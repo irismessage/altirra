@@ -295,6 +295,17 @@ void ATUILoadMenu() {
 		ATSetPortMenu(i, hmenuSpecialMenus[i + 1], pmenuSpecialMenus[i + 1]);
 }
 
+void ATUISetMenuEnabled(bool enabled) {
+	if (g_hMenu) {
+		UINT n = GetMenuItemCount(g_hMenu);
+
+		for(UINT i=0; i<n; ++i)
+			EnableMenuItem(g_hMenu, i, MF_BYPOSITION | (enabled ? MF_ENABLED : MF_GRAYED));
+
+		DrawMenuBar(g_hwnd);
+	}
+}
+
 void ATUIUpdateMenu() {
 	vdfastvector<const char *>::const_iterator it = g_ATUIMenuBoundCommands.begin();
 	vdfastvector<const char *>::const_iterator itEnd = g_ATUIMenuBoundCommands.end();

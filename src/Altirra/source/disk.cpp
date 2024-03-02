@@ -358,9 +358,14 @@ void ATDiskEmulator::Reset() {
 void ATDiskEmulator::LoadDisk(const wchar_t *s) {
 	size_t len = wcslen(s);
 
-	if (!wcscmp(s + len - 2, L"\\*")) {
-		VDStringW t(s, s + len - 2);
-		return MountFolder(t.c_str());
+	if (len >= 3) {
+		if (!wcscmp(s + len - 3, L"\\**")) {
+			VDStringW t(s, s + len - 3);
+			return MountFolder(t.c_str(), true);
+		} else if (!wcscmp(s + len - 2, L"\\*")) {
+			VDStringW t(s, s + len - 2);
+			return MountFolder(t.c_str(), false);
+		}
 	}
 
 	VDFileStream f(s);
@@ -368,15 +373,18 @@ void ATDiskEmulator::LoadDisk(const wchar_t *s) {
 	LoadDisk(s, s, f);
 }
 
-void ATDiskEmulator::MountFolder(const wchar_t *path) {
+void ATDiskEmulator::MountFolder(const wchar_t *path, bool sdfs) {
 	UnloadDisk();
 
 	try {
-		mpDiskImage = ATMountDiskImageVirtualFolder(path, 720, false);
+		if (sdfs)
+			mpDiskImage = ATMountDiskImageVirtualFolderSDFS(path, 65535, (uint64)mUnit << 56);
+		else
+			mpDiskImage = ATMountDiskImageVirtualFolder(path, 720);
 
 		InitSectorInfoArrays();
 
-		mPath = VDMakePath(path, L"*");
+		mPath = VDMakePath(path, L"**" + !sdfs);
 	} catch(const MyError&) {
 		UnloadDisk();
 		throw;
@@ -707,7 +715,11 @@ uint8 ATDiskEmulator::WriteSector(uint16 bufadr, uint16 len, uint16 sector, ATCP
 void ATDiskEmulator::ReadStatus(uint8 dst[5]) {
 	uint8 status = 0;
 
-	if (mSectorSize > 128)
+	// We need to check the sector size in the PERCOM block and not the physical
+	// disk for this value. This is required as SmartDOS 8.2D does a Write PERCOM
+	// Block command and then depends on FM/MFM selection being reflected in the
+	// result.
+	if (mPERCOM[6])		// sector size high byte
 		status += 0x20;
 
 	if (mbLastOpError)
@@ -1517,6 +1529,10 @@ void ATDiskEmulator::ProcessCommandPacket() {
 				mSendPacket[1] = 'C';
 
 				ReadPERCOMBlock(mSendPacket + 2);
+
+				const int sectorSize = VDReadUnalignedBEU16(&mPERCOM[6]);
+				const int sectorCount = mPERCOM[0] * (sint32)VDReadUnalignedBEU16(&mPERCOM[2]) * (mPERCOM[4] + 1);
+				g_ATLCDisk("Reading PERCOM data: %u sectors of %u bytes each, %u boot sectors\n", sectorCount, sectorSize, sectorSize > 256 ? 0 : 3);
 
 				BeginTransfer(15, 2500, 0, mbCommandFrameHighSpeed, highSpeed);
 			}

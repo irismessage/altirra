@@ -37,7 +37,7 @@ public:
 	~ATVBXEEmulator();
 
 	// VBXE requires 512K of memory.
-	void Init(uint8 *memory, IATVBXEEmulatorConnections *conn, ATMemoryManager *memman);
+	void Init(uint8 *memory, IATVBXEEmulatorConnections *conn, ATMemoryManager *memman, bool sharedMemory);
 	void Shutdown();
 
 	void ColdReset();
@@ -115,6 +115,7 @@ protected:
 	uint8	mMemAcBankA;
 	uint8	mMemAcBankB;
 	bool	mb5200Mode;
+	bool	mbSharedMemory;
 	uint8	mRegBase;
 
 	uint32 mXdlBaseAddr;

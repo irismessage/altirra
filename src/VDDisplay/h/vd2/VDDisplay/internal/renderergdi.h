@@ -28,9 +28,7 @@ public:
 
 	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
 	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h);
-	void MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView);
-	void MultiGrayBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {}
-	void MultiColorBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {}
+	void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode);
 
 	void PolyLine(const vdpoint32 *points, uint32 numLines);
 

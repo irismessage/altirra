@@ -118,7 +118,9 @@ public:
 	bool	IsNonlinearMixingEnabled() const { return mbNonlinearMixingEnabled; }
 	void	SetNonlinearMixingEnabled(bool enable);
 
+	bool	GetShiftKeyState() const { return mbShiftKeyState; }
 	void	SetShiftKeyState(bool down);
+	bool	GetControlKeyState() const { return mbControlKeyState; }
 	void	SetControlKeyState(bool down);
 	void	PushKey(uint8 c, bool repeat, bool allowQueue = false, bool flushQueue = true, bool useCooldown = true);
 	void	PushRawKey(uint8 c);

@@ -639,7 +639,7 @@ void VDDisplayRendererSoft::Blt(sint32 x, sint32 y, VDDisplayImageView& imageVie
 		h);
 }
 
-void VDDisplayRendererSoft::MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
+void VDDisplayRendererSoft::MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode) {
 	VDDisplayCachedImageSoft *cachedImage = GetCachedImage(imageView);
 
 	if (!cachedImage)
@@ -649,150 +649,6 @@ void VDDisplayRendererSoft::MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, 
 		const VDDisplayBlt& blt = blts[i];
 		sint32 x = blt.mDestX + mOffsetX;
 		sint32 y = blt.mDestY + mOffsetY;
-		sint32 sx = blt.mSrcX;
-		sint32 sy = blt.mSrcY;
-		sint32 w = blt.mWidth;
-		sint32 h = blt.mHeight;
-
-		// do full clipping
-		if (x < 0) { sx -= x; w += x; x = 0; }
-		if (y < 0) { sy -= y; h += y; y = 0; }
-		if (sx < 0) { x -= sx; w += sx; sx = 0; }
-		if (sy < 0) { y -= sy; h += sy; sy = 0; }
-
-		if ((w|h) < 0)
-			continue;
-
-		if (x + w > mPrimary.w) { w = mPrimary.w - x; }
-		if (y + h > mPrimary.h) { h = mPrimary.h - y; }
-		if (sx + w > cachedImage->mWidth) { w = cachedImage->mWidth - x; }
-		if (sy + h > cachedImage->mHeight) { h = cachedImage->mHeight - y; }
-
-		if ((w|h) < 0)
-			continue;
-
-		// software blitting time
-		char *row = (char *)mPrimary.data + mPrimary.pitch * y;
-
-		switch(mPrimary.format) {
-			case nsVDPixmap::kPixFormat_XRGB1555:
-			case nsVDPixmap::kPixFormat_RGB565:
-				{
-					uint16 *dst16 = (uint16 *)row + x;
-					const uint16 *src16 = (const uint16 *)((const char *)cachedImage->mSoftBuffer.data + cachedImage->mSoftBuffer.pitch * sy) + sx;
-
-					while(h--) {
-						for(sint32 j=0; j<w; ++j) {
-							if (src16[j] & 31)
-								dst16[j] = mNativeColor;
-						}
-
-						src16 = (const uint16 *)((const char *)src16 + cachedImage->mSoftBuffer.pitch);
-						dst16 = (uint16 *)((char *)dst16 + mPrimary.pitch);
-					}
-				}
-				break;
-
-			case nsVDPixmap::kPixFormat_RGB888:
-				{
-					uint8 *dst24 = (uint8 *)row + x*3;
-					const uint8 *src24 = (const uint8 *)cachedImage->mSoftBuffer.data + cachedImage->mSoftBuffer.pitch * sy + sx*3;
-
-					const uint8 mNativeRed   = (uint8)(mColor >> 16);
-					const uint8 mNativeGreen = (uint8)(mColor >>  8);
-					const uint8 mNativeBlue  = (uint8)(mColor >>  0);
-
-					while(h--) {
-						uint8 *dst2 = dst24;
-						const uint8 *src2 = src24;
-
-						for(sint32 j=0; j<w; ++j) {
-							if (src2[0]) {
-								dst2[0] = mNativeBlue;
-								dst2[1] = mNativeGreen;
-								dst2[2] = mNativeRed;
-							}
-
-							src2 += 3;
-							dst2 += 3;
-						}
-
-						src24 += cachedImage->mSoftBuffer.pitch;
-						dst24 += mPrimary.pitch;
-					}
-				}
-				break;
-
-			case nsVDPixmap::kPixFormat_XRGB8888:
-				{
-					uint32 *dst32 = (uint32 *)row + x;
-					const uint32 *src32 = (const uint32 *)((const char *)cachedImage->mSoftBuffer.data + cachedImage->mSoftBuffer.pitch * sy) + sx;
-
-					while(h--) {
-						for(sint32 j=0; j<w; ++j) {
-							if (src32[j] & 0xFFFFFF)
-								dst32[j] = mNativeColor;
-						}
-
-						src32 = (const uint32 *)((const char *)src32 + cachedImage->mSoftBuffer.pitch);
-						dst32 = (uint32 *)((char *)dst32 + mPrimary.pitch);
-					}
-				}
-				break;
-		}
-	}
-}
-
-void VDDisplayRendererSoft::MultiGrayBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
-	VDDisplayCachedImageSoft *cachedImage = GetCachedImage(imageView);
-
-	if (!cachedImage)
-		return;
-
-	for(uint32 i=0; i<n; ++i) {
-		const VDDisplayBlt& blt = blts[i];
-		sint32 x = blt.mDestX + mOffsetX;
-		sint32 y = blt.mDestY + mOffsetY;
-		sint32 sx = blt.mSrcX;
-		sint32 sy = blt.mSrcY;
-		sint32 w = blt.mWidth;
-		sint32 h = blt.mHeight;
-
-		// do full clipping
-		if (x < 0) { sx -= x; w += x; x = 0; }
-		if (y < 0) { sy -= y; h += y; y = 0; }
-		if (sx < 0) { x -= sx; w += sx; sx = 0; }
-		if (sy < 0) { y -= sy; h += sy; sy = 0; }
-
-		if ((w|h) < 0)
-			continue;
-
-		if (x + w > mPrimary.w) { w = mPrimary.w - x; }
-		if (y + h > mPrimary.h) { h = mPrimary.h - y; }
-		if (sx + w > cachedImage->mWidth) { w = cachedImage->mWidth - x; }
-		if (sy + h > cachedImage->mHeight) { h = cachedImage->mHeight - y; }
-
-		if ((w|h) < 0)
-			continue;
-
-		// software blitting time
-		char *dst = (char *)mPrimary.data + mPrimary.pitch * y + mBytesPerPixel * x;
-		const char *src = (const char *)cachedImage->mSoftBuffer.data + cachedImage->mSoftBuffer.pitch * sy + mBytesPerPixel * sx;
-
-		mpFontBlt(dst, mPrimary.pitch, src, cachedImage->mSoftBuffer.pitch, w, h, mNativeColor);
-	}
-}
-
-void VDDisplayRendererSoft::MultiColorBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
-	VDDisplayCachedImageSoft *cachedImage = GetCachedImage(imageView);
-
-	if (!cachedImage)
-		return;
-
-	for(uint32 i=0; i<n; ++i) {
-		const VDDisplayBlt& blt = blts[i];
-		sint32 x = blt.mDestX;
-		sint32 y = blt.mDestY;
 		sint32 sx = blt.mSrcX;
 		sint32 sy = blt.mSrcY;
 		sint32 w = blt.mWidth;
@@ -816,10 +672,97 @@ void VDDisplayRendererSoft::MultiColorBlt(const VDDisplayBlt *blts, uint32 n, VD
 			continue;
 
 		// software blitting time
-		char *dst = (char *)mPrimary.data + mPrimary.pitch * y + mBytesPerPixel * x;
-		const char *src = (const char *)cachedImage->mSoftBuffer.data + cachedImage->mSoftBuffer.pitch * sy + mBytesPerPixel * sx;
+		switch(bltMode) {
+			case kBltMode_Stencil: {
+				char *row = (char *)mPrimary.data + mPrimary.pitch * y;
 
-		mpColorFontBlt(dst, mPrimary.pitch, src, cachedImage->mSoftBuffer.pitch, w, h, mNativeColor);
+				switch(mPrimary.format) {
+					case nsVDPixmap::kPixFormat_XRGB1555:
+					case nsVDPixmap::kPixFormat_RGB565:
+						{
+							uint16 *dst16 = (uint16 *)row + x;
+							const uint16 *src16 = (const uint16 *)((const char *)cachedImage->mSoftBuffer.data + cachedImage->mSoftBuffer.pitch * sy) + sx;
+
+							while(h--) {
+								for(sint32 j=0; j<w; ++j) {
+									if (src16[j] & 31)
+										dst16[j] = mNativeColor;
+								}
+
+								src16 = (const uint16 *)((const char *)src16 + cachedImage->mSoftBuffer.pitch);
+								dst16 = (uint16 *)((char *)dst16 + mPrimary.pitch);
+							}
+						}
+						break;
+
+					case nsVDPixmap::kPixFormat_RGB888:
+						{
+							uint8 *dst24 = (uint8 *)row + x*3;
+							const uint8 *src24 = (const uint8 *)cachedImage->mSoftBuffer.data + cachedImage->mSoftBuffer.pitch * sy + sx*3;
+
+							const uint8 mNativeRed   = (uint8)(mColor >> 16);
+							const uint8 mNativeGreen = (uint8)(mColor >>  8);
+							const uint8 mNativeBlue  = (uint8)(mColor >>  0);
+
+							while(h--) {
+								uint8 *dst2 = dst24;
+								const uint8 *src2 = src24;
+
+								for(sint32 j=0; j<w; ++j) {
+									if (src2[0]) {
+										dst2[0] = mNativeBlue;
+										dst2[1] = mNativeGreen;
+										dst2[2] = mNativeRed;
+									}
+
+									src2 += 3;
+									dst2 += 3;
+								}
+
+								src24 += cachedImage->mSoftBuffer.pitch;
+								dst24 += mPrimary.pitch;
+							}
+						}
+						break;
+
+					case nsVDPixmap::kPixFormat_XRGB8888:
+						{
+							uint32 *dst32 = (uint32 *)row + x;
+							const uint32 *src32 = (const uint32 *)((const char *)cachedImage->mSoftBuffer.data + cachedImage->mSoftBuffer.pitch * sy) + sx;
+
+							while(h--) {
+								for(sint32 j=0; j<w; ++j) {
+									if (src32[j] & 0xFFFFFF)
+										dst32[j] = mNativeColor;
+								}
+
+								src32 = (const uint32 *)((const char *)src32 + cachedImage->mSoftBuffer.pitch);
+								dst32 = (uint32 *)((char *)dst32 + mPrimary.pitch);
+							}
+						}
+						break;
+				}
+				break;
+			}
+
+			case kBltMode_Gray:{
+				// software blitting time
+				char *dst = (char *)mPrimary.data + mPrimary.pitch * y + mBytesPerPixel * x;
+				const char *src = (const char *)cachedImage->mSoftBuffer.data + cachedImage->mSoftBuffer.pitch * sy + mBytesPerPixel * sx;
+
+				mpFontBlt(dst, mPrimary.pitch, src, cachedImage->mSoftBuffer.pitch, w, h, mNativeColor);
+				break;
+			}
+
+			case kBltMode_Color:{
+				// software blitting time
+				char *dst = (char *)mPrimary.data + mPrimary.pitch * y + mBytesPerPixel * x;
+				const char *src = (const char *)cachedImage->mSoftBuffer.data + cachedImage->mSoftBuffer.pitch * sy + mBytesPerPixel * sx;
+
+				mpColorFontBlt(dst, mPrimary.pitch, src, cachedImage->mSoftBuffer.pitch, w, h, mNativeColor);
+				break;
+			}
+		}
 	}
 }
 
@@ -869,8 +812,8 @@ bool VDDisplayRendererSoft::PushViewport(const vdrect32& r, sint32 x, sint32 y) 
 	sre.mOffsetY = mOffsetY;
 
 	// shift to sub-render context
-	mOffsetX = offx;
-	mOffsetY = offy;
+	mOffsetX += x + offx;
+	mOffsetY += y + offy;
 
 	mPrimary.data = (char *)mPrimary.data + mPrimary.pitch * y1 + mBytesPerPixel * x1;
 	mPrimary.w = x2 - x1;

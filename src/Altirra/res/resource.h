@@ -77,6 +77,9 @@
 #define IDR_KERNELXL                    174
 #define IDC_CURSOR1                     175
 #define IDC_TARGET_OFF                  175
+#define IDR_DRAGDROP_MENU               176
+#define IDR_DISK_CONTEXT_MENU           177
+#define IDD_OPTIONS_FLASH               178
 #define IDI_DISK                        500
 #define IDI_TAPE                        501
 #define IDI_XEX                         502
@@ -118,17 +121,21 @@
 #define IDC_NEWDISK1                    1018
 #define IDC_CPUMODEL_6502C              1018
 #define IDC_BURSTIO                     1018
+#define IDC_MORE1                       1018
 #define IDC_NEWDISK2                    1019
 #define IDC_CPUMODEL_65C02              1019
+#define IDC_MORE2                       1019
 #define IDC_NEWDISK3                    1020
 #define IDC_CPUMODEL_65C816             1020
 #define IDC_LIST                        1020
 #define IDC_VC_ZMBV                     1020
 #define IDC_RATE_INTEGRAL               1020
 #define IDC_ERRORMODE_PAUSE             1020
+#define IDC_MORE3                       1020
 #define IDC_NEWDISK4                    1021
 #define IDC_ADD                         1021
 #define IDC_ERRORMODE_COLDRESET         1021
+#define IDC_MORE4                       1021
 #define IDC_WRITEMODE3                  1022
 #define IDC_DELETE                      1022
 #define IDC_SAVEAS1                     1023
@@ -153,6 +160,7 @@
 #define IDC_POSITION                    1030
 #define IDC_NEWDISK5                    1030
 #define IDC_LATENCY                     1030
+#define IDC_MORE5                       1030
 #define IDC_EJECT5                      1031
 #define IDC_STATIC_LATENCY              1031
 #define IDC_DISKPATH6                   1032
@@ -165,6 +173,7 @@
 #define IDC_WRITEMODE6                  1035
 #define IDC_HUERANGE                    1036
 #define IDC_NEWDISK6                    1036
+#define IDC_MORE6                       1036
 #define IDC_BRIGHTNESS                  1037
 #define IDC_EJECT6                      1037
 #define IDC_CONTRAST                    1038
@@ -177,6 +186,7 @@
 #define IDC_WRITEMODE7                  1041
 #define IDC_STATIC_HUESTART             1042
 #define IDC_NEWDISK7                    1042
+#define IDC_MORE7                       1042
 #define IDC_STATIC_HUERANGE             1043
 #define IDC_EJECT7                      1043
 #define IDC_STATIC_BRIGHTNESS           1044
@@ -189,6 +199,7 @@
 #define IDC_WRITEMODE8                  1047
 #define IDC_STATIC_ARTSAT               1048
 #define IDC_NEWDISK8                    1048
+#define IDC_MORE8                       1048
 #define IDC_ARTBRI                      1049
 #define IDC_EJECT8                      1049
 #define IDC_STATIC_ARTBRI               1050
@@ -370,6 +381,7 @@
 #define IDC_HW_MODE                     1197
 #define IDC_COMBO1                      1198
 #define IDC_FILESYSTEM                  1198
+#define IDC_SIC_FLASH                   1198
 #define IDC_TYPE_FIXED                  1199
 #define IDC_TYPE_DYNAMIC                1200
 #define IDC_SIZE_SECTORS                1201
@@ -432,6 +444,22 @@
 #define ID_HISTORYCONTEXTMENU_SHOWMICROSECONDS 40431
 #define ID_DISPLAYCONTEXTMENU_COPY      40445
 #define ID_DISPLAYCONTEXTMENU_PASTE     40446
+#define ID_HISTORYCONTEXTMENU_SHOWSPECIALREGISTERS 40477
+#define ID_BOOTIMAGE                    40478
+#define ID_DRAGDROP_BOOTIMAGE           40479
+#define ID_MOUNTIMAGE_CARTRIDGE         40480
+#define ID_MOUNTIMAGE_D1                40481
+#define ID_MOUNTIMAGE_D2                40482
+#define ID_MOUNTIMAGE_D3                40483
+#define ID_MOUNTIMAGE_D4                40484
+#define ID_MOUNTIMAGE_D                 40485
+#define ID_CONTEXT_NEWDISK              40486
+#define ID_CONTEXT_MOUNTFOLDERASVIRTUALDOS2DISK 40487
+#define ID_CONTEXT_MOUNTFOLDERASVIRTUALSPARTADOSDISK 40488
+#define ID_CONTEXT_EXPLOREDISK          40489
+#define ID_CONTEXT_MOUNTFOLDERDOS2      40490
+#define ID_CONTEXT_MOUNTFOLDERSDFS      40491
+#define ID_CONTEXT_SAVEDISK             40492
 #define ID_INPUT_PORT1_NONE             45000
 #define ID_INPUT_PORT2_NONE             45100
 #define ID_INPUT_PORT3_NONE             45200
@@ -444,8 +472,8 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
-#define _APS_NEXT_RESOURCE_VALUE        176
-#define _APS_NEXT_COMMAND_VALUE         40477
+#define _APS_NEXT_RESOURCE_VALUE        179
+#define _APS_NEXT_COMMAND_VALUE         40493
 #define _APS_NEXT_CONTROL_VALUE         1211
 #define _APS_NEXT_SYMED_VALUE           107
 #endif

@@ -85,6 +85,13 @@ protected:
 
 	ATScheduler *mpScheduler;
 	ATPokeyTables *mpTables;
+	uintptr mPoly4Offset;
+	uintptr mPoly5Offset;
+	uintptr mPoly9Offset;
+	uintptr mPoly17Offset;
+#if !defined(VD_CPU_X86)
+	uint32	mPolyBaseTime;
+#endif
 	bool mbInitMode;
 
 	float	mAccum;

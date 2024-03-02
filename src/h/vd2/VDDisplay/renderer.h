@@ -22,6 +22,7 @@ struct VDDisplayBlt {
 struct VDDisplayRendererCaps {
 	bool mbSupportsAlphaBlending;
 	bool mbSupportsColorBlt;
+	bool mbSupportsColorBlt2;
 };
 
 class VDDisplaySubRenderCache {
@@ -56,12 +57,22 @@ public:
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView) = 0;
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h) = 0;
 
-	// Do multiple stencil blits from a bitmap. White pixels are converted to the current color,
-	// while black pixels are transparent.
-	virtual void MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) = 0;
+	enum BltMode {
+		kBltMode_Normal,
 
-	// Do multiple color blits from a bitmap with RGB alpha and using the current color.
-	virtual void MultiColorBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) = 0;
+		// Do multiple stencil blits from a bitmap. White pixels are converted to the current color,
+		// while black pixels are transparent.
+		kBltMode_Stencil,
+
+		kBltMode_Gray,
+
+		// Do multiple color blits from a bitmap with RGB alpha and using the current color.
+		kBltMode_Color,
+
+		kBltMode_Color2
+	};
+
+	virtual void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode) = 0;
 
 	// Draw a connected line strip.
 	virtual void PolyLine(const vdpoint32 *points, uint32 numLines) = 0;

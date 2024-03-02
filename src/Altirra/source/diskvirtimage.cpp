@@ -632,7 +632,7 @@ void ATDiskImageVirtualFolder::UpdateDirectory(bool reportNewFiles) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-IATDiskImage *ATMountDiskImageVirtualFolder(const wchar_t *path, uint32 sectorCount, bool sdx) {
+IATDiskImage *ATMountDiskImageVirtualFolder(const wchar_t *path, uint32 sectorCount) {
 	vdautoptr<ATDiskImageVirtualFolder> p(new ATDiskImageVirtualFolder);
 	
 	p->Init(path);

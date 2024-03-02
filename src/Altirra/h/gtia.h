@@ -18,6 +18,7 @@
 #ifndef AT_GTIA_H
 #define AT_GTIA_H
 
+#include <vd2/system/linearalloc.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
@@ -232,32 +233,83 @@ public:
 
 protected:
 	struct RegisterChange {
-		uint8 mPos;
+		sint16 mPos;
 		uint8 mReg;
 		uint8 mValue;
-		uint8 mPad;
 	};
 
-	template<class T> void ExchangeStateArch(T& io);
+	struct SpriteState {
+		uint8	mShiftRegister;
+		uint8	mShiftState;
+		uint8	mSizeMode;
+		uint8	mDataLatch;
+
+		void Reset();
+		uint8 Detect(uint32 ticks, const uint8 *src);
+		uint8 Detect(uint32 ticks, const uint8 *src, const uint8 *hires);
+		uint8 Generate(uint32 ticks, uint8 mask, uint8 *dst);
+		uint8 Generate(uint32 ticks, uint8 mask, uint8 *dst, const uint8 *hires);
+		void Advance(uint32 ticks);
+	};
+
+	struct SpriteImage {
+		SpriteImage *mpNext;
+		sint16	mX1;
+		sint16	mX2;
+		SpriteState mState;
+	};
+
+	struct Sprite {
+		SpriteState mState;
+		SpriteImage *mpImageHead;
+		SpriteImage *mpImageTail;
+		int mLastSync;
+
+		void Sync(int pos);
+	};
+
 	template<class T> void ExchangeStatePrivate(T& io);
-	void SyncTo(int x1, int targetX);
+	void SyncTo(int xend);
+	void Render(int x1, int targetX);
 	void ApplyArtifacting();
 	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);
 	void UpdateRegisters(const RegisterChange *rc, int count);
 	void UpdateSECAMTriggerLatch(int index);
 	void ResetSprites();
+	void GenerateSpriteImages(int x1, int x2);
+	void GenerateSpriteImage(Sprite& sprite, int pos);
+	void FreeSpriteImage(SpriteImage *);
+	SpriteImage *AllocSpriteImage();
 
+	// critical variables - sync
 	IATGTIAEmulatorConnections *mpConn; 
+	int		mLastSyncX;
+	VBlankMode		mVBlankMode;
+	bool	mbANTICHiresMode;
+	bool	mbHiresMode;
+
+	typedef vdfastvector<RegisterChange> RegisterChanges;
+	RegisterChanges mRegisterChanges;
+	int mRCIndex;
+	int mRCCount;
+
+	// critical variables - sprite update
+	uint8	mSpritePos[8];
+	bool	mbSpritesActive;
+	bool	mbPMRendered;
+	SpriteImage *mpFreeSpriteImages;
+	Sprite	mSprites[8];
+	uint8	mPlayerCollFlags[4];
+	uint8	mMissileCollFlags[4];
+
+	// non-critical variables
 	IVDVideoDisplay *mpDisplay;
 	IATGTIAVideoTap *mpVideoTap;
 	uint32	mY;
-	uint32	mLastSyncX;
-	bool	mbPMRendered;
 
 	AnalysisMode	mAnalysisMode;
 	ArtifactMode	mArtifactMode;
 	OverscanMode	mOverscanMode;
-	VBlankMode		mVBlankMode;
 	bool	mbVsyncEnabled;
 	bool	mbBlendMode;
 	bool	mbFrameCopiedFromPrev;
@@ -275,20 +327,8 @@ protected:
 
 	ATGTIARegisterState	mState;
 
-	uint8	mPlayerPos[4];
-	uint8	mMissilePos[4];
-	uint8	mPlayerWidth[4];
-	uint8	mMissileWidth[4];
-
-	sint32	mPlayerTriggerPos[4];
-	sint32	mMissileTriggerPos[4];
-	uint8	mPlayerShiftData[4];
-	uint8	mMissileShiftData[4];
-
-	uint8	mPlayerSize[4];
-	uint8	mPlayerData[4];
-	uint8	mMissileData;
-	uint8	mMissileSize;
+	// used during register read
+	uint8	mCollisionMask;
 
 	// The following 9 registers must be contiguous.
 	uint8	mPMColor[4];		// $D012-D015 player and missile colors
@@ -311,25 +351,16 @@ protected:
 	uint8	mTRIGSECAM[4];
 	uint32	mTRIGSECAMLastUpdate[4];
 
-	uint8	mPlayerCollFlags[4];
-	uint8	mMissileCollFlags[4];
-	uint8	mCollisionMask;
-
 	uint8	*mpDst;
 	vdrefptr<VDVideoDisplayFrame>	mpFrame;
 	uint32	mFrameTimestamp;
 	ATFrameTracker *mpFrameTracker;
 	bool	mbMixedRendering;	// GTIA mode with non-hires or pseudo mode E
-	bool	mbANTICHiresMode;
-	bool	mbHiresMode;
 	bool	mbGTIADisableTransition;
 	bool	mbTurbo;
 	bool	mbPALMode;
 	bool	mbSECAMMode;
 	bool	mbForcedBorder;
-
-	const uint8 *mpPriTable;
-	const uint8 *mpColorTable;
 
 	VDALIGN(16)	uint8	mMergeBuffer[228];
 	VDALIGN(16)	uint8	mAnticData[228];
@@ -351,10 +382,7 @@ protected:
 	IATUIRenderer *mpUIRenderer;
 	ATVBXEEmulator *mpVBXE;
 
-	typedef vdfastvector<RegisterChange> RegisterChanges;
-	RegisterChanges mRegisterChanges;
-	int mRCIndex;
-	int mRCCount;
+	VDLinearAllocator mNodeAllocator;
 };
 
 #endif

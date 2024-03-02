@@ -181,18 +181,23 @@ bool ATCPUEmulator::IsNextCycleWrite() const {
 			case kStateReadIndAddrDpLongB:
 			case kStateReadAddrAddY:
 			case kState816ReadAddrL:
-			case kStateRead816AddrAbsHY:
+			case kState816ReadAddrH:
+			case kState816ReadAddrHX:
+			case kState816ReadAddrAbsXSpec:
+			case kState816ReadAddrAbsXAlways:
+			case kState816ReadAddrAbsYSpec:
+			case kState816ReadAddrAbsYAlways:
 			case kStateRead816AddrAbsLongL:
 			case kStateRead816AddrAbsLongH:
 			case kStateRead816AddrAbsLongB:
-			case kState816ReadAddrHX:
-			case kState816ReadAddrHY:
 			case kStateReadAddrB:
 			case kStateReadAddrBX:
 			case kStateReadAddrSO:
+			case kState816ReadAddrSO_AddY:
 			case kState816ReadByte:
 			case kStateReadL16:
 			case kStateReadH16:
+			case kStateReadH16_DpBank:
 			case kStatePopNative:
 			case kStatePopL16:
 			case kStatePopH16:
@@ -213,6 +218,7 @@ bool ATCPUEmulator::IsNextCycleWrite() const {
 			case kState816WriteByte:
 			case kStateWriteL16:
 			case kStateWriteH16:
+			case kStateWriteH16_DpBank:
 			case kStatePushNative:
 			case kStatePushL16:
 			case kStatePushH16:
@@ -666,13 +672,6 @@ int ATCPUEmulator::Advance() {
 		return Advance6502();
 }
 
-int ATCPUEmulator::AdvanceWithBusTracking() {
-	if (mCPUMode == kATCPUMode_65C816)
-		return Advance65816WithBusTracking();
-	else
-		return Advance6502WithBusTracking();
-}
-
 int ATCPUEmulator::Advance6502() {
 	#include "cpumachine.inl"
 }
@@ -682,18 +681,6 @@ int ATCPUEmulator::Advance65816() {
 	#include "cpumachine.inl"
 #undef AT_CPU_MACHINE_65C816
 }
-
-#define AT_CPU_RECORD_BUS_ACTIVITY
-int ATCPUEmulator::Advance6502WithBusTracking() {
-	#include "cpumachine.inl"
-}
-
-int ATCPUEmulator::Advance65816WithBusTracking() {
-#define AT_CPU_MACHINE_65C816
-	#include "cpumachine.inl"
-#undef AT_CPU_MACHINE_65C816
-}
-#undef AT_CPU_RECORD_BUS_ACTIVITY
 
 uint8 ATCPUEmulator::ProcessDebugging() {
 	uint8 iflags = mInsnFlags[mPC];

@@ -18,67 +18,39 @@
 
 .if _KERNEL_PBI_SUPPORT
 
+		icl		'cio.inc'
+
 ;==========================================================================
-; Add handler to HATABS.
+; PBI device ROM entry points:
+;	$D800	Checksum low (unused)
+;	$D801	Checksum high (unused)
+;	$D802	Revision (unused)
+;	$D803	ID byte; must be $80.
+;	$D804	Device type (unused)
+;	$D805	JMP sio_vector
+;	$D806		(cont.)
+;	$D807		(cont.)
+;	$D808	JMP irq_vector
+;	$D809		(cont.)
+;	$D80A		(cont.)
+;	$D80B	ID byte; must be $91
+;	$D80C	Device name (unused)
+;	$D80D	CIO open vector - 1
+;	$D80E		(cont.)
+;	$D80F	CIO close vector - 1
+;	$D810		(cont.)
+;	$D811	CIO get byte vector - 1
+;	$D812		(cont.)
+;	$D813	CIO put byte vector - 1
+;	$D814		(cont.)
+;	$D815	CIO get status vector - 1
+;	$D816		(cont.)
+;	$D817	CIO special vector - 1
+;	$D818		(cont.)
+;	$D819	JMP init_vector
+;	$D81A		(cont.)
+;	$D81B		(cont.)
 ;
-; Input:
-;	X		Name of device
-;	A:Y		CIO handler table address
-;
-; Returns:
-;	N=1		HATABS is full.
-;	C=0		Handler added successfully.
-;	C=1		Handler already exists; X points to address entry
-;			A:Y preserved (required by SDX 4.43rc)
-;
-.proc	PBIAddHandler
-		pha
-		tya
-		pha
-		txa
-		ldx		#33
-search_loop:
-		cmp		hatabs,x
-		beq		found_existing
-		dex
-		dex
-		dex
-		bpl		search_loop	
-		
-insert_loop:
-		inx
-		inx
-		inx
-		ldy		hatabs,x
-		beq		found_empty
-		cpx		#36
-		bne		insert_loop
-		
-		;oops... table is full!
-		pla
-		pla
-		lda		#$ff
-		sec
-		rts
-
-found_existing:
-		pla
-		tay
-		pla
-		inx					;X=address offset, N=0 (not full)
-		sec					;C=1 (already exists)
-		rts
-
-found_empty:
-		sta		hatabs,x
-		pla
-		sta		hatabs+1,x
-		pla
-		sta		hatabs+2,x
-		asl					;N=0 (not full)
-		clc					;C=0 (added successfully)
-		rts
-.endp
 
 ;==========================================================================
 ; Scan for PBI devices.
@@ -130,6 +102,8 @@ invalid:
 		lda		pdvmsk
 		bne		begin_scan
 fail:
+		sta		shpdvs
+		sta		$d1ff
 		clc
 		rts
 
@@ -150,6 +124,7 @@ loop:
 		beq		loop
 		
 		;select the device
+		sta		shpdvs
 		sta		$d1ff
 		
 		;attempt I/O
@@ -160,8 +135,107 @@ loop:
 		;loop back if PBI handler didn't claim the I/O
 		bcc		loop
 		
+		;deselect last device
+		lda		#0
+		sta		shpdvs
+		sta		$d1ff
+		
 		;all done
 		rts
 .endp
+
+;==========================================================================
+.proc PBIGenericDeviceOpen
+		ldy		#0
+		bpl		PBIGenericDevicePutByte.vector_entry
+.endp
+
+;==========================================================================
+.proc PBIGenericDeviceClose
+		ldy		#2
+		bpl		PBIGenericDevicePutByte.vector_entry
+.endp
+
+;==========================================================================
+.proc PBIGenericDeviceGetByte
+		ldy		#4
+		bpl		PBIGenericDevicePutByte.vector_entry
+.endp
+
+;==========================================================================
+.proc PBIGenericDevicePutByte
+		ldy		#6
+vector_entry:
+		sty		reladr
+		sta		reladr+1
+		lda		#0
+		sec
+loop:
+		;advance to next device bit
+		rol
+		
+		;check if we've scanned all 8 IDs
+		bcs		fail
+		
+		;check if device exists and keep scanning if not
+		bit		pdvmsk
+		beq		loop
+		
+		;select the device
+		sta		shpdvs
+		sta		$d1ff
+		
+		;attempt I/O
+		pha
+		jsr		dispatch
+		pla
+		
+		;loop back if PBI handler didn't claim the I/O
+		bcc		loop
+		
+		;all done
+done:
+		lda		#0
+		sta		shpdvs
+		sta		$d1ff
+		rts
+		
+fail:	
+		ldy		#CIOStatUnkDevice
+		bne		done
+				
+dispatch:
+		ldy		reladr
+		lda		$d80e,y
+		pha
+		lda		$d80d,y
+		pha
+		lda		reladr+1
+		ldy		#CIOStatNotSupported
+		rts
+
+.endp
+
+;==========================================================================
+.proc PBIGenericDeviceGetStatus
+		ldy		#8
+		bpl		PBIGenericDevicePutByte.vector_entry
+.endp
+
+;==========================================================================
+.proc PBIGenericDeviceSpecial
+		ldy		#10
+		bpl		PBIGenericDevicePutByte.vector_entry
+.endp
+
+;==========================================================================
+.macro PBI_VECTOR_TABLE
+		dta		a(PBIGenericDeviceOpen-1)
+		dta		a(PBIGenericDeviceClose-1)
+		dta		a(PBIGenericDeviceGetByte-1)
+		dta		a(PBIGenericDevicePutByte-1)
+		dta		a(PBIGenericDeviceGetStatus-1)
+		dta		a(PBIGenericDeviceSpecial-1)
+.endm
 
 .endif

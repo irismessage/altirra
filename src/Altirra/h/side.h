@@ -41,7 +41,7 @@ public:
 	void LoadFirmware(const wchar_t *path);
 	void SaveFirmware(const wchar_t *path);
 
-	void Init(ATIDEEmulator *ide, ATScheduler *sch, IATUIRenderer *uir, ATMemoryManager *memman, ATSimulator *sim);
+	void Init(ATIDEEmulator *ide, ATScheduler *sch, IATUIRenderer *uir, ATMemoryManager *memman, ATSimulator *sim, bool version2);
 	void Shutdown();
 
 	void SetExternalEnable(bool enable);
@@ -59,14 +59,16 @@ public:
 
 protected:
 	void SetSDXBank(sint32 bank, bool topEnable);
-	void SetTopBank(sint32 bank);
+	void SetTopBank(sint32 bank, bool topRightEnable);
 
 	static sint32 OnDebugReadByte(void *thisptr, uint32 addr);
 	static sint32 OnReadByte(void *thisptr, uint32 addr);
 	static bool OnWriteByte(void *thisptr, uint32 addr, uint8 value);
 
 	static sint32 OnCartRead(void *thisptr, uint32 addr);
+	static sint32 OnCartRead2(void *thisptr, uint32 addr);
 	static bool OnCartWrite(void *thisptr, uint32 addr, uint8 value);
+	static bool OnCartWrite2(void *thisptr, uint32 addr, uint8 value);
 
 	void UpdateMemoryLayersCart();
 
@@ -76,13 +78,21 @@ protected:
 	ATSimulator *mpSim;
 	ATMemoryLayer *mpMemLayerIDE;
 	ATMemoryLayer *mpMemLayerCart;
+	ATMemoryLayer *mpMemLayerCart2;
 	ATMemoryLayer *mpMemLayerCartControl;
+	ATMemoryLayer *mpMemLayerCartControl2;
 	bool	mbExternalEnable;
 	bool	mbSDXEnable;
 	bool	mbTopEnable;
+	bool	mbTopRightEnable;
+	bool	mbIDEEnabled;
+	bool	mbVersion2;
+	uint8	mSDXBankRegister;
+	uint8	mTopBankRegister;
 	sint32	mSDXBank;
 	sint32	mTopBank;
 	sint32	mBankOffset;
+	sint32	mBankOffset2;
 	ATFlashEmulator	mFlashCtrl;
 	ATRTCDS1305Emulator mRTC;
 

@@ -6,23 +6,42 @@
 
 class IVDDisplayRenderer;
 class VDDisplayTextRenderer;
+class IATUIAnchor;
 
 class ATUIContainer;
 class ATUIManager;
 
 enum ATUICursorImage {
 	kATUICursorImage_None,
+	kATUICursorImage_Hidden,
 	kATUICursorImage_Arrow,
-	kATUICursorImage_IBeam
+	kATUICursorImage_IBeam,
+	kATUICursorImage_Cross,
+	kATUICursorImage_Query,
+	kATUICursorImage_Target,
+	kATUICursorImage_TargetOff
 };
 
 // Currently these need to match the Win32 definitions.
 enum ATUIVirtKey {
+	kATUIVK_LButton	= 0x01,
+	kATUIVK_RButton	= 0x02,
+	kATUIVK_Cancel	= 0x03,
+	kATUIVK_MButton	= 0x04,
+	kATUIVK_XButton1= 0x05,
+	kATUIVK_XButton2= 0x06,
 	kATUIVK_Back	= 0x08,		// Backspace
+	kATUIVK_Tab		= 0x09,		// VK_TAB
 	kATUIVK_Return	= 0x0D,
 	kATUIVK_Shift	= 0x10,
 	kATUIVK_Control	= 0x11,
 	kATUIVK_Alt		= 0x12,
+	kATUIVK_Pause	= 0x13,
+	kATUIVK_CapsLock= 0x14,
+	kATUIVK_Escape	= 0x1B,		// VK_ESCAPE
+	kATUIVK_Space	= 0x20,		// VK_SPACE
+	kATUIVK_Prior	= 0x21,		// VK_PRIOR
+	kATUIVK_Next	= 0x22,		// VK_NEXT
 	kATUIVK_0		= 0x30,
 	kATUIVK_A		= 0x41,
 	kATUIVK_End		= 0x23,
@@ -31,7 +50,39 @@ enum ATUIVirtKey {
 	kATUIVK_Up		= 0x26,		// Up arrow
 	kATUIVK_Right	= 0x27,		// Right arrow
 	kATUIVK_Down	= 0x28,		// Down arrow
-	kATUIVK_Delete	= 0x2E
+	kATUIVK_Delete	= 0x2E,
+	kATUIVK_F1		= 0x70,		// VK_F1
+	kATUIVK_F2		= 0x71,		// VK_F2
+	kATUIVK_F3		= 0x72,		// VK_F3
+	kATUIVK_F4		= 0x73,		// VK_F4
+	kATUIVK_F5		= 0x74,		// VK_F5
+	kATUIVK_F6		= 0x75,		// VK_F6
+	kATUIVK_F7		= 0x76,		// VK_F7
+	kATUIVK_F8		= 0x77,		// VK_F8
+	kATUIVK_F9		= 0x78,		// VK_F9
+	kATUIVK_F10		= 0x79,		// VK_F10
+	kATUIVK_F11		= 0x7A,		// VK_F11
+	kATUIVK_F12		= 0x7B,		// VK_F12
+	kATUIVK_LShift	= 0xA0,		// VK_LSHIFT
+	kATUIVK_RShift	= 0xA1,		// VK_RSHIFT
+	kATUIVK_LControl= 0xA2,		// VK_LCONTROL
+	kATUIVK_RControl= 0xA3,		// VK_RCONTROL
+	kATUIVK_LAlt	= 0xA4,		// VK_LMENU
+	kATUIVK_RAlt	= 0xA5,		// VK_RMENU
+	kATUIVK_NumpadEnter	= 0x10D,	// VK_RETURN (extended)
+
+	kATUIVK_UILeft		= 0x0500,
+	kATUIVK_UIRight		= 0x0501,
+	kATUIVK_UIUp		= 0x0502,
+	kATUIVK_UIDown		= 0x0503,
+	kATUIVK_UIAccept	= 0x0504,	// PSx[X], Xbox[A]
+	kATUIVK_UIReject	= 0x0505,	// PSx[O], Xbox[B]
+	kATUIVK_UIMenu		= 0x0506,	// PSx[T], Xbox[Y]
+	kATUIVK_UIOption	= 0x0507,	// PSx[S], Xbox[X]
+	kATUIVK_UISwitchLeft	= 0x0508,
+	kATUIVK_UISwitchRight	= 0x0509,
+	kATUIVK_UILeftShift		= 0x050A,
+	kATUIVK_UIRightShift	= 0x050B,
 };
 
 enum ATUIDockMode {
@@ -40,34 +91,98 @@ enum ATUIDockMode {
 	kATUIDockMode_Right,
 	kATUIDockMode_Top,
 	kATUIDockMode_Bottom,
+	kATUIDockMode_LeftFloat,
+	kATUIDockMode_RightFloat,
+	kATUIDockMode_TopFloat,
+	kATUIDockMode_BottomFloat,
 	kATUIDockMode_Fill
+};
+
+enum ATUIFrameMode {
+	kATUIFrameMode_None,
+	kATUIFrameMode_Raised,
+	kATUIFrameMode_Sunken,
+	kATUIFrameMode_SunkenThin,
+	kATUIFrameMode_RaisedEdge,
+	kATUIFrameModeCount
+};
+
+struct ATUIKeyEvent {
+	uint32 mVirtKey;
+	uint32 mExtendedVirtKey;
+	bool mbIsRepeat;
+	bool mbIsExtendedKey;
+};
+
+struct ATUICharEvent {
+	uint32 mCh;
+	bool mbIsRepeat;
+};
+
+struct ATUITriggerBinding {
+	enum {
+		kModNone = 0,
+		kModCtrl = 1,
+		kModShift = 2,
+		kModAlt = 4,
+		kModAll = 7
+	};
+
+	unsigned	mVk : 12;
+	unsigned	mAction : 12;
+	unsigned	mModVal : 3;
+	unsigned	mModMask : 3;
+	unsigned	: 2;
+	uint32	mTargetInstanceId;
 };
 
 class ATUIWidget : public vdrefcount {
 public:
+	enum {
+		kActionFocus = 1,
+		kActionCustom = 16
+	};
+
 	ATUIWidget();
 	~ATUIWidget();
 
 	void Destroy();
 	void Focus();
 
+	uint32 GetInstanceId() const { return mInstanceId; }
+	void SetInstanceId(uint32 id) { mInstanceId = id; }
+
+	ATUIWidget *GetOwner() const;
+	void SetOwner(ATUIWidget *w);
+	ATUIWidget *GetParentOrOwner() const;
+
+	bool HasFocus() const;
+	bool HasCursor() const;
 	bool IsCursorCaptured() const;
-	void CaptureCursor();
+	void CaptureCursor(bool motionMode = false, bool constrained = false);
 	void ReleaseCursor();
 
 	void SetFillColor(uint32 color);
 	void SetAlphaFillColor(uint32 color);
+	void SetFrameMode(ATUIFrameMode frameMode);
 
 	uint32 GetCursorImage() const { return mCursorImage; }
-	void SetCursorImage(uint32 id) { mCursorImage = id; }
+	void SetCursorImage(uint32 id);
 
 	const vdrect32& GetArea() const { return mArea; }
 	void SetPosition(const vdpoint32& pt);
 	void SetSize(const vdsize32& sz);
 	void SetArea(const vdrect32& r);
 
+	virtual void UpdateLayout() {}
+
+	vdrect32 ComputeWindowSize(const vdrect32& clientArea) const;
+
 	ATUIDockMode GetDockMode() const { return mDockMode; }
 	void SetDockMode(ATUIDockMode mode);
+
+	IATUIAnchor *GetAnchor() const { return mpAnchor; }
+	void SetAnchor(IATUIAnchor *anchor);
 
 	// Control visibility.
 	//
@@ -92,15 +207,35 @@ public:
 	bool IsSameOrAncestorOf(ATUIWidget *w) const;
 
 	virtual ATUIWidget *HitTest(vdpoint32 pt);
+	bool TranslateScreenPtToClientPt(vdpoint32 spt, vdpoint32& cpt);
+	bool TranslateWindowPtToClientPt(vdpoint32 wpt, vdpoint32& cpt);
+	vdpoint32 TranslateClientPtToScreenPt(vdpoint32 cpt);
 
+	void UnbindAllActions();
+	void BindAction(const ATUITriggerBinding& binding);
+	void BindAction(uint32 vk, uint32 action, uint32 mod = 0, uint32 instanceid = 0);
+	const ATUITriggerBinding *FindAction(uint32 vk, uint32 extvk, uint32 mods) const;
+
+	virtual void OnMouseRelativeMove(sint32 x, sint32 y);
 	virtual void OnMouseMove(sint32 x, sint32 y);
 	virtual void OnMouseDownL(sint32 x, sint32 y);
+	virtual void OnMouseDblClkL(sint32 x, sint32 y);
 	virtual void OnMouseUpL(sint32 x, sint32 y);
+	virtual void OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk);
+	virtual void OnMouseUp(sint32 x, sint32 y, uint32 vk);
+	virtual void OnMouseWheel(sint32 x, sint32 y, float delta);
 	virtual void OnMouseLeave();
+	virtual void OnMouseHover(sint32 x, sint32 y);
 
-	virtual bool OnKeyDown(uint32 vk);
-	virtual bool OnKeyUp(uint32 vk);
-	virtual bool OnChar(uint32 vk);
+	virtual bool OnContextMenu(const vdpoint32 *pt);
+
+	virtual bool OnKeyDown(const ATUIKeyEvent& event);
+	virtual bool OnKeyUp(const ATUIKeyEvent& event);
+	virtual bool OnChar(const ATUICharEvent& event);
+
+	virtual void OnActionStart(uint32 trid);
+	virtual void OnActionRepeat(uint32 trid);
+	virtual void OnActionStop(uint32 trid);
 
 	virtual void OnCreate();
 	virtual void OnDestroy();
@@ -108,6 +243,8 @@ public:
 
 	virtual void OnKillFocus();
 	virtual void OnSetFocus();
+
+	virtual void OnCaptureLost();
 
 	void Draw(IVDDisplayRenderer& rdr);
 
@@ -118,17 +255,26 @@ protected:
 	void Invalidate();
 
 	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) = 0;
+	void RecomputeClientArea();
 
 	ATUIManager *mpManager;
 	ATUIContainer *mpParent;
 	vdrect32 mArea;
+	vdrect32 mClientArea;
 	uint32 mFillColor;
 	uint32 mCursorImage;
 	ATUIDockMode mDockMode;
+	ATUIFrameMode mFrameMode;
+	IATUIAnchor *mpAnchor;
+	uint32 mInstanceId;
+	uint32 mOwnerId;
 
 	bool mbVisible;
 	bool mbFastClip;
 	bool mbHitTransparent;
+
+	typedef vdfastvector<ATUITriggerBinding> ActionMap;
+	ActionMap mActionMap;
 
 	VDDisplaySubRenderCache mRenderCache;
 };

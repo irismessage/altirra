@@ -17,17 +17,25 @@
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 .proc DiskInit
+	.if _KERNEL_XLXE
 	;set disk sector size to 128 bytes
 	mwa		#$80	dsctln
+	.endif
 	rts
 .endp
 
+;==========================================================================
+; Disk handler routine (pointed to by DSKINV)
+;
+; Exit:
+;	A = command byte (undocumented; required by Pooyan)
+;	Y = status
+;	N = 1 if error, 0 if success (high bit of Y)
+;	C = 1 if command is >=$21 (undocumented; required by Arcade Machine)
+;
 .proc DiskHandler
 	mva		#$31	ddevic
-	lda		#$40
-	sta		dtimlo
-	sta		dstats
-	mwa		dsctln	dbytlo
+	mva		#64		dtimlo
 	
 	;check for status command
 	lda		dcomnd
@@ -37,13 +45,53 @@
 
 	mwa		#dvstat	dbuflo
 	mwa		#4		dbytlo
-	jmp		siov
+	jsr		do_read
+	bmi		xit
+	
+	;update format timeout
+	mvx		dvstat+2 dsktim
+	tax
+xit:
+	rts
 	
 notStatus:
-	;check for put command
-	cmp		#$50
-	sne:mva	#$80	dstats
+
+	;set disk sector length
+	.if _KERNEL_XLXE
+	mwy		dsctln	dbytlo
+	.else
+	mwy		#$80 dbytlo
+	.endif
 	
-	;call SIO
-	jmp		siov
+	;check for put/write
+	.if _KERNEL_XLXE
+	cmp		#$50
+	beq		do_write
+	.endif
+	cmp		#$57
+	beq		do_write
+	
+	;check for format, or else assume it's a read command ($52) or similar
+	cmp		#$21
+	bne		do_read
+
+	;it's format... use the format timeout
+	mva		dsktim dtimlo
+
+do_read:
+	lda		#$40
+do_io:
+	sta		dstats
+	jsr		siov
+	
+	;load disk command back into A (required by Pooyan)
+	;emulate compare against format command (required by Arcade Machine)
+	lda		dcomnd
+	ldy		dstats
+	sec
+	rts
+
+do_write:
+	lda		#$80
+	bne		do_io
 .endp

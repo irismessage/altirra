@@ -1,220 +1,456 @@
 <?xml version='1.0' standalone='yes'?>
-<?xml-stylesheet type="text/xsl" href="index.xsl" ?>
+<?xml-stylesheet type="text/xsl" href="compatibility.xsl" ?>
 <topic title="Program-specific issues">
   <p>
-    If you have trouble with the following programs....
+    Some programs have bugs or are otherwise not well behaved and will malfunction in mysterious ways.
+    This can be due to incompatibility with specific hardware or firmware configurations, timing sensitivities
+    that manifest more or less often on emulators, or just plain bizarre bugs. This is a list of programs
+    with known issues and under what conditions they break.
   </p>
-  <toc/>
+  <p>
+    Note that there are often several versions of programs in the wild, which can display different
+    behavior. In particular, versions that have been "frozen" and stored in a turbo-load configuration
+    or mega-disk can act differently than the originals. Unless specified otherwise, the compatibility
+    entries here are for the original versions.
+  </p>
+  <h2>Compatibility list</h2>
+  <compat-toc/>
 
   <!-- *************************************************** -->
 
-  <stockmsg id="nosiopatch">
-    <p>
-      Unmodified versions of this game contain a RTCLOK check during the disk load and must be
-      booted with the SIO patch disabled.
-    </p>
-  </stockmsg>
+  <h2>Compatibility issues</h2>
+  <p>
+    Many types of compatibility issues are common enough to occur in multiple programs:
+  </p>
+  <compat-tags>
+    <compat-tag id="disktiming" name="Requires disk SIO patch off (timing)">
+      <inline-text>
+        <p>
+          Unmodified versions of this game contain a RTCLOK check during the disk load and must be
+          booted with the SIO patch disabled.
+        </p>
+      </inline-text>
+      <desc>
+        <p>
+          Some programs measure disk load timing to ensure that disk reads take an expected
+          amount of time, usually to detect a copied disk. This is typically done through a
+          timer called RTCLOK. These programs need to be run with the disk SIO patch feature
+          disabled, as that would otherwise cause the disk load to happen too quickly. Particularly
+          picky programs may also need accurate disk timing to be enabled.
+        </p>
+      </desc>
+    </compat-tag>
 
-  <stockmsg id="diskrw">
-    <p>
-      This program writes to the disk during normal operation and requires read/write or virtual
-      read/write mode to be selected.
-    </p>
-  </stockmsg>
-  
-  <!-- *************************************************** -->
+    <compat-tag id="diskrw" name="Requires writable disk">
+      <inline-text>
+        <p>
+          This program writes to the disk during normal operation and requires read/write or virtual
+          read/write mode to be selected.
+        </p>
+      </inline-text>
+      <desc>
+        <p>
+          The program writes its current state to disk, so if the disk is write protected, it
+          won't be able to keep track of progress and will act strangely or fail.
+        </p>
+      </desc>
+    </compat-tag>
 
-  <h2>Demos</h2>
-  <h3>1st Top Demo 1989</h3>
-  <p>
-    Contains a direct jump into the XL/XE OS at $C0E2 and may fail with other OSes.
-  </p>
-  
-  <h3>Cup of Tea</h3>
-  <p>
-    There is a bug in the IRQ handling that causes it to occasionally crash after playing
-    the sample: it assumes that an IRQ cannot happen after it is shut off in IRQEN, but there is
-    a one-cycle window where this can still occur.
-  </p>
-  
-  <h3>Total Daze</h3>
-  <p>
-    Due to a bug in the detection routine, this demo occasionally misdetects a single POKEY as
-    dual POKEYs, resulting in garbled audio during the loading screen.
-  </p>
+    <compat-tag id="requires-osb" name="Requires OS-B">
+      <desc>
+        <p>
+          Program requires the original 400/800 version B operating system to run ("OS-B"), which was
+          the most common version of the OS prior to the XL/XE machines. This is usually because of
+          dependencies on specific code or data locations that weren't guaranteed to be stable
+          across OS versions. As a result, the program can fail if run under the HLE/LLE OSes or
+          with another custom OS.
+        </p>
+      </desc>
+    </compat-tag>
 
-  <!-- *************************************************** -->
+    <compat-tag id="requires-xlos" name="Requires XL/XE OS">
+      <desc>
+        <p>
+          Program requires the original XL/XE operating system to run. This is usually because of
+          dependencies on specific code or data locations that weren't guaranteed to be stable
+          across OS versions. As a result, the program can fail if run under the HLE/LLE OSes or
+          with another custom OS.
+        </p>
+      </desc>
+    </compat-tag>
 
-  <h2>Games</h2>
+    <compat-tag id="minor-bug" name="Minor program bug">
+      <desc>
+        <p>
+          Issues are caused by a minor bug specific to the program that also shows up on real hardware,
+          such as audio glitches. The rate of occurrence may be different in emulation, but
+          the minor bugs are being faithfully emulated.
+        </p>
+      </desc>
+    </compat-tag>
 
-  <h3>Alien Garden</h3>
-  <p>
-    Erroneously trips GTIA video modes, resulting in colored garbage on screen during transitions.
-  </p>
-  
-  <h3>Assault Force 3D</h3>
-  <p>
-    This game requires the SuperCharger 3D cartridge, which is used for hardware multiply/divide.
-  </p>
+    <compat-tag id="major-bug" name="Major program bug">
+      <desc>
+        <p>
+          Issues are caused by a major bug specific to the program that also shows up on real hardware,
+          such as a random crash. The rate of occurrence may be different in emulation, but
+          in any case the crash is being faithfully emulated.
+        </p>
+      </desc>
+    </compat-tag>
 
-  <h3>Berzerk</h3>
-  <p>
-    Some versions do not initialize SKCTL properly and therefore fail to play shot sounds.
-  </p>
+    <compat-tag id="ctia" name="GTIA incompatibility">
+      <desc>
+        <p>
+          Program was designed for the earlier CTIA chip and has problems running on the
+          newer GTIA graphics chip. The most common symptom is abnormal switching to GTIA
+          graphics modes.
+        </p>
+      </desc>
+    </compat-tag>
 
-  <h3>Bounty Bob Strikes Back!</h3>
-  <p>
-    Some versions require <b>exactly</b> 64K of RAM to work.
-  </p>
+    <compat-tag id="os-hackery" name="OS hackery">
+      <desc>
+        <p>
+          Program does naughty things with OS code, such as copying only parts of it to RAM.
+          This was not a recommended or supported programming practice by Atari, and can
+          result in either failure on the HLE/LLE OSes or other custom OSes, or even failing
+          to work on one of the standard OS-B or XL/XE OSes.
+        </p>
+      </desc>
+    </compat-tag>
 
-  <h3>Bubble Bobble (demo)</h3>
-  <p>
-    Some versions of this homebrew game copy the kernel into RAM, write over part of the SIO
-    routine, and then invoke the corrupted SIO routine. This will only work in some emulators
-    when SIO patch is enabled, bypassing the broken code; it does not work in Altirra because
-    SIO hooks are not allowed to activate from code in RAM.
-  </p>
+    <compat-tag id="special-hw" name="Requires special hardware">
+      <desc>
+        <p>
+          Program requires special hardware not usually used by other programs, such as a
+          specific cartridge.
+        </p>
+      </desc>
+    </compat-tag>
 
-  <h3>Castle Wolfenstein</h3>
-  <stockref id="diskrw"/>
-
-  <h3>Choplifter (cartridge)</h3>
-  <p>
-    Copies out OS ROM at addresses $E500-FEFF and $C500-CBFF, and so can fail with OSes other
-    than the stock XL/XE OS.
-  </p>
-
-  <h3>DARG</h3>
-  <p>
-    The clock runs too quickly if accelerated floating-point is enabled.
-  </p>
-
-  <h3>E.T. Phone Home!</h3>
-  <p>
-    This cartridge has a protection check which requires the OS to boot within a certain
-    amount of time. The XL/XE OS takes more time to initialize and can cause this check to
-    fail on NTSC systems.
-  </p>
-  
-  <h3>Gruds in Space</h3>
-  <stockref id="nosiopatch"/>
-  
-  <h3>His Dark Majesty</h3>
-  <p>
-    Version 1.0 has a bug that can cause it to crash if the opening animation is interrupted due
-    to infinite DLI interrupts. The workaround is to hit a key during the title screen instead.
-    This bug is fixed in version 1.01.
-  </p>
-  <p>
-    This game will not work with some custom OSes due to copying out parts of the OS ROM for
-    private use (the SIO routines, to be specific).
-  </p>
-
-  <h3>Mr. DO!</h3>
-  <p>
-    Unmodified versions should be run with the SIO patch disabled. The game may appear to load
-    correctly, but will malfunction in certain game elements due to the silently failed timing
-    check.
-  </p>
-  
-  <h3>M.U.L.E.</h3>
-  <p>
-    The tiny sound glitches that occur when notes are played happen on a real Atari, too.
-  </p>
-
-  <h3>Parsec XL</h3>
-  <p>
-    Directly jumps into XL/XE OS at $C28A and may fail with other OSes.
-  </p>
-
-  <h3>Preppie II</h3>
-  <p>
-    Has hidden a function in the game that skips levels if the button on paddle 4 or 5 is pressed.
-  </p>
-  
-  <h3>Transylvania</h3>
-  <stockref id="nosiopatch"/>
-
-  <h3>Twerps</h3>
-  <stockref id="nosiopatch"/>
-
-  <h3>Ultima I</h3>
-  <p>
-    This game requires the OS-B kernel ROM to run. It fails on HLE or XL kernels because it has
-    hardcoded references to keyboard translation tables in the OS-B ROM.
-  </p>
-  
-  <h3>Zebuland</h3>
-  <stockref id="diskrw"/>
+    <compat-tag id="illinsn" name="Uses illegal instructions">
+      <desc>
+        <p>
+          Program uses "illegal" CPU instructions that weren't part of the official
+          6502 instruction set and cause weird behavior on the CPU chip. This prevents
+          the program from running correctly on a 65C02 or 65C816 CPU.
+        </p>
+      </desc>
+    </compat-tag>
+  </compat-tags>
 
   <!-- *************************************************** -->
 
-  <h2>Applications</h2>
-  <h3>FoReM XL/XE/XE Pro</h3>
-  <p>
-    FoReM relies on particular short response values for CONNECT messages from the modem.
-    These were not standardized for higher baud rates. Altirra's emulated modem returns the Conexant
-    code for 9600 baud (12), while FoReM by default expects the value returned by U.S. Robotics
-    modems (13). Either lower the connection speed limit to 2400 baud or follow the directions in the FXL/FXE
-    documentation to change the expected code.
-  </p>
-  <p>
-    The clock in FoReM XL/XE also tends to lose a couple of seconds per day because it is
-    written to expect exactly 60 or 50 frames per second, whereas the actual Atari runs slightly
-    slower than that (59.92 fps / 49.87 fps). A workaround is to adjust the emulator speed to
-    50/60Hz in Speed Options.
-  </p>
-  <h3>Ice-T XE 2.72</h3>
-  <p>
-    The keyboard click feature of this program has a bug: it calls directly into the OS K:
-    handler's GET BYTE routine without going through CIO and without setting ICAX1Z. This
-    causes the program to sometimes jam up endlessly transmitting the "j" character. Disabling
-    the keyboard click and then waiting for the output buffer to drain fixes the problem.
-  </p>
-  <p>
-    This bug is fixed in Ice-T XE 2.73.
-  </p>
-  
-  <!-- *************************************************** -->
-  
-  <h2>Disk Operating Systems</h2>
-  <h3>MyDOS</h3>
-  <p>
-    The Load Binary command in the MyDOS menu uses a MyDOS-specific XIO call to load the binary
-    instead of regular CIO read calls. This prevents Load Binary from working with the H: handler
-    as the handler does not know how to handle MyDOS XIO calls.
-  </p>
-  <p>
-    There is also a bug in MyDOS that prevents wildcarded copies from working when using H: as
-    the source: MyDOS passes the wrong flags when enumerating files from non-disk devices, causing
-    the copy to fail. Specifically, it attempts to read a directory listing using an <tt>AUX1</tt> mode
-    of <tt>$04</tt> (open file) instead of <tt>$06</tt> (open directory).
-  </p>
-  <h3>SpartaDOS 3.2</h3>
-  <p>
-    While the emulator's H: device can be accessed by SpartaDOS 3, there is a bug in its COPY
-    command that causes it to malfunction when copying from H: to a destination path:
-  </p>
-  <blockquote>
-    <tt>D1:>COPY H:FILE.BIN D2:</tt>
-  </blockquote>
-  <p>
-    This fails with <tt>163 Illegal wildcard in name</tt> because COPY attempts to create a file
-    called <tt>*.*</tt> on the destination drive. It works for copies from the regular <tt>D:</tt>
-    device because there it issues a directory search to get the source name. The workaround is
-    to specify a full destination filename:
-  </p>
-  <blockquote>
-    <tt>D1:>COPY H:FILE.BIN D2:FILE.BIN</tt>
-  </blockquote>
-  <h3>SpartaDOS X</h3>  
-  <p>
-    SpartaDOS X uses a polling loop for SIO transfers, so regular burst I/O mode does not work
-    with it. Use the burst (polled) mode instead.
-  </p>
-  <p>
-    The H: device is not supported at all by the SDX kernel, so specific drivers or tools must
-    be used to copy to and from the emulator devices. <a href="pclink.html">PCLink</a> is the
-    recommended alternative for SDX 4.44 and above.
-  </p>
+  <compat-list>
+    <compat-category name="Demos">
+      <compat-title name="1st Top Demo 1989">
+        <compat-issue id="requires-xlos">
+          <p>
+            Contains a direct jump into the XL/XE OS at $C0E2 and may fail with other OSes.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Cup of Tea">
+        <compat-issue id="minor-bug">
+          <p>
+            There is a bug in the IRQ handling that causes it to occasionally crash after playing
+            the sample: it assumes that an IRQ cannot happen after it is shut off in IRQEN, but there is
+            a one-cycle window where this can still occur.
+          </p>
+        </compat-issue>
+        <compat-issue id="requires-xlos">
+          <p>
+            This demo also contains a strange check for the low byte of the cold start vector (COLDSV)
+            and forces a cold reboot if it doesn't match the address byte in the XL/XE OS, so it won't
+            work with other OSes.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Total Daze">
+        <compat-issue id="minor-bug">
+          <p>
+            Due to a bug in the detection routine, this demo occasionally misdetects a single POKEY as
+            dual POKEYs, resulting in garbled audio during the loading screen.
+          </p>
+        </compat-issue>
+      </compat-title>
+    </compat-category>
+
+    <!-- *************************************************** -->
+
+    <compat-category name="Games">
+      <compat-title name="Alien Garden">
+        <compat-issue id="ctia">
+          <p>
+            Erroneously trips GTIA video modes, resulting in colored garbage on screen during transitions.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Assault Force 3D">
+        <compat-issue id="special-hw">
+          <p>
+            This game requires the SuperCharger 3D cartridge, which is used for hardware multiply/divide.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Berzerk">
+        <compat-issue id="minor-bug">
+          <p>
+            Some versions do not initialize SKCTL properly and therefore fail to play shot sounds.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Bounty Bob Strikes Back!">
+        <p>
+          Some versions require <b>exactly</b> 64K of RAM to work.
+        </p>
+      </compat-title>
+
+      <compat-title name="Bubble Bobble (demo)">
+        <p>
+          Some versions of this homebrew game copy the kernel into RAM, write over part of the SIO
+          routine, and then invoke the corrupted SIO routine. This will only work in some emulators
+          when SIO patch is enabled, bypassing the broken code; it does not work in Altirra because
+          SIO hooks are not allowed to activate from code in RAM.
+        </p>
+      </compat-title>
+
+      <compat-title name="Castle Wolfenstein">
+        <compat-issue id="diskrw"/>
+      </compat-title>
+
+      <compat-title name="Choplifter (cartridge)">
+        <compat-issue id="os-hackery">
+          <p>
+            Copies out OS ROM at addresses $E500-FEFF and $C500-CBFF, and so can fail with OSes other
+            than the stock XL/XE OS.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Cohen's Towers">
+        <compat-issue desc="Requires OS-B or 48K/64K memory">
+          <p>
+            Program tries to clear PIA registers in the wrong order from within the extended memory
+            window ($4000-7FFF), which means on a machine with 128K or more of memory it accidentally
+            bank switches itself out of CPU address space and crashes. It works if it is running on a machine
+            without extended memory banks (48K/64K) or on an OS that configures PIA port B for input
+            (OS-B or LLE[OS-B]).
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Crownland">
+        <compat-issue id="illinsn">
+          <p>
+            Program will crash on horizontal scroll if illegal instructions are not enabled or if
+            65C02/65C816 CPU is selected.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="DARG">
+        <p>
+          The clock runs too quickly if accelerated floating-point is enabled.
+        </p>
+      </compat-title>
+
+      <compat-title name="E.T. Phone Home! (cartridge)">
+        <compat-issue id="major-bug">
+          <p>
+            This cartridge has a protection check which requires the OS to boot within a certain
+            amount of time. The XL/XE OS takes more time to initialize and can cause this check to
+            fail on NTSC systems.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Fort Apocalypse">
+        <compat-issue id="disktiming" />
+      </compat-title>
+      
+      <compat-title name="Gruds in Space">
+        <compat-issue id="disktiming"/>
+      </compat-title>
+
+      <compat-title name="His Dark Majesty">
+        <compat-issue id="major-bug">
+          <p>
+            Version 1.0 has a bug that can cause it to randomly crash due to infinite DLI interrupts if the
+            opening animation is interrupted at certain times in the video frame.  The workaround is to hit
+            a key during the title screen instead.
+            This bug is fixed in version 1.01.
+          </p>
+        </compat-issue>
+
+        <compat-issue id="os-hackery">
+          <p>
+            This game will not work with some custom OSes due to copying out parts of the OS ROM for
+            private use (the SIO routines, to be specific).
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Mr. DO!">
+        <compat-issue id="disktiming">
+          <p>
+            Unmodified versions should be run with the SIO patch disabled and with accurate disk timing
+            enabled. The game may appear to load
+            correctly, but will malfunction in certain game elements due to the silently failed timing
+            check. Specifically, if a particular section of the boot process runs <i>faster</i> than
+            a certain amount of time, the game will deliberately break itself and sprites will fall
+            through to the bottom of the screen.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="M.U.L.E.">
+        <compat-issue id="minor-bug">
+          <p>
+            The tiny sound glitches that occur when notes are played happen on a real Atari, too.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Parsec XL">
+        <compat-issue id="requires-xlos">
+          <p>
+            Directly jumps into XL/XE OS at $C28A and may fail with other OSes.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Preppie-II">
+        <compat-issue id="minor-bug">
+          <p>
+            Has a hidden function in the game that skips levels if the buttons on paddle 4 and 5
+            (port 3) are pressed simultaneously. This is normally impossible on an XL/XE because
+            there is no port 3, and although the OS mirrors port 1 to port 3 in the OS variables
+            and the paddle buttons overlap with the joystick direction lines, it's impossible to
+            trigger this with the joystick (it can't be both left and right). However, this can
+            be triggered if a custom OS doesn't set PTRIG4/PTRIG5 properly.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Transylvania">
+        <compat-issue id="disktiming"/>
+      </compat-title>
+
+      <compat-title name="Twerps">
+        <compat-issue id="disktiming"/>
+      </compat-title>
+
+      <compat-title name="Ultima I">
+        <compat-issue id="requires-osb">
+          <p>
+            This game requires the OS-B kernel ROM to run. It fails on HLE or XL kernels because it has
+            hardcoded references to keyboard translation tables in the OS-B ROM.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Zebuland">
+        <compat-issue id="diskrw"/>
+      </compat-title>
+    </compat-category>
+
+    <!-- *************************************************** -->
+
+    <compat-category name="Applications">
+      <compat-title name="FoReM XL/XE/XE Pro">
+        <p>
+          FoReM relies on particular short response values for CONNECT messages from the modem.
+          These were not standardized for higher baud rates. Altirra's emulated modem returns the Conexant
+          code for 9600 baud (12), while FoReM by default expects the value returned by U.S. Robotics
+          modems (13). Either lower the connection speed limit to 2400 baud or follow the directions in the FXL/FXE
+          documentation to change the expected code.
+        </p>
+        <p>
+          The clock in FoReM XL/XE also tends to lose a couple of seconds per day because it is
+          written to expect exactly 60 or 50 frames per second, whereas the actual Atari runs slightly
+          slower than that (59.92 fps / 49.87 fps). A workaround is to adjust the emulator speed to
+          50/60Hz in Speed Options.
+        </p>
+      </compat-title>
+
+      <compat-title name="Ice-T XE 2.72">
+        <compat-issue id="major-bug">          
+          <p>
+            The keyboard click feature of this program has a bug: it calls directly into the OS K:
+            handler's GET BYTE routine without going through CIO and without setting ICAX1Z. This
+            causes the program to sometimes jam up endlessly transmitting the "j" character. Disabling
+            the keyboard click and then waiting for the output buffer to drain fixes the problem.
+          </p>
+          <p>
+            This bug is fixed in Ice-T XE 2.73.
+          </p>
+        </compat-issue>
+      </compat-title>
+    </compat-category>
+
+    <!-- *************************************************** -->
+
+    <compat-category name="Disk Operating Systems">
+      <compat-title name="Atari DOS 2.5">
+        <compat-issue id="os-hackery">
+          <p>
+            Does an unsupported OS check by looking for a BCC opcode ($90) at address $EA9C in the OS ROM,
+            and replaces the VSEROR vector if it is found. This can cause a failure with custom OSes.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="MyDOS">
+        <p>
+          The Load Binary command in the MyDOS menu uses a MyDOS-specific XIO call to load the binary
+          instead of regular CIO read calls. This prevents Load Binary from working with the H: handler
+          as the handler does not know how to handle MyDOS XIO calls.
+        </p>
+        <p>
+          There is also a bug in MyDOS that prevents wildcarded copies from working when using H: as
+          the source: MyDOS passes the wrong flags when enumerating files from non-disk devices, causing
+          the copy to fail. Specifically, it attempts to read a directory listing using an <tt>AUX1</tt> mode
+          of <tt>$04</tt> (open file) instead of <tt>$06</tt> (open directory).
+        </p>
+      </compat-title>
+
+      <compat-title name="SpartaDOS 3.2">
+        <p>
+          While the emulator's H: device can be accessed by SpartaDOS 3, there is a bug in its COPY
+          command that causes it to malfunction when copying from H: to a destination path:
+        </p>
+        <blockquote>
+          <tt>D1:>COPY H:FILE.BIN D2:</tt>
+        </blockquote>
+        <p>
+          This fails with <tt>163 Illegal wildcard in name</tt> because COPY attempts to create a file
+          called <tt>*.*</tt> on the destination drive. It works for copies from the regular <tt>D:</tt>
+          device because there it issues a directory search to get the source name. The workaround is
+          to specify a full destination filename:
+        </p>
+        <blockquote>
+          <tt>D1:>COPY H:FILE.BIN D2:FILE.BIN</tt>
+        </blockquote>
+      </compat-title>
+
+      <compat-title name="SpartaDOS X">
+        <p>
+          SpartaDOS X uses a polling loop for SIO transfers, so regular burst I/O mode does not work
+          with it. Use the burst (polled) mode instead.
+        </p>
+        <p>
+          The H: device is not supported at all by the SDX kernel, so specific drivers or tools must
+          be used to copy to and from the emulator devices. <a href="pclink.html">PCLink</a> is the
+          recommended alternative for SDX 4.44 and above.
+        </p>
+      </compat-title>
+    </compat-category>
+  </compat-list>
 </topic>

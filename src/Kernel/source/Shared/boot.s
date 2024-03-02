@@ -16,51 +16,61 @@
 ;	along with this program; if not, write to the Free Software
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
+;==========================================================================
+; Disk boot routine.
+;
+; Exit:
+;	DBUFLO/DBUFHI = $0400	(Undoc; required by Ankh and the 1.atr SMB demo)
+;	Last sector in $0400	(Undoc; required by Ankh)
+;
 .proc BootDisk
+	;issue a status request first to see if the disk is active; if this
+	;doesn't come back, don't bother trying to read
+	lda		#$53
+	sta		dcomnd
+	ldx		#1
+	stx		dunit
+	jsr		dskinv
+	bmi		xit
+
 	;read first sector to $0400
-	mva		#1		dunit
+	ldx		#1
+	stx		dunit
+	stx		daux1
+	dex
+	stx		dbuflo
 	mva		#$52	dcomnd
-	mwa		#$0400	dbuflo
-	mwa		#1		daux1
+	mva		#$04	dbufhi
 	jsr		dskinv
 	bmi		fail
 	
-	mva		$0400	dflags
-	mva		$0401	dbsect
-	mwa		$0404	dosini
-	
-	lda		$0402
-	sta		bootad
-	sta		adress
-	sta		dbuflo
-	lda		$0403
-	sta		bootad+1
-	sta		adress+1
-	sta		dbuflo+1
-	
-	ldy		#$7f
-page0copy:
-	lda		$0400,y
-	sta		(adress),y
-	dey
-	bpl		page0copy
+	ldx		#dosini
+	jsr		BootInitHeaders
 
 	;load remaining sectors
 sectorloop:
+	;copy sector from $0400 to destination (required by Ankh; see above)
+	;bump destination address for next sector copy
+	jsr		BootCopyBlock
+
+	;exit if this was the last sector (note that 0 means to load 256 sectors!)
 	dec		dbsect
 	beq		loaddone
-	inc		daux1
-	lda		dbuflo
-	eor		#$80
-	sta		dbuflo
-	smi:inc	dbufhi
+	
+	;increment sector (yes, this can overflow to 256)
+	inw		daux1
+
+	;read next sector
 	jsr		dskinv
+	
+	;keep going if we succeeded
 	bpl		sectorloop
 	
 	;read failed
 fail:
 	cpy		#SIOErrorTimeout
 	bne		failmsg
+xit:
 	rts
 	
 failmsg:
@@ -72,15 +82,8 @@ failmsg:
 .endif
 
 loaddone:
-	;Restore load address; this is necessary for the smb demo (1.atr) to load.
-	;The standard OS does this because it has a buggy SIO handler and always
-	;loads into and copies from $0400. Most boot loaders, like the DOS 2.0
-	;loader, don't have this problem because they don't rely on the value
-	;of DBYTLO.
-	mwa		#$0400 dbuflo
-
 	mva		#1 boot?
-	jsr		multiboot
+	jsr		BootRunLoader
 	bcs		failmsg
 	
 	;Diskette Boot Process, step 7 (p.161 of the OS Manual) is misleading. It
@@ -89,23 +92,16 @@ loaddone:
 	;This is necessary for BASIC to gain control before DOS goes to load
 	;DUP.SYS.
 	jmp		(dosini)
-	
-multiboot:
-	lda		bootad
-	add		#$05
-	tax
-	lda		bootad+1
-	adc		#0
-	pha
-	txa
-	pha
-	rts
 .endp
 
 
 ;============================================================================
 
 .proc BootCassette
+	;set continuous mode -- must do this as CSOPIV doesn't
+	lda		#$80
+	sta		ftype
+
 	;open cassette device
 	jsr		csopiv
 	
@@ -113,35 +109,15 @@ multiboot:
 	jsr		rblokv
 	bmi		load_failure
 	
-	mva		casbuf+4 iccomt
-	mwa		casbuf+7 casini
+	ldx		#casini
+	jsr		BootInitHeaders
 	
-	;copy init address
-	lda		casbuf+5
-	sta		bufadr
-	clc
-	adc		#6				;loader is at load address + 6
-	sta		ramlo
-	lda		casbuf+6
-	sta		bufadr+1
-	adc		#0
-	sta		ramlo+1
-
 block_loop:
-	ldy		#$7f
-copy_block:
-	lda		casbuf+3,y
-	sta		(bufadr),y
-	dey
-	bpl		copy_block
+	;copy 128 bytes from CASBUF+3 ($0400) to destination
+	;update destination pointer
+	jsr		BootCopyBlock
 	
-	;update write address
-	lda		bufadr
-	eor		#$80
-	sta		bufadr
-	smi:inc	bufadr+1
-	
-	dec		iccomt
+	dec		dbsect
 	beq		block_loop_exit
 
 	;read next block
@@ -155,7 +131,7 @@ block_loop_exit:
 	mva		#2 boot?
 
 	;run loader
-	jsr		go_loader
+	jsr		BootRunLoader
 
 	;run cassette init routine
 	jsr		go_init
@@ -166,27 +142,65 @@ block_loop_exit:
 load_failure:
 	jsr		CassetteClose
 	jmp		BootShowError
-
-go_loader:
-	jmp		(ramlo)
 	
 go_init:
 	jmp		(casini)
 .endp
 
 ;============================================================================
+.proc BootInitHeaders
+	;copy the first four bytes to DFLAGS, DBSECT, and BOOTAD
+	ldy		#$fc
+	mva:rne	$0400-$fc,y dflags-$fc,y+
+	
+	;copy boot address in BOOTAD to BUFADR
+	sta		bufadr+1
+	lda		bootad
+	sta		bufadr
+	
+	;copy init vector
+	mwa		$0404 0,x
+	rts
+.endp
+
+;============================================================================
+.proc BootRunLoader
+	;loader is at load address + 6
+	lda		bootad
+	add		#$05
+	tax
+	lda		bootad+1
+	adc		#0
+	pha
+	txa
+	pha
+	rts
+.endp
+
+;============================================================================
+.proc BootCopyBlock
+	ldy		#$7f
+	mva:rpl	$0400,y (bufadr),y-
+
+	lda		bufadr
+	eor		#$80
+	sta		bufadr
+	smi:inc	bufadr+1
+	rts
+.endp
+
+;============================================================================
 
 .proc BootShowError
-	ldx		#0
+	ldx		#$f5
 msgloop:
 	txa
 	pha
-	lda		errormsg,x
+	lda		errormsg-$f5,x
 	jsr		EditorPutByte
 	pla
 	tax
 	inx
-	cpx		#11
 	bne		msgloop
 	rts
 	

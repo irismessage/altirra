@@ -24,13 +24,15 @@
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/w32assist.h>
 #include "simulator.h"
+#include "resource.h"
 
 extern HWND g_hwnd;
 extern ATSimulator g_sim;
 
-extern void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmapper, ATLoadType loadType = kATLoadType_Other, bool *suppressColdReset = NULL);
-extern void DoLoadStream(VDGUIHandle h, const wchar_t *fileName, IVDRandomAccessStream& stream, bool vrw, int cartmapper, ATLoadType loadType = kATLoadType_Other, bool *suppressColdReset = NULL);
+extern void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmapper, ATLoadType loadType = kATLoadType_Other, bool *suppressColdReset = NULL, int loadIndex = -1);
+extern void DoLoadStream(VDGUIHandle h, const wchar_t *fileName, IVDRandomAccessStream& stream, bool vrw, int cartmapper, ATLoadType loadType = kATLoadType_Other, bool *suppressColdReset = NULL, int loadIndex = -1);
 extern void DoBootWithConfirm(const wchar_t *path, bool vrw, bool rw, int cartmapper);
 extern void DoBootStreamWithConfirm(const wchar_t *fileName, IVDRandomAccessStream& stream, bool vrw, int cartmapper);
 
@@ -92,8 +94,12 @@ public:
     virtual HRESULT STDMETHODCALLTYPE Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect);
 
 protected:
+	bool GetLoadTarget(POINTL pt, ATLoadType& loadType, int& loadIndex, bool& doBoot) const;
+	void SetDropEffect(DWORD grfKeyState);
+
 	VDAtomicInt mRefCount;
 	DWORD mDropEffect;
+	bool mbOpenContextMenu;
 	HWND mhwnd;
 	UINT mClipFormatFileDescriptorA;
 	UINT mClipFormatFileDescriptorW;
@@ -155,10 +161,7 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragEnter(IDataObject *pDataObj, 
 
 		// Note that we get S_FALSE if the format is not supported.
 		if (hr == S_OK) {
-			if (grfKeyState & MK_SHIFT)
-				mDropEffect = DROPEFFECT_COPY;
-			else
-				mDropEffect = DROPEFFECT_MOVE;
+			SetDropEffect(grfKeyState);
 		} else {
 			etc.cfFormat = mClipFormatFileDescriptorA;
 			etc.lindex = -1;
@@ -179,10 +182,7 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragEnter(IDataObject *pDataObj, 
 				hr = pDataObj->QueryGetData(&etc);
 
 				if (hr == S_OK) {
-					if (grfKeyState & MK_SHIFT)
-						mDropEffect = DROPEFFECT_COPY;
-					else
-						mDropEffect = DROPEFFECT_MOVE;
+					SetDropEffect(grfKeyState);
 				}
 			}
 		}
@@ -194,10 +194,7 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragEnter(IDataObject *pDataObj, 
 
 HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
 	if (mDropEffect != DROPEFFECT_NONE) {
-		if (grfKeyState & MK_SHIFT)
-			mDropEffect = DROPEFFECT_COPY;
-		else
-			mDropEffect = DROPEFFECT_MOVE;
+		SetDropEffect(grfKeyState);
 	}
 
 	*pdwEffect = mDropEffect;
@@ -225,7 +222,16 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 	medium.pUnkForRelease = NULL;
 	HRESULT hr = pDataObj->GetData(&etc, &medium);
 
+	bool coldBoot = !(grfKeyState & MK_SHIFT);
+	int loadIndex = -1;
+	ATLoadType loadType = kATLoadType_Other;
+
 	if (hr == S_OK) {
+		if (mbOpenContextMenu) {
+			if (!GetLoadTarget(pt, loadType, loadIndex, coldBoot))
+				goto aborted;
+		}
+
 		HDROP hdrop = (HDROP)medium.hGlobal;
 
 		UINT count = DragQueryFileW(hdrop, 0xFFFFFFFF, NULL, 0);
@@ -235,13 +241,12 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 
 			vdfastvector<wchar_t> buf(len+1, 0);
 			if (DragQueryFileW(hdrop, 0, buf.data(), len+1)) {
-				const bool coldBoot = !(grfKeyState & MK_SHIFT);
 
 				try {
 					if (coldBoot)
 						DoBootWithConfirm(buf.data(), false, false, 0);
 					else
-						DoLoad((VDGUIHandle)g_hwnd, buf.data(), false, false, 0);
+						DoLoad((VDGUIHandle)g_hwnd, buf.data(), false, false, 0, loadType, NULL, loadIndex);
 				} catch(const MyError& e) {
 					e.post(g_hwnd, "Altirra Error");
 				}
@@ -341,6 +346,11 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 				hr = pDataObj->GetData(&etc, &medium);
 
 				if (hr == S_OK) {
+					if (mbOpenContextMenu) {
+						if (!GetLoadTarget(pt, loadType, loadIndex, coldBoot))
+							goto aborted;
+					}
+
 					vdfastvector<char> data;
 
 					data.reserve(knownSize);
@@ -350,12 +360,10 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 					else if (medium.tymed == TYMED_HGLOBAL)
 						ATReadCOMBufferIntoMemory(data, medium.hGlobal, knownSize);
 
-					const bool coldBoot = !(grfKeyState & MK_SHIFT);
-
 					if (coldBoot)
 						DoBootStreamWithConfirm(fd.cFileName, VDMemoryStream(data.data(), data.size()), false, 0);
 					else
-						DoLoadStream((VDGUIHandle)g_hwnd, fd.cFileName, VDMemoryStream(data.data(), data.size()), false, 0);
+						DoLoadStream((VDGUIHandle)g_hwnd, fd.cFileName, VDMemoryStream(data.data(), data.size()), false, 0, loadType, NULL, loadIndex);
 				}
 
 			} catch(const MyError& e) {
@@ -364,10 +372,104 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 		}
 	}
 
+aborted:
 	ReleaseStgMedium(&medium);
 
 	return S_OK;
 }
+
+bool ATUIDragDropHandler::GetLoadTarget(POINTL pt, ATLoadType& loadType, int& loadIndex, bool& doBoot) const {
+	doBoot = false;
+	loadIndex = -1;
+	loadType = kATLoadType_Other;
+
+	HMENU hmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_DRAGDROP_MENU));
+	if (!hmenu)
+		return false;
+
+	HMENU hmenu2 = GetSubMenu(hmenu, 0);
+	if (!hmenu2) {
+		DestroyMenu(hmenu);
+		return false;
+	}
+
+	static const UINT kDiskImageIds[]={
+		ID_MOUNTIMAGE_D1,
+		ID_MOUNTIMAGE_D2,
+		ID_MOUNTIMAGE_D3,
+		ID_MOUNTIMAGE_D4,
+	};
+
+	for(size_t i=0; i<vdcountof(kDiskImageIds); ++i) {
+		ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
+
+		const wchar_t *path = disk.GetPath();
+
+		VDStringW s = VDGetMenuItemTextByCommandW32(hmenu2, kDiskImageIds[i]);
+
+		if (path)
+			s.append_sprintf(L" [%ls]", path);
+		else
+			s += L" (empty)";
+
+		VDSetMenuItemTextByCommandW32(hmenu2, kDiskImageIds[i], s.c_str());
+	}
+
+	UINT id = TrackPopupMenu(hmenu2, TPM_RETURNCMD, pt.x, pt.y, 0, g_hwnd, NULL);
+
+	DestroyMenu(hmenu);
+
+	if (!id)
+		return false;
+
+	switch(id) {
+		case ID_DRAGDROP_BOOTIMAGE:
+			doBoot = true;
+			break;
+
+		case ID_MOUNTIMAGE_D1:
+			loadType = kATLoadType_Disk;
+			loadIndex = 0;
+			break;
+
+		case ID_MOUNTIMAGE_D2:
+			loadType = kATLoadType_Disk;
+			loadIndex = 1;
+			break;
+
+		case ID_MOUNTIMAGE_D3:
+			loadType = kATLoadType_Disk;
+			loadIndex = 2;
+			break;
+
+		case ID_MOUNTIMAGE_D4:
+			loadType = kATLoadType_Disk;
+			loadIndex = 3;
+			break;
+
+		case ID_MOUNTIMAGE_CARTRIDGE:
+			loadType = kATLoadType_Cartridge;
+			loadIndex = 0;
+			break;
+	}
+
+	return true;
+}
+
+void ATUIDragDropHandler::SetDropEffect(DWORD grfKeyState) {
+	mDropEffect = DROPEFFECT_NONE;
+	mbOpenContextMenu = false;
+
+	if (grfKeyState & MK_RBUTTON) {
+		mDropEffect = DROPEFFECT_COPY;
+		mbOpenContextMenu = true;
+	} else if (grfKeyState & MK_SHIFT)
+		mDropEffect = DROPEFFECT_COPY;
+	else
+		mDropEffect = DROPEFFECT_MOVE;
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 void ATUIRegisterDragDropHandler(VDGUIHandle h) {
 	RegisterDragDrop((HWND)h, vdrefptr<IDropTarget>(new ATUIDragDropHandler((HWND)h)));

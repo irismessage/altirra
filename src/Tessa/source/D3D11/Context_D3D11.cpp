@@ -1410,8 +1410,12 @@ void VDTSwapChainD3D11::PresentVSyncComplete() {
 	if (mbVSyncPending) {
 		mbVSyncPending = false;
 
-		if (mpSwapChain)
-			mpSwapChain->Present(0, 0);
+		if (mpSwapChain) {
+			if (mDesc.mbWindowed)
+				mpSwapChain->Present(0, 0);
+			else
+				mpSwapChain->Present(1, 0);
+		}
 	}
 }
 

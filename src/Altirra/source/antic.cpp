@@ -230,7 +230,8 @@ x_0:
 
 					if (mbPhantomPMDMA) {
 						mbPhantomPMDMAActive = true;
-						mPhantomDMAData[1] = mDLControl;
+
+						mpGTIA->UpdateMissile((mY & 1) != 0, mDLControl);
 					}
 				}
 
@@ -372,9 +373,14 @@ x_0:
 
 			mpGTIA->UpdatePlayer((mY & 1) != 0, index, byte);
 			busActive = true;
-			mPhantomDMAData[mX] = byte;
+		} else if (mbPhantomPMDMAActive && mX > 3) {
+			// We need to read the result of the _previous_ cycle due to the CPU executing after us.
+			mpGTIA->UpdatePlayer((mY & 1) != 0, mX - 4, *mpConn->mpAnticBusData);
 		}
 	} else if (mX == 6) {		// address DMA (low)
+		if (mbPhantomPMDMAActive)
+			mpGTIA->UpdatePlayer((mY & 1) != 0, 2, *mpConn->mpAnticBusData);
+
 		if (mbDLExtraLoadsPending && (mDMACTL & 0x20)) {
 			mDLNext = mpConn->AnticReadByte(mDLIST);
 			busActive = true;
@@ -382,6 +388,9 @@ x_0:
 		}
 			mLatchedVScroll2 = mVSCROL;
 	} else if (mX == 7) {		// address DMA (high) + NMIST change
+		if (mbPhantomPMDMAActive)
+			mpGTIA->UpdatePlayer((mY & 1) != 0, 3, *mpConn->mpAnticBusData);
+
 		if (mbDLExtraLoadsPending && (mDMACTL & 0x20)) {
 			uint8 b = mpConn->AnticReadByte(mDLIST);
 			busActive = true;
@@ -445,16 +454,6 @@ x_0:
 
 	} else if (mX == 8) {
 		mEarlyNMIEN2 = mNMIEN;
-
-		if (mbPhantomPMDMAActive) {
-			bool odd = (mY & 1) != 0;
-			mpGTIA->UpdateMissile(odd, mPhantomDMAData[1]);
-			mpGTIA->UpdatePlayer(odd, 0, mPhantomDMAData[3]);
-			mpGTIA->UpdatePlayer(odd, 1, mPhantomDMAData[4]);
-			mpGTIA->UpdatePlayer(odd, 2, mPhantomDMAData[5]);
-			mpGTIA->UpdatePlayer(odd, 3, mPhantomDMAData[6]);
-		}
-
 		mbLateNMI = false;
 
 		uint8 cumulativeNMIEN = mPendingNMIs & mEarlyNMIEN;
@@ -519,8 +518,6 @@ x_0:
 		mbPFRendered = false;
 	} else if (mX == 105) {
 		mbWSYNCActive = false;
-		mPhantomDMAData[105] = 0xFF;
-		mPhantomDMAData[106] = 0xFF;
 	} else if (mX == 109) {
 		mLatchedVScroll = mVSCROL;
 	} else if (mX == 111) {
@@ -566,7 +563,7 @@ void ATAnticEmulator::AdvanceScanline() {
 	mX = 0;
 
 	if (mbWSYNCActive)
-		memset(mPhantomDMAData, mWSYNCHoldValue, sizeof mPhantomDMAData);
+		*mpConn->mpAnticBusData = mWSYNCHoldValue;
 
 	if (++mY >= mScanlineLimit) {
 		mY = 0;
@@ -1754,7 +1751,7 @@ void ATAnticEmulator::OnScheduledEvent(uint32 id) {
 				mWSYNCHoldValue = mpConn->AnticGetCPUHeldCycleValue();
 
 				if (mX < 113)
-				memset(mPhantomDMAData + mX + 1, mWSYNCHoldValue, 113 - mX);
+					*mpConn->mpAnticBusData = mWSYNCHoldValue;
 			}
 		}
 

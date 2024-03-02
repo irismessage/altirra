@@ -256,6 +256,7 @@ protected:
 	bool				mbSupportsEventQueries;
 
 	int					mFullScreenCount;
+	uint32				mFSFence;
 
 	uint32				mLastPresentTime;
 	uint32				mLastPresentScanLine;

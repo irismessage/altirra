@@ -26,7 +26,7 @@ enum ATFlashType {
 	kATFlashType_Am29F040B,	// AMD 512K x 8-bit
 	kATFlashType_AT29C010A,	// Atmel 128K x 8-bit
 	kATFlashType_AT29C040,	// Atmel 512K x 8-bit
-	kATFlashType_SST39F040,	// SST 512K x 8-bit
+	kATFlashType_SST39SF040,// SST 512K x 8-bit
 	kATFlashType_A29040,	// Amic 512K x 8-bit
 };
 

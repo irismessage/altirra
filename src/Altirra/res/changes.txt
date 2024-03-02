@@ -1,5 +1,83 @@
 Altirra Change Log
 
+Version 2.30:
+   [features added]
+   * Cartridge: SIC! cartridges can now be switched between Am29F040B and SST39SF040 flash chip emulation in Options.
+   * Debugger: History pane supports horizontal scrolling and hiding S/P registers.
+   * Debugger: Added .readmem command.
+   * Debugger: .basic_dumpline command now handles DATA statements and decodes variable names.
+   * Debugger: The ESC key moves from several debugger panes to the Console pane.
+   * Debugger: Added set tracepoint (bt) command.
+   * Debugger: Added deref signed dword (dsd) operator.
+   * Debugger: Added brief (-b) format to .sio command.
+   * Debugger: .tapedata command now supports seeking options and reports gaps.
+   * Debugger: Added .reload command.
+   * Disk: Folders can now be mounted as virtual disk images using the SpartaDOS file system.
+   * Display: Normal overscan mode now only shows 224 scanlines in NTSC mode instead of 240.
+   * Display: Altered full screen resolution selection to allow possibly unsupported modes for better access to 50Hz refresh modes.
+   * IDE: Added SIDE 2 support.
+   * MMU: Added support for Axlon banked memory.
+   * Simulation: Split XL/XE hardware into separate XL and XE modes to handle hardware differences.
+   * UI: Full-screen mode can now be used when paused.
+   * UI: Added full-screen versions of the Boot Image file browser and emulation error dialog.
+   * UI: Added initial UI bindings for controllers (under the Console controller).
+   * UI: Added on-screen keyboard (activated by UI Option from main screen).
+   * UI: Improved text rendering quality.
+   * UI: Right-drag drop brings up a context menu with mounting options.
+   * UI: Panes can now be stacked with tabs.
+   * VBXE: Updated core support to 1.24, including a/r flag in bit 7 of the MINOR_REVISION register.
+
+   [bugs fixed]
+   * 65C816: The abs,X, abs,Y, (dp),Y, [dp],Y and (d,S),Y addressing modes can now cross bank boundaries.
+   * 65C816: An additional instruction is no longer executed after WAI before servicing the interrupt.
+   * 65C816: JMP (abs) now always reads from bank 0 instead of the data bank.
+   * 65C816: JMP (abs,X), and JSR (abs,X) now read from the program bank rather than the data bank.
+   * 65C816: Fixed switch between DL=0 and DL!=0 in emulation mode not taking effect immediately.
+   * 65C816: Indexed modes now properly take an additional cycle for writes and for 16-bit index registers.
+   * 65C816: The d,S addressing mode can now index out of page one in emulation mode.
+   * 65C816: d,S and (d,S),Y now always read from bank 0.
+   * 65C816: 16-bit stack operations can access page zero and page two in emulation mode.
+   * 65C816: TCS/TXS can no longer change SH in emulation mode.
+   * Debugger: .tracecio now reports correct status.
+   * Debugger: Fixed an issue with stack overflow in History pane on very deep recursion.
+   * Debugger: Verifier now allows jumps to the CIO device initialization vectors.
+   * Debugger: Fixed incorrect wrapping of zero page indexed addressing modes in disassembly.
+   * Debugger: Threaded static trace (st) command.
+   * Debugger: e (enter) now follows normal expression evaluation rules.
+   * Debugger: Fixed disassembly of PEA ($F4) opcode.
+   * Debugger: PHX and PHY no longer create bogus call trees in the History window in 16-bit indexing mode.
+   * Debugger: Fixed disassembly of opcodes with the (d,S),Y addressing mode.
+   * Debugger: Corrected off-by-one index handling in .unloadsym command.
+   * Debugger: Fixed blowup with memory access breakpoints in GTIA range with VBXE enabled.
+   * Disk: Status byte 1 bit 5 is now updated after a Write PERCOM Block command.
+   * Display: Fixed a crash when Direct3D 11 is enabled and fails to initialize.
+   * Display: Fixed alignment errors in OS Screen Only mode with extended PAL height enabled.
+   * Display: Enabled frame skip and reduced latency in full screen vsync mode.
+   * GTIA: Player/missile size code %%10 can now trigger shifter lockup.
+   * GTIA: Improved accuracy of mid-shift size changes.
+   * HLE: Fixed editor tab commands.
+   * HLE: Fixed bug with init segment dispatching.
+   * IDE: READ SECTOR and WRITE SECTOR commands now allow up to 256 sector transfers.
+   * IDE: READ MULTIPLE and WRITE MULTIPLE commands now produce errors when multiple mode is disabled.
+   * IDE: The block size set by the SET MULTIPLE MODE command is now reflected in IDENTIFY DEVICE output.
+   * Input: Fixed MultiJoy #8 input conflict.
+   * LLE: Fixed system reset NMI handling.
+   * LLE: Implemented PBI handler and CIO support.
+   * LLE: Keyboard routines now update ATACHR.
+   * LLE: Fixed editor tab set/clear commands.
+   * LLE: Added printer (P:) device support.
+   * LLE: Added light pen/gun support.
+   * MMU: Fixed crashes accessing high 65C816 memory in the x64 version.
+   * MMU: VBXE can now properly overlay Covox.
+   * POKEY: Fixed timers 3+4 occasionally not being shut off when switching to asynchronous receive mode.
+   * POKEY: Fixed timers 1-3 having the wrong offset when underflowing immediately before a write to STIMER.
+   * POKEY: Corrected start timing of polynomial counters.
+   * POKEY: Corrected audio pattern for 9-bit and 17-bit polynomial counters (was incorrectly inverted).
+   * Recorder: Fixed 8-bit uncompressed output.
+   * Recorder: Minor fixes to compressor.
+   * Serial: SIO emulation level setting is now saved correctly.
+   * VBXE: Writing a '1' to the blitter start bit no longer aborts an active blit.
+
 Version 2.20 [January 6, 2013]:
    [features added]
    * UI: Overlays are now rendered through composition at native resolution instead of simulated resolution.

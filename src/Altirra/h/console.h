@@ -55,7 +55,7 @@ class ATFrameWindow;
 void ATGetUIPanes(vdfastvector<ATUIPane *>& panes);
 ATUIPane *ATGetUIPane(uint32 id);
 ATUIPane *ATGetUIPaneByFrame(ATFrameWindow *frame);
-void ATActivateUIPane(uint32 id, bool giveFocus, bool visible = true);
+void ATActivateUIPane(uint32 id, bool giveFocus, bool visible = true, uint32 relid = 0, int reldock = 0);
 
 bool ATRestorePaneLayout(const char *name);
 void ATSavePaneLayout(const char *name);

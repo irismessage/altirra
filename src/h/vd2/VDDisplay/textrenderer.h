@@ -24,7 +24,7 @@ public:
 	VDDisplayTextRenderer();
 	~VDDisplayTextRenderer();
 
-	void Init(IVDDisplayRenderer *r, uint32 cachew, uint32 cacheh);
+	void Init(IVDDisplayRenderer *r, uint32 cachew, uint32 cacheh, bool useColor2Mode = false);
 
 	void Begin();
 	void End();
@@ -70,6 +70,7 @@ protected:
 	uint32	mWidth;
 	uint32	mHeight;
 	uint32	mLineHeight;
+	bool	mbUseColor2Mode;
 
 	Alignment	mAlignment;
 	VertAlign	mVertAlign;

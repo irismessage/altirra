@@ -16,13 +16,17 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <windows.h>
 #include "autotest.h"
 #include <vd2/system/cmdline.h>
 #include <vd2/system/VDString.h>
 #include "simulator.h"
 #include "console.h"
+#include "gtia.h"
+#include "oshelper.h"
 
 extern ATSimulator g_sim;
+extern HWND g_hwnd;
 
 uint32 ATExecuteAutotestCommand(const wchar_t *cmd, IATAutotestReplyPort *replyPort) {
 	VDCommandLine cmdLine(cmd);
@@ -97,6 +101,14 @@ uint32 ATExecuteAutotestCommand(const wchar_t *cmd, IATAutotestReplyPort *replyP
 			return 1;
 	} else if (s == L"querytime") {
 		return g_sim.GetAntic().GetTimestamp();
+	} else if (s == L"saveframe") {
+		const VDPixmap *frame = g_sim.GetGTIA().GetLastFrameBuffer();
+
+		if (!frame)
+			return 0;
+
+		ATSaveFrame(g_hwnd, *frame, cmdLine[1]);
+		return 1;
 	}
 
 	return 0;

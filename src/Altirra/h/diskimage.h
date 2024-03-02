@@ -56,7 +56,8 @@ public:
 
 IATDiskImage *ATLoadDiskImage(const wchar_t *path);
 IATDiskImage *ATLoadDiskImage(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream);
-IATDiskImage *ATMountDiskImageVirtualFolder(const wchar_t *path, uint32 sectorCount, bool sdx);
+IATDiskImage *ATMountDiskImageVirtualFolder(const wchar_t *path, uint32 sectorCount);
+IATDiskImage *ATMountDiskImageVirtualFolderSDFS(const wchar_t *path, uint32 sectorCount, uint64 uniquenessValue);
 IATDiskImage *ATCreateDiskImage(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize);
 
 #endif	// f_AT_DISKIMAGE_H

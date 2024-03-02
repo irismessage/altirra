@@ -30,6 +30,8 @@ struct ATMemoryMapState {
 	bool mbExtendedCPU;
 	bool mbExtendedANTIC;
 	uint32 mExtendedBank;
+	uint8 mAxlonBank;
+	uint8 mAxlonBankMask;
 };
 
 class ATMMUEmulator {
@@ -55,6 +57,8 @@ public:
 
 	bool IsKernelROMEnabled() const { return (mCurrentBankInfo & kMapInfo_Kernel) != 0; }
 
+	void SetAxlonMemory(uint8 bankbits);
+
 	void GetMemoryMapState(ATMemoryMapState& state) const;
 
 	uint32 GetCPUBankBase() const { return mCPUBase; }
@@ -66,8 +70,13 @@ public:
 	uint8 GetBankRegister() const { return mCurrentBank; }
 	void SetBankRegister(uint8 bank);
 
+	void SetAxlonBank(uint8 bank);
+	uint8 GetAxlonBank() const { return mAxlonBank; }
+
 protected:
 	void RebuildMappingTables();
+	void UpdateAxlonBank();
+	static bool OnAxlonWrite(void *thisptr, uint32 addr, uint8 value);
 
 	int mHardwareMode;
 	int mHardwareModeOverride;
@@ -82,9 +91,13 @@ protected:
 	ATMemoryLayer *mpLayerBASIC;
 	ATMemoryLayer *mpLayerGame;
 	ATMemoryLayer *mpLayerHiddenRAM;
+	ATMemoryLayer *mpLayerAxlonControl1;
+	ATMemoryLayer *mpLayerAxlonControl2;
 	IATHLEKernel *mpHLE;
 	bool		mbBASICForced;
 	uint8		mCurrentBank;
+	uint8		mAxlonBank;
+	uint8		mAxlonBankMask;
 
 	uint32		mCPUBase;
 	uint32		mAnticBase;

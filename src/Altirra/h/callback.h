@@ -36,11 +36,25 @@ struct ATCallbackHandler0 {
 
 template<typename T_Return, typename T_Arg1>
 struct ATCallbackHandler1 {
-	T_Return (*mpFn)(T_Arg1 arg1, void *);
+	T_Return (*mpFn)(void *, T_Arg1 arg1);
 	void *mpData;
 
 	void operator()(T_Arg1 arg1) const {
 		mpFn(mpData, arg1);
+	}
+
+	operator bool() const {
+		return mpFn != NULL;
+	}
+};
+
+template<typename T_Return, typename T_Arg1, typename T_Arg2>
+struct ATCallbackHandler2 {
+	T_Return (*mpFn)(void *, T_Arg1 arg1, T_Arg2 arg2);
+	void *mpData;
+
+	void operator()(T_Arg1 arg1, T_Arg2 arg2) const {
+		mpFn(mpData, arg1, arg2);
 	}
 
 	operator bool() const {
@@ -72,7 +86,22 @@ struct ATCallbackBinder1 {
 
 	template<T_Return (T::*T_Method)(T_Arg1)>
 	static ATCallbackHandler1<T_Return, T_Arg1> Bind(T *thisptr) {
-		const ATCallbackHandler1<T_Arg1> h = { Handler<T_Method>, thisptr };
+		const ATCallbackHandler1<T_Return, T_Arg1> h = { Handler<T_Method>, thisptr };
+
+		return h;
+	}
+};
+
+template<typename T, typename T_Return, typename T_Arg1, typename T_Arg2>
+struct ATCallbackBinder2 {
+	template<T_Return (T::*T_Method)(T_Arg1, T_Arg2)>
+	static T_Return Handler(void *data, T_Arg1 arg1, T_Arg2 arg2) {
+		(((T *)data)->*T_Method)(arg1, arg2);
+	}
+
+	template<T_Return (T::*T_Method)(T_Arg1, T_Arg2)>
+	static ATCallbackHandler2<T_Return, T_Arg1, T_Arg2> Bind(T *thisptr) {
+		const ATCallbackHandler2<T_Return, T_Arg1, T_Arg2> h = { Handler<T_Method>, thisptr };
 
 		return h;
 	}
@@ -87,6 +116,36 @@ template<class T, typename T_Return, typename T_Arg1>
 ATCallbackBinder1<T, T_Return, T_Arg1> ATMakeCallbackHandler(T *thisptr, T_Return (T::*method)(T_Arg1)) {
 	return ATCallbackBinder1<T, T_Return, T_Arg1>();
 }
+
+template<class T, typename T_Return, typename T_Arg1, typename T_Arg2>
+ATCallbackBinder2<T, T_Return, T_Arg1, T_Arg2> ATMakeCallbackHandler(T *thisptr, T_Return (T::*method)(T_Arg1, T_Arg2)) {
+	return ATCallbackBinder2<T, T_Return, T_Arg1, T_Arg2>();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+template<typename T_Return>
+ATCallbackHandler0<T_Return> ATMakeCallbackHandlerFn(T_Return (*fn)(), void *data) {
+	ATCallbackHandler0<T_Return> h = { fn, thisptr };
+
+	return h;
+}
+
+template<typename T_Return, typename T_Arg1>
+ATCallbackHandler1<T_Return, T_Arg1> ATMakeCallbackHandlerFn(T_Return (*fn)(T_Arg1), void *data) {
+	ATCallbackHandler1<T_Return, T_Arg1> h = { fn, data };
+
+	return h;
+}
+
+template<typename T_Return, typename T_Arg1, typename T_Arg2>
+ATCallbackHandler2<T_Return, T_Arg1, T_Arg2> ATMakeCallbackHandlerFn(T_Return (*fn)(T_Arg1, T_Arg2), void *data) {
+	ATCallbackHandler2<T_Return, T_Arg1, T_Arg2> h = { fn, data };
+
+	return h;
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 #define ATBINDCALLBACK(thisptr, method) (ATMakeCallbackHandler(thisptr, method).Bind<method>(thisptr))
 

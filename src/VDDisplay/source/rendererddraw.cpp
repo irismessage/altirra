@@ -461,9 +461,9 @@ void VDDisplayRendererDirectDraw::Blt(sint32 x, sint32 y, VDDisplayImageView& im
 	mpddsComposition->Blt(&rDest, cachedImage->mpSurface, &rSrc, DDBLT_ASYNC | DDBLT_WAIT, NULL);
 }
 
-void VDDisplayRendererDirectDraw::MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
+void VDDisplayRendererDirectDraw::MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode) {
 	if (LockPrimary() && mFallback.Begin(mLockedPrimary) && mFallback.PushViewport(mClipRect, mOffsetX, mOffsetY))
-		mFallback.MultiStencilBlt(blts, n, imageView);
+		mFallback.MultiBlt(blts, n, imageView, bltMode);
 }
 
 void VDDisplayRendererDirectDraw::PolyLine(const vdpoint32 *points, uint32 numLines) {
@@ -519,10 +519,6 @@ void VDDisplayRendererDirectDraw::PopViewport() {
 IVDDisplayRenderer *VDDisplayRendererDirectDraw::BeginSubRender(const vdrect32& r, VDDisplaySubRenderCache& cache) {
 	VDASSERT(!mpCurrentSubRender);
 
-	vdrect32 r2(r);
-
-	r2.translate(mOffsetX, mOffsetY);
-
 	VDDisplayRenderCacheGeneric *pcr = vdpoly_cast<VDDisplayRenderCacheGeneric *>(cache.GetCache());
 	if (!pcr) {
 		pcr = new_nothrow VDDisplayRenderCacheGeneric;
@@ -532,8 +528,8 @@ IVDDisplayRenderer *VDDisplayRendererDirectDraw::BeginSubRender(const vdrect32& 
 		cache.SetCache(pcr);
 	}
 
-	uint32 w = std::min<uint32>(r2.width(), mWidth);
-	uint32 h = std::min<uint32>(r2.height(), mHeight);
+	uint32 w = std::min<uint32>(r.width(), mWidth);
+	uint32 h = std::min<uint32>(r.height(), mHeight);
 
 	if (!pcr->mBuffer.base() || pcr->mBuffer.w != w || pcr->mBuffer.h != h || pcr->mBuffer.format != mColorFormat) {
 		if (!pcr->Init(cache, w, h, mColorFormat))
@@ -541,15 +537,15 @@ IVDDisplayRenderer *VDDisplayRendererDirectDraw::BeginSubRender(const vdrect32& 
 	}
 
 	if (pcr->mUniquenessCounter == cache.GetUniquenessCounter()) {
-		Blt(r2.left, r2.top, pcr->mImageView);
+		Blt(r.left, r.top, pcr->mImageView);
 	} else {
 		if (mFallback.Begin(pcr->mBuffer)) {
-			IVDDisplayRenderer *rdr = mFallback.BeginSubRender(vdrect32(0, 0, r2.width(), r2.height()), cache);
+			IVDDisplayRenderer *rdr = mFallback.BeginSubRender(vdrect32(0, 0, r.width(), r.height()), cache);
 
 			if (rdr) {
 				mpCurrentSubRender = &cache;
-				mSubRenderX = r2.left;
-				mSubRenderY = r2.top;
+				mSubRenderX = r.left;
+				mSubRenderY = r.top;
 
 				pcr->mUniquenessCounter = cache.GetUniquenessCounter();
 				return rdr;

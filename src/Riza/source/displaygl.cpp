@@ -180,8 +180,7 @@ public:
 
 	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
 	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h);
-	void MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView);
-	void MultiColorBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView);
+	void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode);
 
 	void PolyLine(const vdpoint32 *points, uint32 numLines);
 
@@ -315,6 +314,9 @@ void VDDisplayRendererOpenGL::SetColorRGB(uint32 color) {
 }
 
 void VDDisplayRendererOpenGL::FillRect(sint32 x, sint32 y, sint32 w, sint32 h) {
+	if ((w|h) < 0)
+		return;
+
 	mpGL->glDisable(GL_TEXTURE_2D);
 
 	mpGL->glColor4f(mColorRed, mColorGreen, mColorBlue, 1.0f);
@@ -448,7 +450,7 @@ void VDDisplayRendererOpenGL::Blt(sint32 x, sint32 y, VDDisplayImageView& imageV
 	mpGL->glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void VDDisplayRendererOpenGL::MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
+void VDDisplayRendererOpenGL::MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode) {
 	if (!n)
 		return;
 
@@ -533,10 +535,6 @@ void VDDisplayRendererOpenGL::MultiStencilBlt(const VDDisplayBlt *blts, uint32 n
 	mpGL->glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void VDDisplayRendererOpenGL::MultiColorBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
-	return MultiStencilBlt(blts, n, imageView);
-}
-
 void VDDisplayRendererOpenGL::PolyLine(const vdpoint32 *points, uint32 numLines) {
 	if (!numLines)
 		return;
@@ -580,8 +578,8 @@ bool VDDisplayRendererOpenGL::PushViewport(const vdrect32& r, sint32 x, sint32 y
 	vp.mScissor = mScissor;
 
 	mScissor = scissor;
-	mOffsetX = x;
-	mOffsetY = y;
+	mOffsetX += x;
+	mOffsetY += y;
 
 	UpdateViewport();
 	return true;

@@ -6,6 +6,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
 #include <vd2/VDDisplay/font.h>
+#include "callback.h"
 #include "uiwidget.h"
 
 class IVDDisplayFont;
@@ -53,9 +54,21 @@ protected:
 
 class ATUIMenuList : public ATUIWidget, public IVDTimerCallback {
 public:
+	enum {
+		kActionBarLeft = kActionCustom,
+		kActionBarRight,
+		kActionPopupUp,
+		kActionPopupDown,
+		kActionSelect,
+		kActionBack,
+		kActionClose,
+		kActionActivate
+	};
+
 	ATUIMenuList();
 	~ATUIMenuList();
 
+	void SetAutoHide(bool en);
 	void SetFont(IVDDisplayFont *font);
 	void SetPopup(bool popup) { mbPopup = popup; }
 	void SetMenu(ATUIMenu *menu);
@@ -63,18 +76,26 @@ public:
 	int GetItemFromPoint(sint32 x, sint32 y) const;
 
 	void AutoSize();
+	void Activate();
+	void Deactivate();
+	void MovePrev();
+	void MoveNext();
 	void CloseMenu();
 
 	virtual void OnMouseMove(sint32 x, sint32 y);
 	virtual void OnMouseDownL(sint32 x, sint32 y);
 	virtual void OnMouseLeave();
+	virtual void OnCaptureLost();
 
-	virtual bool OnKeyDown(uint32 vk);
-	virtual bool OnChar(uint32 vk);
+	virtual bool OnChar(const ATUICharEvent& event);
+
+	virtual void OnActionStart(uint32 id);
+	virtual void OnActionRepeat(uint32 id);
 
 	virtual void OnCreate();
 
-	VDEvent<ATUIMenuList, uint32>& OnItemSelected() { return mItemSelectedEvent; }
+	ATCallbackHandler1<void, ATUIMenuList *>& OnActivatedEvent() { return mActivatedEvent; }
+	ATCallbackHandler2<void, ATUIMenuList *, uint32>& OnItemSelected() { return mItemSelectedEvent; }
 
 public:
 	virtual void TimerCallback();
@@ -85,7 +106,8 @@ protected:
 	virtual bool HandleMouseMove(sint32 x, sint32 y);
 	virtual bool HandleMouseDownL(sint32 x, sint32 y, bool nested, uint32& itemSelected);
 
-	void SetSelectedIndex(sint32 selIndex, bool immediate);
+	ATUIMenuList *GetTail();
+	void SetSelectedIndex(sint32 selIndex, bool immediate, bool deferredOpen = true);
 	void OpenSubMenu();
 	void CloseSubMenu();
 
@@ -95,6 +117,7 @@ protected:
 	sint32 mSelectedIndex;
 	bool mbPopup;
 	bool mbActive;
+	bool mbAutoHide;
 	vdsize32	mIdealSize;
 	uint32		mTextSplitX;
 	uint32		mLeftMargin;
@@ -124,7 +147,8 @@ protected:
 
 	vdrefptr<ATUIMenuList> mpSubMenu;
 
-	VDEvent<ATUIMenuList, uint32> mItemSelectedEvent;
+	ATCallbackHandler1<void, ATUIMenuList *> mActivatedEvent;
+	ATCallbackHandler2<void, ATUIMenuList *, uint32> mItemSelectedEvent;
 
 	VDLazyTimer mSubMenuTimer;
 };

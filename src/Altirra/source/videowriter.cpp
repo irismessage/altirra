@@ -863,7 +863,8 @@ namespace {
 	}
 
 	#define HASH3(pos) (((uint32)hist[(pos)] ^ ((uint32)hist[(pos)+1] << 4) ^ ((uint32)hist[(pos)+2] << 8)) & 0xffff)
-	#define HASH6(pos) (((uint32)hist[(pos)] ^ ((uint32)hist[(pos)+1] << 2) ^ ((uint32)hist[(pos)+2] << 4) ^ ((uint32)hist[(pos)+3] << 6) ^ ((uint32)hist[(pos)+4] << 7) ^ ((uint32)hist[(pos)+5] << 8)) & 0xffff)
+//	#define HASH6(pos) (((uint32)hist[(pos)] ^ ((uint32)hist[(pos)+1] << 2) ^ ((uint32)hist[(pos)+2] << 4) ^ ((uint32)hist[(pos)+3] << 6) ^ ((uint32)hist[(pos)+4] << 7) ^ ((uint32)hist[(pos)+5] << 8)) & 0xffff)
+	#define HASH6(pos) ((uint32)((*(const uint32 *)&hist[(pos)] + *(const uint16 *)&hist[(pos)+4]) * 0xc17d3f45) >> 16)
 
 	const bool usehash6 = true;
 
@@ -932,7 +933,7 @@ namespace {
 			}
 
 			uint8 c = hist[pos];
-			uint32 hcode = HASH3(pos);
+			uint32 hcode = usehash6 ? HASH6(pos) : HASH3(pos);
 
 			sint32 hpos = mHashTable[hcode];
 			uint32 limit = 258;
@@ -1020,7 +1021,7 @@ namespace {
 									// hop hash chains!
 									hpos += mlen - bestlen;
 									if (hpos > (sint32)pos)
-										hpos = mHashTable[HASH6(hpos)];
+										hpos = mHashTable[HASH3(hpos)];
 									else if (hpos == pos)
 										hpos = hstart;
 									else
@@ -2213,7 +2214,7 @@ void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w
 
 	switch(venc) {
 		case kATVideoEncoding_Raw:
-			mpVideoEncoder = new ATVideoEncoderRaw(w, h, nsVDPixmap::kPixFormat_RGB888);
+			mpVideoEncoder = new ATVideoEncoderRaw(w, h, palette ? nsVDPixmap::kPixFormat_Pal8 : nsVDPixmap::kPixFormat_RGB888);
 			break;
 
 		case kATVideoEncoding_RLE:

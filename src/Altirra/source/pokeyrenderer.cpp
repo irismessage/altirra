@@ -128,14 +128,16 @@ void ATPokeyRenderer::SetInitMode(bool init) {
 
 	mbInitMode = init;
 
-	mPoly4Counter = 0;
-	mPoly5Counter = 0;
-	mPoly9Counter = 0;
-	mPoly17Counter = 0;
-	mLastPoly17Time = t + 1;
-	mLastPoly9Time = t + 1;
-	mLastPoly5Time = t + 1;
-	mLastPoly4Time = t + 1;
+	// These offsets are specifically set so that the audio output patterns
+	// are correctly timed.
+	mPoly4Counter = 8;
+	mPoly5Counter = 22;
+	mPoly9Counter = 507;
+	mPoly17Counter = 131067;
+	mLastPoly17Time = t;
+	mLastPoly9Time = t;
+	mLastPoly5Time = t;
+	mLastPoly4Time = t;
 }
 
 bool ATPokeyRenderer::SetSpeaker(bool newState) {
@@ -429,14 +431,44 @@ void ATPokeyRenderer::Flush(const uint32 t) {
 
 	SortedEdges::iterator it(mSortedEdges.begin()), itEnd(mSortedEdges.end());
 
+	if (it == itEnd)
+		return;
+
+	// set up poly timers
+	const uint32 polyBaseTime = mSortedEdges.front().t + timeSortOffset;
+
+#ifdef VD_CPU_X86
+	const uint32 polyTableOffset = polyBaseTime;
+#else
+	const uint32 polyTableOffset = 0;
+	mPolyBaseTime = polyBaseTime;
+#endif
+
+	if (mbInitMode) {
+		mPoly4Offset =
+			mPoly5Offset =
+			mPoly9Offset =
+			mPoly17Offset = (uintptr)mpTables->mInitModeBuffer - polyTableOffset;
+	} else {
+		UpdatePoly4Counter(polyBaseTime);
+		UpdatePoly5Counter(polyBaseTime);
+		UpdatePoly9Counter(polyBaseTime);
+		UpdatePoly17Counter(polyBaseTime);
+
+		mPoly4Offset = (uintptr)mpTables->mPolyBuffer + mPoly4Counter - polyTableOffset;
+		mPoly5Offset = (uintptr)mpTables->mPolyBuffer + mPoly5Counter - polyTableOffset;
+		mPoly9Offset = (uintptr)mpTables->mPolyBuffer + mPoly9Counter - polyTableOffset;
+		mPoly17Offset = (uintptr)mpTables->mPolyBuffer + mPoly17Counter - polyTableOffset;
+	}
+
+	// init fire timer routines
 	FireTimerRoutine routines[4];
 	routines[0] = GetFireTimerRoutine<0>();
 	routines[1] = GetFireTimerRoutine<1>();
 	routines[2] = GetFireTimerRoutine<2>();
 	routines[3] = GetFireTimerRoutine<3>();
 
-	for(; it != itEnd; ++it)
-	{
+	for(; it != itEnd; ++it) {
 		const Edge& edge = *it;
 
 		(this->*routines[edge.channel])(edge.t + timeSortOffset);
@@ -595,12 +627,21 @@ void ATPokeyRenderer::FireTimer(uint32 t) {
 	bool outputsChanged = false;
 
 	if ((audcn & 0xa0) != 0xa0) {
-		const uint8 polyBit = 8 >> activeChannel;
+		enum {
+			polyOffset = 3 - activeChannel,
+			polyBit = 8 >> activeChannel
+		};
+
+#if defined(VD_CPU_X86)
+		const uint32 polyBaseTime = 0;
+#else
+		const uint32 polyBaseTime = mPolyBaseTime;
+#endif
 
 		if (!(audcn & 0x80)) {
-			UpdatePoly5Counter(t);
-			uint8 poly5 = mpTables->mPoly5Buffer[mPoly5Counter];
-			if (!(poly5 & polyBit)) {
+			uint8 poly5 = *(const uint8 *)(mPoly5Offset + (t - polyBaseTime) + polyOffset);
+
+			if (!(poly5 & 4)) {
 				// This is a bit troublesome. If the high pass filter is enabled, ch1/2
 				// update their high pass flip-flops on every ch3/4 tick regardless of whether
 				// the 5-bit filter is enabled.
@@ -615,17 +656,14 @@ void ATPokeyRenderer::FireTimer(uint32 t) {
 
 		if (!(audcn & 0x20)) {
 			if (audcn & 0x40) {
-				UpdatePoly4Counter(t);
-				uint8 poly4 = mpTables->mPoly4Buffer[mPoly4Counter];
-				noiseFFInput = (poly4 & polyBit) != 0;
+				uint8 poly4 = *(const uint8 *)(mPoly4Offset + (t - polyBaseTime) + polyOffset);
+				noiseFFInput = (poly4 & 8) >> 3;
 			} else if (mAUDCTL & 0x80) {
-				UpdatePoly9Counter(t);
-				uint8 poly9 = mpTables->mPoly9Buffer[mPoly9Counter];
-				noiseFFInput = (poly9 & polyBit) != 0;
+				uint8 poly9 = *(const uint8 *)(mPoly9Offset + (t - polyBaseTime) + polyOffset);
+				noiseFFInput = (poly9 & 2) >> 1;
 			} else {
-				UpdatePoly17Counter(t);
-				uint8 poly17 = mpTables->mPoly17Buffer[mPoly17Counter];
-				noiseFFInput = (poly17 & polyBit) != 0;
+				uint8 poly17 = *(const uint8 *)(mPoly17Offset + (t - polyBaseTime) + polyOffset);
+				noiseFFInput = (poly17 & 1);
 			}
 		}
 
@@ -822,6 +860,7 @@ void ATPokeyRenderer::UpdatePoly4Counter(uint32 t) {
 		return;
 
 	int polyDelta = t - mLastPoly4Time;
+	VDASSERT(polyDelta >= 0);
 	mPoly4Counter += polyDelta;
 	mLastPoly4Time = t;
 

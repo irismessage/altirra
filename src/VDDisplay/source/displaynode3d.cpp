@@ -20,6 +20,8 @@ extern const VDTDataView g_VDDispFPView_RenderBlitStencil(g_VDDispFP_RenderBlitS
 extern const VDTDataView g_VDDispFPView_RenderBlitStencilRBSwap(g_VDDispFP_RenderBlitStencilRBSwap);
 extern const VDTDataView g_VDDispFPView_RenderBlitColor(g_VDDispFP_RenderBlitColor);
 extern const VDTDataView g_VDDispFPView_RenderBlitColorRBSwap(g_VDDispFP_RenderBlitColorRBSwap);
+extern const VDTDataView g_VDDispFPView_RenderBlitColor2(g_VDDispFP_RenderBlitColor2);
+extern const VDTDataView g_VDDispFPView_RenderBlitColor2RBSwap(g_VDDispFP_RenderBlitColor2RBSwap);
 
 ///////////////////////////////////////////////////////////////////////////
 

@@ -22,9 +22,12 @@
 .proc IntInitInterrupts
 	mva		#$40 nmien
 	
+.if _KERNEL_XLXE
 	;Required by XEGS carts to run since they have a clone of the XL/XE
 	;OS in them.
 	mva		trig3 gintlk
+.endif
+
 	rts
 .endp
 
@@ -34,23 +37,24 @@
 	bpl		not_dli		;skip if not a DLI
 	jmp		(vdslst)	;jump to display list vector
 
-not_vbi:
 .if !_KERNEL_XLXE
-	lda		#$20
-	bit		nmist
-	sta		nmires
-	bne		is_system_reset
-	rti
 is_system_reset:
+	jmp		warmsv
 .endif
-exit_a:
-	pla
-exit_none:
-	rti
 
 not_dli:
 	pha
-	bvc		not_vbi		;skip if not a VBI
+	
+.if _KERNEL_XLXE
+	;Only XL/XE OSes cleared the decimal bit.
+	cld
+.else
+	;The stock OS treats 'not RNMI' as VBI. We'd best follow its example.
+	lda		#$20
+	bit		nmist
+	bne		is_system_reset
+.endif
+
 	txa
 	pha
 	tya
@@ -64,6 +68,5 @@ not_dli:
 .endp
 
 ;==============================================================================
-
-IntExitHandler_A = IntDispatchNMI.exit_a
-IntExitHandler_None = IntDispatchNMI.exit_none
+IntExitHandler_A = VBIProcess.exit_a
+IntExitHandler_None = VBIProcess.exit_none

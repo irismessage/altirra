@@ -113,7 +113,7 @@ bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) const {
 							data = 0x1F;	// XX00 Manufacturer ID: Atmel
 							break;
 
-						case kATFlashType_SST39F040:
+						case kATFlashType_SST39SF040:
 							data = 0xBF;	// XX00 Manufacturer ID: SST
 							break;
 
@@ -144,7 +144,7 @@ bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) const {
 							data = 0x5B;
 							break;
 
-						case kATFlashType_SST39F040:
+						case kATFlashType_SST39SF040:
 							data = 0xB7;
 							break;
 
@@ -190,7 +190,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 			switch(mFlashType) {
 				case kATFlashType_Am29F010:
 				case kATFlashType_Am29F040:
-				case kATFlashType_SST39F040:
+				case kATFlashType_SST39SF040:
 					if (address15 == 0x5555 && value == 0xAA)
 						mCommandPhase = 1;
 					break;
@@ -332,7 +332,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 
 					case kATFlashType_Am29F040:
 					case kATFlashType_Am29F040B:
-					case kATFlashType_SST39F040:
+					case kATFlashType_SST39SF040:
 					case kATFlashType_A29040:
 						memset(mpMemory, 0xFF, 0x80000);
 						break;
@@ -357,7 +357,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 						memset(mpMemory + address, 0xFF, 0x10000);
 						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFFF);
 						break;
-					case kATFlashType_SST39F040:
+					case kATFlashType_SST39SF040:
 						address &= 0x7F000;
 						memset(mpMemory + address, 0xFF, 0x1000);
 						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFF);
@@ -504,7 +504,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 						memset(mpMemory + address, 0xFF, 0x10000);
 						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFFF);
 						break;
-					case kATFlashType_SST39F040:
+					case kATFlashType_SST39SF040:
 						address &= 0x7F000;
 						memset(mpMemory + address, 0xFF, 0x1000);
 						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFF);

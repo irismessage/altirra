@@ -27,18 +27,17 @@
 	sta		dspflg
 	sta		escflg
 	jsr		ScreenResetLogicalLineMap
-	jsr		ScreenOpen
-	rts
+	jmp		ScreenOpen
 .endp
 
 ;==========================================================================
-EditorClose = CIOExitSuccess
+EditorClose = ScreenClose
 
 ;==========================================================================
 .proc	EditorGetByte
 	;check if we have anything left in the current line
 	lda		bufcnt
-	bpl		have_line
+	bne		have_line
 	
 	;nope, fetch a line
 	jsr		EditorGetLine
@@ -46,26 +45,27 @@ EditorClose = CIOExitSuccess
 	rts
 	
 have_line:
+	;swap to text context
+	jsr		EditorSwapToText
+	
 	;subtract off a char
 	dec		bufcnt
 	
 	;check if we're at the EOL
-	bpl		have_char
+	bne		have_char
 	
 	;yes, we're at the EOL -- print it and return it (this will re-enable
 	;the cursor, too)
-	jsr		EditorSwapToText
-	
 	lda		#$9b
 	jsr		ScreenPutByte
 
 	lda		#$9b
-	jmp		EditorSwapToScreen
+	bne		done
 	
 have_char:
 	;read a char from the screen
-	jsr		EditorSwapToText
 	jsr		ScreenGetByte
+done:
 	jmp		EditorSwapToScreen
 .endp
 
@@ -107,6 +107,14 @@ have_char:
 ; get updated when regular characters are typed, even when spilling to a
 ; new logical line.
 ;
+; === BUFCNT ===
+;
+; BUFCNT contains the number of characters left to return before we have
+; to get a new line: $00 means we will wait for keys, $01 is the EOL, and
+; >$01 returns a typed character. We need to follow this convention or
+; else the combination of S_VBXE.SYS + CON.SYS /E from SDX 4.46 acts
+; strangely on launch.
+;
 .proc	EditorGetLine
 _start_x equ bufstr+1
 _start_y equ bufstr
@@ -122,6 +130,7 @@ read_loop:
 	;get a character
 	jsr		KeyboardGetByte
 	bpl		read_ok
+read_error:
 	rts
 	
 read_ok:
@@ -130,6 +139,7 @@ read_ok:
 
 	;echo the character	
 	jsr		EditorPutByte
+	bmi		read_error
 	
 	;check if we've hit the warning point (logical pos 113)
 	lda		colcrs
@@ -153,6 +163,7 @@ no_bell:
 is_eol:
 	;echo the character	
 	jsr		EditorPutByte
+	bmi		read_error
 
 	;swap to text screen context
 	jsr		EditorSwapToText
@@ -165,22 +176,19 @@ is_eol:
 	stx		logcol
 	ldy		_start_y
 	sty		rowcrs
-	jsr		ScreenComputeFromAddr
+	jsr		ScreenComputeToAddr
 	
 	ldy		_start_x
 char_loop:
 	inc		logcol
-	lda		(frmadr),y
+	lda		(toadr),y
 	beq		blank
 	mva		logcol bufcnt
 blank:
 	cpy		rmargn
 	iny
 	bcc		char_loop
-	lda		frmadr
-	adc		#39
-	sta		frmadr
-	scc:inc	frmadr+1
+	jsr		EditorNextLineAddr
 	
 	;check if we're at the bottom of the screen
 	inc		rowcrs
@@ -200,6 +208,9 @@ scan_scroll:
 	jsr		EditorDeleteLine0
 	
 scan_done:
+	;adjust BUFCNT so it is the number of chars to read (scanned + EOL)
+	inc		bufcnt
+
 	;mark this as the start of a new logical line, trimming off any extra
 	;blank lines
 	lda		rowcrs
@@ -211,31 +222,20 @@ scan_done:
 	mvx		_start_x colcrs
 	mvy		_start_y rowcrs
 
-	;swap back to main context
+	;swap back to main context and exit
 	lda		#$9b
+	ldy		#1
 	jmp		EditorSwapToScreen
 .endp
 
 ;==========================================================================
-
-;ATASCII	Internal
-;00-1F		40-5F
-;20-3F		00-1F
-;40-5F		20-3F
-;60-7F		60-7F
-;80-9F		C0-DF
-;A0-BF		80-9F
-;C0-DF		A0-BF
-;E0-FF		E0-FF
-
-ATASCIIToInternalTab:
-	dta		$40
-	dta		$20
-	dta		$60
-	dta		$00
-
-;==========================================================================
 ; This routine must NOT write BUFADR -- doing so breaks the DLT flasher.
+;
+; Behavior notes:
+;	- Ctrl+1 (suspend display) does not affect control codes handled only
+;	  by E:. In particular, EOL, move up/down/left/right, ESC, insert, and
+;	  delete are not affected by it. CLEAR on the other hand, is, because
+;	  it's handled by S:.
 ;
 .proc	EditorPutByte
 	;open the screen if it is not open already
@@ -243,27 +243,16 @@ ATASCIIToInternalTab:
 	bne		screenok
 
 	pha
-	lda		icax1z
-	pha
-	lda		icax2z
-	pha
-	
 	jsr		ScreenOpenGr0
-	
-	pla
-	sta		icax2z
-	pla
-	sta		icax1z
 	pla
 screenok:
 
 	;swap to text context
 	jsr		EditorSwapToText
 
-	;check if display is suspended and wait until it is not
-suspendloop:
-	ldx		ssflag
-	bne		suspendloop
+	;hide the cursor -- this must be done before we suspend display on
+	;Ctrl+1.
+	jsr		ScreenHideCursor
 
 	;check if this might be a special character
 	tay
@@ -284,7 +273,7 @@ not_eol:
 	;draw the character... note that we must bypass the clear handling
 	sta		atachr
 	jsr		ScreenPutByte.not_clear
-	jmp		xit
+	jmp		xit2
 	
 not_escaped:
 	;might be special, but not EOL... search the special char table
@@ -302,33 +291,27 @@ special_found:
 	bne		not_special
 
 	;jump to routine
-	lda		special_dispatch_hi_tab,x
-	pha
-	lda		special_dispatch_lo_tab,x
-	pha
-	rts
+	jsr		dispatch
+	jsr		EditorRecomputeCursorAddr
+	jsr		ScreenShowCursorAndXitOK
+	bpl		xit2
 
 not_special:
 	;ok, just put the char to the screen
 	tya
 	jsr		ScreenPutByte
-xit:
+xit2:
 	;swap back to main context and exit
 	jmp		EditorSwapToScreen
-	
-xit_show_cursor:
-	jsr		EditorRecomputeAndShowCursor
-	jmp		xit
 
 ;---------------
 special_escape:
 	mva		#$80 escflg
-	bne		xit
+	rts
 
 ;---------------
 special_clear:
-	jsr		ScreenClear
-	jmp		xit
+	jmp		ScreenClear
 	
 ;---------------
 special_up:
@@ -337,7 +320,7 @@ special_up:
 	ldx		botscr
 isup2:
 	dex
-	jmp		vmoveexit
+	bpl		vmoveexit
 	
 ;---------------
 special_down:
@@ -361,25 +344,23 @@ vmoveexit:
 	mva		lmargn bufstr+1
 	
 moveexit:
-	jsr		ScreenHideCursor
-	jmp		xit_show_cursor
+	rts
 
 ;---------------
 special_left:
 	ldx		colcrs
+	beq		slft_to_right
+	dex
 	cpx		lmargn
-	seq:bcs	slft_1
+	bcs		slft_1
 	
-	;move to right margin	
+	;move to right margin
+slft_to_right:
 	ldx		rmargn
 hmove_to_margin:
-	stx		colcrs
-	jmp		moveexit
-	
 slft_1:
-	;left one char
-	dec		colcrs
-	jmp		moveexit
+	stx		colcrs
+	rts
 
 ;---------------
 special_right:
@@ -389,12 +370,12 @@ special_right:
 	
 	;move to left margin	
 	ldx		lmargn
-	jmp		hmove_to_margin
+	bcs		hmove_to_margin
 	
 srgt_1:
 	;right one char
 	inc		colcrs
-	jmp		moveexit
+	rts
 
 ;---------------
 special_backspace:
@@ -408,14 +389,12 @@ special_backspace:
 	
 	;recompute pos and clear character
 sbks_recomp:
-	jsr		ScreenHideCursor
 	jsr		EditorRecomputeCursorAddr
 	ldy		#0
 	tya
 	sta		(oldadr),y
-	jsr		ScreenShowCursor
 sbks_xit:
-	jmp		xit
+	rts
 	
 sbks_wrap:
 	;check if we're at the start of the logical line
@@ -430,30 +409,29 @@ sbks_wrap:
 	
 	;recompute everything and exit
 	jmp		sbks_recomp
-	
 
 ;----------------
 special_bell:
-	jsr		EditorBell
-	jmp		xit
+	jmp		EditorBell
 
 ;----------------
 special_set_tab:
 	jsr		special_common_tab
-	jmp		special_common_exit_tab
+	ora		tabmap,x
+	bne		special_common_exit_tab
 
 special_clear_tab:
 	jsr		special_common_tab
-	eor		tabmap,x
+	eor		#$ff
+	and		tabmap,x
 special_common_exit_tab:
 	sta		tabmap,x
-	jmp		xit
+	rts
 	
 special_common_tab:
 	jsr		EditorGetLogicalColumn
-	jsr		EditorSetupTabIndex
-	ora		tabmap,x
-	rts	
+	tay
+	jmp		EditorSetupTabIndex	
 
 ;--------------------------------------------------------------------------
 ; Tab behavior:
@@ -462,7 +440,6 @@ special_common_tab:
 ;	  This may cause a scroll.
 ;
 special_tab:
-	jsr		ScreenHideCursor
 	jsr		EditorGetLogicalColumn
 	tay
 	txa
@@ -499,7 +476,7 @@ tab_adjust_scroll:
 tab_adjust_left:
 	mva		lmargn colcrs
 tab_adjust_done:
-	jmp		xit_show_cursor
+	rts
 
 ;--------------------------------------------------------------------------
 ; Delete line behavior:
@@ -509,20 +486,15 @@ tab_adjust_done:
 special_delete_line:
 	;delete current logical line
 	jsr		EditorGetCurLogicalRow
-	jsr		EditorDeleteLine
-
-	;reset cursor
-	jmp		xit_show_cursor
+	jmp		EditorDeleteLine
 
 ;----------------
 special_insert_line:
-	jsr		ScreenHideCursor
 	;insert a new logical line at this point; note that this may split
 	;the current line
 	sec
 	jsr		ScreenInsertLine
-	mva		lmargn colcrs
-	jmp		xit_show_cursor
+	jmp		tab_adjust_left
 
 ;--------------------------------------------------------------------------
 ; Delete character behavior:
@@ -535,11 +507,6 @@ special_insert_line:
 ;	  next logical line. This also does not change the input line!
 ;
 special_delete_char:
-	;hide the cursor
-	jsr		ScreenHideCursor
-	
-	;find the 
-	
 	;compute base address of current row (not char)
 	ldy		rowcrs
 	sty		hold1
@@ -549,9 +516,131 @@ special_delete_char:
 	ldy		colcrs
 	
 	;delete chars to end
-	jmp		delete_shift_loop_entry
+	jmp		delete_shift_loop_entry	
 	
-delete_line_loop
+;--------------------------------------------------------------------------
+; Insert character behavior:
+;	- Inserts a blank at the current position and shifts characters forward
+;	  within the margins.
+;	- If the character shifted out of the end of the logical line is non-
+;	  blank, the logical line will be extended if possible. This can cause
+;	  a scroll. If the logical line is already three rows, the last
+;	  character is lost.
+;
+special_insert_char:
+	;get logical line start
+	jsr		EditorGetCurLogicalRow
+	
+	;compute line at which we cannot add another physical line
+	add		#3
+	sta		deltar
+	
+	;compute address of row
+	ldy		rowcrs
+	sty		hold1
+	jsr		ScreenComputeToAddrX0
+	
+	ldy		colcrs				;end shift at current column
+	ldx		#0					;insert blank character at start
+	beq		insert_line_loop_entry
+	
+insert_line_loop:
+	ldy		lmargn				;end shift at left column
+	ldx		tmpchr				;character to shift in (from last line)
+	
+insert_line_loop_entry:
+	sty		adress+1			;stash shift origin
+	ldy		rmargn				;begin shift at right column
+	lda		(toadr),y			;get character being shifted out
+	sta		tmpchr				;save it off to later shift in on the next row
+insert_shift_loop:
+	dey
+	lda		(toadr),y
+	iny
+	sta		(toadr),y
+	dey
+	cpy		adress+1
+	bne		insert_shift_loop
+
+	;put character shifted out from previous line into beginning of this one
+	txa
+	sta		(toadr),y
+	
+	;next row
+	inc		hold1
+	
+	jsr		EditorNextLineAddr
+	
+	;check if we're at the end of the logical line
+	lda		hold1
+	cmp		botscr
+	bcs		insert_crossed_lline
+	jsr		EditorTestLogicalLineBit
+	beq		insert_line_loop
+insert_crossed_lline:
+
+	;check if we shifted out a non-blank character
+	lda		tmpchr
+	beq		insert_done
+		
+	;save current row
+	lda		rowcrs
+	pha
+	
+	;check if the logical line is already 3 rows -- if so, we cannot extend and
+	;the last char goes into the bit bucket, but we still must scroll (!)
+	ldx		hold1
+	cpx		deltar
+	php
+	
+	;move to the bottom line +1; we use ROWCRS so it stays updated with the scrolling
+	stx		rowcrs
+	
+	;check if we are at the bottom of the screen; if so we must scroll
+	lda		#0
+	sta		deltar
+
+	cpx		botscr
+	bcc		insert_no_scroll
+	
+	;scroll the screen
+	jsr		EditorDeleteLine0
+	
+insert_no_scroll:
+	;if we can't extend, we are done
+	plp
+	bcs		insert_cant_extend
+	
+	;just insert a blank line at the end of this logical row to extend it
+	jsr		ScreenInsertPhysLine
+		
+	;restore shifted character and put it in place
+	ldy		rowcrs
+	jsr		ScreenComputeToAddrX0
+	lda		tmpchr
+	ldy		lmargn
+	sta		(toadr),y
+insert_cant_extend:
+
+	;restore cursor row, adjusting for any scroll
+	pla
+	sec
+	sbc		deltar
+	sta		rowcrs
+
+insert_done:
+	rts
+
+;---------------------------------
+dispatch:
+	lda		#>special_escape
+	pha
+	lda		special_dispatch_lo_tab,x
+	pha
+	rts
+
+;---------------------------------
+delete_line_loop:
 	;copy first character into right margin of previous row
 	ldy		lmargn
 	lda		(toadr),y
@@ -618,124 +707,7 @@ delete_blank_test_loop:
 	
 delete_not_blank:
 	;re-show cursor and exit
-	jmp		xit_show_cursor
-	
-;--------------------------------------------------------------------------
-; Insert character behavior:
-;	- Inserts a blank at the current position and shifts characters forward
-;	  within the margins.
-;	- If the character shifted out of the end of the logical line is non-
-;	  blank, the logical line will be extended if possible. This can cause
-;	  a scroll. If the logical line is already three rows, the last
-;	  character is lost.
-;
-special_insert_char:
-	;hide cursor
-	jsr		ScreenHideCursor
-	
-	;get logical line start
-	jsr		EditorGetCurLogicalRow
-	
-	;compute line at which we cannot add another physical line
-	add		#3
-	sta		scrflg
-	
-	;compute address of row
-	ldy		rowcrs
-	sty		hold1
-	jsr		ScreenComputeToAddrX0
-	
-	ldy		colcrs				;end shift at current column
-	ldx		#0					;insert blank character at start
-	beq		insert_line_loop_entry
-	
-insert_line_loop:
-	ldy		lmargn				;end shift at left column
-	ldx		tmpchr				;character to shift in (from last line)
-	
-insert_line_loop_entry:
-	sty		adress+1			;stash shift origin
-	ldy		rmargn				;begin shift at right column
-	lda		(toadr),y			;get character being shifted out
-	sta		tmpchr				;save it off to later shift in on the next row
-insert_shift_loop:
-	dey
-	lda		(toadr),y
-	iny
-	sta		(toadr),y
-	dey
-	cpy		adress+1
-	bne		insert_shift_loop
-
-	;put character shifted out from previous line into beginning of this one
-	txa
-	sta		(toadr),y
-	
-	;next row
-	inc		hold1
-	
-	jsr		EditorNextLineAddr
-	
-	;check if we're at the end of the logical line
-	lda		hold1
-	cmp		botscr
-	bcs		insert_crossed_lline
-	jsr		EditorTestLogicalLineBit
-	beq		insert_line_loop
-insert_crossed_lline:
-
-	;check if we shifted out a non-blank character
-	lda		tmpchr
-	beq		insert_done
-		
-	;save current row
-	lda		rowcrs
-	pha
-	
-	;check if the logical line is already 3 rows -- if so, we cannot extend and
-	;the last char goes into the bit bucket, but we still must scroll (!)
-	ldx		hold1
-	cpx		scrflg
-	php
-	
-	;move to the bottom line +1; we use ROWCRS so it stays updated with the scrolling
-	stx		rowcrs
-	
-	;check if we are at the bottom of the screen; if so we must scroll
-	lda		#0
-	sta		scrflg
-
-	cpx		botscr
-	bcc		insert_no_scroll
-	
-	;scroll the screen
-	jsr		EditorDeleteLine0
-	
-insert_no_scroll:
-	;if we can't extend, we are done
-	plp
-	bcs		insert_cant_extend
-	
-	;just insert a blank line at the end of this logical row to extend it
-	clc
-	jsr		ScreenInsertLine
-		
-	;restore shifted character and put it in place
-	ldy		rowcrs
-	jsr		ScreenComputeToAddrX0
-	lda		tmpchr
-	ldy		lmargn
-	sta		(toadr),y
-insert_cant_extend:
-
-	;restore cursor row, adjusting for any scroll
-	pla
-	sec
-	sbc		scrflg
-	sta		rowcrs
-
-insert_done:
-	jmp		xit_show_cursor
+	rts
 
 ;----------------
 special_code_tab:
@@ -772,24 +744,29 @@ special_dispatch_lo_tab:
 	dta		<(special_bell-1)
 	dta		<(special_delete_char-1)
 	dta		<(special_insert_char-1)
-
-special_dispatch_hi_tab:
-	dta		>(special_escape-1)
-	dta		>(special_up-1)
-	dta		>(special_down-1)
-	dta		>(special_left-1)
-	dta		>(special_right-1)
-	dta		>(special_clear-1)
-	dta		>(special_backspace-1)
-	dta		>(special_tab-1)
-	dta		>(special_delete_line-1)
-	dta		>(special_insert_line-1)
-	dta		>(special_clear_tab-1)
-	dta		>(special_set_tab-1)
-	dta		>(special_bell-1)
-	dta		>(special_delete_char-1)
-	dta		>(special_insert_char-1)
+	
+.if [((special_escape-1)^(special_insert_char-1))&$ff00]
+	.error 'Special character routines cross a page boundary: ',special_escape,'-',special_insert_char
+.endif
 .endp
+
+;==========================================================================
+
+;ATASCII	Internal
+;00-1F		40-5F
+;20-3F		00-1F
+;40-5F		20-3F
+;60-7F		60-7F
+;80-9F		C0-DF
+;A0-BF		80-9F
+;C0-DF		A0-BF
+;E0-FF		E0-FF
+
+ATASCIIToInternalTab:
+	dta		$40
+	dta		$20
+	dta		$60
+	dta		$00
 
 ;==========================================================================
 .proc	EditorRecomputeCursorAddr
@@ -809,42 +786,73 @@ special_dispatch_hi_tab:
 ;	A = physical line row to delete
 ;
 ; Outputs:
-;	SCRFLG = number of lines scrolled
+;	DELTAR = number of lines scrolled
 ;
 EditorDeleteLine = EditorDeleteLine0.use_line
 .proc	EditorDeleteLine0
 	lda		#0
 use_line:
 	sta		hold1
-	
-	;compute base address and set that as destination
 	ldx		#0
-	tay
-	stx		scrflg
-	jsr		ScreenComputeToAddr
+	stx		deltar
+		
+scroll_loop:
+	;compute base address and set that as destination
+	ldy		hold1
+.if _KERNEL_XLXE
+	bne		notscroll
+	jsr		fine_scroll
+notscroll:
+.endif
+
+	;set TOADR to the line to be deleted
+	jsr		ScreenComputeToAddrX0
 	
-	;now delete bits out of the logical mask until we get to the next
+	ldx		hold1
+	bpl		line_loop_start
+	
+line_loop:
+	;bump line: FRMADR <- TOADR, TOADR += 40
+	jsr		EditorNextLineAddr
+	
+	;move line -- note that we are copying backwards (TOADR to FRMADR)!
+	ldy		#39
+	mva:rpl	(toadr),y (frmadr),y-
+	
+line_loop_start:
+	inx
+	cpx		botscr
+	bne		line_loop
+	
+	;clear the last line
+	ldy		#39
+	lda		#0
+	sta:rpl	(toadr),y-
+	
+.if _KERNEL_XLXE
+	ldy		hold1
+	bne		notscroll2
+	ldx		fine
+	beq		notscroll2
+	sta		vscrol
+notscroll2:
+.endif
+	
+	jsr		adjust_lines
+	
+	;delete bits out of the logical mask until we get to the next
 	;logical line, computing the number of lines to scroll
-count_loop:
 	lda		hold1
 	jsr		EditorGetLogicalLineInfo
-	lda		ReversedBitMasks,x
-	sta		adress				;stash bit mask
-	tya							;load logmap byte index
-	clc
-	adc		#$fe				;subtract 2
+	ldx		update_table,y		;get number of masks to shift
 	sec							;setup to add a new logical line at the end
-	tax
 	beq		do_mask				;jump to masking if we're on byte 2
 	rol		logmap+2			;shift byte 2
-	inx							;
+	dex							;
 	beq		do_mask				;jump to masking if we're on byte 1
 	rol		logmap+1			;shift byte 1
-	inx							;
-	beq		do_mask				;jump to masking if we're on byte 0
-	rol		logmap				;shift byte 0
 do_mask:
-	lda		adress				;load bit to delete
+	sta		adress				;stash mask
 	eor		#$ff				;invert mask
 	and		logmap,y			;kill target bit
 	sta		adress+1			;stash modified mask
@@ -853,10 +861,21 @@ do_mask:
 	adc		adress+1			;shift those up and the bit from the next byte in
 	sta		logmap,y			;write to logmap
 
-	inc		scrflg				;increment line count
+	inc		deltar				;increment line count
 	inc		adress				;revert mask
 	bit		adress				;test if we still have a logical line
-	beq		count_loop			;back for more if so
+
+	;loop back if we need to delete more physical lines
+	beq		scroll_loop
+	
+	;all done
+	rts
+	
+update_table:
+	dta		2,1,0
+
+adjust_lines:
+	lda		lmargn				;prep for line adjustments
 	
 	;adjust the read row if it is affected by the deletion
 	ldx		#<bufstr
@@ -864,78 +883,36 @@ do_mask:
 
 	;adjust the cursor row if it is affected by the deletion
 	ldx		#<rowcrs
-	jsr		adjust_line
-	
-	;compute ending line of scroll
-	lda		hold1
-	clc
-	adc		scrflg
-	sta		hold1
-	
-	;compute source address for move
-	tay
-	jsr		ScreenComputeFromAddrX0
-	
-	;compute byte count to move
-	lda		botscr
-	sub		hold1
-	tay
-	jsr		ScreenComputeRangeSize
-	sta		adress
-	
-	;move screen upward (ascending copy)
-	ldy		#0
-	ldx		adress+1
-	;;##TRACE "Moving %02X%02X bytes from %04X to %04X [%d]" x db($64) dw($68) dw($66) db($51)
-	beq		move_leftovers
-move_loop:
-	mva:rne	(frmadr),y (toadr),y+
-	inc		frmadr+1
-	inc		toadr+1
-	dex
-	bne		move_loop
-move_leftovers:
-	lda		adress
-	beq		move_done
-move_loop_2:
-	mva		(frmadr),y (toadr),y+
-	cpy		adress
-	bne		move_loop_2
-move_done:
-
-	;Clear lines at the bottom. Fortunately, this can only be 1-3 lines,
-	;so this is easy.
-	tya
-	clc
-	adc		toadr
-	sta		toadr
-	scc:inc	toadr+1
-	
-	ldy		scrflg
-	lda		EditorLineLengthTab,y
-	tay
-	txa								;zero
-clear_loop:
-	dey
-	sta		(toadr),y
-	bne		clear_loop
-	
-	;all done
-	rts
-	
 adjust_line:
-	lda		0,x						;get row
-	sub		hold1					;subtract deletion pos
+	ldy		0,x						;get row
+	cpy		hold1					;compare against deletion pos
 	bcc		adjust_line_above		;nothing to do if it's above del range
-	sbc		scrflg					;subtract line count
-	bcs		adjust_line_below		;skip if it's below del range
-	mva		lmargn 1,x				;within range - move cursor to left mgn
-	lda		#0						;prepare to set row to del pos
+	bne		adjust_line_below		;skip col adjust if it's below del range
+	sta		1,x						;within range - move cursor to left mgn
+	rts
 adjust_line_below:
-	add		hold1					;re-add deletion pos
-	sta		0,x						;set row
+	dec		0,x
 adjust_line_above:
 	rts	
+	
+.if _KERNEL_XLXE
+fine_scroll:
+	ldx		fine
+	beq		nofine
+	tax
+xloop:
+	lda		rtclok+2
+	cmp:req	rtclok+2
+	inx
+	stx		vscrol
+	cpx		#7
+	bne		xloop
+	lda		#32/2
+	cmp:rcc	vcount
+	cmp:rcs	vcount
+nofine:
+	rts
+.endif
 .endp
 
 ;==========================================================================
@@ -953,7 +930,11 @@ EditorInit = CIOExitNotSupported
 ;	X = bit index
 ;	Y = mask index
 ;
-.proc	EditorGetLogicalLineInfo
+EditorGetCurLogicalLineInfo = _EditorGetLogicalLineInfo
+EditorGetLogicalLineInfo = _EditorGetLogicalLineInfo.use_a
+.proc	_EditorGetLogicalLineInfo
+	lda		rowcrs
+use_a:
 	pha
 	lsr
 	lsr
@@ -1034,9 +1015,10 @@ found:
 
 ;==========================================================================
 .proc	EditorSwapToScreen
+	sty		adress
 	clc
 	jsr		ScreenSwap
-	ldy		#1
+	ldy		adress
 	rts
 .endp
 
@@ -1099,14 +1081,6 @@ found:
 	jsr		EditorSetupTabIndex
 	and		tabmap,x
 	rts
-.endp
-
-;==========================================================================
-; Recompute cursor address and show cursor.
-;
-.proc EditorRecomputeAndShowCursor
-	jsr		EditorRecomputeCursorAddr
-	jmp		ScreenShowCursor
 .endp
 
 ;==========================================================================

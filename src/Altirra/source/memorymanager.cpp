@@ -21,6 +21,7 @@
 
 ATMemoryManager::ATMemoryManager()
 	: mpFreeNodes(NULL)
+	, mbFloatingDataBus(false)
 {
 	for(int i=0; i<256; ++i) {
 		mDummyReadPageTable[i] = (uintptr)&mDummyReadNode + 1;
@@ -30,6 +31,7 @@ ATMemoryManager::ATMemoryManager()
 	mDummyReadNode.mpDebugReadHandler = DummyReadHandler;
 	mDummyReadNode.mpReadHandler = DummyReadHandler;
 	mDummyReadNode.mNext = 1;
+	mDummyReadNode.mpThis = this;
 	mDummyWriteNode.mpWriteHandler = DummyWriteHandler;
 	mDummyWriteNode.mNext = 1;
 
@@ -57,7 +59,7 @@ void ATMemoryManager::Init(const void *highMemory, uint32 highMemoryBanks) {
 	mWriteBankTable[0] = mCPUWritePageMap;
 
 	if (highMemoryBanks) {
-		uint32 highMemoryOffset = (uintptr)highMemory - 0x10000;
+		uintptr highMemoryOffset = (uintptr)highMemory - 0x10000;
 		for(uint32 i=0; i<256; ++i)
 			mHighMemoryPageTable[i] = highMemoryOffset;
 
@@ -609,7 +611,12 @@ void ATMemoryManager::FreeNode(MemoryNode *node) {
 	mpFreeNodes = node;
 }
 
-sint32 ATMemoryManager::DummyReadHandler(void *thisptr, uint32 addr) {
+sint32 ATMemoryManager::DummyReadHandler(void *thisptr0, uint32 addr) {
+	ATMemoryManager *thisptr = (ATMemoryManager *)thisptr0;
+
+	if (thisptr->mbFloatingDataBus)
+		return thisptr->mBusValue;
+
 	// Star Raiders 5200 has a bug where some 800 code to read the joysticks via the PIA
 	// wasn't removed, so it needs a non-zero value to be returned here.
 	return 0xFF;

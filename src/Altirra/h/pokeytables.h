@@ -20,10 +20,13 @@
 
 struct ATPokeyTables {
 	float	mMixTable[61];
-	uint8	mPoly4Buffer[15];
-	uint8	mPoly5Buffer[31];
-	uint8	mPoly9Buffer[511];
-	uint8	mPoly17Buffer[131071];
+
+	// Bit 0 = 17-bit polynomial
+	// Bit 1 = 9-bit polynomial
+	// Bit 2 = 5-bit polynomial
+	// Bit 3 = 4-bit polynomial
+	uint8	mPolyBuffer[131071 * 2];
+	uint8	mInitModeBuffer[131071 * 2];
 
 	ATPokeyTables();
 };

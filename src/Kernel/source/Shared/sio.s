@@ -20,6 +20,10 @@
 	;turn off POKEY init mode so polynomial counters and audio run
 	mva		#3 skctl
 	sta		sskctl
+	
+	;enable noisy sound (yes, this is actually documented as being inited to
+	;3)
+	sta		soundr
 	rts
 .endp
 
@@ -29,7 +33,6 @@
 	stx		stackp
 	
 	;set retry counters
-	mva		#$0d cretry
 	mva		#$01 dretry
 	
 	;enter critical section
@@ -41,14 +44,32 @@
 	scc:jmp	xit
 .endif
 	
-	jsr		SIOInitBaseTransfers
+	;Set timeout timer address -- MUST be done on each call to SIO, or
+	;Cross-Town Crazy Eight hangs on load due to taking over this vector
+	;previously. This is guaranteed by the OS Manual in Appendix L, H27.
+	jsr		SIOSetTimeoutVector
 
 	;check for cassette
+	ldx		#0
 	lda		ddevic
 	cmp		#$5f
-	sne:jmp	SIOCassette	
+	sne:ldx	#$ff
+	stx		casflg
+
+	;init POKEY hardware
+	jsr		SIOInitHardware
+
+	;go do cassette now
+	bit		casflg
+	beq		retry_command
+	jmp		SIOCassette	
 	
 retry_command:
+	;We try 13 times to get a command accepted by a device; after that it
+	;counts as a device failure and we try one more round of 13 tries.
+	mva		#$0d cretry
+	
+retry_command_2:
 	;init command buffer
 	lda		ddevic
 	clc
@@ -64,43 +85,40 @@ retry_command:
 	;assert command line
 	mva		#$34		pbctl
 
-	;clear stray bytes
-	lda		serin
-
 	;send command frame
 	mva		#0			nocksm
-	mwa		#cdevic-1	bufrlo
+	mwa		#cdevic		bufrlo
 	mwa		#caux2+1	bfenlo
 	jsr		SIOSend
 	bmi		xit
-	
-	;negate command line
-	mva		#$3c		pbctl
-	
-	;setup 3 frame delay for ack
-	mva		#$ff		timflg
-	lda		#1
-	ldx		#>3
-	ldy		#<3
-	jsr		setvbv
-
-	;setup for receiving ACK
-	mwa		#temp		bufrlo
-	mwa		#temp+1		bfenlo
-	mva		#$ff		nocksm
-	jsr		SIOReceive
-	bmi		xit
-	lda		temp
-	cmp		#'A'
+		
+	;wait for the ACK
+	jsr		SIOWaitForACK
 	bpl		ackOK
-	
-	ldy		#SIOErrorNAK
 	
 command_error:
 	dec		cretry
-	bne		retry_command
-	jmp		xit
+	bpl		retry_command_2
+	bmi		transfer_error
+
 ackOK:
+
+	;check if we should send a data frame
+	bit		dstats
+	bpl		no_send_frame
+	
+	;setup buffer pointers
+	jsr		SIOSetupBufferPointers
+	
+	;send data frame	
+	jsr		SIOSend
+	bmi		xit
+	
+	;wait for ACK
+	jsr		SIOWaitForACK
+	bmi		command_error
+
+no_send_frame:
 	
 	;setup 90 frame delay for complete
 	mva		#$ff		timflg
@@ -113,29 +131,43 @@ ackOK:
 	mva		#$ff		nocksm
 	mwa		#temp		bufrlo
 	jsr		SIOReceive
-	bmi		xit
+	bmi		transfer_error
+	
+	;Check if we received a C ($43) or E ($45) -- we must NOT abort immediately
+	;on a device error, as the device still sends back data we need to read, and
+	;Music Studio relies on the data coming back from a CRC error.
 	lda		temp
-	cmp		#'C'
+	cmp		#$43
+	beq		completeOK
+	cmp		#$45
 	beq		completeOK
 	
+	;we received crap... fail it now
+device_error:
+	ldy		#SIOErrorDeviceError
+	
+transfer_error:
 	dec		dretry
-	beq		device_retries_exhausted
+	bmi		device_retries_exhausted
 	jmp		retry_command
 
-device_retries_exhausted:	
-	ldy		#SIOErrorNAK
+device_retries_exhausted:
 xit:
 	lda		#0
+	ldx		casflg
+	bne		leave_cassette_audio_on
 	sta		audc1
 	sta		audc2
 	sta		audc3
 	sta		audc4
+leave_cassette_audio_on:
 	sta		critic
 
 	ldx		stackp
 	txs
 	tya
 	sty		dstats
+	sty		status
 	rts
 
 completeOK:
@@ -143,49 +175,155 @@ completeOK:
 	;setup buffer pointers
 	jsr		SIOSetupBufferPointers
 		
-	;check if we should send a data frame
+	;check if we should read a data frame
 	bit		dstats
-	bmi		sendFrame
-	bvc		dataSendOK
+	bvc		no_receive_frame
 	
 	jsr		SIOReceive
-	bmi		xit
-	ldy		#SIOSuccess
-	jmp		xit
+	bmi		transfer_error
 
-sendFrame:
-	;send data frame
-	dew		bufrlo				;must be -1 for (vseror)
+no_receive_frame:
+	;Now check whether we got a device error earlier. If we did, return
+	;that instead of success.
+	lda		temp
+	cmp		#'C'
+	bne		device_error
 	
-	jsr		SIOSend
-	bmi		xit
-		
-dataSendOK:	
+	;nope, we're good... exit OK.
 	ldy		#SIOSuccess
-	jmp		xit
+	bne		xit
 .endp
 
 ;==============================================================================
-;SIO base init routine
-;
-.proc SIOInitBaseTransfers
-	;set timeout timer address -- MUST be done on each call to SIO, or
-	;Cross-Town Crazy Eight hangs on load due to taking over this vector
-	;previously
+.proc SIOSetTimeoutVector
 	mwa		#SIOCountdown1Handler	cdtma1
+	rts
+.endp
 
-	;clock channel 3 and 4 together at 1.79MHz
-	mva		#$28	audctl
+;==============================================================================
+.proc SIOWaitForACK
+	;setup 2 frame delay for ack
+	mva		#$ff		timflg
+	lda		#1
+	ldx		#>2
+	ldy		#<2
+	jsr		setvbv
 
-	;configure pokey timers 3 and 4 for 19200 baud (1789773/(2*40+7) = 19040)
-	mva		#40		audf3
-	mva		#0		audf4
-	mva		#$a0	audc3
-	mva		#$a8	audc4
+	;setup for receiving ACK
+	mwa		#temp		bufrlo
+	mwa		#temp+1		bfenlo
+	mva		#$ff		nocksm
+	jsr		SIOReceive
 	
+	;check if we had a receive error
+	bmi		xit
+	
+	;check if we got an ACK
+	lda		temp
+	cmp		#'A'
+	beq		xit
+	
+	;doh
+	ldy		#SIOErrorNAK
+xit:
+	rts
+.endp
+
+;==============================================================================
+;SIO send enable routine
+;
+; This is one of those routines that Atari inadvisably exposed in the OS jump
+; table even though they shouldn't. Responsibilities of this routine are:
+;
+;	- Hit SKCTL to reset serial hardware and init for sending
+;	- Hit SKRES to clear status
+;	- Enable send interrupts
+;	- Configure AUDF3/AUDF4 frequency (19200 baud or 600 baud)
+;	- Set AUDC3/AUDC4 for noisy or non-noisy audio
+;	- Set AUDCTL
+;
+; It does not init any of the SIO variables, only hardware/shadow state.
+;
+SIOInitHardware = SIOSendEnable.init_hardware
+.proc SIOSendEnable
+	;enable serial output ready IRQ and suppress serial output complete IRQ
+	lda		pokmsk
+	ora		#$10
+	and		#$f7
+	sta		pokmsk
+	sta		irqen
+
+no_irq_setup:
+	;clear forced break mode and reset serial clocking mode to timer 4
+	;synchronous; also enable two-tone mode if in cassette mode
+	lda		sskctl
+	and		#$0f
+	ora		#$20
+	ldx		casflg
+	seq:ora	#$08
+	sta		sskctl
+	sta		skctl
+
+init_hardware:
+	;clock channel 3 and 4 together at 1.79MHz
+	;configure pokey timers 3 and 4 for 19200 baud (1789773/(2*40+7) = 19040)
+	ldx		#8
+	
+	;check if we are doing a cassette transfer; if so, use the cassette
+	;register table instead
+	lda		casflg
+	beq		not_cassette
+	
+	ldx		#17
+	
+not_cassette:
+
+	;load POKEY audio registers
+	ldy		#8
+	mva:rpl	regdata_normal,x- audf1,y-
+
+	;go noisy audio if requested
+	lda		soundr
+	beq		no_noise
+	
+	lda		#$a8
+	sta		audc4
+	ldx		casflg
+	beq		no_noise
+	lda		#$10
+	bit		sskctl
+	bne		no_noise
+	sta		audc1
+	sta		audc2
+
+no_noise:
+
 	;reset serial status
 	sta		skres
 	rts
+
+regdata_normal:
+	dta		$00		;audf1
+	dta		$a0		;audc1
+	dta		$00		;audf2
+	dta		$a0		;audc2
+	dta		$28		;audf3
+	dta		$a0		;audc3
+	dta		$00		;audf4
+	dta		$a0		;audc4
+	dta		$28		;audctl
+	
+regdata_cassette:
+	dta		$05		;audf1
+	dta		$a0		;audc1
+	dta		$07		;audf2
+	dta		$a0		;audc2
+	dta		$cc		;audf3
+	dta		$a0		;audc3
+	dta		$05		;audf4
+	dta		$a0		;audc4
+	dta		$28		;audctl
+
 .endp
 
 ;==============================================================================
@@ -206,19 +344,12 @@ dataSendOK:
 ;SIO send routine
 ;
 .proc SIOSend
+	dew		bufrlo				;must be -1 for (vseror)
+	
 	;configure serial port for synchronous transmission
 	;enable transmission IRQs
 	sei
-	lda		sskctl
-	and		#$8f
-	ora		#$20
-	sta		sskctl
-	sta		skctl
-	lda		pokmsk
-	ora		#$10
-	and		#$f7
-	sta		pokmsk
-	sta		irqen
+	jsr		SIOSendEnable
 	cli
 	
 	lda		#0
@@ -266,11 +397,11 @@ error:
 	lda		#0
 use_checksum:
 	sta		chksum
-	lda		#0
-	sta		recvdn
-	sta		bufrfl
-	lda		#1
-	sta		status
+	ldx		#0
+	stx		recvdn			;receive done flag = false
+	stx		bufrfl			;buffer full flag = false
+	inx
+	stx		status			;set status to success (1)
 
 	;configure serial port for asynchronous receive
 	;enable receive IRQ
@@ -286,14 +417,21 @@ use_checksum:
 	sta		irqen
 	cli
 	
+	;Negate command line (if it isn't already negated).
+	;
+	;Note that we DON'T do this until we are entirely ready to receive,
+	;because as soon as we do this we can get data.
+	mva		#$3c pbctl
+
 	;wait for receive to complete
 wait:
-	lda		timflg
-	beq		timeout
-	ldy		status
-	bmi		error
-	lda		recvdn
-	beq		wait
+	lda		timflg			;check for timeout
+	beq		timeout			;bail if so
+	ldy		status			;check for another error code
+	bmi		error			;bail if so
+	lda		recvdn			;check for receive complete
+	beq		wait			;keep waiting if not
+
 	ldy		status
 	
 	;shut off receive IRQs
@@ -311,7 +449,7 @@ error:
 	
 timeout:
 	ldy		#SIOErrorTimeout
-	jmp		error
+	bne		error
 .endp
 
 ;==============================================================================
@@ -492,16 +630,37 @@ xit:
 	lda		dcomnd
 	cmp		#$52
 	beq		isread
+	
+	;check if it's put sector
+	cmp		#$50
+	beq		iswrite
 
 	;nope, bail	
 	ldy		#SIOErrorNAK
-	jmp		xit
-	
-isread:
-	jsr		SIOCassetteReadFrame
-xit:
 	jmp		SIO.xit
 	
+iswrite:
+	jsr		SIOCassetteWriteFrame
+	jmp		SIO.xit
+
+isread:
+	jsr		SIOCassetteReadFrame
+	jmp		SIO.xit
+.endp
+
+;==============================================================================
+.proc SIOCassetteWriteFrame
+	;set up to transmit
+	jsr		SIOSendEnable
+	
+	;setup buffer pointers
+	jsr		SIOSetupBufferPointers
+	
+	;send data frame
+	jsr		SIOSend
+	
+	;all done
+	jmp		SIO.xit
 .endp
 
 ;==============================================================================
@@ -510,7 +669,6 @@ xit:
 	mva		#$cc audf3
 	mva		#$05 audf4
 	lda		#0
-	sta		audc3
 	sta		audc4
 	
 	lda		sskctl
@@ -581,24 +739,27 @@ waitdone:
 	;
 	;16 bits at 600 baud is nominally 209 scanline pairs. This means that we
 	;don't have to worry about more than two frames, which is at least 262
-	;scanline pairs or less than 480 baud. However, since we're using HLE,
-	;we can cheat and do this in C++.
+	;scanline pairs or less than 480 baud.
 	
-	lda		#124
-	sta		temp3
+	;set frame height - 262 scanlines for NTSC, 312 for PAL
+	ldx		#131
+	lda		pal
+	lsr
+	sne:ldx	#156
+	stx		temp3
 	
 	;compute line difference
 	lda		timer1
 	jsr		correct_time
-	sta		temp1
+	sta		bfenlo
 	
 	lda		timer2
 	jsr		correct_time
-	sub		temp1
-	sta		temp1
-	lda		#0
-	sbc		#0
-	tay
+	clc							;!! this decrements one line from the line delta
+	sbc		bfenlo
+	sta		bfenlo
+	ldy		#0
+	scs:dey
 	
 	;compute frame difference
 	lda		timer2+1
@@ -607,35 +768,31 @@ waitdone:
 	
 	;accumulate frame difference
 	beq		no_frames
-	lda		temp1
+	lda		bfenlo
 add_frame_loop:
 	clc
 	adc		temp3
 	scc:iny
 	dex
 	bne		add_frame_loop
-	sta		temp1
 no_frames:
-	sty		temp1+1
+	sty		bfenhi
 
-	;compute lines*6 - 7
-	asl		temp1				;lines*2 (lo)
-	rol		temp1+1				;lines*2 (hi)
-	lda		temp1				;
-	ldy		temp1+1				;
-	asl		temp1				;lines*4 (lo)
-	rol		temp1+1				;lines*4 (hi)
-	adc		temp1				;lines*6 (lo)
+	;compute lines*6 - 7 = (lines-1)*6 - 1
+	asl							;(lines-1)*2 (lo)
+	rol		bfenhi				;(lines-1)*2 (hi)
+	sta		bfenlo
+	ldy		bfenhi				;
+	asl		bfenlo				;(lines-1)*4 (lo)
+	rol		bfenhi				;(lines-1)*4 (hi)
+	adc		bfenlo				;(lines-1)*6 (lo)
 	tax							;
 	tya							;
-	adc		temp1+1				;
-	tay
-	txa
-	sec
-	sbc		#7
-	sta		audf3
-	tya
-	sbc		#0
+	adc		bfenhi				;(lines-1)*6 (hi) (and c=0)
+	dex							;-1 line, bringing us to -7
+	stx		audf3
+	inx
+	sne:sbc	#0
 	sta		audf4
 		
 	;kick pokey into init mode to reset serial input shift hw
@@ -667,11 +824,22 @@ aaloop:
 	
 	jmp		SIOReceive.use_checksum
 
+;-------------------------------------------------------------------------
+; We have to be VERY careful when reading (RTCLOK+2, VCOUNT), because
+; the VBI can strike in between. First, we double-check RTCLOK+2 to see
+; if it has changed. If so, we retry the read. Second, we check if
+; VCOUNT=124, which corresponds to lines 248/249. This can correspond to
+; either before or after the VBI -- with CRITIC off the VBI ends around
+; (249, 20-50) -- so we don't know which side of the frame boundary we're
+; on.
+;
 readtimer:
 	ldy		rtclok+2
 	lda		vcount
 	cpy		rtclok+2
 	bne		readtimer
+	cmp		#124
+	beq		readtimer
 	rts
 	
 correct_time:

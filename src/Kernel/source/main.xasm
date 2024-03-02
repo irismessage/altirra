@@ -16,6 +16,8 @@
 ;	along with this program; if not, write to the Free Software
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
+;==========================================================================
+
 .if _KERNEL_XLXE
 	_KERNEL_PBI_SUPPORT = 1
 	_KERNEL_USE_BOOT_SCREEN = 1
@@ -27,6 +29,10 @@
 	_KERNEL_USE_BOOT_SCREEN = 0
 .endif
 
+	_KERNEL_PRINTER_SUPPORT = 1
+	
+;==========================================================================
+
 	icl		'version.inc'
 	icl		'hardware.inc'
 	icl		'kerneldb.inc'
@@ -35,7 +41,13 @@
 
 .if _KERNEL_XLXE
 	org		$c000
+	
+	icl		'vbi.s'
+	icl		'interrupt.s'
+	icl		'irq.s'
+	
 	icl		'pbi.s'
+	icl		'phandler.s'
 	
 	org		$cc00
 	icl		'atariifont.inc'
@@ -69,7 +81,7 @@ screnv	dta		a(ScreenOpen-1)
 		dta		a(ScreenPutByte-1)
 		dta		a(ScreenGetStatus-1)
 		dta		a(ScreenSpecial-1)
-		jsr		BugCheck
+		jsr		ScreenInit
 		dta		$00
 
 keybdv	dta		a(KeyboardOpen-1)
@@ -81,13 +93,13 @@ keybdv	dta		a(KeyboardOpen-1)
 		jmp		KeyboardInit
 		dta		$00
 	
-printv	dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		jsr		BugCheck
+printv	dta		a(PrinterOpen-1)
+		dta		a(PrinterClose-1)
+		dta		a(PrinterGetByte-1)
+		dta		a(PrinterPutByte-1)
+		dta		a(PrinterGetStatus-1)
+		dta		a(PrinterSpecial-1)
+		jsr		PrinterInit
 		dta		$00
 
 casetv	dta		a(CassetteOpen-1)
@@ -101,34 +113,42 @@ casetv	dta		a(CassetteOpen-1)
 
 		;vector table
 		org	$e450
-diskiv	jsr		DiskInit
-dskinv	jmp		DiskHandler
-ciov	jmp		CIO
-siov	jmp		SIO
-setvbv	jmp		VBISetVector
-sysvbv	jmp		VBIStage1
-xitvbv	jmp		VBIExit
-sioinv	jmp		SIOInit
-sendev	jsr		BugCheck
-intinv	jsr		IntInitInterrupts
-cioinv	jmp		CIOInit
+diskiv	jmp		DiskInit			;$E450
+dskinv	jmp		DiskHandler			;$E453
+ciov	jmp		CIO					;$E456
+siov	jmp		SIO					;$E459
+setvbv	jmp		VBISetVector		;$E45C
+sysvbv	jmp		VBIStage1			;$E45F
+xitvbv	jmp		VBIExit				;$E462
+sioinv	jmp		SIOInit				;$E465
+sendev	jmp		SIOSendEnable		;$E468
+intinv	jmp		IntInitInterrupts	;$E46B
+cioinv	jmp		CIOInit				;$E46E
 
 .if _KERNEL_XLXE
-blkbdv	jmp		SelfTestEntry
+blkbdv	jmp		SelfTestEntry		;$E471
 .else
-blkbdv	jmp		Blackboard
+blkbdv	jmp		Blackboard			;$E471
 .endif
 
-warmsv	jmp		InitWarmStart
-coldsv	jmp		InitColdStart
-rblokv	jmp		CassetteReadBlock
-csopiv	jmp		CassetteOpenRead
+warmsv	jmp		InitWarmStart		;$E474
+coldsv	jmp		InitColdStart		;$E477
+rblokv	jmp		CassetteReadBlock	;$E47A
+csopiv	jmp		CassetteOpenRead	;$E47D
 
 .if _KERNEL_XLXE
-pentv	jmp		PBIAddHandler		;$E486	XL: add handler to HATABS
-phunlv	jsr		BugCheck			;$E489	XL: 
-phiniv	jsr		BugCheck			;$E48C	XL:
-gpdvv	jsr		BugCheck			;$E48F	XL: Generic device vector
+pupdiv	jmp		SelfTestEntry		;$E480	XL/XE: power-up display
+slftsv	jmp		$5000				;$E483	XL/XE: self-test entry
+pentv	jmp		PHAddHandler		;$E486	XL/XE: peripheral handler add
+phunlv	jmp		PHRemoveHandler		;$E489	XL/XE: peripheral handler remove
+phiniv	jmp		PHInitHandler		;$E48C	XL/XE: peripheral handler init
+gpdvv	PBI_VECTOR_TABLE			;$E48F	XL/XE: Generic device vector
+.endif
+
+.if _KERNEL_XLXE
+	icl		'selftestentry.s'
+.else
+	icl		'blackboard.s'
 .endif
 
 ;==============================================================================
@@ -143,32 +163,77 @@ gpdvv	jsr		BugCheck			;$E48F	XL: Generic device vector
 		rts
 .endp
 
+;==============================================================================
+; Main modules.
+;
+; We report the sizes here as well as reference sizes. The reference sizes for
+; OS-B come from Mapping the Atari.
+;
 
-	icl		'bugcheck.s'
+	.echo	'Module sizes:'
+
+.macro _KERNEL_REPORT_MODULE_MARK
+	.def ?@_kernel_lastpt = *
+.endm
+
+.macro _KERNEL_REPORT_MODULE_SIZE
+	.if !_KERNEL_XLXE
+		.echo	'    ', *, ' -> ', *-?@_kernel_lastpt, '(', :2, ')', '    ', :1
+	.endif
+	
+	.def ?@_kernel_lastpt = *
+.endm
+
 	icl		'misc.s'
-	icl		'init.s'
-	icl		'boot.s'
+	_KERNEL_REPORT_MODULE_MARK
+	
 	icl		'cio.inc'
 	icl		'cio.s'
+	_KERNEL_REPORT_MODULE_SIZE 'Central Input/Output (CIO)', $E6D5-$E4A6
+
+	.if !_KERNEL_XLXE
+	icl		'vbi.s'
+	icl		'interrupt.s'
+	icl		'irq.s'
+	.endif
+	_KERNEL_REPORT_MODULE_SIZE 'Interrupt routines', $E944-$E6D5
+	
 	icl		'sio.inc'
 	icl		'sio.s'
-	icl		'disk.s'
-	icl		'interrupt.s'
-	icl		'vbi.s'
-	icl		'irq.s'
+	_KERNEL_REPORT_MODULE_SIZE 'Serial Input/Output (SIO)', $EDEA-$E944
 	
-.if _KERNEL_XLXE
-	icl		'selftestentry.s'
-.else
-	icl		'blackboard.s'
-.endif
-
+	icl		'disk.s'
+	_KERNEL_REPORT_MODULE_SIZE 'Disk Handler', $EE78-$EDEA
+	
+	icl		'printer.s'
+	_KERNEL_REPORT_MODULE_SIZE 'Printer Handler', $EF41-$EE78
+	
 	icl		'cassette.s'
+	_KERNEL_REPORT_MODULE_SIZE 'Cassette Handler', $F0E3-$EF41
+	
+	icl		'init.s'
+	icl		'boot.s'
+	_KERNEL_REPORT_MODULE_SIZE 'Monitor routines', $F3E4-$F0E3
 	
 	icl		'screen.s'
 	icl		'editor.s'
+	icl		'screenext.s'
+	
 	icl		'keyboard.s'
 	icl		'keytable.s'
+
+;==============================================================================
+; version block (XL/XE)
+;==============================================================================
+
+	.if _KERNEL_XLXE
+	org		$ffee
+	dta		$01,$01,$13
+	dta		$01					;option byte - !!CHECKED BY ARCHON
+	dta		'CX',$00,$00,$00
+	dta		$00
+	dta		a(0)
+	.endif
 
 ;==============================================================================
 ; reset vectors

@@ -59,6 +59,8 @@ bufrlo	= $0032			;SIO: buffer pointer lo (incremented by IRQ routines)
 bufrhi	= $0033			;SIO: buffer pointer hi (incremented by IRQ routines)
 bfenlo	= $0034			;SIO: buffer end lo
 bfenhi	= $0035			;SIO: buffer end hi
+ltemp	= $0036			;Relocating loader: loader temp address (XL/XE)
+		; $0037
 bufrfl	= $0038			;SIO: buffer full flag
 recvdn	= $0039			;SIO: receive completed flag
 xmtdon	= $003a			;SIO: transmit completed flag
@@ -67,8 +69,10 @@ nocksm	= $003c			;SIO: no-checksum flag
 bptr	= $003d			;Cassette: Buffer pointer
 ftype	= $003e			;Cassette: Interrecord gap (IRG) type; bit7=1 means continuous mode
 feof	= $003f			;Cassette: EOF flag
+soundr	= $0041			;SIO: noisy audio flag
 critic	= $0042			;critical flag for vbi
-ckey	= $004a			;cassette boot key
+zchain	= $004a			;Peripheral Handler: zero-page chain address
+		; $004b
 atract	= $004d			;screen attract counter
 drkmsk	= $004e			;screen attract mask
 colrsh	= $004f			;screen attract color shift
@@ -85,22 +89,32 @@ oldrow	= $005a			;
 oldcol	= $005b			;
 oldchr	= $005d			;cursor character save/restore
 oldadr	= $005e			;cursor memory address
+		; $005f
 palnts	= $0062			;PAL/NTSC flag
 logcol	= $0063			;Display/Editor: Logical column (0-119)
 adress	= $0064			;temporary storage (display code)
 		; $0065
 toadr	= $0066			;temporary storage (display code)
 a1		= toadr
+		; $0067
 frmadr	= $0068			;temporary storage (display code)
+		; $0069
 ramtop	= $006a			;ram size
 bufcnt	= $006b
 bufstr	= $006c			;row/column of start of logical line
 bitmsk	= $006e			;Screen Editor
+shfamt	= $006f			;Screen Editor
+rowac	= $0070			;Screen Editor: line drawing
+		; $0071			;
+colac	= $0072			;Screen Editor: line drawing
+		; $0073			;
+endpt	= $0074			;Screen Editor: line drawing
+		; $0075			;
 deltar	= $0076			;Screen Editor: delta row (line drawing)
 deltac	= $0077			;Screen Editor: delta column (line drawing)
 		; $0078			;
-rowinc	= $0079			;Screen Editor: row direction
-colinc	= $007a			;Screen Editor: col direction
+keydef	= $0079			;XL/XE: Keyboard definition table
+		; $007a
 swpflg	= $007b			;current display var state ($00 = main, $FF = split screen)
 holdch	= $007c			;temporary key hold area prior to shift/control lock logic
 countr	= $007e			;Screen Editor: line length
@@ -150,7 +164,12 @@ sdmctl	= $022f			;shadow for DMACTL ($D400)
 sdlstl	= $0230			;shadow for DLISTL ($D402)
 sdlsth	= $0231			;shadow for DLISTH ($D403)
 sskctl	= $0232			;shadow for SKCTL ($D20F)
+lcount	= $0233			;Relocating loader: (XL/XE)
+lpenh	= $0234			;light pen horizontal pos
+lpenv	= $0235			;light pen vertical pos
 brkky	= $0236			;break key interrupt vector (OS B+ only)
+reladr	= $0238			;Relocating loader: temp address (XL/XE)
+		; $0239
 cdevic	= $023a			;SIO: command frame device ID
 ccomnd	= $023b			;SIO: command frame command ID
 caux1	= $023c			;SIO: command aux byte 1
@@ -161,8 +180,11 @@ dflags	= $0240			;disk boot flags
 dbsect	= $0241			;disk boot sector count
 bootad	= $0242			;disk boot address
 coldst	= $0244			;cold start flag
+reclen	= $0245			;Relocating loader: record length (XL/XE)
+dsktim	= $0246			;Disk Handler: Disk operation timeout
 pdvmsk	= $0247			;PBI device mask (XL/XE)
 shpdvs	= $0248			;PBI device selection register shadow ($D1FF) (XL/XE)
+fine	= $026e			;fine scrolling flag (XL/XE)
 gprior	= $026f			;shadow for PRIOR ($D01B)
 paddl0	= $0270			;shadow for POT0 ($D200)
 paddl1	= $0271			;shadow for POT1 ($D201)
@@ -188,9 +210,11 @@ strig0	= $0284			;shadow for TRIG0 ($D001)
 strig1	= $0285			;shadow for TRIG1 ($D002)
 strig2	= $0286			;shadow for TRIG2 ($D003)
 strig3	= $0287			;shadow for TRIG3 ($D004)
+hibyte	= $0288			;Relocating loader (XL/XE)
 wmode	= $0289			;Cassette: Write mode (00 = read, 80 = write)
 blim	= $028a			;Cassette: Buffer limit
 jveck	= $028c			;XL/XE: IRQ jump vector
+newadr	= $028e			;Relocating loader (XL/XE)
 txtrow	= $0290
 txtcol	= $0291
 		; $0292
@@ -222,10 +246,25 @@ color1	= $02c5			;shadow for COLPF1 ($D017)
 color2	= $02c6			;shadow for COLPF2 ($D018)
 color3	= $02c7			;shadow for COLPF3 ($D019)
 color4	= $02c8			;shadow for COLBK ($D01A)
+runadr	= $02c9			;Relocating loader: run address (XL/XE)
+		; $02ca
+hiused	= $02cb			;Relocating loader: Next available memory location (out) (XL/XE)
+		; $02cc
+zhiuse	= $02cd			;Relocating loader: Next available zero-page address (out) (XL/XE)
+		; $02ce
+gbytea	= $02cf			;Relocating loader: GET BYTE address (XL/XE)
+		; $02d0
+loadad	= $02d1			;Relocating loader: Load address (XL/XE)
+		; $02d2
+zloada	= $02d3			;Relocating loader: Zero-page load address (XL/XE)
+		; $02d4
 dsctln	= $02d5			;Disk sector size (XL/XE)
+pbpnt	= $02de			;Printer: Buffer index (XL/XE location)
+pbufsz	= $02df			;Printer: Record size (XL/XE location)
 ramsiz	= $02e4			;ram size in pages
 memtop	= $02e5			;highest location for programs and data
 memlo	= $02e7			;base of application memory
+hndlod	= $02e9			;CIO: Handler load flag (XL/XE)
 dvstat	= $02ea			;DISK: Status request buffer area (4 bytes)
 		; $02eb
 		; $02ec
@@ -235,6 +274,8 @@ keydel	= $02f1			;keyboard debounce delay (set to 3 vblanks per key)
 ch1		= $02f2			;last keyboard code read
 chact	= $02f3			;shadow for CHACTL ($D401)
 chbas	= $02f4			;shadow for CHBASE ($D409)
+rowinc	= $02f8			;Screen Editor: row direction (XL/XE location)
+colinc	= $02f9			;Screen Editor: col direction (XL/XE location)
 atachr	= $02fb			;Screen Editor
 ch		= $02fc			;keyboard FIFO byte
 fildat	= $02fd			;Screen Editor: fill color
@@ -253,9 +294,11 @@ daux1	= $030a			;sector number lo
 daux2	= $030b			;sector number hi
 timer1	= $030c			;SIO: baud rate determination - first timer value
 addcor	= $030e			;SIO: baud rate determination - correction value
+casflg	= $030f			;SIO: cassette I/O flag (0=normal, nonzero=cassette)
 timer2	= $0310			;SIO: baud rate determination - second timer value
 temp1	= $0312			;SIO: baud rate determination - temp
 		; $0313
+ptimot	= $0314			;Printer: Timeout (XL/XE location)
 temp3	= $0315			;SIO: baud rate determination - temp
 timflg	= $0317			;SIO: operation timeout flag (set by countdown timer 1 IRQ)
 stackp	= $0318			;SIO: stack pointer save
@@ -279,8 +322,11 @@ icax3	= $034c			;
 icax4	= $034d			;
 icax5	= $034e			;
 icax6	= $034f			;
+prnbuf	= $03c0			;printer buffer
+ckey	= $03e9			;cassette boot key
 basicf	= $03f8			;XL/XE: ROM BASIC flag. 0 = enabled
 gintlk	= $03fa			;XL/XE: Cartridge interlock (clone of TRIG3). 
+chlink	= $03fb			;XL/XE: Relocated loader chain
 casbuf	= $03fd			;Cassette buffer (03FD-047F)
 lbuff	= $0580			;
 plyarg	= $05e0			;FP: Polynomial evaluation temp register

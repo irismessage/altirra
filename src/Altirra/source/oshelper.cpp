@@ -192,6 +192,30 @@ void ATSaveFrame(void *hwnd, const VDPixmap& px, const wchar_t *filename) {
 	f.write(mem, len);
 }
 
+void ATCopyTextToClipboard(void *hwnd, const char *s) {
+	if (::OpenClipboard((HWND)hwnd)) {
+		if (::EmptyClipboard()) {
+			HANDLE hMem;
+			void *lpvMem;
+
+			size_t len = strlen(s);
+
+			if (hMem = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, len + 1)) {
+				if (lpvMem = ::GlobalLock(hMem)) {
+					memcpy(lpvMem, s, len + 1);
+
+					::GlobalUnlock(lpvMem);
+					::SetClipboardData(CF_TEXT, hMem);
+					::CloseClipboard();
+					return;
+				}
+				::GlobalFree(hMem);
+			}
+		}
+		::CloseClipboard();
+	}
+}
+
 namespace {
 	struct ATUISavedWindowPlacement {
 		sint32 mLeft;

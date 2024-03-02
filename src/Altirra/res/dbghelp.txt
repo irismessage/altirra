@@ -46,6 +46,7 @@
       dsb addr Read memory signed byte
       dw addr  Read memory unsigned word
       dsw addr Read memory signed word
+      dsd addr Read memory signed double word (32-bit)
       +        Unary plus
       -        Unary minus
       <        Unary low byte (bits 0-7, as unsigned byte)
@@ -349,6 +350,26 @@
     
     See also: ba, bs
 
++ bt   Set breakpoint with trace (tracepoint)
+
+    Set a tracepoint at a PC address.
+    
+      bt <address> format [arguments...]
+      bt `file:line` format [arguments...]
+      
+    Sets a non-stopping breakpoint at a PC address or source location
+    with a command to print a trace line on the console when the breakpoint
+    is hit (tracepoint). The breakpoint location is the same as for the
+    bp (set breakpoint) command and the formatting arguments are the same
+    as for the .printf command.
+    
+    This command is equivalent to using the bp command with a breakpoint
+    command of the form:
+    
+      `.printf <format> <arguments...> ; `g -n
+    
+    See also: bp, .printf
+    
 + bx   Break on expression (conditional breakpoint)
 
     Set a breakpoint conditional on an expression.
@@ -679,17 +700,17 @@
     Registers that can be modified are: PC, A, X, Y, S, and P. The flags in
     the P register can also be individually toggled:
     
-	  p.n    Negative (sign) flag
-	  p.v    Overflow flag
-	  p.m    Accumulator size flag (65C816 mode only)
-	  p.x    Index size flag (65C816 mode only)
-	  p.d    Decimal mode flag
-	  p.i    Interrupt mask flag
-	  p.z    Zero flag
-	  p.c    Carry flag
-	  
-	The break flag cannot be modified as it does not exist in the P register,
-	only in the image of P pushed on the stack during interrupt entry.
+      p.n    Negative (sign) flag
+      p.v    Overflow flag
+      p.m    Accumulator size flag (65C816 mode only)
+      p.x    Index size flag (65C816 mode only)
+      p.d    Decimal mode flag
+      p.i    Interrupt mask flag
+      p.z    Zero flag
+      p.c    Carry flag
+      
+    The break flag cannot be modified as it does not exist in the P register,
+    only in the image of P pushed on the stack during interrupt entry.
 
 + s    Search memory
 
@@ -824,7 +845,10 @@
 
     Lists the statements contained within a BASIC line.
     
-      .basic_dumpline <address>
+      .basic_dumpline [<address>]
+      
+    If no address is specified, the continuation address from the last
+    command is used.
 
 + .basic_vars  Dump BASIC variables
 
@@ -1087,6 +1111,24 @@
     See also: .ide_dumpsec, .ide_wrsec
 
 + .iocb        Display CIO I/O control blocks
+
+    Displays the contents of the nine IOCBs used by CIO.
+    
+      .iocb
+      
+    The zero-page IOCB, or ZIOCB, displayed as ZP. It is only valid during
+    CIO operation.
+    
+    A device name including an ID and a tilde, e.g. $50~R:, is reported for
+    a provisionally open IOCB. An IOCB is provisionally opened when the OS
+    successfully receives a device response to a type 4 poll for a missing
+    CIO device on the SIO bus. Further I/O to this IOCB with the HNDLOD
+    variable set will trigger a load of the handler from the device into
+    memory. The reported ID is the SIO address of the device to be used
+    for handler loading.
+    
+    See also: .tracecio, .ciodevs
+
 + .loadksym    Load kernel symbols
 + .loadsym     Load module symbols
 
@@ -1215,6 +1257,23 @@
 
     See also: .echo
 
++ .readmem     Read memory from disk
+
+    Read a block of data from a file on disk into memory.
+
+      .readmem <path> <xaddress> [L<length>]
+      
+    The address may use extended memory syntax, i.e. v:4000 for VBXE
+    memory.
+
++ .reload      Reload symbol files
+
+    Re-reads symbol files for all currently loaded symbols.
+    
+      .reload
+      
+    See also: lm (list modules), .loadsym, .unloadsym
+
 + .restart     Restart emulated system
 
     Performs a cold reset.
@@ -1232,7 +1291,13 @@
     be specified. The loaded symbols are placed in a module called SDX.
     If this module exists, it is cleared before being reloaded.
 
-+ .sio         Dump SIO parameter block
++ .sio         Dump SIO device control block (DCB)
+
+    Displays the contents of the SIO device control block.
+    
+      .sio [-b]
+      
+    The -b option gives one-line abbreviated output.
 
 + .sourcemode  Switch between source and disassembly level debugging
 
@@ -1264,10 +1329,13 @@
 
     Displays data from the currently loaded cassette tape.
     
-      .tapedata                 (Display raw tape bits)
-      .tapedata -t              (Display raw tape bit transitions)
-      .tapedata -b <baud>       (Display decoded data at baud rate)
-      .tapedata -b <baud> -d    (Display only decoded bytes at baud rate)
+      .tapedata [-t] [-b <baud> [-d]] [-r <pos>] [-p <pos>]
+      
+      -t           Display bit transitions
+      -b <baud>    Decode data at given baud rate
+      -d           Display only decoded bytes
+      -r <pos>     Decode at offset in milliseconds from current position
+      -p <pos>     Decode at absolute position in milliseconds
       
     The .tapedata command displays the data near the current tape
     position. By default, the raw internally stored data bits are

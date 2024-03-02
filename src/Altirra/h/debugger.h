@@ -92,6 +92,7 @@ class IATDebugger;
 
 class IATDebuggerActiveCommand : public IVDRefCount {
 public:
+	virtual bool IsBusy() const = 0;
 	virtual const char *GetPrompt() = 0;
 	virtual void BeginCommand(IATDebugger *debugger) = 0;
 	virtual void EndCommand() = 0;
@@ -121,7 +122,7 @@ public:
 	virtual void ToggleBreakpoint(uint16 addr) = 0;
 	virtual void ToggleAccessBreakpoint(uint16 addr, bool write) = 0;
 	virtual void ToggleSourceBreakpoint(const char *fn, uint32 line) = 0;
-	virtual uint32 SetSourceBreakpoint(const char *fn, uint32 line, ATDebugExpNode *condexp, const char *command) = 0;
+	virtual uint32 SetSourceBreakpoint(const char *fn, uint32 line, ATDebugExpNode *condexp, const char *command, bool continueExecution = false) = 0;
 
 	virtual void StepInto(ATDebugSrcMode sourceMode, uint32 regionStart = 0, uint32 regionSize = 0) = 0;
 	virtual void StepOver(ATDebugSrcMode sourceMode, uint32 rgnStart = 0, uint32 rgnSize = 0) = 0;

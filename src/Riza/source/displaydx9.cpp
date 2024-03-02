@@ -778,8 +778,7 @@ public:
 
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h);
-	virtual void MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView);
-	virtual void MultiColorBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView);
+	virtual void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode);
 
 	virtual void PolyLine(const vdpoint32 *points, uint32 numLines);
 
@@ -919,6 +918,8 @@ void VDDisplayRendererD3D9::SetColorRGB(uint32 color) {
 }
 
 void VDDisplayRendererD3D9::FillRect(sint32 x, sint32 y, sint32 w, sint32 h) {
+	if ((w|h) < 0)
+		return;
 
 	IDirect3DDevice9 *dev = mpD3DManager->GetDevice();
 	dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_CURRENT);
@@ -1157,7 +1158,7 @@ void VDDisplayRendererD3D9::Blt(sint32 x, sint32 y, VDDisplayImageView& imageVie
 	dev->SetTexture(0, NULL);
 }
 
-void VDDisplayRendererD3D9::MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
+void VDDisplayRendererD3D9::MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode) {
 	if (!n)
 		return;
 
@@ -1269,10 +1270,6 @@ void VDDisplayRendererD3D9::MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, 
 
 	dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
 	dev->SetTexture(0, NULL);
-}
-
-void VDDisplayRendererD3D9::MultiColorBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
-	MultiStencilBlt(blts, n, imageView);
 }
 
 void VDDisplayRendererD3D9::PolyLine(const vdpoint32 *points, uint32 numLines) {

@@ -46,6 +46,13 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, const char *name, uint32&
 		val = key.getInt(name, val);
 }
 
+void ATOptionsExchange(VDRegistryKey& key, bool write, const char *name, VDStringA& val) {
+	if (write)
+		key.setString(name, val.c_str());
+	else
+		key.getString(name, val);
+}
+
 template<class T>
 void ATOptionsExchangeEnum(VDRegistryKey& key, bool write, const char *name, T& val, T limit) {
 	if (write)
@@ -64,6 +71,7 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Display: Full screen mode width", opts.mFullScreenWidth);
 	ATOptionsExchange(key, write, "Display: Full screen mode height", opts.mFullScreenHeight);
 	ATOptionsExchange(key, write, "Display: Full screen mode refresh rate", opts.mFullScreenRefreshRate);
+	ATOptionsExchange(key, write, "Flash: SIC! cartridge flash mode", opts.mSICFlashChip);
 }
 
 void ATOptionsLoad() {

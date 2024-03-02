@@ -69,6 +69,7 @@ ATVBXEEmulator::ATVBXEEmulator()
 	, mMemAcBankA(0)
 	, mMemAcBankB(0)
 	, mb5200Mode(false)
+	, mbSharedMemory(false)
 	, mRegBase(0)
 	, mXdlBaseAddr(0)
 	, mXdlAddr(0)
@@ -159,10 +160,11 @@ ATVBXEEmulator::ATVBXEEmulator()
 ATVBXEEmulator::~ATVBXEEmulator() {
 }
 
-void ATVBXEEmulator::Init(uint8 *memory, IATVBXEEmulatorConnections *conn, ATMemoryManager *memman) {
+void ATVBXEEmulator::Init(uint8 *memory, IATVBXEEmulatorConnections *conn, ATMemoryManager *memman, bool sharedMemory) {
 	mpMemory = memory;
 	mpConn = conn;
 	mpMemMan = memman;
+	mbSharedMemory = sharedMemory;
 
 	ColdReset();
 }
@@ -209,6 +211,7 @@ void ATVBXEEmulator::ColdReset() {
 	mbExtendedColor	= false;
 	mbAttrMapEnabled = false;
 
+	InitMemoryMaps();
 	WarmReset();
 }
 
@@ -246,7 +249,6 @@ void ATVBXEEmulator::WarmReset() {
 	mOvWidth = kOvWidth_Normal;
 	mOvMode = kOvMode_Disabled;
 
-	InitMemoryMaps();
 	UpdateMemoryMaps();
 }
 
@@ -580,7 +582,7 @@ sint32 ATVBXEEmulator::ReadControl(uint8 addrLo) {
 			return 0x10;
 
 		case 0x41:	// MINOR_REVISION
-			return 0x20;
+			return (mbSharedMemory ? 0x80 : 0x00) | 0x24;
 
 		case 0x4A:	// COLDETECT
 			return 0x00;
@@ -664,16 +666,18 @@ bool ATVBXEEmulator::WriteControl(uint8 addrLo, uint8 value) {
 		case 0x53:	// BLITTER_START
 			// D0: 1 = START, 0 = STOP
 			if (value & 1) {
-				mbBlitterEnabled = true;
-				mbBlitterListActive = true;
-				mbBlitterActive = false;
-				mbBlitterContinue = true;
-				mBlitListFetchAddr = mBlitListAddr;
+				if (!mbBlitterEnabled) {
+					mbBlitterEnabled = true;
+					mbBlitterListActive = true;
+					mbBlitterActive = false;
+					mbBlitterContinue = true;
+					mBlitListFetchAddr = mBlitListAddr;
 
-				// We have to load the first entry immediately because some demos are a
-				// bit creative and overwrite the first entry without checking blitter
-				// status...
-				LoadBlitter();
+					// We have to load the first entry immediately because some demos are a
+					// bit creative and overwrite the first entry without checking blitter
+					// status...
+					LoadBlitter();
+				}
 			} else {
 				mbBlitterListActive = false;
 				mbBlitterActive = false;
@@ -735,7 +739,7 @@ bool ATVBXEEmulator::WriteControl(uint8 addrLo, uint8 value) {
 			return false;
 	}
 
-	return true;
+	return false;
 }
 
 bool ATVBXEEmulator::StaticGTIAWrite(void *thisptr, uint32 reg, uint8 value) {
@@ -776,7 +780,7 @@ void ATVBXEEmulator::InitMemoryMaps() {
 		handler.mpDebugReadHandler	= StaticReadControl;
 		handler.mpReadHandler		= StaticReadControl;
 		handler.mpWriteHandler		= StaticWriteControl;
-		mpMemLayerRegisters = mpMemMan->CreateLayer(kATMemoryPri_Hardware, handler, mRegBase, 0x01);
+		mpMemLayerRegisters = mpMemMan->CreateLayer(kATMemoryPri_Hardware + 1, handler, mRegBase, 0x01);
 		mpMemMan->EnableLayer(mpMemLayerRegisters, true);
 	}
 }
@@ -2227,6 +2231,9 @@ void ATVBXEEmulator::RunBlitter() {
 			if (!mbBlitterContinue) {
 				mbBlitterListActive = false;
 				mbBlitterEnabled = false;
+
+				if (mbBlitLogging)
+					ATConsoleTaggedPrintf("VBXE: Blit list completed\n");
 
 				// raise blitter complete interrupt
 				if (!mbIRQRequest) {

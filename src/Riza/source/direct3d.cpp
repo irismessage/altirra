@@ -40,6 +40,7 @@
 ///////////////////////////////////////////////////////////////////////////
 
 #define VDDEBUG_D3D VDDEBUG
+#define VDDEBUG_D3D_MODESWITCH (void)sizeof
 
 using namespace nsVDD3D9;
 
@@ -367,12 +368,14 @@ VDD3D9Manager::VDD3D9Manager(HMONITOR hmonitor, bool use9ex)
 	, mpD3DRTMain(NULL)
 	, mhMonitor(hmonitor)
 	, mDevWndClass(NULL)
-	, mhwndDevice(NULL)
+	, mhwndDevice(NULL) 
 	, mThreadID(0)
 	, mbUseD3D9Ex(use9ex)
 	, mbDeviceValid(false)
 	, mbInScene(false)
+	, mbSupportsEventQueries(false)
 	, mFullScreenCount(0)
+	, mFSFence(0)
 	, mpD3DVB(NULL)
 	, mpD3DIB(NULL)
 	, mpD3DQuery(NULL)
@@ -693,8 +696,8 @@ bool VDD3D9Manager::InitVRAMResources() {
 	}
 
 	// create flush event
-	mbSupportsEventQueries = false;
 	if (!mpD3DQuery) {
+		mbSupportsEventQueries = false;
 		hr = mpD3DDevice->CreateQuery(D3DQUERYTYPE_EVENT, NULL);
 		if (SUCCEEDED(hr)) {
 			mbSupportsEventQueries = true;
@@ -861,10 +864,32 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 	if ((!mPresentParms.Windowed) == newState)
 		return;
 
-	D3DDISPLAYMODE dm;
-	mpD3DDevice->GetDisplayMode(0, &dm);
+	mPresentParms.Windowed = !newState;
+	mPresentParms.SwapEffect = newState ? D3DSWAPEFFECT_DISCARD : D3DSWAPEFFECT_COPY;
+	mPresentParms.BackBufferCount = newState ? 3 : 1;
+	mPresentParms.PresentationInterval = newState ? D3DPRESENT_INTERVAL_ONE : D3DPRESENT_INTERVAL_IMMEDIATE;
+
+	D3DDISPLAYMODE dm = {0};
+	HRESULT hrx = mpD3DDevice->GetDisplayMode(0, &dm);
+	VDDEBUG_D3D_MODESWITCH("Current display mode: %ux%u (hr=%08x)\n", dm.Width, dm.Height, hrx);
 	if (newState) {
+		const int targetwidth = w && h ? w : dm.Width;
+		const int targetheight = w && h ? h : dm.Height;
+		const int targetrefresh = w && h && refresh ? refresh : dm.RefreshRate;
+
+		// First, we try resetting with the desired display mode. This is necessary to access
+		// modes not reported by the monitor (i.e. 50Hz) as there is no way to enumerate
+		// unpruned modes in Direct3D 9 or 9Ex. If that fails then we try monitor mode matching.
+		mPresentParms.BackBufferWidth = targetwidth;
+		mPresentParms.BackBufferHeight = targetheight;
+		mPresentParms.FullScreen_RefreshRateInHz = targetrefresh;
+		mPresentParms.BackBufferFormat = D3DFMT_X8R8G8B8;
+
+		if (Reset())
+			return;
+
 		UINT count = mpD3D->GetAdapterModeCount(mAdapter, D3DFMT_X8R8G8B8);
+		VDDEBUG_D3D_MODESWITCH("Unable to switch to requested mode. Trying to match against %u display modes.\n", count);
 
 		D3DDISPLAYMODE dm2;
 		D3DDISPLAYMODE dmbest={0};
@@ -872,9 +897,6 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 		int bestwidtherr = 0;
 		int bestheighterr = 0;
 		int bestrefresherr = 0;
-		const int targetwidth = w && h ? w : dm.Width;
-		const int targetheight = w && h ? h : dm.Height;
-		const int targetrefresh = w && h && refresh ? refresh : dm.RefreshRate;
 		
 		for(UINT mode=0; mode<count; ++mode) {
 			HRESULT hr = mpD3D->EnumAdapterModes(mAdapter, D3DFMT_X8R8G8B8, mode, &dm2);
@@ -919,20 +941,34 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 		mPresentParms.BackBufferFormat = D3DFMT_UNKNOWN;
 		mPresentParms.FullScreen_RefreshRateInHz = 0;
 	}
-
-	mPresentParms.Windowed = !newState;
-	mPresentParms.SwapEffect = newState ? D3DSWAPEFFECT_DISCARD : D3DSWAPEFFECT_COPY;
-	mPresentParms.BackBufferCount = newState ? 1 : 1;
-	mPresentParms.PresentationInterval = newState ? D3DPRESENT_INTERVAL_ONE : D3DPRESENT_INTERVAL_IMMEDIATE;
 	
-	Reset();
+	VDDEBUG_D3D_MODESWITCH("Attempting to switch to %ux%u @ %uHz.\n"
+		, mPresentParms.BackBufferWidth
+		, mPresentParms.BackBufferHeight
+		, mPresentParms.FullScreen_RefreshRateInHz
+		);
+
+	if (Reset()) {
+		VDDEBUG_D3D_MODESWITCH("Switch to %ux%u @ %uHz was successful.\n"
+			, mPresentParms.BackBufferWidth
+			, mPresentParms.BackBufferHeight
+			, mPresentParms.FullScreen_RefreshRateInHz
+			);
+	} else {
+		VDDEBUG_D3D_MODESWITCH("Switch to %ux%u @ %uHz FAILED.\n"
+			, mPresentParms.BackBufferWidth
+			, mPresentParms.BackBufferHeight
+			, mPresentParms.FullScreen_RefreshRateInHz
+			);
+	}
 }
 
 bool VDD3D9Manager::Reset() {
 	if (!mPresentParms.Windowed) {
 		HRESULT hr = mpD3DDevice->TestCooperativeLevel();
-		if (FAILED(hr))
+		if (FAILED(hr) && hr != D3DERR_DEVICENOTRESET) {
 			return false;
+		}
 
 		// Do not reset the device if we do not have focus!
 		HWND hwndFore = GetForegroundWindow();
@@ -971,6 +1007,7 @@ bool VDD3D9Manager::Reset() {
 
 	if (FAILED(hr)) {
 		mbDeviceValid = false;
+		VDDEBUG_D3D_MODESWITCH("Device reset FAILED: hr=%08x. Requested mode: %ux%u @ %uHz\n", hr, mPresentParms.BackBufferWidth, mPresentParms.BackBufferHeight, mPresentParms.FullScreen_RefreshRateInHz);
 		return false;
 	}
 
@@ -991,6 +1028,8 @@ bool VDD3D9Manager::Reset() {
 
 		client.OnPostDeviceReset();
 	}
+
+	mFSFence = 0;
 
 	return true;
 }
@@ -1217,6 +1256,9 @@ void VDD3D9Manager::Finish() {
 }
 
 uint32 VDD3D9Manager::InsertFence() {
+	if (!mbSupportsEventQueries)
+		return 0;
+
 	IDirect3DQuery9 *pQuery = NULL;
 	if (mFenceFreeList.empty()) {
 		HRESULT hr = mpD3DDevice->CreateQuery(D3DQUERYTYPE_EVENT, &pQuery);
@@ -1424,6 +1466,9 @@ HRESULT VDD3D9Manager::PresentFullScreen(bool wait) {
 	if (mPresentParms.Windowed)
 		return S_OK;
 
+	if (!wait && !IsFencePassed(mFSFence))
+		return S_FALSE;
+
 	HRESULT hr;
 	IDirect3DSwapChain9 *pSwapChain;
 	hr = mpD3DDevice->GetSwapChain(0, &pSwapChain);
@@ -1443,6 +1488,8 @@ HRESULT VDD3D9Manager::PresentFullScreen(bool wait) {
 
 		::Sleep(1);
 	}
+
+	mFSFence = InsertFence();
 
 	// record raster status and time of this present
 	mLastPresentTime = VDGetAccurateTick();
@@ -1546,6 +1593,9 @@ bool VDD3D9Manager::CreateSwapChain(HWND hwnd, int width, int height, bool clipT
 	pparms.BackBufferFormat	= mPresentParms.BackBufferFormat;
 	pparms.hDeviceWindow = hwnd;
 	pparms.Flags = clipToMonitor && !mpD3DDeviceEx ? D3DPRESENTFLAG_DEVICECLIP : 0;
+
+	if (mpD3DDeviceEx)
+		pparms.Flags |= D3DPRESENTFLAG_UNPRUNEDMODE;
 
 	vdrefptr<IDirect3DSwapChain9> pD3DSwapChain;
 	HRESULT hr = mpD3DDevice->CreateAdditionalSwapChain(&pparms, ~pD3DSwapChain);

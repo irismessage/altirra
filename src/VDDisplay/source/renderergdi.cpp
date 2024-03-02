@@ -279,7 +279,7 @@ void VDDisplayRendererGDI::Blt(sint32 x, sint32 y, VDDisplayImageView& imageView
 	BitBlt(mhdc, x, y, w, h, cachedImage->mhdc, sx, sy, SRCCOPY);
 }
 
-void VDDisplayRendererGDI::MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
+void VDDisplayRendererGDI::MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode) {
 	if (!n)
 		return;
 
@@ -313,13 +313,21 @@ void VDDisplayRendererGDI::MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, V
 		if (w <= 0 || h <= 0)
 			continue;
 
-		// Merge the brush into the destination through the source:
-		//
-		// ROP3 0x00E20746 = DSPDxax
-		//
-		//   result = ((pattern ^ dest) & source) ^ dest
-		//
-		BitBlt(mhdc, x, y, w, h, cachedImage->mhdc, sx, sy, 0x00E20746);
+		switch(bltMode) {
+			case kBltMode_Normal:
+				BitBlt(mhdc, x, y, w, h, cachedImage->mhdc, sx, sy, SRCCOPY);
+				break;
+
+			case kBltMode_Stencil:
+				// Merge the brush into the destination through the source:
+				//
+				// ROP3 0x00E20746 = DSPDxax
+				//
+				//   result = ((pattern ^ dest) & source) ^ dest
+				//
+				BitBlt(mhdc, x, y, w, h, cachedImage->mhdc, sx, sy, 0x00E20746);
+				break;
+		}
 	}
 }
 
@@ -354,8 +362,6 @@ bool VDDisplayRendererGDI::PushViewport(const vdrect32& r, sint32 x, sint32 y) {
 	vdrect32 r2 = r;
 
 	r2.translate(mOffsetX, mOffsetY);
-	x += mOffsetX;
-	y += mOffsetY;
 
 	if (r2.left < mClipRect.left)
 		r2.left = mClipRect.left;
@@ -374,8 +380,11 @@ bool VDDisplayRendererGDI::PushViewport(const vdrect32& r, sint32 x, sint32 y) {
 
 	Viewport& vp = mViewportStack.push_back();
 	vp.mClipRect = mClipRect;
-	vp.mOffsetX = x;
-	vp.mOffsetY = y;
+	vp.mOffsetX = mOffsetX;
+	vp.mOffsetY = mOffsetY;
+
+	mOffsetX += x;
+	mOffsetY += y;
 
 	mClipRect = r2;
 

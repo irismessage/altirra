@@ -165,7 +165,7 @@ void ATUIDialogFullScreenMode::OnDataExchange(bool write) {
 			devMode.dm.dmSize = sizeof(DEVMODE);
 			devMode.dm.dmDriverExtra = sizeof devMode.buf;
 
-			if (!EnumDisplaySettings(NULL, modeIndex, &devMode.dm))
+			if (!EnumDisplaySettingsEx(NULL, modeIndex, &devMode.dm, EDS_RAWMODE))
 				break;
 
 			// throw out paletted modes
@@ -521,6 +521,68 @@ bool ATUIDialogOptionsPageFileAssoc::OnCommand(uint32 id, uint32 extcode) {
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUIDialogOptionsPageFlash : public ATUIDialogOptionsPage {
+public:
+	ATUIDialogOptionsPageFlash(ATOptions& opts);
+
+protected:
+	bool OnLoaded();
+	void OnDataExchange(bool write);
+	bool OnCommand(uint32 id, uint32 extcode);
+};
+
+ATUIDialogOptionsPageFlash::ATUIDialogOptionsPageFlash(ATOptions& opts)
+	: ATUIDialogOptionsPage(IDD_OPTIONS_FLASH, opts)
+{
+}
+
+bool ATUIDialogOptionsPageFlash::OnLoaded() {
+	AddHelpEntry(IDC_SIC_FLASH, L"SIC! cartridge flash", L"Sets the flash chip used for SIC! cartridges.");
+
+	CBAddString(IDC_SIC_FLASH, L"Am29F040B (64K sectors)");
+	CBAddString(IDC_SIC_FLASH, L"SSF39SF040 (4K sectors)");
+
+	return ATUIDialogOptionsPage::OnLoaded();
+}
+
+void ATUIDialogOptionsPageFlash::OnDataExchange(bool write) {
+	static const char *const kFlashChips[]={
+		"Am29F040B",
+		"SST39SF040"
+	};
+
+	if (write) {
+		int idx = CBGetSelectedIndex(IDC_SIC_FLASH);
+
+		if ((unsigned)idx < vdcountof(kFlashChips))
+			mOptions.mSICFlashChip = kFlashChips[idx];
+	} else {
+		int idx = 0;
+
+		for(int i=0; i<(int)vdcountof(kFlashChips); ++i) {
+			if (mOptions.mSICFlashChip == kFlashChips[i]) {
+				idx = i;
+				break;
+			}
+		}
+
+		CBSetSelectedIndex(IDC_SIC_FLASH, idx);
+	}
+}
+
+bool ATUIDialogOptionsPageFlash::OnCommand(uint32 id, uint32 extcode) {
+	if (id == IDC_SETFILEASSOC) {
+		ATUIShowDialogSetFileAssociations((VDGUIHandle)mhdlg, true);
+		return true;
+	} else if (id == IDC_REMOVEFILEASSOC) {
+		ATUIShowDialogRemoveFileAssociations((VDGUIHandle)mhdlg, true);
+	}
+
+	return false;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATUIDialogOptions : public VDDialogFrameW32 {
 public:
 	ATUIDialogOptions(ATOptions& opts);
@@ -542,7 +604,7 @@ protected:
 	uint32 mLastHelpId;
 	HWND mhwndHelp;
 
-	ATUIDialogOptionsPage *mpPages[4];
+	ATUIDialogOptionsPage *mpPages[5];
 
 	ATOptions& mOptions;
 };
@@ -570,12 +632,14 @@ bool ATUIDialogOptions::OnLoaded() {
 	mpPages[1] = new ATUIDialogOptionsPageDisplay(mOptions);
 	mpPages[2] = new ATUIDialogOptionsPageErrors(mOptions);
 	mpPages[3] = new ATUIDialogOptionsPageFileAssoc(mOptions);
+	mpPages[4] = new ATUIDialogOptionsPageFlash(mOptions);
 	mSelectedPage = -1;
 
 	LBAddString(IDC_PAGE_LIST, L"Startup");
 	LBAddString(IDC_PAGE_LIST, L"Display");
 	LBAddString(IDC_PAGE_LIST, L"Error Handling");
 	LBAddString(IDC_PAGE_LIST, L"File Types");
+	LBAddString(IDC_PAGE_LIST, L"Flash Emulation");
 
 	SelectPage(0);
 	LBSetSelectedIndex(IDC_PAGE_LIST, 0);

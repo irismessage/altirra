@@ -20,6 +20,7 @@
 		_KERNEL_PBI_SUPPORT = 1
 		_KERNEL_XLXE = 1
 		_KERNEL_USE_BOOT_SCREEN = 0
+		_KERNEL_PRINTER_SUPPORT = 1
 
 		icl		'cio.inc'
 		icl		'sio.inc'
@@ -30,17 +31,18 @@
 		org		$c000
 		opt		f+
 
-		icl		'bugcheck.s'
 		icl		'interrupt.s'
 		icl		'keytable.s'
-		icl		'editor.s'
 		icl		'irq.s'
 		icl		'vbi.s'
 		icl		'disk.s'
 		icl		'boot.s'
 		icl		'blackboard.s'
 		icl		'pbi.s'
+		icl		'phandler.s'
 		icl		'misc.s'
+		
+BootScreen = Blackboard
 		
 		org		$cc00
 		icl		'atariifont.inc'
@@ -77,7 +79,7 @@ screnv	dta		a(ScreenOpen-1)
 		dta		a(ScreenPutByte-1)
 		dta		a(ScreenGetStatus-1)
 		dta		a(ScreenSpecial-1)
-		jsr		BugCheck
+		jsr		ScreenInit
 		dta		$00
 
 keybdv	dta		a(KeyboardOpen-1)
@@ -89,13 +91,13 @@ keybdv	dta		a(KeyboardOpen-1)
 		jmp		KeyboardInit
 		dta		$00
 	
-printv	dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		jsr		BugCheck
+printv	dta		a(PrinterOpen-1)
+		dta		a(PrinterClose-1)
+		dta		a(PrinterGetByte-1)
+		dta		a(PrinterPutByte-1)
+		dta		a(PrinterGetStatus-1)
+		dta		a(PrinterSpecial-1)
+		jsr		PrinterInit
 		dta		$00
 
 casetv	dta		a(CassetteOpen-1)
@@ -104,7 +106,7 @@ casetv	dta		a(CassetteOpen-1)
 		dta		a(CassettePutByte-1)
 		dta		a(CassetteGetStatus-1)
 		dta		a(CassetteSpecial-1)
-		jsr		BugCheck
+		jsr		CassetteInit
 		dta		$00
 
 		org	$e450
@@ -116,30 +118,30 @@ setvbv	jmp		VBISetVector
 sysvbv	jmp		VBIStage1
 xitvbv	jmp		VBIExit
 sioinv	jmp		SIOInit
-sendev	jsr		BugCheck
-intinv	jsr		IntInitInterrupts
+sendev	jsr		SIOSendEnable
+intinv	jmp		IntInitInterrupts
 cioinv	jmp		CIOInit
 blkbdv	jmp		Blackboard
 warmsv	jmp		InitWarmStart
 coldsv	jmp		InitColdStart
 rblokv	jmp		CassetteReadBlock
 csopiv	jmp		CassetteOpenRead
-pupdiv	jsr		BugCheck			;$E480	1200XL: Power-on display; XL/XE: self-test
+pupdiv	jsr		SelfTestEntry		;$E480	1200XL: Power-on display; XL/XE: self-test
 slftsv	jmp		$5000				;$E483	XL: Self-test ($5000)
-pentv	jmp		PBIAddHandler		;$E486	XL: add handler to HATABS
-phunlv	jsr		BugCheck			;$E489	XL: 
-phiniv	jsr		BugCheck			;$E48C	XL:
-gpdvv	jsr		BugCheck			;$E48F	XL: Generic device vector
+pentv	jmp		PHAddHandler		;$E486	XL: add handler to HATABS
+phunlv	jmp		PHRemoveHandler		;$E489	XL: 
+phiniv	jmp		PHInitHandler		;$E48C	XL:
+gpdvv	PBI_VECTOR_TABLE			;$E48F	XL: Generic device vector
 
 ;==========================================================================
 
 		icl		'init.s'
 		icl		'sio.s'
 		icl		'cio.s'
-		icl		'screen.s'
-		icl		'keyboard.s'
 		icl		'cassette.s'
-		
+		icl		'printer.s'
+		icl		'selftestentry.s'
+
 ;==========================================================================
 
 .proc InitPreBootHook
@@ -157,6 +159,13 @@ message_start:
 message_end:
 .endp
 
+;==========================================================================
+
+		icl		'screen.s'
+		icl		'editor.s'
+		icl		'screenext.s'
+		icl		'keyboard.s'
+		
 ;==========================================================================
 
 		org		$fffa

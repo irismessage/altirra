@@ -199,7 +199,7 @@ ATSimulator::ATSimulator()
 	, mbPaused(false)
 	, mpPrivateData(new PrivateData(*this))
 	, mbROMAutoReloadEnabled(false)
-	, mbAutoLoadKernelSymbols(true)
+	, mbAutoLoadKernelSymbols(false)
 	, mpMemMan(new ATMemoryManager)
 	, mpMMU(new ATMMUEmulator)
 	, mpPBIManager(new ATPBIManager)
@@ -216,7 +216,6 @@ ATSimulator::ATSimulator()
 	, mpMyIDE(NULL)
 	, mpJoysticks(NULL)
 	, mbDiskSectorCounterEnabled(false)
-//	, mKernelSymbolsModuleIds(0)
 	, mpHLEKernel(ATCreateHLEKernel())
 	, mpProfiler(NULL)
 	, mpVerifier(NULL)
@@ -262,7 +261,10 @@ ATSimulator::ATSimulator()
 	, mpHLEFPAccelerator(NULL)
 	, mpHLEFastBootHook(NULL)
 	, mpHLECIOHook(NULL)
+	, mAxlonMemoryBits(0)
 {
+	mpAnticBusData = &mpMemMan->mBusValue;
+
 	mCartModuleIds[0] = 0;
 	mCartModuleIds[1] = 0;
 
@@ -811,12 +813,24 @@ void ATSimulator::SetHardwareMode(ATHardwareMode mode) {
 	if (mpVBXE)
 		mpVBXE->Set5200Mode(is5200);
 
-	mpLightPen->SetIgnorePort34(mode == kATHardwareMode_800XL || mode == kATHardwareMode_1200XL || mode == kATHardwareMode_XEGS);
+	mpMemMan->SetFloatingDataBus(mode == kATHardwareMode_130XE || mode == kATHardwareMode_800);
+
+	mpLightPen->SetIgnorePort34(mode == kATHardwareMode_800XL || mode == kATHardwareMode_1200XL || mode == kATHardwareMode_XEGS || mode == kATHardwareMode_130XE);
 
 	UpdateXLCartridgeLine();
 	
 	UpdateKernel();
 	InitMemoryMap();
+}
+
+void ATSimulator::SetAxlonMemoryMode(uint8 bits) {
+	if (bits > 8)
+		bits = 8;
+
+	if (mAxlonMemoryBits != bits) {
+		mAxlonMemoryBits = bits;
+		mpMMU->SetAxlonMemory(bits);
+	}
 }
 
 void ATSimulator::SetDiskSIOPatchEnabled(bool enable) {
@@ -904,7 +918,7 @@ void ATSimulator::SetVBXEEnabled(bool enable) {
 			}
 
 			mpVBXE = new ATVBXEEmulator;
-			mpVBXE->Init(mbVBXESharedMemory ? mMemory + 0x10000 : (uint8 *)mpVBXEMemory, this, mpMemMan);
+			mpVBXE->Init(mbVBXESharedMemory ? mMemory + 0x10000 : (uint8 *)mpVBXEMemory, this, mpMemMan, mbVBXESharedMemory);
 			mpVBXE->Set5200Mode(mHardwareMode == kATHardwareMode_5200);
 			mGTIA.SetVBXE(mpVBXE);
 
@@ -1379,6 +1393,8 @@ void ATSimulator::ColdReset() {
 
 	InitMemoryMap();
 
+	mpMMU->SetAxlonBank(0);
+
 	if (mpUltimate1MB)
 		mpUltimate1MB->ColdReset();
 
@@ -1394,7 +1410,7 @@ void ATSimulator::ColdReset() {
 	if (mHardwareMode != kATHardwareMode_XEGS)
 		mGTIA.SetControllerTrigger(2, false);
 
-	if (mHardwareMode != kATHardwareMode_800XL && mHardwareMode != kATHardwareMode_1200XL && mHardwareMode != kATHardwareMode_XEGS)
+	if (mHardwareMode != kATHardwareMode_800XL && mHardwareMode != kATHardwareMode_1200XL && mHardwareMode != kATHardwareMode_XEGS && mHardwareMode != kATHardwareMode_130XE)
 		mPokey.SetPotPos(4, 228);
 
 	// Reset CIO hook. This must be done after the memory map is reinited.
@@ -1412,6 +1428,7 @@ void ATSimulator::ColdReset() {
 	switch(mHardwareMode) {
 		case kATHardwareMode_800XL:
 		case kATHardwareMode_XEGS:
+		case kATHardwareMode_130XE:
 			if (!mbBASICEnabled && (!mpCartridge[0] || mpCartridge[0]->IsBASICDisableAllowed())) {
 				// Don't hold OPTION for a diagnostic cart.
 				if (!mpCartridge[0] || DebugReadByte(0xBFFD) < 0x80)
@@ -1459,7 +1476,7 @@ void ATSimulator::WarmReset() {
 	// NMI with the system reset (bit 5) set in NMIST. On the XL series, /RNMI is permanently
 	// tied to +5V by pullup and the reset button directly resets the 6502, ANTIC, FREDDIE,
 	// and the PIA.
-	if (mHardwareMode == kATHardwareMode_800XL || mHardwareMode == kATHardwareMode_1200XL || mHardwareMode == kATHardwareMode_XEGS) {
+	if (mHardwareMode == kATHardwareMode_800XL || mHardwareMode == kATHardwareMode_1200XL || mHardwareMode == kATHardwareMode_XEGS || mHardwareMode == kATHardwareMode_130XE) {
 		mPIA.Reset();
 
 		mpMMU->SetBankRegister(0xFF);
@@ -1469,6 +1486,8 @@ void ATSimulator::WarmReset() {
 	} else {
 		mAntic.RequestNMI();
 	}
+
+	mpMMU->SetAxlonBank(0);
 
 	if (mpHostDevice)
 		mpHostDevice->WarmReset();
@@ -2096,13 +2115,13 @@ void ATSimulator::LoadIDE(ATIDEHardwareMode mode, bool write, bool fast, uint32 
 
 			kjide->Init(mpIDE, &mScheduler, mpUIRenderer);
 			mpPBIManager->AddDevice(mpKMKJZIDE);
-		} else if (mode == kATIDEHardwareMode_SIDE) {
+		} else if (mode == kATIDEHardwareMode_SIDE || mode == kATIDEHardwareMode_SIDE2) {
 			ATSIDEEmulator *side = new ATSIDEEmulator;
 			mpSIDE = side;
 
 			ReloadIDEFirmware();
 
-			side->Init(mpIDE, &mScheduler, mpUIRenderer, mpMemMan, this);
+			side->Init(mpIDE, &mScheduler, mpUIRenderer, mpMemMan, this, mode == kATIDEHardwareMode_SIDE2);
 
 			UpdateCartEnable();
 			UpdateCartridgeSwitch();
@@ -2154,7 +2173,7 @@ ATSimulator::AdvanceResult ATSimulator::AdvanceUntilInstructionBoundary() {
 		ATSimulatorEvent cpuEvent = kATSimEvent_None;
 
 		if (mCPU.GetUnusedCycle())
-			cpuEvent = (ATSimulatorEvent)mCPU.AdvanceWithBusTracking();
+			cpuEvent = (ATSimulatorEvent)mCPU.Advance();
 		else {
 			int x = mAntic.GetBeamX();
 
@@ -2166,7 +2185,7 @@ ATSimulator::AdvanceResult ATSimulator::AdvanceUntilInstructionBoundary() {
 			uint8 busbusy = mAntic.Advance();
 
 			if (!busbusy)
-				cpuEvent = (ATSimulatorEvent)mCPU.AdvanceWithBusTracking();
+				cpuEvent = (ATSimulatorEvent)mCPU.Advance();
 
 			if (!(cpuEvent | mPendingEvent))
 				continue;
@@ -2195,10 +2214,7 @@ ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
 	ATSimulatorEvent cpuEvent = kATSimEvent_None;
 
 	if (mCPU.GetUnusedCycle()) {
-		if (mAntic.IsPhantomDMARequired())
-			cpuEvent = (ATSimulatorEvent)mCPU.AdvanceWithBusTracking();
-		else
-			cpuEvent = (ATSimulatorEvent)mCPU.Advance();
+		cpuEvent = (ATSimulatorEvent)mCPU.Advance();
 	}
 
 	if (!cpuEvent) {
@@ -2214,17 +2230,7 @@ ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
 					return kAdvanceResult_WaitingForFrame;
 			}
 
-			if (mAntic.IsPhantomDMARequired()) {
-				cpuEvent = AdvancePhantomDMA(x);
-
-				if (cpuEvent | mPendingEvent)
-					goto handle_event;
-
-				x = mAntic.GetBeamX();
-			}
-
-			int cycles = 104 - x;
-
+			int cycles = 114 - x;
 			if (cycles > 0) {
 				if (mCPU.GetCPUMode() == kATCPUMode_65C816) {
 					while(cycles--) {
@@ -2244,34 +2250,6 @@ ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
 
 						if (!busbusy)
 							cpuEvent = (ATSimulatorEvent)mCPU.Advance6502();
-
-						if (cpuEvent | mPendingEvent)
-							goto handle_event;
-					}
-				}
-			}
-
-			cycles = 114 - mAntic.GetBeamX();
-
-			if (cycles > 0) {
-				if (mCPU.GetCPUMode() == kATCPUMode_65C816) {
-					while(cycles--) {
-						ATSCHEDULER_ADVANCE(&mScheduler);
-						uint8 busbusy = mAntic.Advance();
-
-						if (!busbusy)
-							cpuEvent = (ATSimulatorEvent)mCPU.Advance65816WithBusTracking();
-
-						if (cpuEvent | mPendingEvent)
-							goto handle_event;
-					}
-				} else {
-					while(cycles--) {
-						ATSCHEDULER_ADVANCE(&mScheduler);
-						uint8 busbusy = mAntic.Advance();
-
-						if (!busbusy)
-							cpuEvent = (ATSimulatorEvent)mCPU.Advance6502WithBusTracking();
 
 					if (cpuEvent | mPendingEvent)
 							goto handle_event;
@@ -2294,27 +2272,6 @@ handle_event:
 		NotifyEvent(ev);
 
 	return mbRunning ? kAdvanceResult_Running : kAdvanceResult_Stopped;
-}
-
-ATSimulatorEvent VDNOINLINE ATSimulator::AdvancePhantomDMA(int x) {
-	int cycles = 8 - x;
-
-	ATSimulatorEvent cpuEvent = kATSimEvent_None;
-
-	while(cycles > 0) {
-		ATSCHEDULER_ADVANCE(&mScheduler);
-		uint8 busbusy = mAntic.Advance();
-
-		if (!busbusy)
-			cpuEvent = (ATSimulatorEvent)mCPU.AdvanceWithBusTracking();
-
-		if (cpuEvent | mPendingEvent)
-			break;
-
-		--cycles;
-	}
-
-	return cpuEvent;
 }
 
 uint8 ATSimulator::DebugReadByte(uint16 addr) const {
@@ -2412,11 +2369,11 @@ bool ATSimulator::IsKernelROMLocation(uint16 address) const {
 
 	// check for self-test ROM
 	if ((addr - 0x5000) < 0x0800)
-		return (mHardwareMode == kATHardwareMode_800XL || mHardwareMode == kATHardwareMode_1200XL || mHardwareMode == kATHardwareMode_XEGS) && (GetBankRegister() & 0x81) == 0x01;
+		return (mHardwareMode == kATHardwareMode_800XL || mHardwareMode == kATHardwareMode_1200XL || mHardwareMode == kATHardwareMode_XEGS || mHardwareMode == kATHardwareMode_130XE) && (GetBankRegister() & 0x81) == 0x01;
 
 	// check for XL/XE ROM extension
 	if ((addr - 0xC000) < 0x1000)
-		return (mHardwareMode == kATHardwareMode_800XL || mHardwareMode == kATHardwareMode_1200XL || mHardwareMode == kATHardwareMode_XEGS) && (GetBankRegister() & 0x01);
+		return (mHardwareMode == kATHardwareMode_800XL || mHardwareMode == kATHardwareMode_1200XL || mHardwareMode == kATHardwareMode_XEGS || mHardwareMode == kATHardwareMode_130XE) && (GetBankRegister() & 0x01);
 
 	// check for main kernel ROM
 	if ((addr - 0xD800) < 0x2800)
@@ -2987,7 +2944,7 @@ void ATSimulator::UpdateCartEnable() {
 }
 
 void ATSimulator::UpdateXLCartridgeLine() {
-	if (mHardwareMode == kATHardwareMode_800XL || mHardwareMode == kATHardwareMode_1200XL || mHardwareMode == kATHardwareMode_XEGS) {
+	if (mHardwareMode == kATHardwareMode_800XL || mHardwareMode == kATHardwareMode_1200XL || mHardwareMode == kATHardwareMode_XEGS || mHardwareMode == kATHardwareMode_130XE) {
 		// TRIG3 indicates a cartridge on XL/XE. MULE fails if this isn't set properly,
 		// because for some bizarre reason it jumps through WARMSV!
 		bool rd5 = false;
@@ -3031,6 +2988,7 @@ void ATSimulator::UpdateForcedSelfTestLine() {
 		case kATHardwareMode_800XL:
 		case kATHardwareMode_1200XL:
 		case kATHardwareMode_XEGS:
+		case kATHardwareMode_130XE:
 			mPokey.SetPotPos(4, mbForcedSelfTest ? 0 : 228);
 			break;
 	}
@@ -3048,6 +3006,7 @@ void ATSimulator::UpdateBanking(uint8 currBank) {
 	if (mHardwareMode == kATHardwareMode_800XL ||
 		mHardwareMode == kATHardwareMode_1200XL ||
 		mHardwareMode == kATHardwareMode_XEGS ||
+		mHardwareMode == kATHardwareMode_130XE ||
 		mMemoryMode == kATMemoryMode_128K ||
 		mMemoryMode == kATMemoryMode_320K ||
 		mMemoryMode == kATMemoryMode_576K ||
@@ -3073,6 +3032,7 @@ void ATSimulator::UpdateKernel() {
 				mode = mbHaveOSBKernel ? kATKernelMode_OSB : kATKernelMode_HLE;
 				break;
 			case kATHardwareMode_800XL:
+			case kATHardwareMode_130XE:
 				mode = mbHaveXLKernel ? kATKernelMode_XL : kATKernelMode_HLE;
 				break;
 			case kATHardwareMode_1200XL:
@@ -3325,8 +3285,12 @@ void ATSimulator::InitMemoryMap() {
 			break;
 
 		default:
-			loMemPages = 52*4;
-			hiMemPages = 10*4;
+			if (mHardwareMode == kATHardwareMode_800) {
+				loMemPages = 48*4;
+			} else {
+				loMemPages = 52*4;
+				hiMemPages = 10*4;
+			}
 			break;
 	}
 
@@ -3531,13 +3495,8 @@ uint32 ATSimulator::CPUGetTimestamp() {
 	return mAntic.GetTimestamp();
 }
 
-uint8 ATSimulator::CPURecordBusActivity(uint8 value) {
-	mAntic.SetPhantomDMAData(value);
-	return value;
-}
-
 uint8 ATSimulator::AnticReadByte(uint32 addr) {
-	return mpMemMan->AnticReadByte(addr);
+	return *mpAnticBusData = mpMemMan->AnticReadByte(addr);
 }
 
 void ATSimulator::AnticAssertNMI() {

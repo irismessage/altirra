@@ -236,6 +236,10 @@ ScreenTextRows			dta
 		kdb.LOGMAP[1] = 0xFF;
 		kdb.LOGMAP[2] = 0xFF;
 		
+		// init tab map
+		for(int i=0; i<15; ++i)
+			kdb.TABMAP[i] = 0x01;
+		
 		// init display list and playfield DMA
 		kdb.SDLSTL = (uint8)baseAddr;
 		kdb.SDLSTH = (uint8)(baseAddr >> 8);

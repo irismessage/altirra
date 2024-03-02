@@ -67,7 +67,8 @@ cold_boot:
 	txs
 	
 	; 2. clear warmstart flag
-	mva		#0 warmst
+	inx
+	stx		warmst
 	
 	; 3. test for diagnostic cartridge
 	lda		$bffc
@@ -97,15 +98,25 @@ not_diag:
 	lda		#4
 	bit		consol
 	beq		no_basic
-	
+
+.ifdef _KERNEL_SOFTKICK
+	ldx		#$fc
+.else
 	ldx		#$fd
+.endif
 	
 	;check for keyboard present + SELECT or no keyboard + no SELECT and enable game if so
 	lda		trig2		;check keyboard present (1 = present)
 	asl
 	eor		consol		;XOR against select (0 = pressed)
 	and		#$02
+	
+.ifdef _KERNEL_SOFTKICK
 	seq:ldx	#$bf
+.else
+	seq:ldx	#$be
+.endif
+
 	stx		portb		;enable GAME or BASIC
 
 no_basic:
@@ -115,6 +126,11 @@ no_basic:
 	jsr		InitMemory
 	
 	; 6. clear memory from $0008 up to [tramsz,0]
+.ifdef _KERNEL_SOFTKICK
+	ldx		#$50
+.else
+	ldx		tramsz
+.endif
 	ldy		#8
 	mva		#0 a1
 	sta		a1+1
@@ -125,8 +141,7 @@ clearloop2:
 	iny
 	bne		clearloop2
 	inc		a1+1
-	lda		a1+1
-	cmp		tramsz
+	dex
 	bne		clearloop
 	
 	; 7. set dosvec to blackboard routine
@@ -144,10 +159,6 @@ clearloop2:
 	lda		portb
 	and		#$02
 	sta		basicf
-	
-	; set warmstart signature
-	ldx		#2
-	mva:rpl	InitBootSignature,x pupbt1,x-
 .endif
 
 	; 9. set screen margins
@@ -168,7 +179,8 @@ clearloop2:
 ;==============================================================================
 .proc InitWarmStart
 	; A. initialize CPU
-	sei
+	sei								;!! FIRST TWO BYTES CHECKED BY ARCHON
+	lda		$0100
 	cld
 	ldx		#$ff
 	txs
@@ -189,14 +201,10 @@ clearloop2:
 	jsr		InitMemory
 	
 	; D. zero 0010-007F and 0200-03EC (must not clear BASICF).
-	ldx		#$5f
+	ldx		#$60
 	lda		#0
-zpclear:
-	sta		$0010,x
-	dex
-	bpl		zpclear
+	sta:rne	$0f,x-
 	
-	ldx		#0
 dbclear:
 	sta		$0200,x
 	sta		$02ed,x
@@ -213,20 +221,33 @@ dbclear:
 ;==============================================================================
 .proc InitHardwareReset
 	; clear all hardware registers
-	ldx		#0
-	txa
+	ldy		#0
+	tya
 hwclear:
-	sta		$d000,x
-	sta		$d200,x
-	sta		$d400,x
-	inx
+	sta		$d000,y
+	sta		$d200,y
+	sta		$d400,y
+	iny
 	bne		hwclear
 
 	;initialize PIA
-.if _KERNEL_XLXE
 	lda		#$3c
 	ldx		#$38
-	ldy		#0
+
+.ifdef _KERNEL_SOFTKICK
+	stx		pactl		;switch to DDRA
+	sty		porta		;portA -> input
+	sta		pactl		;switch to IORA
+	sty		porta		;portA -> $00
+	sta		pbctl		;switch to IORB
+	dey
+	dey
+	sty		portb		;portB -> $FE
+	stx		pbctl		;switch to DDRB
+	iny
+	sty		portb		;portB -> all output
+	sta		pbctl		;switch to IORB
+.elseif _KERNEL_XLXE
 	stx		pactl		;switch to DDRA
 	sty		porta		;portA -> input
 	sta		pactl		;switch to IORA
@@ -238,9 +259,6 @@ hwclear:
 	sty		portb		;portB -> all output
 	sta		pbctl		;switch to IORB
 .else
-	lda		#$3c
-	ldx		#$38
-	ldy		#0
 	stx		pactl		;switch to DDRA
 	sty		porta		;portA -> input
 	sty		portb		;portB -> input
@@ -293,48 +311,69 @@ notRAM:
 end:
 .endp
 
+.proc InitVectorTable2
+	dta		a(VBIStage1)			;vvblki
+	dta		a(VBIExit)				;vvblkd
+	dta		a(0)					;cdtma1
+.endp
+
 ;==============================================================================
-.proc InitEnvironment	
+.proc InitEnvironment
 	mva		tramsz ramsiz
-	
+
+.if _KERNEL_XLXE	
+	; set warmstart signature -- must be done before cart init, because
+	; SDX doesn't return.
+	ldx		#3
+	mva:rne	InitBootSignature-1,x pupbt1-1,x-
+.endif
+
 	; 9. set screen margins
 	mva		#2 lmargn
 	mva		#39 rmargn
 	
-	;set PAL/NTSC flag
+	;set PAL/NTSC flag (XL/XE only)
+	.if _KERNEL_XLXE
 	ldx		#0
 	lda		pal
 	sne:ldx	#$ff
 	stx		palnts
+	.endif
 	
 	; 10. initialize RAM vectors
-	ldx		#InitVectorTable1.end-InitVectorTable1-1
+
+	;VDSLST-VIMIRQ
+	ldx		#[.len InitVectorTable1]-1
 	mva:rpl	InitVectorTable1,x vdslst,x-
 
-	mwa		#VBIStage1				vvblki
-	mwa		#VBIExit				vvblkd
+	;VVBLKI-CDTMA1
+	ldx		#[.len InitVectorTable2]-1
+	mva:rpl	InitVectorTable2,x vvblki,x-
+	
 	mwa		#KeyboardBreakIRQ		brkky
-	mwa		#0						cdtma1
 	
 	; 11. set misc database values
-	mva		#$ff brkkey
-	mva		#0 memtop
+	ldx		#$ff
+	stx		brkkey
+	inx
+	stx		memtop
+	stx		memlo
 	mva		tramsz memtop+1
-	mwa		#$0700 memlo
+	mva		#$07 memlo+1
 	
 	jsr		DiskInit
 	jsr		ScreenInit
 	;jsr	DisplayInit
 	jsr		KeyboardInit
-	;jsr	PrinterInit
+
+.if _KERNEL_PRINTER_SUPPORT	
+	jsr		PrinterInit
+.endif
+
 	;jsr	CassetteInit
 	jsr		cioinv
 	jsr		SIOInit
 	jsr		IntInitInterrupts
-
-.if _KERNEL_PBI_SUPPORT
-	jsr		PBIScan
-.endif
 	
 	; check for START key, and if so, set cassette boot flag
 	lda		consol
@@ -346,17 +385,14 @@ nocasboot:
 	; 12. enable IRQ interrupts
 	cli
 	
-	; 13. initialize device table
-	ldx		#37
-	lda		#0
-htabinit2:
-	sta		hatabs,x
-	dex
-	cpx		#14
-	bne		htabinit2
-
+	; 13. initialize device table (HATABS has already been cleared)
+	ldx		#14
 	mva:rpl	InitHandlerTable,x hatabs,x-
 	
+.if _KERNEL_PBI_SUPPORT
+	jsr		PBIScan
+.endif
+
 	; 14. initialize cartridges
 	mva		#0 tstdat
 	lda		$9ffc
@@ -387,11 +423,16 @@ skipCartBInit:
 skipCartAInit:
 
 	; 15. use IOCB #0 ($0340) to open screen editor (E)
+	;
+	; NOTE: We _must_ leave $0C in the A register when invoking CIO. Pooyan
+	; relies on $0C being left in CIOCHR after the last call to CIO before
+	; disk boot!
+
 	mva		#$03 iccmd		;OPEN
-	mva		#$c0 icax1		;read/write, no forced read
-	mva		#0 icax2		;mode 0
 	mwa		#ScreenEditorName icbal
+	mva		#$0c icax1		;read/write, no forced read
 	ldx		#0
+	stx		icax2			;mode 0
 	jsr		ciov
 	
 	; 16. wait for VBLANK so screen is initialized
@@ -423,10 +464,10 @@ waitvbl:
 	jsr		BootCassette
 	jmp		postcasboot
 
-reinitcas:	
-	lda		boot?
-	cmp		#2
-	bne		postcasboot
+reinitcas:
+	lda		#2
+	bit		boot?
+	beq		postcasboot
 	jsr		initCassette
 postcasboot:
 
@@ -458,16 +499,28 @@ boot_disk:
 	
 reinitDisk:
 	lda		boot?
-	cmp		#1
-	bne		postDiskBoot
+	lsr
+	bcc		postDiskBoot
 	jsr		initDisk
 postDiskBoot:
+
+.if _KERNEL_XLXE
+	; (XL/XE only) do type 3 poll or reinit handlers
+	lda		warmst
+	bne		reinit_handlers
+	jsr		PHStartupPoll
+	jmp		post_reinit
+reinit_handlers:
+	jsr		PHReinitHandlers
+post_reinit:
+.endif
 
 	; H. same as steps 19 and 20
 	; 19. reset coldstart flag
 	
-	mva		#0 coldst
-	
+	ldx		#0
+	stx		coldst
+
 	; 20. run cartridges or blackboard
 	
 	; try to boot cart A
@@ -503,7 +556,7 @@ InitCartB:
 	jmp		($9ffe)
 	
 ScreenEditorName:
-	dta		c"E",$9B
+	dta		c"E"
 
 .endp
 

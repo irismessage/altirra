@@ -8,6 +8,12 @@ class IVDDisplayFont;
 
 class ATUILabel : public ATUIWidget {
 public:
+	enum Align {
+		kAlignLeft,
+		kAlignCenter,
+		kAlignRight
+	};
+
 	ATUILabel();
 
 	void SetFont(IVDDisplayFont *font);
@@ -16,6 +22,7 @@ public:
 	void ClearBorderColor();
 	void SetBorderColor(uint32 c);
 
+	void SetTextAlign(Align align);
 	void SetTextColor(uint32 c);
 	void SetTextOffset(sint32 x, sint32 y);
 
@@ -32,6 +39,7 @@ public:
 	void AutoSize(int x, int y);
 
 protected:
+	virtual void OnCreate();
 	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 
 	void Reflow();
@@ -40,6 +48,7 @@ protected:
 	vdrefptr<IVDDisplayFont> mpBoldFont;
 	VDStringW mText;
 	VDStringW mTextF;
+	Align mTextAlign;
 	uint32 mTextColor;
 	sint32 mTextX;
 	sint32 mTextY;
@@ -51,6 +60,7 @@ protected:
 		sint32 mX;
 		sint32 mY;
 		uint32 mColor;
+		uint32 mStart;
 		uint32 mChars;
 		bool mbBold;
 	};
@@ -61,6 +71,7 @@ protected:
 		uint32 mSpanCount;
 		uint32 mAscent;
 		uint32 mDescent;
+		sint32 mWidth;
 	};
 
 	vdfastvector<Line> mLines;

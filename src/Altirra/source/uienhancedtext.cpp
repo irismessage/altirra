@@ -19,6 +19,7 @@
 #include <vd2/system/binary.h>
 #include <windows.h>
 #include "uienhancedtext.h"
+#include "uiwidget.h"
 #include "gtia.h"
 #include "antic.h"
 #include "simulator.h"
@@ -40,8 +41,8 @@ public:
 
 	void OnSize(uint32 w, uint32 h);
 	void OnChar(int ch);
-	bool OnKeyDown(uint32 keyCode, uint32 modifiers);
-	bool OnKeyUp(uint32 keyCode, uint32 modifiers);
+	bool OnKeyDown(uint32 keyCode);
+	bool OnKeyUp(uint32 keyCode);
 
 	void Update(bool forceInvalidate);
 	void Paint(HDC hdc);
@@ -253,26 +254,26 @@ void ATUIEnhancedTextEngine::OnChar(int ch) {
 	}
 }
 
-bool ATUIEnhancedTextEngine::OnKeyDown(uint32 keyCode, uint32 modifiers) {
+bool ATUIEnhancedTextEngine::OnKeyDown(uint32 keyCode) {
 	if (IsRawInputEnabled())
 		return false;
 
 	switch(keyCode) {
-		case VK_LEFT:
+		case kATUIVK_Left:
 			if (mInputPos) {
 				--mInputPos;
 				mbLastInputLineDirty = true;
 			}
 			return true;
 
-		case VK_RIGHT:
+		case kATUIVK_Right:
 			if (mInputPos < mInputBuffer.size()) {
 				++mInputPos;
 				mbLastInputLineDirty = true;
 			}
 			return true;
 
-		case VK_UP:
+		case kATUIVK_Up:
 			if (mInputHistIdx < mHistoryBuffer.size()) {
 				const char *base = mHistoryBuffer.data();
 				const char *s = (mHistoryBuffer.end() - mInputHistIdx - 1);
@@ -290,7 +291,7 @@ bool ATUIEnhancedTextEngine::OnKeyDown(uint32 keyCode, uint32 modifiers) {
 
 			return true;
 
-		case VK_DOWN:
+		case kATUIVK_Down:
 			if (mInputHistIdx) {
 				mInputHistIdx -= (1 + strlen(&*(mHistoryBuffer.end() - mInputHistIdx)));
 
@@ -307,7 +308,7 @@ bool ATUIEnhancedTextEngine::OnKeyDown(uint32 keyCode, uint32 modifiers) {
 			}
 			return true;
 
-		case VK_BACK:
+		case kATUIVK_Back:
 			if (mInputPos) {
 				--mInputPos;
 				mInputBuffer.erase(mInputBuffer.begin() + mInputPos);
@@ -315,14 +316,14 @@ bool ATUIEnhancedTextEngine::OnKeyDown(uint32 keyCode, uint32 modifiers) {
 			}
 			return true;
 
-		case VK_DELETE:
+		case kATUIVK_Delete:
 			if (mInputPos < mInputBuffer.size()) {
 				mInputBuffer.erase(mInputBuffer.begin() + mInputPos);
 				mbLastInputLineDirty = true;
 			}
 			return true;
 
-		case VK_RETURN:
+		case kATUIVK_Return:
 			{
 				IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
 
@@ -339,7 +340,7 @@ bool ATUIEnhancedTextEngine::OnKeyDown(uint32 keyCode, uint32 modifiers) {
 			}
 			return true;
 
-		case VK_CAPITAL:
+		case kATUIVK_CapsLock:
 			{
 				IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
 
@@ -368,19 +369,19 @@ bool ATUIEnhancedTextEngine::OnKeyDown(uint32 keyCode, uint32 modifiers) {
 	return false;
 }
 
-bool ATUIEnhancedTextEngine::OnKeyUp(uint32 keyCode, uint32 modifiers) {
+bool ATUIEnhancedTextEngine::OnKeyUp(uint32 keyCode) {
 	if (IsRawInputEnabled())
 		return false;
 
 	switch(keyCode) {
-		case VK_LEFT:
-		case VK_RIGHT:
-		case VK_UP:
-		case VK_DOWN:
-		case VK_BACK:
-		case VK_DELETE:
-		case VK_RETURN:
-		case VK_CAPITAL:
+		case kATUIVK_Left:
+		case kATUIVK_Right:
+		case kATUIVK_Up:
+		case kATUIVK_Down:
+		case kATUIVK_Back:
+		case kATUIVK_Delete:
+		case kATUIVK_Return:
+		case kATUIVK_CapsLock:
 			return true;
 	}
 

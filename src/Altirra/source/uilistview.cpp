@@ -1,26 +1,38 @@
 #include "stdafx.h"
+#include <vd2/system/math.h>
+#include <vd2/system/strutil.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include "uilistview.h"
 #include "uimanager.h"
+#include "uislider.h"
 
 template<> void vdmove<ATUIListViewItem>(ATUIListViewItem& dst, ATUIListViewItem& src) {
 	dst.mText.move_from(src.mText);
+	dst.mpVirtualItem.from(src.mpVirtualItem);
 }
 
 ATUIListView::ATUIListView()
 	: mScrollY(0)
 	, mSelectedIndex(-1)
 	, mItemHeight(0)
+	, mScrollAccum(0.0f)
 	, mTextColor(0x000000)
 	, mHighlightBackgroundColor(0x0A246A)
 	, mHighlightTextColor(0xFFFFFF)
+	, mInactiveHighlightBackgroundColor(0x808080)
+	, mpSlider(NULL)
+	, mItemSelectedEvent()
+	, mItemActivatedEvent()
 {
-	SetFillColor(0xD4D0C8);
+	SetFillColor(0xFFFFFF);
 	SetCursorImage(kATUICursorImage_Arrow);
 
-	AddItem(L"Foo");
-	AddItem(L"Bar");
-	AddItem(L"Baz");
+	BindAction(kATUIVK_Up, kActionMoveUp);
+	BindAction(kATUIVK_Down, kActionMoveDown);
+	BindAction(kATUIVK_Home, kActionMoveFirst);
+	BindAction(kATUIVK_End, kActionMoveLast);
+	BindAction(kATUIVK_Prior, kActionMovePagePrev);
+	BindAction(kATUIVK_Next, kActionMovePageNext);
 }
 
 ATUIListView::~ATUIListView() {
@@ -28,6 +40,11 @@ ATUIListView::~ATUIListView() {
 
 void ATUIListView::AddItem(const wchar_t *text) {
 	InsertItem(0x7FFFFFFF, text);
+	Invalidate();
+}
+
+void ATUIListView::AddItem(IATUIListViewVirtualItem *item) {
+	InsertItem(0x7FFFFFFF, item);
 	Invalidate();
 }
 
@@ -47,12 +64,34 @@ void ATUIListView::InsertItem(sint32 pos, const wchar_t *text) {
 		++mSelectedIndex;
 
 	Invalidate();
+	mpSlider->SetRange(0, (sint32)mItems.size());
+}
+
+void ATUIListView::InsertItem(sint32 pos, IATUIListViewVirtualItem *vitem) {
+	uint32 n = (uint32)mItems.size();
+
+	if (pos < 0)
+		pos = 0;
+	else if ((uint32)pos > n)
+		pos = n;
+
+	ATUIListViewItem& item = *mItems.insert(mItems.begin() + pos, ATUIListViewItem());
+
+	item.mpVirtualItem = vitem;
+
+	if (mSelectedIndex >= pos)
+		++mSelectedIndex;
+
+	Invalidate();
+	mpSlider->SetRange(0, (sint32)mItems.size());
 }
 
 void ATUIListView::RemoveItem(sint32 pos) {
 	uint32 n = (uint32)mItems.size();
 	if ((uint32)pos < n) {
 		mItems.erase(mItems.begin() + pos);
+
+		const bool selDeleted = (pos == mSelectedIndex);
 
 		if (mSelectedIndex >= pos) {
 			if (mSelectedIndex > pos)
@@ -62,7 +101,15 @@ void ATUIListView::RemoveItem(sint32 pos) {
 				mSelectedIndex = -1;
 		}
 
+		RecomputeSlider();
 		Invalidate();
+
+		mpSlider->SetRange(0, (sint32)mItems.size());
+
+		if (selDeleted) {
+			if (mItemSelectedEvent)
+				mItemSelectedEvent(this, mSelectedIndex);
+		}
 	}
 }
 
@@ -71,7 +118,65 @@ void ATUIListView::RemoveAllItems() {
 		mItems.clear();
 		mSelectedIndex = -1;
 		Invalidate();
+		RecomputeSlider();
 	}
+}
+
+namespace {
+	struct LVItemSortAdapter {
+		bool operator()(const ATUIListViewItem *a, const ATUIListViewItem *b) {
+			return mpSorter->Compare(a->mpVirtualItem, b->mpVirtualItem);
+		}
+
+		const IATUIListViewSorter *mpSorter;
+		VDStringW mTextA;
+		VDStringW mTextB;
+	};
+}
+
+void ATUIListView::Sort(const IATUIListViewSorter& sorter) {
+	size_t n = mItems.size();
+	vdfastvector<ATUIListViewItem *> ptrlist(n);
+
+	for(size_t i=0; i<n; ++i)
+		ptrlist[i] = &mItems[i];
+
+	LVItemSortAdapter adapter;
+	adapter.mpSorter = &sorter;
+	std::sort(ptrlist.begin(), ptrlist.end(), adapter);
+
+	vdvector<ATUIListViewItem> items2;
+	items2.resize(n);
+
+	ATUIListViewItem *selItem = mSelectedIndex < 0 ? NULL : &mItems[mSelectedIndex];
+	sint32 newSelIndex = -1;
+
+	bool redrawRequired = false;
+	for(size_t i=0; i<n; ++i) {
+		if (ptrlist[i] == selItem)
+			newSelIndex = (sint32)i;
+
+		if (ptrlist[i] != &mItems[i])
+			redrawRequired = true;
+
+		vdmove(items2[i], *ptrlist[i]);
+	}
+
+	mItems.swap(items2);
+
+	if (redrawRequired) {
+		mSelectedIndex = newSelIndex;
+		Invalidate();
+
+		EnsureSelectedItemVisible(true);
+	}
+}
+
+IATUIListViewVirtualItem *ATUIListView::GetSelectedVirtualItem() {
+	if (mSelectedIndex < 0)
+		return NULL;
+
+	return mItems[mSelectedIndex].mpVirtualItem;
 }
 
 void ATUIListView::SetSelectedItem(sint32 idx) {
@@ -85,6 +190,53 @@ void ATUIListView::SetSelectedItem(sint32 idx) {
 	if (mSelectedIndex != idx) {
 		mSelectedIndex = idx;
 		Invalidate();
+
+		if (mItemSelectedEvent)
+			mItemSelectedEvent(this, idx);
+	}
+}
+
+void ATUIListView::EnsureSelectedItemVisible(bool fullyVisible) {
+	if (mSelectedIndex < 0)
+		return;
+
+	sint32 itemTop = mSelectedIndex * mItemHeight;
+	sint32 itemBottom = itemTop + mItemHeight;
+	sint32 scrollThreshold1 = fullyVisible ? itemTop : itemBottom;
+
+	if (mScrollY > scrollThreshold1) {
+		ScrollToPixel(scrollThreshold1, true);
+		return;
+	}
+
+	sint32 scrollThreshold2 = (fullyVisible ? itemBottom : itemTop) - mClientArea.height();
+	if (mScrollY < scrollThreshold2) {
+		ScrollToPixel(scrollThreshold2, true);
+		return;
+	}
+}
+
+void ATUIListView::ScrollToPixel(sint32 py, bool updateSlider) {
+	sint32 h = mClientArea.height();
+	h -= h % mItemHeight;
+
+	if (!h)
+		h = mItemHeight;
+
+	sint32 maxScroll = (sint32)mItems.size() * mItemHeight - h;
+
+	if (py > maxScroll)
+		py = maxScroll;
+
+	if (py < 0)
+		py = 0;
+
+	if (mScrollY != py) {
+		mScrollY = py;
+		Invalidate();
+
+		if (updateSlider && mpSlider)
+			mpSlider->SetPos(mScrollY);
 	}
 }
 
@@ -99,34 +251,134 @@ void ATUIListView::OnMouseDownL(sint32 x, sint32 y) {
 	SetSelectedItem(idx);
 }
 
-bool ATUIListView::OnKeyDown(uint32 vk) {
-	switch(vk) {
-		case kATUIVK_Up:
-			SetSelectedItem(mSelectedIndex > 0 ? mSelectedIndex - 1 : 0);
-			return true;
+void ATUIListView::OnMouseDblClkL(sint32 x, sint32 y) {
+	Focus();
 
-		case kATUIVK_Down:
-			SetSelectedItem(mSelectedIndex + 1);
-			return true;
+	sint32 idx = (mScrollY + y) / (sint32)mItemHeight;
 
-		case kATUIVK_Home:
-			SetSelectedItem(0);
-			return true;
+	if (idx >= (sint32)mItems.size())
+		idx = -1;
 
-		case kATUIVK_End:
-			SetSelectedItem((sint32)mItems.size() - 1);
-			return true;
+	if (idx >= 0 && idx == mSelectedIndex) {
+		if (mItemActivatedEvent)
+			mItemActivatedEvent(this, idx);
+	} else {
+		SetSelectedItem(idx);
+	}
+}
+
+void ATUIListView::OnMouseWheel(sint32 x, sint32 y, float delta) {
+	mScrollAccum += delta * (float)(sint32)mItemHeight;
+
+	int pixels = VDRoundToInt(mScrollAccum);
+
+	if (pixels) {
+		mScrollAccum -= (float)pixels;
+
+		ScrollToPixel(mScrollY - pixels, true);
+	}
+}
+
+void ATUIListView::OnActionStart(uint32 id) {
+	switch(id) {
+		case kActionActivateItem:
+			if (mSelectedIndex >= 0) {
+				if (mItemActivatedEvent)
+					mItemActivatedEvent(this, mSelectedIndex);
+			}
+			return;
 	}
 
-	return false;
+	if (id >= kActionCustom)
+		return OnActionRepeat(id);
+
+	return ATUIWidget::OnActionStart(id);
+}
+
+void ATUIListView::OnActionRepeat(uint32 id) {
+	switch(id) {
+		case kActionMoveUp:
+			SetSelectedItem(mSelectedIndex > 0 ? mSelectedIndex - 1 : 0);
+			EnsureSelectedItemVisible(true);
+			break;
+
+		case kActionMoveDown:
+			SetSelectedItem(mSelectedIndex + 1);
+			EnsureSelectedItemVisible(true);
+			break;
+
+		case kActionMoveFirst:
+			SetSelectedItem(0);
+			EnsureSelectedItemVisible(true);
+			break;
+
+		case kActionMoveLast:
+			SetSelectedItem((sint32)mItems.size() - 1);
+			EnsureSelectedItemVisible(true);
+			break;
+
+		case kActionMovePagePrev:
+			{
+				sint32 h = mClientArea.height();
+				sint32 pageItems = (sint32)(h / mItemHeight);
+				ScrollToPixel(mScrollY - pageItems * mItemHeight, true);
+				SetSelectedItem(mSelectedIndex >= pageItems ? mSelectedIndex - pageItems : 0);
+				EnsureSelectedItemVisible(true);
+			}
+			break;
+
+		case kActionMovePageNext:
+			{
+				sint32 h = mClientArea.height();
+				sint32 pageItems = (sint32)(h / mItemHeight);
+				ScrollToPixel(mScrollY + pageItems * mItemHeight, true);
+				SetSelectedItem(mSelectedIndex < 0 ? 0 : mSelectedIndex + pageItems);
+				EnsureSelectedItemVisible(true);
+			}
+			break;
+
+		default:
+			return ATUIWidget::OnActionRepeat(id);
+	}
 }
 
 void ATUIListView::OnCreate() {
+	ATUIContainer::OnCreate();
+
+	mpSlider = new ATUISlider;
+	mpSlider->AddRef();
+	AddChild(mpSlider);
+	mpSlider->SetArea(vdrect32(0, 0, 16, 16));
+	mpSlider->SetDockMode(kATUIDockMode_Right);
+	mpSlider->OnValueChangedEvent() = ATBINDCALLBACK(this, &ATUIListView::OnScroll);
+
 	mpFont = mpManager->GetThemeFont(kATUIThemeFont_Default);
 
 	VDDisplayFontMetrics metrics;
 	mpFont->GetMetrics(metrics);
 	mItemHeight = metrics.mAscent + metrics.mDescent + 4;
+}
+
+void ATUIListView::OnDestroy() {
+	vdsaferelease <<= mpSlider;
+
+	ATUIContainer::OnDestroy();
+}
+
+void ATUIListView::OnSize() {
+	ATUIContainer::OnSize();
+
+	RecomputeSlider();
+}
+
+void ATUIListView::OnSetFocus() {
+	if (mSelectedIndex >= 0)
+		Invalidate();
+}
+
+void ATUIListView::OnKillFocus() {
+	if (mSelectedIndex >= 0)
+		Invalidate();
 }
 
 void ATUIListView::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
@@ -135,6 +387,7 @@ void ATUIListView::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 	uint32 n = (uint32)mItems.size();
 	sint32 y = -mScrollY;
 
+	tr->SetFont(mpFont);
 	tr->SetAlignment(VDDisplayTextRenderer::kAlignLeft, VDDisplayTextRenderer::kVertAlignTop);
 	
 	for(uint32 i=0; i<n; ++i) {
@@ -143,17 +396,42 @@ void ATUIListView::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 
 		if (mSelectedIndex == (sint32)i) {
 			textColor = mHighlightTextColor;
-			rdr.SetColorRGB(mHighlightBackgroundColor);
+			rdr.SetColorRGB(HasFocus() ? mHighlightBackgroundColor : mInactiveHighlightBackgroundColor);
 			rdr.FillRect(0, y, w, mItemHeight);
 		}
 
 		if (rdr.PushViewport(vdrect32(2, y+2, w-2, y+mItemHeight-2), 2, y+2)) {
 			tr->SetColorRGB(textColor);
-			tr->DrawTextLine(0, 0, lv.mText.c_str());
+
+			if (lv.mpVirtualItem) {
+				mTempStr.clear();
+				lv.mpVirtualItem->GetText(mTempStr);
+				tr->DrawTextLine(0, 0, mTempStr.c_str());
+			} else {
+				tr->DrawTextLine(0, 0, lv.mText.c_str());
+			}
 
 			rdr.PopViewport();
 		}
 
 		y += mItemHeight;
 	}
+
+	ATUIContainer::Paint(rdr, w, h);
+}
+
+void ATUIListView::OnScroll(ATUISlider *, sint32 pos) {
+	ScrollToPixel(pos, false);
+}
+
+void ATUIListView::RecomputeSlider() {
+	if (!mpSlider)
+		return;
+
+	const sint32 pageItemCount = mClientArea.height() / mItemHeight;
+	const sint32 scrollMax = ((sint32)mItems.size() - pageItemCount) * mItemHeight;
+
+	mpSlider->SetLineSize(mItemHeight);
+	mpSlider->SetPageSize(pageItemCount * mItemHeight);
+	mpSlider->SetRange(0, scrollMax);
 }

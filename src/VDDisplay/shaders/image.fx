@@ -192,3 +192,5 @@ float4 FP_Filter(
 //$$export_shader [ps_2_0,ps_4_0_level_9_1] FP_RenderBlitStencilRBSwap g_VDDispFP_RenderBlitStencilRBSwap
 //$$export_shader [ps_2_0,ps_4_0_level_9_1] FP_RenderBlitColor g_VDDispFP_RenderBlitColor
 //$$export_shader [ps_2_0,ps_4_0_level_9_1] FP_RenderBlitColorRBSwap g_VDDispFP_RenderBlitColorRBSwap
+//$$export_shader [ps_2_0,ps_4_0_level_9_1] FP_RenderBlitColor2 g_VDDispFP_RenderBlitColor2
+//$$export_shader [ps_2_0,ps_4_0_level_9_1] FP_RenderBlitColor2RBSwap g_VDDispFP_RenderBlitColor2RBSwap

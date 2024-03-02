@@ -213,7 +213,10 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 	switch(msg) {
 		case WM_SYSKEYDOWN:
 		case WM_KEYDOWN:
-			if (wParam == VK_PAUSE || wParam == VK_CANCEL) {
+			if (wParam == VK_ESCAPE) {
+				if (ATGetUIPane(kATUIPaneId_Console))
+					ATActivateUIPane(kATUIPaneId_Console, true);
+			} else if (wParam == VK_PAUSE || wParam == VK_CANCEL) {
 				if (GetKeyState(VK_CONTROL) < 0) {
 					ATGetDebugger()->Break();
 				}
@@ -242,6 +245,7 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 
 		case WM_SYSKEYUP:
 			switch(wParam) {
+				case VK_ESCAPE:
 				case VK_PAUSE:
 				case VK_CANCEL:
 				case VK_F8:
@@ -249,6 +253,25 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 				case VK_F10:
 				case VK_F11:
 					return true;
+			}
+			break;
+
+		case WM_CHAR:
+		case WM_DEADCHAR:
+		case WM_UNICHAR:
+		case WM_SYSCHAR:
+		case WM_SYSDEADCHAR:
+			if (wParam >= 0x20) {
+				ATUIPane *pane = ATGetUIPane(kATUIPaneId_Console);
+				if (pane) {
+					ATActivateUIPane(kATUIPaneId_Console, true);
+
+					result = SendMessage(::GetFocus(), msg, wParam, lParam);
+				} else {
+					result = 0;
+				}
+
+				return true;
 			}
 			break;
 
@@ -762,10 +785,9 @@ void ATRegistersWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState&
 		mState.append_sprintf("P = %02X\r\n", state.mP);
 
 		if (state.mbEmulation) {
-			mState.append_sprintf("    %c%c1%c%c%c%c%c\r\n"
+			mState.append_sprintf("    %c%c%c%c%c%c%c\r\n"
 				, state.mP & 0x80 ? 'N' : '-'
 				, state.mP & 0x40 ? 'V' : '-'
-				, state.mP & 0x10 ? 'B' : '-'
 				, state.mP & 0x08 ? 'D' : '-'
 				, state.mP & 0x04 ? 'I' : '-'
 				, state.mP & 0x02 ? 'Z' : '-'
@@ -794,10 +816,9 @@ void ATRegistersWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState&
 		mState.append_sprintf("Y = %02X\r\n", state.mY);
 		mState.append_sprintf("S = %02X\r\n", state.mS);
 		mState.append_sprintf("P = %02X\r\n", state.mP);
-		mState.append_sprintf("    %c%c1%c%c%c%c%c\r\n"
+		mState.append_sprintf("    %c%c%c%c%c%c\r\n"
 			, state.mP & 0x80 ? 'N' : '-'
 			, state.mP & 0x40 ? 'V' : '-'
-			, state.mP & 0x10 ? 'B' : '-'
 			, state.mP & 0x08 ? 'D' : '-'
 			, state.mP & 0x04 ? 'I' : '-'
 			, state.mP & 0x02 ? 'Z' : '-'
@@ -857,6 +878,16 @@ LRESULT ATCallStackWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					ATGetDebugger()->SetFramePC(mFrames[idx]);
 			}
 			break;
+
+		case WM_VKEYTOITEM:
+			if (LOWORD(wParam) == VK_ESCAPE) {
+				ATUIPane *pane = ATGetUIPane(kATUIPaneId_Console);
+
+				if (pane)
+					ATActivateUIPane(kATUIPaneId_Console, true);
+				return -2;
+			}
+			break;
 	}
 
 	return ATUIPane::WndProc(msg, wParam, lParam);
@@ -866,7 +897,7 @@ bool ATCallStackWindow::OnCreate() {
 	if (!ATUIPane::OnCreate())
 		return false;
 
-	mhwndList = CreateWindowEx(0, _T("LISTBOX"), _T(""), WS_CHILD|WS_VISIBLE|LBS_HASSTRINGS|LBS_NOTIFY, 0, 0, 0, 0, mhwnd, (HMENU)100, VDGetLocalModuleHandleW32(), NULL);
+	mhwndList = CreateWindowEx(0, _T("LISTBOX"), _T(""), WS_CHILD|WS_VISIBLE|LBS_HASSTRINGS|LBS_NOTIFY|LBS_WANTKEYBOARDINPUT, 0, 0, 0, 0, mhwnd, (HMENU)100, VDGetLocalModuleHandleW32(), NULL);
 	if (!mhwndList)
 		return false;
 
@@ -1697,10 +1728,12 @@ protected:
 	void OnLButtonDblClk(int x, int y, int mods);
 	bool OnKeyDown(int code);
 	void OnMouseWheel(int lineDelta);
+	void OnHScroll(int code);
 	void OnVScroll(int code);
 	void OnPaint();
 	void PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, uint32 itemEnd, TreeNode *node, uint32 pos, uint32 level);
 	const VDStringA *GetNodeText(TreeNode *node);
+	void HScrollToPixel(int y);
 	void ScrollToPixel(int y);
 	void InvalidateStartingAtNode(TreeNode *node);
 	void SelectNode(TreeNode *node);
@@ -1716,6 +1749,7 @@ protected:
 	TreeNode *GetNearestVisibleNode(TreeNode *node) const;
 	void UpdateScrollMax();
 	void UpdateScrollBar();
+	void UpdateHScrollBar();
 
 	void Reset();
 	void UpdateOpcodes();
@@ -1741,9 +1775,11 @@ protected:
 	uint32 mWidth;
 	uint32 mHeight;
 	uint32 mHeaderHeight;
+	uint32 mCharWidth;
 	uint32 mItemHeight;
 	uint32 mItemTextVOffset;
 	uint32 mPageItems;
+	uint32 mScrollX;
 	uint32 mScrollY;
 	uint32 mScrollMax;
 	sint32 mScrollWheelAccum;
@@ -1762,8 +1798,10 @@ protected:
 	bool	mbUpdatesBlocked;
 	bool	mbInvalidatesBlocked;
 	bool	mbDirtyScrollBar;
+	bool	mbDirtyHScrollBar;
 	bool	mbShowPCAddress;
 	bool	mbShowRegisters;
+	bool	mbShowSpecialRegisters;
 	bool	mbShowFlags;
 	bool	mbShowCodeBytes;
 	bool	mbShowLabels;
@@ -1790,7 +1828,7 @@ protected:
 	TreeNode *mpNodeFreeList;
 	NodeBlock *mpNodeBlocks;
 
-	enum { kRepeatWindowSize = 16 };
+	enum { kRepeatWindowSize = 32 };
 	uint32 mRepeatIPs[kRepeatWindowSize];
 	uint8 mRepeatOpcodes[kRepeatWindowSize];
 	TreeNode *mpRepeatNode;
@@ -1813,6 +1851,7 @@ ATHistoryWindow::ATHistoryWindow()
 	, mItemHeight(0)
 	, mItemTextVOffset(0)
 	, mPageItems(1)
+	, mScrollX(0)
 	, mScrollY(0)
 	, mScrollMax(0)
 	, mScrollWheelAccum(0)
@@ -1821,11 +1860,13 @@ ATHistoryWindow::ATHistoryWindow()
 	, mbUpdatesBlocked(false)
 	, mbInvalidatesBlocked(false)
 	, mbDirtyScrollBar(false)
+	, mbDirtyHScrollBar(false)
 	, mbCollapseLoops(true)
 	, mbCollapseCalls(true)
 	, mbCollapseInterrupts(true)
 	, mbShowPCAddress(true)
 	, mbShowRegisters(true)
+	, mbShowSpecialRegisters(true)
 	, mbShowFlags(false)
 	, mbShowCodeBytes(true)
 	, mbShowLabels(true)
@@ -1861,6 +1902,10 @@ LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_ERASEBKGND:
 			return 0;
 
+		case WM_HSCROLL:
+			OnHScroll(LOWORD(wParam));
+			return 0;
+
 		case WM_VSCROLL:
 			OnVScroll(LOWORD(wParam));
 			return 0;
@@ -1893,6 +1938,8 @@ LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWPCADDRESS, mbShowPCAddress);
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWREGISTERS, mbShowRegisters);
+				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWSPECIALREGISTERS, mbShowSpecialRegisters);
+				VDEnableMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWSPECIALREGISTERS, mbShowRegisters);
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWFLAGS, mbShowFlags);
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWCODEBYTES, mbShowCodeBytes);
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWLABELS, mbShowLabels);
@@ -1923,6 +1970,10 @@ LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					return true;
 				case ID_HISTORYCONTEXTMENU_SHOWREGISTERS:
 					mbShowRegisters = !mbShowRegisters;
+					InvalidateRect(mhwnd, NULL, TRUE);
+					return true;
+				case ID_HISTORYCONTEXTMENU_SHOWSPECIALREGISTERS:
+					mbShowSpecialRegisters = !mbShowSpecialRegisters;
 					InvalidateRect(mhwnd, NULL, TRUE);
 					return true;
 				case ID_HISTORYCONTEXTMENU_SHOWFLAGS:
@@ -2012,8 +2063,11 @@ bool ATHistoryWindow::OnCreate() {
 	if (!mhwndHeader)
 		return false;
 
-	if (!g_sim.GetCPU().IsHistoryEnabled())
+	if (!g_sim.GetCPU().IsHistoryEnabled()) {
 		mbHistoryError = true;
+		UpdateHScrollBar();
+		UpdateScrollBar();
+	}
 
 	OnSize();
 	Reset();
@@ -2081,11 +2135,14 @@ void ATHistoryWindow::OnSize() {
 
 	UpdateScrollMax();
 	UpdateScrollBar();
+	UpdateHScrollBar();
 
 	ScrollToPixel(mScrollY);
+	HScrollToPixel(mScrollX);
 }
 
 void ATHistoryWindow::OnFontsUpdated() {
+	mCharWidth = 12;
 	mItemHeight = 16;
 	mItemTextVOffset = 0;
 
@@ -2094,6 +2151,7 @@ void ATHistoryWindow::OnFontsUpdated() {
 
 		TEXTMETRIC tm = {0};
 		if (GetTextMetrics(hdc, &tm)) {
+			mCharWidth = tm.tmAveCharWidth;
 			mItemHeight = tm.tmHeight + 2*GetSystemMetrics(SM_CYEDGE);
 			mItemTextVOffset = GetSystemMetrics(SM_CYEDGE);
 		}
@@ -2158,6 +2216,11 @@ void ATHistoryWindow::OnLButtonDblClk(int x, int y, int mods) {
 
 bool ATHistoryWindow::OnKeyDown(int code) {
 	switch(code) {
+		case VK_ESCAPE:
+			if (ATGetUIPane(kATUIPaneId_Console))
+				ATActivateUIPane(kATUIPaneId_Console, true);
+			break;
+
 		case VK_PRIOR:
 			if (mpSelectedNode) {
 				for(uint32 i=0; i<mPageItems; ++i) {
@@ -2268,6 +2331,70 @@ void ATHistoryWindow::OnMouseWheel(int dz) {
 	if (SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &linesPerAction, FALSE)) {
 		ScrollToPixel(mScrollY - (int)linesPerAction * actions * (int)mItemHeight);
 	}
+}
+
+void ATHistoryWindow::OnHScroll(int code) {
+	SCROLLINFO si = {0};
+	si.cbSize = sizeof(SCROLLINFO);
+	si.fMask = SIF_TRACKPOS | SIF_POS | SIF_PAGE | SIF_RANGE;
+
+	GetScrollInfo(mhwnd, SB_HORZ, &si);
+
+	int pos = si.nPos;
+
+	switch(code) {
+		case SB_TOP:
+			pos = si.nMin;
+			break;
+
+		case SB_BOTTOM:
+			pos = si.nMax;
+			break;
+
+		case SB_ENDSCROLL:
+			break;
+
+		case SB_LINEDOWN:
+			if (si.nMax - pos >= 16 * (int)mItemHeight)
+				pos += 16 * mItemHeight;
+			else
+				pos = si.nMax;
+			break;
+
+		case SB_LINEUP:
+			if (pos - si.nMin >= 16 * (int)mItemHeight)
+				pos -= 16 * mItemHeight;
+			else
+				pos = si.nMin;
+			break;
+
+		case SB_PAGEDOWN:
+			if (si.nMax - pos >= (int)si.nPage)
+				pos += si.nPage;
+			else
+				pos = si.nMax;
+			break;
+
+		case SB_PAGEUP:
+			if (pos - si.nMin >= (int)si.nPage)
+				pos -= si.nPage;
+			else
+				pos = si.nMin;
+			break;
+
+		case SB_THUMBPOSITION:
+		case SB_THUMBTRACK:
+			pos = si.nTrackPos;
+			break;
+	}
+
+	if (pos != si.nPos) {
+		si.nPos = pos;
+		si.fMask = SIF_POS;
+		SetScrollInfo(mhwnd, SB_HORZ, &si, TRUE);
+	}
+
+	HScrollToPixel(pos);
 }
 
 void ATHistoryWindow::OnVScroll(int code) {
@@ -2418,7 +2545,7 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 					SetTextColor(hdc, GetSysColor(COLOR_WINDOWTEXT));
 				}
 
-				int x = mItemHeight * level;
+				int x = mItemHeight * level - mScrollX;
 				int y = pos * mItemHeight + mHeaderHeight - mScrollY;
 
 				RECT rOpaque;
@@ -2554,7 +2681,7 @@ const VDStringA *ATHistoryWindow::GetNodeText(TreeNode *node) {
 				if (mbShowRegisters) {
 					if (is65C816 && !hent.mbEmulation) {
 						if (hent.mP & AT6502::kFlagM) {
-							mTempLine.append_sprintf("B=%02X A=%02X"
+							mTempLine.append_sprintf("C=%02X%02X"
 								, hent.mAH
 								, hent.mA
 								);
@@ -2566,7 +2693,7 @@ const VDStringA *ATHistoryWindow::GetNodeText(TreeNode *node) {
 						}
 
 						if (hent.mP & AT6502::kFlagX) {
-							mTempLine.append_sprintf(" X=%02X Y=%02X"
+							mTempLine.append_sprintf(" X=--%02X Y=--%02X"
 								, hent.mX
 								, hent.mY
 								);
@@ -2579,19 +2706,26 @@ const VDStringA *ATHistoryWindow::GetNodeText(TreeNode *node) {
 								);
 						}
 
-						mTempLine.append_sprintf(" S=%02X%02X P=%02X"
-							, hent.mSH
-							, hent.mS
-							, hent.mP
-							);
+						if (mbShowSpecialRegisters) {
+							mTempLine.append_sprintf(" S=%02X%02X P=%02X"
+								, hent.mSH
+								, hent.mS
+								, hent.mP
+								);
+						}
 					} else {
-						mTempLine.append_sprintf("A=%02X X=%02X Y=%02X S=%02X P=%02X"
+						mTempLine.append_sprintf("A=%02X X=%02X Y=%02X"
 							, hent.mA
 							, hent.mX
 							, hent.mY
-							, hent.mS
-							, hent.mP
 							);
+
+						if (mbShowSpecialRegisters) {
+							mTempLine.append_sprintf(" S=%02X P=%02X"
+								, hent.mS
+								, hent.mP
+								);
+						}
 					}
 				}
 
@@ -2608,7 +2742,7 @@ const VDStringA *ATHistoryWindow::GetNodeText(TreeNode *node) {
 							, (hent.mP & AT6502::kFlagC) ? 'C' : ' '
 							);
 					} else {
-						mTempLine.append_sprintf(" (%c%c1B%c%c%c%c)"
+						mTempLine.append_sprintf(" (%c%c%c%c%c%c)"
 							, (hent.mP & AT6502::kFlagN) ? 'N' : ' '
 							, (hent.mP & AT6502::kFlagV) ? 'V' : ' '
 							, (hent.mP & AT6502::kFlagD) ? 'D' : ' '
@@ -2630,6 +2764,19 @@ const VDStringA *ATHistoryWindow::GetNodeText(TreeNode *node) {
 	}
 
 	return s;
+}
+
+void ATHistoryWindow::HScrollToPixel(int pos) {
+	if (pos < 0)
+		pos = 0;
+
+	if (mScrollX != pos) {
+		sint32 delta = (sint32)mScrollX - (sint32)pos;
+		mScrollX = pos;
+
+		ScrollWindowEx(mhwnd, delta, 0, &mContentRect, &mContentRect, NULL, NULL, SW_INVALIDATE);
+		UpdateHScrollBar();
+	}
 }
 
 void ATHistoryWindow::ScrollToPixel(int pos) {
@@ -2889,6 +3036,31 @@ ATHistoryWindow::TreeNode *ATHistoryWindow::GetNearestVisibleNode(TreeNode *node
 	return node;
 }
 
+void ATHistoryWindow::UpdateHScrollBar() {
+	if (mbUpdatesBlocked) {
+		mbDirtyHScrollBar = true;
+		return;
+	}
+
+	if (mbHistoryError) {
+		ShowScrollBar(mhwnd, SB_HORZ, FALSE);
+	} else {
+		SCROLLINFO si;
+		si.cbSize = sizeof si;
+		si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+		si.nPage = mWidth;
+		si.nMin = 0;
+		si.nMax = mItemHeight * 64 + mCharWidth * 64;
+		si.nPos = mScrollX;
+		si.nTrackPos = 0;
+		SetScrollInfo(mhwnd, SB_HORZ, &si, TRUE);
+
+		ShowScrollBar(mhwnd, SB_HORZ, TRUE);
+	}
+
+	mbDirtyHScrollBar = false;
+}
+
 void ATHistoryWindow::UpdateScrollMax() {
 	mScrollMax = (mRootNode.mHeight - 1) <= mPageItems ? 0 : ((mRootNode.mHeight - 1) - mPageItems) * mItemHeight;
 }
@@ -2899,17 +3071,21 @@ void ATHistoryWindow::UpdateScrollBar() {
 		return;
 	}
 
-	SCROLLINFO si;
-	si.cbSize = sizeof si;
-	si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
-	si.nPage = mPageItems * mItemHeight;
-	si.nMin = 0;
-	si.nMax = mScrollMax + si.nPage - 1;
-	si.nPos = mScrollY;
-	si.nTrackPos = 0;
-	SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
+	if (mbHistoryError) {
+		ShowScrollBar(mhwnd, SB_VERT, FALSE);
+	} else {
+		SCROLLINFO si;
+		si.cbSize = sizeof si;
+		si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+		si.nPage = mPageItems * mItemHeight;
+		si.nMin = 0;
+		si.nMax = mScrollMax + si.nPage - 1;
+		si.nPos = mScrollY;
+		si.nTrackPos = 0;
+		SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
 
-	ShowScrollBar(mhwnd, SB_VERT, si.nMax > 0);
+		ShowScrollBar(mhwnd, SB_VERT, si.nMax > 0);
+	}
 
 	mbDirtyScrollBar = false;
 }
@@ -2953,6 +3129,8 @@ void ATHistoryWindow::UpdateOpcodes() {
 			ClearAllNodes();
 			Reset();
 			mbHistoryError = true;
+			UpdateHScrollBar();
+			UpdateScrollBar();
 			InvalidateRect(mhwnd, NULL, TRUE);
 			return;
 		}
@@ -3045,14 +3223,21 @@ void ATHistoryWindow::UpdateOpcodes() {
 
 		switch(hent.mOpcode[0]) {
 			case 0x48:	// PHA
+				if (is65C816 && !(hent.mP & 0x20))
+					mStackLevels[(uint8)--mLastS] = parent;
+				// fall through
 			case 0x08:	// PHP
 				mStackLevels[(uint8)--mLastS] = parent;
 				break;
 
-			case 0x6A:	// PHY
+			case 0x5A:	// PHY
 			case 0xDA:	// PHX
-				if (is65C02 || is65C816)
+				if (is65C02 || is65C816) {
+					if (is65C816 && !(hent.mP & 0x10))
+						--mLastS;
+
 					mStackLevels[(uint8)--mLastS] = parent;
+				}
 				break;
 
 			case 0x8B:	// PHB
@@ -3062,6 +3247,9 @@ void ATHistoryWindow::UpdateOpcodes() {
 				break;
 
 			case 0x0B:	// PHD
+			case 0xF4:	// PEA
+			case 0x62:	// PER
+			case 0xD4:	// PEI
 				if (is65C816) {
 					mLastS -= 2;
 					mStackLevels[(uint8)mLastS] = parent;
@@ -3177,6 +3365,9 @@ void ATHistoryWindow::UpdateOpcodes() {
 
 	if (mbDirtyScrollBar)
 		UpdateScrollBar();
+
+	if (mbDirtyHScrollBar)
+		UpdateHScrollBar();
 }
 
 void ATHistoryWindow::ClearAllNodes() {
@@ -3344,35 +3535,56 @@ ATHistoryWindow::TreeNode *ATHistoryWindow::AllocNode() {
 }
 
 void ATHistoryWindow::FreeNode(TreeNode *node) {
-	VDASSERT(node->mpPrevSibling != node);
+	node->mpFirstChild = NULL;
+	node->mpLastChild = NULL;
+	node->mpNextSibling = NULL;
+	node->mpPrevSibling = NULL;
 
-	node->mpPrevSibling = node;
-	node->mpNextSibling = mpNodeFreeList;
-	mpNodeFreeList = node;
+	if (node != &mRootNode) {
+		VDASSERT(node->mpPrevSibling != node);
 
-	--mNodeCount;
+		node->mpPrevSibling = node;
+		node->mpNextSibling = mpNodeFreeList;
+		mpNodeFreeList = node;
+
+		--mNodeCount;
+	}
 }
 
 void ATHistoryWindow::FreeNodes(TreeNode *node) {
 	if (!node)
 		return;
 
-	TreeNode *c = node->mpFirstChild;
-	while(c) {
-		TreeNode *n = c->mpNextSibling;
+	TreeNode *p = node;
 
-		FreeNodes(c);
+	for(;;) {
+		// find first descendent that doesn't have its own children
+		while(p->mpFirstChild) {
+			VDASSERT(p->mpFirstChild->mpParent == p);
 
-		c = n;
+			p = p->mpFirstChild;
+		}
+
+		// free current node
+		TreeNode *next = p->mpNextSibling;
+		TreeNode *parent = p->mpParent;
+
+		FreeNode(p);
+
+		// exit if this is the original node
+		if (p == node)
+			break;
+
+		// advance to next sibling if we have one
+		if (next)
+			p = next;
+		else {
+			p = parent;
+
+			// this node no longer has any children as we just freed them all
+			p->mpFirstChild = NULL;
+		}
 	}
-
-	node->mpFirstChild = NULL;
-	node->mpLastChild = NULL;
-	node->mpNextSibling = NULL;
-	node->mpPrevSibling = NULL;
-
-	if (node != &mRootNode)
-		FreeNode(node);
 }
 
 void ATHistoryWindow::CopyVisibleNodes() {
@@ -3471,6 +3683,7 @@ public:
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	LRESULT LogWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 	bool OnCreate();
@@ -3494,6 +3707,8 @@ protected:
 	HWND	mhwndPrompt;
 	HMENU	mMenu;
 
+	VDFunctionThunk	*mpLogThunk;
+	WNDPROC	mLogProc;
 	VDFunctionThunk	*mpCmdEditThunk;
 	WNDPROC	mCmdEditProc;
 
@@ -3523,7 +3738,10 @@ ATConsoleWindow::ATConsoleWindow()
 	, mhwndLog(NULL)
 	, mhwndPrompt(NULL)
 	, mhwndEdit(NULL)
+	, mpLogThunk(NULL)
+	, mLogProc(NULL)
 	, mpCmdEditThunk(NULL)
+	, mCmdEditProc(NULL)
 	, mbRunState(false)
 	, mbEditShownDisabled(false)
 	, mbAppendTimerStarted(false)
@@ -3609,9 +3827,14 @@ bool ATConsoleWindow::OnCreate() {
 	if (!mhwndPrompt)
 		return false;
 
-	mhwndEdit = CreateWindowEx(WS_EX_CLIENTEDGE, _T("RICHEDIT"), _T(""), WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
+	mhwndEdit = CreateWindowEx(WS_EX_CLIENTEDGE, _T("RICHEDIT"), _T(""), WS_VISIBLE|WS_CHILD|ES_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
 	if (!mhwndEdit)
 		return false;
+
+	mpLogThunk = VDCreateFunctionThunkFromMethod(this, &ATConsoleWindow::LogWndProc, true);
+
+	mLogProc = (WNDPROC)GetWindowLongPtr(mhwndLog, GWLP_WNDPROC);
+	SetWindowLongPtr(mhwndLog, GWLP_WNDPROC, (LONG_PTR)mpLogThunk);
 
 	mpCmdEditThunk = VDCreateFunctionThunkFromMethod(this, &ATConsoleWindow::CommandEditWndProc, true);
 
@@ -3655,8 +3878,17 @@ void ATConsoleWindow::OnDestroy() {
 		mpCmdEditThunk = NULL;
 	}
 
+	if (mhwndLog) {
+		DestroyWindow(mhwndLog);
+		mhwndLog = NULL;
+	}
+
+	if (mpLogThunk) {
+		VDDestroyFunctionThunk(mpLogThunk);
+		mpLogThunk = NULL;
+	}
+
 	mhwndPrompt = NULL;
-	mhwndLog = NULL;
 
 	ATUIPane::OnDestroy();
 }
@@ -3685,7 +3917,7 @@ void ATConsoleWindow::OnSize() {
 		}
 
 		if (mhwndEdit) {
-			VDVERIFY(SetWindowPos(mhwndEdit, NULL, prw, r.bottom - h, r.right, h, SWP_NOZORDER|SWP_NOACTIVATE));
+			VDVERIFY(SetWindowPos(mhwndEdit, NULL, prw, r.bottom - h, r.right - prw, h, SWP_NOZORDER|SWP_NOACTIVATE));
 		}
 	}
 }
@@ -3758,6 +3990,34 @@ void ATConsoleWindow::Write(const char *s) {
 
 void ATConsoleWindow::ShowEnd() {
 	SendMessage(mhwndLog, EM_SCROLLCARET, 0, 0);
+}
+
+LRESULT ATConsoleWindow::LogWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+	if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+		if (wParam == VK_ESCAPE) {
+			if (mhwndEdit)
+				::SetFocus(mhwndEdit);
+			return 0;
+		}
+	} else if (msg == WM_KEYUP || msg == WM_SYSKEYUP) {
+		switch(wParam) {
+			case VK_ESCAPE:
+				return 0;
+		}
+	} else if (msg == WM_CHAR
+		|| msg == WM_SYSCHAR
+		|| msg == WM_DEADCHAR
+		|| msg == WM_SYSDEADCHAR
+		|| msg == WM_UNICHAR
+		)
+	{
+		if (mhwndEdit && wParam >= 0x20) {
+			::SetFocus(mhwndEdit);
+			return ::SendMessage(mhwndEdit, msg, wParam, lParam);
+		}
+	}
+
+	return CallWindowProc(mLogProc, hwnd, msg, wParam, lParam);
 }
 
 LRESULT ATConsoleWindow::CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -5304,24 +5564,37 @@ namespace {
 	}
 
 	void SerializeDockingPane(VDStringA& s, ATContainerDockingPane *pane) {
-		const uint32 n = pane->GetChildCount();
+		ATFrameWindow *visFrame = pane->GetVisibleFrame();
 
+		// serialize local content
+		s += '{';
+
+		uint32 nc = pane->GetContentCount();
+		for(uint32 i=0; i<nc; ++i) {
+			ATFrameWindow *w = pane->GetContent(i);
+			uint32 id = GetIdFromFrame(w);
+
+			if (id) {
+				s.append_sprintf(",%x" + (s.back() == '{'), id);
+
+				if (w == visFrame)
+					s += '*';
+			}
+		}
+
+		s += '}';
+
+		// serialize children
+		const uint32 n = pane->GetChildCount();
 		for(uint32 i=0; i<n; ++i) {
 			ATContainerDockingPane *child = pane->GetChildPane(i);
 
-			if (i)
-				s += ',';
-
-			s.append_sprintf("(%x,%d,%.4f"
-				, GetIdFromFrame(child->GetContent())
+			s.append_sprintf(",(%d,%.4f:"
 				, child->GetDockCode()
 				, child->GetDockFraction()
 				);
 
-			if (child->GetChildCount()) {
-				s += ':';
-				SerializeDockingPane(s, child);
-			}
+			SerializeDockingPane(s, child);
 
 			s += ')';
 		}
@@ -5354,33 +5627,32 @@ void ATSavePaneLayout(const char *name) {
 			);
 	}
 
-	VDRegistryAppKey key("Pane layouts");
+	VDRegistryAppKey key("Pane layouts 2");
 	key.setString(name, s.c_str());
 }
 
 namespace {
-	const char *UnserializeDockablePane(const char *s, ATContainerWindow *cont, ATContainerDockingPane *pane, vdhashmap<uint32, ATFrameWindow *>& frames) {
-		if (*s != '(')
-			return s;
+	const char *UnserializeDockablePane(const char *s, ATContainerWindow *cont, ATContainerDockingPane *pane, int dockingCode, float dockingFraction, vdhashmap<uint32, ATFrameWindow *>& frames) {
+		// Format we are reading:
+		//	node = '{' [id[','id...]] '}' [',' '(' dock_code, fraction: sub_node ')' ...]
 
-		for(;;) {
-			if (*s++ != '(')
-				return NULL;
+		if (*s != '{')
+			return NULL;
 
-			int id;
-			int code;
-			float frac;
-			int len = -1;
-			int n = sscanf(s, "%x,%d,%f%n", &id, &code, &frac, &len);
+		++s;
 
-			if (n < 3 || len <= 0)
-				return NULL;
+		if (*s != '}') {
+			ATFrameWindow *visFrame = NULL;
 
-			s += len;
+			for(;;) {
+				char *next = NULL;
+				uint32 id = (uint32)strtoul(s, &next, 16);
+				if (!id || s == next)
+					return NULL;
 
-			ATFrameWindow *w = NULL;
-			
-			if (id) {
+				s = next;
+
+				ATFrameWindow *w = NULL;
 				vdhashmap<uint32, ATFrameWindow *>::iterator it(frames.find(id));
 
 				if (it != frames.end()) {
@@ -5400,20 +5672,60 @@ namespace {
 						}
 					}
 				}
+
+				if (w) {
+					if (*s == '*') {
+						++s;
+						visFrame = w;
+					}
+
+					ATContainerDockingPane *nextPane = cont->DockFrame(w, pane, dockingCode);
+					if (dockingCode != kATContainerDockCenter) {
+						nextPane->SetDockFraction(dockingFraction);
+						dockingCode = kATContainerDockCenter;
+					}
+
+					pane = nextPane;
+				}
+
+				if (*s != ',')
+					break;
+
+				++s;
 			}
 
-			ATContainerDockingPane *child = cont->DockFrame(w, pane, code);
-			child->SetDockFraction(frac);
+			if (visFrame)
+				pane->SetVisibleFrame(visFrame);
+		}
 
-			if (*s == ':')
-				s = UnserializeDockablePane(s+1, cont, child, frames);
+		if (*s++ != '}')
+			return NULL;
+
+		while(*s == ',') {
+			++s;
+
+			if (*s++ != '(')
+				return NULL;
+
+			int code;
+			float frac;
+			int len = -1;
+			int n = sscanf(s, "%d,%f%n", &code, &frac, &len);
+
+			if (n < 2 || len <= 0)
+				return NULL;
+
+			s += len;
+
+			if (*s++ != ':')
+				return NULL;
+
+			s = UnserializeDockablePane(s, cont, pane, code, frac, frames);
+			if (!s)
+				return NULL;
 
 			if (*s++ != ')')
 				return NULL;
-
-			if (*s != ',')
-				break;
-			++s;
 		}
 
 		return s;
@@ -5424,7 +5736,7 @@ bool ATRestorePaneLayout(const char *name) {
 	if (!name)
 		name = g_uiDebuggerMode ? "Debugger" : "Standard";
 
-	VDRegistryAppKey key("Pane layouts");
+	VDRegistryAppKey key("Pane layouts 2");
 	VDStringA str;
 
 	if (!key.getString(name, str))
@@ -5478,7 +5790,7 @@ bool ATRestorePaneLayout(const char *name) {
 	const char *s = str.c_str();
 
 	// parse dockable panes
-	s = UnserializeDockablePane(s, g_pMainWindow, g_pMainWindow->GetBasePane(), frames);
+	s = UnserializeDockablePane(s, g_pMainWindow, g_pMainWindow->GetBasePane(), kATContainerDockCenter, 0, frames);
 	g_pMainWindow->RemoveAnyEmptyNodes();
 	g_pMainWindow->Relayout();
 
@@ -5594,8 +5906,10 @@ void ATLoadDefaultPaneLayout() {
 
 	if (g_uiDebuggerMode) {
 		ATActivateUIPane(kATUIPaneId_Display, false);
-		ATActivateUIPane(kATUIPaneId_Console, true);
-		ATActivateUIPane(kATUIPaneId_Registers, false);
+		ATActivateUIPane(kATUIPaneId_Console, true, true, kATUIPaneId_Display, kATContainerDockBottom);
+		ATActivateUIPane(kATUIPaneId_Registers, false, true, kATUIPaneId_Display, kATContainerDockRight);
+		ATActivateUIPane(kATUIPaneId_Disassembly, false, true, kATUIPaneId_Registers, kATContainerDockCenter);
+		ATActivateUIPane(kATUIPaneId_History, false, true, kATUIPaneId_Registers, kATContainerDockCenter);
 	} else {
 		ATActivateUIPane(kATUIPaneId_Display, true);
 	}

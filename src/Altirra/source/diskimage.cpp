@@ -188,9 +188,9 @@ void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRan
 			LoadATR(stream, len, origPath, header);
 		} else {
 			if (origPath)
-				throw MyError("Disk image is corrupt or uses an unsupported format.");
-			else
 				throw MyError("Disk image \"%ls\" is corrupt or uses an unsupported format.", VDFileSplitPath(origPath));
+			else
+				throw MyError("Disk image is corrupt or uses an unsupported format.");
 		}
 	}
 

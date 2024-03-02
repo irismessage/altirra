@@ -39,7 +39,6 @@ public:
 	virtual uint32 CPUGetTimestamp() = 0;
 	virtual uint32 CPUGetCycle() = 0;
 	virtual uint32 CPUGetUnhaltedCycle() = 0;
-	virtual uint8 CPURecordBusActivity(uint8 value) = 0;
 };
 
 typedef bool (*ATCPUStepCallback)(ATCPUEmulator *cpu, uint32 pc, void *data);
@@ -160,6 +159,8 @@ public:
 	void	ClearFlagC() { mP &= ~AT6502::kFlagC; }
 
 	void	SetHook(uint16 pc, bool enable);
+
+	bool	GetStep() const { return mbStep; }
 	void	SetStep(bool step) {
 		mbStep = step;
 		mStepRegionStart = 0;
@@ -265,11 +266,8 @@ public:
 	void	AssertNMI();
 	void	NegateNMI();
 	int		Advance();
-	int		AdvanceWithBusTracking();
 	int		Advance6502();
 	int		Advance65816();
-	int		Advance6502WithBusTracking();
-	int		Advance65816WithBusTracking();
 
 protected:
 	__declspec(noinline) uint8 ProcessDebugging();
@@ -300,17 +298,19 @@ protected:
 	void	Decode65816AddrDpY(bool unalignedDP, bool emu);
 	void	Decode65816AddrDpInd(bool unalignedDP);
 	void	Decode65816AddrDpIndX(bool unalignedDP, bool emu);
-	void	Decode65816AddrDpIndY(bool unalignedDP);
+	void	Decode65816AddrDpIndY(bool unalignedDP, bool forceCycle);
 	void	Decode65816AddrDpLongInd(bool unalignedDP);
 	void	Decode65816AddrDpLongIndY(bool unalignedDP);
 	void	Decode65816AddrAbs();
-	void	Decode65816AddrAbsX();
-	void	Decode65816AddrAbsY();
+	void	Decode65816AddrAbsX(bool forceCycle);
+	void	Decode65816AddrAbsY(bool forceCycle);
 	void	Decode65816AddrAbsLong();
 	void	Decode65816AddrAbsLongX();
 	void	Decode65816AddrStackRel();
 	void	Decode65816AddrStackRelInd();
 
+	const uint8 *mpNextState;
+	bool	mbHistoryOrProfilingEnabled;
 	uint8	mA;
 	uint8	mX;
 	uint8	mY;
@@ -387,11 +387,9 @@ protected:
 	ATCPUVerifier	*mpVerifier;
 	ATCPUHeatMap	*mpHeatMap;
 
-	const uint8 *mpNextState;
 	uint8 *mpDstState;
 	uint8	mStates[16];
 
-	bool	mbHistoryOrProfilingEnabled;
 	bool	mbHistoryEnabled;
 	bool	mbPathfindingEnabled;
 	bool	mbPathBreakEnabled;

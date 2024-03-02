@@ -13,16 +13,18 @@ VDDisplayTextRenderer::VDDisplayTextRenderer()
 VDDisplayTextRenderer::~VDDisplayTextRenderer() {
 }
 
-void VDDisplayTextRenderer::Init(IVDDisplayRenderer *renderer, uint32 cachew, uint32 cacheh) {
-	mCacheImage.init(cachew, cacheh, nsVDPixmap::kPixFormat_XRGB8888);
+void VDDisplayTextRenderer::Init(IVDDisplayRenderer *renderer, uint32 cachew, uint32 cacheh, bool useColor2Mode) {
+	const uint32 cachetexw = cachew*2;
+	mCacheImage.init(cachetexw, cacheh, nsVDPixmap::kPixFormat_XRGB8888);
 
-	VDMemset32Rect(mCacheImage.data, mCacheImage.pitch, 0, cachew, cacheh);
+	VDMemset32Rect(mCacheImage.data, mCacheImage.pitch, 0, cachetexw, cacheh);
 
 	mCacheImageView.SetImage(mCacheImage, false);
 
 	mpRenderer = renderer;
 	mWidth = cachew;
 	mHeight = cacheh;
+	mbUseColor2Mode = useColor2Mode;
 
 	Discard();
 }
@@ -110,7 +112,11 @@ void VDDisplayTextRenderer::DrawTextSpan(const wchar_t *text, uint32 numChars) {
 }
 
 void VDDisplayTextRenderer::DrawPrearrangedText(int x, int y, const VDDisplayFontGlyphPlacement *glyphPlacements, uint32 n) {
+	const IVDDisplayRenderer::BltMode bltMode = mbUseColor2Mode ? IVDDisplayRenderer::kBltMode_Color2 : IVDDisplayRenderer::kBltMode_Color;
+
 	mpRenderer->SetColorRGB(mColor);
+
+	const bool colorIsBright = ((mColor >> 16) & 0xff)*54 + ((mColor >> 8) & 0xff)*183 + (mColor & 0xff) * 19 > 0x8000;
 
 	mBlts.clear();
 	for(uint32 i=0; i<n; ++i) {
@@ -125,7 +131,7 @@ void VDDisplayTextRenderer::DrawPrearrangedText(int x, int y, const VDDisplayFon
 			if (mBlts.empty())
 				goto failed;
 
-			mpRenderer->MultiColorBlt(mBlts.data(), (uint32)mBlts.size(), mCacheImageView);
+			mpRenderer->MultiBlt(mBlts.data(), (uint32)mBlts.size(), mCacheImageView, bltMode);
 			Discard();
 
 			mBlts.clear();
@@ -140,11 +146,14 @@ void VDDisplayTextRenderer::DrawPrearrangedText(int x, int y, const VDDisplayFon
 		blt.mWidth = node->mWidth;
 		blt.mHeight = node->mHeight;
 
+		if (!mbUseColor2Mode && colorIsBright)
+			blt.mSrcX += mWidth;
+
 failed:
 		;
 	}
 
-	mpRenderer->MultiColorBlt(mBlts.data(), (uint32)mBlts.size(), mCacheImageView);
+	mpRenderer->MultiBlt(mBlts.data(), (uint32)mBlts.size(), mCacheImageView, bltMode);
 }
 
 void VDDisplayTextRenderer::Discard() {
@@ -189,7 +198,11 @@ const VDDisplayTextRenderer::HashNode *VDDisplayTextRenderer::PrepareGlyph(IVDDi
 		px.w = node->mWidth;
 		px.h = node->mHeight;
 
-		font->GetGlyphImage(glyphIndex, px);
+		font->GetGlyphImage(glyphIndex, true, px);
+
+		px.data = (char *)px.data + mWidth*sizeof(uint32);
+
+		font->GetGlyphImage(glyphIndex, false, px);
 
 		mCacheImageView.Invalidate();
 	}

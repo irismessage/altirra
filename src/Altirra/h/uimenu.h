@@ -24,6 +24,7 @@ class ATUIMenu;
 
 ATUIMenu *ATUIGetMenu();
 void ATUILoadMenu();
+void ATUISetMenuEnabled(bool enabled);
 void ATUIUpdateMenu();
 bool ATUIHandleMenuCommand(uint32 id);
 

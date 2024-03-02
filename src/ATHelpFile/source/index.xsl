@@ -7,6 +7,9 @@
       <head>
         <link rel="stylesheet" href="layout.css"/>
         <meta http-equiv="Content-Type" value="text/html; charset=utf-8"/>
+        <title>
+          Altirra Help: <xsl:value-of select="@title"/>
+        </title>
       </head>
       <body>
         <div class="header">

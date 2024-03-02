@@ -90,7 +90,7 @@ public:
 
 	void Flush();
 	void Reset();
-	void MountFolder(const wchar_t *path);
+	void MountFolder(const wchar_t *path, bool sdfs);
 	void LoadDisk(const wchar_t *s);
 	void LoadDisk(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream);
 	void SaveDisk(const wchar_t *s);

@@ -267,12 +267,20 @@ suspendloop:
 		}
 
 		// check if display of control codes is desired
-		if (!kdb.DSPFLG && !kdb.ESCFLG) {
+		bool escaped = (kdb.DSPFLG != 0);
+		
+		if (!escaped && kdb.ESCFLG) {
+			kdb.ESCFLG = 0;
+			escaped = true;
+		}
+		
+		if (!escaped) {
 			bool moveexit = false;
 			
 			switch(c) {
 				case 0x1B:	// escape
-					kdb.ESCFLG = 0xFF;
+					kdb.ESCFLG = 0x80;
+					mpCPU->SetY(1);
 					return;
 					
 				case 0x1C:	// up
@@ -332,6 +340,7 @@ suspendloop:
 					ScreenShowCursor();
 					EditorRecomputeLogicalColumn();
 					EditorResetLogicalLineStart();
+					mpCPU->SetY(1);
 					return;
 					
 				case 0x7E:	// backspace
@@ -352,6 +361,39 @@ suspendloop:
 						mpMemory->WriteByte(ScreenComputeCursorAddr(), 0);
 						ScreenShowCursor();
 					}
+					mpCPU->SetY(1);
+					return;
+					
+				case 0x7F:	// tab
+					{
+						ScreenHideCursor();
+					
+						int x = kdb.COLCRS;
+						int logbase = EditorRecomputeLogicalColumn() - x;
+						int y = kdb.ROWCRS;
+						
+						do {
+							if (++x >= kdb.RMARGN) {
+								x = kdb.LMARGN;
+								logbase += 40;
+								++y;
+								
+								if (EditorIsLogicalLineStart(y))
+									break;
+							}
+						} while(!(kdb.TABMAP[(logbase + x) >> 3] & (1 << ((logbase + x) & 7))));
+						
+						kdb.COLCRS = x;
+						
+						if (y >= kdb.BOTSCR)
+							y = kdb.BOTSCR - ScreenScroll();
+						
+						kdb.ROWCRS = y;
+						
+						EditorRecomputeLogicalColumn();
+						ScreenShowCursor();
+					}
+					mpCPU->SetY(1);
 					return;
 										
 				case 0x9C:	// delete line
@@ -404,6 +446,8 @@ suspendloop:
 						EditorResetLogicalLineStart();					
 						ScreenShowCursor();
 					}
+					
+					mpCPU->SetY(1);
 					return;
 					
 				case 0x9D:	// insert line
@@ -431,6 +475,28 @@ suspendloop:
 					EditorRecomputeLogicalColumn();
 					EditorResetLogicalLineStart();					
 					ScreenShowCursor();
+					
+					mpCPU->SetY(1);
+					return;
+					
+				case 0x9E:	// clear tab
+					{
+						int logcol = EditorRecomputeLogicalColumn();
+						
+						kdb.TABMAP[logcol >> 3] &= ~(1 << (logcol & 7));
+					}
+					
+					mpCPU->SetY(1);
+					return;
+						
+				case 0x9F:	// set tab
+					{
+						int logcol = EditorRecomputeLogicalColumn();
+						
+						kdb.TABMAP[logcol >> 3] |= ~(1 << (logcol & 7));
+					}
+					
+					mpCPU->SetY(1);
 					return;
 			}
 			
@@ -521,7 +587,7 @@ delay:
 .endp
 
 #<
-void EditorRecomputeLogicalColumn() {
+uint8 EditorRecomputeLogicalColumn() {
 	uint32 mask = EditorReadLogicalLineMask();
 	uint8 logcol = (uint8)kdb.COLCRS;
 	uint8 row = kdb.ROWCRS;
@@ -533,6 +599,8 @@ void EditorRecomputeLogicalColumn() {
 	
 	kdb.LOGCOL = logcol;
 	kdb.BUFSTR = kdb.LMARGN;
+	
+	return logcol;
 }
 #>
 

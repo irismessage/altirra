@@ -104,3 +104,25 @@ half4 FP_RenderBlitColorRBSwap(float4 pos : SV_Position,
 	
 	return half4(px.rgb * c.rgb, c.a);
 }
+
+half4 FP_RenderBlitColor2(float4 pos : SV_Position,
+		half4 c : COLOR0,
+		float2 uv : TEXCOORD0) : SV_Target
+{	
+	half4 px1 = (half4)SAMPLE2D(srctex, srcsamp, (half2)uv);
+	half4 px2 = (half4)SAMPLE2D(srctex, srcsamp, (half2)uv + half2(0.5, 0.0));
+	half4 px = lerp(px1, px2, c.a);
+	
+	return half4(px.rgb * c.rgb, c.a);
+}
+
+half4 FP_RenderBlitColor2RBSwap(float4 pos : SV_Position,
+		half4 c : COLOR0,
+		float2 uv : TEXCOORD0) : SV_Target
+{	
+	half4 px1 = (half4)SAMPLE2D(srctex, srcsamp, (half2)uv).bgra;
+	half4 px2 = (half4)SAMPLE2D(srctex, srcsamp, (half2)uv + half2(0.5, 0.0)).bgra;
+	half4 px = lerp(px1, px2, c.a);
+	
+	return half4(px.rgb * c.rgb, c.a);
+}

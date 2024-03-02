@@ -80,6 +80,7 @@ void ATCPUVerifier::RemoveAllowedTargets() {
 void ATCPUVerifier::ResetAllowedTargets() {
 	using namespace ATKernelSymbols;
 	static const uint16 kDefaultTargets[]={
+		// math pack (+Atari BASIC vectors)
 		AFP,
 		FASC,
 		IPF,
@@ -108,6 +109,15 @@ void ATCPUVerifier::ResetAllowedTargets() {
 		REDRNG,
 		LOG,
 		LOG10,
+
+		// initialization vectors for E:/S:/K:/P:/C:
+		0xE40C,
+		0xE41C,
+		0xE42C,
+		0xE43C,
+		0xE44C,
+
+		// standard vectors
 		DISKIV,
 		DSKINV,
 		CIOV,
@@ -128,8 +138,7 @@ void ATCPUVerifier::ResetAllowedTargets() {
 		SLFTSV,
 		PENTV,
 		PHUNLV,
-		PHINIV,
-		GPDVV,
+		PHINIV
 	};
 
 	mAllowedTargets.assign(kDefaultTargets, kDefaultTargets + sizeof(kDefaultTargets)/sizeof(kDefaultTargets[0]));

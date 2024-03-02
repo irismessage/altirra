@@ -17,10 +17,11 @@
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 .proc	KeyboardInit
-	mva		#0		keydel
-	lda		#$ff
-	sta		ch
-	sta		ch1
+	ldx		#$ff
+	stx		ch
+	stx		ch1
+	inx
+	stx		keydel
 	
 	;enable keyboard interrupts
 	php
@@ -33,6 +34,11 @@
 	
 	;turn on shift lock
 	mva		#$40	shflok
+	
+	;set keyboard definition table pointer
+	.if _KERNEL_XLXE
+	mwa		#KeyCodeToATASCIITable keydef
+	.endif
 	rts
 .endp
 
@@ -64,13 +70,17 @@ waitForChar:
 	beq		isCtrl3
 	
 	;trap Caps Lock and alter shift/caps lock
-	tax
+	tay
 	and		#$3f
 	cmp		#$3c
 	beq		isCapsLock
 		
 	;translate char
-	lda		KeyCodeToATASCIITable,x
+	.if _KERNEL_XLXE
+	lda		(keydef),y
+	.else
+	lda		KeyCodeToATASCIITable,y
+	.endif
 	
 	;check for invalid char
 	cmp		#$f0
@@ -92,6 +102,7 @@ waitForChar:
 
 notAlpha:
 	;return char
+	sta		atachr			;required or CON.SYS (SDX 4.46) breaks
 	ldy		#1
 	rts
 	
@@ -109,7 +120,7 @@ isCtrl3:
 	rts
 	
 isCapsLock:
-	txa
+	tya
 	and		#$c0
 	sta		shflok
 	jmp		waitForChar
@@ -148,6 +159,10 @@ debounced:
 	;reset attract
 	mva		#0		atract
 	
+xit2:
+	;reset key delay
+	mva		#3 keydel
+
 xit:
 	;all done
 	pla
@@ -158,7 +173,7 @@ isctrl_1:
 	lda		ssflag
 	eor		#$ff
 	sta		ssflag
-	jmp		xit
+	jmp		xit2
 .endp
 
 ;==============================================================================

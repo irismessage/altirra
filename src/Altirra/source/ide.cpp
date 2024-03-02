@@ -79,7 +79,7 @@ ATIDEEmulator::ATIDEEmulator()
 	mTransferLength = 0;
 	mTransferIndex = 0;
 	mSectorCount = 0;
-	mMaxSectorTransferCount = 32;
+	mMaxSectorTransferCount = 256;
 	mSectorsPerTrack = 0;
 	mHeadCount = 0;
 	mCylinderCount = 0;
@@ -200,6 +200,7 @@ void ATIDEEmulator::DumpStatus() const {
 	ATConsolePrintf("CHS translation: %u cylinders, %u heads, %u sectors/track\n", mCurrentCylinderCount, mCurrentHeadCount, mCurrentSectorsPerTrack);
 	ATConsolePrintf("Active command:  $%02x\n", mActiveCommand);
 	ATConsolePrintf("Transfer mode:   %d-bit\n", mbTransfer16Bit ? 16 : 8);
+	ATConsolePrintf("Block size:      %u sectors\n", mSectorsPerBlock);
 	ATConsolePrintf("Reset line:      %s\n", mbHardwareReset ? "asserted" : "negated");
 	ATConsolePrintf("Software reset:  %s\n", mbSoftwareReset ? "asserted" : "negated");
 }
@@ -479,6 +480,10 @@ void ATIDEEmulator::ResetDevice() {
 	mbWriteInProgress = false;
 
 	memset(mTransferBuffer.data(), 0, mTransferBuffer.size());
+
+	// Default to READ/WRITE MULTIPLE commands being enabled and specify a preferred
+	// default of 32 sectors.
+	mSectorsPerBlock = 32;
 }
 
 void ATIDEEmulator::UpdateStatus() {
@@ -524,6 +529,13 @@ void ATIDEEmulator::UpdateStatus() {
 					break;
 
 				case 2:
+					// If the command is READ MULTIPLE and multiple commands are disabled, fail the command.
+					if (mActiveCommand == 0xC4 && mSectorsPerBlock == 0) {
+						g_ATLCIDEError("Failing READ MULTIPLE command as multiple commands are disabled.");
+						AbortCommand(0);
+						return;
+					}
+
 					{
 						uint32 lba;
 						uint32 nsecs = mRFile.mSectorCount;
@@ -575,6 +587,13 @@ void ATIDEEmulator::UpdateStatus() {
 					break;
 
 				case 2:
+					// If the command is WRITE MULTIPLE and multiple commands are disabled, fail the command.
+					if (mActiveCommand == 0xC5 && mSectorsPerBlock == 0) {
+						g_ATLCIDEError("Failing WRITE MULTIPLE command as multiple commands are disabled.");
+						AbortCommand(0);
+						return;
+					}
+
 					{
 						uint32 lba;
 						if (!ReadLBA(lba)) {
@@ -755,10 +774,11 @@ void ATIDEEmulator::UpdateStatus() {
 					break;
 
 				case 2:
-					// sector count must be a power of two
-					if (mRFile.mSectorCount >= 2 && !(mRFile.mSectorCount & (mRFile.mSectorCount - 1)))
+					// sector count must be a power of two and cannot be 0
+					if (mRFile.mSectorCount >= 2 && !(mRFile.mSectorCount & (mRFile.mSectorCount - 1))) {
+						mSectorsPerBlock = mRFile.mSectorCount;
 						CompleteCommand();
-					else
+					} else
 						AbortCommand(0);
 					break;
 			}
@@ -889,7 +909,9 @@ void ATIDEEmulator::UpdateStatus() {
 						// words 57-58: current capacity in sectors
 						VDWriteUnalignedLEU32(&dst[57*2], mCurrentCylinderCount * mCurrentHeadCount * mCurrentSectorsPerTrack);
 
-						// word 59: misc
+						// word 59: multiple sector setting
+						dst[59*2+1] = mSectorsPerBlock ? 1 : 0;
+						dst[59*2+0] = mSectorsPerBlock;
 
 						// words 60-61: total number of user addressable LBA sectors (28-bit)
 						VDWriteUnalignedLEU32(&dst[60*2], std::min<uint32>(mSectorCount, 0x0FFFFFFF));

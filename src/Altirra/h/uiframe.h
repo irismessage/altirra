@@ -36,6 +36,10 @@
 #define ATWM_GETAUTOSIZE (WM_APP+201)
 #endif
 
+#ifndef ATWM_SETFULLSCREEN
+#define ATWM_SETFULLSCREEN (WM_APP+202)
+#endif
+
 #define ATWM_PRESYSKEYDOWN (WM_APP + 0x120)
 #define ATWM_PRESYSKEYUP (WM_APP + 0x121)
 #define ATWM_PREKEYDOWN (WM_APP + 0x122)
@@ -49,18 +53,18 @@ class ATContainerDockingPane;
 class ATFrameWindow;
 
 enum {
+	kATContainerDockCenter,
 	kATContainerDockLeft,
 	kATContainerDockRight,
 	kATContainerDockTop,
-	kATContainerDockBottom,
-	kATContainerDockCenter
+	kATContainerDockBottom
 };
 
 class ATContainerResizer {
 public:
 	ATContainerResizer();
 
-	void LayoutWindow(HWND hwnd, int x, int y, int width, int height);
+	void LayoutWindow(HWND hwnd, int x, int y, int width, int height, bool visible);
 	void ResizeWindow(HWND hwnd, int width, int height);
 
 	void Flush();
@@ -140,21 +144,24 @@ public:
 	void	SetDockFraction(float dist);
 
 	ATContainerDockingPane *GetParentPane() const { return mpDockParent; }
-	ATFrameWindow *GetContent() const { return mpContent; }
-	ATFrameWindow *GetAnyContent() const;
 
-	ATContainerDockingPane *GetCenterPane() const;
+	uint32	GetContentCount() const;
+	ATFrameWindow *GetContent(uint32 idx) const;
+	ATFrameWindow *GetAnyContent(bool requireVisible, ATFrameWindow *exclude) const;
 
 	uint32	GetChildCount() const;
 	ATContainerDockingPane *GetChildPane(uint32 index) const;
 
-	void	SetContent(ATFrameWindow *frame, bool deferResize);
-	void	Dock(ATContainerDockingPane *pane, int code);
+	void	AddContent(ATFrameWindow *frame, bool deferResize);
+	ATContainerDockingPane *Dock(ATFrameWindow *pane, int code);
 	bool	Undock(ATFrameWindow *pane);
 
 	void	NotifyFontsUpdated();
 
 	void	RecalcFrame();
+
+	ATFrameWindow *GetVisibleFrame() const;
+	void	SetVisibleFrame(ATFrameWindow *frame);
 
 	void	UpdateModalState(ATFrameWindow *modalFrame);
 	void	UpdateActivationState(ATFrameWindow *frame);
@@ -171,6 +178,8 @@ public:
 
 	void	RemoveAnyEmptyNodes();
 
+	void	OnTabChange(HWND hwndSender);
+
 protected:
 	void	RepositionContent(ATContainerResizer& resizer);
 	void	RemoveEmptyNode();
@@ -178,7 +187,9 @@ protected:
 	ATContainerWindow *const mpParent;
 	vdrefptr<ATDragHandleWindow> mpDragHandle;
 	vdrefptr<ATContainerSplitterBar> mpSplitter;
-	vdrefptr<ATFrameWindow> mpContent;
+
+	typedef vdfastvector<ATFrameWindow *> FrameWindows;
+	FrameWindows mContent;
 
 	ATContainerDockingPane	*mpDockParent;
 
@@ -189,12 +200,14 @@ protected:
 	vdrect32	mCenterArea;
 	int			mDockCode;
 	float		mDockFraction;
-	int			mCenterCount;
 	bool		mbFullScreen;
 	bool		mbFullScreenLayout;
 	bool		mbPinned;
 	bool		mbLayoutInvalid;
 	bool		mbDescendantLayoutInvalid;
+	sint32		mVisibleFrameIndex;
+
+	HWND		mhwndTabControl;
 };
 
 class ATContainerWindow : public VDShaderEditorBaseWindow {
@@ -218,6 +231,7 @@ public:
 
 	ATContainerDockingPane *GetBasePane() const { return mpDockingPane; }
 	ATFrameWindow *GetActiveFrame() const { return mpActiveFrame; }
+	ATFrameWindow *GetModalFrame() const { return mpModalFrame; }
 
 	HFONT GetCaptionFont() const { return mhfontCaption; }
 	HFONT GetCaptionSymbolFont() const { return mhfontCaptionSymbol; }
@@ -238,8 +252,10 @@ public:
 	ATContainerDockingPane *DockFrame(ATFrameWindow *frame, int code);
 	ATContainerDockingPane *DockFrame(ATFrameWindow *frame);
 	void	AddUndockedFrame(ATFrameWindow *frame);
-	void	UndockFrame(ATFrameWindow *frame, bool visible = true);
+	void	UndockFrame(ATFrameWindow *frame, bool visible = true, bool destroy = false);
+	void	CloseFrame(ATFrameWindow *frame);
 
+	ATFrameWindow *GetFullScreenFrame() const { return mpFullScreenFrame; }
 	void	SetFullScreenFrame(ATFrameWindow *frame);
 
 	void	SetModalFrame(ATFrameWindow *frame);
@@ -251,13 +267,14 @@ public:
 	void	NotifyFrameActivated(ATFrameWindow *frame);
 	void	NotifyUndockedFrameDestroyed(ATFrameWindow *frame);
 
+	void	NotifyDockedFrameDestroyed(ATFrameWindow *w);
+
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 
 	virtual bool OnCreate();
 	virtual void OnDestroy();
 	void OnSize();
-	void OnChildDestroy(HWND hwndChild);
 
 	void OnSetFocus(HWND hwndOldFocus);
 	void OnKillFocus(HWND hwndNewFocus);
@@ -286,6 +303,13 @@ class ATFrameWindow : public VDShaderEditorBaseWindow {
 public:
 	enum { kTypeID = 'uifr' };
 
+	enum FrameMode {
+		kFrameModeUndocked,
+		kFrameModeNone,
+		kFrameModeEdge,
+		kFrameModeFull
+	};
+
 	ATFrameWindow();
 	~ATFrameWindow();
 
@@ -299,8 +323,14 @@ public:
 	void SetPane(ATContainerDockingPane *pane) { mpDockingPane = pane; }
 	ATContainerDockingPane *GetPane() const { return mpDockingPane; }
 
+	const wchar_t *GetTitle() const { return mTitle.c_str(); }
+
 	bool IsFullScreen() const;
 	void SetFullScreen(bool fs);
+
+	bool IsVisible() const;
+	void SetVisible(bool vis);
+	void SetFrameMode(FrameMode fm) { mFrameMode = fm; }
 
 	void NotifyFontsUpdated();
 
@@ -333,6 +363,7 @@ protected:
 	bool	mbActiveCaption;
 	bool	mbCloseDown;
 	bool	mbCloseTracking;
+	FrameMode	mFrameMode;
 	vdrect32	mCaptionRect;
 	vdrect32	mClientRect;
 	vdrect32	mCloseRect;

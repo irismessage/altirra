@@ -24,6 +24,7 @@ class ATDebuggerCmdAssemble : public vdrefcounted<IATDebuggerActiveCommand> {
 public:
 	ATDebuggerCmdAssemble(uint32 address);
 
+	virtual bool IsBusy() const { return false; }
 	virtual const char *GetPrompt();
 	virtual void BeginCommand(IATDebugger *debugger);
 	virtual void EndCommand();

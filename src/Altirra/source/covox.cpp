@@ -226,5 +226,5 @@ bool ATCovoxEmulator::StaticWriteControl(void *thisptr, uint32 addr, uint8 value
 	uint8 addr8 = (uint8)addr;
 
 	((ATCovoxEmulator *)thisptr)->WriteControl(addr8, value);
-	return true;
+	return false;
 }

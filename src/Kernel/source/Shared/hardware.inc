@@ -86,6 +86,8 @@ pmbase	equ	$d407
 chbase	equ	$d409
 wsync	equ	$d40a
 vcount	equ	$d40b
+penh	equ	$d40c
+penv	equ	$d40d
 nmien	equ	$d40e
 nmist	equ	$d40f
 nmires	equ	$d40f

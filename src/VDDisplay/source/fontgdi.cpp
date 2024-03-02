@@ -123,8 +123,6 @@ bool VDDisplayFontGDI::Init(HFONT font) {
 		return false;
 
 	::SetTextAlign(mhdc, TA_BASELINE | TA_LEFT);
-	::SetTextColor(mhdc, RGB(255, 255, 255));
-	::SetBkColor(mhdc, RGB(0, 0, 0));
 	::SetBkMode(mhdc, OPAQUE);
 
 	VDPixmap px = {};
@@ -134,7 +132,7 @@ bool VDDisplayFontGDI::Init(HFONT font) {
 	px.w = 1;
 	px.h = 1;
 
-	GetGlyphImage(0x20, px);
+	GetGlyphImage(0x20, false, px);
 
 	return true;
 }
@@ -237,17 +235,17 @@ void VDDisplayFontGDI::GetGlyphMetrics(uint32 c, VDDisplayFontGlyphMetrics& metr
 		return;
 	}
 
-	RenderGlyph(c, NULL, &metrics);
+	RenderGlyph(c, false, NULL, &metrics);
 }
 
-bool VDDisplayFontGDI::GetGlyphImage(uint32 c, const VDPixmap& dst) {
+bool VDDisplayFontGDI::GetGlyphImage(uint32 c, bool inverted, const VDPixmap& dst) {
 	if (dst.format != nsVDPixmap::kPixFormat_XRGB8888)
 		return false;
 
-	return RenderGlyph(c, &dst, NULL);
+	return RenderGlyph(c, inverted, &dst, NULL);
 }
 
-bool VDDisplayFontGDI::RenderGlyph(uint32 c, const VDPixmap *dst, VDDisplayFontGlyphMetrics *dstMetrics) {
+bool VDDisplayFontGDI::RenderGlyph(uint32 c, bool inverted, const VDPixmap *dst, VDDisplayFontGlyphMetrics *dstMetrics) {
 	VDASSERT(!dst || dst->format == nsVDPixmap::kPixFormat_XRGB8888);
 
 	if (!mhbm) {
@@ -272,8 +270,20 @@ bool VDDisplayFontGDI::RenderGlyph(uint32 c, const VDPixmap *dst, VDDisplayFontG
 		::DeleteObject(::SelectObject(mhdc, mhbm));
 	}
 
+	HBRUSH hFillBrush;
+
+	if (inverted) {
+		hFillBrush = (HBRUSH)::GetStockObject(WHITE_BRUSH);
+		::SetBkColor(mhdc, RGB(255, 255, 255));
+		::SetTextColor(mhdc, RGB(0, 0, 0));
+	} else {
+		hFillBrush = (HBRUSH)::GetStockObject(BLACK_BRUSH);
+		::SetBkColor(mhdc, RGB(0, 0, 0));
+		::SetTextColor(mhdc, RGB(255, 255, 255));
+	}
+
 	RECT r = {0, 0, mBitmapWidth, mMetrics.tmHeight};
-	::FillRect(mhdc, &r, (HBRUSH)::GetStockObject(BLACK_BRUSH));
+	::FillRect(mhdc, &r, hFillBrush);
 
 	WCHAR ch = c;
 	VDVERIFY(ExtTextOutW(mhdc, mBitmapMargin, mMetrics.tmAscent, ETO_OPAQUE, NULL, &ch, 1, NULL));
@@ -292,15 +302,28 @@ bool VDDisplayFontGDI::RenderGlyph(uint32 c, const VDPixmap *dst, VDDisplayFontG
 		for(LONG y=0; y<mMetrics.tmHeight; ++y) {
 			const uint32 *scanRow = (const uint32 *)scanSrc;
 			uint32 xl = 0;
-			for(; xl<mBitmapWidth; ++xl) {
-				if (scanRow[xl] & 0xffffff)
-					break;
-			}
-
 			uint32 xr = mBitmapWidth;
-			for(; xr>0; --xr) {
-				if (scanRow[xr-1] & 0xffffff)
-					break;
+
+			if (inverted) {
+				for(; xl<mBitmapWidth; ++xl) {
+					if (~scanRow[xl] & 0xffffff)
+						break;
+				}
+
+				for(; xr>0; --xr) {
+					if (~scanRow[xr-1] & 0xffffff)
+						break;
+				}
+			} else {
+				for(; xl<mBitmapWidth; ++xl) {
+					if (scanRow[xl] & 0xffffff)
+						break;
+				}
+
+				for(; xr>0; --xr) {
+					if (scanRow[xr-1] & 0xffffff)
+						break;
+				}
 			}
 
 			if (xl < xr) {
@@ -352,8 +375,14 @@ bool VDDisplayFontGDI::RenderGlyph(uint32 c, const VDPixmap *dst, VDDisplayFontG
 			const uint32 *srcp = (const uint32 *)srcrow;
 			uint32 *dstp = (uint32 *)dstrow;
 
-			for(int x=0; x<w; ++x) {
-				dstp[x] = srcp[x] | 0xFF000000;
+			if (inverted) {
+				for(int x=0; x<w; ++x) {
+					dstp[x] = ~srcp[x] | 0xFF000000;
+				}
+			} else {
+				for(int x=0; x<w; ++x) {
+					dstp[x] = srcp[x] | 0xFF000000;
+				}
 			}
 
 			dstrow += dst->pitch;

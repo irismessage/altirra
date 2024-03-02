@@ -130,7 +130,8 @@ void ATUltimate1MBEmulator::Init(
 	mpLayerCart = memman->CreateLayer(kATMemoryPri_CartridgeOverlay + 2, mFirmware, 0xA0, 0x20, true);
 	memman->SetLayerName(mpLayerCart, "Ultimate1MB cart window");
 
-	mpLayerPBIData = memman->CreateLayer(kATMemoryPri_PBI, mpMemory + 0xD600, 0xD6, 0x02, false);
+	// This needs to be higher priority than the VBXE and SoundBoard register files.
+	mpLayerPBIData = memman->CreateLayer(kATMemoryPri_HardwareOverlay + 2, mpMemory + 0xD600, 0xD6, 0x02, false);
 	memman->SetLayerName(mpLayerPBIData, "Ultimate1MB PBI RAM");
 
 	mpLayerPBIFirmware = memman->CreateLayer(kATMemoryPri_PBI, mFirmware, 0xD8, 0x08, true);

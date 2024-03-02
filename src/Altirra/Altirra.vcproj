@@ -442,7 +442,7 @@
 				LinkLibraryDependencies="false"
 				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
 				LinkIncremental="1"
-				AdditionalLibraryDirectories="..\..\lib\Release"
+				AdditionalLibraryDirectories="..\..\lib\Profile;..\..\lib\Release"
 				GenerateDebugInformation="true"
 				SubSystem="2"
 				OptimizeReferences="2"
@@ -733,6 +733,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\directorywatcher.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\disasm.cpp"
 				>
 			</File>
@@ -762,6 +766,10 @@
 			</File>
 			<File
 				RelativePath=".\source\diskvirtimage.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\diskvirtimagesdfs.cpp"
 				>
 			</File>
 			<File
@@ -854,6 +862,10 @@
 			</File>
 			<File
 				RelativePath=".\source\kmkjzide.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\leakdetector.cpp"
 				>
 			</File>
 			<File
@@ -1001,6 +1013,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uianchor.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uiaudiooptions.cpp"
 				>
 			</File>
@@ -1029,6 +1045,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uicommondialogs.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uicontainer.cpp"
 				>
 			</File>
@@ -1054,6 +1074,10 @@
 			</File>
 			<File
 				RelativePath=".\source\uidragdrop.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uidrawingutils.cpp"
 				>
 			</File>
 			<File
@@ -1133,7 +1157,15 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uimessagebox.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uimrulist.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uionscreenkeyboard.cpp"
 				>
 			</File>
 			<File
@@ -1161,6 +1193,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uiqueue.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uiregistry.cpp"
 				>
 			</File>
@@ -1177,6 +1213,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uislider.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uispeedoptions.cpp"
 				>
 			</File>
@@ -1190,6 +1230,10 @@
 			</File>
 			<File
 				RelativePath=".\source\uiverifier.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uivideodisplaywindow.cpp"
 				>
 			</File>
 			<File
@@ -1356,6 +1400,10 @@
 			</File>
 			<File
 				RelativePath=".\h\decmath.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\directorywatcher.h"
 				>
 			</File>
 			<File
@@ -1619,6 +1667,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\uianchor.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\uibutton.h"
 				>
 			</File>
@@ -1631,11 +1683,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\uicommondialogs.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\uicontainer.h"
 				>
 			</File>
 			<File
 				RelativePath=".\h\uidisplay.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uidrawingutils.h"
 				>
 			</File>
 			<File
@@ -1679,7 +1739,15 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\uimessagebox.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\uimrulist.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uionscreenkeyboard.h"
 				>
 			</File>
 			<File
@@ -1695,7 +1763,15 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\uiqueue.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\uirender.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uislider.h"
 				>
 			</File>
 			<File
@@ -1704,6 +1780,10 @@
 			</File>
 			<File
 				RelativePath=".\h\uitypes.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uivideodisplaywindow.h"
 				>
 			</File>
 			<File
@@ -1801,11 +1881,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\atdiskloader128.bin"
+				RelativePath="..\..\out\release\atdiskloader128.bin"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\atdiskloader128.bin"
+				RelativePath="..\..\out\debug\atdiskloader128.bin"
 				>
 			</File>
 			<File
@@ -1813,11 +1893,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\basic.rom"
+				RelativePath="..\..\out\release\basic.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\basic.rom"
+				RelativePath="..\..\out\debug\basic.rom"
 				>
 			</File>
 			<File
@@ -1845,19 +1925,19 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\hlekernel.rom"
-				>
-			</File>
-			<File
 				RelativePath="..\..\out\debug\hlekernel.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\kernel.rom"
+				RelativePath="..\..\out\release\hlekernel.rom"
 				>
 			</File>
 			<File
 				RelativePath="..\..\out\release\kernel.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\debug\kernel.rom"
 				>
 			</File>
 			<File
@@ -1873,11 +1953,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Release\nocartridge.rom"
+				RelativePath="..\..\out\Debug\nocartridge.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Debug\nocartridge.rom"
+				RelativePath="..\..\out\Release\nocartridge.rom"
 				>
 			</File>
 			<File
@@ -1889,19 +1969,19 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\nohdbios.rom"
-				>
-			</File>
-			<File
 				RelativePath="..\..\out\release\nohdbios.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\nokernel.rom"
+				RelativePath="..\..\out\debug\nohdbios.rom"
 				>
 			</File>
 			<File
 				RelativePath="..\..\out\debug\nokernel.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\release\nokernel.rom"
 				>
 			</File>
 			<File
@@ -1913,11 +1993,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Release\superkernel.rom"
+				RelativePath="..\..\out\Debug\superkernel.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Debug\superkernel.rom"
+				RelativePath="..\..\out\Release\superkernel.rom"
 				>
 			</File>
 			<File
@@ -1937,11 +2017,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\ultimate.lzrom"
+				RelativePath="..\..\out\debug\ultimate.lzrom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\ultimate.lzrom"
+				RelativePath="..\..\out\release\ultimate.lzrom"
 				>
 			</File>
 		</Filter>

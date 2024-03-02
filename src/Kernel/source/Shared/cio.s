@@ -16,16 +16,16 @@
 ;	along with this program; if not, write to the Free Software
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-.proc CIOInit
+.proc CIOInit	
+	sec
+	ldy		#$70
+iocb_loop:
 	lda		#$ff
-	sta		ichid
-	sta		ichid+$10
-	sta		ichid+$20
-	sta		ichid+$30
-	sta		ichid+$40
-	sta		ichid+$50
-	sta		ichid+$60
-	sta		ichid+$70
+	sta		ichid,y
+	tya
+	sbc		#$10
+	tay
+	bpl		iocb_loop
 	rts
 .endp
 
@@ -44,11 +44,36 @@
 ;		BUFADR must not be touched from CIO. DOS XE relies on this for
 ;		temporary storage and breaks if it is modified.
 ;
+;	XL/XE mode notes:
+;		HNDLOD is always set to $00 afterward, per Sweet 16 supplement 3.
+;
+;		CIO can optionally attempt a provisional open by doing a type 4 poll
+;		over the SIO bus. This happens unconditionally if HNDLOD is non-zero
+;		and only after the device is not found in HATABS if HNDLOD is zero.
+;		If this succeeds, the IOCB is provisionally opened. Type 4 polling
+;		ONLY happens for direct opens -- it does not happen for a soft open.
+;
 .proc CIO
 	;stash IOCB offset (X) and acc (A)
 	sta		ciochr
 	stx		icidno
+	jsr		process
+xit:
+	;copy status back to IOCB
+	ldx		icidno
+	tya
+	sta		icsta,x
+	php
+	
+.if _KERNEL_XLXE
+	mva		#0 hndlod
+.endif
 
+	lda		ciochr
+	plp
+	rts
+	
+process:
 	;validate IOCB offset
 	txa
 	and		#$8f
@@ -56,44 +81,50 @@
 		
 	;return invalid IOCB error
 	ldy		#CIOStatInvalidIOCB
-	jmp		xit
+	rts
 	
 validIOCB:
-
-	;copy IOCB to ZIOCB
-	;
-	; [OSManual p236] "Although both the outer level IOCB and the Zero-page
-	; IOCB are defined to be 16 bytes in size, only the first 12 bytes are
-	; moved by CIO."	
-	;
-	ldy		#0
-copyToZIOCB:
-	lda		ichid,x
-	sta		ziocb,y
-	inx
-	iny
-	cpy		#12
-	bne		copyToZIOCB
+	jsr		CIOLoadZIOCB
 	
 	;check if we're handling the OPEN command
 	lda		iccomz
-	sec
-	sbc		#CIOCmdOpen
+	cmp		#CIOCmdOpen
 	beq		cmdOpen
 	bcs		dispatch
 	
 	;invalid command <$03
 cmdInvalid:
 	ldy		#CIOStatInvalidCmd
-	jmp		xit
+	rts
 	
 dispatch:
 	;check if the IOCB is open
-	asl
-	tax
-	lda		ichidz
+	ldy		ichidz
+	
+.if !_KERNEL_XLXE
+	bpl		isOpen
+.else
+	bmi		not_open
+	
+	;check for a provisionally open IOCB
+	iny
 	bpl		isOpen
 	
+	;okay, it's provisionally open... check if it's a close
+	cmp		#CIOCmdClose
+	sne:jmp	cmdCloseProvisional
+	
+	;check if we're allowed to load a handler
+	lda		hndlod
+	beq		not_open
+	
+	;try to load the handler
+	jsr		CIOLoadHandler
+	bpl		isOpen
+	rts
+.endif
+	
+not_open:
 	;IOCB isn't open - issue error
 	;
 	;Special cases;
@@ -111,13 +142,13 @@ dispatch:
 	bcs		preOpen				;closed IOCB is OK for get status and special
 	ldy		#CIOStatNotOpen
 ignoreOpen:
-	jmp		xit
+	rts
 	
 preOpen:
 	;If the device is not open when a SPECIAL command is issued, parse the path
 	;and soft-open the device in the zero page IOCB.
-	jsr		parsePath
-isOpen:
+	jsr		CIOParsePath
+
 	;check for special command
 	lda		iccomz
 	cmp		#CIOCmdGetStatus
@@ -125,65 +156,78 @@ isOpen:
 	cmp		#CIOCmdSpecial
 	bcs		cmdSpecialSoftOpen
 	
-	;dispatch through command table
-	lda		commandTable-1,x
+isOpen:
+	ldx		iccomz
+	cpx		#CIOCmdSpecial
+	scc:ldx	#$0e
+
+	;load command table vector
+	lda		command_table_hi-4,x
 	pha
-	lda		commandTable-2,x
+	lda		command_table_lo-4,x
 	pha
+	
+	;preload dispatch vector and dispatch to command
+	ldy		vector_preload_table-4,x
+load_vector:
+	ldx		ichidz
+	mwa		hatabs+1,x icax3z
+	lda		(icax3z),y
+	tax
+	dey
+	lda		(icax3z),y
+	sta		icax3z
+	stx		icax3z+1
 	rts
 	
 ;--------------------------------------------------------------------------
 cmdGetStatusSoftOpen:
 	ldy		#9
-	jsr		invoke
-	jsr		soft_close
-	jmp		xit
-
-cmdGetStatus:
-	ldy		#9
-	jsr		invoke
-	jmp		xit
+	bne		invoke_and_soft_close_xit
 
 ;--------------------------------------------------------------------------
 cmdSpecialSoftOpen:
 	ldy		#11
+invoke_and_soft_close_xit:
 	jsr		invoke
-	jsr		soft_close
-	jmp		xit
-	
-cmdSpecial:
-	ldy		#11
-	jsr		invoke
-	jmp		xit
+	jmp		soft_close
 		
 ;--------------------------------------------------------------------------
 ; Open command ($03).
 ;
 cmdOpen:
 	;check if the IOCB is already open
-	lda		ichidz
-	cmp		#$ff
+	ldy		ichidz
+	iny
 	beq		notAlreadyOpen
 	
 	;IOCB is already open - error
 	ldy		#CIOStatIOCBInUse
-	jmp		xit
+	rts
 	
 notAlreadyOpen:
-	jsr		parsePath
+	jsr		CIOParsePath
+	
+	;check for a provisional open and skip the handler call if so
+	ldx		ichidz
+	inx
+	bmi		provisional_open
 
+open_entry:
 	;request open
 	ldy		#1
 	jsr		invoke
-	tya
-	bpl		openOK
-	jmp		xit
-	
-openOK:
+
 	;move handler ID and device number to IOCB
 	ldx		icidno
 	mva		ichidz ichid,x
 	mva		icdnoz icdno,x
+
+	tya
+	bpl		openOK
+	rts
+	
+openOK:
 
 	;copy PUT BYTE vector for Atari Basic
 	ldx		ichidz
@@ -196,18 +240,8 @@ openOK:
 	lda		(icax3z),y
 	sta		icpth,x
 
+provisional_open:
 	ldy		#1
-	jmp		xit	
-
-load_vector:
-	ldx		ichidz
-	mwa		hatabs+1,x icax3z
-	lda		(icax3z),y
-	tax
-	dey
-	lda		(icax3z),y
-	sta		icax3z
-	stx		icax3z+1
 	rts
 
 ;This routine must NOT touch CIOCHR. The DOS 2.5 Ramdisk depends on seeing
@@ -226,15 +260,9 @@ invoke_vector:
 	ldx		icidno
 	rts
 
-xit:
-	;copy status back to IOCB
-	ldx		icidno
-	tya
-	sta		icsta,x
-	php
-	lda		ciochr
-	plp
-	rts
+cmdGetStatus:
+cmdSpecial:
+	jmp		invoke_vector
 	
 ;--------------------------------------------------------------------------
 soft_close:
@@ -250,8 +278,7 @@ soft_close:
 ;--------------------------------------------------------------------------
 cmdGetRecordBufferFull:
 	;read byte to discard
-	ldy		#5
-	jsr		invoke
+	jsr		invoke_vector
 	cpy		#0
 	bmi		cmdGetRecordXitTrunc
 
@@ -263,8 +290,6 @@ cmdGetRecordXitTrunc:
 	jmp		cmdGetRecordXit
 
 cmdGetRecord:
-	ldy		#5
-	jsr		load_vector
 cmdGetRecordLoop:
 	;check if buffer is full
 	lda		icbllz
@@ -281,8 +306,7 @@ cmdGetRecordGetByte:
 	ldy		#0
 	sta		(icbalz),y
 	pha
-	dew		icbllz
-	inw		icbalz
+	jsr		advance_pointers
 	pla
 	
 	;loop back for more bytes if not EOL
@@ -305,12 +329,10 @@ cmdGetPutDone:
 	;we need to change that to 1. (required by Pacem in Terris)
 	tya
 	sne:iny
-	jmp		xit
+	rts
 	
 ;--------------------------------------------------------------------------
 cmdGetChars:
-	ldy		#5
-	jsr		load_vector
 	lda		icbllz
 	ora		icblhz
 	beq		cmdGetCharsSingle
@@ -320,8 +342,7 @@ cmdGetCharsLoop:
 	bmi		cmdGetCharsError
 	ldy		#0
 	sta		(icbalz),y
-	inw		icbalz
-	dew		icbllz
+	jsr		advance_pointers
 	bne		cmdGetCharsLoop
 	lda		icblhz
 	bne		cmdGetCharsLoop
@@ -331,7 +352,7 @@ cmdGetCharsError:
 cmdGetCharsSingle:
 	jsr		invoke_vector
 	sta		ciochr
-	jmp		xit
+	rts
 	
 ;--------------------------------------------------------------------------
 ; PUT RECORD handler ($09)
@@ -345,8 +366,6 @@ cmdGetCharsSingle:
 ; buffer and not the EOL. (Required by Atari DOS 2.5 RAMDISK banner)
 ;
 cmdPutRecord:
-	ldy		#7
-	jsr		load_vector
 	lda		icbllz
 	ora		icblhz
 	beq		cmdPutRecordEOL
@@ -355,8 +374,7 @@ cmdPutRecord:
 	jsr		invoke_vector
 	tya
 	bmi		cmdPutRecordError
-	inw		icbalz
-	dew		icbllz
+	jsr		advance_pointers
 	lda		#$9b
 	cmp		ciochr
 	beq		cmdPutRecordDone
@@ -372,8 +390,6 @@ cmdPutRecordDone:
 	
 ;--------------------------------------------------------------------------
 cmdPutChars:
-	ldy		#7
-	jsr		load_vector
 	lda		icbllz
 	ora		icblhz
 	beq		cmdPutCharsSingle
@@ -381,59 +397,113 @@ cmdPutCharsLoop:
 	ldy		#0
 	mva		(icbalz),y	ciochr
 	jsr		invoke_vector
-	inw		icbalz
-	dew		icbllz
+	jsr		advance_pointers
 	bne		cmdPutCharsLoop
 	lda		icblhz
 	bne		cmdPutCharsLoop
 	jmp		cmdGetPutDone
 cmdPutCharsSingle:
 	lda		ciochr
-	jsr		invoke_vector
-	jmp		xit
+	jmp		invoke_vector
 	
 ;--------------------------------------------------------------------------
+
+advance_pointers:
+	inw		icbalz
+	dew		icbllz
+	rts
+
+;--------------------------------------------------------------------------
 cmdClose:
-	ldy		#3
-	jsr		invoke
-	
+	jsr		invoke_vector
+cmdCloseProvisional:	
 	ldx		icidno
 	mva		#$ff	ichid,x
-	jmp		xit
+	rts
 
-parsePath:
-	;pull first character of filename
+vector_preload_table:
+	dta		$05					;$04 (get record)
+	dta		$05					;$05 (get record)
+	dta		$05					;$06 (get chars)
+	dta		$05					;$07 (get chars)
+	dta		$07					;$08 (put record)
+	dta		$07					;$09 (put record)
+	dta		$07					;$0A (put chars)
+	dta		$07					;$0B (put chars)
+	dta		$03					;$0C (close)
+	dta		$09					;$0D (get status)
+	dta		$0b					;$0E (special)
+
+command_table_lo:
+	dta		<(cmdGetRecord-1)	;$04
+	dta		<(cmdGetRecord-1)	;$05
+	dta		<(cmdGetChars-1)	;$06
+	dta		<(cmdGetChars-1)	;$07
+	dta		<(cmdPutRecord-1)	;$08
+	dta		<(cmdPutRecord-1)	;$09
+	dta		<(cmdPutChars-1)	;$0A
+	dta		<(cmdPutChars-1)	;$0B
+	dta		<(cmdClose-1)		;$0C
+	dta		<(cmdGetStatus-1)	;$0D
+	dta		<(cmdSpecial-1)		;$0E
+
+command_table_hi:
+	dta		>(cmdGetRecord-1)	;$04
+	dta		>(cmdGetRecord-1)	;$05
+	dta		>(cmdGetChars-1)	;$06
+	dta		>(cmdGetChars-1)	;$07
+	dta		>(cmdPutRecord-1)	;$08
+	dta		>(cmdPutRecord-1)	;$09
+	dta		>(cmdPutChars-1)	;$0A
+	dta		>(cmdPutChars-1)	;$0B
+	dta		>(cmdClose-1)		;$0C
+	dta		>(cmdGetStatus-1)	;$0D
+	dta		>(cmdSpecial-1)		;$0E
+.endp
+
+;==========================================================================
+; Copy IOCB to ZIOCB.
+;
+; Entry:
+;	X = IOCB
+;
+; [OSManual p236] "Although both the outer level IOCB and the Zero-page
+; IOCB are defined to be 16 bytes in size, only the first 12 bytes are
+; moved by CIO."	
+;
+.proc CIOLoadZIOCB
+	;We used to do a trick here where we would count Y from $F4 to $00...
+	;but we can't do that because the 65C816 doesn't wrap abs,Y within
+	;bank 0 even in emulation mode. Argh!
+	
+	ldy		#0
+copyToZIOCB:
+	lda		ichid,x
+	sta		ziocb,y
+	inx
+	iny
+	cpy		#12	
+	bne		copyToZIOCB
+	rts
+.endp
+
+;==========================================================================
+.proc CIOParsePath
+	;pull first character of filename and stash it
 	ldy		#0
 	lda		(icbalz),y
-
-	;search for handler
-	ldx		#11*3
-findHandler:
-	cmp		hatabs,x
-	beq		foundHandler
-	dex
-	dex
-	dex
-	bpl		findHandler
-	
-	;return unknown device error
-	ldy		#CIOStatUnkDevice
-	pla
-	pla
-	jmp		xit
-	
-foundHandler:
-
-	;store handler ID
-	stx		ichidz
+	sta		icax4z
 	
 	;default to device #1
-	mva		#1 icdnoz
+	ldx		#1
 	
 	;Check for a device number.
 	;
 	; - D1:-D9: is supported. D0: also gives unit 1, and any digits beyond
 	;   the first are ignored.
+	;
+	; We don't validate the colon anymore -- Atari OS allows opening just "C" to get
+	; to the cassette.
 	;
 	iny
 	lda		(icbalz),y
@@ -442,36 +512,179 @@ foundHandler:
 	beq		nodevnum
 	cmp		#10
 	bcs		nodevnum
+	tax
 	
-	sta		icdnoz
 	iny
 	
 nodevnum:
-
-; We don't validate the colon anymore -- Atari OS allows opening just "C" to get
-; to the cassette.
-;
-;	;check for ':'
-;	lda		(icbalz),y
-;	cmp		#':'
-;	beq		foundColon
-;	
-;	;invalid filename
-;	ldy		#CIOStatFileNameErr
-;	jmp		xit
+	stx		icdnoz
 	
-foundColon:
+.if _KERNEL_XLXE
+	;check if we are doing a true open and if we should do a type 4 poll
+	lda		iccomz
+	cmp		#CIOCmdOpen
+	bne		skip_poll
+	
+	;clear DVSTAT+0/+1 to indicate no poll
+	lda		#0
+	sta		dvstat
+	sta		dvstat+1
+	
+	;check if we should do an unconditional poll (HNDLOD nonzero).
+	lda		hndlod
+	bne		unconditional_poll
+	
+	;search handler table
+	jsr		CIOFindHandler
+	beq		found
+	
+unconditional_poll:
+	;do type 4 poll
+	jsr		CIOPollForDevice
+	bmi		unknown_device
+	
+	;mark provisionally open
+	ldx		icidno
+	mva		#$7f ichid,x
+	mva		icax4z icax3,x
+	mva		dvstat+2 icax4,x
+	mwa		#CIOPutByteLoadHandler-1 icptl,x
+	mva		icdnoz icdno,x
+	ldy		#1
 	rts
 
-commandTable:
-	dta		a(cmdGetRecord-1)	;$04
-	dta		a(cmdGetRecord-1)	;$05
-	dta		a(cmdGetChars-1)	;$06
-	dta		a(cmdGetChars-1)	;$07
-	dta		a(cmdPutRecord-1)	;$08
-	dta		a(cmdPutRecord-1)	;$09
-	dta		a(cmdPutChars-1)	;$0A
-	dta		a(cmdPutChars-1)	;$0B
-	dta		a(cmdClose-1)		;$0C
-	dta		a(cmdGetStatus-1)	;$0D
+skip_poll:
+.endif
+
+	;search handler table
+	jsr		CIOFindHandler
+	beq		found
+	
+unknown_device:
+	;return unknown device error
+	ldy		#CIOStatUnkDevice
+	pla
+	pla
+found:
+	rts
 .endp
+
+;==========================================================================
+; Attempt to find a handler entry in HATABS.
+;
+.proc CIOFindHandler
+	;search for handler
+	lda		icax4z
+	ldx		#11*3
+findHandler:
+	cmp		hatabs,x
+	beq		foundHandler
+	dex
+	dex
+	dex
+	bpl		findHandler
+foundHandler:
+	;store handler ID
+	stx		ichidz
+	rts
+.endp
+
+;==========================================================================
+; Poll SIO bus for CIO device
+;
+; Issues a type 4 poll ($4F/$40/devname/devnumber).
+;
+.if _KERNEL_XLXE
+.proc CIOPollForDevice
+	sta		daux1
+	sty		daux2
+	ldy		#$4f
+	lda		#$40
+	jmp		CIODoHandlerIO
+.endp
+.endif
+
+;==========================================================================
+.if _KERNEL_XLXE
+.proc CIODoHandlerIO
+	sty		ddevic
+	sta		dcomnd
+	mvx		#$01 dunit
+	mvx		#$40 dtimlo
+	mwx		#dvstat dbuflo
+	mwx		#4 dbytlo
+	mvx		#$40 dstats
+	jmp		siov
+.endp
+.endif
+
+;==========================================================================
+; Load handler for a provisionally open IOCB.
+;
+.if _KERNEL_XLXE
+.proc CIOLoadHandler
+	;load handler over SIO bus
+	mwa		dvstat+2 loadad
+	ldx		icidno
+	mva		icax4,x ddevic
+	jsr		PHLoadHandler
+	bcs		fail
+	
+	;let's see if we can look up the handler now
+	ldx		icidno
+	mva		icax3,x icax4z
+	jsr		CIOFindHandler
+	bne		fail
+	
+	;follow through with open
+	jsr		CIO.open_entry
+	bpl		ok
+fail:
+	ldy		#CIOStatUnkDevice
+ok:
+	rts
+.endp
+.endif
+
+;==========================================================================
+; PUT BYTE handler for provisionally open IOCBs.
+;
+; This handler is used when an IOCB has been provisionally opened pending
+; a handler load over the SIO bus. It is used when a direct call is made
+; through ICPTL/ICPTH. If HNDLOD=0, the call fails as handler loading is
+; not set up; if it is nonzero, the handler is loaded over the SIO bus and
+; then the PUT BYTE call continues if everything is good.
+;
+.if _KERNEL_XLXE
+.proc CIOPutByteLoadHandler
+	;save off A/X
+	sta		ciochr
+	stx		icidno
+		
+	;check if we're allowed to load a handler and bail if not
+	lda		hndlod
+	beq		load_error
+
+	;copy IOCB to ZIOCB
+	jsr		CIOLoadZIOCB
+
+	;try to load the handler
+	jsr		CIOLoadHandler
+	bmi		load_error
+	
+	;all good... let's invoke the standard handler
+	lda		ciochr
+	ldy		#7
+	jsr		CIO.invoke
+	jmp		xit
+	
+load_error:
+	ldy		#CIOStatUnkDevice
+xit:
+	php
+	lda		ciochr
+	ldx		icidno
+	plp
+	rts
+.endp
+.endif

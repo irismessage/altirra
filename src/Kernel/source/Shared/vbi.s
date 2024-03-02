@@ -17,31 +17,45 @@
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 ;==========================================================================
-; VBIStage1 - Vertical Blank Stage 1 Processor
+; VBIExit - Vertical Blank Interrupt Exit Routine
 ;
-.proc VBIStage1
+; This is a drop-in replacement for XITVBV.
+;
+VBIExit = VBIProcess.xit
 
+;==========================================================================
+; VBIProcess - Vertical Blank Processor
+;
+VBIStage1 = VBIProcess.stage_1
+VBIStage2 = VBIProcess.stage_2
+.proc VBIProcess
+stage_1:
 	;increment real-time clock and do attract processing
 	inc		rtclok+2
-	bne		ClockDone
+	bne		clock_done
 	inc		atract
 	inc		rtclok+1
-	bne		ClockDone
+	bne		clock_done
 	inc		rtclok
-ClockDone
+clock_done:
 
 	;Pole Position depends on DRKMSK and COLRSH being reset from VBI as it
 	;clears kernel vars after startup.
 	ldx		#$fe				;default to no mask
-	ldy		#$00				;default to no color alteration
-	lda		atract				;check attract counter
+	lda		#$00				;default to no color alteration
+	ldy		atract				;check attract counter
 	bpl		attract_off			;skip if attract is off
-	mva		#$fe atract			;lock the attract counter
+	stx		atract				;lock the attract counter
 	ldx		#$f6				;set mask to dim colors
-	ldy		rtclok+1			;use clock to randomize colors
+	lda		rtclok+1			;use clock to randomize colors
 attract_off:	
 	stx		drkmsk				;set color mask
-	sty		colrsh				;set color modifier
+	sta		colrsh				;set color modifier
+	
+	;atract color 1 only
+	eor		color1
+	and		drkmsk
+	sta		colpf1
 
 	;decrement timer 1 and check for underflow
 	lda		cdtmv1				;check low byte
@@ -60,38 +74,30 @@ timer1_lobytezero:
 timer1_done:
 
 	;check for critical operation
-	lda		critic			;is the critical flag set?
-	bne		xit				;yes, abort
-	lda		#$04			;I flag
-	tsx
-	and		$0104,x			;I flag set on pushed stack?
-	beq		VBIStage2	;exit if so
+	lda		critic
+	beq		no_critic
 xit:
 	pla
 	tay
 	pla
 	tax
+exit_a:
 	pla
+exit_none:
 	rti
 
 timer1_dispatch:
 	jmp		(cdtma1)
-.endp
 
-;==========================================================================
-; VBIExit - Vertical Blank Interrupt Exit Routine
-;
-; This is a drop-in replacement for XITVBV.
-;
-VBIExit = VBIStage1.xit
-	
-;==========================================================================
-; VBIStage2 - Vertical Blank Stage 2 Processor
-;
-.proc VBIStage2
+no_critic:
+	lda		#$04			;I flag
+	tsx
+	and		$0104,x			;I flag set on pushed stack?
+	bne		xit				;exit if so
 	
 	;======== stage 2 processing
 	
+stage_2:	
 	;re-enable interrupts
 	cli
 
@@ -104,6 +110,7 @@ VBIExit = VBIStage1.xit
 	mva		gprior	prior
 	
 	ldx		#8
+	stx		consol				;sneak in speaker reset while we have an 8
 ColorLoop
 	lda		pcolr0,x
 	eor		colrsh
@@ -112,21 +119,30 @@ ColorLoop
 	dex
 	bpl		ColorLoop
 
-	mva		#8		consol
-	
 	;decrement timer 2 and check for underflow
-	ldx		#2
+	ldx		#3
 	jsr		VBIDecrementTimer
 	sne:jsr	Timer2Dispatch
 
-	;decrement timers 3-5 and set flags
-	ldx		#8
+	;Decrement timers 3-5 and set flags
+	;
+	;[OS Manual] Appendix L, page 254 says that the OS never modifies CDTMF3-5
+	;except to set them to zero on timeout at init. This is a LIE. It also sets
+	;the flags to $FF when they are running. It does not write the flags when
+	;the timer is idle. Spider Quake depends on this.
+	;
+	ldx		#9
 timer_n_loop:
+	clc
 	jsr		VBIDecrementTimer
-	sne:mva	#0 cdtmf3-4,x
+	bcs		timer_n_not_running
+	seq:lda	#$ff
+timer_n_not_expired:
+	sta		cdtmf3-5,x
+timer_n_not_running:
 	dex
 	dex
-	cpx		#4
+	cpx		#5
 	bcs		timer_n_loop
 	
 	;Read POKEY keyboard register and handle auto-repeat
@@ -135,48 +151,47 @@ timer_n_loop:
 	bne		no_repeat			;skip if not
 	dec		srtimr				;decrement repeat timer
 	bne		no_repeat			;skip if not time to repeat yet
-	mva		#$06 srtimr			;reset repeat timer
 	mva		kbcode ch			;repeat last key
-no_repeat:
+	mva		#$06 srtimr			;reset repeat timer
+	bne		no_keydel			;skip debounce counter decrement
 
+no_repeat:
 	;decrement keyboard debounce counter
 	lda		keydel
-	bne		NoDebounce
-	dec		keydel
-NoDebounce:
-	
-	;update controller shadows
-	ldx		#3
-PotReadLoop:
-	lda		pot0,x
-	sta		paddl0,x
-	lda		pot4,x
-	sta		paddl4,x
-	lda		#1
-	sta		ptrig4,x
-	dex
-	bpl		PotReadLoop
+	seq:dec	keydel
+no_keydel:
 
-	lda		trig0
-	sta		strig0
-	sta		strig2
-	lda		trig1
-	sta		strig1
-	sta		strig3
+	;Update controller shadows.
+	;
+	;The PORTA/PORTB decoding is a bit complex:
+	;
+	;	bits 0-3 -> STICK0/4 (and no, we cannot leave junk in the high bits)
+	;	bits 4-7 -> STICK1/5
+	;	bit 2    -> PTRIG0/4
+	;	bit 3    -> PTRIG1/5
+	;	bit 6    -> PTRIG2/6
+	;	bit 7    -> PTRIG3/7
+	;
+	;XL/XE machines only have two joystick ports, so the results of ports 0-1
+	;are mapped onto ports 2-3.
+	;
 	
+.if _KERNEL_XLXE
 	lda		porta
 	tax
 	and		#$0f
 	sta		stick0
+	sta		stick2	
 	txa
-	lsr
-	lsr
+	lsr						;shr1
+	lsr						;shr2
 	tax
-	lsr
-	lsr
+	lsr						;shr3
+	lsr						;shr4
 	sta		stick1
-	lsr
-	lsr
+	sta		stick3
+	lsr						;shr5
+	lsr						;shr6
 	tay
 	and		#$01
 	sta		ptrig2
@@ -191,45 +206,123 @@ PotReadLoop:
 	and		#$01
 	sta		ptrig1
 
-	lda		#$0f
-	sta		stick2
-	sta		stick3
+	ldx		#3
+pot_loop:
+	lda		pot0,x
+	sta		paddl0,x
+	sta		paddl4,x
+	lda		ptrig0,x
+	sta		ptrig4,x
+	dex
+	bpl		pot_loop
+
+	ldx		#1
+port_loop:
+	lda		trig0,x
+	sta		strig0,x
+	sta		strig2,x
+	dex
+	bpl		port_loop
+
+.else
+	ldx		#7
+pot_loop:
+	lda		pot0,x
+	sta		paddl0,x
+	lda		#0
+	sta		ptrig0,x
+	dex
+	bpl		pot_loop
+	
+	ldx		#3
+trig_loop:
+	lda		trig0,x
+	sta		strig0,x
+	dex
+	bpl		trig_loop
+
+	lda		porta
+	ldx		#0
+	ldy		#0
+	jsr		do_stick_ptrigs
+	lda		portb
+	ldx		#4
+	ldy		#2
+	jsr		do_stick_ptrigs
+.endif
 	
 	;restart pots (required for SysInfo)
 	sta		potgo
+	
+	;update light pen
+	mva		penh lpenh
+	mva		penv lpenv
 	
 	jmp		(vvblkd)	;jump through vblank deferred vector
 	
 Timer2Dispatch
 	jmp		(cdtma2)
+	
+.if !_KERNEL_XLXE
+do_stick_ptrigs:
+	pha
+	and		#$0f
+	sta		stick0,y
+	pla
+	lsr
+	lsr
+	lsr
+	rol		ptrig0,x
+	lsr
+	rol		ptrig1,x
+	sta		stick1,y
+	lsr
+	lsr
+	lsr
+	rol		ptrig2,x
+	lsr
+	rol		ptrig3,x
+	rts
+.endif
+
 .endp
 
 ;==========================================================================
 ; VBIDecrementTimer
 ;
 ; Entry:
-;	X = timer index (0-4)
+;	X = timer index *2+1 (1-9)
 ;
 ; Exit:
-;	Z = 0 if timer not fired, 1 if fired
+;	C=1,      Z=0, A!0		timer not running
+;	C=0/same, Z=1, A=0		timer just expired
+;	C=0/same, Z=0, A=?		timer still running
 ;
 .proc VBIDecrementTimer
-	lda		cdtmv1,x			;check low byte
-	bne		lobyte_nonzero		;if non-zero, decrement and check for fire
-	lda		cdtmv1+1,x			;check high byte
-	bne		running_lobytezero	;if non-zero, decrement both bytes
-	lda		#1					;counter=0, so timer isn't running
-	rts							;ret Z=0
-running_lobytezero:
-	dec		cdtmv1+1,x			;decrement high byte
-	dec		cdtmv1,x			;decrement low byte ($FF)
-	rts							;we're done (return Z=0)
+	;check low byte
+	lda		cdtmv1-1,x
+	bne		lononzero
 	
-lobyte_nonzero:
-	dec		cdtmv1,x			;decrement low byte
-	bne		done
-	lda		cdtmv1+1,x			;return as fired if high byte zero
-done:
+	;check high byte; set C=1/Z=1 if zero, C=0/Z=0 otherwise
+	cmp		cdtmv1,x
+	bne		lozero_hinonzero
+	
+	;both bytes are zero, so timer's not running
+	txa
+	rts
+	
+lozero_hinonzero:
+	;decrement high byte
+	dec		cdtmv1,x
+
+lononzero:
+	;decrement low byte
+	dec		cdtmv1-1,x
+	bne		still_running
+	
+	;return high byte to set Z appropriately
+	lda		cdtmv1,x
+still_running:
 	rts
 .endp
 

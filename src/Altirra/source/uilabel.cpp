@@ -1,15 +1,18 @@
 #include "stdafx.h"
 #include <vd2/VDDisplay/textrenderer.h>
 #include "uilabel.h"
+#include "uimanager.h"
 
 ATUILabel::ATUILabel()
-	: mTextColor(0)
+	: mTextAlign(kAlignLeft)
+	, mTextColor(0)
 	, mTextX(0)
 	, mTextY(0)
 	, mBorderColor(-1)
 	, mTextSize(0, 0)
 	, mbReflowPending(false)
 {
+	SetFillColor(0xD4D0C8);
 }
 
 void ATUILabel::SetFont(IVDDisplayFont *font) {
@@ -42,6 +45,13 @@ void ATUILabel::SetBorderColor(uint32 c) {
 	}
 }
 
+void ATUILabel::SetTextAlign(Align align) {
+	if (mTextAlign != align) {
+		mTextAlign = align;
+		Invalidate();
+	}
+}
+
 void ATUILabel::SetTextColor(uint32 c) {
 	if (mTextColor != c) {
 		mTextColor = c;
@@ -60,23 +70,35 @@ void ATUILabel::SetTextOffset(sint32 x, sint32 y) {
 }
 
 void ATUILabel::SetText(const wchar_t *s) {
-	if (mText != s || !mSpans.empty()) {
-		mText = s;
+	if (mText == s && !mSpans.empty())
+		return;
 
-		mSpans.resize(1);
-		mLines.resize(1);
+	mText = s;
 
-		Span& span = mSpans.front();
+	mSpans.clear();
+	mLines.clear();
+
+	const wchar_t *t = s;
+	for(;;) {
+		const wchar_t *breakpt = wcschr(t, '\n');
+
+		Span& span = mSpans.push_back();
 		span.mbBold = false;
-		span.mChars = mText.size();
+		span.mStart = t - s;
+		span.mChars = breakpt ? breakpt - t : wcslen(t);
 		span.mColor = mTextColor;
 
-		Line& line = mLines.front();
+		Line& line = mLines.push_back();
 		line.mSpanCount = 1;
 
-		mbReflowPending = true;
-		Invalidate();
+		if (!breakpt)
+			break;
+
+		t = breakpt + 1;
 	}
+
+	mbReflowPending = true;
+	Invalidate();
 }
 
 void ATUILabel::SetTextF(const wchar_t *format, ...) {
@@ -87,23 +109,7 @@ void ATUILabel::SetTextF(const wchar_t *format, ...) {
 	mTextF.append_vsprintf(format, val);
 	va_end(val);
 
-	if (mText != mTextF || !mSpans.empty()) {
-		mText.swap(mTextF);
-
-		mSpans.resize(1);
-		mLines.resize(1);
-
-		Span& span = mSpans.front();
-		span.mbBold = false;
-		span.mChars = mText.size();
-		span.mColor = mTextColor;
-
-		Line& line = mLines.front();
-		line.mSpanCount = 1;
-
-		mbReflowPending = true;
-		Invalidate();
-	}
+	SetText(mTextF.c_str());
 }
 
 void ATUILabel::SetHTMLText(const wchar_t *s) {
@@ -121,6 +127,7 @@ void ATUILabel::SetHTMLText(const wchar_t *s) {
 
 	Span span = {};
 	span.mColor = mTextColor;
+	span.mStart = 0;
 	span.mChars = 0;
 
 	mLines.resize(1);
@@ -173,6 +180,7 @@ void ATUILabel::SetHTMLText(const wchar_t *s) {
 					}
 
 					span.mbBold = open;
+					span.mStart = (uint32)mText.size();
 				}
 			}
 
@@ -208,6 +216,7 @@ void ATUILabel::SetHTMLText(const wchar_t *s) {
 			// is empty.
 			mSpans.push_back(span);
 			span.mChars = 0;
+			span.mStart = (uint32)mText.size();
 			++mLines.back().mSpanCount;
 
 			mLines.push_back();
@@ -242,11 +251,19 @@ void ATUILabel::AppendFormattedText(uint32 color, const wchar_t *s) {
 	if (!*s)
 		return;
 
+	if (mLines.empty()) {
+		Line& line = mLines.push_back();
+		line.mSpanCount = 0;
+	}
+
 	Span& span = mSpans.push_back();
 
 	span.mColor = color;
+	span.mStart = mText.size();
 	span.mChars = wcslen(s);
 	span.mbBold = false;
+
+	++mLines.back().mSpanCount;
 
 	mText.append(s);
 
@@ -272,10 +289,14 @@ void ATUILabel::AutoSize(int x, int y) {
 	if (mbReflowPending)
 		Reflow();
 
-	vdrect32 r(0, 0, mTextSize.w + mTextX * 2, mTextSize.h + mTextY * 2);
+	vdrect32 r = ComputeWindowSize(vdrect32(0, 0, mTextSize.w + mTextX * 2, mTextSize.h + mTextY * 2));
 
-	r.translate(x, y);
+	r.translate(x - r.left, y - r.top);
 	SetArea(r);
+}
+
+void ATUILabel::OnCreate() {
+	mpFont = mpManager->GetThemeFont(kATUIThemeFont_Default);
 }
 
 void ATUILabel::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
@@ -302,19 +323,29 @@ void ATUILabel::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 	tr.SetColorRGB(mTextColor);
 	tr.SetAlignment(VDDisplayTextRenderer::kAlignLeft, VDDisplayTextRenderer::kVertAlignBaseline);
 
-	const wchar_t *s = mText.c_str();
+	const Line *line = mLines.data();
+	uint32 lineSpanCount = line->mSpanCount;
+
+	const wchar_t *const s = mText.c_str();
 	for(vdfastvector<Span>::const_iterator it(mSpans.begin()), itEnd(mSpans.end());
 		it != itEnd;
 		++it)
 	{
 		const Span& span = *it;
 
+		while(!lineSpanCount--) {
+			++line;
+
+			lineSpanCount = line->mSpanCount;
+		}
+
+		sint32 lineX = ((w - line->mWidth) * (sint32)mTextAlign + 1) >> 1;
+
 		if (span.mChars) {
 			tr.SetFont(span.mbBold ? mpBoldFont : mpFont);
 			tr.SetColorRGB(span.mColor);
-			tr.SetPosition(span.mX + mTextX, span.mY + mTextY);
-			tr.DrawTextSpan(s, span.mChars);
-			s += span.mChars;
+			tr.SetPosition(lineX + span.mX + mTextX, span.mY + mTextY);
+			tr.DrawTextSpan(s + span.mStart, span.mChars);
 		}
 	}
 }
@@ -322,7 +353,7 @@ void ATUILabel::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 void ATUILabel::Reflow() {
 	mbReflowPending = false;
 
-	const wchar_t *s = mText.c_str();
+	const wchar_t *const s = mText.c_str();
 
 	Span *spans = mSpans.data();
 
@@ -351,15 +382,13 @@ void ATUILabel::Reflow() {
 				vdrect32 cellBounds;
 				vdpoint32 nextPos;
 
-				font->ShapeText(s, span.mChars, glyphPlacements, &cellBounds, NULL, &nextPos);
+				font->ShapeText(s + span.mStart, span.mChars, glyphPlacements, &cellBounds, NULL, &nextPos);
 
 				ascent = std::max<sint32>(ascent, -cellBounds.top);
 				descent = std::max<sint32>(descent, cellBounds.bottom);
 
 				x += nextPos.x;
 			}
-
-			s += span.mChars;
 		}
 
 		for(uint32 i=0; i<line.mSpanCount; ++i) {
@@ -370,6 +399,7 @@ void ATUILabel::Reflow() {
 
 		line.mAscent = ascent;
 		line.mDescent = descent;
+		line.mWidth = x;
 
 		mTextSize.w = std::max<sint32>(mTextSize.w, x);
 		mTextSize.h += ascent + descent;

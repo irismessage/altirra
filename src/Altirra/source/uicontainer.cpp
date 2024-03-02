@@ -1,8 +1,12 @@
 #include "stdafx.h"
 #include "uicontainer.h"
 #include "uimanager.h"
+#include "uianchor.h"
 
-ATUIContainer::ATUIContainer() {
+ATUIContainer::ATUIContainer()
+	: mbLayoutInvalid(false)
+	, mbDescendantLayoutInvalid(false)
+{
 	mbFastClip = true;
 	SetAlphaFillColor(0);
 }
@@ -16,6 +20,11 @@ void ATUIContainer::AddChild(ATUIWidget *w) {
 	w->SetParent(mpManager, this);
 
 	mWidgets.push_back(w);
+
+	if (w->IsVisible())
+		Invalidate();
+
+	InvalidateLayout();
 }
 
 void ATUIContainer::RemoveChild(ATUIWidget *w) {
@@ -27,6 +36,8 @@ void ATUIContainer::RemoveChild(ATUIWidget *w) {
 			mWidgets.erase(it);
 			w->SetParent(NULL, NULL);
 			w->Release();
+			InvalidateLayout();
+			break;
 		}
 	}
 }
@@ -42,29 +53,42 @@ void ATUIContainer::RemoveAllChildren() {
 	}
 }
 
-ATUIWidget *ATUIContainer::HitTest(vdpoint32 pt) {
-	if (!mbVisible || !mArea.contains(pt))
-		return NULL;
+void ATUIContainer::InvalidateLayout() {
+	if (mbLayoutInvalid)
+		return;
 
-	pt.x -= mArea.left;
-	pt.y -= mArea.top;
+	mbLayoutInvalid = true;
 
-	for(Widgets::const_reverse_iterator it(mWidgets.rbegin()), itEnd(mWidgets.rend());
-		it != itEnd;
-		++it)
-	{
-		ATUIWidget *w = *it;
+	for(ATUIContainer *p = mpParent; p; p = p->mpParent) {
+		if (p->mbDescendantLayoutInvalid)
+			break;
 
-		ATUIWidget *r = w->HitTest(pt);
-		if (r)
-			return r;
+		p->mbDescendantLayoutInvalid = true;
 	}
-
-	return mbHitTransparent ? NULL : this;
 }
 
-void ATUIContainer::OnSize() {
-	vdrect32 r(mArea);
+void ATUIContainer::UpdateLayout() {
+	if (!mbLayoutInvalid) {
+		if (mbDescendantLayoutInvalid) {
+			for(Widgets::const_reverse_iterator it(mWidgets.rbegin()), itEnd(mWidgets.rend());
+				it != itEnd;
+				++it)
+			{
+				ATUIWidget *w = *it;
+
+				w->UpdateLayout();
+			}
+
+			mbDescendantLayoutInvalid = false;
+		}
+
+		return;
+	}
+
+	mbLayoutInvalid = false;
+	mbDescendantLayoutInvalid = false;
+
+	vdrect32 r(mClientArea);
 	vdrect32 r2;
 
 	r.translate(-r.left, -r.top);
@@ -77,6 +101,12 @@ void ATUIContainer::OnSize() {
 
 		switch(w->GetDockMode()) {
 			case kATUIDockMode_None:
+				{
+					IATUIAnchor *anchor = w->GetAnchor();
+
+					if (anchor)
+						w->SetArea(anchor->Position(r, w->GetArea().size()));
+				}
 				break;
 
 			case kATUIDockMode_Left:
@@ -107,11 +137,69 @@ void ATUIContainer::OnSize() {
 				w->SetArea(r2);
 				break;
 
+			case kATUIDockMode_LeftFloat:
+				r2 = r;
+				r2.right = r2.left + w->GetArea().width();
+				w->SetArea(r2);
+				break;
+
+			case kATUIDockMode_RightFloat:
+				r2 = r;
+				r2.left = r2.right - w->GetArea().width();
+				w->SetArea(r2);
+				break;
+
+			case kATUIDockMode_TopFloat:
+				r2 = r;
+				r2.bottom = r2.top + w->GetArea().height();
+				w->SetArea(r2);
+				break;
+
+			case kATUIDockMode_BottomFloat:
+				r2 = r;
+				r2.top = r2.bottom - w->GetArea().height();
+				w->SetArea(r2);
+				break;
+
 			case kATUIDockMode_Fill:
 				w->SetArea(r);
 				break;
 		}
+
+		w->UpdateLayout();
 	}
+}
+
+ATUIWidget *ATUIContainer::HitTest(vdpoint32 pt) {
+	if (!mbVisible || !mArea.contains(pt))
+		return NULL;
+
+	pt.x -= mArea.left;
+	pt.y -= mArea.top;
+	pt.x -= mClientArea.left;
+	pt.y -= mClientArea.top;
+
+	for(Widgets::const_reverse_iterator it(mWidgets.rbegin()), itEnd(mWidgets.rend());
+		it != itEnd;
+		++it)
+	{
+		ATUIWidget *w = *it;
+
+		ATUIWidget *r = w->HitTest(pt);
+		if (r)
+			return r;
+	}
+
+	return mbHitTransparent ? NULL : this;
+}
+
+void ATUIContainer::OnDestroy() {
+	RemoveAllChildren();
+}
+
+void ATUIContainer::OnSize() {
+	mbLayoutInvalid = true;
+	UpdateLayout();
 }
 
 void ATUIContainer::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
@@ -123,4 +211,9 @@ void ATUIContainer::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 
 		w->Draw(rdr);
 	}
+}
+
+void ATUIContainer::OnSetFocus() {
+	if (!mWidgets.empty())
+		mWidgets.front()->Focus();
 }

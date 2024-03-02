@@ -22,7 +22,8 @@ class IATDisplayPane {
 public:
 	enum { kTypeID = 'atdp' };
 
-	virtual void CaptureMouse() = 0;
+	virtual void ReleaseMouse() = 0;
+	virtual void ToggleCaptureMouse() = 0;
 	virtual void OnSize() = 0;
 	virtual void ResetDisplay() = 0;
 	virtual bool IsTextSelected() const = 0;

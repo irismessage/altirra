@@ -1116,6 +1116,37 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATDebugExpNodeDerefSignedDoubleWord : public ATDebugExpNodeUnary {
+public:
+	ATDebugExpNodeDerefSignedDoubleWord(ATDebugExpNode *x)
+		: ATDebugExpNodeUnary(kATDebugExpNodeType_DerefSignedDoubleWord, x)
+	{
+	}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		sint32 x;
+
+		if (!mpArg->Evaluate(x, context))
+			return false;
+
+		if (!context.mpMemory)
+			return false;
+
+		uint8 c0 = context.mpMemory->DebugReadByte(x & 0xffff);
+		uint8 c1 = context.mpMemory->DebugReadByte((x+1) & 0xffff);
+		uint8 c2 = context.mpMemory->DebugReadByte((x+2) & 0xffff);
+		uint8 c3 = context.mpMemory->DebugReadByte((x+3) & 0xffff);
+		result = (sint32)(c0 + (c1 << 8) + (c2 << 16) + (c3 << 24));
+		return true;
+	}
+
+	void EmitUnaryOp(VDStringA& s) {
+		s += "dd ";
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATDebugExpNodeDerefWord : public ATDebugExpNodeUnary {
 public:
 	ATDebugExpNodeDerefWord(ATDebugExpNode *x)
@@ -1545,6 +1576,7 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const
 		kOpDerefSignedByte,
 		kOpDerefSignedWord,
 		kOpDerefWord,
+		kOpDerefSignedDoubleWord,
 		kOpLoByte,
 		kOpHiByte,
 		kOpAddrSpace
@@ -1584,7 +1616,7 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const
 		9,9,9,
 
 		// unary
-		10,10,10,10,10,10,10,10,
+		10,10,10,10,10,10,10,10,10,
 
 		// addr space
 		11
@@ -1597,6 +1629,7 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const
 		kTokDSB,
 		kTokDW,
 		kTokDSW,
+		kTokDSD,
 		kTokAnd,
 		kTokOr,
 		kTokLT,
@@ -1796,6 +1829,8 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const
 						tok = kTokDW;
 					else if (ident == "dsw")
 						tok = kTokDSW;
+					else if (ident == "dsd")
+						tok = kTokDSD;
 					else if (ident == "and")
 						tok = kTokAnd;
 					else if (ident == "or")
@@ -1942,6 +1977,8 @@ force_ident:
 					opstack.push_back(kOpDerefWord);
 				} else if (tok == kTokDSW) {
 					opstack.push_back(kOpDerefSignedWord);
+				} else if (tok == kTokDSD) {
+					opstack.push_back(kOpDerefSignedDoubleWord);
 				} else if (tok == kTokInt) {
 					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeConst(intVal, hexVal, false));
 
@@ -2183,6 +2220,11 @@ force_ident:
 
 						case kOpDerefSignedWord:
 							node = new ATDebugExpNodeDerefSignedWord(sp[0]);
+							argcount = 1;
+							break;
+
+						case kOpDerefSignedDoubleWord:
+							node = new ATDebugExpNodeDerefSignedDoubleWord(sp[0]);
 							argcount = 1;
 							break;
 

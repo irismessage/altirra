@@ -16,14 +16,6 @@
 ;	along with this program; if not, write to the Free Software
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-.proc	ScreenInit
-	mva		memtop+1 ramtop
-	
-	mva		#0	colrsh
-	mva		#$FE	drkmsk
-	rts
-.endp
-
 ;Display list:
 ;	24 blank lines (3 bytes)
 ;	initial mode line with LMS (3 bytes)
@@ -77,6 +69,7 @@
 ; number of programs that rely on the layout of the default screen
 ; and break if the memory addressing is different, such as ForemXEP.
 
+.macro _SCREEN_TABLES_2
 
 ;Mode	Type	Res		Colors	ANTIC	Mem(unsplit)	Mem(split)
 ; 0		Text	40x24	1.5		2		960+32 (4)		960+32 (4)
@@ -99,22 +92,22 @@
 ;==========================================================================
 ;
 .proc ScreenPlayfieldSizesLo
-	dta	<($10000-$03C0)			;gr.0
-	dta	<($10000-$0280)			;gr.1
-	dta	<($10000-$0190)			;gr.2
-	dta	<($10000-$0190)			;gr.3
-	dta	<($10000-$0280)			;gr.4
-	dta	<($10000-$0460)			;gr.5
-	dta	<($10000-$0820)			;gr.6
-	dta	<($10000-$0FA0)			;gr.7
-	dta	<($10000-$1EB0)			;gr.8
-	dta	<($10000-$1EB0)			;gr.9
-	dta	<($10000-$1EB0)			;gr.10
-	dta	<($10000-$1EB0)			;gr.11
-	dta	<($10000-$0460)			;gr.12
-	dta	<($10000-$0280)			;gr.13
-	dta	<($10000-$0FA0)			;gr.14
-	dta	<($10000-$1EB0)			;gr.15
+	dta	<($10000-$03C0)			;gr.0	 960 bytes = 40*24              = 40*24
+	dta	<($10000-$0280)			;gr.1	 640 bytes = 20*24  + 40*4      = 40*12  + 40*4
+	dta	<($10000-$0190)			;gr.2	 400 bytes = 10*24  + 40*4      = 40*6   + 40*4
+	dta	<($10000-$0190)			;gr.3	 400 bytes = 10*24  + 40*4      = 40*6   + 40*4
+	dta	<($10000-$0280)			;gr.4	 640 bytes = 10*48  + 40*4      = 40*12  + 40*4
+	dta	<($10000-$0460)			;gr.5	1120 bytes = 20*48  + 40*4      = 40*24  + 40*4
+	dta	<($10000-$0820)			;gr.6	2080 bytes = 20*96  + 40*4      = 40*48  + 40*4
+	dta	<($10000-$0FA0)			;gr.7	4000 bytes = 40*96  + 40*4      = 40*96  + 40*4
+	dta	<($10000-$1EB0)			;gr.8	7856 bytes = 40*192 + 40*4 + 16 = 40*192 + 40*4 + 16
+	dta	<($10000-$1EB0)			;gr.9	7856 bytes = 40*192 + 40*4 + 16 = 40*192 + 40*4 + 16
+	dta	<($10000-$1EB0)			;gr.10	7856 bytes = 40*192 + 40*4 + 16 = 40*192 + 40*4 + 16
+	dta	<($10000-$1EB0)			;gr.11	7856 bytes = 40*192 + 40*4 + 16 = 40*192 + 40*4 + 16
+	dta	<($10000-$0460)			;gr.12	1120 bytes = 40*24  + 40*4      = 40*24  + 40*4
+	dta	<($10000-$0280)			;gr.13	 640 bytes = 40*12  + 40*4      = 40*12  + 40*4
+	dta	<($10000-$0FA0)			;gr.14	4000 bytes = 20*192 + 40*4      = 40*96  + 40*4
+	dta	<($10000-$1EB0)			;gr.15	7856 bytes = 40*192 + 40*4 + 16 = 40*192 + 40*4 + 16
 .endp
 
 .proc ScreenPlayfieldSizesHi
@@ -138,13 +131,14 @@
 
 ;==========================================================================
 ; ANTIC mode is in bits 0-3, PRIOR bits in 6-7.
+; DL 1K hop: bit 4
+; playfield 4K hop: bit 5
 ;
 .proc ScreenModeTable
-	dta		$02,$06,$07,$08,$09,$0A,$0B,$0D,$0F,$4F,$8F,$CF,$04,$05,$0C,$0E
+	dta		$02,$06,$07,$08,$09,$0A,$0B,$1D,$3F,$7F,$BF,$FF,$04,$05,$1C,$3E
 .endp
 
 ;==========================================================================
-; Number of mode lines we need to add into the display list.
 ;
 .proc ScreenHeightShifts
 	dta		1
@@ -169,65 +163,6 @@
 	dta		12, 24, 48, 96, 192
 .endp
 
-ScreenHeightsSplit = ScreenWidths
-;	dta		10, 20, 40, 80, 160
-
-.proc ScreenDLSizes
-	dta	256-32/2
-	dta	256-32/2
-	dta	256-20/2
-	dta	256-32/2
-	dta	256-56/2
-	dta	256-56/2
-	dta	256-104/2
-	dta	256-200/2
-	dta	256-282/2
-	dta	256-282/2
-	dta	256-282/2
-	dta	256-282/2
-	dta	256-32/2
-	dta	256-20/2
-	dta	256-296/2
-	dta	256-282/2
-
-	;split
-	dta	256-34/2		;not possible
-	dta	256-34/2
-	dta	256-24/2
-	dta	256-34/2
-	dta	256-54/2
-	dta	256-54/2
-	dta	256-94/2
-	dta	256-191/2
-	dta	256-256/2
-	dta	256-256/2		;not possible
-	dta	256-256/2		;not possible
-	dta	256-256/2		;not possible
-	dta	256-34/2
-	dta	256-24/2
-	dta	256-270/2
-	dta	256-256/2
-.endp
-
-.proc ScreenWidthShifts
-	dta		2		;gr.0	40 bytes
-	dta		1		;gr.1	20 bytes
-	dta		1		;gr.2	20 bytes
-	dta		0		;gr.3	10 bytes
-	dta		0		;gr.4	10 bytes
-	dta		1		;gr.5	20 bytes
-	dta		1		;gr.6	20 bytes
-	dta		2		;gr.7	40 bytes
-	dta		2		;gr.8	40 bytes
-	dta		2		;gr.9	40 bytes
-	dta		2		;gr.10	40 bytes
-	dta		2		;gr.11	40 bytes
-	dta		2		;gr.12	40 bytes
-	dta		2		;gr.13	40 bytes
-	dta		1		;gr.14	20 bytes
-	dta		2		;gr.15	40 bytes
-.endp
-
 .proc ScreenPixelWidthIds
 	dta		1		;gr.0	40 pixels
 	dta		0		;gr.1	20 pixels
@@ -246,8 +181,15 @@ ScreenHeightsSplit = ScreenWidths
 	dta		3		;gr.14	160 pixels
 	dta		3		;gr.15	160 pixels
 .endp
+.endm
+
+ScreenHeightsSplit = ScreenWidths
+;	dta		10, 20, 40, 80, 160
 
 ScreenPixelWidthsLo = ScreenWidths + 1
+
+.macro _SCREEN_TABLES_1
+
 .proc ScreenWidths
 	dta		<10
 	dta		<20
@@ -287,12 +229,23 @@ ScreenPixelWidthsLo = ScreenWidths + 1
 .proc ScreenPixelMasks
 	dta		$ff, $0f, $03, $01, $ff, $f0, $c0, $80
 .endp
+.endm
+
+.if _KERNEL_XLXE
+	_SCREEN_TABLES_2
+	_SCREEN_TABLES_1
+.endif
 
 ;==========================================================================
 ;==========================================================================
 
-	;Many compilation disks rely on ScreenOpen being at this address.
-	org		$f3f6
+	;Many compilation disks rely on ScreenOpen being at $F3F6.
+	
+.if *>$f3f6-8
+	.error	'ROM overflow into Screen Handler region: ',*,' > $F3EE.'
+.endif
+
+	org		$f3f6-8
 
 ;==========================================================================
 ;==========================================================================
@@ -313,6 +266,13 @@ ScreenPixelWidthsLo = ScreenWidths + 1
 ;	- Resets tab map, even if the mode does not have a text window.
 ;	- Does NOT reset P/M colors (PCOLR0-PCOLR3).
 ;	- Does NOT reset margins (LMARGN/RMARGN).
+;	- Sets up fine scrolling if FINE bit 7 is set. Note that this is
+;	  different than the scroll logic itself, which tests the whole byte.
+;	- Returns error $80 if BREAK has been pressed.
+;
+; Modified:
+;	- FRMADR: used for bitflags
+;	- ADRESS: temporary addressing
 ;
 ScreenOpen = ScreenOpenGr0.use_iocb
 .proc	ScreenOpenGr0
@@ -327,6 +287,7 @@ use_iocb:
 	
 	;reset cursor parameters
 	ldx		#11
+	lda		#0
 clear_parms:
 	sta		rowcrs,x
 	sta		txtrow,x
@@ -340,25 +301,41 @@ clear_parms:
 	lda		icax2z
 	and		#15
 	sta		dindex
+	tax
 	
 	;poke PRIOR value (saves us some time to do it now)
-	tax
+	;note that we must preserve bits 0-5 of GPRIOR or else Wayout shows logo artifacts
 	lda		ScreenModeTable,x
+	eor		gprior
 	and		#$c0
+	eor		gprior
 	sta		gprior
 	
 	;if a GTIA mode is active or we're in mode 0, force off split mode
-	bne		kill_split
-	txa
+	cmp		#$40
+	lda		icax1z
+	bcs		kill_split
+	cpx		#0
 	bne		not_gtia_mode_or_gr0
 kill_split:
-	lda		icax1z
 	and		#$ef
-	sta		icax1z	
 not_gtia_mode_or_gr0:
+
+	;save off the split screen and clear flags in a more convenient form
+	asl
+	asl
+	sta		frmadr
+	
+	;compute number of mode lines that we're going to have and save it off
+	ldy		ScreenHeightShifts,x
+	ldx		ScreenHeights,y
+	and		#$40
+	seq:ldx	ScreenHeightsSplit,y
+	stx		frmadr+1
 
 	;attempt to allocate playfield memory
 	lda		ramtop
+	ldx		dindex
 	clc
 	adc		ScreenPlayfieldSizesHi,x
 	bcs		pf_alloc_ok
@@ -376,41 +353,68 @@ cant_reopen_gr0:
 	
 pf_alloc_ok:
 	sta		savmsc+1
-	lda		ScreenPlayfieldSizesLo,x
-	sta		savmsc
-	
-	;save off the split screen and clear flags in a more convenient form
-	lda		icax1z
-	and		#$10
-	ora		dindex
-	tax
-	asl
-	asl
-	sta		hold2
+	ldy		ScreenPlayfieldSizesLo,x
+	sty		savmsc
+
+	;Gr. modes 7 and 14 consume enough space for the playfield that there
+	;is not enough space left between the playfield and the next 1K
+	;boundary to contain the display list. In these cases, we preallocate
+	;to the 1K boundary to prevent a DL crossing error. Gr.8-11 and 15
+	;do this too -- I have no idea why, as it's not like the OS correctly
+	;handles moving the 4K page split for those modes if RAMTOP is
+	;misaligned.
+	lda		ScreenModeTable,x
+	ldx		savmsc+1
+	and		#$30
+	beq		no_dlist_page_crossing
+	ldy		#0
+	dex
+no_dlist_page_crossing:
+	sty		rowac
+	stx		memtop+1
+	stx		rowac+1
+	stx		sdlsth
 		
-	;compute display list size and subtract that off too
-	lda		ScreenDLSizes,x
-	asl
-	ldy		savmsc+1
-	scs:dey
-	clc
-	adc		savmsc
+	;Compute display list size.
+	;
+	; We need:
+	;	- 8 fixed bytes (24 blank lines, LMS address, JVB)
+	;	- N bytes for mode lines
+	;	- 2 bytes for LMS split address (ANTIC modes E-F only)
+	;	- 6 bytes for split
+	;
+	;Note that the display list never crosses a page boundary. This is
+	;conservative, as the display list only can't cross 1K boundaries.
+	
+	cmp		#$20				;test 4K hop bit (bit 5)
+	lda		#$f8				;start with -8 (if carry is clear after test)
+	scc:lda	#$f5				;use -11 if so (carry is set)
+	sbc		frmadr+1			;subtract mode line count
+	bit		frmadr
+	svc:sbc	#6					;subtract 6 bytes for a split
+	
+.if _KERNEL_XLXE
+	bit		fine
+	spl:clc
+.endif
+
+	adc		rowac				;allocate dl bytes (note that carry is set!)
 	sta		memtop
-	sta		adress
+	sta		rowac
 	sta		sdlstl
-	scs:dey
-	sty		memtop+1
-	sty		adress+1
-	sty		sdlsth
 	
 	;check if we're below APPMHI
-	cpy		appmhi+1
+	cpx		appmhi+1
 	bcc		alloc_fail
 	bne		alloc_ok
 	cmp		appmhi
 	bcc		alloc_fail
 	
 alloc_ok:
+	;MEMTOP is -1 from first used byte; we cheat here with the knowledge that
+	;the low byte of MEMTOP is never $00
+	dec		memtop
+
 	;set up text window address (-160 from top)
 	ldx		ramtop
 	dex
@@ -426,96 +430,60 @@ alloc_ok:
 
 	;--- construct display list
 	ldy		#0
-	sty		tindex
 	
 	;add 24 blank lines
 	lda		#$70
-	sta		(adress),y+
-	sta		(adress),y+
-	sta		(adress),y+
+	ldx		#3
+	jsr		write_repeat
 	
-	;Add initial mode line with LMS, and check if we need to do an LMS
-	;split (playfield exceeds 4K). As it turns out, this only happens if
-	;we're using ANTIC mode E or F.
-	lda		ScreenModeTable,x
-	and		#$0f
-	pha
-	ldx		#0
-	cmp		#$0e
-	scc:ldx	#99
-	stx		hold1
-	ora		#$40
-	ldx		#savmsc
-	jsr		write_with_zp_address
+	;add in the main screen
+	jsr		setup_display
 	
-	;add remaining mode lines
-	ldx		dindex
-	lda		ScreenHeightShifts,x
-	tax
-	lda		ScreenHeights,x
-	bit		hold2
-	svc:lda	ScreenHeightsSplit,x
-	tax
-	dex
-	pla
-rowloop:
-
-	;Check if we need to do an LMS mid-way through the screen -- this happens
-	;for any mode that requires 8K of memory. The split happens on byte 101.
-	;Sadly, we cannot always check for line 101 because of mode 14, which has
-	;192 scanlines but only takes 4K of memory.
-	cpy		hold1
-	bne		notsplit
+	;save off the DL ptr
+	sty		countr
 	
-	;Yes, it is split -- add an LMS.
-	pha
-	ora		#$40
-	sta		(adress),y+
-	lda		#0
-	sta		(adress),y+
-	lda		savmsc+1
-	clc
-	adc		#$0f
-	sta		(adress),y+
-	pla
-	dex
-notsplit:
-	sta		(adress),y+
-	dex
-	bne		rowloop
+	;clear it if necessary
+	jsr		try_clear
 	
-	;Add 4 lines of mode 2 if split is enabled and we're not in mode 0. Note
-	;that we need an LMS to do this as the text window is not contiguous.
-	bit		hold2
+	;check if we are doing a split
+	bit		frmadr
 	bvc		nosplit
-	lda		dindex
-	beq		nosplit
-		
-	;add split mode lines (and fix the botscr line count)
-	mva		#$42 (adress),y+
-	mva		#$60 (adress),y+
-	mva		txtmsc+1 (adress),y+
 
+	;change text screen height to four lines
 	ldx		#4
 	stx		botscr
-	dex
-	lda		#$02
-splitloop:
-	sta		(adress),y+
-	dex
-	bne		splitloop
-nosplit:
 
+	;swap to the text screen
+	jsr		EditorSwapToText
+	
+	;add text screen dlist
+	ldy		countr
+	jsr		setup_display
+	sty		countr
+	
+	;init cursor to left margin
+	mva		lmargn colcrs
+	
+	;clear the split screen
+	jsr		try_clear
+
+nosplit:
 	;init character set
 	mva		#$02	chact
-	mva		#$e0	chbas
+	mva		#$e0	chbas			;!! - also used for NMIEN
 
 	;enable VBI; note that we have not yet enabled display DMA
-	lda		#$41					;!! - also used for JVB insn!
+.if _KERNEL_XLXE
+	lsr		frmadr
+	scs
+.endif
+	lda		#$40
 	sta		nmien
 	
 	;terminate display list with jvb
-	ldx		#adress
+	ldy		countr
+	ldx		#rowac
+	lda		#$41
 	jsr		write_with_zp_address
 	
 	;init display list and playfield dma
@@ -523,61 +491,161 @@ nosplit:
 	ora		#$22
 	sta		sdmctl
 	
-	;wait for screen to establish (necessary for Timewise splash screen to render)
-	ldx		rtclok+2
-	cmp:req	rtclok+2
-	
 	;init colors -- note that we do NOT overwrite pcolr0-3!
 	ldy		#4
 	mva:rpl	standard_colors,y color0,y-
+
+	;wait for screen to establish (necessary for Timewise splash screen to render)
+	lda		rtclok+2
+	cmp:req	rtclok+2
 	
 	;init tab map to every 8 columns
-	ldx		#14
+	ldx		#15
 	lda		#1
-	sta:rpl	tabmap,x-
+	sta:rne	tabmap-1,x-
 
 	;reset line status
 	stx		bufcnt
 
-	;clear if requested
-	jsr		try_clear
-
 	;if there is a text window, show the cursor
 	lda		botscr
 	beq		no_cursor
-	
-	;swap to text context, if we have split-screen
-	cmp		#4
-	sne:jsr	EditorSwapToText
-
-	;init cursor to left margin
-	mva		lmargn colcrs
-	
-	;clear it if needed
-	lda		swpflg
-	beq		skip_split_clear
-	jsr		try_clear
-skip_split_clear:
 
 	;show cursor
-	jsr		EditorRecomputeAndShowCursor
+	jsr		ScreenPutByte.recompute_show_cursor_exit
 no_cursor:
-	;swap back to main context and exit
-	jmp		EditorSwapToScreen
+	;swap back to main context
+	jsr		EditorSwapToScreen
 	
+	;exit
+	ldx		#0				;required by Qix (v3)
+	ldy		#1
+	rts
+	
+	
+;--------------------------------------------------------
+setup_display:
+	;Add initial mode line with LMS, and check if we need to do an LMS
+	;split (playfield exceeds 4K). As it turns out, this only happens if
+	;we're using ANTIC mode E or F.
+	ldx		dindex
+	lda		ScreenModeTable,x
+	and		#$0f
+
+.if _KERNEL_XLXE
+	;check if we are doing fine scrolling and set the vscrol bit if so
+	ldx		dindex
+	bne		nofine
+	ldx		fine
+	beq		nofine
+	ora		#$20
+nofine:
+.endif
+
+	pha
+	ora		#$40
+	ldx		#savmsc
+	jsr		write_with_zp_address
+
+	;retrieve row count
+	ldx		frmadr+1
+	lda		dindex
+	sne:ldx	botscr
+	
+	;dec row count since we already did the LMS
+	dex
+	pla
+	
+.if _KERNEL_XLXE
+	;subtract two rows if we are fine scrolling, as we need to do DLI
+	;and non-vscrolled row
+	cmp		#$22
+	beq		dofine
+.endif
+	
+	;check if this is a split mode
+	cmp		#$0e
+	bcc		no_lms_split
+	
+	;yes it is -- write 93 lines
+	ldx		#93
+	jsr		write_repeat
+	
+	;write LMS to jump over 4K boundary
+	pha
+	ora		#$40
+	sta		(rowac),y+
+	lda		#0
+	sta		(rowac),y+
+	lda		savmsc+1
+	clc
+	adc		#$0f
+	sta		(rowac),y+
+	
+	;set up to write 95 fewer lines (note that carry is cleared)
+	lda		frmadr+1
+	sbc		#94
+	tax
+	pla
+	
+no_lms_split:
+	;write mode lines and return
+	jmp		write_repeat
+
+.if _KERNEL_XLXE
+dofine:
+	;write the regular lines (22 or 2)
+	dex
+	jsr		write_repeat
+
+	;write DLI line
+	ora		#$80
+	sta		(rowac),y+
+	
+	;write non-scrolled line
+	and		#$5f
+	sta		(rowac),y+
+	
+	;indicate to mainline that DLIs should be turned on
+	inc		frmadr
+	
+	;set up DLI routine
+	ldx		#<ScreenFineScrollDLI
+	lda		#>ScreenFineScrollDLI
+write_vdslst:
+	stx		vdslst
+	sta		vdslst+1
+	rts
+.endif
+
+	;write mode lines and return
+	jmp		write_repeat
+
+;--------------------------------------------------------
 write_with_zp_address:
-	sta		(adress),y+
+	sta		(rowac),y+
 	lda		0,x
-	sta		(adress),y+
+	sta		(rowac),y+
 	lda		1,x
-	sta		(adress),y+
+	sta		(rowac),y+
 	rts
 	
+;--------------------------------------------------------
+write_repeat:
+	sta		(rowac),y+
+	dex
+	bne		write_repeat
+	rts
+	
+;--------------------------------------------------------
 try_clear:
-	bit		hold2
-	smi:jsr	ScreenClear
+	bit		frmadr
+	bmi		no_clear
+	jsr		ScreenClear
+no_clear:
 	rts
 	
+;--------------------------------------------------------
 standard_colors:
 	dta		$28
 	dta		$ca
@@ -586,7 +654,14 @@ standard_colors:
 	dta		$00
 .endp
 
-ScreenClose = CIOExitSuccess
+;==========================================================================
+.proc	ScreenInit
+	mva		memtop+1 ramtop
+	
+	mva		#0	colrsh
+	mva		#$FE	drkmsk
+	rts
+.endp
 
 ;==========================================================================
 ; Behavior in gr.0:
@@ -602,18 +677,40 @@ ScreenClose = CIOExitSuccess
 .proc ScreenGetByte
 	jsr		ScreenCheckPosition
 	bmi		xit
+	
+	;compute addressing
 	ldy		rowcrs
-	jsr		ScreenComputeFromAddrX0
-	ldy		colcrs
-	lda		(frmadr),y
+	jsr		ScreenComputeToAddrX0
+	lda		colcrs
+	ldx		dindex
+	ldy		ScreenEncodingTab,x
+	eor		bit_pos_flip_tab,y
+	tax
+	lda		colcrs+1
+	jsr		ScreenSetupPixelAddr.phase2
+	
+	;retrieve byte containing pixel
+	ldy		shfamt
+	lda		(toadr),y
+	
+	;shift down
+	jsr		ScreenAlignPixel
+
+	;mask using right-justified pixel mask for mode
+	ldx		dindex
+	ldy		ScreenEncodingTab,x
+	and		ScreenPixelMasks,y
 	
 	;convert from Internal to ATASCII
 	jsr		ScreenConvertSetup
 	eor		int_to_atascii_tab,x
 	
 	;advance to next position
+	ldx		dindex
+	beq		mode0
+	jmp		ScreenAdvancePosNonMode0
+mode0:
 	jsr		ScreenAdvancePosMode0
-
 	ldy		#1
 xit:
 	rts
@@ -622,7 +719,11 @@ int_to_atascii_tab:
 	dta		$20
 	dta		$60
 	dta		$40
-	dta		$00
+bit_pos_flip_tab:
+	dta		$00		;shared between tables!
+	dta		$01
+	dta		$03
+	dta		$07
 .endp
 
 ;==========================================================================
@@ -674,12 +775,12 @@ not_clear_2:
 	
 	;check if we're in gr.0
 	ldx		dindex
-	sne:jmp	mode_0
+	beq		mode_0
 	
 	;nope, we're in a graphics mode... that makes this easier.
 	;check if it's an EOL
 	cmp		#$9b
-	beq		graphics_eol
+	sne:jmp	ScreenAdvancePosNonMode0.graphics_eol
 	
 	;check for display suspend (ctrl+1) and wait until it is cleared
 	ldx:rne	ssflag
@@ -696,43 +797,18 @@ not_clear_2:
 	jsr		ScreenSetupPlotPixel
 	
 	pla
-	ldy		hold2
+	ldy		shfamt
 	eor		(toadr),y
 	and		bitmsk
 	eor		(toadr),y
 	sta		(toadr),y
-	
-	;advance position
-	inc		colcrs
-	sne:inc	colcrs+1
-	ldx		dindex
-	ldy		ScreenPixelWidthIds,x
-	lda		ScreenPixelWidthsHi,y
-	cmp		colcrs+1
-	bne		graphics_no_wrap
-	lda		ScreenPixelWidthsLo,y
-	cmp		colcrs
-	bne		graphics_no_wrap
 
-graphics_eol:
-	;move to left side and then one row down -- note that this may
-	;push us into an invalid coordinate, which will result on an error
-	;on the next call if not corrected
-	ldy		#0
-	sty		colcrs
-	sty		colcrs+1
-	inc		rowcrs
-graphics_no_wrap:
-	
-	;all done
-	ldy		#1
-	rts
+	;advance cursor position and exit
+	jmp		ScreenAdvancePosNonMode0
 	
 mode_0:
 	;hide the cursor
-	pha
 	jsr		ScreenHideCursor
-	pla
 
 	;check for EOL, which bypasses the ESC check
 	cmp		#$9b
@@ -754,9 +830,7 @@ mode_0:
 	
 	jsr		EditorDeleteLine0
 noywrap:
-	jsr		EditorRecomputeAndShowCursor
-	ldy		#1
-	rts
+	jmp		recompute_show_cursor_exit
 
 not_eol:
 	;check for display suspend (ctrl+1) and wait until it is cleared
@@ -788,15 +862,13 @@ not_eol:
 
 	;check if we can extend the current logical line -- 3 rows max.
 	jsr		check_extend
-	beq		post_scroll
 
 	;Mark the current physical line as part of the last logical line.
 	;
 	;NOTE: There is a subtlety here in that we may delete multiple physical
 	;      lines if the top logical line is more than one line long, but we
 	;      only want to add one physical line onto our current logical line.
-	lda		rowcrs
-	jsr		EditorGetLogicalLineInfo
+	jsr		EditorGetCurLogicalLineInfo
 	eor		#$ff
 	and		logmap,y
 	sta		logmap,y
@@ -806,7 +878,6 @@ not_eol:
 no_scroll:
 	;check if we can extend the current logical line -- 3 rows max.
 	jsr		check_extend
-	beq		post_scroll
 
 	;okay, here's the fun part -- we didn't scroll beyond, but we might
 	;be on another logical line, in which case we need to scroll everything
@@ -816,14 +887,13 @@ no_scroll:
 	beq		post_scroll
 	
 	;yup, insert a physical line
-	jsr		ScreenInsertLine
+	jsr		ScreenInsertPhysLine
 
+recompute_show_cursor_exit:
 post_scroll:
 	jsr		EditorRecomputeCursorAddr
 nowrap:
-	jsr		ScreenShowCursor
-	ldy		#1
-	rts
+	jmp		ScreenShowCursorAndXitOK
 	
 check_extend:
 	ldx		rowcrs
@@ -833,6 +903,7 @@ check_extend:
 	clc
 	adc		#3
 	cmp		rowcrs
+	beq		post_scroll
 	rts
 .endp
 
@@ -843,53 +914,9 @@ ScreenGetStatus = CIOExitSuccess
 .proc ScreenSpecial
 	lda		iccomz
 	cmp		#$11
-	sne:jmp	ScreenDrawLineFill	;draw line
+	beq		ScreenDrawLineFill	;draw line
 	cmp		#$12
-	sne:jmp	ScreenDrawLineFill	;fill
-	rts
-.endp
-
-;==========================================================================
-; Given a color byte, mask it off to the pertinent bits and reflect it
-; throughout a byte.
-;
-; Entry:
-;	A = color value
-;
-; Exit:
-;	A = folded color byte
-;	DMASK = right-justified bit mask
-;	HOLD3 = left-justified bit mask
-;
-; Modified:
-;	HOLD1, ADRESS
-;
-.proc ScreenFoldColor
-	ldx		dindex
-	ldy		ScreenEncodingTab,x			;0 = 8-bit, 1 = 4-bit, 2 = 2-bit, 3 = 1-bit
-	mvx		ScreenPixelMasks,y dmask
-	mvx		ScreenPixelMasks+4,y hold3
-	dey
-	bmi		fold_done
-	and		dmask
-	sta		hold1
-	asl
-	asl
-	asl
-	asl
-	ora		hold1
-	dey
-	bmi		fold_done
-	sta		hold1
-	asl
-	asl
-	ora		hold1
-	dey
-	bmi		fold_done
-	sta		hold1
-	asl
-	ora		hold1
-fold_done:
+	beq		ScreenDrawLineFill	;fill
 	rts
 .endp
 
@@ -936,11 +963,11 @@ fold_done:
 	jsr		ScreenSetupPlotPixel
 
 	;compute screen pitch
-	ldx		dindex
-	ldy		ScreenWidthShifts,x
-	lda		ScreenWidths,y
-	sta		tmprow
+	ldy		#1
+	jsr		ScreenComputeRangeSize
+	sta		deltac+1
 	tax
+	ldy		#0
 
 	;compute abs(dy) and sign(dy)
 	lda		rowcrs
@@ -948,57 +975,62 @@ fold_done:
 	bcs		going_down
 	eor		#$ff					;take abs(dy)
 	adc		#1						;
+	;negate screen pitch
 	pha
 	txa
 	eor		#$ff
 	tax
 	inx
+	dey
 	pla
 going_down:
-	stx		rowinc
+	stx		rowac
 	sta		deltar
-	ldy		#0
-	txa
-	spl:ldy	#$ff
-	sty		rowinc+1
+	sty		rowac+1
 	
 	;;##TRACE "dy = %d" db(deltar)
 	
 	;compute abs(dx) and sign(dx)
-	ldx		#4
+	ldx		#0
 	lda		colcrs
 	sub		oldcol
-	sta		deltac
+	sta		colac
 	lda		colcrs+1
 	sbc		oldcol+1
 	bcs		going_right
 	eor		#$ff
 	tay
-	lda		deltac
+	lda		colac
 	eor		#$ff
 	adc		#1
-	sta		deltac
+	sta		colac
 	tya
-	ldx		#0
+	adc		#0
+	ldx		#left_shift_8-right_shift_8
 going_right:
-	sta		deltac+1
+	sta		colac+1
 
-	;;##TRACE "dx = %d" dw(deltac)
+	;;##TRACE "dx = %d" dw(colac)
 	
 	;set up x shift routine
 	txa
 	ldx		dindex
-	ora		ScreenEncodingTab,x
-	tay
-	mva		shift_lo_tab,y oldcol
-	mva		#>left_shift_8 oldcol+1
 	ldy		ScreenEncodingTab,x
-	mva		fill_lo_tab,y tmpcol
-	mva		#>fill_right_8 tmpcol+1
+	clc
+	adc		shift_lo_tab,y
+	sta		oldcol
+	lda		#>left_shift_8
+	sta		oldcol+1
+	sta		endpt+1
+	
+	;set up x fill shift routine
+	lda		shift_lo_tab,y
+	adc		#fill_right_8-right_shift_8
+	sta		endpt
 	
 	;compute max(dx, dy)
-	lda		deltac
-	ldy		deltac+1
+	lda		colac
+	ldy		colac+1
 	bne		dy_larger
 	cmp		deltar
 	bcs		dy_larger
@@ -1009,94 +1041,108 @@ dy_larger:
 	sty		countr+1
 	
 	;;##TRACE "Pixel count = %d" dw(countr)
-	;check if we actually have anything to do
-	ora		countr+1
-	bne		count_nonzero
-	
-	;whoops, line is zero length... we're done
-	jmp		done
-	
-count_nonzero:
-	lda		countr
-	sne:dec	countr+1
 
-	;compute initial error accumulator in adress (dx-dy)
-	lda		deltac
+	;compute initial error accumulator in frmadr (dx-dy)
+	lda		colac
 	sub		deltar
-	sta		adress
-	lda		deltac+1
-	sbc		#0
-	sta		adress+1
-	
-	;------- pixel loop state -------
-	;	toadr		current row address
-	;	dmask		right-justified bit mask
-	;	hold3		left-justified bit mask
-	;	bitmsk		current bit mask
-	;	hold2		current byte offset within row
-	;	colcrs		y address increment/decrement (note different from Atari OS)
-	;	oldcol		left/right shift routine
-	;	tmprow		screen pitch, in bytes
-	;	tmpcol		right shift routine
-pixel_loop:
-	;compute 2*err -> frmadr
-	;;##TRACE "Error accum = %d (dx=%d, dy=%d(%d))" dsw(adress) dw(deltac) db(deltar) dsw(rowinc)
-	lda		adress
-	asl
 	sta		frmadr
-	lda		adress+1
-	rol
+	lda		colac+1
+	sbc		#0
 	sta		frmadr+1
 	
-	;check for y increment (2*e < dx, or frmadr < deltac)
-	bmi		do_yinc
+	;enter pixel loop (this will do a decrement for us)
+	jmp		next_pixel
+	
+	;------- pixel loop state -------
+	;	(zp)	frmadr		error accumulator
+	;	(zp)	toadr		current row address
+	;	(abs)	dmask		right-justified bit mask
+	;	(zp)	deltac		left-justified bit mask
+	;	(zp)	bitmsk		current bit mask
+	;	(zp)	shfamt		current byte offset within row
+	;	(zp)	rowac		y step address increment/decrement (note different from Atari OS)
+	;	(zp)	oldcol		left/right shift routine
+	;	(zp)	deltac+1	screen pitch, in bytes (for fill)
+	;	(zp)	endpt		right shift routine
+	;	(zp)	colac		dy
+pixel_loop:
+	;compute 2*err
+	;;##TRACE "Error accum = %d (dx=%d, dy=%d(%d))" dsw(frmadr) dw(colac) db(deltar) dsw(rowac)
 	lda		frmadr
-	cmp		deltac
+	asl
+	tay
 	lda		frmadr+1
-	sbc		deltac+1
+	rol
+	pha
+	
+	;check for y increment (2*e < dx, or A:X < colac)
+	;note: 2*e is also in A:X
+	bmi		do_yinc
+	cpy		colac
+	sbc		colac+1
 	bcs		no_yinc
 
 do_yinc:
 	;bump y (add/subtract pitch, e += dx)
-	lda		rowinc
+	ldx		#2
+yinc_loop:
+	lda		rowac,x
 	clc
-	adc		toadr
-	sta		toadr
-	lda		rowinc+1
-	adc		toadr+1
-	sta		toadr+1
-	
-	adw		adress deltac adress
+	adc		toadr,x
+	sta		toadr,x
+	lda		rowac+1,x
+	adc		toadr+1,x
+	sta		toadr+1,x
+	dex
+	dex
+	bpl		yinc_loop
 no_yinc:
 
-	;check for x increment (2*e + dy > 0, or frmadr + deltar > 0)
-	lda		frmadr
+	;check for x increment (2*e + dy > 0, or Y:X + deltar > 0)
+	tya
 	clc
 	adc		deltar
-	tax
-	lda		frmadr+1
+	tay
+	pla
 	adc		#0
 	bmi		no_xinc
 	bne		do_xinc
-	txa
+	tya
 	beq		no_xinc
 do_xinc:
 	;update error accumulator
-	lda		adress
+	lda		frmadr
 	sub		deltar
-	sta		adress
-	scs:dec	adress+1
+	sta		frmadr
+	scs:dec	frmadr+1
 
 	;bump x
 	lda		bitmsk
 	jmp		(oldcol)
+
+	.pages 1
+	
+right_shift_4:
+	lsr
+	lsr
+right_shift_2:
+	lsr
+right_shift_1:
+	lsr
+	bcc		right_shift_ok
+right_shift_8:
+	inc		shfamt
+	lda		deltac
+right_shift_ok:
+	;fall through to post_xinc
+
 post_xinc:
 	sta		bitmsk
 no_xinc:
 
 	;plot pixel
-	;;##TRACE "Plotting at $%04X+%d with mask $%02X" dw(toadr) db(hold2) db(bitmsk)	
-	ldy		hold2
+	;;##TRACE "Plotting at $%04X+%d with mask $%02X" dw(toadr) db(shfamt) db(bitmsk)	
+	ldy		shfamt
 	lda		hold1
 	eor		(toadr),y
 	and		bitmsk
@@ -1105,23 +1151,69 @@ no_xinc:
 
 	;do fill if needed
 	lda		iccomz
-	cmp		#$12
-	beq		do_fill
+	lsr
+	bcc		do_fill
 	
 next_pixel:
 	;loop back for next pixel
+	lda		countr
+	beq		next_pixel_2
+next_pixel_1:
 	dec		countr
-	bne		pixel_loop
+	jmp		pixel_loop
+next_pixel_2:
 	dec		countr+1
-	bpl		pixel_loop
+	bpl		next_pixel_1
 	
 done:
 	jsr		ScreenSetLastPosition
 	ldy		#1
 	rts
-	
+
+;----------------------------------------------	
+left_shift_4:
+	asl
+	asl
+left_shift_2:
+	asl
+left_shift_1:
+	asl
+	bcc		left_shift_ok
+left_shift_8:
+	dec		shfamt
+	.endpg
+	lda		dmask
+left_shift_ok:
+	bne		post_xinc
+
+;----------------------------------------------	
+fill_right_4:
+	lsr
+	lsr
+fill_right_2:
+	lsr
+fill_right_1:
+	lsr
+	bcc		fill_right_ok
+fill_right_8:
+	lda		deltac
+	iny
+	cpy		deltac+1
+	scc:ldy	#0
+fill_right_ok:
+	sta		bitmsk
+	bne		fill_loop
+fill_done:
+	stx		bitmsk
+	jmp		next_pixel
+
+.if [(fill_right_8 ^ left_shift_4)&$ff00]
+.error "Line draw / fill table crosses page boundary: ",right_shift_4," vs. ",fill_right_8
+.endif
+
+;----------------------------------------------	
 do_fill:
-	ldy		hold2				;load current byte offset
+	ldy		shfamt				;load current byte offset
 	ldx		bitmsk				;save current bitmask
 	bne		fill_start
 fill_loop:
@@ -1134,82 +1226,74 @@ fill_loop:
 	sta		(toadr),y			;save screen byte
 fill_start:
 	lda		bitmsk
-	jmp		(tmpcol)
-	
-	.pages 1
-fill_right_4:
-	lsr
-	lsr
-fill_right_2:
-	lsr
-fill_right_1:
-	lsr
-	bcc		fill_right_ok
-	lda		hold3
-fill_right_8:
-	iny
-	cpy		tmprow
-	scc:ldy	#0
-fill_right_ok:
-	sta		bitmsk
-	bne		fill_loop
-fill_done:
-	stx		bitmsk
-	jmp		next_pixel
-	.endpg
-	
-fill_lo_tab:
-	dta		<fill_right_8
-	dta		<fill_right_4
-	dta		<fill_right_2
-	dta		<fill_right_1
-	
+	jmp		(endpt)
+
+;----------------------------------------------		
 shift_lo_tab:
-	dta		<left_shift_8	
-	dta		<left_shift_4	
-	dta		<left_shift_2	
-	dta		<left_shift_1
 	dta		<right_shift_8	
 	dta		<right_shift_4	
 	dta		<right_shift_2	
-	dta		<right_shift_1	
+	dta		<right_shift_1
 	
-	.pages 1
-left_shift_4:
-	asl
-	asl
-left_shift_2:
-	asl
-left_shift_1:
-	asl
-	bcc		left_shift_ok
-left_shift_8:
-	dec		hold2
-	lda		dmask
-left_shift_ok:
-	jmp		post_xinc
+;----------------------------------------------
+;
+addzp16:
 	
-right_shift_4:
-	lsr
-	lsr
-right_shift_2:
-	lsr
-right_shift_1:
-	lsr
-	bcc		right_shift_ok
-right_shift_8:
-	inc		hold2
-	lda		hold3
-right_shift_ok:
-	jmp		post_xinc
-	.endpg
 .endp
 
 ;==========================================================================
+; Given a color byte, mask it off to the pertinent bits and reflect it
+; throughout a byte.
+;
+; Entry:
+;	A = color value
+;
+; Exit:
+;	A = folded color byte
+;	DMASK = right-justified bit mask
+;	DELTAC = left-justified bit mask
+;
+; Modified:
+;	HOLD1, ADRESS
+;
+.proc ScreenFoldColor
+	ldx		dindex
+	ldy		ScreenEncodingTab,x			;0 = 8-bit, 1 = 4-bit, 2 = 2-bit, 3 = 1-bit
+	mvx		ScreenPixelMasks,y dmask
+	mvx		ScreenPixelMasks+4,y deltac
+	dey
+	bmi		fold_done
+	and		dmask
+	sta		hold1
+	asl
+	asl
+	asl
+	asl
+	ora		hold1
+	dey
+	bmi		fold_done
+	sta		hold1
+	asl
+	asl
+	ora		hold1
+	dey
+	bmi		fold_done
+	sta		hold1
+	asl
+	ora		hold1
+fold_done:
+	rts
+.endp
+
+;==========================================================================
+;
+;Used:
+;	ADRESS
+;	TOADR
+;
 .proc ScreenClear
 	;first, set up for clearing the split-screen window (4*40 bytes)
-	mvy		#<160 adress
-	lda		#>160
+	ldy		#4
 	
 	;check if we are in the split screen text window
 	ldx		swpflg
@@ -1217,19 +1301,25 @@ right_shift_ok:
 	
 	;nope, it's the main screen... compute size
 	ldx		dindex
-	jsr		ScreenComputeMainSize	
+	ldy		ScreenHeightShifts,x
+	lda		ScreenHeights,y
+	tay
 not_main_screen:
+	jsr		ScreenComputeRangeSize
 
 	;clear memory
+	tay
+	lda		adress+1
 	tax
 	clc
 	adc		savmsc+1
 	sta		toadr+1
 	mva		savmsc toadr
-	
-	lda		#0
-	ldy		adress
+
+	tya	
 	beq		loop_start
+loop2:
+	lda		#0
 loop:
 	dey
 	sta		(toadr),y
@@ -1237,7 +1327,7 @@ loop:
 loop_start:
 	dec		toadr+1
 	dex
-	bpl		loop
+	bpl		loop2
 
 	;reset coordinates and cursor (we're going to wipe the cursor)
 	sta		colcrs+1
@@ -1263,9 +1353,12 @@ is_graphic_screen:
 ;	C = 0 if physical line only, C = 1 if should start new logical line
 ;
 ; Modified:
-;	HOLD1
+;	HOLD1, ADRESS
 ;
-.proc ScreenInsertLine
+ScreenInsertLine = ScreenInsertPhysLine.use_c
+.proc ScreenInsertPhysLine
+	clc
+use_c:
 	;save new logline flag
 	php
 	
@@ -1312,23 +1405,21 @@ clear_loop:
 	bpl		clear_loop
 	
 	;insert bit into logical line mask
-	lda		rowcrs
-	jsr		EditorGetLogicalLineInfo
+	jsr		EditorGetCurLogicalLineInfo
 	
 	plp
-	lda		#0
-	scc:lda	ReversedBitMasks,x
+	scs:lda	#0
 	sta		hold1
-	
+
 	lda		#0
 	sec
-	sbc		ReversedBitMasks,x		;-bit
+	sbc		ReversedBitMasks,x			;-bit
 	asl
 	and		logmap,y
 	clc
 	adc		logmap,y
-	ora		hold1					;set logical line bit if needed
 	ror
+	ora		hold1
 	sta		logmap,y
 	
 	dey
@@ -1339,23 +1430,34 @@ clear_loop:
 .endp
 
 ;==========================================================================
+; Hide the screen cursor, if it is present.
+;
+; Modified:
+;	Y
+;
+; Preserved:
+;	A
+;
 .proc ScreenHideCursor
 	;check if we had a cursor (note that we CANNOT use CRSINH for this as
 	;it can be changed by app code!)
-	lda		oldadr+1
+	ldy		oldadr+1
 	beq		no_cursor
 	
 	;erase the cursor
+	pha
 	ldy		#0
 	lda		oldchr
 	sta		(oldadr),y
 	sty		oldadr+1
+	pla
 no_cursor:
 	rts
 .endp
 
 ;==========================================================================
-.proc ScreenShowCursor
+; Also returns with Y=1 for convenience.
+.proc ScreenShowCursorAndXitOK
 	;;##ASSERT dw(oldadr) >= dw(savmsc)
 	;check if the cursor is enabled
 	ldy		crsinh
@@ -1364,12 +1466,14 @@ no_cursor:
 	sta		oldchr
 	eor		#$80
 	sta		(oldadr),y
+	iny
 	rts
 	
 cursor_inhibited:
 	;mark no cursor
 	ldy		#0
 	sty		oldadr+1
+	iny
 	rts
 .endp
 
@@ -1377,63 +1481,36 @@ cursor_inhibited:
 .proc	ScreenCheckPosition
 	;Check for ROWCRS out of range. Note that for split screen modes we still
 	;check against the full height!
-	lda		rowcrs
+	lda		botscr
 	ldx		dindex
-	bne		rowcheck_not_gr0
-	cmp		botscr
-	bcc		rowcheck_pass	
+	beq		rowcheck_gr0
+	ldy		ScreenHeightShifts,x
+	lda		ScreenHeights,y
+rowcheck_gr0:
+	clc
+	sbc		rowcrs
+	bcs		rowcheck_pass	
 invalid_position:
 	ldy		#CIOStatCursorRange
 	rts
 	
-rowcheck_not_gr0:
-	ldy		ScreenHeightShifts,x
-	cmp		ScreenHeights,y
-	beq		rowcheck_pass
-	bcs		invalid_position		
 rowcheck_pass:
-
 	;check width
 	ldy		ScreenPixelWidthIds,x
-	lda		ScreenPixelWidthsHi,y
-	cmp		colcrs+1
-	bcc		invalid_position
-	bne		valid_position
-	lda		ScreenPixelWidthsLo,y
-	cmp		colcrs
-	bcc		invalid_position
-valid_position:
-	ldy		#1
-	rts
-.endp
+	lda		colcrs
+	cmp		ScreenPixelWidthsLo,y
+	lda		colcrs+1
+	sbc		ScreenPixelWidthsHi,y
+	bcs		invalid_position
 
-;==========================================================================
-; Compute the size of the main screen, in bytes
-;
-; Inputs:
-;	X = screen mode (0-15)
-;
-; Outputs:
-;	ADRESS = low byte of size
-;	A = high byte of size
-;
-; Modified:
-;	ADRESS
-;	
-.proc ScreenComputeMainSize
-	lda		#120
-	sta		adress
-	lda		ScreenWidthShifts,x
-	clc
-	adc		ScreenHeightShifts,x
-	tax
-	lda		#0
-loop:
-	asl		adress
-	rol
-	dex
-	bne		loop
-done:
+	;check for BREAK
+	ldy		#$ff
+	lda		brkkey
+	bne		no_break
+	sty		brkkey
+	ldy		#CIOStatBreak-1
+no_break:
+	iny
 	rts
 .endp
 
@@ -1561,8 +1638,11 @@ with_x:
 	mva		#0 adress+1
 	sty		adress
 	ldy		dindex
-	lda		ScreenWidthShifts,y
+	lda		ScreenPixelWidthIds,y
+	sec
+	sbc		ScreenEncodingTab,y
 	tay
+	iny
 	lda		adress
 	asl
 	rol		adress+1		;row*2
@@ -1593,68 +1673,28 @@ shift_loop:
 .endp
 
 ;==========================================================================
-; Convert an ATASCII character to displayable INTERNAL format.
-;
-; Entry:
-;	A = ATASCII char
-;
-; Exit:
-;	A = INTERNAL char
-;
-.proc	ScreenConvertATASCIIToInternal
-	jsr		ScreenConvertSetup
-	eor		ATASCIIToInternalTab,x
-	rts
-.endp
-
-;==========================================================================
 ; Setup for pixel plot.
 ;
 ; Entry:
 ;	OLDCOL, OLDROW = position
+;	DELTAC = left-justified pixel mask
 ;
 ; Exit:
 ;	TOADR = screen row
-;	HOLD2 = byte offset within row
+;	SHFAMT = byte offset within row
 ;	BITMSK = shifted bit mask for pixel
 ;
 ; Modified:
 ;	ADRESS
 ;
+ScreenAlignPixel = ScreenSetupPlotPixel.rshift_mask
 .proc ScreenSetupPlotPixel
 	;;##TRACE "Folded pixel = $%02X" db(hold1)
+	jsr		ScreenSetupPixelAddr
 	
-	;compute initial address
-	ldy		oldrow
-	jsr		ScreenComputeToAddrX0
-	
-	;;##TRACE "Initial row address = $%04X" dw(toadr)
-	
-	;compute initial byte offset
-	lda		oldcol+1
-	ror
-	lda		oldcol
-	sta		hold2
-	lda		#0
-	ldx		dindex
-	ldy		ScreenEncodingTab,x
-	beq		no_xshift	
-xshift_loop:
-	ror		hold2
-	ror
-	dey
-	bne		xshift_loop
-no_xshift:
-
-	;;##TRACE "Initial row offset = $%02X" db(hold2)
-
 	;preshift bit mask
-	rol
-	rol
-	rol
-	rol
-	tax
-	lda		hold3
+	lda		deltac
+rshift_mask:
 	dex
 	bmi		xmaskshift_done
 xmaskshift_loop:
@@ -1669,52 +1709,80 @@ xmaskshift_done:
 .endp
 
 ;==========================================================================
-; ScreenSetLastPosition
+; Setup for pixel addressing.
 ;
-; Copies COLCRS/ROWCRS to OLDCOL/OLDROW.
-;
-.proc ScreenSetLastPosition
-	ldx		#2
-loop:
-	lda		rowcrs,x
-	sta		oldrow,x
-	dex
-	bpl		loop
-	rts
-.endp
-
-;==========================================================================
-; ScreenResetLogicalLineMap
-;
-; Marks all lines as the start of logical lines.
-;
-.proc ScreenResetLogicalLineMap
-	lda		#$ff
-	sta		logmap
-	sta		logmap+1
-	sta		logmap+2
-	rts
-.endp
-
-;==========================================================================
-; ScreenAdvancePosMode0
-;
-; Advance to the next cursor position in reading order, for mode 0.
+; Entry:
+;	COLCRS, ROWCRS = position (ScreenSetupPixelAddr)
+;	OLDCOL, OLDROW = position (ScreenSetupPixelAddrOld)
 ;
 ; Exit:
-;	C = 1 if no wrap, 0 if wrapped
+;	TOADR = screen row
+;	SHFAMT = byte offset within row
+;	X = number of bits from left side of byte to left side of pixel
 ;
-; Modified:
-;	X
-;
-.proc ScreenAdvancePosMode0
-	inc		colcrs
-	ldx		rmargn
-	cpx		colcrs
-	bcs		post_wrap
-	ldx		lmargn
-	stx		colcrs
-	inc		rowcrs
-post_wrap:
+.proc ScreenSetupPixelAddr
+	;compute initial address
+	ldy		oldrow
+	jsr		ScreenComputeToAddrX0
+	
+	;;##TRACE "Initial row address = $%04X" dw(toadr)
+	
+	;compute initial byte offset
+	lda		oldcol+1
+	ldx		oldcol
+phase2:
+	ror
+	stx		shfamt
+	lda		#0
+	ldx		dindex
+	ldy		ScreenEncodingTab,x
+	beq		no_xshift	
+xshift_loop:
+	ror		shfamt
+	ror
+	dey
+	bne		xshift_loop
+no_xshift:
+	rol
+	rol
+	rol
+	rol
+	tax
+
+	;;##TRACE "Initial row offset = $%02X" db(shfamt)
 	rts
 .endp
+
+;==========================================================================
+; ScreenAdvancePosNonMode0
+;
+.proc ScreenAdvancePosNonMode0
+	;advance position
+	inc		colcrs
+	sne:inc	colcrs+1
+	ldx		dindex
+	ldy		ScreenPixelWidthIds,x
+	ldx		ScreenPixelWidthsHi,y
+	cpx		colcrs+1
+	bne		graphics_no_wrap
+	ldx		ScreenPixelWidthsLo,y
+	cpx		colcrs
+	bne		graphics_no_wrap
+
+graphics_eol:
+	;move to left side and then one row down -- note that this may
+	;push us into an invalid coordinate, which will result on an error
+	;on the next call if not corrected
+	ldy		#0
+	sty		colcrs
+	sty		colcrs+1
+	inc		rowcrs
+graphics_no_wrap:
+	ldy		#1
+	rts
+.endp
+
+;==========================================================================
+.if !_KERNEL_XLXE
+	_SCREEN_TABLES_1
+.endif

@@ -680,6 +680,7 @@ ATUIRenderer::ATUIRenderer()
 		
 		mpWatchLabels[i] = label;
 
+		label->SetFillColor(0);
 		label->SetTextColor(0xFFFFFF);
 		label->SetVisible(false);
 		label->SetTextOffset(2, 1);
@@ -1014,7 +1015,7 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 		c->AddChild(mpHoverTip);
 
 		// update fonts
-		mpSysFont = m->GetThemeFont(kATUIThemeFont_Default);
+		mpSysFont = m->GetThemeFont(kATUIThemeFont_Header);
 		mpSmallMonoSysFont = m->GetThemeFont(kATUIThemeFont_MonoSmall);
 		mpSysMonoFont = m->GetThemeFont(kATUIThemeFont_Mono);
 		mpSysHoverTipFont = m->GetThemeFont(kATUIThemeFont_Tooltip);

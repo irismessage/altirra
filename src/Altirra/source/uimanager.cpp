@@ -1,4 +1,5 @@
 #include <stdafx.h>
+#include <vd2/system/time.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/Kasumi/triblt.h>
 #include <vd2/VDDisplay/font.h>
@@ -9,14 +10,44 @@
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUIManager::ActiveAction : public IVDTimerCallback {
+public:
+	virtual void TimerCallback();
+
+public:
+	ATUIManager *mpParent;
+	uint32 mTargetInstance;
+	uint32 mActionId;
+	uint32 mRepeatDelay;
+
+	VDLazyTimer mRepeatTimer;
+};
+
+void ATUIManager::ActiveAction::TimerCallback() {
+	mpParent->RepeatAction(*this);
+
+	mRepeatTimer.SetOneShot(this, mRepeatDelay);
+
+	if (mRepeatDelay > 20)
+		mRepeatDelay = mRepeatDelay - 10;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 ATUIManager::ATUIManager()
 	: mpNativeDisplay(NULL)
 	, mpMainWindow(NULL)
 	, mpCursorWindow(NULL)
-	, mpFocusWindow(NULL)
+	, mpActiveWindow(NULL)
+	, mpModalWindow(NULL)
+	, mpModalCookie(NULL)
 	, mbCursorCaptured(false)
+	, mbCursorMotionMode(false)
 	, mCursorImageId(kATUICursorImage_None)
+	, mbForeground(true)
 	, mbInvalidated(false)
+	, mDestroyLocks(0)
+	, mNextInstanceId(0)
 {
 	for(size_t i=0; i<vdcountof(mpStockImages); ++i)
 		mpStockImages[i] = NULL;
@@ -34,7 +65,8 @@ void ATUIManager::Init(IATUINativeDisplay *natDisp) {
 	mpMainWindow->SetHitTransparent(true);
 	mpMainWindow->SetParent(this, NULL);
 
-	VDCreateDisplaySystemFont(20, false, "MS Shell Dlg", &mpThemeFonts[kATUIThemeFont_Default]);
+	VDCreateDisplaySystemFont(15, false, "MS Shell Dlg", &mpThemeFonts[kATUIThemeFont_Default]);
+	VDCreateDisplaySystemFont(20, false, "MS Shell Dlg", &mpThemeFonts[kATUIThemeFont_Header]);
 	VDCreateDisplaySystemFont(14, false, "Lucida Console", &mpThemeFonts[kATUIThemeFont_MonoSmall]);
 	VDCreateDisplaySystemFont(20, false, "Lucida Console", &mpThemeFonts[kATUIThemeFont_Mono]);
 	VDCreateDisplaySystemFont(-11, false, "Tahoma", &mpThemeFonts[kATUIThemeFont_Tooltip]);
@@ -46,7 +78,13 @@ void ATUIManager::Init(IATUINativeDisplay *natDisp) {
 		L'a',	// menu check
 		L'h',	// menu radio
 		L'8',	// menu arrow
+		L'3',	// button left
+		L'4',	// button right
+		L'5',	// button up
+		L'6',	// button down
 	};
+
+	VDASSERTCT(vdcountof(kMagicChars) == vdcountof(mpStockImages));
 
 	VDDisplayFontMetrics menuFontMetrics;
 	mpThemeFonts[kATUIThemeFont_Menu]->GetMetrics(menuFontMetrics);
@@ -54,7 +92,7 @@ void ATUIManager::Init(IATUINativeDisplay *natDisp) {
 	vdrefptr<IVDDisplayFont> marlett;
 	VDCreateDisplaySystemFont(menuFontMetrics.mAscent + menuFontMetrics.mDescent + 2, false, "Marlett", ~marlett);
 
-	for(int i=0; i<3; ++i) {
+	for(int i=0; i<vdcountof(mpStockImages); ++i) {
 		vdfastvector<VDDisplayFontGlyphPlacement> placements;
 		vdrect32 bounds;
 		marlett->ShapeText(&kMagicChars[i], 1, placements, &bounds, NULL, NULL);
@@ -84,16 +122,88 @@ void ATUIManager::Init(IATUINativeDisplay *natDisp) {
 }
 
 void ATUIManager::Shutdown() {
+	VDASSERT(!mDestroyLocks);
+
 	vdsafedelete <<= mpStockImages;
 
-	vdsaferelease <<= mpMainWindow;
+	if (mpMainWindow) {
+		mpMainWindow->SetParent(NULL, NULL);
+		vdsaferelease <<= mpMainWindow;
+	}
+
 	vdsaferelease <<= mpThemeFonts;
 
 	mpNativeDisplay = NULL;
+
+	VDASSERT(mInstanceMap.empty());
+}
+
+IATUIClipboard *ATUIManager::GetClipboard() {
+	return mpNativeDisplay ? mpNativeDisplay->GetClipboard() : NULL;
 }
 
 ATUIContainer *ATUIManager::GetMainWindow() const {
 	return mpMainWindow;
+}
+
+ATUIWidget *ATUIManager::GetFocusWindow() const {
+	return mbForeground ? mpActiveWindow : NULL;
+}
+
+ATUIWidget *ATUIManager::GetWindowByInstance(uint32 id) const {
+	InstanceMap::const_iterator it = mInstanceMap.find(id);
+
+	if (it == mInstanceMap.end())
+		return NULL;
+
+	return it->second;
+}
+
+void ATUIManager::BeginAction(ATUIWidget *w, const ATUITriggerBinding& binding) {
+	ATUIWidget *target = w;
+
+	if (binding.mTargetInstanceId) {
+		target = GetWindowByInstance(binding.mTargetInstanceId);
+		if (!target)
+			return;
+	}
+
+	ActiveActionMap::insert_return_type r = mActiveActionMap.insert(binding.mVk);
+	if (!r.second)
+		return;
+
+	ActiveAction *action = new ActiveAction;
+	action->mpParent = this;
+	action->mTargetInstance = target->GetInstanceId();
+	action->mActionId = binding.mAction;
+
+	r.first->second = action;
+
+	LockDestroy();
+	target->OnActionStart(binding.mAction);
+	UnlockDestroy();
+
+	action->mRepeatDelay = 100;
+	action->mRepeatTimer.SetOneShot(action, 400);
+}
+
+void ATUIManager::EndAction(uint32 vk) {
+	ActiveActionMap::iterator it = mActiveActionMap.find(vk);
+
+	if (it != mActiveActionMap.end()) {
+		ActiveAction *action = it->second;
+		mActiveActionMap.erase(it);
+
+		ATUIWidget *target = GetWindowByInstance(action->mTargetInstance);
+
+		if (target) {
+			LockDestroy();
+			target->OnActionStop(action->mActionId);
+			UnlockDestroy();
+		}
+
+		delete action;
+	}
 }
 
 void ATUIManager::Resize(sint32 w, sint32 h) {
@@ -101,37 +211,62 @@ void ATUIManager::Resize(sint32 w, sint32 h) {
 		mpMainWindow->SetArea(vdrect32(0, 0, w, h));
 }
 
-void ATUIManager::SetFocusWindow(ATUIWidget *w) {
-	if (mpFocusWindow == w)
+void ATUIManager::SetActiveWindow(ATUIWidget *w) {
+	if (mpActiveWindow == w)
 		return;
 
-	ATUIWidget *prevFocus = mpFocusWindow;
-	mpFocusWindow = w;
+	VDASSERT(w->GetManager());
+
+	ATUIWidget *prevFocus = mpActiveWindow;
+	mpActiveWindow = w;
+
+	LockDestroy();
 
 	if (prevFocus)
 		prevFocus->OnKillFocus();
 
-	if (mpFocusWindow == w)
+	if (mpActiveWindow == w)
 		w->OnSetFocus();
+
+	UnlockDestroy();
 }
 
-void ATUIManager::CaptureCursor(ATUIWidget *w) {
-	if (w && mpCursorWindow != w) {
-		if (mpCursorWindow)
-			mpCursorWindow->OnMouseLeave();
+void ATUIManager::CaptureCursor(ATUIWidget *w, bool motionMode, bool constrainPosition) {
+	if (mpCursorWindow != w) {
+		LockDestroy();
 
-		mpCursorWindow = w;
-		UpdateCursorImage();
+		if (mpCursorWindow) {
+			if (mbCursorCaptured)
+				mpCursorWindow->OnCaptureLost();
+
+			if (w)
+				mpCursorWindow->OnMouseLeave();
+		}
+
+		if (w)
+			mpCursorWindow = w;
+
+		UnlockDestroy();
+
+		if (w)
+			UpdateCursorImage();
 	}
+
+	if (!w)
+		motionMode = false;
+
+	if (mpNativeDisplay)
+		mpNativeDisplay->ConstrainCursor(w && constrainPosition);
 
 	bool newCaptureState = (w != NULL);
 
-	if (mbCursorCaptured != newCaptureState) {
+	if (mbCursorCaptured != newCaptureState || mbCursorMotionMode != motionMode) {
 		mbCursorCaptured = newCaptureState;
+		mbCursorMotionMode = motionMode;
 
 		if (mpNativeDisplay) {
 			if (newCaptureState)
-				mpNativeDisplay->CaptureCursor();
+				mpNativeDisplay->CaptureCursor(motionMode);
 			else
 				mpNativeDisplay->ReleaseCursor();
 		}
@@ -144,35 +279,61 @@ void ATUIManager::BeginModal(ATUIWidget *w) {
 		return;
 	}
 
-	if (!mpNativeDisplay)
-		mpNativeDisplay->BeginModal();
+	void *cookie = NULL;
+	if (mpNativeDisplay)
+		cookie = mpNativeDisplay->BeginModal();
 
 	ModalEntry& me = mModalStack.push_back();
 	me.mpPreviousModal = mpModalWindow;
+	me.mpPreviousModalCookie = mpModalCookie;
 
 	mpModalWindow = w;
+	mpModalCookie = cookie;
+
+	if (!w->IsSameOrAncestorOf(mpActiveWindow))
+		w->Focus();
 }
 
 void ATUIManager::EndModal() {
 	VDASSERT(mpModalWindow);
 	VDASSERT(!mModalStack.empty());
 
+	if (mpNativeDisplay)
+		mpNativeDisplay->EndModal(mpModalCookie);
+
 	const ModalEntry& me = mModalStack.back();
 
 	mpModalWindow = me.mpPreviousModal;
+	mpModalCookie = me.mpPreviousModalCookie;
 	mModalStack.pop_back();
-
-	if (mpNativeDisplay)
-		mpNativeDisplay->EndModal();
 }
 
 bool ATUIManager::IsKeyDown(uint32 vk) {
 	return mpNativeDisplay && mpNativeDisplay->IsKeyDown(vk);
 }
 
+vdpoint32 ATUIManager::GetCursorPosition() {
+	if (!mpNativeDisplay)
+		return vdpoint32(0, 0);
+
+	return mpNativeDisplay->GetCursorPosition();
+}
+
+bool ATUIManager::OnMouseRelativeMove(sint32 dx, sint32 dy) {
+	if (!mbCursorCaptured || !mpCursorWindow)
+		return false;
+
+	if (!(dx | dy))
+		return false;
+
+	LockDestroy();
+	mpCursorWindow->OnMouseRelativeMove(dx, dy);
+	UnlockDestroy();
+	return true;
+}
+
 bool ATUIManager::OnMouseMove(sint32 x, sint32 y) {
-	if (!mpMainWindow)
-		return false;
+	VDASSERT(!mDestroyLocks);
 
 	if (!mbCursorCaptured) {
 		if (!UpdateCursorWindow(x, y))
@@ -182,18 +343,16 @@ bool ATUIManager::OnMouseMove(sint32 x, sint32 y) {
 	if (!mpCursorWindow)
 		return false;
 
-	for(ATUIWidget *w = mpCursorWindow; w; w = w->GetParent()) {
-		const vdrect32& area = w->GetArea();
-
-		x -= area.left;
-		y -= area.top;
+	vdpoint32 cpt;
+	if (mpCursorWindow->TranslateScreenPtToClientPt(vdpoint32(x, y), cpt) || mbCursorCaptured) {
+		LockDestroy();
+		mpCursorWindow->OnMouseMove(cpt.x, cpt.y);
+		UnlockDestroy();
 	}
-
-	mpCursorWindow->OnMouseMove(x, y);
 	return true;
 }
 
-bool ATUIManager::OnMouseDownL(sint32 x, sint32 y) {
+bool ATUIManager::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk) {
 	if (!mpMainWindow)
 		return false;
 
@@ -205,18 +364,17 @@ bool ATUIManager::OnMouseDownL(sint32 x, sint32 y) {
 	if (!mpCursorWindow)
 		return false;
 
-	for(ATUIWidget *w = mpCursorWindow; w; w = w->GetParent()) {
-		const vdrect32& area = w->GetArea();
-
-		x -= area.left;
-		y -= area.top;
+	vdpoint32 cpt;
+	if (mpCursorWindow->TranslateScreenPtToClientPt(vdpoint32(x, y), cpt) || mbCursorCaptured) {
+		LockDestroy();
+		mpCursorWindow->OnMouseDown(cpt.x, cpt.y, vk, dblclk);
+		UnlockDestroy();
 	}
 
-	mpCursorWindow->OnMouseDownL(x, y);
 	return true;
 }
 
-bool ATUIManager::OnMouseUpL(sint32 x, sint32 y) {
+bool ATUIManager::OnMouseUp(sint32 x, sint32 y, uint32 vk) {
 	if (!mpMainWindow)
 		return false;
 
@@ -228,63 +386,196 @@ bool ATUIManager::OnMouseUpL(sint32 x, sint32 y) {
 	if (!mpCursorWindow)
 		return false;
 
-	for(ATUIWidget *w = mpCursorWindow; w; w = w->GetParent()) {
-		const vdrect32& area = w->GetArea();
-
-		x -= area.left;
-		y -= area.top;
+	vdpoint32 cpt;
+	if (mpCursorWindow->TranslateScreenPtToClientPt(vdpoint32(x, y), cpt) || mbCursorCaptured) {
+		LockDestroy();
+		mpCursorWindow->OnMouseUp(cpt.x, cpt.y, vk);
+		UnlockDestroy();
 	}
 
-	mpCursorWindow->OnMouseUpL(x, y);
+	return true;
+}
+
+bool ATUIManager::OnMouseWheel(sint32 x, sint32 y, float delta) {
+	if (!mpMainWindow)
+		return false;
+
+	if (!mbCursorCaptured) {
+		if (!UpdateCursorWindow(x, y))
+			return true;
+	}
+
+	if (!mpCursorWindow)
+		return false;
+
+	vdpoint32 cpt;
+	if (mpCursorWindow->TranslateScreenPtToClientPt(vdpoint32(x, y), cpt) || mbCursorCaptured) {
+		LockDestroy();
+		mpCursorWindow->OnMouseWheel(cpt.x, cpt.y, delta);
+		UnlockDestroy();
+	}
+
 	return true;
 }
 
 void ATUIManager::OnMouseLeave() {
-	if (mpMainWindow)
-		mpMainWindow->OnMouseLeave();
+	if (!mpCursorWindow)
+		return;
+
+	LockDestroy();
+
+	if (mpCursorWindow)
+		CaptureCursor(NULL);
+
+	mpCursorWindow->OnMouseLeave();
+
+	UnlockDestroy();
 }
 
-bool ATUIManager::OnKeyDown(uint32 vk) {
-	for(ATUIWidget *w = mpFocusWindow; w; w = w->GetParent()) {
-		if (w->OnKeyDown(vk))
-			return true;
+void ATUIManager::OnMouseHover(sint32 x, sint32 y) {
+	if (!mpCursorWindow)
+		return;
+
+	vdpoint32 cpt;
+	if (mpCursorWindow->TranslateScreenPtToClientPt(vdpoint32(x, y), cpt) || mbCursorCaptured) {
+		LockDestroy();
+		mpCursorWindow->OnMouseHover(cpt.x, cpt.y);
+		UnlockDestroy();
+	}
+}
+
+bool ATUIManager::OnContextMenu(const vdpoint32 *pt) {
+	// If we have a point then we should do the lookup that way; otherwise, use
+	// the focus window (keyboard activated).
+
+	bool success = false;
+
+	if (pt) {
+		if (!mpCursorWindow)
+			return false;
+
+		vdpoint32 cpt;
+
+		if (mpCursorWindow->TranslateScreenPtToClientPt(*pt, cpt) || mbCursorCaptured) {
+			LockDestroy();
+			success = mpCursorWindow->OnContextMenu(&cpt);
+			UnlockDestroy();
+		}
+	} else if (mpActiveWindow) {
+		LockDestroy();
+		success = mpCursorWindow->OnContextMenu(NULL);
+		UnlockDestroy();
 	}
 
+	return success;
+}
+
+bool ATUIManager::OnKeyDown(const ATUIKeyEvent& event) {
+	LockDestroy();
+
+	for(ATUIWidget *w = mpActiveWindow; w; w = w->GetParent()) {
+		if (w->OnKeyDown(event)) {
+			UnlockDestroy();
+			return true;
+		}
+
+		if (w == mpModalWindow)
+			break;
+	}
+
+	UnlockDestroy();
 	return false;
 }
 
-bool ATUIManager::OnKeyUp(uint32 vk) {
-	for(ATUIWidget *w = mpFocusWindow; w; w = w->GetParent()) {
-		if (w->OnKeyUp(vk))
+bool ATUIManager::OnKeyUp(const ATUIKeyEvent& event) {
+	LockDestroy();
+
+	EndAction(event.mVirtKey);
+
+	if (event.mVirtKey != event.mExtendedVirtKey)
+		EndAction(event.mExtendedVirtKey);
+
+	for(ATUIWidget *w = mpActiveWindow; w; w = w->GetParent()) {
+		if (w->OnKeyUp(event)) {
+			UnlockDestroy();
 			return true;
+		}
+
+		if (w == mpModalWindow)
+			break;
 	}
 
+	UnlockDestroy();
 	return false;
 }
 
-bool ATUIManager::OnChar(uint32 ch) {
-	for(ATUIWidget *w = mpFocusWindow; w; w = w->GetParent()) {
-		if (w->OnChar(ch))
+bool ATUIManager::OnChar(const ATUICharEvent& event) {
+	LockDestroy();
+
+	for(ATUIWidget *w = mpActiveWindow; w; w = w->GetParent()) {
+		if (w->OnChar(event)) {
+			UnlockDestroy();
 			return true;
+		}
+
+		if (w == mpModalWindow)
+			break;
 	}
 
+	UnlockDestroy();
 	return false;
+}
+
+void ATUIManager::OnCaptureLost() {
+	if (mbCursorCaptured) {
+		mbCursorCaptured = false;
+
+		if (mpCursorWindow) {
+			LockDestroy();
+			mpCursorWindow->OnCaptureLost();
+			UnlockDestroy();
+		}
+	}
 }
 
 void ATUIManager::Attach(ATUIWidget *w) {
+	do {
+		++mNextInstanceId;
+	} while(!mNextInstanceId || !mInstanceMap.insert(InstanceMap::value_type(mNextInstanceId, w)).second);
+
+	w->SetInstanceId(mNextInstanceId);
 }
 
 void ATUIManager::Detach(ATUIWidget *w) {
 	VDASSERT(mpModalWindow != w);
 
+	uint32 instanceId = w->GetInstanceId();
+	VDASSERT(instanceId);
+
+	InstanceMap::iterator itInst = mInstanceMap.find(instanceId);
+	if (itInst != mInstanceMap.end()) {
+		mInstanceMap.erase(itInst);
+	} else {
+		VDASSERT(!"Detaching window not in instance map.");
+	}
+
+	w->SetInstanceId(0);
+
+	if (mDestroyLocks) {
+		w->AddRef();
+		mDestroyList.push_back(w);
+	}
+
 	if (mpCursorWindow == w) {
-		mpCursorWindow = NULL;
+		mpCursorWindow = w->GetParent();
 		mbCursorCaptured = false;
 		UpdateCursorImage();
 	}
 
-	if (mpFocusWindow == w)
-		mpFocusWindow = w->GetParent();
+	if (mpActiveWindow == w) {
+		mpActiveWindow = w->GetParentOrOwner();
+		VDASSERT(!mpActiveWindow || mpActiveWindow->GetManager());
+	}
 
 	for(ModalStack::iterator it = mModalStack.begin(), itEnd = mModalStack.end();
 		it != itEnd;
@@ -306,9 +597,21 @@ void ATUIManager::Invalidate(ATUIWidget *w) {
 	}
 }
 
+void ATUIManager::UpdateCursorImage(ATUIWidget *w) {
+	if (w->IsSameOrAncestorOf(mpCursorWindow))
+		UpdateCursorImage();
+}
+
 void ATUIManager::Composite(IVDDisplayRenderer& r, const VDDisplayCompositeInfo& compInfo) {
-	if (mpMainWindow)
+	// !!NOTE!! We _cannot_ check for mDestroyLocks=0 here. A modal dialog from the Win32 side
+	// may cause reentrancy that requires us to paint while being in the middle of an event
+	// handler. This should be OK since the drawing path shouldn't be messing with the window
+	// hierarchy.
+
+	if (mpMainWindow) {
+		mpMainWindow->UpdateLayout();
 		mpMainWindow->Draw(r);
+	}
 
 	mbInvalidated = false;
 }
@@ -316,30 +619,67 @@ void ATUIManager::Composite(IVDDisplayRenderer& r, const VDDisplayCompositeInfo&
 void ATUIManager::UpdateCursorImage() {
 	uint32 id = 0;
 
-	for(ATUIWidget *w = mpCursorWindow; w; w = w->GetParent()) {
+	for(ATUIWidget *w = mpCursorWindow; w && w != mpModalWindow; w = w->GetParent()) {
 		id = w->GetCursorImage();
 
 		if (id)
 			break;
 	}
 
-	if (mCursorImageId != id)
+	if (mCursorImageId != id) {
 		mCursorImageId = id;
+
+		if (mpNativeDisplay)
+			mpNativeDisplay->SetCursorImage(mCursorImageId);
+	}
 }
 
 bool ATUIManager::UpdateCursorWindow(sint32 x, sint32 y) {
+	VDASSERT(!mbCursorCaptured);
+
 	ATUIWidget *w = mpMainWindow->HitTest(vdpoint32(x, y));
 
 	if (w != mpCursorWindow) {
 		if (mpModalWindow && !mpModalWindow->IsSameOrAncestorOf(w))
 			return false;
 
+		LockDestroy();
+
 		if (mpCursorWindow)
 			mpCursorWindow->OnMouseLeave();
 
 		mpCursorWindow = w;
+		UnlockDestroy();
+
 		UpdateCursorImage();
 	}
 
 	return true;
+}
+
+void ATUIManager::LockDestroy() {
+	++mDestroyLocks;
+}
+
+void ATUIManager::UnlockDestroy() {
+	if (!--mDestroyLocks && !mDestroyList.empty()) {
+		DestroyList dlist;
+
+		dlist.swap(mDestroyList);
+
+		while(!dlist.empty()) {
+			dlist.back()->Release();
+			dlist.pop_back();
+		}
+	}
+}
+
+void ATUIManager::RepeatAction(ActiveAction& action) {
+	ATUIWidget *target = GetWindowByInstance(action.mTargetInstance);
+	if (!target)
+		return;
+
+	LockDestroy();
+	target->OnActionRepeat(action.mActionId);
+	UnlockDestroy();
 }

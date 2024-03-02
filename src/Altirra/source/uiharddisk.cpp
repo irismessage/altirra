@@ -279,6 +279,7 @@ bool ATUIDialogHardDisk::OnLoaded() {
 	mComboHWMode.AddItem(L"KMK/JZ IDE V1");
 	mComboHWMode.AddItem(L"KMK/JZ IDE V2 (IDEPlus)");
 	mComboHWMode.AddItem(L"SIDE");
+	mComboHWMode.AddItem(L"SIDE 2");
 
 	return VDDialogFrameW32::OnLoaded();
 }
@@ -317,6 +318,7 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 				case kATIDEHardwareMode_KMKJZ_V1: hwidx = 3; break;
 				case kATIDEHardwareMode_KMKJZ_V2: hwidx = 4; break;
 				case kATIDEHardwareMode_SIDE: hwidx = 5; break;
+				case kATIDEHardwareMode_SIDE2: hwidx = 6; break;
 			}
 
 			mComboHWMode.SetSelection(hwidx);
@@ -345,6 +347,7 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 				case 3: hwmode = kATIDEHardwareMode_KMKJZ_V1; break;
 				case 4: hwmode = kATIDEHardwareMode_KMKJZ_V2; break;
 				case 5: hwmode = kATIDEHardwareMode_SIDE; break;
+				case 6: hwmode = kATIDEHardwareMode_SIDE2; break;
 			}
 
 			const bool write = !IsButtonChecked(IDC_IDEREADONLY);

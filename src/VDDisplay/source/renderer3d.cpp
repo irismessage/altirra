@@ -15,6 +15,8 @@ extern const VDTDataView g_VDDispFPView_RenderBlitStencil;
 extern const VDTDataView g_VDDispFPView_RenderBlitStencilRBSwap;
 extern const VDTDataView g_VDDispFPView_RenderBlitColor;
 extern const VDTDataView g_VDDispFPView_RenderBlitColorRBSwap;
+extern const VDTDataView g_VDDispFPView_RenderBlitColor2;
+extern const VDTDataView g_VDDispFPView_RenderBlitColor2RBSwap;
 
 VDDisplayCachedImage3D::VDDisplayCachedImage3D() {
 	mListNodePrev = NULL;
@@ -105,7 +107,10 @@ VDDisplayRenderer3D::VDDisplayRenderer3D()
 	, mpVFBlit(NULL)
 	, mpFPFill(NULL)
 	, mpFPBlit(NULL)
+	, mpFPBlitDirect(NULL)
 	, mpFPBlitStencil(NULL)
+	, mpFPBlitColor(NULL)
+	, mpFPBlitColor2(NULL)
 	, mpVB(NULL)
 	, mpIB(NULL)
 	, mpSS(NULL)
@@ -184,6 +189,7 @@ bool VDDisplayRenderer3D::Init(IVDTContext& ctx) {
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, rbswap ? g_VDDispFPView_RenderBlitDirectRBSwap : g_VDDispFPView_RenderBlitDirect, &mpFPBlitDirect) ||
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, rbswap ? g_VDDispFPView_RenderBlitStencilRBSwap : g_VDDispFPView_RenderBlitStencil, &mpFPBlitStencil) ||
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, rbswap ? g_VDDispFPView_RenderBlitColorRBSwap : g_VDDispFPView_RenderBlitColor, &mpFPBlitColor) ||
+		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, rbswap ? g_VDDispFPView_RenderBlitColor2RBSwap : g_VDDispFPView_RenderBlitColor2, &mpFPBlitColor2) ||
 		!ctx.CreateVertexBuffer(65536, true, NULL, &mpVB) ||
 		!ctx.CreateIndexBuffer(256 * 6, false, false, indices, &mpIB) ||
 		!ctx.CreateSamplerState(ssdesc, &mpSS) ||
@@ -199,7 +205,7 @@ bool VDDisplayRenderer3D::Init(IVDTContext& ctx) {
 
 	mVBOffset = 0;
 
-	mTextRenderer.Init(this, 256, 256);
+	mTextRenderer.Init(this, 256, 256, true);
 	return true;
 }
 
@@ -223,6 +229,7 @@ void VDDisplayRenderer3D::Shutdown() {
 		mpIB,
 		mpVB,
 		mpFPBlitColor,
+		mpFPBlitColor2,
 		mpFPBlitStencil,
 		mpFPBlitDirect,
 		mpFPBlit,
@@ -288,6 +295,9 @@ void VDDisplayRenderer3D::SetColorRGB(uint32 color) {
 }
 
 void VDDisplayRenderer3D::FillRect(sint32 x, sint32 y, sint32 w, sint32 h) {
+	if ((w|h) < 0)
+		return;
+
 	x += mOffsetX;
 	y += mOffsetY;
 
@@ -396,22 +406,10 @@ void VDDisplayRenderer3D::Blt(sint32 x, sint32 y, VDDisplayImageView& imageView,
 		{ x1, y1, 0xFFFFFFFFU, u1, v1 },
 	};
 
-	AddQuads(v, 1, kBlitNormal);
+	AddQuads(v, 1, kBltMode_Normal);
 }
 
-void VDDisplayRenderer3D::MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
-	MultiSpecialBlt(blts, n, imageView, kBlitStencil);
-}
-
-void VDDisplayRenderer3D::MultiGrayBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
-	MultiSpecialBlt(blts, n, imageView, kBlitStencil);
-}
-
-void VDDisplayRenderer3D::MultiColorBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
-	MultiSpecialBlt(blts, n, imageView, kBlitColor);
-}
-
-void VDDisplayRenderer3D::MultiSpecialBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BlitMode blitMode) {
+void VDDisplayRenderer3D::MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode) {
 	if (!n)
 		return;
 
@@ -433,7 +431,7 @@ void VDDisplayRenderer3D::MultiSpecialBlt(const VDDisplayBlt *blts, uint32 n, VD
 	for(int pass=0; pass<3; ++pass) {
 		uint32 color = mNativeColor;
 
-		if (blitMode == kBlitColor) {
+		if (bltMode == kBltMode_Color || bltMode == kBltMode_Color2) {
 			switch(pass) {
 				case 0:
 					color = 0x0000ff + ((mNativeColor & 0xff) << 24);
@@ -491,17 +489,17 @@ void VDDisplayRenderer3D::MultiSpecialBlt(const VDDisplayBlt *blts, uint32 n, VD
 			++i;
 
 			if (i >= 256) {
-				AddQuads(v, i >> 2, blitMode);
+				AddQuads(v, i >> 2, bltMode);
 				i = 0;
 			}
 		}
 
-		if (pass == 0 && blitMode != kBlitColor)
+		if (pass == 0 && bltMode != kBltMode_Color && bltMode != kBltMode_Color2)
 			break;
 	}
 
 	if (i)
-		AddQuads(v, i >> 2, blitMode);
+		AddQuads(v, i >> 2, bltMode);
 }
 
 void VDDisplayRenderer3D::PolyLine(const vdpoint32 *points, uint32 numLines) {
@@ -649,7 +647,7 @@ void VDDisplayRenderer3D::AddQuads(const FillVertex *p, uint32 n, bool alpha) {
 	}
 }
 
-void VDDisplayRenderer3D::AddQuads(const BlitVertex *p, uint32 n, BlitMode blitMode) {
+void VDDisplayRenderer3D::AddQuads(const BlitVertex *p, uint32 n, BltMode bltMode) {
 	uint32 vtxbytes = sizeof(BlitVertex) * n * 4;
 
 	if (65536 - mVBOffset < vtxbytes)
@@ -660,19 +658,24 @@ void VDDisplayRenderer3D::AddQuads(const BlitVertex *p, uint32 n, BlitMode blitM
 		mpContext->SetVertexProgram(mpVPBlit);
 		mpContext->SetVertexStream(0, mpVB, mVBOffset, sizeof(BlitVertex));
 
-		switch(blitMode) {
-			case kBlitNormal:
+		switch(bltMode) {
+			case kBltMode_Normal:
 				mpContext->SetFragmentProgram(mpFPBlit);
 				mpContext->SetBlendState(NULL);
 				break;
 
-			case kBlitStencil:
+			case kBltMode_Stencil:
 				mpContext->SetFragmentProgram(mpFPBlitStencil);
 				mpContext->SetBlendState(mpBSStencil);
 				break;
 
-			case kBlitColor:
+			case kBltMode_Color:
 				mpContext->SetFragmentProgram(mpFPBlitColor);
+				mpContext->SetBlendState(mpBSColor);
+				break;
+
+			case kBltMode_Color2:
+				mpContext->SetFragmentProgram(mpFPBlitColor2);
 				mpContext->SetBlendState(mpBSColor);
 				break;
 		}

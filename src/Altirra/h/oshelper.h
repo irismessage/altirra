@@ -15,6 +15,8 @@ void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly);
 void ATCopyFrameToClipboard(void *hwnd, const VDPixmap& px);
 void ATSaveFrame(void *hwnd, const VDPixmap& px, const wchar_t *filename);
 
+void ATCopyTextToClipboard(void *hwnd, const char *s);
+
 void ATUISaveWindowPlacement(void *hwnd, const char *name);
 void ATUIRestoreWindowPlacement(void *hwnd, const char *name, int nCmdShow);
 

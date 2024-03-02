@@ -7,6 +7,6 @@ SIOErrorNAK			= $8B
 SIOErrorBadFrame	= $8C
 SIOErrorOverrun		= $8E
 SIOErrorChecksum	= $8F
-SIOErrorDeviceDone	= $90
+SIOErrorDeviceError	= $90
 
 .endif

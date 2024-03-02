@@ -100,7 +100,7 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 
 	bool basic = mpSim->IsBASICEnabled();
 
-	if (hwmode != kATHardwareMode_800XL && hwmode != kATHardwareMode_XEGS)
+	if (hwmode != kATHardwareMode_800XL && hwmode != kATHardwareMode_XEGS && hwmode != kATHardwareMode_130XE)
 		basic = false;
 
 	if (mbLastBASICState != basic) {
@@ -162,7 +162,11 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 			break;
 
 		case kATHardwareMode_800XL:
-			mPrefix += L": XL/XE";
+			mPrefix += L": XL";
+			break;
+
+		case kATHardwareMode_130XE:
+			mPrefix += L": XE";
 			break;
 
 		case kATHardwareMode_1200XL:
@@ -189,7 +193,7 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 			break;
 
 		case kATKernelMode_XL:
-			if (hwmode != kATHardwareMode_800XL)
+			if (hwmode != kATHardwareMode_800XL && hwmode != kATHardwareMode_130XE)
 				mPrefix += L" XL/XE";
 			break;
 
@@ -228,6 +232,7 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 				case kATHardwareMode_800XL:
 				case kATHardwareMode_1200XL:
 				case kATHardwareMode_XEGS:
+				case kATHardwareMode_130XE:
 					mPrefix += L" LLE";
 					break;
 

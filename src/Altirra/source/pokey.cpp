@@ -542,10 +542,10 @@ void ATPokeyEmulator::FireTimer() {
 		if (mSerialInputCounter) {
 			--mSerialInputCounter;
 
-			if (!mSerialInputCounter && (mSKCTL & 0x10)) {
+			if (!mSerialInputCounter) {
 				mbSerialWaitingForStartBit = true;
 
-				if (!mbLinkedTimers34) {
+				if ((mSKCTL & 0x10) && !mbLinkedTimers34) {
 					mCounter[2] = mAUDFP1[2];
 					SetupTimers(0x04);
 				}
@@ -891,7 +891,7 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 			mpRenderer->ResetTimers();
 
 			for(int i=0; i<4; ++i) {
-				mCounterBorrow[0] = 0;
+				mCounterBorrow[i] = 0;
 
 				if (mpTimerBorrowEvents[i]) {
 					mpScheduler->RemoveEvent(mpTimerBorrowEvents[i]);
@@ -1560,21 +1560,35 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 		case 0x09:	// $D209 KBCODE
 			return mKBCODE;
 		case 0x0A:	// $D20A RANDOM
-			if (mSKCTL & 3) {
-				int t = ATSCHEDULER_GETTIME(mpScheduler);
-				int polyDelta = t - mLastPolyTime;
-				mPoly9Counter += polyDelta;
-				mPoly17Counter += polyDelta;
-				mLastPolyTime = t;
+			{
+				if (mSKCTL & 3) {
+					int t = ATSCHEDULER_GETTIME(mpScheduler);
+					int polyDelta = t - mLastPolyTime;
+					mPoly9Counter += polyDelta;
+					mPoly17Counter += polyDelta;
+					mLastPolyTime = t;
 
-				if (mPoly9Counter >= 511)
-					mPoly9Counter %= 511;
+					if (mPoly9Counter >= 511)
+						mPoly9Counter %= 511;
 
-				if (mPoly17Counter >= 131071)
-					mPoly17Counter %= 131071;
+					if (mPoly17Counter >= 131071)
+						mPoly17Counter %= 131071;
 
+				}
+
+				const uint8 *src = mAUDCTL & 0x80 ? &mpTables->mPolyBuffer[mPoly9Counter] : &mpTables->mPolyBuffer[mPoly17Counter];
+				uint8 v = 0;
+
+				if (mAUDCTL & 0x80) {
+					for(int i=7; i>=0; --i)
+						v = (v + v) + ((src[i] & 2) >> 1);
+				} else {
+					for(int i=7; i>=0; --i)
+						v = (v + v) + (src[i] & 1);
+				}
+
+				return ~v;
 			}
-			return mAUDCTL & 0x80 ? (uint8)(mpTables->mPoly9Buffer[mPoly9Counter]) : (uint8)(mpTables->mPoly17Buffer[mPoly17Counter]);
 		case 0x0D:	// $D20D SERIN
 			{
 				uint8 c = mSERIN;

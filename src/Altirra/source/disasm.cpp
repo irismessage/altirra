@@ -404,7 +404,7 @@ namespace {
 		/* C0 */   ImX(CPY), Ix(CMP), Im(REP), Sr(CMP), Zp(CPY), Zp(CMP), Zp(DEC), Xd(CMP), Ip(INY),ImM(CMP), Ip(DEX), Ip(WAI), Ab(CPY), Ab(CMP), Ab(DEC), Lg(CMP), 
 		/* D0 */	Re(BNE), Iy(CMP), Iz(CMP), Sy(CMP), Iz(PEI), Zx(CMP), Zx(DEC), Xy(CMP), Ip(CLD), Ay(CMP), Ip(PHX), Ip(STP), Il(JML), Ax(CMP), Ax(DEC), Lx(CMP), 
 		/* E0 */   ImX(CPX), Ix(SBC), Im(SEP), Sr(SBC), Zp(CPX), Zp(SBC), Zp(INC), Xd(SBC), Ip(INX),ImM(SBC), Ip(NOP), Ip(XBA), Ab(CPX), Ab(SBC), Ab(INC), Lg(SBC), 
-		/* F0 */	Re(BEQ), Iy(SBC), Iz(SBC), Sy(SBC), I2(PEA), Zx(SBC), Zx(INC), Xy(SBC), Ip(SED), Ay(SBC), Ip(PLX), Ip(XCE), It(JSR), Ax(SBC), Ax(INC), Lx(SBC),
+		/* F0 */	Re(BEQ), Iy(SBC), Iz(SBC), Sy(SBC), Ab(PEA), Zx(SBC), Zx(INC), Xy(SBC), Ip(SED), Ay(SBC), Ip(PLX), Ip(XCE), It(JSR), Ax(SBC), Ax(INC), Lx(SBC),
 	};
 
 	const uint8 (*kModeTbl[8])[2]={
@@ -504,7 +504,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 	uint8 dbk = hent.mB;
 	uint32 dbkbase = (uint32)hent.mB << 16;
 	uint32 d = hent.mD;
-	uint32 dpmask = (uint8)d ? 0xff : 0xffff;
+	uint32 dpmask = (uint8)d ? 0xffff : 0xff;
 	uint32 x = hent.mX;
 	uint32 y = hent.mY;
 	uint32 s16 = ((uint32)hent.mSH << 8) + hent.mS;
@@ -523,6 +523,8 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 			if (hent.mbEmulation) {
 				subMode = kATCPUSubMode_65C816_Emulation;
 			} else {
+				dpmask = 0xffff;
+				
 				switch(hent.mP & (AT6502::kFlagM | AT6502::kFlagX)) {
 					case 0:
 						subMode = kATCPUSubMode_65C816_NativeM16X16;
@@ -672,29 +674,49 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 			case kModeZpX:
 				base = byte1;
 				ea = (d + ((byte1 + x) & dpmask)) & 0xffff;
+
+				if (dpmask >= 0x100)
+					ea16 = true;
 				break;
 
 			case kModeZpY:
 				base = byte1;
 				ea = (d + ((byte1 + y) & dpmask)) & 0xffff;
+
+				if (dpmask >= 0x100)
+					ea16 = true;
 				break;
 
 			case kModeAbs:
 				base = ea = byte1 + (byte2 << 8);
+
+				if (cpuMode == kATCPUMode_65C816)
+					ea += ((uint32)hent.mB << 16);
+
 				addr16 = true;
 				ea16 = true;
 				break;
 
 			case kModeAbsX:
 				base = byte1 + (byte2 << 8);
-				ea = base + x;
+
+				if (cpuMode == kATCPUMode_65C816)
+					ea = (base + x + ((uint32)hent.mB << 16)) & 0xffffff;
+				else
+					ea = (base + x) & 0xffff;
+
 				addr16 = true;
 				ea16 = true;
 				break;
 
 			case kModeAbsY:
 				base = byte1 + (byte2 << 8);
-				ea = base + y;
+
+				if (cpuMode == kATCPUMode_65C816)
+					ea = (base + y + ((uint32)hent.mB << 16)) & 0xffffff;
+				else
+					ea = (base + y) & 0xffff;
+
 				addr16 = true;
 				ea16 = true;
 				break;
@@ -794,17 +816,17 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 			case kModeStack:
 				dolabel = false;
 				base = byte1;
-				ea = base + s16;
+				ea = (base + s16) & 0xffff;
 				break;
 
 			case kModeStackIndY:
 				dolabel = false;
-				base = byte1 + s16;
+				base = byte1;
 
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = g_sim.DebugReadWord(base) + y;
+					ea = g_sim.DebugReadWord(base + s16) + y;
 				break;
 
 			case kModeDpIndLong:
@@ -915,27 +937,33 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 
 		if (decodeRefsHistory && ea != 0xFFFFFFFFUL) {
 			switch(mode) {
-				case kModeZpX:
-				case kModeZpY:
-				case kModeAbsX:
-				case kModeAbsY:
-				case kModeIndA:
-				case kModeIndAL:
-				case kModeIndX:
-				case kModeIndY:
-				case kModeInd:
-				case kModeIndAX:
-				case kModeStackIndY:
-				case kModeDpIndLong:
-				case kModeDpIndLongY:
+				case kModeZpX:			// bank 0
+				case kModeZpY:			// bank 0
+				case kModeAbsX:			// DBK
+				case kModeAbsY:			// DBK
+				case kModeIndA:			// bank 0 -> PBK
+				case kModeIndAL:		// bank 0 -> any
+				case kModeIndX:			// DBK
+				case kModeIndY:			// DBK
+				case kModeInd:			// bank 0 -> DBK
+				case kModeIndAX:		// PBK
+				case kModeStackIndY:	// bank 0 -> PBK
+				case kModeDpIndLong:	// bank 0 -> any
+				case kModeDpIndLongY:	// bank 0 -> any
 					size_t padLen = startPos + 20;
 
 					if (line.size() < padLen)
 						line.resize(padLen, ' ');
 
-					if (cpuMode == kATCPUMode_65C816)
+					if (cpuMode == kATCPUMode_65C816 &&
+						mode != kModeZpX &&
+						mode != kModeZpY)
+					{
 						line.append_sprintf(" ;$%02X:%04X", (ea >> 16) & 0xff, ea & 0xffff);
-					else if (ea16)
+						break;
+					}
+
+					if (ea16)
 						line.append_sprintf(" ;$%04X", ea);
 					else
 						line.append_sprintf(" ;$%02X", ea);

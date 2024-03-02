@@ -168,6 +168,8 @@ protected:
 	static sint32 ReadByte_BB800_2(void *thisptr0, uint32 address);
 	static bool WriteByte_BB800_1(void *thisptr0, uint32 address, uint8 value);
 	static bool WriteByte_BB800_2(void *thisptr0, uint32 address, uint8 value);
+	static sint32 ReadByte_SIC(void *thisptr0, uint32 address);
+	static bool WriteByte_SIC(void *thisptr0, uint32 address, uint8 value);
 	static sint32 ReadByte_MaxFlash(void *thisptr0, uint32 address);
 	static bool WriteByte_MaxFlash(void *thisptr0, uint32 address, uint8 value);
 	static bool WriteByte_Corina1M(void *thisptr0, uint32 address, uint8 value);

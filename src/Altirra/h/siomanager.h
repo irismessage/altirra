@@ -47,7 +47,7 @@ public:
 	void ReinitHooks();
 	void UninitHooks();
 
-	bool TryAccelRequest(const ATSIORequest& req);
+	bool TryAccelRequest(const ATSIORequest& req, bool isDSKINV);
 
 private:
 	uint8 OnHookDSKINV(uint16);

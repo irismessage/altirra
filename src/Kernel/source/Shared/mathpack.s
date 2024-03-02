@@ -752,27 +752,7 @@ nonzero:
 	stx		_offset
 	sed
 	
-offloop:
-	ldx		#5
-offloop2:
-	;shift a bit out of fr1 mantissa
-	lsr		_fr2,x
-	bcc		noadd
-			
-	;add fr1 to fr0 at offset
-	jsr		fp_fmul_addfr1tooffset
-	
-noadd:
-	;go back for next byte
-	dex
-	bne		offloop2
-	
-	;double fr1
-	jsr		fp_doublefr1
-	
-	;loop back until all mantissa bytes finished
-	dec		_offset
-	bne		offloop
+	jsr		fp_fmul_innerloop
 
 	;check if we need to shift up the fr0 mantissa
 	lda		fr0+1
@@ -965,42 +945,6 @@ binloop:
 	rts
 .endp
 
-.proc fp_doublefr1
-	ldx		#5
-	clc
-doublefr1:
-	lda		fr1,x
-	adc		fr1,x
-	sta		fr1,x
-	dex
-	bpl		doublefr1
-	rts
-.endp
-
-.proc fp_fmul_addfr1tooffset
-_offset2 = _fr2
-	stx		_offset2
-	ldy		#5
-	clc
-addloop:
-	lda		fr1,y
-	adc		fr0+5,x
-	sta		fr0+5,x
-	dex
-	dey
-	bpl		addloop
-	bcc		done
-carryloop:
-	lda		fr0+5,x
-	adc		#0
-	sta		fr0+5,x
-	dex
-	bcs		carryloop
-done:
-	ldx		_offset2
-	rts
-.endp
-
 ;==========================================================================
 ; NORMALIZE [DC00]	Normalize FR0 (UNDOCUMENTED)
 	org		$dc00
@@ -1104,6 +1048,72 @@ diff_borrow:
 	lda		#$80
 	eor		fr0
 	sta		fr0
+	rts
+.endp
+
+;--------------------------------------------------------------------------
+.proc fp_fmul_innerloop
+_offset = _fr3+5
+_offset2 = _fr2
+
+	;begin outer loop -- this is where we process one _bit_ out of each
+	;multiplier byte in FR2's mantissa (note that this is inverted in that
+	;it is bytes-in-bits instead of bits-in-bytes)
+offloop:
+
+	;begin inner loop -- here we process the same bit in each multiplier
+	;byte, going from byte 5 down to byte 1
+	ldx		#5
+offloop2:
+	;shift a bit out of fr1 mantissa
+	lsr		_fr2,x
+	bcc		noadd
+			
+	;add fr1 to fr0 at offset
+	stx		_offset2
+	ldy		#5
+	clc
+addloop:
+	lda		fr1,y
+	adc		fr0+5,x
+	sta		fr0+5,x
+	dex
+	dey
+	bpl		addloop
+	
+	;check if we have a carry out to the upper bytes
+	bcc		no_carry
+carryloop:
+	lda		fr0+5,x
+	adc		#0
+	sta		fr0+5,x
+	dex
+	bcs		carryloop
+no_carry:
+
+	;restore byte offset
+	ldx		_offset2
+	
+noadd:
+	;go back for next byte
+	dex
+	bne		offloop2
+
+	;double fr1
+	ldx		#5
+	clc
+doublefr1:
+	lda		fr1,x
+	adc		fr1,x
+	sta		fr1,x
+	dex
+	bpl		doublefr1
+
+	;loop back until all mantissa bytes finished
+	dec		_offset
+	bne		offloop
+
+	;all done
 	rts
 .endp
 

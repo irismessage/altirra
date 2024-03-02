@@ -60,9 +60,7 @@ public:
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
 	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h);
 
-	virtual void MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView);
-	virtual void MultiGrayBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView);
-	virtual void MultiColorBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView);
+	virtual void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode);
 
 	virtual void PolyLine(const vdpoint32 *points, uint32 numLines);
 
@@ -73,14 +71,6 @@ public:
 	virtual void EndSubRender();
 
 protected:
-	enum BlitMode {
-		kBlitNormal,
-		kBlitStencil,
-		kBlitColor
-	};
-
-	void MultiSpecialBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BlitMode blitMode);
-
 	struct FillVertex {
 		float x;
 		float y;
@@ -99,7 +89,7 @@ protected:
 	void AddLineStrip(const FillVertex *p, uint32 n, bool alpha);
 	void AddQuads(const FillVertex *p, uint32 n, bool alpha);
 
-	void AddQuads(const BlitVertex *p, uint32 n, BlitMode blitMode);
+	void AddQuads(const BlitVertex *p, uint32 n, BltMode bltMode);
 	VDDisplayCachedImage3D *GetCachedImage(VDDisplayImageView& imageView);
 
 	uint32 mColor;
@@ -121,6 +111,7 @@ protected:
 	IVDTFragmentProgram *mpFPBlitDirect;
 	IVDTFragmentProgram *mpFPBlitStencil;
 	IVDTFragmentProgram *mpFPBlitColor;
+	IVDTFragmentProgram *mpFPBlitColor2;
 	IVDTVertexBuffer *mpVB;
 	IVDTIndexBuffer *mpIB;
 	IVDTSamplerState *mpSS;

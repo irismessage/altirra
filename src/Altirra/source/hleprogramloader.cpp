@@ -263,10 +263,10 @@ launch:
 
 	// push virtual load hook ($01FE-1) onto stack and jsr through (INITAD)
 	mpCPU->PushWord(0x01FD);
+	mpCPU->PushWord(kdb.INITAD - 1);
 
-	mpCPU->Jump(kdb.INITAD);
 	mpSimEventMgr->NotifyEvent(kATSimEvent_EXEInitSegment);
-	return 0;
+	return 0x60;
 }
 
 void ATHLEProgramLoader::UnloadProgramSymbols() {

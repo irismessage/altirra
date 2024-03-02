@@ -5,25 +5,31 @@
 #include <vd2/system/VDString.h>
 #include <vd2/VDDisplay/font.h>
 #include "uiwidget.h"
+#include "callback.h"
 
 class ATUITextEdit : public ATUIWidget, public IVDTimerCallback {
 public:
 	ATUITextEdit();
 	~ATUITextEdit();
 
+	void AutoSize();
+
 	void ClearSelection();
 	void Delete();
 
+	const wchar_t *GetText() const { return mText.c_str(); }
 	void SetText(const wchar_t *s);
+
+	ATCallbackHandler1<void, ATUITextEdit *>& OnReturnPressed() { return mReturnPressedEvent; }
 
 public:
 	virtual void OnMouseDownL(sint32 x, sint32 y);
 	virtual void OnMouseUpL(sint32 x, sint32 y);
 	virtual void OnMouseMove(sint32 x, sint32 y);
 
-	virtual bool OnKeyDown(uint32 vk);
-	virtual bool OnKeyUp(uint32 vk);
-	virtual bool OnChar(uint32 ch);
+	virtual bool OnKeyDown(const ATUIKeyEvent& event);
+	virtual bool OnKeyUp(const ATUIKeyEvent& event);
+	virtual bool OnChar(const ATUICharEvent& event);
 
 	virtual void OnCreate();
 	virtual void OnDestroy();
@@ -39,6 +45,7 @@ protected:
 	sint32 GetNearestPosFromX(sint32 x) const;
 	void SetCaretPosX(sint32 x, bool enableSelection);
 	void UpdateCaretPixelX();
+	void TurnCaretOn();
 
 	sint32 mScrollX;
 	sint32 mCaretPosX;
@@ -62,6 +69,8 @@ protected:
 	GlyphPlacements mGlyphPlacements2;
 
 	VDLazyTimer mCaretTimer;
+
+	ATCallbackHandler1<void, ATUITextEdit *> mReturnPressedEvent;
 };
 
 #endif

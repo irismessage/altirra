@@ -99,13 +99,51 @@ ATUIMenuList::ATUIMenuList()
 	: mSelectedIndex(-1)
 	, mbPopup(false)
 	, mbActive(false)
+	, mbAutoHide(false)
 	, mpRootList(NULL)
+	, mItemSelectedEvent()
 {
 	SetFillColor(0xD4D0C8);
 	SetCursorImage(kATUICursorImage_Arrow);
+
+	BindAction(kATUIVK_Left, kActionBarLeft);
+	BindAction(kATUIVK_Right, kActionBarRight);
+	BindAction(kATUIVK_Up, kActionPopupUp);
+	BindAction(kATUIVK_Down, kActionPopupDown);
+	BindAction(kATUIVK_Return, kActionSelect);
+
+	BindAction(kATUIVK_UILeft, kActionBarLeft);
+	BindAction(kATUIVK_UIRight, kActionBarRight);
+	BindAction(kATUIVK_UIUp, kActionPopupUp);
+	BindAction(kATUIVK_UIDown, kActionPopupDown);
+	BindAction(kATUIVK_UIAccept, kActionSelect);
+	BindAction(kATUIVK_UIMenu, kActionClose);
+	BindAction(kATUIVK_UIReject, kActionBack);
 }
 
 ATUIMenuList::~ATUIMenuList() {
+}
+
+void ATUIMenuList::SetAutoHide(bool en) {
+	if (mbAutoHide == en)
+		return;
+
+	mbAutoHide = en;
+
+	if (en) {
+		CloseSubMenu();
+		ReleaseCursor();
+		mSelectedIndex = -1;
+
+		if (mpParent)
+			mpParent->Focus();
+
+		mbFastClip = true;
+		SetAlphaFillColor(0);
+		Invalidate();
+
+		VDASSERT(!mpSubMenu);
+	}
 }
 
 void ATUIMenuList::SetFont(IVDDisplayFont *font) {
@@ -154,6 +192,76 @@ void ATUIMenuList::AutoSize() {
 	SetArea(vdrect32(mArea.left, mArea.top, mArea.left + mIdealSize.w, mArea.top + mIdealSize.h));
 }
 
+void ATUIMenuList::Activate() {
+	if (!mbActive) {
+		mbActive = true;
+
+		mbFastClip = false;
+		SetFillColor(0xD4D0C8);
+		Invalidate();
+
+		SetSelectedIndex(0, true);
+		if (mpSubMenu)
+			MoveNext();
+	}
+
+	Focus();
+}
+
+void ATUIMenuList::MovePrev() {
+	ATUIMenuList *p = GetTail();
+	int n = (int)p->mpMenu->GetItemCount();
+
+	if (!n)
+		return;
+
+	int idx0 = p->mSelectedIndex;
+	if (idx0 < 0)
+		idx0 = 0;
+
+	int idx = idx0;
+	for(;;) {
+		if (--idx < 0)
+			idx = n - 1;
+
+		ATUIMenuItem *item = p->mpMenu->GetItemByIndex(idx);
+		if (!item->mbSeparator && !item->mbDisabled)
+			break;
+	}
+
+	p->SetSelectedIndex(idx, p == this, false);
+
+	if (p == this && mpSubMenu)
+		MoveNext();
+}
+
+void ATUIMenuList::MoveNext() {
+	ATUIMenuList *p = GetTail();
+	int n = (int)p->mpMenu->GetItemCount();
+
+	if (!n)
+		return;
+
+	int idx0 = p->mSelectedIndex;
+	if (idx0 < 0)
+		idx0 = n - 1;
+
+	int idx = idx0;
+	for(;;) {
+		if (++idx >= n)
+			idx = 0;
+
+		ATUIMenuItem *item = p->mpMenu->GetItemByIndex(idx);
+		if (!item->mbSeparator && !item->mbDisabled)
+			break;
+	}
+
+	p->SetSelectedIndex(idx, p == this, false);
+
+	if (p == this && mpSubMenu)
+		MoveNext();
+}
+
 void ATUIMenuList::CloseMenu() {
 	if (!mpRootList) {
 		SetSelectedIndex(-1, true);
@@ -168,11 +276,19 @@ void ATUIMenuList::CloseMenu() {
 }
 
 void ATUIMenuList::OnMouseMove(sint32 x, sint32 y) {
+	if (mbAutoHide && mbFastClip) {
+		mbFastClip = false;
+		SetFillColor(0xD4D0C8);
+		Invalidate();
+	}
+
 	HandleMouseMove(x, y);
 }
 
 void ATUIMenuList::OnMouseDownL(sint32 x, sint32 y) {
 	uint32 itemSelected = 0;
+
+	Focus();
 
 	if (!HandleMouseDownL(x, y, false, itemSelected)) {
 		if (mbActive) {
@@ -186,48 +302,117 @@ void ATUIMenuList::OnMouseDownL(sint32 x, sint32 y) {
 	if (itemSelected) {
 		CloseMenu();
 
-		mItemSelectedEvent.Raise(this, itemSelected);
+		if (mItemSelectedEvent)
+			mItemSelectedEvent(this, itemSelected);
 	}
 }
 
 void ATUIMenuList::OnMouseLeave() {
-	SetVisible(false);
-
 	mbActive = false;
-}
+	CloseSubMenu();
 
-bool ATUIMenuList::OnKeyDown(uint32 vk) {
-	switch(vk) {
-		case kATUIVK_Left:
-			if (!mbPopup && mSelectedIndex >= 0) {
-				sint32 i = mSelectedIndex - 1;
+	if (mpParent)
+		mpParent->Focus();
 
-				if (i < 0)
-					i = (sint32)mpMenu->GetItemCount() - 1;
-
-				SetSelectedIndex(i, false);
-				return true;
-			}
-			break;
-
-		case kATUIVK_Right:
-			if (!mbPopup && mSelectedIndex >= 0) {
-				sint32 i = mSelectedIndex + 1;
-
-				if (i >= (sint32)mpMenu->GetItemCount())
-					i = 0;
-
-				SetSelectedIndex(i, false);
-				return true;
-			}
-			break;
+	if (mbAutoHide && !mbFastClip) {
+		mbFastClip = true;
+		SetAlphaFillColor(0);
+		Invalidate();
 	}
+}
 
+void ATUIMenuList::OnCaptureLost() {
+	OnMouseLeave();
+}
+
+bool ATUIMenuList::OnChar(const ATUICharEvent& event) {
 	return false;
 }
 
-bool ATUIMenuList::OnChar(uint32 vk) {
-	return false;
+void ATUIMenuList::OnActionStart(uint32 id) {
+	switch(id) {
+		case kActionSelect:
+			{
+				ATUIMenuList *p = GetTail();
+
+				if (p->mSelectedIndex >= 0) {
+					ATUIMenuItem *item = p->mpMenu->GetItemByIndex(p->mSelectedIndex);
+
+					if (item->mpSubMenu) {
+						p->OpenSubMenu();
+
+						if (p->mpSubMenu)
+							MoveNext();
+					} else {
+						OnMouseLeave();
+
+						if (mItemSelectedEvent)
+							mItemSelectedEvent(this, item->mId);
+					}
+				}
+			}
+			break;
+
+		case kActionBack:
+			if (mpSubMenu && mpSubMenu->mpSubMenu) {
+				ATUIMenuList *p = this;
+
+				while(p->mpSubMenu->mpSubMenu)
+					p = p->mpSubMenu;
+
+				p->CloseSubMenu();
+			} else
+				OnMouseLeave();
+			break;
+
+		case kActionClose:
+			OnMouseLeave();
+			break;
+
+		case kActionActivate:
+			if (mbVisible)
+				Activate();
+			break;
+
+		default:
+			if (id >= kActionCustom)
+				OnActionRepeat(id);
+
+			return ATUIWidget::OnActionStart(id);
+	}
+}
+
+void ATUIMenuList::OnActionRepeat(uint32 id) {
+	switch(id) {
+		case kActionBarLeft:
+			if (mpSubMenu)
+				CloseSubMenu();
+
+			if (!GetTail()->mbPopup)
+				MovePrev();
+			break;
+
+		case kActionBarRight:
+			if (mpSubMenu)
+				CloseSubMenu();
+
+			if (!GetTail()->mbPopup)
+				MoveNext();
+			break;
+
+		case kActionPopupUp:
+			if (GetTail()->mbPopup)
+				MovePrev();
+			break;
+
+		case kActionPopupDown:
+			if (GetTail()->mbPopup)
+				MoveNext();
+			break;
+
+		default:
+			return ATUIWidget::OnActionRepeat(id);
+	}
 }
 
 void ATUIMenuList::OnCreate() {
@@ -242,6 +427,9 @@ void ATUIMenuList::TimerCallback() {
 }
 
 void ATUIMenuList::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
+	if (mbFastClip)
+		return;
+
 	VDDisplayTextRenderer& tr = *rdr.GetTextRenderer();
 	tr.SetFont(mpFont);
 	tr.SetAlignment(VDDisplayTextRenderer::kAlignLeft, VDDisplayTextRenderer::kVertAlignTop);
@@ -294,7 +482,7 @@ void ATUIMenuList::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 					blt.mSrcY = 0;
 					blt.mWidth = radioImage.mWidth;
 					blt.mHeight = radioImage.mHeight;
-					rdr.MultiColorBlt(&blt, 1, radioImage.mImageView);
+					rdr.MultiBlt(&blt, 1, radioImage.mImageView, IVDDisplayRenderer::kBltMode_Color);
 				}
 
 				if (info.mbChecked) {
@@ -306,7 +494,7 @@ void ATUIMenuList::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 					blt.mSrcY = 0;
 					blt.mWidth = checkImage.mWidth;
 					blt.mHeight = checkImage.mHeight;
-					rdr.MultiColorBlt(&blt, 1, checkImage.mImageView);
+					rdr.MultiBlt(&blt, 1, checkImage.mImageView, IVDDisplayRenderer::kBltMode_Color);
 				}
 
 				if (info.mbPopup) {
@@ -318,7 +506,7 @@ void ATUIMenuList::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 					blt.mSrcY = 0;
 					blt.mWidth = popupImage.mWidth;
 					blt.mHeight = popupImage.mHeight;
-					rdr.MultiColorBlt(&blt, 1, popupImage.mImageView);
+					rdr.MultiBlt(&blt, 1, popupImage.mImageView, IVDDisplayRenderer::kBltMode_Color);
 				}
 			}
 		}
@@ -428,9 +616,12 @@ bool ATUIMenuList::HandleMouseDownL(sint32 x, sint32 y, bool nested, uint32& ite
 		if (mbActive != active) {
 			mbActive = active;
 
-			if (active)
+			if (active) {
+				if (mActivatedEvent)
+					mActivatedEvent(this);
+
 				CaptureCursor();
-			else
+			} else
 				ReleaseCursor();
 		}
 	}
@@ -438,7 +629,16 @@ bool ATUIMenuList::HandleMouseDownL(sint32 x, sint32 y, bool nested, uint32& ite
 	return true;
 }
 
-void ATUIMenuList::SetSelectedIndex(sint32 selIndex, bool immediate) {
+ATUIMenuList *ATUIMenuList::GetTail() {
+	ATUIMenuList *p = this;
+
+	while(p->mpSubMenu)
+		p = p->mpSubMenu;
+
+	return p;
+}
+
+void ATUIMenuList::SetSelectedIndex(sint32 selIndex, bool immediate, bool deferredOpen) {
 	if (mSelectedIndex != selIndex) {
 		mSelectedIndex = selIndex;
 
@@ -446,7 +646,7 @@ void ATUIMenuList::SetSelectedIndex(sint32 selIndex, bool immediate) {
 
 		if (immediate)
 			TimerCallback();
-		else
+		else if (deferredOpen)
 			mSubMenuTimer.SetOneShot(this, GetMenuDelay());
 
 		Invalidate();
@@ -454,6 +654,7 @@ void ATUIMenuList::SetSelectedIndex(sint32 selIndex, bool immediate) {
 }
 
 void ATUIMenuList::OpenSubMenu() {
+	VDASSERT(!mbFastClip);
 	VDASSERT(!mpSubMenu && mSelectedIndex >= 0);
 
 	const sint32 itemPos = mMenuItems[mSelectedIndex].mPos;

@@ -17,12 +17,23 @@ ATUITextEdit::ATUITextEdit()
 	, mHighlightTextColor(0xFFFFFF)
 	, mbFocused(false)
 	, mbCaretOn(false)
+	, mReturnPressedEvent()
 {
-	SetFillColor(0xD4D0C8);
+	SetFillColor(0xFFFFFF);
 	SetCursorImage(kATUICursorImage_IBeam);
 }
 
 ATUITextEdit::~ATUITextEdit() {
+}
+
+void ATUITextEdit::AutoSize() {
+	if (!mpFont)
+		return;
+
+	VDDisplayFontMetrics metrics;
+	mpFont->GetMetrics(metrics);
+
+	SetSize(vdsize32(mClientArea.width(), metrics.mAscent + metrics.mDescent + mTextMarginY * 2));
 }
 
 void ATUITextEdit::ClearSelection() {
@@ -85,8 +96,11 @@ void ATUITextEdit::OnMouseMove(sint32 x, sint32 y) {
 	}
 }
 
-bool ATUITextEdit::OnKeyDown(uint32 vk) {
-	switch(vk) {
+bool ATUITextEdit::OnKeyDown(const ATUIKeyEvent& event) {
+	if (ATUIWidget::OnKeyDown(event))
+		return true;
+
+	switch(event.mVirtKey) {
 		case kATUIVK_Home:
 			SetCaretPosX(0, mpManager->IsKeyDown(kATUIVK_Shift));
 			return true;
@@ -116,16 +130,23 @@ bool ATUITextEdit::OnKeyDown(uint32 vk) {
 		case kATUIVK_Delete:
 			Delete();
 			return true;
+
+		case kATUIVK_Return:
+			if (mReturnPressedEvent)
+				mReturnPressedEvent(this);
+			return true;
 	}
 
 	return false;
 }
 
-bool ATUITextEdit::OnKeyUp(uint32 vk) {
-	return false;
+bool ATUITextEdit::OnKeyUp(const ATUIKeyEvent& event) {
+	return ATUIWidget::OnKeyUp(event);
 }
 
-bool ATUITextEdit::OnChar(uint32 ch) {
+bool ATUITextEdit::OnChar(const ATUICharEvent& event) {
+	uint32 ch = event.mCh;
+
 	if (ch >= 0x20 && ch != 0x7F) {
 		mText.insert(mText.begin() + mCaretPosX, (wchar_t)ch);
 		++mCaretPosX;
@@ -152,12 +173,19 @@ void ATUITextEdit::OnDestroy() {
 
 void ATUITextEdit::OnKillFocus() {
 	mbFocused = false;
+
+	if (mbCaretOn) {
+		mbCaretOn = false;
+
+		Invalidate();
+	}
 }
 
 void ATUITextEdit::OnSetFocus() {
 	mbFocused = true;
 
 	mCaretTimer.SetPeriodic(this, 500);
+	TurnCaretOn();
 }
 
 void ATUITextEdit::TimerCallback() {
@@ -285,6 +313,15 @@ void ATUITextEdit::UpdateCaretPixelX() {
 
 	if (mCaretPixelX != px) {
 		mCaretPixelX = px;
+		TurnCaretOn();
+		Invalidate();
+	}
+}
+
+void ATUITextEdit::TurnCaretOn() {
+	if (!mbCaretOn) {
+		mbCaretOn = true;
+
 		Invalidate();
 	}
 }

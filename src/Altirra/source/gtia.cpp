@@ -65,7 +65,172 @@ public:
 namespace {
 	const int kPlayerWidths[4]={8,16,8,32};
 	const int kMissileWidths[4]={2,4,2,8};
+
+	const uint32 kSpriteShiftMasks[4]={
+		0xFFFFFFFF,
+		0x00,
+		0x00,
+		0x00,
+	};
+
+	const uint8 kSpriteStateTransitions[4][4]={
+		{ 0, 0, 0, 0 },
+		{ 1, 0, 1, 0 },
+		{ 0, 2, 2, 0 },
+		{ 1, 2, 3, 0 },
+	};
 }
+
+///////////////////////////////////////////////////////////////////////////
+
+void ATGTIAEmulator::SpriteState::Reset() {
+	mShiftRegister = 0;
+	mShiftState = 0;
+	mSizeMode = 0;
+	mDataLatch = 0;
+}
+
+// Detect collisions
+uint8 ATGTIAEmulator::SpriteState::Detect(uint32 ticks, const uint8 *src) {
+	uint8 shifter = mShiftRegister;
+	int state = mShiftState;
+	const uint8 *VDRESTRICT stateTransitions = kSpriteStateTransitions[mSizeMode];
+	uint8 detect = 0;
+
+	do {
+		detect |= (*src++) & (uint8)((sint8)shifter >> 7);
+
+		state = stateTransitions[state];
+		shifter += shifter & kSpriteShiftMasks[state];
+	} while(--ticks);
+
+	return detect;
+}
+
+uint8 ATGTIAEmulator::SpriteState::Detect(uint32 ticks, const uint8 *src, const uint8 *hires) {
+	uint8 shifter = mShiftRegister;
+	int state = mShiftState;
+	const uint8 *VDRESTRICT stateTransitions = kSpriteStateTransitions[mSizeMode];
+	uint8 detect = 0;
+
+	do {
+		if ((sint8)shifter < 0) {
+			detect |= (*src & (P01 | P23));
+
+			if (*hires)
+				detect |= PF2;
+		}
+
+		++src;
+		++hires;
+
+		state = stateTransitions[state];
+		shifter += shifter & kSpriteShiftMasks[state];
+	} while(--ticks);
+
+	return detect;
+}
+
+uint8 ATGTIAEmulator::SpriteState::Generate(uint32 ticks, uint8 mask, uint8 *dst) {
+	uint8 shifter = mShiftRegister;
+	int state = mShiftState;
+	const uint8 *VDRESTRICT stateTransitions = kSpriteStateTransitions[mSizeMode];
+	uint8 detect = 0;
+
+	do {
+		if ((sint8)shifter < 0) {
+			detect |= *dst;
+			*dst |= mask;
+		}
+
+		++dst;
+
+		state = stateTransitions[state];
+		shifter += shifter & kSpriteShiftMasks[state];
+	} while(--ticks);
+
+	return detect;
+}
+
+uint8 ATGTIAEmulator::SpriteState::Generate(uint32 ticks, uint8 mask, uint8 *dst, const uint8 *hires) {
+	uint8 shifter = mShiftRegister;
+	int state = mShiftState;
+	const uint8 *VDRESTRICT stateTransitions = kSpriteStateTransitions[mSizeMode];
+	uint8 detect = 0;
+
+	do {
+		if ((sint8)shifter < 0) {
+			detect |= (*dst & (P01 | P23));
+			*dst |= mask;
+
+			if (*hires)
+				detect |= PF2;
+		}
+
+		++dst;
+
+		state = stateTransitions[state];
+		shifter += shifter & kSpriteShiftMasks[state];
+	} while(--ticks);
+
+	return detect;
+}
+
+// Advance the shift state for a player or missile by a number of ticks,
+// without actually generating image data.
+void ATGTIAEmulator::SpriteState::Advance(uint32 ticks) {
+	int shifts = 0;
+
+	switch(mSizeMode) {
+		case 0:
+			shifts = ticks;
+			mShiftState = 0;
+			break;
+
+		case 1:
+			shifts = ((mShiftState & 1) + ticks) >> 1;
+			mShiftState = (ticks + mShiftState) & 1;
+			break;
+
+		case 2:
+			// 00,11 -> 00
+			// 01,10 -> 10
+			switch(mShiftState) {
+				case 0:
+				case 3:
+					shifts = ticks;
+					mShiftState = 0;
+					break;
+
+				case 1:
+					mShiftState = 2;
+				case 2:
+					break;
+			}
+			break;
+
+		case 3:
+			shifts = (mShiftState + ticks) >> 2;
+			mShiftState = (mShiftState + ticks) & 3;
+			break;
+	}
+
+	if (shifts >= 32)
+		mShiftRegister = 0;
+	else
+		mShiftRegister <<= shifts;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+void ATGTIAEmulator::Sprite::Sync(int pos) {
+	if (mLastSync != pos) {
+		mState.Advance(pos - mLastSync);
+		mLastSync = pos;
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 ATGTIAEmulator::ATGTIAEmulator()
 	: mpConn(NULL)
@@ -95,6 +260,7 @@ ATGTIAEmulator::ATGTIAEmulator()
 	, mpVBXE(NULL)
 	, mRCIndex(0)
 	, mRCCount(0)
+	, mpFreeSpriteImages(NULL)
 {
 	ResetColors();
 
@@ -128,20 +294,6 @@ ATGTIAEmulator::ATGTIAEmulator()
 	memset(mMissileCollFlags, 0, sizeof mMissileCollFlags);
 	mCollisionMask = 0xFF;
 
-	mPlayerSize[0] = 0;
-	mPlayerSize[1] = 0;
-	mPlayerSize[2] = 0;
-	mPlayerSize[3] = 0;
-	mMissileSize = 0;
-	mPlayerWidth[0] = 8;
-	mPlayerWidth[1] = 8;
-	mPlayerWidth[2] = 8;
-	mPlayerWidth[3] = 8;
-	mMissileWidth[0] = 2;
-	mMissileWidth[1] = 2;
-	mMissileWidth[2] = 2;
-	mMissileWidth[3] = 2;
-
 	mbTurbo = false;
 	mbForcedBorder = false;
 
@@ -168,11 +320,7 @@ void ATGTIAEmulator::Init(IATGTIAEmulatorConnections *conn) {
 }
 
 void ATGTIAEmulator::ColdReset() {
-	memset(mPlayerPos, 0, sizeof mPlayerPos);
-	memset(mMissilePos, 0, sizeof mMissilePos);
-	memset(mPlayerSize, 0, sizeof mPlayerSize);
-	memset(mPlayerData, 0, sizeof mPlayerData);
-	mMissileData = 0;
+	memset(mSpritePos, 0, sizeof mSpritePos);
 	memset(mPMColor, 0, sizeof mPMColor);
 	memset(mPFColor, 0, sizeof mPFColor);
 
@@ -277,7 +425,12 @@ vdrect32 ATGTIAEmulator::GetFrameScanArea() const {
 		yhi += 25;
 	}
 
-	switch(mOverscanMode) {
+	OverscanMode omode = mOverscanMode;
+
+	if (mAnalysisMode || mbForcedBorder)
+		omode = kOverscanFull;
+
+	switch(omode) {
 		case kOverscanFull:
 			xlo = 0;
 			xhi = 228;
@@ -298,8 +451,18 @@ vdrect32 ATGTIAEmulator::GetFrameScanArea() const {
 		case kOverscanOSScreen:
 			xlo = 48;
 			xhi = 208;
-			ylo = 32;
-			yhi = 224;
+
+			if (!palext) {
+				ylo = 32;
+				yhi = 224;
+			}
+			break;
+
+		case kOverscanNormal:
+			if (!mbPALMode) {
+				ylo = 16;
+				yhi = 240;
+			}
 			break;
 	}
 
@@ -338,13 +501,18 @@ void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
 
 			if (mbPALMode && mbOverscanPALExtended)
 				h = 288;
-			else
+			else if (mbPALMode)
 				h = 240;
+			else
+				h = 224;
 			break;
 
 		case kOverscanOSScreen:
 			w = 320;
-			h = 192;
+			if (mbPALMode && mbOverscanPALExtended)
+				h = 288;
+			else
+				h = 192;
 			break;
 	}
 
@@ -385,13 +553,18 @@ void ATGTIAEmulator::GetFrameSize(int& w, int& h) const {
 
 			if (mbPALMode && mbOverscanPALExtended)
 				h = 288;
-			else
+			else if (mbPALMode)
 				h = 240;
+			else
+				h = 224;
 			break;
 
 		case kOverscanOSScreen:
 			w = 320;
-			h = 192;
+			if (mbPALMode && mbOverscanPALExtended)
+				h = 288;
+			else
+				h = 192;
 			break;
 	}
 
@@ -421,14 +594,18 @@ bool ATGTIAEmulator::ArePMCollisionsEnabled() const {
 
 void ATGTIAEmulator::SetPMCollisionsEnabled(bool enable) {
 	if (enable) {
+		if (!(mCollisionMask & 0xf0)) {
+			// we clear the collision flags directly when re-enabling collisions
+			// as they were being masked in the register read
+			for(int i=0; i<4; ++i) {
+				mPlayerCollFlags[i] &= 0x0f;
+				mMissileCollFlags[i] &= 0x0f;
+			}
+		}
+
 		mCollisionMask |= 0xf0;
 	} else {
 		mCollisionMask &= 0x0f;
-
-		for(int i=0; i<4; ++i) {
-			mPlayerCollFlags[i] &= 0x0f;
-			mMissileCollFlags[i] &= 0x0f;
-		}
 	}
 }
 
@@ -438,14 +615,18 @@ bool ATGTIAEmulator::ArePFCollisionsEnabled() const {
 
 void ATGTIAEmulator::SetPFCollisionsEnabled(bool enable) {
 	if (enable) {
+		if (!(mCollisionMask & 0x0f)) {
+			// we clear the collision flags directly when re-enabling collisions
+			// as they were being masked in the register read
+			for(int i=0; i<4; ++i) {
+				mPlayerCollFlags[i] &= 0xf0;
+				mMissileCollFlags[i] &= 0xf0;
+			}
+		}
+
 		mCollisionMask |= 0x0f;
 	} else {
 		mCollisionMask &= 0xf0;
-
-		for(int i=0; i<4; ++i) {
-			mPlayerCollFlags[i] &= 0xf0;
-			mMissileCollFlags[i] &= 0xf0;
-		}
 	}
 }
 
@@ -494,9 +675,9 @@ void ATGTIAEmulator::DumpStatus() {
 		ATConsolePrintf("Player  %d: color = %02x, pos = %02x, size=%d, data = %02x\n"
 			, i
 			, mPMColor[i]
-			, mPlayerPos[i]
-			, mPlayerSize[i]
-			, mPlayerData[i]
+			, mSpritePos[i]
+			, mSprites[i].mState.mSizeMode
+			, mSprites[i].mState.mDataLatch
 			);
 	}
 
@@ -504,9 +685,9 @@ void ATGTIAEmulator::DumpStatus() {
 		ATConsolePrintf("Missile %d: color = %02x, pos = %02x, size=%d, data = %02x\n"
 			, i
 			, mPRIOR & 0x10 ? mPFColor[3] : mPMColor[i]
-			, mMissilePos[i]
-			, (mMissileSize >> (2*i)) & 3
-			, (mMissileData >> (2*i)) & 3
+			, mSpritePos[i+4]
+			, mSprites[i+4].mState.mSizeMode
+			, mSprites[i+4].mState.mDataLatch >> 6
 			);
 	}
 
@@ -589,44 +770,6 @@ void ATGTIAEmulator::DumpStatus() {
 }
 
 template<class T>
-void ATGTIAEmulator::ExchangeStateArch(T& io) {
-	// P/M pos
-	for(int i=0; i<4; ++i)
-		io != mPlayerPos[i];
-
-	for(int i=0; i<4; ++i)
-		io != mMissilePos[i];
-
-	// P/M size
-	for(int i=0; i<4; ++i)
-		io != mPlayerSize[i];
-
-	io != mMissileSize;
-
-	// graphics latches
-	for(int i=0; i<4; ++i)
-		io != mPlayerData[i];
-
-	io != mMissileData;
-
-
-	// colors
-	for(int i=0; i<4; ++i)
-		io != mPMColor[i];
-
-	for(int i=0; i<4; ++i)
-		io != mPFColor[i];
-
-	io != mPFBAK;
-
-	// misc registers
-	io != mPRIOR;
-	io != mVDELAY;
-	io != mGRACTL;
-	io != mSwitchOutput;
-}
-
-template<class T>
 void ATGTIAEmulator::ExchangeStatePrivate(T& io) {
 	for(int i=0; i<4; ++i)
 		io != mPlayerCollFlags[i];
@@ -642,10 +785,45 @@ void ATGTIAEmulator::BeginLoadState(ATSaveStateReader& reader) {
 	reader.RegisterHandlerMethod(kATSaveStateSection_Private, VDMAKEFOURCC('G', 'T', 'I', 'A'), this, &ATGTIAEmulator::LoadStatePrivate);
 	reader.RegisterHandlerMethod(kATSaveStateSection_ResetPrivate, 0, this, &ATGTIAEmulator::LoadStateResetPrivate);
 	reader.RegisterHandlerMethod(kATSaveStateSection_End, 0, this, &ATGTIAEmulator::EndLoadState);
+
+	ResetSprites();
 }
 
 void ATGTIAEmulator::LoadStateArch(ATSaveStateReader& reader) {
-	ExchangeStateArch(reader);
+	// P/M pos
+	for(int i=0; i<8; ++i)
+		reader != mSpritePos[i];
+
+	// P/M size
+	for(int i=0; i<4; ++i)
+		mSprites[i].mState.mSizeMode = reader.ReadUint8() & 3;
+
+	const uint8 missileSize = reader.ReadUint8();
+	for(int i=0; i<4; ++i)
+		mSprites[i+4].mState.mSizeMode = (missileSize >> (2*i)) & 3;
+
+	// graphics latches
+	for(int i=0; i<4; ++i)
+		mSprites[i].mState.mDataLatch = reader.ReadUint8();
+
+	const uint8 missileData = reader.ReadUint8();
+	for(int i=0; i<4; ++i)
+		mSprites[i+4].mState.mDataLatch = ((missileData >> (2*i)) & 3) << 6;
+
+	// colors
+	for(int i=0; i<4; ++i)
+		reader != mPMColor[i];
+
+	for(int i=0; i<4; ++i)
+		reader != mPFColor[i];
+
+	reader != mPFBAK;
+
+	// misc registers
+	reader != mPRIOR;
+	reader != mVDELAY;
+	reader != mGRACTL;
+	reader != mSwitchOutput;
 }
 
 void ATGTIAEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
@@ -667,11 +845,10 @@ void ATGTIAEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
 }
 
 void ATGTIAEmulator::LoadStateResetPrivate(ATSaveStateReader& reader) {
-	for(int i=0; i<4; ++i)
-		mPlayerCollFlags[i] = 0;
-
-	for(int i=0; i<4; ++i)
-		mMissileCollFlags[i] = 0;
+	for(int i=0; i<8; ++i) {
+		mSprites[i].mState.mShiftState = 0;
+		mSprites[i].mState.mShiftRegister = 0;
+	}
 
 	mbHiresMode = false;
 	
@@ -685,11 +862,6 @@ void ATGTIAEmulator::LoadStateResetPrivate(ATSaveStateReader& reader) {
 void ATGTIAEmulator::EndLoadState(ATSaveStateReader& writer) {
 	// recompute derived state
 	mpConn->GTIASetSpeaker(0 != (mSwitchOutput & 8));
-
-	for(int i=0; i<4; ++i) {
-		mPlayerWidth[i] = kPlayerWidths[mPlayerSize[i]];
-		mMissileWidth[i] = kMissileWidths[(mMissileSize >> (i+i)) & 3];
-	}
 
 	for(int i=0; i<4; ++i) {
 		mpRenderer->SetRegisterImmediate(0x12 + i, mPMColor[i]);
@@ -710,7 +882,46 @@ void ATGTIAEmulator::BeginSaveState(ATSaveStateWriter& writer) {
 
 void ATGTIAEmulator::SaveStateArch(ATSaveStateWriter& writer) {
 	writer.BeginChunk(VDMAKEFOURCC('G', 'T', 'I', 'A'));
-	ExchangeStateArch(writer);
+
+	// P/M pos
+	for(int i=0; i<8; ++i)
+		writer != mSpritePos[i];
+
+	// P/M size
+	for(int i=0; i<4; ++i)
+		writer.WriteUint8(mSprites[i].mState.mSizeMode);
+
+	writer.WriteUint8(
+		(mSprites[4].mState.mSizeMode << 0) +
+		(mSprites[5].mState.mSizeMode << 2) +
+		(mSprites[6].mState.mSizeMode << 4) +
+		(mSprites[7].mState.mSizeMode << 6));
+
+	// graphics latches
+	for(int i=0; i<4; ++i)
+		writer.WriteUint8(mSprites[i].mState.mDataLatch);
+
+	writer.WriteUint8(
+		(mSprites[4].mState.mDataLatch >> 6) +
+		(mSprites[5].mState.mDataLatch >> 4) +
+		(mSprites[6].mState.mDataLatch >> 2) +
+		(mSprites[7].mState.mDataLatch >> 0));
+
+	// colors
+	for(int i=0; i<4; ++i)
+		writer != mPMColor[i];
+
+	for(int i=0; i<4; ++i)
+		writer != mPFColor[i];
+
+	writer != mPFBAK;
+
+	// misc registers
+	writer != mPRIOR;
+	writer != mVDELAY;
+	writer != mGRACTL;
+	writer != mSwitchOutput;
+
 	writer.EndChunk();
 }
 
@@ -723,7 +934,7 @@ void ATGTIAEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
 	for(int i=mRCIndex; i<mRCCount; ++i) {
 		const RegisterChange& rc = mRegisterChanges[i];
 
-		writer.WriteUint8(rc.mPos);
+		writer.WriteSint16(rc.mPos);
 		writer.WriteUint8(rc.mReg);
 		writer.WriteUint8(rc.mValue);
 	}
@@ -832,32 +1043,68 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 			omode = kOverscanFull;
 
 		if (omode != kOverscanFull) {
-			ptrdiff_t rawoffset = (omode == kOverscanExtended ? 34*2 : omode == kOverscanNormal ? 44*2 : 48*2);
+			int scanx1;
+			int scanx2;
+			int scany1;
+			int scany2;
+
+			if (omode == kOverscanExtended) {
+				scanx1 = 34*2;
+				scanx2 = 222*2;
+				scany1 = 8;
+				scany2 = 248;
+			} else if (omode == kOverscanNormal) {
+				scanx1 = 44*2;
+				scanx2 = 212*2;
+
+				if (mbPALMode) {
+					scany1 = 8;
+					scany2 = 248;
+				} else {
+					scany1 = 16;
+					scany2 = 240;
+				}
+			} else {
+				scanx1 = 48*2;
+				scanx2 = 208*2;
+				scany1 = 32;
+				scany2 = 224;
+			}
+
+			if (mbOverscanPALExtendedThisFrame) {
+				scany1 = 0;
+				scany2 = 288;
+			}
+
+			ptrdiff_t rawoffset = scanx1;
 			ptrdiff_t offset = rawoffset;
 
-			if (use14MHz)
+			if (use14MHz) {
+				// We're generating pixels at 2x rate, in 32-bit -> 8x normal.
 				offset *= 8;
-			else if (mbPostProcessThisFrame)
+			} else if (mbPostProcessThisFrame) {
+				// We're generating pixels at 1x rate, in 32-bit -> 4x normal.
 				offset *= 4;
+			}
 
 			ptrdiff_t scanPitch = fb->mPixmap.pitch;
 
 			if (mbInterlaceEnabledThisFrame || mbScanlinesEnabledThisFrame)
 				scanPitch *= 2;
 
-			if (omode == kOverscanOSScreen)
-				offset += scanPitch * 32;
-			else if (!mbOverscanPALExtendedThisFrame)
-				offset += scanPitch * 8;
+			fb->mPixmap.data = (char *)fb->mPixmap.data + offset + scanPitch * scany1;
+			fb->mPixmap.w = scanx2 - scanx1;
+			fb->mPixmap.h = scany2 - scany1;
 
-			fb->mPixmap.data = (char *)fb->mPixmap.data + offset;
-			fb->mPixmap.w = ((omode == kOverscanExtended) ? 376 : (omode == kOverscanNormal) ? 336 : 320) * (use14MHz ? 2 : 1);
-			fb->mPixmap.h = (omode == kOverscanOSScreen) ? 192 : mbOverscanPALExtendedThisFrame ? 288 : 240;
+			mPreArtifactFrameVisibleY1 = scany1;
+			mPreArtifactFrameVisibleY2 = scany2;
 
-			mPreArtifactFrameVisibleY1 = omode == kOverscanOSScreen ? 32 : mbOverscanPALExtendedThisFrame ? 0 : 8;
-			mPreArtifactFrameVisibleY2 = mPreArtifactFrameVisibleY1 + fb->mPixmap.h;
+			if (use14MHz) {
+				fb->mPixmap.w *= 2;
+				rawoffset *= 2;
+			}
 
-			mPreArtifactFrameVisible.data = (char *)mPreArtifactFrameVisible.data + rawoffset * (use14MHz ? 2 : 1) + mPreArtifactFrameVisibleY1*mPreArtifactFrameVisible.pitch;
+			mPreArtifactFrameVisible.data = (char *)mPreArtifactFrameVisible.data + rawoffset + mPreArtifactFrameVisibleY1*mPreArtifactFrameVisible.pitch;
 			mPreArtifactFrameVisible.w = fb->mPixmap.w;
 			mPreArtifactFrameVisible.h = fb->mPixmap.h;
 
@@ -941,9 +1188,8 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 }
 
 void ATGTIAEmulator::EndScanline(uint8 dlControl, bool pfrendered) {
-	// obey VBLANK
-	if (mVBlankMode != kVBlankModeOn)
-		Sync();
+	// flush any remaining changes
+	Sync();
 
 	if (mpDst) {
 		if (mpVBXE)
@@ -957,16 +1203,51 @@ void ATGTIAEmulator::EndScanline(uint8 dlControl, bool pfrendered) {
 	else
 		mpRenderer->EndScanline();
 
-	// flush remaining register changes
-	if (mRCIndex < mRCCount)
-		UpdateRegisters(&mRegisterChanges[mRCIndex], mRCCount - mRCIndex);
+	// move down buffers as necessary and offset all pending render changes by -scanline
+	if (mRCIndex >= 64) {
+		mRegisterChanges.erase(mRegisterChanges.begin(), mRegisterChanges.begin() + mRCIndex);
+		mRCCount -= mRCIndex;
+		mRCIndex = 0;
+	}
 
-	mRegisterChanges.clear();
-	mRCCount = 0;
-	mRCIndex = 0;
-	mLastSyncX = 0;
+	for(int i=mRCIndex; i<mRCCount; ++i) {
+		mRegisterChanges[i].mPos -= 228;
+	}
 
-	ResetSprites();
+	for(int i=0; i<8; ++i) {
+		Sprite& sprite = mSprites[i];
+
+		sprite.mLastSync -= 228;
+
+		// make sure the sprites don't get too far behind
+		if (sprite.mLastSync < -10000)
+			sprite.Sync(-2);
+
+		for(SpriteImage *image = sprite.mpImageHead; image; image = image->mpNext) {
+			image->mX1 -= 228;
+			image->mX2 -= 228;
+		}
+
+		// delete any sprites that are too old (this can happen in vblank)
+		while(sprite.mpImageHead && sprite.mpImageHead->mX2 < 34) {
+			SpriteImage *next = sprite.mpImageHead->mpNext;
+			FreeSpriteImage(sprite.mpImageHead);
+			sprite.mpImageHead = next;
+
+			if (!next)
+				sprite.mpImageTail = NULL;
+		}
+
+		// check if the sprite is stuck -- if so, continue extending the current image
+		if (sprite.mpImageTail && sprite.mState.mSizeMode == 2 && (sprite.mState.mShiftState == 1 || sprite.mState.mShiftState == 2)) {
+			sprite.mpImageTail->mX1 = -2;
+			sprite.mpImageTail->mX2 = 1024;
+		}
+	}
+
+	// We have to restart at -2 instead of 0 because GTIA runs two color clocks head of ANTIC
+	// for timing purposes.
+	mLastSyncX = -2;
 
 	if (!mpDst)
 		return;
@@ -1062,54 +1343,6 @@ void ATGTIAEmulator::UpdatePlayfield320(uint32 x, const uint8 *src, uint32 n) {
 }
 
 namespace {
-	uint32 Expand(uint8 x, uint8 mode) {
-		static const uint8 tab2[16]={
-			0x00,
-			0x03,
-			0x0c,
-			0x0f,
-			0x30,
-			0x33,
-			0x3c,
-			0x3f,
-			0xc0,
-			0xc3,
-			0xcc,
-			0xcf,
-			0xf0,
-			0xf3,
-			0xfc,
-			0xff,
-		};
-		static const uint16 tab4[16]={
-			0x0000,
-			0x000f,
-			0x00f0,
-			0x00ff,
-			0x0f00,
-			0x0f0f,
-			0x0ff0,
-			0x0fff,
-			0xf000,
-			0xf00f,
-			0xf0f0,
-			0xf0ff,
-			0xff00,
-			0xff0f,
-			0xfff0,
-			0xffff,
-		};
-
-		switch(mode) {
-			default:
-				return (uint32)x << 24;
-			case 1:
-				return ((uint32)tab2[x >> 4] << 24) + ((uint32)tab2[x & 15] << 16);
-			case 3:
-				return ((uint32)tab4[x >> 4] << 16) + (uint32)tab4[x & 15];
-		}
-	}
-
 	void Convert160To320(int x1, int x2, uint8 *dst, const uint8 *src) {
 		static const uint8 kPriTable[16]={
 			0,		// BAK
@@ -1145,17 +1378,17 @@ namespace {
 }
 
 void ATGTIAEmulator::Sync(int offset) {
-	// obey VBLANK
-	if (mVBlankMode == kVBlankModeOn)
-		return;
-
 	mpConn->GTIARequestAnticSync(offset);
 
 	int xend = (int)mpConn->GTIAGetXClock() + 2;
 
-	if (xend > 222)
-		xend = 222;
+	if (xend > 228)
+		xend = 228;
 
+	SyncTo(xend);
+}
+
+void ATGTIAEmulator::SyncTo(int xend) {
 	int x1 = mLastSyncX;
 
 	if (x1 >= xend)
@@ -1168,6 +1401,7 @@ void ATGTIAEmulator::Sync(int offset) {
 		if (mRCIndex < mRCCount) {
 			const RegisterChange *rc0 = &mRegisterChanges[mRCIndex];
 			const RegisterChange *rc = rc0;
+
 			do {
 				int xchg = rc->mPos;
 				if (xchg > x1) {
@@ -1183,7 +1417,10 @@ void ATGTIAEmulator::Sync(int offset) {
 		}
 
 		if (x2 > x1) {
-			SyncTo(x1, x2);
+			if (mbSpritesActive)
+				GenerateSpriteImages(x1, x2);
+
+			Render(x1, x2);
 			x1 = x2;
 		}
 	} while(x1 < xend);
@@ -1191,15 +1428,21 @@ void ATGTIAEmulator::Sync(int offset) {
 	mLastSyncX = x1;
 }
 
-void ATGTIAEmulator::SyncTo(int x1, int x2) {
+void ATGTIAEmulator::Render(int x1, int x2) {
+	if (mVBlankMode == kVBlankModeOn)
+		return;
+
 	// determine displayed range
 	int xc1 = x1;
 	if (xc1 < 34)
 		xc1 = 34;
 
 	int xc2 = x2;
-	if (xc2 < xc1)
-		xc2 = xc1;
+	if (xc2 > 222)
+		xc2 = 222;
+
+	if (xc2 <= xc1)
+		return;
 
 	// convert modes if necessary
 	bool needHires = mbHiresMode || (mPRIOR & 0xC0);
@@ -1303,252 +1546,115 @@ void ATGTIAEmulator::SyncTo(int x1, int x2) {
 
 	uint8 *dst = mMergeBuffer;
 
-	static const int kOverlapShifts[4] = {0,1,0,2};
-	static const int kOverlapOffsets[4] = {0,1,0,3};
+	// flush player images
+	for(int i=0; i<4; ++i) {
+		Sprite& sprite = mSprites[i];
 
-	for(uint32 player=0; player<4; ++player) {
-		uint8 data = mPlayerData[player];
+		// check if we have any sprite images
+		if (!sprite.mpImageHead)
+			continue;
 
-		if (data | mPlayerShiftData[player]) {
-			int xst = x1;
-			int xend;
+		// expire old sprite images
+		for(;;) {
+			if (sprite.mpImageHead->mX2 > xc1)
+				break;
 
-			while(xst < x2) {
-				xend = x2;
+			SpriteImage *next = sprite.mpImageHead->mpNext;
+			FreeSpriteImage(sprite.mpImageHead);
+			sprite.mpImageHead = next;
 
-				int ptx = mPlayerTriggerPos[player];
-				int pw = mPlayerWidth[player];
-				int px = mPlayerPos[player];
-
-				// check if the player is set to retrigger within this range
-				if (px >= xst && px < x2) {
-					// check if a previous image will still be shifting out for at least one color
-					// cycle
-					if (ptx + pw > xst && px > xst) {
-						// We're still shifting out a player image, so continue shifting the
-						// existing image until the trigger point and then truncate it.
-						xend = px;
-					} else {
-						// It's time to swap in the new image.
-						
-						// Check if there is overlap with a previous image. If so, we need to merge
-						// the contents of the shift register.
-						VDASSERT(ptx < px);   
-
-						if (ptx >= 0) {
-							const int size = mPlayerSize[player];
-							int offset = px - ptx + kOverlapOffsets[size];
-
-							if (offset >= 0) {
-								offset >>= kOverlapShifts[size];
-
-								if (offset < 8)
-									data |= mPlayerShiftData[player] << offset;
-							}
-						}
-
-						mPlayerShiftData[player] = data;
-
-						// Retrigger at the position set in the HPOSPx register.
-						ptx = px;
-						mPlayerTriggerPos[player] = px;
-					}
-				}
-
-				int px1 = ptx;
-				int px2 = ptx + pw;
-
-				if (px1 < xst)
-					px1 = xst;
-				if (px2 > xend)
-					px2 = xend;
-
-				if (px1 < xc1)
-					px1 = xc1;
-				if (px2 > xc2)
-					px2 = xc2;
-
-				if (px1 < px2) {
-					mbPMRendered = true;
-
-					uint8 *pldst = mMergeBuffer + px1;
-					uint8 bit = P0 << player;
-					sint32 mask = Expand(mPlayerShiftData[player], mPlayerSize[player]) << (px1 - ptx);
-					sint32 mask2 = mask;
-					uint8 flags = 0;
-					for(int x=px2-px1; x > 0; --x) {
-						if (mask < 0) {
-							flags |= *pldst;
-							*pldst |= bit;
-						}
-
-						++pldst;
-						mask += mask;
-					}
-
-					if (mbHiresMode) {
-						flags &= ~PF;
-
-						for(int x=px1; x < px2; ++x) {
-							if (mask2 < 0) {
-								if (mAnticData[x])
-									flags |= PF2;
-							}
-
-							++pldst;
-							mask2 += mask2;
-						}
-					}
-
-					if (flags)
-						mPlayerCollFlags[player] |= flags & mCollisionMask;
-				}
-
-				xst = xend;
+			if (!next) {
+				sprite.mpImageTail = NULL;
+				break;
 			}
+		}
+
+		// render out existing images
+		for(SpriteImage *image = sprite.mpImageHead; image; image = image->mpNext) {
+			if (image->mX1 >= xc2)
+				break;
+
+			if (image->mX1 < xc1) {
+				image->mState.Advance((uint32)(xc1 - image->mX1));
+				image->mX1 = xc1;
+			}
+
+			int minx2 = image->mX2;
+			if (minx2 > xc2)
+				minx2 = xc2;
+
+			if (mbHiresMode)
+				mPlayerCollFlags[i] |= image->mState.Generate(minx2 - image->mX1, P0 << i, mMergeBuffer + image->mX1, mAnticData + image->mX1);
+			else
+				mPlayerCollFlags[i] |= image->mState.Generate(minx2 - image->mX1, P0 << i, mMergeBuffer + image->mX1); 
+
+			mbPMRendered = true;
 		}
 	}
 
-	if (mMissileData | mMissileShiftData[0] | mMissileShiftData[1] | mMissileShiftData[2] | mMissileShiftData[3]) {
-		static const int kMissileShifts[4]={6,4,2,0};
+	// Flush missile images.
+	//
+	// We _have_ to do this as two pass as the missiles will start overlapping with
+	// the players once the scanout has started. Therefore, we do detection over all
+	// missiles first before rendering any of them.
 
-		struct MissileRange {
-			int mX;
-			int mX1;
-			int mX2;
-			int mIndex;
-			uint8 mData;
-		};
+	for(int i=0; i<4; ++i) {
+		Sprite& sprite = mSprites[i + 4];
 
-		MissileRange mranges[8];
-		MissileRange *mrnext = mranges;
+		// check if we have any sprite images
+		if (!sprite.mpImageHead)
+			continue;
 
-		for(uint32 missile=0; missile<4; ++missile) {
-			uint8 data = (mMissileData << kMissileShifts[missile]) & 0xc0;
+		// expire old sprite images
+		for(;;) {
+			if (sprite.mpImageHead->mX2 > xc1)
+				break;
 
-			if (data) {
-				int xst = x1;
-				int xend;
+			SpriteImage *next = sprite.mpImageHead->mpNext;
+			FreeSpriteImage(sprite.mpImageHead);
+			sprite.mpImageHead = next;
 
-				while(xst < x2) {
-					xend = x2;
-
-					int ptx = mMissileTriggerPos[missile];
-					int pw = mMissileWidth[missile];
-					int px = mMissilePos[missile]; 
-
-					// check if the missile is set to retrigger within this range
-					if (px >= xst && px < x2) {
-						// check if a previous image will still be shifting out for at least one color
-						// cycle
-						if (ptx + pw > xst && px > xst) {
-							// We're still shifting out a player image, so continue shifting the
-							// existing image until the trigger point and then truncate it.
-							xend = px;
-						} else {
-							// It's time to swap in the new image.
-							
-							// Check if there is overlap with a previous image. If so, we need to merge
-							// the contents of the shift register.
-							VDASSERT(ptx < px);   
-
-							if (ptx >= 0) {
-								const int size = (mMissileSize >> (2*missile)) & 3;
-								int offset = px - ptx + kOverlapOffsets[size];
-
-								if (offset >= 0) {
-									offset >>= kOverlapShifts[size];
-
-									if (offset < 2)
-										data |= mMissileShiftData[missile] << offset;
-								}
-							}
-
-							mMissileShiftData[missile] = data;
-
-							ptx = px;
-							mMissileTriggerPos[missile] = ptx;
-						}
-					}
-
-					int px1 = ptx;
-					int px2 = ptx + mMissileWidth[missile];
-
-					if (px1 < xst)
-						px1 = xst;
-					if (px2 > xend)
-						px2 = xend;
-
-					if (px1 < xc1)
-						px1 = xc1;
-					if (px2 > xc2)
-						px2 = xc2;
-
-					if (px1 < px2) {
-						mrnext->mX = ptx;
-						mrnext->mX1 = px1;
-						mrnext->mX2 = px2;
-						mrnext->mIndex = missile;
-						mrnext->mData = data;
-						++mrnext;
-
-						uint8 *pldst = mMergeBuffer + px1;
-						int mwidx = (mMissileSize >> (2*missile)) & 3;
-						sint32 mask = Expand(mMissileShiftData[missile], mwidx) << (px1 - ptx);
-						sint32 mask2 = mask;
-						uint8 flags = 0;
-						for(int x=px2-px1; x > 0; --x) {
-							if (mask < 0)
-								flags |= *pldst;
-
-							++pldst;
-							mask += mask;
-						}
-
-						if (mbHiresMode) {
-							flags &= ~PF;
-
-							for(int x=px1; x < px2; ++x) {
-								if (mask2 < 0) {
-									if (mAnticData[x])
-										flags |= PF2;
-								}
-
-								++pldst;
-								mask2 += mask2;
-							}
-						}
-
-						if (flags)
-							mMissileCollFlags[missile] |= flags & mCollisionMask;
-					}
-
-					xst = xend;
-				}
+			if (!next) {
+				sprite.mpImageTail = NULL;
+				break;
 			}
 		}
 
-		if (mranges != mrnext)
-			mbPMRendered = true;
+		// render out existing images
+		for(SpriteImage *image = sprite.mpImageHead; image; image = image->mpNext) {
+			if (image->mX1 >= xc2)
+				break;
 
-		for(MissileRange *mr = mranges; mr != mrnext; ++mr) {
-			int missile = mr->mIndex;
-
-			uint8 data = mr->mData;
-			int ptx = mr->mX;
-			int px1 = mr->mX1;
-			int px2 = mr->mX2;
-
-			uint8 *pldst = mMergeBuffer + px1;
-			uint8 bit = (mPRIOR & 0x10) ? PF3 : P0 << missile;
-			sint32 mask = Expand(data, (mMissileSize >> (2*missile)) & 3) << (px1 - ptx);
-			for(int x=px2-px1; x > 0; --x) {
-				if (mask < 0)
-					*pldst |= bit;
-
-				++pldst;
-				mask += mask;
+			if (image->mX1 < xc1) {
+				image->mState.Advance((uint32)(xc1 - image->mX1));
+				image->mX1 = xc1;
 			}
+
+			int minx2 = image->mX2;
+			if (minx2 > xc2)
+				minx2 = xc2;
+
+			if (mbHiresMode)
+				mMissileCollFlags[i] |= image->mState.Detect(minx2 - image->mX1, mMergeBuffer + image->mX1, mAnticData + image->mX1);
+			else
+				mMissileCollFlags[i] |= image->mState.Detect(minx2 - image->mX1, mMergeBuffer + image->mX1);
+		}
+	}
+
+	for(int i=0; i<4; ++i) {
+		Sprite& sprite = mSprites[i + 4];
+
+		// render out existing images
+		for(SpriteImage *image = sprite.mpImageHead; image; image = image->mpNext) {
+			if (image->mX1 >= xc2)
+				break;
+
+			int minx2 = image->mX2;
+			if (minx2 > xc2)
+				minx2 = xc2;
+
+			image->mState.Generate(minx2 - image->mX1, (mPRIOR & 0x10) ? PF3 : (P0 << i), mMergeBuffer + image->mX1); 
+			mbPMRendered = true;
 		}
 	}
 }
@@ -1792,36 +1898,36 @@ uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
 
 	switch(reg) {
 		// missile-to-playfield collisions
-		case 0x00:	return mMissileCollFlags[0] & 15;
-		case 0x01:	return mMissileCollFlags[1] & 15;
-		case 0x02:	return mMissileCollFlags[2] & 15;
-		case 0x03:	return mMissileCollFlags[3] & 15;
+		case 0x00:	return mMissileCollFlags[0] & 15 & mCollisionMask;
+		case 0x01:	return mMissileCollFlags[1] & 15 & mCollisionMask;
+		case 0x02:	return mMissileCollFlags[2] & 15 & mCollisionMask;
+		case 0x03:	return mMissileCollFlags[3] & 15 & mCollisionMask;
 
 		// player-to-playfield collisions
-		case 0x04:	return mPlayerCollFlags[0] & 15;
-		case 0x05:	return mPlayerCollFlags[1] & 15;
-		case 0x06:	return mPlayerCollFlags[2] & 15;
-		case 0x07:	return mPlayerCollFlags[3] & 15;
+		case 0x04:	return mPlayerCollFlags[0] & 15 & mCollisionMask;
+		case 0x05:	return mPlayerCollFlags[1] & 15 & mCollisionMask;
+		case 0x06:	return mPlayerCollFlags[2] & 15 & mCollisionMask;
+		case 0x07:	return mPlayerCollFlags[3] & 15 & mCollisionMask;
 
 		// missile-to-player collisions
-		case 0x08:	return mMissileCollFlags[0] >> 4;
-		case 0x09:	return mMissileCollFlags[1] >> 4;
-		case 0x0A:	return mMissileCollFlags[2] >> 4;
-		case 0x0B:	return mMissileCollFlags[3] >> 4;
+		case 0x08:	return (mMissileCollFlags[0] & mCollisionMask) >> 4;
+		case 0x09:	return (mMissileCollFlags[1] & mCollisionMask) >> 4;
+		case 0x0A:	return (mMissileCollFlags[2] & mCollisionMask) >> 4;
+		case 0x0B:	return (mMissileCollFlags[3] & mCollisionMask) >> 4;
 
 		// player-to-player collisions
-		case 0x0C:	return    ((mPlayerCollFlags[1] >> 3) & 0x02)	// 1 -> 0
+		case 0x0C:	return (  ((mPlayerCollFlags[1] >> 3) & 0x02)	// 1 -> 0
 							+ ((mPlayerCollFlags[2] >> 2) & 0x04)	// 2 -> 0
-							+ ((mPlayerCollFlags[3] >> 1) & 0x08);	// 3 -> 0
+							+ ((mPlayerCollFlags[3] >> 1) & 0x08)) & (mCollisionMask >> 4);	// 3 -> 0
 
-		case 0x0D:	return    ((mPlayerCollFlags[1] >> 4) & 0x01)	// 1 -> 0
+		case 0x0D:	return (  ((mPlayerCollFlags[1] >> 4) & 0x01)	// 1 -> 0
 							+ ((mPlayerCollFlags[2] >> 3) & 0x04)	// 2 -> 1
-							+ ((mPlayerCollFlags[3] >> 2) & 0x08);	// 3 -> 1
+							+ ((mPlayerCollFlags[3] >> 2) & 0x08)) & (mCollisionMask >> 4);	// 3 -> 1
 
-		case 0x0E:	return    ((mPlayerCollFlags[2] >> 4) & 0x03)	// 2 -> 0, 1
-							+ ((mPlayerCollFlags[3] >> 3) & 0x08);	// 3 -> 2
+		case 0x0E:	return (  ((mPlayerCollFlags[2] >> 4) & 0x03)	// 2 -> 0, 1
+							+ ((mPlayerCollFlags[3] >> 3) & 0x08)) & (mCollisionMask >> 4);	// 3 -> 2
 
-		case 0x0F:	return    ((mPlayerCollFlags[3] >> 4) & 0x07);	// 3 -> 0, 1, 2
+		case 0x0F:	return (  ((mPlayerCollFlags[3] >> 4) & 0x07)) & (mCollisionMask >> 4);	// 3 -> 0, 1, 2
 
 		default:
 //			__debugbreak();
@@ -1922,7 +2028,7 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 		case 0x0A:	// $D00A SIZEP2
 		case 0x0B:	// $D00B SIZEP3
 		case 0x0C:	// $D00C SIZEM
-			AddRegisterChange(xpos + 4, reg, value);
+			AddRegisterChange(xpos + 3, reg, value);
 			break;
 		case 0x0D:	// $D00D GRAFP0
 		case 0x0E:	// $D00E GRAFP1
@@ -2034,6 +2140,8 @@ void ATGTIAEmulator::ApplyArtifacting() {
 
 	srcrow += srcpitch * y1;
 
+	// In PAL extended mode, we wrap the bottom 16 lines back up to the top, thus
+	// the weird adjustment here.
 	const uint32 vstart = mbOverscanPALExtendedThisFrame ? 24 : 8;
 	const uint32 w = mb14MHzThisFrame ? 912 : 456;
 
@@ -2066,7 +2174,7 @@ void ATGTIAEmulator::ApplyArtifacting() {
 }
 
 void ATGTIAEmulator::AddRegisterChange(uint8 pos, uint8 addr, uint8 value) {
-	RegisterChanges::iterator it(mRegisterChanges.end()), itBegin(mRegisterChanges.begin());
+	RegisterChanges::iterator it(mRegisterChanges.end()), itBegin(mRegisterChanges.begin() + mRCIndex);
 
 	while(it != itBegin && it[-1].mPos > pos)
 		--it;
@@ -2075,7 +2183,6 @@ void ATGTIAEmulator::AddRegisterChange(uint8 pos, uint8 addr, uint8 value) {
 	change.mPos = pos;
 	change.mReg = addr;
 	change.mValue = value;
-	change.mPad = 0;
 	mRegisterChanges.insert(it, change);
 
 	++mRCCount;
@@ -2086,84 +2193,71 @@ void ATGTIAEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 		uint8 value = rc->mValue;
 
 		switch(rc->mReg) {
-			case 0x00:	mPlayerPos[0] = value;			break;
-			case 0x01:	mPlayerPos[1] = value;			break;
-			case 0x02:	mPlayerPos[2] = value;			break;
-			case 0x03:	mPlayerPos[3] = value;			break;
-			case 0x04:	mMissilePos[0] = value;			break;
-			case 0x05:	mMissilePos[1] = value;			break;
-			case 0x06:	mMissilePos[2] = value;			break;
-			case 0x07:	mMissilePos[3] = value;			break;
+			case 0x00:
+			case 0x01:
+			case 0x02:
+			case 0x03:
+			case 0x04:
+			case 0x05:
+			case 0x06:
+			case 0x07:
+				mSpritePos[rc->mReg] = value;
+				break;
 
 			case 0x08:
 			case 0x09:
 			case 0x0A:
 			case 0x0B:
 				{
-					int idx = rc->mReg & 3;
+					Sprite& sprite = mSprites[rc->mReg & 3];
+					const uint8 newSize = value & 3;
 
-					static const uint8 kSizeMap[4]={0,1,0,3};
+					if (sprite.mState.mSizeMode != newSize) {
+						// catch sprite state up to this point
+						sprite.Sync(rc->mPos);
 
-					const uint8 newSize = kSizeMap[value & 3];
+						// change sprite mode
+						sprite.mState.mSizeMode = newSize;
 
-					const uint8 oldSize = mPlayerSize[idx];
-					if (newSize != oldSize) {
-						// Check if we are in the middle of shifting out the player. If so, we need to
-						// change the trigger position to reflect the correct shift position.
-						const uint32 tpos = mPlayerTriggerPos[idx];
-						if (tpos) {
-							static const int kBitShifts[4] = {2,1,2,0};
-
-							const uint32 offset = rc->mPos - tpos;
-							int shiftedBits = offset << kBitShifts[mPlayerSize[idx]];
-
-							static const int kPerturb1[4]={
-								1, 2, 3, 0
-							};
-
-							static const int kPerturb2[4]={
-								-2, -2, -1, -1
-							};
-
-							if (newSize == 1 && oldSize == 3)
-								shiftedBits += kPerturb1[shiftedBits & 3];
-							else if (newSize == 3 && oldSize == 1)
-								shiftedBits += kPerturb2[shiftedBits & 2];
-							else if (newSize == 0 && oldSize == 3)
-								shiftedBits += 3;
-							else if (newSize == 0 && oldSize == 1)
-								shiftedBits++;
-
-							mPlayerTriggerPos[idx] = rc->mPos - (shiftedBits >> kBitShifts[newSize]);
-						}
-
-						mPlayerSize[idx] = newSize;
-						mPlayerWidth[idx] = kPlayerWidths[newSize];
+						// generate update image
+						GenerateSpriteImage(sprite, rc->mPos);
 					}
 				}
 				break;
 
 			case 0x0C:
-				mMissileSize = value;
-				mMissileWidth[0] = kMissileWidths[(value >> 0) & 3];
-				mMissileWidth[1] = kMissileWidths[(value >> 2) & 3];
-				mMissileWidth[2] = kMissileWidths[(value >> 4) & 3];
-				mMissileWidth[3] = kMissileWidths[(value >> 6) & 3];
+				for(int i=0; i<4; ++i) {
+					Sprite& sprite = mSprites[i+4];
+
+					const uint8 newSize = (value >> (2*i)) & 3;
+
+					if (sprite.mState.mSizeMode != newSize) {
+						// catch sprite state up to this point
+						sprite.Sync(rc->mPos);
+
+						// switch size mode
+						sprite.mState.mSizeMode = newSize;
+
+						// generate update image
+						GenerateSpriteImage(sprite, rc->mPos);
+					}
+				}
 				break;
 			case 0x0D:
-				mPlayerData[0] = value;
-				break;
 			case 0x0E:
-				mPlayerData[1] = value;
-				break;
 			case 0x0F:
-				mPlayerData[2] = value;
-				break;
 			case 0x10:
-				mPlayerData[3] = value;
+				mSprites[rc->mReg - 0x0D].mState.mDataLatch = value;
+				if (value)
+					mbSpritesActive = true;
 				break;
 			case 0x11:
-				mMissileData = value;
+				mSprites[4].mState.mDataLatch = (value << 6) & 0xc0;
+				mSprites[5].mState.mDataLatch = (value << 4) & 0xc0;
+				mSprites[6].mState.mDataLatch = (value << 2) & 0xc0;
+				mSprites[7].mState.mDataLatch = (value     ) & 0xc0;
+				if (value)
+					mbSpritesActive = true;
 				break;
 
 			case 0x1B:
@@ -2183,19 +2277,25 @@ void ATGTIAEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 
 			case 0x20:		// missile DMA
 				{
-					uint8 mask = 0xFF;
-
-					static const uint8 kDelayTable[16]={
-						0xFF, 0xFC, 0xF3, 0xF0,
-						0xCF, 0xCC, 0xC3, 0xC0,
-						0x3F, 0x3C, 0x33, 0x30,
-						0x0F, 0x0C, 0x03, 0x00,
-					};
+					uint8 mask = 0x0F;
 
 					if (!(mY & 1))
-						mask = kDelayTable[mVDELAY & 15];
+						mask = ~mVDELAY;
 
-					mMissileData ^= (mMissileData ^ value) & mask;
+					if (mask & 0x01)
+						mSprites[4].mState.mDataLatch = (value << 6) & 0xc0;
+
+					if (mask & 0x02)
+						mSprites[5].mState.mDataLatch = (value << 4) & 0xc0;
+
+					if (mask & 0x04)
+						mSprites[6].mState.mDataLatch = (value << 2) & 0xc0;
+
+					if (mask & 0x08)
+						mSprites[7].mState.mDataLatch = (value     ) & 0xc0;
+
+					if (value)
+						mbSpritesActive = true;
 				}
 				break;
 		}
@@ -2219,20 +2319,118 @@ void ATGTIAEmulator::UpdateSECAMTriggerLatch(int index) {
 }
 
 void ATGTIAEmulator::ResetSprites() {
-	mPlayerTriggerPos[0] = -32;
-	mPlayerTriggerPos[1] = -32;
-	mPlayerTriggerPos[2] = -32;
-	mPlayerTriggerPos[3] = -32;
-	mMissileTriggerPos[0] = -32;
-	mMissileTriggerPos[1] = -32;
-	mMissileTriggerPos[2] = -32;
-	mMissileTriggerPos[3] = -32;
-	mPlayerShiftData[0] = 0;
-	mPlayerShiftData[1] = 0;
-	mPlayerShiftData[2] = 0;
-	mPlayerShiftData[3] = 0;
-	mMissileShiftData[0] = 0;
-	mMissileShiftData[1] = 0;
-	mMissileShiftData[2] = 0;
-	mMissileShiftData[3] = 0;
+	for(int i=0; i<8; ++i) {
+		Sprite& sprite = mSprites[i];
+
+		sprite.mLastSync = 0;
+		sprite.mState.Reset();
+
+		SpriteImage *p = sprite.mpImageHead;
+		while(p) {
+			SpriteImage *next = p->mpNext;
+
+			FreeSpriteImage(p);
+
+			p = next;
+		}
+
+		sprite.mpImageHead = NULL;
+		sprite.mpImageTail = NULL;
+	}
+
+	mbSpritesActive = false;
 }
+
+void ATGTIAEmulator::GenerateSpriteImages(int x1, int x2) {
+	unsigned xr = (unsigned)(x2 - x1);
+
+	// Trigger new sprite images
+	bool foundActiveSprite = false;
+
+	for(int i=0; i<8; ++i) {
+		Sprite& sprite = mSprites[i];
+
+		// Check if there is any latched or shifting data -- if not, we do not care because:
+		//
+		// - the only impact of the shifter state is its output for priority and collision
+		// - shifting in any non-zero data would reset the state to 0
+		//
+		// Note that we still need to do this if data is still available to shift out as
+		// we can re-capture that in a new image. Also, we are doing this on the last synced
+		// state of the shift hardware instead of the state at the time of the trigger, but
+		// we will check again below.
+
+		if (!(sprite.mState.mDataLatch | sprite.mState.mShiftRegister))
+			continue;
+
+		foundActiveSprite = true;
+
+		int pos = mSpritePos[i];
+
+		if ((unsigned)(pos - x1) < xr) {
+			// catch sprite state up to this point
+			sprite.Sync(pos);
+
+			// latch in new image
+			if (sprite.mState.mShiftState) {
+				sprite.mState.mShiftState = 0;
+				sprite.mState.mShiftRegister += sprite.mState.mShiftRegister;
+			}
+
+			sprite.mState.mShiftRegister |= sprite.mState.mDataLatch;
+
+			// generate new sprite image
+			GenerateSpriteImage(sprite, pos);
+		}
+	}
+
+	if (!foundActiveSprite)
+		mbSpritesActive = false;
+}
+
+void ATGTIAEmulator::GenerateSpriteImage(Sprite& sprite, int pos) {
+	// if we have a previous image, truncate it
+	if (sprite.mpImageTail && sprite.mpImageTail->mX2 > pos)
+		sprite.mpImageTail->mX2 = pos;
+
+	// skip all zero images
+	if (sprite.mState.mShiftRegister) {
+		// compute sprite width
+		static const int kWidthLookup[4] = {8,16,8,32};
+		int width = kWidthLookup[sprite.mState.mSizeMode];
+
+		// check for special case lockup
+		if (sprite.mState.mSizeMode == 2 && (sprite.mState.mShiftState == 1 || sprite.mState.mShiftState == 2))
+			width = 1024;
+
+		// record image
+		SpriteImage *image = AllocSpriteImage();
+		image->mX1 = pos;
+		image->mX2 = pos + width;
+		image->mState = sprite.mState;
+		image->mpNext = NULL;
+
+		if (sprite.mpImageTail)
+			sprite.mpImageTail->mpNext = image;
+		else
+			sprite.mpImageHead = image;
+
+		sprite.mpImageTail = image;
+	}
+}
+
+void ATGTIAEmulator::FreeSpriteImage(SpriteImage *p) {
+	p->mpNext = mpFreeSpriteImages;
+	mpFreeSpriteImages = p;
+}
+
+ATGTIAEmulator::SpriteImage *ATGTIAEmulator::AllocSpriteImage() {
+	if (!mpFreeSpriteImages)
+		return mNodeAllocator.Allocate<SpriteImage>();
+
+	SpriteImage *p = mpFreeSpriteImages;
+	mpFreeSpriteImages = p->mpNext;
+
+	return p;
+}
+

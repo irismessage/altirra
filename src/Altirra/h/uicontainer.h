@@ -12,12 +12,21 @@ public:
 	void RemoveChild(ATUIWidget *w);
 	void RemoveAllChildren();
 
-	ATUIWidget *HitTest(vdpoint32 pt);
+	void InvalidateLayout();
+	void UpdateLayout();
 
+	virtual ATUIWidget *HitTest(vdpoint32 pt);
+
+	virtual void OnDestroy();
 	virtual void OnSize();
+
+	virtual void OnSetFocus();
 
 protected:
 	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
+
+	bool mbLayoutInvalid;
+	bool mbDescendantLayoutInvalid;
 
 	typedef vdfastvector<ATUIWidget *> Widgets;
 	Widgets mWidgets;

@@ -259,6 +259,7 @@ struct ATKernelDatabase {
 		ATWordAdapter<ATKernelSymbols::TXTMSC> TXTMSC;
 		ATByteAdapter<ATKernelSymbols::TXTOLD> TXTOLD;
 		ATByteAdapter<ATKernelSymbols::ESCFLG> ESCFLG;
+		ATByteAdapter<ATKernelSymbols::TABMAP> TABMAP;
 		ATByteAdapter<ATKernelSymbols::LOGMAP> LOGMAP;
 		ATByteAdapter<ATKernelSymbols::SHFLOK> SHFLOK;
 		ATByteAdapter<ATKernelSymbols::BOTSCR> BOTSCR;

@@ -107,7 +107,7 @@ void ATPortController::Shutdown() {
 }
 
 void ATPortController::SetMultiMask(uint8 mask) {
-	mMultiMask = (uint32)mask << 24;
+	mMultiMask = (uint32)mask << 22;
 
 	UpdatePortValue();
 }
@@ -119,9 +119,9 @@ int ATPortController::AllocatePortInput(bool port2, int multiIndex) {
 	uint32 v = port2 ? 0xC0000000 : 0x80000000;
 
 	if (multiIndex >= 0)
-		v |= 0x01000000 << multiIndex;
+		v |= 0x00400000 << multiIndex;
 	else
-		v |= 0x0F000000;
+		v |= 0x3FC00000;
 
 	if (it != mPortInputs.end())
 		*it = v;
@@ -150,7 +150,7 @@ void ATPortController::FreePortInput(int index) {
 void ATPortController::SetPortInput(int index, uint32 portBits) {
 	uint32 oldVal = mPortInputs[index];
 	if (oldVal != portBits) {
-		mPortInputs[index] = (oldVal & 0xff000000) + portBits;
+		mPortInputs[index] = (oldVal & 0xffc00000) + portBits;
 		UpdatePortValue();
 	}
 }

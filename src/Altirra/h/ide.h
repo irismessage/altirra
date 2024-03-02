@@ -106,7 +106,7 @@ protected:
 	ATScheduler *mpScheduler;
 	IATUIRenderer *mpUIRenderer;
 
-	uint8 mMaxSectorTransferCount;
+	uint32 mMaxSectorTransferCount;
 	uint32 mSectorCount;
 	uint32 mSectorsPerTrack;
 	uint32 mHeadCount;
@@ -114,6 +114,7 @@ protected:
 	uint32 mCurrentSectorsPerTrack;
 	uint32 mCurrentHeadCount;
 	uint32 mCurrentCylinderCount;
+	uint32 mSectorsPerBlock;
 	uint32 mIODelaySetting;
 	uint32 mTransferIndex;
 	uint32 mTransferLength;

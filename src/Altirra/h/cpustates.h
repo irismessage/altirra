@@ -168,15 +168,20 @@ namespace AT6502States {
 		kStateReadIndAddrDpLongB,		// Read bank byte of indirect long address from direct page
 		kStateReadAddrAddY,				// Add Y16 to address register
 		kState816ReadAddrL,				// Read low byte of absolute address and push data bank
-		kStateRead816AddrAbsHY,			// Read high byte of absolute address from data bank, add Y16
+		kState816ReadAddrH,				// Read high byte of absolute address
+		kState816ReadAddrHX,			// Read high byte of absolute address and add X
+		kState816ReadAddrAbsXSpec,		// 
+		kState816ReadAddrAbsXAlways,	// 
+		kState816ReadAddrAbsYSpec,		//
+		kState816ReadAddrAbsYAlways,	//
+		kState816ReadAddrAbsInd,		// JMP (abs)
 		kStateRead816AddrAbsLongL,		// Read low byte of long address from data bank
 		kStateRead816AddrAbsLongH,		// Read high byte of long address from data bank
 		kStateRead816AddrAbsLongB,		// Read bank byte of long address from data bank
-		kState816ReadAddrHX,
-		kState816ReadAddrHY,
 		kStateReadAddrB,				// Read bank byte of long absolute address
 		kStateReadAddrBX,				// Read bank byte of long absolute address and add X16
 		kStateReadAddrSO,				// Read stack offset and compute EA
+		kState816ReadAddrSO_AddY,		// Dummy read cycle for computing final (d,S),Y address
 		kStateBtoD,
 		kStateKtoD,
 		kState0toD16,
@@ -198,10 +203,12 @@ namespace AT6502States {
 		kState816WriteByte,
 		kStateWriteL16,
 		kStateWriteH16,
+		kStateWriteH16_DpBank,
 		kState816ReadByte,
 		kState816ReadByte_PBK,
 		kStateReadL16,
 		kStateReadH16,
+		kStateReadH16_DpBank,
 		kStateOr16,
 		kStateAnd16,
 		kStateXor16,
@@ -251,6 +258,8 @@ namespace AT6502States {
 		kState816_MoveWriteP,
 		kState816_MoveWriteN,
 		kState816_Per,
+		kState816_SetBank0,
+		kState816_SetBankPBR,
 
 		kStateStandard_Count,
 

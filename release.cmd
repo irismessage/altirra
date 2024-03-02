@@ -133,6 +133,7 @@ zip -9 -X -j publish\Altirra-!_verid!.zip ^
 	Copying ^
 	out\Helpfile\Altirra.chm
 copy out\release\Altirra.pdb publish\Altirra-!_verid!.pdb
+copy out\releaseamd64\Altirra64.pdb publish\Altirra64-!_verid!.pdb
 
 dir publish
 if exist src\Altirra\autobuild\version.h del src\Altirra\autobuild\version.h

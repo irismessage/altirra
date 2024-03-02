@@ -94,7 +94,8 @@
 	---
 	&Hardware
 		400/800					{System.HardwareMode800}
-		XL/XE					{System.HardwareMode800XL}
+		600XL/800XL				{System.HardwareMode800XL}
+		65XE/130XE				{System.HardwareMode130XE}
 		1200XL					{System.HardwareMode1200XL}
 		XEGS					{System.HardwareModeXEGS}
 		5200					{System.HardwareMode5200}
@@ -136,6 +137,16 @@
 		40K (800)					{System.MemoryMode40K}
 		52K (800)					{System.MemoryMode52K}
 		---
+		Axlon Ramdisk
+			None					{System.AxlonMemoryNone}
+			64K (4 banks)			{System.AxlonMemory64K}
+			128K (8 banks)			{System.AxlonMemory128K}
+			256K (16 banks)			{System.AxlonMemory256K}
+			512K (32 banks)			{System.AxlonMemory512K}
+			1024K (64 banks)		{System.AxlonMemory1024K}
+			2048K (128 banks)		{System.AxlonMemory2048K}
+			4096K (256 banks)		{System.AxlonMemory4096K}
+		---
 		MapRAM						{System.ToggleMapRAM}
 		Ultimate1MB					{System.ToggleUltimate1MB}
 	&Video
@@ -147,7 +158,7 @@
 		&Interlace					{Video.ToggleInterlace}
 		&Scanlines					{Video.ToggleScanlines}
 		---
-		VB&XE (FX1.20 core)			{Video.ToggleVBXE}
+		VB&XE (FX1.24 core)			{Video.ToggleVBXE}
 		Use VBXE memory for expansion	{Video.ToggleVBXESharedMemory}
 		Use $D7xx for VBXE registers	{Video.ToggleVBXEAltPage}
 		---
@@ -290,6 +301,10 @@ Input
 	&Options...							{Tools.OptionsDialog}
 	&Keyboard Shortcuts...				{Tools.KeyboardShortcutsDialog}
 	
+&Window
+	&Close								{Window.Close}
+	&Undock								{Window.Undock}
+
 &Help
 	Contents							{Help.Contents}
 	&About								{Help.About}

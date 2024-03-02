@@ -29,15 +29,18 @@ source\Shared\keyboard.s \
 source\Shared\keytable.s \
 source\Shared\mathpack.s \
 source\Shared\screen.s \
+source\Shared\screenext.s \
 source\Shared\vbi.s \
 source\Shared\sio.inc \
 source\Shared\sio.s \
 source\Shared\pbi.s \
+source\Shared\phandler.s \
 source\Shared\cassette.s \
 source\Shared\misc.s \
 source\Shared\bootscreen.s \
 source\Shared\driveimage.inc \
-source\Shared\selftestentry.s
+source\Shared\selftestentry.s \
+source\Shared\printer.s
 
 NOKERNEL_SRCFILES = source\nokernel\main.xasm
 BASIC_SRCFILES = source\basic\main.xasm
@@ -48,10 +51,11 @@ NOHDBIOS_SRCFILES = source\NoHDBIOS\main.s
 NOGAME_SRCFILES = source\NoGame\main.s
 ULTIMATE_SRCFILES = source\Ultimate\main.s source\Ultimate\bios.s source\Ultimate\kernel.s
 BOOTSECDOS2_SRCFILES = source\BootSector\bootsecdos2.s
+SOFTKICK_SRCFILES = source\softkick.s
 
 VERSION_SRCFILES = autobuild\version*.inc autobuild_default\version.inc
 
-all: kernel kernelxl nokernel basic superkernel nocartridge atdiskloader64 atdiskloader128 nohdbios nogame ultimate bootsecdos2
+all: kernel kernelxl kernelxlsoftkick nokernel basic superkernel nocartridge atdiskloader64 atdiskloader128 nohdbios nogame ultimate bootsecdos2
 
 clean:
 	if exist "$(OUT)\kernel.rom" del "$(OUT)\kernel.rom"
@@ -71,6 +75,8 @@ clean:
 kernel: $(OUT)\kernel.rom
 
 kernelxl: $(OUT)\kernelxl.rom
+
+kernelxlsoftkick: $(OUT)\kernelxlsoftkick.xex
 
 nokernel: $(OUT)\nokernel.rom
 
@@ -97,6 +103,12 @@ $(OUT)\kernel.rom: $(SRCFILES) $(SHARED_SRCFILES)
 
 $(OUT)\kernelxl.rom: $(SRCFILES) $(SHARED_SRCFILES) $(VERSION_SRCFILES)
 	@for %%x in (source\main.xasm) do $(MADS) -i:autobuild -i:autobuild_default -d:_KERNEL_XLXE=1 -s -p -i:source\Shared -b:$$c000 -l:$(OUT)\kernelxl.lst -t:$(OUT)\kernelxl.lab -o:$(OUT)\kernelxl.rom %~fx
+
+$(OUT)\kernelxlsoftkick.xex: $(SRCFILES) $(SHARED_SRCFILES) $(VERSION_SRCFILES) $(SOFTKICK_SRCFILES) $(OUT)\kernelxlsoft.bin
+	@for %%x in (source\softkick.s) do $(MADS) -i:$(OUT) -s -p -i:source\Shared -l:$(OUT)\kernelxlsoftkick.lst -t:$(OUT)\kernelxlsoftkick.lab -o:$(OUT)\kernelxlsoftkick.xex %~fx
+
+$(OUT)\kernelxlsoft.bin: $(SRCFILES) $(SHARED_SRCFILES) $(VERSION_SRCFILES)
+	@for %%x in (source\main.xasm) do $(MADS) -i:autobuild -i:autobuild_default -d:_KERNEL_XLXE=1 -d:_KERNEL_SOFTKICK=1 -s -p -i:source\Shared -b:$$c000 -l:$(OUT)\kernelxlsoft.lst -t:$(OUT)\kernelxlsoft.lab -o:$(OUT)\kernelxlsoft.bin %~fx
 
 $(OUT)\nokernel.rom: $(NOKERNEL_SRCFILES) $(SHARED_SRCFILESMIN)
 	@$(MADS) -s -p -i:source\shared -b:$$c000 -l:$(OUT)\nokernel.lst -o:$(OUT)\nokernel.rom source\nokernel\main.xasm

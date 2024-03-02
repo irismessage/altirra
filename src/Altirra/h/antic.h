@@ -34,7 +34,7 @@ class ATAnticEmulatorConnections {
 public:
 	VDFORCEINLINE uint8 AnticReadByteFast(uint32 address) {
 		uintptr readPage = mpAnticReadPageMap[address >> 8];
-		return !(readPage & 1) ? *(const uint8 *)(readPage + address) : AnticReadByte(address);
+		return *mpAnticBusData = (!(readPage & 1) ? *(const uint8 *)(readPage + address) : AnticReadByte(address));
 	}
 
 	virtual uint8 AnticReadByte(uint32 address) = 0;
@@ -43,6 +43,8 @@ public:
 	virtual void AnticEndScanline() = 0;
 	virtual bool AnticIsNextCPUCycleWrite() = 0;
 	virtual uint8 AnticGetCPUHeldCycleValue() = 0;
+
+	uint8 *mpAnticBusData;
 
 protected:
 	const uintptr *mpAnticReadPageMap;
@@ -109,9 +111,6 @@ public:
 	void ColdReset();
 	void WarmReset();
 	void RequestNMI();
-
-	bool IsPhantomDMARequired() const { return mbPhantomPMDMA && mX < 8; }
-	void SetPhantomDMAData(uint8 byte) { mPhantomDMAData[mX] = byte; }
 
 	void SetLightPenPosition(bool phase);
 	void SetLightPenPosition(int x, int y);
@@ -281,8 +280,6 @@ protected:
 	uint32	mGTIAHSyncOffset;
 	uint32	mVSyncShiftTime;
 
-	uint8	mPhantomDMAData[114];
-
 	ATGTIAEmulator *mpGTIA;
 	ATScheduler *mpScheduler;
 
@@ -345,23 +342,23 @@ VDFORCEINLINE uint8 ATAnticEmulator::Advance() {
 			break;
 
 		case 18:
-			mpPFDataWrite[(xoff - 1) >> 1] = mPhantomDMAData[xoff - 1];
+			mpPFDataWrite[(xoff - 1) >> 1] = *mpConn->mpAnticBusData;
 			++mPFRowDMAPtrOffset;
 			break;
 		case 20:
-			mpPFDataWrite[(xoff - 1) >> 2] = mPhantomDMAData[xoff - 1];
+			mpPFDataWrite[(xoff - 1) >> 2] = *mpConn->mpAnticBusData;
 			++mPFRowDMAPtrOffset;
 			break;
 		case 22:
-			mpPFDataWrite[(xoff - 1) >> 3] = mPhantomDMAData[xoff - 1];
+			mpPFDataWrite[(xoff - 1) >> 3] = *mpConn->mpAnticBusData;
 			++mPFRowDMAPtrOffset;
 			break;
 
 		case 24:
-			mpPFCharFetchPtr[(xoff - 1) >> 1] = mPhantomDMAData[xoff - 1];
+			mpPFCharFetchPtr[(xoff - 1) >> 1] = *mpConn->mpAnticBusData;
 			break;
 		case 26:
-			mpPFCharFetchPtr[(xoff - 1) >> 2] = mPhantomDMAData[xoff - 1];
+			mpPFCharFetchPtr[(xoff - 1) >> 2] = *mpConn->mpAnticBusData;
 			break;
 
 		default:

@@ -76,6 +76,10 @@
 				RelativePath=".\source\main.xasm"
 				>
 			</File>
+			<File
+				RelativePath=".\source\softkick.s"
+				>
+			</File>
 			<Filter
 				Name="BASIC"
 				>
@@ -244,7 +248,19 @@
 					>
 				</File>
 				<File
+					RelativePath=".\source\Shared\phandler.s"
+					>
+				</File>
+				<File
+					RelativePath=".\source\Shared\printer.s"
+					>
+				</File>
+				<File
 					RelativePath=".\source\Shared\screen.s"
+					>
+				</File>
+				<File
+					RelativePath=".\source\Shared\screenext.s"
 					>
 				</File>
 				<File

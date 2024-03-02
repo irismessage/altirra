@@ -23,8 +23,15 @@
 #include "debugger.h"
 #include "cpu.h"
 #include "options.h"
+#include "uimanager.h"
+#include "uimessagebox.h"
+#include "uicommondialogs.h"
+#include "uiqueue.h"
 
+bool ATUIGetFullscreen();
 void ATSetFullscreen(bool enabled);
+
+extern ATUIManager g_ATUIManager;
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -87,6 +94,7 @@ void ATUIDialogEmuError::OnDataExchange(bool write) {
 			case kATHardwareMode_800:
 			case kATHardwareMode_1200XL:
 			case kATHardwareMode_XEGS:
+			case kATHardwareMode_130XE:
 				s += L"XL/XE";
 				break;
 
@@ -160,7 +168,7 @@ bool ATUIDialogEmuError::OnOK() {
 	if (IsButtonChecked(IDC_CHANGE_HARDWARE)) {
 		mpSim->SetHardwareMode(mNewHardwareMode);
 
-		if (mNewHardwareMode == kATHardwareMode_800XL || mNewHardwareMode == kATHardwareMode_1200XL || mNewHardwareMode == kATHardwareMode_XEGS) {
+		if (mNewHardwareMode == kATHardwareMode_800XL || mNewHardwareMode == kATHardwareMode_1200XL || mNewHardwareMode == kATHardwareMode_XEGS || mNewHardwareMode == kATHardwareMode_130XE) {
 			switch(mpSim->GetMemoryMode()) {
 				case kATMemoryMode_8K:
 				case kATMemoryMode_24K:
@@ -232,6 +240,35 @@ ATErrorAction ATUIShowDialogEmuError(VDGUIHandle h, ATSimulator *sim) {
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUIStageErrorDialog : public ATUIFuture {
+public:
+	ATUIStageErrorDialog(ATSimulator *sim) : mpSim(sim) {}
+
+	void Start() {
+		ATUIPushStep(GetStep());
+	}
+
+	virtual void RunInner() {
+		switch(mStage) {
+			case 0:
+				mpResult = ATUIShowAlert(L"The emulated system has stopped due to a program error.", L"Altirra Error");
+				Wait(mpResult);
+				mStage = 1;
+				break;
+
+			case 1:
+				mpSim->Pause();
+				MarkCompleted();
+				break;
+		}
+	}
+
+	ATSimulator *mpSim;
+	vdrefptr<ATUIFutureWithResult<bool> > mpResult;
+};
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATEmuErrorHandler {
 public:
 	void Init(VDGUIHandle h, ATSimulator *sim);
@@ -239,6 +276,7 @@ public:
 
 private:
 	void OnDebuggerOpen(IATDebugger *dbg, ATDebuggerOpenEvent *event);
+	void OnAlertDialogCompleted(uint32 result);
 
 	VDGUIHandle mParent;
 	ATSimulator *mpSim;
@@ -256,6 +294,15 @@ void ATEmuErrorHandler::Shutdown() {
 }
 
 void ATEmuErrorHandler::OnDebuggerOpen(IATDebugger *dbg, ATDebuggerOpenEvent *event) {
+	if (!ATUIGetNativeDialogMode()) {
+		vdrefptr<ATUIStageErrorDialog> stage(new ATUIStageErrorDialog(mpSim));
+
+		stage->Start();
+
+		event->mbAllowOpen = false;
+		return;
+	}
+
 	switch(g_ATOptions.mErrorMode) {
 		case kATErrorMode_Dialog:
 			break;
@@ -297,6 +344,10 @@ void ATEmuErrorHandler::OnDebuggerOpen(IATDebugger *dbg, ATDebuggerOpenEvent *ev
 			event->mbAllowOpen = false;
 			break;
 	}
+}
+
+void ATEmuErrorHandler::OnAlertDialogCompleted(uint32 result) {
+	mpSim->Pause();
 }
 
 ATEmuErrorHandler g_emuErrorHandler;

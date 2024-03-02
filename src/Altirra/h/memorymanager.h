@@ -69,6 +69,8 @@ public:
 
 	void Init(const void *highMemory, uint32 highMemoryBanks);
 
+	void SetFloatingDataBus(bool floating) { mbFloatingDataBus = floating; }
+
 	void DumpStatus();
 
 	ATMemoryLayer *CreateLayer(int priority, const uint8 *base, uint32 pageAddr, uint32 pages, bool readOnly);
@@ -131,6 +133,8 @@ protected:
 	typedef vdfastvector<MemoryLayer *> Layers;
 	Layers mLayers;
 	Layers mLayerTempList;
+
+	bool	mbFloatingDataBus;
 
 	bool	mbSimple_4000_7FFF[3];
 

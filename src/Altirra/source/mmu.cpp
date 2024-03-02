@@ -35,16 +35,22 @@ ATMMUEmulator::ATMMUEmulator()
 	, mpLayerBASIC(NULL)
 	, mpLayerGame(NULL)
 	, mpLayerHiddenRAM(NULL)
+	, mpLayerAxlonControl1(NULL)
+	, mpLayerAxlonControl2(NULL)
 	, mpHLE(NULL)
 	, mCurrentBank(0xFF)
 	, mCPUBase(0)
 	, mAnticBase(0)
 	, mCurrentBankInfo(0)
+	, mAxlonBank(0)
+	, mAxlonBankMask(0)
 {
 	Shutdown();
 }
 
 ATMMUEmulator::~ATMMUEmulator() {
+	Shutdown();
+	SetAxlonMemory(0);
 }
 
 void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
@@ -81,6 +87,9 @@ void ATMMUEmulator::RebuildMappingTables() {
 	const ATHardwareMode hwmode = (ATHardwareMode)(mHardwareModeOverride >= 0 ? mHardwareModeOverride : mHardwareMode);
 	uint8 extbankmask = 0;
 
+	if (mpLayerAxlonControl1)
+		mpMemMan->EnableLayer(mpLayerAxlonControl1, kATMemoryAccessMode_CPUWrite, hwmode == kATHardwareMode_800);
+
 	switch(memmode) {
 		case kATMemoryMode_128K:		// 4 banks * 16K = 64K
 			extbankmask = 0x03;
@@ -103,7 +112,8 @@ void ATMMUEmulator::RebuildMappingTables() {
 
 	const int kernelBankMask = (hwmode == kATHardwareMode_800XL ||
 		hwmode == kATHardwareMode_1200XL ||
-		hwmode == kATHardwareMode_XEGS) ? 0x00 : 0x01;
+		hwmode == kATHardwareMode_XEGS ||
+		hwmode == kATHardwareMode_130XE) ? 0x00 : 0x01;
 
 	const int cpuBankBit = (extbankmask != 0) ? 0x10 : 0x00;
 	int anticBankBit = 0;
@@ -148,6 +158,7 @@ void ATMMUEmulator::RebuildMappingTables() {
 	switch(hwmode) {
 		case kATHardwareMode_800XL:
 		case kATHardwareMode_XEGS:
+		case kATHardwareMode_130XE:
 			basicMask = 0;
 			break;
 	}
@@ -259,6 +270,47 @@ void ATMMUEmulator::Shutdown() {
 	mAnticBase = 0;
 }
 
+void ATMMUEmulator::SetAxlonMemory(uint8 bankbits) {
+	const uint8 bankMask = (uint8)((1 << bankbits) - 1);
+
+	if (mAxlonBankMask == bankMask)
+		return;
+
+	if (mpLayerAxlonControl1) {
+		mpMemMan->DeleteLayer(mpLayerAxlonControl1);
+		mpLayerAxlonControl1 = NULL;
+	}
+
+	if (mpLayerAxlonControl2) {
+		mpMemMan->DeleteLayer(mpLayerAxlonControl2);
+		mpLayerAxlonControl2 = NULL;
+	}
+
+	mAxlonBankMask = bankMask;
+	mAxlonBank &= mAxlonBankMask;
+
+	if (bankbits) {
+		ATMemoryHandlerTable handler = {};
+		handler.mbPassWrites = true;
+		handler.mpThis = this;
+		handler.mpWriteHandler = OnAxlonWrite;
+
+		mpLayerAxlonControl1 = mpMemMan->CreateLayer(kATMemoryPri_ExtRAM+1, handler, 0x0F, 0x01);
+		mpMemMan->SetLayerName(mpLayerAxlonControl1, "Axlon control (low mirror)");
+		mpMemMan->EnableLayer(mpLayerAxlonControl1, kATMemoryAccessMode_CPUWrite, true);
+
+		mpLayerAxlonControl2 = mpMemMan->CreateLayer(kATMemoryPri_ROM+1, handler, 0xCF, 0x01);
+		mpMemMan->SetLayerName(mpLayerAxlonControl2, "Axlon control (high mirror)");
+		mpMemMan->EnableLayer(mpLayerAxlonControl2, kATMemoryAccessMode_CPUWrite, true);
+	}
+
+	if (mpLayerExtRAM)
+		mpMemMan->EnableLayer(mpLayerExtRAM, true);
+
+	if (mpMemory)
+		RebuildMappingTables();
+}
+
 void ATMMUEmulator::GetMemoryMapState(ATMemoryMapState& state) const {
 	state.mbKernelEnabled = (mCurrentBankInfo & kMapInfo_Kernel) != 0;
 	state.mbBASICEnabled = (mCurrentBankInfo & kMapInfo_BASIC) != 0;
@@ -267,6 +319,8 @@ void ATMMUEmulator::GetMemoryMapState(ATMemoryMapState& state) const {
 	state.mbExtendedCPU = (mCurrentBankInfo & kMapInfo_ExtendedCPU) != 0;
 	state.mbExtendedANTIC = (mCurrentBankInfo & kMapInfo_ExtendedANTIC) != 0;
 	state.mExtendedBank = (mCurrentBankInfo & kMapInfo_BankMask);
+	state.mAxlonBank = mAxlonBank;
+	state.mAxlonBankMask = mAxlonBankMask;
 }
 
 void ATMMUEmulator::ClearModeOverrides() {
@@ -299,26 +353,31 @@ void ATMMUEmulator::SetBankRegister(uint8 bank) {
 	const uint32 bankOffset = ((bankInfo & kMapInfo_BankMask) << 14);
 	uint8 *bankbase = mpMemory + bankOffset;
 
-	mpMemMan->SetLayerMemory(mpLayerExtRAM, bankbase, 0x40, 0x40);
+	if (bankInfo & (kMapInfo_ExtendedCPU | kMapInfo_ExtendedANTIC))
+		mpMemMan->SetLayerMemory(mpLayerExtRAM, bankbase, 0x40, 0x40);
+	else
+		UpdateAxlonBank();
 
 	mCPUBase = 0;
 	mAnticBase = 0;
 
+	bool extcpu = (mAxlonBankMask != 0);
+	bool extantic = (mAxlonBankMask != 0);
+
 	if (bankInfo & kMapInfo_ExtendedCPU) {
 		mCPUBase = bankOffset;
-		mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_CPURead, true);
-		mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_CPUWrite, true);
-	} else {
-		mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_CPURead, false);
-		mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_CPUWrite, false);
+		extcpu = true;
 	}
+
+	mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_CPURead, extcpu);
+	mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_CPUWrite, extcpu);
 
 	if (bankInfo & kMapInfo_ExtendedANTIC) {
 		mAnticBase = bankOffset;
-		mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_AnticRead, true);
-	} else {
-		mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_AnticRead, false);
+		extantic = true;
 	}
+
+	mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_AnticRead, extantic);
 
 	const bool selfTestEnabled = (bankInfo & kMapInfo_SelfTest) != 0;
 
@@ -329,6 +388,9 @@ void ATMMUEmulator::SetBankRegister(uint8 bank) {
 		mpHLE->EnableSelfTestROM(selfTestEnabled);
 
 	const bool kernelEnabled = (bankInfo & kMapInfo_Kernel) != 0;
+
+	if (mpLayerAxlonControl2)
+		mpMemMan->EnableLayer(mpLayerAxlonControl2, kATMemoryAccessMode_CPUWrite, kernelEnabled);
 
 	if (mpLayerLowerKernel) {
 		mpMemMan->EnableLayer(mpLayerLowerKernel, kernelEnabled);
@@ -358,4 +420,27 @@ void ATMMUEmulator::SetBankRegister(uint8 bank) {
 
 	if (mpLayerHiddenRAM)
 		mpMemMan->EnableLayer(mpLayerHiddenRAM, (bankInfo & kMapInfo_HiddenRAM) != 0);
+}
+
+void ATMMUEmulator::SetAxlonBank(uint8 bank) {
+	bank &= mAxlonBankMask;
+
+	if (mAxlonBank != bank) {
+		mAxlonBank = bank;
+
+		UpdateAxlonBank();
+	}
+}
+
+void ATMMUEmulator::UpdateAxlonBank() {
+	if (mpLayerExtRAM && !(mCurrentBankInfo & (kMapInfo_ExtendedCPU | kMapInfo_ExtendedANTIC)))
+		mpMemMan->SetLayerMemory(mpLayerExtRAM, (uint8 *)mpMemory + 0x10000 + ((uint32)mAxlonBank << 14), 0x40, 0x40);
+}
+
+bool ATMMUEmulator::OnAxlonWrite(void *thisptr, uint32 addr, uint8 value) {
+	if ((addr & 0x0FF0) == 0xFF0) {
+		((ATMMUEmulator *)thisptr)->SetAxlonBank(value);
+	}
+
+	return false;
 }

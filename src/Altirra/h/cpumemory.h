@@ -33,6 +33,7 @@ public:
 	virtual void CPUWriteByte(uint16 address, uint8 value) = 0;
 	virtual void CPUExtWriteByte(uint16 address, uint8 bank, uint8 value) = 0;
 
+	uint8	mBusValue;
 	const uintptr *mpCPUReadPageMap;
 	const uintptr *mpCPUWritePageMap;
 	const uintptr *const *mpCPUReadBankMap;

@@ -35,7 +35,7 @@ public:
 
 	virtual void ShapeText(const wchar_t *s, uint32 n, vdfastvector<VDDisplayFontGlyphPlacement>& glyphPlacements, vdrect32 *cellBounds, vdrect32 *glyphBounds, vdpoint32 *nextPos) = 0;
 
-	virtual bool GetGlyphImage(uint32 c, const VDPixmap& dst) = 0;
+	virtual bool GetGlyphImage(uint32 c, bool inverted, const VDPixmap& dst) = 0;
 
 	virtual vdsize32 MeasureString(const wchar_t *s, uint32 n, bool includeOverhangs) = 0;
 	virtual vdsize32 FitString(const wchar_t *s, uint32 n, uint32 maxWidth, uint32 *count) = 0;

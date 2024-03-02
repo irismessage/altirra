@@ -29,7 +29,8 @@ class ATPIAEmulator;
 
 enum AT850SIOEmulationLevel {
 	kAT850SIOEmulationLevel_None,
-	kAT850SIOEmulationLevel_StubLoader
+	kAT850SIOEmulationLevel_StubLoader,
+	kAT850SIOEmulationLevelCount
 };
 
 enum ATRS232DeviceMode {

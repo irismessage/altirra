@@ -83,6 +83,7 @@ enum ATHardwareMode {
 	kATHardwareMode_5200,
 	kATHardwareMode_XEGS,
 	kATHardwareMode_1200XL,
+	kATHardwareMode_130XE,
 	kATHardwareModeCount
 };
 
@@ -128,6 +129,7 @@ enum ATIDEHardwareMode {
 	kATIDEHardwareMode_KMKJZ_V2,
 	kATIDEHardwareMode_SIDE,
 	kATIDEHardwareMode_MyIDE_V2_D5xx,
+	kATIDEHardwareMode_SIDE2,
 	kATIDEHardwareModeCount
 };
 
@@ -325,6 +327,10 @@ public:
 	void SetMemoryMode(ATMemoryMode mode);
 	void SetKernelMode(ATKernelMode mode);
 	void SetHardwareMode(ATHardwareMode mode);
+
+	uint8 GetAxlonMemoryMode() { return mAxlonMemoryBits; }
+	void SetAxlonMemoryMode(uint8 bits);
+
 	void SetDiskSIOPatchEnabled(bool enable);
 	void SetDiskSIOOverrideDetectEnabled(bool enable);
 	void SetDiskAccurateTimingEnabled(bool enable);
@@ -472,7 +478,6 @@ private:
 	uint32 CPUGetCycle();
 	uint32 CPUGetUnhaltedCycle();
 	uint32 CPUGetTimestamp();
-	uint8 CPURecordBusActivity(uint8 value);
 	uint8 AnticReadByte(uint32 address);
 	void AnticAssertNMI();
 	void AnticEndFrame();
@@ -604,8 +609,7 @@ private:
 	uint32	mHookPage;
 	uint8	mHookPageByte;
 
-	const uint8 *mpBPReadPage;
-	uint8 *mpBPWritePage;
+	uint8	mAxlonMemoryBits;
 
 	const uint8 *mpKernelUpperROM;
 	const uint8 *mpKernelLowerROM;
@@ -662,7 +666,7 @@ private:
 
 	VDALIGN(4)	uint8	mHookROM[0x200];
 
-	VDALIGN(4)	uint8	mMemory[0x140000];
+	VDALIGN(4)	uint8	mMemory[0x440000];
 };
 
 #endif

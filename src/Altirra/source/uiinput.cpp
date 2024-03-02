@@ -636,6 +636,16 @@ const uint32 ATUIDialogEditInputMapping::kTargetCodesConsole[] = {
 	kATInputTrigger_ColdReset,
 	kATInputTrigger_WarmReset,
 	kATInputTrigger_KeySpace,
+	kATInputTrigger_UILeft,
+	kATInputTrigger_UIRight,
+	kATInputTrigger_UIUp,
+	kATInputTrigger_UIDown,
+	kATInputTrigger_UIAccept,
+	kATInputTrigger_UIReject,
+	kATInputTrigger_UIMenu,
+	kATInputTrigger_UIOption,
+	kATInputTrigger_UISwitchLeft,
+	kATInputTrigger_UISwitchRight,
 };
 
 const uint32 ATUIDialogEditInputMapping::kTargetCodesInputState[] = {

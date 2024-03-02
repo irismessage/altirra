@@ -39,13 +39,13 @@ public:
 	void ShapeText(const wchar_t *s, uint32 n, vdfastvector<VDDisplayFontGlyphPlacement>& glyphPlacements, vdrect32 *cellBounds, vdrect32 *glyphBounds, vdpoint32 *nextPos);
 
 	void GetGlyphMetrics(uint32 c, VDDisplayFontGlyphMetrics& metrics);
-	bool GetGlyphImage(uint32 c, const VDPixmap& dst);
+	bool GetGlyphImage(uint32 c, bool inverted, const VDPixmap& dst);
 
 	vdsize32 MeasureString(const wchar_t *s, uint32 n, bool includeOverhangs);
 	vdsize32 FitString(const wchar_t *s, uint32 n, uint32 maxWidth, uint32 *count);
 
 protected:
-	bool RenderGlyph(uint32 c, const VDPixmap *dst, VDDisplayFontGlyphMetrics *dstMetrics);
+	bool RenderGlyph(uint32 c, bool inverted, const VDPixmap *dst, VDDisplayFontGlyphMetrics *dstMetrics);
 
 	HFONT mhfont;
 	HDC mhdc;

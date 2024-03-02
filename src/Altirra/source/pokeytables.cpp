@@ -30,17 +30,17 @@ ATPokeyTables::ATPokeyTables() {
 	};
 
 	int poly4 = 0;
-	for(int i=0; i<15; ++i) {
+	for(int i=0; i<131071; ++i) {
 		poly4 = (poly4+poly4) + (~((poly4 >> 2) ^ (poly4 >> 3)) & 1);
 
-		mPoly4Buffer[i] = kRevBits4[poly4 & 15];
+		mPolyBuffer[i] = (poly4 & 1) << 3;
 	}
 
 	int poly5 = 0;
-	for(int i=0; i<31; ++i) {
+	for(int i=0; i<131071; ++i) {
 		poly5 = (poly5+poly5) + (~((poly5 >> 2) ^ (poly5 >> 4)) & 1);
 
-		mPoly5Buffer[i] = kRevBits4[poly5 & 15];
+		mPolyBuffer[i] |= (poly5 & 1) << 2;
 	}
 
 	// The 17-bit polynomial counter is also of the XNOR variety, but one big
@@ -54,12 +54,12 @@ ATPokeyTables::ATPokeyTables() {
 	// 9-bit LFSR would be to set carry equal to (D0 ^ D5) and then execute
 	// a ROR.
 	int poly9 = 0;
-	for(int i=0; i<511; ++i) {
+	for(int i=0; i<131071; ++i) {
 		// Note: This one is actually verified against a real Atari.
 		// At WSYNC time, the pattern goes: 00 DF EE 16 B9....
 		poly9 = (poly9 >> 1) + (~((poly9 << 8) ^ (poly9 << 3)) & 0x100);
 
-		mPoly9Buffer[i] = (~poly9 & 0xff);
+		mPolyBuffer[i] |= (poly9 & 1) << 1;
 	}
 
 	// The 17-bit mode inserts an additional 8 register bits immediately after
@@ -68,6 +68,10 @@ ATPokeyTables::ATPokeyTables() {
 	for(int i=0; i<131071; ++i) {
 		poly17 = (poly17 >> 1) + (~((poly17 << 16) ^ (poly17 << 11)) & 0x10000);
 
-		mPoly17Buffer[i] = ((~poly17 >> 8) & 0xff);
+		mPolyBuffer[i] |= (poly17 >> 8) & 1;
 	}
+
+	memcpy(mPolyBuffer + 131071, mPolyBuffer, 131071);
+
+	memset(mInitModeBuffer, 0xFF, sizeof mInitModeBuffer);
 }

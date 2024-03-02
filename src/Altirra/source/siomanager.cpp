@@ -83,8 +83,8 @@ void ATSIOManager::UninitHooks() {
 	}
 }
 
-bool ATSIOManager::TryAccelRequest(const ATSIORequest& req) {
-	g_ATLCHookSIOReqs("Checking SIO request: device $%02X, command $%02X\n", req.mDevice, req.mCommand);
+bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool isDSKINV) {
+	g_ATLCHookSIOReqs("Checking %s request: device $%02X, command $%02X\n", isDSKINV ? "DSKINV" : "SIOV", req.mDevice, req.mCommand);
 
 	// Abort read acceleration if the buffer overlaps the parameter region.
 	// Yes, there is game stupid enough to do this (Formula 1 Racing). Specifically,
@@ -242,7 +242,7 @@ fastbootignore:
 	return true;
 }
 
-uint8 ATSIOManager::OnHookDSKINV(uint16) {
+uint8 ATSIOManager::OnHookDSKINV(uint16 pc) {
 	ATKernelDatabase kdb(mpMemory);
 
 	// check if we support the command
@@ -268,10 +268,18 @@ uint8 ATSIOManager::OnHookDSKINV(uint16) {
 	// set device and invoke SIOV
 	kdb.DDEVIC = 0x31;
 
-	return OnHookSIOV(0);
+	uint8 opcode = OnHookSIOV(pc);
+	if (!opcode)
+		return 0;
+
+	// We need to set the carry flag to satisfy Arcade Machine, which stupidly
+	// relies on it being set after a CMP #'!' command check in the OS. Since
+	// we only handle commands above that, the carry flag is always set.
+	mpCPU->SetFlagC();
+	return opcode;
 }
 
-uint8 ATSIOManager::OnHookSIOV(uint16) {
+uint8 ATSIOManager::OnHookSIOV(uint16 pc) {
 	ATKernelDatabase kdb(mpMemory);
 
 	// read out SIO block
@@ -293,5 +301,5 @@ uint8 ATSIOManager::OnHookSIOV(uint16) {
 	for(int i=0; i<6; ++i)
 		req.mAUX[i] = siodata[i + 10];
 
-	return TryAccelRequest(req) ? 0x60 : 0;
+	return TryAccelRequest(req, pc == ATKernelSymbols::DSKINV) ? 0x60 : 0;
 }

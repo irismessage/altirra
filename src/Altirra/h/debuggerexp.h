@@ -39,6 +39,7 @@ enum ATDebugExpNodeType {
 	kATDebugExpNodeType_DerefSignedByte,
 	kATDebugExpNodeType_DerefWord,
 	kATDebugExpNodeType_DerefSignedWord,
+	kATDebugExpNodeType_DerefSignedDoubleWord,
 	kATDebugExpNodeType_Invert,
 	kATDebugExpNodeType_Negate,
 	kATDebugExpNodeType_Const,

@@ -22,6 +22,7 @@
 #include <vd2/system/vdstl.h>
 #include "cartridge.h"
 #include "savestate.h"
+#include "options.h"
 #include "oshelper.h"
 #include "resource.h"
 #include "simulator.h"
@@ -922,6 +923,44 @@ bool ATCartridgeEmulator::WriteByte_BB800_2(void *thisptr0, uint32 address, uint
 
 	if (index < 4)
 		thisptr->SetCartBank2(index);
+
+	return true;
+}
+
+sint32 ATCartridgeEmulator::ReadByte_SIC(void *thisptr0, uint32 address) {
+	ATCartridgeEmulator *thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	const uint32 fullAddr = (thisptr->mCartBank & 0x1f) * 0x4000 + (address & 0x3fff);
+
+	uint8 value;
+	if (thisptr->mFlashEmu.ReadByte(fullAddr, value)) {
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, false);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_CPURead, false);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec2, kATMemoryAccessMode_AnticRead, false);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec2, kATMemoryAccessMode_CPURead, false);
+	}
+
+	return value;
+}
+
+bool ATCartridgeEmulator::WriteByte_SIC(void *thisptr0, uint32 address, uint8 value) {
+	ATCartridgeEmulator *thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	const uint32 fullAddr = (thisptr->mCartBank & 0x1f) * 0x4000 + (address & 0x3fff);
+
+	if (thisptr->mFlashEmu.WriteByte(fullAddr, value)) {
+		if (thisptr->mFlashEmu.CheckForWriteActivity())
+			thisptr->mpUIRenderer->SetFlashWriteActivity();
+
+		const bool flashRead = thisptr->mFlashEmu.IsControlReadEnabled();
+		const bool flashReadBank1 = flashRead && (thisptr->mCartBank & 0x40);
+		const bool flashReadBank2 = flashRead && (thisptr->mCartBank & 0x20);
+
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, flashReadBank1);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_CPURead, flashReadBank1);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec2, kATMemoryAccessMode_AnticRead, flashReadBank2);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec2, kATMemoryAccessMode_CPURead, flashReadBank2);
+	}
 
 	return true;
 }
@@ -2181,13 +2220,18 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			cctlhd.mpWriteHandler = WriteByte_CCTL_SIC;
 			spec1Base	= 0xA0;
 			spec1Size	= 0x20;
-			spec1hd.mpReadHandler = ReadByte_MaxFlash;
-			spec1hd.mpWriteHandler = WriteByte_MaxFlash;
+			spec1hd.mpReadHandler = ReadByte_SIC;
+			spec1hd.mpWriteHandler = WriteByte_SIC;
 			spec1WriteEnabled = true;
 			spec2Base	= 0x80;
 			spec2Size	= 0x20;
-			spec2hd.mpReadHandler = ReadByte_MaxFlash;
-			spec2hd.mpWriteHandler = WriteByte_MaxFlash;
+			spec2hd.mpReadHandler = ReadByte_SIC;
+			spec2hd.mpWriteHandler = WriteByte_SIC;
+
+			if (g_ATOptions.mSICFlashChip == "SST39SF040")
+				mFlashEmu.Init(mCARTROM.data(), kATFlashType_SST39SF040, mpScheduler);
+			else
+				mFlashEmu.Init(mCARTROM.data(), kATFlashType_Am29F040B, mpScheduler);
 			break;
 
 		case kATCartridgeMode_OSS_8K:
@@ -2385,7 +2429,7 @@ void ATCartridgeEmulator::UpdateCartBank() {
 		mpMemMan->EnableLayer(mpMemLayerSpec1, kATMemoryAccessMode_CPUWrite, flashWrite);
 		mpMemMan->EnableLayer(mpMemLayerSpec2, kATMemoryAccessMode_CPUWrite, flashWrite);
 
-		const bool flashRead = (mFlashReadMode != kFlashReadMode_Normal);
+		const bool flashRead = mFlashEmu.IsControlReadEnabled();
 
 		if (mCartBank & 0x40) {
 			mpMemMan->EnableLayer(mpMemLayerVarBank1, false);

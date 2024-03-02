@@ -196,6 +196,7 @@ protected:
 	HBRUSH mVirtualDiskBrush;
 	HBRUSH mVirtualFolderBrush;
 	HICON mhEjectIcon;
+	HFONT mhFontMarlett;
 	COLORREF mDirtyDiskColor;
 	COLORREF mVirtualDiskColor;
 	COLORREF mVirtualFolderColor;
@@ -208,12 +209,16 @@ ATDiskDriveDialog::ATDiskDriveDialog()
 	, mVirtualDiskBrush(NULL)
 	, mVirtualFolderBrush(NULL)
 	, mhEjectIcon(NULL)
+	, mhFontMarlett(NULL)
 {
 }
 
 ATDiskDriveDialog::~ATDiskDriveDialog() {
 	if (mhEjectIcon)
 		DeleteObject(mhEjectIcon);
+
+	if (mhFontMarlett)
+		DeleteObject(mhFontMarlett);
 }
 
 namespace {
@@ -260,6 +265,17 @@ namespace {
 		IDC_EJECT7,
 		IDC_EJECT8,
 	};
+
+	const uint32 kMoreIds[]={
+		IDC_MORE1,
+		IDC_MORE2,
+		IDC_MORE3,
+		IDC_MORE4,
+		IDC_MORE5,
+		IDC_MORE6,
+		IDC_MORE7,
+		IDC_MORE8,
+	};
 }
 
 bool ATDiskDriveDialog::OnLoaded() {
@@ -273,6 +289,28 @@ bool ATDiskDriveDialog::OnLoaded() {
 
 			if (hwndControl)
 				SendMessage(hwndControl, BM_SETIMAGE, IMAGE_ICON, (LPARAM)mhEjectIcon);
+		}
+	}
+
+	if (!mhFontMarlett) {
+		HFONT hfontDlg = (HFONT)SendMessage(mhdlg, WM_GETFONT, 0, 0);
+
+		if (hfontDlg) {
+			LOGFONT lf = {0};
+			if (GetObject(hfontDlg, sizeof lf, &lf)) {
+				mhFontMarlett = CreateFont(lf.lfHeight, 0, 0, 0, FW_DONTCARE, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, _T("Marlett"));
+			}
+		}
+	}
+
+	if (mhFontMarlett) {
+		for(size_t i=0; i<vdcountof(kMoreIds); ++i) {
+			HWND hwndControl = GetControl(kMoreIds[i]);
+
+			if (hwndControl) {
+				SendMessage(hwndControl, WM_SETFONT, (WPARAM)mhFontMarlett, MAKELONG(TRUE, 0));
+				SetWindowText(hwndControl, _T("4"));
+			}
 		}
 	}
 
@@ -363,10 +401,7 @@ void ATDiskDriveDialog::OnDataExchange(bool write) {
 		ShowControl(IDC_WRITEMODE8, !mbHighDrives);
 		ShowControl(IDC_BROWSE8, !mbHighDrives);
 		ShowControl(IDC_EJECT8, !mbHighDrives);
-		ShowControl(IDC_NEWDISK8, !mbHighDrives);
-		ShowControl(IDC_SAVEAS8, !mbHighDrives);
-		ShowControl(IDC_EXPLORE8, !mbHighDrives);
-		ShowControl(IDC_FOLDER8, !mbHighDrives);
+		ShowControl(IDC_MORE8, !mbHighDrives);
 
 		for(int i=0; i<8; ++i) {
 			int driveIdx = i;
@@ -468,84 +503,128 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 			}
 			return true;
 
-		case IDC_NEWDISK8:	++index;
-		case IDC_NEWDISK7:	++index;
-		case IDC_NEWDISK6:	++index;
-		case IDC_NEWDISK5:	++index;
-		case IDC_NEWDISK4:	++index;
-		case IDC_NEWDISK3:	++index;
-		case IDC_NEWDISK2:	++index;
-		case IDC_NEWDISK1:
+		case IDC_MORE8:	++index;
+		case IDC_MORE7:	++index;
+		case IDC_MORE6:	++index;
+		case IDC_MORE5:	++index;
+		case IDC_MORE4:	++index;
+		case IDC_MORE3:	++index;
+		case IDC_MORE2:	++index;
+		case IDC_MORE1:
 			{
 				int driveIndex = index;
 				if (mbHighDrives)
 					driveIndex += 8;
 
-				ATNewDiskDialog dlg;
-				if (dlg.ShowDialog((VDGUIHandle)mhdlg)) {
-					ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
+				UINT selectedId = 0;
 
-					disk.UnloadDisk();
-					disk.CreateDisk(dlg.GetSectorCount(), dlg.GetBootSectorCount(), dlg.GetSectorSize());
-					disk.SetWriteFlushMode(true, false);
+				HMENU hmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_DISK_CONTEXT_MENU));
+				if (hmenu) {
+					HMENU hsubmenu = GetSubMenu(hmenu, 0);
 
-					switch(dlg.GetFormatFFS()) {
-						case kATDiskFFS_DOS2:
-							try {
-								vdautoptr<IATDiskFS> fs(ATDiskFormatImageDOS2(disk.GetDiskImage()));
+					if (hsubmenu) {
+						RECT r = {0};
+						if (HWND hwndItem = GetDlgItem(mhdlg, id))
+							GetWindowRect(hwndItem, &r);
 
-								fs->Flush();
-							} catch(const MyError& e) {
-								e.post(mhdlg, "Format error");
-							}
-							break;
-
+						TPMPARAMS params = {sizeof(TPMPARAMS)};
+						params.rcExclude = r;
+						selectedId = (UINT)TrackPopupMenuEx(hsubmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | TPM_NONOTIFY | TPM_RETURNCMD, r.right, r.top, mhdlg, &params);
 					}
 
-					SetControlText(kDiskPathID[index], disk.GetPath());
-					CBSetSelectedIndex(kWriteModeID[index], 2);
+					DestroyMenu(hmenu);
 				}
-			}
-			return true;
-
-		case IDC_SAVEAS8:	++index;
-		case IDC_SAVEAS7:	++index;
-		case IDC_SAVEAS6:	++index;
-		case IDC_SAVEAS5:	++index;
-		case IDC_SAVEAS4:	++index;
-		case IDC_SAVEAS3:	++index;
-		case IDC_SAVEAS2:	++index;
-		case IDC_SAVEAS1:
-			{
-				int driveIndex = index;
-				if (mbHighDrives)
-					driveIndex += 8;
 
 				ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
 
-				if (disk.IsDiskLoaded() && !disk.GetDiskImage()->IsDynamic()) {
-					VDStringW s(VDGetSaveFileName(
-							'disk',
-							(VDGUIHandle)mhdlg,
-							L"Save disk image",
-							L"Atari disk image (*.atr)\0*.atr\0All files\0*.*\0",
-							L"atr"));
+				switch(selectedId) {
+					case ID_CONTEXT_NEWDISK:
+						{
+							ATNewDiskDialog dlg;
+							if (dlg.ShowDialog((VDGUIHandle)mhdlg)) {
 
-					if (!s.empty()) {
-						try {
-							disk.SaveDisk(s.c_str());
+								disk.UnloadDisk();
+								disk.CreateDisk(dlg.GetSectorCount(), dlg.GetBootSectorCount(), dlg.GetSectorSize());
+								disk.SetWriteFlushMode(true, false);
 
-							// if the disk is in VirtR/W mode, switch to R/W mode
-							if (disk.IsWriteEnabled() && !disk.IsAutoFlushEnabled()) {
-								disk.SetWriteFlushMode(true, true);
-								OnDataExchange(false);
+								switch(dlg.GetFormatFFS()) {
+									case kATDiskFFS_DOS2:
+										try {
+											vdautoptr<IATDiskFS> fs(ATDiskFormatImageDOS2(disk.GetDiskImage()));
+
+											fs->Flush();
+										} catch(const MyError& e) {
+											e.post(mhdlg, "Format error");
+										}
+										break;
+
+								}
+
+								SetControlText(kDiskPathID[index], disk.GetPath());
+								CBSetSelectedIndex(kWriteModeID[index], 2);
 							}
-
-							SetControlText(kDiskPathID[index], s.c_str());
-						} catch(const MyError& e) {
-							e.post(mhdlg, "Disk load error");
 						}
-					}
+						break;
+
+					case ID_CONTEXT_EXPLOREDISK:
+						if (IATDiskImage *image = disk.GetDiskImage()) {
+							VDStringW imageName;
+
+							imageName.sprintf(L"Mounted disk on D%u:", driveIndex + 1);
+
+							ATUIShowDialogDiskExplorer((VDGUIHandle)mhdlg, image, imageName.c_str(), disk.IsWriteEnabled(), disk.IsAutoFlushEnabled());
+
+							// invalidate the path widget in case the disk has been dirtied
+							HWND hwndPathControl = GetControl(kDiskPathID[index]);
+
+							if (hwndPathControl)
+								InvalidateRect(hwndPathControl, NULL, TRUE);
+						}
+						break;
+
+					case ID_CONTEXT_MOUNTFOLDERDOS2:
+					case ID_CONTEXT_MOUNTFOLDERSDFS:
+						{
+							const VDStringW& path = VDGetDirectory('vfol', (VDGUIHandle)mhdlg, L"Select folder for virtual disk image");
+
+							if (!path.empty()) {
+								try {
+									disk.MountFolder(path.c_str(), selectedId == ID_CONTEXT_MOUNTFOLDERSDFS);
+
+									OnDataExchange(false);
+								} catch(const MyError& e) {
+									e.post(mhdlg, "Mount error");
+								}
+							}
+						}
+						break;
+
+					case ID_CONTEXT_SAVEDISK:
+						if (disk.IsDiskLoaded() && !disk.GetDiskImage()->IsDynamic()) {
+							VDStringW s(VDGetSaveFileName(
+									'disk',
+									(VDGUIHandle)mhdlg,
+									L"Save disk image",
+									L"Atari disk image (*.atr)\0*.atr\0All files\0*.*\0",
+									L"atr"));
+
+							if (!s.empty()) {
+								try {
+									disk.SaveDisk(s.c_str());
+
+									// if the disk is in VirtR/W mode, switch to R/W mode
+									if (disk.IsWriteEnabled() && !disk.IsAutoFlushEnabled()) {
+										disk.SetWriteFlushMode(true, true);
+										OnDataExchange(false);
+									}
+
+									SetControlText(kDiskPathID[index], s.c_str());
+								} catch(const MyError& e) {
+									e.post(mhdlg, "Disk load error");
+								}
+							}
+						}
+						break;
 				}
 			}
 			return true;
@@ -572,66 +651,6 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 				} else {
 					disk.SetEnabled(true);
 					disk.SetWriteFlushMode(mode > 1, mode == 3);
-				}
-			}
-			return true;
-
-		case IDC_FOLDER8:		++index;
-		case IDC_FOLDER7:		++index;
-		case IDC_FOLDER6:		++index;
-		case IDC_FOLDER5:		++index;
-		case IDC_FOLDER4:		++index;
-		case IDC_FOLDER3:		++index;
-		case IDC_FOLDER2:		++index;
-		case IDC_FOLDER1:
-			{
-				int driveIndex = index;
-				if (mbHighDrives)
-					driveIndex += 8;
-
-				ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
-				const VDStringW& path = VDGetDirectory('vfol', (VDGUIHandle)mhdlg, L"Select folder for virtual disk image");
-
-				if (!path.empty()) {
-					try {
-						disk.MountFolder(path.c_str());
-
-						OnDataExchange(false);
-					} catch(const MyError& e) {
-						e.post(mhdlg, "Mount error");
-					}
-				}
-			}
-			return true;
-
-		case IDC_EXPLORE8:		++index;
-		case IDC_EXPLORE7:		++index;
-		case IDC_EXPLORE6:		++index;
-		case IDC_EXPLORE5:		++index;
-		case IDC_EXPLORE4:		++index;
-		case IDC_EXPLORE3:		++index;
-		case IDC_EXPLORE2:		++index;
-		case IDC_EXPLORE1:
-			{
-				int driveIndex = index;
-				if (mbHighDrives)
-					driveIndex += 8;
-
-				ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
-				IATDiskImage *image = disk.GetDiskImage();
-
-				if (image) {
-					VDStringW imageName;
-
-					imageName.sprintf(L"Mounted disk on D%u:", driveIndex + 1);
-
-					ATUIShowDialogDiskExplorer((VDGUIHandle)mhdlg, image, imageName.c_str(), disk.IsWriteEnabled(), disk.IsAutoFlushEnabled());
-
-					// invalidate the path widget in case the disk has been dirtied
-					HWND hwndPathControl = GetControl(kDiskPathID[index]);
-
-					if (hwndPathControl)
-						InvalidateRect(hwndPathControl, NULL, TRUE);
 				}
 			}
 			return true;

@@ -1,49 +1,104 @@
 #ifndef f_AT_UILISTVIEW_H
 #define f_AT_UILISTVIEW_H
 
+#include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
 #include <vd2/VDDisplay/font.h>
-#include "uiwidget.h"
+#include "callback.h"
+#include "uicontainer.h"
+
+class ATUISlider;
+
+class IATUIListViewVirtualItem : public IVDRefUnknown {
+public:
+	virtual void GetText(VDStringW& s) = 0;
+};
+
+class IATUIListViewSorter {
+public:
+	virtual bool Compare(IATUIListViewVirtualItem *a, IATUIListViewVirtualItem *b) const = 0;
+};
 
 struct ATUIListViewItem {
 	VDStringW mText;
+	vdrefptr<IATUIListViewVirtualItem> mpVirtualItem;
 };
 
 VDMOVE_CAPABLE(ATUIListViewItem);
 
-class ATUIListView : public ATUIWidget {
+class ATUIListView : public ATUIContainer {
 public:
+	enum {
+		kActionMoveFirst = kActionCustom,
+		kActionMoveLast,
+		kActionMoveUp,
+		kActionMoveDown,
+		kActionMovePagePrev,
+		kActionMovePageNext,
+		kActionActivateItem
+	};
+
 	ATUIListView();
 	~ATUIListView();
 
 	void AddItem(const wchar_t *text);
+	void AddItem(IATUIListViewVirtualItem *item);
 	void InsertItem(sint32 pos, const wchar_t *text);
+	void InsertItem(sint32 pos, IATUIListViewVirtualItem *text);
 	void RemoveItem(sint32 pos);
 	void RemoveAllItems();
 
+	void Sort(const IATUIListViewSorter& item);
+
+	IATUIListViewVirtualItem *GetSelectedVirtualItem();
 	void SetSelectedItem(sint32 idx);
+	void EnsureSelectedItemVisible(bool fullyVisible);
+
+	void ScrollToPixel(sint32 py, bool updateSlider);
+
+	ATCallbackHandler2<void, ATUIListView *, sint32>& OnItemSelectedEvent() { return mItemSelectedEvent; }
+	ATCallbackHandler2<void, ATUIListView *, sint32>& OnItemActivatedEvent() { return mItemActivatedEvent; }
 
 public:
 	virtual void OnMouseDownL(sint32 x, sint32 y);
+	virtual void OnMouseDblClkL(sint32 x, sint32 y);
+	virtual void OnMouseWheel(sint32 x, sint32 y, float delta);
 
-	virtual bool OnKeyDown(uint32 vk);
+	virtual void OnActionStart(uint32 id);
+	virtual void OnActionRepeat(uint32 id);
 
 	virtual void OnCreate();
+	virtual void OnDestroy();
+	virtual void OnSize();
+	virtual void OnSetFocus();
+	virtual void OnKillFocus();
+
+	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 
 protected:
-	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
+	void OnScroll(ATUISlider *, sint32 pos);
+	void RecomputeSlider();
 
 	sint32	mScrollY;
 	sint32	mSelectedIndex;
 	sint32	mItemHeight;
+	float	mScrollAccum;
 
 	uint32	mTextColor;
 	uint32	mHighlightBackgroundColor;
 	uint32	mHighlightTextColor;
+	uint32	mInactiveHighlightBackgroundColor;
+
+	VDStringW	mTempStr;
 
 	vdrefptr<IVDDisplayFont> mpFont;
 	vdvector<ATUIListViewItem> mItems;
+
+	ATUISlider *mpSlider;
+
+	ATCallbackHandler2<void, ATUIListView *, sint32> mItemSelectedEvent;
+	ATCallbackHandler2<void, ATUIListView *, sint32> mItemActivatedEvent;
 };
 
 #endif

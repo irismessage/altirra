@@ -853,8 +853,45 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 			case kATInputTrigger_5200_Reset:
 				name = L"Reset";
 				break;
-			}
-			break;
+			case kATInputTrigger_UILeft:
+				name = L"UI Left";
+				break;
+			case kATInputTrigger_UIRight:
+				name = L"UI Right";
+				break;
+			case kATInputTrigger_UIUp:
+				name = L"UI Up";
+				break;
+			case kATInputTrigger_UIDown:
+				name = L"UI Down";
+				break;
+			case kATInputTrigger_UIAccept:
+				name = L"UI Accept";
+				break;
+			case kATInputTrigger_UIReject:
+				name = L"UI Reject";
+				break;
+			case kATInputTrigger_UIMenu:
+				name = L"UI Menu";
+				break;
+			case kATInputTrigger_UIOption:
+				name = L"UI Option";
+				break;
+			case kATInputTrigger_UISwitchLeft:
+				name = L"UI Switch Left";
+				break;
+			case kATInputTrigger_UISwitchRight:
+				name = L"UI Switch Right";
+				break;
+			case kATInputTrigger_UILeftShift:
+				name = L"UI Left Shift";
+				break;
+			case kATInputTrigger_UIRightShift:
+				name = L"UI Right Shift";
+				break;
+		}
+
+		break;
 	}
 
 	if (name.empty())
@@ -1718,6 +1755,26 @@ void ATInputManager::InitPresetMaps() {
 	imap->AddMapping(kATInputCode_JoyButton0+4,	4, kATInputTrigger_Turbo);
 	imap->AddMapping(kATInputCode_JoyButton0+6,	4, kATInputTrigger_Select);
 	imap->AddMapping(kATInputCode_JoyButton0+7,	4, kATInputTrigger_Start);
+
+	mPresetMaps.push_back(imap);
+	imap.release();
+
+	imap = new ATInputMap;
+	imap->SetName(L"Xbox 360 Controller -> User interface control");
+	imap->AddController(kATInputControllerType_Console, 0);
+
+	imap->AddMapping(kATInputCode_JoyPOVLeft,	0, kATInputTrigger_UILeft);
+	imap->AddMapping(kATInputCode_JoyPOVRight,	0, kATInputTrigger_UIRight);
+	imap->AddMapping(kATInputCode_JoyPOVUp,		0, kATInputTrigger_UIUp);
+	imap->AddMapping(kATInputCode_JoyPOVDown,	0, kATInputTrigger_UIDown);
+	imap->AddMapping(kATInputCode_JoyButton0+0,	0, kATInputTrigger_UIAccept);
+	imap->AddMapping(kATInputCode_JoyButton0+1,	0, kATInputTrigger_UIReject);
+	imap->AddMapping(kATInputCode_JoyButton0+2,	0, kATInputTrigger_UIOption);
+	imap->AddMapping(kATInputCode_JoyButton0+3,	0, kATInputTrigger_UIMenu);
+	imap->AddMapping(kATInputCode_JoyButton0+4,	0, kATInputTrigger_UISwitchLeft);
+	imap->AddMapping(kATInputCode_JoyButton0+5,	0, kATInputTrigger_UISwitchRight);
+	imap->AddMapping(kATInputCode_JoyStick2Down,	0, kATInputTrigger_UILeftShift);
+	imap->AddMapping(kATInputCode_JoyStick2Up,		0, kATInputTrigger_UIRightShift);
 
 	mPresetMaps.push_back(imap);
 	imap.release();

@@ -86,9 +86,14 @@
 #include "uitypes.h"
 #include "uicommandmanager.h"
 #include "uiprofiler.h"
+#include "uiqueue.h"
+#include "uicommondialogs.h"
 
 #pragma comment(lib, "comctl32")
 #pragma comment(lib, "shlwapi")
+
+void ATUITriggerButtonDown(uint32 vk);
+void ATUITriggerButtonUp(uint32 vk);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -132,6 +137,7 @@ bool ATIDEIsPhysicalDiskPath(const wchar_t *path);
 void ATUIInitManager();
 void ATUIShutdownManager();
 void ATUIFlushDisplay();
+bool ATUIIsActiveModal();
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -150,8 +156,7 @@ void SaveInputMaps();
 
 void ProcessKey(char c, bool repeat, bool allowQueue, bool useCooldown);
 void ProcessVirtKey(int vkey, uint8 keycode, bool repeat);
-bool ProcessRawKeyUp(int vkey);
-void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmapper, ATLoadType loadType = kATLoadType_Other, bool *suppressColdReset = NULL);
+void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmapper, ATLoadType loadType = kATLoadType_Other, bool *suppressColdReset = NULL, int loadIndex = -1);
 void DoBootWithConfirm(const wchar_t *path, bool vrw, bool rw, int cartmapper);
 
 void LoadBaselineSettings();
@@ -186,8 +191,7 @@ bool g_mouseAutoCapture = true;
 bool g_pauseInactive = true;
 bool g_winActive = true;
 bool g_showFps = false;
-int g_lastVkeyPressed;
-int g_lastVkeySent;
+bool g_autotestEnabled = false;
 
 ATUIKeyboardOptions g_kbdOpts;
 
@@ -331,6 +335,24 @@ void ATInputConsoleCallback::SetConsoleTrigger(uint32 id, bool state) {
 			} else if (state)
 				g_sim.GetPokey().PushKey(0x21, false);
 			break;
+
+		case kATInputTrigger_UILeft:
+		case kATInputTrigger_UIRight:
+		case kATInputTrigger_UIUp:
+		case kATInputTrigger_UIDown:
+		case kATInputTrigger_UIAccept:
+		case kATInputTrigger_UIReject:
+		case kATInputTrigger_UIMenu:
+		case kATInputTrigger_UIOption:
+		case kATInputTrigger_UISwitchLeft:
+		case kATInputTrigger_UISwitchRight:
+		case kATInputTrigger_UILeftShift:
+		case kATInputTrigger_UIRightShift:
+			if (state)
+				ATUITriggerButtonDown(id);
+			else
+				ATUITriggerButtonUp(id);
+			break;
 	}
 }
 
@@ -345,7 +367,7 @@ bool ATUIConfirmDiscardCartridge(VDGUIHandle h) {
 	return IDYES == MessageBoxW((HWND)h, L"Modified cartridge image has not been saved. Discard it anyway?", L"Altirra Warning", MB_ICONEXCLAMATION | MB_YESNO);
 }
 
-bool ATUIConfirmDiscardAllStorage(VDGUIHandle h, const wchar_t *prompt, bool includeUnmountables = false) {
+VDStringW ATUIConfirmDiscardAllStorageGetMessage(const wchar_t *prompt, bool includeUnmountables) {
 	typedef vdfastvector<ATStorageId> DirtyIds;
 	DirtyIds dirtyIds;
 
@@ -361,7 +383,7 @@ bool ATUIConfirmDiscardAllStorage(VDGUIHandle h, const wchar_t *prompt, bool inc
 	}
 
 	if (dirtyIds.empty() && dbgDirtyIds.empty())
-		return true;
+		return VDStringW();
 
 	std::sort(dirtyIds.begin(), dirtyIds.end());
 	std::sort(dbgDirtyIds.begin(), dbgDirtyIds.end());
@@ -421,7 +443,25 @@ bool ATUIConfirmDiscardAllStorage(VDGUIHandle h, const wchar_t *prompt, bool inc
 	msg += L'\n';
 	msg += prompt;
 
+	return msg;
+}
+
+bool ATUIConfirmDiscardAllStorage(VDGUIHandle h, const wchar_t *prompt, bool includeUnmountables = false) {
+	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, includeUnmountables);
+
+	if (msg.empty())
+		return true;
+
 	return IDYES == MessageBoxW((HWND)h, msg.c_str(), L"Altirra Warning", MB_YESNO | MB_ICONEXCLAMATION);
+}
+
+vdrefptr<ATUIFutureWithResult<bool > > ATUIConfirmDiscardAllStorage(const wchar_t *prompt, bool includeUnmountables) {
+	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, includeUnmountables);
+
+	if (msg.empty())
+		return vdrefptr<ATUIFutureWithResult<bool> >(new ATUIFutureWithResult<bool>(true));
+
+	return ATUIShowAlert(msg.c_str(), L"Altirra Warning");
 }
 
 bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode) {
@@ -453,7 +493,7 @@ bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode) {
 
 		case kATKernelMode_XL:
 		case kATKernelMode_Other:
-			if (mode != kATHardwareMode_800XL && mode != kATHardwareMode_1200XL)
+			if (mode != kATHardwareMode_800XL && mode != kATHardwareMode_1200XL && mode != kATHardwareMode_130XE && mode != kATHardwareMode_XEGS)
 				g_sim.SetKernelMode(kATKernelMode_Default);
 			break;
 
@@ -586,13 +626,24 @@ void ATUISwitchMemoryMode(VDGUIHandle h, ATMemoryMode mode) {
 				mode == kATMemoryMode_40K)
 				return;
 			break;
+
+		case kATHardwareMode_130XE:
+			if (mode == kATMemoryMode_48K ||
+				mode == kATMemoryMode_52K ||
+				mode == kATMemoryMode_8K ||
+				mode == kATMemoryMode_16K ||
+				mode == kATMemoryMode_24K ||
+				mode == kATMemoryMode_32K ||
+				mode == kATMemoryMode_40K)
+				return;
+			break;
 	}
 
 	g_sim.SetMemoryMode(mode);
 	g_sim.ColdReset();
 }
 
-void DoLoadStream(VDGUIHandle h, const wchar_t *fileName, IVDRandomAccessStream& stream, bool vrw, int cartmapper, ATLoadType loadType, bool *suppressColdReset) {
+void DoLoadStream(VDGUIHandle h, const wchar_t *fileName, IVDRandomAccessStream& stream, bool vrw, int cartmapper, ATLoadType loadType, bool *suppressColdReset, int loadIndex) {
 	vdfastvector<uint8> captureBuffer;
 
 	ATCartLoadContext cartctx = {};
@@ -608,8 +659,10 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *fileName, IVDRandomAccessStream&
 
 	ATLoadContext ctx;
 	ctx.mLoadType = loadType;
+	ctx.mLoadIndex = loadIndex;
 	ctx.mpCartLoadContext = &cartctx;
 	ctx.mpStateLoadContext = &statectx;
+
 	if (!g_sim.Load(NULL, fileName, stream, vrw, false, &ctx)) {
 		if (ctx.mLoadType == kATLoadType_Cartridge) {
 			int mapper = ATUIShowDialogCartridgeMapper(h, cartctx.mCartSize, captureBuffer.data());
@@ -644,7 +697,7 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *fileName, IVDRandomAccessStream&
 	}
 }
 
-void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmapper, ATLoadType loadType, bool *suppressColdReset) {
+void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmapper, ATLoadType loadType, bool *suppressColdReset, int loadIndex) {
 	vdfastvector<uint8> captureBuffer;
 
 	ATCartLoadContext cartctx = {};
@@ -660,6 +713,7 @@ void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmappe
 
 	ATLoadContext ctx;
 	ctx.mLoadType = loadType;
+	ctx.mLoadIndex = loadIndex;
 	ctx.mpCartLoadContext = &cartctx;
 	ctx.mpStateLoadContext = &statectx;
 	if (!g_sim.Load(path, vrw, rw, &ctx)) {
@@ -721,7 +775,7 @@ void DoBootStreamWithConfirm(const wchar_t *fileName, IVDRandomAccessStream& str
 	try {
 		g_sim.UnloadAll();
 
-		DoLoadStream((VDGUIHandle)g_hwnd, fileName, stream, vrw, cartmapper, kATLoadType_Other, NULL);
+		DoLoadStream((VDGUIHandle)g_hwnd, fileName, stream, vrw, cartmapper, kATLoadType_Other, NULL, -1);
 
 		g_sim.ColdReset();
 	} catch(const MyError& e) {
@@ -729,47 +783,83 @@ void DoBootStreamWithConfirm(const wchar_t *fileName, IVDRandomAccessStream& str
 	}
 }
 
-void OnCommandOpen(bool forceColdBoot) {
-	if (forceColdBoot && !ATUIConfirmDiscardAllStorage((VDGUIHandle)g_hwnd, L"OK to discard?"))
-		return;
+class ATUIFutureOpenBootImage : public ATUIFuture {
+public:
+	ATUIFutureOpenBootImage(bool coldBoot)
+		: mbColdBoot(coldBoot)
+	{
+	}
 
-	VDStringW fn(VDGetLoadFileName('load', (VDGUIHandle)g_hwnd, L"Load disk, cassette, cartridge, or program image",
-		L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.zip;*.atz;*.gz;*.bas\0"
-		L"Atari program (*.xex,*.obx,*.com)\0*.xex;*.obx;*.com\0"
-		L"BASIC program (*.bas)\0*.bas\0"
-		L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm\0"
-		L"Protected disk image (*.pro)\0*.pro\0"
-		L"VAPI disk image (*.atx)\0*.atx\0"
-		L"Cartridge (*.rom,*.bin,*.a52,*.car)\0*.rom;*.bin;*.a52;*.car\0"
-		L"Cassette tape (*.cas,*.wav)\0*.cas;*.wav\0"
-		L"Zip archive (*.zip)\0*.zip\0"
-		L"gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
-		L"All files\0*.*\0",
-		L"atr"
-		));
+	virtual void RunInner() {
+		switch(mStage) {
+			case 0:
+				if (mbColdBoot) {
+					mpConfirmResult = ATUIConfirmDiscardAllStorage(L"OK to discard?", false);
+					Wait(mpConfirmResult);
+				}
+				++mStage;
+				break;
 
-	if (!fn.empty()) {
-		try {
-			if (forceColdBoot)
-				g_sim.UnloadAll();
+			case 1:
+				if (mpConfirmResult && !mpConfirmResult->GetResult()) {
+					MarkCompleted();
+					break;
+				}
 
-			DoLoad((VDGUIHandle)g_hwnd, fn.c_str(), false, false, 0);
+				mpConfirmResult.clear();
+				mpFileDialogResult = ATUIShowOpenFileDialog('load', L"Load disk, cassette, cartridge, or program image",
+					L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.zip;*.atz;*.gz;*.bas\0"
+					L"Atari program (*.xex,*.obx,*.com)\0*.xex;*.obx;*.com\0"
+					L"BASIC program (*.bas)\0*.bas\0"
+					L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm\0"
+					L"Protected disk image (*.pro)\0*.pro\0"
+					L"VAPI disk image (*.atx)\0*.atx\0"
+					L"Cartridge (*.rom,*.bin,*.a52,*.car)\0*.rom;*.bin;*.a52;*.car\0"
+					L"Cassette tape (*.cas,*.wav)\0*.cas;*.wav\0"
+					L"Zip archive (*.zip)\0*.zip\0"
+					L"gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
+					L"All files\0*.*\0");
 
-			if (forceColdBoot)
-				g_sim.ColdReset();
+				Wait(mpFileDialogResult);
+				++mStage;
+				break;
 
-			ATAddMRUListItem(fn.c_str());
-			ATUpdateMRUListMenu(g_hMenuMRU, g_pMenuMRU, ID_FILE_MRU_BASE, ID_FILE_MRU_BASE + 99);
-		} catch(const MyError& e) {
-			e.post(g_hwnd, "Altirra Error");
+			case 2:
+				if (mpFileDialogResult->mbAccepted) {
+					if (mbColdBoot)
+						g_sim.UnloadAll();
+
+					DoLoad((VDGUIHandle)g_hwnd, mpFileDialogResult->mPath.c_str(), false, false, 0);
+
+					if (mbColdBoot)
+						g_sim.ColdReset();
+
+					ATAddMRUListItem(mpFileDialogResult->mPath.c_str());
+					ATUpdateMRUListMenu(g_hMenuMRU, g_pMenuMRU, ID_FILE_MRU_BASE, ID_FILE_MRU_BASE + 99);
+				}
+				mpFileDialogResult.clear();
+
+				MarkCompleted();
+				break;
 		}
 	}
+
+	const bool mbColdBoot;
+	vdrefptr<ATUIFileDialogResult> mpFileDialogResult;
+	vdrefptr<ATUIFutureWithResult<bool> > mpConfirmResult;
+};
+
+void OnCommandOpen(bool forceColdBoot) {
+	vdrefptr<ATUIFutureOpenBootImage> stage(new ATUIFutureOpenBootImage(forceColdBoot));
+
+	ATUIPushStep(stage->GetStep());
+}
+
+bool ATUIGetFullscreen() { 
+	return g_fullscreen;
 }
 
 void ATSetFullscreen(bool fs) {
-	if (!g_sim.IsRunning())
-		fs = false;
-
 	ATUIPane *dispPane = ATGetUIPane(kATUIPaneId_Display);
 	ATFrameWindow *frame = NULL;
 
@@ -786,6 +876,8 @@ void ATSetFullscreen(bool fs) {
 
 	if (fs == g_fullscreen)
 		return;
+
+	ATUISetNativeDialogMode(!fs);
 
 	if (frame)
 		frame->SetFullScreen(fs);
@@ -821,7 +913,7 @@ void ATSetFullscreen(bool fs) {
 		g_fullscreen = true;
 		if (g_pDisplay)
 			g_pDisplay->SetFullScreen(true, g_ATOptions.mFullScreenWidth, g_ATOptions.mFullScreenHeight, g_ATOptions.mFullScreenRefreshRate);
-		g_sim.SetFrameSkipEnabled(false);
+		g_sim.SetFrameSkipEnabled(true);
 	} else {
 		if (g_pDisplay)
 			g_pDisplay->SetFullScreen(false);
@@ -1578,6 +1670,14 @@ void OnCommandSystemMemoryMode() {
 	ATUISwitchMemoryMode((VDGUIHandle)g_hwnd, T_Mode);
 }
 
+template<uint8 T_BankBits>
+void OnCommandSystemAxlonMemoryMode() {
+	if (g_sim.GetHardwareMode() != kATHardwareMode_5200 && g_sim.GetAxlonMemoryMode() != T_BankBits) {
+		g_sim.SetAxlonMemoryMode(T_BankBits);
+		g_sim.ColdReset();
+	}
+}
+
 void OnCommandSystemToggleMapRAM() {
 	g_sim.SetMapRAMEnabled(!g_sim.IsMapRAMEnabled());
 }
@@ -1818,18 +1918,9 @@ void OnCommandAudioToggleCovox() {
 ///////////////////////////////////////////////////////////////////////////
 
 void OnCommandInputCaptureMouse() {
-	if (g_mouseClipped) {
-		::ClipCursor(NULL);
-		g_mouseClipped = false;
-
-		g_winCaptionUpdater.SetMouseCaptured(g_mouseClipped || g_mouseCaptured);
-	} else if (g_mouseCaptured) {
-		::ReleaseCapture();
-	} else {
-		IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
-		if (pane)
-			pane->CaptureMouse();
-	}
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->ToggleCaptureMouse();
 }
 
 void OnCommandInputToggleAutoCaptureMouse() {
@@ -2049,6 +2140,34 @@ void OnCommandToolsKeyboardShortcutsDialog() {
 	}
 }
 
+void OnCommandWindowClose() {
+	if (!g_pMainWindow)
+		return;
+
+	if (g_pMainWindow->GetModalFrame() || g_pMainWindow->GetFullScreenFrame())
+		return;
+
+	ATFrameWindow *w = g_pMainWindow->GetActiveFrame();
+	if (!w)
+		return;
+
+	g_pMainWindow->CloseFrame(w);
+}
+
+void OnCommandWindowUndock() {
+	if (!g_pMainWindow)
+		return;
+
+	if (g_pMainWindow->GetModalFrame() || g_pMainWindow->GetFullScreenFrame())
+		return;
+
+	ATFrameWindow *w = g_pMainWindow->GetActiveFrame();
+	if (!w)
+		return;
+
+	g_pMainWindow->UndockFrame(w);
+}
+
 void OnCommandHelpContents() {
 	ATShowHelp(g_hwnd, NULL);
 }
@@ -2139,6 +2258,11 @@ namespace {
 		return g_sim.GetMemoryMode() == T_Mode;
 	}
 
+	template<uint8 T_BankBits>
+	bool AxlonMemoryModeIs() {
+		return g_sim.GetAxlonMemoryMode() == T_BankBits;
+	}
+
 	template<ATVideoStandard T_Standard>
 	bool VideoStandardIs() {
 		return g_sim.GetVideoStandard() == T_Standard;
@@ -2195,6 +2319,7 @@ namespace {
 			case kATHardwareMode_800XL:
 			case kATHardwareMode_1200XL:
 			case kATHardwareMode_XEGS:
+			case kATHardwareMode_130XE:
 				return true;
 
 			default:
@@ -2205,6 +2330,7 @@ namespace {
 	bool SupportsBASIC() {
 		switch(g_sim.GetHardwareMode()) {
 			case kATHardwareMode_800XL:
+			case kATHardwareMode_130XE:
 			case kATHardwareMode_XEGS:
 				return true;
 
@@ -2330,6 +2456,10 @@ namespace {
 	template<bool (ATPokeyEmulator::*T_Method)() const>
 	bool PokeyTest() {
 		return (g_sim.GetPokey().*T_Method)();
+	}
+
+	bool CanManipulateWindows() {
+		return g_pMainWindow && g_pMainWindow->GetActiveFrame() && !g_pMainWindow->GetModalFrame() && !g_pMainWindow->GetFullScreenFrame();
 	}
 
 	const struct ATUICommand kATCommands[]={
@@ -2465,6 +2595,7 @@ namespace {
 		{ "System.HardwareMode800XL", OnCommandSystemHardwareMode<kATHardwareMode_800XL>, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_800XL> > },
 		{ "System.HardwareMode1200XL", OnCommandSystemHardwareMode<kATHardwareMode_1200XL>, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_1200XL> > },
 		{ "System.HardwareModeXEGS", OnCommandSystemHardwareMode<kATHardwareMode_XEGS>, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_XEGS> > },
+		{ "System.HardwareMode130XE", OnCommandSystemHardwareMode<kATHardwareMode_130XE>, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_130XE> > },
 		{ "System.HardwareMode5200", OnCommandSystemHardwareMode<kATHardwareMode_5200>, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_5200> > },
 
 		{ "System.KernelModeDefault", OnCommandSystemKernelMode<kATKernelMode_Default>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_Default> > },
@@ -2494,6 +2625,15 @@ namespace {
 		{ "System.MemoryMode576K", OnCommandSystemMemoryMode<kATMemoryMode_576K>, And<Not<SimTest<&ATSimulator::IsUltimate1MBEnabled> >, IsNot5200>, RadioCheckedIf<MemoryModeIs<kATMemoryMode_576K> > },
 		{ "System.MemoryMode576KCompy", OnCommandSystemMemoryMode<kATMemoryMode_576K_Compy>, And<Not<SimTest<&ATSimulator::IsUltimate1MBEnabled> >, IsNot5200>, RadioCheckedIf<MemoryModeIs<kATMemoryMode_576K_Compy> > },
 		{ "System.MemoryMode1088K", OnCommandSystemMemoryMode<kATMemoryMode_1088K>, And<Not<SimTest<&ATSimulator::IsUltimate1MBEnabled> >, IsNot5200>, RadioCheckedIf<MemoryModeIs<kATMemoryMode_1088K> > },
+
+		{ "System.AxlonMemoryNone", OnCommandSystemAxlonMemoryMode<0>, IsNot5200, RadioCheckedIf<AxlonMemoryModeIs<0> > },
+		{ "System.AxlonMemory64K", OnCommandSystemAxlonMemoryMode<2>, IsNot5200, RadioCheckedIf<AxlonMemoryModeIs<2> > },
+		{ "System.AxlonMemory128K", OnCommandSystemAxlonMemoryMode<3>, IsNot5200, RadioCheckedIf<AxlonMemoryModeIs<3> > },
+		{ "System.AxlonMemory256K", OnCommandSystemAxlonMemoryMode<4>, IsNot5200, RadioCheckedIf<AxlonMemoryModeIs<4> > },
+		{ "System.AxlonMemory512K", OnCommandSystemAxlonMemoryMode<5>, IsNot5200, RadioCheckedIf<AxlonMemoryModeIs<5> > },
+		{ "System.AxlonMemory1024K", OnCommandSystemAxlonMemoryMode<6>, IsNot5200, RadioCheckedIf<AxlonMemoryModeIs<6> > },
+		{ "System.AxlonMemory2048K", OnCommandSystemAxlonMemoryMode<7>, IsNot5200, RadioCheckedIf<AxlonMemoryModeIs<7> > },
+		{ "System.AxlonMemory4096K", OnCommandSystemAxlonMemoryMode<8>, IsNot5200, RadioCheckedIf<AxlonMemoryModeIs<8> > },
 
 		{ "System.ToggleMapRAM", OnCommandSystemToggleMapRAM, NULL, CheckedIf<SimTest<&ATSimulator::IsMapRAMEnabled> > },
 		{ "System.ToggleUltimate1MB", OnCommandSystemToggleUltimate1MB, NULL, CheckedIf<SimTest<&ATSimulator::IsUltimate1MBEnabled> > },
@@ -2576,6 +2716,9 @@ namespace {
 		{ "Tools.OptionsDialog", OnCommandToolsOptionsDialog },
 		{ "Tools.KeyboardShortcutsDialog", OnCommandToolsKeyboardShortcutsDialog },
 
+		{ "Window.Close", OnCommandWindowClose, CanManipulateWindows },
+		{ "Window.Undock", OnCommandWindowUndock, CanManipulateWindows },
+
 		{ "Help.Contents", OnCommandHelpContents },
 		{ "Help.About", OnCommandHelpAbout },
 		{ "Help.ChangeLog", OnCommandHelpChangeLog },
@@ -2622,208 +2765,12 @@ void OnActivateApp(HWND hwnd, WPARAM wParam) {
 	g_winActive = (wParam != 0);
 
 	if (!wParam) {
-		if (g_mouseClipped) {
-			ClipCursor(NULL);
-			g_mouseClipped = false;
-			g_winCaptionUpdater.SetMouseCaptured(g_mouseClipped || g_mouseCaptured);
-		}
+		IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+		if (pane)
+			pane->ReleaseMouse();
 
 		ATSetFullscreen(false);
 	}
-}
-
-int ATGetInputCodeForRawKey(WPARAM wParam, LPARAM lParam) {
-	const bool ext = (lParam & (1 << 24)) != 0;
-	int code = LOWORD(wParam);
-
-	switch(code) {
-		case VK_RETURN:
-			if (ext)
-				code = kATInputCode_KeyNumpadEnter;
-			break;
-
-		case VK_SHIFT:
-			// Windows doesn't set the ext bit for RShift, so we have to use the scan
-			// code instead.
-			if (MapVirtualKey((UINT)(lParam >> 16) & 0xff, 3) == VK_RSHIFT)
-				code = kATInputCode_KeyRShift;
-			else
-				code = kATInputCode_KeyLShift;
-			break;
-
-		case VK_CONTROL:
-			code = ext ? kATInputCode_KeyRControl : kATInputCode_KeyLControl;
-			break;
-	}
-
-	return code;
-}
-
-bool OnKeyDown(HWND hwnd, WPARAM wParam, LPARAM lParam, bool enableKeyInput) {
-	ATInputManager *im = g_sim.GetInputManager();
-
-	const int key = LOWORD(wParam);
-	const bool alt = (GetKeyState(VK_MENU) < 0);
-
-	if (!alt) {
-		int inputCode = ATGetInputCodeForRawKey(wParam, lParam);
-
-		if (im->IsInputMapped(0, inputCode)) {
-			im->OnButtonDown(0, inputCode);
-			return true;
-		}
-	}
-
-	const bool isRepeat = (lParam & (1<<30)) != 0;
-	const bool shift = (GetKeyState(VK_SHIFT) < 0);
-	const bool ctrl = (GetKeyState(VK_CONTROL) < 0);
-	const bool acs = alt || ctrl || shift;
-	const uint8 ctrlmod = (ctrl ? 0x80 : 0x00);
-	const uint8 shiftmod = (shift ? 0x40 : 0x00);
-
-	const uint8 modifier = ctrlmod + shiftmod;
-	if (key == VK_CAPITAL) {
-		// drop injected CAPS LOCK keys
-		if (!(lParam & 0x00ff0000))
-			return true;
-
-		if (!enableKeyInput)
-			return false;
-
-		ProcessVirtKey(key, 0x3C + modifier, false);
-		return true;
-	}
-
-	const bool ext = (lParam & (1 << 24)) != 0;
-	if (ATUIActivateVirtKeyMapping(key, alt, ctrl, shift, ext, false, kATUIAccelContext_Display)) {
-		g_lastVkeyPressed = key;
-		return true;
-	} else {
-		uint8 scanCode;
-		if (ATUIGetScanCodeForVirtualKey(key, alt, ctrl, shift, scanCode)) {
-			if (!enableKeyInput)
-				return false;
-
-			ProcessVirtKey(key, scanCode, isRepeat);
-			return true;
-		}
-
-		switch(key) {
-			case VK_SHIFT:
-				g_sim.GetPokey().SetShiftKeyState(true);
-				break;
-
-			case VK_F2:
-				if (!acs) {
-					g_sim.GetGTIA().SetConsoleSwitch(0x01, true);
-					return true;
-				}
-				break;
-
-			case VK_F3:
-				if (!acs) {
-					g_sim.GetGTIA().SetConsoleSwitch(0x02, true);
-					return true;
-				}
-				break;
-
-			case VK_F4:
-				if (!acs) {
-					g_sim.GetGTIA().SetConsoleSwitch(0x04, true);
-					return true;
-				}
-
-				// Note: Particularly important that we don't eat Alt+F4 here.
-				break;
-
-			case VK_F7:
-				if (!ctrl && !alt) {
-					g_sim.GetPokey().PushBreak();
-					return true;
-				}
-				break;
-
-			case VK_CANCEL:
-			case VK_PAUSE:
-				if (!ctrl && !alt) {
-					g_sim.GetPokey().PushBreak();
-					return true;
-				}
-				break;
-		}
-	}
-
-	g_lastVkeyPressed = key;
-	return false;
-}
-
-bool OnKeyUp(HWND hwnd, WPARAM wParam, LPARAM lParam, bool enableKeyInput) {
-	ATInputManager *im = g_sim.GetInputManager();
-
-	const int key = LOWORD(wParam);
-	const bool alt = (GetKeyState(VK_MENU) < 0);
-
-	if (!alt) {
-		int inputCode = ATGetInputCodeForRawKey(wParam, lParam);
-
-		if (im->IsInputMapped(0, inputCode)) {
-			im->OnButtonUp(0, inputCode);
-			return true;
-		}
-	}
-
-	if (key == VK_CAPITAL) {
-		if (GetKeyState(VK_CAPITAL) & 1) {
-			// force caps lock back off
-			keybd_event(VK_CAPITAL, 0, 0, 0);
-			keybd_event(VK_CAPITAL, 0, KEYEVENTF_KEYUP, 0);
-		}
-
-		if (!enableKeyInput)
-			return false;
-	}
-
-	if (ProcessRawKeyUp(key))
-		return true;
-
-	const bool shift = (GetKeyState(VK_SHIFT) < 0);
-	const bool ctrl = (GetKeyState(VK_CONTROL) < 0);
-	const bool acs = alt || ctrl || shift;
-	const bool ext = (lParam & (1 << 24)) != 0;
-
-	if (!ATUIActivateVirtKeyMapping(key, alt, ctrl, shift, ext, true, kATUIAccelContext_Display)) {
-		switch(key) {
-			case VK_CAPITAL:
-				return true;
-
-			case VK_SHIFT:
-				g_sim.GetPokey().SetShiftKeyState(false);
-				break;
-
-			case VK_F2:
-				if (!acs) {
-					g_sim.GetGTIA().SetConsoleSwitch(0x01, false);
-					return true;
-				}
-				break;
-
-			case VK_F3:
-				if (!acs) {
-					g_sim.GetGTIA().SetConsoleSwitch(0x02, false);
-					return true;
-				}
-				break;
-
-			case VK_F4:
-				if (!acs) {
-					g_sim.GetGTIA().SetConsoleSwitch(0x04, false);
-					return true;
-				}
-				break;
-		}
-	}
-
-	return false;
 }
 
 void ProcessKey(char c, bool repeat, bool allowQueue, bool useCooldown) {
@@ -2833,47 +2780,6 @@ void ProcessKey(char c, bool repeat, bool allowQueue, bool useCooldown) {
 		return;
 
 	g_sim.GetPokey().PushKey(ch, repeat, allowQueue, !allowQueue, useCooldown);
-}
-
-void ProcessVirtKey(int vkey, uint8 keycode, bool repeat) {
-	g_lastVkeySent = vkey;
-
-	if (g_kbdOpts.mbRawKeys) {
-		if (!repeat)
-			g_sim.GetPokey().PushRawKey(keycode);
-	} else
-		g_sim.GetPokey().PushKey(keycode, repeat);
-}
-
-bool ProcessRawKeyUp(int vkey) {
-	if (g_lastVkeySent == vkey) {
-		g_sim.GetPokey().ReleaseRawKey();
-		return true;
-	}
-
-	return false;
-}
-
-void OnChar(HWND hwnd, WPARAM wParam, LPARAM lParam) {
-	int code = LOWORD(wParam);
-	if (code <= 0 || code > 127)
-		return;
-
-	const bool repeat = (lParam & 0x40000000) != 0;
-
-	if (g_kbdOpts.mbRawKeys) {
-		uint8 ch;
-
-		if (repeat || !ATUIGetScanCodeForCharacter(code, ch))
-			return;
-
-		g_lastVkeySent = g_lastVkeyPressed;
-
-		g_sim.GetPokey().PushRawKey(ch);
-		return;
-	}
-
-	ProcessKey((char)code, repeat, false, true);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2916,6 +2822,11 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			return 0;
 
 		case WM_CLOSE:
+			if (ATUIIsActiveModal()) {
+				MessageBeep(MB_ICONASTERISK);
+				return 0;
+			}
+
 			if (!ATUIConfirmDiscardAllStorage((VDGUIHandle)mhwnd, L"Exit without saving?", true))
 				return 0;
 
@@ -2940,6 +2851,9 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 
 		case WM_COMMAND:
+			if (ATUIIsActiveModal())
+				return 0;
+
 			if (OnCommand(LOWORD(wParam)))
 				return 0;
 			break;
@@ -2952,7 +2866,7 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 
 		case ATWM_APP_PRETRANSLATE:
-			{
+			if (!ATUIIsActiveModal()) {
 				MSG& globalMsg = *(MSG *)lParam;
 
 				const bool ctrl = GetKeyState(VK_CONTROL) < 0;
@@ -3073,7 +2987,7 @@ void ATMainWindow::OnCopyData(HWND hwndReply, const COPYDATASTRUCT& cds) {
 		return;
 	}
 
-	if (cds.dwData != 0xA7000000)
+	if (cds.dwData != 0xA7000000 || !g_autotestEnabled)
 		return;
 
 	vdfastvector<wchar_t> s;
@@ -3144,6 +3058,10 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		if (cmdLine.FindAndRemoveSwitch(L"baseline")) {
 			LoadBaselineSettings();
 			coldReset = true;
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"autotest")) {
+			g_autotestEnabled = true;
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"f"))
@@ -3284,6 +3202,8 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.SetHardwareMode(kATHardwareMode_800XL);
 			else if (!vdwcsicmp(arg, L"1200xl"))
 				g_sim.SetHardwareMode(kATHardwareMode_1200XL);
+			else if (!vdwcsicmp(arg, L"130xe"))
+				g_sim.SetHardwareMode(kATHardwareMode_130XE);
 			else if (!vdwcsicmp(arg, L"xegs"))
 				g_sim.SetHardwareMode(kATHardwareMode_XEGS);
 			else if (!vdwcsicmp(arg, L"5200"))
@@ -3350,6 +3270,25 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.SetMemoryMode(kATMemoryMode_1088K);
 			else
 				throw MyError("Command line error: Invalid memory mode '%ls'", arg);
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"axlonmemsize", arg)) {
+			if (!vdwcsicmp(arg, L"none"))
+				g_sim.SetAxlonMemoryMode(0);
+			if (!vdwcsicmp(arg, L"64K"))
+				g_sim.SetAxlonMemoryMode(2);
+			if (!vdwcsicmp(arg, L"128K"))
+				g_sim.SetAxlonMemoryMode(3);
+			if (!vdwcsicmp(arg, L"256K"))
+				g_sim.SetAxlonMemoryMode(4);
+			if (!vdwcsicmp(arg, L"512K"))
+				g_sim.SetAxlonMemoryMode(5);
+			if (!vdwcsicmp(arg, L"1024K"))
+				g_sim.SetAxlonMemoryMode(6);
+			if (!vdwcsicmp(arg, L"2048K"))
+				g_sim.SetAxlonMemoryMode(7);
+			if (!vdwcsicmp(arg, L"4096K"))
+				g_sim.SetAxlonMemoryMode(7);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"artifact", arg)) {
@@ -3490,6 +3429,8 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				hwmode = kATIDEHardwareMode_KMKJZ_V2;
 			else if (iorange == L"side")
 				hwmode = kATIDEHardwareMode_SIDE;
+			else if (iorange == L"side2")
+				hwmode = kATIDEHardwareMode_SIDE2;
 			else if (iorange == L"myidev2_d5xx")
 				hwmode = kATIDEHardwareMode_MyIDE_V2_D5xx;
 			else
@@ -3858,7 +3799,8 @@ void LoadMountedImages() {
 
 			if (imagestr.size() > 1) {
 				try {
-					if (wcschr(imagestr.c_str(), L'*')) {
+					const wchar_t *star = wcschr(imagestr.c_str(), L'*');
+					if (star) {
 						disk.LoadDisk(imagestr.c_str() + 1);
 					} else {
 						ATLoadContext ctx;
@@ -4062,6 +4004,7 @@ void LoadSettings(bool useHardwareBaseline) {
 			config.mbDisableThrottling = key.getBool("Serial Ports: Disable throttling", config.mbDisableThrottling);
 			config.mbRequireMatchedDTERate = key.getBool("Serial Ports: Require matched DTE rate", config.mbRequireMatchedDTERate);
 			config.mbExtendedBaudRates = key.getBool("Serial Ports: Enable extended baud rates", config.mbExtendedBaudRates);
+			config.m850SIOLevel = (AT850SIOEmulationLevel)key.getEnumInt("Serial Ports; SIO emulation level", kAT850SIOEmulationLevelCount, config.m850SIOLevel);
 
 			key.getString("Serial Ports: Dial address", config.mDialAddress);
 			key.getString("Serial Ports: Dial service", config.mDialService);
@@ -4069,6 +4012,7 @@ void LoadSettings(bool useHardwareBaseline) {
 			g_sim.GetRS232()->SetConfig(config);
 		}
 
+		g_sim.SetAxlonMemoryMode(key.getInt("Memory: Axlon size", g_sim.GetAxlonMemoryMode()));
 		g_sim.SetMapRAMEnabled(key.getBool("Memory: MapRAM", g_sim.IsMapRAMEnabled()));
 		g_sim.SetUltimate1MBEnabled(key.getBool("Memory: Ultimate1MB", g_sim.IsUltimate1MBEnabled()));
 		g_sim.SetRandomFillEnabled(key.getBool("Memory: Randomize on start", g_sim.IsRandomFillEnabled()));
@@ -4217,6 +4161,7 @@ void SaveSettings() {
 	key.setBool("Turbo mode", ATUIGetTurbo());
 	key.setBool("Pause when inactive", g_pauseInactive);
 
+	key.setInt("Memory: Axlon size", g_sim.GetAxlonMemoryMode());
 	key.setBool("Memory: MapRAM", g_sim.IsMapRAMEnabled());
 	key.setBool("Memory: Ultimate1MB", g_sim.IsUltimate1MBEnabled());
 	key.setBool("Memory: Randomize on start", g_sim.IsRandomFillEnabled());
@@ -4339,6 +4284,7 @@ void SaveSettings() {
 		key.setBool("Serial Ports: Disable throttling", config.mbDisableThrottling);
 		key.setBool("Serial Ports: Require matched DTE rate", config.mbRequireMatchedDTERate);
 		key.setBool("Serial Ports: Enable extended baud rates", config.mbExtendedBaudRates);
+		key.setInt("Serial Ports; SIO emulation level", config.m850SIOLevel);
 		key.setString("Serial Ports: Dial address", config.mDialAddress.c_str());
 		key.setString("Serial Ports: Dial service", config.mDialService.c_str());
 	}
@@ -4387,6 +4333,91 @@ uint64 ATGetCumulativeCPUTime() {
 		+ ((uint64)ut.dwHighDateTime << 32) + ut.dwLowDateTime;
 }
 
+bool ATUIProcessMessages(bool waitForMessage, int& returnCode) {
+	ATUIProfileBeginRegion(kATUIProfileRegion_NativeEvents);
+
+	for(int i=0; i<2; ++i) {
+		DWORD flags = i ? PM_REMOVE : PM_QS_INPUT | PM_REMOVE;
+
+		MSG msg;
+		while(PeekMessage(&msg, NULL, 0, 0, flags)) {
+			if (msg.message == WM_QUIT) {
+				ATUIProfileEndRegion();
+				returnCode = (int)msg.wParam;
+				return false;
+			}
+
+			if (msg.hwnd) {
+				HWND hwndOwner;
+				switch(msg.message) {
+					case WM_KEYDOWN:
+					case WM_SYSKEYDOWN:
+					case WM_KEYUP:
+					case WM_SYSKEYUP:
+					case WM_CHAR:
+						hwndOwner = GetAncestor(msg.hwnd, GA_ROOT);
+						if (hwndOwner) {
+							if (SendMessage(hwndOwner, ATWM_APP_PRETRANSLATE, 0, (LPARAM)&msg))
+								continue;
+						}
+						break;
+
+					case WM_SYSCHAR:
+						if (g_hwnd && msg.hwnd != g_hwnd && GetAncestor(msg.hwnd, GA_ROOT) == g_hwnd)
+						{
+							msg.hwnd = g_hwnd;
+						}
+						break;
+
+					case WM_MOUSEWHEEL:
+						{
+							POINT pt = { (short)LOWORD(msg.lParam), (short)HIWORD(msg.lParam) };
+							HWND hwndUnder = WindowFromPoint(pt);
+
+							if (hwndUnder && GetWindowThreadProcessId(hwndUnder, NULL) == GetCurrentThreadId())
+								msg.hwnd = hwndUnder;
+						}
+						break;
+				}
+		
+				switch(msg.message) {
+					case WM_KEYDOWN:
+						if (SendMessage(msg.hwnd, ATWM_PREKEYDOWN, msg.wParam, msg.lParam))
+							continue;
+						break;
+					case WM_SYSKEYDOWN:
+						if (SendMessage(msg.hwnd, ATWM_PRESYSKEYDOWN, msg.wParam, msg.lParam))
+							continue;
+						break;
+					case WM_KEYUP:
+						if (SendMessage(msg.hwnd, ATWM_PREKEYUP, msg.wParam, msg.lParam))
+							continue;
+						break;
+					case WM_SYSKEYUP:
+						if (SendMessage(msg.hwnd, ATWM_PRESYSKEYUP, msg.wParam, msg.lParam))
+							continue;
+						break;
+				}
+			}
+
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+	}
+
+	if (!g_ATCmdLineRead) {
+		g_ATCmdLineRead = true;
+
+		ReadCommandLine(g_hwnd, g_ATCmdLine);
+	}
+	ATUIProfileEndRegion();
+
+	if (waitForMessage)
+		WaitMessage();
+
+	return true;
+}
+
 int RunMainLoop2(HWND hwnd) {
 	bool commandLineRead = false;
 	int ticks = 0;
@@ -4409,86 +4440,19 @@ int RunMainLoop2(HWND hwnd) {
 
 	g_winCaptionUpdater.Update(hwnd, true, 0, 0, 0);
 
-	MSG msg;
 	int rcode = 0;
 	bool lastIsRunning = false;
 	for(;;) {
-		ATUIProfileBeginRegion(kATUIProfileRegion_NativeEvents);
-		for(int i=0; i<2; ++i) {
-			DWORD flags = i ? PM_REMOVE : PM_QS_INPUT | PM_REMOVE;
-
-			while(PeekMessage(&msg, NULL, 0, 0, flags)) {
-				if (msg.message == WM_QUIT) {
-					rcode = (int)msg.wParam;
-					goto xit;
-				}
-
-				if (msg.hwnd) {
-					HWND hwndOwner;
-					switch(msg.message) {
-						case WM_KEYDOWN:
-						case WM_SYSKEYDOWN:
-						case WM_KEYUP:
-						case WM_SYSKEYUP:
-						case WM_CHAR:
-							hwndOwner = GetAncestor(msg.hwnd, GA_ROOT);
-							if (hwndOwner) {
-								if (SendMessage(hwndOwner, ATWM_APP_PRETRANSLATE, 0, (LPARAM)&msg))
-									continue;
-							}
-							break;
-
-						case WM_SYSCHAR:
-							if (g_hwnd && msg.hwnd != g_hwnd && GetAncestor(msg.hwnd, GA_ROOT) == g_hwnd)
-							{
-								msg.hwnd = g_hwnd;
-							}
-							break;
-
-						case WM_MOUSEWHEEL:
-							{
-								POINT pt = { (short)LOWORD(msg.lParam), (short)HIWORD(msg.lParam) };
-								HWND hwndUnder = WindowFromPoint(pt);
-
-								if (hwndUnder && GetWindowThreadProcessId(hwndUnder, NULL) == GetCurrentThreadId())
-									msg.hwnd = hwndUnder;
-							}
-							break;
-					}
-			
-					switch(msg.message) {
-						case WM_KEYDOWN:
-							if (SendMessage(msg.hwnd, ATWM_PREKEYDOWN, msg.wParam, msg.lParam))
-								continue;
-							break;
-						case WM_SYSKEYDOWN:
-							if (SendMessage(msg.hwnd, ATWM_PRESYSKEYDOWN, msg.wParam, msg.lParam))
-								continue;
-							break;
-						case WM_KEYUP:
-							if (SendMessage(msg.hwnd, ATWM_PREKEYUP, msg.wParam, msg.lParam))
-								continue;
-							break;
-						case WM_SYSKEYUP:
-							if (SendMessage(msg.hwnd, ATWM_PRESYSKEYUP, msg.wParam, msg.lParam))
-								continue;
-							break;
-					}
-				}
-
-				TranslateMessage(&msg);
-				DispatchMessage(&msg);
-			}
-		}
-
-		if (!g_ATCmdLineRead) {
-			g_ATCmdLineRead = true;
-
-			ReadCommandLine(hwnd, g_ATCmdLine);
-		}
-		ATUIProfileEndRegion();
+		if (!ATUIProcessMessages(false, rcode))
+			break;
 
 		bool isRunning = g_sim.IsRunning();
+		if (!isRunning)
+			ATUIFlushDisplay();
+
+		if (ATUIGetQueue().Run())
+			continue;
+
 
 		if (isRunning != lastIsRunning) {
 			if (isRunning)
@@ -4629,15 +4593,9 @@ int RunMainLoop2(HWND hwnd) {
 				if (g_fullscreen)
 					ATSetFullscreen(false);
 
-				if (g_mouseCaptured)
-					ReleaseCapture();
-
-				if (g_mouseClipped) {
-					g_mouseClipped = false;
-					g_winCaptionUpdater.SetMouseCaptured(g_mouseClipped || g_mouseCaptured);
-
-					::ClipCursor(NULL);
-				}
+				IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+				if (pane)
+					pane->UpdateTextDisplay(g_enhancedText != 0);
 			}
 
 			if (updateScreenPending) {
@@ -4651,7 +4609,7 @@ int RunMainLoop2(HWND hwnd) {
 
 		WaitMessage();
 	}
-xit:
+
 	if (lastIsRunning)
 		timeEndPeriod(1);
 
