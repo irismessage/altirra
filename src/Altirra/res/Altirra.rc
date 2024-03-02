@@ -75,6 +75,12 @@ BEGIN
             MENUITEM "&Empty 1Mb flash cartridge",  ID_ATTACHSPECIALCARTRIDGE_EMPTY1MB
             MENUITEM "&Empty 1Mb flash cartridge (MyIDE banking)", ID_ATTACHSPECIALCARTRIDGE_EMPTY1MBMYIDE
             MENUITEM "Empty 8Mb flash cartridge",   ID_ATTACHSPECIALCARTRIDGE_EMPTY8MB
+            MENUITEM "Empty SIC flash cartridge",   ID_ATTACHSPECIALCARTRIDGE_EMPTYSIC
+        END
+        POPUP "Secondary Cartridge"
+        BEGIN
+            MENUITEM "&Attach...",                  ID_CART2_ATTACH
+            MENUITEM "&Detach",                     ID_CART2_DETACH
         END
         MENUITEM "&Attach Cartridge...",        ID_FILE_ATTACHCARTRIDGE
         MENUITEM "&Detach Cartridge",           ID_FILE_DETACHCARTRIDGE
@@ -189,7 +195,8 @@ BEGIN
             MENUITEM "No Artifacting",              ID_VIDEO_NOARTIFACTING
             MENUITEM "NTSC &Artifacting (Standard)", ID_VIDEO_NTSCARTIFACTING
             MENUITEM "NTSC Artifacting (High)",     ID_VIDEO_NTSCARTIFACTINGHI
-            MENUITEM "PA&L Artifacting",            ID_VIDEO_PALARTIFACTING
+            MENUITEM "PA&L Artifacting (Standard)", ID_VIDEO_PALARTIFACTING
+            MENUITEM "PA&L Artifacting (High)",     ID_VIDEO_PALARTIFACTINGHI
             MENUITEM SEPARATOR
             MENUITEM "Standard Video Only",         ID_VIDEO_STANDARDVIDEO
             MENUITEM "Enhanced Text (Hardware Intercept)", ID_VIDEO_ENHANCEDTEXT
@@ -220,6 +227,7 @@ BEGIN
         BEGIN
             MENUITEM "&Stereo",                     ID_AUDIO_STEREO
             MENUITEM "&Non-linear Mixing",          ID_AUDIO_NONLINEARMIXING
+            MENUITEM "Audio &Monitor",              ID_AUDIO_AUDIOMONITOR
             MENUITEM SEPARATOR
             MENUITEM "Channel &1\tCtrl+Alt+1",      ID_AUDIO_CHANNEL1
             MENUITEM "Channel &2\tCtrl+Alt+2",      ID_AUDIO_CHANNEL2
@@ -230,9 +238,18 @@ BEGIN
         END
         MENUITEM "CP&U Options...",             ID_SYSTEM_CPUOPTIONS
         MENUITEM "Ha&rd Disk...",               ID_SYSTEM_HARDDISK
+        MENUITEM "PCLink...",                   ID_SYSTEM_PCLINK
         MENUITEM "&Printer",                    ID_SYSTEM_PRINTER
         MENUITEM "&R-Time 8",                   ID_SYSTEM_RTIME8
         MENUITEM "Serial Ports...",             ID_SYSTEM_SERIALPORTS
+        POPUP "SoundBoard"
+        BEGIN
+            MENUITEM "Enabled",                     ID_SOUNDBOARD_ENABLED
+            MENUITEM SEPARATOR
+            MENUITEM "Use $D2C0-D2FF",              ID_SOUNDBOARD_ADDR_D2C0
+            MENUITEM "Use $D500-D5FF",              ID_SOUNDBOARD_ADDR_D500
+            MENUITEM "Use $D600-D6FF",              ID_SOUNDBOARD_ADDR_D600
+        END
     END
     POPUP "&Input"
     BEGIN
@@ -285,6 +302,8 @@ BEGIN
             MENUITEM "Auto-Reload ROMs on Cold Reset", ID_DEBUG_AUTORELOADROMS
             MENUITEM "Auto-Load Kernel Symbols",    ID_DEBUG_AUTOLOADKERNELSYMBOLS
             MENUITEM "&Randomize Memory At Cold Reset", ID_MEMORY_RANDOMIZE
+            MENUITEM "&Break At EXE Run Address",   ID_DEBUG_BREAKATEXERUNADDRESS
+            MENUITEM SEPARATOR
             MENUITEM "Change Font...",              ID_DEBUG_CHANGEFONT
         END
         MENUITEM SEPARATOR
@@ -299,16 +318,17 @@ BEGIN
         BEGIN
             MENUITEM "&Profile View\tAlt+Shift+0",  ID_PROFILE_PROFILEVIEW
         END
-        POPUP "&Verifier"
-        BEGIN
-            MENUITEM "&Enabled",                    ID_VERIFIER_ENABLED
-        END
+        MENUITEM "&Verifier...",                ID_DEBUG_VERIFIER
     END
     POPUP "&Record"
     BEGIN
         MENUITEM "&Record Raw Audio...",        ID_RECORD_RECORDRAWAUDIO
         MENUITEM "&Record Video...",            ID_RECORD_RECORDVIDEO
         MENUITEM "Stop Recording",              ID_RECORD_STOPRECORDING
+    END
+    POPUP "&Tools"
+    BEGIN
+        MENUITEM "Disk Explorer...",            ID_TOOLS_DISKEXPLORER
     END
     POPUP "&Help"
     BEGIN
@@ -359,7 +379,8 @@ IDR_COLOR_PRESETS_MENU MENU
 BEGIN
     POPUP "Context Menu"
     BEGIN
-        MENUITEM "Original",                    ID_COLORS_ORIGINAL
+        MENUITEM "Default (NTSC)",              ID_COLORS_DEFAULTNTSC
+        MENUITEM "Default (PAL)",               ID_COLORS_DEFAULTPAL
         MENUITEM "Alternate",                   ID_COLORS_ALTERNATE
         MENUITEM "Authentic NTSC",              ID_COLORS_AUTHENTICNTSC
         MENUITEM "G2F",                         ID_COLORS_G2F
@@ -395,6 +416,17 @@ BEGIN
         MENUITEM "Show Flags",                  ID_HISTORYCONTEXTMENU_SHOWFLAGS
         MENUITEM "Show Code Bytes",             ID_HISTORYCONTEXTMENU_SHOWCODEBYTES
         MENUITEM "Show Labels",                 ID_HISTORYCONTEXTMENU_SHOWLABELS
+        MENUITEM SEPARATOR
+        MENUITEM "Copy Visible to Clipboard",   ID_HISTORYCONTEXTMENU_COPYVISIBLETOCLIPBOARD
+    END
+END
+
+IDR_DISK_EXPLORER_CONTEXT_MENU MENU 
+BEGIN
+    POPUP "Context"
+    BEGIN
+        MENUITEM "Rename",                      ID_DISKEXP_RENAME
+        MENUITEM "Delete",                      ID_DISKEXP_DELETE
     END
 END
 
@@ -444,7 +476,7 @@ END
 // Dialog
 //
 
-IDD_CPU_OPTIONS DIALOGEX 0, 0, 186, 125
+IDD_CPU_OPTIONS DIALOGEX 0, 0, 186, 135
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "CPU options"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
@@ -453,12 +485,13 @@ BEGIN
     CONTROL         "Track code &paths",IDC_ENABLE_PATHS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,18,71,10
     CONTROL         "Enable illegal instructions",IDC_ENABLE_ILLEGALS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,29,95,10
     CONTROL         "Stop on BRK instruction",IDC_STOP_ON_BRK,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,40,91,10
-    LTEXT           "CPU model:",IDC_STATIC,7,57,38,8
-    CONTROL         "6502C",IDC_CPUMODEL_6502C,"Button",BS_AUTORADIOBUTTON | WS_GROUP,17,67,37,10
-    CONTROL         "65C02",IDC_CPUMODEL_65C02,"Button",BS_AUTORADIOBUTTON,17,77,37,10
-    CONTROL         "65C816",IDC_CPUMODEL_65C816,"Button",BS_AUTORADIOBUTTON,17,87,41,10
-    DEFPUSHBUTTON   "OK",IDOK,76,104,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,129,104,50,14
+    LTEXT           "CPU model:",IDC_STATIC,7,68,38,8
+    CONTROL         "6502C",IDC_CPUMODEL_6502C,"Button",BS_AUTORADIOBUTTON | WS_GROUP,17,78,37,10
+    CONTROL         "65C02",IDC_CPUMODEL_65C02,"Button",BS_AUTORADIOBUTTON,17,88,37,10
+    CONTROL         "65C816",IDC_CPUMODEL_65C816,"Button",BS_AUTORADIOBUTTON,17,98,41,10
+    DEFPUSHBUTTON   "OK",IDOK,76,115,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,129,115,50,14
+    CONTROL         "Allow BRK/IRQ to block NMI",IDC_ALLOWNMIBLOCKING,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,51,104,10
 END
 
 IDD_DISK_DRIVES DIALOGEX 0, 0, 335, 157
@@ -685,38 +718,40 @@ BEGIN
     LTEXT           "Static",IDC_STATIC_POSITION,180,7,63,15,SS_CENTERIMAGE,WS_EX_RIGHT
 END
 
-IDD_ADJUST_COLORS DIALOGEX 0, 0, 296, 247
+IDD_ADJUST_COLORS DIALOGEX 0, 0, 388, 145
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
 CAPTION "Adjust Colors"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Hue start",IDC_STATIC,7,7,92,15,SS_CENTERIMAGE
-    CONTROL         "",IDC_HUESTART,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,7,147,15
-    RTEXT           "",IDC_STATIC_HUESTART,246,7,43,15,SS_CENTERIMAGE
-    LTEXT           "Hue step",IDC_STATIC,7,23,92,15,SS_CENTERIMAGE
-    CONTROL         "",IDC_HUERANGE,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,23,147,15
-    RTEXT           "",IDC_STATIC_HUERANGE,246,23,43,15,SS_CENTERIMAGE
-    LTEXT           "Brightness",IDC_STATIC,7,38,92,15,SS_CENTERIMAGE
-    CONTROL         "",IDC_BRIGHTNESS,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,38,147,15
-    RTEXT           "",IDC_STATIC_BRIGHTNESS,246,38,43,15,SS_CENTERIMAGE
-    LTEXT           "Contrast",IDC_STATIC,7,53,92,15,SS_CENTERIMAGE
-    CONTROL         "",IDC_CONTRAST,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,53,147,15
-    RTEXT           "",IDC_STATIC_CONTRAST,246,53,43,15,SS_CENTERIMAGE
-    LTEXT           "Saturation",IDC_STATIC,7,68,92,15,SS_CENTERIMAGE
-    CONTROL         "",IDC_SATURATION,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,68,147,15
-    RTEXT           "",IDC_STATIC_SATURATION,246,68,43,15,SS_CENTERIMAGE
-    LTEXT           "Artifacting phase",IDC_STATIC,7,83,92,15,SS_CENTERIMAGE
-    CONTROL         "",IDC_ARTPHASE,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,83,147,15
-    RTEXT           "",IDC_STATIC_ARTPHASE,246,83,43,15,SS_CENTERIMAGE
-    LTEXT           "Artifacting saturation",IDC_STATIC,7,98,92,15,SS_CENTERIMAGE
-    CONTROL         "",IDC_ARTSAT,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,98,147,15
-    RTEXT           "",IDC_STATIC_ARTSAT,246,98,43,15,SS_CENTERIMAGE
-    LTEXT           "Artifacting brightness",IDC_STATIC,7,113,92,15,SS_CENTERIMAGE
-    CONTROL         "",IDC_ARTBRI,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,99,113,147,15
-    RTEXT           "",IDC_STATIC_ARTBRI,246,113,43,15,SS_CENTERIMAGE
-    PUSHBUTTON      "Load Preset",IDC_LOADPRESET,239,134,50,14
-    CONTROL         "",IDC_COLORS,"Static",SS_OWNERDRAW,104,134,123,106,WS_EX_CLIENTEDGE
-    LTEXT           "Resulting palette",IDC_STATIC,7,135,92,15
+    CONTROL         "Share NTSC/PAL palettes",IDC_SHARED,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,7,97,10
+    CONTROL         "Use PAL Quirks",IDC_PALQUIRKS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,137,7,64,10
+    LTEXT           "Hue start",IDC_STATIC,7,17,73,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_HUESTART,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,80,17,124,15
+    RTEXT           "",IDC_STATIC_HUESTART,204,17,48,15,SS_CENTERIMAGE
+    LTEXT           "Hue step",IDC_STATIC,7,33,73,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_HUERANGE,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,80,33,124,15
+    RTEXT           "",IDC_STATIC_HUERANGE,204,33,48,15,SS_CENTERIMAGE
+    LTEXT           "Brightness",IDC_STATIC,7,48,73,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_BRIGHTNESS,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,80,48,124,15
+    RTEXT           "",IDC_STATIC_BRIGHTNESS,204,48,48,15,SS_CENTERIMAGE
+    LTEXT           "Contrast",IDC_STATIC,7,63,73,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_CONTRAST,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,80,63,124,15
+    RTEXT           "",IDC_STATIC_CONTRAST,204,63,48,15,SS_CENTERIMAGE
+    LTEXT           "Saturation",IDC_STATIC,7,78,73,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_SATURATION,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,80,78,124,15
+    RTEXT           "",IDC_STATIC_SATURATION,204,78,48,15,SS_CENTERIMAGE
+    LTEXT           "Artifacting phase",IDC_STATIC,7,93,73,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_ARTPHASE,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,80,93,124,15
+    RTEXT           "",IDC_STATIC_ARTPHASE,204,93,48,15,SS_CENTERIMAGE
+    LTEXT           "Artifacting saturation",IDC_STATIC,7,108,73,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_ARTSAT,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,80,108,124,15
+    RTEXT           "",IDC_STATIC_ARTSAT,204,108,48,15,SS_CENTERIMAGE
+    LTEXT           "Artifacting brightness",IDC_STATIC,7,123,73,15,SS_CENTERIMAGE
+    CONTROL         "",IDC_ARTBRI,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,80,123,124,15
+    RTEXT           "",IDC_STATIC_ARTBRI,204,123,48,15,SS_CENTERIMAGE
+    LTEXT           "Resulting palette",IDC_STATIC,258,7,67,14,SS_CENTERIMAGE
+    PUSHBUTTON      "Load Preset",IDC_LOADPRESET,331,7,50,14
+    CONTROL         "",IDC_COLORS,"Static",SS_OWNERDRAW,258,24,123,106,WS_EX_CLIENTEDGE
 END
 
 IDD_VIDEO_RECORDING DIALOGEX 0, 0, 228, 110
@@ -791,15 +826,32 @@ BEGIN
     LTEXT           "Static",IDC_STATIC_TARGET,4,12,214,8
 END
 
-IDD_SERIAL_PORTS DIALOGEX 0, 0, 151, 55
+IDD_SERIAL_PORTS DIALOGEX 0, 0, 270, 191
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Serial Port Options"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    DEFPUSHBUTTON   "OK",IDOK,42,34,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,94,34,50,14
-    CONTROL         "&Enable serial port emulation (R:)",IDC_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,7,119,10
-    CONTROL         "Emulate &Telnet protocol",IDC_TELNET,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,19,91,10
+    GROUPBOX        "",IDC_STATIC,7,7,256,108
+    CONTROL         "&Enable serial port emulation (R:)",IDC_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,13,7,119,10
+    CONTROL         "Emulate &Telnet protocol",IDC_TELNET,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,13,19,91,10
+    CONTROL         "Automatic CR/LF conversion (improves compatibility, but disables binary xfers; auto-disables on received EOL)",IDC_TELNET_LFCONVERSION,
+                    "Button",BS_AUTOCHECKBOX | BS_TOP | BS_MULTILINE | WS_TABSTOP,24,31,232,19
+    CONTROL         "Allow &outbound connections",IDC_ALLOW_OUTBOUND,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,13,51,105,10
+    CONTROL         "&Accept incoming connections on port (1024-65535):",IDC_ACCEPT_CONNECTIONS,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,13,64,181,10
+    EDITTEXT        IDC_LISTEN_PORT,197,63,59,12,ES_AUTOHSCROLL | ES_NUMBER
+    CONTROL         "Accept IPv&6 connections",IDC_ACCEPT_IPV6,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,24,77,95,10
+    CONTROL         "Enable e&xtended baud rate support (57600, 115K, 230Kbaud)",IDC_EXTENDED_BAUD_RATES,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,13,89,215,10
+    CONTROL         "Disable serial port rate t&hrottling",IDC_DISABLE_THROTTLING,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,13,101,119,10
+    GROUPBOX        "Modem emulation options",IDC_STATIC,7,118,256,43
+    LTEXT           "&Reported connection speed:",IDC_STATIC,13,130,97,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_CONNECTION_SPEED,112,130,144,107,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "Re&quire DTE baud rate to match connection speed",IDC_REQUIRE_MATCHED_DTE_RATE,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,24,145,177,10
+    DEFPUSHBUTTON   "OK",IDOK,160,170,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,213,170,50,14
 END
 
 IDD_LIGHTPEN DIALOGEX 0, 0, 252, 109
@@ -889,6 +941,71 @@ BEGIN
     PUSHBUTTON      "...",IDC_BROWSE_XL,231,37,15,12
 END
 
+IDD_PROGRAM_ERROR DIALOGEX 0, 0, 232, 161
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Altirra Error"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "The emulated system has stopped due to a program error. Please choose an action.",IDC_STATIC,7,7,218,18
+    LTEXT           "You can also try restarting with different emulation settings to improve compatibility:",IDC_STATIC,7,29,218,18
+    CONTROL         "Change &hardware: ",IDC_CHANGE_HARDWARE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,53,203,10
+    CONTROL         "Change &memory configuration: ",IDC_CHANGE_MEMORY,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,63,203,10
+    CONTROL         "Change &firmware: ",IDC_CHANGE_FIRMWARE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,73,203,10
+    CONTROL         "Change &video mode: ",IDC_CHANGE_VIDEO,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,83,203,10
+    CONTROL         "Change &CPU mode: 6502",IDC_CHANGE_CPU,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,93,203,10
+    CONTROL         "Disable &BASIC",IDC_CHANGE_BASIC,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,103,203,10
+    CONTROL         "Disable &debugging options",IDC_CHANGE_DEBUGGING,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,113,203,10
+    CONTROL         "Use accurate floppy dis&k timing",IDC_CHANGE_DISKIO,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,123,203,10
+    PUSHBUTTON      "Debug",IDC_DEBUG,7,140,50,14
+    PUSHBUTTON      "Warm Reset",IDC_RESET,71,140,50,14
+    DEFPUSHBUTTON   "Restart",IDOK,123,140,50,14
+    PUSHBUTTON      "Pause",IDCANCEL,175,140,50,14
+END
+
+IDD_DISK_EXPLORER DIALOGEX 0, 0, 300, 172
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Disk Explorer"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    EDITTEXT        IDC_FILENAME,7,7,265,12,ES_AUTOHSCROLL | ES_READONLY
+    PUSHBUTTON      "...",IDC_BROWSE,273,7,20,12
+    CONTROL         "",IDC_DISK_CONTENTS,"SysListView32",LVS_REPORT | LVS_SHAREIMAGELISTS | LVS_EDITLABELS | LVS_ALIGNLEFT | WS_TABSTOP,7,26,286,126,WS_EX_CLIENTEDGE
+    LTEXT           "",IDC_STATUS,7,156,286,9
+END
+
+IDD_VERIFIER DIALOGEX 0, 0, 184, 78
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Verifier Settings"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Enabled checks",IDC_STATIC,7,7,170,46
+    CONTROL         "Undocumented OS entry",IDC_FLAG_UNDOCOSENTRY,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,12,18,95,10
+    CONTROL         "Recursive NMI handler execution",IDC_FLAG_RECURSIVENMI,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,12,27,121,10
+    CONTROL         "Interrupt handler register save/restore",IDC_FLAG_INTERRUPTREGS,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,12,37,141,10
+    DEFPUSHBUTTON   "OK",IDOK,75,57,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,127,57,50,14
+END
+
+IDD_PCLINK DIALOGEX 0, 0, 320, 106
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "PCLink setup"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    DEFPUSHBUTTON   "OK",IDOK,210,85,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,263,85,50,14
+    LTEXT           "PCLink allows a guest OS running under emulation to access files and directories on the host file system through the SIO interface. This requires a special guest OS driver, such as PCLINK.SYS.",IDC_STATIC,7,7,306,26
+    GROUPBOX        "",IDC_STATIC,7,36,306,45
+    CONTROL         "&Enable PCLink device",IDC_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,11,36,83,10
+    LTEXT           "Host &path:",IDC_STATIC_HOSTPATH,12,51,35,8
+    EDITTEXT        IDC_PATH,51,49,239,12,ES_AUTOHSCROLL
+    PUSHBUTTON      "&...",IDC_BROWSE,292,49,15,12
+    CONTROL         "Allow &write access",IDC_ALLOW_WRITES,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,51,65,74,10
+END
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -903,7 +1020,7 @@ BEGIN
         LEFTMARGIN, 7
         RIGHTMARGIN, 179
         TOPMARGIN, 7
-        BOTTOMMARGIN, 118
+        BOTTOMMARGIN, 128
     END
 
     IDD_DISK_DRIVES, DIALOG
@@ -1008,11 +1125,13 @@ BEGIN
     IDD_ADJUST_COLORS, DIALOG
     BEGIN
         LEFTMARGIN, 7
-        RIGHTMARGIN, 289
-        VERTGUIDE, 99
-        VERTGUIDE, 246
+        RIGHTMARGIN, 381
+        VERTGUIDE, 80
+        VERTGUIDE, 204
+        VERTGUIDE, 252
+        VERTGUIDE, 258
         TOPMARGIN, 7
-        BOTTOMMARGIN, 240
+        BOTTOMMARGIN, 138
     END
 
     IDD_VIDEO_RECORDING, DIALOG
@@ -1062,9 +1181,10 @@ BEGIN
     IDD_SERIAL_PORTS, DIALOG
     BEGIN
         LEFTMARGIN, 7
-        RIGHTMARGIN, 144
+        RIGHTMARGIN, 263
+        VERTGUIDE, 256
         TOPMARGIN, 7
-        BOTTOMMARGIN, 48
+        BOTTOMMARGIN, 184
     END
 
     IDD_LIGHTPEN, DIALOG
@@ -1112,6 +1232,41 @@ BEGIN
         TOPMARGIN, 7
         BOTTOMMARGIN, 114
     END
+
+    IDD_PROGRAM_ERROR, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 225
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 154
+    END
+
+    IDD_DISK_EXPLORER, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 293
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 165
+        HORZGUIDE, 152
+        HORZGUIDE, 156
+    END
+
+    IDD_VERIFIER, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 177
+        VERTGUIDE, 12
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 71
+    END
+
+    IDD_PCLINK, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 313
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 99
+    END
 END
 #endif    // APSTUDIO_INVOKED
 
@@ -1139,12 +1294,12 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "FileDescription", "Altirra 8-bit computer emulator"
-            VALUE "FileVersion", "1, 8, 0, 0"
+            VALUE "FileVersion", "1, 9, 0, 0"
             VALUE "InternalName", "Altirra"
             VALUE "LegalCopyright", "Copyright (C) 2008-2010 Avery Lee, All Rights Reserved."
             VALUE "OriginalFilename", "Altirra.exe"
             VALUE "ProductName", "Altirra"
-            VALUE "ProductVersion", "1.8"
+            VALUE "ProductVersion", "1.9"
         END
     END
     BLOCK "VarFileInfo"
@@ -1251,6 +1406,20 @@ IDR_NOCARTRIDGE         KERNEL                  "..\\..\\..\\out\\Release\\nocar
 
 IDR_CHANGES             STUFF                   "changes.txt"
 IDR_DEBUG_HELP          STUFF                   "dbghelp.txt"
+#if defined(APSTUDIO_INVOKED) || defined(DEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_DISKLOADER128$(DEBUG) STUFF                   "..\\..\\..\\out\\Debug\\atdiskloader128.bin"
+#else
+IDR_DISKLOADER128       STUFF                   "..\\..\\..\\out\\Debug\\atdiskloader128.bin"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(NDEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_DISKLOADER128$(NDEBUG) STUFF                   "..\\..\\..\\out\\Release\\atdiskloader128.bin"
+#else
+IDR_DISKLOADER128       STUFF                   "..\\..\\..\\out\\Release\\atdiskloader128.bin"
+#endif
+#endif
 
 /////////////////////////////////////////////////////////////////////////////
 //

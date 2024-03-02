@@ -21,7 +21,9 @@
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/text.h>
 #include "uirender.h"
+#include "audiomonitor.h"
 #include "font3x5.inl"
+#include "font3x5p.inl"
 #include "font5x8p.inl"
 
 namespace {
@@ -34,6 +36,128 @@ namespace {
 		}
 
 		VDPixmapDrawText(px, &g_ATFont5x8p_FontInfo, x, y, fc, bc, str);
+	}
+
+	void DrawString5(const VDPixmap& px, const uint32 *palette, int x, int y, uint8 forecolor, uint8 backcolor, const char *str) {
+		uint32 fc = forecolor;
+		uint32 bc = backcolor;
+		if (px.format == nsVDPixmap::kPixFormat_XRGB8888) {
+			fc = palette[fc];
+			bc = palette[bc];
+		}
+
+		VDPixmapDrawText(px, &g_ATFont3x5p_FontInfo, x, y, fc, bc, str);
+	}
+
+	void Shade(const VDPixmap& px, int x1, int y1, int dx, int dy) {
+		int x2 = x1 + dx;
+		int y2 = y1 + dy;
+
+		if (x1 < 0)
+			x1 = 0;
+
+		if (y1 < 0)
+			y1 = 0;
+
+		if (x2 > (int)px.w)
+			x2 = (int)px.w;
+
+		if (y2 > (int)px.h)
+			y2 = (int)px.h;
+
+		if (x2 <= x1 || y2 <= y1)
+			return;
+
+		bool px32 = false;
+
+		if (px.format == nsVDPixmap::kPixFormat_XRGB8888)
+			px32 = true;
+		else if (px.format != nsVDPixmap::kPixFormat_Pal8)
+			return;
+
+		dx = x2 - x1;
+		dy = y2 - y1;
+
+		char *dst0 = (char *)px.data + px.pitch * y1 + (px32 ? x1 * 4 : x1);
+
+		do {
+			int dx2 = dx;
+
+			if (px32) {
+				uint32 *dst = (uint32 *)dst0;
+
+				do {
+					*dst = (*dst & 0xfcfcfc) >> 2;
+					++dst;
+				} while(--dx2);
+			} else {
+				uint8 *dst = (uint8 *)dst0;
+
+				do {
+					uint8 c = *dst;
+
+					c = (c & 0xf0) + ((c & 0x0c) >> 2);
+
+					*dst++ = c;
+				} while(--dx2);
+			}
+
+			dst0 += px.pitch;
+		} while(--dy);
+	}
+
+	void FillRect(const VDPixmap& px, const uint32 *palette, uint8 color, int x1, int y1, int dx, int dy) {
+		int x2 = x1 + dx;
+		int y2 = y1 + dy;
+
+		if (x1 < 0)
+			x1 = 0;
+
+		if (y1 < 0)
+			y1 = 0;
+
+		if (x2 > (int)px.w)
+			x2 = (int)px.w;
+
+		if (y2 > (int)px.h)
+			y2 = (int)px.h;
+
+		if (x2 <= x1 || y2 <= y1)
+			return;
+
+		bool px32 = false;
+		uint32 c32;
+
+		if (px.format == nsVDPixmap::kPixFormat_XRGB8888) {
+			px32 = true;
+			c32 = palette[color];
+		} else if (px.format != nsVDPixmap::kPixFormat_Pal8)
+			return;
+
+		dx = x2 - x1;
+		dy = y2 - y1;
+
+		char *dst0 = (char *)px.data + px.pitch * y1 + (px32 ? x1 * 4 : x1);
+
+		do {
+			int dx2 = dx;
+
+			if (px32) {
+				uint32 *dst = (uint32 *)dst0;
+
+				do {
+					*dst++ = c32;
+				} while(--dx2);
+			} else {
+				uint8 *dst = (uint8 *)dst0;
+
+				do {
+					*dst++ = color;
+				} while(--dx2);
+			}
+
+			dst0 += px.pitch;
+		} while(--dy);
 	}
 }
 
@@ -49,6 +173,7 @@ public:
 	void SetStatusCounter(uint32 index, uint32 value);
 
 	void SetHActivity(bool write);
+	void SetPCLinkActivity(bool write);
 	void SetIDEActivity(bool write, uint32 lba);
 	void SetFlashWriteActivity();
 
@@ -62,6 +187,7 @@ public:
 
 	void SetWatchedValue(int index, uint32 value, int len);
 	void SetAudioStatus(ATUIAudioStatus *status);
+	void SetAudioMonitor(ATAudioMonitor *monitor);
 
 	void Render(const VDPixmap& px, const uint32 *palette);
 
@@ -81,6 +207,8 @@ protected:
 
 	uint8	mHReadCounter;
 	uint8	mHWriteCounter;
+	uint8	mPCLinkReadCounter;
+	uint8	mPCLinkWriteCounter;
 	uint8	mFlashWriteCounter;
 
 	VDStringA	mModemConnection;
@@ -90,6 +218,8 @@ protected:
 
 	bool	mbShowAudioStatus;
 	ATUIAudioStatus mAudioStatus;
+
+	ATAudioMonitor	*mpAudioMonitor;
 };
 
 void ATCreateUIRenderer(IATUIRenderer **r) {
@@ -110,8 +240,11 @@ ATUIRenderer::ATUIRenderer()
 	, mHardDiskCounter(0)
 	, mHReadCounter(0)
 	, mHWriteCounter(0)
+	, mPCLinkReadCounter(0)
+	, mPCLinkWriteCounter(0)
 	, mFlashWriteCounter(0)
 	, mbShowAudioStatus(false)
+	, mpAudioMonitor(NULL)
 {
 	for(int i=0; i<15; ++i) {
 		mStatusCounter[i] = i+1;
@@ -133,6 +266,13 @@ void ATUIRenderer::SetHActivity(bool write) {
 		mHWriteCounter = 30;
 	else
 		mHReadCounter = 30;
+}
+
+void ATUIRenderer::SetPCLinkActivity(bool write) {
+	if (write)
+		mPCLinkWriteCounter = 30;
+	else
+		mPCLinkReadCounter = 30;
 }
 
 void ATUIRenderer::SetIDEActivity(bool write, uint32 lba) {
@@ -173,6 +313,10 @@ void ATUIRenderer::SetAudioStatus(ATUIAudioStatus *status) {
 	} else {
 		mbShowAudioStatus = false;
 	}
+}
+
+void ATUIRenderer::SetAudioMonitor(ATAudioMonitor *monitor) {
+	mpAudioMonitor = monitor;
 }
 
 void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
@@ -244,7 +388,7 @@ void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
 		DrawString8(pxdst, palette, 7, y, 0x94, 0, buf);
 	}
 
-	// draw IDE indicators
+	// draw H: indicators
 	if (mHReadCounter || mHWriteCounter) {
 		DrawString8(pxdst, palette, 48, y, 0x00, 0xB4, "H:  ");
 
@@ -256,6 +400,21 @@ void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
 		if (mHWriteCounter) {
 			--mHWriteCounter;
 			DrawString8(pxdst, palette, 64, y, mHWriteCounter >= 25 ? 0xFF : 0x00, 0xB4, "W");
+		}
+	}
+
+	// draw PCLink indicators (same place as H:)
+	if (mPCLinkReadCounter || mPCLinkWriteCounter) {
+		DrawString8(pxdst, palette, 48, y, 0x00, 0xB4, "PCL:  ");
+
+		if (mPCLinkReadCounter) {
+			--mPCLinkReadCounter;
+			DrawString8(pxdst, palette, 70, y, mHReadCounter >= 25 ? 0xFF : 0x00, 0xB4, "R");
+		}
+
+		if (mPCLinkWriteCounter) {
+			--mPCLinkWriteCounter;
+			DrawString8(pxdst, palette, 76, y, mHWriteCounter >= 25 ? 0xFF : 0x00, 0xB4, "W");
 		}
 	}
 
@@ -313,5 +472,98 @@ void ATUIRenderer::Render(const VDPixmap& pxdst, const uint32 *palette) {
 		}
 
 		DrawString8(pxdst, palette, 64, y, 0xFF, 0x00, buf);
+	}
+
+	// draw audio monitor
+	if (mpAudioMonitor) {
+		ATPokeyAudioLog *log;
+		ATPokeyRegisterState *rstate;
+
+		mpAudioMonitor->Update(&log, &rstate);
+
+		uint8 audctl = rstate->mReg[8];
+
+		int slowRate = audctl & 0x01 ? 114 : 28;
+		int divisors[4];
+
+		divisors[0] = (audctl & 0x40) ? (int)rstate->mReg[0] + 4 : ((int)rstate->mReg[0] + 1) * slowRate;
+
+		divisors[1] = (audctl & 0x10)
+			? (audctl & 0x40) ? rstate->mReg[0] + ((int)rstate->mReg[2] << 8) + 7 : (rstate->mReg[0] + ((int)rstate->mReg[2] << 8) + 1) * slowRate
+			: ((int)rstate->mReg[2] + 1) * slowRate;
+
+		divisors[2] = (audctl & 0x20) ? (int)rstate->mReg[4] + 4 : ((int)rstate->mReg[4] + 1) * slowRate;
+
+		divisors[3] = (audctl & 0x08)
+			? (audctl & 0x20) ? rstate->mReg[4] + ((int)rstate->mReg[6] << 8) + 7 : (rstate->mReg[4] + ((int)rstate->mReg[6] << 8) + 1) * slowRate
+			: ((int)rstate->mReg[6] + 1) * slowRate;
+
+		const int x = 8;
+		const int y = pxdst.h - 128;
+		sint32 hstep = log->mRecordedCount ? (80 << 16) / log->mRecordedCount : 0;
+
+		Shade(pxdst, x, y, 130, 72);
+
+		for(int ch=0; ch<4; ++ch) {
+			int chy = y + 18*ch;
+			sprintf(buf, "%7.1f", 7159090.0f / 8.0f / divisors[ch]);
+
+			DrawString8(pxdst, palette, x, chy + 4, 0xFF, 0x00, buf);
+
+			// draw link/clock indicator
+			if ((ch == 1 && (audctl & 0x10)) || (ch == 3 && (audctl & 0x08)))
+				DrawString5(pxdst, palette, x, chy + 13, 0xFF, 0x00, "16");
+			else if ((ch == 0 && (audctl & 0x40)) || (ch == 2 && (audctl & 0x20)))
+				DrawString5(pxdst, palette, x + 8, chy + 13, 0xFF, 0x00, "1.79");
+			else
+				DrawString5(pxdst, palette, x + 8, chy + 13, 0xFF, 0x00, audctl & 1 ? "15K" : "64K");
+
+			// draw high-pass indicator
+			if ((ch == 0 && (audctl & 4)) || (ch == 1 && (audctl & 2)))
+				DrawString5(pxdst, palette, x + 22, chy + 13, 0xFF, 0x00, "H");
+
+			// draw mode indicator
+			const uint8 ctl = rstate->mReg[ch*2 + 1];
+			if (ctl & 0x10)
+				DrawString5(pxdst, palette, x + 30, chy + 13, 0xFF, 0x00, "V");
+			else {
+				DrawString5(pxdst, palette, x + 30, chy + 13, 0xFF, 0x00, (ctl & 0x80) ? "L" : "5");
+
+				if (ctl & 0x20)
+					DrawString5(pxdst, palette, x + 36, chy + 13, 0xFF, 0x00, "T");
+				else if (ctl & 0x40)
+					DrawString5(pxdst, palette, x + 36, chy + 13, 0xFF, 0x00, "4");
+				else
+					DrawString5(pxdst, palette, x + 36, chy + 13, 0xFF, 0x00, (audctl & 0x80) ? "9" : "17");
+			}
+
+			// draw volume indicator
+			int vol = ctl & 15;
+			FillRect(pxdst, palette, 0xFF, x + 48, chy + 18 - vol, 1, vol);
+
+			if (log->mRecordedCount) {
+				uint32 hpos = 0x8000 + ((x + 50) << 16);
+				int pybase = chy + 17;
+
+				for(uint32 pos = 0; pos < log->mRecordedCount; ++pos) {
+					int px = hpos >> 16;
+					int py = pybase - log->mpStates[pos].mChannelOutputs[ch];
+
+					if (px < pxdst.w && py < pxdst.h) {
+						if (pxdst.format == nsVDPixmap::kPixFormat_XRGB8888) {
+							uint32 *ppx = (uint32 *)((char *)pxdst.data + pxdst.pitch * py) + px;
+
+							*ppx = 0xFFFFFF;
+						} else if (pxdst.format == nsVDPixmap::kPixFormat_Pal8) {
+							((uint8 *)pxdst.data)[pxdst.pitch * py + px] = 0xFF;
+						}
+					}
+
+					hpos += hstep;
+				}
+			}
+		}
+
+		mpAudioMonitor->Reset();
 	}
 }

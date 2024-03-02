@@ -45,6 +45,19 @@ namespace nsVDWinFormats {
 	};
 
 	extern const Guid kKSDATAFORMAT_SUBTYPE_PCM;
+
+	// Helper class.
+	struct WaveFormatExPCM : public WaveFormatEx{
+		WaveFormatExPCM(uint32 samplingRate, uint32 channels, uint32 precision) {
+			mFormatTag = kWAVE_FORMAT_PCM;
+			mChannels = channels;
+			mSamplesPerSec = samplingRate;
+			mBitsPerSample = precision;
+			mBlockAlign = mChannels * ((precision + 7) >> 3);
+			mAvgBytesPerSec = samplingRate * mBlockAlign;
+			mSize = 0;
+		}
+	};
 }
 
 #ifdef _MSC_VER

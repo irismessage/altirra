@@ -24,6 +24,7 @@
 #include <math.h>
 #include "cassette.h"
 #include "cpu.h"
+#include "cpumemory.h"
 #include "console.h"
 
 using namespace nsVDWinFormats;
@@ -967,7 +968,7 @@ void ATCassetteEmulator::OnScheduledEvent(uint32 id) {
 		mpPlayEvent = NULL;
 
 		if (kBR_ByteReceived == ProcessBit()) {
-			mpPokey->ReceiveSIOByte(mDataByte);
+			mpPokey->ReceiveSIOByte(mDataByte, 0);
 			//VDDEBUG("Receiving byte: %02x\n", mDataByte);
 		}
 

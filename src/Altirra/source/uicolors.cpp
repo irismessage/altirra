@@ -42,7 +42,9 @@ protected:
 	void UpdateLabel(uint32 id);
 	void UpdateColorImage();
 
-	ATColorParams mParams;
+	ATColorSettings mSettings;
+	ATColorParams *mpParams;
+	ATColorParams *mpOtherParams;
 	HMENU mPresetsPopupMenu;
 };
 
@@ -66,6 +68,8 @@ bool ATAdjustColorsDialog::OnLoaded() {
 	TBSetRange(IDC_ARTSAT, 0, 400);
 	TBSetRange(IDC_ARTBRI, -50, 50);
 
+	EnableControl(IDC_PALQUIRKS, g_sim.GetGTIA().IsPALMode());
+
 	OnDataExchange(false);
 	SetFocusToControl(IDC_HUESTART);
 	return true;
@@ -84,16 +88,32 @@ void ATAdjustColorsDialog::OnDataExchange(bool write) {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
 	if (write) {
+		if (!mSettings.mbUsePALParams)
+			*mpOtherParams = *mpParams;
+
+		g_sim.GetGTIA().SetColorSettings(mSettings);
 	} else {
-		mParams = gtia.GetColorParams();
-		TBSetValue(IDC_HUESTART, VDRoundToInt(mParams.mHueStart));
-		TBSetValue(IDC_HUERANGE, VDRoundToInt(mParams.mHueRange));
-		TBSetValue(IDC_BRIGHTNESS, VDRoundToInt(mParams.mBrightness * 100.0f));
-		TBSetValue(IDC_CONTRAST, VDRoundToInt(mParams.mContrast * 100.0f));
-		TBSetValue(IDC_SATURATION, VDRoundToInt(mParams.mSaturation * 100.0f));
-		TBSetValue(IDC_ARTPHASE, VDRoundToInt(mParams.mArtifactHue));
-		TBSetValue(IDC_ARTSAT, VDRoundToInt(mParams.mArtifactSat * 100.0f));
-		TBSetValue(IDC_ARTBRI, VDRoundToInt(mParams.mArtifactBias * 100.0f));
+		mSettings = gtia.GetColorSettings();
+
+		if (gtia.IsPALMode()) {
+			mpParams = &mSettings.mPALParams;
+			mpOtherParams = &mSettings.mNTSCParams;
+		} else {
+			mpParams = &mSettings.mNTSCParams;
+			mpOtherParams = &mSettings.mPALParams;
+		}
+
+		CheckButton(IDC_SHARED, !mSettings.mbUsePALParams);
+		CheckButton(IDC_PALQUIRKS, mpParams->mbUsePALQuirks);
+
+		TBSetValue(IDC_HUESTART, VDRoundToInt(mpParams->mHueStart));
+		TBSetValue(IDC_HUERANGE, VDRoundToInt(mpParams->mHueRange));
+		TBSetValue(IDC_BRIGHTNESS, VDRoundToInt(mpParams->mBrightness * 100.0f));
+		TBSetValue(IDC_CONTRAST, VDRoundToInt(mpParams->mContrast * 100.0f));
+		TBSetValue(IDC_SATURATION, VDRoundToInt(mpParams->mSaturation * 100.0f));
+		TBSetValue(IDC_ARTPHASE, VDRoundToInt(mpParams->mArtifactHue));
+		TBSetValue(IDC_ARTSAT, VDRoundToInt(mpParams->mArtifactSat * 100.0f));
+		TBSetValue(IDC_ARTBRI, VDRoundToInt(mpParams->mArtifactBias * 100.0f));
 
 		UpdateLabel(IDC_HUESTART);
 		UpdateLabel(IDC_HUERANGE);
@@ -115,67 +135,102 @@ bool ATAdjustColorsDialog::OnCommand(uint32 id, uint32 extcode) {
 
 		TrackPopupMenuEx(GetSubMenu(mPresetsPopupMenu, 0), TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON, tpp.rcExclude.right, tpp.rcExclude.top, mhdlg, &tpp);
 		return true;
-	} else if (id == ID_COLORS_ORIGINAL) {
-		ATGTIAEmulator& gtia = g_sim.GetGTIA();
-		gtia.ResetColors();
+	} else if (id == IDC_SHARED) {
+		bool split = !IsButtonChecked(IDC_SHARED);
+
+		if (split != mSettings.mbUsePALParams) {
+			if (!split) {
+				if (!Confirm(L"Enabling palette sharing will overwrite the other profile with the current colors. Proceed?", L"Altirra Warning")) {
+					CheckButton(IDC_SHARED, false);
+					return true;
+				}
+			}
+
+			mSettings.mbUsePALParams = split;
+			OnDataExchange(true);
+		}
+
+		return true;
+	} else if (id == IDC_PALQUIRKS) {
+		bool quirks = IsButtonChecked(IDC_PALQUIRKS);
+
+		if (mpParams->mbUsePALQuirks != quirks) {
+			mpParams->mbUsePALQuirks = quirks;
+
+			OnDataExchange(true);
+			UpdateColorImage();
+		}		
+	} else if (id == ID_COLORS_DEFAULTNTSC) {
+		mpParams->mHueStart = -15.0f;
+		mpParams->mHueRange = 360.0f * 15.0f / 14.4f;
+		mpParams->mBrightness = 0.0f;
+		mpParams->mContrast = 1.0f;
+		mpParams->mSaturation = 75.0f / 255.0f;
+		mpParams->mArtifactHue = 96.0f;
+		mpParams->mArtifactSat = 2.76f;
+		mpParams->mArtifactBias = 0.35f;
+		mpParams->mbUsePALQuirks = false;
+		OnDataExchange(true);
+		OnDataExchange(false);
+	} else if (id == ID_COLORS_DEFAULTPAL) {
+		mpParams->mHueStart = -23.0f;
+		mpParams->mHueRange = 23.5f * 15.0f;
+		mpParams->mBrightness = 0.0f;
+		mpParams->mContrast = 1.0f;
+		mpParams->mSaturation = 0.29f;
+		mpParams->mArtifactHue = 96.0f;
+		mpParams->mArtifactSat = 2.76f;
+		mpParams->mArtifactBias = 0.35f;
+		mpParams->mbUsePALQuirks = true;
+		OnDataExchange(true);
 		OnDataExchange(false);
 	} else if (id == ID_COLORS_ALTERNATE) {
-		ATColorParams params;
-		params.mHueStart = -29.0f;
-		params.mHueRange = 26.1f * 15.0f;
-		params.mBrightness = -0.03f;
-		params.mContrast = 0.88f;
-		params.mSaturation = 0.23f;
-		params.mArtifactHue = 96.0f;
-		params.mArtifactSat = 2.76f;
-		params.mArtifactBias = 0.35f;
-
-		ATGTIAEmulator& gtia = g_sim.GetGTIA();
-		gtia.SetColorParams(params);
+		mpParams->mHueStart = -29.0f;
+		mpParams->mHueRange = 26.1f * 15.0f;
+		mpParams->mBrightness = -0.03f;
+		mpParams->mContrast = 0.88f;
+		mpParams->mSaturation = 0.23f;
+		mpParams->mArtifactHue = 96.0f;
+		mpParams->mArtifactSat = 2.76f;
+		mpParams->mArtifactBias = 0.35f;
+		mpParams->mbUsePALQuirks = false;
+		OnDataExchange(true);
 		OnDataExchange(false);
 	} else if (id == ID_COLORS_AUTHENTICNTSC) {
-		ATColorParams params;
-		params.mHueStart = -51.0f;
-		params.mHueRange = 418.0f;
-		params.mBrightness = -0.11f;
-		params.mContrast = 1.04f;
-		params.mSaturation = 0.34f;
-		params.mArtifactHue = 96.0f;
-		params.mArtifactSat = 2.76f;
-		params.mArtifactBias = 0.35f;
-
-		ATGTIAEmulator& gtia = g_sim.GetGTIA();
-		gtia.SetColorParams(params);
+		mpParams->mHueStart = -51.0f;
+		mpParams->mHueRange = 418.0f;
+		mpParams->mBrightness = -0.11f;
+		mpParams->mContrast = 1.04f;
+		mpParams->mSaturation = 0.34f;
+		mpParams->mArtifactHue = 96.0f;
+		mpParams->mArtifactSat = 2.76f;
+		mpParams->mArtifactBias = 0.35f;
+		mpParams->mbUsePALQuirks = false;
+		OnDataExchange(true);
 		OnDataExchange(false);
 	} else if (id == ID_COLORS_G2F) {
-		ATColorParams params;
-
-		params.mHueStart = -9.36754f;
-		params.mHueRange = 361.019f;
-		params.mBrightness = +0.174505f;
-		params.mContrast = 0.82371f;
-		params.mSaturation = 0.21993f;
-		params.mArtifactHue = 96.0f;
-		params.mArtifactSat = 2.76f;
-		params.mArtifactBias = 0.35f;
-
-		ATGTIAEmulator& gtia = g_sim.GetGTIA();
-		gtia.SetColorParams(params);
+		mpParams->mHueStart = -9.36754f;
+		mpParams->mHueRange = 361.019f;
+		mpParams->mBrightness = +0.174505f;
+		mpParams->mContrast = 0.82371f;
+		mpParams->mSaturation = 0.21993f;
+		mpParams->mArtifactHue = 96.0f;
+		mpParams->mArtifactSat = 2.76f;
+		mpParams->mArtifactBias = 0.35f;
+		mpParams->mbUsePALQuirks = false;
+		OnDataExchange(true);
 		OnDataExchange(false);
 	} else if (id == ID_COLORS_OLIVIERPAL) {
-		ATColorParams params;
-
-		params.mHueStart = -14.7889f;
-		params.mHueRange = 385.155f;
-		params.mBrightness = +0.057038f;
-		params.mContrast = 0.941149f;
-		params.mSaturation = 0.195861f;
-		params.mArtifactHue = 96.0f;
-		params.mArtifactSat = 2.76f;
-		params.mArtifactBias = 0.35f;
-
-		ATGTIAEmulator& gtia = g_sim.GetGTIA();
-		gtia.SetColorParams(params);
+		mpParams->mHueStart = -14.7889f;
+		mpParams->mHueRange = 385.155f;
+		mpParams->mBrightness = +0.057038f;
+		mpParams->mContrast = 0.941149f;
+		mpParams->mSaturation = 0.195861f;
+		mpParams->mArtifactHue = 96.0f;
+		mpParams->mArtifactSat = 2.76f;
+		mpParams->mArtifactBias = 0.35f;
+		mpParams->mbUsePALQuirks = false;
+		OnDataExchange(true);
 		OnDataExchange(false);
 	}
 
@@ -186,80 +241,80 @@ void ATAdjustColorsDialog::OnHScroll(uint32 id, int code) {
 	if (id == IDC_HUESTART) {
 		float v = (float)TBGetValue(IDC_HUESTART);
 
-		if (mParams.mHueStart != v) {
-			mParams.mHueStart = v;
+		if (mpParams->mHueStart != v) {
+			mpParams->mHueStart = v;
 
-			g_sim.GetGTIA().SetColorParams(mParams);
+			OnDataExchange(true);
 			UpdateColorImage();
 			UpdateLabel(id);
 		}
 	} else if (id == IDC_HUERANGE) {
 		float v = (float)TBGetValue(IDC_HUERANGE);
 
-		if (mParams.mHueRange != v) {
-			mParams.mHueRange = v;
+		if (mpParams->mHueRange != v) {
+			mpParams->mHueRange = v;
 
-			g_sim.GetGTIA().SetColorParams(mParams);
+			OnDataExchange(true);
 			UpdateColorImage();
 			UpdateLabel(id);
 		}
 	} else if (id == IDC_BRIGHTNESS) {
 		float v = (float)TBGetValue(IDC_BRIGHTNESS) / 100.0f;
 
-		if (mParams.mBrightness != v) {
-			mParams.mBrightness = v;
+		if (mpParams->mBrightness != v) {
+			mpParams->mBrightness = v;
 
-			g_sim.GetGTIA().SetColorParams(mParams);
+			OnDataExchange(true);
 			UpdateColorImage();
 			UpdateLabel(id);
 		}
 	} else if (id == IDC_CONTRAST) {
 		float v = (float)TBGetValue(IDC_CONTRAST) / 100.0f;
 
-		if (mParams.mContrast != v) {
-			mParams.mContrast = v;
+		if (mpParams->mContrast != v) {
+			mpParams->mContrast = v;
 
-			g_sim.GetGTIA().SetColorParams(mParams);
+			OnDataExchange(true);
 			UpdateColorImage();
 			UpdateLabel(id);
 		}
 	} else if (id == IDC_SATURATION) {
 		float v = (float)TBGetValue(IDC_SATURATION) / 100.0f;
 
-		if (mParams.mSaturation != v) {
-			mParams.mSaturation = v;
+		if (mpParams->mSaturation != v) {
+			mpParams->mSaturation = v;
 
-			g_sim.GetGTIA().SetColorParams(mParams);
+			OnDataExchange(true);
 			UpdateColorImage();
 			UpdateLabel(id);
 		}
 	} else if (id == IDC_ARTPHASE) {
 		float v = (float)TBGetValue(IDC_ARTPHASE);
 
-		if (mParams.mArtifactHue != v) {
-			mParams.mArtifactHue = v;
+		if (mpParams->mArtifactHue != v) {
+			mpParams->mArtifactHue = v;
 
-			g_sim.GetGTIA().SetColorParams(mParams);
+			OnDataExchange(true);
 			UpdateColorImage();
 			UpdateLabel(id);
 		}
 	} else if (id == IDC_ARTSAT) {
 		float v = (float)TBGetValue(IDC_ARTSAT) / 100.0f;
 
-		if (mParams.mArtifactSat != v) {
-			mParams.mArtifactSat = v;
+		if (mpParams->mArtifactSat != v) {
+			mpParams->mArtifactSat = v;
 
-			g_sim.GetGTIA().SetColorParams(mParams);
+			OnDataExchange(true);
 			UpdateColorImage();
 			UpdateLabel(id);
 		}
 	} else if (id == IDC_ARTBRI) {
 		float v = (float)TBGetValue(IDC_ARTBRI) / 100.0f;
 
-		if (mParams.mArtifactBias != v) {
-			mParams.mArtifactBias = v;
+		if (mpParams->mArtifactBias != v) {
+			mpParams->mArtifactBias = v;
 
-			g_sim.GetGTIA().SetColorParams(mParams);
+			OnDataExchange(true);
 			UpdateColorImage();
 			UpdateLabel(id);
 		}
@@ -311,28 +366,28 @@ VDZINT_PTR ATAdjustColorsDialog::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARA
 void ATAdjustColorsDialog::UpdateLabel(uint32 id) {
 	switch(id) {
 		case IDC_HUESTART:
-			SetControlTextF(IDC_STATIC_HUESTART, L"%.0f\u00B0", mParams.mHueStart);
+			SetControlTextF(IDC_STATIC_HUESTART, L"%.0f\u00B0", mpParams->mHueStart);
 			break;
 		case IDC_HUERANGE:
-			SetControlTextF(IDC_STATIC_HUERANGE, L"%.1f\u00B0", mParams.mHueRange / 15.0f);
+			SetControlTextF(IDC_STATIC_HUERANGE, L"%.1f\u00B0", mpParams->mHueRange / 15.0f);
 			break;
 		case IDC_BRIGHTNESS:
-			SetControlTextF(IDC_STATIC_BRIGHTNESS, L"%+.0f%%", mParams.mBrightness * 100.0f);
+			SetControlTextF(IDC_STATIC_BRIGHTNESS, L"%+.0f%%", mpParams->mBrightness * 100.0f);
 			break;
 		case IDC_CONTRAST:
-			SetControlTextF(IDC_STATIC_CONTRAST, L"%.0f%%", mParams.mContrast * 100.0f);
+			SetControlTextF(IDC_STATIC_CONTRAST, L"%.0f%%", mpParams->mContrast * 100.0f);
 			break;
 		case IDC_SATURATION:
-			SetControlTextF(IDC_STATIC_SATURATION, L"%.0f%%", mParams.mSaturation * 100.0f);
+			SetControlTextF(IDC_STATIC_SATURATION, L"%.0f%%", mpParams->mSaturation * 100.0f);
 			break;
 		case IDC_ARTPHASE:
-			SetControlTextF(IDC_STATIC_ARTPHASE, L"%.0f\u00B0", mParams.mArtifactHue);
+			SetControlTextF(IDC_STATIC_ARTPHASE, L"%.0f\u00B0", mpParams->mArtifactHue);
 			break;
 		case IDC_ARTSAT:
-			SetControlTextF(IDC_STATIC_ARTSAT, L"%.0f%%", mParams.mArtifactSat * 100.0f);
+			SetControlTextF(IDC_STATIC_ARTSAT, L"%.0f%%", mpParams->mArtifactSat * 100.0f);
 			break;
 		case IDC_ARTBRI:
-			SetControlTextF(IDC_STATIC_ARTBRI, L"%+.0f%%", mParams.mArtifactBias * 100.0f);
+			SetControlTextF(IDC_STATIC_ARTBRI, L"%+.0f%%", mpParams->mArtifactBias * 100.0f);
 			break;
 	}
 }

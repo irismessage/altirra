@@ -164,6 +164,14 @@
 					>
 				</File>
 			</Filter>
+			<Filter
+				Name="ATDiskLoader"
+				>
+				<File
+					RelativePath=".\source\ATDiskLoader\main.s"
+					>
+				</File>
+			</Filter>
 		</Filter>
 		<Filter
 			Name="Header Files"

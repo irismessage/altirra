@@ -95,6 +95,13 @@ void ATScheduler::SetEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id, AT
 	ptr = AddEvent(ticks, cb, id);
 }
 
+void ATScheduler::UnsetEvent(ATEvent *&ptr) {
+	if (ptr) {
+		RemoveEvent(ptr);
+		ptr = NULL;
+	}
+}
+
 ATEvent *ATScheduler::AddEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id) {
 	VDASSERT(ticks > 0 && ticks < 100000000);
 	VDASSERT(id);

@@ -118,7 +118,7 @@ struct VDDelegateAdapterM {
 
 	static void Init(VDDelegate& dst, T_Fn2 fn) {
 		dst.mpCallback = Fn2;
-		dst.mpFnM = reinterpret_cast<void(VDDelegateHolderM::*)()>(fn2);
+		dst.mpFnM = reinterpret_cast<void(VDDelegateHolderM::*)()>(fn);
 	}
 
 	static void Fn(void *src, const void *info, VDDelegate& del) {

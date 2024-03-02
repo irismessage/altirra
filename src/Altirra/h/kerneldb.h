@@ -2,6 +2,7 @@
 #define AT_KERNELDB_H
 
 #include "cpu.h"
+#include "cpumemory.h"
 #include "ksyms.h"
 
 struct ATMemoryAdapter {
@@ -76,13 +77,18 @@ public:
 		return ATByteVAdapter(mpMem, kAddress + offset);
 	}
 
+	uint8 operator-=(uint8 delta) {
+		uint8 c = mpMem->ReadByte(kAddress) - delta;
+		mpMem->WriteByte(kAddress, c);
+		return c;
+	}
+
 	uint8 operator&=(uint8 mask) {
 		uint8 c = mpMem->ReadByte(kAddress) & mask;
 		mpMem->WriteByte(kAddress, c);
 		return c;
 	}
 
-private:
 	ATCPUEmulatorMemory *mpMem;
 };
 
@@ -121,7 +127,18 @@ public:
 		return (uint16)(lo + ((uint32)hi << 8));
 	}
 
-private:
+	ATByteAdapter<kAddress> Lo() {
+		ATByteAdapter<kAddress> ad = {mpMem};
+
+		return ad;
+	}
+
+	ATByteAdapter<kAddress + 1> Hi() {
+		ATByteAdapter<kAddress + 1> ad = {mpMem};
+
+		return ad;
+	}
+
 	ATCPUEmulatorMemory *mpMem;
 };
 
@@ -141,6 +158,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::POKMSK> POKMSK;
 		ATByteAdapter<ATKernelSymbols::BRKKEY> BRKKEY;
 		ATByteAdapter<ATKernelSymbols::RTCLOK> RTCLOK;
+		ATWordAdapter<ATKernelSymbols::BUFADR> BUFADR;
 		ATByteAdapter<ATKernelSymbols::ICHIDZ> ICHIDZ;
 		ATByteAdapter<ATKernelSymbols::ICDNOZ> ICDNOZ;
 		ATByteAdapter<ATKernelSymbols::ICCOMZ> ICCOMZ;
@@ -184,9 +202,10 @@ struct ATKernelDatabase {
 		ATWordAdapter<ATKernelSymbols::OLDADR> OLDADR;
 		ATByteAdapter<ATKernelSymbols::PALNTS> PALNTS;
 		ATByteAdapter<ATKernelSymbols::LOGCOL> LOGCOL;
+		ATWordAdapter<ATKernelSymbols::ADRESS> ADRESS;
 		ATByteAdapter<ATKernelSymbols::RAMTOP> RAMTOP;
 		ATByteAdapter<ATKernelSymbols::BUFCNT> BUFCNT;
-		ATWordAdapter<ATKernelSymbols::BUFADR> BUFADR;
+		ATWordAdapter<ATKernelSymbols::BUFSTR> BUFSTR;
 		ATByteAdapter<ATKernelSymbols::SWPFLG> SWPFLG;
 		ATWordAdapter<ATKernelSymbols::RAMLO > RAMLO ;
 		ATByteAdapter<ATKernelSymbols::CIX   > CIX   ;
@@ -247,10 +266,19 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::CRSINH> CRSINH;
 		ATByteAdapter<ATKernelSymbols::CHACT > CHACT;
 		ATByteAdapter<ATKernelSymbols::CHBAS > CHBAS;
+		ATByteAdapter<ATKernelSymbols::ATACHR> ATACHR;
 		ATByteAdapter<ATKernelSymbols::DSPFLG> DSPFLG;
 		ATByteAdapter<ATKernelSymbols::DDEVIC> DDEVIC;
 		ATByteAdapter<ATKernelSymbols::DUNIT > DUNIT;
+		ATByteAdapter<ATKernelSymbols::DCOMND> DCOMND;
 		ATByteAdapter<ATKernelSymbols::DSTATS> DSTATS;
+		ATByteAdapter<ATKernelSymbols::DBUFLO> DBUFLO;
+		ATByteAdapter<ATKernelSymbols::DBUFHI> DBUFHI;
+		ATByteAdapter<ATKernelSymbols::DTIMLO> DTIMLO;
+		ATByteAdapter<ATKernelSymbols::DBYTLO> DBYTLO;
+		ATByteAdapter<ATKernelSymbols::DBYTHI> DBYTHI;
+		ATByteAdapter<ATKernelSymbols::DAUX1 > DAUX1;
+		ATByteAdapter<ATKernelSymbols::DAUX2 > DAUX2;
 		ATWordAdapter<ATKernelSymbols::TIMER1> TIMER1;
 		ATWordAdapter<ATKernelSymbols::TIMER2> TIMER2;
 		ATByteAdapter<ATKernelSymbols::HATABS> HATABS;

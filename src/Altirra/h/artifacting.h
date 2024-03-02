@@ -45,12 +45,16 @@ protected:
 
 	void ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
 	void ArtifactNTSCHi(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
+	void ArtifactPALHi(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool oddline);
 	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N]);
 	void BlendExchange(uint32 *dst, uint32 *blendDst, uint32 n);
 
 	void RecomputeNTSCTables(const ATColorParams& params);
+	void RecomputePALTables(const ATColorParams& params);
 
 	bool mbPAL;
+	bool mbHighNTSCTablesInited;
+	bool mbHighPALTablesInited;
 	bool mbChromaArtifacts;
 	bool mbChromaArtifactsHi;
 	bool mbBlendActive;
@@ -63,12 +67,15 @@ protected:
 	int mArtifactBlue;
 	int mArtifactYScale;
 
+	ATColorParams mColorParams;
+
 	int mChromaVectors[16][3];
 	uint32 mPalette[256];
 
 	union {
 		uint8 mPALDelayLine[N];
 		uint8 mPALDelayLine32[N*2*3];	// RGB24 @ 14MHz resolution
+		__declspec(align(16)) uint32 mPALDelayLineUV[2][N];
 	};
 
 	union {
@@ -76,8 +83,8 @@ protected:
 		uint32 mPrevFrame14MHz[M][N*2];
 	};
 
-	//  NTSC artifacting
 	union {
+		// NTSC high artifacting - scalar/MMX (64-bit)
 		struct {
 			__declspec(align(8)) uint32 mPalToR[256][2][12];
 			__declspec(align(8)) uint32 mPalToG[256][2][12];
@@ -87,6 +94,7 @@ protected:
 			__declspec(align(8)) uint32 mPalToBTwin[256][12];
 		} m2x;
 
+		// NTSC high artifacting - SSE2 (128-bit)
 		struct {
 			__declspec(align(16)) uint32 mPalToR[256][4][16];
 			__declspec(align(16)) uint32 mPalToG[256][4][16];
@@ -95,6 +103,38 @@ protected:
 			__declspec(align(16)) uint32 mPalToGTwin[256][2][16];
 			__declspec(align(16)) uint32 mPalToBTwin[256][2][16];
 		} m4x;
+
+		// PAL high artifacting - scalar (32-bit) (448K)
+		struct {
+			// [oddLine][color][phase][offset]
+			uint32 mPalToY[2][256][8][4];
+			uint32 mPalToU[2][256][8][12];
+			uint32 mPalToV[2][256][8][12];
+		} mPal2x;
+
+		// PAL high artifacting - scalar (64-bit) (608K)
+		struct {
+			// [oddLine][color][phase][offset]
+			uint32 mPalToY[2][256][8][6];
+			uint32 mPalToU[2][256][8][16];
+			uint32 mPalToV[2][256][8][16];
+
+			uint32 mPalToYTwin[2][256][4][6];
+			uint32 mPalToUTwin[2][256][4][16];
+			uint32 mPalToVTwin[2][256][4][16];
+		} mPal4x;
+
+		// PAL high artifacting - scalar (128-bit) (960K)
+		struct {
+			// [oddLine][color][phase][offset]
+			uint32 mPalToY[2][256][8][8];
+			uint32 mPalToU[2][256][8][16];
+			uint32 mPalToV[2][256][8][16];
+
+			uint32 mPalToYTwin[2][256][4][8];
+			uint32 mPalToUTwin[2][256][4][16];
+			uint32 mPalToVTwin[2][256][4][16];
+		} mPal8x;
 	};
 };
 

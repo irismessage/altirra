@@ -19,8 +19,9 @@ NOKERNEL_SRCFILES = source\nokernel\main.xasm
 BASIC_SRCFILES = source\basic\main.xasm
 SUPERKERNEL_SRCFILES = source\superkernel\main.xasm source\superkernel\includes.xasm
 NOCARTRIDGE_SRCFILES = source\nocartridge\main.xasm
+ATDISKLOADER_SRCFILES = source\ATDiskLoader\main.s
 
-all: kernel nokernel basic superkernel nocartridge
+all: kernel nokernel basic superkernel nocartridge atdiskloader64 atdiskloader128
 
 clean:
 	if exist "$(OUT)\kernel.rom" del "$(OUT)\kernel.rom"
@@ -28,6 +29,8 @@ clean:
 	if exist "$(OUT)\basic.rom" del "$(OUT)\basic.rom"
 	if exist "$(OUT)\superkernel.rom" del "$(OUT)\superkernel.rom"
 	if exist "$(OUT)\nocartridge.rom" del "$(OUT)\nocartridge.rom"
+	if exist "$(OUT)\atdiskload64.rom" del "$(OUT)\atdiskload64.rom"
+	if exist "$(OUT)\atdiskload128.rom" del "$(OUT)\atdiskload128.rom"
 
 kernel: $(OUT)\kernel.rom
 
@@ -39,18 +42,27 @@ superkernel: $(OUT)\superkernel.rom
 
 nocartridge: $(OUT)\nocartridge.rom
 
+atdiskloader64: $(OUT)\atdiskloader64.bin
+
+atdiskloader128: $(OUT)\atdiskloader128.bin
+
 $(OUT)\kernel.rom: $(SRCFILES)
-#	-$(MADS) -x -l main.xasm
-	-$(MADS) -p -b:$$c000 -l:$(OUT)\kernel.lst -o:$(OUT)\kernel.rom -l source\main.xasm
+	@$(MADS) -s -p -b:$$c000 -l:$(OUT)\kernel.lst -o:$(OUT)\kernel.rom source\main.xasm
 
 $(OUT)\nokernel.rom: $(NOKERNEL_SRCFILES)
-	-$(MADS) -p -b:$$c000 -l:$(OUT)\nokernel.lst -o:$(OUT)\nokernel.rom -l source\nokernel\main.xasm
+	@$(MADS) -s -p -b:$$c000 -l:$(OUT)\nokernel.lst -o:$(OUT)\nokernel.rom source\nokernel\main.xasm
 
 $(OUT)\basic.rom: $(BASIC_SRCFILES)
-	-$(MADS) -p -b:$$a000 -l:$(OUT)\basic.lst -o:$(OUT)\basic.rom -l source\basic\main.xasm
+	@$(MADS) -s -p -b:$$a000 -l:$(OUT)\basic.lst -o:$(OUT)\basic.rom source\basic\main.xasm
 
 $(OUT)\superkernel.rom: $(SUPERKERNEL_SRCFILES)
-	-$(MADS) -p -b:$$f800 -l:$(OUT)\superkernel.lst -o:$(OUT)\superkernel.rom -l source\superkernel\main.xasm
+	@$(MADS) -s -p -b:$$f800 -l:$(OUT)\superkernel.lst -o:$(OUT)\superkernel.rom source\superkernel\main.xasm
 
 $(OUT)\nocartridge.rom: $(NOCARTRIDGE_SRCFILES)
-	-$(MADS) -p -b:$$b000 -l:$(OUT)\nocartridge.lst -o:$(OUT)\nocartridge.rom -l source\nocartridge\main.xasm
+	@$(MADS) -s -p -b:$$b000 -l:$(OUT)\nocartridge.lst -o:$(OUT)\nocartridge.rom source\nocartridge\main.xasm
+
+$(OUT)\atdiskloader128.bin: $(ATDISKLOADER_SRCFILES)
+	@$(MADS) -d:MEMORY=128 -s -p -b:$$0800 -l:$(OUT)\atdiskloader128.lst -o:$(OUT)\atdiskloader128.bin source\ATDiskLoader\main.s
+
+$(OUT)\atdiskloader64.bin: $(ATDISKLOADER_SRCFILES)
+	@$(MADS) -d:MEMORY=64 -s -p -b:$$0800 -l:$(OUT)\atdiskloader64.lst -o:$(OUT)\atdiskloader64.bin source\ATDiskLoader\main.s

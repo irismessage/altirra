@@ -26,6 +26,7 @@
 #include "cpu.h"
 #include "savestate.h"
 #include "audiooutput.h"
+#include "soundboard.h"
 
 namespace {
 	enum {
@@ -61,6 +62,7 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mKBCODE(0)
 	, mKeyCodeTimer(0)
 	, mKeyCooldownTimer(0)
+	, mbKeyboardIRQPending(false)
 	, mbUseKeyCooldownTimer(true)
 	, mbShiftKeyState(false)
 	, mbControlKeyState(false)
@@ -89,6 +91,7 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mbSerialWaitingForStartBit(true)
 	, mbSerInBurstPending(false)
 	, mSerBurstMode(kSerialBurstMode_Disabled)
+	, mpAudioLog(NULL)
 	, mbFastTimer1(false)
 	, mbFastTimer3(false)
 	, mbLinkedTimers12(false)
@@ -109,6 +112,7 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mbIsSlave(isSlave)
 	, mpAudioOut(NULL)
 	, mpCassette(NULL)
+	, mpSoundBoard(NULL)
 	, mOutputSampleCount(0)
 {
 	for(int i=0; i<8; ++i) {
@@ -199,6 +203,9 @@ void ATPokeyEmulator::ColdReset() {
 	memset(mbKeyMatrix, 0, sizeof mbKeyMatrix);
 	mKeyScanCode = 0;
 	mKeyScanState = 0;
+	mbKeyboardIRQPending = false;
+
+	memset(&mState, 0, sizeof mState);
 
 	mKBCODE = 0;
 	mSKSTAT = 0xFF;
@@ -315,6 +322,14 @@ void ATPokeyEmulator::SetCassette(IATPokeyCassetteDevice *dev) {
 	mbSerialRateChanged = true;
 }
 
+void ATPokeyEmulator::SetSoundBoard(IATSoundBoardEmulator *sbe) {
+	mpSoundBoard = sbe;
+}
+
+void ATPokeyEmulator::SetAudioLog(ATPokeyAudioLog *log) {
+	mpAudioLog = log;
+}
+
 void ATPokeyEmulator::Set5200Mode(bool enable) {
 	if (mb5200Mode == enable)
 		return;
@@ -332,7 +347,14 @@ void ATPokeyEmulator::AddSIODevice(IATPokeySIODevice *device) {
 	device->PokeyAttachDevice(this);
 }
 
-void ATPokeyEmulator::ReceiveSIOByte(uint8 c) {
+void ATPokeyEmulator::RemoveSIODevice(IATPokeySIODevice *device) {
+	Devices::iterator it(std::find(mDevices.begin(), mDevices.end(), device));
+
+	if (it != mDevices.end())
+		mDevices.erase(it);
+}
+
+void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit) {
 	if (mbTraceSIO)
 		ATConsoleTaggedPrintf("POKEY: Receiving byte (c=%02x; %02x %02x)\n", c, mSERIN, mSerialInputShiftRegister);
 
@@ -344,6 +366,21 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c) {
 			ATConsoleTaggedPrintf("POKEY: Serial input overrun detected (c=%02x; %02x %02x)\n", c, mSERIN, mSerialInputShiftRegister);
 
 		mSERIN = mSerialInputShiftRegister;
+	}
+
+	// check for mismatched baud rate
+	if (cyclesPerBit) {
+		uint32 expectedCPB = GetSerialCyclesPerBit();
+		uint32 margin = (expectedCPB + 7) >> 3;
+
+		if (cyclesPerBit < expectedCPB - margin || cyclesPerBit > expectedCPB + margin) {
+			// blown read -- trash the byte and assert the framing error bit
+			c = 0xFF;
+			mSKSTAT &= 0x7F;
+
+			if (mbTraceSIO)
+				ATConsoleTaggedPrintf("POKEY: Signaling overrun due to receive rate mismatch (expected %d cycles/bit, got %d)\n", expectedCPB, cyclesPerBit);
+		}
 	}
 
 	if (mSKCTL & 0x10) {
@@ -458,16 +495,8 @@ void ATPokeyEmulator::PushKey(uint8 c, bool repeat, bool allowQueue, bool flushQ
 	mKBCODE = c;
 	mSKSTAT &= ~0x04;
 
-	if (!mKeyCodeTimer || !repeat) {
-		if ((mIRQEN & 0x40) && (mSKCTL & 2)) {
-			// If keyboard IRQ is already active, set the keyboard overrun bit.
-			if (!(mIRQST & 0x40))
-				mSKSTAT &= ~0x40;
-
-			mIRQST &= ~0x40;
-			mpConn->PokeyAssertIRQ(false);
-		}
-	}
+	if (!mKeyCodeTimer || !repeat)
+		mbKeyboardIRQPending = true;
 
 	mKeyCodeTimer = 1;
 	mKeyCooldownTimer = 0;
@@ -719,32 +748,44 @@ void ATPokeyEmulator::OnSerialOutputTick(bool cpuBased) {
 	}
 }
 
+uint32 ATPokeyEmulator::GetSerialCyclesPerBit() const {
+	uint32 divisor;
+
+	if (mbLinkedTimers34) {
+		divisor = ((uint32)mAUDF[3] << 8) + mAUDF[2] + 1;
+
+		if (mbFastTimer3)
+			divisor += 6;
+		else if (mbUse15KHzClock)
+			divisor *= 114;
+		else
+			divisor *= 28;
+
+	} else if (mbUse15KHzClock) {
+		// 15KHz clock
+		divisor = ((uint32)mAUDF[3] + 1) * 114;
+	} else {
+		// 64KHz clock
+		divisor = ((uint32)mAUDF[3] + 1) * 28;
+	}
+
+	return divisor + divisor;
+}
+
 void ATPokeyEmulator::AdvanceScanLine() {
 	if (mbSerialRateChanged) {
 		mbSerialRateChanged = false;
 
 		if (mpCassette) {
-			uint32 divisor;
-			if (mbLinkedTimers34) {
-				divisor = ((uint32)mAUDF[3] << 8) + mAUDF[2] + 1;
-				if (mbFastTimer3) {
-					divisor += 6;
-				} else if (mbUse15KHzClock) {
-					divisor *= 114;
-				} else {
-					divisor *= 28;
-				}
-
-			} else if (mbUse15KHzClock) {
-				// 15KHz clock
-				divisor = ((uint32)mAUDF[3] + 1) * 114;
-			} else {
-				// 64KHz clock
-				divisor = ((uint32)mAUDF[3] + 1) * 28;
-			}
+			uint32 divisor = GetSerialCyclesPerBit() >> 1;
 
 			mpCassette->PokeyChangeSerialRate(divisor);
 		}
+	}
+
+	if (mpAudioLog) {
+		if (mpAudioLog->mRecordedCount < mpAudioLog->mMaxCount)
+			GetAudioState(mpAudioLog->mpStates[mpAudioLog->mRecordedCount++]);
 	}
 }
 
@@ -802,6 +843,19 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 
 				uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 				mLast15KHzTime = t;
+
+				if (mbKeyboardIRQPending) {
+					mbKeyboardIRQPending = false;
+
+					if ((mIRQEN & 0x40) && (mSKCTL & 2)) {
+						// If keyboard IRQ is already active, set the keyboard overrun bit.
+						if (!(mIRQST & 0x40))
+							mSKSTAT &= ~0x40;
+
+						mIRQST &= ~0x40;
+						mpConn->PokeyAssertIRQ(false);
+					}
+				}
 
 				if (mb5200Mode && (mSKCTL & 2)) {
 					++mKeyScanCode;
@@ -1247,6 +1301,8 @@ void ATPokeyEmulator::SetupTimers(uint8 channels) {
 }
 
 uint8 ATPokeyEmulator::DebugReadByte(uint8 reg) const {
+	reg &= 0x1f;
+
 	switch(reg) {
 		case 0x00:	// $D200 POT0
 		case 0x01:	// $D201 POT1
@@ -1283,6 +1339,8 @@ uint8 ATPokeyEmulator::DebugReadByte(uint8 reg) const {
 }
 
 uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
+	reg &= 0x1f;
+
 	switch(reg) {
 		case 0x00:	// $D200 POT0
 		case 0x01:	// $D201 POT1
@@ -1368,6 +1426,10 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 }
 
 void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
+	reg &= 0x1f;
+
+	mState.mReg[reg] = value;
+
 	switch(reg) {
 		case 0x00:	// $D200 AUDF1
 			mAUDF[0] = value;
@@ -1667,6 +1729,21 @@ void ATPokeyEmulator::SaveState(ATSaveStateWriter& writer) {
 	writer.WriteUint8(mSKCTL);
 }
 
+void ATPokeyEmulator::GetRegisterState(ATPokeyRegisterState& state) const {
+	state = mState;
+}
+
+void ATPokeyEmulator::GetAudioState(ATPokeyAudioState& state) const {
+	for(int ch=0; ch<4; ++ch) {
+		int level = mChannelVolume[ch];
+
+		if (!(mAUDC[ch] & 0x10))
+			level *= mOutputs[ch];
+
+		state.mChannelOutputs[ch] = level;
+	}
+}
+
 void ATPokeyEmulator::DumpStatus(bool isSlave) {
 	for(int i=0; i<4; ++i) {
 		if (mpTimerEvents[i])
@@ -1725,7 +1802,11 @@ void ATPokeyEmulator::DumpStatus(bool isSlave) {
 void ATPokeyEmulator::FlushAudio(bool pushAudio) {
 	if (mpAudioOut) {
 		uint32 timestamp = mpConn->PokeyGetTimestamp() - 28 * mOutputSampleCount;
-		mpAudioOut->WriteAudio(mRawOutputBuffer, mpSlave ? mpSlave->mRawOutputBuffer : NULL, mOutputSampleCount, pushAudio, timestamp);
+
+		if (mpSoundBoard)
+			mpSoundBoard->WriteAudio(mRawOutputBuffer, mpSlave ? mpSlave->mRawOutputBuffer : NULL, mOutputSampleCount, pushAudio, timestamp);
+		else
+			mpAudioOut->WriteAudio(mRawOutputBuffer, mpSlave ? mpSlave->mRawOutputBuffer : NULL, mOutputSampleCount, pushAudio, timestamp);
 	}
 
 	mOutputSampleCount = 0;

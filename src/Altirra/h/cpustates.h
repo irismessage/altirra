@@ -35,6 +35,7 @@ namespace AT6502States {
 		kStateReadAddrHX,
 		kStateReadAddrHY,
 		kStateReadAddrHX_SHY,
+		kStateReadAddrHY_SHA,
 		kStateReadAddrHY_SHX,
 		kStateRead,
 		kStateReadAddX,
@@ -69,8 +70,13 @@ namespace AT6502States {
 		kStateDSetSZ,
 		kStateDSetSV,
 		kStateAddrToPC,
+		kStateCheckNMIBlocked,
 		kStateNMIVecToPC,
 		kStateIRQVecToPC,
+		kStateIRQVecToPCBlockNMIs,
+		kStateNMIOrIRQVecToPC,
+		kStateNMIOrIRQVecToPCBlockable,
+		kStateDelayInterrupts,
 		kStatePush,
 		kStatePushPCL,
 		kStatePushPCH,
@@ -143,7 +149,7 @@ namespace AT6502States {
 		kStateWaitForInterrupt,
 		kStateStop,
 		kStateTrb,
-		kStateTsb,
+		kStateTsb,		// also used by BIT #imm
 		kStateC02_Adc,
 		kStateC02_Sbc,
 
@@ -152,7 +158,9 @@ namespace AT6502States {
 		kStateReadImmH16,				// Read 16-bit immediate, high byte
 		kStateReadAddrDp,				// Read direct page offset to address register
 		kStateReadAddrDpX,				// Read direct page offset to address register and add X16
+		kStateReadAddrDpXInPage,		// Read direct page offset to address register and add X16 (no page wrap)
 		kStateReadAddrDpY,				// Read direct page offset to address register and add Y16
+		kStateReadAddrDpYInPage,		// Read direct page offset to address register and add Y16 (no page wrap)
 		kStateReadIndAddrDp,			// Read high byte of indirect address from direct page
 		kStateReadIndAddrDpY,			// Read high byte of indirect address from direct page and add Y16
 		kStateReadIndAddrDpLongH,		// Read high byte of indirect long address from direct page

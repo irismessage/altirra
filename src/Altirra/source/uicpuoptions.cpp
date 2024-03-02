@@ -44,6 +44,7 @@ void ATUICPUOptionsDialog::OnDataExchange(bool write) {
 		cpuem.SetPathfindingEnabled(IsButtonChecked(IDC_ENABLE_PATHS));
 		cpuem.SetIllegalInsnsEnabled(IsButtonChecked(IDC_ENABLE_ILLEGALS));
 		cpuem.SetStopOnBRK(IsButtonChecked(IDC_STOP_ON_BRK));
+		cpuem.SetNMIBlockingEnabled(IsButtonChecked(IDC_ALLOWNMIBLOCKING));
 
 		ATCPUMode cpuMode = kATCPUMode_6502;
 		if (IsButtonChecked(IDC_CPUMODEL_65C816))
@@ -62,6 +63,7 @@ void ATUICPUOptionsDialog::OnDataExchange(bool write) {
 		CheckButton(IDC_ENABLE_PATHS, cpuem.IsPathfindingEnabled());
 		CheckButton(IDC_ENABLE_ILLEGALS, cpuem.AreIllegalInsnsEnabled());
 		CheckButton(IDC_STOP_ON_BRK, cpuem.GetStopOnBRK());
+		CheckButton(IDC_ALLOWNMIBLOCKING, cpuem.IsNMIBlockingEnabled());
 
 		switch(cpuem.GetCPUMode()) {
 			case kATCPUMode_6502:

@@ -47,6 +47,7 @@ public:
 	void ProcessNextEvent();
 
 	void SetEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id, ATEvent *&ptr);
+	void UnsetEvent(ATEvent *&ptr);
 
 	ATEvent	*AddEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id);
 	void	RemoveEvent(ATEvent *);

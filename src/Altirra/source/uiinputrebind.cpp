@@ -12,6 +12,7 @@ public:
 
 	void SetAnchorPos(const vdpoint32& pt) { mAnchorPos = pt; }
 	void SetTarget(uint32 target) { mTargetCode = target; }
+	void SetControllerType(ATInputControllerType type) { mControllerType = type; }
 
 	uint32 GetInputCode() const { return mInputCode; }
 
@@ -26,6 +27,7 @@ protected:
 
 	uint32 mTargetCode;
 	ATInputCode mInputCode;
+	ATInputControllerType mControllerType;
 	bool mbRightShiftWasDown;
 
 	vdpoint32 mAnchorPos;
@@ -37,6 +39,7 @@ protected:
 ATUIDialogRebindInput::ATUIDialogRebindInput(ATInputManager& iman, IATJoystickManager *ijoy)
 	: VDDialogFrameW32(IDD_INPUTMAP_REBIND)
 	, mTargetCode(kATInputTrigger_Button0)
+	, mControllerType(kATInputControllerType_None)
 	, mInputCode(kATInputCode_None)
 	, mbRightShiftWasDown(false)
 	, mAnchorPos(0, 0)
@@ -115,7 +118,7 @@ VDZINT_PTR ATUIDialogRebindInput::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPAR
 
 bool ATUIDialogRebindInput::OnLoaded() {
 	VDStringW s;
-	mInputMan.GetNameForTargetCode(mTargetCode, s);
+	mInputMan.GetNameForTargetCode(mTargetCode, mControllerType, s);
 
 	SetPosition(mAnchorPos);
 	AdjustPosition();
@@ -168,11 +171,19 @@ bool ATUIDialogRebindInput::OnCommand(uint32 id, uint32 extcode) {
 	return false;
 }
 
-bool ATUIShowRebindDialog(VDGUIHandle hParent, ATInputManager& inputManager, IATJoystickManager *joyMan, uint32 targetCode, const vdpoint32& anchorPos, uint32& inputCode) {
+bool ATUIShowRebindDialog(VDGUIHandle hParent,
+						  ATInputManager& inputManager,
+						  IATJoystickManager *joyMan,
+						  uint32 targetCode,
+						  ATInputControllerType controllerType,
+						  const vdpoint32& anchorPos,
+						  uint32& inputCode)
+{
 	ATUIDialogRebindInput dlg(inputManager, joyMan);
 
 	dlg.SetAnchorPos(anchorPos);
 	dlg.SetTarget(targetCode);
+	dlg.SetControllerType(controllerType);
 
 	if (!dlg.ShowDialog(hParent))
 		return false;

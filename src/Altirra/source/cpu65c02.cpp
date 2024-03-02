@@ -348,6 +348,11 @@ bool ATCPUEmulator::Decode65C02(uint8 opcode) {
 			*mpDstState++ = kStateJccFalseRead;
 			break;
 
+		case 0x89:	// BIT #imm
+			*mpDstState++ = kStateReadImm;
+			*mpDstState++ = kStateTsb;
+			break;
+
 		case 0x02:	// Reserved NOP (2 bytes, 2 cycles)
 		case 0x22:
 		//case 0x42:	We use this as an escape.
@@ -382,6 +387,7 @@ bool ATCPUEmulator::Decode65C02(uint8 opcode) {
 			break;
 
 		case 0xDC:	// Reserved NOP (3 bytes, 4 cycles)
+		case 0xFC:
 			*mpDstState++ = kStateReadImm;
 			*mpDstState++ = kStateReadImm;
 			*mpDstState++ = kStateWait;

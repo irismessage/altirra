@@ -19,7 +19,40 @@
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/math.h>
 #include "artifacting.h"
+#include "artifacting_filters.h"
 #include "gtia.h"
+
+void ATArtifactPALLuma(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+void ATArtifactPALChroma(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+void ATArtifactPALFinal(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, const uint32 *vbuf, uint32 *ulbuf, uint32 *vlbuf, uint32 n);
+
+#ifdef VD_CPU_X86
+	void __cdecl ATArtifactNTSCAccum_MMX(void *rout, const void *table, const void *src, uint32 count);
+	void __cdecl ATArtifactNTSCAccumTwin_MMX(void *rout, const void *table, const void *src, uint32 count);
+	void __cdecl ATArtifactNTSCFinal_MMX(void *dst, const void *srcr, const void *srcg, const void *srcb, uint32 count);
+
+	void __cdecl ATArtifactNTSCAccum_SSE2(void *rout, const void *table, const void *src, uint32 count);
+	void __cdecl ATArtifactNTSCAccumTwin_SSE2(void *rout, const void *table, const void *src, uint32 count);
+
+	void __stdcall ATArtifactPALLuma_MMX(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void __stdcall ATArtifactPALLumaTwin_MMX(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void __stdcall ATArtifactPALChroma_MMX(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void __stdcall ATArtifactPALChromaTwin_MMX(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void __stdcall ATArtifactPALFinal_MMX(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, const uint32 *vbuf, uint32 *ulbuf, uint32 *vlbuf, uint32 n);
+	void __stdcall ATArtifactPALLuma_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void __stdcall ATArtifactPALLumaTwin_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void __stdcall ATArtifactPALChroma_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void __stdcall ATArtifactPALChromaTwin_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void __stdcall ATArtifactPALFinal_SSE2(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, const uint32 *vbuf, uint32 *ulbuf, uint32 *vlbuf, uint32 n);
+#endif
+
+#ifdef VD_CPU_AMD64
+	void ATArtifactPALLuma_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void ATArtifactPALLumaTwin_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void ATArtifactPALChroma_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void ATArtifactPALChromaTwin_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void ATArtifactPALFinal_SSE2(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, const uint32 *vbuf, uint32 *ulbuf, uint32 *vlbuf, uint32 n);
+#endif
 
 namespace {
 	const float kSaturation = 75.0f / 255.0f;
@@ -28,6 +61,8 @@ namespace {
 ATArtifactingEngine::ATArtifactingEngine()
 	: mbBlendActive(false)
 	, mbBlendCopy(false)
+	, mbHighNTSCTablesInited(false)
+	, mbHighPALTablesInited(false)
 {
 }
 
@@ -35,6 +70,8 @@ ATArtifactingEngine::~ATArtifactingEngine() {
 }
 
 void ATArtifactingEngine::SetColorParams(const ATColorParams& params) {
+	mColorParams = params;
+
 	mYScale = VDRoundToInt32(params.mContrast * 65280.0f * 1024.0f / 15.0f);
 	mYBias = VDRoundToInt32(params.mBrightness * 65280.0f * 1024.0f) + 512;
 	mArtifactYScale = VDRoundToInt32(params.mArtifactBias * 65280.0f * 1024.0f / 15.0f);
@@ -51,9 +88,48 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params) {
 	mChromaVectors[0][2] = 0;
 
 	for(int j=0; j<15; ++j) {
-		float theta = nsVDMath::kfTwoPi * (params.mHueStart / 360.0f + (float)j * (params.mHueRange / (15.0f * 360.0f)));
-		float i = cosf(theta);
-		float q = sinf(theta);
+		float i = 0;
+		float q = 0;
+
+		if (params.mbUsePALQuirks) {
+			static const float kPALPhaseLookup[][4]={
+				{ -1.0f,  1, -5.0f,  1 },
+				{  0.0f,  1, -6.0f,  1 },
+				{ -7.0f, -1, -7.0f,  1 },
+				{ -6.0f, -1,  0.0f, -1 },
+				{ -5.0f, -1, -1.0f, -1 },
+				{ -4.0f, -1, -2.0f, -1 },
+				{ -2.0f, -1, -4.0f, -1 },
+				{ -1.0f, -1, -5.0f, -1 },
+				{  0.0f, -1, -6.0f, -1 },
+				{ -7.0f,  1, -7.0f, -1 },
+				{ -5.0f,  1, -1.0f,  1 },
+				{ -4.0f,  1, -2.0f,  1 },
+				{ -3.0f,  1, -3.0f,  1 },
+				{ -2.0f,  1, -4.0f,  1 },
+				{ -1.0f,  1, -5.0f,  1 },
+			};
+
+			const float step = params.mHueRange * (nsVDMath::kfTwoPi / (15.0f * 360.0f));
+			const float theta = (params.mHueStart - 33.0f) * (nsVDMath::kfTwoPi / 360.0f);
+
+			const float *co = kPALPhaseLookup[j];
+
+			float angle2 = theta + step * (co[0] + 3.0f);
+			float angle3 = theta + step * (-co[2] - 3.0f);
+			float i2 = cosf(angle2) * co[1];
+			float q2 = sinf(angle2) * co[1];
+			float i3 = cosf(angle3) * co[3];
+			float q3 = sinf(angle3) * co[3];
+
+			i = (i2 + i3) * 0.5f;
+			q = (q2 + q3) * 0.5f;
+		} else {
+			float theta = nsVDMath::kfTwoPi * (params.mHueStart / 360.0f + (float)j * (params.mHueRange / (15.0f * 360.0f)));
+			i = cosf(theta);
+			q = sinf(theta);
+		}
+
 		double r = 65280.0f * (+ 0.9563f*i + 0.6210f*q) * params.mSaturation;
 		double g = 65280.0f * (- 0.2721f*i - 0.6474f*q) * params.mSaturation;
 		double b = 65280.0f * (- 1.1070f*i + 1.7046f*q) * params.mSaturation;
@@ -99,7 +175,8 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params) {
 		mPalette[i] = cb + (cg << 8) + (cr << 16);
 	}
 
-	RecomputeNTSCTables(params);
+	mbHighNTSCTablesInited = false;
+	mbHighPALTablesInited = false;
 }
 
 void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chromaArtifactHi, bool blend) {
@@ -107,8 +184,34 @@ void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chroma
 	mbChromaArtifacts = chromaArtifacts;
 	mbChromaArtifactsHi = chromaArtifactHi;
 
-	if (pal)
-		memset(mPALDelayLine32, 0, sizeof mPALDelayLine32);
+	if (chromaArtifactHi) {
+		if (pal) {
+			if (!mbHighPALTablesInited)
+				RecomputePALTables(mColorParams);
+		} else {
+			if (!mbHighNTSCTablesInited)
+				RecomputeNTSCTables(mColorParams);
+		}
+	}
+
+	if (pal) {
+		if (chromaArtifactHi) {
+#if defined(VD_CPU_AMD64)
+			memset(mPALDelayLineUV, 0, sizeof mPALDelayLineUV);
+#else
+#if defined(VD_CPU_X86)
+			if (MMX_enabled || SSE2_enabled) {
+				memset(mPALDelayLineUV, 0, sizeof mPALDelayLineUV);
+			} else
+#endif
+			{
+				VDMemset32(mPALDelayLineUV, 0x20002000, sizeof(mPALDelayLineUV) / sizeof(mPALDelayLineUV[0][0]));
+			}
+#endif
+		} else {
+			memset(mPALDelayLine32, 0, sizeof mPALDelayLine32);
+		}
+	}
 
 	if (blend) {
 		mbBlendCopy = !mbBlendActive;
@@ -121,12 +224,17 @@ void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chroma
 void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes) {
 	if (!mbChromaArtifacts)
 		BlitNoArtifacts(dst, src);
-	else if (mbPAL)
-		ArtifactPAL8(dst, src);
-	else if (mbChromaArtifactsHi)
-		ArtifactNTSCHi(dst, src, scanlineHasHiRes);
-	else
-		ArtifactNTSC(dst, src, scanlineHasHiRes);
+	else if (mbPAL) {
+		if (mbChromaArtifactsHi)
+			ArtifactPALHi(dst, src, scanlineHasHiRes, (y & 1) != 0);
+		else
+			ArtifactPAL8(dst, src);
+	} else {
+		if (mbChromaArtifactsHi)
+			ArtifactNTSCHi(dst, src, scanlineHasHiRes);
+		else
+			ArtifactNTSC(dst, src, scanlineHasHiRes);
+	}
 
 	if (mbBlendActive && y < M) {
 		uint32 *blendDst = mbChromaArtifactsHi ? mPrevFrame14MHz[y] : mPrevFrame7MHz[y];
@@ -321,338 +429,6 @@ namespace {
 		yr = -x0*sn + y0*cs;
 	}
 
-#if defined(VD_COMPILER_MSVC) && defined(VD_CPU_X86)
-	void __declspec(naked) __cdecl accum_SSE2(void *rout, const void *table, const void *src, uint32 count) {
-		static const __declspec(align(16)) uint64 kBiasedZero[2] = { 0x4000400040004000ull, 0x4000400040004000ull };
-
-		__asm {
-			push	ebp
-			push	edi
-			push	esi
-			push	ebx
-
-			mov		edx, [esp+4+16]		;dst
-			mov		esi, [esp+8+16]		;table
-			mov		ebx, [esp+12+16]	;src
-			mov		ebp, [esp+16+16]	;count
-
-			movdqa	xmm7, xmmword ptr kBiasedZero
-			movdqa	xmm0, xmm7
-			movdqa	xmm1, xmm7
-			movdqa	xmm2, xmm7
-			movdqa	xmm3, xmm7
-
-			add		esi, 80h
-
-			align	16
-xloop:
-			movzx	eax, byte ptr [ebx]
-			shl		eax, 8
-			add		eax, esi
-
-			paddw	xmm0, [eax-80h]
-			paddw	xmm1, [eax-70h]
-			paddw	xmm2, [eax-60h]
-			movdqa	xmm3, [eax-50h]
-
-			movzx	eax, byte ptr [ebx+1]
-			shl		eax, 8
-			add		eax, esi
-
-			paddw	xmm0, [eax-40h]
-			paddw	xmm1, [eax-30h]
-			paddw	xmm2, [eax-20h]
-			paddw	xmm3, [eax-10h]
-
-			movzx	eax, byte ptr [ebx+2]
-			shl		eax, 8
-			add		eax, esi
-
-			paddw	xmm0, [eax]
-			paddw	xmm1, [eax+10h]
-			paddw	xmm2, [eax+20h]
-			paddw	xmm3, [eax+30h]
-
-			movzx	eax, byte ptr [ebx+3]
-			add		ebx, 4
-			shl		eax, 8
-			add		eax, esi
-
-			paddw	xmm0, [eax+40h]
-			paddw	xmm1, [eax+50h]
-			paddw	xmm2, [eax+60h]
-			paddw	xmm3, [eax+70h]
-
-			movdqa	[edx], xmm0
-			movdqa	xmm0, xmm1
-			movdqa	xmm1, xmm2
-			movdqa	xmm2, xmm3
-
-			add		edx, 16
-			sub		ebp, 4
-			jnz		xloop
-
-			movdqa	[edx], xmm0
-			movdqa	[edx+10h], xmm1
-			movdqa	[edx+20h], xmm2
-
-			pop		ebx
-			pop		esi
-			pop		edi
-			pop		ebp
-			ret
-		}
-	}
-
-	void __declspec(naked) __cdecl accum_twin_SSE2(void *rout, const void *table, const void *src, uint32 count) {
-		static const __declspec(align(16)) uint64 kBiasedZero[2] = { 0x4000400040004000ull, 0x4000400040004000ull };
-
-		__asm {
-			push	ebp
-			push	edi
-			push	esi
-			push	ebx
-
-			mov		edx, [esp+4+16]		;dst
-			mov		esi, [esp+8+16]		;table
-			mov		ebx, [esp+12+16]	;src
-			mov		ebp, [esp+16+16]	;count
-
-			movdqa	xmm7, xmmword ptr kBiasedZero
-			movdqa	xmm0, xmm7
-			movdqa	xmm1, xmm7
-			movdqa	xmm2, xmm7
-			movdqa	xmm3, xmm7
-
-			align	16
-xloop:
-			movzx	eax, byte ptr [ebx]
-			shl		eax, 7
-			add		eax, esi
-
-			paddw	xmm0, [eax]
-			paddw	xmm1, [eax+10h]
-			paddw	xmm2, [eax+20h]
-			movdqa	xmm3, [eax+30h]
-
-			movzx	eax, byte ptr [ebx+2]
-			add		ebx, 4
-			shl		eax, 7
-			add		eax, esi
-
-			paddw	xmm0, [eax+40h]
-			paddw	xmm1, [eax+50h]
-			movdqa	[edx], xmm0
-			paddw	xmm2, [eax+60h]
-			movdqa	xmm0, xmm1
-			paddw	xmm3, [eax+70h]
-			movdqa	xmm1, xmm2
-
-			movdqa	xmm2, xmm3
-			add		edx, 16
-			sub		ebp, 4
-			jnz		xloop
-
-			movdqa	[edx], xmm0
-			movdqa	[edx+10h], xmm1
-			movdqa	[edx+20h], xmm2
-
-			pop		ebx
-			pop		esi
-			pop		edi
-			pop		ebp
-			ret
-		}
-	}
-
-	void __declspec(naked) __cdecl accum_MMX(void *rout, const void *table, const void *src, uint32 count) {
-		static const __declspec(align(8)) uint64 kBiasedZero = 0x4000400040004000ull;
-
-		__asm {
-			push	ebp
-			push	edi
-			push	esi
-			push	ebx
-
-			mov		edx, [esp+4+16]		;dst
-			mov		esi, [esp+8+16]		;table
-			mov		ebx, [esp+12+16]	;src
-			mov		ebp, [esp+16+16]	;count
-
-			movq	mm7, kBiasedZero
-			movq	mm0, mm7
-			movq	mm1, mm7
-			movq	mm2, mm7
-			movq	mm3, mm7
-			movq	mm4, mm7
-
-			align	16
-xloop:
-			movzx	eax, byte ptr [ebx]
-			imul	ecx, eax, 60h
-			add		ecx, esi
-
-			paddw	mm0, [ecx]
-			paddw	mm1, [ecx+8]
-			paddw	mm2, [ecx+16]
-			paddw	mm3, [ecx+24]
-			paddw	mm4, [ecx+32]
-			movq	mm5, [ecx+40]
-
-			movzx	eax, byte ptr [ebx+1]
-			add		ebx, 2
-			imul	ecx, eax, 60h
-			add		ecx, esi
-
-			paddw	mm0, [ecx+48]
-			movq	[edx], mm0
-			paddw	mm1, [ecx+56]
-			paddw	mm2, [ecx+64]
-			movq	mm0, mm1
-			paddw	mm3, [ecx+72]
-			movq	mm1, mm2
-			paddw	mm4, [ecx+80]
-			movq	mm2, mm3
-			paddw	mm5, [ecx+88]
-
-			movq	mm3, mm4
-			movq	mm4, mm5
-
-			add		edx, 8
-			sub		ebp, 2
-			jnz		xloop
-
-			movq	[edx], mm0
-			movq	[edx+8], mm1
-			movq	[edx+16], mm2
-			movq	[edx+24], mm3
-			movq	[edx+32], mm4
-
-			emms
-			pop		ebx
-			pop		esi
-			pop		edi
-			pop		ebp
-			ret
-		}
-	}
-
-	void __declspec(naked) __cdecl accum_twin_MMX(void *rout, const void *table, const void *src, uint32 count) {
-		static const __declspec(align(8)) uint64 kBiasedZero = 0x4000400040004000ull;
-
-		__asm {
-			push	ebp
-			push	edi
-			push	esi
-			push	ebx
-
-			mov		edx, [esp+4+16]		;dst
-			mov		esi, [esp+8+16]		;table
-			mov		ebx, [esp+12+16]	;src
-			mov		ebp, [esp+16+16]	;count
-
-			movq	mm7, kBiasedZero
-			movq	mm0, mm7
-			movq	mm1, mm7
-			movq	mm2, mm7
-			movq	mm3, mm7
-			movq	mm4, mm7
-
-			align	16
-xloop:
-			movzx	eax, byte ptr [ebx]
-			add		ebx, 2
-			imul	ecx, eax, 30h
-			add		ecx, esi
-
-			paddw	mm0, [ecx]
-			paddw	mm1, [ecx+8]
-			movq	[edx], mm0
-			paddw	mm2, [ecx+16]
-			movq	mm0, mm1
-			paddw	mm3, [ecx+24]
-			movq	mm1, mm2
-			paddw	mm4, [ecx+32]
-			movq	mm2, mm3
-			movq	mm5, [ecx+40]
-
-			movq	mm3, mm4
-			movq	mm4, mm5
-
-			add		edx, 8
-			sub		ebp, 2
-			jnz		xloop
-
-			movq	[edx], mm0
-			movq	[edx+8], mm1
-			movq	[edx+16], mm2
-			movq	[edx+24], mm3
-			movq	[edx+32], mm4
-
-			emms
-			pop		ebx
-			pop		esi
-			pop		edi
-			pop		ebp
-			ret
-		}
-	}
-
-	void __declspec(naked) __cdecl final_MMX(void *dst, const void *srcr, const void *srcg, const void *srcb, uint32 count) {
-		static const uint64 k3ff03ff03ff03ff0 = 0x3ff03ff03ff03ff0ull;
-		__asm {
-			push	ebp
-			push	edi
-			push	esi
-			push	ebx
-
-			mov		edi, [esp+4+16]		;dst
-			mov		ebx, [esp+8+16]		;srcr
-			mov		ecx, [esp+12+16]	;srcg
-			mov		edx, [esp+16+16]	;srcb
-			mov		esi, [esp+20+16]	;count
-
-			movq	mm7, qword ptr k3ff03ff03ff03ff0
-xloop:
-			movq	mm0, [ebx]		;red
-			add		ebx, 8
-			movq	mm1, [ecx]		;green
-			add		ecx, 8
-			movq	mm2, [edx]		;blue
-			add		edx, 8
-
-			psubw	mm0, mm7
-			psubw	mm1, mm7
-			psubw	mm2, mm7
-			psraw	mm0, 5
-			psraw	mm1, 5
-			psraw	mm2, 5
-			packuswb	mm0, mm0
-			packuswb	mm1, mm1
-			packuswb	mm2, mm2
-
-			punpcklbw	mm2, mm1	;gb
-			punpcklbw	mm0, mm1	;gr
-			movq	mm1, mm2
-			punpcklwd	mm1, mm0	;grgb
-			punpckhwd	mm2, mm0
-			movq	[edi], mm1
-			movq	[edi+8], mm2
-			add		edi, 16
-
-			sub		esi, 2
-			jnz		xloop
-
-			emms
-			pop		ebx
-			pop		esi
-			pop		edi
-			pop		ebp
-			ret
-		}
-	}
-#endif
-
 	void accum(uint32 *VDRESTRICT dst, const uint32 (*VDRESTRICT table)[2][12], const uint8 *VDRESTRICT src, uint32 count) {
 		count >>= 1;
 
@@ -749,23 +525,23 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 #if defined(VD_COMPILER_MSVC) && defined(VD_CPU_X86)
 	if (SSE2_enabled) {
 		if (scanlineHasHiRes) {
-			accum_SSE2(rout, m4x.mPalToR, src, N);
-			accum_SSE2(gout, m4x.mPalToG, src, N);
-			accum_SSE2(bout, m4x.mPalToB, src, N);
+			ATArtifactNTSCAccum_SSE2(rout, m4x.mPalToR, src, N);
+			ATArtifactNTSCAccum_SSE2(gout, m4x.mPalToG, src, N);
+			ATArtifactNTSCAccum_SSE2(bout, m4x.mPalToB, src, N);
 		} else {
-			accum_twin_SSE2(rout, m4x.mPalToRTwin, src, N);
-			accum_twin_SSE2(gout, m4x.mPalToGTwin, src, N);
-			accum_twin_SSE2(bout, m4x.mPalToBTwin, src, N);
+			ATArtifactNTSCAccumTwin_SSE2(rout, m4x.mPalToRTwin, src, N);
+			ATArtifactNTSCAccumTwin_SSE2(gout, m4x.mPalToGTwin, src, N);
+			ATArtifactNTSCAccumTwin_SSE2(bout, m4x.mPalToBTwin, src, N);
 		}
 	} else if (MMX_enabled) {
 		if (scanlineHasHiRes) {
-			accum_MMX(rout, m2x.mPalToR, src, N);
-			accum_MMX(gout, m2x.mPalToG, src, N);
-			accum_MMX(bout, m2x.mPalToB, src, N);
+			ATArtifactNTSCAccum_MMX(rout, m2x.mPalToR, src, N);
+			ATArtifactNTSCAccum_MMX(gout, m2x.mPalToG, src, N);
+			ATArtifactNTSCAccum_MMX(bout, m2x.mPalToB, src, N);
 		} else {
-			accum_twin_MMX(rout, m2x.mPalToRTwin, src, N);
-			accum_twin_MMX(gout, m2x.mPalToGTwin, src, N);
-			accum_twin_MMX(bout, m2x.mPalToBTwin, src, N);
+			ATArtifactNTSCAccumTwin_MMX(rout, m2x.mPalToRTwin, src, N);
+			ATArtifactNTSCAccumTwin_MMX(gout, m2x.mPalToGTwin, src, N);
+			ATArtifactNTSCAccumTwin_MMX(bout, m2x.mPalToBTwin, src, N);
 		}
 	} else
 #endif
@@ -799,11 +575,65 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 
 #if defined(VD_COMPILER_MSVC) && defined(VD_CPU_X86)
 	if (MMX_enabled) {
-		final_MMX(dst, rout+6, gout+6, bout+6, N);
+		ATArtifactNTSCFinal_MMX(dst, rout+6, gout+6, bout+6, N);
 	} else
 #endif
 	{
 		final(dst, rout+6, gout+6, bout+6, N);
+	}
+}
+
+void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes, bool oddLine) {
+	// encode to YUV
+	__declspec(align(16)) uint32 ybuf[32 + N];
+	__declspec(align(16)) uint32 ubuf[32 + N];
+	__declspec(align(16)) uint32 vbuf[32 + N];
+
+	uint32 *const ulbuf = mPALDelayLineUV[0];
+	uint32 *const vlbuf = mPALDelayLineUV[1];
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
+	if (SSE2_enabled) {
+		if (scanlineHasHiRes) {
+			ATArtifactPALLuma_SSE2(ybuf, src, N, &mPal8x.mPalToY[oddLine][0][0][0]);
+			ATArtifactPALChroma_SSE2(ubuf, src, N, &mPal8x.mPalToU[oddLine][0][0][0]);
+			ATArtifactPALChroma_SSE2(vbuf, src, N, &mPal8x.mPalToV[oddLine][0][0][0]);
+		} else {
+			ATArtifactPALLumaTwin_SSE2(ybuf, src, N, &mPal8x.mPalToYTwin[oddLine][0][0][0]);
+			ATArtifactPALChromaTwin_SSE2(ubuf, src, N, &mPal8x.mPalToUTwin[oddLine][0][0][0]);
+			ATArtifactPALChromaTwin_SSE2(vbuf, src, N, &mPal8x.mPalToVTwin[oddLine][0][0][0]);
+		}
+
+		ATArtifactPALFinal_SSE2(dst, ybuf, ubuf, vbuf, ulbuf, vlbuf, N);
+		return;
+	}
+#endif
+	
+#ifdef VD_CPU_X86
+	if (MMX_enabled) {
+		if (scanlineHasHiRes) {
+			ATArtifactPALLuma_MMX(ybuf, src, N, &mPal4x.mPalToY[oddLine][0][0][0]);
+			ATArtifactPALChroma_MMX(ubuf, src, N, &mPal4x.mPalToU[oddLine][0][0][0]);
+			ATArtifactPALChroma_MMX(vbuf, src, N, &mPal4x.mPalToV[oddLine][0][0][0]);
+		} else {
+			ATArtifactPALLumaTwin_MMX(ybuf, src, N, &mPal4x.mPalToYTwin[oddLine][0][0][0]);
+			ATArtifactPALChromaTwin_MMX(ubuf, src, N, &mPal4x.mPalToUTwin[oddLine][0][0][0]);
+			ATArtifactPALChromaTwin_MMX(vbuf, src, N, &mPal4x.mPalToVTwin[oddLine][0][0][0]);
+		}
+
+		ATArtifactPALFinal_MMX(dst, ybuf, ubuf, vbuf, ulbuf, vlbuf, N);
+		return;
+	}
+#endif
+
+	{
+		VDMemset32(ubuf, 0x20002000, sizeof(ubuf)/sizeof(ubuf[0]));
+		VDMemset32(vbuf, 0x20002000, sizeof(vbuf)/sizeof(vbuf[0]));
+
+		ATArtifactPALLuma(ybuf, src, N, &mPal2x.mPalToY[oddLine][0][0][0]);
+		ATArtifactPALChroma(ubuf, src, N, &mPal2x.mPalToU[oddLine][0][0][0]);
+		ATArtifactPALChroma(vbuf, src, N, &mPal2x.mPalToV[oddLine][0][0][0]);
+		ATArtifactPALFinal(dst, ybuf, ubuf, vbuf, ulbuf, vlbuf, N);
 	}
 }
 
@@ -824,6 +654,9 @@ void ATArtifactingEngine::BlendExchange(uint32 *dst, uint32 *blendDst, uint32 n)
 }
 
 void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
+	mbHighNTSCTablesInited = true;
+	mbHighPALTablesInited = false;
+
 	int chroma_to_r[16][2][10] = {0};
 	int chroma_to_g[16][2][10] = {0};
 	int chroma_to_b[16][2][10] = {0};
@@ -834,7 +667,7 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 	cb = 2.54375f;
 	ca = 0.6155f;
 
-	float phadjust = -0.0171875f * nsVDMath::kfPi - nsVDMath::kfPi * 0.25f;
+	float phadjust = -params.mArtifactHue * (nsVDMath::kfTwoPi / 360.0f) + nsVDMath::kfPi * 0.25f;
 
 	float cp = cosf(phadjust);
 	float sp = sinf(phadjust);
@@ -1107,7 +940,11 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 		}
 	}
 
+#ifdef VD_CPU_AMD64
+	if (false) {
+#else
 	if (SSE2_enabled) {
+#endif
 		memset(&m4x, 0, sizeof m4x);
 
 		for(int idx=0; idx<256; ++idx) {
@@ -1163,6 +1000,7 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 				m2x.mPalToB[idx][k][10+k] = y_to_b[lidx][k][10];
 			}
 
+#ifdef VD_CPU_X86
 			if (MMX_enabled) {
 				for(int i=0; i<2; ++i) {
 					m2x.mPalToR[idx][0][10+i] += 0x40004000;
@@ -1170,6 +1008,7 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 					m2x.mPalToB[idx][0][10+i] += 0x40004000;
 				}
 			}
+#endif
 
 			for(int i=0; i<12; ++i) {
 				m2x.mPalToRTwin[idx][i] = m2x.mPalToR[idx][0][i] + m2x.mPalToR[idx][1][i];
@@ -1179,3 +1018,348 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 		}
 	}
 }
+
+void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
+	mbHighNTSCTablesInited = false;
+	mbHighPALTablesInited = true;
+
+	// The PAL color subcarrier is about 25% faster than the NTSC subcarrier. This
+	// means that a hi-res pixel covers 5/8ths of a color cycle instead of half, which
+	// is a lot less convenient than the NTSC case.
+	//
+	// Our process looks something like this:
+	//
+	//	Low-pass C to 4.43MHz (1xFsc / 0.6xHR).
+	//	QAM encode C at 35.54MHz (8xFsc / 5xHR).
+	//	Add Y to C to produce composite signal S.
+	//	Bandlimit S to around 4.43MHz (0.125f) to produce C'.
+	//	Sample every 4 pixels to extract U/V (or I/Q).
+	//	Low-pass S to ~3.5MHz to produce Y'.
+	//
+	// All of the above is baked into a series of filter kernels that run at 1.66xFsc/1xHR.
+	// This avoids the high cost of actually synthesizing an 8xFsc signal.
+
+	const float sat1 = 0.4f;
+	const float sat2 = mColorParams.mSaturation / sat1;
+
+	const float chromaPhaseStep = -mColorParams.mHueRange * (nsVDMath::kfTwoPi / (360.0f * 15.0f));
+
+	// UV<->RGB chroma coefficients.
+	const float co_vr = 1.1402509f;
+	const float co_vg = -0.5808092f;
+	const float co_ug = -0.3947314f;
+	const float co_ub = 2.0325203f;
+
+	float utab[2][16];
+	float vtab[2][16];
+	float ytab[16];
+
+	static const float kPALPhaseLookup[][4]={
+		{  2.0f,  1, -2.0f,  1 },
+		{  3.0f,  1, -3.0f,  1 },
+		{ -4.0f, -1, -4.0f,  1 },
+		{ -3.0f, -1,  3.0f, -1 },
+		{ -2.0f, -1,  2.0f, -1 },
+		{ -1.0f, -1,  1.0f, -1 },
+		{  1.0f, -1, -1.0f, -1 },
+		{  2.0f, -1, -2.0f, -1 },
+		{  3.0f, -1, -3.0f, -1 },
+		{ -4.0f,  1, -4.0f, -1 },
+		{ -2.0f,  1,  2.0f,  1 },
+		{ -1.0f,  1,  1.0f,  1 },
+		{  0.0f,  1,  0.0f,  1 },
+		{  1.0f,  1, -1.0f,  1 },
+		{  2.0f,  1, -2.0f,  1 },
+	};
+
+	utab[0][0] = 0;
+	utab[1][0] = 0;
+	vtab[0][0] = 0;
+	vtab[1][0] = 0;
+
+	for(int i=0; i<15; ++i) {
+		const float *src = kPALPhaseLookup[i];
+		float t1 = src[0] * chromaPhaseStep;
+		float t2 = src[2] * chromaPhaseStep;
+
+		utab[0][i+1] = cosf(t1)*src[1];
+		vtab[0][i+1] = -sinf(t1)*src[1];
+		utab[1][i+1] = cosf(t2)*src[3];
+		vtab[1][i+1] = -sinf(t2)*src[3];
+	}
+
+	for(int i=0; i<16; ++i) {
+		ytab[i] = mColorParams.mBrightness + mColorParams.mContrast * (float)i / 15.0f;
+	}
+
+	ATFilterKernel kernbase;
+	ATFilterKernel kerncfilt;
+	ATFilterKernel kernumod;
+	ATFilterKernel kernvmod;
+
+	// Box filter representing pixel time.
+	kernbase.Init(0) = 1, 1, 1, 1, 1;
+
+	// Chroma low-pass filter. We apply this before encoding to avoid excessive bleeding
+	// into luma.
+	kerncfilt.Init(-5) = 
+		  1.0f / 1024.0f,
+		 10.0f / 1024.0f,
+		 45.0f / 1024.0f,
+		120.0f / 1024.0f,
+		210.0f / 1024.0f,
+		252.0f / 1024.0f,
+		210.0f / 1024.0f,
+		120.0f / 1024.0f,
+		 45.0f / 1024.0f,
+		 10.0f / 1024.0f,
+		  1.0f / 1024.0f;
+
+	// Modulation filters -- sine and cosine of color subcarrier. We also apply chroma
+	// amplitude adjustment here.
+	const float ivrt2 = 0.70710678118654752440084436210485f;
+	kernumod.Init(0) = 1, ivrt2, 0, -ivrt2, -1, -ivrt2, 0, ivrt2;
+	kernumod *= sat1;
+	kernvmod.Init(0) = 0, ivrt2, 1, ivrt2, 0, -ivrt2, -1, -ivrt2;
+	kernvmod *= sat1;
+
+	ATFilterKernel kernysep;
+	ATFilterKernel kerncsep;
+	ATFilterKernel kerncdemod;
+
+	// Luma separation filter -- just a box filter.
+	kernysep.Init(-4) =
+		0.5f / 8.0f,
+		1.0f / 8.0f,
+		1.0f / 8.0f,
+		1.0f / 8.0f,
+		1.0f / 8.0f,
+		1.0f / 8.0f,
+		1.0f / 8.0f,
+		1.0f / 8.0f,
+		0.5f / 8.0f;
+
+	// Chroma separation filter -- dot with peaks of sine/cosine waves and apply box filter.
+	kerncsep.Init(-16) = 1,0,0,0,-2,0,0,0,2,0,0,0,-2,0,0,0,2,0,0,0,-2,0,0,0,2,0,0,0,-2,0,0,0,1;
+	kerncsep *= 1.0f / 16.0f;
+
+	// Demodulation filter. Here we invert every other sample of extracted U and V.
+	kerncdemod.Init(0) =
+		 -1,
+		 -1,
+		 1,
+		 1,
+		 1,
+		 1,
+		 -1,
+		 -1;
+
+	kerncdemod *= sat2 * 0.5f;	// 0.5 is for chroma line averaging
+
+	memset(&mPal8x, 0, sizeof mPal8x);
+
+	for(int i=0; i<8; ++i) {
+		const float yphase = 0;
+		const float cphase = 0;
+
+		ATFilterKernel kernbase2 = kernbase >> (5*i);
+		ATFilterKernel kernsignaly = kernbase2;
+
+		// downsample chroma and modulate
+		ATFilterKernel kernsignalu = (kernbase2 * kerncfilt) ^ kernumod;
+		ATFilterKernel kernsignalv = (kernbase2 * kerncfilt) ^ kernvmod;
+
+		// extract Y via low pass filter
+		ATFilterKernel kerny2y = ATFilterKernelSampleBicubic(kernsignaly * kernysep, yphase, 2.5f, -0.75f);
+		ATFilterKernel kernu2y = ATFilterKernelSampleBicubic(kernsignalu * kernysep, yphase, 2.5f, -0.75f);
+		ATFilterKernel kernv2y = ATFilterKernelSampleBicubic(kernsignalv * kernysep, yphase, 2.5f, -0.75f);
+
+		// separate, low pass filter and demodulate chroma
+		ATFilterKernel kerny2u = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignaly * kerncsep) ^ kerncdemod, 0, 4), cphase     , 0.625f, -0.75f);
+		ATFilterKernel kernu2u = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalu * kerncsep) ^ kerncdemod, 0, 4), cphase     , 0.625f, -0.75f);
+		ATFilterKernel kernv2u = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalv * kerncsep) ^ kerncdemod, 0, 4), cphase     , 0.625f, -0.75f);
+
+		ATFilterKernel kerny2v = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignaly * kerncsep) ^ kerncdemod, 2, 4), cphase-0.5f, 0.625f, -0.75f);
+		ATFilterKernel kernu2v = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalu * kerncsep) ^ kerncdemod, 2, 4), cphase-0.5f, 0.625f, -0.75f);
+		ATFilterKernel kernv2v = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalv * kerncsep) ^ kerncdemod, 2, 4), cphase-0.5f, 0.625f, -0.75f);
+
+		for(int k=0; k<2; ++k) {
+			float v_invert = k ? -1.0f : 1.0f;
+
+			for(int j=0; j<256; ++j) {
+				float u = utab[k][j >> 4];
+				float v = vtab[k][j >> 4];
+				float y = ytab[j & 15];
+
+				float p2yw[8 + 8] = {0};
+				float p2uw[24 + 8] = {0};
+				float p2vw[24 + 8] = {0};
+
+				if (SSE2_enabled) {
+					int ypos = 3 - (i & 4)*2;
+					int cpos = 12 - (i & 4)*2;
+
+					ATFilterKernelAccumulateWindow(kerny2y, p2yw, ypos, 16, y);
+					ATFilterKernelAccumulateWindow(kernu2y, p2yw, ypos, 16, u);
+					ATFilterKernelAccumulateWindow(kernv2y, p2yw, ypos, 16, v);
+
+					ATFilterKernelAccumulateWindow(kerny2u, p2uw, cpos, 32, y * co_ub);
+					ATFilterKernelAccumulateWindow(kernu2u, p2uw, cpos, 32, u * co_ub);
+					ATFilterKernelAccumulateWindow(kernv2u, p2uw, cpos, 32, v * co_ub);
+
+					ATFilterKernelAccumulateWindow(kerny2v, p2vw, cpos, 32, y * co_vr * v_invert);
+					ATFilterKernelAccumulateWindow(kernu2v, p2vw, cpos, 32, u * co_vr * v_invert);
+					ATFilterKernelAccumulateWindow(kernv2v, p2vw, cpos, 32, v * co_vr * v_invert);
+
+					uint32 *kerny16 = mPal8x.mPalToY[k][j][i];
+					uint32 *kernu16 = mPal8x.mPalToU[k][j][i];
+					uint32 *kernv16 = mPal8x.mPalToV[k][j][i];
+
+					for(int offset=0; offset<8; ++offset) {
+						sint32 w0 = VDRoundToInt32(p2yw[offset*2+0] * 64.0f * 255.0f);
+						sint32 w1 = VDRoundToInt32(p2yw[offset*2+1] * 64.0f * 255.0f);
+
+						kerny16[offset] = (w1 << 16) + w0;
+					}
+
+					kerny16[i & 3] += 0x00200020;
+
+					for(int offset=0; offset<16; ++offset) {
+						sint32 w0 = VDRoundToInt32(p2uw[offset*2+0] * 64.0f * 255.0f);
+						sint32 w1 = VDRoundToInt32(p2uw[offset*2+1] * 64.0f * 255.0f);
+
+						kernu16[offset] = (w1 << 16) + w0;
+					}
+
+					for(int offset=0; offset<16; ++offset) {
+						sint32 w0 = VDRoundToInt32(p2vw[offset*2+0] * 64.0f * 255.0f);
+						sint32 w1 = VDRoundToInt32(p2vw[offset*2+1] * 64.0f * 255.0f);
+
+						kernv16[offset] = (w1 << 16) + w0;
+					}
+				} else if (MMX_enabled) {
+					int ypos = 3 - (i & 6)*2;
+					int cpos = 12 - (i & 6)*2;
+
+					ATFilterKernelAccumulateWindow(kerny2y, p2yw, ypos, 12, y);
+					ATFilterKernelAccumulateWindow(kernu2y, p2yw, ypos, 12, u);
+					ATFilterKernelAccumulateWindow(kernv2y, p2yw, ypos, 12, v);
+
+					ATFilterKernelAccumulateWindow(kerny2u, p2uw, cpos, 28, y * co_ub);
+					ATFilterKernelAccumulateWindow(kernu2u, p2uw, cpos, 28, u * co_ub);
+					ATFilterKernelAccumulateWindow(kernv2u, p2uw, cpos, 28, v * co_ub);
+
+					ATFilterKernelAccumulateWindow(kerny2v, p2vw, cpos, 28, y * co_vr * v_invert);
+					ATFilterKernelAccumulateWindow(kernu2v, p2vw, cpos, 28, u * co_vr * v_invert);
+					ATFilterKernelAccumulateWindow(kernv2v, p2vw, cpos, 28, v * co_vr * v_invert);
+
+					uint32 *kerny16 = mPal4x.mPalToY[k][j][i];
+					uint32 *kernu16 = mPal4x.mPalToU[k][j][i];
+					uint32 *kernv16 = mPal4x.mPalToV[k][j][i];
+
+					for(int offset=0; offset<6; ++offset) {
+						sint32 w0 = VDRoundToInt32(p2yw[offset*2+0] * 64.0f * 255.0f);
+						sint32 w1 = VDRoundToInt32(p2yw[offset*2+1] * 64.0f * 255.0f);
+
+						kerny16[offset] = (w1 << 16) + w0;
+					}
+
+					for(int offset=0; offset<14; ++offset) {
+						sint32 w0 = VDRoundToInt32(p2uw[offset*2+0] * 64.0f * 255.0f);
+						sint32 w1 = VDRoundToInt32(p2uw[offset*2+1] * 64.0f * 255.0f);
+
+						kernu16[offset] = (w1 << 16) + w0;
+					}
+
+					for(int offset=0; offset<14; ++offset) {
+						sint32 w0 = VDRoundToInt32(p2vw[offset*2+0] * 64.0f * 255.0f);
+						sint32 w1 = VDRoundToInt32(p2vw[offset*2+1] * 64.0f * 255.0f);
+
+						kernv16[offset] = (w1 << 16) + w0;
+					}
+				} else {
+					int ypos = 3 - i*2;
+					int cpos = 12 - i*2;
+
+					ATFilterKernelAccumulateWindow(kerny2y, p2yw, ypos, 8, y);
+					ATFilterKernelAccumulateWindow(kernu2y, p2yw, ypos, 8, u);
+					ATFilterKernelAccumulateWindow(kernv2y, p2yw, ypos, 8, v);
+
+					ATFilterKernelAccumulateWindow(kerny2u, p2uw, cpos, 24, y * co_ub);
+					ATFilterKernelAccumulateWindow(kernu2u, p2uw, cpos, 24, u * co_ub);
+					ATFilterKernelAccumulateWindow(kernv2u, p2uw, cpos, 24, v * co_ub);
+
+					ATFilterKernelAccumulateWindow(kerny2v, p2vw, cpos, 24, y * co_vr * v_invert);
+					ATFilterKernelAccumulateWindow(kernu2v, p2vw, cpos, 24, u * co_vr * v_invert);
+					ATFilterKernelAccumulateWindow(kernv2v, p2vw, cpos, 24, v * co_vr * v_invert);
+
+					uint32 *kerny16 = mPal2x.mPalToY[k][j][i];
+					uint32 *kernu16 = mPal2x.mPalToU[k][j][i];
+					uint32 *kernv16 = mPal2x.mPalToV[k][j][i];
+
+					for(int offset=0; offset<4; ++offset) {
+						sint32 w0 = VDRoundToInt32(p2yw[offset*2+0] * 64.0f * 255.0f);
+						sint32 w1 = VDRoundToInt32(p2yw[offset*2+1] * 64.0f * 255.0f);
+
+						kerny16[offset] = (w1 << 16) + w0;
+					}
+
+					kerny16[3] += 0x40004000;
+
+					for(int offset=0; offset<12; ++offset) {
+						sint32 w0 = VDRoundToInt32(p2uw[offset*2+0] * 64.0f * 255.0f);
+						sint32 w1 = VDRoundToInt32(p2uw[offset*2+1] * 64.0f * 255.0f);
+
+						kernu16[offset] = (w1 << 16) + w0;
+					}
+
+					for(int offset=0; offset<12; ++offset) {
+						sint32 w0 = VDRoundToInt32(p2vw[offset*2+0] * 64.0f * 255.0f);
+						sint32 w1 = VDRoundToInt32(p2vw[offset*2+1] * 64.0f * 255.0f);
+
+						kernv16[offset] = (w1 << 16) + w0;
+					}
+				}
+			}
+		}
+	}
+
+	// Create twin kernels.
+	//
+	// Most scanlines on the Atari aren't hires, which means that pairs of pixels are identical.
+	// What we do here is precompute pairs of adjacent phase filter kernels added together. On
+	// any scanline that is lores only, we can use a faster twin-mode set of filter routines.
+
+	if (SSE2_enabled) {
+		for(int i=0; i<2; ++i) {
+			for(int j=0; j<256; ++j) {
+				for(int k=0; k<4; ++k) {
+					for(int l=0; l<8; ++l)
+						mPal8x.mPalToYTwin[i][j][k][l] = mPal8x.mPalToY[i][j][k*2][l] + mPal8x.mPalToY[i][j][k*2+1][l];
+
+					for(int l=0; l<16; ++l)
+						mPal8x.mPalToUTwin[i][j][k][l] = mPal8x.mPalToU[i][j][k*2][l] + mPal8x.mPalToU[i][j][k*2+1][l];
+
+					for(int l=0; l<16; ++l)
+						mPal8x.mPalToVTwin[i][j][k][l] = mPal8x.mPalToV[i][j][k*2][l] + mPal8x.mPalToV[i][j][k*2+1][l];
+				}
+			}
+		}
+	} else if (MMX_enabled) {
+		for(int i=0; i<2; ++i) {
+			for(int j=0; j<256; ++j) {
+				for(int k=0; k<4; ++k) {
+					for(int l=0; l<6; ++l)
+						mPal4x.mPalToYTwin[i][j][k][l] = mPal4x.mPalToY[i][j][k*2][l] + mPal4x.mPalToY[i][j][k*2+1][l];
+
+					for(int l=0; l<16; ++l)
+						mPal4x.mPalToUTwin[i][j][k][l] = mPal4x.mPalToU[i][j][k*2][l] + mPal4x.mPalToU[i][j][k*2+1][l];
+
+					for(int l=0; l<16; ++l)
+						mPal4x.mPalToVTwin[i][j][k][l] = mPal4x.mPalToV[i][j][k*2][l] + mPal4x.mPalToV[i][j][k*2+1][l];
+				}
+			}
+		}
+	}
+}
+

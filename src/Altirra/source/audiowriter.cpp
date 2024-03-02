@@ -19,18 +19,39 @@
 #include "audiowriter.h"
 
 ATAudioWriter::ATAudioWriter(const wchar_t *filename)
-	: mFile(filename, nsVDFile::kWrite | nsVDFile::kDenyRead | nsVDFile::kCreateAlways | nsVDFile::kSequential)
+	: mbErrorState(false)
+	, mFile(filename, nsVDFile::kWrite | nsVDFile::kDenyRead | nsVDFile::kCreateAlways | nsVDFile::kSequential)
 {
 }
 
 ATAudioWriter::~ATAudioWriter() {
 }
 
+void ATAudioWriter::CheckExceptions() {
+	if (!mbErrorState)
+		return;
+
+	if (!mError.empty()) {
+		MyError e;
+
+		e.TransferFrom(mError);
+		throw e;
+	}
+}
+
 void ATAudioWriter::WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp) {
-	if (right) {
-		WriteInterleaved(left, right, count);
-	} else {
-		mFile.writeData(left, sizeof(float)*count);
+	if (mbErrorState)
+		return;
+
+	try {
+		if (right) {
+			WriteInterleaved(left, right, count);
+		} else {
+			mFile.writeData(left, sizeof(float)*count);
+		}
+	} catch(MyError& e) {
+		mError.TransferFrom(e);
+		mbErrorState = true;
 	}
 }
 

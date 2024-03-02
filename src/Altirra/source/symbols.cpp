@@ -56,10 +56,12 @@ public:
 	const wchar_t *GetFileName(uint16 fileid);
 	uint16	GetFileId(const wchar_t *fileName);
 	void	GetLines(uint16 fileId, vdfastvector<ATSourceLineInfo>& lines);
-	bool	GetLineForOffset(uint32 moduleOffset, ATSourceLineInfo& lineInfo);
+	bool	GetLineForOffset(uint32 moduleOffset, bool searchUp, ATSourceLineInfo& lineInfo);
 	bool	GetOffsetForLine(const ATSourceLineInfo& lineInfo, uint32& moduleOffset);
 	uint32	GetSymbolCount() const;
 	void	GetSymbol(uint32 index, ATSymbolInfo& symbol);
+	uint32	GetDirectiveCount() const;
+	void	GetDirective(uint32 index, ATSymbolDirectiveInfo& dirInfo);
 
 protected:
 	void LoadSymbols(VDTextStream& ifile);
@@ -105,6 +107,12 @@ protected:
 		}
 	};
 
+	struct Directive {
+		ATSymbolDirectiveType mType;
+		uint16	mOffset;
+		size_t	mArgOffset;
+	};
+
 	uint32	mModuleBase;
 	uint32	mModuleSize;
 	bool	mbSymbolsNeedSorting;
@@ -113,6 +121,9 @@ protected:
 	Symbols					mSymbols;
 	vdfastvector<char>		mNameBytes;
 	vdfastvector<const wchar_t *>	mFileNames;
+
+	typedef vdfastvector<Directive> Directives;
+	Directives	mDirectives;
 
 	typedef std::map<uint32, uint32> OffsetToLine;
 	typedef std::map<uint32, uint32> LineToOffset;
@@ -340,16 +351,21 @@ void ATSymbolStore::GetLines(uint16 matchFileId, vdfastvector<ATSourceLineInfo>&
 	}
 }
 
-bool ATSymbolStore::GetLineForOffset(uint32 moduleOffset, ATSourceLineInfo& lineInfo) {
+bool ATSymbolStore::GetLineForOffset(uint32 moduleOffset, bool searchUp, ATSourceLineInfo& lineInfo) {
 	OffsetToLine::const_iterator it(mOffsetToLine.upper_bound(moduleOffset));
+	
+	if (searchUp) {
+		if (it == mOffsetToLine.end())
+			return false;
+	} else {
+		if (it == mOffsetToLine.begin())
+			return false;
 
-	if (it == mOffsetToLine.begin())
-		return false;
-
-	--it;
+		--it;
+	}
 
 	uint32 key = it->second;
-	lineInfo.mOffset = moduleOffset;
+	lineInfo.mOffset = it->first;
 	lineInfo.mFileId = key >> 16;
 	lineInfo.mLine = key & 0xffff;
 	return true;
@@ -378,6 +394,18 @@ void ATSymbolStore::GetSymbol(uint32 index, ATSymbolInfo& symbol) {
 	symbol.mFlags	= sym.mFlags;
 	symbol.mOffset	= sym.mOffset;
 	symbol.mLength	= sym.mSize;
+}
+
+uint32 ATSymbolStore::GetDirectiveCount() const {
+	return mDirectives.size();
+}
+
+void ATSymbolStore::GetDirective(uint32 index, ATSymbolDirectiveInfo& dirInfo) {
+	const Directive& dir = mDirectives[index];
+
+	dirInfo.mType = dir.mType;
+	dirInfo.mpArguments = mNameBytes.data() + dir.mArgOffset;
+	dirInfo.mOffset = dir.mOffset;
 }
 
 void ATSymbolStore::LoadSymbols(VDTextStream& ifile) {
@@ -553,6 +581,14 @@ void ATSymbolStore::LoadLabels(VDTextStream& ifile) {
 	mModuleSize = 0x10000;	
 }
 
+namespace {
+	struct FileEntry {
+		uint16 mFileId;
+		int mNextLine;
+		int mForcedLine;
+	};
+}
+
 void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 	uint16 fileid = 0;
 
@@ -564,10 +600,12 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 
 	VDStringA label;
 
-	typedef vdfastvector<std::pair<int, int> > LastLines;
-	LastLines lastLines;
+	typedef vdfastvector<FileEntry> FileStack;
+	FileStack fileStack;
 	int nextline = 1;
 	bool macroMode = false;
+	int forcedLine = -1;
+	bool directivePending = false;
 
 	while(const char *line = ifile.GetNextLine()) {
 		char space0;
@@ -587,10 +625,15 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 			if (macroMode)
 				macroMode = false;
 			else {
-				if (fileid)
-					lastLines.push_back(LastLines::value_type(nextline, fileid));
+				if (fileid) {
+					FileEntry& fe = fileStack.push_back();
+					fe.mNextLine = nextline;
+					fe.mFileId = fileid;
+					fe.mForcedLine = forcedLine;
+				}
 
 				fileid = AddFileName(VDTextAToW(line+8).c_str());
+				forcedLine = -1;
 				mode = kModeSource;
 				nextline = 1;
 			}
@@ -606,18 +649,21 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 				continue;
 
 			bool valid = false;
+			int afterline = 0;
 
-			if (2 == sscanf(line, "%c%5d", &space0, &origline)
+			if (2 == sscanf(line, "%c%5d%n", &space0, &origline, &afterline)
 				&& space0 == ' ')
 			{
 				if (fileid && origline > 0) {
 					// check for discontinuous line (mads doesn't re-emit the parent line)
 					if (origline != nextline) {
-						LastLines::const_reverse_iterator it(lastLines.rbegin()), itEnd(lastLines.rend());
+						FileStack::const_reverse_iterator it(fileStack.rbegin()), itEnd(fileStack.rend());
 
 						for(; it != itEnd; ++it) {
-							if (it->first == origline && it->second != fileid) {
-								fileid = it->second;
+							const FileEntry& fe = *it;
+							if (fe.mNextLine == origline && fe.mFileId != fileid) {
+								fileid = fe.mFileId;
+								forcedLine = fe.mForcedLine;
 								break;
 							}
 						}
@@ -634,9 +680,6 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 					&& space2 == ' '
 					&& (space3 == ' ' || space3 == '\t'))
 				{
-					if (fileid && origline > 0)
-						AddSourceLine(fileid, origline, address);
-
 					valid = true;
 				} else if (8 == sscanf(line, "%c%5d%c%4x-%4x>%c%2x%c", &space0, &origline, &space1, &address, &address2, &space2, &op, &space3)
 					&& space0 == ' '
@@ -644,10 +687,105 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 					&& space2 == ' '
 					&& (space3 == ' ' || space3 == '\t'))
 				{
-					if (fileid && origline > 0)
-						AddSourceLine(fileid, origline, address);
-
 					valid = true;
+				} else {
+					// Look for a comment line.
+					const char *s = line + afterline;
+
+					while(*s == ' ' || *s == '\t')
+						++s;
+
+					if (*s == ';') {
+						// We have a comment. Check if it has one of these special syntaxes:
+						// ; ### file(num)    [line number directive]
+						++s;
+
+						while(*s == ' ' || *s == '\t')
+							++s;
+
+						if (s[0] == '#' && s[1] == '#') {
+							s += 2;
+
+							if (*s == '#') {
+								// ;### file(line) ...     [line number directive]
+								++s;
+								while(*s == ' ' || *s == '\t')
+									++s;
+
+								const char *fnstart = s;
+								const char *fnend;
+								if (*s == '"') {
+									++s;
+									fnstart = s;
+
+									while(*s && *s != '"')
+										++s;
+
+									fnend = s;
+
+									if (*s)
+										++s;
+								} else {
+									while(*s && *s != ' ' && *s != '(')
+										++s;
+
+									fnend = s;
+								}
+
+								while(*s == ' ' || *s == '\t')
+									++s;
+
+								char term = 0;
+								unsigned newlineno;
+								if (2 == sscanf(s, "(%u %c", &newlineno, &term) && term == ')') {
+									fileid = AddFileName(VDTextAToW(fnstart, fnend - fnstart).c_str());
+									forcedLine = newlineno;
+								}
+							} else if (!strncmp(s, "ASSERT", 6) && (s[6] == ' ' || s[6] == '\t')) {
+								// ;##ASSERT <address> <condition>
+								s += 7;
+
+								while(*s == ' ' || *s == '\t')
+									++s;
+
+								VDStringSpanA arg(s);
+								arg.trim(" \t");
+
+								if (!arg.empty()) {
+									Directive& dir = mDirectives.push_back();
+									dir.mOffset = 0;
+									dir.mType = kATSymbolDirType_Assert;
+									dir.mArgOffset = mNameBytes.size();
+
+									mNameBytes.insert(mNameBytes.end(), arg.begin(), arg.end());
+									mNameBytes.push_back(0);
+
+									directivePending = true;
+								}
+							} else if (!strncmp(s, "TRACE", 5) && (s[5] == ' ' || s[5] == '\t')) {
+								// ;##TRACE <printf arguments>
+								s += 6;
+
+								while(*s == ' ' || *s == '\t')
+									++s;
+
+								VDStringSpanA arg(s);
+								arg.trim(" \t");
+
+								if (!arg.empty()) {
+									Directive& dir = mDirectives.push_back();
+									dir.mOffset = 0;
+									dir.mType = kATSymbolDirType_Trace;
+									dir.mArgOffset = mNameBytes.size();
+
+									mNameBytes.insert(mNameBytes.end(), arg.begin(), arg.end());
+									mNameBytes.push_back(0);
+
+									directivePending = true;
+								}
+							}
+						}
+					}
 				}
 			} else if (8 == sscanf(line, "%6x%c%c%c%c%c%2x%c", &address, &space0, &space1, &dummy, &space2, &space3, &op, &space4)
 				&& space0 == ' '
@@ -666,10 +804,25 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 				valid = true;
 			}
 
-			if (valid) { 
-				uint32 key = ((uint32)fileid << 16) + origline;
-				mOffsetToLine.insert(OffsetToLine::value_type(address, key));
-				mLineToOffset.insert(LineToOffset::value_type(key, address));
+			if (valid) {
+				if (directivePending) {
+					for(Directives::reverse_iterator it(mDirectives.rbegin()), itEnd(mDirectives.rend()); it != itEnd; ++it) {
+						Directive& d = *it;
+
+						if (d.mOffset)
+							break;
+
+						d.mOffset = address;
+					}
+
+					directivePending = false;
+				}
+
+				if (forcedLine >= 0) {
+					AddSourceLine(fileid, forcedLine, address);
+					forcedLine = -2;
+				} else if (forcedLine == -1)
+					AddSourceLine(fileid, origline, address);
 			}
 		} else if (mode == kModeLabels) {
 			// MADS:
@@ -700,6 +853,10 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 
 	mModuleBase = 0;
 	mModuleSize = 0x10000;
+
+	// remove useless directives
+	while(!mDirectives.empty() && mDirectives.back().mOffset == 0)
+		mDirectives.pop_back();
 }
 
 void ATSymbolStore::LoadKernelListing(VDTextStream& ifile) {
@@ -844,6 +1001,14 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(SDLSTH, "SDLSTH", 1);
 	symstore->AddSymbol(COLDST, "COLDST", 1);
 	symstore->AddSymbol(GPRIOR, "GPRIOR", 1);
+	symstore->AddSymbol(STICK0, "STICK0", 1);
+	symstore->AddSymbol(STICK1, "STICK1", 1);
+	symstore->AddSymbol(STICK2, "STICK2", 1);
+	symstore->AddSymbol(STICK3, "STICK3", 1);
+	symstore->AddSymbol(STRIG0, "STRIG0", 1);
+	symstore->AddSymbol(STRIG1, "STRIG1", 1);
+	symstore->AddSymbol(STRIG2, "STRIG2", 1);
+	symstore->AddSymbol(STRIG3, "STRIG3", 1);
 	symstore->AddSymbol(JVECK, "JVECK", 1);
 	symstore->AddSymbol(PCOLR0, "PCOLR0", 1);
 	symstore->AddSymbol(PCOLR1, "PCOLR1", 1);

@@ -2317,6 +2317,12 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 	} else if (mUploadMode == kUploadModeDirect8 || mUploadMode == kUploadModeDirect8Laced || mUploadMode == kUploadModeDirectNV12) {
 		VDMemcpyRect(dst.data, dst.pitch, src.data, src.pitch, src.w, src.h);
 	} else {
+		if (dst.w > src.w)
+			dst.w = src.w;
+		
+		if (dst.h > src.h)
+			dst.h = src.h;
+
 		mCachedBlitter.Blit(dst, src);
 	}
 
@@ -3325,56 +3331,65 @@ void VDVideoDisplayMinidriverDX9::Shutdown() {
 }
 
 bool VDVideoDisplayMinidriverDX9::ModifySource(const VDVideoDisplaySourceInfo& info) {
-	if (mSource.pixmap.w != info.pixmap.w || mSource.pixmap.h != info.pixmap.h || mSource.pixmap.pitch != info.pixmap.pitch)
-		return false;
+	bool fastPath = false;
 
-	const int prevFormat = mSource.pixmap.format;
-	const int nextFormat = info.pixmap.format;
-	if (prevFormat != nextFormat) {
-		// Check for compatible formats.
-		switch(prevFormat) {
-			case nsVDPixmap::kPixFormat_YUV420it_Planar:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar)
+	if (mSource.pixmap.w == info.pixmap.w && mSource.pixmap.h == info.pixmap.h) {
+		const int prevFormat = mSource.pixmap.format;
+		const int nextFormat = info.pixmap.format;
+
+		if (prevFormat != nextFormat) {
+			// Check for compatible formats.
+			switch(prevFormat) {
+				case nsVDPixmap::kPixFormat_YUV420it_Planar:
+					if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar)
+						fastPath = true;
 					break;
-				return false;
 
-			case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_FR)
+				case nsVDPixmap::kPixFormat_YUV420it_Planar_FR:
+					if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_FR)
+						fastPath = true;
 					break;
-				return false;
 
-			case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_709)
+				case nsVDPixmap::kPixFormat_YUV420it_Planar_709:
+					if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_709)
+						fastPath = true;
 					break;
-				return false;
 
-			case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR)
+				case nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR:
+					if (nextFormat == nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR)
+						fastPath = true;
 					break;
-				return false;
 
-			case nsVDPixmap::kPixFormat_YUV420ib_Planar:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar)
+				case nsVDPixmap::kPixFormat_YUV420ib_Planar:
+					if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar)
+						fastPath = true;
 					break;
-				return false;
 
-			case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_FR)
+				case nsVDPixmap::kPixFormat_YUV420ib_Planar_FR:
+					if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_FR)
+						fastPath = true;
 					break;
-				return false;
 
-			case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_709)
+				case nsVDPixmap::kPixFormat_YUV420ib_Planar_709:
+					if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_709)
+						fastPath = true;
 					break;
-				return false;
 
-			case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
-				if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR)
+				case nsVDPixmap::kPixFormat_YUV420ib_Planar_709_FR:
+					if (nextFormat == nsVDPixmap::kPixFormat_YUV420it_Planar_709_FR)
+						fastPath = true;
 					break;
-				return false;
+			}
+		}
+	}
 
-			default:
-				return false;
+	if (!fastPath) {
+		mpUploadContext.clear();
+
+		mpUploadContext = new_nothrow VDVideoUploadContextD3D9;
+		if (!mpUploadContext || !mpUploadContext->Init(mpManager->GetMonitor(), info.pixmap, info.bAllowConversion, mbHighPrecision && mpVideoManager->Is16FEnabled(), 1)) {
+			mpUploadContext.clear();
+			return false;
 		}
 	}
 

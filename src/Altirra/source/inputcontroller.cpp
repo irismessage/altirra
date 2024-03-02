@@ -209,7 +209,7 @@ void ATPortInputController::SetPotPosition(bool second, uint8 pos) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATMouseController::ATMouseController()
+ATMouseController::ATMouseController(bool amigaMode)
 	: mPortBits(0)
 	, mTargetX(0)
 	, mTargetY(0)
@@ -217,6 +217,7 @@ ATMouseController::ATMouseController()
 	, mAccumY(0)
 	, mpUpdateEvent(NULL)
 	, mpScheduler(NULL)
+	, mbAmigaMode(amigaMode)
 {
 	mbButtonState[0] = false;
 	mbButtonState[1] = false;
@@ -309,10 +310,17 @@ void ATMouseController::Update() {
 	}
 
 	if (changed) {
-		static const uint8 kTabX[4] = { 0x00, 0x02, 0x03, 0x01 };
-		static const uint8 kTabY[4] = { 0x00, 0x08, 0x0c, 0x04 };
+		static const uint8 kSTTabX[4] = { 0x00, 0x02, 0x03, 0x01 };
+		static const uint8 kSTTabY[4] = { 0x00, 0x08, 0x0c, 0x04 };
+		static const uint8 kAMTabX[4] = { 0x00, 0x02, 0x0A, 0x08 };
+		static const uint8 kAMTabY[4] = { 0x00, 0x01, 0x05, 0x04 };
 
-		uint32 val = kTabX[mAccumX & 3] + kTabY[mAccumY & 3];
+		uint32 val;
+		
+		if (mbAmigaMode)
+			val = kAMTabX[mAccumX & 3] + kAMTabY[mAccumY & 3];
+		else
+			val = kSTTabX[mAccumX & 3] + kSTTabY[mAccumY & 3];
 
 		uint32 newPortBits = (mPortBits & ~15) + val;
 
@@ -1067,4 +1075,86 @@ void ATLightPenController::OnDetach() {
 		mpScheduler->RemoveEvent(mpLPEvent);
 		mpLPEvent = NULL;
 	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+
+ATKeypadController::ATKeypadController()
+	: mPortBits(0x1F)
+{
+}
+
+ATKeypadController::~ATKeypadController() {
+}
+
+void ATKeypadController::SetDigitalTrigger(uint32 trigger, bool state) {
+	// DPRTA
+	// 00000	-
+	// 00001	+/ENTER
+	// 00010	.
+	// 00011	0
+	// 00100	3
+	// 00101	2
+	// 00110	1
+	// 00111	Y
+	// 01000	9
+	// 01001	8
+	// 01010	7
+	// 01011	N
+	// 01100	6
+	// 01101	5
+	// 01110	4
+	// 01111	DEL
+	// 10000
+	// 10001
+	// 10010
+	// 10011	ESC
+	// 10100
+	// 10101
+	// 10110
+	// 10111
+	// 11000
+	// 11001
+	// 11010
+	// 11011
+	// 11100
+	// 11101
+	// 11110
+	// 11111
+
+	static const uint8 kButtonLookup[17]={
+		0x06, 0x05, 0x04,	// 1 2 3
+		0x0E, 0x0D, 0x0C,	// 4 5 6
+		0x0A, 0x09, 0x08,	// 7 8 9
+		0x03,	// 0
+		0x02,	// .
+		0x01,	// +/ENTER
+		0x00,	// -
+		0x07,	// Y
+		0x0B,	// N
+		0x0F,	// DEL
+		0x13	// ESC
+	};
+
+	trigger -= kATInputTrigger_Button0;
+
+	if (trigger >= 17)
+		return;
+
+	if (state) {
+		uint8 code = kButtonLookup[trigger];
+		mPortBits = 0x100 + (code & 0x0F);
+
+		SetPotPosition(true, code & 0x10 ? 228 : 0);
+	} else
+		mPortBits &= ~0x100;
+
+	SetPortOutput(mPortBits);
+}
+
+void ATKeypadController::OnAttach() {
+}
+
+void ATKeypadController::OnDetach() {
+	mpPortController->ResetPotPositions();
 }

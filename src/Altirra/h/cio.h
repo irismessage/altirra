@@ -41,18 +41,26 @@ namespace ATCIOSymbols {
 		CIOStatBadScrnMode	= 0x91,	// bad screen mode
 		CIOStatNotSupported	= 0x92,	// function not supported by handler
 		CIOStatOutOfMemory	= 0x93,	// not enough memory
+		CIOStatPathNotFound	= 0x96,	// [SDX] path not found
+		CIOStatFileExists	= 0x97,	// [SDX] file exists
+		CIOStatBadParameter	= 0x9C,	// [SDX] bad parameter
 		CIOStatDriveNumErr	= 0xA0,	// disk drive # error
 		CIOStatTooManyFiles	= 0xA1,	// too many open disk files
 		CIOStatDiskFull		= 0xA2,	// disk full
 		CIOStatFatalDiskIO	= 0xA3,	// fatal disk I/O error
+		CIOStatIllegalWild	= 0xA3,	// [SDX] Illegal wildcard in name
 		CIOStatFileNumDiff	= 0xA4,	// internal file # mismatch
 		CIOStatFileNameErr	= 0xA5,	// filename error
 		CIOStatPointDLen	= 0xA6,	// point data length error
 		CIOStatFileLocked	= 0xA7,	// file locked
+		CIOStatDirNotEmpty	= 0xA7,	// [SDX] directory not empty
 		CIOStatInvDiskCmd	= 0xA8,	// invalid command for disk
 		CIOStatDirFull		= 0xA9,	// directory full (64 files)
 		CIOStatFileNotFound	= 0xAA,	// file not found
 		CIOStatInvPoint		= 0xAB,	// invalid point
+		CIOStatAccessDenied	= 0xB0,	// [SDX] access denied
+		CIOStatPathTooLong	= 0xB6,	// [SDX] path too long
+		CIOStatSystemError	= 0xFF,	// {SDX] system error
 
 		CIOCmdOpen			= 0x03,
 		CIOCmdGetRecord		= 0x05,

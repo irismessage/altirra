@@ -1999,6 +1999,8 @@ public:
 	ATVideoWriter();
 	~ATVideoWriter();
 
+	void CheckExceptions();
+
 	void Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, IATUIRenderer *r);
 	void Shutdown();
 
@@ -2050,6 +2052,18 @@ ATVideoWriter::ATVideoWriter()
 ATVideoWriter::~ATVideoWriter() {
 }
 
+void ATVideoWriter::CheckExceptions() {
+	if (!mbErrorState)
+		return;
+
+	if (!mError.empty()) {
+		MyError e;
+
+		e.TransferFrom(mError);
+		throw e;
+	}
+}
+
 void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, IATUIRenderer *r) {
 	if (!palette && venc == kATVideoEncoding_RLE)
 		throw MyError("RLE encoding is not available as the current emulator video settings require 24-bit video.");
@@ -2087,8 +2101,8 @@ void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w
 	bmf.hdr.biPlanes		= 1;
 	bmf.hdr.biXPelsPerMeter	= 3150;
 	bmf.hdr.biYPelsPerMeter	= 3150;
-	bmf.hdr.biClrUsed		= palette ? 256 : 0;
-	bmf.hdr.biClrImportant	= palette ? 256 : 0;
+	bmf.hdr.biClrUsed		= venc != kATVideoEncoding_ZMBV && palette ? 256 : 0;
+	bmf.hdr.biClrImportant	= bmf.hdr.biClrUsed;
 
 	switch(venc) {
 		case kATVideoEncoding_Raw:
@@ -2211,12 +2225,22 @@ void ATVideoWriter::Shutdown() {
 	}
 
 	if (mVideoStream) {
-		mVideoStream->finish();
+		try {
+			mVideoStream->finish();
+		} catch(const MyError& e) {
+			RaiseError(e);
+		}
+
 		mVideoStream = NULL;
 	}
 
 	if (mFile) {
-		mFile->finalize();
+		try {
+			mFile->finalize();
+		} catch(const MyError& e) {
+			RaiseError(e);
+		}
+
 		mFile = NULL;
 	}
 
@@ -2224,6 +2248,9 @@ void ATVideoWriter::Shutdown() {
 }
 
 void ATVideoWriter::WriteFrame(const VDPixmap& px, uint32 timestamp) {
+	if (mbErrorState)
+		return;
+
 	if (!mbAudioPreskipSet) {
 		mbVideoTimestampSet = true;
 		mFirstVideoTimestamp = timestamp;

@@ -101,8 +101,25 @@
   <h3>Twerps</h3>
   <stockref id="nosiopatch"/>
 
+  <h3>Ultima I</h3>
+  <p>
+    This game requires the OS-B kernel ROM to run. It fails on HLE or XL kernels because it has
+    hardcoded references to keyboard translation tables in the OS-B ROM.
+  </p>
+  
   <h3>Zebuland</h3>
   <stockref id="diskrw"/>
+
+  <!-- *************************************************** -->
+
+  <h2>Applications</h2>
+  <h3>Ice-T XE 2.72</h3>
+  <p>
+    The keyboard click feature of this program has a bug: it calls directly into the OS K:
+    handler's GET BYTE routine without going through CIO and without setting ICAX1Z. This
+    causes the program to sometimes jam up endlessly transmitting the "j" character. Disabling
+    the keyboard click and then waiting for the output buffer to drain fixes the problem.
+  </p>
   
   <!-- *************************************************** -->
   

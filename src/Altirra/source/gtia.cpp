@@ -151,6 +151,10 @@ void ATGTIAEmulator::Init(IATGTIAEmulatorConnections *conn) {
 	mX = 0;
 	mY = 0;
 
+	ColdReset();
+}
+
+void ATGTIAEmulator::ColdReset() {
 	memset(mPlayerPos, 0, sizeof mPlayerPos);
 	memset(mMissilePos, 0, sizeof mMissilePos);
 	memset(mPlayerSize, 0, sizeof mPlayerSize);
@@ -158,6 +162,8 @@ void ATGTIAEmulator::Init(IATGTIAEmulatorConnections *conn) {
 	mMissileData = 0;
 	memset(mPMColor, 0, sizeof mPMColor);
 	memset(mPFColor, 0, sizeof mPFColor);
+
+	memset(&mState, 0, sizeof mState);
 }
 
 void ATGTIAEmulator::SetVBXE(ATVBXEEmulator *vbxe) {
@@ -175,32 +181,45 @@ void ATGTIAEmulator::SetUIRenderer(IATUIRenderer *r) {
 	mpUIRenderer = r;
 }
 
-ATColorParams ATGTIAEmulator::GetColorParams() const {
-	return mColorParams;
+ATColorSettings ATGTIAEmulator::GetColorSettings() const {
+	return mColorSettings;
 }
 
-void ATGTIAEmulator::SetColorParams(const ATColorParams& params) {
-	mColorParams = params;
+void ATGTIAEmulator::SetColorSettings(const ATColorSettings& settings) {
+	mColorSettings = settings;
 	RecomputePalette();
-
-	mpArtifactingEngine->SetColorParams(params);
 }
 
 void ATGTIAEmulator::ResetColors() {
-	mColorParams.mHueStart = -15.0f;
-	mColorParams.mHueRange = 360.0f * 15.0f / 14.4f;
-	mColorParams.mBrightness = 0.0f;
-	mColorParams.mContrast = 1.0f;
-	mColorParams.mSaturation = 75.0f / 255.0f;
-	mColorParams.mArtifactHue = 96.0f;
-	mColorParams.mArtifactSat = 2.76f;
-	mColorParams.mArtifactBias = 0.35f;
+	{
+		ATColorParams& colpa = mColorSettings.mNTSCParams;
+		colpa.mHueStart = -15.0f;
+		colpa.mHueRange = 360.0f * 15.0f / 14.4f;
+		colpa.mBrightness = 0.0f;
+		colpa.mContrast = 1.0f;
+		colpa.mSaturation = 75.0f / 255.0f;
+		colpa.mArtifactHue = 96.0f;
+		colpa.mArtifactSat = 2.76f;
+		colpa.mArtifactBias = 0.35f;
+		colpa.mbUsePALQuirks = false;
+	}
+
+	{
+		ATColorParams& colpa = mColorSettings.mPALParams;
+		colpa.mHueStart = -23.0f;
+		colpa.mHueRange = 23.5f * 15.0f;
+		colpa.mBrightness = 0.0f;
+		colpa.mContrast = 1.0f;
+		colpa.mSaturation = 0.29f;
+		colpa.mArtifactHue = 96.0f;
+		colpa.mArtifactSat = 2.76f;
+		colpa.mArtifactBias = 0.35f;
+		colpa.mbUsePALQuirks = true;
+	}
+
+	mColorSettings.mbUsePALParams = true;
+
 	RecomputePalette();
-
-	if (mpVBXE)
-		mpVBXE->SetDefaultPalette(mPalette);
-
-	mpArtifactingEngine->SetColorParams(mColorParams);
 }
 
 void ATGTIAEmulator::GetPalette(uint32 pal[256]) const {
@@ -260,7 +279,7 @@ void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
 	if (mbInterlaceEnabled)
 		h *= 2;
 
-	if (mpVBXE != NULL || mArtifactMode == kArtifactNTSCHi)
+	if (mpVBXE != NULL || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi)
 		w *= 2;
 }
 
@@ -350,6 +369,8 @@ void ATGTIAEmulator::SetVideoOutput(IVDVideoDisplay *pDisplay) {
 
 void ATGTIAEmulator::SetPALMode(bool enabled) {
 	mbPALMode = enabled;
+
+	RecomputePalette();
 }
 
 void ATGTIAEmulator::SetConsoleSwitch(uint8 c, bool set) {
@@ -559,6 +580,10 @@ void ATGTIAEmulator::SaveState(ATSaveStateWriter& writer) {
 	mpRenderer->SaveState(writer);
 }
 
+void ATGTIAEmulator::GetRegisterState(ATGTIARegisterState& state) const {
+	state = mState;
+}
+
 void ATGTIAEmulator::SetFieldPolarity(bool polarity) {
 	mbFieldPolarity = polarity;
 }
@@ -589,7 +614,7 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 		}
 	}
 
-	bool use14MHz = (mpVBXE != NULL) || mArtifactMode == kArtifactNTSCHi;
+	bool use14MHz = (mpVBXE != NULL) || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi;
 
 	if (mpFrame) {
 		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
@@ -609,9 +634,9 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 		if (mbPostProcessThisFrame) {
 			mPreArtifactFrame.h = mbOverscanPALExtendedThisFrame ? 312 : 262;
 
-			mpArtifactingEngine->BeginFrame(mArtifactMode == kArtifactPAL, mArtifactMode != kArtifactNone, mArtifactMode == kArtifactNTSCHi, mbBlendMode);
+			mpArtifactingEngine->BeginFrame(mArtifactMode == kArtifactPAL || mArtifactMode == kArtifactPALHi, mArtifactMode != kArtifactNone, mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi, mbBlendMode);
 		} else if (mpVBXE && (mArtifactMode == kArtifactPAL || mbBlendMode)) {
-			mpArtifactingEngine->BeginFrame(mArtifactMode == kArtifactPAL, mArtifactMode != kArtifactNone, mArtifactMode == kArtifactNTSCHi, mbBlendMode);
+			mpArtifactingEngine->BeginFrame(mArtifactMode == kArtifactPAL || mArtifactMode == kArtifactPALHi, mArtifactMode != kArtifactNone, mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi, mbBlendMode);
 		}
 
 		int format = mArtifactMode || mbBlendMode || use14MHz ? nsVDPixmap::kPixFormat_XRGB8888 : nsVDPixmap::kPixFormat_Pal8;
@@ -728,8 +753,6 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 				mpDst = (uint8 *)fb->mBuffer.data + yw * fb->mBuffer.pitch;
 			else
 				mpDst = (uint8 *)fb->mBuffer.data + yw * fb->mBuffer.pitch*2 + (mbFieldPolarity ? fb->mBuffer.pitch : 0);
-
-			memset(mpDst, 0, mb14MHzThisFrame ? 912 : 456);
 		} else {
 			mpDst = NULL;
 		}
@@ -1283,6 +1306,12 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 				y += 16;
 		}
 
+		if (mbInterlaceEnabledThisFrame) {
+			y += y;
+			if (mbFieldPolarity)
+				++y;
+		}
+
 		if (y < (uint32)pxdst.h) {
 			uint8 *row = (uint8 *)pxdst.data + y*pxdst.pitch;
 
@@ -1352,19 +1381,55 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 void ATGTIAEmulator::RecomputePalette() {
 	uint32 *dst = mPalette;
 
-	double angle = mColorParams.mHueStart * (nsVDMath::krTwoPi / 360.0f);
-	double angleStep = nsVDMath::krTwoPi * mColorParams.mHueRange / (360.0f * 15.0f);
+	const ATColorParams& params = mbPALMode && mColorSettings.mbUsePALParams ? mColorSettings.mPALParams : mColorSettings.mNTSCParams;
+	const bool palQuirks = params.mbUsePALQuirks;
+	float angle = (params.mHueStart + (palQuirks ? -33.0f : 0.0f)) * (nsVDMath::kfTwoPi / 360.0f);
+	float angleStep = params.mHueRange * (nsVDMath::kfTwoPi / (360.0f * 15.0f));
 
 	for(int hue=0; hue<16; ++hue) {
-		double i = mColorParams.mSaturation * cos(angle);
-		double q = mColorParams.mSaturation * sin(angle);
+		float i = 0;
+		float q = 0;
 
-		if (!hue) {
-			i = q = 0.0;
+		if (hue) {
+			if (palQuirks) {
+				static const float kPALPhaseLookup[][4]={
+					{ -1.0f,  1, -5.0f,  1 },
+					{  0.0f,  1, -6.0f,  1 },
+					{ -7.0f, -1, -7.0f,  1 },
+					{ -6.0f, -1,  0.0f, -1 },
+					{ -5.0f, -1, -1.0f, -1 },
+					{ -4.0f, -1, -2.0f, -1 },
+					{ -2.0f, -1, -4.0f, -1 },
+					{ -1.0f, -1, -5.0f, -1 },
+					{  0.0f, -1, -6.0f, -1 },
+					{ -7.0f,  1, -7.0f, -1 },
+					{ -5.0f,  1, -1.0f,  1 },
+					{ -4.0f,  1, -2.0f,  1 },
+					{ -3.0f,  1, -3.0f,  1 },
+					{ -2.0f,  1, -4.0f,  1 },
+					{ -1.0f,  1, -5.0f,  1 },
+				};
+
+				const float *co = kPALPhaseLookup[hue - 1];
+
+				float angle2 = angle + angleStep * (co[0] + 3.0f);
+				float angle3 = angle + angleStep * (-co[2] - 3.0f);
+				float i2 = cos(angle2) * co[1];
+				float q2 = sin(angle2) * co[1];
+				float i3 = cos(angle3) * co[3];
+				float q3 = sin(angle3) * co[3];
+
+				i = (i2 + i3) * (0.5f * params.mSaturation);
+				q = (q2 + q3) * (0.5f * params.mSaturation);
+			} else {
+				i = params.mSaturation * cos(angle);
+				q = params.mSaturation * sin(angle);
+				angle += angleStep;
+			}
 		}
 
 		for(int luma=0; luma<16; ++luma) {
-			double y = (double)luma * mColorParams.mContrast / 15.0f + mColorParams.mBrightness;
+			double y = (double)luma * params.mContrast / 15.0f + params.mBrightness;
 			double r = y + 0.956*i + 0.621*q;
 			double g = y - 0.272*i - 0.647*q;
 			double b = y - 1.107*i + 1.704*q;
@@ -1373,17 +1438,23 @@ void ATGTIAEmulator::RecomputePalette() {
 					+ (VDClampedRoundFixedToUint8Fast((float)g) <<  8)
 					+ (VDClampedRoundFixedToUint8Fast((float)b)      );
 		}
-
-		if (hue)
-			angle += angleStep;
 	}
+
+	if (mpVBXE)
+		mpVBXE->SetDefaultPalette(mPalette);
+
+	mpArtifactingEngine->SetColorParams(params);
 }
 
 uint8 ATGTIAEmulator::DebugReadByte(uint8 reg) const {
+	reg &= 0x1F;
+
 	return reg >= 0x10 ? const_cast<ATGTIAEmulator *>(this)->ReadByte(reg) : 0xFF;
 }
 
 uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
+	reg &= 0x1F;
+
 	// fast registers
 	switch(reg) {
 		case 0x10:
@@ -1451,6 +1522,10 @@ uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
 }
 
 void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
+	reg &= 0x1F;
+
+	mState.mReg[reg] = value;
+
 	switch(reg) {
 		case 0x12:
 		case 0x13:
@@ -1487,7 +1562,9 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 			return;
 
 		case 0x1D:
-			if (mGRACTL & ~value & 4) {
+			// We actually need to sync the latches when latching is *enabled*, since they
+			// are always updated but only read when latching is enabled.
+			if (~mGRACTL & value & 4) {
 				mTRIGLatched[0] = mTRIG[0];
 				mTRIGLatched[1] = mTRIG[1];
 				mTRIGLatched[2] = mTRIG[2];
@@ -1623,11 +1700,15 @@ void ATGTIAEmulator::ApplyArtifacting() {
 	dstrow += dstpitch * y1;
 	srcrow += srcpitch * y1;
 
+	const uint32 vstart = mbOverscanPALExtendedThisFrame ? 24 : 8;
+
 	for(uint32 row=y1; row<y2; ++row) {
 		uint32 *dst = (uint32 *)dstrow;
 		const uint8 *src = srcrow;
 
-		mpArtifactingEngine->Artifact8(row, dst, src, (unsigned)(row-8) < 240 && mbScanlinesWithHiRes[row - 8]);
+		uint32 relativeRow = row - vstart;
+
+		mpArtifactingEngine->Artifact8(row, dst, src, relativeRow < 240 && mbScanlinesWithHiRes[relativeRow]);
 
 		srcrow += srcpitch;
 		dstrow += dstpitch;

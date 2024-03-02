@@ -18,6 +18,7 @@
 #ifndef f_AT_AUDIOWRITER_H
 #define f_AT_AUDIOWRITER_H
 
+#include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include "audiooutput.h"
 
@@ -28,12 +29,15 @@ public:
 	ATAudioWriter(const wchar_t *filename);
 	~ATAudioWriter();
 
+	void CheckExceptions();
 	void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp);
 	
 protected:
 	void WriteInterleaved(const float *left, const float *right, uint32 count);
 
+	bool mbErrorState;
 	VDFile mFile;
+	MyError mError;
 };
 
 #endif	// f_AT_AUDIOWRITER_H

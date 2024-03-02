@@ -95,20 +95,28 @@ public:
 	virtual bool ProcessSubCommand(const char *s) = 0;
 };
 
+struct ATDebuggerOpenEvent {
+	int mInterruptingEvent;
+	bool mbAllowOpen;
+};
+
 class IATDebugger {
 public:
 	virtual bool IsRunning() const = 0;
 
 	virtual void Detach() = 0;
 	virtual void SetSourceMode(ATDebugSrcMode src) = 0;
+	virtual bool Tick() = 0;
 	virtual void Break() = 0;
 	virtual void Run(ATDebugSrcMode sourceMode) = 0;
 	virtual void RunTraced() = 0;
 	virtual void ClearAllBreakpoints() = 0;
 	virtual void ToggleBreakpoint(uint16 addr) = 0;
+	virtual void ToggleAccessBreakpoint(uint16 addr, bool write) = 0;
 	virtual void StepInto(ATDebugSrcMode sourceMode, uint32 regionStart = 0, uint32 regionSize = 0) = 0;
-	virtual void StepOver(ATDebugSrcMode sourceMode) = 0;
+	virtual void StepOver(ATDebugSrcMode sourceMode, uint32 rgnStart = 0, uint32 rgnSize = 0) = 0;
 	virtual void StepOut(ATDebugSrcMode sourceMode) = 0;
+	virtual uint16 GetPC() const = 0;
 	virtual void SetPC(uint16 pc) = 0;
 	virtual uint16 GetFramePC() const = 0;
 	virtual void SetFramePC(uint16 pc) = 0;
@@ -116,16 +124,20 @@ public:
 	virtual void DumpCallStack() = 0;
 	virtual void ListModules() = 0;
 
+	virtual bool IsBreakOnEXERunAddrEnabled() const = 0;
+	virtual void SetBreakOnEXERunAddrEnabled(bool en) = 0;
+
 	virtual void AddClient(IATDebuggerClient *client, bool requestUpdate = false) = 0;
 	virtual void RemoveClient(IATDebuggerClient *client) = 0;
 	virtual void RequestClientUpdate(IATDebuggerClient *client) = 0;
 
-	virtual uint32 LoadSymbols(const wchar_t *fileName) = 0;
+	virtual uint32 LoadSymbols(const wchar_t *fileName, bool processDirectives = true) = 0;
 	virtual void UnloadSymbols(uint32 moduleId) = 0;
+	virtual void ProcessSymbolDirectives(uint32 id) = 0;
 
 	virtual sint32 ResolveSymbol(const char *s, bool allowGlobal = false) = 0;
 
-	virtual void AddCustomSymbol(uint32 address, uint32 len, const char *name, uint32 rwxmode) = 0;
+	virtual void AddCustomSymbol(uint32 address, uint32 len, const char *name, uint32 rwxmode, uint32 moduleId = 0) = 0;
 	virtual void RemoveCustomSymbol(uint32 address) = 0;
 	virtual void LoadCustomSymbols(const wchar_t *filename) = 0;
 	virtual void SaveCustomSymbols(const wchar_t *filename) = 0;
@@ -140,6 +152,10 @@ public:
 
 	virtual const char *GetPrompt() const = 0;
 	virtual VDEvent<IATDebugger, const char *>& OnPromptChanged() = 0;
+
+	virtual VDEvent<IATDebugger, bool>& OnRunStateChanged() = 0;
+
+	virtual VDEvent<IATDebugger, ATDebuggerOpenEvent *>& OnDebuggerOpen() = 0;
 };
 
 struct ATDebuggerSymbol {
@@ -152,7 +168,7 @@ public:
 	virtual bool GetSourceFilePath(uint32 moduleId, uint16 fileId, VDStringW& path) = 0;
 	virtual bool LookupSymbol(uint32 addr, uint32 flags, ATSymbol& symbol) = 0;
 	virtual bool LookupSymbol(uint32 addr, uint32 flags, ATDebuggerSymbol& symbol) = 0;
-	virtual bool LookupLine(uint32 addr, uint32& moduleId, ATSourceLineInfo& lineInfo) = 0;
+	virtual bool LookupLine(uint32 addr, bool searchUp, uint32& moduleId, ATSourceLineInfo& lineInfo) = 0;
 	virtual bool LookupFile(const wchar_t *fileName, uint32& moduleId, uint16& fileId) = 0;
 	virtual void GetLinesForFile(uint32 moduleId, uint16 fileId, vdfastvector<ATSourceLineInfo>& lines) = 0;
 };

@@ -4,7 +4,6 @@ body {
 	font-size: 10pt;
 	margin: 0;
 	padding: 0;
-	padding-bottom: 10pt;
 	background: #fff;
 	color: #000;
 }
@@ -17,7 +16,6 @@ h2 {
 	font-size: 14pt;
 	font-weight: normal;
 	border-bottom: 1px solid #aaa;
-	padding: 0;
 }
 
 h3 {
@@ -61,6 +59,7 @@ td {
 
 .main {
 	margin: 12pt;
+	padding-bottom: 1px;
 }
 
 .header {
@@ -133,15 +132,4 @@ td {
 
 .featurelist-no {
 	background-color: #fee;
-}
-
-dl.inline dt {
-	float: left;
-	display: block;
-	clear: both;
-	font-weight: bold;
-}
-
-dl.inline dd {
-	display: block;
 }

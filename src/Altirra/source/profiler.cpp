@@ -17,6 +17,7 @@
 
 #include "stdafx.h"
 #include "cpu.h"
+#include "cpumemory.h"
 #include "console.h"
 #include "profiler.h"
 #include "scheduler.h"
@@ -34,9 +35,10 @@ ATCPUProfiler::~ATCPUProfiler() {
 	ClearSamples();
 }
 
-void ATCPUProfiler::Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATScheduler *scheduler, ATScheduler *slowScheduler) {
+void ATCPUProfiler::Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATCPUEmulatorCallbacks *callbacks, ATScheduler *scheduler, ATScheduler *slowScheduler) {
 	mpCPU = cpu;
 	mpMemory = mem;
+	mpCallbacks = callbacks;
 	mpFastScheduler = scheduler;
 	mpSlowScheduler = slowScheduler;
 }
@@ -45,7 +47,7 @@ void ATCPUProfiler::Start(ATProfileMode mode) {
 	ClearSamples();
 
 	mProfileMode = mode;
-	mStartCycleTime = mpMemory->CPUGetCycle();
+	mStartCycleTime = mpCallbacks->CPUGetCycle();
 	mLastHistoryCounter = mpCPU->GetHistoryCounter();
 	mTotalSamples = 0;
 	mTotalCycles = 0;
@@ -69,7 +71,7 @@ void ATCPUProfiler::End() {
 		mpUpdateEvent = NULL;
 	}
 
-	mTotalCycles = mpMemory->CPUGetCycle() - mStartCycleTime;
+	mTotalCycles = mpCallbacks->CPUGetCycle() - mStartCycleTime;
 }
 
 void ATCPUProfiler::GetSession(ATProfileSession& session) {
@@ -117,8 +119,8 @@ void ATCPUProfiler::Update() {
 	uint32 lineNo = 0;
 
 	if (mProfileMode == kATProfileMode_BasicLines) {
-		uint32 lineAddr = (uint32)mpMemory->CPUDebugReadByte(0x8A) + ((uint32)mpMemory->CPUDebugReadByte(0x8B) << 8);
-		lineNo = (uint32)mpMemory->CPUDebugReadByte(lineAddr) + ((uint32)mpMemory->CPUDebugReadByte(lineAddr + 1) << 8);
+		uint32 lineAddr = (uint32)mpMemory->DebugReadByte(0x8A) + ((uint32)mpMemory->DebugReadByte(0x8B) << 8);
+		lineNo = (uint32)mpMemory->DebugReadByte(lineAddr) + ((uint32)mpMemory->DebugReadByte(lineAddr + 1) << 8);
 	}
 
 	const ATCPUHistoryEntry *hentp = &mpCPU->GetHistory(count);

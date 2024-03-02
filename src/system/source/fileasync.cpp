@@ -630,10 +630,13 @@ void VDFileAsyncNT::FastWrite(const void *pData, uint32 bytes) {
 }
 
 void VDFileAsyncNT::FastWriteEnd() {
-	FastWrite(NULL, mSectorSize - 1);
-	mState = kStateFlush;
-	mWriteOccurred.signal();
-	ThreadWait();
+	if (mhFileFast != INVALID_HANDLE_VALUE) {
+		FastWrite(NULL, mSectorSize - 1);
+		mState = kStateFlush;
+		mWriteOccurred.signal();
+		ThreadWait();
+	}
+
 	if (mpError)
 		ThrowError();
 }

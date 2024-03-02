@@ -366,6 +366,181 @@
 				Name="VCPostBuildEventTool"
 			/>
 		</Configuration>
+		<Configuration
+			Name="Profile|Win32"
+			OutputDirectory="..\..\out\$(ConfigurationName)"
+			IntermediateDirectory="..\..\obj\$(ConfigurationName)\$(ProjectName)"
+			ConfigurationType="1"
+			CharacterSet="2"
+			WholeProgramOptimization="0"
+			>
+			<Tool
+				Name="VCPreBuildEventTool"
+			/>
+			<Tool
+				Name="VCCustomBuildTool"
+			/>
+			<Tool
+				Name="VCXMLDataGeneratorTool"
+			/>
+			<Tool
+				Name="VCWebServiceProxyGeneratorTool"
+			/>
+			<Tool
+				Name="VCMIDLTool"
+			/>
+			<Tool
+				Name="VCCLCompilerTool"
+				Optimization="3"
+				InlineFunctionExpansion="2"
+				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\Release\HLEKernel;autobuild;autobuild_default"
+				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0400"
+				RuntimeLibrary="0"
+				BufferSecurityCheck="false"
+				FloatingPointModel="2"
+				ForceConformanceInForLoopScope="true"
+				RuntimeTypeInfo="false"
+				UsePrecompiledHeader="2"
+				PrecompiledHeaderThrough="stdafx.h"
+				WarningLevel="3"
+				Detect64BitPortabilityProblems="false"
+				DebugInformationFormat="3"
+			/>
+			<Tool
+				Name="VCManagedResourceCompilerTool"
+			/>
+			<Tool
+				Name="VCResourceCompilerTool"
+			/>
+			<Tool
+				Name="VCPreLinkEventTool"
+			/>
+			<Tool
+				Name="VCLinkerTool"
+				LinkLibraryDependencies="false"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib"
+				LinkIncremental="1"
+				AdditionalLibraryDirectories="..\..\lib\Release"
+				GenerateDebugInformation="true"
+				SubSystem="2"
+				OptimizeReferences="2"
+				EnableCOMDATFolding="2"
+				TargetMachine="1"
+			/>
+			<Tool
+				Name="VCALinkTool"
+			/>
+			<Tool
+				Name="VCManifestTool"
+			/>
+			<Tool
+				Name="VCXDCMakeTool"
+			/>
+			<Tool
+				Name="VCBscMakeTool"
+			/>
+			<Tool
+				Name="VCFxCopTool"
+			/>
+			<Tool
+				Name="VCAppVerifierTool"
+			/>
+			<Tool
+				Name="VCWebDeploymentTool"
+			/>
+			<Tool
+				Name="VCPostBuildEventTool"
+			/>
+		</Configuration>
+		<Configuration
+			Name="Profile|x64"
+			OutputDirectory="..\..\out\$(ConfigurationName)AMD64"
+			IntermediateDirectory="..\..\obj\$(ConfigurationName)AMD64\$(ProjectName)"
+			ConfigurationType="1"
+			CharacterSet="2"
+			WholeProgramOptimization="0"
+			>
+			<Tool
+				Name="VCPreBuildEventTool"
+			/>
+			<Tool
+				Name="VCCustomBuildTool"
+			/>
+			<Tool
+				Name="VCXMLDataGeneratorTool"
+			/>
+			<Tool
+				Name="VCWebServiceProxyGeneratorTool"
+			/>
+			<Tool
+				Name="VCMIDLTool"
+				TargetEnvironment="3"
+			/>
+			<Tool
+				Name="VCCLCompilerTool"
+				Optimization="3"
+				InlineFunctionExpansion="2"
+				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\Release\HLEKernel;autobuild;autobuild_default"
+				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0400"
+				RuntimeLibrary="0"
+				BufferSecurityCheck="false"
+				FloatingPointModel="2"
+				ForceConformanceInForLoopScope="true"
+				RuntimeTypeInfo="false"
+				UsePrecompiledHeader="2"
+				PrecompiledHeaderThrough="stdafx.h"
+				WarningLevel="3"
+				Detect64BitPortabilityProblems="false"
+				DebugInformationFormat="3"
+			/>
+			<Tool
+				Name="VCManagedResourceCompilerTool"
+			/>
+			<Tool
+				Name="VCResourceCompilerTool"
+			/>
+			<Tool
+				Name="VCPreLinkEventTool"
+			/>
+			<Tool
+				Name="VCLinkerTool"
+				LinkLibraryDependencies="false"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib"
+				OutputFile="$(OutDir)\Altirra64.exe"
+				LinkIncremental="1"
+				AdditionalLibraryDirectories="..\..\lib\ReleaseAMD64"
+				GenerateManifest="false"
+				GenerateDebugInformation="true"
+				SubSystem="2"
+				OptimizeReferences="2"
+				EnableCOMDATFolding="2"
+				TargetMachine="17"
+			/>
+			<Tool
+				Name="VCALinkTool"
+			/>
+			<Tool
+				Name="VCManifestTool"
+			/>
+			<Tool
+				Name="VCXDCMakeTool"
+			/>
+			<Tool
+				Name="VCBscMakeTool"
+			/>
+			<Tool
+				Name="VCFxCopTool"
+			/>
+			<Tool
+				Name="VCAppVerifierTool"
+			/>
+			<Tool
+				Name="VCWebDeploymentTool"
+			/>
+			<Tool
+				Name="VCPostBuildEventTool"
+			/>
+		</Configuration>
 	</Configurations>
 	<References>
 	</References>
@@ -388,11 +563,39 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\artifacting_ntsc_mmx.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\artifacting_ntsc_sse2.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\artifacting_pal_mmx.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\artifacting_pal_scalar.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\artifacting_pal_sse2.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\artifacting_pal_sse2_intrin.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\assembler.cpp"
 				>
 			</File>
 			<File
 				RelativePath=".\source\audiofilters.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\audiomonitor.cpp"
 				>
 			</File>
 			<File
@@ -409,6 +612,10 @@
 			</File>
 			<File
 				RelativePath=".\source\aviwriter.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\bkptmanager.cpp"
 				>
 			</File>
 			<File
@@ -456,6 +663,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\debuggerexp.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\decmath.cpp"
 				>
 			</File>
@@ -469,6 +680,22 @@
 			</File>
 			<File
 				RelativePath=".\source\disk.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\diskfs.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\diskfsdos2.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\diskfssdx2.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\diskimage.cpp"
 				>
 			</File>
 			<File
@@ -516,6 +743,14 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\memorymanager.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\mmu.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\modem.cpp"
 				>
 			</File>
@@ -525,6 +760,14 @@
 			</File>
 			<File
 				RelativePath=".\source\oshelper.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\pclink.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\pclink_win32.cpp"
 				>
 			</File>
 			<File
@@ -564,6 +807,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\soundboard.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\symbols.cpp"
 				>
 			</File>
@@ -580,7 +827,15 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uiabout.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uiaudiooptions.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uicaptionupdater.cpp"
 				>
 			</File>
 			<File
@@ -608,7 +863,15 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uidiskexplorer.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uidragdrop.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uiemuerror.cpp"
 				>
 			</File>
 			<File
@@ -644,6 +907,14 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uipclink.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uiportmenus.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uiproxies.cpp"
 				>
 			</File>
@@ -665,6 +936,10 @@
 			</File>
 			<File
 				RelativePath=".\source\uitapecontrol.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uiverifier.cpp"
 				>
 			</File>
 			<File
@@ -694,7 +969,15 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\artifacting_filters.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\audiofilters.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\audiomonitor.h"
 				>
 			</File>
 			<File
@@ -711,6 +994,10 @@
 			</File>
 			<File
 				RelativePath=".\h\aviwriter.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\bkptmanager.h"
 				>
 			</File>
 			<File
@@ -746,11 +1033,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\cpumemory.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\cpustates.h"
 				>
 			</File>
 			<File
 				RelativePath=".\h\debugger.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\debuggerexp.h"
 				>
 			</File>
 			<File
@@ -767,6 +1062,14 @@
 			</File>
 			<File
 				RelativePath=".\h\disk.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\diskfs.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\diskimage.h"
 				>
 			</File>
 			<File
@@ -822,6 +1125,14 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\memorymanager.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\mmu.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\modem.h"
 				>
 			</File>
@@ -831,6 +1142,10 @@
 			</File>
 			<File
 				RelativePath=".\h\oshelper.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\pclink.h"
 				>
 			</File>
 			<File
@@ -870,6 +1185,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\soundboard.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\symbols.h"
 				>
 			</File>
@@ -886,6 +1205,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\uicaptionupdater.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\uienhancedtext.h"
 				>
 			</File>
@@ -895,6 +1218,10 @@
 			</File>
 			<File
 				RelativePath=".\h\uikeyboard.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uiportmenus.h"
 				>
 			</File>
 			<File
@@ -958,13 +1285,37 @@
 						PreprocessorDefinitions="NDEBUG"
 					/>
 				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|Win32"
+					>
+					<Tool
+						Name="VCResourceCompilerTool"
+						PreprocessorDefinitions="NDEBUG"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|x64"
+					>
+					<Tool
+						Name="VCResourceCompilerTool"
+						PreprocessorDefinitions="NDEBUG"
+					/>
+				</FileConfiguration>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\basic.rom"
+				RelativePath="..\..\out\release\atdiskloader128.bin"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\debug\atdiskloader128.bin"
 				>
 			</File>
 			<File
 				RelativePath="..\..\out\release\basic.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\debug\basic.rom"
 				>
 			</File>
 			<File
@@ -976,15 +1327,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\hlekernel.rom"
-				>
-			</File>
-			<File
 				RelativePath="..\..\out\release\hlekernel.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\kernel.rom"
+				RelativePath="..\..\out\debug\hlekernel.rom"
 				>
 			</File>
 			<File
@@ -992,7 +1339,7 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Release\nocartridge.rom"
+				RelativePath="..\..\out\debug\kernel.rom"
 				>
 			</File>
 			<File
@@ -1000,11 +1347,15 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\nokernel.rom"
+				RelativePath="..\..\out\Release\nocartridge.rom"
 				>
 			</File>
 			<File
 				RelativePath="..\..\out\release\nokernel.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\debug\nokernel.rom"
 				>
 			</File>
 			<File
@@ -1016,11 +1367,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Debug\superkernel.rom"
+				RelativePath="..\..\out\Release\superkernel.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Release\superkernel.rom"
+				RelativePath="..\..\out\Debug\superkernel.rom"
 				>
 			</File>
 			<File
@@ -1060,6 +1411,22 @@
 				</FileConfiguration>
 				<FileConfiguration
 					Name="Release|x64"
+					>
+					<Tool
+						Name="VCCLCompilerTool"
+						UsePrecompiledHeader="1"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|Win32"
+					>
+					<Tool
+						Name="VCCLCompilerTool"
+						UsePrecompiledHeader="1"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|x64"
 					>
 					<Tool
 						Name="VCCLCompilerTool"
@@ -1142,6 +1509,98 @@
 						Outputs="&quot;$(InputDir)\..\h\font3x5.inl&quot;"
 					/>
 				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 3x5 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\Release\asuka&quot; fontencode &quot;$(InputPath)&quot; 3 5 16 16 4 1 0 &quot;$(InputDir)\..\h\font3x5.inl&quot; g_ATFont3x5&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font3x5.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 3x5 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\Release\asuka&quot; fontencode &quot;$(InputPath)&quot; 3 5 16 16 4 1 0 &quot;$(InputDir)\..\h\font3x5.inl&quot; g_ATFont3x5&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font3x5.inl&quot;"
+					/>
+				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\data\font3x5p.bmp"
+				>
+				<FileConfiguration
+					Name="Debug|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 3x5p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\Debug\asuka&quot; fontencode &quot;$(InputPath)&quot; 3 5 16 16 4 1 0 &quot;$(InputDir)\..\h\font3x5p.inl&quot; g_ATFont3x5p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Debug\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font3x5p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Debug|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 3x5p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\Debug\asuka&quot; fontencode &quot;$(InputPath)&quot; 3 5 16 16 4 1 0 &quot;$(InputDir)\..\h\font3x5p.inl&quot; g_ATFont3x5p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Debug\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font3x5p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 3x5p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\Release\asuka&quot; fontencode &quot;$(InputPath)&quot; 3 5 16 16 4 1 0 &quot;$(InputDir)\..\h\font3x5p.inl&quot; g_ATFont3x5p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font3x5p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 3x5p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\Release\asuka&quot; fontencode &quot;$(InputPath)&quot; 3 5 16 16 4 1 0 &quot;$(InputDir)\..\h\font3x5p.inl&quot; g_ATFont3x5p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font3x5p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 3x5p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\Release\asuka&quot; fontencode &quot;$(InputPath)&quot; 3 5 16 16 4 1 0 &quot;$(InputDir)\..\h\font3x5p.inl&quot; g_ATFont3x5p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font3x5p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 3x5p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\Release\asuka&quot; fontencode &quot;$(InputPath)&quot; 3 5 16 16 4 1 0 &quot;$(InputDir)\..\h\font3x5p.inl&quot; g_ATFont3x5p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font3x5p.inl&quot;"
+					/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\data\font5x8p.bmp"
@@ -1190,6 +1649,28 @@
 						Outputs="&quot;$(InputDir)\..\h\font5x8p.inl&quot;"
 					/>
 				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 5x8p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\Release\asuka&quot; fontencode &quot;$(InputPath)&quot; 5 8 16 16 7 1 0 &quot;$(InputDir)\..\h\font5x8p.inl&quot; g_ATFont5x8p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font5x8p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 5x8p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\Release\asuka&quot; fontencode &quot;$(InputPath)&quot; 5 8 16 16 7 1 0 &quot;$(InputDir)\..\h\font5x8p.inl&quot; g_ATFont5x8p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font5x8p.inl&quot;"
+					/>
+				</FileConfiguration>
 			</File>
 		</Filter>
 		<Filter
@@ -1214,6 +1695,14 @@
 						Name="VCCustomBuildTool"
 					/>
 				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|x64"
+					ExcludedFromBuild="true"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+					/>
+				</FileConfiguration>
 			</File>
 			<File
 				RelativePath=".\manifest\comctl6_x64.manifest"
@@ -1228,6 +1717,14 @@
 				</FileConfiguration>
 				<FileConfiguration
 					Name="Release|Win32"
+					ExcludedFromBuild="true"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|Win32"
 					ExcludedFromBuild="true"
 					>
 					<Tool

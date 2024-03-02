@@ -62,11 +62,13 @@ bool ATInputMap::UsesPhysicalPort(int portIdx) const {
 
 		switch(c.mType) {
 			case kATInputControllerType_Joystick:
-			case kATInputControllerType_Mouse:
+			case kATInputControllerType_STMouse:
 			case kATInputControllerType_5200Controller:
 			case kATInputControllerType_LightPen:
 			case kATInputControllerType_Tablet:
 			case kATInputControllerType_KoalaPad:
+			case kATInputControllerType_AmigaMouse:
+			case kATInputControllerType_Keypad:
 				if (c.mIndex == portIdx)
 					return true;
 				break;
@@ -667,18 +669,48 @@ void ATInputManager::GetNameForInputCode(uint32 code, VDStringW& name) const {
 	}
 }
 
-void ATInputManager::GetNameForTargetCode(uint32 code, VDStringW& name) const {
+void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType type, VDStringW& name) const {
+	static const wchar_t *const kKeypadButtons[]={
+		L"1 Key",
+		L"2 Key",
+		L"3 Key",
+		L"4 Key",
+		L"5 Key",
+		L"6 Key",
+		L"7 Key",
+		L"8 Key",
+		L"9 Key",
+		L"0 Key",
+		L"Period",
+		L"Plus/Enter",
+		L"Minus",
+		L"Y",
+		L"N",
+		L"Del",
+		L"Esc"
+	};
+
 	name.clear();
 
+	uint32 index = code & 0xFF;
 	switch(code & 0xFF00) {
 		case kATInputTrigger_Button0:
-			name.sprintf(L"Button %d", (code & 0xFF) + 1);
+			switch(type) {
+				case kATInputControllerType_Keypad:
+					if (index < sizeof(kKeypadButtons)/sizeof(kKeypadButtons[0])) {
+						name = kKeypadButtons[index];
+						return;
+					}
+					break;
+			}
+
+			name.sprintf(L"Button %d", index + 1);
 			break;
 		case kATInputTrigger_Axis0:
-			name.sprintf(L"Axis %d", (code & 0xFF) + 1);
+			name.sprintf(L"Axis %d", index + 1);
 			break;
 		case kATInputTrigger_Flag0:
-			name.sprintf(L"Flag %d", (code & 0xFF) + 1);
+			name.sprintf(L"Flag %d", index + 1);
 			break;
 		default:
 			switch(code) {
@@ -969,9 +1001,10 @@ void ATInputManager::RebuildMappings() {
 						}
 						break;
 
-					case kATInputControllerType_Mouse:
+					case kATInputControllerType_STMouse:
+					case kATInputControllerType_AmigaMouse:
 						if (c.mIndex < 4) {
-							ATMouseController *mouse = new ATMouseController;
+							ATMouseController *mouse = new ATMouseController(c.mType == kATInputControllerType_AmigaMouse);
 
 							mouse->Init(mpSlowScheduler);
 							mouse->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
@@ -1042,6 +1075,16 @@ void ATInputManager::RebuildMappings() {
 							tc->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
 
 							pic = tc;
+						}
+						break;
+
+					case kATInputControllerType_Keypad:
+						if (c.mIndex < 4) {
+							ATKeypadController *kpc = new ATKeypadController;
+
+							kpc->Attach(mpPorts[c.mIndex >> 1], (c.mIndex & 1) != 0);
+
+							pic = kpc;
 						}
 						break;
 				}
@@ -1410,7 +1453,7 @@ void ATInputManager::InitPresetMaps() {
 
 	imap = new ATInputMap;
 	imap->SetName(L"Mouse -> ST Mouse (port 1)");
-	imap->AddController(kATInputControllerType_Mouse, 0);
+	imap->AddController(kATInputControllerType_STMouse, 0);
 	imap->AddMapping(kATInputCode_MouseHoriz, 0, kATInputTrigger_Axis0);
 	imap->AddMapping(kATInputCode_MouseVert, 0, kATInputTrigger_Axis0+1);
 	imap->AddMapping(kATInputCode_MouseLMB, 0, kATInputTrigger_Button0);
@@ -1431,7 +1474,7 @@ void ATInputManager::InitPresetMaps() {
 
 	imap = new ATInputMap;
 	imap->SetName(L"Mouse -> ST Mouse (port 2)");
-	imap->AddController(kATInputControllerType_Mouse, 1);
+	imap->AddController(kATInputControllerType_STMouse, 1);
 	imap->AddMapping(kATInputCode_MouseHoriz, 0, kATInputTrigger_Axis0);
 	imap->AddMapping(kATInputCode_MouseVert, 0, kATInputTrigger_Axis0+1);
 	imap->AddMapping(kATInputCode_MouseLMB, 0, kATInputTrigger_Button0);

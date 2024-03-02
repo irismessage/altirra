@@ -34,6 +34,7 @@ template<class K, class V, class Hash = vdhash<K>, class Pred = std::equal_to<K>
 class vdhashmap : public vdhashtable<std::pair<K, V> > {
 public:
 	typedef K key_type;
+	typedef V mapped_type;
 	typedef Hash hasher;
 	typedef Pred key_equal;
 	typedef A allocator_type;
@@ -44,6 +45,8 @@ public:
 	~vdhashmap();
 
 	vdhashmap& operator=(const vdhashmap&);
+
+	mapped_type&		operator[](const K& key);
 
 	allocator_type get_allocator() const;
 
@@ -174,6 +177,11 @@ vdhashmap<K, V, Hash, Pred, A>& vdhashmap<K, V, Hash, Pred, A>::operator=(const 
 	}
 	
 	return *this;
+}
+
+template<class K, class V, class Hash, class Pred, class A>
+typename vdhashmap<K, V, Hash, Pred, A>::mapped_type& vdhashmap<K, V, Hash, Pred, A>::operator[](const K& key) {
+	return insert(key).first->second;
 }
 
 template<class K, class V, class Hash, class Pred, class A>

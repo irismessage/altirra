@@ -20,9 +20,11 @@
 
 #include <vd2/system/vdstl.h>
 
+class ATMemoryManager;
+class ATMemoryLayer;
+
 class IATVBXEEmulatorConnections {
 public:
-	virtual void VBXERequestMemoryMapUpdate() = 0;
 	virtual void VBXEAssertIRQ() = 0;
 	virtual void VBXENegateIRQ() = 0;
 };
@@ -35,12 +37,14 @@ public:
 	~ATVBXEEmulator();
 
 	// VBXE requires 512K of memory.
-	void Init(uint8 *memory, IATVBXEEmulatorConnections *conn);
+	void Init(uint8 *memory, IATVBXEEmulatorConnections *conn, ATMemoryManager *memman);
+	void Shutdown();
 
 	void ColdReset();
 	void WarmReset();
 
-	void Set5200Mode(bool enable) { mb5200Mode = enable; }
+	void Set5200Mode(bool enable);
+	void SetRegisterBase(uint8 page);
 
 	void SetAnalysisMode(bool analysisMode);
 	void SetDefaultPalette(const uint32 pal[256]);
@@ -58,8 +62,6 @@ public:
 	uint8 ReadControl(uint8 addrLo);
 	void WriteControl(uint8 addrLo, uint8 value);
 
-	void UpdateMemoryMaps(const uint8 *cpuRead[256], uint8 *cpuWrite[256], const uint8 *anticRead[256]);
-
 	// GTIA interface
 	void BeginFrame();
 	void BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires);
@@ -76,6 +78,13 @@ protected:
 		uint8 mPad;
 	};
 
+	static bool StaticGTIAWrite(void *thisptr, uint32 reg, uint8 value);
+	static sint32 StaticReadControl(void *thisptr, uint32 reg) { return (uint8)((ATVBXEEmulator *)thisptr)->ReadControl((uint8)reg); }
+	static bool StaticWriteControl(void *thisptr, uint32 reg, uint8 value) { ((ATVBXEEmulator *)thisptr)->WriteControl((uint8)reg, value); return true; }
+
+	void InitMemoryMaps();
+	void ShutdownMemoryMaps();
+	void UpdateMemoryMaps();
 	void UpdateRegisters(const RegisterChange *changes, int count);
 
 	int RenderAttrPixels(int x1, int x2);
@@ -99,11 +108,13 @@ protected:
 
 	uint8 *mpMemory;
 	IATVBXEEmulatorConnections *mpConn;
+	ATMemoryManager *mpMemMan;
 
 	uint8	mMemAcControl;
 	uint8	mMemAcBankA;
 	uint8	mMemAcBankB;
 	bool	mb5200Mode;
+	uint8	mRegBase;
 
 	uint32 mXdlBaseAddr;
 	uint32 mXdlAddr;
@@ -210,6 +221,11 @@ protected:
 	const uint8 (*mpPriTable)[2];
 	const uint8 (*mpPriTableHi)[2];
 	const uint8 *mpColorTable;
+
+	ATMemoryLayer *mpMemLayerMEMACA;
+	ATMemoryLayer *mpMemLayerMEMACB;
+	ATMemoryLayer *mpMemLayerRegisters;
+	ATMemoryLayer *mpMemLayerGTIAOverlay;
 
 	typedef vdfastvector<RegisterChange> RegisterChanges;
 	RegisterChanges mRegisterChanges;

@@ -56,6 +56,17 @@ struct ATColorParams {
 	float mArtifactHue;
 	float mArtifactSat;
 	float mArtifactBias;
+	bool mbUsePALQuirks;
+};
+
+struct ATColorSettings {
+	ATColorParams	mNTSCParams;
+	ATColorParams	mPALParams;
+	bool	mbUsePALParams;
+};
+
+struct ATGTIARegisterState {
+	uint8	mReg[0x20];
 };
 
 class ATGTIAEmulator {
@@ -64,6 +75,7 @@ public:
 	~ATGTIAEmulator();
 
 	void Init(IATGTIAEmulatorConnections *);
+	void ColdReset();
 
 	void SetVBXE(ATVBXEEmulator *);
 	void SetUIRenderer(IATUIRenderer *);
@@ -82,6 +94,7 @@ public:
 		kArtifactNTSC,
 		kArtifactPAL,
 		kArtifactNTSCHi,
+		kArtifactPALHi,
 		kArtifactCount
 	};
 
@@ -92,8 +105,8 @@ public:
 		kOverscanCount
 	};
 
-	ATColorParams GetColorParams() const;
-	void SetColorParams(const ATColorParams& params);
+	ATColorSettings GetColorSettings() const;
+	void SetColorSettings(const ATColorSettings& settings);
 	void ResetColors();
 	void GetPalette(uint32 pal[256]) const;
 
@@ -125,6 +138,7 @@ public:
 
 	void SetVideoOutput(IVDVideoDisplay *pDisplay);
 
+	bool IsPALMode() const { return mbPALMode; }
 	void SetPALMode(bool enabled);
 
 	ArtifactMode GetArtifactingMode() const { return mArtifactMode; }
@@ -161,6 +175,8 @@ public:
 
 	void LoadState(ATSaveStateReader& reader);
 	void SaveState(ATSaveStateWriter& writer);
+
+	void GetRegisterState(ATGTIARegisterState& state) const;
 
 	enum VBlankMode {
 		kVBlankModeOff,
@@ -227,6 +243,8 @@ protected:
 	bool	mbPostProcessThisFrame;
 	bool	mb14MHzThisFrame;
 
+	ATGTIARegisterState	mState;
+
 	uint8	mPlayerPos[4];
 	uint8	mMissilePos[4];
 	uint8	mPlayerWidth[4];
@@ -284,7 +302,7 @@ protected:
 	uint32	mPalette[256];
 	bool	mbScanlinesWithHiRes[240];
 
-	ATColorParams mColorParams;
+	ATColorSettings mColorSettings;
 
 	vdfastvector<uint8>		mPreArtifactFrameBuffer;
 	VDPixmap	mPreArtifactFrame;

@@ -19,6 +19,7 @@
 #include <vd2/system/VDString.h>
 #include "decmath.h"
 #include "cpu.h"
+#include "cpumemory.h"
 #include "ksyms.h"
 
 struct ATDecFloat {
@@ -373,7 +374,7 @@ void ATAccelAFP(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 				}
 			} else if (period)
 				--leading;
-		} else
+		} else if (c != ' ')
 			break;
 
 		if (!++index) {
@@ -1298,14 +1299,15 @@ void ATAccelREDRNG(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	one.SetOne();
 
 	ATDecFloat x = ATReadFR0(mem);
+	ATDecFloat y = ATReadDecFloat(mem, cpu.GetY()*256U + cpu.GetX());
 
 	ATDecFloat num;
 	ATDecFloat den;
 	ATDecFloat res;
 
 	cpu.ClearFlagC();
-	if (!ATDecFloatAdd(num, x, -one) ||
-		!ATDecFloatAdd(den, x, one) ||
+	if (!ATDecFloatAdd(num, x, -y) ||
+		!ATDecFloatAdd(den, x, y) ||
 		!ATDecFloatDiv(res, num, den)) {
 		cpu.SetFlagC();
 	} else {

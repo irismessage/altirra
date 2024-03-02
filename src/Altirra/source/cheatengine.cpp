@@ -405,6 +405,10 @@ void ATCheatEngine::UpdateCheat(uint32 index, const Cheat& cheat) {
 void ATCheatEngine::ApplyCheats() {
 	for(Cheats::const_iterator it(mCheats.begin()), itEnd(mCheats.end()); it != itEnd; ++it) {
 		uint32 address = it->mAddress;
+
+		if (!it->mbEnabled)
+			continue;
+
 		if (it->mb16Bit) {
 			if (address >= mMemorySize - 1)
 				continue;

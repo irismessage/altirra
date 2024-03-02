@@ -1,6 +1,100 @@
 Altirra Change Log
 
-Version 1.8:
+Version 1.9:
+   [features added]
+   * Debugger: Multiple memory access breakpoints can now be placed.
+   * Debugger: Added option to break on run address of loaded executable.
+   * Debugger: Conditional breakpoints (bx) are now supported.
+   * Debugger: Commands can now be run when a breakpoint fires.
+   * Debugger: Added ? (evaluate) and .printf commands.
+   * Debugger: Trace and assert statements can now be embedded in assembler listings.
+   * Debugger: Added vta, vtc, vtl, and vtr commands to control verifier OS entry point checking.
+   * Debugger: Added .dumpsnap command.
+   * Debugger: Memory access breakpoints can now be placed on an address range.
+   * Debugger: History window now has a Copy Visible context menu option.
+   * Debugger: Verifier modes are now configurable.
+   * Debugger: Verifier can now catch register corruption across interrupts.
+   * Debugger: .writemem now supports extended address syntax.
+   * Debugger: Added .sio command.
+   * Debugger: Added .sdx_loadsyms command.
+   * SoundBoard: Initial support.
+   * UI: Added emulator crash dialog.
+   * UI: Show FPS option now also shows CPU usage.
+   * Input: Added Amiga mouse support.
+   * Input: Added CX-85 keypad support.
+   * GTIA: NTSC and PAL modes can now have separate palettes.
+   * GTIA: Added option for PAL encoding quirks.
+   * GTIA: Added PAL high artifacting mode.
+   * Disk: Initial version of disk explorer.
+   * Serial: Inbound connections are now supported.
+   * Serial: Added support for A, L, M, P, Q, S, T, V, X, &C, &D, &F, &G, &P, &T, &V, and &W modem commands.
+   * Serial: Added DTR and CRX signal support.
+   * Serial: Added IPv6 support.
+   * Serial: Added option to force specific connection and DTE communication rates.
+   * Serial: Added option to bypass accurate serial port rate throttling.
+   * Cartridge: Two cartridges are now supported for 800 left+right and stacked cartridge configurations.
+   * Cartridge: 2K and 4K cartridges are now supported (as mirrored 8K cartridges).
+   * Cartridge: SIC! cartridge support.
+   * PCLink: Initial support.
+   
+   [bugs fixed]
+   * UI: Pane dragging is less twitchy and no longer undocks a pane as soon as you click on the caption.
+   * UI: Fixed undocked panes getting lost on exit when no other panes were docked.
+   * UI: Optimized Direct3D9 code to reduce flickering when switching artifacting modes.
+   * UI: Fixed current beam position indicator not updating properly when stepping with interlacing enabled.
+   * UI: Auto-size command now works when menu wraps.
+   * HLE: Fixed crash when NMI handler is invoked with no NMIs pending.
+   * HLE: Added support for XL OS PENTV vector.
+   * HLE: E: device now excludes prompts from data returned by get-line commands.
+   * HLE: Increased HLE kernel compatibility with SpartaDOS X.
+   * HLE: Fixed BASIC ^ operator with HLE kernel or floating-point acceleration.
+   * HLE: Fixed AFP not accepting leading spaces (which broke the Atari BASIC READ statement).
+   * Simulator: Default kernel mode now prefers ROM images properly again.
+   * Simulator: BOOT? and DOSINI are now set at the beginning of EXE/XEX loads to support more WARMSV tricks.
+   * Cheats: Enable checkbox on cheats was broken.
+   * CPU: Added missing SHA abs,Y ($9F) instruction.
+   * CPU: Fixed CMOS BIT #imm ($89) instruction.
+   * CPU: Fixed 65C02 $FC instruction.
+   * CPU: Back-to-back interrupts are no longer allowed.
+   * CPU: Added emulation of BRK/NMI bug.
+   * CPU: Added option to emulate masked NMIs (off by default).
+   * CPU: Fixed dp,X, dp,Y, and (dp,X) page wrapping behavior in 65C816 E=1 mode.
+   * ANTIC: DMACTL bits 6 and 7 are no longer reflected in .dlhistory output.
+   * ANTIC: Fixed CPU not being halted when playfield DMA occurred on cycle 10.
+   * ANTIC: Fixed timing of when VSCROL affects DLIs.
+   * Debugger: Optimized History pane.
+   * Debugger: Avoid re-requesting the same source file when it is not found on disk.
+   * Debugger: Improved reliability of source-level stepping.
+   * Debugger: Added XL OS entry points to default entry points allowed by verifier.
+   * Recorder: Fixed crash on recording errors.
+   * Recorder: Fixed incorrect format on video stream when using ZMBV compression.
+   * Disk: SIO receive speeds are now validated for more reliable high-speed SIO detection.
+   * Disk: VAPI (ATX) images can now be loaded from .zip files.
+   * Disk: Fixed problems binding disk images to D9:-D15:.
+   * GTIA: NTSC high artifacting mode now respects artifact phase setting.
+   * GTIA: Fixed trigger state sometimes being initially wrong when enabling latching.
+   * GTIA: Improved accuracy of transitions from mode 8 to mode 9/10.
+   * GTIA: Fixed hires lines not artifacting correctly with the extended PAL height setting enabled.
+   * Serial: Telnet emulation now reads out of band data.
+   * Serial: Telnet emulation now handles incoming WILL and WONT commands.
+   * Serial: Telnet server now attempts to turn off local echo on remote end.
+   * Serial: Fixed sporadic missing newlines on modem status messages.
+   * Serial: Control line state is now reported in non-concurrent mode.
+   * Serial: Ring pattern adjusted to match US standard (2s/4s).
+   * Serial: Re-opening the R: device now flushes buffered data.
+   * Serial: Closing the R: device deactivates concurrent mode to make subsequent status requests work.
+   * Serial: Fixed crash in R: when invoking GET BYTE with an empty input buffer or PUT BYTE with a full output buffer.
+   * Serial: Fixed BASIC GET command failing after XIO on R:.
+   * Serial: Fixed erroneous CR-to-CRLF conversion on transmit path.
+   * Serial: XIO commands to R: instead of R1-R4: now work properly.
+   * Serial: Closing R: waits for queued output data to flush.
+   * Printer: Fixed close command not actually closing IOCB.
+   * VBXE: VBXE memory no longer overlays extended memory in 1088K mode with shared memory disabled.
+   * IDE: Cold reset now also resets the emulated IDE device.
+   * IDE: Addressing is now restricted to offsets $00-07 to avoid conflicting with OS PBI scan.
+   * Cartridge: Corrected banks 1 and 2 for OSS 034M cartridge type.
+
+Version 1.8 [December 22, 2010]:
    [features added]
    * Initial 5200 support.
    * Simulator: Added 16K memory size support.

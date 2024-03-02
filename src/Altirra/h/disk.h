@@ -26,6 +26,7 @@
 #include <vd2/system/vdstl.h>
 #include "pokey.h"
 #include "scheduler.h"
+#include "diskimage.h"
 
 class ATPokeyEmulator;
 
@@ -100,7 +101,7 @@ protected:
 	void LoadDiskP3(IVDRandomAccessStream& file, uint32 len, const uint8 *header);
 	void LoadDiskATR(IVDRandomAccessStream& file, uint32 len, const wchar_t *origPath, const uint8 *header);
 
-	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool useRotationalDelay, bool useHighSpeed = false);
+	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool useRotationalDelay, bool useHighSpeedFirstByte, bool useHighSpeed);
 	void UpdateRotationalCounter();
 	void QueueAutoSave();
 	void AutoSave();
@@ -125,6 +126,9 @@ protected:
 
 	uint32	mTransferOffset;
 	uint32	mTransferLength;
+	uint32	mTransferRate;
+	uint32	mTransferCyclesPerBit;
+	uint32	mTransferCyclesPerBitFirstByte;
 	uint8	mFDCStatus;
 	uint8	mActiveCommand;
 	uint8	mActiveCommandState;
@@ -139,6 +143,7 @@ protected:
 	sint32	mReWriteOffset;
 	bool	mbWriteEnabled;
 	bool	mbWriteRotationalDelay;
+	bool	mbWriteHighSpeedFirstByte;
 	bool	mbWriteHighSpeed;
 	bool	mbAutoFlush;
 	bool	mbDirty;

@@ -130,7 +130,10 @@ private:
 		}
 
 		String^ cssFile = Path::Combine(mSourcePath, "layout.css");
-		File::Copy(cssFile, Path::Combine(mOutputPath, "layout.css"), true);
+		String^ cssFileOut = Path::Combine(mOutputPath, "layout.css");
+		if (File::Exists(cssFileOut))
+			File::SetAttributes(cssFileOut, FileAttributes::Normal);
+		File::Copy(cssFile, cssFileOut, true);
 		File::SetAttributes(cssFile, FileAttributes::Normal);
 
 		BuildHelpFile();

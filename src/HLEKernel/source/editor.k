@@ -18,6 +18,7 @@
 
 .proc	EditorOpen
 	jsr		ScreenOpen
+	
 	mva		#$ff bufcnt
 	mva		#$00 dspflg
 	rts
@@ -32,7 +33,6 @@
 	bpl		haveLine
 	jsr		EditorGetLine
 	bpl		haveLine
-	jsr		BugCheck
 	rts
 haveLine:
 	#{
@@ -50,34 +50,39 @@ haveLine:
 			// restore old cursor pos and toggle cursor back on
 			ScreenWrite(0x9B);
 			ScreenShowCursor();
+			EditorResetLogicalLineStart();
 		}
 		
 		mpCPU->SetA(rval);
+		mpCPU->Ldy(0);
 	#}
-	
-	ldy		#0
 	rts
 .endp
 
 .proc	EditorGetLine
-	;save off current logical line offset
 	#{
-		uint8 logcol = kdb.LOGCOL;
-		
-		kdb.BUFADR = logcol;
+		// Set line buffer start to current position (NOT the start of the logical
+		// line -- this is a special case).
+		uint8 row = kdb.ROWCRS;
+		uint8 col = (uint8)kdb.COLCRS.Lo();
+		kdb.BUFSTR.Lo() = row;
+		kdb.BUFSTR.Hi() = col;
 	#}
-	
+
 readLoop:
 	;get a character
 	jsr		KeyboardGetByte
 	bpl		readOK
 	rts
 readOK:
-	pha
+	pha	
 	
 	#{
-		uint8 prevOffset = (uint8)kdb.BUFADR;
-		kdb.BUFCNT = prevOffset;
+		if (mpCPU->GetA() == 0x9B) {
+			// save off previous start of logical line
+			uint16 prevStart = kdb.BUFSTR;
+			kdb.ADRESS = prevStart;
+		}
 	#}
 	
 	jsr		EditorPutByte
@@ -93,21 +98,10 @@ isEOL:
 	#{
 		ScreenSwap(true);
 		
-		// find start of logical line
+		// find start of previous logical line
 		uint32 logMask = EditorReadLogicalLineMask();
-		uint32 x1 = kdb.LMARGN;
-		uint32 y1 = kdb.ROWCRS;
-		
-		while(y1 > 0) {
-			// We need to decrement first because we're actually on the line-after.
-			--y1;
-			
-			if (logMask & (0x800000 >> y1))
-				break;
-		}
-			
-		// record start of logical line
-		kdb.BUFADR = (uint16)(x1 + (y1 << 8));
+		uint32 x1 = kdb.ADRESS.Hi();
+		uint32 y1 = kdb.ADRESS.Lo();
 			
 		// find end of logical line by finding last non-blank char
 		uint32 curLen = 0;
@@ -136,9 +130,8 @@ isEOL:
 		
 		VDASSERT(lastLen <= 120);
 				
-		// record count and current cursor pos
+		// record count
 		kdb.BUFCNT = lastLen;
-		kdb.BUFADR = kdb.COLCRS + (kdb.ROWCRS << 8);
 		
 		EditorRecomputeLogicalColumn();
 		ScreenHideCursor();
@@ -253,10 +246,14 @@ suspendloop:
 			
 			if (y >= kdb.BOTSCR) {
 				uint8 scrolled = ScreenScroll();
-				kdb.ROWCRS = kdb.BOTSCR - scrolled;
+				y = kdb.BOTSCR - scrolled;
+				kdb.ROWCRS = y;
+				kdb.ADRESS.Lo() -= scrolled;
 			}
-			
+
+			EditorSetLogicalLineStart(y);
 			EditorRecomputeLogicalColumn();
+			EditorResetLogicalLineStart();
 			
 			ScreenShowCursor();
 			return;
@@ -273,9 +270,10 @@ suspendloop:
 					else
 						kdb.ROWCRS = kdb.BOTSCR - 1;
 						
-					if (kdb.LOGCOL < 40)
+					if (kdb.LOGCOL < 40) {
 						EditorRecomputeLogicalColumn();
-					else
+						EditorResetLogicalLineStart();
+					} else
 						kdb.LOGCOL = kdb.LOGCOL - 40;
 						
 					moveexit = true;
@@ -286,7 +284,7 @@ suspendloop:
 						kdb.ROWCRS = 0;
 						
 					if (EditorIsLogicalLineStart(kdb.ROWCRS))
-						kdb.BUFADR = kdb.LMARGN;
+						EditorResetLogicalLineStart();
 						
 					moveexit = true;
 					break;
@@ -319,6 +317,7 @@ suspendloop:
 					ScreenClear();
 					ScreenShowCursor();
 					EditorRecomputeLogicalColumn();
+					EditorResetLogicalLineStart();
 					return;
 					
 				case 0x7E:	// backspace
@@ -336,7 +335,6 @@ suspendloop:
 							--kdb.COLCRS;
 						}
 							
-						EditorRecomputeLogicalColumn();
 						mpMemory->WriteByte(ScreenComputeCursorAddr(), 0);
 						ScreenShowCursor();
 					}
@@ -389,6 +387,7 @@ suspendloop:
 						kdb.COLCRS = kdb.LMARGN;
 						
 						EditorRecomputeLogicalColumn();
+						EditorResetLogicalLineStart();					
 						ScreenShowCursor();
 					}
 					return;
@@ -414,7 +413,9 @@ suspendloop:
 						for(int i=0; i<bpr; ++i)
 							mpMemory->WriteByte(newrow + i, 0);
 					}
+					
 					EditorRecomputeLogicalColumn();
+					EditorResetLogicalLineStart();					
 					ScreenShowCursor();
 					return;
 			}
@@ -454,7 +455,10 @@ suspendloop:
 			
 			if (logcol >= 120) {
 				logcol -= 120;
+				
 				kdb.LOGMAP[kdb.ROWCRS >> 3] |= (0x80 >> (kdb.ROWCRS & 7));
+				kdb.LOGCOL = logcol;	// needed by EditorResetLogicalLineStart()
+				EditorResetLogicalLineStart();					
 			}
 
 			kdb.COLCRS = kdb.LMARGN;
@@ -512,13 +516,30 @@ void EditorRecomputeLogicalColumn() {
 	}
 	
 	kdb.LOGCOL = logcol;
-	kdb.BUFADR = kdb.LMARGN;
+	kdb.BUFSTR = kdb.LMARGN;
+}
+#>
+
+#<
+void EditorResetLogicalLineStart() {
+	uint8 logcol = (uint8)kdb.COLCRS;
+	uint8 row = kdb.ROWCRS;
+	
+	kdb.BUFSTR.Lo() = row - logcol / 40;
+	kdb.BUFSTR.Hi() = kdb.LMARGN;
 }
 #>
 
 #<
 uint32 EditorReadLogicalLineMask() {
 	return ((uint32)kdb.LOGMAP[0] << 16) + ((uint32)kdb.LOGMAP[1] << 8) + ((uint32)kdb.LOGMAP[2] << 0);
+}
+#>
+
+#<
+void EditorSetLogicalLineStart(uint8 row) {
+	if (row < kdb.BOTSCR)
+		kdb.LOGMAP[row >> 3] |= (0x80 >> (row & 7));
 }
 #>
 

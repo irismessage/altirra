@@ -36,20 +36,31 @@ class ATScheduler;
 
 class ATAnticEmulatorConnections {
 public:
-	VDFORCEINLINE uint8 AnticReadByteFast(uint16 address) {
-		const uint8 *page = mpAnticReadPageMap[address >> 8];
-
-		return page ? page[address & 0xff] : AnticReadByte(address);
+	VDFORCEINLINE uint8 AnticReadByteFast(uint32 address) {
+		uintptr readPage = mpAnticReadPageMap[address >> 8];
+		return (readPage & 1) ? AnticReadByte(address) : *(const uint8 *)(readPage + address);
 	}
 
-	virtual uint8 AnticReadByte(uint16 address) = 0;
+	virtual uint8 AnticReadByte(uint32 address) = 0;
 	virtual void AnticAssertNMI() = 0;
 	virtual void AnticEndFrame() = 0;
 	virtual void AnticEndScanline() = 0;
 	virtual bool AnticIsNextCPUCycleWrite() = 0;
 
 protected:
-	const uint8 *const *mpAnticReadPageMap;
+	const uintptr *mpAnticReadPageMap;
+};
+
+struct ATAnticRegisterState {
+	uint8	mDMACTL;
+	uint8	mCHACTL;
+	uint8	mDLISTL;
+	uint8	mDLISTH;
+	uint8	mHSCROL;
+	uint8	mVSCROL;
+	uint8	mPMBASE;
+	uint8	mCHBASE;
+	uint8	mNMIEN;
 };
 
 class ATAnticEmulator : public IATSchedulerCallback {
@@ -120,6 +131,8 @@ public:
 	void	LoadState(ATSaveStateReader& reader);
 	void	SaveState(ATSaveStateWriter& writer);
 
+	void	GetRegisterState(ATAnticRegisterState& state) const;
+
 protected:
 	template<class T>
 	void	ExchangeState(T& io);
@@ -166,7 +179,8 @@ protected:
 	uint8	mEarlyNMIEN2;
 	uint32	mRowCounter;
 	uint32	mRowCount;
-	uint32	mLatchedVScroll;		// latched VSCROL at cycle 109 from previous scanline -- used to detect end of vs region
+	uint8	mLatchedVScroll;		// latched VSCROL at cycle 109 from previous scanline -- used to detect end of vs region
+	uint8	mLatchedVScroll2;		// latched VSCROL at cycle 6 from current scanline -- used to control DLI
 
 	uint16	mPFDMAPtr;
 	uint16	mPFRowDMAPtrBase;

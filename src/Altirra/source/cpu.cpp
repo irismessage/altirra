@@ -24,6 +24,7 @@
 #include "savestate.h"
 #include "simulator.h"
 #include "verifier.h"
+#include "bkptmanager.h"
 
 using namespace AT6502;
 
@@ -31,6 +32,7 @@ ATCPUEmulator::ATCPUEmulator()
 	: mpHLE(NULL)
 	, mpProfiler(NULL)
 	, mpVerifier(NULL)
+	, mpBkptManager(NULL)
 {
 	mSBrk = 0x100;
 	mpNextState = NULL;
@@ -45,6 +47,7 @@ ATCPUEmulator::ATCPUEmulator()
 	mbPathBreakEnabled = false;
 	mbIllegalInsnsEnabled = true;
 	mbStopOnBRK = false;
+	mbAllowBlockedNMIs = false;
 
 	RebuildDecodeTables();
 
@@ -54,8 +57,9 @@ ATCPUEmulator::ATCPUEmulator()
 ATCPUEmulator::~ATCPUEmulator() {
 }
 
-bool ATCPUEmulator::Init(ATCPUEmulatorMemory *mem) {
+bool ATCPUEmulator::Init(ATCPUEmulatorMemory *mem, ATCPUEmulatorCallbacks *callbacks) {
 	mpMemory = mem;
+	mpCallbacks = callbacks;
 
 	ColdReset();
 
@@ -69,6 +73,10 @@ void ATCPUEmulator::SetHLE(IATCPUHighLevelEmulator *hle) {
 	mpHLE = hle;
 }
 
+void ATCPUEmulator::SetBreakpointManager(ATBreakpointManager *bkptmanager) {
+	mpBkptManager = bkptmanager;
+}
+
 void ATCPUEmulator::ColdReset() {
 	mbStep = false;
 	mbTrace = false;
@@ -78,7 +86,7 @@ void ATCPUEmulator::ColdReset() {
 
 void ATCPUEmulator::WarmReset() {
 	mpNextState = mStates;
-	mIFlagSetCycle = mpMemory->CPUGetUnhaltedCycle();
+	mIFlagSetCycle = mpCallbacks->CPUGetUnhaltedCycle();
 	mbIRQReleasePending = false;
 	mbNMIPending = false;
 	mbUnusedCycle = false;
@@ -320,6 +328,13 @@ void ATCPUEmulator::SetStopOnBRK(bool en) {
 	}
 }
 
+void ATCPUEmulator::SetNMIBlockingEnabled(bool enable) {
+	if (mbAllowBlockedNMIs != enable) {
+		mbAllowBlockedNMIs = enable;
+		RebuildDecodeTables();
+	}
+}
+
 bool ATCPUEmulator::IsBreakpointSet(uint16 addr) const {
 	return 0 != (mInsnFlags[addr] & kInsnFlagBreakPt);
 }
@@ -328,17 +343,13 @@ void ATCPUEmulator::SetBreakpoint(uint16 addr) {
 	mInsnFlags[addr] |= kInsnFlagBreakPt;
 }
 
-void ATCPUEmulator::SetOneShotBreakpoint(uint16 addr) {
-	mInsnFlags[addr] |= kInsnFlagBreakPt | kInsnFlagOneShotBreakPt;
-}
-
 void ATCPUEmulator::ClearBreakpoint(uint16 addr) {
-	mInsnFlags[addr] &= ~(kInsnFlagBreakPt | kInsnFlagOneShotBreakPt);
+	mInsnFlags[addr] &= ~kInsnFlagBreakPt;
 }
 
 void ATCPUEmulator::ClearAllBreakpoints() {
 	for(uint32 i=0; i<65536; ++i)
-		mInsnFlags[i] &= ~(kInsnFlagBreakPt | kInsnFlagOneShotBreakPt);
+		mInsnFlags[i] &= ~kInsnFlagBreakPt;
 }
 
 void ATCPUEmulator::ResetAllPaths() {
@@ -476,7 +487,7 @@ void ATCPUEmulator::SaveState(ATSaveStateWriter& writer) {
 
 	writer.WriteBool(mbNMIPending);
 
-	mIRQAssertTime = mpMemory->CPUGetUnhaltedCycle() - 10;
+	mIRQAssertTime = mpCallbacks->CPUGetUnhaltedCycle() - 10;
 	mIRQAcknowledgeTime = mIRQAssertTime;
 }
 
@@ -517,7 +528,7 @@ void ATCPUEmulator::AssertIRQ(int cycleOffset) {
 			UpdatePendingIRQState();
 
 		mbIRQActive = true;
-		mIRQAssertTime = mpMemory->CPUGetUnhaltedCycle() + cycleOffset;
+		mIRQAssertTime = mpCallbacks->CPUGetUnhaltedCycle() + cycleOffset;
 	}
 }
 
@@ -533,7 +544,7 @@ void ATCPUEmulator::NegateIRQ() {
 void ATCPUEmulator::AssertNMI() {
 	if (!mbNMIPending) {
 		mbNMIPending = true;
-		mNMIAssertTime = mpMemory->CPUGetUnhaltedCycle();
+		mNMIAssertTime = mpCallbacks->CPUGetUnhaltedCycle();
 	}
 }
 
@@ -576,7 +587,7 @@ int ATCPUEmulator::Advance65816WithBusTracking() {
 void ATCPUEmulator::UpdatePendingIRQState() {
 	VDASSERT(mbIRQActive != mbIRQPending);
 
-	const uint32 cycle = mpMemory->CPUGetUnhaltedCycle();
+	const uint32 cycle = mpCallbacks->CPUGetUnhaltedCycle();
 
 	if (mbIRQActive) {
 		// IRQ line is pulled down, but no IRQ acknowledge has happened. Check if the IRQ
@@ -788,8 +799,14 @@ void ATCPUEmulator::RebuildDecodeTables() {
 			*mpDstState++ = kStateVerifyIRQEntry;
 
 		*mpDstState++ = kStateSEI;
-		*mpDstState++ = kStateIRQVecToPC;
+
+		if (mCPUMode == kATCPUMode_6502 && mbAllowBlockedNMIs)
+			*mpDstState++ = kStateIRQVecToPCBlockNMIs;
+		else
+			*mpDstState++ = kStateIRQVecToPC;
+
 		*mpDstState++ = kStateReadAddrL;
+		*mpDstState++ = kStateDelayInterrupts;
 		*mpDstState++ = kStateReadAddrH;
 		*mpDstState++ = kStateAddrToPC;
 

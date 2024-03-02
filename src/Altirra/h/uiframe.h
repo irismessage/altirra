@@ -295,9 +295,12 @@ protected:
 
 	void EndDrag(bool success);
 
+	int		mDragOriginX;
+	int		mDragOriginY;
 	int		mDragOffsetX;
 	int		mDragOffsetY;
 	bool	mbDragging;
+	bool	mbDragVerified;
 	bool	mbFullScreen;
 	bool	mbActiveCaption;
 	bool	mbCloseDown;

@@ -354,6 +354,7 @@ bool ATAnticEmulator::AdvanceSpecial() {
 			busActive = true;
 			mDLIST = (mDLIST & 0xFC00) + ((mDLIST + 1) & 0x03FF);
 		}
+			mLatchedVScroll2 = mVSCROL;
 	} else if (mX == 7) {		// address DMA (high) + NMIST change
 		if (mbDLExtraLoadsPending && (mDMACTL & 0x20)) {
 			uint8 b = mpConn->AnticReadByte(mDLIST);
@@ -401,7 +402,7 @@ bool ATAnticEmulator::AdvanceSpecial() {
 
 			memset(mPFDataBuffer, 0, sizeof mPFDataBuffer);
 		} else {
-			uint32 rowStop = mbRowStopUseVScroll ? mLatchedVScroll : ((mRowCount - 1) & 15);
+			uint32 rowStop = mbRowStopUseVScroll ? mLatchedVScroll2 : ((mRowCount - 1) & 15);
 
 			if ((mDLControl & 0x80) && mRowCounter == rowStop) {
 				mPendingNMIs = 0x80;
@@ -421,7 +422,7 @@ bool ATAnticEmulator::AdvanceSpecial() {
 			mpGTIA->UpdatePlayer(odd, 2, mPhantomDMAData[5]);
 			mpGTIA->UpdatePlayer(odd, 3, mPhantomDMAData[6]);
 		}
-	} else if (mX == 10) {
+
 		mbLateNMI = false;
 
 		uint8 cumulativeNMIEN = mPendingNMIs & mEarlyNMIEN;
@@ -432,6 +433,10 @@ bool ATAnticEmulator::AdvanceSpecial() {
 		} else if (cumulativeNMIENLate) {
 			mbLateNMI = true;
 		}
+	} else if (mX == 9) {
+		if (mbLateNMI)
+			mpConn->AnticAssertNMI();
+	} else if (mX == 10) {
 
 		mPFHScrollDMAOffset = 0;
 		mbHScrollDelay = false;
@@ -477,9 +482,9 @@ bool ATAnticEmulator::AdvanceSpecial() {
 		mPFDecodeCounter = 0;
 		mPFDisplayCounter = 0;
 		mPFDMALastCheckX = 0;
-	} else if (mX == 11) {
-		if (mbLateNMI)
-			mpConn->AnticAssertNMI();
+
+		// Since we just changed playfield timing, this cycle may now be occupied!
+		busActive = mbDMAPattern[mX];
 	} else if (mX == 16) {
 		mpGTIA->BeginScanline(mY, mPFPushMode == k320);
 	} else if (mX == 105) {
@@ -853,6 +858,8 @@ void ATAnticEmulator::Decode(int offset) {
 }
 
 uint8 ATAnticEmulator::ReadByte(uint8 reg) const {
+	reg &= 0x0F;
+
 	switch(reg) {
 		case 0x0B:
 			// There is a one cycle delay between the time that VCOUNT increments and when
@@ -885,47 +892,53 @@ uint8 ATAnticEmulator::ReadByte(uint8 reg) const {
 }
 
 void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
+	reg &= 0x0F;
+
 	switch(reg) {
 		case 0x00:	// DMACTL [D400]
-			// Ugh. We need to check whether we have crossed the current start or stop boundaries
-			// and latch PF start/end as necessary. This reflects the fact that you can't change
-			// the DMA start and stop boundaries once you already cross them.
-			if (mPFWidth) {
-				uint32 cycleRange = mX - mPFDMALastCheckX;
+			value &= 0x3F;
 
-				const int offset = (mDLControl & 15) < 8 ? 26-23 : 28-23;
+			if (value != mDMACTL) {
+				// Ugh. We need to check whether we have crossed the current start or stop boundaries
+				// and latch PF start/end as necessary. This reflects the fact that you can't change
+				// the DMA start and stop boundaries once you already cross them.
+				if (mPFWidth) {
+					uint32 cycleRange = mX - mPFDMALastCheckX;
 
-				if ((uint32)((mPFDMAStart - offset) - mPFDMALastCheckX) <= cycleRange) {
-					mPFDMALatchedStart = mPFDMAStart;
-					mPFFetchWidthLatchedStart = mPFFetchWidth;
+					const int offset = (mDLControl & 15) < 8 ? 26-23 : 28-23;
+
+					if ((uint32)((mPFDMAStart - offset) - mPFDMALastCheckX) <= cycleRange) {
+						mPFDMALatchedStart = mPFDMAStart;
+						mPFFetchWidthLatchedStart = mPFFetchWidth;
+					}
+
+					if ((uint32)((mPFDMAEnd - offset) - mPFDMALastCheckX) <= cycleRange) {
+						mPFDMALatchedEnd = mPFDMAEnd;
+						mPFFetchWidthLatchedEnd = mPFFetchWidth;
+					}
 				}
 
-				if ((uint32)((mPFDMAEnd - offset) - mPFDMALastCheckX) <= cycleRange) {
-					mPFDMALatchedEnd = mPFDMAEnd;
-					mPFFetchWidthLatchedEnd = mPFFetchWidth;
+				mPFDMALastCheckX = mX;
+
+				SyncWithGTIA(0);
+				mDMACTL = value;
+				switch(mDMACTL & 3) {
+				case 0:
+					mPFWidth = kPFDisabled;
+					break;
+				case 1:
+					mPFWidth = kPFNarrow;
+					break;
+				case 2:
+					mPFWidth = kPFNormal;
+					break;
+				case 3:
+					mPFWidth = kPFWide;
+					break;
 				}
+
+				UpdatePlayfieldTiming();
 			}
-
-			mPFDMALastCheckX = mX;
-
-			SyncWithGTIA(0);
-			mDMACTL = value;
-			switch(mDMACTL & 3) {
-			case 0:
-				mPFWidth = kPFDisabled;
-				break;
-			case 1:
-				mPFWidth = kPFNarrow;
-				break;
-			case 2:
-				mPFWidth = kPFNormal;
-				break;
-			case 3:
-				mPFWidth = kPFWide;
-				break;
-			}
-
-			UpdatePlayfieldTiming();
 			break;
 
 		case 0x01:
@@ -1039,7 +1052,7 @@ void ATAnticEmulator::DumpDMAPattern() {
 
 	for(int i=0; i<114; ++i) {
 		if (mbDMAPattern[i]) {
-			switch(mDMAPFFetchPattern[i]) {
+			switch(mDMAPFFetchPattern[i] & 0x7f) {
 				case 0:
 					buf[i] = 'R';
 					break;
@@ -1104,6 +1117,7 @@ void ATAnticEmulator::ExchangeState(T& io) {
 	io != mRowCounter;
 	io != mRowCount;
 	io != mLatchedVScroll;
+	io != mLatchedVScroll2;
 
 	io != mPFDMAPtr;
 	io != mPFRowDMAPtrBase;
@@ -1232,6 +1246,18 @@ void ATAnticEmulator::SaveState(ATSaveStateWriter& writer) {
 	}
 }
 
+void ATAnticEmulator::GetRegisterState(ATAnticRegisterState& state) const {
+	state.mDMACTL	= mDMACTL;
+	state.mCHACTL	= mCHACTL;
+	state.mDLISTL	= (uint8)mDLIST;
+	state.mDLISTH	= (uint8)(mDLIST >> 8);
+	state.mHSCROL	= mHSCROL;
+	state.mVSCROL	= mVSCROL;
+	state.mPMBASE	= mPMBASE;
+	state.mCHBASE	= mCHBASE;
+	state.mNMIEN	= mNMIEN;
+}
+
 void ATAnticEmulator::UpdateDMAPattern(int dmaStart, int dmaEnd, uint8 mode) {
 	uint32 key = (dmaStart << 16) + (dmaEnd << 8) + mode + (mbPFDMAActive ? 0x8000 : 0x0000) + (mbPFDMAEnabled ? 0x4000 : 0x0000);
 
@@ -1324,8 +1350,8 @@ void ATAnticEmulator::UpdateDMAPattern(int dmaStart, int dmaEnd, uint8 mode) {
 		mDMAPFFetchPattern[  6] |= 0x80;	// Display list DMA
 		mDMAPFFetchPattern[  7] |= 0x80;	// Display list DMA
 		mDMAPFFetchPattern[  8] |= 0x80;	// NMI
+		mDMAPFFetchPattern[  9] |= 0x80;	// NMI
 		mDMAPFFetchPattern[ 10] |= 0x80;	// NMI
-		mDMAPFFetchPattern[ 11] |= 0x80;	// NMI
 		mDMAPFFetchPattern[ 16] |= 0x80;	// end HBLANK
 		mDMAPFFetchPattern[105] |= 0x80;	// WSYNC end
 		mDMAPFFetchPattern[109] |= 0x80;

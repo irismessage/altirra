@@ -50,17 +50,17 @@
 ; 4		Bitmap	80x48	2		9		480+56 (3)		560+52 (3)
 ; 5		Bitmap	80x48	4		A		960+56 (4)		960+52 (4)
 ; 6		Bitmap	160x96	2		B		1920+104 (8)	1760+92 (8)
-; 7		Bitmap	160x96	4		C		3840+104 (16)	3360+92 (14)
+; 7		Bitmap	160x96	4		D		3840+104 (16)	3360+92 (14)
 ; 8		Bitmap	320x192	1.5		F		7680+202 (32)	6560+174 (27)
 ; 9		Bitmap	80x192	16		F		7680+202 (32)	6560+174 (27)
 ; 10	Bitmap	80x192	9		F		7680+202 (32)	6560+174 (27)
 ; 11	Bitmap	80x192	16		F		7680+202 (32)	6560+174 (27)
 ; 12	Text	40x24	5		4		960+32 (4)		960+32 (4)
 ; 13	Text	40x12	5		5		480+20 (2)		560+24 (3)
-; 14	Bitmap	160x192	2		D		3840+200 (16)	3360+172 (14)
+; 14	Bitmap	160x192	2		C		3840+200 (16)	3360+172 (14)
 ; 15	Bitmap	160x192	4		E		7680+202 (32)	6560+172 (27)
 
-ScreenANTICModeTable	dta		2,6,7,8,9,10,11,12,15,15,15,15,4,5,13,14
+ScreenANTICModeTable	dta		2,6,7,8,9,10,11,13,15,15,15,15,4,5,12,14
 ScreenRowCount			dta		24,24,12,24,48,48,96,96,192,192,192,192,24,12,192,192
 						dta		24,20,10,20,40,40,80,80,160,160,160,160,20,10,160,160
 ScreenPRIORTable		dta		0,0,0,0,0,0,0,0,0,$40,$80,$c0,0,0,0,0
@@ -141,7 +141,7 @@ ScreenTextRows			dta
 		
 		// add initial mode line with LMS
 		static const uint8 kModeByte[]={
-			2,6,7,8,9,10,11,12,15,15,15,15,4,5,13,14
+			2,6,7,8,9,10,11,13,15,15,15,15,4,5,12,14
 		};
 		
 		const uint8 modeByte = kModeByte[mode];
@@ -232,6 +232,7 @@ ScreenTextRows			dta
 			
 		kdb.LOGCOL = 0;
 		kdb.SWPFLG = 0;
+		kdb.BUFSTR = kdb.LMARGN;
 
 		kdb.LOGMAP[0] = 0xFF;
 		kdb.LOGMAP[1] = 0xFF;
@@ -396,6 +397,8 @@ uint8 ScreenRead() {
 		}
 	}
 	
+	kdb.ATACHR = c;
+	
 	return c;
 }
 #>
@@ -413,6 +416,8 @@ uint8 ScreenRead() {
 
 #<
 void ScreenWrite(uint8 d) {
+	kdb.ATACHR = d;		// needed by SDX
+	
 	if (d == 0x7d) {
 		ScreenClear();
 		return;
@@ -658,7 +663,7 @@ void ScreenSwapModes() {
 	b1 = kdb.ROWCRS;	b2 = kdb.TXTROW;	kdb.TXTROW = b1;	kdb.ROWCRS = b2;
 	w1 = kdb.COLCRS;	w2 = kdb.TXTCOL;	kdb.TXTCOL = w1;	kdb.COLCRS = w2;
 	b1 = kdb.DINDEX;	b2 = kdb.TINDEX;	kdb.TINDEX = b1;	kdb.DINDEX = b2;
-	w1 = kdb.SAVMSC;	w2 = kdb.SAVMSC;	kdb.SAVMSC = w1;	kdb.SAVMSC = w2;
+	w1 = kdb.SAVMSC;	w2 = kdb.TXTMSC;	kdb.TXTMSC = w1;	kdb.SAVMSC = w2;
 	
 	b1 = kdb.OLDROW;	b2 = kdb.TXTOLD[0];			kdb.TXTOLD[0] = b1;		kdb.OLDROW = b2;
 	w1 = kdb.OLDCOL;	w2 = kdb.TXTOLD[1].r16();	kdb.TXTOLD[1].w16(w1);	kdb.OLDCOL = w2;

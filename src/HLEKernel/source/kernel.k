@@ -142,6 +142,9 @@ adress	= $0064			;temporary storage (display code)
 a1		= adress
 ramtop	= $006a			;ram size
 bufcnt	= $006b
+bufstr	= $006c			;row/column of start of logical line
+keydat	= $0079			;keyboard translation table (XL/XE only; required by SDX ED)
+		; $007a
 holdch	= $007c			;temporary key hold area prior to shift/control lock logic
 
 fr0		= $00d4			;floating point register 0
@@ -242,6 +245,7 @@ keydel	= $02f1			;keyboard debounce delay (set to 3 vblanks per key)
 ch1		= $02f2			;last keyboard code read
 chact	= $02f3			;shadow for CHACTL ($D401)
 chbas	= $02f4			;shadow for CHBASE ($D409)
+atachr	= $02fb			;
 ch		= $02fc			;keyboard FIFO byte
 dspflg	= $02fe			;enable/disable of control codes by screen editor (E:)
 ssflag	= $02ff			;display/screen editor suspend flag
@@ -284,12 +288,32 @@ casbuf	= $03fd			;Cassette buffer (03FD-047F)
 
 ;	icl		'loader.xasm'
 
-	org		$c000
-:4096	dta		$12
-:2048	dta		$12
-	
-	#include <mathpack.k>
+;============================================================================
+;	C000-CFFF	LOWER OS ROM
+;
+;
+		#include <xlext.k>
+		
+:$d000-*	dta		$12
 
+;============================================================================
+;	5000-57FF	SELF-TEST ROM
+;
+;
+		org		$5000, $d000
+		jsr		BugCheck
+:$5800-*	dta		$12
+	
+;============================================================================
+;	D800-DFFF	MATH PACK
+;
+		org		$d800
+		#include <mathpack.k>
+:$e000-*	dta		$12
+
+;============================================================================
+;	E000-FFFF	UPPER OS ROM
+;
 	org		$e000
 	ins		'..\..\src\kernel\source\atarifont.bin',$0,$400
 
@@ -341,22 +365,28 @@ casetv	dta		a(CassetteOpen-1)
 	
 		;vector table
 		org	$e450
-diskiv	jmp		DiskInit
-dskinv	jmp		DiskHandler
-ciov	jmp		CIO
-siov	jmp		SIO
-setvbv	jmp		SetVBlankVector
-sysvbv	jmp		VBlankImmediate
-xitvbv	jmp		VBlankDeferred
-sioinv	jmp		SIOInit
-sendev	jsr		BugCheck
-intinv	jmp		InitInterrupts
-cioinv	jmp		CIOInit
-blkbdv	jmp		Blackboard
-warmsv	jmp		WarmStart
-coldsv	jmp		ColdStart
-rblokv	jmp		CassetteReadBlock
-csopiv	jmp		CassetteOpenRead
+diskiv	jmp		DiskInit			;$E450
+dskinv	jmp		DiskHandler			;$E453
+ciov	jmp		CIO					;$E456
+siov	jmp		SIO					;$E459
+setvbv	jmp		SetVBlankVector		;$E45C
+sysvbv	jmp		VBlankImmediate		;$E45F
+xitvbv	jmp		VBlankDeferred		;$E462
+sioinv	jmp		SIOInit				;$E465
+sendev	jsr		BugCheck			;$E468
+intinv	jmp		InitInterrupts		;$E46B
+cioinv	jmp		CIOInit				;$E46E
+blkbdv	jmp		Blackboard			;$E471
+warmsv	jmp		WarmStart			;$E474
+coldsv	jmp		ColdStart			;$E477
+rblokv	jmp		CassetteReadBlock	;$E47A
+csopiv	jmp		CassetteOpenRead	;$E47D
+pupdiv	jsr		BugCheck			;$E480	1200XL: Power-on display; XL/XE: self-test
+slftsv	jmp		$5000				;$E483	XL: Self-test ($5000)
+pentv	jmp		PBIAddHandler		;$E486	XL: add handler to HATABS
+phunlv	jsr		BugCheck			;$E489	XL: 
+phiniv	jsr		BugCheck			;$E48C	XL:
+gpdvv	jsr		BugCheck			;$E48F	XL: Generic device vector
 
 		;handler table
 HandlerTable:
@@ -403,6 +433,7 @@ DefaultHandler_RTI:
 #include <boot.k>
 #include <init.k>
 #include <blackboard.k>
+#include <pbi.k>
 	
 ;==============================================================================
 .proc ResetRoutine

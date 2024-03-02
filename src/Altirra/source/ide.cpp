@@ -1,3 +1,20 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2011 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License
+//	along with this program; if not, write to the Free Software
+//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
 #include "stdafx.h"
 #include <vd2/system/error.h>
 #include <vd2/system/math.h>
@@ -54,24 +71,9 @@ ATIDEEmulator::ATIDEEmulator() {
 	mCylinderCount = 0;
 	mIODelaySetting = 0;
 
-	mActiveCommand = 0;
-	mActiveCommandNextTime = 0;
-	mActiveCommandState = 0;
-
-	// ATA-1 8.1 Reset Response
-	mRFile.mData			= 0x00;
-	mRFile.mErrors			= 0x01;
-	mRFile.mSectorCount		= 0x01;
-	mRFile.mSectorNumber	= 0x01;
-	mRFile.mCylinderLow		= 0x00;
-	mRFile.mCylinderHigh	= 0x00;
-	mRFile.mHead			= 0x00;
-	mRFile.mStatus			= kATIDEStatus_DRDY | kATIDEStatus_DSC;
-
-	mFeatures = 0;
-	mbTransfer16Bit = true;
-
 	mTransferBuffer.resize(512 * mMaxSectorTransferCount);
+
+	ColdReset();
 }
 
 ATIDEEmulator::~ATIDEEmulator() {
@@ -99,6 +101,8 @@ void ATIDEEmulator::OpenImage(bool write, bool fast, uint32 cylinders, uint32 he
 		mPath = filename;
 		mIODelaySetting = fast ? kIODelayFast : kIODelaySlow;
 		mbFastDevice = fast;
+
+		ColdReset();
 	} catch(const MyError&) {
 		CloseImage();
 		throw;
@@ -112,17 +116,57 @@ void ATIDEEmulator::CloseImage() {
 	mHeadCount = 0;
 	mSectorsPerTrack = 0;
 	mPath.clear();
+
+	ColdReset();
 }
 
 const wchar_t *ATIDEEmulator::GetImagePath() const {
 	return mPath.c_str();
 }
 
+void ATIDEEmulator::ColdReset() {
+	mActiveCommand = 0;
+	mActiveCommandNextTime = 0;
+	mActiveCommandState = 0;
+
+	// ATA-1 8.1 Reset Response / ATA-4 9.1 Signature and persistence
+	mRFile.mData			= 0x00;
+	mRFile.mErrors			= 0x01;
+	mRFile.mSectorCount		= 0x01;
+	mRFile.mSectorNumber	= 0x01;
+	mRFile.mCylinderLow		= 0x00;
+	mRFile.mCylinderHigh	= 0x00;
+	mRFile.mHead			= 0x00;
+	mRFile.mStatus			= kATIDEStatus_DRDY | kATIDEStatus_DSC;
+
+	mFeatures = 0;
+	mbTransfer16Bit = true;
+
+	memset(mTransferBuffer.data(), 0, mTransferBuffer.size());
+}
+
 uint8 ATIDEEmulator::DebugReadByte(uint8 address) {
-	return ReadByte(address);
+	if (address >= 8)
+		return 0xFF;
+
+	uint32 idx = address & 7;
+
+	UpdateStatus();
+
+	// ATA-1 7.2.13 - if BSY=1, all reads of the command block return the status register
+	if (mRFile.mStatus & kATIDEStatus_BSY)
+		return mRFile.mStatus;
+
+	if (idx == 0)
+		return mTransferBuffer[mTransferIndex];
+
+	return mRegisters[idx];
 }
 
 uint8 ATIDEEmulator::ReadByte(uint8 address) {
+	if (address >= 8)
+		return 0xFF;
+
 	uint32 idx = address & 7;
 
 	UpdateStatus();
@@ -151,6 +195,9 @@ uint8 ATIDEEmulator::ReadByte(uint8 address) {
 }
 
 void ATIDEEmulator::WriteByte(uint8 address, uint8 value) {
+	if (address >= 8)
+		return;
+
 	uint32 idx = address & 7;
 
 	switch(idx) {

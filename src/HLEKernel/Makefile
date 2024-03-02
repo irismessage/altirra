@@ -15,7 +15,8 @@ source\nmi.k \
 source\screen.k \
 source\sio.k \
 source\mathpack.k \
-source\cassette.k
+source\cassette.k \
+source\pbi.k
 
 all: hlekernel
 

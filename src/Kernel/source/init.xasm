@@ -236,7 +236,13 @@ nocasboot:
 	cli
 	
 	; 13. initialize device table
-	ldx		#14
+	ldx		#37
+	lda		#0
+htabinit2:
+	sta		hatabs,x
+	dex
+	cpx		#14
+	bne		htabinit2
 htabinit:
 	lda		HandlerTable,x
 	sta		hatabs,x

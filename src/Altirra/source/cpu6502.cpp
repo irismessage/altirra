@@ -25,15 +25,24 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			if (mbStopOnBRK)
 				*mpDstState++ = kStateBreakOnUnsupportedOpcode;
 
-			*mpDstState++ = kStateReadAddrL;	// 1
-			*mpDstState++ = kStateReadAddrH;	// 2
-			*mpDstState++ = kStatePushPCHM1;	// 3
-			*mpDstState++ = kStatePushPCLM1;	// 4
+			*mpDstState++ = kStateReadAddrL;	// 2
+			*mpDstState++ = kStatePushPCH;		// 3
+			*mpDstState++ = kStatePushPCL;		// 4
 			*mpDstState++ = kStatePtoD_B1;
+
+			if (mbAllowBlockedNMIs)
+				*mpDstState++ = kStateCheckNMIBlocked;
+
 			*mpDstState++ = kStatePush;			// 5
 			*mpDstState++ = kStateSEI;
-			*mpDstState++ = kStateIRQVecToPC;
+
+			if (mbAllowBlockedNMIs)
+				*mpDstState++ = kStateNMIOrIRQVecToPCBlockable;
+			else
+				*mpDstState++ = kStateNMIOrIRQVecToPC;
+
 			*mpDstState++ = kStateReadAddrL;	// 6
+			*mpDstState++ = kStateDelayInterrupts;
 			*mpDstState++ = kStateReadAddrH;	// 7
 			*mpDstState++ = kStateAddrToPC;
 			break;
@@ -266,15 +275,14 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			break;
 
 		case 0x40:	// RTI
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyReturn;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStatePop;
 			*mpDstState++ = kStateDtoP_noICheck;
 			*mpDstState++ = kStatePopPCL;
 			*mpDstState++ = kStatePopPCH;
-
-			if (mpVerifier)
-				*mpDstState++ = kStateVerifyReturn;
 			break;
 
 		case 0x41:	// EOR (zp,X)
@@ -397,10 +405,6 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWait;
-
-			if (mpVerifier)
-				*mpDstState++ = kStateVerifyReturn;
-
 			break;
 
 		case 0x61:	// ADC (zp,X)

@@ -331,7 +331,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 					try {
 						ATLoadContext ctx;
 						ctx.mLoadType = kATLoadType_Disk;
-						ctx.mLoadIndex = index;
+						ctx.mLoadIndex = driveIndex;
 
 						bool writeEnabled = disk.IsWriteEnabled();
 						bool autoFlushEnabled = disk.IsAutoFlushEnabled();

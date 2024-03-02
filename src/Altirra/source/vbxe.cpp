@@ -20,6 +20,7 @@
 #include "gtiarenderer.h"
 #include "gtiatables.h"
 #include "console.h"
+#include "memorymanager.h"
 
 using namespace ATGTIA;
 
@@ -62,6 +63,7 @@ const ATVBXEEmulator::OvMode ATVBXEEmulator::kOvModeTable[3][4]={
 ATVBXEEmulator::ATVBXEEmulator()
 	: mpMemory(NULL)
 	, mpConn(NULL)
+	, mpMemMan(NULL)
 	, mMemAcControl(0)
 	, mMemAcBankA(0)
 	, mMemAcBankB(0)
@@ -138,6 +140,10 @@ ATVBXEEmulator::ATVBXEEmulator()
 	, mpPriTable(0)
 	, mpPriTableHi(0)
 	, mpColorTable(0)
+	, mpMemLayerMEMACA(NULL)
+	, mpMemLayerMEMACB(NULL)
+	, mpMemLayerRegisters(NULL)
+	, mpMemLayerGTIAOverlay(NULL)
 {
 	memset(mColorTable, 0, sizeof mColorTable);
 
@@ -151,11 +157,16 @@ ATVBXEEmulator::ATVBXEEmulator()
 ATVBXEEmulator::~ATVBXEEmulator() {
 }
 
-void ATVBXEEmulator::Init(uint8 *memory, IATVBXEEmulatorConnections *conn) {
+void ATVBXEEmulator::Init(uint8 *memory, IATVBXEEmulatorConnections *conn, ATMemoryManager *memman) {
 	mpMemory = memory;
 	mpConn = conn;
+	mpMemMan = memman;
 
 	ColdReset();
+}
+
+void ATVBXEEmulator::Shutdown() {
+	ShutdownMemoryMaps();
 }
 
 void ATVBXEEmulator::ColdReset() {
@@ -207,6 +218,27 @@ void ATVBXEEmulator::WarmReset() {
 
 	mbExtendedColor	= false;
 	mbAttrMapEnabled = false;
+
+	InitMemoryMaps();
+	UpdateMemoryMaps();
+}
+
+void ATVBXEEmulator::Set5200Mode(bool enable) {
+	mb5200Mode = enable;
+
+	if (mpMemMan) {
+		InitMemoryMaps();
+		UpdateMemoryMaps();
+	}
+}
+
+void ATVBXEEmulator::SetRegisterBase(uint8 page) {
+	mRegBase = page;
+
+	if (mpMemMan) {
+		InitMemoryMaps();
+		UpdateMemoryMaps();
+	}
 }
 
 void ATVBXEEmulator::SetAnalysisMode(bool enable) {
@@ -651,59 +683,111 @@ void ATVBXEEmulator::WriteControl(uint8 addrLo, uint8 value) {
 		case 0x5D:	// MEMAC_B_CONTROL
 			if (mMemAcBankB != value) {
 				mMemAcBankB = value;
-				mpConn->VBXERequestMemoryMapUpdate();
+				UpdateMemoryMaps();
 			}
 			break;
 
 		case 0x5E:	// MEMAC_CONTROL
 			if (mMemAcControl != value) {
 				mMemAcControl = value;
-				mpConn->VBXERequestMemoryMapUpdate();
+				UpdateMemoryMaps();
 			}
 			break;
 
 		case 0x5F:	// MEMAC_BANK_SEL
 			if (mMemAcBankA != value) {
 				mMemAcBankA = value;
-				mpConn->VBXERequestMemoryMapUpdate();
+				UpdateMemoryMaps();
 			}
 			break;
 	}
 }
 
-void ATVBXEEmulator::UpdateMemoryMaps(const uint8 *cpuRead[256], uint8 *cpuWrite[256], const uint8 *anticRead[256]) {
+bool ATVBXEEmulator::StaticGTIAWrite(void *thisptr, uint32 reg, uint8 value) {
+	if ((uint8)reg >= 0x80)
+		((ATVBXEEmulator *)thisptr)->WarmReset();
+
+	return false;
+}
+
+void ATVBXEEmulator::InitMemoryMaps() {
+	ShutdownMemoryMaps();
+
+	// Window A has priority over window B
+	mpMemLayerMEMACA = mpMemMan->CreateLayer(kATMemoryPri_Extsel+1, NULL, 0xD8, 0x10, false);
+	mpMemLayerMEMACB = mpMemMan->CreateLayer(kATMemoryPri_Extsel, NULL, 0x40, 0x40, false);
+
+	ATMemoryHandlerTable handler;
+	handler.mbPassReads			= true;
+	handler.mbPassAnticReads	= true;
+	handler.mbPassWrites		= true;
+	handler.mpThis				= this;
+	handler.mpDebugReadHandler	= NULL;
+	handler.mpReadHandler		= NULL;
+	handler.mpWriteHandler		= StaticGTIAWrite;
+
+	if (mb5200Mode)
+		mpMemLayerGTIAOverlay = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handler, 0xC0, 0x10);
+	else
+		mpMemLayerGTIAOverlay = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handler, 0xD0, 0x01);
+
+	mpMemMan->EnableLayer(mpMemLayerGTIAOverlay, kATMemoryAccessMode_CPUWrite, true);
+
+	handler.mbPassReads			= false;
+	handler.mbPassAnticReads	= false;
+	handler.mbPassWrites		= false;
+	handler.mpThis				= this;
+	handler.mpDebugReadHandler	= StaticReadControl;
+	handler.mpReadHandler		= StaticReadControl;
+	handler.mpWriteHandler		= StaticWriteControl;
+	mpMemLayerRegisters = mpMemMan->CreateLayer(kATMemoryPri_Hardware, handler, mRegBase, 0x01);
+	mpMemMan->EnableLayer(mpMemLayerRegisters, true);
+}
+
+void ATVBXEEmulator::ShutdownMemoryMaps() {
+	if (mpMemLayerGTIAOverlay) {
+		mpMemMan->DeleteLayer(mpMemLayerGTIAOverlay);
+		mpMemLayerGTIAOverlay = NULL;
+	}
+
+	if (mpMemLayerRegisters) {
+		mpMemMan->DeleteLayer(mpMemLayerRegisters);
+		mpMemLayerRegisters = NULL;
+	}
+
+	if (mpMemLayerMEMACA) {
+		mpMemMan->DeleteLayer(mpMemLayerMEMACA);
+		mpMemLayerMEMACA = NULL;
+	}
+
+	if (mpMemLayerMEMACB) {
+		mpMemMan->DeleteLayer(mpMemLayerMEMACB);
+		mpMemLayerMEMACB = NULL;
+	}
+}
+
+void ATVBXEEmulator::UpdateMemoryMaps() {
 	if (mb5200Mode) {
 		// Window A ($D800-E7FF)
 		uint8 *winA = mpMemory + (((uint32)mMemAcBankA << 12) & 0x7F000);
-
-		// MEMAC-A access - CPU
-		for(int i=0; i<16; ++i) {
-			cpuRead[0xD8 + i] = winA;
-			cpuWrite[0xD8 + i] = winA;
-			anticRead[0xD8 + i] = winA;
-			winA += 0x100;
-		}
+		mpMemMan->SetLayerMemory(mpMemLayerMEMACA, winA, 0xD8, 0x10);
+		mpMemMan->EnableLayer(mpMemLayerMEMACA, true);
 	} else {
 		// Window B ($4000-7FFF)
 		if (mMemAcBankB & 0xC0) {
 			uint8 *winB = mpMemory + ((mMemAcBankB & 0x1F) << 14);
+			mpMemMan->SetLayerMemory(mpMemLayerMEMACB, winB, 0x40, 0x40);
 
 			// MEMAC-B access - CPU
-			if (mMemAcBankB & 0x80) {
-				for(int i=0; i<64; ++i) {
-					cpuRead[0x40 + i] = winB + (i << 8);
-					cpuWrite[0x40 + i] = winB + (i << 8);
-				}
-			}
+			mpMemMan->EnableLayer(mpMemLayerMEMACB, kATMemoryAccessMode_CPURead, (mMemAcBankB & 0x80) != 0);
+			mpMemMan->EnableLayer(mpMemLayerMEMACB, kATMemoryAccessMode_CPUWrite, (mMemAcBankB & 0x80) != 0);
 
 			// MEMAC-B access - ANTIC
-			if (mMemAcBankB & 0x40) {
-				for(int i=0; i<64; ++i)
-					anticRead[0x40 + i] = winB + (i << 8);
-			}
+			mpMemMan->EnableLayer(mpMemLayerMEMACB, kATMemoryAccessMode_AnticRead, (mMemAcBankB & 0x40) != 0);
+		} else {
+			mpMemMan->EnableLayer(mpMemLayerMEMACB, false);
 		}
 
-		// Window A -- has priority over window B
 		if ((mMemAcBankA & 0x80) && (mMemAcControl & 0x0C)) {
 			static const int kPageCount[4]={
 				16,		// 00 - 4K window
@@ -727,29 +811,16 @@ void ATVBXEEmulator::UpdateMemoryMaps(const uint8 *cpuRead[256], uint8 *cpuWrite
 			};
 
 			uint8 *winA = mpMemory + (((uint32)mMemAcBankA << 12) & kAddrMask[mMemAcControl & 3]);
+			mpMemMan->SetLayerMemory(mpMemLayerMEMACA, winA, pageBase, numPages);
 
 			// MEMAC-A access - CPU
-			if (mMemAcControl & 0x08) {
-				for(int i=0; i<numPages; ++i) {
-					uint8 *p = winA + (i << 8);
-					int page = pageBase + i;
-
-					if (pageBase < 0xD0 || page >= 0xD8) {
-						cpuRead[page] = p;
-						cpuWrite[page] = p;
-					}
-				}
-			}
+			mpMemMan->EnableLayer(mpMemLayerMEMACA, kATMemoryAccessMode_CPURead, (mMemAcControl & 0x08) != 0);
+			mpMemMan->EnableLayer(mpMemLayerMEMACA, kATMemoryAccessMode_CPUWrite, (mMemAcControl & 0x08) != 0);
 
 			// MEMAC-A access - ANTIC
-			if (mMemAcControl & 0x04) {
-				for(int i=0; i<numPages; ++i) {
-					int page = pageBase + i;
-
-					if (pageBase < 0xD0 || page >= 0xD8)
-						anticRead[page] = winA + (i << 8);
-				}
-			}
+			mpMemMan->EnableLayer(mpMemLayerMEMACA, kATMemoryAccessMode_AnticRead, (mMemAcControl & 0x04) != 0);
+		} else {
+			mpMemMan->EnableLayer(mpMemLayerMEMACA, false);
 		}
 	}
 }

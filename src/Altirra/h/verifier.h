@@ -19,7 +19,14 @@
 #define f_AT_VERIFIER_H
 
 class ATCPUEmulator;
+class ATCPUEmulatorMemory;
 class ATSimulator;
+
+enum {
+	kATVerifierFlag_UndocumentedKernelEntry = 0x01,
+	kATVerifierFlag_RecursiveNMI = 0x02,
+	kATVerifierFlag_InterruptRegs = 0x04
+};
 
 class ATCPUVerifier {
 	ATCPUVerifier(const ATCPUVerifier&);
@@ -29,6 +36,15 @@ public:
 	~ATCPUVerifier();
 
 	void Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATSimulator *sim);
+
+	uint32 GetFlags() const { return mFlags; }
+	void SetFlags(uint32 flags);
+
+	void AddAllowedTarget(uint32 addr);
+	void RemoveAllowedTarget(uint32 addr);
+	void RemoveAllowedTargets();
+	void ResetAllowedTargets();
+	void GetAllowedTargets(vdfastvector<uint16>& exceptions);
 
 	void OnReset();
 	void OnIRQEntry();
@@ -41,8 +57,24 @@ protected:
 	ATCPUEmulatorMemory *mpMemory;
 	ATSimulator *mpSimulator;
 
+	uint32	mFlags;
+
 	bool	mbInNMIRoutine;
 	uint8	mNMIStackLevel;
+
+	typedef vdfastvector<uint16> Addresses;
+	Addresses	mAllowedTargets;
+
+	struct StackRegState {
+		uint8	mA;
+		uint8	mX;
+		uint8	mY;
+		uint8	mbActive;
+		uint16	mPC;
+		uint16	mPad2;
+	};
+
+	StackRegState mStackRegState[256];
 };
 
 #endif	// f_AT_VERIFIER_H

@@ -26,7 +26,13 @@
 
 ///////////////////////////////////////////////////////////////////////////
 
-bool ATUIShowRebindDialog(VDGUIHandle hParent, ATInputManager& inputManager, IATJoystickManager *joyMan, uint32 targetCode, const vdpoint32& anchorPos, uint32& inputCode);
+bool ATUIShowRebindDialog(VDGUIHandle hParent,
+						  ATInputManager& inputManager,
+						  IATJoystickManager *joyMan,
+						  uint32 targetCode,
+						  ATInputControllerType controllerType,
+						  const vdpoint32& anchorPos,
+						  uint32& inputCode);
 
 void ATGetInputTriggerModeName(uint32 mode, bool addSpeed, VDStringW& s) {
 	switch(mode & kATInputTriggerMode_Mask) {
@@ -119,7 +125,8 @@ ATUIDialogEditControllerMapping::ATUIDialogEditControllerMapping(ATInputControll
 
 bool ATUIDialogEditControllerMapping::OnLoaded() {
 	CBAddString(IDC_CONTROLLER, L"Joystick");
-	CBAddString(IDC_CONTROLLER, L"Mouse");
+	CBAddString(IDC_CONTROLLER, L"Mouse (Atari ST)");
+	CBAddString(IDC_CONTROLLER, L"Mouse (Amiga)");
 	CBAddString(IDC_CONTROLLER, L"Paddle A");
 	CBAddString(IDC_CONTROLLER, L"Paddle B");
 	CBAddString(IDC_CONTROLLER, L"Console");
@@ -128,6 +135,7 @@ bool ATUIDialogEditControllerMapping::OnLoaded() {
 	CBAddString(IDC_CONTROLLER, L"Light Pen");
 	CBAddString(IDC_CONTROLLER, L"Tablet (Atari touch tablet)");
 	CBAddString(IDC_CONTROLLER, L"Tablet (KoalaPad)");
+	CBAddString(IDC_CONTROLLER, L"CX-85 Numerical Keypad");
 
 	CBAddString(IDC_PORT, L"Port 1");
 	CBAddString(IDC_PORT, L"Port 2");
@@ -153,39 +161,47 @@ void ATUIDialogEditControllerMapping::OnDataExchange(bool write) {
 				mControllerIndex = index;
 				break;
 			case 1:
-				mControllerType = kATInputControllerType_Mouse;
+				mControllerType = kATInputControllerType_STMouse;
 				mControllerIndex = index;
 				break;
 			case 2:
-				mControllerType = kATInputControllerType_Paddle;
-				mControllerIndex = index*2;
+				mControllerType = kATInputControllerType_AmigaMouse;
+				mControllerIndex = index;
 				break;
 			case 3:
 				mControllerType = kATInputControllerType_Paddle;
-				mControllerIndex = index*2+1;
+				mControllerIndex = index*2;
 				break;
 			case 4:
+				mControllerType = kATInputControllerType_Paddle;
+				mControllerIndex = index*2+1;
+				break;
+			case 5:
 				mControllerType = kATInputControllerType_Console;
 				mControllerIndex = 0;
 				break;
-			case 5:
+			case 6:
 				mControllerType = kATInputControllerType_5200Controller;
 				mControllerIndex = index;
 				break;
-			case 6:
+			case 7:
 				mControllerType = kATInputControllerType_InputState;
 				mControllerIndex = 0;
 				break;
-			case 7:
+			case 8:
 				mControllerType = kATInputControllerType_LightPen;
 				mControllerIndex = index;
 				break;
-			case 8:
+			case 9:
 				mControllerType = kATInputControllerType_Tablet;
 				mControllerIndex = index;
 				break;
-			case 9:
+			case 10:
 				mControllerType = kATInputControllerType_KoalaPad;
+				mControllerIndex = index;
+				break;
+			case 11:
+				mControllerType = kATInputControllerType_Keypad;
 				mControllerIndex = index;
 				break;
 		}
@@ -220,36 +236,44 @@ void ATUIDialogEditControllerMapping::OnDataExchange(bool write) {
 				CBSetSelectedIndex(IDC_CONTROLLER, 0);
 				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
 				break;
-			case kATInputControllerType_Mouse:
+			case kATInputControllerType_STMouse:
 				CBSetSelectedIndex(IDC_CONTROLLER, 1);
 				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
 				break;
+			case kATInputControllerType_AmigaMouse:
+				CBSetSelectedIndex(IDC_CONTROLLER, 2);
+				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
+				break;
 			case kATInputControllerType_Paddle:
-				CBSetSelectedIndex(IDC_CONTROLLER, mControllerIndex & 1 ? 3 : 2);
+				CBSetSelectedIndex(IDC_CONTROLLER, mControllerIndex & 1 ? 4 : 3);
 				CBSetSelectedIndex(IDC_PORT, mControllerIndex >> 1);
 				break;
 			case kATInputControllerType_Console:
-				CBSetSelectedIndex(IDC_CONTROLLER, 4);
+				CBSetSelectedIndex(IDC_CONTROLLER, 5);
 				CBSetSelectedIndex(IDC_PORT, 0);
 				break;
 			case kATInputControllerType_5200Controller:
-				CBSetSelectedIndex(IDC_CONTROLLER, 5);
+				CBSetSelectedIndex(IDC_CONTROLLER, 6);
 				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
 				break;
 			case kATInputControllerType_InputState:
-				CBSetSelectedIndex(IDC_CONTROLLER, 6);
+				CBSetSelectedIndex(IDC_CONTROLLER, 7);
 				CBSetSelectedIndex(IDC_PORT, 0);
 				break;
 			case kATInputControllerType_LightPen:
-				CBSetSelectedIndex(IDC_CONTROLLER, 7);
-				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
-				break;
-			case kATInputControllerType_Tablet:
 				CBSetSelectedIndex(IDC_CONTROLLER, 8);
 				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
 				break;
-			case kATInputControllerType_KoalaPad:
+			case kATInputControllerType_Tablet:
 				CBSetSelectedIndex(IDC_CONTROLLER, 9);
+				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
+				break;
+			case kATInputControllerType_KoalaPad:
+				CBSetSelectedIndex(IDC_CONTROLLER, 10);
+				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
+				break;
+			case kATInputControllerType_Keypad:
+				CBSetSelectedIndex(IDC_CONTROLLER, 11);
 				CBSetSelectedIndex(IDC_PORT, mControllerIndex);
 				break;
 		}
@@ -346,6 +370,7 @@ protected:
 	static const uint32 kTargetCodesInputState[];
 	static const uint32 kTargetCodesLightPen[];
 	static const uint32 kTargetCodesTablet[];
+	static const uint32 kTargetCodesKeypad[];
 	static const uint32 kTargetModes[];
 };
 
@@ -615,6 +640,26 @@ const uint32 ATUIDialogEditInputMapping::kTargetCodesTablet[] = {
 	kATInputTrigger_Button0+3,
 };
 
+const uint32 ATUIDialogEditInputMapping::kTargetCodesKeypad[] = {
+	kATInputTrigger_Button0,
+	kATInputTrigger_Button0+1,
+	kATInputTrigger_Button0+2,
+	kATInputTrigger_Button0+3,
+	kATInputTrigger_Button0+4,
+	kATInputTrigger_Button0+5,
+	kATInputTrigger_Button0+6,
+	kATInputTrigger_Button0+7,
+	kATInputTrigger_Button0+8,
+	kATInputTrigger_Button0+9,
+	kATInputTrigger_Button0+10,
+	kATInputTrigger_Button0+11,
+	kATInputTrigger_Button0+12,
+	kATInputTrigger_Button0+13,
+	kATInputTrigger_Button0+14,
+	kATInputTrigger_Button0+15,
+	kATInputTrigger_Button0+16,
+};
+
 const uint32 ATUIDialogEditInputMapping::kTargetModes[] = {
 	kATInputTriggerMode_Default,
 	kATInputTriggerMode_AutoFire,
@@ -647,7 +692,8 @@ const vdspan<const uint32> ATUIDialogEditInputMapping::GetTargetCodes(ATInputCon
 		case kATInputControllerType_Paddle:
 			return vdspan<const uint32>(kTargetCodesPaddle);
 
-		case kATInputControllerType_Mouse:
+		case kATInputControllerType_STMouse:
+		case kATInputControllerType_AmigaMouse:
 			return vdspan<const uint32>(kTargetCodesMouse);
 
 		case kATInputControllerType_5200Controller:
@@ -665,6 +711,9 @@ const vdspan<const uint32> ATUIDialogEditInputMapping::GetTargetCodes(ATInputCon
 		case kATInputControllerType_Tablet:
 		case kATInputControllerType_KoalaPad:
 			return vdspan<const uint32>(kTargetCodesTablet);
+
+		case kATInputControllerType_Keypad:
+			return vdspan<const uint32>(kTargetCodesKeypad);
 	}
 }
 
@@ -681,7 +730,7 @@ bool ATUIDialogEditInputMapping::OnLoaded() {
 	}
 
 	for(uint32 i=0; i<mTargetCodeCount; ++i) {
-		mInputMan.GetNameForTargetCode(mpTargetCodes[i], name);
+		mInputMan.GetNameForTargetCode(mpTargetCodes[i], mControllerType, name);
 		CBAddString(IDC_TARGET, name.c_str());
 	}
 
@@ -969,8 +1018,12 @@ void ATUIDialogInputMapControllerItem::GetText(VDStringW& s) const {
 			s.sprintf(L"Paddle %c (port %d)", mControllerUnit & 1 ? 'B' : 'A', (mControllerUnit >> 1) + 1);
 			break;
 
-		case kATInputControllerType_Mouse:
-			s.sprintf(L"Mouse (port %d)", mControllerUnit + 1);
+		case kATInputControllerType_STMouse:
+			s.sprintf(L"ST Mouse (port %d)", mControllerUnit + 1);
+			break;
+
+		case kATInputControllerType_AmigaMouse:
+			s.sprintf(L"Amiga Mouse (port %d)", mControllerUnit + 1);
 			break;
 
 		case kATInputControllerType_Console:
@@ -995,6 +1048,10 @@ void ATUIDialogInputMapControllerItem::GetText(VDStringW& s) const {
 
 		case kATInputControllerType_KoalaPad:
 			s = L"Tablet (KoalaPad)";
+			break;
+
+		case kATInputControllerType_Keypad:
+			s.sprintf(L"CX-85 Numerical Keypad (port %d)", mControllerUnit + 1);
 			break;
 	}
 
@@ -1027,7 +1084,7 @@ void ATUIDialogInputMapListItem::GetText(VDStringW& s) const {
 	VDStringW t;
 
 	mInputMan.GetNameForInputCode(mInputCode, t);
-	mInputMan.GetNameForTargetCode(mTargetCode & kATInputTrigger_Mask, s);
+	mInputMan.GetNameForTargetCode(mTargetCode & kATInputTrigger_Mask, mpController->GetControllerType(), s);
 
 	s += L" -> ";
 	s += t;
@@ -1297,7 +1354,7 @@ bool ATUIDialogEditInputMap::OnCommand(uint32 id, uint32 extcode) {
 			const vdrect32& r = GetControlScreenPos(IDC_TREE);
 
 			uint32 inputCode;
-			if (!ATUIShowRebindDialog((VDGUIHandle)mhdlg, mInputMan, mpJoyMan, item->GetTargetCode(), vdpoint32(r.left, r.bottom), inputCode))
+			if (!ATUIShowRebindDialog((VDGUIHandle)mhdlg, mInputMan, mpJoyMan, item->GetTargetCode(), ctitem->GetControllerType(), vdpoint32(r.left, r.bottom), inputCode))
 				break;
 
 			item->Set(inputCode, item->GetTargetCode());
@@ -1345,6 +1402,15 @@ void ATUIDialogEditInputMap::OnItemDoubleClicked(VDUIProxyTreeViewControl *sourc
 		if (mEditControllerDialog.ShowDialog((VDGUIHandle)mhdlg)) {
 			ctitem->Set(mEditControllerDialog.GetControllerType(), mEditControllerDialog.GetControllerIndex(), mEditControllerDialog.GetFlagCheckBits());
 			mTreeView.RefreshNode(ctitem->GetNodeRef());
+
+			// refresh all of the items in case the controller type changed
+			uint32 n = ctitem->GetItemCount();
+			for(uint32 i=0; i<n; ++i) {
+				ATUIDialogInputMapListItem *item = ctitem->GetItem(i);
+
+				if (item)
+					mTreeView.RefreshNode(item->GetNodeRef());
+			}
 		}
 
 		*handled = true;
@@ -1413,7 +1479,7 @@ protected:
 	void SortItems();
 	void OnItemCheckedChanged(VDUIProxyListView *source, int index); 
 	void OnItemSelectionChanged(VDUIProxyListView *source, int index); 
-	void OnItemLabelChanged(VDUIProxyListView *source, const VDUIProxyListView::LabelEventData& index); 
+	void OnItemLabelChanged(VDUIProxyListView *source, VDUIProxyListView::LabelChangedEvent *event); 
 	void OnItemDoubleClicked(VDUIProxyListView *source, int index); 
 
 	VDUIProxyListView mListView;
@@ -1441,7 +1507,7 @@ bool ATUIDialogInput::OnLoaded() {
 
 	mListView.OnItemCheckedChanged() += mItemCheckedDelegate.Bind(this, &ATUIDialogInput::OnItemCheckedChanged);
 	mListView.OnItemSelectionChanged() += mItemSelectedDelegate.Bind(this, &ATUIDialogInput::OnItemSelectionChanged);
-	mListView.OnItemLabelChanged() += mItemLabelEditedDelegate(this, &ATUIDialogInput::OnItemLabelChanged);
+	mListView.OnItemLabelChanged() += mItemLabelEditedDelegate.Bind(this, &ATUIDialogInput::OnItemLabelChanged);
 	mListView.OnItemDoubleClicked() += mItemDblClkDelegate.Bind(this, &ATUIDialogInput::OnItemDoubleClicked);
 	mListView.SetFullRowSelectEnabled(true);
 	mListView.SetItemCheckboxesEnabled(true);
@@ -1645,16 +1711,16 @@ void ATUIDialogInput::OnItemSelectionChanged(VDUIProxyListView *source, int inde
 	EnableControl(IDC_CLONE, index >= 0);
 }
 
-void ATUIDialogInput::OnItemLabelChanged(VDUIProxyListView *source, const VDUIProxyListView::LabelEventData& data) {
-	ATUIDialogInputListItem *item = static_cast<ATUIDialogInputListItem *>(mListView.GetVirtualItem(data.mIndex));
+void ATUIDialogInput::OnItemLabelChanged(VDUIProxyListView *source, VDUIProxyListView::LabelChangedEvent *event) {
+	ATUIDialogInputListItem *item = static_cast<ATUIDialogInputListItem *>(mListView.GetVirtualItem(event->mIndex));
 
 	if (item) {
 		ATInputMap *imap = item->GetInputMap();
 
 		VDStringW s;
-		mListView.GetItemText(data.mIndex, s);
-		imap->SetName(data.mpNewLabel);
-		mListView.RefreshItem(data.mIndex);
+		mListView.GetItemText(event->mIndex, s);
+		imap->SetName(event->mpNewLabel);
+		mListView.RefreshItem(event->mIndex);
 	}
 }
 

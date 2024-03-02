@@ -52,7 +52,7 @@ public:
 
 	operator void*() const { return ptr; }
 
-	vdautoblockptr& from(vdautoblockptr& src) { free(ptr); ptr=src.ptr; src.ptr=0; }
+	void from(vdautoblockptr& src) { free(ptr); ptr=src.ptr; src.ptr=0; }
 	void *get() const { return ptr; }
 	void *release() { void *v = ptr; ptr = NULL; return v; }
 };
@@ -99,7 +99,7 @@ public:
 		return &ptr;
 	}
 
-	vdautoptr<T>& from(vdautoptr<T>& src) { delete ptr; ptr=src.ptr; src.ptr=0; }
+	void from(vdautoptr<T>& src) { delete ptr; ptr=src.ptr; src.ptr=0; }
 	T *get() const { return ptr; }
 	T *release() { T *v = ptr; ptr = NULL; return v; }
 
@@ -129,7 +129,7 @@ public:
 
 	T& operator[](int offset) const { return ptr[offset]; }
 
-	vdautoarrayptr<T>& from(vdautoarrayptr<T>& src) { delete[] ptr; ptr=src.ptr; src.ptr=0; }
+	void from(vdautoarrayptr<T>& src) { delete[] ptr; ptr=src.ptr; src.ptr=0; }
 	T *get() const { return ptr; }
 	T *release() { T *v = ptr; ptr = NULL; return v; }
 };

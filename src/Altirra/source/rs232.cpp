@@ -1,6 +1,24 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2011 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License
+//	along with this program; if not, write to the Free Software
+//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
 #include "stdafx.h"
 #include "rs232.h"
 #include "cpu.h"
+#include "cpumemory.h"
 #include "cio.h"
 #include "ksyms.h"
 #include "scheduler.h"
@@ -8,15 +26,22 @@
 
 //////////////////////////////////////////////////////////////////////////
 
-class ATRS232Channel : public IATSchedulerCallback {
+class ATRS232Channel : public IATSchedulerCallback, public IATRS232DeviceCallback {
 public:
 	ATRS232Channel();
 
-	void Init(int index, ATCPUEmulatorMemory *mem, ATScheduler *sched, IATUIRenderer *uir);
+	void Init(int index, ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir);
 	void Shutdown();
+
+	void ColdReset();
 
 	uint8 Open(uint8 aux1, uint8 aux2);
 	void Close();
+
+	uint8 GetCIOPermissions() const { return mOpenPerms; }
+	uint32 GetOutputLevel() const { return mOutputLevel; }
+
+	void SetConcurrentMode();
 
 	void ReconfigureDataRate(uint8 aux1, uint8 aux2);
 	void ReconfigureTranslation(uint8 aux1, uint8 aux2);
@@ -26,9 +51,13 @@ public:
 	void GetStatus();
 	bool GetByte(uint8& c);
 	bool PutByte(uint8 c);
+	void SetTerminalState(uint8 c);
 
 protected:
+	void FlushInputBuffer();
+	void OnControlStateChanged(const ATRS232ControlState& status);
 	void OnScheduledEvent(uint32 id);
+	void PollDevice();
 
 	ATScheduler	*mpScheduler;
 	ATEvent	*mpEvent;
@@ -41,9 +70,21 @@ protected:
 	bool	mbTranslationEnabled;
 	bool	mbTranslationHeavy;
 	bool	mbLFPending;
+	bool	mbConcurrentMode;
 	uint8	mWontTranslateChar;
 
 	uint8	mInputParityMask;
+
+	uint8	mOpenPerms;		// Mirror of ICAX1 at open time.
+	uint8	mControlState;
+
+	// These must match the error flags returned by STATUS.
+	enum {
+		kErrorFlag_FramingError = 0x80
+	};
+	uint8	mErrorFlags;
+
+	uint32	mBaudRate;
 
 	// These must match bits 0-1 of AUX1 as passed to XIO 38.
 	enum OutputParityMode {
@@ -54,6 +95,8 @@ protected:
 	};
 
 	OutputParityMode	mOutputParityMode;
+
+	ATRS232TerminalState	mTerminalState;
 
 	int		mInputReadOffset;
 	int		mInputWriteOffset;
@@ -66,6 +109,8 @@ protected:
 
 	uint8	mInputBuffer[32];
 	uint8	mOutputBuffer[32];
+
+	ATRS232Config mConfig;
 };
 
 ATRS232Channel::ATRS232Channel()
@@ -77,6 +122,12 @@ ATRS232Channel::ATRS232Channel()
 	, mbTranslationEnabled(false)
 	, mbTranslationHeavy(false)
 	, mWontTranslateChar(0)
+	, mInputParityMask(0)
+	, mOpenPerms(0)
+	, mControlState(0)
+	, mErrorFlags(0)
+	, mBaudRate(300)
+	, mOutputParityMode(kOutputParityNone)
 	, mInputReadOffset(0)
 	, mInputWriteOffset(0)
 	, mInputLevel(0)
@@ -88,11 +139,32 @@ ATRS232Channel::ATRS232Channel()
 {
 }
 
-void ATRS232Channel::Init(int index, ATCPUEmulatorMemory *mem, ATScheduler *sched, IATUIRenderer *uir) {
+void ATRS232Channel::Init(int index, ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir) {
 	mpMemory = mem;
 	mpScheduler = sched;
 
-	static_cast<ATModemEmulator *>(mpDevice)->Init(sched, uir);
+	mpDevice->SetCallback(this);
+	static_cast<ATModemEmulator *>(mpDevice)->Init(sched, slowsched, uir);
+
+	// compute initial control state
+	ATRS232ControlState cstate(mpDevice->GetControlState());
+
+	mControlState = 0;
+	
+	if (cstate.mbCarrierDetect)
+		mControlState += 0x0c;
+
+	if (cstate.mbClearToSend)
+		mControlState += 0x30;
+
+	if (cstate.mbDataSetReady)
+		mControlState += 0xc0;
+
+	// Default to 300 baud, 8 data bits, 1 stop bit, no input parity, space output parity,
+	// no CR after LF, light translation. This must NOT be reapplied on each open or it
+	// breaks BobTerm.
+	ReconfigureDataRate(0, 0);
+	ReconfigureTranslation(0x10, 0);
 }
 
 void ATRS232Channel::Shutdown() {
@@ -111,15 +183,18 @@ void ATRS232Channel::Shutdown() {
 	}
 }
 
-uint8 ATRS232Channel::Open(uint8 aux1, uint8 aux2) {
-	// Default to 300 baud, 8 data bits, 1 stop bit, no input parity, space output parity,
-	// no CR after LF, light translation
-	ReconfigureDataRate(0, 0);
-	ReconfigureTranslation(0x10, 0);
+void ATRS232Channel::ColdReset() {
+	Close();
 
+	if (mpDevice)
+		mpDevice->ColdReset();
+}
+
+uint8 ATRS232Channel::Open(uint8 aux1, uint8 aux2) {
 	if (!mpEvent)
 		mpEvent = mpScheduler->AddEvent(mCyclesPerByte, this, 1);
 
+	mOpenPerms = aux1;
 	mInputReadOffset = 0;
 	mInputWriteOffset = 0;
 	mInputLevel = 0;
@@ -130,7 +205,24 @@ uint8 ATRS232Channel::Open(uint8 aux1, uint8 aux2) {
 	mOutputWriteOffset = 0;
 	mOutputLevel = 0;
 
+	mErrorFlags = 0;
+
 	mbLFPending = false;
+
+	// AUX1:
+	//	bit 0 = concurrent mode
+	//	bit 2 = input mode
+	//	bit 3 = output mode
+	mbConcurrentMode = false;
+
+	// ICD Multi I/O Manual Chapter 6: Open sets RTS and DTR to high.
+	mTerminalState.mbDataTerminalReady = true;
+	mTerminalState.mbRequestToSend = true;
+
+	if (mpDevice)
+		mpDevice->SetTerminalState(mTerminalState);
+
+	FlushInputBuffer();
 
 	return ATCIOSymbols::CIOStatSuccess;
 }
@@ -140,10 +232,43 @@ void ATRS232Channel::Close() {
 		mpScheduler->RemoveEvent(mpEvent);
 		mpEvent = NULL;
 	}
+
+	if (mbConcurrentMode)
+		mErrorFlags = 0;
+
+	// LAMEAPP: This is required to make BBS Express work -- it expects to be able
+	// to close a channel and then issue a status request to read CD without
+	// re-opening the stream first.
+	mbConcurrentMode = false;
+}
+
+void ATRS232Channel::SetConcurrentMode() {
+	mbConcurrentMode = true;
+
+	FlushInputBuffer();
 }
 
 void ATRS232Channel::ReconfigureDataRate(uint8 aux1, uint8 aux2) {
 	static const uint32 kBaudTable[16]={
+		300,		// 0000 = 300 baud
+		45,			// 0001 = 45.5 baud
+		50,			// 0010 = 50 baud
+		57,			// 0011 = 56.875 baud
+		75,			// 0100 = 75 baud
+		110,		// 0101 = 110 baud
+		135,		// 0110 = 134.5 baud
+		150,		// 0111 = 150 baud
+		300,		// 1000 = 300 baud
+		600,		// 1001 = 600 baud
+		1200,		// 1010 = 1200 baud
+		1800,		// 1011 = 1800 baud
+		2400,		// 1100 = 2400 baud
+		4800,		// 1101 = 4800 baud
+		9600,		// 1110 = 9600 baud
+		19200,		// 1111 = 19200 baud
+	};
+
+	static const uint32 kPeriodTable[16]={
 		 59659,		// 0000 = 300 baud
 		393357,		// 0001 = 45.5 baud
 		357955,		// 0010 = 50 baud
@@ -162,7 +287,24 @@ void ATRS232Channel::ReconfigureDataRate(uint8 aux1, uint8 aux2) {
 		   932,		// 1111 = 19200 baud
 	};
 
-	mCyclesPerByte = kBaudTable[aux1 & 15];
+	uint32 baudIdx = aux1 & 15;
+	mBaudRate = kBaudTable[baudIdx];
+	mCyclesPerByte = kPeriodTable[baudIdx];
+
+	if (mConfig.mbExtendedBaudRates) {	// Atari800 extension
+		if (aux1 & 0x40) {
+			mBaudRate = 230400;
+			mCyclesPerByte = 78;		// 77.68
+		} else if (baudIdx == 1) {
+			mBaudRate = 57600;
+			mCyclesPerByte = 311;		// 310.7
+		} else if (baudIdx == 3) {
+			mBaudRate = 115200;
+			mCyclesPerByte = 155;		// 155.36
+		}
+	}
+
+	mErrorFlags = 0;
 }
 
 void ATRS232Channel::ReconfigureTranslation(uint8 aux1, uint8 aux2) {
@@ -170,26 +312,46 @@ void ATRS232Channel::ReconfigureTranslation(uint8 aux1, uint8 aux2) {
 	mbTranslationHeavy = (aux1 & 0x10) != 0;
 
 	// EOL -> CR+LF is only available if translation is enabled.
-	mbAddLFAfterEOL = (aux1 & 0x30) && (aux1 & 0x40);
+	mbAddLFAfterEOL = mbTranslationEnabled && (aux1 & 0x40);
 
 	mWontTranslateChar = aux2;
 
 	mInputParityMask = (aux1 & 0x0c) ? 0x7F : 0xFF;
 	mOutputParityMode = (OutputParityMode)(aux1 & 0x03);
+
+	mErrorFlags = 0;
 }
 
 void ATRS232Channel::SetConfig(const ATRS232Config& config) {
+	mConfig = config;
 	mpDevice->SetConfig(config);
 }
 
 void ATRS232Channel::GetStatus() {
-	mpMemory->WriteByte(ATKernelSymbols::DVSTAT, 0);
-	mpMemory->WriteByte(ATKernelSymbols::DVSTAT+1, mInputLevel & 0xFF);
+	if (mConfig.mbDisableThrottling)
+		PollDevice();
+
+	mpMemory->WriteByte(ATKernelSymbols::DVSTAT, mErrorFlags);
+
+	if (mbConcurrentMode) {
+		mpMemory->WriteByte(ATKernelSymbols::DVSTAT+1, mInputLevel & 0xFF);
+	} else {
+		mpMemory->WriteByte(ATKernelSymbols::DVSTAT+1, mControlState);
+		mErrorFlags = 0;
+	}
+
 	mpMemory->WriteByte(ATKernelSymbols::DVSTAT+2, mInputLevel >> 8);
 	mpMemory->WriteByte(ATKernelSymbols::DVSTAT+3, mOutputLevel);
+
+	// reset sticky bits
+	mControlState &= 0xa8;
+	mControlState += (mControlState >> 1);
 }
 
 bool ATRS232Channel::GetByte(uint8& c) {
+	if (mConfig.mbDisableThrottling)
+		PollDevice();
+
 	if (!mInputLevel)
 		return false;
 
@@ -230,7 +392,7 @@ bool ATRS232Channel::PutByte(uint8 c) {
 
 		if (mbTranslationHeavy) {
 			// heavy translation -- drop bytes <$20 or >$7C
-			if ((uint8)(c - 0x20) > 0x5C)
+			if ((uint8)(c - 0x20) > 0x5C && c != 0x0D)
 				return true;
 		} else {
 			// light translation - strip high bit
@@ -276,6 +438,9 @@ bool ATRS232Channel::PutByte(uint8 c) {
 
 		++mOutputLevel;
 
+		if (mConfig.mbDisableThrottling)
+			PollDevice();
+
 		// If we just pushed out a CR byte and add-LF is enabled, we need to
 		// loop around and push out another LF byte.
 		if (c != 0x0D || !mbAddLFAfterEOL)
@@ -289,14 +454,91 @@ bool ATRS232Channel::PutByte(uint8 c) {
 	return true;
 }
 
+void ATRS232Channel::SetTerminalState(uint8 c) {
+	bool changed = false;
+
+	if (c & 0x80) {
+		bool dtr = (c & 0x40) != 0;
+
+		if (mTerminalState.mbDataTerminalReady != dtr) {
+			mTerminalState.mbDataTerminalReady = dtr;
+
+			changed = true;
+		}
+	}
+
+	if (c & 0x20) {
+		bool rts = (c & 0x10) != 0;
+
+		if (mTerminalState.mbRequestToSend != rts) {
+			mTerminalState.mbRequestToSend = rts;
+
+			changed = true;
+		}
+	}
+
+	if (changed && mpDevice)
+		mpDevice->SetTerminalState(mTerminalState);
+}
+
+void ATRS232Channel::FlushInputBuffer() {
+	mInputLevel = 0;
+	mInputReadOffset = 0;
+	mInputWriteOffset = 0;
+
+	if (mpDevice)
+		mpDevice->FlushOutputBuffer();
+}
+
+void ATRS232Channel::OnControlStateChanged(const ATRS232ControlState& status) {
+	// Line state transitions:
+	//
+	//	Prev				State	Next
+	//	00 (always off)		off		00 (always off)
+	//	01 (currently off)	off		01 (currently off)
+	//	10 (currently on)	off		01 (currently off)
+	//	11 (always on)		off		01 (currently off)
+	//	00 (always off)		on		10 (currently on)
+	//	01 (currently off)	on		10 (currently on)
+	//	10 (currently on)	on		10 (currently on)
+	//	11 (always on)		on		11 (always on)
+	if (status.mbCarrierDetect) {
+		if (!(mControlState & 0x08))
+			mControlState = (mControlState & 0xf3) + 0x08;
+	} else {
+		if (mControlState & 0x08)
+			mControlState = (mControlState & 0xf3) + 0x04;
+	}
+
+	if (status.mbClearToSend) {
+		if (!(mControlState & 0x20))
+			mControlState = (mControlState & 0xcf) + 0x20;
+	} else {
+		if (mControlState & 0x20)
+			mControlState = (mControlState & 0xcf) + 0x10;
+	}
+
+	if (status.mbDataSetReady) {
+		if (!(mControlState & 0x80))
+			mControlState = (mControlState & 0x3f) + 0x80;
+	} else {
+		if (mControlState & 0x80)
+			mControlState = (mControlState & 0x3f) + 0x40;
+	}
+}
+
 void ATRS232Channel::OnScheduledEvent(uint32 id) {
 	mpEvent = mpScheduler->AddEvent(mCyclesPerByte, this, 1);
 
+	PollDevice();
+}
+
+void ATRS232Channel::PollDevice() {
 	if (mOutputLevel) {
 		--mOutputLevel;
 
 		if (mpDevice)
-			mpDevice->Write(mOutputBuffer[mOutputReadOffset]);
+			mpDevice->Write(mBaudRate, mOutputBuffer[mOutputReadOffset]);
 
 		if (++mOutputReadOffset >= sizeof mOutputBuffer)
 			mOutputReadOffset = 0;
@@ -304,8 +546,12 @@ void ATRS232Channel::OnScheduledEvent(uint32 id) {
 
 	if (mpDevice) {
 		uint8 c;
+		bool framingError;
 
-		if (mInputLevel < mInputBufferSize && mpDevice->Read(c)) {
+		if (mInputLevel < mInputBufferSize && mpDevice->Read(mBaudRate, c, framingError)) {
+			if (framingError)
+				mErrorFlags |= kErrorFlag_FramingError;
+
 			if (mInputBufAddr)
 				mpMemory->WriteByte(mInputBufAddr + mInputWriteOffset, c);
 			else
@@ -328,8 +574,10 @@ public:
 	ATRS232Emulator();
 	~ATRS232Emulator();
 
-	void Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, IATUIRenderer *uir);
+	void Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir);
 	void Shutdown();
+
+	void ColdReset();
 
 	void GetConfig(ATRS232Config& config);
 	void SetConfig(const ATRS232Config& config);
@@ -353,15 +601,21 @@ ATRS232Emulator::~ATRS232Emulator() {
 	Shutdown();
 }
 
-void ATRS232Emulator::Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, IATUIRenderer *uir) {
+void ATRS232Emulator::Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir) {
 	for(int i=0; i<4; ++i) {
-		mChannels[i].Init(i, mem, sched, uir);
+		mChannels[i].Init(i, mem, sched, slowsched, i ? NULL : uir);
 	}
 }
 
 void ATRS232Emulator::Shutdown() {
 	for(int i=0; i<4; ++i) {
 		mChannels[i].Shutdown();
+	}
+}
+
+void ATRS232Emulator::ColdReset() {
+	for(int i=0; i<4; ++i) {
+		mChannels[i].ColdReset();
 	}
 }
 
@@ -373,16 +627,28 @@ void ATRS232Emulator::SetConfig(const ATRS232Config& config) {
 	mConfig = config;
 
 	for(int i=0; i<4; ++i) {
-		mChannels[i].SetConfig(config);
+		ATRS232Config chanConfig(config);
+
+		if (i)
+			chanConfig.mListenPort = 0;
+
+		mChannels[i].SetConfig(chanConfig);
 	}
 }
 
 void ATRS232Emulator::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, int offset) {
-	uint32 idx = mem->ReadByte(ATKernelSymbols::ICDNOZ) - 1;
+	// We must read from the originating IOCB instead of from the zero-page IOCB.
+	// BASIC jumps directly to the put vector instead of going through CIO.
+	uint32 idx = mem->ReadByte(ATKernelSymbols::ICDNO + cpu->GetX()) - 1;
 
 	if (idx >= 4) {
-		cpu->Ldy(ATCIOSymbols::CIOStatUnkDevice);
-		return;
+		// For XIO and Open commands, we map R: to R1:. This is required by FoReM XEP's START module.
+		if ((offset == 0 || offset == 10) && idx == (uint32)-1)
+			idx = 0;
+		else {
+			cpu->Ldy(ATCIOSymbols::CIOStatUnkDevice);
+			return;
+		}
 	}
 
 	ATRS232Channel& ch = mChannels[idx];
@@ -393,6 +659,17 @@ void ATRS232Emulator::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, 
 			break;
 
 		case 2:		// close
+			// wait for output buffer to drain (requires assist)
+			if (ch.GetOutputLevel()) {
+				cpu->Push(cpu->GetPC() >> 8);
+				cpu->Push((cpu->GetPC() - 1) & 0xFF);
+				cpu->Push(0xE4);
+				cpu->Push(0xBF);
+				cpu->Push(0xE4);
+				cpu->Push(0xBF);
+				return;
+			}
+
 			ch.Close();
 			cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
 			break;
@@ -403,8 +680,10 @@ void ATRS232Emulator::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, 
 				if (!ch.GetByte(c)) {
 					cpu->Push(cpu->GetPC() >> 8);
 					cpu->Push((cpu->GetPC() - 1) & 0xFF);
+					cpu->Push(0xE4);
 					cpu->Push(0xBF);
 					cpu->Push(0xE4);
+					cpu->Push(0xBF);
 					return;
 				}
 
@@ -417,8 +696,10 @@ void ATRS232Emulator::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, 
 			if (!ch.PutByte(cpu->GetA())) {
 				cpu->Push(cpu->GetPC() >> 8);
 				cpu->Push((cpu->GetPC() - 1) & 0xFF);
+				cpu->Push(0xE4);
 				cpu->Push(0xBF);
 				cpu->Push(0xE4);
+				cpu->Push(0xBF);
 				return;
 			}
 
@@ -436,29 +717,40 @@ void ATRS232Emulator::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, 
 
 				switch(cmd) {
 					case 32:	// XIO 32 Force short block (silently ignored)
-						cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
-						return;
+						break;
 
 					case 34:	// XIO 34 control DTR, RTS, XMT (silently ignored)
-						cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
-						return;
+						ch.SetTerminalState(mem->ReadByte(ATKernelSymbols::ICAX1Z));
+						break;
 
 					case 36:	// XIO 36 configure baud rate (partial support)
 						ch.ReconfigureDataRate(mem->ReadByte(ATKernelSymbols::ICAX1Z), mem->ReadByte(ATKernelSymbols::ICAX2Z));
-						cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
-						return;
+						break;
 
 					case 38:	// XIO 38 configure translation mode (silently ignored)
 						ch.ReconfigureTranslation(mem->ReadByte(ATKernelSymbols::ICAX1Z), mem->ReadByte(ATKernelSymbols::ICAX2Z));
-						cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
-						return;
+						break;
 
 					case 40:	// XIO 40 concurrent mode (silently ignored)
-						cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
+						ch.SetConcurrentMode();
+						break;
+
+					default:
+						cpu->Ldy(ATCIOSymbols::CIOStatNotSupported);
 						return;
 				}
 			}
-			cpu->Ldy(ATCIOSymbols::CIOStatNotSupported);
-			break;
+
+			// Page 41 of the OS Manual says:
+			// "You should not alter ICAX1 once the device/file is open."
+			//
+			// ...which of course means that Atari BASIC does it: XIO commands stomp the
+			// AUX1 and AUX2 bytes. The former then causes GET BYTE operations to break as
+			// they check the permission bits in AUX1. To work around this, the SPECIAL
+			// routine of R: handlers have to restore the permissions byte.
+			mem->WriteByte(ATKernelSymbols::ICAX1Z, ch.GetCIOPermissions());
+
+			cpu->Ldy(ATCIOSymbols::CIOStatSuccess);
+			return;
 	}
 }

@@ -49,6 +49,18 @@ struct ATSourceLineInfo {
 	uint16	mFileId;
 };
 
+enum ATSymbolDirectiveType {
+	kATSymbolDirType_None,
+	kATSymbolDirType_Assert,
+	kATSymbolDirType_Trace
+};
+
+struct ATSymbolDirectiveInfo {
+	ATSymbolDirectiveType mType;
+	uint16 mOffset;
+	const char *mpArguments;
+};
+
 class IATSymbolStore : public IVDRefCount {
 public:
 	virtual uint32	GetDefaultBase() const = 0;
@@ -59,11 +71,14 @@ public:
 	virtual uint16	GetFileId(const wchar_t *fileName) = 0;
 
 	virtual void	GetLines(uint16 fileId, vdfastvector<ATSourceLineInfo>& lines) = 0;
-	virtual bool	GetLineForOffset(uint32 moduleOffset, ATSourceLineInfo& lineInfo) = 0;
+	virtual bool	GetLineForOffset(uint32 moduleOffset, bool searchUp, ATSourceLineInfo& lineInfo) = 0;
 	virtual bool	GetOffsetForLine(const ATSourceLineInfo& lineInfo, uint32& moduleOffset) = 0;
 
 	virtual uint32	GetSymbolCount() const = 0;
 	virtual void	GetSymbol(uint32 index, ATSymbolInfo& symbol) = 0;
+
+	virtual uint32	GetDirectiveCount() const = 0;
+	virtual void	GetDirective(uint32 index, ATSymbolDirectiveInfo& dirInfo) = 0;
 };
 
 class IATCustomSymbolStore : public IATSymbolStore {

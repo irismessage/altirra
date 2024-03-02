@@ -106,8 +106,14 @@ protected:
 	void RenderLoresFast(int x1, int x2);
 	void RenderMode8(int x1, int x2);
 	void RenderMode8Fast(int x1, int x2);
+	void RenderMode8Transition(int x1);
 	void RenderMode9(int x1, int x2);
+	void RenderMode9Transition1(int x1);
+	void RenderMode9Transition2(int x1);
 	void RenderMode10(int x1, int x2);
+	void RenderMode10Transition1(int x1);
+	void RenderMode10Transition2(int x1);
+	void RenderMode10Transition3(int x1);
 	void RenderMode11(int x1, int x2);
 
 	const uint8 *mpMergeBuffer;
@@ -120,6 +126,7 @@ protected:
 
 	bool mbHiresMode;
 	bool mbGTIAEnableTransition;
+	uint8 mTransitionPhase;
 	bool mbVBlank;
 	uint8 mPRIOR;
 

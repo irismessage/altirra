@@ -166,6 +166,19 @@ void VDUIProxyListView::SetSelectedIndex(int index) {
 	ListView_SetItemState(mhwnd, index, LVIS_SELECTED|LVIS_FOCUSED, LVIS_SELECTED|LVIS_FOCUSED);
 }
 
+void VDUIProxyListView::GetSelectedIndices(vdfastvector<int>& indices) const {
+	int idx = -1;
+
+	indices.clear();
+	for(;;) {
+		idx = ListView_GetNextItem(mhwnd, idx, LVNI_SELECTED);
+		if (idx < 0)
+			return;
+
+		indices.push_back(idx);
+	}
+}
+
 void VDUIProxyListView::SetFullRowSelectEnabled(bool enabled) {
 	ListView_SetExtendedListViewStyleEx(mhwnd, LVS_EX_FULLROWSELECT, enabled ? LVS_EX_FULLROWSELECT : 0);
 }
@@ -359,6 +372,28 @@ void VDUIProxyListView::SetItemChecked(int item, bool checked) {
 	ListView_SetCheckState(mhwnd, item, checked);
 }
 
+void VDUIProxyListView::SetItemImage(int item, uint32 imageIndex) {
+	if (VDIsWindowsNT()) {
+		LVITEMW itemw = {};
+
+		itemw.mask		= LVIF_IMAGE;
+		itemw.iItem		= item;
+		itemw.iSubItem	= 0;
+		itemw.iImage	= imageIndex;
+
+		SendMessageW(mhwnd, LVM_SETITEMW, 0, (LPARAM)&itemw);
+	} else {
+		LVITEMA itema = {};
+
+		itema.mask		= LVIF_IMAGE;
+		itema.iItem		= item;
+		itema.iSubItem	= 0;
+		itema.iImage	= imageIndex;
+
+		SendMessageA(mhwnd, LVM_SETITEMA, 0, (LPARAM)&itema);
+	}
+}
+
 void VDUIProxyListView::Sort(IVDUIListViewVirtualComparer& comparer) {
 	ListView_SortItems(mhwnd, SortAdapter, (LPARAM)&comparer);
 }
@@ -446,12 +481,16 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 				const NMLVDISPINFOA *di = (const NMLVDISPINFOA *)hdr;
 				if (di->item.pszText) {
 					const VDStringW label(VDTextAToW(di->item.pszText));
-					LabelEventData data = {
+					LabelChangedEvent event = {
+						true,
 						di->item.iItem,
 						label.c_str()
 					};
 
-					mEventItemLabelEdited.Raise(this, data);
+					mEventItemLabelEdited.Raise(this, &event);
+
+					if (!event.mbAllowEdit)
+						return FALSE;
 				}
 			}
 			return TRUE;
@@ -461,15 +500,52 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 				const NMLVDISPINFOW *di = (const NMLVDISPINFOW *)hdr;
 
 				if (di->item.pszText) {
-					LabelEventData data = {
+					LabelChangedEvent event = {
+						true,
 						di->item.iItem,
 						di->item.pszText
 					};
 
-					mEventItemLabelEdited.Raise(this, data);
+					mEventItemLabelEdited.Raise(this, &event);
+
+					if (!event.mbAllowEdit)
+						return FALSE;
 				}
 			}
 			return TRUE;
+
+		case LVN_BEGINDRAG:
+			{
+				const NMLISTVIEW *nmlv = (const NMLISTVIEW *)hdr;
+
+				mEventItemBeginDrag.Raise(this, nmlv->iItem);
+			}
+			return 0;
+
+		case LVN_BEGINRDRAG:
+			{
+				const NMLISTVIEW *nmlv = (const NMLISTVIEW *)hdr;
+
+				mEventItemBeginRDrag.Raise(this, nmlv->iItem);
+			}
+			return 0;
+
+		case NM_RCLICK:
+			{
+				const NMITEMACTIVATE *nmia = (const NMITEMACTIVATE *)hdr;
+
+				if (nmia->iItem >= 0) {
+					ContextMenuEvent event;
+					event.mIndex = nmia->iItem;
+
+					POINT pt = nmia->ptAction;
+					ClientToScreen(mhwnd, &pt);
+					event.mX = pt.x;
+					event.mY = pt.y;
+					mEventItemContextMenu.Raise(this, event);
+				}
+			}
+			return 0;
 
 		case NM_DBLCLK:
 			{

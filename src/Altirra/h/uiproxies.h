@@ -72,6 +72,7 @@ public:
 	int GetItemCount() const;
 	int GetSelectedIndex() const;
 	void SetSelectedIndex(int index);
+	void GetSelectedIndices(vdfastvector<int>& indices) const;
 	void SetFullRowSelectEnabled(bool enabled);
 	void SetItemCheckboxesEnabled(bool enabled);
 	void EnsureItemVisible(int index);
@@ -89,6 +90,8 @@ public:
 	bool IsItemChecked(int item);
 	void SetItemChecked(int item, bool checked);
 
+	void SetItemImage(int item, uint32 imageIndex);
+
 	void Sort(IVDUIListViewVirtualComparer& comparer);
 
 	VDEvent<VDUIProxyListView, int>& OnColumnClicked() {
@@ -103,17 +106,36 @@ public:
 		return mEventItemDoubleClicked;
 	}
 
+	struct ContextMenuEvent {
+		int mIndex;
+		int mX;
+		int mY;
+	};
+
+	VDEvent<VDUIProxyListView, ContextMenuEvent>& OnItemContextMenu() {
+		return mEventItemContextMenu;
+	}
+
 	VDEvent<VDUIProxyListView, int>& OnItemCheckedChanged() {
 		return mEventItemCheckedChanged;
 	}
 
-	struct LabelEventData {
+	struct LabelChangedEvent {
+		bool mbAllowEdit;
 		int mIndex;
 		const wchar_t *mpNewLabel;
 	};
 
-	VDEvent<VDUIProxyListView, LabelEventData>& OnItemLabelChanged() {
+	VDEvent<VDUIProxyListView, LabelChangedEvent *>& OnItemLabelChanged() {
 		return mEventItemLabelEdited;
+	}
+
+	VDEvent<VDUIProxyListView, int>& OnItemBeginDrag() {
+		return mEventItemBeginDrag;
+	}
+
+	VDEvent<VDUIProxyListView, int>& OnItemBeginRDrag() {
+		return mEventItemBeginRDrag;
 	}
 
 protected:
@@ -129,7 +151,10 @@ protected:
 	VDEvent<VDUIProxyListView, int> mEventItemSelectionChanged;
 	VDEvent<VDUIProxyListView, int> mEventItemDoubleClicked;
 	VDEvent<VDUIProxyListView, int> mEventItemCheckedChanged;
-	VDEvent<VDUIProxyListView, LabelEventData> mEventItemLabelEdited;
+	VDEvent<VDUIProxyListView, ContextMenuEvent> mEventItemContextMenu;
+	VDEvent<VDUIProxyListView, LabelChangedEvent *> mEventItemLabelEdited;
+	VDEvent<VDUIProxyListView, int> mEventItemBeginDrag;
+	VDEvent<VDUIProxyListView, int> mEventItemBeginRDrag;
 };
 
 /////////////////////////////////////////////////////////////////////////////

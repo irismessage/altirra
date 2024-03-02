@@ -25,6 +25,8 @@ class ATSaveStateReader;
 class ATSaveStateWriter;
 class IVDRandomAccessStream;
 class IATUIRenderer;
+class ATMemoryManager;
+class ATMemoryLayer;
 
 enum ATCartridgeMode {
 	kATCartridgeMode_None,
@@ -76,6 +78,7 @@ enum ATCartridgeMode {
 	kATCartridgeMode_Williams_32K,
 	kATCartridgeMode_Phoenix_8K,
 	kATCartridgeMode_Blizzard_16K,
+	kATCartridgeMode_SIC,
 	kATCartridgeModeCount
 };
 
@@ -93,6 +96,11 @@ struct ATCartLoadContext {
 	bool mbMayBe2600;
 };
 
+class IATCartridgeCallbacks {
+public:
+	virtual void CartSetAxxxMapped(bool mapped) = 0;
+};
+
 class ATCartridgeEmulator {
 	ATCartridgeEmulator(const ATCartridgeEmulator&);
 	ATCartridgeEmulator& operator=(const ATCartridgeEmulator&);
@@ -101,7 +109,11 @@ public:
 	ATCartridgeEmulator();
 	~ATCartridgeEmulator();
 
+	void Init(ATMemoryManager *memman, int basePriority);
+	void Shutdown();
+
 	void SetUIRenderer(IATUIRenderer *r);
+	void SetCallbacks(IATCartridgeCallbacks *cb) { mpCB = cb; }
 
 	int GetCartBank() const { return mCartBank; }
 	bool IsABxxMapped() const;
@@ -118,6 +130,7 @@ public:
 	void Load5200Default();
 	void LoadFlash1Mb(bool altbank);
 	void LoadFlash8Mb();
+	void LoadFlashSIC();
 	bool Load(const wchar_t *fn, ATCartLoadContext *loadCtx);
 	bool Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, ATCartLoadContext *loadCtx);
 	void Unload();
@@ -126,31 +139,100 @@ public:
 
 	void ColdReset();
 
-	bool WriteMemoryMap5200(const uint8 **readMap, uint8 **writeMap, const uint8 **anticMap, const uint8 *dummyReadPage, uint8 *dummyWritePage);
-	bool WriteMemoryMap89(const uint8 **readMap, uint8 **writeMap, const uint8 **anticMap, const uint8 *dummyReadPage, uint8 *dummyWritePage);
-	bool WriteMemoryMapAB(const uint8 **readMap, uint8 **writeMap, const uint8 **anticMap, const uint8 *dummyReadPage, uint8 *dummyWritePage);
-
-	uint8 ReadByte4567(uint16 address, bool& remapRequired);
-	bool WriteByte4567(uint16 address, uint8 value);
-	uint8 ReadByte89AB(uint16 address, bool& remapRequired);
-	bool WriteByte89AB(uint16 address, uint8 value);
-	bool ReadByteD5(uint16 address, uint8& value);
-	bool WriteByteD5(uint16 address, uint8 value);
-
 	void LoadState(ATSaveStateReader& reader);
 	void SaveState(ATSaveStateWriter& writer);
 
 protected:
 	template<class T> void ExchangeState(T& io);
 
+	static sint32 ReadByte_BB5200_1(void *thisptr0, uint32 address);
+	static sint32 ReadByte_BB5200_2(void *thisptr0, uint32 address);
+	static bool WriteByte_BB5200_1(void *thisptr0, uint32 address, uint8 value);
+	static bool WriteByte_BB5200_2(void *thisptr0, uint32 address, uint8 value);
+	static sint32 ReadByte_BB800_1(void *thisptr0, uint32 address);
+	static sint32 ReadByte_BB800_2(void *thisptr0, uint32 address);
+	static bool WriteByte_BB800_1(void *thisptr0, uint32 address, uint8 value);
+	static bool WriteByte_BB800_2(void *thisptr0, uint32 address, uint8 value);
+	static sint32 ReadByte_MaxFlash(void *thisptr0, uint32 address);
+	static bool WriteByte_MaxFlash(void *thisptr0, uint32 address, uint8 value);
+	static bool WriteByte_Corina1M(void *thisptr0, uint32 address, uint8 value);
+	static bool WriteByte_Corina512K(void *thisptr0, uint32 address, uint8 value);
+	static bool WriteByte_TelelinkII(void *thisptr0, uint32 address, uint8 value);
+
+	static bool WriteByte_CCTL_Phoenix(void *thisptr0, uint32 address, uint8 value);
+
+	template<uint8 T_Mask>
+	static bool WriteByte_CCTL_AddressToBank(void *thisptr0, uint32 address, uint8 value);
+
+	template<uint8 T_Mask>
+	static bool WriteByte_CCTL_DataToBank(void *thisptr0, uint32 address, uint8 value);
+
+	template<uint8 T_Mask>
+	static bool WriteByte_CCTL_DataToBank_Switchable(void *thisptr0, uint32 address, uint8 value);
+
+	template<uint8 T_Mask>
+	static sint32 ReadByte_CCTL_Williams(void *thisptr0, uint32 address);
+
+	template<uint8 T_Mask>
+	static bool WriteByte_CCTL_Williams(void *thisptr0, uint32 address, uint8 value);
+
+	template<uint8 T_Address>
+	static sint32 ReadByte_CCTL_SDX64(void *thisptr0, uint32 address);
+
+	template<uint8 T_Address>
+	static bool WriteByte_CCTL_SDX64(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_SDX128(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_SDX128(void *thisptr0, uint32 address, uint8 value);
+	static sint32 ReadByte_CCTL_MaxFlash_128K(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_MaxFlash_128K(void *thisptr0, uint32 address, uint8 value);
+	static sint32 ReadByte_CCTL_MaxFlash_128K_MyIDE(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_MaxFlash_128K_MyIDE(void *thisptr0, uint32 address, uint8 value);
+	static sint32 ReadByte_CCTL_MaxFlash_1024K(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_MaxFlash_1024K(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_SIC(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_SIC(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_SC3D(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_SC3D(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_TelelinkII(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_TelelinkII(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_OSS_034M(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_OSS_034M(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_OSS_M091(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_OSS_M091(void *thisptr0, uint32 address, uint8 value);
+
+	static bool WriteByte_CCTL_Corina(void *thisptr0, uint32 address, uint8 value);
+
+	void InitMemoryLayers();
+	void ShutdownMemoryLayers();
+	void SetCartBank(int bank);
+	void SetCartBank2(int bank);
+	void UpdateCartBank();
+	void UpdateCartBank2();
+
 	ATCartridgeMode mCartMode;
 	int	mCartBank;
 	int	mCartBank2;
 	int	mInitialCartBank;
 	int	mInitialCartBank2;
+	int mBasePriority;
 	int mCommandPhase;
 	bool mbDirty;
 	IATUIRenderer *mpUIRenderer;
+	IATCartridgeCallbacks *mpCB;
+	ATMemoryManager *mpMemMan;
+	ATMemoryLayer *mpMemLayerFixedBank1;
+	ATMemoryLayer *mpMemLayerFixedBank2;
+	ATMemoryLayer *mpMemLayerVarBank1;
+	ATMemoryLayer *mpMemLayerVarBank2;
+	ATMemoryLayer *mpMemLayerSpec1;
+	ATMemoryLayer *mpMemLayerSpec2;
+	ATMemoryLayer *mpMemLayerControl;
 
 	enum FlashReadMode {
 		kFlashReadMode_Normal,

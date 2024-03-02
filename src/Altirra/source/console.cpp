@@ -53,7 +53,7 @@ extern HWND g_hwnd;
 extern ATSimulator g_sim;
 extern ATContainerWindow *g_pMainWindow;
 
-void ATConsoleExecuteCommand(char *s);
+void ATConsoleExecuteCommand(const char *s, bool echo = true);
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -338,7 +338,7 @@ bool ATDisassemblyWindow::OnCommand(UINT cmd) {
 					uint32 moduleId;
 					ATSourceLineInfo lineInfo;
 					IATDebuggerSymbolLookup *lookup = ATGetDebuggerSymbolLookup();
-					if (lookup->LookupLine(addr, moduleId, lineInfo)) {
+					if (lookup->LookupLine(addr, false, moduleId, lineInfo)) {
 						VDStringW path;
 						if (lookup->GetSourceFilePath(moduleId, lineInfo.mFileId, path) && lineInfo.mLine) {
 							IATSourceWindow *w = ATOpenSourceWindow(path.c_str());
@@ -520,6 +520,8 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 
 void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
 	if (state.mbRunning) {
+		mPCLine = -1;
+		mFramePCLine = -1;
 		mpTextEditor->RecolorAll();
 		return;
 	}
@@ -1258,36 +1260,45 @@ bool ATSourceWindow::OnCommand(UINT cmd) {
 					MessageBeep(MB_ICONEXCLAMATION);
 			}
 			return true;
+		case ID_DEBUG_STEPOVER:
 		case ID_DEBUG_STEPINTO:
 			{
 				IATDebugger *dbg = ATGetDebugger();
-				int line = mpTextEditor->GetCursorLine();
+				IATDebuggerSymbolLookup *dsl = ATGetDebuggerSymbolLookup();
+				const uint32 pc = dbg->GetPC();
 
-				LooseLineLookup::const_iterator it(mLineToAddressLooseLookup.find(line));
+				void (IATDebugger::*stepMethod)(ATDebugSrcMode, uint32, uint32)
+					= (cmd == ID_DEBUG_STEPOVER) ? &IATDebugger::StepOver : &IATDebugger::StepInto;
 
-				if (it == mLineToAddressLooseLookup.end())
-					dbg->StepInto(kATDebugSrcMode_Source);
-				else {
-					LooseLineLookup::const_iterator itNext(it);
+				LooseAddressLookup::const_iterator it(mAddressToLineLooseLookup.upper_bound(pc));
+				if (it != mAddressToLineLooseLookup.end() && it != mAddressToLineLooseLookup.begin()) {
+					LooseAddressLookup::const_iterator itNext(it);
+					--it;
 
-					++itNext;
+					uint32 addr1 = it->first;
+					uint32 addr2 = itNext->first;
 
-					if (itNext == mLineToAddressLooseLookup.end())
-						dbg->StepInto(kATDebugSrcMode_Source);
-					else {
-						uint32 addr1 = it->second;
-						uint32 addr2 = itNext->second;
-
-						if (addr2 - addr1 > 100)
-							dbg->StepInto(kATDebugSrcMode_Source);
-						else
-							dbg->StepInto(kATDebugSrcMode_Source, addr1, addr2 - addr1);
+					if (addr2 - addr1 < 100 && addr1 != addr2 && pc + 1 < addr2) {
+						(dbg->*stepMethod)(kATDebugSrcMode_Source, pc + 1, (addr2 - pc) - 1);
+						return true;
 					}
 				}
+
+				uint32 moduleId;
+				ATSourceLineInfo sli1;
+				ATSourceLineInfo sli2;
+				if (dsl->LookupLine(pc, false, moduleId, sli1)
+					&& dsl->LookupLine(pc, true, moduleId, sli2)
+					&& sli2.mOffset > pc + 1
+					&& sli2.mOffset - sli1.mOffset < 100)
+				{
+					(dbg->*stepMethod)(kATDebugSrcMode_Source, pc + 1, sli2.mOffset - (pc + 1));
+					return true;
+				}
+
+				(dbg->*stepMethod)(kATDebugSrcMode_Source, 0, 0);
 			}
-			return true;
-		case ID_DEBUG_STEPOVER:
-			ATGetDebugger()->StepOver(kATDebugSrcMode_Source);
+
 			return true;
 		case ID_DEBUG_STEPOUT:
 			ATGetDebugger()->StepOut(kATDebugSrcMode_Source);
@@ -1298,7 +1309,7 @@ bool ATSourceWindow::OnCommand(UINT cmd) {
 				uint32 moduleId;
 				ATSourceLineInfo lineInfo;
 				IATDebuggerSymbolLookup *lookup = ATGetDebuggerSymbolLookup();
-				if (lookup->LookupLine(ATGetDebugger()->GetFramePC(), moduleId, lineInfo)) {
+				if (lookup->LookupLine(ATGetDebugger()->GetFramePC(), false, moduleId, lineInfo)) {
 					VDStringW path;
 					if (lookup->GetSourceFilePath(moduleId, lineInfo.mFileId, path) && lineInfo.mLine) {
 						IATSourceWindow *w = ATOpenSourceWindow(path.c_str());
@@ -1564,11 +1575,16 @@ IATSourceWindow *ATOpenSourceWindow(const wchar_t *s) {
 	if (w)
 		return w;
 
+	HWND hwndParent = GetActiveWindow();
+
+	if (!hwndParent || (hwndParent != g_hwnd && GetWindow(hwndParent, GA_ROOT) != g_hwnd))
+		hwndParent = g_hwnd;
+
 	VDStringW fn;
 	if (!VDDoesPathExist(s)) {
 		VDStringW title(L"Find source file ");
 		title += s;
-		fn = VDGetLoadFileName('src ', (VDGUIHandle)g_hwnd, title.c_str(), L"All files (*.*)\0*.*\0", NULL);
+		fn = VDGetLoadFileName('src ', (VDGUIHandle)hwndParent, title.c_str(), L"All files (*.*)\0*.*\0", NULL);
 
 		if (fn.empty())
 			return NULL;
@@ -1576,7 +1592,7 @@ IATSourceWindow *ATOpenSourceWindow(const wchar_t *s) {
 
 	vdrefptr<ATSourceWindow> srcwin(new ATSourceWindow);
 
-	HWND hwndSrcWin = (HWND)srcwin->Create(WS_EX_NOPARENTNOTIFY, WS_OVERLAPPEDWINDOW|WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, (VDGUIHandle)g_hwnd, 0);
+	HWND hwndSrcWin = (HWND)srcwin->Create(WS_EX_NOPARENTNOTIFY, WS_OVERLAPPEDWINDOW|WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, (VDGUIHandle)hwndParent, 0);
 
 	if (hwndSrcWin) {
 		try {
@@ -1604,6 +1620,13 @@ public:
 	~ATHistoryWindow();
 
 protected:
+	enum NodeType {
+		kNodeTypeInsn,
+		kNodeTypeRepeat,
+		kNodeTypeInterrupt,
+		kNodeTypeLabel
+	};
+
 	struct TreeNode {
 		uint32	mRelYPos;		// Y position in items, relative to parent
 		uint32	mHeight;		// Height, in items
@@ -1615,6 +1638,9 @@ protected:
 		TreeNode *mpFirstChild;
 		TreeNode *mpLastChild;
 		ATCPUHistoryEntry mHEnt;
+		uint32	mRepeatCount;
+		uint32	mRepeatSize;
+		NodeType	mNodeType;
 		VDStringA	mText;
 	};
 
@@ -1630,6 +1656,7 @@ protected:
 	void OnVScroll(int code);
 	void OnPaint();
 	void PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, uint32 itemEnd, TreeNode *node, uint32 pos, uint32 level);
+	const VDStringA *GetNodeText(TreeNode *node);
 	void ScrollToPixel(int y);
 	void InvalidateStartingAtNode(TreeNode *node);
 	void SelectNode(TreeNode *node);
@@ -1642,18 +1669,22 @@ protected:
 	TreeNode *GetNodeFromClientPoint(int x, int y) const;
 	TreeNode *GetPrevVisibleNode(TreeNode *node) const;
 	TreeNode *GetNextVisibleNode(TreeNode *node) const;
+	TreeNode *GetNearestVisibleNode(TreeNode *node) const;
 	void UpdateScrollMax();
 	void UpdateScrollBar();
 
 	void Reset();
 	void UpdateOpcodes();
 	void ClearAllNodes();
-	TreeNode *InsertNode(TreeNode *parent, TreeNode *after, const char *text, const ATCPUHistoryEntry *hent);
+	TreeNode *InsertNode(TreeNode *parent, TreeNode *after, const char *text, const ATCPUHistoryEntry *hent, NodeType nodeType);
 	void InsertNode(TreeNode *parent, TreeNode *after, TreeNode *node);
 	void RemoveNode(TreeNode *node);
 	TreeNode *AllocNode();
 	void FreeNode(TreeNode *);
 	void FreeNodes(TreeNode *);
+
+	void CopyVisibleNodes();
+	void CopyNodes(TreeNode *begin, TreeNode *end);
 
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
 	void OnDebuggerEvent(ATDebugEvent eventId);
@@ -1678,6 +1709,7 @@ protected:
 
 	bool	mbHistoryError;
 	bool	mbUpdatesBlocked;
+	bool	mbInvalidatesBlocked;
 	bool	mbDirtyScrollBar;
 	bool	mbShowPCAddress;
 	bool	mbShowRegisters;
@@ -1692,6 +1724,7 @@ protected:
 		NodeBlock *mpNext;
 	};
 
+	uint32	mNodeCount;
 	TreeNode *mpNodeFreeList;
 	NodeBlock *mpNodeBlocks;
 
@@ -1723,6 +1756,7 @@ ATHistoryWindow::ATHistoryWindow()
 	, mScrollWheelAccum(0)
 	, mbHistoryError(false)
 	, mbUpdatesBlocked(false)
+	, mbInvalidatesBlocked(false)
 	, mbDirtyScrollBar(false)
 	, mbShowPCAddress(true)
 	, mbShowRegisters(true)
@@ -1815,6 +1849,10 @@ LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				case ID_HISTORYCONTEXTMENU_SHOWLABELS:
 					mbShowLabels = !mbShowLabels;
 					InvalidateRect(mhwnd, NULL, TRUE);
+					return true;
+
+				case ID_HISTORYCONTEXTMENU_COPYVISIBLETOCLIPBOARD:
+					CopyVisibleNodes();
 					return true;
 			}
 
@@ -2242,9 +2280,78 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 			rOpaque.right = mWidth;
 			rOpaque.bottom = y + mItemHeight;
 
-			const VDStringA *s = &node->mText;
+			const VDStringA *s = GetNodeText(node);
 
-			if (s->empty()) {
+			ExtTextOut(hdc, x + mItemHeight, rOpaque.top + mItemTextVOffset, ETO_OPAQUE | ETO_CLIPPED, &rOpaque, s->data(), s->size(), NULL);
+
+			RECT rPad;
+			rPad.left = rPaint->left;
+			rPad.top = y;
+			rPad.right = x;
+			rPad.bottom = y + mItemHeight;
+
+			FillRect(hdc, &rPad, (HBRUSH)(COLOR_WINDOW + 1));
+
+			if (node->mpFirstChild) {
+				SelectObject(hdc, selected ? GetStockObject(WHITE_PEN) : GetStockObject(BLACK_PEN));
+
+				int boxsize = (mItemHeight - 5) & ~1;
+				int x1 = x + 2;
+				int y1 = y + 2;
+				int x2 = x1 + boxsize;
+				int y2 = y1 + boxsize;
+
+				MoveToEx(hdc, x1, y1, NULL);
+				LineTo(hdc, x2, y1);
+				LineTo(hdc, x2, y2);
+				LineTo(hdc, x1, y2);
+				LineTo(hdc, x1, y1);
+
+				int xh = (x1 + x2) >> 1;
+				int yh = (y1 + y2) >> 1;
+				MoveToEx(hdc, x1 + 2, yh, NULL);
+				LineTo(hdc, x2 - 1, yh);
+
+				if (!node->mbExpanded) {
+					MoveToEx(hdc, xh, y1 + 2, NULL);
+					LineTo(hdc, xh, y2 - 1);
+				}
+			}
+		}
+
+		if (pos + node->mHeight > itemStart) {
+			if (node->mbExpanded && node->mpFirstChild)
+				PaintItems(hdc, rPaint, itemStart, itemEnd, node->mpFirstChild, pos + 1, level + 1);
+		}
+
+		pos += node->mHeight;
+		node = node->mpNextSibling;
+	}
+}
+
+const VDStringA *ATHistoryWindow::GetNodeText(TreeNode *node) {
+	const VDStringA *s = &node->mText;
+
+	switch(node->mNodeType) {
+		case kNodeTypeRepeat:
+			mTempLine.sprintf("Last %d insns repeated %d times", node->mRepeatSize, node->mRepeatCount);
+			s = &mTempLine;
+			break;
+
+		case kNodeTypeInterrupt:
+			{
+				const ATCPUHistoryEntry& hent = node->mHEnt;
+
+				int beamy = (hent.mTimestamp >> 8) & 0xfff;
+
+				mTempLine = hent.mbNMI ? beamy >= 248 ? "NMI interrupt (VBI)" : "NMI interrupt (DLI)" : "IRQ interrupt";
+				s = &mTempLine;
+			}
+			break;
+
+		case kNodeTypeInsn:
+			{
+				const bool is65C816 = g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816;
 				const ATCPUHistoryEntry& hent = node->mHEnt;
 
 				mTempLine.sprintf("%d:%3d:%3d | "
@@ -2328,52 +2435,10 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 
 				s = &mTempLine;
 			}
-
-			ExtTextOut(hdc, x + mItemHeight, rOpaque.top + mItemTextVOffset, ETO_OPAQUE | ETO_CLIPPED, &rOpaque, s->data(), s->size(), NULL);
-
-			RECT rPad;
-			rPad.left = rPaint->left;
-			rPad.top = y;
-			rPad.right = x;
-			rPad.bottom = y + mItemHeight;
-
-			FillRect(hdc, &rPad, (HBRUSH)(COLOR_WINDOW + 1));
-
-			if (node->mpFirstChild) {
-				SelectObject(hdc, selected ? GetStockObject(WHITE_PEN) : GetStockObject(BLACK_PEN));
-
-				int boxsize = (mItemHeight - 5) & ~1;
-				int x1 = x + 2;
-				int y1 = y + 2;
-				int x2 = x1 + boxsize;
-				int y2 = y1 + boxsize;
-
-				MoveToEx(hdc, x1, y1, NULL);
-				LineTo(hdc, x2, y1);
-				LineTo(hdc, x2, y2);
-				LineTo(hdc, x1, y2);
-				LineTo(hdc, x1, y1);
-
-				int xh = (x1 + x2) >> 1;
-				int yh = (y1 + y2) >> 1;
-				MoveToEx(hdc, x1 + 2, yh, NULL);
-				LineTo(hdc, x2 - 1, yh);
-
-				if (!node->mbExpanded) {
-					MoveToEx(hdc, xh, y1 + 2, NULL);
-					LineTo(hdc, xh, y2 - 1);
-				}
-			}
-		}
-
-		if (pos + node->mHeight > itemStart) {
-			if (node->mbExpanded && node->mpFirstChild)
-				PaintItems(hdc, rPaint, itemStart, itemEnd, node->mpFirstChild, pos + 1, level + 1);
-		}
-
-		pos += node->mHeight;
-		node = node->mpNextSibling;
+			break;
 	}
+
+	return s;
 }
 
 void ATHistoryWindow::ScrollToPixel(int pos) {
@@ -2616,6 +2681,23 @@ ATHistoryWindow::TreeNode *ATHistoryWindow::GetNextVisibleNode(TreeNode *node) c
 	return NULL;
 }
 
+ATHistoryWindow::TreeNode *ATHistoryWindow::GetNearestVisibleNode(TreeNode *node) const {
+	TreeNode *firstCollapsedParent = NULL;
+
+	if (!node)
+		return node;
+
+	for(TreeNode *p = node->mpParent; p; p = p->mpParent) {
+		if (!p->mbExpanded)
+			firstCollapsedParent = p;
+	}
+
+	if (firstCollapsedParent)
+		return GetNextVisibleNode(firstCollapsedParent);
+
+	return node;
+}
+
 void ATHistoryWindow::UpdateScrollMax() {
 	mScrollMax = (mRootNode.mHeight - 1) <= mPageItems ? 0 : ((mRootNode.mHeight - 1) - mPageItems) * mItemHeight;
 }
@@ -2690,7 +2772,7 @@ void ATHistoryWindow::UpdateOpcodes() {
 	if (dist == 0)
 		return;
 
-	if (dist > l) {
+	if (dist > l || mNodeCount > 500000) {
 		ClearAllNodes();
 		Reset();
 		dist = l;
@@ -2700,6 +2782,7 @@ void ATHistoryWindow::UpdateOpcodes() {
 	bool quickMode = false;
 	if (dist > 1000) {
 		quickMode = true;
+		mbInvalidatesBlocked = true;
 	}
 
 	mbUpdatesBlocked = true;
@@ -2740,8 +2823,10 @@ void ATHistoryWindow::UpdateOpcodes() {
 
 			if (!hent.mbNMI && !hent.mbIRQ && parent->mpLastChild)
 				parent = parent->mpLastChild;
+			else if (hent.mbNMI || hent.mbIRQ)
+				parent = InsertNode(parent, parent ? parent->mpLastChild : NULL, "", &hent, kNodeTypeInterrupt);
 			else
-				parent = InsertNode(parent, parent ? parent->mpLastChild : NULL, hent.mbNMI ? "NMI interrupt" : hent.mbIRQ ? "IRQ interrupt" : "Subroutine call", NULL);
+				parent = InsertNode(parent, parent ? parent->mpLastChild : NULL, "Subroutine call", NULL, kNodeTypeLabel);
 
 			mStackLevels[hent.mS] = parent;
 		}
@@ -2775,7 +2860,7 @@ void ATHistoryWindow::UpdateOpcodes() {
 		mLastS = hent.mS;
 		
 		// add new node
-		last = InsertNode(parent, parent->mpLastChild, "", &hent);
+		last = InsertNode(parent, parent->mpLastChild, "", &hent, kNodeTypeInsn);
 
 		// check if we have a match on the repeat window
 		int repeatOffset = -1;
@@ -2815,11 +2900,12 @@ void ATHistoryWindow::UpdateOpcodes() {
 					for(int i=0; i<mRepeatLooseNodeCount; ++i)
 						pred = pred->mpPrevSibling;
 
-					mpRepeatNode = InsertNode(parent, pred, "", NULL);
+					mpRepeatNode = InsertNode(parent, pred, "", NULL, kNodeTypeRepeat);
 				}
 
 				if (mpRepeatNode) {
-					mpRepeatNode->mText.sprintf("Last %d insns repeated %d times", mRepeatLoopSize, mRepeatLoopCount);
+					mpRepeatNode->mRepeatCount = mRepeatLoopCount;
+					mpRepeatNode->mRepeatSize = mRepeatLoopSize;
 					RefreshNode(mpRepeatNode);
 
 					TreeNode *looseNode = mpRepeatNode->mpParent->mpLastChild;
@@ -2862,8 +2948,10 @@ void ATHistoryWindow::UpdateOpcodes() {
 	if (last)
 		SelectNode(last);
 
-	if (quickMode)
+	if (quickMode) {
 		InvalidateRect(mhwnd, NULL, TRUE);
+		mbInvalidatesBlocked = false;
+	}
 
 	mbUpdatesBlocked = false;
 
@@ -2878,12 +2966,13 @@ void ATHistoryWindow::ClearAllNodes() {
 	memset(&mRootNode, 0, sizeof mRootNode);
 	mRootNode.mbExpanded = true;
 	mRootNode.mHeight = 1;
+	mRootNode.mRepeatCount = 0;
 
 	if (mhwnd)
 		InvalidateRect(mhwnd, NULL, TRUE);
 }
 
-ATHistoryWindow::TreeNode *ATHistoryWindow::InsertNode(TreeNode *parent, TreeNode *insertAfter, const char *text, const ATCPUHistoryEntry *hent) {
+ATHistoryWindow::TreeNode *ATHistoryWindow::InsertNode(TreeNode *parent, TreeNode *insertAfter, const char *text, const ATCPUHistoryEntry *hent, NodeType nodeType) {
 	TreeNode *node = AllocNode();
 	node->mText = text;
 	node->mRelYPos = 0;
@@ -2891,6 +2980,9 @@ ATHistoryWindow::TreeNode *ATHistoryWindow::InsertNode(TreeNode *parent, TreeNod
 	node->mpFirstChild = NULL;
 	node->mpLastChild = NULL;
 	node->mHeight = 1;
+	node->mRepeatCount = 0;
+	node->mNodeType = nodeType;
+
 	if (hent)
 		node->mHEnt = *hent;
 
@@ -2951,7 +3043,8 @@ void ATHistoryWindow::InsertNode(TreeNode *parent, TreeNode *insertAfter, TreeNo
 			mScrollMax += mItemHeight;
 	}
 
-	InvalidateStartingAtNode(node);
+	if (!mbInvalidatesBlocked)
+		InvalidateStartingAtNode(node);
 }
 
 void ATHistoryWindow::RemoveNode(TreeNode *node) {
@@ -2990,7 +3083,7 @@ void ATHistoryWindow::RemoveNode(TreeNode *node) {
 	else
 		parentNode->mpLastChild = prevNode;
 
-	if (successorNode)
+	if (successorNode && !mbInvalidatesBlocked)
 		InvalidateStartingAtNode(successorNode);
 }
 
@@ -3022,6 +3115,8 @@ ATHistoryWindow::TreeNode *ATHistoryWindow::AllocNode() {
 	mpNodeFreeList = p->mpNextSibling;
 
 	p->mpPrevSibling = NULL;
+
+	++mNodeCount;
 	return p;
 }
 
@@ -3031,6 +3126,8 @@ void ATHistoryWindow::FreeNode(TreeNode *node) {
 	node->mpPrevSibling = node;
 	node->mpNextSibling = mpNodeFreeList;
 	mpNodeFreeList = node;
+
+	--mNodeCount;
 }
 
 void ATHistoryWindow::FreeNodes(TreeNode *node) {
@@ -3053,6 +3150,77 @@ void ATHistoryWindow::FreeNodes(TreeNode *node) {
 
 	if (node != &mRootNode)
 		FreeNode(node);
+}
+
+void ATHistoryWindow::CopyVisibleNodes() {
+	TreeNode *node1 = GetNodeFromClientPoint(0, mHeaderHeight);
+	TreeNode *node2 = GetNodeFromClientPoint(0, mHeight);
+
+	CopyNodes(node1, node2);
+}
+
+void ATHistoryWindow::CopyNodes(TreeNode *begin, TreeNode *end) {
+	begin = GetNearestVisibleNode(begin);
+	end = GetNearestVisibleNode(end);
+
+	if (!begin || (end && GetNodeYPos(end) <= GetNodeYPos(begin)))
+		return;
+
+	int minLevel = INT_MAX;
+	for(TreeNode *p = begin; p && p != end; p = GetNextVisibleNode(p)) {
+		int level = 0;
+
+		for(TreeNode *q = p; q; q = q->mpParent)
+			++level;
+
+		if (minLevel > level)
+			minLevel = level;
+	}
+
+	if (minLevel == INT_MAX)
+		return;
+
+	VDStringA s;
+
+	for(TreeNode *p = begin; p && p != end; p = GetNextVisibleNode(p)) {
+		int level = -minLevel;
+
+		for(TreeNode *q = p; q; q = q->mpParent)
+			++level;
+
+		if (level > 0) {
+			for(int i=0; i<level; ++i) {
+				s += ' ';
+				s += ' ';
+			}
+		}
+
+		s += p->mpFirstChild ? p->mbExpanded ? '-' : '+' : ' ';
+		s += ' ';
+		s += *GetNodeText(p);
+		s += '\r';
+		s += '\n';
+	}
+	
+	if (::OpenClipboard((HWND)mhwnd)) {
+		if (::EmptyClipboard()) {
+			HANDLE hMem;
+			void *lpvMem;
+
+			if (hMem = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, s.size() + 1)) {
+				if (lpvMem = ::GlobalLock(hMem)) {
+					memcpy(lpvMem, s.c_str(), s.size() + 1);
+
+					::GlobalUnlock(lpvMem);
+					::SetClipboardData(CF_TEXT, hMem);
+					::CloseClipboard();
+					return;
+				}
+				::GlobalFree(hMem);
+			}
+		}
+		::CloseClipboard();
+	}
 }
 
 void ATHistoryWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
@@ -3088,8 +3256,11 @@ protected:
 	void OnFontsUpdated();
 
 	void OnPromptChanged(IATDebugger *target, const char *prompt);
+	void OnRunStateChanged(IATDebugger *target, bool runState);
 	
 	void AddToHistory(const char *s);
+
+	enum { kTimerId_DisableEdit = 500 };
 
 	HWND	mhwndLog;
 	HWND	mhwndEdit;
@@ -3099,7 +3270,11 @@ protected:
 	VDFunctionThunk	*mpCmdEditThunk;
 	WNDPROC	mCmdEditProc;
 
+	bool	mbRunState;
+	bool	mbEditShownDisabled;
+
 	VDDelegate	mDelegatePromptChanged;
+	VDDelegate	mDelegateRunStateChanged;
 
 	enum { kHistorySize = 8192 };
 
@@ -3119,6 +3294,8 @@ ATConsoleWindow::ATConsoleWindow()
 	, mhwndPrompt(NULL)
 	, mhwndEdit(NULL)
 	, mpCmdEditThunk(NULL)
+	, mbRunState(false)
+	, mbEditShownDisabled(false)
 	, mHistoryFront(0)
 	, mHistoryBack(0)
 	, mHistorySize(0)
@@ -3160,6 +3337,22 @@ LRESULT ATConsoleWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			TrackPopupMenu(GetSubMenu(mMenu, 0), TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
 		}
 		return 0;
+
+	case WM_TIMER:
+		if (wParam == kTimerId_DisableEdit) {
+			if (mbRunState && mhwndEdit) {
+				if (!mbEditShownDisabled) {
+					mbEditShownDisabled = true;
+					SendMessage(mhwndEdit, EM_SETREADONLY, TRUE, 0);
+					SendMessage(mhwndEdit, EM_SETBKGNDCOLOR, FALSE, GetSysColor(COLOR_3DFACE));
+				}
+			}
+
+			KillTimer(mhwnd, wParam);
+			return 0;
+		}
+
+		break;
 	}
 
 	return ATUIPane::WndProc(msg, wParam, lParam);
@@ -3195,8 +3388,14 @@ bool ATConsoleWindow::OnCreate() {
 	IATDebugger *d = ATGetDebugger();
 
 	d->OnPromptChanged() += mDelegatePromptChanged.Bind(this, &ATConsoleWindow::OnPromptChanged);
+	d->OnRunStateChanged() += mDelegateRunStateChanged.Bind(this, &ATConsoleWindow::OnRunStateChanged);
+
+	mbRunState = d->IsRunning();
 
 	VDSetWindowTextFW32(mhwndPrompt, L"%hs>", d->GetPrompt());
+
+	mbEditShownDisabled = mbRunState;		// deliberately wrong
+	OnRunStateChanged(NULL, mbRunState);
 	return true;
 }
 
@@ -3204,6 +3403,7 @@ void ATConsoleWindow::OnDestroy() {
 	IATDebugger *d = ATGetDebugger();
 
 	d->OnPromptChanged() -= mDelegatePromptChanged;
+	d->OnRunStateChanged() -= mDelegateRunStateChanged;
 
 	g_pConsoleWindow = NULL;
 
@@ -3268,6 +3468,24 @@ void ATConsoleWindow::OnFontsUpdated() {
 void ATConsoleWindow::OnPromptChanged(IATDebugger *target, const char *prompt) {
 	if (mhwndPrompt)
 		VDSetWindowTextFW32(mhwndPrompt, L"%hs>", prompt);
+}
+
+void ATConsoleWindow::OnRunStateChanged(IATDebugger *target, bool rs) {
+	if (mbRunState == rs)
+		return;
+
+	mbRunState = rs;
+
+	if (mhwndEdit) {
+		if (!rs) {
+			if (mbEditShownDisabled) {
+				mbEditShownDisabled = false;
+				SendMessage(mhwndEdit, EM_SETREADONLY, FALSE, 0);
+				SendMessage(mhwndEdit, EM_SETBKGNDCOLOR, TRUE, GetSysColor(COLOR_WINDOW));
+			}
+		} else
+			SetTimer(mhwnd, kTimerId_DisableEdit, 100, NULL);
+	}
 }
 
 void ATConsoleWindow::Write(const char *s) {
@@ -3416,6 +3634,9 @@ LRESULT ATConsoleWindow::CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, 
 		}
 	} else if (msg == WM_CHAR || msg == WM_SYSCHAR) {
 		if (wParam == '\r') {
+			if (mbRunState)
+				return 0;
+
 			const VDStringA& s = VDGetWindowTextAW32(mhwndEdit);
 
 			if (!s.empty()) {
@@ -3593,10 +3814,7 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 							uint32 addr;
 							if (GetAddressFromPoint(pt.x, pt.y, addr)) {
-								if (g_sim.IsReadBreakEnabled() && g_sim.GetReadBreakAddress() == addr)
-									g_sim.SetReadBreakAddress();
-								else
-									g_sim.SetReadBreakAddress(addr);
+								ATGetDebugger()->ToggleAccessBreakpoint(addr, false);
 							}
 						}
 						break;
@@ -3608,10 +3826,7 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 							uint32 addr;
 							if (GetAddressFromPoint(pt.x, pt.y, addr)) {
-								if (g_sim.IsWriteBreakEnabled() && g_sim.GetWriteBreakAddress() == addr)
-									g_sim.SetWriteBreakAddress();
-								else
-									g_sim.SetWriteBreakAddress(addr);
+								ATGetDebugger()->ToggleAccessBreakpoint(addr, true);
 							}
 						}
 						break;
@@ -4234,6 +4449,9 @@ void ATSavePaneLayout(const char *name) {
 
 namespace {
 	const char *UnserializeDockablePane(const char *s, ATContainerWindow *cont, ATContainerDockingPane *pane, ATFrameWindow **frames) {
+		if (*s != '(')
+			return s;
+
 		for(;;) {
 			if (*s++ != '(')
 				return NULL;

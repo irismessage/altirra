@@ -21,6 +21,8 @@
 #include "scheduler.h"
 
 class ATCPUEmulator;
+class ATCPUEmulatorMemory;
+class ATCPUEmulatorCallbacks;
 
 struct ATProfileRecord {
 	uint32 mAddress;
@@ -53,7 +55,7 @@ public:
 
 	bool IsRunning() const { return mpUpdateEvent != NULL; }
 
-	void Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATScheduler *scheduler, ATScheduler *slowScheduler);
+	void Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATCPUEmulatorCallbacks *callbacks, ATScheduler *scheduler, ATScheduler *slowScheduler);
 	void Start(ATProfileMode mode);
 	void End();
 
@@ -66,6 +68,7 @@ protected:
 
 	ATCPUEmulator *mpCPU;
 	ATCPUEmulatorMemory *mpMemory;
+	ATCPUEmulatorCallbacks *mpCallbacks;
 	ATScheduler *mpFastScheduler;
 	ATScheduler *mpSlowScheduler;
 	ATEvent *mpUpdateEvent;

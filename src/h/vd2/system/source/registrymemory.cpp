@@ -26,6 +26,7 @@
 #include "stdafx.h"
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/registrymemory.h>
+#include <vd2/system/hash.h>
 
 class VDRegistryProviderMemory::Value : public vdhashtable_base_node {
 public:
@@ -150,18 +151,49 @@ public:
 
 	Key *mpParent;
 
-	typedef vdhashmap<VDStringA, Key, vdhash<VDStringA>, vdstringpred> KeyMap;
+	struct KeyHash {
+		size_t operator()(const VDStringA& s) const;
+		size_t operator()(const char *s) const;
+	};
+
+	struct KeyPred {
+		bool operator()(const VDStringA& s, const VDStringA& t) const;
+		bool operator()(const VDStringA& s, const VDStringSpanA& t) const;
+		bool operator()(const VDStringA& s, const char *t) const;
+	};
+
+	typedef vdhashmap<VDStringA, Key, KeyHash, KeyPred> KeyMap;
 	KeyMap mKeyMap;
 
 	typedef vdfastvector<const KeyMap::value_type *> KeyList;
 	KeyList mKeyList;
 
-	typedef vdhashmap<VDStringA, Value, vdhash<VDStringA>, vdstringpred> ValueMap;
+	typedef vdhashmap<VDStringA, Value, KeyHash, KeyPred> ValueMap;
 	ValueMap mValueMap;
 
 	typedef vdfastvector<const ValueMap::value_type *> ValueList;
 	ValueList mValueList;
 };
+
+size_t VDRegistryProviderMemory::Key::KeyHash::operator()(const VDStringA& s) const {
+	return VDHashString32I(s.data(), s.size());
+}
+
+size_t VDRegistryProviderMemory::Key::KeyHash::operator()(const char *s) const {
+	return VDHashString32I(s);
+}
+
+bool VDRegistryProviderMemory::Key::KeyPred::operator()(const VDStringA& s, const VDStringA& t) const {
+	return s.comparei(t) == 0;
+}
+
+bool VDRegistryProviderMemory::Key::KeyPred::operator()(const VDStringA& s, const VDStringSpanA& t) const {
+	return s.comparei(t) == 0;
+}
+
+bool VDRegistryProviderMemory::Key::KeyPred::operator()(const VDStringA& s, const char *t) const {
+	return s.comparei(t) == 0;
+}
 
 VDRegistryProviderMemory::Key::Key()
 	: mRefCount(0)

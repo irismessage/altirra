@@ -1,3 +1,37 @@
++ ?    Evaluate expression
+
+    Prints the value of an expression.
+    
+      ? <expression>
+      
+    The expression may contain the following elements:
+    
+      iii      Integer
+      $hhh     Hex integer
+      pc       PC register
+      x        X register
+      y        Y register
+      s        S register
+      p        P register
+      hpos     ANTIC horizontal position counter
+      vpos     ANTIC vertical position counter
+      db addr  Read memory byte
+      dw addr  Read memory word
+      +        Add / unary plus
+      -        Subtract / unary minus
+      *        Multiply
+      /        Divide
+      <        Less-than
+      <=       Less-equal
+      >        Greater-than
+      >=       Greater-equal
+      =        Equal
+      !=       Not equal
+      
+    Symbol names may also be used in expressions, but care should be taken
+    to distinguish between "symbol", which evaluates to the symbol's address,
+    and "db symbol" or "dw symbol", which reads a byte or word at the address.
+
 + a    Assemble
 
     Invoke 6502 miniassembler.
@@ -27,37 +61,104 @@
 
     Set or clear a memory access breakpoint.
     
-      ba r <address>   (Break on memory read)
-      ba w <address>   (Break on memory write)
-      ba r/w *         (Clear memory read/write access breakpoint)
+      ba r <address> [L<length>]  (Break on memory read)
+      ba w <address> [L<length>]  (Break on memory write)
+      ba r/w *         (Clear memory read/write access breakpoints)
       
     Memory access breakpoints cause the emulator to stop whenever the CPU
-    core reads or writes a particular address. There can only be one
-    access breakpoint of a type outstanding at a type; attempting to
-    set two read or two write access breakpoints overwrites the previous
-    one of the same type.
+    core reads or writes a particular address. There can be an unlimited
+    number of both read and write breakpoints. If a length greater than 1
+    byte is specified, a range breakpoint is created.
     
     DMA accesses, such as by ANTIC or VBXE, do not trip access breakpoints.
-
-^ bc, bl, bp   Breakpoint control
-> bp   Set breakpoint
-> bc   Clear breakpoint(s)
-> bl   List breakpoints
-
-    Set, clear, or list PC breakpoints.
+    All breakpoints are by CPU address and trip regardless of any
+    bankswitching or other memory overlays.
     
-      bp <address>   (Set breakpoint)
-      bc <address>   (Clear a breakpoint)
+    Memory read breakpoints can be tripped by false reads from the CPU core.
+    This happens for certain indexed operations. Although generally invisible
+    to normal program operation, these false reads are real and can cause
+    malfunctions with memory mapped hardware, such as cartridge banking
+    registers that are sensitive to reads. False writes are rarer but can
+    occur with read/modify/write instructions.
+    
+    Using * as the address will clear all access breakpoints of the
+    indicated type.
+
++ bc   Clear breakpoint(s)
+
+    Clear PC, memory, or expression breakpoints.
+    
+      bc <index>     (Clear a breakpoint)
       bc *           (Clear all breakpoints)
+    
+    Removes a breakpoint by index, or if * is specified, all breakpoints.
+    This works for any breakpoint listed by the bl (breakpoint list)
+    command.
+    
+    See also: ba, bp, bl, bx  
+      
++ bl   List breakpoints
+
+    Lists all currently set breakpoints.
+
       bl             (List breakpoints)
       
-    Manages breakpoints in the CPU core, which cause the emulator to stop
+    Displays a list of all breakpoints. This displayed breakpoint indices
+    can be used in other commands such as bc (breakpoint clear).
+    
+    See also: bc, bl, bp, bx
+
++ bp   Set breakpoint
+
+    Set a breakpoint at a PC address.
+    
+      bp <address> ["command"]
+      
+    Sets a PC breakpoint in the CPU core, which cause the emulator to stop
     when the PC is equal to the address of a breakpoint. There are no
     limits to the number of PC breakpoints. Breakpoints do not modify
     memory and work even after the location has been modified; they also
     fire at an address regardless of any bank switching.
     
+    If a command is specified, the command is executed when the breakpoint
+    fires. Multiple commands may be specified using ; as a separator.
+    The normal breakpoint hit message is suppressed, but execution will
+    stop after the commands are executed unless a command is also issued
+    to continue execution. This can be used to implement tracepoints.
+    
+    Example: bp pc "? db(rtclok); g"
+    
     See also: ba, bs
+
++ bx   Break on expression (conditional breakpoint)
+
+    Set a breakpoint conditional on an expression.
+    
+      bx <expression> ["command"]
+      
+    Creates a breakpoint that only activates when the expression is true.    
+    In addition to the normal expression elements, conditional breakpoints
+    may have the following additional clauses:
+    
+      read=<address>    Read access to address
+      write=<address>   Write access to address
+      
+    The expression must have an identifiable PC, read access, or write
+    access check, and only one read or write access may be included.
+    
+    If there are no other clauses other than a single PC or access check,
+    the result is the same as the equivalent bp or ba command.
+    
+    Examples:
+    
+      bx "pc=$4000 and y=4"
+      bx "write=rtclok+2 and db(rtclok+2)=$04"
+      bx "write=rtclok+2 and pc>$c000"
+      
+    If a command is specified, it is executed when the breakpoint trips;
+    see the bp (breakpoint) command for details.
+    
+    See also: ? (evaluate expression), bp (breakpoint)
 
 + bs   Break on disk sector
 
@@ -78,11 +179,11 @@
 
     Shows the contents of memory with a particular interpretation.
     
-      da <address> [L<length>]   (Display ATASCII string)
-      db <address> [L<length>]   (Display bytes)
-      df <address> [L<length>]   (Display decimal float)
-      di <address> [L<length>]   (Display INTERNAL string)
-      dw <address> [L<length>]   (Display words)
+      da <xaddress> [L<length>]   (Display ATASCII string)
+      db <xaddress> [L<length>]   (Display bytes)
+      df <xaddress> [L<length>]   (Display decimal float)
+      di <xaddress> [L<length>]   (Display INTERNAL string)
+      dw <xaddress> [L<length>]   (Display words)
       
     Length specifies the number of elements to display.
 
@@ -90,13 +191,23 @@
 
     Modifies a block of memory with new data.
     
-      e <address> <byte> [<bytes...]
+      e <xaddress> <byte> [<bytes...]
 
 + g    Go
 
     Resume execution.
     
       g
+
++ gf   Go until frame end
+
+    Resume execution until the end of the current frame.
+    
+      gf
+      
+    Resumes execution until the beginning of scan line 0 of the next frame.
+    If the beam position is currently at the beginning of scan line 0, an
+    entire frame is executed.
 
 + gr   Go until return (step out)
 
@@ -201,6 +312,28 @@
     
       u <address> [L<length>]
 
+^ vta, vtc, vtl, vtr    Verifier target control
+> vta  Verifier target add
+> vtc  Verifier target clear
+> vtl  Verifier target list
+> vtr  Verifier target reset
+
+    Add, clear, or list verifier allowed OS entry targets.
+    
+      vta <address>    (Add allowed target)
+      vtc <address>    (Clear allowed target)
+      vtc *            (Clear all allowed targets)
+      vtl              (List allowed targets)
+      vtr              (Reset allowed targets)
+      
+    Manages the list of allowed kernel entry targets allowed by the verifier.
+    The verifier checks for improper dependencies on internal OS routines
+    by forcing a debug break if it sees a control transfer into the OS ROM
+    with an entry point not on the allowed target list. This detection may
+    misfire with an OS ROM that contains extra entry points or with a routine
+    that self-modifies its code with a vector address. The vt* commands allow
+    the target list to be modified to exclude valid targets from detection.
+
 ^ wb, wc, wl, ww   Watch data
 > wb   Watch byte
 > wc   Watch clear
@@ -279,6 +412,25 @@
     used.
 
 + .dumpdsm     Dump disassembly to file
+
++ .dumpsnap    Create bootable snapshot image
+
+    Create a bootable snapshot image from the current simulator state.
+    
+      .dumpsnap <path.atr>
+      
+    Records hardware and memory state to a disk image with a loader that
+    restores the state on boot. The snapshot image contains the base 64K
+    of memory and requires a 128K system to boot (the extra memory is
+    used by the loader). The loader attempts to reconfigure the hardware
+    to match the snapshot state and then resume the running program.
+    
+    Not all state is restored precisely and load success depends on the
+    exact state and program code. For best results, the same OS ROM
+    should be used, no cartridge should be present, and the snapshot
+    should be taken at the beginning of the NMI handler for the vertical
+    blank interrupt.
+
 + .gtia        Display GTIA status
 + .iocb        Display CIO I/O control blocks
 + .loadksym    Load kernel symbols
@@ -293,9 +445,12 @@
     debugging. Both label and listing files can be loaded at the same time,
     and multiple sets of symbols can also be loaded.
 
-^ .pathdump, .pathreset, .pathbreak   Manage execution path recording
-> .pathreset   Clear recorded paths
++ .map         Show memory map layers
+
+^ .pathdump, .pathrecord, .pathreset, .pathbreak   Manage execution path recording
 > .pathdump    Dump disassembly of recorded paths to a file
+> .pathrecord  Show or change path recording setting
+> .pathreset   Clear recorded paths
 > .pathbreak   Toggle break on new path
 
     Record and dump instruction paths executed by the CPU.
@@ -317,6 +472,7 @@
     in a large frame loop, as the body of the loop can be captured and
     then .pathbreak enabled to capture the exit path.
 
++ .pclink      Display PCLink status
 + .pokey       Display POKEY status
 + .restart     Restart emulated system
 
@@ -324,6 +480,18 @@
     
       .restart
 
++ .sdx_loadsyms  Load SpartaDOS X symbols
+
+    Loads symbols from the SpartaDOS X symbol table.
+    
+      .sdx_loadsyms [address]
+      
+    By default, this follows the symbol chain starting with the pointer
+    at address $D4E. An alternate override address for the pointer can
+    be specified. The loaded symbols are placed in a module called SDX.
+    If this module exists, it is cleared before being reloaded.
+
++ .sio         Dump SIO parameter block
 + .tracecio    Toggle CIO call tracing
 + .traceser    Toggle serial I/O port tracing
 + .unloadsym   Unload module symbols
@@ -332,7 +500,16 @@
 + .vbxe_xdl    Display VBXE extended display list (XDL)
 + .vbxe_traceblits    Toggle VBXE blit tracing
 + .vectors     Display kernel vectors
+
 + .writemem    Write memory to disk
+
+    Write a block of memory to a file on disk.
+
+      .writemem <path> <xaddress> <length>
+      
+    The address may use extended memory syntax, i.e. v:4000 for VBXE
+    memory.
+
 . 
 . Some commands support extended memory syntax:
 .   $0000      CPU view of primary memory
@@ -344,4 +521,4 @@
 . Some commands support length syntax:
 .   db siov L100
 .
-. Use ? <command> for detailed help on that command.
+. Use .help <command> for detailed help on that command.

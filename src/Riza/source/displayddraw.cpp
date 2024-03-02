@@ -419,16 +419,16 @@ IVDDirectDrawManager *VDInitDirectDraw(HMONITOR hmonitor, IVDDirectDrawClient *p
 		}
 	}
 
-	if (firstClient) {
-		if (!pMgr->Init(pClient)) {
+	if (!pMgr->Init(pClient)) {
+		if (firstClient) {
 			vdsynchronized(g_csVDDisplayDDManagers) {
 				g_VDDisplayDDManagers.erase(pMgr);
 			}
 
 			delete pMgr;
-
-			return NULL;
 		}
+
+		return NULL;
 	}
 
 	return pMgr;

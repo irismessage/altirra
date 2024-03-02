@@ -179,13 +179,15 @@ enum ATInputControllerType {
 	kATInputControllerType_None,
 	kATInputControllerType_Joystick,
 	kATInputControllerType_Paddle,
-	kATInputControllerType_Mouse,
+	kATInputControllerType_STMouse,
 	kATInputControllerType_Console,
 	kATInputControllerType_5200Controller,
 	kATInputControllerType_InputState,
 	kATInputControllerType_LightPen,
 	kATInputControllerType_Tablet,
-	kATInputControllerType_KoalaPad
+	kATInputControllerType_KoalaPad,
+	kATInputControllerType_AmigaMouse,
+	kATInputControllerType_Keypad
 };
 
 struct atfixedhash_basenode {
@@ -425,7 +427,7 @@ public:
 	void ActivateFlag(uint32 id, bool state);
 
 	void GetNameForInputCode(uint32 code, VDStringW& name) const;
-	void GetNameForTargetCode(uint32 code, VDStringW& name) const;
+	void GetNameForTargetCode(uint32 code, ATInputControllerType type, VDStringW& name) const;
 
 	uint32 GetInputMapCount() const;
 	bool GetInputMapByIndex(uint32 index, ATInputMap **imap) const;

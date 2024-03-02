@@ -579,6 +579,30 @@ void VDCreateDirectory(const wchar_t *path) {
 		throw MyWin32Error("Cannot create directory: %%s", GetLastError());
 }
 
+void VDRemoveDirectory(const wchar_t *path) {
+	VDStringW::size_type l(wcslen(path));
+
+	if (l) {
+		const wchar_t c = path[l-1];
+
+		if (c == L'/' || c == L'\\') {
+			VDCreateDirectory(VDStringW(path, l-1).c_str());
+			return;
+		}
+	}
+
+	BOOL succeeded;
+
+	if (!(GetVersion() & 0x80000000)) {
+		succeeded = RemoveDirectoryW(path);
+	} else {
+		succeeded = RemoveDirectoryA(VDTextWToA(path).c_str());
+	}
+
+	if (!succeeded)
+		throw MyWin32Error("Cannot remove directory: %%s", GetLastError());
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 bool VDDeletePathAutodetect(const wchar_t *path);
@@ -605,6 +629,20 @@ bool VDDeletePathAutodetect(const wchar_t *path) {
 		VDRemoveFile = VDDeleteFile9x;
 
 	return VDRemoveFile(path);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+void VDMoveFile(const wchar_t *srcPath, const wchar_t *dstPath) {
+	bool success;
+	if (VDIsWindowsNT()) {
+		success = MoveFileW(srcPath, dstPath) != 0;
+	} else {
+		success = MoveFileA(VDTextWToA(srcPath).c_str(), VDTextWToA(dstPath).c_str()) != 0;
+	}
+
+	if (!success)
+		throw MyWin32Error("Cannot rename \"%ls\" to \"%ls\": %%s", GetLastError(), srcPath, dstPath);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -829,6 +867,93 @@ VDStringW VDGetSystemPath() {
 	return VDGetSystemPath9x();
 }
 
+uint32 VDFileGetAttributesFromNativeW32(uint32 nativeAttrs) {
+	if (nativeAttrs == INVALID_FILE_ATTRIBUTES)
+		return kVDFileAttr_Invalid;
+
+	uint32 attrs = 0;
+
+	if (nativeAttrs & FILE_ATTRIBUTE_READONLY)
+		attrs |= kVDFileAttr_ReadOnly;
+
+	if (nativeAttrs & FILE_ATTRIBUTE_SYSTEM)
+		attrs |= kVDFileAttr_System;
+
+	if (nativeAttrs & FILE_ATTRIBUTE_HIDDEN)
+		attrs |= kVDFileAttr_Hidden;
+
+	if (nativeAttrs & FILE_ATTRIBUTE_ARCHIVE)
+		attrs |= kVDFileAttr_Archive;
+
+	if (nativeAttrs & FILE_ATTRIBUTE_DIRECTORY)
+		attrs |= kVDFileAttr_Directory;
+
+	return attrs;
+}
+
+uint32 VDFileGetNativeAttributesFromAttrsW32(uint32 attrs) {
+	uint32 nativeAttrs = 0;
+
+	if (attrs == kVDFileAttr_Invalid)
+		return INVALID_FILE_ATTRIBUTES;
+
+	if (attrs & kVDFileAttr_ReadOnly)
+		nativeAttrs |= FILE_ATTRIBUTE_READONLY;
+
+	if (attrs & kVDFileAttr_System)
+		nativeAttrs |= FILE_ATTRIBUTE_SYSTEM;
+
+	if (attrs & kVDFileAttr_Hidden)
+		nativeAttrs |= FILE_ATTRIBUTE_HIDDEN;
+
+	if (attrs & kVDFileAttr_Archive)
+		nativeAttrs |= FILE_ATTRIBUTE_ARCHIVE;
+
+	if (attrs & kVDFileAttr_Directory)
+		nativeAttrs |= FILE_ATTRIBUTE_DIRECTORY;
+
+	return nativeAttrs;
+}
+
+uint32 VDFileGetAttributes(const wchar_t *path) {
+	uint32 nativeAttrs = 0;
+	if (VDIsWindowsNT())
+		nativeAttrs = ::GetFileAttributesW(path);
+	else
+		nativeAttrs = ::GetFileAttributesA(VDTextWToA(path).c_str());
+
+	return VDFileGetAttributesFromNativeW32(nativeAttrs);
+}
+
+void VDFileSetAttributes(const wchar_t *path, uint32 attrsToChange, uint32 newAttrs) {
+	const uint32 nativeAttrMask = VDFileGetNativeAttributesFromAttrsW32(attrsToChange);
+	const uint32 nativeAttrVals = VDFileGetNativeAttributesFromAttrsW32(newAttrs);
+
+	if (VDIsWindowsNT()) {
+		DWORD nativeAttrs = ::GetFileAttributesW(path);
+
+		if (nativeAttrs != INVALID_FILE_ATTRIBUTES) {
+			nativeAttrs ^= (nativeAttrs ^ nativeAttrVals) & nativeAttrMask;
+
+			if (::SetFileAttributesW(path, nativeAttrs))
+				return;
+		}
+	} else {
+		VDStringA pathA(VDTextWToA(path));
+
+		DWORD nativeAttrs = ::GetFileAttributesA(pathA.c_str());
+
+		if (nativeAttrs != INVALID_FILE_ATTRIBUTES) {
+			nativeAttrs ^= (nativeAttrs ^ nativeAttrVals) & nativeAttrMask;
+
+			if (::SetFileAttributesA(pathA.c_str(), nativeAttrs))
+				return;
+		}
+	}
+
+	throw MyWin32Error("Cannot change attributes on \"%ls\": %%s.", GetLastError(), path);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 VDDirectoryIterator::VDDirectoryIterator(const wchar_t *path)
@@ -854,6 +979,8 @@ bool VDDirectoryIterator::Next() {
 		WIN32_FIND_DATAW w;
 	} wfd;
 
+	uint32 attribs;
+
 	if (GetVersion() & 0x80000000) {
 		if (mpHandle)
 			mbSearchComplete = !FindNextFileA((HANDLE)mpHandle, &wfd.a);
@@ -867,6 +994,9 @@ bool VDDirectoryIterator::Next() {
 		mbDirectory = (wfd.a.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 		mFilename = VDTextAToW(wfd.a.cFileName);
 		mFileSize = wfd.a.nFileSizeLow + ((sint64)wfd.w.nFileSizeHigh << 32);
+		mLastWriteDate.mTicks = wfd.a.ftLastWriteTime.dwLowDateTime + ((uint64)wfd.a.ftLastWriteTime.dwHighDateTime << 32);
+
+		attribs = wfd.a.dwFileAttributes;
 	} else {
 		if (mpHandle)
 			mbSearchComplete = !FindNextFileW((HANDLE)mpHandle, &wfd.w);
@@ -880,7 +1010,23 @@ bool VDDirectoryIterator::Next() {
 		mbDirectory = (wfd.w.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 		mFilename = wfd.w.cFileName;
 		mFileSize = wfd.w.nFileSizeLow + ((sint64)wfd.w.nFileSizeHigh << 32);
+		mLastWriteDate.mTicks = wfd.w.ftLastWriteTime.dwLowDateTime + ((uint64)wfd.w.ftLastWriteTime.dwHighDateTime << 32);
+
+		attribs = wfd.w.dwFileAttributes;
 	}
 
+	mAttributes = VDFileGetAttributesFromNativeW32(attribs);
 	return true;
+}
+
+bool VDDirectoryIterator::IsDotDirectory() const {
+	if (!mbDirectory)
+		return false;
+
+	const wchar_t *s = mFilename.c_str();
+
+	if (s[0] != L'.')
+		return false;
+
+	return !s[1] || (s[1] == L'.' && !s[2]);
 }

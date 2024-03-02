@@ -112,6 +112,19 @@ public:
 		return p ? (size_type)((const value_type *)p - mpBegin) : npos;
 	}
 
+	size_type find_last_of(value_type c) const {
+		const value_type *s = mpEnd;
+
+		while(s != mpBegin) {
+			--s;
+
+			if (*s == c)
+				return (size_type)(s - mpBegin);
+		}
+
+		return npos;
+	}
+
 	int compare(const VDStringSpanA& s) const {
 		size_type l1 = (size_type)(mpEnd - mpBegin);
 		size_type l2 = (size_type)(s.mpEnd - s.mpBegin);

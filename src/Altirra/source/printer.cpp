@@ -126,6 +126,7 @@ uint8 ATPrinterEmulator::OnCIOCommand(ATCPUEmulator *cpu, ATCPUEmulatorMemory *m
 			break;
 
 		case CIOCmdClose:
+			mem->WriteByte(ATKernelSymbols::ICHID + iocb, 0xFF);
 			cpu->SetY(CIOStatSuccess);
 			cpu->SetP(cpu->GetP() & ~(AT6502::kFlagN | AT6502::kFlagZ));
 			break;

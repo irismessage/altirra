@@ -56,13 +56,24 @@ ATUIDialogCartridgeMapper::ATUIDialogCartridgeMapper(uint32 cartSize, bool show2
 
 bool ATUIDialogCartridgeMapper::OnLoaded() {
 	for(int i=1; i<kATCartridgeModeCount; ++i) {
-		if (GetModeSize(i) != mCartSize) {
+		bool valid = false;
+
+		if (GetModeSize(i) == mCartSize) {
+			// size matches
+			valid = true;
+		} else if (i == kATCartridgeMode_TelelinkII && mCartSize == 8192 + 256) {
 			// We allow either 8K or 8K + 256 for the Telelink II cart.
-			if (i != kATCartridgeMode_TelelinkII || mCartSize != 8192 + 256)
-				continue;
+			valid = true;
+		} else if (i == kATCartridgeMode_8K && (mCartSize == 2048 || mCartSize == 4096)) {
+			// We allow 2K and 4K for the regular 8K option.
+			valid = true;
+		} else if (i == kATCartridgeMode_SIC && (mCartSize == 0x20000 || mCartSize == 0x40000)) {
+			// We allow 128K and 256K for SIC!.
+			valid = true;
 		}
 
-		mMappers.push_back(i);
+		if (valid)
+			mMappers.push_back(i);
 	}
 
 	if (mMappers.empty()) {
@@ -150,7 +161,7 @@ uint32 ATUIDialogCartridgeMapper::GetModeSize(int mode) {
 		case kATCartridgeMode_Atrax_128K:			return 131072;
 		case kATCartridgeMode_Williams_32K:			return 32768;
 		case kATCartridgeMode_Phoenix_8K:			return 8192;
-		case kATCartridgeMode_Blizzard_16K:			return 16384;
+		case kATCartridgeMode_SIC:					return 524288;
 		default:
 			return 0;
 	}
@@ -205,6 +216,7 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_Corina_1M_EEPROM:		return L"Corina 1M + 8K EEPROM";
 		case kATCartridgeMode_Corina_512K_SRAM_EEPROM:	return L"Corina 512K + 512K SRAM + 8K EEPROM";
 		case kATCartridgeMode_TelelinkII:			return L"8K Telelink II";
+		case kATCartridgeMode_SIC:					return L"SIC!";
 		default:
 			return L"";
 	}

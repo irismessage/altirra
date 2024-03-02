@@ -202,7 +202,7 @@ class ATMouseController : public ATPortInputController, public IATSchedulerCallb
 	ATMouseController(const ATMouseController&);
 	ATMouseController& operator=(const ATMouseController&);
 public:
-	ATMouseController();
+	ATMouseController(bool amigaMode);
 	~ATMouseController();
 
 	void Init(ATScheduler *scheduler);
@@ -228,6 +228,7 @@ protected:
 	uint32	mAccumX;
 	uint32	mAccumY;
 	bool	mbButtonState[2];
+	bool	mbAmigaMode;
 
 	ATEvent *mpUpdateEvent;
 	ATScheduler *mpScheduler;
@@ -404,6 +405,25 @@ protected:
 	ATScheduler *mpScheduler;
 	ATLightPenPort *mpLightPen;
 };
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATKeypadController : public ATPortInputController {
+	ATKeypadController(const ATKeypadController&);
+	ATKeypadController& operator=(const ATKeypadController&);
+public:
+	ATKeypadController();
+	~ATKeypadController();
+
+	virtual void SetDigitalTrigger(uint32 trigger, bool state);
+
+protected:
+	virtual void OnAttach();
+	virtual void OnDetach();
+
+	uint32	mPortBits;
+};
+
 ///////////////////////////////////////////////////////////////////////////
 
 #endif	// f_AT_INPUTCONTROLLER_H

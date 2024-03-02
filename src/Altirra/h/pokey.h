@@ -31,6 +31,7 @@ class ATPokeyEmulator;
 class ATSaveStateReader;
 class ATSaveStateWriter;
 class ATAudioFilter;
+class IATSoundBoardEmulator;
 
 class IATPokeyEmulatorConnections {
 public:
@@ -57,6 +58,20 @@ public:
 	virtual void PokeyResetSerialInput() = 0;
 };
 
+struct ATPokeyRegisterState {
+	uint8 mReg[0x20];
+};
+
+struct ATPokeyAudioState {
+	int		mChannelOutputs[4];
+};
+
+struct ATPokeyAudioLog {
+	ATPokeyAudioState	*mpStates;
+	uint32	mRecordedCount;
+	uint32	mMaxCount;
+};
+
 class ATPokeyEmulator : public IATSchedulerCallback {
 public:
 	ATPokeyEmulator(bool isSlave);
@@ -67,6 +82,8 @@ public:
 
 	void	SetSlave(ATPokeyEmulator *slave);
 	void	SetCassette(IATPokeyCassetteDevice *dev);
+	void	SetSoundBoard(IATSoundBoardEmulator *sbe);
+	void	SetAudioLog(ATPokeyAudioLog *log);
 
 	void	Set5200Mode(bool enable);
 
@@ -84,7 +101,9 @@ public:
 	void	SetSerialBurstMode(SerialBurstMode mode);
 
 	void	AddSIODevice(IATPokeySIODevice *device);
-	void	ReceiveSIOByte(uint8 byte);
+	void	RemoveSIODevice(IATPokeySIODevice *device);
+
+	void	ReceiveSIOByte(uint8 byte, uint32 cyclesPerByte);
 
 	void	SetAudioLine(int v);		// used for audio from tape
 	void	SetAudioLine2(int v);		// used for audio from motor control line
@@ -138,6 +157,8 @@ public:
 
 	void	LoadState(ATSaveStateReader& reader);
 	void	SaveState(ATSaveStateWriter& writer);
+	void	GetRegisterState(ATPokeyRegisterState& state) const;
+	void	GetAudioState(ATPokeyAudioState& state) const;
 
 	void	FlushAudio(bool pushAudio);
 
@@ -149,6 +170,7 @@ protected:
 	void	UpdatePolynomialCounters() const;
 	void	FireTimers(uint8 activeChannels);
 	void	OnSerialOutputTick(bool cpuBased);
+	uint32	GetSerialCyclesPerBit() const;
 	void	UpdateOutput();
 	void	FlushBlock();
 	void	UpdateTimerCounters(uint8 channels);
@@ -194,6 +216,7 @@ protected:
 	uint8	mKBCODE;
 	uint32	mKeyCodeTimer;
 	uint32	mKeyCooldownTimer;
+	bool	mbKeyboardIRQPending;
 	bool	mbUseKeyCooldownTimer;
 	bool	mbShiftKeyState;
 	bool	mbControlKeyState;
@@ -221,6 +244,8 @@ protected:
 							// bit 3: shift key depressed
 							// bit 2: key depressed
 
+	ATPokeyRegisterState mState;
+
 	int		mCounter[4];
 
 	mutable uint32	mLastPolyTime;
@@ -241,6 +266,8 @@ protected:
 	bool	mbSerialWaitingForStartBit;
 	bool	mbSerInBurstPending;
 	SerialBurstMode	mSerBurstMode;
+
+	ATPokeyAudioLog	*mpAudioLog;
 
 	// AUDCTL breakout
 	bool	mbFastTimer1;
@@ -276,6 +303,7 @@ protected:
 	Devices	mDevices;
 
 	IATPokeyCassetteDevice *mpCassette;
+	IATSoundBoardEmulator *mpSoundBoard;
 
 	vdfastdeque<uint8> mKeyQueue;
 

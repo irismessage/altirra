@@ -127,6 +127,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\pclink.xml"
+				>
+			</File>
+			<File
 				RelativePath=".\source\portable-mode.xml"
 				>
 			</File>

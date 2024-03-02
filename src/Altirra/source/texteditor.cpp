@@ -318,7 +318,7 @@ void TextEditor::SetCursorPos(int line, int offset) {
 
 	ClearSelection();
 
-	if (line > paraCount)
+	if (line >= paraCount)
 		mCaretPos.MoveToEnd();
 	else if (line < 0)
 		mCaretPos.MoveToStart();

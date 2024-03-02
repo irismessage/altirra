@@ -1056,10 +1056,26 @@ void ATContainerWindow::AutoSize() {
 	if (!AdjustWindowRect(&r, GetWindowLong(mhwnd, GWL_STYLE), GetMenu(mhwnd) != NULL))
 		return;
 
-	wp.rcNormalPosition.right = wp.rcNormalPosition.left + (r.right - r.left);
-	wp.rcNormalPosition.bottom = wp.rcNormalPosition.top + (r.bottom - r.top);
+	const int desiredWidth = (r.right - r.left);
+	const int desiredHeight = (r.bottom - r.top);
+	wp.rcNormalPosition.right = wp.rcNormalPosition.left + desiredWidth;
+	wp.rcNormalPosition.bottom = wp.rcNormalPosition.top + desiredHeight;
 
 	SetWindowPlacement(mhwnd, &wp);
+
+	// Check for the case where the menu has forced the client rectangle to shrink
+	// vertically due to wrapping -- in that case, measure the delta and attempt to
+	// apply a one time correction.
+	RECT r2;
+	if (GetWindowRect(mhwnd, &r2) && r2.right - r2.left == desiredWidth && r2.bottom - r2.top == desiredHeight) {
+		RECT rc;
+
+		if (GetClientRect(mhwnd, &rc) && rc.right == sz.w && rc.bottom < sz.h) {
+			wp.rcNormalPosition.bottom += (sz.h - rc.bottom);
+
+			SetWindowPlacement(mhwnd, &wp);
+		}
+	}
 }
 
 void ATContainerWindow::Relayout() {
@@ -1144,8 +1160,10 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 			if (hwndActive && ::GetWindow(hwndActive, GW_OWNER) != hwndFrame)
 				hwndActive = NULL;
 
-			if (::GetForegroundWindow() == hwndFrame)
+			if (::GetForegroundWindow() == hwndFrame) {
 				::SetForegroundWindow(mhwnd);
+				mpActiveFrame = frame;
+			}
 
 			UINT style = GetWindowLong(hwndFrame, GWL_STYLE);
 			style |= WS_CHILD | WS_SYSMENU;
@@ -1948,25 +1966,20 @@ bool ATFrameWindow::OnNCLButtonDown(int code, int x, int y) {
 	RECT r;
 
 	mbDragging = true;
+	mbDragVerified = false;
 	GetWindowRect(mhwnd, &r);
 
+	mDragOriginX = x;
+	mDragOriginY = y;
 	mDragOffsetX = r.left - x;
 	mDragOffsetY = r.top - y;
 
 	mpDragContainer = ATContainerWindow::GetContainerWindow(GetWindow(mhwnd, GW_OWNER));
 
-	UINT style = GetWindowLong(mhwnd, GWL_STYLE);
-	if (style & WS_CHILD) {
-		mpDragContainer->UndockFrame(this);
-	}
-
 	SetForegroundWindow(mhwnd);
 	SetActiveWindow(mhwnd);
 	SetFocus(mhwnd);
 	SetCapture(mhwnd);
-	if (mpDragContainer) {
-		mpDragContainer->InitDragHandles();
-	}
 	return true;
 }
 
@@ -1976,6 +1989,26 @@ bool ATFrameWindow::OnMouseMove(int x, int y) {
 
 	POINT pt = {x, y};
 	ClientToScreen(mhwnd, &pt);
+
+	if (!mbDragVerified) {
+		int dx = abs(GetSystemMetrics(SM_CXDRAG));
+		int dy = abs(GetSystemMetrics(SM_CYDRAG));
+
+		if (abs(mDragOriginX - pt.x) <= dx && abs(mDragOriginY - pt.y) <= dy)
+			return true;
+
+		mbDragVerified = true;
+
+		UINT style = GetWindowLong(mhwnd, GWL_STYLE);
+		if (style & WS_CHILD) {
+			mpDragContainer->UndockFrame(this);
+		}
+
+		if (mpDragContainer) {
+			mpDragContainer->InitDragHandles();
+		}
+	}
+
 	SetWindowPos(mhwnd, NULL, pt.x + mDragOffsetX, pt.y + mDragOffsetY, 0, 0, SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
 
 	if (mpDragContainer)
@@ -1991,11 +2024,13 @@ void ATFrameWindow::EndDrag(bool success) {
 			ReleaseCapture();
 
 		if (mpDragContainer) {
-			if (success) {
-				mpDragContainer->DockFrame(this);
+			if (mbDragVerified) {
+				if (success)
+					mpDragContainer->DockFrame(this);
+
+				mpDragContainer->ShutdownDragHandles();
 			}
 
-			mpDragContainer->ShutdownDragHandles();
 			mpDragContainer = NULL;
 		}
 	}

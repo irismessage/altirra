@@ -33,7 +33,7 @@ extern void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int ca
 
 class ATUIDragDropHandler : public IDropTarget {
 public:
-	ATUIDragDropHandler();
+	ATUIDragDropHandler(HWND hwnd);
 
 	virtual ULONG STDMETHODCALLTYPE AddRef();
 	virtual ULONG STDMETHODCALLTYPE Release();
@@ -46,13 +46,15 @@ public:
 protected:
 	VDAtomicInt mRefCount;
 	DWORD mDropEffect;
+	HWND mhwnd;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
 
-ATUIDragDropHandler::ATUIDragDropHandler()
+ATUIDragDropHandler::ATUIDragDropHandler(HWND hwnd)
 	: mRefCount(0)
 	, mDropEffect(DROPEFFECT_NONE)
+	, mhwnd(hwnd)
 {
 }
 
@@ -87,20 +89,22 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::QueryInterface(const IID& riid, v
 HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
 	mDropEffect = DROPEFFECT_NONE;
 
-	FORMATETC etc;
-	etc.cfFormat = CF_HDROP;
-	etc.dwAspect = DVASPECT_CONTENT;
-	etc.lindex = -1;
-	etc.ptd = NULL;
-	etc.tymed = TYMED_HGLOBAL;
+	if (!(GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED)) {
+		FORMATETC etc;
+		etc.cfFormat = CF_HDROP;
+		etc.dwAspect = DVASPECT_CONTENT;
+		etc.lindex = -1;
+		etc.ptd = NULL;
+		etc.tymed = TYMED_HGLOBAL;
 
-	HRESULT hr = pDataObj->QueryGetData(&etc);
+		HRESULT hr = pDataObj->QueryGetData(&etc);
 
-	if (SUCCEEDED(hr)) {
-		if (grfKeyState & MK_SHIFT)
-			mDropEffect = DROPEFFECT_COPY;
-		else
-			mDropEffect = DROPEFFECT_MOVE;
+		if (SUCCEEDED(hr)) {
+			if (grfKeyState & MK_SHIFT)
+				mDropEffect = DROPEFFECT_COPY;
+			else
+				mDropEffect = DROPEFFECT_MOVE;
+		}
 	}
 
 	*pdwEffect = mDropEffect;
@@ -124,6 +128,9 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragLeave() {
 }
 
 HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
+	if (GetWindowLong(mhwnd, GWL_STYLE) & WS_DISABLED)
+		return S_OK;
+
 	FORMATETC etc;
 	etc.cfFormat = CF_HDROP;
 	etc.dwAspect = DVASPECT_CONTENT;
@@ -170,7 +177,7 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 }
 
 void ATUIRegisterDragDropHandler(VDGUIHandle h) {
-	RegisterDragDrop((HWND)h, vdrefptr<IDropTarget>(new ATUIDragDropHandler));
+	RegisterDragDrop((HWND)h, vdrefptr<IDropTarget>(new ATUIDragDropHandler((HWND)h)));
 }
 
 void ATUIRevokeDragDropHandler(VDGUIHandle h) {

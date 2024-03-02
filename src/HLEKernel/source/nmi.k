@@ -20,13 +20,19 @@
 	bit		nmist		;check nmi status
 	bpl		NotDLI		;skip if not a DLI
 	jmp		(vdslst)	;jump to display list vector
+	
 NotVBI:
 	lda		#$20
 	bit		nmist
 	bne		IsBreak
-	sta		nmires
+	
+	;We can get here if the NMI was cleared on ANTIC but the 6502 still
+	;took the NMI vector. No need to strobe NMIRES, as there are no bits
+	;set.
 	rti
+
 IsBreak:
+	sta		nmires
 	pla
 	rti
 

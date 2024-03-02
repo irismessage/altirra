@@ -29,6 +29,19 @@ class ATCPUProfiler;
 class ATCPUVerifier;
 class ATSaveStateReader;
 class ATSaveStateWriter;
+class ATCPUEmulatorMemory;
+class ATBreakpointManager;
+
+class ATCPUEmulatorCallbacks {
+public:
+	virtual uint32 CPUGetTimestamp() = 0;
+	virtual uint32 CPUGetCycle() = 0;
+	virtual uint32 CPUGetUnhaltedCycle() = 0;
+	virtual uint8 CPUHookHit(uint16 address) = 0;
+	virtual uint8 CPURecordBusActivity(uint8 value) = 0;
+};
+
+typedef bool (*ATCPUStepCallback)(ATCPUEmulator *cpu, uint32 pc, void *data);
 
 enum ATCPUMode {
 	kATCPUMode_6502,
@@ -61,82 +74,6 @@ namespace AT6502 {
 		kFlagC = 0x01
 	};
 }
-
-class VDINTERFACE ATCPUEmulatorMemory {
-public:
-	virtual uint8 CPUReadByte(uint16 address) = 0;
-	virtual uint8 CPUDebugReadByte(uint16 address) = 0;
-	virtual uint8 CPUDebugExtReadByte(uint16 address, uint8 value) = 0;
-	virtual void CPUWriteByte(uint16 address, uint8 value) = 0;
-	virtual uint32 CPUGetTimestamp() = 0;
-	virtual uint32 CPUGetCycle() = 0;
-	virtual uint32 CPUGetUnhaltedCycle() = 0;
-	virtual uint8 CPUHookHit(uint16 address) = 0;
-	virtual uint8 CPURecordBusActivity(uint8 value) = 0;
-
-	const uint8 *const *mpCPUReadPageMap;
-	uint8 *const *mpCPUWritePageMap;
-	const uint8 *const *const *mpCPUReadBankMap;
-	uint8 *const *const *mpCPUWriteBankMap;
-
-	uint8 ReadByte(uint16 address) {
-		const uint8 *readPage = mpCPUReadPageMap[address >> 8];
-		return readPage ? readPage[address & 0xff] : CPUReadByte(address);
-	}
-
-	uint8 ReadByteHL(uint8 addrH, uint8 addrL) {
-		const uint8 *readPage = mpCPUReadPageMap[addrH];
-		return readPage ? readPage[addrL] : CPUReadByte(((uint32)addrH << 8) + addrL);
-	}
-
-	uint8 ExtReadByte(uint16 address, uint8 bank) {
-		const uint8 *readPage = mpCPUReadBankMap[bank][address >> 8];
-		return readPage ? readPage[address & 0xff] : CPUExtReadByte(address, bank);
-	}
-
-	uint8 CPUExtReadByte(uint16 address, uint8 bank) {
-		if (bank)
-			return 0xFF;
-
-		const uint8 *readPage = mpCPUReadPageMap[address >> 8];
-		return readPage ? readPage[address & 0xff] : CPUReadByte(address);
-	}
-	
-	void WriteByte(uint16 address, uint8 value) {
-		uint8 *writePage = mpCPUWritePageMap[address >> 8];
-		if (writePage)
-			writePage[address & 0xff] = value;
-		else
-			CPUWriteByte(address, value);
-	}
-
-	void WriteByteHL(uint8 addrH, uint8 addrL, uint8 value) {
-		uint8 *writePage = mpCPUWritePageMap[addrH];
-		if (writePage)
-			writePage[addrL] = value;
-		else
-			CPUWriteByte(((uint32)addrH << 8) + addrL, value);
-	}
-
-	void ExtWriteByte(uint16 address, uint8 bank, uint8 value) {
-		uint8 *writePage = mpCPUWriteBankMap[bank][address >> 8];
-
-		if (writePage)
-			writePage[address & 0xff] = value;
-		else
-			CPUExtWriteByte(address, bank, value);
-	}
-
-	void CPUExtWriteByte(uint16 address, uint8 bank, uint8 value) {
-		if (!bank) {
-			uint8 *writePage = mpCPUWritePageMap[address >> 8];
-			if (writePage)
-				writePage[address & 0xff] = value;
-			else
-				CPUWriteByte(address, value);
-		}
-	}
-};
 
 class VDINTERFACE IATCPUHighLevelEmulator {
 public:
@@ -171,9 +108,10 @@ public:
 	ATCPUEmulator();
 	~ATCPUEmulator();
 
-	bool	Init(ATCPUEmulatorMemory *mem);
+	bool	Init(ATCPUEmulatorMemory *mem, ATCPUEmulatorCallbacks *callbacks);
 
 	void	SetHLE(IATCPUHighLevelEmulator *hle);
+	void	SetBreakpointManager(ATBreakpointManager *bkptmanager);
 
 	void	ColdReset();
 	void	WarmReset();
@@ -216,8 +154,19 @@ public:
 	void	ClearFlagC() { mP &= ~AT6502::kFlagC; }
 
 	void	SetHook(uint16 pc, bool enable);
-	void	SetStep(bool step) { mbStep = step; mStepRegionStart = 0; mStepRegionSize = 0; }
-	void	SetStepRange(uint32 regionStart, uint32 regionSize) { mbStep = true; mStepRegionStart = regionStart; mStepRegionSize = regionSize; }
+	void	SetStep(bool step) {
+		mbStep = step; mStepRegionStart = 0; mStepRegionSize = 0; mpStepCallback = NULL;
+		mStepStackLevel = -1;
+	}
+	void	SetStepRange(uint32 regionStart, uint32 regionSize, ATCPUStepCallback stepcb, void *stepcbdata) {
+		mbStep = true;
+		mStepRegionStart = regionStart;
+		mStepRegionSize = regionSize;
+		mpStepCallback = stepcb;
+		mpStepCallbackData = stepcbdata;
+		mStepStackLevel = -1;
+	}
+
 	void	SetTrace(bool trace) { mbTrace = trace; }
 	void	SetRTSBreak() { mSBrk = 0x100; }
 	void	SetRTSBreak(uint8 sp) { mSBrk = sp; }
@@ -244,10 +193,12 @@ public:
 	bool	GetStopOnBRK() const { return mbStopOnBRK; }
 	void	SetStopOnBRK(bool en);
 
+	bool	IsNMIBlockingEnabled() const { return mbAllowBlockedNMIs; }
+	void	SetNMIBlockingEnabled(bool enable);
+
 	bool	IsBreakpointSet(uint16 addr) const;
 	sint32	GetNextBreakpoint(sint32 last) const;
 	void	SetBreakpoint(uint16 addr);
-	void	SetOneShotBreakpoint(uint16 addr);
 	void	ClearBreakpoint(uint16 addr);
 	void	ClearAllBreakpoints();
 
@@ -307,10 +258,10 @@ protected:
 	void	DecodeReadInd();
 
 	void	Decode65816AddrDp(bool unalignedDP);
-	void	Decode65816AddrDpX(bool unalignedDP);
-	void	Decode65816AddrDpY(bool unalignedDP);
+	void	Decode65816AddrDpX(bool unalignedDP, bool emu);
+	void	Decode65816AddrDpY(bool unalignedDP, bool emu);
 	void	Decode65816AddrDpInd(bool unalignedDP);
-	void	Decode65816AddrDpIndX(bool unalignedDP);
+	void	Decode65816AddrDpIndX(bool unalignedDP, bool emu);
 	void	Decode65816AddrDpIndY(bool unalignedDP);
 	void	Decode65816AddrDpLongInd(bool unalignedDP);
 	void	Decode65816AddrDpLongIndY(bool unalignedDP);
@@ -350,10 +301,16 @@ protected:
 	bool	mbIRQActive;
 	bool	mbIRQPending;
 	bool	mbNMIPending;
+	bool	mbNMIForced;
 	bool	mbTrace;
 	bool	mbStep;
+
 	uint32	mStepRegionStart;
 	uint32	mStepRegionSize;
+	int		mStepStackLevel;
+	ATCPUStepCallback mpStepCallback;
+	void	*mpStepCallbackData;
+
 	bool	mbUnusedCycle;
 	bool	mbEmulationFlag;
 	uint32	mNMIIgnoreUnhaltedCycle;
@@ -365,6 +322,8 @@ protected:
 	ATCPUSubMode	mCPUSubMode;
 
 	ATCPUEmulatorMemory	*mpMemory;
+	ATCPUEmulatorCallbacks	*mpCallbacks;
+	ATBreakpointManager *mpBkptManager;
 	IATCPUHighLevelEmulator	*mpHLE;
 	uint32	mHLEDelay;
 
@@ -383,11 +342,10 @@ protected:
 	bool	mbStopOnBRK;
 	bool	mbMarkHistoryIRQ;
 	bool	mbMarkHistoryNMI;
+	bool	mbAllowBlockedNMIs;
 
 	enum {
 		kInsnFlagBreakPt		= 0x01,
-		kInsnFlagOneShotBreakPt	= 0x02,
-		kInsnFlagSpecialTracePt	= 0x04,
 		kInsnFlagHook			= 0x08,
 		kInsnFlagPathStart		= 0x10,
 		kInsnFlagPathExecuted	= 0x20

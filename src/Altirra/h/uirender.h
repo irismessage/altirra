@@ -21,6 +21,7 @@
 #include <vd2/system/refcount.h>
 
 struct VDPixmap;
+class ATAudioMonitor;
 
 struct ATUIAudioStatus {
 	int mUnderflowCount;
@@ -43,6 +44,7 @@ public:
 
 	virtual void SetHActivity(bool write) = 0;
 	virtual void SetIDEActivity(bool write, uint32 lba) = 0;
+	virtual void SetPCLinkActivity(bool write) = 0;
 
 	virtual void SetFlashWriteActivity() = 0;
 
@@ -57,6 +59,8 @@ public:
 	virtual void SetWatchedValue(int index, uint32 value, int len) = 0;
 
 	virtual void SetAudioStatus(ATUIAudioStatus *status) = 0;
+
+	virtual void SetAudioMonitor(ATAudioMonitor *monitor) = 0;
 
 	virtual void Render(const VDPixmap& px, const uint32 *palette) = 0;
 };

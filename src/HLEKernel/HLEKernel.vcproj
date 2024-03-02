@@ -121,11 +121,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\pbi.k"
+				>
+			</File>
+			<File
 				RelativePath=".\source\screen.k"
 				>
 			</File>
 			<File
 				RelativePath=".\source\sio.k"
+				>
+			</File>
+			<File
+				RelativePath=".\source\xlext.k"
 				>
 			</File>
 		</Filter>

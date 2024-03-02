@@ -21,6 +21,7 @@
 	lda		#$ff
 	sta		ch
 	sta		ch1
+	mwa		#KeyboardGetByte.keyCodeToATASCII keydat
 	
 	;enable keyboard interrupts
 	php
@@ -72,8 +73,8 @@ waitForChar:
 	beq		isCtrl3
 	
 	;translate char
-	tax
-	lda		keyCodeToATASCII,x
+	tay
+	lda		(keydat),y
 	
 	;check for invalid char
 	cmp		#$f0
@@ -101,6 +102,7 @@ notAlpha:
 skipClick:
 
 	;return char
+	sta		atachr
 	ldy		#0
 	rts
 	

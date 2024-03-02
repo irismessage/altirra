@@ -93,12 +93,46 @@ void ATGTIARenderer::RenderScanline(int xend, bool pmgraphics) {
 		}
 
 		if (mbGTIAEnableTransition) {
-			mbGTIAEnableTransition = false;
+			switch(mTransitionPhase) {
+				case 0:
+					if ((mPRIOR & 0xc0) == 0x40) {
+						RenderMode9Transition1(x1);
+						mTransitionPhase = 1;
+					} else if ((mPRIOR & 0xc0) == 0x80) {
+						RenderMode8(x1, x1+1);
+						mTransitionPhase = 1;
+					} else {
+						RenderMode8(x1, x1+1);
+						mbGTIAEnableTransition = false;
+					}
+					break;
 
-			RenderMode8(x1, x1+1);
+				case 1:
+					if ((mPRIOR & 0xc0) == 0x80)
+						RenderMode10Transition2(x1);
+					else
+						RenderMode9Transition2(x1);
+					mTransitionPhase = 2;
+					break;
 
-			if (++x1 >= x2)
-				continue;
+				case 2:
+					if ((mPRIOR & 0xc0) == 0x80) {
+						RenderMode10Transition2(x1);
+						mTransitionPhase = 3;
+					} else {
+						RenderMode9Transition2(x1);
+						mbGTIAEnableTransition = false;
+					}
+					break;
+
+				case 3:
+					RenderMode10Transition3(x1);
+					mbGTIAEnableTransition = false;
+					break;
+			}
+
+			++x1;
+			continue;
 		}
 
 		// 40 column mode is set by ANTIC during horizontal blank if ANTIC modes 2, 3, or
@@ -305,8 +339,10 @@ void ATGTIARenderer::UpdateRegisters(const RegisterChange *rc, int count) {
 			mColorTable[kColorBAK] = value;
 			break;
 		case 0x1B:
-			if ((value & 0xc0) && !(mPRIOR & 0xc0))
+			if ((value & 0xc0) && !(mPRIOR & 0xc0)) {
 				mbGTIAEnableTransition = true;
+				mTransitionPhase = 0;
+			}
 
 			mPRIOR = value;
 			mpPriTable = mPriorityTables[(value & 15) + (value&32 ? 16 : 0)];
@@ -487,6 +523,69 @@ void ATGTIARenderer::RenderMode9(int x1, int x2) {
 	}
 }
 
+void ATGTIARenderer::RenderMode9Transition1(int x1) {
+	static const uint8 kPlayerMaskLookup[16]={0xff};
+
+	const uint8 *__restrict colorTable = mpColorTable;
+	const uint8 *__restrict priTable = mpPriTable;
+
+	uint8 *dst = mpDst + x1*2;
+	const uint8 *src = mpMergeBuffer + x1;
+
+	// This is complicated.
+	//
+	// What happens on the first color clock of the three color clock transition is that
+	// both mode 9 and hires logic is active at the same time. Fun.
+
+	uint8 code0 = *src++ & (P0|P1|P2|P3|PF3);
+	uint8 pri0 = colorTable[priTable[code0]];
+
+	const uint8 *lumasrc = &mpAnticBuffer[x1++];
+	uint8 l1 = (lumasrc[0] << 2) + lumasrc[1];
+
+	uint8 c0 = pri0;
+	uint8 c1 = c0;
+
+	if (l1 & 0x08)
+		c0 = (c0 & 0xf0) + (mpColorTable[5] & 0xf);
+
+	if (l1 & 0x04)
+		c1 = (c1 & 0xf0) + (mpColorTable[5] & 0xf);
+
+	const uint8 lumaadd = (l1 & kPlayerMaskLookup[code0 >> 4]);
+
+	dst[0] = c0 | lumaadd;
+	dst[1] = c1 | lumaadd;
+}
+
+void ATGTIARenderer::RenderMode9Transition2(int x1) {
+	static const uint8 kPlayerMaskLookup[16]={0xff};
+
+	const uint8 *__restrict colorTable = mpColorTable;
+	const uint8 *__restrict priTable = mpPriTable;
+
+	uint8 *dst = mpDst + x1*2;
+	const uint8 *src = mpMergeBuffer + x1;
+
+	// 1 color / 16 luma mode
+	//
+	// In this mode, PF0-PF3 are forced off, so no playfield collisions ever register
+	// and the playfield always registers as the background color. Luminance is
+	// ORed in after the priority logic, but its substitution is gated by all P/M bits
+	// and so it does not affect players or missiles. It does, however, affect PF3 if
+	// the fifth player is enabled.
+
+	uint8 code0 = *src++ & (P0|P1|P2|P3|PF3);
+	uint8 pri0 = colorTable[priTable[code0]];
+
+	const uint8 *lumasrc = &mpAnticBuffer[x1++];
+	uint8 l1 = (lumasrc[0] << 2) + lumasrc[0];
+
+	uint8 c4 = pri0 | (l1 & kPlayerMaskLookup[code0 >> 4]);
+
+	dst[0] = dst[1] = c4;
+}
+
 void ATGTIARenderer::RenderMode10(int x1, int x2) {
 	const uint8 *__restrict colorTable = mpColorTable;
 	const uint8 *__restrict priTable = mpPriTable;
@@ -531,6 +630,90 @@ void ATGTIARenderer::RenderMode10(int x1, int x2) {
 		dst[0] = dst[1] = colorTable[priTable[c4 | (*src++ & 0xf8)]];
 		dst += 2;
 	}
+}
+
+void ATGTIARenderer::RenderMode10Transition2(int x1) {
+	const uint8 *__restrict colorTable = mpColorTable;
+	const uint8 *__restrict priTable = mpPriTable;
+
+	uint8 *dst = mpDst + x1*2;
+	const uint8 *src = mpMergeBuffer + x1;
+
+	// 9 colors
+	//
+	// This mode works by using AN0-AN1 to trigger either the playfield or the player/missle
+	// bits going into the priority logic. This means that when player colors are used, the
+	// playfield takes the same priority as that player. Playfield collisions are triggered
+	// only for PF0-PF3; P0-P3 colors coming from the playfield do not trigger collisions.
+
+	static const uint8 kMode10Lookup[16]={
+		P0,
+		P1,
+		P2,
+		P3,
+		PF0,
+		PF1,
+		PF2,
+		PF3,
+		0,
+		0,
+		0,
+		0,
+		PF0,
+		PF1,
+		PF2,
+		PF3
+	};
+
+	const uint8 *lumasrc = &mpAnticBuffer[x1++];
+	uint8 l1 = (lumasrc[-1] << 2) + lumasrc[0];
+
+	uint8 c4 = kMode10Lookup[l1];
+
+	dst[0] = dst[1] = colorTable[priTable[c4 | (*src++ & 0xf8)]];
+	dst += 2;
+}
+
+void ATGTIARenderer::RenderMode10Transition3(int x1) {
+	const uint8 *__restrict colorTable = mpColorTable;
+	const uint8 *__restrict priTable = mpPriTable;
+
+	uint8 *dst = mpDst + x1*2;
+	const uint8 *src = mpMergeBuffer + x1;
+
+	// 9 colors
+	//
+	// This mode works by using AN0-AN1 to trigger either the playfield or the player/missle
+	// bits going into the priority logic. This means that when player colors are used, the
+	// playfield takes the same priority as that player. Playfield collisions are triggered
+	// only for PF0-PF3; P0-P3 colors coming from the playfield do not trigger collisions.
+
+	static const uint8 kMode10Lookup[16]={
+		P0,
+		P1,
+		P2,
+		P3,
+		PF0,
+		PF1,
+		PF2,
+		PF3,
+		0,
+		0,
+		0,
+		0,
+		PF0,
+		PF1,
+		PF2,
+		PF3
+	};
+
+	const uint8 *lumasrc = &mpAnticBuffer[x1++];
+	uint8 l1 = (lumasrc[-1] << 2) + lumasrc[-1];
+
+	uint8 c4 = kMode10Lookup[l1];
+
+	dst[0] = dst[1] = colorTable[priTable[c4 | (*src++ & 0xf8)]];
+	dst += 2;
 }
 
 void ATGTIARenderer::RenderMode11(int x1, int x2) {
