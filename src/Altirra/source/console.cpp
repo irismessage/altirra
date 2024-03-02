@@ -60,6 +60,7 @@ class ATUIPane;
 
 namespace {
 	HFONT	g_monoFont;
+	int		g_monoFontLineHeight;
 	HMENU	g_hmenuSrcContext;
 }
 
@@ -81,7 +82,7 @@ public:
 	void OnTextEditorUpdated();
 	void RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *colorization);
 
-	void SetPosition(uint16 addr);
+	void SetPosition(uint32 addr);
 
 protected:
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
@@ -103,6 +104,7 @@ protected:
 
 	uint32	mViewStart;
 	uint32	mViewLength;
+	uint8	mViewBank;
 	int		mPCLine;
 	uint32	mPCAddr;
 	int		mFramePCLine;
@@ -159,7 +161,7 @@ LRESULT ATDisassemblyWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 						if (addr < 0)
 							MessageBeep(MB_ICONERROR);
 						else
-							SetPosition((uint16)addr);
+							SetPosition(addr);
 
 						return FALSE;
 					}
@@ -184,10 +186,11 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 				if (GetKeyState(VK_CONTROL) < 0) {
 					ATGetDebugger()->Break();
 				}
-			} else if (wParam == VK_F5) {
-				ATGetDebugger()->Run(kATDebugSrcMode_Disasm);
 			} else if (wParam == VK_F8) {
-				ATGetDebugger()->Break();
+				if (ATGetDebugger()->IsRunning())
+					ATGetDebugger()->Break();
+				else
+					ATGetDebugger()->Run(kATDebugSrcMode_Disasm);
 			} else if (wParam == VK_F9) {
 				size_t line = (size_t)mpTextEditor->GetCursorLine();
 
@@ -210,6 +213,7 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 			switch(wParam) {
 				case VK_PAUSE:
 				case VK_CANCEL:
+				case VK_F8:
 				case VK_F9:
 				case VK_F10:
 				case VK_F11:
@@ -314,7 +318,11 @@ bool ATDisassemblyWindow::OnCommand(UINT cmd) {
 			}
 			break;
 		case ID_CONTEXT_SHOWNEXTSTATEMENT:
-			RemakeView(g_sim.GetCPU().GetInsnPC());
+			{
+				ATCPUEmulator& cpu = g_sim.GetCPU();
+
+				SetPosition(cpu.GetInsnPC() + ((uint32)cpu.GetK() << 16));
+			}
 			break;
 		case ID_CONTEXT_SETNEXTSTATEMENT:
 			{
@@ -343,13 +351,23 @@ bool ATDisassemblyWindow::OnCommand(UINT cmd) {
 
 void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 	uint16 pc = mViewStart;
-	char buf[256];
+	VDStringA buf;
 
 	mpTextEditor->Clear();
 	mAddressesByLine.clear();
 
 	mPCLine = -1;
 	mFramePCLine = -1;
+
+	ATCPUHistoryEntry hent0;
+	ATDisassembleCaptureRegisterContext(hent0);
+
+	ATCPUHistoryEntry hent(hent0);
+
+	bool autoModeSwitching = false;
+
+	if (g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816)
+		autoModeSwitching = true;
 
 	int line = 0;
 	int focusLine = -1;
@@ -364,8 +382,58 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 
 		++line;
 
+		if (autoModeSwitching && pc == mPCAddr)
+			hent = hent0;
+
 		mAddressesByLine.push_back(pc);
-		uint16 newpc = ATDisassembleInsn(buf, pc, false);
+		ATDisassembleCaptureInsnContext(pc, mViewBank, hent);
+		buf.clear();
+		uint16 newpc = ATDisassembleInsn(buf, hent, false);
+		buf += '\n';
+
+		// auto-switch mode if necessary
+		if (autoModeSwitching) {
+			switch(hent.mOpcode[0]) {
+				case 0x18:	// CLC
+					hent.mP &= ~AT6502::kFlagC;
+					break;
+
+				case 0x38:	// SEC
+					hent.mP |= AT6502::kFlagC;
+					break;
+
+				case 0xC2:	// REP
+					if (hent.mbEmulation)
+						hent.mP &= ~hent.mOpcode[1] | 0x30;
+					else
+						hent.mP &= ~hent.mOpcode[1];
+					break;
+
+				case 0xE2:	// SEP
+					if (hent.mbEmulation)
+						hent.mP |= hent.mOpcode[1] & 0xcf;
+					else
+						hent.mP |= hent.mOpcode[1];
+					break;
+
+				case 0xFB:	// XCE
+					{
+						uint8 e = hent.mbEmulation ? 1 : 0;
+						uint8 xor = hent.mP ^ e;
+
+						if (xor) {
+							e ^= xor;
+							hent.mP ^= xor;
+
+							hent.mbEmulation = e != 0;
+
+							if (hent.mbEmulation)
+								hent.mP |= 0x30;
+						}
+					}
+					break;
+			}
+		}
 
 		// don't allow disassembly to skip the desired PC
 		if (newpc > focusAddr && pc < focusAddr)
@@ -373,7 +441,7 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 
 		pc = newpc;
 
-		mpTextEditor->Append(buf);
+		mpTextEditor->Append(buf.c_str());
 	}
 
 	mLastSubMode = g_sim.GetCPU().GetCPUSubMode();
@@ -395,9 +463,9 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 
 	mLastState = state;
 
-	mPCAddr = state.mInsnPC;
+	mPCAddr = (uint32)state.mInsnPC + ((uint32)state.mK << 16);
 	mPCLine = -1;
-	mFramePCAddr = state.mFramePC;
+	mFramePCAddr = (uint32)state.mFramePC + ((uint32)state.mK << 16);
 	mFramePCLine = -1;
 
 	if (state.mbRunning) {
@@ -465,9 +533,11 @@ void ATDisassemblyWindow::RecolorLine(int line, const char *text, int length, IV
 		cl->AddTextColorPoint(next, 0x000000, 0x80FF80);
 }
 
-void ATDisassemblyWindow::SetPosition(uint16 addr) {
-	VDSetWindowTextFW32(mhwndAddress, L"$%04X", addr);
+void ATDisassemblyWindow::SetPosition(uint32 addr) {
+	VDStringA text(ATGetDebugger()->GetAddressText(addr, true));
+	VDSetWindowTextFW32(mhwndAddress, L"%hs", text.c_str());
 	mViewStart = ATDisassembleGetFirstAnchor(addr >= 0x80 ? addr - 0x80 : 0, addr);
+	mViewBank = (uint8)(addr >> 16);
 
 	RemakeView(addr);
 }
@@ -564,8 +634,8 @@ void ATRegistersWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState&
 			mState.append_sprintf("A = %02X%02X\r\n", state.mAH, state.mA);
 
 		if (state.mbEmulation || (state.mP & AT6502::kFlagX)) {
-			mState.append_sprintf("X = %02X\r\n", state.mXH, state.mX);
-			mState.append_sprintf("Y = %02X\r\n", state.mYH, state.mY);
+			mState.append_sprintf("X = %02X\r\n", state.mX);
+			mState.append_sprintf("Y = %02X\r\n", state.mY);
 		} else {
 			mState.append_sprintf("X = %02X%02X\r\n", state.mXH, state.mX);
 			mState.append_sprintf("Y = %02X%02X\r\n", state.mYH, state.mY);
@@ -1398,6 +1468,7 @@ protected:
 
 	void Reset();
 	void UpdateOpcodes();
+	void ClearAllNodes();
 	TreeNode *InsertNode(TreeNode *parent, TreeNode *after, const char *text, const ATCPUHistoryEntry *hent);
 	TreeNode *AllocNode();
 	void FreeNode(TreeNode *);
@@ -1462,9 +1533,9 @@ ATHistoryWindow::ATHistoryWindow()
 	mPreferredDockCode = kATContainerDockRight;
 
 	memset(&mContentRect, 0, sizeof mContentRect);
+
 	memset(&mRootNode, 0, sizeof mRootNode);
-	mRootNode.mbExpanded = true;
-	mRootNode.mHeight = 1;
+	ClearAllNodes();
 }
 
 ATHistoryWindow::~ATHistoryWindow() {
@@ -1827,7 +1898,6 @@ void ATHistoryWindow::OnPaint() {
 
 			SetBkMode(hdc, OPAQUE);
 			SetTextAlign(hdc, TA_LEFT | TA_TOP);
-			SelectObject(hdc, GetStockObject(BLACK_PEN));
 
 			if (mRootNode.mpFirstChild) {
 				PaintItems(hdc, &ps.rcPaint, itemStart, itemEnd, mRootNode.mpFirstChild, 0, 0);
@@ -1858,10 +1928,12 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 			return;
 
 		if (pos >= itemStart) {
+			bool selected = false;
+
 			if (mpSelectedNode == node) {
+				selected = true;
 				SetBkColor(hdc, GetSysColor(COLOR_HIGHLIGHT));
 				SetTextColor(hdc, GetSysColor(COLOR_HIGHLIGHTTEXT));
-
 			} else {
 				SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
 				SetTextColor(hdc, GetSysColor(COLOR_WINDOWTEXT));
@@ -1946,6 +2018,8 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 			FillRect(hdc, &rPad, (HBRUSH)(COLOR_WINDOW + 1));
 
 			if (node->mpFirstChild) {
+				SelectObject(hdc, selected ? GetStockObject(WHITE_PEN) : GetStockObject(BLACK_PEN));
+
 				int boxsize = (mItemHeight - 5) & ~1;
 				int x1 = x + 2;
 				int y1 = y + 2;
@@ -2226,7 +2300,7 @@ void ATHistoryWindow::UpdateScrollBar() {
 	si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
 	si.nPage = mPageItems * mItemHeight;
 	si.nMin = 0;
-	si.nMax = mScrollMax;
+	si.nMax = mScrollMax + si.nPage - 1;
 	si.nPos = mScrollY;
 	si.nTrackPos = 0;
 	SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
@@ -2257,8 +2331,15 @@ void ATHistoryWindow::UpdateOpcodes() {
 	uint32 dist = c - mLastCounter;
 	uint32 l = cpu.GetHistoryLength();
 
-	if (dist > l)
+	if (dist == 0)
+		return;
+
+	if (dist > l) {
+		ClearAllNodes();
+		Reset();
 		dist = l;
+		mLastCounter = c - l;
+	}
 
 	bool quickMode = false;
 	if (dist > 1000) {
@@ -2330,8 +2411,10 @@ void ATHistoryWindow::UpdateOpcodes() {
 		last = InsertNode(parent, parent ? parent->mpLastChild : NULL, "", &hent);
 	}
 
-	if (last && mLastS == cpu.GetS())
+	if (last) {
 		EnsureNodeVisible(last);
+		mpSelectedNode = last;
+	}
 
 	if (quickMode)
 		InvalidateRect(mhwnd, NULL, TRUE);
@@ -2340,6 +2423,17 @@ void ATHistoryWindow::UpdateOpcodes() {
 
 	if (mbDirtyScrollBar)
 		UpdateScrollBar();
+}
+
+void ATHistoryWindow::ClearAllNodes() {
+	mpSelectedNode = NULL;
+
+	FreeNodes(&mRootNode);
+	memset(&mRootNode, 0, sizeof mRootNode);
+	mRootNode.mbExpanded = true;
+	mRootNode.mHeight = 1;
+
+	InvalidateRect(mhwnd, NULL, TRUE);
 }
 
 ATHistoryWindow::TreeNode *ATHistoryWindow::InsertNode(TreeNode *parent, TreeNode *insertAfter, const char *text, const ATCPUHistoryEntry *hent) {
@@ -2418,6 +2512,7 @@ ATHistoryWindow::TreeNode *ATHistoryWindow::AllocNode() {
 		for(int i=0; i<255; ++i) {
 			TreeNode *n = &b->mNodes[i];
 
+			n->mpPrevSibling = n;
 			n->mpNextSibling = next;
 			next = n;
 		}
@@ -2429,11 +2524,18 @@ ATHistoryWindow::TreeNode *ATHistoryWindow::AllocNode() {
 
 	TreeNode *p = mpNodeFreeList;
 
+	VDASSERT(p->mpPrevSibling == p);
+
 	mpNodeFreeList = p->mpNextSibling;
+
+	p->mpPrevSibling = NULL;
 	return p;
 }
 
 void ATHistoryWindow::FreeNode(TreeNode *node) {
+	VDASSERT(node->mpPrevSibling != node);
+
+	node->mpPrevSibling = node;
 	node->mpNextSibling = mpNodeFreeList;
 	mpNodeFreeList = node;
 }
@@ -2650,8 +2752,11 @@ LRESULT ATConsoleWindow::CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, 
 		} else if (wParam == VK_F10) {
 			ATGetDebugger()->StepOver(kATDebugSrcMode_Disasm);
 			return 0;
-		} else if (wParam == VK_F5) {
-			ATGetDebugger()->Run(kATDebugSrcMode_Disasm);
+		} else if (wParam == VK_F8) {
+			if (ATGetDebugger()->IsRunning())
+				ATGetDebugger()->Break();
+			else
+				ATGetDebugger()->Run(kATDebugSrcMode_Disasm);
 			return 0;
 		} else if (wParam == VK_ESCAPE) {
 			ATActivateUIPane(kATUIPaneId_Display, true);
@@ -2670,7 +2775,7 @@ LRESULT ATConsoleWindow::CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, 
 		case VK_CANCEL:
 		case VK_F11:
 		case VK_F10:
-		case VK_F5:
+		case VK_F8:
 		case VK_ESCAPE:
 		case VK_UP:
 		case VK_DOWN:
@@ -2714,7 +2819,7 @@ public:
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
 	void OnDebuggerEvent(ATDebugEvent eventId);
 
-	void SetPosition(uint16 addr);
+	void SetPosition(uint32 addr);
 
 protected:
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
@@ -2726,8 +2831,8 @@ protected:
 	void OnDestroy();
 	void OnSize();
 	void OnPaint();
-	void RemakeView(uint16 focusAddr);
-	bool GetAddressFromPoint(int x, int y, uint16& addr) const;
+	void RemakeView(uint32 focusAddr);
+	bool GetAddressFromPoint(int x, int y, uint32& addr) const;
 
 	HWND	mhwndAddress;
 	HMENU	mMenu;
@@ -2774,12 +2879,12 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					if (hdr->code == CBEN_ENDEDIT) {
 						const NMCBEENDEDIT *info = (const NMCBEENDEDIT *)hdr;
 
-						sint32 addr = ATGetDebugger()->ResolveSymbol(info->szText);
+						sint32 addr = ATGetDebugger()->ResolveSymbol(info->szText, true);
 
 						if (addr < 0)
 							MessageBeep(MB_ICONERROR);
 						else
-							SetPosition((uint16)addr);
+							SetPosition(addr);
 
 						return FALSE;
 					}
@@ -2804,7 +2909,7 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 							POINT pt = {x, y};
 							ScreenToClient(mhwnd, &pt);
 
-							uint16 addr;
+							uint32 addr;
 							if (GetAddressFromPoint(pt.x, pt.y, addr)) {
 								if (g_sim.IsReadBreakEnabled() && g_sim.GetReadBreakAddress() == addr)
 									g_sim.SetReadBreakAddress();
@@ -2819,7 +2924,7 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 							POINT pt = {x, y};
 							ScreenToClient(mhwnd, &pt);
 
-							uint16 addr;
+							uint32 addr;
 							if (GetAddressFromPoint(pt.x, pt.y, addr)) {
 								if (g_sim.IsWriteBreakEnabled() && g_sim.GetWriteBreakAddress() == addr)
 									g_sim.SetWriteBreakAddress();
@@ -2844,10 +2949,11 @@ bool ATMemoryWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, 
 				if (GetKeyState(VK_CONTROL) < 0) {
 					ATGetDebugger()->Break();
 				}
-			} else if (wParam == VK_F5) {
-				ATGetDebugger()->Run(kATDebugSrcMode_Same);
 			} else if (wParam == VK_F8) {
-				ATGetDebugger()->Break();
+				if (ATGetDebugger()->IsRunning())
+					ATGetDebugger()->Break();
+				else
+					ATGetDebugger()->Run(kATDebugSrcMode_Same);
 			} else if (wParam == VK_F10) {
 				ATGetDebugger()->StepOver(kATDebugSrcMode_Same);
 				return true;
@@ -2864,7 +2970,7 @@ bool ATMemoryWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, 
 			switch(wParam) {
 				case VK_PAUSE:
 				case VK_CANCEL:
-				case VK_F9:
+				case VK_F8:
 				case VK_F10:
 				case VK_F11:
 					return true;
@@ -2883,7 +2989,7 @@ bool ATMemoryWindow::OnCreate() {
 	if (!mhwndAddress)
 		return false;
 
-	VDSetWindowTextFW32(mhwndAddress, L"$%04X", mViewStart);
+	VDSetWindowTextFW32(mhwndAddress, L"%hs", ATGetDebugger()->GetAddressText(mViewStart, true).c_str());
 
 	HDC hdc = GetDC(mhwnd);
 	if (hdc) {
@@ -2958,17 +3064,31 @@ void ATMemoryWindow::OnPaint() {
 		int rowStart	= (ps.rcPaint.top - mTextArea.top) / mLineHeight;
 		int rowEnd		= (ps.rcPaint.bottom - mTextArea.top + mLineHeight - 1) / mLineHeight;
 
-		for(int rowIndex = rowStart; rowIndex < rowEnd; ++rowIndex) {
-			uint32 addr = (mViewStart + (rowIndex << 4)) & 0xffff;
+		uint32 incMask = 0xffff;
 
-			mTempLine.sprintf("%04X:", addr);
-			mTempLine2 = "     ";
+		switch(mViewStart & kATAddressSpaceMask) {
+			case kATAddressSpace_PORTB:
+				incMask = 0xfffff;
+				break;
+
+			case kATAddressSpace_VBXE:
+				incMask = 0x7ffff;
+				break;
+		}
+
+		uint32 addrBase = mViewStart & ~incMask;
+		for(int rowIndex = rowStart; rowIndex < rowEnd; ++rowIndex) {
+			uint32 addr = addrBase + ((mViewStart + (rowIndex << 4)) & incMask);
+
+			mTempLine.sprintf("%s:", ATGetDebugger()->GetAddressText(addr, false).c_str());
+			mTempLine2.clear();
+			mTempLine2.resize(mTempLine.size(), ' ');
 
 			uint32 changeMask = (rowIndex < (int)mChangedBits.size()) ? mChangedBits[rowIndex] : 0;
 			for(int i=0; i<16; ++i) {
-				uint16 baddr = (addr + i) & 0xffff;
+				uint32 baddr = addrBase + ((addr + i) & incMask);
 
-				data[i] = g_sim.DebugReadByte(baddr);
+				data[i] = g_sim.DebugGlobalReadByte(baddr);
 
 				if (changeMask & (1 << i)) {
 					mTempLine += "   ";
@@ -3012,7 +3132,7 @@ void ATMemoryWindow::OnPaint() {
 	::EndPaint(mhwnd, &ps);
 }
 
-void ATMemoryWindow::RemakeView(uint16 focusAddr) {
+void ATMemoryWindow::RemakeView(uint32 focusAddr) {
 	ATCPUEmulatorMemory& mem = g_sim.GetCPUMemory();
 
 	bool changed = false;
@@ -3055,7 +3175,7 @@ void ATMemoryWindow::RemakeView(uint16 focusAddr) {
 		::InvalidateRect(mhwnd, NULL, TRUE);
 }
 
-bool ATMemoryWindow::GetAddressFromPoint(int x, int y, uint16& addr) const {
+bool ATMemoryWindow::GetAddressFromPoint(int x, int y, uint32& addr) const {
 	if (!mLineHeight || !mCharWidth)
 		return false;
 	
@@ -3065,15 +3185,36 @@ bool ATMemoryWindow::GetAddressFromPoint(int x, int y, uint16& addr) const {
 	if ((uint32)(y - mTextArea.top) >= (uint32)(mTextArea.bottom - mTextArea.top))
 		return false;
 
-	int xc = (x - mTextArea.left) / mCharWidth;
+	int addrLen = 4;
+
+	switch(mViewStart & kATAddressSpaceMask) {
+		case kATAddressSpace_CPU:
+			if (mViewStart >= 0x010000)
+				addrLen = 6;
+			break;
+
+		case kATAddressSpace_ANTIC:
+			addrLen = 6;
+			break;
+
+		case kATAddressSpace_VBXE:
+			addrLen = 7;
+			break;
+
+		case kATAddressSpace_PORTB:
+			addrLen = 7;
+			break;
+	}
+
+	int xc = (x - mTextArea.left) / mCharWidth - addrLen;
 	int yc = (y - mTextArea.top) / mLineHeight;
 
 	// 0000: 00 00 00 00 00 00 00 00-00 00 00 00 00 00 00 00 |................|
-	if (xc >= 6 && xc < 54) {
-		addr = (uint16)((yc << 4) + (xc - 6)/3);
+	if (xc >= 2 && xc < 50) {
+		addr = mViewStart + (uint16)((yc << 4) + (xc - 2)/3);
 		return true;
-	} else if (xc >= 55 && xc < 71) {
-		addr = (uint16)((yc << 4) + (xc - 55));
+	} else if (xc >= 51 && xc < 67) {
+		addr = mViewStart + (uint16)((yc << 4) + (xc - 51));
 		return true;
 	}
 
@@ -3087,8 +3228,8 @@ void ATMemoryWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& st
 void ATMemoryWindow::OnDebuggerEvent(ATDebugEvent eventId) {
 }
 
-void ATMemoryWindow::SetPosition(uint16 addr) {
-	VDSetWindowTextFW32(mhwndAddress, L"$%04X", addr);
+void ATMemoryWindow::SetPosition(uint32 addr) {
+	VDSetWindowTextFW32(mhwndAddress, L"%hs", ATGetDebugger()->GetAddressText(addr, true).c_str());
 
 	RemakeView(addr);
 }
@@ -3190,10 +3331,7 @@ void ATShowConsole() {
 		ATSavePaneLayout(NULL);
 		g_uiDebuggerMode = true;
 
-		if (ATRestorePaneLayout(NULL)) {
-			if (ATGetUIPane(kATUIPaneId_Console))
-				ATActivateUIPane(kATUIPaneId_Console, true);
-		} else {
+		if (!ATRestorePaneLayout(NULL)) {
 			ATActivateUIPane(kATUIPaneId_Console, !ATGetUIPane(kATUIPaneId_Console));
 			ATActivateUIPane(kATUIPaneId_Registers, false);
 		}
@@ -3229,6 +3367,14 @@ bool ATIsDebugConsoleActive() {
 	return g_uiDebuggerMode;
 }
 
+void *ATGetConsoleFontW32() {
+	return g_monoFont;
+}
+
+int ATGetConsoleFontLineHeightW32() {
+	return g_monoFontLineHeight;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void ATInitUIPanes() {
@@ -3247,6 +3393,21 @@ void ATInitUIPanes() {
 
 		if (!g_monoFont)
 			g_monoFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+
+		g_monoFontLineHeight = 10;
+		HDC hdc = GetDC(NULL);
+		if (hdc) {
+			HGDIOBJ hgoFont = SelectObject(hdc, g_monoFont);
+			if (hgoFont) {
+				TEXTMETRIC tm={0};
+
+				if (GetTextMetrics(hdc, &tm))
+					g_monoFontLineHeight = tm.tmHeight + tm.tmExternalLeading;
+			}
+
+			SelectObject(hdc, hgoFont);
+			ReleaseDC(NULL, hdc);
+		}
 	}
 
 	g_hmenuSrcContext = LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_SOURCE_CONTEXT_MENU));

@@ -81,6 +81,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\cassette.k"
+				>
+			</File>
+			<File
 				RelativePath=".\source\cio.k"
 				>
 			</File>

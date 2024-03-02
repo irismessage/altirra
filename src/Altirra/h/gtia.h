@@ -72,6 +72,7 @@ public:
 		kArtifactNone,
 		kArtifactNTSC,
 		kArtifactPAL,
+		kArtifactNTSCHi,
 		kArtifactCount
 	};
 
@@ -87,11 +88,17 @@ public:
 	void ResetColors();
 	void GetPalette(uint32 pal[256]) const;
 
+	bool IsVsyncEnabled() const { return mbVsyncEnabled; }
+	void SetVsyncEnabled(bool enabled) { mbVsyncEnabled = enabled; }
+
 	AnalysisMode GetAnalysisMode() const { return mAnalysisMode; }
 	void SetAnalysisMode(AnalysisMode mode);
 
 	OverscanMode GetOverscanMode() const { return mOverscanMode; }
 	void SetOverscanMode(OverscanMode mode);
+
+	bool IsOverscanPALExtended() const { return mbOverscanPALExtended; }
+	void SetOverscanPALExtended(bool extended);
 
 	void GetFrameSize(int& w, int& h) const;
 
@@ -190,7 +197,11 @@ protected:
 	ArtifactMode	mArtifactMode;
 	OverscanMode	mOverscanMode;
 	VBlankMode		mVBlankMode;
+	bool	mbVsyncEnabled;
 	bool	mbBlendMode;
+	bool	mbOverscanPALExtended;
+	bool	mbOverscanPALExtendedThisFrame;
+	bool	mbPALThisFrame;
 	bool	mbInterlaceEnabled;
 	bool	mbInterlaceEnabledThisFrame;
 	bool	mbFieldPolarity;
@@ -264,6 +275,8 @@ protected:
 	vdfastvector<uint8>		mPreArtifactFrameBuffer;
 	VDPixmap	mPreArtifactFrame;
 	VDPixmap	mPreArtifactFrameVisible;
+	uint32		mPreArtifactFrameVisibleY1;
+	uint32		mPreArtifactFrameVisibleY2;
 
 	ATArtifactingEngine	*mpArtifactingEngine;
 	vdrefptr<VDVideoDisplayFrame> mpLastFrame;

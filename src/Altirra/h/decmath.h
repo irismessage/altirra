@@ -37,9 +37,11 @@ void ATAccelEXP(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelEXP10(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelSKPSPC(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelISDIGT(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
+void ATAccelNORMALIZE(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelPLYEVL(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelZFR0(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelZF1(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
+void ATAccelZFL(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelLDBUFA(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelFLD0R(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelFLD0P(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
@@ -48,5 +50,6 @@ void ATAccelFLD1P(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelFST0R(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelFST0P(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 void ATAccelFMOVE(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
+void ATAccelREDRNG(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem);
 
 #endif

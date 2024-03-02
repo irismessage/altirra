@@ -17,6 +17,10 @@
 		DebugInformationFormat="3"
 	/>
 	<UserMacro
+		Name="VDBaseDir"
+		Value="..\.."
+	/>
+	<UserMacro
 		Name="VDDirTag"
 		Value="$(VDConfigDirTag)$(VDPlatformDirTag)"
 	/>
@@ -31,9 +35,5 @@
 	<UserMacro
 		Name="VDObjPath"
 		Value="$(VDBaseDir)\obj\$(VDDirTag)\$(ProjectName)"
-	/>
-	<UserMacro
-		Name="VDBaseDir"
-		Value="..\.."
 	/>
 </VisualStudioPropertySheet>

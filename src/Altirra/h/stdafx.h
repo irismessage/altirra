@@ -17,6 +17,7 @@
 
 #pragma once
 #pragma warning(disable: 4355)
+#define _SCL_SECURE_NO_WARNINGS
 #include <stddef.h>
 #include <string.h>
 #include <stdio.h>

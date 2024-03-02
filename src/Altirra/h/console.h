@@ -67,7 +67,11 @@ enum {
 	kATUIPaneId_History,
 	kATUIPaneId_Memory,
 	kATUIPaneId_PrinterOutput,
+	kATUIPaneId_Profiler,
 	kATUIPaneId_Count
 };
+
+void *ATGetConsoleFontW32();
+int ATGetConsoleFontLineHeightW32();
 
 #endif

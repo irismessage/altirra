@@ -14,7 +14,8 @@ source\keyboard.k \
 source\nmi.k \
 source\screen.k \
 source\sio.k \
-source\mathpack.k
+source\mathpack.k \
+source\cassette.k
 
 all: hlekernel
 

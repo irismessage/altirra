@@ -111,6 +111,7 @@ namespace ATKernelSymbols {
 		SDMCTL = 0x022F,
 		SDLSTL = 0x0230,
 		SDLSTH = 0x0231,
+		SSKCTL = 0x0232,
 		COLDST = 0x0244,
 		GPRIOR = 0x026F,
 		JVECK  = 0x028C,
@@ -199,6 +200,7 @@ namespace ATKernelSymbols {
 		FPI    = 0xD9D2,	// __ftol
 		ZFR0   = 0xDA44,
 		ZF1    = 0xDA46,
+		ZFL    = 0xDA48,	// undocumented (used by Atari Basic) - zero Y bytes at (X)
 		LDBUFA = 0xDA51,	// undocumented (used by Atari Basic) - mwa #ldbuf inbuff
 		FADD   = 0xDA66,
 		FSUB   = 0xDA60,
@@ -206,6 +208,7 @@ namespace ATKernelSymbols {
 		FDIV   = 0xDB28,
 		SKPSPC = 0xDBA1,	// undocumented (used by Atari Basic) - skip spaces starting at INBUFF[CIX]
 		ISDIGT = 0xDBAF,	// undocumented (used by Atari Basic) - set carry if INBUFF[CIX] is not a digit
+		NORMALIZE = 0xDC00,	// undocumented (used by Atari Basic) - normalize mantissa/exponent in FR0
 		PLYEVL = 0xDD40,
 		FLD0R  = 0xDD89,
 		FLD0P  = 0xDD8D,
@@ -216,6 +219,7 @@ namespace ATKernelSymbols {
 		FMOVE  = 0xDDB6,
 		EXP    = 0xDDC0,
 		EXP10  = 0xDDCC,
+		REDRNG = 0xDE95,	// undocumented (used by Atari Basic) - reduce range via y = (x-1)/(x+1)
 		LOG    = 0xDECD,
 		LOG10  = 0xDED1
 	};
@@ -223,11 +227,21 @@ namespace ATKernelSymbols {
 	// kernel symbols
 	enum {
 		CASETV = 0xE440,
+		DISKIV = 0xE450,
 		DSKINV = 0xE453,
 		CIOV   = 0xE456,
 		SIOV   = 0xE459,
+		SETVBV = 0xE45C,
 		SYSVBV = 0xE45F,
 		XITVBV = 0xE462,
+		SIOINV = 0xE465,
+		SENDEV = 0xE468,
+		INTINV = 0xE46B,
+		CIOINV = 0xE46E,
+		BLKBDV = 0xE471,
+		WARMSV = 0xE474,
+		COLDSV = 0xE477,
+		RBLOKV = 0xE47A,
 		CSOPIV = 0xE47D
 	};
 }

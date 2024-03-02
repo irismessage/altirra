@@ -71,7 +71,17 @@ enum ATSimulatorEvent {
 	kATSimEvent_EndOfFrame,
 	kATSimEvent_ScanlineBreakpoint,
 	kATSimEvent_Resume,
-	kATSimEvent_Suspend
+	kATSimEvent_Suspend,
+	kATSimEvent_VerifierFailure
+};
+
+enum {
+	kATAddressSpace_CPU		= 0x00000000,
+	kATAddressSpace_ANTIC	= 0x10000000,
+	kATAddressSpace_VBXE	= 0x20000000,
+	kATAddressSpace_PORTB	= 0x30000000,
+	kATAddressOffsetMask	= 0x00FFFFFF,
+	kATAddressSpaceMask		= 0xF0000000
 };
 
 class ATSaveStateReader;
@@ -86,6 +96,8 @@ class ATInputManager;
 class IATPrinterEmulator;
 class ATVBXEEmulator;
 class ATRTime8Emulator;
+class ATCPUProfiler;
+class ATCPUVerifier;
 
 class IATSimulatorCallback {
 public:
@@ -93,7 +105,7 @@ public:
 };
 
 class ATSimulator : ATCPUEmulatorMemory,
-					IATAnticEmulatorConnections,
+					ATAnticEmulatorConnections,
 					IATPokeyEmulatorConnections,
 					IATGTIAEmulatorConnections,
 					IATDiskActivity,
@@ -152,6 +164,7 @@ public:
 	bool IsAutoLoadKernelSymbolsEnabled() const { return mbAutoLoadKernelSymbols; }
 	bool IsDualPokeysEnabled() const { return mbDualPokeys; }
 	bool IsVBXESharedMemoryEnabled() const { return mbVBXESharedMemory; }
+	bool IsVBXEAltPageEnabled() const { return mbVBXEUseD7xx; }
 	bool IsRTime8Enabled() const { return mpRTime8 != NULL; }
 
 	uint8	GetBankRegister() const { return mPORTBOUT | ~mPORTBDDR; }
@@ -168,6 +181,17 @@ public:
 	void SetReadBreakAddress(uint16 addr);
 	void SetWriteBreakAddress();
 	void SetWriteBreakAddress(uint16 addr);
+
+	ATCPUProfiler *GetProfiler() const { return mpProfiler; }
+	bool IsProfilingEnabled() const { return mpProfiler != NULL; }
+	void SetProfilingEnabled(bool enabled);
+
+	ATCPUVerifier *GetVerifier() const { return mpVerifier; }
+	bool IsVerifierEnabled() const { return mpVerifier != NULL; }
+	void SetVerifierEnabled(bool enabled);
+
+	bool IsRandomFillEnabled() const { return mbRandomFillEnabled; }
+	void SetRandomFillEnabled(bool enabled) { mbRandomFillEnabled = enabled; }
 
 	void SetBreakOnFrameEnd(bool enabled) { mbBreakOnFrameEnd = enabled; }
 	void SetBreakOnScanline(int scanline) { mBreakOnScanline = scanline; }
@@ -188,6 +212,7 @@ public:
 	void SetDualPokeysEnabled(bool enable);
 	void SetVBXEEnabled(bool enable);
 	void SetVBXESharedMemoryEnabled(bool enable);
+	void SetVBXEAltPageEnabled(bool enable);
 	void SetRTime8Enabled(bool enable);
 
 	bool IsPrinterEnabled() const;
@@ -198,6 +223,7 @@ public:
 	void Resume();
 	void Suspend();
 
+	void UnloadAll();
 	void Load(const wchar_t *s);
 	void LoadProgram(const wchar_t *s);
 
@@ -215,13 +241,22 @@ public:
 	AdvanceResult AdvanceUntilInstructionBoundary();
 	AdvanceResult Advance();
 
-	uint8 DebugReadByte(uint16 address);
+	uint8 DebugReadByte(uint16 address) const;
 	uint16 DebugReadWord(uint16 address);
 	uint32 DebugRead24(uint16 address);
+
+	uint8 DebugExtReadByte(uint32 address);
+
+	uint8 DebugGlobalReadByte(uint32 address);
+	uint16 DebugGlobalReadWord(uint32 address);
+	uint32 DebugGlobalRead24(uint32 address);
+	void DebugGlobalWriteByte(uint32 address, uint8 value);
 
 	uint8 DebugAnticReadByte(uint16 address) {
 		return AnticReadByte(address);
 	}
+
+	bool IsKernelROMLocation(uint16 address) const;
 
 	void DumpPIAState();
 
@@ -236,8 +271,11 @@ private:
 
 	uint8 CPUReadByte(uint16 address);
 	uint8 CPUDebugReadByte(uint16 address);
+	uint8 CPUDebugExtReadByte(uint16 address, uint8 bank);
 	void CPUWriteByte(uint16 address, uint8 value);
-	uint32 GetTimestamp();
+	uint32 CPUGetCycle();
+	uint32 CPUGetUnhaltedCycle();
+	uint32 CPUGetTimestamp();
 	uint8 CPUHookHit(uint16 address);
 	uint8 AnticReadByte(uint16 address);
 	void AnticAssertNMI();
@@ -251,6 +289,7 @@ private:
 	void PokeyNegateIRQ();
 	void PokeyBreak();
 	bool PokeyIsInInterrupt() const;
+	bool PokeyIsKeyPushOK(uint8 c) const;
 	void OnDiskActivity(uint8 drive, bool active, uint32 sector);
 	void VBXERequestMemoryMapUpdate();
 	void VBXEAssertIRQ();
@@ -272,6 +311,7 @@ private:
 	bool mbTurbo;
 	bool mbFrameSkip;
 	bool mbPALMode;
+	bool mbRandomFillEnabled;
 	bool mbDiskSIOPatchEnabled;
 	bool mbDiskSectorCounterEnabled;
 	bool mbCassetteSIOPatchEnabled;
@@ -282,6 +322,7 @@ private:
 	bool mbAutoLoadKernelSymbols;
 	bool mbDualPokeys;
 	bool mbVBXESharedMemory;
+	bool mbVBXEUseD7xx;
 	int mBreakOnScanline;
 
 	int		mStartupDelay;
@@ -326,6 +367,9 @@ private:
 	};
 
 	uint32	mIRQFlags;
+	uint32	mVBXEPage;
+	uint32	mHookPage;
+	uint8	mHookPageByte;
 
 	uint32	mReadBreakAddress;
 	uint32	mWriteBreakAddress;
@@ -345,8 +389,8 @@ private:
 	vdfastvector<uint8>		mProgramToLoad;
 	bool		mbProgramLoadPending;
 	ptrdiff_t	mProgramLoadIndex;
-	uint32		mProgramModuleIds[2];
-	uint32		mCartModuleIds[2];
+	uint32		mProgramModuleIds[3];
+	uint32		mCartModuleIds[3];
 
 	typedef vdfastvector<IATSimulatorCallback *> Callbacks;
 	Callbacks	mCallbacks;
@@ -354,6 +398,8 @@ private:
 	bool		mbCallbacksChanged;
 
 	IATHLEKernel	*mpHLEKernel;
+	ATCPUProfiler	*mpProfiler;
+	ATCPUVerifier	*mpVerifier;
 
 	////////////////////////////////////
 	const uint8	*mReadMemoryMap[256];
@@ -371,9 +417,16 @@ private:
 	uint8	mBASICROM[0x2000];
 	uint8	mOtherKernelROM[0x4000];
 
-	uint8	mMemory[0x110000];
+	uint8	mMemory[0x140000];
 	uint8	mDummyRead[256];
 	uint8	mDummyWrite[256];
+
+	const uint8	*mHighMemoryReadPageTables[3][256];
+	uint8	*mHighMemoryWritePageTables[3][256];
+	const uint8	*mDummyReadPageTable[256];
+	uint8	*mDummyWritePageTable[256];
+	const uint8	**mReadBankTable[256];
+	uint8	**mWriteBankTable[256];
 };
 
 #endif

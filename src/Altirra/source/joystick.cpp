@@ -133,7 +133,7 @@ bool ATController::Init(LPCDIDEVICEINSTANCE devInst, HWND hwnd, ATInputManager *
 	mpInputManager = inputMan;
 
 	memcpy(&mId, &devInst->guidInstance, sizeof mId);
-	mUnit = inputMan->RegisterInputUnit(mId);
+	mUnit = inputMan->RegisterInputUnit(mId, VDTextAToW(devInst->tszInstanceName).c_str());
 
 	return true;
 }

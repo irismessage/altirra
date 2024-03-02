@@ -26,6 +26,7 @@ struct ATDecFloat {
 	uint8	mMantissa[5];
 
 	void SetZero();
+	void SetOne();
 	bool SetDouble(double d);
 
 	ATDecFloat operator-() const;
@@ -39,6 +40,15 @@ struct ATDecFloat {
 void ATDecFloat::SetZero() {
 	mSignExp = 0;
 	mMantissa[0] = 0;
+	mMantissa[1] = 0;
+	mMantissa[2] = 0;
+	mMantissa[3] = 0;
+	mMantissa[4] = 0;
+}
+
+void ATDecFloat::SetOne() {
+	mSignExp = 0x40;
+	mMantissa[0] = 0x01;
 	mMantissa[1] = 0;
 	mMantissa[2] = 0;
 	mMantissa[3] = 0;
@@ -1131,6 +1141,33 @@ void ATAccelISDIGT(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 		cpu.ClearFlagC();
 }
 
+void ATAccelNORMALIZE(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
+	ATDecFloat fr0(ATReadFR0(mem));
+	int count = 0;
+
+	while(count < 5 && !fr0.mMantissa[count])
+		++count;
+
+	if (count == 0)
+		return;
+	else if (count >= 5)
+		fr0.SetZero();
+	else {
+		for(int i=count; i<5; ++i)
+			fr0.mMantissa[i-count] = fr0.mMantissa[i];
+
+		for(int i=0; i<count; ++i)
+			fr0.mMantissa[count+i] = 0;
+
+		if ((fr0.mSignExp & 0x7f) < 64 - 49 + count)
+			fr0.SetZero();
+		else
+			fr0.mSignExp -= count;
+	}
+
+	ATWriteFR0(mem, fr0);
+}
+
 void ATAccelPLYEVL(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	uint16 addr = ((uint16)cpu.GetY() << 8) + cpu.GetX();
 	uint8 coeffs = cpu.GetA();
@@ -1173,6 +1210,15 @@ void ATAccelZF1(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 
 	for(int i=0; i<6; ++i)
 		mem.WriteByte(addr++, 0);
+}
+
+void ATAccelZFL(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
+	uint8 addr = cpu.GetX();
+	uint8 len = cpu.GetY();
+
+	do {
+		mem.WriteByte(addr++, 0);
+	} while(--len);
 }
 
 void ATAccelLDBUFA(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
@@ -1232,4 +1278,24 @@ void ATAccelFST0P(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 void ATAccelFMOVE(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	for(int i=0; i<6; ++i)
 		mem.WriteByte(ATKernelSymbols::FR1+i, mem.ReadByte(ATKernelSymbols::FR0+i));
+}
+
+void ATAccelREDRNG(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
+	ATDecFloat one;
+	one.SetOne();
+
+	ATDecFloat x = ATReadFR0(mem);
+
+	ATDecFloat num;
+	ATDecFloat den;
+	ATDecFloat res;
+
+	cpu.ClearFlagC();
+	if (!ATDecFloatAdd(num, x, -one) ||
+		!ATDecFloatAdd(den, x, one) ||
+		!ATDecFloatDiv(res, num, den)) {
+		cpu.SetFlagC();
+	} else {
+		ATWriteFR0(mem, res);
+	}
 }

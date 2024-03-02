@@ -35,6 +35,10 @@ public:
 	bool IsEnabled() const;
 	void SetEnabled(bool enabled);
 
+	void SetHookPageByte(uint8 page) {
+		mHookPageByte = page;
+	}
+
 	void SetOutput(IATPrinterOutput *output) {
 		mpOutput = output;
 	}
@@ -57,6 +61,7 @@ protected:
 	IATPrinterOutput *mpOutput;
 
 	bool		mbEnabled;
+	uint8		mHookPageByte;
 	uint32		mLineBufIdx;
 	uint8		mLineBuf[132];
 };
@@ -115,7 +120,7 @@ uint8 ATPrinterEmulator::OnCIOCommand(ATCPUEmulator *cpu, ATCPUEmulatorMemory *m
 	switch(cmd) {
 		case CIOCmdOpen:
 			mem->WriteByte(ATKernelSymbols::ICPTL + iocb, 0x35);
-			mem->WriteByte(ATKernelSymbols::ICPTH + iocb, 0xD7);
+			mem->WriteByte(ATKernelSymbols::ICPTH + iocb, mHookPageByte);
 			cpu->SetY(CIOStatSuccess);
 			cpu->SetP(cpu->GetP() & ~(AT6502::kFlagN | AT6502::kFlagZ));
 			break;

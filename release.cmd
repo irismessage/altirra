@@ -44,11 +44,13 @@ zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	src ^
 	src\Kasumi\data\Tuffy.* ^
 	src\Kernel\Makefile ^
-	-i *.vcproj *.sln *.cpp *.h *.fx *.rules *.asm *.xasm *.vsprops *.rc *.asm64 *.inl *.fxh *.vdfx *.inc *.k *.txt
+	Copying ^
+	README.html ^
+	-i *.vcproj *.sln *.cpp *.h *.fx *.rules *.asm *.xasm *.vsprops *.rc *.asm64 *.inl *.fxh *.vdfx *.inc *.k *.txt *.bmp
 
 zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	Copying ^
-	README.txt ^
+	README.html ^
 	release.cmd ^
 	src\Kasumi\data\Tuffy.* ^
 	src\Kernel\source\atarifont.bin ^
@@ -58,7 +60,7 @@ zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	out\release\kernel.rom
 
 
-zip -9 -X -j publish\Altirra-!_verid!.zip out\release\Altirra.exe copying README.txt
+zip -9 -X -j publish\Altirra-!_verid!.zip out\release\Altirra.exe copying README.html
 copy out\release\Altirra.pdb publish\Altirra-!_verid!.pdb
 
 dir publish

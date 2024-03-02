@@ -103,6 +103,13 @@ isdigt:
 	#}
 	rts
 
+	org		$dc00
+normalize:
+	#{
+		ATAccelNORMALIZE(*mpCPU, *mpMemory);
+	#}
+	rts
+
 	org		$dd40
 plyevl:
 	#{
@@ -173,6 +180,13 @@ exp10:
 	#}
 	rts
 
+	org		$de95
+redrng:
+	#{
+		ATAccelREDRNG(*mpCPU, *mpMemory);
+	#}
+	rts
+
 	org		$decd
 log:
 	#{
@@ -186,3 +200,33 @@ log10:
 		ATAccelLOG10(*mpCPU, *mpMemory);
 	#}
 	rts
+
+;===========================================================
+; HALF[DF6C] - Atari Basic 0.5 constant (undocumented)
+	org		$df6c
+half:
+	.fl		0.5
+
+
+;===========================================================
+; _ATNCOEF - Atari Basic ATN() coefficients (undocumented)
+;
+
+	org		$dfae
+atncoef:	;coefficients for atn(x) ~= f(x^2)
+			;see Abramowitz & Stegun 4.4.49
+	.fl		0
+	.fl		0	
+	.fl		0.0028662257
+	.fl		-0.0161657367
+	.fl		0.0492096138
+	.fl		-0.0752896400
+	.fl		0.1065626393
+	.fl		-0.1420889944
+	.fl		0.1999355085
+	.fl		-0.3333314528
+	.fl		1.0
+
+	org		$dff0
+pi4:		;pi/4
+	.fl		0.78539816339744830961566084581988

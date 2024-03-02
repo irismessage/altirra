@@ -60,6 +60,7 @@ public:
 
 	void AutoSizeColumns();
 	void Clear();
+	void ClearExtraColumns();
 	void DeleteItem(int index);
 	int GetColumnCount() const;
 	int GetItemCount() const;
@@ -92,6 +93,10 @@ public:
 		return mEventItemSelectionChanged;
 	}
 
+	VDEvent<VDUIProxyListView, int>& OnItemDoubleClicked() {
+		return mEventItemDoubleClicked;
+	}
+
 	VDEvent<VDUIProxyListView, int>& OnItemCheckedChanged() {
 		return mEventItemCheckedChanged;
 	}
@@ -116,6 +121,7 @@ protected:
 
 	VDEvent<VDUIProxyListView, int> mEventColumnClicked;
 	VDEvent<VDUIProxyListView, int> mEventItemSelectionChanged;
+	VDEvent<VDUIProxyListView, int> mEventItemDoubleClicked;
 	VDEvent<VDUIProxyListView, int> mEventItemCheckedChanged;
 	VDEvent<VDUIProxyListView, LabelEventData> mEventItemLabelEdited;
 };

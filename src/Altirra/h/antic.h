@@ -22,22 +22,37 @@
 	#pragma once
 #endif
 
+#ifndef VDFORCEINLINE
+#define VDFORCEINLINE __forceinline
+#endif
+
 #include <vd2/system/vdtypes.h>
+#include "scheduler.h"
 
 class ATGTIAEmulator;
 class ATSaveStateReader;
 class ATSaveStateWriter;
+class ATScheduler;
 
-class IATAnticEmulatorConnections {
+class ATAnticEmulatorConnections {
 public:
+	VDFORCEINLINE uint8 AnticReadByteFast(uint16 address) {
+		const uint8 *page = mpAnticReadPageMap[address >> 8];
+
+		return page ? page[address & 0xff] : AnticReadByte(address);
+	}
+
 	virtual uint8 AnticReadByte(uint16 address) = 0;
 	virtual void AnticAssertNMI() = 0;
 	virtual void AnticEndFrame() = 0;
 	virtual void AnticEndScanline() = 0;
 	virtual bool AnticIsNextCPUCycleWrite() = 0;
+
+protected:
+	const uint8 *const *mpAnticReadPageMap;
 };
 
-class ATAnticEmulator {
+class ATAnticEmulator : public IATSchedulerCallback {
 public:
 	ATAnticEmulator();
 	~ATAnticEmulator();
@@ -54,6 +69,7 @@ public:
 	uint32	GetFrameCounter() const { return mFrame; }
 	uint32	GetBeamX() const { return mX; }
 	uint32	GetBeamY() const { return mY; }
+	uint32	GetHaltedCycleCount() const { return mHaltedCycles; }
 
 	AnalysisMode	GetAnalysisMode() const { return mAnalysisMode; }
 	void			SetAnalysisMode(AnalysisMode mode) { mAnalysisMode = mode; }
@@ -76,15 +92,15 @@ public:
 	const DLHistoryEntry *GetDLHistory() const { return mDLHistory; }
 	const uint8 *GetActivityMap() const { return mActivityMap[0]; }
 
-	void Init(IATAnticEmulatorConnections *conn, ATGTIAEmulator *gtia);
+	void Init(ATAnticEmulatorConnections *conn, ATGTIAEmulator *gtia, ATScheduler *sch);
 	void ColdReset();
 	void WarmReset();
 	void RequestNMI();
-	bool Advance();
+	VDFORCEINLINE bool Advance();
 	void SyncWithGTIA(int offset);
 	void Decode(int offset);
 
-	uint8 ReadByte(uint8 reg);
+	uint8 ReadByte(uint8 reg) const;
 	void WriteByte(uint8 reg, uint8 value);
 
 	void DumpStatus();
@@ -97,16 +113,23 @@ protected:
 	template<class T>
 	void	ExchangeState(T& io);
 
-	bool	AdvanceHBlank();
+	bool	AdvanceSpecial();
 	void	AdvanceScanline();
 	void	UpdateDMAPattern(int dmaStart, int dmaEnd, uint8 mode);
 	void	UpdateCurrentCharRow();
 	void	UpdatePlayfieldTiming();
+	void	UpdatePlayfieldDataPointers();
 
+	void	OnScheduledEvent(uint32 id);
+	void	QueueRegisterUpdate(uint32 delay, uint8 reg, uint8 value);
+	void	ExecuteQueuedUpdates();
+
+	uint32	mHaltedCycles;
 	uint32	mX;
 	uint32	mY;
 	uint32	mFrame;
 	uint32	mScanlineLimit;
+	uint32	mScanlineMax;
 	uint32	mVSyncStart;
 
 	bool	mbDLExtraLoadsPending;
@@ -114,6 +137,8 @@ protected:
 	bool	mbDLDMAEnabledInTime;
 	int		mPFDisplayCounter;
 	int		mPFDecodeCounter;
+	int		mPFDMALastCheckX;
+	bool	mbPFDMAEnabled;
 	bool	mbPFDMAActive;
 	bool	mbWSYNCActive;
 	bool	mbWSYNCRelease;
@@ -130,10 +155,14 @@ protected:
 	uint32	mLatchedVScroll;		// latched VSCROL at cycle 109 from previous scanline -- used to detect end of vs region
 
 	uint16	mPFDMAPtr;
-	uint16	mPFRowDMAPtr;
+	uint16	mPFRowDMAPtrBase;
+	uint16	mPFRowDMAPtrOffset;
 	uint32	mPFPushCycleMask;
 
 	uint32	mPFCharFetchPtr;
+	uint8	mPFCharMask;
+	uint8	*mpPFDataWrite;
+	uint8	*mpPFDataRead;
 
 	int		mPFWidthShift;
 	int		mPFHScrollDMAOffset;
@@ -151,7 +180,12 @@ protected:
 		kPFNarrow,
 		kPFNormal,
 		kPFWide
-	} mPFWidth, mPFFetchWidth;
+	};
+	
+	PFWidthMode	mPFWidth;
+	PFWidthMode	mPFFetchWidth;
+	PFWidthMode	mPFFetchWidthLatchedStart;
+	PFWidthMode	mPFFetchWidthLatchedEnd;
 
 	uint8	mPFCharSave;
 
@@ -159,6 +193,8 @@ protected:
 	uint32	mPFDisplayEnd;
 	uint32	mPFDMAStart;
 	uint32	mPFDMAEnd;
+	uint32	mPFDMALatchedStart;
+	uint32	mPFDMALatchedEnd;
 	uint32	mPFDMAPatternCacheKey;
 
 	AnalysisMode	mAnalysisMode;
@@ -203,7 +239,20 @@ protected:
 	uint32	mVSyncShiftTime;
 
 	ATGTIAEmulator *mpGTIA;
-	IATAnticEmulatorConnections *mpConn;
+	ATAnticEmulatorConnections *mpConn;
+	ATScheduler *mpScheduler;
+
+	struct QueuedRegisterUpdate {
+		uint32 mTime;
+		uint8 mReg;
+		uint8 mValue;
+	};
+
+	typedef vdfastvector<QueuedRegisterUpdate> RegisterUpdates;
+	RegisterUpdates mRegisterUpdates;
+	uint32	mRegisterUpdateHeadIdx;
+
+	ATEvent *mpRegisterUpdateEvent;
 
 	bool	mbDMAPattern[114];
 	uint8	mDMAPFFetchPattern[114];
@@ -216,5 +265,51 @@ protected:
 	DLHistoryEntry	mDLHistory[312];
 	uint8	mActivityMap[312][114];
 };
+
+VDFORCEINLINE bool ATAnticEmulator::Advance() {
+	bool busActive = false;
+
+	if (mWSYNCPending && !--mWSYNCPending) {
+		// The 6502 doesn't respond to RDY for write cycles, so if the next CPU cycle is a write,
+		// we cannot pull RDY yet.
+		if (mpConn->AnticIsNextCPUCycleWrite())
+			++mWSYNCPending;
+		else
+			mbWSYNCActive = true;
+	}
+
+	if (++mX >= 114)
+		AdvanceScanline();
+
+	busActive = mbDMAPattern[mX];
+	uint8 fetchMode = mDMAPFFetchPattern[mX];
+
+	if (fetchMode & 0x80) {
+		if (AdvanceSpecial())
+			busActive = true;
+
+		fetchMode = mDMAPFFetchPattern[mX];
+	}
+
+	int xoff = mX;
+	switch(fetchMode & 0x7f) {
+	case 1:
+		mpPFDataWrite[xoff] = mpConn->AnticReadByteFast(mPFRowDMAPtrBase + ((mPFRowDMAPtrOffset++) & 0x0fff));
+		break;
+	case 2:
+		{
+			uint8 c = mpPFDataRead[xoff];
+			mPFCharBuffer[xoff - mPFDMAStart] = mpConn->AnticReadByteFast(mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3));
+		}
+		break;
+	}
+
+	busActive |= mbWSYNCActive;
+
+	if (busActive)
+		++mHaltedCycles;
+
+	return busActive;
+}
 
 #endif

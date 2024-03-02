@@ -25,6 +25,8 @@
 #include <vd2/system/vdtypes.h>
 
 class ATCPUEmulator;
+class ATCPUProfiler;
+class ATCPUVerifier;
 class ATSaveStateReader;
 class ATSaveStateWriter;
 
@@ -64,12 +66,17 @@ class VDINTERFACE ATCPUEmulatorMemory {
 public:
 	virtual uint8 CPUReadByte(uint16 address) = 0;
 	virtual uint8 CPUDebugReadByte(uint16 address) = 0;
+	virtual uint8 CPUDebugExtReadByte(uint16 address, uint8 value) = 0;
 	virtual void CPUWriteByte(uint16 address, uint8 value) = 0;
-	virtual uint32 GetTimestamp() = 0;
+	virtual uint32 CPUGetTimestamp() = 0;
+	virtual uint32 CPUGetCycle() = 0;
+	virtual uint32 CPUGetUnhaltedCycle() = 0;
 	virtual uint8 CPUHookHit(uint16 address) = 0;
 
 	const uint8 *const *mpCPUReadPageMap;
 	uint8 *const *mpCPUWritePageMap;
+	const uint8 *const *const *mpCPUReadBankMap;
+	uint8 *const *const *mpCPUWriteBankMap;
 
 	uint8 ReadByte(uint16 address) {
 		const uint8 *readPage = mpCPUReadPageMap[address >> 8];
@@ -82,6 +89,11 @@ public:
 	}
 
 	uint8 ExtReadByte(uint16 address, uint8 bank) {
+		const uint8 *readPage = mpCPUReadBankMap[bank][address >> 8];
+		return readPage ? readPage[address & 0xff] : CPUExtReadByte(address, bank);
+	}
+
+	uint8 CPUExtReadByte(uint16 address, uint8 bank) {
 		if (bank)
 			return 0xFF;
 
@@ -106,6 +118,15 @@ public:
 	}
 
 	void ExtWriteByte(uint16 address, uint8 bank, uint8 value) {
+		uint8 *writePage = mpCPUWriteBankMap[bank][address >> 8];
+
+		if (writePage)
+			writePage[address & 0xff] = value;
+		else
+			CPUExtWriteByte(address, bank, value);
+	}
+
+	void CPUExtWriteByte(uint16 address, uint8 bank, uint8 value) {
 		if (!bank) {
 			uint8 *writePage = mpCPUWritePageMap[address >> 8];
 			if (writePage)
@@ -122,6 +143,7 @@ public:
 };
 
 struct ATCPUHistoryEntry {
+	uint32	mCycle;
 	uint32	mTimestamp;
 	uint16	mPC;
 	uint8	mS;
@@ -207,6 +229,9 @@ public:
 	bool	IsPathfindingEnabled() const { return mbPathfindingEnabled; }
 	void	SetPathfindingEnabled(bool enable);
 
+	void	SetProfiler(ATCPUProfiler *profiler);
+	void	SetVerifier(ATCPUVerifier *verifier);
+
 	bool	AreIllegalInsnsEnabled() const { return mbIllegalInsnsEnabled; }
 	void	SetIllegalInsnsEnabled(bool enable);
 
@@ -247,9 +272,12 @@ public:
 	void	NegateIRQ();
 	void	AssertNMI();
 	void	NegateNMI();
-	int		Advance(bool busLocked);
+	int		Advance();
+	int		Advance6502();
+	int		Advance65816();
 
 protected:
+	void	UpdatePendingIRQState();
 	void	RedecodeInsnWithoutBreak();
 	void	Update65816DecodeTable();
 	void	RebuildDecodeTables();
@@ -308,12 +336,15 @@ protected:
 	uint16	mDP;
 
 	bool	mbIRQReleasePending;
+	bool	mbIRQActive;
 	bool	mbIRQPending;
 	bool	mbNMIPending;
 	bool	mbTrace;
 	bool	mbStep;
 	bool	mbUnusedCycle;
 	bool	mbEmulationFlag;
+	uint32	mIRQAssertTime;
+	uint32	mIRQAcknowledgeTime;
 	uint32	mSBrk;
 	ATCPUMode	mCPUMode;
 	ATCPUSubMode	mCPUSubMode;
@@ -322,10 +353,14 @@ protected:
 	IATCPUHighLevelEmulator	*mpHLE;
 	uint32	mHLEDelay;
 
+	ATCPUProfiler	*mpProfiler;
+	ATCPUVerifier	*mpVerifier;
+
 	const uint8 *mpNextState;
 	uint8 *mpDstState;
 	uint8	mStates[16];
 
+	bool	mbHistoryOrProfilingEnabled;
 	bool	mbHistoryEnabled;
 	bool	mbPathfindingEnabled;
 	bool	mbIllegalInsnsEnabled;

@@ -33,6 +33,7 @@ public:
 	virtual bool IsEnabled() const = 0;
 	virtual void SetEnabled(bool enabled) = 0;
 
+	virtual void SetHookPageByte(uint8 page) = 0;
 	virtual void SetOutput(IATPrinterOutput *output) = 0;
 
 	virtual void WarmReset() = 0;

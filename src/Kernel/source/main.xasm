@@ -131,13 +131,14 @@ a1		= adress
 ramtop	= $006a			;ram size
 holdch	= $007c			;temporary key hold area prior to shift/control lock logic
 fr0		= $00d4			;FP: Accumulator 0
-_fr4	= $00da			;FP: Accumulator 4
+_fr3	= $00da			;FP: Accumulator 4
 fr1		= $00e0			;FP: Accumulator 1
 _fr2	= $00e6			;FP: Accumulator 2
-_fr3	= $00ec			;FP: Accumulator 3
-
+_fpres2	= $00ef			;BASIC: Used in sqr() routine -- must not be touched by FP code
+_fpres	= $00f0			;BASIC: Used in sin() routine -- must not be touched by FP code
 cix		= $00f2			;FP: Character index
 inbuff	= $00f3			;FP: ASCII conversion buffer
+		; $00f4
 _fpcount= $00f5
 _fptemp0= $00f6
 _fptemp1= $00f7
@@ -261,6 +262,7 @@ icax5	= $034e			;
 icax6	= $034f			;
 basicf	= $03f8			;(XL) ROM BASIC flag. 0 = enabled
 lbuff	= $0580			;
+plyarg	= $05e0			;FP: Polynomial evaluation temp register
 
 	opt		h-o+f+
 

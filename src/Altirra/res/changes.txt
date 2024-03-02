@@ -1,5 +1,65 @@
 Altirra Change Log
 
+Version 1.6:
+   [features added]
+   * Debugger: Added profiler.
+   * Debugger: Added support for loading CA65 labels.
+   * Debugger: Added verifier to catch possible coding errors.
+   * Debugger: Added support to view extended memory to some commands and panes.
+   * UI: Added option for controlling vertical sync lock.
+   * UI: Added /opengl command line switch.
+   * UI: BASIC ROM is now noted on window caption.
+   * UI: Window position is saved on exit.
+   * UI: Added /debug switch to launch in debugger mode.
+   * UI: Added /f switch for full-screen mode.
+   * UI: Added .car extension to Open Image dialog.
+   * UI: Input maps can now be cloned.
+   * UI: Input maps can now be bound to a specific game controller index.
+   * UI: Create disk dialog now has entries for standard disk formats.
+   * UI: Added ability to paste text from clipboard.
+   * UI: Moved warm reset to F5, bound Help to F6 and Break to F7, and merged Run into F8 to match other emulators.
+   * UI: Added program icon.
+   * Simulator: Added option to fill memory with a psuedorandom pattern on cold boot instead of zeroes.
+   * Simulator: Added support for 65C816 high memory at banks $01-03.
+   * POKEY: Increased playback sampling rate to 44KHz.
+   * POKEY: Added option to toggle non-linear mixing.
+   * POKEY: Added option to toggle individual sound channels.
+   * POKEY: Implemented keyboard overrun bit.
+   * VBXE: Register window can now be switched between $D6xx and $D7xx.
+   * Disk: Added support for 1050 drive dual density format.
+   * Disk: Added support for XF551 drive high speed commands.
+   * GTIA: Added a stronger level of NTSC artifact emulation.
+
+   [bugs fixed]
+   * Fixed command line parsing and added several new switches.
+   * HLE: Fixed math pack issues preventing Atari Basic ATN(), INT(), and SQR() from working.
+   * HLE: Fixed handling of BASIC enable/disable on warm reset.
+   * LLE: Improved math pack implementation.
+   * ANTIC: Playfield DMA wasn't properly shut off on cold reset.
+   * ANTIC: Improved emulation of mid scan line DMACTL changes.
+   * ANTIC: Reset line now resets position counters.
+   * ANTIC: Emulated single cycle glitch in VCOUNT at the end of a frame.
+   * ANTIC: Implemented delay for changes to CHBASE to take effect.
+   * POKEY: Adjusted timing of STIMER and timer rollovers.
+   * POKEY: Retuned filters and non-linear mixing curve.
+   * POKEY: Fixed behavior of SKSTAT serial overrun bit.
+   * GTIA: Added option for displaying full PAL height when extending display past scan line 239.
+   * GTIA: Fixed display of beam position when single stepping with VBXE enabled.
+   * Debugger: Fixed bug where history window didn't allow scrolling to the bottom via the slider.
+   * Debugger: History window now always shows last executed instruction.
+   * Debugger: History window now flushes and rebuilds the tree when the history window rolls over.
+   * Debugger: "Toggle read/write breakpoint" in the memory window was using the wrong address.
+   * Debugger: Disassembly window now tracks 65C816 M/X/E state.
+   * Debugger: .history command was using wrong register state for decoding indexed effective addresses.
+   * Debugger: Fixed incorrect index register values in Registers pane in 65C816 emulation mode.
+   * Debugger: Fixed disassembly of JMP (abs,X) and JSR (abs,X) instructions.
+   * CPU: XCE instruction no longer sets M/X bits when staying in native mode.
+   * CPU: Fixed bank used by JML, JMP (abs), and JMP (abs,X) instructions in 65C816 mode.
+   * Disk: Added support for reading broken DD disks that have full 256 byte boot sectors.
+   * Disk: SIO acceleration hook now sets SKCTL correctly.
+   * UI: Fixed issue where full-screen mode didn't always cover the entire screen.
+   * Simulator: Shortened delay to releasing OPTION on startup.
+
 Version 1.5 [January 31, 2010]:
    [features added]
    * Added option to redirect P: to a text pane.

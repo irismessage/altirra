@@ -88,6 +88,13 @@ void ATScheduler::ProcessNextEvent() {
 	mTimeBase -= mNextEventCounter;
 }
 
+void ATScheduler::SetEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id, ATEvent *&ptr) {
+	if (ptr)
+		RemoveEvent(ptr);
+
+	ptr = AddEvent(ticks, cb, id);
+}
+
 ATEvent *ATScheduler::AddEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id) {
 	VDASSERT(ticks > 0 && ticks < 10000000);
 	VDASSERT(id);

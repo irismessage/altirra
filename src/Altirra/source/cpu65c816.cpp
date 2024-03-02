@@ -468,6 +468,10 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 		case 0x20:	// JSR
 			*mpDstState++ = kStateReadAddrL;
 			*mpDstState++ = kStateReadAddrH;
+
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyJump;
+
 			*mpDstState++ = kStatePushPCHM1Native;
 			*mpDstState++ = kStatePushPCLM1Native;
 			*mpDstState++ = kStateAddrToPC;
@@ -485,7 +489,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			*mpDstState++ = kStateReadAddrB;			// 6: read jump address bank
 			*mpDstState++ = kStatePushPCHM1Native;		// 7: push PCH
 			*mpDstState++ = kStatePushPCLM1Native;		// 8: push PCL
-			*mpDstState++ = kStateAddrToPC;	
+			*mpDstState++ = kState816_LongAddrToPC;
 
 			if (mbPathfindingEnabled)
 				*mpDstState++ = kStateAddAsPathStart;
@@ -775,6 +779,10 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 		case 0x4C:	// JMP abs
 			*mpDstState++ = kStateReadAddrL;
 			*mpDstState++ = kStateReadAddrH;
+
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyJump;
+
 			*mpDstState++ = kStateAddrToPC;
 			break;
 
@@ -978,7 +986,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 
 		case 0x6C:	// JMP (abs)
 			Decode65816AddrAbs();
-			*mpDstState++ = kState816ReadByte;
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateReadAbsIndAddrBroken;
 			*mpDstState++ = kStateAddrToPC;
 			break;
@@ -1071,7 +1079,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			*mpDstState++ = kStateReadAddrL;
 			*mpDstState++ = kStateReadAddrHX;
 			*mpDstState++ = kStateWait;
-			*mpDstState++ = kState816ReadByte;
+			*mpDstState++ = kStateRead;
 			*mpDstState++ = kStateReadAbsIndAddr;
 			*mpDstState++ = kStateAddrToPC;
 			break;

@@ -18,9 +18,10 @@
 #ifndef f_ARTIFACTING_H
 #define f_ARTIFACTING_H
 
+#include <vd2/system/memory.h>
 #include "gtia.h"
 
-class ATArtifactingEngine {
+class ATArtifactingEngine : public VDAlignedObject<16> {
 	ATArtifactingEngine(const ATArtifactingEngine&);
 	ATArtifactingEngine& operator=(const ATArtifactingEngine&);
 public:
@@ -31,10 +32,10 @@ public:
 
 	enum {
 		N = 456,
-		M = 262
+		M = 312
 	};
 
-	void BeginFrame(bool pal, bool chromaArtifact, bool blend);
+	void BeginFrame(bool pal, bool chromaArtifact, bool chromaArtifactHi, bool blend);
 	void Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
 	void Artifact32(uint32 y, uint32 *dst, uint32 width);
 
@@ -43,11 +44,15 @@ protected:
 	void ArtifactPAL32(uint32 *dst, uint32 width);
 
 	void ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
+	void ArtifactNTSCHi(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
 	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N]);
 	void BlendExchange(uint32 dst[N], uint32 blendDst[N]);
 
+	void RecomputeNTSCTables(const ATColorParams& params);
+
 	bool mbPAL;
 	bool mbChromaArtifacts;
+	bool mbChromaArtifactsHi;
 	bool mbBlendActive;
 	bool mbBlendCopy;
 
@@ -67,6 +72,27 @@ protected:
 	};
 
 	uint32 mPrevFrame[M][N];
+
+	//  NTSC artifacting
+	union {
+		struct {
+			__declspec(align(8)) uint32 mPalToR[256][2][12];
+			__declspec(align(8)) uint32 mPalToG[256][2][12];
+			__declspec(align(8)) uint32 mPalToB[256][2][12];
+			__declspec(align(8)) uint32 mPalToRTwin[256][12];
+			__declspec(align(8)) uint32 mPalToGTwin[256][12];
+			__declspec(align(8)) uint32 mPalToBTwin[256][12];
+		} m2x;
+
+		struct {
+			__declspec(align(16)) uint32 mPalToR[256][4][16];
+			__declspec(align(16)) uint32 mPalToG[256][4][16];
+			__declspec(align(16)) uint32 mPalToB[256][4][16];
+			__declspec(align(16)) uint32 mPalToRTwin[256][2][16];
+			__declspec(align(16)) uint32 mPalToGTwin[256][2][16];
+			__declspec(align(16)) uint32 mPalToBTwin[256][2][16];
+		} m4x;
+	};
 };
 
 #endif	// f_ARTIFACTING_H

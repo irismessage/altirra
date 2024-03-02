@@ -102,6 +102,8 @@ BEGIN
             MENUITEM "&Normal",                     ID_OVERSCAN_NORMAL
             MENUITEM "&Extended",                   ID_OVERSCAN_EXTENDED
             MENUITEM "&Full",                       ID_OVERSCAN_FULL
+            MENUITEM SEPARATOR
+            MENUITEM "Extended PAL Height",         ID_OVERSCAN_PALEXTENDED
         END
         POPUP "&GTIA Visualization"
         BEGIN
@@ -111,17 +113,19 @@ BEGIN
         BEGIN
             MENUITEM "&Next Mode\tShift+F8",        ID_ANTICVISUALIZATION_NEXTMODE
         END
+        MENUITEM "&Vertical Sync",              ID_VIEW_VSYNC
         MENUITEM "Show FPS",                    ID_VIEW_SHOWFPS
         MENUITEM SEPARATOR
         MENUITEM "&Display\tAlt+1",             ID_VIEW_DISPLAY
         MENUITEM "&Printer Output\tAlt+8",      ID_VIEW_PRINTEROUTPUT
         MENUITEM "Reset Window Layout",         ID_VIEW_RESETWINDOWLAYOUT
         MENUITEM SEPARATOR
-        MENUITEM "Copy Frame To Clipboard\tAlt+C", ID_VIEW_COPYFRAMETOCLIPBOARD
+        MENUITEM "Copy Frame To Clipboard\tAlt+Shift+C", ID_VIEW_COPYFRAMETOCLIPBOARD
+        MENUITEM "Paste\tAlt+Shift+V",          ID_VIEW_PASTE
     END
     POPUP "&System"
     BEGIN
-        MENUITEM "Warm Reset\tCtrl+F5",         ID_SYSTEM_WARMRESET
+        MENUITEM "Warm Reset\tF5",              ID_SYSTEM_WARMRESET
         MENUITEM "&Cold Reset\tShift+F5",       ID_SYSTEM_COLDRESET
         MENUITEM SEPARATOR
         MENUITEM "&Warp Speed\tF1",             ID_SYSTEM_WARPSPEED
@@ -153,6 +157,8 @@ BEGIN
             MENUITEM "320K",                        ID_MEMORYSIZE_320K
             MENUITEM "576K",                        ID_MEMORYSIZE_576K
             MENUITEM "1088K",                       ID_MEMORYSIZE_1088K
+            MENUITEM SEPARATOR
+            MENUITEM "&Randomize At Cold Start",    ID_MEMORY_RANDOMIZE
         END
         POPUP "&Video"
         BEGIN
@@ -162,9 +168,11 @@ BEGIN
             MENUITEM SEPARATOR
             MENUITEM "VB&XE (FX1.20 core)",         ID_VIDEO_VBXE
             MENUITEM "Use VBXE memory for expansion", ID_VIDEO_VBXESHAREDMEMORY
+            MENUITEM "Use $D7xx for VBXE registers", ID_VIDEO_VBXEALTPAGE
             MENUITEM SEPARATOR
             MENUITEM "No Artifacting",              ID_VIDEO_NOARTIFACTING
-            MENUITEM "NTSC &Artifacting",           ID_VIDEO_NTSCARTIFACTING
+            MENUITEM "NTSC &Artifacting (Standard)", ID_VIDEO_NTSCARTIFACTING
+            MENUITEM "NTSC Artifacting (High)",     ID_VIDEO_NTSCARTIFACTINGHI
             MENUITEM "PA&L Artifacting",            ID_VIDEO_PALARTIFACTING
             MENUITEM SEPARATOR
             MENUITEM "Standard Video Only",         ID_VIDEO_STANDARDVIDEO
@@ -198,6 +206,12 @@ BEGIN
         POPUP "Audio"
         BEGIN
             MENUITEM "&Stereo",                     ID_AUDIO_STEREO
+            MENUITEM "&Non-linear Mixing",          ID_AUDIO_NONLINEARMIXING
+            MENUITEM SEPARATOR
+            MENUITEM "Channel &1\tCtrl+Alt+1",      ID_AUDIO_CHANNEL1
+            MENUITEM "Channel &2\tCtrl+Alt+2",      ID_AUDIO_CHANNEL2
+            MENUITEM "Channel &3\tCtrl+Alt+3",      ID_AUDIO_CHANNEL3
+            MENUITEM "Channel &4\tCtrl+Alt+4",      ID_AUDIO_CHANNEL4
             MENUITEM SEPARATOR
             MENUITEM "&Options...",                 ID_AUDIO_OPTIONS
         END
@@ -249,12 +263,21 @@ BEGIN
             MENUITEM "Auto-Load Kernel Symbols",    ID_DEBUG_AUTOLOADKERNELSYMBOLS
         END
         MENUITEM SEPARATOR
-        MENUITEM "Run\tF5",                     ID_DEBUG_RUN
+        MENUITEM "Run/Break\tF8",               ID_DEBUG_RUN
         MENUITEM "Break\tCtrl+Break",           ID_DEBUG_BREAK
         MENUITEM SEPARATOR
         MENUITEM "Step Into\tF11",              ID_DEBUG_STEPINTO
         MENUITEM "Step Over\tF10",              ID_DEBUG_STEPOVER
         MENUITEM "Step Out\tShift+F11",         ID_DEBUG_STEPOUT
+        MENUITEM SEPARATOR
+        POPUP "&Profile"
+        BEGIN
+            MENUITEM "&Profile View\tAlt+Shift+0",  ID_PROFILE_PROFILEVIEW
+        END
+        POPUP "&Verifier"
+        BEGIN
+            MENUITEM "&Enabled",                    ID_VERIFIER_ENABLED
+        END
     END
     POPUP "&Record"
     BEGIN
@@ -321,6 +344,16 @@ BEGIN
     END
 END
 
+IDR_PROFILE_MODE_MENU MENU 
+BEGIN
+    POPUP "Mode menu"
+    BEGIN
+        MENUITEM "Instruction sampling",        ID_PROFMODE_SAMPLEINSNS
+        MENUITEM "Function sampling",           ID_PROFMODE_SAMPLEFNS
+        MENUITEM "BASIC line sampling",         ID_PROFMODE_SAMPLEBASIC
+    END
+END
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -339,6 +372,11 @@ END
 
 IDR_ACCELERATOR1 ACCELERATORS 
 BEGIN
+    "1",            ID_AUDIO_CHANNEL1,      VIRTKEY, CONTROL, ALT, NOINVERT
+    "2",            ID_AUDIO_CHANNEL2,      VIRTKEY, CONTROL, ALT, NOINVERT
+    "3",            ID_AUDIO_CHANNEL3,      VIRTKEY, CONTROL, ALT, NOINVERT
+    "4",            ID_AUDIO_CHANNEL4,      VIRTKEY, CONTROL, ALT, NOINVERT
+    "O",            ID_DEBUG_OPENSOURCE,    VIRTKEY, SHIFT, ALT, NOINVERT
     "B",            ID_FILE_BOOTIMAGE,      VIRTKEY, ALT, NOINVERT
     "D",            ID_FILE_DISKDRIVES,     VIRTKEY, SHIFT, ALT, NOINVERT
     "O",            ID_FILE_OPENIMAGE,      VIRTKEY, ALT, NOINVERT
@@ -349,7 +387,7 @@ BEGIN
     "6",            ID_VIEW_HISTORY,        VIRTKEY, ALT, NOINVERT
     "7",            ID_VIEW_MEMORY,         VIRTKEY, ALT, NOINVERT
     "3",            ID_VIEW_REGISTERS,      VIRTKEY, ALT, NOINVERT
-    "O",            ID_DEBUG_OPENSOURCE,    VIRTKEY, SHIFT, ALT, NOINVERT
+    "V",            ID_VIEW_PASTE,          VIRTKEY, SHIFT, ALT, NOINVERT
 END
 
 
@@ -439,21 +477,23 @@ BEGIN
     DEFPUSHBUTTON   "OK",IDOK,278,122,50,14
 END
 
-IDD_CREATE_DISK DIALOGEX 0, 0, 229, 101
+IDD_CREATE_DISK DIALOGEX 0, 0, 307, 117
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Create new disk"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "Sector count",IDC_STATIC,7,7,70,14,SS_CENTERIMAGE
-    EDITTEXT        IDC_SECTOR_COUNT,77,7,145,14,ES_AUTOHSCROLL
-    LTEXT           "Boot sector count",IDC_STATIC,7,24,70,14,SS_CENTERIMAGE
-    EDITTEXT        IDC_BOOT_SECTOR_COUNT,77,24,145,14,ES_AUTOHSCROLL
-    LTEXT           "Sector size",IDC_STATIC,7,42,70,10,SS_CENTERIMAGE
-    CONTROL         "128 bytes (SD)",IDC_SECTOR_SIZE_128,"Button",BS_AUTORADIOBUTTON | WS_GROUP,77,42,64,10
-    CONTROL         "256 bytes (DD)",IDC_SECTOR_SIZE_256,"Button",BS_AUTORADIOBUTTON,77,53,65,10
-    CONTROL         "512 bytes",IDC_SECTOR_SIZE_512,"Button",BS_AUTORADIOBUTTON,77,64,48,10
-    DEFPUSHBUTTON   "OK",IDOK,119,80,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,172,80,50,14
+    LTEXT           "Disk format",IDC_STATIC,7,7,70,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_FORMAT,77,7,223,83,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Sector count",IDC_STATIC,7,22,70,14,SS_CENTERIMAGE
+    EDITTEXT        IDC_SECTOR_COUNT,77,22,223,14,ES_AUTOHSCROLL
+    LTEXT           "Boot sector count",IDC_STATIC,7,39,70,14,SS_CENTERIMAGE
+    EDITTEXT        IDC_BOOT_SECTOR_COUNT,77,39,223,14,ES_AUTOHSCROLL
+    LTEXT           "Sector size",IDC_STATIC,7,57,70,10,SS_CENTERIMAGE
+    CONTROL         "128 bytes (SD)",IDC_SECTOR_SIZE_128,"Button",BS_AUTORADIOBUTTON | WS_GROUP,77,57,64,10
+    CONTROL         "256 bytes (DD)",IDC_SECTOR_SIZE_256,"Button",BS_AUTORADIOBUTTON,77,68,65,10
+    CONTROL         "512 bytes",IDC_SECTOR_SIZE_512,"Button",BS_AUTORADIOBUTTON,77,79,48,10
+    DEFPUSHBUTTON   "OK",IDOK,198,96,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,250,96,50,14
 END
 
 IDD_ABOUT DIALOGEX 0, 0, 290, 113
@@ -496,11 +536,12 @@ CAPTION "Input Maps"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
     CONTROL         "",IDC_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_EDITLABELS | LVS_ALIGNLEFT | WS_TABSTOP,7,7,286,168,WS_EX_CLIENTEDGE
-    PUSHBUTTON      "Add...",IDC_ADD,7,178,50,14
-    PUSHBUTTON      "Delete",IDC_DELETE,59,178,50,14,WS_DISABLED
-    PUSHBUTTON      "Edit...",IDC_EDIT,111,178,50,14,WS_DISABLED
+    PUSHBUTTON      "&Add...",IDC_ADD,7,178,40,14
+    PUSHBUTTON      "&Delete",IDC_DELETE,49,178,40,14,WS_DISABLED
+    PUSHBUTTON      "&Edit...",IDC_EDIT,91,178,40,14,WS_DISABLED
+    PUSHBUTTON      "&Clone...",IDC_CLONE,133,178,40,14,WS_DISABLED
+    PUSHBUTTON      "Reset",IDC_RESET,175,178,40,14
     DEFPUSHBUTTON   "Close",IDOK,243,178,50,14
-    PUSHBUTTON      "Reset",IDC_RESET,163,178,50,14
 END
 
 IDD_INPUTMAP_EDIT DIALOGEX 0, 0, 300, 181
@@ -508,11 +549,13 @@ STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSM
 CAPTION "Edit Input Map"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    DEFPUSHBUTTON   "OK",IDOK,190,160,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,243,160,50,14
-    CONTROL         "",IDC_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_ALIGNLEFT | WS_TABSTOP,7,7,286,150,WS_EX_CLIENTEDGE
+    CONTROL         "",IDC_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_ALIGNLEFT | WS_TABSTOP,7,7,286,134,WS_EX_CLIENTEDGE
+    LTEXT           "&Game controller",IDC_STATIC,7,145,68,8
+    COMBOBOX        IDC_GAMEPAD,80,144,213,87,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     PUSHBUTTON      "Add...",IDC_ADD,7,160,50,14
     PUSHBUTTON      "Delete",IDC_DELETE,59,160,50,14,WS_DISABLED
+    DEFPUSHBUTTON   "OK",IDOK,190,160,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,243,160,50,14
 END
 
 IDD_INPUTMAP_ADD DIALOGEX 0, 0, 186, 92
@@ -622,10 +665,10 @@ BEGIN
     IDD_CREATE_DISK, DIALOG
     BEGIN
         LEFTMARGIN, 7
-        RIGHTMARGIN, 222
+        RIGHTMARGIN, 300
         VERTGUIDE, 77
         TOPMARGIN, 7
-        BOTTOMMARGIN, 94
+        BOTTOMMARGIN, 110
     END
 
     IDD_ABOUT, DIALOG
@@ -716,8 +759,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,5,0,0
- PRODUCTVERSION 1,5,0,0
+ FILEVERSION 1,6,0,0
+ PRODUCTVERSION 1,6,0,0
  FILEFLAGSMASK 0x17L
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -733,12 +776,12 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "FileDescription", "Altirra 8-bit computer emulator"
-            VALUE "FileVersion", "1, 5, 0, 0"
+            VALUE "FileVersion", "1, 6, 0, 0"
             VALUE "InternalName", "Altirra"
             VALUE "LegalCopyright", "Copyright (C) 2008-2010 Avery Lee, All Rights Reserved."
             VALUE "OriginalFilename", "Altirra.exe"
             VALUE "ProductName", "Altirra"
-            VALUE "ProductVersion", "1.5"
+            VALUE "ProductVersion", "1.6"
         END
     END
     BLOCK "VarFileInfo"
@@ -816,6 +859,22 @@ IDR_BASIC               KERNEL                  "..\\..\\..\\out\\debug\\basic.r
 //
 
 IDR_CHANGES             STUFF                   "changes.txt"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Bitmap
+//
+
+IDB_TOOLBAR_PROFILER    BITMAP                  "profilerToolbar.bmp"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_APPICON             ICON                    "program.ico"
 #endif    // English (U.S.) resources
 /////////////////////////////////////////////////////////////////////////////
 

@@ -68,10 +68,13 @@ struct ATCallStackFrame {
 	uint16	mPC;
 	uint8	mS;
 	uint8	mP;
+	uint8	mK;
 };
 
 class IATDebugger {
 public:
+	virtual bool IsRunning() const = 0;
+
 	virtual void Detach() = 0;
 	virtual void SetSourceMode(ATDebugSrcMode src) = 0;
 	virtual void Break() = 0;
@@ -96,7 +99,8 @@ public:
 	virtual uint32 LoadSymbols(const wchar_t *fileName) = 0;
 	virtual void UnloadSymbols(uint32 moduleId) = 0;
 
-	virtual sint32 ResolveSymbol(const char *s) = 0;
+	virtual sint32 ResolveSymbol(const char *s, bool allowGlobal = false) = 0;
+	virtual VDStringA GetAddressText(uint32 globalAddr, bool useHexSpecifier) = 0;
 };
 
 struct ATDebuggerSymbol {

@@ -20,6 +20,7 @@
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
+#include <vd2/system/strutil.h>
 #include <vd2/system/VDString.h>
 #include <algorithm>
 #include <ctype.h>
@@ -52,6 +53,7 @@ public:
 	bool	GetOffsetForLine(const ATSourceLineInfo& lineInfo, uint32& moduleOffset);
 
 protected:
+	void LoadCC65Labels(VDTextStream& ifile);
 	void LoadMADSListing(VDTextStream& ifile);
 	void LoadKernelListing(VDTextStream& ifile);
 
@@ -119,11 +121,19 @@ void ATSymbolStore::Load(const wchar_t *filename) {
 			LoadMADSListing(ts);
 			return;
 		}
+
+		if (!strncmp(line, "ca65 ", 5))
+			throw MyError("CA65 listings are not supported.");
 	}
 
 	fs.Seek(0);
 
 	VDTextStream ts2(&fs);
+
+	if (!vdwcsicmp(VDFileSplitExt(filename), L".lbl")) {
+		LoadCC65Labels(ts2);
+		return;
+	}
 
 	LoadKernelListing(ts2);
 }
@@ -307,6 +317,37 @@ bool ATSymbolStore::GetOffsetForLine(const ATSourceLineInfo& lineInfo, uint32& m
 
 	moduleOffset = it->second;
 	return true;
+}
+
+void ATSymbolStore::LoadCC65Labels(VDTextStream& ifile) {
+	VDStringA label;
+
+	while(const char *line = ifile.GetNextLine()) {
+		unsigned long addr;
+		int nameoffset;
+		char namecheck;
+
+		if (2 != sscanf(line, "al %6lx %n%c", &addr, &nameoffset, &namecheck))
+			continue;
+
+		const char *labelStart = line + nameoffset;
+		const char *labelEnd = labelStart;
+
+		for(;;) {
+			char c = *labelEnd;
+
+			if (!c || c == ' ' || c == '\t' || c == '\n' || c== '\r')
+				break;
+
+			++labelEnd;
+		}
+
+		label.assign(labelStart, labelEnd);
+		AddSymbol(addr, label.c_str());
+	}
+
+	mModuleBase = 0;
+	mModuleSize = 0x10000;
 }
 
 void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
@@ -678,7 +719,7 @@ bool ATCreateDefaultHardwareSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddReadWriteRegisterSymbol(0xD01C, "VDELAY");
 	symstore->AddReadWriteRegisterSymbol(0xD01D, "GRACTL");
 	symstore->AddReadWriteRegisterSymbol(0xD01E, "HITCLR");
-	symstore->AddReadWriteRegisterSymbol(0xD01F, "CONSOL");
+	symstore->AddReadWriteRegisterSymbol(0xD01F, "CONSOL", "CONSOL");
 
 	symstore->AddReadWriteRegisterSymbol(0xD200, "AUDF1", "POT0");
 	symstore->AddReadWriteRegisterSymbol(0xD201, "AUDC1", "POT1");

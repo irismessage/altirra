@@ -41,6 +41,8 @@
 #include "printer.h"
 #include "vbxe.h"
 #include "rtime8.h"
+#include "profiler.h"
+#include "verifier.h"
 
 namespace {
 	class PokeyDummyConnection : public IATPokeyEmulatorConnections {
@@ -49,9 +51,59 @@ namespace {
 		void PokeyNegateIRQ() {}
 		void PokeyBreak() {}
 		bool PokeyIsInInterrupt() const { return false; }
+		bool PokeyIsKeyPushOK(uint8) const { return true; }
 	};
 
 	PokeyDummyConnection g_pokeyDummyConnection;
+
+	uint32 NoiseFill8(uint8 *dst, size_t count, uint32 seed) {
+		while(count--) {
+			*dst++ = (uint8)seed;
+
+			uint32 sbits = seed & 0xFF;
+			seed = (seed >> 8) ^ (sbits << 24) ^ (sbits << 22) ^ (sbits << 18) ^ (sbits << 17);
+		}
+
+		return seed;
+	}
+
+	uint32 NoiseFill32(uint32 *dst, size_t count, uint32 seed) {
+		uint32 sbits;
+		while(count--) {
+			*dst++ = seed;
+
+			sbits = seed & 0xFFFF;
+			seed = (seed >> 16) ^ (sbits << 16) ^ (sbits << 14) ^ (sbits << 10) ^ (sbits << 9);
+
+			sbits = seed & 0xFFFF;
+			seed = (seed >> 16) ^ (sbits << 16) ^ (sbits << 14) ^ (sbits << 10) ^ (sbits << 9);
+		}
+
+		return seed;
+	}
+
+	uint32 NoiseFill(uint8 *dst, size_t count, uint32 seed) {
+		if (count < 8) {
+			NoiseFill8(dst, count, seed);
+			return seed;
+		}
+
+		size_t align = (size_t)-(ptrdiff_t)dst & 7;
+		if (align) {
+			seed = NoiseFill8(dst, align, seed);
+			dst += align;
+			count -= align;
+		}
+
+		seed = NoiseFill32((uint32 *)dst, count >> 2, seed);
+		dst += count & ~(size_t)3;
+
+		size_t remain = count & 3;
+		if (remain)
+			seed = NoiseFill8(dst, remain, seed);
+
+		return seed;
+	}
 }
 
 ATSimulator::ATSimulator()
@@ -69,6 +121,8 @@ ATSimulator::ATSimulator()
 	, mCallbacksBusy(0)
 	, mbCallbacksChanged(false)
 	, mpHLEKernel(ATCreateHLEKernel())
+	, mpProfiler(NULL)
+	, mpVerifier(NULL)
 	, mpInputManager(new ATInputManager)
 	, mpPortAController(new ATPortController)
 	, mpPortBController(new ATPortController)
@@ -91,7 +145,7 @@ ATSimulator::ATSimulator()
 	mCPU.Init(this);
 	mCPU.SetHLE(mpHLEKernel->AsCPUHLE());
 	mGTIA.Init(this);
-	mAntic.Init(this, &mGTIA);
+	mAntic.Init(this, &mGTIA, &mScheduler);
 	mPokey.Init(this, &mScheduler);
 	mPokey2.Init(&g_pokeyDummyConnection, &mScheduler);
 
@@ -119,12 +173,14 @@ ATSimulator::ATSimulator()
 	mbTurbo = false;
 	mbFrameSkip = true;
 	mbPALMode = false;
+	mbRandomFillEnabled = false;
 	mbDiskSIOPatchEnabled = false;
 	mbCassetteSIOPatchEnabled = false;
 	mbCassetteAutoBootEnabled = false;
 	mbBASICEnabled = false;
 	mbDualPokeys = false;
-	mbVBXESharedMemory = true;
+	mbVBXESharedMemory = false;
+	mbVBXEUseD7xx = false;
 
 	mStartupDelay = 0;
 	mbCIOHandlersEstablished = false;
@@ -136,6 +192,35 @@ ATSimulator::ATSimulator()
 	mBreakOnScanline = -1;
 
 	memset(mDummyRead, 0xFF, sizeof mDummyRead);
+
+	for(int i=0; i<256; ++i) {
+		mDummyReadPageTable[i] = mDummyRead;
+		mDummyWritePageTable[i] = mDummyWrite;
+		mReadBankTable[i] = mDummyReadPageTable;
+		mWriteBankTable[i] = mDummyWritePageTable;
+	}
+
+	for(int j=0; j<3; ++j) {
+		for(int i=0; i<256; ++i) {
+			mHighMemoryReadPageTables[j][i] = mMemory + 0x110000 + (i << 8) + (j << 16);
+			mHighMemoryWritePageTables[j][i] = mMemory + 0x110000 + (i << 8) + (j << 16);
+		}
+	}
+
+	mReadBankTable[0] = mReadMemoryMap;
+	mWriteBankTable[0] = mWriteMemoryMap;
+	mReadBankTable[1] = mHighMemoryReadPageTables[0];
+	mWriteBankTable[1] = mHighMemoryWritePageTables[0];
+	mReadBankTable[2] = mHighMemoryReadPageTables[1];
+	mWriteBankTable[2] = mHighMemoryWritePageTables[1];
+	mReadBankTable[3] = mHighMemoryReadPageTables[2];
+	mWriteBankTable[3] = mHighMemoryWritePageTables[2];
+
+	mpAnticReadPageMap = mAnticMemoryMap;
+	mpCPUReadPageMap = mReadMemoryMap;
+	mpCPUWritePageMap = mWriteMemoryMap;
+	mpCPUReadBankMap = mReadBankTable;
+	mpCPUWriteBankMap = mWriteBankTable;
 
 	ColdReset();
 }
@@ -186,6 +271,16 @@ void ATSimulator::Shutdown() {
 	if (mpRTime8) {
 		delete mpRTime8;
 		mpRTime8 = NULL;
+	}
+
+	if (mpProfiler) {
+		delete mpProfiler;
+		mpProfiler = NULL;
+	}
+
+	if (mpVerifier) {
+		delete mpVerifier;
+		mpVerifier = NULL;
 	}
 }
 
@@ -361,6 +456,42 @@ void ATSimulator::SetWriteBreakAddress(uint16 addr) {
 	RecomputeMemoryMaps();
 }
 
+void ATSimulator::SetProfilingEnabled(bool enabled) {
+	if (enabled) {
+		if (mpProfiler)
+			return;
+
+		mpProfiler = new ATCPUProfiler;
+		mpProfiler->Init(&mCPU, this, &mScheduler, &mSlowScheduler);
+		mCPU.SetProfiler(mpProfiler);
+	} else {
+		if (!mpProfiler)
+			return;
+
+		mCPU.SetProfiler(NULL);
+		delete mpProfiler;
+		mpProfiler = NULL;
+	}
+}
+
+void ATSimulator::SetVerifierEnabled(bool enabled) {
+	if (enabled) {
+		if (mpVerifier)
+			return;
+
+		mpVerifier = new ATCPUVerifier;
+		mpVerifier->Init(&mCPU, this, this);
+		mCPU.SetVerifier(mpVerifier);
+	} else {
+		if (!mpProfiler)
+			return;
+
+		mCPU.SetVerifier(NULL);
+		delete mpVerifier;
+		mpVerifier = NULL;
+	}
+}
+
 void ATSimulator::SetTurboModeEnabled(bool turbo) {
 	mbTurbo = turbo;
 	mPokey.SetTurbo(mbTurbo);
@@ -457,9 +588,11 @@ void ATSimulator::SetFPPatchEnabled(bool enable) {
 	mCPU.SetHook(ATKernelSymbols::EXP10, mbFPPatchEnabled);
 	mCPU.SetHook(ATKernelSymbols::SKPSPC, mbFPPatchEnabled);
 	mCPU.SetHook(ATKernelSymbols::ISDIGT, mbFPPatchEnabled);
+	mCPU.SetHook(ATKernelSymbols::NORMALIZE, mbFPPatchEnabled);
 	mCPU.SetHook(ATKernelSymbols::PLYEVL, mbFPPatchEnabled);
 	mCPU.SetHook(ATKernelSymbols::ZFR0, mbFPPatchEnabled);
 	mCPU.SetHook(ATKernelSymbols::ZF1, mbFPPatchEnabled);
+	mCPU.SetHook(ATKernelSymbols::ZFL, mbFPPatchEnabled);
 	mCPU.SetHook(ATKernelSymbols::LDBUFA, mbFPPatchEnabled);
 	mCPU.SetHook(ATKernelSymbols::FLD0R, mbFPPatchEnabled);
 	mCPU.SetHook(ATKernelSymbols::FLD0P, mbFPPatchEnabled);
@@ -468,6 +601,7 @@ void ATSimulator::SetFPPatchEnabled(bool enable) {
 	mCPU.SetHook(ATKernelSymbols::FST0R, mbFPPatchEnabled);
 	mCPU.SetHook(ATKernelSymbols::FST0P, mbFPPatchEnabled);
 	mCPU.SetHook(ATKernelSymbols::FMOVE, mbFPPatchEnabled);
+	mCPU.SetHook(ATKernelSymbols::REDRNG, mbFPPatchEnabled);
 }
 
 void ATSimulator::SetBASICEnabled(bool enable) {
@@ -522,6 +656,10 @@ void ATSimulator::SetVBXESharedMemoryEnabled(bool enable) {
 	}
 }
 
+void ATSimulator::SetVBXEAltPageEnabled(bool enable) {
+	mbVBXEUseD7xx = enable;
+}
+
 void ATSimulator::SetRTime8Enabled(bool enable) {
 	if (mpRTime8) {
 		if (enable)
@@ -546,11 +684,22 @@ void ATSimulator::SetPrinterEnabled(bool enable) {
 		mpPrinter = ATCreatePrinterEmulator();
 
 	mpPrinter->SetEnabled(enable);
+	mpPrinter->SetHookPageByte(mHookPageByte);
 	UpdatePrinterHook();
 	UpdateCIOVHook();
 }
 
 void ATSimulator::ColdReset() {
+	if (mbVBXEUseD7xx) {
+		mVBXEPage = 0xD700;
+		mHookPage = 0xD600;
+		mHookPageByte = 0xD6;
+	} else {
+		mVBXEPage = 0xD600;
+		mHookPage = 0xD700;
+		mHookPageByte = 0xD7;
+	}
+
 	if (mbROMAutoReloadEnabled) {
 		LoadROMs();
 		UpdateKernel();
@@ -582,10 +731,16 @@ void ATSimulator::ColdReset() {
 	if (mpHardDisk)
 		mpHardDisk->ColdReset();
 
-	if (mpPrinter)
+	if (mpPrinter) {
 		mpPrinter->ColdReset();
+		mpPrinter->SetHookPageByte(mHookPageByte);
+	}
 
-	memset(mMemory, 0, sizeof mMemory);
+	// Nuke memory with a deterministic pattern. We used to clear it, but that's not realistic.
+	if (mbRandomFillEnabled)
+		NoiseFill(mMemory, sizeof mMemory, 0xA702819E);
+	else
+		memset(mMemory, 0, sizeof mMemory);
 
 	if (mpCartridge)
 		mpCartridge->ColdReset();
@@ -602,12 +757,12 @@ void ATSimulator::ColdReset() {
 	UpdatePrinterHook();
 
 	const bool hdenabled = (mpHardDisk && mpHardDisk->IsEnabled());
-	mCPU.SetHook(0xD710, hdenabled);
-	mCPU.SetHook(0xD712, hdenabled);
-	mCPU.SetHook(0xD714, hdenabled);
-	mCPU.SetHook(0xD716, hdenabled);
-	mCPU.SetHook(0xD718, hdenabled);
-	mCPU.SetHook(0xD71A, hdenabled);
+	mCPU.SetHook(mHookPage + 0x10, hdenabled);
+	mCPU.SetHook(mHookPage + 0x12, hdenabled);
+	mCPU.SetHook(mHookPage + 0x14, hdenabled);
+	mCPU.SetHook(mHookPage + 0x16, hdenabled);
+	mCPU.SetHook(mHookPage + 0x18, hdenabled);
+	mCPU.SetHook(mHookPage + 0x1A, hdenabled);
 
 	// disable program load hook in case it was left on
 	mCPU.SetHook(0x01FE, false);
@@ -617,14 +772,17 @@ void ATSimulator::ColdReset() {
 	// press start during power on if cassette auto-boot is enabled
 	uint8 consoleSwitches = 0x0F;
 
+	mStartupDelay = 1;
+
 	if (!mbBASICEnabled && (!mpCartridge || mpCartridge->IsBASICDisableAllowed()))
 		consoleSwitches &= ~4;
 
-	if (mpCassette->IsLoaded() && mbCassetteAutoBootEnabled)
+	if (mpCassette->IsLoaded() && mbCassetteAutoBootEnabled) {
 		consoleSwitches &= ~1;
+		mStartupDelay = 5;
+	}
 
 	mGTIA.SetForcedConsoleSwitches(consoleSwitches);
-	mStartupDelay = 5;
 
 	HookCassetteOpenVector();
 }
@@ -679,6 +837,17 @@ void ATSimulator::Resume() {
 
 void ATSimulator::Suspend() {
 	mbRunning = false;
+}
+
+void ATSimulator::UnloadAll() {
+	LoadCartridge(NULL);
+
+	mpCassette->Unload();
+
+	for(int i=0; i<sizeof(mDiskDrives)/sizeof(mDiskDrives[0]); ++i) {
+		mDiskDrives[i].UnloadDisk();
+		mDiskDrives[i].SetEnabled(false);
+	}
 }
 
 void ATSimulator::Load(const wchar_t *s) {
@@ -749,7 +918,8 @@ void ATSimulator::Load(const wchar_t *s) {
 		}
 
 		if (!vdwcsicmp(ext, L".rom")
-			|| !vdwcsicmp(ext, L".bin"))
+			|| !vdwcsicmp(ext, L".bin")
+			|| !vdwcsicmp(ext, L".car"))
 		{
 			LoadCartridge(s);
 			return;
@@ -782,7 +952,7 @@ void ATSimulator::LoadProgram(const wchar_t *s) {
 
 	if (d) {
 		static const wchar_t *const kSymExts[]={
-			L".lst", L".lab"
+			L".lst", L".lab", L".lbl"
 		};
 
 		VDASSERTCT(sizeof(kSymExts)/sizeof(kSymExts[0]) == sizeof(mProgramModuleIds)/sizeof(mProgramModuleIds[0]));
@@ -817,7 +987,7 @@ void ATSimulator::LoadCartridge(const wchar_t *s) {
 	IATDebugger *d = ATGetDebugger();
 
 	if (d) {
-		for(int i=0; i<2; ++i) {
+		for(int i=0; i<3; ++i) {
 			if (!mCartModuleIds[i])
 				continue;
 
@@ -848,7 +1018,7 @@ void ATSimulator::LoadCartridge(const wchar_t *s) {
 
 	if (d) {
 		static const wchar_t *const kSymExts[]={
-			L".lst", L".lab"
+			L".lst", L".lab", L".lbl"
 		};
 
 		VDASSERTCT(sizeof(kSymExts)/sizeof(kSymExts[0]) == sizeof(mCartModuleIds)/sizeof(mCartModuleIds[0]));
@@ -893,7 +1063,7 @@ ATSimulator::AdvanceResult ATSimulator::AdvanceUntilInstructionBoundary() {
 		ATSimulatorEvent cpuEvent = kATSimEvent_None;
 
 		if (mCPU.GetUnusedCycle())
-			cpuEvent = (ATSimulatorEvent)mCPU.Advance(false);
+			cpuEvent = (ATSimulatorEvent)mCPU.Advance();
 		else {
 			int x = mAntic.GetBeamX();
 
@@ -904,7 +1074,9 @@ ATSimulator::AdvanceResult ATSimulator::AdvanceUntilInstructionBoundary() {
 			ATSCHEDULER_ADVANCE(&mScheduler);
 			bool busbusy = mAntic.Advance();
 
-			cpuEvent = (ATSimulatorEvent)mCPU.Advance(busbusy);
+			if (!busbusy)
+				cpuEvent = (ATSimulatorEvent)mCPU.Advance();
+
 			if (!(cpuEvent | mPendingEvent))
 				continue;
 		}
@@ -932,7 +1104,7 @@ ATSimulator::AdvanceResult ATSimulator::Advance() {
 	ATSimulatorEvent cpuEvent = kATSimEvent_None;
 
 	if (mCPU.GetUnusedCycle())
-		cpuEvent = (ATSimulatorEvent)mCPU.Advance(false);
+		cpuEvent = (ATSimulatorEvent)mCPU.Advance();
 
 	if (!cpuEvent) {
 		for(int scans = 0; scans < 8; ++scans) {
@@ -945,13 +1117,28 @@ ATSimulator::AdvanceResult ATSimulator::Advance() {
 
 			uint32 cycles = 114 - x;
 
-			while(cycles--) {
-				ATSCHEDULER_ADVANCE(&mScheduler);
-				bool busbusy = mAntic.Advance();
+			if (mCPU.GetCPUMode() == kATCPUMode_65C816) {
+				while(cycles--) {
+					ATSCHEDULER_ADVANCE(&mScheduler);
+					bool busbusy = mAntic.Advance();
 
-				cpuEvent = (ATSimulatorEvent)mCPU.Advance(busbusy);
-				if (cpuEvent | mPendingEvent)
-					goto handle_event;
+					if (!busbusy)
+						cpuEvent = (ATSimulatorEvent)mCPU.Advance65816();
+
+					if (cpuEvent | mPendingEvent)
+						goto handle_event;
+				}
+			} else {
+				while(cycles--) {
+					ATSCHEDULER_ADVANCE(&mScheduler);
+					bool busbusy = mAntic.Advance();
+
+					if (!busbusy)
+						cpuEvent = (ATSimulatorEvent)mCPU.Advance6502();
+
+					if (cpuEvent | mPendingEvent)
+						goto handle_event;
+				}
 			}
 		}
 
@@ -974,13 +1161,14 @@ handle_event:
 	return mbRunning ? kAdvanceResult_Running : kAdvanceResult_Stopped;
 }
 
-uint8 ATSimulator::DebugReadByte(uint16 addr) {
+uint8 ATSimulator::DebugReadByte(uint16 addr) const {
 	const uint8 *src = mpReadMemoryMap[addr >> 8];
 	if (src)
 		return src[addr & 0xff];
 
 	// D000-D7FF	2K		hardware address
-	switch(addr & 0xff00) {
+	uint32 page = addr & 0xff00;
+	switch(page) {
 	case 0xD000:
 		return mGTIA.DebugReadByte(addr & 0x1f);
 	case 0xD200:
@@ -1012,13 +1200,16 @@ uint8 ATSimulator::DebugReadByte(uint16 addr) {
 		return 0xFF;
 
 	case 0xD600:
-		if (mpVBXE)
-			return mpVBXE->ReadControl((uint8)addr);
+	case 0xD700:
+		if (page == mVBXEPage) {
+			if (mpVBXE)
+				return mpVBXE->ReadControl((uint8)addr);
+		} else {
+			if ((addr & 0xff) < 0x40)
+				return (addr & 1) ? mHookPageByte : (addr + 0x0F);
+		}
 
 		return 0xFF;
-
-	case 0xD700:
-		return (addr & 1) ? 0xD7 : (addr + 0x0F);
 
 	default:
 		if (!((mReadBreakAddress ^ addr) & 0xff00)) {
@@ -1038,6 +1229,98 @@ uint32 ATSimulator::DebugRead24(uint16 address) {
 	return (uint32)DebugReadByte(address)
 		+ ((uint32)DebugReadByte(address+1) << 8)
 		+ ((uint32)DebugReadByte(address+2) << 16);
+}
+
+uint8 ATSimulator::DebugExtReadByte(uint32 address) {
+	address &= 0xffffff;
+
+	if (address < 0x10000)
+		return DebugReadByte(address);
+
+	const uint8 *pt = mpCPUReadBankMap[address >> 16][(uint8)(address >> 8)];
+	return pt ? pt[address & 0xff] : 0;
+}
+
+uint8 ATSimulator::DebugGlobalReadByte(uint32 address) {
+	switch(address & kATAddressSpaceMask) {
+		case kATAddressSpace_CPU:
+			return DebugExtReadByte(address);
+
+		case kATAddressSpace_ANTIC:
+			return DebugAnticReadByte(address);
+
+		case kATAddressSpace_PORTB:
+			return mMemory[0x10000 + (address & 0xfffff)];
+
+		case kATAddressSpace_VBXE:
+			if (!mpVBXE)
+				return 0;
+
+			return mpVBXE->GetMemoryBase()[address & 0x7ffff];
+
+		default:
+			return 0;
+	}
+}
+
+uint16 ATSimulator::DebugGlobalReadWord(uint32 address) {
+	uint32 atype = address & kATAddressSpaceMask;
+	uint32 aoffset = address & kATAddressOffsetMask;
+
+	return (uint32)DebugGlobalReadByte(address)
+		+ ((uint32)DebugGlobalReadByte(atype + ((aoffset + 1) & kATAddressOffsetMask)) << 8);
+}
+
+uint32 ATSimulator::DebugGlobalRead24(uint32 address) {
+	uint32 atype = address & kATAddressSpaceMask;
+	uint32 aoffset = address & kATAddressOffsetMask;
+
+	return (uint32)DebugGlobalReadByte(address)
+		+ ((uint32)DebugGlobalReadByte(atype + ((aoffset + 1) & kATAddressOffsetMask)) << 8)
+		+ ((uint32)DebugGlobalReadByte(atype + ((aoffset + 2) & kATAddressOffsetMask)) << 16);
+}
+
+void ATSimulator::DebugGlobalWriteByte(uint32 address, uint8 value) {
+	switch(address & kATAddressSpaceMask) {
+		case kATAddressSpace_CPU:
+			CPUExtWriteByte((uint16)address, (uint8)(address >> 8), value);
+			break;
+
+		case kATAddressSpace_ANTIC:
+			const_cast<uint8 *>(mpAnticMemoryMap[(uint8)(address >> 8)])[address & 0xff] = value;
+			break;
+
+		case kATAddressSpace_PORTB:
+			mMemory[0x10000 + (address & 0xfffff)] = value;
+			break;
+
+		case kATAddressSpace_VBXE:
+			if (mpVBXE)
+				mpVBXE->GetMemoryBase()[address & 0x7ffff] = value;
+			break;
+	}
+}
+
+bool ATSimulator::IsKernelROMLocation(uint16 address) const {
+	// 5000-57FF
+	// C000-CFFF
+	// D800-FFFF
+	uint32 addr = address;
+
+	// check for self-test ROM
+	if ((addr - 0x5000) < 0x0800)
+		return mHardwareMode == kATHardwareMode_800XL && (GetBankRegister() & 0x81) == 0x01;
+
+	// check for XL/XE ROM extension
+	if ((addr - 0xC000) < 0x1000)
+		return mHardwareMode == kATHardwareMode_800XL && (GetBankRegister() & 0x01);
+
+	// check for main kernel ROM
+	if ((addr - 0xD800) < 0x2800)
+		return mHardwareMode == kATHardwareMode_800 || (GetBankRegister() & 0x01);
+
+	// it's not kernel ROM
+	return false;
 }
 
 uint8 ATSimulator::ReadPortA() const {
@@ -1255,9 +1538,7 @@ void ATSimulator::UpdateKernel() {
 
 void ATSimulator::RecomputeMemoryMaps() {
 	mpReadMemoryMap = mReadMemoryMap;
-	mpCPUReadPageMap = mReadMemoryMap;
 	mpWriteMemoryMap = mWriteMemoryMap;
-	mpCPUWritePageMap = mWriteMemoryMap;
 	mpAnticMemoryMap = mAnticMemoryMap;
 
 	const uint8 portb = GetBankRegister();
@@ -1440,6 +1721,7 @@ uint8 ATSimulator::CPUReadByte(uint16 addr) {
 	}
 
 	// D000-D7FF	2K		hardware address
+	uint32 page = addr & 0xff00;
 	switch(addr & 0xff00) {
 	case 0xD000:
 		return mGTIA.ReadByte(addr & 0x1f);
@@ -1473,12 +1755,15 @@ uint8 ATSimulator::CPUReadByte(uint16 addr) {
 		break;
 
 	case 0xD600:
-		if (mpVBXE)
-			return mpVBXE->ReadControl((uint8)addr);
-		break;
-
 	case 0xD700:
-		return (addr & 1) ? 0xD7 : (addr + 0x0F);
+		if (page == mVBXEPage) {
+			if (mpVBXE)
+				return mpVBXE->ReadControl((uint8)addr);
+		} else
+			if ((addr & 0xff) < 0x40)
+				return (addr & 1) ? mHookPageByte : (addr + 0x0F);
+
+		break;
 	}
 
 	if (((uint32)addr - 0x8000) < 0x4000 && mpCartridge) {
@@ -1504,6 +1789,10 @@ uint8 ATSimulator::CPUDebugReadByte(uint16 address) {
 	return DebugReadByte(address);
 }
 
+uint8 ATSimulator::CPUDebugExtReadByte(uint16 address, uint8 bank) {
+	return DebugExtReadByte((uint32)address + ((uint32)bank << 16));
+}
+
 void ATSimulator::CPUWriteByte(uint16 addr, uint8 value) {
 	uint8 *dst = mpWriteMemoryMap[addr >> 8];
 	if (dst) {
@@ -1515,7 +1804,8 @@ void ATSimulator::CPUWriteByte(uint16 addr, uint8 value) {
 		mPendingEvent = kATSimEvent_WriteBreakpoint;
 	}
 
-	switch(addr & 0xff00) {
+	const uint32 page = addr & 0xff00;
+	switch(page) {
 	case 0xD000:
 		mGTIA.WriteByte(addr & 0x1f, value);
 
@@ -1596,8 +1886,11 @@ void ATSimulator::CPUWriteByte(uint16 addr, uint8 value) {
 		}
 		return;
 	case 0xD600:
-		if (mpVBXE)
-			mpVBXE->WriteControl((uint8)addr, value);
+	case 0xD700:
+		if (page == mVBXEPage) {
+			if (mpVBXE)
+				mpVBXE->WriteControl((uint8)addr, value);
+		}
 		return;
 	}
 
@@ -1615,7 +1908,15 @@ void ATSimulator::CPUWriteByte(uint16 addr, uint8 value) {
 	}
 }
 
-uint32 ATSimulator::GetTimestamp() {
+uint32 ATSimulator::CPUGetCycle() {
+	return ATSCHEDULER_GETTIME(&mScheduler);
+}
+
+uint32 ATSimulator::CPUGetUnhaltedCycle() {
+	return ATSCHEDULER_GETTIME(&mScheduler) - mAntic.GetHaltedCycleCount();
+}
+
+uint32 ATSimulator::CPUGetTimestamp() {
 	return mAntic.GetTimestamp();
 }
 
@@ -1720,6 +2021,7 @@ uint8 ATSimulator::CPUHookHit(uint16 address) {
 
 				ClearPokeyTimersOnDiskIo();
 
+				kdb.SKCTL = (kdb.SSKCTL & 0x07) | 0x10;
 				return 0x60;
 			} else if (cmd == 0x50 || cmd == 0x57) {
 				uint8 status = disk.WriteSector(bufadr, 128, sector, this);
@@ -1743,6 +2045,10 @@ uint8 ATSimulator::CPUHookHit(uint16 address) {
 
 				mGTIA.PulseStatusFlags(1 << (drive - 1));
 				ClearPokeyTimersOnDiskIo();
+
+				// leave SKCTL set to asynchronous receive
+				ATKernelDatabase kdb(this);
+				kdb.SKCTL = (kdb.SSKCTL & 0x07) | 0x10;
 				return 0x60;
 			}
 		}
@@ -1796,6 +2102,10 @@ uint8 ATSimulator::CPUHookHit(uint16 address) {
 
 				mGTIA.PulseStatusFlags(1 << (device - 0x31));
 				ClearPokeyTimersOnDiskIo();
+
+				// leave SKCTL set to asynchronous receive
+				kdb.SKCTL = (kdb.SSKCTL & 0x07) | 0x10;
+
 				return 0x60;
 			} else if (cmd == 0x50 || cmd == 0x57) {
 				uint8 dstats = ReadByte(0x0303);
@@ -1822,6 +2132,11 @@ uint8 ATSimulator::CPUHookHit(uint16 address) {
 
 				mGTIA.PulseStatusFlags(1 << (device - 0x31));
 				ClearPokeyTimersOnDiskIo();
+
+				// leave SKCTL set to asynchronous receive
+				ATKernelDatabase kdb(this);
+				kdb.SKCTL = (kdb.SSKCTL & 0x07) | 0x10;
+
 				return 0x60;
 			} else if (cmd == 0x53) {
 				uint8 dstats = ReadByte(0x0303);
@@ -1966,7 +2281,7 @@ uint8 ATSimulator::CPUHookHit(uint16 address) {
 					if (!ReadByte(hent)) {
 						WriteByte(hent, 'H');
 						WriteByte(hent+1, 0x00);
-						WriteByte(hent+2, 0xD7);
+						WriteByte(hent+2, mHookPageByte);
 						break;
 					}
 				}
@@ -2052,6 +2367,9 @@ uint8 ATSimulator::CPUHookHit(uint16 address) {
 	} else if (address == ATKernelSymbols::ISDIGT) {
 		ATAccelISDIGT(mCPU, *this);
 		return 0x60;
+	} else if (address == ATKernelSymbols::NORMALIZE) {
+		ATAccelNORMALIZE(mCPU, *this);
+		return 0x60;
 	} else if (address == ATKernelSymbols::PLYEVL) {
 		ATAccelPLYEVL(mCPU, *this);
 		return 0x60;
@@ -2060,6 +2378,9 @@ uint8 ATSimulator::CPUHookHit(uint16 address) {
 		return 0x60;
 	} else if (address == ATKernelSymbols::ZF1) {
 		ATAccelZF1(mCPU, *this);
+		return 0x60;
+	} else if (address == ATKernelSymbols::ZFL) {
+		ATAccelZFL(mCPU, *this);
 		return 0x60;
 	} else if (address == ATKernelSymbols::LDBUFA) {
 		ATAccelLDBUFA(mCPU, *this);
@@ -2085,14 +2406,21 @@ uint8 ATSimulator::CPUHookHit(uint16 address) {
 	} else if (address == ATKernelSymbols::FMOVE) {
 		ATAccelFMOVE(mCPU, *this);
 		return 0x60;
-	} else if (address >= 0xD710 && address < 0xD720) {
-		if (mpHardDisk && mpHardDisk->IsEnabled())
-			mpHardDisk->OnCIOVector(&mCPU, this, address - 0xD710);
+	} else if (address == ATKernelSymbols::REDRNG) {
+		ATAccelREDRNG(mCPU, *this);
 		return 0x60;
-	} else if (address >= 0xD730 && address < 0xD740) {
-		if (mpPrinter && mpPrinter->IsEnabled())
-			mpPrinter->OnCIOVector(&mCPU, this, address - 0xD730);
-		return 0x60;
+	} else if ((address - mHookPage) < 0x100) {
+		uint32 offset = address - mHookPage;
+
+		if (offset >= 0x10 && offset < 0x20) {
+			if (mpHardDisk && mpHardDisk->IsEnabled())
+				mpHardDisk->OnCIOVector(&mCPU, this, offset - 0x10);
+			return 0x60;
+		} else if (offset >= 0x30 && offset < 0x40) {
+			if (mpPrinter && mpPrinter->IsEnabled())
+				mpPrinter->OnCIOVector(&mCPU, this, offset - 0x30);
+			return 0x60;
+		}
 	}
 
 	return 0;
@@ -2199,6 +2527,10 @@ void ATSimulator::PokeyBreak() {
 
 bool ATSimulator::PokeyIsInInterrupt() const {
 	return (mCPU.GetP() & AT6502::kFlagI) != 0;
+}
+
+bool ATSimulator::PokeyIsKeyPushOK(uint8 c) const {
+	return (DebugReadByte(ATKernelSymbols::KEYDEL) == 0 || DebugReadByte(ATKernelSymbols::CH1) != c) && DebugReadByte(ATKernelSymbols::CH) == 0xFF;
 }
 
 void ATSimulator::OnDiskActivity(uint8 drive, bool active, uint32 sector) {
@@ -2412,7 +2744,7 @@ void ATSimulator::UnhookCassetteOpenVector() {
 
 void ATSimulator::UpdatePrinterHook() {
 	const bool prenabled = (mpPrinter && mpPrinter->IsEnabled());
-	mCPU.SetHook(0xD736, prenabled);
+	mCPU.SetHook(mHookPage + 0x36, prenabled);
 }
 
 void ATSimulator::UpdateCIOVHook() {

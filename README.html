@@ -1,0 +1,512 @@
+<html xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0">
+   <head>
+      <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><style>
+          a:link { text-decoration: none; }
+          a:visited { text-decoration: none; }
+          li { font-family: Arial; font-size: 10pt; }
+          td { font-family: Arial; font-size: 10pt; }
+          p { font-family: Arial; font-size: 10pt; margin: 8pt; }
+          h1 { font-family: Arial; font-weight: normal; font-size: 20pt; }
+          h2 { font-family: Arial; font-weight: normal; font-size: 14pt; border-bottom: 2px solid black; }
+          h3 { font-family: Arial; font-weight: bold; font-size: 12pt; }
+          p.faq-answer { }
+          p.deftext { margin-top: 0pt; margin-bottom: 12pt; margin-left: 28pt; }
+          p.defent { margin-bottom: 1pt; font-weight: bold; margin-left: 16pt; }
+          table { margin-left: 8pt; }
+        </style></head>
+   <body>
+      <h1>Altirra 1.6 README</h1>
+      <h2>Contents</h2>
+      <ul class="toctop">
+         <li><a href="%0A                #d2e381">Introduction</a></li>
+         <ul></ul>
+         <li><a href="%0A                #d2e399">Getting started</a></li>
+         <ul>
+            <li><a href="%0A                    #d2e433">Protected disk support</a></li>
+         </ul>
+         <li><a href="%0A                #d2e467">Options</a></li>
+         <ul>
+            <li><a href="%0A                    #d2e472">View</a></li>
+            <li><a href="%0A                    #d2e499">Hardware options</a></li>
+            <li><a href="%0A                    #d2e513">Firmware options</a></li>
+            <li><a href="%0A                    #d2e546">Memory size options</a></li>
+            <li><a href="%0A                    #d2e579">Video options</a></li>
+            <li><a href="%0A                    #d2e624">Disk options</a></li>
+            <li><a href="%0A                    #d2e652">Cassette options</a></li>
+            <li><a href="%0A                    #d2e667">CPU options</a></li>
+            <li><a href="%0A                    #d2e705">Audio options</a></li>
+            <li><a href="%0A                    #d2e716">Misc options</a></li>
+         </ul>
+         <li><a href="%0A                #d2e741">Keyboard mappings</a></li>
+         <ul></ul>
+         <li><a href="%0A                #d2e864">Emulation accuracy</a></li>
+         <ul></ul>
+         <li><a href="%0A                #d2e946">End</a></li>
+         <ul></ul>
+      </ul>
+      <h2><a name="d2e381">Introduction</a></h2>
+      <p class="faq-answer">Altirra is an emulator for the Atari 8-bit series of home computers, including the 800, 800XL, and 130XE versions. Because
+         modern computers are so much faster than the original 1.79MHz machine, a nearly complete emulation of the hardware is provided
+         and thus the emulator can run a large amount of the software available for the platform.
+      </p>
+      <p class="faq-answer"></p>
+      <p class="faq-answer">The main reasons I wrote Altirra was for two purposes: education, and nostalgia. I grew up with a number of 8-bit computers,
+         and the Atari was my favorite, partially because it was the ancestor of the Amiga. I've learned a tremendous amount about
+         the original hardware while writing the emulator, and it's certainly been an interesting (and sometimes frustrating experience).
+         This does mean that Altirra is missing some polish and has some rather odd development features, which I hope you'll bear
+         with. Please excuse my eccentricity.
+      </p>
+      <p class="faq-answer"></p>
+      <p class="faq-answer">Of course, I should note that Atari is a trademark I don't own, that neither I nor Altirra are affilated with Atari, and that
+         Altirra does not intentionally include any unlicensed intellectual property of other entities. Finally, Altirra is not intended
+         for piracy, and I do not condone or approve of distributing Altirra with unlicensed software.
+      </p>
+      <p class="faq-answer"></p>
+      <p class="faq-answer">I hope Altirra is useful to you, and all comments are welcome. Altirra is a side project, and as such I don't work on it consistently,
+         but I still wouldn't mind hearing from people who try it.
+      </p>
+      <p class="faq-answer"></p>
+      <p class="faq-answer">-- Avery Lee &lt;phaeron (at) virtualdub.org&gt;</p>
+      <p class="faq-answer"></p>
+      <h2><a name="d2e399">Getting started</a></h2>
+      <p class="faq-answer">By default, Altirra uses an internal kernel ROM which partially supports basic Atari kernel services, such as interrupts,
+         display, and disk I/O. If you have cartridge or disk images already, you can use them with the emulator as-is, and some of
+         them may work. There are also freely available demo images on the Internet you can obtain which were written by people around
+         the world to stretch and demonstrate the power of the Atari hardware, and which you can view with the emulator if you have
+         not seen an Atari in action before.
+      </p>
+      <p class="faq-answer"></p>
+      <p class="faq-answer">To load a disk, simply use the File &gt; Boot Disk/Program... option, and select the disk image. The most common disk images
+         are in .ATR format. If they are compressed in a .zip archive, you must extract them with a separate utility first.
+      </p>
+      <p class="faq-answer"></p>
+      <p class="faq-answer">Most games are compatible with the original Atari 800, and as such should use the 800 hardware mode. Some newer games that
+         need more memory will need 800XL mode and 64K memory instead, and perhaps 128K of memory. When running demos, 800XL hardware
+         mode with 320K of memory will run almost anything, although you should use PAL for demos as the vast majority of demos are
+         produced in Europe.
+      </p>
+      <p class="faq-answer"></p>
+      <p class="faq-answer">Altirra emulates the hardware with much higher compatibility than its internal ROM emulates the kernel, so for much better
+         success, it's recommended that you use real Atari kernel ROMs if available. These should be placed next to Altirra.exe:
+      </p>
+      <p class="faq-answer"></p>
+      <ul>
+         <li>atariosb.rom(Atari 800 OS-B kernel ROM)</li>
+         <li>atarixl.rom (Atari 800XL kernel ROM)</li>
+         <li>ataribas.rom(Atari Basic ROM)</li>
+      </ul>
+      <p class="faq-answer"></p>
+      <p class="faq-answer">With these available, you can switch the firmware to 800 OS-B and 800XL mode. I won't tell how to obtain these ROMs, and needless
+         to say, you should only use images of the ROMs if you actually own the real ones. If you don't, you can still run a lot of
+         software on the internal kernel, and the full Atari hardware is still emulated.
+      </p>
+      <h3><a name="d2e433">Protected disk support</a></h3>
+      <p class="faq-answer">If you have actual original diskettes with Atari software on them and have transferred them to your computer, you can use
+         them with Altirra. A special trick is that Altirra can use special disk formats that allow you to run copy protected software
+         authentically, without bypassing the copy protection. (Please heed the usual warning here about only using validly licensed
+         software; I'll assume you own a real copy.) Two protected formats are supported.
+      </p>
+      <p class="faq-answer"></p>
+      <p class="defent">APE (.pro):</p>
+      <p class="deftext">This is the format produced and used by the Atari Peripheral Emulator (APE). Support for the .pro format was implemented by
+         reverse engineering the protected disks (but not the program), so emulation is spotty. The PRO format works mostly by encoding
+         the order in which phantom sectors are read by the program, so they do not truly support full emulation and must be run with
+         the Accurate Sector Timing option disabled. Not all PRO disks will work, unfortunately.
+      </p>
+      <p class="faq-answer"></p>
+      <p class="defent">VAPI (.atx):</p>
+      <p class="deftext">This is a newer format created by a group of people dedicated to Atari software archival. Unlike the .pro format, the .atx
+         format encodes sector positioning, which allows Altirra to actually emulate true disk read timing for a high level of compatibility.
+         Accurate Sector Timing is recommended when using VAPI disks.
+      </p>
+      <p class="faq-answer">Copy protection algorithms are notoriously fickle, and thus may fail to boot without optimal settings. For maximum compatibility,
+         use the following settings:
+      </p>
+      <p class="faq-answer"></p>
+      <ul>
+         <li>Firmware: 800 OS-B or 800XL</li>
+         <li>Disk &gt; SIO patch: off</li>
+         <li>Disk &gt; Burst SIO transfer: off</li>
+         <li>Disk &gt; Accurate Sector Timing: on for .atx, off for .pro</li>
+      </ul>
+      <p class="faq-answer"></p>
+      <p class="faq-answer">Many programs will boot with the SIO patch enabled, though, as it is designed to try to maintain correct sector timing even
+         though the emulated Atari isn't actually spending time reading a sector. For programs that switch to custom disk routines,
+         you can either use warp mode to speed the load, or try enabling the burst SIO transfer mode.
+      </p>
+      <h2><a name="d2e467">Options</a></h2>
+      <p class="faq-answer">Altirra has a number of options that can be used to customize the emulated Atari hardware.</p>
+      <h3><a name="d2e472">View</a></h3>
+      <p class="defent">Filter Mode</p>
+      <p class="deftext">Selects the interpolation mode for the display. Point gives the sharpest display, but can give artifacts depending on the
+         scaling factor. Bilinear generates a smoother display. Bicubic generates an even higher quality display, but can be slow on
+         some video cards.
+      </p>
+      <p class="deftext">Filter modes are not available unless a Direct3D 9 video card is available; if Altirra is running in DirectDraw or GDI mode,
+         filtering is controlled by the OS or video card driver.
+      </p>
+      <p class="defent">Stretch Mode</p>
+      <p class="deftext">Controls how the display is stretched to fit the screen. Fit to Window just stretches, regardless of how it distorts; Preserve
+         Aspect Ratio attempts to match the aspect ratio that would be seen on a properly adjusted TV set. Square Pixels always assumes
+         square pixels instead, which is mostly the same for PAL, but noticeably different for NTSC. Integral Square Pixels is similar,
+         but also ensures that the scaling factor is always an integer, which prevents distortion in Point filter mode.
+      </p>
+      <p class="defent">Overscan Mode</p>
+      <p class="deftext">Selects how much of the display is visible. Normal only shows the maximum visible playfield region; Extended shows additional
+         border regions that are visible on some TV sets. Full expands the display to cover the entire video signal, even horizontal
+         and vertical blank regions.
+      </p>
+      <p class="deftext">The Extended PAL Height option enables viewing of additional scan lines above and below the normal picture area. This is only
+         useful when running software that explicitly uses a special trick to display more than the 240 scan lines normally allowed
+         by ANTIC.
+      </p>
+      <p class="defent">Vertical Sync</p>
+      <p class="deftext">Lock the display to the vertical sync period, thus reducing the amount of tearing seen on screen.</p>
+      <p class="defent">Show FPS</p>
+      <p class="deftext">Display the current emulator performance in frames per second in the window caption. This can introduce occasional glitching
+         into the video output.
+      </p>
+      <h3><a name="d2e499">Hardware options</a></h3>
+      <p class="faq-answer"></p>
+      <p class="defent">800:</p>
+      <p class="deftext">Enables the base Atari 800 hardware.</p>
+      <p class="faq-answer"></p>
+      <p class="defent">800XL:</p>
+      <p class="deftext">Enables Atari 800XL/130XE hardware features.</p>
+      <h3><a name="d2e513">Firmware options</a></h3>
+      <p class="faq-answer"></p>
+      <p class="defent">Default:</p>
+      <p class="deftext">Chooses either the OS-B ROM for 800 hardware or the XL ROM for 800XL hardware if available; otherwise, defaults to the built-in
+         HLE kernel.
+      </p>
+      <p class="defent">800 (OS-A):</p>
+      <p class="deftext">Selects the OS-A version of the Atari 800 firmware. You must have ATARIOSA.ROM for this to work.</p>
+      <p class="defent">800 (OS-B):</p>
+      <p class="deftext">Selects the OS-B version of the Atari 800 firmware. You must have ATARIOSB.ROM for this to work.</p>
+      <p class="defent">600XL/800XL:</p>
+      <p class="deftext">Selects the Atari 800XL firmware. You must have ATARIXL.ROM for this to work.</p>
+      <p class="defent">Other OS:</p>
+      <p class="deftext">Loads OTHEROS.ROM as firmware, if present. This firmware must be for the XL series (16K).</p>
+      <p class="defent">HLE Kernel:</p>
+      <p class="deftext">Selects the internal high level emulation (HLE) kernel, which executes kernel calls in native code. No firmware is required.
+         This is the next best mode to use when no real kernel ROM is available.
+      </p>
+      <p class="defent">LLE Kernel:</p>
+      <p class="deftext">Selects the internal low level emulation (LLE) kernel, which is a replacement kernel in pure 6502 code. No firmware is required.
+         This mode is partially complete and will boot some software. Enabling the disk SIO patch is recommended.
+      </p>
+      <h3><a name="d2e546">Memory size options</a></h3>
+      <p class="defent">48K:</p>
+      <p class="deftext">Standard Atari 800 configuration with RAM from 0000-BFFF. The range from C000-CFFF is unconnected.</p>
+      <p class="defent">52K:</p>
+      <p class="deftext">Extended Atari 800 configuration with RAM from 0000-CFFF.</p>
+      <p class="defent">64K (XL):</p>
+      <p class="deftext">Standard Atari 800XL configuration with RAM from 0000-FFFF, with the upper 14K swappable with Kernel ROM via PORTB.</p>
+      <p class="defent">128K (130XE):</p>
+      <p class="deftext">Atari 130XE configuration with main ROM from 0000-FFFF and external RAM bank switched via a window at 4000-7FFF. This mode
+         supports ANTIC bank switching.
+      </p>
+      <p class="defent">320K:</p>
+      <p class="deftext">Extended Atari 800/800XL configuration with an additional 12 banks of memory. This mode supports ANTIC bank switching.</p>
+      <p class="defent">576K:</p>
+      <p class="deftext">Extended Atari 800/800XL configuration with an additional 28 banks of memory. This mode does not support either ANTIC bank
+         switching or enabling BASIC.
+      </p>
+      <p class="defent">1088K:</p>
+      <p class="deftext">Extended Atari 800/800XL configuration with an additional 60 banks of memory. In addition to disabling ANTIC banking and BASIC,
+         this mode also takes an additional bit in PORTB.
+      </p>
+      <h3><a name="d2e579">Video options</a></h3>
+      <p class="defent">PAL:</p>
+      <p class="deftext">Selects PAL ANTIC/GTIA operation, including aspect ratio and a 50Hz refresh rate. This is recommended for demos since many
+         are written in Europe.
+      </p>
+      <p class="defent">Frame blending:</p>
+      <p class="deftext">Averages adjacent frames together to reduce flickering with programs that use alternating frames to multiplex sprites or increase
+         apparent frame buffer depth.
+      </p>
+      <p class="defent">Interlace:</p>
+      <p class="deftext">Enables display of interlaced fields (480 scan lines) instead of the standard 240 scan lines. This is only useful when running
+         software that supports interlaced display.
+      </p>
+      <p class="defent">VBXE:</p>
+      <p class="deftext">Enables Video Board XE (VBXE) emulation. This is an internally installed module with 512K of VRAM and a custom FPGA core that
+         greatly expands the video capabilities of the 8-bit Atari. The FX 1.20 core is emulated.
+      </p>
+      <p class="defent">Use VBXE memory for expansion:</p>
+      <p class="deftext">When VBXE emulation is also enabled, this option causes extended memory mapped through the PIA (most expansion modes) to overlap
+         memory used by VBXE. This matches the extended memory emulation done by the FX1.20r core. If disabled, the memories are separate
+         as with the FX1.20a core.
+      </p>
+      <p class="defent">Use $D7xx for VBXE registers:</p>
+      <p class="deftext">Locates the VBXE registers at $D7xx instead of $D6xx. This is sometimes done on actual hardware to avoid conflicts with Parallel
+         Bus Interface (PBI) devices.
+      </p>
+      <p class="defent">NTSC artifacting (standard):</p>
+      <p class="deftext">Enables emulation of false colors from alternating high resolution pixels with NTSC video encoding. This is necessary to see
+         colors in some games that use artifacting, such as Choplifter and Pitstop II.
+      </p>
+      <p class="defent">NTSC artifacting (high):</p>
+      <p class="deftext">Emulates NTSC artifacts by simulating the NTSC decoding process. This produces artifacts that are more realistic. However,
+         the picture is also blurrier due to NTSC limitations.
+      </p>
+      <p class="defent">PAL artifacting:</p>
+      <p class="deftext">Enables emulation of false colors from chroma blending in the delay line of a PAL video decoder. This gives more accurate
+         color output in programs that alternate color and grayscale lines to increase the effective color depth.
+      </p>
+      <p class="defent">Enhanced text output (hardware intercept):</p>
+      <p class="deftext">Replaces the standard emulated video display with a text screen using native Windows fonts. This disables emulation of most
+         Atari video features and only supports basic text modes, but produces a higher quality text display.
+      </p>
+      <h3><a name="d2e624">Disk options</a></h3>
+      <p class="defent">SIO patch:</p>
+      <p class="deftext">Intercepts and accelerates disk I/O calls to the serial input/output (SIO) and disk (DSKIN) routines in the kernel. This tremendously
+         speeds up disk access in the emulated programs.
+      </p>
+      <p class="deftext">Some demos or protected apps may not be compatible with the SIO patch, however.</p>
+      <p class="defent">Burst (standard):</p>
+      <p class="deftext">When enabled, the disk drive sends data across the SIO bus as fast as the program can accept it. This is useful for speeding
+         up disk loads for programs that use custom SIO routines. It will, however, cause the foreground task in the Atari to run very
+         slowly during the transfer. This mode is compatible with the ROM kernel, Atari DOS, and most programs and games.
+      </p>
+      <p class="defent">Burst (polled / SDX compatible):</p>
+      <p class="deftext">Uses a burst mode to accelerate disk transfers for programs that drive the SIO bus in a polling loop instead of by interrupts,
+         particularly SpartaDOS X.
+      </p>
+      <p class="defent">Accurate sector timing:</p>
+      <p class="deftext">Causes the emulator to simulate rotational delays caused by sector position and seek delays (step and head settling time).
+         This results in a slower disk load, but is sometimes necessary to load protected disks.
+      </p>
+      <p class="deftext">When disabled or when the SIO patch is enabled, Altirra still attempts to track disk rotation for protected disks. This means
+         that CPU timing is not preserved, but rotational position is still noted.
+      </p>
+      <p class="defent">Show sector counter:</p>
+      <p class="deftext">Displays the current sector being read or written instead of the unit number in the on-screen indicator.</p>
+      <h3><a name="d2e652">Cassette options</a></h3>
+      <p class="defent">SIO patch:</p>
+      <p class="deftext">Intercepts and accelerates cassette I/O calls to the serial input/output (SIO) routine in the kernel. This greatly speeds
+         up cassette loads.
+      </p>
+      <p class="defent">Auto-boot on startup:</p>
+      <p class="deftext">Automatically holds down START during system startup and then hits a key to initiate a cassette tape load. This only works
+         with cassette tapes that have a machine language program; BASIC tapes must be loaded via CLOAD at the BASIC prompt instead.
+      </p>
+      <p class="defent">Load data as audio:</p>
+      <p class="deftext">Converts the data from a .CAS tape image into raw audio data so it plays through the speaker.</p>
+      <h3><a name="d2e667">CPU options</a></h3>
+      <p class="faq-answer">The first three options should not be used unless you are debugging code in the interactive debugger, as they will slow down
+         execution or cause debug breaks in code that may be executing normally.
+      </p>
+      <p class="faq-answer"></p>
+      <p class="defent">Record instruction history:</p>
+      <p class="deftext">Causes the CPU to record a trace record for every instruction executed.</p>
+      <p class="defent">Track code paths:</p>
+      <p class="deftext">Enables tracking of all memory where instructions are executed and which instructions are branch or call targets.</p>
+      <p class="defent">Stop on BRK instruction:</p>
+      <p class="deftext">Causes the debugger to stop when a breakpoint (BRK) instruction is executed. This often indicates that the Atari has crashed.</p>
+      <p class="defent">Enable illegal instructions:</p>
+      <p class="deftext">Allows execution of undocumented NMOS 6502 instructions, which are used by some programs. This only works in 6502C mode.</p>
+      <p class="defent">CPU model &gt; 6502C:</p>
+      <p class="deftext">Selects the base NMOS 6502C as the CPU model. This is the CPU type used by all official Atari models.</p>
+      <p class="defent">CPU model &gt; 65C02:</p>
+      <p class="deftext">Selects the CMOS 65C02 as the CPU model, which contains some extra instructions. This is occasionally used as a homebrew upgrade
+         option. It may introduce some compatibility problems with games.
+      </p>
+      <p class="defent">CPU model &gt; 65C816:</p>
+      <p class="deftext">Selects the 16-bit 65C816 as the CPU model, which contains many more instructions and a new 16-bit native mode. This is used
+         in some homebrew and commercial accelerators to both increase speed and memory address space.
+      </p>
+      <p class="deftext">Currently, the 65C816 mode does neither: the CPU still runs at 1.79MHz and there is no memory available outside of bank 0.
+         However, this mode can run some extended BIOS and application code that makes use of 65C816 features.
+      </p>
+      <h3><a name="d2e705">Audio options</a></h3>
+      <p class="defent">Stereo:</p>
+      <p class="deftext">Enables a second POKEY. Addresses in the D2xx range with bit 4 clear address the left channel, and addresses with bit 4 set
+         address the right channel. The IRQ and serial facilities of the second POKEY are active but unconnected.
+      </p>
+      <p class="defent">Non-linear mixing:</p>
+      <p class="deftext">Emulates the effective mixing curve of the hardware, which causes the output of two voices to be lower than the sum of their
+         volume levels. This is needed for some effects and also causes some compression of the output.
+      </p>
+      <h3><a name="d2e716">Misc options</a></h3>
+      <p class="defent">Warp speed:</p>
+      <p class="deftext">Disables the speed limiter and audio sync, and runs the emulator as fast as possible.</p>
+      <p class="defent">Pause when inactive:</p>
+      <p class="deftext">When set, causes Altirra to pause emulation when its window goes inactive. Use this to prevent the emulated Atari from using
+         CPU time when in the background.
+      </p>
+      <p class="defent">Accelerated floating point:</p>
+      <p class="deftext">Intercepts known entry points in the floating point library with native math routines. This accelerates Atari decimal math
+         to a large degree, particularly speeding up Atari Basic.
+      </p>
+      <p class="deftext">The emulated FP library is higher accuracy than the real library due to better rounding and use of native math routines, so
+         it will produce slightly different results.
+      </p>
+      <p class="defent">Printer:</p>
+      <p class="deftext">Enables printer emulation. When enabled, any output sent to the OS P: device goes to the printer pane instead, where it can
+         be viewed or copied out.
+      </p>
+      <p class="defent">R-Time 8:</p>
+      <p class="deftext">Enables emulation for the R-Time 8 cartridge, which reflects the real system time.</p>
+      <h2><a name="d2e741">Keyboard mappings</a></h2>
+      <p class="faq-answer">The PC keyboard is mapped to the Atari keyboard by character, so that text can be typed naturally using whatever layout is
+         active in Windows. The following keys are specially mapped:
+      </p>
+      <p class="faq-answer"></p>
+      <table border="1" cellspacing="0">
+         <tr>
+            <td>F1</td>
+            <td>Temporarily engages warp speed.</td>
+         </tr>
+         <tr>
+            <td>F2</td>
+            <td>Atari Start button.</td>
+         </tr>
+         <tr>
+            <td>F3</td>
+            <td>Atari Select button.</td>
+         </tr>
+         <tr>
+            <td>F4</td>
+            <td>Atari Option button.</td>
+         </tr>
+         <tr>
+            <td>F5</td>
+            <td>Warm reset.</td>
+         </tr>
+         <tr>
+            <td>F6</td>
+            <td>Atari Help key.</td>
+         </tr>
+         <tr>
+            <td>Shift+F5</td>
+            <td>Cold reset.</td>
+         </tr>
+         <tr>
+            <td>Ctrl+F7</td>
+            <td>Toggles PAL mode.</td>
+         </tr>
+         <tr>
+            <td>F8</td>
+            <td>Break/Continue.</td>
+         </tr>
+         <tr>
+            <td>Break</td>
+            <td>Atari Break key.</td>
+         </tr>
+         <tr>
+            <td>Ctrl+Break</td>
+            <td>Break into debugger.</td>
+         </tr>
+         <tr>
+            <td>Right-Alt</td>
+            <td>Release mouse capture.</td>
+         </tr>
+         <tr>
+            <td>End</td>
+            <td>Atari key</td>
+         </tr>
+         <tr>
+            <td>Del</td>
+            <td>Shift+&lt; (Clear)</td>
+         </tr>
+         <tr>
+            <td>Ins</td>
+            <td>Shift+&gt; (Insert)</td>
+         </tr>
+         <tr>
+            <td>Page Down</td>
+            <td>Atari Help key</td>
+         </tr>
+      </table>
+      <p class="faq-answer"></p>
+      <h2><a name="d2e864">Emulation accuracy</a></h2>
+      <p class="faq-answer">Altirra was written with reference to the original Atari hardware and OS manuals, as well as many helpful documents on the
+         Internet and even hardware specs and gate diagrams that have since been graciously released to the public, and is designed
+         to target very high hardware emulation accuracy. Despite that, there are still many areas in which its behavior does not quite
+         match that of a real Atari. Here is the known emulation status.
+      </p>
+      <p class="faq-answer"></p>
+      <p class="defent">CPU:</p>
+      <p class="deftext">Instruction execution is believed to be nearly cycle exact with an NMOS 6502C. Page crossing and false reads are implemented,
+         including indexing retry cycles. All instructions, including illegal instructions, are supported.
+      </p>
+      <p class="deftext">65C02 and 65C816 support is still fairly experimental at this point. The 6502 emulation mode portion of the 65C816 is stable,
+         but the native mode may have some problems. There is currently 192K of extended memory in banks $01-03.
+      </p>
+      <p class="defent">ANTIC:</p>
+      <p class="deftext">DMA is emulated at cycle level. Cycle stealing timing, including refresh DMA, is believed to be cycle-exact. There may be cases where mid-scanline changes do not take effect at exactly the right time. The
+         timing of several registers, most notably VSCROL, VCOUNT, and WSYNC, has been calibrated to match a real Atari.
+      </p>
+      <p class="defent">GTIA:</p>
+      <p class="deftext">P/M and playfield collisions are fully supported on a per-cycle basis, undocumented priority modes are implemented, including
+         the colorful mode 0.
+      </p>
+      <p class="deftext">Mid-scanline PRIOR-based GTIA mode changes are supported, including the false ANTIC E mode that results when switching GTIA
+         modes on and off. The color clock position difference in Graphics 10 is also implemented.
+      </p>
+      <p class="deftext">The colors produced by Altirra are designed to provide a reasonable look. Actual colors produced by real Ataris vary considerably
+         based on model and TV standard; PAL Ataris produce slightly different colors than NTSC models. I have seen an NTSC 130XE that
+         actually generates fairly horrid colors, only about 12 unique hues of the 15 it is supposed to generate.
+      </p>
+      <p class="deftext">NTSC artifacting is supported.</p>
+      <p class="defent">POKEY:</p>
+      <p class="deftext">All timers run on cycle granularity and output is downfiltered from 1.79MHz equivalent rate waveforms.</p>
+      <p class="deftext">Two-tone mode is supported, as is serial tone beeping.</p>
+      <p class="deftext">The polynomial counters use the same polynomials as the real hardware, but the sequence position seen by RANDOM may not be
+         correct when switching between 9-bit and 17-bit polynomial mode.
+      </p>
+      <p class="deftext">POKEY serial port parameters are only partially emulated, so invalid or otherwise out-of-spec serial port parameters may work
+         in Altirra even though they wouldn't on a real Atari.
+      </p>
+      <p class="defent">RAM:</p>
+      <p class="deftext">CPU, ANTIC, Kernel ROM, and Self-Test ROM banking are all supported, assuming they are enabled according to the current machine
+         and memory settings.
+      </p>
+      <p class="defent">FLOPPY DISK:</p>
+      <p class="deftext">Intended to emulate an Atari 810. I even checked the 810 schematics and partially disassembled the firmware to determine the
+         exact SIO bus transfer rates and error handling behavior.
+      </p>
+      <p class="deftext">The base 810 command set is supported, as well as a few additional extended commands (Format Medium, Read PERCOM Block, high-speed
+         commands). The disk emulator will read and write disks with 256 byte sectors, as well as mega images of up to 65535 sectors
+         (the max supported by the SIO protocol).
+      </p>
+      <p class="deftext">The disk subsystem emulates the rotational and seek latency of an Atari 810 when accurate sector timing is enabled. When disabled,
+         rotational position is still simulated to select phantom sectors for VAPI disks.
+      </p>
+      <p class="defent">CASSETTE:</p>
+      <p class="deftext">Only partially implemented. The emulation is based on raw SIO waveforms and not decoded sectors; CAS files are converted to
+         bitstreams.
+      </p>
+      <p class="deftext">When reading raw .wav files, Altirra attempts to decode the cassette similarly to the 410 hardware, with two bandpass filters
+         and a comparator with hysteresis. As such, it should have fairly good success at decoding raw tapes.
+      </p>
+      <p class="defent">KERNEL:</p>
+      <p class="deftext">The kernel is fully compatible when using authentic Atari firmware, because, well, it IS the actual firmware.</p>
+      <p class="deftext">The low level kernel is quite incomplete, but contains partial implementations of SIO, CIO, and interrupt services. SIO can
+         boot DOS 2.0S, but in some cases it may corrupt transfers and the SIO patch bypass is recommended. Note that the low level
+         kernel is written like a real kernel ROM, so it is not specific to Altirra and can be run on other emulators or on a real
+         Atari.
+      </p>
+      <p class="deftext">At this point, the high level emulation (HLE) kernel actually has better compatibility than the LLE kernel. Timing-wise it
+         will not be as good as a real 6502-based kernel, but at this point it boots a wide variety of demos and games and is now the
+         default. There are missing features in the S: and E: device handlers that can cause glitches when running productivity software.
+      </p>
+      <p class="deftext">As noted above, the floating point acceleration does not always exactly match the results from the real floating point ROM.</p>
+      <p class="defent">PBI:</p>
+      <p class="deftext">The 800XL parallel bus interface is not supported. I've never seen or touched any PBI peripherals anyway.</p>
+      <p class="defent">VBXE:</p>
+      <p class="deftext">MEMAC windows, the extended display list (XDL), LR/SR/HR/text overlays, and attribute maps are implemented. This includes
+         horizontal and vertical scrolling. Collision detection, overlay priority, and hires/CCR switching are not implemented. Transparency
+         and extended color are partially implemented.
+      </p>
+      <p class="deftext">All features of the blitter are implemented, but the blitter currently only runs at the end of a scan line. Blitter cycle
+         accounting does throttle the blitter according to blit size, but DMA contention is not implemented.
+      </p>
+      <p class="deftext">VBXE DMA fetches are not cycle exact or interleaved with the CPU; they are performed at the end of a scan line or at a control
+         register write driven sync instead.
+      </p>
+      <h2><a name="d2e946">End</a></h2>
+      <p class="faq-answer"></p>
+   </body>
+</html>

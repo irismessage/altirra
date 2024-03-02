@@ -59,6 +59,9 @@ namespace {
 	// 19200 baud.
 	static const int kCyclesPerSIOByte = 945;		// was 939, but 945 is closer to actual 810 speed
 
+	// XF551 high speed data transfer rate -- approx. 39000 baud (POKEY divisor = 0x10).
+	static const int kCyclesPerSIOByteHighSpeed = 460;
+
 	// Delay from end of request to end of ACK byte.
 	static const int kCyclesToACKSent = kCyclesPerSIOByte + 1000;
 
@@ -120,6 +123,7 @@ void ATDiskEmulator::Init(int unit, IATDiskActivity *act, ATScheduler *sched) {
 	mpRotationalEvent = mpScheduler->AddEvent(kCyclesPerDiskRotation, this, kATDiskEventRotation);
 	mbWriteEnabled = false;
 	mbDirty = false;
+	mbDiskFormatDirty = false;
 	mbErrorIndicatorPhase = false;
 	mbHasDiskSource = false;
 }
@@ -255,11 +259,12 @@ void ATDiskEmulator::LoadDisk(const wchar_t *s) {
 	}
 
 	mCurrentTrack = 0;
-	mSectorsPerTrack = mSectorSize >= 256 ? 26 : 18;
+	ComputeSectorsPerTrack();
 	mbEnabled = true;
 	mbWriteEnabled = false;
 	mbAutoFlush = false;
 	mbDirty = false;
+	mbDiskFormatDirty = false;
 	mbHasDiskSource = true;
 }
 
@@ -803,9 +808,21 @@ void ATDiskEmulator::LoadDiskP3(VDFile& f, uint32 len, const wchar_t *s, const u
 void ATDiskEmulator::LoadDiskATR(VDFile& f, uint32 len, const wchar_t *s, const uint8 *header) {
 	mSectorSize = header[4] + 256*header[5];
 
-	if (mSectorSize <= 256)
+	int imageBootSectorCount = 0;
+
+	if (mSectorSize <= 256) {
 		mBootSectorCount = 3;
-	else
+		imageBootSectorCount = 3;
+
+		// Check if this is a FUBARed DD disk where the boot sectors are 256 bytes.
+		// We assume this is the case if the paragraphs count works out for that.
+		if (mSectorSize == 256) {
+			uint32 headerParas = header[2] + 256*header[3];
+
+			if (!(headerParas & 0x0f))
+				imageBootSectorCount = 0;
+		}
+	} else
 		mBootSectorCount = 0;
 
 	if (mSectorSize > 512)
@@ -813,7 +830,9 @@ void ATDiskEmulator::LoadDiskATR(VDFile& f, uint32 len, const wchar_t *s, const 
 
 	mReWriteOffset = 16;
 
-	mTotalSectorCount = (len - 128*mBootSectorCount) / mSectorSize + mBootSectorCount;
+	mTotalSectorCount = (len - 128*imageBootSectorCount) / mSectorSize + imageBootSectorCount;
+
+	ComputeSectorsPerTrack();	// needed earlier for interleave
 
 	mPhysSectorInfo.resize(mTotalSectorCount);
 	mVirtSectorInfo.resize(mTotalSectorCount);
@@ -826,10 +845,12 @@ void ATDiskEmulator::LoadDiskATR(VDFile& f, uint32 len, const wchar_t *s, const 
 		vsi.mNumPhysSectors = 1;
 		vsi.mPhantomSectorCounter = 0;
 
-		psi.mOffset		= i < mBootSectorCount ? 128*i : 128*mBootSectorCount + mSectorSize*(i-mBootSectorCount);
+		psi.mOffset		= i < imageBootSectorCount ? 128*i : 128*imageBootSectorCount + mSectorSize*(i-imageBootSectorCount);
 		psi.mSize		= i < mBootSectorCount ? 128 : + mSectorSize;
 		psi.mFDCStatus	= 0xFF;
-		psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f : (float)kTrackInterleave18[i % 18] / 18.0f;
+		psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f
+			: mSectorsPerTrack >= 26 ? (float)kTrackInterleave26[i % 26] / 26.0f
+			: (float)kTrackInterleave18[i % 18] / 18.0f;
 		psi.mForcedOrder = -1;
 		psi.mWeakDataOffset = -1;
 		psi.mbDirty		= false;
@@ -845,6 +866,11 @@ struct ATDiskEmulator::SortDirtySectors {
 void ATDiskEmulator::UpdateDisk() {
 	if (mReWriteOffset < 0 || !mbHasDiskSource)
 		throw MyError("The current disk image cannot be updated.");
+
+	if (mbDiskFormatDirty) {
+		SaveDisk(VDStringW(mPath).c_str());
+		return;
+	}
 
 	// build a list of dirty sectors
 	typedef vdfastvector<PhysSectorInfo *> DirtySectors;
@@ -924,14 +950,27 @@ void ATDiskEmulator::SaveDisk(const wchar_t *s) {
 		f.write(&mDiskImage[psi.mOffset], psi.mSize);
 	}
 
+	for(uint32 i=0; i<physCount; ++i) {
+		PhysSectorInfo& psi = mPhysSectorInfo[i];
+		psi.mbDirty = false;
+	}
+
 	mPath = s;
 	mbDirty = false;
+	mbDiskFormatDirty = false;
 	mbHasDiskSource = true;
 }
 
 void ATDiskEmulator::CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize) {
 	UnloadDisk();
+	FormatDisk(sectorCount, bootSectorCount, sectorSize);
+	mPath = L"(New disk)";
+	mbWriteEnabled = false;
+	mbHasDiskSource = false;
+	mbEnabled = true;
+}
 
+void ATDiskEmulator::FormatDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize) {
 	mBootSectorCount = bootSectorCount;
 	mSectorSize = sectorSize;
 	mTotalSectorCount = sectorCount;
@@ -941,6 +980,8 @@ void ATDiskEmulator::CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint
 
 	mPhysSectorInfo.resize(mTotalSectorCount);
 	mVirtSectorInfo.resize(mTotalSectorCount);
+
+	ComputeSectorsPerTrack();
 
 	for(int i=0; i<mTotalSectorCount; ++i) {
 		PhysSectorInfo& psi = mPhysSectorInfo[i];
@@ -953,13 +994,16 @@ void ATDiskEmulator::CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint
 		psi.mOffset		= i < mBootSectorCount ? 128*i : 128*mBootSectorCount + mSectorSize*(i-mBootSectorCount);
 		psi.mSize		= i < mBootSectorCount ? 128 : + mSectorSize;
 		psi.mFDCStatus	= 0xFF;
-		psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f : (float)kTrackInterleave18[i % 18] / 18.0f;
+		psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f
+			: mSectorsPerTrack >= 26 ? (float)kTrackInterleave26[i % 26] / 26.0f
+			: (float)kTrackInterleave18[i % 18] / 18.0f;
 	}
 
-	mPath = L"(New disk)";
-	mbWriteEnabled = false;
-	mbEnabled = true;
-	mbHasDiskSource = false;
+	mbDirty = true;
+	mbDiskFormatDirty = true;
+
+	if (mbAutoFlush)
+		QueueAutoSave();
 }
 
 void ATDiskEmulator::UnloadDisk() {
@@ -1178,7 +1222,7 @@ uint8 ATDiskEmulator::WriteSector(uint16 bufadr, uint16 len, uint16 sector, ATCP
 }
 
 void ATDiskEmulator::ReadStatus(uint8 dst[5]) {
-	dst[0] = (mSectorSize > 128 ? 0x30 : 0x10) + (mbLastOpError ? 0x04 : 0x00) + (mbWriteEnabled ? 0x00 : 0x08);
+	dst[0] = (mSectorSize > 128 ? 0x30 : 0x10) + (mbLastOpError ? 0x04 : 0x00) + (mbWriteEnabled ? 0x00 : 0x08) + (mSectorsPerTrack == 26 ? 0x80 : 0x00);
 	dst[1] = mTotalSectorCount > 0 ? mFDCStatus : 0x7F;
 	dst[2] = 0xe0;
 	dst[3] = 0x00;
@@ -1278,7 +1322,7 @@ void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 		mpPokey->ReceiveSIOByte(mSendPacket[mTransferOffset++]);
 
 		// SIO barfs if the third byte is sent too quickly
-		uint32 transferDelay = kCyclesPerSIOByte;
+		uint32 transferDelay = mbWriteHighSpeed ? kCyclesPerSIOByteHighSpeed : kCyclesPerSIOByte;
 		if (mTransferOffset == 1) {
 			transferDelay = kCyclesToFirstData;
 
@@ -1378,9 +1422,10 @@ void ATDiskEmulator::PokeyWriteSIO(uint8 c) {
 		mReceivePacket[mTransferOffset++] = c;
 }
 
-void ATDiskEmulator::BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool rotationalDelay) {
+void ATDiskEmulator::BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool rotationalDelay, bool useHighSpeed) {
 	mbWriteMode = true;
 	mbWriteRotationalDelay = rotationalDelay;
+	mbWriteHighSpeed = useHighSpeed;
 	mTransferOffset = 0;
 	mTransferLength = length;
 
@@ -1452,15 +1497,20 @@ void ATDiskEmulator::ProcessCommandPacket() {
 
 	// interpret the command
 //		ATConsoleTaggedPrintf("DISK: Processing command %02X\n", mReceivePacket[1]);
-	switch(mReceivePacket[1]) {
+	const uint8 command = mReceivePacket[1];
+	const bool highSpeed = (command & 0x80) != 0;
+
+	switch(command) {
 		case 0x53:	// status
+		case 0xD3:	// status (XF551 high speed)
 			mSendPacket[0] = 0x41;
 			mSendPacket[1] = 0x43;
 			ReadStatus(mSendPacket + 2);
-			BeginTransfer(7, 2500, false);
+			BeginTransfer(7, 2500, false, highSpeed);
 			break;
 
 		case 0x52:	// read
+		case 0xD2:	// read (XF551 high speed)
 			{
 				uint32 sector = mReceivePacket[2] + mReceivePacket[3] * 256;
 
@@ -1602,7 +1652,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 				mSendPacket[psi.mSize+2] = Checksum(mSendPacket + 2, psi.mSize);
 				const uint32 transferLength = psi.mSize + 3;
 
-				BeginTransfer(transferLength, kCyclesToACKSent, true);
+				BeginTransfer(transferLength, kCyclesToACKSent, true, highSpeed);
 				ATConsolePrintf("DISK: Reading vsec=%3d (%d/%d) (trk=%d), psec=%3d, chk=%02x, rot=%.2f >> %.2f%s.\n"
 						, sector
 						, physSector - vsi.mStartPhysSector + 1
@@ -1639,6 +1689,29 @@ void ATDiskEmulator::ProcessCommandPacket() {
 				mbLastOpError = false;
 				BeginTransfer(1, kCyclesToACKSent, false);
 
+				ATConsolePrintf("DISK: FORMAT COMMAND RECEIVED. Reformatting disk as single density.\n");
+				FormatDisk(720, 3, 128);
+
+				if (mpOperationEvent)
+					mpScheduler->RemoveEvent(mpOperationEvent);
+				mpOperationEvent = mpScheduler->AddEvent(1000000, this, kATDiskEventFormatCompleted);
+			}
+			break;
+
+		case 0x22:	// format disk medium density
+			if (!mbWriteEnabled) {
+				ATConsolePrintf("DISK: FORMAT COMMAND RECEIVED. Blocking due to read-only disk!\n");
+				mSendPacket[0] = 'N';
+				mbLastOpError = true;
+				BeginTransfer(1, kCyclesToACKSent, false);
+			} else {
+				mSendPacket[0] = 'A';
+				mbLastOpError = false;
+				BeginTransfer(1, kCyclesToACKSent, false);
+
+				ATConsolePrintf("DISK: FORMAT COMMAND RECEIVED. Reformatting disk as enhanced density.\n");
+				FormatDisk(1040, 3, 128);
+
 				if (mpOperationEvent)
 					mpScheduler->RemoveEvent(mpOperationEvent);
 				mpOperationEvent = mpScheduler->AddEvent(1000000, this, kATDiskEventFormatCompleted);
@@ -1646,7 +1719,9 @@ void ATDiskEmulator::ProcessCommandPacket() {
 			break;
 
 		case 0x50:	// put (without verify)
+		case 0xD0:	// put (without verify) (XF551 high speed)
 		case 0x57:	// write (with verify)
+		case 0xD7:	// write (with verify) (XF551 high speed)
 			{
 				uint32 sector = mReceivePacket[2] + mReceivePacket[3] * 256;
 
@@ -1695,7 +1770,22 @@ void ATDiskEmulator::ProcessCommandPacket() {
 		default:
 			mSendPacket[0] = 0x4E;
 			BeginTransfer(1, kCyclesToACKSent, false);
-			ATConsolePrintf("DISK: Unsupported command %02X\n", mReceivePacket[1]);
+
+			{
+				const char *desc = "?";
+
+				switch(command) {
+					case 0x3F:
+						desc = "Write PERCOM block";
+						break;
+
+					case 0x58:
+						desc = "CA-2001 write/execute";
+						break;
+				}
+
+				ATConsolePrintf("DISK: Unsupported command %02X (%s)\n", command, desc);
+			}
 			break;
 
 	}
@@ -1811,4 +1901,8 @@ void ATDiskEmulator::PokeySerInReady() {
 		mpScheduler->RemoveEvent(mpTransferEvent);
 		mpTransferEvent = mpScheduler->AddEvent(50, this, kATDiskEventTransferByte);
 	}
+}
+
+void ATDiskEmulator::ComputeSectorsPerTrack() {
+	mSectorsPerTrack = mSectorSize >= 256 ? 18 : mTotalSectorCount > 720 && !(mTotalSectorCount % 26) ? 26 : 18;
 }

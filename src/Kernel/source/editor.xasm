@@ -79,10 +79,6 @@ suspendloop:
 	ldx		ssflag
 	bne		suspendloop
 
-	;check if display of control codes is desired
-	ldx		dspflg
-	bne		rawput	
-
 	cmp		#$9b
 	bne		notret
 	
@@ -136,6 +132,10 @@ moveexit:
 	rts
 	
 notret:
+	;check if display of control codes is desired
+	ldx		dspflg
+	bne		rawput
+
 	cmp		#$7d
 	beq		isclear
 	cmp		#$1c

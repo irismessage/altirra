@@ -331,20 +331,30 @@ void ATGTIARenderer::RenderMode8(int x1, int x2) {
 
 	const uint8 luma1 = mpColorTable[5] & 0xf;
 
+	const uint32 andtab[4]={
+		0xffff,
+		0xf0ff,
+		0xfff0,
+		0xf0f0,
+	};
+
+	const uint32 addtab[4]={
+		0x0000,
+		(uint32)luma1 << 8,
+		luma1,
+		(uint32)luma1 * 0x0101
+	};
+
 	int w = x2 - x1;
 	while(w--) {
-		uint8 lb = *lumasrc++;
+		uint32 lb = *lumasrc++ & 3;
 
-		uint8 c0 = colorTable[priTable[*src++]];
-		uint8 c1 = c0;
+		uint32 c0 = (uint32)colorTable[priTable[*src++]];
 
-		if (lb & 2) c0 = (c0 & 0xf0) + luma1;
-		if (lb & 1) c1 = (c1 & 0xf0) + luma1;
+		c0 += (c0 << 8);
 
-		dst[0] = c0;
-		dst[1] = c1;
+		*(uint16 *)dst = (c0 & andtab[lb]) + addtab[lb];
 		dst += 2;
-		++x1;
 	}
 }
 

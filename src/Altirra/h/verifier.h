@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL emulator
-//	Copyright (C) 2008 Avery Lee
+//	Copyright (C) 2008-2010 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -15,20 +15,27 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#ifndef AT_DISASM_H
-#define AT_DISASM_H
+#ifndef f_AT_VERIFIER_H
+#define f_AT_VERIFIER_H
 
-class VDStringA;
+class ATCPUEmulator;
+class ATSimulator;
 
-void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent);
-void ATDisassembleCaptureInsnContext(uint16 addr, uint8 bank, ATCPUHistoryEntry& hent);
-uint16 ATDisassembleInsn(uint16 addr, uint8 bank = 0);
-uint16 ATDisassembleInsn(char *buf, uint16 addr, bool decodeReferences);
-uint16 ATDisassembleInsn(VDStringA& buf, uint16 addr, bool decodeReferences);
-uint16 ATDisassembleInsn(VDStringA& buf, const ATCPUHistoryEntry& hent, bool decodeReferences);
-void ATDisassembleRange(FILE *f, uint16 addr1, uint16 addr2);
-uint16 ATDisassembleGetFirstAnchor(uint16 addr, uint16 target);
+class ATCPUVerifier {
+	ATCPUVerifier(const ATCPUVerifier&);
+	ATCPUVerifier& operator=(const ATCPUVerifier&);
+public:
+	ATCPUVerifier();
+	~ATCPUVerifier();
 
-int ATGetOpcodeLength(uint8 opcode);
+	void Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATSimulator *sim);
 
-#endif
+	void VerifyJump(uint16 target);
+
+protected:
+	ATCPUEmulator *mpCPU;
+	ATCPUEmulatorMemory *mpMemory;
+	ATSimulator *mpSimulator;
+};
+
+#endif	// f_AT_VERIFIER_H

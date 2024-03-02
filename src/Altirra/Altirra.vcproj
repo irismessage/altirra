@@ -45,7 +45,7 @@
 				Name="VCCLCompilerTool"
 				Optimization="0"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500"
+				PreprocessorDefinitions="WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0400"
 				MinimalRebuild="true"
 				BasicRuntimeChecks="1"
 				RuntimeLibrary="1"
@@ -127,7 +127,7 @@
 				Optimization="3"
 				InlineFunctionExpansion="2"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500"
+				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0400"
 				RuntimeLibrary="0"
 				BufferSecurityCheck="false"
 				FloatingPointModel="2"
@@ -312,6 +312,14 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\profiler.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\profilerui.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\rtime8.cpp"
 				>
 			</File>
@@ -359,6 +367,10 @@
 				RelativePath=".\source\vbxe.cpp"
 				>
 			</File>
+			<File
+				RelativePath=".\source\verifier.cpp"
+				>
+			</File>
 		</Filter>
 		<Filter
 			Name="Header Files"
@@ -399,6 +411,10 @@
 			</File>
 			<File
 				RelativePath=".\h\cpu.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\cpumachine.inl"
 				>
 			</File>
 			<File
@@ -482,6 +498,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\profiler.h"
+				>
+			</File>
+			<File
 				RelativePath=".\res\resource.h"
 				>
 			</File>
@@ -529,6 +549,10 @@
 				RelativePath=".\h\vbxe.h"
 				>
 			</File>
+			<File
+				RelativePath=".\h\verifier.h"
+				>
+			</File>
 		</Filter>
 		<Filter
 			Name="Resource Files"
@@ -557,6 +581,14 @@
 			</File>
 			<File
 				RelativePath=".\res\changes.txt"
+				>
+			</File>
+			<File
+				RelativePath=".\res\profilerToolbar.bmp"
+				>
+			</File>
+			<File
+				RelativePath=".\res\program.ico"
 				>
 			</File>
 		</Filter>

@@ -128,6 +128,15 @@ void VDUIProxyListView::Clear() {
 		SendMessage(mhwnd, LVM_DELETEALLITEMS, 0, 0);
 }
 
+void VDUIProxyListView::ClearExtraColumns() {
+	if (!mhwnd)
+		return;
+
+	uint32 n = GetColumnCount();
+	for(uint32 i=n; i > 1; --i)
+		ListView_DeleteColumn(mhwnd, i - 1);
+}
+
 void VDUIProxyListView::DeleteItem(int index) {
 	SendMessage(mhwnd, LVM_DELETEITEM, index, 0);
 }
@@ -454,6 +463,14 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 				}
 			}
 			return TRUE;
+
+		case NM_DBLCLK:
+			{
+				int selIndex = ListView_GetNextItem(mhwnd, -1, LVNI_ALL | LVNI_SELECTED);
+
+				mEventItemDoubleClicked.Raise(this, selIndex);
+			}
+			return 0;
 	}
 
 	return 0;

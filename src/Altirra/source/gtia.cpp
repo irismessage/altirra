@@ -61,14 +61,18 @@ ATGTIAEmulator::ATGTIAEmulator()
 	, mArtifactMode(kArtifactNone)
 	, mOverscanMode(kOverscanExtended)
 	, mVBlankMode(kVBlankModeOn)
+	, mbVsyncEnabled(true)
 	, mbBlendMode(false)
+	, mbOverscanPALExtended(false)
+	, mbOverscanPALExtendedThisFrame(false)
+	, mbPALThisFrame(false)
 	, mbInterlaceEnabled(false)
 	, mbInterlaceEnabledThisFrame(false)
 	, mbFieldPolarity(false)
 	, mbLastFieldPolarity(false)
 	, mbPostProcessThisFrame(false)
 	, mbShowCassetteIndicator(false)
-	, mPreArtifactFrameBuffer(456*262)
+	, mPreArtifactFrameBuffer(456*312)
 	, mpArtifactingEngine(new ATArtifactingEngine)
 	, mpRenderer(new ATGTIARenderer)
 	, mpVBXE(NULL)
@@ -214,25 +218,45 @@ void ATGTIAEmulator::SetOverscanMode(OverscanMode mode) {
 	mOverscanMode = mode;
 }
 
+void ATGTIAEmulator::SetOverscanPALExtended(bool extended) {
+	mbOverscanPALExtended = extended;
+}
+
 void ATGTIAEmulator::GetFrameSize(int& w, int& h) const {
 	if (mAnalysisMode || mbForcedBorder) {
 		w = 456;
-		h = 262;
+
+		if (mbPALMode && mbOverscanPALExtended)
+			h = 312;
+		else
+			h = 262;
 	} else {
 		switch(mOverscanMode) {
 			case kOverscanFull:
 				w = 456;
-				h = 262;
+
+				if (mbPALMode && mbOverscanPALExtended)
+					h = 312;
+				else
+					h = 262;
 				break;
 
 			case kOverscanExtended:
 				w = 376;
-				h = 240;
+
+				if (mbPALMode && mbOverscanPALExtended)
+					h = 288;
+				else
+					h = 240;
 				break;
 
 			case kOverscanNormal:
 				w = 336;
-				h = 240;
+
+				if (mbPALMode && mbOverscanPALExtended)
+					h = 288;
+				else
+					h = 240;
 				break;
 		}
 	}
@@ -524,26 +548,43 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 			fb->mPixmap.format = 0;
 			fb->mbAllowConversion = true;
 			fb->mbInterlaced = false;
-			fb->mFlags = IVDVideoDisplay::kAllFields | IVDVideoDisplay::kVSync;
+			fb->mFlags = IVDVideoDisplay::kAllFields;
 		} else if (!mbTurbo && !force)
 			return false;
 	}
 
-	bool use14MHz = (mpVBXE != NULL);
+	bool use14MHz = (mpVBXE != NULL) || mArtifactMode == kArtifactNTSCHi;
 
 	if (mpFrame) {
 		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 
-		mbPostProcessThisFrame = (mArtifactMode || mbBlendMode) && !use14MHz;
+		if (mbVsyncEnabled)
+			fb->mFlags |= IVDVideoDisplay::kVSync;
+		else
+			fb->mFlags &= ~IVDVideoDisplay::kVSync;
+
+		mbPALThisFrame = mbPALMode;
+		mbOverscanPALExtendedThisFrame = mbPALThisFrame && mbOverscanPALExtended;
+		mbPostProcessThisFrame = (mArtifactMode || mbBlendMode) && !mpVBXE;
 		mb14MHzThisFrame = use14MHz;
 		mbInterlaceEnabledThisFrame = mbInterlaceEnabled;
 
-		if (mbPostProcessThisFrame)
-			mpArtifactingEngine->BeginFrame(mArtifactMode == kArtifactPAL, mArtifactMode != kArtifactNone, mbBlendMode);
+		if (mbPostProcessThisFrame) {
+			mPreArtifactFrame.h = mbOverscanPALExtendedThisFrame ? 312 : 262;
+
+			mpArtifactingEngine->BeginFrame(mArtifactMode == kArtifactPAL, mArtifactMode != kArtifactNone, mArtifactMode == kArtifactNTSCHi, mbBlendMode);
+		}
 
 		int format = mArtifactMode || mbBlendMode || use14MHz ? nsVDPixmap::kPixFormat_XRGB8888 : nsVDPixmap::kPixFormat_Pal8;
-		int width = use14MHz ? 912 : 456;
-		int height = mbInterlaceEnabledThisFrame ? 524 : 262;
+
+		int width = 456;
+		if (use14MHz)
+			width *= 2;
+
+		int height = mbOverscanPALExtendedThisFrame ? 312 : 262;
+		
+		if (mbInterlaceEnabledThisFrame)
+			height *= 2;
 
 		if (mpFrame->mPixmap.format != format || mpFrame->mPixmap.w != width || mpFrame->mPixmap.h != height) {
 			fb->mBuffer.init(width, height, format);
@@ -553,6 +594,8 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 		fb->mPixmap.palette = mPalette;
 
 		mPreArtifactFrameVisible = mPreArtifactFrame;
+		mPreArtifactFrameVisibleY1 = 0;
+		mPreArtifactFrameVisibleY2 = mPreArtifactFrame.h;
 
 		if (!mAnalysisMode && !mbForcedBorder && mOverscanMode != kOverscanFull) {
 			ptrdiff_t offset = (mOverscanMode == kOverscanExtended ? 34*2 : 44*2);
@@ -562,16 +605,22 @@ bool ATGTIAEmulator::BeginFrame(bool force) {
 			else if (mbPostProcessThisFrame)
 				offset *= 4;
 
-			offset += fb->mPixmap.pitch * (mbInterlaceEnabledThisFrame ? 16 : 8);
+			if (!mbOverscanPALExtendedThisFrame)
+				offset += fb->mPixmap.pitch * (mbInterlaceEnabledThisFrame ? 16 : 8);
 
 			fb->mPixmap.data = (char *)fb->mPixmap.data + offset;
 			fb->mPixmap.w = ((mOverscanMode == kOverscanExtended) ? (222 - 34)*2 : (212 - 44)*2) * (use14MHz ? 2 : 1);
-			fb->mPixmap.h = mbInterlaceEnabledThisFrame ? 480 : 240;
+			fb->mPixmap.h = mbOverscanPALExtendedThisFrame ? 288 : 240;
 
-			mPreArtifactFrameVisible.data = (char *)mPreArtifactFrameVisible.data + (mOverscanMode == kOverscanExtended ? 34*2 : 44*2) * (use14MHz ? 2 : 1) + mPreArtifactFrameVisible.pitch * 8;
+			mPreArtifactFrameVisibleY1 = mbOverscanPALExtendedThisFrame ? 0 : 8;
+			mPreArtifactFrameVisibleY2 = mPreArtifactFrameVisibleY1 + fb->mPixmap.h;
+
+			mPreArtifactFrameVisible.data = (char *)mPreArtifactFrameVisible.data + (mOverscanMode == kOverscanExtended ? 34*2 : 44*2) * (use14MHz ? 2 : 1) + mPreArtifactFrameVisibleY1*mPreArtifactFrameVisible.pitch;
 			mPreArtifactFrameVisible.w = fb->mPixmap.w;
 			mPreArtifactFrameVisible.h = fb->mPixmap.h;
 
+			if (mbInterlaceEnabledThisFrame)
+				fb->mPixmap.h *= 2;
 		}
 	}
 
@@ -597,13 +646,32 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 	if (mpFrame) {
 		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 
-		if (y < 262) {
-			if (mbPostProcessThisFrame)
-				mpDst = &mPreArtifactFrameBuffer[y * 456];
-			else if (!mbInterlaceEnabledThisFrame)
-				mpDst = (uint8 *)fb->mBuffer.data + y * fb->mBuffer.pitch;
+		int yw = y;
+		int h = fb->mBuffer.h;
+
+		if (mbPostProcessThisFrame)
+			h = mPreArtifactFrame.h;
+		else if (mbInterlaceEnabledThisFrame)
+			h >>= 1;
+
+		if (mbOverscanPALExtendedThisFrame) {
+			// What we do here is wrap the last 16 lines back up to the top of
+			// the display. This isn't correct, as it causes those lines to
+			// lead by a frame, but it at least solves the vertical position
+			// issue.
+			if (yw >= 312 - 16)
+				yw -= 312 - 16;
 			else
-				mpDst = (uint8 *)fb->mBuffer.data + y * fb->mBuffer.pitch*2 + (mbFieldPolarity ? fb->mBuffer.pitch : 0);
+				yw += 16;
+		}
+
+		if (yw < h) {
+			if (mbPostProcessThisFrame)
+				mpDst = &mPreArtifactFrameBuffer[yw * 456];
+			else if (!mbInterlaceEnabledThisFrame)
+				mpDst = (uint8 *)fb->mBuffer.data + yw * fb->mBuffer.pitch;
+			else
+				mpDst = (uint8 *)fb->mBuffer.data + yw * fb->mBuffer.pitch*2 + (mbFieldPolarity ? fb->mBuffer.pitch : 0);
 
 			memset(mpDst, 0, mb14MHzThisFrame ? 912 : 456);
 		} else {
@@ -1329,9 +1397,12 @@ void ATGTIAEmulator::UpdateScreen() {
 
 		uint8 *row = (uint8 *)pxdst.data + (mY+1)*pxdst.pitch;
 
-		if (mb14MHzThisFrame) {
+		if (mpVBXE) {
 			VDMemset32(row, 0x00, 4*x);
-			VDMemset32(row + x*4, 0xFFFF00, 912 - 4*x);
+			VDMemset32(row + x*4*4, 0xFFFF00, 912 - 4*x);
+		} else if (mb14MHzThisFrame) {
+			VDMemset8(row, 0x00, 4*x);
+			VDMemset8(row + x*4, 0xFF, 912 - 4*x);
 		} else {
 			VDMemset8(row, 0x00, 2*x);
 			VDMemset8(row + x*2, 0xFF, 456 - 2*x);
@@ -1623,20 +1694,22 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 }
 
 void ATGTIAEmulator::ApplyArtifacting() {
-	if (mb14MHzThisFrame) {
+	if (mpVBXE) {
 		if (mArtifactMode == kArtifactPAL) {
 			ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 			char *dstrow = (char *)fb->mBuffer.data;
 			ptrdiff_t dstpitch = fb->mBuffer.pitch;
+			uint32 h = fb->mBuffer.h;
 
 			if (mbInterlaceEnabledThisFrame) {
 				if (mbFieldPolarity)
 					dstrow += dstpitch;
 
 				dstpitch *= 2;
+				h >>= 1;
 			}
 
-			for(uint32 row=0; row<262; ++row) {
+			for(uint32 row=0; row<h; ++row) {
 				uint32 *dst = (uint32 *)dstrow;
 
 				mpArtifactingEngine->Artifact32(row, dst, 912);
@@ -1664,8 +1737,18 @@ void ATGTIAEmulator::ApplyArtifacting() {
 
 	const uint8 *srcrow = (const uint8 *)mPreArtifactFrame.data;
 	ptrdiff_t srcpitch = mPreArtifactFrame.pitch;
+	uint32 srch = mPreArtifactFrame.h;
 
-	for(uint32 row=0; row<262; ++row) {
+	uint32 y1 = mPreArtifactFrameVisibleY1;
+	uint32 y2 = mPreArtifactFrameVisibleY2;
+
+	if (y1)
+		--y1;
+
+	dstrow += dstpitch * y1;
+	srcrow += srcpitch * y1;
+
+	for(uint32 row=y1; row<y2; ++row) {
 		uint32 *dst = (uint32 *)dstrow;
 		const uint8 *src = srcrow;
 

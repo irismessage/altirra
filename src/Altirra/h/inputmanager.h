@@ -119,6 +119,8 @@ enum ATInputCode {
 	kATInputCode_MouseRMB		= 0x1802,
 	kATInputCode_MouseX1B		= 0x1803,
 	kATInputCode_MouseX2B		= 0x1804,
+
+	kATInputCode_JoyClass		= 0x2000,
 	kATInputCode_JoyHoriz1		= 0x2000,
 	kATInputCode_JoyVert1		= 0x2001,
 	kATInputCode_JoyVert2		= 0x2002,
@@ -144,6 +146,8 @@ enum ATInputCode {
 	kATInputCode_JoyPOVUp		= 0x210E,
 	kATInputCode_JoyPOVDown		= 0x210F,
 	kATInputCode_JoyButton0		= 0x2800,
+
+	kATInputCode_ClassMask		= 0xF000,
 
 	kATInputCode_SpecificUnit	= 0x80000000,
 	kATInputCode_UnitScale		= 0x01000000,
@@ -288,6 +292,19 @@ std::pair<typename atfixedhash<K,V,N>::iterator, bool> atfixedhash<K,V,N>::inser
 struct ATInputUnitIdentifier {
 	char buf[16];
 
+	bool IsZero() const {
+		for(int i=0; i<16; ++i) {
+			if (buf[i])
+				return false;
+		}
+
+		return true;
+	}
+
+	void SetZero() {
+		memset(buf, 0, sizeof buf);
+	}
+
 	bool operator==(const ATInputUnitIdentifier& x) const {
 		return !memcmp(buf, x.buf, 16);
 	}
@@ -316,6 +333,14 @@ public:
 
 	void Clear();
 
+	int GetSpecificInputUnit() const {
+		return mSpecificInputUnit;
+	}
+
+	void SetSpecificInputUnit(int index) {
+		mSpecificInputUnit = index;
+	}
+
 	uint32 GetControllerCount() const;
 	const Controller& GetController(uint32 i) const;
 	uint32 AddController(ATInputControllerType type, uint32 index);
@@ -335,6 +360,7 @@ protected:
 	Mappings mMappings;
 
 	VDStringW mName;
+	int mSpecificInputUnit;
 };
 
 class ATInputManager {
@@ -353,7 +379,10 @@ public:
 	void SwapPorts(int p1, int p2);
 	void Poll();
 
-	int RegisterInputUnit(const ATInputUnitIdentifier& id);
+	int GetInputUnitCount() const;
+	const wchar_t *GetInputUnitName(int index) const;
+	int GetInputUnitIndexById(const ATInputUnitIdentifier& id) const;
+	int RegisterInputUnit(const ATInputUnitIdentifier& id, const wchar_t *name);
 	void UnregisterInputUnit(int unit);
 
 	bool IsInputMapped(int unit, uint32 inputCode) const;
@@ -413,6 +442,7 @@ protected:
 
 	uint32	mAllocatedUnits;
 	ATInputUnitIdentifier mUnitIds[32];
+	VDStringW	mUnitNames[32];
 };
 
 #endif	// f_AT_INPUTMANAGER_H

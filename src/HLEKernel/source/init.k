@@ -125,6 +125,13 @@ dbclear:
 notdiag:
 
 	;(Altirra specific) Check OPTION and enable BASIC rom.
+	bit		warmst			;is warmstart set?
+	bpl		checkoption		;yes, check the OPTION key
+	
+	lda		basicf
+	jmp		setoption
+	
+checkoption:
 	lda		#$3c
 	sta		pbctl
 	sta		pactl
@@ -132,7 +139,9 @@ notdiag:
 	sta		porta
 
 	lda		consol
+setoption:
 	and		#$04
+	sta		basicf
 	lsr
 	eor		#$02
 	ora		#$b1

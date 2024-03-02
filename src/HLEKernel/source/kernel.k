@@ -114,6 +114,9 @@ recvdn	= $0039			;SIO: receive completed flag
 xmtdon	= $003a			;SIO: transmit completed flag
 chksnt	= $003b			;SIO: checksum sent flag
 nocksm	= $003c			;SIO: no-checksum flag
+bptr	= $003d			;Cassette: Buffer pointer
+ftype	= $003e			;Cassette: Interrecord gap (IRG) type; bit7=1 means continuous mode
+feof	= $003f			;Cassette: EOF flag
 critic	= $0042			;critical flag for vbi
 ckey	= $004a			;cassette boot key
 atract	= $004d			;screen attract counter
@@ -205,6 +208,8 @@ strig0	= $0284			;shadow for TRIG0 ($D001)
 strig1	= $0285			;shadow for TRIG1 ($D002)
 strig2	= $0286			;shadow for TRIG2 ($D003)
 strig3	= $0287			;shadow for TRIG3 ($D004)
+wmode	= $0289			;Cassette: Write mode (00 = read, 80 = write)
+blim	= $028a			;Cassette: Buffer limit
 txtmsc	= $0294			;text window pointer
 		; $0295
 logmap	= $02b2			;line logical map
@@ -265,6 +270,8 @@ icax3	= $034c			;
 icax4	= $034d			;
 icax5	= $034e			;
 icax6	= $034f			;
+basicf	= $03f8			;XL/XE: BASIC flag (0 = enabled)
+casbuf	= $03fd			;Cassette buffer (03FD-047F)
 
 	opt		h-o+f+
 
@@ -316,13 +323,13 @@ printv	dta		a(BugCheck-1)
 		jsr		BugCheck
 		dta		$00
 
-casetv	dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		dta		a(BugCheck-1)
-		jsr		BugCheck
+casetv	dta		a(CassetteOpen-1)
+		dta		a(CassetteClose-1)
+		dta		a(CassetteGetByte-1)
+		dta		a(CassettePutByte-1)
+		dta		a(CassetteGetStatus-1)
+		dta		a(CassetteSpecial-1)
+		jsr		CassetteInit
 		dta		$00
 	
 		;vector table
@@ -363,6 +370,7 @@ HandlerTable:
 #include <keyboard.k>
 #include <nmi.k>
 #include <screen.k>
+#include <cassette.k>
 
 ;==============================================================================
 ; Hacks

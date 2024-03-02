@@ -65,6 +65,7 @@ public:
 	void LoadDisk(const wchar_t *s);
 	void SaveDisk(const wchar_t *s);
 	void CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize);
+	void FormatDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize);
 	void UnloadDisk();
 
 	uint32 GetSectorCount() const;
@@ -96,7 +97,7 @@ protected:
 	void LoadDiskP3(VDFile& file, uint32 len, const wchar_t *s, const uint8 *header);
 	void LoadDiskATR(VDFile& file, uint32 len, const wchar_t *s, const uint8 *header);
 
-	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool useRotationalDelay);
+	void BeginTransfer(uint32 length, uint32 cyclesToFirstByte, bool useRotationalDelay, bool useHighSpeed = false);
 	void UpdateRotationalCounter();
 	void QueueAutoSave();
 	void AutoSave();
@@ -105,6 +106,7 @@ protected:
 	void ProcessCommandPacket();
 	void ProcessCommandTransmitCompleted();
 	void ProcessCommandData();
+	void ComputeSectorsPerTrack();
 
 	ATPokeyEmulator	*mpPokey;
 	IATDiskActivity *mpActivity;
@@ -134,8 +136,10 @@ protected:
 	sint32	mReWriteOffset;
 	bool	mbWriteEnabled;
 	bool	mbWriteRotationalDelay;
+	bool	mbWriteHighSpeed;
 	bool	mbAutoFlush;
 	bool	mbDirty;
+	bool	mbDiskFormatDirty;
 	bool	mbHasDiskSource;
 	bool	mbErrorIndicatorPhase;
 

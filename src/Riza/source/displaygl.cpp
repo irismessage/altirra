@@ -5,6 +5,8 @@
 #include <vd2/system/math.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Kasumi/pixmap.h>
+#include <vd2/Kasumi/pixmapops.h>
+#include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Riza/opengl.h>
 #include "displaydrv.h"
 
@@ -251,6 +253,8 @@ protected:
 
 	VDRTProfileChannel	mProfChan;
 	VDOpenGLBinding	mGL;
+
+	VDPixmapBuffer	mConversionBuffer;
 };
 
 #define MYWM_OGLINIT		(WM_USER + 0x180)
@@ -302,7 +306,11 @@ bool VDVideoDisplayMinidriverOpenGL::Init(HWND hwnd, const VDVideoDisplaySourceI
 			break;
 
 		default:
-			return false;
+			if (!info.bAllowConversion)
+				return false;
+
+			mConversionBuffer.init(info.pixmap.w, info.pixmap.h, nsVDPixmap::kPixFormat_XRGB8888);
+			break;
 	}
 
 	// OpenGL doesn't allow upside-down texture uploads, so we simply
@@ -502,6 +510,10 @@ void VDVideoDisplayMinidriverOpenGL::Upload(const VDPixmap& source, VDVideoTextu
 		break;
 	case nsVDPixmap::kPixFormat_XRGB8888:
 		mGL.glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, tile.mSrcW, tile.mSrcH, GL_BGRA_EXT, GL_UNSIGNED_BYTE, (const char *)source.data);
+		break;
+	default:
+		VDPixmapBlt(mConversionBuffer, source);
+		mGL.glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, tile.mSrcW, tile.mSrcH, GL_BGRA_EXT, GL_UNSIGNED_BYTE, (const char *)mConversionBuffer.data);
 		break;
 	}
 

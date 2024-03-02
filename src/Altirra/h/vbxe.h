@@ -43,6 +43,8 @@ public:
 	void SetAnalysisMode(bool analysisMode);
 	void SetDefaultPalette(const uint32 pal[256]);
 
+	uint8 *GetMemoryBase() { return mpMemory; }
+
 	bool IsBlitLoggingEnabled() const { return mbBlitLogging; }
 	void SetBlitLoggingEnabled(bool enable);
 	void DumpStatus();

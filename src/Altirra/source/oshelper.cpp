@@ -2,6 +2,7 @@
 #include "oshelper.h"
 #include <windows.h>
 #include <vd2/system/error.h>
+#include <vd2/system/registry.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmapops.h>
@@ -85,5 +86,64 @@ void ATCopyFrameToClipboard(void *hwnd, const VDPixmap& px) {
 			}
 		}
 		::CloseClipboard();
+	}
+}
+
+namespace {
+	struct ATUISavedWindowPlacement {
+		sint32 mLeft;
+		sint32 mTop;
+		sint32 mRight;
+		sint32 mBottom;
+		uint8 mbMaximized;
+		uint8 mPad[3];
+	};
+}
+
+void ATUISaveWindowPlacement(void *hwnd, const char *name) {
+	VDRegistryAppKey key("Window Placement");
+
+	WINDOWPLACEMENT wp = {sizeof(WINDOWPLACEMENT)};
+
+	if (GetWindowPlacement((HWND)hwnd, &wp)) {
+		ATUISavedWindowPlacement sp = {0};
+		sp.mLeft	= wp.rcNormalPosition.left;
+		sp.mTop		= wp.rcNormalPosition.top;
+		sp.mRight	= wp.rcNormalPosition.right;
+		sp.mBottom	= wp.rcNormalPosition.bottom;
+		sp.mbMaximized = (wp.showCmd == SW_MAXIMIZE);
+		key.setBinary(name, (const char *)&sp, sizeof sp);
+	}
+}
+
+void ATUIRestoreWindowPlacement(void *hwnd, const char *name, int nCmdShow) {
+	if (!IsZoomed((HWND)hwnd) && !IsIconic((HWND)hwnd)) {
+		VDRegistryAppKey key("Window Placement");
+		ATUISavedWindowPlacement sp = {0};
+
+		// Earlier versions only saved a RECT.
+		int len = key.getBinaryLength(name);
+
+		if (len > (int)sizeof(ATUISavedWindowPlacement))
+			len = sizeof(ATUISavedWindowPlacement);
+
+		if (len >= offsetof(ATUISavedWindowPlacement, mbMaximized) && key.getBinary(name, (char *)&sp, len)) {
+			WINDOWPLACEMENT wp = {sizeof(WINDOWPLACEMENT)};
+
+			if (GetWindowPlacement((HWND)hwnd, &wp)) {
+				wp.length			= sizeof(WINDOWPLACEMENT);
+				wp.flags			= 0;
+				wp.showCmd			= nCmdShow;
+				wp.rcNormalPosition.left = sp.mLeft;
+				wp.rcNormalPosition.top = sp.mTop;
+				wp.rcNormalPosition.right = sp.mRight;
+				wp.rcNormalPosition.bottom = sp.mBottom;
+
+				if ((wp.showCmd == SW_SHOW || wp.showCmd == SW_SHOWNORMAL || wp.showCmd == SW_SHOWDEFAULT) && sp.mbMaximized)
+					wp.showCmd = SW_SHOWMAXIMIZED;
+
+				SetWindowPlacement((HWND)hwnd, &wp);
+			}
+		}
 	}
 }

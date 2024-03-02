@@ -29,6 +29,10 @@
 #define IDD_ADJUST_COLORS               127
 #define IDR_COLOR_PRESETS_MENU          128
 #define IDR_MEMORY_CONTEXT_MENU         129
+#define IDB_TOOLBAR_PROFILER            130
+#define IDR_PROFILE_MODE_MENU           131
+#define IDI_ICON1                       132
+#define IDI_APPICON                     132
 #define IDC_ENABLE_HISTORY              1001
 #define IDC_ENABLE_PATHS                1002
 #define IDC_DISKPATH1                   1002
@@ -77,6 +81,7 @@
 #define IDC_SAVEAS2                     1024
 #define IDC_RESET                       1024
 #define IDC_SAVEAS3                     1025
+#define IDC_CLONE                       1025
 #define IDC_SAVEAS4                     1026
 #define IDC_SOURCE                      1026
 #define IDC_WRITEMODE4                  1027
@@ -127,6 +132,8 @@
 #define IDC_STATIC_ARTBRI               1050
 #define IDC_LOADPRESET                  1052
 #define IDC_COLORS                      1054
+#define IDC_GAMEPAD                     1055
+#define IDC_FORMAT                      1056
 #define ID_FILE_EXIT                    40001
 #define ID_RUN_COLDRESET                40002
 #define ID_RUN_MAXIMUMSPEED             40003
@@ -343,6 +350,38 @@
 #define ID_SYSTEM_RTIME8                40237
 #define ID_VIDEO_INTERLACE              40238
 #define ID_VIEW_SHOWFPS                 40239
+#define ID_WINDOW_PROFILER              40240
+#define ID_DEBUG_PROFILE                40241
+#define ID_PROFILE_PROFILEVIEW          40242
+#define ID_INSTRUCTIONSAMPLING          40243
+#define ID_PROFMODE_SAMPLEINSNS         40244
+#define ID_FUNCTIONSAMPLING             40245
+#define ID_PROFMODE_SAMPLEFNS           40246
+#define ID_BASICLINESAMPLING            40247
+#define ID_PROFMODE_SAMPLEBASIC         40248
+#define ID_INSTRUCTIONSAMPLING_MODEMENU 40249
+#define ID_MODEMENU_INSTRUCTIONSAMPLING 40250
+#define ID_VIEW_VERTICALSYNC            40251
+#define ID_VIEW_VSYNC                   40252
+#define ID_DEBUG_VERIFIER               40253
+#define ID_VERIFIER_ENABLED             40254
+#define ID_OVERSCANMODE_EXTENDEDPALHEIGHT 40255
+#define ID_OVERSCANMODE_PALEXTENDED     40256
+#define ID_OVERSCAN_PALEXTENDED         40257
+#define ID_AUDIO_NON                    40258
+#define ID_AUDIO_NONLINEARMIXING        40259
+#define ID_VIDEO_VBXEAT                 40260
+#define ID_VIDEO_VBXEALTPAGE            40261
+#define ID_AUDIO_CHANNEL1               40262
+#define ID_AUDIO_CHANNEL2               40263
+#define ID_AUDIO_CHANNEL3               40264
+#define ID_AUDIO_CHANNEL4               40265
+#define ID_MEMORYSIZE_RANDOMIZEINITIALDATA 40271
+#define ID_MEMORY_RANDOMIZE             40272
+#define ID_VIDEO_NTSCARTIFACTING40273   40273
+#define ID_VIDEO_NTSCARTIFACTINGFULL    40274
+#define ID_VIDEO_NTSCARTIFACTINGHI      40275
+#define ID_VIEW_PASTE                   40276
 #define ID_INPUT_PORT1_NONE             45000
 #define ID_INPUT_PORT2_NONE             45100
 #define ID_INPUT_PORT3_NONE             45200
@@ -354,9 +393,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
-#define _APS_NEXT_RESOURCE_VALUE        130
-#define _APS_NEXT_COMMAND_VALUE         40240
-#define _APS_NEXT_CONTROL_VALUE         1055
+#define _APS_NEXT_RESOURCE_VALUE        133
+#define _APS_NEXT_COMMAND_VALUE         40279
+#define _APS_NEXT_CONTROL_VALUE         1057
 #define _APS_NEXT_SYMED_VALUE           105
 #endif
 #endif

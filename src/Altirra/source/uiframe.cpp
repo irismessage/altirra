@@ -882,8 +882,8 @@ void *ATContainerWindow::AsInterface(uint32 id) {
 	return VDShaderEditorBaseWindow::AsInterface(id);
 }
 
-VDGUIHandle ATContainerWindow::Create(int x, int y, int cx, int cy, VDGUIHandle parent) {
-	return (VDGUIHandle)CreateWindowEx(WS_EX_CLIENTEDGE, (LPCSTR)sWndClass, "", WS_OVERLAPPEDWINDOW|WS_VISIBLE|WS_CLIPCHILDREN, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
+VDGUIHandle ATContainerWindow::Create(int x, int y, int cx, int cy, VDGUIHandle parent, bool visible) {
+	return (VDGUIHandle)CreateWindowEx(WS_EX_CLIENTEDGE, (LPCSTR)sWndClass, "", WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|(visible ? WS_VISIBLE : 0), x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
 }
 
 void ATContainerWindow::Destroy() {
@@ -1025,6 +1025,7 @@ void ATContainerWindow::AddUndockedFrame(ATFrameWindow *frame) {
 	VDASSERT(std::find(mUndockedFrames.begin(), mUndockedFrames.end(), frame) == mUndockedFrames.end());
 
 	mUndockedFrames.push_back(frame);
+	frame->SetContainer(this);
 }
 
 void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible) {
@@ -1058,7 +1059,7 @@ void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible) {
 		SetWindowLong(hwndFrame, GWL_STYLE, style);
 
 		UINT exstyle = GetWindowLong(hwndFrame, GWL_EXSTYLE);
-		exstyle &= ~WS_EX_TOOLWINDOW;
+		exstyle |= WS_EX_TOOLWINDOW;
 		SetWindowLong(hwndFrame, GWL_EXSTYLE, exstyle);
 
 		SetWindowPos(hwndFrame, NULL, r.left, r.top, 0, 0, SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOACTIVATE|SWP_NOZORDER|SWP_HIDEWINDOW);
@@ -1112,7 +1113,7 @@ void ATContainerWindow::NotifyFrameActivated(ATFrameWindow *frame) {
 	if (frame)
 		hwndFrame = frame->GetHandleW32();
 
-	VDASSERT(!hwndFrame || GetAncestor(hwndFrame, GA_ROOT) == mhwnd);
+	VDASSERT(!hwndFrame || !(GetWindowLong(hwndFrame, GWL_STYLE) & WS_CHILD) || GetAncestor(hwndFrame, GA_ROOT) == mhwnd);
 	mpActiveFrame = frame;
 
 	if (mpDockingPane)
@@ -1331,7 +1332,7 @@ void ATFrameWindow::SetFullScreen(bool fs) {
 }
 
 VDGUIHandle ATFrameWindow::Create(const char *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
-	return (VDGUIHandle)CreateWindowEx(0, (LPCSTR)sWndClass, title, WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
+	return (VDGUIHandle)CreateWindowEx(WS_EX_TOOLWINDOW, (LPCSTR)sWndClass, title, WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
 }
 
 VDGUIHandle ATFrameWindow::CreateChild(const char *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
@@ -1406,6 +1407,9 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					SetFocus(hwndChild);
 			}
 			return 0;
+
+		case WM_ERASEBKGND:
+			return TRUE;
 	}
 
 	return VDShaderEditorBaseWindow::WndProc(msg, wParam, lParam);
@@ -1619,6 +1623,11 @@ LRESULT ATUIPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_SETFOCUS:
 			OnSetFocus();
 			return 0;
+
+		case WM_COMMAND:
+			if (OnCommand(LOWORD(wParam), HIWORD(wParam)))
+				return 0;
+			break;
 	}
 
 	return VDShaderEditorBaseWindow::WndProc(msg, wParam, lParam);
@@ -1638,6 +1647,10 @@ void ATUIPane::OnSize() {
 }
 
 void ATUIPane::OnSetFocus() {
+}
+
+bool ATUIPane::OnCommand(uint32 id, uint32 extcode) {
+	return false;
 }
 
 void ATUIPane::RegisterUIPane() {

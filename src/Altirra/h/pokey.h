@@ -37,6 +37,7 @@ public:
 	virtual void PokeyNegateIRQ() = 0;
 	virtual void PokeyBreak() = 0;
 	virtual bool PokeyIsInInterrupt() const = 0;
+	virtual bool PokeyIsKeyPushOK(uint8 c) const = 0;
 };
 
 class IATPokeySIODevice {
@@ -59,21 +60,24 @@ public:
 	virtual void WriteRawAudio(const float *left, const float *right, uint32 count) = 0;
 };
 
-struct ATAudioFilter {
-	float	mHiPassAccum;
-	float	mLoPassPrev1;
-	float	mLoPassPrev2;
-	float	mLoPassPrev3;
-	float	mLoPassPrev4;
-	float	mScale;
-	float	mRawScale;
+class ATAudioFilter {
+public:
+	enum { kFilterOverlap = 8 };
 
 	ATAudioFilter();
 
 	float GetScale() const;
 	void SetScale(float scale);
 
-	void Filter(float * VDRESTRICT dst, const float * VDRESTRICT src, uint32 count, float hiCoeff);
+	void PreFilter(float * VDRESTRICT dst, uint32 count);
+	void Filter(float * VDRESTRICT dst, const float * VDRESTRICT src, uint32 count);
+
+protected:
+	float	mHiPassAccum;
+	float	mScale;
+	float	mRawScale;
+
+	float	mLoPassCoeffs[kFilterOverlap];
 };
 
 
@@ -115,6 +119,7 @@ public:
 	void	SetSpeaker(bool newState) {
 		if (mbSpeakerState != newState) {
 			mbSpeakerState = newState;
+			mbSpeakerActive = true;
 			UpdateOutput();
 		}
 	}
@@ -122,8 +127,14 @@ public:
 	float	GetVolume() const;
 	void	SetVolume(float vol);
 
+	bool	IsChannelEnabled(uint32 channel) const { return mbChannelEnabled[channel]; }
+	void	SetChannelEnabled(uint32 channel, bool enabled);
+
+	bool	IsNonlinearMixingEnabled() const { return mbNonlinearMixingEnabled; }
+	void	SetNonlinearMixingEnabled(bool enable);
+
 	void	SetShiftKeyState(bool down);
-	void	PushKey(uint8 c, bool repeat);
+	void	PushKey(uint8 c, bool repeat, bool allowQueue = false, bool flushQueue = true);
 	void	PushBreak();
 
 	int	GetPotPos(unsigned idx) const { return mPOT[idx]; }
@@ -140,7 +151,7 @@ public:
 	void	AdvanceScanLine();
 	void	AdvanceFrame();
 
-	uint8	DebugReadByte(uint8 reg);
+	uint8	DebugReadByte(uint8 reg) const;
 	uint8	ReadByte(uint8 reg);
 	void	WriteByte(uint8 reg, uint8 value);
 
@@ -154,7 +165,7 @@ protected:
 	void	OnScheduledEvent(uint32 id);
 
 	void	GenerateSample(uint32 pos, uint32 t);
-	void	UpdatePolynomialCounters();
+	void	UpdatePolynomialCounters() const;
 	void	FireTimers(uint8 activeChannels);
 	void	UpdateOutput();
 	void	FlushBlock();
@@ -166,6 +177,11 @@ protected:
 	void	ResamplerReset();
 	void	ResamplerShift();
 	void	ResamplerSetRate(float rate);
+
+	void	UpdateMixTable();
+
+	void	UnpackAUDCx(int index);
+	void	TryPushNextKey();
 
 protected:
 	void	SetLast64KHzTime(uint32 t) { mLast64KHzTime = t; }
@@ -196,16 +212,21 @@ protected:
 	int		mTimerCounters[4];
 
 	int		mOutputs[4];
+	int		mChannelVolume[4];
 	bool	mNoiseFF[4];
 	bool	mHighPassFF[2];
+
+	bool	mbChannelEnabled[4];
 
 	bool	mbCommandLineState;
 	bool	mbPal;
 	bool	mbTurbo;
 	bool	mbTraceSIO;
+	bool	mbNonlinearMixingEnabled;
 
 	uint8	mKBCODE;
 	uint32	mKeyCodeTimer;
+	uint32	mKeyCooldownTimer;
 
 	uint8	mIRQEN;
 	uint8	mIRQST;
@@ -231,21 +252,20 @@ protected:
 
 	int		mCounter[4];
 
-	uint32	mLastPolyTime;
-	uint32	mPoly17Counter;
-	uint32	mPoly9Counter;
-	uint32	mPoly5Counter;
-	uint32	mPoly4Counter;
+	mutable uint32	mLastPolyTime;
+	mutable uint32	mPoly17Counter;
+	mutable uint32	mPoly9Counter;
+	mutable uint32	mPoly5Counter;
+	mutable uint32	mPoly4Counter;
 
 	uint8	mSerialInputShiftRegister;
 	uint8	mSerialOutputShiftRegister;
 	uint8	mSerialInputCounter;
 	uint8	mSerialOutputCounter;
-	bool	mbSerInValid;
-	bool	mbSerShiftInValid;
 	bool	mbSerOutValid;
 	bool	mbSerialOutputState;
 	bool	mbSpeakerState;
+	bool	mbSpeakerActive;
 	bool	mbSerialRateChanged;
 	bool	mbSerialWaitingForStartBit;
 	bool	mbSerInBurstPending;
@@ -262,6 +282,7 @@ protected:
 	uint32	mLast64KHzTime;
 	uint32	mAudioRate;
 	float	mAudioDampedError;
+	int		mSamplingRate;
 
 	uint8	mPOT[8];
 	uint8	mALLPOT;
@@ -272,7 +293,9 @@ protected:
 	ATEvent	*mp15KHzEvent;
 	ATEvent	*mpAudioEvent;
 	ATEvent	*mpStartBitEvent;
+	ATEvent	*mpResetTimersEvent;
 	ATEvent	*mpTimerEvents[4];
+	ATEvent	*mpTimerBorrowEvents[4];
 	ATScheduler *mpScheduler;
 
 	IATPokeyEmulatorConnections *mpConn;
@@ -288,13 +311,15 @@ protected:
 	IATPokeyAudioTap *mpAudioTap;
 
 	enum {
-		kSamplesPerBlock = 128,
+		kSamplesPerBlock = 256,
 		kBlockSize = kSamplesPerBlock * 4,
 		kBlockCount = 32,
 		kBufferSize = kBlockSize * kBlockCount,
-		kLatency = 2048 * 4,
+		kLatency = 2048 * 4 * 2,
 		kRawBlockSize = kSamplesPerBlock * 16
 	};
+
+	vdfastdeque<uint8> mKeyQueue;
 
 	float	mMixTable[61];
 	float	mRawOutputBuffer[kRawBlockSize];

@@ -23,6 +23,7 @@
 #endif
 
 #include <vd2/system/refcount.h>
+#include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
 #include "ui.h"
 
@@ -164,7 +165,7 @@ public:
 
 	void *AsInterface(uint32 id);
 
-	VDGUIHandle Create(int x, int y, int cx, int cy, VDGUIHandle parent);
+	VDGUIHandle Create(int x, int y, int cx, int cy, VDGUIHandle parent, bool visible);
 	void Destroy();
 
 	void Clear();
@@ -278,6 +279,7 @@ protected:
 	virtual void OnDestroy();
 	virtual void OnSize();
 	virtual void OnSetFocus();
+	virtual bool OnCommand(uint32 id, uint32 extcode);
 
 	void RegisterUIPane();
 	void UnregisterUIPane();

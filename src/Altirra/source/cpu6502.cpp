@@ -136,6 +136,10 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 		case 0x20:	// JSR abs
 			*mpDstState++ = kStateReadAddrL;
 			*mpDstState++ = kStateReadAddrH;
+
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyJump;
+
 			*mpDstState++ = kStatePushPCHM1;
 			*mpDstState++ = kStatePushPCLM1;
 			*mpDstState++ = kStateAddrToPC;
@@ -324,6 +328,10 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 		case 0x4C:	// JMP abs
 			*mpDstState++ = kStateReadAddrL;
 			*mpDstState++ = kStateReadAddrH;
+
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyJump;
+
 			*mpDstState++ = kStateAddrToPC;
 			break;
 

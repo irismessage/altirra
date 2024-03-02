@@ -28,6 +28,13 @@ class ATUIDialogEditInputMapping : public VDDialogFrameW32 {
 public:
 	ATUIDialogEditInputMapping(ATInputManager& iman, IATJoystickManager *ijoy, uint32 inputCode, ATInputControllerType ctype, int cindex, uint32 targetCode);
 
+	void Set(uint32 inputCode, ATInputControllerType controllerType, int controllerIndex, uint32 targetCode) {
+		mInputCode = inputCode;
+		mControllerType = controllerType;
+		mControllerIndex = controllerIndex;
+		mTargetCode = targetCode;
+	}
+
 	uint32 GetInputCode() const { return mInputCode; }
 	ATInputControllerType GetControllerType() const { return mControllerType; }
 	int GetControllerIndex() { return mControllerIndex; }
@@ -387,6 +394,8 @@ public:
 	ATUIDialogInputMapListItem(ATInputManager& iman, uint32 inputCode, ATInputControllerType controllerType, int unit, uint32 targetCode);
 	void GetText(int subItem, VDStringW& s) const;
 
+	void Set(uint32 inputCode, ATInputControllerType controllerType, int unit, uint32 targetCode);
+
 	uint32 GetInputCode() const { return mInputCode; }
 	ATInputControllerType GetControllerType() const { return mControllerType; }
 	int GetControllerUnit() { return mControllerUnit; }
@@ -441,6 +450,13 @@ void ATUIDialogInputMapListItem::GetText(int subItem, VDStringW& s) const {
 	}
 }
 
+void ATUIDialogInputMapListItem::Set(uint32 inputCode, ATInputControllerType controllerType, int unit, uint32 targetCode) {
+	mInputCode		= inputCode;
+	mControllerType	= controllerType;
+	mControllerUnit	= unit;
+	mTargetCode		= targetCode;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 class ATUIDialogEditInputMap : public VDDialogFrameW32 {
@@ -453,6 +469,7 @@ protected:
 	void OnDataExchange(bool write);
 	bool OnCommand(uint32 id, uint32 extcode);
 	void OnItemSelectionChanged(VDUIProxyListView *source, int index); 
+	void OnItemDoubleClicked(VDUIProxyListView *source, int index); 
 
 	VDUIProxyListView mListView;
 
@@ -462,6 +479,7 @@ protected:
 
 	ATUIDialogEditInputMapping mEditMappingDialog;
 	VDDelegate mItemSelectedDelegate;
+	VDDelegate mItemDoubleClickedDelegate;
 };
 
 ATUIDialogEditInputMap::ATUIDialogEditInputMap(ATInputManager& iman, IATJoystickManager *ijoy, ATInputMap& imap)
@@ -471,6 +489,8 @@ ATUIDialogEditInputMap::ATUIDialogEditInputMap(ATInputManager& iman, IATJoystick
 	, mInputMap(imap)
 	, mEditMappingDialog(iman, ijoy, kATInputCode_JoyButton0, kATInputControllerType_Joystick, 0, kATInputTrigger_Button0)
 {
+	mListView.OnItemSelectionChanged() += mItemSelectedDelegate.Bind(this, &ATUIDialogEditInputMap::OnItemSelectionChanged);
+	mListView.OnItemDoubleClicked() += mItemDoubleClickedDelegate.Bind(this, &ATUIDialogEditInputMap::OnItemDoubleClicked);
 }
 
 ATUIDialogEditInputMap::~ATUIDialogEditInputMap() {
@@ -479,11 +499,17 @@ ATUIDialogEditInputMap::~ATUIDialogEditInputMap() {
 bool ATUIDialogEditInputMap::OnLoaded() {
 	AddProxy(&mListView, IDC_LIST);
 
-	mListView.OnItemSelectionChanged() += mItemSelectedDelegate.Bind(this, &ATUIDialogEditInputMap::OnItemSelectionChanged);
 	mListView.SetFullRowSelectEnabled(true);
 	mListView.InsertColumn(0, L"Source", 10);
 	mListView.InsertColumn(1, L"Controller", 10);
 	mListView.InsertColumn(2, L"Target", 10);
+
+	VDStringW s;
+	CBAddString(IDC_GAMEPAD, L"Any");
+	for(int i=0; i<7; ++i) {
+		s.sprintf(L"Game controller %d", i+1);
+		CBAddString(IDC_GAMEPAD, s.c_str());
+	}
 
 	OnDataExchange(false);
 
@@ -523,6 +549,8 @@ void ATUIDialogEditInputMap::OnDataExchange(bool write) {
 				mInputMap.AddMapping(inputCode, cid, targetCode);
 			}
 		}
+
+		mInputMap.SetSpecificInputUnit(CBGetSelectedIndex(IDC_GAMEPAD) - 1);
 	} else {
 		uint32 n = mInputMap.GetMappingCount();
 		for(uint32 i=0; i<n; ++i) {
@@ -534,6 +562,8 @@ void ATUIDialogEditInputMap::OnDataExchange(bool write) {
 		}
 
 		mListView.AutoSizeColumns();
+
+		CBSetSelectedIndex(IDC_GAMEPAD, mInputMap.GetSpecificInputUnit() + 1);
 	}
 }
 
@@ -564,6 +594,27 @@ void ATUIDialogEditInputMap::OnItemSelectionChanged(VDUIProxyListView *source, i
 	EnableControl(IDC_EDIT, index >= 0);
 }
 
+void ATUIDialogEditInputMap::OnItemDoubleClicked(VDUIProxyListView *source, int index) {
+	int selIdx = mListView.GetSelectedIndex();
+	if (selIdx >= 0) {
+		ATUIDialogInputMapListItem *item = static_cast<ATUIDialogInputMapListItem *>(mListView.GetVirtualItem(selIdx));
+
+		if (item) {
+			mEditMappingDialog.Set(item->GetInputCode(), item->GetControllerType(), item->GetControllerUnit(), item->GetTargetCode());
+
+			if (mEditMappingDialog.ShowDialog((VDGUIHandle)mhdlg)) {
+				item->Set(mEditMappingDialog.GetInputCode()
+					, mEditMappingDialog.GetControllerType()
+					, mEditMappingDialog.GetControllerIndex()
+					, mEditMappingDialog.GetTargetCode());
+
+				mListView.RefreshItem(selIdx);
+				mListView.AutoSizeColumns();
+			}
+		}
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 class ATUIDialogInputListItem : public vdrefcounted<IVDUIListViewVirtualItem> {
@@ -581,6 +632,14 @@ protected:
 void ATUIDialogInputListItem::GetText(int subItem, VDStringW& s) const {
 	if (subItem == 0)
 		s = mpInputMap->GetName();
+	else if (subItem == 1) {
+		int unit = mpInputMap->GetSpecificInputUnit();
+
+		if (unit < 0)
+			s = L"Any";
+		else
+			s.sprintf(L"%d", unit + 1);
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -627,6 +686,7 @@ bool ATUIDialogInput::OnLoaded() {
 	mListView.SetFullRowSelectEnabled(true);
 	mListView.SetItemCheckboxesEnabled(true);
 	mListView.InsertColumn(0, L"Name", 10);
+	mListView.InsertColumn(1, L"Unit", 10);
 
 	OnDataExchange(false);
 	SetFocusToControl(IDC_LIST);
@@ -652,7 +712,33 @@ bool ATUIDialogInput::OnCommand(uint32 id, uint32 extcode) {
 			mListView.EnsureItemVisible(idx);
 			mListView.EditItemLabel(idx);
 		}
+	} else if (id == IDC_CLONE) {
+		int index = mListView.GetSelectedIndex();
+		if (index >= 0) {
+			ATUIDialogInputListItem *item = static_cast<ATUIDialogInputListItem *>(mListView.GetVirtualItem(index));
 
+			if (item) {
+				ATInputMap *imap = item->GetInputMap();
+
+				vdrefptr<ATInputMap> newMap(new ATInputMap(*imap));
+
+				VDStringW s;
+				s.sprintf(L"Input map %d", mInputMan.GetInputMapCount() + 1);
+				newMap->SetName(s.c_str());
+
+				vdrefptr<IVDUIListViewVirtualItem> item(new ATUIDialogInputListItem(newMap));
+				int idx = mListView.InsertVirtualItem(mListView.GetItemCount(), item);
+
+				if (idx >= 0) {
+					mInputMan.AddInputMap(newMap);
+
+					SetFocusToControl(IDC_LIST);
+					mListView.SetSelectedIndex(idx);
+					mListView.EnsureItemVisible(idx);
+					mListView.EditItemLabel(idx);
+				}
+			}
+		}
 	} else if (id == IDC_EDIT) {
 		int index = mListView.GetSelectedIndex();
 		if (index >= 0) {
@@ -758,6 +844,7 @@ void ATUIDialogInput::OnItemCheckedChanged(VDUIProxyListView *source, int index)
 void ATUIDialogInput::OnItemSelectionChanged(VDUIProxyListView *source, int index) {
 	EnableControl(IDC_DELETE, index >= 0);
 	EnableControl(IDC_EDIT, index >= 0);
+	EnableControl(IDC_CLONE, index >= 0);
 }
 
 void ATUIDialogInput::OnItemLabelChanged(VDUIProxyListView *source, const VDUIProxyListView::LabelEventData& data) {

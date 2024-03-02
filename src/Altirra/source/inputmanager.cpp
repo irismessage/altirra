@@ -24,7 +24,9 @@
 #include "inputcontroller.h"
 #include "joystick.h"
 
-ATInputMap::ATInputMap() {
+ATInputMap::ATInputMap()
+	: mSpecificInputUnit(-1)
+{
 }
 
 ATInputMap::~ATInputMap() {
@@ -62,6 +64,7 @@ bool ATInputMap::UsesPhysicalPort(int portIdx) const {
 void ATInputMap::Clear() {
 	mControllers.clear();
 	mMappings.clear();
+	mSpecificInputUnit = -1;
 }
 
 uint32 ATInputMap::GetControllerCount() const {
@@ -111,7 +114,11 @@ bool ATInputMap::Load(VDRegistryKey& key, const char *name) {
 	if (!key.getBinary(name, (char *)heap.data(), len))
 		return false;
 
-	if (heap[0] != 1)
+	const uint32 version = heap[0];
+	uint32 headerWords = 4;
+	if (version == 2)
+		headerWords = 5;
+	else if (version != 1)
 		return false;
 
 	uint32 nameLen = heap[1];
@@ -119,10 +126,16 @@ bool ATInputMap::Load(VDRegistryKey& key, const char *name) {
 	uint32 ctrlCount = heap[2];
 	uint32 mapCount = heap[3];
 
-	if (((nameLen | ctrlCount | mapCount) & 0xff000000) || 4 + nameWords + 2*ctrlCount + 3*mapCount > heapWords)
+	if (headerWords >= 5) {
+		mSpecificInputUnit = heap[4];
+	} else {
+		mSpecificInputUnit = -1;
+	}
+
+	if (((nameLen | ctrlCount | mapCount) & 0xff000000) || headerWords + nameWords + 2*ctrlCount + 3*mapCount > heapWords)
 		return false;
 
-	const uint32 *src = heap.data() + 4;
+	const uint32 *src = heap.data() + headerWords;
 
 	mName.assign((const wchar_t *)src, (const wchar_t *)src + nameLen);
 	src += nameWords;
@@ -152,10 +165,11 @@ bool ATInputMap::Load(VDRegistryKey& key, const char *name) {
 void ATInputMap::Save(VDRegistryKey& key, const char *name) {
 	vdfastvector<uint32> heap;
 
-	heap.push_back(1);
+	heap.push_back(2);
 	heap.push_back(mName.size());
 	heap.push_back(mControllers.size());
 	heap.push_back(mMappings.size());
+	heap.push_back(mSpecificInputUnit);
 
 	uint32 offset = heap.size();
 	heap.resize(heap.size() + ((mName.size() + 1) >> 1), 0);
@@ -288,12 +302,74 @@ void ATInputManager::ResetToDefaults() {
 	imap->AddMapping(kATInputCode_JoyButton0+2, 0, kATInputTrigger_Button0);
 	imap->AddMapping(kATInputCode_JoyButton0+3, 0, kATInputTrigger_Button0);
 	AddInputMap(imap);
+
+	imap = new ATInputMap;
+	imap->SetName(L"Gamepad 1 -> Joystick (port 1)");
+	imap->SetSpecificInputUnit(0);
+	imap->AddController(kATInputControllerType_Joystick, 0);
+	imap->AddMapping(kATInputCode_JoyPOVUp, 0, kATInputTrigger_Up);
+	imap->AddMapping(kATInputCode_JoyPOVDown, 0, kATInputTrigger_Down);
+	imap->AddMapping(kATInputCode_JoyPOVLeft, 0, kATInputTrigger_Left);
+	imap->AddMapping(kATInputCode_JoyPOVRight, 0, kATInputTrigger_Right);
+	imap->AddMapping(kATInputCode_JoyStick1Up, 0, kATInputTrigger_Up);
+	imap->AddMapping(kATInputCode_JoyStick1Down, 0, kATInputTrigger_Down);
+	imap->AddMapping(kATInputCode_JoyStick1Left, 0, kATInputTrigger_Left);
+	imap->AddMapping(kATInputCode_JoyStick1Right, 0, kATInputTrigger_Right);
+	imap->AddMapping(kATInputCode_JoyButton0, 0, kATInputTrigger_Button0);
+	imap->AddMapping(kATInputCode_JoyButton0+1, 0, kATInputTrigger_Button0);
+	imap->AddMapping(kATInputCode_JoyButton0+2, 0, kATInputTrigger_Button0);
+	imap->AddMapping(kATInputCode_JoyButton0+3, 0, kATInputTrigger_Button0);
+	AddInputMap(imap);
+
+	imap = new ATInputMap;
+	imap->SetName(L"Gamepad 2 -> Joystick (port 2)");
+	imap->SetSpecificInputUnit(1);
+	imap->AddController(kATInputControllerType_Joystick, 1);
+	imap->AddMapping(kATInputCode_JoyPOVUp, 0, kATInputTrigger_Up);
+	imap->AddMapping(kATInputCode_JoyPOVDown, 0, kATInputTrigger_Down);
+	imap->AddMapping(kATInputCode_JoyPOVLeft, 0, kATInputTrigger_Left);
+	imap->AddMapping(kATInputCode_JoyPOVRight, 0, kATInputTrigger_Right);
+	imap->AddMapping(kATInputCode_JoyStick1Up, 0, kATInputTrigger_Up);
+	imap->AddMapping(kATInputCode_JoyStick1Down, 0, kATInputTrigger_Down);
+	imap->AddMapping(kATInputCode_JoyStick1Left, 0, kATInputTrigger_Left);
+	imap->AddMapping(kATInputCode_JoyStick1Right, 0, kATInputTrigger_Right);
+	imap->AddMapping(kATInputCode_JoyButton0, 0, kATInputTrigger_Button0);
+	imap->AddMapping(kATInputCode_JoyButton0+1, 0, kATInputTrigger_Button0);
+	imap->AddMapping(kATInputCode_JoyButton0+2, 0, kATInputTrigger_Button0);
+	imap->AddMapping(kATInputCode_JoyButton0+3, 0, kATInputTrigger_Button0);
+	AddInputMap(imap);
 }
 
 void ATInputManager::Poll() {
 }
 
-int ATInputManager::RegisterInputUnit(const ATInputUnitIdentifier& id) {
+int ATInputManager::GetInputUnitCount() const {
+	return 32;
+}
+
+const wchar_t *ATInputManager::GetInputUnitName(int index) const {
+	if ((unsigned)index >= 32)
+		return NULL;
+
+	if (!(mAllocatedUnits & ((uint32)1 << index)))
+		return NULL;
+
+	return mUnitNames[index].c_str();
+}
+
+int ATInputManager::GetInputUnitIndexById(const ATInputUnitIdentifier& id) const {
+	for(int i=0; i<32; ++i) {
+		if (!(mAllocatedUnits & ((uint32)1 << i)))
+			continue;
+
+		if (mUnitIds[i] == id)
+			return i;
+	}
+
+	return -1;
+}
+
+int ATInputManager::RegisterInputUnit(const ATInputUnitIdentifier& id, const wchar_t *name) {
 	if (mAllocatedUnits == 0xFFFFFFFF)
 		return -1;
 
@@ -301,6 +377,7 @@ int ATInputManager::RegisterInputUnit(const ATInputUnitIdentifier& id) {
 
 	mAllocatedUnits |= (1 << unit);
 	mUnitIds[unit] = id;
+	mUnitNames[unit] = name;
 
 	return unit;
 }
@@ -751,6 +828,7 @@ void ATInputManager::RebuildMappings() {
 
 		ATInputMap *imap = it->first;
 		const uint32 controllerCount = imap->GetControllerCount();
+		int specificUnit = imap->GetSpecificInputUnit();
 
 		controllerTable.resize(controllerCount);
 		for(uint32 i=0; i<controllerCount; ++i) {
@@ -834,7 +912,15 @@ void ATInputManager::RebuildMappings() {
 				t.mCount = 0;
 			}
 
-			mMappings.insert(Mappings::value_type(m.mInputCode, triggerIdx));
+			uint32 inputCode = m.mInputCode;
+			if ((inputCode & kATInputCode_ClassMask) == kATInputCode_JoyClass) {
+				if (specificUnit >= 0) {
+					inputCode |= kATInputCode_SpecificUnit;
+					inputCode |= specificUnit << kATInputCode_UnitShift;
+				}
+			}
+
+			mMappings.insert(Mappings::value_type(inputCode, triggerIdx));
 		}
 	}
 }
