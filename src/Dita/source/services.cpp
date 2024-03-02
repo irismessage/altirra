@@ -439,9 +439,7 @@ static const VDStringW VDGetFileName(bool bSaveAs, long nKey, VDGUIHandle ctxPar
 	// But if sizeof(OPENFILENAME) is used under Windows 95/98, the open call fails.
 	// Argh.
 
-	bool bIsAtLeastWin2K = (sint32)(GetVersion() & 0x800000FF) >= 5;	// OS must be NT, major version >= 5
-
-	ofn.w.lStructSize		= bIsAtLeastWin2K ? sizeof(OPENFILENAME) : OPENFILENAME_SIZE_VERSION_400;
+	ofn.w.lStructSize		= sizeof(OPENFILENAME);
 	ofn.w.hwndOwner			= (HWND)ctxParent;
 	ofn.w.lpstrCustomFilter	= NULL;
 	ofn.w.nFilterIndex		= 0;
@@ -530,72 +528,52 @@ static const VDStringW VDGetFileName(bool bSaveAs, long nKey, VDGUIHandle ctxPar
 	// supply a full file path in lpstrFile or a directory path in lpstrInitialDir,
 	// but never the same in both.
 
-	if ((sint32)GetVersion() < 0) {		// Windows 95/98
-		VDStringA strFilters(VDTextWToA(pszFilters, FileFilterLength(pszFilters)));
-		VDStringA strDefExt(VDTextWToA(pszExt, -1));
-		VDStringA strTitle(VDTextWToA(pszTitle, -1));
+	wchar_t wszFile[MAX_PATH];
 
-		char szInitialPath[MAX_PATH];
-		char szFile[MAX_PATH];
+	if (existingFileName) {
+		wcsncpyz(wszFile, fsent.szFile, MAX_PATH);
 
-		if (existingFileName) {
-			VDTextWToA(szFile, sizeof szFile, fsent.szFile, -1);
-		} else {
-			szFile[0] = 0;
-			VDTextWToA(szInitialPath, sizeof szInitialPath, fsent.szFile, -1);
+		// If we are doing a save and have an extension, check for one on the
+		// last filename and change it.
+		if (bSaveAs && pszExt) {
+			wchar_t *existingExt = VDFileSplitExt(wszFile);
+
+			if (*existingExt == L'.')
+				++existingExt;
+
+			// check if it's different and we have enough space
+			const wchar_t *ext = pszExt;
+
+			if (*ext == L'.')
+				++ext;
+
+			if (vdwcsicmp(existingExt, ext) && (MAX_PATH - (existingExt - wszFile)) >= (int)wcslen(ext) + 1)
+				wcscpy(existingExt, ext);
 		}
+	} else
+		wszFile[0] = 0;
 
-		ofn.a.lpstrFilter		= strFilters.c_str();
-		ofn.a.lpstrFile			= szFile;
-		ofn.a.nMaxFile			= sizeof(szFile) / sizeof(szFile[0]);
-		ofn.a.lpstrTitle		= strTitle.c_str();
-		ofn.a.lpstrDefExt		= strDefExt.c_str();
-		ofn.a.lpstrInitialDir	= existingFileName ? NULL : szInitialPath;
+	ofn.w.lpstrFilter		= pszFilters;
+	ofn.w.lpstrFile			= wszFile;
+	ofn.w.nMaxFile			= MAX_PATH;
+	ofn.w.lpstrTitle		= pszTitle;
+	ofn.w.lpstrDefExt		= pszExt;
+	ofn.w.lpstrInitialDir	= existingFileName ? NULL : fsent.szFile;
 
-		BOOL (WINAPI *pfn)(OPENFILENAMEA *) = (bSaveAs ? GetSaveFileNameA : GetOpenFileNameA);
-		BOOL result = pfn(&ofn.a);
+	BOOL (WINAPI *pfn)(OPENFILENAMEW *) = (bSaveAs ? GetSaveFileNameW : GetOpenFileNameW);
+	BOOL result = pfn(&ofn.w);
 
-		// If the last path is no longer valid the dialog may fail to initialize, so if it's not
-		// a cancel we retry with no preset filename.
-		if (!result && CommDlgExtendedError()) {
-			szFile[0] = 0;
-			result = pfn(&ofn.a);
-		}
+	// If the last path is no longer valid the dialog may fail to initialize, so if it's not
+	// a cancel we retry with no preset filename.
+	if (!result && CommDlgExtendedError()) {
+		wszFile[0] = 0;
+		ofn.w.lpstrInitialDir = NULL;
+		result = pfn(&ofn.w);
+	}
 
-		if (result) {
-			VDTextAToW(fsent.szFile, sizeof(fsent.szFile)/sizeof(fsent.szFile[0]), szFile, -1);
-			bSuccess = true;
-		}
-	} else {
-		wchar_t wszFile[MAX_PATH];
-
-		if (existingFileName)
-			wcsncpyz(wszFile, fsent.szFile, MAX_PATH);
-		else
-			wszFile[0] = 0;
-
-		ofn.w.lpstrFilter		= pszFilters;
-		ofn.w.lpstrFile			= wszFile;
-		ofn.w.nMaxFile			= MAX_PATH;
-		ofn.w.lpstrTitle		= pszTitle;
-		ofn.w.lpstrDefExt		= pszExt;
-		ofn.w.lpstrInitialDir	= existingFileName ? NULL : fsent.szFile;
-
-		BOOL (WINAPI *pfn)(OPENFILENAMEW *) = (bSaveAs ? GetSaveFileNameW : GetOpenFileNameW);
-		BOOL result = pfn(&ofn.w);
-
-		// If the last path is no longer valid the dialog may fail to initialize, so if it's not
-		// a cancel we retry with no preset filename.
-		if (!result && CommDlgExtendedError()) {
-			wszFile[0] = 0;
-			ofn.w.lpstrInitialDir = NULL;
-			result = pfn(&ofn.w);
-		}
-
-		if (result) {
-			wcsncpyz(fsent.szFile, wszFile, MAX_PATH);
-			bSuccess = true;
-		}
+	if (result) {
+		wcsncpyz(fsent.szFile, wszFile, MAX_PATH);
+		bSuccess = true;
 	}
 
 	if (bSuccess) {
@@ -792,6 +770,8 @@ const VDStringW VDGetDirectory(long nKey, VDGUIHandle ctxParent, const wchar_t *
 
 			HRESULT hr = CoCreateInstance(__uuidof(FileOpenDialog), NULL, CLSCTX_ALL, __uuidof(IFileDialog), (void **)~pfd);
 			if (SUCCEEDED(hr)) {
+				pfd->SetTitle(pszTitle);
+
 				FILEOPENDIALOGOPTIONS opts;
 				hr = pfd->GetOptions(&opts);
 				if (SUCCEEDED(hr)) {
@@ -824,61 +804,33 @@ const VDStringW VDGetDirectory(long nKey, VDGUIHandle ctxParent, const wchar_t *
 
 			if (SUCCEEDED(SHGetMalloc(&pMalloc))) {
 
-				if ((LONG)GetVersion() < 0) {		// Windows 9x
-					char *pszBuffer;
+				HMODULE hmod = GetModuleHandle("shell32.dll");		// We know shell32 is loaded because we hard link to SHBrowseForFolderA.
+				typedef LPITEMIDLIST (APIENTRY *tpSHBrowseForFolderW)(LPBROWSEINFOW);
+				typedef BOOL (APIENTRY *tpSHGetPathFromIDListW)(LPCITEMIDLIST pidl, LPWSTR pszPath);
+				tpSHBrowseForFolderW pSHBrowseForFolderW = (tpSHBrowseForFolderW)GetProcAddress(hmod, "SHBrowseForFolderW");
+				tpSHGetPathFromIDListW pSHGetPathFromIDListW = (tpSHGetPathFromIDListW)GetProcAddress(hmod, "SHGetPathFromIDListW");
 
-					if (pszBuffer = (char *)pMalloc->Alloc(MAX_PATH)) {
-						BROWSEINFOA bi;
+				if (pSHBrowseForFolderW && pSHGetPathFromIDListW) {
+					if (wchar_t *pszBuffer = (wchar_t *)pMalloc->Alloc(MAX_PATH * sizeof(wchar_t))) {
+						BROWSEINFOW bi;
 						ITEMIDLIST *pidlBrowse;
-
-						VDStringA tempA(VDTextWToA(pszTitle));
 
 						bi.hwndOwner		= (HWND)ctxParent;
 						bi.pidlRoot			= NULL;
 						bi.pszDisplayName	= pszBuffer;
-						bi.lpszTitle		= tempA.c_str();
+						bi.lpszTitle		= pszTitle;
 						bi.ulFlags			= BIF_EDITBOX | /*BIF_NEWDIALOGSTYLE |*/ BIF_RETURNONLYFSDIRS | BIF_VALIDATE;
 						bi.lpfn				= NULL;
 
-						if (pidlBrowse = SHBrowseForFolderA(&bi)) {
-							if (SHGetPathFromIDListA(pidlBrowse, pszBuffer)) {
-								VDTextAToW(fsent.szFile, MAX_PATH, pszBuffer);
+						if (pidlBrowse = pSHBrowseForFolderW(&bi)) {
+							if (pSHGetPathFromIDListW(pidlBrowse, pszBuffer)) {
+								wcscpy(fsent.szFile, pszBuffer);
 								bSuccess = true;
 							}
 
 							pMalloc->Free(pidlBrowse);
 						}
 						pMalloc->Free(pszBuffer);
-					}
-				} else {
-					HMODULE hmod = GetModuleHandle("shell32.dll");		// We know shell32 is loaded because we hard link to SHBrowseForFolderA.
-					typedef LPITEMIDLIST (APIENTRY *tpSHBrowseForFolderW)(LPBROWSEINFOW);
-					typedef BOOL (APIENTRY *tpSHGetPathFromIDListW)(LPCITEMIDLIST pidl, LPWSTR pszPath);
-					tpSHBrowseForFolderW pSHBrowseForFolderW = (tpSHBrowseForFolderW)GetProcAddress(hmod, "SHBrowseForFolderW");
-					tpSHGetPathFromIDListW pSHGetPathFromIDListW = (tpSHGetPathFromIDListW)GetProcAddress(hmod, "SHGetPathFromIDListW");
-
-					if (pSHBrowseForFolderW && pSHGetPathFromIDListW) {
-						if (wchar_t *pszBuffer = (wchar_t *)pMalloc->Alloc(MAX_PATH * sizeof(wchar_t))) {
-							BROWSEINFOW bi;
-							ITEMIDLIST *pidlBrowse;
-
-							bi.hwndOwner		= (HWND)ctxParent;
-							bi.pidlRoot			= NULL;
-							bi.pszDisplayName	= pszBuffer;
-							bi.lpszTitle		= pszTitle;
-							bi.ulFlags			= BIF_EDITBOX | /*BIF_NEWDIALOGSTYLE |*/ BIF_RETURNONLYFSDIRS | BIF_VALIDATE;
-							bi.lpfn				= NULL;
-
-							if (pidlBrowse = pSHBrowseForFolderW(&bi)) {
-								if (pSHGetPathFromIDListW(pidlBrowse, pszBuffer)) {
-									wcscpy(fsent.szFile, pszBuffer);
-									bSuccess = true;
-								}
-
-								pMalloc->Free(pidlBrowse);
-							}
-							pMalloc->Free(pszBuffer);
-						}
 					}
 				}
 			}

@@ -54,8 +54,8 @@ public:
 	void Init(ATIRQController *irqcon);
 	void Reset();
 
-	void AssertProceed();
-	void AssertInterrupt();
+	void SetCA1(bool level);		// Proceed
+	void SetCB1(bool level);		// Interrupt
 
 	uint8 DebugReadByte(uint8 addr) const;
 	uint8 ReadByte(uint8 addr);
@@ -88,6 +88,8 @@ protected:
 	uint8	mPORTBCTL;
 	bool	mbPIAEdgeA;
 	bool	mbPIAEdgeB;
+	bool	mbCA1;
+	bool	mbCB1;
 	uint8	mPIACB2;
 
 	enum {

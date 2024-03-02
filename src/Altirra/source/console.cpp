@@ -36,11 +36,13 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/VDDisplay/display.h>
+#include <at/atui/uiproxies.h>
+#include <at/atui/dialog.h>
+#include <at/atcore/deviceprinter.h>
 #include "console.h"
 #include "ui.h"
 #include "uiframe.h"
 #include "uikeyboard.h"
-#include <at/atui/uiproxies.h>
 #include "texteditor.h"
 #include "simulator.h"
 #include "debugger.h"
@@ -49,7 +51,6 @@
 #include "disasm.h"
 #include "symbols.h"
 #include "printer.h"
-#include <at/atui/dialog.h>
 #include "debugdisplay.h"
 
 extern HINSTANCE g_hInst;
@@ -84,7 +85,7 @@ namespace {
 		OUT_DEFAULT_PRECIS,	// lfOutPrecision
 		CLIP_DEFAULT_PRECIS,	// lfClipPrecision
 		DEFAULT_QUALITY,	// lfQuality
-		DEFAULT_PITCH | FF_DONTCARE,	// lfPitchAndFamily
+		FIXED_PITCH | FF_DONTCARE,	// lfPitchAndFamily
 		L"Lucida Console"
 	};
 
@@ -852,7 +853,7 @@ void ATRegistersWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState&
 		mState.append_sprintf("P = %02X\r\n", state.mP);
 
 		if (state.mbEmulation) {
-			mState.append_sprintf("    %c%c%c%c%c%c%c\r\n"
+			mState.append_sprintf("    %c%c%c%c%c%c\r\n"
 				, state.mP & 0x80 ? 'N' : '-'
 				, state.mP & 0x40 ? 'V' : '-'
 				, state.mP & 0x08 ? 'D' : '-'
@@ -2747,7 +2748,7 @@ void ATHistoryWindow::OnPaint() {
 	int sdc = SaveDC(hdc);
 	if (sdc) {
 		if (mbHistoryError) {
-			SelectObject(hdc, GetStockObject(DEFAULT_GUI_FONT));
+			SelectObject(hdc, g_propFont);
 			SetBkMode(hdc, TRANSPARENT);
 
 			FillRect(hdc, &mContentRect, (HBRUSH)(COLOR_WINDOW + 1));
@@ -2953,8 +2954,9 @@ const char *ATHistoryWindow::GetNodeText(TreeNode *node) {
 					}
 
 					case kTsMode_Microseconds: {
+						auto vs = g_sim.GetVideoStandard();
 						mTempLine.sprintf("T%+.6f | ", (float)(sint32)(((uint32)node->mHiBaseCycles << 16) + hent.mCycle - mTimeBaseCycles) *
-							(g_sim.GetVideoStandard() == kATVideoStandard_NTSC ? 1.0f / 1773447.0f : 1.0f / 1789772.5f));
+							(vs == kATVideoStandard_NTSC || vs == kATVideoStandard_PAL60 ? 1.0f / 1773447.0f : 1.0f / 1789772.5f));
 						break;
 				    }
 
@@ -3040,7 +3042,7 @@ const char *ATHistoryWindow::GetNodeText(TreeNode *node) {
 				}
 
 				if (mbShowFlags) {
-					if (is65C816) {
+					if (is65C816 && !hent.mbEmulation) {
 						mTempLine.append_sprintf(" (%c%c%c%c%c%c%c%c)"
 							, (hent.mP & AT6502::kFlagN) ? 'N' : ' '
 							, (hent.mP & AT6502::kFlagV) ? 'V' : ' '
@@ -5695,7 +5697,13 @@ public:
 	ATPrinterOutputWindow();
 	~ATPrinterOutputWindow();
 
-	void WriteLine(const char *line);
+public:
+	int AddRef() { return ATUIPane::AddRef(); }
+	int Release() { return ATUIPane::Release(); }
+
+public:
+	void WriteASCII(const void *buf, size_t len) override;
+	void WriteATASCII(const void *buf, size_t len) override;
 
 protected:
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
@@ -5709,11 +5717,15 @@ protected:
 
 	vdrefptr<IVDTextEditor> mpTextEditor;
 	HWND	mhwndTextEditor;
+
+	uint32		mLineBufIdx;
+	uint8		mLineBuf[132];
 };
 
 ATPrinterOutputWindow::ATPrinterOutputWindow()
 	: ATUIPane(kATUIPaneId_PrinterOutput, L"Printer Output")
 	, mhwndTextEditor(NULL)
+	, mLineBufIdx(0)
 {
 	mPreferredDockCode = kATContainerDockBottom;
 }
@@ -5721,9 +5733,71 @@ ATPrinterOutputWindow::ATPrinterOutputWindow()
 ATPrinterOutputWindow::~ATPrinterOutputWindow() {
 }
 
-void ATPrinterOutputWindow::WriteLine(const char *line) {
-	if (mpTextEditor)
-		mpTextEditor->Append(line);
+void ATPrinterOutputWindow::WriteASCII(const void *buf, size_t len) {
+	const uint8 *s = (const uint8 *)buf;
+
+	while(len--) {
+		uint8 c = *s++;
+
+		if (c == 0x0D)
+			continue;
+
+		if (c != 0x0A) {
+			c &= 0x7f;
+			
+			if (c < 0x20 || c > 0x7F)
+				c = '?';
+		}
+
+		mLineBuf[mLineBufIdx++] = c;
+
+		if (mLineBufIdx >= 130) {
+			c = '\n';
+			mLineBuf[mLineBufIdx++] = c;
+		}
+
+		if (c == '\n') {
+			mLineBuf[mLineBufIdx] = 0;
+
+			if (mpTextEditor)
+				mpTextEditor->Append((const char *)mLineBuf);
+
+			mLineBufIdx = 0;
+		}
+	}
+}
+
+void ATPrinterOutputWindow::WriteATASCII(const void *buf, size_t len) {
+	const uint8 *s = (const uint8 *)buf;
+
+	while(len--) {
+		uint8 c = *s++;
+
+		if (c == 0x9B)
+			c = '\n';
+		else {
+			c &= 0x7f;
+			
+			if (c < 0x20 || c > 0x7F)
+				c = '?';
+		}
+
+		mLineBuf[mLineBufIdx++] = c;
+
+		if (mLineBufIdx >= 130) {
+			c = '\n';
+			mLineBuf[mLineBufIdx++] = c;
+		}
+
+		if (c == '\n') {
+			mLineBuf[mLineBufIdx] = 0;
+
+			if (mpTextEditor)
+				mpTextEditor->Append((const char *)mLineBuf);
+
+			mLineBufIdx = 0;
+		}
+	}
 }
 
 LRESULT ATPrinterOutputWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -5784,19 +5858,12 @@ bool ATPrinterOutputWindow::OnCreate() {
 
 	OnSize();
 
-	IATPrinterEmulator *p = g_sim.GetPrinter();
-
-	if (p)
-		p->SetOutput(this);
-
+	g_sim.SetPrinterOutput(this);
 	return true;
 }
 
 void ATPrinterOutputWindow::OnDestroy() {
-	IATPrinterEmulator *p = g_sim.GetPrinter();
-
-	if (p)
-		p->SetOutput(NULL);
+	g_sim.SetPrinterOutput(nullptr);
 
 	ATUIPane::OnDestroy();
 }
@@ -5841,8 +5908,7 @@ void ATOpenConsole() {
 			if (ATGetUIPane(kATUIPaneId_Console))
 				ATActivateUIPane(kATUIPaneId_Console, true);
 		} else {
-			ATActivateUIPane(kATUIPaneId_Console, true);
-			ATActivateUIPane(kATUIPaneId_Registers, false);
+			ATLoadDefaultPaneLayout();
 		}
 	}
 }

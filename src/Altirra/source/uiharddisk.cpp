@@ -20,6 +20,7 @@
 #include <vd2/system/error.h>
 #include <vd2/system/math.h>
 #include <vd2/system/strutil.h>
+#include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
 #include <at/atui/dialog.h>
 #include "resource.h"
@@ -262,7 +263,7 @@ ATUIDialogHardDisk::~ATUIDialogHardDisk() {
 }
 
 bool ATUIDialogHardDisk::OnLoaded() {
-	if (LOBYTE(LOWORD(GetVersion())) >= 6) {
+	if (VDIsAtLeastVistaW32()) {
 		HWND hwndItem = GetDlgItem(mhdlg, IDC_IDE_DISKBROWSE);
 
 		if (hwndItem)
@@ -286,28 +287,40 @@ bool ATUIDialogHardDisk::OnLoaded() {
 
 void ATUIDialogHardDisk::OnDataExchange(bool write) {
 	if (!write) {
-		ATIDEEmulator *ide = g_sim.GetIDEEmulator();
-		CheckButton(IDC_IDE_ENABLE, ide != NULL);
+		bool ideHardware = (g_sim.GetSIDE() || g_sim.GetKMKJZIDE() || g_sim.GetMyIDE());
 
-		if (ide) {
-			SetControlText(IDC_IDE_IMAGEPATH, ide->GetImagePath());
-			CheckButton(IDC_IDEREADONLY, !ide->IsWriteEnabled());
+		CheckButton(IDC_IDE_ENABLE, ideHardware);
 
-			uint32 cylinders = ide->GetCylinderCount();
-			uint32 heads = ide->GetHeadCount();
-			uint32 spt = ide->GetSectorsPerTrack();
+		if (ideHardware) {
+			ATIDEEmulator *ide = g_sim.GetIDEEmulator();
 
-			if (!cylinders || !heads || !spt) {
-				heads = 16;
-				spt = 63;
-				cylinders = 20;
+			if (ide) {
+				SetControlText(IDC_IDE_IMAGEPATH, ide->GetImagePath());
+				CheckButton(IDC_IDEREADONLY, !ide->IsWriteEnabled());
+
+				uint32 cylinders = ide->GetCylinderCount();
+				uint32 heads = ide->GetHeadCount();
+				uint32 spt = ide->GetSectorsPerTrack();
+
+				if (!cylinders || !heads || !spt) {
+					heads = 16;
+					spt = 63;
+					cylinders = 20;
+				} else {
+					SetControlTextF(IDC_IDE_CYLINDERS, L"%u", cylinders);
+					SetControlTextF(IDC_IDE_HEADS, L"%u", heads);
+					SetControlTextF(IDC_IDE_SPT, L"%u", spt);
+				}
+
+				bool fast = ide->IsFastDevice();
+				CheckButton(IDC_SPEED_FAST, fast);
+				CheckButton(IDC_SPEED_SLOW, !fast);
+
+				UpdateCapacity();
 			} else {
-				SetControlTextF(IDC_IDE_CYLINDERS, L"%u", cylinders);
-				SetControlTextF(IDC_IDE_HEADS, L"%u", heads);
-				SetControlTextF(IDC_IDE_SPT, L"%u", spt);
+				CheckButton(IDC_SPEED_FAST, true);
+				SetControlText(IDC_IDE_IMAGEPATH, L"");
 			}
-
-			UpdateCapacity();
 
 			ATIDEHardwareMode hwmode = g_sim.GetIDEHardwareMode();
 			int hwidx = 0;
@@ -322,10 +335,6 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 			}
 
 			mComboHWMode.SetSelection(hwidx);
-
-			bool fast = ide->IsFastDevice();
-			CheckButton(IDC_SPEED_FAST, fast);
-			CheckButton(IDC_SPEED_SLOW, !fast);
 		} else {
 			mComboHWMode.SetSelection(1);		// MyIDE D5xx
 			CheckButton(IDC_SPEED_FAST, true);
@@ -337,9 +346,8 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 		bool reset = false;
 
 		ATIDEEmulator *ide = g_sim.GetIDEEmulator();
+		ATIDEHardwareMode hwmode = kATIDEHardwareMode_None;
 		if (IsButtonChecked(IDC_IDE_ENABLE)) {
-			ATIDEHardwareMode hwmode = kATIDEHardwareMode_MyIDE_D5xx;
-
 			switch(mComboHWMode.GetSelection()) {
 				case 0: hwmode = kATIDEHardwareMode_MyIDE_D1xx; break;
 				case 1: hwmode = kATIDEHardwareMode_MyIDE_D5xx; break;
@@ -360,48 +368,67 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 			uint32 heads = 0;
 			uint32 sectors = 0;
 
-			ExchangeControlValueUint32(true, IDC_IDE_CYLINDERS, cylinders, 1, 16777216);
-			ExchangeControlValueUint32(true, IDC_IDE_HEADS, heads, 1, 16);
-			ExchangeControlValueUint32(true, IDC_IDE_SPT, sectors, 1, 255);
+			if (!path.empty()) {
+				ExchangeControlValueUint32(true, IDC_IDE_CYLINDERS, cylinders, 1, 16777216);
+				ExchangeControlValueUint32(true, IDC_IDE_HEADS, heads, 1, 16);
+				ExchangeControlValueUint32(true, IDC_IDE_SPT, sectors, 1, 255);
+			}
 
 			if (!mbValidationFailed) {
+				bool hwchanged = false;
+				if (g_sim.GetIDEHardwareMode() != hwmode)
+					hwchanged = true;
+
 				bool changed = true;
 
 				if (ide) {
-					changed = false;
+					if (!path.empty()) {
+						changed = false;
 
-					if (ide->GetImagePath() != path)
-						changed = true;
-					else if (ide->IsWriteEnabled() != write)
-						changed = true;
-					else if (g_sim.GetIDEHardwareMode() != hwmode)
-						changed = true;
-					else if (ide->GetCylinderCount() != cylinders)
-						changed = true;
-					else if (ide->GetHeadCount() != heads)
-						changed = true;
-					else if (ide->GetSectorsPerTrack() != sectors)
-						changed = true;
-					else if (ide->IsFastDevice() != fast)
-						changed = true;
+						if (ide->GetImagePath() != path)
+							changed = true;
+						else if (ide->IsWriteEnabled() != write)
+							changed = true;
+						else if (ide->GetCylinderCount() != cylinders)
+							changed = true;
+						else if (ide->GetHeadCount() != heads)
+							changed = true;
+						else if (ide->GetSectorsPerTrack() != sectors)
+							changed = true;
+						else if (ide->IsFastDevice() != fast)
+							changed = true;
+					}
+				} else {
+					if (path.empty())
+						changed = false;
 				}
 
-				if (changed) {
-					try {
-						g_sim.LoadIDE(hwmode, write, fast, cylinders, heads, sectors, path.c_str());
+				try {
+					if (hwchanged) {
+						g_sim.LoadIDE(hwmode);
 						reset = true;
-					} catch(const MyError& e) {
-						e.post(mhdlg, "Altirra Error");
-						FailValidation(IDC_IDE_IMAGEPATH);
-						// fall through to force a reset
 					}
+
+					if (changed) {
+						if (path.empty())
+							g_sim.UnloadIDEImage();
+						else
+							g_sim.LoadIDEImage(write, fast, cylinders, heads, sectors, path.c_str());
+					}
+				} catch(const MyError& e) {
+					e.post(mhdlg, "Altirra Error");
+					FailValidation(IDC_IDE_IMAGEPATH);
+					// fall through to force a reset
 				}
 			}
 		} else {
-			if (ide) {
+			if (g_sim.GetKMKJZIDE() || g_sim.GetSIDE() || g_sim.GetMyIDE()) {
 				g_sim.UnloadIDE();
 				reset = true;
 			}
+
+			if (ide)
+				g_sim.UnloadIDEImage();
 		}
 
 		if (reset)
@@ -440,6 +467,10 @@ bool ATUIDialogHardDisk::OnCommand(uint32 id, uint32 extcode) {
 					SetControlText(IDC_IDE_IMAGEPATH, s.c_str());
 				}
 			}
+			return true;
+
+		case IDC_EJECT:
+			SetControlText(IDC_IDE_IMAGEPATH, L"");
 			return true;
 
 		case IDC_IDE_DISKBROWSE:
@@ -510,6 +541,7 @@ void ATUIDialogHardDisk::UpdateEnables() {
 	EnableControl(IDC_IDE_DISKBROWSE, ideenable);
 	EnableControl(IDC_CREATE_VHD, ideenable);
 	EnableControl(IDC_IDEREADONLY, ideenable);
+	EnableControl(IDC_EJECT, ideenable);
 	EnableControl(IDC_STATIC_IDE_GEOMETRY, ideenable);
 	EnableControl(IDC_STATIC_IDE_CYLINDERS, ideenable);
 	EnableControl(IDC_STATIC_IDE_HEADS, ideenable);

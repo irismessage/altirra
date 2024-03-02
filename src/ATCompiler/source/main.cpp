@@ -21,6 +21,10 @@
 extern int cmd_lzpack(int argc, const char *const *argv);
 extern int cmd_lzunpack(int argc, const char *const *argv);
 extern int cmd_makereloc(int argc, const char *const *argv);
+extern int cmd_makereloc2(int argc, const char *const *argv);
+extern int cmd_makereloc3(int argc, const char *const *argv);
+extern int cmd_mkfsdos2(int argc, const char *const *argv);
+extern int cmd_makeexports(int argc, const char *const *argv);
 
 void print_usage();
 
@@ -40,6 +44,14 @@ int main(int argc, const char *const *argv) {
 		return cmd_lzunpack(argc, argv);
 	else if (!strcmp(cmdname, "makereloc"))
 		return cmd_makereloc(argc, argv);
+	else if (!strcmp(cmdname, "makereloc2"))
+		return cmd_makereloc2(argc, argv);
+	else if (!strcmp(cmdname, "makereloc3"))
+		return cmd_makereloc3(argc, argv);
+	else if (!strcmp(cmdname, "mkfsdos2"))
+		return cmd_mkfsdos2(argc, argv);
+	else if (!strcmp(cmdname, "makeexports"))
+		return cmd_makeexports(argc, argv);
 
 	print_usage();
 	return 10;
@@ -52,4 +64,8 @@ void print_usage() {
 	puts("  lzpack - compress using LZ77");
 	puts("  lzunpack - decompress using LZ77");
 	puts("  makereloc - create relocatable module");
+	puts("  makereloc2 - create relocatable module (MADS input)");
+	puts("  makereloc3 - create relocatable module (pages only)");
+	puts("  mkfsdos2 - make DOS 2.0S disk");
+	puts("  makeexports - convert MADS label file to exports include");
 }

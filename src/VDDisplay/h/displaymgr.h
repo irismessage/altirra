@@ -25,6 +25,7 @@
 
 #include <vd2/system/vdstl.h>
 #include <vd2/system/thread.h>
+#include <vd2/VDDisplay/display.h>
 
 class VDVideoDisplayManager;
 
@@ -68,6 +69,8 @@ public:
 
 	bool	Init();
 	void	Shutdown();
+
+	void	SetProfileHook(const vdfunction<void(IVDVideoDisplay::ProfileEvent)>& profileHook);
 
 	void	SetBackgroundFallbackEnabled(bool enabled);
 
@@ -144,6 +147,8 @@ protected:
 
 	typedef vdlist<RemoteCallNode> RemoteCalls;
 	RemoteCalls	mRemoteCalls;
+
+	vdfunction<void(IVDVideoDisplay::ProfileEvent)> mpProfileHook;
 
 	uint8	mLogicalPalette[256];
 };

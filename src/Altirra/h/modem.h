@@ -18,13 +18,23 @@
 #ifndef f_AT_MODEM_H
 #define f_AT_MODEM_H
 
+#include <vd2/system/refcount.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/VDString.h>
+#include <at/atcore/deviceimpl.h>
+#include <at/atcore/deviceserial.h>
 #include "rs232.h"
 #include "scheduler.h"
 #include "modemtcp.h"
 
 class IATUIRenderer;
+
+enum class ATModemFlowControl : uint8 {
+	None = 0,
+	RTS_CTS = 3,
+	XON_XOFF = 4,
+	Transparent_XON_XOFF = 5
+};
 
 struct ATModemRegisters {
 	ATModemRegisters();
@@ -49,41 +59,72 @@ struct ATModemRegisters {
 	uint8	mSpeakerMode;					///< 0=off, 1=connect only, 2=on, 3=answer only (M).
 	uint8	mGuardToneMode;					///< 0-2 (G).
 	bool	mbLoopbackMode;					///< True if local analog loopback test mode is enabled (&T).
+	bool	mbFullDuplex;					///< (S15 bit 3). Half/full duplex (F). SX212 only.
+	bool	mbOriginateMode;				///< True if we are originating (ATD/ATO); false if we are in answer mode (ATA/ATDR).
+	ATModemFlowControl	mFlowControlMode;	///< (S39). Default = 3 (RTS/CTS)
 };
 
-class ATModemEmulator : public IATRS232Device, public IATModemDriverCallback, public IATSchedulerCallback {
-	ATModemEmulator(const ATModemEmulator&);
-	ATModemEmulator& operator=(const ATModemEmulator&);
+
+class ATModemEmulator final : public ATDevice
+					, public IATRS232Device
+					, public IATModemDriverCallback
+					, public IATSchedulerCallback
+					, public IATDeviceScheduling
+					, public IATDeviceIndicators
+					, public IATDeviceSerial
+{
+	ATModemEmulator(const ATModemEmulator&) = delete;
+	ATModemEmulator& operator=(const ATModemEmulator&) = delete;
 public:
 	ATModemEmulator();
-	~ATModemEmulator();
 
+public:
+	virtual int AddRef() override;
+	virtual int Release() override;
+	virtual void *AsInterface(uint32 iid) override;
+
+public:
+	virtual void GetDeviceInfo(ATDeviceInfo& info);
+	virtual void GetSettings(ATPropertySet& settings);
+	virtual bool SetSettings(const ATPropertySet& settings);
+	virtual void Init();
+	virtual void Shutdown();
+	virtual void WarmReset();
+	virtual void ColdReset();
+
+public:
+	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch);
+
+public:
+	virtual void InitIndicators(IATUIRenderer *r);
+
+public:
+	virtual void SetOnStatusChange(const vdfunction<void(const ATDeviceSerialStatus&)>& fn) override;
+	virtual void SetTerminalState(const ATDeviceSerialTerminalState&) override;
+	virtual ATDeviceSerialStatus GetStatus() override;
+
+public:
 	void Init(ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir);
-	void Shutdown();
-
-	void SetCallback(IATRS232DeviceCallback *cb) {
-		mpCB = cb;
-	}
-
-	void ColdReset();
-
-	void SetTerminalState(const ATRS232TerminalState&);
-	ATRS232ControlState GetControlState();
 
 	void SetConfig(const ATRS232Config& config);
 
+	bool Read(uint32& baudRate, uint8& c);
 	bool Read(uint32 baudRate, uint8& c, bool& framingError);
 	void Write(uint32 baudRate, uint8 c);
 
+	void Set1030Mode();
+	void SetSX212Mode();
 	void SetToneDialingMode(bool enable);
 	bool IsToneDialingMode() const;
 	void HangUp();
 	void Dial(const char *address, const char *service);
 	void Answer();
 
-	void FlushOutputBuffer();
+	void FlushBuffers() override;
 
 protected:
+	~ATModemEmulator();
+
 	void Poll();
 	void ParseCommand();
 
@@ -120,6 +161,7 @@ protected:
 
 	void TerminateCall();
 	void RestoreListeningState();
+	void UpdateConfig();
 	void UpdateControlState();
 	void UpdateUIStatus();
 	void EnterCommandMode(bool sendPrompt, bool force);
@@ -137,14 +179,13 @@ protected:
 	ATScheduler *mpSlowScheduler;
 	IATUIRenderer *mpUIRenderer;
 	IATModemDriver *mpDriver;
-	IATRS232DeviceCallback *mpCB;
+	vdfunction<void(const ATDeviceSerialStatus&)> mpCB;
 	ATEvent *mpEventEnterCommandMode;
 	ATEvent *mpEventCommandModeTimeout;
 	ATEvent *mpEventCommandTermDelay;
 	ATEvent *mpEventPoll;
 	uint8	mGuardCharCounter;
 	uint8	mLastRegister;
-	bool	mbInited;
 	bool	mbCommandMode;
 
 	enum ConnectionState {
@@ -160,6 +201,7 @@ protected:
 	bool	mbListenEnabled;				///< True if listening for incoming calls is enabled (not necessarily right now).
 	bool	mbListening;					///< True if we are currently listening for a call (not dialing or connected).
 	bool	mbLoggingState;
+	bool	mbHighSpeed;
 	VDAtomicInt	mbRinging;
 
 	enum CommandState {
@@ -176,13 +218,14 @@ protected:
 	uint32	mLastWriteTime;
 	uint32	mLastRingTime;
 	uint32	mConnectRate;
+	uint32	mCommandRate;
 
 	VDStringA	mAddress;
 	VDStringA	mService;
 
 	ATRS232Config	mConfig;
-	ATRS232ControlState	mControlState;
-	ATRS232TerminalState mTerminalState;
+	ATDeviceSerialStatus	mControlState;
+	ATDeviceSerialTerminalState mTerminalState;
 
 	uint32	mTransmitIndex;
 	uint32	mTransmitLength;

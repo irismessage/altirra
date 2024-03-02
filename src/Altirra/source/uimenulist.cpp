@@ -801,6 +801,6 @@ void ATUIMenuList::Reflow() {
 
 		mTextSplitX = maxItemWidthLeft + 6 + 12;
 	} else {
-		mIdealSize = vdsize32(0, 0);
+		mIdealSize = vdsize32(0, metrics.mAscent + metrics.mDescent + 4);
 	}
 }

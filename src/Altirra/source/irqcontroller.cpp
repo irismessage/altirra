@@ -21,8 +21,13 @@
 
 ATIRQController::ATIRQController()
 	: mActiveIRQs(0)
+	, mFreeCustomIRQs(0xFFFF0000)
 	, mpCPU(NULL)
 {
+}
+
+ATIRQController::~ATIRQController() {
+	VDASSERT(mFreeCustomIRQs == 0xFFFF0000);
 }
 
 void ATIRQController::Init(ATCPUEmulator *cpu) {
@@ -31,6 +36,22 @@ void ATIRQController::Init(ATCPUEmulator *cpu) {
 
 void ATIRQController::ColdReset() {
 	mActiveIRQs = 0;
+}
+
+uint32 ATIRQController::AllocateIRQ() {
+	VDASSERT(mFreeCustomIRQs);
+
+	uint32 allocBit = mFreeCustomIRQs & (0 - mFreeCustomIRQs);
+
+	mFreeCustomIRQs -= allocBit;
+
+	return allocBit;
+}
+
+void ATIRQController::FreeIRQ(uint32 irqbit) {
+	VDASSERT(irqbit >= 0x10000 && !(mFreeCustomIRQs & irqbit));
+
+	mFreeCustomIRQs += irqbit;
 }
 
 void ATIRQController::Assert(uint32 sources, bool cpuBased)

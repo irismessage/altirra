@@ -31,19 +31,12 @@
 #include <vd2/system/VDString.h>
 
 inline bool VDIsWindowsNT() {
-#ifdef _M_AMD64
+	// We don't run on 9x anymore.
 	return true;
-#else
-	static bool is_nt = !(GetVersion() & 0x80000000);
-
-	return is_nt;
-#endif
 }
 
-inline bool VDIsAtLeastVistaW32() {
-	return (sint32)(::GetVersion() & 0x800000FF) >= 6;
-}
-
+bool VDIsAtLeastVistaW32();
+bool VDIsAtLeast7W32();
 bool VDIsAtLeast81W32();
 
 // useful constants missing from the Platform SDK

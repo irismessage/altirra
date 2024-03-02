@@ -29,6 +29,7 @@ public:
 	void Init(ATSimulator *sim);
 
 	void SetShowFps(bool showFps) { mbShowFps = showFps; }
+	void SetFullScreen(bool fs) { mbFullScreen = fs; }
 	void SetMouseCaptured(bool captured, bool mmbRelease) { mbCaptured = captured; mbCaptureMMBRelease = mmbRelease; }
 
 	void Update(HWND hwnd, bool running, int ticks, float fps, float cpu);
@@ -40,6 +41,7 @@ protected:
 	bool mbLastCaptured;
 
 	bool mbShowFps;
+	bool mbFullScreen;
 	bool mbCaptured;
 	bool mbCaptureMMBRelease;
 
@@ -48,7 +50,7 @@ protected:
 	VDStringW	mBuffer;
 
 	ATHardwareMode	mLastHardwareMode;
-	ATKernelMode	mLastKernelMode;
+	uint64			mLastKernelId;
 	ATMemoryMode	mLastMemoryMode;
 	ATVideoStandard	mLastVideoStd;
 	bool			mbLastBASICState;

@@ -18,10 +18,13 @@
 #include <stdafx.h>
 #include <vd2/system/math.h>
 #include <vd2/system/binary.h>
+#include <at/atcore/deviceimpl.h>
+#include <at/atcore/devicevideo.h>
 #include "xep80.h"
 #include "scheduler.h"
 #include "pia.h"
 #include "debuggerlog.h"
+#include "devicemanager.h"
 #include "xep80_font_normal.inl"
 #include "xep80_font_intl.inl"
 #include "xep80_font_internal.inl"
@@ -36,8 +39,8 @@ namespace {
 	}
 }
 
-ATDebuggerLogChannel g_ATLCXEPData(false, false, "XEPDATA", "XEP-80 Data Transfer");
-ATDebuggerLogChannel g_ATLCXEPCmd(false, false, "XEPCMD", "XEP-80 Commands");
+ATDebuggerLogChannel g_ATLCXEPData(false, false, "XEPDATA", "XEP80 Data Transfer");
+ATDebuggerLogChannel g_ATLCXEPCmd(false, false, "XEPCMD", "XEP80 Commands");
 
 struct ATXEP80Emulator::CommandInfo {
 	uint8 mCommandLo;
@@ -413,12 +416,12 @@ void ATXEP80Emulator::UpdateFrame() {
 		// NS405 only sees the character shape data. This results in unusual behavior
 		// that the switching between the AL0/AL1 attribute latches is based on the
 		// 8th bit of the character *data* and not the name. Due to an awful hack in
-		// the XEP-80's character ROM where the $9B (EOL) character is a blank in the
+		// the XEP80's character ROM where the $9B (EOL) character is a blank in the
 		// middle of the inverted character set, this means that all characters in
 		// the $80-FF range select AL1 except for $9B, which still selects AL0.
 		//
 		// In theory, the character generator ROM could cause the NS405 to switch
-		// attribute latches on a per-scan basis. Thankfully, the XEP-80's character
+		// attribute latches on a per-scan basis. Thankfully, the XEP80's character
 		// generator doesn't do that and so we only have to deal with this goofy EOL
 		// issue.
 		//
@@ -993,11 +996,13 @@ not_control:
 void ATXEP80Emulator::OnCmdSetCursorHPos(uint8 ch) {
 	mX = ch;
 	mLastX = mX;
+	UpdateCursorAddr();
 }
 
 void ATXEP80Emulator::OnCmdSetCursorHPosHi(uint8 ch) {
 	mX = (mX & 0x0F) + (ch << 4);
 	mLastX = mX;
+	UpdateCursorAddr();
 }
 
 void ATXEP80Emulator::OnCmdSetLeftMarginLo(uint8 ch) {
@@ -1011,6 +1016,7 @@ void ATXEP80Emulator::OnCmdSetLeftMarginHi(uint8 ch) {
 void ATXEP80Emulator::OnCmdSetCursorVPos(uint8 ch) {
 	mY = ch - 0x80;
 	mLastY = mY;
+	UpdateCursorAddr();
 }
 
 void ATXEP80Emulator::OnCmdSetGraphics(uint8) {
@@ -1214,8 +1220,6 @@ void ATXEP80Emulator::OnCmdCursorOnBlink(uint8) {
 void ATXEP80Emulator::OnCmdMoveToLogicalStart(uint8) {
 	while(mY > 0 && GetRowPtr(mY - 1)[mRightMargin] != 0x9B)
 		--mY;
-
-	mX = mLeftMargin;
 }
 
 void ATXEP80Emulator::OnCmdSetScrollX(uint8 ch) {
@@ -1779,7 +1783,7 @@ void ATXEP80Emulator::RebuildActiveFont() {
 				// Both external and internal chargen active.
 				//
 				// Extending the cluster*#$ here is that because the NS405 serializes bits
-				// in LSB-to-MSB order instead of MSB-to-LSB as ANTIC does, the XEP-80 has
+				// in LSB-to-MSB order instead of MSB-to-LSB as ANTIC does, the XEP80 has
 				// the data bus for the character ROM hooked backwards. That would be fine
 				// except that we store the charset in M2L order for speed, which is backwards
 				// for looking up the block graphics or internal charset here.
@@ -1968,4 +1972,165 @@ void ATXEP80Emulator::RecomputeVideoTiming() {
 
 	mFrameLayoutChangeCount |= 1;
 	InvalidateFrame();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDeviceXEP80 : public ATDevice
+					, public IATDeviceScheduling
+					, public IATDevicePortInput
+					, public IATDeviceVideoOutput
+					, public IATDeviceDiagnostics
+{
+public:
+	ATDeviceXEP80();
+
+	virtual void *AsInterface(uint32 id) override;
+
+	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
+	virtual void ColdReset() override;
+	virtual void Init() override;
+	virtual void Shutdown() override;
+
+public:	// IATDeviceScheduling
+	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
+
+public:
+	virtual void InitPortInput(ATPIAEmulator *pia) override;
+
+public:	// IATDeviceVideoOutput
+	virtual void Tick(uint32 hz300ticks) override;
+	virtual void UpdateFrame() override;
+	virtual const VDPixmap& GetFrameBuffer() override;
+	virtual const ATDeviceVideoInfo& GetVideoInfo() override;
+	virtual vdpoint32 PixelToCaretPos(const vdpoint32& pixelPos) override;
+	virtual vdrect32 CharToPixelRect(const vdrect32& r) override;
+	virtual int ReadRawText(uint8 *dst, int x, int y, int n) override;
+	virtual uint32 GetActivityCounter() override;
+
+public:	// IATDeviceDiagnostics
+	virtual void DumpStatus(ATConsoleOutput& output) override;
+
+private:
+	static sint32 ReadByte(void *thisptr0, uint32 addr);
+	static bool WriteByte(void *thisptr0, uint32 addr, uint8 value);
+
+	ATScheduler *mpScheduler;
+	ATPIAEmulator *mpPIA;
+
+	ATDeviceVideoInfo mVideoInfo;
+
+	ATXEP80Emulator mXEP80;
+};
+
+ATDeviceXEP80::ATDeviceXEP80()
+	: mpScheduler(nullptr)
+	, mpPIA(nullptr)
+{
+}
+
+void *ATDeviceXEP80::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDeviceScheduling::kTypeID:
+			return static_cast<IATDeviceScheduling *>(this);
+
+		case IATDeviceVideoOutput::kTypeID:
+			return static_cast<IATDeviceVideoOutput *>(this);
+
+		case IATDeviceDiagnostics::kTypeID:
+			return static_cast<IATDeviceDiagnostics *>(this);
+
+		case IATDevicePortInput::kTypeID:
+			return static_cast<IATDevicePortInput *>(this);
+
+		default:
+			return ATDevice::AsInterface(id);
+	}
+}
+
+void ATDeviceXEP80::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mTag = "xep80";
+	info.mName = L"XEP80";
+	info.mConfigTag = "xep80";
+}
+
+void ATDeviceXEP80::ColdReset() {
+	mXEP80.ColdReset();
+}
+
+void ATDeviceXEP80::Init() {
+	mXEP80.Init(mpScheduler, mpPIA);
+}
+
+void ATDeviceXEP80::Shutdown() {
+	mXEP80.Shutdown();
+
+	mpPIA = nullptr;
+	mpScheduler = nullptr;
+}
+
+void ATDeviceXEP80::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
+	mpScheduler = sch;
+}
+
+void ATDeviceXEP80::InitPortInput(ATPIAEmulator *pia) {
+	mpPIA = pia;
+}
+
+void ATDeviceXEP80::Tick(uint32 ticks300Hz) {
+	mXEP80.Tick(ticks300Hz);
+}
+
+void ATDeviceXEP80::UpdateFrame() {
+	mXEP80.UpdateFrame();
+}
+
+const VDPixmap& ATDeviceXEP80::GetFrameBuffer() {
+	return mXEP80.GetFrameBuffer();
+}
+
+const ATDeviceVideoInfo& ATDeviceXEP80::GetVideoInfo() {
+	mVideoInfo.mbSignalValid = mXEP80.IsVideoSignalValid();
+	mVideoInfo.mHorizScanRate = mXEP80.GetVideoHorzRate();
+	mVideoInfo.mVertScanRate = mXEP80.GetVideoVertRate();
+	mVideoInfo.mFrameBufferLayoutChangeCount = mXEP80.GetFrameLayoutChangeCount();
+	mVideoInfo.mFrameBufferChangeCount = mXEP80.GetFrameChangeCount();
+
+	const auto textDisplayInfo = mXEP80.GetTextDisplayInfo();
+	mVideoInfo.mTextRows = textDisplayInfo.mRows;
+	mVideoInfo.mTextColumns = textDisplayInfo.mColumns;
+
+	mVideoInfo.mPixelAspectRatio = mXEP80.GetPixelAspectRatio();
+	mVideoInfo.mDisplayArea = mXEP80.GetDisplayArea();
+
+	return mVideoInfo;
+}
+
+vdpoint32 ATDeviceXEP80::PixelToCaretPos(const vdpoint32& pixelPos) {
+	return mXEP80.PixelToCaretPos(pixelPos);
+}
+
+vdrect32 ATDeviceXEP80::CharToPixelRect(const vdrect32& r) {
+	return mXEP80.CharToPixelRect(r);
+}
+
+int ATDeviceXEP80::ReadRawText(uint8 *dst, int x, int y, int n) {
+	return mXEP80.ReadRawText(dst, x, y, n);
+}
+
+uint32 ATDeviceXEP80::GetActivityCounter() {
+	return mXEP80.GetDataReceivedCount();
+}
+
+void ATDeviceXEP80::DumpStatus(ATConsoleOutput& output) {
+}
+
+void ATCreateDeviceXEP80(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceXEP80> p(new ATDeviceXEP80);
+
+	*dev = p.release();
+}
+
+void ATRegisterDeviceXEP80(ATDeviceManager& dev) {
+	dev.AddDeviceFactory("xep80", ATCreateDeviceXEP80);
 }

@@ -7,8 +7,8 @@ static const struct VD_MSVC_C4786Workaround { VD_MSVC_C4786Workaround() {} } g_V
 #endif
 
 #ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0500
-#elif _WIN32_WINNT < 0x0500
+#define _WIN32_WINNT 0x0600
+#elif _WIN32_WINNT < 0x0600
 #error _WIN32_WINNT is less than 5.0. This will break the places bar on the load/save dialog.
 #endif
 

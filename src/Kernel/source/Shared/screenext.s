@@ -22,10 +22,9 @@ ScreenEncodingOffsetTable:
 	dta		$10			;2-bit
 	dta		$14			;1-bit
 
-ScreenEncodingTable:
-	dta		$00,$11,$22,$33,$44,$55,$66,$77,$88,$99,$aa,$bb,$cc,$dd,$ee,$ff
-	dta		$00,$55,$aa,$ff
-	dta		$00,$ff
+.if !_KERNEL_XLXE
+	_SCREEN_TABLES_3
+.endif
 
 ;==========================================================================
 ; ScreenFineScrollDLI

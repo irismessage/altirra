@@ -1,5 +1,124 @@
 Altirra Change Log
-Version 2.50:
+
+Version 2.60 [March 21, 2015]:
+   [changes]
+   * Devices: PCLink, DragonCart, XEP-80, SlightSID, Covox, R-Time 8, 850, 1030, P:, and H: have been moved to the Devices tree.
+
+   [features added]
+   * ATBasic: Improved execution speed.
+   * ATBasic: Added partial support for CONT statement.
+   * ATBasic: Added support for DPOKE, BPUT, BGET, ERASE, PROTECT, UNPROTECT, DIR, RENAME, MOVE, HEX$(), DPEEK(), !, %, &, and $.
+   * AltirraOS: Optimized FPI routine.
+   * AltirraOS: Improved rounding of FDIV results.
+   * BlackBox: Initial emulation support.
+   * Debugger: Changed .writemem to use length syntax.
+   * Debugger: .basic_dumpline updated with shortcuts for STMCUR/STMTAB and continuous output.
+   * Debugger: Added .basic_rebuiltvnt command.
+   * Debugger: Added support for one-shot, grouped, and clear-on-reset breakpoints.
+   * Debugger: Added support for return tracepoints (bt --).
+   * Debugger: Added .sprintf command and @ts tokens.
+   * Debugger: Added @t0-t9 (temporary) and @ra (return address) variables.
+   * Debugger: Added option to randomize application memory after EXE load (direct EXE load only).
+   * Debugger: Added .diskreadsec and .diskwritesec commands.
+   * Debugger: Added dbi (dump bytes with INTERNAL text) command.
+   * Devices: Added support for SIO-based real-time clock devices.
+   * Devices: Added SIO type 3/4 polling test devices.
+   * Devices: Added SX212 modem emulation.
+   * Devices: Added MidiMate emulation.
+   * Disk: Added support for creating and exploring DOS 3 disk images.
+   * Disk: Added generic emulation mode with 57,600 baud high speed support.
+   * Disk: ATX, PRO, DCM, and XFD disk images can now be written.
+   * Disk: Detach Disk commands now turn off disk drives.
+   * Disk: Added rotate disk commands.
+   * Disk Explorer: Added read/write support for MyDOS and DOS 2.5 disks.
+   * Disk Explorer: Added create directory (new folder) option for MyDOS and SDFS disks.
+   * Display: Sharp bilinear now works on pixel shader 1.x devices.
+   * Display: Vertical overscan can be overridden separately from horizontal.
+   * HDevice: Added option to use lowercase filenames.
+   * HDevice: H: can now be hot-started or stopped without a reboot.
+   * HDevice: H: can now also be installed as D:.
+   * IDE: CF hot swapping is now supported.
+   * Input: Added support for quick-cycling between a set of input maps.
+   * MMU: Axlon banking register aliasing is now optional.
+   * Printer: Added SIO-level 820 emulation.
+   * Serial: Modem now supports RTS/CTS flow control (&K3).
+   * Serial: Added software T: handler and support for 1030 handler bootstrap.
+   * Simulation: Added support for mixed NTSC/PAL ANTIC+GTIA combinations (PAL-60 and NTSC-50).
+   * Simulation: Added support for more realistic power-on memory patterns.
+   * Software: Added Additions disk containing supplementary utilities.
+   * UI: Added new firmware management dialog and support for multiple custom OS and BASIC ROMs.
+   * UI: Added /[no]cheats switch.
+   * UI: Improved high DPI support.
+   * UI: Added /portablealt:<file> switch to use alternate INI files.
+   * UI: Multiple disk images can now be loaded with repeated /disk switches.
+   * UI: Full screen mode state is now saved on exit.
+   * UI: Improved full-screen UI.
+   
+   [bugs fixed]
+   * ATBasic: Fixed precedence of unary minus vs. exponentiation.
+   * ATBasic: Fixed x^y for x<=0.
+   * ATBasic: Error messages now indicate STOPPED or line numbers as appropriate.
+   * ATBasic: Fixed not being able to Break out of a single-line loop.
+   * ATBasic: TRAP line is now reset more appropriately.
+   * ATBasic: Fixed range reduction in SIN() and COS().
+   * ATBasic: GRAPHICS no longer reopens E:.
+   * ATBasic: Fixed CONT sometimes failing in deferred mode.
+   * ATBasic: Fixed parsing errors on the right side of a string relational expression.
+   * ATBasic: Banner changed so startup programs that hardcode line 2 work.
+   * ATBasic: Use of IOCB #0 is no longer allowed.
+   * ATBasic: Out of memory errors are now detected and thrown.
+   * ATBasic: PUT now takes an aexpr instead of avar.
+   * ATBasic: PTABW is now supported.
+   * AltirraOS: SIO no longer saves STACKP before invoking PBI routines (fixes BlackBox crash).
+   * AltirraOS: SIO now leaves ICBALZ/ICBAHZ equal to ICBAL/ICBAH for better custom DOS compatibility.
+   * AltirraOS: Fixed CRITIC being left on after servicing a PBI-based SIO request.
+   * AltirraOS: Fixed GET BYTE returning bogus characters for PBI-based CIO devices.
+   * AltirraOS: E: now supports forced read mode.
+   * AltirraOS: SETVBV now preserves I flag.
+   * AltirraOS: AUX1/2 are now updated properly on R: XIO commands.
+   * AltirraOS: Fixed CIO type 4 polling support.
+   * AltirraOS: Fix timeout for SIO operations.
+   * AltirraOS: Fix ESC-Clear handling in E:.
+   * AltirraOS: Cassette boot now reads EOF record.
+   * AltirraOS: Fixed diagnostic cartridge handling.
+   * ANTIC: Improved emulation of phantom P/M DMA effects.
+   * Cassette: Fixed inconsistent motor control state when using C: patch with short IRG mode.
+   * CPU: Fixed NMI not triggering early enough when occurring during IRQ entry sequence.
+   * CPU: Fixed spurious IRQs when interrupts are masked for more than 2^32 cycles.
+   * CPU: Fixed video snow problem when running CPU faster than 1.79MHz.
+   * Debugger: -$80000000/-1 no longer causes a crash.
+   * Debugger: .printf %%u formatter now works correctly for numbers >=10^10.
+   * Debugger: Fixed EXP/EXP10 not being logged to FPACCEL channel.
+   * Debugger: Fixed static trace (st) not stopping properly on BRK/RTS/RTI instructions.
+   * Debugger: Debug display now reflects CHACTL bits.
+   * Disk: Rewrote ATX image parser to be more robust.
+   * Disk: Added workaround for XFD images improperly named .ATR.
+   * Disk Explorer: Fixed DOS 2 filename encoding for filenames without extensions.
+   * Disk Explorer: Fixed directory parsing for double-density DOS 2 filesystems.
+   * Display: Fixed crash on display hardware change when using DirectDraw.
+   * Display: Added workaround for crash when initializing Direct3D 9 with VirtualBox display driver.
+   * Display: Improved windowed mode vsync strategy when DWM is active.
+   * Display: Improved quality of NTSC high artifacting mode.
+   * GTIA: Fixed DMA reads from hardware registers.
+   * HDevice: Fixed NOTE command sometimes giving incorrect positions.
+   * HLE: Hook page for H:, P:, R:, T:, and E: hooks is now better at dodging conflicting hardware windows.
+   * HLE: Fixed EXP10(-1) returning an error with FP acceleration enabled.
+   * HLE: Improved register return values for several FP acceleration calls.
+   * HLE: SIO patch acceleration is skipped if the I flag is set.
+   * Input: Fixed right mouse button not working on mouse controllers.
+   * Input: Keyboard and mouse inputs are now auto-released when display window loses focus.
+   * Input: Moved joystick poll before VBI to reduce input delay.
+   * Network: Fixed emulated Ethernet packet timing.
+   * POKEY: Undetectable $C0-C7 and $D0-D7 scan codes are now blocked.
+   * Serial: 6502-based R: handler now waits for output buffers to drain on a close command.
+   * Serial: Fixed emulated R: device only draining one byte from transfer buffer per call in unthrottled mode.
+   * Serial: Many fixes to 1030 T: device command handling.
+   * UI: Fixed mouse pointer blinking when a video player injects mouse moves to prevent the display from sleeping.
+   * Ultimate1MB: Fixed SDX control register not gating non-SIDE external cartridges properly.
+   * XEP80: Move Cursor to Start of Logical Line ($DB) no longer moves cursor to left margin.
+   * XEP80: Set horizontal/vertical position commands now update the cursor address.
+
+Version 2.50 [July 26, 2014]:
    [features added]
    * BASIC: Altirra BASIC is now the default when no BASIC ROM is included.
    * Cartridge: Added support for another 512K/4MB/8MB flash cartridge.

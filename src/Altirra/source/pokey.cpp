@@ -75,12 +75,20 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mSerialInputCounter(0)
 	, mSerialOutputCounter(0)
 	, mbSerOutValid(false)
+	, mbSerShiftValid(false)
 	, mbSerialOutputState(false)
+	, mbSpeakerActive(false)
 	, mbSerialRateChanged(false)
 	, mbSerialWaitingForStartBit(true)
 	, mbSerInBurstPending(false)
+	, mbSerInDeferredLoad(false)
+	, mSerialSimulateInputBaseTime(0)
+	, mSerialSimulateInputCyclesPerBit(0)
+	, mSerialSimulateInputData(0)
+	, mbSerialSimulateInputPort(false)
+	, mSerialExtBaseTime(0)
+	, mSerialExtPeriod(0)
 	, mSerBurstMode(kSerialBurstMode_Disabled)
-	, mbSpeakerActive(false)
 	, mpAudioLog(NULL)
 	, mbFastTimer1(false)
 	, mbFastTimer3(false)
@@ -366,6 +374,11 @@ void ATPokeyEmulator::SetSpeaker(bool newState) {
 		mbSpeakerActive = true;
 }
 
+void ATPokeyEmulator::SetExternalSerialClock(uint32 basetime, uint32 period) {
+	mSerialExtBaseTime = basetime;
+	mSerialExtPeriod = period;
+}
+
 bool ATPokeyEmulator::IsChannelEnabled(uint32 channel) const {
 	return mpRenderer->IsChannelEnabled(channel);
 }
@@ -536,7 +549,7 @@ void ATPokeyEmulator::FireTimer() {
 			mpConn->PokeyAssertIRQ(false);
 		}
 
-		if (mSerialInputCounter) {
+		if (mSerialInputCounter && (mSKCTL & 0x30)) {
 			--mSerialInputCounter;
 
 			if (!mSerialInputCounter) {
@@ -581,7 +594,7 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 		
 			switch(mSKCTL & 0x60) {
 				case 0x00:		// external clock
-					cyclesPerBit = 0;
+					cyclesPerBit = mSerialExtPeriod;
 					break;
 
 				case 0x20:		// timer 4 as transmit clock
@@ -631,6 +644,10 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 		else
 			mpConn->PokeyNegateIRQ(false);
 	}
+
+	// check if we must reset the tick for external clock
+	if (mSerialOutputCounter && !(mSKCTL & 0x60))
+		mpScheduler->SetEvent(mSerialExtPeriod, this, kATPokeyEventSerialOutput, mpEventSerialOutput);
 }
 
 uint32 ATPokeyEmulator::GetSerialCyclesPerBit() const {
@@ -720,6 +737,16 @@ void ATPokeyEmulator::AdvanceFrame(bool pushAudio) {
 
 	if (t - mLast64KHzTime > 28*65536)
 		mLast64KHzTime += 28*65536;
+
+	// Catch up the external clock, to avoid glitches at 2^32
+	if (mSerialExtPeriod) {
+		uint32 extsince = t - mSerialExtBaseTime;
+
+		if (extsince >= 0x40000000) {
+			extsince += mSerialExtPeriod - 1;
+			mSerialExtBaseTime += extsince - extsince % mSerialExtPeriod;
+		}
+	}
 }
 
 void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
@@ -1858,8 +1885,28 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 			if (mbSerOutValid && mbTraceSIO)
 				ATConsoleTaggedPrintf("POKEY: Serial output overrun detected.\n");
 
-			if (!mSerialOutputCounter)
+			if (!mSerialOutputCounter) {
 				mSerialOutputCounter = 1;
+
+				// check if we are doing external output clock
+				if (!(mSKCTL & 0x60) && mSerialExtPeriod) {
+					// yup -- start external clock
+					uint32 delay = (ATSCHEDULER_GETTIME(mpScheduler) + 2) - mSerialExtBaseTime;
+
+					if (delay >= 0x80000000) {
+						delay = (0 - delay) % mSerialExtPeriod;
+
+						delay = mSerialExtPeriod - delay;
+					} else {
+						delay %= mSerialExtPeriod;
+
+						if (!delay)
+							delay = mSerialExtPeriod;
+					}
+
+					mpScheduler->SetEvent(delay, this, kATPokeyEventSerialOutput, mpEventSerialOutput);
+				}
+			}
 
 			mbSerOutValid = true;
 			break;

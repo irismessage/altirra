@@ -178,7 +178,7 @@ sint64 VDGetDiskFreeSpace(const wchar_t *path);
 void VDCreateDirectory(const wchar_t *path);
 void VDRemoveDirectory(const wchar_t *path);
 
-extern bool (*VDRemoveFile)(const wchar_t *path);
+bool VDRemoveFile(const wchar_t *path);
 void VDRemoveFileEx(const wchar_t *path);		// throws exception on failure
 
 void VDMoveFile(const wchar_t *srcPath, const wchar_t *dstPath);
@@ -189,7 +189,7 @@ uint64 VDFileGetLastWriteTime(const wchar_t *path);
 VDStringW VDFileGetRootPath(const wchar_t *partialPath);
 VDStringW VDGetFullPath(const wchar_t *partialPath);
 
-extern VDStringW (*VDGetLongPath)(const wchar_t *path);
+VDStringW VDGetLongPath(const wchar_t *path);
 
 VDStringW VDMakePath(const wchar_t *base, const wchar_t *file);
 bool VDFileIsPathEqual(const wchar_t *path1, const wchar_t *path2);

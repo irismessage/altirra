@@ -45,7 +45,10 @@
 #include <vd2/Dita/accel.h>
 #include <vd2/Dita/services.h>
 #include <at/atui/acceleditdialog.h>
+#include <at/atui/dialog.h>
 #include <at/atui/hotkeyexcontrol.h>
+#include <at/atcore/device.h>
+#include <at/atcore/propertyset.h>
 #include "console.h"
 #include "simulator.h"
 #include "cassette.h"
@@ -53,8 +56,6 @@
 #include "uiframe.h"
 #include "debugger.h"
 #include "hostdevice.h"
-#include "pclink.h"
-#include <at/atui/dialog.h>
 #include "savestate.h"
 #include "resource.h"
 #include "oshelper.h"
@@ -71,9 +72,8 @@
 #include "side.h"
 #include "myide.h"
 #include "ultimate1mb.h"
-#include "rs232.h"
 #include "options.h"
-#include "dragoncart.h"
+#include "cheatengine.h"
 #include "uienhancedtext.h"
 #include "uikeyboard.h"
 #include "uicaptionupdater.h"
@@ -89,6 +89,11 @@
 #include "uiprofiler.h"
 #include "uiqueue.h"
 #include "uicommondialogs.h"
+#include "uiaccessors.h"
+#include "uifilefilters.h"
+
+#include "firmwaremanager.h"
+#include "devicemanager.h"
 
 #pragma comment(lib, "comctl32")
 #pragma comment(lib, "shlwapi")
@@ -101,20 +106,16 @@ void ATUITriggerButtonUp(uint32 vk);
 void ATUIShowDialogInputMappings(VDZHWND parent, ATInputManager& iman, IATJoystickManager *ijoy);
 void ATUIShowDiskDriveDialog(VDGUIHandle hParent);
 void ATUIShowHardDiskDialog(VDGUIHandle hParent);
-void ATUIShowHostDeviceDialog(VDGUIHandle hParent, IATHostDeviceEmulator *hd);
-void ATUIShowPCLinkDialog(VDGUIHandle hParent, ATSimulator *sim);
 void ATUIOpenAdjustColorsDialog(VDGUIHandle hParent);
 void ATUICloseAdjustColorsDialog();
 void ATUIShowAudioOptionsDialog(VDGUIHandle hParent);
 void ATUIShowTapeControlDialog(VDGUIHandle hParent, ATCassetteEmulator& cassette);
 void ATUIShowCPUOptionsDialog(VDGUIHandle h);
-void ATUIShowSerialPortsDialog(VDGUIHandle h);
-void ATUIShowDialogDragonCart(VDGUIHandle h);
 int ATUIShowDialogCartridgeMapper(VDGUIHandle h, uint32 cartSize, const void *data);
 void ATUIShowDialogLightPen(VDGUIHandle h, ATLightPenPort *lpp);
 void ATUIShowDialogDebugFont(VDGUIHandle hParent);
 void ATUIShowDialogCheater(VDGUIHandle hParent, ATCheatEngine *engine);
-void ATUIShowDialogROMImages(VDGUIHandle hParent, ATSimulator& sim);
+void ATUIShowDialogFirmware(VDGUIHandle hParent, ATFirmwareManager& fwm, bool *anyChanges);
 void ATUIShowDialogDiskExplorer(VDGUIHandle h);
 void ATUIShowDialogOptions(VDGUIHandle h);
 void ATUIShowDialogAbout(VDGUIHandle h);
@@ -123,6 +124,7 @@ bool ATUIShowDialogKeyboardOptions(VDGUIHandle hParent, ATUIKeyboardOptions& opt
 void ATUIShowDialogSetFileAssociations(VDGUIHandle parent, bool allowElevation);
 void ATUIShowDialogRemoveFileAssociations(VDGUIHandle parent, bool allowElevation);
 void ATUIShowDialogSpeedOptions(VDGUIHandle parent);
+void ATUIShowDialogDevices(VDGUIHandle parent, ATDeviceManager& devMgr);
 bool ATUIShowDialogVideoEncoding(VDGUIHandle parent, bool hz50, ATVideoEncoding& encoding, ATVideoRecordingFrameRate& frameRate, bool& halfRate, bool& encodeAll);
 
 void ATUIRegisterDragDropHandler(VDGUIHandle h);
@@ -140,7 +142,28 @@ void ATUIInitManager();
 void ATUIShutdownManager();
 void ATUIFlushDisplay();
 bool ATUIIsActiveModal();
-void ATUISetXEPViewEnabled(bool enabled);
+
+void ATUIInitFirmwareMenuCallbacks(ATFirmwareManager *fwmgr);
+
+void ATRegisterDeviceModem(ATDeviceManager& dev);
+void ATRegisterDeviceBlackBox(ATDeviceManager& dev);
+void ATRegisterDeviceMIO(ATDeviceManager& dev);
+void ATRegisterDeviceHardDisks(ATDeviceManager& dev);
+void ATRegisterDeviceConfigurers(ATDeviceManager& dev);
+void ATRegisterDeviceRTime8(ATDeviceManager& dev);
+void ATRegisterDeviceCovox(ATDeviceManager& dev);
+void ATRegisterDeviceXEP80(ATDeviceManager& dev);
+void ATRegisterDeviceSlightSID(ATDeviceManager& dev);
+void ATRegisterDeviceDragonCart(ATDeviceManager& dev);
+void ATRegisterDeviceSIOClock(ATDeviceManager& dev);
+void ATRegisterDeviceTestSIOPoll(ATDeviceManager& dev);
+void ATRegisterDevicePCLink(ATDeviceManager& dev);
+void ATRegisterDeviceHostFS(ATDeviceManager& dev);
+void ATRegisterDevicePrinter(ATDeviceManager& dev);
+void ATRegisterDevice850Modem(ATDeviceManager& dev);
+void ATRegisterDevice1030Modem(ATDeviceManager& dev);
+void ATRegisterDeviceSX212(ATDeviceManager& dev);
+void ATRegisterDeviceMidiMate(ATDeviceManager& dev);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -201,8 +224,8 @@ bool g_xepViewAutoswitchingEnabled = false;
 
 ATUIKeyboardOptions g_kbdOpts;
 
-ATDisplayFilterMode g_dispFilterMode = kATDisplayFilterMode_Bilinear;
-int g_dispFilterSharpness = 0;
+ATDisplayFilterMode g_dispFilterMode = kATDisplayFilterMode_SharpBilinear;
+int g_dispFilterSharpness = +1;
 int g_enhancedText = 0;
 LOGFONTW g_enhancedTextFont;
 
@@ -236,7 +259,7 @@ void ATUIUpdateSpeedTiming() {
 		{ 1.0 / 60.0000, 1.0 / 50.0000 },
 	};
 
-	const bool hz50 = (g_sim.GetVideoStandard() != kATVideoStandard_NTSC);
+	const bool hz50 = (g_sim.GetVideoStandard() != kATVideoStandard_NTSC) && (g_sim.GetVideoStandard() != kATVideoStandard_PAL60);
 	double rawSecondsPerFrame = kPeriods[g_frameRateMode][hz50];
 	
 	double cyclesPerSecond;
@@ -354,6 +377,8 @@ void ATInputConsoleCallback::SetConsoleTrigger(uint32 id, bool state) {
 		case kATInputTrigger_UISwitchRight:
 		case kATInputTrigger_UILeftShift:
 		case kATInputTrigger_UIRightShift:
+			ATUISetNativeDialogMode(false);
+
 			if (state)
 				ATUITriggerButtonDown(id);
 			else
@@ -478,7 +503,7 @@ bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode) {
 	// check if we are switching to or from 5200 mode
 	if (mode == kATHardwareMode_5200 || prevMode == kATHardwareMode_5200) {
 		// check if it's OK to unload everything
-		if (!ATUIConfirmDiscardAllStorage(h, L"OK to switch hardware mode and discard everything?"))
+		if (h && !ATUIConfirmDiscardAllStorage(h, L"OK to switch hardware mode and discard everything?"))
 			return false;
 
 		g_sim.UnloadAll();
@@ -498,25 +523,18 @@ bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode) {
 			break;
 
 		case kATKernelMode_XL:
-		case kATKernelMode_Other:
 			if (mode != kATHardwareMode_800XL && mode != kATHardwareMode_1200XL && mode != kATHardwareMode_130XE && mode != kATHardwareMode_XEGS)
-				g_sim.SetKernelMode(kATKernelMode_Default);
-			break;
-
-		case kATKernelMode_XEGS:
-			if (mode != kATHardwareMode_XEGS)
-				g_sim.SetKernelMode(kATKernelMode_Default);
+				g_sim.SetKernel(0);
 			break;
 
 		case kATKernelMode_5200:
-		case kATKernelMode_5200_LLE:
 			if (mode != kATHardwareMode_5200)
-				g_sim.SetKernelMode(kATKernelMode_Default);
+				g_sim.SetKernel(0);
 			break;
 
 		default:
 			if (mode == kATHardwareMode_5200)
-				g_sim.SetKernelMode(kATKernelMode_Default);
+				g_sim.SetKernel(0);
 			break;
 	}
 
@@ -545,66 +563,79 @@ bool ATUISwitchHardwareMode5200(VDGUIHandle h) {
 	return ATUISwitchHardwareMode(h, kATHardwareMode_5200);
 }
 
-bool ATUISwitchKernelMode(VDGUIHandle h, ATKernelMode mode) {
-	if (g_sim.GetKernelMode() == mode)
+bool ATUISwitchKernel(VDGUIHandle h, uint64 kernelId) {
+	if (g_sim.GetKernelId() == kernelId)
 		return true;
 
 	// If the kernel mode is incompatible, check if we can switch the computer
 	// mode.
-	switch(mode) {
-		case kATKernelMode_Default:
-			break;
+	ATFirmwareManager& fwm = *g_sim.GetFirmwareManager();
 
-		case kATKernelMode_XL:
-		case kATKernelMode_Other:
-			if (!ATUISwitchHardwareMode(h, kATHardwareMode_800XL))
-				return false;
-			break;
+	if (kernelId) {
+		ATFirmwareInfo fwinfo;
+		if (!fwm.GetFirmwareInfo(kernelId, fwinfo))
+			return false;
 
-		case kATKernelMode_1200XL:
-			if (!ATUISwitchHardwareMode(h, kATHardwareMode_1200XL))
-				return false;
-			break;
+		switch(fwinfo.mType) {
+			case kATFirmwareType_KernelXL:
+			case kATFirmwareType_Kernel1200XL:
+				if (!ATUISwitchHardwareMode(h, kATHardwareMode_800XL))
+					return false;
+				break;
 
-		case kATKernelMode_XEGS:
-			if (!ATUISwitchHardwareMode(h, kATHardwareMode_XEGS))
-				return false;
-			break;
+			case kATFirmwareType_KernelXEGS:
+				if (!ATUISwitchHardwareMode(h, kATHardwareMode_XEGS))
+					return false;
+				break;
 
-		case kATKernelMode_5200:
-		case kATKernelMode_5200_LLE:
-			if (!ATUISwitchHardwareMode5200(h))
-				return false;
-			break;
+			case kATFirmwareType_Kernel800_OSA:
+			case kATFirmwareType_Kernel800_OSB:
+				if (!ATUISwitchHardwareMode(h, kATHardwareMode_800))
+					return false;
+				break;
 
-		default:
-			if (!ATUISwitchHardwareModeComputer(h))
-				return false;
-			break;
+			case kATFirmwareType_Kernel5200:
+				if (!ATUISwitchHardwareMode5200(h))
+					return false;
+				break;
+		}
+
+		// Check if we need to adjust the memory size. XL and Other kernels can't
+		// run with 48K or 56K. 16K is OK (600XL configuration). We don't need to
+		// check 5200 here as it was already changed in the hardware mode switch.
+		switch(fwinfo.mType) {
+			case kATFirmwareType_KernelXL:
+			case kATFirmwareType_Kernel1200XL:
+				switch(g_sim.GetMemoryMode()) {
+					case kATMemoryMode_8K:
+					case kATMemoryMode_24K:
+					case kATMemoryMode_32K:
+					case kATMemoryMode_40K:
+					case kATMemoryMode_48K:
+					case kATMemoryMode_52K:
+						g_sim.SetMemoryMode(kATMemoryMode_64K);
+						break;
+				}
+				break;
+		}
 	}
 
-	// Check if we need to adjust the memory size. XL and Other kernels can't
-	// run with 48K or 56K. 16K is OK (600XL configuration). We don't need to
-	// check 5200 here as it was already changed in the hardware mode switch.
-	switch(mode) {
-		case kATKernelMode_XL:
-		case kATKernelMode_Other:
-			switch(g_sim.GetMemoryMode()) {
-				case kATMemoryMode_8K:
-				case kATMemoryMode_24K:
-				case kATMemoryMode_32K:
-				case kATMemoryMode_40K:
-				case kATMemoryMode_48K:
-				case kATMemoryMode_52K:
-					g_sim.SetMemoryMode(kATMemoryMode_64K);
-					break;
-			}
-			break;
-	}
-
-	g_sim.SetKernelMode(mode);
+	g_sim.SetKernel(kernelId);
 	g_sim.ColdReset();
 	return true;
+}
+
+void ATUISwitchKernel(uint64 id) {
+	ATUISwitchKernel((VDGUIHandle)g_hwnd, id);
+}
+
+void ATUISwitchBasic(uint64 basicId) {
+	if (g_sim.GetBasicId() == basicId)
+		return;
+
+	g_sim.SetBasic(basicId);
+	g_sim.ColdReset();
+	return;
 }
 
 void ATUISwitchMemoryMode(VDGUIHandle h, ATMemoryMode mode) {
@@ -824,6 +855,7 @@ public:
 					L"Cassette tape (*.cas,*.wav)\0*.cas;*.wav\0"
 					L"Zip archive (*.zip)\0*.zip\0"
 					L"gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
+					L".ARC archive (*.arc)\0*.arc\0"
 					L"All files\0*.*\0");
 
 				Wait(mpFileDialogResult);
@@ -866,6 +898,9 @@ bool ATUIGetFullscreen() {
 }
 
 void ATSetFullscreen(bool fs) {
+	if (g_enhancedText)
+		return;
+
 	ATUIPane *dispPane = ATGetUIPane(kATUIPaneId_Display);
 	ATFrameWindow *frame = NULL;
 
@@ -944,6 +979,8 @@ void ATSetFullscreen(bool fs) {
 		SetMenu(g_hwnd, g_hMenu);
 		g_sim.SetFrameSkipEnabled(true);
 	}
+
+	g_winCaptionUpdater.SetFullScreen(g_fullscreen);
 }
 
 void OnCommandAnticVisualizationNext() {
@@ -998,6 +1035,14 @@ void OnCommandGTIAVisualizationNext() {
 
 void OnCommandVideoToggleXEP80View() {
 	ATUISetXEPViewEnabled(!g_xepViewEnabled);
+}
+
+bool ATUIGetXEPViewAutoswitchingEnabled() {
+	return g_xepViewAutoswitchingEnabled;
+}
+
+void ATUISetXEPViewAutoswitchingEnabled(bool enabled) {
+	g_xepViewAutoswitchingEnabled = enabled;
 }
 
 void OnCommandVideoToggleXEP80ViewAutoswitching() {
@@ -1143,9 +1188,7 @@ void OnCommandQuickSaveState() {
 
 void OnCommandLoadState() {
 	const VDStringW fn(VDGetLoadFileName('save', (VDGUIHandle)g_hwnd, L"Load save state",
-		L"All supported types\0*.altstate\0"
-		L"Altirra save state\0*.altstate\0"
-		L"All files\0*.*\0",
+		g_ATUIFileFilter_LoadState,
 		L"altstate"
 		));
 
@@ -1156,7 +1199,7 @@ void OnCommandLoadState() {
 
 void OnCommandSaveState() {
 	const VDStringW fn(VDGetSaveFileName('save', (VDGUIHandle)g_hwnd, L"Save save state",
-		L"Altirra save state (*.altstate)\0*.altstate\0",
+		g_ATUIFileFilter_SaveState,
 		L"altstate"
 		));
 
@@ -1168,18 +1211,14 @@ void OnCommandSaveState() {
 
 		VDFile f(fn.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 
-		f.write(storage.data(), storage.size());
+		f.write(storage.data(), (long)storage.size());
 	}
 }
 
 void OnCommandAttachCartridge(bool cart2) {
 	if (ATUIConfirmDiscardCartridge((VDGUIHandle)g_hwnd)) {
 		VDStringW fn(VDGetLoadFileName('cart', (VDGUIHandle)g_hwnd, L"Load cartridge",
-			L"All supported types\0*.bin;*.car;*.rom;*.a52;*.zip\0"
-			L"Cartridge image (*.bin,*.car,*.rom,*.a52)\0*.bin;*.car;*.rom;*.a52\0"
-			L"Zip archive (*.zip)\0*.zip\0"
-			L"All files\0*.*\0",
-
+			g_ATUIFileFilter_LoadCartridge,
 			L"bin"));
 
 		if (!fn.empty()) {
@@ -1296,16 +1335,6 @@ void OnCommandSaveFirmware(int idx) {
 	if (!g_sim.IsStoragePresent((ATStorageId)(kATStorageId_Firmware + idx)))
 		throw MyError("The selected type of firmware is not present.");
 
-	const ATROMImage image
-		= idx==2 ? kATROMImage_Ultimate1MB
-		: side ? kATROMImage_SIDE_SDX
-		: myide ? kATROMImage_MyIDEII
-		: idx ? kATROMImage_KMKJZIDEV2_SDX : kATROMImage_KMKJZIDEV2;
-
-	VDStringW origPath;
-	g_sim.GetROMImagePath(image, origPath);
-	VDSetLastLoadSaveFileName('rom ', origPath.c_str());
-
 	VDStringW fn(VDGetSaveFileName('rom ', (VDGUIHandle)g_hwnd, L"Save firmware image",
 		L"Raw firmware image\0*.rom\0",
 		L"rom"));
@@ -1319,8 +1348,6 @@ void OnCommandSaveFirmware(int idx) {
 			side->SaveFirmware(fn.c_str());
 		else if (myide)
 			myide->SaveFirmware(fn.c_str());
-
-		g_sim.SetROMImagePath(image, fn.c_str());
 	}
 }
 
@@ -1342,7 +1369,7 @@ void OnCommandExit() {
 }
 
 void OnCommandCassetteLoad() {
-	VDStringW fn(VDGetLoadFileName('cass', (VDGUIHandle)g_hwnd, L"Load cassette tape", L"All supported types\0*.wav;*.cas\0Atari cassette image (*.cas)\0*.cas\0Waveform audio (*.wav)\0*.wav\0All files\0*.*\0", L"wav"));
+	VDStringW fn(VDGetLoadFileName('cass', (VDGUIHandle)g_hwnd, L"Load cassette tape", g_ATUIFileFilter_LoadTape, L"wav"));
 
 	if (!fn.empty()) {
 		ATCassetteEmulator& cas = g_sim.GetCassette();
@@ -1373,71 +1400,63 @@ void OnCommandCassetteToggleLoadDataAsAudio() {
 	cas.SetLoadDataAsAudioEnable(!cas.IsLoadDataAsAudioEnabled());
 }
 
+ATDisplayFilterMode ATUIGetDisplayFilterMode() {
+	return g_dispFilterMode;
+}
+
+void ATUISetDisplayFilterMode(ATDisplayFilterMode mode) {
+	g_dispFilterMode = mode;
+
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->UpdateFilterMode();
+}
+
 void OnCommandViewNextFilterMode() {
 	switch(g_dispFilterMode) {
 		case kATDisplayFilterMode_Point:
-			g_dispFilterMode = kATDisplayFilterMode_Bilinear;
+			ATUISetDisplayFilterMode(kATDisplayFilterMode_Bilinear);
 			break;
 		case kATDisplayFilterMode_Bilinear:
-			g_dispFilterMode = kATDisplayFilterMode_SharpBilinear;
+			ATUISetDisplayFilterMode(kATDisplayFilterMode_SharpBilinear);
 			break;
 		case kATDisplayFilterMode_SharpBilinear:
-			g_dispFilterMode = kATDisplayFilterMode_Bicubic;
+			ATUISetDisplayFilterMode(kATDisplayFilterMode_Bicubic);
 			break;
 		case kATDisplayFilterMode_Bicubic:
-			g_dispFilterMode = kATDisplayFilterMode_AnySuitable;
+			ATUISetDisplayFilterMode(kATDisplayFilterMode_AnySuitable);
 			break;
 		case kATDisplayFilterMode_AnySuitable:
-			g_dispFilterMode = kATDisplayFilterMode_Point;
+			ATUISetDisplayFilterMode(kATDisplayFilterMode_Point);
 			break;
 	}
-
-	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
-	if (pane)
-		pane->UpdateFilterMode();
 }
 
 void OnCommandViewFilterModePoint() {
-	g_dispFilterMode = kATDisplayFilterMode_Point;
-
-	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
-	if (pane)
-		pane->UpdateFilterMode();
+	ATUISetDisplayFilterMode(kATDisplayFilterMode_Point);
 }
 
 void OnCommandViewFilterModeBilinear() {
-	g_dispFilterMode = kATDisplayFilterMode_Bilinear;
-
-	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
-	if (pane)
-		pane->UpdateFilterMode();
+	ATUISetDisplayFilterMode(kATDisplayFilterMode_Bilinear);
 }
 
 void OnCommandViewFilterModeSharpBilinear() {
-	g_dispFilterMode = kATDisplayFilterMode_SharpBilinear;
-
-	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
-	if (pane)
-		pane->UpdateFilterMode();
+	ATUISetDisplayFilterMode(kATDisplayFilterMode_SharpBilinear);
 }
 
 void OnCommandViewFilterModeBicubic() {
-	g_dispFilterMode = kATDisplayFilterMode_Bicubic;
-
-	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
-	if (pane)
-		pane->UpdateFilterMode();
+	ATUISetDisplayFilterMode(kATDisplayFilterMode_Bicubic);
 }
 
 void OnCommandViewFilterModeDefault() {
-	g_dispFilterMode = kATDisplayFilterMode_AnySuitable;
-
-	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
-	if (pane)
-		pane->UpdateFilterMode();
+	ATUISetDisplayFilterMode(kATDisplayFilterMode_AnySuitable);
 }
 
-void OnCommandViewFilterSharpness(int sharpness) {
+int ATUIGetViewFilterSharpness() {
+	return g_dispFilterSharpness;
+}
+
+void ATUISetViewFilterSharpness(int sharpness) {
 	g_dispFilterSharpness = sharpness;
 
 	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
@@ -1446,67 +1465,80 @@ void OnCommandViewFilterSharpness(int sharpness) {
 }
 
 void OnCommandViewFilterSharpnessSofter() {
-	OnCommandViewFilterSharpness(-2);
+	ATUISetViewFilterSharpness(-2);
 }
 
 void OnCommandViewFilterSharpnessSoft() {
-	OnCommandViewFilterSharpness(-1);
+	ATUISetViewFilterSharpness(-1);
 }
 
 void OnCommandViewFilterSharpnessNormal() {
-	OnCommandViewFilterSharpness(0);
+	ATUISetViewFilterSharpness(0);
 }
 
 void OnCommandViewFilterSharpnessSharp() {
-	OnCommandViewFilterSharpness(+1);
+	ATUISetViewFilterSharpness(+1);
 }
 
 void OnCommandViewFilterSharpnessSharper() {
-	OnCommandViewFilterSharpness(+2);
+	ATUISetViewFilterSharpness(+2);
 }
 
+ATDisplayStretchMode ATUIGetDisplayStretchMode() {
+	return g_displayStretchMode;
+}
+
+void ATUISetDisplayStretchMode(ATDisplayStretchMode mode) {
+	if (g_displayStretchMode != mode) {
+		g_displayStretchMode = mode;
+
+		ResizeDisplay();
+	}
+}
 void OnCommandViewStretchFitToWindow() {
-	g_displayStretchMode = kATDisplayStretchMode_Unconstrained;
-	ResizeDisplay();
+	ATUISetDisplayStretchMode(kATDisplayStretchMode_Unconstrained);
 }
 
 void OnCommandViewStretchPreserveAspectRatio() {
-	g_displayStretchMode = kATDisplayStretchMode_PreserveAspectRatio;
-	ResizeDisplay();
+	ATUISetDisplayStretchMode(kATDisplayStretchMode_PreserveAspectRatio);
 }
 
 void OnCommandViewStretchSquarePixels() {
-	g_displayStretchMode = kATDisplayStretchMode_SquarePixels;
-	ResizeDisplay();
+	ATUISetDisplayStretchMode(kATDisplayStretchMode_SquarePixels);
 }
 
 void OnCommandViewStretchSquarePixelsInt() {
-	g_displayStretchMode = kATDisplayStretchMode_Integral;
-	ResizeDisplay();
+	ATUISetDisplayStretchMode(kATDisplayStretchMode_Integral);
 }
 
 void OnCommandViewStretchPreserveAspectRatioInt() {
-	g_displayStretchMode = kATDisplayStretchMode_IntegralPreserveAspectRatio;
+	ATUISetDisplayStretchMode(kATDisplayStretchMode_IntegralPreserveAspectRatio);
+}
+
+void ATUISetOverscanMode(ATGTIAEmulator::OverscanMode mode) {
+	g_sim.GetGTIA().SetOverscanMode(mode);
 	ResizeDisplay();
 }
 
 void OnCommandViewOverscanOSScreen() {
-	g_sim.GetGTIA().SetOverscanMode(ATGTIAEmulator::kOverscanOSScreen);
-	ResizeDisplay();
+	ATUISetOverscanMode(ATGTIAEmulator::kOverscanOSScreen);
 }
 
 void OnCommandViewOverscanNormal() {
-	g_sim.GetGTIA().SetOverscanMode(ATGTIAEmulator::kOverscanNormal);
-	ResizeDisplay();
+	ATUISetOverscanMode(ATGTIAEmulator::kOverscanNormal);
 }
 
 void OnCommandViewOverscanExtended() {
-	g_sim.GetGTIA().SetOverscanMode(ATGTIAEmulator::kOverscanExtended);
-	ResizeDisplay();
+	ATUISetOverscanMode(ATGTIAEmulator::kOverscanExtended);
 }
 
 void OnCommandViewOverscanFull() {
-	g_sim.GetGTIA().SetOverscanMode(ATGTIAEmulator::kOverscanFull);
+	ATUISetOverscanMode(ATGTIAEmulator::kOverscanFull);
+}
+
+template<ATGTIAEmulator::VerticalOverscanMode T_Mode>
+void OnCommandViewVerticalOverscan() {
+	g_sim.GetGTIA().SetVerticalOverscanMode(T_Mode);
 	ResizeDisplay();
 }
 
@@ -1526,12 +1558,20 @@ void OnCommandViewToggleVSync() {
 	gtia.SetVsyncEnabled(!gtia.IsVsyncEnabled());
 }
 
-void OnCommandViewToggleFPS() {
-	g_showFps = !g_showFps;
-	g_winCaptionUpdater.SetShowFps(g_showFps);
+bool ATUIGetShowFPS() {
+	return g_showFps;
+}
 
-	if (!g_showFps)
+void ATUISetShowFPS(bool enabled) {
+	g_showFps = enabled;
+	g_winCaptionUpdater.SetShowFps(enabled);
+
+	if (enabled)
 		g_sim.GetUIRenderer()->SetFpsIndicator(-1.0f);
+}
+
+void OnCommandViewToggleFPS() {
+	ATUISetShowFPS(!ATUIGetShowFPS());
 }
 
 void OnCommandViewAdjustWindowSize() {
@@ -1563,6 +1603,9 @@ void OnCommandEditCopyFrame() {
 		else {
 			VDPixmapBuffer buf(frame->w * 2 / px, frame->h * 2 / py, frame->format);
 
+			if (frame->format == nsVDPixmap::kPixFormat_Pal8)
+				memcpy((uint32 *)buf.palette, frame->palette, 256*4);
+
 			VDPixmapStretchBltNearest(buf, *frame);
 
 			ATCopyFrameToClipboard(g_hwnd, buf);
@@ -1571,13 +1614,30 @@ void OnCommandEditCopyFrame() {
 }
 
 void OnCommandEditSaveFrame() {
-	const VDPixmap *frame = g_sim.GetGTIA().GetLastFrameBuffer();
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
+	const VDPixmap *frame = gtia.GetLastFrameBuffer();
 
 	if (frame) {
 		const VDStringW fn(VDGetSaveFileName('scrn', (VDGUIHandle)g_hwnd, L"Save Screenshot", L"Portable Network Graphics (*.png)\0*.png\0", L"png"));
 
-		if (!fn.empty())
-			ATSaveFrame(g_hwnd, *frame, fn.c_str());
+		if (!fn.empty()) {
+			int px = 2;
+			int py = 2;
+			gtia.GetPixelAspectMultiple(px, py);
+
+			if (px == 1 && py == 1)
+				ATSaveFrame(g_hwnd, *frame, fn.c_str());
+			else {
+				VDPixmapBuffer buf(frame->w * 2 / px, frame->h * 2 / py, frame->format);
+
+				if (frame->format == nsVDPixmap::kPixFormat_Pal8)
+					memcpy((uint32 *)buf.palette, frame->palette, 256*4);
+
+				VDPixmapStretchBltNearest(buf, *frame);
+
+				ATSaveFrame(g_hwnd, buf, fn.c_str());
+			}
+		}
 	}
 }
 
@@ -1654,19 +1714,12 @@ void OnCommandSystemHardDiskDialog() {
 	ATUIShowHardDiskDialog((VDGUIHandle)g_hwnd);
 }
 
-void OnCommandSystemHostDeviceDialog() {
-	IATHostDeviceEmulator *hd = g_sim.GetHostDevice();
-
-	if (hd)
-		ATUIShowHostDeviceDialog((VDGUIHandle)g_hwnd, hd);
-}
-
-void OnCommandSystemPCLinkDialog() {
-	ATUIShowPCLinkDialog((VDGUIHandle)g_hwnd, &g_sim);
-}
-
 void OnCommandSystemSpeedOptionsDialog() {
 	ATUIShowDialogSpeedOptions((VDGUIHandle)g_hwnd);
+}
+
+void OnCommandSystemDevicesDialog() {
+	ATUIShowDialogDevices((VDGUIHandle)g_hwnd, *g_sim.GetDeviceManager());
 }
 
 void OnCommandSystemToggleKeyboardPresent() {
@@ -1677,14 +1730,45 @@ void OnCommandSystemToggleForcedSelfTest() {
 	g_sim.SetForcedSelfTest(!g_sim.IsForcedSelfTest());
 }
 
+void OnCommandConsoleBlackBoxDumpScreen() {
+	g_sim.GetDeviceManager()->ForEachDevice(
+		false,
+		[](IATDevice *dev)
+		{
+			auto *p = vdpoly_cast<IATDeviceButtons *>(dev);
+
+			if (p)
+				p->ActivateButton(0);
+		}
+	);
+}
+
+void OnCommandConsoleBlackBoxMenu() {
+	g_sim.GetDeviceManager()->ForEachDevice(
+		false,
+		[](IATDevice *dev)
+		{
+			auto *p = vdpoly_cast<IATDeviceButtons *>(dev);
+
+			if (p)
+				p->ActivateButton(1);
+		}
+	);
+}
+
 template<ATHardwareMode T_Mode>
 void OnCommandSystemHardwareMode() {
 	ATUISwitchHardwareMode((VDGUIHandle)g_hwnd, T_Mode);
 }
 
-template<ATKernelMode T_Mode>
-void OnCommandSystemKernelMode() {
-	ATUISwitchKernelMode((VDGUIHandle)g_hwnd, T_Mode);
+template<ATFirmwareId T_Id>
+void OnCommandSystemKernel() {
+	ATUISwitchKernel((VDGUIHandle)g_hwnd, T_Id);
+}
+
+template<ATFirmwareId T_Id>
+void OnCommandSystemBasic() {
+	ATUISwitchBasic(T_Id);
 }
 
 template<ATMemoryMode T_Mode>
@@ -1717,8 +1801,13 @@ void OnCommandSystemToggleUltimate1MB() {
 	g_sim.ColdReset();
 }
 
-void OnCommandSystemToggleMemoryRandomization() {
-	g_sim.SetRandomFillEnabled(!g_sim.IsRandomFillEnabled());
+template<ATMemoryClearMode T_Mode>
+void OnCommandSystemMemoryClearMode() {
+	g_sim.SetMemoryClearMode(T_Mode);
+}
+
+void OnCommandSystemToggleMemoryRandomizationEXE() {
+	g_sim.SetRandomFillEXEEnabled(!g_sim.IsRandomFillEXEEnabled());
 }
 
 void OnCommandSystemToggleBASIC() {
@@ -1730,23 +1819,27 @@ void OnCommandSystemToggleFastBoot() {
 }
 
 void OnCommandSystemROMImagesDialog() {
-	ATUIShowDialogROMImages((VDGUIHandle)g_hwnd, g_sim);
-}
+//	ATUIShowDialogROMImages((VDGUIHandle)g_hwnd, g_sim);
 
-void OnCommandSystemTogglePrinter() {
-	g_sim.SetPrinterEnabled(!g_sim.IsPrinterEnabled());
+	bool anyChanges = false;
+	ATUIShowDialogFirmware((VDGUIHandle)g_hwnd, *g_sim.GetFirmwareManager(), &anyChanges);
+
+	if (anyChanges) {
+		if (g_sim.LoadROMs())
+			g_sim.ColdReset();
+	}
+
+	ATUIRebuildDynamicMenu(0);
+	ATUIRebuildDynamicMenu(1);
 }
 
 void OnCommandSystemToggleRTime8() {
-	g_sim.SetRTime8Enabled(!g_sim.IsRTime8Enabled());
-}
+	auto *dm = g_sim.GetDeviceManager();
 
-void OnCommandSystemSerialPortsDialog() {
-	ATUIShowSerialPortsDialog((VDGUIHandle)g_hwnd);
-}
-
-void OnCommandSystemDragonCartDialog() {
-	ATUIShowDialogDragonCart((VDGUIHandle)g_hwnd);
+	if (dm->GetDeviceByTag("rtime8"))
+		dm->RemoveDevice("rtime8");
+	else
+		dm->AddDevice("rtime8", ATPropertySet(), false);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1771,7 +1864,7 @@ void OnCommandDiskToggleSIOOverrideDetection() {
 }
 
 template<ATPokeyEmulator::SerialBurstMode T_BurstMode>
-void OnCommandDiskBurstMode() {
+void OnCommandDevicesBurstMode() {
 	g_sim.GetPokey().SetSerialBurstMode(T_BurstMode);
 }
 
@@ -1782,11 +1875,20 @@ void OnCommandDiskToggleAccurateSectorTiming() {
 	}
 }
 
-void OnCommandDiskToggleDriveSounds() {
+bool ATUIGetDriveSoundsEnabled() {
+	const ATDiskEmulator& disk = g_sim.GetDiskDrive(0);
+	return disk.AreDriveSoundsEnabled();
+}
+
+void ATUISetDriveSoundsEnabled(bool enabled) {
 	for(int i=0; i<15; ++i) {
 		ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
-		disk.SetDriveSoundsEnabled(!disk.AreDriveSoundsEnabled());
+		disk.SetDriveSoundsEnabled(enabled);
 	}
+}
+
+void OnCommandDiskToggleDriveSounds() {
+	ATUISetDriveSoundsEnabled(!ATUIGetDriveSoundsEnabled());
 }
 
 void OnCommandDiskToggleSectorCounter() {
@@ -1822,12 +1924,13 @@ public:
 
 				mpConfirmResult.clear();
 				mpFileDialogResult = ATUIShowOpenFileDialog('disk', L"Attach disk image",
-					L"All supported types\0*.atr;*.pro;*.atx;*.xfd;*.dcm;*.zip\0"
+					L"All supported types\0*.atr;*.pro;*.atx;*.xfd;*.dcm;*.zip;*.gz;*.atz;*.arc\0"
 					L"Atari disk image (*.atr, *.xfd)\0*.atr;*.xfd;*.dcm\0"
 					L"Protected disk image (*.pro)\0*.pro\0"
 					L"VAPI disk image (*.atx)\0*.atx\0"
 					L"Zip archive (*.zip)\0*.zip\0"
 					L"Gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
+					L".ARC archive (*.arc)\0*.arc\0"
 					L"All files\0*.*\0");
 
 				Wait(mpFileDialogResult);
@@ -1898,10 +2001,18 @@ public:
 
 			case 1:
 				if (mIndex < 0) {
-					for(int i=0; i<15; ++i)
-						g_sim.GetDiskDrive(i).UnloadDisk();
-				} else
-					g_sim.GetDiskDrive(mIndex).UnloadDisk();
+					for(int i=0; i<15; ++i) {
+						ATDiskEmulator& drive = g_sim.GetDiskDrive(i);
+						drive.UnloadDisk();
+						drive.Reset();
+						drive.SetEnabled(false);
+					}
+				} else {
+					ATDiskEmulator& drive = g_sim.GetDiskDrive(mIndex);
+					drive.UnloadDisk();
+					drive.Reset();
+					drive.SetEnabled(false);
+				}
 
 				MarkCompleted();
 				break;
@@ -1926,6 +2037,30 @@ void OnCommandDiskDetachAll() {
 	ATUIPushStep(stage->GetStep());
 }
 
+void OnCommandDiskRotate(int delta) {
+	// find highest drive in use
+	int activeDrives = 0;
+	for(int i=14; i>=0; --i) {
+		if (g_sim.GetDiskDrive(i).IsEnabled()) {
+			activeDrives = i+1;
+			break;
+		}
+	}
+
+	IATUIRenderer *uir = g_sim.GetUIRenderer();
+	if (!activeDrives) {
+		if (uir)
+			uir->SetStatusMessage(L"No disk drives are active.");
+
+		return;
+	}
+
+	g_sim.RotateDrives(activeDrives, delta);
+
+	if (uir)
+		uir->SetStatusMessage(VDStringW().sprintf(L"Rotated to D1: %ls", g_sim.GetDiskDrive(0).GetMountedImageLabel().c_str()).c_str());
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void OnCommandVideoToggleFrameBlending() {
@@ -1947,14 +2082,7 @@ void OnCommandVideoToggleScanlines() {
 }
 
 void OnCommandVideoToggleXEP80() {
-	g_sim.SetXEP80Enabled(!g_sim.GetXEP80());
-
-	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
-	if (pane)
-		pane->OnHardwareChanged();
-
-	g_sim.ColdReset();
-
+	g_sim.GetDeviceManager()->ToggleDevice("xep80");
 }
 
 void OnCommandVideoToggleVBXE() {
@@ -1983,19 +2111,23 @@ void OnCommandVideoArtifacting() {
 	gtia.SetArtifactingMode(T_Mode);
 }
 
-template<ATVideoStandard T_Mode>
-void OnCommandVideoStandard() {
+void ATSetVideoStandard(ATVideoStandard mode) {
 	// Don't allow switching to PAL or SECAM in 5200 mode!
 	if (g_sim.GetHardwareMode() == kATHardwareMode_5200)
 		return;
 
-	g_sim.SetVideoStandard(T_Mode);
+	g_sim.SetVideoStandard(mode);
 
 	ATUIUpdateSpeedTiming();
 
 	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
 	if (pane)
 		pane->OnSize();
+}
+
+template<ATVideoStandard T_Mode>
+void OnCommandVideoStandard() {
+	ATSetVideoStandard(T_Mode);
 }
 
 void OnCommandVideoToggleStandardNTSCPAL() {
@@ -2084,13 +2216,15 @@ void OnCommandAudioSoundBoardAddr() {
 }
 
 void OnCommandAudioToggleSlightSid() {
-	g_sim.SetSlightSIDEnabled(!g_sim.GetSlightSID());
-	g_sim.ColdReset();
+	auto& dm = *g_sim.GetDeviceManager();
+
+	dm.ToggleDevice("slightsid");
 }
 
 void OnCommandAudioToggleCovox() {
-	g_sim.SetCovoxEnabled(!g_sim.GetCovox());
-	g_sim.ColdReset();
+	auto& dm = *g_sim.GetDeviceManager();
+
+	dm.ToggleDevice("covox");
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2120,6 +2254,23 @@ void OnCommandInputLightPenDialog() {
 	ATUIShowDialogLightPen((VDGUIHandle)g_hwnd, g_sim.GetLightPenPort());
 }
 
+void OnCommandInputCycleQuickMaps() {
+	auto *pIM = g_sim.GetInputManager();
+
+	if (pIM) {
+		ATInputMap *pMap = pIM->CycleQuickMaps();
+
+		auto *pUIR = g_sim.GetUIRenderer();
+
+		if (pUIR) {
+			if (pMap)
+				pUIR->SetStatusMessage((VDStringW(L"Quick map: ") + pMap->GetName()).c_str());
+			else
+				pUIR->SetStatusMessage(L"Quick maps disabled");
+		}
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void OnCommandRecordStop() {
@@ -2132,7 +2283,8 @@ void OnCommandRecordRawAudio() {
 		VDStringW s(VDGetSaveFileName('raud', (VDGUIHandle)g_hwnd, L"Record raw audio", L"Raw 32-bit float data\0*.pcm\0", L"pcm"));
 
 		if (!s.empty()) {
-			g_pAudioWriter = new ATAudioWriter(s.c_str(), true, g_sim.IsDualPokeysEnabled(), g_sim.GetVideoStandard() != kATVideoStandard_NTSC, g_sim.GetUIRenderer());
+			const auto vs = g_sim.GetVideoStandard();
+			g_pAudioWriter = new ATAudioWriter(s.c_str(), true, g_sim.IsDualPokeysEnabled(), vs != kATVideoStandard_NTSC && vs != kATVideoStandard_PAL60, g_sim.GetUIRenderer());
 			g_sim.GetAudioOutput()->SetAudioTap(g_pAudioWriter);
 		}
 	}
@@ -2143,7 +2295,8 @@ void OnCommandRecordAudio() {
 		VDStringW s(VDGetSaveFileName('raud', (VDGUIHandle)g_hwnd, L"Record audio", L"Wave audio (*.wav)\0*.wav\0", L"wav"));
 
 		if (!s.empty()) {
-			g_pAudioWriter = new ATAudioWriter(s.c_str(), false, g_sim.IsDualPokeysEnabled(), g_sim.GetVideoStandard() != kATVideoStandard_NTSC, g_sim.GetUIRenderer());
+			const auto vs = g_sim.GetVideoStandard();
+			g_pAudioWriter = new ATAudioWriter(s.c_str(), false, g_sim.IsDualPokeysEnabled(), vs != kATVideoStandard_NTSC && vs != kATVideoStandard_PAL60, g_sim.GetUIRenderer());
 			g_sim.GetAudioOutput()->SetAudioTap(g_pAudioWriter);
 		}
 	}
@@ -2154,7 +2307,7 @@ void OnCommandRecordVideo() {
 		VDStringW s(VDGetSaveFileName('rvid', (VDGUIHandle)g_hwnd, L"Record raw video", L"Audio/visual interleaved (*.avi)\0*.avi\0", L"avi"));
 
 		if (!s.empty()) {
-			const bool hz50 = g_sim.GetVideoStandard() != kATVideoStandard_NTSC;
+			const bool hz50 = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
 
 			ATVideoEncoding encoding;
 			ATVideoRecordingFrameRate frameRateOption;
@@ -2444,15 +2597,19 @@ namespace {
 	}
 
 	bool IsSlightSidEnabled() {
-		return g_sim.GetSlightSID() != NULL;
+		return g_sim.GetDeviceManager()->GetDeviceByTag("slightsid") != NULL;
 	}
 
 	bool IsCovoxEnabled() {
-		return g_sim.GetCovox() != NULL;
+		return g_sim.GetDeviceManager()->GetDeviceByTag("covox") != NULL;
+	}
+
+	bool IsRTime8Enabled() {
+		return g_sim.GetDeviceManager()->GetDeviceByTag("rtime8") != NULL;
 	}
 
 	bool IsXEP80Enabled() {
-		return g_sim.GetXEP80() != NULL;
+		return g_sim.GetDeviceManager()->GetDeviceByTag("xep80") != NULL;
 	}
 
 	bool IsXEP80ViewEnabled() {
@@ -2486,6 +2643,16 @@ namespace {
 		return g_sim.GetKernelMode() == T_Mode;
 	}
 
+	template<ATFirmwareId T_Id>
+	bool KernelIs() {
+		return g_sim.GetKernelId() == T_Id;
+	}
+
+	template<ATFirmwareId T_Id>
+	bool BasicIs() {
+		return g_sim.GetBasicId() == T_Id;
+	}
+
 	template<ATMemoryMode T_Mode>
 	bool MemoryModeIs() {
 		return g_sim.GetMemoryMode() == T_Mode;
@@ -2494,6 +2661,11 @@ namespace {
 	template<uint8 T_BankBits>
 	bool AxlonMemoryModeIs() {
 		return g_sim.GetAxlonMemoryMode() == T_BankBits;
+	}
+
+	template<ATMemoryClearMode T_Mode>
+	bool MemoryClearModeIs() {
+		return g_sim.GetMemoryClearMode() == T_Mode;
 	}
 
 	bool Is65C816() {
@@ -2523,6 +2695,11 @@ namespace {
 	template<ATGTIAEmulator::OverscanMode T_Mode>
 	bool VideoOverscanModeIs() {
 		return g_sim.GetGTIA().GetOverscanMode() == T_Mode;
+	}
+
+	template<ATGTIAEmulator::VerticalOverscanMode T_Mode>
+	bool VideoVerticalOverscanModeIs() {
+		return g_sim.GetGTIA().GetVerticalOverscanMode() == T_Mode;
 	}
 
 	template<ATDisplayStretchMode T_Mode>
@@ -2594,9 +2771,22 @@ namespace {
 		return g_sim.GetDiskDrive(0).IsAccurateSectorTimingEnabled();
 	}
 
+	bool IsDiskDriveEnabledAny() {
+		for(int i=0; i<15; ++i) {
+			if (g_sim.GetDiskDrive(i).IsEnabled())
+				return true;
+		}
+
+		return false;
+	}
+
 	template<int index>
-	bool IsDiskAttached() {
-		return g_sim.GetDiskDrive(index).IsDiskLoaded();
+	bool IsDiskDriveEnabled() {
+		return g_sim.GetDiskDrive(index).IsEnabled();
+	}
+
+	bool IsHardDiskPresent() {
+		return g_sim.GetSIDE() || g_sim.GetKMKJZIDE() || g_sim.GetMyIDE();
 	}
 
 	template<int index>
@@ -2613,7 +2803,7 @@ namespace {
 	}
 
 	bool AreDriveSoundsEnabled() {
-		return g_sim.GetDiskDrive(0).AreDriveSoundsEnabled();
+		return ATUIGetDriveSoundsEnabled();
 	}
 
 	bool IsDebuggerEnabled() {
@@ -2808,6 +2998,11 @@ namespace {
 		{ "View.OverscanNormal", OnCommandViewOverscanNormal, NULL, RadioCheckedIf<VideoOverscanModeIs<ATGTIAEmulator::kOverscanNormal> > },
 		{ "View.OverscanExtended", OnCommandViewOverscanExtended, NULL, RadioCheckedIf<VideoOverscanModeIs<ATGTIAEmulator::kOverscanExtended> > },
 		{ "View.OverscanFull", OnCommandViewOverscanFull, NULL, RadioCheckedIf<VideoOverscanModeIs<ATGTIAEmulator::kOverscanFull> > },
+		{ "View.VerticalOverrideOff",		OnCommandViewVerticalOverscan<ATGTIAEmulator::kVerticalOverscan_Default>,	NULL, RadioCheckedIf<VideoVerticalOverscanModeIs<ATGTIAEmulator::kVerticalOverscan_Default> > },
+		{ "View.VerticalOverrideOSScreen",	OnCommandViewVerticalOverscan<ATGTIAEmulator::kVerticalOverscan_OSScreen>,	NULL, RadioCheckedIf<VideoVerticalOverscanModeIs<ATGTIAEmulator::kVerticalOverscan_OSScreen> > },
+		{ "View.VerticalOverrideNormal",	OnCommandViewVerticalOverscan<ATGTIAEmulator::kVerticalOverscan_Normal>,	NULL, RadioCheckedIf<VideoVerticalOverscanModeIs<ATGTIAEmulator::kVerticalOverscan_Normal> > },
+		{ "View.VerticalOverrideExtended",	OnCommandViewVerticalOverscan<ATGTIAEmulator::kVerticalOverscan_Extended>,	NULL, RadioCheckedIf<VideoVerticalOverscanModeIs<ATGTIAEmulator::kVerticalOverscan_Extended> > },
+		{ "View.VerticalOverrideFull",		OnCommandViewVerticalOverscan<ATGTIAEmulator::kVerticalOverscan_Full>,		NULL, RadioCheckedIf<VideoVerticalOverscanModeIs<ATGTIAEmulator::kVerticalOverscan_Full> > },
 		{ "View.TogglePALExtended", OnCommandViewTogglePALExtended, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsOverscanPALExtended> > },
 
 		{ "View.ToggleFullScreen", OnCommandViewToggleFullScreen, VideoEnhancedTextModeIs<0>, CheckedIf<IsFullScreen> },
@@ -2856,13 +3051,14 @@ namespace {
 		{ "System.PulseWarpOn", OnCommandSystemPulseWarpOn, NULL, NULL },
 		{ "System.CPUOptionsDialog", OnCommandSystemCPUOptionsDialog },
 		{ "System.ToggleFPPatch", OnCommandSystemToggleFPPatch, NULL, CheckedIf<SimTest<&ATSimulator::IsFPPatchEnabled> > },
-		{ "System.HardDiskDialog", OnCommandSystemHardDiskDialog },
-		{ "System.HostDeviceDialog", OnCommandSystemHostDeviceDialog },
-		{ "System.PCLinkDialog", OnCommandSystemPCLinkDialog },
+		{ "System.HardDiskDialog", OnCommandSystemHardDiskDialog, NULL, CheckedIf<IsHardDiskPresent> },
 		{ "System.SpeedOptionsDialog", OnCommandSystemSpeedOptionsDialog },
+		{ "System.DevicesDialog", OnCommandSystemDevicesDialog },
 
 		{ "System.ToggleKeyboardPresent", OnCommandSystemToggleKeyboardPresent, HardwareModeIs<kATHardwareMode_XEGS>, CheckedIf<And<HardwareModeIs<kATHardwareMode_XEGS>, SimTest<&ATSimulator::IsKeyboardPresent> > >},
 		{ "System.ToggleForcedSelfTest", OnCommandSystemToggleForcedSelfTest, IsXLHardware, CheckedIf<And<IsXLHardware, SimTest<&ATSimulator::IsForcedSelfTest> > > },
+		{ "Console.BlackBoxDumpScreen", OnCommandConsoleBlackBoxDumpScreen },
+		{ "Console.BlackBoxMenu", OnCommandConsoleBlackBoxMenu },
 
 		{ "System.HardwareMode800", OnCommandSystemHardwareMode<kATHardwareMode_800>, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_800> > },
 		{ "System.HardwareMode800XL", OnCommandSystemHardwareMode<kATHardwareMode_800XL>, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_800XL> > },
@@ -2871,18 +3067,13 @@ namespace {
 		{ "System.HardwareMode130XE", OnCommandSystemHardwareMode<kATHardwareMode_130XE>, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_130XE> > },
 		{ "System.HardwareMode5200", OnCommandSystemHardwareMode<kATHardwareMode_5200>, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_5200> > },
 
-		{ "System.KernelModeDefault", OnCommandSystemKernelMode<kATKernelMode_Default>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_Default> > },
-		{ "System.KernelModeOSA", OnCommandSystemKernelMode<kATKernelMode_OSA>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_OSA> > },
-		{ "System.KernelModeOSB", OnCommandSystemKernelMode<kATKernelMode_OSB>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_OSB> > },
-		{ "System.KernelModeXL", OnCommandSystemKernelMode<kATKernelMode_XL>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_XL> > },
-		{ "System.KernelMode1200XL", OnCommandSystemKernelMode<kATKernelMode_1200XL>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_1200XL> > },
-		{ "System.KernelModeXEGS", OnCommandSystemKernelMode<kATKernelMode_XEGS>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_XEGS> > },
-		{ "System.KernelModeOther", OnCommandSystemKernelMode<kATKernelMode_Other>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_Other> > },
-		{ "System.KernelModeHLE", OnCommandSystemKernelMode<kATKernelMode_HLE>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_HLE> > },
-		{ "System.KernelModeLLE", OnCommandSystemKernelMode<kATKernelMode_LLE_OSB>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_LLE_OSB> > },
-		{ "System.KernelModeLLEXL", OnCommandSystemKernelMode<kATKernelMode_LLE_XL>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_LLE_XL> > },
-		{ "System.KernelMode5200", OnCommandSystemKernelMode<kATKernelMode_5200>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_5200> > },
-		{ "System.KernelMode5200LLE", OnCommandSystemKernelMode<kATKernelMode_5200_LLE>, NULL, RadioCheckedIf<KernelModeIs<kATKernelMode_5200_LLE> > },
+		{ "System.KernelModeDefault", OnCommandSystemKernel<kATFirmwareId_Invalid>, NULL, RadioCheckedIf<KernelIs<kATFirmwareId_Invalid> > },
+		{ "System.KernelModeHLE", OnCommandSystemKernel<kATFirmwareId_Kernel_HLE>, NULL, RadioCheckedIf<KernelIs<kATFirmwareId_Kernel_HLE> > },
+		{ "System.KernelModeLLE", OnCommandSystemKernel<kATFirmwareId_Kernel_LLE>, NULL, RadioCheckedIf<KernelIs<kATFirmwareId_Kernel_LLE> > },
+		{ "System.KernelModeLLEXL", OnCommandSystemKernel<kATFirmwareId_Kernel_LLEXL>, NULL, RadioCheckedIf<KernelIs<kATFirmwareId_Kernel_LLEXL> > },
+		{ "System.KernelMode5200LLE", OnCommandSystemKernel<kATFirmwareId_5200_LLE>, NULL, RadioCheckedIf<KernelIs<kATFirmwareId_5200_LLE> > },
+
+		{ "System.BasicDefault", OnCommandSystemBasic<kATFirmwareId_Invalid>, NULL, RadioCheckedIf<BasicIs<kATFirmwareId_Invalid> > },
 
 		{ "System.MemoryMode8K", OnCommandSystemMemoryMode<kATMemoryMode_8K>, And<Not<SimTest<&ATSimulator::IsUltimate1MBEnabled> >, Is800>, RadioCheckedIf<MemoryModeIs<kATMemoryMode_8K> > },
 		{ "System.MemoryMode16K", OnCommandSystemMemoryMode<kATMemoryMode_16K>, And<Not<SimTest<&ATSimulator::IsUltimate1MBEnabled> >, Not<HardwareModeIs<kATHardwareMode_1200XL> > >, RadioCheckedIf<MemoryModeIs<kATMemoryMode_16K> > },
@@ -2908,6 +3099,14 @@ namespace {
 		{ "System.AxlonMemory2048K", OnCommandSystemAxlonMemoryMode<7>, IsNot5200, RadioCheckedIf<AxlonMemoryModeIs<7> > },
 		{ "System.AxlonMemory4096K", OnCommandSystemAxlonMemoryMode<8>, IsNot5200, RadioCheckedIf<AxlonMemoryModeIs<8> > },
 
+		{ "System.ToggleAxlonAliasing",
+			[]() { g_sim.SetAxlonAliasingEnabled(!g_sim.GetAxlonAliasingEnabled()); },
+			IsNot5200,
+			[]() {
+				return g_sim.GetAxlonAliasingEnabled() ? kATUICmdState_Checked : kATUICmdState_None;
+			}
+		},
+
 		{ "System.HighMemoryNA", OnCommandSystemHighMemBanks<-1>, Is65C816, RadioCheckedIf<HighMemBanksIs<-1> > },
 		{ "System.HighMemoryNone", OnCommandSystemHighMemBanks<0>, Is65C816, RadioCheckedIf<HighMemBanksIs<0> > },
 		{ "System.HighMemory64K", OnCommandSystemHighMemBanks<1>, Is65C816, RadioCheckedIf<HighMemBanksIs<1> > },
@@ -2917,24 +3116,22 @@ namespace {
 
 		{ "System.ToggleMapRAM", OnCommandSystemToggleMapRAM, NULL, CheckedIf<SimTest<&ATSimulator::IsMapRAMEnabled> > },
 		{ "System.ToggleUltimate1MB", OnCommandSystemToggleUltimate1MB, NULL, CheckedIf<SimTest<&ATSimulator::IsUltimate1MBEnabled> > },
-		{ "System.ToggleMemoryRandomization", OnCommandSystemToggleMemoryRandomization, NULL, CheckedIf<SimTest<&ATSimulator::IsRandomFillEnabled> > },
+		{ "System.MemoryClearZero", OnCommandSystemMemoryClearMode<kATMemoryClearMode_Zero>, NULL, RadioCheckedIf<MemoryClearModeIs<kATMemoryClearMode_Zero>> },
+		{ "System.MemoryClearRandom", OnCommandSystemMemoryClearMode<kATMemoryClearMode_Random>, NULL, RadioCheckedIf<MemoryClearModeIs<kATMemoryClearMode_Random>> },
+		{ "System.MemoryClearDRAM1", OnCommandSystemMemoryClearMode<kATMemoryClearMode_DRAM1>, NULL, RadioCheckedIf<MemoryClearModeIs<kATMemoryClearMode_DRAM1>> },
+		{ "System.MemoryClearDRAM2", OnCommandSystemMemoryClearMode<kATMemoryClearMode_DRAM2>, NULL, RadioCheckedIf<MemoryClearModeIs<kATMemoryClearMode_DRAM2>> },
+		{ "System.MemoryClearDRAM3", OnCommandSystemMemoryClearMode<kATMemoryClearMode_DRAM3>, NULL, RadioCheckedIf<MemoryClearModeIs<kATMemoryClearMode_DRAM3>> },
+		{ "System.ToggleMemoryRandomizationEXE", OnCommandSystemToggleMemoryRandomizationEXE, NULL, CheckedIf<SimTest<&ATSimulator::IsRandomFillEXEEnabled> > },
 
 		{ "System.ToggleBASIC", OnCommandSystemToggleBASIC, SupportsBASIC, CheckedIf<And<SupportsBASIC, SimTest<&ATSimulator::IsBASICEnabled> > > },
 		{ "System.ToggleFastBoot", OnCommandSystemToggleFastBoot, IsNot5200, CheckedIf<SimTest<&ATSimulator::IsFastBootEnabled> > },
 		{ "System.ROMImagesDialog", OnCommandSystemROMImagesDialog },
-		{ "System.TogglePrinter", OnCommandSystemTogglePrinter, NULL, CheckedIf<SimTest<&ATSimulator::IsPrinterEnabled> > },
-		{ "System.ToggleRTime8", OnCommandSystemToggleRTime8, NULL, CheckedIf<SimTest<&ATSimulator::IsRTime8Enabled> > },
-		{ "System.SerialPortsDialog", OnCommandSystemSerialPortsDialog, NULL, CheckedIf<SimTest<&ATSimulator::IsRS232Enabled> > },
-
-		{ "System.DragonCartDialog", OnCommandSystemDragonCartDialog, NULL, CheckedIf<SimTest<&ATSimulator::IsDragonCartEnabled> > },
+		{ "System.ToggleRTime8", OnCommandSystemToggleRTime8, NULL, CheckedIf<IsRTime8Enabled> },
 
 		{ "Disk.DrivesDialog", OnCommandDiskDrivesDialog },
 		{ "Disk.ToggleAllEnabled", OnCommandDiskToggleAllEnabled, NULL, CheckedIf<IsDiskEnabled> },
 		{ "Disk.ToggleSIOPatch", OnCommandDiskToggleSIOPatch, NULL, CheckedIf<SimTest<&ATSimulator::IsDiskSIOPatchEnabled> > },
 		{ "Disk.ToggleSIOOverrideDetection", OnCommandDiskToggleSIOOverrideDetection, NULL, CheckedIf<SimTest<&ATSimulator::IsDiskSIOOverrideDetectEnabled> > },
-		{ "Disk.BurstModeNone", OnCommandDiskBurstMode<ATPokeyEmulator::kSerialBurstMode_Disabled>, NULL, RadioCheckedIf<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Disabled> > },
-		{ "Disk.BurstModeStandard", OnCommandDiskBurstMode<ATPokeyEmulator::kSerialBurstMode_Standard>, NULL, RadioCheckedIf<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Standard> > },
-		{ "Disk.BurstModePolled", OnCommandDiskBurstMode<ATPokeyEmulator::kSerialBurstMode_Polled>, NULL, RadioCheckedIf<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Polled> > },
 		{ "Disk.ToggleAccurateSectorTiming", OnCommandDiskToggleAccurateSectorTiming, NULL, CheckedIf<IsDiskAccurateSectorTimingEnabled> },
 		{ "Disk.ToggleDriveSounds", OnCommandDiskToggleDriveSounds, NULL, CheckedIf<AreDriveSoundsEnabled> },
 		{ "Disk.ToggleSectorCounter", OnCommandDiskToggleSectorCounter, NULL, CheckedIf<SimTest<&ATSimulator::IsDiskSectorCounterEnabled> > },
@@ -2948,19 +3145,88 @@ namespace {
 		{ "Disk.Attach7", OnCommandDiskAttach<6>, NULL, NULL, UIFormatMenuItemDiskName<6> },
 		{ "Disk.Attach8", OnCommandDiskAttach<7>, NULL, NULL, UIFormatMenuItemDiskName<7> },
 
-		{ "Disk.DetachAll", OnCommandDiskDetachAll, IsDiskAttached<0> },
-		{ "Disk.Detach1", OnCommandDiskDetach<0>, IsDiskAttached<0>, NULL, UIFormatMenuItemDiskName<0> },
-		{ "Disk.Detach2", OnCommandDiskDetach<1>, IsDiskAttached<1>, NULL, UIFormatMenuItemDiskName<1> },
-		{ "Disk.Detach3", OnCommandDiskDetach<2>, IsDiskAttached<2>, NULL, UIFormatMenuItemDiskName<2> },
-		{ "Disk.Detach4", OnCommandDiskDetach<3>, IsDiskAttached<3>, NULL, UIFormatMenuItemDiskName<3> },
-		{ "Disk.Detach5", OnCommandDiskDetach<4>, IsDiskAttached<4>, NULL, UIFormatMenuItemDiskName<4> },
-		{ "Disk.Detach6", OnCommandDiskDetach<5>, IsDiskAttached<5>, NULL, UIFormatMenuItemDiskName<5> },
-		{ "Disk.Detach7", OnCommandDiskDetach<6>, IsDiskAttached<6>, NULL, UIFormatMenuItemDiskName<6> },
-		{ "Disk.Detach8", OnCommandDiskDetach<7>, IsDiskAttached<7>, NULL, UIFormatMenuItemDiskName<7> },
+		{ "Disk.DetachAll", OnCommandDiskDetachAll, IsDiskDriveEnabledAny },
+		{ "Disk.Detach1", OnCommandDiskDetach<0>, IsDiskDriveEnabled<0>, NULL, UIFormatMenuItemDiskName<0> },
+		{ "Disk.Detach2", OnCommandDiskDetach<1>, IsDiskDriveEnabled<1>, NULL, UIFormatMenuItemDiskName<1> },
+		{ "Disk.Detach3", OnCommandDiskDetach<2>, IsDiskDriveEnabled<2>, NULL, UIFormatMenuItemDiskName<2> },
+		{ "Disk.Detach4", OnCommandDiskDetach<3>, IsDiskDriveEnabled<3>, NULL, UIFormatMenuItemDiskName<3> },
+		{ "Disk.Detach5", OnCommandDiskDetach<4>, IsDiskDriveEnabled<4>, NULL, UIFormatMenuItemDiskName<4> },
+		{ "Disk.Detach6", OnCommandDiskDetach<5>, IsDiskDriveEnabled<5>, NULL, UIFormatMenuItemDiskName<5> },
+		{ "Disk.Detach7", OnCommandDiskDetach<6>, IsDiskDriveEnabled<6>, NULL, UIFormatMenuItemDiskName<6> },
+		{ "Disk.Detach8", OnCommandDiskDetach<7>, IsDiskDriveEnabled<7>, NULL, UIFormatMenuItemDiskName<7> },
+
+		{ "Disk.RotatePrev", []() { OnCommandDiskRotate(-1); }, IsDiskDriveEnabledAny },
+		{ "Disk.RotateNext", []() { OnCommandDiskRotate(+1); }, IsDiskDriveEnabledAny },
+
+		{ "Devices.BurstModeNone", OnCommandDevicesBurstMode<ATPokeyEmulator::kSerialBurstMode_Disabled>, NULL, RadioCheckedIf<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Disabled> > },
+		{ "Devices.BurstModeStandard", OnCommandDevicesBurstMode<ATPokeyEmulator::kSerialBurstMode_Standard>, NULL, RadioCheckedIf<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Standard> > },
+		{ "Devices.BurstModePolled", OnCommandDevicesBurstMode<ATPokeyEmulator::kSerialBurstMode_Polled>, NULL, RadioCheckedIf<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Polled> > },
+
+		{ "Disk.ToggleBurstTransfers",
+			[]() {
+				g_sim.SetDiskBurstTransfersEnabled(!g_sim.GetDiskBurstTransfersEnabled());
+			},
+			Not<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Disabled>>,
+			[]() {
+				return g_sim.GetDiskBurstTransfersEnabled() ? kATUICmdState_Checked : kATUICmdState_None;
+			}
+		},
+
+		{ "Devices.ToggleCIOBurstTransfers",
+			[]() {
+				g_sim.SetDeviceCIOBurstTransfersEnabled(!g_sim.GetDeviceCIOBurstTransfersEnabled());
+			},
+			nullptr,
+			[]() {
+				return g_sim.GetDeviceCIOBurstTransfersEnabled() ? kATUICmdState_Checked : kATUICmdState_None;
+			}
+		},
+
+		{ "Devices.ToggleSIOBurstTransfers",
+			[]() {
+				g_sim.SetDeviceSIOBurstTransfersEnabled(!g_sim.GetDeviceSIOBurstTransfersEnabled());
+			},
+			Not<PokeySerialBurstModeIs<ATPokeyEmulator::kSerialBurstMode_Disabled>>,
+			[]() {
+				return g_sim.GetDeviceSIOBurstTransfersEnabled() ? kATUICmdState_Checked : kATUICmdState_None;
+			}
+		},
+
+		{ "Devices.ToggleSIOPatch",
+			[]() { g_sim.SetDeviceSIOPatchEnabled(!g_sim.GetDeviceSIOPatchEnabled()); },
+			nullptr,
+			[]() { return g_sim.GetDeviceSIOPatchEnabled() ? kATUICmdState_Checked : kATUICmdState_None; },
+		},
+
+		{ "Devices.ToggleCIOPatchH",
+			[]() { g_sim.SetCIOPatchEnabled('H', !g_sim.GetCIOPatchEnabled('H')); },
+			[]() { return g_sim.HasCIODevice('H'); },
+			[]() { return g_sim.GetCIOPatchEnabled('H') ? kATUICmdState_Checked : kATUICmdState_None; },
+		},
+
+		{ "Devices.ToggleCIOPatchP",
+			[]() { g_sim.SetCIOPatchEnabled('P', !g_sim.GetCIOPatchEnabled('P')); },
+			[]() { return g_sim.HasCIODevice('P'); },
+			[]() { return g_sim.GetCIOPatchEnabled('P') ? kATUICmdState_Checked : kATUICmdState_None; },
+		},
+
+		{ "Devices.ToggleCIOPatchR",
+			[]() { g_sim.SetCIOPatchEnabled('R', !g_sim.GetCIOPatchEnabled('R')); },
+			[]() { return g_sim.HasCIODevice('R'); },
+			[]() { return g_sim.GetCIOPatchEnabled('R') ? kATUICmdState_Checked : kATUICmdState_None; },
+		},
+
+		{ "Devices.ToggleCIOPatchT",
+			[]() { g_sim.SetCIOPatchEnabled('T', !g_sim.GetCIOPatchEnabled('T')); },
+			[]() { return g_sim.HasCIODevice('T'); },
+			[]() { return g_sim.GetCIOPatchEnabled('T') ? kATUICmdState_Checked : kATUICmdState_None; },
+		},
 
 		{ "Video.StandardNTSC", OnCommandVideoStandard<kATVideoStandard_NTSC>, NULL, RadioCheckedIf<VideoStandardIs<kATVideoStandard_NTSC> > },
 		{ "Video.StandardPAL", OnCommandVideoStandard<kATVideoStandard_PAL>, IsNot5200, RadioCheckedIf<VideoStandardIs<kATVideoStandard_PAL> > },
 		{ "Video.StandardSECAM", OnCommandVideoStandard<kATVideoStandard_SECAM>, IsNot5200, RadioCheckedIf<VideoStandardIs<kATVideoStandard_SECAM> > },
+		{ "Video.StandardNTSC50", OnCommandVideoStandard<kATVideoStandard_NTSC50>, NULL, RadioCheckedIf<VideoStandardIs<kATVideoStandard_NTSC50> > },
+		{ "Video.StandardPAL60", OnCommandVideoStandard<kATVideoStandard_PAL60>, IsNot5200, RadioCheckedIf<VideoStandardIs<kATVideoStandard_PAL60> > },
 		{ "Video.ToggleStandardNTSCPAL", OnCommandVideoToggleStandardNTSCPAL, IsNot5200 },
 
 		{ "Video.ToggleFrameBlending", OnCommandVideoToggleFrameBlending, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsBlendModeEnabled> > },
@@ -3005,6 +3271,7 @@ namespace {
 		{ "Input.InputMappingsDialog", OnCommandInputInputMappingsDialog },
 		{ "Input.KeyboardDialog", OnCommandInputKeyboardDialog },
 		{ "Input.LightPenDialog", OnCommandInputLightPenDialog },
+		{ "Input.CycleQuickMaps", OnCommandInputCycleQuickMaps },
 
 		{ "Record.Stop", OnCommandRecordStop, IsRecording },
 		{ "Record.RawAudio", OnCommandRecordRawAudio, Not<IsRecording>, CheckedIf<IsRecordingRawAudio> },
@@ -3138,6 +3405,13 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 				return 0;
 
 			ATSavePaneLayout(NULL);
+
+			// We need to save this here as SaveSettings() is too late -- we will already have
+			// switched out of FS mode.
+			{
+				VDRegistryAppKey key("Settings");
+				key.setBool("Display: Full screen", g_fullscreen);
+			}
 			break;
 
 		case WM_DESTROY:
@@ -3184,13 +3458,13 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 				switch(globalMsg.message) {
 					case WM_KEYDOWN:
 					case WM_SYSKEYDOWN:
-						if (ATUIActivateVirtKeyMapping(globalMsg.wParam, alt, ctrl, shift, ext, false, kATUIAccelContext_Global))
+						if (ATUIActivateVirtKeyMapping((uint32)globalMsg.wParam, alt, ctrl, shift, ext, false, kATUIAccelContext_Global))
 							return TRUE;
 						break;
 
 					case WM_KEYUP:
 					case WM_SYSKEYUP:
-						if (ATUIActivateVirtKeyMapping(globalMsg.wParam, alt, ctrl, shift, ext, true, kATUIAccelContext_Global))
+						if (ATUIActivateVirtKeyMapping((uint32)globalMsg.wParam, alt, ctrl, shift, ext, true, kATUIAccelContext_Global))
 							return TRUE;
 						break;
 
@@ -3349,6 +3623,11 @@ private:
 	VDD3D9Manager *mpMgr;
 } g_d3d9Lock;
 
+void SetKernelType(ATFirmwareType type) {
+	uint64 id = g_sim.GetFirmwareManager()->GetFirmwareOfType(type, false);
+	g_sim.SetKernel(id ? id : kATFirmwareId_NoKernel);
+}
+
 void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 	bool coldReset = false;
 	bool debugMode = false;
@@ -3376,19 +3655,25 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 
 		if (cmdLine.FindAndRemoveSwitch(L"ntsc"))
 			g_sim.SetVideoStandard(kATVideoStandard_NTSC);
-
-		if (cmdLine.FindAndRemoveSwitch(L"pal"))
+		else if (cmdLine.FindAndRemoveSwitch(L"pal"))
 			g_sim.SetVideoStandard(kATVideoStandard_PAL);
-
-		if (cmdLine.FindAndRemoveSwitch(L"secam"))
+		else if (cmdLine.FindAndRemoveSwitch(L"secam"))
 			g_sim.SetVideoStandard(kATVideoStandard_SECAM);
+		else if (cmdLine.FindAndRemoveSwitch(L"ntsc50"))
+			g_sim.SetVideoStandard(kATVideoStandard_NTSC50);
+		else if (cmdLine.FindAndRemoveSwitch(L"pal60"))
+			g_sim.SetVideoStandard(kATVideoStandard_PAL60);
 
-		if (cmdLine.FindAndRemoveSwitch(L"burstio"))
+		if (cmdLine.FindAndRemoveSwitch(L"burstio")) {
 			g_sim.GetPokey().SetSerialBurstMode(ATPokeyEmulator::kSerialBurstMode_Standard);
-		if (cmdLine.FindAndRemoveSwitch(L"burstiopolled"))
+			g_sim.SetDiskBurstTransfersEnabled(true);
+		} else if (cmdLine.FindAndRemoveSwitch(L"burstiopolled")) {
 			g_sim.GetPokey().SetSerialBurstMode(ATPokeyEmulator::kSerialBurstMode_Polled);
-		else if (cmdLine.FindAndRemoveSwitch(L"noburstio"))
+			g_sim.SetDiskBurstTransfersEnabled(true);
+		} else if (cmdLine.FindAndRemoveSwitch(L"noburstio")) {
 			g_sim.GetPokey().SetSerialBurstMode(ATPokeyEmulator::kSerialBurstMode_Disabled);
+			g_sim.SetDiskBurstTransfersEnabled(false);
+		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"siopatch")) {
 			g_sim.SetDiskSIOPatchEnabled(true);
@@ -3487,19 +3772,19 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"slightsid", arg)) {
-			g_sim.SetSlightSIDEnabled(true);
-			coldReset = true;
+			auto& dm = *g_sim.GetDeviceManager();
+			if (!dm.GetDeviceByTag("slightsid"))
+				dm.AddDevice("slightsid", ATPropertySet(), false);
 		} else if (cmdLine.FindAndRemoveSwitch(L"noslightsid")) {
-			g_sim.SetSlightSIDEnabled(false);
-			coldReset = true;
+			g_sim.GetDeviceManager()->RemoveDevice("slightsid");
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"covox", arg)) {
-			g_sim.SetCovoxEnabled(true);
-			coldReset = true;
+			auto& dm = *g_sim.GetDeviceManager();
+			if (!dm.GetDeviceByTag("covox"))
+				dm.AddDevice("covox", ATPropertySet(), false);
 		} else if (cmdLine.FindAndRemoveSwitch(L"nocovox")) {
-			g_sim.SetCovoxEnabled(false);
-			coldReset = true;
+			g_sim.GetDeviceManager()->RemoveDevice("covox");
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"hardware", arg)) {
@@ -3521,27 +3806,27 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 
 		if (cmdLine.FindAndRemoveSwitch(L"kernel", arg)) {
 			if (!vdwcsicmp(arg, L"default"))
-				g_sim.SetKernelMode(kATKernelMode_Default);
+				g_sim.SetKernel(0);
 			else if (!vdwcsicmp(arg, L"osa"))
-				g_sim.SetKernelMode(kATKernelMode_OSA);
+				SetKernelType(kATFirmwareType_Kernel800_OSA);
 			else if (!vdwcsicmp(arg, L"osb"))
-				g_sim.SetKernelMode(kATKernelMode_OSB);
+				SetKernelType(kATFirmwareType_Kernel800_OSB);
 			else if (!vdwcsicmp(arg, L"xl"))
-				g_sim.SetKernelMode(kATKernelMode_XL);
+				SetKernelType(kATFirmwareType_KernelXL);
+			else if (!vdwcsicmp(arg, L"xegs"))
+				SetKernelType(kATFirmwareType_KernelXEGS);
 			else if (!vdwcsicmp(arg, L"1200xl"))
-				g_sim.SetKernelMode(kATKernelMode_1200XL);
-			else if (!vdwcsicmp(arg, L"lle"))
-				g_sim.SetKernelMode(kATKernelMode_LLE_OSB);
-			else if (!vdwcsicmp(arg, L"llexl"))
-				g_sim.SetKernelMode(kATKernelMode_LLE_XL);
-			else if (!vdwcsicmp(arg, L"hle"))
-				g_sim.SetKernelMode(kATKernelMode_HLE);
-			else if (!vdwcsicmp(arg, L"other"))
-				g_sim.SetKernelMode(kATKernelMode_Other);
+				SetKernelType(kATFirmwareType_Kernel1200XL);
 			else if (!vdwcsicmp(arg, L"5200"))
-				g_sim.SetKernelMode(kATKernelMode_5200);
+				SetKernelType(kATFirmwareType_Kernel5200);
+			else if (!vdwcsicmp(arg, L"lle"))
+				g_sim.SetKernel(kATFirmwareId_Kernel_LLE);
+			else if (!vdwcsicmp(arg, L"llexl"))
+				g_sim.SetKernel(kATFirmwareId_Kernel_LLEXL);
+			else if (!vdwcsicmp(arg, L"hle"))
+				g_sim.SetKernel(kATFirmwareId_Kernel_HLE);
 			else if (!vdwcsicmp(arg, L"5200lle"))
-				g_sim.SetKernelMode(kATKernelMode_5200_LLE);
+				g_sim.SetKernel(kATFirmwareId_5200_LLE);
 			else
 				throw MyError("Command line error: Invalid kernel mode '%ls'", arg);
 		}
@@ -3665,7 +3950,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"nopclink")) {
-			g_sim.SetPCLinkEnabled(false);
+			g_sim.GetDeviceManager()->RemoveDevice("pclink");
 		} else if (cmdLine.FindAndRemoveSwitch(L"pclink", arg)) {
 			VDStringRefW tokenizer(arg);
 			VDStringRefW mode;
@@ -3680,28 +3965,40 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			else if (mode != L"ro")
 				throw MyError("Invalid PCLink mount mode: %.*ls", mode.size(), mode.data());
 
-			g_sim.SetPCLinkEnabled(true);
-			
-			IATPCLinkDevice *pclink = g_sim.GetPCLink();
-			pclink->SetReadOnly(!write);
-			pclink->SetBasePath(VDStringW(tokenizer).c_str());
+			ATPropertySet pset;
+			pset.SetString("path", VDStringW(tokenizer).c_str());
+
+			if (write)
+				pset.SetBool("write", true);
+
+			auto *dm = g_sim.GetDeviceManager();
+			IATDevice *dev = dm->GetDeviceByTag("pclink");
+
+			if (dev)
+				dev->SetSettings(pset);
+			else
+				dm->AddDevice("pclink", pset, false);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"nohdpath", arg)) {
-			IATHostDeviceEmulator *hd = g_sim.GetHostDevice();
+			auto *dm = g_sim.GetDeviceManager();
+			IATDevice *dev = dm->GetDeviceByTag("hostfs");
 
-			if (hd && hd->IsEnabled()) {
-				hd->SetEnabled(false);
+			if (dev) {
+				dm->RemoveDevice(dev);
 				coldReset = true;
 			}
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"hdpath", arg)) {
-			IATHostDeviceEmulator *hd = g_sim.GetHostDevice();
-			if (hd) {
-				if (!hd->IsEnabled())
-					hd->SetEnabled(true);
+			auto *dm = g_sim.GetDeviceManager();
+			IATDevice *dev = dm->GetDeviceByTag("hostfs");
 
+			if (!dev)
+				dev = dm->AddDevice("hostfs", ATPropertySet(), false);
+
+			IATHostDeviceEmulator *hd = vdpoly_cast<IATHostDeviceEmulator *>(dev);
+			if (hd) {
 				hd->SetReadOnly(true);
 				hd->SetBasePath(0, arg);
 
@@ -3710,11 +4007,14 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"hdpathrw", arg)) {
-			IATHostDeviceEmulator *hd = g_sim.GetHostDevice();
-			if (hd) {
-				if (!hd->IsEnabled())
-					hd->SetEnabled(true);
+			auto *dm = g_sim.GetDeviceManager();
+			IATDevice *dev = dm->GetDeviceByTag("hostfs");
 
+			if (!dev)
+				dev = dm->AddDevice("hostfs", ATPropertySet(), false);
+
+			IATHostDeviceEmulator *hd = vdpoly_cast<IATHostDeviceEmulator *>(dev);
+			if (hd) {
 				hd->SetReadOnly(false);
 				hd->SetBasePath(0, arg);
 
@@ -3724,6 +4024,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 
 		if (cmdLine.FindAndRemoveSwitch(L"noide")) {
 			g_sim.UnloadIDE();
+			g_sim.UnloadIDEImage();
 			coldReset = true;
 		} else if (cmdLine.FindAndRemoveSwitch(L"ide", arg)) {
 			VDStringRefW tokenizer(arg);
@@ -3786,7 +4087,8 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 					, spt.size(), spt.data()
 				);
 
-			g_sim.LoadIDE(hwmode, write, fast, cylval, headsval, sptval, VDStringW(tokenizer).c_str());
+			g_sim.LoadIDE(hwmode);
+			g_sim.LoadIDEImage(write, fast, cylval, headsval, sptval, VDStringW(tokenizer).c_str());
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"rawkeys"))
@@ -3799,6 +4101,13 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 
 			if (cartmapper <= 0 || cartmapper >= kATCartridgeModeCount)
 				throw MyError("Unsupported or invalid cartridge mapper: %ls", arg);
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"nocheats")) {
+			g_sim.SetCheatEngineEnabled(false);
+		} else if (cmdLine.FindAndRemoveSwitch(L"cheats", arg)) {
+			g_sim.SetCheatEngineEnabled(true);
+			g_sim.GetCheatEngine()->Load(arg);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"?")) {
@@ -3839,6 +4148,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				_T("/[no]rawkeys - enable/disable raw keyboard presses\n")
 				_T("/cartmapper <mapper> - set cartridge mapper for untagged image\n")
 				_T("/portable - create Altirra.ini file and switch to portable mode\n")
+				_T("/portablealt:<file> - temporarily enable portable mode with alternate INI file\n")
 				_T("/ide:d1xx|d5xx|kmkjzv1|kmkjzv2|side,ro|rw,c,h,s,path - set IDE emulation\n")
 				_T("/[no]pclink:ro|rw,path - set PCLink emulation\n")
 				_T("/hostcpu:none|mmx|sse|sse2|sse2|sse3|ssse3|sse41 - override host CPU detection\n")
@@ -3847,6 +4157,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				_T("/disk <image> - load disk image\n")
 				_T("/run <image> - run binary program")
 				_T("/runbas <image> - run BASIC program")
+				_T("/[no]cheats <file> - load cheats")
 				,
 				_T("Altirra command-line help"), MB_OK | MB_ICONINFORMATION);
 		}
@@ -3861,13 +4172,14 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			coldReset = true;// required to set up cassette autoboot
 		}
 
+		int diskIndex = 0;
 		while(cmdLine.FindAndRemoveSwitch(L"disk", arg)) {
 			if (!unloaded) {
 				unloaded = true;
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootvrw, bootrw, cartmapper, kATLoadType_Disk);
+			DoLoad((VDGUIHandle)hwnd, arg, bootvrw, bootrw, cartmapper, kATLoadType_Disk, nullptr, diskIndex++);
 			coldReset = true;// required to set up cassette autoboot
 		}
 
@@ -3914,6 +4226,8 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			}
 
 			DoLoad((VDGUIHandle)hwnd, arg, bootvrw, bootrw, cartmapper, kATLoadType_Other, &suppressColdReset);
+
+			VDSetLastLoadSavePath('load', VDGetFullPath(arg).c_str());
 
 			coldReset = !suppressColdReset; // required to set up cassette autoboot
 		}
@@ -3966,10 +4280,15 @@ void LoadColorParams(VDRegistryKey& key, ATColorParams& colpa) {
 	colpa.mBrightness = VDGetIntAsFloat(key.getInt("Brightness", VDGetFloatAsInt(colpa.mBrightness)));
 	colpa.mContrast = VDGetIntAsFloat(key.getInt("Contrast", VDGetFloatAsInt(colpa.mContrast)));
 	colpa.mSaturation = VDGetIntAsFloat(key.getInt("Saturation", VDGetFloatAsInt(colpa.mSaturation)));
-	colpa.mArtifactHue = VDGetIntAsFloat(key.getInt("Artifact Hue", VDGetFloatAsInt(colpa.mArtifactHue)));
+	colpa.mGammaCorrect = VDGetIntAsFloat(key.getInt("Gamma Correction2", VDGetFloatAsInt(colpa.mGammaCorrect)));
+
+	// Artifact hue is stored negated for compatibility reasons.
+	colpa.mArtifactHue = -VDGetIntAsFloat(key.getInt("Artifact Hue", VDGetFloatAsInt(-colpa.mArtifactHue)));
+
 	colpa.mArtifactSat = VDGetIntAsFloat(key.getInt("Artifact Saturation", VDGetFloatAsInt(colpa.mArtifactSat)));
 	colpa.mArtifactBias = VDGetIntAsFloat(key.getInt("Artifact Bias", VDGetFloatAsInt(colpa.mArtifactBias)));
 	colpa.mbUsePALQuirks = key.getBool("PAL quirks", colpa.mbUsePALQuirks);
+	colpa.mLumaRampMode = (ATLumaRampMode)key.getEnumInt("Luma ramp mode", (int)kATLumaRampModeCount, (int)colpa.mLumaRampMode);
 }
 
 void SaveColorParams(VDRegistryKey& key, const ATColorParams& colpa) {
@@ -3978,10 +4297,15 @@ void SaveColorParams(VDRegistryKey& key, const ATColorParams& colpa) {
 	key.setInt("Brightness", VDGetFloatAsInt(colpa.mBrightness));
 	key.setInt("Contrast", VDGetFloatAsInt(colpa.mContrast));
 	key.setInt("Saturation", VDGetFloatAsInt(colpa.mSaturation));
-	key.setInt("Artifact Hue", VDGetFloatAsInt(colpa.mArtifactHue));
+	key.setInt("Gamma Correction2", VDGetFloatAsInt(colpa.mGammaCorrect));
+
+	// Artifact hue is stored negated for compatibility reasons.
+	key.setInt("Artifact Hue", VDGetFloatAsInt(-colpa.mArtifactHue));
+
 	key.setInt("Artifact Saturation", VDGetFloatAsInt(colpa.mArtifactSat));
 	key.setInt("Artifact Bias", VDGetFloatAsInt(colpa.mArtifactBias));
 	key.setBool("PAL quirks", colpa.mbUsePALQuirks);
+	key.setInt("Luma ramp mode", colpa.mLumaRampMode);
 }
 
 void LoadSettingsEarly() {
@@ -4072,11 +4396,19 @@ void SaveMountedImages() {
 		}
 	}
 
+	ATIDEHardwareMode idehwmode = g_sim.GetIDEHardwareMode();
+
+	if (idehwmode)
+		key.setInt("IDE: Hardware mode 2", idehwmode);
+	else {
+		key.removeValue("IDE: Hardware mode");
+		key.removeValue("IDE: Hardware mode 2");
+	}
+
 	ATIDEEmulator *ide = g_sim.GetIDEEmulator();
 
 	if (ide) {
 		key.setString("IDE: Image path", ide->GetImagePath());
-		key.setInt("IDE: Hardware mode", g_sim.GetIDEHardwareMode());
 		key.setBool("IDE: Write enabled", ide->IsWriteEnabled());
 		key.setBool("IDE: Fast device", ide->IsFastDevice());
 		key.setInt("IDE: Image cylinders", ide->GetCylinderCount());
@@ -4084,7 +4416,6 @@ void SaveMountedImages() {
 		key.setInt("IDE: Image sectors per track", ide->GetSectorsPerTrack());
 	} else {
 		key.removeValue("IDE: Image path");
-		key.removeValue("IDE: Hardware mode");
 		key.removeValue("IDE: Write enabled");
 		key.removeValue("IDE: Image cylinders");
 		key.removeValue("IDE: Image heads");
@@ -4166,26 +4497,30 @@ void LoadMountedImages() {
 		}
 	}
 
-	VDStringW idePath;
-	if (key.getString("IDE: Image path", idePath)) {
-		ATIDEHardwareMode hwmode = key.getBool("IDE: Use D5xx", true) ? kATIDEHardwareMode_MyIDE_D5xx : kATIDEHardwareMode_MyIDE_D1xx;
+	try {
+		ATIDEHardwareMode hwmode = (ATIDEHardwareMode)key.getEnumInt("IDE: Hardware mode 2", kATIDEHardwareModeCount, kATIDEHardwareMode_None);
+		if (hwmode)
+			g_sim.LoadIDE(hwmode);
+		else
+			g_sim.UnloadIDE();
 
-		hwmode = (ATIDEHardwareMode)key.getEnumInt("IDE: Hardware mode", kATIDEHardwareModeCount, hwmode);
+		VDStringW idePath;
+		if (key.getString("IDE: Image path", idePath)) {
 
-		bool write = key.getBool("IDE: Write enabled", false);
-		bool fast = key.getBool("IDE: Fast device", false);
-		uint32 cyls = key.getInt("IDE: Image cylinders", 0);
-		uint32 heads = key.getInt("IDE: Image heads", 0);
-		uint32 sectors = key.getInt("IDE: Image sectors per track", 0);
+			bool write = key.getBool("IDE: Write enabled", false);
+			bool fast = key.getBool("IDE: Fast device", false);
+			uint32 cyls = key.getInt("IDE: Image cylinders", 0);
+			uint32 heads = key.getInt("IDE: Image heads", 0);
+			uint32 sectors = key.getInt("IDE: Image sectors per track", 0);
 
-		try {
 			// Force read-only if we have a device or volume path; never auto-mount read-write.
 			if (write && ATIDEIsPhysicalDiskPath(idePath.c_str()))
 				write = false;
 
-			g_sim.LoadIDE(hwmode, write, fast, cyls, heads, sectors, idePath.c_str());
-		} catch(const MyError&) {
-		}
+			g_sim.LoadIDEImage(write, fast, cyls, heads, sectors, idePath.c_str());
+		} else
+			g_sim.UnloadIDEImage();
+	} catch(const MyError&) {
 	}
 }
 
@@ -4209,19 +4544,12 @@ namespace {
 	};
 }
 
-void LoadROMImageSettings() {
-	VDRegistryAppKey imageKey("Settings\\ROM Images", false);
-	for(int i=0; i<kATROMImageCount; ++i) {
-		VDStringW s;
-		if (imageKey.getString(kSettingNamesROMImages[i], s))
-			g_sim.SetROMImagePath((ATROMImage)i, s.c_str());
-	}
-}
-
 void LoadBaselineSettings() {
 	ATPokeyEmulator& pokey = g_sim.GetPokey();
 
-	g_sim.SetKernelMode(kATKernelMode_Default);
+	g_sim.GetDeviceManager()->RemoveAllDevices();
+
+	g_sim.SetKernel(0);
 	g_sim.SetHardwareMode(kATHardwareMode_800XL);
 	g_sim.SetBASICEnabled(false);
 	g_sim.SetVideoStandard(kATVideoStandard_NTSC);
@@ -4244,16 +4572,10 @@ void LoadBaselineSettings() {
 
 	g_sim.SetDualPokeysEnabled(false);
 	g_sim.SetSoundBoardEnabled(false);
-	g_sim.SetSlightSIDEnabled(false);
-	g_sim.SetCovoxEnabled(false);
 
 	g_enhancedText = 0;
 
-	g_sim.SetPrinterEnabled(false);
-	g_sim.SetRTime8Enabled(false);
-	g_sim.SetRS232Enabled(false);
-
-	g_sim.SetRandomFillEnabled(false);
+	g_sim.SetMemoryClearMode(kATMemoryClearMode_DRAM1);
 	g_kbdOpts.mbRawKeys = false;
 	g_sim.SetKeyboardPresent(true);
 	g_sim.SetForcedSelfTest(false);
@@ -4265,13 +4587,53 @@ void LoadSettings(bool useHardwareBaseline) {
 	ATPokeyEmulator& pokey = g_sim.GetPokey();
 
 	if (!useHardwareBaseline) {
-		g_sim.SetKernelMode((ATKernelMode)key.getEnumInt("Kernel mode", kATKernelModeCount, g_sim.GetKernelMode()));
+		VDStringW kernelPath;
+		key.getString("Kernel path", kernelPath);
+
+		ATFirmwareManager& fwmgr = *g_sim.GetFirmwareManager();
+		uint64 kernelId = 0;
+		if (!kernelPath.empty()) {
+			kernelId = fwmgr.GetFirmwareByRefString(kernelPath.c_str());
+
+			ATFirmwareInfo info;
+			if (!kernelId) {
+				VDStringA kernelTypeName;
+				key.getString("Kernel type", kernelTypeName);
+
+				ATFirmwareType type = ATGetFirmwareTypeFromName(kernelTypeName.c_str());
+				kernelId = g_sim.GetFirmwareManager()->GetFirmwareOfType(type, false);
+				if (!kernelId)
+					kernelId = kATFirmwareId_NoKernel;
+			}
+		}
+
+		g_sim.SetKernel(kernelId);
+
+		VDStringW basicPath;
+		key.getString("Basic path", basicPath);
+		g_sim.SetBasic(fwmgr.GetFirmwareByRefString(basicPath.c_str()));
+
 		g_sim.SetHardwareMode((ATHardwareMode)key.getEnumInt("Hardware mode", kATHardwareModeCount, g_sim.GetHardwareMode()));
 		g_sim.SetBASICEnabled(key.getBool("BASIC enabled", g_sim.IsBASICEnabled()));
 
-		const bool isPAL = key.getBool("PAL mode", g_sim.GetVideoStandard() == kATVideoStandard_PAL);
-		const bool isSECAM = key.getBool("SECAM mode", g_sim.GetVideoStandard() == kATVideoStandard_SECAM);
-		g_sim.SetVideoStandard(isSECAM ? kATVideoStandard_SECAM : isPAL ? kATVideoStandard_PAL : kATVideoStandard_NTSC);
+		auto vs =  g_sim.GetVideoStandard();
+		const bool isPAL = key.getBool("PAL mode", vs == kATVideoStandard_PAL || vs == kATVideoStandard_NTSC50);
+		const bool isSECAM = key.getBool("SECAM mode", vs == kATVideoStandard_SECAM);
+		const bool isMixed = key.getBool("Mixed video mode", vs == kATVideoStandard_NTSC50 || vs == kATVideoStandard_PAL60);
+
+		if (isSECAM)
+			g_sim.SetVideoStandard(kATVideoStandard_SECAM);
+		else if (isPAL) {
+			if (isMixed)
+				g_sim.SetVideoStandard(kATVideoStandard_NTSC50);
+			else
+				g_sim.SetVideoStandard(kATVideoStandard_PAL);
+		} else {
+			if (isMixed)
+				g_sim.SetVideoStandard(kATVideoStandard_PAL60);
+			else
+				g_sim.SetVideoStandard(kATVideoStandard_NTSC);
+		}
 
 		g_sim.SetMemoryMode((ATMemoryMode)key.getEnumInt("Memory mode", kATMemoryModeCount, g_sim.GetMemoryMode()));
 		g_sim.SetCassetteSIOPatchEnabled(key.getBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled()));
@@ -4284,6 +4646,7 @@ void LoadSettings(bool useHardwareBaseline) {
 		g_sim.SetVBXEAltPageEnabled(key.getBool("GTIA: VBXE alternate page", g_sim.IsVBXEAltPageEnabled()));
 		g_sim.SetDiskSIOPatchEnabled(key.getBool("Disk: SIO patch enabled", g_sim.IsDiskSIOPatchEnabled()));
 		g_sim.SetDiskSIOOverrideDetectEnabled(key.getBool("Disk: SIO override detection enabled", g_sim.IsDiskSIOOverrideDetectEnabled()));
+		g_sim.SetDiskBurstTransfersEnabled(key.getBool("Disk: Burst transfers enabled", g_sim.GetDiskBurstTransfersEnabled()));
 
 		for(int i=0; i<15; ++i) {
 			ATDiskEmulator& disk = g_sim.GetDiskDrive(i);
@@ -4297,68 +4660,39 @@ void LoadSettings(bool useHardwareBaseline) {
 		g_sim.SetSoundBoardEnabled(key.getBool("SoundBoard: Enabled", g_sim.GetSoundBoard() != NULL));
 		g_sim.SetSoundBoardMemBase(key.getInt("SoundBoard: Memory base", g_sim.GetSoundBoardMemBase()));
 
-		g_sim.SetSlightSIDEnabled(key.getBool("SlightSID: Enabled", g_sim.GetSlightSID() != NULL));
-		g_sim.SetCovoxEnabled(key.getBool("Covox: Enabled", g_sim.GetCovox() != NULL));
-
-		g_sim.SetXEP80Enabled(key.getBool("XEP80: Enabled", g_sim.GetXEP80() != NULL));
-
 		g_enhancedText = key.getInt("Video: Enhanced text mode", 0);
 		if (g_enhancedText > 2)
 			g_enhancedText = 2;
 
 		g_sim.SetVirtualScreenEnabled(g_enhancedText == 2);
 
-		g_sim.SetPrinterEnabled(key.getBool("Printer: Enabled", g_sim.IsPrinterEnabled()));
-		g_sim.SetRTime8Enabled(key.getBool("Misc: R-Time 8 Enabled", g_sim.IsRTime8Enabled()));
-		g_sim.SetRS232Enabled(key.getBool("Serial Ports: Enabled", g_sim.IsRS232Enabled()));
-
-		if (g_sim.IsRS232Enabled()) {
-			ATRS232Config config;
-
-			config.mDeviceMode = (ATRS232DeviceMode)key.getEnumInt("Serial Ports: Device mode", kATRS232DeviceModeCount, config.mDeviceMode);
-			config.mbTelnetEmulation = key.getBool("Serial Ports: Telnet emulation", config.mbTelnetEmulation);
-			config.mbTelnetLFConversion = key.getBool("Serial Ports: Telnet LF conversion", config.mbTelnetLFConversion);
-			config.mbAllowOutbound = key.getBool("Serial Ports: Allow outbound connections", config.mbAllowOutbound);
-			key.getString("Serial Ports: Telnet terminal type", config.mTelnetTermType);
-			config.mListenPort = key.getInt("Serial Ports: Listen Port", config.mListenPort);
-			if (config.mListenPort < 1 || config.mListenPort > 65535)
-				config.mListenPort = 0;
-
-			config.mConnectionSpeed = key.getInt("Serial Ports: Modem connection rate", config.mConnectionSpeed);
-			config.mbListenForIPv6 = key.getBool("Serial Ports: Listen for IPv6 connections", config.mbListenForIPv6);
-			config.mbDisableThrottling = key.getBool("Serial Ports: Disable throttling", config.mbDisableThrottling);
-			config.mbRequireMatchedDTERate = key.getBool("Serial Ports: Require matched DTE rate", config.mbRequireMatchedDTERate);
-			config.mbExtendedBaudRates = key.getBool("Serial Ports: Enable extended baud rates", config.mbExtendedBaudRates);
-			config.m850SIOLevel = (AT850SIOEmulationLevel)key.getEnumInt("Serial Ports; SIO emulation level", kAT850SIOEmulationLevelCount, config.m850SIOLevel);
-
-			key.getString("Serial Ports: Dial address", config.mDialAddress);
-			key.getString("Serial Ports: Dial service", config.mDialService);
-
-			g_sim.GetRS232()->SetConfig(config);
-		}
-
 		g_sim.SetAxlonMemoryMode(key.getInt("Memory: Axlon size", g_sim.GetAxlonMemoryMode()));
+		g_sim.SetAxlonAliasingEnabled(key.getBool("Memory: Axlon aliasing", g_sim.GetAxlonAliasingEnabled()));
 		g_sim.SetHighMemoryBanks(key.getInt("Memory: High banks", g_sim.GetHighMemoryBanks()));
 		g_sim.SetMapRAMEnabled(key.getBool("Memory: MapRAM", g_sim.IsMapRAMEnabled()));
 		g_sim.SetUltimate1MBEnabled(key.getBool("Memory: Ultimate1MB", g_sim.IsUltimate1MBEnabled()));
-		g_sim.SetRandomFillEnabled(key.getBool("Memory: Randomize on start", g_sim.IsRandomFillEnabled()));
+		g_sim.SetMemoryClearMode((ATMemoryClearMode)key.getEnumInt("Memory: Cold start pattern", kATMemoryClearModeCount, g_sim.GetMemoryClearMode()));
+		g_sim.SetRandomFillEXEEnabled(key.getBool("Memory: Randomize on EXE load", g_sim.IsRandomFillEXEEnabled()));
 		g_kbdOpts.mbRawKeys = key.getBool("Keyboard: Raw mode", g_kbdOpts.mbRawKeys);
 		g_sim.SetKeyboardPresent(key.getBool("Console: Keyboard present", g_sim.IsKeyboardPresent()));
 		g_sim.SetForcedSelfTest(key.getBool("Console: Force self test", g_sim.IsForcedSelfTest()));
 		g_sim.SetCartridgeSwitch(key.getBool("Console: Cartridge switch", g_sim.GetCartridgeSwitch()));
 
-		if (key.getBool("DragonCart: Enabled", false)) {
-			ATDragonCartSettings settings;
-			settings.SetDefault();
+		VDStringW devStr;
+		key.getString("Devices", devStr);
+		g_sim.GetDeviceManager()->DeserializeDevices(nullptr, devStr.c_str());
 
-			settings.mNetAddr = key.getInt("DragonCart: Network address", settings.mNetAddr);
-			settings.mNetMask = key.getInt("DragonCart: Network mask", settings.mNetMask);
-			settings.mAccessMode = (ATDragonCartSettings::AccessMode)key.getEnumInt("DragonCart: Access mode", ATDragonCartSettings::kAccessModeCount, settings.mAccessMode);
+		g_sim.SetDeviceCIOBurstTransfersEnabled(key.getBool("Devices: CIO burst transfers enabled", g_sim.GetDeviceCIOBurstTransfersEnabled()));
+		g_sim.SetDeviceSIOBurstTransfersEnabled(key.getBool("Devices: SIO burst transfers enabled", g_sim.GetDeviceSIOBurstTransfersEnabled()));
 
-			g_sim.SetDragonCartEnabled(&settings);
-		} else {
-			g_sim.SetDragonCartEnabled(NULL);
+		for(char c : { 'H', 'P', 'R', 'T' }) {
+			VDStringA s;
+
+			s.sprintf("Devices: CIO %c: patch enabled", c);
+			g_sim.SetCIOPatchEnabled(c, key.getBool(s.c_str(), g_sim.GetCIOPatchEnabled(c)));
 		}
+
+		g_sim.SetDeviceSIOPatchEnabled(key.getBool("Devices: SIO patch enabled", g_sim.GetDeviceSIOPatchEnabled()));
 	}
 
 	g_kbdOpts.mArrowKeyMode = (ATUIKeyboardOptions::ArrowKeyMode)key.getEnumInt("Keyboard: Arrow key mode", ATUIKeyboardOptions::kAKMCount, g_kbdOpts.mArrowKeyMode);
@@ -4391,6 +4725,7 @@ void LoadSettings(bool useHardwareBaseline) {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 	gtia.SetArtifactingMode((ATGTIAEmulator::ArtifactMode)key.getEnumInt("GTIA: Artifacting mode", ATGTIAEmulator::kArtifactCount, gtia.GetArtifactingMode()));
 	gtia.SetOverscanMode((ATGTIAEmulator::OverscanMode)key.getEnumInt("GTIA: Overscan mode", ATGTIAEmulator::kOverscanCount, gtia.GetOverscanMode()));
+	gtia.SetVerticalOverscanMode((ATGTIAEmulator::VerticalOverscanMode)key.getEnumInt("GTIA: Vertical overscan mode", ATGTIAEmulator::kVerticalOverscanCount, gtia.GetVerticalOverscanMode()));
 	gtia.SetOverscanPALExtended(key.getBool("GTIA: PAL extended height", gtia.IsOverscanPALExtended()));
 	gtia.SetBlendModeEnabled(key.getBool("GTIA: Frame blending", gtia.IsBlendModeEnabled()));
 	gtia.SetInterlaceEnabled(key.getBool("GTIA: Interlace", gtia.IsInterlaceEnabled()));
@@ -4422,37 +4757,6 @@ void LoadSettings(bool useHardwareBaseline) {
 	ATCPUMode cpuMode = (ATCPUMode)key.getEnumInt("CPU: Chip type", kATCPUModeCount, cpu.GetCPUMode());
 	uint32 cpuMultiplier = key.getInt("CPU: Clock multiplier", cpu.GetSubCycles());
 	cpu.SetCPUMode(cpuMode, cpuMultiplier);
-
-	IATHostDeviceEmulator *hd = g_sim.GetHostDevice();
-	if (hd) {
-		VDStringW path;
-		VDStringA keyName;
-
-		for(int i=0; i<4; ++i) {
-			keyName = "Hard disk: Host path";
-
-			if (i)
-				keyName.append_sprintf(" %u", i + 2);
-
-			if (key.getString(keyName.c_str(), path))
-				hd->SetBasePath(i, path.c_str());
-		}
-
-		hd->SetEnabled(key.getBool("Hard disk: Enabled", hd->IsEnabled()));
-		hd->SetReadOnly(key.getBool("Hard disk: Read only", hd->IsReadOnly()));
-		hd->SetBurstIOEnabled(key.getBool("Hard disk: Burst IO enabled", hd->IsBurstIOEnabled()));
-		hd->SetLongNameEncodingEnabled(key.getBool("Hard disk: Long name encoding", hd->IsLongNameEncodingEnabled()));
-	}
-
-	g_sim.SetPCLinkEnabled(key.getBool("PCLink: Enabled", g_sim.GetPCLink() != NULL));
-	IATPCLinkDevice *pclink = g_sim.GetPCLink();
-	if (pclink) {
-		VDStringW path;
-		if (key.getString("PCLink: Host path", path))
-			pclink->SetBasePath(path.c_str());
-
-		pclink->SetReadOnly(key.getBool("PCLink: Read only", pclink->IsReadOnly()));
-	}
 
 	pokey.SetNonlinearMixingEnabled(key.getBool("Audio: Non-linear mixing", pokey.IsNonlinearMixingEnabled()));
 
@@ -4491,31 +4795,61 @@ void LoadSettings(bool useHardwareBaseline) {
 		LoadMountedImages();
 }
 
+void LoadDisplaySettings() {
+	VDRegistryAppKey key("Settings", false);
+
+	if (key.getBool("Display: Full screen"))
+		ATSetFullscreen(true);
+}
+
 void SaveSettings() {
 	VDRegistryAppKey key("Settings");
 
-	VDRegistryAppKey imageKey("Settings\\ROM Images");
-	for(int i=0; i<kATROMImageCount; ++i) {
-		VDStringW s;
-		g_sim.GetROMImagePath((ATROMImage)i, s);
+	ATFirmwareManager& fwmgr = *g_sim.GetFirmwareManager();
+	const uint64 kernelId = g_sim.GetKernelId();
 
-		imageKey.setString(kSettingNamesROMImages[i], s.c_str());
-	}
+	key.setString("Kernel path", fwmgr.GetFirmwareRefString(kernelId).c_str());
 
-	key.setInt("Kernel mode", g_sim.GetKernelMode());
+	ATFirmwareInfo kernelFwInfo;
+	kernelFwInfo.mType = kATFirmwareType_Unknown;
+	g_sim.GetFirmwareManager()->GetFirmwareInfo(kernelId, kernelFwInfo);
+	key.setString("Kernel type", ATGetFirmwareTypeName(kernelFwInfo.mType));
+
+	key.setString("Basic path", fwmgr.GetFirmwareRefString(g_sim.GetBasicId()).c_str());
+
 	key.setInt("Hardware mode", g_sim.GetHardwareMode());
 	key.setBool("BASIC enabled", g_sim.IsBASICEnabled());
-	key.setBool("PAL mode", g_sim.GetVideoStandard() != kATVideoStandard_NTSC);
-	key.setBool("SECAM mode", g_sim.GetVideoStandard() == kATVideoStandard_SECAM);
+
+	struct {
+		bool mbPAL;
+		bool mbSECAM;
+		bool mbMixed;
+	} kVSModes[]={
+		{ false, false, false },	// NTSC
+		{ true,  false, false },	// PAL
+		{ true,  true,  false },	// SECAM
+		{ false, false, true },		// PAL60
+		{ true,  false, true },		// NTSC50
+	};
+
+	VDASSERTCT(vdcountof(kVSModes) == kATVideoStandardCount);
+
+	const auto& vsmode = kVSModes[g_sim.GetVideoStandard()];
+	key.setBool("PAL mode", vsmode.mbPAL);
+	key.setBool("SECAM mode", vsmode.mbSECAM);
+	key.setBool("Mixed video mode", vsmode.mbMixed);
+
 	key.setInt("Memory mode", g_sim.GetMemoryMode());
 	key.setBool("Turbo mode", ATUIGetTurbo());
 	key.setBool("Pause when inactive", g_pauseInactive);
 
 	key.setInt("Memory: Axlon size", g_sim.GetAxlonMemoryMode());
+	key.setBool("Memory: Axlon aliasing", g_sim.GetAxlonAliasingEnabled());
 	key.setInt("Memory: High banks", g_sim.GetHighMemoryBanks());
 	key.setBool("Memory: MapRAM", g_sim.IsMapRAMEnabled());
 	key.setBool("Memory: Ultimate1MB", g_sim.IsUltimate1MBEnabled());
-	key.setBool("Memory: Randomize on start", g_sim.IsRandomFillEnabled());
+	key.setInt("Memory: Cold start pattern", g_sim.GetMemoryClearMode());
+	key.setBool("Memory: Randomize on EXE load", g_sim.IsRandomFillEXEEnabled());
 
 	key.setBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled());
 	key.setBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled());
@@ -4538,6 +4872,7 @@ void SaveSettings() {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 	key.setInt("GTIA: Artifacting mode", gtia.GetArtifactingMode());
 	key.setInt("GTIA: Overscan mode", gtia.GetOverscanMode());
+	key.setInt("GTIA: Vertical overscan mode", gtia.GetVerticalOverscanMode());
 	key.setBool("GTIA: PAL extended height", gtia.IsOverscanPALExtended());
 	key.setBool("GTIA: Frame blending", gtia.IsBlendModeEnabled());
 	key.setBool("GTIA: Interlace", gtia.IsInterlaceEnabled());
@@ -4560,6 +4895,7 @@ void SaveSettings() {
 	key.setBool("Disk: SIO patch enabled", g_sim.IsDiskSIOPatchEnabled());
 	key.setBool("Disk: SIO override detection enabled", g_sim.IsDiskSIOOverrideDetectEnabled());
 	key.setBool("Disk: Accurate sector timing", disk.IsAccurateSectorTimingEnabled());
+	key.setBool("Disk: Burst transfers enabled", g_sim.GetDiskBurstTransfersEnabled());
 	key.setBool("Disk: Drive sounds", disk.AreDriveSoundsEnabled());
 	key.setInt("Disk: Emulation mode", disk.GetEmulationMode());
 	key.setBool("Disk: Sector counter enabled", g_sim.IsDiskSectorCounterEnabled());
@@ -4569,10 +4905,6 @@ void SaveSettings() {
 
 	key.setBool("SoundBoard: Enabled", g_sim.GetSoundBoard() != NULL);
 	key.setInt("SoundBoard: Memory base", g_sim.GetSoundBoardMemBase());
-
-	key.setBool("SlightSID: Enabled", g_sim.GetSlightSID() != NULL);
-	key.setBool("Covox: Enabled", g_sim.GetCovox() != NULL);
-	key.setBool("XEP80: Enabled", g_sim.GetXEP80() != NULL);
 
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 	key.setBool("CPU: History enabled", cpu.IsHistoryEnabled());
@@ -4586,34 +4918,6 @@ void SaveSettings() {
 	key.setBool("CPU: Shadow ROMs", g_sim.GetShadowROMEnabled());
 	key.setBool("CPU: Shadow cartridges", g_sim.GetShadowCartridgeEnabled());
 
-	IATHostDeviceEmulator *hd = g_sim.GetHostDevice();
-	if (hd) {
-		VDStringA keyName;
-
-		for(int i=0; i<4; ++i) {
-			keyName = "Hard disk: Host path";
-
-			if (i)
-				keyName.append_sprintf(" %u", i+2);
-
-			key.setString(keyName.c_str(), hd->GetBasePath(i));
-		}
-
-		key.setBool("Hard disk: Enabled", hd->IsEnabled());
-		key.setBool("Hard disk: Read only", hd->IsReadOnly());
-		key.setBool("Hard disk: Burst IO enabled", hd->IsBurstIOEnabled());
-		key.setBool("Hard disk: Long name encoding", hd->IsLongNameEncodingEnabled());
-	}
-
-	IATPCLinkDevice *pclink = g_sim.GetPCLink();
-	key.setBool("PCLink: Enabled", g_sim.GetPCLink() != NULL);
-	if (pclink) {
-		VDStringW path;
-		if (key.setString("PCLink: Host path", pclink->GetBasePath()))
-
-		key.setBool("PCLink: Read only", pclink->IsReadOnly());
-	}
-
 	key.setInt("Display: Filter mode", g_dispFilterMode);
 	key.setInt("Display: Filter sharpness", g_dispFilterSharpness);
 	key.setInt("Display: Stretch mode", g_displayStretchMode);
@@ -4625,44 +4929,25 @@ void SaveSettings() {
 	key.setBool("View: 80-column view enabled", g_xepViewEnabled);
 	key.setBool("View: 80-column view autoswitching enabled", g_xepViewAutoswitchingEnabled);
 
-	key.setBool("Printer: Enabled", g_sim.IsPrinterEnabled());
-	key.setBool("Misc: R-Time 8 Enabled", g_sim.IsRTime8Enabled());
-	key.setBool("Serial Ports: Enabled", g_sim.IsRS232Enabled());
-
-	if (g_sim.IsRS232Enabled()) {
-		ATRS232Config config;
-		g_sim.GetRS232()->GetConfig(config);
-
-		key.setInt("Serial Ports: Device mode", config.mDeviceMode);
-		key.setBool("Serial Ports: Telnet emulation", config.mbTelnetEmulation);
-		key.setBool("Serial Ports: Telnet LF conversion", config.mbTelnetLFConversion);
-		key.setBool("Serial Ports: Allow outbound connections", config.mbAllowOutbound);
-		key.setString("Serial Ports: Telnet terminal type", config.mTelnetTermType.c_str());
-		key.setInt("Serial Ports: Listen port", config.mListenPort);
-		key.setInt("Serial Ports: Modem connection rate", config.mConnectionSpeed);
-		key.setBool("Serial Ports: Listen for IPv6 connections", config.mbListenForIPv6);
-		key.setBool("Serial Ports: Disable throttling", config.mbDisableThrottling);
-		key.setBool("Serial Ports: Require matched DTE rate", config.mbRequireMatchedDTERate);
-		key.setBool("Serial Ports: Enable extended baud rates", config.mbExtendedBaudRates);
-		key.setInt("Serial Ports; SIO emulation level", config.m850SIOLevel);
-		key.setString("Serial Ports: Dial address", config.mDialAddress.c_str());
-		key.setString("Serial Ports: Dial service", config.mDialService.c_str());
-	}
-
 	key.setBool("Console: Keyboard present", g_sim.IsKeyboardPresent());
 	key.setBool("Console: Force self test", g_sim.IsForcedSelfTest());
 	key.setBool("Console: Cartridge switch", g_sim.GetCartridgeSwitch());
 
-	const bool dragonCartEnabled = g_sim.IsDragonCartEnabled();
-	key.setBool("DragonCart: Enabled", dragonCartEnabled);
+	VDStringW devStr;
+	g_sim.GetDeviceManager()->SerializeDevice(nullptr, devStr);
+	key.setString("Devices", devStr.c_str());
 
-	if (dragonCartEnabled) {
-		const ATDragonCartSettings& settings = g_sim.GetDragonCart()->GetSettings();
+	key.setBool("Devices: CIO burst transfers enabled", g_sim.GetDeviceCIOBurstTransfersEnabled());
+	key.setBool("Devices: SIO burst transfers enabled", g_sim.GetDeviceSIOBurstTransfersEnabled());
 
-		key.setInt("DragonCart: Network address", settings.mNetAddr);
-		key.setInt("DragonCart: Network mask", settings.mNetMask);
-		key.setInt("DragonCart: Access mode", settings.mAccessMode);
+	for(char c : { 'H', 'P', 'R', 'T' }) {
+		VDStringA s;
+
+		s.sprintf("Devices: CIO %c: patch enabled", c);
+		key.setBool(s.c_str(), g_sim.GetCIOPatchEnabled(c));
 	}
+
+	key.setBool("Devices: SIO: patch enabled", g_sim.GetDeviceSIOPatchEnabled());
 
 	key.setBool("Keyboard: Raw mode", g_kbdOpts.mbRawKeys);
 	key.setInt("Keyboard: Arrow key mode", g_kbdOpts.mArrowKeyMode);
@@ -4805,6 +5090,58 @@ bool ATUIProcessMessages(bool waitForMessage, int& returnCode) {
 	return true;
 }
 
+// The joystick poll is normally done once a frame. However, when we aren't
+// running, we need to do an idle poll. We poll only a 100ms timer normally
+// and speed that up to 10ms for five seconds when activity is detected.
+VDLazyTimer g_joystickPollTimer;
+uint32 g_joystickPollLastFast;
+bool g_joystickPollActive;
+bool g_joystickPollFast;
+
+void ATPollJoysticks() {
+	auto& jm = g_sim.GetJoystickManager();
+
+	switch(jm.Poll()) {
+		case IATJoystickManager::kPollResult_NoControllers:
+			g_joystickPollTimer.Stop();
+			break;
+
+		case IATJoystickManager::kPollResult_NoActivity:
+			if (g_joystickPollFast && VDGetCurrentTick() - g_joystickPollLastFast > 5000) {
+				g_joystickPollFast = false;
+				g_joystickPollTimer.SetPeriodicFn(ATPollJoysticks, 100);
+			}
+			break;
+
+		case IATJoystickManager::kPollResult_OK:
+			g_joystickPollLastFast = VDGetCurrentTick();
+			if (!g_joystickPollFast) {
+				g_joystickPollFast = true;
+				g_joystickPollTimer.SetPeriodicFn(ATPollJoysticks, 10);
+			}
+			break;
+	}
+}
+
+void ATBeginIdleJoystickPoll() {
+	if (g_joystickPollActive)
+		return;
+	g_joystickPollActive = true;
+
+	auto& jm = g_sim.GetJoystickManager();
+
+	g_joystickPollLastFast = VDGetCurrentTick();
+	g_joystickPollFast = true;
+	g_joystickPollTimer.SetPeriodicFn(ATPollJoysticks, 10);
+}
+
+void ATEndIdleJoystickPoll() {
+	if (g_joystickPollActive) {
+		g_joystickPollActive = false;
+		g_joystickPollTimer.Stop();
+	}
+}
+
 int RunMainLoop2(HWND hwnd) {
 	bool commandLineRead = false;
 	int ticks = 0;
@@ -4837,15 +5174,21 @@ int RunMainLoop2(HWND hwnd) {
 		if (!isRunning)
 			ATUIFlushDisplay();
 
-		if (ATUIGetQueue().Run())
+		if (ATUIGetQueue().Run()) {
+			ATBeginIdleJoystickPoll();
 			continue;
+		}
 
+		if (isRunning)
+			ATEndIdleJoystickPoll();
 
 		if (isRunning != lastIsRunning) {
-			if (isRunning)
+			if (isRunning) {
 				timeBeginPeriod(1);
-			else
+			} else {
 				timeEndPeriod(1);
+				ATBeginIdleJoystickPoll();
+			}
 
 			lastIsRunning = isRunning;
 		}
@@ -4997,8 +5340,10 @@ int RunMainLoop2(HWND hwnd) {
 		WaitMessage();
 	}
 
-	if (lastIsRunning)
+	if (lastIsRunning) {
+		ATEndIdleJoystickPoll();
 		timeEndPeriod(1);
+	}
 
 	return 0;
 }
@@ -5068,9 +5413,17 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 	VDRegistryProviderMemory *rpmem = NULL;
 
 	const bool resetAll = g_ATCmdLine.FindAndRemoveSwitch(L"resetall");
-	const VDStringW portableRegPath(VDMakePath(VDGetProgramPath().c_str(), L"Altirra.ini"));
 
-	if (g_ATCmdLine.FindAndRemoveSwitch(L"portable") || VDDoesPathExist(portableRegPath.c_str())) {
+	const wchar_t *portableAltFile = nullptr;
+	g_ATCmdLine.FindAndRemoveSwitch(L"portablealt", portableAltFile);
+
+	VDStringW portableRegPath;
+	if (portableAltFile)
+		portableRegPath = portableAltFile;
+	else
+		portableRegPath = VDMakePath(VDGetProgramPath().c_str(), L"Altirra.ini");
+
+	if (portableAltFile || g_ATCmdLine.FindAndRemoveSwitch(L"portable") || VDDoesPathExist(portableRegPath.c_str())) {
 		rpmem = new VDRegistryProviderMemory;
 		VDSetRegistryProvider(rpmem);
 
@@ -5161,6 +5514,30 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 	return rval;
 }
 
+void ATRegisterDevices() {
+	auto& dm = *g_sim.GetDeviceManager();
+
+	ATRegisterDeviceModem(dm);
+	ATRegisterDeviceBlackBox(dm);
+	ATRegisterDeviceMIO(dm);
+	ATRegisterDeviceHardDisks(dm);
+	ATRegisterDeviceConfigurers(dm);
+	ATRegisterDeviceRTime8(dm);
+	ATRegisterDeviceCovox(dm);
+	ATRegisterDeviceXEP80(dm);
+	ATRegisterDeviceSlightSID(dm);
+	ATRegisterDeviceDragonCart(dm);
+	ATRegisterDeviceSIOClock(dm);
+	ATRegisterDeviceTestSIOPoll(dm);
+	ATRegisterDevicePCLink(dm);
+	ATRegisterDeviceHostFS(dm);
+	ATRegisterDevicePrinter(dm);
+	ATRegisterDevice850Modem(dm);
+	ATRegisterDevice1030Modem(dm);
+	ATRegisterDeviceSX212(dm);
+	ATRegisterDeviceMidiMate(dm);
+}
+
 int RunInstance(int nCmdShow) {
 	VDRegisterVideoDisplayControl();
 	VDUIRegisterHotKeyExControl();
@@ -5169,6 +5546,8 @@ int RunInstance(int nCmdShow) {
 	ATInitUIFrameSystem();
 	ATUIInitCommandMappings();
 	ATUIInitDefaultAccelTables();
+	
+	VDDialogFrameW32::SetDefaultCaption(L"Altirra");
 
 	struct local {
 		static void DisplayUpdateFn(ATOptions& opts, const ATOptions *prevOpts, void *) {
@@ -5209,6 +5588,8 @@ int RunInstance(int nCmdShow) {
 	ATUIInitVirtualKeyMap(g_kbdOpts);
 	ATUILoadAccelTables();
 
+	ATUIInitFirmwareMenuCallbacks(g_sim.GetFirmwareManager());
+
 	try {
 		ATUILoadMenu();
 	} catch(const MyError& e) {
@@ -5242,6 +5623,8 @@ int RunInstance(int nCmdShow) {
 	g_sim.Init(hwnd);
 	g_sim.GetInputManager()->SetConsoleCallback(&g_inputConsoleCallback);
 
+	ATRegisterDevices();
+
 	ATInitPortMenus(g_sim.GetInputManager());
 
 	g_winCaptionUpdater.Init(&g_sim);
@@ -5264,7 +5647,6 @@ int RunInstance(int nCmdShow) {
 	const bool useHardwareBaseline = g_ATCmdLine.FindAndRemoveSwitch(L"baseline");
 
 	ATInitDebugger();
-	LoadROMImageSettings();
 	LoadSettings(useHardwareBaseline);
 
 	try {
@@ -5285,6 +5667,9 @@ int RunInstance(int nCmdShow) {
 		ATActivateUIPane(kATUIPaneId_Display, true);
 
 	g_sim.ColdReset();
+
+	// we can't go full screen until the display panes have been created
+	LoadDisplaySettings();
 
 	int returnCode = RunMainLoop(hwnd);
 

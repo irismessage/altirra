@@ -18,12 +18,14 @@
 #ifndef f_AT_SLIGHTSID_H
 #define f_AT_SLIGHTSID_H
 
+#include <vd2/system/memory.h>
 #include "audiosource.h"
 
 class ATScheduler;
 class ATMemoryManager;
 class ATMemoryLayer;
 class IATAudioOutput;
+class ATConsoleOutput;
 
 // SlightSID expansion emulator.
 //
@@ -39,10 +41,12 @@ class IATAudioOutput;
 // are run at 1MHz speed. The channel outputs are mixed and crudely box filtered
 // down to Altirra's internal mixing rate (64KHz) before the filter is applied.
 //
-class ATSlightSIDEmulator : public IATSyncAudioSource {
+class ATSlightSIDEmulator : public VDAlignedObject<16>, public IATSyncAudioSource {
 	ATSlightSIDEmulator(const ATSlightSIDEmulator&);
 	ATSlightSIDEmulator& operator=(const ATSlightSIDEmulator&);
 public:
+	enum { kTypeID = 'ssid' };
+
 	ATSlightSIDEmulator();
 	~ATSlightSIDEmulator();
 
@@ -52,7 +56,7 @@ public:
 	void ColdReset();
 	void WarmReset();
 
-	void DumpStatus();
+	void DumpStatus(ATConsoleOutput& output);
 
 	void WriteControl(uint8 addr, uint8 value);
 

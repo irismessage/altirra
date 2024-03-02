@@ -1,6 +1,7 @@
 #ifndef f_VD2_RIZA_DISPLAY_H
 #define f_VD2_RIZA_DISPLAY_H
 
+#include <vd2/system/function.h>
 #include <vd2/system/vectors.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/refcount.h>
@@ -107,6 +108,13 @@ public:
 	virtual FilterMode GetFilterMode() = 0;
 	virtual void SetFilterMode(FilterMode) = 0;
 	virtual float GetSyncDelta() const = 0;
+
+	enum ProfileEvent {
+		kProfileEvent_BeginTick,
+		kProfileEvent_EndTick,
+	};
+
+	virtual void SetProfileHook(const vdfunction<void(ProfileEvent)>& profileHook) = 0;
 };
 
 void VDVideoDisplaySetFeatures(bool enableDirectX, bool enableOverlays, bool enableTermServ, bool enableOpenGL, bool enableDirect3D, bool enableD3DFX, bool enableHighPrecision);

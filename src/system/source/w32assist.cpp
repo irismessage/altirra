@@ -30,18 +30,31 @@
 #include <vd2/system/vdstdc.h>
 #include <vd2/system/vdstl.h>
 
-bool VDIsAtLeast81W32Check() {
-	OSVERSIONINFOA osinfo = {sizeof(OSVERSIONINFOA)};
+bool VDTestOSVersionW32(uint8 major, uint8 minor) {
+	OSVERSIONINFOEX vervals = {};
+	vervals.dwMajorVersion = major;
+	vervals.dwMinorVersion = minor;
 
-	if (!::GetVersionExA(&osinfo))
-		return false;
+	ULONGLONG cond = 0;
+	VER_SET_CONDITION(cond, VER_MAJORVERSION, VER_GREATER_EQUAL);
+	VER_SET_CONDITION(cond, VER_MINORVERSION, VER_GREATER_EQUAL);
+	return 0 != VerifyVersionInfo(&vervals, VER_MAJORVERSION | VER_MINORVERSION, cond);
+}
 
-	return osinfo.dwMajorVersion >= 7 ||
-		(osinfo.dwMajorVersion >= 6 && osinfo.dwMinorVersion >= 3);
+bool VDIsAtLeastVistaW32() {
+	static const bool result = VDTestOSVersionW32(6,0);
+
+	return result;
+}
+
+bool VDIsAtLeast7W32() {
+	static const bool result = VDTestOSVersionW32(6,1);
+
+	return result;
 }
 
 bool VDIsAtLeast81W32() {
-	static const bool result = VDIsAtLeast81W32Check();
+	static const bool result = VDTestOSVersionW32(6,3);
 
 	return result;
 }
@@ -93,11 +106,7 @@ int VDGetSizeOfBitmapHeaderW32(const BITMAPINFOHEADER *pHdr) {
 }
 
 void VDSetWindowTextW32(HWND hwnd, const wchar_t *s) {
-	if (VDIsWindowsNT()) {
-		SetWindowTextW(hwnd, s);
-	} else {
-		SetWindowTextA(hwnd, VDTextWToA(s).c_str());
-	}
+	SetWindowTextW(hwnd, s);
 }
 
 void VDSetWindowTextFW32(HWND hwnd, const wchar_t *format, ...) {
@@ -149,56 +158,32 @@ VDStringW VDGetWindowTextW32(HWND hwnd) {
 		char a[512];
 	} buf;
 
-	if (VDIsWindowsNT()) {
-		int len = GetWindowTextLengthW(hwnd);
+	int len = GetWindowTextLengthW(hwnd);
 
-		if (len > 255) {
-			vdblock<wchar_t> tmp(len + 1);
-			len = GetWindowTextW(hwnd, tmp.data(), tmp.size());
+	if (len > 255) {
+		vdblock<wchar_t> tmp(len + 1);
+		len = GetWindowTextW(hwnd, tmp.data(), tmp.size());
 
-			VDStringW text(tmp.data(), len);
-			return text;
-		} else if (len > 0) {
-			len = GetWindowTextW(hwnd, buf.w, 256);
+		VDStringW text(tmp.data(), len);
+		return text;
+	} else if (len > 0) {
+		len = GetWindowTextW(hwnd, buf.w, 256);
 
-			VDStringW text(buf.w, len);
-			return text;
-		}
-	} else {
-		int len = GetWindowTextLengthA(hwnd);
-
-		if (len > 511) {
-			vdblock<char> tmp(len + 1);
-			len = GetWindowTextA(hwnd, tmp.data(), tmp.size());
-
-			VDStringW text(VDTextAToW(tmp.data(), len));
-			return text;
-		} else if (len > 0) {
-			len = GetWindowTextA(hwnd, buf.a, 512);
-
-			VDStringW text(VDTextAToW(buf.a, len));
-			return text;
-		}
+		VDStringW text(buf.w, len);
+		return text;
 	}
 
 	return VDStringW();
 }
 
 void VDAppendMenuW32(HMENU hmenu, UINT flags, UINT id, const wchar_t *text){
-	if (VDIsWindowsNT()) {
-		AppendMenuW(hmenu, flags, id, text);
-	} else {
-		AppendMenuA(hmenu, flags, id, VDTextWToA(text).c_str());
-	}
+	AppendMenuW(hmenu, flags, id, text);
 }
 
 bool VDAppendPopupMenuW32(HMENU hmenu, UINT flags, HMENU hmenuPopup, const wchar_t *text){
 	flags |= MF_POPUP;
 
-	if (VDIsWindowsNT())
-		return 0 != AppendMenuW(hmenu, flags, (UINT_PTR)hmenuPopup, text);
-	else
-		return 0 != AppendMenuA(hmenu, flags, (UINT_PTR)hmenuPopup, VDTextWToA(text).c_str());
+	return 0 != AppendMenuW(hmenu, flags, (UINT_PTR)hmenuPopup, text);
 }
 
 void VDAppendMenuSeparatorW32(HMENU hmenu) {
@@ -206,24 +191,13 @@ void VDAppendMenuSeparatorW32(HMENU hmenu) {
 	if (pos < 0)
 		return;
 
-	if (VDIsWindowsNT()) {
-		MENUITEMINFOW mmiW;
-		vdfastfixedvector<wchar_t, 256> bufW;
+	MENUITEMINFOW mmiW;
 
-		mmiW.cbSize		= MENUITEMINFO_SIZE_VERSION_400W;
-		mmiW.fMask		= MIIM_TYPE;
-		mmiW.fType		= MFT_SEPARATOR;
+	mmiW.cbSize		= MENUITEMINFO_SIZE_VERSION_400W;
+	mmiW.fMask		= MIIM_TYPE;
+	mmiW.fType		= MFT_SEPARATOR;
 
-		InsertMenuItemW(hmenu, pos, TRUE, &mmiW);
-	} else {
-		MENUITEMINFOA mmiA;
-
-		mmiA.cbSize		= MENUITEMINFO_SIZE_VERSION_400A;
-		mmiA.fMask		= MIIM_TYPE;
-		mmiA.fType		= MFT_SEPARATOR;
-
-		InsertMenuItemA(hmenu, pos, TRUE, &mmiA);
-	}
+	InsertMenuItemW(hmenu, pos, TRUE, &mmiW);
 }
 
 void VDCheckMenuItemByPositionW32(HMENU hmenu, uint32 pos, bool checked) {
@@ -269,67 +243,36 @@ void VDEnableMenuItemByCommandW32(HMENU hmenu, UINT cmd, bool checked) {
 VDStringW VDGetMenuItemTextByCommandW32(HMENU hmenu, UINT cmd) {
 	VDStringW s;
 
-	if (VDIsWindowsNT()) {
-		MENUITEMINFOW mmiW;
-		vdfastfixedvector<wchar_t, 256> bufW;
+	MENUITEMINFOW mmiW;
+	vdfastfixedvector<wchar_t, 256> bufW;
 
-		mmiW.cbSize		= MENUITEMINFO_SIZE_VERSION_400W;
-		mmiW.fMask		= MIIM_TYPE;
-		mmiW.fType		= MFT_STRING;
-		mmiW.dwTypeData	= NULL;
-		mmiW.cch		= 0;		// required to avoid crash on NT4
+	mmiW.cbSize		= MENUITEMINFO_SIZE_VERSION_400W;
+	mmiW.fMask		= MIIM_TYPE;
+	mmiW.fType		= MFT_STRING;
+	mmiW.dwTypeData	= NULL;
+	mmiW.cch		= 0;		// required to avoid crash on NT4
 
-		if (GetMenuItemInfoW(hmenu, cmd, FALSE, &mmiW)) {
-			bufW.resize(mmiW.cch + 1, 0);
-			++mmiW.cch;
-			mmiW.dwTypeData = bufW.data();
+	if (GetMenuItemInfoW(hmenu, cmd, FALSE, &mmiW)) {
+		bufW.resize(mmiW.cch + 1, 0);
+		++mmiW.cch;
+		mmiW.dwTypeData = bufW.data();
 
-			if (GetMenuItemInfoW(hmenu, cmd, FALSE, &mmiW))
-				s = bufW.data();
-		}
-	} else {
-		MENUITEMINFOA mmiA;
-		vdfastfixedvector<char, 256> bufA;
-
-		mmiA.cbSize		= MENUITEMINFO_SIZE_VERSION_400A;
-		mmiA.fMask		= MIIM_TYPE;
-		mmiA.fType		= MFT_STRING;
-		mmiA.dwTypeData	= NULL;
-
-		if (GetMenuItemInfoA(hmenu, cmd, FALSE, &mmiA)) {
-			bufA.resize(mmiA.cch + 1, 0);
-			++mmiA.cch;
-			mmiA.dwTypeData = bufA.data();
-
-			if (GetMenuItemInfoA(hmenu, cmd, FALSE, &mmiA))
-				s = VDTextAToW(bufA.data());
-		}
+		if (GetMenuItemInfoW(hmenu, cmd, FALSE, &mmiW))
+			s = bufW.data();
 	}
 
 	return s;
 }
 
 void VDSetMenuItemTextByCommandW32(HMENU hmenu, UINT cmd, const wchar_t *text) {
-	if (VDIsWindowsNT()) {
-		MENUITEMINFOW mmiW;
+	MENUITEMINFOW mmiW;
 
-		mmiW.cbSize		= MENUITEMINFO_SIZE_VERSION_400W;
-		mmiW.fMask		= MIIM_TYPE;
-		mmiW.fType		= MFT_STRING;
-		mmiW.dwTypeData	= (LPWSTR)text;
+	mmiW.cbSize		= MENUITEMINFO_SIZE_VERSION_400W;
+	mmiW.fMask		= MIIM_TYPE;
+	mmiW.fType		= MFT_STRING;
+	mmiW.dwTypeData	= (LPWSTR)text;
 
-		SetMenuItemInfoW(hmenu, cmd, FALSE, &mmiW);
-	} else {
-		MENUITEMINFOA mmiA;
-		VDStringA textA(VDTextWToA(text));
-
-		mmiA.cbSize		= MENUITEMINFO_SIZE_VERSION_400A;
-		mmiA.fMask		= MIIM_TYPE;
-		mmiA.fType		= MFT_STRING;
-		mmiA.dwTypeData	= (LPSTR)textA.c_str();
-
-		SetMenuItemInfoA(hmenu, cmd, FALSE, &mmiA);
-	}
+	SetMenuItemInfoW(hmenu, cmd, FALSE, &mmiW);
 }
 
 LRESULT	VDDualCallWindowProcW32(WNDPROC wp, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -387,49 +330,26 @@ HMODULE VDGetLocalModuleHandleW32() {
 
 bool VDDrawTextW32(HDC hdc, const wchar_t *s, int nCount, LPRECT lpRect, UINT uFormat) {
 	RECT r;
-	if (VDIsWindowsNT()) {
-		// If multiline and vcentered (not normally supported...)
-		if (!((uFormat ^ DT_VCENTER) & (DT_VCENTER|DT_SINGLELINE))) {
-			uFormat &= ~DT_VCENTER;
 
-			r = *lpRect;
-			if (!DrawTextW(hdc, s, nCount, &r, uFormat | DT_CALCRECT))
-				return false;
+	// If multiline and vcentered (not normally supported...)
+	if (!((uFormat ^ DT_VCENTER) & (DT_VCENTER|DT_SINGLELINE))) {
+		uFormat &= ~DT_VCENTER;
 
-			int dx = ((lpRect->right - lpRect->left) - (r.right - r.left)) >> 1;
-			int dy = ((lpRect->bottom - lpRect->top) - (r.bottom - r.top)) >> 1;
+		r = *lpRect;
+		if (!DrawTextW(hdc, s, nCount, &r, uFormat | DT_CALCRECT))
+			return false;
 
-			r.left += dx;
-			r.right += dx;
-			r.top += dy;
-			r.bottom += dy;
-			lpRect = &r;
-		}
+		int dx = ((lpRect->right - lpRect->left) - (r.right - r.left)) >> 1;
+		int dy = ((lpRect->bottom - lpRect->top) - (r.bottom - r.top)) >> 1;
 
-		return !!DrawTextW(hdc, s, nCount, lpRect, uFormat);
-	} else {
-		VDStringA strA(VDTextWToA(s, nCount));
-
-		// If multiline and vcentered (not normally supported...)
-		if (!((uFormat ^ DT_VCENTER) & (DT_VCENTER|DT_SINGLELINE))) {
-			uFormat &= ~DT_VCENTER;
-
-			r = *lpRect;
-			if (!DrawTextA(hdc, strA.data(), strA.size(), &r, uFormat | DT_CALCRECT))
-				return false;
-
-			int dx = ((lpRect->right - lpRect->left) - (r.right - r.left)) >> 1;
-			int dy = ((lpRect->bottom - lpRect->top) - (r.bottom - r.top)) >> 1;
-
-			r.left += dx;
-			r.right += dx;
-			r.top += dy;
-			r.bottom += dy;
-			lpRect = &r;
-		}
-
-		return !!DrawTextA(hdc, strA.data(), strA.size(), lpRect, uFormat);
+		r.left += dx;
+		r.right += dx;
+		r.top += dy;
+		r.bottom += dy;
+		lpRect = &r;
 	}
+
+	return !!DrawTextW(hdc, s, nCount, lpRect, uFormat);
 }
 
 bool VDPatchModuleImportTableW32(HMODULE hmod, const char *srcModule, const char *name, void *pCompareValue, void *pNewValue, void *volatile *ppOldValue) {
@@ -671,56 +591,30 @@ bool VDPatchModuleExportTableW32(HMODULE hmod, const char *name, void *pCompareV
 }
 
 HMODULE VDLoadSystemLibraryW32(const char *name) {
-	if (VDIsWindowsNT()) {
-		vdfastvector<wchar_t> pathW(MAX_PATH, 0);
+	vdfastvector<wchar_t> pathW(MAX_PATH, 0);
 
-		size_t len = GetSystemDirectoryW(pathW.data(), MAX_PATH);
+	size_t len = GetSystemDirectoryW(pathW.data(), MAX_PATH);
 
-		if (!len)
+	if (!len)
+		return NULL;
+
+	if (len > MAX_PATH) {
+		pathW.resize(len + 1, 0);
+
+		len = GetSystemDirectoryW(pathW.data(), len);
+		if (!len || len >= pathW.size())
 			return NULL;
-
-		if (len > MAX_PATH) {
-			pathW.resize(len + 1, 0);
-
-			len = GetSystemDirectoryW(pathW.data(), len);
-			if (!len || len >= pathW.size())
-				return NULL;
-		}
-
-		pathW.resize(len);
-
-		if (pathW.back() != '\\')
-			pathW.push_back('\\');
-
-		while(const char c = *name++)
-			pathW.push_back(c);
-
-		pathW.push_back(0);
-
-		return LoadLibraryW(pathW.data());
-	} else {
-		vdfastvector<char> pathA(MAX_PATH, 0);
-		size_t len = GetSystemDirectoryA(pathA.data(), MAX_PATH);
-
-		if (!len)
-			return NULL;
-
-		if (len > MAX_PATH) {
-			pathA.resize(len + 1, 0);
-
-			len = GetSystemDirectoryA(pathA.data(), len);
-			if (!len || len >= pathA.size())
-				return NULL;
-		}
-
-		pathA.resize(len);
-
-		if (pathA.back() != '\\')
-			pathA.push_back('\\');
-
-		pathA.insert(pathA.end(), name, name + strlen(name));
-		pathA.push_back(0);
-
-		return LoadLibraryA(pathA.data());
 	}
+
+	pathW.resize(len);
+
+	if (pathW.back() != '\\')
+		pathW.push_back('\\');
+
+	while(const char c = *name++)
+		pathW.push_back(c);
+
+	pathW.push_back(0);
+
+	return LoadLibraryW(pathW.data());
 }

@@ -41,7 +41,7 @@ public:
 	void RemoveItems(uint32 start, uint32 n);
 	void RemoveAllItems();
 
-	uint32 GetItemCount() const { return mItems.size(); }
+	uint32 GetItemCount() const { return (uint32)mItems.size(); }
 	ATUIMenuItem *GetItemByIndex(uint32 i) { return &mItems[i]; }
 	const ATUIMenuItem *GetItemByIndex(uint32 i) const { return &mItems[i]; }
 	ATUIMenuItem *GetItemById(uint32 id, bool recurse);
@@ -76,6 +76,8 @@ public:
 	int GetItemFromPoint(sint32 x, sint32 y) const;
 
 	void AutoSize();
+	sint32 GetIdealHeight() const { return mIdealSize.h; }
+
 	void Activate();
 	void Deactivate();
 	void MovePrev();

@@ -34,7 +34,6 @@
 #include "oshelper.h"
 #include "resource.h"
 
-ATDebuggerLogChannel g_ATLCDiskImage(false, false, "DISKIMAGE", "Disk image load details");
 ATDebuggerLogChannel g_ATLCDisk(false, false, "DISK", "Disk activity");
 ATDebuggerLogChannel g_ATLCDiskCmd(false, false, "DISKCMD", "Disk commands");
 ATDebuggerLogChannel g_ATLCDiskData(false, false, "DISKXFR", "Disk data transfer");
@@ -95,6 +94,7 @@ namespace {
 	static const int kCyclesPerSIOByte_810 = 949;
 	static const int kCyclesPerSIOByte_1050 = 982;
 	static const int kCyclesPerSIOByte_PokeyDiv0 = 140;
+	static const int kCyclesPerSIOByte_57600baud = 311;
 	static const int kCyclesPerSIOByte_USDoubler = 956;
 	static const int kCyclesPerSIOByte_USDoubler_Fast = 394;
 	static const int kCyclesPerSIOByte_Speedy1050 = 940;
@@ -110,6 +110,7 @@ namespace {
 	static const int kCyclesPerSIOBit_810 = 94;
 	static const int kCyclesPerSIOBit_1050 = 91;
 	static const int kCyclesPerSIOBit_PokeyDiv0 = 14;
+	static const int kCyclesPerSIOBit_57600baud = 31;
 	static const int kCyclesPerSIOBit_USDoubler = 95;
 	static const int kCyclesPerSIOBit_USDoubler_Fast = 34;
 	static const int kCyclesPerSIOBit_Speedy1050 = 93;
@@ -193,6 +194,46 @@ ATDiskEmulator::ATDiskEmulator()
 	, mTransferCyclesPerBitFirstByte(0)
 	, mTransferCompleteRotPos(0)
 	, mbTransferAdjustRotation(false)
+	, mFDCStatus(0)
+	, mActiveCommand(0)
+	, mbActiveCommandHighSpeed(false)
+	, mActiveCommandState(0)
+	, mActiveCommandPhysSector(0)
+	, mPhantomSectorCounter(0)
+	, mRotationalCounter(0)
+	, mRotations(0)
+	, mRotationalPosition(0)
+	, mCurrentTrack(0)
+	, mSectorsPerTrack(0)
+	, mTrackCount(0)
+	, mSideCount(0)
+	, mbMFM(false)
+	, mbWriteEnabled(false)
+	, mbWriteHighSpeed(false)
+	, mbWriteHighSpeedFirstByte(false)
+	, mbAutoFlush(false)
+	, mbHasDiskSource(false)
+	, mbErrorIndicatorPhase(false)
+	, mbAccessed(false)
+	, mbWriteMode(false)
+	, mbCommandMode(false)
+	, mbCommandValid(false)
+	, mbCommandFrameHighSpeed(false)
+	, mbEnabled(false)
+	, mbBurstTransfersEnabled(false)
+	, mbDriveSoundsEnabled(false)
+	, mbAccurateSectorTiming(false)
+	, mbAccurateSectorPrediction(false)
+	, mbLastOpError(false)
+	, mBootSectorCount(0)
+	, mTotalSectorCount(0)
+	, mSectorSize(0)
+	, mSectorBreakpoint(0)
+	, mLastSector(0)
+	, mRotationSoundId(0)
+	, mFormatSectorSize(0)
+	, mFormatSectorCount(0)
+	, mFormatBootSectorCount(0)
 	, mEmuMode(kATDiskEmulationMode_Generic)
 	, mCyclesPerSIOByte(1)
 	, mCyclesPerSIOBit(1)
@@ -207,6 +248,8 @@ ATDiskEmulator::ATDiskEmulator()
 	, mCyclesForHeadSettle(1)
 	, mbSeekHalfTracks(false)
 {
+	memset(mPERCOM, 0, sizeof mPERCOM);
+
 	Reset();
 
 	static bool loaded = false;
@@ -249,6 +292,18 @@ void ATDiskEmulator::Init(int unit, IATDiskActivity *act, ATScheduler *sched, AT
 	mRotationSoundId = 0;
 
 	memcpy(mPERCOM, kDefaultPERCOM, 12);
+}
+
+void ATDiskEmulator::Rename(int unit) {
+	if (mUnit == unit)
+		return;
+
+	if (mpActivity) {
+		mpActivity->OnDiskActivity(mUnit, false, 0);
+		mpActivity->OnDiskMotorChange(mUnit, false);
+	}
+
+	mUnit = unit;
 }
 
 void ATDiskEmulator::SetDriveSoundsEnabled(bool enabled) {
@@ -305,10 +360,14 @@ void ATDiskEmulator::Flush() {
 }
 
 void ATDiskEmulator::Reset() {
-	mpScheduler->UnsetEvent(mpTransferEvent);
-	mpScheduler->UnsetEvent(mpOperationEvent);
+	if (mpScheduler)
+		mpScheduler->UnsetEvent(mpTransferEvent);
 
-	mpSlowScheduler->UnsetEvent(mpMotorOffEvent);
+	if (mpScheduler)
+		mpScheduler->UnsetEvent(mpOperationEvent);
+
+	if (mpSlowScheduler)
+		mpSlowScheduler->UnsetEvent(mpMotorOffEvent);
 
 	if (mpAudioSyncMixer) {
 		if (mRotationSoundId) {
@@ -433,11 +492,11 @@ void ATDiskEmulator::UpdateDisk() {
 		throw MyError("The current disk image cannot be updated.");
 }
 
-void ATDiskEmulator::SaveDisk(const wchar_t *s) {
+void ATDiskEmulator::SaveDisk(const wchar_t *s, ATDiskImageFormat format) {
 	if (mpDiskImage->IsDynamic())
 		throw MyError("The current disk image is dynamic and cannot be saved.");
 
-	mpDiskImage->SaveATR(s);
+	mpDiskImage->Save(s, format);
 
 	mPath = s;
 	mbHasDiskSource = true;
@@ -458,7 +517,7 @@ void ATDiskEmulator::FormatDisk(uint32 sectorCount, uint32 bootSectorCount, uint
 	mpDiskImage = ATCreateDiskImage(sectorCount, bootSectorCount, sectorSize);
 
 	if (mbHasDiskSource)
-		mpDiskImage->SetPathATR(mPath.c_str());
+		mpDiskImage->SetPath(mPath.c_str());
 
 	InitSectorInfoArrays();
 	ComputeGeometry();
@@ -500,6 +559,21 @@ namespace {
 	}
 }
 
+VDStringW ATDiskEmulator::GetMountedImageLabel() const {
+	if (!mpDiskImage)
+		return VDStringW(L"(No disk)");
+
+	VDStringW label = VDFileSplitPathRight(mPath);
+
+	if (mPath.empty())
+		label = L"New disk";
+
+	if (mpDiskImage->IsDirty())
+		label += L" (modified)";
+
+	return label;
+}
+
 uint32 ATDiskEmulator::GetSectorCount() const {
 	return mTotalSectorCount;
 }
@@ -521,23 +595,25 @@ uint32 ATDiskEmulator::GetSectorPhantomCount(uint16 sector) const {
 	return vsi.mNumPhysSectors;
 }
 
-float ATDiskEmulator::GetSectorTiming(uint16 sector, int phantomIdx) const {
+bool ATDiskEmulator::GetSectorInfo(uint16 sector, int phantomIdx, SectorInfo& info) const {
 	if (!mpDiskImage)
-		return -1;
+		return false;
 
 	if (!sector || sector > mpDiskImage->GetVirtualSectorCount())
-		return -1;
+		return false;
 
 	ATDiskVirtualSectorInfo vsi;
 	mpDiskImage->GetVirtualSectorInfo(sector - 1, vsi);
 
 	if (phantomIdx < 0 || (uint32)phantomIdx >= vsi.mNumPhysSectors)
-		return -1;
+		return false;
 
 	ATDiskPhysicalSectorInfo psi;
 	mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector + phantomIdx, psi);
 
-	return psi.mRotPos;
+	info.mRotPos = psi.mRotPos;
+	info.mFDCStatus = psi.mFDCStatus;
+	return true;
 }
 
 uint8 ATDiskEmulator::ReadSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem) {
@@ -1366,7 +1442,8 @@ void ATDiskEmulator::ProcessCommandPacket() {
 						, mSendPacket[mTransferLength - 1]
 						, (float)mRotations + (float)mRotationalCounter / (float)mCyclesPerDiskRotation
 						, psi.mRotPos
-						, !(mFDCStatus & 0x04) ? " (w/long sector)"
+						,  psi.mWeakDataOffset >= 0 ? " (w/weak bits)"
+							: !(mFDCStatus & 0x04) ? " (w/long sector)"
 							: !(mFDCStatus & 0x08) ? " (w/CRC error)"
 							: !(mFDCStatus & 0x10) ? " (w/missing sector)"
 							: !(mFDCStatus & 0x20) ? " (w/deleted sector)"
@@ -1860,7 +1937,7 @@ void ATDiskEmulator::PokeyEndCommand() {
 }
 
 void ATDiskEmulator::PokeySerInReady() {
-	if (!mbEnabled)
+	if (!mbEnabled || !mbBurstTransfersEnabled)
 		return;
 
 	if (mbWriteMode && mTransferOffset > 2 && mpTransferEvent && mpScheduler->GetTicksToEvent(mpTransferEvent) > 50) {
@@ -1928,6 +2005,24 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 			mCyclesPerSIOBit = kCyclesPerSIOBit_810;
 			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_810;
 			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_810;
+			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
+			mCyclesPerTrackStep = kCyclesPerTrackStep_810;
+			mCyclesForHeadSettle = kCyclesForHeadSettle_810;
+			mbSeekHalfTracks = false;
+			break;
+
+		case kATDiskEmulationMode_Generic57600:
+			mbSupportedCmdHighSpeed = true;
+			mbSupportedCmdFrameHighSpeed = true;
+			mbSupportedCmdPERCOM = true;
+			mbSupportedCmdFormatSkewed = true;
+			mbSupportedCmdGetHighSpeedIndex = true;
+			mHighSpeedIndex = 8;
+			highSpeedCmdFrameDivisor = 8;
+			mCyclesPerSIOByte = kCyclesPerSIOByte_810;
+			mCyclesPerSIOBit = kCyclesPerSIOBit_810;
+			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_57600baud;
+			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_57600baud;
 			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
 			mCyclesPerTrackStep = kCyclesPerTrackStep_810;
 			mCyclesForHeadSettle = kCyclesForHeadSettle_810;
@@ -2099,16 +2194,16 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 	mCyclesToCompleteFast = mCyclesToFDCCommand + kCyclesCompleteDelay_Fast;
 	mCyclesToCompleteAccurate = mCyclesToFDCCommand + kCyclesCompleteDelay_Accurate;
 
-	mHighSpeedDataFrameRateLo = mCyclesPerSIOBitHighSpeed - mCyclesPerSIOBitHighSpeed / 20;
-	mHighSpeedDataFrameRateHi = mCyclesPerSIOBitHighSpeed + mCyclesPerSIOBitHighSpeed / 20;
+	mHighSpeedDataFrameRateLo = mCyclesPerSIOBitHighSpeed - (mCyclesPerSIOBitHighSpeed + 19) / 20;
+	mHighSpeedDataFrameRateHi = mCyclesPerSIOBitHighSpeed + (mCyclesPerSIOBitHighSpeed + 19) / 20;
 
 	mHighSpeedCmdFrameRateLo = 0;
 	mHighSpeedCmdFrameRateHi = 0;
 
 	if (mbSupportedCmdFrameHighSpeed) {
 		int rate = (highSpeedCmdFrameDivisor + 7) * 2;
-		mHighSpeedCmdFrameRateLo = rate - rate / 20;
-		mHighSpeedCmdFrameRateHi = rate + rate / 20;
+		mHighSpeedCmdFrameRateLo = rate - (rate + 19) / 20;
+		mHighSpeedCmdFrameRateHi = rate + (rate + 19) / 20;
 	}
 }
 

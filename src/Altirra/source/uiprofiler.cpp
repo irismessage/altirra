@@ -131,6 +131,7 @@ void ATUIProfilerWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 		0x808080,
 		0x4060E0,
 		0xE02010,
+		0x20E010,
 	};
 
 	VDASSERTCT(vdcountof(kColors) == kATUIProfileRegionCount);
@@ -156,7 +157,8 @@ void ATUIProfilerWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 		static const wchar_t *const kNames[]={
 			L"Idle",
 			L"Simulation",
-			L"Native messages"
+			L"Native messages",
+			L"Display tick",
 		};
 
 		VDASSERTCT(vdcountof(kNames) == kATUIProfileRegionCount);

@@ -11,10 +11,30 @@
 ;	Y:A		Total bytes required
 ;	X		ZP offset of first pointer to offset
 ;	A0		Insertion point
+;
+; Errors:
+;	Error 2 if out of memory (yes, this may invoke TRAP!)
+;
 .proc expandTable
 		;##TRACE "Expanding table: $%04x bytes required, table offset $%02x (%y:%y) [$%04x:$%04x], insert pt=$%04x" y*256+a x x-2 x dw(x-2) dw(x) dw(a0)
 		sta		a2
 		sty		a2+1
+
+		;Check how much space is available and throw error 2 if we're
+		;out. Note that we're one byte off here -- this is because
+		;FRE(0) has this bug, and we don't want to have that value go
+		;negative.
+		lda		memtop
+		sbc		memtop2
+		tay
+		lda		memtop+1
+		sbc		memtop2+1
+		cmp		a2+1
+		bcc		out_of_memory
+		bne		memory_ok
+		cpy		a2
+		bcc		out_of_memory
+memory_ok:
 		txa
 		pha
 
@@ -26,23 +46,26 @@
 		;top of dst = memtop2 + N
 		clc
 		lda		memtop2
-		sta		a0
-		adc		a2
 		sta		a1
+		adc		a2
+		sta		a0
 		lda		memtop2+1
-		sta		a0+1
-		adc		a2+1
 		sta		a1+1
+		adc		a2+1
+		sta		a0+1
 				
 		jsr		copyDescending
 		
 		jmp		contractTable.adjust_table_pointers
+
+out_of_memory:
+		jmp		errorNoMemory
 .endp
 
 ;==========================================================================
 ; Input:
-;	A0	end of source range
-;	A1	end of destination range
+;	A1	end of source range
+;	A0	end of destination range
 ;	A3	bytes to copy
 ;
 ; Modified:
@@ -63,8 +86,8 @@ loop2:
 		dec		a1+1
 loop:
 		dey
-		lda		(a0),y
-		sta		(a1),y
+		lda		(a1),y
+		sta		(a0),y
 		tya
 		bne		loop
 		dex
@@ -76,8 +99,8 @@ leftovers:
 		dec		a1+1
 leftover_loop:
 		dey
-		lda		(a0),y
-		sta		(a1),y
+		lda		(a1),y
+		sta		(a0),y
 		dex
 		bne		leftover_loop
 leftovers_done:
@@ -110,18 +133,36 @@ leftovers_done:
 adjust_table_pointers:
 		pla
 		tax
+
+.def :MemAdjustTablePtrs = *
+
+		ldy		#a2
 offset_loop:
-		lda		0,x
-		add		a2
-		sta		0,x
-		lda		1,x
-		adc		a2+1
-		sta		1,x
+		jsr		IntAdd
 		inx
 		inx
 		cpx		#memtop2+2
 		bne		offset_loop
+
+.def :MemAdjustAPPMHI = *			;NOTE: Must not modify X or CLR/NEW will break.
+		;update OS APPMHI from our memory top
+		lda		memtop2
+		sta		appmhi
+		lda		memtop2+1
+		sta		appmhi+1
+
 nothing_to_do:
+		rts
+.endp
+
+;==========================================================================
+.proc IntAdd
+		lda		0,x
+		add		0,y
+		sta		0,x
+		lda		1,x
+		adc		1,y
+		sta		1,x
 		rts
 .endp
 

@@ -45,6 +45,7 @@ public:
 	virtual bool AnticIsNextCPUCycleWrite() = 0;
 	virtual uint8 AnticGetCPUHeldCycleValue() = 0;
 	virtual void AnticForceNextCPUCycleSlow() = 0;
+	virtual void AnticOnVBlank() =0;
 
 	uint8 *mpAnticBusData;
 
@@ -64,7 +65,7 @@ struct ATAnticRegisterState {
 	uint8	mNMIEN;
 };
 
-class ATAnticEmulator : public IATSchedulerCallback {
+class ATAnticEmulator final : public IATSchedulerCallback {
 public:
 	ATAnticEmulator();
 	~ATAnticEmulator();
@@ -199,6 +200,8 @@ protected:
 	bool	mbInBuggedVBlank;
 	bool	mbPhantomPMDMA;
 	bool	mbPhantomPMDMAActive;
+	bool	mbPhantomPlayerDMA;
+	bool	mbMissileDMADisabledLate;
 	uint8	mPendingNMIs;
 	uint8	mEarlyNMIEN;
 	uint8	mEarlyNMIEN2;

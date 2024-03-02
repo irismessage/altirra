@@ -753,6 +753,26 @@ void ATCPUEmulator::AssertNMI() {
 	}
 }
 
+void ATCPUEmulator::PeriodicCleanup() {
+	// check if we need to bump the interrupt assert times forward to avoid wrapping
+	const uint32 t = mpCallbacks->CPUGetUnhaltedCycle();
+
+	if (((t - mNMIAssertTime) >> 30) == 2)
+		mNMIAssertTime += 0x40000000;
+
+	if (((t - mNMIIgnoreUnhaltedCycle) >> 30) == 2)
+		mNMIIgnoreUnhaltedCycle += 0x40000000;
+
+	if (((t - mIRQAssertTime) >> 30) == 2)
+		mIRQAssertTime += 0x40000000;
+	
+	if (((t - mIRQAcknowledgeTime) >> 30) == 2)
+		mIRQAcknowledgeTime += 0x40000000;
+
+	if (((t - mIFlagSetCycle) >> 30) == 2)
+		mIFlagSetCycle += 0x40000000;
+}
+
 int ATCPUEmulator::Advance() {
 	if (mCPUMode == kATCPUMode_65C816) {
 		if (mSubCycles > 1)
@@ -1185,6 +1205,10 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 	*mpDstState++ = kStatePushPCH;
 	*mpDstState++ = kStatePushPCL;
 	*mpDstState++ = kStatePtoD_B0;
+
+	if (mCPUMode == kATCPUMode_6502 && mbAllowBlockedNMIs)
+		*mpDstState++ = kStateCheckNMIBlocked;
+
 	*mpDstState++ = kStatePush;
 
 	if (mpVerifier)
@@ -1193,9 +1217,9 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 	*mpDstState++ = kStateSEI;
 
 	if (mCPUMode == kATCPUMode_6502 && mbAllowBlockedNMIs)
-		*mpDstState++ = kStateIRQVecToPCBlockNMIs;
+		*mpDstState++ = kStateNMIOrIRQVecToPCBlockable;
 	else
-		*mpDstState++ = kStateIRQVecToPC;
+		*mpDstState++ = kStateNMIOrIRQVecToPC;
 
 	*mpDstState++ = kStateReadAddrL;
 	*mpDstState++ = kStateDelayInterrupts;

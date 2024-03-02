@@ -34,10 +34,7 @@ void VDFileWatcher::Init(const wchar_t *file, IVDFileWatcherCallback *callback) 
 	if (basePath.empty())
 		basePath = L".";
 
-	if (VDIsWindowsNT())
-		mChangeHandle = FindFirstChangeNotificationW(basePath.c_str(), FALSE, FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE);
-	else
-		mChangeHandle = FindFirstChangeNotificationA(VDTextWToA(basePath).c_str(), FALSE, FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE);
+	mChangeHandle = FindFirstChangeNotificationW(basePath.c_str(), FALSE, FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE);
 
 	if (mChangeHandle == INVALID_HANDLE_VALUE)
 		throw MyError("Unable to monitor file: %ls", file);
@@ -71,10 +68,8 @@ void VDFileWatcher::InitDir(const wchar_t *path, bool subdirs, IVDFileWatcherCal
 		| FILE_NOTIFY_CHANGE_LAST_WRITE
 		| FILE_NOTIFY_CHANGE_FILE_NAME
 		| FILE_NOTIFY_CHANGE_CREATION;
-	if (VDIsWindowsNT())
-		mChangeHandle = FindFirstChangeNotificationW(path, subdirs, flags);
-	else
-		mChangeHandle = FindFirstChangeNotificationA(VDTextWToA(path).c_str(), subdirs, flags);
+
+	mChangeHandle = FindFirstChangeNotificationW(path, subdirs, flags);
 
 	if (mChangeHandle == INVALID_HANDLE_VALUE)
 		throw MyError("Unable to monitor path: %ls", path);

@@ -19,16 +19,34 @@
 #define f_AT_MEMORYMANAGER_H
 
 #include <vd2/system/linearalloc.h>
+#include <vd2/system/memory.h>
 #include <vd2/system/vdstl.h>
 #include "cpumemory.h"
 
+// Read/write handlers. The address is the 16-bit or 24-bit global address
+// of the access. Read routines return 0-255 if handled or -1 if not handled;
+// write routines return true if handled and false otherwise.
+//
+// A read/write handler MUST handle an access if it modifies memory layers.
+// This is because the handler chain is undefined after the change.
+//
+// The read handler type is used for both regular reads and debug reads.
+// Debug reads are reads with all side effects skipped; it is used by the
+// the debugger and the UI to avoid changing the emulation state.
+//
 typedef sint32 (*ATMemoryReadHandler)(void *thisptr, uint32 addr);
 typedef bool (*ATMemoryWriteHandler)(void *thisptr, uint32 addr, uint8 value);
 
 struct ATMemoryHandlerTable {
+	// Set if a CPU or ANTIC read can go unhandled by the read handler or
+	// debug read handler, or a CPU write by the write handler, for the given
+	// region. This is an optimization to avoid populating the rest of the
+	// handler chain for that page and access type. It MUST be clear if
+	// the handler can pass.
 	bool mbPassReads;
 	bool mbPassAnticReads;
 	bool mbPassWrites;
+
 	void *mpThis;
 	ATMemoryReadHandler mpDebugReadHandler;
 	ATMemoryReadHandler mpReadHandler;
@@ -58,10 +76,12 @@ enum ATMemoryPriority {
 	kATMemoryPri_AccessBP	= 64
 };
 
-class ATMemoryManager : public ATCPUEmulatorMemory {
-	ATMemoryManager(const ATMemoryManager&);
-	ATMemoryManager& operator=(const ATMemoryManager&);
+class ATMemoryManager final : public VDAlignedObject<32>, public ATCPUEmulatorMemory {
+	ATMemoryManager(const ATMemoryManager&) = delete;
+	ATMemoryManager& operator=(const ATMemoryManager&) = delete;
 public:
+	// Returned by the accelerated read/write routines if a slow access is
+	// prohibited but required by the accessed memory layer.
 	enum { kChipReadNeedsDelay = -256 };
 
 	ATMemoryManager();
@@ -94,6 +114,11 @@ public:
 	// (accelerated 65C816 mode only). The default is chip.
 	void SetLayerFastBus(ATMemoryLayer *layer, bool fast);
 
+	void ClearLayerMaskRange(ATMemoryLayer *layer);
+	void SetLayerMaskRange(ATMemoryLayer *layer, uint32 pageStart, uint32 pageCount);
+
+	uint8 ReadFloatingDataBus() const;
+
 	uint8 AnticReadByte(uint32 address);
 	uint8 DebugAnticReadByte(uint16 address);
 	void DebugAnticReadMemory(void *dst, uint16 address, uint32 len);
@@ -118,6 +143,8 @@ protected:
 		uint32 mPageCount;
 		ATMemoryHandlerTable mHandlers;
 		const char *mpName;
+		uint32 mMaskRangeStart;
+		uint32 mMaskRangeEnd;
 	};
 
 	struct MemoryLayerPred {

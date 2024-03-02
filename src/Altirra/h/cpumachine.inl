@@ -19,7 +19,6 @@
 #define AT_CPU_READ_BYTE_ADDR16(addr) ((mpMemory->mBusValue) = (mpMemory->ReadByteAddr16((addr))))
 #define AT_CPU_DUMMY_READ_BYTE(addr) ((mpMemory->mBusValue) = (mpMemory->ReadByte((addr))))
 #define AT_CPU_READ_BYTE_HL(addrhi, addrlo) ((mpMemory->mBusValue) = (mpMemory->ReadByte((((uint32)addrhi) << 8) + (addrlo))))
-#define AT_CPU_DUMMY_EXT_READ_BYTE(addr, bank) ((mpMemory->mBusValue) = (mpMemory->ExtReadByte((addr), (bank))))
 #define AT_CPU_WRITE_BYTE(addr, value) (mpMemory->WriteByte((addr), (mpMemory->mBusValue) = ((value))))
 #define AT_CPU_WRITE_BYTE_HL(addrhi, addrlo, value) (mpMemory->WriteByte(((uint32)(addrhi) << 8) + (addrlo), (mpMemory->mBusValue) = ((value))))
 
@@ -40,6 +39,19 @@
 #endif
 
 #ifdef AT_CPU_MACHINE_65C816_HISPEED
+	// Dummy reads have to be routed too, as the ANTIC emulation gets pretty unhappy and
+	// misdecodes bytes if the 65C816 manages to somehow do a memory cycle while ANTIC
+	// has the bus. I imagine the real ANTIC chip would be unhappy, too.
+	#define AT_CPU_DUMMY_EXT_READ_BYTE(addr, bank)	\
+		busResult = mpMemory->ExtReadByteAccel((addr), (bank), mSubCycles == mSubCyclesLeft);	\
+		if (busResult < 0) { \
+			if (busResult == -256) { \
+				--mpNextState;\
+				goto wait_slow_cycle;	\
+			}	\
+			mSubCyclesLeft = 1;	\
+		}
+
 	#define AT_CPU_EXT_READ_BYTE(addr, bank)	\
 		busResult = mpMemory->ExtReadByteAccel((addr), (bank), mSubCycles == mSubCyclesLeft);	\
 		if (busResult < 0) { \
@@ -77,6 +89,7 @@
 
 	#define END_SUB_CYCLE() goto end_sub_cycle;
 #else
+	#define AT_CPU_DUMMY_EXT_READ_BYTE(addr, bank) ((mpMemory->mBusValue) = (mpMemory->ExtReadByte((addr), (bank))))
 	#define AT_CPU_EXT_READ_BYTE(addr, bank) (void)(readData = (mpMemory->mBusValue) = (mpMemory->ExtReadByte((addr), (bank))))
 	#define AT_CPU_EXT_READ_BYTE_2(addr, bank, slowFlag) AT_CPU_EXT_READ_BYTE(addr, bank)
 	#define AT_CPU_EXT_WRITE_BYTE(addr, bank, value) (mpMemory->ExtWriteByte((addr), (bank), (mpMemory->mBusValue) = ((value))))
@@ -1621,25 +1634,31 @@ for(;;) {
 				mAddr2 = (mAddr & 0xff00) + ((mAddr + mX) & 0x00ff);
 
 				const uint32 addr32 = (uint32)mAddr + mX + ((uint32)mXH << 8);
-				mAddr = (uint16)addr32;
-				mAddrBank = (uint8)(mAddrBank + (addr32 >> 16));
+				const uint16 newAddr = (uint16)addr32;
+				const uint8 newAddrBank = (uint8)(mAddrBank + (addr32 >> 16));
 
-				if (mAddr != mAddr2) {
+				if (newAddr != mAddr2) {
 					AT_CPU_DUMMY_EXT_READ_BYTE(mAddr2, mAddrBank);
+
+					mAddr = newAddr;
+					mAddrBank = newAddrBank;
 					END_SUB_CYCLE();
 				}
+
+				mAddr = newAddr;
+				mAddrBank = newAddrBank;
 			}
 			break;
 
 		case kState816ReadAddrAbsXAlways:
 			{
 				mAddr2 = (mAddr & 0xff00) + ((mAddr + mX) & 0x00ff);
+				AT_CPU_DUMMY_EXT_READ_BYTE(mAddr2, mAddrBank);
 
 				const uint32 addr32 = (uint32)mAddr + mX + ((uint32)mXH << 8);
 				mAddr = (uint16)addr32;
 				mAddrBank = (uint8)(mAddrBank + (addr32 >> 16));
 
-				AT_CPU_DUMMY_EXT_READ_BYTE(mAddr2, mAddrBank);
 				END_SUB_CYCLE();
 			}
 
@@ -1648,25 +1667,31 @@ for(;;) {
 				mAddr2 = (mAddr & 0xff00) + ((mAddr + mY) & 0x00ff);
 
 				const uint32 addr32 = (uint32)mAddr + mY + ((uint32)mYH << 8);
-				mAddr = (uint16)addr32;
-				mAddrBank = (uint8)(mAddrBank + (addr32 >> 16));
+				const uint16 newAddr = (uint16)addr32;
+				const uint8 newAddrBank = (uint8)(mAddrBank + (addr32 >> 16));
 
-				if (mAddr != mAddr2) {
+				if (newAddr != mAddr2) {
 					AT_CPU_DUMMY_EXT_READ_BYTE(mAddr2, mAddrBank);
+
+					mAddr = newAddr;
+					mAddrBank = newAddrBank;
 					END_SUB_CYCLE();
 				}
+
+				mAddr = newAddr;
+				mAddrBank = newAddrBank;
 			}
 			break;
 
 		case kState816ReadAddrAbsYAlways:
 			{
 				mAddr2 = (mAddr & 0xff00) + ((mAddr + mY) & 0x00ff);
+				AT_CPU_DUMMY_EXT_READ_BYTE(mAddr2, mAddrBank);
 
 				const uint32 addr32 = (uint32)mAddr + mY + ((uint32)mYH << 8);
 				mAddr = (uint16)addr32;
 				mAddrBank = (uint8)(mAddrBank + (addr32 >> 16));
 
-				AT_CPU_DUMMY_EXT_READ_BYTE(mAddr2, mAddrBank);
 				END_SUB_CYCLE();
 			}
 

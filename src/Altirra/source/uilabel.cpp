@@ -56,6 +56,9 @@ void ATUILabel::SetTextColor(uint32 c) {
 	if (mTextColor != c) {
 		mTextColor = c;
 
+		for(auto& span : mSpans)
+			span.mColor = mTextColor;
+
 		Invalidate();
 	}
 }
@@ -316,6 +319,9 @@ void ATUILabel::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 
 		rdr.PolyLine(pts, 4);
 	}
+
+	if (mLines.empty())
+		return;
 
 	VDDisplayTextRenderer& tr = *rdr.GetTextRenderer();
 	tr.SetFont(mpFont);

@@ -90,10 +90,17 @@ void ATUIMessageBox::OnCreate() {
 	mpButtonCancel->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUIMessageBox::OnCancelPressed);
 
 	OnSize();
+
+	mpButtonOK->Focus();
+
+	BindAction(kATUIVK_UIAccept, ATUIButton::kActionActivate, 0, mpButtonOK->GetInstanceId());
+	BindAction(kATUIVK_UIReject, ATUIButton::kActionActivate, 0, mpButtonCancel->GetInstanceId());
 }
 
 void ATUIMessageBox::OnDestroy() {
 	vdsaferelease <<= mpButtonCancel, mpButtonOK, mpMessageLabel, mpCaptionFont;
+
+	UnbindAllActions();
 
 	ATUIContainer::OnDestroy();
 }
@@ -113,6 +120,13 @@ void ATUIMessageBox::OnSize() {
 		mpButtonOK->SetPosition(vdpoint32((w - 75) >> 1, h - (2+24)));
 		mpButtonCancel->SetVisible(false);
 	}
+}
+
+void ATUIMessageBox::OnSetFocus() {
+	if (mpButtonCancel)
+		mpButtonCancel->Focus();
+	else if (mpButtonOK)
+		mpButtonOK->Focus();
 }
 
 void ATUIMessageBox::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {

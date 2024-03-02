@@ -19,8 +19,10 @@ public:
 
 	void SetStockImage(sint32 id);
 	void SetText(const wchar_t *s);
+	void SetTextColor(uint32 color);
 	void SetDepressed(bool depressed);
 	void SetToggleMode(bool enabled);
+	void SetFrameEnabled(bool enabled);
 
 	ATCallbackHandler1<void, ATUIButton *>& OnPressedEvent() { return mPressedEvent; }
 	ATCallbackHandler1<void, ATUIButton *>& OnActivatedEvent() { return mActivatedEvent; }
@@ -48,6 +50,8 @@ protected:
 	bool mbHeld;
 	bool mbToggleMode;
 	bool mbToggleNextState;
+	bool mbFrameEnabled;
+	uint32 mTextColor;
 	sint32 mTextX;
 	sint32 mTextY;
 	VDStringW mText;

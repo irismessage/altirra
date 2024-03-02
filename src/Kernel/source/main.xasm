@@ -22,7 +22,7 @@
 	_KERNEL_PBI_SUPPORT = 1
 	_KERNEL_USE_BOOT_SCREEN = 1
 	.macro _KERNELSTR_BIOS_NAME_INTERNAL
-		dta		d"LLE"
+		dta		d" for XL/XE/XEGS"
 	.endm
 .else
 	_KERNEL_PBI_SUPPORT = 0

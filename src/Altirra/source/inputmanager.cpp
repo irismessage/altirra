@@ -17,6 +17,7 @@
 
 #include "stdafx.h"
 #include <vd2/system/bitmath.h>
+#include <vd2/system/hash.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/strutil.h>
 #include <vd2/Dita/accel.h>
@@ -42,6 +43,7 @@ namespace {
 
 ATInputMap::ATInputMap()
 	: mSpecificInputUnit(-1)
+	, mbQuickMap(false)
 {
 }
 
@@ -437,6 +439,10 @@ void ATInputManager::UnregisterInputUnit(int unit) {
 	mpUnitNameSources[unit] = NULL;
 }
 
+void ATInputManager::SetRestrictedMode(bool restricted) {
+	mbRestrictedMode = restricted;
+}
+
 bool ATInputManager::IsInputMapped(int unit, uint32 inputCode) const {
 	return mMappings.find(inputCode) != mMappings.end()
 		|| mMappings.find(inputCode | kATInputCode_SpecificUnit | (unit << kATInputCode_UnitShift)) != mMappings.end();
@@ -472,6 +478,34 @@ void ATInputManager::OnButtonUp(int unit, int id) {
 
 		if (!it->second) 
 			ActivateMappings(id, false);
+	}
+}
+
+void ATInputManager::ReleaseButtons(uint32 idmin, uint32 idmax) {
+	vdfastvector<uint32> ids;
+
+	mButtons.get_keys(ids);
+
+	for(uint32 id : ids) {
+		if (id < idmin || id > idmax)
+			continue;
+
+		auto it = mButtons.find(id);
+
+		if (it != mButtons.end()) {
+			uint32 unitMask = it->second;
+
+			while(unitMask) {
+				uint32 unit = VDFindLowestSetBit(unitMask);
+				unitMask &= ~(1 << unit);
+
+				ActivateMappings(id | kATInputCode_SpecificUnit | (unit << kATInputCode_UnitShift), false);
+			}
+
+			ActivateMappings(id, false);
+
+			it->second = 0;
+		}
 	}
 }
 
@@ -970,6 +1004,41 @@ void ATInputManager::ActivateInputMap(ATInputMap *imap, bool enable) {
 	}
 }
 
+ATInputMap *ATInputManager::CycleQuickMaps() {
+	bool found = false;
+	ATInputMap *first = nullptr;
+	ATInputMap *active = nullptr;
+
+	for(auto& entry : mInputMaps) {
+		ATInputMap *imap = entry.first;
+
+		if (!imap->IsQuickMap())
+			continue;
+
+		if (!first)
+			first = imap;
+
+		if (found) {
+			if (!active) {
+				active = imap;
+				entry.second = true;
+			} else
+				entry.second = false;
+		} else if (entry.second) {
+			found = true;
+			entry.second = false;
+		}
+	}
+
+	if (!found) {
+		ActivateInputMap(first, true);
+		return first;
+	} else
+		RebuildMappings();
+
+	return active;
+}
+
 uint32 ATInputManager::GetPresetInputMapCount() const {
 	return mPresetMaps.size();
 }
@@ -993,6 +1062,15 @@ bool ATInputManager::Load(VDRegistryKey& key) {
 	if (!key.getBinary("Active maps", (char *)bitfield.data(), len))
 		return false;
 
+	vdfastvector<uint32> quickmaps;
+	int qmlen = key.getBinaryLength("Quick maps");
+	if (qmlen > 0 && !(qmlen & 3)) {
+		int qmcount = qmlen >> 2;
+
+		quickmaps.resize(qmcount, 0);
+		key.getBinary("Quick maps", (char *)quickmaps.data(), qmlen);
+	}
+
 	uint32 inputMaps = bitfield[0];
 
 	if (inputMaps >= 0x10000 || len < (int)((inputMaps + 31) >> 5))
@@ -1007,6 +1085,9 @@ bool ATInputManager::Load(VDRegistryKey& key) {
 		vdrefptr<ATInputMap> imap(new ATInputMap);
 
 		if (imap->Load(key, valName.c_str())) {
+			if (std::find(quickmaps.begin(), quickmaps.end(), VDHashString32(imap->GetName())) != quickmaps.end())
+				imap->SetQuickMap(true);
+
 			AddInputMap(imap);
 
 			if (bitfield[1 + (i >> 5)] & (1 << (i & 31)))
@@ -1035,6 +1116,7 @@ void ATInputManager::Save(VDRegistryKey& key) {
 
 	const uint32 n = sortedMaps.size();
 	vdfastvector<uint32> bitfield(1 + ((n + 31) >> 5), 0);
+	vdfastvector<uint32> quickmaps;
 
 	bitfield[0] = n;
 
@@ -1047,9 +1129,13 @@ void ATInputManager::Save(VDRegistryKey& key) {
 
 		valName.sprintf("Input map %u", i);
 		imap->Save(key, valName.c_str());
+
+		if (imap->IsQuickMap())
+			quickmaps.push_back(VDHashString32(imap->GetName()));
 	}
 
 	key.setBinary("Active maps", (const char *)bitfield.data(), bitfield.size() * 4);
+	key.setBinary("Quick maps", (const char *)quickmaps.data(), quickmaps.size() * 4);
 }
 
 void ATInputManager::RebuildMappings() {
@@ -1337,9 +1423,11 @@ void ATInputManager::ActivateMappings(uint32 id, bool state) {
 		const uint32 triggerIdx = mapping.mTriggerIdx;
 		const Trigger& trigger = mTriggers[triggerIdx];
 
+		const bool restricted = IsTriggerRestricted(trigger);
+
 		switch(trigger.mId & kATInputTriggerMode_Mask) {
 			case kATInputTriggerMode_Toggle:
-				if (!state)
+				if (!state || restricted)
 					break;
 
 				state = !mapping.mbTriggerActivated;
@@ -1348,7 +1436,7 @@ void ATInputManager::ActivateMappings(uint32 id, bool state) {
 			case kATInputTriggerMode_Default:
 			case kATInputTriggerMode_Inverted:
 			default:
-				SetTrigger(mapping, state);
+				SetTrigger(mapping, state && !restricted);
 				break;
 
 			case kATInputTriggerMode_ToggleAF:
@@ -1359,7 +1447,7 @@ void ATInputManager::ActivateMappings(uint32 id, bool state) {
 				// fall through
 
 			case kATInputTriggerMode_AutoFire:
-				if (state) {
+				if (state && !restricted) {
 					if (!mapping.mbMotionActive) {
 						mapping.mbMotionActive = true;
 						mapping.mAccel = 0;
@@ -1377,7 +1465,7 @@ void ATInputManager::ActivateMappings(uint32 id, bool state) {
 				break;
 
 			case kATInputTriggerMode_Relative:
-				if (state) {
+				if (state && !restricted) {
 					const int speedIndex = ((trigger.mId & kATInputTriggerSpeed_Mask) >> kATInputTriggerSpeed_Shift);
 					int speedVal = kSpeedScaleTable[speedIndex];
 
@@ -1410,6 +1498,8 @@ void ATInputManager::ActivateAnalogMappings(uint32 id, int ds, int dsdead) {
 		}
 
 		Trigger& trigger = mTriggers[mapping.mTriggerIdx];
+		if (IsTriggerRestricted(trigger))
+			continue;
 		
 		const uint32 id = trigger.mId & kATInputTrigger_Mask;
 
@@ -1455,6 +1545,9 @@ void ATInputManager::ActivateImpulseMappings(uint32 id, int ds) {
 
 		const uint32 triggerIdx = mapping.mTriggerIdx;
 		Trigger& trigger = mTriggers[triggerIdx];
+
+		if (IsTriggerRestricted(trigger))
+			continue;
 		
 		const uint32 id = trigger.mId & kATInputTrigger_Mask;
 
@@ -1560,6 +1653,7 @@ void ATInputManager::InitPresetMaps() {
 	imap->AddMapping(kATInputCode_KeyUp, 0, kATInputTrigger_Up);
 	imap->AddMapping(kATInputCode_KeyDown, 0, kATInputTrigger_Down);
 	imap->AddMapping(kATInputCode_KeyLControl, 0, kATInputTrigger_Button0);
+	imap->SetQuickMap(true);
 	mPresetMaps.push_back(imap);
 	imap.release();
 
@@ -1608,6 +1702,7 @@ void ATInputManager::InitPresetMaps() {
 	imap->AddMapping(kATInputCode_KeyUp, 0, kATInputTrigger_Up);
 	imap->AddMapping(kATInputCode_KeyDown, 0, kATInputTrigger_Down);
 	imap->AddMapping(kATInputCode_KeyLControl, 0, kATInputTrigger_Button0);
+	imap->SetQuickMap(true);
 	mPresetMaps.push_back(imap);
 	imap.release();
 
@@ -1788,4 +1883,11 @@ void ATInputManager::InitPresetMaps() {
 
 	mPresetMaps.push_back(imap);
 	imap.release();
+}
+
+bool ATInputManager::IsTriggerRestricted(const Trigger& trigger) const {
+	if (!mbRestrictedMode)
+		return false;
+
+	return (trigger.mId & 0xff00) != kATInputTrigger_UILeft;
 }

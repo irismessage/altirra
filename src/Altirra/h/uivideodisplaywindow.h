@@ -1,3 +1,20 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2014 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License
+//	along with this program; if not, write to the Free Software
+//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
 #ifndef f_AT_UIVIDEODISPLAY_H
 #define f_AT_UIVIDEODISPLAY_H
 
@@ -5,24 +22,28 @@
 #include "uicontainer.h"
 #include "callback.h"
 #include "simeventmanager.h"
+#include "devicemanager.h"
 
 class IATUIEnhancedTextEngine;
 class ATUILabel;
 class ATUIOnScreenKeyboard;
+class ATUISettingsWindow;
 class ATXEP80Emulator;
 class ATSimulatorEventManager;
+class IATDeviceVideoOutput;
 
-class ATUIVideoDisplayWindow : public ATUIContainer, public IATSimulatorCallback {
+class ATUIVideoDisplayWindow : public ATUIContainer, public IATSimulatorCallback, public IATDeviceChangeCallback {
 public:
 	enum {
 		kActionOpenOSK = kActionCustom,
-		kActionCloseOSK
+		kActionCloseOSK,
+		kActionOpenSidePanel
 	};
 
 	ATUIVideoDisplayWindow();
 	~ATUIVideoDisplayWindow();
 
-	bool Init(ATSimulatorEventManager& sem);
+	bool Init(ATSimulatorEventManager& sem, ATDeviceManager& devmgr);
 	void Shutdown();
 
 	void Copy();
@@ -34,21 +55,31 @@ public:
 	void OpenOSK();
 	void CloseOSK();
 
+	void OpenSidePanel();
+	void CloseSidePanel();
+
 	bool IsTextSelected() const { return !mDragPreviewSpans.empty(); }
+
+	vdrect32 GetOSKSafeArea() const;
 
 	void SetDisplayRect(const vdrect32& r);
 
 	void ClearXorRects();
 	void AddXorRect(int x1, int y1, int x2, int y2);
 
-	void SetXEP(ATXEP80Emulator *xep);
+	void SetXEP(IATDeviceVideoOutput *xep);
 	void SetEnhancedTextEngine(IATUIEnhancedTextEngine *p) { mpEnhTextEngine = p; }
 
-	ATCallbackHandler0<void>& OnAllowContextMenuEvent() { return mAllowContextMenuEvent; }
-	ATCallbackHandler1<void, const vdpoint32&>& OnDisplayContextMenuEvent() { return mDisplayContextMenuEvent; }
+	void SetOnAllowContextMenu(const vdfunction<void()>& fn) { mpOnAllowContextMenu = fn; }
+	void SetOnDisplayContextMenu(const vdfunction<void(const vdpoint32&)>& fn) { mpOnDisplayContextMenu = fn; }
+	void SetOnOSKChange(const vdfunction<void()>& fn) { mpOnOSKChange = fn; }
 
 public:
 	virtual void OnSimulatorEvent(ATSimulatorEvent ev);
+
+public:
+	virtual void OnDeviceAdded(uint32 iid, IATDevice *dev, void *iface) override;
+	virtual void OnDeviceRemoved(uint32 iid, IATDevice *dev, void *iface) override;
 
 protected:
 	virtual ATUITouchMode GetTouchModeAtPoint(const vdpoint32& pt) const;
@@ -66,6 +97,7 @@ protected:
 	virtual bool OnChar(const ATUICharEvent& event);
 
 	virtual void OnActionStart(uint32 id);
+	virtual void OnActionStop(uint32 id);
 
 	virtual void OnCreate();
 	virtual void OnDestroy();
@@ -74,9 +106,12 @@ protected:
 	virtual void OnSetFocus();
 	virtual void OnKillFocus();
 	virtual void OnCaptureLost();
+	
+	virtual void OnDeactivate() override;
 
 	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 
+protected:
 	bool ProcessKeyDown(const ATUIKeyEvent& event, bool enableKeyInput);
 	bool ProcessKeyUp(const ATUIKeyEvent& event, bool enableKeyInput);
 	void ProcessVirtKey(int vkey, uint8 keycode, bool repeat);
@@ -105,6 +140,12 @@ protected:
 	bool	mbDragActive;
 	int		mDragAnchorX;
 	int		mDragAnchorY;
+
+	bool	mbMouseHidden;
+	int		mMouseHideX;
+	int		mMouseHideY;
+
+	bool	mbOpenSidePanelDeferred;
 
 	struct XorRect {
 		int mX1;
@@ -135,9 +176,11 @@ protected:
 
 	IATUIEnhancedTextEngine *mpEnhTextEngine;
 	ATUIOnScreenKeyboard *mpOSK;
+	ATUISettingsWindow *mpSidePanel;
 
 	ATSimulatorEventManager *mpSEM;
-	ATXEP80Emulator *mpXEP;
+	ATDeviceManager *mpDevMgr;
+	IATDeviceVideoOutput *mpXEP;
 	VDDisplayImageView mXEPImageView;
 	uint32 mXEPChangeCount;
 	uint32 mXEPLayoutChangeCount;
@@ -145,8 +188,9 @@ protected:
 
 	ATUILabel *mpUILabelBadSignal;
 
-	ATCallbackHandler0<void> mAllowContextMenuEvent;
-	ATCallbackHandler1<void, const vdpoint32&> mDisplayContextMenuEvent;
+	vdfunction<void()> mpOnAllowContextMenu;
+	vdfunction<void(const vdpoint32&)> mpOnDisplayContextMenu;
+	vdfunction<void()> mpOnOSKChange;
 };
 
 #endif

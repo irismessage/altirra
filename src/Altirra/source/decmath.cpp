@@ -1190,38 +1190,41 @@ void ATAccelLOG10(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 }
 
 void ATAccelEXP(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
-	double x = ATReadFR0(mem).ToDouble();
+	const ATDecFloat x0 = ATReadFR0(mem);
+	double x = x0.ToDouble();
 
 	double r = exp(x);
 	if (r == HUGE_VAL) {
+		g_ATLCFPAccel("EXP(%s) -> error\n", x0.ToString().c_str());
 		cpu.SetFlagC();
 		return;
 	}
 
 	ATDecFloat fpr;
 	if (!fpr.SetDouble(r)) {
+		g_ATLCFPAccel("EXP(%s) -> error\n", x0.ToString().c_str());
 		cpu.SetFlagC();
 		return;
 	}
 
+	g_ATLCFPAccel("EXP(%s) -> %s\n", x0.ToString().c_str(), fpr.ToString().c_str());
 	ATWriteFR0(mem, fpr);
 	cpu.ClearFlagC();
 }
 
 void ATAccelEXP10(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
-	double x = ATReadFR0(mem).ToDouble();
-	if (x < 0.0) {
-		cpu.SetFlagC();
-		return;
-	}
+	const ATDecFloat x0 = ATReadFR0(mem);
+	double x = x0.ToDouble();
 
 	double r = pow(10.0, x);
 	ATDecFloat fpr;
 	if (!fpr.SetDouble(r)) {
+		g_ATLCFPAccel("EXP10(%s) -> error\n", x0.ToString().c_str());
 		cpu.SetFlagC();
 		return;
 	}
 
+	g_ATLCFPAccel("EXP10(%s) -> %s\n", x0.ToString().c_str(), fpr.ToString().c_str());
 	ATWriteFR0(mem, fpr);
 	cpu.ClearFlagC();
 }
@@ -1255,6 +1258,9 @@ void ATAccelISDIGT(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 		cpu.SetFlagC();
 	else
 		cpu.ClearFlagC();
+
+	cpu.SetA((uint8)(c - '0'));
+	cpu.SetY(index);
 }
 
 void ATAccelNORMALIZE(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
@@ -1329,6 +1335,9 @@ void ATAccelZFR0(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	z.SetZero();
 	ATWriteFR0(mem, z);
 
+	// Note: must preserve C for Basic XE compatibility.
+	cpu.SetA(0);
+
 	g_ATLCFPAccel("ZFR0\n");
 }
 
@@ -1337,6 +1346,8 @@ void ATAccelZF1(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 
 	for(int i=0; i<6; ++i)
 		mem.WriteByte(addr++, 0);
+
+	cpu.SetA(0);
 
 	g_ATLCFPAccel("ZF1\n");
 }
@@ -1348,6 +1359,8 @@ void ATAccelZFL(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	do {
 		mem.WriteByte(addr++, 0);
 	} while(--len);
+
+	cpu.SetA(0);
 
 	g_ATLCFPAccel("ZFL\n");
 }

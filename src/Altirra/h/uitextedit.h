@@ -13,6 +13,7 @@ public:
 	~ATUITextEdit();
 
 	void AutoSize();
+	sint32 GetIdealHeight() const;
 
 	void ClearSelection();
 	void Delete();

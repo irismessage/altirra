@@ -45,7 +45,11 @@
 #include "uivideodisplaywindow.h"
 #include "uimessagebox.h"
 #include "uiqueue.h"
+#include "uiaccessors.h"
+#include "uicommondialogs.h"
+#include "uiprofiler.h"
 #include "resource.h"
+#include "options.h"
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -123,6 +127,11 @@ void ATUIFlushDisplay();
 
 ATUIVideoDisplayWindow *g_pATVideoDisplayWindow;
 
+void ATUIOpenOnScreenKeyboard() {
+	if (g_pATVideoDisplayWindow)
+		g_pATVideoDisplayWindow->OpenOSK();
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 struct ATUIStepDoModalWindow : public vdrefcount {
@@ -133,7 +142,8 @@ struct ATUIStepDoModalWindow : public vdrefcount {
 
 	void Run() {
 		if (mbModalWindowActive) {
-			ATUIPushStep(ATUIStep::FromMethod<ATUIStepDoModalWindow, &ATUIStepDoModalWindow::Run>(this));
+			auto thisptr = vdmakerefptr(this);
+			ATUIPushStep([thisptr]() { thisptr->Run(); });
 
 			int rc;
 			ATUIProcessMessages(true, rc);
@@ -226,7 +236,8 @@ public:
 		ATUIStepDoModalWindow *step = new ATUIStepDoModalWindow;
 		step->AddRef();
 
-		ATUIPushStep(ATUIStep::FromMethod<ATUIStepDoModalWindow, &ATUIStepDoModalWindow::Run>(step));
+		auto stepptr = vdmakerefptr(step);
+		ATUIPushStep([stepptr]() { stepptr->Run(); });
 
 		if (!mModalCount++) {
 			ATUISetMenuEnabled(false);
@@ -355,12 +366,25 @@ private:
 
 ///////////////////////////////////////////////////////////////////////////
 
+void ATUIUpdateThemeScaleCallback(ATOptions& opts, const ATOptions *prevOpts, void *) {
+	sint32 scale = opts.mThemeScale;
+
+	if (scale < 10)
+		scale = 10;
+
+	if (scale > 1000)
+		scale = 1000;
+
+	g_ATUIManager.SetThemeScaleFactor((float)opts.mThemeScale / 100.0f);
+}
+
 void ATUIInitManager() {
+	ATOptionsAddUpdateCallback(true, ATUIUpdateThemeScaleCallback);
 	g_ATUIManager.Init(&g_ATUINativeDisplay);
 
 	g_pATVideoDisplayWindow = new ATUIVideoDisplayWindow;
 	g_pATVideoDisplayWindow->AddRef();
-	g_pATVideoDisplayWindow->Init(*g_sim.GetEventManager());
+	g_pATVideoDisplayWindow->Init(*g_sim.GetEventManager(), *g_sim.GetDeviceManager());
 	g_ATUIManager.GetMainWindow()->AddChild(g_pATVideoDisplayWindow);
 	g_pATVideoDisplayWindow->SetDockMode(kATUIDockMode_Fill);
 
@@ -428,14 +452,6 @@ public:
 	void OnSize();
 	void UpdateFilterMode();
 
-	bool IsXEPViewEnabled();
-	void SetXEPViewEnabled(bool enabled);
-
-	bool IsXEPViewAutoswitchEnabled();
-	void SetXEPViewAutoswitchEnabled(bool enabled);
-
-	void OnHardwareChanged();
-
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 	virtual ATUITouchMode GetTouchModeAtPoint(const vdpoint32& pt) const;
@@ -456,6 +472,8 @@ protected:
 	void OnMenuItemSelected(ATUIMenuList *sender, uint32 id);
 	void OnAllowContextMenu();
 	void OnDisplayContextMenu(const vdpoint32& pt);
+	void OnOSKChange();
+	void ResizeDisplay();
 
 	HWND	mhwndDisplay;
 	HMENU	mhmenuContext;
@@ -641,7 +659,8 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				int x = (short)LOWORD(lParam);
 				int y = (short)HIWORD(lParam);
 
-				ATInputManager *im = g_sim.GetInputManager();
+				if (!ATUIGetFullscreen())
+					ATUISetNativeDialogMode(true);
 
 				switch(msg) {
 					case WM_LBUTTONDOWN:
@@ -895,6 +914,20 @@ bool ATDisplayPane::OnCreate() {
 	// screen mode to size the window correctly.
 	mpDisplay->SetSourceSolidColor(0);
 
+	mpDisplay->SetProfileHook(
+		[](IVDVideoDisplay::ProfileEvent event) {
+			switch(event) {
+				case IVDVideoDisplay::kProfileEvent_BeginTick:
+					ATUIProfileBeginRegion(kATUIProfileRegion_DisplayTick);
+					break;
+
+				case IVDVideoDisplay::kProfileEvent_EndTick:
+					ATUIProfileEndRegion();
+					break;
+			}
+		}
+	);
+
 	g_ATUINativeDisplay.SetDisplay(mhwnd, ATFrameWindow::GetFrameWindow(GetParent(mhwnd)));
 
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
@@ -907,40 +940,22 @@ bool ATDisplayPane::OnCreate() {
 	mpMenuBar->SetFont(g_ATUIManager.GetThemeFont(kATUIThemeFont_Menu));
 	mpMenuBar->SetMenu(ATUIGetMenu());
 	mpMenuBar->SetAutoHide(true);
-	mpMenuBar->SetArea(vdrect32(0, 0, 0, 20));
 	mpMenuBar->SetDockMode(kATUIDockMode_TopFloat);
 	mpMenuBar->OnActivatedEvent() = ATBINDCALLBACK(this, &ATDisplayPane::OnMenuActivated);
 	mpMenuBar->OnItemSelected() = ATBINDCALLBACK(this, &ATDisplayPane::OnMenuItemSelected);
+	mpMenuBar->SetArea(vdrect32(0, 0, 0, mpMenuBar->GetIdealHeight()));
 
-	g_pATVideoDisplayWindow->SetXEP(g_sim.GetXEP80());
-
-#if 0
-	ATUIMessageBox *osk = new ATUIMessageBox;
-	g_ATUIManager.GetMainWindow()->AddChild(osk);
-	osk->SetFrameMode(kATUIFrameMode_Raised);
-	osk->SetCaption(L"Foo bar");
-	osk->SetText(L"WTF");
-	osk->SetArea(vdrect32(100, 100, 600, 350));
-	osk->ShowModal();
-#elif 0
-	ATUIFileBrowser *fb = new ATUIFileBrowser;
-	fb->SetDockMode(kATUIDockMode_Fill);
-	g_ATUIManager.GetMainWindow()->AddChild(fb);
-	fb->Focus();
-#endif
-
-	g_pATVideoDisplayWindow->BindAction(kATUIVK_UIMenu, ATUIMenuList::kActionActivate, 0, mpMenuBar->GetInstanceId());
-	g_pATVideoDisplayWindow->OnAllowContextMenuEvent() = ATBINDCALLBACK(this, &ATDisplayPane::OnAllowContextMenu);
-	g_pATVideoDisplayWindow->OnDisplayContextMenuEvent() = ATBINDCALLBACK(this, &ATDisplayPane::OnDisplayContextMenu);
-
-	OnHardwareChanged();
+	g_pATVideoDisplayWindow->SetOnAllowContextMenu([this]() { OnAllowContextMenu(); });
+	g_pATVideoDisplayWindow->SetOnDisplayContextMenu([this](const vdpoint32& pt) { OnDisplayContextMenu(pt); });
+	g_pATVideoDisplayWindow->SetOnOSKChange([this]() { OnOSKChange(); });
 	return true;
 }
 
 void ATDisplayPane::OnDestroy() {
 	if (g_pATVideoDisplayWindow) {
-		g_pATVideoDisplayWindow->OnAllowContextMenuEvent() = ATCallbackHandler0<void>();
-		g_pATVideoDisplayWindow->OnDisplayContextMenuEvent() = ATCallbackHandler1<void, const vdpoint32&>();
+		g_pATVideoDisplayWindow->SetOnAllowContextMenu(nullptr);
+		g_pATVideoDisplayWindow->SetOnDisplayContextMenu(nullptr);
+		g_pATVideoDisplayWindow->SetOnOSKChange(nullptr);
 		g_pATVideoDisplayWindow->UnbindAllActions();
 	}
 
@@ -948,9 +963,6 @@ void ATDisplayPane::OnDestroy() {
 		mpMenuBar->Destroy();
 		mpMenuBar.clear();
 	}
-
-	if (g_pATVideoDisplayWindow)
-		g_pATVideoDisplayWindow->SetXEP(NULL);
 
 	if (mpEnhTextEngine) {
 		if (g_pATVideoDisplayWindow)
@@ -1098,71 +1110,8 @@ void ATDisplayPane::OnSize() {
 	}
 
 	if (mhwndDisplay) {
-		if (mpDisplay) {
-			UpdateFilterMode();
-
-			vdrect32 rd(r.left, r.top, r.right, r.bottom);
-			sint32 w = rd.width();
-			sint32 h = rd.height();
-
-			int sw = 1;
-			int sh = 1;
-			g_sim.GetGTIA().GetFrameSize(sw, sh);
-
-			if (w && h) {
-				if (g_displayStretchMode == kATDisplayStretchMode_PreserveAspectRatio || g_displayStretchMode == kATDisplayStretchMode_IntegralPreserveAspectRatio) {
-					const bool pal = g_sim.GetVideoStandard() != kATVideoStandard_NTSC;
-					const float desiredAspect = (pal ? 1.03964f : 0.857141f);
-					const float fsw = (float)sw * desiredAspect;
-					const float fsh = (float)sh;
-					const float fw = (float)w;
-					const float fh = (float)h;
-					float zoom = std::min<float>(fw / fsw, fh / fsh);
-
-					if (g_displayStretchMode == kATDisplayStretchMode_IntegralPreserveAspectRatio && zoom > 1)
-						zoom = floorf(zoom);
-
-					sint32 w2 = (sint32)(0.5f + fsw * zoom);
-					sint32 h2 = (sint32)(0.5f + fsh * zoom);
-
-					rd.left		= (w - w2) >> 1;
-					rd.right	= rd.left + w2;
-					rd.top		= (h - h2) >> 1;
-					rd.bottom	= rd.top + h2;
-				} else if (g_displayStretchMode == kATDisplayStretchMode_SquarePixels || g_displayStretchMode == kATDisplayStretchMode_Integral) {
-					int ratio = std::min<int>(w / sw, h / sh);
-
-					if (ratio < 1 || g_displayStretchMode == kATDisplayStretchMode_SquarePixels) {
-						if (w*sh < h*sw) {		// (w / sw) < (h / sh) -> w*sh < h*sw
-							// width is smaller ratio -- compute restricted height
-							int restrictedHeight = (sh * w + (sw >> 1)) / sw;
-
-							rd.top = (h - restrictedHeight) >> 1;
-							rd.bottom = rd.top + restrictedHeight;
-						} else {
-							// height is smaller ratio -- compute restricted width
-							int restrictedWidth = (sw * h + (sh >> 1)) / sh;
-
-							rd.left = (w - restrictedWidth) >> 1;
-							rd.right = rd.left+ restrictedWidth;
-						}
-					} else {
-						int finalWidth = sw * ratio;
-						int finalHeight = sh * ratio;
-
-						rd.left = (w - finalWidth) >> 1;
-						rd.right = rd.left + finalWidth;
-
-						rd.top = (h - finalHeight) >> 1;
-						rd.bottom = rd.top + finalHeight;
-					}
-				}
-			}
-
-			mDisplayRect = rd;
-			mpDisplay->SetDestRect(&rd, 0);
-			g_pATVideoDisplayWindow->SetDisplayRect(mDisplayRect);
-		}
+		if (mpDisplay)
+			ResizeDisplay();
 
 		SetWindowPos(mhwndDisplay, NULL, 0, 0, r.right, r.bottom, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
 	}
@@ -1217,11 +1166,6 @@ void ATDisplayPane::UpdateFilterMode() {
 			mpDisplay->SetPixelSharpness(1.0f, 1.0f);
 			break;
 	}
-}
-
-void ATDisplayPane::OnHardwareChanged() {
-	if (g_pATVideoDisplayWindow)
-		g_pATVideoDisplayWindow->SetXEP(g_sim.GetXEP80());
 }
 
 void ATDisplayPane::SetHaveMouse() {
@@ -1315,6 +1259,89 @@ void ATDisplayPane::OnDisplayContextMenu(const vdpoint32& pt) {
 		TrackPopupMenu(hmenuPopup, TPM_LEFTALIGN | TPM_TOPALIGN, pt2.x, pt2.y, 0, mhwnd, NULL);
 		--mMouseCursorLock;
 	}
+}
+
+void ATDisplayPane::OnOSKChange() {
+	ResizeDisplay();
+}
+
+void ATDisplayPane::ResizeDisplay() {
+	UpdateFilterMode();
+
+	RECT r;
+	GetClientRect(mhwnd, &r);
+
+	vdrect32 rd(r.left, r.top, r.right, r.bottom);
+	sint32 w = rd.width();
+	sint32 h = rd.height();
+
+	if (g_pATVideoDisplayWindow) {
+		vdrect32 rsafe = g_pATVideoDisplayWindow->GetOSKSafeArea();
+
+		h = rsafe.height();
+	}
+
+	int sw = 1;
+	int sh = 1;
+	g_sim.GetGTIA().GetFrameSize(sw, sh);
+
+	if (w && h) {
+		if (g_displayStretchMode == kATDisplayStretchMode_PreserveAspectRatio || g_displayStretchMode == kATDisplayStretchMode_IntegralPreserveAspectRatio) {
+			// NTSC-50 and PAL-60 are de-facto standards for when NTSC video needs to be played in
+			// a PAL environment or vice versa. PAL-60, for instance, involves munging NTSC video
+			// into a form good enough for a PAL decoder to accept. Therefore, we assume that the
+			// video uses NTSC pixel aspect ratio, but is displayed with PAL colors.
+			const bool pal = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
+			const float desiredAspect = (pal ? 1.03964f : 0.857141f);
+			const float fsw = (float)sw * desiredAspect;
+			const float fsh = (float)sh;
+			const float fw = (float)w;
+			const float fh = (float)h;
+			float zoom = std::min<float>(fw / fsw, fh / fsh);
+
+			if (g_displayStretchMode == kATDisplayStretchMode_IntegralPreserveAspectRatio && zoom > 1)
+				zoom = floorf(zoom);
+
+			sint32 w2 = (sint32)(0.5f + fsw * zoom);
+			sint32 h2 = (sint32)(0.5f + fsh * zoom);
+
+			rd.left		= (w - w2) >> 1;
+			rd.right	= rd.left + w2;
+			rd.top		= (h - h2) >> 1;
+			rd.bottom	= rd.top + h2;
+		} else if (g_displayStretchMode == kATDisplayStretchMode_SquarePixels || g_displayStretchMode == kATDisplayStretchMode_Integral) {
+			int ratio = std::min<int>(w / sw, h / sh);
+
+			if (ratio < 1 || g_displayStretchMode == kATDisplayStretchMode_SquarePixels) {
+				if (w*sh < h*sw) {		// (w / sw) < (h / sh) -> w*sh < h*sw
+					// width is smaller ratio -- compute restricted height
+					int restrictedHeight = (sh * w + (sw >> 1)) / sw;
+
+					rd.top = (h - restrictedHeight) >> 1;
+					rd.bottom = rd.top + restrictedHeight;
+				} else {
+					// height is smaller ratio -- compute restricted width
+					int restrictedWidth = (sw * h + (sh >> 1)) / sh;
+
+					rd.left = (w - restrictedWidth) >> 1;
+					rd.right = rd.left+ restrictedWidth;
+				}
+			} else {
+				int finalWidth = sw * ratio;
+				int finalHeight = sh * ratio;
+
+				rd.left = (w - finalWidth) >> 1;
+				rd.right = rd.left + finalWidth;
+
+				rd.top = (h - finalHeight) >> 1;
+				rd.bottom = rd.top + finalHeight;
+			}
+		}
+	}
+
+	mDisplayRect = rd;
+	mpDisplay->SetDestRect(&rd, 0);
+	g_pATVideoDisplayWindow->SetDisplayRect(mDisplayRect);
 }
 
 ///////////////////////////////////////////////////////////////////////////

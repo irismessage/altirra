@@ -53,6 +53,42 @@ void ATUIContainer::RemoveAllChildren() {
 	}
 }
 
+void ATUIContainer::SendToBack(ATUIWidget *w) {
+	if (!w)
+		return;
+
+	if (w->GetParent() != this) {
+		VDASSERT(!"Invalid call to SendToBack().");
+		return;
+	}
+
+	auto it = std::find(mWidgets.begin(), mWidgets.end(), w);
+	VDASSERT(it != mWidgets.end());
+
+	if (it != mWidgets.begin()) {
+		mWidgets.erase(it);
+		mWidgets.insert(mWidgets.begin(), w);
+	}
+}
+
+void ATUIContainer::BringToFront(ATUIWidget *w) {
+	if (!w)
+		return;
+
+	if (w->GetParent() != this) {
+		VDASSERT(!"Invalid call to SendToBack().");
+		return;
+	}
+
+	auto it = std::find(mWidgets.begin(), mWidgets.end(), w);
+	VDASSERT(it != mWidgets.end());
+
+	if (it != mWidgets.end() - 1) {
+		mWidgets.erase(it);
+		mWidgets.push_back(w);
+	}
+}
+
 void ATUIContainer::InvalidateLayout() {
 	if (mbLayoutInvalid)
 		return;
@@ -176,18 +212,23 @@ ATUIWidget *ATUIContainer::HitTest(vdpoint32 pt) {
 
 	pt.x -= mArea.left;
 	pt.y -= mArea.top;
-	pt.x -= mClientArea.left;
-	pt.y -= mClientArea.top;
 
-	for(Widgets::const_reverse_iterator it(mWidgets.rbegin()), itEnd(mWidgets.rend());
-		it != itEnd;
-		++it)
-	{
-		ATUIWidget *w = *it;
+	if (mClientArea.contains(pt)) {
+		pt.x -= mClientArea.left;
+		pt.y -= mClientArea.top;
+		pt.x += mClientOrigin.x;
+		pt.y += mClientOrigin.y;
 
-		ATUIWidget *r = w->HitTest(pt);
-		if (r)
-			return r;
+		for(Widgets::const_reverse_iterator it(mWidgets.rbegin()), itEnd(mWidgets.rend());
+			it != itEnd;
+			++it)
+		{
+			ATUIWidget *w = *it;
+
+			ATUIWidget *r = w->HitTest(pt);
+			if (r)
+				return r;
+		}
 	}
 
 	return mbHitTransparent ? NULL : this;

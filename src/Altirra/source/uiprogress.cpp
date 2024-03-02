@@ -38,7 +38,7 @@ class ATUIProgressDialogW32 : public VDDialogFrameW32 {
 public:
 	ATUIProgressDialogW32();
 
-	void Init(const wchar_t *desc, const wchar_t *statusFormat, uint32 total);
+	void Init(const wchar_t *desc, const wchar_t *statusFormat, uint32 total, const VDGUIHandle *parent);
 	void Update(uint32 value);
 	void Shutdown();
 
@@ -70,7 +70,7 @@ ATUIProgressDialogW32::ATUIProgressDialogW32()
 {
 }
 
-void ATUIProgressDialogW32::Init(const wchar_t *desc, const wchar_t *statusFormat, uint32 total) {
+void ATUIProgressDialogW32::Init(const wchar_t *desc, const wchar_t *statusFormat, uint32 total, const VDGUIHandle *parent) {
 	mpDesc = desc;
 	mpStatusFormat = statusFormat;
 
@@ -81,7 +81,7 @@ void ATUIProgressDialogW32::Init(const wchar_t *desc, const wchar_t *statusForma
 	mTotal = total;
 	mValue = 0;
 
-	Create((VDGUIHandle)g_hwndATProgressParent);
+	Create(parent ? *parent : (VDGUIHandle)g_hwndATProgressParent);
 }
 
 void ATUIProgressDialogW32::Update(uint32 value) {
@@ -111,7 +111,7 @@ void ATUIProgressDialogW32::Update(uint32 value) {
 			SendMessage(mhwndProgress, PBM_SETPOS, (WPARAM)pos, 0);
 		}
 
-		if (mhwndStatus) {
+		if (mhwndStatus && mpStatusFormat) {
 			mStatusBuffer.sprintf(mpStatusFormat, mValue, mTotal);
 
 			SetWindowTextW(mhwndStatus, mStatusBuffer.c_str());
@@ -170,12 +170,12 @@ bool ATUIProgressDialogW32::OnClose() {
 
 ATUIProgressDialogW32 *g_pATProgressDialog;
 
-bool ATUIBeginProgressDialog(const wchar_t *desc, const wchar_t *statusFormat, uint32 total) {
+bool ATUIBeginProgressDialog(const wchar_t *desc, const wchar_t *statusFormat, uint32 total, const VDGUIHandle *parent) {
 	g_pATProgressDialog = new_nothrow ATUIProgressDialogW32;
 	if (!g_pATProgressDialog)
 		return false;
 
-	g_pATProgressDialog->Init(desc, statusFormat, total);
+	g_pATProgressDialog->Init(desc, statusFormat, total, parent);
 	return true;
 }
 
@@ -202,6 +202,20 @@ ATUIProgress::~ATUIProgress() {
 	Shutdown();
 }
 
+void ATUIProgress::InitF(VDGUIHandle parent, uint32 n, const wchar_t *statusFormat, const wchar_t *descFormat, ...) {
+	Shutdown();
+
+	va_list val;
+	va_start(val, descFormat);
+	mDesc.append_vsprintf(descFormat, val);
+	va_end(val);
+
+	if (statusFormat)
+		mStatusFormat = statusFormat;
+
+	mbCreated = ATUIBeginProgressDialog(mDesc.c_str(), statusFormat ? mStatusFormat.c_str() : NULL, n, &parent);
+}
+
 void ATUIProgress::InitF(uint32 n, const wchar_t *statusFormat, const wchar_t *descFormat, ...) {
 	Shutdown();
 
@@ -210,8 +224,10 @@ void ATUIProgress::InitF(uint32 n, const wchar_t *statusFormat, const wchar_t *d
 	mDesc.append_vsprintf(descFormat, val);
 	va_end(val);
 
-	mStatusFormat = statusFormat;
-	mbCreated = ATUIBeginProgressDialog(mDesc.c_str(), mStatusFormat.c_str(), n);
+	if (statusFormat)
+		mStatusFormat = statusFormat;
+
+	mbCreated = ATUIBeginProgressDialog(mDesc.c_str(), statusFormat ? mStatusFormat.c_str() : NULL, n);
 }
 
 void ATUIProgress::Shutdown() {

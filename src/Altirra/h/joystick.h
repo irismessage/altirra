@@ -30,7 +30,15 @@ public:
 	virtual void SetCaptureMode(bool capture) = 0;
 
 	virtual void RescanForDevices() = 0;
-	virtual void Poll() = 0;
+
+	enum PollResult {
+		kPollResult_OK,
+		kPollResult_NoActivity,
+		kPollResult_NoControllers
+	};
+
+	virtual PollResult Poll() = 0;
+
 	virtual bool PollForCapture(int& unit, uint32& inputCode) = 0;
 
 	virtual uint32 GetJoystickPortStates() const = 0;

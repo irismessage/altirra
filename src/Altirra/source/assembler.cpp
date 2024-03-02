@@ -1885,7 +1885,13 @@ const char *ATDebuggerCmdAssemble::ParseExpression(const char *s, sint32& value)
 						valstack.pop_back();
 						break;
 					case kOpDivide:
-						sp[-1] /= *sp;
+						if (!*sp)
+							throw ParseException(s-1, "Division by zero");
+
+						// -0x80000000 / -1 throws an overflow exception... which we don't care about
+						if (sp[-1] != INT_MIN || *sp != -1)
+							sp[-1] /= *sp;
+
 						valstack.pop_back();
 						break;
 					case kOpNegate:

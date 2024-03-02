@@ -340,14 +340,19 @@ bool VDDirectDrawManager::Restore() {
 		if (FAILED(hr)) {
 			VDDEBUG_DISP("VDDirectDraw: Primary surface restore failed -- tearing down DirectDraw!\n");
 
+			++mInitCount;
+
 			for(tClients::iterator it(mClients.begin()), itEnd(mClients.end()); it!=itEnd; ++it) {
 				IVDDirectDrawClient *pClient = *it;
 
 				pClient->DirectDrawShutdown();
 			}
 
+			--mInitCount;
+
 			if (!mInitCount) {
 				VDDEBUG_DISP("VDDirectDraw: All clients vacated.\n");
+				Shutdown(NULL);
 				return false;
 			}
 
@@ -662,9 +667,8 @@ bool VDVideoDisplayMinidriverDirectDraw::Init(HWND hwnd, HMONITOR hmonitor, cons
 			// the result is a failed dependency error when we try loading it. We avoid this by
 			// explicitly checking for Windows Vista or higher.
 
-			OSVERSIONINFO osInfo = { sizeof(OSVERSIONINFO) };
-			if (GetVersionEx(&osInfo) && osInfo.dwMajorVersion >= 6) {
-				HMODULE hmodDwmApi = LoadLibraryA("dwmapi");
+			if (VDIsAtLeastVistaW32()) {
+				HMODULE hmodDwmApi = VDLoadSystemLibraryW32("dwmapi");
 				if (hmodDwmApi) {
 					typedef HRESULT (WINAPI *tpDwmIsCompositionEnabled)(BOOL *);
 
@@ -1116,17 +1120,29 @@ bool VDVideoDisplayMinidriverDirectDraw::Update(UpdateMode mode) {
 
 	ddsd.ddpfPixelFormat.dwSize = sizeof(DDPIXELFORMAT);
 	
-	static DWORD dwLockFlags = GetVersion() & 0x80000000 ? DDLOCK_WRITEONLY | DDLOCK_NOSYSLOCK | DDLOCK_WAIT : DDLOCK_WRITEONLY | DDLOCK_WAIT;
-
-	IDirectDrawSurface2 *pTarget = mpddsBitmap ? mpddsBitmap : mpddsOverlay;
-
-	if (!pTarget)
-		return false;
+	const DWORD dwLockFlags = DDLOCK_WRITEONLY | DDLOCK_WAIT;
 
 	// When NView reverts between dual-display modes, we can get a DDERR_SURFACELOST on which
 	// Restore() succeeds, but the next lock still fails. We insert a safety counter here to
 	// prevent a hang.
+	IDirectDrawSurface2 *pTarget;
+	bool needRestore = false;
+
 	for(int retries=0; retries<5; ++retries) {
+		// We need to re-read this each time as a restore will create new ones.
+		pTarget = mpddsBitmap ? mpddsBitmap : mpddsOverlay;
+
+		if (!pTarget)
+			return false;
+
+		if (needRestore) {
+			needRestore = false;
+
+			hr = pTarget->Restore();
+			if (FAILED(hr))
+				break;
+		}
+
 		hr = pTarget->Lock(NULL, &ddsd, dwLockFlags, 0);
 
 		if (SUCCEEDED(hr))
@@ -1141,9 +1157,7 @@ bool VDVideoDisplayMinidriverDirectDraw::Update(UpdateMode mode) {
 		if (!mpddman->Restore())
 			break;
 
-		hr = pTarget->Restore();
-		if (FAILED(hr))
-			break;
+		needRestore = true;
 	}
 
 	if (FAILED(hr)) {

@@ -7,37 +7,20 @@
 ; without any warranty.
 
 ;==========================================================================
-.proc imprint
-		pla
-		sta		inbuff
-		pla
-		sta		inbuff+1
+; Print a message from the message database.
+;
+; Entry:
+;	X = LSB of message pointer
+;
+.proc IoPrintMessage
+		stx		inbuff
 loop:
-		inw		inbuff
-		ldy		#0
-		lda		(inbuff),y
+		ldx		inbuff
+		lda		msg_base&$ff00,x
 		beq		xit
-		jsr		putchar
+		jsr		IoPutCharAndInc
 		jmp		loop
 xit:
-		lda		inbuff+1
-		pha
-		lda		inbuff
-		pha
-		rts
-.endp
-
-;==========================================================================
-.proc printLineINBUFF
-loop:
-		ldy		#0
-		lda		(inbuff),y
-		pha
-		jsr		putchar
-		pla
-		inw		inbuff
-		cmp		#$9b
-		bne		loop
 		rts
 .endp
 
@@ -52,11 +35,48 @@ loop:
 		lda		(inbuff),y
 		pha
 		and		#$7f
-		jsr		putchar
-		inw		inbuff
+		jsr		IoPutCharAndInc
 		pla
 		bpl		loop
 		rts
+.endp
+
+;==========================================================================
+.proc IoConvNumToHex
+		php
+		jsr		ldbufa
+		jsr		fpi
+		ldy		#0
+		plp
+		lda		fr0+1
+		bcc		force_16bit
+		beq		print_8bit
+force_16bit:
+		jsr		print_digit_pair
+print_8bit:
+		lda		fr0
+print_digit_pair:
+		pha
+		lsr
+		lsr
+		lsr
+		lsr
+		jsr		print_digit
+		pla
+		and		#$0f
+print_digit:
+		cmp		#10
+		scc:adc	#6
+		adc		#$30
+		sta		(inbuff),y
+		iny
+		rts
+.endp
+
+;==========================================================================
+.proc IoPutCharAndInc
+		inw		inbuff
+		jmp		putchar
 .endp
 
 ;==========================================================================
@@ -71,19 +91,24 @@ IoPutSpace:
 .proc putchar
 		dec		ioPrintCol
 		bne		not_tabstop
-		mvx		#10 ioPrintCol
+		mvx		ptabw ioPrintCol
 not_tabstop:
 direct:
 		ldx		iocbidx
 direct_with_x:
 		jsr		dispatch
 		tya
+
+.def :ioCheck = *
 		bpl		done
+dispatch_error:
 		sty		errno
 		jmp		errorDispatch
 		
 dispatch:
 		sta		ciochr
+		lda		icax1,x
+		sta		icax1z
 		lda		icpth,x
 		pha
 		lda		icptl,x
@@ -94,7 +119,6 @@ done:
 .endp
 
 ;==========================================================================
-ioCheck = IoDoCmd._check_entry
 ioChecked = IoDoCmd._check_entry2
 IoDoCmdX = IoDoCmd._with_x
 .proc IoDoCmd
@@ -103,12 +127,7 @@ _with_x:
 		sta		iccmd,x
 _check_entry2:
 		jsr		ciov
-_check_entry:
-		bpl		ok
-		sty		errno
-		jmp		errorDispatch
-ok:
-		rts
+		jmp		ioCheck
 .endp
 
 ;==========================================================================
@@ -127,7 +146,11 @@ ok:
 ; I/O errors are checked after calling CIO and the error handler is issued
 ; if one occurs.
 ;
+IoDoOpenReadWithFilename:
+		lda		#4
 IoDoOpenWithFilename:
+		ldx		iocbidx
+		sta		icax1,x
 		lda		#CIOCmdOpen
 .proc IoDoWithFilename
 		;stash command
@@ -154,7 +177,9 @@ IoCloseX = IoClose.with_IOCB_X
 .proc IoClose
 		ldx		iocbidx
 with_IOCB_X:
-		mva		#CIOCmdClose iccmd,x
+		lda		#CIOCmdClose
+.def :IoTryCmdX = *
+		sta		iccmd,x
 		jmp		ciov
 .endp
 
@@ -253,13 +278,14 @@ with_IOCB_X:
 .proc IoSetupReadLine
 		;we are using some pretty bad hacks here:
 		;- GET RECORD and >LBUFF are $05
-		;- <LBUFF and LBUFF length are $80
+		;- <LBUFF is $80
 		mva		#CIOCmdGetRecord iccmd,x
 		sta		icbah,x
 		lda		#$80
 		sta		icbal,x
-		sta		icbll,x
 		asl
 		sta		icblh,x
+		lda		#$ff
+		sta		icbll,x
 		rts
 .endp

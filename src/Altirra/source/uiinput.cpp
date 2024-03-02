@@ -1556,6 +1556,11 @@ void ATUIDialogInputListItem::GetText(int subItem, VDStringW& s) const {
 			s = L"Any";
 		else
 			s.sprintf(L"%d", unit + 1);
+	} else if (subItem == 2) {
+		if (mpInputMap->IsQuickMap())
+			s = L"Yes";
+		else
+			s.clear();
 	}
 }
 
@@ -1608,6 +1613,7 @@ bool ATUIDialogInput::OnLoaded() {
 	mListView.SetItemCheckboxesEnabled(true);
 	mListView.InsertColumn(0, L"Name", 10);
 	mListView.InsertColumn(1, L"Unit", 10);
+	mListView.InsertColumn(2, L"Quick", 10);
 
 	OnDataExchange(false);
 	SetFocusToControl(IDC_LIST);
@@ -1747,6 +1753,23 @@ bool ATUIDialogInput::OnCommand(uint32 id, uint32 extcode) {
 				}
 			}
 		}
+
+		return true;
+	} else if (id == IDC_QUICKMAP) {
+		ATUIDialogInputListItem *item = static_cast<ATUIDialogInputListItem *>(mListView.GetSelectedVirtualItem());
+
+		if (item) {
+			ATInputMap *imap = item->GetInputMap();
+			bool quick = IsButtonChecked(IDC_QUICKMAP);
+
+			if (imap->IsQuickMap() != quick) {
+				imap->SetQuickMap(quick);
+
+				mListView.RefreshItem(mListView.GetSelectedIndex());
+			}
+		}
+
+		return true;
 	}
 
 	return VDDialogFrameW32::OnCommand(id, extcode);
@@ -1805,9 +1828,20 @@ void ATUIDialogInput::OnItemSelectionChanged(VDUIProxyListView *source, int inde
 	EnableControl(IDC_DELETE, index >= 0);
 	EnableControl(IDC_EDIT, index >= 0);
 	EnableControl(IDC_CLONE, index >= 0);
+	EnableControl(IDC_QUICKMAP, index >= 0);
+	
+	if (index >= 0) {
+		ATUIDialogInputListItem *item = static_cast<ATUIDialogInputListItem *>(mListView.GetVirtualItem(index));
+
+		if (item)
+			CheckButton(IDC_QUICKMAP, item->GetInputMap()->IsQuickMap());
+	}
 }
 
 void ATUIDialogInput::OnItemLabelChanged(VDUIProxyListView *source, VDUIProxyListView::LabelChangedEvent *event) {
+	if (!event->mpNewLabel)
+		return;
+
 	ATUIDialogInputListItem *item = static_cast<ATUIDialogInputListItem *>(mListView.GetVirtualItem(event->mIndex));
 
 	if (item) {

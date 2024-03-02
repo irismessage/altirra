@@ -258,7 +258,15 @@ term_rollback_exp:
 	bcs		nodigitshift
 
 	;shift right one digit
-	jsr		fp_shr4
+	ldx		#4
+digitshift:
+	lsr		fr0+1
+	ror		fr0+2
+	ror		fr0+3
+	ror		fr0+4
+	ror		fr0+5
+	dex
+	bne		digitshift
 
 nodigitshift:
 	jmp		fp_normalize
@@ -325,38 +333,21 @@ expterm:
 
 .endp
 
-fp_shr4:
-	ldx		#4
-digitshift:
-	lsr		fr0+1
-	ror		fr0+2
-	ror		fr0+3
-	ror		fr0+4
-	ror		fr0+5
-	dex
-	bne		digitshift
-	rts
-	
 ;==========================================================================
-; Entry:
-;	A = BCD value
-;	P.D = clear
-;
-; Exit:
-;	A = binary value
-;	Y = modified
-;
-.proc fp_dectobin
-	pha
-	lsr
-	lsr
-	lsr
-	lsr
-	tay
-	pla
-	clc
-	adc		fp_dectobin_tab,y
+.proc fp_carryup
+round_loop:
+	adc		0,x
+	sta		0,x
+dec_entry:
+	dex
+	lda		#0
+	bcs		round_loop
 	rts
+.endp
+
+;==========================================================================
+.proc fp_tab_lo_100
+	:10 dta <[100*#]
 .endp
 
 ;==========================================================================
@@ -596,88 +587,86 @@ byteloop:
 	fixadr	$d9d2
 .nowarn .proc fpi
 _acc0 = fr2
-_acc1 = fr2+2
+_acc1 = fr2+1
 	
 	;error out if it's guaranteed to be too big or negative (>999999)
-	ldx		fr0
-	cpx		#$43
+	lda		fr0
+	cmp		#$43
 	bcs		err
-	
-	;clear temp accum
-	lda		#0
-	sta		_acc0+1
-	sta		_acc0
-	
+
 	;zero number if it's guaranteed to be too small (<0.01)
-	cpx		#$3f
-	bcc		too_small
+	sbc		#$3f-1			;!!- carry is clear
+	bcc		zfr0
 
-	ldx		#$3f
-	bne		shloop_start
-shloop:
-	;multiply by 10 twice
-	ldy		#2
-mul10_loop:
-	lda		_acc0+1
-	sta		_acc1+1
-	lda		_acc0
+	tax
 	
-	;x2
-	asl
-	rol		_acc0+1
-	bcs		err
-
-	;x2 -> x4
-	asl
-	rol		_acc0+1
-	bcs		err
-	
-	;+1 -> x5
-	adc		_acc0
-	sta		_acc0
-	lda		_acc0+1
-	adc		_acc1+1
-	bcs		err
-	
-	;x2 -> x10
-	asl		_acc0
-	rol
-	sta		_acc0+1
-	bcs		err
-
-	dey
-	bne		mul10_loop
-	
-	;convert BCD digit pair to binary
-	lda		fr0-$3e,x
-	jsr		fp_dectobin
-
-	clc
-	adc		_acc0
-	sta		_acc0
-	bcc		add2
-	inc		_acc0+1
-	beq		err
-add2:
-	
-	;loop until we've done all digits
-	inx
-shloop_start:
-	cpx		fr0
-	bne		shloop
-	
-	;move result back to FR0, with rounding
-	ldy		fr0-$3e,x
+	;clear temp accum and set up rounding
+	lda		#0
+	ldy		fr0+1,x
 	cpy		#$50
-	adc		#0
+	rol						;!! - clears carry too
 	sta		fr0
-	lda		_acc0+1
+	lda		#0
+
+	;check for [0.01, 1)
+	dex
+	bmi		done
+
+	;convert ones/tens digit pair to binary (one result byte: 0-100)
+	lda		fr0+1,x
+	jsr		fp_dectobin
+	adc		fr0
+	adc		fp_dectobin_tab,y
+	clc
+	sta		fr0
+	lda		#0
+
+	;check if we're done
+	dex
+	bmi		done
+
+	;convert hundreds/thousands digit pair to binary (two result bytes: 0-10000)
+	lda		fr0+1,x
+	jsr		fp_dectobin
+	lda		fr0
+	adc		fp_tab_lo_1000,y
+	sta		fr0
+	lda		fp_tab_hi_1000,y
 	adc		#0
+	pha
+	lda		fr0+1,x
+	and		#$0f
+	tay
+	lda		fr0
+	adc		fp_tab_lo_100,y
+	sta		fr0
+	pla
+	adc		fp_tab_hi_100,y
+
+	;check if we're done
+	dex
+	bmi		done
+
+	;convert ten thousands digit pair to binary (two result bytes: 0-100000, overflow possible)
+	ldy		fr0+1,x
+	cpy		#$07
+	bcs		err
+	tax
+	tya
+	asl
+	asl
+	asl
+	asl
+	adc		fr0
+	sta		fr0
+	txa
+	adc		fp_tab_hi_10000-1,y
+
+done:
+	;move result back to FR0, with rounding
 	sta		fr0+1
 err:
 	rts
-
-too_small = zfr0
 .endp
 
 ;==========================================================================
@@ -774,7 +763,7 @@ noswap:
 	;X = add/sub flag
 
 	;compute positions for add/subtract	
-	adc		#6			;A = (FR1) - (FR0) + 5   !! carry is set coming in
+	adc		#6			;A = (FR1) - (FR0) + 6   !! carry is clear coming in
 	tay
 	
 	;check if FR1 is too small in magnitude to matter
@@ -842,6 +831,27 @@ sub_loop_entry:
 	dey
 	bpl		sub_loop
 	jmp		fp_fsub_cont
+.endp
+
+;==========================================================================
+; Entry:
+;	A = BCD value
+;	P.D = clear
+;
+; Exit:
+;	A = binary value
+;	Y = modified
+;
+.proc fp_dectobin
+	pha
+	lsr
+	lsr
+	lsr
+	lsr
+	tay
+	pla
+	clc
+	rts
 .endp
 
 ;==========================================================================
@@ -943,7 +953,10 @@ fpconst_ln10:
 ;==========================================================================
 ; FDIV [DB28]	Divide FR0 / FR1 -> FR0
 ;
-; 
+; Compatibility:
+;	- It is important that FDIV rounds if FADD/FMUL do. Otherwise, some
+;	  forms of square root computation can have a slight error on integers,
+;	  which breaks TICKTOCK.BAS.
 ;
 		fixadr		$db28
 .proc fdiv
@@ -959,16 +972,14 @@ _index = _fr3+2
 	
 	ldx		#fr2
 	jsr		zf1
+	lda		#$50
+	sta		fr2+6
 	
 	;compute new exponent
 	jsr		fp_adjust_exponent.fdiv_entry
-	sta		_fr3
 	
 	jsr		fp_fdiv_init	
-
 	sec
-	lda		#0-6
-	sta		fdiv._index
 
 digitloop:
 	;just keep going if we're accurate
@@ -981,12 +992,11 @@ digitloop:
 
 decloop:
 	;increment quotient mantissa byte
-	sec
-	ldx		_index
 	lda		_digit
+	ldx		_index
 uploop:
-	adc		fr2+6,x
-	sta		fr2+6,x
+	adc		fr2+7,x
+	sta		fr2+7,x
 	lda		#0
 	dex
 	bcs		uploop
@@ -994,7 +1004,7 @@ uploop:
 	;subtract mantissas
 	jsr		fp_fastsub5
 	lda		fr0
-	sbc		fr1
+	sbc		#0
 	sta		fr0
 
 	;keep going until we underflow
@@ -1003,13 +1013,12 @@ uploop:
 	
 incloop:
 	;decrement quotient mantissa byte
-	clc
-	ldx		_index
 	lda		#0
 	sbc		_digit
+	ldx		_index
 downloop:
-	adc		fr2+6,x
-	sta		fr2+6,x
+	adc		fr2+7,x
+	sta		fr2+7,x
 	lda		#$99
 	dex
 	bcc		downloop
@@ -1188,6 +1197,8 @@ underflow:
 ;==========================================================================
 
 .proc fp_fdiv_init		
+	sta		_fr3
+
 	ldx		#0
 	stx		fr0
 	stx		fr1
@@ -1214,6 +1225,9 @@ start_with_ones:
 
 	stx		fdiv._digit
 	sed
+
+	ldx		#0-7
+	stx		fdiv._index
 	rts
 .endp
 
@@ -1359,12 +1373,7 @@ offloop2:
 	;check if we have a carry out to the upper bytes
 	bcc		no_carry
 	stx		_offset2
-carryloop:
-	dex
-	lda		0,x
-	adc		#0
-	sta		0,x
-	bcs		carryloop
+	jsr		fp_carryup.dec_entry
 	ldx		_offset2
 no_carry:
 	
@@ -1387,37 +1396,12 @@ noadd:
 	beq		renorm_needed
 
 	lda		#$50
-	ldx		#6
-round_loop:
-	adc		fr0,x
-	sta		fr0,x
-	dex
-	lda		#0
-	bcs		round_loop
+	ldx		#fr0+6
+	jsr		fp_carryup
 
 renorm_needed:
 	;all done
 	jmp		fp_normalize_cld
-.endp
-
-;==========================================================================
-.proc fp_fastadc5				;$1F bytes	
-	lda		4,x
-	adc		fr1+5
-	sta		4,x
-	lda		3,x
-	adc		fr1+4
-	sta		3,x
-	lda		2,x
-	adc		fr1+3
-	sta		2,x
-	lda		1,x
-	adc		fr1+2
-	sta		1,x
-	lda		0,x
-	adc		fr1+1
-	sta		0,x
-	rts
 .endp
 
 ;==========================================================================
@@ -1440,12 +1424,29 @@ loop:
 .endp
 
 ;==========================================================================
+.proc fp_tab_lo_1000
+	:10 dta <[1000*#]
+.endp
+
+.proc fp_tab_hi_1000
+	:10 dta >[1000*#]
+.endp
+
+.proc fp_tab_hi_100
+	:10 dta >[100*#]
+.endp
+
+.proc fp_tab_hi_10000
+	:6 dta >[10000*[#+1]]
+.endp
+
+;==========================================================================
 ; PLYEVL [DD40]	Eval polynomial at (X:Y) with A coefficients using FR0
 ;
 		fixadr	$dd3e
 fp_plyevl_10:
 	lda		#10
-.proc plyevl
+.nowarn .proc plyevl
 	;stash arguments
 	stx		fptr2
 	sty		fptr2+1
@@ -1585,11 +1586,9 @@ exp10 = exp._exp10
 	ckaddr	$ddcc
 _exp10:
 	;stash sign and compute abs
-	lda		fr0
-	and		#$80
-	sta		_fptemp1
-	eor		fr0
-	sta		fr0
+	asl		fr0
+	ror		_fptemp1
+	lsr		fr0
 
 	ldy		#0
 	
@@ -1602,6 +1601,7 @@ _exp10:
 	;|exp|>=1, so split it into integer/fraction
 	lda		fr0+1
 	jsr		fp_dectobin
+	adc		fp_dectobin_tab,y
 	tay
 
 	dec		fr0
@@ -1618,7 +1618,7 @@ abs_too_big:
 	;okay, the |x| is too big... check if the original was negative.
 	;if so, zero and exit, otherwise error.
 	lda		_fptemp1
-	beq		err2
+	bpl		err2
 	clc
 	jmp		zfr0
 		
@@ -1658,8 +1658,6 @@ even:
 	jsr		fld0r
 	jmp		fdiv
 
-err:
-	sec
 err2:
 xit2:
 	rts
@@ -1789,7 +1787,7 @@ mid_range:
 	;multiply by 10
 	ldx		#<fpconst_ten
 	jsr		fp_fld1r_const_fmul
-	bcs		err
+	bcs		err2
 
 adjust_exponent:
 	;increase result by 1 (equivalent to *10 input)

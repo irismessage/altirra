@@ -18,6 +18,7 @@
 #ifndef f_AT_IDEVHDIMAGE_H
 #define f_AT_IDEVHDIMAGE_H
 
+#include <at/atcore/deviceimpl.h>
 #include <vd2/system/file.h>
 #include "idedisk.h"
 
@@ -61,18 +62,31 @@ struct ATVHDDynamicDiskHeader {
 	uint8	mReserved2[256];
 };
 
-class ATIDEVHDImage : public vdrefcounted<IATIDEDisk> {
+class ATIDEVHDImage : public IATIDEDisk, public ATDevice {
 	ATIDEVHDImage(const ATIDEVHDImage&);
 	ATIDEVHDImage& operator=(const ATIDEVHDImage&);
 public:
 	ATIDEVHDImage();
 	~ATIDEVHDImage();
 
+public:
+	int AddRef();
+	int Release();
+	void *AsInterface(uint32 iid);
+
+public:
+	void GetDeviceInfo(ATDeviceInfo& info);
+	void GetSettings(ATPropertySet& settings);
+	bool SetSettings(const ATPropertySet& settings);
+
+public:
+	virtual bool IsReadOnly() const override { return mbReadOnly; }
 	uint32 GetSectorCount() const;
 
 	void Init(const wchar_t *path, bool write);
 	void InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 totalSectorCount, bool dynamic);
-	void Shutdown();
+	virtual void Init() {}
+	virtual void Shutdown();
 
 	void Flush();
 
@@ -90,6 +104,8 @@ protected:
 	void AllocateBlock();
 
 	VDFile mFile;
+	VDStringW mPath;
+	bool mbReadOnly;
 	sint64 mFooterLocation;
 	uint32 mSectorCount;
 	int mBlockSizeShift;

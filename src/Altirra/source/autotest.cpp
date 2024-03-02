@@ -41,13 +41,7 @@ uint32 ATExecuteAutotestCommand(const wchar_t *cmd, IATAutotestReplyPort *replyP
 				g_sim.SetVideoStandard(kATVideoStandard_NTSC);
 			else if (t == L"pal")
 				g_sim.SetVideoStandard(kATVideoStandard_PAL);
-			else if (t == L"800") {
-				g_sim.SetHardwareMode(kATHardwareMode_800);
-				g_sim.SetKernelMode(kATKernelMode_OSB);
-			} else if (t == L"800XL") {
-				g_sim.SetHardwareMode(kATHardwareMode_800XL);
-				g_sim.SetKernelMode(kATKernelMode_XL);
-			} else if (t == L"48K") {
+			else if (t == L"48K") {
 				g_sim.SetMemoryMode(kATMemoryMode_48K);
 			} else if (t == L"64K") {
 				g_sim.SetMemoryMode(kATMemoryMode_64K);

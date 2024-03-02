@@ -18,230 +18,252 @@
 #include "stdafx.h"
 #include <vd2/system/error.h>
 #include <vd2/system/filesys.h>
+#include <vd2/system/strutil.h>
+#include <at/atcore/cio.h>
+#include <at/atcore/devicecio.h>
+#include <at/atcore/deviceimpl.h>
+#include <at/atcore/deviceprinter.h>
+#include <at/atcore/devicesio.h>
 #include "printer.h"
 #include "kerneldb.h"
 #include "oshelper.h"
 #include "cio.h"
+#include "devicemanager.h"
 
 using namespace ATCIOSymbols;
 
-class ATPrinterEmulator : public IATPrinterEmulator {
-	ATPrinterEmulator(const ATPrinterEmulator&);
-	ATPrinterEmulator& operator=(const ATPrinterEmulator&);
+class ATDevicePrinter final : public ATDevice, public IATDevicePrinter, public IATDeviceCIO, public IATDeviceSIO {
+	ATDevicePrinter(const ATDevicePrinter&) = delete;
+	ATDevicePrinter& operator=(const ATDevicePrinter&) = delete;
 public:
-	ATPrinterEmulator();
-	~ATPrinterEmulator();
+	ATDevicePrinter();
+	~ATDevicePrinter();
 
-	bool IsEnabled() const;
-	void SetEnabled(bool enabled);
+	void *AsInterface(uint32 id);
 
 	void SetHookPageByte(uint8 page) {
 		mHookPageByte = page;
 	}
 
-	void SetOutput(IATPrinterOutput *output) {
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void Shutdown() override;
+	void WarmReset() override;
+	void ColdReset() override;
+
+public:
+	void InitCIO(IATDeviceCIOManager *mgr) override;
+	void GetCIODevices(char *buf, size_t len) const override;
+	sint32 OnCIOOpen(int channel, uint8 deviceNo, uint8 aux1, uint8 aux2, const uint8 *filename) override;
+	sint32 OnCIOClose(int channel, uint8 deviceNo) override;
+	sint32 OnCIOGetBytes(int channel, uint8 deviceNo, void *buf, uint32 len, uint32& actual) override;
+	sint32 OnCIOPutBytes(int channel, uint8 deviceNo, const void *buf, uint32 len, uint32& actual) override;
+	sint32 OnCIOGetStatus(int channel, uint8 deviceNo, uint8 statusbuf[4]) override;
+	sint32 OnCIOSpecial(int channel, uint8 deviceNo, uint8 cmd, uint16 bufadr, uint16 buflen, uint8 aux[6]) override;
+	void OnCIOAbortAsync() override;
+
+public:
+	void SetPrinterOutput(IATPrinterOutput *output) {
 		mpOutput = output;
 	}
 
-	void WarmReset();
-	void ColdReset();
-
-	void OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, int offset);
-	uint8 OnCIOCommand(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, uint8 iocbIdx, uint8 command);
+public:
+	virtual void InitSIO(IATDeviceSIOManager *mgr) override;
+	virtual CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
+	virtual void OnSerialAbortCommand() override;
+	virtual void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
+	virtual void OnSerialFence(uint32 id) override;
+	virtual CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 protected:
-	void DoOpen(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, uint8 iocb);
-	void DoClose(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, uint8 iocb);
-	void DoPutRecord(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, uint8 iocb);
-	void DoPutChars(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, uint8 iocb);
-	void DoPutByte(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem);
-
 	void Write(const uint8 *c, uint32 count);
 
+	IATDeviceCIOManager *mpCIOMgr;
+	IATDeviceSIOManager *mpSIOMgr;
 	IATPrinterOutput *mpOutput;
 
-	bool		mbEnabled;
 	uint8		mHookPageByte;
 	uint32		mLineBufIdx;
 	uint8		mLineBuf[132];
 };
 
-IATPrinterEmulator *ATCreatePrinterEmulator() {
-	return new ATPrinterEmulator;
-}
-
-ATPrinterEmulator::ATPrinterEmulator()
-	: mpOutput(NULL)
-	, mbEnabled(false)
+ATDevicePrinter::ATDevicePrinter()
+	: mpCIOMgr(nullptr)
+	, mpSIOMgr(nullptr)
+	, mpOutput(nullptr)
 {
 	ColdReset();
 }
 
-ATPrinterEmulator::~ATPrinterEmulator() {
+ATDevicePrinter::~ATDevicePrinter() {
 	ColdReset();
 }
 
-bool ATPrinterEmulator::IsEnabled() const {
-	return mbEnabled;
+void *ATDevicePrinter::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDevicePrinter::kTypeID:
+			return static_cast<IATDevicePrinter *>(this);
+		case IATDeviceSIO::kTypeID:
+			return static_cast<IATDeviceSIO *>(this);
+		case IATDeviceCIO::kTypeID:
+			return static_cast<IATDeviceCIO *>(this);
+	}
+
+	return ATDevice::AsInterface(id);
 }
 
-void ATPrinterEmulator::SetEnabled(bool enable) {
-	if (mbEnabled == enable)
-		return;
+void ATDevicePrinter::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mTag = "printer";
+	info.mName = L"Printer (P:)";
+}
 
-	mbEnabled = enable;
+void ATDevicePrinter::Shutdown() {
+	if (mpCIOMgr) {
+		mpCIOMgr->RemoveCIODevice(this);
+		mpCIOMgr = nullptr;
+	}
 
+	if (mpSIOMgr) {
+		mpSIOMgr->RemoveDevice(this);
+		mpSIOMgr = nullptr;
+	}
+}
+
+void ATDevicePrinter::WarmReset() {
 	ColdReset();
 }
 
-void ATPrinterEmulator::WarmReset() {
-	ColdReset();
-}
-
-void ATPrinterEmulator::ColdReset() {
+void ATDevicePrinter::ColdReset() {
 	mLineBufIdx = 0;
 }
 
-void ATPrinterEmulator::OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, int offset) {
-	if (!mbEnabled)
+void ATDevicePrinter::InitCIO(IATDeviceCIOManager *mgr) {
+	mpCIOMgr = mgr;
+	mpCIOMgr->AddCIODevice(this);
+}
+
+void ATDevicePrinter::GetCIODevices(char *buf, size_t len) const {
+	vdstrlcpy(buf, "P", len);
+}
+
+sint32 ATDevicePrinter::OnCIOOpen(int channel, uint8 deviceNo, uint8 aux1, uint8 aux2, const uint8 *filename) {
+	return kATCIOStat_NotSupported;
+}
+
+sint32 ATDevicePrinter::OnCIOClose(int channel, uint8 deviceNo) {
+	return kATCIOStat_Success;
+}
+
+sint32 ATDevicePrinter::OnCIOGetBytes(int channel, uint8 deviceNo, void *buf, uint32 len, uint32& actual) {
+	return kATCIOStat_ReadOnly;
+}
+
+sint32 ATDevicePrinter::OnCIOPutBytes(int channel, uint8 deviceNo, const void *buf, uint32 len, uint32& actual) {
+	actual = len;
+
+	if (mpOutput)
+		mpOutput->WriteATASCII(buf, len);
+
+	return kATCIOStat_Success;
+}
+
+sint32 ATDevicePrinter::OnCIOGetStatus(int channel, uint8 deviceNo, uint8 statusbuf[4]) {
+	statusbuf[0] = 0;
+	statusbuf[1] = 0;
+	statusbuf[2] = 0x3F;	// not sure what the timeout should be for an 820 printer
+	statusbuf[3] = 0;
+	return kATCIOStat_Success;
+}
+
+sint32 ATDevicePrinter::OnCIOSpecial(int channel, uint8 deviceNo, uint8 cmd, uint16 bufadr, uint16 buflen, uint8 aux[6]) {
+	return kATCIOStat_NotSupported;
+}
+
+void ATDevicePrinter::OnCIOAbortAsync() {
+}
+
+void ATDevicePrinter::InitSIO(IATDeviceSIOManager *mgr) {
+	mpSIOMgr = mgr;
+	mpSIOMgr->AddDevice(this);
+}
+
+IATDeviceSIO::CmdResponse ATDevicePrinter::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
+	if (!cmd.mbStandardRate)
+		return kCmdResponse_NotHandled;
+
+	if (cmd.mDevice != 0x40)
+		return kCmdResponse_NotHandled;
+
+	if (cmd.mCommand == 'W') {
+		mpSIOMgr->BeginCommand();
+
+		if (cmd.mAUX[0] == 'S') {
+			mpSIOMgr->SendACK();
+			mpSIOMgr->ReceiveData(0, 29, true);
+			mpSIOMgr->SendComplete();
+		} else {
+			mpSIOMgr->SendACK();
+			mpSIOMgr->ReceiveData(0, 40, true);
+			mpSIOMgr->SendComplete();
+		}
+
+		mpSIOMgr->EndCommand();
+
+		return kCmdResponse_Start;
+	} else if (cmd.mCommand == 'S') {
+		mpSIOMgr->BeginCommand();
+		mpSIOMgr->SendACK();
+		mpSIOMgr->SendComplete();
+
+		const uint8 statusData[4]={
+			0,0,16,0
+		};
+
+		mpSIOMgr->SendData(statusData, 4, true);
+		mpSIOMgr->EndCommand();
+
+		return kCmdResponse_Start;
+	}
+
+	return kCmdResponse_NotHandled;
+}
+
+void ATDevicePrinter::OnSerialAbortCommand() {
+}
+
+void ATDevicePrinter::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
+	if (!mpOutput)
 		return;
 
-	switch(offset) {
-		case 6:
-			DoPutByte(cpu, mem);
-			break;
-	}
+	const uint8 *src = (const uint8 *)data;
+
+	while(len && (src[len - 1] == 0x20 || src[len - 1] == 0x9B))
+		--len;
+
+	if (len > 40)
+		len = 40;
+
+	uint8 buf[41];
+	memcpy(buf, src, len);
+	buf[len] = 0x9B;
+
+	mpOutput->WriteATASCII(buf, len+1);
 }
 
-uint8 ATPrinterEmulator::OnCIOCommand(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, uint8 iocb, uint8 cmd) {
-	if (!mbEnabled)
-		return 0;
-
-	switch(cmd) {
-		case CIOCmdOpen:
-			mem->WriteByte(ATKernelSymbols::ICPTL + iocb, 0x46);
-			mem->WriteByte(ATKernelSymbols::ICPTH + iocb, mHookPageByte);
-			cpu->SetY(CIOStatSuccess);
-			cpu->SetP(cpu->GetP() & ~(AT6502::kFlagN | AT6502::kFlagZ));
-			break;
-
-		case CIOCmdClose:
-			mem->WriteByte(ATKernelSymbols::ICHID + iocb, 0xFF);
-			cpu->SetY(CIOStatSuccess);
-			cpu->SetP(cpu->GetP() & ~(AT6502::kFlagN | AT6502::kFlagZ));
-			break;
-
-		case CIOCmdPutRecord:
-			DoPutRecord(cpu, mem, iocb);
-			cpu->SetY(CIOStatSuccess);
-			cpu->SetP(cpu->GetP() & ~(AT6502::kFlagN | AT6502::kFlagZ));
-			break;
-
-		case CIOCmdPutChars:
-			DoPutChars(cpu, mem, iocb);
-			cpu->SetY(CIOStatSuccess);
-			cpu->SetP(cpu->GetP() & ~(AT6502::kFlagN | AT6502::kFlagZ));
-			break;
-
-		default:
-			cpu->SetY(CIOStatNotSupported);
-			cpu->SetP((cpu->GetP() | AT6502::kFlagN) & ~AT6502::kFlagZ);
-			break;
-	}
-
-	mem->WriteByte(ATKernelSymbols::ICSTA + iocb, cpu->GetY());
-	return 0x60;
+void ATDevicePrinter::OnSerialFence(uint32 id) {
 }
 
-void ATPrinterEmulator::DoClose(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, uint8 iocb) {
+IATDeviceSIO::CmdResponse ATDevicePrinter::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
+	return OnSerialBeginCommand(request);
 }
 
-void ATPrinterEmulator::DoPutRecord(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, uint8 iocb) {
-	ATKernelDatabase kdb(mem);
-	uint16 addr = kdb.ICBAL[iocb].r16();
-	uint16 len = kdb.ICBLL[iocb].r16();
-	uint8 buf[256];
+///////////////////////////////////////////////////////////////////////////
 
-	while(len) {
-		uint32 tc = len > 256 ? 256 : len;
-		len -= tc;
+void ATCreateDevicePrinter(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDevicePrinter> p(new ATDevicePrinter);
 
-		for(uint32 i=0; i<tc; ++i) {
-			uint8 c = mem->ReadByte((uint16)(addr + i));
-
-			buf[i] = c;
-
-			if (c == 0x9B) {
-				len = 0;
-				tc = i;
-				break;
-			}
-		}
-
-		Write(buf, tc);
-		addr += tc;
-	}
+	*dev = p.release();
 }
 
-void ATPrinterEmulator::DoPutChars(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, uint8 iocb) {
-	ATKernelDatabase kdb(mem);
-	uint16 len = kdb.ICBLL[iocb].r16();
-	uint8 buf[256];
-	
-	if (len == 0) {
-		buf[0] = cpu->GetA();
-		Write(buf, 1);
-		return;
-	}
-
-	uint16 addr = kdb.ICBAL[iocb].r16();
-	while(len) {
-		uint32 tc = len > 256 ? 256 : len;
-
-		for(uint32 i=0; i<tc; ++i)
-			buf[i] = mem->ReadByte((uint16)(addr + i));
-
-		Write(buf, tc);
-		addr += tc;
-		len -= tc;
-	}
-}
-
-void ATPrinterEmulator::DoPutByte(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem) {
-	uint8 c = cpu->GetA();
-	Write(&c, 1);
-
-	cpu->SetY(CIOStatSuccess);
-	cpu->SetP(cpu->GetP() & ~(AT6502::kFlagN | AT6502::kFlagZ));
-}
-
-void ATPrinterEmulator::Write(const uint8 *s, uint32 count) {
-	while(count--) {
-		uint8 c = *s++;
-
-		if (c == 0x9B)
-			c = '\n';
-		else {
-			c &= 0x7f;
-			
-			if (c < 0x20 || c > 0x7F)
-				c = '?';
-		}
-
-		mLineBuf[mLineBufIdx++] = c;
-
-		if (mLineBufIdx >= 130) {
-			c = '\n';
-			mLineBuf[mLineBufIdx++] = c;
-		}
-
-		if (c == '\n') {
-			mLineBuf[mLineBufIdx] = 0;
-
-			if (mpOutput)
-				mpOutput->WriteLine((const char *)mLineBuf);
-
-			mLineBufIdx = 0;
-		}
-	}
+void ATRegisterDevicePrinter(ATDeviceManager& dev) {
+	dev.AddDeviceFactory("printer", ATCreateDevicePrinter);
 }

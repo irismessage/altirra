@@ -112,6 +112,8 @@ public:
 	void	SetCommandLine(bool newState);
 	void	SetSpeaker(bool newState);
 
+	void	SetExternalSerialClock(uint32 basetime, uint32 period);
+
 	bool	IsChannelEnabled(uint32 channel) const;
 	void	SetChannelEnabled(uint32 channel, bool enabled);
 
@@ -266,6 +268,9 @@ protected:
 	uint32	mSerialSimulateInputData;
 	bool	mbSerialSimulateInputPort;
 
+	uint32	mSerialExtBaseTime;
+	uint32	mSerialExtPeriod;
+
 	SerialBurstMode	mSerBurstMode;
 
 	ATPokeyTables *mpTables;
@@ -294,6 +299,7 @@ protected:
 	ATEvent	*mpStartBitEvent;
 	ATEvent	*mpResetTimersEvent;
 	ATEvent *mpEventSerialOutput;
+	ATEvent *mpEventResetTwoTones;
 	ATEvent	*mpTimerBorrowEvents[4];
 
 	bool	mbDeferredTimerEvents[4];

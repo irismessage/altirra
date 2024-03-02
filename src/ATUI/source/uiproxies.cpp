@@ -3,6 +3,7 @@
 #include <commctrl.h>
 
 #include <vd2/system/w32assist.h>
+#include <vd2/system/thunk.h>
 #include <vd2/Dita/accel.h>
 #include <at/atui/uiproxies.h>
 
@@ -26,6 +27,11 @@ void VDUIProxyControl::Detach() {
 void VDUIProxyControl::SetArea(const vdrect32& r) {
 	if (mhwnd)
 		SetWindowPos(mhwnd, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void VDUIProxyControl::SetEnabled(bool enabled) {
+	if (mhwnd)
+		EnableWindow(mhwnd, enabled);
 }
 
 void VDUIProxyControl::SetRedraw(bool redraw) {
@@ -284,21 +290,12 @@ IVDUIListViewVirtualItem *VDUIProxyListView::GetVirtualItem(int index) const {
 	if (index < 0)
 		return NULL;
 
-	if (VDIsWindowsNT()) {
-		LVITEMW itemw={};
-		itemw.mask = LVIF_PARAM;
-		itemw.iItem = index;
-		itemw.iSubItem = 0;
-		if (SendMessage(mhwnd, LVM_GETITEMA, 0, (LPARAM)&itemw))
-			return (IVDUIListViewVirtualItem *)itemw.lParam;
-	} else {
-		LVITEMA itema={};
-		itema.mask = LVIF_PARAM;
-		itema.iItem = index;
-		itema.iSubItem = 0;
-		if (SendMessage(mhwnd, LVM_GETITEMW, 0, (LPARAM)&itema))
-			return (IVDUIListViewVirtualItem *)itema.lParam;
-	}
+	LVITEMW itemw={};
+	itemw.mask = LVIF_PARAM;
+	itemw.iItem = index;
+	itemw.iSubItem = 0;
+	if (SendMessage(mhwnd, LVM_GETITEMW, 0, (LPARAM)&itemw))
+		return (IVDUIListViewVirtualItem *)itemw.lParam;
 
 	return NULL;
 }
@@ -306,50 +303,27 @@ IVDUIListViewVirtualItem *VDUIProxyListView::GetVirtualItem(int index) const {
 void VDUIProxyListView::InsertColumn(int index, const wchar_t *label, int width, bool rightAligned) {
 	VDASSERT(index || !rightAligned);
 
-	if (VDIsWindowsNT()) {
-		LVCOLUMNW colw = {};
+	LVCOLUMNW colw = {};
 
-		colw.mask		= LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
-		colw.fmt		= rightAligned ? LVCFMT_RIGHT : LVCFMT_LEFT;
-		colw.cx			= width;
-		colw.pszText	= (LPWSTR)label;
+	colw.mask		= LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
+	colw.fmt		= rightAligned ? LVCFMT_RIGHT : LVCFMT_LEFT;
+	colw.cx			= width;
+	colw.pszText	= (LPWSTR)label;
 
-		SendMessageW(mhwnd, LVM_INSERTCOLUMNW, (WPARAM)index, (LPARAM)&colw);
-	} else {
-		LVCOLUMNA cola = {};
-		VDStringA labela(VDTextWToA(label));
-
-		cola.mask		= LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
-		cola.fmt		= rightAligned ? LVCFMT_RIGHT : LVCFMT_LEFT;
-		cola.cx			= width;
-		cola.pszText	= (LPSTR)labela.c_str();
-
-		SendMessageA(mhwnd, LVM_INSERTCOLUMNA, (WPARAM)index, (LPARAM)&cola);
-	}
+	SendMessageW(mhwnd, LVM_INSERTCOLUMNW, (WPARAM)index, (LPARAM)&colw);
 }
 
 int VDUIProxyListView::InsertItem(int item, const wchar_t *text) {
 	if (item < 0)
 		item = 0x7FFFFFFF;
 
-	if (VDIsWindowsNT()) {
-		LVITEMW itemw = {};
+	LVITEMW itemw = {};
 
-		itemw.mask		= LVIF_TEXT;
-		itemw.iItem		= item;
-		itemw.pszText	= (LPWSTR)text;
+	itemw.mask		= LVIF_TEXT;
+	itemw.iItem		= item;
+	itemw.pszText	= (LPWSTR)text;
 
-		return (int)SendMessageW(mhwnd, LVM_INSERTITEMW, 0, (LPARAM)&itemw);
-	} else {
-		LVITEMA itema = {};
-		VDStringA texta(VDTextWToA(text));
-
-		itema.mask		= LVIF_TEXT;
-		itema.iItem		= item;
-		itema.pszText	= (LPSTR)texta.c_str();
-
-		return (int)SendMessageA(mhwnd, LVM_INSERTITEMA, 0, (LPARAM)&itema);
-	}
+	return (int)SendMessageW(mhwnd, LVM_INSERTITEMW, 0, (LPARAM)&itemw);
 }
 
 int VDUIProxyListView::InsertVirtualItem(int item, IVDUIListViewVirtualItem *lvvi) {
@@ -359,25 +333,16 @@ int VDUIProxyListView::InsertVirtualItem(int item, IVDUIListViewVirtualItem *lvv
 		item = 0x7FFFFFFF;
 
 	++mChangeNotificationLocks;
-	if (VDIsWindowsNT()) {
-		LVITEMW itemw = {};
 
-		itemw.mask		= LVIF_TEXT | LVIF_PARAM;
-		itemw.iItem		= item;
-		itemw.pszText	= LPSTR_TEXTCALLBACKW;
-		itemw.lParam	= (LPARAM)lvvi;
+	LVITEMW itemw = {};
 
-		index = (int)SendMessageW(mhwnd, LVM_INSERTITEMW, 0, (LPARAM)&itemw);
-	} else {
-		LVITEMA itema = {};
+	itemw.mask		= LVIF_TEXT | LVIF_PARAM;
+	itemw.iItem		= item;
+	itemw.pszText	= LPSTR_TEXTCALLBACKW;
+	itemw.lParam	= (LPARAM)lvvi;
 
-		itema.mask		= LVIF_TEXT | LVIF_PARAM;
-		itema.iItem		= item;
-		itema.pszText	= LPSTR_TEXTCALLBACKA;
-		itema.lParam	= (LPARAM)lvvi;
+	index = (int)SendMessageW(mhwnd, LVM_INSERTITEMW, 0, (LPARAM)&itemw);
 
-		index = (int)SendMessageA(mhwnd, LVM_INSERTITEMA, 0, (LPARAM)&itema);
-	}
 	--mChangeNotificationLocks;
 
 	if (index >= 0)
@@ -402,52 +367,27 @@ void VDUIProxyListView::EditItemLabel(int item) {
 }
 
 void VDUIProxyListView::GetItemText(int item, VDStringW& s) const {
-	if (VDIsWindowsNT()) {
-		LVITEMW itemw;
-		wchar_t buf[512];
+	LVITEMW itemw;
+	wchar_t buf[512];
 
-		itemw.iSubItem = 0;
-		itemw.cchTextMax = 511;
-		itemw.pszText = buf;
-		buf[0] = 0;
-		SendMessageW(mhwnd, LVM_GETITEMTEXTW, item, (LPARAM)&itemw);
+	itemw.iSubItem = 0;
+	itemw.cchTextMax = 511;
+	itemw.pszText = buf;
+	buf[0] = 0;
+	SendMessageW(mhwnd, LVM_GETITEMTEXTW, item, (LPARAM)&itemw);
 
-		s = buf;
-	} else {
-		LVITEMA itema;
-		char buf[512];
-
-		itema.iSubItem = 0;
-		itema.cchTextMax = 511;
-		itema.pszText = buf;
-		buf[0] = 0;
-		SendMessageW(mhwnd, LVM_GETITEMTEXTA, item, (LPARAM)&itema);
-
-		s = VDTextAToW(buf);
-	}
+	s = buf;
 }
 
 void VDUIProxyListView::SetItemText(int item, int subitem, const wchar_t *text) {
-	if (VDIsWindowsNT()) {
-		LVITEMW itemw = {};
+	LVITEMW itemw = {};
 
-		itemw.mask		= LVIF_TEXT;
-		itemw.iItem		= item;
-		itemw.iSubItem	= subitem;
-		itemw.pszText	= (LPWSTR)text;
+	itemw.mask		= LVIF_TEXT;
+	itemw.iItem		= item;
+	itemw.iSubItem	= subitem;
+	itemw.pszText	= (LPWSTR)text;
 
-		SendMessageW(mhwnd, LVM_SETITEMW, 0, (LPARAM)&itemw);
-	} else {
-		LVITEMA itema = {};
-		VDStringA texta(VDTextWToA(text));
-
-		itema.mask		= LVIF_TEXT;
-		itema.iItem		= item;
-		itema.iSubItem	= subitem;
-		itema.pszText	= (LPSTR)texta.c_str();
-
-		SendMessageA(mhwnd, LVM_SETITEMA, 0, (LPARAM)&itema);
-	}
+	SendMessageW(mhwnd, LVM_SETITEMW, 0, (LPARAM)&itemw);
 }
 
 bool VDUIProxyListView::IsItemChecked(int item) {
@@ -466,25 +406,14 @@ void VDUIProxyListView::SetItemCheckedVisible(int item, bool checked) {
 }
 
 void VDUIProxyListView::SetItemImage(int item, uint32 imageIndex) {
-	if (VDIsWindowsNT()) {
-		LVITEMW itemw = {};
+	LVITEMW itemw = {};
 
-		itemw.mask		= LVIF_IMAGE;
-		itemw.iItem		= item;
-		itemw.iSubItem	= 0;
-		itemw.iImage	= imageIndex;
+	itemw.mask		= LVIF_IMAGE;
+	itemw.iItem		= item;
+	itemw.iSubItem	= 0;
+	itemw.iImage	= imageIndex;
 
-		SendMessageW(mhwnd, LVM_SETITEMW, 0, (LPARAM)&itemw);
-	} else {
-		LVITEMA itema = {};
-
-		itema.mask		= LVIF_IMAGE;
-		itema.iItem		= item;
-		itema.iSubItem	= 0;
-		itema.iImage	= imageIndex;
-
-		SendMessageA(mhwnd, LVM_SETITEMA, 0, (LPARAM)&itema);
-	}
+	SendMessageW(mhwnd, LVM_SETITEMW, 0, (LPARAM)&itemw);
 }
 
 bool VDUIProxyListView::GetItemScreenRect(int item, vdrect32& r) const {
@@ -636,18 +565,16 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 			{
 				const NMLVDISPINFOW *di = (const NMLVDISPINFOW *)hdr;
 
-				if (di->item.pszText) {
-					LabelChangedEvent event = {
-						true,
-						di->item.iItem,
-						di->item.pszText
-					};
+				LabelChangedEvent event = {
+					true,
+					di->item.iItem,
+					di->item.pszText
+				};
 
-					mEventItemLabelEdited.Raise(this, &event);
+				mEventItemLabelEdited.Raise(this, &event);
 
-					if (!event.mbAllowEdit)
-						return FALSE;
-				}
+				if (!event.mbAllowEdit)
+					return FALSE;
 			}
 			return TRUE;
 
@@ -671,16 +598,14 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 			{
 				const NMITEMACTIVATE *nmia = (const NMITEMACTIVATE *)hdr;
 
-				if (nmia->iItem >= 0) {
-					ContextMenuEvent event;
-					event.mIndex = nmia->iItem;
+				ContextMenuEvent event;
+				event.mIndex = nmia->iItem;
 
-					POINT pt = nmia->ptAction;
-					ClientToScreen(mhwnd, &pt);
-					event.mX = pt.x;
-					event.mY = pt.y;
-					mEventItemContextMenu.Raise(this, event);
-				}
+				POINT pt = nmia->ptAction;
+				ClientToScreen(mhwnd, &pt);
+				event.mX = pt.x;
+				event.mY = pt.y;
+				mEventItemContextMenu.Raise(this, event);
 			}
 			return 0;
 
@@ -770,20 +695,11 @@ void VDUIProxyTabControl::AddItem(const wchar_t *s) {
 		return;
 
 	int n = TabCtrl_GetItemCount(mhwnd);
-	if (VDIsWindowsNT()) {
-		TCITEMW tciw = { TCIF_TEXT };
+	TCITEMW tciw = { TCIF_TEXT };
 
-		tciw.pszText = (LPWSTR)s;
+	tciw.pszText = (LPWSTR)s;
 
-		SendMessageW(mhwnd, TCM_INSERTITEMW, n, (LPARAM)&tciw);
-	} else {
-		TCITEMA tcia = { TCIF_TEXT };
-		VDStringA sa(VDTextWToA(s));
-
-		tcia.pszText = (LPSTR)sa.c_str();
-
-		SendMessageA(mhwnd, TCM_INSERTITEMA, n, (LPARAM)&tcia);
-	}
+	SendMessageW(mhwnd, TCM_INSERTITEMW, n, (LPARAM)&tciw);
 }
 
 void VDUIProxyTabControl::DeleteItem(int index) {
@@ -857,10 +773,7 @@ int VDUIProxyListBoxControl::AddItem(const wchar_t *s, uintptr_t cookie) {
 		return -1;
 
 	int idx;
-	if (VDIsWindowsNT())
-		idx = (int)SendMessageW(mhwnd, LB_ADDSTRING, 0, (LPARAM)s);
-	else
-		idx = (int)SendMessageA(mhwnd, LB_ADDSTRING, 0, (LPARAM)VDTextWToA(s).c_str());
+	idx = (int)SendMessageW(mhwnd, LB_ADDSTRING, 0, (LPARAM)s);
 
 	if (idx >= 0)
 		SendMessage(mhwnd, LB_SETITEMDATA, idx, (LPARAM)cookie);
@@ -934,10 +847,7 @@ void VDUIProxyComboBoxControl::AddItem(const wchar_t *s) {
 	if (!mhwnd)
 		return;
 
-	if (VDIsWindowsNT())
-		SendMessageW(mhwnd, CB_ADDSTRING, 0, (LPARAM)s);
-	else
-		SendMessageA(mhwnd, CB_ADDSTRING, 0, (LPARAM)VDTextWToA(s).c_str());
+	SendMessageW(mhwnd, CB_ADDSTRING, 0, (LPARAM)s);
 }
 
 int VDUIProxyComboBoxControl::GetSelection() const {
@@ -968,10 +878,19 @@ const VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::kNodeLast = (N
 
 VDUIProxyTreeViewControl::VDUIProxyTreeViewControl()
 	: mNextTextIndex(0)
+	, mpEditWndProcThunk(NULL)
+	, mhfontBold(NULL)
+	, mbCreatedBoldFont(false)
 {
 }
 
 VDUIProxyTreeViewControl::~VDUIProxyTreeViewControl() {
+	if (mpEditWndProcThunk) {
+		SendMessageW(mhwnd, TVM_ENDEDITLABELNOW, TRUE, 0);
+
+		VDDestroyFunctionThunk(mpEditWndProcThunk);
+		mpEditWndProcThunk = NULL;
+	}
 }
 
 IVDUITreeViewVirtualItem *VDUIProxyTreeViewControl::GetSelectedVirtualItem() const {
@@ -983,23 +902,13 @@ IVDUITreeViewVirtualItem *VDUIProxyTreeViewControl::GetSelectedVirtualItem() con
 	if (!hti)
 		return NULL;
 
-	if (VDIsWindowsNT()) {
-		TVITEMW itemw = {0};
+	TVITEMW itemw = {0};
 
-		itemw.mask = LVIF_PARAM;
-		itemw.hItem = hti;
+	itemw.mask = LVIF_PARAM;
+	itemw.hItem = hti;
 
-		SendMessageW(mhwnd, TVM_GETITEMW, 0, (LPARAM)&itemw);
-		return (IVDUITreeViewVirtualItem *)itemw.lParam;
-	} else {
-		TVITEMA itema = {0};
-
-		itema.mask = LVIF_PARAM;
-		itema.hItem = hti;
-
-		SendMessageA(mhwnd, TVM_GETITEMA, 0, (LPARAM)&itema);
-		return (IVDUITreeViewVirtualItem *)itema.lParam;
-	}
+	SendMessageW(mhwnd, TVM_GETITEMW, 0, (LPARAM)&itemw);
+	return (IVDUITreeViewVirtualItem *)itemw.lParam;
 }
 
 void VDUIProxyTreeViewControl::Clear() {
@@ -1018,28 +927,15 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddItem(NodeRef pare
 	if (!mhwnd)
 		return NULL;
 
-	if (VDIsWindowsNT()) {
-		TVINSERTSTRUCTW isw = { 0 };
+	TVINSERTSTRUCTW isw = { 0 };
 
-		isw.hParent = (HTREEITEM)parent;
-		isw.hInsertAfter = (HTREEITEM)insertAfter;
-		isw.item.mask = TVIF_TEXT | TVIF_PARAM;
-		isw.item.pszText = (LPWSTR)label;
-		isw.item.lParam = NULL;
+	isw.hParent = (HTREEITEM)parent;
+	isw.hInsertAfter = (HTREEITEM)insertAfter;
+	isw.item.mask = TVIF_TEXT | TVIF_PARAM;
+	isw.item.pszText = (LPWSTR)label;
+	isw.item.lParam = NULL;
 
-		return (NodeRef)SendMessageW(mhwnd, TVM_INSERTITEMW, 0, (LPARAM)&isw);
-	} else {
-		TVINSERTSTRUCTA isa;
-		VDStringA sa(VDTextWToA(label));
-
-		isa.hParent = (HTREEITEM)parent;
-		isa.hInsertAfter = (HTREEITEM)insertAfter;
-		isa.item.mask = TVIF_TEXT | TVIF_PARAM;
-		isa.item.pszText = (LPSTR)sa.c_str();
-		isa.item.lParam = NULL;
-
-		return (NodeRef)SendMessageA(mhwnd, TVM_INSERTITEMA, 0, (LPARAM)&isa);
-	}
+	return (NodeRef)SendMessageW(mhwnd, TVM_INSERTITEMW, 0, (LPARAM)&isw);
 }
 
 VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddVirtualItem(NodeRef parent, NodeRef insertAfter, IVDUITreeViewVirtualItem *item) {
@@ -1048,27 +944,15 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddVirtualItem(NodeR
 
 	HTREEITEM hti;
 
-	if (VDIsWindowsNT()) {
-		TVINSERTSTRUCTW isw = { 0 };
+	TVINSERTSTRUCTW isw = { 0 };
 
-		isw.hParent = (HTREEITEM)parent;
-		isw.hInsertAfter = (HTREEITEM)insertAfter;
-		isw.item.mask = TVIF_PARAM | TVIF_TEXT;
-		isw.item.lParam = (LPARAM)item;
-		isw.item.pszText = LPSTR_TEXTCALLBACKW;
+	isw.hParent = (HTREEITEM)parent;
+	isw.hInsertAfter = (HTREEITEM)insertAfter;
+	isw.item.mask = TVIF_PARAM | TVIF_TEXT;
+	isw.item.lParam = (LPARAM)item;
+	isw.item.pszText = LPSTR_TEXTCALLBACKW;
 
-		hti = (HTREEITEM)SendMessageW(mhwnd, TVM_INSERTITEMW, 0, (LPARAM)&isw);
-	} else {
-		TVINSERTSTRUCTA isa;
-
-		isa.hParent = (HTREEITEM)parent;
-		isa.hInsertAfter = (HTREEITEM)insertAfter;
-		isa.item.mask = TVIF_PARAM | TVIF_TEXT;
-		isa.item.lParam = (LPARAM)item;
-		isa.item.pszText = LPSTR_TEXTCALLBACKA;
-
-		hti = (HTREEITEM)SendMessageA(mhwnd, TVM_INSERTITEMA, 0, (LPARAM)&isa);
-	}
+	hti = (HTREEITEM)SendMessageW(mhwnd, TVM_INSERTITEMW, 0, (LPARAM)&isw);
 
 	if (hti) {
 		if (parent != kNodeRoot) {
@@ -1094,28 +978,96 @@ void VDUIProxyTreeViewControl::SelectNode(NodeRef node) {
 }
 
 void VDUIProxyTreeViewControl::RefreshNode(NodeRef node) {
+	VDASSERT(node);
+
 	if (mhwnd) {
-		if (VDIsWindowsNT()) {
-			TVITEMW itemw = {0};
+		TVITEMW itemw = {0};
 
-			itemw.mask = LVIF_PARAM;
-			itemw.hItem = (HTREEITEM)node;
+		itemw.mask = LVIF_PARAM;
+		itemw.hItem = (HTREEITEM)node;
 
-			SendMessageW(mhwnd, TVM_GETITEMW, 0, (LPARAM)&itemw);
+		SendMessageW(mhwnd, TVM_GETITEMW, 0, (LPARAM)&itemw);
 
-			if (itemw.lParam)
-				SendMessageW(mhwnd, TVM_SETITEMW, 0, (LPARAM)&itemw);
-		} else {
-			TVITEMA itema = {0};
-
-			itema.mask = LVIF_PARAM;
-			itema.hItem = (HTREEITEM)node;
-
-			SendMessageA(mhwnd, TVM_GETITEMA, 0, (LPARAM)&itema);
-
-			if (itema.lParam)
-				SendMessageA(mhwnd, TVM_SETITEMA, 0, (LPARAM)&itema);
+		if (itemw.lParam) {
+			itemw.mask = LVIF_TEXT;
+			itemw.pszText = LPSTR_TEXTCALLBACKW;
+			SendMessageW(mhwnd, TVM_SETITEMW, 0, (LPARAM)&itemw);
 		}
+	}
+}
+
+void VDUIProxyTreeViewControl::ExpandNode(NodeRef node, bool expanded) {
+	VDASSERT(node);
+
+	if (!mhwnd)
+		return;
+
+	TreeView_Expand(mhwnd, (HTREEITEM)node, expanded ? TVE_EXPAND : TVE_COLLAPSE);
+}
+
+void VDUIProxyTreeViewControl::EditNodeLabel(NodeRef node) {
+	if (!mhwnd)
+		return;
+
+	::SetFocus(mhwnd);
+	::SendMessageW(mhwnd, TVM_EDITLABELW, 0, (LPARAM)(HTREEITEM)node);
+}
+
+namespace {
+	int CALLBACK TreeNodeCompareFn(LPARAM node1, LPARAM node2, LPARAM comparer) {
+		if (!node1)
+			return node2 ? -1 : 0;
+
+		if (!node2)
+			return 1;
+
+		return ((IVDUITreeViewVirtualItemComparer *)comparer)->Compare(
+			*(IVDUITreeViewVirtualItem *)node1,
+			*(IVDUITreeViewVirtualItem *)node2);
+	}
+}
+
+void VDUIProxyTreeViewControl::EnumChildren(NodeRef parent, const vdfunction<void(IVDUITreeViewVirtualItem *)>& callback) {
+	if (!mhwnd)
+		return;
+
+	TVITEMW itemw = {0};
+	itemw.mask = LVIF_PARAM;
+
+	HTREEITEM hti = TreeView_GetChild(mhwnd, parent);
+	while(hti) {
+		itemw.hItem = hti;
+		if (SendMessageW(mhwnd, TVM_GETITEMW, 0, (LPARAM)&itemw))
+			callback((IVDUITreeViewVirtualItem *)itemw.lParam);
+
+		hti = TreeView_GetNextSibling(mhwnd, hti);
+	}
+}
+
+void VDUIProxyTreeViewControl::SortChildren(NodeRef parent, IVDUITreeViewVirtualItemComparer& comparer) {
+	if (!mhwnd)
+		return;
+
+	TVSORTCB scb;
+	scb.hParent = (HTREEITEM)parent;
+	scb.lParam = (LPARAM)&comparer;
+	scb.lpfnCompare = TreeNodeCompareFn;
+
+	SendMessageW(mhwnd, TVM_SORTCHILDRENCB, 0, (LPARAM)&scb);
+}
+
+void VDUIProxyTreeViewControl::Attach(VDZHWND hwnd) {
+	VDUIProxyControl::Attach(hwnd);
+
+	if (mhwnd)
+		SendMessageW(mhwnd, CCM_SETVERSION, 5, 0);
+}
+
+void VDUIProxyTreeViewControl::Detach() {
+	if (mhfontBold) {
+		::DeleteObject(mhfontBold);
+		mhfontBold = NULL;
+		mbCreatedBoldFont = false;
 	}
 }
 
@@ -1177,6 +1129,108 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 			mEventItemSelectionChanged.Raise(this, 0);
 			break;
 
+		case TVN_BEGINLABELEDITA:
+			{
+				const NMTVDISPINFOA& dispInfo = *(const NMTVDISPINFOA *)hdr;
+				BeginEditEvent event;
+
+				event.mNode = (NodeRef)dispInfo.item.hItem;
+				event.mpItem = (IVDUITreeViewVirtualItem *)dispInfo.item.lParam;
+				event.mbAllowEdit = true;
+				event.mbOverrideText = false;
+
+				mEventItemBeginEdit.Raise(this, &event);
+
+				if (event.mbAllowEdit) {
+					HWND hwndEdit = (HWND)SendMessageA(mhwnd, TVM_GETEDITCONTROL, 0, 0);
+
+					if (hwndEdit) {
+						if (!mpEditWndProcThunk)
+							mpEditWndProcThunk = VDCreateFunctionThunkFromMethod(this, &VDUIProxyTreeViewControl::FixLabelEditWndProcA, true);
+
+						if (mpEditWndProcThunk) {
+							mPrevEditWndProc = (void *)(WNDPROC)GetWindowLongPtrA(hwndEdit, GWLP_WNDPROC);
+
+							if (mPrevEditWndProc)
+								SetWindowLongPtrA(hwndEdit, GWLP_WNDPROC, (LONG_PTR)mpEditWndProcThunk);
+						}
+
+						if (event.mbOverrideText)
+							VDSetWindowTextW32(hwndEdit, event.mOverrideText.c_str());
+					}
+				}
+
+				return !event.mbAllowEdit;
+			}
+
+		case TVN_BEGINLABELEDITW:
+			{
+				const NMTVDISPINFOW& dispInfo = *(const NMTVDISPINFOW *)hdr;
+				BeginEditEvent event;
+
+				event.mNode = (NodeRef)dispInfo.item.hItem;
+				event.mpItem = (IVDUITreeViewVirtualItem *)dispInfo.item.lParam;
+				event.mbAllowEdit = true;
+				event.mbOverrideText = false;
+
+				mEventItemBeginEdit.Raise(this, &event);
+
+				if (event.mbAllowEdit) {
+					HWND hwndEdit = (HWND)SendMessageA(mhwnd, TVM_GETEDITCONTROL, 0, 0);
+
+					if (hwndEdit) {
+						if (!mpEditWndProcThunk)
+							mpEditWndProcThunk = VDCreateFunctionThunkFromMethod(this, &VDUIProxyTreeViewControl::FixLabelEditWndProcW, true);
+
+						if (mpEditWndProcThunk) {
+							mPrevEditWndProc = (WNDPROC)GetWindowLongPtrW(hwndEdit, GWLP_WNDPROC);
+
+							if (mPrevEditWndProc)
+								SetWindowLongPtrW(hwndEdit, GWLP_WNDPROC, (LONG_PTR)mpEditWndProcThunk);
+						}
+
+						if (event.mbOverrideText)
+							VDSetWindowTextW32(hwndEdit, event.mOverrideText.c_str());
+					}
+				}
+
+				return !event.mbAllowEdit;
+			}
+
+		case TVN_ENDLABELEDITA:
+			{
+				const NMTVDISPINFOA& dispInfo = *(const NMTVDISPINFOA *)hdr;
+
+				if (dispInfo.item.pszText) {
+					EndEditEvent event;
+
+					event.mNode = (NodeRef)dispInfo.item.hItem;
+					event.mpItem = (IVDUITreeViewVirtualItem *)dispInfo.item.lParam;
+
+					const VDStringW& text = VDTextAToW(dispInfo.item.pszText);
+					event.mpNewText = text.c_str();
+
+					mEventItemEndEdit.Raise(this, &event);
+				}
+			}
+			break;
+
+		case TVN_ENDLABELEDITW:
+			{
+				const NMTVDISPINFOW& dispInfo = *(const NMTVDISPINFOW *)hdr;
+
+				if (dispInfo.item.pszText) {
+					EndEditEvent event;
+
+					event.mNode = (NodeRef)dispInfo.item.hItem;
+					event.mpItem = (IVDUITreeViewVirtualItem *)dispInfo.item.lParam;
+					event.mpNewText = dispInfo.item.pszText;
+
+					mEventItemEndEdit.Raise(this, &event);
+				}
+			}
+			break;
+
 		case NM_DBLCLK:
 			{
 				bool handled = false;
@@ -1184,7 +1238,64 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 				return handled;
 			}
 
+		case NM_CUSTOMDRAW:
+			{
+				NMTVCUSTOMDRAW& cd = *(LPNMTVCUSTOMDRAW)lParam;
+
+				if (!mEventItemGetDisplayAttributes.IsEmpty()) {
+					if (cd.nmcd.dwDrawStage == CDDS_PREPAINT) {
+						return CDRF_NOTIFYITEMDRAW;
+					} else if (cd.nmcd.dwDrawStage == CDDS_ITEMPREPAINT && cd.nmcd.lItemlParam) {
+						GetDispAttrEvent event;
+						event.mpItem = (IVDUITreeViewVirtualItem *)cd.nmcd.lItemlParam;
+						event.mbIsBold = false;
+
+						mEventItemGetDisplayAttributes.Raise(this, &event);
+
+						if (event.mbIsBold) {
+							if (!mhfontBold) {
+								HFONT hfont = (HFONT)::GetCurrentObject(cd.nmcd.hdc, OBJ_FONT);
+
+								if (hfont) {
+									LOGFONTW lfw = {0};
+									if (::GetObject(hfont, sizeof lfw, &lfw)) {
+										lfw.lfWeight = FW_BOLD;
+
+										mhfontBold = ::CreateFontIndirectW(&lfw);
+									}
+								}
+
+								mbCreatedBoldFont = true;
+							}
+
+							if (mhfontBold) {
+								::SelectObject(cd.nmcd.hdc, mhfontBold);
+								return CDRF_NEWFONT;
+							}
+						}
+					}
+				}
+			}
+			return CDRF_DODEFAULT;
 	}
 
 	return 0;
+}
+
+VDZLRESULT VDUIProxyTreeViewControl::FixLabelEditWndProcA(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
+	switch(msg) {
+		case WM_GETDLGCODE:
+			return DLGC_WANTALLKEYS;
+	}
+
+	return ::CallWindowProcA((WNDPROC)mPrevEditWndProc, hwnd, msg, wParam, lParam);
+}
+
+VDZLRESULT VDUIProxyTreeViewControl::FixLabelEditWndProcW(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
+	switch(msg) {
+		case WM_GETDLGCODE:
+			return DLGC_WANTALLKEYS;
+	}
+
+	return ::CallWindowProcW((WNDPROC)mPrevEditWndProc, hwnd, msg, wParam, lParam);
 }

@@ -239,6 +239,14 @@ public:
 
 	void clear();
 
+	template<class T>
+	void get_keys(T& result) const {
+		for(const auto& bucket : m.table) {
+			for(const auto *p = bucket.mpNext; p != &bucket; p = p->mpNext)
+				result.push_back(static_cast<const atfixedhash_node<value_type> *>(p)->mValue.first);
+		}
+	}
+
 	iterator find(const key_type& k);
 	std::pair<pointer, bool> insert(const value_type& v);
 
@@ -364,6 +372,9 @@ public:
 	const wchar_t *GetName() const;
 	void SetName(const wchar_t *name);
 
+	bool IsQuickMap() const { return mbQuickMap; }
+	void SetQuickMap(bool q) { mbQuickMap = q; }
+
 	bool UsesPhysicalPort(int portIdx) const;
 
 	void Clear();
@@ -396,6 +407,8 @@ protected:
 
 	VDStringW mName;
 	int mSpecificInputUnit;
+
+	bool mbQuickMap;
 };
 
 class ATInputManager {
@@ -422,6 +435,10 @@ public:
 	int RegisterInputUnit(const ATInputUnitIdentifier& id, const wchar_t *name, IATInputUnitNameSource *nameSource);
 	void UnregisterInputUnit(int unit);
 
+	/// Enables or disables restricted mode. Restricted mode limits triggers
+	/// UI triggers only. All other triggers are forced off.
+	void SetRestrictedMode(bool restricted);
+
 	bool IsInputMapped(int unit, uint32 inputCode) const;
 	bool IsMouseMapped() const { return mbMouseMapped; }
 	bool IsMouseAbsoluteMode() const { return mbMouseAbsMode; }
@@ -434,6 +451,7 @@ public:
 	void SetMouseBeamPos(int x, int y);
 	void SetMousePadPos(int x, int y);
 	void ActivateFlag(uint32 id, bool state);
+	void ReleaseButtons(uint32 idmin, uint32 idmax);
 
 	void GetNameForInputCode(uint32 code, VDStringW& name) const;
 	void GetNameForTargetCode(uint32 code, ATInputControllerType type, VDStringW& name) const;
@@ -445,6 +463,7 @@ public:
 	void RemoveInputMap(ATInputMap *imap);
 	void RemoveAllInputMaps();
 	void ActivateInputMap(ATInputMap *imap, bool enable);
+	ATInputMap *CycleQuickMaps();
 
 	uint32 GetPresetInputMapCount() const;
 	bool GetPresetInputMapByIndex(uint32 index, ATInputMap **imap) const;
@@ -454,6 +473,7 @@ public:
 
 protected:
 	struct Mapping;
+	struct Trigger;
 
 	void ReconfigurePorts();
 	void RebuildMappings();
@@ -464,12 +484,14 @@ protected:
 	void SetTrigger(Mapping& mapping, bool state);
 	void Update5200Controller();
 	void InitPresetMaps();
+	bool IsTriggerRestricted(const Trigger& trigger) const;
 
 	ATScheduler *mpSlowScheduler;
 	ATScheduler *mpFastScheduler;
 	ATLightPenPort *mpLightPen;
 	ATPortController *mpPorts[2];
 	IATInputConsoleCallback *mpCB;
+	bool mbRestrictedMode;
 	int m5200ControllerIndex;
 	bool mb5200PotsEnabled;
 	bool mbMouseAbsMode;

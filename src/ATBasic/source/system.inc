@@ -110,6 +110,7 @@ warmst	= $0008			;warmstart flag
 boot?	= $0009			;boot flag; 0 if none, 1 for disk, 2 for cassette
 dosvec	= $000a
 dosini	= $000c
+appmhi	= $000e
 pokmsk	= $0010
 brkkey	= $0011			;set on [BREAK]
 rtclok	= $0012
@@ -257,12 +258,15 @@ color4	= $02c8			;shadow for COLBK ($D01A)
 dsctln	= $02d5			;disk sector length (1200XL and newer only)
 		; $02d6
 noclik	= $02db			;key click disable (XL/XE only)
+runad	= $02e0			;DOS run address
+		; $02e1
 memtop	= $02e5			;highest location for programs and data
 memlo	= $02e7			;base of application memory
 dvstat	= $02ea			;DISK: Status request buffer area (4 bytes)
 		; $02eb
 		; $02ec
 		; $02ed
+crsinh	= $02f0			;Display/Editor: cursor inhibit flag
 keydel	= $02f1			;keyboard debounce delay (set to 3 vblanks per key)
 ch1		= $02f2			;last keyboard code read
 chact	= $02f3			;shadow for CHACTL ($D401)

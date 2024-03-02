@@ -17,6 +17,8 @@
 
 #include "stdafx.h"
 #include <vd2/system/binary.h>
+#include <vd2/system/text.h>
+#include <vd2/system/VDString.h>
 #include "savestate.h"
 
 extern const uint8 kATSaveStateHeader[12]={'A', 'l', 't', 'S', 'a', 'v', 'e', 0x0D, 0x0A, 0x1A, 0x00, 0x80 };
@@ -155,6 +157,28 @@ uint32 ATSaveStateReader::ReadUint32() {
 	return v;
 }
 
+void ATSaveStateReader::ReadString(VDStringW& str) {
+	uint32 len = 0;
+	int shift = 0;
+
+	for(;;) {
+		uint8 v;
+		ReadData(&v, 1);
+
+		len += (v & 0x7f) << shift;
+		shift += 7;
+
+		if (!(v & 0x80))
+			break;
+	}
+
+	if (mSize - mPosition < len)
+		throw ATInvalidSaveStateException();
+
+	str = VDTextU8ToW((const char *)(mpSrc + mPosition), len);
+	mPosition += len;
+}
+
 void ATSaveStateReader::ReadData(void *dst, uint32 count) {
 	if (mSize - mPosition < count)
 		throw ATInvalidSaveStateException();
@@ -229,6 +253,23 @@ void ATSaveStateWriter::WriteUint16(uint16 v) {
 
 void ATSaveStateWriter::WriteUint32(uint32 v) {
 	WriteData(&v, 4);
+}
+
+void ATSaveStateWriter::WriteString(const wchar_t *s) {
+	const VDStringA& s8 = VDTextWToU8(s, wcslen(s));
+	size_t len = s8.size();
+
+	do {
+		uint8 val = (uint8)len;
+
+		len >>= 7;
+		if (len)
+			val |= 0x80;
+
+		WriteData(&val, 1);
+	} while(len);
+
+	WriteData(s8.data(), s8.size());
 }
 
 void ATSaveStateWriter::WriteData(const void *src, uint32 count) {

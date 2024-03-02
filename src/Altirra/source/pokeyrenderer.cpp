@@ -83,6 +83,8 @@ void ATPokeyRenderer::ColdReset() {
 	mSpeakerLevel = 0;
 
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+	mLastOutputSampleTime = t;
+	mLastOutputTime = t;
 	mLastPoly17Time = t;
 	mLastPoly9Time = t;
 	mLastPoly5Time = t;
@@ -91,6 +93,10 @@ void ATPokeyRenderer::ColdReset() {
 	mPoly9Counter = 0;
 	mPoly5Counter = 0;
 	mPoly4Counter = 0;
+
+	for(ChannelEdges& edges : mChannelEdges) {
+		edges.clear();
+	}
 
 	// This must be done after everything else is inited, as it will start recomputing
 	// derived values.
@@ -216,12 +222,12 @@ void ATPokeyRenderer::AddChannelEvent(int channel) {
 	ChannelEdges& ce = mChannelEdges[channel];
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 
-	VDASSERT(ce.empty() || t >= ce.back());
+	VDASSERT(ce.empty() || t - ce.back() < 0x80000000);
 	ce.push_back(t);
 }
 
 void ATPokeyRenderer::SetChannelDeferredEvents(int channel, uint32 start, uint32 period) {
-	VDASSERT(start >= mLastOutputTime);
+	VDASSERT(start - mLastOutputTime < 0x80000000);
 	VDASSERT(period < 7500000);
 
 	DeferredEvent& ev = mDeferredEvents[channel];
@@ -232,8 +238,8 @@ void ATPokeyRenderer::SetChannelDeferredEvents(int channel, uint32 start, uint32
 }
 
 void ATPokeyRenderer::SetChannelDeferredEventsLinked(int channel, uint32 loStart, uint32 loPeriod, uint32 hiStart, uint32 hiPeriod, uint32 loOffset) {
-	VDASSERT(loStart >= mLastOutputTime);
-	VDASSERT(hiStart > loStart);
+	VDASSERT(loStart - mLastOutputTime < 0x80000000);
+	VDASSERT(hiStart - loStart - 1 < 0x7FFFFFFFU);		// wrapped(hiStart > loStart)
 	VDASSERT(loPeriod < 30000);
 	VDASSERT(hiPeriod < 7500000);
 
@@ -347,7 +353,7 @@ void ATPokeyRenderer::SaveState(ATSaveStateWriter& writer) {
 void ATPokeyRenderer::FlushDeferredEvents(int channel, uint32 t) {
 	DeferredEvent de = mDeferredEvents[channel];
 
-	VDASSERT(de.mNextTime >= mLastOutputTime);
+	VDASSERT(de.mNextTime - mLastOutputTime < 0x80000000);
 
 	ChannelEdges& ce = mChannelEdges[channel];
 
@@ -746,7 +752,7 @@ void ATPokeyRenderer::UpdateOutput() {
 }
 
 void ATPokeyRenderer::UpdateOutput(uint32 t) {
-	VDASSERT(t >= mLastOutputTime);
+	VDASSERT(t - mLastOutputTime < 0x80000000);
 
 	GenerateSamples(t);
 

@@ -35,10 +35,17 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <functional>
+#include <type_traits>
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/text.h>
 #include <vd2/system/vdstl.h>
+
+///////////////////////////////////////////////////////////////////////////
+
+template<typename... T> struct VDStringPrintfCheck {};
+template<typename T, typename... U> struct VDStringPrintfCheck<T, U...> : public std::enable_if<std::is_arithmetic<T>::value || std::is_pointer<T>::value, VDStringPrintfCheck<U...>>::type {};
+template<> struct VDStringPrintfCheck<> : public std::true_type {};
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -628,8 +635,20 @@ public:
 	// 21.3.6 string operations
 	const_pointer		c_str() const		{ return mpBegin; }
 
-	this_type& sprintf(const value_type *format, ...);
-	this_type& append_sprintf(const value_type *format, ...);
+	template<typename... Args>
+	this_type& sprintf(const value_type *format, Args... args) {
+		static_assert(VDStringPrintfCheck<Args...>::value, "Types not supported by printf() style function");
+		return sprintf_unchecked(format, args...);
+	}
+
+	template<typename... Args>
+	this_type& append_sprintf(const value_type *format, Args... args) {
+		static_assert(VDStringPrintfCheck<Args...>::value, "Types not supported by printf() style function");
+		return append_sprintf_unchecked(format, args...);
+	}
+
+	this_type& sprintf_unchecked(const value_type *format, ...);
+	this_type& append_sprintf_unchecked(const value_type *format, ...);
 	this_type& append_vsprintf(const value_type *format, va_list val);
 
 	void move_from(VDStringA& src);
@@ -1215,8 +1234,20 @@ public:
 	// 21.3.6 string operations
 	const_pointer		c_str() const		{ return mpBegin; }
 
-	this_type& sprintf(const value_type *format, ...);
-	this_type& append_sprintf(const value_type *format, ...);
+	template<typename... Args>
+	this_type& sprintf(const value_type *format, Args... args) {
+		static_assert(VDStringPrintfCheck<Args...>::value, "Types not supported by printf() style function");
+		return sprintf_unchecked(format, args...);
+	}
+
+	template<typename... Args>
+	this_type& append_sprintf(const value_type *format, Args... args) {
+		static_assert(VDStringPrintfCheck<Args...>::value, "Types not supported by printf() style function");
+		return append_sprintf_unchecked(format, args...);
+	}
+
+	this_type& sprintf_unchecked(const value_type *format, ...);
+	this_type& append_sprintf_unchecked(const value_type *format, ...);
 	this_type& append_vsprintf(const value_type *format, va_list val);
 
 	void move_from(VDStringW& src);

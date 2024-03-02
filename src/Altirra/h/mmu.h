@@ -57,7 +57,7 @@ public:
 
 	bool IsKernelROMEnabled() const { return (mCurrentBankInfo & kMapInfo_Kernel) != 0; }
 
-	void SetAxlonMemory(uint8 bankbits);
+	void SetAxlonMemory(uint8 bankbits, bool enableAliasing);
 
 	void GetMemoryMapState(ATMemoryMapState& state) const;
 
@@ -98,6 +98,7 @@ protected:
 	uint8		mCurrentBank;
 	uint8		mAxlonBank;
 	uint8		mAxlonBankMask;
+	bool		mbAxlonAliasing;
 
 	uint32		mCPUBase;
 	uint32		mAnticBase;

@@ -26,7 +26,9 @@ ATCPUHookManager::ATCPUHookManager()
 	, mpMMU(NULL)
 	, mpPBI(NULL)
 	, mbOSHooksEnabled(false)
-	, mpFreeList(NULL)
+	, mpFreeList(nullptr)
+	, mpInitChain(nullptr)
+	, mpInitFreeList(nullptr)
 {
 	std::fill(mpHashTable, mpHashTable + 256, (HashNode *)NULL);
 }
@@ -48,6 +50,7 @@ void ATCPUHookManager::Shutdown() {
 			uint16 pc = node->mPC;
 
 			do {
+				node->mpHookFn = nullptr;
 				node = node->mpNext;
 			} while(node && node->mPC == pc);
 
@@ -57,6 +60,10 @@ void ATCPUHookManager::Shutdown() {
 
 	std::fill(mpHashTable, mpHashTable + 256, (HashNode *)NULL);
 	mAllocator.Clear();
+
+	mpInitChain = nullptr;
+	mpInitFreeList = nullptr;
+	mpFreeList = nullptr;
 
 	mpPBI = NULL;
 	mpMMU = NULL;
@@ -90,24 +97,80 @@ uint8 ATCPUHookManager::OnHookHit(uint16 pc) const {
 					break;
 			}
 
-			uint8 opcode = node->mpHookFn(pc, node->mpContext, node);
+			uint8 opcode = node->mpHookFn(pc);
 
 			if (opcode)
 				return opcode;
 		}
 	}
 
-// Can't enable this until all manual hooks are gone.
-//	VDASSERT(!"OnHookHit() called without a hook being registered.");
 	return 0;
 }
 
-ATCPUHookNode *ATCPUHookManager::AddHook(ATCPUHookMode mode, uint16 pc, sint8 priority, ATCPUHookFn fn, void *context) {
+void ATCPUHookManager::CallInitHooks(const uint8 *lowerKernelROM, const uint8 *upperKernelROM) {
+	InitNode *node = mpInitChain;
+
+	while(node) {
+		InitNode *next = node->mpNext;
+
+		node->mpHookFn(lowerKernelROM, upperKernelROM);
+
+		node = next;
+	}
+}
+
+ATCPUHookInitNode *ATCPUHookManager::AddInitHook(const ATCPUHookInitFn& fn) {
+	if (!mpInitFreeList) {
+		InitNode *node = mAllocator.Allocate<InitNode>();
+
+		node->mpNext = NULL;
+		node->mpHookFn = nullptr;
+		mpInitFreeList = node;
+	}
+
+	InitNode *node = mpInitFreeList;
+	mpInitFreeList = node->mpNext;
+	VDASSERT(!node->mpHookFn);
+
+	node->mpNext = mpInitChain;
+	mpInitChain = node;
+
+	node->mpHookFn = fn;
+
+	return node;
+}
+
+void ATCPUHookManager::RemoveInitHook(ATCPUHookInitNode *hook) {
+	if (!hook)
+		return;
+
+	InitNode **prev = &mpInitChain;
+	InitNode *node = *prev;
+
+	while(node) {
+		if (node == hook) {
+			*prev = node->mpNext;
+
+			node->mpNext = mpInitFreeList;
+			mpInitFreeList = node;
+
+			node->mpHookFn = nullptr;
+			return;
+		}
+
+		prev = &node->mpNext;
+		node = *prev;
+	}
+
+	VDASSERT(!"Attempt to remove invalid init hook!");
+}
+
+ATCPUHookNode *ATCPUHookManager::AddHook(ATCPUHookMode mode, uint16 pc, sint8 priority, const ATCPUHookFn& fn) {
 	if (!mpFreeList) {
 		HashNode *node = mAllocator.Allocate<HashNode>();
 
 		node->mpNext = NULL;
-		node->mpHookFn = NULL;
+		node->mpHookFn = nullptr;
 		mpFreeList = node;
 	}
 
@@ -116,7 +179,6 @@ ATCPUHookNode *ATCPUHookManager::AddHook(ATCPUHookMode mode, uint16 pc, sint8 pr
 	VDASSERT(!node->mpHookFn);
 
 	node->mpHookFn = fn;
-	node->mpContext = context;
 	node->mMode = mode;
 	node->mPriority = priority;
 	node->mPC = pc;
@@ -161,7 +223,7 @@ void ATCPUHookManager::RemoveHook(ATCPUHookNode *hook) {
 			node->mpNext = mpFreeList;
 			mpFreeList = node;
 
-			node->mpHookFn = NULL;
+			node->mpHookFn = nullptr;
 			return;
 		}
 

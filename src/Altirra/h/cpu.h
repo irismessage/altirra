@@ -286,6 +286,11 @@ public:
 	void	NegateIRQ();
 	void	AssertNMI();
 	void	NegateNMI();
+
+	// Low-priority call needed to clean up timers to avoid time base wrapping. This needs
+	// to be called no more than every 2^30 cycles, so not critical.
+	void	PeriodicCleanup();
+
 	int		Advance();
 	int		Advance6502();
 	int		Advance65816();

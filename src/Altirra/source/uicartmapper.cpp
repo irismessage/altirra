@@ -196,6 +196,7 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_MaxFlash_1024K_Bank0:	return L"MaxFlash 1M / 8Mbit - newer (bank 0)";
 		case kATCartridgeMode_MegaCart_1M_2:		return L"Megacart 1M (2)";
 		case kATCartridgeMode_5200_64K_32KBanks:	return L"5200 64K cartridge (32K banks)";
+		case kATCartridgeMode_5200_512K_32KBanks:	return L"5200 512K cartridge (32K banks)";
 		case kATCartridgeMode_MicroCalc:			return L"52: MicroCalc 32K";
 		case kATCartridgeMode_2K:					return L"57: 2K";
 		case kATCartridgeMode_4K:					return L"58: 4K";

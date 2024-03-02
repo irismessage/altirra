@@ -33,11 +33,19 @@ size_t vdhash<VDStringA>::operator()(const VDStringA& s) const {
 	return VDHashString32(s.data(), s.length());
 }
 
+size_t vdhash<VDStringA>::operator()(const VDStringSpanA& s) const {
+	return VDHashString32(s.data(), s.length());
+}
+
 size_t vdhash<VDStringA>::operator()(const char *s) const {
 	return VDHashString32(s, strlen(s));
 }
 
 size_t vdhash<VDStringW>::operator()(const VDStringW& s) const {
+	return VDHashString32(s.data(), s.length());
+}
+
+size_t vdhash<VDStringW>::operator()(const VDStringSpanW& s) const {
 	return VDHashString32(s.data(), s.length());
 }
 

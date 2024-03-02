@@ -80,19 +80,84 @@ extern ATContainerWindow *g_pMainWindow;
 
 ///////////////////////////////////////////////////////////////////////////////
 
-namespace ATUIFrame {
-	int g_splitterDistH;
-	int g_splitterDistV;
-}
-
-using namespace ATUIFrame;
-
 void ATInitUIFrameSystem() {
-	g_splitterDistH = GetSystemMetrics(SM_CXEDGE);
-	g_splitterDistV = GetSystemMetrics(SM_CYEDGE);
 }
 
 void ATShutdownUIFrameSystem() {
+}
+
+uint32 ATUIGetGlobalDpiW32() {
+	HDC hdc = GetDC(nullptr);
+	uint32 dpi = 0;
+
+	if (hdc) {
+		dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+		ReleaseDC(nullptr, hdc);
+	}
+
+	VDASSERT(dpi);
+
+	return dpi ? dpi : 96;
+}
+
+uint32 ATUIGetWindowDpiW32(HWND hwnd) {
+	uint32 dpi = 0;
+
+	hwnd = ::GetAncestor(hwnd, GA_ROOT);
+
+	if (VDIsAtLeast81W32()) {
+		HMONITOR hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+
+		if (hmon) {
+			UINT dpiX = 0;
+			UINT dpiY = 0;
+
+			HMODULE hmodShCore = VDLoadSystemLibraryW32("shcore");
+			if (hmodShCore) {
+				typedef HRESULT (WINAPI *tpGetDpiForMonitor)(HMONITOR, MONITOR_DPI_TYPE, UINT *, UINT *);
+				tpGetDpiForMonitor pGetDpiForMonitor = (tpGetDpiForMonitor)GetProcAddress(hmodShCore, "GetDpiForMonitor");
+
+				if (pGetDpiForMonitor) {
+					HRESULT hr = pGetDpiForMonitor(hmon, MDT_EFFECTIVE_DPI, &dpiX, &dpiY);
+					if (SUCCEEDED(hr) && dpiY) {
+						dpi = dpiY;
+					}
+				}
+
+				FreeLibrary(hmodShCore);
+			}
+
+		}
+	} else {
+		HDC hdc = GetDC(hwnd);
+
+		if (hdc) {
+			dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+			ReleaseDC(hwnd, hdc);
+		}
+	}
+
+	return dpi;
+}
+
+HFONT ATUICreateDefaultFontForDpiW32(uint32 dpi) {
+	NONCLIENTMETRICS ncm = { sizeof(NONCLIENTMETRICS) };
+	HFONT hfont = nullptr;
+
+	if (SystemParametersInfo(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &ncm, 0)) {
+		if (dpi) {
+			int globalDpi = ATUIGetGlobalDpiW32();
+
+			ncm.lfMessageFont.lfHeight = MulDiv(ncm.lfMessageFont.lfHeight, (int)dpi, globalDpi);
+		}
+
+		hfont = CreateFontIndirect(&ncm.lfMessageFont);
+	}
+
+	if (!hfont)
+		hfont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+
+	return hfont;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -615,19 +680,19 @@ void ATContainerDockingPane::Relayout(ATContainerResizer& resizer) {
 
 		switch(mDockCode) {
 			case kATContainerDockLeft:
-				resizer.LayoutWindow(hwndSplitter, mArea.right, mArea.top, g_splitterDistH, mArea.height(), true);
+				resizer.LayoutWindow(hwndSplitter, mArea.right, mArea.top, mpParent->GetSplitterWidth(), mArea.height(), true);
 				break;
 
 			case kATContainerDockRight:
-				resizer.LayoutWindow(hwndSplitter, mArea.left - g_splitterDistH, mArea.top, g_splitterDistH, mArea.height(), true);
+				resizer.LayoutWindow(hwndSplitter, mArea.left - mpParent->GetSplitterWidth(), mArea.top, mpParent->GetSplitterWidth(), mArea.height(), true);
 				break;
 
 			case kATContainerDockTop:
-				resizer.LayoutWindow(hwndSplitter, mArea.left, mArea.bottom, mArea.width(), g_splitterDistV, true);
+				resizer.LayoutWindow(hwndSplitter, mArea.left, mArea.bottom, mArea.width(), mpParent->GetSplitterHeight(), true);
 				break;
 
 			case kATContainerDockBottom:
-				resizer.LayoutWindow(hwndSplitter, mArea.left, mArea.top - g_splitterDistV, mArea.width(), g_splitterDistV, true);
+				resizer.LayoutWindow(hwndSplitter, mArea.left, mArea.top - mpParent->GetSplitterHeight(), mArea.width(), mpParent->GetSplitterHeight(), true);
 				break;
 		}
 	}
@@ -661,22 +726,22 @@ void ATContainerDockingPane::Relayout(ATContainerResizer& resizer) {
 			switch(pane->mDockCode) {
 				case kATContainerDockLeft:
 					rPane.right = rPane.left + w;
-					mCenterArea.left = rPane.right + g_splitterDistH;
+					mCenterArea.left = rPane.right + mpParent->GetSplitterWidth();
 					break;
 
 				case kATContainerDockRight:
 					rPane.left = rPane.right - w;
-					mCenterArea.right = rPane.left - g_splitterDistH;
+					mCenterArea.right = rPane.left - mpParent->GetSplitterWidth();
 					break;
 
 				case kATContainerDockTop:
 					rPane.bottom = rPane.top + h;
-					mCenterArea.top = rPane.bottom + g_splitterDistV;
+					mCenterArea.top = rPane.bottom + mpParent->GetSplitterHeight();
 					break;
 
 				case kATContainerDockBottom:
 					rPane.top = rPane.bottom - h;
-					mCenterArea.bottom = rPane.top - g_splitterDistV;
+					mCenterArea.bottom = rPane.top - mpParent->GetSplitterHeight();
 					break;
 
 				case kATContainerDockCenter:
@@ -714,13 +779,13 @@ bool ATContainerDockingPane::GetFrameSizeForContent(vdsize32& sz) {
 			case kATContainerDockLeft:
 			case kATContainerDockRight:
 				horizFraction -= pane->mDockFraction;
-				horizExtra += g_splitterDistH + 1;		// +1 for rounding bias
+				horizExtra += mpParent->GetSplitterWidth() + 1;		// +1 for rounding bias
 				break;
 
 			case kATContainerDockTop:
 			case kATContainerDockBottom:
 				vertFraction -= pane->mDockFraction;
-				vertExtra += g_splitterDistV + 1;
+				vertExtra += mpParent->GetSplitterHeight() + 1;
 				break;
 
 			case kATContainerDockCenter:
@@ -1200,19 +1265,19 @@ void ATContainerDockingPane::CreateSplitter() {
 	switch(mDockCode) {
 		case kATContainerDockLeft:
 			rSplit.left = rSplit.right;
-			rSplit.right += g_splitterDistH;
+			rSplit.right += mpParent->GetSplitterWidth();
 			break;
 		case kATContainerDockRight:
 			rSplit.right = rSplit.left;
-			rSplit.left -= g_splitterDistH;
+			rSplit.left -= mpParent->GetSplitterWidth();
 			break;
 		case kATContainerDockTop:
 			rSplit.top = rSplit.bottom;
-			rSplit.bottom += g_splitterDistV;
+			rSplit.bottom += mpParent->GetSplitterHeight();
 			break;
 		case kATContainerDockBottom:
 			rSplit.bottom = rSplit.top;
-			rSplit.top -= g_splitterDistV;
+			rSplit.top -= mpParent->GetSplitterHeight();
 			break;
 	}
 
@@ -1439,6 +1504,8 @@ ATContainerWindow::ATContainerWindow()
 	, mpFullScreenFrame(NULL)
 	, mpModalFrame(NULL)
 	, mbBlockActiveUpdates(false)
+	, mSplitterWidth(1)
+	, mSplitterHeight(1)
 	, mCaptionHeight(0)
 	, mhfontCaption(NULL)
 	, mhfontCaptionSymbol(NULL)
@@ -2042,6 +2109,9 @@ void ATContainerWindow::RecreateSystemObjects() {
 		scaleFactor = MulDiv(100, mMonitorDpi, globalDpi);
 	}
 
+	mSplitterWidth = (GetSystemMetrics(SM_CXEDGE) * scaleFactor + 99) / 100;
+	mSplitterHeight = (GetSystemMetrics(SM_CYEDGE) * scaleFactor + 99) / 100;
+
 	NONCLIENTMETRICS ncm = {
 #if WINVER >= 0x0600
 		offsetof(NONCLIENTMETRICS, iPaddedBorderWidth)
@@ -2050,7 +2120,7 @@ void ATContainerWindow::RecreateSystemObjects() {
 #endif
 	};
 
-	SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
+	SystemParametersInfo(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &ncm, FALSE);
 
 	ncm.lfSmCaptionFont.lfHeight = MulDiv(ncm.lfSmCaptionFont.lfHeight, scaleFactor, 100);
 
@@ -2059,9 +2129,16 @@ void ATContainerWindow::RecreateSystemObjects() {
 
 	LOGFONT lf = ncm.lfSmCaptionFont;
 	lf.lfEscapement = 0;
+	lf.lfWidth = 0;
+	lf.lfOrientation = 0;
 	lf.lfItalic = FALSE;
 	lf.lfUnderline = FALSE;
 	lf.lfWeight = 0;
+	lf.lfCharSet = DEFAULT_CHARSET;
+	lf.lfOutPrecision = OUT_DEFAULT_PRECIS;
+	lf.lfClipPrecision = CLIP_DEFAULT_PRECIS;
+	lf.lfQuality = DEFAULT_QUALITY;
+	lf.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
 	vdwcslcpy(lf.lfFaceName, L"Marlett", sizeof(lf.lfFaceName)/sizeof(lf.lfFaceName[0]));
 
 	mhfontCaptionSymbol = CreateFontIndirect(&lf);
@@ -2104,40 +2181,11 @@ void ATContainerWindow::DestroySystemObjects() {
 }
 
 void ATContainerWindow::UpdateMonitorDpi() {
-	if (VDIsAtLeast81W32()) {
-		HMONITOR hmon = MonitorFromWindow(mhwnd, MONITOR_DEFAULTTONEAREST);
+	uint32 dpi = ATUIGetWindowDpiW32(mhwnd);
 
-		if (hmon) {
-			UINT dpiX = 0;
-			UINT dpiY = 0;
-
-			HMODULE hmodShCore = VDLoadSystemLibraryW32("shcore");
-			if (hmodShCore) {
-				typedef HRESULT (WINAPI *tpGetDpiForMonitor)(HMONITOR, MONITOR_DPI_TYPE, UINT *, UINT *);
-				tpGetDpiForMonitor pGetDpiForMonitor = (tpGetDpiForMonitor)GetProcAddress(hmodShCore, "GetDpiForMonitor");
-
-				if (pGetDpiForMonitor) {
-					HRESULT hr = pGetDpiForMonitor(hmon, MDT_EFFECTIVE_DPI, &dpiX, &dpiY);
-					if (SUCCEEDED(hr) && dpiY) {
-						mMonitorDpi = dpiY;
-						UpdateMonitorDpi(dpiY);
-					}
-				}
-
-				FreeLibrary(hmodShCore);
-			}
-
-		}
-	} else {
-		HDC hdc = GetDC(mhwnd);
-
-		if (hdc) {
-			int dpiY = GetDeviceCaps(hdc, LOGPIXELSY);
-			ReleaseDC(mhwnd, hdc);
-
-			mMonitorDpi = dpiY;
-			UpdateMonitorDpi(dpiY);
-		}
+	if (dpi) {
+		mMonitorDpi = dpi;
+		UpdateMonitorDpi(dpi);
 	}
 }
 

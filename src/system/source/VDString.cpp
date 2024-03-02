@@ -77,7 +77,7 @@ void VDStringA::reserve_amortized_slow(size_type n, size_type current_size, size
 	reserve_slow(n, current_capacity);
 }
 
-VDStringA& VDStringA::sprintf(const value_type *format, ...) {
+VDStringA& VDStringA::sprintf_unchecked(const value_type *format, ...) {
 	clear();
 	va_list val;
 	va_start(val, format);
@@ -86,7 +86,7 @@ VDStringA& VDStringA::sprintf(const value_type *format, ...) {
 	return *this;
 }
 
-VDStringA& VDStringA::append_sprintf(const value_type *format, ...) {
+VDStringA& VDStringA::append_sprintf_unchecked(const value_type *format, ...) {
 	va_list val;
 	va_start(val, format);
 	append_vsprintf(format, val);
@@ -127,9 +127,9 @@ void VDStringA::move_from(VDStringA& src) {
 	mpEnd = src.mpEnd;
 	mpEOS = src.mpEOS;
 
-	src.mpBegin = NULL;
-	src.mpEnd = NULL;
-	src.mpEOS = NULL;
+	src.mpBegin = const_cast<value_type *>(sNull);
+	src.mpEnd = const_cast<value_type *>(sNull);
+	src.mpEOS = const_cast<value_type *>(sNull);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -179,7 +179,7 @@ void VDStringW::reserve_amortized_slow(size_type n, size_type current_size, size
 	reserve_slow(n, current_capacity);
 }
 
-VDStringW& VDStringW::sprintf(const value_type *format, ...) {
+VDStringW& VDStringW::sprintf_unchecked(const value_type *format, ...) {
 	clear();
 	va_list val;
 	va_start(val, format);
@@ -188,7 +188,7 @@ VDStringW& VDStringW::sprintf(const value_type *format, ...) {
 	return *this;
 }
 
-VDStringW& VDStringW::append_sprintf(const value_type *format, ...) {
+VDStringW& VDStringW::append_sprintf_unchecked(const value_type *format, ...) {
 	va_list val;
 	va_start(val, format);
 	append_vsprintf(format, val);
@@ -230,9 +230,9 @@ void VDStringW::move_from(VDStringW& src) {
 	mpEnd = src.mpEnd;
 	mpEOS = src.mpEOS;
 
-	src.mpBegin = NULL;
-	src.mpEnd = NULL;
-	src.mpEOS = NULL;
+	src.mpBegin = const_cast<value_type *>(sNull);
+	src.mpEnd = const_cast<value_type *>(sNull);
+	src.mpEOS = const_cast<value_type *>(sNull);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

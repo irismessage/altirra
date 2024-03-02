@@ -125,6 +125,10 @@ T *vdmove_backward(T *src1, T *src2, T *dst) {
 	template<> struct vdmove_capable<type> : public vdtrue_result {}; \
 	template<> void vdmove<type>(type& dst, type& src)
 
+#define VDMOVE_CAPABLE_INLINE(type) \
+	template<> struct vdmove_capable<type> : public vdtrue_result {}; \
+	template<> inline void vdmove<type>(type& dst, type& src)
+
 ///////////////////////////////////////////////////////////////////////////
 
 template<class T, size_t N> char (&VDCountOfHelper(const T(&)[N]))[N];
@@ -873,14 +877,14 @@ template<class T> VDTINLINE typename vdspan<T>::const_reference		vdspan<T>::oper
 
 template<class T>
 bool operator==(const vdspan<T>& x, const vdspan<T>& y) {
-	uint32 len = x.size();
+	auto len = x.size();
 	if (len != y.size())
 		return false;
 
 	const T *px = x.data();
 	const T *py = y.data();
 
-	for(uint32 i=0; i<len; ++i) {
+	for(decltype(len) i=0; i<len; ++i) {
 		if (px[i] != py[i])
 			return false;
 	}
@@ -1465,6 +1469,8 @@ public:
 
 	void				clear();
 
+	reference			push_front();
+	void				push_front(const_reference x);
 	reference			push_back();
 	void				push_back(const_reference x);
 
@@ -1474,6 +1480,7 @@ public:
 	void				swap(vdfastdeque& x);
 
 protected:
+	void				push_front_extend();
 	void				push_back_extend();
 	void				validate();
 
@@ -1608,11 +1615,27 @@ void vdfastdeque<T,A>::clear() {
 }
 
 template<class T, class A>
+typename vdfastdeque<T,A>::reference vdfastdeque<T,A>::push_front() {
+	if (mTails.startIndex <= 0) {
+		push_front_extend();
+	}
+
+	--mTails.startIndex;
+
+	VDASSERT(m.mapStart[0]);
+	return m.mapStart[0]->data[mTails.startIndex];
+}
+
+template<class T, class A>
+void vdfastdeque<T,A>::push_front(const_reference x) {
+	const T x2(x);
+	push_front() = x2;
+}
+
+template<class T, class A>
 typename vdfastdeque<T,A>::reference vdfastdeque<T,A>::push_back() {
 	if (mTails.endIndex >= kBlockSize - 1) {
 		push_back_extend();
-
-		mTails.endIndex = -1;
 	}
 
 	++mTails.endIndex;
@@ -1659,6 +1682,75 @@ void vdfastdeque<T,A>::swap(vdfastdeque& x) {
 }
 
 /////////////////////////////////
+
+template<class T, class A>
+void vdfastdeque<T,A>::push_front_extend() {
+	validate();
+
+	// check if we need to extend the map itself
+	if (m.mapStart == m.mapStartAlloc) {
+		// can we just shift the map?
+		size_type currentMapSize = m.mapEndAlloc - m.mapStartAlloc;
+		size_type freeAtEnd = m.mapEndAlloc - m.mapEndCommit;
+
+		if (freeAtEnd >= 2 && (freeAtEnd + freeAtEnd) >= currentMapSize) {
+			size_type shiftDistance = freeAtEnd >> 1;
+
+			VDASSERT(!m.mapEndAlloc[-1]);
+			memmove(m.mapStartAlloc + shiftDistance, m.mapStartAlloc, sizeof(Block *) * (currentMapSize - shiftDistance));
+			memset(m.mapStartAlloc, 0, shiftDistance * sizeof(Block *));
+
+			// relocate pointers
+			m.mapEndCommit		+= shiftDistance;
+			m.mapEnd			+= shiftDistance;
+			m.mapStart			+= shiftDistance;
+			m.mapStartCommit	+= shiftDistance;
+		} else {
+			size_type shiftDistance = currentMapSize+1;
+			size_type newMapSize = currentMapSize + shiftDistance;
+
+			Block **newMap = m.allocate(newMapSize);
+
+			memcpy(newMap + shiftDistance, m.mapStartAlloc, currentMapSize * sizeof(Block *));
+			memset(newMap, 0, shiftDistance * sizeof(Block *));
+
+			// relocate pointers
+			m.mapEndAlloc		= newMap + shiftDistance + newMapSize;
+			m.mapEndCommit		= newMap + shiftDistance + (m.mapEndCommit		- m.mapStartAlloc);
+			m.mapEnd			= newMap + shiftDistance + (m.mapEnd			- m.mapStartAlloc);
+			m.mapStart			= newMap + shiftDistance + (m.mapStart			- m.mapStartAlloc);
+			m.mapStartCommit	= newMap + shiftDistance + (m.mapStartCommit	- m.mapStartAlloc);
+
+			m.deallocate(m.mapStartAlloc, currentMapSize);
+			m.mapStartAlloc		= newMap;
+		}
+
+		validate();
+	}
+
+	VDASSERT(m.mapStart != m.mapStartAlloc);
+
+	// check if we already have a block we can use
+	--m.mapStart;
+	if (!*m.mapStart) {
+		// check if we can steal a block from the end
+		if (m.mapEndCommit != m.mapEnd) {
+			VDASSERT(m.mapEndCommit[-1]);
+			*m.mapStart = m.mapEndCommit[-1];
+			m.mapEndCommit[-1] = nullptr;
+			--m.mapEndCommit;
+		} else {
+			// allocate a new block
+			*m.mapStart = mTails.allocate(1);
+		}
+
+		m.mapStartCommit = m.mapStart;
+	}
+
+	validate();
+
+	mTails.startIndex = kBlockSize;
+}
 
 template<class T, class A>
 void vdfastdeque<T,A>::push_back_extend() {
@@ -1709,29 +1801,25 @@ void vdfastdeque<T,A>::push_back_extend() {
 	// check if we already have a block we can use
 	if (*m.mapEnd) {
 		++m.mapEnd;
-		validate();
-		return;
-	}
-
-	// check if we can steal a block from the beginning
-	if (m.mapStartCommit != m.mapStart) {
-		VDASSERT(*m.mapStartCommit);
-		if (m.mapStartCommit != m.mapEnd) {
+	} else {
+		// check if we can steal a block from the beginning
+		if (m.mapStartCommit != m.mapStart) {
+			VDASSERT(*m.mapStartCommit);
 			*m.mapEnd = *m.mapStartCommit;
-			*m.mapStartCommit = NULL;
+			*m.mapStartCommit = nullptr;
 			++m.mapStartCommit;
+		} else {
+			// allocate a new block
+			*m.mapEnd = mTails.allocate(1);
 		}
+
 		++m.mapEnd;
 		m.mapEndCommit = m.mapEnd;
-		validate();
-		return;
 	}
 
-	// allocate a new block
-	*m.mapEnd = mTails.allocate(1);
-	++m.mapEnd;
-	m.mapEndCommit = m.mapEnd;
 	validate();
+
+	mTails.endIndex = -1;
 }
 
 template<class T, class A>

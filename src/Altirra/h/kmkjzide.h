@@ -26,6 +26,7 @@ class ATMemoryManager;
 class ATMemoryLayer;
 class ATIDEEmulator;
 class IATUIRenderer;
+class ATFirmwareManager;
 
 class ATKMKJZIDE : public IATPBIDevice {
 	ATKMKJZIDE(const ATKMKJZIDE&);
@@ -39,12 +40,15 @@ public:
 	bool IsMainFlashDirty() const { return mFlashCtrl.IsDirty(); }
 	bool IsSDXFlashDirty() const { return mSDXCtrl.IsDirty(); }
 
-	void LoadFirmware(bool sdx, const void *ptr, uint32 len);
-	void LoadFirmware(bool sdx, const wchar_t *path);
+	// Load new firmware. Returns true if the firmware changed, false otherwise.
+	bool LoadFirmware(bool sdx, const void *ptr, uint32 len);
+	bool LoadFirmware(bool sdx, ATFirmwareManager& fwmgr, uint64 id);
 	void SaveFirmware(bool sdx, const wchar_t *path);
 
-	void Init(ATIDEEmulator *ide, ATScheduler *sch, IATUIRenderer *uir);
+	void Init(ATScheduler *sch, IATUIRenderer *uir);
 	void Shutdown();
+
+	void SetIDEImage(ATIDEEmulator *ide);
 
 	void AttachDevice(ATMemoryManager *memman);
 	void DetachDevice();

@@ -212,7 +212,7 @@ public:
 		return *this;
 	}
 
-	operator T*() const { return ptr; }
+ 	operator T*() const { return ptr; }
 	T& operator*() const { return *ptr; }
 	T *operator->() const { return ptr; }
 
@@ -272,6 +272,13 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
+template<class T>
+vdrefptr<T> vdmakerefptr(T *p) {
+	return vdrefptr<T>(p);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 template<class T, class U>
 bool VDRefCountObjectFactory(U **pp) {
 	T *p = new_nothrow T;
@@ -308,6 +315,18 @@ inline vdsaferelease_t& operator,(vdsaferelease_t& x, T *& p) {
 	return x;
 }
 
+template<class T>
+inline vdsaferelease_t& operator<<=(vdsaferelease_t& x, vdrefptr<T>& p) {
+	p.clear();
+	return x;
+}
+
+template<class T>
+inline vdsaferelease_t& operator,(vdsaferelease_t& x, vdrefptr<T>& p) {
+	p.clear();
+	return x;
+}
+
 template<class T, size_t N>
 inline vdsaferelease_t& operator<<=(vdsaferelease_t& x, T *(&p)[N]) {
 	for(size_t i=0; i<N; ++i) {
@@ -327,6 +346,15 @@ inline vdsaferelease_t& operator,(vdsaferelease_t& x, T *(&p)[N]) {
 			p[i]->Release();
 			p[i] = 0;
 		}
+	}
+
+	return x;
+}
+
+template<class T, size_t N>
+inline vdsaferelease_t& operator,(vdsaferelease_t& x, vdrefptr<T> (&p)[N]) {
+	for(size_t i=0; i<N; ++i) {
+		p[i].clear();
 	}
 
 	return x;

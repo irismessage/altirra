@@ -58,7 +58,7 @@ uint16 ATARCCRC::Compute(const uint8 *data, uint32 len) const {
 	return ((uint16)hi << 8) + lo;
 }
 
-class ATDiskFSARC : public IATDiskFS {
+class ATDiskFSARC final : public IATDiskFS {
 public:
 	ATDiskFSARC();
 	~ATDiskFSARC();
@@ -88,6 +88,7 @@ public:
 	uintptr WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len);
 	void RenameFile(uintptr key, const char *newFileName);
 	void SetFileTimestamp(uintptr key, const VDExpandedDate& date);
+	void CreateDir(uintptr parentKey, const char *filename);
 
 protected:
 	struct DirEnt;
@@ -338,6 +339,10 @@ void ATDiskFSARC::RenameFile(uintptr key, const char *filename) {
 
 void ATDiskFSARC::SetFileTimestamp(uintptr key, const VDExpandedDate& date) {
 	throw ATDiskFSException(kATDiskFSError_ReadOnly);
+}
+
+void ATDiskFSARC::CreateDir(uintptr parentKey, const char *filename) {
+	throw ATDiskFSException(kATDiskFSError_NotSupported);
 }
 
 // Packed (mode 3) encoding is a simple RLE encoding. All bytes are literal bytes except

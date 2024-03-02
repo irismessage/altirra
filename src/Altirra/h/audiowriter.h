@@ -20,6 +20,7 @@
 
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
+#include <vd2/system/memory.h>
 #include "audiooutput.h"
 
 class IATUIRenderer;
@@ -46,7 +47,7 @@ protected:
 	VDALIGN(16) sint16 mOutputBuffer[4096];
 };
 
-class ATAudioWriter : public IATAudioTap {
+class ATAudioWriter : public VDAlignedObject<16>, public IATAudioTap {
 	ATAudioWriter(const ATAudioWriter&);
 	ATAudioWriter& operator=(const ATAudioWriter&);
 public:

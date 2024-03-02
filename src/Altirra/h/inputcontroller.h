@@ -312,6 +312,9 @@ public:
 	virtual void ApplyImpulse(uint32 trigger, int ds);
 
 	virtual void Tick();
+
+	virtual void OnDetach();
+
 protected:
 	bool mbSecond;
 	uint32 mPortBits;

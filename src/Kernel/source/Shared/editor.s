@@ -36,6 +36,16 @@
 EditorClose = ScreenClose
 
 ;==========================================================================
+;
+; === Forced read mode ===
+;
+; If bit 0 if AUX1 is set on the IOCB, it means to read in forced read
+; mode. In forced read mode, no keyboard input is fetched and instead
+; line read immediately commences, as if ENTER were pressed.
+;
+; Note that since AUX1 is tested on the IOCB used, it is possible to have
+; E: open on more than one IOCB with different forced read modes.
+;
 .proc	EditorGetByte
 	;check if we have anything left in the current line
 	lda		bufcnt
@@ -127,6 +137,14 @@ _start_y equ bufstr
 	mva		colcrs _start_x
 	mva		rowcrs _start_y
 	jsr		EditorSwapToScreen
+
+	;check if forced read is enabled on the IOCB -- if so, assume we've gotten
+	;an EOL
+	lda		icax1z
+	lsr
+	bcc		read_loop
+	lda		#$9b
+	bne		is_eol
 
 read_loop:
 	;get a character
@@ -225,7 +243,6 @@ scan_done:
 	mvy		_start_y rowcrs
 
 	;swap back to main context and exit
-	lda		#$9b
 	ldy		#1
 	jmp		EditorSwapToScreen
 .endp
@@ -259,30 +276,25 @@ screenok:
 	;Ctrl+1.
 	jsr		ScreenHideCursor
 
-	;check if this might be a special character
+	;save off character to free up acc
 	tay
-	and		#$1f
-	cmp		#$1b
-	bcc		not_special
 
-not_eol:
 	;Check if [esc] is active
 	;
 	;Note that the ASL trick relies on ESCFLG being $80 when set; this
 	;is in fact guaranteed by the spec in the OS Manual, Appendix L, B26.
 	;
 	asl		escflg					;test and clear escape flag
-	tya
-	bcc		not_escaped
-	
-	;draw the character... note that we must bypass the clear handling
-	sta		atachr
-	jsr		ScreenPutByte.not_clear
-	jmp		xit2
-	
-not_escaped:
+	bcs		not_special
+
+	;check if this might be a special character
+	and		#$1f
+	cmp		#$1b
+	bcc		not_special
+
 	;might be special, but not EOL... search the special char table
 	ldx		#special_code_tab_end-special_code_tab-1
+	tya
 special_binsearch:
 	cmp		special_code_tab,x
 	beq		special_found
@@ -303,8 +315,8 @@ special_found:
 
 not_special:
 	;ok, just put the char to the screen
-	tya
-	jsr		ScreenPutByte
+	sty		atachr
+	jsr		ScreenPutByte.not_clear
 xit2:
 	;swap back to main context and exit
 	jmp		EditorSwapToScreen
@@ -349,37 +361,6 @@ vmoveexit:
 	mva		lmargn bufstr+1
 	
 moveexit:
-	rts
-
-;---------------
-special_left:
-	ldx		colcrs
-	beq		slft_to_right
-	dex
-	cpx		lmargn
-	bcs		slft_1
-	
-	;move to right margin
-slft_to_right:
-	ldx		rmargn
-hmove_to_margin:
-slft_1:
-	stx		colcrs
-	rts
-
-;---------------
-special_right:
-	ldx		colcrs
-	cpx		rmargn
-	bcc		srgt_1
-	
-	;move to left margin	
-	ldx		lmargn
-	bcs		hmove_to_margin
-	
-srgt_1:
-	;right one char
-	inc		colcrs
 	rts
 
 ;---------------
@@ -443,6 +424,7 @@ special_common_tab:
 ;	- Moves cursor to the next tab position within the logical line.
 ;	- If there are no more tabs, moves cursor to beginning of next line.
 ;	  This may cause a scroll.
+;	- Tab does NOT adjust the read row.
 ;
 special_tab:
 	jsr		EditorGetLogicalColumn
@@ -478,8 +460,35 @@ tab_adjust_row:
 tab_adjust_scroll:
 	jsr		EditorDeleteLine0
 tab_adjust_left:
-	mva		lmargn colcrs
+hmove_to_lmargn:
+	;move to left margin	
+	ldx		lmargn
+hmove_to_x:
+	stx		colcrs
 tab_adjust_done:
+	rts
+
+;--------------------------------------------------------------------------
+special_left:
+	ldx		colcrs
+	beq		slft_to_right
+	dex
+	cpx		lmargn
+	bcs		hmove_to_x
+	
+	;move to right margin
+slft_to_right:
+	ldx		rmargn
+	bcc		hmove_to_x
+
+;--------------------------------------------------------------------------
+special_right:
+	ldx		colcrs
+	cpx		rmargn
+	bcs		hmove_to_lmargn
+
+	;right one char
+	inc		colcrs
 	rts
 
 ;--------------------------------------------------------------------------
@@ -1007,11 +1016,9 @@ found:
 ; Swap in the text screen (main if gr.0, split otherwise).
 ;
 .proc	EditorSwapToText
-	;get current screen index
-	ldy		dindex
-	
 	;set C=0 (main) if gr.0, C=1 (split) otherwise
-	cpy		#1
+	ldy		#23
+	cpy		botscr
 
 	;swap to it
 	jmp		ScreenSwap	

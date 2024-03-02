@@ -5,12 +5,14 @@
   <t name="How to use">
     <t name="Getting started" href="getting-started.html"/>
     <t name="Keyboard layout" href="keyboard.html"/>
+    <t name="Using the emulated computer" href="using-the-emulated-computer.html"/>
     <t name="Configuring input" href="input.html"/>
     <t name="On-screen indicators" href="indicators.html"/>
     <t name="Portable mode" href="portable-mode.html"/>
     <t name="Touch support" href="touch.html"/>
   </t>
   <t name="Emulated devices">
+    <t name="Additions disk" href="additions.html"/>
     <t name="Cartridge-based devices">
       <t name="Introduction" href="devices-cartintro.html" />
       <t name="MyIDE" href="myide.html"/>
@@ -23,6 +25,8 @@
       <t name="Introduction" href="devices-serintro.html" />
       <t name="Disk drives" href="disk.html"/>
       <t name="850 Interface Module" href="serial.html"/>
+      <t name="1030 Modem" href="1030.html"/>
+      <t name="SX212 Modem" href="sx212.html"/>
       <t name="PCLink" href="pclink.html"/>
     </t>
     <t name="Other devices">

@@ -34,6 +34,8 @@
 #include "stdafx.h"
 #include <time.h>
 #include "rtime8.h"
+#include "memorymanager.h"
+#include "devicemanager.h"
 
 namespace {
 	uint8 ToBCD(uint8 v) {
@@ -136,4 +138,93 @@ void ATRTime8Emulator::WriteControl(uint8 addr, uint8 value) {
 
 	static const uint8 kWriteAdvanceLookup[3] = {1, 2, 0};
 	mPhase = kWriteAdvanceLookup[mPhase];
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+ATDeviceRTime8::ATDeviceRTime8()
+	: mpMemMan(nullptr)
+	, mpMemLayerRT8(nullptr)
+{
+}
+
+void *ATDeviceRTime8::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDeviceMemMap::kTypeID:
+			return static_cast<IATDeviceMemMap *>(this);
+
+		default:
+			return ATDevice::AsInterface(id);
+	}
+}
+
+void ATDeviceRTime8::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mTag = "rtime8";
+	info.mName = L"R-Time 8";
+	info.mConfigTag = "rtime8";
+}
+
+void ATDeviceRTime8::Shutdown() {
+	if (mpMemLayerRT8) {
+		mpMemMan->DeleteLayer(mpMemLayerRT8);
+		mpMemLayerRT8 = nullptr;
+	}
+
+	mpMemMan = nullptr;
+}
+
+void ATDeviceRTime8::InitMemMap(ATMemoryManager *memmap) {
+	mpMemMan = memmap;
+
+	ATMemoryHandlerTable handlerTable = {};
+	handlerTable.mpThis = this;
+	handlerTable.mbPassAnticReads = true;
+	handlerTable.mbPassReads = true;
+	handlerTable.mbPassWrites = true;
+	handlerTable.mpDebugReadHandler = ReadByte;
+	handlerTable.mpReadHandler = ReadByte;
+	handlerTable.mpWriteHandler = WriteByte;
+	mpMemLayerRT8 = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay, handlerTable, 0xD5, 0x01);
+	mpMemMan->SetLayerName(mpMemLayerRT8, "R-Time 8");
+	mpMemMan->EnableLayer(mpMemLayerRT8, true);
+}
+
+bool ATDeviceRTime8::GetMappedRange(uint32 index, uint32& lo, uint32& hi) const {
+	if (index == 0) {
+		lo = 0xD5B8;
+		hi = 0xD5C0;
+		return true;
+	}
+
+	return false;
+}
+
+sint32 ATDeviceRTime8::ReadByte(void *thisptr0, uint32 addr) {
+	if (addr - 0xD5B8 < 8) {
+		ATDeviceRTime8 *thisptr = (ATDeviceRTime8 *)thisptr0;
+
+		// The R-Time 8 only drives the lower four data lines.
+		return (thisptr->mRTime8.ReadControl((uint8)addr) & 0x0F) + (thisptr->mpMemMan->ReadFloatingDataBus() & 0xF0);
+	}
+
+	return -1;
+}
+
+bool ATDeviceRTime8::WriteByte(void *thisptr0, uint32 addr, uint8 value) {
+	if (addr - 0xD5B8 < 8) {
+		((ATDeviceRTime8 *)thisptr0)->mRTime8.WriteControl((uint8)addr, value);
+		return true;
+	}
+
+	return false;
+}
+
+void ATCreateDeviceRTime8(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceRTime8> p(new ATDeviceRTime8);
+
+	*dev = p.release();
+}
+
+void ATRegisterDeviceRTime8(ATDeviceManager& dev) {
+	dev.AddDeviceFactory("rtime8", ATCreateDeviceRTime8);
 }

@@ -1,0 +1,9 @@
+dos.sys
+autorun.sys
+boot850.xex -> boot850.com
+boot1030.xex -> boot1030.com
+rhnd850.xex -> rhnd850.com
+thnd1030.xex -> thnd1030.com
+xep80.sys -> altxep80.sys
+atbasicx.xex -> atbasicx.com
+sx212.xex -> sx212.com

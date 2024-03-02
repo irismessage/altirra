@@ -26,6 +26,9 @@ class ATEthernetBus;
 class ATEthernetSimClock;
 class IATEthernetGatewayServer;
 class IATNetSockWorker;
+class ATPropertySet;
+class ATConsoleOutput;
+class ATScheduler;
 
 struct ATDragonCartSettings {
 	enum AccessMode {
@@ -40,6 +43,10 @@ struct ATDragonCartSettings {
 	AccessMode mAccessMode;
 
 	void SetDefault();
+
+	void LoadFromProps(const ATPropertySet& pset);
+	void SaveToProps(ATPropertySet& pset);
+
 	bool operator==(const ATDragonCartSettings&) const;
 	bool operator!=(const ATDragonCartSettings&) const;
 };
@@ -59,7 +66,7 @@ public:
 	void ColdReset();
 	void WarmReset();
 
-	void DumpConnectionInfo();
+	void DumpConnectionInfo(ATConsoleOutput&);
 
 protected:
 	static sint32 OnDebugRead(void *thisptr, uint32 addr);

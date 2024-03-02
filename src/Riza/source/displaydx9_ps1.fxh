@@ -145,6 +145,61 @@ technique bicubic1_1 {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
+//	Pixel shader 1.1 boxlinear path
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+struct VertexOutputBoxlinear1_1 {
+	float4	pos		: POSITION;
+	float2	uvfilt	: TEXCOORD0;
+	float2	uvsrc	: TEXCOORD1;
+};
+
+VertexOutputBoxlinear1_1 VertexShaderBoxlinear1_1(VertexInput IN) {
+	VertexOutputBoxlinear1_1 OUT;
+	
+	OUT.pos = IN.pos;
+	OUT.uvfilt = IN.uv2 * vd_vpsize * vd_interptexsize.wz;
+	OUT.uvsrc = IN.uv + float2(0, vd_fieldinfo.y)*vd_texsize.wz;
+	return OUT;
+}
+
+pixelshader PixelShaderBoxlinear1_1 = asm {
+	ps_1_1
+	tex t0
+	texbem t1, t0
+	mov r0, t1
+};
+
+technique boxlinear_1_1 {
+	pass <
+		string vd_bumpenvscale="vd_texsize";
+	> {
+		VertexShader = compile vs_1_1 VertexShaderBoxlinear1_1();
+		PixelShader = <PixelShaderBoxlinear1_1>;
+		
+		Texture[0] = <vd_interptexture>;
+		AddressU[0] = Clamp;
+		AddressV[0] = Clamp;
+		MipFilter[0] = None;
+		MinFilter[0] = Point;
+		MagFilter[0] = Point;
+
+		Texture[1] = <vd_srctexture>;
+		AddressU[1] = Clamp;
+		AddressV[1] = Clamp;
+		MipFilter[1] = None;
+		MinFilter[1] = Linear;
+		MagFilter[1] = Linear;
+		BumpEnvMat00[1] = 1.0f;
+		BumpEnvMat01[1] = 0.0f;
+		BumpEnvMat10[1] = 0.0f;
+		BumpEnvMat11[1] = 1.0f;
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//
 //	UYVY/YUY2 to RGB -- pixel shader 1.1
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////

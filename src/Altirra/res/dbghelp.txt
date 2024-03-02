@@ -37,6 +37,8 @@
       xbankreg  Bank register value for PORTB extended memory
       xbankcpu  PORTB extended memory bank (CPU)
       xbankantic  PORTB extended memory bank (ANTIC)
+      @t0-t9   Temporaries
+      @ra      Return address (if RTS executed immediately)
      
      Grouping
       (exp)    Subexpression
@@ -272,8 +274,10 @@
 
     Set or clear a memory access breakpoint.
     
-      ba r <address> [L<length>] ["cmd"] (Break on memory read)
-      ba w <address> [L<length>] ["cmd"] (Break on memory write)
+      ba [-n] [-k] [-q] [-g <group>] r <address> [L<length>] ["cmd"]
+                                         (Break on memory read)
+      ba [-n] [-k] [-q] [-g <group>] w <address> [L<length>] ["cmd"]
+                                         (Break on memory write)
       ba r/w *         (Clear memory read/write access breakpoints)
       
     Memory access breakpoints cause the emulator to stop whenever the CPU
@@ -294,9 +298,13 @@
     malfunctions with memory mapped hardware, such as cartridge banking
     registers that are sensitive to reads. False writes are rarer but can
     occur with read/modify/write instructions.
+
+    The -n, -k, -q, and -g options are the same as for the bp command.
     
     Using * as the address will clear all access breakpoints of the
     indicated type.
+
+    See also: bp (set breakpoint)
 
 + bc   Clear breakpoint(s)
 
@@ -308,6 +316,11 @@
     Removes a breakpoint by index, or if * is specified, all breakpoints.
     This works for any breakpoint listed by the bl (breakpoint list)
     command.
+
+    By default 'bc' only clears breakpoints in the main breakpoint
+    group. Breakpoints in other groups can be cleared by prefixing with
+    with the group name in a period, e.g. foo.1. Similarly, an entire
+    group can be cleared with 'bc group.*'.
     
     See also: ba, bp, bl, bx  
       
@@ -315,15 +328,26 @@
 
     Lists all currently set breakpoints.
 
-      bl             (List breakpoints)
+      bl [-a]        (List breakpoints)
       
     Displays a list of all breakpoints. The displayed breakpoint indices
     can be used in other commands such as bc (breakpoint clear).
+
+    Flags displayed on each breakpoint:
+
+      K     - auto-clear on reset
+      O     - one-shot
+      PC    - break on CPU PC address
+      R     - break on read access
+      W     - break on write access
     
     Deferred breakpoints are also listed and are ones that haven't been
     bound to an actual address yet. These remain inactive until symbols
     have been loaded that contain an entry for the source file/line
     reference.
+
+    -a lists breakpoints in all groups. Normally only breakpoints in the
+    main group are listed.
     
     See also: bc, bl, bp, bx
 
@@ -331,14 +355,24 @@
 
     Set a breakpoint at a PC address.
     
-      bp <address> ["command"]
-      bp `file:line` ["command"]
+      bp [-n] [-k] [-q] [-g group] <address> ["command"]
+      bp [-n] [-k] [-q] [-g group] `file:line` ["command"]
       
     Sets a PC breakpoint in the CPU core, which cause the emulator to stop
     when the PC is equal to the address of a breakpoint. There are no
     limits to the number of PC breakpoints. Breakpoints do not modify
     memory and work even after the location has been modified; they also
     fire at an address regardless of any bank switching.
+
+    The -n option creates a non-stopping breakpoint after which execution
+    continues.
+
+    Breakpoints created with -k are automatically cleared on reset.
+
+    -g creates the breakpoint in a named group. Named groups have a separate
+    numbering than the main user group and are not visible by default.
+
+    -q suppresses normal output of the command.
     
     If a command is specified, the command is executed when the breakpoint
     fires. Multiple commands may be specified using ; as a separator.
@@ -362,27 +396,46 @@
 
     Set a tracepoint at a PC address.
     
-      bt <address> format [arguments...]
-      bt `file:line` format [arguments...]
+      bt [-k] [-q] [-g group] { <address> | `file:line` }
+             format [arguments...]
+
+      bt [-k] [-q] [-g group] { <address> | `file:line` }
+             format [arguments...] -- [return-arguments...]
       
     Sets a non-stopping breakpoint at a PC address or source location
     with a command to print a trace line on the console when the breakpoint
     is hit (tracepoint). The breakpoint location is the same as for the
     bp (set breakpoint) command and the formatting arguments are the same
     as for the .printf command.
+
+    The -k, -q, and -g options work the same as for the bp command.
     
-    This command is equivalent to using the bp command with a breakpoint
+    This command is equivalent to using the bp -n command with a breakpoint
     command of the form:
     
-      `.printf <format> <arguments...> ; `g -n
+      `.printf <format> <arguments...>
+
+    The @ts variable can be used to substitute the output of the last
+    .sprintf command as the format string.
+
+    The second form of the command with '--' allows a return tracepoint to
+    be set. The format string is evaluated with the first set of arguments
+    prior to -- when the tracepoint is first hit. A second, one-time
+    tracepoint is then set at the return address (@ra) with the resulting
+    string as the format, expanded by the second set of arguments.
+
+    Examples:
+
+       bt siov "SIOV command=$%02X aux=$%04X" db(dcomnd) dw(daux1)
+       bt fadd "FADD(%g+%g) = %%g --> $%04X" fr0 fr1 @ra -- fr0
     
-    See also: bp, .printf
+    See also: bp, .printf, .sprintf
     
 + bx   Break on expression (conditional breakpoint)
 
     Set a breakpoint conditional on an expression.
     
-      bx <expression> ["command"]
+      bx [-k] [-q] [-n] [-g group] <expression> ["command"]
       
     Creates a breakpoint that only activates when the expression is true.    
     In addition to the normal expression elements, conditional breakpoints
@@ -420,6 +473,8 @@
     
       bx "pc=ciov and x=$10" "r; g"
     
+    The -k, -q, and -g options work the same as for the bp command.
+
     See also: ? (evaluate expression), bp (breakpoint)
 
 + bs   Break on disk sector
@@ -432,9 +487,10 @@
     Stops emulation when the first disk drive (D1:) receives a request
     to read a particular virtual disk sector.
 
-^ da, db, dd, df, di, dw   Display memory
+^ da, db, dbi, dd, df, di, dw   Display memory
 > da   Display ATASCII string
 > db   Display bytes
+> dbi  Display bytes w/ INTERNAL dump
 > dd   Display double words
 > df   Display decimal float
 > di   Display INTERNAL string
@@ -444,6 +500,7 @@
     
       da [<xaddress> [L<length>]]   (Display ATASCII string)
       db [<xaddress> [L<length>]]   (Display bytes)
+      dbi [<xaddress> [L<length>]]  (Display bytes with INTERNAL text)
       dd [<xaddress> [L<length>]]   (Display 32-bit double words)
       df [<xaddress> [L<length>]]   (Display decimal float)
       di [<xaddress> [L<length>]]   (Display INTERNAL string)
@@ -458,7 +515,7 @@
     If no address or length is given, memory dumping continues from the
     end of the last continuable operation.
     
-> dy   Display binary
++ dy   Display binary
 
     Shows the contents of memory as binary.
     
@@ -923,21 +980,27 @@
     
       .basic
       
-    See also: .basic_dumpline, .basic_vars, .basic_dumpstack
+    See also: .basic_dumpline, .basic_vars, .basic_dumpstack,
+              .basic_rebuildvnt, .basic_save
 
 + .basic_dumpline  Dump BASIC program line
 
     Lists the statements contained within a BASIC line.
     
-      .basic_dumpline [<address>] [-o <offset>]
+      .basic_dumpline [<address> | * | 0] [-o <offset>] [-c]
       
     The optional address specifies the beginning of the line, including
     the line number. If no address is specified, the continuation address
     from the last command is used.
+
+    Using * for the address uses the current line address (STMCUR). Zero
+    specifies the beginning of the program (STMTAB).
     
     -o specifies an optional byte offset from the beginning of the line.
     Any token that begins that that byte offset is marked in the output
     with >>.
+
+    -c gives continuous output until the end of the program.
     
     Tokens from Atari BASIC, BASIC XL, and BASIC XE are supported.
     
@@ -950,6 +1013,36 @@
       .basic_dumpstack
       
     See also: .basic
+
++ .basic_rebuildvnt  Rebuild BASIC variable name table
+
+    Reinitializes the BASIC variable name table (VNT) based on the variable
+    value table (VVT).
+
+      .basic_rebuildvnt
+
+    Deletes all existing variable names and replaces them with new variable
+    names, based on the variable type information in the VVT. This can repair
+    a program with a damaged VNT, at the cost of losing any existing variable
+    names. The statement table, array table, and runtime stack are relocated
+    in the process.
+
+    Using this command on a running BASIC program is likely to produce
+    fireworks and is not recommended.
+
++ .basic_save  Save BASIC program
+
+      .basic_save <path>
+
+    Saves a BASIC program to a file on the host (not on the emulated disk).
+    The file produced is the same format produced by Atari BASIC.
+
+    A check is made during the save process for an abnormally large
+    argument stack region, which is caused by Atari BASIC rev. B when saving.
+    If detected, the argument stack region is corrected back to its normal
+    size of 256 bytes.
+
+    This command cannot be used with Basic XE when Extend mode is enabled.
 
 + .basic_vars  Dump BASIC variables
 
@@ -976,7 +1069,7 @@
 
 + .covox       Dump Covox sound extension status
 
-+ .diskdumpsec Dump disk sector data
++ .diskdumpsec Dump floppy disk sector data
 
     Displays raw sector data.
     
@@ -1022,6 +1115,22 @@
     See also: lfe (enable log channel), lft (enable tagged log channel),
               .disktrack (show sector order within track)
 
++ .diskreadsec Read sector from floppy disk
+
+    Reads a sector from floppy disk into memory.
+    
+      .diskreadsec [-d <drive>] <virt-sector> <address>
+      
+    Reads a raw sector from disk by virtual sector number and writes it
+    into memory. If phantom sectors are present, the first one is used.
+    Dumping a sector does not disturb the drive's timing state.
+    
+    WARNING: While this command doesn't disturb timing state, it will
+             change virtual disk image state when reading sectors off
+             a drive with a mounted folder.
+    
+    See also: .diskwritesec (write sector to floppy disk)
+
 + .disktrack   Show sector order within track
 
     Displays all sectors within a track on D1: in rotational order.
@@ -1034,6 +1143,17 @@
     rotations per second.
     
     See also: .diskorder (set phantom sector ordering), 
+
++ .diskwritesec Read sector from floppy disk
+
+    Writes a sector from memory to a floppy disk.
+    
+      .diskwritesec [-d <drive>] <virt-sector> <address>
+      
+    Writes memory to a raw sector from disk by virtual sector number.
+    If phantom sectors are present, the first one is used.
+    
+    See also: .diskwritesec (write sector to floppy disk)
 
 + .dlhistory   Show ANTIC display list execution history
 
@@ -1495,6 +1615,22 @@
     
     See also: g (Go)
 
++ .sprintf     Construct message with formatted fields
+
+    Constructs a string with formatted fields.
+    
+      .sprintf "format-string" [field...]
+
+    Expands format tokens in the format-string with the supplied fields
+    and stores it in the @ts variable. This variable can then be used
+    by subsequent commands that take a text string, such as .printf,
+    .sprintf, and bt.
+
+    The format-string is the same format as that used by the .printf
+    command.
+
+    See also: .printf, bt
+
 + .sum         Compute sum of memory range
 
     Computes the sum of bytes in a memory range.
@@ -1570,7 +1706,7 @@
 
     Write a block of memory to a file on disk.
 
-      .writemem <path> <xaddress> <length>
+      .writemem <path> <xaddress> L<length>
       
     The address may use extended memory syntax, i.e. v:4000 for VBXE
     memory.

@@ -11,6 +11,7 @@ ATUIWidget::ATUIWidget()
 	, mpParent(NULL)
 	, mArea(0, 0, 0, 0)
 	, mClientArea(0, 0, 0, 0)
+	, mClientOrigin(0, 0)
 	, mFillColor(0xFF000000)
 	, mCursorImage(0)
 	, mDockMode(kATUIDockMode_None)
@@ -19,6 +20,7 @@ ATUIWidget::ATUIWidget()
 	, mpAnchor(NULL)
 	, mInstanceId(0)
 	, mOwnerId(0)
+	, mbActivated(false)
 	, mbVisible(true)
 	, mbFastClip(false)
 	, mbHitTransparent(false)
@@ -109,6 +111,11 @@ void ATUIWidget::SetCursorImage(uint32 id) {
 
 	if (mpManager)
 		mpManager->UpdateCursorImage(this);
+}
+
+vdrect32 ATUIWidget::GetClientArea() const {
+
+	return vdrect32(mClientOrigin.x, mClientOrigin.y, mClientOrigin.x + mClientArea.width(), mClientOrigin.y + mClientArea.height());
 }
 
 void ATUIWidget::SetPosition(const vdpoint32& pt) {
@@ -214,36 +221,61 @@ ATUIWidget *ATUIWidget::HitTest(vdpoint32 pt) {
 	return mbVisible && !mbHitTransparent && mArea.contains(pt) ? this : NULL;
 }
 
+void ATUIWidget::SetClientOrigin(vdpoint32 pt) {
+	if (mClientOrigin != pt) {
+		mClientOrigin = pt;
+
+		Invalidate();
+	}
+}
+
 bool ATUIWidget::TranslateScreenPtToClientPt(vdpoint32 spt, vdpoint32& cpt) {
 	sint32 x = spt.x;
 	sint32 y = spt.y;
 
+	// Screen to client transforms should conceptually be done from
+	// the outermost window inward, but we can do them in reverse order
+	// since the transforms are commutative.
 	for(ATUIWidget *w = this; w; w = w->GetParent()) {
 		x -= w->mArea.left;
 		y -= w->mArea.top;
 		x -= w->mClientArea.left;
 		y -= w->mClientArea.top;
+		x += w->mClientOrigin.x;
+		y += w->mClientOrigin.y;
 	}
 
-	return TranslateWindowPtToClientPt(vdpoint32(x, y), cpt);
+	cpt = vdpoint32(x, y);
+	return (uint32)(x - mClientOrigin.x) < (uint32)mClientArea.width() && (uint32)(y - mClientOrigin.y) < (uint32)mClientArea.height();
 }
 
 bool ATUIWidget::TranslateWindowPtToClientPt(vdpoint32 wpt, vdpoint32& cpt) {
-	cpt.x = wpt.x - mClientArea.left;
-	cpt.y = wpt.y - mClientArea.top;
+	cpt.x = wpt.x - mClientArea.left + mClientOrigin.x;
+	cpt.y = wpt.y - mClientArea.top + mClientOrigin.y;
 
 	return mClientArea.contains(wpt);
 }
 
 vdpoint32 ATUIWidget::TranslateClientPtToScreenPt(vdpoint32 cpt) {
 	for(ATUIWidget *w = this; w; w = w->GetParent()) {
-		cpt.x += w->mClientArea.left;
-		cpt.y += w->mClientArea.top;
+		cpt.x += w->mClientArea.left - w->mClientOrigin.x;
+		cpt.y += w->mClientArea.top - w->mClientOrigin.y;
 		cpt.x += w->mArea.left;
 		cpt.y += w->mArea.top;
 	}
 
 	return cpt;
+}
+
+void ATUIWidget::UnbindAction(uint32 vk, uint32 mod) {
+	auto it = std::find_if(mActionMap.begin(), mActionMap.end(),
+		[=](const ATUITriggerBinding& binding) {
+			return binding.mVk == vk && binding.mModVal == mod;
+		}
+	);
+
+	if (it != mActionMap.end())
+		mActionMap.erase(it);
 }
 
 void ATUIWidget::UnbindAllActions() {
@@ -315,7 +347,8 @@ void ATUIWidget::OnMouseUp(sint32 x, sint32 y, uint32 vk) {
 		OnMouseUpL(x, y);
 }
 
-void ATUIWidget::OnMouseWheel(sint32 x, sint32 y, float delta) {
+bool ATUIWidget::OnMouseWheel(sint32 x, sint32 y, float delta) {
+	return false;
 }
 
 void ATUIWidget::OnMouseLeave() {
@@ -386,6 +419,15 @@ void ATUIWidget::OnSetFocus() {
 void ATUIWidget::OnCaptureLost() {
 }
 
+void ATUIWidget::OnActivate() {
+}
+
+void ATUIWidget::OnDeactivate() {
+}
+
+void ATUIWidget::OnTrackCursorChanges(ATUIWidget *w) {
+}
+
 void ATUIWidget::Draw(IVDDisplayRenderer& rdr) {
 	if (!mbVisible)
 		return;
@@ -428,9 +470,10 @@ void ATUIWidget::Draw(IVDDisplayRenderer& rdr) {
 				break;
 		}
 
-		drawInner = sr->PushViewport(mClientArea, mClientArea.left, mClientArea.top);
 		framed = true;
 	}
+
+	drawInner = sr->PushViewport(mClientArea, mClientArea.left - mClientOrigin.x, mClientArea.top - mClientOrigin.y);
 
 	if (drawInner) {
 		if (mFillColor >= 0x01000000) {
@@ -446,8 +489,7 @@ void ATUIWidget::Draw(IVDDisplayRenderer& rdr) {
 
 		Paint(*sr, mClientArea.width(), mClientArea.height());
 
-		if (framed)
-			sr->PopViewport();
+		sr->PopViewport();
 	}
 
 	if (mbFastClip)
@@ -458,7 +500,10 @@ void ATUIWidget::Draw(IVDDisplayRenderer& rdr) {
 
 void ATUIWidget::Invalidate() {
 	if (mbVisible) {
-		mRenderCache.Invalidate();
+		// Currently, the software renderer can ignore nested subcache requests, so we have
+		// to invalidate all the way up the chain.
+		for(ATUIWidget *w = this; w; w = w->GetParent())
+			w->mRenderCache.Invalidate();
 
 		if (mpManager)
 			mpManager->Invalidate(this);
@@ -483,6 +528,17 @@ void ATUIWidget::SetParent(ATUIManager *mgr, ATUIContainer *parent) {
 
 		if (mbVisible && !mArea.empty())
 			mgr->Invalidate(this);
+	}
+}
+
+void ATUIWidget::SetActivated(bool activated) {
+	if (mbActivated != activated) {
+		mbActivated = activated;
+
+		if (activated)
+			OnActivate();
+		else
+			OnDeactivate();
 	}
 }
 
@@ -525,6 +581,7 @@ void ATUIWidget::RecomputeClientArea() {
 	if (mClientArea != clientArea) {
 		mClientArea = clientArea;
 
+		Invalidate();
 		OnSize();
 	}
 }

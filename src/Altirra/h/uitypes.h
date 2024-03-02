@@ -18,7 +18,7 @@
 #ifndef f_AT_UITYPES_H
 #define f_AT_UITYPES_H
 
-enum ATDisplayFilterMode {
+enum ATDisplayFilterMode : uint32 {
 	kATDisplayFilterMode_Point,
 	kATDisplayFilterMode_Bilinear,
 	kATDisplayFilterMode_Bicubic,
@@ -27,7 +27,7 @@ enum ATDisplayFilterMode {
 	kATDisplayFilterModeCount
 };
 
-enum ATDisplayStretchMode {
+enum ATDisplayStretchMode : uint32 {
 	kATDisplayStretchMode_Unconstrained,
 	kATDisplayStretchMode_PreserveAspectRatio,
 	kATDisplayStretchMode_SquarePixels,

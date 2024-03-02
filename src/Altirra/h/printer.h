@@ -18,30 +18,4 @@
 #ifndef AT_PRINTER_H
 #define AT_PRINTER_H
 
-class ATCPUEmulator;
-class ATCPUEmulatorMemory;
-
-class IATPrinterOutput {
-public:
-	virtual void WriteLine(const char *line) = 0;
-};
-
-class IATPrinterEmulator {
-public:
-	virtual ~IATPrinterEmulator() {}
-
-	virtual bool IsEnabled() const = 0;
-	virtual void SetEnabled(bool enabled) = 0;
-
-	virtual void SetHookPageByte(uint8 page) = 0;
-	virtual void SetOutput(IATPrinterOutput *output) = 0;
-
-	virtual void WarmReset() = 0;
-	virtual void ColdReset() = 0;
-	virtual uint8 OnCIOCommand(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, uint8 iocb, uint8 command) = 0;
-	virtual void OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, int offset) = 0;
-};
-
-IATPrinterEmulator *ATCreatePrinterEmulator();
-
 #endif

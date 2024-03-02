@@ -103,6 +103,7 @@ void ATAnticEmulator::ColdReset() {
 	mGTIAHSyncOffset = 110;
 	mbInBuggedVBlank = false;
 	mbPhantomPMDMA = false;
+	mbPhantomPlayerDMA = false;
 	mAbnormalDMAPattern = 0;
 	mEndingDMAPattern = 0;
 	mAbnormalDecodePattern = 0;
@@ -144,6 +145,7 @@ void ATAnticEmulator::WarmReset() {
 	mDMACTL = 0;
 	mNMIEN = 0;
 	mbDLExtraLoadsPending = false;
+	mbMissileDMADisabledLate = false;
 	mAbnormalDMAPattern = 0;
 	mEndingDMAPattern = 0;
 	mAbnormalDecodePattern = 0;
@@ -217,7 +219,9 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 		}
 
 		if (mX == 0) {		// missile DMA
-			if ((mDMACTL & 0x0C) && (uint32)(mY - 8) < 240) {	// player DMA also forces missile DMA (Run For the Money requires this).
+			if ((mbMissileDMADisabledLate || (mDMACTL & 0x0C)) && (uint32)(mY - 8) < 240) {	// player DMA also forces missile DMA (Run For the Money requires this).
+				mbMissileDMADisabledLate = false;
+
 				if (mDMACTL & 0x10) {
 					uint8 byte = mpConn->AnticReadByte(addressMask & (((mPMBASE & 0xf8) << 8) + 0x0300 + mY));
 					busActive = true;
@@ -227,6 +231,14 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 					uint8 byte = mpConn->AnticReadByte(addressMask & (((mPMBASE & 0xfc) << 8) + 0x0180 + (mY >> 1)));
 					busActive = true;
 					mpGTIA->UpdateMissile((mY & 1) != 0, byte);
+				}
+
+				// If player DMA is not enabled, do phantom DMA on regular (unshifted) timing.
+				if (!(mDMACTL & 0x08)) {
+					// If we were still doing missile DMA due to a late disable but
+					// player DMA is now turned off, GTIA has already seen the missile
+					// DMA and may start reading player DMA. Enable early fetch.
+					mbPhantomPlayerDMA = true;
 				}
 			}
 
@@ -480,10 +492,14 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 			} else if (mbPhantomPMDMAActive && mX > 3) {
 				// We need to read the result of the _previous_ cycle due to the CPU executing after us.
 				mpGTIA->UpdatePlayer((mY & 1) != 0, mX - 4, *mpConn->mpAnticBusData);
+			} else if (mbPhantomPlayerDMA && mX > 2) {
+				mpGTIA->UpdatePlayer((mY & 1) != 0, mX - 3, *mpConn->mpAnticBusData);
 			}
 		} else if (mX == 6) {		// address DMA (low)
 			if (mbPhantomPMDMAActive)
 				mpGTIA->UpdatePlayer((mY & 1) != 0, 2, *mpConn->mpAnticBusData);
+			else if (mbPhantomPlayerDMA)
+				mpGTIA->UpdatePlayer((mY & 1) != 0, 3, *mpConn->mpAnticBusData);
 
 			if (mbDLExtraLoadsPending && (mDMACTL & 0x20)) {
 				mDLNext = mpConn->AnticReadByte(mDLIST & addressMask);
@@ -701,6 +717,9 @@ void ATAnticEmulator::AdvanceScanline() {
 
 		// The DMA clock is unconditionally cleared during VBLANK, ending any abnormal DMA condition.
 		mAbnormalDMAPattern = 0;
+		
+		if (mpConn)
+			mpConn->AnticOnVBlank();
 	} else {
 		// Update abnormal DMA pattern.
 		const int mode = mDLControl & 15;
@@ -760,6 +779,7 @@ void ATAnticEmulator::AdvanceScanline() {
 
 	mbPhantomPMDMA = (mDMACTL & 0x2C) == 0x20 && (uint32)(mY - 8) < 240;
 	mbPhantomPMDMAActive = false;
+	mbPhantomPlayerDMA = false;
 
 	mpPFDataWrite = mPFDataBuffer;
 	mpPFDataRead = mPFDataBuffer;
@@ -845,10 +865,10 @@ void ATAnticEmulator::SyncWithGTIA(int offset) {
 }
 
 void ATAnticEmulator::Decode(int offset) {
-	int limit = (int)mX + offset + 1;
+	int limit = (int)mX + offset + 0;
 
 	if (!(mDLControl & 8))
-		limit -= 3;
+		limit -= 2;
 
 	if (limit > (int)mPFDMAVEnd)
 		limit = (int)mPFDMAVEnd;
@@ -1516,6 +1536,12 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 				}
 
 				SyncWithGTIA(0);
+
+				// Check if we are shutting off missile DMA on cycle 113. This is too late. Note
+				// that player DMA implicitly enables missile DMA, so we must check that too.
+				if (mX == 113 && !(value & 0x0C) && (mDMACTL & 0x0C) && (uint32)(mY - 7) < 240)
+					mbMissileDMADisabledLate = true;
+
 				mDMACTL = value;
 
 				switch(mDMACTL & 3) {
@@ -1870,6 +1896,8 @@ void ATAnticEmulator::ExchangeState(T& io) {
 	io != mDLISTLatch;
 
 	io != mWSYNCPending;
+	io != mbPhantomPlayerDMA;
+	io != mbMissileDMADisabledLate;
 }
 
 void ATAnticEmulator::BeginLoadState(ATSaveStateReader& reader) {

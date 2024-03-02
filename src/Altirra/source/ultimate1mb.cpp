@@ -19,6 +19,8 @@
 #include <vd2/system/binary.h>
 #include <vd2/system/file.h>
 #include <vd2/system/registry.h>
+#include <vd2/system/hash.h>
+#include <vd2/system/int128.h>
 #include "ultimate1mb.h"
 #include "mmu.h"
 #include "pbi.h"
@@ -28,6 +30,7 @@
 #include "simulator.h"
 #include "cpuhookmanager.h"
 #include "options.h"
+#include "firmwaremanager.h"
 
 ATUltimate1MBEmulator::ATUltimate1MBEmulator()
 	: mCartBankOffset(0)
@@ -45,7 +48,8 @@ ATUltimate1MBEmulator::ATUltimate1MBEmulator()
 	, mbPBISelected(false)
 	, mbPBIButton(false)
 	, mbExternalCartEnabled(false)
-	, mbExternalCartEnabled2(false)
+	, mbExternalCartEnabledRD4(false)
+	, mbExternalCartEnabledRD5(false)
 	, mbExternalCartActive(false)
 	, mbSoundBoardEnabled(false)
 	, mVBXEPage(0)
@@ -231,22 +235,27 @@ void ATUltimate1MBEmulator::SetCartActive(bool active) {
 	mbExternalCartActive = active;
 }
 
-void ATUltimate1MBEmulator::LoadFirmware(const wchar_t *path) {
+bool ATUltimate1MBEmulator::LoadFirmware(ATFirmwareManager& fwmgr, uint64 id) {
+	const vduint128 oldHash = VDHash128(mFirmware, sizeof mFirmware);
+
 	memset(mFirmware, 0xFF, sizeof mFirmware);
 
-	if (!path)
-		return;
+	fwmgr.LoadFirmware(id, mFirmware, 0, sizeof mFirmware);
 
-	VDFile f(path);
-	f.readData(mFirmware, sizeof mFirmware);
+	return oldHash != VDHash128(mFirmware, sizeof mFirmware);
 }
 
-void ATUltimate1MBEmulator::LoadFirmware(const void *p, uint32 len) {
+bool ATUltimate1MBEmulator::LoadFirmware(const void *p, uint32 len) {
+	const vduint128 oldHash = VDHash128(mFirmware, sizeof mFirmware);
+
 	if (len > sizeof mFirmware)
 		len = sizeof mFirmware;
 
-	memcpy(mFirmware, p, len);
-	memset(mFirmware + len, 0, (sizeof mFirmware) - len);
+	if (p)
+		memcpy(mFirmware, p, len);
+	memset(mFirmware + len, 0xFF, (sizeof mFirmware) - len);
+
+	return oldHash != VDHash128(mFirmware, sizeof mFirmware);
 }
 
 void ATUltimate1MBEmulator::SaveFirmware(const wchar_t *path) {
@@ -399,7 +408,7 @@ void ATUltimate1MBEmulator::UpdateKernelBank() {
 	// of $7x000. The BASIC, GAME, and PBI selects also act weirdly in this
 	// mode (they are mapped with the SDX mapping register!).
 
-	const uint8 *kernelbase = mFirmware + (mbControlLocked ? 0x70000 + ((uint32)mKernelBank << 14) : 0x50000);
+	const uint8 *kernelbase = GetKernelBase();
 
 	if (mpMemLayerLowerKernelROM)
 		mpMemMan->SetLayerMemory(mpMemLayerLowerKernelROM, kernelbase);
@@ -417,6 +426,10 @@ void ATUltimate1MBEmulator::UpdateKernelBank() {
 		mpMemMan->SetLayerMemory(mpMemLayerGameROM, mFirmware + (mbControlLocked ? 0x68000 + ((uint32)mGameBank << 13) : mCartBankOffset));
 }
 
+const uint8 *ATUltimate1MBEmulator::GetKernelBase() const {
+	return mFirmware + (mbControlLocked ? 0x70000 + ((uint32)mKernelBank << 14) : 0x50000);
+}
+
 void ATUltimate1MBEmulator::UpdateCartLayers() {
 	const bool enabled = mbSDXEnabled && mbSDXModuleEnabled;
 
@@ -429,10 +442,14 @@ void ATUltimate1MBEmulator::UpdateCartLayers() {
 }
 
 void ATUltimate1MBEmulator::UpdateExternalCart() {
-	const bool exten = mbExternalCartEnabled && !mbPBIButton;
+	const bool extrd4 = mbExternalCartEnabled;
+	const bool extrd5 = mbExternalCartEnabled && !mbPBIButton;
 
-	if (mbExternalCartEnabled2 != exten) {
-		mbExternalCartEnabled2 = exten;
+	if (mbExternalCartEnabledRD4 != extrd4 ||
+		mbExternalCartEnabledRD5 != extrd5)
+	{
+		mbExternalCartEnabledRD4 = extrd4;
+		mbExternalCartEnabledRD5 = extrd5;
 
 		if (mExternalCartStateHandler)
 			mExternalCartStateHandler();
@@ -645,8 +662,12 @@ bool ATUltimate1MBEmulator::WriteByteD3xx(void *thisptr0, uint32 addr, uint8 val
 						}
 					}
 					
-					if (validOS)
+					if (validOS) {
 						thisptr->mpHookMgr->EnableOSHooks(true);
+
+						const uint8 *kernelBase = thisptr->GetKernelBase();
+						thisptr->mpHookMgr->CallInitHooks(kernelBase, kernelBase + 0x1800);
+					}
 				}
 			} else if (addr == 0xD381) {
 				// UAUX (write only)

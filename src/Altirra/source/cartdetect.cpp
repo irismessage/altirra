@@ -80,6 +80,7 @@ namespace {
 		kHeaderFirst8K_PreferAll8K,
 		kHeaderFirst16K_PreferAll16K,
 		kHeaderFirst32K,
+		kHeaderLast32K,
 		kHeaderLast16B,
 		kHeaderLast8K_PreferAll8K
 	};
@@ -177,7 +178,8 @@ static const struct ATCartDetectInfo {
 {	kATCartridgeMode_5200_16K_OneChip,			kType5200,	kSize16K,	kWrsNone,	kBankNone,		kInit32K,	kHeaderLast16B,					},
 {	kATCartridgeMode_5200_8K,					kType5200,	kSize8K,	kWrsNone,	kBankNone,		kInit32K,	kHeaderLast16B,					},
 {	kATCartridgeMode_5200_4K,					kType5200,	kSize8K,	kWrsNone,	kBankNone,		kInit32K,	kHeaderLast16B,					},
-{	kATCartridgeMode_5200_64K_32KBanks,			kType5200,	kSize64K,	kWrsNone,	kBankBF,		kInit32K,	kHeaderFirst32K,				},
+{	kATCartridgeMode_5200_64K_32KBanks,			kType5200,	kSize64K,	kWrsNone,	kBankBF,		kInit32K,	kHeaderLast32K,					},
+{	kATCartridgeMode_5200_512K_32KBanks,		kType5200,	kSize512K,	kWrsNone,	kBankBF,		kInit32K,	kHeaderLast32K,					},
 };
 
 uint32 ATCartridgeAutodetectMode(const void *data, uint32 size, vdfastvector<int>& cartModes) {
@@ -318,6 +320,10 @@ uint32 ATCartridgeAutodetectMode(const void *data, uint32 size, vdfastvector<int
 
 				case kHeaderFirst32K:
 					headerOffset = 0x7FF0;
+					break;
+
+				case kHeaderLast32K:
+					headerOffset = size - 0x10;
 					break;
 
 				case kHeaderLast16B:

@@ -85,8 +85,10 @@ void ATEthernetBus::ClearPendingFrames() {
 		it != itEnd;
 		++it)
 	{
-		const QueuedPacket& qp = *it->second;
-		mClocks[qp.mPacket.mClockIndex]->RemoveClockEvent(qp.mClockEventId);
+		QueuedPacket *qp = it->second;
+		mClocks[qp->mPacket.mClockIndex]->RemoveClockEvent(qp->mClockEventId);
+		qp->~QueuedPacket();
+		free(qp);
 	}
 
 	mPackets.clear();
@@ -116,7 +118,7 @@ void ATEthernetBus::TransmitFrame(uint32 source, const ATEthernetPacket& packet)
 	qp->mPacket.mTimestamp = mClocks[packet.mClockIndex]->GetTimestamp((sint32)packet.mTimestamp);
 	qp->mPacket.mpData = (const uint8 *)(qp + 1);
 
-	qp->mClockEventId = mClocks[packet.mClockIndex]->AddClockEvent(packet.mTimestamp, this, packetId);
+	qp->mClockEventId = mClocks[packet.mClockIndex]->AddClockEvent(qp->mPacket.mTimestamp, this, packetId);
 	VDASSERT(qp->mClockEventId);
 
 	mPackets[packetId] = qp;

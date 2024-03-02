@@ -161,6 +161,10 @@ void VDVideoDisplayManager::Shutdown() {
 	}
 }
 
+void VDVideoDisplayManager::SetProfileHook(const vdfunction<void(IVDVideoDisplay::ProfileEvent)>& profileHook) {
+	mpProfileHook = profileHook;
+}
+
 void VDVideoDisplayManager::SetBackgroundFallbackEnabled(bool enabled) {
 	if (mhwnd)
 		PostMessage(mhwnd, WM_USER+101, enabled, 0);
@@ -381,6 +385,9 @@ void VDVideoDisplayManager::ThreadRunTimerOnly() {
 }
 
 void VDVideoDisplayManager::DispatchTicks() {
+	if (mpProfileHook)
+		mpProfileHook(IVDVideoDisplay::kProfileEvent_BeginTick);
+
 	Clients::iterator it(mClients.begin()), itEnd(mClients.end());
 	for(; it!=itEnd; ++it) {
 		VDVideoDisplayClient *pClient = *it;
@@ -388,6 +395,9 @@ void VDVideoDisplayManager::DispatchTicks() {
 		if (pClient->mbTicksEnabled)
 			pClient->OnTick();
 	}
+
+	if (mpProfileHook)
+		mpProfileHook(IVDVideoDisplay::kProfileEvent_EndTick);
 }
 
 void VDVideoDisplayManager::PostTick() {

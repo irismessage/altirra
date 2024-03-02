@@ -129,6 +129,7 @@ public:
 	uint8 ReadUint8();
 	uint16 ReadUint16();
 	uint32 ReadUint32();
+	void ReadString(VDStringW& str);
 
 	template<class T>
 	void operator!=(T& val) {
@@ -190,6 +191,7 @@ public:
 	void WriteUint8(uint8 v);
 	void WriteUint16(uint16 v);
 	void WriteUint32(uint32 v);
+	void WriteString(const wchar_t *s);
 
 	template<class T>
 	void operator!=(const T& val) {

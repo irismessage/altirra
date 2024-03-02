@@ -14,51 +14,40 @@
 ;
 ; Output:
 ;	varptr = address of variable
-VarGetAddr0:
-		ldy		#0
-VarGetAddr:
-		ldx		#varptr
-.proc	VarGetAddrX
+.proc VarGetAddr0
 		;;##TRACE "Looking up variable: $%02x" a|$80
 		asl					;!! ignore bit 7 of variable index
 		asl
-		rol		1,x
+		rol		varptr+1
 		asl
-		rol		1,x
-		sty		0,x
+		rol		varptr+1
 		clc
-		adc		0,x
 		adc		vvtp
-		sta		0,x
-		lda		1,x
+		sta		varptr
+		lda		varptr+1
 		and		#$03
 		adc		vvtp+1
-		sta		1,x
-		;##ASSERT ((dw(x)-dw(vvtp)-y)&7)=0
-		;##ASSERT db(dw(x)+1-y)=(dw(x)-dw(vvtp))/8
-		;;##TRACE "varptr=$%04x" dw(x)
+		sta		varptr+1
+		;##ASSERT ((dw(varptr)-dw(vvtp))&7)=0
+		;##ASSERT db(dw(varptr)+1)=(dw(varptr)-dw(vvtp))/8
+		;;##TRACE "varptr=$%04x" dw(varptr)
 		rts
 .endp
 
 ;==========================================================================
-.proc VarLoadExtendedFR0
+.proc VarLoadFR0
 		ldy		#7
-varloop:
-		lda		(varptr),y
-		sta		prefr0,y
-		dey
-		bpl		varloop
+.def :VarLoadFR0_OffsetY = *
+		:5 mva (varptr),y- fr0+(5-#)
+		mva (varptr),y fr0
 		rts
 .endp
 
 ;==========================================================================
-.proc varStoreArgStk
-		jsr		VarGetAddr0
-		jsr		expPopFR0
-.def :VarStoreFR0 = *
+.proc VarStoreFR0
 		ldy		#2
 loop:
-		mva		prefr0,y (varptr),y
+		mva		fr0-2,y (varptr),y
 		iny
 		cpy		#8
 		bne		loop
@@ -71,10 +60,9 @@ loop:
 skip_loop:
 		lda		(iterPtr),y
 		iny
-		cmp		#0
+		tax
 		bpl		skip_loop
 		tya
-.def :VarAdvancePtr = *
 		ldx		#iterPtr
 .def :VarAdvancePtrX = *
 		clc

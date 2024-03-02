@@ -33,12 +33,7 @@ errorNoMemory		inc		errno		;2
 		
 		;clear BREAK flag in case that's what caused us to stop
 		stx		brkkey
-		
-		;save off error
-		lda		errno
-		sta		fr0
-		sta		errsave
-		
+				
 		;set stop line
 		ldy		#0
 		sty		dspflg			;force off list flag while we have a zero
@@ -49,29 +44,59 @@ errorNoMemory		inc		errno		;2
 		iny
 		lda		(stmcur),y
 		sta		stopln+1
-		sty		errno			;reset errno to 1
 				
+		;save off error
+		lda		errno
+		sta		fr0
+		sty		errno			;reset errno to 1
+
+		;check if we are in break -- if so, we should not execute TRAP or
+		;set ERRSAVE (but STOPLN should be set!).
+		cmp		#$80
+		bne		not_break
+
+		;print STOPPED and then jump for opt lineno
+		ldx		#<msg_stopped
+		jsr		IoPrintMessage
+		jmp		print_lineno
+
+not_break:
+		;save off error
+		sta		errsave
+
 		;check if we have a trap line
 		lda		exTrapLine+1
 		bmi		no_trap
 		
-		sta		fr0+1
-		lda		exTrapLine
-		sta		fr0
+		ldx		exTrapLine
 		
 		;reset trap line
 		sec
 		ror		exTrapLine+1
 		
 		;goto trap line
-		jmp		stGoto.gotoFR0Int
+		;!! - needs to use JSR because stGoto pops off the retaddr!
+		jsr		stGoto.gotoFR0Int
 		
 no_trap:
 		;ERROR-   11
-		jsr		imprint
-		dta		c"ERROR-   ",0
-		
+		ldx		#<msg_error
+		jsr		IoPrintMessage		
 		jsr		IoPrintInt
+
+print_lineno:
+		lda		stopln+1
+		sta		fr0+1
+		bmi		imm_mode
+
+		ldx		#<msg_atline
+		jsr		IoPrintMessage
+
+		lda		stopln
+		sta		fr0
+		jsr		IoPrintInt
+
+imm_mode:
 		jsr		IoPutNewline
-		jmp		immediateMode
+		jmp		execLoop.loop2
 .endp

@@ -30,6 +30,9 @@ public:
 
 	void SetColorParams(const ATColorParams& params);
 
+	ATArtifactingParams GetArtifactingParams() const { return mArtifactingParams; }
+	void SetArtifactingParams(const ATArtifactingParams& params);
+
 	enum {
 		N = 456,
 		M = 312
@@ -71,8 +74,11 @@ protected:
 	int mArtifactYScale;
 
 	ATColorParams mColorParams;
+	ATArtifactingParams mArtifactingParams;
 
 	int mChromaVectors[16][3];
+	int mLumaRamp[16];
+	uint8 mGammaTable[256];
 	uint32 mPalette[256];
 
 	union {

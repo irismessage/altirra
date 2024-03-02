@@ -29,9 +29,6 @@
 
 ;==============================================================================
 .proc SIO
-	tsx
-	stx		stackp
-	
 	;set retry counters
 	mva		#$01 dretry
 	
@@ -41,8 +38,13 @@
 .if _KERNEL_PBI_SUPPORT
 	;attempt PBI transfer
 	jsr		PBIAttemptSIO
-	scc:jmp	xit
+	scc:jmp	xit_pbi
 .endif
+
+	;we must not save STACKP until after PBI devices are polled -- the
+	;BlackBox PBI routines depend on being able to reuse this location
+	tsx
+	stx		stackp
 	
 	;Set timeout timer address -- MUST be done on each call to SIO, or
 	;Cross-Town Crazy Eight hangs on load due to taking over this vector
@@ -123,14 +125,24 @@ ackOK:
 
 no_send_frame:
 	
-	;setup 90 frame delay for complete
 	;setup for receiving complete
 	ldx		#$ff
 	stx		timflg
 	stx		nocksm
-	inx					;X=0 (>90)
+
+	;setup frame delay for complete
+	lda		dtimlo
+	ror
+	ror
+	pha
+	ror
+	and		#$c0
+	tay
+	pla
+	and		#$3f
+	tax
+
 	lda		#1
-	ldy		#90
 	jsr		setvbv
 
 	mwa		#temp		bufrlo
@@ -157,18 +169,20 @@ transfer_error:
 
 device_retries_exhausted:
 xit:
-	lda		#0
 	ldx		casflg
 	bne		leave_cassette_audio_on
-	sta		audc1
-	sta		audc2
-	sta		audc3
-	sta		audc4
+	stx		audc1
+	stx		audc2
+	stx		audc3
+	stx		audc4
 leave_cassette_audio_on:
-	sta		critic
-
 	ldx		stackp
 	txs
+
+xit_pbi:
+	lda		#0
+	sta		critic
+
 	tya
 	sty		dstats
 	sty		status

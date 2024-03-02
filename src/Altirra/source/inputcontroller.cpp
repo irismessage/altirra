@@ -299,7 +299,11 @@ void ATMouseController::SetDigitalTrigger(uint32 trigger, bool state) {
 			}
 			break;
 		case kATInputTrigger_Button0 + 1:
-			mbButtonState[1] = state;
+			if (mbButtonState[1] != state) {
+				mbButtonState[1] = state;
+
+				mpPortController->SetPotPosition(0, state ? 0 : 228);
+			}
 			break;
 	}
 }
@@ -377,6 +381,8 @@ void ATMouseController::OnAttach() {
 }
 
 void ATMouseController::OnDetach() {
+	mpPortController->ResetPotPositions();
+
 	if (mpUpdateEvent) {
 		mpScheduler->RemoveEvent(mpUpdateEvent);
 		mpUpdateEvent = NULL;
@@ -616,6 +622,10 @@ void ATPaddleController::Tick() {
 
 	mRotXLast = x;
 	mRotYLast = y;
+}
+
+void ATPaddleController::OnDetach() {
+	mpPortController->SetPotPosition(mbSecond, 228);
 }
 
 ///////////////////////////////////////////////////////////////////////////

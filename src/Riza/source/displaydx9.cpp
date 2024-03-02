@@ -299,6 +299,7 @@ public:
 		IDirect3DTexture9 *mpPaletteTexture;
 		IDirect3DTexture9 *mpInterpFilterH;
 		IDirect3DTexture9 *mpInterpFilterV;
+		IDirect3DTexture9 *mpInterpFilter;
 		uint32 mSourceW;
 		uint32 mSourceH;
 		uint32 mSourceTexW;
@@ -307,6 +308,8 @@ public:
 		uint32 mInterpHTexH;
 		uint32 mInterpVTexW;
 		uint32 mInterpVTexH;
+		uint32 mInterpTexW;
+		uint32 mInterpTexH;
 
 		/// Source rect.
 		vdrect32f mSourceArea;
@@ -355,6 +358,7 @@ public:
 
 	bool IsD3D9ExEnabled() const { return mbUseD3D9Ex; }
 	bool Is16FEnabled() const { return mbIs16FEnabled; }
+	bool IsPS11Enabled() const { return mbIsPS11Enabled; }
 	bool IsPS20Enabled() const { return mbIsPS20Enabled; }
 
 	VDThreadID GetThreadId() const { return mThreadId; }
@@ -392,6 +396,7 @@ protected:
 	int					mCubicRefCount;
 	int					mCubicTempSurfacesRefCount[2];
 	bool				mbIs16FEnabled;
+	bool				mbIsPS11Enabled;
 	bool				mbIsPS20Enabled;
 	bool				mbUseD3D9Ex;
 
@@ -1803,6 +1808,14 @@ bool VDVideoDisplayDX9Manager::Init() {
 	const D3DCAPS9& caps = mpManager->GetCaps();
 
 	mbIs16FEnabled = false;
+
+	mbIsPS11Enabled = false;
+	if (caps.VertexShaderVersion >= D3DVS_VERSION(1, 1) &&
+		caps.PixelShaderVersion >= D3DPS_VERSION(1, 1))
+	{
+		mbIsPS11Enabled = true;
+	}
+
 	if (caps.VertexShaderVersion >= D3DVS_VERSION(2, 0) &&
 		caps.PixelShaderVersion >= D3DPS_VERSION(2, 0))
 	{
@@ -2192,7 +2205,7 @@ bool VDVideoDisplayDX9Manager::RunEffect(const EffectContext& ctx, const Techniq
 bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const TechniqueInfo& technique, IDirect3DSurface9 *pRTOverride) {
 	const int firstRTTIndex = ctx.mbHighPrecision ? 2 : 0;
 
-	IDirect3DTexture9 *const textures[14]={
+	IDirect3DTexture9 *const textures[15]={
 		NULL,
 		ctx.mpSourceTexture1,
 		ctx.mpSourceTexture2,
@@ -2206,7 +2219,8 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const Techni
 		mpHEvenOddTexture ? mpHEvenOddTexture->GetD3DTexture() : NULL,
 		mpDitherTexture ? mpDitherTexture->GetD3DTexture() : NULL,
 		ctx.mpInterpFilterH,
-		ctx.mpInterpFilterV
+		ctx.mpInterpFilterV,
+		ctx.mpInterpFilter
 	};
 
 	const D3DDISPLAYMODE& dmode = mpManager->GetDisplayMode();
@@ -2233,6 +2247,7 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const Techni
 		float time[4];				// (time)
 		float interphtexsize[4];	// (cubic htex interp info)
 		float interpvtexsize[4];	// (cubic vtex interp info)
+		float interptexsize[4];		// (interp tex info)
 		float fieldinfo[4];			// (field information)		fieldoffset, -fieldoffset/4, und, und
 		float chromauvscale[4];		// (chroma UV scale)		U scale, V scale, und, und
 		float chromauvoffset[4];	// (chroma UV offset)		U offset, V offset, und, und
@@ -2258,6 +2273,7 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const Techni
 		offsetof(StdParamData, time),
 		offsetof(StdParamData, interphtexsize),
 		offsetof(StdParamData, interpvtexsize),
+		offsetof(StdParamData, interptexsize),
 		offsetof(StdParamData, fieldinfo),
 		offsetof(StdParamData, chromauvscale),
 		offsetof(StdParamData, chromauvoffset),
@@ -2326,6 +2342,10 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const Techni
 	data.interpvtexsize[1] = (float)ctx.mInterpVTexH;
 	data.interpvtexsize[2] = ctx.mInterpVTexH ? 1.0f / (float)ctx.mInterpVTexH : 0.0f;
 	data.interpvtexsize[3] = ctx.mInterpVTexW ? 1.0f / (float)ctx.mInterpVTexW : 0.0f;
+	data.interptexsize[0] = (float)ctx.mInterpTexW;
+	data.interptexsize[1] = (float)ctx.mInterpTexH;
+	data.interptexsize[2] = ctx.mInterpTexH ? 1.0f / (float)ctx.mInterpTexH : 0.0f;
+	data.interptexsize[3] = ctx.mInterpTexW ? 1.0f / (float)ctx.mInterpTexW : 0.0f;
 	data.fieldinfo[0] = ctx.mFieldOffset;
 	data.fieldinfo[1] = ctx.mFieldOffset * -0.25f;
 	data.fieldinfo[2] = 0.0f;
@@ -3617,6 +3637,7 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 				ctx.mpPaletteTexture = mpD3DPaletteTexture;
 				ctx.mpInterpFilterH = NULL;
 				ctx.mpInterpFilterV = NULL;
+				ctx.mpInterpFilter = NULL;
 				ctx.mSourceW = source.w;
 				ctx.mSourceH = source.h;
 				ctx.mSourceTexW = mTexFmt.w;
@@ -3626,6 +3647,8 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 				ctx.mInterpHTexH = 0;
 				ctx.mInterpVTexW = 0;
 				ctx.mInterpVTexH = 0;
+				ctx.mInterpTexW = 0;
+				ctx.mInterpTexH = 0;
 				ctx.mViewportX = 0;
 				ctx.mViewportY = 0;
 				ctx.mViewportW = source.w;
@@ -4069,6 +4092,8 @@ protected:
 	void ShutdownBicubic();
 	bool InitBicubicPS2Filters(int w, int h);
 	void ShutdownBicubicPS2Filters();
+	bool InitBoxlinearPS11Filters(int w, int h, float facx, float facy);
+	void ShutdownBoxlinearPS11Filters();
 
 	bool UpdateBackbuffer(const RECT& rClient, UpdateMode updateMode);
 	bool UpdateScreen(const RECT& rClient, UpdateMode updateMode, bool polling);
@@ -4081,10 +4106,15 @@ protected:
 	IDirect3DDevice9	*mpD3DDevice;			// weak ref
 	vdrefptr<IDirect3DTexture9>	mpD3DInterpFilterTextureH;
 	vdrefptr<IDirect3DTexture9>	mpD3DInterpFilterTextureV;
+	vdrefptr<IDirect3DTexture9>	mpD3DInterpFilterTexture;
 	int					mInterpFilterHSize;
 	int					mInterpFilterHTexSize;
 	int					mInterpFilterVSize;
 	int					mInterpFilterVTexSize;
+	int					mInterpFilterTexSizeW;
+	int					mInterpFilterTexSizeH;
+	float				mInterpFilterFactorX;
+	float				mInterpFilterFactorY;
 
 	vdrefptr<VDVideoUploadContextD3D9>	mpUploadContext;
 	vdrefptr<IVDFontRendererD3D9>	mpFontRenderer;
@@ -4109,6 +4139,7 @@ protected:
 	bool				mbCubicAttempted;
 	bool				mbCubicUsingHighPrecision;
 	bool				mbCubicTempSurfacesInitialized;
+	bool				mbBoxlinearCapable11;
 	bool				mbUseD3D9Ex;
 
 	FilterMode			mPreferredFilter;
@@ -4134,6 +4165,10 @@ VDVideoDisplayMinidriverDX9::VDVideoDisplayMinidriverDX9(bool clipToMonitor, boo
 	, mInterpFilterHTexSize(0)
 	, mInterpFilterVSize(0)
 	, mInterpFilterVTexSize(0)
+	, mInterpFilterTexSizeW(0)
+	, mInterpFilterTexSizeH(0)
+	, mInterpFilterFactorX(0)
+	, mInterpFilterFactorY(0)
 	, mpVideoManager(NULL)
 	, mSwapChainW(0)
 	, mSwapChainH(0)
@@ -4151,6 +4186,7 @@ VDVideoDisplayMinidriverDX9::VDVideoDisplayMinidriverDX9(bool clipToMonitor, boo
 	, mbCubicAttempted(false)
 	, mbCubicUsingHighPrecision(false)
 	, mbCubicTempSurfacesInitialized(false)
+	, mbBoxlinearCapable11(false)
 	, mbUseD3D9Ex(use9ex)
 	, mPreferredFilter(kFilterAnySuitable)
 	, mSyncDelta(0.0f)
@@ -4211,12 +4247,15 @@ bool VDVideoDisplayMinidriverDX9::Init(HWND hwnd, HMONITOR hmonitor, const VDVid
 	mSyncDelta = 0.0f;
 	mbFirstPresent = true;
 
+	mbBoxlinearCapable11 = mpVideoManager->IsPS11Enabled();
+
 	return true;
 }
 
 void VDVideoDisplayMinidriverDX9::OnPreDeviceReset() {
 	ShutdownBicubic();
 	ShutdownBicubicPS2Filters();
+	ShutdownBoxlinearPS11Filters();
 	mpSwapChain = NULL;
 	mSwapChainW = 0;
 	mSwapChainH = 0;
@@ -4424,6 +4463,96 @@ namespace {
 
 		return texw;
 	}
+
+	std::pair<int, int> GeneratePS11BoxlinearTexture(VDD3D9Manager *pManager, int w, int h, int srcw, int srch, float facx, float facy, vdrefptr<IDirect3DTexture9>& pTexture, int existingTexW, int existingTexH) {
+		IDirect3DDevice9 *dev = pManager->GetDevice();
+
+		// Round up to next multiple of 128 pixels to reduce reallocation.
+		int texw = (w + 127) & ~127;
+		int texh = (h + 127) & ~127;
+		pManager->AdjustTextureSize(texw, texh);
+
+		// If we can't fit the texture, bail.
+		if (texw < w || texh < h)
+			return std::pair<int, int>(-1, -1);
+
+		// Check if we need to reallocate the texture.
+		HRESULT hr;
+		D3DFORMAT format = D3DFMT_V8U8;
+		const bool useDefault = (pManager->GetDeviceEx() != NULL);
+
+		if (!pTexture || existingTexW != texw || existingTexH != texh) {
+			hr = dev->CreateTexture(texw, texh, 1, 0, D3DFMT_V8U8, useDefault ? D3DPOOL_DEFAULT : D3DPOOL_MANAGED, ~pTexture, NULL);
+			if (FAILED(hr))
+				return std::pair<int, int>(-1, -1);
+		}
+
+		vdrefptr<IDirect3DTexture9> uploadtex;
+		if (useDefault) {
+			hr = dev->CreateTexture(texw, texh, 1, 0, D3DFMT_V8U8, D3DPOOL_SYSTEMMEM, ~uploadtex, NULL);
+			if (FAILED(hr))
+				return std::pair<int, int>(-1, -1);
+		} else {
+			uploadtex = pTexture;
+		}
+
+		// Fill the texture.
+		D3DLOCKED_RECT lr;
+		hr = uploadtex->LockRect(0, &lr, NULL, 0);
+		VDASSERT(SUCCEEDED(hr));
+		if (FAILED(hr)) {
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load boxlinear texture.\n");
+			return std::pair<int, int>(-1, -1);
+		}
+
+		double dudx = (double)srcw / (double)w;
+		double dvdy = (double)srch / (double)h;
+		double u = dudx * 0.5;
+		double v = dvdy * 0.5;
+
+		vdfastvector<sint8> hfilter(texw);
+		for(int x = 0; x < texw; ++x) {
+			double edgePos = floor(u + 0.5);
+			double snappedPos = edgePos - fmax(-0.5f, fmin((edgePos - u) * facx, 0.5));
+			hfilter[x] = (sint8)floor(0.5 + 127.0 * (snappedPos - u));
+			u += dudx;
+		}
+
+		vdfastvector<sint8> vfilter(texh);
+		for(int y = 0; y < texh; ++y) {
+			double edgePos = floor(v + 0.5);
+			double snappedPos = edgePos - fmax(-0.5f, fmin((edgePos - v) * facy, 0.5));
+			vfilter[y] = (sint8)floor(0.5 + 127.0 * (snappedPos - v));
+			v += dvdy;
+		}
+
+		sint8 *p0 = (sint8 *)lr.pBits;
+
+		for(int y = 0; y < texh; ++y) {
+			sint8 *p = p0;
+			sint8 vc = vfilter[y];
+
+			for(int x = 0; x < texw; ++x) {
+				p[0] = hfilter[x];
+				p[1] = vc;
+				p += 2;
+			}
+
+			p0 += lr.Pitch;
+		}
+
+		VDVERIFY(SUCCEEDED(uploadtex->UnlockRect(0)));
+
+		if (useDefault) {
+			hr = pManager->GetDevice()->UpdateTexture(uploadtex, pTexture);
+			if (FAILED(hr)) {
+				pTexture.clear();
+				return std::pair<int,int>(texw, texh);
+			}
+		}
+
+		return std::pair<int,int>(texw, texh);
+	}
 }
 
 bool VDVideoDisplayMinidriverDX9::InitBicubicPS2Filters(int w, int h) {
@@ -4464,6 +4593,35 @@ void VDVideoDisplayMinidriverDX9::ShutdownBicubicPS2Filters() {
 	mInterpFilterVTexSize = 0;
 }
 
+bool VDVideoDisplayMinidriverDX9::InitBoxlinearPS11Filters(int w, int h, float facx, float facy) {
+	// update horiz filter
+	if (!mpD3DInterpFilterTexture
+		|| mInterpFilterHSize != w
+		|| mInterpFilterVSize != h
+		|| mInterpFilterFactorX != facx
+		|| mInterpFilterFactorY != facy)
+	{
+		auto newtexsize = GeneratePS11BoxlinearTexture(mpManager, w, h, mSource.pixmap.w, mSource.pixmap.h, facx, facy, mpD3DInterpFilterTexture, mInterpFilterHSize, mInterpFilterVSize);
+		if (newtexsize.first < 0)
+			return false;
+
+		mInterpFilterHSize = w;
+		mInterpFilterVSize = h;
+		mInterpFilterTexSizeW = newtexsize.first;
+		mInterpFilterTexSizeH = newtexsize.second;
+		mInterpFilterFactorX = facx;
+		mInterpFilterFactorY = facy;
+	}
+
+	return true;
+}
+
+void VDVideoDisplayMinidriverDX9::ShutdownBoxlinearPS11Filters() {
+	mpD3DInterpFilterTexture.clear();
+	mInterpFilterTexSizeW = 0;
+	mInterpFilterTexSizeH = 0;
+}
+
 void VDVideoDisplayMinidriverDX9::Shutdown() {
 	mpUploadContext = NULL;
 
@@ -4479,6 +4637,7 @@ void VDVideoDisplayMinidriverDX9::Shutdown() {
 
 	ShutdownBicubic();
 	ShutdownBicubicPS2Filters();
+	ShutdownBoxlinearPS11Filters();
 
 	mpSwapChain = NULL;
 	mSwapChainW = 0;
@@ -4555,6 +4714,8 @@ bool VDVideoDisplayMinidriverDX9::ModifySource(const VDVideoDisplaySourceInfo& i
 	}
 
 	if (!fastPath) {
+		ShutdownBoxlinearPS11Filters();
+
 		mpUploadContext.clear();
 
 		mpUploadContext = new_nothrow VDVideoUploadContextD3D9;
@@ -4731,6 +4892,8 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 	else if (mode == kFilterBicubic && !mbCubicInitialized && !mbCubicAttempted)
 		InitBicubic();
 
+	if (mpD3DInterpFilterTexture && mPixelSharpnessX <= 1 && mPixelSharpnessY <= 1)
+		ShutdownBoxlinearPS11Filters();
 
 	static const D3DMATRIX ident={
 		1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1
@@ -4879,6 +5042,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 			ctx.mpSourceTexture5 = NULL;
 			ctx.mpInterpFilterH = NULL;
 			ctx.mpInterpFilterV = NULL;
+			ctx.mpInterpFilter = NULL;
 			ctx.mSourceW = mSource.pixmap.w;
 			ctx.mSourceH = mSource.pixmap.h;
 			ctx.mSourceArea.set(0, 0, (float)ctx.mSourceW, (float)ctx.mSourceH);
@@ -4895,6 +5059,8 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 			ctx.mInterpHTexH = 1;
 			ctx.mInterpVTexW = 1;
 			ctx.mInterpVTexH = 1;
+			ctx.mInterpTexW = 1;
+			ctx.mInterpTexH = 1;
 			ctx.mViewportX = rDest.left;
 			ctx.mViewportY = rDest.top;
 			ctx.mViewportW = rDest.right - rDest.left;
@@ -4970,7 +5136,20 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 						bSuccess = mpVideoManager->RunEffect(ctx, g_technique_point, pRTMain);
 					else if ((mPixelSharpnessX > 1 || mPixelSharpnessY > 1) && mpVideoManager->IsPS20Enabled())
 						bSuccess = mpVideoManager->RunEffect(ctx, g_technique_boxlinear_2_0, pRTMain);
-					else
+					else if ((mPixelSharpnessX > 1 || mPixelSharpnessY > 1) && mbBoxlinearCapable11) {
+						if (!InitBoxlinearPS11Filters(ctx.mViewportW, ctx.mViewportH, mPixelSharpnessX, mPixelSharpnessY))
+							mbBoxlinearCapable11 = false;
+						else {
+							ctx.mpInterpFilter = mpD3DInterpFilterTexture;
+							ctx.mInterpTexW = mInterpFilterTexSizeW;
+							ctx.mInterpTexH = mInterpFilterTexSizeH;
+						}
+
+						if (ctx.mpInterpFilter)
+							bSuccess = mpVideoManager->RunEffect(ctx, g_technique_boxlinear_1_1, pRTMain);
+						else
+							bSuccess = mpVideoManager->RunEffect(ctx, g_technique_bilinear, pRTMain);
+					} else
 						bSuccess = mpVideoManager->RunEffect(ctx, g_technique_bilinear, pRTMain);
 				}
 			}

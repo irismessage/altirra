@@ -24,4 +24,6 @@
 #include <math.h>
 #include <tchar.h>
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/vdstl.h>
+#include <vd2/system/VDString.h>
 #include <deque>

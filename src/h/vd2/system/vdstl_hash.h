@@ -100,11 +100,13 @@ class VDStringSpanW;
 
 template<> struct vdhash<VDStringA> {
 	size_t operator()(const VDStringA& s) const;
+	size_t operator()(const VDStringSpanA& s) const;
 	size_t operator()(const char *s) const;
 };
 
 template<> struct vdhash<VDStringW> {
 	size_t operator()(const VDStringW& s) const;
+	size_t operator()(const VDStringSpanW& s) const;
 	size_t operator()(const wchar_t *s) const;
 };
 

@@ -6,12 +6,51 @@
 ; notice and this notice are preserved.  This file is offered as-is,
 ; without any warranty.
 
+;===========================================================================
+; Parser module
+;===========================================================================
+;
+; The parser is responsible for accepting a line of input and converting it
+; to a tokenized line, either deferred (line 0-32767) or immediate (line
+; 32768).
+;
+; Execution phases and error handling
+; -----------------------------------
+; Oddly enough, the parser may be invoked by program execution by means of
+; the ENTER statement being used in deferred mode. However, execution stops
+; after this happens. In Atari BASIC, CONT can be used to resume execution.
+;
+; One corner case that must be dealt with is that it is possible for the
+; parser to run out of memory trying to expand the variable or statement
+; tables, raising Error 2. This can in turn invoke TRAP! This means that
+; STMCUR must be on a valid line for the optimized line lookup to succeed,
+; although any line will do.
+;
+; Entering a line number between 32768 and 65535 produces a syntax error.
+; However, entering a line number that fails FPI (not in 0-65535) causes
+; error 3. This can also invoke TRAP.
+;
+; If an error does occur during table expansion, any variables added during
+; parsing are NOT rolled back.
+;
+; Memory usage
+; ------------
+; The argument stack area (LOMEM to LOMEM+$ff) is used as the temporary
+; tokenization buffer and the 6502 stack is used to handle backtracking.
+; Unlike Atari BASIC, the region from $0480-$057F is not used by the parser.
+;
+;===========================================================================
+
 ?parser_start = *
 
 ;============================================================================
 .proc parseLine
+		;reset errno in case we trigger an error
+		lda		#1
+		sta		errno
+
 		;clear last statement marker and reset input pointer
-		lda		#0
+		lsr
 		sta		parStBegin
 		sta		cix
 
@@ -22,34 +61,31 @@
 		jsr		afp
 		bcc		lineno_valid
 		
-		;use line 32768 for immediate statements
+		;use line 32768 for immediate statements (A:X)
 		lda		#$80
-		sta		fr0+1
-		asl
-		sta		fr0
+		ldx		#$00
 		
 		;restart at beginning of line
-		sta		cix
+		stx		cix
 		beq		lineno_none
 		
 lineno_valid:
-		jsr		fpi
+		;convert line to integer and throw error 3 if it fails
+		;(yes, you can invoke TRAP this way!)
+		jsr		ExprConvFR0Int
 		
+		;A:X = line number
 		;check for a line >=32768, which is illegal
-		lda		fr0+1
-		bpl		lineno_valid2
-		
-		jmp		paCmdFail
+		bmi		paCmdFail
 
-lineno_valid2:
 lineno_none:
 		;stash the line number and a dummy byte as the line length
-		ldy		#0
-		mva		fr0 (argstk),y+
-		lda		fr0+1
-		jsr		ExprPushRawByteAsWord	;!! push FR0+1 then $00
-		
-		;save room for statement length
+		ldy		#1
+		sta		(argstk),y
+		dey
+		txa
+		sta		(argstk),y
+		ldy		#3
 		sty		parout
 		
 		;check if the line is empty
@@ -155,26 +191,34 @@ backtrack_fail:
 		;##TRACE "Parser: No backtrack -- failing."
 		ldx		#0
 		sta		iocbidx
-		jsr		imprint
-		dta		c"ERROR-   ",0
+		sta		parout
+		ldx		#<msg_error2
+		jsr		IoPrintMessage
 		
-		jsr		ldbufa
-		ldy		cix
-		lda		(inbuff),y
-		cmp		#$9b
-		beq		is_cr
+		inc		cix
+print_loop:
+		ldx		parout
+		inc		parout
+		lda		lbuff,x
+		pha
+		dec		cix
+		bne		no_invert
 		eor		#$80
-		sta		(inbuff),y
-		jmp		not_cr
-is_cr:
+		cmp		#$1b
+		bne		not_eol
 		lda		#$a0
-		sta		(inbuff),y+
+		jsr		putchar
 		lda		#$9b
-		sta		(inbuff),y
-not_cr:
-		jsr		printLineINBUFF
+no_invert:
+not_eol:
+		jsr		putchar
+		pla
+		cmp		#$9b
+		bne		print_loop
 		
-		jmp		immediateMode
+		;We use loop2 here because an syntax error does not interrupt
+		;ENTER.
+		jmp		execLoop.loop2
 .endp
 
 ;============================================================================
@@ -192,7 +236,7 @@ parse_dispatch_table_lo:
 		dta		<[paCmdTryNumber-1]		;$0A
 		dta		<[paCmdTryVariable-1]	;$0B
 		dta		<[paCmdTryFunction-1]	;$0C
-		dta		<[paCmdStBegin-1]		;$0D
+		dta		<[paCmdHex-1]			;$0D
 		dta		<[paCmdStEnd-1]			;$0E
 		dta		<[paCmdString-1]		;$0F
 		dta		<[paCmdBranchStr-1]		;$10
@@ -216,7 +260,7 @@ parse_dispatch_table_hi:
 		dta		>[paCmdTryNumber-1]		;$0A
 		dta		>[paCmdTryVariable-1]	;$0B
 		dta		>[paCmdTryFunction-1]	;$0C
-		dta		>[paCmdStBegin-1]		;$0D
+		dta		>[paCmdHex-1]			;$0D
 		dta		>[paCmdStEnd-1]			;$0E
 		dta		>[paCmdString-1]		;$0F
 		dta		>[paCmdBranchStr-1]		;$10
@@ -260,70 +304,159 @@ parse_dispatch_table_hi:
 
 ;============================================================================
 .proc paCmdTryStatement
-_stateIdx = fr0
-
+		;skip any spaces at the beginning
 		jsr		skpspc
+		
+		;reserve byte for statement length and record its location
+		ldy		parout
+		sty		parStBegin
+		inc		parout
+		
+		;scan the statement table
+		ldx		#<statement_table
+		lda		#>statement_table
+		ldy		#0
+		jmp		paSearchTable
+.endp
 
-		;first character must be a letter or a ?
+;============================================================================
+; Entry:
+;	A:X = search table
+;	Y = token base (0 for statements, $3D for functions)
+;
+.proc paSearchTable
+_stateIdx = fr0
+_functionMode = fr0+1
+
+		sty		_functionMode
+		sty		_stateIdx
+		stx		iterPtr
+		sta		iterPtr+1
+
+		;check if first character is a letter, a qmark, or a period
+		ldy		cix
 		lda		(inbuff),y
 		cmp		#'?'
-		beq		valid
-		tax
-		sbc		#'A'			;!! carry set if >'?', cleared if below
+		beq		first_ok
+		cmp		#'.'
+		bne		not_period
+		lda		_functionMode
+		beq		first_ok
+not_period:
+		sub		#'A'
 		cmp		#26
-		scc:jmp	parseLine.parse_loop
-valid:
-		txa
-		
+		bcs		fail_try
+
+first_ok:
 		;okay, it's a letter... let's go down the statement table.
-		ldx		#0
-		stx		_stateIdx
 table_loop:
-		ldy		cix
+		;check if we hit the end of the table
+		ldy		#0
+		lda		(iterPtr),y
+		beq		fail_try
+
+		;begin scan
+		ldx		cix
 statement_loop:
-		lda		statement_table,x
+		lda		(iterPtr),y
 		and		#$7f
-		cmp		(inbuff),y
-		bne		fail
+		inx
+		cmp		lbuff-1,x
+		bne		fail_stcheck
+
+		;check if this was the last char
+		lda		(iterPtr),y
+		asl
 		
 		;progress to next char
-		inx
 		iny
-		lda		statement_table-1,x
-		bpl		statement_loop
+		bcc		statement_loop
 		
+check_term:
+
+		;Term check
+		;
+		;For statements, a partial match is accepted:
+		;
+		;	PRINTI -> PRINT I
+		;
+		;However, this is not true for functions. A function name will not match
+		;if there is an alphanumeric character after it. Examples:
+		;
+		;	PRINT SIN(0) -> OK, parsed as function call
+		;	PRINT SIN0(0) -> OK, parsed as array reference
+		;	PRINT SINE(0) -> OK, parsed as array reference
+		;	PRINT SIN$(0) -> Parse error at $
+		;	PRINT STR(0) -> OK, parsed as array reference
+
+		ldy		_functionMode
+		beq		accept
+
+		lda		lbuff,x
+		jsr		paIsalnum
+		bcc		fail
+
 accept:
 		;looks like we've got a hit -- update input pointer, emit token, and change the state.
-		sty		cix
+		stx		cix
 		
 		lda		_stateIdx
-		ldy		parout
-		inc		parout
-		sta		(argstk),y
-		adc		#PST_STATEMENT_BASE-1		;!! carry is set!
-		jmp		parseJump
+		jsr		paCmdEmit.doEmitByte
+		tax
+
+		;init for statements
+		lda		parse_state_table_statements,x
+		ldy		#>pa_statements_begin
+
+		;check if we're doing functions
+		lsr		_functionMode
+		bcc		do_branch
+
+		;init for functions
+
+		stx		stScratch
+		jsr		paApplyBranch
+				
+		;push frame on stack
+		lda		parptr
+		pha
+		lda		parptr+1
+		pha
+		lda		parout
+		pha
+		lda		#0
+		pha
 		
-fail:
-		;allow . as a trivial accept
-		lda		(inbuff),y
-		iny
+		ldx		stScratch
+		lda		parse_state_table_functions-$3d,x
+		ldy		#>pa_functions_begin
+
+do_branch:
+		jmp		parseJump.do_branch
+
+fail_stcheck:
+		;check for a ., which is a trivial accept -- this is only allowed for
+		;statements and not functions
+		ldy		_functionMode
+		bne		fail
+
+		lda		lbuff-1,x
 		cmp		#'.'
 		beq		accept
-		dey
-skip_loop:
+
+fail:
 		;skip chars until we're at the end of the entry
-		inx
-		lda		statement_table-1,x
-		bpl		skip_loop
+		jsr		VarAdvanceName
 		
-		;keep going if we have more statements
+		;loop back for more
 		inc		_stateIdx
-		lda		statement_table,x
 		bne		table_loop
 		
 		;whoops
-		jmp		parseLine.parse_loop
-		
+fail_try:
+		lda		_functionMode
+		beq		paCmdBranch.next
+		jmp		parseLine.parse_loop_inc
 .endp
 
 ;============================================================================
@@ -347,6 +480,14 @@ skip_loop:
 		;resume parsing
 		jmp		parseLine.parse_loop_inc
 .endp
+
+;============================================================================
+.proc paCmdBranchStr
+		lda		parStrType
+		bmi		paCmdBranch
+		jmp		parseLine.parse_loop_inc
+.endp
+
 
 ;============================================================================
 paCmdEmitBranch:
@@ -376,11 +517,9 @@ char_match:
 		
 		;check if we need to emit
 		jsr		paFetch
-		beq		no_emit
+		beq		paCmdBranch
 		
 		jsr		paCmdEmit.doEmitByte
-
-no_emit:
 		jmp		paCmdBranch
 .endp
 
@@ -424,10 +563,14 @@ doEmitByte:
 		;emit the token
 		ldy		parout
 		inc		parout
+		beq		overflow
 		sta		(argstk),y
 		
 		;all done
 		rts
+
+overflow:
+		jmp		errorLineTooLong
 .endp
 
 ;============================================================================
@@ -458,24 +601,40 @@ doEmitByte:
 		sta		cix
 		jmp		parseLine.parse_loop_inc
 succeeded:
+
 		;emit a constant number token
-		ldy		parout
-		cpy		#255-6
-		bcs		overflow
-		
-		mva		#TOK_EXP_CNUM (argstk),y+
+		lda		#TOK_EXP_CNUM
+emit_number:
+		jsr		paCmdEmit.doEmitByte
 		
 		;emit the number
 		ldx		#-6
 copyloop:
-		mva		fr0+6,x (argstk),y+
+		lda		fr0+6,x
+		jsr		paCmdEmit.doEmitByte
 		inx
 		bne		copyloop
-		sty		parout
 		
 		;all done
 		jmp		paCmdBranch
-overflow:
+.endp
+
+;============================================================================
+; Exit:
+;	C = 0 if alphanumeric
+;	C = 1 if not alphanumeric
+;
+.proc paIsalnum
+		pha
+		sec
+		sbc		#'0'
+		cmp		#10
+		bcc		success
+		sbc		#'A'-'0'
+		cmp		#26
+success:
+		pla
+		rts
 .endp
 
 ;============================================================================
@@ -502,23 +661,12 @@ _array_entry:
 		bcs		reject
 
 		;compute length of the name
-		lda		#1
-		sta		_nameLen
-		
 		iny
 		
 namelen_loop:
 		lda		(inbuff),y
-		cmp		#'A'
-		bcc		namelen_not_alpha
-		cmp		#'Z'+1
-		bcc		namelen_loop_ok
-namelen_not_alpha:
-		cmp		#'0'
-		bcc		namelen_loop_end
-		cmp		#'9'+1
+		jsr		paIsalnum
 		bcs		namelen_loop_end
-namelen_loop_ok:
 		iny
 		bne		namelen_loop
 		
@@ -551,7 +699,7 @@ search_loop:
 		;check if we've hit the sentinel at the end
 		ldy		#0
 		lda		(iterPtr),y
-		sne:jmp	create_new
+		beq		create_new
 		
 		;check characters one at a time for this entry
 		ldx		cix
@@ -578,11 +726,8 @@ match_last:
 match_ok:
 		stx		cix
 match_ok_2:
-		ldy		parout
-		mva		_index (argstk),y
-		iny
-		beq		overflow
-		sty		parout
+		lda		_index
+		jsr		paCmdEmit.doEmitByte
 		
 		;set expr type flag
 		ldx		cix
@@ -594,9 +739,6 @@ match_ok_2:
 		;branch
 		;##TRACE "Taking variable branch"
 		jmp		paCmdBranch
-
-overflow:
-		jmp		errorArgStkOverflow
 				
 no_match:
 		;skip remaining chars in this entry
@@ -640,16 +782,16 @@ create_new_have_space:
 		;##TRACE "vntp=$%04x, vvtp=$%04x, stmtab=$%04x" dw(vntp) dw(vvtp) dw(stmtab)
 		sbw		stmtab vvtp a3		;compute VVT size
 		lda		stmtab
-		sta		a0
+		sta		a1
 		clc
 		adc		_nameLen
 		sta		stmtab
-		sta		a1
+		sta		a0
 		lda		stmtab+1
-		sta		a0+1				;A0 = source = stmtab
+		sta		a1+1				;A0 = dest = stmtab
 		adc		#0
 		sta		stmtab+1			;bump up STMTAB by total offset
-		sta		a1+1				;A1 = dest = stmtab
+		sta		a0+1				;A1 = source = stmtab
 		jsr		copyDescending
 		
 		;relocate STMTAB
@@ -657,9 +799,12 @@ create_new_have_space:
 		ldx		#stmtab
 		jsr		VarAdvancePtrX
 		
-		;relocate VVT pointer
+		;relocate VNTD and VVTP
 		lda		_nameLen
 		ldx		#vvtp
+		jsr		VarAdvancePtrX
+		lda		_nameLen
+		ldx		#vntd
 		jsr		VarAdvancePtrX
 		
 		;copy the name just below the vvt, complementing the first byte
@@ -717,109 +862,13 @@ type_not_array:
 
 ;============================================================================
 .proc paCmdTryFunction
-_stateIdx = fr0
-		;first character must be a letter
-		ldy		cix
-		lda		(inbuff),y
-		tax
-		sub		#'A'
-		cmp		#26
-		bcc		letter_start
-		jmp		parseLine.parse_loop_inc
-letter_start:
-		txa
-		
-		;okay, it's a letter... let's go down the function table.
-		ldx		#$3d
-		stx		_stateIdx
-		ldx		#0
-table_loop:
-		ldy		cix
-function_loop:
-		lda		funtok_name_table,x
-		and		#$7f
-		cmp		(inbuff),y
-		bne		fail
-		
-		;progress to next char
-		inx
-		iny
-		lda		funtok_name_table-1,x
-		bpl		function_loop
-		
-accept:
-		;looks like we've got a hit -- update input pointer and emit the token,
-		;then do a jsr.
-		sty		cix
-		
-		ldy		parout
-		mva		_stateIdx (argstk),y
-		iny
-		beq		overflow
-		sty		parout
-		
-		;compute state offset
-		add		#PST_FUNCTION_BASE-$3d
-		asl
-		sta		stScratch
-
-		;apply branch
-		jsr		paApplyBranch
-				
-		;push frame on stack
-		lda		parptr
-		pha
-		lda		parptr+1
-		pha
-		lda		parout
-		pha
-		lda		#0
-		pha
-		
-		;jump
-		ldx		stScratch
-		jsr		ParseSetJump
-		jmp		parseLine.parse_loop
-
-overflow:
-		brk
-		
-fail:
-skip_loop:
-		;skip chars until we're at the end of the entry
-		inx
-		lda		funtok_name_table-1,x
-		bpl		skip_loop
-		
-		;keep going if we have more statements
-		inc		_stateIdx
-		lda		funtok_name_table,x
-		bne		table_loop
-		
-		;whoops
-		jmp		parseLine.parse_loop_inc
-		
+		;scan the function table
+		ldx		#<funtok_name_table
+		lda		#>funtok_name_table
+		ldy		#$3d
+		jmp		paSearchTable		
 .endp
 
-
-;============================================================================
-.proc paCmdStBegin
-		;skip any spaces at the beginning
-		jsr		skpspc
-		
-		;reserve byte for statement length and record its location
-		ldy		parout
-		sty		parStBegin
-		iny
-		beq		overflow
-		sty		parout
-		
-		;resume execution
-		jmp		parseLine.parse_loop
-		
-overflow:
-		brk
-.endp
 
 ;============================================================================
 .proc paCmdStEnd
@@ -829,8 +878,8 @@ overflow:
 		sta		(argstk),y
 
 		;check if we have EOL
-		ldx		cix
-		lda		lbuff,x
+		ldy		cix
+		lda		(inbuff),y
 		cmp		#$9b
 		beq		is_eol
 		
@@ -863,15 +912,19 @@ not_empty:
 		
 		;determine where this should fit in statement table
 		dey
-		mva		(argstk),y fr0+1
+		lda		(argstk),y
+		pha
 		dey
-		mva		(argstk),y fr0
-		lda		#fr0
+		lda		(argstk),y
+		tax
+		pla
 		jsr		exFindLineInt
+		sta		fr0
+		sty		fr0+1
 		
 		;save off address
-		ldx		#stmcur
-		jsr		ExprStoreFR0Int
+		sta		stmcur
+		sty		stmcur+1
 		
 		;check whether we should expand or contract the statement table
 		bcc		not_found
@@ -904,6 +957,7 @@ do_expand:
 		jsr		expandTable
 
 same_length:
+		clc
 		lda		parout
 		beq		done
 
@@ -916,9 +970,60 @@ copyloop:
 		cpy		parout
 		bne		copyloop
 		
-		;all done
+		;all done - exit C=0 for delete, C=1 for insert/replace/immediate
 done:
 		rts
+.endp
+
+;============================================================================
+.proc paCmdHex
+		;zero FR0 (although really only need 16-bit)
+		jsr		zfr0
+
+		;set empty flag
+		ldx		#1
+digit_loop:
+		;try to parse a digit
+		jsr		isdigt
+		bcc		digit_ok
+		and		#$df
+		cmp		#$11
+		bcc		parse_end
+		cmp		#$17
+		bcs		parse_end
+		sbc		#7-1
+
+digit_ok:
+		inc		cix
+
+		;shl4
+		ldx		#4
+shl4_loop:
+		asl		fr0
+		rol		fr0+1
+		dex					;!! - also clears empty flag
+		bne		shl4_loop
+
+		;merge in new digit
+		ora		fr0
+		sta		fr0
+
+		;loop back if we're not full
+		lda		fr0+1
+		cmp		#$10
+		bcc		digit_loop
+
+parse_end:
+		;check if we actually got anything
+		txa
+		seq:jmp	paCmdFail
+
+		;convert to FP
+		jsr		ifp
+
+		;emit and then branch
+		lda		#TOK_EXP_CHEX
+		jmp		paCmdTryNumber.emit_number
 .endp
 
 ;============================================================================
@@ -929,33 +1034,31 @@ done:
 ;
 .proc paCmdString
 		;add string literal token
-		ldy		parout
-		mva		#TOK_EXP_CSTR (argstk),y+
+		lda		#TOK_EXP_CSTR
+		jsr		paCmdEmit.doEmitByte
 		
+		ldx		cix
+		dex
+
 		;reserve length and stash offset
-		sty		a0
 		iny
-		beq		overflow
+		sty		a0
+		bne		loop_start		;!! - relying on A != EOL or "
 
 		;advance and copy until we find the terminating quote
-		ldx		cix
 loop:
 		lda		lbuff,x
-		inx
-		sta		(argstk),y
-		iny
-		beq		overflow
+loop_start:
+		jsr		paCmdEmit.doEmitByte
 		cmp		#$9b
 		beq		unterminated
+		inx
 		cmp		#'"'
 		bne		loop
-		inx
 unterminated:
-		dex
 		
 		;save new locations
 		stx		cix
-		dey
 		sty		parout
 		
 		;compute length
@@ -969,25 +1072,13 @@ unterminated:
 		
 		;resume
 		jmp		parseLine.parse_loop
-		
-overflow:
-		jmp		errorArgStkOverflow
-.endp
-
-;============================================================================
-.proc paCmdBranchStr
-		lda		parStrType
-		spl:jmp	paCmdBranch
-		jmp		parseLine.parse_loop_inc
 .endp
 
 ;============================================================================
 paCmdStr:
-		sec
-		ror		parStrType
-		dta		{bit $0100}
 paCmdNum:
-		lsr		parStrType
+		cpx		#$12
+		ror		parStrType
 		jmp		parseLine.parse_loop
 
 ;============================================================================
@@ -996,7 +1087,12 @@ parseJump0:
 .proc parseJump
 		asl
 		tax
-		jsr		ParseSetJump
+		lda		parse_state_table,x
+		ldy		parse_state_table+1,x
+
+do_branch:
+		sta		parptr
+		sty		parptr+1
 		
 		;clear any backtracking entries from the stack
 btc_loop:
@@ -1009,12 +1105,6 @@ btc_loop:
 bt_cleared:
 		pha
 		jmp		parseLine.parse_loop
-.endp
-
-;============================================================================
-.proc ParseSetJump
-		mwa		parse_state_table,x parptr
-		rts
 .endp
 
 .echo "- Parser length: ",*-?parser_start

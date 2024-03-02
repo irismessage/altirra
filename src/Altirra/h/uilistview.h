@@ -61,23 +61,23 @@ public:
 	ATCallbackHandler2<void, ATUIListView *, sint32>& OnItemActivatedEvent() { return mItemActivatedEvent; }
 
 public:
-	virtual void OnMouseDownL(sint32 x, sint32 y);
-	virtual void OnMouseDblClkL(sint32 x, sint32 y);
-	virtual void OnMouseWheel(sint32 x, sint32 y, float delta);
+	virtual void OnMouseDownL(sint32 x, sint32 y) override;
+	virtual void OnMouseDblClkL(sint32 x, sint32 y) override;
+	virtual bool OnMouseWheel(sint32 x, sint32 y, float delta) override;
 
-	virtual void OnActionStart(uint32 id);
-	virtual void OnActionRepeat(uint32 id);
+	virtual void OnActionStart(uint32 id) override;
+	virtual void OnActionRepeat(uint32 id) override;
 
-	virtual void OnCreate();
-	virtual void OnDestroy();
-	virtual void OnSize();
-	virtual void OnSetFocus();
-	virtual void OnKillFocus();
+	virtual void OnCreate() override;
+	virtual void OnDestroy() override;
+	virtual void OnSize() override;
+	virtual void OnSetFocus() override;
+	virtual void OnKillFocus() override;
 
 	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 
 protected:
-	void OnScroll(ATUISlider *, sint32 pos);
+	void OnScroll(sint32 pos);
 	void RecomputeSlider();
 
 	sint32	mScrollY;

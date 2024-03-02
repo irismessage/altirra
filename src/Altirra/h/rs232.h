@@ -18,8 +18,11 @@
 #ifndef f_AT_RS232_H
 #define f_AT_RS232_H
 
+#include <vd2/system/refcount.h>
+#include <vd2/system/unknown.h>
 #include <vd2/system/VDString.h>
 
+class ATFirmwareManager;
 class ATCPUEmulator;
 class ATCPUEmulatorMemory;
 class ATScheduler;
@@ -37,6 +40,7 @@ enum AT850SIOEmulationLevel {
 enum ATRS232DeviceMode {
 	kATRS232DeviceMode_850,
 	kATRS232DeviceMode_1030,
+	kATRS232DeviceMode_SX212,
 	kATRS232DeviceModeCount
 };
 
@@ -72,52 +76,10 @@ struct ATRS232Config {
 	}
 };
 
-class IATRS232Emulator {
+class IATRS232Device : public IVDRefUnknown {
 public:
-	virtual ~IATRS232Emulator() {}
+	enum { kTypeID = 'r2dv' };
 
-	virtual void Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, ATPokeyEmulator *pokey, ATPIAEmulator *pia) = 0;
-	virtual void Shutdown() = 0;
-
-	virtual void LoadFirmware(const void *relocator, uint32 rellen, const void *handler, uint32 hlen) = 0;
-	virtual void ColdReset() = 0;
-
-	virtual void GetConfig(ATRS232Config& config) = 0;
-	virtual void SetConfig(const ATRS232Config& config) = 0;
-
-	virtual uint8 GetCIODeviceName() const = 0;
-	virtual void OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, int offset) = 0;
-};
-
-
-struct ATRS232TerminalState {
-	bool mbDataTerminalReady;
-	bool mbRequestToSend;
-};
-
-struct ATRS232ControlState {
-	bool mbCarrierDetect;
-	bool mbClearToSend;
-	bool mbDataSetReady;
-};
-
-class IATRS232DeviceCallback {
-public:
-	virtual void OnControlStateChanged(const ATRS232ControlState& status) = 0;
-};
-
-class IATRS232Device {
-public:
-	virtual ~IATRS232Device() {}
-
-	virtual void SetCallback(IATRS232DeviceCallback *cb) = 0;
-
-	virtual void ColdReset() = 0;
-
-	virtual void SetTerminalState(const ATRS232TerminalState&) = 0;
-	virtual ATRS232ControlState GetControlState() = 0;
-	virtual bool Read(uint32 baudRate, uint8& c, bool& framingError) = 0;
-	virtual void Write(uint32 baudRate, uint8 c) = 0;
 	virtual void SetConfig(const ATRS232Config&) = 0;
 
 	virtual void SetToneDialingMode(bool enable) = 0;
@@ -125,10 +87,6 @@ public:
 	virtual void HangUp() = 0;
 	virtual void Dial(const char *address, const char *service) = 0;
 	virtual void Answer() = 0;
-
-	virtual void FlushOutputBuffer() = 0;
 };
-
-IATRS232Emulator *ATCreateRS232Emulator();
 
 #endif

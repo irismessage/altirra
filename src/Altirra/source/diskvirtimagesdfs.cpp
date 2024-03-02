@@ -144,10 +144,12 @@ public:
 	virtual bool IsDirty() const { return false; }
 	virtual bool IsUpdatable() const { return false; }
 	virtual bool IsDynamic() const { return true; }
+	virtual ATDiskImageFormat GetImageFormat() const override { return kATDiskImageFormat_None; }
+
 	virtual bool Flush() { return true; }
 
-	virtual void SetPathATR(const wchar_t *path);
-	virtual void SaveATR(const wchar_t *path);
+	virtual void SetPath(const wchar_t *path);
+	virtual void Save(const wchar_t *path, ATDiskImageFormat format);
 
 	virtual ATDiskGeometryInfo GetGeometry() const;
 	virtual uint32 GetSectorSize() const;
@@ -386,10 +388,10 @@ void ATDiskImageVirtualFolderSDFS::Init(const wchar_t *path, uint64 uniquenessVa
 	}
 }
 
-void ATDiskImageVirtualFolderSDFS::SetPathATR(const wchar_t *path) {
+void ATDiskImageVirtualFolderSDFS::SetPath(const wchar_t *path) {
 }
 
-void ATDiskImageVirtualFolderSDFS::SaveATR(const wchar_t *path) {
+void ATDiskImageVirtualFolderSDFS::Save(const wchar_t *path, ATDiskImageFormat format) {
 }
 
 ATDiskGeometryInfo ATDiskImageVirtualFolderSDFS::GetGeometry() const {

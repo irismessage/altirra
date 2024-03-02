@@ -28,6 +28,7 @@
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/atomic.h>
+#include <vd2/system/function.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/win32/miniwindows.h>
 
@@ -100,12 +101,16 @@ private:
 
 
 class VDLazyTimer {
+	VDLazyTimer(const VDLazyTimer&) = delete;
+	VDLazyTimer& operator=(const VDLazyTimer&) = delete;
 public:
 	VDLazyTimer();
 	~VDLazyTimer();
 
 	void SetOneShot(IVDTimerCallback *pCB, uint32 delay);
+	void SetOneShotFn(const vdfunction<void()>& fn, uint32 delay);
 	void SetPeriodic(IVDTimerCallback *pCB, uint32 delay);
+	void SetPeriodicFn(const vdfunction<void()>& fn, uint32 delay);
 	void Stop();
 
 protected:
@@ -114,7 +119,7 @@ protected:
 	uint32				mTimerId;
 	bool				mbPeriodic;
 	VDFunctionThunk		*mpThunk;
-	IVDTimerCallback	*mpCB;
+	vdfunction<void()>	mpFn;
 };
 
 #endif

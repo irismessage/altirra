@@ -6,13 +6,15 @@
 
 class ATUIButton;
 
-class ATUIOnScreenKeyboard : public ATUIContainer {
+class ATUIOnScreenKeyboard final : public ATUIContainer {
 public:
 	enum {
 		kActionLeft = kActionCustom,
 		kActionRight,
 		kActionUp,
-		kActionDown
+		kActionDown,
+		kActionHoldShift,
+		kActionHoldControl
 	};
 
 	ATUIOnScreenKeyboard();
@@ -25,8 +27,9 @@ public:
 	virtual void OnDestroy();
 	virtual void OnSize();
 
-	virtual void OnActionStart(uint32 id);
-	virtual void OnActionRepeat(uint32 id);
+	virtual void OnActionStart(uint32 id) override;
+	virtual void OnActionRepeat(uint32 id) override;
+	virtual void OnActionStop(uint32 id) override;
 
 protected:
 	void OnButtonPressed(ATUIButton *);
@@ -63,6 +66,13 @@ protected:
 
 	sint32	mButtonWidth;
 	sint32	mButtonHeight;
+	bool	mbShift;
+	bool	mbShiftHeld;
+	bool	mbControl;
+	bool	mbControlHeld;
+
+	vdfastvector<int> mControlButtons;
+	vdfastvector<int> mShiftButtons;
 
 	ButtonEntry mButtons[62];
 

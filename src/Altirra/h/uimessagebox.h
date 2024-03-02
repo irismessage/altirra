@@ -33,6 +33,7 @@ public:
 	virtual void OnCreate();
 	virtual void OnDestroy();
 	virtual void OnSize();
+	virtual void OnSetFocus();
 
 protected:
 	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);

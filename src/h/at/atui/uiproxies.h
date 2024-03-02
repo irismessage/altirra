@@ -27,7 +27,10 @@
 #include <vd2/system/VDString.h>
 #include <vd2/system/win32/miniwindows.h>
 
+#include <vd2/system/function.h>
+
 struct VDUIAccelerator;
+class VDFunctionThunk;
 
 class VDUIProxyControl : public vdlist_node {
 public:
@@ -40,6 +43,7 @@ public:
 
 	void SetArea(const vdrect32& r);
 
+	void SetEnabled(bool);
 	void SetRedraw(bool);
 
 	virtual VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
@@ -309,6 +313,11 @@ public:
 	virtual void GetText(VDStringW& s) const = 0;
 };
 
+class IVDUITreeViewVirtualItemComparer {
+public:
+	virtual int Compare(IVDUITreeViewVirtualItem& x, IVDUITreeViewVirtualItem& y) const = 0;
+};
+
 class VDUIProxyTreeViewControl : public VDUIProxyControl {
 public:
 	typedef uintptr NodeRef;
@@ -320,6 +329,9 @@ public:
 	VDUIProxyTreeViewControl();
 	~VDUIProxyTreeViewControl();
 
+	virtual void Attach(VDZHWND hwnd);
+	virtual void Detach();
+
 	IVDUITreeViewVirtualItem *GetSelectedVirtualItem() const;
 
 	void Clear();
@@ -330,6 +342,10 @@ public:
 	void MakeNodeVisible(NodeRef node);
 	void SelectNode(NodeRef node);
 	void RefreshNode(NodeRef node);
+	void ExpandNode(NodeRef node, bool expanded);
+	void EditNodeLabel(NodeRef node);
+	void EnumChildren(NodeRef parent, const vdfunction<void(IVDUITreeViewVirtualItem *)>& callback);
+	void SortChildren(NodeRef parent, IVDUITreeViewVirtualItemComparer& comparer);
 
 	VDEvent<VDUIProxyTreeViewControl, int>& OnItemSelectionChanged() {
 		return mEventItemSelectionChanged;
@@ -339,15 +355,56 @@ public:
 		return mEventItemDoubleClicked;
 	}
 
+	struct BeginEditEvent {
+		NodeRef mNode;
+		IVDUITreeViewVirtualItem *mpItem;
+		bool mbAllowEdit;
+		bool mbOverrideText;
+		VDStringW mOverrideText;
+	};
+
+	VDEvent<VDUIProxyTreeViewControl, BeginEditEvent *>& OnItemBeginEdit() {
+		return mEventItemBeginEdit;
+	}
+
+	struct EndEditEvent {
+		NodeRef mNode;
+		IVDUITreeViewVirtualItem *mpItem;
+		const wchar_t *mpNewText;
+	};
+
+	VDEvent<VDUIProxyTreeViewControl, EndEditEvent *>& OnItemEndEdit() {
+		return mEventItemEndEdit;
+	}
+
+	struct GetDispAttrEvent {
+		IVDUITreeViewVirtualItem *mpItem;
+		bool mbIsBold;
+	};
+
+	VDEvent<VDUIProxyTreeViewControl, GetDispAttrEvent *>& OnItemGetDisplayAttributes() {
+		return mEventItemGetDisplayAttributes;
+	}
+
 protected:
 	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
+	VDZLRESULT FixLabelEditWndProcA(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
+	VDZLRESULT FixLabelEditWndProcW(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
 
 	int			mNextTextIndex;
 	VDStringW mTextW[3];
 	VDStringA mTextA[3];
+	VDZHFONT	mhfontBold;
+	bool		mbCreatedBoldFont;
+
+	void *mPrevEditWndProc;
+	VDFunctionThunk *mpEditWndProcThunk;
 
 	VDEvent<VDUIProxyTreeViewControl, int> mEventItemSelectionChanged;
 	VDEvent<VDUIProxyTreeViewControl, bool *> mEventItemDoubleClicked;
+	VDEvent<VDUIProxyTreeViewControl, BeginEditEvent *> mEventItemBeginEdit;
+	VDEvent<VDUIProxyTreeViewControl, EndEditEvent *> mEventItemEndEdit;
+	VDEvent<VDUIProxyTreeViewControl, GetDispAttrEvent *> mEventItemGetDisplayAttributes;
 };
 
 #endif

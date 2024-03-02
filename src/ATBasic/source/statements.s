@@ -9,66 +9,9 @@
 ?statements_start = *
 
 ;===========================================================================
-.proc stRem
-		;remove return address
-		pla
-		pla
-		
-		;warp to end of current line
-		ldy		#2
-		lda		(stmcur),y
-		jmp		exec.next_line_2
-.endp
-
-
-;===========================================================================
-stData = stRem
-
-;===========================================================================
-; INPUT [#aexp{,|;}] var [,var...]
-;
-; Reads input from the console or an I/O channel.
-;
-; If the IOCB is #0, either implicitly or explicitly, a question mark is
-; printed to the console first. Whether the IOCB number is followed by
-; a comma or semicolon doesn't matter.
-;
-; Leading spaces are included for string input and skipped for numeric
-; input. Numeric input is considered invalid if the immediately following
-; character is not a comma or a string of spaces (spaces followed by
-; a comma is _not_ accepted). Numeric inputs may not be empty -- either
-; a blank line or no input after a comma will cause a numeric input to
-; fail.
-;
-; When multiple variables are supplied, subsequent variables are read in
-; from the same line if more values are available as a comma separated
-; list. If not, a new line is read in. String reads eat the comma as part
-; of the string and always force a new line.
-;
-; The default line buffer is always used (255 bytes), even if a larger
-; string buffer is supplied. The string is silently truncated as necessary.
-; EOLs are not placed into string arrays. If the string array is not
-; dimensioned, error 9 is issued, but only when that string array is
-; reached and after input has been read.
-;
-; End of file gives an EOF error.
-;
-.proc stInput
-		;parse optional #iocb and set iocbidx
-		jsr		evaluateHashIOCBOpt
-		bne		no_iocb
-		
-		;eat following comma or semicolon
-		inc		exLineOffset
-no_iocb:
-		jmp		DataRead
-.endp
-
-
-;===========================================================================
 .proc stColor
 		jsr		evaluateInt
-		mva		fr0 grColor
+		stx		grColor
 		rts
 .endp
 
@@ -85,6 +28,10 @@ no_iocb:
 ; SAVE itself *does* succeed, which means that SAVE must close IOCB #7
 ; first.
 ;
+; ENTER may be used in deferred mode, but execution stops after the
+; statement is executed. This is equivalent to a STOP, so sounds and I/O
+; channels are not affected.
+;
 .proc stEnter
 _vectmp = $0500
 
@@ -92,13 +39,10 @@ _vectmp = $0500
 		jsr		IoSetupIOCB7
 		
 		;get filename
-		jsr		ExprEvalAndPopString
+		jsr		evaluate
 		
-		;set open mode to read
-		mva		#4 icax1+$70
-		
-		;issue open call
-		jsr		IoDoOpenWithFilename
+		;issue open call for read
+		jsr		IoDoOpenReadWithFilename
 
 		;set exec IOCB to #7
 		mvx		#$70 iocbexec
@@ -110,6 +54,20 @@ _vectmp = $0500
 
 ;===========================================================================
 stLet = evaluateAssignment
+
+;===========================================================================
+.proc stRem
+		;remove return address
+		pla
+		pla
+
+		;warp to end of current line
+		jmp		exec.next_line
+.endp
+
+
+;===========================================================================
+stData = stRem
 
 ;===========================================================================
 ; IF aexp THEN {lineno | statement [:statement...]}
@@ -128,17 +86,12 @@ stLet = evaluateAssignment
 .proc stIf
 		;evaluate condition
 		jsr		evaluate
-		jsr		expPopFR0
 		
-		;check if it is zero
+		;check if it is zero and skip the line if so
 		lda		fr0
 		;;##TRACE "If condition: %g" fr0
-		bne		non_zero
-		
-		;condition is false... skip the line
-		jmp		stRem
-		
-non_zero:
+		beq		stRem
+
 		;skip the THEN token, which is always present
 		;##ASSERT db(dw(stmcur)+db(exLineOffset)) = $1B
 		inc		exLineOffset
@@ -149,7 +102,15 @@ non_zero:
 		beq		statement_follows
 		
 		;no, it isn't... process the implicit GOTO.
-		jmp		stGoto
+		ldx		#<-6
+copy_loop:
+		iny
+		lda		(stmcur),y
+		sta		fr0+6,x
+		inx
+		bne		copy_loop
+		jsr		ExprConvFR0Int
+		jmp		stGoto.gotoFR0Int
 		
 statement_follows:
 		;a statement follows, so execute it
@@ -160,24 +121,15 @@ statement_follows:
 ;===========================================================================
 .proc stFor
 		;get and save variable
-		lda		(stmcur),y+
+		lda		(stmcur),y
 		pha
 		
-		;skip equals
-		iny
-		sty		exLineOffset
-		
-		;evaluate initial loop value and store in variable
-		jsr		evaluate
-		pla
-		pha
-		jsr		varStoreArgStk
-		
-		;skip the TO keyword
-		inc		exLineOffset
-		
-		;evaluate stop value and push
-		jsr		evalAndPush
+		;execute assignment to set variable initial value
+		jsr		evaluateAssignment
+				
+		;skip TO keyword, evaluate stop value and push
+		jsr		ExprSkipCommaAndEval		;actually skipping TO, not a comma
+		jsr		pushNumber
 		
 		;check for a STEP keyword
 		ldy		exLineOffset
@@ -185,55 +137,43 @@ statement_follows:
 		cmp		#$1a
 		bne		no_step
 		
-		;skip STEP keyword
-		inc		exLineOffset
-		
-		;evaluate and store step
-		jsr		evalAndPush
+		;skip STEP keyword, then evaluate and store step
+		jsr		ExprSkipCommaAndEval
 		jmp		had_step
 no_step:
-		;set step to 1.0 and push on stack
-		ldx		#$fa
-		ldy		#0
-oneloop:
-		lda		const_one-$fa,x
-		sta		(memtop2),y
-		inw		memtop2
-		inx
-		bne		oneloop
+		jsr		fld1
 had_step:
+		jsr		pushNumber
 
 		;push frame and exit
 		pla
 pushFrame:
-		ldx		#0
-		jsr		pushByte
-		lda		stmcur
-		jsr		pushByte
+		ldy		#0
+		ldx		stmcur
+		jsr		push_ax
 		lda		stmcur+1
-		jsr		pushByte
-		lda		exLineOffsetNxt
-		jsr		pushByte
-		;##ASSERT dw(runstk)<=dw(memtop2) and !((dw(memtop2)-dw(runstk))&3) and (db(dw(memtop2)-4)=0 or db(dw(memtop2)-4)>=$80) and dw(dw(memtop2)-3) >= dw(stmtab)
+		ldx		exLineOffsetNxt
+		jsr		push_ax
+raise_stack:
+		ldx		#memtop2
+		tya
+		jmp		VarAdvancePtrX
+
+push_ax:
+		sta		(memtop2),y+
+		txa
+		sta		(memtop2),y+
 		rts
 		
-evalAndPush:
-		jsr		evaluate
-pushFR1:
-		ldx		#0
-		ldy		#2
-		mva		#6 fr1
+pushNumber:
+		ldy		#0
 loop1:
-		lda		(argstk),y
+		lda		fr0,y
+		sta		(memtop2),y
 		iny
-		jsr		pushByte
-		dec		fr1
+		cpy		#6
 		bne		loop1
-		rts
-pushByte:
-		sta		(memtop2,x)
-		inw		memtop2
-		rts
+		beq		raise_stack
 .endp
 
 
@@ -256,10 +196,7 @@ pushByte:
 .proc stNext
 		;pop entries off runtime stack until we find the right frame
 loop:
-		lda		runstk
-		cmp		memtop2
-		lda		runstk+1
-		sbc		memtop2+1
+		jsr		stReturn.check_rtstack_empty
 		bcc		stack_not_empty
 		
 error:
@@ -284,18 +221,22 @@ stack_not_empty:
 		;compute variable address
 		jsr		VarGetAddr0
 		
-		;add step to variable
-		jsr		VarLoadExtendedFR0
-		ldy		memtop2+1
-		lda		memtop2
-		add		#6
-		scc:iny
-		tax
-		jsr		fld1r
+		;load loop variable
+		jsr		VarLoadFR0
 		
+		;load step		
+		ldy		#11
+		mva		(memtop2),y- fr1+5
+		mva		(memtop2),y- fr1+4
+		mva		(memtop2),y- fr1+3
+		mva		(memtop2),y- fr1+2
+		mva		(memtop2),y- fr1+1
+		mva		(memtop2),y fr1
+
 		;save off step sign
-		mva		fr1 stScratch
-		
+		sta		stScratch
+
+		;add step to variable		
 		jsr		fadd
 		jsr		VarStoreFR0
 		
@@ -311,19 +252,15 @@ stack_not_empty:
 		;< termination value for negative step
 		beq		not_done
 		
-		bit		stScratch
-		bmi		negative_step
-		
-		bcc		not_done
+		ror
+		eor		stScratch
+		bpl		not_done
 		
 loop_done:
 		;skip variable and exit
 		;;##TRACE "Terminating FOR loop"
 		inc		exLineOffset
 		rts
-		
-negative_step:
-		bcc		loop_done
 
 not_done:
 		;warp to FOR end
@@ -349,500 +286,6 @@ pop_frame:
 		;##ASSERT dw(memtop2) >= dw(runstk) and ((dw(memtop2)-dw(runstk))&3)=0
 		;##ASSERT dw(memtop2) = dw(runstk) or db(dw(memtop2)-4)=0 or db(dw(memtop2)-4)>=$80
 		rts
-.endp
-
-
-;===========================================================================
-.proc stGoto
-		;get line number
-		jsr		evaluate
-gotoTOS:
-		jsr		expPopFR0Int
-gotoFR0Int:
-		lda		#stmcur
-		jsr		exFindLineInt
-		bcc		not_found
-gotoFoundLineConfirmed:
-		;jump to it
-		pla
-		pla
-		jmp		exec.new_line
-not_found:
-		jmp		errorLineNotFound
-.endp
-
-
-;===========================================================================
-stGoto2 = stGoto
-
-;===========================================================================
-.proc stGosub
-		;get line number
-		jsr		evaluate
-
-		;push gosub frame
-		;##TRACE "Pushing GOSUB frame: $%04x+$%02x" dw(stmcur) db(exLineOffset)
-		lda		#0
-		jsr		stFor.pushFrame
-		
-		;jump to new location
-		;##ASSERT dw(runstk)<=dw(memtop2) and !((dw(memtop2)-dw(runstk))&3) and (db(dw(memtop2)-4)=0 or db(dw(memtop2)-4)>=$80) and dw(dw(memtop2)-3) >= dw(stmtab)
-		jmp		stGoto.gotoTOS
-.endp
-
-
-;===========================================================================
-.proc stTrap
-		jsr		evaluateInt
-		ldx		#exTrapLine
-		jmp		ExprStoreFR0Int
-.endp
-
-
-;===========================================================================
-.proc stBye
-		ldx		#$ff
-		txs
-		jmp		blkbdv
-.endp
-
-
-;===========================================================================
-.proc stCont
-		;check if we are executing the immedate mode line
-		ldy		#0
-		lda		(stmcur),y
-		bmi		stGoto.not_found
-		rts
-.endp
-
-;===========================================================================
-stCom = stDim
-
-;===========================================================================
-.proc stClose
-		jsr		evaluateHashIOCBNoCheckOpen
-		jmp		IoClose
-.endp
-
-
-;===========================================================================
-; CLR
-;
-; Clears all numeric values to zero and un-dimensions any string and numeric
-; arrays. The runtime stack is also cleared, so no FOR or GOSUB frames are
-; left afterward.
-;
-.proc stClr
-		lda		#0
-		jsr		VarGetAddr0
-		jsr		zfr0
-		jmp		loopstart
-clearloop:
-		;clear variable info and value
-		jsr		VarStoreFR0
-		
-		;clear dimensioned bits for arrays/strings
-		ldy		#0
-		lda		(varptr),y
-		and		#$c0
-		sta		(varptr),y
-		
-		;next variable
-		lda		#8
-		ldx		#varptr
-		jsr		VarAdvancePtrX
-loopstart:
-		lda		varptr
-		cmp		stmtab
-		lda		varptr+1
-		sbc		stmtab+1
-		bcc		clearloop
-		
-		;empty the string/array table region and runtime stack		
-		;note: this loop is reused by NEW!
-		ldx		#<-4
-reset_loop:
-		lda		starp+4,x
-		sta		runstk+4,x
-		inx
-		bne		reset_loop
-		
-		rts
-.endp
-
-
-;===========================================================================
-.proc stDegRad
-.def :stDeg = *
-		lda		#6
-		dta		{bit $0100}
-.def :stRad = *
-		lda		#0
-		sta		degflg
-done:
-		rts
-.endp
-
-;===========================================================================
-.proc stDim
-loop:
-		jsr		evaluate
-
-		ldy		exLineOffset
-		lda		(stmcur),y
-		cmp		#TOK_EXP_COMMA
-		bne		stDegRad.done
-		inc		exLineOffset
-		bcs		loop
-.endp
-
-
-;===========================================================================
-stEnd = immediateModeReset
-
-;===========================================================================
-.proc stNew
-		ldy		lomem+1
-		ldx		lomem
-
-		;reset trap line
-		mva		#$80 exTrapLine+1
-		
-		;reserve a page for the argument stack
-		iny
-		
-		;place variable name table above argument stack
-		stx		vntp
-		sty		vntp+1
-		stx		vntd
-		sty		vntd+1
-
-		;reserve byte for sentinel in variable name table
-		inx
-		sne:iny
-		
-		;place variable value table
-		stx		vvtp
-		sty		vvtp+1
-
-		;copy VVTP to STMTAB/STMCUR/STARP/RUNSTK/MEMTOP2
-		ldx		#<-10
-		jsr		stClr.reset_loop
-		
-		;write sentinel into variable name table
-		txa
-		tay
-		sta		(vntp),y
-
-		;all done
-		jmp		immediateModeReset
-.endp
-
-
-;===========================================================================
-; OPEN #iocb, aexp1, aexp2, filename
-;
-; Opens an I/O channel.
-;
-; Errors:
-;	Error 7 if aexp1 or aexp2 in [32768, 65535]
-;	Error 3 if aexp1 or aexp2 not in [0, 65535]
-;
-.proc stOpen
-		;get #IOCB
-		jsr		evaluateHashIOCBNoCheckOpen
-		
-		;get AUX1 and AUX2 bytes
-		jsr		ExprSkipCommaAndEvalPopIntPos
-		txa
-		ldx		iocbidx
-		sta		icax1,x
-		
-		jsr		ExprSkipCommaAndEvalPopIntPos
-		txa
-		ldx		iocbidx
-		sta		icax2,x
-		
-		;get filename
-		jsr		ExprSkipCommaEvalAndPopString
-		mwa		fr0 icbal,x
-				
-		;issue open
-		jmp		IoDoOpenWithFilename
-.endp
-
-
-;===========================================================================
-; LOAD filespec
-;
-; Loads a BASIC program in binary format.
-;
-; Execution is reset prior to beginning the load.
-;
-.proc stLoad
-_vectmp = fr0
-_loadflg = stScratch
-		sec
-run_entry:
-		ror		_loadflg
-		
-		;close IOCBs and silence audio
-		jsr		ExecReset
-		
-		;Use IOCB #7 for compatibility with Atari BASIC
-		ldx		#$70
-
-withIOCB:
-		;save IOCB #
-		stx		iocbidx
-		
-		;pop filename
-		jsr		ExprEvalAndPopString
-				
-		;do open
-		ldx		iocbidx
-		mva		#$04 icax1,x
-		jsr		IoDoOpenWithFilename
-
-with_open_iocb:
-		;load vector table to temporary area (14 bytes)
-		ldy		#CIOCmdGetChars
-		jsr		setup_vector_io
-		
-		;check if first pointer is zero -- if not, assume bad file
-		lda		_vectmp
-		ora		_vectmp+1
-		bne		bogus
-		
-		;relocate pointers
-		ldx		#12
-relocloop:
-		lda		_vectmp,x
-		add		lomem
-		sta		lomem,x
-		lda		_vectmp+1,x
-		adc		lomem+1
-		sta		lomem+1,x
-		dex
-		dex
-		bne		relocloop
-		
-		;load remaining data at VNTP
-		jsr		setup_main_io
-		jsr		ioChecked
-				
-		;close IOCB
-		jsr		IoClose
-		
-		;clear runtime variables
-		jsr		stClr
-		
-		;check if we should run
-		asl		_loadflg
-		scs:jmp	exec
-		
-		;jump to immediate mode loop
-		jmp		immediateMode
-		
-bogus:
-		jmp		errorLoadError
-		
-setup_vector_io:
-		mva		#<_vectmp icbal,x
-		lda		#$00
-		sta		icblh,x
-		sta		icbah,x
-		mva		#14 icbll,x
-		tya
-		jmp		IoDoCmdX
-
-setup_main_io:
-		ldx		iocbidx
-		lda		vntp
-		sta		icbal,x
-		lda		vntp+1
-		sta		icbah,x
-		sbw		starp vntp icbll,x
-		rts
-.endp
-
-
-;===========================================================================
-; SAVE filespec
-;
-; It is possible to issue a SAVE command during ENTER processing. For this
-; reason, we must close IOCB #7 before reopening it.
-;
-.proc stSave
-_vectmp = fr0
-
-		;Use IOCB #7 for compatibility with Atari BASIC
-		;close it in case ENTER is active
-		jsr		IoSetupIOCB7
-		
-		;get filename
-		jsr		ExprEvalAndPopString
-		
-		;set open mode to write
-		mva		#8 icax1+$70
-		
-		;issue open call
-		jsr		IoDoOpenWithFilename
-		
-with_open_iocb:
-		;set up and relocate pointers
-		;note that this subtracts LOMEM from itself, producing an offset
-		;of $0000 -- this is in fact required.
-		ldx		#12
-relocloop:
-		sec
-		lda		lomem,x
-		sbc		lomem
-		sta		_vectmp,x
-		lda		lomem+1,x
-		sbc		lomem+1
-		sta		_vectmp+1,x
-		dex
-		dex
-		bpl		relocloop
-		
-		;write vector table (14 bytes)
-		ldy		#CIOCmdPutChars
-		ldx		#$70
-		jsr		stLoad.setup_vector_io
-		
-		;write from VNTP from STARP
-		jsr		stLoad.setup_main_io
-		jsr		ioChecked
-		
-		;close and exit
-		jmp		IoClose
-.endp
-
-
-;===========================================================================
-.proc stStatus
-		jsr		evaluateHashIOCB
-		jsr		ExprSkipCommaAndEvalVar
-		
-		lda		#CIOCmdGetStatus
-		jsr		IoDoCmd
-		ldx		iocbidx
-
-		lda		icsta,x
-		jmp		stGet.store_byte_to_var
-.endp
-
-;===========================================================================
-; NOTE #iocb, avar, avar
-;
-.proc stNote
-		;consume #iocb,
-		jsr		evaluateHashIOCB
-		inc		exLineOffset		;eat comma
-		
-		;issue XIO 38 to get current position
-		ldx		iocbidx
-		mva		#38 iccmd,x
-		jsr		ioChecked
-		
-		;copy ICAX3/4 into first variable
-		jsr		evaluateVar
-		ldx		iocbidx
-		mwa		icax3,x fr0
-		jsr		ifp
-		jsr		VarStoreFR0
-		
-		;copy ICAX5 into second variable
-		jsr		ExprSkipCommaAndEvalVar
-		ldx		iocbidx
-		lda		icax5,x
-		jsr		MathByteToInt		
-		jmp		VarStoreFR0
-.endp
-
-
-;===========================================================================
-; POINT #iocb, avar, avar
-;
-; Note that there is only one byte in the IOCB for the sector offset (AUX5);
-; Atari BASIC silently drops the high byte without error.
-;
-.proc stPoint
-		;consume #iocb,
-		jsr		evaluateHashIOCB
-		
-		;consume comma and then first var, which holds sector number
-		jsr		ExprSkipCommaAndEvalPopInt
-		
-		;move to ICAX3/4
-		ldx		iocbidx
-		mwa		fr0 icax3,x
-		
-		;consume comma and then second var, which holds sector offset
-		jsr		ExprSkipCommaAndEvalPopInt
-		
-		;move to ICAX5
-		txa
-		ldx		iocbidx
-		sta		icax5,x
-		
-		;issue XIO 37 and exit
-		mva		#37 iccmd,x
-		jmp		ioChecked
-.endp
-
-
-;===========================================================================
-; XIO cmdno, #aexp, aexp1, aexp2, filespec
-;
-; Performs extended I/O to an IOCB.
-;
-; This issues a CIO call as follows:
-;	ICCMD = cmdno
-;	ICAX1 = aexp1
-;	ICAX2 = aexp2
-;	ICBAL/H = filespec
-;
-; Quirks:
-;	- Neither AUX bytes are modified until all arguments are successfully
-;	  evaluated.
-;	- Because ICAX1 is modified and not restored even in the event of
-;	  success, subsequent attempts to read from the channel can fail due
-;	  to AUX1 permission checks in SIO. Writes can work because BASIC
-;	  bypasses CIO and jumps directly to ICPTL/H+1, but reads still go
-;	  through CIO. One symptom that occurs is LOCATE commands failing with
-;	  Error 131 after filling with XIO 18,#6,0,0,"S".
-;
-;	  This is avoided if the handler itself restores AUX1 or aexp1 is set
-;	  to the permission byte instead.
-;
-.proc stXio
-		jsr		evaluateInt
-		mva		fr0 iocbcmd
-		inc		exLineOffset
-		jsr		evaluateHashIOCBNoCheckOpen
-		jsr		ExprSkipCommaAndEvalPopInt
-		txa
-		pha
-		jsr		ExprSkipCommaAndEvalPopInt
-		txa
-		pha
-
-		;get filename
-		jsr		ExprSkipCommaEvalAndPopString
-		
-		ldx		iocbidx
-		mwa		fr0 icbal,x
-		pla
-		sta		icax2,x
-		pla
-		sta		icax1,x
-				
-		;issue command
-		lda		iocbcmd
-		jmp		IoDoWithFilename
 .endp
 
 
@@ -875,7 +318,7 @@ relocloop:
 ;
 stOn = _stOn._entry
 .proc _stOn
-_index = parout
+_index = stScratch
 
 fail_value_err:
 		jmp		errorValueErr
@@ -883,88 +326,711 @@ fail_value_err:
 _entry:
 		;fetch and convert the selection value
 		jsr		ExprEvalPopIntPos
+
+		;issue error 3 if value is greater than 255		
+		bne		fail_value_err
 				
+		;exit immediately if index is zero		
+		txa
+		beq		xit
+		sta		_index
+
 		;next token should be GOTO or GOSUB
 		ldy		exLineOffset
 		inc		exLineOffset
 		lda		(stmcur),y
-		
+
 		;save GOTO/GOSUB token
 		pha
-		
-		;issue error 3 if it is greater than 255
-		lda		fr0+1
-		bne		fail_value_err
-		
-		lda		fr0
-		beq		xit
-		sta		_index
 
 count_loop:
-		;evaluate a line number
-		jsr		ExprEvalPopIntPos
-		
 		;check if it's time to branch
 		dec		_index
 		beq		do_branch
+
+		;evaluate a line number
+		jsr		ExprEvalPopIntPos
 		
 		;read next token and check if it is a comma
-		ldy		exLineOffset
-		inc		exLineOffset
-		lda		(stmcur),y
-		cmp		#TOK_EXP_COMMA
+		jsr		ExecGetComma
 		beq		count_loop
 		
 		;out of line numbers -- continue with next statement
-xit:
 		pla
+xit:
 		rts
-		
-not_found:
-		jmp		errorLineNotFound
-		
+				
 do_branch:
-		lda		#fr0
-		jsr		exFindLineInt
-		bcc		not_found
-		
-		;warp to end of statement for GOSUB
-		mvy		exLineOffsetNxt exLineOffset
-
-		;retrieve GOTO/GOSUB token
+		;check if we should do GOTO or GOSUB
 		pla
 		eor		#TOK_EXP_GOTO
-		beq		is_goto
-		
+		beq		stGoto
+
+		;!! fall through to stGosub!
+.endp
+
+stGosub:
 		;push gosub frame
+		;##TRACE "Pushing GOSUB frame: $%04x+$%02x" dw(stmcur) db(exLineOffset)
 		lda		#0
 		jsr		stFor.pushFrame
-		
-is_goto:
-		;jump to new location
-		ldx		#stmcur
-		jsr		ExprStoreFR0Int
-		jmp		stGoto.gotoFoundLineConfirmed
+
+		;fall through
+
+.proc stGoto
+		;get line number
+		jsr		ExprEvalPopIntPos
+gotoFR0Int:
+		jsr		exFindLineInt
+		sta		stmcur
+		sty		stmcur+1
+		bcc		not_found
+
+		;jump to it
+		pla
+		pla
+		jmp		exec.new_line
+
+not_found:
+		jmp		errorLineNotFound
 .endp
 
 ;===========================================================================
-.proc stPoke
-		;evaluate address
+stGoto2 = stGoto
+
+;===========================================================================
+.proc stTrap
 		jsr		evaluateInt
+		stx		exTrapLine
+		sta		exTrapLine+1
+xit:
+		rts
+.endp
+
+
+;===========================================================================
+.proc stBye
+		ldx		#$ff
+		txs
+		jmp		blkbdv
+.endp
+
+
+;===========================================================================
+; CONT
+;
+; Resumes execution from the last stop or error point.
+;
+; Quirks:
+;	- The documentation says that CONT resumes execution at the next lineno,
+;	  but this is incorrect. Instead, Atari BASIC appears to do an insertion
+;	  search for the stop line itself, then skip to the end of that line.
+;	  This means that if the stop line is deleted, execution will resume at
+;	  the line AFTER the next line.
+;
+.proc stCont
+		;check if we are executing the immediate mode line
+		ldy		#1
+		lda		(stmcur),y
+
+		;if we aren't (deferred mode), it's a no-op
+		bpl		stTrap.xit
+
+		;bail if stop line is >=32K
+		ldx		stopln
+		lda		stopln+1
+		bmi		stGoto.not_found
+
+		;search for the stop line -- okay if this fails
+		jsr		exFindLineInt
+
+		;jump to that line
+		sta		stmcur
+		sty		stmcur+1
+
+		;warp to end of line and continue execution
+		jmp		exec.next_line
+.endp
+
+;===========================================================================
+stCom = stDim
+
+;===========================================================================
+; CLOSE #iocb
+;
+; Closes the given I/O channel. No error results if the IOCB is already
+; closed.
+;
+; Errors:
+;	Error 20 if IOCB #0 or #1-32767
+;	Error 7 if IOCB #32768-65535
+;	Error 3 if IOCB# not in [0,65535]
+;
+.proc stClose
+		jsr		evaluateHashIOCB
+close_iocb:
+		jmp		IoClose
+.endp
+
+;===========================================================================
+.proc stDir
+		jsr		evaluate
+		jsr		IoSetupIOCB7
+		lda		#6
+		ldy		argsp
+		bne		open_fn
+		ldy		#<devpath_d1all
+		jsr		IoOpenStockDeviceIOCB7
+		bpl		read_loop
+open_fn:
+		jsr		IoDoOpenWithFilename
+read_loop:
+		ldx		#$70
+		jsr		IoSetupReadLine
+		jsr		ciov
+		bpl		ok
+		cpy		#$88
+		beq		stClose.close_iocb
+		jsr		ioCheck
+ok:
+		ldx		#0
+		jsr		IoSetupReadLine
+		lda		#CIOCmdPutRecord
+		jsr		IoDoCmdX
+		bpl		read_loop			;!! N=0 - error would be trapped
+.endp
+
+;===========================================================================
+; CLR
+;
+; Clears all numeric values to zero and un-dimensions any string and numeric
+; arrays. The runtime stack is also cleared, so no FOR or GOSUB frames are
+; left afterward.
+;
+; The current COLOR, degree/radian mode, and TRAP line are not affected.
+;
+.proc stClr
+		jsr		zfr0			;!! - also sets A=0
+		jsr		VarGetAddr0
+		bne		loopstart
+clearloop:
+		;clear variable info and value
+		jsr		VarStoreFR0
 		
+		;clear dimensioned bits for arrays/strings
+		ldy		#0
+		lda		(varptr),y
+		and		#$c0
+		sta		(varptr),y
+		
+		;next variable
+		lda		#8
+		ldx		#varptr
+		jsr		VarAdvancePtrX
+loopstart:
+		lda		varptr
+		cmp		stmtab
+		lda		varptr+1
+		sbc		stmtab+1
+		bcc		clearloop
+		
+		;empty the string/array table region and runtime stack		
+		;note: this loop is reused by NEW!
+clear_arrays:
+		ldx		#<-4
+reset_loop:
+		lda		starp+4,x
+		sta		runstk+4,x
+		inx
+		bne		reset_loop
+
+		;reset APPMHI
+		jmp		MemAdjustAPPMHI
+.endp
+
+
+;===========================================================================
+.nowarn .proc stDegRad
+.def :stDeg = *
+		lda		#6
+		dta		{bit $0100}
+.def :stRad = *
+		lda		#0
+		sta		degflg
+done:
+		rts
+.endp
+
+;===========================================================================
+.proc stDim
+loop:
+		;DIM is the only statement that allows undimensioned strings to
+		;be referenced, so we set a special flag.
+		lda		#$40
+		jsr		evaluate._assign_entry
+		jsr		ExecGetComma
+		beq		loop
+		rts
+.endp
+
+
+;===========================================================================
+; END
+;
+; Silences audio channels and closes IOCBs. Does not reset TRAP or clear
+; variables.
+;
+stEnd = immediateModeReset
+
+;===========================================================================
+; NEW
+;
+; Erases all program text and variables, clears the TRAP line, silences
+; sound, closes IOCBs, resets the tab width to 10, and resets angular mode
+; to radians.
+;
+; Not affected by new: COLOR
+;
+.proc stNew
+		jsr		reset_entry
+		jmp		immediateModeReset
+
+reset_entry:
+		ldy		memlo+1
+		ldx		memlo
+
+		;set up second argument stack pointer
+		txa
+		clc
+		adc		#$6c
+		sta		argstk2
+		tya
+		adc		#0
+		sta		argstk2+1
+
+		;initialize LOMEM from MEMLO
+		iny
+		sty		lomem+1
+		stx		lomem
+
+		;clear remaining tables
+		;copy LOMEM to VNTP/VNTD/VVTP/STMTAB/STMCUR/STARP/RUNSTK/MEMTOP2
+		ldx		#<-16
+		jsr		stClr.reset_loop
+
+		dec		lomem+1
+
+		;reset trap line
+		ldx		#$ff
+		stx		exTrapLine+1
+
+		;reset tab width
+		lda		#10
+		sta		ptabw
+
+		;insert byte at VNTD
+		inx
+		stx		degflg			;!! - set degflg to $00 (radians)
+		stx		a2+1
+		inx
+		stx		a2
+		ldx		#vvtp
+		jsr		MemAdjustTablePtrs
+
+		;insert three bytes at STARP
+		lda		#3
+		sta		a2
+		ldx		#starp
+		jsr		MemAdjustTablePtrs
+		
+		;write sentinel into variable name table
+		ldy		#3
+		mva:rpl	empty_program,y (vntp),y-
+
+		;all done
+		rts
+
+empty_program:
+		dta		$00,$00,$80,$03
+.endp
+
+;===========================================================================
+; RUN [sexp]
+;
+; Optionally loads a file from disk and begins execution.
+;
+; All open IOCBs are closed and sound channels silenced prior to execution.
+;
+;===========================================================================
+; LOAD filespec
+;
+; Loads a BASIC program in binary format.
+;
+; Execution is reset prior to beginning the load.
+;
+.proc stLoadRun
+_vectmp = fr0
+_loadflg = stScratch		;N=0 for run, N=1 for load
+
+.def :stRun
+		;set up for run
+		lsr		_loadflg
+
+		;check if we have a filename
+		jsr		ExecTestEnd
+		beq		do_imm_or_run
+		bne		run_entry
+
+.def :stLoad
+		sec
+		ror		_loadflg
+		
+run_entry:
+		;Use IOCB #7 for compatibility with Atari BASIC
+		jsr		IoSetupIOCB7
+		
+		;pop filename
+		jsr		evaluate
+
+loader_entry:
+		;do open
+		jsr		IoDoOpenReadWithFilename
+
+with_open_iocb:
+		;load vector table to temporary area (14 bytes)
+		ldy		#CIOCmdGetChars
+		jsr		setup_vector_io
+		
+		;check if first pointer is zero -- if not, assume bad file
+		lda		_vectmp
+		ora		_vectmp+1
+		bne		bogus
+
+		;check if MEMTOP2 will be pushed at or above OS MEMTOP
+		lda		_vectmp+12
+		clc
+		adc		lomem
+		tax
+		lda		_vectmp+13
+		clc
+		adc		lomem+1
+		bcs		too_long
+		cmp		memtop+1
+		bcc		memory_ok
+		bne		too_long
+		cpx		memtop
+		bcs		too_long
+memory_ok:
+		
+		;relocate pointers
+		ldx		#12
+relocloop:
+		lda		_vectmp,x
+		add		lomem
+		sta		lomem,x
+		lda		_vectmp+1,x
+		adc		lomem+1
+		sta		lomem+1,x
+		dex
+		dex
+		bne		relocloop
+		
+		;load remaining data at VNTP
+		jsr		setup_main_io
+
+do_imm_or_run:
+		;close IOCBs (including the one we just used) and reset sound
+		jsr		ExecReset
+		
+		;clear runtime variables
+		jsr		stClr
+		
+		;check if we should run
+		asl		_loadflg		;!! - sets C=0 for normal run
+		scs:jmp	exec
+		
+		;jump to immediate mode loop
+		jmp		immediateMode
+		
+too_long:
+bogus:
+		jmp		errorLoadError
+		
+setup_vector_io:
+		mva		#<_vectmp icbal,x
+		lda		#$00
+		sta		icblh,x
+		sta		icbah,x
+		mva		#14 icbll,x
+		tya
+		jmp		IoDoCmdX
+
+setup_main_io:
+		ldx		iocbidx
+		lda		vntp
+		sta		icbal,x
+		lda		vntp+1
+		sta		icbah,x
+		sbw		starp vntp icbll,x
+		jmp		ioChecked
+.endp
+
+
+;===========================================================================
+; SAVE filespec
+;
+; It is possible to issue a SAVE command during ENTER processing. For this
+; reason, we must close IOCB #7 before reopening it.
+;
+.proc stSave
+_vectmp = fr0
+
+		;Use IOCB #7 for compatibility with Atari BASIC
+		;close it in case ENTER is active
+		jsr		IoSetupIOCB7
+		
+		;get filename
+		jsr		evaluate
+		
+		;issue open call for write
+		lda		#8
+		jsr		IoDoOpenWithFilename
+		
+with_open_iocb:
+
+		;Set up and relocate pointers. There are two gotchas here:
+		;
+		;1) We must actually subtract LOMEM from itself, producing an
+		;   offset of 0. This is in fact required.
+		;
+		;2) Atari BASIC assumes that the load length is the STARP offset
+		;   minus $0100, but rev. B has a bug where it extends the argument
+		;   stack by 16 bytes each time it saves. This results in a
+		;   corresponding amount of junk at the end of the file that must
+		;   be there for the file to load. Because this is rather dumb,
+		;   we fix up the offsets on save. We don't do this on load
+		;   because there are a number of programs in the wild that have
+		;   such offsets and we don't want to shift the memory layout.
+
+		ldx		#12
+relocloop:
+		sec
+		lda		lomem,x
+		sbc		vntp
+		sta		_vectmp,x
+		lda		lomem+1,x
+		sbc		vntp+1
+		adc		#0
+		sta		_vectmp+1,x
+		dex
+		dex
+		bne		relocloop
+
+		;now reset LOMEM and VNTP offsets
+		stx		_vectmp
+		stx		_vectmp+1
+		stx		_vectmp+2
+		inx
+		stx		_vectmp+3
+		
+		;write vector table (14 bytes)
+		ldy		#CIOCmdPutChars
+		ldx		#$70
+		jsr		stLoadRun.setup_vector_io
+		
+		;write from VNTP from STARP
+		jsr		stLoadRun.setup_main_io
+		
+		;close and exit
+		jmp		IoClose
+.endp
+
+
+;===========================================================================
+; STATUS #iocb, avar
+;
+; Retrieves the status code of an I/O channel and puts it into the given
+; numeric variable.
+;
+; Bugs:
+;	Atari BASIC allows a numeric array element to be passed as the second
+;	parameter and stomps the array entry with a number. We do not currently
+;	support this bug.
+;
+.proc stStatus
+		jsr		evaluateHashIOCB
+		jsr		ExprSkipCommaAndEvalVar
+		
+		lda		#CIOCmdGetStatus
+		jsr		IoDoCmd
+		ldx		iocbidx
+
+		lda		icsta,x
+		jmp		stGet.store_byte_to_var
+.endp
+
+;===========================================================================
+; NOTE #iocb, avar, avar
+;
+.proc stNote
+		;consume #iocb,
+		jsr		evaluateHashIOCB
+		
+		;issue XIO 38 to get current position
+		ldx		iocbidx
+		mva		#38 iccmd,x
+		jsr		ioChecked
+		
+		;copy ICAX3/4 into first variable
+		jsr		ExprSkipCommaAndEvalVar
+		ldy		iocbidx
+		lda		icax3,y
+		ldx		icax4,y
+		jsr		MathWordToFP
+		jsr		VarStoreFR0
+		
+		;copy ICAX5 into second variable
+		jsr		ExprSkipCommaAndEvalVar
+		ldx		iocbidx
+		lda		icax5,x
+		jmp		stGet.store_byte_to_var
+.endp
+
+
+;===========================================================================
+; POINT #iocb, avar, avar
+;
+; Note that there is only one byte in the IOCB for the sector offset (AUX5);
+; Atari BASIC silently drops the high byte without error.
+;
+; For some reason, this command only takes avars instead of aexps, even
+; though they're incoming parameters.
+;
+.proc stPoint
+		;consume #iocb,
+		jsr		evaluateHashIOCB
+		
+		;consume comma and then first var, which holds sector number
+		jsr		ExprSkipCommaAndEvalPopInt
+		
+		;move to ICAX3/4
+		ldy		iocbidx
+		sta		icax4,y
+		txa
+		sta		icax3,y
+		
+		;consume comma and then second var, which holds sector offset
+		jsr		ExprSkipCommaAndEvalPopInt
+		
+		;move to ICAX5
+		txa
+		ldx		iocbidx
+		sta		icax5,x
+		
+		;issue XIO 37 and exit
+		lda		#37
+		jmp		IoDoCmdX
+.endp
+
+
+;===========================================================================
+; XIO cmdno, #aexp, aexp1, aexp2, filespec
+;
+; Performs extended I/O to an IOCB.
+;
+; This issues a CIO call as follows:
+;	ICCMD = cmdno
+;	ICAX1 = aexp1
+;	ICAX2 = aexp2
+;	ICBAL/H = filespec
+;
+; Quirks:
+;	- Neither AUX bytes are modified until all arguments are successfully
+;	  evaluated.
+;	- Because ICAX1 is modified and not restored even in the event of
+;	  success, subsequent attempts to read from the channel can fail due
+;	  to AUX1 permission checks in SIO. Writes can work because BASIC
+;	  bypasses CIO and jumps directly to ICPTL/H+1, but reads still go
+;	  through CIO. One symptom that occurs is LOCATE commands failing with
+;	  Error 131 after filling with XIO 18,#6,0,0,"S".
+;
+;	  This is avoided if the handler itself restores AUX1 or aexp1 is set
+;	  to the permission byte instead.
+;
+;===========================================================================
+; OPEN #iocb, aexp1, aexp2, filename
+;
+; Opens an I/O channel.
+;
+; Errors:
+;	Error 7 if aexp1 or aexp2 in [32768, 65535]
+;	Error 3 if aexp1 or aexp2 not in [0, 65535]
+;	Error 20 if iocb #0
+;
+; Quirks:
+;	AUX1/2 are overwritten and CIOV is called without checking whether the
+;	IOCB is already open. This means that if the IOCB is already in use,
+;	its permission byte will be stomped by the conflicting OPEN.
+;
+.proc stXio
+		jsr		evaluateInt
+		inc		exLineOffset
+		txa
+		dta		{bit $0100}
+.def :stOpen = *
+		lda		#CIOCmdOpen
+		pha
+		jsr		evaluateHashIOCB
+		jsr		ExprSkipCommaAndEvalPopInt
+		txa
+		pha
+		jsr		ExprSkipCommaAndEvalPopInt
+		txa
+		pha
+
+		;get filename
+		jsr		ExprSkipCommaAndEval
+		
+		ldx		iocbidx
+		pla
+		sta		icax2,x
+		pla
+		sta		icax1,x
+				
+		;issue command
+		pla
+		jmp		IoDoWithFilename
+.endp
+
+;===========================================================================
+stPoke = stDpoke
+.proc stDpoke
+		stx		stScratch3
+
+		;evaluate and save address
+		jsr		evaluateInt
+
 		;save address
-		lda		fr0+1
 		sta		stScratch+1
-		lda		fr0
-		sta		stScratch
+		stx		stScratch
 		
 		;skip comma and evaluate value
 		jsr		ExprSkipCommaAndEvalPopInt
 		
+		;set up for DPOKE
+		ldy		#1
+
+		;check if we're doing POKE -- note that POKE's token is odd ($1F)
+		;while DPOKE's is even ($3E)		
+		lsr		stScratch3
+		bcs		poke_only
+
 		;do poke
 		;;##TRACE "POKE %u,%u" dw(fr0+1) db(fr0)
-		ldy		#0
+		sta		(stScratch),y
+poke_only:
 		txa
+		dey
 		sta		(stScratch),y
 		
 		;done
@@ -982,7 +1048,7 @@ is_goto:
 ;
 .proc stPrint
 		;reset comma tab stop position
-		mva		#10 ioPrintCol
+		mva		ptabw ioPrintCol
 
 		;set IOCB, defaulting to #0 if there is none
 		jsr		evaluateHashIOCBOpt
@@ -1029,7 +1095,7 @@ not_eos:
 comma_tab_loop:
 		jsr		IoPutSpace
 		lda		ioPrintCol
-		cmp		#10
+		cmp		ptabw
 		bne		comma_tab_loop
 		beq		token_semi
 		
@@ -1041,21 +1107,16 @@ not_comma:
 		jsr		evaluate
 		
 		;check if we have a number on the argstack
-		ldy		#0
-		lda		(argstk),y
+		lda		expType
 		bmi		is_string
 		
 		;print the number
-		jsr		expPopFR0
 		jsr		IoPrintNumber
 		bmi		token_loop
 		
 is_string:
-		;extract string var
-		jsr		expPopAbsString
-		
 		;print chars
-		mva		#0 cix
+		mwa		fr0 inbuff
 strprint_loop:
 		lda		fr0+2
 		bne		strprint_loop1
@@ -1065,19 +1126,10 @@ strprint_loop:
 strprint_loop1:
 		dec		fr0+2
 		
-		ldy		cix
-		lda		(fr0),y
-		inc		cix
-		sne:inc	fr0+1
-		jsr		putchar
-		jmp		strprint_loop
-.endp
-
-;===========================================================================
-.proc stRead
-		sec
-		ror		iocbidx
-		jmp		DataRead		
+		ldy		#0
+		lda		(inbuff),y
+		jsr		IoPutCharAndInc
+		bpl		strprint_loop
 .endp
 
 ;===========================================================================
@@ -1102,26 +1154,11 @@ strprint_loop1:
 		beq		no_lineno
 		
 		;we have a line number -- pop it and copy to dataln
-		jsr		expPopFR0IntPos
+		jsr		ExprConvFR0IntPos
 		stx		dataln
 		sta		dataln+1
 no_lineno:
 		rts
-.endp
-
-
-;===========================================================================
-.proc stRun
-		;check if we have a filename
-		jsr		ExecTestEnd
-		beq		no_filename
-		clc
-		jmp		stLoad.run_entry
-		
-no_filename:
-		jsr		stClr
-		clc
-		jmp		exec
 .endp
 
 ;===========================================================================
@@ -1134,14 +1171,8 @@ no_filename:
 		;pop entries off runtime stack until we find the right frame
 loop:
 		;##ASSERT dw(runstk)<=dw(memtop2) and !((dw(memtop2)-dw(runstk))&3) and (dw(runstk)=dw(memtop2) or ((db(dw(memtop2)-4)=0 or db(dw(memtop2)-4)>=$80) and dw(dw(memtop2)-3) >= dw(stmtab)))
-		lda		memtop2
-		cmp		runstk
-		bne		stack_not_empty
-		lda		memtop2+1
-		cmp		runstk+1
-		bne		stack_not_empty
-error:
-		jmp		errorBadRETURN
+		jsr		check_rtstack_empty
+		bcs		stack_empty
 stack_not_empty:
 
 		;check if we have a GOSUB frame (varbyte=0) or a FOR frame (varbyte>=$80)
@@ -1162,6 +1193,16 @@ stack_not_empty:
 		;switch context and exit
 		ldy		#1
 		jmp		stNext.pop_frame
+
+stack_empty:
+		jmp		errorBadRETURN
+
+check_rtstack_empty:
+		lda		runstk
+		cmp		memtop2
+		lda		runstk+1
+		sbc		memtop2+1
+		rts
 .endp
 
 
@@ -1180,16 +1221,14 @@ stStop = execStop
 		;##ASSERT dw(runstk)<=dw(memtop2) and !((dw(memtop2)-dw(runstk))&3) and (dw(runstk)=dw(memtop2) or ((db(dw(memtop2)-4)=0 or db(dw(memtop2)-4)>=$80) and dw(dw(memtop2)-3) >= dw(stmtab)))
 
 		;check if runtime stack is empty
-		lda		runstk
-		cmp		memtop2
-		lda		runstk+1
-		sbc		memtop2+1
+		jsr		stReturn.check_rtstack_empty
 		bcs		done
 		
 		;pop back one frame
 		lda		#$fc
 		jsr		dec_ptr			;(!) carry is clear
-		
+
+pop_frame_remainder:
 		;check if we popped off a GOSUB frame
 		ldy		#0
 		lda		(memtop2),y
@@ -1224,7 +1263,7 @@ get_and_store:
 		
 store_byte_to_var:
 		;convert retrieved byte to float
-		jsr		MathByteToInt
+		jsr		MathByteToFP
 		
 		;store into variable and exit
 		jmp		VarStoreFR0
@@ -1232,6 +1271,15 @@ store_byte_to_var:
 
 
 ;===========================================================================
+; PUT #iocb, aexp
+;
+; Writes the given character by number to the specified I/O channel.
+;
+; Errors:
+;	Error 20 if IOCB #0 or 8-32767
+;	Error 7 if IOCB #32768-65535
+;	Error 3 if IOCB# not in [0,65535]
+;
 .proc stPut
 		jsr		evaluateHashIOCB
 		jsr		ExprSkipCommaAndEvalPopInt
@@ -1246,27 +1294,27 @@ store_byte_to_var:
 ;
 ; Open a graphics mode.
 ;
+; Errors:
+;	3 - if mode <0 or >65535
+;
 ; An oddity of this command is that it opens S: on IOCB #6 even in mode 0.
 ; This means that the I/O environment is different post-boot and after a
 ; GR.0 -- before then, graphics commands like PLOT and LOCATE will fail on
 ; the text mode screen, but after issuing GR.0 they will work. CLUES.BAS
 ; depends on this.
 ;
+; This command must not reopen the E: device. Doing so will break Space
+; Station Multiplication due to overwriting graphics data already placed
+; at $BFxx.
+;
 .proc stGraphics
 		jsr		evaluateInt
 
-		;close IOCB 0 and 6
-		ldx		#$00
-		jsr		IoCloseX
+		;close IOCB 6
 		ldx		#$60
 		jsr		IoCloseX
-		
-		;open IOCB 0 (E:)
-		lda		#$0c
-		ldx		#0
-		ldy		#<devname_e
-		jsr		IoOpenStockDevice
-		
+				
+		;reopen IOCB 6 with S:
 		lda		fr0
 		and		#$0f
 		sta		icax2+$60
@@ -1310,10 +1358,9 @@ stSetupCommandXY = stPosition
 		;skip comma and evaluate Y
 		jsr		ExprSkipCommaAndEvalPopIntPos
 		bne		out_of_range
-		txa
 		
 		;position at (X,Y)
-		sta		rowcrs
+		stx		rowcrs
 		pla
 		sta		colcrs+1
 		pla
@@ -1326,9 +1373,11 @@ out_of_range:
 
 
 ;===========================================================================
+stCp = stDos
 .proc stDos
-		ldx		#$ff
-		txs
+		jsr		ExecReset
+		;We may end up returning if DOS fails to load (MEM.SAV error, user
+		;backs out!).
 		jmp		(dosvec)
 .endp
 
@@ -1391,6 +1440,10 @@ out_of_range:
 ; All audio channels are set to unlinked, 64KHz clock, and 17-bit noise by
 ; this command.
 ;
+; Asynchronous receive mode is also turned off in SKCTL so that channels 3+4
+; function. However, a quirk in Atari BASIC is that the shadow SSKCTL is
+; *not* updated.
+;
 .proc stSound
 _channel = stScratch
 
@@ -1418,6 +1471,9 @@ _channel = stScratch
 		
 		;force all audio channels to 64K clock and unlinked
 		mva		#0 audctl
+
+		;force off asynchronous mode so that channels 3 and 4 work
+		mva		#3 skctl
 		rts
 
 oob_value:
@@ -1468,7 +1524,7 @@ decode_dual:
 
 ;===========================================================================
 .proc stLprint
-		;open IOCB #7 to P: device for read
+		;open IOCB #7 to P: device for write
 		ldy		#<devname_p
 		lda		#8
 		jsr		IoOpenStockDeviceIOCB7
@@ -1500,8 +1556,8 @@ decode_dual:
 		
 		;do load
 		sec
-		ror		stLoad._loadflg
-		jmp		stLoad.with_open_iocb
+		ror		stLoadRun._loadflg
+		jmp		stLoadRun.with_open_iocb
 .endp
 
 
@@ -1510,5 +1566,108 @@ stImpliedLet = evaluateAssignment
 
 ;===========================================================================
 stSyntaxError = errorWTF
+
+;===========================================================================
+.proc stFileOp
+		lda		op_table-TOK_ERASE,x
+		pha
+		jsr		evaluate
+		jsr		IoSetupIOCB7
+		pla
+		jmp		IoDoWithFilename
+
+op_table:
+		dta		$21,$23,$24,0,$20
+.endp
+
+;===========================================================================
+.proc stMove
+		;get source address and save
+		jsr		evaluateInt
+		pha
+		txa
+		pha
+
+		;get destination address and save
+		jsr		ExprSkipCommaAndEvalPopInt
+		pha
+		txa
+		pha
+
+		;get length
+		jsr		ExprSkipCommaAndEval
+
+		;split off the sign and take abs
+		jsr		MathSplitSign
+
+		;convert to int and save
+		jsr		ExprConvFR0Int
+		stx		a3
+		sta		a3+1
+
+		;unpack destination address
+		pla
+		sta		a0
+		pla
+		sta		a0+1
+
+		;unpack source address
+		pla
+		sta		a1
+		pla
+		sta		a1+1
+
+		;check if we are doing a descending copy
+		bit		funScratch1
+		bmi		copy_down
+
+		;copy up
+		jmp		copyAscending
+
+copy_down:
+		;adjust pointers
+		ldy		#a3
+		ldx		#a0
+		jsr		IntAdd
+		ldx		#a1
+		jsr		IntAdd
+
+		;copy down
+		jmp		copyDescending
+.endp
+
+;===========================================================================
+.proc stBput
+		lda		#CIOCmdPutChars
+		dta		{bit $0100}
+.def :stBget = *
+		lda		#CIOCmdGetChars
+		pha
+
+		;consume #iocb,
+		jsr		evaluateHashIOCB
+		
+		;consume comma and then first val (address)
+		jsr		ExprSkipCommaAndEvalPopInt
+		
+		;store address
+		ldy		iocbidx
+		sta		icbah,y
+		txa
+		sta		icbal,y
+		
+		;consume comma and then second val (length)
+		jsr		ExprSkipCommaAndEvalPopInt
+
+		;store length
+		ldy		iocbidx
+		sta		icblh,y
+		txa
+		sta		icbll,y
+
+		;issue read call and exit
+		pla
+		jmp		IoDoCmd
+.endp
 
 .echo "- Statement module length: ",*-?statements_start

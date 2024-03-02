@@ -18,34 +18,27 @@
 #ifndef AT_HOSTDEVICE_H
 #define AT_HOSTDEVICE_H
 
+#include <vd2/system/unknown.h>
+
 class ATCPUEmulator;
 class ATCPUEmulatorMemory;
 class IATUIRenderer;
 
-class IATHostDeviceEmulator {
+class IATHostDeviceEmulator : public IVDUnknown {
 public:
-	virtual ~IATHostDeviceEmulator() {}
-
-	virtual void SetUIRenderer(IATUIRenderer *uir) = 0;
-
-	virtual bool IsEnabled() const = 0;
-	virtual void SetEnabled(bool enabled) = 0;
+	enum { kTypeID = 'ahdv' };
 
 	virtual bool IsReadOnly() const = 0;
 	virtual void SetReadOnly(bool enabled) = 0;
 
-	virtual bool IsBurstIOEnabled() const = 0;
-	virtual void SetBurstIOEnabled(bool enabled) = 0;
-
 	virtual bool IsLongNameEncodingEnabled() const = 0;
 	virtual void SetLongNameEncodingEnabled(bool enabled) = 0;
 
+	virtual bool IsLowercaseNamingEnabled() const = 0;
+	virtual void SetLowercaseNamingEnabled(bool enabled) = 0;
+
 	virtual const wchar_t *GetBasePath(int index) const = 0;
 	virtual void SetBasePath(int index, const wchar_t *s) = 0;
-
-	virtual void WarmReset() = 0;
-	virtual void ColdReset() = 0;
-	virtual void OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, int offset) = 0;
 };
 
 IATHostDeviceEmulator *ATCreateHostDeviceEmulator();

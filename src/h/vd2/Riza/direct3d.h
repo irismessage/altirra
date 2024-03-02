@@ -257,6 +257,7 @@ protected:
 	bool				mbDeviceValid;
 	bool				mbInScene;
 	bool				mbSupportsEventQueries;
+	bool				mbDwmCompositing;
 
 	int					mFullScreenCount;
 	uint32				mFSFence;

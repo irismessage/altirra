@@ -22,6 +22,7 @@
 #include <at/atui/dialog.h>
 #include "resource.h"
 #include "cheatengine.h"
+#include "uifilefilters.h"
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -331,10 +332,7 @@ bool ATUIDialogCheater::OnCommand(uint32 id, uint32 extcode) {
 				const VDStringW& fn = VDGetLoadFileName('CHET'
 					, (VDGUIHandle)mhdlg
 					, L"Load cheat file"
-					, L"All supported files\0*.atcheats;*.a8t\0"
-						L"Altirra cheat file (*.atcheats)\0*.atcheats\0"
-						L"Atari800WinPLus cheat file (*.a8t)\0*.a8t\0"
-						L"All files\0*.*\0"
+					, g_ATUIFileFilter_Cheats
 					, NULL);
 
 				if (!fn.empty()) {

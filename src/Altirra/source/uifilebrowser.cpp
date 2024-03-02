@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include <vd2/system/error.h>
 #include <vd2/system/filesys.h>
+#include <vd2/system/math.h>
 #include <vd2/Dita/services.h>
 #include "uifilebrowser.h"
 #include "uimanager.h"
@@ -36,8 +37,7 @@ struct ATUIFileBrowserItemSorter : public IATUIListViewSorter {
 ///////////////////////////////////////////////////////////////////////////
 
 ATUIFileBrowser::ATUIFileBrowser()
-	: mCompletedEvent()
-	, mbModal(false)
+	: mbModal(false)
 {
 }
 
@@ -138,7 +138,7 @@ void ATUIFileBrowser::OnCreate() {
 		if (volLabel.empty())
 			item->mDescription.assign(item->mName, 0, nameLen);
 		else {
-			item->mDescription.sprintf(L"%ls (%.*ls)", volLabel.c_str(), nameLen, item->mName);
+			item->mDescription.sprintf(L"%ls (%.*ls)", volLabel.c_str(), nameLen, item->mName.c_str());
 		}
 
 		item->mbIsDirectory = true;
@@ -152,44 +152,46 @@ void ATUIFileBrowser::OnCreate() {
 
 	mpTopContainer = new ATUIContainer;
 	AddChild(mpTopContainer);
-	mpTopContainer->SetArea(vdrect32(0, 0, 0, 26));
 	mpTopContainer->SetDockMode(kATUIDockMode_Top);
 
 	mpTextEditPath = new ATUITextEdit;
 	mpTopContainer->AddChild(mpTextEditPath);
 	mpTextEditPath->SetDockMode(kATUIDockMode_Fill);
-	mpTextEditPath->SetText(L"f:\\anime\\");
 	mpTextEditPath->SetFrameMode(kATUIFrameMode_Sunken);
 	mpTextEditPath->OnReturnPressed() = ATBINDCALLBACK(this, &ATUIFileBrowser::OnNewPathEntered);
 
+	const sint32 rowHt = mpTextEditPath->GetIdealHeight();
+	const sint32 buttonWidth = VDRoundToInt32((float)rowHt * (75.0f / 20.0f));
+	mpTopContainer->SetArea(vdrect32(0, 0, 0, rowHt));
+
 	mpButtonUp = new ATUIButton;
 	mpTopContainer->AddChild(mpButtonUp);
-	mpButtonUp->SetArea(vdrect32(0, 0, 75, 20));
+	mpButtonUp->SetArea(vdrect32(0, 0, buttonWidth, 20));
 	mpButtonUp->SetText(L"Up");
 	mpButtonUp->SetDockMode(kATUIDockMode_Right);
 	mpButtonUp->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUIFileBrowser::OnGoUpPressed);
 
 	mpBottomContainer = new ATUIContainer;
 	AddChild(mpBottomContainer);
-	mpBottomContainer->SetArea(vdrect32(0, 0, 0, 26));
 	mpBottomContainer->SetDockMode(kATUIDockMode_Bottom);
 
 	mpTextEdit = new ATUITextEdit;
 	mpBottomContainer->AddChild(mpTextEdit);
 	mpTextEdit->SetDockMode(kATUIDockMode_Fill);
-	mpTextEdit->SetText(L"c:\\foo\\bar");
 	mpTextEdit->SetFrameMode(kATUIFrameMode_Sunken);
+
+	mpBottomContainer->SetArea(vdrect32(0, 0, 0, mpTextEdit->GetIdealHeight()));
 
 	mpButtonOK = new ATUIButton;
 	mpBottomContainer->AddChild(mpButtonOK);
-	mpButtonOK->SetArea(vdrect32(0, 0, 75, 20));
+	mpButtonOK->SetArea(vdrect32(0, 0, buttonWidth, 20));
 	mpButtonOK->SetText(L"OK");
 	mpButtonOK->SetDockMode(kATUIDockMode_Right);
 	mpButtonOK->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUIFileBrowser::OnOKPressed);
 
 	mpButtonCancel = new ATUIButton;
 	mpBottomContainer->AddChild(mpButtonCancel);
-	mpButtonCancel->SetArea(vdrect32(0, 0, 75, 20));
+	mpButtonCancel->SetArea(vdrect32(0, 0, buttonWidth, 20));
 	mpButtonCancel->SetText(L"Cancel");
 	mpButtonCancel->SetDockMode(kATUIDockMode_Right);
 	mpButtonCancel->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUIFileBrowser::OnCancelPressed);
@@ -255,6 +257,18 @@ void ATUIFileBrowser::OnDestroy() {
 	RemoveAllChildren();
 }
 
+void ATUIFileBrowser::OnSize() {
+	if (mpRootListView) {
+		vdrect32 r = mpRootListView->GetArea();
+
+		r.right = r.left + GetClientArea().width() / 5;
+
+		mpRootListView->SetArea(r);
+
+		InvalidateLayout();
+	}
+}
+
 void ATUIFileBrowser::OnGoUpPressed(ATUIButton *) {
 	Ascend();
 }
@@ -292,8 +306,8 @@ void ATUIFileBrowser::OnOKPressed(ATUIButton *) {
 		mpManager->EndModal();
 	}
 
-	if (mCompletedEvent)
-		mCompletedEvent(this, true);
+	if (mpCompletionFn)
+		mpCompletionFn(true);
 
 	if (mpParent)
 		mpParent->RemoveChild(this);
@@ -305,8 +319,8 @@ void ATUIFileBrowser::OnCancelPressed(ATUIButton *) {
 		mpManager->EndModal();
 	}
 
-	if (mCompletedEvent)
-		mCompletedEvent(this, false);
+	if (mpCompletionFn)
+		mpCompletionFn(false);
 
 	if (mpParent)
 		mpParent->RemoveChild(this);

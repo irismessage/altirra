@@ -59,7 +59,8 @@ diff:
 ;===========================================================================
 .proc	fld1
 		ldx		#<const_one
-		ldy		#>const_one
+.def :MathLoadConstFR0 = *
+		ldy		#>const_table
 		jmp		fld0r
 .endp
 
@@ -83,8 +84,7 @@ diff:
 neg_tiny:
 		;negative... load -1
 		ldx		#<const_negone
-		ldy		#>const_negone
-		jsr		fld0r
+		jmp		MathLoadConstFR0
 done:
 		rts
 		
@@ -120,16 +120,30 @@ neg_round:
 .endp
 
 ;===========================================================================
-.proc MathByteToInt
+; Extract sign from FR0 into funScratch1 and take abs(FR0).
+;
+.proc MathSplitSign
+		lda		fr0
+		sta		funScratch1
+		and		#$7f
 		sta		fr0
-		lda		#0
-		sta		fr0+1
+		rts
+.endp
+
+;===========================================================================
+.proc MathByteToFP
+		ldx		#0
+.def :MathWordToFP = *
+		stx		fr0+1
+.def :MathWordToFP_FR0Hi_A = *
+		sta		fr0
 		jmp		ifp
 .endp
 
 ;===========================================================================
 .proc MathLoadOneFR1
 		ldx		#<const_one
+.def :MathLoadConstFR1 = *
 		ldy		#>const_one
 		jmp		fld1r
 .endp
@@ -137,6 +151,7 @@ neg_round:
 ;===========================================================================
 .proc MathStoreFR0_FPSCR
 		ldx		#<fpscr
+.def :MathStoreFR0_Page5 = *
 		ldy		#>fpscr
 		jmp		fst0r
 .endp
@@ -144,19 +159,7 @@ neg_round:
 ;===========================================================================
 .proc MathLoadFR1_FPSCR
 		ldx		#<fpscr
+.def :MathLoadFR1_Page5 = *
 		ldy		#>fpscr
 		jmp		fld1r
 .endp
-
-;===========================================================================
-
-const_one:
-		.fl		1.0
-const_negone:
-		.fl		-1.0
-const_half:
-		.fl		0.5
-fpconst_pi2:
-		.fl		1.5707963267949
-fp_180_div_pi:
-		.fl		57.295779513082

@@ -23,15 +23,19 @@
 #pragma once
 #endif
 
+#include <vd2/system/function.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
 #include <vd2/system/win32/miniwindows.h>
 #include <at/atui/uiproxies.h>
+#include <list>
 
 class IVDUIDropFileList {
 public:
 	virtual bool GetFileName(int index, VDStringW& fileName) = 0;
 };
+
+#define VDWM_APP_POSTEDCALL (WM_APP + 0x400)
 
 class VDDialogFrameW32 {
 public:
@@ -39,6 +43,7 @@ public:
 	VDZHWND GetWindowHandle() const { return mhdlg; }
 
 	bool	Create(VDGUIHandle hwndParent);
+	bool	Create(VDDialogFrameW32 *parent);
 	void	Destroy();
 	void	Close();
 
@@ -50,15 +55,22 @@ public:
 	void BringToFront();
 
 	vdsize32 GetSize() const;
-	void SetSize(const vdsize32& sz);
+	void SetSize(const vdsize32& sz, bool repositionSafe = false);
 
 	vdrect32 GetArea() const;
+	void SetArea(const vdrect32& r, bool repositionSafe);
 	void SetPosition(const vdpoint32& pt);
+
+	vdrect32 GetClientArea() const;
 
 	void AdjustPosition();
 	void CenterOnParent();
 
 	sintptr ShowDialog(VDGUIHandle hwndParent);
+	sintptr ShowDialog(VDDialogFrameW32 *parent);
+
+	static void ShowInfo(VDGUIHandle hParent, const wchar_t *message, const wchar_t *caption);
+	static void SetDefaultCaption(const wchar_t *caption);
 
 protected:
 	VDDialogFrameW32(uint32 dlgid);
@@ -105,14 +117,15 @@ protected:
 	bool EndValidation();
 
 	void FailValidation(uint32 id);
+	void FailValidation(uint32 id, const wchar_t *msg);
 	void SignalFailedValidation(uint32 id);
 
 	void SetPeriodicTimer(uint32 id, uint32 msperiod);
 
-	void ShowInfo(const wchar_t *message, const wchar_t *caption);
-	void ShowWarning(const wchar_t *message, const wchar_t *caption);
-	void ShowError(const wchar_t *message, const wchar_t *caption);
-	bool Confirm(const wchar_t *message, const wchar_t *caption);
+	void ShowInfo(const wchar_t *message, const wchar_t *caption = nullptr);
+	void ShowWarning(const wchar_t *message, const wchar_t *caption = nullptr);
+	void ShowError(const wchar_t *message, const wchar_t *caption = nullptr);
+	bool Confirm(const wchar_t *message, const wchar_t *caption = nullptr);
 
 	int ActivateMenuButton(uint32 id, const wchar_t *const *items);
 	int ActivatePopupMenu(int x, int y, const wchar_t *const *items);
@@ -138,6 +151,8 @@ protected:
 
 	// up/down controls
 	void UDSetRange(uint32 id, sint32 minval, sint32 maxval);
+
+	void PostCall(const vdfunction<void()>& call);
 
 protected:
 	virtual VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
@@ -166,12 +181,18 @@ protected:
 	int		mMinHeight;
 
 private:
+	void ExecutePostedCalls();
 	void SetDialogIcon();
 
 	static VDZINT_PTR VDZCALLBACK StaticDlgProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
 
 	const char *mpDialogResourceName;
 	uint32	mFailedId;
+	VDStringW mFailedMsg;
+
+	std::list<vdfunction<void()>> mPostedCalls;
+
+	static const wchar_t *spDefaultCaption;
 
 protected:
 	VDUIProxyMessageDispatcherW32 mMsgDispatcher;

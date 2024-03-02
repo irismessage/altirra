@@ -272,6 +272,10 @@ void ATDebugDisplay::Update() {
 		}
 
 		// render out rows
+		const int fontRowInv = (anticState.mCHACTL & 4) ? 0x07 : 0x00;
+		const uint8 charBlankMask = (anticState.mCHACTL & 1) ? 0x00 : 0xFF;
+		const uint8 charInvMask = (anticState.mCHACTL & 2) ? 0xFF : 0x00;
+
 		do {
 			uint8 *dst0 = (uint8 *)mDisplayBuffer.data + mDisplayBuffer.pitch * y;
 			uint8 *dst = dst0;
@@ -285,15 +289,17 @@ void ATDebugDisplay::Update() {
 			switch(mode) {
 				case 2:
 					{
-						const uint8 *fontptr = mFontHi + (row & 7);
+						const uint8 *fontptr = mFontHi + ((row & 7) ^ fontRowInv);
 
 						const uint8 back = pf2;
 						const uint8 fore = (back & 0xf0) + (pf1 & 0x0e);
 						for(int i = 0; i < rowbytes; ++i) {
 							uint8 c = fontptr[(uint32)(rowbuffer[i] & 0x7f) << 3];
 
-							if (rowbuffer[i] & 0x80)
-								c ^= 0xff;
+							if (rowbuffer[i] & 0x80) {
+								c &= charBlankMask;
+								c ^= charInvMask;
+							}
 
 							dst[0] = (c & 0x80) ? fore : back;
 							dst[1] = (c & 0x40) ? fore : back;
@@ -311,7 +317,7 @@ void ATDebugDisplay::Update() {
 				case 3:
 					{
 						int fontRow = row & 7;
-						const uint8 *fontptr = mFontHi + fontRow;
+						const uint8 *fontptr = mFontHi + (fontRow ^ fontRowInv);
 
 						const uint8 back = pf2;
 						const uint8 fore = (back & 0xf0) + (pf1 & 0x0e);
@@ -324,8 +330,10 @@ void ATDebugDisplay::Update() {
 							uint8 c = rowbuffer[i];
 							uint8 d = fontptr[(uint32)(c & 0x7f) << 3] & mask[(c >> 5) & 3];
 
-							if (c & 0x80)
-								d ^= 0xff;
+							if (c & 0x80) {
+								d &= charBlankMask;
+								d ^= charInvMask;
+							}
 
 							dst[0] = (d & 0x80) ? fore : back;
 							dst[1] = (d & 0x40) ? fore : back;
@@ -348,7 +356,7 @@ void ATDebugDisplay::Update() {
 						if (mode == 5)
 							fontRow >>= 1;
 
-						const uint8 *fontptr = mFontHi + (fontRow & 7);
+						const uint8 *fontptr = mFontHi + ((fontRow & 7) ^ fontRowInv);
 
 						const uint8 palA[4] = {
 							pfbak,
@@ -387,7 +395,7 @@ void ATDebugDisplay::Update() {
 						if (mode == 7)
 							fontRow >>= 1;
 
-						const uint8 *fontptr = mFontLo + (fontRow & 7);
+						const uint8 *fontptr = mFontLo + ((fontRow & 7) ^ fontRowInv);
 
 						const uint8 pal[4] = {
 							pf0,

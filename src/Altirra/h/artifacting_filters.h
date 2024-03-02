@@ -190,7 +190,7 @@ inline void ATFilterKernelAccumulate(const ATFilterKernel& k, float *dst, float 
 
 inline void ATFilterKernelAccumulateWindow(const ATFilterKernel& k, float *dst, int offset, int limit, float scale) {
 	int start = k.mOffset + offset;
-	int end = start + k.mCoeffs.size();
+	int end = start + (int)k.mCoeffs.size();
 	int lo = start;
 	int hi = end;
 
@@ -310,7 +310,7 @@ inline ATFilterKernel ATFilterKernel::trim() const {
 		--itEnd;
 
 	ATFilterKernel r;
-	r.mOffset = mOffset + (it - itBegin);
+	r.mOffset = mOffset + (int)(it - itBegin);
 	r.mCoeffs.assign(it, itEnd);
 
 	return r;
@@ -324,10 +324,10 @@ inline ATFilterKernel operator^(const ATFilterKernel& x, const ATFilterKernel& y
 	int off = y.mOffset;
 
 	while(off > x.mOffset)
-		off -= n;
+		off -= (int)n;
 
 	while(off + (int)n <= x.mOffset)
-		off += n;
+		off += (int)n;
 
 	VDASSERT(off <= x.mOffset);
 	VDASSERT(x.mOffset - off < (int)n);
@@ -423,7 +423,7 @@ inline ATFilterKernel ATFilterKernelSamplePoint(const ATFilterKernel& src, int o
 		pos += step;
 	}
 
-	int n = src.mCoeffs.size();
+	int n = (int)src.mCoeffs.size();
 	while(pos < n) {
 		r.mCoeffs.push_back(src.mCoeffs[pos]);
 

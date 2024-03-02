@@ -120,9 +120,22 @@ void ATMemoryManager::DumpStatus() {
 	for(Layers::const_iterator it(mLayers.begin()), itEnd(mLayers.end()); it != itEnd; ++it) {
 		const MemoryLayer& layer = **it;
 
-		s.sprintf("%06X-%06X %2u%s %c%c%c  "
-			, layer.mPageOffset << 8
-			, ((layer.mPageOffset + layer.mPageCount) << 8) - 1
+		uint32 pageStart = layer.mPageOffset;
+		uint32 pageEnd = layer.mPageOffset + layer.mPageCount;
+
+		if (pageStart < layer.mMaskRangeStart)
+			pageStart = layer.mMaskRangeStart;
+
+		if (pageEnd > layer.mMaskRangeEnd)
+			pageEnd = layer.mMaskRangeEnd;
+
+		if (pageStart < pageEnd) {
+			s.sprintf("%06X-%06X", pageStart << 8, (pageEnd << 8) - 1);
+		} else {
+			s = "<masked>     ";
+		}
+
+		s.append_sprintf(" %2u%s %c%c%c  "
 			, layer.mPriority
 			, mbFastBusEnabled ? layer.mbFastBus ? " fast" : " chip" : ""
 			, layer.mbEnabled[kATMemoryAccessMode_AnticRead] ? 'A' : '-'
@@ -170,6 +183,8 @@ ATMemoryLayer *ATMemoryManager::CreateLayer(int priority, const uint8 *base, uin
 	layer->mHandlers.mpThis = NULL;
 	layer->mAddrMask = 0xFFFFFFFFU;
 	layer->mpName = NULL;
+	layer->mMaskRangeStart = 0x00;
+	layer->mMaskRangeEnd = 0x100;
 
 	mLayers.insert(std::lower_bound(mLayers.begin(), mLayers.end(), layer, MemoryLayerPred()), layer);
 	return layer;
@@ -190,6 +205,8 @@ ATMemoryLayer *ATMemoryManager::CreateLayer(int priority, const ATMemoryHandlerT
 	layer->mHandlers = handlers;
 	layer->mAddrMask = 0xFFFFFFFFU;
 	layer->mpName = NULL;
+	layer->mMaskRangeStart = 0x00;
+	layer->mMaskRangeEnd = 0x100;
 
 	mLayers.insert(std::lower_bound(mLayers.begin(), mLayers.end(), layer, MemoryLayerPred()), layer);
 	return layer;
@@ -331,6 +348,57 @@ void ATMemoryManager::SetLayerFastBus(ATMemoryLayer *layer0, bool fast) {
 			RebuildNodes(&mCPUWritePageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPUWrite);
 		}
 	}
+}
+
+void ATMemoryManager::ClearLayerMaskRange(ATMemoryLayer *layer) {
+	SetLayerMaskRange(layer, 0, 0x100);
+}
+
+void ATMemoryManager::SetLayerMaskRange(ATMemoryLayer *layer0, uint32 pageStart, uint32 pageCount) {
+	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
+
+	const uint32 pageEnd = pageStart + pageCount;
+
+	if (layer->mMaskRangeStart == pageStart &&
+		layer->mMaskRangeEnd == pageEnd)
+	{
+		return;
+	}
+
+	const auto rangeIntersect = [](uint32 a0, uint32 a1, uint32 b0, uint32 b1) {
+		uint32 as = (uint32)abs((sint32)a0 - (sint32)a1);
+		uint32 bs = (uint32)abs((sint32)b0 - (sint32)b1);
+
+		return as && bs && (a0+a1) - (b0+b1) > (as+bs)*2;
+	};
+
+	// check if an update is needed -- this is true if the ranges covered by the
+	// changes to either the start or end of the mask range intersect the layer
+	const bool changed = rangeIntersect(pageStart, layer->mMaskRangeStart, layer->mPageOffset, layer->mPageOffset + layer->mPageCount)
+		|| rangeIntersect(pageEnd, layer->mMaskRangeEnd, layer->mPageOffset, layer->mPageOffset + layer->mPageCount);
+
+	layer->mMaskRangeStart = pageStart;
+	layer->mMaskRangeEnd = pageEnd;
+
+	if (changed) {
+		if (layer->mbEnabled[kATMemoryAccessMode_AnticRead])
+			RebuildNodes(&mAnticReadPageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_AnticRead);
+
+		if (layer->mbEnabled[kATMemoryAccessMode_CPURead])
+			RebuildNodes(&mCPUReadPageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPURead);
+
+		if (layer->mbEnabled[kATMemoryAccessMode_CPUWrite])
+			RebuildNodes(&mCPUWritePageMap[layer->mPageOffset], layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_CPUWrite);
+	}
+}
+
+uint8 ATMemoryManager::ReadFloatingDataBus() const {
+	if (mbFloatingDataBus)
+		return mBusValue;
+
+	// Star Raiders 5200 has a bug where some 800 code to read the joysticks via the PIA
+	// wasn't removed, so it needs a non-zero value to be returned here.
+	return 0xFF;
 }
 
 uint8 ATMemoryManager::AnticReadByte(uint32 address) {
@@ -551,11 +619,18 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 			continue;
 
 		if (base < layer->mPageOffset + layer->mPageCount &&
-			layer->mPageOffset < base + n)
+			layer->mPageOffset < base + n &&
+			base < layer->mMaskRangeEnd &&
+			layer->mMaskRangeStart < base + n)
 		{
 			pertinentLayers.push_back(layer);
 
-			if (layer->mpBase && layer->mPageOffset <= base && (layer->mPageOffset + layer->mPageCount) >= (base + n)) {
+			if (layer->mpBase &&
+				layer->mPageOffset <= base &&
+				(layer->mPageOffset + layer->mPageCount) >= (base + n) &&
+				layer->mMaskRangeStart <= base &&
+				layer->mMaskRangeEnd >= (base + n))
+			{
 				completeBaseLayer = true;
 				break;
 			}
@@ -652,7 +727,10 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 				for(; it != itEnd; ++it) {
 					MemoryLayer *layer = *it;
 
-					if (base + i - layer->mPageOffset < layer->mPageCount) {
+					if (pageOffset - layer->mPageOffset < layer->mPageCount &&
+						pageOffset >= layer->mMaskRangeStart &&
+						pageOffset < layer->mMaskRangeEnd)
+					{
 						if (layer->mpBase) {
 							*root = (uintptr)layer->mpBase + (((uintptr)((pageOffset - layer->mPageOffset) & layer->mAddrMask) - pageOffset) << 8);
 							break;
@@ -681,7 +759,10 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 				for(; it != itEnd; ++it) {
 					MemoryLayer *layer = *it;
 
-					if (base + i - layer->mPageOffset < layer->mPageCount) {
+					if (pageOffset - layer->mPageOffset < layer->mPageCount &&
+						pageOffset >= layer->mMaskRangeStart &&
+						pageOffset < layer->mMaskRangeEnd)
+					{
 						if (layer->mpBase) {
 							if (mbFastBusEnabled && !layer->mbFastBus) {
 								MemoryNode *node = AllocNode();
@@ -720,7 +801,10 @@ void ATMemoryManager::RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemo
 				for(; it != itEnd; ++it) {
 					MemoryLayer *layer = *it;
 
-					if (base + i - layer->mPageOffset < layer->mPageCount) {
+					if (pageOffset - layer->mPageOffset < layer->mPageCount &&
+						pageOffset >= layer->mMaskRangeStart &&
+						pageOffset < layer->mMaskRangeEnd)
+					{
 						if (layer->mbReadOnly) {
 							*root = (uintptr)&mDummyWriteNode + 1;
 							break;
@@ -783,12 +867,7 @@ void ATMemoryManager::FreeNode(MemoryNode *node) {
 sint32 ATMemoryManager::DummyReadHandler(void *thisptr0, uint32 addr) {
 	ATMemoryManager *thisptr = (ATMemoryManager *)thisptr0;
 
-	if (thisptr->mbFloatingDataBus)
-		return thisptr->mBusValue;
-
-	// Star Raiders 5200 has a bug where some 800 code to read the joysticks via the PIA
-	// wasn't removed, so it needs a non-zero value to be returned here.
-	return 0xFF;
+	return thisptr->ReadFloatingDataBus();
 }
 
 bool ATMemoryManager::DummyWriteHandler(void *thisptr, uint32 addr, uint8 value) {

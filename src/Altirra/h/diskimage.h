@@ -15,7 +15,8 @@ struct ATDiskVirtualSectorInfo {
 };
 
 struct ATDiskPhysicalSectorInfo {
-	uint32	mOffset;
+	uint32	mOffset;			// offset within memory image
+	sint32	mDiskOffset;		// offset within disk image (for rewriting)
 	uint16	mSize;
 	bool	mbDirty;
 	float	mRotPos;
@@ -33,6 +34,16 @@ struct ATDiskGeometryInfo {
 	bool	mbMFM;
 };
 
+enum ATDiskImageFormat {
+	kATDiskImageFormat_None,
+	kATDiskImageFormat_ATR,
+	kATDiskImageFormat_XFD,
+	kATDiskImageFormat_P2,
+	kATDiskImageFormat_P3,
+	kATDiskImageFormat_ATX,
+	kATDiskImageFormat_DCM
+};
+
 class VDINTERFACE IATDiskImage {
 public:
 	virtual ~IATDiskImage() {}
@@ -42,10 +53,12 @@ public:
 	virtual bool IsDirty() const = 0;
 	virtual bool IsUpdatable() const = 0;
 	virtual bool IsDynamic() const = 0;
+	virtual ATDiskImageFormat GetImageFormat() const = 0;
+
 	virtual bool Flush() = 0;
 
-	virtual void SetPathATR(const wchar_t *path) = 0;
-	virtual void SaveATR(const wchar_t *path) = 0;
+	virtual void SetPath(const wchar_t *path) = 0;
+	virtual void Save(const wchar_t *path, ATDiskImageFormat format) = 0;
 
 	virtual ATDiskGeometryInfo GetGeometry() const = 0;
 	virtual uint32 GetSectorSize() const = 0;

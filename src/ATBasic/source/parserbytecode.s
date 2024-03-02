@@ -21,94 +21,89 @@ parse_state_table:
 		dta		a(pa_array2-1)
 		dta		a(pa_comma-1)
 		dta		a(pa_aexpr_comma-1)
-		
+
 		;statements
 parse_state_table_statements:
-		dta		a(pa_state_rem-1)
-		dta		a(pa_state_data-1)
-		dta		a(pa_state_input-1)
-		dta		a(pa_state_color-1)
-		dta		a(pa_state_list-1)
-		dta		a(pa_state_enter-1)
-		dta		a(pa_state_let-1)
-		dta		a(pa_state_if-1)
-		dta		a(pa_state_for-1)
-		dta		a(pa_state_next-1)
-		dta		a(pa_state_goto-1)
-		dta		a(pa_state_goto2-1)
-		dta		a(pa_state_gosub-1)
-		dta		a(pa_state_trap-1)
-		dta		a(pa_state_bye-1)
-		dta		a(pa_state_cont-1)
-		dta		a(pa_state_com-1)
-		dta		a(pa_state_close-1)
-		dta		a(pa_state_clr-1)
-		dta		a(pa_state_deg-1)
-		dta		a(pa_state_dim-1)
-		dta		a(pa_state_end-1)
-		dta		a(pa_state_new-1)
-		dta		a(pa_state_open-1)
-		dta		a(pa_state_load-1)
-		dta		a(pa_state_save-1)
-		dta		a(pa_state_status-1)
-		dta		a(pa_state_note-1)
-		dta		a(pa_state_point-1)
-		dta		a(pa_state_xio-1)
-		dta		a(pa_state_on-1)
-		dta		a(pa_state_poke-1)
-		dta		a(pa_state_print-1)
-		dta		a(pa_state_rad-1)
-		dta		a(pa_state_read-1)
-		dta		a(pa_state_restore-1)
-		dta		a(pa_state_return-1)
-		dta		a(pa_state_run-1)
-		dta		a(pa_state_stop-1)
-		dta		a(pa_state_pop-1)
-		dta		a(pa_state_print-1)
-		dta		a(pa_state_get-1)
-		dta		a(pa_state_put-1)
-		dta		a(pa_state_graphics-1)
-		dta		a(pa_state_plot-1)
-		dta		a(pa_state_position-1)
-		dta		a(pa_state_dos-1)
-		dta		a(pa_state_drawto-1)
-		dta		a(pa_state_setcolor-1)
-		dta		a(pa_state_locate-1)
-		dta		a(pa_state_sound-1)
-		dta		a(pa_state_lprint-1)
-		dta		a(pa_state_csave-1)
-		dta		a(pa_state_cload-1)
+		dta		<pa_state_rem-1
+		dta		<pa_state_data-1
+		dta		<pa_state_input-1
+		dta		<pa_state_color-1
+		dta		<pa_state_list-1
+		dta		<pa_state_enter-1
+		dta		<pa_state_let-1
+		dta		<pa_state_if-1
+		dta		<pa_state_for-1
+		dta		<pa_state_next-1
+		dta		<pa_state_goto-1
+		dta		<pa_state_goto2-1
+		dta		<pa_state_gosub-1
+		dta		<pa_state_trap-1
+		dta		<pa_state_bye-1
+		dta		<pa_state_cont-1
+		dta		<pa_state_com-1
+		dta		<pa_state_close-1
+		dta		<pa_state_clr-1
+		dta		<pa_state_deg-1
+		dta		<pa_state_dim-1
+		dta		<pa_state_end-1
+		dta		<pa_state_new-1
+		dta		<pa_state_open-1
+		dta		<pa_state_load-1
+		dta		<pa_state_save-1
+		dta		<pa_state_status-1
+		dta		<pa_state_note-1
+		dta		<pa_state_point-1
+		dta		<pa_state_xio-1
+		dta		<pa_state_on-1
+		dta		<pa_state_poke-1
+		dta		<pa_state_print-1
+		dta		<pa_state_rad-1
+		dta		<pa_state_read-1
+		dta		<pa_state_restore-1
+		dta		<pa_state_return-1
+		dta		<pa_state_run-1
+		dta		<pa_state_stop-1
+		dta		<pa_state_pop-1
+		dta		<pa_state_print-1
+		dta		<pa_state_get-1
+		dta		<pa_state_put-1
+		dta		<pa_state_graphics-1
+		dta		<pa_state_plot-1
+		dta		<pa_state_position-1
+		dta		<pa_state_dos-1
+		dta		<pa_state_drawto-1
+		dta		<pa_state_setcolor-1
+		dta		<pa_state_locate-1
+		dta		<pa_state_sound-1
+		dta		<pa_state_lprint-1
+		dta		<pa_state_csave-1
+		dta		<pa_state_cload-1
+		dta		<0
+		dta		<0
+		dta		<0
+		dta		<0
+		dta		<0
+		dta		<0
+		dta		<0
+		dta		<0
+		dta		<pa_state_dpoke-1
+		dta		<0
 
-		;functions
-parse_state_table_functions:
-		dta		a(pa_state_str-1)
-		dta		a(pa_state_chr-1)
-		dta		a(pa_state_usr-1)
-		dta		a(pa_state_asc-1)
-		dta		a(pa_state_val-1)
-		dta		a(pa_state_len-1)
-		dta		a(pa_state_adr-1)
-		dta		a(pa_state_atn-1)
-		dta		a(pa_state_cos-1)
-		dta		a(pa_state_peek-1)
-		dta		a(pa_state_sin-1)
-		dta		a(pa_state_rnd-1)
-		dta		a(pa_state_fre-1)
-		dta		a(pa_state_exp-1)
-		dta		a(pa_state_log-1)
-		dta		a(pa_state_clog-1)
-		dta		a(pa_state_sqr-1)
-		dta		a(pa_state_sgn-1)
-		dta		a(pa_state_abs-1)
-		dta		a(pa_state_int-1)
-		dta		a(pa_state_paddle-1)
-		dta		a(pa_state_stick-1)
-		dta		a(pa_state_ptrig-1)
-		dta		a(pa_state_strig-1)		
-		dta		a(pa_state_and-1)
-		dta		a(pa_state_not-1)
-		dta		a(pa_state_or-1)
-
+		;$40
+		dta		<0
+		dta		<0
+		dta		<0
+		dta		<pa_state_bput-1
+		dta		<pa_state_bget-1
+		dta		<0
+		dta		<pa_state_cp-1
+		dta		<pa_state_erase-1
+		dta		<pa_state_protect-1
+		dta		<pa_state_unprotect-1
+		dta		<pa_state_dir-1
+		dta		<pa_state_rename-1
+		dta		<pa_state_move-1
+		
 ;============================================================================
 ; Parser instructions
 ;
@@ -197,8 +192,9 @@ parse_state_table_functions:
 		PA_BRANCH_TARGET :1
 .endm
 
-.macro PAI_STBEGIN			;Begin a statement.
+.macro PAI_HEX_B			;Parse hex and then branch
 		dta		$0d
+		PA_BRANCH_TARGET :1
 .endm
 
 .macro PAI_STEND			;End a statement.
@@ -291,11 +287,9 @@ PST_ARRAY2			= $09
 PST_COMMA			= $0A
 PST_AEXPR_COMMA		= $0B
 PST_STATEMENT_BASE	= (parse_state_table_statements-parse_state_table)/2
-PST_FUNCTION_BASE	= (parse_state_table_functions-parse_state_table)/2
 
 ;============================================================================
 .proc pa_state0		;initial statement
-		PAI_STBEGIN
 		PAI_TRYSTATEMENT
 		
 		;assume it's an implicit let
@@ -319,11 +313,23 @@ next_statement:
 .proc pa_aexpr
 		;This is pretty complicated.
 
+str_var:
+		PAI_FAIL
 arrayvar:
 		PAI_JSR		PST_ARRAY
 variable:
-		PAI_BSTR	need_soperator
+need_either_operator:
+		PAI_BSTR	str_var
+		PAI_ACCEPT
 		PAI_B		need_operator
+
+const_hex:
+		PAI_HEX_B	need_operator
+
+open_paren:
+		PAM_AEXPR
+		PAI_EXPECT	')'
+		PAI_EMIT_B	TOK_EXP_CLOSEPAREN, need_operator
 
 entry:
 need_value:
@@ -331,9 +337,8 @@ need_value:
 		PAI_BEQEMIT	'+', TOK_EXP_UNPLUS, need_value
 		PAI_BEQEMIT	'-', TOK_EXP_UNMINUS, need_value
 		PAI_BEQEMIT	'(', TOK_EXP_OPENPAREN, open_paren
-		PAI_BEQ		'"',const_string
+		PAI_BEQ		'$',const_hex
 		PAI_TRYNUMBER	need_operator
-		PAI_TRYFUNCTION	need_operator
 		PAI_OR		not_not
 		PAI_EXPECT	'N'
 		PAI_EXPECT	'O'
@@ -342,31 +347,17 @@ need_value:
 		PAI_EMIT	TOK_EXP_NOT
 		PAI_B		need_value
 not_not:
+		PAI_OR		svalue
+		PAI_TRYFUNCTION	variable
 		PAI_TRYARRAYVAR	arrayvar
 		PAI_TRYVARIABLE	variable
 		PAI_FAIL
-		
-open_paren:
-		PAM_AEXPR
-		PAI_EXPECT	')'
-		PAI_EMIT_B	TOK_EXP_CLOSEPAREN, need_operator
 
 op_less:
 		PAI_BEQEMIT	'=', TOK_EXP_LE, need_value
 		PAI_BEQEMIT	'>', TOK_EXP_NE, need_value
 		PAI_EMIT_B	TOK_EXP_LT, need_value
 
-const_string:
-		PAI_STRING
-need_soperator:
-		PAI_SPACES
-		PAI_BEQ		'<',op_str_l
-		PAI_BEQ		'>',op_str_g
-		PAI_BEQEMIT	'=', TOK_EXP_STR_EQ, need_svalue
-		PAI_FAIL
-
-const_string2:
-		PAI_STRING
 need_operator:
 		PAI_SPACES
 		PAI_BEQEMIT	'+', TOK_EXP_ADD, need_value
@@ -377,6 +368,9 @@ need_operator:
 		PAI_BEQ		'<',op_less
 		PAI_BEQ		'>',op_greater
 		PAI_BEQEMIT	'=', TOK_EXP_EQUAL, need_value
+		PAI_BEQEMIT	'%', TOK_EXP_BITWISE_XOR, need_value
+		PAI_BEQEMIT	'!', TOK_EXP_BITWISE_OR, need_value
+		PAI_BEQEMIT	'&', TOK_EXP_BITWISE_AND, need_value
 		PAI_OR		not_and
 		PAI_EXPECT	'A'
 		PAI_EXPECT	'N'
@@ -399,6 +393,15 @@ op_greater:
 		PAI_BEQEMIT	'=', TOK_EXP_GE, need_value
 		PAI_EMIT_B	TOK_EXP_GT, need_value
 
+svalue:
+		PAM_SEXPR
+need_soperator:
+		PAI_SPACES
+		PAI_BEQ		'<',op_str_l
+		PAI_BEQ		'>',op_str_g
+		PAI_BEQEMIT	'=', TOK_EXP_STR_EQ, need_svalue
+		PAI_FAIL
+
 op_str_l:
 		PAI_BEQEMIT	'>', TOK_EXP_STR_NE, need_svalue
 		PAI_BEQEMIT	'=', TOK_EXP_STR_LE, need_svalue
@@ -409,14 +412,8 @@ op_str_g:
 		PAI_EMIT_B	TOK_EXP_STR_GT, need_svalue
 		
 need_svalue:
-		PAI_SPACES
-		PAI_BEQ		'"',const_string2
-		PAI_TRYVARIABLE svariable
-		PAI_FAIL
-		
-svariable:
-		PAI_BSTR	need_operator
-		PAI_FAIL
+		PAM_SEXPR
+		PAI_B		need_operator
 .endp
 
 ;----------------------------
@@ -446,8 +443,10 @@ is_str:
 const_string:
 		PAI_STRING
 done:
-func:
 		PAI_RTS
+func:
+		PAI_BSTR	done
+		PAI_FAIL
 		
 is_arraystr:
 		PAM_AEXPR
@@ -553,14 +552,91 @@ pa_aexpr_comma:
 .endp
 
 ;==========================================================================
+.pages 1
+
+pa_functions_begin:
+
+;aexpr fun(aexpr)
+pa_state_abs:
+pa_state_atn:
+pa_state_clog:
+pa_state_cos:
+pa_state_exp:
+pa_state_fre:
+pa_state_int:
+pa_state_log:
+pa_state_paddle:
+pa_state_peek:
+pa_state_ptrig:
+pa_state_rnd:
+pa_state_sgn:
+pa_state_sin:
+pa_state_sqr:
+pa_state_stick:
+pa_state_strig:
+pa_state_dpeek:
+pa_state_vstick:
+pa_state_hstick:
+		PAI_EXPECT	'('
+		PAI_EMIT	TOK_EXP_OPEN_FUN
+		PAM_AEXPR
+pa_close_numeric_function:
+		PAI_EXPECT	')'
+		PAI_EMIT	TOK_EXP_CLOSEPAREN
+pa_end_numeric_function:
+		PAI_NUM
+		PAI_RTS
+
+;aexpr fun(sexpr)
+pa_state_adr:
+pa_state_asc:
+pa_state_len:
+pa_state_val:
+		PAI_EXPECT	'('
+		PAI_EMIT	TOK_EXP_OPEN_FUN
+		PAM_SEXPR
+		PAI_B		pa_close_numeric_function
+
+;aexpr usr(aexpr[, aexpr])
+pa_state_usr:
+		PAI_EXPECT	'('
+		PAI_EMIT	TOK_EXP_OPEN_FUN
+pa_state_usr_loop:
+		PAM_AEXPR
+		PAI_BEQEMIT	')', TOK_EXP_CLOSEPAREN, pa_end_numeric_function
+		PAI_BEQEMIT	',', TOK_EXP_ARRAY_COMMA, pa_state_usr_loop
+		PAI_FAIL
+
+;sexpr fun(aexpr)
+pa_state_chr:
+pa_state_str:
+pa_state_hex:
+		PAI_EXPECT	'('
+.endpg
+		PAI_EMIT	TOK_EXP_OPEN_FUN
+		PAM_AEXPR
+		PAI_EXPECT	')'
+		PAI_EMIT	TOK_EXP_CLOSEPAREN
+		PAI_STR
+		PAI_RTS
+
+pa_functions_end:
+
+;==========================================================================
+
+.pages 1
+pa_statements_begin:
+
 pa_state_sound:			;STATEMENT aexpr,aexpr,aexpr,aexpr
 		PAM_AEXPR_COMMA
 pa_state_setcolor:		;STATEMENT aexpr,aexpr,aexpr
+pa_state_move:
 		PAM_AEXPR_COMMA
 pa_state_drawto:		;STATEMENT aexpr,aexpr
 pa_state_plot:
 pa_state_poke:
 pa_state_position:
+pa_state_dpoke:
 		PAM_AEXPR_COMMA
 pa_state_color:			;STATEMENT aexpr
 pa_state_goto:
@@ -582,8 +658,15 @@ pa_state_pop:
 pa_state_rad:
 pa_state_return:
 pa_state_stop:
+pa_state_cp:
 		PAM_NEXT
-		
+
+pa_state_bput:			;BPUT #iocb,aexpr,aexpr
+pa_state_bget:			;BGET #iocb,aexpr,aexpr
+		PAM_IOCB
+		PAM_COMMA
+		PAI_B			pa_state_dpoke
+
 pa_state_close:
 		PAM_IOCB
 		PAM_NEXT
@@ -660,10 +743,16 @@ have_step:
 ;--------------------------------------------------------------------------
 pa_state_get:
 pa_state_status:
-pa_state_put:
 		PAM_IOCB
 		PAM_COMMA
 		PAM_AVAR
+		PAM_NEXT
+
+;--------------------------------------------------------------------------
+pa_state_put:
+		PAM_IOCB
+		PAM_COMMA
+		PAM_AEXPR
 		PAM_NEXT
 
 ;--------------------------------------------------------------------------
@@ -698,11 +787,8 @@ end:
 		PAI_EXPECT	'N'
 		PAI_TRYNUMBER	is_lineno
 		PAI_STEND			;must end statement without EOS
-		PAI_STBEGIN
 		PAI_TRYSTATEMENT
 		PAM_AEXPR
-		PAM_NEXT
-		
 is_lineno:
 		PAM_NEXT
 .endp
@@ -763,8 +849,6 @@ pa_state_point:
 		
 is_goto:
 		PAI_EXPECT	'O'
-		PAI_B		linenos
-		
 lineno_comma:
 linenos:
 		PAM_AEXPR
@@ -782,7 +866,20 @@ pa_state_open:
 pa_state_load:
 pa_state_save:
 pa_state_enter:
+pa_state_erase:
+pa_state_protect:
+pa_state_unprotect:
+pa_state_rename:
 		PAM_SEXPR
+pa_state_print_simple:
+		PAM_NEXT
+
+pa_state_run:
+pa_state_dir:
+		PAI_SPACES
+		PAI_BEOS	pa_state_run_2
+		PAM_SEXPR
+pa_state_run_2:
 		PAM_NEXT
 
 pa_state_lprint:
@@ -791,213 +888,149 @@ pa_state_lprint:
 
 pa_state_print:
 		PAI_SPACES
+.endpg
 		PAI_BEOS	pa_state_print_simple
 		PAI_OR		pa_state_print_item
 		PAM_IOCB
 		PAI_ACCEPT
+		PAI_B		pa_state_print_sep
 pa_state_print_item:
-		PAI_BEOS	pa_state_print_simple
 		PAI_SPACES
+		PAI_BEOS	pa_state_print_simple
 		PAI_BEQEMIT	',', TOK_EXP_COMMA, pa_state_print_item
 		PAI_BEQEMIT	';', TOK_EXP_SEMI, pa_state_print_item
 		PAM_EXPR
-		PAI_B		pa_state_print_item
-pa_state_print_simple:
-		PAM_NEXT
-
-pa_state_run:
-		PAI_OR		pa_state_run_2
-		PAM_SEXPR
-		PAI_ACCEPT
-pa_state_run_2:
-		PAM_NEXT
-
-;==========================================================================
-;aexpr fun(aexpr)
-pa_state_abs:
-pa_state_atn:
-pa_state_clog:
-pa_state_cos:
-pa_state_exp:
-pa_state_fre:
-pa_state_int:
-pa_state_log:
-pa_state_paddle:
-pa_state_peek:
-pa_state_ptrig:
-pa_state_rnd:
-pa_state_sgn:
-pa_state_sin:
-pa_state_sqr:
-pa_state_stick:
-pa_state_strig:
-		PAI_EXPECT	'('
-		PAI_EMIT	TOK_EXP_OPEN_FUN
-		PAM_AEXPR
-		PAI_EXPECT	')'
-		PAI_EMIT	TOK_EXP_CLOSEPAREN
-		PAI_NUM
-		PAI_RTS
-
-;aexpr fun(sexpr)
-pa_state_adr:
-pa_state_asc:
-pa_state_len:
-pa_state_val:
-		PAI_EXPECT	'('
-		PAI_EMIT	TOK_EXP_OPEN_FUN
-		PAM_SEXPR
-		PAI_EXPECT	')'
-		PAI_EMIT	TOK_EXP_CLOSEPAREN
-		PAI_NUM
-		PAI_RTS
-
-;sexpr fun(aexpr)
-pa_state_chr:
-pa_state_str:
-		PAI_EXPECT	'('
-		PAI_EMIT	TOK_EXP_OPEN_FUN
-		PAM_AEXPR
-		PAI_EXPECT	')'
-		PAI_EMIT	TOK_EXP_CLOSEPAREN
-		PAI_STR
-		PAI_RTS
-
-;aexpr usr(aexpr[, aexpr])
-.proc pa_state_usr
-		PAI_EXPECT	'('
-		PAI_EMIT	TOK_EXP_OPEN_FUN
-loop:
-		PAM_AEXPR
-		PAI_BEQEMIT	')', TOK_EXP_CLOSEPAREN, done
-		PAI_BEQEMIT	',', TOK_EXP_ARRAY_COMMA, loop
+pa_state_print_sep:
+		PAI_BEOS	pa_state_print_simple
+		PAI_BEQEMIT	',', TOK_EXP_COMMA, pa_state_print_item
+		PAI_BEQEMIT	';', TOK_EXP_SEMI, pa_state_print_item
 		PAI_FAIL
 
-done:
-		PAI_NUM
-		PAI_RTS
-.endp
-
-pa_state_and:
-pa_state_not:
-pa_state_or:
-		PAI_FAIL
+pa_statements_end:
 
 ;============================================================================		
 statement_table:
-stname_rem:		dta		c'RE',c'M'+$80		;R.
-stname_data:	dta		c'DAT',c'A'+$80		;D.
-stname_input:	dta		c'INPU',c'T'+$80	;I.
-stname_color:	dta		c'COLO',c'R'+$80	;C.		exp
-stname_list:	dta		c'LIS',c'T'+$80		;L.
-stname_enter:	dta		c'ENTE',c'R'+$80	;E.
-stname_let:		dta		c'LE',c'T'+$80		;LE.
-stname_if:		dta		c'I',c'F'+$80		;IF
-stname_for:		dta		c'FO',c'R'+$80		;F.
-stname_next:	dta		c'NEX',c'T'+$80		;N.
-stname_goto:	dta		c'GOT',c'O'+$80		;G.
-stname_go_to:	dta		c'GO T',c'O'+$80
-stname_gosub:	dta		c'GOSU',c'B'+$80	;GOS.
-stname_trap:	dta		c'TRA',c'P'+$80		;T.
-stname_bye:		dta		c'BY',c'E'+$80		;B.
-stname_cont:	dta		c'CON',c'T'+$80		;CON.
-stname_com:		dta		c'CO',c'M'+$80
-stname_close:	dta		c'CLOS',c'E'+$80	;CL.	#exp
-stname_clr:		dta		c'CL',c'R'+$80
-stname_deg:		dta		c'DE',c'G'+$80		;DE.
-stname_dim:		dta		c'DI',c'M'+$80		;DI.
-stname_end:		dta		c'EN',c'D'+$80		;
-stname_new:		dta		c'NE',c'W'+$80		;
-stname_open:	dta		c'OPE',c'N'+$80		;O.
-stname_load:	dta		c'LOA',c'D'+$80		;LO.
-stname_save:	dta		c'SAV',c'E'+$80		;S.
-stname_status:	dta		c'STATU',c'S'+$80	;ST.
-stname_note:	dta		c'NOT',c'E'+$80		;NO.
-stname_point:	dta		c'POIN',c'T'+$80	;P.
-stname_xio:		dta		c'XI',c'O'+$80		;X.
-stname_on:		dta		c'O',c'N'+$80		;
-stname_poke:	dta		c'POK',c'E'+$80		;POK.
-stname_print:	dta		c'PRIN',c'T'+$80	;PR.
-stname_rad:		dta		c'RA',c'D'+$80		;
-stname_read:	dta		c'REA',c'D'+$80		;REA.
-stname_restore:	dta		c'RESTOR',c'E'+$80	;RES.
-stname_return:	dta		c'RETUR',c'N'+$80	;RET.
-stname_run:		dta		c'RU',c'N'+$80		;RU.
-stname_stop:	dta		c'STO',c'P'+$80		;STO.
-stname_pop:		dta		c'PO',c'P'+$80		;
-stname_qprint:	dta		c'?'+$80
-stname_get:		dta		c'GE',c'T'+$80		;GE.
-stname_put:		dta		c'PU',c'T'+$80		;PU.
-stname_graphics dta		c'GRAPHIC',c'S'+$80	;GR.
-stname_plot:	dta		c'PLO',c'T'+$80		;PL.
-stname_position dta		c'POSITIO',c'N'+$80	;POS.
-stname_dos:		dta		c'DO',c'S'+$80		;DO.
-stname_drawto:	dta		c'DRAWT',c'O'+$80	;DR.
-stname_setcolor dta		c'SETCOLO',c'R'+$80	;SE.
-stname_locate:	dta		c'LOCAT',c'E'+$80	;LOC.
-stname_sound:	dta		c'SOUN',c'D'+$80	;SO.
-stname_lprint:	dta		c'LPRIN',c'T'+$80	;LP.
-stname_csave:	dta		c'CSAV',c'E'+$80
-stname_cload:	dta		c'CLOA',c'D'+$80	;CLOA.
-				dta		0					;end for searching
-		
-		_STATIC_ASSERT *-statement_table<255 "Statement table exceeds 256 bytes."
-		
-.proc stname_table
-		dta		stname_rem - statement_table
-		dta		stname_data - statement_table
-		dta		stname_input - statement_table
-		dta		stname_color - statement_table
-		dta		stname_list - statement_table
-		dta		stname_enter - statement_table
-		dta		stname_let - statement_table
-		dta		stname_if - statement_table
-		dta		stname_for - statement_table
-		dta		stname_next - statement_table
-		dta		stname_goto - statement_table
-		dta		stname_go_to - statement_table
-		dta		stname_gosub - statement_table
-		dta		stname_trap - statement_table
-		dta		stname_bye - statement_table
-		dta		stname_cont - statement_table
-		dta		stname_com - statement_table
-		dta		stname_close - statement_table
-		dta		stname_clr - statement_table
-		dta		stname_deg - statement_table
-		dta		stname_dim - statement_table
-		dta		stname_end - statement_table
-		dta		stname_new - statement_table
-		dta		stname_open - statement_table
-		dta		stname_load - statement_table
-		dta		stname_save - statement_table
-		dta		stname_status - statement_table
-		dta		stname_note - statement_table
-		dta		stname_point - statement_table
-		dta		stname_xio - statement_table
-		dta		stname_on - statement_table
-		dta		stname_poke - statement_table
-		dta		stname_print - statement_table
-		dta		stname_rad - statement_table
-		dta		stname_read - statement_table
-		dta		stname_restore - statement_table
-		dta		stname_return - statement_table
-		dta		stname_run - statement_table
-		dta		stname_stop - statement_table
-		dta		stname_pop - statement_table
-		dta		stname_qprint - statement_table
-		dta		stname_get - statement_table
-		dta		stname_put - statement_table
-		dta		stname_graphics - statement_table
-		dta		stname_plot - statement_table
-		dta		stname_position - statement_table
-		dta		stname_dos - statement_table
-		dta		stname_drawto - statement_table
-		dta		stname_setcolor - statement_table
-		dta		stname_locate - statement_table
-		dta		stname_sound - statement_table
-		dta		stname_lprint - statement_table
-		dta		stname_csave - statement_table
-		dta		stname_cload - statement_table
-.endp
+		dta		c'RE',c'M'+$80		;R.
+		dta		c'DAT',c'A'+$80		;D.
+		dta		c'INPU',c'T'+$80	;I.
+		dta		c'COLO',c'R'+$80	;C.		exp
+		dta		c'LIS',c'T'+$80		;L.
+		dta		c'ENTE',c'R'+$80	;E.
+		dta		c'LE',c'T'+$80		;LE.
+		dta		c'I',c'F'+$80		;IF
+		dta		c'FO',c'R'+$80		;F.
+		dta		c'NEX',c'T'+$80		;N.
+		dta		c'GOT',c'O'+$80		;G.
+		dta		c'GO T',c'O'+$80
+		dta		c'GOSU',c'B'+$80	;GOS.
+		dta		c'TRA',c'P'+$80		;T.
+		dta		c'BY',c'E'+$80		;B.
+		dta		c'CON',c'T'+$80		;CON.
+		dta		c'CO',c'M'+$80
+		dta		c'CLOS',c'E'+$80	;CL.	#exp
+		dta		c'CL',c'R'+$80
+		dta		c'DE',c'G'+$80		;DE.
+		dta		c'DI',c'M'+$80		;DI.
+		dta		c'EN',c'D'+$80		;
+		dta		c'NE',c'W'+$80		;
+		dta		c'OPE',c'N'+$80		;O.
+		dta		c'LOA',c'D'+$80		;LO.
+		dta		c'SAV',c'E'+$80		;S.
+		dta		c'STATU',c'S'+$80	;ST.
+		dta		c'NOT',c'E'+$80		;NO.
+		dta		c'POIN',c'T'+$80	;P.
+		dta		c'XI',c'O'+$80		;X.
+		dta		c'O',c'N'+$80		;
+		dta		c'POK',c'E'+$80		;POK.
+		dta		c'PRIN',c'T'+$80	;PR.
+		dta		c'RA',c'D'+$80		;
+		dta		c'REA',c'D'+$80		;REA.
+		dta		c'RESTOR',c'E'+$80	;RES.
+		dta		c'RETUR',c'N'+$80	;RET.
+		dta		c'RU',c'N'+$80		;RU.
+		dta		c'STO',c'P'+$80		;STO.
+		dta		c'PO',c'P'+$80		;
+		dta		c'?'+$80
+		dta		c'GE',c'T'+$80		;GE.
+		dta		c'PU',c'T'+$80		;PU.
+		dta		c'GRAPHIC',c'S'+$80	;GR.
+		dta		c'PLO',c'T'+$80		;PL.
+		dta		c'POSITIO',c'N'+$80	;POS.
+		dta		c'DO',c'S'+$80		;DO.
+		dta		c'DRAWT',c'O'+$80	;DR.
+		dta		c'SETCOLO',c'R'+$80	;SE.
+		dta		c'LOCAT',c'E'+$80	;LOC.
+		dta		c'SOUN',c'D'+$80	;SO.
+		dta		c'LPRIN',c'T'+$80	;LP.
+		dta		c'CSAV',c'E'+$80
+		dta		c'CLOA',c'D'+$80	;CLOA.
+		dta		c'?'+$80
+		dta		c'?'+$80
+		dta		c'?'+$80
+		dta		c'?'+$80
+		dta		c'?'+$80
+		dta		c'?'+$80
+		dta		c'?'+$80
+		dta		c'?'+$80
+		dta		c'DPOK',c'E'+$80
+		dta		c'?'+$80
+
+		;$40
+		dta		c'?'+$80
+		dta		c'?'+$80
+		dta		c'?'+$80
+		dta		c'BPU',c'T'+$80
+		dta		c'BGE',c'T'+$80
+		dta		c'?'+$80
+		dta		c'C',c'P'+$80
+		dta		c'ERAS',c'E'+$80
+		dta		c'PROTEC',c'T'+$80
+		dta		c'UNPROTEC',c'T'+$80
+		dta		c'DI',c'R'+$80		;
+		dta		c'RENAM',c'E'+$80
+		dta		c'MOV',c'E'+$80
+		dta		0					;end for searching
+	
+.echo "-- Statement token table length: ", *-statement_table
+
+		;functions
+parse_state_table_functions:
+		dta		<pa_state_str-1
+		dta		<pa_state_chr-1
+		dta		<pa_state_usr-1
+		dta		<pa_state_asc-1
+		dta		<pa_state_val-1
+		dta		<pa_state_len-1
+		dta		<pa_state_adr-1
+		dta		<pa_state_atn-1
+		dta		<pa_state_cos-1
+		dta		<pa_state_peek-1
+		dta		<pa_state_sin-1
+		dta		<pa_state_rnd-1
+		dta		<pa_state_fre-1
+		dta		<pa_state_exp-1
+		dta		<pa_state_log-1
+		dta		<pa_state_clog-1
+		dta		<pa_state_sqr-1
+		dta		<pa_state_sgn-1
+		dta		<pa_state_abs-1
+		dta		<pa_state_int-1
+		dta		<pa_state_paddle-1
+		dta		<pa_state_stick-1
+		dta		<pa_state_ptrig-1
+		dta		<pa_state_strig-1		
+		dta		0
+		dta		0
+		dta		0
+		dta		0
+		dta		0
+		dta		0
+		dta		0
+		dta		<pa_state_hex-1
+		dta		0
+		dta		<pa_state_dpeek-1
+		dta		0
+		dta		<pa_state_vstick-1
+		dta		<pa_state_hstick-1
 
 .echo "- Parser program length: ",*-?parser_program_start

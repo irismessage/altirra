@@ -34,6 +34,8 @@ struct ATOptions {
 	bool mbDisplayOpenGL;
 
 	bool mbSingleInstance;
+	
+	sint32 mThemeScale;
 
 	ATErrorMode mErrorMode;
 

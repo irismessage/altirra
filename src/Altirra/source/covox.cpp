@@ -17,10 +17,13 @@
 
 #include "stdafx.h"
 #include <vd2/system/binary.h>
+#include <at/atcore/consoleoutput.h>
+#include <at/atcore/deviceimpl.h>
 #include "covox.h"
 #include "scheduler.h"
 #include "audiooutput.h"
 #include "memorymanager.h"
+#include "devicemanager.h"
 #include "console.h"
 
 namespace {
@@ -103,8 +106,8 @@ void ATCovoxEmulator::WarmReset() {
 	mOutputAccumRight = 0;
 }
 
-void ATCovoxEmulator::DumpStatus() {
-	ATConsolePrintf("Channel outputs: $%02X $%02X $%02X $%02X\n"
+void ATCovoxEmulator::DumpStatus(ATConsoleOutput& output) {
+	output("Channel outputs: $%02X $%02X $%02X $%02X"
 		, mVolume[0]
 		, mVolume[1]
 		, mVolume[2]
@@ -227,4 +230,136 @@ bool ATCovoxEmulator::StaticWriteControl(void *thisptr, uint32 addr, uint8 value
 
 	((ATCovoxEmulator *)thisptr)->WriteControl(addr8, value);
 	return false;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDeviceCovox : public VDAlignedObject<16>
+					, public ATDevice
+					, public IATDeviceMemMap
+					, public IATDeviceScheduling
+					, public IATDeviceAudioOutput
+					, public IATDeviceDiagnostics
+{
+public:
+	ATDeviceCovox();
+
+	virtual void *AsInterface(uint32 id) override;
+
+	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
+	virtual void WarmReset() override;
+	virtual void ColdReset() override;
+	virtual void Init() override;
+	virtual void Shutdown() override;
+
+public: // IATDeviceMemMap
+	virtual void InitMemMap(ATMemoryManager *memmap) override;
+	virtual bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
+
+public:	// IATDeviceScheduling
+	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
+
+public:	// IATDeviceAudioOutput
+	virtual void InitAudioOutput(IATAudioOutput *out) override;
+
+public:	// IATDeviceDiagnostics
+	virtual void DumpStatus(ATConsoleOutput& output) override;
+
+private:
+	static sint32 ReadByte(void *thisptr0, uint32 addr);
+	static bool WriteByte(void *thisptr0, uint32 addr, uint8 value);
+
+	ATMemoryManager *mpMemMan;
+	ATScheduler *mpScheduler;
+	IATAudioOutput *mpAudioOutput;
+
+	ATCovoxEmulator mCovox;
+};
+
+ATDeviceCovox::ATDeviceCovox()
+	: mpMemMan(nullptr)
+	, mpScheduler(nullptr)
+	, mpAudioOutput(nullptr)
+{
+}
+
+void *ATDeviceCovox::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDeviceMemMap::kTypeID:
+			return static_cast<IATDeviceMemMap *>(this);
+
+		case IATDeviceScheduling::kTypeID:
+			return static_cast<IATDeviceScheduling *>(this);
+
+		case IATDeviceAudioOutput::kTypeID:
+			return static_cast<IATDeviceAudioOutput *>(this);
+
+		case IATDeviceDiagnostics::kTypeID:
+			return static_cast<IATDeviceDiagnostics *>(this);
+
+		default:
+			return ATDevice::AsInterface(id);
+	}
+}
+
+void ATDeviceCovox::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mTag = "covox";
+	info.mName = L"Covox";
+	info.mConfigTag = "covox";
+}
+
+void ATDeviceCovox::WarmReset() {
+	mCovox.WarmReset();
+}
+
+void ATDeviceCovox::ColdReset() {
+	mCovox.ColdReset();
+}
+
+void ATDeviceCovox::Init() {
+	mCovox.Init(mpMemMan, mpScheduler, mpAudioOutput);
+}
+
+void ATDeviceCovox::Shutdown() {
+	mCovox.Shutdown();
+
+	mpAudioOutput = nullptr;
+	mpScheduler = nullptr;
+	mpMemMan = nullptr;
+}
+
+void ATDeviceCovox::InitMemMap(ATMemoryManager *memmap) {
+	mpMemMan = memmap;
+}
+
+bool ATDeviceCovox::GetMappedRange(uint32 index, uint32& lo, uint32& hi) const {
+	if (index == 0) {
+		lo = 0xD600;
+		hi = 0xD700;
+		return true;
+	}
+
+	return false;
+}
+
+void ATDeviceCovox::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
+	mpScheduler = sch;
+}
+
+void ATDeviceCovox::InitAudioOutput(IATAudioOutput *out) {
+	mpAudioOutput = out;
+}
+
+void ATDeviceCovox::DumpStatus(ATConsoleOutput& output) {
+	mCovox.DumpStatus(output);
+}
+
+void ATCreateDeviceCovox(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceCovox> p(new ATDeviceCovox);
+
+	*dev = p.release();
+}
+
+void ATRegisterDeviceCovox(ATDeviceManager& dev) {
+	dev.AddDeviceFactory("covox", ATCreateDeviceCovox);
 }

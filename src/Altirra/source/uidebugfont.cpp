@@ -21,8 +21,13 @@
 #include <vd2/system/strutil.h>
 #include <at/atui/dialog.h>
 #include <at/atui/uiproxies.h>
+#include "uiframe.h"
 #include "console.h"
 #include "resource.h"
+
+#ifndef WM_DPICHANGED
+#define WM_DPICHANGED 0x02E0
+#endif
 
 class ATUIDialogDebugFont : public VDDialogFrameW32 {
 public:
@@ -33,6 +38,8 @@ public:
 	const wchar_t *GetFontFamily() const { return mFontFamily.c_str(); }
 
 private:
+	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
+
 	bool OnLoaded();
 	void OnDataExchange(bool write);
 	void SelectFontFromList();
@@ -106,6 +113,16 @@ ATUIDialogDebugFont::ATUIDialogDebugFont(const wchar_t *name, int dp)
 ATUIDialogDebugFont::~ATUIDialogDebugFont() {
 	if (mhFont)
 		DeleteObject(mhFont);
+}
+
+VDZINT_PTR ATUIDialogDebugFont::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
+	switch(msg) {
+		case WM_DPICHANGED:
+			UpdateFont();
+			break;
+	}
+
+	return VDDialogFrameW32::DlgProc(msg, wParam, lParam);
 }
 
 bool ATUIDialogDebugFont::OnLoaded() {
@@ -182,12 +199,9 @@ void ATUIDialogDebugFont::UpdateFont() {
 
 	vdwcslcpy(lf.lfFaceName, name.c_str(), vdcountof(lf.lfFaceName));
 
-	HDC hdc = GetDC(mhdlg);
-	if (hdc) {
-		lf.lfHeight = -MulDiv(dp, GetDeviceCaps(hdc, LOGPIXELSY), 720);
-
-		ReleaseDC(mhdlg, hdc);
-	}
+	uint32 dpi = ATUIGetWindowDpiW32(mhdlg);
+	if (dpi)
+		lf.lfHeight = -MulDiv(dp, dpi, 720);
 
 	HFONT hNewFont = CreateFontIndirectW(&lf);
 	if (hNewFont) {

@@ -35,7 +35,7 @@
 ;
 .proc DiskHandler
 	mva		#$31	ddevic
-	mvx		#64		dtimlo		;(!) this must be preserved through do_read!
+	mva		#$0f	dtimlo
 	
 	;check for status command
 	lda		dcomnd
@@ -86,7 +86,7 @@ notStatus:
 	mva		dsktim dtimlo
 
 do_read:
-	txa							;(!) X=$40 comes from entry code to set DTIMLO
+	lda		#$40
 do_io:
 	sta		dstats
 	jsr		siov

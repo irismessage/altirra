@@ -169,6 +169,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::ICHIDZ> ICHIDZ;
 		ATByteAdapter<ATKernelSymbols::ICDNOZ> ICDNOZ;
 		ATByteAdapter<ATKernelSymbols::ICCOMZ> ICCOMZ;
+		ATByteAdapter<ATKernelSymbols::ICSTAZ> ICSTAZ;
 		ATByteAdapter<ATKernelSymbols::ICBALZ> ICBALZ;
 		ATByteAdapter<ATKernelSymbols::ICBAHZ> ICBAHZ;
 		ATWordAdapter<ATKernelSymbols::ICBALZ> ICBAZ;
@@ -301,6 +302,8 @@ struct ATKernelDatabase {
 		ATWordAdapter<ATKernelSymbols::TIMER1> TIMER1;
 		ATWordAdapter<ATKernelSymbols::TIMER2> TIMER2;
 		ATByteAdapter<ATKernelSymbols::HATABS> HATABS;
+		ATByteAdapter<ATKernelSymbols::ICHID > ICHID;
+		ATByteAdapter<ATKernelSymbols::ICDNO > ICDNO;
 		ATByteAdapter<ATKernelSymbols::ICCMD > ICCMD;
 		ATByteAdapter<ATKernelSymbols::ICSTA > ICSTA;
 		ATByteAdapter<ATKernelSymbols::ICBAL > ICBAL;
@@ -309,6 +312,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::ICBLL > ICBLL;
 		ATByteAdapter<ATKernelSymbols::ICBLH > ICBLH;
 		ATWordAdapter<ATKernelSymbols::ICBLL > ICBLL_ICBLH;
+		ATByteAdapter<ATKernelSymbols::ICAX1 > ICAX1;
 
 		ATByteAdapter<ATKernelSymbols::COLPM0> COLPM0;
 		ATByteAdapter<ATKernelSymbols::COLPM1> COLPM1;

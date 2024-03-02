@@ -229,7 +229,6 @@ void VDCallbackTimer::ThreadRun() {
 
 VDLazyTimer::VDLazyTimer()
 	: mTimerId(0)
-	, mpCB(NULL)
 	, mbPeriodic(false)
 {
 	if (!VDInitThunkAllocator())
@@ -250,18 +249,26 @@ VDLazyTimer::~VDLazyTimer() {
 }
 
 void VDLazyTimer::SetOneShot(IVDTimerCallback *pCB, uint32 delay) {
+	SetOneShotFn([=]() { pCB->TimerCallback(); }, delay);
+}
+
+void VDLazyTimer::SetOneShotFn(const vdfunction<void()>& fn, uint32 delay) {
 	Stop();
 
 	mbPeriodic = false;
-	mpCB = pCB;
+	mpFn = fn;
 	mTimerId = SetTimer(NULL, 0, delay, (TIMERPROC)mpThunk);
 }
 
 void VDLazyTimer::SetPeriodic(IVDTimerCallback *pCB, uint32 delay) {
+	SetPeriodicFn([=]() { pCB->TimerCallback(); }, delay);
+}
+
+void VDLazyTimer::SetPeriodicFn(const vdfunction<void()>& fn, uint32 delay) {
 	Stop();
 
 	mbPeriodic = true;
-	mpCB = pCB;
+	mpFn = fn;
 	mTimerId = SetTimer(NULL, 0, delay, (TIMERPROC)mpThunk);
 }
 
@@ -276,6 +283,6 @@ void VDLazyTimer::StaticTimeCallback(VDZHWND hwnd, VDZUINT msg, VDZUINT_PTR id, 
 	if (!mbPeriodic)
 		Stop();
 
-	if (mpCB)
-		mpCB->TimerCallback();
+	if (mpFn)
+		mpFn();
 }

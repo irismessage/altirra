@@ -48,6 +48,7 @@ namespace
 		"vd_dithertexture",
 		"vd_interphtexture",
 		"vd_interpvtexture",
+		"vd_interptexture",
 	};
 
 	static const char *const kParameterNames[]={
@@ -67,6 +68,7 @@ namespace
 		"vd_time",
 		"vd_interphtexsize",
 		"vd_interpvtexsize",
+		"vd_interptexsize",
 		"vd_fieldinfo",
 		"vd_chromauvscale",
 		"vd_chromauvoffset",

@@ -18,15 +18,24 @@
 #ifndef f_AT_HLECIOHOOK_H
 #define f_AT_HLECIOHOOK_H
 
-class IATHLECIOHook {
+#include <vd2/system/unknown.h>
+
+class IATHLECIOHook : public IVDUnknown {
 public:
 	virtual void WarmReset() = 0;
-	virtual void ColdReset(uint16 hookPage, const uint8 *upperROM) = 0;
+	virtual void ColdReset() = 0;
 
-	virtual void ReinitHooks() = 0;
+	virtual bool GetBurstTransfersEnabled() const = 0;
+	virtual void SetBurstTransfersEnabled(bool enabled) = 0;
+
+	virtual bool HasCIODevice(char c) const = 0;
+	virtual bool GetCIOPatchEnabled(char c) const = 0;
+	virtual void SetCIOPatchEnabled(char c, bool enabled) = 0;
+
+	virtual void ReinitHooks(uint8 hookPage) = 0;
 };
 
-IATHLECIOHook *ATCreateHLECIOHook(ATCPUEmulator *cpu, ATSimulator *sim);
+IATHLECIOHook *ATCreateHLECIOHook(ATCPUEmulator *cpu, ATSimulator *sim, ATMemoryManager *memmgr);
 void ATDestroyHLECIOHook(IATHLECIOHook *hook);
 
 #endif	// f_AT_HLECIOHOOK_H

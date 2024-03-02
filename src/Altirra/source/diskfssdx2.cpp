@@ -9,7 +9,7 @@
 #include "diskimage.h"
 #include "diskfssdx2util.h"
 
-class ATDiskFSSDX2 : public IATDiskFS {
+class ATDiskFSSDX2 final : public IATDiskFS {
 public:
 	ATDiskFSSDX2();
 	~ATDiskFSSDX2();
@@ -277,6 +277,7 @@ bool ATDiskFSSDX2::Validate(ATDiskFSValidationReport& report) {
 
 	report.mbBrokenFiles = false;
 	report.mbBitmapIncorrect = false;
+	report.mbOpenWriteFiles = false;
 
 	uint32 freeSectors = 0;
 
@@ -594,9 +595,17 @@ uintptr ATDiskFSSDX2::WriteFile(uintptr parentKey, const char *filename, const v
 }
 
 void ATDiskFSSDX2::CreateDir(uintptr parentKey, const char *filename) {
+	if (mbReadOnly)
+		throw ATDiskFSException(kATDiskFSError_ReadOnly);
+
+	if (!IsValidFileName(filename))
+		throw ATDiskFSException(kATDiskFSError_InvalidFileName);
+
 	uint8 dirEnt[23] = {0};
 
 	dirEnt[3] = 23;
+
+	WriteFileName(dirEnt + 6, filename);
 
 	WriteEntry(parentKey, filename, dirEnt, 23, true);
 }
@@ -612,6 +621,18 @@ uintptr ATDiskFSSDX2::WriteEntry(uintptr parentKey, const char *filename, const 
 		throw ATDiskFSException(kATDiskFSError_FileTooLarge);
 
 	uint32 dirSectorMap = GetDirectorySectorMap(parentKey);
+
+	// if this is a subdirectory, copy the entry and fill in the parent directory sector map
+	uint8 subDirData[23];
+	if (isDir) {
+		VDASSERT(len == 23);
+
+		memcpy(subDirData, src, 23);
+		src = subDirData;
+		len = 23;
+
+		VDWriteUnalignedLEU16(subDirData + 1, dirSectorMap);
+	}
 
 	FileHandle fh;
 	OpenFile(fh, dirSectorMap);
@@ -734,6 +755,23 @@ void ATDiskFSSDX2::RenameFile(uintptr key, const char *filename) {
 	SeekFile(dh, dirOffset, false);
 	WriteFile(dh, dirEnt, 23);
 	FlushFile(dh);
+
+	// if this is a subdirectory, we need to also update its entry
+	if (dirEnt[0] & 0x20) {
+		FileHandle sdh;
+
+		const uint32 subDirSectorMap = VDReadUnalignedLEU16(dirEnt + 1);
+
+		OpenFile(sdh, subDirSectorMap);
+
+		uint8 subDirEnt[23];
+		ReadFile(sdh, subDirEnt, 23);
+		SeekFile(sdh, 0, false);
+		memcpy(subDirEnt + 6, dirEnt + 6, 11);
+		WriteFile(sdh, subDirEnt, 23);
+
+		FlushFile(sdh);
+	}
 
 	mbDirty = true;
 }

@@ -97,8 +97,8 @@ bool ATCreateDefaultVariableSymbolStore5200(IATSymbolStore **ppStore);
 bool ATCreateDefaultKernelSymbolStore(IATSymbolStore **ppStore);
 bool ATCreateDefaultHardwareSymbolStore(IATSymbolStore **ppStore);
 bool ATCreateDefault5200HardwareSymbolStore(IATSymbolStore **ppStore);
-bool ATCreateCustomSymbolStore(IATCustomSymbolStore **ppStore);
-bool ATLoadSymbols(const wchar_t *filename, IATSymbolStore **ppStore);
+void ATCreateCustomSymbolStore(IATCustomSymbolStore **ppStore);
+void ATLoadSymbols(const wchar_t *filename, IATSymbolStore **ppStore);
 void ATSaveSymbols(const wchar_t *filename, IATSymbolStore *ppStore);
 
 #endif

@@ -1,6 +1,7 @@
 #ifndef f_AT_UIFILEBROWSER_H
 #define f_AT_UIFILEBROWSER_H
 
+#include <vd2/system/function.h>
 #include "uicontainer.h"
 #include "uilabel.h"
 #include "uibutton.h"
@@ -8,7 +9,7 @@
 #include "uitextedit.h"
 #include "callback.h"
 
-class ATUIFileBrowser : public ATUIContainer {
+class ATUIFileBrowser final : public ATUIContainer {
 public:
 	ATUIFileBrowser();
 	~ATUIFileBrowser();
@@ -27,11 +28,12 @@ public:
 	void Ascend();
 	void Descend(const wchar_t *folder);
 
-	ATCallbackHandler2<void, ATUIFileBrowser *, bool>& OnCompletedEvent() { return mCompletedEvent; }
+	void SetCompletionFn(const vdfunction<void(bool)>& fn) { mpCompletionFn = fn; }
 
 public:
-	virtual void OnCreate();
-	virtual void OnDestroy();
+	void OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
 
 protected:
 	void OnGoUpPressed(ATUIButton *);
@@ -59,7 +61,7 @@ protected:
 	vdrefptr<ATUITextEdit> mpTextEdit;
 	vdrefptr<ATUITextEdit> mpTextEditPath;
 
-	ATCallbackHandler2<void, ATUIFileBrowser *, bool> mCompletedEvent;
+	vdfunction<void(bool)> mpCompletionFn;
 };
 
 #endif

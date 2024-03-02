@@ -19,6 +19,8 @@
 #include <shlobj.h>
 #include <shellapi.h>
 #include <ole2.h>
+#include <windows.h>
+#include <richedit.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/event.h>
@@ -34,6 +36,319 @@
 #include <at/atui/dialog.h>
 #include <at/atui/uiproxies.h>
 #include "diskfs.h"
+#include "uifilefilters.h"
+
+class ATUIFileViewer : public VDDialogFrameW32 {
+public:
+	ATUIFileViewer();
+
+	void SetBuffer(const void *buf, size_t len);
+
+protected:
+	bool OnLoaded();
+	void OnSize();
+	void OnWrapModeChanged(VDUIProxyComboBoxControl *sender, int sel);
+	void ReloadFile();
+
+	const void *mpSrc;
+	size_t mSrcLen;
+	int mViewMode;
+
+	enum ViewMode {
+		kViewMode_None,
+		kViewMode_Window,
+		kViewMode_38Columns,
+		kViewMode_HexDump,
+		kViewMode_Executable,
+		kViewModeCount
+	};
+
+	VDUIProxyComboBoxControl mViewModeCombo;
+	VDDialogResizerW32 mResizer;
+	VDDelegate mDelSelChanged;
+};
+
+ATUIFileViewer::ATUIFileViewer()
+	: VDDialogFrameW32(IDD_FILEVIEW)
+	, mpSrc(nullptr)
+	, mSrcLen(0)
+{
+	mViewModeCombo.OnSelectionChanged() += mDelSelChanged.Bind(this, &ATUIFileViewer::OnWrapModeChanged);
+}
+
+void ATUIFileViewer::SetBuffer(const void *buf, size_t len) {
+	mpSrc = buf;
+	mSrcLen = len;
+}
+
+bool ATUIFileViewer::OnLoaded() {
+	SetCurrentSizeAsMinSize();
+
+	AddProxy(&mViewModeCombo, IDC_VIEWMODE);
+	mViewModeCombo.AddItem(L"Text: no line wrapping");
+	mViewModeCombo.AddItem(L"Text: wrap to window");
+	mViewModeCombo.AddItem(L"Text: wrap to GR.0 screen (38 columns)");
+	mViewModeCombo.AddItem(L"Hex dump");
+	mViewModeCombo.AddItem(L"Executable");
+
+	mViewMode = kViewMode_38Columns;
+	mViewModeCombo.SetSelection(mViewMode);
+
+	mResizer.Init(mhdlg);
+	mResizer.Add(IDC_RICHEDIT, mResizer.kMC);
+
+	HWND hwndHelp = GetDlgItem(mhdlg, IDC_RICHEDIT);
+	if (hwndHelp) {
+		RECT r;
+		SendMessage(hwndHelp, EM_GETRECT, 0, (LPARAM)&r);
+		r.left += 4;
+		r.top += 4;
+		r.right -= 4;
+		r.bottom -= 4;
+		SendMessage(hwndHelp, EM_SETRECT, 0, (LPARAM)&r);
+
+		ReloadFile();
+	}
+
+	return true;
+}
+
+void ATUIFileViewer::OnSize() {
+	mResizer.Relayout();
+}
+
+void ATUIFileViewer::OnWrapModeChanged(VDUIProxyComboBoxControl *sender, int sel) {
+	if (sel >= 0 && sel < kViewModeCount) {
+		if (mViewMode != sel) {
+			mViewMode = sel;
+			ReloadFile();
+		}
+	}
+}
+
+void ATUIFileViewer::ReloadFile() {
+	HWND hwndHelp = GetDlgItem(mhdlg, IDC_RICHEDIT);
+	if (!hwndHelp)
+		return;
+
+	SendMessageW(hwndHelp, WM_SETREDRAW, FALSE, 0);
+
+	DWORD dwStyles = GetWindowLong(hwndHelp, GWL_STYLE);
+	if (mViewMode == kViewMode_None || mViewMode == kViewMode_HexDump) {
+		SetWindowLong(hwndHelp, GWL_STYLE, dwStyles | WS_HSCROLL | ES_AUTOHSCROLL);
+
+		// This is voodoo from the Internet....
+		SendMessage(hwndHelp, EM_SETTARGETDEVICE, 0, 1);
+	} else {
+		SetWindowLong(hwndHelp, GWL_STYLE, dwStyles & ~(WS_HSCROLL | ES_AUTOHSCROLL));
+		SendMessage(hwndHelp, EM_SETTARGETDEVICE, 0, 0);
+	}
+
+	SetWindowPos(hwndHelp, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
+	// use approx GR.0 colors
+	const uint32 background = 0xB34700;
+	const uint32 foreground = 0xFFFBC9;
+	SendMessage(hwndHelp, EM_SETBKGNDCOLOR, FALSE, background);
+
+	VDStringA rtf;
+		
+	rtf.sprintf(R"raw({\rtf\ansi\deff0
+{\fonttbl{\f0\fmodern Lucida Console;}}
+{\colortbl;\red%u\green%u\blue%u;\red%u\green%u\blue%u;}
+\fs16\cf2 )raw"
+	, background & 255
+	, (background >> 8) & 255
+	, (background >> 16) & 255
+	, foreground & 255
+	, (foreground >> 8) & 255
+	, (foreground >> 16) & 255
+	);
+
+	const uint8 *src = (const uint8 *)mpSrc;
+	bool inv = false;
+	int col = 0;
+	int linewidth = INT_MAX;
+
+	if (mViewMode == kViewMode_38Columns)
+		linewidth = 38;
+
+	if (mViewMode == kViewMode_Executable) {
+		uint32_t pos = 0;
+
+		while(pos + 4 <= mSrcLen) {
+			uint32_t start = VDReadUnalignedLEU16(&src[pos]);
+
+			if (start == 0xFFFF) {
+				rtf.append_sprintf("%08X: $FFFF\\line ", pos);
+				pos += 2;
+				continue;
+			}
+
+			uint32_t end = VDReadUnalignedLEU16(&src[pos + 2]);
+			uint32_t len = end + 1 - start;
+
+			if (end < start || mSrcLen - pos < len) {
+				rtf.append_sprintf("%08X: Invalid range %04X-%04X\\line ", pos, start, end);
+
+				// dump the remainder of the file
+				pos += 4;
+				len = mSrcLen - pos;
+			} else if (start == 0x2E0 && end == 0x2E1) {
+				rtf.append_sprintf("%08X: Run $%04X\\line ", pos, VDReadUnalignedLEU16(&src[pos+4]));
+				pos += 6;
+				continue;
+			} else if (start == 0x2E2 && end == 0x2E3) {
+				rtf.append_sprintf("%08X: Init $%04X\\line ", pos, VDReadUnalignedLEU16(&src[pos+4]));
+				pos += 6;
+				continue;
+			} else {
+				rtf.append_sprintf("%08X: Load $%04X-%04X\\line ", pos, start, end);
+				pos += 4;
+			}
+
+			while(len) {
+				uint32_t tc = len > 16 ? 16 : len;
+
+				rtf.append_sprintf("%08X / $%04X:", pos, start);
+
+				for(uint32_t i=0; i<tc; ++i)
+					rtf.append_sprintf(" %02X", src[pos+i]);
+
+				rtf.append("\\line ");
+
+				pos += tc;
+				len -= tc;
+				start += tc;
+			}
+		}
+	} else for(size_t i=0; i<mSrcLen; ++i) {
+		unsigned char c = src[i];
+
+		if (mViewMode == kViewMode_HexDump && !(i & 15)) {
+			if (inv) {
+				inv = false;
+
+				rtf += "}";
+			}
+
+			rtf.append_sprintf("%08X:", i);
+
+			for(size_t j = 0; j < 16; ++j) {
+				if (i + j < mSrcLen)
+					rtf.append_sprintf("%c%02X", j == 8 ? '-' : ' ', src[i+j]);
+				else
+					rtf += "   ";
+			}
+
+			rtf += " | ";
+			col = 0;
+		}
+
+		if (c == 0x9B && mViewMode != kViewMode_HexDump) {
+			rtf += "\\line ";
+			col = 0;
+		} else {
+			bool newinv = (c >= 0x80);
+
+			if (inv != newinv) {
+				if (newinv)
+					rtf += "{\\highlight2\\cf1 ";
+				else
+					rtf += "}";
+
+				inv = newinv;
+			}
+
+			c &= 0x7f;
+
+			if (c == 0x20) {
+				if (inv)
+					rtf += "\\'A0";
+				else
+					rtf += ' ';
+			} else if (c < 0x20) {
+				static const uint16 kLowTable[]={
+					0x2665,	// heart
+					0x251C,	// vertical tee right
+					0x2595,	// vertical bar right
+					0x2518,	// top-left elbow
+					0x2524,	// vertical tee left
+					0x2510,	// bottom-left elbow
+					0x2571,	// forward diagonal
+					0x2572,	// backwards diagonal
+					0x25E2,	// lower right filled triangle
+					0x2597,	// lower right quadrant
+					0x25E3,	// lower left filled triangle
+					0x2580,	// top half
+					0x2594,	// top quarter
+					0x2582,	// bottom quarter
+					0x2596,	// lower left quadrant
+					0x2660,	// club
+					0x250C,	// lower-right elbow
+					0x2500,	// horizontal bar
+					0x253C,	// four-way
+					0x2022,	// filled circle
+					0x2584,	// lower half
+					0x258E,	// left quarter
+					0x252C,	// horizontal tee down
+					0x2534,	// horizontal tee up
+					0x258C,	// left side
+					0x2514,	// top-right elbow
+					0x241B,	// escape
+					0x2191,	// up arrow
+					0x2193,	// down arrow
+					0x2190,	// left arrow
+					0x2192,	// right arrow
+					0x2666,	// diamond
+				};
+
+				rtf.append_sprintf("\\u%u?", kLowTable[c]);
+			} else if (c >= 0x7B) {
+				static const uint16 kHighTable[]={
+					0x2663,	// club
+					'|',	// vertical bar (leave this alone so as to not invite font issues)
+					0x21B0,	// curved arrow up-left
+					0x25C4,	// left wide arrow
+					0x25BA,	// right wide arrow
+				};
+				
+				rtf.append_sprintf("\\u%u?", kHighTable[c - 0x7B]);
+			} else if (c == '{' || c == '}' || c == '\\')
+				rtf.append_sprintf("\\'%02x", c);
+			else
+				rtf += (char)c;
+
+			if (++col >= linewidth) {
+				rtf += "\\line ";
+				col = 0;
+			}
+		}
+
+		if (mViewMode == kViewMode_HexDump) {
+			if (i + 1 == mSrcLen || (i & 15) == 15)
+				rtf += "\\line ";
+		}
+	}
+
+	if (inv)
+		rtf += "}";
+
+	rtf += "}";
+
+	SETTEXTEX stex;
+	stex.flags = ST_DEFAULT;
+	stex.codepage = 1252;
+	SendMessageW(hwndHelp, EM_SETTEXTEX, (WPARAM)&stex, (LPARAM)rtf.c_str());
+
+	SetFocusToControl(IDC_RICHEDIT);
+	SendMessageW(hwndHelp, EM_SETSEL, 0, 0);
+
+	SendMessageW(hwndHelp, WM_SETREDRAW, TRUE, 0);
+	RedrawWindow(hwndHelp, nullptr, nullptr, RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN);
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 struct ATUIDiskExplorerFileEntry {
 public:
@@ -42,6 +357,7 @@ public:
 	uint32 mSectors;
 	uint32 mBytes;
 	bool mbIsDirectory;
+	bool mbIsCreate;
 	bool mbDateValid;
 	VDExpandedDate mDate;
 
@@ -51,6 +367,7 @@ public:
 		mBytes = einfo.mBytes;
 		mFileKey = einfo.mKey;
 		mbIsDirectory = einfo.mbIsDirectory;
+		mbIsCreate = false;
 		mbDateValid = einfo.mbDateValid;
 		mDate = einfo.mDate;
 	}
@@ -365,7 +682,7 @@ namespace {
 			hr = stream->Read(buf.data(), len32, &actual);
 
 			if (SUCCEEDED(hr))
-				mpFS->WriteFile(0, filename, buf.data(), actual);
+				mpFS->WriteFile(mpNotify->GetDropTargetParentKey(), filename, buf.data(), actual);
 		}
 
 		stream.clear();
@@ -559,8 +876,6 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 
 			mCurrentDirKey = 0;
 
-			RefreshList();
-
 			if (mbWriteEnabled) {
 				if (mpFS->IsReadOnly()) {
 					ShowWarning(L"This disk format is only supported in read-only mode.", L"Altirra Warning");
@@ -573,6 +888,9 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 					}
 				}
 			}
+
+			// must be after the above to indicate r/o filesystem
+			RefreshList();
 
 			SetFocusToControl(IDC_DISK_CONTENTS);
 		} catch(const MyError& e) {
@@ -628,12 +946,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 		const VDStringW fn(VDGetLoadFileName(VDMAKEFOURCC('d', 'i', 's', 'k'),
 			(VDGUIHandle)mhdlg,
 			L"Choose disk image to browse",
-			L"All supported images\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.arc\0"
-			L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm\0"
-			L"Protected disk image (*.pro)\0*.pro\0"
-			L"VAPI disk image (*.atx)\0*.atx\0"
-			L"Compressed archive (*.arc)\0*.arc\0"
-			L"All files\0*.*\0",
+			g_ATUIFileFilter_Disk,
 			NULL
 			));
 
@@ -713,6 +1026,54 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 		}
 
 		return true;
+	} else if (id == ID_DISKEXP_NEWFOLDER) {
+		vdrefptr<FileListEntry> fle(new FileListEntry);
+
+		fle->mFileName = L"New folder";
+		fle->mFileKey = 0;
+		fle->mSectors = 0;
+		fle->mBytes = 0;
+		fle->mbIsDirectory = true;
+		fle->mbIsCreate = true;
+		fle->mbDateValid = false;
+
+		int index = mList.InsertVirtualItem(-1, fle);
+		mList.EnsureItemVisible(index);
+		mList.EditItemLabel(index);
+
+	} else if (id == ID_DISKEXP_VIEW) {
+		vdfastvector<int> indices;
+		mList.GetSelectedIndices(indices);
+
+		HMODULE hmod = VDLoadSystemLibraryW32("riched32.dll");
+		if (!indices.empty()) {
+			const int index = indices.front();
+			FileListEntry *fle = static_cast<FileListEntry *>(mList.GetVirtualItem(index));
+
+			if (fle) {
+				if (fle->mbIsDirectory) {
+					OnItemDoubleClick(nullptr, index);
+				} else if (fle->mFileKey) {
+					if (hmod) {
+						vdfastvector<uint8> buf;
+
+						try {
+							mpFS->ReadFile(fle->mFileKey, buf);
+
+							ATUIFileViewer viewer;
+							viewer.SetBuffer(buf.data(), buf.size());
+							viewer.ShowDialog(this);
+						} catch(const MyError& e) {
+							VDStringW str;
+							str.sprintf(L"Cannot view file: %hs", e.gets());
+							ShowError(str.c_str(), L"Altirra Error");
+						}
+
+						FreeLibrary(hmod);
+					}
+				}
+			}
+		}
 	}
 
 	return false;
@@ -1282,6 +1643,13 @@ void ATUIDialogDiskExplorer::OnItemContextMenu(VDUIProxyListView *sender, const 
 	if (!mhMenuItemContext)
 		return;
 
+	const int idx = mList.GetSelectedIndex();
+	const bool writable = !mpFS->IsReadOnly();
+	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_VIEW, idx >= 0);
+	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_RENAME, idx >= 0 && writable);
+	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_DELETE, idx >= 0 && writable);
+	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_NEWFOLDER, writable);
+
 	TrackPopupMenu(GetSubMenu(mhMenuItemContext, 0), TPM_LEFTALIGN | TPM_TOPALIGN, event.mX, event.mY, 0, mhdlg, NULL);
 }
 
@@ -1289,17 +1657,44 @@ void ATUIDialogDiskExplorer::OnItemLabelChanged(VDUIProxyListView *sender, VDUIP
 	int idx = event->mIndex;
 
 	FileListEntry *fle = static_cast<FileListEntry *>(mList.GetVirtualItem(idx));
-	if (!fle || !fle->mFileKey)
+	if (!fle)
+		return;
+
+	// check if we were creating a new directory
+	if (fle->mbIsCreate) {
+		// check if it was cancelled
+		if (!event->mpNewLabel) {
+			mList.DeleteItem(idx);
+		} else {
+			// try creating the dir
+			//
+			// note that we can't modify the list in the callback, as that causes
+			// the list view control to blow up
+			try {
+				mpFS->CreateDir(mCurrentDirKey, VDTextWToA(event->mpNewLabel).c_str());
+
+				PostCall([this]() { OnFSModified(); });
+			} catch(const MyError& e) {
+				event->mbAllowEdit = false;
+
+				VDStringW s;
+				s.sprintf(L"Cannot create directory \"%ls\": %hs", event->mpNewLabel, e.gets());
+				ShowError(s.c_str(), L"Altirra Error");
+
+				PostCall([=,this]() { mList.DeleteItem(idx); });
+			}
+		}
+
+		return;
+	}
+
+	if (!fle->mFileKey)
 		return;
 
 	try {
 		mpFS->RenameFile(fle->mFileKey, VDTextWToA(event->mpNewLabel).c_str());
 
-		ATDiskFSEntryInfo einfo;
-		mpFS->GetFileInfo(fle->mFileKey, einfo);
-		fle->InitFrom(einfo);
-
-		OnFSModified();
+		PostCall([this]() { OnFSModified(); });
 	} catch(const MyError& e) {
 		event->mbAllowEdit = false;
 
@@ -1346,6 +1741,7 @@ void ATUIDialogDiskExplorer::RefreshList() {
 		fle->mFileName = L"..";
 		fle->mFileKey = 0;
 		fle->mbIsDirectory = true;
+		fle->mbIsCreate = false;
 
 		int item = mList.InsertVirtualItem(-1, fle);
 		if (item >= 0)
@@ -1397,7 +1793,12 @@ void ATUIDialogDiskExplorer::RefreshList() {
 	mpFS->GetInfo(fsinfo);
 
 	VDStringW s;
-	s.sprintf(L"Mounted %hs file system%hs. %d blocks free", fsinfo.mFSType.c_str(), mpFS->IsReadOnly() ? " (read-only)" : "", fsinfo.mFreeBlocks);
+	s.sprintf(L"Mounted %hs file system%hs. %d block%s (%uKB) free"
+		, fsinfo.mFSType.c_str(), mpFS->IsReadOnly() ? " (read-only)" : ""
+		, fsinfo.mFreeBlocks
+		, fsinfo.mFreeBlocks != 1 ? "s" : ""
+		, (fsinfo.mFreeBlocks * fsinfo.mBlockSize) >> 10
+		);
 
 	SetControlText(IDC_STATUS, s.c_str());
 }

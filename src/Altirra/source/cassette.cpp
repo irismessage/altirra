@@ -29,6 +29,7 @@
 #include "cpumemory.h"
 #include "console.h"
 #include "debuggerlog.h"
+#include "ksyms.h"
 
 using namespace nsVDWinFormats;
 
@@ -234,12 +235,13 @@ void ATCassetteEmulator::SkipForward(float seconds) {
 	SeekToBitPos(mPosition + bitsToSkip);
 }
 
-uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem) {
+uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMemory *mpMem) {
 	if (!mbPlayEnable)
 		return 0x8A;	// timeout
 
-	mbMotorEnable = false;
-	UpdateMotorState();
+	// We need to turn this on/off through the PIA instead of doing it directly,
+	// or else the two get out of sync. This breaks the SIECOD loader.
+	mpMem->WriteByte(ATKernelSymbols::PACTL, (mpMem->ReadByte(ATKernelSymbols::PACTL) & 0xC7) + 0x38);
 
 	uint32 offset = 0;
 	uint32 sum = 0;
@@ -254,8 +256,7 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemo
 	int framingErrors = 0;
 	uint32 firstFramingError = 0;
 
-	//VDDEBUG("CAS: Beginning accelerated read.\n");
-
+	uint16 bufadr = bufadr0;
 	while(offset <= len) {
 		if (mPosition >= mLength)
 			return 0x8A;	// timeout
@@ -375,13 +376,14 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemo
 	// resync audio position
 	SeekAudio(VDRoundToInt((float)mPosition * (kAudioFrequency / kDataFrequency)));
 
-	g_ATLCCas("Completed read with status %02x to buffer $%04X; control=%02x, position=%.2fs (cycle %u), baud=%.2fs\n", status, bufadr, mpMem->ReadByte(bufadr - len + 2), mPosition / kDataFrequency, mPosition, idealBaudRate);
+	g_ATLCCas("Completed read with status %02x to buffer $%04X; control=%02x, position=%.2fs (cycle %u), baud=%.2fs\n", status, bufadr0, mpMem->ReadByte(bufadr - len + 2), mPosition / kDataFrequency, mPosition, idealBaudRate);
 
 	// check if short inter-record gaps (IRGs) are enabled
 	uint8 daux2 = mpMem->ReadByte(0x030B);
 	if (daux2 < 0) {
-		mbMotorEnable = true;
-		UpdateMotorState();
+		// We need to turn this on/off through the PIA instead of doing it directly,
+		// or else the two get out of sync. This breaks the SIECOD loader.
+		mpMem->WriteByte(ATKernelSymbols::PACTL, (mpMem->ReadByte(ATKernelSymbols::PACTL) & 0xC7) + 0x30);
 	}
 
 	return status;

@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include "gtia.h"
 #include "gtiatables.h"
 #include "gtiarenderer.h"
 
@@ -218,4 +219,47 @@ void ATInitGTIAPriorityTables(uint8 priorityTables[32][256]) {
 			priorityTables[prior][i] = c;
 		}
 	}
+}
+
+void ATComputeLumaRamp(ATLumaRampMode mode, float lumaRamp[16]) {
+	if (mode == kATLumaRampMode_Linear) {
+		for(int i=0; i<16; ++i)
+			lumaRamp[i] = (float)i / 15.0f;
+
+		return;
+	}
+
+	// Empirically determined resistor bank outputs, based on linear least
+	// squares of luma output from 800XL:
+	//
+	//   14161
+	//   7553
+    //   3941
+    //   1808
+	//
+	// Doesn't quite match the 4.7K/9.1K/18K/36K resistor set in the schematic.
+	// There doesn't seem to be noticeable non-linearity in the output as
+	// the CGIA doc would suggest, but the short step between levels 7 and 8
+	// is definitely visible.
+
+	const float kAltRamp[16]={
+		0.0f,
+		0.0658340f,
+		0.1435022f,
+		0.2093362f,
+		0.2750246f,
+		0.3408586f,
+		0.4185267f,
+		0.4843608f,
+		0.5156392f,
+		0.5814733f,
+		0.6591414f,
+		0.7249754f,
+		0.7906638f,
+		0.8564978f,
+		0.9341660f,
+		1.0f
+ 	};
+
+	memcpy(lumaRamp, kAltRamp, sizeof(float)*16);
 }

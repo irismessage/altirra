@@ -23,6 +23,7 @@ casini	= $0002			;cassette initialization vector
 ramlo	= $0004			;
 tramsz	= $0006			;temporary ram size / cart A flag
 tstdat	= $0007			;RAM test data register / cart B flag
+						;(also CMCMD for T:)
 warmst	= $0008			;warmstart flag
 boot?	= $0009			;boot flag; 0 if none, 1 for disk, 2 for cassette
 dosvec	= $000a

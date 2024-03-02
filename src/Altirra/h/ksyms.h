@@ -314,6 +314,7 @@ namespace ATKernelSymbols {
 	// kernel symbols
 	enum {
 		EDITRV = 0xE400,
+		PRINTV = 0xE430,
 		CASETV = 0xE440,
 		DISKIV = 0xE450,
 		DSKINV = 0xE453,

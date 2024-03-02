@@ -21,6 +21,7 @@
 #include <richedit.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
+#include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
 #include <at/atui/dialog.h>
 #include <at/atui/uiproxies.h>
@@ -493,7 +494,7 @@ ATUIDialogOptionsPageFileAssoc::ATUIDialogOptionsPageFileAssoc(ATOptions& opts)
 }
 
 bool ATUIDialogOptionsPageFileAssoc::OnLoaded() {
-	if (LOBYTE(LOWORD(GetVersion())) >= 6) {
+	if (VDIsAtLeastVistaW32()) {
 		HWND hwndItem = GetDlgItem(mhdlg, IDC_SETFILEASSOC);
 
 		if (hwndItem)
@@ -609,6 +610,32 @@ bool ATUIDialogOptionsPageFlash::OnCommand(uint32 id, uint32 extcode) {
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUIDialogOptionsPageUI : public ATUIDialogOptionsPage {
+public:
+	ATUIDialogOptionsPageUI(ATOptions& opts);
+
+protected:
+	bool OnLoaded();
+	void OnDataExchange(bool write);
+};
+
+ATUIDialogOptionsPageUI::ATUIDialogOptionsPageUI(ATOptions& opts)
+	: ATUIDialogOptionsPage(IDD_OPTIONS_UI, opts)
+{
+}
+
+bool ATUIDialogOptionsPageUI::OnLoaded() {
+	AddHelpEntry(IDC_SCALE, L"Scale factor", L"Scale factor in percent for on-screen UI in the display window.");
+
+	return ATUIDialogOptionsPage::OnLoaded();
+}
+
+void ATUIDialogOptionsPageUI::OnDataExchange(bool write) {
+	ExchangeControlValueSint32(write, IDC_SCALE, mOptions.mThemeScale, 10, 1000);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATUIDialogOptions : public VDDialogFrameW32 {
 public:
 	ATUIDialogOptions(ATOptions& opts);
@@ -630,7 +657,7 @@ protected:
 	uint32 mLastHelpId;
 	HWND mhwndHelp;
 
-	ATUIDialogOptionsPage *mpPages[5];
+	ATUIDialogOptionsPage *mpPages[6];
 
 	ATOptions& mOptions;
 };
@@ -659,6 +686,7 @@ bool ATUIDialogOptions::OnLoaded() {
 	mpPages[2] = new ATUIDialogOptionsPageErrors(mOptions);
 	mpPages[3] = new ATUIDialogOptionsPageFileAssoc(mOptions);
 	mpPages[4] = new ATUIDialogOptionsPageFlash(mOptions);
+	mpPages[5] = new ATUIDialogOptionsPageUI(mOptions);
 	mSelectedPage = -1;
 
 	LBAddString(IDC_PAGE_LIST, L"Startup");
@@ -666,6 +694,7 @@ bool ATUIDialogOptions::OnLoaded() {
 	LBAddString(IDC_PAGE_LIST, L"Error Handling");
 	LBAddString(IDC_PAGE_LIST, L"File Types");
 	LBAddString(IDC_PAGE_LIST, L"Flash Emulation");
+	LBAddString(IDC_PAGE_LIST, L"UI");
 
 	SelectPage(0);
 	LBSetSelectedIndex(IDC_PAGE_LIST, 0);

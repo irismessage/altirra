@@ -28,11 +28,13 @@ struct ATDiskFSEntryInfo {
 struct ATDiskFSValidationReport {
 	bool mbBitmapIncorrect;
 	bool mbBrokenFiles;
+	bool mbOpenWriteFiles;
 };
 
 enum ATDiskFSError {
 	kATDiskFSError_InvalidFileName,
 	kATDiskFSError_DiskFull,
+	kATDiskFSError_DiskFullFragmented,
 	kATDiskFSError_DirectoryFull,
 	kATDiskFSError_CorruptedFileSystem,
 	kATDiskFSError_FileExists,
@@ -44,7 +46,8 @@ enum ATDiskFSError {
 	kATDiskFSError_DirectoryNotEmpty,
 	kATDiskFSError_UnsupportedCompressionMode,
 	kATDiskFSError_DecompressionError,
-	kATDiskFSError_CRCError
+	kATDiskFSError_CRCError,
+	kATDiskFSError_NotSupported
 };
 
 class ATDiskFSException : public MyError {
@@ -83,9 +86,13 @@ public:
 	virtual uintptr WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len) = 0;
 	virtual void RenameFile(uintptr key, const char *newFileName) = 0;
 	virtual void SetFileTimestamp(uintptr key, const VDExpandedDate& date) = 0;
+
+	virtual void CreateDir(uintptr parentKey, const char *filename) = 0;
 };
 
 IATDiskFS *ATDiskFormatImageDOS2(IATDiskImage *image);
+IATDiskFS *ATDiskFormatImageDOS3(IATDiskImage *image);
+IATDiskFS *ATDiskFormatImageMyDOS(IATDiskImage *image);
 IATDiskFS *ATDiskFormatImageSDX2(IATDiskImage *image, const char *volNameHint = 0);
 
 IATDiskFS *ATDiskMountImage(IATDiskImage *image, bool readOnly);

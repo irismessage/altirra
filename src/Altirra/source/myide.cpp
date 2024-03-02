@@ -17,11 +17,14 @@
 
 #include <stdafx.h>
 #include <vd2/system/file.h>
+#include <vd2/system/hash.h>
+#include <vd2/system/int128.h>
 #include "myide.h"
 #include "memorymanager.h"
 #include "ide.h"
 #include "uirender.h"
 #include "simulator.h"
+#include "firmwaremanager.h"
 
 ATMyIDEEmulator::ATMyIDEEmulator()
 	: mpMemMan(NULL)
@@ -47,12 +50,12 @@ bool ATMyIDEEmulator::IsLeftCartEnabled() const {
 	return mCartBank >= 0;
 }
 
-void ATMyIDEEmulator::Init(ATMemoryManager *memman, IATUIRenderer *uir, ATScheduler *sch, ATIDEEmulator *ide, ATSimulator *sim, bool used5xx, bool v2) {
+void ATMyIDEEmulator::Init(ATMemoryManager *memman, IATUIRenderer *uir, ATScheduler *sch, ATSimulator *sim, bool used5xx, bool v2) {
 	mpMemMan = memman;
-	mpIDE = ide;
 	mpUIRenderer = uir;
 	mbVersion2 = v2;
 	mpSim = sim;
+	mbUseD5xx = used5xx;
 
 	mFlash.SetDirty(false);
 
@@ -88,7 +91,7 @@ void ATMyIDEEmulator::Init(ATMemoryManager *memman, IATUIRenderer *uir, ATSchedu
 		UpdateCartBank();
 		UpdateCartBank2();
 	} else {
-		handlerTable.mpThis = mpIDE;
+		handlerTable.mpThis = this;
 		handlerTable.mpDebugReadHandler = OnDebugReadByte_CCTL;
 		handlerTable.mpReadHandler = OnReadByte_CCTL;
 		handlerTable.mpWriteHandler = OnWriteByte_CCTL;
@@ -138,26 +141,38 @@ void ATMyIDEEmulator::Shutdown() {
 	mpSim = NULL;
 }
 
-void ATMyIDEEmulator::LoadFirmware(const void *ptr, uint32 len) {
+void ATMyIDEEmulator::SetIDEImage(ATIDEEmulator *ide) {
+	mpIDE = ide;
+
+	UpdateIDEReset();
+}
+
+bool ATMyIDEEmulator::LoadFirmware(const void *ptr, uint32 len) {
+	vduint128 oldHash = VDHash128(mFirmware, sizeof mFirmware);
+
 	if (len > sizeof mFirmware)
 		len = sizeof mFirmware;
 
 	memset(mFirmware, 0xFF, sizeof mFirmware);
 	memcpy(mFirmware, ptr, len);
 	mFlash.SetDirty(false);
+
+	return oldHash != VDHash128(mFirmware, sizeof mFirmware);
 }
 
-void ATMyIDEEmulator::LoadFirmware(const wchar_t *path) {
+bool ATMyIDEEmulator::LoadFirmware(ATFirmwareManager& fwmgr, uint64 id) {
 	void *flash = mFirmware;
 	uint32 flashSize = sizeof mFirmware;
+
+	vduint128 oldHash = VDHash128(flash, flashSize);
 
 	mFlash.SetDirty(false);
 
 	memset(flash, 0xFF, flashSize);
 
-	VDFile f;
-	f.open(path);
-	f.readData(flash, flashSize);
+	fwmgr.LoadFirmware(id, flash, 0, flashSize);
+
+	return oldHash != VDHash128(flash, flashSize);
 }
 
 void ATMyIDEEmulator::SaveFirmware(const wchar_t *path) {
@@ -200,16 +215,30 @@ void ATMyIDEEmulator::ColdReset() {
 	UpdateIDEReset();
 }
 
-sint32 ATMyIDEEmulator::OnDebugReadByte_CCTL(void *thisptr, uint32 addr) {
-	return (uint8)((ATIDEEmulator *)thisptr)->DebugReadByte((uint8)addr);
+sint32 ATMyIDEEmulator::OnDebugReadByte_CCTL(void *thisptr0, uint32 addr) {
+	ATMyIDEEmulator *thisptr = (ATMyIDEEmulator *)thisptr0;
+
+	if (!thisptr->mpIDE)
+		return 0xFF;
+
+	return (uint8)thisptr->mpIDE->DebugReadByte((uint8)addr);
 }
 
-sint32 ATMyIDEEmulator::OnReadByte_CCTL(void *thisptr, uint32 addr) {
-	return (uint8)((ATIDEEmulator *)thisptr)->ReadByte((uint8)addr);
+sint32 ATMyIDEEmulator::OnReadByte_CCTL(void *thisptr0, uint32 addr) {
+	ATMyIDEEmulator *thisptr = (ATMyIDEEmulator *)thisptr0;
+
+	if (!thisptr->mpIDE)
+		return 0xFF;
+
+	return (uint8)thisptr->mpIDE->ReadByte((uint8)addr);
 }
 
-bool ATMyIDEEmulator::OnWriteByte_CCTL(void *thisptr, uint32 addr, uint8 value) {
-	((ATIDEEmulator *)thisptr)->WriteByte((uint8)addr, value);
+bool ATMyIDEEmulator::OnWriteByte_CCTL(void *thisptr0, uint32 addr, uint8 value) {
+	ATMyIDEEmulator *thisptr = (ATMyIDEEmulator *)thisptr0;
+
+	if (thisptr->mpIDE)
+		thisptr->mpIDE->WriteByte((uint8)addr, value);
+
 	return true;
 }
 
@@ -217,7 +246,7 @@ sint32 ATMyIDEEmulator::OnDebugReadByte_CCTL_V2(void *thisptr0, uint32 addr) {
 	if (addr < 0xD508) {
 		ATMyIDEEmulator *thisptr = (ATMyIDEEmulator *)thisptr0;
 
-		if (!thisptr->mbCFPower)
+		if (!thisptr->mbCFPower || !thisptr->mpIDE)
 			return 0xFF;
 
 		if (thisptr->mbCFAltReg)
@@ -238,7 +267,10 @@ sint32 ATMyIDEEmulator::OnReadByte_CCTL_V2(void *thisptr0, uint32 addr) {
 			// bit 6 = CF /RESET
 			// bit 5 = CF powered
 
-			uint8 status = 0x9F;
+			uint8 status = 0x1F;
+
+			if (thisptr->mpIDE)
+				status |= 0x80;
 
 			if (!thisptr->mbCFReset)
 				status |= 0x40;
@@ -249,7 +281,7 @@ sint32 ATMyIDEEmulator::OnReadByte_CCTL_V2(void *thisptr0, uint32 addr) {
 			return status;
 		}
 
-		if (!thisptr->mbCFPower)
+		if (!thisptr->mbCFPower || !thisptr->mpIDE)
 			return 0xFF;
 
 		if (thisptr->mbCFAltReg)
@@ -307,7 +339,7 @@ bool ATMyIDEEmulator::OnWriteByte_CCTL_V2(void *thisptr0, uint32 addr, uint8 val
 		case 0xD505:
 		case 0xD506:
 		case 0xD507:
-			if (thisptr->mbCFPower) {
+			if (thisptr->mbCFPower && thisptr->mpIDE) {
 				if (thisptr->mbCFAltReg)
 					thisptr->mpIDE->WriteByteAlt((uint8)addr, value);
 				else
@@ -475,7 +507,8 @@ bool ATMyIDEEmulator::WriteByte_Cart_V2(void *thisptr0, uint32 address, uint8 va
 }
 
 void ATMyIDEEmulator::UpdateIDEReset() {
-	mpIDE->SetReset(!mbCFPower || mbCFReset);
+	if (mpIDE)
+		mpIDE->SetReset(!mbCFPower || mbCFReset);
 }
 
 void ATMyIDEEmulator::SetCartBank(int bank) {

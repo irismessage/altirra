@@ -1,12 +1,13 @@
 #ifndef f_AT_UISLIDER_H
 #define f_AT_UISLIDER_H
 
+#include <vd2/system/function.h>
 #include "uicontainer.h"
 #include "callback.h"
 
 class ATUIButton;
 
-class ATUISlider : public ATUIContainer {
+class ATUISlider final : public ATUIContainer {
 public:
 	enum {
 		kActionPagePrior = kActionCustom,
@@ -18,15 +19,14 @@ public:
 	ATUISlider();
 	~ATUISlider();
 
+	void SetFrameEnabled(bool enabled);
 	void SetVertical(bool vert);
 	void SetPos(sint32 pos);
 	void SetPageSize(sint32 pageSize);
 	void SetLineSize(sint32 lineSize) { mLineSize = lineSize; }
 	void SetRange(sint32 minVal, sint32 maxVal);
 
-	void AutoSize();
-
-	ATCallbackHandler2<void, ATUISlider *, sint32>& OnValueChangedEvent() { return mValueChangedEvent; }
+	void SetOnValueChanged(const vdfunction<void(sint32)>& fn) { mpValueChangedFn = fn; }
 
 public:
 	virtual void OnCreate();
@@ -62,6 +62,7 @@ protected:
 	sint32 mTrackMin;
 	sint32 mTrackSize;
 
+	bool mbFrameEnabled;
 	bool mbVertical;
 	bool mbDragging;
 	sint32 mDragOffset;
@@ -69,7 +70,7 @@ protected:
 	ATUIButton *mpButtonLower;
 	ATUIButton *mpButtonRaise;
 
-	ATCallbackHandler2<void, ATUISlider *, sint32> mValueChangedEvent;
+	vdfunction<void(sint32)> mpValueChangedFn;
 };
 
 #endif

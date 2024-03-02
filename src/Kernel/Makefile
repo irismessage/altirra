@@ -61,7 +61,12 @@ SOFTKICK_SRCFILES = source\softkick.s
 
 VERSION_SRCFILES = autobuild\version*.inc autobuild_default\version.inc
 
-all: kernel kernelxl kernelxlsoftkick nokernel basic superkernel nocartridge atdiskloader64 atdiskloader128 nohdbios nogame ultimate bootsecdos2 r850
+all: kernel kernelxl kernelxlsoftkick \
+	nokernel basic superkernel nocartridge \
+	atdiskloader64 atdiskloader128 \
+	nohdbios nomio noblackbox \
+	nogame ultimate bootsecdos2 \
+	r850 fw1030 additions
 
 clean:
 	if exist "$(OUT)\kernel.rom" del "$(OUT)\kernel.rom"
@@ -81,6 +86,11 @@ clean:
 	if exist "$(OUT)\850handler.bin" del "$(OUT)\850handler.bin"
 	if exist "$(INT)\850handler-lo.obx" del "$(INT)\850handler-lo.obx"
 	if exist "$(INT)\850handler-hi.obx" del "$(INT)\850handler-hi.obx"
+	if exist "$(OUT)\1030handler.bin" del "$(OUT)\1030handler.bin"
+	if exist "$(OUT)\1030firmware.bin" del "$(OUT)\1030firmware.bin"
+	if exist "$(INT)\boot850.xex" del "$(INT)\boot850.xex"
+	if exist "$(INT)\rhnd850.xex" del "$(INT)\rhnd850.xex"
+	if exist "$(INT)\boot1030.xex" del "$(INT)\boot1030.xex"
 
 kernel: $(OUT)\kernel.rom
 
@@ -102,6 +112,10 @@ atdiskloader128: $(OUT)\atdiskloader128.bin
 
 nohdbios: $(OUT)\nohdbios.rom
 
+nomio: $(OUT)\nomio.lzrom
+
+noblackbox: $(OUT)\noblackbox.lzrom
+
 nogame: $(OUT)\nogame.rom
 
 ultimate: $(OUT)\ultimate.lzrom
@@ -109,6 +123,13 @@ ultimate: $(OUT)\ultimate.lzrom
 bootsecdos2: $(OUT)\bootsecdos2.bin
 
 r850: $(OUT)\850relocator.bin $(OUT)\850handler.bin
+
+fw1030: $(OUT)\1030firmware.bin
+
+additions: $(OUT)\Additions.atr
+
+$(OUT)\Additions.atr: $(INT)\dos.sys source\Additions\filelist.txt $(INT)\boot850.xex $(INT)\rhnd850.xex $(INT)\xep80.sys $(INT)\boot1030.xex $(INT)\thnd1030.xex $(INT)\autorun.sys $(INT)\atbasicx.xex $(INT)\sx212.xex
+	@$(ATCOMPILER) mkfsdos2 source\Additions\filelist.txt $(INT)\ $(OUT)\Additions.atr
 
 $(OUT)\kernel.rom: $(SRCFILES) $(SHARED_SRCFILES)
 	@for %%x in (source\main.xasm) do $(MADS) -i:autobuild -i:autobuild_default -d:_KERNEL_XLXE=0 -s -p -i:source\Shared -b:$$d800 -l:$(OUT)\kernel.lst -t:$(OUT)\kernel.lab -o:$(OUT)\kernel.rom %~fx
@@ -143,6 +164,20 @@ $(OUT)\atdiskloader64.bin: $(ATDISKLOADER_SRCFILES)
 $(OUT)\nohdbios.rom: $(NOHDBIOS_SRCFILES)
 	@$(MADS) -s -p -b:$$d800 -l:$(OUT)\nohdbios.lst -o:$(OUT)\nohdbios.rom source\NoHDBIOS\main.s
 
+$(INT)\nomio.rom: source\Placeholders\nomio.s $(SHARED_SRCFILES)
+	@$(MADS) -s -p -i:source\Shared -l:$(OUT)\nomio.lst -o:$(INT)\nomio.rom source\Placeholders\nomio.s
+
+$(OUT)\nomio.lzrom: $(INT)\nomio.rom $(ATCOMPILER)
+	copy /b "$(INT)\nomio.rom"+"$(INT)\nomio.rom"+"$(INT)\nomio.rom"+"$(INT)\nomio.rom" "$(INT)\nomio2.rom"
+	@$(ATCOMPILER) lzpack "$(INT)\nomio2.rom" "$(OUT)\nomio.lzrom"
+
+$(INT)\noblackbox.rom: source\Placeholders\noblackbox.s $(SHARED_SRCFILES)
+	@$(MADS) -s -p -i:source\Shared -l:$(OUT)\noblackbox.lst -o:$(INT)\noblackbox.rom source\Placeholders\noblackbox.s
+
+$(OUT)\noblackbox.lzrom: $(INT)\noblackbox.rom $(ATCOMPILER)
+	copy /b "$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom" "$(INT)\noblackbox2.rom"
+	@$(ATCOMPILER) lzpack "$(INT)\noblackbox2.rom" "$(OUT)\noblackbox.lzrom"
+
 $(OUT)\nogame.rom: $(NOGAME_SRCFILES)
 	@$(MADS) -s -p -b:$$a000 -l:$(OUT)\nogame.lst -o:$(OUT)\nogame.rom source\nogame\main.s
 
@@ -172,3 +207,75 @@ $(INT)\850handler-relocs.inc $(OUT)\850handler.bin: $(INT)\850handler-2800.obx $
 
 $(OUT)\850relocator.bin: $(SHARED_INCFILES) source\850\relocator.s $(INT)\850handler-2800.obx $(INT)\850handler-2801.obx $(INT)\850handler-a800.obx $(INT)\850handler-relocs.inc
 	@$(MADS) -s -p -i:source\Shared -i:$(INT) -l:$(OUT)\850relocator.lst -o:$(OUT)\850relocator.bin source\850\relocator.s
+
+$(INT)\sx212handler-2800.obx: $(SHARED_INCFILES) source\Additions\sx212handler.s
+	@$(MADS) -D:BASEADDR=10240 -D:HIBUILD=0 -s -p -i:source\Shared -o:$(INT)\sx212handler-2800.obx -l:$(OUT)\sx212handler.lst source\Additions\sx212handler.s
+	
+$(INT)\sx212handler-2801.obx: $(SHARED_INCFILES) source\Additions\sx212handler.s
+	@$(MADS) -D:BASEADDR=10241 -D:HIBUILD=0 -s -p -i:source\Shared -o:$(INT)\sx212handler-2801.obx source\Additions\sx212handler.s
+
+$(INT)\sx212handler-a800.obx: $(SHARED_INCFILES) source\Additions\sx212handler.s
+	@$(MADS) -D:BASEADDR=43008 -D:HIBUILD=0 -s -p -i:source\Shared -o:$(INT)\sx212handler-a800.obx source\Additions\sx212handler.s
+
+$(INT)\sx212handler-2800hi.obx: $(SHARED_INCFILES) source\Additions\sx212handler.s
+	@$(MADS) -D:BASEADDR=10240 -D:HIBUILD=1 -s -p -i:source\Shared -o:$(INT)\sx212handler-2800hi.obx source\Additions\sx212handler.s
+
+$(INT)\sx212handler-relocs.inc $(INT)\sx212handler.bin: $(INT)\sx212handler-2800.obx $(INT)\sx212handler-2801.obx $(INT)\sx212handler-a800.obx $(INT)\sx212handler-2800hi.obx $(ATCOMPILER)
+	@$(ATCOMPILER) makereloc $(INT)\sx212handler-2800.obx $(INT)\sx212handler-2801.obx $(INT)\sx212handler-a800.obx $(INT)\sx212handler-2800hi.obx $(INT)\sx212handler.bin $(INT)\sx212handler-relocs.inc
+
+$(INT)\sx212.xex: $(SHARED_INCFILES) source\Additions\sx212.s $(INT)\sx212handler.bin
+	$(MADS) -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\sx212.lst -t:$(INT)\sx212.lab -o:$(INT)\sx212.xex source\Additions\sx212.s
+
+$(INT)\1030handler.bin: $(SHARED_INCFILES) source\1030\handler.s
+	@$(MADS) -s -p -D:BASEADDR=7424 -i:source\Shared -i:$(INT) -l:$(INT)\1030handler.lst -t:$(INT)\1030handler.lab -o:$(INT)\1030handler.bin source\1030\handler.s
+
+$(INT)\1030handler-hi.bin: $(SHARED_INCFILES) source\1030\handler.s
+	@$(MADS) -s -p -D:BASEADDR=7680 -i:source\Shared -i:$(INT) -o:$(INT)\1030handler-hi.bin source\1030\handler.s
+
+$(OUT)\1030firmware.bin: $(SHARED_INCFILES) source\1030\firmware.s $(INT)\1030handler.bin
+	@$(MADS) -s -p -i:source\Shared -i:$(INT) -l:$(OUT)\1030firmware.lst -t:$(OUT)\1030firmware.lab -o:$(OUT)\1030firmware.bin source\1030\firmware.s
+
+$(INT)\boot850.xex: $(SHARED_INCFILES) source\Additions\boot850.s
+	$(MADS) -s -p -i:source\Shared -l:$(INT)\boot850.lst -t:$(INT)\boot850.lab -o:$(INT)\boot850.xex source\Additions\boot850.s
+
+$(INT)\rhnd850.xex: $(SHARED_INCFILES) source\Additions\rhnd850.s $(OUT)\850relocator.bin $(OUT)\850handler.bin
+	$(MADS) -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\rhnd850.lst -t:$(INT)\rhnd850.lab -o:$(INT)\rhnd850.xex source\Additions\rhnd850.s
+
+$(INT)\xep80handler-2800.obx: $(SHARED_INCFILES) source\Additions\xep80handler.s
+	$(MADS) -D:BASEADDR=10240 -D:HIBUILD=0 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\xep80handler.lst -t:$(INT)\xep80handler.lab -o:$(INT)\xep80handler-2800.obx source\Additions\xep80handler.s
+
+$(INT)\xep80handler-2801.obx: $(SHARED_INCFILES) source\Additions\xep80handler.s
+	$(MADS) -D:BASEADDR=10241 -D:HIBUILD=0 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handler-2801.obx source\Additions\xep80handler.s
+
+$(INT)\xep80handler-a800.obx: $(SHARED_INCFILES) source\Additions\xep80handler.s
+	$(MADS) -D:BASEADDR=43008 -D:HIBUILD=0 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handler-a800.obx source\Additions\xep80handler.s
+
+$(INT)\xep80handler-2800hi.obx: $(SHARED_INCFILES) source\Additions\xep80handler.s
+	$(MADS) -D:BASEADDR=10240 -D:HIBUILD=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handler-2800hi.obx source\Additions\xep80handler.s
+	
+$(INT)\xep80handler2.bin: $(INT)\xep80handler-2800.obx $(INT)\xep80handler-2801.obx $(INT)\xep80handler-a800.obx $(INT)\xep80handler-2800hi.obx
+	$(ATCOMPILER) makereloc $(INT)\xep80handler-2800.obx $(INT)\xep80handler-2801.obx $(INT)\xep80handler-a800.obx $(INT)\xep80handler-2800hi.obx $(INT)\xep80handler2.bin $(INT)\xep80handler-relocs.inc
+	
+$(INT)\xep80.sys: $(SHARED_INCFILES) source\Additions\xep80.s $(INT)\xep80handler2.bin $(INT)\xep80handler-relocs.inc
+	$(MADS) -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\xep80.lst -t:$(INT)\xep80.lab -o:$(INT)\xep80.sys source\Additions\xep80.s
+
+$(INT)\dos.sys: $(SHARED_INCFILES) source\Additions\dos.s source\Additions\cp.s
+	$(MADS) -c -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\dos.lst -t:$(INT)\dos.lab -o:$(INT)\dos.sys source\Additions\dos.s
+
+$(INT)\dosexports.inc: $(INT)\dos.lab $(ATCOMPILER)
+	$(ATCOMPILER) makeexports $(INT)\dos.lab $(INT)\dosexports.inc export_
+
+$(INT)\autorun.sys: $(SHARED_INCFILES) source\Additions\autorun.s
+	$(MADS) -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\autorun.lst -t:$(INT)\autorun.lab -o:$(INT)\autorun.sys source\Additions\autorun.s
+
+$(INT)\boot1030.xex: $(SHARED_INCFILES) source\Additions\boot1030.s
+	$(MADS) -s -p -i:source\Shared -l:$(INT)\autorun.lst -t:$(INT)\boot1030.lab -o:$(INT)\boot1030.xex source\Additions\boot1030.s
+
+$(INT)\1030handler-reloc.bin $(INT)\1030handler-reloc.inc: $(INT)\1030handler.bin $(INT)\1030handler-hi.bin
+	@$(ATCOMPILER) makereloc3 $(INT)\1030handler.bin $(INT)\1030handler-hi.bin $(INT)\1030handler-reloc.inc $(INT)\1030handler-reloc.bin 0x1D
+
+$(INT)\thnd1030.xex: $(SHARED_INCFILES) source\Additions\thnd1030.s $(INT)\1030handler-reloc.bin $(INT)\1030handler-reloc.inc
+	$(MADS) -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\thnd1030.lst -t:$(INT)\thnd1030.lab -o:$(INT)\thnd1030.xex source\Additions\thnd1030.s
+
+$(INT)\atbasicx.xex: $(OUT)\atbasicx.xex
+	copy $(OUT)\atbasicx.xex $(INT)\atbasicx.xex /y

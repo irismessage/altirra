@@ -93,6 +93,7 @@ enum ATCartridgeMode {
 	kATCartridgeMode_MaxFlash_1024K_Bank0,
 	kATCartridgeMode_MegaCart_1M_2,			// Hardware by Bernd for ABBUC JHV 2009
 	kATCartridgeMode_5200_64K_32KBanks,		// Used by M.U.L.E. 64K conversion
+	kATCartridgeMode_5200_512K_32KBanks,
 	kATCartridgeMode_MicroCalc,
 	kATCartridgeMode_2K,
 	kATCartridgeMode_4K,
@@ -143,6 +144,10 @@ public:
 
 	void SetFastBus(bool fastBus);
 
+	// Enables or disables gates on the RD4 and RD5 signals of the cartridge. RD4
+	// controls the $8000-9FFF window, while RD5 controls $A000-BFFF.
+	void SetRD45Enables(bool rd4, bool rd5);
+
 	int GetCartBank() const { return mCartBank; }
 	bool IsABxxMapped() const;
 	bool IsBASICDisableAllowed() const;		// Cleared if we have a cart type that doesn't want OPTION pressed (AtariMax).
@@ -171,6 +176,14 @@ public:
 	void SaveStatePrivate(ATSaveStateWriter& writer);
 
 protected:
+	struct LayerEnables {
+		bool mbRead;
+		bool mbWrite;
+		bool mbRD5Masked;
+
+		void Init(uint8 pageBase, uint8 pageSize);
+	};
+
 	template<class T> void ExchangeState(T& io);
 
 	static sint32 ReadByte_BB5200_1(void *thisptr0, uint32 address);
@@ -267,6 +280,9 @@ protected:
 	static sint32 ReadByte_CCTL_5200_64K_32KBanks(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_5200_64K_32KBanks(void *thisptr0, uint32 address, uint8 value);
 
+	static sint32 ReadByte_CCTL_5200_512K_32KBanks(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_5200_512K_32KBanks(void *thisptr0, uint32 address, uint8 value);
+
 	static sint32 ReadByte_CCTL_MicroCalc(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_MicroCalc(void *thisptr0, uint32 address, uint8 value);
 
@@ -280,6 +296,7 @@ protected:
 	void UpdateCartBank();
 	void UpdateCartBank2();
 	void UpdateLayerBuses();
+	void UpdateLayerMasks();
 	void UpdateTheCartBanking();
 	void UpdateTheCart();
 
@@ -291,11 +308,21 @@ protected:
 	int	mInitialCartBank2;
 	int mBasePriority;
 	bool mbDirty;
+	bool mbRD4Gate;
+	bool mbRD5Gate;
 	bool mbFastBus;
 	IATUIRenderer *mpUIRenderer;
 	IATCartridgeCallbacks *mpCB;
 	ATMemoryManager *mpMemMan;
 	ATScheduler *mpScheduler;
+
+	LayerEnables mLayerEnablesFixedBank1;
+	LayerEnables mLayerEnablesFixedBank2;
+	LayerEnables mLayerEnablesVarBank1;
+	LayerEnables mLayerEnablesVarBank2;
+	LayerEnables mLayerEnablesSpec1;
+	LayerEnables mLayerEnablesSpec2;
+
 	ATMemoryLayer *mpMemLayerFixedBank1;
 	ATMemoryLayer *mpMemLayerFixedBank2;
 	ATMemoryLayer *mpMemLayerVarBank1;

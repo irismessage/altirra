@@ -1,5 +1,24 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2014 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License
+//	along with this program; if not, write to the Free Software
+//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
 #include "stdafx.h"
 #include <vd2/system/math.h>
+#include <at/atcore/device.h>
+#include <at/atcore/devicevideo.h>
 #include "console.h"
 #include "inputmanager.h"
 #include "pokey.h"
@@ -11,6 +30,7 @@
 #include "uirender.h"
 #include "uivideodisplaywindow.h"
 #include "uionscreenkeyboard.h"
+#include "uisettingswindow.h"
 #include "uitypes.h"
 #include "uilabel.h"
 #include "uianchor.h"
@@ -32,6 +52,13 @@ extern ATDisplayFilterMode g_dispFilterMode;
 extern int g_dispFilterSharpness;
 
 void ProcessKey(char c, bool repeat, bool allowQueue, bool useCooldown);
+void ATCreateUISettingsScreenMain(IATUISettingsScreen **screen);
+
+bool g_xepViewAvailable;
+
+bool ATUIGetXEPViewEnabled() {
+	return g_xepViewEnabled;
+}
 
 void ATUISetXEPViewEnabled(bool enabled) {
 	if (g_xepViewEnabled == enabled)
@@ -39,7 +66,7 @@ void ATUISetXEPViewEnabled(bool enabled) {
 
 	g_xepViewEnabled = enabled;
 
-	if (g_sim.GetXEP80()) {
+	if (g_xepViewAvailable) {
 		IATUIRenderer *uir = g_sim.GetUIRenderer();
 
 		if (uir) {
@@ -58,20 +85,24 @@ ATUIVideoDisplayWindow::ATUIVideoDisplayWindow()
 	, mbDragActive(false)
 	, mDragAnchorX(0)
 	, mDragAnchorY(0)
+	, mbMouseHidden(false)
+	, mMouseHideX(0)
+	, mMouseHideY(0)
+	, mbOpenSidePanelDeferred(false)
 	, mbCoordIndicatorActive(false)
 	, mbCoordIndicatorEnabled(false)
 	, mHoverTipArea(0, 0, 0, 0)
 	, mbHoverTipActive(false)
 	, mpEnhTextEngine(NULL)
 	, mpOSK(NULL)
+	, mpSidePanel(NULL)
 	, mpSEM(NULL)
+	, mpDevMgr(nullptr)
 	, mpXEP(NULL)
 	, mXEPChangeCount(0)
 	, mXEPLayoutChangeCount(0)
 	, mXEPDataReceivedCount(0)
 	, mpUILabelBadSignal(NULL)
-	, mAllowContextMenuEvent()
-	, mDisplayContextMenuEvent()
 {
 	mbFastClip = true;
 	SetAlphaFillColor(0);
@@ -82,14 +113,23 @@ ATUIVideoDisplayWindow::~ATUIVideoDisplayWindow() {
 	Shutdown();
 }
 
-bool ATUIVideoDisplayWindow::Init(ATSimulatorEventManager& sem) {
+bool ATUIVideoDisplayWindow::Init(ATSimulatorEventManager& sem, ATDeviceManager& devMgr) {
 	mpSEM = &sem;
 	mpSEM->AddCallback(this);
+
+	mpDevMgr = &devMgr;
+	mpDevMgr->AddDeviceChangeCallback(IATDeviceVideoOutput::kTypeID, this);
+
+	mpDevMgr->ForEachInterface<IATDeviceVideoOutput>(false, [this](IATDeviceVideoOutput& vo) { SetXEP(&vo); });
 
 	return true;
 }
 
 void ATUIVideoDisplayWindow::Shutdown() {
+	if (mpDevMgr) {
+		mpDevMgr->RemoveDeviceChangeCallback(IATDeviceVideoOutput::kTypeID, this);
+	}
+
 	if (mpSEM) {
 		mpSEM->RemoveCallback(this);
 		mpSEM = NULL;
@@ -130,11 +170,16 @@ void ATUIVideoDisplayWindow::CaptureMouse() {
 
 void ATUIVideoDisplayWindow::OpenOSK() {
 	if (!mpOSK) {
+		CloseSidePanel();
+
 		mpOSK = new ATUIOnScreenKeyboard;
 		mpOSK->AddRef();
 		AddChild(mpOSK);
 		mpOSK->Focus();
 		OnSize();
+
+		if (mpOnOSKChange)
+			mpOnOSKChange();
 	}
 }
 
@@ -142,6 +187,33 @@ void ATUIVideoDisplayWindow::CloseOSK() {
 	if (mpOSK) {
 		mpOSK->Destroy();
 		vdsaferelease <<= mpOSK;
+
+		if (mpOnOSKChange)
+			mpOnOSKChange();
+	}
+}
+
+void ATUIVideoDisplayWindow::OpenSidePanel() {
+	if (mpSidePanel)
+		return;
+
+	CloseOSK();
+
+	vdrefptr<IATUISettingsScreen> screen;
+	ATCreateUISettingsScreenMain(~screen);
+
+	ATCreateUISettingsWindow(&mpSidePanel);
+	mpSidePanel->SetOnDestroy([this]() { vdsaferelease <<= mpSidePanel; });
+	mpSidePanel->SetSettingsScreen(screen);
+	mpSidePanel->SetArea(vdrect32(0,100,600,700));
+	AddChild(mpSidePanel);
+	mpSidePanel->Focus();
+}
+
+void ATUIVideoDisplayWindow::CloseSidePanel() {
+	if (mpSidePanel) {
+		mpSidePanel->Destroy();
+		vdsaferelease <<= mpSidePanel;
 	}
 }
 
@@ -221,6 +293,23 @@ void ATUIVideoDisplayWindow::Copy() {
 	}
 }
 
+vdrect32 ATUIVideoDisplayWindow::GetOSKSafeArea() const {
+	vdrect32 r(GetArea());
+	r.translate(-r.left, -r.top);
+
+	if (mpOSK) {
+		int bottomLimit = mpOSK->GetArea().top;
+
+		if (bottomLimit < r.bottom/2)
+			bottomLimit = r.bottom/2;
+
+		if (bottomLimit < r.bottom)
+			r.bottom = bottomLimit;
+	}
+
+	return r;
+}
+
 void ATUIVideoDisplayWindow::SetDisplayRect(const vdrect32& r) {
 	mDisplayRect = r;
 	UpdateDragPreviewRects();
@@ -243,18 +332,24 @@ void ATUIVideoDisplayWindow::AddXorRect(int x1, int y1, int x2, int y2) {
 	Invalidate();
 }
 
-void ATUIVideoDisplayWindow::SetXEP(ATXEP80Emulator *xep) {
+void ATUIVideoDisplayWindow::SetXEP(IATDeviceVideoOutput *xep) {
 	mpXEP = xep;
 
 	if (xep) {
+		const auto& vi = xep->GetVideoInfo();
+
 		// do force a change event next frame
-		mXEPChangeCount = xep->GetFrameChangeCount() - 1;
-		mXEPLayoutChangeCount = xep->GetFrameLayoutChangeCount() - 1;
+		mXEPChangeCount = vi.mFrameBufferChangeCount - 1;
+		mXEPLayoutChangeCount = vi.mFrameBufferLayoutChangeCount - 1;
 
 		// _don't_ force a data received event next frame
-		mXEPDataReceivedCount = xep->GetDataReceivedCount();
+		mXEPDataReceivedCount = xep->GetActivityCounter();
+
+		g_xepViewAvailable = true;
 	} else {
 		mXEPImageView.SetImage();
+
+		g_xepViewAvailable = false;
 	}
 }
 
@@ -266,13 +361,13 @@ void ATUIVideoDisplayWindow::OnSimulatorEvent(ATSimulatorEvent ev) {
 				if (g_xepViewAutoswitchingEnabled)
 					ATUISetXEPViewEnabled(false);
 
-				mXEPDataReceivedCount = mpXEP->GetDataReceivedCount();
+				mXEPDataReceivedCount = mpXEP->GetActivityCounter();
 			}
 			break;
 
 		case kATSimEvent_FrameTick:
 			if (mpXEP) {
-				uint32 c = mpXEP->GetDataReceivedCount();
+				uint32 c = mpXEP->GetActivityCounter();
 
 				if (mXEPDataReceivedCount != c) {
 					mXEPDataReceivedCount = c;
@@ -283,6 +378,20 @@ void ATUIVideoDisplayWindow::OnSimulatorEvent(ATSimulatorEvent ev) {
 			}
 			break;
 	}
+}
+
+void ATUIVideoDisplayWindow::OnDeviceAdded(uint32 iid, IATDevice *dev, void *iface) {
+	IATDeviceVideoOutput *vo = (IATDeviceVideoOutput *)iface;
+
+	if (vo)
+		SetXEP(vo);
+}
+
+void ATUIVideoDisplayWindow::OnDeviceRemoved(uint32 iid, IATDevice *dev, void *iface) {
+	IATDeviceVideoOutput *vo = (IATDeviceVideoOutput *)iface;
+
+	if (mpXEP == vo)
+		SetXEP(nullptr);
 }
 
 ATUITouchMode ATUIVideoDisplayWindow::GetTouchModeAtPoint(const vdpoint32& pt) const {
@@ -363,6 +472,14 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 	// LMB.
 
 	if (vk == kATUIVK_LButton) {
+		// double-click on the left 10% of the screen opens the side panel
+		if (dblclk) {
+			if (x < GetArea().width() / 10) {
+				mbOpenSidePanelDeferred = true;
+				return;
+			}
+		}
+
 		if (g_xepViewEnabled && mpXEP) {
 			mbDragActive = GetXEP80Area().contains(vdpoint32(x, y));
 
@@ -377,6 +494,7 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 
 		if (mbDragActive) {
 			ClearDragPreview();
+			mbMouseHidden = false;
 			SetCursorImage(kATUICursorImage_IBeam);
 			CaptureCursor();
 		}
@@ -384,12 +502,20 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 }
 
 void ATUIVideoDisplayWindow::OnMouseUp(sint32 x, sint32 y, uint32 vk) {
-	if (vk == kATUIVK_LButton && mbDragActive) {
-		mbDragActive = false;
+	if (vk == kATUIVK_LButton) {
+		if (mbDragActive) {
+			mbDragActive = false;
 
-		ReleaseCursor();
-		UpdateDragPreview(x, y);
-		return;
+			ReleaseCursor();
+			UpdateDragPreview(x, y);
+			return;
+		}
+
+		if (mbOpenSidePanelDeferred) {
+			mbOpenSidePanelDeferred = false;
+			OpenSidePanel();
+			return;
+		}
 	}
 
 	ATInputManager *im = g_sim.GetInputManager();
@@ -420,8 +546,8 @@ void ATUIVideoDisplayWindow::OnMouseUp(sint32 x, sint32 y, uint32 vk) {
 	}
 
 	if (vk == kATUIVK_RButton) {
-		if (mAllowContextMenuEvent)
-			mAllowContextMenuEvent();
+		if (mpOnAllowContextMenu)
+			mpOnAllowContextMenu();
 	}
 }
 
@@ -433,6 +559,16 @@ void ATUIVideoDisplayWindow::OnMouseRelativeMove(sint32 dx, sint32 dy) {
 }
 
 void ATUIVideoDisplayWindow::OnMouseMove(sint32 x, sint32 y) {
+	// MPC-HC sometimes injects mouse moves in order to prevent the screen from
+	// going to sleep. We need to filter out these moves to prevent the cursor
+	// from blinking.
+	if (mbMouseHidden) {
+		if (mMouseHideX == x && mMouseHideY == y)
+			return;
+
+		mbMouseHidden = false;
+	}
+
 	// If we have already entered a selection drag, it has highest priority.
 	if (mbDragActive) {
 		SetCursorImage(kATUICursorImage_IBeam);
@@ -464,6 +600,8 @@ void ATUIVideoDisplayWindow::OnMouseLeave() {
 
 	if (mbHoverTipActive)
 		g_sim.GetUIRenderer()->SetHoverTip(0, 0, NULL);
+
+	mbOpenSidePanelDeferred = false;
 }
 
 namespace {
@@ -566,6 +704,12 @@ namespace {
 						case 169: msg += L"<b>DOS:</b> Directory full"; break;
 						case 170: msg += L"<b>DOS:</b> File not found"; break;
 						case 171: msg += L"<b>DOS:</b> Invalid POINT"; break;
+
+						case 173: msg += L"<b>DOS 3:</b> Bad sectors at format time"; break;
+						case 174: msg += L"<b>DOS 3:</b> Duplicate filename"; break;
+						case 175: msg += L"<b>DOS 3:</b> Bad load file"; break;
+						case 176: msg += L"<b>DOS 3:</b> Incompatible format"; break;
+						case 177: msg += L"<b>DOS 3:</b> Disk structure damaged"; break;
 					}
 				}
 			}
@@ -584,6 +728,9 @@ void ATUIVideoDisplayWindow::OnMouseHover(sint32 x, sint32 y) {
 
 	if (!mpManager->IsKeyDown(kATUIVK_Shift)) {
 		SetCursorImage(kATUICursorImage_Hidden);
+		mbMouseHidden = true;
+		mMouseHideX = x;
+		mMouseHideY = y;
 		return;
 	}
 
@@ -598,8 +745,9 @@ void ATUIVideoDisplayWindow::OnMouseHover(sint32 x, sint32 y) {
 	bool valid = false;
 
 	if (g_xepViewEnabled && mpXEP) {
+		const auto& videoInfo = mpXEP->GetVideoInfo();
 		const vdrect32& rBlit = GetXEP80Area();
-		const vdrect32& rDisp = mpXEP->GetDisplayArea();
+		const vdrect32& rDisp = videoInfo.mDisplayArea;
 
 		if (rBlit.contains(vdpoint32(x, y)) && !rDisp.empty()) {
 			int dx = VDRoundToInt((float)x * (float)rDisp.width() / (float)rBlit.width());
@@ -625,7 +773,7 @@ void ATUIVideoDisplayWindow::OnMouseHover(sint32 x, sint32 y) {
 			const VDStringW& msg = GetMessageForError(text);
 
 			if (!msg.empty()) {
-				const vdrect32& lineRect = mpXEP->CharToPixelRect(vdrect32(0, caretPos.y, mpXEP->GetTextDisplayInfo().mColumns, caretPos.y + 1));
+				const vdrect32& lineRect = mpXEP->CharToPixelRect(vdrect32(0, caretPos.y, videoInfo.mTextColumns, caretPos.y + 1));
 
 				float scaleX = (float)rBlit.width() / (float)rDisp.width();
 				float scaleY = (float)rBlit.height() / (float)rDisp.height();
@@ -682,11 +830,11 @@ void ATUIVideoDisplayWindow::OnMouseHover(sint32 x, sint32 y) {
 bool ATUIVideoDisplayWindow::OnContextMenu(const vdpoint32 *pt) {
 	// For now we do a bit of a hack and let the top-level native display code handle this,
 	// as it is too hard currently to display the menu here.
-	if (mDisplayContextMenuEvent) {
+	if (mpOnDisplayContextMenu) {
 		if (pt)
-			mDisplayContextMenuEvent(*pt);
+			mpOnDisplayContextMenu(*pt);
 		else
-			mDisplayContextMenuEvent(TranslateClientPtToScreenPt(vdpoint32(mClientArea.width() >> 1, mClientArea.height() >> 1)));
+			mpOnDisplayContextMenu(TranslateClientPtToScreenPt(vdpoint32(mClientArea.width() >> 1, mClientArea.height() >> 1)));
 	}
 
 	return true;
@@ -704,6 +852,7 @@ bool ATUIVideoDisplayWindow::OnKeyDown(const ATUIKeyEvent& event) {
 			if (!g_sim.IsRunning() && ATIsDebugConsoleActive()) {
 				mbCoordIndicatorEnabled = true;
 
+				mbMouseHidden = false;
 				SetCursorImage(kATUICursorImage_Cross);
 
 				vdpoint32 cpt;
@@ -735,8 +884,10 @@ bool ATUIVideoDisplayWindow::OnKeyUp(const ATUIKeyEvent& event) {
 		mbHoverTipActive = false;
 
 		vdpoint32 cpt;
-		if (TranslateScreenPtToClientPt(mpManager->GetCursorPosition(), cpt))
+		if (TranslateScreenPtToClientPt(mpManager->GetCursorPosition(), cpt)) {
+			mbMouseHidden = false;
 			SetCursorImage(ComputeCursorImage(cpt));
+		}
 	}
 
 	if (ProcessKeyUp(event, !mpEnhTextEngine || mpEnhTextEngine->IsRawInputEnabled()) || (mpEnhTextEngine && mpEnhTextEngine->OnKeyUp(event.mVirtKey)))
@@ -776,12 +927,12 @@ bool ATUIVideoDisplayWindow::OnChar(const ATUICharEvent& event) {
 
 void ATUIVideoDisplayWindow::OnActionStart(uint32 id) {
 	switch(id) {
-		case kActionOpenOSK:
-			OpenOSK();
+		case kActionOpenSidePanel:
+			OpenSidePanel();
 			break;
 
-		case kActionCloseOSK:
-			CloseOSK();
+		case kActionOpenOSK:
+			OpenOSK();
 			break;
 
 		default:
@@ -789,9 +940,18 @@ void ATUIVideoDisplayWindow::OnActionStart(uint32 id) {
 	}
 }
 
+void ATUIVideoDisplayWindow::OnActionStop(uint32 id) {
+	switch(id) {
+		case kActionCloseOSK:
+			CloseOSK();
+			break;
+	}
+}
+
 void ATUIVideoDisplayWindow::OnCreate() {
 	ATUIContainer::OnCreate();
 
+	BindAction(kATUIVK_UIMenu, kActionOpenSidePanel);
 	BindAction(kATUIVK_UIOption, kActionOpenOSK);
 	BindAction(kATUIVK_UIReject, kActionCloseOSK);
 
@@ -816,6 +976,7 @@ void ATUIVideoDisplayWindow::OnDestroy() {
 
 	vdsaferelease <<= mpUILabelBadSignal;
 	vdsaferelease <<= mpOSK;
+	vdsaferelease <<= mpSidePanel;
 
 	ATUIContainer::OnDestroy();
 }
@@ -834,9 +995,14 @@ void ATUIVideoDisplayWindow::OnSize() {
 }
 
 void ATUIVideoDisplayWindow::OnSetFocus() {
+	g_sim.GetInputManager()->SetRestrictedMode(false);
+
+	CloseSidePanel();
 }
 
 void ATUIVideoDisplayWindow::OnKillFocus() {
+	g_sim.GetInputManager()->SetRestrictedMode(true);
+
 	mbCoordIndicatorEnabled = false;
 	ClearCoordinateIndicator();
 
@@ -845,6 +1011,18 @@ void ATUIVideoDisplayWindow::OnKillFocus() {
 
 		ReleaseCursor();
 	}
+}
+
+void ATUIVideoDisplayWindow::OnDeactivate() {
+	ATInputManager *im = g_sim.GetInputManager();
+	im->ReleaseButtons(0, kATInputCode_JoyClass-1);
+
+	auto& pokey = g_sim.GetPokey();
+	pokey.SetShiftKeyState(false);
+	pokey.ReleaseRawKey();
+
+	g_sim.GetGTIA().SetConsoleSwitch(0x07, false);
+
 }
 
 void ATUIVideoDisplayWindow::OnCaptureLost() {
@@ -858,25 +1036,26 @@ void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) 
 	if (g_xepViewEnabled && mpXEP) {
 		mpXEP->UpdateFrame();
 
-		uint32 lcc = mpXEP->GetFrameLayoutChangeCount();
+		const auto& vi = mpXEP->GetVideoInfo();
+		uint32 lcc = vi.mFrameBufferLayoutChangeCount;
 		if (mXEPLayoutChangeCount != lcc) {
 			mXEPLayoutChangeCount = lcc;
 			mXEPImageView.SetImage(mpXEP->GetFrameBuffer(), true);
 		}
 
-		uint32 cc = mpXEP->GetFrameChangeCount();
+		uint32 cc = vi.mFrameBufferChangeCount;
 		if (cc != mXEPChangeCount) {
 			mXEPChangeCount = cc;
 			mXEPImageView.Invalidate();
 		}
 
-		if (!mpXEP->IsVideoSignalValid()) {
+		if (!vi.mbSignalValid) {
 			rdr.SetColorRGB(0);
 			rdr.FillRect(0, 0, w, h);
 
 			mpUILabelBadSignal->SetVisible(true);
 			mpUILabelBadSignal->SetTextAlign(ATUILabel::kAlignCenter);
-			mpUILabelBadSignal->SetTextF(L"Unsupported video mode\n%.3fKHz, %.1fHz", mpXEP->GetVideoHorzRate() / 1000.0f, mpXEP->GetVideoVertRate());
+			mpUILabelBadSignal->SetTextF(L"Unsupported video mode\n%.3fKHz, %.1fHz", vi.mHorizScanRate / 1000.0f, vi.mVertScanRate);
 			mpUILabelBadSignal->AutoSize();
 			mpUILabelBadSignal->SetArea(mpUILabelBadSignal->GetAnchor()->Position(vdrect32(0, 0, w, h), mpUILabelBadSignal->GetArea().size()));
 		} else {
@@ -914,7 +1093,7 @@ void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) 
 					break;
 			}
 
-			const vdrect32& src = mpXEP->GetDisplayArea();
+			const vdrect32& src = vi.mDisplayArea;
 
 			rdr.StretchBlt(dst.left, dst.top, dst.width(), dst.height(), mXEPImageView, src.left, src.top, src.width(), src.height(), opts);
 		}
@@ -1208,7 +1387,8 @@ const vdrect32 ATUIVideoDisplayWindow::GetXEP80Area() const {
 	if (!mpXEP)
 		return vdrect32(0, 0, 0, 0);
 
-	const vdrect32& r = mpXEP->GetDisplayArea();
+	const auto& vi = mpXEP->GetVideoInfo();
+	const vdrect32& r = vi.mDisplayArea;
 	const sint32 w = mArea.width();
 	const sint32 h = mArea.height();
 	sint32 dw = w;
@@ -1223,7 +1403,7 @@ const vdrect32 ATUIVideoDisplayWindow::GetXEP80Area() const {
 				break;
 
 			default:
-				par = mpXEP->GetPixelAspectRatio();
+				par = vi.mPixelAspectRatio;
 				break;
 		}
 
@@ -1304,15 +1484,15 @@ void ATUIVideoDisplayWindow::UpdateDragPreview(int x, int y) {
 }
 
 void ATUIVideoDisplayWindow::UpdateDragPreviewXEP80(int x, int y) {
-	const ATXEP80TextDisplayInfo& tdi = mpXEP->GetTextDisplayInfo();
-	if (!tdi.mRows || !tdi.mColumns)
+	const auto& vi = mpXEP->GetVideoInfo();
+	if (!vi.mTextRows || !vi.mTextColumns)
 		return;
 
 	const vdrect32& drawArea = GetXEP80Area();
 	if (drawArea.empty())
 		return;
 
-	const vdrect32& dispArea = mpXEP->GetDisplayArea();
+	const vdrect32& dispArea = vi.mDisplayArea;
 	if (dispArea.empty())
 		return;
 
@@ -1461,7 +1641,8 @@ void ATUIVideoDisplayWindow::UpdateDragPreviewRects() {
 
 	if (g_xepViewEnabled && mpXEP) {
 		const vdrect32& drawArea = GetXEP80Area();
-		const vdrect32& dispArea = mpXEP->GetDisplayArea();
+		const auto& vi = mpXEP->GetVideoInfo();
+		const vdrect32& dispArea = vi.mDisplayArea;
 		
 		if (!dispArea.empty()) {
 			const float scaleX = (float)drawArea.width() / (float)dispArea.width();

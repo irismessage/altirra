@@ -22,9 +22,18 @@
 
 class ATUIMenu;
 
+class IATUIDynamicMenuProvider {
+public:
+	virtual void RebuildMenu(ATUIMenu& menu, uint32 idbase) = 0;
+	virtual void UpdateMenu(ATUIMenu& menu, uint32 firstIndex, uint32 n) = 0;
+	virtual void HandleMenuCommand(uint32 index) = 0;
+};
+
 ATUIMenu *ATUIGetMenu();
 void ATUILoadMenu();
 void ATUISetMenuEnabled(bool enabled);
+void ATUISetDynamicMenuProvider(int index, IATUIDynamicMenuProvider *provider);
+void ATUIRebuildDynamicMenu(int index);
 void ATUIUpdateMenu();
 bool ATUIHandleMenuCommand(uint32 id);
 

@@ -147,12 +147,29 @@ valid_unit:
 		cpx		serialConcurrentNum
 		bne		not_concurrent
 		
-		;yes -- stop concurrent I/O
+		;yes -- wait for output to flush
+		;note -- must check concurrent flag in this loop in case BREAK is
+		;hit
+		;note 2 -- must wait for transmission to actually finish!
+wait_loop:
+		lda		serialConcurrentNum
+		beq		concurrent_stopped
+		lda		serialOutIdle
+		bpl		wait_loop
+		lda		irqst
+		and		#$08
+		bne		wait_loop
+
+		;stop concurrent I/O
 		jsr		SerialEndConcurrent
 		
-not_concurrent:
+concurrent_stopped:
 		ldy		#1
 		rts
+
+not_concurrent:
+		;flush pending output, if any, and exit
+		jmp		RDevXio32
 .endp
 
 ;==========================================================================

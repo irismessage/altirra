@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <string.h>
+#include <vector>
 #include "utils.h"
 
 typedef unsigned char uint8;

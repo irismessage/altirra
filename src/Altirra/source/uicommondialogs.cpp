@@ -38,10 +38,10 @@ public:
 
 		ATUIMessageBox *mbox = new ATUIMessageBox;
 		mbox->AddRef();
+		mbox->SetOwner(g_ATUIManager.GetFocusWindow());
 		g_ATUIManager.GetMainWindow()->AddChild(mbox);
 
 		mbox->OnCompletedEvent() = ATBINDCALLBACK(this, &ATUIStageAlert::OnResult);
-		mbox->SetOwner(g_ATUIManager.GetFocusWindow());
 		mbox->SetCaption(caption);
 		mbox->SetText(text);
 		mbox->SetFrameMode(kATUIFrameMode_Raised);
@@ -87,7 +87,7 @@ public:
 			fb->SetTitle(title);
 			fb->SetDockMode(kATUIDockMode_Fill);
 			fb->SetOwner(g_ATUIManager.GetFocusWindow());
-			fb->OnCompletedEvent() = ATBINDCALLBACK(this, &ATUIStageOpenFileDialog::OnCompleted);
+			fb->SetCompletionFn([this, fb](bool succeeded) { OnCompleted(fb, succeeded); });
 			fb->LoadPersistentData(id);
 			fb->ShowModal();
 			fb->Release();

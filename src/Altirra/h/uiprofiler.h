@@ -7,6 +7,7 @@ enum ATUIProfileRegion {
 	kATUIProfileRegion_Idle,
 	kATUIProfileRegion_Simulation,
 	kATUIProfileRegion_NativeEvents,
+	kATUIProfileRegion_DisplayTick,
 	kATUIProfileRegionCount
 };
 

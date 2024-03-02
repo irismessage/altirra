@@ -505,6 +505,7 @@ protected:
 
 	uint32 mBaseAddress;
 	HWND mhwndHeader;
+	HFONT mhPropFont;
 	vdrefptr<ATUIProfilerSourceTextView> mpSourceView;
 
 	ATProfileSession mSession;
@@ -549,7 +550,7 @@ LRESULT ATUIProfilerSourcePane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) 
 					if (hdr.code == HDN_ITEMCHANGED) {
 						const NMHEADER& hdr2 = reinterpret_cast<const NMHEADER&>(hdr);
 
-						if ((hdr2.pitem->mask & HDI_WIDTH) && hdr2.iItem < 3)
+						if ((hdr2.pitem->mask & HDI_WIDTH) && hdr2.iItem < 5)
 							UpdateViewColumnWidths();
 					}
 				}
@@ -567,8 +568,9 @@ LRESULT ATUIProfilerSourcePane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) 
 
 void ATUIProfilerSourcePane::OnCreate() {
 	mhwndHeader = CreateWindow(WC_HEADER, _T(""), WS_CHILD | WS_VISIBLE | HDS_HORZ | HDS_BUTTONS | HDS_FULLDRAG, 0, 0, 0, 0, mhwnd, (HMENU)100, VDGetLocalModuleHandleW32(), NULL);
+	mhPropFont = ATUICreateDefaultFontForDpiW32(ATUIGetWindowDpiW32(mhwnd));
 
-	SendMessage(mhwndHeader, WM_SETFONT, (WPARAM)(HFONT)GetStockObject(DEFAULT_GUI_FONT), TRUE);
+	SendMessage(mhwndHeader, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
 
 	HDITEM hdi;
 	hdi.mask = HDI_TEXT | HDI_WIDTH | HDI_FORMAT;
@@ -604,6 +606,11 @@ void ATUIProfilerSourcePane::OnDestroy() {
 	if (mhwndHeader) {
 		DestroyWindow(mhwndHeader);
 		mhwndHeader = NULL;
+	}
+
+	if (mhPropFont) {
+		DeleteObject(mhPropFont);
+		mhPropFont = nullptr;
 	}
 }
 
@@ -667,6 +674,7 @@ protected:
 	bool OnCreate();
 	void OnDestroy();
 	void OnSize();
+	void OnFontsUpdated();
 	bool OnCommand(uint32 id, uint32 extcode);
 	bool OnNotify(uint32 id, uint32 code, const void *hdr, LRESULT& result);
 	void OnColumnClicked(VDUIProxyListView *lv, int column);
@@ -685,6 +693,7 @@ protected:
 	HWND mhwndList;
 	HWND mhwndTree;
 	HWND mhwndStatus;
+	HFONT mhPropFont;
 	HMENU mhmenuMode;
 	HIMAGELIST mToolbarImageList;
 	ATProfileMode mProfileMode;
@@ -844,6 +853,7 @@ ATUIProfilerPane::ATUIProfilerPane()
 	, mhwndTree(NULL)
 	, mhwndStatus(NULL)
 	, mhmenuMode(NULL)
+	, mhPropFont(nullptr)
 	, mToolbarImageList(NULL)
 	, mProfileMode(kATProfileMode_Insns)
 {
@@ -888,6 +898,7 @@ LRESULT ATUIProfilerPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 bool ATUIProfilerPane::OnCreate() {
 	mhmenuMode = LoadMenu(NULL, MAKEINTRESOURCE(IDR_PROFILE_MODE_MENU));
+	mhPropFont = ATUICreateDefaultFontForDpiW32(ATUIGetWindowDpiW32(mhwnd));
 
 	mToolbarImageList = ImageList_LoadBitmap(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDB_TOOLBAR_PROFILER), 16, 0, RGB(255, 0, 255));
 
@@ -896,11 +907,13 @@ bool ATUIProfilerPane::OnCreate() {
 		return false;
 
 	mhwndList = CreateWindowEx(WS_EX_CLIENTEDGE | WS_EX_NOPARENTNOTIFY, WC_LISTVIEW, _T(""), WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SHOWSELALWAYS, 0, 0, 0, 0, mhwnd, (HMENU)101, VDGetLocalModuleHandleW32(), NULL);
+	SendMessage(mhwndList, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
 
 	mhwndTree = CreateWindowEx(WS_EX_CLIENTEDGE | WS_EX_NOPARENTNOTIFY, WC_TREEVIEW, _T(""), WS_CHILD | WS_VISIBLE | TVS_FULLROWSELECT | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS, 0, 0, 0, 0, mhwnd, (HMENU)103, VDGetLocalModuleHandleW32(), NULL);
+	SendMessage(mhwndTree, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
 
 	mhwndStatus = CreateWindowEx(0, STATUSCLASSNAME, _T(""), WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, mhwnd, (HMENU)102, VDGetLocalModuleHandleW32(), NULL);
-	SendMessage(mhwndStatus, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
+	SendMessage(mhwndStatus, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
 	SetWindowPos(mhwndStatus, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 	
 	SendMessage(mhwndToolbar, TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_DRAWDDARROWS);
@@ -978,6 +991,11 @@ void ATUIProfilerPane::OnDestroy() {
 		mToolbarImageList = NULL;
 	}
 
+	if (mhPropFont) {
+		DeleteObject(mhPropFont);
+		mhPropFont = nullptr;
+	}
+
 	ATUIPane::OnDestroy();
 }
 
@@ -1018,6 +1036,24 @@ void ATUIProfilerPane::OnSize() {
 
 	if (mhwndTree)
 		SetWindowPos(mhwndTree, NULL, 0, y, r.right, lh, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void ATUIProfilerPane::OnFontsUpdated() {
+	HFONT hNewFont = ATUICreateDefaultFontForDpiW32(ATUIGetWindowDpiW32(mhwnd));
+
+	if (mhwndList)
+		SendMessage(mhwndList, WM_SETFONT, (WPARAM)hNewFont, TRUE);
+
+	if (mhwndTree)
+		SendMessage(mhwndTree, WM_SETFONT, (WPARAM)hNewFont, TRUE);
+
+	if (mhwndStatus)
+		SendMessage(mhwndStatus, WM_SETFONT, (WPARAM)hNewFont, TRUE);
+
+	if (mhPropFont)
+		::DeleteObject(mhPropFont);
+
+	mhPropFont = hNewFont;
 }
 
 bool ATUIProfilerPane::OnCommand(uint32 id, uint32 extcode) {

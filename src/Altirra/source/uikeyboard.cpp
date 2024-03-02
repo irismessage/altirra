@@ -214,6 +214,14 @@ static uint8 g_ATVKeyMap[256*8];
 	VKEYMAP((vkey), kCtrl, (sc) + 0x80),	\
 	VKEYMAP((vkey), kCtrl + kShift, (sc) + 0xC0)
 
+#define VKEYMAP_CSXOR(vkey, sc) \
+	VKEYMAP((vkey), 0, (sc)),	\
+	VKEYMAP((vkey), kShift, (sc) + 0x40),	\
+	VKEYMAP((vkey), kCtrl, (sc) + 0x80)
+
+#define VKEYMAP_C(vkey, sc) \
+	VKEYMAP((vkey), kCtrl, (sc) + 0x80)
+
 #define VKEYMAP_C_SALL(vkey, sc) \
 	VKEYMAP((vkey), kCtrl, (sc) + 0x80),	\
 	VKEYMAP((vkey), kCtrl + kShift, (sc) + 0xC0)
@@ -224,11 +232,11 @@ static const uint32 g_ATDefaultVKeyMap[]={
 	VKEYMAP_CSALL(VK_RETURN,	0x0C),	// Enter
 	VKEYMAP_CSALL(VK_ESCAPE,	0x1C),	// Esc
 	VKEYMAP_CSALL(VK_END,		0x27),	// Fuji
-	VKEYMAP_CSALL(VK_F6,		0x11),	// Help
+	VKEYMAP_CSXOR(VK_F6,		0x11),	// Help
 	VKEYMAP(VK_OEM_1, kCtrl,	0x82),	// ;:
-	VKEYMAP(VK_OEM_1, kCtrl + kShift, 0xC2),	// ;:
+	//VKEYMAP(VK_OEM_1, kCtrl + kShift, 0xC2),	// ;:
 	VKEYMAP(VK_OEM_PLUS, kCtrl,			0x86),	// +
-	VKEYMAP(VK_OEM_PLUS, kCtrl + kShift,0x86),	// +
+	//VKEYMAP(VK_OEM_PLUS, kCtrl + kShift,0xC6),	// +
 	VKEYMAP(VK_OEM_4, kCtrl,			0xE0),	// [{
 	VKEYMAP(VK_OEM_4, kCtrl + kShift,	0xE0),	// [{
 	VKEYMAP(VK_OEM_5, kCtrl,			0x9C),	// Ctrl+\| -> Ctrl+Esc
@@ -256,17 +264,17 @@ static const uint32 g_ATDefaultVKeyMap[]={
 	VKEYMAP(VK_SPACE,	kCtrl + kShift,	0xE1),	// Ctrl+Shift+Space
 
 	VKEYMAP_C_SALL('A', 0x3F),
-	VKEYMAP_C_SALL('B', 0x15),
-	VKEYMAP_C_SALL('C', 0x12),
+	VKEYMAP_C     ('B', 0x15),
+	VKEYMAP_C     ('C', 0x12),
 	VKEYMAP_C_SALL('D', 0x3A),
 	VKEYMAP_C_SALL('E', 0x2A),
 	VKEYMAP_C_SALL('F', 0x38),
 	VKEYMAP_C_SALL('G', 0x3D),
 	VKEYMAP_C_SALL('H', 0x39),
 	VKEYMAP_C_SALL('I', 0x0D),
-	VKEYMAP_C_SALL('J', 0x01),
-	VKEYMAP_C_SALL('K', 0x05),
-	VKEYMAP_C_SALL('L', 0x00),
+	VKEYMAP_C     ('J', 0x01),
+	VKEYMAP_C     ('K', 0x05),
+	VKEYMAP_C     ('L', 0x00),
 	VKEYMAP_C_SALL('M', 0x25),
 	VKEYMAP_C_SALL('N', 0x23),
 	VKEYMAP_C_SALL('O', 0x08),
@@ -276,11 +284,11 @@ static const uint32 g_ATDefaultVKeyMap[]={
 	VKEYMAP_C_SALL('S', 0x3E),
 	VKEYMAP_C_SALL('T', 0x2D),
 	VKEYMAP_C_SALL('U', 0x0B),	
-	VKEYMAP_C_SALL('V', 0x10),
+	VKEYMAP_C     ('V', 0x10),
 	VKEYMAP_C_SALL('W', 0x2E),
-	VKEYMAP_C_SALL('X', 0x16),
+	VKEYMAP_C     ('X', 0x16),
 	VKEYMAP_C_SALL('Y', 0x2B),
-	VKEYMAP_C_SALL('Z', 0x17),
+	VKEYMAP_C     ('Z', 0x17),
 	VKEYMAP_C_SALL('0', 0x32),
 	VKEYMAP_C_SALL('1', 0x1F),
 	VKEYMAP_C_SALL('2', 0x1E),
@@ -294,12 +302,12 @@ static const uint32 g_ATDefaultVKeyMap[]={
 };
 
 static const uint32 g_ATRawVKeyMap[]={
-	VKEYMAP_CSALL('L', 0x00),
-	VKEYMAP_CSALL('J', 0x01),
-	VKEYMAP_CSALL(VK_OEM_1, 0x02),	// ;:
-	VKEYMAP_CSALL('K', 0x05),
-	VKEYMAP_CSALL(VK_OEM_7, 0x06),	// '"
-	VKEYMAP_CSALL(VK_OEM_5, 0x07),	// \|
+	VKEYMAP_CSXOR('L', 0x00),
+	VKEYMAP_CSXOR('J', 0x01),
+	VKEYMAP_CSXOR(VK_OEM_1, 0x02),	// ;:
+	VKEYMAP_CSXOR('K', 0x05),
+	VKEYMAP_CSXOR(VK_OEM_7, 0x06),	// '"
+	VKEYMAP_CSXOR(VK_OEM_5, 0x07),	// \|
 	VKEYMAP_CSALL('O', 0x08),
 	VKEYMAP_CSALL('P', 0x0A),
 	VKEYMAP_CSALL('U', 0x0B),
@@ -308,12 +316,12 @@ static const uint32 g_ATRawVKeyMap[]={
 	VKEYMAP_CSALL(VK_OEM_4, 0x0E),	// [{
 	VKEYMAP_CSALL(VK_OEM_6, 0x0F),	// ]}
 
-	VKEYMAP_CSALL('V', 0x10),
-	VKEYMAP_CSALL(VK_F6, 0x11),	// Help
-	VKEYMAP_CSALL('C', 0x12),
-	VKEYMAP_CSALL('B', 0x15),
-	VKEYMAP_CSALL('X', 0x16),
-	VKEYMAP_CSALL('Z', 0x17),
+	VKEYMAP_CSXOR('V', 0x10),
+	VKEYMAP_CSXOR(VK_F6, 0x11),	// Help
+	VKEYMAP_CSXOR('C', 0x12),
+	VKEYMAP_CSXOR('B', 0x15),
+	VKEYMAP_CSXOR('X', 0x16),
+	VKEYMAP_CSXOR('Z', 0x17),
 	VKEYMAP_CSALL('4', 0x18),
 	VKEYMAP_CSALL('3', 0x1A),
 	VKEYMAP_CSALL('6', 0x1B),
@@ -353,10 +361,10 @@ static const uint32 g_ATRawVKeyMap[]={
 };
 
 static const uint32 g_ATDefaultVKeyMapFKey[]={
-	VKEYMAP_CSALL(VK_F1, 0x03),
-	VKEYMAP_CSALL(VK_F2, 0x04),
-	VKEYMAP_CSALL(VK_F3, 0x13),
-	VKEYMAP_CSALL(VK_F4, 0x14),
+	VKEYMAP_CSXOR(VK_F1, 0x03),
+	VKEYMAP_CSXOR(VK_F2, 0x04),
+	VKEYMAP_CSXOR(VK_F3, 0x13),
+	VKEYMAP_CSXOR(VK_F4, 0x14),
 };
 
 void ATUIRegisterVirtualKeyMappings(const uint32 *mappings, uint32 n) {
@@ -409,7 +417,15 @@ void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions& options) {
 		const uint8 kbcode = kArrowKCs[i];
 
 		for(int j=0; j<4; ++j) {
-			dst[0] = dst[1024] = kbcode | csmasks[j];
+			uint8 kbcode2 = kbcode | csmasks[j];
+
+			// codes 0xC0-C7 and 0xD0-D7 cannot be produced due to a keyboard
+			// matrix conflict when Ctrl+Shift is pressed and keys on 0x00-07/10-17.
+
+			if ((kbcode2 & 0xE8) == 0xC0)
+				kbcode2 = kInvalidKeyCode;
+
+			dst[0] = dst[1024] = kbcode2;
 			dst += 256;
 		}
 	}
@@ -450,7 +466,6 @@ bool ATUIGetScanCodeForVirtualKey(uint32 virtKey, bool alt, bool ctrl, bool shif
 const VDAccelTableEntry kATDefaultAccelTableDisplay[]={
 	{ "System.PulseWarpOn", 0, { VK_F1, 0 } },
 	{ "System.PulseWarpOff", 0, { VK_F1, UP } },
-	{ "View.NextFilterMode", 0, { VK_F1, CTRL } },
 	{ "System.WarmReset", 0, { VK_F5, 0 } },
 	{ "System.ColdReset", 0, { VK_F5, SHIFT } },
 	{ "Video.ToggleStandardNTSCPAL", 0, { VK_F7, CTRL } },

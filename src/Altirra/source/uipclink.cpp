@@ -19,14 +19,13 @@
 #include <windows.h>
 #include <vd2/system/error.h>
 #include <vd2/Dita/services.h>
+#include <at/atcore/propertyset.h>
 #include <at/atui/dialog.h>
 #include "resource.h"
-#include "pclink.h"
-#include "simulator.h"
 
 class ATUIDialogPCLink : public VDDialogFrameW32 {
 public:
-	ATUIDialogPCLink(ATSimulator *sim);
+	ATUIDialogPCLink(ATPropertySet& pset);
 	~ATUIDialogPCLink();
 
 	bool OnLoaded();
@@ -35,14 +34,12 @@ public:
 	void Update(int id);
 
 protected:
-	void UpdateEnables();
-
-	ATSimulator *mpSim;
+	ATPropertySet& mProps;
 };
 
-ATUIDialogPCLink::ATUIDialogPCLink(ATSimulator *sim)
+ATUIDialogPCLink::ATUIDialogPCLink(ATPropertySet& pset)
 	: VDDialogFrameW32(IDD_PCLINK)
-	, mpSim(sim)
+	, mProps(pset)
 {
 }
 
@@ -55,26 +52,17 @@ bool ATUIDialogPCLink::OnLoaded() {
 
 void ATUIDialogPCLink::OnDataExchange(bool write) {
 	if (!write) {
-		IATPCLinkDevice *pclink = mpSim->GetPCLink();
-		CheckButton(IDC_ENABLE, pclink != NULL);
-		CheckButton(IDC_ALLOW_WRITES, pclink && !pclink->IsReadOnly());
-
-		if (pclink)
-			SetControlText(IDC_PATH, pclink->GetBasePath());
-
-		UpdateEnables();
+		CheckButton(IDC_ALLOW_WRITES, mProps.GetBool("write"));
+		SetControlText(IDC_PATH, mProps.GetString("path", L""));
 	} else {
-		if (!IsButtonChecked(IDC_ENABLE)) {
-			mpSim->SetPCLinkEnabled(false);
-		} else {
-			mpSim->SetPCLinkEnabled(true);
+		mProps.Clear();
 
-			IATPCLinkDevice *pclink = mpSim->GetPCLink();
-			pclink->SetReadOnly(!IsButtonChecked(IDC_ALLOW_WRITES));
-			VDStringW path;
-			GetControlText(IDC_PATH, path);
-			pclink->SetBasePath(path.c_str());
-		}
+		if (IsButtonChecked(IDC_ALLOW_WRITES))
+			mProps.SetBool("write", true);
+
+		VDStringW path;
+		GetControlText(IDC_PATH, path);
+		mProps.SetString("path", path.c_str());
 	}
 }
 
@@ -89,26 +77,13 @@ bool ATUIDialogPCLink::OnCommand(uint32 id, uint32 extcode) {
 					SetControlText(IDC_PATH, s.c_str());
 			}
 			return true;
-
-		case IDC_ENABLE:
-			if (extcode == BN_CLICKED)
-				UpdateEnables();
-			return true;
 	}
 
 	return false;
 }
 
-void ATUIDialogPCLink::UpdateEnables() {
-	bool enable = IsButtonChecked(IDC_ENABLE);
+bool ATUIConfDevPCLink(VDGUIHandle hParent, ATPropertySet& props) {
+	ATUIDialogPCLink dlg(props);
 
-	EnableControl(IDC_STATIC_HOSTPATH, enable);
-	EnableControl(IDC_PATH, enable);
-	EnableControl(IDC_ALLOW_WRITES, enable);
-}
-
-void ATUIShowPCLinkDialog(VDGUIHandle hParent, ATSimulator *sim) {
-	ATUIDialogPCLink dlg(sim);
-
-	dlg.ShowDialog(hParent);
+	return dlg.ShowDialog(hParent) != 0;
 }

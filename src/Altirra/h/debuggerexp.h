@@ -55,7 +55,9 @@ enum ATDebugExpNodeType {
 	kATDebugExpNodeType_XBankCPU,
 	kATDebugExpNodeType_XBankANTIC,
 	kATDebugExpNodeType_AddrSpace,
-	kATDebugExpNodeType_Ternary
+	kATDebugExpNodeType_Ternary,
+	kATDebugExpNodeType_Temporary,
+	kATDebugExpNodeType_ReturnAddress
 };
 
 struct ATDebugExpEvalContext {
@@ -63,6 +65,7 @@ struct ATDebugExpEvalContext {
 	ATCPUEmulatorMemory *mpMemory;
 	ATAnticEmulator *mpAntic;
 	ATMMUEmulator *mpMMU;
+	const sint32 *mpTemporaries;
 
 	bool mbAccessValid;
 	bool mbAccessReadValid;

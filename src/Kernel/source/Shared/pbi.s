@@ -107,7 +107,7 @@ invalid:
 ;==========================================================================
 ; Entry:
 ;	A, X saved on stack
-;	A = active PBI IRQ mask ($D1FF AND PDVMSK)
+;	A = active PBI IRQ mask ($D1FF AND PDMSK)
 ;
 ; Exit:
 ;	A, X restored
@@ -234,18 +234,17 @@ loop:
 		sta		$d1ff
 		
 		;attempt I/O
-		pha
+		lda		ciochr
 		jsr		dispatch
-		pla
 		
 		;loop back if PBI handler didn't claim the I/O
 		bcc		loop
 		
 		;all done
 done:
-		lda		#0
-		sta		shpdvs
-		sta		$d1ff
+		ldx		#0
+		stx		shpdvs
+		stx		$d1ff
 		rts
 		
 fail:	

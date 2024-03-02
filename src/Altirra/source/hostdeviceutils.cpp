@@ -35,7 +35,7 @@ bool ATHostDeviceIsDevice(const wchar_t *s) {
 
 	VDStringSpanW fname(s, ext ? ext : s + wcslen(s));
 	for(const wchar_t *const *pp = kReservedDeviceNames; *pp; ++pp) {
-		if (fname == *pp)
+		if (!fname.comparei(*pp))
 			return true;
 	}
 

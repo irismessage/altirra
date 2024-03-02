@@ -33,6 +33,8 @@ ATPIAEmulator::ATPIAEmulator()
 	, mPORTBCTL(0)
 	, mbPIAEdgeA(false)
 	, mbPIAEdgeB(false)
+	, mbCA1(true)
+	, mbCB1(true)
 	, mPIACB2(kPIACS_Floating)
 	, mOutputReportMask(0)
 	, mOutputAllocBitmap(0)
@@ -123,30 +125,62 @@ void ATPIAEmulator::Reset() {
 	mbPIAEdgeB = false;
 	mPIACB2 = kPIACS_Floating;
 
-	mpIRQController->Negate(kATIRQSource_PIAA1 | kATIRQSource_PIAA2 | kATIRQSource_PIAB1 | kATIRQSource_PIAB2, true);
+	if (mpIRQController)
+		mpIRQController->Negate(kATIRQSource_PIAA1 | kATIRQSource_PIAA2 | kATIRQSource_PIAB1 | kATIRQSource_PIAB2, true);
 
 	UpdateOutput();
 }
 
-void ATPIAEmulator::AssertProceed() {
+void ATPIAEmulator::SetCA1(bool level) {
+	if (mbCA1 == level)
+		return;
+
+	mbCA1 = level;
+
+	// check if interrupts are enabled and that the interrupt isn't already active
 	if ((mPORTACTL & 0x81) != 0x01)
 		return;
 
-	// set IRQA1 status
+	// check if we have the correct transition
+	if (mPORTACTL & 0x02) {
+		if (!level)
+			return;
+	} else {
+		if (level)
+			return;
+	}
+
+	// assert IRQ
 	mPORTACTL |= 0x80;
 
-	mpIRQController->Assert(kATIRQSource_PIAA1, true);
+	if (mpIRQController)
+		mpIRQController->Assert(kATIRQSource_PIAA1, true);
 }
 
-void ATPIAEmulator::AssertInterrupt() {
-	// check if IRQB1 is enabled or if IRQB1 is already set
+void ATPIAEmulator::SetCB1(bool level) {
+	if (mbCB1 == level)
+		return;
+
+	mbCB1 = level;
+
+	// check if interrupts are enabled and that the interrupt isn't already active
 	if ((mPORTBCTL & 0x81) != 0x01)
 		return;
 
-	// set IRQB1 status
+	// check if we have the correct transition
+	if (mPORTBCTL & 0x02) {
+		if (!level)
+			return;
+	} else {
+		if (level)
+			return;
+	}
+
+	// assert IRQ
 	mPORTBCTL |= 0x80;
 
-	mpIRQController->Assert(kATIRQSource_PIAB1, true);
+	if (mpIRQController)
+		mpIRQController->Assert(kATIRQSource_PIAB1, true);
 }
 
 uint8 ATPIAEmulator::DebugReadByte(uint8 addr) const {
@@ -179,7 +213,8 @@ uint8 ATPIAEmulator::ReadByte(uint8 addr) {
 			// Reading the PIA port A data register negates port A interrupts.
 			mPORTACTL &= 0x3F;
 
-			mpIRQController->Negate(kATIRQSource_PIAA1 | kATIRQSource_PIAA2, true);
+			if (mpIRQController)
+				mpIRQController->Negate(kATIRQSource_PIAA1 | kATIRQSource_PIAA2, true);
 		}
 		break;
 
@@ -188,7 +223,8 @@ uint8 ATPIAEmulator::ReadByte(uint8 addr) {
 			// Reading the PIA port A data register negates port B interrupts.
 			mPORTBCTL &= 0x3F;
 
-			mpIRQController->Negate(kATIRQSource_PIAB1 | kATIRQSource_PIAB2, true);
+			if (mpIRQController)
+				mpIRQController->Negate(kATIRQSource_PIAB1 | kATIRQSource_PIAB2, true);
 		}
 
 		break;
@@ -276,10 +312,12 @@ void ATPIAEmulator::WriteByte(uint8 addr, uint8 value) {
 
 		mPORTACTL = (mPORTACTL & 0xc0) + (value & 0x3f);
 
-		if ((mPORTACTL & 0x68) == 0x48)
-			mpIRQController->Assert(kATIRQSource_PIAA2, true);
-		else
-			mpIRQController->Negate(kATIRQSource_PIAA2, true);
+		if (mpIRQController) {
+			if ((mPORTACTL & 0x68) == 0x48)
+				mpIRQController->Assert(kATIRQSource_PIAA2, true);
+			else
+				mpIRQController->Negate(kATIRQSource_PIAA2, true);
+		}
 
 		UpdateCA2();
 		break;
@@ -324,10 +362,12 @@ void ATPIAEmulator::WriteByte(uint8 addr, uint8 value) {
 
 		mPORTBCTL = (mPORTBCTL & 0xc0) + (value & 0x3f);
 
-		if ((mPORTBCTL & 0x68) == 0x48)
-			mpIRQController->Assert(kATIRQSource_PIAB2, true);
-		else
-			mpIRQController->Negate(kATIRQSource_PIAB2, true);
+		if (mpIRQController) {
+			if ((mPORTBCTL & 0x68) == 0x48)
+				mpIRQController->Assert(kATIRQSource_PIAB2, true);
+			else
+				mpIRQController->Negate(kATIRQSource_PIAB2, true);
+		}
 
 		UpdateCB2();
 		break;

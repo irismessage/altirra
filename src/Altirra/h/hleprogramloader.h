@@ -34,6 +34,8 @@ public:
 	void Init(ATCPUEmulator *cpu, ATSimulatorEventManager *simEventMan, ATSimulator *sim);
 	void Shutdown();
 
+	void SetRandomizeMemoryOnLoad(bool enable) { mbRandomizeMemoryOnLoad = enable; }
+
 	bool IsLaunchPending() const { return mbLaunchPending; }
 
 	void LoadProgram(const wchar_t *symbolHintPath, IVDRandomAccessStream& stream);
@@ -55,6 +57,7 @@ protected:
 	vdfastvector<uint8>		mProgramToLoad;
 	ptrdiff_t	mProgramLoadIndex;
 
+	bool		mbRandomizeMemoryOnLoad;
 	bool		mbLaunchPending;
 	uint32		mProgramModuleIds[4];
 };

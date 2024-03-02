@@ -159,7 +159,7 @@ not_seroc:
 	pla
 	pha
 	and		#$10
-	bne		not_brk
+	beq		not_brk
 	lda		jveck
 	pha
 	jmp		(vbreak)

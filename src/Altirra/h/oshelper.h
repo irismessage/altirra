@@ -7,7 +7,8 @@
 struct VDPixmap;
 class VDStringW;
 
-bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size);
+bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size, bool allowPartial);
+bool ATLoadKernelResource(int id, vdfastvector<uint8>& data);
 bool ATLoadKernelResourceLZPacked(int id, vdfastvector<uint8>& data);
 bool ATLoadMiscResource(int id, vdfastvector<uint8>& data);
 void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly);

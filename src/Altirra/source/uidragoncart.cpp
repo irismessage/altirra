@@ -17,27 +17,24 @@
 
 #include "stdafx.h"
 #include <at/atui/dialog.h>
-#include "simulator.h"
-#include "dragoncart.h"
 #include "resource.h"
-
-extern ATSimulator g_sim;
+#include "dragoncart.h"
 
 class ATUIDragonCartDialog : public VDDialogFrameW32 {
 public:
-	ATUIDragonCartDialog();
+	ATUIDragonCartDialog(ATPropertySet& props);
 	~ATUIDragonCartDialog();
 
 	void OnDestroy();
 	void OnDataExchange(bool write);
 
 protected:
-	bool OnCommand(uint32 id, uint32 extcode);
-	void UpdateEnables();
+	ATPropertySet& mProps;
 };
 
-ATUIDragonCartDialog::ATUIDragonCartDialog()
+ATUIDragonCartDialog::ATUIDragonCartDialog(ATPropertySet& props)
 	: VDDialogFrameW32(IDD_DRAGONCART)
+	, mProps(props)
 {
 }
 
@@ -49,16 +46,9 @@ void ATUIDragonCartDialog::OnDestroy() {
 
 void ATUIDragonCartDialog::OnDataExchange(bool write) {
 	if (!write) {
-		ATDragonCartEmulator *dc = g_sim.GetDragonCart();
 		ATDragonCartSettings settings;
 
-		if (dc) {
-			CheckButton(IDC_ENABLE, true);
-			settings = dc->GetSettings();
-		} else {
-			CheckButton(IDC_ENABLE, false);
-			settings.SetDefault();
-		}
+		settings.LoadFromProps(mProps);
 
 		SetControlTextF(IDC_NETADDR, L"%u.%u.%u.%u"
 			, (settings.mNetAddr >> 24) & 0xff
@@ -87,92 +77,58 @@ void ATUIDragonCartDialog::OnDataExchange(bool write) {
 				CheckButton(IDC_ACCESS_NAT, true);
 				break;
 		}
-
-		UpdateEnables();
 	} else {
-		if (IsButtonChecked(IDC_ENABLE)) {
-			ATDragonCartSettings settings;
-			VDStringW s;
+		ATDragonCartSettings settings;
+		VDStringW s;
 
-			unsigned a0, a1, a2, a3;
-			wchar_t c;
-			if (!GetControlText(IDC_NETADDR, s) || 4 != swscanf(s.c_str(), L"%u.%u.%u.%u%c", &a0, &a1, &a2, &a3, &c)) {
-				FailValidation(IDC_NETADDR);
-				return;
-			}
-
-			if ((a0 | a1 | a2 | a3) >= 256) {
-				FailValidation(IDC_NETADDR);
-				return;
-			}
-
-			settings.mNetAddr = (a0 << 24) + (a1 << 16) + (a2 << 8) + a3;
-
-			if (!GetControlText(IDC_NETMASK, s) || 4 != swscanf(s.c_str(), L"%u.%u.%u.%u%c", &a0, &a1, &a2, &a3, &c)) {
-				FailValidation(IDC_NETMASK);
-				return;
-			}
-
-			if ((a0 | a1 | a2 | a3) >= 256) {
-				FailValidation(IDC_NETMASK);
-				return;
-			}
-
-			settings.mNetMask = (a0 << 24) + (a1 << 16) + (a2 << 8) + a3;
-
-			if (settings.mNetAddr & ~settings.mNetMask) {
-				FailValidation(IDC_NETADDR);
-				return;
-			}
-
-			// Netmask must have contiguous 1 bits on high end: (-mask) must be power of two
-			uint32 test = 0 - settings.mNetMask;
-			if (test & (test - 1)) {
-				FailValidation(IDC_NETMASK);
-				return;
-			}
-
-			if (IsButtonChecked(IDC_ACCESS_NAT))
-				settings.mAccessMode = ATDragonCartSettings::kAccessMode_NAT;
-			else if (IsButtonChecked(IDC_ACCESS_HOSTONLY))
-				settings.mAccessMode = ATDragonCartSettings::kAccessMode_HostOnly;
-			else
-				settings.mAccessMode = ATDragonCartSettings::kAccessMode_None;
-
-			g_sim.SetDragonCartEnabled(&settings);
-		} else {
-			g_sim.SetDragonCartEnabled(NULL);
+		unsigned a0, a1, a2, a3;
+		wchar_t c;
+		if (!GetControlText(IDC_NETADDR, s) ||
+			4 != swscanf(s.c_str(), L"%u.%u.%u.%u %c", &a0, &a1, &a2, &a3, &c) ||
+			(a0 | a1 | a2 | a3) >= 256)
+		{
+			FailValidation(IDC_NETADDR, L"The network address must be an IPv4 address of the form A.B.C.D and different than your actual network address. Example: 192.168.10.0");
+			return;
 		}
+
+		settings.mNetAddr = (a0 << 24) + (a1 << 16) + (a2 << 8) + a3;
+
+		if (!GetControlText(IDC_NETMASK, s) ||
+			4 != swscanf(s.c_str(), L"%u.%u.%u.%u %c", &a0, &a1, &a2, &a3, &c) ||
+			(a0 | a1 | a2 | a3) >= 256)
+		{
+			FailValidation(IDC_NETMASK, L"The network mask must be of the form A.B.C.D. Example: 255.255.255.0");
+			return;
+		}
+
+		// Netmask must have contiguous 1 bits on high end: (-mask) must be power of two
+		settings.mNetMask = (a0 << 24) + (a1 << 16) + (a2 << 8) + a3;
+		uint32 test = 0 - settings.mNetMask;
+		if (test & (test - 1)) {
+			FailValidation(IDC_NETMASK, L"The network mask is invalid. It must have contiguous 1 bits followed by contiguous 0 bits.");
+			return;
+		}
+
+		if (settings.mNetAddr & ~settings.mNetMask) {
+			FailValidation(IDC_NETADDR, L"The network mask is invalid for the given network address. For a class C network, the address must end in .0 and the mask must be 255.255.255.0.");
+			return;
+		}
+
+		if (IsButtonChecked(IDC_ACCESS_NAT))
+			settings.mAccessMode = ATDragonCartSettings::kAccessMode_NAT;
+		else if (IsButtonChecked(IDC_ACCESS_HOSTONLY))
+			settings.mAccessMode = ATDragonCartSettings::kAccessMode_HostOnly;
+		else
+			settings.mAccessMode = ATDragonCartSettings::kAccessMode_None;
+
+		settings.SaveToProps(mProps);
 	}
-}
-
-bool ATUIDragonCartDialog::OnCommand(uint32 id, uint32 extcode) {
-	if (id == IDC_ENABLE)
-		UpdateEnables();
-
-	return false;
-}
-
-void ATUIDragonCartDialog::UpdateEnables() {
-	static const uint32 kIds[]={
-		IDC_STATIC_NETADDR,
-		IDC_STATIC_NETMASK,
-		IDC_STATIC_BRIDGING,
-		IDC_NETADDR,
-		IDC_NETMASK,
-		IDC_ACCESS_NONE,
-		IDC_ACCESS_HOSTONLY,
-		IDC_ACCESS_NAT
-	};
-
-	const bool enabled = IsButtonChecked(IDC_ENABLE);
-
-	for(size_t i=0; i<vdcountof(kIds); ++i)
-		EnableControl(kIds[i], enabled);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
-void ATUIShowDialogDragonCart(VDGUIHandle hParent) {
-	ATUIDragonCartDialog().ShowDialog(hParent);
+bool ATUIConfDevDragonCart(VDGUIHandle hParent, ATPropertySet& props) {
+	ATUIDragonCartDialog dlg(props);
+
+	return dlg.ShowDialog(hParent) != 0;
 }

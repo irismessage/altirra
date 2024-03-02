@@ -74,4 +74,9 @@ T vdpoly_cast(IVDUnknown *pUnk) {
 	return pUnk ? (T)pUnk->AsInterface(vdpoly_id_from_ptr(T(NULL))) : NULL;
 }
 
+template<class T>
+const T vdpoly_cast(const IVDUnknown *pUnk) {
+	return pUnk ? (const T)pUnk->AsInterface(vdpoly_id_from_ptr(T(NULL))) : NULL;
+}
+
 #endif

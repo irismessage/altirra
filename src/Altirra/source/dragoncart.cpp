@@ -19,13 +19,16 @@
 #include <vd2/system/binary.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
+#include <at/atcore/consoleoutput.h>
+#include <at/atcore/deviceimpl.h>
+#include <at/atcore/propertyset.h>
 #include <at/atnetwork/ethernetbus.h>
 #include <at/atnetwork/gatewayserver.h>
 #include <at/atnetworksockets/worker.h>
 #include "scheduler.h"
 #include "dragoncart.h"
+#include "devicemanager.h"
 #include "memorymanager.h"
-#include "console.h"
 
 class ATEthernetSimClock : public IATSchedulerCallback, public IATEthernetClock {
 public:
@@ -247,6 +250,41 @@ void ATDragonCartSettings::SetDefault() {
 	mAccessMode = ATDragonCartSettings::kAccessMode_NAT;
 }
 
+void ATDragonCartSettings::LoadFromProps(const ATPropertySet& pset) {
+	SetDefault();
+
+	pset.TryGetUint32("netaddr", mNetAddr);
+	pset.TryGetUint32("netmask", mNetMask);
+
+	const wchar_t *s = pset.GetString("access");
+	if (s) {
+		if (!wcscmp(s, L"none"))
+			mAccessMode = kAccessMode_None;
+		else if (!wcscmp(s, L"hostonly"))
+			mAccessMode = kAccessMode_HostOnly;
+		else if (!wcscmp(s, L"nat"))
+			mAccessMode = kAccessMode_NAT;
+	}
+}
+
+void ATDragonCartSettings::SaveToProps(ATPropertySet& pset) {
+	pset.Clear();
+	pset.SetUint32("netaddr", mNetAddr);
+	pset.SetUint32("netmask", mNetMask);
+
+	switch(mAccessMode) {
+		case kAccessMode_None:
+			pset.SetString("access", L"none");
+			break;
+		case kAccessMode_HostOnly:
+			pset.SetString("access", L"hostonly");
+			break;
+		case kAccessMode_NAT:
+			pset.SetString("access", L"nat");
+			break;
+	}
+}
+
 bool ATDragonCartSettings::operator==(const ATDragonCartSettings& x) const {
 	return mNetAddr == x.mNetAddr
 		&& mNetMask == x.mNetMask
@@ -360,7 +398,7 @@ namespace {
 	};
 }
 
-void ATDragonCartEmulator::DumpConnectionInfo() {
+void ATDragonCartEmulator::DumpConnectionInfo(ATConsoleOutput& output) {
 	typedef vdfastvector<ATNetConnectionInfo> ConnInfos;
 	ConnInfos connInfos;
 
@@ -368,7 +406,7 @@ void ATDragonCartEmulator::DumpConnectionInfo() {
 
 	std::sort(connInfos.begin(), connInfos.end(), ConnectionSort());
 
-	ATConsoleWrite("  Proto  Local address          Foreign address        State        NAT address\n");
+	output <<= "  Proto  Local address          Foreign address        State        NAT address";
 
 	VDStringA line;
 
@@ -402,9 +440,7 @@ void ATDragonCartEmulator::DumpConnectionInfo() {
 			line.append_sprintf("%u.%u.%u.%u:%u", natIpAddr4[0], natIpAddr4[1], natIpAddr4[2], natIpAddr4[3], natPort);
 		}
 
-		line += '\n';
-
-		ATConsoleWrite(line.c_str());
+		output <<= line.c_str();
 	}
 }
 
@@ -435,4 +471,149 @@ bool ATDragonCartEmulator::OnWrite(void *thisptr0, uint32 addr, uint8 value) {
 	}
 
 	return false;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDeviceDragonCart : public ATDevice
+					, public IATDeviceMemMap
+					, public IATDeviceScheduling
+					, public IATDeviceDiagnostics
+{
+public:
+	ATDeviceDragonCart();
+
+	virtual void *AsInterface(uint32 id) override;
+
+	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
+	virtual void GetSettings(ATPropertySet& settings) override;
+	virtual bool SetSettings(const ATPropertySet& settings) override;
+	virtual void WarmReset() override;
+	virtual void ColdReset() override;
+	virtual void Init() override;
+	virtual void Shutdown() override;
+
+public: // IATDeviceMemMap
+	virtual void InitMemMap(ATMemoryManager *memmap) override;
+	virtual bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
+
+public:	// IATDeviceScheduling
+	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
+
+public:	// IATDeviceDiagnostics
+	virtual void DumpStatus(ATConsoleOutput& output) override;
+
+private:
+	static sint32 ReadByte(void *thisptr0, uint32 addr);
+	static bool WriteByte(void *thisptr0, uint32 addr, uint8 value);
+
+	ATMemoryManager *mpMemMan;
+	ATScheduler *mpSlowScheduler;
+	ATDragonCartSettings mSettings;
+	bool mbDragonCartInited;
+
+	ATDragonCartEmulator mDragonCart;
+};
+
+ATDeviceDragonCart::ATDeviceDragonCart()
+	: mpMemMan(nullptr)
+	, mpSlowScheduler(nullptr)
+	, mbDragonCartInited(false)
+{
+	mSettings.SetDefault();
+}
+
+void *ATDeviceDragonCart::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDeviceMemMap::kTypeID:
+			return static_cast<IATDeviceMemMap *>(this);
+
+		case IATDeviceScheduling::kTypeID:
+			return static_cast<IATDeviceScheduling *>(this);
+
+		case IATDeviceDiagnostics::kTypeID:
+			return static_cast<IATDeviceDiagnostics *>(this);
+
+		default:
+			return ATDevice::AsInterface(id);
+	}
+}
+
+void ATDeviceDragonCart::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mTag = "dragoncart";
+	info.mName = L"DragonCart";
+	info.mConfigTag = "dragoncart";
+}
+
+void ATDeviceDragonCart::GetSettings(ATPropertySet& props) {
+	mSettings.SaveToProps(props);
+}
+
+bool ATDeviceDragonCart::SetSettings(const ATPropertySet& props) {
+	ATDragonCartSettings settings;
+	settings.LoadFromProps(props);
+
+	if (mSettings != settings) {
+		mSettings = settings;
+
+		if (mbDragonCartInited) {
+			mDragonCart.Shutdown();
+			mDragonCart.Init(mpMemMan, mpSlowScheduler, mSettings);
+		}
+	}
+
+	return true;
+}
+
+void ATDeviceDragonCart::WarmReset() {
+	mDragonCart.WarmReset();
+}
+
+void ATDeviceDragonCart::ColdReset() {
+	mDragonCart.ColdReset();
+}
+
+void ATDeviceDragonCart::Init() {
+	mDragonCart.Init(mpMemMan, mpSlowScheduler, mSettings);
+	mbDragonCartInited = true;
+}
+
+void ATDeviceDragonCart::Shutdown() {
+	mbDragonCartInited = false;
+	mDragonCart.Shutdown();
+
+	mpSlowScheduler = nullptr;
+	mpMemMan = nullptr;
+}
+
+void ATDeviceDragonCart::InitMemMap(ATMemoryManager *memmap) {
+	mpMemMan = memmap;
+}
+
+bool ATDeviceDragonCart::GetMappedRange(uint32 index, uint32& lo, uint32& hi) const {
+	if (index == 0) {
+		lo = 0xD500;
+		hi = 0xD600;
+		return true;
+	}
+
+	return false;
+}
+
+void ATDeviceDragonCart::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
+	mpSlowScheduler = slowsch;
+}
+
+void ATDeviceDragonCart::DumpStatus(ATConsoleOutput& output) {
+	mDragonCart.DumpConnectionInfo(output);
+}
+
+void ATCreateDeviceDragonCart(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceDragonCart> p(new ATDeviceDragonCart);
+
+	*dev = p.release();
+}
+
+void ATRegisterDeviceDragonCart(ATDeviceManager& dev) {
+	dev.AddDeviceFactory("dragoncart", ATCreateDeviceDragonCart);
 }

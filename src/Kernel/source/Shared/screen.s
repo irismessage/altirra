@@ -231,7 +231,16 @@ ScreenPixelWidthsLo = ScreenWidths + 1
 .endp
 .endm
 
+.macro _SCREEN_TABLES_3
+.proc ScreenEncodingTable
+	dta		$00,$11,$22,$33,$44,$55,$66,$77,$88,$99,$aa,$bb,$cc,$dd,$ee,$ff
+	dta		$00,$55,$aa,$ff
+	dta		$00,$ff
+.endp
+.endm
+
 .if _KERNEL_XLXE
+	_SCREEN_TABLES_3
 	_SCREEN_TABLES_2
 	_SCREEN_TABLES_1
 .endif
@@ -1489,6 +1498,12 @@ cursor_inhibited:
 	ldy		ScreenHeightShifts,x
 	lda		ScreenHeights,y
 rowcheck_gr0:
+	;while we know it's GR.0, clamp RMARGN to 39 (required for ARTILLERY.BAS)
+	ldy		#39
+	cpy		rmargn
+	bcs		rmargn_ok
+	sty		rmargn
+rmargn_ok:
 	clc
 	sbc		rowcrs
 	bcs		rowcheck_pass	

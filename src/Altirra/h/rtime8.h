@@ -18,9 +18,14 @@
 #ifndef AT_RTIME8_H
 #define AT_RTIME8_H
 
+#include <at/atcore/deviceimpl.h>
+
+class ATMemoryManager;
+class ATMemoryLayer;
+
 class ATRTime8Emulator {
-	ATRTime8Emulator(const ATRTime8Emulator&);
-	ATRTime8Emulator& operator=(const ATRTime8Emulator&);
+	ATRTime8Emulator(const ATRTime8Emulator&) = delete;
+	ATRTime8Emulator& operator=(const ATRTime8Emulator&) = delete;
 public:
 	ATRTime8Emulator();
 	~ATRTime8Emulator();
@@ -35,5 +40,27 @@ protected:
 	uint8 mRAM[16];
 };
 
-#endif
+class ATDeviceRTime8 : public ATDevice, public IATDeviceMemMap {
+public:
+	ATDeviceRTime8();
 
+	virtual void *AsInterface(uint32 id) override;
+
+	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
+	virtual void Shutdown() override;
+
+public: // IATDeviceMemMap
+	virtual void InitMemMap(ATMemoryManager *memmap) override;
+	virtual bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
+
+private:
+	static sint32 ReadByte(void *thisptr0, uint32 addr);
+	static bool WriteByte(void *thisptr0, uint32 addr, uint8 value);
+
+	ATMemoryManager *mpMemMan;
+	ATMemoryLayer *mpMemLayerRT8;
+
+	ATRTime8Emulator mRTime8;
+};
+
+#endif

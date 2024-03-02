@@ -14,7 +14,7 @@
 #include <vd2/Riza/bitmap.h>
 #include "encode_png.h"
 
-bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size) {
+bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size, bool allowPartial) {
 	HMODULE hmod = VDGetLocalModuleHandleW32();
 
 	HRSRC hrsrc = FindResourceA(hmod, MAKEINTRESOURCEA(id), "KERNEL");
@@ -22,8 +22,15 @@ bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size) {
 		return false;
 
 	DWORD rsize = SizeofResource(hmod, hrsrc);
-	if (offset > rsize || (rsize - offset) < size)
+	if (offset > rsize)
 		return false;
+
+	if ((rsize - offset) < size) {
+		if (!allowPartial)
+			return false;
+
+		size = rsize - offset;
+	}
 
 	HGLOBAL hg = LoadResource(hmod, hrsrc);
 
@@ -34,6 +41,25 @@ bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size) {
 
 	memcpy(dst, (const char *)p + offset, size);
 
+	return true;
+}
+
+bool ATLoadKernelResource(int id, vdfastvector<uint8>& buf) {
+	HMODULE hmod = VDGetLocalModuleHandleW32();
+
+	HRSRC hrsrc = FindResourceA(hmod, MAKEINTRESOURCEA(id), "KERNEL");
+	if (!hrsrc)
+		return false;
+
+	DWORD rsize = SizeofResource(hmod, hrsrc);
+	HGLOBAL hg = LoadResource(hmod, hrsrc);
+
+	const uint8 *p = (const uint8 *)LockResource(hg);
+
+	if (!p)
+		return false;
+
+	buf.assign(p, p + rsize);
 	return true;
 }
 
@@ -120,12 +146,7 @@ void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly) {
 	VDStringA s;
 	DWORD attrs;
 
-	if (!VDIsWindowsNT()) {
-		s = VDTextWToA(path);
-		attrs = GetFileAttributesA(s.c_str());
-	} else {
-		attrs = GetFileAttributesW(path);
-	}
+	attrs = GetFileAttributesW(path);
 
 	if (attrs == INVALID_FILE_ATTRIBUTES)
 		throw MyWin32Error("Unable to change read-only flag on file: %s", GetLastError());
@@ -135,11 +156,7 @@ void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly) {
 	else
 		attrs &= ~FILE_ATTRIBUTE_READONLY;
 
-	BOOL success;
-	if (!VDIsWindowsNT())
-		success = SetFileAttributesA(s.c_str(), attrs);
-	else
-		success = SetFileAttributesW(path, attrs);
+	BOOL success = SetFileAttributesW(path, attrs);
 
 	if (!success)
 		throw MyWin32Error("Unable to change read-only flag on file: %s", GetLastError());
@@ -292,7 +309,7 @@ void ATShowHelp(void *hwnd, const wchar_t *filename) {
 			throw MyError("Cannot find help file: %ls", helpFile.c_str());
 
 		// If we're on Windows NT, check for the ADS and/or network drive.
-		if (VDIsWindowsNT()) {
+		{
 			VDStringW helpFileADS(helpFile);
 			helpFileADS += L":Zone.Identifier";
 			if (VDDoesPathExist(helpFileADS.c_str())) {
@@ -314,17 +331,11 @@ void ATShowHelp(void *hwnd, const wchar_t *filename) {
 		BOOL retval;
 
 		// CreateProcess will actually modify the string that it gets, soo....
-		if (VDIsWindowsNT()) {
+		{
 			STARTUPINFOW si = {sizeof(STARTUPINFOW)};
 			std::vector<wchar_t> tempbufW(helpCommand.size() + 1, 0);
 			helpCommand.copy(&tempbufW[0], tempbufW.size());
 			retval = CreateProcessW(NULL, &tempbufW[0], NULL, NULL, FALSE, CREATE_DEFAULT_ERROR_MODE, NULL, NULL, &si, &pi);
-		} else {
-			STARTUPINFOA si = {sizeof(STARTUPINFOA)};
-			VDStringA strA(VDTextWToA(helpCommand));
-			std::vector<char> tempbufA(strA.size() + 1, 0);
-			strA.copy(&tempbufA[0], tempbufA.size());
-			retval = CreateProcessA(NULL, &tempbufA[0], NULL, NULL, FALSE, CREATE_DEFAULT_ERROR_MODE, NULL, NULL, &si, &pi);
 		}
 
 		if (retval) {
@@ -338,7 +349,7 @@ void ATShowHelp(void *hwnd, const wchar_t *filename) {
 }
 
 bool ATIsUserAdministrator() {
-	if (LOBYTE(LOWORD(::GetVersion())) < 6)
+	if (!VDIsAtLeastVistaW32())
 		return TRUE;
 
 	BOOL isAdmin = FALSE;

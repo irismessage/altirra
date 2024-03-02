@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include <windows.h>
 #include <winioctl.h>
+#include <at/atcore/propertyset.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include "idephysdisk.h"
@@ -50,9 +51,40 @@ ATIDEPhysicalDisk::~ATIDEPhysicalDisk() {
 	Shutdown();
 }
 
+int ATIDEPhysicalDisk::AddRef() {
+	return ATDevice::AddRef();
+}
+
+int ATIDEPhysicalDisk::Release() {
+	return ATDevice::Release();
+}
+
+void *ATIDEPhysicalDisk::AsInterface(uint32 iid) {
+	switch(iid) {
+		case IATIDEDisk::kTypeID: return static_cast<IATIDEDisk *>(this);
+		default:
+			return ATDevice::AsInterface(iid);
+	}
+}
+
+void ATIDEPhysicalDisk::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mName = L"Hard disk image (physical disk)";
+	info.mConfigTag = "harddisk";
+	info.mTag = "hdphysdisk";
+}
+
+void ATIDEPhysicalDisk::GetSettings(ATPropertySet& settings) {
+	settings.SetString("path", mPath.c_str());
+}
+
+bool ATIDEPhysicalDisk::SetSettings(const ATPropertySet& settings) {
+	return false;
+}
+
 void ATIDEPhysicalDisk::Init(const wchar_t *path) {
 	Shutdown();
 
+	mPath = path;
 	mhDisk = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING, NULL);
 
 	if (mhDisk == INVALID_HANDLE_VALUE)

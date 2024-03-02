@@ -20,8 +20,11 @@
 
 #include <vd2/system/refcount.h>
 
-class IATIDEDisk : public IVDRefCount {
+class IATIDEDisk : public IVDRefUnknown {
 public:
+	enum { kTypeID = 'ided' };
+
+	virtual bool IsReadOnly() const = 0;
 	virtual uint32 GetSectorCount() const = 0;
 
 	virtual void Flush() = 0;

@@ -374,6 +374,7 @@ VDD3D9Manager::VDD3D9Manager(HMONITOR hmonitor, bool use9ex)
 	, mbDeviceValid(false)
 	, mbInScene(false)
 	, mbSupportsEventQueries(false)
+	, mbDwmCompositing(false)
 	, mFullScreenCount(0)
 	, mFSFence(0)
 	, mpD3DVB(NULL)
@@ -486,21 +487,14 @@ bool VDD3D9Manager::Init() {
 	}
 
 	if (mbUseD3D9Ex) {
-		DWORD osver = ::GetVersion();
-
 		// FLIPEX support requires at least Windows 7.
-		if (osver < 0x80000000) {
-			uint8 osmajorver = LOBYTE(LOWORD(osver));
-			uint8 osminorver = HIBYTE(LOWORD(osver));
+		if (VDIsAtLeast7W32()) {
+			HRESULT (APIENTRY *pDirect3DCreate9Ex)(UINT, IDirect3D9Ex **) = (HRESULT (APIENTRY *)(UINT, IDirect3D9Ex **))GetProcAddress(mhmodDX9, "Direct3DCreate9Ex");
+			if (pDirect3DCreate9Ex) {
+				HRESULT hr = pDirect3DCreate9Ex(D3D_SDK_VERSION, &mpD3DEx);
 
-			if (osmajorver >= 7 || (osmajorver == 6 && osminorver >= 1)) {
-				HRESULT (APIENTRY *pDirect3DCreate9Ex)(UINT, IDirect3D9Ex **) = (HRESULT (APIENTRY *)(UINT, IDirect3D9Ex **))GetProcAddress(mhmodDX9, "Direct3DCreate9Ex");
-				if (pDirect3DCreate9Ex) {
-					HRESULT hr = pDirect3DCreate9Ex(D3D_SDK_VERSION, &mpD3DEx);
-
-					if (SUCCEEDED(hr))
-						mpD3D = mpD3DEx;
-				}
+				if (SUCCEEDED(hr))
+					mpD3D = mpD3DEx;
 			}
 		}
 	}
@@ -856,12 +850,38 @@ void VDD3D9Manager::Shutdown() {
 }
 
 bool VDD3D9Manager::UpdateCachedDisplayMode() {
+	// We can get called from WM_DISPLAYCHANGE during Direct3DCreate9() under VirtualBox, presumably
+	// due to some weirdness in the VBox display driver.
+	if (!mpD3D)
+		return false;
+
 	// retrieve display mode
 	HRESULT hr = mpD3D->GetAdapterDisplayMode(mAdapter, &mDisplayMode);
 	if (FAILED(hr)) {
 		VDDEBUG_D3D("VideoDisplay/DX9: Failed to get current adapter mode.\n");
 		return false;
 	}
+
+	mbDwmCompositing = false;
+
+	if (VDIsAtLeastVistaW32()) {
+		HMODULE hmodDwmApi = VDLoadSystemLibraryW32("dwmapi");
+		if (hmodDwmApi) {
+			typedef HRESULT (WINAPI *tpDwmIsCompositionEnabled)(BOOL *);
+
+			tpDwmIsCompositionEnabled pDwmIsCompositionEnabled = (tpDwmIsCompositionEnabled)GetProcAddress(hmodDwmApi, "DwmIsCompositionEnabled");
+			if (pDwmIsCompositionEnabled) {
+				BOOL enabled;
+				HRESULT hr = pDwmIsCompositionEnabled(&enabled);
+
+				if (SUCCEEDED(hr) && enabled)
+					mbDwmCompositing = true;
+			}
+
+			FreeLibrary(hmodDwmApi);
+		}
+	}
+
 
 	return true;
 }
@@ -1854,11 +1874,17 @@ HRESULT VDD3D9Manager::PresentSwapChain(IVDD3D9SwapChain *pSwapChain, const RECT
 
 		syncDelta = yf;
 
-		history.mScanlineTarget -= yf * 15.0f;
-		if (history.mScanlineTarget < 0.0f)
-			history.mScanlineTarget += (float)mDisplayMode.Height;
-		else if (history.mScanlineTarget >= (float)mDisplayMode.Height)
-			history.mScanlineTarget -= (float)mDisplayMode.Height;
+		if (mbDwmCompositing) {
+			// The DWM makes vertical sync a bit easier as it already sync presents, but we have to avoid
+			// updating the frame around the time that it reads it.
+			history.mScanlineTarget = (float)mDisplayMode.Height * 0.5f;
+		} else {
+			history.mScanlineTarget -= yf * 15.0f;
+			if (history.mScanlineTarget < 0.0f)
+				history.mScanlineTarget += (float)mDisplayMode.Height;
+			else if (history.mScanlineTarget >= (float)mDisplayMode.Height)
+				history.mScanlineTarget -= (float)mDisplayMode.Height;
+		}
 
 		float success = rastStatus2.InVBlank || (int)rastStatus2.ScanLine <= history.mScanTop || (int)rastStatus2.ScanLine >= history.mScanBottom ? 1.0f : 0.0f;
 

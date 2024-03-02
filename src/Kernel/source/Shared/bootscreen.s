@@ -128,12 +128,14 @@ sprinit:
 		jsr		Imprint
 		
 		;		  0123456789012345678901234567890123456789012345678901234567890123
-		dta		d"Altirra "
+		dta		d"AltirraOS"
 		_KERNELSTR_BIOS_NAME_INTERNAL
-		dta		d" system BIOS "
+		dta		d" "
 		_VERSIONSTR_INTERNAL
-		dta		$9b
-		dta		d"Copyright (C) 2012-2013 Avery Lee",$9b
+		
+		;need space here for HLE to shift
+		dta		" ",$9b
+		dta		d"Copyright (C) 2012-2014 Avery Lee",$9b
 		dta		d"All Rights Reserved",$9b
 		dta		d"This is a substitute for the standard OS ROM. See the help file",$9b
 		dta		d"for how to use real Atari ROM images for higher compatibility."

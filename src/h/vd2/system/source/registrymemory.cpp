@@ -246,7 +246,7 @@ bool VDRegistryProviderMemory::Key::RemoveKey(const char *name) {
 	KeyMap::iterator it(mKeyMap.find_as(name));
 	
 	// fail if not found
-	if (it != mKeyMap.end())
+	if (it == mKeyMap.end())
 		return false;
 
 	// can't delete key if it has subkeys

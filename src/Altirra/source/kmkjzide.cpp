@@ -18,10 +18,13 @@
 #include <stdafx.h>
 #include <vd2/system/file.h>
 #include <vd2/system/registry.h>
+#include <vd2/system/hash.h>
+#include <vd2/system/int128.h>
 #include "kmkjzide.h"
 #include "memorymanager.h"
 #include "ide.h"
 #include "uirender.h"
+#include "firmwaremanager.h"
 
 ATKMKJZIDE::ATKMKJZIDE(bool version2)
 	: mpIDE(NULL)
@@ -49,25 +52,39 @@ ATKMKJZIDE::~ATKMKJZIDE() {
 	Shutdown();
 }
 
-void ATKMKJZIDE::LoadFirmware(bool sdx, const void *ptr, uint32 len) {
+bool ATKMKJZIDE::LoadFirmware(bool sdx, const void *ptr, uint32 len) {
 	if (sdx) {
+		vduint128 oldHash = VDHash128(mSDX, sizeof mSDX);
+
 		if (len > sizeof mSDX)
 			len = sizeof mSDX;
 
-		memcpy(mSDX, ptr, len);
+		if (len)
+			memcpy(mSDX, ptr, len);
+
+		memset(mSDX + len, 0xFF, (sizeof mSDX) - len);
+
 		mSDXCtrl.SetDirty(false);
+
+		return VDHash128(mSDX, sizeof mSDX) != oldHash;
 	} else {
-		uint32 flashSize = mbVersion2 ? sizeof mFlash : 0xc00;
+		const uint32 flashSize = mbVersion2 ? sizeof mFlash : 0xc00;
+		const vduint128 oldHash = VDHash128(mFlash, flashSize);
 
 		if (len > flashSize)
 			len = flashSize;
 
-		memcpy(mFlash, ptr, len);
+		if (len)
+			memcpy(mFlash, ptr, len);
+
+		memset(mFlash + len, 0xFF, flashSize - len);
+
 		mFlashCtrl.SetDirty(false);
+		return VDHash128(mFlash, len) != oldHash;
 	}
 }
 
-void ATKMKJZIDE::LoadFirmware(bool sdx, const wchar_t *path) {
+bool ATKMKJZIDE::LoadFirmware(bool sdx, ATFirmwareManager& fwmgr, uint64 id) {
 	void *flash;
 	uint32 flashSize;
 
@@ -81,11 +98,11 @@ void ATKMKJZIDE::LoadFirmware(bool sdx, const wchar_t *path) {
 		mFlashCtrl.SetDirty(false);
 	}
 
+	vduint128 oldHash = VDHash128(flash, flashSize);
 	memset(flash, 0xFF, flashSize);
 
-	VDFile f;
-	f.open(path);
-	f.readData(flash, flashSize);
+	fwmgr.LoadFirmware(id, flash, 0, flashSize);
+	return oldHash != VDHash128(flash, flashSize);
 }
 
 void ATKMKJZIDE::SaveFirmware(bool sdx, const wchar_t *path) {
@@ -110,8 +127,7 @@ void ATKMKJZIDE::SaveFirmware(bool sdx, const wchar_t *path) {
 		mFlashCtrl.SetDirty(false);
 }
 
-void ATKMKJZIDE::Init(ATIDEEmulator *ide, ATScheduler *sch, IATUIRenderer *uir) {
-	mpIDE = ide;
+void ATKMKJZIDE::Init(ATScheduler *sch, IATUIRenderer *uir) {
 	mpUIRenderer = uir;
 	mbSelected = false;
 
@@ -122,6 +138,10 @@ void ATKMKJZIDE::Init(ATIDEEmulator *ide, ATScheduler *sch, IATUIRenderer *uir) 
 void ATKMKJZIDE::Shutdown() {
 	mpIDE = NULL;
 	mpUIRenderer = NULL;
+}
+
+void ATKMKJZIDE::SetIDEImage(ATIDEEmulator *ide) {
+	mpIDE = ide;
 }
 
 void ATKMKJZIDE::AttachDevice(ATMemoryManager *memman) {
@@ -290,9 +310,15 @@ sint32 ATKMKJZIDE::OnControlDebugRead(void *thisptr0, uint32 addr) {
 		case 0x15:
 		case 0x16:
 		case 0x17:
+			if (!thisptr->mpIDE)
+				return 0xFF;
+
 			return thisptr->mpIDE->DebugReadByte(addr8 & 0x07);
 
 		case 0x1E:	// alternate status register
+			if (!thisptr->mpIDE)
+				return 0xFF;
+
 			return thisptr->mpIDE->DebugReadByte(0x07);
 
 		case 0x20:
@@ -329,6 +355,9 @@ sint32 ATKMKJZIDE::OnControlRead(void *thisptr0, uint32 addr) {
 			return thisptr->mHighDataLatch;
 
 		case 0x10:
+			if (!thisptr->mpIDE)
+				return 0xFF;
+
 			{
 				uint32 v = thisptr->mpIDE->ReadDataLatch(true);
 
@@ -343,9 +372,15 @@ sint32 ATKMKJZIDE::OnControlRead(void *thisptr0, uint32 addr) {
 		case 0x15:
 		case 0x16:
 		case 0x17:
+			if (!thisptr->mpIDE)
+				return 0xFF;
+
 			return thisptr->mpIDE->ReadByte(addr8 & 0x07);
 
 		case 0x1E:	// alternate status register
+			if (!thisptr->mpIDE)
+				return 0xFF;
+
 			return thisptr->mpIDE->ReadByte(0x07);
 
 		case 0x20:
@@ -383,7 +418,8 @@ bool ATKMKJZIDE::OnControlWrite(void *thisptr0, uint32 addr, uint8 value) {
 			return true;
 
 		case 0x10:
-			thisptr->mpIDE->WriteDataLatch(value, thisptr->mHighDataLatch);
+			if (thisptr->mpIDE)
+				thisptr->mpIDE->WriteDataLatch(value, thisptr->mHighDataLatch);
 			return true;
 
 		case 0x11:
@@ -393,7 +429,8 @@ bool ATKMKJZIDE::OnControlWrite(void *thisptr0, uint32 addr, uint8 value) {
 		case 0x15:
 		case 0x16:
 		case 0x17:
-			thisptr->mpIDE->WriteByte(addr8 & 0x07, value);
+			if (thisptr->mpIDE)
+				thisptr->mpIDE->WriteByte(addr8 & 0x07, value);
 			return true;
 
 		case 0x20:

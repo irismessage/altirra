@@ -79,26 +79,14 @@ void VDAppendLocalDateString(VDStringW& dst, const VDExpandedDate& ed) {
 
 	VDConvertExpandedDateToNativeW32(st, ed);
 
-	if (VDIsWindowsNT()) {
-		int len = ::GetDateFormatW(LOCALE_USER_DEFAULT, LOCALE_USE_CP_ACP, &st, NULL, NULL, 0);
+	int len = ::GetDateFormatW(LOCALE_USER_DEFAULT, LOCALE_USE_CP_ACP, &st, NULL, NULL, 0);
 
-		if (len > 0) {
-			vdfastvector<WCHAR> buf;
-			buf.resize(len, 0);
+	if (len > 0) {
+		vdfastvector<WCHAR> buf;
+		buf.resize(len, 0);
 
-			if (::GetDateFormatW(LOCALE_USER_DEFAULT, LOCALE_USE_CP_ACP | DATE_SHORTDATE, &st, NULL, buf.data(), len))
-				dst += buf.data();
-		}
-	} else {
-		int len = ::GetDateFormatA(LOCALE_USER_DEFAULT, LOCALE_USE_CP_ACP | DATE_SHORTDATE, &st, NULL, NULL, 0);
-
-		if (len > 0) {
-			vdfastvector<CHAR> buf;
-			buf.resize(len, 0);
-
-			if (::GetDateFormatA(LOCALE_USER_DEFAULT, LOCALE_USE_CP_ACP | DATE_SHORTDATE, &st, NULL, buf.data(), len))
-				dst += VDTextAToW(buf.data());
-		}
+		if (::GetDateFormatW(LOCALE_USER_DEFAULT, LOCALE_USE_CP_ACP | DATE_SHORTDATE, &st, NULL, buf.data(), len))
+			dst += buf.data();
 	}
 }
 
@@ -107,25 +95,13 @@ void VDAppendLocalTimeString(VDStringW& dst, const VDExpandedDate& ed) {
 
 	VDConvertExpandedDateToNativeW32(st, ed);
 
-	if (VDIsWindowsNT()) {
-		int len = ::GetTimeFormatW(LOCALE_USER_DEFAULT, LOCALE_USE_CP_ACP | TIME_NOSECONDS, &st, NULL, NULL, 0);
+	int len = ::GetTimeFormatW(LOCALE_USER_DEFAULT, LOCALE_USE_CP_ACP | TIME_NOSECONDS, &st, NULL, NULL, 0);
 
-		if (len > 0) {
-			vdfastvector<WCHAR> buf;
-			buf.resize(len, 0);
+	if (len > 0) {
+		vdfastvector<WCHAR> buf;
+		buf.resize(len, 0);
 
-			if (::GetTimeFormatW(LOCALE_USER_DEFAULT, LOCALE_USE_CP_ACP | TIME_NOSECONDS, &st, NULL, buf.data(), len))
-				dst += buf.data();
-		}
-	} else {
-		int len = ::GetTimeFormatA(LOCALE_USER_DEFAULT, LOCALE_USE_CP_ACP | TIME_NOSECONDS, &st, NULL, NULL, 0);
-
-		if (len > 0) {
-			vdfastvector<CHAR> buf;
-			buf.resize(len, 0);
-
-			if (::GetTimeFormatA(LOCALE_USER_DEFAULT, LOCALE_USE_CP_ACP | TIME_NOSECONDS, &st, NULL, buf.data(), len))
-				dst += VDTextAToW(buf.data());
-		}
+		if (::GetTimeFormatW(LOCALE_USER_DEFAULT, LOCALE_USE_CP_ACP | TIME_NOSECONDS, &st, NULL, buf.data(), len))
+			dst += buf.data();
 	}
 }

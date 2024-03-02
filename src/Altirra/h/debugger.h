@@ -88,6 +88,18 @@ struct ATDebuggerWatchInfo {
 	ATDebugExpNode *mpExpr;
 };
 
+struct ATDebuggerBreakpointInfo {
+	sint32	mNumber;
+	sint32	mAddress;
+	uint32	mLength;
+	bool	mbBreakOnPC;
+	bool	mbBreakOnRead;
+	bool	mbBreakOnWrite;
+	bool	mbDeferred;
+	bool	mbClearOnReset;
+	bool	mbOneShot;
+};
+
 class IATDebugger;
 
 class IATDebuggerActiveCommand : public IVDRefCount {

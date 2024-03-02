@@ -22,12 +22,12 @@ class ATEvent : public ATEventLink {
 public:
 	IATSchedulerCallback *mpCB;
 	uint32 mId;
-	sint32 mNextTime;
+	uint32 mNextTime;
 };
 
 ATScheduler::ATScheduler()
-	: mNextEventCounter(-1000)
-	, mTimeBase(1000)
+	: mNextEventCounter(0U-1000)
+	, mTimeBase(0xFFF00000 + 1000)
 	, mpFreeEvents(NULL)
 {
 	mActiveEvents.mpNext = mActiveEvents.mpPrev = &mActiveEvents;
@@ -38,10 +38,10 @@ ATScheduler::~ATScheduler() {
 
 void ATScheduler::ProcessNextEvent() {
 
-	sint32 timeToNext = 100000;
+	uint32 timeToNext = 100000;
 	while(mActiveEvents.mpNext != &mActiveEvents) {
 		ATEvent *ev = static_cast<ATEvent *>(mActiveEvents.mpNext);
-		sint32 timeToNextEvent = ev->mNextTime - (mTimeBase + mNextEventCounter);
+		uint32 timeToNextEvent = ev->mNextTime - (mTimeBase + mNextEventCounter);
 
 		VDASSERT(timeToNextEvent<100000000);
 
@@ -68,7 +68,7 @@ void ATScheduler::ProcessNextEvent() {
 
 	VDASSERT((uint32)(timeToNext - 1) < 100000);
 	mTimeBase += mNextEventCounter;
-	mNextEventCounter = -timeToNext;
+	mNextEventCounter = 0U - timeToNext;
 	mTimeBase -= mNextEventCounter;
 }
 
@@ -101,28 +101,31 @@ ATEvent *ATScheduler::AddEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id
 
 	VDASSERT(!ev->mId);
 
+	const uint32 t = mTimeBase + mNextEventCounter;
+
 	ev->mpCB = cb;
 	ev->mId = id;
-	ev->mNextTime = mTimeBase + mNextEventCounter + ticks;
+	ev->mNextTime = t + ticks;
 
 	ATEventLink *it = mActiveEvents.mpNext;
 	for(; it != &mActiveEvents; it = it->mpNext) {
 		ATEvent *ev2 = static_cast<ATEvent *>(it);
 
-		if ((ev->mNextTime - mTimeBase) < (ev2->mNextTime - mTimeBase))
+		if (ticks < ev2->mNextTime - t)
 			break;
 	}
 
+	// adjust time base if we added a new event at the front
 	if (it == mActiveEvents.mpNext) {
 		mTimeBase += mNextEventCounter;
-		mNextEventCounter = -(sint32)ticks;
+		mNextEventCounter = 0U - ticks;
 		mTimeBase -= mNextEventCounter;
-		VDASSERT((uint32)-mNextEventCounter < 100000000);
+		VDASSERT((uint32)0-mNextEventCounter < 100000000);
 	}
 
-	ATEventLink *t = it->mpPrev;
-	t->mpNext = ev;
-	ev->mpPrev = t;
+	ATEventLink *prev = it->mpPrev;
+	prev->mpNext = ev;
+	ev->mpPrev = prev;
 	it->mpPrev = ev;
 	ev->mpNext = it;
 

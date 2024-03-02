@@ -50,22 +50,36 @@ class ATSaveStateWriter;
 class ATGTIARenderer;
 class ATVBXEEmulator;
 
+enum ATLumaRampMode : uint8 {
+	kATLumaRampMode_Linear,
+	kATLumaRampMode_XL,
+	kATLumaRampModeCount
+};
+
 struct ATColorParams {
 	float mHueStart;
 	float mHueRange;
 	float mBrightness;
 	float mContrast;
 	float mSaturation;
-	float mArtifactHue;
+	float mGammaCorrect;
+	float mArtifactHue;	
 	float mArtifactSat;
 	float mArtifactBias;
 	bool mbUsePALQuirks;
+	ATLumaRampMode mLumaRampMode;
 };
 
 struct ATColorSettings {
 	ATColorParams	mNTSCParams;
 	ATColorParams	mPALParams;
 	bool	mbUsePALParams;
+};
+
+struct ATArtifactingParams {
+	float mNTSCLumaSharpness;
+	float mNTSCChromaSharpness;
+	float mNTSCLumaNotchQ;
 };
 
 struct ATGTIARegisterState {
@@ -107,9 +121,22 @@ public:
 		kOverscanOSScreen,
 		kOverscanCount
 	};
+	
+	enum VerticalOverscanMode {
+		kVerticalOverscan_Default,
+		kVerticalOverscan_OSScreen,
+		kVerticalOverscan_Normal,
+		kVerticalOverscan_Extended,
+		kVerticalOverscan_Full,
+		kVerticalOverscanCount
+	};
 
 	ATColorSettings GetColorSettings() const;
 	void SetColorSettings(const ATColorSettings& settings);
+
+	ATArtifactingParams GetArtifactingParams() const;
+	void SetArtifactingParams(const ATArtifactingParams& params);
+
 	void ResetColors();
 	void GetPalette(uint32 pal[256]) const;
 
@@ -123,6 +150,9 @@ public:
 
 	OverscanMode GetOverscanMode() const { return mOverscanMode; }
 	void SetOverscanMode(OverscanMode mode);
+
+	VerticalOverscanMode GetVerticalOverscanMode() const { return mVerticalOverscanMode; }
+	void SetVerticalOverscanMode(VerticalOverscanMode mode);
 
 	bool IsOverscanPALExtended() const { return mbOverscanPALExtended; }
 	void SetOverscanPALExtended(bool extended);
@@ -226,7 +256,10 @@ public:
 	void UpdateScreen(bool immediate, bool forceAnyScreen);
 	void RecomputePalette();
 
-	uint8 DebugReadByte(uint8 reg) const;
+	uint8 DebugReadByte(uint8 reg) {
+		return ReadByte(reg);
+	}
+
 	uint8 ReadByte(uint8 reg);
 	void WriteByte(uint8 reg, uint8 value);
 
@@ -279,6 +312,7 @@ protected:
 	void GenerateSpriteImage(Sprite& sprite, int pos);
 	void FreeSpriteImage(SpriteImage *);
 	SpriteImage *AllocSpriteImage();
+	VerticalOverscanMode DeriveVerticalOverscanMode() const;
 
 	// critical variables - sync
 	IATGTIAEmulatorConnections *mpConn; 
@@ -309,6 +343,7 @@ protected:
 	AnalysisMode	mAnalysisMode;
 	ArtifactMode	mArtifactMode;
 	OverscanMode	mOverscanMode;
+	VerticalOverscanMode	mVerticalOverscanMode;
 	bool	mbVsyncEnabled;
 	bool	mbBlendMode;
 	bool	mbFrameCopiedFromPrev;

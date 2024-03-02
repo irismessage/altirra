@@ -52,6 +52,7 @@ enum ATDiskEmulationMode {
 	kATDiskEmulationMode_IndusGT,
 	kATDiskEmulationMode_Happy,
 	kATDiskEmulationMode_1050Turbo,
+	kATDiskEmulationMode_Generic57600,
 	kATDiskEmulationModeCount
 };
 
@@ -62,13 +63,18 @@ public:
 
 	void Init(int unit, IATDiskActivity *act, ATScheduler *sched, ATScheduler *slowsched, ATAudioSyncMixer *mixer);
 
+	void Rename(int unit);
+
 	bool IsEnabled() const { return mbEnabled; }
 	bool IsAccurateSectorTimingEnabled() const { return mbAccurateSectorTiming; }
 	bool AreDriveSoundsEnabled() const { return mbDriveSoundsEnabled; }
+	bool GetBurstTransfersEnabled() const { return mbBurstTransfersEnabled; }
 
 	void SetEnabled(bool enabled) { mbEnabled = enabled; }
 	void SetAccurateSectorTimingEnabled(bool enabled) { mbAccurateSectorTiming = enabled; }
 	void SetDriveSoundsEnabled(bool enabled);
+	void SetBurstTransfersEnabled(bool enabled) { mbBurstTransfersEnabled = enabled; }
+
 	void SetSectorBreakpoint(int sector) { mSectorBreakpoint = sector; }
 	int GetSectorBreakpoint() const { return mSectorBreakpoint; }
 
@@ -93,15 +99,23 @@ public:
 	void MountFolder(const wchar_t *path, bool sdfs);
 	void LoadDisk(const wchar_t *s);
 	void LoadDisk(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream);
-	void SaveDisk(const wchar_t *s);
+	void SaveDisk(const wchar_t *s, ATDiskImageFormat format);
 	void CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize);
 	void FormatDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize);
 	void UnloadDisk();
 
+	VDStringW GetMountedImageLabel() const;
+
 	uint32 GetSectorCount() const;
 	uint32 GetSectorSize(uint16 sector) const;
 	uint32 GetSectorPhantomCount(uint16 sector) const;
-	float GetSectorTiming(uint16 sector, int phantomIdx) const;
+
+	struct SectorInfo {
+		float mRotPos;
+		uint8 mFDCStatus;
+	};
+
+	bool GetSectorInfo(uint16 sector, int phantomIdx, SectorInfo& info) const;
 	uint8 ReadSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem);
 	uint8 WriteSector(uint16 bufadr, uint16 len, uint16 sector, ATCPUEmulatorMemory *mpMem);
 	void ReadStatus(uint8 dst[5]);
@@ -194,7 +208,7 @@ protected:
 	bool	mbCommandValid;
 	bool	mbCommandFrameHighSpeed;
 	bool	mbEnabled;
-	bool	mbBurstTransfer;
+	bool	mbBurstTransfersEnabled;
 	bool	mbDriveSoundsEnabled;
 	bool	mbAccurateSectorTiming;
 	bool	mbAccurateSectorPrediction;

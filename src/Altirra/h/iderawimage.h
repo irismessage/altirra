@@ -18,16 +18,29 @@
 #ifndef f_AT_IDERAWIMAGE_H
 #define f_AT_IDERAWIMAGE_H
 
+#include <at/atcore/deviceimpl.h>
 #include <vd2/system/file.h>
 #include "idedisk.h"
 
-class ATIDERawImage : public vdrefcounted<IATIDEDisk> {
+class ATIDERawImage : public ATDevice, public IATIDEDisk {
 	ATIDERawImage(const ATIDERawImage&);
 	ATIDERawImage& operator=(const ATIDERawImage&);
 public:
 	ATIDERawImage();
 	~ATIDERawImage();
 
+public:
+	int AddRef();
+	int Release();
+	void *AsInterface(uint32 iid);
+
+public:
+	virtual void GetDeviceInfo(ATDeviceInfo& info);
+	virtual void GetSettings(ATPropertySet& settings);
+	virtual bool SetSettings(const ATPropertySet& settings);
+
+public:
+	virtual bool IsReadOnly() const override;
 	uint32 GetSectorCount() const;
 
 	void Init(const wchar_t *path, bool write);
@@ -41,7 +54,10 @@ public:
 
 protected:
 	VDFile mFile;
+	VDStringW mPath;
 	uint32 mSectorCount;
+	uint32 mSectorCountLimit;
+	bool mbReadOnly;
 };
 
 #endif

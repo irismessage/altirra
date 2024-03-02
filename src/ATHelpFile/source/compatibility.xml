@@ -204,6 +204,23 @@
           </p>
         </compat-issue>
       </compat-title>
+
+      <compat-title name="Vantage Point">
+        <compat-issue id="major-bug">
+          <p>
+            The executable has a malformed segment (two bytes too long). The built-in executable loader
+            will load the program, but complain; DOS may barf.
+          </p>
+          <p>
+            The startup code for this demo is <b>very</b> broken and it does not run reliably on real
+            hardware. It banks out the kernel ROM, hooks
+            the NMI vector, and then returns to an invalid location in RAM. This causes the 6502 to run
+            garbage as code in mainline while display list interrupts run the initial display and music.
+            The most serious problem is that the IRQ/BRK vector is uninitialized, which can cause the
+            CPU to jump to random locations depending on the RAM power-on pattern.
+          </p>
+        </compat-issue>
+      </compat-title>
     </compat-category>
 
     <!-- *************************************************** -->
@@ -390,6 +407,15 @@
         </compat-issue>
       </compat-title>
 
+      <compat-title name="Missile Command">
+        <compat-issue id="requires-osb">
+          <p>
+            Has a hardcoded reference to the keyboard lookup table in the OS-B ROM. The game is playable on
+            XL/XE or custom OSes, but the keys for selecting the starting wave will not work.
+          </p>
+        </compat-issue>
+      </compat-title>
+
       <compat-title name="Mr. DO!">
         <compat-issue id="disktiming">
           <p>
@@ -440,6 +466,16 @@
         </compat-issue>
       </compat-title>
       
+      <compat-title name="Return of Heracles">
+        <compat-issue id="requires-osb">
+          <p>
+            Requires OS-B due to hardcoded references to the keyboard translation table. The game will
+            appear to work on the XL/XE or a custom OS, but keyboard entry will fail late in the game
+            with the Riddle of the Sphinx puzzle.
+          </p>
+        </compat-issue>
+      </compat-title>
+
       <compat-title name="The Tail of Beta Lyrae">
         <compat-issue id="diskrw">
           <p>
@@ -447,6 +483,14 @@
             elements as the game is loaded more times. The game will work if the disk is write
             protected, but the new game elements will not appear if the counter is not already
             high enough.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="The Wizard and the Princess">
+        <compat-issue id="requires-osb">
+          <p>
+            Directly jumps into the OS-B screen editor; fails with XL/XE or custom OSes.
           </p>
         </compat-issue>
       </compat-title>
@@ -535,6 +579,16 @@
         <compat-issue id="requires-osb">
           <p>
             Requires OS-B as it has illegal calls into the screen editor code.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="The Newsroom">
+        <compat-issue id="diskrw">
+          <p>
+            Requires program disk to be writable, or else it will keep asking for the program disk to
+            be inserted. Unusually, this check is done by checking the write protection tab directly
+            rather than being detected from a write failure.
           </p>
         </compat-issue>
       </compat-title>

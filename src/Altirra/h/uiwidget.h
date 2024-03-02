@@ -157,6 +157,8 @@ public:
 	void SetOwner(ATUIWidget *w);
 	ATUIWidget *GetParentOrOwner() const;
 
+	bool IsActivated() const { return mbActivated; }
+
 	bool HasFocus() const;
 	bool HasCursor() const;
 	bool IsCursorCaptured() const;
@@ -171,6 +173,7 @@ public:
 	void SetCursorImage(uint32 id);
 
 	const vdrect32& GetArea() const { return mArea; }
+	vdrect32 GetClientArea() const;
 	void SetPosition(const vdpoint32& pt);
 	void SetSize(const vdsize32& sz);
 	void SetArea(const vdrect32& r);
@@ -211,10 +214,17 @@ public:
 	bool IsSameOrAncestorOf(ATUIWidget *w) const;
 
 	virtual ATUIWidget *HitTest(vdpoint32 pt);
+
+	// Gets/sets the (x,y) point in the client coordinate system that corresponds to the
+	// upper-left corner of the client rect.
+	vdpoint32 GetClientOrigin() const { return mClientOrigin; }
+	void SetClientOrigin(vdpoint32 pt);
+
 	bool TranslateScreenPtToClientPt(vdpoint32 spt, vdpoint32& cpt);
 	bool TranslateWindowPtToClientPt(vdpoint32 wpt, vdpoint32& cpt);
 	vdpoint32 TranslateClientPtToScreenPt(vdpoint32 cpt);
 
+	void UnbindAction(uint32 vk, uint32 mod);
 	void UnbindAllActions();
 	void BindAction(const ATUITriggerBinding& binding);
 	void BindAction(uint32 vk, uint32 action, uint32 mod = 0, uint32 instanceid = 0);
@@ -228,7 +238,7 @@ public:
 	virtual void OnMouseUpL(sint32 x, sint32 y);
 	virtual void OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk);
 	virtual void OnMouseUp(sint32 x, sint32 y, uint32 vk);
-	virtual void OnMouseWheel(sint32 x, sint32 y, float delta);
+	virtual bool OnMouseWheel(sint32 x, sint32 y, float delta);
 	virtual void OnMouseLeave();
 	virtual void OnMouseHover(sint32 x, sint32 y);
 
@@ -251,10 +261,16 @@ public:
 
 	virtual void OnCaptureLost();
 
+	virtual void OnActivate();
+	virtual void OnDeactivate();
+
+	virtual void OnTrackCursorChanges(ATUIWidget *w);
+
 	void Draw(IVDDisplayRenderer& rdr);
 
 public:
 	void SetParent(ATUIManager *mgr, ATUIContainer *parent);
+	void SetActivated(bool activated);
 	void OnPointerEnter(uint8 bit);
 	void OnPointerLeave(uint8 bit);
 	void OnPointerClear();
@@ -269,6 +285,7 @@ protected:
 	ATUIContainer *mpParent;
 	vdrect32 mArea;
 	vdrect32 mClientArea;
+	vdpoint32 mClientOrigin;
 	uint32 mFillColor;
 	uint32 mCursorImage;
 	ATUIDockMode mDockMode;
@@ -278,6 +295,7 @@ protected:
 	uint32 mInstanceId;
 	uint32 mOwnerId;
 
+	bool mbActivated;
 	bool mbVisible;
 	bool mbFastClip;
 	bool mbHitTransparent;

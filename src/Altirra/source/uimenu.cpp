@@ -37,6 +37,12 @@ extern HMENU g_hMenuMRU;
 extern ATUIMenu *g_pMenuMRU;
 extern ATUICommandManager g_ATUICommandMgr;
 
+HMENU g_hMenuFirmware[2];
+ATUIMenu *g_pMenuFirmware[2];
+
+IATUIDynamicMenuProvider *g_pDynamicMenuProvider[2];
+int g_dynamicMenuItemBaseCount[2];
+
 VDLinearAllocator g_ATUIMenuBoundCommandsAlloc;
 vdfastvector<std::pair<const char *, const wchar_t *> > g_ATUIMenuBoundCommands;
 vdrefptr<ATUIMenu> g_pATUIMenu;
@@ -50,8 +56,8 @@ void ATUILoadMenu() {
 	g_ATUIMenuBoundCommands.clear();
 
 	HMENU hmenu = CreateMenu();
-	HMENU hmenuSpecialMenus[5] = {NULL};
-	ATUIMenu *pmenuSpecialMenus[5] = {NULL};
+	HMENU hmenuSpecialMenus[7] = {NULL};
+	ATUIMenu *pmenuSpecialMenus[7] = {NULL};
 	UINT id = 40000;
 
 	VDStringW menuItemText;
@@ -191,6 +197,10 @@ void ATUILoadMenu() {
 						specialidx = 3;
 					else if (cmdname == L"$port4")
 						specialidx = 4;
+					else if (cmdname == L"$firmware_os")
+						specialidx = 5;
+					else if (cmdname == L"$firmware_basic")
+						specialidx = 6;
 					else if (cmdname == L"$port1none")
 						itemid = ID_INPUT_PORT1_NONE;
 					else if (cmdname == L"$port2none")
@@ -294,6 +304,14 @@ void ATUILoadMenu() {
 	if (g_hMenuMRU)
 		ATUpdateMRUListMenu(g_hMenuMRU, g_pMenuMRU, ID_FILE_MRU_BASE, ID_FILE_MRU_BASE + 99);
 
+	for(int i=0; i<2; ++i) {
+		g_hMenuFirmware[i] = hmenuSpecialMenus[i+5];
+		g_pMenuFirmware[i] = pmenuSpecialMenus[i+5];
+		g_dynamicMenuItemBaseCount[i] = pmenuSpecialMenus[i+5]->GetItemCount();
+
+		ATUIRebuildDynamicMenu(i);
+	}
+
 	for(int i=0; i<4; ++i)
 		ATSetPortMenu(i, hmenuSpecialMenus[i + 1], pmenuSpecialMenus[i + 1]);
 }
@@ -306,6 +324,39 @@ void ATUISetMenuEnabled(bool enabled) {
 			EnableMenuItem(g_hMenu, i, MF_BYPOSITION | (enabled ? MF_ENABLED : MF_GRAYED));
 
 		DrawMenuBar(g_hwnd);
+	}
+}
+
+void ATUISetDynamicMenuProvider(int index, IATUIDynamicMenuProvider *provider) {
+	g_pDynamicMenuProvider[index] = provider;
+}
+
+void ATUIRebuildDynamicMenu(int index) {
+	ATUIMenu *menu = g_pMenuFirmware[index];
+
+	if (!menu)
+		return;
+
+	menu->RemoveItems(g_dynamicMenuItemBaseCount[index], menu->GetItemCount() - g_dynamicMenuItemBaseCount[index]);
+
+	if (g_pDynamicMenuProvider[index])
+		g_pDynamicMenuProvider[index]->RebuildMenu(*menu, ID_DYNAMIC_BASE + 100*index);
+
+	HMENU hmenu = g_hMenuFirmware[index];
+	if (hmenu) {
+		int count = ::GetMenuItemCount(hmenu);
+		for(int i=count-1; i>=g_dynamicMenuItemBaseCount[index]; --i)
+			::DeleteMenu(hmenu, i, MF_BYPOSITION);
+
+		uint32 n = menu->GetItemCount() - g_dynamicMenuItemBaseCount[index];
+		for(uint32 i=0; i<n; ++i) {
+			ATUIMenuItem *item = menu->GetItemByIndex(i + g_dynamicMenuItemBaseCount[index]);
+
+			if (item->mbSeparator)
+				VDAppendMenuSeparatorW32(hmenu);
+			else
+				VDAppendMenuW32(hmenu, MF_STRING | (item->mbDisabled ? MF_DISABLED : MF_ENABLED), item->mId, item->mText.c_str());
+		}
 	}
 }
 
@@ -367,9 +418,52 @@ void ATUIUpdateMenu() {
 			}
 		}
 	}
+
+	for(int i=0; i<2; ++i) {
+		if (g_pDynamicMenuProvider[i] && g_pMenuFirmware[i]) {
+			ATUIMenu& menu = *g_pMenuFirmware[i];
+			const uint32 base = g_dynamicMenuItemBaseCount[i];
+			const uint32 n = menu.GetItemCount() - g_dynamicMenuItemBaseCount[i];
+
+			vdfastvector<uint8> oldState(n);
+
+			for(uint32 j=0; j<n; ++j) {
+				const ATUIMenuItem *item = menu.GetItemByIndex(base + j);
+
+				oldState[j] = (item->mbChecked ? 1 : 0) + (item->mbRadioChecked ? 2 : 0);
+			}
+
+			g_pDynamicMenuProvider[i]->UpdateMenu(menu, base, n);
+
+			if (g_hMenuFirmware[i]) {
+				for(uint32 j=0; j<n; ++j) {
+					const ATUIMenuItem *item = menu.GetItemByIndex(base + j);
+
+					if (oldState[j] != ((item->mbChecked ? 1 : 0) + (item->mbRadioChecked ? 2 : 0))) {
+						if (item->mbRadioChecked)
+							VDCheckRadioMenuItemByPositionW32(g_hMenuFirmware[i], base + j, true);
+						else if (item->mbChecked)
+							VDCheckMenuItemByPositionW32(g_hMenuFirmware[i], base + j, true);
+						else
+							VDCheckMenuItemByPositionW32(g_hMenuFirmware[i], base + j, false);
+					}
+				}				
+			}
+		}
+	}
 }
 
 bool ATUIHandleMenuCommand(uint32 id) {
+	if (id >= ID_DYNAMIC_BASE && id < ID_DYNAMIC_BASE + 200) {
+		int dynOffset = id - ID_DYNAMIC_BASE;
+		int menuIndex = dynOffset / 100;
+		int itemIndex = dynOffset % 100;
+
+		if (g_pDynamicMenuProvider[menuIndex])
+			g_pDynamicMenuProvider[menuIndex]->HandleMenuCommand(itemIndex);
+		return true;
+	}
+
 	uint32 offset = id - 40000;
 
 	if (offset < (uint32)g_ATUIMenuBoundCommands.size()) {

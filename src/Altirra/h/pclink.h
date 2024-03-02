@@ -30,7 +30,6 @@ class IATUIRenderer;
 class IATPCLinkDevice {
 public:
 	virtual ~IATPCLinkDevice() {}
-	virtual void Init(ATScheduler *scheduler, ATPokeyEmulator *pokey, IATUIRenderer *uirenderer) = 0;
 	virtual void Shutdown() = 0;
 
 	virtual bool IsReadOnly() = 0;
@@ -38,10 +37,6 @@ public:
 
 	virtual const wchar_t *GetBasePath() = 0;
 	virtual void SetBasePath(const wchar_t *basePath) = 0;
-
-	virtual void DumpStatus() = 0;
-
-	virtual bool TryAccelSIO(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem, ATKernelDatabase& kdb, uint8 device, uint8 command) = 0;
 };
 
 

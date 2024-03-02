@@ -34,6 +34,12 @@
 	#include <vd2/system/vdtypes.h>
 #endif
 
+inline int VDCountBits8(uint8 v) {
+	v -= (v >> 1) & 0x55;
+	v = ((v & 0xcc) >> 2) + (v & 0x33);
+	return (int)((v + (v >> 4)) & 15);
+}
+
 int VDCountBits(uint32 v);
 int VDFindLowestSetBit(uint32 v);
 int VDFindHighestSetBit(uint32 v);

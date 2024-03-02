@@ -5,6 +5,9 @@
 	&Open Image...			{File.OpenImage}
 	Dis&k Drives...			{Disk.DrivesDialog}
 	Attach Disk
+		Rotate Down			{Disk.RotateNext}
+		Rotate Up			{Disk.RotatePrev}
+		---
 		Drive 1%			{Disk.Attach1}
 		Drive 2%			{Disk.Attach2}
 		Drive 3%			{Disk.Attach3}
@@ -91,6 +94,12 @@
 		&Extended				{View.OverscanExtended}
 		&Full					{View.OverscanFull}
 		---
+		&Vertical Override
+			&Off					{View.VerticalOverrideOff}
+			&OS Screen Only			{View.VerticalOverrideOSScreen}
+			&Normal					{View.VerticalOverrideNormal}
+			&Extended				{View.VerticalOverrideExtended}
+			&Full					{View.VerticalOverrideFull}
 		&Extended PAL Height	{View.TogglePALExtended}
 	&GTIA Visualization
 		&Next Mode				{View.NextGTIAVisMode}
@@ -98,8 +107,8 @@
 		&Next Mode				{View.NextANTICVisMode}
 	&Vertical Sync				{View.ToggleVSync}
 	Show FPS					{View.ToggleFPS}
-	&XEP-80 View				{View.ToggleXEP80View}
-	&Auto-switch XEP-80 View	{View.ToggleXEP80ViewAutoswitching}
+	&XEP80 View					{View.ToggleXEP80View}
+	&Auto-switch XEP80 View		{View.ToggleXEP80ViewAutoswitching}
 	---
 	&Display					{Pane.Display}
 	&Printer Output				{Pane.PrinterOutput}
@@ -120,6 +129,8 @@
 	Pause When Inactive			{System.TogglePauseWhenInactive}
 	Speed Options...			{System.SpeedOptionsDialog}
 	---
+	D&evices...					{System.DevicesDialog}
+	---
 	&Hardware
 		400/800					{System.HardwareMode800}
 		600XL/800XL				{System.HardwareMode800XL}
@@ -128,26 +139,39 @@
 		XEGS					{System.HardwareModeXEGS}
 		5200					{System.HardwareMode5200}
 	&Firmware
-		Default					{System.KernelModeDefault}
-		800 (OS-A)				{System.KernelModeOSA}
-		800 (OS-B)				{System.KernelModeOSB}
-		600XL/800XL				{System.KernelModeXL}
-		1200XL					{System.KernelMode1200XL}
-		XEGS					{System.KernelModeXEGS}
-		Other					{System.KernelModeOther}
-		HLE Kernel				{System.KernelModeHLE}
-		LLE Kernel (OS-B Compatible)	{System.KernelModeLLE}
-		LLE Kernel (XL/XE Compatible)	{System.KernelModeLLEXL}
-		5200					{System.KernelMode5200}
-		5200 LLE Kernel			{System.KernelMode5200LLE}
+		Operating System		{$firmware_os}
+			Autoselect				{System.KernelModeDefault}
+			---
+		BASIC					{$firmware_basic}
+			Autoselect				{System.BasicDefault}
+			---
 		---
 		BASIC (Boot Without Option Key)	{System.ToggleBASIC}
 		---
-		Fast Boot				{System.ToggleFastBoot}
-		Accelerated Floating-Point	{System.ToggleFPPatch}
+		Firmware Images...		{System.ROMImagesDialog}
+	&Acceleration
+		Fast Boot					{System.ToggleFastBoot}
+		Fast FP Math				{System.ToggleFPPatch}
 		---
-		ROM Images...			{System.ROMImagesDialog}
-	&Memory Size
+		&C: patch (Cassette SIO)	{Cassette.ToggleSIOPatch}
+		&D: patch (Disk SIO)		{Disk.ToggleSIOPatch}
+		PRT: patch (Other SIO)		{Devices.ToggleSIOPatch}
+		SIO Override Detection		{Disk.ToggleSIOOverrideDetection}
+		SIO Burst Transfers
+			Disabled						{Devices.BurstModeNone}
+			Standard IRQ Transfers			{Devices.BurstModeStandard}
+			Polled (SpartaDOS X compatible)	{Devices.BurstModePolled}
+			---
+			Disk (D:)				{Disk.ToggleBurstTransfers}
+			Other (PRT:)			{Devices.ToggleSIOBurstTransfers}
+		---
+		&H: (Host device CIO)		{Devices.ToggleCIOPatchH}
+		&P: (Printer CIO)			{Devices.ToggleCIOPatchP}
+		&R: (RS-232 CIO)			{Devices.ToggleCIOPatchR}
+		&T: (1030 Serial CIO)		{Devices.ToggleCIOPatchT}
+		CIO Burst Transfers			{Devices.ToggleCIOBurstTransfers}
+		
+	&Memory Config
 		16K (400/800/600XL/5200)	{System.MemoryMode16K}
 		&48K (800)					{System.MemoryMode48K}
 		&64K (800XL/1200XL)			{System.MemoryMode64K}
@@ -165,6 +189,12 @@
 		40K (800)					{System.MemoryMode40K}
 		52K (800)					{System.MemoryMode52K}
 		---
+		Power-up &Pattern
+			&Cleared				{System.MemoryClearZero}
+			&SRAM (random)			{System.MemoryClearRandom}
+			DRAM &1					{System.MemoryClearDRAM1}
+			DRAM &2					{System.MemoryClearDRAM2}
+			DRAM &3					{System.MemoryClearDRAM3}
 		Axlon Ramdisk
 			None					{System.AxlonMemoryNone}
 			64K (4 banks)			{System.AxlonMemory64K}
@@ -174,6 +204,8 @@
 			1024K (64 banks)		{System.AxlonMemory1024K}
 			2048K (128 banks)		{System.AxlonMemory2048K}
 			4096K (256 banks)		{System.AxlonMemory4096K}
+			---
+			Enable Bank Register Aliasing	{System.ToggleAxlonAliasing}
 		High Memory
 			None (16-bit addressing)	{System.HighMemoryNA}
 			None (24-bit addressing)	{System.HighMemoryNone}
@@ -188,6 +220,8 @@
 		&NTSC						{Video.StandardNTSC}
 		&PAL						{Video.StandardPAL}
 		SECAM						{Video.StandardSECAM}
+		&NTSC-50					{Video.StandardNTSC50}
+		&PAL-60						{Video.StandardPAL60}
 		---
 		&Frame Blending				{Video.ToggleFrameBlending}
 		&Interlace					{Video.ToggleInterlace}
@@ -212,19 +246,11 @@
 	&Disk Drive
 		&Enabled						{Disk.ToggleAllEnabled}
 		---
-		&SIO Patch						{Disk.ToggleSIOPatch}
-		SIO Override Detection			{Disk.ToggleSIOOverrideDetection}
-		---
 		&Accurate Sector Timing			{Disk.ToggleAccurateSectorTiming}
-		---
-		No Burst Transfers				{Disk.BurstModeNone}
-		Burst (standard)				{Disk.BurstModeStandard}
-		Burst (polled / SDX compatible)	{Disk.BurstModePolled}
 		---
 		Show Sector Counter				{Disk.ToggleSectorCounter}
 		Drive Sounds					{Disk.ToggleDriveSounds}
 	&Cassette
-		&SIO Patch						{Cassette.ToggleSIOPatch}
 		&Auto-boot on Startup			{Cassette.ToggleAutoBoot}
 		Load &Data as Audio				{Cassette.ToggleLoadDataAsAudio}
 	Audio
@@ -241,11 +267,6 @@
 		&Options...						{Audio.OptionsDialog}
 	CP&U Options...						{System.CPUOptionsDialog}
 	Ha&rd Disk...						{System.HardDiskDialog}
-	Host Device (H:)...					{System.HostDeviceDialog}
-	PCLink...							{System.PCLinkDialog}
-	&Printer							{System.TogglePrinter}
-	&R-Time 8							{System.ToggleRTime8}
-	Serial Ports...						{System.SerialPortsDialog}
 	SoundBoard
 		Enabled							{Audio.ToggleSoundBoard}
 		---
@@ -257,19 +278,16 @@
 		Force Self-Test					{System.ToggleForcedSelfTest}
 		Activate Cart Menu Button		{Cart.ActivateMenuButton}
 		Enable Cart SDX					{Cart.ToggleSwitch}
-	Slight-SID
-		Enabled							{Audio.ToggleSlightSid}
-	Covox
-		Enabled							{Audio.ToggleCovox}
-	XEP80
-		Enabled							{Video.ToggleXEP80}
-	Dragon Cart...						{System.DragonCartDialog}
+		BlackBox: Dump Screen			{Console.BlackBoxDumpScreen}
+		BlackBox: Menu					{Console.BlackBoxMenu}
 
 Input
+	Input Mappings...					{Input.InputMappingsDialog}
+	Cycle &Quick Maps					{Input.CycleQuickMaps}
+	---
 	Capture Mouse						{Input.CaptureMouse}
 	Auto-capture Mouse					{Input.ToggleAutoCaptureMouse}
 	---
-	Input Mappings...					{Input.InputMappingsDialog}
 	&Keyboard...						{Input.KeyboardDialog}
 	Light Pen/Gun...					{Input.LightPenDialog}
 	---
@@ -312,7 +330,7 @@ Input
 	Options
 		Auto-Reload ROMs on Cold Reset	{Debug.ToggleAutoReloadRoms}
 		Auto-Load Kernel Symbols		{Debug.ToggleAutoLoadKernelSymbols}
-		&Randomize Memory At Cold Reset	{System.ToggleMemoryRandomization}
+		&Randomize Memory On EXE Load	{System.ToggleMemoryRandomizationEXE}
 		&Break at EXE Run Address		{Debug.ToggleBreakAtExeRun}
 		---
 		Change Font...					{Debug.ChangeFontDialog}

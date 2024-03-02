@@ -6,22 +6,74 @@
 ; notice and this notice are preserved.  This file is offered as-is,
 ; without any warranty.
 
-;==========================================================================
+;===========================================================================
+; INPUT [#aexp{,|;}] var [,var...]
 ;
-; Entry:
+; Reads input from the console or an I/O channel.
+;
+; If the IOCB is #0, either implicitly or explicitly, a question mark is
+; printed to the console first. Whether the IOCB number is followed by
+; a comma or semicolon doesn't matter.
+;
+; Leading spaces are included for string input and skipped for numeric
+; input. Numeric input is considered invalid if the immediately following
+; character is not a comma or a string of spaces (spaces followed by
+; a comma is _not_ accepted). Numeric inputs may not be empty -- either
+; a blank line or no input after a comma will cause a numeric input to
+; fail.
+;
+; When multiple variables are supplied, subsequent variables are read in
+; from the same line if more values are available as a comma separated
+; list. If not, a new line is read in. String reads eat the comma as part
+; of the string and always force a new line.
+;
+; The default line buffer is always used (255 bytes), even if a larger
+; string buffer is supplied. The string is silently truncated as necessary.
+; EOLs are not placed into string arrays. If the string array is not
+; dimensioned, error 9 is issued, but only when that string array is
+; reached and after input has been read.
+;
+; End of file gives an EOF error.
+;
+;==========================================================================
+; READ var [,var...]
+;
+; Reads input from DATA lines in a program.
+;
+; Quirks:
+;	- Atari BASIC caches the pointer and offset within the DATA line and
+;	  does not update them when tables are adjusted. This means that
+;	  editing the current program, even just by adding new variables,
+;	  will cause corrupted READs from immediate mode unless a RESTORE is
+;	  done.
+;
+; Entry (stDataRead):
 ;	IOCBIDX = IOCB to use for INPUT, or -1 for READ
 ;
-.proc DataRead
+.nowarn .proc stDataRead
+.def :stInput = *
+		;parse optional #iocb and set iocbidx
+		jsr		evaluateHashIOCBOpt
+		bcs		read_loop
+		
+		;eat following comma or semicolon
+		inc		exLineOffset
+		bne		read_loop
+.def :stRead = *
+		lda		#$ff
+		sta		iocbidx
+		sta		iocbidx2
 read_loop:
 		;check if IOCB #0 was specified and we're in INPUT mode, and if so,
 		;print a question mark. note that this happens even if the IOCB was
-		;specified, i.e. INPUT #0,A$.		
-		ldx		iocbidx
+		;specified, i.e. INPUT #0,A$, and that INPUT #16;A$ should not print
+		;a prompt.
+		ldx		iocbidx2
 		bne		skip_prompt
 		
 		;print ? prompt
-		jsr		imprint
-		dta		'?',0
+		lda		#'?'
+		jsr		IoPutCharDirect
 		
 skip_prompt:
 		;reset read pointer
@@ -37,9 +89,11 @@ skip_prompt:
 		bne		have_data_line
 		
 		;call into exec to get next line
-		mwa		dataln a0
-		lda		#dataptr
+		ldx		dataln
+		lda		dataln+1
 		jsr		exFindLineInt
+		sta		dataptr
+		sty		dataptr+1
 		
 		;reset starting index
 have_data_line_2:
@@ -123,40 +177,36 @@ read_line_input:
 		
 parse_loop:
 		;get next variable
-		jsr		evaluate
-		jsr		expPopVar
+		jsr		evaluateVar
 				
 		;check type of variable
-		ldy		#0
-		lda		(varptr),y
+		lda		expType
 		bpl		is_numeric
 		
-		;check if string is dimensioned
-		lsr
-		bcs		strvar_ok
-		jmp		errorDimError
-strvar_ok:
-
-		;copy string data to FR0 for convenience
-		ldy		#8
-		sty		argsp
-		jsr		expPopFR0
-		
 		;we have a string... compute the remaining length
+		;
 		;READ statements will stop string reads at a comma; INPUT
-		;statements will consume the comma
+		;statements will consume the comma. Note that we must NOT actually
+		;consume the comma here, as the end of read routine needs to see it
+		;in case we have this case:
+		;
+		; DATA ABC,
+		;
+		;Eating the comma here would cause the end of read code to jump to
+		;the next line, preventing the empty trailing string from being read.
+		;
 		ldy		cix
 		ldx		#0
 len_loop:
 		lda		(inbuff),y
 		cmp		#$9b
 		beq		len_loop_end
-		iny
 		bit		iocbidx
 		bpl		no_comma_stop
 		cmp		#','
 		beq		len_loop_end
 no_comma_stop:
+		iny
 		inx
 		bne		len_loop
 len_loop_end:
@@ -170,13 +220,11 @@ len_loop_end:
 		;as necessary
 		ldy		fr0+5
 		bne		string_fits		;>=256 chars... guaranteed to fit
-		txa
-		cmp		fr0+4
-		scc:lda	fr0+4			;use capacity if it is smaller (or equal)
+		cpx		fr0+4
+		scc:ldx	fr0+4			;use capacity if it is smaller (or equal)
 string_fits:
 		
 		;write length to string variable
-		tax
 		ldy		#5
 		mva		#0 (varptr),y-
 		txa
@@ -184,6 +232,7 @@ string_fits:
 		sta		fr0+2			;for convenience below
 		
 		;copy string to string storage		
+		beq		strcpy_end
 		ldy		cix
 		ldx		#0
 strcpy_loop:
@@ -194,91 +243,63 @@ strcpy_loop:
 		dec		fr0+2
 		bne		strcpy_loop
 		
+strcpy_end:
 		;warp to end of the input
 		pla
 		sta		cix
 		
-read_next:
-		;check if we have more vars to read
-		jsr		DataCheckMore
-		
-		;read new line if line is empty, else keep parsing
-		ldy		cix
-		lda		(inbuff),y
-		cmp		#$9b
-		bne		parse_loop
-		
-		;check if we are processing a DATA statement -- if so, force end so
-		;we go to the next one
-		bit		iocbidx
-		bpl		not_data_end
-		
-		mva		dataLnEnd dataoff
-not_data_end:
-		jmp		read_loop
-		
-parse_next:
-		;store numeric value to variable
-		;##TRACE "READ -> %g" fr0
-		jsr		VarStoreFR0
-		jmp		read_next
-		
-is_numeric:
-		;attempt to parse out a number
-		jsr		afp
-		bcs		parse_error
-		
-		;advance to next input, checking for spaces or a comma -- we must
+advance:
+		;advance to next input, checking for EOL or a comma -- we must
 		;do this before we store the parsed value and even if there are no
 		;other values to retrieve
 		ldy		cix
 		lda		(inbuff),y
-		cmp		#$9b
-		beq		parse_next
-		inc		cix
-		cmp		#','
-		beq		parse_next
-		cmp		#' '
-		bne		parse_error
-		
-		;okay, we have spaces... eat the spaces, then check if there's
-		;anything afterward. Nothing can follow, not even a comma.
-		jsr		skpspc
-		cmp		#$9b
-		beq		parse_next
+
+		;check if we had an EOL (and stash EOL flag in X)
+		eor		#$9b
+		tax
+		beq		is_eol
+
+		;not an EOL -- better be comma or it's an error
+		iny
+		sty		cix
+		cmp		#[','^$9b]
+		beq		is_comma
+
 parse_error:
 		jmp		errorInputStmt
-.endp
 
-;==========================================================================
-.proc DataCheckMore
-		;read current token
-		ldy		exLineOffset
-		lda		(stmcur),y
-		
-		;check if it's a comma
-		cmp		#TOK_EXP_COMMA
-		beq		have_more
-		
-		;no, it's not -- pop so we will be ending the current statement
-		pla
-		pla
-		
+is_eol:
+		;force end of DATA statement, if we are reading one
+		ldy		dataLnEnd
+
+is_comma:
 		;check if we are processing a DATA statement -- if so, stash the current
 		;offset.
 		bit		iocbidx
-		bpl		skip_data_update
-		
-		;stash off the current offset
-		ldy		cix
-		lda		(inbuff),y
-		cmp		#$9b
-		sne:ldy	dataLnEnd
-		sty		dataoff
-skip_data_update:		
+		spl:sty	dataoff
+
+		;check if we have more vars to read
+		;read current token and check for comma
+		jsr		ExecGetComma
+		bne		xit
+				
+		;read new line if line is empty, else keep parsing
+		txa
+		bne		parse_loop
+		jmp		read_loop
+
+xit:
 		rts
-		
-have_more:
-		inc		exLineOffset
-		rts
+
+is_numeric:
+		;attempt to parse out a number
+		jsr		afp
+		bcs		parse_error
+
+		;store numeric value to variable
+		;##TRACE "READ -> %g" fr0
+		jsr		VarStoreFR0
+
+		jmp		advance
 .endp

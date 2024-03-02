@@ -116,17 +116,16 @@ block_loop:
 	;copy 128 bytes from CASBUF+3 ($0400) to destination
 	;update destination pointer
 	jsr		BootCopyBlock
-	
-	dec		dbsect
-	beq		block_loop_exit
 
 	;read next block
+	;we always need to do one more to catch the EOF block, which is
+	;required by STDBLOAD2
 	jsr		rblokv
 	bmi		load_failure
-	jmp		block_loop
-
-block_loop_exit:
 	
+	dec		dbsect
+	bne		block_loop
+
 	;set cassette boot flag
 	mva		#2 boot?
 

@@ -26,22 +26,28 @@ enum ATIRQSource {
 	kATIRQSource_PIAA1 = 0x04,
 	kATIRQSource_PIAA2 = 0x08,
 	kATIRQSource_PIAB1 = 0x10,
-	kATIRQSource_PIAB2 = 0x20
+	kATIRQSource_PIAB2 = 0x20,
+	kATIRQSource_PBI = 0x40
 };
 
 class ATIRQController {
 public:
 	ATIRQController();
+	~ATIRQController();
 
 	void Init(ATCPUEmulator *cpu);
 
 	void ColdReset();
+
+	uint32 AllocateIRQ();
+	void FreeIRQ(uint32 irqbit);
 
 	void Assert(uint32 sources, bool cpuBased);
 	void Negate(uint32 sources, bool cpuBased);
 
 protected:
 	uint32 mActiveIRQs;
+	uint32 mFreeCustomIRQs;
 
 	ATCPUEmulator *mpCPU;
 };

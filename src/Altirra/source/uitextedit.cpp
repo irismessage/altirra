@@ -30,10 +30,14 @@ void ATUITextEdit::AutoSize() {
 	if (!mpFont)
 		return;
 
+	SetSize(vdsize32(mClientArea.width(), GetIdealHeight()));
+}
+
+sint32 ATUITextEdit::GetIdealHeight() const {
 	VDDisplayFontMetrics metrics;
 	mpFont->GetMetrics(metrics);
 
-	SetSize(vdsize32(mClientArea.width(), metrics.mAscent + metrics.mDescent + mTextMarginY * 2));
+	return ComputeWindowSize(vdrect32(0, 0, 0, metrics.mAscent + metrics.mDescent + mTextMarginY * 2)).height();
 }
 
 void ATUITextEdit::ClearSelection() {

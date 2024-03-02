@@ -18,14 +18,16 @@
 #ifndef f_AT_COVOX_H
 #define f_AT_COVOX_H
 
+#include <vd2/system/memory.h>
 #include "audiosource.h"
 
 class ATScheduler;
 class ATMemoryManager;
 class ATMemoryLayer;
 class IATAudioOutput;
+class ATConsoleOutput;
 
-class ATCovoxEmulator : public IATSyncAudioSource {
+class ATCovoxEmulator : public VDAlignedObject<16>, public IATSyncAudioSource {
 	ATCovoxEmulator(const ATCovoxEmulator&);
 	ATCovoxEmulator& operator=(const ATCovoxEmulator&);
 public:
@@ -38,7 +40,7 @@ public:
 	void ColdReset();
 	void WarmReset();
 
-	void DumpStatus();
+	void DumpStatus(ATConsoleOutput&);
 
 	void WriteControl(uint8 addr, uint8 value);
 

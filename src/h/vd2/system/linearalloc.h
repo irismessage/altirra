@@ -4,6 +4,8 @@
 #include <new>
 
 class VDLinearAllocator {
+	VDLinearAllocator(const VDLinearAllocator&) = delete;
+	VDLinearAllocator& operator=(const VDLinearAllocator&) = delete;
 public:
 	explicit VDLinearAllocator(uint32 blockSize = 4096);
 	~VDLinearAllocator();

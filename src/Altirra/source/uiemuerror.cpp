@@ -186,7 +186,7 @@ bool ATUIDialogEmuError::OnOK() {
 		mpSim->SetMemoryMode(mNewMemoryMode);
 
 	if (IsButtonChecked(IDC_CHANGE_FIRMWARE))
-		mpSim->SetKernelMode(mNewKernelMode);
+		mpSim->SetKernel(0);
 
 	if (IsButtonChecked(IDC_CHANGE_VIDEO))
 		mpSim->SetVideoStandard(mbNewPALMode ? kATVideoStandard_PAL : kATVideoStandard_NTSC);

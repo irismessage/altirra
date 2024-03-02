@@ -19,10 +19,16 @@
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
+#include <vd2/system/function.h>
+#include <at/atcore/consoleoutput.h>
+#include <at/atcore/deviceimpl.h>
+#include <at/atcore/devicesio.h>
+#include <at/atcore/propertyset.h>
 #include "pclink.h"
 #include "pokey.h"
 #include "scheduler.h"
 #include "console.h"
+#include "devicemanager.h"
 #include "cio.h"
 #include "cpu.h"
 #include "kerneldb.h"
@@ -260,8 +266,13 @@ bool ATPCLinkFileName::ParseFromNative(const wchar_t *fn) {
 			continue;
 		}
 
-		if (i >= 8 && !inext)
-			return false;
+		if (inext) {
+			if (i >= 11)
+				return false;
+		} else {
+			if (i >= 8)
+				return false;
+		}
 
 		if (c >= L'a' && c <= L'z')
 			mName[i++] = (uint8)(c - 0x20);
@@ -620,15 +631,19 @@ bool ATPCLinkFileHandle::GetNextDirEnt(ATPCLinkDirEnt& dirEnt) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATPCLinkDevice : public IATPCLinkDevice, public IATPokeySIODevice, public IATSchedulerCallback {
-	ATPCLinkDevice(const ATPCLinkDevice&);
-	ATPCLinkDevice& operator=(const ATPCLinkDevice&);
+class ATPCLinkDevice : public IATPCLinkDevice
+			, public ATDevice
+			, public IATDeviceSIO
+			, public IATDeviceIndicators
+			, public IATDeviceDiagnostics
+{
+	ATPCLinkDevice(const ATPCLinkDevice&) = delete;
+	ATPCLinkDevice& operator=(const ATPCLinkDevice&) = delete;
 public:
 	ATPCLinkDevice();
 	~ATPCLinkDevice();
 
-	void Init(ATScheduler *scheduler, ATPokeyEmulator *pokey, IATUIRenderer *uirenderer);
-	void Shutdown();
+	void *AsInterface(uint32 id);
 
 	bool IsReadOnly() { return mbReadOnly; }
 	void SetReadOnly(bool readOnly);
@@ -636,31 +651,36 @@ public:
 	const wchar_t *GetBasePath() { return mBasePathNative.c_str(); }
 	void SetBasePath(const wchar_t *basePath);
 
-	void DumpStatus();
-
-	bool TryAccelSIO(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem, ATKernelDatabase& kdb, uint8 device, uint8 command);
+public:
+	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
+	virtual void GetSettings(ATPropertySet& settings) override;
+	virtual bool SetSettings(const ATPropertySet& settings) override;
+	virtual void Shutdown() override;
+	virtual void ColdReset() override;
 
 public:
-	void PokeyAttachDevice(ATPokeyEmulator *pokey);
-	void PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit);
-	void PokeyBeginCommand();
-	void PokeyEndCommand();
-	void PokeySerInReady();
+	virtual void InitIndicators(IATUIRenderer *uir) override;
 
 public:
-	void OnScheduledEvent(uint32 id);
+	virtual void InitSIO(IATDeviceSIOManager *mgr) override;
+	virtual CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
+	virtual void OnSerialAbortCommand() override;
+	virtual void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
+	virtual void OnSerialFence(uint32 id) override;
+	virtual CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
+
+public:
+	virtual void DumpStatus(ATConsoleOutput& output) override;
 
 protected:
 	enum Command {
 		kCommandNone,
-		kCommandNAK,
 		kCommandGetHiSpeedIndex,
 		kCommandStatus,
 		kCommandPut,
 		kCommandRead
 	};
 
-	void ProcessCommand();
 	void AbortCommand();
 	void BeginCommand(Command cmd);
 	void AdvanceCommand();
@@ -678,32 +698,14 @@ protected:
 	void OnReadActivity();
 	void OnWriteActivity();
 
-	void BeginReceive(uint32 length);
-	void BeginTransmit(uint32 length, bool includeChecksum, uint32 initialDelay = 0);
-	void BeginTransmitByte(uint8 c, uint32 initialDelay = 0);
-	void BeginTransmitACK();
-	void BeginTransmitNAK();
-	void BeginTransmitComplete(uint32 delay = kDelayACKToComplete);
-
-	enum {
-		kEventTransfer = 1
-	};
-
-	ATScheduler *mpScheduler;
-	ATPokeyEmulator *mpPokey;
+	IATDeviceSIOManager *mpSIOMgr;
 	IATUIRenderer *mpUIRenderer;
 
 	VDStringW	mBasePathNative;
 	bool	mbReadOnly;
 
-	uint32	mTransferIndex;
-	uint32	mTransferOriginalLength;
-	uint32	mTransferLength;
-	uint8	mTransferByte;
-	bool	mbTransferActive;
-	bool	mbTransferWrite;
-	bool	mbTransferError;
-	bool	mbCommandLine;
+	vdfunction<void(const void *, uint32)> mpReceiveFn;
+	vdfunction<void()> mpFenceFn;
 
 	uint8	mStatusFlags;
 	uint8	mStatusError;
@@ -714,8 +716,6 @@ protected:
 	uint32	mCommandPhase;
 	uint8	mCommandAux1;
 	uint8	mCommandAux2;
-
-	ATEvent		*mpTransferEvent;
 
 	VDStringA	mCurDir;
 
@@ -759,45 +759,34 @@ IATPCLinkDevice *ATCreatePCLinkDevice() {
 }
 
 ATPCLinkDevice::ATPCLinkDevice()
-	: mpScheduler(NULL)
-	, mpPokey(NULL)
+	: mpSIOMgr(NULL)
 	, mpUIRenderer(NULL)
 	, mbReadOnly(false)
-	, mTransferIndex(0)
-	, mTransferLength(0)
-	, mbTransferActive(false)
-	, mbTransferWrite(false)
-	, mbCommandLine(false)
 	, mStatusFlags(0)
 	, mStatusError(0)
 	, mStatusLengthLo(0)
 	, mStatusLengthHi(0)
 	, mCommand(kCommandNone)
 	, mCommandPhase(0)
-	, mpTransferEvent(NULL)
 {
 }
 
 ATPCLinkDevice::~ATPCLinkDevice() {
 }
 
-void ATPCLinkDevice::Init(ATScheduler *scheduler, ATPokeyEmulator *pokey, IATUIRenderer *uirenderer) {
-	mpPokey = pokey;
-	mpScheduler = scheduler;
-	mpUIRenderer = uirenderer;
-	pokey->AddSIODevice(this);
-}
+void *ATPCLinkDevice::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDeviceSIO::kTypeID:
+			return static_cast<IATDeviceSIO *>(this);
 
-void ATPCLinkDevice::Shutdown() {
-	AbortCommand();
+		case IATDeviceIndicators::kTypeID:
+			return static_cast<IATDeviceIndicators *>(this);
 
-	if (mpPokey) {
-		mpPokey->RemoveSIODevice(this);
-		mpPokey = NULL;
+		case IATDeviceDiagnostics::kTypeID:
+			return static_cast<IATDeviceDiagnostics *>(this);
 	}
 
-	mpUIRenderer = NULL;
-	mpScheduler = NULL;
+	return ATDevice::AsInterface(id);
 }
 
 void ATPCLinkDevice::SetReadOnly(bool readOnly) {
@@ -814,11 +803,120 @@ void ATPCLinkDevice::SetBasePath(const wchar_t *basePath) {
 		mBasePathNative += '\\';
 }
 
-void ATPCLinkDevice::DumpStatus() {
-	ATConsolePrintf("Native base path: %ls\n", mBasePathNative.c_str());
-	ATConsolePrintf("Current directory: %s\n", mCurDir.c_str());
+void ATPCLinkDevice::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mTag = "pclink";
+	info.mConfigTag = "pclink";
+	info.mName = L"PCLink";
+}
 
-	ATConsoleWrite("\n");
+void ATPCLinkDevice::GetSettings(ATPropertySet& settings) {
+	if (mbReadOnly)
+		settings.Unset("write");
+	else
+		settings.SetBool("write", true);
+
+	settings.SetString("path", mBasePathNative.c_str());
+}
+
+bool ATPCLinkDevice::SetSettings(const ATPropertySet& settings) {
+	SetReadOnly(!settings.GetBool("write"));
+	SetBasePath(settings.GetString("path", L""));
+	return true;
+}
+
+void ATPCLinkDevice::Shutdown() {
+	AbortCommand();
+
+	mpUIRenderer = nullptr;
+
+	if (mpSIOMgr) {
+		mpSIOMgr->RemoveDevice(this);
+		mpSIOMgr = nullptr;
+	}
+}
+
+void ATPCLinkDevice::ColdReset() {
+	for(auto& fh : mFileHandles)
+		fh.Close();
+}
+
+void ATPCLinkDevice::InitIndicators(IATUIRenderer *uir) {
+	mpUIRenderer = uir;
+}
+
+void ATPCLinkDevice::InitSIO(IATDeviceSIOManager *mgr) {
+	mpSIOMgr = mgr;
+	mpSIOMgr->AddDevice(this);
+}
+
+IATDeviceSIO::CmdResponse ATPCLinkDevice::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
+	if (cmd.mDevice != 0x6F)
+		return kCmdResponse_NotHandled;
+
+	if (mBasePathNative.empty())
+		return kCmdResponse_NotHandled;
+
+	if (!cmd.mbStandardRate) {
+		if (cmd.mCyclesPerBit < 30 || cmd.mCyclesPerBit > 34)
+			return kCmdResponse_NotHandled;
+	}
+
+	const uint8 commandId = cmd.mCommand & 0x7f;
+
+	mCommandAux1 = cmd.mAUX[0];
+	mCommandAux2 = cmd.mAUX[1];
+
+	Command command = kCommandNone;
+
+	if (commandId == 0x53)			// status
+		command = kCommandStatus;
+	else if (commandId == 0x50)		// put
+		command = kCommandPut;
+	else if (commandId == 0x52)		// read
+		command = kCommandRead;
+	else if (commandId == 0x3F)
+		command = kCommandGetHiSpeedIndex;
+	else {
+		g_ATLCPCLink("Unsupported command $%02x\n", cmd);
+		return kCmdResponse_Fail_NAK;
+	}
+
+	mpSIOMgr->BeginCommand();
+
+	// High-speed via bit 7 uses 38400 baud.
+	// High-speed via HS command frame uses 52Kbaud. Currently we use US Doubler timings.
+	if (cmd.mCommand & 0x80)
+		mpSIOMgr->SetTransferRate(45, 450);
+	else if (!cmd.mbStandardRate)
+		mpSIOMgr->SetTransferRate(34, 394);
+
+	mpSIOMgr->SendACK();
+
+	BeginCommand(command);
+	return kCmdResponse_Start;
+}
+
+void ATPCLinkDevice::OnSerialAbortCommand() {
+	AbortCommand();
+}
+
+void ATPCLinkDevice::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
+	mpReceiveFn(data, len);
+}
+
+void ATPCLinkDevice::OnSerialFence(uint32 id) {
+	mpFenceFn();
+}
+
+IATDeviceSIO::CmdResponse ATPCLinkDevice::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
+	return OnSerialBeginCommand(request);
+}
+
+void ATPCLinkDevice::DumpStatus(ATConsoleOutput& output) {
+	output("Native base path: %ls", mBasePathNative.c_str());
+	output("Current directory: %s", mCurDir.c_str());
+
+	output("");
 
 	VDStringA s;
 	for(int i=0; i<15; ++i) {
@@ -848,256 +946,8 @@ void ATPCLinkDevice::DumpStatus() {
 			s += ']';
 		}
 
-		s += '\n';
-		ATConsoleWrite(s.c_str());
+		output <<= s.c_str();
 	}
-}
-
-bool ATPCLinkDevice::TryAccelSIO(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem, ATKernelDatabase& kdb, uint8 device, uint8 command) {
-	if (device != 0x6f)
-		return false;
-
-	if (mBasePathNative.empty())
-		return false;
-
-	const uint8 dstats = kdb.DSTATS;
-	const uint32 bufadr = kdb.DBUFLO + ((uint32)kdb.DBUFHI << 8);
-	const uint32 buflen = kdb.DBYTLO + ((uint32)kdb.DBYTHI << 8);
-
-	if (command == 0x53) {	// Status
-		// check direction and length
-		if ((dstats & 0xc0) != 0x40)
-			return false;
-
-		if (buflen != 4)
-			return false;
-
-		AbortCommand();
-
-		const uint8 data[4] = {
-			mStatusFlags,
-			mStatusError,
-			mStatusLengthLo,
-			mStatusLengthHi
-		};
-
-		g_ATLCPCLink("Sending status: Flags=$%02x, Error=%3d, Length=%02x%02x\n", mStatusFlags, mStatusError, mStatusLengthHi, mStatusLengthLo);
-		for(int i=0; i<4; ++i)
-			mem.WriteByte((bufadr + i) & 0xffff, data[i]);
-
-		cpu.Ldy(ATCIOSymbols::CIOStatSuccess);
-		return true;
-	}
-
-	if (command == 0x50) {	// Put
-		// check direction and length
-		if ((dstats & 0xc0) != 0x80)
-			return false;
-
-		uint32 reqlen = kdb.DAUX1;
-		if (!reqlen)
-			reqlen = 256;
-
-		if (reqlen != buflen)
-			return false;
-
-		// abort existing command
-		AbortCommand();
-
-		// set command bytes
-		mCommandAux1 = kdb.DAUX1;
-		mCommandAux2 = kdb.DAUX2;
-
-		// transfer memory into buffer
-		for(uint32 i = 0; i < buflen; ++i)
-			mTransferBuffer[i] = mem.ReadByte((bufadr + i) & 0xffff);
-
-		mTransferLength = buflen;
-
-		memcpy(&mParBuf, mTransferBuffer, std::min<uint32>(mTransferLength, sizeof(mParBuf)));
-		if (OnPut())
-			cpu.Ldy(ATCIOSymbols::CIOStatSuccess);
-		else
-			cpu.Ldy(ATCIOSymbols::CIOStatNAK);
-		return true;
-	}
-
-	if (command == 0x52) {	// Read
-		const bool isFwrite = (mParBuf.mFunction == 0x01);
-
-		// check direction
-		if (!isFwrite) {
-			if ((dstats & 0xc0) != 0x40)
-				return false;
-		} else {
-			if ((dstats & 0xc0) != 0x80)
-				return false;
-
-			const uint32 expectedLength = mStatusLengthLo + ((uint32)mStatusLengthHi << 8);
-			if (buflen != expectedLength)
-				return false;
-
-			// transfer from emulation memory
-			for(uint32 i = 0; i < buflen; ++i)
-				mTransferBuffer[i] = mem.ReadByte((bufadr + i) & 0xffff);
-
-			mTransferLength = buflen;
-		}
-
-		// abort existing command
-		AbortCommand();
-
-		// run request
-		if (!OnRead()) {
-			cpu.Ldy(ATCIOSymbols::CIOStatNAK);
-			return true;
-		}
-
-		// transfer memory back to emulation
-		if (!isFwrite) {
-			if (!mbTransferActive) {
-				cpu.Ldy(ATCIOSymbols::CIOStatInvalidCmd);
-				return true;
-			}
-
-			mbTransferActive = false;
-			mpScheduler->UnsetEvent(mpTransferEvent);
-
-			if (mTransferOriginalLength != buflen) {
-				cpu.Ldy(ATCIOSymbols::CIOStatSerChecksum);
-				return true;
-			} else {
-				for(uint32 i = 0; i < buflen; ++i)
-					mem.WriteByte((bufadr + i) & 0xffff, mTransferBuffer[i]);
-
-			}
-		}
-
-		cpu.Ldy(ATCIOSymbols::CIOStatSuccess);
-		return true;
-	}
-
-	return false;
-}
-
-void ATPCLinkDevice::PokeyAttachDevice(ATPokeyEmulator *pokey) {
-}
-
-void ATPCLinkDevice::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
-	if (mbCommandLine) {
-		if (mTransferIndex < 5)
-			mTransferBuffer[mTransferIndex++] = c;
-
-		return;
-	}
-
-	if (mbTransferActive && !mbTransferWrite) {
-		//ATConsolePrintf("PCLINK: Receiving byte %02x\n", c);
-
-		if (mTransferIndex < mTransferLength) {
-			mTransferBuffer[mTransferIndex++] = c;
-		} else if (mTransferIndex == mTransferLength) {
-			const uint8 d = ATComputeSIOChecksum(mTransferBuffer, mTransferLength);
-
-			if (c != d) {
-				g_ATLCPCLink("Checksum error detected while receiving %u bytes.\n", mTransferLength);
-				mbTransferError = true;
-			}
-
-			// transfer complete
-			mbTransferActive = false;
-			++mCommandPhase;
-
-			AdvanceCommand();
-		}
-	}
-}
-
-void ATPCLinkDevice::PokeyBeginCommand() {
-	AbortCommand();
-
-	mbCommandLine = true;
-	mTransferIndex = 0;
-}
-
-void ATPCLinkDevice::PokeyEndCommand() {
-	if (mbCommandLine) {
-		mbCommandLine = false;
-
-		if (mTransferIndex >= 5) {
-			if (ATComputeSIOChecksum(mTransferBuffer, 4) == mTransferBuffer[4]
-				&& mTransferBuffer[0] == 0x6F)
-			{
-				ProcessCommand();
-			}
-		}
-	}
-}
-
-void ATPCLinkDevice::PokeySerInReady() {
-	if (mTransferIndex > 2 && mpTransferEvent && mpScheduler->GetTicksToEvent(mpTransferEvent) > 50)
-		mpScheduler->SetEvent(50, this, kEventTransfer, mpTransferEvent);
-}
-
-void ATPCLinkDevice::OnScheduledEvent(uint32 id) {
-	if (id == kEventTransfer) {
-		mpTransferEvent = NULL;
-
-		if (mTransferIndex < mTransferLength) {
-			const uint8 c = mTransferByte ? mTransferByte : mTransferBuffer[mTransferIndex];
-
-			++mTransferIndex;
-
-			//ATConsoleTaggedPrintf("PCLINK: Transmitting byte %02x\n", c);
-
-			mpPokey->ReceiveSIOByte(c, kCyclesPerBit);
-
-			mpTransferEvent = mpScheduler->AddEvent(kCyclesPerByte, this, kEventTransfer);
-		} else {
-			// transfer complete
-
-			//ATConsolePrintf("PCLINK: Transfer complete\n");
-			++mCommandPhase;
-			AdvanceCommand();
-		}
-	}
-}
-
-void ATPCLinkDevice::ProcessCommand() {
-	if (mBasePathNative.empty())
-		return;
-
-	//ATConsoleTaggedPrintf("PCLINK: Received command: %02x %02x %02x\n", mTransferBuffer[1], mTransferBuffer[2], mTransferBuffer[3]);
-
-	const uint8 cmd = mTransferBuffer[1] & 0x7f;
-
-	mCommandAux1 = mTransferBuffer[2];
-	mCommandAux2 = mTransferBuffer[3];
-
-	if (cmd == 0x53) {	// STATUS
-		BeginCommand(kCommandStatus);
-		return;
-	}
-
-#if 0
-	if (cmd == 0x3F) {	// get high-speed index
-		BeginCommand(kCommandGetHiSpeedIndex);
-		return;
-	}
-#endif
-
-	if (cmd == 0x50) {	// put
-		BeginCommand(kCommandPut);
-		return;
-	}
-
-	if (cmd == 0x52) {	// read
-		BeginCommand(kCommandRead);
-		return;
-	}
-
-	g_ATLCPCLink("Unsupported command $%02x\n", cmd);
-	BeginCommand(kCommandNAK);
 }
 
 void ATPCLinkDevice::BeginCommand(Command cmd) {
@@ -1108,107 +958,80 @@ void ATPCLinkDevice::BeginCommand(Command cmd) {
 }
 
 void ATPCLinkDevice::AbortCommand() {
-	mpScheduler->UnsetEvent(mpTransferEvent);
+	if (mCommand) {
+		mCommand = kCommandNone;
+		mCommandPhase = 0;
 
-	mCommand = kCommandNone;
-	mCommandPhase = 0;
-
-	mbTransferActive = false;
+		mpSIOMgr->EndCommand();
+	}
 }
 
 void ATPCLinkDevice::AdvanceCommand() {
-	//ATConsolePrintf("PCLINK: Command phase = %d\n", mCommandPhase);
-
 	switch(mCommand) {
-		case kCommandNAK:
-			switch(mCommandPhase) {
-				case 0:	BeginTransmitNAK();
-				case 1:	break;
-				case 2: FinishCommand();
-						break;
-			}
-			break;
-
 		case kCommandGetHiSpeedIndex:
 			g_ATLCPCLink("Sending high-speed index\n");
-			switch(mCommandPhase) {
-				case 0:	BeginTransmitACK();
-				case 1: break;
-				case 2: BeginTransmitComplete();
-				case 3: break;
-				case 4: mTransferBuffer[0] = 0x09;
-						BeginTransmit(1, true);
-				case 5: break;
-				case 6: FinishCommand();
-						break;
+			mpSIOMgr->SendComplete();
+			{
+				uint8 hsindex = 9;
+				mpSIOMgr->SendData(&hsindex, 1, true);
 			}
+			mpSIOMgr->EndCommand();
 			break;
 
 		case kCommandStatus:
-			switch(mCommandPhase) {
-				case 0:	g_ATLCPCLink("Sending status: Flags=$%02x, Error=%3d, Length=%02x%02x\n", mStatusFlags, mStatusError, mStatusLengthHi, mStatusLengthLo);
-						BeginTransmitACK();
-				case 1:	break;
-				case 2:	BeginTransmitComplete(0);
-				case 3:	break;
-				case 4:	mTransferBuffer[0] = mStatusFlags;
-						mTransferBuffer[1] = mStatusError;
-						mTransferBuffer[2] = mStatusLengthLo;
-						mTransferBuffer[3] = mStatusLengthHi;
-						BeginTransmit(4, true);
-				case 5: break;
-				case 6:	FinishCommand();
-						break;
+			g_ATLCPCLink("Sending status: Flags=$%02x, Error=%3d, Length=%02x%02x\n", mStatusFlags, mStatusError, mStatusLengthHi, mStatusLengthLo);
+			mpSIOMgr->SendComplete();
+			{
+				const uint8 data[4] = {
+					mStatusFlags,
+					mStatusError,
+					mStatusLengthLo,
+					mStatusLengthHi
+				};
+
+				mpSIOMgr->SendData(data, 4, true);
 			}
+			mpSIOMgr->EndCommand();
 			break;
 
 		case kCommandPut:
-			switch(mCommandPhase) {
-				case 0:	BeginTransmitACK();
-				case 1: break;
-				case 2:	BeginReceive(mCommandAux1 ? mCommandAux1 : 256);
-				case 3:	break;
-				case 4:	memcpy(&mParBuf, mTransferBuffer, std::min<uint32>(mTransferLength, sizeof(mParBuf)));
-						BeginTransmitACK();
-				case 5:	break;
-				case 6: if (OnPut())
-							BeginTransmitComplete();
-						else
-							BeginTransmitNAK();
-				case 7:	break;
-				case 8:	FinishCommand();
-						break;
-			}
+			mpReceiveFn = [this](const void *src, uint32 len) {
+				memcpy(&mParBuf, src, std::min<uint32>(len, sizeof(mParBuf)));
+			};
+			mpSIOMgr->ReceiveData(0, mCommandAux1 ? mCommandAux1 : 256, true);
+			mpFenceFn = [this]() {
+				if (OnPut())
+					mpSIOMgr->SendComplete();
+				else
+					mpSIOMgr->SendError();
+				mpSIOMgr->EndCommand();
+			};
+			mpSIOMgr->InsertFence(0);
 			break;
 
 		case kCommandRead:
-			switch(mCommandPhase) {
-				case 0:	BeginTransmitACK();
-				case 1: break;
-				case 2:	// fwrite ($01) is special
-						if (mParBuf.mFunction == 0x01)
-							BeginReceive(mParBuf.mF1 + ((uint32)mParBuf.mF2 << 8));
-						else {
-							mCommandPhase = 6;
-							goto state_6;
-						}
-				case 3:	break;
-				case 4:	BeginTransmitACK();
-				case 5: break;
-				case 6: state_6:
-						if (mParBuf.mFunction == 0x01)
-							OnRead();
-
-						BeginTransmitComplete();
-				case 7:	break;
-				case 8:	if (mParBuf.mFunction == 0x01)
-							FinishCommand();
-						else
-							OnRead();
-				case 9:	break;
-				case 10:FinishCommand();
-						break;
+			// fwrite ($01) is special
+			if (mParBuf.mFunction == 0x01) {
+				mpReceiveFn = [this](const void *src, uint32 len) {
+					memcpy(mTransferBuffer, src, len);
+				};
+				mpSIOMgr->ReceiveData(0, mParBuf.mF1 + ((uint32)mParBuf.mF2 << 8), true);
+				mpSIOMgr->SendACK();
+				mpSIOMgr->InsertFence(0);
+				mpFenceFn = [this]() {
+					OnRead();
+					mpSIOMgr->EndCommand();
+				};
+				mpSIOMgr->SendComplete();
+			} else {
+				mpSIOMgr->SendComplete();
+				mpFenceFn = [this]() {
+					OnRead();
+					mpSIOMgr->EndCommand();
+				};
+				mpSIOMgr->InsertFence(0);
 			}
+
 			break;
 	}
 }
@@ -1939,7 +1762,7 @@ bool ATPCLinkDevice::OnRead() {
 					mStatusLengthHi = (uint8)(actual >> 8);
 				}
 
-				BeginTransmit(blocklen, true);
+				mpSIOMgr->SendData(mTransferBuffer, blocklen, true);
 			}
 			return true;
 
@@ -1975,7 +1798,7 @@ bool ATPCLinkDevice::OnRead() {
 				mTransferBuffer[2] = (uint8)(len >> 16);
 				mStatusError = ATCIOSymbols::CIOStatSuccess;
 			}
-			BeginTransmit(3, true);
+			mpSIOMgr->SendData(mTransferBuffer, 3, true);
 			return true;
 
 		case 4:		// flen
@@ -1993,7 +1816,7 @@ bool ATPCLinkDevice::OnRead() {
 					mTransferBuffer[2] = (uint8)(len >> 16);
 				}
 			}
-			BeginTransmit(3, true);
+			mpSIOMgr->SendData(mTransferBuffer, 3, true);
 			return true;
 
 		case 5:		// reserved
@@ -2022,7 +1845,7 @@ bool ATPCLinkDevice::OnRead() {
 			}
 
 			mTransferBuffer[0] = mStatusError;
-			BeginTransmit(sizeof(ATPCLinkDirEnt) + 1, true);
+			mpSIOMgr->SendData(mTransferBuffer, sizeof(ATPCLinkDirEnt) + 1, true);
 			return true;
 
 		case 7:		// fclose
@@ -2044,7 +1867,7 @@ bool ATPCLinkDevice::OnRead() {
 
 				memcpy(mTransferBuffer + 1, &dirEnt, sizeof(ATPCLinkDirEnt));
 			}
-			BeginTransmit(sizeof(ATPCLinkDirEnt) + 1, true);
+			mpSIOMgr->SendData(mTransferBuffer, sizeof(ATPCLinkDirEnt) + 1, true);
 			return true;
 
 		case 11:	// rename
@@ -2060,7 +1883,7 @@ bool ATPCLinkDevice::OnRead() {
 			{
 				memset(mTransferBuffer, 0, 65);
 				strncpy((char *)mTransferBuffer, mCurDir.c_str(), 64);
-				BeginTransmit(64, true);
+				mpSIOMgr->SendData(mTransferBuffer, 64, true);
 			}
 			return true;
 
@@ -2086,7 +1909,7 @@ bool ATPCLinkDevice::OnRead() {
 				memcpy(diskInfo.mVolumeLabel, "PCLink  ", 8);
 
 				memcpy(mTransferBuffer, &diskInfo, 64);
-				BeginTransmit(64, true);
+				mpSIOMgr->SendData(mTransferBuffer, 64, true);
 			}
 			return true;
 
@@ -2362,58 +2185,14 @@ void ATPCLinkDevice::OnWriteActivity() {
 		mpUIRenderer->SetPCLinkActivity(true);
 }
 
-void ATPCLinkDevice::BeginReceive(uint32 length) {
-	mpScheduler->UnsetEvent(mpTransferEvent);
+///////////////////////////////////////////////////////////////////////////
 
-	mbTransferActive = true;
-	mbTransferWrite = false;
-	mTransferIndex = 0;
-	mTransferOriginalLength = length;
-	mTransferLength = length;
-	mbTransferError = false;
+void ATCreateDevicePCLink(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATPCLinkDevice> p(new ATPCLinkDevice);
 
-	++mCommandPhase;
+	*dev = p.release();
 }
 
-void ATPCLinkDevice::BeginTransmit(uint32 length, bool includeChecksum, uint32 initialDelay) {
-	VDASSERT(length <= (includeChecksum ? (sizeof mTransferBuffer) - 1 : sizeof mTransferBuffer));
-
-	mTransferOriginalLength = length;
-
-	if (includeChecksum)
-		mTransferBuffer[length++] = ATComputeSIOChecksum(mTransferBuffer, length);
-
-	mbTransferActive = true;
-	mbTransferWrite = true;
-	mTransferByte = 0;
-	mTransferIndex = 0;
-	mTransferLength = length;
-
-	mpScheduler->SetEvent(initialDelay + kCyclesPerByte, this, kEventTransfer, mpTransferEvent);
-}
-
-void ATPCLinkDevice::BeginTransmitByte(uint8 c, uint32 initialDelay) {
-	mbTransferActive = true;
-	mbTransferWrite = true;
-	mTransferByte = c;
-	mTransferIndex = 0;
-	mTransferOriginalLength = 1;
-	mTransferLength = 1;
-
-	mpScheduler->SetEvent(initialDelay + kCyclesPerByte, this, kEventTransfer, mpTransferEvent);
-}
-
-void ATPCLinkDevice::BeginTransmitACK() {
-	BeginTransmitByte(0x41, kDelayCmdLineToACK);
-	++mCommandPhase;
-}
-
-void ATPCLinkDevice::BeginTransmitNAK() {
-	BeginTransmitByte(0x4E, kDelayCmdLineToNAK);
-	++mCommandPhase;
-}
-
-void ATPCLinkDevice::BeginTransmitComplete(uint32 delay) {
-	BeginTransmitByte(0x43, delay);
-	++mCommandPhase;
+void ATRegisterDevicePCLink(ATDeviceManager& dev) {
+	dev.AddDeviceFactory("pclink", ATCreateDevicePCLink);
 }

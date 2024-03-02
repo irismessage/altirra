@@ -26,6 +26,7 @@ ATOptions::ATOptions()
 	, mbDisplay3D(false)
 	, mbDisplayOpenGL(false)
 	, mbSingleInstance(false)
+	, mThemeScale(100)
 	, mErrorMode(kATErrorMode_Dialog)
 	, mFullScreenWidth(0)
 	, mFullScreenHeight(0)
@@ -41,6 +42,13 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, const char *name, bool& v
 }
 
 void ATOptionsExchange(VDRegistryKey& key, bool write, const char *name, uint32& val) {
+	if (write)
+		key.setInt(name, val);
+	else
+		val = key.getInt(name, val);
+}
+
+void ATOptionsExchange(VDRegistryKey& key, bool write, const char *name, sint32& val) {
 	if (write)
 		key.setInt(name, val);
 	else
@@ -74,6 +82,7 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Display: Full screen mode refresh rate", opts.mFullScreenRefreshRate);
 	ATOptionsExchange(key, write, "Flash: SIC! cartridge flash mode", opts.mSICFlashChip);
 	ATOptionsExchange(key, write, "Flash: Ultimate1MB flash mode", opts.mU1MBFlashChip);
+	ATOptionsExchange(key, write, "UI: Theme scale factor", opts.mThemeScale);
 }
 
 void ATOptionsLoad() {

@@ -67,6 +67,9 @@ struct VDDelegateNode {
 };
 
 class VDEventBase {
+public:
+	bool IsEmpty() const { return mAnchor.mpNext == &mAnchor; }
+
 protected:
 	VDEventBase();
 	~VDEventBase();

@@ -18,6 +18,8 @@
 #ifndef f_AT_SOUNDBOARD_H
 #define f_AT_SOUNDBOARD_H
 
+#include <vd2/system/memory.h>
+
 class ATScheduler;
 class ATMemoryManager;
 class ATMemoryLayer;
@@ -30,7 +32,7 @@ public:
 	virtual void WriteAudio(const float *left, const float *right, uint32 count, bool pushAudio, uint32 timestamp) = 0;
 };
 
-class ATSoundBoardEmulator : public IATSoundBoardEmulator {
+class ATSoundBoardEmulator : public VDAlignedObject<16>, public IATSoundBoardEmulator {
 	ATSoundBoardEmulator(const ATSoundBoardEmulator&);
 	ATSoundBoardEmulator& operator=(const ATSoundBoardEmulator&);
 public:

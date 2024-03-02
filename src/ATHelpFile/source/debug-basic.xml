@@ -48,12 +48,18 @@ MEMTOP  Top of used memory    087E</pre>
 10 FOR I=1 TO 100 {end $0821}</pre>
   <p>
     This command is useful when used with the current value of the <tt>STMCUR</tt> pointer, as it
-    can be used to determine the currently executing line. The end pointer shown is the address
-    after the last byte in the line and which should be the start of the next line.
+    can be used to determine the currently executing line. Using an asterisk as the address,
+    i.e. <tt>.basic_dumpline *</tt>, is a shortcut for the current line. The end pointer shown is the address after the last byte in the line and
+    which should be the start of the next line.
   </p>
   <p>
-    If invoked with no argument, the next line is dumped. This can also be invoked simply by pressing Enter
+    Using 0 as the start address, i.e. <tt>.basic_dumpline *</tt>, dumps the first line.
+    If no argument is used, the next line is dumped. This can also be invoked simply by pressing Enter
     in the debugger to re-issue the command.
+  </p>
+  <p>
+    The <tt>-c</tt> flag dumps the remainder of the program from the start point. Thus, <tt>.basic_dumpline -c 0</tt>
+    dumps the entire program.
   </p>
   <h2>Displaying variable tables</h2>
   <p>
@@ -108,4 +114,22 @@ Altirra> .basic_dumpline 82f
   <p>
     Verifying the result also shows how the program was originally protected.
   </p>
+  <p>
+    The <tt>.basic_rebuildvnt</tt> command will rebuild the Variable Name Table (VNT)
+    region of a BASIC program. This table is only needed by the BASIC interpreter for
+    parsing or LISTing, so if it is damaged, those actions can be blocked. <tt>.basic_rebuildvnt</tt>
+    rebuilds the VNT by substituting generated variable names, using the type information
+    in the Variable Value Table (VVT).
+  </p>
+  <h2>Saving a BASIC program</h2>
+  <p>
+    The <tt>.basic_save</tt> command will save a BASIC program from memory, even if the BASIC
+    interpreter has failed. This is done using the same process that the BASIC interpreter itself
+    uses when executing a SAVE. The program is saved to a path on the host, not on the emulated
+    disk, so this can be done even without DOS. Afterward, if desired, the program can be brought
+    back into BASIC by the H: device, a virtual disk, or direct booting from the emulator.
+  </p>
+  <note>
+    <tt>.basic_save</tt> cannot be used on a Basic XE program in Extend mode.
+  </note>
 </topic>

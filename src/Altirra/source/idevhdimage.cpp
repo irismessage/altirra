@@ -21,6 +21,7 @@
 #include <vd2/system/date.h>
 #include <vd2/system/error.h>
 #include <vd2/system/math.h>
+#include <at/atcore/propertyset.h>
 #include "idevhdimage.h"
 #include "oshelper.h"
 #include "uiprogress.h"
@@ -103,7 +104,8 @@ void ATSwapEndian(ATVHDDynamicDiskHeader& header) {
 }
 
 ATIDEVHDImage::ATIDEVHDImage()
-	: mFooterLocation(0)
+	: mbReadOnly(false)
+	, mFooterLocation(0)
 	, mSectorCount(0)
 	, mBlockSizeShift(0)
 	, mBlockLBAMask(0)
@@ -122,6 +124,37 @@ ATIDEVHDImage::~ATIDEVHDImage() {
 	Shutdown();
 }
 
+int ATIDEVHDImage::AddRef() {
+	return ATDevice::AddRef();
+}
+
+int ATIDEVHDImage::Release() {
+	return ATDevice::Release();
+}
+
+void *ATIDEVHDImage::AsInterface(uint32 iid) {
+	switch(iid) {
+		case IATIDEDisk::kTypeID: return static_cast<IATIDEDisk *>(this);
+		default:
+			return ATDevice::AsInterface(iid);
+	}
+}
+
+void ATIDEVHDImage::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mTag = "hdvhdimage";
+	info.mConfigTag = "harddisk";
+	info.mName = L"Hard disk image (VHD file)";
+}
+
+void ATIDEVHDImage::GetSettings(ATPropertySet& settings) {
+	settings.SetString("path", mPath.c_str());
+	settings.SetBool("write_enabled", !mbReadOnly);
+}
+
+bool ATIDEVHDImage::SetSettings(const ATPropertySet& settings) {
+	return false;
+}
+
 uint32 ATIDEVHDImage::GetSectorCount() const {
 	return mSectorCount;
 }
@@ -129,7 +162,9 @@ uint32 ATIDEVHDImage::GetSectorCount() const {
 void ATIDEVHDImage::Init(const wchar_t *path, bool write) {
 	Shutdown();
 
+	mPath = path;
 	mFile.open(path, write ? nsVDFile::kReadWrite | nsVDFile::kDenyAll | nsVDFile::kOpenAlways : nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
+	mbReadOnly = !write;
 
 	uint64 size = mFile.size();
 
@@ -343,6 +378,10 @@ void ATIDEVHDImage::InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 
 			mFile.write(batBuf.data(), tc);
 			batBytesToWrite -= tc;
 		}
+
+		// init runtime buffers
+		mBlockAllocTable.resize(blockCount, 0xFFFFFFFF);
+		mCurrentBlockBitmap.resize(mBlockBitmapSize);
 	} else {
 		// write blank data
 		vdblock<uint8> clearData(262144);

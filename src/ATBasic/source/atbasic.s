@@ -6,6 +6,8 @@
 ; notice and this notice are preserved.  This file is offered as-is,
 ; without any warranty.
 
+		opt		m-
+
 		icl		'system.inc'
 		icl		'tokens.inc'
 
@@ -36,27 +38,34 @@ exLineOffset	dta		0		;offset within current line being executed
 exLineOffsetNxt	dta		0		;offset of next statement
 exLineEnd		dta		0		;offset of end of current line
 exTrapLine		dta		a(0)	;TRAP line
+exFloatStk		dta		0		;bit 7 set if stack is floating (line numbers)
 opsp		dta		0		;operand stack pointer offset
 argsp		dta		0		;argument stack pointer offset
-expCurOp	dta		0		;expression evaluator current operator
-expCurPrec	dta		0		;expression evaluator current operator precedence
 expCommas	dta		0		;expression evaluator comma count
 expFCommas	dta		0
 expAsnCtx	dta		0		;flag - set if this is an assignment context for arrays
+expType		dta		0		;bit 7 = 0 for numeric, 1 for string
 varptr		dta		a(0)	;pointer to current variable
 lvarptr		dta		a(0)	;lvar pointer for array assignment
 parptr		dta		a(0)	;parsing state machine pointer
 parout		dta		0		;parsing output idx
-grColor		dta		0		;graphics color
+expCurOp	= parout		;expression evaluator current operator
+expCurPrec	dta		0		;expression evaluator current operator precedence
 iocbexec	dta		0		;current immediate/deferred mode IOCB
-iocbidx		dta		0		;current IOCB
-iocbcmd		dta		0		;IOCB command
+iocbidx		dta		0		;current IOCB*16
+iocbidx2	dta		0		;current IOCB (used to distinguish #0 and #16)
 iterPtr		dta		a(0)	;pointer used for sequential name table indexing
 ioPrintCol	dta		0		;IO: current PRINT column
 ioTermSave	dta		0		;IO: String terminator byte save location
 ioTermOff	dta		0		;IO: String terminator byte offset
+argstk2		dta		a(0)	;Evaluator: Second argument stack pointer
+dataLnEnd	dta		0		;current DATA statement line end
 
-		.if *>$b0
+		.if grColor!=$c8
+		.error "Graphics color is at ",grColor," but must be at $C8 for PEEK(200) to work (see Space Station Multiplication.bas)"
+		.endif
+
+		.if *>$ba
 		.error "Zero page overflow: ",*
 		.endif
 
@@ -68,7 +77,8 @@ stopln	= $ba				;(compat - Atari BASIC manual): line number of error
 ; statement or by the parser. They must not be used by functions or library
 ; code.
 ;
-stScratch	= $bc
+			org		$bc
+stScratch	dta		0
 stScratch2	dta		0
 stScratch3	dta		0
 stScratch4	dta		0
@@ -90,8 +100,17 @@ errsave	= $c3				;(compat - Atari BASIC manual): error number
 			org		$c4
 dataln		dta		a(0)	;current DATA statement line
 dataptr		dta		a(0)	;current DATA statement pointer
+grColor		dta		0		;graphics color (must be at $C8 for Space Station Multiplication)
+ptabw		dta		0		;(compat - Atari BASIC manual): tab width
 dataoff		dta		0		;current DATA statement offset
-dataLnEnd	dta		0		;current DATA statement line end
+
+.if ptabw != $C9
+			.error	"PTABW is wrong"
+.endif
+
+.if * > $CB
+.error "$CB-D1 are reserved"
+.endif
 
 ;--------------------------------------------------------------------------
 ; $CB-D1 are reserved for use by annoying people that read Mapping The
@@ -125,68 +144,394 @@ lbuff	equ		$0580
 		.endif
 .endm
 
+;==========================================================================
+; EXE loader start
+;
 		.if CART==0
+
 		org		$2800
 		opt		o+
 		
+;==========================================================================
+; Preloader
+;
+; The preloader executes before the main load.
+
 .proc __preloader
 		;check if BASIC is on
-		ldx		$a000
-		inx
-		stx		$a000
-		dex
-		cmp		$a000
-		stx		$a000
+		jsr		__testROM
 		beq		basic_ok
 		
-		;turn basic off
+		;try to turn basic off
 		lda		#0
 		sta		basicf
 		lda		portb
 		ora		#2
 		sta		portb
+
+		;check again if BASIC is on
+		jsr		__testROM
+		beq		basic_ok
+
+		;print failure
+		mwa		#msg_romconflict_begin icbal
+		mwa		#msg_romconflict_end-msg_romconflict_begin icbll
+		mva		#CIOCmdPutChars iccmd
+		ldx		#0
+		jsr		ciov
+
+		lda		#$ff
+		cmp:req	ch
+		sta		ch
+
+		;exit
+		jmp		(dosvec)
 		
 basic_ok:
-		;reset RAMTOP
-		mva		#$a0 ramtop
+		;print loading banner and continue disk load
+		mwa		#msg_loading_begin icbal
+		mwa		#msg_loading_end-msg_loading_begin icbll
+		mva		#CIOCmdPutChars iccmd
+		ldx		#0
+		jmp		ciov
+
+msg_loading_begin:
+		dta		'Loading Altirra BASIC...'
+msg_loading_end:
+
+msg_romconflict_begin:
+		dta		$9B
+		dta		'Cannot load Altirra BASIC: another',$9B
+		dta		'ROM is already present at $A000.',$9B
+		dta		$9B
+		dta		'If you are running under SpartaDOS X,',$9B
+		dta		'use the X command to run ATBasic.',$9B
+		dta		$9B
+		dta		'Press a key',$9B
+msg_romconflict_end:
+.endp
+
+;--------------------------------------------------------------------------
+; Exit:
+;	Z=0: Not writable
+;	Z=1: Writable
+;
+.proc __testROM
+		lda		$a000
+		tax
+		eor		#$ff
+		sta		$a000
+		cmp		$a000
+		stx		$a000
+		rts		
+.endp
+
+;--------------------------------------------------------------------------
+
+		ini		__preloader
+
+;--------------------------------------------------------------------------
+.proc __loader
+		;reset RAMTOP if it is above $A000
+		lda		#$a0
+		cmp		ramtop
+		bcs		ramtop_ok
+
+adjust_ramtop:
+		sta		ramtop
 		
 		;reinitialize GR.0 screen if needed (XEP80 doesn't)
 		lda		sdmctl
 		and		#$20
 		beq		dma_off
 		
-		mva		#CIOCmdClose iccmd
+		jsr		wait_vbl
+
 		ldx		#0
+		stx		dmactl
+		stx		sdmctl
+		lda		#4
+		cmp:rcc	vcount
+		mva		#CIOCmdClose iccmd
 		jsr		ciov
-dma_off:
 
-		rts
-.endp
-
-		ini		__preloader
-
-.proc __loader		
 		mva		#CIOCmdOpen iccmd
-		mwa		#editor icbll
+		mwa		#editor icbal
 		mva		#$0c icax1
 		mva		#$00 icax2
 		ldx		#0
 		jsr		ciov
-		jmp		main
+
+		;Wait for a VBLANK to ensure that the screen has taken place;
+		;we don't just use RTCLOK because we need to ensure that stage
+		;2 VBLANK has been run, not just stage 1.
+		jsr		wait_vbl
+dma_off:
+ramtop_ok:
+
+		;Check if we might have the OS-A or OS-B screen editor. The OS-A/B
+		;screen editor has a nasty bug of clearing up to one page more than
+		;it should on a screen clear, which will trash the beginning of our
+		;soft-loaded BASIC interpreter. In that case, we need to drop RAMTOP
+		;by another 4K to compensate. 4K is a lot, but is necessary since
+		;the screen editor does not align playfields properly otherwise.
+		
+		;The first check we do is to see if the memory limit is already $9F00
+		;or lower; if so, we don't have a problem.
+		lda		ramtop
+		cmp		#$A0
+		bcc		editor_ok
+
+		;The first check we do is to see if the put char routine for E: is
+		;that of OS-A/B. If it isn't, then either we aren't running on OS-A/B,
+		;or E: has been replaced. Either way, we're fine.
+		lda		icptl
+		cmp		#$A3
+		bne		editor_ok
+		lda		#$F6
+		cmp		icptl+1
+		bne		editor_ok
+
+		;Okay, we might have OS-A/B. However, there's a chance that someone
+		;preserved that entry point but fixed the editor (hah). So, let's do
+		;a test: put a test byte at $A000 and clear the screen. If it gets
+		;wiped, we have a problem.
+		sta		$A000
+
+		ldx		#0
+		stx		icbll
+		stx		icblh
+		mva		#CIOCmdPutChars iccmd
+		lda		#$7d
+		jsr		ciov
+
+		lda		$A000
+		cmp		#$FC
+		beq		editor_ok
+
+		;Whoops... the test byte was overwritten. Lower RAMTOP from $A0 to
+		;$90 and reinitialize E:.
+		lda		#$90
+		bne		adjust_ramtop
+
+editor_ok:
+		;reset RUNAD to $A000 so we can be re-invoked
+		mwa		#$a000 runad
+
+		;move $3000-4FFF to $A000-BFFF
+		mva		#$30 fr0+1
+		mva		#$a0 fr1+1
+		ldy		#0
+		sty		fr0
+		sty		fr1
+		ldx		#$20
+copy_loop:
+		mva:rne	(fr0),y (fr1),y+
+		inc		fr0+1
+		inc		fr1+1
+		dex
+		bne		copy_loop
+
+		;check if there is a command line to process
+		ldy		#0
+		sty		iocbidx				;!! - needed since we will be skipping it
+		lda		(dosvec),y
+		cmp		#$4c
+		bne		no_cmdline
+		ldy		#3
+		lda		(dosvec),y
+		cmp		#$4c
+		beq		have_cmdline
+no_cmdline:
+		lda		#0
+		jmp		no_filename
+
+have_cmdline:
+		;skip spaces
+		ldy		#10
+		lda		(dosvec),y
+		clc
+		adc		#63
+		tay
+space_loop:
+		lda		(dosvec),y
+		cmp		#$9b
+		beq		no_filename
+		iny
+		cmp		#' '
+		beq		space_loop
+
+		;stash filename base offset
+		dey
+		sty		fr0+3
+
+		;check if the first character is other than D and there is a colon
+		;afterward -- if so, we should skip DOS's parser and use it straight
+		;as it may be a CIO filename that DOS would munge
+		cmp		#'D'
+		beq		possibly_dos_file
+cio_file:
+		;copy filename to LBUFF
+		ldx		#0
+cio_copy_loop:
+		lda		(dosvec),y
+		sta		lbuff,x
+		inx
+		iny
+		cmp		#$9b
+		bne		cio_copy_loop
+
+		;stash length
+		stx		fr0+2
+
+		tya
+		jmp		have_filename_nz
+
+possibly_dos_file:
+		;scan for colon
+colon_loop:
+		lda		(dosvec),y
+		iny
+		cmp		#':'
+		beq		cio_file
+		cmp		#$9b
+		bne		colon_loop
+
+		;okay, assume it's a DOS file - clear the CIO filename flag
+		lda		#0
+		sta		fr0+2
+		
+		;try to parse out a filename
+		ldy		fr0+3
+		sec
+		sbc		#63
+		ldy		#10
+		sta		(dosvec),y
+
+		ldy		#4
+		mva		(dosvec),y fr0
+		iny
+		mva		(dosvec),y fr0+1
+		jsr		jump_fr0
+		
+no_filename:
+have_filename_nz:
+		;save off filename flag
+		php
+
+		;cold boot ATBasic
+		ldx		#0
+		stx		iocbidx
+		stx		iocbexec
+
+		lda		#$9c				;delete loading line
+		jsr		putchar
+		ldx		#<msg_banner
+		jsr		IoPrintMessage
+		jsr		IoPutNewline
+
+		jsr		stNew.reset_entry
+		jsr		ExecReset
+
+		;read filename flag
+		plp
+		bne		explicit_fn
+
+		;no filename... try loading implicit file
+		ldx		#$70
+		stx		iocbidx
+		mwa		#default_fn_start icbal+$70
+		mwa		#default_fn_end-default_fn_start icbll+$70
+		mva		#CIOCmdOpen iccmd+$70
+		mva		#$04 icax1+$70
+		jsr		ciov
+		bmi		load_failed
+
+		;load and run
+		lsr		stLoadRun._loadflg
+		jmp		stLoadRun.with_open_iocb
+
+load_failed:
+		;failed... undo the EOL with an up arrow so the prompt is in the right place
+		mva		#0 iocbidx
+		lda		#$1c
+		jsr		putchar
+
+		;close IOCB and jump to prompt
+		ldx		#$70
+		mva		#CIOCmdClose iccmd+$70
+		jsr		ciov
+		jsr		ExecReset
+		jmp		execLoop
+
+explicit_fn:
+		;move filename to line buffer
+		ldy		#33
+		ldx		#0
+		stx		fr0+3
+
+		;check if filename is already there
+		lda		fr0+2
+		bne		fncopy_skip
+fncopy_loop:
+		lda		(dosvec),y
+		sta		lbuff,x
+		cmp		#$9b
+		beq		fncopy_exit
+		iny
+		inx
+		bne		fncopy_loop
+fncopy_exit:
+		;finish length
+		stx		fr0+2
+
+fncopy_skip:
+		;set string pointer
+		mwa		#lbuff fr0
+
+		;set up for RUN statement
+		jsr		IoPutNewline
+		lsr		stLoadRun._loadflg
+		ldx		#$70
+		stx		iocbidx
+		jmp		stLoadRun.loader_entry
+
+wait_vbl:
+		sei
+		mwa		#1 cdtmv3
+		cli
+		lda:rne	cdtmv4
+		rts
+
+jump_fr0:
+		jmp		(fr0)
+
 editor:
 		dta		c'E',$9B
+
+default_fn_start:
+		dta		'D:AUTORUN.BAS',$9B
+default_fn_end:
 .endp
+
+		opt		h-
+		dta		a($ffff),a($3000),a($4fff)
+
 		.endif
 		
+;==========================================================================
+; Cartridge start
+;
+		opt		h-
 		org		$a000
-		
-		.if CART
-		opt		h-o+f+
-		.else
-		opt		o+
-		.endif
+		opt		o+f+
 
 ;==========================================================================
+; Entry point
+;
+; This can be skipped by the loader if a command line load is requested,
+; so this must be replaced by the load path.
+;
 main:
 		;init I/O
 		ldx		#0
@@ -195,34 +540,56 @@ main:
 		;check if this is a warm start
 		bit		warmst
 		bmi		immediateMode
-
-		;initialize LOMEM from MEMLO
-		mwa		memlo	lomem
 				
+main_cold:
 		;print banner
-		jsr		imprint
-		dta		$9B,c'Altirra 8K BASIC 0.8',$9b,0
+		ldx		#<msg_banner
+		jsr		IoPrintMessage
 		
 		jmp		stNew
 
+;==========================================================================
+; Message base
+;
+.pages 1
+msg_base:
+msg_banner:
+		dta		c'Altirra 8K BASIC 1.38',0
+
+msg_ready:
+		dta		$9B,c'Ready',$9B,0
+
+msg_stopped:
+		dta		$9B,c"Stopped",0
+
+msg_error:
+		dta		$9B
+msg_error2:
+		dta		c"Error-   ",0
+
+msg_atline:
+		dta		c" at line ",0
+.endpg
+
+;==========================================================================
 immediateModeReset:
 		jsr		ExecReset
 immediateMode:
 		;use IOCB #0 (E:) for commands
 		mva		#0 iocbexec
 .proc execLoop
-		;reset stack
-		ldx		#$ff
-		txs
-
 loop:
 		;display prompt
 		ldx		#0
 		stx		iocbidx
-		jsr		imprint
-		dta		$9B,'Ready',$9B,0
+		ldx		#<msg_ready
+		jsr		IoPrintMessage
 
-loop2:		
+loop2:	
+		;reset stack
+		ldx		#$ff
+		txs
+	
 		;read line
 		ldx		iocbexec
 		jsr		IoSetupReadLine
@@ -243,8 +610,12 @@ loop2:
 		cmp		#$9b
 		beq		loop2
 		
+		;float the stack if it isn't already
+		jsr		ExecFloatStack
+
 		;##TRACE "Parsing immediate mode line: [%.*s]" dw(icbll) lbuff
 		jsr		parseLine
+		bcc		loop2
 		
 		;check if this line was immediate mode
 		ldy		#1
@@ -265,6 +636,8 @@ eof:
 
 ;==========================================================================
 
+		icl		'parserbytecode.s'
+		icl		'parser.s'
 		icl		'exec.s'
 		icl		'data.s'
 		icl		'statements.s'
@@ -272,8 +645,6 @@ eof:
 		icl		'functions.s'
 		icl		'variables.s'
 		icl		'math.s'
-		icl		'parser.s'
-		icl		'parserbytecode.s'
 		icl		'io.s'
 		icl		'memory.s'
 		icl		'list.s'
@@ -282,9 +653,11 @@ eof:
 
 ;==========================================================================
 
-		.echo	"Main program ends at ",*," (",[((((*-$a000)*100/8192)/10)*16+(((*-$a000)*100)/8192)%10)],"% full)"
+const_table = $bffa - 4 - 6*7 - 7
 
-		org		$bffa - 16
+		.echo	"Main program ends at ",*," (",[((((*-$a000)*100/8192)/10)*16+(((*-$a000)*100)/8192)%10)],"% full) (", const_table-*," bytes free)"
+
+		org		const_table
 		.echo	"Constant table begins at ",*
 		.pages 1
 
@@ -296,24 +669,38 @@ devname_e:
 		dta		'E'
 devname_p:
 		dta		'P'
-		;next char must not be a digit
+devpath_d1all:
+		dta		'D1:*.*',$9B
 
 angle_conv_tab:
 		.fl		1.57079633
 		.fl		90
+
+const_one:
+		.fl		1.0
+const_negone:
+		.fl		-1.0
+const_half:
+		.fl		0.5
+fpconst_neg_pi2:
+		.fl		-1.5707963267949
+fp_180_div_pi:
+		.fl		57.295779513082
+
 		.endpg
 		
 ;==========================================================================
 		
 		.echo	"Program ends at ",*," (",[((((*-$a000)*100/8192)/10)*16+(((*-$a000)*100)/8192)%10)],"% full)"
 
-		.if CART
 		org		$bffa
 		dta		a(main)			;boot vector
 		dta		$00				;do not init
 		dta		$05				;boot disk/tape, boot cart
 		dta		a(ExNop)		;init vector (no-op)
-		.else
+
+		.if CART==0
+		opt		f-h+
 		run		__loader
 		.endif
 		

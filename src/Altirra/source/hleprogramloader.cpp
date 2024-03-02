@@ -20,6 +20,7 @@
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
+#include <at/atcore/memoryutils.h>
 #include "hleprogramloader.h"
 #include "hleutils.h"
 #include "kerneldb.h"
@@ -37,7 +38,8 @@ ATHLEProgramLoader::ATHLEProgramLoader()
 	, mpSim(NULL)
 	, mpLaunchHook(NULL)
 	, mpLoadContinueHook(NULL)
-	, mbLaunchPending(0)
+	, mbRandomizeMemoryOnLoad(false)
+	, mbLaunchPending(false)
 {
 	std::fill(mProgramModuleIds, mProgramModuleIds + sizeof(mProgramModuleIds)/sizeof(mProgramModuleIds[0]), 0);
 }
@@ -152,6 +154,15 @@ uint8 ATHLEProgramLoader::OnDSKINV(uint16) {
 	ATKernelDatabase kdb(mpCPU->GetMemory());
 
 	mbLaunchPending = false;
+
+	if (mbRandomizeMemoryOnLoad) {
+		const uint16 memlo = kdb.MEMLO;
+		const uint16 memtop = kdb.MEMTOP;
+
+		uint32 seed = mpSim->RandomizeRawMemory(0x80, 0x80, 0x73b1b086);
+		if (memlo < memtop)
+			mpSim->RandomizeRawMemory(memlo, (uint32)(memtop - memlo) + 1, seed);
+	}
 
 	// reset run/init addresses to hook location near top of stack
 	kdb.INITAD = 0x1FE;
@@ -282,11 +293,11 @@ void ATHLEProgramLoader::UnloadProgramSymbols() {
 	if (!d)
 		return;
 
-	for(int i=0; i<2; ++i) {
-		if (!mProgramModuleIds[i])
+	for(uint32& moduleId : mProgramModuleIds) {
+		if (!moduleId)
 			continue;
 
-		d->UnloadSymbols(mProgramModuleIds[i]);	
-		mProgramModuleIds[i] = 0;
+		d->UnloadSymbols(moduleId);	
+		moduleId = 0;
 	}
 }

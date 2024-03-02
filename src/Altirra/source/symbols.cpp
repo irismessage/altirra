@@ -1703,25 +1703,18 @@ bool ATCreateDefault5200HardwareSymbolStore(IATSymbolStore **ppStore) {
 	return true;
 }
 
-bool ATCreateCustomSymbolStore(IATCustomSymbolStore **ppStore) {
+void ATCreateCustomSymbolStore(IATCustomSymbolStore **ppStore) {
 	vdrefptr<ATSymbolStore> symstore(new ATSymbolStore);
 	*ppStore = symstore.release();
-	return true;
 }
 
-bool ATLoadSymbols(const wchar_t *sym, IATSymbolStore **outsymbols) {
+void ATLoadSymbols(const wchar_t *sym, IATSymbolStore **outsymbols) {
 	vdrefptr<IATCustomSymbolStore> symbols;
-	if (!ATCreateCustomSymbolStore(~symbols))
-		return false;
+	ATCreateCustomSymbolStore(~symbols);
 
-	try {
-		symbols->Load(sym);
-	} catch(const MyError&) {
-		return false;
-	}
+	symbols->Load(sym);
 
 	*outsymbols = symbols.release();
-	return true;
 }
 
 void ATSaveSymbols(const wchar_t *filename, IATSymbolStore *syms) {

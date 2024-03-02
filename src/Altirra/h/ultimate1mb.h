@@ -32,6 +32,7 @@ class ATMemoryLayer;
 class ATScheduler;
 class IATUIRenderer;
 class ATCPUHookManager;
+class ATFirmwareManager;
 
 class ATUltimate1MBEmulator : public IATPBIDevice {
 	ATUltimate1MBEmulator(const ATUltimate1MBEmulator&);
@@ -59,7 +60,8 @@ public:
 
 	void SetCartActive(bool active);
 	bool IsCartEnabled() const { return mbSDXEnabled && mbSDXModuleEnabled; }
-	bool IsExternalCartEnabled() const { return mbExternalCartEnabled2; }
+	bool IsExternalCartEnabledRD4() const { return mbExternalCartEnabledRD4; }
+	bool IsExternalCartEnabledRD5() const { return mbExternalCartEnabledRD5; }
 	bool IsSoundBoardEnabled() const { return mbSoundBoardEnabled; }
 	bool IsFirmwareDirty() const { return mFlashEmu.IsDirty(); }
 	uint8 GetVBXEPage() const { return !mbIORAMEnabled && !mbPBISelected ? mVBXEPage : 0; }
@@ -80,8 +82,8 @@ public:
 		mSBPageHandler = h;
 	}
 
-	void LoadFirmware(const wchar_t *path);
-	void LoadFirmware(const void *p, uint32 len);
+	bool LoadFirmware(ATFirmwareManager& fwmgr, uint64 id);
+	bool LoadFirmware(const void *p, uint32 len);
 	void SaveFirmware(const wchar_t *path);
 
 	virtual void AttachDevice(ATMemoryManager *memman);
@@ -104,6 +106,7 @@ public:
 protected:
 	void SetKernelBank(uint8 bank);
 	void UpdateKernelBank();
+	const uint8 *GetKernelBase() const;
 	void UpdateExternalCart();
 	void UpdateCartLayers();
 	void UpdatePBIDevice();
@@ -139,7 +142,8 @@ protected:
 	bool mbPBIEnabled;
 	bool mbPBIButton;
 	bool mbExternalCartEnabled;
-	bool mbExternalCartEnabled2;
+	bool mbExternalCartEnabledRD4;
+	bool mbExternalCartEnabledRD5;
 	bool mbExternalCartActive;
 	bool mbSoundBoardEnabled;
 	uint8 mVBXEPage;

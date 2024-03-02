@@ -24,6 +24,8 @@ ATUIListView::ATUIListView()
 	, mItemSelectedEvent()
 	, mItemActivatedEvent()
 {
+	mbFastClip = false;
+
 	SetFillColor(0xFFFFFF);
 	SetCursorImage(kATUICursorImage_Arrow);
 
@@ -40,12 +42,10 @@ ATUIListView::~ATUIListView() {
 
 void ATUIListView::AddItem(const wchar_t *text) {
 	InsertItem(0x7FFFFFFF, text);
-	Invalidate();
 }
 
 void ATUIListView::AddItem(IATUIListViewVirtualItem *item) {
 	InsertItem(0x7FFFFFFF, item);
-	Invalidate();
 }
 
 void ATUIListView::InsertItem(sint32 pos, const wchar_t *text) {
@@ -64,7 +64,7 @@ void ATUIListView::InsertItem(sint32 pos, const wchar_t *text) {
 		++mSelectedIndex;
 
 	Invalidate();
-	mpSlider->SetRange(0, (sint32)mItems.size());
+	RecomputeSlider();
 }
 
 void ATUIListView::InsertItem(sint32 pos, IATUIListViewVirtualItem *vitem) {
@@ -83,7 +83,7 @@ void ATUIListView::InsertItem(sint32 pos, IATUIListViewVirtualItem *vitem) {
 		++mSelectedIndex;
 
 	Invalidate();
-	mpSlider->SetRange(0, (sint32)mItems.size());
+	RecomputeSlider();
 }
 
 void ATUIListView::RemoveItem(sint32 pos) {
@@ -267,7 +267,7 @@ void ATUIListView::OnMouseDblClkL(sint32 x, sint32 y) {
 	}
 }
 
-void ATUIListView::OnMouseWheel(sint32 x, sint32 y, float delta) {
+bool ATUIListView::OnMouseWheel(sint32 x, sint32 y, float delta) {
 	mScrollAccum += delta * (float)(sint32)mItemHeight;
 
 	int pixels = VDRoundToInt(mScrollAccum);
@@ -277,6 +277,8 @@ void ATUIListView::OnMouseWheel(sint32 x, sint32 y, float delta) {
 
 		ScrollToPixel(mScrollY - pixels, true);
 	}
+
+	return true;
 }
 
 void ATUIListView::OnActionStart(uint32 id) {
@@ -348,9 +350,9 @@ void ATUIListView::OnCreate() {
 	mpSlider = new ATUISlider;
 	mpSlider->AddRef();
 	AddChild(mpSlider);
-	mpSlider->SetArea(vdrect32(0, 0, 16, 16));
+	mpSlider->SetArea(vdrect32(0, 0, mpManager->GetSystemMetrics().mVertSliderWidth, 16));
 	mpSlider->SetDockMode(kATUIDockMode_Right);
-	mpSlider->OnValueChangedEvent() = ATBINDCALLBACK(this, &ATUIListView::OnScroll);
+	mpSlider->SetOnValueChanged([this](sint32 pos) { OnScroll(pos); });
 
 	mpFont = mpManager->GetThemeFont(kATUIThemeFont_Default);
 
@@ -420,7 +422,7 @@ void ATUIListView::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 	ATUIContainer::Paint(rdr, w, h);
 }
 
-void ATUIListView::OnScroll(ATUISlider *, sint32 pos) {
+void ATUIListView::OnScroll(sint32 pos) {
 	ScrollToPixel(pos, false);
 }
 

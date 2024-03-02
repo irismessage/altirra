@@ -9,70 +9,60 @@
 ?functions_start = *
 
 ;===========================================================================
-.proc expNumConst
-		ldx		#<-6
-		ldy		exLineOffset
-var_loop:
-		lda		(stmcur),y+
-		sta		fr0+6,x
-		inx
-		bne		var_loop
-		sty		exLineOffset
-		jmp		expPushFR0
-.endp
-
-;===========================================================================
-.proc expStrConst
-		;load and stash string literal length (so we don't have to thrash Y)
-		ldy		exLineOffset
-		lda		(stmcur),y
-		tax
-
-		;build argument stack entry
-		jsr		ExprBeginPushStringVal
-		
-		;address
-		lda		stmcur
-		sec								;+1 to skip length
-		adc		exLineOffset
-		sta		(argstk),y+
-		lda		stmcur+1
-		adc		#0
-		sta		(argstk),y+
-		
-		;length
-		txa
-		jsr		ExprPushRawByteAsWord
-		
-		;dimensioned length	
-		txa
-		jsr		ExprPushRawByteAsWord
-		
-		;skip past length and string in statement text
-		txa
-		sec
-		adc		exLineOffset
-		sta		exLineOffset
-		
-		;all done
-		sty		argsp
-		rts
-.endp
-
-
-;===========================================================================
-.proc expComma
-		;leave arguments on stack
-		rts
-.endp
-
-
-;===========================================================================
 .proc funStringCompare
+_str0 = fr0
+_str1 = fr1
+
+		;reset expression type back to numeric
+		stx		expType
+
 		lda		funCompare.compare_mode_tab-TOK_EXP_STR_LE,x
 		sta		a3
 
-		jsr		compareStrings
+		jsr		expPopFR1
+		
+		;compare lengths
+		ldx		_str0+3
+		cpx		_str1+3
+		bne		compdone
+		lda		_str0+2
+		cmp		_str1+2
+compdone:
+		php
+		pla
+		sta		funScratch1
+		
+		ldy		#0
+		bcc		start
+		mva		_str1+2 _str0+2
+		ldx		_str1+3
+start:
+		txa
+		beq		loop2_start
+loop:
+		lda		(_str0),y
+		cmp		(_str1),y
+		bne		done
+		iny
+		bne		loop
+		inc		_str0+1
+		inc		_str1+1
+		dex
+		bne		loop
+		beq		loop2_start
+loop2:
+		lda		(_str0),y
+		cmp		(_str1),y
+		bne		done
+		iny
+loop2_start:
+		cpy		_str0+2
+		bne		loop2
+
+		lda		funScratch1
+		pha
+		plp
+done:
 		jmp		funCompare.push_flags_as_bool
 .endp
 
@@ -82,8 +72,8 @@ var_loop:
 		lda		compare_mode_tab-TOK_EXP_LE,x
 		sta		a3
 		
-		;pop both arguments off
-		jsr		expPopFR1FR0
+		;pop first argument off
+		jsr		expPopFR1
 
 		;do FP comparison
 		jsr		fcomp
@@ -101,141 +91,215 @@ push_flags_as_bool:
 		
 		;push and exit
 		bne		nonzero
-		jsr		zfr0
-		jmp		expPushFR0
+		jmp		zfr0
 nonzero:
-		jsr		fld1
-		jmp		expPushFR0
+		jmp		fld1
 		
 cmptab:	;input = (z,c)
 		;output = (=, <>, <, >=, >, <=)
-		dta		%011001		;fr0 < fr1
-		dta		%010110		;fr0 > fr1
-		dta		%100101		;fr0 = fr1
-		dta		%100101		;fr0 = fr1
+		dta		%010110		;fr1 > fr0
+		dta		%011001		;fr1 < fr0
+		dta		%100101		;fr1 = fr0
+		dta		%100101		;fr1 = fr0
 		
 compare_mode_tab:
 		dta		$01,$10,$04,$08,$02,$20
 .endp
 
 ;===========================================================================
+; ^ operator (exponentiation)
+;
+; Quirks (arguably bugs):
+;	0^0 = 0
+;	0^1E+80 -> Error 11
+;	1^131072 = 2 with XL/XE OS, even though LOG/CLOG(1) = 0
+;
+; Errors:
+;	Error 3 if x=0 and y<0
+;	Error 11 if x<0 and y not integer
+;	Error 11 if underflow/overflow
+;
 .proc funPower
+_flags = funScratch1
+_rneg = funScratch2
+
 		;unfortunately, we have to futz with the stack here since the
 		;parameters are in the wrong order....
-		lda		argsp
-		sub		#8
-		tay
-		jsr		expPopFR0.with_offset
-		jsr		log10
-		lda		argsp
+		ldx		#6
+push_loop:
+		lda		fr0-1,x
 		pha
-		add		#16
-		tay
-		jsr		expPopFR1.with_offset
-		jsr		fmul
-		jsr		exp10
+		dex
+		bne		push_loop
+		stx		_rneg
+
+		jsr		expPopFR0
+
+		;check if x<0 and take abs(x) if so
+		jsr		MathSplitSign
+
+		;check if x=0 and cache nonzero flag
+		cmp		#1
+		ror		_flags
+		bpl		x_zero
+
+		;compute log(x)
+		jsr		log10
+		bcs		funAdd.arith_error
+
+x_zero:
+		;pop y
+		ldx		#<-6
+pop_loop:
 		pla
-		sta		argsp
-		jmp		expPushFR0
-.endp
+		sta		fr1+6,x
+		inx
+		bne		pop_loop
 
-;===========================================================================
-.proc funMultiply
-		jsr		expPopFR1FR0
+		asl		_flags
+		bcc		x_zero2
+		bpl		x_positive
+
+		;x is negative... check if y is an integer
+		lda		fr1
+		beq		y_zero
+		and		#$7f
+
+		;bias y and skip if it's too large to be odd or have a fraction
+		sbc		#$45
+		bpl		y_large_integer
+
+		;check if y>0 and y<1, which means it must be fractional
+		cmp		#<-5
+		bcc		funAdd.arith_error
+
+		;load least significant integer byte and copy oddness to sign
+		tax
+		lda		fr1+6,x
+		lsr
+		ror		_rneg
+
+		;check for fraction
+		bcc		y_fracstart
+y_fracloop:
+		lda		fr1+6,x
+		bne		funAdd.arith_error
+y_fracstart:
+		inx
+		bmi		y_fracloop		
+
+y_large_integer:
+x_positive:
+y_zero:
+		;compute log(x)*y
 		jsr		fmul
-		bcs		funDivide.onerr
-		jmp		expPushFR0
+		bcs		funAdd.arith_error
+
+		;compute exp(log(x)*y)
+		jsr		exp10
+		bcs		funAdd.arith_error
+
+		;flip sign if x<0 and y odd
+		lda		fr0
+		eor		_rneg
+		sta		fr0
+
+push_exit:
+		rts
+
+x_zero2:
+		;x is zero, so fire error if y<0
+		lda		fr1
+		bmi		funAdd.arith_error
+
+		;return zero
+		rts
+.endp
+
+;===========================================================================
+; * operator
+;
+; Errors:
+;	Error 11 if underflow/overflow
+;
+.proc funMultiply
+		jsr		expPopFR1
+		jsr		fmul
+		jmp		funAdd.arith_exit
 .endp
 
 
 ;===========================================================================
+; - operator
+;
+; Errors:
+;	Error 11 if overflow
+;
+;---------------------------------------------------------------------------
+; + operator
+;
+; Errors:
+;	Error 11 if overflow
+;
+funSubtract:
+		jsr		funUnaryMinus
 .proc funAdd
-		jsr		expPopFR1FR0
+		jsr		expPopFR1
+_sub_entry:
 		jsr		fadd
-		bcs		funDivide.onerr
-		jmp		expPushFR0
-.endp
-
-
-;===========================================================================
-.proc funSubtract
-		jsr		expPopFR1FR0
-		jsr		fsub
-		bcs		funDivide.onerr
-		jmp		expPushFR0
-.endp
-
-
-;===========================================================================
-.proc funDivide
-		jsr		expPopFR1FR0
-		jsr		fdiv
-		bcs		onerr
-		jmp		expPushFR0
-onerr:
+arith_exit:
+		bcc		funPower.push_exit
+arith_error:
 		jmp		errorFPError
 .endp
 
+;===========================================================================
+; / operator
+;
+; Errors:
+;	Error 11 if underflow/overflow/div0
+;
+.proc funDivide
+		jsr		fmove
+		jsr		expPopFR0
+		jsr		fdiv
+		jmp		funAdd.arith_exit
+.endp
 
 ;===========================================================================
 .proc funNot
-		jsr		expPopFR0
 		lda		fr0+1
 		beq		is_zero
 push_zero:
-		jsr		zfr0
-		jmp		expPushFR0
+		jmp		zfr0
 is_zero:
 push_one:
-		jsr		fld1
-push_fr0:
-		jmp		expPushFR0
+		jmp		fld1
 .endp
 
 ;===========================================================================
 .proc funOr
-		jsr		expPopFR1FR0
+		jsr		expPopFR1
 		lda		fr0+1
 		ora		fr1+1
-		bne		funNot.push_one
-		jmp		expPushFR0
+		jmp		funAnd.push_z
 .endp
 
 ;===========================================================================
 .proc funAnd
-		jsr		expPopFR1FR0
+		jsr		expPopFR1
 		lda		fr0+1
-		beq		funNot.push_fr0
+		beq		push_fr0
 		lda		fr1+1
+push_z:
 		bne		funNot.push_one
 		beq		funNot.push_zero
-.endp
-
-;===========================================================================
-.proc funOpenParens
-		;reset comma count
-		lda		expCommas
-		sta		expFCommas
-		lda		#0
-		sta		expCommas
-
-		;pop the return address and force next token to be processed --
-		;this prevents any further reduction and the close parens from
-		;shifting onto the stack.
-		pla
-		pla
-		jmp		evaluate.loop
+push_fr0:
+		rts
 .endp
 
 ;===========================================================================
 .proc funAssignNum
-_tmpadr = fr1
-		;copy number to FR0
-		jsr		expPopFR0
-
-		;pop variable from stack
-		jsr		expPopVar
-		
 		;copy FR0 to variable or array element
 		;;##TRACE "Assigning %g to element at $%04x" fr0 dw(lvarptr)
 		ldy		#5
@@ -243,6 +307,9 @@ copy_loop:
 		mva		fr0,y (lvarptr),y
 		dey
 		bpl		copy_loop
+
+		;since this is an assignment, the stack must be empty afterward...
+		;but we don't care about the state of the stack.
 		rts
 .endp
 
@@ -290,23 +357,13 @@ copy_loop:
 ;
 .proc funAssignStr
 		;pop source string to FR1
-		jsr		expPopFR1
+		jsr		fmove
 		
 		;pop dest string to FR0
 		jsr		ExprPopExtFR0
 		
 		;##TRACE "Dest string: $%04x+%u [%u] = [%.*s]" dw(fr0) dw(fr0+2) dw(fr0+4) dw(fr0+2) dw(fr0)
 		;##TRACE "Source string: $%04x+%u [%u] = [%.*s]" dw(fr1) dw(fr1+2) dw(fr1+4) dw(fr1+2) dw(fr1)
-		
-		;check that dest string is dimmed
-		lda		prefr0
-		lsr
-		bcs		is_dimmed
-		
-		;oops... issue error
-		jmp		errorDimError
-		
-is_dimmed:
 
 		;check if we need to truncate length (len(src) > capacity(dst))
 		;;##TRACE "source length %x" dw(fr1+2)
@@ -325,11 +382,6 @@ len_ok:
 		;set copy length (a3)
 		sta		a3
 		stx		a3+1
-
-		;look up source variable
-		;;##TRACE "Variable %x" db(prefr0+1)
-		lda		prefr0+1
-		jsr		VarGetAddr0
 		
 		;check if we need to alter the source length:
 		; - for A$(X)=B$, the length is always set to min(X+len(B$)-1, capacity(A$))
@@ -353,38 +405,37 @@ len_ok:
 		adc		a3+1
 		sta		fr1+5
 		
-		ldy		#2
+		ldy		#0
 		sec
 		txa
-		sbc		(varptr),y
+		sbc		(lvarptr),y
 		tax
 		iny
 		lda		fr1+5
-		sbc		(varptr),y
+		sbc		(lvarptr),y
 		sta		fr1+5
 		
-		;check if we are doing A$(X)
-		lda		expAsnCtx
-		lsr
-		bcs		update_length
+		;check if we are doing A$(X)=...
+		bit		expAsnCtx
+		bmi		update_length
 		
 		;check if the new length is longer than the existing length
 		;##TRACE "Comparing var length: existing %u, proposed %u" dw(dw(varptr)+4) db(fr1+5)*256+x
 		txa
 		iny
-		cmp		(varptr),y
+		cmp		(lvarptr),y
 		iny
 		lda		fr1+5
-		sbc		(varptr),y
+		sbc		(lvarptr),y
 		bcc		no_update_length
 		
 update_length:
 		;##TRACE "Setting var length to %d" db(fr1+5)*256+x
-		ldy		#5
-		mva		fr1+5 (varptr),y
+		ldy		#3
+		mva		fr1+5 (lvarptr),y
 		dey
 		txa
-		sta		(varptr),y
+		sta		(lvarptr),y
 no_update_length:
 
 		;copy source address to dest pointer (a1)
@@ -397,76 +448,26 @@ no_update_length:
 		;##ASSERT dw(a0) >= dw(starp) and dw(a0)+dw(a3) <= dw(runstk)
 		
 		;do memcpy and we're done
-		jmp		copyAscending
-.endp
-
-
-;===========================================================================
-.proc compareStrings
-_str0 = fr0
-_str1 = fr1
-		jsr		expPopFR1FR0
-		
-		ldx		_str0+3
-		cpx		_str1+3
-		bne		compdone
-		lda		_str0+2
-		cmp		_str1+2
-compdone:
-		php
-		pla
-		sta		funScratch1
-		
-		ldy		#0
-		bcc		start
-		mva		_str1+2 _str0+2
-		ldx		_str1+3
-start:
-		beq		loop2_start
-loop:
-		lda		(_str0),y
-		cmp		(_str1),y
-		bne		done
-		iny
-		bne		loop
-		inc		_str0+1
-		inc		_str1+1
-		dex
-		bne		loop
-		beq		loop2_start
-loop2:
-		lda		(_str0),y
-		cmp		(_str1),y
-		bne		done
-		iny
-loop2_start:
-		cpy		_str0+2
-		bne		loop2
-
-		lda		funScratch1
-		pha
-		plp
-done:
-		rts
+		jsr		copyAscending
+		jmp		ExprPopExtFR0
 .endp
 
 ;===========================================================================
 .proc funUnaryMinus
-		jsr		expPopFR0
-		
 		;test for zero
 		lda		fr0
 		beq		done
 		eor		#$80
 		sta		fr0
 done:
-		jmp		expPushFR0
+		rts
 .endp
 
 ;===========================================================================
 .proc funArrayComma
 		inc		expCommas
 .def :funUnaryPlus = *
+.def :expComma = *
 		rts
 .endp
 
@@ -503,44 +504,41 @@ done:
 		beq		no_second
 		
 		;convert second subscript to int and move into place
-		jsr		expPopFR0IntPos
+		jsr		ExprConvFR0IntPos
 		
 		;##TRACE "String subscript 2 = %d" dw(fr0)
-		ldx		#fr1+4
-		jsr		ExprStoreFR0Int
+		stx		fr1+4
+		sta		fr1+5
+		jsr		ExprPopExtFR0
 no_second:
 		;convert first subscript to int and subtract 1 to convert 1-based
 		;to 0-based indexing
-		jsr		expPopFR0IntPos
+		jsr		ExprConvFR0IntPos
 		
 		;##TRACE "String subscript 1 = %d" dw(fr0)
-		sec
+		tay
 		txa
-		sbc		#1
-		sta		fr1+2
-		lda		fr0+1
-		sbc		#0
-		sta		fr1+3
-		
+		bne		sub1_ok
+		dey
 		;first subscript can't be zero since it's 1-based
-		bcc		bad_subscript
+		bmi		bad_subscript
+sub1_ok:
+		dex
 
+		stx		fr1+2
+		sty		fr1+3
+		
 		;pop off the array variable
 		jsr		ExprPopExtFR0
 		
-		;check that it is dimensioned
-		lda		prefr0
-		lsr
-		bcs		dim_ok
-		jmp		errorDimError
-dim_ok:
-
 		;##TRACE "String var: adr=$%04x, len=%d, capacity=%d" dw(fr0) dw(fr0+2) dw(fr0+4)
 
 		;determine whether we should use the length or the capacity to
 		;bounds check
 		ldx		#fr0+2				;use length
+		stx		expType				;!! - set expression type to string!
 		lda		argsp				;bottom of stack?
+		cmp		#3
 		bne		use_length			;nope, can't be root assignment... use length
 		lda		expAsnCtx			;in assignment context?
 		beq		use_length			;nope, use length
@@ -585,13 +583,11 @@ second_ok:
 		;
 		;##ASSERT dw(fr1+2) < dw(fr0+4)
 		;##ASSERT dw(fr1+4) <= dw(fr0+4)
+
 		;address += start
-		lda		fr1+2
-		adc		fr0					;!! carry is clear from branch above
-		sta		fr0
-		lda		fr1+3
-		adc		fr0+1
-		sta		fr0+1
+		ldx		#fr0
+		ldy		#fr1+2
+		jsr		IntAdd
 
 		;length -= start; clamp if needed
 		sec
@@ -615,16 +611,15 @@ second_ok:
 		;limit length against capacity
 		cpx		fr0+2
 		lda		fr0+5
+		tay
 		sbc		fr0+3
 		bcs		length_ok
 		stx		fr0+2
-		mva		fr0+5 fr0+3
+		sty		fr0+3
 length_ok:
 		
 		;push subscripted result back onto eval stack
 		;##TRACE "Pushing substring: var %02X address $%04X length $%04X capacity $%04X" db(prefr0+1) dw(fr0) dw(fr0+2) dw(fr0+4)
-		
-		jsr		ExprPushExtFR0
 		
 		;all done - do standard open parens processing
 		jmp		funOpenParens
@@ -646,113 +641,107 @@ length_ok:
 ; X+Y*(N+1).
 ;
 .proc funArrayNum
-		lda		#0
-		sta		fr1
-		sta		fr1+1
-
-		;check if we have two subscripts
+		;check if we have two subscripts and clear sub2 if not
 		lda		expCommas
 		beq		one_dim
 		
 		;load second subscript
-		jsr		expPopFR0Int
+		jsr		ExprConvFR0Int
+		stx		fr0+4
+		sta		fr0+5
 		
-		;bounds check against second array size
-		lda		argsp
-		sec
-		sbc		#10
-		tay
-		txa
-		sbc		(argstk),y
-		iny
-		lda		fr0+1
-		sbc		(argstk),y
-		bcc		bound2_ok
-		
-invalid_bound:
-		;index out of bound -- issue dim error
-		jmp		errorDimError
-
-bound2_ok:
-		;multiply by first array size
-		dey
-		dey
-		lda		(argstk),y
-		sta		fr1+1
-		dey
-		lda		(argstk),y
-		sta		fr1
-		jsr		umul16x16
-		jsr		fmove
-		
-one_dim:
-		jsr		expPopFR0Int
-		
-		;bounds check against first array size
+		;bounds check against second array size (offset 2, one level up)
 		lda		argsp
 		sec
 		sbc		#4
 		tay
 		txa
 		sbc		(argstk),y
-		iny
 		lda		fr0+1
-		sbc		(argstk),y
+		sbc		(argstk2),y
 		bcs		invalid_bound
 		
-		;add in second index offset
-		clc
-		lda		fr0
-		adc		fr1
-		sta		fr0
+bound2_ok:
+		;multiply by first array size
+		dey
+		lda		(argstk2),y
+		sta		fr0+3
+		lda		(argstk),y
+		sta		fr0+2
+		jsr		umul16x16
+		jsr		fmove
+		jsr		ExprPopExtFR0
+		
+one_dim:
+		jsr		ExprConvFR0Int
+		
+		;bounds check against first array size
+		ldy		argsp
+		dey
+		dey
+		txa
+		cmp		(argstk),y
 		lda		fr0+1
-		adc		fr1+1
-		sta		fr0+1
+		sbc		(argstk2),y
+		dey
+		sty		argsp
+		bcs		invalid_bound
+		
+		;add in second index offset, if there is one
+		lda		expCommas
+		beq		skip_add_dim2
+		ldx		#fr0
+		ldy		#fr1
+		jsr		IntAdd
+skip_add_dim2:
 				
 		;multiply by 6
 		jsr		umul16_6
 		
 		;add address of array (stack always has abs)
-		lda		argsp
-		;##ASSERT db(dw(argstk)+a-8)=$43
-		;##TRACE "Doing array indexing: offset=$%04x, array=$%04x" dw(fr0) dw(dw(argstk)+a-6)
-		sub		#6
-		tay
+		ldy		argsp
+		;##TRACE "Doing array indexing: offset=$%04x, array=$%02x%02x, argsp=$%02x" dw(fr0) db(dw(argstk)+y-3) db(dw(argstk2)+y-3) y
 		lda		(argstk),y
-		iny
-		add		fr0
-		sta		fr1
-		lda		(argstk),y
+		adc		fr0
+		sta		varptr
+		tax
+		lda		(argstk2),y
 		adc		fr0+1
-		sta		fr1+1
-		dey
-		dey
-		dey
-		sty		argsp
+		sta		varptr+1
 		
 		;check if this is the first entry on the arg stack -- if so,
 		;stash off the element address for possible assignment
+		cpy		#3
 		bne		not_first
 		
 		;##TRACE "Array element pointer: %04x" dw(fr1)
-		mwa		fr1 lvarptr
+		sta		lvarptr+1
+		stx		lvarptr
 		
 not_first:
 		;load variable to fr0
-		ldx		#$fa
-		ldy		#0
-copyloop:
-		lda		(fr1),y
-		iny
-		sta		fr0+6,x
-		inx
-		bne		copyloop
-		
-		;push value onto stack
-		jsr		expPushFR0
+		ldy		#5
+		jsr		VarLoadFR0_OffsetY
 		
 		;all done - do standard open parens processing
-		jmp		funOpenParens
+.def :funOpenParens = *
+		;reset comma count
+		lda		expCommas
+		sta		expFCommas
+		lda		#0
+		sta		expCommas
+
+		;pop the return address and force next token to be processed --
+		;this prevents any further reduction and the close parens from
+		;shifting onto the stack.
+		pla
+		pla
+		jmp		evaluate.loop
+
+invalid_bound:
+dim_error:
+		;index out of bound -- issue dim error
+		jmp		errorDimError
 .endp
 
 ;===========================================================================
@@ -761,133 +750,132 @@ copyloop:
 ;
 ; Sets dimensions for a numeric array variable.
 ;
+; Atari BASIC throws an error 9 if the array size exceeds 32K-1 bytes. We
+; lift that limitation here (there's no good reason for it).
+;
 ; Errors:
 ;	Error 9 if M=0 or N=0
 ;	Error 9 if out of memory
 ;	Error 3 if M/N outside of [0, 65535]
 ;
 .proc funDimArray
-		ldx		#fr1
-		jsr		zf1
-		jsr		expPopFR0Int
-		lda		expCommas
+		jsr		ExprConvFR0Int
+		ldy		expCommas
+		sty		fr1
+		sty		fr1+1
 		beq		one_dim
-		jsr		fmove
+		stx		fr1
+		sta		fr1+1
 		jsr		expPopFR0Int
 one_dim:
-		inw		fr0
-		inw		fr1
-		jsr		expPopVar
-		
-		;check if it is undimensioned
-		ldy		#0
-		lda		(varptr),y
-		lsr
-		bcc		not_dimmed
-		
-		;already dimensioned -- error
-		jmp		errorDimError
-		
-not_dimmed:
-		;##TRACE "Allocating new array with dimensions: %ux%u" dw(fr0) dw(fr1)
-		
-		;store relative address from STARP
-		jsr		funDimStr.set_array_offset
-		
-		;store dimensions
-		mva		fr0 (varptr),y+
-		mva		fr0+1 (varptr),y+
-		mva		fr1 (varptr),y+
-		mva		fr1+1 (varptr),y
-		
-		;bump both dimensions by one and compute array size
-		jsr		umul16x16
-		bcs		overflow
-		jsr		umul16_6
-		bcs		overflow
-		
-		;##TRACE "Allocating %u bytes" dw(fr0)
-		
-		ldy		#0
-		mva		#$41 (varptr),y
-		
-		;relocate runtime stack
-		lda		fr0
-		ldy		fr0+1
-		mwx		runstk a0
-		ldx		#runstk
-		jsr		expandTable
+		tay
+		inx
+		stx		fr0+2
+		sne:iny
+		sty		fr0+3
 
-		jmp		funOpenParens
-overflow:
-		jmp		errorNoMemory
+		lda		fr1
+		clc
+		adc		#1
+		sta		fr0+4
+		lda		#0
+		sta		argsp				;!! - reset stack while we have a zero
+		adc		fr1+1
+		sta		fr0+5
 
-.endp
-
-;===========================================================================
-.proc funDimStr
-		;pop string length
-		jsr		expPopFR0IntPos
-		
-		;throw dim error if it is zero
-		ora		fr0
-		bne		not_zero
-		jmp		errorDimError
-		
-not_zero:
-		;get variable reference
-		jsr		expPopVar
-		
-		;check if var is undimensioned
-		ldy		#0
-		lda		(varptr),y
-		and		#$03
-		beq		not_dimmed
-		
-		;already dimensioned -- error
-		jmp		errorDimError
-		
-not_dimmed:
+		;check if var is already dimensioned
 		;store new address, length, and dimension
 		jsr		set_array_offset
+				
+		;compute array size
+		jsr		umul16x16
+		bcs		funArrayNum.dim_error
+		jsr		umul16_6
+		bcs		funArrayNum.dim_error
 		
-		lda		#0
-		sta		(varptr),y+
-		sta		(varptr),y+
-		mva		fr0 (varptr),y+
-		mva		fr0+1 (varptr),y
-		
-		;attempt to allocate memory
-		ldy		fr0+1
+		;##TRACE "Allocating %u bytes" dw(fr0)
+				
+		;allocate space
 		lda		fr0
+		ldy		fr0+1
+allocate_and_exit:
 		mwx		runstk a0
 		ldx		#runstk
 		jsr		expandTable
-		
-		;mark as dimensioned string
-		;##TRACE "Allocating new string for var $%02X" (dw(varptr)-dw(vvtp))/8+$80
-		ldy		#0
-		lda		#$81
-		sta		(varptr),y
+
+		;mark dimensioned
+		lda		stScratch
+		ora		#$01
+		ldy		#$fe
+		dec		lvarptr+1
+		sta		(lvarptr),y
 
 		;all done
 		jmp		funOpenParens
-		
+.endp
+
+;===========================================================================
+; starting: $4E
+;
 set_array_offset:
-		ldy		#2
+		;check if the array is already dimensioned, but do NOT mark it
+		;yet -- we need to allocate the space before that
+		ldy		#$fe
+		dec		lvarptr+1
+		lda		(lvarptr),y
+		inc		lvarptr+1
+		sta		stScratch
+		lsr
+		bcs		funArrayNum.dim_error
+
 		lda		runstk
 		sub		starp
-		sta		(varptr),y+
+		sta		fr0
 		lda		runstk+1
 		sbc		starp+1
-		sta		(varptr),y+
-		rts
+		sta		fr0+1
+		jmp		funAssignNum
+
+.proc funDimStr
+		;pop string length
+		jsr		ExprConvFR0IntPos
+
+		;move to capacity location (fr0+4)
+		stx		fr0+4
+		sta		fr0+5
+		
+		;throw dim error if it is zero
+		ora		fr0
+		beq		funArrayNum.dim_error
+
+		lda		#0
+		sta		argsp				;!! - reset stack while we have a zero
+		sta		fr0+2
+		sta		fr0+3
+
+		;check if var is already dimensioned
+		;store new address, length, and dimension
+		jsr		set_array_offset
+		
+		;allocate memory, relocate runtime stack and exit
+		lda		fr0+4
+		ldy		fr0+5
+		jmp		funDimArray.allocate_and_exit
+.endp
+
+;===========================================================================
+.proc funHex
+		;convert string to hex at LBUFF
+		clc
+		jsr		IoConvNumToHex
+
+		;push string onto stack
+		bne		funStr.push_lbuff
 .endp
 
 ;===========================================================================
 .proc funStr
 		;convert TOS to string
-		jsr		expPopFR0
 		jsr		fasc
 		
 		;determine length of string and fix last char
@@ -899,13 +887,11 @@ lenloop:
 		eor		#$80
 		sta		(inbuff),y
 		iny
-		tya
-		tax
 		
+push_lbuff:
 		;push string onto stack
-		jsr		ExprBeginPushStringVal
-		mwa		inbuff (argstk),y+
-		txa
+		lda		inbuff
+		ldx		inbuff+1
 		jmp		funChr.finish_str_entry
 .endp
 
@@ -926,23 +912,32 @@ lenloop:
 ;   INBUFF, so we offset our location here instead.
 ;
 .proc funChr
-		jsr		expPopFR0Int
+		jsr		ExprConvFR0Int
 		stx		lbuff+$40
 		
 		;push string onto stack
-		jsr		ExprBeginPushStringVal
-		mwa		#lbuff+$40 (argstk),y+
-		lda		#1
+		lda		#<[lbuff+$40]
+		ldx		#>[lbuff+$40]
+		ldy		#1
 finish_str_entry:
-		jsr		ExprPushRawByteAsWord
-		jsr		ExprPushRawByteAsWord
-		sty		argsp
+		sta		fr0
+		stx		fr0+1
+		sty		fr0+2
+		sty		fr0+4
+		ldx		#0
+		stx		fr0+3
+		stx		fr0+5
+		dex
+		stx		expType
 		rts		
 .endp
 
 
 ;===========================================================================
 ; USR(aexp [,aexp...])
+;
+; Errors:
+;	Error 3 if any values not in [0,65535]
 ;
 .proc funUsr
 usrArgCnt = funScratch1
@@ -955,16 +950,17 @@ usrArgCnt = funScratch1
 		jsr		arg_loop_start
 
 		;push result back onto stack and return
-		jmp		expPushFR0Int
+		jmp		ifp
 		
 arg_loop:
 		;arguments on eval stack to words on native stack
 		;(!!) For some reason, Atari BASIC pushes these on in reverse order!
-		jsr		expPopFR0Int
+		jsr		ExprConvFR0Int
 		txa
 		pha
 		lda		fr0+1
 		pha
+		jsr		ExprPopExtFR0
 arg_loop_start:
 		dec		expFCommas
 		bpl		arg_loop
@@ -974,13 +970,21 @@ arg_loop_start:
 		pha
 
 		;extract address
-		jsr		expPopFR0Int
+		jsr		fpi
 		
 		;dispatch
 		jmp		(fr0)
 .endp
 
 ;===========================================================================
+; PEEK(aexp)
+;
+; Returns the byte at the given location.
+;
+; Errors:
+;	Error 3 if value not in [0,65536)
+;
+;---------------------------------------------------------------------------
 ; ASC(sexp)
 ;
 ; Returns the character value of the first character of a string as a
@@ -990,21 +994,34 @@ arg_loop_start:
 ;	- Atari BASIC does not check whether the string is empty and returns
 ;	  garbage instead.
 ;
-.proc funAsc
-		jsr		expPopAbsString
-push_byte_at_fr0_addr:
+.proc funPeek
+		jsr		ExprConvFR0Int
+.def :funAsc = *
 		ldy		#0
-		lda		(fr0),y
-		sta		fr0
-		sty		fr0+1
-		jmp		expPushFR0Int
+		sty		expType
+push_fr0_y:
+		ldx		#0
+		beq		funDpeek.peek_cont
 .endp
 
-
 ;===========================================================================
-.proc funPeek
-		jsr		expPopFR0Int
-		jmp		funAsc.push_byte_at_fr0_addr
+; DPEEK(aexp)
+;
+; Returns the word at the given location.
+;
+; Errors:
+;	Error 3 if value not in [0,65536)
+;
+.proc funDpeek
+		jsr		ExprConvFR0Int
+		ldy		#1
+		lda		(fr0),y
+		tax
+		dey
+		sty		expType
+peek_cont:
+		lda		(fr0),y
+		jmp		MathWordToFP
 .endp
 
 ;===========================================================================
@@ -1025,13 +1042,13 @@ push_byte_at_fr0_addr:
 ;	A$="12345": VAL(A$(1,2)) -> 12		!! tricky case
 ;
 .proc funVal
-		jsr		expPopAbsString
 		mva		#0 cix
+		sta		expType
 		jsr		IoTerminateString
 		jsr		afp
 		jsr		IoUnterminateString
 		bcs		err
-		jmp		expPushFR0
+		rts
 err:
 		jmp		errorInvalidString
 .endp
@@ -1042,23 +1059,17 @@ err:
 ;
 ; Returns the length in characters of a string expression.
 ;
-.proc funLen
-		jsr		expPopAbsString
-		mwa		fr0+2 fr0
-		jmp		expPushFR0Int
-.endp
-
-
 ;===========================================================================
 ; ADR(sexp)
 ;
 ; Returns the starting address of a string expression.
 ;
-.proc funAdr
-		jsr		expPopAbsString
-		jmp		expPushFR0Int
+.proc funLen
+		mwa		fr0+2 fr0
+.def :funAdr = *
+		lsr		expType
+		jmp		ifp
 .endp
-
 
 ;===========================================================================
 ; ATN(aexp)
@@ -1070,17 +1081,10 @@ err:
 ;
 .proc funAtn
 _sign = funScratch1
-
-		jsr		expPopFR0
-
 		;stash off sign and take abs
-		lda		fr0
-		asl
-		ror		_sign
-		lsr
-		sta		fr0
+		jsr		MathSplitSign
 		
-		;check if |x| >= 1; if so, use approximation directly
+		;check if |x| < 1; if so, use approximation directly
 		cmp		#$40
 		bcs		is_big
 		jsr		do_approx
@@ -1092,29 +1096,24 @@ is_big:
 		jsr		fld1
 		jsr		fdiv
 		jsr		do_approx
-		jsr		fmove
-		ldx		#<fpconst_pi2
-		ldy		#>fpconst_pi2
-		jsr		fld0r
-		jsr		fsub
+		ldx		#<fpconst_neg_pi2
+		jsr		MathLoadConstFR1
+		jsr		fadd
 xit:
 		lda		degflg
 		beq		use_radians
 		
 		;convert radians to degrees
 		ldx		#<fp_180_div_pi
-		ldy		#>fp_180_div_pi
-		jsr		fld1r
+		jsr		MathLoadConstFR1
 		jsr		fmul
 		
 use_radians:
 		;merge in sign
-		lda		_sign
-		eor		fr0
-		and		#$80
-		eor		fr0
-		sta		fr0
-		jmp		expPushFR0
+		asl		fr0
+		asl		_sign
+		ror		fr0
+		rts
 
 do_approx:
 		;save x
@@ -1138,23 +1137,17 @@ do_approx:
 
 ;===========================================================================
 .proc funCos
-		ldx		#1
-		jmp		funSin.cos_entry
-.endp
-
-
-;===========================================================================
-.proc funSin
 _cosFlag = funScratch1
 _quadrant = funScratch2
 
+		ldx		#1
+		dta		{bit $0100}
+
+.def :funSin = *
 		ldx		#0
-cos_entry:
+
 		;save sincos flag
 		stx		_cosFlag
-		
-		;get arg
-		jsr		expPopFR0
 
 		;convert from radians/degrees to quarter-angle binary fraction
 		;FMUL would be faster, but we use FDIV for better accuracy for
@@ -1163,8 +1156,7 @@ cos_entry:
 		clc
 		adc		degflg
 		tax
-		ldy		#>angle_conv_tab
-		jsr		fld1r
+		jsr		MathLoadConstFR1
 		jsr		fdiv
 		
 		;stash and then floor
@@ -1191,6 +1183,7 @@ is_tiny_or_big:
 		lsr
 		lsr
 		lsr
+		and		#$02
 		eor		_quadrant
 		sta		_quadrant
 		
@@ -1219,9 +1212,7 @@ odd_quadrant:
 
 		;take abs() of FR0 since depending on quadrant we would have
 		;computed either -z or 1-z above
-		lda		fr0
-		and		#$7f
-		sta		fr0
+		jsr		funAbs				;!! - this also stomps funScratch1 (_cosFlag)
 		
 		;stash z
 		jsr		MathStoreFR0_FPSCR
@@ -1239,22 +1230,23 @@ odd_quadrant:
 		;compute y' = z*f(z^2) so we have odd terms
 		jsr		MathLoadFR1_FPSCR
 		jsr		fmul
-		
-		;check if polynomial expansion is zero
-		lda		fr0
-		beq		frac_zero
-		
+				
 		;negate result if we are in quadrants III or IV
 		lsr		_quadrant
 		bcc		skip_quadrant_negation
-
-		eor		#$80
-		sta		fr0
+		jsr		funUnaryMinus
 		
-frac_zero:
 skip_quadrant_negation:
+		;clamp to +/-1.0
+		lda		fr0
+		asl
+		bpl		abs_below_one
+		lda		#0
+		sta		fr0+5
+
 		;push result and exit
-		jmp		expPushFR0
+abs_below_one:
+		rts
 
 coefficients:
 		;The Maclaurin expansion for sin(x) is as follows:
@@ -1283,9 +1275,6 @@ coefficients:
 .proc funRnd
 _temp = fr0+6
 _temp2 = fr0+7
-		;pop off dummy argument
-		jsr		expPopFR0
-
 		mva		#$3f fr0
 		ldx		#5
 loop:
@@ -1316,8 +1305,7 @@ bitloop:
 		bne		loop
 		
 		;renormalize random value and exit
-		jsr		normalize
-		jmp		expPushFR0
+		jmp		normalize
 .endp
 
 
@@ -1332,43 +1320,53 @@ bitloop:
 ;	The returned value is actually off by one as OS MEMTOP is inclusive.
 ;
 .proc funFre
-		jsr		expPopFR0
 		lda		memtop
 		sub		memtop2
-		sta		fr0
+		tay
 		lda		memtop+1
 		sbc		memtop2+1
-		sta		fr0+1
-		jmp		expPushFR0Int
+		tax
+		tya
+		jmp		MathWordToFP
 .endp
 
-
 ;===========================================================================
+; EXP(aexp)
+;
+; Errors:
+;	Error 3 if underflow/overflow
+;
 .proc funExp
-		jsr		expPopFR0
 		jsr		exp
-		bcs		funLog.err
-		jmp		expPushFR0
+		jmp		funLog.test_exit
 .endp
 
 
 ;===========================================================================
+; EXP(aexp)
+;
+; Errors:
+;	Error 3 if underflow/overflow
+;
 .proc funLog
-		jsr		expPopFR0
 		jsr		log
+test_exit:
 		bcs		err
-		jmp		expPushFR0
+		rts
 err:
 		jmp		errorValueErr
 .endp
 
 
 ;===========================================================================
+; EXP(aexp)
+;
+; Errors:
+;	Error 3 if underflow/overflow
+;
 .proc funClog
-		jsr		expPopFR0
 		jsr		log10
-		bcs		funLog.err
-		jmp		expPushFR0
+		jmp		funLog.test_exit
 .endp
 
 
@@ -1395,21 +1393,17 @@ err:
 ; to between 0.10 and 1.00. In this way, we can get to 10 sig digits in
 ; four iterations.
 ;
+; TICKTOCK.BAS is sensitive to errors here.
+;
 .proc funSqr
-_itercount = funScratch1
-
-		;get argument
-		jsr		expPopFR0
-		
-		;check if it is zero
+_itercount = funScratch1		
+		;check if arg is zero
 		lda		fr0
 		beq		done
 		
 		;error out if negative
-		bpl		is_positive
-		jmp		errorValueErr
-		
-is_positive:
+		bmi		funLog.err
+
 		;stash original value
 		jsr		MathStoreFR0_FPSCR
 		
@@ -1448,8 +1442,7 @@ iter_loop:
 		
 		;PLYARG = x
 		ldx		#<plyarg
-		ldy		#>plyarg
-		jsr		fst0r
+		jsr		MathStoreFR0_Page5
 		
 		;compute S/x
 		ldx		#<fpscr
@@ -1459,14 +1452,12 @@ iter_loop:
 		
 		;compute S/x + x
 		ldx		#<plyarg
-		ldy		#>plyarg
-		jsr		fld1r
+		jsr		MathLoadFR1_Page5
 		jsr		fadd
 		
 		;divide by two
 		ldx		#<const_half
-		ldy		#>const_half
-		jsr		fld1r
+		jsr		MathLoadConstFR1
 		jsr		fmul
 		
 		;loop back until iterations completed
@@ -1474,7 +1465,7 @@ iter_loop:
 		bne		iter_loop
 		
 done:
-		jmp		expPushFR0
+		rts
 		
 approx_compare_tab:
 		dta		$03,$08,$15,$25,$37,$56,$67,$88
@@ -1488,41 +1479,53 @@ approx_value_tab:
 ;
 ; Returns the sign of a number, as -1/0/+1.
 ;
+.nowarn .proc _funHVStick
+table:
+		dta	$00,$FF,$01,$00
+.def :funHstick
+.def :funVstick
+		cpx		#TOK_EXP_VSTICK
+		php
+		jsr		ExprConvFR0IntPos
+		lda		stick0,x
+		pha
+		jsr		zfr0
+		pla
+		plp
+		beq		vstick
+		lsr
+		lsr
+		eor		#$03
+vstick:
+		and		#$03
+		tax
+		lda		table,x
+		sta		fr0
+.endp
+		;!! - fall through
 .proc funSgn
-		jsr		expPopFR0
-		
 		;check if the number is zero
-		lda		fr0
+		asl		fr0
 		beq		is_zero
 		
 		;convert to +/-1
+		lda		#$80
+		ror
 		pha
 		jsr		fld1
 		pla
-		and		#$80
-		ora		#$40
 		sta		fr0
 is_zero:
-		jmp		expPushFR0
+		rts
 .endp
 
 
 ;===========================================================================
-.proc funAbs
-		jsr		expPopFR0
-		asl		fr0
-		lsr		fr0
-		jmp		expPushFR0
-.endp
-
+funAbs = MathSplitSign
 
 ;===========================================================================
 ; This is really floor().
-.proc funInt
-		jsr		expPopFR0
-		jsr		MathFloor		
-		jmp		expPushFR0
-.endp
+funInt = MathFloor		
 
 
 ;===========================================================================
@@ -1537,36 +1540,57 @@ is_zero:
 ;	Invalid paddle numbers 8-255 aren't trapped and return data from
 ;	other parts of the OS database.
 ;
-.proc funPaddle
-		jsr		expPopFR0IntPos
-		lda		paddl0,x
-return_entry:
-		sta		fr0
-		jmp		expPushFR0Int
+.proc funPaddleStick
+		lda		offset_table-$51,x
+		pha
+		jsr		ExprConvFR0IntPos
+		lda		#2
+		sta		fr0+1
+		pla
+		tay
+		jmp		funPeek.push_fr0_y
+
+offset_table:
+		dta		<paddl0
+		dta		<stick0
+		dta		<ptrig0
+		dta		<strig0
 .endp
 
-
 ;===========================================================================
-.proc funStick
-		jsr		expPopFR0IntPos
-		lda		stick0,x
-		jmp		funPaddle.return_entry
+.proc funBitwiseSetup
+		jsr		ExprConvFR0Int
+		jsr		fmove
+		jmp		expPopFR0Int
 .endp
 
-
-;===========================================================================
-.proc funPtrig
-		jsr		expPopFR0IntPos
-		lda		ptrig0,x
-		jmp		funPaddle.return_entry
+.proc funBitwiseAnd
+		jsr		funBitwiseSetup
+		and		fr1+1
+		tay
+		txa
+		and		fr1
+finish:
+		sty		fr0+1
+		jmp		MathWordToFP_FR0Hi_A
 .endp
 
+.proc funBitwiseOr
+		jsr		funBitwiseSetup
+		ora		fr1+1
+		tay
+		txa
+		ora		fr1
+		jmp		funBitwiseAnd.finish
+.endp
 
-;===========================================================================
-.proc funStrig
-		jsr		expPopFR0IntPos
-		lda		strig0,x
-		jmp		funPaddle.return_entry
+.proc funBitwiseXor
+		jsr		funBitwiseSetup
+		eor		fr1+1
+		tay
+		txa
+		eor		fr1
+		jmp		funBitwiseAnd.finish
 .endp
 
 ;===========================================================================

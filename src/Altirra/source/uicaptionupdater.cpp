@@ -19,15 +19,17 @@
 #include "uicaptionupdater.h"
 #include "versioninfo.h"
 #include "console.h"
+#include "firmwaremanager.h"
 
 ATUIWindowCaptionUpdater::ATUIWindowCaptionUpdater()
 	: mbLastRunning(false)
 	, mbLastCaptured(false)
 	, mbShowFps(false)
+	, mbFullScreen(false)
 	, mbCaptured(false)
 	, mbCaptureMMBRelease(false)
 	, mLastHardwareMode(kATHardwareModeCount)
-	, mLastKernelMode(kATKernelModeCount)
+	, mLastKernelId(0)
 	, mLastMemoryMode(kATMemoryModeCount)
 	, mLastVideoStd(kATVideoStandardCount)
 	, mbLastBASICState(false)
@@ -67,7 +69,7 @@ void ATUIWindowCaptionUpdater::Update(HWND hwnd, bool running, int ticks, float 
 
 	mBuffer = mPrefix;
 
-	if ((running && mbShowFps) || mbForceUpdate) {
+	if ((running && mbShowFps && !mbFullScreen) || mbForceUpdate) {
 		mbForceUpdate = false;
 
 		if (mbShowFps)
@@ -93,9 +95,9 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 		change = true;
 	}
 
-	ATKernelMode krmode = mpSim->GetKernelMode();
-	if (mLastKernelMode != krmode) {
-		mLastKernelMode = krmode;
+	uint64 kernelId = mpSim->GetActualKernelId();
+	if (mLastKernelId != kernelId) {
+		mLastKernelId = kernelId;
 		change = true;
 	}
 
@@ -201,68 +203,71 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 			break;
 	}
 
-	switch(mpSim->GetActualKernelMode()) {
-		case kATKernelMode_OSA:
-			mPrefix += L" OS-A";
-			break;
+	ATFirmwareInfo fwInfo;
+	if (mpSim->GetFirmwareManager()->GetFirmwareInfo(kernelId, fwInfo)) {
+		switch(fwInfo.mId) {
+			case kATFirmwareId_Kernel_HLE:
+				mPrefix += L" ATOS/HLE";
+				break;
 
-		case kATKernelMode_OSB:
-			mPrefix += L" OS-B";
-			break;
+			case kATFirmwareId_Kernel_LLE:
+				if (hwmode == kATHardwareMode_800)
+					mPrefix += L" ATOS";
+				else
+					mPrefix += L" ATOS/800";
+				break;
 
-		case kATKernelMode_XL:
-			if (hwmode != kATHardwareMode_800XL && hwmode != kATHardwareMode_130XE)
-				mPrefix += L" XL/XE";
-			break;
+			case kATFirmwareId_Kernel_LLEXL:
+				switch(hwmode) {
+					case kATHardwareMode_800XL:
+					case kATHardwareMode_1200XL:
+					case kATHardwareMode_XEGS:
+					case kATHardwareMode_130XE:
+						mPrefix += L" ATOS";
+						break;
 
-		case kATKernelMode_1200XL:
-			if (hwmode != kATHardwareMode_1200XL)
-				mPrefix += L" 1200XL";
-			break;
+					default:
+						mPrefix += L" ATOS/XL";
+						break;
+				}
+				break;
 
-		case kATKernelMode_XEGS:
-			if (hwmode != kATHardwareMode_XEGS)
-				mPrefix += L" XEGS";
-			break;
+			case kATFirmwareId_5200_LLE:
+				mPrefix += L" ATOS/5200";
+				break;
 
-		case kATKernelMode_Other:
-			mPrefix += L" Other";
-			break;
+			default:
+				switch(fwInfo.mType) {
+					case kATFirmwareType_Kernel800_OSA:
+						mPrefix += L" OS-A";
+						break;
 
-		case kATKernelMode_5200:
-			if (hwmode != kATHardwareMode_5200)
-				mPrefix += L" 5200";
-			break;
+					case kATFirmwareType_Kernel800_OSB:
+						mPrefix += L" OS-B";
+						break;
 
-		case kATKernelMode_HLE:
-			mPrefix += L" HLE";
-			break;
+					case kATFirmwareType_KernelXL:
+						if (hwmode != kATHardwareMode_800XL && hwmode != kATHardwareMode_130XE)
+							mPrefix += L" XL/XE";
+						break;
 
-		case kATKernelMode_LLE_OSB:
-			if (hwmode == kATHardwareMode_800)
-				mPrefix += L" LLE";
-			else
-				mPrefix += L" LLE[OSB]";
-			break;
+					case kATFirmwareType_Kernel1200XL:
+						if (hwmode != kATHardwareMode_1200XL)
+							mPrefix += L" 1200XL";
+						break;
 
-		case kATKernelMode_LLE_XL:
-			switch(hwmode) {
-				case kATHardwareMode_800XL:
-				case kATHardwareMode_1200XL:
-				case kATHardwareMode_XEGS:
-				case kATHardwareMode_130XE:
-					mPrefix += L" LLE";
-					break;
+					case kATFirmwareType_KernelXEGS:
+						if (hwmode != kATHardwareMode_XEGS)
+							mPrefix += L" XEGS";
+						break;
 
-				default:
-					mPrefix += L" LLE[XL]";
-					break;
-			}
-			break;
-
-		case kATKernelMode_5200_LLE:
-			mPrefix += L" LLE";
-			break;
+					case kATFirmwareType_Kernel5200:
+						if (hwmode != kATHardwareMode_5200)
+							mPrefix += L" 5200";
+						break;
+				}
+				break;
+		}
 	}
 
 	switch(mLastVideoStd) {
@@ -277,6 +282,14 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 
 		case kATVideoStandard_SECAM:
 			mPrefix += L" SECAM";
+			break;
+
+		case kATVideoStandard_NTSC50:
+			mPrefix += L" NTSC-50";
+			break;
+
+		case kATVideoStandard_PAL60:
+			mPrefix += L" PAL-60";
 			break;
 	}
 
@@ -294,7 +307,7 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 		case kATCPUMode_65C816:
 			mPrefix += L"+816";
 			if (cpuSubCycles > 1)
-				mPrefix.append_sprintf(L"[%ux]", cpuSubCycles);
+				mPrefix.append_sprintf(L" @ %.3gMHz", (double)cpuSubCycles * 1.79);
 			break;
 
 		default:

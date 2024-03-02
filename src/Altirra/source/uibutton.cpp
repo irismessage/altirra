@@ -9,8 +9,10 @@ ATUIButton::ATUIButton()
 	, mbDepressed(false)
 	, mbHeld(false)
 	, mbToggleMode(false)
+	, mbFrameEnabled(true)
 	, mTextX(0)
 	, mTextY(0)
+	, mTextColor(0)
 	, mActivatedEvent()
 	, mPressedEvent()
 {
@@ -40,6 +42,14 @@ void ATUIButton::SetText(const wchar_t *s) {
 	}
 }
 
+void ATUIButton::SetTextColor(uint32 color) {
+	if (mTextColor != color) {
+		mTextColor = color;
+
+		Invalidate();
+	}
+}
+
 void ATUIButton::SetDepressed(bool depressed) {
 	if (mbDepressed != depressed) {
 		mbDepressed = depressed;
@@ -60,6 +70,17 @@ void ATUIButton::SetToggleMode(bool enabled) {
 	mbToggleMode = enabled;
 }
 
+void ATUIButton::SetFrameEnabled(bool enabled) {
+	if (mbFrameEnabled != enabled) {
+		mbFrameEnabled = enabled;
+
+		SetAlphaFillColor(enabled ? 0xFFD4D0C8 : 0);
+
+		Relayout();
+		Invalidate();
+	}
+}
+
 void ATUIButton::OnMouseDownL(sint32 x, sint32 y) {
 	SetHeld(true);
 	CaptureCursor();
@@ -76,7 +97,7 @@ void ATUIButton::OnMouseUpL(sint32 x, sint32 y) {
 void ATUIButton::OnActionStart(uint32 id) {
 	switch(id) {
 		case kActionActivate:
-			SetDepressed(true);
+			SetHeld(true);
 			break;
 
 		default:
@@ -87,7 +108,7 @@ void ATUIButton::OnActionStart(uint32 id) {
 void ATUIButton::OnActionStop(uint32 id) {
 	switch(id) {
 		case kActionActivate:
-			SetDepressed(false);
+			SetHeld(false);
 			break;
 
 		default:
@@ -106,13 +127,17 @@ void ATUIButton::OnSize() {
 }
 
 void ATUIButton::OnSetFocus() {
-	SetFillColor(0xA0C0FF);
-	Invalidate();
+	if (mbFrameEnabled) {
+		SetFillColor(0xA0C0FF);
+		Invalidate();
+	}
 }
 
 void ATUIButton::OnKillFocus() {
-	SetFillColor(0xD4D0C8);
-	Invalidate();
+	if (mbFrameEnabled) {
+		SetFillColor(0xD4D0C8);
+		Invalidate();
+	}
 }
 
 void ATUIButton::SetHeld(bool held) {
@@ -138,28 +163,36 @@ void ATUIButton::SetHeld(bool held) {
 }
 
 void ATUIButton::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
-	ATUIDraw3DRect(rdr, vdrect32(0, 0, w, h), mbDepressed);
+	vdrect32 r(0, 0, w, h);
 
-	if (mpFont && rdr.PushViewport(vdrect32(2, 2, w-2, h-2), 2, 2)) {
+	if (mbFrameEnabled) {
+		ATUIDraw3DRect(rdr, r, mbDepressed);
+		r.left = 2;
+		r.top = 2;
+		r.right -= 2;
+		r.bottom -= 2;
+	}
+
+	if (rdr.PushViewport(r, r.left, r.top)) {
 		if (mStockImageIdx >= 0) {
 			ATUIStockImage& image = mpManager->GetStockImage((ATUIStockImageIdx)mStockImageIdx);
 
 			VDDisplayBlt blt;
-			blt.mDestX = ((w-4) - image.mWidth) >> 1;
-			blt.mDestY = ((h-4) - image.mHeight) >> 1;
+			blt.mDestX = (r.width() - image.mWidth) >> 1;
+			blt.mDestY = (r.height() - image.mHeight) >> 1;
 			blt.mSrcX = 0;
 			blt.mSrcY = 0;
 			blt.mWidth = image.mWidth;
 			blt.mHeight = image.mHeight;
 
-			rdr.SetColorRGB(0);
+			rdr.SetColorRGB(mTextColor);
 			rdr.MultiBlt(&blt, 1, image.mImageView, IVDDisplayRenderer::kBltMode_Color);
-		} else {
+		} else if (mpFont) {
 			VDDisplayTextRenderer *tr = rdr.GetTextRenderer();
 
 			tr->SetFont(mpFont);
 			tr->SetAlignment(VDDisplayTextRenderer::kAlignLeft, VDDisplayTextRenderer::kVertAlignTop);
-			tr->SetColorRGB(0);
+			tr->SetColorRGB(mTextColor);
 			tr->DrawTextLine(mTextX, mTextY, mText.c_str());
 		}
 
@@ -174,8 +207,16 @@ void ATUIButton::Relayout() {
 		VDDisplayFontMetrics m;
 		mpFont->GetMetrics(m);
 
-		mTextX = ((mArea.width() - 4) - size.w) >> 1;
-		mTextY = ((mArea.height() - 4) - m.mAscent) >> 1;
+		sint32 w = mArea.width();
+		sint32 h = mArea.height();
+
+		if (mbFrameEnabled) {
+			w -= 4;
+			h -= 4;
+		}
+
+		mTextX = (w - size.w) >> 1;
+		mTextY = (h - m.mAscent) >> 1;
 
 		Invalidate();
 	}

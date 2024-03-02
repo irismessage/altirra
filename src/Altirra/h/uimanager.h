@@ -46,6 +46,10 @@ struct ATUIStockImage {
 	int mHeight;
 };
 
+struct ATUISystemMetrics {
+	sint32 mVertSliderWidth;
+};
+
 struct ATUITouchInput {
 	uint32 mId;
 	sint32 mX;
@@ -103,10 +107,16 @@ public:
 	void EndAction(uint32 vk);
 
 	void Resize(sint32 w, sint32 h);
-	void SetForeground(bool foreground) { mbForeground = foreground; }
+	void SetForeground(bool foreground);
+	void SetThemeScaleFactor(float scale);
 
 	void SetActiveWindow(ATUIWidget *w);
 	void CaptureCursor(ATUIWidget *w, bool motionMode = false, bool constrainPosition = false);
+
+	/// Adds or removes a tracking window, which receives cursor window change
+	/// notifications for itself and all windows below it.
+	void AddTrackingWindow(ATUIWidget *w);
+	void RemoveTrackingWindow(ATUIWidget *w);
 
 	ATUIWidget *GetModalWindow() const { return mpModalWindow; }
 	void BeginModal(ATUIWidget *w);
@@ -138,6 +148,8 @@ public:
 	IVDDisplayFont *GetThemeFont(ATUIThemeFont themeFont) const { return mpThemeFonts[themeFont]; }
 	ATUIStockImage& GetStockImage(ATUIStockImageIdx stockImage) const { return *mpStockImages[stockImage]; }
 
+	const ATUISystemMetrics& GetSystemMetrics() const { return mSystemMetrics; }
+
 public:
 	void Attach(ATUIWidget *w);
 	void Detach(ATUIWidget *w);
@@ -152,11 +164,13 @@ protected:
 
 	void UpdateCursorImage();
 	bool UpdateCursorWindow(sint32 x, sint32 y);
+	void SetCursorWindow(ATUIWidget *w);
 
 	void LockDestroy();
 	void UnlockDestroy();
 
 	void RepeatAction(ActiveAction& action);
+	void ReinitTheme();
 
 	IATUINativeDisplay *mpNativeDisplay;
 	ATUIContainer *mpMainWindow;
@@ -170,6 +184,8 @@ protected:
 
 	bool mbForeground;
 	bool mbInvalidated;
+
+	float mThemeScale;
 
 	struct ModalEntry {
 		ATUIWidget *mpPreviousModal;
@@ -197,6 +213,10 @@ protected:
 	};
 
 	PointerInfo mPointers[7];
+
+	vdfastvector<ATUIWidget *> mTrackingWindows;
+
+	ATUISystemMetrics mSystemMetrics;
 
 	IVDDisplayFont *mpThemeFonts[kATUIThemeFontCount];
 

@@ -23,7 +23,7 @@
 
 VDZHWND ATUISetProgressWindowParentW32(VDZHWND hwnd);
 
-bool ATUIBeginProgressDialog(const wchar_t *desc, const wchar_t *statusFormat, uint32 total);
+bool ATUIBeginProgressDialog(const wchar_t *desc, const wchar_t *statusFormat, uint32 total, const VDGUIHandle *parent = 0);
 void ATUIUpdateProgressDialog(uint32 count);
 void ATUIEndProgressDialog();
 
@@ -34,6 +34,7 @@ public:
 	ATUIProgress();
 	~ATUIProgress();
 
+	void InitF(VDGUIHandle parent, uint32 n, const wchar_t *statusFormat, const wchar_t *descFormat, ...);
 	void InitF(uint32 n, const wchar_t *statusFormat, const wchar_t *descFormat, ...);
 
 	void Shutdown();

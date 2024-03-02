@@ -16,24 +16,84 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <at/atcore/propertyset.h>
 #include <vd2/system/error.h>
+#include <vd2/system/filesys.h>
 #include "iderawimage.h"
 
-ATIDERawImage::ATIDERawImage() {
+ATIDERawImage::ATIDERawImage()
+	: mSectorCount(0)
+	, mSectorCountLimit(0)
+	, mbReadOnly(false)
+{
 }
 
 ATIDERawImage::~ATIDERawImage() {
 	Shutdown();
 }
 
+int ATIDERawImage::AddRef() {
+	return ATDevice::AddRef();
+}
+
+int ATIDERawImage::Release() {
+	return ATDevice::Release();
+}
+
+void *ATIDERawImage::AsInterface(uint32 iid) {
+	switch(iid) {
+		case IATIDEDisk::kTypeID: return static_cast<IATIDEDisk *>(this);
+		default:
+			return ATDevice::AsInterface(iid);
+	}
+}
+
+void ATIDERawImage::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mTag = "hdrawimage";
+	info.mConfigTag = "harddisk";
+	info.mName = L"Hard disk image (raw file)";
+}
+
+void ATIDERawImage::GetSettings(ATPropertySet& settings) {
+	settings.SetString("path", mPath.c_str());
+	settings.SetUint32("sectors", mSectorCountLimit);
+	settings.SetBool("write_enabled", !mbReadOnly);
+}
+
+bool ATIDERawImage::SetSettings(const ATPropertySet& settings) {
+	const wchar_t *path = settings.GetString("path");
+	if (path && !VDFileIsPathEqual(path, mPath.c_str()))
+		return false;
+
+	bool we;
+	if (settings.TryGetBool("write_enabled", we)) {
+		if (mbReadOnly != !we)
+			return false;
+	}
+
+	settings.TryGetUint32("sectors", mSectorCountLimit);
+
+
+	return true;
+}
+
+bool ATIDERawImage::IsReadOnly() const {
+	return mbReadOnly;
+}
+
 uint32 ATIDERawImage::GetSectorCount() const {
-	return 0;
+	return std::max(mSectorCount, mSectorCountLimit);
 }
 
 void ATIDERawImage::Init(const wchar_t *path, bool write) {
 	Shutdown();
 
+	mPath = path;
 	mFile.open(path, write ? nsVDFile::kReadWrite | nsVDFile::kDenyAll | nsVDFile::kOpenAlways : nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
+	mbReadOnly = !write;
+
+	uint64 sectors = (uint64)mFile.size() >> 9;
+	mSectorCount = sectors > 0xFFFFFFFFU ? 0xFFFFFFFFU : (uint32)sectors;
 }
 
 void ATIDERawImage::Shutdown() {
@@ -59,4 +119,7 @@ void ATIDERawImage::ReadSectors(void *data, uint32 lba, uint32 n) {
 void ATIDERawImage::WriteSectors(const void *data, uint32 lba, uint32 n) {
 	mFile.seek((sint64)lba << 9);
 	mFile.write(data, 512 * n);
+
+	if (lba + n > mSectorCount)
+		mSectorCount = lba + n;
 }

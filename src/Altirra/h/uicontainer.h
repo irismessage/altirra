@@ -12,6 +12,9 @@ public:
 	void RemoveChild(ATUIWidget *w);
 	void RemoveAllChildren();
 
+	void SendToBack(ATUIWidget *w);
+	void BringToFront(ATUIWidget *w);
+
 	void InvalidateLayout();
 	void UpdateLayout();
 

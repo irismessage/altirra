@@ -53,7 +53,7 @@ const ATUIOnScreenKeyboard::KeyEntry ATUIOnScreenKeyboard::kEntries[]={
 	{ 0, 4, 0x0A, L"P", NULL, NULL },
 	{ 0, 4, 0x0E, L"-", L"_", L"Up" },
 	{ 0, 4, 0x0F, L"=", L"|", L"Down" },
-	{ 0, 4, 0x3C, L"Caps", NULL, NULL },
+	{ 0, 4, 0x0C, L"Return", NULL, NULL },
 
 	{ 0, 6, 0x41, L"Ctrl", NULL, NULL, true },
 	{ 0, 4, 0x3F, L"A", NULL, NULL },
@@ -68,7 +68,7 @@ const ATUIOnScreenKeyboard::KeyEntry ATUIOnScreenKeyboard::kEntries[]={
 	{ 0, 4, 0x02, L";", L":", NULL },
 	{ 0, 4, 0x06, L"+", L"\\", L"Left" },
 	{ 0, 4, 0x07, L"*", L"^", L"Right" },
-	{ 0, 4, 0x0C, L"Return", NULL, NULL },
+	{ 0, 4, 0x3C, L"Caps", NULL, NULL },
 
 	{ 0, 8, 0x42, L"Shift", NULL, NULL, true },
 	{ 0, 4, 0x17, L"Z", NULL, NULL },
@@ -100,9 +100,15 @@ const int ATUIOnScreenKeyboard::kRowBreaks[]={
 ATUIOnScreenKeyboard::ATUIOnScreenKeyboard()
 	: mButtonWidth(32)
 	, mButtonHeight(32)
+	, mbShift(false)
+	, mbShiftHeld(false)
+	, mbControl(false)
+	, mbControlHeld(false)
 {
 	for(size_t i=0; i<vdcountof(mButtons); ++i)
 		mButtons[i].mpButton = NULL;
+
+	SetCursorImage(kATUICursorImage_Arrow);
 }
 
 ATUIOnScreenKeyboard::~ATUIOnScreenKeyboard() {
@@ -120,6 +126,12 @@ void ATUIOnScreenKeyboard::AutoSize() {
 		mButtonHeight = buttonSize;
 		mButtonWidth = buttonSize;
 	}
+	
+	const vdsize32 alphaSize = mpManager->GetThemeFont(kATUIThemeFont_Default)->MeasureString(L"ABCDEFGHIJKLMNOPQRSTUVWXYZ", 26, true);
+	int textBasedSize = std::max<int>(alphaSize.w * 3 / 26, alphaSize.h * 3 / 2) + 4;
+
+	mButtonWidth = textBasedSize;
+	mButtonHeight = textBasedSize;
 
 	SetSize(vdsize32(mButtonWidth * kCols, (mButtonHeight * kSubRows) / 4));
 }
@@ -136,8 +148,6 @@ void ATUIOnScreenKeyboard::OnCreate() {
 	const int bh = mButtonHeight;
 	int x = 0;
 	int y = -1;
-	bool foundShift = false;
-	bool foundControl = false;
 
 	for(int i=0; i<(int)vdcountof(mButtons); ++i) {
 		if (i >= kRowBreaks[y+1]) {
@@ -174,19 +184,11 @@ void ATUIOnScreenKeyboard::OnCreate() {
 				break;
 
 			case 0x41:	// control
-				if (!foundControl) {
-					foundControl = true;
-
-					BindAction(kATUIVK_UIRightShift, ATUIButton::kActionActivate, 0, button->GetInstanceId());
-				}
+				mControlButtons.push_back(i);
 				break;
 
 			case 0x42:	// shift
-				if (!foundShift) {
-					foundShift = true;
-
-					BindAction(kATUIVK_UILeftShift, ATUIButton::kActionActivate, 0, button->GetInstanceId());
-				}
+				mShiftButtons.push_back(i);
 				break;
 		}
 
@@ -220,6 +222,8 @@ void ATUIOnScreenKeyboard::OnCreate() {
 	BindAction(kATUIVK_UIDown, kActionDown);
 	BindAction(kATUIVK_UILeft, kActionLeft);
 	BindAction(kATUIVK_UIRight, kActionRight);
+	BindAction(kATUIVK_UILeftShift, kActionHoldShift);
+	BindAction(kATUIVK_UIRightShift, kActionHoldControl);
 }
 
 void ATUIOnScreenKeyboard::OnDestroy() {
@@ -266,6 +270,20 @@ void ATUIOnScreenKeyboard::OnSize() {
 }
 
 void ATUIOnScreenKeyboard::OnActionStart(uint32 id) {
+	switch(id) {
+		case kActionHoldShift:
+			mbShiftHeld = true;
+			g_sim.GetPokey().SetShiftKeyState(true);
+			UpdateLabels();
+			break;
+
+		case kActionHoldControl:
+			mbControlHeld = true;
+			g_sim.GetPokey().SetControlKeyState(true);
+			UpdateLabels();
+			break;
+	}
+
 	if (id >= kActionCustom)
 		return OnActionRepeat(id);
 
@@ -298,6 +316,24 @@ void ATUIOnScreenKeyboard::OnActionRepeat(uint32 id) {
 	}
 }
 
+void ATUIOnScreenKeyboard::OnActionStop(uint32 id) {
+	switch(id) {
+		case kActionHoldShift:
+			mbShift = false;
+			mbShiftHeld = false;
+			g_sim.GetPokey().SetShiftKeyState(false);
+			UpdateLabels();
+			break;
+
+		case kActionHoldControl:
+			mbControl = false;
+			mbControlHeld = false;
+			g_sim.GetPokey().SetControlKeyState(false);
+			UpdateLabels();
+			break;
+	}
+}
+
 void ATUIOnScreenKeyboard::OnButtonPressed(ATUIButton *src) {
 	for(size_t i=0; i<vdcountof(mButtons); ++i) {
 		if (mButtons[i].mpButton == src) {
@@ -305,9 +341,6 @@ void ATUIOnScreenKeyboard::OnButtonPressed(ATUIButton *src) {
 
 			ATPokeyEmulator& pokey = g_sim.GetPokey();
 			ATGTIAEmulator& gtia = g_sim.GetGTIA();
-
-			if (ke.mbToggle)
-				mButtons[i].mpButton->SetToggleMode(true);
 
 			switch(ke.mScanCode) {
 				default:
@@ -319,11 +352,13 @@ void ATUIOnScreenKeyboard::OnButtonPressed(ATUIButton *src) {
 					break;
 
 				case 0x41:
+					mbControl = true;
 					pokey.SetControlKeyState(true);
 					UpdateLabels();
 					break;
 
 				case 0x42:
+					mbShift = true;
 					pokey.SetShiftKeyState(true);
 					UpdateLabels();
 					break;
@@ -365,12 +400,18 @@ void ATUIOnScreenKeyboard::OnButtonReleased(ATUIButton *src) {
 				case 0x40:
 					break;
 				case 0x41:
-					pokey.SetControlKeyState(false);
-					UpdateLabels();
+					mbControl = false;
+					if (!mbControlHeld) {
+						pokey.SetControlKeyState(false);
+						UpdateLabels();
+					}
 					break;
 				case 0x42:
-					pokey.SetShiftKeyState(false);
-					UpdateLabels();
+					mbShift = false;
+					if (!mbShiftHeld) {
+						pokey.SetShiftKeyState(false);
+						UpdateLabels();
+					}
 					break;
 				case 0x43:
 					break;
@@ -395,23 +436,46 @@ void ATUIOnScreenKeyboard::OnButtonReleased(ATUIButton *src) {
 
 	// release any buttons that are toggles -- do this AFTER we've pushed keys
 	if (!toggled) {
-		for(size_t i=0; i<vdcountof(mButtons); ++i) {
-			const ButtonEntry& be = mButtons[i];
+		if (mbShift && !mbShiftHeld) {
+			mbShift = false;
 
-			if (be.mpKeyEntry->mbToggle) {
-				if (!be.mpButton->IsHeld())
-					be.mpButton->SetDepressed(false);
+			for(int index : mShiftButtons) {
+				ATUIButton *b = mButtons[index].mpButton;
 
-				be.mpButton->SetToggleMode(false);
+				if (b) {
+					b->SetDepressed(false);
+				}
+			}
+		}
+
+		if (mbControl && !mbControlHeld) {
+			for(int index : mControlButtons) {
+				ATUIButton *b = mButtons[index].mpButton;
+
+				if (b) {
+					b->SetDepressed(false);
+				}
 			}
 		}
 	}
 }
 
 void ATUIOnScreenKeyboard::UpdateLabels() {
-	ATPokeyEmulator& pokey = g_sim.GetPokey();
-	const bool shift = pokey.GetShiftKeyState();
-	const bool control = pokey.GetControlKeyState();
+	for(int index : mShiftButtons) {
+		ATUIButton *b = mButtons[index].mpButton;
+
+		if (b) {
+			b->SetDepressed(mbShiftHeld || mbShift);
+		}
+	}
+
+	for(int index : mControlButtons) {
+		ATUIButton *b = mButtons[index].mpButton;
+
+		if (b) {
+			b->SetDepressed(mbControlHeld || mbControl);
+		}
+	}
 
 	for(size_t i=0; i<vdcountof(mButtons); ++i) {
 		const ButtonEntry& be = mButtons[i];
@@ -420,10 +484,10 @@ void ATUIOnScreenKeyboard::UpdateLabels() {
 			const KeyEntry& ke = *be.mpKeyEntry;
 			const wchar_t *s = ke.mpNormalText;
 
-			if (control) {
+			if (mbControl) {
 				if (ke.mpControlText)
 					s = ke.mpControlText;
-			} else if (shift) {
+			} else if (mbShift) {
 				if (ke.mpShiftText)
 					s = ke.mpShiftText;
 			}

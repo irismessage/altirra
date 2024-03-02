@@ -204,14 +204,11 @@ perm_check_fail:
 ;--------------------------------------------------------------------------
 cmdGetStatusSoftOpen:
 	ldy		#9
-	bne		invoke_and_soft_close_xit
-
-;--------------------------------------------------------------------------
+	dta		{bit $0100}
 cmdSpecialSoftOpen:
 	ldy		#11
 invoke_and_soft_close_xit:
-	jsr		CIOInvoke
-	jmp		soft_close
+	jmp		CIOInvoke
 		
 ;--------------------------------------------------------------------------
 ; Open command ($03).
@@ -227,12 +224,9 @@ cmdOpen:
 	rts
 	
 notAlreadyOpen:
+	;attempt to parse and open -- note that this will fail out directly
+	;on an unknown device or provisional open
 	jsr		CIOParsePath
-	
-	;check for a provisional open and skip the handler call if so
-	ldx		ichidz
-	inx
-	bmi		provisional_open
 
 open_entry:
 	;request open
@@ -260,23 +254,17 @@ openOK:
 	iny
 	lda		(icax3z),y
 	sta		icpth,x
-
-provisional_open:
 	ldy		#1
 	rts
 
-cmdGetStatus:
+cmdGetStatus = CIOInvoke.invoke_vector
 cmdSpecial:
-	jmp		CIOInvoke.invoke_vector
-	
-;--------------------------------------------------------------------------
-soft_close:
-	tya
-	pha
-	ldy		#3
-	jsr		CIOInvoke
-	pla
-	tay
+	jsr		CIOInvoke.invoke_vector
+
+	;need to copy AUX1/2 back for R:
+	ldx		icidno
+	mva		icax1z icax1,x
+	mva		icax2z icax2,x
 	rts
 	
 ;--------------------------------------------------------------------------
@@ -329,6 +317,9 @@ cmdGetPutDone:
 	lda		icblh,x
 	sbc		icblhz
 	sta		icblh,x
+
+	;NOMAM 2013 BASIC Ten-Liners disk requires ICBALZ to be untouched :P
+	mwa		icbal,x icbalz
 	
 	;Pacem in Terris requires Y=1 exit.
 	;DOS 3.0 with 128K/XE mode requires Y=3 for EOF imminent.
@@ -342,6 +333,7 @@ cmdGetCharsLoop:
 	cpy		#0
 	bmi		cmdGetCharsError
 	ldx		#0
+	sta		ciochr					;required by HOTEL title screen
 	sta		(icbalz,x)
 	jsr		advance_pointers
 	bne		cmdGetCharsLoop
@@ -373,7 +365,7 @@ cmdPutRecordLoop:
 	tya
 	bmi		cmdPutRecordError
 	jsr		advance_pointers
-	beq		cmdPutRecordDone
+	beq		cmdPutRecordEOL
 	lda		#$9b
 	cmp		ciochr
 	beq		cmdPutRecordDone
@@ -589,6 +581,10 @@ unconditional_poll:
 	mva		dvstat+2 icax4,x
 	mwa		#CIOPutByteLoadHandler-1 icptl,x
 	mva		icdnoz icdno,x
+
+	;do direct exit, bypassing regular open path
+	pla
+	pla
 	ldy		#1
 	rts
 
@@ -644,8 +640,10 @@ foundHandler:
 ;
 .if _KERNEL_XLXE
 .proc CIOPollForDevice
+	lda		icax4z
 	sta		daux1
-	sty		daux2
+	lda		icdnoz
+	sta		daux2
 	
 	ldx		#9
 	mva:rpl	cmd_tab,x ddevic,x-

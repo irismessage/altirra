@@ -257,6 +257,7 @@ bool ATIsCartridgeModeHWCompatible(ATCartridgeMode cartmode, int hwmode) {
 		case kATCartridgeMode_5200_8K:
 		case kATCartridgeMode_5200_4K:
 		case kATCartridgeMode_5200_64K_32KBanks:
+		case kATCartridgeMode_5200_512K_32KBanks:
 			cartIs5200 = true;
 			break;
 	}
@@ -275,6 +276,8 @@ ATCartridgeEmulator::ATCartridgeEmulator()
 	, mInitialCartBank(-1)
 	, mInitialCartBank2(-1)
 	, mbDirty(false)
+	, mbRD4Gate(true)
+	, mbRD5Gate(true)
 	, mpUIRenderer(NULL)
 	, mpCB(NULL)
 	, mpMemMan(NULL)
@@ -320,6 +323,16 @@ void ATCartridgeEmulator::SetFastBus(bool fastBus) {
 	UpdateLayerBuses();
 }
 
+void ATCartridgeEmulator::SetRD45Enables(bool rd4, bool rd5) {
+	if (mbRD4Gate == rd4 && mbRD5Gate == rd5)
+		return;
+
+	mbRD4Gate = rd4;
+	mbRD5Gate = rd5;
+
+	UpdateLayerMasks();
+}
+
 bool ATCartridgeEmulator::IsABxxMapped() const {
 	if (mCartMode == kATCartridgeMode_SIC)
 		return !(mCartBank & 0x40);
@@ -345,7 +358,7 @@ void ATCartridgeEmulator::Load5200Default() {
 	mImagePath.clear();
 	mCARTROM.resize(0x1000, 0xFF);
 	mCartSize = 0x1000;
-	ATLoadKernelResource(IDR_NOCARTRIDGE, mCARTROM.data(), 0, 4096);
+	ATLoadKernelResource(IDR_NOCARTRIDGE, mCARTROM.data(), 0, 4096, false);
 	mbDirty = false;
 
 	InitMemoryLayers();
@@ -770,6 +783,11 @@ bool ATCartridgeEmulator::Load(const wchar_t *origPath, IVDRandomAccessStream& f
 		case kATCartridgeMode_5200_64K_32KBanks:
 			mInitialCartBank = 0;
 			allocSize = 0x10000;
+			break;
+
+		case kATCartridgeMode_5200_512K_32KBanks:
+			mInitialCartBank = 0;
+			allocSize = 0x80000;
 			break;
 
 		case kATCartridgeMode_MicroCalc:
@@ -1922,6 +1940,36 @@ bool ATCartridgeEmulator::WriteByte_CCTL_5200_64K_32KBanks(void *thisptr0, uint3
 	return true;
 }
 
+sint32 ATCartridgeEmulator::ReadByte_CCTL_5200_512K_32KBanks(void *thisptr0, uint32 address) {
+	ATCartridgeEmulator *const thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	uint8 addr8 = (uint8)address;
+
+	if (addr8 >= 0xE0)
+		thisptr->SetCartBank(15);
+	else if (addr8 >= 0xD0)
+		thisptr->SetCartBank((thisptr->mCartBank & 0x0C) + ((address >> 2) & 0x03));
+	else if (addr8 >= 0xC0)
+		thisptr->SetCartBank((thisptr->mCartBank & 0x03) + ((address >> 0) & 0x0C));
+
+	return thisptr->mCARTROM[address - 0x4000 + (thisptr->mCartBank << 15)];
+}
+
+bool ATCartridgeEmulator::WriteByte_CCTL_5200_512K_32KBanks(void *thisptr0, uint32 address, uint8 value) {
+	ATCartridgeEmulator *const thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	uint8 addr8 = (uint8)address;
+
+	if (addr8 >= 0xE0)
+		thisptr->SetCartBank(15);
+	else if (addr8 >= 0xD0)
+		thisptr->SetCartBank((thisptr->mCartBank & 0x0C) + ((address >> 2) & 0x03));
+	else if (addr8 >= 0xC0)
+		thisptr->SetCartBank((thisptr->mCartBank & 0x03) + ((address >> 0) & 0x0C));
+
+	return true;
+}
+
 namespace {
 	static const sint8 kMicroCalcTab[]={ 0, 1, 2, 3, -1 };
 }
@@ -2707,6 +2755,17 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			spec1hd.mpWriteHandler = WriteByte_CCTL_5200_64K_32KBanks;
 			break;
 
+		case kATCartridgeMode_5200_512K_32KBanks:
+			bank1Base	= 0x40;
+			bank1Size	= 0x80;
+			spec1Base	= 0xBF;
+			spec1Size	= 0x01;
+			spec1ReadEnabled = true;
+			spec1WriteEnabled = true;
+			spec1hd.mpReadHandler = ReadByte_CCTL_5200_512K_32KBanks;
+			spec1hd.mpWriteHandler = WriteByte_CCTL_5200_512K_32KBanks;
+			break;
+
 		case kATCartridgeMode_MicroCalc:
 			bank1Base	= 0xA0;
 			bank1Size	= 0x20;
@@ -2833,6 +2892,7 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 	mCartSizeMask = (uint32)mCARTROM.size() - 1;
 
 	UpdateLayerBuses();
+	UpdateLayerMasks();
 
 	switch(mCartMode) {
 		case kATCartridgeMode_TheCart_32M:
@@ -3061,6 +3121,7 @@ void ATCartridgeEmulator::UpdateCartBank() {
 			break;
 
 		case kATCartridgeMode_5200_64K_32KBanks:
+		case kATCartridgeMode_5200_512K_32KBanks:
 			// 32K banks
 			mpMemMan->SetLayerMemory(mpMemLayerVarBank1, cartbase + (mCartBank << 15));
 			break;
@@ -3195,6 +3256,36 @@ void ATCartridgeEmulator::UpdateLayerBuses() {
 	if (mpMemLayerSpec1		) mpMemMan->SetLayerFastBus(mpMemLayerSpec1, mbFastBus);
 	if (mpMemLayerSpec2		) mpMemMan->SetLayerFastBus(mpMemLayerSpec2, mbFastBus);
 	if (mpMemLayerControl	) mpMemMan->SetLayerFastBus(mpMemLayerControl, mbFastBus);
+}
+
+void ATCartridgeEmulator::UpdateLayerMasks() {
+	uint32 maskStart;
+	uint32 maskLen;
+
+	if (mbRD4Gate) {
+		if (mbRD5Gate) {
+			maskStart = 0;
+			maskLen = 0x100;
+		} else {
+			maskStart = 0x80;
+			maskLen = 0x20;
+		}
+	} else {
+		if (mbRD5Gate) {
+			maskStart = 0xA0;
+			maskLen = 0x20;
+		} else {
+			maskStart = 0;
+			maskLen = 0;
+		}
+	}
+
+	if (mpMemLayerFixedBank1) mpMemMan->SetLayerMaskRange(mpMemLayerFixedBank1, maskStart, maskLen);
+	if (mpMemLayerFixedBank2) mpMemMan->SetLayerMaskRange(mpMemLayerFixedBank2, maskStart, maskLen);
+	if (mpMemLayerVarBank1	) mpMemMan->SetLayerMaskRange(mpMemLayerVarBank1, maskStart, maskLen);
+	if (mpMemLayerVarBank2	) mpMemMan->SetLayerMaskRange(mpMemLayerVarBank2, maskStart, maskLen);
+	if (mpMemLayerSpec1		) mpMemMan->SetLayerMaskRange(mpMemLayerSpec1, maskStart, maskLen);
+	if (mpMemLayerSpec2		) mpMemMan->SetLayerMaskRange(mpMemLayerSpec2, maskStart, maskLen);
 }
 
 void ATCartridgeEmulator::UpdateTheCartBanking() {

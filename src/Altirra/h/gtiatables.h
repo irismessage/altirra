@@ -22,4 +22,8 @@ extern const VDALIGN(16) uint8 kATAnalysisColorTable[24];
 
 void ATInitGTIAPriorityTables(uint8 priorityTables[32][256]);
 
+enum ATLumaRampMode : uint8;
+
+void ATComputeLumaRamp(ATLumaRampMode mode, float lumaRamp[16]);
+
 #endif

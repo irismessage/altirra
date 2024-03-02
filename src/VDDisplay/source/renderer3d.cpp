@@ -646,8 +646,8 @@ bool VDDisplayRenderer3D::PushViewport(const vdrect32& r, sint32 x, sint32 y) {
 	mpContext->SetScissorRect(scissor);
 
 	mClipRect = scissor;
-	mOffsetX += r.left;
-	mOffsetY += r.top;
+	mOffsetX += x;
+	mOffsetY += y;
 
 	return true;
 }

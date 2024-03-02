@@ -20,10 +20,13 @@
 
 #include <vd2/system/vdstl.h>
 #include <vd2/system/linearalloc.h>
+#include <vd2/system/function.h>
 
 struct ATCPUHookNode {};
+struct ATCPUHookInitNode {};
 
-typedef uint8 (*ATCPUHookFn)(uint16 pc, void *context1, ATCPUHookNode *hookNode);
+typedef vdfunction<uint8(uint16 pc)> ATCPUHookFn;
+typedef vdfunction<void(const uint8 *lowerKernelROM, const uint8 *upperKernelROM)> ATCPUHookInitFn;
 
 class ATCPUEmulator;
 class ATMMUEmulator;
@@ -36,27 +39,21 @@ enum ATCPUHookMode {
 };
 
 class ATCPUHookManager {
-	ATCPUHookManager(const ATCPUHookManager&);
-	ATCPUHookManager& operator=(const ATCPUHookManager&);
-
-#ifdef VD_COMPILER_MSVC
-	struct DummyV0 {};
-	struct __virtual_inheritance DummyV : public virtual DummyV0 {};
-#else
-	struct DummyV {};
-#endif
+	ATCPUHookManager(const ATCPUHookManager&) = delete;
+	ATCPUHookManager& operator=(const ATCPUHookManager&) = delete;
 
 	struct HashNode : public ATCPUHookNode {
-
 		HashNode *mpNext;
 		uint16 mPC;
 		uint8 mMode;
 		sint8 mPriority;
 
 		ATCPUHookFn mpHookFn;
+	};
 
-		void *mpContext;
-		DummyV mpMethod;
+	struct InitNode : public ATCPUHookInitNode {
+		InitNode *mpNext;
+		ATCPUHookInitFn mpHookFn;
 	};
 
 public:
@@ -70,10 +67,17 @@ public:
 
 	uint8 OnHookHit(uint16 pc) const;
 
+	// The init hooks are called when it is first safe to register OS hooks,
+	// i.e. after the OS has been set up. The routine receives a pointer to
+	// the upper kernel ROM ($D800-FFFF).
+	void CallInitHooks(const uint8 *lowerKernelROM, const uint8 *upperKernelROM);
+	ATCPUHookInitNode *AddInitHook(const ATCPUHookInitFn& fn);
+	void RemoveInitHook(ATCPUHookInitNode *hook);
+
 	template<class T, typename Method>
 	ATCPUHookNode *AddHookMethod(ATCPUHookMode mode, uint16 pc, sint8 priority, T *thisPtr, Method method);
 
-	ATCPUHookNode *AddHook(ATCPUHookMode mode, uint16 pc, sint8 priority, ATCPUHookFn fn, void *context);
+	ATCPUHookNode *AddHook(ATCPUHookMode mode, uint16 pc, sint8 priority, const ATCPUHookFn& fn);
 	void RemoveHook(ATCPUHookNode *hook);
 
 	template<class T, typename Method>
@@ -82,9 +86,9 @@ public:
 		hook = AddHookMethod(mode, pc, priority, thisPtr, method);
 	}
 
-	void SetHook(ATCPUHookNode *& hook, ATCPUHookMode mode, uint16 pc, sint8 priority, ATCPUHookFn fn, void *context) {
+	void SetHook(ATCPUHookNode *& hook, ATCPUHookMode mode, uint16 pc, sint8 priority, const ATCPUHookFn& fn) {
 		UnsetHook(hook);
-		hook = AddHook(mode, pc, priority, fn, context);
+		hook = AddHook(mode, pc, priority, fn);
 	}
 
 	void UnsetHook(ATCPUHookNode *& hook) {
@@ -95,15 +99,14 @@ public:
 	}
 
 private:
-	template<class T, typename Method>
-	static uint8 MethodAdapter(uint16 pc, void *thisPtr0, ATCPUHookNode *hookNode);
-
 	ATCPUEmulator *mpCPU;
 	ATMMUEmulator *mpMMU;
 	ATPBIManager *mpPBI;
 	bool mbOSHooksEnabled;
 
 	HashNode *mpFreeList;
+	InitNode *mpInitChain;
+	InitNode *mpInitFreeList;
 
 	HashNode *mpHashTable[256];
 
@@ -112,20 +115,8 @@ private:
 
 ///////////////////////////////////////////////////////////////////////////
 template<class T, typename Method>
-uint8 ATCPUHookManager::MethodAdapter(uint16 pc, void *thisPtr0, ATCPUHookNode *hookNode) {
-	HashNode *hashNode = static_cast<HashNode *>(hookNode);
-	Method method = *(const Method *)&hashNode->mpMethod;
-	T *thisPtr = (T *)thisPtr0;
-
-	return (thisPtr->*method)(pc);
-}
-
-///////////////////////////////////////////////////////////////////////////
-template<class T, typename Method>
 ATCPUHookNode *ATCPUHookManager::AddHookMethod(ATCPUHookMode mode, uint16 pc, sint8 priority, T *thisPtr, Method method) {
-	ATCPUHookNode *node = AddHook(mode, pc, priority, MethodAdapter<T, Method>, thisPtr);
-	*(Method *)&static_cast<HashNode *>(node)->mpMethod = method;
-	return node;
+	return AddHook(mode, pc, priority, [=](uint16 pc) { return (thisPtr->*method)(pc); });
 }
 
 #endif	// f_AT_CPUHOOKMANAGER_H

@@ -174,12 +174,15 @@ isctrl_1:
 	lda		ssflag
 	eor		#$ff
 	sta		ssflag
-	jmp		xit2
+	bcs		xit2			;!! carry set from cmp #$9f!
 .endp
 
 ;==============================================================================
 .proc	KeyboardBreakIRQ
 	mva		#0		brkkey
+
+	;need to clear the suspend flag as BREAK automatically nukes a pending Ctrl+1
+	sta		ssflag
 	
 	;interestingly, the default break handler forces the cursor back on.
 	sta		crsinh

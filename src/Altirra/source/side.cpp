@@ -23,6 +23,7 @@
 #include "ide.h"
 #include "uirender.h"
 #include "simulator.h"
+#include "firmwaremanager.h"
 
 ATSIDEEmulator::ATSIDEEmulator()
 	: mpIDE(NULL)
@@ -66,7 +67,7 @@ void ATSIDEEmulator::LoadFirmware(const void *ptr, uint32 len) {
 	mFlashCtrl.SetDirty(false);
 }
 
-void ATSIDEEmulator::LoadFirmware(const wchar_t *path) {
+void ATSIDEEmulator::LoadFirmware(ATFirmwareManager& fwmgr, uint64 id) {
 	void *flash = mFlash;
 	uint32 flashSize = sizeof mFlash;
 
@@ -74,9 +75,7 @@ void ATSIDEEmulator::LoadFirmware(const wchar_t *path) {
 
 	memset(flash, 0xFF, flashSize);
 
-	VDFile f;
-	f.open(path);
-	f.readData(flash, flashSize);
+	fwmgr.LoadFirmware(id, flash, 0, flashSize);
 }
 
 void ATSIDEEmulator::SaveFirmware(const wchar_t *path) {
@@ -90,8 +89,7 @@ void ATSIDEEmulator::SaveFirmware(const wchar_t *path) {
 	mFlashCtrl.SetDirty(false);
 }
 
-void ATSIDEEmulator::Init(ATIDEEmulator *ide, ATScheduler *sch, IATUIRenderer *uir, ATMemoryManager *memman, ATSimulator *sim, bool version2) {
-	mpIDE = ide;
+void ATSIDEEmulator::Init(ATScheduler *sch, IATUIRenderer *uir, ATMemoryManager *memman, ATSimulator *sim, bool version2) {
 	mpUIRenderer = uir;
 	mpMemMan = memman;
 	mpSim = sim;
@@ -172,6 +170,10 @@ void ATSIDEEmulator::Shutdown() {
 	mpUIRenderer = NULL;
 	mpIDE = NULL;
 	mpSim = NULL;
+}
+
+void ATSIDEEmulator::SetIDEImage(ATIDEEmulator *ide) {
+	mpIDE = ide;
 }
 
 void ATSIDEEmulator::SetExternalEnable(bool enable) {
@@ -276,7 +278,7 @@ sint32 ATSIDEEmulator::OnDebugReadByte(void *thisptr0, uint32 addr) {
 		case 0xD5F5:
 		case 0xD5F6:
 		case 0xD5F7:
-			if (thisptr->mbIDEEnabled)
+			if (thisptr->mbIDEEnabled && thisptr->mpIDE)
 				return (uint8)thisptr->mpIDE->DebugReadByte((uint8)addr & 7);
 			else
 				return 0xFF;
@@ -315,13 +317,13 @@ sint32 ATSIDEEmulator::OnReadByte(void *thisptr0, uint32 addr) {
 		case 0xD5F5:
 		case 0xD5F6:
 		case 0xD5F7:
-			return thisptr->mbIDEEnabled ? (uint8)thisptr->mpIDE->ReadByte((uint8)addr & 7) : 0xFF;
+			return thisptr->mbIDEEnabled && thisptr->mpIDE ? (uint8)thisptr->mpIDE->ReadByte((uint8)addr & 7) : 0xFF;
 
 		case 0xD5F8:
 			if (thisptr->mbVersion2)
 				return 0x32;
 
-			return 0xFF;
+			break;
 
 		case 0xD5F9:
 			if (thisptr->mbVersion2) {
@@ -330,7 +332,7 @@ sint32 ATSIDEEmulator::OnReadByte(void *thisptr0, uint32 addr) {
 				return 0x00;
 			}
 
-			return 0xFF;
+			break;
 
 		case 0xD5FC:	return thisptr->mbSDXEnable ? 'S' : ' ';
 		case 0xD5FD:	return 'I';
@@ -338,7 +340,7 @@ sint32 ATSIDEEmulator::OnReadByte(void *thisptr0, uint32 addr) {
 		case 0xD5FF:	return 'E';
 	}
 
-	return 0xFF;
+	return -1;
 }
 
 bool ATSIDEEmulator::OnWriteByte(void *thisptr0, uint32 addr, uint8 value) {
@@ -383,7 +385,7 @@ bool ATSIDEEmulator::OnWriteByte(void *thisptr0, uint32 addr, uint8 value) {
 		case 0xD5F5:
 		case 0xD5F6:
 		case 0xD5F7:
-			if (thisptr->mbIDEEnabled)
+			if (thisptr->mbIDEEnabled && thisptr->mpIDE)
 				thisptr->mpIDE->WriteByte((uint8)addr & 7, value);
 			break;
 
@@ -399,7 +401,8 @@ bool ATSIDEEmulator::OnWriteByte(void *thisptr0, uint32 addr, uint8 value) {
 				thisptr->mbIDEEnabled = !(value & 0x80);
 			}
 
-			thisptr->mpIDE->SetReset(!(value & 1));
+			if (thisptr->mpIDE)
+				thisptr->mpIDE->SetReset(!(value & 1));
 			break;
 	}
 

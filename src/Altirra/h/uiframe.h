@@ -237,6 +237,8 @@ public:
 	ATFrameWindow *GetActiveFrame() const { return mpActiveFrame; }
 	ATFrameWindow *GetModalFrame() const { return mpModalFrame; }
 
+	int GetSplitterWidth() const { return mSplitterWidth; }
+	int GetSplitterHeight() const { return mSplitterHeight; }
 	int GetCaptionHeight() const { return mCaptionHeight; }
 	HFONT GetCaptionFont() const { return mhfontCaption; }
 	HFONT GetCaptionSymbolFont() const { return mhfontCaptionSymbol; }
@@ -300,6 +302,8 @@ protected:
 	int mDragPaneTargetCode;
 	bool mbBlockActiveUpdates;
 	int mCaptionHeight;
+	int mSplitterWidth;
+	int mSplitterHeight;
 	HFONT mhfontCaption;
 	HFONT mhfontCaptionSymbol;
 	HFONT mhfontLabel;
@@ -427,5 +431,8 @@ typedef bool (*ATPaneClassCreator)(uint32 id, ATUIPane **);
 
 void ATRegisterUIPaneType(uint32 id, ATPaneCreator creator);
 void ATRegisterUIPaneClass(uint32 id, ATPaneClassCreator creator);
+
+uint32 ATUIGetWindowDpiW32(HWND hwnd);
+HFONT ATUICreateDefaultFontForDpiW32(uint32 dpi);
 
 #endif

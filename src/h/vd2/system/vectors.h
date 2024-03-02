@@ -396,7 +396,7 @@ struct VDSize {
 
 	int w, h;
 
-	VDSize() {}
+	VDSize() = default;
 	VDSize(int _w, int _h) : w(_w), h(_h) {}
 
 	bool operator==(const VDSize& s) const { return w==s.w && h==s.h; }
@@ -418,19 +418,20 @@ struct VDSize {
 	}
 };
 
+///////////////////////////////////////////////////////////////////////////
+
 template<class T>
 class VDPoint {
 public:
-	VDPoint();
+	VDPoint() = default;
 	VDPoint(T x_, T y_);
+
+	bool operator==(const VDPoint& pt) const;
+	bool operator!=(const VDPoint& pt) const;
 
 	T x;
 	T y;
 };
-
-template<class T>
-VDPoint<T>::VDPoint() {
-}
 
 template<class T>
 VDPoint<T>::VDPoint(T x_, T y_)
@@ -439,11 +440,23 @@ VDPoint<T>::VDPoint(T x_, T y_)
 }
 
 template<class T>
+bool VDPoint<T>::operator==(const VDPoint& pt) const {
+	return x == pt.x && y == pt.y;
+}
+
+template<class T>
+bool VDPoint<T>::operator!=(const VDPoint& pt) const {
+	return x != pt.x || y != pt.y;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+template<class T>
 class VDRect {
 public:
 	typedef T value_type;
 
-	VDRect();
+	VDRect() = default;
 	VDRect(T left_, T top_, T right_, T bottom_);
 
 	bool empty() const;
@@ -475,10 +488,6 @@ public:
 public:
 	T left, top, right, bottom;
 };
-
-template<class T>
-VDRect<T>::VDRect() {
-}
 
 template<class T>
 VDRect<T>::VDRect(T left_, T top_, T right_, T bottom_)

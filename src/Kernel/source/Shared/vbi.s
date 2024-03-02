@@ -148,13 +148,16 @@ timer_n_not_running:
 	;Read POKEY keyboard register and handle auto-repeat
 	lda		skstat				;get key status
 	and		#$04				;check if key is down
-	bne		no_repeat			;skip if not
+	bne		no_repeat_key		;skip if not
 	dec		srtimr				;decrement repeat timer
 	bne		no_repeat			;skip if not time to repeat yet
 	mva		kbcode ch			;repeat last key
 	mva		#$06 srtimr			;reset repeat timer
 	bne		no_keydel			;skip debounce counter decrement
 
+no_repeat_key:
+	lda		#0
+	sta		srtimr
 no_repeat:
 	;decrement keyboard debounce counter
 	lda		keydel
@@ -350,9 +353,13 @@ still_running:
 	;The Atari OS Manual says that DLIs will be disabled after SETVBV is called.
 	;This is a lie -- neither the OS-B nor XL kernels do this, and the Bewesoft
 	;8-players demo depends on it being left enabled.
+	;
+	;IRQ mask state must be saved across this proc. DOSDISKA.ATR breaks if IRQs
+	;are unmasked.
 	
 	asl
 	sta		intemp
+	php
 	sei
 	tya
 	ldy		intemp
@@ -398,6 +405,6 @@ still_running:
 	sta		cdtmv1-2,y
 	txa
 	sta		cdtmv1-1,y
-	cli
+	plp
 	rts
 .endp

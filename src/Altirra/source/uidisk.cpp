@@ -26,6 +26,7 @@
 #include "disk.h"
 #include "diskfs.h"
 #include "simulator.h"
+#include "uifilefilters.h"
 
 extern ATSimulator g_sim;
 
@@ -34,6 +35,8 @@ void ATUIShowDialogDiskExplorer(VDGUIHandle h, IATDiskImage *image, const wchar_
 enum ATDiskFormatFileSystem {
 	kATDiskFFS_None,
 	kATDiskFFS_DOS2,
+	kATDiskFFS_DOS3,
+	kATDiskFFS_MyDOS,
 	kATDiskFFS_SDFS
 };
 
@@ -57,6 +60,7 @@ protected:
 		kFormatSingle,
 		kFormatMedium,
 		kFormatDouble,
+		kFormatDSDD,
 		kFormatCustom
 	};
 
@@ -84,10 +88,13 @@ bool ATNewDiskDialog::OnLoaded() {
 	CBAddString(IDC_FORMAT, L"Single density (720 sectors, 128 bytes/sector)");
 	CBAddString(IDC_FORMAT, L"Medium density (1040 sectors, 128 bytes/sector)");
 	CBAddString(IDC_FORMAT, L"Double density (720 sectors, 256 bytes/sector)");
+	CBAddString(IDC_FORMAT, L"Double-sided DD (1440 sectors, 256 bytes/sector)");
 	CBAddString(IDC_FORMAT, L"Custom");
 
 	CBAddString(IDC_FILESYSTEM, L"None (unformatted)");
-	CBAddString(IDC_FILESYSTEM, L"DOS 2");
+	CBAddString(IDC_FILESYSTEM, L"DOS 2.0/2.5");
+	CBAddString(IDC_FILESYSTEM, L"DOS 3");
+	CBAddString(IDC_FILESYSTEM, L"MyDOS");
 	CBAddString(IDC_FILESYSTEM, L"SpartaDOS File System (SDFS)");
 
 	return VDDialogFrameW32::OnLoaded();
@@ -104,33 +111,63 @@ void ATNewDiskDialog::OnDataExchange(bool write) {
 		else if (IsButtonChecked(IDC_SECTOR_SIZE_512))
 			mSectorSize = 512;
 
+		bool supported = false;
 		switch(CBGetSelectedIndex(IDC_FILESYSTEM)) {
 			case 0:
 			default:
 				mDiskFFS = kATDiskFFS_None;
+				supported = true;
 				break;
 
 			case 1:
-				if (mSectorSize != 128 || mSectorCount != 720 || mBootSectorCount != 3) {
-					ShowError(L"The specified disk geometry is not supported for the selected filesystem.", L"Altirra Error");
-					FailValidation(IDC_FILESYSTEM);
-					return;
-				}
+				// DOS 2.0S: 720 sectors, SD or DD (yes, DOS 2.0S supports DD!)
+				// DOS 2.5: adds 1040 sectors @ 128bps (ED)
+				if (mBootSectorCount != 3)
+					break;
+
+				if (mSectorSize != 128 && mSectorSize != 256)
+					break;
+
+				if (mSectorCount == 1040) {
+					if (mSectorSize != 128)
+						break;
+				} else if (mSectorCount != 720)
+					break;
 
 				mDiskFFS = kATDiskFFS_DOS2;
+				supported = true;
 				break;
 
 			case 2:
-				if (mSectorCount < 16) {
-					ShowError(L"The specified disk geometry is not supported for the selected filesystem.", L"Altirra Error");
-					FailValidation(IDC_FILESYSTEM);
-					return;
-				}
+				if ((mSectorCount != 720 && mSectorCount != 1040) || mSectorSize != 128)
+					break;
+
+				mDiskFFS = kATDiskFFS_DOS3;
+				supported = true;
+				break;
+
+			case 3:
+				if (mSectorCount < 720 || (mSectorSize != 128 && mSectorSize != 256))
+					break;
+
+				mDiskFFS = kATDiskFFS_MyDOS;
+				supported = true;
+				break;
+
+			case 4:
+				if (mSectorCount < 16)
+					break;
 
 				mDiskFFS = kATDiskFFS_SDFS;
+				supported = true;
 				break;
 		}
 
+		if (!supported) {
+			ShowError(L"The specified disk geometry is not supported for the selected filesystem.", L"Altirra Error");
+			FailValidation(IDC_FILESYSTEM);
+			return;
+		}
 	} else {
 		CheckButton(IDC_SECTOR_SIZE_128, mSectorSize == 128);
 		CheckButton(IDC_SECTOR_SIZE_256, mSectorSize == 256);
@@ -171,6 +208,13 @@ bool ATNewDiskDialog::OnCommand(uint32 id, uint32 extcode) {
 					mSectorSize = 256;
 					OnDataExchange(false);
 					break;
+
+				case kFormatDSDD:
+					mSectorCount = 1440;
+					mBootSectorCount = 3;
+					mSectorSize = 256;
+					OnDataExchange(false);
+					break;
 			}
 		}
 	}
@@ -203,8 +247,10 @@ public:
 
 protected:
 	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
+	void UpdateActionButtons();
 	
 	bool mbHighDrives;
+	int mSelectedDrive;
 	HBRUSH mDirtyDiskBrush;
 	HBRUSH mVirtualDiskBrush;
 	HBRUSH mVirtualFolderBrush;
@@ -213,11 +259,31 @@ protected:
 	COLORREF mDirtyDiskColor;
 	COLORREF mVirtualDiskColor;
 	COLORREF mVirtualFolderColor;
+
+	static const struct EmulationModeEntry {
+		ATDiskEmulationMode mMode;
+		const wchar_t *mpLabel;
+	} kEmuModes[];
+};
+
+const ATDiskDriveDialog::EmulationModeEntry ATDiskDriveDialog::kEmuModes[] = {
+	{ kATDiskEmulationMode_Generic, L"Generic emulation (288 RPM)" },
+	{ kATDiskEmulationMode_Generic57600, L"Generic emulation + 57600 baud (288 RPM)" },
+	{ kATDiskEmulationMode_FastestPossible, L"Fastest possible (288 RPM, 128Kbps high speed)" },
+	{ kATDiskEmulationMode_810, L"810 (288 RPM)" },
+	{ kATDiskEmulationMode_1050, L"1050 (288 RPM)" },
+	{ kATDiskEmulationMode_XF551, L"XF551 (300 RPM, 39Kbps high speed)" },
+	{ kATDiskEmulationMode_USDoubler, L"US-Doubler (288 RPM, 52Kbps high speed)" },
+	{ kATDiskEmulationMode_Speedy1050, L"Speedy 1050 (288 RPM, 56Kbps high speed)" },
+	{ kATDiskEmulationMode_IndusGT, L"Indus GT (288 RPM, 68Kbps high speed)" },
+	{ kATDiskEmulationMode_Happy, L"Happy (288 RPM, 52Kbps high speed)" },
+	{ kATDiskEmulationMode_1050Turbo, L"1050 Turbo (288 RPM, 68Kbps high speed)" },
 };
 
 ATDiskDriveDialog::ATDiskDriveDialog()
 	: VDDialogFrameW32(IDD_DISK_DRIVES)
 	, mbHighDrives(false)
+	, mSelectedDrive(-1)
 	, mDirtyDiskBrush(NULL)
 	, mVirtualDiskBrush(NULL)
 	, mVirtualFolderBrush(NULL)
@@ -322,7 +388,6 @@ bool ATDiskDriveDialog::OnLoaded() {
 
 			if (hwndControl) {
 				SendMessage(hwndControl, WM_SETFONT, (WPARAM)mhFontMarlett, MAKELONG(TRUE, 0));
-				SetWindowText(hwndControl, _T("4"));
 			}
 		}
 	}
@@ -371,18 +436,18 @@ bool ATDiskDriveDialog::OnLoaded() {
 		CBAddString(id, L"R/W");
 	}
 
-	CBAddString(IDC_EMULATION_LEVEL, L"Generic emulation (288 RPM)");
-	CBAddString(IDC_EMULATION_LEVEL, L"Fastest possible (288 RPM, 128Kbps high speed)");
-	CBAddString(IDC_EMULATION_LEVEL, L"810 (288 RPM)");
-	CBAddString(IDC_EMULATION_LEVEL, L"1050 (288 RPM)");
-	CBAddString(IDC_EMULATION_LEVEL, L"XF551 (300 RPM, 39Kbps high speed)");
-	CBAddString(IDC_EMULATION_LEVEL, L"US-Doubler (288 RPM, 52Kbps high speed)");
-	CBAddString(IDC_EMULATION_LEVEL, L"Speedy 1050 (288 RPM, 56Kbps high speed)");
-	CBAddString(IDC_EMULATION_LEVEL, L"Indus GT (288 RPM, 68Kbps high speed)");
-	CBAddString(IDC_EMULATION_LEVEL, L"Happy (288 RPM, 52Kbps high speed)");
-	CBAddString(IDC_EMULATION_LEVEL, L"1050 Turbo (288 RPM, 68Kbps high speed)");
+	int index = 0;
+	int selIndex = 0;
+	const auto mode = g_sim.GetDiskDrive(0).GetEmulationMode();
+	for(const auto& entry : kEmuModes) {
+		if (entry.mMode == mode)
+			selIndex = index;
 
-	CBSetSelectedIndex(IDC_EMULATION_LEVEL, (sint32)g_sim.GetDiskDrive(0).GetEmulationMode());
+		CBAddString(IDC_EMULATION_LEVEL, entry.mpLabel);
+		++index;
+	}
+
+	CBSetSelectedIndex(IDC_EMULATION_LEVEL, selIndex);
 
 	return VDDialogFrameW32::OnLoaded();
 }
@@ -431,15 +496,23 @@ void ATDiskDriveDialog::OnDataExchange(bool write) {
 			else
 				SetControlTextF(kDriveLabelID[i], L"D1&%c:", '0' + (driveIdx - 9));
 
+			CheckDlgButton(mhdlg, kDriveLabelID[i], mSelectedDrive == driveIdx ? BST_PUSHED : 0);
+
 			ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIdx);
 			SetControlText(kDiskPathID[i], disk.GetPath());
 
 			CBSetSelectedIndex(kWriteModeID[i], !disk.IsEnabled() ? 0 : disk.IsWriteEnabled() ? disk.IsAutoFlushEnabled() ? 3 : 2 : 1);
 		}
+
+		UpdateActionButtons();
 	} else {
-		ATDiskEmulationMode mode = (ATDiskEmulationMode)CBGetSelectedIndex(IDC_EMULATION_LEVEL);
-		for(int i=0; i<15; ++i)
-			g_sim.GetDiskDrive(i).SetEmulationMode(mode);
+		int selIndex = CBGetSelectedIndex(IDC_EMULATION_LEVEL);
+
+		if (selIndex >= 0 && selIndex < (int)vdcountof(kEmuModes)) {
+			const ATDiskEmulationMode mode = kEmuModes[selIndex].mMode;
+			for(int i=0; i<15; ++i)
+				g_sim.GetDiskDrive(i).SetEmulationMode(mode);
+		}
 	}
 }
 
@@ -487,14 +560,8 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 					driveIndex += 8;
 
 				VDStringW s(VDGetLoadFileName('disk', (VDGUIHandle)mhdlg, L"Load disk image",
-					L"All supported types\0*.atr;*.pro;*.atx;*.xfd;*.dcm;*.zip\0"
-					L"Atari disk image (*.atr, *.xfd)\0*.atr;*.xfd;*.dcm\0"
-					L"Protected disk image (*.pro)\0*.pro\0"
-					L"VAPI disk image (*.atx)\0*.atx\0"
-					L"Zip archive (*.zip)\0*.zip\0"
-					L"Gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
-					L"All files\0*.*\0"
-					, L"atr"));
+					g_ATUIFileFilter_DiskWithArchives,
+					L"atr"));
 
 				if (!s.empty()) {
 					ATDiskEmulator& disk = g_sim.GetDiskDrive(index);
@@ -524,7 +591,21 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 		case IDC_MORE3:	++index;
 		case IDC_MORE2:	++index;
 		case IDC_MORE1:
-			{
+			if (mSelectedDrive >= 0) {
+				int driveIndex = index;
+				if (mbHighDrives)
+					driveIndex += 8;
+
+				int oldDrive = mSelectedDrive;
+				mSelectedDrive = -1;
+
+				if (driveIndex != oldDrive) {
+					g_sim.SwapDrives(driveIndex, oldDrive);
+					OnDataExchange(false);
+				} else {
+					UpdateActionButtons();
+				}
+			} else {
 				int driveIndex = index;
 				if (mbHighDrives)
 					driveIndex += 8;
@@ -566,6 +647,12 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 									switch(dlg.GetFormatFFS()) {
 										case kATDiskFFS_DOS2:
 											fs = ATDiskFormatImageDOS2(disk.GetDiskImage());
+											break;
+										case kATDiskFFS_DOS3:
+											fs = ATDiskFormatImageDOS3(disk.GetDiskImage());
+											break;
+										case kATDiskFFS_MyDOS:
+											fs = ATDiskFormatImageMyDOS(disk.GetDiskImage());
 											break;
 										case kATDiskFFS_SDFS:
 											fs = ATDiskFormatImageSDX2(disk.GetDiskImage());
@@ -652,16 +739,54 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 
 					case ID_CONTEXT_SAVEDISK:
 						if (disk.IsDiskLoaded() && !disk.GetDiskImage()->IsDynamic()) {
+							VDFileDialogOption opts[]={
+								{ VDFileDialogOption::kSelectedFilter, 0 },
+								{ VDFileDialogOption::kEnd }
+							};
+
+							int optVals[1] = { 0 };
+
 							VDStringW s(VDGetSaveFileName(
 									'disk',
 									(VDGUIHandle)mhdlg,
 									L"Save disk image",
-									L"Atari disk image (*.atr)\0*.atr\0All files\0*.*\0",
-									L"atr"));
+									L"Atari disk image (*.atr)\0*.atr\0"
+										L"VAPI protected disk image (*.atx)\0*.atx\0"
+										L"APE protected disk image v2 (*.pro)\0*.pro\0"
+										L"APE protected disk image v3 (*.pro)\0*.pro\0"
+										L"DiskComm compressed image (*.dcm)\0*.dcm\0"
+										L"XFormer disk image (*.xfd)\0*.xfd\0"
+										L"All files\0*.*\0",
+									L"atr",
+									opts,
+									optVals));
 
 							if (!s.empty()) {
 								try {
-									disk.SaveDisk(s.c_str());
+									ATDiskImageFormat format = kATDiskImageFormat_ATR;
+
+									switch(optVals[0]) {
+										case 1:
+											// default is ATR
+											break;
+										case 2:
+											format = kATDiskImageFormat_ATX;
+											break;
+										case 3:
+											format = kATDiskImageFormat_P2;
+											break;
+										case 4:
+											format = kATDiskImageFormat_P3;
+											break;
+										case 5:
+											format = kATDiskImageFormat_DCM;
+											break;
+										case 6:
+											format = kATDiskImageFormat_XFD;
+											break;
+									}
+
+									disk.SaveDisk(s.c_str(), format);
 
 									// if the disk is in VirtR/W mode, switch to R/W mode
 									if (disk.IsWriteEnabled() && !disk.IsAutoFlushEnabled()) {
@@ -675,6 +800,11 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 								}
 							}
 						}
+						break;
+
+					case ID_CONTEXT_SWAPWITHANOTHERDRIVE:
+						mSelectedDrive = driveIndex;
+						UpdateActionButtons();
 						break;
 				}
 			}
@@ -774,6 +904,18 @@ VDZINT_PTR ATDiskDriveDialog::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM l
 	}
 
 	return VDDialogFrameW32::DlgProc(msg, wParam, lParam);
+}
+
+void ATDiskDriveDialog::UpdateActionButtons() {
+	int driveIndex = (mbHighDrives ? 8 : 0);
+
+	// update to:
+	// - right arrow if no swap in progress
+	// - X if swap in progress and this is the originating drive
+	// - <> if swap in progress and other drive
+	for(int i=0; i<8; ++i) {
+		SetControlText(kMoreIds[i], mSelectedDrive >= 0 ? mSelectedDrive == driveIndex + i ? L"r" : L"v" : L"4");
+	}
 }
 
 void ATUIShowDiskDriveDialog(VDGUIHandle hParent) {

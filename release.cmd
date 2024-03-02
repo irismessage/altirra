@@ -1,9 +1,43 @@
 @echo off
+setlocal enableextensions enabledelayedexpansion
 
-if {%1}=={} (
-	echo Usage: release ^<version-id^>
-	exit /b 0
+rem ---echo banner
+echo Altirra Build Release Utility Version 2.60
+echo Copyright (C) Avery Lee 2014. Licensed under GNU General Public License
+echo.
+
+rem ---parse command line arguments
+set _incremental=false
+set _packonly=false
+set _verid=
+
+:arglist
+if "%1"=="" goto endargs
+
+if "%1"=="/packonly" (
+	set _packonly=true
+) else if "%1"=="/inc" (
+	set _incremental=true
+) else if "%1"=="/?" (
+	goto :usage
+) else if "%1"=="/h" (
+	goto :usage
+) else if "!_verid!"=="" (
+	set _verid=%1
+) else (
+	goto :usage
 )
+
+shift /1
+goto :arglist
+
+:usage
+echo Usage: release [/inc] [/packonly] ^<version-id^>
+echo.
+exit /b 5
+
+:endargs
+if "!_verid!"=="" goto :usage
 
 @where /q devenv.exe >nul
 if errorlevel 1 (
@@ -17,15 +51,16 @@ if errorlevel 1 (
 	exit /b 0
 )
 
-set _verid=%1
-
-setlocal enabledelayedexpansion
-
 if not exist out md out
 if not exist out\debug md out\debug
 if not exist out\release md out\release
 if not exist publish md publish
-if exist publish\build.log del publish\build.log
+
+if not "!_packonly!"=="true" (
+	if exist publish\build.log del publish\build.log
+	if exist publish\build-x64.log del publish\build-x64.log
+)
+
 if exist publish\Altirra-!_verid!-src.zip del publish\Altirra-!_verid!-src.zip
 if exist publish\Altirra-!_verid!.zip del publish\Altirra-!_verid!.zip
 
@@ -35,8 +70,12 @@ set _abverfile2=src\Kernel\autobuild\version.inc
 if not exist src\Altirra\autobuild md src\Altirra\autobuild
 if not exist src\Kernel\autobuild md src\Kernel\autobuild
 
-devenv src\Altirra.sln /Clean Release^|Win32
-devenv src\Altirra.sln /Clean Release^|x64
+if not "!_incremental!"=="true" (
+	if not "!_packonly!"=="true" (
+		devenv src\Altirra.sln /Clean Release^|Win32
+		devenv src\Altirra.sln /Clean Release^|x64
+	)
+)
 
 echo #ifndef AT_VERSION_H >%_abverfile%
 echo #define AT_VERSION_H >>%_abverfile%
@@ -55,44 +94,55 @@ echo .macro _VERSIONSTR_INTERNAL >%_abverfile2%
 echo 	dta d"%_verid%" >>%_abverfile2%
 echo .endm >>%_abverfile2%
 
-devenv src\Altirra.sln /Build Debug /Project Kernel /Out publish\build-debug.log
-if errorlevel 1 (
-	call :reportBuildFailure publish\build-debug.log
-	goto :cleanup
-)
+if not !_packonly!==true (
+	devenv src\Altirra.sln /Build Release^|Win32 /Project Kernel /Out publish\build-kernel.log
+	if errorlevel 1 (
+		call :reportBuildFailure publish\build-debug.log
+		goto :cleanup
+	)
 
-devenv src\Altirra.sln /Rebuild Release^|Win32 /Out publish\build.log
-if errorlevel 1 (
-	call :reportBuildFailure publish\build.log
-	goto :cleanup
-)
+	if "!_incremental!"=="true" (
+		set _buildswitch=/Build
+	) else (
+		set _buildswitch=/Rebuild
+	)
 
-devenv src\Altirra.sln /Rebuild Release^|x64 /Out publish\build-x64.log
-if errorlevel 1 (
-	call :reportBuildFailure publish\build-x64.log
-	goto :cleanup
-)
+	devenv src\Altirra.sln !_buildswitch! Release^|Win32 /Out publish\build.log
+	if errorlevel 1 (
+		call :reportBuildFailure publish\build.log
+		goto :cleanup
+	)
 
-devenv src\ATHelpFile.sln /Rebuild Release /Out publish\build-x64-debug.log
-if errorlevel 1 (
-	call :reportBuildFailure publish\build-x64-debug.log
-	goto :cleanup
+	devenv src\Altirra.sln !_buildswitch! Release^|x64 /Out publish\build-x64.log
+	if errorlevel 1 (
+		call :reportBuildFailure publish\build-x64.log
+		goto :cleanup
+	)
+
+	devenv src\ATHelpFile.sln !_buildswitch! Release /Out publish\build-help.log
+	if errorlevel 1 (
+		call :reportBuildFailure publish\build-x64-debug.log
+		goto :cleanup
+	)
 )
 
 zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	src ^
 	src\Kasumi\data\Tuffy.* ^
+	src\Kernel\Makefile ^
 	Copying ^
 	-i ^
-	*.vcproj ^
+	*.vcxproj ^
+	*.vcxproj.filters ^
 	*.sln ^
 	*.cpp ^
 	*.h ^
 	*.fx ^
-	*.rules ^
+	*.props ^
+	*.xml ^
+	*.targets ^
 	*.asm ^
 	*.xasm ^
-	*.vsprops ^
 	*.rc ^
 	*.asm64 ^
 	*.inl ^
@@ -106,17 +156,24 @@ zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	*.cur ^
 	*.manifest ^
 	*.s ^
-	*.pcm
+	*.pcm ^
+	*.bas
+
+if errorlevel 1 (
+	echo Packaging step failed.
+	exit /b 0
+)
 
 zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	Copying ^
 	release.cmd ^
+	Readme.txt ^
 	src\Kasumi\data\Tuffy.* ^
 	src\Kernel\source\shared\atarifont.bin ^
 	src\Kernel\source\shared\atariifont.bin ^
+	src\atbasic\Makefile ^
 	src\Kernel\Makefile ^
 	src\HLEKernel\Makefile ^
-	src\ATBasic\makefile ^
 	src\ATHelpFile\source\*.xml ^
 	src\ATHelpFile\source\*.xsl ^
 	src\ATHelpFile\source\*.css ^
@@ -127,11 +184,23 @@ zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	out\debug\kernel.rom ^
 	out\release\kernel.rom
 
+if errorlevel 1 (
+	echo Packaging step failed.
+	exit /b 0
+)
+
 zip -9 -X -j publish\Altirra-!_verid!.zip ^
 	out\release\Altirra.exe ^
 	out\releaseamd64\Altirra64.exe ^
 	Copying ^
-	out\Helpfile\Altirra.chm
+	out\Helpfile\Altirra.chm ^
+	out\Release\Additions.atr
+
+if errorlevel 1 (
+	echo Packaging step failed.
+	exit /b 0
+)
+
 copy out\release\Altirra.pdb publish\Altirra-!_verid!.pdb
 copy out\releaseamd64\Altirra64.pdb publish\Altirra64-!_verid!.pdb
 
@@ -145,6 +214,7 @@ echo.
 echo ============ BUILD FAILED ============
 
 findstr /r "^[0-9]*>*[a-zA-Z0-9:\/]*[ ]*\([0-9][0-9]*\).*error.*" "%1"
+findstr /l "fatal error LNK" "%1"
 echo ============ BUILD FAILED ============
 goto :cleanup
 

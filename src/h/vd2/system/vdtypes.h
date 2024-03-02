@@ -94,25 +94,45 @@
 //
 ///////////////////////////////////////////////////////////////////////////
 
-#ifndef VD_STANDARD_TYPES_DECLARED
-	#if defined(_MSC_VER)
-		typedef signed __int64		sint64;
-		typedef unsigned __int64	uint64;
-	#elif defined(__GNUC__)
-		typedef signed long long	sint64;
-		typedef unsigned long long	uint64;
-	#endif
-	typedef signed int			sint32;
-	typedef unsigned int		uint32;
-	typedef signed short		sint16;
-	typedef unsigned short		uint16;
-	typedef signed char			sint8;
-	typedef unsigned char		uint8;
+// Use stdint.h if we have it
 
-	typedef sint64				int64;
-	typedef sint32				int32;
-	typedef sint16				int16;
-	typedef sint8				int8;
+#ifndef VD_STANDARD_TYPES_DECLARED
+	#if defined(_MSC_VER) && _MSC_VER >= 1600
+		#include <stdint.h>
+
+		typedef int64_t				sint64;
+		typedef uint64_t			uint64;
+		typedef int32_t				sint32;
+		typedef uint32_t			uint32;
+		typedef int16_t				sint16;
+		typedef uint16_t			uint16;
+		typedef int8_t				sint8;
+		typedef uint8_t				uint8;
+
+		typedef int64_t				int64;
+		typedef int32_t				int32;
+		typedef int16_t				int16;
+		typedef int8_t				int8;
+	#else
+		#if defined(_MSC_VER)
+			typedef signed __int64		sint64;
+			typedef unsigned __int64	uint64;
+		#elif defined(__GNUC__)
+			typedef signed long long	sint64;
+			typedef unsigned long long	uint64;
+		#endif
+		typedef signed int			sint32;
+		typedef unsigned int		uint32;
+		typedef signed short		sint16;
+		typedef unsigned short		uint16;
+		typedef signed char			sint8;
+		typedef unsigned char		uint8;
+
+		typedef sint64				int64;
+		typedef sint32				int32;
+		typedef sint16				int16;
+		typedef sint8				int8;
+	#endif
 
 	#ifdef _M_AMD64
 		typedef sint64 sintptr;

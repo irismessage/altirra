@@ -16,11 +16,14 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <at/atcore/propertyset.h>
+#include <at/atcore/deviceserial.h>
 #include "modem.h"
 #include "scheduler.h"
 #include "uirender.h"
 #include "console.h"
 #include "debuggerlog.h"
+#include "devicemanager.h"
 
 ATDebuggerLogChannel g_ATLCModem(false, false, "MODEM", "Modem activity");
 ATDebuggerLogChannel g_ATLCModemTCP(false, false, "MODEMTCP", "Modem TCP/IP activity");
@@ -63,24 +66,28 @@ ATModemRegisters::ATModemRegisters()
 	, mSpeakerMode(0)
 	, mGuardToneMode(0)
 	, mbLoopbackMode(false)
+	, mbFullDuplex(true)
+	, mbOriginateMode(false)
+	, mFlowControlMode(ATModemFlowControl::RTS_CTS)
 {
 }
 
 ATModemEmulator::ATModemEmulator()
 	: mpScheduler(NULL)
 	, mpSlowScheduler(NULL)
+	, mpUIRenderer(nullptr)
 	, mpDriver(NULL)
-	, mpCB(NULL)
 	, mpEventEnterCommandMode(NULL)
 	, mpEventCommandModeTimeout(NULL)
 	, mpEventCommandTermDelay(NULL)
-	, mbInited(false)
+	, mpEventPoll(nullptr)
 	, mbCommandMode(false)
 	, mbListenEnabled(false)
 	, mbLoggingState(false)
 	, mbRinging(false)
 	, mCommandState(kCommandState_Idle)
 	, mLostCarrierDelayCycles(0)
+	, mCommandRate(9600)
 {
 }
 
@@ -88,13 +95,117 @@ ATModemEmulator::~ATModemEmulator() {
 	Shutdown();
 }
 
-void ATModemEmulator::Init(ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir) {
-	mbInited = true;
+int ATModemEmulator::AddRef() {
+	return ATDevice::AddRef();
+}
 
+int ATModemEmulator::Release() {
+	return ATDevice::Release();
+}
+
+void *ATModemEmulator::AsInterface(uint32 iid) {
+	switch(iid) {
+		case IATDevice::kTypeID:
+			return static_cast<IATDevice *>(this);
+
+		case IATDeviceScheduling::kTypeID:
+			return static_cast<IATDeviceScheduling *>(this);
+
+		case IATDeviceIndicators::kTypeID:
+			return static_cast<IATDeviceIndicators *>(this);
+
+		case IATDeviceSerial::kTypeID:
+			return static_cast<IATDeviceSerial *>(this);
+
+		case IATRS232Device::kTypeID:
+			return static_cast<IATRS232Device *>(this);
+
+		default:
+			return ATDevice::AsInterface(iid);
+	}
+}
+
+void ATModemEmulator::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mTag = "modem";
+	info.mName = L"Modem";
+}
+
+void ATModemEmulator::GetSettings(ATPropertySet& settings) {
+	if (mConfig.mListenPort)
+		settings.SetUint32("port", mConfig.mListenPort);
+
+	if (mConfig.mbAllowOutbound)
+		settings.SetBool("outbound", true);
+
+	if (!mConfig.mTelnetTermType.empty())
+		settings.SetString("termtype", VDTextAToW(mConfig.mTelnetTermType).c_str());
+
+	if (mConfig.mbTelnetEmulation)
+		settings.SetBool("telnet", true);
+
+	if (mConfig.mbTelnetLFConversion)
+		settings.SetBool("telnetlf", true);
+
+	if (mConfig.mbListenForIPv6)
+		settings.SetBool("ipv6", true);
+
+	if (mConfig.mbDisableThrottling)
+		settings.SetBool("unthrottled", true);
+
+	if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212) {
+		if (mConfig.mConnectionSpeed > 300)
+			settings.SetUint32("connect_rate", 1200);
+	} else {
+		if (mConfig.mbRequireMatchedDTERate)
+			settings.SetBool("check_rate", true);
+
+		settings.SetUint32("connect_rate", mConfig.mConnectionSpeed);
+	}
+
+	if (!mConfig.mDialAddress.empty())
+		settings.SetString("dialaddr", VDTextAToW(mConfig.mDialAddress).c_str());
+
+	if (!mConfig.mDialService.empty())
+		settings.SetString("dialsvc", VDTextAToW(mConfig.mDialService).c_str());
+}
+
+bool ATModemEmulator::SetSettings(const ATPropertySet& settings) {
+	mConfig.mListenPort = settings.GetUint32("port");
+	mConfig.mbAllowOutbound = settings.GetBool("outbound");
+	mConfig.mTelnetTermType = VDTextWToA(settings.GetString("termtype", L""));
+	mConfig.mbTelnetEmulation = settings.GetBool("telnet");
+	mConfig.mbTelnetLFConversion = settings.GetBool("telnetlf");
+	mConfig.mbListenForIPv6 = settings.GetBool("ipv6");
+	mConfig.mbDisableThrottling = settings.GetBool("unthrottled");
+	mConfig.mbRequireMatchedDTERate = settings.GetBool("check_rate");
+	mConfig.mConnectionSpeed = settings.GetUint32("connect_rate");
+	mConfig.mDialAddress = VDTextWToA(settings.GetString("dialaddr", L""));
+	mConfig.mDialService = VDTextWToA(settings.GetString("dialsvc", L""));
+
+	UpdateConfig();
+	return true;
+}
+
+void ATModemEmulator::WarmReset() {
+}
+
+void ATModemEmulator::InitScheduling(ATScheduler *sched, ATScheduler *slowsched) {
 	mpScheduler = sched;
 	mpSlowScheduler = slowsched;
-	mpUIRenderer = uir;
-	mLastWriteTime = ATSCHEDULER_GETTIME(sched);
+}
+
+void ATModemEmulator::InitIndicators(IATUIRenderer *r) {
+	mpUIRenderer = r;
+}
+
+void ATModemEmulator::Init(ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir) {
+	InitScheduling(sched, slowsched);
+	InitIndicators(uir);
+	Init();
+}
+
+void ATModemEmulator::Init() {
+	mLastWriteTime = ATSCHEDULER_GETTIME(mpScheduler);
 	mTransmitIndex = 0;
 	mTransmitLength = 0;
 
@@ -123,7 +234,7 @@ void ATModemEmulator::Init(ATScheduler *sched, ATScheduler *slowsched, IATUIRend
 }
 
 void ATModemEmulator::Shutdown() {
-	mpCB = NULL;
+	mpCB = nullptr;
 
 	TerminateCall();
 
@@ -159,8 +270,6 @@ void ATModemEmulator::Shutdown() {
 		mpUIRenderer->SetModemConnection(NULL);
 		mpUIRenderer = NULL;
 	}
-
-	mbInited = false;
 }
 
 void ATModemEmulator::ColdReset() {
@@ -181,6 +290,10 @@ void ATModemEmulator::ColdReset() {
 
 	TerminateCall();
 
+	mCommandRate = 9600;
+
+	mControlState.mbHighSpeed = false;
+
 	mSavedRegisters = ATModemRegisters();
 	mRegisters = mSavedRegisters;
 	UpdateDerivedRegisters();
@@ -190,7 +303,11 @@ void ATModemEmulator::ColdReset() {
 	EnterCommandMode(false, true);
 }
 
-void ATModemEmulator::SetTerminalState(const ATRS232TerminalState& state) {
+void ATModemEmulator::SetOnStatusChange(const vdfunction<void(const ATDeviceSerialStatus&)>& fn) {
+	mpCB = fn;
+}
+
+void ATModemEmulator::SetTerminalState(const ATDeviceSerialTerminalState& state) {
 	const bool dtrdrop = mTerminalState.mbDataTerminalReady && !state.mbDataTerminalReady;
 
 	mTerminalState = state;
@@ -217,13 +334,22 @@ void ATModemEmulator::SetTerminalState(const ATRS232TerminalState& state) {
 	}
 }
 
-ATRS232ControlState ATModemEmulator::GetControlState() {
+ATDeviceSerialStatus ATModemEmulator::GetStatus() {
 	return mControlState;
 }
 
 void ATModemEmulator::SetConfig(const ATRS232Config& config) {
 	mConfig = config;
-	mbListenEnabled = (config.mListenPort != 0);
+	UpdateConfig();
+}
+
+void ATModemEmulator::UpdateConfig() {
+	if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212) {
+		mConfig.mbRequireMatchedDTERate = true;
+		mConfig.mConnectionSpeed = (mConfig.mConnectionSpeed > 300) ? 1200 : 300;
+	}
+
+	mbListenEnabled = (mConfig.mListenPort != 0);
 
 	if (mbListening && !mbListenEnabled)
 		TerminateCall();
@@ -231,20 +357,24 @@ void ATModemEmulator::SetConfig(const ATRS232Config& config) {
 		RestoreListeningState();
 
 	if (mpDriver)
-		mpDriver->SetConfig(config);
+		mpDriver->SetConfig(mConfig);
 
 	UpdateUIStatus();
 }
 
-bool ATModemEmulator::Read(uint32 baudRate, uint8& c, bool& framingError) {
-	framingError = false;
-
+bool ATModemEmulator::Read(uint32& baudRate, uint8& c) {
 	bool loggingState = g_ATLCModemTCP.IsEnabled();
 	if (mbLoggingState != loggingState) {
 		mbLoggingState = loggingState;
 
 		if (mpDriver)
 			mpDriver->SetLoggingEnabled(loggingState);
+	}
+
+	// if we have RTS/CTS enabled and RTS is negated, don't send data
+	if (mRegisters.mFlowControlMode == ATModemFlowControl::RTS_CTS) {
+		if (!mTerminalState.mbRequestToSend)
+			return false;
 	}
 
 	if (mTransmitIndex < mTransmitLength) {
@@ -255,6 +385,7 @@ bool ATModemEmulator::Read(uint32 baudRate, uint8& c, bool& framingError) {
 			mTransmitLength = 0;
 		}
 
+		baudRate = mConfig.mbRequireMatchedDTERate ? mCommandRate : 0;
 		return true;
 	}
 
@@ -283,7 +414,19 @@ bool ATModemEmulator::Read(uint32 baudRate, uint8& c, bool& framingError) {
 		}
 	}
 
-	if (mConfig.mbRequireMatchedDTERate && abs((int)baudRate - (int)mConnectRate) > 1) {
+	baudRate = mConfig.mbRequireMatchedDTERate ? mConnectRate : 0;
+	return true;
+}
+
+bool ATModemEmulator::Read(uint32 baudRate, uint8& c, bool& framingError) {
+	framingError = false;
+
+	uint32 transmitRate;
+	if (!Read(transmitRate, c))
+		return false;
+
+	// check for more than a 5% discrepancy in baud rates between modem and serial port
+	if (mConfig.mbRequireMatchedDTERate && abs((int)baudRate - (int)transmitRate) * 20 > (int)transmitRate) {
 		// baud rate mismatch -- return some bogus character and flag a framing error
 		c = 'U';
 		framingError = true;
@@ -296,12 +439,24 @@ void ATModemEmulator::Write(uint32 baudRate, uint8 c) {
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 	uint32 delay = t - mLastWriteTime;
 	mLastWriteTime = t;
+	mCommandRate = baudRate;
 
 	if (mpEventCommandTermDelay)
 		return;
 
 	if (mbCommandMode) {
 		c &= 0x7F;
+
+		if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212) {
+			const bool highSpeed = baudRate > 600;
+
+			if (mControlState.mbHighSpeed != highSpeed) {
+				mControlState.mbHighSpeed = highSpeed;
+
+				if (mpCB)
+					mpCB(mControlState);
+			}
+		}
 
 		switch(mCommandState) {
 			case kCommandState_Idle:
@@ -397,6 +552,16 @@ void ATModemEmulator::Write(uint32 baudRate, uint8 c) {
 	}
 }
 
+void ATModemEmulator::Set1030Mode() {
+	mConfig.mDeviceMode = kATRS232DeviceMode_1030;
+	mRegisters.mbReportCarrier = true;
+}
+
+void ATModemEmulator::SetSX212Mode() {
+	mConfig.mDeviceMode = kATRS232DeviceMode_SX212;
+	mRegisters.mbReportCarrier = true;
+}
+
 void ATModemEmulator::SetToneDialingMode(bool enable) {
 	mRegisters.mbToneDialMode = enable;
 }
@@ -443,6 +608,7 @@ void ATModemEmulator::Answer() {
 	// will issue the CONNECT banner.
 	if (mbIncomingConnection) {
 		mbListening = false;
+		mRegisters.mbOriginateMode = false;
 		return;
 	}
 
@@ -450,7 +616,7 @@ void ATModemEmulator::Answer() {
 	SendResponse(kResponseNoCarrier);
 }
 
-void ATModemEmulator::FlushOutputBuffer() {
+void ATModemEmulator::FlushBuffers() {
 	mTransmitIndex = 0;
 	mTransmitLength = 0;
 }
@@ -542,9 +708,23 @@ void ATModemEmulator::Poll() {
 					if (nowConnected) {
 						mConnectionState = kConnectionState_Connected;
 
-						mConnectRate = mConfig.mConnectionSpeed;
-						if (!mConnectRate)
-							mConnectRate = 9600;
+						if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212) {
+							const bool highSpeed = mConfig.mConnectionSpeed > 600;
+
+							mConnectRate = highSpeed ? 1200 : 300;
+
+							if (mControlState.mbHighSpeed != highSpeed) {
+								mControlState.mbHighSpeed = highSpeed;
+
+								if (mpCB)
+									mpCB(mControlState);
+							}
+						} else {
+							mConnectRate = mConfig.mConnectionSpeed;
+
+							if (!mConnectRate)
+								mConnectRate = 9600;
+						}
 
 						SendConnectResponse();
 
@@ -670,9 +850,33 @@ void ATModemEmulator::ParseCommand() {
 			}
 		}
 
+		// Commands supported by the SX212:
+		//	ATA		Set answer mode
+		//	ATB		Set Bell modulation mode
+		//	ATC		Set transmit carrier
+		//	ATD		Dial
+		//	ATE		Set echo
+		//	ATF		Set full duplex
+		//	ATH		Set on/off hook
+		//	ATI		Information
+		//	ATL		Speaker loudness
+		//	ATM		Speaker mode
+		//	ATO		Set originate mode
+		//	ATP		Set pulse dial mode
+		//	ATQ		Set quiet mode
+		//	ATR		Set reverse mode
+		//	ATS		Set or query register
+		//	ATT		Set touch dialing
+		//	ATV		Set verbose reporting
+		//	ATX		Set connect/busy/dialtone reporting
+		//	ATY		Set long space disconnect enable
+		//	ATZ		Reset modem
 		switch(cmd) {
 			case '&':	// extended command
-				switch(extcmd) {
+				if (mConfig.mDeviceMode != kATRS232DeviceMode_850) {
+					SendResponse(kResponseError);
+					return;
+				} else switch(extcmd) {
 					case 'C':	// &C - RLSD behavior
 						if (!hasNumber)
 							number = 0;
@@ -713,6 +917,15 @@ void ATModemEmulator::ParseCommand() {
 						}
 
 						mRegisters.mGuardToneMode = number;
+						break;
+
+					case 'K':	// &K - Flow control
+						if (!hasNumber || (number != 0 && number != 3 && number != 4 && number != 5)) {
+							SendResponse(kResponseError);
+							return;
+						}
+
+						mRegisters.mFlowControlMode = (ATModemFlowControl)number;
 						break;
 
 					case 'P':	// &P - Select Pulse Dial Make/Break Ratio (validated but ignored)
@@ -777,6 +990,8 @@ void ATModemEmulator::ParseCommand() {
 					return;
 				}
 
+				mRegisters.mbOriginateMode = true;
+
 				// check for 'I' to indicate IP-based dialing (for compatibility with Atari800)
 				if (*s == 'I' || *s == 'i') {
 					// parse out hostname and port
@@ -825,6 +1040,15 @@ void ATModemEmulator::ParseCommand() {
 				mRegisters.mbEchoMode = (number != 0);
 				break;
 
+			case 'F':	// full duplex (SX212)
+				if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212) {
+					mRegisters.mbFullDuplex = (number > 0);
+				} else {
+					SendResponse(kResponseError);
+					return;
+				}
+				break;
+
 			case 'H':	// hook control (optional number)
 				if (hasNumber && number >= 2) {
 					SendResponse(kResponseError);
@@ -832,6 +1056,26 @@ void ATModemEmulator::ParseCommand() {
 				}
 
 				HangUp();
+				break;
+
+			case 'I':	// version (SX212)
+				if (mTransmitIndex <= sizeof mTransmitBuffer - 7) {
+					if (!mRegisters.mbShortResponses) {
+						mTransmitBuffer[mTransmitLength++] = mRegisters.mLineTermChar;
+						mTransmitBuffer[mTransmitLength++] = mRegisters.mRespFormatChar;
+					}
+
+					if (number >= 2) {
+						int v = number ? 103 : 134;
+
+						mTransmitBuffer[mTransmitLength++] = (uint8)('0' + (v / 100)); v %= 100;
+						mTransmitBuffer[mTransmitLength++] = (uint8)('0' + (v / 10)); v %= 10;
+						mTransmitBuffer[mTransmitLength++] = (uint8)('0' + v);
+					}
+
+					mTransmitBuffer[mTransmitLength++] = mRegisters.mLineTermChar;
+					mTransmitBuffer[mTransmitLength++] = mRegisters.mRespFormatChar;
+				}
 				break;
 
 			case 'L':	// set speaker volume (ignored)
@@ -859,8 +1103,19 @@ void ATModemEmulator::ParseCommand() {
 				return;
 
 			case 'P':	// change dial mode default to pulse dial
+				if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212 && number > 0) {
+					SendResponse(kResponseError);
+					return;
+				}
 				mRegisters.mbToneDialMode = false;
 				break;
+
+			case 'R':	// reverse connect (SX212)
+				if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212 && hasNumber)
+					break;
+
+				SendResponse(kResponseError);
+				return;
 
 			case 'Q':	// quiet mode
 				if (!hasNumber)
@@ -875,6 +1130,11 @@ void ATModemEmulator::ParseCommand() {
 				break;
 
 			case '=':	// set/query register
+				if (mConfig.mDeviceMode != kATRS232DeviceMode_850) {
+					SendResponse(kResponseError);
+					return;
+				}
+				// fall through
 			case 'S':	// set/query register
 				{
 					bool set = false;
@@ -911,6 +1171,8 @@ void ATModemEmulator::ParseCommand() {
 								mTransmitBuffer[mTransmitLength++] = mRegisters.mLineTermChar;
 								mTransmitBuffer[mTransmitLength++] = mRegisters.mRespFormatChar;
 							}
+
+							g_ATLCModem("Returning query: S%02d = %03d\n", mLastRegister, v);
 
 							mTransmitBuffer[mTransmitLength++] = (uint8)('0' + (v / 100)); v %= 100;
 							mTransmitBuffer[mTransmitLength++] = (uint8)('0' + (v / 10)); v %= 10;
@@ -965,6 +1227,15 @@ void ATModemEmulator::ParseCommand() {
 				}
 
 				mRegisters.mExtendedResultCodes = number;
+				break;
+
+			case 'Y':
+				if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212) {
+					// ignore for now
+				} else {
+					SendResponse(kResponseError);
+					return;
+				}
 				break;
 
 			case 'Z':	// reset modem (number optional)
@@ -1141,7 +1412,7 @@ void ATModemEmulator::SendResponseF(const char *format, ...) {
 }
 
 void ATModemEmulator::ReportRegisters(const ATModemRegisters& reg, bool stored) {
-	SendResponseF("E%u L%u M%u Q%u %c V%u X%u &C%u &D%u &G%u &T%u"
+	SendResponseF("E%u L%u M%u Q%u %c V%u X%u &C%u &D%u &G%u &K%u &T%u"
 		, reg.mbEchoMode
 		, reg.mSpeakerVolume
 		, reg.mSpeakerMode
@@ -1152,6 +1423,7 @@ void ATModemEmulator::ReportRegisters(const ATModemRegisters& reg, bool stored) 
 		, reg.mbReportCarrier
 		, reg.mDTRMode
 		, reg.mGuardToneMode
+		, reg.mFlowControlMode
 		, reg.mbLoopbackMode
 		);
 
@@ -1232,7 +1504,7 @@ void ATModemEmulator::UpdateControlState() {
 	mControlState.mbDataSetReady = true;
 
 	if (changed && mpCB)
-		mpCB->OnControlStateChanged(mControlState);
+		mpCB(mControlState);
 }
 
 void ATModemEmulator::UpdateUIStatus() {
@@ -1286,7 +1558,8 @@ void ATModemEmulator::UpdateUIStatus() {
 			break;
 	}
 
-	mpUIRenderer->SetModemConnection(str.c_str());
+	if (mpUIRenderer)
+		mpUIRenderer->SetModemConnection(str.c_str());
 }
 
 void ATModemEmulator::EnterCommandMode(bool sendPrompt, bool force) {
@@ -1311,6 +1584,59 @@ void ATModemEmulator::EnterCommandMode(bool sendPrompt, bool force) {
 }
 
 int ATModemEmulator::GetRegisterValue(uint32 reg) const {
+	if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212) {
+		switch(reg) {
+			case 1:		// ring count
+				return 0;
+
+			case 8:		// pause time (seconds)
+				return 2;
+
+			case 9:		// carrier detect response time (tenths of seconds)
+				return 6;
+
+			case 11:	// duration and spacing of touch tones (msec)
+				return 70;
+
+			case 13:	// UART status register
+				return 16;
+
+			case 14:	// Option register
+				return 106;
+
+			case 15:	// Flag register
+			{
+				uint8 v = 0;
+
+				// originate mode is reported on bit 2
+				if (mRegisters.mbOriginateMode)
+					v += 0x04;
+
+				// full duplex is reported on bit 3
+				if (mRegisters.mbFullDuplex)
+					v += 0x08;
+
+				// baud rate is reported on bits 0-1 and 4-5 (x1 = 110, 10 = 300, 11 = 1200)
+				if (mCommandRate < 300)
+					v += 0x11;
+				else if (mCommandRate == 300)
+					v += 0x22;
+				else
+					v += 0x33;
+
+				// carrier detect is reported on bit 6
+				if (mControlState.mbCarrierDetect)
+					v += 0x40;
+
+				// DTR enable is reported on bit 7 (currently always off)
+				return v;
+			}
+
+			case 16:	// test modes
+				return 0;
+		}
+	}
+
 	switch(reg) {
 		case 0:		return mRegisters.mAutoAnswerRings;
 		case 2:		return mRegisters.mEscapeChar;
@@ -1321,6 +1647,9 @@ int ATModemEmulator::GetRegisterValue(uint32 reg) const {
 		case 7:		return mRegisters.mDialCarrierWaitTime;
 		case 10:	return mRegisters.mLostCarrierWaitTime;
 		case 12:	return mRegisters.mEscapePromptDelay;
+
+		case 15:
+			return 0x3B;
 
 		default:
 			return -1;
@@ -1367,6 +1696,10 @@ bool ATModemEmulator::SetRegisterValue(uint32 reg, uint8 value) {
 			return true;
 
 		default:
+			// The SX212 silently ignores an attempt to write to a non-existent register.
+			if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212)
+				return true;
+
 			return false;
 	}
 }
@@ -1446,4 +1779,19 @@ void ATModemEmulator::OnEvent(IATModemDriver *sender, ATModemPhase phase, ATMode
 		if (phase <= kATModemPhase_Connecting)
 			mbConnectionFailed = true;
 	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+void ATCreateDeviceModem(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATModemEmulator> p(new ATModemEmulator);
+
+	p->SetSettings(pset);
+
+	*dev = p;
+	(*dev)->AddRef();
+}
+
+void ATRegisterDeviceModem(ATDeviceManager& dev) {
+	dev.AddDeviceFactory("modem", ATCreateDeviceModem);
 }

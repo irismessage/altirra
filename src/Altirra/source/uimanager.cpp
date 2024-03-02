@@ -1,4 +1,5 @@
 #include <stdafx.h>
+#include <vd2/system/math.h>
 #include <vd2/system/time.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/Kasumi/triblt.h>
@@ -46,8 +47,10 @@ ATUIManager::ATUIManager()
 	, mCursorImageId(kATUICursorImage_None)
 	, mbForeground(true)
 	, mbInvalidated(false)
+	, mThemeScale(2.0f)
 	, mDestroyLocks(0)
 	, mNextInstanceId(0)
+	, mSystemMetrics()
 {
 	for(size_t i=0; i<vdcountof(mpStockImages); ++i)
 		mpStockImages[i] = NULL;
@@ -65,60 +68,7 @@ void ATUIManager::Init(IATUINativeDisplay *natDisp) {
 	mpMainWindow->SetHitTransparent(true);
 	mpMainWindow->SetParent(this, NULL);
 
-	VDCreateDisplaySystemFont(15, false, "MS Shell Dlg", &mpThemeFonts[kATUIThemeFont_Default]);
-	VDCreateDisplaySystemFont(20, false, "MS Shell Dlg", &mpThemeFonts[kATUIThemeFont_Header]);
-	VDCreateDisplaySystemFont(14, false, "Lucida Console", &mpThemeFonts[kATUIThemeFont_MonoSmall]);
-	VDCreateDisplaySystemFont(20, false, "Lucida Console", &mpThemeFonts[kATUIThemeFont_Mono]);
-	VDCreateDisplaySystemFont(-11, false, "Tahoma", &mpThemeFonts[kATUIThemeFont_Tooltip]);
-	VDCreateDisplaySystemFont(-11, true, "Tahoma", &mpThemeFonts[kATUIThemeFont_TooltipBold]);
-	mpThemeFonts[kATUIThemeFont_Menu] = mpThemeFonts[kATUIThemeFont_Tooltip];
-	mpThemeFonts[kATUIThemeFont_Menu]->AddRef();
-
-	static const wchar_t kMagicChars[]={
-		L'a',	// menu check
-		L'h',	// menu radio
-		L'8',	// menu arrow
-		L'3',	// button left
-		L'4',	// button right
-		L'5',	// button up
-		L'6',	// button down
-	};
-
-	VDASSERTCT(vdcountof(kMagicChars) == vdcountof(mpStockImages));
-
-	VDDisplayFontMetrics menuFontMetrics;
-	mpThemeFonts[kATUIThemeFont_Menu]->GetMetrics(menuFontMetrics);
-
-	vdrefptr<IVDDisplayFont> marlett;
-	VDCreateDisplaySystemFont(menuFontMetrics.mAscent + menuFontMetrics.mDescent + 2, false, "Marlett", ~marlett);
-
-	for(int i=0; i<vdcountof(mpStockImages); ++i) {
-		vdfastvector<VDDisplayFontGlyphPlacement> placements;
-		vdrect32 bounds;
-		marlett->ShapeText(&kMagicChars[i], 1, placements, &bounds, NULL, NULL);
-
-		ATUIStockImage *img1 = new ATUIStockImage;
-		mpStockImages[i] = img1;
-		img1->mBuffer.init(bounds.width(), bounds.height(), nsVDPixmap::kPixFormat_XRGB8888);
-		img1->mWidth = bounds.width();
-		img1->mHeight = bounds.height();
-		img1->mOffsetX = bounds.left;
-		img1->mOffsetY = bounds.top;
-
-		VDDisplayRendererSoft rs;
-		rs.Init();
-		rs.Begin(img1->mBuffer);
-		rs.SetColorRGB(0);
-		rs.FillRect(0, 0, bounds.width(), bounds.height());
-		VDDisplayTextRenderer& tr = *rs.GetTextRenderer();
-		tr.SetColorRGB(0xFFFFFF);
-		tr.SetFont(marlett);
-		tr.SetAlignment(VDDisplayTextRenderer::kAlignLeft, VDDisplayTextRenderer::kVertAlignTop);
-		tr.SetPosition(0, 0);
-		tr.DrawTextSpan(&kMagicChars[i], 1);
-
-		img1->mImageView.SetImage(img1->mBuffer, false);
-	}
+	ReinitTheme();
 }
 
 void ATUIManager::Shutdown() {
@@ -180,11 +130,12 @@ void ATUIManager::BeginAction(ATUIWidget *w, const ATUITriggerBinding& binding) 
 	r.first->second = action;
 
 	LockDestroy();
-	target->OnActionStart(binding.mAction);
-	UnlockDestroy();
-
+	// must do this first as the action may go away!
 	action->mRepeatDelay = 100;
 	action->mRepeatTimer.SetOneShot(action, 400);
+
+	target->OnActionStart(binding.mAction);
+	UnlockDestroy();
 }
 
 void ATUIManager::EndAction(uint32 vk) {
@@ -211,11 +162,38 @@ void ATUIManager::Resize(sint32 w, sint32 h) {
 		mpMainWindow->SetArea(vdrect32(0, 0, w, h));
 }
 
+void ATUIManager::SetForeground(bool fg) {
+	if (mbForeground != fg) {
+		mbForeground = fg;
+
+		if (!fg) {
+			while(!mActiveActionMap.empty())
+				EndAction(mActiveActionMap.begin()->first);
+		}
+
+		LockDestroy();
+
+		ATUIWidget *w = mpActiveWindow;
+
+		for(ATUIWidget *p = mpActiveWindow; p && w == mpActiveWindow; p = p->GetParent())
+			p->SetActivated(fg);
+
+		UnlockDestroy();
+	}
+}
+
+void ATUIManager::SetThemeScaleFactor(float scale) {
+	if (mThemeScale != scale) {
+		mThemeScale = scale;
+		ReinitTheme();
+	}
+}
+
 void ATUIManager::SetActiveWindow(ATUIWidget *w) {
 	if (mpActiveWindow == w)
 		return;
 
-	VDASSERT(w->GetManager());
+	VDASSERT(w->GetManager() == this);
 
 	ATUIWidget *prevFocus = mpActiveWindow;
 	mpActiveWindow = w;
@@ -225,9 +203,15 @@ void ATUIManager::SetActiveWindow(ATUIWidget *w) {
 	if (prevFocus)
 		prevFocus->OnKillFocus();
 
+	for(ATUIWidget *p = prevFocus; p && p->IsActivated() && !p->IsSameOrAncestorOf(mpActiveWindow); p = p->GetParent())
+		p->SetActivated(false);
+
+	for(ATUIWidget *p = mpActiveWindow; p && !p->IsActivated() && mpActiveWindow == w; p = p->GetParent())
+		p->SetActivated(true);
+
 	if (mpActiveWindow == w)
 		w->OnSetFocus();
-
+	
 	UnlockDestroy();
 }
 
@@ -243,8 +227,10 @@ void ATUIManager::CaptureCursor(ATUIWidget *w, bool motionMode, bool constrainPo
 				mpCursorWindow->OnPointerLeave(1);
 		}
 
-		if (w)
-			mpCursorWindow = w;
+		if (w) {
+			SetCursorWindow(w);
+			mpCursorWindow->OnPointerEnter(1);
+		}
 
 		UnlockDestroy();
 
@@ -271,6 +257,20 @@ void ATUIManager::CaptureCursor(ATUIWidget *w, bool motionMode, bool constrainPo
 				mpNativeDisplay->ReleaseCursor();
 		}
 	}
+}
+
+void ATUIManager::AddTrackingWindow(ATUIWidget *w) {
+	auto it = std::lower_bound(mTrackingWindows.begin(), mTrackingWindows.end(), w);
+
+	if (it == mTrackingWindows.end() || *it != w)
+		mTrackingWindows.insert(it, w);
+}
+
+void ATUIManager::RemoveTrackingWindow(ATUIWidget *w) {
+	auto it = std::lower_bound(mTrackingWindows.begin(), mTrackingWindows.end(), w);
+
+	if (it != mTrackingWindows.end() && *it == w)
+		mTrackingWindows.erase(it);
 }
 
 void ATUIManager::BeginModal(ATUIWidget *w) {
@@ -500,12 +500,18 @@ bool ATUIManager::OnMouseWheel(sint32 x, sint32 y, float delta) {
 	if (!mpCursorWindow)
 		return false;
 
-	vdpoint32 cpt;
-	if (mpCursorWindow->TranslateScreenPtToClientPt(vdpoint32(x, y), cpt) || mbCursorCaptured) {
-		LockDestroy();
-		mpCursorWindow->OnMouseWheel(cpt.x, cpt.y, delta);
-		UnlockDestroy();
+	LockDestroy();
+	for(ATUIWidget *w = mpCursorWindow; w; w = w->GetParent()) {
+		vdpoint32 cpt;
+		if (w->TranslateScreenPtToClientPt(vdpoint32(x, y), cpt) || mbCursorCaptured) {
+			if (w->OnMouseWheel(cpt.x, cpt.y, delta))
+				break;
+		}
+
+		if (mbCursorCaptured)
+			break;
 	}
+	UnlockDestroy();
 
 	return true;
 }
@@ -519,6 +525,8 @@ void ATUIManager::OnMouseLeave() {
 	if (mpCursorWindow) {
 		CaptureCursor(NULL);
 		mpCursorWindow->OnPointerLeave(1);
+
+		SetCursorWindow(nullptr);
 	}
 
 	UnlockDestroy();
@@ -555,7 +563,7 @@ bool ATUIManager::OnContextMenu(const vdpoint32 *pt) {
 		}
 	} else if (mpActiveWindow) {
 		LockDestroy();
-		success = mpCursorWindow->OnContextMenu(NULL);
+		success = mpActiveWindow->OnContextMenu(NULL);
 		UnlockDestroy();
 	}
 
@@ -659,13 +667,27 @@ void ATUIManager::Detach(ATUIWidget *w) {
 	}
 
 	if (mpActiveWindow == w) {
-		mpActiveWindow = w->GetParentOrOwner();
-		VDASSERT(!mpActiveWindow || mpActiveWindow->GetManager());
+		ATUIWidget *newActive = w->GetParentOrOwner();
+		VDASSERT(!newActive || newActive->GetManager());
+
+		mpActiveWindow = nullptr;
+		SetActiveWindow(newActive);
 	}
 
 	if (w->HasCursor()) {
 		if (mpCursorWindow == w) {
-			mpCursorWindow = w->GetParent();
+			if (mbCursorCaptured) {
+				mbCursorCaptured = false;
+
+				if (mpNativeDisplay)
+					mpNativeDisplay->ReleaseCursor();
+			}
+
+			SetCursorWindow(w->GetParent());
+
+			if (mpCursorWindow)
+				mpCursorWindow->OnPointerEnter(1);
+
 			mbCursorCaptured = false;
 			UpdateCursorImage();
 		}
@@ -676,7 +698,11 @@ void ATUIManager::Detach(ATUIWidget *w) {
 		}
 
 		w->OnPointerClear();
+	} else {
+		VDASSERT(mpCursorWindow != w);
 	}
+
+	RemoveTrackingWindow(w);
 
 	for(ModalStack::iterator it = mModalStack.begin(), itEnd = mModalStack.end();
 		it != itEnd;
@@ -752,7 +778,7 @@ bool ATUIManager::UpdateCursorWindow(sint32 x, sint32 y) {
 		if (mpCursorWindow)
 			mpCursorWindow->OnPointerLeave(1);
 
-		mpCursorWindow = w;
+		SetCursorWindow(w);
 
 		if (w)
 			w->OnPointerEnter(1);
@@ -763,6 +789,18 @@ bool ATUIManager::UpdateCursorWindow(sint32 x, sint32 y) {
 	}
 
 	return true;
+}
+
+void ATUIManager::SetCursorWindow(ATUIWidget *w) {
+	if (mpCursorWindow == w)
+		return;
+
+	for(ATUIWidget *tw : mTrackingWindows) {
+		if (tw->IsSameOrAncestorOf(w) || tw->IsSameOrAncestorOf(mpCursorWindow))
+			tw->OnTrackCursorChanges(w);
+	}
+
+	mpCursorWindow = w;
 }
 
 void ATUIManager::LockDestroy() {
@@ -790,4 +828,69 @@ void ATUIManager::RepeatAction(ActiveAction& action) {
 	LockDestroy();
 	target->OnActionRepeat(action.mActionId);
 	UnlockDestroy();
+}
+
+void ATUIManager::ReinitTheme() {
+	vdsaferelease <<= mpThemeFonts;
+	vdsafedelete <<= mpStockImages;
+
+	VDCreateDisplaySystemFont(VDRoundToInt(15*mThemeScale), false, "MS Shell Dlg", &mpThemeFonts[kATUIThemeFont_Default]);
+	VDCreateDisplaySystemFont(VDRoundToInt(20*mThemeScale), false, "MS Shell Dlg", &mpThemeFonts[kATUIThemeFont_Header]);
+	VDCreateDisplaySystemFont(VDRoundToInt(14*mThemeScale), false, "Lucida Console", &mpThemeFonts[kATUIThemeFont_MonoSmall]);
+	VDCreateDisplaySystemFont(VDRoundToInt(20*mThemeScale), false, "Lucida Console", &mpThemeFonts[kATUIThemeFont_Mono]);
+	VDCreateDisplaySystemFont(-VDRoundToInt(11*mThemeScale), false, "Tahoma", &mpThemeFonts[kATUIThemeFont_Tooltip]);
+	VDCreateDisplaySystemFont(-VDRoundToInt(11*mThemeScale), true, "Tahoma", &mpThemeFonts[kATUIThemeFont_TooltipBold]);
+	mpThemeFonts[kATUIThemeFont_Menu] = mpThemeFonts[kATUIThemeFont_Tooltip];
+	mpThemeFonts[kATUIThemeFont_Menu]->AddRef();
+
+	static const wchar_t kMagicChars[]={
+		L'a',	// menu check
+		L'h',	// menu radio
+		L'8',	// menu arrow
+		L'3',	// button left
+		L'4',	// button right
+		L'5',	// button up
+		L'6',	// button down
+	};
+
+	VDASSERTCT(vdcountof(kMagicChars) == vdcountof(mpStockImages));
+
+	VDDisplayFontMetrics menuFontMetrics;
+	mpThemeFonts[kATUIThemeFont_Menu]->GetMetrics(menuFontMetrics);
+
+	vdrefptr<IVDDisplayFont> marlett;
+	VDCreateDisplaySystemFont(menuFontMetrics.mAscent + menuFontMetrics.mDescent + 2, false, "Marlett", ~marlett);
+
+	mSystemMetrics.mVertSliderWidth = menuFontMetrics.mAscent + menuFontMetrics.mDescent + 4;
+
+	for(int i=0; i<vdcountof(mpStockImages); ++i) {
+		vdfastvector<VDDisplayFontGlyphPlacement> placements;
+		vdrect32 bounds;
+		marlett->ShapeText(&kMagicChars[i], 1, placements, &bounds, NULL, NULL);
+
+		ATUIStockImage *img1 = new ATUIStockImage;
+		mpStockImages[i] = img1;
+		img1->mBuffer.init(bounds.width(), bounds.height(), nsVDPixmap::kPixFormat_XRGB8888);
+		img1->mWidth = bounds.width();
+		img1->mHeight = bounds.height();
+		img1->mOffsetX = bounds.left;
+		img1->mOffsetY = bounds.top;
+
+		VDDisplayRendererSoft rs;
+		rs.Init();
+		rs.Begin(img1->mBuffer);
+		rs.SetColorRGB(0);
+		rs.FillRect(0, 0, bounds.width(), bounds.height());
+		VDDisplayTextRenderer& tr = *rs.GetTextRenderer();
+		tr.SetColorRGB(0xFFFFFF);
+		tr.SetFont(marlett);
+		tr.SetAlignment(VDDisplayTextRenderer::kAlignLeft, VDDisplayTextRenderer::kVertAlignTop);
+		tr.SetPosition(0, 0);
+		tr.DrawTextSpan(&kMagicChars[i], 1);
+
+		img1->mImageView.SetImage(img1->mBuffer, false);
+	}
+
+	if (mpMainWindow)
+		mpMainWindow->InvalidateLayout();
 }

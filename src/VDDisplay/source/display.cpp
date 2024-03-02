@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <vd2/system/atomic.h>
+#include <vd2/system/function.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/vdtypes.h>
@@ -56,11 +57,7 @@ vdautoptr<VDVideoDisplayManager> g_pVDVideoDisplayManager;
 
 namespace {
 	bool VDIsTerminalServicesClient() {
-		if ((sint32)(GetVersion() & 0x000000FF) >= 0x00000005) {
-			return GetSystemMetrics(SM_REMOTESESSION) != 0;		// Requires Windows NT SP4 or later.
-		}
-
-		return false;	// Ignore Windows 95/98/98SE/ME/NT3/NT4.  (Broken on NT4 Terminal Server, but oh well.)
+		return GetSystemMetrics(SM_REMOTESESSION) != 0;		// Requires Windows NT SP4 or later.
 	}
 }
 
@@ -123,6 +120,12 @@ protected:
 	FilterMode GetFilterMode();
 	void SetFilterMode(FilterMode mode);
 	float GetSyncDelta() const { return mSyncDelta; }
+
+	void SetProfileHook(const vdfunction<void(ProfileEvent)>& profileHook) override {
+		mpProfileHook = profileHook;
+
+		g_pVDVideoDisplayManager->SetProfileHook(profileHook);
+	}
 
 	void OnTick() {
 		if (mpMiniDriver)
@@ -189,6 +192,7 @@ protected:
 	vdrefptr<IVDDisplayCompositor> mpCompositor;
 
 	IVDVideoDisplayMinidriver *mpMiniDriver;
+	int		mMinidriverInitLock;
 	bool	mbMiniDriverSecondarySensitive;
 	bool	mbMiniDriverClearOtherMonitors;
 	UINT	mReinitDisplayTimer;
@@ -221,6 +225,8 @@ protected:
 	VDStringW	mMessage;
 
 	uint32				mSolidColorBuffer;
+
+	vdfunction<void(ProfileEvent)> mpProfileHook;
 
 	VDPixmapBuffer		mCachedImage;
 
@@ -363,6 +369,7 @@ VDVideoDisplayWindow::VDVideoDisplayWindow(HWND hwnd, const CREATESTRUCT& create
 	, mhLastMonitor(NULL)
 	, mhOldPalette(0)
 	, mpMiniDriver(0)
+	, mMinidriverInitLock(0)
 	, mbMiniDriverSecondarySensitive(false)
 	, mbMiniDriverClearOtherMonitors(false)
 	, mReinitDisplayTimer(0)
@@ -816,8 +823,15 @@ LRESULT VDVideoDisplayWindow::ChildWndProc(UINT msg, WPARAM wParam, LPARAM lPara
 		break;
 
 	case WM_TIMER:
-		if (mpMiniDriver)
+		if (mpMiniDriver) {
+			if (mpProfileHook)
+				mpProfileHook(kProfileEvent_BeginTick);
+
 			VerifyDriverResult(mpMiniDriver->Tick((int)wParam));
+
+			if (mpProfileHook)
+				mpProfileHook(kProfileEvent_EndTick);
+		}
 		break;
 
 	case WM_TOUCH:
@@ -1352,7 +1366,10 @@ void VDVideoDisplayWindow::OnDisplayChange() {
 			ReleaseDC(mhwnd, hdc);
 		}
 	}
-	if (!mReinitDisplayTimer && !mbFullScreen) {
+	
+	// Need to check the init lock in case we get an unexpected WM_DISPLAYCHANGE during the
+	// minidriver init -- this can happen with the VirtualBox 4.2.18 driver on XP.
+	if (!mReinitDisplayTimer && !mbFullScreen && !mMinidriverInitLock) {
 		SyncReset();
 		if (!SyncInit(true, false))
 			mReinitDisplayTimer = SetTimer(mhwnd, kReinitDisplayTimerId, 500, NULL);
@@ -1418,7 +1435,9 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 	// the display minidriver.
 
 	++mInhibitPaint;
+	++mMinidriverInitLock;
 	bool success = mpMiniDriver->Init(mhwndChild, mhLastMonitor, mSource);
+	--mMinidriverInitLock;
 	--mInhibitPaint;
 
 	if (!success) {

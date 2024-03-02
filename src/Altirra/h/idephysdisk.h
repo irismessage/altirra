@@ -18,22 +18,35 @@
 #ifndef f_AT_IDEPHYSDISK_H
 #define f_AT_IDEPHYSDISK_H
 
+#include <at/atcore/deviceimpl.h>
 #include "idedisk.h"
 
 bool ATIDEIsPhysicalDiskPath(const wchar_t *path);
 sint64 ATIDEGetPhysicalDiskSize(const wchar_t *path);
 
-class ATIDEPhysicalDisk : public vdrefcounted<IATIDEDisk> {
+class ATIDEPhysicalDisk : public IATIDEDisk, public ATDevice {
 	ATIDEPhysicalDisk(const ATIDEPhysicalDisk&);
 	ATIDEPhysicalDisk& operator=(const ATIDEPhysicalDisk&);
 public:
 	ATIDEPhysicalDisk();
 	~ATIDEPhysicalDisk();
 
+public:
+	int AddRef();
+	int Release();
+	void *AsInterface(uint32 iid);
+
+public:
+	void GetDeviceInfo(ATDeviceInfo& info);
+	void GetSettings(ATPropertySet& settings);
+	bool SetSettings(const ATPropertySet& settings);
+	void Shutdown();
+
+public:
+	virtual bool IsReadOnly() const override { return true; }
 	uint32 GetSectorCount() const { return mSectorCount; }
 
 	void Init(const wchar_t *path);
-	void Shutdown();
 
 	void Flush();
 	void RequestUpdate();
@@ -45,6 +58,7 @@ protected:
 	void *mhDisk;
 	void *mpBuffer;
 	uint32 mSectorCount;
+	VDStringW mPath;
 };
 
 #endif

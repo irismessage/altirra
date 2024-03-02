@@ -222,7 +222,7 @@ typename vdhashset<K, Hash, Pred, A>::insert_return_type vdhashset<K, Hash, Pred
 
 template<class K, class Hash, class Pred, class A>
 typename vdhashset<K, Hash, Pred, A>::iterator vdhashset<K, Hash, Pred, A>::erase(iterator position) {
-	size_type bucket = mHasher(position->first) % this->mBucketCount;
+	size_type bucket = mHasher(*position) % this->mBucketCount;
 	vdhashtable_base_node *prev = NULL;
 	vdhashtable_base_node *p = this->mpBucketStart[bucket];
 
@@ -230,6 +230,8 @@ typename vdhashset<K, Hash, Pred, A>::iterator vdhashset<K, Hash, Pred, A>::eras
 		prev = p;
 		p = p->mpHashNext;
 	}
+
+	++position;
 
 	vdhashtable_base_node *next = p->mpHashNext;
 	if (prev)
@@ -242,12 +244,12 @@ typename vdhashset<K, Hash, Pred, A>::iterator vdhashset<K, Hash, Pred, A>::eras
 	mAllocator.deallocate(node, 1);
 	--this->mElementCount;
 
-	return iterator(next, &this->mpBucketStart[bucket], this->mpBucketEnd);
+	return position;
 }
 
 template<class K, class Hash, class Pred, class A>
 typename vdhashset<K, Hash, Pred, A>::const_iterator vdhashset<K, Hash, Pred, A>::erase(const_iterator position) {
-	size_type bucket = mHasher(position->first) % this->mBucketCount;
+	size_type bucket = mHasher(*position) % this->mBucketCount;
 	const vdhashtable_base_node *prev = NULL;
 	const vdhashtable_base_node *p = this->mpBucketStart[bucket];
 
@@ -255,6 +257,8 @@ typename vdhashset<K, Hash, Pred, A>::const_iterator vdhashset<K, Hash, Pred, A>
 		prev = p;
 		p = p->mpHashNext;
 	}
+
+	++position;
 
 	const vdhashtable_base_node *next = p->mpHashNext;
 	if (prev)
@@ -267,7 +271,7 @@ typename vdhashset<K, Hash, Pred, A>::const_iterator vdhashset<K, Hash, Pred, A>
 	mAllocator.deallocate(node, 1);
 	--this->mElementCount;
 
-	return const_iterator(next, &this->mpBucketStart[bucket], this->mpBucketEnd);
+	return position;
 }
 
 template<class K, class Hash, class Pred, class A>
@@ -282,7 +286,7 @@ typename vdhashset<K, Hash, Pred, A>::size_type vdhashset<K, Hash, Pred, A>::era
 	while(p) {
 		node_type *node = static_cast<node_type *>(p);
 
-		if (mPred(node->mData.first, k)) {
+		if (mPred(node->mData, k)) {
 			vdhashtable_base_node *next = p->mpHashNext;
 
 			if (prev)
@@ -347,7 +351,7 @@ typename vdhashset<K, Hash, Pred, A>::iterator vdhashset<K, Hash, Pred, A>::find
 	for(vdhashtable_base_node *p = this->mpBucketStart[bucket]; p; p = p->mpHashNext) {
 		node_type *node = static_cast<node_type *>(p);
 
-		if (mPred(node->mData.first, k))
+		if (mPred(node->mData, k))
 			return iterator(node, &this->mpBucketStart[bucket], this->mpBucketEnd);
 	}
 

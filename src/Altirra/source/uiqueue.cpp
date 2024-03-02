@@ -3,10 +3,6 @@
 #include "uiqueue.h"
 #include "uicommondialogs.h"
 
-void ATUIStepFunctionAdapter(void *data) {
-	((void(*)())data)();
-}
-
 ATUIFuture::ATUIFuture()
 	: mStage(0)
 {
@@ -16,7 +12,8 @@ ATUIFuture::~ATUIFuture() {
 }
 
 ATUIStep ATUIFuture::GetStep() {
-	return ATUIStep::FromMethod<ATUIFuture, &ATUIFuture::RunStep>(this);
+	auto p = vdmakerefptr(this);
+	return ATUIStep([p]() { p->RunStep(); });
 }
 
 bool ATUIFuture::Run() {
@@ -59,19 +56,14 @@ bool ATUIQueue::Run() {
 	if (mSteps.empty())
 		return false;
 
-	ATUIStep step = mSteps.back();
+	ATUIStep step(std::move(mSteps.back()));
 	mSteps.pop_back();
 
-	if (step.mpRunFn) {
-		try {
-			step.mpRunFn(step.mpData);
-		} catch(const MyError& e) {
-			PushStep(ATUIShowAlert(VDTextAToW(e.gets()).c_str(), L"Altirra Error")->GetStep());
-		}
+	try {
+		step();
+	} catch(const MyError& e) {
+		PushStep(ATUIShowAlert(VDTextAToW(e.gets()).c_str(), L"Altirra Error")->GetStep());
 	}
-
-	if (step.mpReleaseFn)
-		step.mpReleaseFn(step.mpData);
 
 	return true;
 }

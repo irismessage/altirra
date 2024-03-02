@@ -34,6 +34,7 @@ float4 vd_tempsize;
 float4 vd_temp2size;
 float4 vd_interphtexsize;
 float4 vd_interpvtexsize;
+float4 vd_interptexsize;
 float4 vd_fieldinfo;
 float2 vd_chromauvscale;
 float2 vd_chromauvoffset;
@@ -52,6 +53,7 @@ texture vd_hevenoddtexture;
 texture vd_dithertexture;
 texture vd_interphtexture;
 texture vd_interpvtexture;
+texture vd_interptexture;
 
 extern sampler samp0 : register(s0);
 extern sampler samp1 : register(s1);

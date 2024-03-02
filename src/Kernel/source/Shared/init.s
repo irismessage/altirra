@@ -80,13 +80,12 @@ cold_boot:
 	; 3. test for diagnostic cartridge
 	lda		$bffc
 	bne		not_diag
-	ldx		$bfff			;prevent diagnostic cart from activating if addr is $FFxx
-	inx
-	bne		not_diag
-	ldx		#0
-	mva		#$ff $bffc
+	ldx		#$ff
+	cpx		$bfff			;prevent diagnostic cart from activating if addr is $FFxx
+	beq		not_diag
+	stx		$bffc
+	cmp		$bffc
 	sta		$bffc
-	cmp		not_diag
 	bne		not_diag
 	
 	; is it enabled?
@@ -404,6 +403,8 @@ end:
 	
 	; 14. initialize cartridges
 	mva		#0 tstdat
+
+.if !_KERNEL_XLXE
 	lda		$9ffc
 	bne		skipCartBInit
 	lda		$9ffb
@@ -416,6 +417,7 @@ end:
 	jsr		InitCartB
 	mva		#1 tstdat
 skipCartBInit:
+.endif
 	
 	mva		#0 tramsz
 	lda		$bffc

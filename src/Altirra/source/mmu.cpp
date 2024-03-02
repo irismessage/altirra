@@ -44,13 +44,14 @@ ATMMUEmulator::ATMMUEmulator()
 	, mCurrentBankInfo(0)
 	, mAxlonBank(0)
 	, mAxlonBankMask(0)
+	, mbAxlonAliasing(false)
 {
 	Shutdown();
 }
 
 ATMMUEmulator::~ATMMUEmulator() {
 	Shutdown();
-	SetAxlonMemory(0);
+	SetAxlonMemory(0, false);
 }
 
 void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
@@ -270,10 +271,10 @@ void ATMMUEmulator::Shutdown() {
 	mAnticBase = 0;
 }
 
-void ATMMUEmulator::SetAxlonMemory(uint8 bankbits) {
+void ATMMUEmulator::SetAxlonMemory(uint8 bankbits, bool enableAliasing) {
 	const uint8 bankMask = (uint8)((1 << bankbits) - 1);
 
-	if (mAxlonBankMask == bankMask)
+	if (mAxlonBankMask == bankMask && mbAxlonAliasing == enableAliasing)
 		return;
 
 	if (mpLayerAxlonControl1) {
@@ -286,6 +287,7 @@ void ATMMUEmulator::SetAxlonMemory(uint8 bankbits) {
 		mpLayerAxlonControl2 = NULL;
 	}
 
+	mbAxlonAliasing = enableAliasing;
 	mAxlonBankMask = bankMask;
 	mAxlonBank &= mAxlonBankMask;
 
@@ -295,9 +297,11 @@ void ATMMUEmulator::SetAxlonMemory(uint8 bankbits) {
 		handler.mpThis = this;
 		handler.mpWriteHandler = OnAxlonWrite;
 
-		mpLayerAxlonControl1 = mpMemMan->CreateLayer(kATMemoryPri_ExtRAM+1, handler, 0x0F, 0x01);
-		mpMemMan->SetLayerName(mpLayerAxlonControl1, "Axlon control (low mirror)");
-		mpMemMan->EnableLayer(mpLayerAxlonControl1, kATMemoryAccessMode_CPUWrite, true);
+		if (mbAxlonAliasing) {
+			mpLayerAxlonControl1 = mpMemMan->CreateLayer(kATMemoryPri_ExtRAM+1, handler, 0x0F, 0x01);
+			mpMemMan->SetLayerName(mpLayerAxlonControl1, "Axlon control (low mirror)");
+			mpMemMan->EnableLayer(mpLayerAxlonControl1, kATMemoryAccessMode_CPUWrite, true);
+		}
 
 		mpLayerAxlonControl2 = mpMemMan->CreateLayer(kATMemoryPri_ROM+1, handler, 0xCF, 0x01);
 		mpMemMan->SetLayerName(mpLayerAxlonControl2, "Axlon control (high mirror)");

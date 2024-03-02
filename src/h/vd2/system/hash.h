@@ -34,6 +34,8 @@
 	#include <vd2/system/vdtypes.h>
 #endif
 
+struct vduint128;
+
 // Case-sensitive string hashes
 
 uint32 VDHashString32(const char *s);
@@ -47,5 +49,9 @@ uint32 VDHashString32I(const char *s);
 uint32 VDHashString32I(const char *s, uint32 len);
 uint32 VDHashString32I(const wchar_t *s);
 uint32 VDHashString32I(const wchar_t *s, uint32 len);
+
+// Raw data hashes
+
+vduint128 VDHash128(const void *data, size_t len);
 
 #endif

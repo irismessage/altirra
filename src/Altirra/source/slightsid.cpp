@@ -17,10 +17,13 @@
 
 #include "stdafx.h"
 #include <vd2/system/binary.h>
+#include <at/atcore/consoleoutput.h>
+#include <at/atcore/deviceimpl.h>
 #include "slightsid.h"
 #include "scheduler.h"
 #include "audiooutput.h"
 #include "memorymanager.h"
+#include "devicemanager.h"
 #include "console.h"
 
 ATSlightSIDEmulator::ATSlightSIDEmulator()
@@ -114,12 +117,12 @@ void ATSlightSIDEmulator::WarmReset() {
 	memset(mAccumBuffer, 0, sizeof mAccumBuffer);
 }
 
-void ATSlightSIDEmulator::DumpStatus() {
-	ATConsoleWrite("CH  Freq  Phase   Wfrm  ADSR  Env-M\n");
+void ATSlightSIDEmulator::DumpStatus(ATConsoleOutput& output) {
+	output <<= "CH  Freq  Phase   Wfrm  ADSR  Env-M";
 	for(int i=0; i<3; ++i) {
 		const Channel& ch = mChannels[i];
 
-		ATConsolePrintf("%2u  %04X  %06X  %c%c%c%c  %X%X%X%X  %02X-%c\n"
+		output("%2u  %04X  %06X  %c%c%c%c  %X%X%X%X  %02X-%c"
 			, i+1
 			, ch.mFreq >> 8
 			, ch.mPhase >> 8
@@ -586,4 +589,139 @@ bool ATSlightSIDEmulator::StaticWriteControl(void *thisptr, uint32 addr, uint8 v
 
 	((ATSlightSIDEmulator *)thisptr)->WriteControl(addr8, value);
 	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDeviceSlightSID : public VDAlignedObject<16>
+					, public ATDevice
+					, public IATDeviceMemMap
+					, public IATDeviceScheduling
+					, public IATDeviceAudioOutput
+					, public IATDeviceDiagnostics
+{
+public:
+	ATDeviceSlightSID();
+
+	virtual void *AsInterface(uint32 id) override;
+
+	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
+	virtual void WarmReset() override;
+	virtual void ColdReset() override;
+	virtual void Init() override;
+	virtual void Shutdown() override;
+
+public: // IATDeviceMemMap
+	virtual void InitMemMap(ATMemoryManager *memmap) override;
+	virtual bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
+
+public:	// IATDeviceScheduling
+	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
+
+public:	// IATDeviceAudioOutput
+	virtual void InitAudioOutput(IATAudioOutput *out) override;
+
+public:	// IATDeviceDiagnostics
+	virtual void DumpStatus(ATConsoleOutput& output) override;
+
+private:
+	static sint32 ReadByte(void *thisptr0, uint32 addr);
+	static bool WriteByte(void *thisptr0, uint32 addr, uint8 value);
+
+	ATMemoryManager *mpMemMan;
+	ATScheduler *mpScheduler;
+	IATAudioOutput *mpAudioOutput;
+
+	ATSlightSIDEmulator mSlightSID;
+};
+
+ATDeviceSlightSID::ATDeviceSlightSID()
+	: mpMemMan(nullptr)
+	, mpScheduler(nullptr)
+	, mpAudioOutput(nullptr)
+{
+}
+
+void *ATDeviceSlightSID::AsInterface(uint32 id) {
+	switch(id) {
+		case IATDeviceMemMap::kTypeID:
+			return static_cast<IATDeviceMemMap *>(this);
+
+		case IATDeviceScheduling::kTypeID:
+			return static_cast<IATDeviceScheduling *>(this);
+
+		case IATDeviceAudioOutput::kTypeID:
+			return static_cast<IATDeviceAudioOutput *>(this);
+
+		case IATDeviceDiagnostics::kTypeID:
+			return static_cast<IATDeviceDiagnostics *>(this);
+
+		case ATSlightSIDEmulator::kTypeID:
+			return static_cast<ATSlightSIDEmulator *>(&mSlightSID);
+
+		default:
+			return ATDevice::AsInterface(id);
+	}
+}
+
+void ATDeviceSlightSID::GetDeviceInfo(ATDeviceInfo& info) {
+	info.mTag = "slightsid";
+	info.mName = L"SlightSID";
+	info.mConfigTag.clear();
+}
+
+void ATDeviceSlightSID::WarmReset() {
+	mSlightSID.WarmReset();
+}
+
+void ATDeviceSlightSID::ColdReset() {
+	mSlightSID.ColdReset();
+}
+
+void ATDeviceSlightSID::Init() {
+	mSlightSID.Init(mpMemMan, mpScheduler, mpAudioOutput);
+}
+
+void ATDeviceSlightSID::Shutdown() {
+	mSlightSID.Shutdown();
+
+	mpAudioOutput = nullptr;
+	mpScheduler = nullptr;
+	mpMemMan = nullptr;
+}
+
+void ATDeviceSlightSID::InitMemMap(ATMemoryManager *memmap) {
+	mpMemMan = memmap;
+}
+
+bool ATDeviceSlightSID::GetMappedRange(uint32 index, uint32& lo, uint32& hi) const {
+	if (index == 0) {
+		lo = 0xD500;
+		hi = 0xD600;
+		return true;
+	}
+
+	return false;
+}
+
+void ATDeviceSlightSID::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
+	mpScheduler = sch;
+}
+
+void ATDeviceSlightSID::InitAudioOutput(IATAudioOutput *out) {
+	mpAudioOutput = out;
+}
+
+void ATDeviceSlightSID::DumpStatus(ATConsoleOutput& output) {
+	mSlightSID.DumpStatus(output);
+}
+
+void ATCreateDeviceSlightSID(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceSlightSID> p(new ATDeviceSlightSID);
+
+	*dev = p.release();
+}
+
+void ATRegisterDeviceSlightSID(ATDeviceManager& dev) {
+	dev.AddDeviceFactory("slightsid", ATCreateDeviceSlightSID);
 }

@@ -26,6 +26,7 @@ class ATMemoryManager;
 class ATMemoryLayer;
 class ATIDEEmulator;
 class ATSimulator;
+class ATFirmwareManager;
 
 class ATSIDEEmulator {
 	ATSIDEEmulator(const ATSIDEEmulator&);
@@ -39,11 +40,13 @@ public:
 	bool IsSDXFlashDirty() const { return mFlashCtrl.IsDirty(); }
 
 	void LoadFirmware(const void *ptr, uint32 len);
-	void LoadFirmware(const wchar_t *path);
+	void LoadFirmware(ATFirmwareManager& fwmgr, uint64 id);
 	void SaveFirmware(const wchar_t *path);
 
-	void Init(ATIDEEmulator *ide, ATScheduler *sch, IATUIRenderer *uir, ATMemoryManager *memman, ATSimulator *sim, bool version2);
+	void Init(ATScheduler *sch, IATUIRenderer *uir, ATMemoryManager *memman, ATSimulator *sim, bool version2);
 	void Shutdown();
+
+	void SetIDEImage(ATIDEEmulator *ide);
 
 	void SetExternalEnable(bool enable);
 

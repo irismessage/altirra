@@ -16,12 +16,12 @@ ATUISlider::ATUISlider()
 	, mThumbSize(0)
 	, mTrackMin(0)
 	, mTrackSize(0)
+	, mbFrameEnabled(true)
 	, mbVertical(true)
 	, mbDragging(false)
 	, mDragOffset(0)
 	, mpButtonLower(NULL)
 	, mpButtonRaise(NULL)
-	, mValueChangedEvent()
 {
 	SetFillColor(0xD4D0C8);
 
@@ -30,6 +30,10 @@ ATUISlider::ATUISlider()
 }
 
 ATUISlider::~ATUISlider() {
+}
+
+void ATUISlider::SetFrameEnabled(bool enabled) {
+	mbFrameEnabled = enabled;
 }
 
 void ATUISlider::SetVertical(bool vert) {
@@ -45,12 +49,20 @@ void ATUISlider::SetPos(sint32 pos) {
 }
 
 void ATUISlider::SetPageSize(sint32 pageSize) {
-	mPageSize = pageSize;
+	if (mPageSize != pageSize) {
+		mPageSize = pageSize;
+
+		OnSize();
+	}
 }
 
 void ATUISlider::SetRange(sint32 minVal, sint32 maxVal) {
-	mMin = minVal;
-	mMax = maxVal;
+	if (mMin != minVal || mMax != maxVal) {
+		mMin = minVal;
+		mMax = maxVal;
+		
+		OnSize();
+	}
 }
 
 void ATUISlider::OnCreate() {
@@ -58,15 +70,22 @@ void ATUISlider::OnCreate() {
 
 	mpButtonLower = new ATUIButton;
 	mpButtonLower->AddRef();
+	mpButtonLower->SetFrameEnabled(mbFrameEnabled);
 	AddChild(mpButtonLower);
 	mpButtonLower->OnPressedEvent() = ATBINDCALLBACK(this, &ATUISlider::OnButtonLowerPressed);
 	mpButtonLower->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUISlider::OnButtonReleased);
 
 	mpButtonRaise = new ATUIButton;
 	mpButtonRaise->AddRef();
+	mpButtonRaise->SetFrameEnabled(mbFrameEnabled);
 	AddChild(mpButtonRaise);
 	mpButtonRaise->OnPressedEvent() = ATBINDCALLBACK(this, &ATUISlider::OnButtonRaisePressed);
 	mpButtonRaise->OnActivatedEvent() = ATBINDCALLBACK(this, &ATUISlider::OnButtonReleased);
+
+	if (!mbFrameEnabled) {
+		mpButtonLower->SetTextColor(0xFFFFFF);
+		mpButtonRaise->SetTextColor(0xFFFFFF);
+	}
 
 	if (mbVertical) {
 		mpButtonLower->SetStockImage(kATUIStockImageIdx_ButtonUp);
@@ -114,7 +133,7 @@ void ATUISlider::OnSize() {
 	const sint32 trackLen = sliderLen - 2 * buttonSize;
 
 	// compute thumb size
-	const uint32 range = mMax - mMin;
+	const uint32 range = mMax - mMin + mPageSize;
 	sint32 thumbSize = range ? (sint32)(((sint64)trackLen * mPageSize + (range >> 1)) / range) : trackLen;
 
 	if (thumbSize < buttonSize)
@@ -149,6 +168,8 @@ void ATUISlider::OnMouseDownL(sint32 x, sint32 y) {
 			mDragOffset = y - mPixelPos;
 		else
 			mDragOffset = x - mPixelPos;
+
+		Invalidate();
 	} else {
 		ATUITriggerBinding binding = {};
 		binding.mVk = kATUIVK_LButton;
@@ -183,8 +204,8 @@ void ATUISlider::OnMouseMove(sint32 x, sint32 y) {
 		if (mPos != pos) {
 			mPos = pos;
 
-			if (mValueChangedEvent)
-				mValueChangedEvent(this, pos);
+			if (mpValueChangedFn)
+				mpValueChangedFn(pos);
 		}
 	}
 }
@@ -201,6 +222,8 @@ void ATUISlider::OnMouseUpL(sint32 x, sint32 y) {
 
 void ATUISlider::OnActionStart(uint32 trid) {
 	switch(trid) {
+		case kActionLinePrior:
+		case kActionLineNext:
 		case kActionPagePrior:
 		case kActionPageNext:
 			OnActionRepeat(trid);
@@ -236,10 +259,21 @@ void ATUISlider::OnCaptureLost() {
 }
 
 void ATUISlider::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
+	vdrect32 rThumb;
+
 	if (mbVertical)
-		ATUIDraw3DRect(rdr, vdrect32(0, mPixelPos, w, mPixelPos + mThumbSize), mbDragging);
+		rThumb.set(0, mPixelPos, w, mPixelPos + mThumbSize);
 	else
-		ATUIDraw3DRect(rdr, vdrect32(mPixelPos, 0, mPixelPos + mThumbSize, h), mbDragging);
+		rThumb.set(mPixelPos, 0, mPixelPos + mThumbSize, h);
+
+	if (mbFrameEnabled)
+		ATUIDraw3DRect(rdr, rThumb, mbDragging);
+	else {
+		rdr.SetColorRGB(0xFFFFFF);
+
+		sint32 w3 = rThumb.width() / 3;
+		rdr.FillRect(rThumb.left + w3, rThumb.top, rThumb.width() - w3*2, rThumb.height());
+	}
 
 	ATUIContainer::Paint(rdr, w, h);
 }
@@ -278,7 +312,7 @@ void ATUISlider::SetPosInternal(sint32 pos, bool notify) {
 		mFloatPos = (float)pos;
 
 		sint32 range = mMax - mMin;
-		sint32 ppos = mTrackMin + (sint32)(((sint64)mTrackSize * (pos - mMin) + (range >> 1)) / range);
+		sint32 ppos = mTrackMin + (range ? (sint32)(((sint64)mTrackSize * (pos - mMin) + (range >> 1)) / range) : 0);
 
 		if (mPixelPos != ppos) {
 			mPixelPos = ppos;
@@ -288,7 +322,7 @@ void ATUISlider::SetPosInternal(sint32 pos, bool notify) {
 	}
 
 	if (notify) {
-		if (mValueChangedEvent)
-			mValueChangedEvent(this, pos);
+		if (mpValueChangedFn)
+			mpValueChangedFn(pos);
 	}
 }

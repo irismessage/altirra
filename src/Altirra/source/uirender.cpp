@@ -233,7 +233,7 @@ void ATUIAudioDisplay::SetSmallFont(IVDDisplayFont *font) {
 void ATUIAudioDisplay::AutoSize() {
 	const int chanht = 5 + mBigFontH + mSmallFontH;
 
-	SetArea(vdrect32(mArea.left, mArea.top, mArea.left + 320, mArea.top + chanht * 4));
+	SetArea(vdrect32(mArea.left, mArea.top, mArea.left + 34 * mSmallFontW, mArea.top + chanht * 4));
 }
 
 void ATUIAudioDisplay::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
@@ -287,6 +287,7 @@ void ATUIAudioDisplay::PaintSID(IVDDisplayRenderer& rdr, VDDisplayTextRenderer& 
 		tr.SetColorRGB(color);
 		tr.SetAlignment(VDDisplayTextRenderer::kAlignRight, VDDisplayTextRenderer::kVertAlignTop);
 		tr.DrawTextLine(x_freq, chy_freq, buf);
+		tr.SetFont(mpSmallFont);
 
 		buf[0] = chreg[4] & 0x80 ? 'N' : ' ';
 		buf[1] = chreg[4] & 0x40 ? 'P' : ' ';
@@ -769,8 +770,8 @@ ATUIRenderer::ATUIRenderer()
 	mpPausedLabel->SetVisible(false);
 	mpPausedLabel->SetFont(mpSysFont);
 	mpPausedLabel->SetTextOffset(4, 2);
-	mpPausedLabel->SetTextColor(0);
-	mpPausedLabel->SetFillColor(0xa4a098);
+	mpPausedLabel->SetTextColor(0xffffff);
+	mpPausedLabel->SetFillColor(0x404040);
 	mpPausedLabel->SetBorderColor(0xffffff);
 	mpPausedLabel->SetText(L"Paused");
 
@@ -1113,7 +1114,7 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 		mpFpsLabel->SetFont(mpSysFont);
 		mpAudioStatusDisplay->SetFont(mpSysFont);
 		mpAudioStatusDisplay->AutoSize();
-		mpAudioDisplay->SetBigFont(mpSysFont);
+		mpAudioDisplay->SetBigFont(mpSysMonoFont);
 		mpAudioDisplay->SetSmallFont(mpSmallMonoSysFont);
 		mpHardDiskDeviceLabel->SetFont(mpSysFont);
 		mpRecordingLabel->SetFont(mpSysFont);

@@ -166,7 +166,8 @@
       <p>
         <b>Direct bootstrap.</b> The 850 also exposes commands to allow direct bootstrap of the handler. The standard
         AUTORUN.SYS that comes with DOS 2.5 will automatically attempt this bootstrap, and other DOSes come with
-        programs to initiate this bootstrap.
+        programs to initiate this bootstrap. The Additions disk contains both a downloader (<tt>BOOT850.COM</tt>)
+        and a disk based version of the Altirra's R: handler (<tt>RHND850.COM</tt>).
       </p>
     </li>
   </ul>

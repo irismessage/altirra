@@ -185,7 +185,7 @@ public:
 
 	virtual void SetDeadZone(int zone) {}
 
-	virtual void Poll() = 0;
+	virtual bool Poll() = 0;
 	virtual bool PollForCapture(int& unit, uint32& inputCode) = 0;
 
 protected:
@@ -207,7 +207,7 @@ public:
 
 	virtual void SetDeadZone(int zone) { mDeadZone = zone << 5; }
 
-	virtual void Poll();
+	virtual bool Poll();
 	virtual bool PollForCapture(int& unit, uint32& inputCode);
 
 public:
@@ -251,14 +251,14 @@ ATControllerXInput::ATControllerXInput(ATXInputBinding& xinput, uint32 xid, ATIn
 ATControllerXInput::~ATControllerXInput() {
 }
 
-void ATControllerXInput::Poll() {
+bool ATControllerXInput::Poll() {
 	XINPUT_STATE xis;
 
 	if (ERROR_SUCCESS != mXInput.mpXInputGetState(mXid, &xis))
-		return;
+		return false;
 
 	if (mLastPacketId && mLastPacketId == xis.dwPacketNumber)
-		return;
+		return false;
 
 	mLastPacketId = xis.dwPacketNumber;
 
@@ -292,6 +292,7 @@ void ATControllerXInput::Poll() {
 	}
 
 	mLastState = dstate;
+	return true;
 }
 
 bool ATControllerXInput::PollForCapture(int& unit, uint32& inputCode) {
@@ -513,7 +514,7 @@ public:
 
 	void SetDeadZone(int zone) { mDeadZone = zone; }
 
-	void Poll();
+	bool Poll();
 	bool PollForCapture(int& unit, uint32& inputCode);
 
 protected:
@@ -620,21 +621,29 @@ void ATControllerDirectInput::Shutdown() {
 	mpDevice = NULL;
 }
 
-void ATControllerDirectInput::Poll() {
+bool ATControllerDirectInput::Poll() {
 	DecodedState state;
 	PollState(state);
 
+	bool change = false;
+
 	uint32 buttonDelta = (state.mButtonStates ^ mLastSentState.mButtonStates);
-	if (buttonDelta)
+	if (buttonDelta) {
+		change = true;
 		UpdateButtons(kATInputCode_JoyButton0, state.mButtonStates, buttonDelta);
+	}
 
 	uint32 axisButtonDelta = (state.mAxisButtonStates ^ mLastSentState.mAxisButtonStates);
-	if (axisButtonDelta)
+	if (axisButtonDelta) {
+		change = true;
 		UpdateButtons(kATInputCode_JoyStick1Left, state.mAxisButtonStates, axisButtonDelta);
+	}
 
 	for(int i=0; i<6; ++i) {
 		if (state.mAxisVals[i] != mLastSentState.mAxisVals[i] ||
-			state.mAxisDeadVals[i] != mLastSentState.mAxisDeadVals[i]) {
+			state.mAxisDeadVals[i] != mLastSentState.mAxisDeadVals[i])
+		{
+			change = true;
 			// We set DirectInput to use [-1024, 1024], but we want +/-64K.
 			mpInputManager->OnAxisInput(mUnit, kATInputCode_JoyHoriz1 + i, state.mAxisVals[i] << 6, state.mAxisDeadVals[i] << 6);
 		}
@@ -642,6 +651,8 @@ void ATControllerDirectInput::Poll() {
 
 	mLastSentState = state;
 	mLastPolledState = state;
+
+	return change;
 }
 
 bool ATControllerDirectInput::PollForCapture(int& unit, uint32& inputCode) {
@@ -785,7 +796,7 @@ public:
 	void SetCaptureMode(bool capture) { mbCaptureMode = capture; }
 
 	void RescanForDevices();
-	void Poll();
+	PollResult Poll();
 	bool PollForCapture(int& unit, uint32& inputCode);
 	void SetDeadZone(int zone);
 
@@ -965,16 +976,20 @@ void ATJoystickManager::RescanForDevices() {
 	}
 }
 
-void ATJoystickManager::Poll() {
-	if (mbCaptureMode)
-		return;
+ATJoystickManager::PollResult ATJoystickManager::Poll() {
+	if (mbCaptureMode || mControllers.empty())
+		return kPollResult_NoControllers;
 
 	Controllers::const_iterator it(mControllers.begin()), itEnd(mControllers.end());
+	bool change = false;
+
 	for(; it!=itEnd; ++it) {
 		ATController *ctrl = *it;
 
-		ctrl->Poll();
+		change = ctrl->Poll();
 	}
+
+	return change ? kPollResult_OK : kPollResult_NoActivity;
 }
 
 bool ATJoystickManager::PollForCapture(int& unit, uint32& inputCode) {

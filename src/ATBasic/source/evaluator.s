@@ -7,99 +7,203 @@
 ; without any warranty.
 
 ;===========================================================================
-; We try to match Atari BASIC's stack here as much as possible.
+; The stack handling is conceptually similar to that of Atari BASIC, but
+; has diverged quite a bit for efficiency. It now looks like this:
 ;
-; Argument stack format:
+; +----------------------+  LOMEM + $100
+; |    operator stack    |
+; +----------------------+
+; .          |           .
+; .          v           .
+; .                      .
+; .          ^           .
+; .          |           .
+; +----------------------+
+; |   argument stack 2   |
+; +----------------------+  LOMEM + $6C
+; .                      .
+; .                      .
+; .          ^           .
+; .          |           .
+; +----------------------+
+; |   argument stack 1   |
+; +----------------------+  LOMEM
 ;
-;	Numeric constant:		00 00 <value,6>
-;	Var-sourced number:		00 <varidx> <value,6>
-;	String constant:		80 00 <addr,2> <len,2> 00 00
+; The argument stacks together contain the values pushed onto the stack
+; and grow upward, while the operator stack grows downward from the top.
+; opsp points to the last valid location. There is enough room for 36
+; levels of nesting.
 ;
-
-;===========================================================================
-.proc ExprBeginPushStringVal
-		ldy		argsp
-		lda		#$83
-.def :ExprPushRawByteAsWord = *
-		sta		(argstk),y+
-		mva		#0 (argstk),y+
-		rts
-.endp
+; The paired argument stack is very different from Atari BASIC. First,
+; it only contains six bytes per entry instead of eight, omitting the
+; type and variable bytes. This is because most of the time keeping
+; these on the stack is unnecessary -- the argument types for each token
+; type are already known and enforced by the parser. A couple of statements
+; do take both types, including LIST, INPUT, and PRINT, and for those we
+; maintain a type byte for the top of stack. Variable information is
+; available from LVARPTR for the leftmost variable and VARPTR for the
+; rightmost variable.
+;
+; The six bytes of the argument stack are split between the two argument
+; stacks, with even bytes in stack 1 and odd bytes in stack 2. This serves
+; two purposes, one being to reduce the amount of stack pointer futzing
+; we have to do, and also to provide easy access to 16-bit quantities.
+; argsp points to the next available location. It would be faster to
+; store the stack as SoA like Turbo Basic XL does, but since we are running
+; from ROM and have neither a suitable absolute addressed writable area
+; nor enough zero page to burn on 6 pointers, we sacrifice a little
+; speed here.
+;
+; There is one other trick that we do, which is to cache the top of stack
+; in FR0. Each argument stack is actually shifted up one entry, with the
+; first entry not used. This is a substantial performance and size
+; optimization as it eliminates a lot of paired pushes and pops. For
+; instance, instead of doing pop(fr1)/pop(fr0)/fadd/push(fr0) for an add
+; token, we simply just do pop(fr1)/fadd. Unary operators are even
+; simpler -- ABS() just has to clear FR0 bit 7!
+;
+; The bottom of the stack, argsp=0, has special significance when in an
+; assignment context (expAsnCtx bit 7 = 1). Two differences in execution
+; occur in this situation. First, a pointer to the variable's value is
+; stashed in LVARPTR for later use. Second, the string indexing function
+; allows selecting a range beyond the current length of a string.
 
 ;===========================================================================
 ExprSkipCommaAndEvalPopInt:
 		inc		exLineOffset
 .proc	evaluateInt
 		jsr		evaluate
-		jmp		expPopFR0Int
+		jmp		ExprConvFR0Int
 .endp
 
 ;===========================================================================
 .proc evaluateHashIOCBOpt
 		;default to IOCB #0
 		lda		#0
+		tax
 		sta		iocbidx
 		
 		;check if we have an IOCB
 		ldy		exLineOffset
 		lda		(stmcur),y
 		cmp		#TOK_EXP_HASH
+		sec							;set C=1 to indicate no #iocb found
 		bne		valid_iocb
 
-.def :evaluateHashIOCB = *
-		jsr		evaluateHashIOCBNoCheckOpen
+.def :evaluateHashIOCBNoCheckZero = *
+		;fetch IOCB# -- note that we deliberately don't check the high
+		;byte, for compatbility with Atari BASIC
+		jsr		ExprSkipCommaAndEvalPopIntPos
 
-		;okay, now we need to check if this IOCB is actually open
-		tax
-		ldy		ichid,x
-		bpl		valid_iocb_2
-		
-		;force an IOCB not open error
-		lda		#$85
-		sta		errno
-		jmp		errorDispatch
-		
-valid_iocb_2:
-		lda		#0		;set Z=1 to indicate #iocb found
+		;IOCB #0 is allowed by some statements, so we don't check it here.
+		;	OPEN - not allowed
+		;	CLOSE - not allowed
+		;	XIO - not allowed
+		;	GET - not allowed
+		;	PUT - not allowed
+		;	NOTE - not allowed
+		;	POINT - not allowed
+		;	STATUS - not allowed
+		;	PRINT - allowed
+		;	INPUT - allowed
+		;IOCB #8-15 aren't allowed, but #16 is (#$&*#)
+		txa
+		asl
+		asl
+		asl
+		asl
+		bmi		invalid_iocb
+		sta		iocbidx
+
+		clc							;set C=0 to indicate #iocb found
 valid_iocb:
+		stx		iocbidx2
 		rts
+
+invalid_iocb:
+		jmp		errorBadDeviceNo
 .endp
 
 ;===========================================================================
-.proc	evaluateHashIOCBNoCheckOpen
-		jsr		ExprSkipCommaAndEvalPopIntPos
-		lda		fr0+1
-		bne		invalid_iocb
-		lda		fr0
-		cmp		#8
-		bcc		plausible_iocb
-invalid_iocb:
-		jmp		errorBadDeviceNo
-		
-plausible_iocb:
-		asl
-		asl
-		asl
-		asl
-		sta		iocbidx
+.proc	evaluateHashIOCB
+		jsr		evaluateHashIOCBNoCheckZero
+		txa
+		beq		evaluateHashIOCBOpt.invalid_iocb
 		rts
 .endp
 
 ;===========================================================================
 .proc	evaluateAssignment
-		lda		#$ff
-		jmp		evaluate._assign_entry
+		lda		#$80
+		bne		evaluate._assign_entry
 .endp
 
 ;===========================================================================
-ExprSkipCommaAndEvalVar
+ExprSkipCommaAndEvalVar = ExprSkipCommaAndEval
+evaluateVar = evaluate
+
+;===========================================================================
+.proc ExprPushLiteralConst
+		sta		expType
+		jsr		ExprPushExtFR0
+		ldy		exLineOffset
+		:6 mva (stmcur),y+ fr0+#
+		sty		exLineOffset
+		;##TRACE "Pushing literal constant: %g" fr0
+		jmp		evaluate.loop
+.endp
+
+;===========================================================================
+.proc ExprPushLiteralStr
+		;build argument stack entry
+		jsr		ExprPushExtFR0
+		lda		#$83
+		sta		expType
+		
+		;length
+		;dimensioned length	
+		;load and stash string literal length (so we don't have to thrash Y)
+		ldy		exLineOffset
+		lda		(stmcur),y
+		sta		fr0+2
+		sta		fr0+4
+		
+		;skip past length and string in statement text
+		sec
+		adc		exLineOffset
+		sta		exLineOffset		
+
+		;address
+		tya
+		sec								;+1 to skip length
+		adc		stmcur
+		sta		fr0
+		lda		#0
+		sta		fr0+3
+		sta		fr0+5
+		adc		stmcur+1
+		sta		fr0+1
+		
+		;all done
+		jmp		evaluate.loop
+.endp
+
+
+;===========================================================================
+; Main expression evaluator.
+;
+; _assign_entry:
+;	Special entry point that takes custom evaluation flags in the A
+;	register:
+;
+;	bit 7 = assignment context - allow string bounds beyond current
+;	        length for first lvalue
+;
+;	bit 6 = DIM context - allow references to undimensioned array/string
+;	        variables
+;
+ExprSkipCommaAndEval:
 		inc		exLineOffset
-.proc	evaluateVar
-		jsr		evaluate
-		jmp		expPopVar
-.endp
-
-;===========================================================================
 .proc	evaluate
 _tmpadr = fr0+1
 
@@ -111,9 +215,8 @@ _assign_entry = *
 		;;##TRACE "Beginning evaluation at $%04x+$%02x = $%04x" dw(stmcur) db(exLineOffset) dw(stmcur)+db(exLineOffset)
 
 		;reset stack pointers
-		ldy		#$ff
+		ldy		#0
 		sty		opsp
-		iny
 		sty		argsp
 		sty		expCommas
 loop:
@@ -124,79 +227,69 @@ loop:
 		;;##TRACE "Processing token: $%02x ($%04x+$%02x=$%04x)" (a) dw(stmcur) y dw(stmcur)+y
 		
 		;check if this token needs to be reduced immediately
-		bmi		is_imm
-		cmp		#$10
-		bcs		not_imm
-is_imm:
-		jsr		dispatch
-		;##ASSERT (db(argsp)&7)=0
-		jmp		loop
+		bmi		is_variable
+		cmp		#$0f
+		bcc		ExprPushLiteralConst
+		beq		ExprPushLiteralStr
 not_imm:
 			
 		;==== reduce loop ====
 				
 		;reduce while precedence of new operator is equal or lower than
 		;precedence of last operator on stack
-		sta		expCurOp
 		
 		;get push-on / shift precedence
-		jsr		ExprGetPrecedence
-		lsr
-		and		#$55
-
+		;
+		;if bit 7 is set, we immedately shift
+		sta		expCurOp
+		tax
+		lda		prec_table-$10,x
+		bmi		shift
+		and		#$7f
 		sta		expCurPrec
 		;;##TRACE "Current operator get-on precedence = $%02x" a
 
 reduce_loop:		
 		ldy		opsp
-		iny
 		beq		reduce_done
 		lda		(argstk),y
 		
 		;get pull-off/reduce precendence
-		jsr		ExprGetPrecedence
-		and		#$55
+		tax
+		lda		prec_table-$10,x
+		and		#$7e
 		
 		;stop reducing if the current operator has higher precedence
 		;;##TRACE "Checking precedence: tos $%02x vs. cur $%02x" a db(expCurPrec)
 		cmp		expCurPrec
 		bcc		reduce_done
 		
-		lda		(argstk),y
-		sty		opsp
+reduce_go:
+		inc		opsp
 		jsr		dispatch
-		;##ASSERT (db(argsp)&7)=0
+		;##ASSERT (db(argsp)%3)=0
 		jmp		reduce_loop
+
 reduce_done:
 		;exit if this is not an expression token
 		lda		expCurPrec
 		beq		done
-		
+
 		;push current operator on stack
+shift:
+		lda		expCurOp		
+		dec		opsp	
 		ldy		opsp
-		lda		expCurOp
-		;;##TRACE "Shift: $%02x" (a)
+		;##TRACE "Shift: $%02x" (a)
 		sta		(argstk),y
-		dey
-		sty		opsp	
-		jmp		loop
+		bne		loop
 done:	
 		;;##TRACE "Exiting evaluator"
 		dec		exLineOffset
 		rts
-		
-dispatch:
-		;;##TRACE "Reduce: $%02x (%y) - %u values on stack (%g %g)" (a) db(functionDispatchTableLo-14+a)+256*db(functionDispatchTableLo-14+a)+1 db(argsp)/8 dw(argstk)+db(argsp)-14 dw(argstk)+db(argsp)-6
-		tax
-		bmi		is_variable
-		lda		functionDispatchTableHi-$0e,x
-		pha
-		lda		functionDispatchTableLo-$0e,x
-		pha
-		ldy		argsp
-		rts
-		
+				
 is_variable:
+		;##TRACE "Push variable $%02X" (a)
 		;get value address of variable
 		jsr		VarGetAddr0
 		
@@ -213,37 +306,64 @@ is_variable:
 		adc		#0
 		sta		lvarptr+1
 		
+		;since we know the stack is empty, we know we don't need to push, either
+		ldy		#3
+		sty		argsp
+		bne		skip_push_fr0
+
 not_lvalue:
 
 		;push variable entry from VNTP onto argument stack
+		jsr		ExprPushFR0NonEmpty
 
+skip_push_fr0:
 		;load variable
-		jsr		VarLoadExtendedFR0
+		jsr		VarLoadFR0
+
+		;fetch type and set expression type
+		ldy		#0
+		lda		(varptr),y
+		sta		expType
 		
 		;check if we had an array or string		
 		;;##TRACE "arg %02x %02x %02x %02x" db(dw(argstk)+0) db(dw(argstk)+1) db(dw(argstk)+2) db(dw(argstk)+3)
 		cmp		#$40
-		bcc		not_relative_arraystr
+		bcc		loop
+
+		;check if it is dimensioned
+		lsr
+		bcc		not_dimmed
 		
+undim_ok:
 		;check if we have a relative pointer
-		and		#$02
-		bne		not_relative_arraystr
+		lsr
+		bcs		loop
 		
 		;it's relative -- convert relative pointer to absolute
 		;;##TRACE "Converting to absolute"
-		lda		prefr0
-		adc		#$01				;!! carry is set here, and this clears carry
-		sta		prefr0
 		lda		fr0
 		adc		starp
 		sta		fr0
 		lda		fr0+1
 		adc		starp+1
 		sta		fr0+1
-not_relative_arraystr:
 
 		;push variable onto argument stack and exit
-		jmp		ExprPushExtFR0
+		jmp		loop
+
+not_dimmed:
+		;check if we allow unDIM'd vars (i.e. we're in DIM)
+		bit		expAsnCtx
+		bvs		undim_ok
+		jmp		errorDimError
+
+dispatch:
+		;##TRACE "Reduce: $%02x (%y) by %02x - %u values on stack (%02X%02X%02X%02X%02X%02X %g)" (x) db(functionDispatchTableLo-$12+x)+256*db(functionDispatchTableHi-$12+x)+1 db(expCurOp) db(argsp)/3 db(dw(argstk)+db(argsp)-3) db(dw(argstk2)+db(argsp)-3) db(dw(argstk)+db(argsp)-2) db(dw(argstk2)+db(argsp)-2) db(dw(argstk)+db(argsp)-1) db(dw(argstk2)+db(argsp)-1) fr0
+		lda		functionDispatchTableHi-$12,x
+		pha
+		lda		functionDispatchTableLo-$12,x
+		pha
+		rts
 .endp
 
 ;===========================================================================
@@ -252,134 +372,154 @@ not_relative_arraystr:
 ; There are two precedences for each operator, a go-on and come-off
 ; precedence. A reduce happens if prec_on(cur) <= prec_off(tos); a
 ; shift happens otherwise. A prec_on of zero also terminates evaluation
-; after the entire stack is reduced.
+; after the entire stack is reduced. prec_on is the value from the table,
+; while prec_off = prec_on & $7F.
 ;
-; For values, prec_on and prec_off are always the same high value, always
-; forcing a shift and an immediate reduce.
+; If bit 7 is set, the operator always shifts when it is encountered.
+; Unary operators and open parens need this.
 ;
 ; For arithmetic operators, prec_on <= prec_off for left associativity and
-; prec_on > prec_off for right associativity.
+; prec_on > prec_off for right associativity. Bit 0 therefore indicates
+; right associativity.
 ;
-; Parens and commas deserve special attention here. For the open parens
-; operators, prec_on is high in order to force a shift and prec_off is
-; low in order to stall reduction. For the close parens operators, prec_on
-; is low to force a reduce immediately and prec_off is low so that nothing
-; causes it to reduce except an open parens. In order to prevent a close
-; parens from consuming more than one open parens, the close parens routine
-; short-circuits the reduce loop, preventing any further reduction and
-; preventing the close parens from being shifted onto the stack.
+; Parentheses use a bit of a hack: open parens are force-shifted onto the
+; stack but have a low precedence to allow arguments to accumulate. The
+; close parens also has a low precedence and causes reduction of everything
+; in between, including comma operators and the open paren. The open paren's
+; reduction routine then terminates the reduction loop to prevent the close
+; paren from reducing more than one nesting level or itself being
+; shifted/reduced.
 ;
+; Commas are shifted onto the stack along with the parameters they separate,
+; and when finally reduced due to the close parenthesis, increment the comma
+; count as they reduce. They have to be shifted onto the stack instead of
+; reducing immediately so that expressions like USR(X,USR(A,B,C)) work --
+; the outer call's commas need to be stacked so they don't collide with those
+; of the inner call.
+;
+; Unary operators have to be right-associative. We don't care about order of
+; unary +/-, but we do need to preserve ordering of NOT versus +/- so that
+; -NOT 0 works. Atari BASIC does not allow this sequence, but Basic XE does.
+;
+PREC_PCLOSE		= 2
+PREC_POPEN		= 4+$80
+PREC_COMMA		= 6+$01			;Commas must be right associative so that nesting works, i.e. USR(0,1,2*(X-Y)
+PREC_ASSIGN		= 8
+PREC_OR			= 10
+PREC_AND		= 12
+PREC_NOT		= 14+$80
+PREC_REL		= 16
+PREC_ADD		= 18
+PREC_MUL		= 20
+PREC_BITWISE	= 22
+PREC_EXP		= 24
+PREC_UNARY		= 26+$80
+PREC_RELSTR		= 28
+PREC_FUNC		= 30
 
-.proc	ExprGetPrecedence
-		cmp		#$0e
-		bcc		other
-		cmp		#$3d
-		scc:lda	#$3d
-		tax
-		lda		prectbl-$0e,x
-		rts
-other:
-		lda		#$ff
-		rts
-.endp
-
-.macro	_PREC
-		dta [:1&8]*16+[:1&4]*8+[:1&2]*4+[:1&1]*2+[:2&8]*8+[:2&4]*4+[:2&2]*2+[:2&1]*1
-.endm
-
-.proc	prectbl
-		;on, off
-		_PREC	 0,0				;$0E	numeric constant
-		_PREC	 0,0				;$0F	string constant
-		_PREC	 0,0				;$10
-		_PREC	 0,0				;$11
-		_PREC	 0,0				;$12	,
-		_PREC	 0,0				;$13	$
-		_PREC	 0,0				;$14	: (statement end)
-		_PREC	 0,0				;$15	;
-		_PREC	 0,0				;$16	EOL
-		_PREC	 0,0				;$17	goto
-		_PREC	 0,0				;$18	gosub
-		_PREC	 0,0				;$19	to
-		_PREC	 0,0				;$1A	step
-		_PREC	 0,0				;$1B	then
-		_PREC	 0,0				;$1C	#
-		_PREC	 8,8				;$1D	<=
-		_PREC	 8,8				;$1E	<>
-		_PREC	 8,8				;$1F	>=
-		_PREC	 8,8				;$20	<
-		_PREC	 8,8				;$21	>
-		_PREC	 8,8				;$22	=
-		_PREC	11,11				;$23	^
-		_PREC	10,10				;$24	*
-		_PREC	 9,9				;$25	+
-		_PREC	 9,9				;$26	-
-		_PREC	10,10				;$27	/
-		_PREC	 7,7				;$28	not
-		_PREC	 5,5				;$29	or
-		_PREC	 6,6				;$2A	and
-		_PREC	13,3				;$2B	(
-		_PREC	 2,2				;$2C	)
-		_PREC	 4,4				;$2D	= (numeric assignment)
-		_PREC	 4,4				;$2E	= (string assignment)
-		_PREC	12,12				;$2F	<= (strings)
-		_PREC	12,12				;$30	<>
-		_PREC	12,12				;$31	>=
-		_PREC	12,12				;$32	<
-		_PREC	12,12				;$33	>
-		_PREC	12,12				;$34	=
-		_PREC	11,11				;$35	+ (unary)
-		_PREC	11,11				;$36	-
-		_PREC	14,3				;$37	( (string left paren)
-		_PREC	14,3				;$38	( (array left paren)
-		_PREC	14,3				;$39	( (dim array left paren)
-		_PREC	14,3				;$3A	( (fun left paren)
-		_PREC	14,3				;$3B	( (dim str left paren)
-		_PREC	 4,3				;$3C	, (array/argument comma)
+.proc	prec_table
+		dta		0				;$10
+		dta		0				;$11
+		dta		0				;$12	,
+		dta		0				;$13	$
+		dta		0				;$14	: (statement end)
+		dta		0				;$15	;
+		dta		0				;$16	EOL
+		dta		0				;$17	goto
+		dta		0				;$18	gosub
+		dta		0				;$19	to
+		dta		0				;$1A	step
+		dta		0				;$1B	then
+		dta		0				;$1C	#
+		dta		PREC_REL		;$1D	<=
+		dta		PREC_REL		;$1E	<>
+		dta		PREC_REL		;$1F	>=
+		dta		PREC_REL		;$20	<
+		dta		PREC_REL		;$21	>
+		dta		PREC_REL		;$22	=
+		dta		PREC_EXP		;$23	^
+		dta		PREC_MUL		;$24	*
+		dta		PREC_ADD		;$25	+
+		dta		PREC_ADD		;$26	-
+		dta		PREC_MUL		;$27	/
+		dta		PREC_NOT		;$28	not
+		dta		PREC_OR			;$29	or
+		dta		PREC_AND		;$2A	and
+		dta		PREC_POPEN		;$2B	(
+		dta		PREC_PCLOSE		;$2C	)
+		dta		PREC_ASSIGN		;$2D	= (numeric assignment)
+		dta		PREC_ASSIGN		;$2E	= (string assignment)
+		dta		PREC_RELSTR		;$2F	<= (strings)
+		dta		PREC_RELSTR		;$30	<>
+		dta		PREC_RELSTR		;$31	>=
+		dta		PREC_RELSTR		;$32	<
+		dta		PREC_RELSTR		;$33	>
+		dta		PREC_RELSTR		;$34	=
+		dta		PREC_UNARY		;$35	+ (unary)
+		dta		PREC_UNARY		;$36	-
+		dta		PREC_POPEN		;$37	( (string left paren)
+		dta		PREC_POPEN		;$38	( (array left paren)
+		dta		PREC_POPEN		;$39	( (dim array left paren)
+		dta		PREC_POPEN		;$3A	( (fun left paren)
+		dta		PREC_POPEN		;$3B	( (dim str left paren)
+		dta		PREC_COMMA		;$3C	, (array/argument comma)
 		
 		;$3D and on are functions
-		_PREC	13,13
+		dta		PREC_FUNC		;$3D
+		dta		PREC_FUNC		;$3E
+		dta		PREC_FUNC		;$3F
+		dta		PREC_FUNC		;$40
+		dta		PREC_FUNC		;$41
+		dta		PREC_FUNC		;$42
+		dta		PREC_FUNC		;$43
+		dta		PREC_FUNC		;$44
+		dta		PREC_FUNC		;$45
+		dta		PREC_FUNC		;$46
+		dta		PREC_FUNC		;$47
+		dta		PREC_FUNC		;$48
+		dta		PREC_FUNC		;$49
+		dta		PREC_FUNC		;$4A
+		dta		PREC_FUNC		;$4B
+		dta		PREC_FUNC		;$4C
+		dta		PREC_FUNC		;$4D
+		dta		PREC_FUNC		;$4E
+		dta		PREC_FUNC		;$4F
+		dta		PREC_FUNC		;$50
+		dta		PREC_FUNC		;$51
+		dta		PREC_FUNC		;$52
+		dta		PREC_FUNC		;$53
+		dta		PREC_FUNC		;$54
+		dta		PREC_FUNC		;$55
+		dta		PREC_BITWISE	;$56	% (xor)
+		dta		PREC_BITWISE	;$57	! (or)
+		dta		PREC_BITWISE	;$58	& (and)
+		dta		PREC_FUNC		;$59
+		dta		PREC_FUNC		;$5A
+		dta		PREC_FUNC		;$5B
+		dta		PREC_FUNC		;$5C
+		dta		PREC_FUNC		;$5D
+		dta		PREC_FUNC		;$5E
+		dta		PREC_FUNC		;$5F
+		dta		PREC_FUNC		;$60
+		dta		PREC_FUNC		;$61
 .endp
 
 ;===========================================================================
-.proc	expPopVar
-		lda		argsp
-		;##ASSERT (a&7)=0 and a
-		sub		#7
-		tay
-		lda		(argstk),y
-		dey
-		sty		argsp
-		jmp		VarGetAddr0
-.endp
+ExprPopExtFR0 = expPopFR0
 
 ;===========================================================================
-.proc	ExprPopExtFR0
-		ldx		#7
-copyloop:
-		dec		argsp
-		ldy		argsp
-		mva		(argstk),y prefr0,x
-		dex
-		bpl		copyloop
-		rts
-.endp
-
-;===========================================================================
-expPopFR1FR0:
-		jsr		expPopFR1
 .proc	expPopFR0
 		ldy		argsp
-		;##ASSERT (y&7)=0 and y
-with_offset:
-		ldx		#5
-copyloop:
+		;##ASSERT (y%3)=0 and y
 		dey
-		mva		(argstk),y fr0,x
-		dex
-		bpl		copyloop
+		mva		(argstk2),y fr0+5
+		mva		(argstk),y fr0+4
 		dey
+		mva		(argstk2),y fr0+3
+		mva		(argstk),y fr0+2
 		dey
+		mva		(argstk2),y fr0+1
+		mva		(argstk),y fr0
 		sty		argsp
 		rts
 .endp
@@ -391,6 +531,7 @@ copyloop:
 ;
 .proc	expPopFR0Int
 		jsr		expPopFR0
+.def :ExprConvFR0Int = *
 		jsr		fpi
 		bcs		fail
 		ldx		fr0
@@ -409,8 +550,8 @@ ExprSkipCommaAndEvalPopIntPos:
 		inc		exLineOffset
 ExprEvalPopIntPos:
 		jsr		evaluate
-.proc	expPopFR0IntPos
-		jsr		expPopFR0Int
+.proc	ExprConvFR0IntPos
+		jsr		ExprConvFR0Int
 		bmi		is_neg
 		rts
 is_neg:
@@ -420,16 +561,16 @@ is_neg:
 ;===========================================================================
 .proc	expPopFR1
 		ldy		argsp
-		;##ASSERT (y&7)=0 and y
-with_offset:
-		ldx		#5
-copyloop:
+		;##ASSERT (y%3)=0 and y
 		dey
-		mva		(argstk),y fr1,x
-		dex
-		bpl		copyloop
+		mva (argstk2),y fr1+5
+		mva (argstk),y fr1+4
 		dey
+		mva (argstk2),y fr1+3
+		mva (argstk),y fr1+2
 		dey
+		mva (argstk2),y fr1+1
+		mva (argstk),y fr1
 		sty		argsp
 		rts
 .endp
@@ -437,249 +578,121 @@ copyloop:
 ;===========================================================================
 .proc	ExprPushExtFR0
 		ldy		argsp
-		ldx		#<-8
-		bne		expPushFR0.copyloop
-.endp
-
-;===========================================================================
-expPushFR0Int:
-		jsr		ifp
-.proc	expPushFR0
-		ldy		argsp
-		lda		#0
-		jsr		ExprPushRawByteAsWord
-		ldx		#-6
-copyloop:
-		mva		fr0+6,x (argstk),y+
-		inx
-		bne		copyloop
+		beq		stack_empty
+.def :ExprPushFR0NonEmpty = *
+		mva		fr0 (argstk),y
+		mva		fr0+1 (argstk2),y+
+		mva		fr0+2 (argstk),y
+		mva		fr0+3 (argstk2),y+
+		mva		fr0+4 (argstk),y
+		mva		fr0+5 (argstk2),y+
+		sty		argsp
+		rts
+stack_empty:
+		ldy		#3
 		sty		argsp
 		rts
 .endp
 
 ;===========================================================================
-; Obtain absolute address of string on top of evaluation stack.
-;
-; Inputs:
-;	String entry on eval TOS.
-;
-; Outputs:
-;	FR0 = string data
-;	VARPTR = ID bytes
-;
-ExprSkipCommaEvalAndPopString:
-		inc		exLineOffset
-ExprEvalAndPopString:
-		jsr		evaluate
-.proc	expPopAbsString
-		;lower SP
-		ldy		argsp
-		;##ASSERT (y&7)=0 and y
-		
-		;copy upper 6 bytes to FR0
-		ldx		#5
-copy_loop:
-		dey
-		lda		(argstk),y
-		sta		fr0,x
-		dex
-		bpl		copy_loop
-		
-		;copy first two string bytes to VARPTR
-		dey
-		lda		(argstk),y
-		sta		varptr+1
-		dey
-		lda		(argstk),y
-		sta		varptr
-		
-		sty		argsp
-		
-		;result should always be a string, and absolute if dimensioned
-		;##ASSERT db(varptr)=$80 or db(varptr)=$82 or db(varptr)=$83
-		rts
-.endp
-
-;===========================================================================
-; Inputs:
-;	X = zero page location to store FR0+1,FR0 to
-;
-.proc ExprStoreFR0Int
-		mwa		fr0 0,x
-		rts
-.endp
-
-;===========================================================================
-.proc functionDispatchTableLo
-		;$0E
-		dta		<[expNumConst-1]
-		dta		<[expStrConst-1]
-		
-		;$10
-		dta		<[0]
-		dta		<[0]
-		dta		<[expComma-1]
-		dta		<[0]
-		dta		<[0]
-		dta		<[0]
-		dta		<[0]
-		dta		<[0]
-		dta		<[0]
-		dta		<[0]
-		dta		<[0]
-		dta		<[0]
-		dta		<[0]
-		dta		<[funCompare-1]
-		dta		<[funCompare-1]
-		dta		<[funCompare-1]
+.macro FUNCTION_DISPATCH_TABLE
+		;$12
+		dta		:1[expComma-1]
+		dta		:1[0]
+		dta		:1[0]
+		dta		:1[0]
+		dta		:1[0]
+		dta		:1[0]
+		dta		:1[0]
+		dta		:1[0]
+		dta		:1[0]
+		dta		:1[0]
+		dta		:1[0]
+		dta		:1[funCompare-1]
+		dta		:1[funCompare-1]
+		dta		:1[funCompare-1]
 
 		;$20
-		dta		<[funCompare-1]
-		dta		<[funCompare-1]
-		dta		<[funCompare-1]
-		dta		<[funPower-1]
-		dta		<[funMultiply-1]
-		dta		<[funAdd-1]
-		dta		<[funSubtract-1]
-		dta		<[funDivide-1]
-		dta		<[funNot-1]
-		dta		<[funOr-1]
-		dta		<[funAnd-1]
-		dta		<[funOpenParens-1]
-		dta		<[0]
-		dta		<[funAssignNum-1]
-		dta		<[funAssignStr-1]
-		dta		<[funStringCompare-1]
+		dta		:1[funCompare-1]
+		dta		:1[funCompare-1]
+		dta		:1[funCompare-1]
+		dta		:1[funPower-1]
+		dta		:1[funMultiply-1]
+		dta		:1[funAdd-1]
+		dta		:1[funSubtract-1]
+		dta		:1[funDivide-1]
+		dta		:1[funNot-1]
+		dta		:1[funOr-1]
+		dta		:1[funAnd-1]
+		dta		:1[funOpenParens-1]
+		dta		:1[0]
+		dta		:1[funAssignNum-1]
+		dta		:1[funAssignStr-1]
+		dta		:1[funStringCompare-1]
 
 		;$30
-		dta		<[funStringCompare-1]
-		dta		<[funStringCompare-1]
-		dta		<[funStringCompare-1]
-		dta		<[funStringCompare-1]
-		dta		<[funStringCompare-1]
-		dta		<[funUnaryPlus-1]
-		dta		<[funUnaryMinus-1]
-		dta		<[funArrayStr-1]
-		dta		<[funArrayNum-1]
-		dta		<[funDimArray-1]
-		dta		<[funOpenParens-1]
-		dta		<[funDimStr-1]
-		dta		<[funArrayComma-1]
+		dta		:1[funStringCompare-1]
+		dta		:1[funStringCompare-1]
+		dta		:1[funStringCompare-1]
+		dta		:1[funStringCompare-1]
+		dta		:1[funStringCompare-1]
+		dta		:1[funUnaryPlus-1]
+		dta		:1[funUnaryMinus-1]
+		dta		:1[funArrayStr-1]
+		dta		:1[funArrayNum-1]
+		dta		:1[funDimArray-1]
+		dta		:1[funOpenParens-1]
+		dta		:1[funDimStr-1]
+		dta		:1[funArrayComma-1]
 		
 		;$3D
-		dta		<[funStr-1]
-		dta		<[funChr-1]
-		dta		<[funUsr-1]
+		dta		:1[funStr-1]
+		dta		:1[funChr-1]
+		dta		:1[funUsr-1]
 
 		;$40
-		dta		<[funAsc-1]
-		dta		<[funVal-1]
-		dta		<[funLen-1]
-		dta		<[funAdr-1]
-		dta		<[funAtn-1]
-		dta		<[funCos-1]
-		dta		<[funPeek-1]
-		dta		<[funSin-1]
-		dta		<[funRnd-1]
-		dta		<[funFre-1]
-		dta		<[funExp-1]
-		dta		<[funLog-1]
-		dta		<[funClog-1]
-		dta		<[funSqr-1]
-		dta		<[funSgn-1]
-		dta		<[funAbs-1]
+		dta		:1[funAsc-1]
+		dta		:1[funVal-1]
+		dta		:1[funLen-1]
+		dta		:1[funAdr-1]
+		dta		:1[funAtn-1]
+		dta		:1[funCos-1]
+		dta		:1[funPeek-1]
+		dta		:1[funSin-1]
+		dta		:1[funRnd-1]
+		dta		:1[funFre-1]
+		dta		:1[funExp-1]
+		dta		:1[funLog-1]
+		dta		:1[funClog-1]
+		dta		:1[funSqr-1]
+		dta		:1[funSgn-1]
+		dta		:1[funAbs-1]
 		
 		;$50
-		dta		<[funInt-1]
-		dta		<[funPaddle-1]
-		dta		<[funStick-1]
-		dta		<[funPtrig-1]
-		dta		<[funStrig-1]
+		dta		:1[funInt-1]
+		dta		:1[funPaddleStick-1]		;PADDLE
+		dta		:1[funPaddleStick-1]		;STICK
+		dta		:1[funPaddleStick-1]		;PTRIG
+		dta		:1[funPaddleStick-1]		;STRIG
+		dta		0
+		dta		:1[funBitwiseXor-1]
+		dta		:1[funBitwiseOr-1]
+		dta		:1[funBitwiseAnd-1]
+		dta		0
+		dta		0
+		dta		0
+		dta		:1[funHex-1]
+		dta		0
+		dta		:1[funDpeek-1]
+		dta		0
+		dta		:1[funVstick-1]
+		dta		:1[funHstick-1]
+.endm
+
+.proc functionDispatchTableLo
+		FUNCTION_DISPATCH_TABLE <
 .endp
 
 .proc functionDispatchTableHi
-		;$0E
-		dta		>[expNumConst-1]
-		dta		>[expStrConst-1]
-		
-		;$10
-		dta		>[0]
-		dta		>[0]
-		dta		>[expComma-1]
-		dta		>[0]
-		dta		>[0]
-		dta		>[0]
-		dta		>[0]
-		dta		>[0]
-		dta		>[0]
-		dta		>[0]
-		dta		>[0]
-		dta		>[0]
-		dta		>[0]
-		dta		>[funCompare-1]
-		dta		>[funCompare-1]
-		dta		>[funCompare-1]
-
-		;$20
-		dta		>[funCompare-1]
-		dta		>[funCompare-1]
-		dta		>[funCompare-1]
-		dta		>[funPower-1]
-		dta		>[funMultiply-1]
-		dta		>[funAdd-1]
-		dta		>[funSubtract-1]
-		dta		>[funDivide-1]
-		dta		>[funNot-1]
-		dta		>[funOr-1]
-		dta		>[funAnd-1]
-		dta		>[funOpenParens-1]
-		dta		>[0]
-		dta		>[funAssignNum-1]
-		dta		>[funAssignStr-1]
-		dta		>[funStringCompare-1]
-
-		;$30
-		dta		>[funStringCompare-1]
-		dta		>[funStringCompare-1]
-		dta		>[funStringCompare-1]
-		dta		>[funStringCompare-1]
-		dta		>[funStringCompare-1]
-		dta		>[funUnaryPlus-1]
-		dta		>[funUnaryMinus-1]
-		dta		>[funArrayStr-1]
-		dta		>[funArrayNum-1]
-		dta		>[funDimArray-1]
-		dta		>[funOpenParens-1]
-		dta		>[funDimStr-1]
-		dta		>[funArrayComma-1]
-		
-		;$3D
-		dta		>[funStr-1]
-		dta		>[funChr-1]
-		dta		>[funUsr-1]
-
-		;$40
-		dta		>[funAsc-1]
-		dta		>[funVal-1]
-		dta		>[funLen-1]
-		dta		>[funAdr-1]
-		dta		>[funAtn-1]
-		dta		>[funCos-1]
-		dta		>[funPeek-1]
-		dta		>[funSin-1]
-		dta		>[funRnd-1]
-		dta		>[funFre-1]
-		dta		>[funExp-1]
-		dta		>[funLog-1]
-		dta		>[funClog-1]
-		dta		>[funSqr-1]
-		dta		>[funSgn-1]
-		dta		>[funAbs-1]
-		
-		;$50
-		dta		>[funInt-1]
-		dta		>[funPaddle-1]
-		dta		>[funStick-1]
-		dta		>[funPtrig-1]
-		dta		>[funStrig-1]
+		FUNCTION_DISPATCH_TABLE >
 .endp

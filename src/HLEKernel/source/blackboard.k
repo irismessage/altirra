@@ -22,12 +22,41 @@
 		if (kdb.RAMTOP >= 0x80) {
 			// load the self-test module out of the LLE-XL kernel
 			uint8 buf[2048];
-			ATLoadKernelResource(IDR_KERNELXL, buf, 0x1000, 0x800);
+			ATLoadKernelResource(IDR_KERNELXL, buf, 0x1000, 0x800, false);
 			
-			// patch the name to say HLE instead of LLE
-			for(int i=0; i<2048-3; ++i) {
-				if (buf[i] == 'L'-0x20 && buf[i+1] == 'L'-0x20 && buf[i+2] == 'E'-0x20) {
-					buf[i] = 'H'-0x20;
+			// patch the name to say HLE instead of " for XL/XE/XEGS"
+			static const char kSearchString[]={
+				' '-0x20,
+				'f',
+				'o',
+				'r',
+				' '-0x20,
+				'X'-0x20,
+				'L'-0x20,
+				'/'-0x20,
+				'X'-0x20,
+				'E'-0x20,
+				'/'-0x20,
+				'X'-0x20,
+				'E'-0x20,
+				'G'-0x20,
+				'S'-0x20,
+			};
+				
+			const size_t kSearchLen = sizeof kSearchString;
+			
+			for(int i=0; i<2048-256; ++i) {
+				if (!memcmp(buf+i, kSearchString, kSearchLen)) {
+					buf[i+1] = 'H'-0x20;
+					buf[i+2] = 'L'-0x20;
+					buf[i+3] = 'E'-0x20;
+					
+					// find EOL and move down version info, space padding on right
+					uint8 *end = (uint8 *)memchr(buf+i+kSearchLen, 0x9B, 256);
+					if (end) {
+						memmove(buf + i + 4, buf + i + kSearchLen, end - (buf + i + kSearchLen));
+						memset(end - kSearchLen + 4, 0, kSearchLen - 4);
+					}
 					break;
 				}
 			}

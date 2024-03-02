@@ -626,7 +626,12 @@ public:
 		if (!y)
 			return false;
 
-		result = x / y;
+		// suppress integer overflow exception
+		if (x == -0x7FFFFFFF-1 && y == -1)
+			result = x;
+		else
+			result = x / y;
+
 		return true;
 	}
 
@@ -1712,6 +1717,70 @@ bool ATDebugExpNodeTernary::Optimize2(ATDebugExpNode **result) {
 	return false;
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeTemporary : public ATDebugExpNode {
+public:
+	ATDebugExpNodeTemporary(int index) : ATDebugExpNode(kATDebugExpNodeType_Temporary), mIndex(index) {}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		if (!context.mpTemporaries)
+			return false;
+
+		result = context.mpTemporaries[mIndex];
+		return true;
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		s += '@';
+		s += 't';
+		s += (char)('0' + mIndex);
+	}
+
+protected:
+	const int mIndex;
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeReturnAddress : public ATDebugExpNode {
+public:
+	ATDebugExpNodeReturnAddress() : ATDebugExpNode(kATDebugExpNodeType_ReturnAddress) {}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		if (!context.mpCPU || !context.mpMemory)
+			return false;
+
+		uint32 addr = 0;
+		uint32 s;
+
+		switch(context.mpCPU->GetCPUSubMode()) {
+			case kATCPUSubMode_65C816_NativeM16X16:
+			case kATCPUSubMode_65C816_NativeM16X8:
+			case kATCPUSubMode_65C816_NativeM8X16:
+			case kATCPUSubMode_65C816_NativeM8X8:
+				s = context.mpCPU->GetS();
+				addr = context.mpMemory->CPUReadByte(s + 1);
+				addr += (uint32)context.mpMemory->CPUReadByte(s + 2) << 8;
+				break;
+
+			default:
+				s = context.mpCPU->GetS();
+				addr = context.mpMemory->CPUReadByte(0x100 + ((s + 1) & 0xff));
+				addr += (uint32)context.mpMemory->CPUReadByte(0x100 + ((s + 2) & 0xff)) << 8;
+				break;
+		}
+
+		result = (addr + 1) & 0xffff;
+
+		return true;
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		s += "@ra";
+	}
+};
+
 ///////////////////////////////////////////////////////////////////////////
 
 ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const ATDebuggerExprParseOpts& opts) {
@@ -1838,7 +1907,9 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const
 		kTokAddrSpace,
 		kTokXBankReg,
 		kTokXBankCPU,
-		kTokXBankANTIC
+		kTokXBankANTIC,
+		kTokTemp,
+		kTokReturnAddr
 	};
 
 	vdfastvector<ATDebugExpNode *> valstack;
@@ -2067,6 +2138,25 @@ force_ident:
 							throw ATDebuggerExprParseException("Unable to resolve symbol \"%s\"", identstr.c_str());
 						}
 					}
+				} else if (c == '@') {
+					const char *nameStart = s;
+
+					if (isalpha((unsigned char)*s)) {
+						++s;
+
+						while(isalnum((unsigned char)*s))
+							++s;
+					}
+
+					const char *nameEnd = s;
+
+					if (nameEnd - nameStart == 2 && nameStart[0] == 't' && nameStart[1] >= '0' && nameStart[1] <= '9') {
+						tok = kTokTemp;
+						intVal = (int)(nameStart[1] - '0');
+					} else if (nameEnd - nameStart == 2 && nameStart[0] == 'r' && nameStart[1] == 'a') {
+						tok = kTokReturnAddr;
+					} else
+						throw ATDebuggerExprParseException("Unknown special variable '@%.*s'", nameEnd - nameStart, nameStart);
 				} else
 					throw ATDebuggerExprParseException("Unexpected character '%c'", c);
 			}
@@ -2228,6 +2318,18 @@ force_ident:
 					valstack.push_back(node);
 					node.release();
 
+					needValue = false;
+				} else if (tok == kTokTemp) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeTemporary(intVal));
+
+					valstack.push_back(node);
+					node.release();
+					needValue = false;
+				} else if (tok == kTokReturnAddr) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeReturnAddress);
+
+					valstack.push_back(node);
+					node.release();
 					needValue = false;
 				} else {
 					throw ATDebuggerExprParseException("Expected value");

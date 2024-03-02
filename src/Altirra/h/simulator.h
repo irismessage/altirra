@@ -1,5 +1,5 @@
-//	Altirra - Atari 800/800XL emulator
-//	Copyright (C) 2008 Avery Lee
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2008-2014 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -58,11 +58,13 @@ class ATHLEFPAccelerator;
 class ATHLEFastBootHook;
 class IATHLECIOHook;
 class ATAudioSyncMixer;
-class ATXEP80Emulator;
-class ATDragonCartEmulator;
-struct ATDragonCartSettings;
+class ATFirmwareManager;
+class ATDeviceManager;
+class IATDeviceSIOManager;
+class IATDeviceCIOManager;
+class IATPrinterOutput;
 
-enum ATMemoryMode {
+enum ATMemoryMode : uint32 {
 	kATMemoryMode_48K,
 	kATMemoryMode_52K,
 	kATMemoryMode_64K,
@@ -80,7 +82,7 @@ enum ATMemoryMode {
 	kATMemoryModeCount
 };
 
-enum ATHardwareMode {
+enum ATHardwareMode : uint32 {
 	kATHardwareMode_800,
 	kATHardwareMode_800XL,
 	kATHardwareMode_5200,
@@ -112,21 +114,14 @@ enum ATROMImage {
 
 enum ATKernelMode {
 	kATKernelMode_Default,
-	kATKernelMode_OSB,
+	kATKernelMode_800,
 	kATKernelMode_XL,
-	kATKernelMode_HLE,
-	kATKernelMode_LLE_OSB,
-	kATKernelMode_OSA,
-	kATKernelMode_Other,
 	kATKernelMode_5200,
-	kATKernelMode_5200_LLE,
-	kATKernelMode_XEGS,
-	kATKernelMode_1200XL,
-	kATKernelMode_LLE_XL,
 	kATKernelModeCount
 };
 
 enum ATIDEHardwareMode {
+	kATIDEHardwareMode_None,
 	kATIDEHardwareMode_MyIDE_D1xx,
 	kATIDEHardwareMode_MyIDE_D5xx,
 	kATIDEHardwareMode_KMKJZ_V1,
@@ -147,11 +142,22 @@ enum ATStorageId {
 	kATStorageId_All
 };
 
-enum ATVideoStandard {
+enum ATVideoStandard : uint32 {
 	kATVideoStandard_NTSC,
 	kATVideoStandard_PAL,
 	kATVideoStandard_SECAM,
+	kATVideoStandard_PAL60,
+	kATVideoStandard_NTSC50,
 	kATVideoStandardCount
+};
+
+enum ATMemoryClearMode : uint8 {
+	kATMemoryClearMode_Zero,
+	kATMemoryClearMode_Random,
+	kATMemoryClearMode_DRAM1,
+	kATMemoryClearMode_DRAM2,
+	kATMemoryClearMode_DRAM3,
+	kATMemoryClearModeCount
 };
 
 class ATSaveStateReader;
@@ -159,28 +165,21 @@ class ATSaveStateWriter;
 class ATCassetteEmulator;
 class IATHLEKernel;
 class IATJoystickManager;
-class IATHostDeviceEmulator;
 class ATCartridgeEmulator;
 class ATPortController;
 class ATInputManager;
-class IATPrinterEmulator;
 class ATVBXEEmulator;
 class ATSoundBoardEmulator;
-class ATSlightSIDEmulator;
-class ATCovoxEmulator;
-class ATRTime8Emulator;
 class ATCPUProfiler;
 class ATCPUVerifier;
 class ATCPUHeatMap;
 class ATIDEEmulator;
 class ATMyIDEEmulator;
 class IATAudioOutput;
-class IATRS232Emulator;
 class ATLightPenPort;
 class ATCheatEngine;
 class ATMMUEmulator;
 class ATAudioMonitor;
-class IATPCLinkDevice;
 class IATPBIDevice;
 class IATVirtualScreenHandler;
 
@@ -215,7 +214,7 @@ struct ATLoadContext {
 		, mLoadIndex(-1) {}
 };
 
-class ATSimulator : ATCPUEmulatorCallbacks,
+class ATSimulator final : ATCPUEmulatorCallbacks,
 					ATAnticEmulatorConnections,
 					IATPokeyEmulatorConnections,
 					IATGTIAEmulatorConnections,
@@ -229,8 +228,9 @@ public:
 	void Init(void *hwnd);
 	void Shutdown();
 
-	void LoadBuiltInROMs();
-	void LoadROMs();
+	// Reload any currently used ROM images. Returns true if an actively used ROM image was
+	// changed.
+	bool LoadROMs();
 
 	void AddCallback(IATSimulatorCallback *cb);
 	void RemoveCallback(IATSimulatorCallback *cb);
@@ -258,38 +258,43 @@ public:
 	ATGTIAEmulator& GetGTIA() { return mGTIA; }
 	ATPokeyEmulator& GetPokey() { return mPokey; }
 	ATPIAEmulator& GetPIA() { return mPIA; }
-	ATDiskEmulator& GetDiskDrive(int index) { return mDiskDrives[index]; }
+	ATDiskEmulator& GetDiskDrive(int index) { return *mpDiskDrives[index]; }
 	ATCassetteEmulator& GetCassette() { return *mpCassette; }
-	IATHostDeviceEmulator *GetHostDevice() { return mpHostDevice; }
 	ATInputManager *GetInputManager() { return mpInputManager; }
 	IATJoystickManager& GetJoystickManager() { return *mpJoysticks; }
 	ATPBIManager& GetPBIManager() const { return *mpPBIManager; }
-	IATPrinterEmulator *GetPrinter() { return mpPrinter; }
-	ATXEP80Emulator *GetXEP80() { return mpXEP80; }
 	ATVBXEEmulator *GetVBXE() { return mpVBXE; }
 	ATSoundBoardEmulator *GetSoundBoard() { return mpSoundBoard; }
-	ATSlightSIDEmulator *GetSlightSID() { return mpSlightSID; }
-	ATCovoxEmulator *GetCovox() { return mpCovox; }
 	ATCartridgeEmulator *GetCartridge(uint32 unit) { return mpCartridge[unit]; }
 	IATUIRenderer *GetUIRenderer() { return mpUIRenderer; }
 	ATIDEEmulator *GetIDEEmulator() { return mpIDE; }
 	IATAudioOutput *GetAudioOutput() { return mpAudioOutput; }
 	ATAudioSyncMixer *GetAudioSyncMixer() { return mpAudioSyncMixer; }
-	IATRS232Emulator *GetRS232() { return mpRS232; }
 	ATLightPenPort *GetLightPenPort() { return mpLightPen; }
-	IATPCLinkDevice *GetPCLink() { return mpPCLink; }
 	ATKMKJZIDE *GetKMKJZIDE() { return mpKMKJZIDE; }
 	ATSIDEEmulator *GetSIDE() { return mpSIDE; }
 	ATMyIDEEmulator *GetMyIDE() { return mpMyIDE; }
 	ATUltimate1MBEmulator *GetUltimate1MB() { return mpUltimate1MB; }
 	IATVirtualScreenHandler *GetVirtualScreenHandler() { return mpVirtualScreenHandler; }
+	ATIRQController *GetIRQController() { return &mIRQController; }
+	ATFirmwareManager *GetFirmwareManager() { return mpFirmwareManager; }
+	ATDeviceManager *GetDeviceManager() { return mpDeviceManager; }
+	ATScheduler *GetScheduler() { return &mScheduler; }
+	ATScheduler *GetSlowScheduler() { return &mSlowScheduler; }
+	IATDeviceSIOManager *GetDeviceSIOManager();
+	IATDeviceCIOManager *GetDeviceCIOManager();
+
+	IATPrinterOutput *GetPrinterOutput() { return mpPrinterOutput; }
+	void SetPrinterOutput(IATPrinterOutput *p);
 
 	bool IsTurboModeEnabled() const { return mbTurbo; }
 	bool IsFrameSkipEnabled() const { return mbFrameSkip; }
 	ATVideoStandard GetVideoStandard() const { return mVideoStandard; }
 	ATMemoryMode GetMemoryMode() const { return mMemoryMode; }
 	ATKernelMode GetKernelMode() const { return mKernelMode; }
-	ATKernelMode GetActualKernelMode() const { return mActualKernelMode; }
+	uint64 GetKernelId() const { return mKernelId; }
+	uint64 GetActualKernelId() const { return mActualKernelId; }
+	uint64 GetBasicId() const { return mBasicId; }
 	ATHardwareMode GetHardwareMode() const { return mHardwareMode; }
 	bool IsDiskSIOPatchEnabled() const { return mbDiskSIOPatchEnabled; }
 	bool IsDiskSIOOverrideDetectEnabled() const { return mbDiskSIOOverrideDetectEnabled; }
@@ -304,13 +309,27 @@ public:
 	bool IsDualPokeysEnabled() const { return mbDualPokeys; }
 	bool IsVBXESharedMemoryEnabled() const { return mbVBXESharedMemory; }
 	bool IsVBXEAltPageEnabled() const { return mbVBXEUseD7xx; }
-	bool IsRTime8Enabled() const { return mpRTime8 != NULL; }
 	ATIDEHardwareMode GetIDEHardwareMode() const { return mIDEHardwareMode; }
+
+	bool GetDiskBurstTransfersEnabled() const;
+	void SetDiskBurstTransfersEnabled(bool enabled);
+	bool GetDeviceCIOBurstTransfersEnabled() const;
+	void SetDeviceCIOBurstTransfersEnabled(bool enabled);
+	bool GetDeviceSIOBurstTransfersEnabled() const;
+	void SetDeviceSIOBurstTransfersEnabled(bool enabled);
+
+	bool HasCIODevice(char c) const;
+	bool GetCIOPatchEnabled(char c) const;
+	void SetCIOPatchEnabled(char c, bool enabled) const;
+
+	bool GetDeviceSIOPatchEnabled() const;
+	void SetDeviceSIOPatchEnabled(bool enable) const;
 
 	uint8	GetBankRegister() const;
 	int		GetCartBank(uint32 unit) const;
 
 	const uint8 *GetRawMemory() const { return mMemory; }
+	uint32 RandomizeRawMemory(uint16 start, uint32 count, uint32 seed);
 
 	ATCPUProfiler *GetProfiler() const { return mpProfiler; }
 	bool IsProfilingEnabled() const { return mpProfiler != NULL; }
@@ -324,8 +343,11 @@ public:
 	bool IsHeatMapEnabled() const { return mpHeatMap != NULL; }
 	void SetHeatMapEnabled(bool enabled);
 
-	bool IsRandomFillEnabled() const { return mbRandomFillEnabled; }
-	void SetRandomFillEnabled(bool enabled) { mbRandomFillEnabled = enabled; }
+	ATMemoryClearMode GetMemoryClearMode() const { return mMemoryClearMode; }
+	void SetMemoryClearMode(ATMemoryClearMode mode) { mMemoryClearMode = mode; }
+
+	bool IsRandomFillEXEEnabled() const { return mbRandomFillEXEEnabled; }
+	void SetRandomFillEXEEnabled(bool enabled);
 
 	void SetBreakOnFrameEnd(bool enabled) { mbBreakOnFrameEnd = enabled; }
 	void SetBreakOnScanline(int scanline) { mBreakOnScanline = scanline; }
@@ -333,11 +355,15 @@ public:
 	void SetFrameSkipEnabled(bool skip);
 	void SetVideoStandard(ATVideoStandard vs);
 	void SetMemoryMode(ATMemoryMode mode);
-	void SetKernelMode(ATKernelMode mode);
+	void SetKernel(uint64 id);
+	void SetBasic(uint64 id);
 	void SetHardwareMode(ATHardwareMode mode);
 
 	uint8 GetAxlonMemoryMode() { return mAxlonMemoryBits; }
 	void SetAxlonMemoryMode(uint8 bits);
+
+	bool GetAxlonAliasingEnabled() const { return mbAxlonAliasingEnabled; }
+	void SetAxlonAliasingEnabled(bool enabled);
 
 	sint32 GetHighMemoryBanks() { return mHighMemoryBanks; }
 	void SetHighMemoryBanks(sint32 bits);
@@ -353,29 +379,13 @@ public:
 	void SetROMAutoReloadEnabled(bool enable);
 	void SetAutoLoadKernelSymbolsEnabled(bool enable);
 	void SetDualPokeysEnabled(bool enable);
-	void SetXEP80Enabled(bool enable);
 	void SetVBXEEnabled(bool enable);
 	void SetVBXESharedMemoryEnabled(bool enable);
 	void SetVBXEAltPageEnabled(bool enable);
-	void SetRTime8Enabled(bool enable);
-	void SetPCLinkEnabled(bool enable);
 
 	void SetSoundBoardEnabled(bool enable);
 	void SetSoundBoardMemBase(uint32 membase);
 	uint32 GetSoundBoardMemBase() const;
-
-	void SetSlightSIDEnabled(bool enable);
-	void SetCovoxEnabled(bool enable);
-
-	bool IsRS232Enabled() const;
-	void SetRS232Enabled(bool enable);
-
-	bool IsDragonCartEnabled() const;
-	ATDragonCartEmulator *GetDragonCart() const { return mpDragonCart; }
-	void SetDragonCartEnabled(const ATDragonCartSettings *settings);
-
-	bool IsPrinterEnabled() const;
-	void SetPrinterEnabled(bool enable);
 
 	bool IsFastBootEnabled() const { return mbFastBoot; }
 	void SetFastBootEnabled(bool enable);
@@ -409,20 +419,18 @@ public:
 	bool GetShadowCartridgeEnabled() const { return mbShadowCartridge; }
 	void SetShadowCartridgeEnabled(bool enabled);
 
-	bool IsKernelAvailable(ATKernelMode mode) const;
-
 	void ColdReset();
 	void WarmReset();
 	void Resume();
 	void Suspend();
 	void Pause();
 
-	void GetROMImagePath(ATROMImage image, VDStringW& s) const;
-	void SetROMImagePath(ATROMImage image, const wchar_t *s);
-
 	void GetDirtyStorage(vdfastvector<ATStorageId>& ids, ATStorageId mediaId = kATStorageId_None) const;
 	bool IsStorageDirty(ATStorageId mediaId) const;
 	bool IsStoragePresent(ATStorageId mediaId) const;
+
+	void SwapDrives(int src, int dst);
+	void RotateDrives(int count, int delta);
 
 	void UnloadAll();
 	bool Load(const wchar_t *path, bool vrw, bool rw, ATLoadContext *loadCtx);
@@ -438,7 +446,9 @@ public:
 	void LoadNewCartridge(int mode);
 	void LoadCartridgeBASIC();
 
-	void LoadIDE(ATIDEHardwareMode mode, bool write, bool fast, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *path);
+	void LoadIDE(ATIDEHardwareMode mode);
+	void LoadIDEImage(bool write, bool fast, uint32 cylinders, uint32 heads, uint32 sectors, const wchar_t *path);
+	void UnloadIDEImage();
 	void UnloadIDE();
 
 	enum AdvanceResult {
@@ -485,10 +495,9 @@ private:
 	void LoadStateSection(ATSaveStateReader& reader, int section);
 	void LoadStateMemoryArch(ATSaveStateReader& reader);
 
-	void UpdateKernel();
-	void ReloadIDEFirmware();
-	void ReloadU1MBFirmware();
-	void ReloadRS232Firmware();
+	bool UpdateKernel(bool trackChanges, bool forceReload = false);
+	bool ReloadIDEFirmware();
+	bool ReloadU1MBFirmware();
 	void InitMemoryMap();
 	void ShutdownMemoryMap();
 
@@ -507,6 +516,7 @@ private:
 	bool AnticIsNextCPUCycleWrite();
 	uint8 AnticGetCPUHeldCycleValue();
 	void AnticForceNextCPUCycleSlow();
+	void AnticOnVBlank();
 
 	uint32 GTIAGetXClock();
 	uint32 GTIAGetTimestamp() const;
@@ -529,10 +539,7 @@ private:
 
 	void ClearPokeyTimersOnDiskIo();
 
-	void HookCassetteOpenVector();
-	void UnhookCassetteOpenVector();
-	void UpdatePrinterHook();
-	void UpdateCIOVHook();
+	void ReinitHookPage();
 
 	bool mbRunning;
 	bool mbPaused;
@@ -541,7 +548,8 @@ private:
 	bool mbTurbo;
 	bool mbFrameSkip;
 	ATVideoStandard mVideoStandard;
-	bool mbRandomFillEnabled;
+	ATMemoryClearMode mMemoryClearMode;
+	bool mbRandomFillEXEEnabled;
 	bool mbDiskSIOPatchEnabled;
 	bool mbDiskSIOOverrideDetectEnabled;
 	bool mbDiskSectorCounterEnabled;
@@ -569,7 +577,11 @@ private:
 
 	ATMemoryMode	mMemoryMode;
 	ATKernelMode	mKernelMode;
-	ATKernelMode	mActualKernelMode;
+	uint64			mKernelId;
+	uint64			mActualKernelId;
+	uint32			mActualKernelFlags;
+	uint64			mBasicId;
+	uint64			mActualBasicId;
 	ATHardwareMode	mHardwareMode;
 	ATSimulatorEvent	mPendingEvent;
 
@@ -594,31 +606,23 @@ private:
 	ATPokeyTables	*mpPokeyTables;
 	ATScheduler		mScheduler;
 	ATScheduler		mSlowScheduler;
-	ATDiskEmulator	mDiskDrives[15];
+	ATDiskEmulator	*mpDiskDrives[15];
 	ATAudioMonitor	*mpAudioMonitor;
 	ATCassetteEmulator	*mpCassette;
 	ATIDEEmulator	*mpIDE;
 	ATMyIDEEmulator	*mpMyIDE;
 	IATJoystickManager	*mpJoysticks;
-	IATHostDeviceEmulator	*mpHostDevice;
 	ATCartridgeEmulator	*mpCartridge[2];
 	ATInputManager	*mpInputManager;
 	ATPortController *mpPortAController;
 	ATPortController *mpPortBController;
 	ATLightPenPort *mpLightPen;
-	IATPrinterEmulator	*mpPrinter;
-	ATXEP80Emulator *mpXEP80;
+	IATPrinterOutput *mpPrinterOutput;
 	ATVBXEEmulator *mpVBXE;
 	void *mpVBXEMemory;
 	ATSoundBoardEmulator *mpSoundBoard;
-	ATSlightSIDEmulator *mpSlightSID;
-	ATCovoxEmulator *mpCovox;
-	ATRTime8Emulator *mpRTime8;
-	IATRS232Emulator *mpRS232;
-	ATDragonCartEmulator *mpDragonCart;
 	ATCheatEngine *mpCheatEngine;
 	IATUIRenderer *mpUIRenderer;
-	IATPCLinkDevice *mpPCLink;
 	ATKMKJZIDE *mpKMKJZIDE;
 	ATSIDEEmulator *mpSIDE;
 	ATUltimate1MBEmulator *mpUltimate1MB;
@@ -633,11 +637,10 @@ private:
 	ATPIAEmulator mPIA;
 	ATIRQController	mIRQController;
 
-	uint32	mVBXEPage;
-	uint32	mHookPage;
-	uint8	mHookPageByte;
+	uint8	mHookPage;
 
 	uint8	mAxlonMemoryBits;
+	bool	mbAxlonAliasingEnabled;
 	sint32	mHighMemoryBanks;
 
 	const uint8 *mpKernelUpperROM;
@@ -666,35 +669,17 @@ private:
 	ATMemoryLayer	*mpMemLayerGTIA;
 	ATMemoryLayer	*mpMemLayerPOKEY;
 	ATMemoryLayer	*mpMemLayerPIA;
-	ATMemoryLayer	*mpMemLayerIDE;
-	ATMemoryLayer	*mpMemLayerRT8;
-	ATMemoryLayer	*mpMemLayerHook;
 
-	VDStringW	mROMImagePaths[kATROMImageCount];
+	ATFirmwareManager	*mpFirmwareManager;
+	ATDeviceManager		*mpDeviceManager;
+
+	class DeviceChangeCallback;
+	DeviceChangeCallback *mpDeviceChangeCallback;
 
 	////////////////////////////////////
-	bool	mbHaveOSBKernel;
-	bool	mbHaveXLKernel;
-	bool	mbHave1200XLKernel;
-	bool	mbHaveXEGSKernel;
-	bool	mbHave5200Kernel;
-
-	VDALIGN(4)	uint8	mOSAKernelROM[0x2800];
-	VDALIGN(4)	uint8	mOSBKernelROM[0x2800];
-	VDALIGN(4)	uint8	mXLKernelROM[0x4000];
-	VDALIGN(4)	uint8	m1200XLKernelROM[0x4000];
-	VDALIGN(4)	uint8	mXEGSKernelROM[0x4000];
-	VDALIGN(4)	uint8	mHLEKernelROM[0x4000];
-	VDALIGN(4)	uint8	mLLEOSBKernelROM[0x2800];
-	VDALIGN(4)	uint8	mLLEXLKernelROM[0x4000];
+	VDALIGN(4)	uint8	mKernelROM[0x4000];
 	VDALIGN(4)	uint8	mBASICROM[0x2000];
-	VDALIGN(4)	uint8	mOtherKernelROM[0x4000];
-	VDALIGN(4)	uint8	m5200KernelROM[0x0800];
-	VDALIGN(4)	uint8	m5200LLEKernelROM[0x0800];
 	VDALIGN(4)	uint8	mGameROM[0x2000];
-
-	VDALIGN(4)	uint8	mHookROM[0x200];
-
 	VDALIGN(4)	uint8	mMemory[0x440000];
 };
 

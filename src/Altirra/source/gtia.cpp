@@ -25,6 +25,7 @@
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Kasumi/triblt.h>
 #include "gtia.h"
+#include "gtiatables.h"
 #include "gtiarenderer.h"
 #include "console.h"
 #include "artifacting.h"
@@ -241,6 +242,7 @@ ATGTIAEmulator::ATGTIAEmulator()
 	, mbSECAMMode(false)
 	, mArtifactMode(kArtifactNone)
 	, mOverscanMode(kOverscanExtended)
+	, mVerticalOverscanMode(kVerticalOverscan_Default)
 	, mVBlankMode(kVBlankModeOn)
 	, mbVsyncEnabled(true)
 	, mbBlendMode(false)
@@ -367,18 +369,28 @@ void ATGTIAEmulator::SetColorSettings(const ATColorSettings& settings) {
 	RecomputePalette();
 }
 
+ATArtifactingParams ATGTIAEmulator::GetArtifactingParams() const {
+	return mpArtifactingEngine->GetArtifactingParams();
+}
+
+void ATGTIAEmulator::SetArtifactingParams(const ATArtifactingParams& params) {
+	mpArtifactingEngine->SetArtifactingParams(params);
+}
+
 void ATGTIAEmulator::ResetColors() {
 	{
 		ATColorParams& colpa = mColorSettings.mNTSCParams;
-		colpa.mHueStart = -51.0f;
-		colpa.mHueRange = 27.9f * 15.0f;
-		colpa.mBrightness = 0.0f;
-		colpa.mContrast = 1.0f;
+		colpa.mHueStart = -36.0f;
+		colpa.mHueRange = 25.5f * 15.0f;
+		colpa.mBrightness = -0.08f;
+		colpa.mContrast = 1.08f;
 		colpa.mSaturation = 75.0f / 255.0f;
-		colpa.mArtifactHue = 96.0f;
+		colpa.mGammaCorrect = 1.0f;
+		colpa.mArtifactHue = 279.0f;
 		colpa.mArtifactSat = 2.76f;
 		colpa.mArtifactBias = 0.35f;
 		colpa.mbUsePALQuirks = false;
+		colpa.mLumaRampMode = kATLumaRampMode_XL;
 	}
 
 	{
@@ -388,10 +400,12 @@ void ATGTIAEmulator::ResetColors() {
 		colpa.mBrightness = 0.0f;
 		colpa.mContrast = 1.0f;
 		colpa.mSaturation = 0.29f;
+		colpa.mGammaCorrect = 1.0f;
 		colpa.mArtifactHue = 96.0f;
 		colpa.mArtifactSat = 2.76f;
 		colpa.mArtifactBias = 0.35f;
 		colpa.mbUsePALQuirks = true;
+		colpa.mLumaRampMode = kATLumaRampMode_XL;
 	}
 
 	mColorSettings.mbUsePALParams = true;
@@ -412,6 +426,10 @@ void ATGTIAEmulator::SetOverscanMode(OverscanMode mode) {
 	mOverscanMode = mode;
 }
 
+void ATGTIAEmulator::SetVerticalOverscanMode(VerticalOverscanMode mode) {
+	mVerticalOverscanMode = mode;
+}
+
 void ATGTIAEmulator::SetOverscanPALExtended(bool extended) {
 	mbOverscanPALExtended = extended;
 }
@@ -429,14 +447,35 @@ vdrect32 ATGTIAEmulator::GetFrameScanArea() const {
 	}
 
 	OverscanMode omode = mOverscanMode;
+	VerticalOverscanMode vomode = DeriveVerticalOverscanMode();
 
-	if (mAnalysisMode || mbForcedBorder)
+	if (mAnalysisMode || mbForcedBorder) {
 		omode = kOverscanFull;
+		vomode = kVerticalOverscan_Full;
+	}
 
 	switch(omode) {
 		case kOverscanFull:
 			xlo = 0;
 			xhi = 228;
+			break;
+
+		case kOverscanExtended:
+			xlo = 34;
+			xhi = 222;
+			break;
+
+		case kOverscanNormal:
+			break;
+
+		case kOverscanOSScreen:
+			xlo = 48;
+			xhi = 208;
+			break;
+	}
+
+	switch(vomode) {
+		case kVerticalOverscan_Full:
 			ylo = 0;
 			yhi = 262;
 
@@ -446,22 +485,17 @@ vdrect32 ATGTIAEmulator::GetFrameScanArea() const {
 			}
 			break;
 
-		case kOverscanExtended:
-			xlo = 34;
-			xhi = 222;
+		case kVerticalOverscan_Extended:
 			break;
 
-		case kOverscanOSScreen:
-			xlo = 48;
-			xhi = 208;
-
+		case kVerticalOverscan_OSScreen:
 			if (!palext) {
 				ylo = 32;
 				yhi = 224;
 			}
 			break;
 
-		case kOverscanNormal:
+		case kVerticalOverscan_Normal:
 			if (!mbPALMode) {
 				ylo = 16;
 				yhi = 240;
@@ -476,33 +510,49 @@ void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
 	rgb32 = (mpVBXE != NULL) || mArtifactMode || mbBlendMode;
 
 	OverscanMode omode = mOverscanMode;
+	VerticalOverscanMode vomode = DeriveVerticalOverscanMode();
 
-	if (mAnalysisMode || mbForcedBorder)
+	if (mAnalysisMode || mbForcedBorder) {
 		omode = kOverscanFull;
+		vomode = kVerticalOverscan_Full;
+	}
 
 	switch(omode) {
 		case kOverscanFull:
 			w = 456;
+			break;
 
-			if (mbPALMode && mbOverscanPALExtended)
+		case kOverscanExtended:
+			w = 376;
+			break;
+
+		case kOverscanNormal:
+			w = 336;
+			break;
+
+		case kOverscanOSScreen:
+			w = 320;
+			break;
+	}
+
+	const bool extpal = (mbPALMode && mbOverscanPALExtended);
+	switch(vomode) {
+		case kVerticalOverscan_Full:
+			if (extpal)
 				h = 312;
 			else
 				h = 262;
 			break;
 
-		case kOverscanExtended:
-			w = 376;
-
-			if (mbPALMode && mbOverscanPALExtended)
+		case kVerticalOverscan_Extended:
+			if (extpal)
 				h = 288;
 			else
 				h = 240;
 			break;
 
-		case kOverscanNormal:
-			w = 336;
-
-			if (mbPALMode && mbOverscanPALExtended)
+		case kVerticalOverscan_Normal:
+			if (extpal)
 				h = 288;
 			else if (mbPALMode)
 				h = 240;
@@ -510,9 +560,8 @@ void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
 				h = 224;
 			break;
 
-		case kOverscanOSScreen:
-			w = 320;
-			if (mbPALMode && mbOverscanPALExtended)
+		case kVerticalOverscan_OSScreen:
+			if (extpal)
 				h = 288;
 			else
 				h = 192;
@@ -528,32 +577,47 @@ void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
 
 void ATGTIAEmulator::GetFrameSize(int& w, int& h) const {
 	OverscanMode omode = mOverscanMode;
+	VerticalOverscanMode vomode = DeriveVerticalOverscanMode();
 
-	if (mAnalysisMode || mbForcedBorder)
+	if (mAnalysisMode || mbForcedBorder) {
 		omode = kOverscanFull;
+		vomode = kVerticalOverscan_Full;
+	}
 
 	switch(omode) {
 		case kOverscanFull:
 			w = 456;
+			break;
 
+		case kOverscanExtended:
+			w = 376;
+			break;
+
+		case kOverscanNormal:
+			w = 336;
+			break;
+
+		case kOverscanOSScreen:
+			w = 320;
+			break;
+	}
+
+	switch(vomode) {
+		case kVerticalOverscan_Full:
 			if (mbPALMode && mbOverscanPALExtended)
 				h = 312;
 			else
 				h = 262;
 			break;
 
-		case kOverscanExtended:
-			w = 376;
-
+		case kVerticalOverscan_Extended:
 			if (mbPALMode && mbOverscanPALExtended)
 				h = 288;
 			else
 				h = 240;
 			break;
 
-		case kOverscanNormal:
-			w = 336;
-
+		case kVerticalOverscan_Normal:
 			if (mbPALMode && mbOverscanPALExtended)
 				h = 288;
 			else if (mbPALMode)
@@ -562,8 +626,7 @@ void ATGTIAEmulator::GetFrameSize(int& w, int& h) const {
 				h = 224;
 			break;
 
-		case kOverscanOSScreen:
-			w = 320;
+		case kVerticalOverscan_OSScreen:
 			if (mbPALMode && mbOverscanPALExtended)
 				h = 288;
 			else
@@ -1084,42 +1147,76 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 		mPreArtifactFrameVisibleY2 = mPreArtifactFrame.h;
 
 		OverscanMode omode = mOverscanMode;
+		VerticalOverscanMode vomode = DeriveVerticalOverscanMode();
 
-		if (mbForcedBorder || mAnalysisMode)
+		if (mbForcedBorder || mAnalysisMode) {
 			omode = kOverscanFull;
+			vomode = kVerticalOverscan_Full;
+		}
 
-		if (omode != kOverscanFull) {
+		if (omode != kOverscanFull || vomode != kVerticalOverscan_Full) {
 			int scanx1;
 			int scanx2;
 			int scany1;
 			int scany2;
 
-			if (omode == kOverscanExtended) {
-				scanx1 = 34*2;
-				scanx2 = 222*2;
-				scany1 = 8;
-				scany2 = 248;
-			} else if (omode == kOverscanNormal) {
-				scanx1 = 44*2;
-				scanx2 = 212*2;
+			switch(omode) {
+				case kOverscanFull:
+					scanx1 = 0*2;
+					scanx2 = 228*2;
+					break;
 
-				if (mbPALMode) {
+				case kOverscanExtended:
+					scanx1 = 34*2;
+					scanx2 = 222*2;
+					break;
+
+				case kOverscanNormal:
+					scanx1 = 44*2;
+					scanx2 = 212*2;
+					break;
+
+				case kOverscanOSScreen:
+					scanx1 = 48*2;
+					scanx2 = 208*2;
+					break;
+			}
+
+			switch(vomode) {
+				case kVerticalOverscan_Full:
+					scany1 = 0;
+					scany2 = 262;
+					break;
+
+				case kVerticalOverscan_Extended:
 					scany1 = 8;
 					scany2 = 248;
-				} else {
-					scany1 = 16;
-					scany2 = 240;
-				}
-			} else {
-				scanx1 = 48*2;
-				scanx2 = 208*2;
-				scany1 = 32;
-				scany2 = 224;
+					break;
+
+				case kVerticalOverscan_Normal:
+					if (mbPALMode) {
+						scany1 = 8;
+						scany2 = 248;
+					} else {
+						scany1 = 16;
+						scany2 = 240;
+					}
+					break;
+
+				case kVerticalOverscan_OSScreen:
+					scany1 = 32;
+					scany2 = 224;
+					break;
 			}
 
 			if (mbOverscanPALExtendedThisFrame) {
-				scany1 = 0;
-				scany2 = 288;
+				if (vomode == kVerticalOverscan_Full) {
+					scany1 = 0;
+					scany2 = 312;
+				} else {
+					scany1 = 0;
+					scany2 = 288;
+				}
 			}
 
 			ptrdiff_t rawoffset = scanx1;
@@ -1781,13 +1878,11 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 				y += 16;
 		}
 
-		if (mbInterlaceEnabledThisFrame) {
+		if (!mbPostProcessThisFrame && mbInterlaceEnabledThisFrame) {
 			y += y;
 
 			if (mbFieldPolarity)
 				++y;
-		} else if (mbScanlinesEnabledThisFrame) {
-			y += y;
 		}
 
 		if (y < (uint32)pxdst.h) {
@@ -1860,6 +1955,11 @@ void ATGTIAEmulator::RecomputePalette() {
 	const bool palQuirks = params.mbUsePALQuirks;
 	float angle = (params.mHueStart + (palQuirks ? -33.0f : 0.0f)) * (nsVDMath::kfTwoPi / 360.0f);
 	float angleStep = params.mHueRange * (nsVDMath::kfTwoPi / (360.0f * 15.0f));
+	float gamma = 1.0f / params.mGammaCorrect;
+
+	float lumaRamp[16];
+
+	ATComputeLumaRamp(params.mLumaRampMode, lumaRamp);
 
 	for(int hue=0; hue<16; ++hue) {
 		float i = 0;
@@ -1889,10 +1989,10 @@ void ATGTIAEmulator::RecomputePalette() {
 
 				float angle2 = angle + angleStep * (co[0] + 3.0f);
 				float angle3 = angle + angleStep * (-co[2] - 3.0f);
-				float i2 = cos(angle2) * co[1];
-				float q2 = sin(angle2) * co[1];
-				float i3 = cos(angle3) * co[3];
-				float q3 = sin(angle3) * co[3];
+				float i2 = cosf(angle2) * co[1];
+				float q2 = sinf(angle2) * co[1];
+				float i3 = cosf(angle3) * co[3];
+				float q3 = sinf(angle3) * co[3];
 
 				i = (i2 + i3) * (0.5f * params.mSaturation);
 				q = (q2 + q3) * (0.5f * params.mSaturation);
@@ -1904,10 +2004,20 @@ void ATGTIAEmulator::RecomputePalette() {
 		}
 
 		for(int luma=0; luma<16; ++luma) {
-			double y = (double)luma * params.mContrast / 15.0f + params.mBrightness;
+			double y = params.mContrast * lumaRamp[luma] + params.mBrightness;
+
 			double r = y + 0.956*i + 0.621*q;
 			double g = y - 0.272*i - 0.647*q;
 			double b = y - 1.107*i + 1.704*q;
+
+			if (r > 0.0f)
+				r = pow(r, gamma);
+
+			if (g > 0.0f)
+				g = pow(g, gamma);
+
+			if (b > 0.0f)
+				b = pow(b, gamma);
 
 			*dst++	= (VDClampedRoundFixedToUint8Fast((float)r) << 16)
 					+ (VDClampedRoundFixedToUint8Fast((float)g) <<  8)
@@ -1919,12 +2029,6 @@ void ATGTIAEmulator::RecomputePalette() {
 		mpVBXE->SetDefaultPalette(mPalette);
 
 	mpArtifactingEngine->SetColorParams(params);
-}
-
-uint8 ATGTIAEmulator::DebugReadByte(uint8 reg) const {
-	reg &= 0x1F;
-
-	return reg >= 0x10 ? const_cast<ATGTIAEmulator *>(this)->ReadByte(reg) : 0xFF;
 }
 
 uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
@@ -2134,7 +2238,9 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 
 void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 	if (mpVBXE) {
-		if (mArtifactMode == kArtifactPAL || mbBlendMode) {
+		const bool doBlending = mArtifactMode == kArtifactPAL || mbBlendMode;
+
+		if (doBlending || mbScanlinesEnabledThisFrame) {
 			ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 			char *dstrow = (char *)fb->mBuffer.data;
 			ptrdiff_t dstpitch = fb->mBuffer.pitch;
@@ -2152,7 +2258,8 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 			for(uint32 row=0; row<h; ++row) {
 				uint32 *dst = (uint32 *)dstrow;
 
-				mpArtifactingEngine->Artifact32(row, dst, 912, immediate);
+				if (doBlending)
+					mpArtifactingEngine->Artifact32(row, dst, 912, immediate);
 
 				if (mbScanlinesEnabledThisFrame) {
 					if (row)
@@ -2503,3 +2610,22 @@ ATGTIAEmulator::SpriteImage *ATGTIAEmulator::AllocSpriteImage() {
 	return p;
 }
 
+ATGTIAEmulator::VerticalOverscanMode ATGTIAEmulator::DeriveVerticalOverscanMode() const {
+	if (mVerticalOverscanMode != kVerticalOverscan_Default)
+		return mVerticalOverscanMode;
+
+	switch(mOverscanMode) {
+		case kOverscanFull:
+			return kVerticalOverscan_Full;
+
+		case kOverscanExtended:
+			return kVerticalOverscan_Extended;
+
+		default:
+		case kOverscanNormal:
+			return kVerticalOverscan_Normal;
+
+		case kOverscanOSScreen:
+			return kVerticalOverscan_OSScreen;
+	}
+}

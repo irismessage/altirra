@@ -26,6 +26,7 @@ class ATIDEEmulator;
 class ATScheduler;
 class ATSimulator;
 class IATUIRenderer;
+class ATFirmwareManager;
 
 class ATMyIDEEmulator {
 	ATMyIDEEmulator(const ATMyIDEEmulator&);
@@ -37,12 +38,15 @@ public:
 	bool IsVersion2() const { return mbVersion2; }
 	bool IsFlashDirty() const { return mFlash.IsDirty(); }
 	bool IsLeftCartEnabled() const;
+	bool IsUsingD5xx() const { return mbUseD5xx; }
 
-	void Init(ATMemoryManager *memman, IATUIRenderer *uir, ATScheduler *sch, ATIDEEmulator *ide, ATSimulator *sim, bool used5xx, bool v2);
+	void Init(ATMemoryManager *memman, IATUIRenderer *uir, ATScheduler *sch, ATSimulator *sim, bool used5xx, bool v2);
 	void Shutdown();
 
-	void LoadFirmware(const void *ptr, uint32 len);
-	void LoadFirmware(const wchar_t *path);
+	void SetIDEImage(ATIDEEmulator *ide);
+
+	bool LoadFirmware(const void *ptr, uint32 len);
+	bool LoadFirmware(ATFirmwareManager& fwmgr, uint64 id);
 	void SaveFirmware(const wchar_t *path);
 
 	void ColdReset();
@@ -80,6 +84,7 @@ protected:
 	bool mbCFReset;
 	bool mbCFAltReg;
 	bool mbVersion2;
+	bool mbUseD5xx;
 
 	// MyIDE II control registers
 	int	mCartBank;

@@ -309,6 +309,8 @@ typename vdhashmap<K, V, Hash, Pred, A>::iterator vdhashmap<K, V, Hash, Pred, A>
 		p = p->mpHashNext;
 	}
 
+	++position;
+
 	vdhashtable_base_node *next = p->mpHashNext;
 	if (prev)
 		prev->mpHashNext = next;
@@ -320,7 +322,7 @@ typename vdhashmap<K, V, Hash, Pred, A>::iterator vdhashmap<K, V, Hash, Pred, A>
 	mAllocator.deallocate(node, 1);
 	--mElementCount;
 
-	return iterator(next, &mpBucketStart[bucket], mpBucketEnd);
+	return position;
 }
 
 template<class K, class V, class Hash, class Pred, class A>
@@ -334,6 +336,8 @@ typename vdhashmap<K, V, Hash, Pred, A>::const_iterator vdhashmap<K, V, Hash, Pr
 		p = p->mpHashNext;
 	}
 
+	++position;
+
 	vdhashtable_base_node *next = p->mpHashNext;
 	if (prev)
 		prev->mpHashNext = next;
@@ -345,7 +349,7 @@ typename vdhashmap<K, V, Hash, Pred, A>::const_iterator vdhashmap<K, V, Hash, Pr
 	mAllocator.deallocate(node, 1);
 	--mElementCount;
 
-	return const_iterator(next, &mpBucketStart[bucket], mpBucketEnd);
+	return position;
 }
 
 template<class K, class V, class Hash, class Pred, class A>
