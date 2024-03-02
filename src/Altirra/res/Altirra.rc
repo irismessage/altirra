@@ -1876,12 +1876,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "virtualdub.org"
             VALUE "FileDescription", "Altirra 8-bit computer emulator"
-            VALUE "FileVersion", "2.7.0.0"
+            VALUE "FileVersion", "2.7.1.0"
             VALUE "InternalName", "Altirra"
-            VALUE "LegalCopyright", "Copyright (C) 2008-2015 Avery Lee, All Rights Reserved."
+            VALUE "LegalCopyright", "Copyright (C) 2008-2016 Avery Lee, All Rights Reserved."
             VALUE "OriginalFilename", "Altirra.exe"
             VALUE "ProductName", "Altirra"
-            VALUE "ProductVersion", "2.7.0.0"
+            VALUE "ProductVersion", "2.7.1.0"
         END
     END
     BLOCK "VarFileInfo"

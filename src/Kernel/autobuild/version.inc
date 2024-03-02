@@ -1,3 +1,3 @@
 .macro _VERSIONSTR_INTERNAL 
-	dta d"2.70" 
+	dta d"2.71" 
 .endm 

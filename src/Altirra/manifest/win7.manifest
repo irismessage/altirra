@@ -1,23 +1,29 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
-    <application>
+  <!--
+    The weird namespacing here is necessary to avoid stability issues with XPSP2 systems
+    that do not have KB921337 installed - otherwise, mt.exe puts a duplicate namespace
+    declaration into the XML. This was suppsosed to be fixed in VS2005SP1; looks like
+    it's back in VS2013. :(
+  -->
+  <ms-compatibility:compatibility xmlns:ms-compatibility="urn:schemas-microsoft-com:compatibility.v1">
+    <ms-compatibility:application>
       <!-- Application support for Windows Vista -->
-      <supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}"/>
+      <ms-compatibility:supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}"/>
       
       <!-- Application support for Windows 7 -->
-      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/>
+      <ms-compatibility:supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/>
       
       <!-- Application support for Windows 8 -->
-      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
+      <ms-compatibility:supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
 
       <!-- Application support for Windows 8.1 -->
-      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+      <ms-compatibility:supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
       
       <!-- Application support for Windows 10 -->
-      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
-    </application>
-  </compatibility>
+      <ms-compatibility:supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </ms-compatibility:application>
+  </ms-compatibility:compatibility>
 
   <asmv3:application xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
     <asmv3:windowsSettings xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">

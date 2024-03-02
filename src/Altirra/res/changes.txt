@@ -1,5 +1,9 @@
 Altirra Change Log
 
+Version 2.71 [April 16, 2016]:
+   [bugs fixed]
+   * Added workaround for crash on XP systems without SP3 or KB921337 hotfix installed.
+
 Version 2.70 [December 19, 2015]:
    [changes]
    * Debugger: Switched BRK back to being a single byte opcode in the disassembler.
