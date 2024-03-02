@@ -28,6 +28,7 @@ bool ATUIShowDialogEditAccelerators(VDGUIHandle hParent,
 	VDAccelTableDefinition *accelTables,
 	const VDAccelTableDefinition *defaultTables,
 	uint32 tableCount,
-	const wchar_t *const *contextNames);
+	const wchar_t *const *contextNames,
+	const char *preSelectedCommand);
 
 #endif

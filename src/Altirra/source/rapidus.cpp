@@ -20,6 +20,7 @@
 #include <vd2/system/registry.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceindicators.h>
+#include <at/atcore/deviceport.h>
 #include <at/atcore/logging.h>
 #include "firmwaremanager.h"
 #include "memorymanager.h"
@@ -58,6 +59,9 @@ void ATRapidusDevice::GetDeviceInfo(ATDeviceInfo& info) {
 }
 
 void ATRapidusDevice::Init() {
+	mpPortMgr = GetService<IATDevicePortManager>();
+	mPortOutput = mpPortMgr->AllocOutput([](void *data, uint32 outputState) { ((ATRapidusDevice *)data)->UpdateSRAMWindows(0xE); }, this, IATDevicePortManager::kMask_PB0 | IATDevicePortManager::kMask_PB1 | IATDevicePortManager::kMask_PB7);
+
 	ReloadFirmware();
 	mFlashEmu.Init(mFlash, kATFlashType_SST39SF040, mpScheduler);
 
@@ -69,7 +73,8 @@ void ATRapidusDevice::Init() {
 		const char *mpName;
 	} kSRAMWindows[]={
 		{ 0x00, 0x40,	"Rapidus $0000-3FFF SRAM window" },
-		{ 0x40, 0x40,	"Rapidus $4000-7FFF SRAM window" },
+		{ 0x40, 0x40,	"Rapidus $4000-7FFF SRAM window (1)" },
+		{ 0x58, 0x28,	"Rapidus $4000-7FFF SRAM window (2)" },
 		{ 0x80, 0x40,	"Rapidus $8000-BFFF SRAM window" },
 		{ 0xC0, 0x40,	"Rapidus $C000-FFFF SRAM window (1)" },
 		{ 0xD8, 0x28,	"Rapidus $C000-FFFF SRAM window (2)" },
@@ -251,6 +256,13 @@ void ATRapidusDevice::Shutdown() {
 	}
 
 	mpFwMgr = nullptr;
+
+	if (mpPortMgr) {
+		mpPortMgr->FreeOutput(mPortOutput);
+		mPortOutput = -1;
+
+		mpPortMgr = nullptr;
+	}
 }
 
 void ATRapidusDevice::ColdReset() {
@@ -875,36 +887,71 @@ void ATRapidusDevice::UpdateLoFlashWindow() {
 	}
 }
 
-void ATRapidusDevice::UpdateSRAMWindows() {
+void ATRapidusDevice::UpdateSRAMWindows(uint8 windowMask) {
 	const uint8 effectiveMCR = (mFPGAConfigReg & 0x40) ? 0x8F : mMCR;
 	const bool enableWriteThrough = (mMCR & 0x20) != 0;
 
 	// setting bit 6 of the CMCR disables write-through on $0000-3FFF.
 	const bool fastMem0 = (mCMCR & 0x40) != 0;
 
-	// First three 16K windows
-	for(int i=0; i<3; ++i) {
-		const bool windowEnabled = (effectiveMCR & (1 << i)) == 0;
+	// window 0 ($0000-3FFF)
+	if (windowMask & 0x01) {
+		const bool window0Enabled = !(effectiveMCR & 1);
+		mpMemMan->EnableLayer(mpLayerBank0RAM[0], kATMemoryAccessMode_AR, window0Enabled);
+		mpMemMan->EnableLayer(mpLayerBank0RAM[0], kATMemoryAccessMode_W, window0Enabled && (!enableWriteThrough || fastMem0));
+	}
 
-		mpMemMan->EnableLayer(mpLayerBank0RAM[i], kATMemoryAccessMode_AR, windowEnabled);
-		mpMemMan->EnableLayer(mpLayerBank0RAM[i], kATMemoryAccessMode_W, windowEnabled && (!enableWriteThrough || (i == 0 && fastMem0)));
+	// window 1 ($4000-7FFF)
+	if (windowMask & 0x02) {
+		const uint32 portState = mpPortMgr->GetOutputState();
+		const bool xramEnabled = !(portState & IATDevicePortManager::kMask_PB4);
+		const bool selfTestEnabled = (portState & (IATDevicePortManager::kMask_PB0 | IATDevicePortManager::kMask_PB7)) == IATDevicePortManager::kMask_PB0;
+		const bool window1Enabled = !(effectiveMCR & 2) && !xramEnabled;
+
+		if (selfTestEnabled)
+			mpMemMan->SetLayerMaskRange(mpLayerBank0RAM[1], 0x40, 0x10);
+		else
+			mpMemMan->SetLayerMaskRange(mpLayerBank0RAM[1], 0x40, 0x40);
+
+		mpMemMan->EnableLayer(mpLayerBank0RAM[1], kATMemoryAccessMode_AR, window1Enabled);
+		mpMemMan->EnableLayer(mpLayerBank0RAM[1], kATMemoryAccessMode_W, window1Enabled && !enableWriteThrough);
+		mpMemMan->EnableLayer(mpLayerBank0RAM[2], kATMemoryAccessMode_AR, window1Enabled && selfTestEnabled);
+		mpMemMan->EnableLayer(mpLayerBank0RAM[2], kATMemoryAccessMode_W, window1Enabled && selfTestEnabled && !enableWriteThrough);
+	}
+
+	// window 2 ($8000-BFFF)
+	if (windowMask & 0x04) {
+		const uint32 portState = mpPortMgr->GetOutputState();
+		const bool window2Enabled = !(effectiveMCR & 4);
+
+		if (!(portState & IATDevicePortManager::kMask_PB1))
+			mpMemMan->SetLayerMaskRange(mpLayerBank0RAM[3], 0x80, 0x20);
+		else
+			mpMemMan->ClearLayerMaskRange(mpLayerBank0RAM[3]);
+
+		mpMemMan->EnableLayer(mpLayerBank0RAM[3], kATMemoryAccessMode_AR, window2Enabled);
+		mpMemMan->EnableLayer(mpLayerBank0RAM[3], kATMemoryAccessMode_W, window2Enabled && !enableWriteThrough);
 	}
 
 	// $C000-FFFF window (can be fragmented by hardware $D000-D7FF window)
-	if (effectiveMCR & 0x08) {
-		mpMemMan->EnableLayer(mpLayerBank0RAM[3], kATMemoryAccessMode_ARW, false);
-		mpMemMan->EnableLayer(mpLayerBank0RAM[4], kATMemoryAccessMode_ARW, false);
-	} else {
-		mpMemMan->EnableLayer(mpLayerBank0RAM[3], kATMemoryAccessMode_AR, true);
-		mpMemMan->EnableLayer(mpLayerBank0RAM[3], kATMemoryAccessMode_W, !enableWriteThrough);
+	if (windowMask & 0x08) {
+		const bool osEnabled = (mpPortMgr->GetOutputState() & IATDevicePortManager::kMask_PB0) != 0;
 
-		if (effectiveMCR & 0x40) {
-			mpMemMan->SetLayerMaskRange(mpLayerBank0RAM[3], 0xC0, 0x10);
+		if ((effectiveMCR & 0x08) || osEnabled) {
+			mpMemMan->EnableLayer(mpLayerBank0RAM[4], kATMemoryAccessMode_ARW, false);
+			mpMemMan->EnableLayer(mpLayerBank0RAM[5], kATMemoryAccessMode_ARW, false);
+		} else {
 			mpMemMan->EnableLayer(mpLayerBank0RAM[4], kATMemoryAccessMode_AR, true);
 			mpMemMan->EnableLayer(mpLayerBank0RAM[4], kATMemoryAccessMode_W, !enableWriteThrough);
-		} else {
-			mpMemMan->SetLayerMaskRange(mpLayerBank0RAM[3], 0xC0, 0x40);
-			mpMemMan->EnableLayer(mpLayerBank0RAM[4], kATMemoryAccessMode_ARW, false);
+
+			if (effectiveMCR & 0x40) {
+				mpMemMan->SetLayerMaskRange(mpLayerBank0RAM[4], 0xC0, 0x10);
+				mpMemMan->EnableLayer(mpLayerBank0RAM[5], kATMemoryAccessMode_AR, true);
+				mpMemMan->EnableLayer(mpLayerBank0RAM[5], kATMemoryAccessMode_W, !enableWriteThrough);
+			} else {
+				mpMemMan->SetLayerMaskRange(mpLayerBank0RAM[4], 0xC0, 0x40);
+				mpMemMan->EnableLayer(mpLayerBank0RAM[5], kATMemoryAccessMode_ARW, false);
+			}
 		}
 	}
 
@@ -953,15 +1000,13 @@ void ATRapidusDevice::UpdateHardwareProtect() {
 void ATRapidusDevice::LoadNVRAM() {
 	VDRegistryAppKey key("Nonvolatile RAM");
 
-	uint8 buf[sizeof(mEEPROM)] {};
+	memset(mEEPROM, 0, sizeof mEEPROM);
 
 	key.getBinary("Rapidus EEPROM", (char *)mEEPROM, sizeof(mEEPROM));
 }
 
 void ATRapidusDevice::SaveNVRAM() {
 	VDRegistryAppKey key("Nonvolatile RAM");
-
-	uint8 buf[sizeof(mEEPROM)] {};
 
 	key.setBinary("Rapidus EEPROM", (const char *)mEEPROM, sizeof(mEEPROM));
 }

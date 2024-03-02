@@ -215,7 +215,7 @@ int cmd_makereloc2(int argc, const char *const *argv) {
 	// close output files
 	fclose(forelocs);
 
-	printf("%d bytes, %d lo relocs, %d word relocs, %d hi relocs\n", dataseg.size(), lorelocs, wordrelocs, hirelocs);
+	printf("%d bytes, %d lo relocs, %d word relocs, %d hi relocs\n", (int)dataseg.size(), lorelocs, wordrelocs, hirelocs);
 
 	return 0;
 }

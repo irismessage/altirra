@@ -97,7 +97,7 @@ void OnCommandSystemPulseWarpOff() {
 }
 
 void OnCommandSystemCPUOptionsDialog() {
-	ATUIShowCPUOptionsDialog(ATUIGetMainWindow());
+	ATUIShowCPUOptionsDialog(ATUIGetNewPopupOwner());
 	ATSyncCPUHistoryState();
 }
 
@@ -106,11 +106,11 @@ void OnCommandSystemToggleFPPatch() {
 }
 
 void OnCommandSystemSpeedOptionsDialog() {
-	ATUIShowDialogSpeedOptions(ATUIGetMainWindow());
+	ATUIShowDialogSpeedOptions(ATUIGetNewPopupOwner());
 }
 
 void OnCommandSystemDevicesDialog() {
-	ATUIShowDialogDevices(ATUIGetMainWindow());
+	ATUIShowDialogDevices(ATUIGetNewPopupOwner());
 }
 
 void OnCommandSystemToggleKeyboardPresent() {
@@ -122,7 +122,7 @@ void OnCommandSystemToggleForcedSelfTest() {
 }
 
 void OnCommandSystemHardwareMode(ATHardwareMode mode) {
-	ATUISwitchHardwareMode(ATUIGetMainWindow(), mode, false);
+	ATUISwitchHardwareMode(ATUIGetNewPopupOwner(), mode, false);
 }
 
 void OnCommandSystemKernel(ATFirmwareId id) {
@@ -134,7 +134,7 @@ void OnCommandSystemBasic(ATFirmwareId id) {
 }
 
 void OnCommandSystemMemoryMode(ATMemoryMode mode) {
-	ATUISwitchMemoryMode(ATUIGetMainWindow(), mode);
+	ATUISwitchMemoryMode(ATUIGetNewPopupOwner(), mode);
 }
 
 void OnCommandSystemAxlonMemoryMode(uint8 bankBits) {
@@ -272,6 +272,15 @@ void OnCommandVideoToggleScanlines() {
 	ATUIResizeDisplay();
 }
 
+void OnCommandVideoToggleBloom() {
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
+	auto params = gtia.GetArtifactingParams();
+
+	params.mbEnableBloom = !params.mbEnableBloom;
+
+	gtia.SetArtifactingParams(params);
+}
+
 void OnCommandVideoMonitorMode(ATMonitorMode mode) {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
@@ -283,11 +292,11 @@ void OnCommandVideoToggleXEP80() {
 }
 
 void OnCommandVideoAdjustColorsDialog() {
-	ATUIOpenAdjustColorsDialog(ATUIGetMainWindow());
+	ATUIOpenAdjustColorsDialog(ATUIGetNewPopupOwner());
 }
 
 void OnCommandVideoAdjustScreenEffectsDialog() {
-	ATUIOpenAdjustScreenEffectsDialog(ATUIGetMainWindow());
+	ATUIOpenAdjustScreenEffectsDialog(ATUIGetNewPopupOwner());
 }
 
 void OnCommandVideoArtifacting(ATArtifactMode mode) {
@@ -366,10 +375,10 @@ void OnCommandVideoEnhancedModeCIO() {
 }
 
 void OnCommandSystemEditProfilesDialog() {
-	ATUIShowDialogProfiles(ATUIGetMainWindow());
+	ATUIShowDialogProfiles(ATUIGetNewPopupOwner());
 	ATUIRebuildDynamicMenu(kATUIDynamicMenu_Profile);
 }
 
 void OnCommandConfigureSystem() {
-	ATUIShowDialogConfigureSystem(ATUIGetMainWindow());
+	ATUIShowDialogConfigureSystem(ATUIGetNewPopupOwner());
 }

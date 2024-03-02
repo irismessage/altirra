@@ -96,11 +96,11 @@
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
-#include <vd2/system/filewatcher.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/time.h>
 #include <at/atio/diskimage.h>
 #include <at/atio/diskfsdos2util.h>
+#include "directorywatcher.h"
 #include "debuggerlog.h"
 #include "hostdeviceutils.h"
 #include "diskvirtimagebase.h"
@@ -196,7 +196,7 @@ protected:
 	vdfunction<float(uint32)> mpInterleaveFn;
 
 	VDLazyTimer mCloseTimer;
-	VDFileWatcher mFileWatcher;
+	ATDirectoryWatcher mDirWatcher;
 
 	DirEnt	mDirEnt[64];
 	XDirEnt	mXDirEnt[64];
@@ -218,8 +218,6 @@ void ATDiskImageVirtualFolder::Init(const wchar_t *path) {
 	mBootFileLastDate.mTicks = 0;
 	mDosEntry = -1;
 	memset(mDirEnt, 0, sizeof mDirEnt);
-
-	UpdateDirectory(false);
 
 	// Mark all sectors as in use.
 	for(uint32 i=0; i<(uint32)vdcountof(mSectorMap); ++i) {
@@ -246,14 +244,17 @@ void ATDiskImageVirtualFolder::Init(const wchar_t *path) {
 	for(uint32 i=368; i<=718; ++i)
 		LinkDataSector(i);
 
+	UpdateDirectory(false);
+
 	try {
-		mFileWatcher.InitDir(path, false, NULL);
-	} catch(const MyError&) {
+		mDirWatcher.Init(path, false);
+	} catch(const MyError& e) {
+		g_ATLCVDisk("Unable to set up file watching: %s\n", e.c_str());
 	}
 }
 
 ATDiskGeometryInfo ATDiskImageVirtualFolder::GetGeometry() const {
-	ATDiskGeometryInfo info;
+	ATDiskGeometryInfo info {};
 	info.mSectorSize = 128;
 	info.mBootSectorCount = 3;
 	info.mTotalSectorCount = 720;
@@ -299,7 +300,7 @@ void ATDiskImageVirtualFolder::ReadPhysicalSector(uint32 index, void *data, uint
 		return;
 
 	// check for updates
-	if (mFileWatcher.Wait(0))
+	if (mDirWatcher.CheckForChanges())
 		UpdateDirectory(true);
 
 	// check for boot sector
@@ -683,7 +684,6 @@ void ATDiskImageVirtualFolder::PreallocateTrack(uint32 baseSectorIndex) {
 	const uint32 trackStart = baseSectorIndex - baseSectorIndex % 18;
 	const uint32 trackEnd = trackStart + 18;
 	uint32 nextSectorIndex = baseSectorIndex;
-	uint32 filesScanned = 0;
 
 	// Construct file order for track. Use the files that we currently have on the track,
 	// then the remainder of files.

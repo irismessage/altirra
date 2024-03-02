@@ -29,9 +29,7 @@
 #include <at/atcore/scheduler.h>
 #include <at/atio/diskimage.h>
 #include "diskinterface.h"
-#include "pokey.h"
 
-class ATPokeyEmulator;
 class ATAudioSamplePlayer;
 
 class ATCPUEmulatorMemory;
@@ -47,7 +45,9 @@ class ATTraceChannelFormatted;
 enum ATMediaWriteMode : uint8;
 enum class ATSoundId : uint32;
 
-enum ATDiskEmulationMode {
+struct ATDiskProfile;
+
+enum ATDiskEmulationMode : uint8 {
 	kATDiskEmulationMode_Generic,
 	kATDiskEmulationMode_FastestPossible,
 	kATDiskEmulationMode_810,
@@ -120,11 +120,13 @@ protected:
 	void BeginTransferACK();
 	void BeginTransferComplete();
 	void BeginTransferError();
-	void BeginTransferNAK();
+	void BeginTransferNAKCommand();
+	void BeginTransferNAKData();
 	void SendResult(bool successful, uint32 length);
 	void Send(uint32 length);
 	void BeginReceive(uint32 len);
 	void WarpOrDelay(uint32 cycles, uint32 minCycles = 0);
+	void WarpOrDelayFromStopBit(uint32 cycles);
 	void Wait(uint32 nextState);
 	void EndCommand();
 	void AbortCommand();
@@ -155,10 +157,12 @@ protected:
 	void ComputeGeometry();
 	void ComputePERCOMBlock();
 	void ComputeSupportedProfile();
-	void UpdateHighSpeedTiming();
 	bool SetPERCOMData(const uint8 *data);
 	void TurnOffMotor();
 	bool TurnOnMotor(uint32 delay = 0);
+	void ExtendMotorTimeoutBy(uint32 additionalDelay);
+	void ExtendMotorTimeoutTo(uint32 delay);
+	void SetMotorEvent();
 	void PlaySeekSound(uint32 initialDelay, uint32 trackCount);
 
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
@@ -167,6 +171,7 @@ protected:
 	int		mUnit = 0;
 
 	ATEvent		*mpMotorOffEvent = nullptr;
+	uint32	mMotorOffTime = 0;
 
 	uint32	mLastRotationUpdateCycle = 0;
 	uint32	mLastAccelTimeSkew = 0;
@@ -183,6 +188,7 @@ protected:
 	uint32	mActiveCommandSector = 0;
 	sint32	mActiveCommandPhysSector = 0;
 	float	mActiveCommandStartRotPos = 0;
+	uint32	mActiveCommandStartTime = 0;
 	uint8	mCustomCodeState = 0;
 	uint32	mPhantomSectorCounter = 0;
 	uint32	mRotationalCounter = 0;
@@ -192,11 +198,11 @@ protected:
 	uint32	mTrackCount = 0;
 	uint32	mSideCount = 0;
 	bool	mbMFM = false;
+	bool	mbHighDensity = false;
 
 	bool	mbFormatEnabled = false;
 	bool	mbWriteEnabled = false;
 
-	bool	mbCommandMode = false;
 	bool	mbCommandValid = false;
 	bool	mbCommandFrameHighSpeed = false;
 	bool	mbEnabled = false;
@@ -216,37 +222,10 @@ protected:
 	int		mFormatBootSectorCount = 0;
 
 	ATDiskEmulationMode mEmuMode = kATDiskEmulationMode_Generic;
-	bool	mbSupportedNotReady = false;
-	bool	mbSupportedCmdHighSpeed = false;
-	bool	mbSupportedCmdFrameHighSpeed = false;
-	bool	mbSupportedCmdPERCOM = false;
-	bool	mbSupportedCmdFormatSkewed = false;
-	bool	mbSupportedCmdGetHighSpeedIndex = false;
-	uint8	mHighSpeedIndex = 0;
-	uint8	mHighSpeedCmdIndex = 0;
-	uint8	mHighSpeedCmdFrameRateLo = 0;
-	uint8	mHighSpeedCmdFrameRateHi = 0;
-	uint8	mHighSpeedDataFrameRateLo = 0;
-	uint8	mHighSpeedDataFrameRateHi = 0;
-	uint32	mCyclesPerSIOByte = 1;
-	uint32	mCyclesPerSIOBit = 1;
-	uint32	mCyclesPerSIOByteHighSpeed = 1;
-	uint32	mCyclesPerSIOBitHighSpeed = 1;
-	uint32	mCyclesToACKSent = 1;
-	uint32	mCyclesToFDCCommand = 1;
-	uint32	mCyclesToCompleteAccurate = 1;
-	uint32	mCyclesToCompleteAccurateED = 1;
-	uint32	mCyclesToCompleteFast = 1;
-	uint32	mCyclesPerDiskRotation = 1;
-	uint32	mCyclesPerTrackStep = 1;
-	uint32	mCyclesForHeadSettle = 1;
-	uint32	mCyclesCEToDataFrame = 0;
-	uint32	mCyclesCEToDataFramePBDiv256 = 0;
-	uint32	mCyclesCEToDataFrameHighSpeed = 0;
-	uint32	mCyclesCEToDataFrameHighSpeedPBDiv256 = 0;
-	bool	mbSeekHalfTracks = false;
-	bool	mbRetryMode1050 = false;
-	bool	mbReverseOnForwardSeeks = false;
+
+	const ATDiskProfile *mpProfile = nullptr;
+	uint32	mCyclesPerSIOBitCurrent = 1;
+	uint32	mCyclesPerSIOByteCurrent = 1;
 
 	ATAudioSamplePlayer *mpAudioSyncMixer = nullptr;
 	vdrefptr<IATAudioSoundGroup> mpRotationSoundGroup;
@@ -255,7 +234,6 @@ protected:
 	ATDiskInterface *mpDiskInterface = nullptr;
 	ATTraceContext *mpTraceContext = nullptr;
 	ATTraceChannelFormatted *mpTraceChannel = nullptr;
-	uint64	mTraceCommandStartTime = 0;
 
 	struct ExtPhysSector {
 		sint8	mForcedOrder;

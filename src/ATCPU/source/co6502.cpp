@@ -340,6 +340,15 @@ void ATCoProc6502::OnBreakpointsChanged(const uint16 *pc) {
 		return;
 
 	if (pc) {
+		// Check if the PC is in the trace cache and avoid invalidating the trace
+		// cache if that instruction has not yet been traced. It is guaranteed that
+		// the starting offset will be set if any trace contains that instruction,
+		// as traces populate trace offsets for all insns not already covered.
+		//
+		// Note that this will not invalidate if the PC is within a traced insn but
+		// not at the insn start. Our BPs do not fire in this situation, only when
+		// the insn PC matches.
+
 		const uint16 addr = *pc;
 
 		uint32 traceSegmentId = mTraceMap[addr >> 8];
@@ -348,7 +357,7 @@ void ATCoProc6502::OnBreakpointsChanged(const uint16 *pc) {
 			return;
 
 		const auto& traceSegment = mpTraceCache->GetSegment(traceSegmentId);
-		if (!traceSegment.mTraceOffset)
+		if (!traceSegment.mTraceOffset[addr & 0xFF])
 			return;
 	}
 

@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <windows.h>
+#include <windowsx.h>
 #include <vd2/system/error.h>
 #include <vd2/system/function.h>
 #include <vd2/system/registry.h>
@@ -55,6 +56,7 @@ void ATUISaveMainWindowPlacement();
 
 void DoBootWithConfirm(const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper);
 bool ATUIConfirmDiscardAll(VDGUIHandle h, const wchar_t *title, const wchar_t *prompt);
+void ATUIShowDialogEditAccelerators(const char *preSelectedCommand);
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -63,25 +65,66 @@ public:
 	ATMainWindow();
 	~ATMainWindow();
 
-protected:
+	void TestMenuAutoShow(const vdpoint32& pointerScreenPos) override;
+
+private:
+	static constexpr UINT kTimerID_VerifyMenu = 100;
+
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT WndProc2(UINT msg, WPARAM wParam, LPARAM lParam);
 
 	void OnCopyData(HWND hwndReply, const COPYDATASTRUCT& cds);
 	bool OnCommand(UINT id);
+	bool OnMenuRButtonUp(uint32 index, HMENU hmenu);
 	void OnActivateApp(WPARAM wParam);
 
 	void SetIcons();
+	void UpdateCachedMetrics();
 
 	void UpdateMonitorDpi(unsigned dpiY) override {
+		UpdateCachedMetrics();
 		ATConsoleSetFontDpi(dpiY);
 	}
+
+	bool IsAutoHideMenuEnabled() const override {
+		return ATUIIsMenuAutoHideEnabled();
+	}
+
+	void TrackNonClientLeave();
+
+	bool mbTrackingNonClient = false;
+	bool mbMouseInNonClientArea = false;
+	sint32 mMenuHeight = 0;
+
+	static inline constexpr UINT ATWM_SUBCLASS_CUSTOMIZE_MENU_ITEM = ATWM_SUBCLASS_PRIVATE + 1;
 };
 
 ATMainWindow::ATMainWindow() {
 }
 
 ATMainWindow::~ATMainWindow() {
+}
+
+void ATMainWindow::TestMenuAutoShow(const vdpoint32& pointerScreenPos) {
+	if (GetActiveWindow() != mhwnd)
+		return;
+
+	const vdpoint32& cpt = TransformScreenToClient(pointerScreenPos);
+
+	if (cpt.y < mMenuHeight) {
+		ATUISetMenuAutoHidden(false);
+		TrackNonClientLeave();
+
+		// TrackPopupMenu(TME_NONCLIENT) has an annoying bug we need to work around here.
+		// It seems that a leave is only detected when the mouse transitions from being
+		// within the non-client area to outside, where 'in' is detected by a mouse event.
+		// Problem is, if the mouse is currently outside of the non-client area and the
+		// non-client area is extended under the mouse by adding a menu, and the mouse
+		// then moves out of the NC area on the next event, it is never considered 'in'
+		// for leave detection. To work around this, we require an NC mouse move within
+		// 100ms and re-hide the menu otherwise.
+		SetTimer(mhwnd, kTimerID_VerifyMenu, 100, nullptr);
+	}
 }
 
 LRESULT ATMainWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -103,6 +146,7 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			ATUIRegisterTopLevelWindow(mhwnd);
 			ATUIRegisterDragDropHandler((VDGUIHandle)mhwnd);
 			SetIcons();
+			UpdateCachedMetrics();
 			return 0;
 
 		case WM_CLOSE:
@@ -142,6 +186,12 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 
 		case WM_SYSCOMMAND:
+			// Check if the menu is being accessed by Alt+Key, and unhide it if the key is valid. If Alt
+			// is just being pressed by itself, we'll get 0.
+			if (wParam == SC_KEYMENU && (!lParam || ATUIIsMenuCharacter((wchar_t)lParam))) {
+				ATUISetMenuAutoHidden(false);
+			}
+
 			// Need to drop capture for Alt+F4 to work.
 			ReleaseCapture();
 			break;
@@ -158,6 +208,12 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			ATUIUpdateMenu();
 			ATUpdatePortMenus();
 			return 0;
+
+		case WM_MENURBUTTONUP:
+			if (OnMenuRButtonUp(wParam, (HMENU)lParam))
+				return 0;
+
+			break;
 
 		case WM_SETCURSOR:
 			break;
@@ -235,8 +291,60 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			ATUINotifyThemeChanged();
 			break;
 
+		case WM_EXITMENULOOP:
+			SetTimer(mhwnd, kTimerID_VerifyMenu, 100, nullptr);
+			break;
+
+		case WM_NCMOUSEMOVE:
+			mbMouseInNonClientArea = true;
+
+			if (wParam == HTCAPTION || wParam == HTMENU) {
+				ATUISetMenuAutoHidden(false);
+				TrackNonClientLeave();
+			}
+			break;
+
+		case WM_NCMOUSELEAVE:
+			mbTrackingNonClient = false;
+			mbMouseInNonClientArea = false;
+
+			if (ATUIIsMenuAutoHideActive()) {
+				if (ATUIIsMenuAutoHidden()) {
+					DWORD pos = GetMessagePos();
+					int x = GET_X_LPARAM(pos);
+					int y = GET_Y_LPARAM(pos);
+
+					vdpoint32 cpt = TransformScreenToClient(vdpoint32(x, y));
+					if (GetClientArea().contains(cpt) && cpt.y < ATUIGetDpiScaledSystemMetricForWindowW32(mhwnd, SM_CYMENU))
+						TestMenuAutoShow(vdpoint32(x, y));
+				} else {
+					GUITHREADINFO gti { sizeof(GUITHREADINFO) };
+
+					if (GetGUIThreadInfo(GetCurrentThreadId(), &gti) && !(gti.flags & (GUI_INMENUMODE | GUI_INMOVESIZE))) {
+						// Yet another bug in TME_NONCLIENT, clicks count, so for the leave detection we also
+						// use the lazy hide timer.
+						SetTimer(mhwnd, kTimerID_VerifyMenu, 100, nullptr);
+					}
+				}
+			}
+			break;
+
+		case WM_TIMER:
+			if (wParam == kTimerID_VerifyMenu) {
+				KillTimer(mhwnd, kTimerID_VerifyMenu);
+				if (!mbMouseInNonClientArea)
+					ATUISetMenuAutoHidden(true);
+				return 0;
+			}
+			break;
+
 		case ATWM_SUBCLASS_PRIVATE:
 			g_sim.OnWake();
+			return 0;
+
+		case ATWM_SUBCLASS_CUSTOMIZE_MENU_ITEM:
+			if (const char *cmd = ATUIGetCommandForMenuItem(wParam))
+				ATUIShowDialogEditAccelerators(cmd);
 			return 0;
 	}
 
@@ -337,6 +445,40 @@ bool ATMainWindow::OnCommand(UINT id) {
 	return false;
 }
 
+bool ATMainWindow::OnMenuRButtonUp(uint32 index, HMENU hmenu) {
+	UINT id = GetMenuItemID(hmenu, index);
+
+	if (!id)
+		return false;
+
+	const DWORD mousePos = GetMessagePos();
+	const sint32 x = GET_X_LPARAM(mousePos);
+	const sint32 y = GET_Y_LPARAM(mousePos);
+
+	HMENU hmenuPopup = LoadMenu(nullptr, MAKEINTRESOURCE(IDR_CUSTOMIZE_MENU));
+	if (!hmenuPopup)
+		return false;
+
+	const bool canCustomize = ATUIIsCommandMappedMenuItem(id);
+
+	if (!canCustomize)
+		VDEnableMenuItemByCommandW32(hmenuPopup, ID_ASSIGNSHORTCUT, false);
+
+	if (ID_ASSIGNSHORTCUT == TrackPopupMenu(GetSubMenu(hmenuPopup, 0), TPM_RECURSE | TPM_RETURNCMD, x, y, 0, mhwnd, nullptr)) {
+		// The window manager in Windows 10 starts acting very oddly if we spawn
+		// a modal dialog from a nested menu command, preventing other windows from
+		// coming to top. To avoid this, we need to trampoline out with a posted
+		// message.
+		if (canCustomize) {
+			EndMenu();
+			PostMessage(mhwnd, ATWM_SUBCLASS_CUSTOMIZE_MENU_ITEM, id, 0);
+		}
+	}
+
+	DestroyMenu(hmenuPopup);
+	return true;
+}
+
 void ATMainWindow::OnActivateApp(WPARAM wParam) {
 	ATUISetAppActive(wParam != 0);
 
@@ -360,6 +502,21 @@ void ATMainWindow::SetIcons() {
 	HICON hSmallIcon = (HICON)LoadImage(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
 	if (hSmallIcon)
 		SendMessage(mhwnd, WM_SETICON, ICON_SMALL, (LPARAM)hSmallIcon);
+}
+
+void ATMainWindow::UpdateCachedMetrics() {
+	mMenuHeight = ATUIGetDpiScaledSystemMetricW32(SM_CYMENU, mMonitorDpi);
+}
+
+void ATMainWindow::TrackNonClientLeave() {
+	if (!mbTrackingNonClient) {
+		TRACKMOUSEEVENT tme { sizeof(TRACKMOUSEEVENT) };
+		tme.dwFlags = TME_NONCLIENT;
+		tme.hwndTrack = mhwnd;
+
+		if (TrackMouseEvent(&tme))
+			mbTrackingNonClient = true;
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////

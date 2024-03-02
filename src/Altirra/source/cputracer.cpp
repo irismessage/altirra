@@ -201,9 +201,6 @@ void ATCPUTracer::Update() {
 			mpTraceChannelHistory->AddEvent(eventTime, *hentp);
 		}
 
-		uint32 extpc = hentp->mPC + (hentp->mK << 16);
-		uint32 addr = extpc;
-
 		bool adjustStack = mbAdjustStackNext || hentp->mbIRQ || hentp->mbNMI;
 		mbAdjustStackNext = false;
 

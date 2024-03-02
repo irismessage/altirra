@@ -778,13 +778,14 @@ LRESULT ATUIProfilerSourceTextView::WndProc(UINT msg, WPARAM wParam, LPARAM lPar
 		case WM_MOUSEWHEEL:
 			{
 				UINT linesPerDelta = 3;
-
 				::SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &linesPerDelta, FALSE);
+
+				if (linesPerDelta == WHEEL_PAGESCROLL)
+					linesPerDelta = mLinesVisible;
 
 				mWheelAccum += (int)GET_WHEEL_DELTA_WPARAM(wParam) * linesPerDelta;
 
 				int linesToScroll = mWheelAccum / WHEEL_DELTA;
-
 				if (linesToScroll) {
 					mWheelAccum -= linesToScroll * WHEEL_DELTA;
 
@@ -2114,8 +2115,6 @@ void ATUIProfileView::RemakeView() {
 			uint32 i = stack.back();
 			stack.pop_back();
 
-			const ATProfileCallGraphRecord& cgr = mpCurrentFrame->mCallGraphRecords[i];
-
 			nodes[i] = mTreeView.AddIndexedItem(i < 4 ? VDUIProxyTreeViewControl::kNodeRoot : nodes[mpSession->mContexts[i].mParent], VDUIProxyTreeViewControl::kNodeFirst, i + 1);
 
 			uint32 childBase = (uint32)stack.size();
@@ -2156,8 +2155,10 @@ void ATUIProfileView::RemakeView() {
 
 		int nc = 1;
 
-		for (const auto& name : mListColumnNames)
-			mListView.InsertColumn(nc++, name.c_str(), 0, nc > 1);
+		for (const auto& name : mListColumnNames) {
+			mListView.InsertColumn(nc, name.c_str(), 0, nc > 1);
+			++nc;
+		}
 
 		mListView.InsertColumn(nc, L"", 0, false);		// crude hack to fix full justified column
 
@@ -2445,8 +2446,6 @@ void ATUIProfilerPane::OnSize() {
 			mTimelineView.Hide();
 		}
 	}
-
-	int both = lh - toph;
 
 	mProfileView.SetArea(vdrect32(0, y + toph, r.right, r.bottom));
 

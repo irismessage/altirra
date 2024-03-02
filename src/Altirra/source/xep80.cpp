@@ -19,6 +19,8 @@
 #include <vd2/system/math.h>
 #include <vd2/system/binary.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/deviceparentimpl.h>
+#include <at/atcore/deviceprinter.h>
 #include <at/atcore/devicevideo.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
@@ -177,6 +179,14 @@ void ATXEP80Emulator::ColdReset() {
 	RecomputeBaudRate();
 
 	SoftReset();
+
+	mCommandState = kState_WaitCommand;
+	mReadBitState = 0;
+	mCurrentWriteData = ~UINT32_C(0);
+	mWriteBitState = 0;
+	UpdatePIAInput();
+	mpScheduler->UnsetEvent(mpReadBitEvent);
+	mpScheduler->UnsetEvent(mpWriteBitEvent);
 }
 
 void ATXEP80Emulator::SoftReset() {
@@ -216,7 +226,7 @@ void ATXEP80Emulator::SoftReset() {
 	mHorzCount = 105 - 1;
 	mHorzBlankStart = 80 - 1;
 	mHorzSyncStart = 82;
-	mHorzSyncStart = 95;
+	mHorzSyncEnd = 95;
 	mVertCount = 27 - 1;
 	mVertBlankStart = 25 - 1;
 	mVertSyncBegin = 0;
@@ -285,6 +295,10 @@ void ATXEP80Emulator::SetPortIndex(uint8 portIndex) {
 
 		UpdatePIABits();
 	}
+}
+
+void ATXEP80Emulator::SetOnPrinterOutput(vdfunction<void(uint8)> fn) {
+	mpOnPrinterOutput = std::move(fn);
 }
 
 void ATXEP80Emulator::Tick(uint32 ticks300Hz) {
@@ -379,7 +393,6 @@ void ATXEP80Emulator::UpdateFrame() {
 
 			// read from VRAM -- note that we must translate through the character ROMs
 			// if the VRAM address has been altered to be <$4000
-			uint8 *fetchdst = wrapbuf;
 			uint16 fetchaddr = vramaddr;
 			uint32 fetchidx = 0;
 
@@ -574,6 +587,23 @@ void ATXEP80Emulator::UpdateFrame() {
 		const uint16 charMask = 0x10000 - (0x10000 >> mCharWidth);
 		const uint16 cursormask = mbCursorBlinkState ? charMask : 0x00;
 
+		int rows = (int)mVertBlankStart + 1;
+		int cols = (int)mHorzBlankStart + 1;
+
+		// The XEP80 uses an external row counter clocked off of horizontal
+		// sync (HS). However, the NS405 actually prefetches four bytes into
+		// its FIFO shortly after horizontal blank. If horizontal sync is too
+		// late within horizontal blank, it results in those prefetched characters
+		// using the previous character row index. This only affects ATASCII
+		// as the internal charset uses an internal row counter that is unaffected.
+
+		const int incorrectlyPrefetchedChars = std::min<int>(std::clamp<int>(mHorzSyncStart - mHorzBlankStart - 4, 0, 4), cols);
+		const int incorrectlyPrefetchedChars2 = std::min<int>(std::clamp<int>(mHorzSyncStart - mHorzBlankStart - 3, 0, 5), cols);
+
+		// crude hack to deal with row pointer count limit for now
+		if (rows > 25)
+			rows = 25;
+
 		// This EOL check looks like a terrible hack, but it's correct.
 		//
 		// In external character generator mode, the NS405 never sees the character
@@ -595,17 +625,11 @@ void ATXEP80Emulator::UpdateFrame() {
 		// names on its data bus, so it is bit 7 of the name that does the switching
 		// instead.
 
-		int rows = (int)mVertBlankStart + 1;
-		int cols = (int)mHorzBlankStart + 1;
-
-		// crude hack to deal with row pointer count limit for now
-		if (rows > 25)
-			rows = 25;
-
 		for(int y=0; y<rows; ++y) {
 			uint32 vramaddr = ((uint32)mRowPtrs[y] << 8) + mScrollX;
 			const uint16 *VDRESTRICT rowfont = mActiveFonts[vramaddr & 0x4000 ? 2 : vramaddr & 0x2000 ? 1 : 0];
-			const int eolChar = (vramaddr & 0x4000) ? -1 : 0x9B;
+			const bool internalCharset = (vramaddr & 0x4000) != 0;
+			const int eolChar = internalCharset ? -1 : 0x9B;
 
 			memset(cursorbuf, 0, sizeof(cursorbuf));
 
@@ -668,16 +692,45 @@ void ATXEP80Emulator::UpdateFrame() {
 				int shift = 16;
 
 				uint16 *rowdst = (uint16 *)row;
-				for(int x=0; x<cols; ++x) {
-					const int charoffset = linebuf[x];
 
-					accum += ((rowfont[charoffset] | cursorbuf[x]) ^ rvsbuf[x]) << shift;
-					shift -= mCharWidth;
+				// Compute prefetch timing. The NS405 seems to have a one-char
+				// variance in prefetch timing, probably due to the 8048 core;
+				// we drive an LFSR to provide the psuedorandom pattern. It's
+				// more cyclical and less noisy to better match the actual
+				// pattern on real hardware, which is probably from the idle
+				// loop in the firmware.
+				int prefetch = incorrectlyPrefetchedChars;
 
-					if (shift <= 0) {
-						*rowdst++ = (uint16)VDSwizzleU32(accum);
-						accum <<= 16;
-						shift += 16;
+				if (mPrefetchLFSR & 1) {
+					mPrefetchLFSR ^= 0x2001;
+					prefetch = incorrectlyPrefetchedChars2;
+				}
+
+				mPrefetchLFSR >>= 1;
+
+				int limit = internalCharset ? 0 : prefetch;
+				int x = 0;
+				for(int pass=0; pass<2; ++pass) {
+					for(; x<limit; ++x) {
+						const int charoffset = linebuf[x];
+
+						accum += ((rowfont[charoffset] | cursorbuf[x]) ^ rvsbuf[x]) << shift;
+						shift -= mCharWidth;
+
+						if (shift <= 0) {
+							*rowdst++ = (uint16)VDSwizzleU32(accum);
+							accum <<= 16;
+							shift += 16;
+						}
+					}
+
+					if (!pass) {
+						// end of prefetch, do the rest of the line with the
+						// intended character row
+						limit = cols;
+
+						if (line)
+							++rowfont;
 					}
 				}
 
@@ -686,7 +739,6 @@ void ATXEP80Emulator::UpdateFrame() {
 				}
 
 				row += mFrame.pitch;
-				++rowfont;
 			}
 		}
 	}
@@ -861,7 +913,11 @@ void ATXEP80Emulator::OnScheduledEvent(uint32 id) {
 
 		++mWriteBitState;
 
-		if (mWriteBitState >= 13) {
+		// We reach state 1 here at the leading edge of the start bit and thus
+		// state 11 at the leading edge of the stop bit. At state 12, the byte
+		// is finished (9 data bits + 1 stop bit). The XEP80 actually configures
+		// its UART for two stop bits, but we don't wait around for it here.
+		if (mWriteBitState >= 12) {
 			if (mWriteIndex >= mWriteLength) {
 				mCommandState = kState_WaitCommand;
 				return;
@@ -873,9 +929,26 @@ void ATXEP80Emulator::OnScheduledEvent(uint32 id) {
 
 			mCurrentWriteData = ((uint32)data << 1) + 0x1c00;
 			mWriteBitState = 0;
+
+			// At 9 data bits a 2 stop bits, the UART can send a byte every
+			// 64*12 = 768us. In practice the XEP80 firmware takes a bit longer
+			// and actual measurements show more like 830us from start bit to
+			// start bit between report bytes, which is another bit cell time.
+			// Fortunately -- this just happens to be what we're set up to
+			// do, and falling through here will set up the delay of one bit
+			// cell between stop bit TE to start bit LE.
 		}
 
-		mpWriteBitEvent = mpScheduler->AddEvent(mCyclesPerBitXmit, this, 2);
+		// The SpartaDOS X XEP80.SYS driver uses suboptimal receive
+		// timing and begins sampling very shortly after the leading edge of
+		// the start bit, so it is sensitive to slow transmit rates and we
+		// must use high precision.
+
+		mXmitTimingAccum += mCyclesPerBitXmitX256;
+		uint32 cyclesToNextEdge = mXmitTimingAccum >> 8;
+		mXmitTimingAccum &= 0xFF;
+
+		mpWriteBitEvent = mpScheduler->AddEvent(cyclesToNextEdge, this, 2);
 	}
 }
 
@@ -936,7 +1009,7 @@ void ATXEP80Emulator::OnReceiveByte(uint32 ch) {
 	}
 }
 
-void ATXEP80Emulator::SendCursor(uint8 offset) {
+void ATXEP80Emulator::SendCursor(uint8 offset, uint32 delay) {
 	if (mX != mLastX || mY == mLastY) {
 		uint8 x = mX;
 
@@ -946,21 +1019,21 @@ void ATXEP80Emulator::SendCursor(uint8 offset) {
 		if (mY != mLastY) {
 			mWriteBuffer[offset+0] = 0x180 + x;		// horiz cursor, vert follows
 			mWriteBuffer[offset+1] = 0x1e0 + mY;	// vert cursor
-			BeginWrite(offset+2);
+			BeginWrite(offset+2, delay);
 		} else {
 			mWriteBuffer[offset+0] = 0x100 + x;		// horiz cursor, no vert follows
-			BeginWrite(offset+1);
+			BeginWrite(offset+1, delay);
 		}
 	} else {
 		mWriteBuffer[offset+0] = 0x1e0 + mY;		// vert cursor
-		BeginWrite(offset+1);
+		BeginWrite(offset+1, delay);
 	}
 
 	mLastX = mX;
 	mLastY = mY;
 }
 
-void ATXEP80Emulator::BeginWrite(uint8 len) {
+void ATXEP80Emulator::BeginWrite(uint8 len, uint32 delay) {
 	VDASSERT(len <= vdcountof(mWriteBuffer));
 
 	mpScheduler->UnsetEvent(mpWriteBitEvent);
@@ -971,6 +1044,7 @@ void ATXEP80Emulator::BeginWrite(uint8 len) {
 	}
 
 	mCommandState = kState_ReturningData;
+	mXmitTimingAccum = 0x80;
 
 	mWriteIndex = 1;
 	mWriteLength = len;
@@ -980,12 +1054,15 @@ void ATXEP80Emulator::BeginWrite(uint8 len) {
 	mCurrentWriteData = ((uint32)mWriteBuffer[0] << 1) + 0x1c00;
 	mWriteBitState = 0;
 
-	mpWriteBitEvent = mpScheduler->AddEvent(1 + 0*mCyclesPerBitXmit, this, 2);
+	mpWriteBitEvent = mpScheduler->AddEvent(200, this, 2);
 }
 
 void ATXEP80Emulator::OnChar(uint8 ch) {
-	if (mbPrinterMode)
+	if (mbPrinterMode) {
+		if (mpOnPrinterOutput)
+			mpOnPrinterOutput(ch);
 		return;
+	}
 
 	mLastChar = ch;
 
@@ -1013,6 +1090,9 @@ void ATXEP80Emulator::OnChar(uint8 ch) {
 		goto not_control;
 
 	// process control characters
+	uint32 controlDelay;
+	controlDelay = 1;
+
 	switch(ch) {
 		case 0x1B:	// escape
 			mbEscape = true;
@@ -1069,6 +1149,9 @@ void ATXEP80Emulator::OnChar(uint8 ch) {
 			break;
 
 		case 0x7D:
+			// Clearing the screen takes a notably long time -- measured time
+			// on an XEP80 is 11.5ms from computer stop bit to XEP80 start bit.
+			controlDelay = 20527;
 			Clear();
 			break;
 
@@ -1140,7 +1223,7 @@ void ATXEP80Emulator::OnChar(uint8 ch) {
 	if (mbBurstMode)
 		mpPIA->SetInput(mPIAInput, ~0);
 	else
-		SendCursor(0);
+		SendCursor(0, controlDelay);
 	return;
 
 not_control:
@@ -1149,8 +1232,11 @@ not_control:
 		mX = mRightMargin;
 		Advance(false);
 	} else {
-		GetRowPtr(mY)[mX] = ch;
-		Advance(true);
+		uint8 *row = GetRowPtr(mY);
+		const bool overwroteEOL = row[mX] == 0x9B;
+
+		row[mX] = ch;
+		Advance(overwroteEOL);
 	}
 
 	UpdateCursorAddr();
@@ -1158,8 +1244,15 @@ not_control:
 
 	if (mbBurstMode)
 		mpPIA->SetInput(mPIAInput, ~0);
-	else
-		SendCursor(0);
+	else {
+		// Measured timing for a regular put byte from leading edge of character
+		// stop bit to leading edge of report byte is about 350-440us on a real
+		// XEP80. The stop bit is 64us and we get the command mid-bit when the
+		// stop bit is sampled, so we need a delay of ~570-730 cycles. For now,
+		// we split the difference deterministically.
+
+		SendCursor(0, 650);
+	}
 }
 
 void ATXEP80Emulator::OnCmdSetCursorHPos(uint8 ch) {
@@ -1252,7 +1345,11 @@ void ATXEP80Emulator::OnCmdReadCharAndAdvance(uint8) {
 
 	UpdateCursorAddr();
 	InvalidateFrame();
-	SendCursor(1);
+
+	// Measured time on real hardware is about 940us from leading edge of
+	// computer start bit to leading edge of XEP80 start bit, or around 594
+	// cycles.
+	SendCursor(1, 594);
 }
 
 void ATXEP80Emulator::OnCmdRequestCursorHPos(uint8) {
@@ -1268,7 +1365,7 @@ void ATXEP80Emulator::OnCmdMasterReset(uint8) {
 }
 
 void ATXEP80Emulator::OnCmdPrinterPortStatus(uint8) {
-	mWriteBuffer[0] = 0x00;	// busy
+	mWriteBuffer[0] = 0x01;	// not busy
 	BeginWrite(1);
 }
 
@@ -1290,7 +1387,7 @@ void ATXEP80Emulator::OnCmdFillSpace(uint8) {
 }
 
 void ATXEP80Emulator::OnCmdFillEOL(uint8) {
-	memset(mVRAM, 0x1B, sizeof mVRAM);
+	memset(mVRAM, 0x9B, sizeof mVRAM);
 	InvalidateFrame();
 
 	mWriteBuffer[0] = 0x01;
@@ -1610,7 +1707,7 @@ void ATXEP80Emulator::OnCmdSetBaudRate(uint8) {
 
 	RecomputeBaudRate();
 
-	g_ATLCXEPCmd("Baud rate now set to %u cycles/bit receive, %u cycles/bit transmit\n", mCyclesPerBitRecv, mCyclesPerBitXmit);
+	g_ATLCXEPCmd("Baud rate now set to %u cycles/bit receive, %.1f cycles/bit transmit\n", mCyclesPerBitRecv, (float)mCyclesPerBitXmitX256 / 256.0f);
 }
 
 void ATXEP80Emulator::OnCmdSetUMX(uint8) {
@@ -1618,7 +1715,7 @@ void ATXEP80Emulator::OnCmdSetUMX(uint8) {
 
 	RecomputeBaudRate();
 
-	g_ATLCXEPCmd("Baud rate now set to %u cycles/bit receive, %u cycles/bit transmit\n", mCyclesPerBitRecv, mCyclesPerBitXmit);
+	g_ATLCXEPCmd("Baud rate now set to %u cycles/bit receive, %.1f cycles/bit transmit\n", mCyclesPerBitRecv, (float)mCyclesPerBitXmitX256 / 256.0f);
 }
 
 void ATXEP80Emulator::Clear() {
@@ -1753,11 +1850,9 @@ void ATXEP80Emulator::DeleteLine() {
 	if (mY >= 24)
 		return;
 
-	// find start of logical line
-	while(mY > 0 && GetRowPtr(mY - 1)[mRightMargin] != 0x9B)
-		--mY;
-
-	// get size of logical line
+	// get size of logical line from this line -- note that we may be in the
+	// middle of a logical line, and it's intentional that we only delete from
+	// this point and not the whole line, as that's what the XEP80 does
 	uint8 y2 = mY;
 	while(y2 < 24 && GetRowPtr(y2)[mRightMargin] != 0x9B)
 		++y2;
@@ -1799,11 +1894,9 @@ void ATXEP80Emulator::Advance(bool extendLine) {
 }
 
 void ATXEP80Emulator::Scroll() {
-	// determine number of physical lines in top logical line
+	// The XEP80 always scrolls by a single line, even if the top logical line
+	// has multiple physical lines. This may truncate a logical line.
 	int rows = 1;
-
-	while(rows < 24 && GetRowPtr(rows - 1)[mRightMargin] != 0x9B)
-		++rows;
 
 	// rotate physical lines
 	if (rows < 24) {
@@ -2134,7 +2227,7 @@ void ATXEP80Emulator::RecomputeBaudRate() {
 	// The fastest possible clock is 214KHz, so this will never be 0. Note that we
 	// are using the NTSC clock rate here; PAL shouldn't be far enough off to matter
 	// here, though.
-	double cyclesPerBit = 1789772.5 / baserate * prescale * divisor;
+	double cyclesPerBit = mpScheduler->GetRate().asDouble() / baserate * prescale * divisor;
 	double cyclesPerBit2 = cyclesPerBit;
 
 	for(int i=5; i>0; --i) {
@@ -2145,10 +2238,10 @@ void ATXEP80Emulator::RecomputeBaudRate() {
 	}
 
 	if (mUARTMultiplex & 0x80) {
-		mCyclesPerBitXmit = VDRoundToInt32(cyclesPerBit);
+		mCyclesPerBitXmitX256 = VDRoundToInt32(cyclesPerBit * 256);
 		mCyclesPerBitRecv = VDRoundToInt32(cyclesPerBit2);
 	} else {
-		mCyclesPerBitXmit = VDRoundToInt32(cyclesPerBit2);
+		mCyclesPerBitXmitX256 = VDRoundToInt32(cyclesPerBit2 * 256);
 		mCyclesPerBitRecv = VDRoundToInt32(cyclesPerBit);
 	}
 }
@@ -2207,6 +2300,8 @@ class ATDeviceXEP80 : public ATDevice
 					, public IATDevicePortInput
 					, public IATDeviceVideoOutput
 					, public IATDeviceDiagnostics
+					, public IATDevicePrinterPort
+					, public IATDeviceParent
 {
 public:
 	ATDeviceXEP80();
@@ -2228,26 +2323,36 @@ public:
 	virtual void InitPortInput(IATDevicePortManager *pia) override;
 
 public:	// IATDeviceVideoOutput
-	virtual void Tick(uint32 hz300ticks) override;
-	virtual void UpdateFrame() override;
-	virtual const VDPixmap& GetFrameBuffer() override;
-	virtual const ATDeviceVideoInfo& GetVideoInfo() override;
-	virtual vdpoint32 PixelToCaretPos(const vdpoint32& pixelPos) override;
-	virtual vdrect32 CharToPixelRect(const vdrect32& r) override;
-	virtual int ReadRawText(uint8 *dst, int x, int y, int n) override;
-	virtual uint32 GetActivityCounter() override;
+	const char *GetName() const override;
+	const wchar_t *GetDisplayName() const override;
+	void Tick(uint32 hz300ticks) override;
+	void UpdateFrame() override;
+	const VDPixmap& GetFrameBuffer() override;
+	const ATDeviceVideoInfo& GetVideoInfo() override;
+	vdpoint32 PixelToCaretPos(const vdpoint32& pixelPos) override;
+	vdrect32 CharToPixelRect(const vdrect32& r) override;
+	int ReadRawText(uint8 *dst, int x, int y, int n) override;
+	uint32 GetActivityCounter() override;
 
 public:	// IATDeviceDiagnostics
-	virtual void DumpStatus(ATConsoleOutput& output) override;
+	void DumpStatus(ATConsoleOutput& output) override;
+
+public:	// IATDevicePrinterPort
+	void SetPrinterDefaultOutput(IATPrinterOutput *out) override;
+
+public:	// IATDeviceParent
+	IATDeviceBus *GetDeviceBus(uint32 index) override;
 
 private:
 	static sint32 ReadByte(void *thisptr0, uint32 addr);
 	static bool WriteByte(void *thisptr0, uint32 addr, uint8 value);
 
-	ATScheduler *mpScheduler;
-	IATDevicePortManager *mpPIA;
+	ATScheduler *mpScheduler = nullptr;
+	IATDevicePortManager *mpPIA = nullptr;
+	vdrefptr<IATPrinterOutput> mpDefaultPrinter;
 
 	ATDeviceVideoInfo mVideoInfo;
+	ATDeviceBusSingleChild mParallelBus;
 
 	ATXEP80Emulator mXEP80;
 	uint8 mPortIndex = 1;
@@ -2261,10 +2366,15 @@ void ATCreateDeviceXEP80(const ATPropertySet& pset, IATDevice **dev) {
 
 extern const ATDeviceDefinition g_ATDeviceDefXEP80 = { "xep80", "xep80", L"XEP80", ATCreateDeviceXEP80 };
 
-ATDeviceXEP80::ATDeviceXEP80()
-	: mpScheduler(nullptr)
-	, mpPIA(nullptr)
-{
+ATDeviceXEP80::ATDeviceXEP80() {
+	mXEP80.SetOnPrinterOutput(
+		[this](uint8 c) {
+			if (auto *printer = mParallelBus.GetChild<IATPrinterOutput>())
+				printer->WriteASCII(&c, 1);
+			else if (mpDefaultPrinter)
+				mpDefaultPrinter->WriteASCII(&c, 1);
+		}
+	);
 }
 
 void *ATDeviceXEP80::AsInterface(uint32 id) {
@@ -2280,6 +2390,12 @@ void *ATDeviceXEP80::AsInterface(uint32 id) {
 
 		case IATDevicePortInput::kTypeID:
 			return static_cast<IATDevicePortInput *>(this);
+
+		case IATDevicePrinterPort::kTypeID:
+			return static_cast<IATDevicePrinterPort *>(this);
+
+		case IATDeviceParent::kTypeID:
+			return static_cast<IATDeviceParent *>(this);
 
 		default:
 			return ATDevice::AsInterface(id);
@@ -2315,11 +2431,19 @@ void ATDeviceXEP80::ColdReset() {
 }
 
 void ATDeviceXEP80::Init() {
+	mParallelBus.Init(this, 0, IATPrinterOutput::kTypeID, "parallel", L"Parallel Printer Port", "parport");
+
 	mXEP80.SetPortIndex(mPortIndex);
 	mXEP80.Init(mpScheduler, mpPIA);
+
+	GetService<IATDeviceVideoManager>()->AddVideoOutput(this);
 }
 
 void ATDeviceXEP80::Shutdown() {
+	mParallelBus.Shutdown();
+
+	GetService<IATDeviceVideoManager>()->RemoveVideoOutput(this);
+
 	mXEP80.Shutdown();
 
 	mpPIA = nullptr;
@@ -2332,6 +2456,14 @@ void ATDeviceXEP80::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 
 void ATDeviceXEP80::InitPortInput(IATDevicePortManager *pia) {
 	mpPIA = pia;
+}
+
+const char *ATDeviceXEP80::GetName() const {
+	return "xep80";
+}
+
+const wchar_t *ATDeviceXEP80::GetDisplayName() const {
+	return L"XEP80";
 }
 
 void ATDeviceXEP80::Tick(uint32 ticks300Hz) {
@@ -2347,6 +2479,7 @@ const VDPixmap& ATDeviceXEP80::GetFrameBuffer() {
 }
 
 const ATDeviceVideoInfo& ATDeviceXEP80::GetVideoInfo() {
+	mVideoInfo.mbSignalPassThrough = false;
 	mVideoInfo.mbSignalValid = mXEP80.IsVideoSignalValid();
 	mVideoInfo.mHorizScanRate = mXEP80.GetVideoHorzRate();
 	mVideoInfo.mVertScanRate = mXEP80.GetVideoVertRate();
@@ -2361,6 +2494,7 @@ const ATDeviceVideoInfo& ATDeviceXEP80::GetVideoInfo() {
 	mVideoInfo.mDisplayArea = mXEP80.GetDisplayArea();
 
 	mVideoInfo.mBorderColor = 0;
+	mVideoInfo.mbForceExactPixels = false;
 
 	return mVideoInfo;
 }
@@ -2382,4 +2516,12 @@ uint32 ATDeviceXEP80::GetActivityCounter() {
 }
 
 void ATDeviceXEP80::DumpStatus(ATConsoleOutput& output) {
+}
+
+void ATDeviceXEP80::SetPrinterDefaultOutput(IATPrinterOutput *out) {
+	mpDefaultPrinter = out;
+}
+
+IATDeviceBus *ATDeviceXEP80::GetDeviceBus(uint32 index) {
+	return index ? nullptr : &mParallelBus;
 }

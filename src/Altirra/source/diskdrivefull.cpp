@@ -20,6 +20,7 @@
 #include <vd2/system/int128.h>
 #include <vd2/system/math.h>
 #include <at/atcore/audiosource.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/propertyset.h>
@@ -31,6 +32,8 @@
 #include "debuggerlog.h"
 
 ATLogChannel g_ATLCDiskEmu(true, false, "DISKEMU", "Disk drive emulation");
+
+ATConfigVarBool g_ATCVFullDisk1050TurboForceDensityDetect("full_disk.1050turbo.force_density_detect", true);
 
 void ATCreateDeviceDiskDrive810(const ATPropertySet& pset, IATDevice **dev) {
 	vdrefptr<ATDeviceDiskDriveFull> p(new ATDeviceDiskDriveFull(false, ATDeviceDiskDriveFull::kDeviceType_810));
@@ -219,6 +222,11 @@ void ATDeviceDiskDriveFull::GetSettingsBlurb(VDStringW& buf) {
 void ATDeviceDiskDriveFull::GetSettings(ATPropertySet& settings) {
 	settings.SetUint32("id", mDriveId);
 
+	if (mDeviceType == kDeviceType_Happy810) {
+		settings.SetBool("autospeed", mbHappy810AutoSpeed);
+		settings.SetFloat("autospeedrate", mHappy810AutoSpeedRate);
+	}
+
 	if (mDeviceType == kDeviceType_Happy1050 || mDeviceType == kDeviceType_Happy810) {
 		settings.SetBool("slow", mbSlowSwitch);
 	}
@@ -244,6 +252,16 @@ bool ATDeviceDiskDriveFull::SetSettings(const ATPropertySet& settings) {
 			mbWPDisable = false;
 		}
 	}
+	
+	if (mDeviceType == kDeviceType_Happy810) {
+		mbHappy810AutoSpeed = settings.GetBool("autospeed", false);
+
+		float rate = settings.GetFloat("autospeedrate", kDefaultAutoSpeedRate);
+		if (!isfinite(rate) || rate < 200.0f || rate > 400.0f)
+			rate = kDefaultAutoSpeedRate;
+
+		mHappy810AutoSpeedRate = rate;
+	}
 
 	uint32 newDriveId = settings.GetUint32("id", mDriveId) & 3;
 
@@ -252,6 +270,8 @@ bool ATDeviceDiskDriveFull::SetSettings(const ATPropertySet& settings) {
 		return false;
 	}
 
+	if (mpScheduler)
+		UpdateAutoSpeed();
 	return true;
 }
 
@@ -305,6 +325,8 @@ void ATDeviceDiskDriveFull::Init() {
 		mReadNodeFDCRAM.mpRead = [](uint32 addr, void *thisptr0) -> uint8 {
 			auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
 
+			addr &= 0xFF;
+
 			if (addr >= 0x80)
 				return thisptr->mRAM[addr];
 			else
@@ -314,6 +336,8 @@ void ATDeviceDiskDriveFull::Init() {
 		mReadNodeFDCRAM.mpDebugRead = [](uint32 addr, void *thisptr0) -> uint8 {
 			auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
 
+			addr &= 0xFF;
+
 			if (addr >= 0x80)
 				return thisptr->mRAM[addr];
 			else
@@ -322,6 +346,8 @@ void ATDeviceDiskDriveFull::Init() {
 
 		mWriteNodeFDCRAM.mpWrite = [](uint32 addr, uint8 val, void *thisptr0) {
 			auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
+			
+			addr &= 0xFF;
 
 			if (addr >= 0x80)
 				thisptr->mRAM[addr] = val;
@@ -826,9 +852,13 @@ void ATDeviceDiskDriveFull::Init() {
 	}
 
 	// In general, Atari-compatible disk drives use FDCs that spec timings in their datasheets
-	// for 2MHz, but run them at 1MHz. Therefore, we push in a period factor of 2x to scale all
-	// of the timings appropriately.
-	mFDC.Init(&mDriveScheduler, 288.0f, 2.0f, mb1050 || mDeviceType == kDeviceType_810Turbo ? ATFDCEmulator::kType_2793 : ATFDCEmulator::kType_1771);
+	// for 2MHz, but run them at 1MHz in 8" mode. Therefore, we push in a period factor of 2x
+	// to scale all of the timings appropriately.
+	mFDC.Init(&mDriveScheduler, 288.0f, mb1050 ? 2.0f : 1.0f, mb1050 || mDeviceType == kDeviceType_810Turbo ? ATFDCEmulator::kType_2793 : ATFDCEmulator::kType_1771);
+
+	if (mb1050)
+		mFDC.SetDoubleClock(true);
+
 	mFDC.SetDiskInterface(mpDiskInterface);
 	mFDC.SetOnDrqChange([this](bool drq) { mRIOT.SetInputA(drq ? 0x80 : 0x00, 0x80); });
 
@@ -851,6 +881,7 @@ void ATDeviceDiskDriveFull::Init() {
 	UpdateROMBankSuperArchiver();
 	UpdateROMBank1050Turbo();
 	UpdateSlowSwitch();
+	UpdateAutoSpeed();
 }
 
 void ATDeviceDiskDriveFull::Shutdown() {
@@ -936,6 +967,11 @@ void ATDeviceDiskDriveFull::PeripheralColdReset() {
 	// need to update motor and sound status, since the 810 starts with the motor on
 	UpdateRotationStatus();
 
+	// if we're in 1050 Turbo mode, turn on the startup hack to force density
+	// detection to work around a bug with the firmware not doing so
+	if (mDeviceType == kDeviceType_1050Turbo && mpDiskInterface->IsDiskLoaded())
+		mFDC.SetDiskChangeStartupHackEnabled(g_ATCVFullDisk1050TurboForceDensityDetect);
+
 	WarmReset();
 }
 
@@ -998,11 +1034,14 @@ bool ATDeviceDiskDriveFull::ReloadFirmware() {
 	// ROM or a full 4K/8K image. Both are supported.
 	if (mDeviceType == kDeviceType_Happy810) {
 		if (len == 0xC00) {
+			// 3K firmware
 			memmove(firmware + 0x400, firmware, 0xC00);
 			memset(firmware, 0, 0x400);
 		} else if (len == 0x1000) {
+			// 4K firmware
 			memcpy(firmware + 0x1000, firmware, 0x1000);
 		} else if (len == 0x1800) {
+			// 6K firmware
 			memmove(firmware + 0x1400, firmware + 0xC00, 0xC00);
 			memmove(firmware + 0x400, firmware, 0xC00);
 			memset(firmware, 0, 0x400);
@@ -1217,10 +1256,22 @@ bool ATDeviceDiskDriveFull::IsImageSupported(const IATDiskImage& image) const {
 
 	const auto& geo = image.GetGeometry();
 
+	if (geo.mbHighDensity)
+		return false;
+
 	if (!mb1050 && mDeviceType != kDeviceType_810Turbo) {
 		if (geo.mbMFM)
 			return false;
 	}
+
+	if (geo.mSectorSize > 256)
+		return false;
+
+	if (geo.mSectorsPerTrack > 26)
+		return false;
+
+	if (geo.mTrackCount > 80)
+		return false;
 
 	return true;
 }
@@ -1283,9 +1334,14 @@ void ATDeviceDiskDriveFull::OnRIOTRegisterWrite(uint32 addr, uint8 val) {
 		if (mDeviceType == kDeviceType_SuperArchiver && (delta & 4))
 			UpdateROMBankSuperArchiver();
 
-		// check for SLOW sense (Happy 810)
-		if (mDeviceType == kDeviceType_Happy810 && (delta & 8))
-			UpdateSlowSwitch();
+		// check for SLOW sense and autospeed (Happy 810)
+		if (mDeviceType == kDeviceType_Happy810) {
+			if (delta & 8)
+				UpdateSlowSwitch();
+
+			if ((delta & 0x20) && mbHappy810AutoSpeed)
+				UpdateAutoSpeed();
+		}
 
 		// check for index pulse change (1050)
 		if (mb1050 && (delta & 0x40)) {
@@ -1486,6 +1542,9 @@ void ATDeviceDiskDriveFull::UpdateDiskStatus() {
 
 	mFDC.SetDiskImage(image, !mb1050 || (image != nullptr && mDiskChangeState == 0));
 
+	if (!image)
+		mFDC.SetDiskChangeStartupHackEnabled(false);
+
 	UpdateWriteProtectStatus();
 }
 
@@ -1558,4 +1617,11 @@ void ATDeviceDiskDriveFull::UpdateSlowSwitch() {
 		else
 			mRIOT.SetInputA(0x20, 0x20);
 	}
+}
+
+void ATDeviceDiskDriveFull::UpdateAutoSpeed() {
+	if (mDeviceType != kDeviceType_Happy810 || !mbHappy810AutoSpeed || (mRIOT.ReadOutputA() & 0x20))
+		mFDC.SetSpeeds(288.0f, mb1050 ? 2.0f : 1.0f, mb1050);
+	else
+		mFDC.SetSpeeds(mHappy810AutoSpeedRate, mb1050 ? 2.0f : 1.0f, mb1050);
 }

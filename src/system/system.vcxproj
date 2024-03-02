@@ -76,10 +76,6 @@
     <ClCompile Include="source\tls.cpp">
     </ClCompile>
     <ClCompile Include="source\vdalloc.cpp" />
-    <ClCompile Include="source\VDNamespace.cpp">
-    </ClCompile>
-    <ClCompile Include="source\VDScheduler.cpp">
-    </ClCompile>
     <ClCompile Include="source\vdstl.cpp" />
     <ClCompile Include="source\vdstl_hash.cpp" />
     <ClCompile Include="source\vdstl_hashtable.cpp" />
@@ -149,10 +145,8 @@
     <ClInclude Include="..\h\VD2\system\tls.h" />
     <ClInclude Include="..\h\vd2\system\unknown.h" />
     <ClInclude Include="..\h\VD2\system\vdalloc.h" />
-    <ClInclude Include="..\h\VD2\system\VDNamespace.h" />
     <ClInclude Include="..\h\VD2\system\VDQueue.h" />
     <ClInclude Include="..\h\VD2\system\VDRingBuffer.h" />
-    <ClInclude Include="..\h\VD2\system\VDScheduler.h" />
     <ClInclude Include="..\h\vd2\system\vdstdc.h" />
     <ClInclude Include="..\h\vd2\system\vdstl.h" />
     <ClInclude Include="..\h\vd2\system\vdstl_algorithm.h" />
@@ -182,9 +176,6 @@
     </YASM>
     <YASM Include="source\a_thunk.asm">
       <ExcludedFromBuild Condition="'$(Platform)'!='Win32'">true</ExcludedFromBuild>
-    </YASM>
-    <YASM Include="source\a64_cpuaccel.asm">
-      <ExcludedFromBuild Condition="'$(Platform)'!='x64'">true</ExcludedFromBuild>
     </YASM>
     <YASM Include="source\a64_fraction.asm">
       <ExcludedFromBuild Condition="'$(Platform)'!='x64'">true</ExcludedFromBuild>

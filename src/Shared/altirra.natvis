@@ -1,5 +1,14 @@
 <?xml version="1.0"?>
 <AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="vdstructex&lt;*&gt;">
+    <DisplayString>size={mSize} {*($T1 *)mpMemory}</DisplayString>
+    <Expand>
+      <Item Name="[size]">mSize</Item>
+      <Item Name="[item]" Condition="mpMemory">*($T1 *)mpMemory</Item>
+      <Item Name="[item]" Condition="!mpMemory">"(empty)"</Item>
+    </Expand>
+  </Type>
+  
   <Type Name="vdspan&lt;*&gt;">
     <DisplayString>size={mpEnd-mpBegin,i}</DisplayString>
     <Expand>
@@ -181,7 +190,11 @@
   <Type Name="nsVDVecMath::vdmask32x4">
     <DisplayString>({v.m128_i32[0]!=0}, {v.m128_i32[1]!=0}, {v.m128_i32[2]!=0}, {v.m128_i32[3]!=0})</DisplayString>
   </Type>
-  
+
+  <Type Name="nsVDVecMath::vdfloat32x3">
+    <DisplayString>({v.m128_f32[0]}, {v.m128_f32[1]}, {v.m128_f32[2]})</DisplayString>
+  </Type>
+
   <Type Name="nsVDVecMath::vdfloat32x4">
     <DisplayString>({v.m128_f32[0]}, {v.m128_f32[1]}, {v.m128_f32[2]}, {v.m128_f32[3]})</DisplayString>
   </Type>
@@ -447,7 +460,7 @@
     </DisplayString>
   </Type>
 
-  <Type Name="ATCDVMFunction">
+  <Type Name="ATVMFunction">
     <DisplayString>{mpName,sb}()</DisplayString>
     <Expand>
       <Synthetic Name="[Bytecode]">
@@ -455,14 +468,22 @@
           
           <IndexListItems>
             <Size>mByteCodeLen</Size>
-            <ValueNode>(ATCDVMOpcode)mpByteCode[$i],x</ValueNode>
+            <ValueNode>(ATVMOpcode)mpByteCode[$i],x</ValueNode>
           </IndexListItems>
         </Expand>
       </Synthetic>
     </Expand>
   </Type>
 
-  <Type Name="__m128i">
+  <Type Name="ATTapeImageSpan">
+    <DisplayString IncludeView="BlockType" Condition="mBlockType==kATCassetteImageBlockType_Blank">Blank</DisplayString>
+    <DisplayString IncludeView="BlockType" Condition="mBlockType==kATCassetteImageBlockType_FSK">FSK</DisplayString>
+    <DisplayString IncludeView="BlockType" Condition="mBlockType==kATCassetteImageBlockType_Std">Std</DisplayString>
+    <DisplayString IncludeView="BlockType">{mBlockType,en}</DisplayString>
+    <DisplayString>Start {mStart,i} | Len {this[1].mStart-mStart,i} | Offset {mOffset,i} | Type {*this,view(BlockType)}</DisplayString>
+  </Type>
+
+    <Type Name="__m128i">
     <DisplayString>{m128i_u32[3],Xb} {m128i_u32[2],Xb} {m128i_u32[1],Xb} {m128i_u32[0],Xb}</DisplayString>
   </Type>
 </AutoVisualizer>

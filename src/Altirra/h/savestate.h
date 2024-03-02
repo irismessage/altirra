@@ -22,10 +22,10 @@
 #pragma once
 #endif
 
-#include <vd2/system/error.h>
 #include <vd2/system/linearalloc.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vdstl_hashmap.h>
+#include <at/atcore/savestate.h>
 
 enum ATSaveStateSection {
 	// architectural state
@@ -41,16 +41,6 @@ enum ATSaveStateSection {
 };
 
 class ATSaveStateReader;
-
-class ATInvalidSaveStateException : public MyError {
-public:
-	ATInvalidSaveStateException();
-};
-
-class ATUnsupportedSaveStateException : public MyError {
-public:
-	ATUnsupportedSaveStateException();
-};
 
 ///////////////////////////////////////////////////////////////////////////
 struct ATSaveStateReadHandler {

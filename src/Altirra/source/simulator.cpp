@@ -25,9 +25,12 @@
 #include <vd2/system/zip.h>
 #include <vd2/system/int128.h>
 #include <vd2/system/hash.h>
+#include <at/ataudio/audiooutput.h>
+#include <at/ataudio/pokeytables.h>
 #include <at/atcore/address.h>
 #include <at/atcore/asyncdispatcherimpl.h>
 #include <at/atcore/bussignal.h>
+#include <at/atcore/consoleoutput.h>
 #include <at/atcore/constants.h>
 #include <at/atcore/device.h>
 #include <at/atcore/devicecio.h>
@@ -39,6 +42,7 @@
 #include <at/atcore/media.h>
 #include <at/atcore/memoryutils.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/randomization.h>
 #include <at/atcore/snapshotimpl.h>
 #include <at/atcore/serialization.h>
 #include <at/atcore/vfs.h>
@@ -58,6 +62,7 @@
 #include "disk.h"
 #include "oshelper.h"
 #include "savestate.h"
+#include "savestateio.h"
 #include "cartridge.h"
 #include "cartridgeport.h"
 #include "resource.h"
@@ -69,14 +74,12 @@
 #include "verifier.h"
 #include "uirender.h"
 #include "audiomonitor.h"
-#include "audiooutput.h"
 #include "audiosampleplayer.h"
 #include "cheatengine.h"
 #include "mmu.h"
 #include "pbi.h"
 #include "ultimate1mb.h"
 #include "virtualscreen.h"
-#include "pokeytables.h"
 #include "cpuhookmanager.h"
 #include "cpuheatmap.h"
 #include "cputracer.h"
@@ -97,6 +100,9 @@
 #include "tracevideo.h"
 #include "rapidus.h"
 #include "mediamanager.h"
+#include "videomanager.h"
+#include "pokeysavecompat.h"
+#include "pokeytrace.h"
 
 namespace {
 	const char kSaveStateVersion[] = "Altirra save state V1";
@@ -219,6 +225,13 @@ namespace {
 	}
 }
 
+class ATPokeyConsoleOutput final : public ATConsoleOutput {
+public:
+	void WriteLine(const char *s) override {
+		ATConsoleTaggedPrintf("%s\n", s);
+	}
+} g_ATPokeyConsoleOutput;
+
 ///////////////////////////////////////////////////////////////////////////
 
 class ATSimulator::PrivateData final
@@ -280,6 +293,9 @@ public:
 	ATCPUMode mCPUMode = kATCPUMode_6502;
 	uint32 mCPUSubCycles = 1;
 
+	uint32 mRandomSeed = 1;
+	uint32 mLockedRandomSeed = 0;
+
 	uint64 mColdResetTime = 0;
 	bool mbExtRAMClearedOnce = false;
 	bool mbInU1MBPreLock = false;
@@ -297,6 +313,7 @@ public:
 	ATPIAFloatingInputs mFloatingInputs = {};
 	ATDeferredEventManager mDeferredEventManager;
 	ATAsyncDispatcher mAsyncDispatcher;
+	vdautoptr<ATVideoManager> mpVideoManager;
 	vdfunction<void()> mAsyncWakeFunction;
 	bool mAsyncWakePending = false;
 
@@ -307,6 +324,8 @@ public:
 	ATNotifyList<const vdfunction<void(bool)> *> mCovoxEnableChangedNotifyList;
 
 	ATDiskInterface *mpDiskInterfaces[15] = {};
+
+	vdautoptr<ATPokeyTracer> mpPokeyTracer;
 };
 
 ATSimulator::PrivateData::PrivateData(ATSimulator& parent)
@@ -338,6 +357,8 @@ ATSimulator::PrivateData::PrivateData(ATSimulator& parent)
 			}
 		}
 	);
+
+	mpVideoManager = new ATVideoManager;
 }
 
 void ATSimulator::PrivateData::ResetCPU() {
@@ -359,6 +380,11 @@ void ATSimulator::PrivateData::OverrideCPUMode(IATDeviceSystemControl *source, b
 	mpCPUModeOverrider = source;
 
 	mParent.mCPU.SetCPUMode(use816 ? kATCPUMode_65C816 : kATCPUMode_6502, multiplier);
+
+	// We need to force the main advance loop the exit as it is running a CPU-specific
+	// loop.
+	if (!mParent.mPendingEvent)
+		mParent.mPendingEvent = kATSimEvent_CPURestart;
 
 	ResetCPU();
 }
@@ -425,6 +451,9 @@ void ATSimulator::PrivateData::OnDeviceAdded(uint32 iid, IATDevice *dev, void *i
 		if (mParent.mpMemLayerHiRAM)
 			mParent.mpMemMan->SetLayerFastBus(mParent.mpMemLayerHiRAM, false);
 
+		if (mParent.mpMemLayerExtendedRAM)
+			mParent.mpMemMan->SetLayerFastBus(mParent.mpMemLayerExtendedRAM, false);
+
 		mParent.mpMemMan->SetFastBusEnabled(true);
 		mParent.mpMemMan->SetHighMemoryEnabled(true);
 		mParent.mpMMU->SetHighMemory(0, nullptr);
@@ -454,6 +483,9 @@ void ATSimulator::PrivateData::OnDeviceRemoving(uint32 iid, IATDevice *dev, void
 
 		if (mParent.mpMemLayerHiRAM)
 			mParent.mpMemMan->SetLayerFastBus(mParent.mpMemLayerHiRAM, true);
+
+		if (mParent.mpMemLayerExtendedRAM)
+			mParent.mpMemMan->SetLayerFastBus(mParent.mpMemLayerExtendedRAM, true);
 
 		mParent.mpMemMan->SetFastBusEnabled(mParent.mCPU.GetSubCycles() > 1);
 		mParent.mpMemMan->SetHighMemoryEnabled(mParent.mHighMemoryBanks >= 0);
@@ -628,6 +660,9 @@ void ATSimulator::Init() {
 	mpDeviceManager->AddDeviceChangeCallback(IATDeviceSystemControl::kTypeID, mpPrivateData);
 	mpDeviceManager->AddInitCallback([this](IATDevice& dev) { InitDevice(dev); });
 	mpDeviceManager->RegisterService<IATAsyncDispatcher>(&mpPrivateData->mAsyncDispatcher);
+	mpDeviceManager->RegisterService<IATDeviceVideoManager>(mpPrivateData->mpVideoManager);
+	mpDeviceManager->RegisterService<ATIRQController>(&mpPrivateData->mIRQController);
+	mpDeviceManager->RegisterService<IATDevicePortManager>(&mPIA);
 
 	mpAnticBusData = &mpMemMan->mBusValue;
 
@@ -689,6 +724,9 @@ void ATSimulator::Init() {
 	mPokey.Init(this, &mScheduler, mpAudioOutput, mpPokeyTables);
 	mPokey2.Init(&g_pokeyDummyConnection, &mScheduler, NULL, mpPokeyTables);
 
+	mPokey.SetConsoleOutput(&g_ATPokeyConsoleOutput);
+	mPokey2.SetConsoleOutput(&g_ATPokeyConsoleOutput);
+
 	mpPrivateData->mStereoEnableSignal.SetOnUpdated(
 		[this] {
 			this->mPokey.SetStereoSoftEnable(mpPrivateData->mStereoEnableSignal.AndDefaultTrue());
@@ -704,7 +742,7 @@ void ATSimulator::Init() {
 	mpPortBController->Init(&mGTIA, &mPokey, &mPIA, mpLightPen, 2);
 
 	mpCassette = new ATCassetteEmulator;
-	mpCassette->Init(&mPokey, &mScheduler, &mSlowScheduler, &mpAudioOutput->AsMixer(), &mpPrivateData->mDeferredEventManager, mpSIOManager);
+	mpCassette->Init(&mPokey, &mScheduler, &mSlowScheduler, &mpAudioOutput->AsMixer(), &mpPrivateData->mDeferredEventManager, mpSIOManager, &mPIA);
 	mpCassette->SetRandomizedStartEnabled(false);
 	mPokey.SetCassette(mpCassette);
 
@@ -790,10 +828,7 @@ void ATSimulator::Shutdown() {
 		mpHLEFastBootHook = NULL;
 	}
 
-	if (mpHLEFPAccelerator) {
-		ATDestroyHLEFPAccelerator(mpHLEFPAccelerator);
-		mpHLEFPAccelerator = NULL;
-	}
+	vdsafedelete <<= mpHLEFPAccelerator;
 
 	if (mpHLEProgramLoader) {
 		mpHLEProgramLoader->Shutdown();
@@ -997,7 +1032,7 @@ IATDeviceCIOManager *ATSimulator::GetDeviceCIOManager() {
 	return vdpoly_cast<IATDeviceCIOManager *>(mpHLECIOHook);
 }
 
-void ATSimulator::SetPrinterOutput(IATPrinterOutput *p) {
+void ATSimulator::SetPrinterDefaultOutput(IATPrinterOutput *p) {
 	if (mpPrinterOutput == p)
 		return;
 
@@ -1009,8 +1044,8 @@ void ATSimulator::SetPrinterOutput(IATPrinterOutput *p) {
 
 	mpPrinterOutput = p;
 
-	for(IATDevicePrinter *pr : mpDeviceManager->GetInterfaces<IATDevicePrinter>(false, false))
-		pr->SetPrinterOutput(p);
+	for(IATDevicePrinterPort *pr : mpDeviceManager->GetInterfaces<IATDevicePrinterPort>(false, false))
+		pr->SetPrinterDefaultOutput(p);
 }
 
 bool ATSimulator::GetDiskBurstTransfersEnabled() const {
@@ -1311,7 +1346,7 @@ void ATSimulator::SetAxlonMemoryMode(uint8 bits) {
 		if (mAxlonMemory.size() != reqSize) {
 			mAxlonMemory.resize(reqSize);
 
-			ResetMemoryBuffer(mAxlonMemory.data(), reqSize, 0xBF1ADAEE);
+			ResetMemoryBuffer(mAxlonMemory.data(), reqSize, g_ATRandomizationSeeds.mAxlonMemory);
 		}
 
 		mpMMU->SetAxlonMemory(bits, mbAxlonAliasingEnabled, mAxlonMemory.data());
@@ -1342,7 +1377,7 @@ void ATSimulator::SetHighMemoryBanks(sint32 banks) {
 	if (mpPrivateData->mHighMemory.size() != highMemSize) {
 		mpPrivateData->mHighMemory.resize(highMemSize);
 
-		ResetMemoryBuffer(mpPrivateData->mHighMemory.data(), mpPrivateData->mHighMemory.size(), 0x324CBA17);
+		ResetMemoryBuffer(mpPrivateData->mHighMemory.data(), mpPrivateData->mHighMemory.size(), g_ATRandomizationSeeds.mHighMemory);
 	}
 
 	if (!mpPrivateData->mpRapidus) {
@@ -1415,10 +1450,7 @@ void ATSimulator::SetFPPatchEnabled(bool enable) {
 		if (!mpHLEFPAccelerator)
 			mpHLEFPAccelerator = ATCreateHLEFPAccelerator(&mCPU);
 	} else {
-		if (mpHLEFPAccelerator) {
-			ATDestroyHLEFPAccelerator(mpHLEFPAccelerator);
-			mpHLEFPAccelerator = NULL;
-		}
+		vdsafedelete <<= mpHLEFPAccelerator;
 	}
 
 	mbFPPatchEnabled = enable;
@@ -1602,6 +1634,14 @@ void ATSimulator::SetAudioScopeEnabled(bool enable) {
 		mpUIRenderer->SetAudioScopeEnabled(true);
 }
 
+void ATSimulator::SetAudioStatusEnabled(bool enable) {
+	if (mbAudioStatusEnabled != enable) {
+		mbAudioStatusEnabled = enable;
+
+		UpdateAudioStatus();
+	}
+}
+
 void ATSimulator::SetVirtualScreenEnabled(bool enable) {
 	if (enable) {
 		if (!mpVirtualScreenHandler) {
@@ -1743,7 +1783,13 @@ void ATSimulator::SetTracingEnabled(const ATTraceSettings *settings) {
 
 	mPIA.SetTraceContext(context);
 	mAntic.SetTraceContext(context);
-	mPokey.SetTraceContext(context);
+
+	if (context)
+		mpPrivateData->mpPokeyTracer = new ATPokeyTracer(*context);
+	else
+		mpPrivateData->mpPokeyTracer = nullptr;
+
+	mPokey.SetTraceOutput(mpPrivateData->mpPokeyTracer);
 
 	for(ATDiskEmulator *disk : mpDiskDrives) {
 		if (disk)
@@ -1764,6 +1810,22 @@ void ATSimulator::SetTracingEnabled(const ATTraceSettings *settings) {
 
 uint64 ATSimulator::TimeSinceColdReset() const {
 	return mScheduler.GetTick64() - mpPrivateData->mColdResetTime;
+}
+
+uint32 ATSimulator::GetRandomSeed() const {
+	return mpPrivateData->mRandomSeed;
+}
+
+void ATSimulator::SetRandomSeed(uint32 seed) {
+	mpPrivateData->mRandomSeed = seed;
+}
+
+uint32 ATSimulator::GetLockedRandomSeed() const {
+	return mpPrivateData->mLockedRandomSeed;
+}
+
+void ATSimulator::SetLockedRandomSeed(uint32 seed) {
+	mpPrivateData->mLockedRandomSeed = seed;
 }
 
 void ATSimulator::ColdReset() {
@@ -1798,6 +1860,15 @@ void ATSimulator::ColdResetComputerOnly() {
 }
 
 void ATSimulator::InternalColdReset(bool computerOnly) {
+	if (mpPrivateData->mLockedRandomSeed) {
+		mpPrivateData->mRandomSeed = mpPrivateData->mLockedRandomSeed;
+	} else
+		++mpPrivateData->mRandomSeed;
+
+	ATSetRandomizationSeeds(mpPrivateData->mRandomSeed);
+
+	mpPrivateData->mFloatingInputs.mRandomSeed = g_ATRandomizationSeeds.mPIAFloatingInputs;
+
 	ResetAutoHeldButtons();
 	SetupPendingHeldButtons();
 
@@ -1854,9 +1925,9 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 		clearExtRAM = true;
 	}
 
-	ResetMemoryBuffer(mMemory, clearExtRAM ? sizeof mMemory : 0x10000, 0xA702819E);
-	ResetMemoryBuffer(mpPrivateData->mHighMemory.data(), mpPrivateData->mHighMemory.size(), 0x324CBA17);
-	ResetMemoryBuffer(mAxlonMemory.data(), mAxlonMemory.size(), 0xBF1ADAEE);
+	ResetMemoryBuffer(mMemory, clearExtRAM ? sizeof mMemory : 0x10000, g_ATRandomizationSeeds.mMainMemory);
+	ResetMemoryBuffer(mpPrivateData->mHighMemory.data(), mpPrivateData->mHighMemory.size(), g_ATRandomizationSeeds.mHighMemory);
+	ResetMemoryBuffer(mAxlonMemory.data(), mAxlonMemory.size(), g_ATRandomizationSeeds.mAxlonMemory);
 
 	if (mpHeatMap) {
 		mpHeatMap->ResetMemoryRange(0, 0x10000);
@@ -1872,7 +1943,7 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 	for(ATVBXEEmulator *devvbxe : mpDeviceManager->GetInterfaces<ATVBXEEmulator>(false, false)) {
 		void *vbxeMem = devvbxe->GetMemoryBase();
 		if (mMemoryClearMode != kATMemoryClearMode_Zero)
-			ATRandomizeMemory((uint8 *)vbxeMem, 0x80000, 0x9B274CA3);
+			ATRandomizeMemory((uint8 *)vbxeMem, 0x80000, g_ATRandomizationSeeds.mVBXEMemory);
 		else
 			memset(vbxeMem, 0, 0x80000);
 	}
@@ -2085,7 +2156,7 @@ void ATSimulator::Suspend() {
 	if (mbRunning) {
 		mbRunning = false;
 
-		if (!mPendingEvent)
+		if (!mPendingEvent || mPendingEvent == kATSimEvent_CPURestart)
 			mPendingEvent = kATSimEvent_AnonymousInterrupt;
 	}
 }
@@ -2400,7 +2471,7 @@ bool ATSimulator::Load(ATMediaLoadContext& ctx) {
 	
 	ATScopeGuard restoreCassetteImageLoadCtx([&] { loadCtx->mpCassetteLoadContext = origCassetteLoadCtx; });
 
-	loadCtx->mpCassetteLoadContext->mbUseTurboPrefilter = mpCassette->IsTurboPrefilterEnabled();
+	loadCtx->mpCassetteLoadContext->mTurboDecodeAlgorithm = mpCassette->GetTurboDecodeAlgorithm();
 
 	const wchar_t *origPath = ctx.mOriginalPath.empty() ? nullptr : ctx.mOriginalPath.c_str();
 	const wchar_t *imagePath = ctx.mImageName.empty() ? nullptr : ctx.mImageName.c_str();
@@ -2622,7 +2693,7 @@ void ATSimulator::LoadProgram(const wchar_t *path, IATBlobImage *image, bool bas
 		vdautoptr<ATHLEProgramLoader> loader(new ATHLEProgramLoader);
 
 		loader->Init(&mCPU, mpSimEventManager, this, mpSIOManager);
-		loader->LoadProgram(path, image, mProgramLoadMode);
+		loader->LoadProgram(path, image, mProgramLoadMode, mbRandomizeLaunchDelay);
 
 		mpHLEProgramLoader = loader.release();
 		mpHLEProgramLoader->SetRandomizeMemoryOnLoad(mbRandomFillEXEEnabled);
@@ -2881,6 +2952,7 @@ ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
 		return mbRunning ? kAdvanceResult_Running : kAdvanceResult_Stopped;
 	}
 
+restart_cpu:
 	if (mCPU.GetUnusedCycle()) {
 		cpuEvent = (ATSimulatorEvent)mCPU.Advance();
 	}
@@ -2963,6 +3035,10 @@ ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
 handle_event:
 	ATSimulatorEvent ev = mPendingEvent;
 	mPendingEvent = kATSimEvent_None;
+
+	if (!cpuEvent && ev == kATSimEvent_CPURestart)
+		goto restart_cpu;
+
 	mbRunning = false;
 
 	if (cpuEvent)
@@ -3334,6 +3410,13 @@ bool ATSimulator::LoadState(ATSaveStateReader& reader, ATStateLoadContext *pctx)
 	bool privateStateOK = false;
 	bool privateStateLoaded = false;
 
+	vdautoptr<ATPokeyEmulatorOldStateLoader> pokeyLoaders[2];
+
+	pokeyLoaders[0] = new ATPokeyEmulatorOldStateLoader(mPokey);
+
+	if (mbDualPokeys)
+		pokeyLoaders[1] = new ATPokeyEmulatorOldStateLoader(mPokey2);
+
 	try {
 		while(reader.GetAvailable() >= 8) {
 			uint32 fcc = reader.ReadUint32();
@@ -3352,7 +3435,12 @@ bool ATSimulator::LoadState(ATSaveStateReader& reader, ATStateLoadContext *pctx)
 					// init load handlers now
 					mCPU.BeginLoadState(reader);
 					mAntic.BeginLoadState(reader);
-					mPokey.BeginLoadState(reader);
+
+					pokeyLoaders[0]->BeginLoadState(reader);
+
+					if (pokeyLoaders[1])
+						pokeyLoaders[1]->BeginLoadState(reader);
+
 					mGTIA.BeginLoadState(reader);
 					mPIA.BeginLoadState(reader);
 
@@ -3432,6 +3520,26 @@ bool ATSimulator::LoadState(ATSaveStateReader& reader, ATStateLoadContext *pctx)
 
 	NotifyEvent(kATSimEvent_StateLoaded);
 	return true;
+}
+
+void ATSimulator::SaveState(const wchar_t *path) {
+	try {
+		vdrefptr<IATSerializable> snapshot;
+		CreateSnapshot(~snapshot);
+
+		vdautoptr<IATSaveStateSerializer> ser(ATCreateSaveStateSerializer());
+		VDFileStream fs(path, nsVDFile::kWrite | nsVDFile::kCreateAlways | nsVDFile::kSequential);
+		VDBufferedWriteStream bs(&fs, 4096);
+		vdautoptr<IVDZipArchiveWriter> zip(VDCreateZipArchiveWriter(bs));
+
+		ser->Serialize(*zip, *snapshot);
+		zip->Finalize();
+		bs.Flush();
+		fs.close();
+	} catch(const MyError&) {
+		VDRemoveFile(path);
+		throw;
+	}
 }
 
 void ATSimulator::LoadStateMachineDesc(ATSaveStateReader& reader) {
@@ -3545,6 +3653,9 @@ void ATSimulator::LoadStateMachineDesc(ATSaveStateReader& reader) {
 
 	// Issue a baseline reset so everything is sane.
 	ColdReset();
+
+	mPoweronDelayCounter = 0;
+	mbPowered = true;
 
 	mStartupDelay = 0;
 	mStartupDelay2 = 0;
@@ -4317,20 +4428,20 @@ void ATSimulator::InitMemoryMap() {
 
 	mpMemLayerLoRAM = mpMemMan->CreateLayer(kATMemoryPri_BaseRAM, mMemory, 0, loMemPages, false);
 	mpMemMan->SetLayerName(mpMemLayerLoRAM, "Low RAM");
-	mpMemMan->SetLayerFastBus(mpMemLayerLoRAM, true);
+	mpMemMan->SetLayerFastBus(mpMemLayerLoRAM, !mpPrivateData->mpRapidus);
 	mpMemMan->EnableLayer(mpMemLayerLoRAM, true);
 
 	if (hiMemPages) {
 		mpMemLayerHiRAM = mpMemMan->CreateLayer(kATMemoryPri_BaseRAM, mMemory + 0xD800, 0xD8, hiMemPages, false);
 		mpMemMan->SetLayerName(mpMemLayerHiRAM, "High RAM");
-		mpMemMan->SetLayerFastBus(mpMemLayerHiRAM, true);
+		mpMemMan->SetLayerFastBus(mpMemLayerHiRAM, !mpPrivateData->mpRapidus);
 		mpMemMan->EnableLayer(mpMemLayerHiRAM, true);
 	}
 
 	// create extended RAM layer
 	mpMemLayerExtendedRAM = mpMemMan->CreateLayer(kATMemoryPri_ExtRAM, mMemory, 0x40, 16 * 4, false);
 	mpMemMan->SetLayerName(mpMemLayerExtendedRAM, "Extended RAM");
-	mpMemMan->SetLayerFastBus(mpMemLayerExtendedRAM, true);
+	mpMemMan->SetLayerFastBus(mpMemLayerExtendedRAM, !mpPrivateData->mpRapidus);
 
 	// create kernel ROM layer(s)
 	if (mpKernelSelfTestROM) {
@@ -4727,7 +4838,7 @@ void ATSimulator::AnticEndFrame() {
 	NotifyEvent(kATSimEvent_FrameTick);
 
 	mpUIRenderer->SetCassetteIndicatorVisible(mpCassette->IsLoaded() && mpCassette->IsMotorRunning());
-	mpUIRenderer->SetCassettePosition(mpCassette->GetPosition(), mpCassette->GetLength(), mpCassette->IsRecordEnabled(), mpCassette->IsFSKDecodingEnabled());
+	mpUIRenderer->SetCassettePosition(mpCassette->GetPosition(), mpCassette->GetLength(), mpCassette->IsRecordEnabled(), !mpCassette->IsTurboDecodingEnabled());
 
 	if (mpPrivateData->mpTraceContext) {
 		uint64 traceSize = mpPrivateData->mpTraceContext->mMemTracker.GetSize();
@@ -4740,6 +4851,8 @@ void ATSimulator::AnticEndFrame() {
 			SetTracingEnabled(nullptr);
 		}
 	}
+
+	UpdateAudioStatus();
 
 	mpUIRenderer->Update();
 
@@ -4946,6 +5059,9 @@ void ATSimulator::BeginFrame() {
 	const bool palTick = (mVideoStandard != kATVideoStandard_NTSC && mVideoStandard != kATVideoStandard_PAL60);
 	const float dt = palTick ? 1.0f / 50.0f : 1.0f / 60.0f;
 	mpInputManager->Poll(dt);
+
+	if (mpCassette)
+		mpCassette->SetNextVerticalBlankTime(mScheduler.GetTick64() + mAntic.GetScanlineCount() * 114);
 }
 
 void ATSimulator::ReinitHookPage() {
@@ -5101,8 +5217,8 @@ void ATSimulator::InitDevice(IVDUnknown& dev) {
 	if (auto devcio = vdpoly_cast<IATDeviceCIO *>(&dev))
 		devcio->InitCIO(GetDeviceCIOManager());
 
-	if (auto devpr = vdpoly_cast<IATDevicePrinter *>(&dev))
-		devpr->SetPrinterOutput(GetPrinterOutput());
+	if (auto devpr = vdpoly_cast<IATDevicePrinterPort *>(&dev))
+		devpr->SetPrinterDefaultOutput(GetPrinterOutput());
 
 	if (auto devpbi = vdpoly_cast<IATDevicePBIConnection *>(&dev))
 		devpbi->InitPBI(mpPBIManager);
@@ -5250,4 +5366,12 @@ void ATSimulator::UpdateAudioMonitors() {
 	} else {
 		vdsafedelete <<= mpAudioMonitors;
 	}
+}
+
+void ATSimulator::UpdateAudioStatus() {
+	if (mbAudioStatusEnabled) {
+		const auto& status = mpAudioOutput->GetAudioStatus();
+		mpUIRenderer->SetAudioStatus(&status);
+	} else
+		mpUIRenderer->SetAudioStatus(nullptr);
 }

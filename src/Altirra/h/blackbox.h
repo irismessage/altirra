@@ -44,7 +44,7 @@ class ATBlackBoxEmulator final : public ATDevice
 	, public IATDeviceParent
 	, public ATDeviceBus
 	, public IATDeviceIndicators
-	, public IATDevicePrinter
+	, public IATDevicePrinterPort
 	, public IATSCSIBusMonitor
 	, public IATSchedulerCallback
 {
@@ -101,7 +101,7 @@ public:
 	void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 public:
-	void SetPrinterOutput(IATPrinterOutput *out) override;
+	void SetPrinterDefaultOutput(IATPrinterOutput *out) override;
 
 public:
 	void OnSCSIControlStateChanged(uint32 state) override;
@@ -172,6 +172,7 @@ protected:
 	ATSCSIBusEmulator mSCSIBus;
 
 	ATDeviceBusSingleChild mSerialBus;
+	ATDeviceBusSingleChild mParallelBus;
 
 	uint8 mRAM[0x10000];
 	uint8 mFirmware[0x10000];

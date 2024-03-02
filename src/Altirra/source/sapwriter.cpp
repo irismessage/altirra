@@ -18,8 +18,8 @@
 #include <stdafx.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
+#include <at/ataudio/pokey.h>
 #include "sapwriter.h"
-#include "pokey.h"
 #include "simeventmanager.h"
 #include "uirender.h"
 

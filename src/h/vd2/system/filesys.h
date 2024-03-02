@@ -223,6 +223,7 @@ enum VDFileAttributes : uint32 {
 	kVDFileAttr_Hidden		= 0x04,
 	kVDFileAttr_Archive		= 0x08,
 	kVDFileAttr_Directory	= 0x10,
+	kVDFileAttr_Link		= 0x20,		// symlink or other reparse point
 	kVDFileAttr_Invalid		= 0xFFFFFFFFU
 };
 
@@ -240,11 +241,17 @@ public:
 
 	bool Next();
 
-	// checks for . and .. directories
-	bool IsDotDirectory() const;
+	// If the current entry is for a file symbolic link, retrieve the size
+	// of the target. Returns true if the resolution was successful or the
+	// current entry is not a link to a file.
+	bool ResolveLinkSize();
 
 	bool IsDirectory() const {
 		return mbDirectory;
+	}
+
+	bool IsLink() const {
+		return (mAttributes & kVDFileAttr_Link) != 0;
 	}
 
 	const wchar_t *GetName() const {

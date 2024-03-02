@@ -142,6 +142,7 @@ protected:
 	void OnWriteEnabled();
 	void UpdateWriteProtectOverride();
 	void UpdateSlowSwitch();
+	void UpdateAutoSpeed();
 
 	enum {
 		kEventId_DriveReceiveBit = kEventId_FirstCustom,
@@ -177,6 +178,10 @@ protected:
 	bool mbWPToggle = false;
 	bool mbWPEnable = false;
 	bool mbWPDisable = false;
+	bool mbHappy810AutoSpeed = false;
+
+	static constexpr float kDefaultAutoSpeedRate = 266.0f;
+	float mHappy810AutoSpeedRate = kDefaultAutoSpeedRate;
 
 	ATDiskDriveAudioPlayer mAudioPlayer;
 

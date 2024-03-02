@@ -45,17 +45,31 @@ public:
 
 	void Clear();
 	void Add(const VDAccelTableEntry& ent);
-	void AddRange(const VDAccelTableEntry *ent, uint32 n);
+	void AddRange(const VDAccelTableEntry *ent, size_t n);
 	void RemoveAt(uint32 index);
 
 	void Swap(VDAccelTableDefinition& dst);
 
-	void Save(VDRegistryKey& key) const;
-	void Load(VDRegistryKey& key, const VDAccelToCommandEntry *pCommands, uint32 nCommands);
+	void Save(VDRegistryKey& key, const VDAccelTableDefinition& baseDef) const;
+	void Load(VDRegistryKey& key, const VDAccelTableDefinition& baseDef, const VDAccelToCommandEntry *pCommands, uint32 nCommands);
 
 public:
 	typedef vdfastvector<VDAccelTableEntry> Accelerators;
 	Accelerators	mAccelerators;
+
+private:
+	struct TaggedAccel {
+		uint32 mKey;
+		const VDAccelTableEntry *mpEntry;
+	};
+
+	struct TaggedAccelPred;
+
+	static inline uint32 GetKey(const VDAccelTableEntry& e);
+
+	typedef vdfastvector<TaggedAccel> TaggedAccelerators;
+
+	static void BuildTaggedList(TaggedAccelerators& dst, const VDAccelTableDefinition& src);
 };
 
 inline bool operator==(const VDUIAccelerator& x, const VDUIAccelerator& y) {

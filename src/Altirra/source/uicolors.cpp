@@ -17,14 +17,22 @@
 
 #include <stdafx.h>
 #include <windows.h>
+#include <wincodec.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/color.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/math.h>
+#include <vd2/system/strutil.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
+#include <vd2/Kasumi/pixmapops.h>
+#include <vd2/Kasumi/pixmaputils.h>
+#include <vd2/Kasumi/resample.h>
 #include <at/atcore/snapshotimpl.h>
+#include <at/atnativeui/canvas_win32.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/messagedispatcher.h>
 #include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/uinativewindow.h>
 #include "resource.h"
@@ -33,6 +41,9 @@
 #include "savestateio.h"
 #include "simulator.h"
 #include "uiaccessors.h"
+#include "common_png.h"
+#include "decode_png.h"
+#include "palettesolver.h"
 
 extern ATSimulator g_sim;
 
@@ -348,6 +359,9 @@ void ATUIColorReferenceControl::OnMouseWheel(float delta) {
 	UINT linesPerNotch = 3;
 	SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &linesPerNotch, 0);
 
+	if (linesPerNotch == WHEEL_PAGESCROLL)
+		linesPerNotch = mRowHeight ? mHeight / mRowHeight : 1;
+
 	mScrollAccum += delta * (float)((sint32)linesPerNotch * mRowHeight);
 
 	sint32 pixels = VDRoundToInt32(mScrollAccum);
@@ -414,6 +428,1074 @@ void ATUIColorReferenceControl::OnPaint() {
 	EndPaint(mhwnd, &ps);
 }
 
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIColorImageReferenceControl final : public ATUINativeWindow, public ATUINativeMouseMessages, public VDAlignedObject<16> {
+public:
+	ATUIColorImageReferenceControl();
+
+	void SetGain(float gain);
+
+	void SetImage();
+	void SetImage(const VDPixmap& px);
+
+	void SetCornerPoints(const vdfloat2& tl, const vdfloat2& br);
+
+	void GetSampledColors(uint32 *colors) const;
+
+	void SetColorOverlayEnabled(bool enabled);
+	void SetOverlayColors(const uint32 colors[256]);
+
+private:
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+
+	void OnSize();
+	void OnPaint();
+
+	void OnMouseMove(sint32 x, sint32 y) override;
+	void OnMouseDownL(sint32 x, sint32 y) override;
+	void OnMouseUpL(sint32 x, sint32 y) override;
+	void OnMouseWheel(sint32 x, sint32 y, float delta) override;
+	void OnMouseLeave() override;
+
+	int FindPoint(sint32 x, sint32 y) const;
+	void RecomputeAdjustmentTable();
+	void RecomputeAdjustedImage();
+	void RecomputeImageArea(bool force);
+	void RescaleImage();
+	void RecomputePointPixelPositions();
+	void RecomputeGrid();
+	void SampleColors();
+
+	ATUICanvasW32 mCanvas;
+	VDPixmapBuffer mImage;
+
+	float mGain = 1.0f;
+
+	VDPixmapBuffer mAdjustedImage;
+	VDPixmapBuffer mScaledImage;
+	VDDisplayImageView mScaledImageView;
+
+	bool mbDragging = false;
+	int mDragPtIndex = -1;
+	vdint2 mDragOffset;
+	vdfloat2 mDragOffsetF;
+	bool mbEnableColorOverlay = false;
+
+	bool mbScaledImageValid = false;
+	bool mbProjectionValid = false;
+	int mZoomClicks = 0;
+	float mWheelAccum = 0.0f;
+	vdfloat2 mScrollAreaSize { 0.0f, 0.0f };
+	vdfloat2 mScrollOffset { 0.0f, 0.0f };
+	vdrect32 mDestArea { 0, 0, 0, 0 };
+	vdrect32f mDestAreaF { 0.0f, 0.0f, 0.0f, 0.0f };
+	vdfloat2 mPoints[4];
+	vdint2 mPointPixelPos[4] {};
+
+	vdfloat32x4 mRawSampledColors[256] {};
+	uint32 mOverlaidColors[256];
+
+	vdfloat2 mGridCenters[16][16];
+	vdfloat2 mGridCorners[17][17];
+
+	uint8 mAdjustmentTable[256];
+};
+
+ATUIColorImageReferenceControl::ATUIColorImageReferenceControl() {
+	mPoints[0] = vdfloat2 { 0.1f, 0.1f };
+	mPoints[1] = vdfloat2 { 0.9f, 0.1f };
+	mPoints[2] = vdfloat2 { 0.1f, 0.9f };
+	mPoints[3] = vdfloat2 { 0.9f, 0.9f };
+
+	RecomputeGrid();
+	RecomputeAdjustmentTable();
+}
+
+void ATUIColorImageReferenceControl::SetGain(float gain) {
+	gain = std::clamp(gain, 0.5f, 2.0f);
+	if (mGain != gain) {
+		mGain = gain;
+
+		RecomputeAdjustmentTable();
+		RecomputeAdjustedImage();
+		RecomputeImageArea(true);
+	}
+}
+
+void ATUIColorImageReferenceControl::SetImage() {
+	mAdjustedImage.clear();
+	mImage.clear();
+	mScaledImage.clear();
+	mZoomClicks = 0;
+	RecomputeAdjustedImage();
+	RecomputeImageArea(true);
+}
+
+void ATUIColorImageReferenceControl::SetImage(const VDPixmap& px) {
+	mZoomClicks = 0;
+	mImage.init(px.w, px.h, nsVDPixmap::kPixFormat_XRGB8888);
+	VDPixmapBlt(mImage, px);
+	RecomputeAdjustedImage();
+	RecomputeImageArea(true);
+	SampleColors();
+}
+
+void ATUIColorImageReferenceControl::SetCornerPoints(const vdfloat2& tl, const vdfloat2& br) {
+	mPoints[0] = tl;
+	mPoints[1] = vdfloat2 { br.x, tl.y };
+	mPoints[2] = vdfloat2 { tl.x, br.y };
+	mPoints[3] = br;
+	RecomputeImageArea(true);
+	SampleColors();
+}
+
+void ATUIColorImageReferenceControl::GetSampledColors(uint32 *colors) const {
+	for(int i=0; i<256; ++i)
+		colors[i] = VDColorRGB(mRawSampledColors[i] * mGain).ToRGB8();
+}
+
+void ATUIColorImageReferenceControl::SetColorOverlayEnabled(bool enabled) {
+	if (mbEnableColorOverlay != enabled) {
+		mbEnableColorOverlay = enabled;
+
+		Invalidate();
+	}
+}
+
+void ATUIColorImageReferenceControl::SetOverlayColors(const uint32 colors[256]) {
+	memcpy(mOverlaidColors, colors, sizeof mOverlaidColors);
+
+	if (mbEnableColorOverlay)
+		Invalidate();
+}
+
+LRESULT ATUIColorImageReferenceControl::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+	auto [result, handled] = ATUIDispatchWndProcMessage<ATUINativeMouseMessages>(mhwnd, msg, wParam, lParam, *this);
+
+	if (handled)
+		return result;
+
+	switch(msg) {
+		case WM_NCCREATE:
+			mCanvas.Init(mhwnd);
+			break;
+
+		case WM_PAINT:
+			OnPaint();
+			return 0;
+
+		case WM_ERASEBKGND:
+			return 0;
+
+		case WM_SIZE:
+			OnSize();
+			break;
+	}
+
+	return ATUINativeWindow::WndProc(msg, wParam, lParam);
+}
+
+void ATUIColorImageReferenceControl::OnSize() {
+	RecomputeImageArea(false);
+}
+
+void ATUIColorImageReferenceControl::OnPaint() {
+	if (!mbScaledImageValid)
+		RescaleImage();
+
+	PAINTSTRUCT ps;
+	IVDDisplayRenderer *r = mCanvas.Begin(ps, true);
+	if (!r)
+		return;
+
+	r->SetColorRGB(0x181818);
+	r->FillRect(0, 0, ps.rcPaint.right, ps.rcPaint.bottom);
+
+	if (!mDestArea.empty()) {
+		r->SetColorRGB(0xFFFFFF);
+		r->Blt(mDestArea.left, mDestArea.top, mScaledImageView, 0, 0, mScaledImage.w, mScaledImage.h);
+
+		const vdfloat2 scale { mDestAreaF.width(), mDestAreaF.height() };
+		const vdfloat2 offset { mDestAreaF.left, mDestAreaF.top };
+
+		if (mbProjectionValid) {
+			for(int y=0; y<16; ++y) {
+				bool bigY = (y == 0) || (y == 15);
+
+				for(int x=0; x<16; ++x) {
+					bool big = ((x == 0) || (x == 15)) && bigY;
+					vdfloat2 pt = mGridCenters[y][x] * scale + offset;
+
+					sint32 ptX = VDFloorToInt(pt.x);
+					sint32 ptY = VDFloorToInt(pt.y);
+
+					uint32 c = VDColorRGB(mRawSampledColors[y*16+x] * mGain).ToRGB8();
+
+					if (mbEnableColorOverlay) {
+						r->SetColorRGB(mOverlaidColors[y*16+x]);
+						r->FillRect(ptX - 4, ptY - 4, 9, 9);
+					} else if (big) {
+						r->SetColorRGB(0x00C000);
+						r->FillRect(ptX - 4, ptY - 4, 9, 9);
+					} else if (mDragPtIndex >= 0) {
+						r->SetColorRGB(0x00C000);
+						r->FillRect(ptX - 2, ptY - 2, 5, 5);
+					} else {
+						r->SetColorRGB(c);
+						r->FillRect(ptX - 2, ptY - 2, 5, 5);
+					}
+				}
+			}
+		} else {
+			for(int y=0; y<16; y += 15) {
+				for(int x=0; x<16; x += 15) {
+					vdfloat2 pt = mGridCenters[y][x] * scale + offset;
+
+					sint32 ptX = VDFloorToInt(pt.x);
+					sint32 ptY = VDFloorToInt(pt.y);
+
+					r->SetColorRGB(0xFF0000);
+					r->FillRect(ptX - 4, ptY - 4, 9, 9);
+				}
+			}
+		}
+	}
+
+	mCanvas.End(ps);
+}
+
+void ATUIColorImageReferenceControl::OnMouseMove(sint32 x, sint32 y) {
+	if (!mbDragging)
+		return;
+
+	if (mDragPtIndex >= 0) {
+		vdint2 newPos = vdint2{x, y} + mDragOffset;
+		vdint2 clampedNewPos;
+
+		clampedNewPos.x = std::clamp(newPos.x, VDFloorToInt(mDestAreaF.left + 0.5f), VDFloorToInt(mDestAreaF.right  + 0.5f));
+		clampedNewPos.y = std::clamp(newPos.y, VDFloorToInt(mDestAreaF.top  + 0.5f), VDFloorToInt(mDestAreaF.bottom + 0.5f));
+
+		if (mPointPixelPos[mDragPtIndex] != newPos) {
+			mPointPixelPos[mDragPtIndex] = newPos;
+
+			vdfloat2 rawPt{vdfloat2{(float)(newPos.x + 0.5f) - mDestAreaF.left, (float)(newPos.y + 0.5f) - mDestAreaF.top} / vdfloat2{std::max(1.0f, mDestAreaF.width()), std::max(1.0f, mDestAreaF.height())}};
+			mPoints[mDragPtIndex] = nsVDMath::max(vdfloat2{0.0f, 0.0f}, nsVDMath::min(rawPt, vdfloat2{1.0f, 1.0f}));
+
+			RecomputeGrid();
+			Invalidate();
+		}
+	} else {
+		mScrollOffset = mDragOffsetF + vdfloat2{(float)x, (float)y};
+
+		RecomputeImageArea(false);
+	}
+}
+
+void ATUIColorImageReferenceControl::OnMouseDownL(sint32 x, sint32 y) {
+	if (mDestArea.empty())
+		return;
+
+	int pti = FindPoint(x, y);
+
+	mDragPtIndex = pti;
+	mbDragging = true;
+
+	if (pti >= 0) {
+		mDragOffset = mPointPixelPos[pti] - vdint2{x, y};
+		Invalidate();
+	} else {
+		mDragOffsetF = mScrollOffset - vdfloat2{(float)x, (float)y};
+	}
+
+	SetCapture(mhwnd);
+}
+
+void ATUIColorImageReferenceControl::OnMouseUpL(sint32 x, sint32 y) {
+	if (mbDragging) {
+		mbDragging = false;
+
+		ReleaseCapture();
+
+		if (mDragPtIndex >= 0) {
+			mDragPtIndex = -1;
+
+			SampleColors();
+			Invalidate();
+		}
+	}
+}
+
+void ATUIColorImageReferenceControl::OnMouseWheel(sint32 x, sint32 y, float delta) {
+	mWheelAccum += delta;
+
+	int clicks = (int)mWheelAccum;
+
+	if (clicks) {
+		mWheelAccum -= (float)clicks;
+
+		int newZoomClicks = std::clamp(mZoomClicks + clicks, 0, 8);
+
+		if (mZoomClicks != newZoomClicks) {
+			mZoomClicks = newZoomClicks;
+
+			RecomputeImageArea(true);
+			Invalidate();
+		}
+	}
+}
+
+void ATUIColorImageReferenceControl::OnMouseLeave() {
+	if (mbDragging) {
+		mbDragging = false;
+		ReleaseCapture();
+	}
+}
+
+int ATUIColorImageReferenceControl::FindPoint(sint32 x, sint32 y) const {
+	for(int i=0; i<4; ++i) {
+		int dx = abs(mPointPixelPos[i].x - x);
+		int dy = abs(mPointPixelPos[i].y - y);
+
+		if (std::max(dx, dy) <= 4)
+			return i;
+	}
+
+	return -1;
+}
+
+void ATUIColorImageReferenceControl::RecomputeAdjustmentTable() {
+	uint32 scale = VDRoundToInt32(mGain * 0x1.0p20f);
+
+	for(int i=0; i<256; ++i) {
+		uint32 y = ((uint32)i * scale) >> 20;
+
+		if (y > 255)
+			y = 255;
+
+		mAdjustmentTable[i] = y;
+	}
+}
+
+void ATUIColorImageReferenceControl::RecomputeAdjustedImage() {
+	const uint8 *srcRow = (const uint8 *)mImage.data;
+	if (!srcRow)
+		return;
+
+	if (!mAdjustedImage.data || mAdjustedImage.w != mImage.w || mAdjustedImage.h != mImage.h)
+		mAdjustedImage.init(mImage.w, mImage.h, nsVDPixmap::kPixFormat_XRGB8888);
+	
+	uint8 *dstRow = (uint8 *)mAdjustedImage.data;
+
+	sint32 w = mAdjustedImage.w;
+	sint32 h = mAdjustedImage.h;
+	const uint8 *VDRESTRICT table = mAdjustmentTable;
+	for(sint32 y = 0; y < h; ++y) {
+		const uint8 *VDRESTRICT src = srcRow;
+		uint8 *VDRESTRICT dst = dstRow;
+
+		for(sint32 x = 0; x < w; ++x) {
+			dst[0] = table[src[0]];
+			dst[1] = table[src[1]];
+			dst[2] = table[src[2]];
+			dst[3] = src[3];
+			dst += 4;
+			src += 4;
+		}
+
+		srcRow += mImage.pitch;
+		dstRow += mAdjustedImage.pitch;
+	}
+}
+
+void ATUIColorImageReferenceControl::RecomputeImageArea(bool force) {
+	using namespace nsVDMath;
+
+	vdrect32 area { 0, 0, 0, 0 };
+	vdrect32f areaF { 0.0f, 0.0f, 1.0f, 1.0f };
+
+	if (mImage.format && mImage.w > 0 && mImage.h > 0) {
+		// viewport size is the size of the client area
+		const vdsize32& csz = GetClientSize();
+		const vdfloat2 viewportSize { (float)csz.w, (float)csz.h };
+
+		// image size is from the image we're going to scale
+		const vdfloat2 imageSize { (float)mImage.w, (float)mImage.h };
+
+		// compute ratio to inscribe image within viewport
+		const vdfloat2 xyratio = viewportSize / imageSize;
+		const float ratio = std::min(xyratio.x, xyratio.y);
+		const vdfloat2 baseSize = imageSize * ratio;
+
+		// compute zoomed size from base size
+		const float zoomFactor = powf(2.0f, 0.5f * (float)mZoomClicks);
+		const vdfloat2 scaledSize = baseSize * zoomFactor;
+
+		// scroll area is excess of zoomed size over viewport size, if any
+		mScrollAreaSize = max(vdfloat2{0.0f, 0.0f}, scaledSize - viewportSize);
+
+		// clamp scroll offset to be within +/- half the scroll area size in either direction
+		mScrollOffset = max(-0.5f * mScrollAreaSize, min(mScrollOffset, 0.5f * mScrollAreaSize));
+
+		// set the destination rect as the scaled rect with the center offset from the
+		// viewport rect by the scroll offset (this will naturally center)
+		vdfloat2 destPos = mScrollOffset + (viewportSize - scaledSize) * 0.5f;
+		areaF.set(destPos.x, destPos.y, destPos.x + scaledSize.x, destPos.y + scaledSize.y);
+
+		// integer version encompasses pixel centers covered by float rect, clipped to viewport
+		area.left	= std::clamp<sint32>(VDCeilToInt(areaF.left		- 0.5f), 0.0f, csz.w);
+		area.top	= std::clamp<sint32>(VDCeilToInt(areaF.top		- 0.5f), 0.0f, csz.h);
+		area.right	= std::clamp<sint32>(VDCeilToInt(areaF.right	- 0.5f), 0.0f, csz.w);
+		area.bottom	= std::clamp<sint32>(VDCeilToInt(areaF.bottom	- 0.5f), 0.0f, csz.h);
+	}
+
+	if (force || mDestAreaF != areaF || mDestArea != area) {
+		mDestAreaF = areaF;
+		mDestArea = area;
+
+		RecomputePointPixelPositions();
+		RecomputeGrid();
+
+		mbScaledImageValid = false;
+
+		Invalidate();
+	}
+}
+
+void ATUIColorImageReferenceControl::RescaleImage() {
+	if (mDestArea.empty()) {
+		mScaledImageView.SetImage();
+		mScaledImage.clear();
+	} else {
+		bool reinitNeeded = false;
+
+		if (!mScaledImage.data || mScaledImage.w != mDestArea.width() || mScaledImage.h != mDestArea.height())
+			reinitNeeded = true;
+
+		if (reinitNeeded) {
+			mScaledImageView.SetImage();
+			mScaledImage.init(mDestArea.width(), mDestArea.height(), nsVDPixmap::kPixFormat_XRGB8888);
+		}
+
+		vdautoptr resampler { VDCreatePixmapResampler() };
+
+		resampler->SetFilters(IVDPixmapResampler::kFilterCubic, IVDPixmapResampler::kFilterCubic, false);
+
+		vdrect32f surfaceRelDestArea = mDestAreaF;
+		surfaceRelDestArea.translate(-(float)mDestArea.left, -(float)mDestArea.top);
+		if (resampler->Init(
+			surfaceRelDestArea,
+			mDestArea.width(),
+			mDestArea.height(),
+			mAdjustedImage.format,
+			vdrect32f(0.0f, 0.0f, mAdjustedImage.w, mAdjustedImage.h),
+			mAdjustedImage.w,
+			mAdjustedImage.h,
+			mAdjustedImage.format))
+		{
+			resampler->Process(mScaledImage, mAdjustedImage);
+		}
+
+		if (reinitNeeded)
+			mScaledImageView.SetImage(mScaledImage, false);
+		else
+			mScaledImageView.Invalidate();
+	}
+
+	mbScaledImageValid = true;
+}
+
+void ATUIColorImageReferenceControl::RecomputePointPixelPositions() {
+	const vdfloat2 scale { (float)mDestAreaF.width(), (float)mDestAreaF.height() };
+	const vdfloat2 offset { (float)mDestAreaF.left, (float)mDestAreaF.top };
+
+	for(int i=0; i<4; ++i) {
+		vdfloat2 pt = mPoints[i] * scale + offset;
+
+		mPointPixelPos[i] = vdint2{ VDRoundToInt32(pt.x), VDRoundToInt32(pt.y) };
+	}
+}
+
+void ATUIColorImageReferenceControl::RecomputeGrid() {
+	// Compute homogeneous transformation from normalized 0-1 coordinates to
+	// four points. See Jim Blinn's Corner 3 p.182 (derived from Heckbert).
+	vdfloat3x3 M;
+	float U0 = mPoints[0].x;
+	float U1 = mPoints[1].x;
+	float U2 = mPoints[3].x;	// 2/3 swapped since are book and not circular order
+	float U3 = mPoints[2].x;
+	float V0 = mPoints[0].y;
+	float V1 = mPoints[1].y;
+	float V2 = mPoints[3].y;
+	float V3 = mPoints[2].y;
+
+	M.x.z = (U3-U2)*(V1-V0) - (U1-U0)*(V3-V2);
+	M.y.z = (U3-U0)*(V1-V2) - (U1-U2)*(V3-V0);
+	M.z.z = (U1-U2)*(V3-V2) - (U3-U2)*(V1-V2);
+	M.z.x = M.z.z*U0;
+	M.z.y = M.z.z*V0;
+	M.x.x = (M.x.z + M.z.z)*U1 - M.z.x;
+	M.y.x = (M.y.z + M.z.z)*U3 - M.z.x;
+	M.x.y = (M.x.z + M.z.z)*V1 - M.z.y;
+	M.y.y = (M.y.z + M.z.z)*V3 - M.z.y;
+
+	mbProjectionValid = false;
+
+	// If any of the w-coordinates are close to zero or positive, the projection
+	// is invalid as it intersects the view plane (they are negated because our
+	// handedness is flipped).
+	const float eps = 1e-5f;
+
+	if (M.z.z >= -eps || M.x.z + M.z.z >= -eps || M.y.z + M.z.z >= -eps || M.x.z + M.y.z + M.z.z >= -eps) {
+		// just copy over the corner centers and return
+		mGridCenters[ 0][ 0] = mPoints[0];
+		mGridCenters[ 0][15] = mPoints[1];
+		mGridCenters[15][ 0] = mPoints[2];
+		mGridCenters[15][15] = mPoints[3];
+		return;
+	}
+
+	mbProjectionValid = true;
+
+	// The points that we are mapping to 0-1 are at the corner cell centers, so we only have 15 divisions
+	// between them.
+
+	for(int y=0; y<17; ++y) {
+		for(int x=0; x<17; ++x)
+			mGridCorners[y][x] = (vdfloat3{((float)x - 0.5f) / 15.0f, ((float)y - 0.5f) / 15.0f, 1.0f} * M).project();
+	}
+
+	for(int y=0; y<16; ++y) {
+		for(int x=0; x<16; ++x)
+			mGridCenters[y][x] = (vdfloat3{(float)x / 15.0f, (float)y / 15.0f, 1.0f} * M).project();
+	}
+}
+
+void ATUIColorImageReferenceControl::SampleColors() {
+	using namespace nsVDMath;
+	using namespace nsVDVecMath;
+
+	if (!mImage.format || !mbProjectionValid)
+		return;
+
+	const sint32 sourceW = mImage.w;
+	const sint32 sourceH = mImage.h;
+	const vdfloat2 sourceSize { (float)sourceW, (float)sourceH };
+
+	vdfloat2 cornerPts[4];
+
+	for(int i=0; i<4; ++i)
+		cornerPts[i] = mPoints[i] * sourceSize;
+
+	for(int y=0; y<16; ++y) {
+		float yf = (float)y / 15.0f;
+		vdfloat2 above		= cornerPts[0] + (cornerPts[2] - cornerPts[0]) * (yf - 0.5f / 15.0f);
+		vdfloat2 below		= cornerPts[0] + (cornerPts[2] - cornerPts[0]) * (yf + 0.5f / 15.0f);
+		vdfloat2 centr		= cornerPts[0] + (cornerPts[2] - cornerPts[0]) * yf;
+		vdfloat2 aboveDelta	= ((cornerPts[1] + (cornerPts[3] - cornerPts[1]) * (yf - 0.5f / 15.0f)) - above) / 15.0f;
+		vdfloat2 belowDelta	= ((cornerPts[1] + (cornerPts[3] - cornerPts[1]) * (yf + 0.5f / 15.0f)) - below) / 15.0f;
+		vdfloat2 centrDelta	= ((cornerPts[1] + (cornerPts[3] - cornerPts[1]) * yf) - centr) / 15.0f;
+
+		for(int x=0; x<16; ++x) {
+			// compute boundary corners
+			vdfloat2 pt1 = mGridCorners[y  ][x  ] * sourceSize;
+			vdfloat2 pt2 = mGridCorners[y  ][x+1] * sourceSize;
+			vdfloat2 pt3 = mGridCorners[y+1][x  ] * sourceSize;
+			vdfloat2 pt4 = mGridCorners[y+1][x+1] * sourceSize;
+
+			// compute center point 
+			vdfloat2 ptc = mGridCenters[y][x] * sourceSize;
+
+			// pull all points inward 10% toward the center
+			pt1 += (ptc - pt1) * 0.1f;
+			pt2 += (ptc - pt2) * 0.1f;
+			pt3 += (ptc - pt3) * 0.1f;
+			pt4 += (ptc - pt4) * 0.1f;
+
+			// compute transposed planes so that dot(plane, (p, 1)) >= 0 for inside
+			vdfloat4 planeNX { pt1.y - pt2.y, pt2.y - pt4.y, pt4.y - pt3.y, pt3.y - pt1.y };
+			vdfloat4 planeNY { pt2.x - pt1.x, pt4.x - pt2.x, pt3.x - pt4.x, pt1.x - pt3.x };
+			vdfloat4 planeNW
+				= -planeNX * vdfloat4{ pt1.x, pt2.x, pt4.x, pt3.x }
+				-  planeNY * vdfloat4{ pt1.y, pt2.y, pt4.y, pt3.y }
+				;
+
+			// convert to floating point bounding box
+			vdfloat2 minF = min(min(pt1, pt2), min(pt3, pt4));
+			vdfloat2 maxF = max(max(pt1, pt2), max(pt3, pt4));
+
+			// convert to integer bounding box based on pixel centers and clamp to surface;
+			// note that we are using an inclusive fill convention
+			sint32 minX = VDCeilToInt (minF.x - 0.5f);
+			sint32 minY = VDCeilToInt (minF.y - 0.5f);
+			sint32 maxX = VDFloorToInt(maxF.x + 0.5f);
+			sint32 maxY = VDFloorToInt(maxF.y + 0.5f);
+
+			// dropout control
+			sint32 cenX = VDFloorToInt(ptc.x);
+			sint32 cenY = VDFloorToInt(ptc.y);
+
+			minX = std::min(minX, cenX);
+			minY = std::min(minY, cenY);
+			maxX = std::max(maxX, cenX + 1);
+			maxY = std::max(maxY, cenY + 1);
+
+			// clamp to surface
+			minX = std::max<sint32>(minX, 0); 
+			minY = std::max<sint32>(minY, 0); 
+			maxX = std::min<sint32>(maxX, sourceW); 
+			maxY = std::min<sint32>(maxY, sourceH); 
+
+			vdfloat4 planeCheck = planeNX * ((float)cenX + 0.5f) + planeNY * ((float)cenY + 0.5f) + planeNW;
+
+			planeNW += max(vdfloat4::splat(0.1f) - planeCheck, vdfloat4::zero());
+
+			// pixel scan (finally)
+			const uint32 *srcRow = (const uint32 *)((const char *)mImage.data + mImage.pitch * minY);
+
+			vdfloat32x4 accum = vdfloat32x4::zero();
+			vdfloat32x4 planeNX2 = loadu(planeNX);
+			vdfloat32x4 planeNY2 = loadu(planeNY);
+			vdfloat32x4 planeNW2 = loadu(planeNW);
+			vdfloat32x4 planeV = planeNX2 * (minX + 0.5f) + planeNY2 * (minY + 0.5f) + planeNW2;
+
+			int count = 0;
+			for(sint32 py = minY; py < maxY; ++py) {
+				vdfloat32x4 planeV2 = planeV;
+
+				for(sint32 px = minX; px < maxX; ++px) {
+					if (all_bool(planeV2 >= vdfloat32x4::zero())) {
+						accum += vdfloat32x4(VDColorRGB::FromRGB8(srcRow[px]).SRGBToLinear());
+						++count;
+					}
+
+					planeV2 += planeNX2;
+				}
+
+				planeV += planeNY2;
+
+				srcRow = (const uint32 *)((const char *)srcRow + mImage.pitch);
+			}
+
+			if (count)
+				mRawSampledColors[y*16+x] = (vdfloat32x4)VDColorRGB(accum * (1.0f / (float)count)).LinearToSRGB();
+			else
+				mRawSampledColors[y*16+x] = vdfloat32x4::zero();
+		}
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIColorImageReferenceWindow final : public VDResizableDialogFrameW32 {
+public:
+	ATUIColorImageReferenceWindow();
+
+	void SetOnMatch(vdfunction<void()> fn) {
+		mpFnOnMatch = fn;
+	}
+
+	void UpdateComputedColors(const uint32 colors[256]);
+
+private:
+	bool OnLoaded() override;
+	void OnDestroy() override;
+	void OnHScroll(uint32 id, int code) override;
+	void OnCommandLoad();
+	void OnCommandMatch();
+	void OnCommandResetGain();
+	void OnCommandOverlayComputedColors();
+	void UpdateFromSolver();
+	void OnSolverFinished();
+
+	VDUIProxyButtonControl mLoadButton;
+	VDUIProxyButtonControl mMatchButton;
+	VDUIProxyButtonControl mResetGainButton;
+	VDUIProxyButtonControl mLockHueStartCheckBox;
+	VDUIProxyButtonControl mLockGammaCheckBox;
+	VDUIProxyButtonControl mNormalizeContrastCheckBox;
+	VDUIProxyButtonControl mOverlayComputedColorsCheckBox;
+	VDUIProxyControl mStatusLabel;
+
+	vdfunction<void()> mpFnOnMatch;
+	ATUIColorImageReferenceControl *mpImageView = nullptr;
+
+	class WorkerThread final : public VDThread, public vdrefcount {
+	public:
+		WorkerThread(ATUIColorImageReferenceWindow& parent, vdautoptr<IATColorPaletteSolver>&& solver) : mpParent(&parent), mpSolver(std::move(solver)) {}
+
+		void Detach() {
+			mMutex.Lock();
+			mpParent = nullptr;
+			mMutex.Unlock();
+		}
+
+		void ThreadRun() override;
+
+		std::pair<ATColorParams, uint32> GetLastSolution() {
+			mMutex.Lock();
+			auto params = mImprovedSolution;
+			auto error = mCurrentError;
+			mMutex.Unlock();
+
+			return std::pair(params, error);
+		}
+
+		std::optional<std::pair<ATColorParams, uint32>> TakeImprovedSolution() {
+			mMutex.Lock();
+			auto improved = mbHaveImprovedSolution;
+			auto params = mImprovedSolution;
+			auto error = mCurrentError;
+			mbHaveImprovedSolution = false;
+			mMutex.Unlock();
+
+			return improved ? std::optional(std::pair(params, error)) : std::optional<std::pair<ATColorParams, uint32>>();
+		}
+
+	private:
+		VDCriticalSection mMutex;
+		ATUIColorImageReferenceWindow *mpParent;
+
+		vdautoptr<IATColorPaletteSolver> mpSolver;
+
+		bool mbHaveImprovedSolution;
+		ATColorParams mImprovedSolution;
+		uint32 mCurrentError;
+	};
+
+	vdrefptr<WorkerThread> mpWorkerThread;
+};
+
+void ATUIColorImageReferenceWindow::WorkerThread::ThreadRun() {
+	int pass = 0;
+
+	mMutex.Lock();
+	for(;;) {
+		bool valid = mpParent != nullptr;
+
+		if (!valid)
+			break;
+
+		mMutex.Unlock();
+
+		auto status = mpSolver->Iterate();
+
+		mMutex.Lock();
+
+		if (status == IATColorPaletteSolver::Status::RunningImproved) {
+			mbHaveImprovedSolution = true;
+			mpSolver->GetCurrentSolution(mImprovedSolution);
+			mCurrentError = mpSolver->GetCurrentError().value_or(0);
+
+			if (mpParent)
+				mpParent->PostCall(
+					[p = mpParent] {
+						p->UpdateFromSolver();
+					}
+				);
+		}
+
+		if (status == IATColorPaletteSolver::Status::Finished) {
+			++pass;
+
+			if (pass == 1) {
+				ATColorParams newInitialSolution = mImprovedSolution;
+
+				newInitialSolution.mColorMatchingMode = ATColorMatchingMode::SRGB;
+
+				mpSolver->Reinit(newInitialSolution);
+			} else {
+				break;
+			}
+		}
+	}
+
+	mpSolver->GetCurrentSolution(mImprovedSolution);
+	mCurrentError = mpSolver->GetCurrentError().value_or(0);
+
+	if (mpParent)
+		mpParent->PostCall(
+			[p = mpParent] {
+				p->OnSolverFinished();
+			}
+		);
+
+	mMutex.Unlock();
+
+	this->Release();
+}
+
+ATUIColorImageReferenceWindow::ATUIColorImageReferenceWindow()
+	: VDResizableDialogFrameW32(IDD_ADJUST_COLORS_REFERENCE)
+{
+	ATUINativeWindow::RegisterForClass<ATUIColorImageReferenceControl>(L"ATColorReference");
+
+	mLoadButton.SetOnClicked([this] { OnCommandLoad(); });
+	mMatchButton.SetOnClicked([this] { OnCommandMatch(); });
+	mResetGainButton.SetOnClicked([this] { OnCommandResetGain(); });
+	mOverlayComputedColorsCheckBox.SetOnClicked([this] { OnCommandOverlayComputedColors(); });
+}
+
+void ATUIColorImageReferenceWindow::UpdateComputedColors(const uint32 colors[256]) {
+	if (mpImageView)
+		mpImageView->SetOverlayColors(colors);
+}
+
+bool ATUIColorImageReferenceWindow::OnLoaded() {
+	ATUIRegisterModelessDialog(mhdlg);
+
+	AddProxy(&mLoadButton, IDC_LOAD);
+	AddProxy(&mMatchButton, IDC_MATCH);
+	AddProxy(&mResetGainButton, IDC_RESET_GAIN);
+	AddProxy(&mStatusLabel, IDC_STATIC_STATUS);
+	AddProxy(&mLockHueStartCheckBox, IDC_LOCKHUESTART);
+	AddProxy(&mLockGammaCheckBox, IDC_LOCKGAMMA);
+	AddProxy(&mNormalizeContrastCheckBox, IDC_NORMALIZECONTRAST);
+	AddProxy(&mOverlayComputedColorsCheckBox, IDC_OVERLAYCOMPUTEDCOLORS);
+
+	mResizer.Add(IDC_REFERENCE_IMAGE, mResizer.kMC);
+	mResizer.Add(IDC_STATIC_GAIN, mResizer.kBL);
+	mResizer.Add(IDC_GAIN, mResizer.kBL);
+	mResizer.Add(IDC_STATIC_STATUS, mResizer.kBL);
+	mResizer.Add(mLoadButton.GetHandle(), mResizer.kBL);
+	mResizer.Add(mMatchButton.GetHandle(), mResizer.kBL);
+	mResizer.Add(mResetGainButton.GetHandle(), mResizer.kBL);
+
+	TBSetRange(IDC_GAIN, -100, 100);
+	TBSetPageStep(IDC_GAIN, 10);
+	TBSetValue(IDC_GAIN, 0);
+
+	mpImageView = ATUINativeWindow::FromHandle<ATUIColorImageReferenceControl>(GetControl(IDC_REFERENCE_IMAGE));
+
+	return VDResizableDialogFrameW32::OnLoaded();
+}
+
+void ATUIColorImageReferenceWindow::OnDestroy() {
+	if (mpWorkerThread) {
+		mpWorkerThread->Detach();
+		mpWorkerThread = nullptr;
+	}
+
+	mpImageView = nullptr;
+
+	VDResizableDialogFrameW32::OnDestroy();
+
+	ATUIUnregisterModelessDialog(mhdlg);
+}
+
+void ATUIColorImageReferenceWindow::OnHScroll(uint32 id, int code) {
+	int rawValue = TBGetValue(IDC_GAIN);
+
+	mpImageView->SetGain(powf(2.0f, (float)rawValue / 100.0f));
+}
+
+void ATUIColorImageReferenceWindow::OnCommandLoad() {
+	try {
+		const VDStringW& path = VDGetLoadFileName('cref', (VDGUIHandle)mhdlg, L"Select Reference Image", L"PNG/JPEG images\0*.png;*.jpg;*.jpeg;*.pal;*.act\0", nullptr);
+		if (path.empty())
+			return;
+
+		VDFile f(path.c_str());
+
+		sint64 size = f.size();
+		if (size > 256*1024*1024)
+			throw MyError("File is too large to load.");
+
+		vdblock<unsigned char> buf((uint32)size);
+		f.read(buf.data(), (long)size);
+		f.close();
+
+		static constexpr uint8 kJPEGSig[4] = { 0xFF, 0xD8, 0xFF, 0xE0 };
+
+		if (size == 768 && path.size() >= 4 && (!vdwcsicmp(&*(path.end() - 4), L".pal") || !vdwcsicmp(&*(path.end() - 4), L".act"))) {
+			// convert the palette from 24-bit RGB to 32-bit BGR
+			vdblock<uint8> pal32(1024);
+
+			uint8 *dst = pal32.data();
+			const uint8 *src = buf.data();
+			for(int i=0; i<256; ++i) {
+				dst[0] = src[2];
+				dst[1] = src[1];
+				dst[2] = src[0];
+				dst[3] = 0;
+				dst += 4;
+				src += 3;
+			}
+
+			// map the palette as a 16x16 32-bit RGB bitmap and stretchblt 16x to 256x256
+			VDPixmap px;
+			px.w = 16;
+			px.h = 16;
+			px.data = pal32.data();
+			px.pitch = 16 * 4;
+			px.format = nsVDPixmap::kPixFormat_XRGB8888;
+
+			VDPixmapBuffer px2(256, 256, nsVDPixmap::kPixFormat_XRGB8888);
+			VDPixmapStretchBltNearest(px2, px);
+
+			mpImageView->SetImage(px2);
+			mpImageView->SetCornerPoints(vdfloat2 { 0.5f / 16.0f, 0.5f / 16.0f }, vdfloat2 { 15.5f / 16.0f, 15.5f / 16.0f });
+		} else if (size >= 4 && buf[0] == 0xFF && buf[1] == 0xD8 && buf[2] == 0xFF && (buf[3] & 0xF0) == 0xE0) {
+			bool succeeded = false;
+
+			vdrefptr<IWICImagingFactory> factory;
+			HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_ALL, __uuidof(IWICImagingFactory), (void **)~factory);
+			if (SUCCEEDED(hr)) {
+				vdrefptr<IWICStream> stream;
+				hr = factory->CreateStream(~stream);
+				if (SUCCEEDED(hr)) {
+					hr = stream->InitializeFromMemory((BYTE *)buf.data(), (uint32)size);
+					if (SUCCEEDED(hr)) {
+						vdrefptr<IWICBitmapDecoder> decoder;
+
+						hr = factory->CreateDecoder(GUID_ContainerFormatJpeg, &GUID_VendorMicrosoft, ~decoder);
+						if (SUCCEEDED(hr)) {
+							hr = decoder->Initialize(stream, WICDecodeMetadataCacheOnDemand);
+
+							if (SUCCEEDED(hr)) {
+								vdrefptr<IWICBitmapFrameDecode> frameDecode;
+								hr = decoder->GetFrame(0, ~frameDecode);
+
+								if (SUCCEEDED(hr)) {
+									vdrefptr<IWICFormatConverter> formatConverter;
+
+									hr = factory->CreateFormatConverter(~formatConverter);
+									if (SUCCEEDED(hr)) {
+										hr = formatConverter->Initialize(frameDecode, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.5, WICBitmapPaletteTypeMedianCut);
+
+										if (SUCCEEDED(hr)) {
+											UINT w = 0, h = 0;
+											hr = formatConverter->GetSize(&w, &h);
+
+											if (SUCCEEDED(hr) && w && h) {
+												VDPixmapBuffer pxbuf(w, h, nsVDPixmap::kPixFormat_XRGB8888);
+
+												hr = formatConverter->CopyPixels(nullptr, pxbuf.pitch, pxbuf.pitch * pxbuf.h, (BYTE *)pxbuf.data);
+												if (SUCCEEDED(hr)) {
+													mpImageView->SetImage(pxbuf);
+													succeeded = true;
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			if (!succeeded)
+				throw MyError("Unable to decode JPEG file.");
+		} else if (size >= 8 && !memcmp(buf.data(), nsVDPNG::kPNGSignature, 8)){
+			vdautoptr decoder(VDCreateImageDecoderPNG());
+			if (kPNGDecodeOK == decoder->Decode(buf.data(), (uint32)buf.size())) {
+				const VDPixmap& px = decoder->GetFrameBuffer();
+
+				mpImageView->SetImage(px);
+			} else
+				throw MyError("Error decoding PNG image.");
+		} else {
+			throw MyError("Image file is not of a supported image type.");
+		}
+	} catch(const MyError& e) {
+		ShowError(e);
+	}
+}
+
+void ATUIColorImageReferenceWindow::OnCommandMatch() {
+	if (!mpImageView)
+		return;
+
+	if (mpWorkerThread) {
+		mpWorkerThread->Detach();
+		mpWorkerThread = nullptr;
+
+		mMatchButton.SetCaption(L"Match");
+	} else {
+		mMatchButton.SetCaption(L"Stop");
+
+		ATGTIAEmulator& gtia = g_sim.GetGTIA();
+		ATColorSettings settings = gtia.GetColorSettings();
+		ATColorParams initialParams = settings.mbUsePALParams && gtia.IsPALMode() ? settings.mPALParams : settings.mNTSCParams;
+
+		vdautoptr solver(ATCreateColorPaletteSolver());
+
+		uint32 pal[256];
+		mpImageView->GetSampledColors(pal);
+
+		solver->Init(initialParams, pal, mLockHueStartCheckBox.GetChecked(), mLockGammaCheckBox.GetChecked());
+
+		initialParams.mColorMatchingMode = ATColorMatchingMode::None;
+		solver->Reinit(initialParams);
+
+		mpWorkerThread = new WorkerThread(*this, std::move(solver));
+		mpWorkerThread->AddRef();
+		if (!mpWorkerThread->ThreadStart()) {
+			mpWorkerThread->Release();
+			mpWorkerThread = nullptr;
+		}
+	}
+}
+
+void ATUIColorImageReferenceWindow::OnCommandResetGain() {
+	TBSetValue(IDC_GAIN, 0);
+	mpImageView->SetGain(1.0f);
+}
+
+void ATUIColorImageReferenceWindow::OnCommandOverlayComputedColors() {
+	mpImageView->SetColorOverlayEnabled(mOverlayComputedColorsCheckBox.GetChecked());
+}
+
+void ATUIColorImageReferenceWindow::UpdateFromSolver() {
+	if (!mpWorkerThread)
+		return;
+
+	const auto& params = mpWorkerThread->TakeImprovedSolution();
+
+	if (!params.has_value())
+		return;
+
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
+	ATColorSettings settings = gtia.GetColorSettings();
+	ATColorParams& activeParams = settings.mbUsePALParams && gtia.IsPALMode() ? settings.mPALParams : settings.mNTSCParams;
+
+	activeParams = params.value().first;
+
+	if (mNormalizeContrastCheckBox.GetChecked())
+		activeParams.mContrast = 1.0f - activeParams.mBrightness;
+
+	// convert raw sum of squared byte errors to standard error
+	const uint32 rawError = params.value().second;
+	const float stdError = sqrtf((float)rawError / 719.0f);		// 240 colors x 3 RGB channels, -1 for unbiased estimator
+
+	const wchar_t *errorMatchQuality = L"";
+
+	if (stdError < 2.5f)
+		errorMatchQuality = L"excellent";
+	else if (stdError < 5.0f)
+		errorMatchQuality = L"very good";
+	else if (stdError < 10.0f)
+		errorMatchQuality = L"good";
+	else if (stdError < 15.0f)
+		errorMatchQuality = L"poor";
+	else
+		errorMatchQuality = L"very poor";
+
+	VDStringW label;
+	label.sprintf(L"Error = %.6g (%ls)", stdError, errorMatchQuality);
+	mStatusLabel.SetCaption(label.c_str());
+
+	g_sim.GetGTIA().SetColorSettings(settings);
+
+	if (mpFnOnMatch)
+		mpFnOnMatch();
+}
+
+void ATUIColorImageReferenceWindow::OnSolverFinished() {
+	mpWorkerThread = nullptr;
+	mMatchButton.SetCaption(L"Match");
+}
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -430,6 +1512,7 @@ protected:
 	void OnInitMenu(VDZHMENU hmenu) override;
 	void OnHScroll(uint32 id, int code) override;
 	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) override;
+	void ForcePresetToCustom();
 	void OnParamUpdated(uint32 id);
 	void UpdateLabel(uint32 id);
 	void UpdateColorImage();
@@ -455,6 +1538,7 @@ protected:
 	VDUIProxySysLinkControl mGammaWarning;
 
 	vdrefptr<ATUIColorReferenceControl> mpSamplesControl;
+	ATUIColorImageReferenceWindow mReferenceWindow;
 };
 
 ATAdjustColorsDialog g_adjustColorsDialog;
@@ -467,6 +1551,15 @@ ATAdjustColorsDialog::ATAdjustColorsDialog()
 	mPresetCombo.SetOnSelectionChanged([this](int sel) { OnPresetChanged(sel); });
 	mLumaRampCombo.OnSelectionChanged() += mDelLumaRampChanged.Bind(this, &ATAdjustColorsDialog::OnLumaRampChanged);
 	mColorModeCombo.OnSelectionChanged() += mDelColorModeChanged.Bind(this, &ATAdjustColorsDialog::OnColorModeChanged);
+
+	mReferenceWindow.SetOnMatch([this] {
+		OnDataExchange(false);
+
+		if (!mpParams->mPresetTag.empty()) {
+			ForcePresetToCustom();
+			OnDataExchange(true);
+		}
+	});
 }
 
 bool ATAdjustColorsDialog::OnLoaded() {
@@ -523,12 +1616,22 @@ bool ATAdjustColorsDialog::OnLoaded() {
 
 	UpdateGammaWarning();
 
+	mPresetCombo.Clear();
+	mPresetCombo.AddItem(L"Custom");
+
+	const uint32 n = ATGetColorPresetCount();
+	for(uint32 i = 0; i < n; ++i) {
+		mPresetCombo.AddItem(ATGetColorPresetNameByIndex(i));
+	}
+
 	OnDataExchange(false);
 	SetFocusToControl(IDC_HUESTART);
 	return true;
 }
 
 void ATAdjustColorsDialog::OnDestroy() {
+	mReferenceWindow.Destroy();
+
 	ATUIUnregisterModelessDialog(mhwnd);
 
 	VDDialogFrameW32::OnDestroy();
@@ -551,14 +1654,6 @@ void ATAdjustColorsDialog::OnDataExchange(bool write) {
 		} else {
 			mpParams = &mSettings.mNTSCParams;
 			mpOtherParams = &mSettings.mPALParams;
-		}
-
-		mPresetCombo.Clear();
-		mPresetCombo.AddItem(L"Custom");
-
-		const uint32 n = ATGetColorPresetCount();
-		for(uint32 i = 0; i < n; ++i) {
-			mPresetCombo.AddItem(ATGetColorPresetNameByIndex(i));
 		}
 
 		mPresetCombo.SetSelection(ATGetColorPresetIndexByTag(mpParams->mPresetTag.c_str()) + 1);
@@ -719,6 +1814,17 @@ bool ATAdjustColorsDialog::OnCommand(uint32 id, uint32 extcode) {
 			ser->Serialize(bs, *cs, L"ATColorSettings");
 			bs.Flush();
 			fs.close();
+		}
+		return true;
+	} else if (id == ID_FILE_IMPORTREFERENCEPICTURE) {
+		if (!mReferenceWindow.IsValid()) {
+			mReferenceWindow.Create(this);
+
+			uint32 pal[256] {};
+			g_sim.GetGTIA().GetPalette(pal);
+			mpSamplesControl->UpdateFromPalette(pal);
+
+			mReferenceWindow.UpdateComputedColors(pal);
 		}
 		return true;
 	}
@@ -936,13 +2042,17 @@ VDZINT_PTR ATAdjustColorsDialog::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARA
 	return VDDialogFrameW32::DlgProc(msg, wParam, lParam);
 }
 
-void ATAdjustColorsDialog::OnParamUpdated(uint32 id) {
+void ATAdjustColorsDialog::ForcePresetToCustom() {
 	// force preset to custom
 	if (!mpParams->mPresetTag.empty()) {
 		mpParams->mPresetTag.clear();
 
 		mPresetCombo.SetSelection(0);
 	}
+}
+
+void ATAdjustColorsDialog::OnParamUpdated(uint32 id) {
+	ForcePresetToCustom();
 
 	OnDataExchange(true);
 	UpdateColorImage();
@@ -1027,6 +2137,8 @@ void ATAdjustColorsDialog::UpdateColorImage() {
 	uint32 pal[256] = {};
 	g_sim.GetGTIA().GetPalette(pal);
 	mpSamplesControl->UpdateFromPalette(pal);
+
+	mReferenceWindow.UpdateComputedColors(pal);
 }
 
 void ATAdjustColorsDialog::UpdateGammaWarning() {

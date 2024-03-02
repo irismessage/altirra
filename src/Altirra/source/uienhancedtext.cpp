@@ -52,6 +52,8 @@ public:
 	void Update(bool forceInvalidate);
 
 public:
+	const char *GetName() const override;
+	const wchar_t *GetDisplayName() const override;
 	void Tick(uint32 hz300ticks) override;
 	void UpdateFrame() override;
 	const VDPixmap& GetFrameBuffer() override;
@@ -135,8 +137,10 @@ const uint8 ATUIEnhancedTextEngine::kInternalToATASCIIXorTab[4]={
 ATUIEnhancedTextEngine::ATUIEnhancedTextEngine() {
 	mVideoInfo.mPixelAspectRatio = 1.0f;
 	mVideoInfo.mbSignalValid = true;
+	mVideoInfo.mbSignalPassThrough = false;
 	mVideoInfo.mHorizScanRate = 15735.0f;
 	mVideoInfo.mVertScanRate = 59.94f;
+	mVideoInfo.mbForceExactPixels = true;
 	
 	memset(mTextLineMode, 0, sizeof mTextLineMode);
 	memset(mTextLineCHBASE, 0, sizeof mTextLineCHBASE);
@@ -727,6 +731,14 @@ void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 	if (forceInvalidate || linesDirty) {
 		Paint(forceInvalidate ? NULL : redrawFlags);
 	}
+}
+
+const char *ATUIEnhancedTextEngine::GetName() const {
+	return "enhtext";
+}
+
+const wchar_t *ATUIEnhancedTextEngine::GetDisplayName() const {
+	return L"Enhanced Text";
 }
 
 void ATUIEnhancedTextEngine::Tick(uint32 hz300ticks) {

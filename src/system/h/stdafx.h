@@ -14,6 +14,8 @@ struct IUnknown;
 #include <vd2/system/atomic.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/error.h>
+#include <vd2/system/vdstl.h>
+#include <vd2/system/vdstl_hashmap.h>
 #include <windows.h>
 #include <process.h>
 #include <vd2/system/win32/intrin.h>

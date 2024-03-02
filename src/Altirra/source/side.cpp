@@ -96,14 +96,14 @@ void ATSIDEEmulator::Init() {
 	handlerTable.mbPassReads = false;
 	handlerTable.mbPassWrites = false;
 	handlerTable.mbPassAnticReads = false;
-	handlerTable.mpDebugReadHandler = OnCartRead;
+	handlerTable.mpDebugReadHandler = OnCartDebugRead;
 	handlerTable.mpReadHandler = OnCartRead;
 	handlerTable.mpWriteHandler = OnCartWrite;
 
 	mpMemLayerCartControl = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay+1, handlerTable, 0xA0, 0x20);
 	mpMemMan->SetLayerName(mpMemLayerCartControl, "SIDE flash control (left cart window)");
 
-	handlerTable.mpDebugReadHandler = OnCartRead2;
+	handlerTable.mpDebugReadHandler = OnCartDebugRead2;
 	handlerTable.mpReadHandler = OnCartRead2;
 	handlerTable.mpWriteHandler = OnCartWrite2;
 
@@ -570,37 +570,19 @@ bool ATSIDEEmulator::OnWriteByte(void *thisptr0, uint32 addr, uint8 value) {
 }
 
 sint32 ATSIDEEmulator::OnCartDebugRead(void *thisptr0, uint32 addr) {
-	ATSIDEEmulator *thisptr = (ATSIDEEmulator *)thisptr0;
+	const ATSIDEEmulator *thisptr = (ATSIDEEmulator *)thisptr0;
 
 	uint8 value;
-	if (thisptr->mFlashCtrl.DebugReadByte(thisptr->mBankOffset + (addr - 0xA000), value)) {
-		if (thisptr->mpUIRenderer) {
-			if (thisptr->mFlashCtrl.CheckForWriteActivity()) {
-				thisptr->mpUIRenderer->SetFlashWriteActivity();
-				thisptr->mbFirmwareUsable = true;
-			}
-		}
-
-		thisptr->UpdateMemoryLayersCart();
-	}
+	thisptr->mFlashCtrl.DebugReadByte(thisptr->mBankOffset + (addr - 0xA000), value);
 
 	return value;
 }
 
 sint32 ATSIDEEmulator::OnCartDebugRead2(void *thisptr0, uint32 addr) {
-	ATSIDEEmulator *thisptr = (ATSIDEEmulator *)thisptr0;
+	const ATSIDEEmulator *thisptr = (ATSIDEEmulator *)thisptr0;
 
 	uint8 value;
-	if (thisptr->mFlashCtrl.DebugReadByte(thisptr->mBankOffset2 + (addr - 0x8000), value)) {
-		if (thisptr->mpUIRenderer) {
-			if (thisptr->mFlashCtrl.CheckForWriteActivity()) {
-				thisptr->mpUIRenderer->SetFlashWriteActivity();
-				thisptr->mbFirmwareUsable = true;
-			}
-		}
-
-		thisptr->UpdateMemoryLayersCart();
-	}
+	thisptr->mFlashCtrl.DebugReadByte(thisptr->mBankOffset2 + (addr - 0x8000), value);
 
 	return value;
 }

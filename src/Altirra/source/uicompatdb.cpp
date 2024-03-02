@@ -724,8 +724,6 @@ void ATUIDialogCompatDB::RefreshTitles(ATCompatEDB *src) {
 }
 
 void ATUIDialogCompatDB::OnAddTitle() {
-	const wchar_t *newTitle = L"(New Title)";
-
 	// If we have a selection, insert it right after the selection; otherwise, add at end.
 	int insertPos = mListBoxTitle.GetSelection();
 
@@ -787,7 +785,7 @@ void ATUIDialogCompatDB::RefreshAliases() {
 	mpTitleForAliases = titleEntry;
 
 	uint32 aliasIdx = 0;
-	for(const auto& alias : titleEntry->mAliases) {
+	for([[maybe_unused]] const auto& alias : titleEntry->mAliases) {
 		mDisplayedAliasIndices.push_back(aliasIdx++);
 	}
 
@@ -837,8 +835,6 @@ void ATUIDialogCompatDB::OnDeleteAlias() {
 	SetModified();
 
 	const uint32 aliasIndex = mDisplayedAliasIndices[sel];
-
-	int idx = mListBoxTitle.GetSelection();
 
 	mpTitleForAliases->mAliases.erase(mpTitleForAliases->mAliases.begin() + aliasIndex);
 
@@ -1128,8 +1124,7 @@ void ATUIDialogCompatDB::OnUpdateChecksumsToSHA256() {
 
 			while(it.Next()) {
 				if (it.IsDirectory()) {
-					if (!it.IsDotDirectory())
-						pathStack.push_back(it.GetFullPath());
+					pathStack.push_back(it.GetFullPath());
 				} else if (it.GetSize() <= sizeLimit) {
 					const VDStringW& filePath = it.GetFullPath();
 
@@ -1330,8 +1325,6 @@ void ATUIShowDialogCompatDB(VDGUIHandle hParent) {
 
 		auto *pl = g_sim.GetProgramLoader();
 		if (pl) {
-			auto *image = pl->GetCurrentImage();
-
 			ATCompatAddSourcedRulesForImage(availRules, pl->GetCurrentImage(), L"Exe");
 		}
 	};

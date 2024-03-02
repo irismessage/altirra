@@ -67,13 +67,7 @@
     <ClCompile Include="source\assembler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\audiofilters.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\audiomonitor.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\audiooutput.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\audiowriter.cpp">
@@ -266,15 +260,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\pia.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\pokey.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\pokeyrenderer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\pokeytables.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\printer.cpp">
@@ -805,10 +790,85 @@
     <ClCompile Include="source\customdevice_win32.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\customdevicevm.cpp">
+    <ClCompile Include="source\videomanager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\customdevicecompiler.cpp">
+    <ClCompile Include="source\cmdoptions.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\palettegenerator.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\palettesolver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiadvancedconfiguration.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevhappy810.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\diskdrive815.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdev815.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\side3.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\blockdevvirtfat32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevhdvirtfat32.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevside3.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\diskprofile.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\blockdevdiskadapter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\1090.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uivideooutputmenu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\bit3.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uitapeeditor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\asyncdownloader_win32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\updatecheck.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiupdatecheck.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiaccessors.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\updatefeed.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\updatefeed_win32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevparfilewriter.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\pokeytrace.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\pokeysavecompat.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -822,13 +882,7 @@
     <ClInclude Include="h\artifacting_filters.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\audiofilters.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\audiomonitor.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\audiooutput.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\audiowriter.h">
@@ -1012,15 +1066,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\pia.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\pokey.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\pokeyrenderer.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\pokeytables.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\profiler.h">
@@ -1317,10 +1362,52 @@
     <ClInclude Include="h\customdevice_win32.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\customdevicecompiler.h">
+    <ClInclude Include="h\videomanager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\customdevicevm.h">
+    <ClInclude Include="h\palettegenerator.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\palettesolver.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\diskdrive815.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\side3.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\blockdevvirtfat32.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\diskprofile.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\blockdevdiskadapter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\1090.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\bit3.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uitapeeditor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\asyncdownloader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\updatecheck.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\updatefeed.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\pokeytrace.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\pokeysavecompat.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -1540,6 +1627,9 @@
       <Filter>Resource Files</Filter>
     </ResourceCompile>
     <ResourceCompile Include="..\ATNativeUI\res\atnativeui.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+    <ResourceCompile Include="res\AltirraVersion.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
   </ItemGroup>

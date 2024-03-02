@@ -264,10 +264,8 @@ ATUIDialogOptionsPageDisplay::ATUIDialogOptionsPageDisplay(ATOptions& opts)
 }
 
 bool ATUIDialogOptionsPageDisplay::OnLoaded() {
-	AddHelpEntry(IDC_GRAPHICS_DDRAW, L"DirectDraw", L"Enable DirectDraw support. This is used if D3D9/OpenGL are disabled or not available.");
 	AddHelpEntry(IDC_GRAPHICS_D3D9, L"Direct3D 9", L"Enable Direct3D 9 support. This is the best general option for speed and quality, and also enables the filtering options.");
 	AddHelpEntry(IDC_GRAPHICS_3D, L"Direct3D 11", L"Enable Direct3D 11 support. On Windows 8.1 and later, D3D11 can give better performance and power efficiency.");
-	AddHelpEntry(IDC_GRAPHICS_OPENGL, L"OpenGL", L"Enable OpenGL support. Direct3D 9 is a better option, but this is a reasonable fallback.");
 	AddHelpEntry(IDC_16BIT, L"Use 16-bit surfaces", L"Use 16-bit surfaces for faster speed on low-end graphics cards. May reduce visual quality.");
 	AddHelpEntry(IDC_FSMODE_BORDERLESS, L"Full screen mode: Borderless mode", L"Use a full-screen borderless window without switching to exclusive full screen mode.");
 	AddHelpEntry(IDC_FSMODE_DESKTOP, L"Full screen mode: Match desktop", L"Uses the desktop resolution for full screen mode. This avoids a mode switch.");
@@ -281,10 +279,8 @@ bool ATUIDialogOptionsPageDisplay::OnLoaded() {
 }
 
 void ATUIDialogOptionsPageDisplay::OnDataExchange(bool write) {
-	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_DDRAW, mOptions.mbDisplayDDraw);
 	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_D3D9, mOptions.mbDisplayD3D9);
 	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_3D, mOptions.mbDisplay3D);
-	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_OPENGL, mOptions.mbDisplayOpenGL);
 	ExchangeControlValueBoolCheckbox(write, IDC_16BIT, mOptions.mbDisplay16Bit);
 
 	if (write) {

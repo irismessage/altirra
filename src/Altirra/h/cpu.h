@@ -253,10 +253,10 @@ public:
 	bool	IsInPath(uint16 addr) const;
 
 	const ATCPUHistoryEntry& GetHistory(int i) const {
-		return mHistory[(mHistoryIndex - i - 1) & 131071];
+		return mHistory[(mHistoryIndex - i - 1) & (vdcountof(mHistory) - 1)];
 	}
 
-	int GetHistoryLength() const { return 131072; }
+	int GetHistoryLength() const { return vdcountof(mHistory); }
 	uint32	GetHistoryCounter() const { return mHistoryIndex; }
 
 	void	DumpStatus(bool extended = false);

@@ -30,7 +30,12 @@ namespace {
 			uint32 Match2(const ATHTNode& node, uint32 insnOffset, std::index_sequence<I...>) const {
 				const ATHTNode *chain = node.mpFirstChild;
 
-				(void)(((insnOffset = std::get<I>(mArgs).Match(*chain, insnOffset)), (chain = chain->mpNextSibling)), ...);
+				(void)((
+					(
+						(insnOffset = std::get<I>(mArgs).Match(*chain, insnOffset)),
+						(chain = chain->mpNextSibling)
+					), ...
+				));
 
 				TEST_ASSERT(chain == nullptr);
 

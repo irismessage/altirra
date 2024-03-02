@@ -1,10 +1,26 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2021 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
 #include "uionscreenkeyboard.h"
+#include <at/ataudio/pokey.h>
 #include <at/atuicontrols/uibutton.h>
 #include "uikeyboard.h"
 #include <at/atui/uimanager.h>
 #include "simulator.h"
-#include "pokey.h"
 
 extern ATUIKeyboardOptions g_kbdOpts;
 
@@ -446,7 +462,6 @@ void ATUIOnScreenKeyboard::OnButtonHeld(bool held, int index) {
 	const KeyEntry& ke = *mButtons[index].mpKeyEntry;
 
 	ATPokeyEmulator& pokey = g_sim.GetPokey();
-	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
 	switch(ke.mScanCode) {
 		case 0x41:

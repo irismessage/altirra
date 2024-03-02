@@ -30,12 +30,26 @@ enum ATDisplayFilterMode : uint32;
 enum ATDisplayStretchMode : uint32;
 enum ATFrameRateMode : uint32;
 class ATUICommandManager;
+class IATAsyncDispatcher;
 
-bool ATUIGetXEPViewEnabled();
+const char *ATUIGetCurrentAltOutputName();
+void ATUISetCurrentAltOutputName(const char *name);
+void ATUIToggleAltOutput(const char *name);
+bool ATUIIsAltOutputAvailable();
+
+bool ATUIIsXEPViewEnabled();
 void ATUISetXEPViewEnabled(bool enabled);
+bool ATUIGetAltViewEnabled();
+void ATUISetAltViewEnabled(bool enabled);
 
-bool ATUIGetXEPViewAutoswitchingEnabled();
-void ATUISetXEPViewAutoswitchingEnabled(bool enabled);
+sint32 ATUIGetCurrentAltViewIndex();
+void ATUISetAltViewByIndex(sint32 idx);
+
+void ATUISelectPrevAltOutput();
+void ATUISelectNextAltOutput();
+
+bool ATUIGetAltViewAutoswitchingEnabled();
+void ATUISetAltViewAutoswitchingEnabled(bool enabled);
 
 ATDisplayStretchMode ATUIGetDisplayStretchMode();
 void ATUISetDisplayStretchMode(ATDisplayStretchMode mode);
@@ -65,6 +79,9 @@ bool ATUIGetFullscreen();
 bool ATUIGetDisplayFullscreen();
 void ATSetFullscreen(bool);
 
+bool ATUIGetConstrainMouseFullScreen();
+void ATUISetConstrainMouseFullScreen(bool enabled);
+
 bool ATUIGetDisplayPadIndicators();
 void ATUISetDisplayPadIndicators(bool enabled);
 
@@ -83,6 +100,9 @@ void ATUISetPointerAutoHide(bool enabled);
 
 bool ATUIGetTargetPointerVisible();
 void ATUISetTargetPointerVisible(bool enabled);
+
+bool ATUIGetRawInputEnabled();
+void ATUISetRawInputEnabled(bool enabled);
 
 bool ATUIGetTurbo();
 void ATUISetTurbo(bool turbo);
@@ -139,5 +159,8 @@ void ATUIActivateDeviceButton(uint32 idx, bool state);
 ATUICommandManager& ATUIGetCommandManager();
 
 void ATUIBootImage(const wchar_t *path);
+
+IATAsyncDispatcher *ATUIGetDispatcher();
+void ATUISetDispatcher(IATAsyncDispatcher *dispatcher);
 
 #endif	// f_AT_UIACCESSORS_H

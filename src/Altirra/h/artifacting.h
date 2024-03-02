@@ -53,7 +53,7 @@ public:
 	void SuspendFrame();
 	void ResumeFrame();
 
-	void BeginFrame(bool pal, bool chromaArtifact, bool chromaArtifactHi, bool blendIn, bool blendOut, bool blendLinear, bool bypassOutputCorrection, bool useSignedPalette);
+	void BeginFrame(bool pal, bool chromaArtifact, bool chromaArtifactHi, bool blendIn, bool blendOut, bool blendLinear, bool bypassOutputCorrection, bool extendedRangeInput, bool extendedRangeOutput);
 	void Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool temporaryUpdate, bool includeBlanking);
 	void Artifact32(uint32 y, uint32 *dst, uint32 width, bool temporaryUpdate, bool includeBlanking);
 	void InterpolateScanlines(uint32 *dst, const uint32 *src1, const uint32 *src2, uint32 n);
@@ -63,6 +63,13 @@ private:
 
 	void ArtifactPAL8(uint32 dst[N], const uint8 src[N]);
 	void ArtifactPAL32(uint32 *dst, uint32 width);
+	void ArtifactCompressRange(uint32 *dst, uint32 width);
+
+	void ArtifactCompressRange_Scalar(uint32 *dst, uint32 width);
+
+#if defined(VD_COMPILER_MSVC) && (defined(VD_CPU_X86) || defined(VD_CPU_X64))
+	void ArtifactCompressRange_SSE2(uint32 *dst, uint32 width);
+#endif
 
 	void ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool includeHBlank);
 
@@ -78,12 +85,16 @@ private:
 
 	void ColorCorrect(uint8 *VDRESTRICT dst8, uint32 n) const;
 
-	void RecomputeNTSCTables(const ATColorParams& params);
-	void RecomputePALTables(const ATColorParams& params);
+	void RecomputeActiveTables(bool signedOutput);
+	void RecomputeNTSCTables(const ATColorParams& params, bool signedOutput);
+	void RecomputePALTables(const ATColorParams& params, bool signedOutput);
 
 	bool mbPAL;
-	bool mbHighNTSCTablesInited;
-	bool mbHighPALTablesInited;
+	bool mbHighNTSCTablesInited = false;
+	bool mbHighPALTablesInited = false;
+	bool mbHighTablesSigned = false;
+	bool mbActiveTablesInited = false;
+	bool mbActiveTablesSigned = false;
 	bool mbChromaArtifacts;
 	bool mbChromaArtifactsHi;
 	bool mbBlendActive = false;
@@ -93,7 +104,8 @@ private:
 	bool mbGammaIdentity = false;
 	bool mbEnableColorCorrection = false;
 	bool mbBypassOutputCorrection = false;
-	bool mbUseSignedPalette = false;
+	bool mbExpandedRangeInput = false;
+	bool mbExpandedRangeOutput = false;
 
 	bool mbSavedPAL = false;
 	bool mbSavedChromaArtifacts = false;
@@ -102,7 +114,8 @@ private:
 	bool mbSavedBlendActive = false;
 	bool mbSavedBlendCopy = false;
 	bool mbSavedBlendLinear = false;
-	bool mbSavedUseSignedPalette = false;
+	bool mbSavedExpandedRangeInput = false;
+	bool mbSavedExpandedRangeOutput = false;
 
 	bool mbTintColorEnabled = false;
 	vdfloat3 mTintColor {};
@@ -120,10 +133,18 @@ private:
 	uint8 mGammaTable[256];
 	sint16 mCorrectLinearTable[256];
 	uint8 mCorrectGammaTable[1024];
+
 	uint32 mPalette[256];
 	uint32 mSignedPalette[256];
 	uint32 mCorrectedPalette[256];
+	uint32 mCorrectedSignedPalette[256];
 	uint32 mMonoTable[256];
+
+	// versions modified for signed/unsigned
+	uint32 mActivePalette[256];
+	alignas(16) sint16 mActiveChromaVectors[16][4];
+	alignas(16) sint16 mActiveLumaRamp[16];
+	alignas(16) sint16 mActiveArtifactRamp[31][4];
 
 	union {
 		uint8 mPALDelayLine[N];

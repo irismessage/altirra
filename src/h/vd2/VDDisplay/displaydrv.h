@@ -28,6 +28,8 @@ class IVDDisplayCompositor;
 class IVDDisplayCompositionEngine;
 struct VDVideoDisplayScreenFXInfo;
 
+enum class VDDHDRAvailability : uint8;
+
 class IVDVideoDisplayMinidriverCallback {
 public:
 	// Release the current frame, as it has been rendered.
@@ -42,16 +44,20 @@ public:
 	// minidriver on the rendering thread. This method is thread-safe and
 	// may be called asynchronously.
 	virtual void QueuePresent() = 0;
+
+	// Callback when a requested frame render capture has completed.
+	virtual void OnFrameCaptured(const VDPixmap *px) = 0;
 };
 
 struct VDVideoDisplaySourceInfo {
-	VDPixmap	pixmap;
-	int			bpp;
-	int			bpr;
-	bool		bAllowConversion;
-	bool		bPersistent;
-	bool		use16bit;
-	IVDVideoDisplayMinidriverCallback *mpCB;
+	VDPixmap	pixmap {};
+	int			bpp = 0;
+	int			bpr = 0;
+	bool		bAllowConversion = false;
+	bool		bPersistent = false;
+	bool		use16bit = false;
+	bool		mbHDR = false;
+	IVDVideoDisplayMinidriverCallback *mpCB = nullptr;
 };
 
 class VDINTERFACE IVDVideoDisplayMinidriver {
@@ -82,6 +88,7 @@ public:
 	virtual bool IsValid() = 0;
 	virtual bool IsFramePending() = 0;
 	virtual bool IsScreenFXSupported() const = 0;
+	virtual VDDHDRAvailability IsHDRCapable() const = 0;
 	virtual void SetFilterMode(FilterMode mode) = 0;
 	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit) = 0;
 	virtual void SetDisplayDebugInfo(bool enable) = 0;
@@ -89,6 +96,7 @@ public:
 	virtual void SetHighPrecision(bool enable) = 0;
 	virtual void SetDestRect(const vdrect32 *r, uint32 color) = 0;
 	virtual void SetPixelSharpness(float xfactor, float yfactor) = 0;
+	virtual void SetSDRBrightness(float nits) = 0;
 	virtual bool SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) = 0;
 	virtual void SetCompositor(IVDDisplayCompositor *compositor) = 0;
 
@@ -100,6 +108,7 @@ public:
 	virtual void Refresh(UpdateMode) = 0;
 	virtual bool Paint(HDC hdc, const RECT& rClient, UpdateMode lastUpdateMode) = 0;
 	virtual void PresentQueued() = 0;
+	virtual void RequestCapture() = 0;
 
 	virtual bool SetSubrect(const vdrect32 *r) = 0;
 	virtual void SetLogicalPalette(const uint8 *pLogicalPalette) = 0;
@@ -120,27 +129,30 @@ public:
 
 	virtual bool IsFramePending() override;
 	virtual bool IsScreenFXSupported() const override;
-	virtual void SetFilterMode(FilterMode mode);
-	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit);
-	virtual void SetDisplayDebugInfo(bool enable);
-	virtual void SetColorOverride(uint32 color);
-	virtual void SetHighPrecision(bool enable);
-	virtual void SetDestRect(const vdrect32 *r, uint32 color);
-	virtual void SetPixelSharpness(float xfactor, float yfactor);
-	virtual bool SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX);
-	virtual void SetCompositor(IVDDisplayCompositor *compositor);
+	virtual VDDHDRAvailability IsHDRCapable() const override;
+	virtual void SetFilterMode(FilterMode mode) override;
+	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit) override;
+	virtual void SetDisplayDebugInfo(bool enable) override;
+	virtual void SetColorOverride(uint32 color) override;
+	virtual void SetHighPrecision(bool enable) override;
+	virtual void SetDestRect(const vdrect32 *r, uint32 color) override;
+	virtual void SetPixelSharpness(float xfactor, float yfactor) override;
+	virtual void SetSDRBrightness(float nits) override;
+	virtual bool SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) override;
+	virtual void SetCompositor(IVDDisplayCompositor *compositor) override;
 
-	virtual bool Tick(int id);
-	virtual void Poll();
-	virtual bool Resize(int w, int h);
-	virtual bool Invalidate();
-	virtual void PresentQueued() {}
+	virtual bool Tick(int id) override;
+	virtual void Poll() override;
+	virtual bool Resize(int w, int h) override;
+	virtual bool Invalidate() override;
+	virtual void PresentQueued() override {}
+	virtual void RequestCapture() override;
 
-	virtual bool SetSubrect(const vdrect32 *r);
-	virtual void SetLogicalPalette(const uint8 *pLogicalPalette);
+	virtual bool SetSubrect(const vdrect32 *r) override;
+	virtual void SetLogicalPalette(const uint8 *pLogicalPalette) override;
 
-	virtual bool AreVSyncTicksNeeded() const { return true; }
-	virtual float GetSyncDelta() const;
+	virtual bool AreVSyncTicksNeeded() const override { return true; }
+	virtual float GetSyncDelta() const override;
 
 protected:
 	virtual IVDDisplayCompositionEngine *GetDisplayCompositionEngine() = 0;
@@ -148,26 +160,27 @@ protected:
 protected:
 	static void GetFormatString(const VDVideoDisplaySourceInfo& info, VDStringA& s);
 	void UpdateDrawRect();
+	bool CheckForCapturePending();
 
-	bool	mbDisplayDebugInfo;
-	bool	mbHighPrecision;
-	bool	mbDestRectEnabled;
-	vdrect32	mClientRect;		// (0,0)-(w,h)
-	vdrect32	mDrawRect;			// DestRect clipped against ClientRect
-	vdrect32	mDestRect;
-	uint32	mBackgroundColor;
-	uint32	mColorOverride;
-	float	mPixelSharpnessX;
-	float	mPixelSharpnessY;
+	bool	mbDisplayDebugInfo {};
+	bool	mbHighPrecision {};
+	bool	mbDestRectEnabled {};
+	bool	mbFrameCaptureRequested {};
+	vdrect32	mClientRect {};		// (0,0)-(w,h)
+	vdrect32	mDrawRect {};			// DestRect clipped against ClientRect
+	vdrect32	mDestRect {};
+	uint32	mBackgroundColor {};
+	uint32	mColorOverride {};
+	float	mPixelSharpnessX {};
+	float	mPixelSharpnessY {};
+	float	mSDRBrightness {};
 
-	vdrect32	mBorderRects[4];
-	int			mBorderRectCount;
+	vdrect32	mBorderRects[4] {};
+	int			mBorderRectCount {};
 
-	IVDDisplayCompositor *mpCompositor;
+	IVDDisplayCompositor *mpCompositor {};
 };
 
-IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverOpenGL();
-IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDirectDraw(bool enableOverlays, bool enableSecondaryDraw);
 IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverGDI();
 IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDX9(bool clipToMonitor, bool use9ex);
 

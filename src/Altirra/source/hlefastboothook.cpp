@@ -204,8 +204,6 @@ uint8 ATHLEFastBootHook::OnHookMemClear(uint16 pc) {
 
 	uint32 addr = mem.ReadByte(ATKernelSymbols::TOADR) + 256*(uint32)mem.ReadByte(ATKernelSymbols::TOADR + 1);
 
-	bool success = true;
-
 	const uint8 fillByte = mpCPU->GetA();
 	uint8 x = mpCPU->GetX();
 	uint8 y = mpCPU->GetY();

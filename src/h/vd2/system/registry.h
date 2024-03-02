@@ -87,7 +87,12 @@ public:
 
 	VDRegistryKey(const char *pszKey, bool global = false, bool write = true);
 	VDRegistryKey(VDRegistryKey& baseKey, const char *name, bool write = true);
+	VDRegistryKey(const VDRegistryKey&) = delete;
+	VDRegistryKey(VDRegistryKey&& src);
 	~VDRegistryKey();
+
+	VDRegistryKey& operator=(const VDRegistryKey&) = delete;
+	VDRegistryKey& operator=(VDRegistryKey&&);
 
 	void *getRawHandle() const { return mKey; }
 

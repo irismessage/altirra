@@ -177,7 +177,7 @@ uint32 VDFile::open_internal(const char *pszFilename, const wchar_t *pwszFilenam
 		pszFilename = NULL;
 	}
 
-	if (!IsHardDrivePath(pwszFilename))
+	if ((flags & FILE_FLAG_NO_BUFFERING) && !IsHardDrivePath(pwszFilename))
 		flags &= ~FILE_FLAG_NO_BUFFERING;
 
 	mhFile = CreateFileW(pwszFilename, dwDesiredAccess, dwShareMode, NULL, dwCreationDisposition, dwAttributes, NULL);
@@ -463,6 +463,16 @@ VDDate VDFile::getLastWriteTime() const {
 
 	const uint64 ticks = ULARGE_INTEGER { { lastWriteTime.dwLowDateTime, lastWriteTime.dwHighDateTime } }.QuadPart;
 	return VDDate { ticks };
+}
+
+void VDFile::setLastWriteTime(const VDDate& date) {
+	if (mhFile) {
+		FILETIME ft;
+		ft.dwLowDateTime = (DWORD)date.mTicks;
+		ft.dwHighDateTime = (DWORD)(date.mTicks >> 32);
+
+		SetFileTime(mhFile, nullptr, nullptr, &ft);
+	}
 }
 
 void *VDFile::AllocUnbuffer(size_t nBytes) {

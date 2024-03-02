@@ -25,6 +25,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/w32assist.h>
+#include <vd2/system/filesys.h>
 #include <vd2/system/seh.h>
 #include <vd2/system/text.h>
 #include <vd2/system/vdstdc.h>
@@ -41,11 +42,6 @@ bool VDTestOSVersionW32(uint8 major, uint8 minor) {
 	return 0 != VerifyVersionInfo(&vervals, VER_MAJORVERSION | VER_MINORVERSION, cond);
 }
 
-bool VDIsAtLeastVistaW32() {
-	static const bool result = VDTestOSVersionW32(6,0);
-
-	return result;
-}
 
 bool VDIsAtLeast7W32() {
 	static const bool result = VDTestOSVersionW32(6,1);
@@ -84,21 +80,11 @@ bool VDIsForegroundTaskW32() {
 }
 
 LPVOID VDConvertThreadToFiberW32(LPVOID parm) {
-	typedef LPVOID (WINAPI *tpConvertThreadToFiber)(LPVOID p);
-	static tpConvertThreadToFiber ctof = (tpConvertThreadToFiber)GetProcAddress(GetModuleHandleW(L"kernel32"), "ConvertThreadToFiber");
-
-	if (!ctof)
-		return NULL;
-
-	return ctof(parm);
+	return ConvertThreadToFiber(parm);
 }
 
 void VDSwitchToFiberW32(LPVOID fiber) {
-	typedef void (WINAPI *tpSwitchToFiber)(LPVOID p);
-	static tpSwitchToFiber stof = (tpSwitchToFiber)GetProcAddress(GetModuleHandleW(L"kernel32"), "SwitchToFiber");
-
-	if (stof)
-		stof(fiber);
+	return SwitchToFiber(fiber);
 }
 
 int VDGetSizeOfBitmapHeaderW32(const BITMAPINFOHEADER *pHdr) {
@@ -189,7 +175,7 @@ VDStringW VDGetWindowTextW32(HWND hwnd) {
 }
 
 void VDAppendMenuW32(HMENU hmenu, UINT flags, UINT id, const wchar_t *text){
-	AppendMenuW(hmenu, flags, id, text);
+	VDVERIFY(AppendMenuW(hmenu, flags, id, text));
 }
 
 bool VDAppendPopupMenuW32(HMENU hmenu, UINT flags, HMENU hmenuPopup, const wchar_t *text){
@@ -203,7 +189,34 @@ void VDAppendMenuSeparatorW32(HMENU hmenu) {
 	if (pos < 0)
 		return;
 
-	MENUITEMINFOW mmiW;
+	MENUITEMINFOW mmiW {};
+	mmiW.cbSize		= sizeof(MENUITEMINFOW);
+	mmiW.fMask		= MIIM_TYPE;
+	mmiW.fType		= MFT_SEPARATOR;
+
+	VDVERIFY(InsertMenuItemW(hmenu, pos, TRUE, &mmiW));
+}
+
+void VDInsertMenuW32(HMENU hmenu, UINT pos, UINT flags, UINT id, const wchar_t *text){
+	MENUITEMINFOW mmiW {};
+	mmiW.cbSize		= sizeof(MENUITEMINFOW);
+	mmiW.fMask		= MIIM_FTYPE | MIIM_STRING | MIIM_ID | MIIM_STATE;
+	mmiW.fType		= MFT_STRING;
+	mmiW.wID		= id;
+	mmiW.dwTypeData	= (LPWSTR)text;
+
+	mmiW.fState		= 0;
+
+	if (flags & MF_CHECKED)		mmiW.fState |= MFS_CHECKED;
+	if (flags & MF_DISABLED)	mmiW.fState |= MFS_DISABLED;
+	if (flags & MF_GRAYED)		mmiW.fState |= MFS_GRAYED;
+	if (flags & MF_HILITE)		mmiW.fState |= MFS_HILITE;
+
+	VDVERIFY(InsertMenuItemW(hmenu, pos, TRUE, &mmiW));
+}
+
+void VDInsertMenuSeparatorW32(HMENU hmenu, UINT pos) {
+	MENUITEMINFOW mmiW {};
 	mmiW.cbSize		= sizeof(MENUITEMINFOW);
 	mmiW.fMask		= MIIM_TYPE;
 	mmiW.fType		= MFT_SEPARATOR;
@@ -286,25 +299,9 @@ void VDSetMenuItemTextByCommandW32(HMENU hmenu, UINT cmd, const wchar_t *text) {
 	SetMenuItemInfoW(hmenu, cmd, FALSE, &mmiW);
 }
 
-LRESULT	VDDualCallWindowProcW32(WNDPROC wp, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-	return (IsWindowUnicode(hwnd) ? CallWindowProcW : CallWindowProcA)(wp, hwnd, msg, wParam, lParam);
-}
-
-LRESULT VDDualDefWindowProcW32(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-	return IsWindowUnicode(hwnd) ? DefWindowProcW(hwnd, msg, wParam, lParam) : DefWindowProcA(hwnd, msg, wParam, lParam);
-}
-
 EXECUTION_STATE VDSetThreadExecutionStateW32(EXECUTION_STATE esFlags) {
-	EXECUTION_STATE es = 0;
-
 	// SetThreadExecutionState(): requires Windows 98+/2000+.
-	typedef EXECUTION_STATE (WINAPI *tSetThreadExecutionState)(EXECUTION_STATE);
-	static tSetThreadExecutionState pFunc = (tSetThreadExecutionState)GetProcAddress(GetModuleHandleW(L"kernel32"), "SetThreadExecutionState");
-
-	if (pFunc)
-		es = pFunc(esFlags);
-
-	return es;
+	return SetThreadExecutionState(esFlags);
 }
 
 bool VDSetFilePointerW32(HANDLE h, sint64 pos, DWORD dwMoveMethod) {
@@ -329,15 +326,6 @@ bool VDGetFileSizeW32(HANDLE h, sint64& size) {
 	size = dwSizeLow + ((sint64)dwSizeHigh << 32);
 	return true;
 }
-
-#if !defined(_MSC_VER) || _MSC_VER < 1300
-HMODULE VDGetLocalModuleHandleW32() {
-	MEMORY_BASIC_INFORMATION meminfo;
-	static HMODULE shmod = (VirtualQuery((HINSTANCE)&VDGetLocalModuleHandleW32, &meminfo, sizeof meminfo), (HMODULE)meminfo.AllocationBase);
-
-	return shmod;
-}
-#endif
 
 bool VDDrawTextW32(HDC hdc, const wchar_t *s, int nCount, LPRECT lpRect, UINT uFormat) {
 	RECT r;
@@ -599,6 +587,15 @@ bool VDPatchModuleExportTableW32(HMODULE hmod, const char *name, void *pCompareV
 	}
 
 	return false;
+}
+
+HMODULE VDLoadSystemLibraryWithAllowedOverrideW32(const char *name) {
+	HMODULE hmod = LoadLibraryW(VDMakePath(VDGetProgramPath().c_str(), VDTextAToW(name).c_str()).c_str());
+
+	if (hmod)
+		return hmod;
+
+	return VDLoadSystemLibraryW32(name);
 }
 
 HMODULE VDLoadSystemLibraryW32(const char *name) {

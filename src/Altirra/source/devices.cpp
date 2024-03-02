@@ -58,6 +58,7 @@ extern const ATDeviceDefinition g_ATDeviceDefMyIDED5xx;
 extern const ATDeviceDefinition g_ATDeviceDefMyIDE2;
 extern const ATDeviceDefinition g_ATDeviceDefSIDE;
 extern const ATDeviceDefinition g_ATDeviceDefSIDE2;
+extern const ATDeviceDefinition g_ATDeviceDefSIDE3;
 extern const ATDeviceDefinition g_ATDeviceDefDongle;
 extern const ATDeviceDefinition g_ATDeviceDefPBIDisk;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive810;
@@ -79,8 +80,10 @@ extern const ATDeviceDefinition g_ATDeviceDefDiskDriveXF551;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveATR8000;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercomRFD;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercomAT;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercomATSPD;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive810Turbo;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveAMDC;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrive815;
 extern const ATDeviceDefinition g_ATDeviceDefBrowser;
 extern const ATDeviceDefinition g_ATDeviceDefVBXE;
 extern const ATDeviceDefinition g_ATDeviceDefXELCF;
@@ -88,9 +91,15 @@ extern const ATDeviceDefinition g_ATDeviceDefXELCF3;
 extern const ATDeviceDefinition g_ATDeviceDefRapidus;
 extern const ATDeviceDefinition g_ATDeviceDefWarpOS;
 extern const ATDeviceDefinition g_ATDeviceDefCustom;
+extern const ATDeviceDefinition g_ATDeviceDefBlockDevVFAT16;
+extern const ATDeviceDefinition g_ATDeviceDefBlockDevVFAT32;
+extern const ATDeviceDefinition g_ATDeviceDefBlockDevVSDFS;
+extern const ATDeviceDefinition g_ATDeviceDefBlockDevTemporaryWriteFilter;
+extern const ATDeviceDefinition g_ATDeviceDef1090;
+extern const ATDeviceDefinition g_ATDeviceDefBit3FullView;
 
 void ATRegisterDevices(ATDeviceManager& dm) {
-	static const ATDeviceDefinition *const kDeviceDefs[]={
+	static constexpr const ATDeviceDefinition *kDeviceDefs[]={
 		&g_ATDeviceDefModem,
 		&g_ATDeviceDefBlackBox,
 		&g_ATDeviceDefMIO,
@@ -127,6 +136,7 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefMyIDE2,
 		&g_ATDeviceDefSIDE,
 		&g_ATDeviceDefSIDE2,
+		&g_ATDeviceDefSIDE3,
 		&g_ATDeviceDefDongle,
 		&g_ATDeviceDefPBIDisk,
 		&g_ATDeviceDefDiskDrive810,
@@ -148,8 +158,10 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefDiskDriveATR8000,
 		&g_ATDeviceDefDiskDrivePercomRFD,
 		&g_ATDeviceDefDiskDrivePercomAT,
+		&g_ATDeviceDefDiskDrivePercomATSPD,
 		&g_ATDeviceDefDiskDrive810Turbo,
 		&g_ATDeviceDefDiskDriveAMDC,
+		&g_ATDeviceDefDiskDrive815,
 		&g_ATDeviceDefBrowser,
 		&g_ATDeviceDefVBXE,
 		&g_ATDeviceDefXELCF,
@@ -157,6 +169,12 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefRapidus,
 		&g_ATDeviceDefWarpOS,
 		&g_ATDeviceDefCustom,
+		&g_ATDeviceDefBlockDevVFAT16,
+		&g_ATDeviceDefBlockDevVFAT32,
+		&g_ATDeviceDefBlockDevVSDFS,
+		&g_ATDeviceDefBlockDevTemporaryWriteFilter,
+		&g_ATDeviceDef1090,
+		&g_ATDeviceDefBit3FullView
 	};
 
 	for(const ATDeviceDefinition *def : kDeviceDefs)

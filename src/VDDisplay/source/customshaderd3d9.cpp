@@ -250,8 +250,8 @@ namespace {
 		{
 		}
 
-		HRESULT STDMETHODCALLTYPE Open(D3D10_INCLUDE_TYPE includeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes);
-		HRESULT STDMETHODCALLTYPE Close(LPCVOID pData);
+		COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE Open(D3D10_INCLUDE_TYPE includeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes);
+		COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE Close(LPCVOID pData);
 
 	private:
 		struct IncludeHeader {
@@ -261,7 +261,7 @@ namespace {
 		VDStringW mDefaultBasePath;
 	};
 
-	HRESULT STDMETHODCALLTYPE VDDisplayIncludeHandlerD3D9::Open(D3D10_INCLUDE_TYPE includeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes) {
+	COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE VDDisplayIncludeHandlerD3D9::Open(D3D10_INCLUDE_TYPE includeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes) {
 		const wchar_t *basePath = pParentData ? ((IncludeHeader *)((const char *)pParentData - sizeof(IncludeHeader)))->mpBasePath : mDefaultBasePath.c_str();
 		const auto newPath = VDMakePath(VDStringSpanW(basePath), VDTextAToW(pFileName));
 
@@ -301,7 +301,7 @@ namespace {
 		return S_OK;
 	}
 
-	HRESULT STDMETHODCALLTYPE VDDisplayIncludeHandlerD3D9::Close(LPCVOID pData) {
+	COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE VDDisplayIncludeHandlerD3D9::Close(LPCVOID pData) {
 		if (pData) {
 			free(((IncludeHeader *)pData) - 1);
 		}
@@ -652,7 +652,6 @@ void VDDisplayCustomShaderD3D9::Init(const char *shaderPath8, const VDDisplayCus
 
 VDDisplayCustomShaderD3D9::TextureSpec VDDisplayCustomShaderD3D9::Run(const vdrect32f *dstRect, const TextureSpec *srcTexSpecs, const TextureSpec *prevTexSpecs, const vdsize32& viewportSize, bool lastStage) {
 	const TextureSpec& srcTexSpec = srcTexSpecs[mPassIndex];
-	IDirect3DTexture9 *const srcTex = srcTexSpec.mpTexture;
 	const vdsize32 srcSize = { (sint32)srcTexSpec.mTexWidth, (sint32)srcTexSpec.mTexHeight };
 	const vdrect32f srcRect = { 0.0f, 0.0f, (float)srcTexSpec.mImageWidth / (float)srcTexSpec.mTexWidth, srcTexSpec.mImageHeight / (float)srcTexSpec.mTexHeight };
 

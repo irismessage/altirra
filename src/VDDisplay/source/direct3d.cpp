@@ -37,6 +37,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/VDDisplay/direct3d.h>
+#include <vd2/VDDisplay/display.h>
 #include <vd2/VDDisplay/logging.h>
 
 ///////////////////////////////////////////////////////////////////////////
@@ -674,7 +675,11 @@ bool VDD3D9Manager::Init() {
 	}
 
 	// attempt to load D3D9.DLL
-	mhmodDX9 = VDLoadSystemLibraryW32("d3d9.dll");
+	if (VDDGetLibraryOverridesEnabled())
+		mhmodDX9 = VDLoadSystemLibraryWithAllowedOverrideW32("d3d9.dll");
+	else
+		mhmodDX9 = VDLoadSystemLibraryW32("d3d9.dll");
+
 	if (!mhmodDX9) {
 		Shutdown();
 		return false;
@@ -895,7 +900,10 @@ bool VDD3D9Manager::Init() {
 
 	// If we're on Vista+, see if we can load DXGI 1.1.
 	if (VDIsAtLeastVistaW32()) {
-		mhmodDXGI = VDLoadSystemLibraryW32("dxgi.dll");
+		if (VDDGetLibraryOverridesEnabled())
+			mhmodDXGI = VDLoadSystemLibraryWithAllowedOverrideW32("dxgi.dll");
+		else
+			mhmodDXGI = VDLoadSystemLibraryW32("dxgi.dll");
 
 		if (mhmodDXGI) {
 			mpCreateDXGIFactory1 = (decltype(mpCreateDXGIFactory1))GetProcAddress(mhmodDXGI, "CreateDXGIFactory1");
@@ -1166,9 +1174,10 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 	mPresentParms.hDeviceWindow = newState ? GetAncestor(hwnd, GA_ROOT) : nullptr;
 
 	D3DDISPLAYMODE dm = {0};
-	HRESULT hrx = mpD3DDevice->GetDisplayMode(0, &dm);
-	VDDEBUG_D3D_MODESWITCH("Current display mode: %ux%u (hr=%08x %s)", dm.Width, dm.Height, hrx, VDDispDecodeD3D9Error(hrx));
 	if (newState) {
+		HRESULT hrx = mpD3DDevice->GetDisplayMode(0, &dm);
+		VDDEBUG_D3D_MODESWITCH("Current display mode: %ux%u (hr=%08x %s)", dm.Width, dm.Height, hrx, VDDispDecodeD3D9Error(hrx));
+
 		const int targetwidth = w && h ? w : dm.Width;
 		const int targetheight = w && h ? h : dm.Height;
 		const int targetrefresh = w && h && refresh ? refresh : dm.RefreshRate;
@@ -1241,16 +1250,17 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 			mPresentParms.BackBufferFormat = format;
 		}
 	} else {
-		mPresentParms.BackBufferWidth = dm.Width;
-		mPresentParms.BackBufferHeight = dm.Height;
+		mPresentParms.BackBufferWidth = 32;
+		mPresentParms.BackBufferHeight = 32;
 		mPresentParms.BackBufferFormat = D3DFMT_UNKNOWN;
 		mPresentParms.FullScreen_RefreshRateInHz = 0;
 	}
 	
-	VDDEBUG_D3D_MODESWITCH("Attempting to switch to %ux%u @ %uHz."
+	VDDEBUG_D3D_MODESWITCH("Attempting to switch to %ux%u @ %uHz (%s)."
 		, mPresentParms.BackBufferWidth
 		, mPresentParms.BackBufferHeight
 		, mPresentParms.FullScreen_RefreshRateInHz
+		, mPresentParms.Windowed ? "windowed" : "fullscreen"
 		);
 
 	if (Reset()) {
@@ -1282,7 +1292,7 @@ bool VDD3D9Manager::Reset() {
 			return false;
 
 		DWORD pid;
-		DWORD tid = GetWindowThreadProcessId(hwndFore, &pid);
+		(void)GetWindowThreadProcessId(hwndFore, &pid);
 
 		if (GetCurrentProcessId() != pid)
 			return false;
@@ -1313,7 +1323,8 @@ bool VDD3D9Manager::Reset() {
 
 	if (FAILED(hr)) {
 		mbDeviceValid = false;
-		VDDEBUG_D3D_MODESWITCH("Device reset FAILED: hr=%08x %s. Requested mode: %ux%u @ %uHz", hr, VDDispDecodeD3D9Error(hr), mPresentParms.BackBufferWidth, mPresentParms.BackBufferHeight, mPresentParms.FullScreen_RefreshRateInHz);
+		VDDEBUG_D3D_MODESWITCH("Device reset FAILED: hr=%08x %s. Requested mode: %ux%u @ %uHz (%s)", hr, VDDispDecodeD3D9Error(hr), mPresentParms.BackBufferWidth, mPresentParms.BackBufferHeight, mPresentParms.FullScreen_RefreshRateInHz,
+			mPresentParms.Windowed ? "windowed" : "fullscreen");
 		return false;
 	}
 
@@ -1953,8 +1964,10 @@ bool VDD3D9Manager::CreateSwapChain(HWND hwnd, int width, int height, bool clipT
 
 	vdrefptr<IDirect3DSwapChain9> pD3DSwapChain;
 	HRESULT hr = mpD3DDevice->CreateAdditionalSwapChain(&pparms, ~pD3DSwapChain);
-	if (FAILED(hr))
+	if (FAILED(hr)) {
+		VDDEBUG_D3D("VideoDisplay/DX9: CreateAdditionalSwapChain() failed (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 		return false;
+	}
 
 	vdrefptr<VDD3D9SwapChain> pSwapChain(new_nothrow VDD3D9SwapChain(this, pD3DSwapChain));
 	if (!pSwapChain)
@@ -2271,7 +2284,7 @@ LRESULT CALLBACK VDD3D9Manager::StaticDeviceWndProc(HWND hwnd, UINT msg, WPARAM 
 
 const char *VDDispDecodeD3D9Error(uint32 hr) {
 	switch(hr) {
-#define X(val) case val: return #val;
+#define X(val) case (uint32)val: return #val;
 		X(D3D_OK)
 		X(E_UNEXPECTED)
 		X(E_NOTIMPL)

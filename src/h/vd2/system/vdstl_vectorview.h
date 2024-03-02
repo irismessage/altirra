@@ -53,13 +53,11 @@ public:
 	{
 	}
 
-	// do not make this constexpr -- 15.7.3/15.8.0p3 has broken constexpr array arithmetic
 	template<typename U>
-	vdvector_view(const U& v)
-		: mpBegin(&*std::begin(v))
-		, mSize(size_type(std::end(v) - std::begin(v)))
+	constexpr vdvector_view(const U& v)
+		: mpBegin(std::data(v))
+		, mSize(std::size(v))
 	{
-
 	}
 
 	bool			empty() const { return !mSize; }

@@ -299,7 +299,7 @@ void ATUITapePeakControl::UpdateImage() {
 			const uint32 red = 0xFFFF0000;
 			const uint32 blue = 0xFF7E7EFF;
 
-			if (mpImage->GetAudioLength()) {
+			if (mpImage->IsAudioPresent()) {
 				DrawPeaks(0, mWidth, 0, hf * 0.5f, buf.data(), blue);
 				DrawPeaks(0, mWidth, hf * 0.5f, hf, buf.data() + mWidth * 2, red);
 			} else {
@@ -534,8 +534,8 @@ bool ATTapeControlDialog::OnLoaded() {
 
 	mTape.PositionChanged += &mFnTapePositionChanged;
 	mTape.PlayStateChanged += &mFnTapePlayStateChanged;
-	mTape.TapeChanging += &mFnTapeChanging;
-	mTape.TapeChanged += &mFnTapeChanged;
+	mTape.TapeChanging.Add(&mFnTapeChanging);
+	mTape.TapeChanged.Add(&mFnTapeChanged);
 	mTape.TapePeaksUpdated += &mFnTapePeaksUpdated;
 
 	UpdatePlayState();
@@ -544,8 +544,8 @@ bool ATTapeControlDialog::OnLoaded() {
 
 void ATTapeControlDialog::OnDestroy() {
 	mTape.TapePeaksUpdated -= &mFnTapePeaksUpdated;
-	mTape.TapeChanged -= &mFnTapeChanged;
-	mTape.TapeChanging -= &mFnTapeChanging;
+	mTape.TapeChanged.Remove(&mFnTapeChanged);
+	mTape.TapeChanging.Remove(&mFnTapeChanging);
 	mTape.PlayStateChanged -= &mFnTapePlayStateChanged;
 	mTape.PositionChanged -= &mFnTapePositionChanged;
 

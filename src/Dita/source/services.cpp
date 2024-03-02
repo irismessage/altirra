@@ -312,11 +312,13 @@ void VDClearFilespecSystemData() {
 		VDRegistryAppKey key("Saved filespecs");
 
 		VDRegistryValueIterator it(key);
+		vdvector<VDStringA> values;
 
-		VDStringW value;
-		while(const char *s = it.Next()) {
-			key.removeValue(s);
-		}
+		while(const char *s = it.Next())
+			values.emplace_back(s);
+
+		for(const VDStringA& value : values)
+			key.removeValue(value.c_str());
 	}
 }
 

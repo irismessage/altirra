@@ -27,6 +27,794 @@
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUIDialogCreateInputMap final : public VDDialogFrameW32 {
+public:
+	ATUIDialogCreateInputMap(ATInputManager& inputMan);
+
+	ATInputMap *GetInputMap() const { return mpInputMap; }
+
+	void SetControllerType(ATInputControllerType type);
+
+private:
+	bool OnLoaded();
+	void OnDataExchange(bool write);
+
+	void UpdateAnalogModeEnable();
+	void CreateInputMap();
+
+	ATInputManager& mInputMan;
+	vdrefptr<ATInputMap> mpInputMap;
+
+	VDUIProxyComboBoxControl mControllerTypeView;
+	VDUIProxyComboBoxControl mControllerPortView;
+	VDUIProxyComboBoxControl mAnalogModeView;
+	VDUIProxyComboBoxControl mInputSourceView;
+
+	enum class VirtualInput {
+		Stick_Left,
+		Stick_Right,
+		Stick_Up,
+		Stick_Down,
+		Stick_AnalogX,
+		Stick_AnalogY,
+		Stick_AnalogPosX,
+		Stick_AnalogPosY,
+		Stick_AnalogMoveX,
+		Stick_AnalogMoveY,
+		Stick_AnalogBeamX,
+		Stick_AnalogBeamY,
+		Button_0,
+		Button_1,
+		Button_2,
+		Button_3,
+		Contact,
+		Key_0,
+		Key_1,
+		Key_2,
+		Key_3,
+		Key_4,
+		Key_5,
+		Key_6,
+		Key_7,
+		Key_8,
+		Key_9,
+		Key_Pound,
+		Key_Star,
+		Key_Start,
+		Key_Pause,
+		Key_Reset,
+		Key_Period,
+		Key_PlusEnter,
+		Key_Minus,
+		Key_Y,
+		Key_N,
+		Key_Del,
+		Key_Esc
+	};
+
+	struct InputMapping {
+		VirtualInput mVirtualInput;
+		uint32 mInputCode;
+	};
+
+	struct InputSourceInfo {
+		const wchar_t *mpName;
+		const wchar_t *mpShortName;
+		bool mbAllowDualADMapping;
+		std::initializer_list<InputMapping> mMappings;
+	};
+
+	static const InputSourceInfo kInputSourceInfo[];
+
+	struct TargetMapping {
+		VirtualInput mVirtualInput;
+		uint32 mTargetCode;
+	};
+
+	struct ControllerTypeInfo {
+		ATInputControllerType mType;
+		const wchar_t *mpName;
+		const wchar_t *mpShortName;
+		int mIndex;
+		bool mbHasAbsoluteRelative : 1;
+		bool mbRequiresRelative : 1;
+		uint32 mAnalogRelativeModifier;
+		uint32 mDigitalRelativeModifier;
+		std::initializer_list<TargetMapping> mMappings;
+		std::initializer_list<ATInputMap::Mapping> mExtraMappings;
+	};
+
+	static const ControllerTypeInfo kControllerTypeInfo[];
+};
+
+const ATUIDialogCreateInputMap::InputSourceInfo ATUIDialogCreateInputMap::kInputSourceInfo[] {
+	{
+		.mpName = L"Keyboard (arrows + left ctrl/shift)",
+		.mpShortName = L"Keyboard (arrows)",
+		.mMappings = {
+			{ VirtualInput::Stick_Left,			kATInputCode_KeyLeft },
+			{ VirtualInput::Stick_Right,		kATInputCode_KeyRight },
+			{ VirtualInput::Stick_Up,			kATInputCode_KeyUp },
+			{ VirtualInput::Stick_Down,			kATInputCode_KeyDown },
+			{ VirtualInput::Button_0,			kATInputCode_KeyLControl },
+			{ VirtualInput::Button_1,			kATInputCode_KeyLShift },
+			{ VirtualInput::Key_0,				kATInputCode_Key0 },
+			{ VirtualInput::Key_1,				kATInputCode_Key1 },
+			{ VirtualInput::Key_2,				kATInputCode_Key2 },
+			{ VirtualInput::Key_3,				kATInputCode_Key3 },
+			{ VirtualInput::Key_4,				kATInputCode_Key4 },
+			{ VirtualInput::Key_5,				kATInputCode_Key5 },
+			{ VirtualInput::Key_6,				kATInputCode_Key6 },
+			{ VirtualInput::Key_7,				kATInputCode_Key7 },
+			{ VirtualInput::Key_8,				kATInputCode_Key8 },
+			{ VirtualInput::Key_9,				kATInputCode_Key9 },
+			{ VirtualInput::Key_Pound,			kATInputCode_KeyOemPlus },
+			{ VirtualInput::Key_Star,			kATInputCode_KeyOemMinus },
+			{ VirtualInput::Key_Start,			kATInputCode_KeyF2 },
+			{ VirtualInput::Key_Pause,			kATInputCode_KeyF3 },
+			{ VirtualInput::Key_Reset,			kATInputCode_KeyF4 },
+			{ VirtualInput::Key_Period,			kATInputCode_KeyOemPeriod },
+			{ VirtualInput::Key_PlusEnter,		kATInputCode_KeyReturn },
+			{ VirtualInput::Key_Minus,			kATInputCode_KeyOemMinus },
+			{ VirtualInput::Key_Y,				kATInputCode_KeyY },
+			{ VirtualInput::Key_N,				kATInputCode_KeyN },
+			{ VirtualInput::Key_Del,			kATInputCode_KeyDelete },
+			{ VirtualInput::Key_Esc,			kATInputCode_KeyEscape },
+		}
+	},
+	{
+		.mpName = L"Keyboard (numpad)",
+		.mpShortName = L"Keyboard (numpad)",
+		.mMappings = {
+			{ VirtualInput::Stick_Left,			kATInputCode_KeyNumpad7 },
+			{ VirtualInput::Stick_Left,			kATInputCode_KeyNumpad4 },
+			{ VirtualInput::Stick_Left,			kATInputCode_KeyNumpad1 },
+			{ VirtualInput::Stick_Right,		kATInputCode_KeyNumpad9 },
+			{ VirtualInput::Stick_Right,		kATInputCode_KeyNumpad6 },
+			{ VirtualInput::Stick_Right,		kATInputCode_KeyNumpad3 },
+			{ VirtualInput::Stick_Up,			kATInputCode_KeyNumpad7 },
+			{ VirtualInput::Stick_Up,			kATInputCode_KeyNumpad8 },
+			{ VirtualInput::Stick_Up,			kATInputCode_KeyNumpad9 },
+			{ VirtualInput::Stick_Down,			kATInputCode_KeyNumpad1 },
+			{ VirtualInput::Stick_Down,			kATInputCode_KeyNumpad2 },
+			{ VirtualInput::Stick_Down,			kATInputCode_KeyNumpad3 },
+			{ VirtualInput::Button_0,			kATInputCode_KeyNumpad0 },
+			{ VirtualInput::Key_0,				kATInputCode_Key0 },
+			{ VirtualInput::Key_1,				kATInputCode_Key1 },
+			{ VirtualInput::Key_2,				kATInputCode_Key2 },
+			{ VirtualInput::Key_3,				kATInputCode_Key3 },
+			{ VirtualInput::Key_4,				kATInputCode_Key4 },
+			{ VirtualInput::Key_5,				kATInputCode_Key5 },
+			{ VirtualInput::Key_6,				kATInputCode_Key6 },
+			{ VirtualInput::Key_7,				kATInputCode_Key7 },
+			{ VirtualInput::Key_8,				kATInputCode_Key8 },
+			{ VirtualInput::Key_9,				kATInputCode_Key9 },
+			{ VirtualInput::Key_Pound,			kATInputCode_KeyOemPlus },
+			{ VirtualInput::Key_Star,			kATInputCode_KeyOemMinus },
+			{ VirtualInput::Key_Start,			kATInputCode_KeyF2 },
+			{ VirtualInput::Key_Pause,			kATInputCode_KeyF3 },
+			{ VirtualInput::Key_Reset,			kATInputCode_KeyF4 },
+			{ VirtualInput::Key_Period,			kATInputCode_KeyOemPeriod },
+			{ VirtualInput::Key_PlusEnter,		kATInputCode_KeyReturn },
+			{ VirtualInput::Key_Minus,			kATInputCode_KeyOemMinus },
+			{ VirtualInput::Key_Y,				kATInputCode_KeyY },
+			{ VirtualInput::Key_N,				kATInputCode_KeyN },
+			{ VirtualInput::Key_Del,			kATInputCode_KeyDelete },
+			{ VirtualInput::Key_Esc,			kATInputCode_KeyEscape },
+		}
+	},
+	{
+		.mpName = L"Mouse",
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputCode_MouseHoriz },
+			{ VirtualInput::Stick_AnalogMoveY,	kATInputCode_MouseVert },
+			{ VirtualInput::Stick_AnalogPosX,	kATInputCode_MousePadX },
+			{ VirtualInput::Stick_AnalogPosY,	kATInputCode_MousePadY },
+			{ VirtualInput::Stick_AnalogBeamX,	kATInputCode_MouseBeamX },
+			{ VirtualInput::Stick_AnalogBeamY,	kATInputCode_MouseBeamY },
+			{ VirtualInput::Stick_AnalogX,		kATInputCode_MouseEmuStickX },
+			{ VirtualInput::Stick_AnalogY,		kATInputCode_MouseEmuStickY },
+			{ VirtualInput::Stick_Left,			kATInputCode_MouseLeft },
+			{ VirtualInput::Stick_Right,		kATInputCode_MouseRight },
+			{ VirtualInput::Stick_Up,			kATInputCode_MouseUp },
+			{ VirtualInput::Stick_Down,			kATInputCode_MouseDown },
+			{ VirtualInput::Button_0,			kATInputCode_MouseLMB },
+			{ VirtualInput::Button_1,			kATInputCode_MouseRMB },
+			{ VirtualInput::Button_2,			kATInputCode_MouseMMB },
+			{ VirtualInput::Key_0,				kATInputCode_Key0 },
+			{ VirtualInput::Key_1,				kATInputCode_Key1 },
+			{ VirtualInput::Key_2,				kATInputCode_Key2 },
+			{ VirtualInput::Key_3,				kATInputCode_Key3 },
+			{ VirtualInput::Key_4,				kATInputCode_Key4 },
+			{ VirtualInput::Key_5,				kATInputCode_Key5 },
+			{ VirtualInput::Key_6,				kATInputCode_Key6 },
+			{ VirtualInput::Key_7,				kATInputCode_Key7 },
+			{ VirtualInput::Key_8,				kATInputCode_Key8 },
+			{ VirtualInput::Key_9,				kATInputCode_Key9 },
+			{ VirtualInput::Key_Pound,			kATInputCode_KeyOemPlus },
+			{ VirtualInput::Key_Star,			kATInputCode_KeyOemMinus },
+			{ VirtualInput::Key_Start,			kATInputCode_KeyF2 },
+			{ VirtualInput::Key_Pause,			kATInputCode_KeyF3 },
+			{ VirtualInput::Key_Reset,			kATInputCode_KeyF4 },
+		}
+	},
+	{
+		.mpName = L"Gamepad",
+		.mbAllowDualADMapping = true,
+		.mMappings = {
+			{ VirtualInput::Stick_Left,			kATInputCode_JoyPOVLeft },
+			{ VirtualInput::Stick_Right,		kATInputCode_JoyPOVRight },
+			{ VirtualInput::Stick_Up,			kATInputCode_JoyPOVUp },
+			{ VirtualInput::Stick_Down,			kATInputCode_JoyPOVDown },
+			{ VirtualInput::Stick_AnalogX,		kATInputCode_JoyHoriz1 },
+			{ VirtualInput::Stick_AnalogY,		kATInputCode_JoyVert1 },
+			{ VirtualInput::Button_0,			kATInputCode_JoyButton0 },
+			{ VirtualInput::Button_1,			kATInputCode_JoyButton0+1 },
+			{ VirtualInput::Button_2,			kATInputCode_JoyButton0+2 },
+			{ VirtualInput::Button_3,			kATInputCode_JoyButton0+3 },
+			{ VirtualInput::Key_0,				kATInputCode_Key0 },
+			{ VirtualInput::Key_1,				kATInputCode_Key1 },
+			{ VirtualInput::Key_2,				kATInputCode_Key2 },
+			{ VirtualInput::Key_3,				kATInputCode_Key3 },
+			{ VirtualInput::Key_4,				kATInputCode_Key4 },
+			{ VirtualInput::Key_5,				kATInputCode_Key5 },
+			{ VirtualInput::Key_6,				kATInputCode_Key6 },
+			{ VirtualInput::Key_7,				kATInputCode_Key7 },
+			{ VirtualInput::Key_8,				kATInputCode_Key8 },
+			{ VirtualInput::Key_9,				kATInputCode_Key9 },
+			{ VirtualInput::Key_Pound,			kATInputCode_KeyOemPlus },
+			{ VirtualInput::Key_Star,			kATInputCode_KeyOemMinus },
+			{ VirtualInput::Key_Start,			kATInputCode_KeyF2 },
+			{ VirtualInput::Key_Pause,			kATInputCode_KeyF3 },
+			{ VirtualInput::Key_Reset,			kATInputCode_KeyF4 },
+		}
+	}
+};
+
+const ATUIDialogCreateInputMap::ControllerTypeInfo ATUIDialogCreateInputMap::kControllerTypeInfo[] {
+	{
+		.mType = kATInputControllerType_Joystick,
+		.mpName = L"Joystick (CX40)",
+		.mpShortName = L"Joystick",
+		.mbHasAbsoluteRelative = false,
+		.mMappings = {
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left			},
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right			},
+			{ VirtualInput::Stick_Up,			kATInputTrigger_Up				},
+			{ VirtualInput::Stick_Down,			kATInputTrigger_Down			},
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0			},
+		}
+	},
+	{
+		.mType = kATInputControllerType_Paddle,
+		.mpName = L"Paddle A (CX30)",
+		.mpShortName = L"Paddle A",
+		.mIndex = 0,
+		.mbHasAbsoluteRelative = true,
+		.mAnalogRelativeModifier = kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift),
+		.mDigitalRelativeModifier = kATInputTriggerMode_Relative | (6 << kATInputTriggerSpeed_Shift) | (10 << kATInputTriggerAccel_Shift),
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputTrigger_Axis0			},
+			{ VirtualInput::Stick_AnalogX,		kATInputTrigger_Axis0			},
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left			},
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right			},
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0			},
+		}
+	},
+	{
+		.mType = kATInputControllerType_Paddle,
+		.mpName = L"Paddle B (CX30)",
+		.mpShortName = L"Paddle B",
+		.mIndex = 1,
+		.mbHasAbsoluteRelative = true,
+		.mAnalogRelativeModifier = kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift),
+		.mDigitalRelativeModifier = kATInputTriggerMode_Relative | (6 << kATInputTriggerSpeed_Shift) | (10 << kATInputTriggerAccel_Shift),
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputTrigger_Axis0			},
+			{ VirtualInput::Stick_AnalogX,		kATInputTrigger_Axis0			},
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left			},
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right			},
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0			},
+		}
+	},
+	{
+		.mType = kATInputControllerType_STMouse,
+		.mpName = L"ST Mouse",
+		.mIndex = 0,
+		.mbHasAbsoluteRelative = false,
+		.mbRequiresRelative = true,
+		.mAnalogRelativeModifier = kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift) | (7 << kATInputTriggerAccel_Shift),
+		.mDigitalRelativeModifier = kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (10 << kATInputTriggerAccel_Shift),
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogMoveY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogX,		kATInputTrigger_Axis0			},
+			{ VirtualInput::Stick_AnalogY,		kATInputTrigger_Axis0+1			},
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left },
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right },
+			{ VirtualInput::Stick_Up,			kATInputTrigger_Up },
+			{ VirtualInput::Stick_Down,			kATInputTrigger_Down },
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0 },
+			{ VirtualInput::Button_1,			kATInputTrigger_Button0+1 },
+		},
+	},
+	{
+		.mType = kATInputControllerType_AmigaMouse,
+		.mpName = L"Amiga Mouse",
+		.mIndex = 0,
+		.mbHasAbsoluteRelative = false,
+		.mbRequiresRelative = true,
+		.mAnalogRelativeModifier = kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift) | (7 << kATInputTriggerAccel_Shift),
+		.mDigitalRelativeModifier = kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (10 << kATInputTriggerAccel_Shift),
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogMoveY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogX,		kATInputTrigger_Axis0			},
+			{ VirtualInput::Stick_AnalogY,		kATInputTrigger_Axis0+1			},
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left },
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right },
+			{ VirtualInput::Stick_Up,			kATInputTrigger_Up },
+			{ VirtualInput::Stick_Down,			kATInputTrigger_Down },
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0 },
+			{ VirtualInput::Button_1,			kATInputTrigger_Button0+1 },
+		},
+	},
+	{
+		.mType = kATInputControllerType_LightPen,
+		.mpName = L"Light Pen (CX70/CX75)",
+		.mIndex = 0,
+		.mbHasAbsoluteRelative = true,
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogBeamX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogBeamY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogPosX,		kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogPosY,		kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogMoveY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left },
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right },
+			{ VirtualInput::Stick_Up,			kATInputTrigger_Up },
+			{ VirtualInput::Stick_Down,			kATInputTrigger_Down },
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0 | kATInputTriggerMode_Inverted },
+			{ VirtualInput::Button_1,			kATInputTrigger_Button0+1 },
+		},
+		.mExtraMappings = {
+			{ kATInputCode_None,			0, kATInputTrigger_Button0+2 | kATInputTriggerMode_Inverted },
+		},
+	},
+	{
+		.mType = kATInputControllerType_LightPen,
+		.mpName = L"Light Gun (XG-1)",
+		.mIndex = 1,
+		.mbHasAbsoluteRelative = true,
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogBeamX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogBeamY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogPosX,		kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogPosY,		kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogMoveY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left },
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right },
+			{ VirtualInput::Stick_Up,			kATInputTrigger_Up },
+			{ VirtualInput::Stick_Down,			kATInputTrigger_Down },
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0 },
+		},
+		.mExtraMappings = {
+			{ kATInputCode_None,			0, kATInputTrigger_Button0+2 | kATInputTriggerMode_Inverted },
+		},
+	},
+	{
+		.mType = kATInputControllerType_Tablet,
+		.mpName = L"Tablet (Atari touch tablet)",
+		.mbHasAbsoluteRelative = true,
+		.mAnalogRelativeModifier = kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (7 << kATInputTriggerAccel_Shift),
+		.mDigitalRelativeModifier = kATInputTriggerMode_Relative | (3 << kATInputTriggerSpeed_Shift) | (10 << kATInputTriggerAccel_Shift),
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogMoveY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogBeamX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogBeamY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogPosX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogPosY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogX,		kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogY,		kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left },
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right },
+			{ VirtualInput::Stick_Up,			kATInputTrigger_Up },
+			{ VirtualInput::Stick_Down,			kATInputTrigger_Down },
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0 },
+			{ VirtualInput::Button_1,			kATInputTrigger_Button0+1 | kATInputTriggerMode_Toggle },
+			{ VirtualInput::Button_2,			kATInputTrigger_Button0+2 },
+			{ VirtualInput::Button_3,			kATInputTrigger_Button0+3 },
+		},
+	},
+	{
+		.mType = kATInputControllerType_KoalaPad,
+		.mpName = L"Tablet (KoalaPad)",
+		.mbHasAbsoluteRelative = true,
+		.mAnalogRelativeModifier = kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (7 << kATInputTriggerAccel_Shift),
+		.mDigitalRelativeModifier = kATInputTriggerMode_Relative | (3 << kATInputTriggerSpeed_Shift) | (10 << kATInputTriggerAccel_Shift),
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogMoveY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogBeamX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogBeamY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogPosX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogPosY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogX,		kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogY,		kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left },
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right },
+			{ VirtualInput::Stick_Up,			kATInputTrigger_Up },
+			{ VirtualInput::Stick_Down,			kATInputTrigger_Down },
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0 },
+			{ VirtualInput::Button_1,			kATInputTrigger_Button0+3 | kATInputTriggerMode_Toggle },
+			{ VirtualInput::Button_2,			kATInputTrigger_Button0+1 },
+			{ VirtualInput::Button_3,			kATInputTrigger_Button0+2 },
+		},
+	},
+	{
+		.mType = kATInputControllerType_Keypad,
+		.mpName = L"Numerical Keypad (CX85)",
+		.mMappings = {
+			{ VirtualInput::Key_1,				kATInputTrigger_Button0 },
+			{ VirtualInput::Key_2,				kATInputTrigger_Button0+1 },
+			{ VirtualInput::Key_3,				kATInputTrigger_Button0+2 },
+			{ VirtualInput::Key_4,				kATInputTrigger_Button0+3 },
+			{ VirtualInput::Key_5,				kATInputTrigger_Button0+4 },
+			{ VirtualInput::Key_6,				kATInputTrigger_Button0+5 },
+			{ VirtualInput::Key_7,				kATInputTrigger_Button0+6 },
+			{ VirtualInput::Key_8,				kATInputTrigger_Button0+7 },
+			{ VirtualInput::Key_9,				kATInputTrigger_Button0+8 },
+			{ VirtualInput::Key_0,				kATInputTrigger_Button0+9 },
+			{ VirtualInput::Key_Period,			kATInputTrigger_Button0+10 },
+			{ VirtualInput::Key_PlusEnter,		kATInputTrigger_Button0+11 },
+			{ VirtualInput::Key_Minus,			kATInputTrigger_Button0+12 },
+			{ VirtualInput::Key_Y,				kATInputTrigger_Button0+13 },
+			{ VirtualInput::Key_N,				kATInputTrigger_Button0+14 },
+			{ VirtualInput::Key_Del,			kATInputTrigger_Button0+15 },
+			{ VirtualInput::Key_Esc,			kATInputTrigger_Button0+16 },
+		},
+	},
+	{
+		.mType = kATInputControllerType_Trackball_CX80_V1,
+		.mpName = L"Trak-Ball (CX80 V1)",
+		.mbRequiresRelative = true,
+		.mAnalogRelativeModifier = kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift),
+		.mDigitalRelativeModifier = kATInputTriggerMode_Relative | (10 << kATInputTriggerSpeed_Shift) | (10 << kATInputTriggerAccel_Shift),
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogMoveY,	kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_AnalogX,		kATInputTrigger_Axis0 },
+			{ VirtualInput::Stick_AnalogY,		kATInputTrigger_Axis0+1 },
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left },
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right },
+			{ VirtualInput::Stick_Up,			kATInputTrigger_Up },
+			{ VirtualInput::Stick_Down,			kATInputTrigger_Down },
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0 },
+		}
+	},
+	{
+		.mType = kATInputControllerType_Driving,
+		.mpName = L"Driving Controller (CX20)",
+		.mpShortName = L"Driving Controller",
+		.mbRequiresRelative = true,
+		.mAnalogRelativeModifier = kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift),
+		.mDigitalRelativeModifier = kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift),
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputTrigger_Axis0			},
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left			},
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right			},
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0			},
+		}
+	},
+	{
+		.mType = kATInputControllerType_Keyboard,
+		.mpName = L"Keyboard Controller (CX21/23/50)",
+		.mpShortName = L"Keyboard Controller",
+		.mMappings = {
+			{ VirtualInput::Key_1,				kATInputTrigger_Button0			},
+			{ VirtualInput::Key_2,				kATInputTrigger_Button0+1		},
+			{ VirtualInput::Key_3,				kATInputTrigger_Button0+2		},
+			{ VirtualInput::Key_4,				kATInputTrigger_Button0+3		},
+			{ VirtualInput::Key_5,				kATInputTrigger_Button0+4		},
+			{ VirtualInput::Key_6,				kATInputTrigger_Button0+5		},
+			{ VirtualInput::Key_7,				kATInputTrigger_Button0+6		},
+			{ VirtualInput::Key_8,				kATInputTrigger_Button0+7		},
+			{ VirtualInput::Key_9,				kATInputTrigger_Button0+8		},
+			{ VirtualInput::Key_Star,			kATInputTrigger_Button0+9		},
+			{ VirtualInput::Key_0,				kATInputTrigger_Button0+10		},
+			{ VirtualInput::Key_Pound,			kATInputTrigger_Button0+11		},
+		}
+	},
+	{
+		.mType = kATInputControllerType_5200Controller,
+		.mpName = L"5200 Controller (CX52)",
+		.mbHasAbsoluteRelative = true,
+		.mAnalogRelativeModifier = kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift),
+		.mDigitalRelativeModifier = kATInputTriggerMode_Relative | (3 << kATInputTriggerSpeed_Shift) | (8 << kATInputTriggerAccel_Shift),
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputTrigger_Axis0			},
+			{ VirtualInput::Stick_AnalogMoveY,	kATInputTrigger_Axis0+1			},
+			{ VirtualInput::Stick_AnalogX,		kATInputTrigger_Axis0			},
+			{ VirtualInput::Stick_AnalogY,		kATInputTrigger_Axis0+1			},
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left			},
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right			},
+			{ VirtualInput::Stick_Up,			kATInputTrigger_Up				},
+			{ VirtualInput::Stick_Down,			kATInputTrigger_Down			},
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0			},
+			{ VirtualInput::Button_1,			kATInputTrigger_Button0+1		},
+			{ VirtualInput::Key_0,				kATInputTrigger_5200_0			},
+			{ VirtualInput::Key_1,				kATInputTrigger_5200_1			},
+			{ VirtualInput::Key_2,				kATInputTrigger_5200_2			},
+			{ VirtualInput::Key_3,				kATInputTrigger_5200_3			},
+			{ VirtualInput::Key_4,				kATInputTrigger_5200_4			},
+			{ VirtualInput::Key_5,				kATInputTrigger_5200_5			},
+			{ VirtualInput::Key_6,				kATInputTrigger_5200_6			},
+			{ VirtualInput::Key_7,				kATInputTrigger_5200_7			},
+			{ VirtualInput::Key_8,				kATInputTrigger_5200_8			},
+			{ VirtualInput::Key_9,				kATInputTrigger_5200_9			},
+			{ VirtualInput::Key_Star,			kATInputTrigger_5200_Star		},
+			{ VirtualInput::Key_Pound,			kATInputTrigger_5200_Pound		},
+			{ VirtualInput::Key_Start,			kATInputTrigger_5200_Start		},
+			{ VirtualInput::Key_Pause,			kATInputTrigger_5200_Pause		},
+			{ VirtualInput::Key_Reset,			kATInputTrigger_5200_Reset		},
+		}
+	},
+	{
+		.mType = kATInputControllerType_5200Trackball,
+		.mpName = L"5200 Trak-Ball (CX53)",
+		.mbHasAbsoluteRelative = false,
+		.mbRequiresRelative = true,
+		.mAnalogRelativeModifier = kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift),
+		.mDigitalRelativeModifier = kATInputTriggerMode_Relative | (3 << kATInputTriggerSpeed_Shift) | (8 << kATInputTriggerAccel_Shift),
+		.mMappings = {
+			{ VirtualInput::Stick_AnalogMoveX,	kATInputTrigger_Axis0			},
+			{ VirtualInput::Stick_AnalogMoveY,	kATInputTrigger_Axis0+1			},
+			{ VirtualInput::Stick_AnalogX,		kATInputTrigger_Axis0			},
+			{ VirtualInput::Stick_AnalogY,		kATInputTrigger_Axis0+1			},
+			{ VirtualInput::Stick_Left,			kATInputTrigger_Left			},
+			{ VirtualInput::Stick_Right,		kATInputTrigger_Right			},
+			{ VirtualInput::Stick_Up,			kATInputTrigger_Up				},
+			{ VirtualInput::Stick_Down,			kATInputTrigger_Down			},
+			{ VirtualInput::Button_0,			kATInputTrigger_Button0			},
+			{ VirtualInput::Button_1,			kATInputTrigger_Button0+1		},
+			{ VirtualInput::Key_0,				kATInputTrigger_5200_0			},
+			{ VirtualInput::Key_1,				kATInputTrigger_5200_1			},
+			{ VirtualInput::Key_2,				kATInputTrigger_5200_2			},
+			{ VirtualInput::Key_3,				kATInputTrigger_5200_3			},
+			{ VirtualInput::Key_4,				kATInputTrigger_5200_4			},
+			{ VirtualInput::Key_5,				kATInputTrigger_5200_5			},
+			{ VirtualInput::Key_6,				kATInputTrigger_5200_6			},
+			{ VirtualInput::Key_7,				kATInputTrigger_5200_7			},
+			{ VirtualInput::Key_8,				kATInputTrigger_5200_8			},
+			{ VirtualInput::Key_9,				kATInputTrigger_5200_9			},
+			{ VirtualInput::Key_Star,			kATInputTrigger_5200_Star		},
+			{ VirtualInput::Key_Pound,			kATInputTrigger_5200_Pound		},
+			{ VirtualInput::Key_Start,			kATInputTrigger_5200_Start		},
+			{ VirtualInput::Key_Pause,			kATInputTrigger_5200_Pause		},
+			{ VirtualInput::Key_Reset,			kATInputTrigger_5200_Reset		},
+		}
+	},
+};
+
+ATUIDialogCreateInputMap::ATUIDialogCreateInputMap(ATInputManager& inputMan)
+	: VDDialogFrameW32(IDD_CREATEINPUTMAP)
+	, mInputMan(inputMan)
+{
+	mControllerTypeView.SetOnSelectionChanged([this](int) { UpdateAnalogModeEnable(); });
+}
+
+void ATUIDialogCreateInputMap::SetControllerType(ATInputControllerType type) {
+	auto it = std::find_if(std::begin(kControllerTypeInfo), std::end(kControllerTypeInfo), [type](const auto& e) { return e.mType == type; });
+
+	if (it != std::end(kControllerTypeInfo)) {
+		mControllerTypeView.SetSelection((int)(it - std::begin(kControllerTypeInfo)));
+		UpdateAnalogModeEnable();
+	}
+}
+
+bool ATUIDialogCreateInputMap::OnLoaded() {
+	AddProxy(&mControllerTypeView, IDC_CONTROLLERTYPE);
+	AddProxy(&mControllerPortView, IDC_CONTROLLERPORT);
+	AddProxy(&mAnalogModeView, IDC_ANALOGCONTROLMODE);
+	AddProxy(&mInputSourceView, IDC_INPUTSOURCE);
+
+	VDStringW s;
+	for(int i=0; i<4; ++i) {
+		s.sprintf(L"Port %d", i + 1);
+		mControllerPortView.AddItem(s.c_str());
+	}
+
+	mControllerPortView.SetSelection(0);
+
+	for(const auto& e : kControllerTypeInfo)
+		mControllerTypeView.AddItem(e.mpName);
+
+	mAnalogModeView.AddItem(L"Absolute - Map input position directly");
+	mAnalogModeView.AddItem(L"Relative - Gradually move in input direction");
+
+	for(const auto& e : kInputSourceInfo)
+		mInputSourceView.AddItem(e.mpName);
+
+	mInputSourceView.SetSelection(0);
+
+	SetControllerType(mInputMan.Is5200Mode() ? kATInputControllerType_5200Controller : kATInputControllerType_Joystick);
+
+	SetFocusToControl(mControllerTypeView.GetWindowId());
+	return true;
+}
+
+void ATUIDialogCreateInputMap::OnDataExchange(bool write) {
+	if (write)
+		CreateInputMap();
+}
+
+void ATUIDialogCreateInputMap::UpdateAnalogModeEnable() {
+	int typeIdx = mControllerTypeView.GetSelection();
+	bool available = false;
+
+	if (typeIdx >= 0 && typeIdx < (int)vdcountof(kControllerTypeInfo)) {
+		if (kControllerTypeInfo[typeIdx].mbHasAbsoluteRelative)
+			available = true;
+	}
+
+	mAnalogModeView.SetEnabled(available);
+
+	int modeIdx = mAnalogModeView.GetSelection();
+	if (available) {
+		if (modeIdx < 0)
+			mAnalogModeView.SetSelection(0);
+	} else {
+		mAnalogModeView.SetSelection(-1);
+	}
+}
+
+void ATUIDialogCreateInputMap::CreateInputMap() {
+	int typeIdx = mControllerTypeView.GetSelection();
+	int portIdx = mControllerPortView.GetSelection();
+	int sourceIdx = mInputSourceView.GetSelection();
+
+	if (typeIdx < 0 || typeIdx >= (int)vdcountof(kControllerTypeInfo))
+		return;
+
+	if (sourceIdx < 0 || sourceIdx >= (int)vdcountof(kInputSourceInfo))
+		return;
+
+	if (portIdx < 0 || portIdx > 3)
+		portIdx = 0;
+
+	const bool usingRelative = mAnalogModeView.GetSelection() > 0;
+
+	const ControllerTypeInfo& ctinfo = kControllerTypeInfo[typeIdx];
+	const InputSourceInfo& isinfo = kInputSourceInfo[sourceIdx];
+
+	vdrefptr<ATInputMap> imap(new ATInputMap);
+
+	VDStringW s;
+	const wchar_t *modeStr = ctinfo.mbHasAbsoluteRelative ? usingRelative ? L"relative; " : L"absolute; " : L"";
+	s.sprintf(L"%ls -> %ls (%lsport %u)", isinfo.mpShortName ? isinfo.mpShortName : isinfo.mpName, ctinfo.mpShortName ? ctinfo.mpShortName : ctinfo.mpName, modeStr, portIdx + 1);
+	imap->SetName(s.c_str());
+
+	uint32 controllerIdx = (uint32)portIdx;
+
+	if (ctinfo.mType == kATInputControllerType_Paddle)
+		controllerIdx = controllerIdx * 2 + ctinfo.mIndex;
+
+	imap->AddController(ctinfo.mType, controllerIdx);
+
+	uint32 analogAxesBound = 0;
+
+	for(const TargetMapping& targetMapping : ctinfo.mMappings) {
+		for(const InputMapping& inputMapping : isinfo.mMappings) {
+			if (inputMapping.mVirtualInput != targetMapping.mVirtualInput)
+				continue;
+
+			uint32 targetCode = targetMapping.mTargetCode;
+
+			// check if this is an analog or digital axis mapping (node that this
+			// includes the absolute positioning mappings)
+			bool isDigitalAxisMapping = false;
+			bool isAnalogAxisMapping = false;
+			bool isAbsoluteMapping = false;
+
+			switch(inputMapping.mVirtualInput) {
+				case VirtualInput::Stick_Left:
+				case VirtualInput::Stick_Right:
+				case VirtualInput::Stick_Up:
+				case VirtualInput::Stick_Down:
+					isDigitalAxisMapping = true;
+					break;
+
+				case VirtualInput::Stick_AnalogMoveX:
+				case VirtualInput::Stick_AnalogMoveY:
+					isAnalogAxisMapping = true;
+
+					if (!usingRelative && ctinfo.mbHasAbsoluteRelative)
+						continue;
+					break;
+
+				case VirtualInput::Stick_AnalogX:
+				case VirtualInput::Stick_AnalogY:
+					isAnalogAxisMapping = true;
+					break;
+
+				case VirtualInput::Stick_AnalogBeamX:
+				case VirtualInput::Stick_AnalogBeamY:
+				case VirtualInput::Stick_AnalogPosX:
+				case VirtualInput::Stick_AnalogPosY:
+					isAbsoluteMapping = true;
+					break;
+			}
+
+			// check if this targets one of the axis mappings
+			if (targetCode == kATInputTrigger_Axis0
+				|| targetCode == kATInputTrigger_Axis0+1
+				|| targetCode == kATInputTrigger_Left
+				|| targetCode == kATInputTrigger_Right
+				|| targetCode == kATInputTrigger_Up
+				|| targetCode == kATInputTrigger_Down
+			) {
+				// check if this axis has already been bound to an analog input
+				uint32 axisBit = 0;
+				switch(targetCode) {
+					case kATInputTrigger_Axis0:
+					case kATInputTrigger_Left:
+					case kATInputTrigger_Right:
+						axisBit = 1;
+						break;
+
+					case kATInputTrigger_Axis0+1:
+					case kATInputTrigger_Up:
+					case kATInputTrigger_Down:
+						axisBit = 2;
+						break;
+				}
+
+				const bool isAxisAnalogBound = (analogAxesBound & axisBit) != 0;
+
+				if (isAxisAnalogBound) {
+					// if we have made an absolute binding, suppress the analog binding
+					if (!isDigitalAxisMapping || isAbsoluteMapping)
+						continue;
+
+					// if we have made an absolute or analog binding, suppress the
+					// digital binding unless the input source has separate analog and
+					// digital inputs
+					if (isDigitalAxisMapping && !isinfo.mbAllowDualADMapping)
+						continue;
+				} else {
+					if (!isDigitalAxisMapping)
+						analogAxesBound |= axisBit;
+				}
+			}
+
+			// if this is an analog or digital axis mapping, then apply relative modifiers
+			// if relative mode is enabled
+			if (usingRelative || ((isDigitalAxisMapping || isAnalogAxisMapping) && ctinfo.mbRequiresRelative)) {
+				if (isAnalogAxisMapping)
+					targetCode |= ctinfo.mAnalogRelativeModifier;
+				else if (isDigitalAxisMapping)
+					targetCode |= ctinfo.mDigitalRelativeModifier;
+			}
+
+			imap->AddMapping(inputMapping.mInputCode, 0, targetCode);
+
+			// continue searching, as some input sources require multibinding, particularly
+			// the numpad for diagonals
+		}
+	}
+
+	imap->AddMappings(ctinfo.mExtraMappings);
+
+	mInputMan.AddInputMap(imap);
+
+	mpInputMap = std::move(imap);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 bool ATUIShowRebindDialog(VDGUIHandle hParent,
 						  ATInputManager& inputManager,
 						  IATJoystickManager *joyMan,
@@ -132,18 +920,18 @@ bool ATUIDialogEditControllerMapping::OnLoaded() {
 	CBAddString(IDC_CONTROLLER, L"Joystick (CX40)");
 	CBAddString(IDC_CONTROLLER, L"Mouse (Atari ST)");
 	CBAddString(IDC_CONTROLLER, L"Mouse (Amiga)");
-	CBAddString(IDC_CONTROLLER, L"Paddle A");
-	CBAddString(IDC_CONTROLLER, L"Paddle B");
+	CBAddString(IDC_CONTROLLER, L"Paddle A (CX30)");
+	CBAddString(IDC_CONTROLLER, L"Paddle B (CX30)");
 	CBAddString(IDC_CONTROLLER, L"Console");
-	CBAddString(IDC_CONTROLLER, L"5200 Controller");
+	CBAddString(IDC_CONTROLLER, L"5200 Controller (CX52)");
 	CBAddString(IDC_CONTROLLER, L"Input State");
-	CBAddString(IDC_CONTROLLER, L"Light Pen");
+	CBAddString(IDC_CONTROLLER, L"Light Pen (CX70/CX75)");
 	CBAddString(IDC_CONTROLLER, L"Tablet (Atari touch tablet)");
 	CBAddString(IDC_CONTROLLER, L"Tablet (KoalaPad)");
-	CBAddString(IDC_CONTROLLER, L"CX85 Numerical Keypad");
-	CBAddString(IDC_CONTROLLER, L"CX80 Trackball (V1)");
-	CBAddString(IDC_CONTROLLER, L"5200 Trackball");
-	CBAddString(IDC_CONTROLLER, L"Driving Controller");
+	CBAddString(IDC_CONTROLLER, L"Numerical Keypad (CX85)");
+	CBAddString(IDC_CONTROLLER, L"Trak-Ball (CX80 V1)");
+	CBAddString(IDC_CONTROLLER, L"5200 Trak-Ball (CX53)");
+	CBAddString(IDC_CONTROLLER, L"Driving Controller (CX20)");
 	CBAddString(IDC_CONTROLLER, L"Keyboard Controller (CX21/23/50)");
 
 	CBAddString(IDC_PORT, L"Port 1");
@@ -537,6 +1325,8 @@ const uint32 ATUIDialogEditInputMapping::kInputCodes[] = {
 	kATInputCode_MousePadY,
 	kATInputCode_MouseBeamX,
 	kATInputCode_MouseBeamY,
+	kATInputCode_MouseEmuStickX,
+	kATInputCode_MouseEmuStickY,
 	kATInputCode_MouseLeft,
 	kATInputCode_MouseRight,
 	kATInputCode_MouseUp,
@@ -624,6 +1414,10 @@ const uint32 ATUIDialogEditInputMapping::kTargetCodesPaddle[] = {
 const uint32 ATUIDialogEditInputMapping::kTargetCodesMouse[] = {
 	kATInputTrigger_Axis0,
 	kATInputTrigger_Axis0+1,
+	kATInputTrigger_Left,
+	kATInputTrigger_Right,
+	kATInputTrigger_Up,
+	kATInputTrigger_Down,
 	kATInputTrigger_Button0,
 	kATInputTrigger_Button0+1,
 };
@@ -631,10 +1425,10 @@ const uint32 ATUIDialogEditInputMapping::kTargetCodesMouse[] = {
 const uint32 ATUIDialogEditInputMapping::kTargetCodes5200Controller[] = {
 	kATInputTrigger_Button0,
 	kATInputTrigger_Button0+1,
-	kATInputTrigger_Up,
-	kATInputTrigger_Down,
 	kATInputTrigger_Left,
 	kATInputTrigger_Right,
+	kATInputTrigger_Up,
+	kATInputTrigger_Down,
 	kATInputTrigger_Axis0,
 	kATInputTrigger_Axis0+1,
 	kATInputTrigger_5200_0,
@@ -729,16 +1523,20 @@ const uint32 ATUIDialogEditInputMapping::kTargetCodesKeypad[] = {
 const uint32 ATUIDialogEditInputMapping::kTargetCodesTrackballCX80V1[] = {
 	kATInputTrigger_Axis0,
 	kATInputTrigger_Axis0+1,
+	kATInputTrigger_Left,
+	kATInputTrigger_Right,
+	kATInputTrigger_Up,
+	kATInputTrigger_Down,
 	kATInputTrigger_Button0,
 };
 
 const uint32 ATUIDialogEditInputMapping::kTargetCodes5200Trackball[] = {
 	kATInputTrigger_Button0,
 	kATInputTrigger_Button0+1,
-	kATInputTrigger_Up,
-	kATInputTrigger_Down,
 	kATInputTrigger_Left,
 	kATInputTrigger_Right,
+	kATInputTrigger_Up,
+	kATInputTrigger_Down,
 	kATInputTrigger_Axis0,
 	kATInputTrigger_Axis0+1,
 	kATInputTrigger_5200_0,
@@ -1192,7 +1990,7 @@ void ATUIDialogInputMapControllerItem::GetText(VDStringW& s) const {
 			break;
 
 		case kATInputControllerType_5200Controller:
-			s.sprintf(L"5200 controller (port %d)", mControllerUnit + 1);
+			s.sprintf(L"5200 Controller (port %d)", mControllerUnit + 1);
 			break;
 
 		case kATInputControllerType_InputState:
@@ -1204,7 +2002,7 @@ void ATUIDialogInputMapControllerItem::GetText(VDStringW& s) const {
 			break;
 
 		case kATInputControllerType_Tablet:
-			s = L"Tablet (Atari touch tablet)";
+			s = L"Tablet (Atari Touch Tablet)";
 			break;
 
 		case kATInputControllerType_KoalaPad:
@@ -1212,23 +2010,23 @@ void ATUIDialogInputMapControllerItem::GetText(VDStringW& s) const {
 			break;
 
 		case kATInputControllerType_Keypad:
-			s.sprintf(L"CX-85 Numerical Keypad (port %d)", mControllerUnit + 1);
+			s.sprintf(L"Numerical Keypad (port %d)", mControllerUnit + 1);
 			break;
 
 		case kATInputControllerType_Trackball_CX80_V1:
-			s.sprintf(L"CX-80 Trackball V1 (port %d)", mControllerUnit + 1);
+			s.sprintf(L"Trak-Ball (port %d)", mControllerUnit + 1);
 			break;
 
 		case kATInputControllerType_5200Trackball:
-			s.sprintf(L"5200 Trackball (port %d)", mControllerUnit + 1);
+			s.sprintf(L"5200 Trak-Ball (port %d)", mControllerUnit + 1);
 			break;
 
 		case kATInputControllerType_Driving:
-			s.sprintf(L"Driving controller (port %d)", mControllerUnit + 1);
+			s.sprintf(L"Driving Controller (port %d)", mControllerUnit + 1);
 			break;
 
 		case kATInputControllerType_Keyboard:
-			s.sprintf(L"Keyboard controller (port %d)", mControllerUnit + 1);
+			s.sprintf(L"Keyboard Controller (port %d)", mControllerUnit + 1);
 			break;
 	}
 
@@ -1814,7 +2612,7 @@ bool ATUIDialogInput::OnCommand(uint32 id, uint32 extcode) {
 
 				VDStringW msg;
 				msg.sprintf(L"Are you sure you want to delete the input map \"%ls\"?", imap->GetName());
-				if (Confirm(msg.c_str(), L"Altirra warning")) {
+				if (Confirm2("DeleteInputMap", msg.c_str(), L"Deleting input map")) {
 					mListView.DeleteItem(index);
 					mInputMan.RemoveInputMap(imap);
 				}
@@ -1823,7 +2621,7 @@ bool ATUIDialogInput::OnCommand(uint32 id, uint32 extcode) {
 
 		return true;
 	} else if (id == IDC_RESET) {
-		if (Confirm(L"This will erase all custom input maps and restore the default ones. Continue?", L"Altirra warning")) {
+		if (Confirm2("ResetInputMaps", L"This will erase all custom input maps and restore the default ones. Continue?", L"Reset input maps")) {
 			mInputMan.ResetToDefaults();
 			OnDataExchange(false);
 		}
@@ -1832,7 +2630,7 @@ bool ATUIDialogInput::OnCommand(uint32 id, uint32 extcode) {
 	} else if (id == IDC_PRESETS) {
 		uint32 n = mInputMan.GetPresetInputMapCount();
 
-		vdfastvector<const wchar_t *> items(n+1, NULL);
+		vdfastvector<const wchar_t *> items(n+3, NULL);
 		vdvector<vdrefptr<ATInputMap>> imaps(n);
 
 		for(uint32 i = 0; i < n; ++i) {
@@ -1842,9 +2640,30 @@ bool ATUIDialogInput::OnCommand(uint32 id, uint32 extcode) {
 				items[i] = L"?";
 		}
 
+		items[n] = L"---";
+		items[n+1] = L"&Create From Template...";
+
 		int sel = ActivateMenuButton(id, items.data());
 
-		if (sel >= 0) {
+		if (sel == (int)n+1) {
+			ATUIDialogCreateInputMap createdlg(mInputMan);
+
+			if (createdlg.ShowDialog(this)) {
+				OnDataExchange(false);
+
+				int n = mListView.GetItemCount();
+				for(int i=0; i<n; ++i) {
+					auto *item = static_cast<ATUIDialogInputListItem *>(mListView.GetVirtualItem(i));
+
+					if (item && item->GetInputMap() == createdlg.GetInputMap()) {
+						mListView.SetSelectedIndex(i);
+						break;
+					}
+				}
+
+				SetFocusToControl(mListView.GetWindowId());
+			}
+		} else if (sel >= 0 && sel < (int)n) {
 			vdrefptr<ATInputMap> selimap;
 
 			if (mInputMan.GetPresetInputMapByIndex((uint32)sel, ~selimap)) {

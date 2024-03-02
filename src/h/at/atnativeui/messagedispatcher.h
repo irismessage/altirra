@@ -39,8 +39,7 @@ struct ATUINativeMessageDispatchResult {
 template<typename... T_SubDispatchers, typename T_Target>
 ATUINativeMessageDispatchResult ATUIDispatchWndProcMessage(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, T_Target& target) {
 	ATUINativeMessageDispatchContext ctx { hwnd, msg, wParam, lParam };
-	const char dummy[] = { (ATUIDispatchWndProcMessage(ctx, static_cast<T_SubDispatchers&>(target)), 0)... };
-	(void)dummy;
+	(void)(((ATUIDispatchWndProcMessage(ctx, static_cast<T_SubDispatchers&>(target)), 0), ...));
 
 	return { ctx.mResult, ctx.mbHandled };
 }

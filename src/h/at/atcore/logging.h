@@ -24,7 +24,9 @@
 enum ATLogFlags : uint32 {
 	kATLogFlags_None = 0,
 	kATLogFlags_Timestamp = 0x1,
-	kATLogFlags_CassettePos = 0x2
+	kATLogFlags_CassettePos = 0x2,
+	kATLogFlags_TimestampUs = 0x4,
+	kATLogFlags_TimestampRaw = 0x8
 };
 
 class ATLogChannel;

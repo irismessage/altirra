@@ -1,6 +1,6 @@
 //	Altirra - Atari 800/800XL/5200 emulator
 //	Native UI library - system theme support
-//	Copyright (C) 2008-2019 Avery Lee
+//	Copyright (C) 2008-2020 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -19,6 +19,7 @@
 #include <windows.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/color.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/notifylist.h>
 #include <at/atnativeui/theme.h>
 #include <at/atnativeui/theme_win32.h>
@@ -35,6 +36,18 @@ namespace {
 		{ &ATUIThemeColors::mContentFg,		&ATUIThemeColorsW32::mContentFgBrush,	&ATUIThemeColorsW32::mContentFgCRef },
 		{ &ATUIThemeColors::mContentBg,		&ATUIThemeColorsW32::mContentBgBrush,	&ATUIThemeColorsW32::mContentBgCRef },
 	};
+
+	void ATUIUpdateDarkThemeColors() {
+		if (ATUIIsDarkThemeActive()) {
+			ATUIUpdateThemeColors();
+			ATUINotifyThemeChanged();
+		}
+	}
+
+	ATConfigVarRGBColor g_ATCVDarkThemeStaticBg("ui.theme.dark.static_bg", 0x303030, ATUIUpdateDarkThemeColors);
+	ATConfigVarRGBColor g_ATCVDarkThemeStaticFg("ui.theme.dark.static_fg", 0xD8D8D8, ATUIUpdateDarkThemeColors);
+	ATConfigVarRGBColor g_ATCVDarkThemeContentBg("ui.theme.dark.content_bg", 0x202020, ATUIUpdateDarkThemeColors);
+	ATConfigVarRGBColor g_ATCVDarkThemeContentFg("ui.theme.dark.content_fg", 0xD8D8D8, ATUIUpdateDarkThemeColors);
 }
 
 bool g_ATUIDarkThemeEnabled;
@@ -105,11 +118,11 @@ void ATUIUpdateThemeColors() {
 		tc.mInactiveCaptionText = 0xD0D0D0;
 		tc.mCaptionIcon		= 0xE0E0E0;
 
-		tc.mStaticBg		= 0x303030;
-		tc.mStaticFg		= 0xD8D8D8;
+		tc.mStaticBg		= g_ATCVDarkThemeStaticBg;
+		tc.mStaticFg		= g_ATCVDarkThemeStaticFg;
 		tc.mDisabledFg		= 0x808080;
-		tc.mContentBg		= 0x202020;
-		tc.mContentFg		= 0xD8D8D8;
+		tc.mContentBg		= g_ATCVDarkThemeContentBg;
+		tc.mContentFg		= g_ATCVDarkThemeContentFg;
 		tc.mHighlightedBg	= VDSwizzleU32(GetSysColor(COLOR_HIGHLIGHT)) >> 8;
 		tc.mHighlightedFg	= 0xFFFFFF;
 		tc.mInactiveHiBg	= 0x909090;
@@ -122,6 +135,16 @@ void ATUIUpdateThemeColors() {
 		tc.mDirectLocationFg = 0x000000;
 		tc.mIndirectLocationBg = 0x60C060;
 		tc.mIndirectLocationFg = 0x000000;
+
+		tc.mHardPosEdge		= 0x909090;
+		tc.mHardNegEdge		= 0x909090;
+		tc.mSoftPosEdge		= 0x383838;
+		tc.mSoftNegEdge		= 0x383838;
+		tc.mButtonBg		= 0x383838;
+
+		tc.mButtonFg		= tc.mStaticFg;
+
+		tc.mFocusedBg		= 0x505050;
 	} else {
 		tc.mActiveCaptionText	= VDSwizzleU32(GetSysColor(COLOR_CAPTIONTEXT)) >> 8;
 		tc.mInactiveCaptionText	= VDSwizzleU32(GetSysColor(COLOR_INACTIVECAPTIONTEXT)) >> 8;
@@ -153,7 +176,19 @@ void ATUIUpdateThemeColors() {
 		tc.mHiMarkedBg = 0xFF8080;
 		tc.mPendingHiMarkedFg = 0x000000;
 		tc.mPendingHiMarkedBg = 0xFFA880;
+
+		tc.mHardPosEdge = VDSwizzleU32(GetSysColor(COLOR_3DHIGHLIGHT)) >> 8;
+		tc.mSoftPosEdge = VDSwizzleU32(GetSysColor(COLOR_BTNHIGHLIGHT)) >> 8;
+		tc.mSoftNegEdge = VDSwizzleU32(GetSysColor(COLOR_BTNSHADOW)) >> 8;
+		tc.mHardNegEdge = VDSwizzleU32(GetSysColor(COLOR_3DSHADOW)) >> 8;
+		tc.mButtonBg = VDSwizzleU32(GetSysColor(COLOR_BTNFACE)) >> 8;
+		tc.mButtonFg = VDSwizzleU32(GetSysColor(COLOR_BTNTEXT)) >> 8;
+
+		tc.mFocusedBg = tc.mHighlightedBg;
 	}
+	
+	tc.mButtonPushedBg	= (tc.mStaticFg | tc.mButtonBg) - (((tc.mStaticFg ^ tc.mButtonBg) & 0xfefefe) >> 1);
+	tc.mButtonCheckedBg = (tc.mButtonBg | tc.mButtonPushedBg) - (((tc.mButtonBg ^ tc.mButtonPushedBg) & 0xfefefe) >> 1);
 
 	BOOL gradientsEnabled = FALSE;
 	SystemParametersInfo(SPI_GETGRADIENTCAPTIONS, 0, &gradientsEnabled, FALSE);

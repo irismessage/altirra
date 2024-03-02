@@ -137,7 +137,7 @@ void tool_fontrender(const vdfastvector<const char *>& args, const vdfastvector<
 		exit(20);
 	}
 
-	BITMAPFILEHEADER fh = { 0x4D42, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + bi.bmiHeader.biSizeImage, 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) };
+	BITMAPFILEHEADER fh = { 0x4D42, (DWORD)(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + bi.bmiHeader.biSizeImage), 0, 0, (DWORD)(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)) };
 	fwrite(&fh, sizeof fh, 1, fo);
 	fwrite(&bi.bmiHeader, sizeof bi.bmiHeader, 1, fo);
 	fwrite(dibbits, bi.bmiHeader.biSizeImage, 1, fo);

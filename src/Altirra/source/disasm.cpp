@@ -63,10 +63,10 @@ namespace {
 	};
 
 									//	inv	imp	rel	r16	imm	imM	imX	im6	ivc	zp	zpX	zpY	abs	abX	abY	(a)	[a]	(zX	(zY	(z)	(aX	bz	z,r	al	alX	o,S	S)Y	[d]	[dY	#sd
-	static const uint8 kBPM_M8_X8[]={	1,	1,	2,	3,	2,	2,	2,	3,	1,	2,	2,	2,	3,	3,	3,	3,	3,	2,	2,	2,	3,	2,	3,	4,	4,	2,	2,	2,	2,	3	};
-	static const uint8 kBPM_M8_X16[]={	1,	1,	2,	3,	2,	2,	3,	3,	1,	2,	2,	2,	3,	3,	3,	3,	3,	2,	2,	2,	3,	2,	3,	4,	4,	2,	2,	2,	2,	3	};
-	static const uint8 kBPM_M16_X8[]={	1,	1,	2,	3,	2,	3,	2,	3,	1,	2,	2,	2,	3,	3,	3,	3,	3,	2,	2,	2,	3,	2,	3,	4,	4,	2,	2,	2,	2,	3	};
-	static const uint8 kBPM_M16_X16[]={	1,	1,	2,	3,	2,	3,	3,	3,	1,	2,	2,	2,	3,	3,	3,	3,	3,	2,	2,	2,	3,	2,	3,	4,	4,	2,	2,	2,	2,	3	};
+	static const uint8 kBPM_M8_X8[]={	1,	1,	2,	3,	2,	2,	2,	3,	2,	2,	2,	2,	3,	3,	3,	3,	3,	2,	2,	2,	3,	2,	3,	4,	4,	2,	2,	2,	2,	3	};
+	static const uint8 kBPM_M8_X16[]={	1,	1,	2,	3,	2,	2,	3,	3,	2,	2,	2,	2,	3,	3,	3,	3,	3,	2,	2,	2,	3,	2,	3,	4,	4,	2,	2,	2,	2,	3	};
+	static const uint8 kBPM_M16_X8[]={	1,	1,	2,	3,	2,	3,	2,	3,	2,	2,	2,	2,	3,	3,	3,	3,	3,	2,	2,	2,	3,	2,	3,	4,	4,	2,	2,	2,	2,	3	};
+	static const uint8 kBPM_M16_X16[]={	1,	1,	2,	3,	2,	3,	3,	3,	2,	2,	2,	2,	3,	3,	3,	3,	3,	2,	2,	2,	3,	2,	3,	4,	4,	2,	2,	2,	2,	3	};
 
 	static const uint8 *const kBytesPerModeTables[]={
 		kBPM_M8_X8,		// 6502
@@ -1309,6 +1309,9 @@ ATDisasmResult ATDisassembleInsnZ80(VDStringA& line, const ATCPUHistoryEntry& he
 			} else {
 				oplen = 2;
 				insn = &kZ80InsnsDDFD[op1];
+
+				if (!insn->s)
+					insn = &kZ80Insns[op1];
 			}
 		}
 	} else if (op0 == 0xED) {
@@ -2114,10 +2117,12 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 		//	JSR abs			-> PBK
 		//	JSR (abs,X)		-> PBK
 		//	All branch		-> PBK
-		uint8 eaBank = 0;
+		uint32 eaBank = 0;
+		uint32 eaMask = 0xFFFF;
 		
 		if (disasmMode == kATDebugDisasmMode_65C816) {
-			eaBank = hent.mB;
+			eaBank = (uint32)hent.mB << 16;
+			eaMask = 0xFFFFFF;
 
 			switch(opid) {
 			case kOpcodeBCC:
@@ -2131,7 +2136,7 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 			case kOpcodeBVS:
 			case kOpcodeJSR:
 			case kOpcodeJSL:
-				eaBank = hent.mK;
+				eaBank = (uint32)hent.mK << 16;
 				break;
 
 			case kOpcodeJMP:
@@ -2139,7 +2144,7 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 				if (mode == kModeIndA || mode == kModeIndAL)
 					eaBank = 0;
 				else
-					eaBank = hent.mK;
+					eaBank = (uint32)hent.mK << 16;
 				break;
 
 			}
@@ -2198,9 +2203,7 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 
 			case kModeAbs:
 				base = ea = byte1 + (byte2 << 8);
-
-				if (disasmMode == kATDebugDisasmMode_65C816)
-					ea += ((uint32)eaBank << 16);
+				ea += eaBank;
 
 				addr16 = true;
 				ea16 = true;
@@ -2208,11 +2211,7 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 
 			case kModeAbsX:
 				base = byte1 + (byte2 << 8);
-
-				if (disasmMode == kATDebugDisasmMode_65C816)
-					ea = (base + x + ((uint32)hent.mB << 16)) & 0xffffff;
-				else
-					ea = (base + x) & 0xffff;
+				ea = (base + x + eaBank) & eaMask;
 
 				addr16 = true;
 				ea16 = true;
@@ -2220,71 +2219,77 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 
 			case kModeAbsY:
 				base = byte1 + (byte2 << 8);
-
-				if (disasmMode == kATDebugDisasmMode_65C816)
-					ea = (base + y + ((uint32)hent.mB << 16)) & 0xffffff;
-				else
-					ea = (base + y) & 0xffff;
+				ea = (base + y + eaBank) & eaMask;
 
 				addr16 = true;
 				ea16 = true;
 				break;
 
-			case kModeIndA:
+			case kModeIndA:		// (abs)
 				base = byte1 + (byte2 << 8);
 
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = target->DebugReadByte(base) + 256*target->DebugReadByte(base+1) + ((uint32)eaBank << 16);
+					ea = target->DebugReadByte(base) + 256*target->DebugReadByte(base+1) + eaBank;
 
 				addr16 = true;
 				ea16 = true;
 				break;
 
-			case kModeIndAL:
+			case kModeIndAL:	// [abs]
 				base = byte1 + (byte2 << 8);
 
 				if (decodeRefsHistory)
 					ea = hent.mEA;
-				else
+				else {
+					// [abs] always reads from bank 0.
 					ea = target->DebugReadByte(base)
-						+ 256 * target->DebugReadByte(base+1)
-						+ 65536 * target->DebugReadByte(base+2);
+						+ 256 * target->DebugReadByte((base+1) & 0xFFFF)
+						+ 65536 * target->DebugReadByte((base+2) & 0xFFFF);
+				}
 
 				addr16 = true;
 				ea16 = true;
 				break;
 
-			case kModeIndX:
+			case kModeIndX:		// (dp,X)
 				base = byte1;
 
 				if (decodeRefsHistory)
 					ea = hent.mEA;
-				else
-					ea = target->DebugReadByte((uint8)(base + x)) + 256*target->DebugReadByte((uint8)(base + ((x + 1) & dpmask)));
+				else {
+					// (dp,X) is a bit strange -- the first byte always crosses pages, but the second byte
+					// wraps within that page.
+					uint32 firstByteAddr = (d + ((base + x) & dpmask)) & 0xFFFF;
+					uint32 secondByteMask = hent.mbEmulation ? 0xFF : dpmask;
+					uint32 secondByteAddr = (firstByteAddr & ~secondByteMask) + ((firstByteAddr + 1) & secondByteMask);
+					ea	= target->DebugReadByte(firstByteAddr)
+						+ 256*target->DebugReadByte(secondByteAddr)
+						+ eaBank;
+				}
 
 				ea16 = true;
 				break;
 
-			case kModeIndY:
+			case kModeIndY:		// (dp),Y
 				base = byte1;
 
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = target->DebugReadByte(d + base) + 256*target->DebugReadByte(d + ((base + 1) & dpmask)) + y;
+					ea = (target->DebugReadByte((d + base) & 0xFFFF) + 256*target->DebugReadByte((d + ((base + 1) & dpmask)) & 0xFFFF) + y + eaBank) & eaMask;
 
 				ea16 = true;
 				break;
 
-			case kModeInd:
+			case kModeInd:		// (dp)
 				base = byte1;
 
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = target->DebugReadByte(d + base) + 256*target->DebugReadByte(d + ((base+1) & dpmask));
+					ea = target->DebugReadByte((d + base) & 0xFFFF) + 256*target->DebugReadByte((d + ((base+1) & dpmask)) & 0xFFFF) + eaBank;
 
 				ea16 = true;
 				break;
@@ -2294,8 +2299,10 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 
 				if (decodeRefsHistory)
 					ea = hent.mEA;
-				else
-					ea = target->DebugReadByte(base+x) + 256*target->DebugReadByte(base+1+x);
+				else {
+					// As (abs, X) references are in PBK, they do not wrap across banks.
+					ea = target->DebugReadByte(eaBank + ((base+x) & 0xFFFF)) + 256*target->DebugReadByte(eaBank + ((base+1+x) & 0xFFFF)) + eaBank;
+				}
 
 				addr16 = true;
 				ea16 = true;
@@ -2315,7 +2322,7 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 
 			case kModeLongX:
 				base = (uint32)byte1 + ((uint32)byte2 << 8) + ((uint32)byte3 << 16);
-				ea = base + x;
+				ea = (base + x) & 0xFFFFFF;
 				addr16 = true;
 				addr24 = true;
 				ea16 = true;
@@ -2324,7 +2331,8 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 			case kModeStack:
 				dolabel = false;
 				base = byte1;
-				ea = (base + s16) & 0xffff;
+				ea16 = true;
+				ea = (base + s16) & 0xFFFF;		// ,S is bank 0 only
 				break;
 
 			case kModeStackIndY:
@@ -2334,9 +2342,12 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else {
-					ea = target->DebugReadByte(base + s16);
-					ea += 256 * target->DebugReadByte(base + s16+1);
+					// (d,S),Y fetches address from bank 0 only and data from
+					// DBK.
+					ea = target->DebugReadByte((base + s16) & 0xFFFF);
+					ea += 256 * target->DebugReadByte((base + s16+1) & 0xFFFF);
 					ea += y;
+					ea = (ea + eaBank) & eaMask;
 				}
 
 				break;
@@ -2373,6 +2384,7 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 					ea += (uint32)target->DebugReadByte(dpaddr++) << 8;
 					ea += (uint32)target->DebugReadByte(dpaddr) << 16;
 					ea += y;
+					ea &= 0xFFFFFF;
 				}
 				break;
 		}
@@ -2405,7 +2417,7 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 			uint32 symAddr = base;
 
 			if (!addr24)
-				symAddr += (uint32)eaBank << 16;
+				symAddr += eaBank;
 
 			name = ATGetSymbolNameOffset(symAddr, write, offset);
 		}
@@ -2499,6 +2511,7 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 				case kModeIndY:			// DBK
 				case kModeInd:			// bank 0 -> DBK
 				case kModeIndAX:		// PBK
+				case kModeStack:		// bank 0
 				case kModeStackIndY:	// bank 0 -> PBK
 				case kModeDpIndLong:	// bank 0 -> any
 				case kModeDpIndLongY:	// bank 0 -> any
@@ -2509,7 +2522,8 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 
 					if (disasmMode == kATDebugDisasmMode_65C816 &&
 						mode != kModeZpX &&
-						mode != kModeZpY)
+						mode != kModeZpY &&
+						mode != kModeStack)
 					{
 						line.append_sprintf(" ;$%02X:%04X", (ea >> 16) & 0xff, ea & 0xffff);
 						break;

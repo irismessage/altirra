@@ -18,6 +18,8 @@
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Kasumi/resample.h>
+#include <at/ataudio/audiofilters.h>
+#include <at/ataudio/audiooutput.h>
 
 #if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
 	#include <at/atcore/intrin_sse2.h>
@@ -25,8 +27,6 @@
 
 #include <at/atio/wav.h>
 #include "videowriter.h"
-#include "audiofilters.h"
-#include "audiooutput.h"
 #include "aviwriter.h"
 #include "gtia.h"
 #include "uirender.h"
@@ -873,9 +873,9 @@ namespace {
 		EndBlock(false);
 	}
 
-	#define HASH3(pos) (((uint32)hist[(pos)] ^ ((uint32)hist[(pos)+1] << 4) ^ ((uint32)hist[(pos)+2] << 8)) & 0xffff)
+	#define HASH3(pos) (((uint32)*(const uint8 *)(hist + (pos)) ^ ((uint32)*(const uint8 *)(hist+(pos)+1) << 4) ^ ((uint32)*(const uint8 *)(hist+(pos)+2) << 8)) & 0xffff)
 //	#define HASH6(pos) (((uint32)hist[(pos)] ^ ((uint32)hist[(pos)+1] << 2) ^ ((uint32)hist[(pos)+2] << 4) ^ ((uint32)hist[(pos)+3] << 6) ^ ((uint32)hist[(pos)+4] << 7) ^ ((uint32)hist[(pos)+5] << 8)) & 0xffff)
-	#define HASH6(pos) ((uint32)((*(const uint32 *)&hist[(pos)] + *(const uint16 *)&hist[(pos)+4]) * 0xc17d3f45) >> 16)
+	#define HASH6(pos) ((uint32)((*(const uint32 *)(hist + (pos)) + *(const uint16 *)(hist + (pos) + 4)) * 0xc17d3f45) >> 16)
 
 	const bool usehash6 = true;
 
@@ -918,7 +918,7 @@ namespace {
 		uint16	*codeptr = mpCode;
 		uint16	*distptr = mpDist;
 
-		const uint8 *hist = mHistoryBuffer - mHistoryBase;
+		const uintptr hist = (uintptr)mHistoryBuffer - mHistoryBase;
 		const int maxmatch = 100;
 
 		uint32 pos = mHistoryPos;
@@ -943,7 +943,7 @@ namespace {
 				continue;
 			}
 
-			uint8 c = hist[pos];
+			uint8 c = *(const uint8 *)(hist + pos);
 			uint32 hcode = usehash6 ? HASH6(pos) : HASH3(pos);
 
 			sint32 hpos = mHashTable[hcode];
@@ -960,7 +960,7 @@ namespace {
 
 			if (hpos >= hlimit && limit >= hashlen) {
 				sint32 hstart = hpos;
-				const unsigned char *s2 = hist + pos;
+				const unsigned char *VDRESTRICT s2 = (const unsigned char *)(hist + pos);
 				int matchlimit = maxmatch;
 
 				if (usehash6) {
@@ -969,7 +969,7 @@ namespace {
 					int hashoffset = 0;
 
 					do {
-						const unsigned char *s1 = hist + hpos - hashoffset;
+						const unsigned char *VDRESTRICT s1 = (const unsigned char *)(hist + hpos - hashoffset);
 						uint32 mlen = 0;
 
 						if (s1[bestlen] == s2[bestlen] && *(const uint32 *)s1 == matchWord1 && *(const uint16 *)(s1 + 4) == matchWord2) {
@@ -1016,7 +1016,7 @@ namespace {
 					uint8 matchByte2 = s2[2];
 
 					do {
-						const unsigned char *s1 = hist + hpos - bestlen + 2;
+						const unsigned char *VDRESTRICT s1 = (const unsigned char *)(hist + hpos - bestlen + 2);
 						uint32 mlen = 0;
 
 						if (s1[bestlen] == s2[bestlen] && s1[0] == matchByte0 && s1[1] == matchByte1 && s1[2] == matchByte2) {
@@ -1063,7 +1063,7 @@ namespace {
 				// check for an illegal match
 				VDASSERT((uint32)(bestoffset-1) < 32768U);
 				VDASSERT(bestlen < 259);
-				VDASSERT(!memcmp(hist+pos, hist+pos-bestoffset, bestlen));
+				VDASSERT(!memcmp((const void *)(hist+pos), (const void *)(hist+pos-bestoffset), bestlen));
 				VDASSERT(pos >= bestoffset);
 				VDASSERT(pos+bestlen <= len);
 				VDASSERT(pos-bestoffset >= mHistoryBase);
@@ -1098,7 +1098,7 @@ namespace {
 				}
 			} else {
 				if (bestlen > mPendingLen) {
-					codeptr[-2] = hist[pos - 1];
+					codeptr[-2] = *(const uint8 *)(hist + pos - 1);
 					distptr[-2] = distptr[-1];
 					--distptr;
 					lenptr[-2] = lenptr[-1];
@@ -1429,16 +1429,17 @@ public:
 	void Compress(const VDPixmap& px, bool intra, bool encodeAll);
 
 	uint32 GetEncodedLength() const { return mEncodedLength; }
-	const void *GetEncodedData() const { return mPackBuffer.data(); }
+	const void *GetEncodedData() const { return mPackBuffer.data() + mEncodedOffset; }
 
 protected:
 	void CompressIntra8(const VDPixmap& px);
 	void CompressInter8(bool encodeAll);
 
-	uint32 mWidth;
-	uint32 mHeight;
-	bool mbRgb32;
-	uint32 mEncodedLength;
+	uint32 mWidth = 0;
+	uint32 mHeight = 0;
+	bool mbRgb32 = false;
+	uint32 mEncodedLength = 0;
+	uint32 mEncodedOffset = 0;
 
 	vdfastvector<uint8, vdaligned_alloc<uint8> > mPackBuffer;
 	vdfastvector<uint8, vdaligned_alloc<uint8> > mBuffer;
@@ -1457,8 +1458,7 @@ protected:
 		}
 
 		MotionVector offset(sint8 dx, sint8 dy) const {
-			MotionVector v = {x+dx, y+dy};
-			return v;
+			return MotionVector { (sint8)(x+dx), (sint8)(y+dy) };
 		}
 	};
 
@@ -1475,7 +1475,9 @@ ATVideoEncoderZMBV::ATVideoEncoderZMBV(uint32 w, uint32 h, bool rgb32) {
 	mHeight = h;
 	mbRgb32 = rgb32;
 
-	mPackBuffer.resize(rgb32 ? w * h * 8 : w * h * 2);
+	// The pack buffer is extended by 15 bytes so we can pad it at the beginning to
+	// align the main image data for the frame (see mEncodedOffset).
+	mPackBuffer.resize((rgb32 ? w * h * 8 : w * h * 2) + 15);
 
 	mLayout.format = rgb32 ? nsVDPixmap::kPixFormat_XRGB8888 : nsVDPixmap::kPixFormat_Pal8;
 	mLayout.w = w;
@@ -1532,7 +1534,10 @@ void ATVideoEncoderZMBV::Compress(const VDPixmap& px, bool intra, bool encodeAll
 }
 
 void ATVideoEncoderZMBV::CompressIntra8(const VDPixmap& px) {
-	uint8 *dst0 = mPackBuffer.data();
+	// header is 7 bytes, so add 1 byte to align everything nicely
+	mEncodedOffset = 1;
+
+	uint8 *dst0 = mPackBuffer.data() + mEncodedOffset;
 	uint8 *dst = dst0;
 
 	const uint32 w = mWidth;
@@ -1544,7 +1549,7 @@ void ATVideoEncoderZMBV::CompressIntra8(const VDPixmap& px) {
 	*dst++ = 0x01;	// minor
 	*dst++ = 0x01;	// zlib compressed
 	*dst++ = mbRgb32 ? 0x08 : 0x04;	// 8-bit / 32-bit
-	*dst++ = 16;	// 8x8 blocks
+	*dst++ = 16;	// 16x16 blocks
 	*dst++ = 16;
 
 	uint8 *base = dst;
@@ -1844,17 +1849,24 @@ namespace {
 }
 
 void ATVideoEncoderZMBV::CompressInter8(bool encodeAll) {
-	uint8 *dst0 = mPackBuffer.data();
-	uint8 *dst = dst0;
-
+	// The inter frame header consists of:
+	// - one byte for inter frame
+	// - two motion vector bytes per block
+	// - two additional bytes if block count is odd
 	const uint32 w = mWidth;
 	const uint32 h = mHeight;
-	const uint8 *src = mBuffer.data() + mLayout.data;
-	const uint8 *ref = mBufferRef.data() + mLayout.data;
-
 	const uint32 bw = (w + 15) >> 4;
 	const uint32 bh = (h + 15) >> 4;
 	const uint32 bcount = bw * bh;
+
+	mEncodedOffset = (0 - (1 + 2*(bcount + (bcount & 1)))) & 7;
+
+	uint8 *dst0 = mPackBuffer.data() + mEncodedOffset;
+	uint8 *dst = dst0;
+
+	const uint8 *src = mBuffer.data() + mLayout.data;
+	const uint8 *ref = mBufferRef.data() + mLayout.data;
+
 	const uint32 bxedge = w >> 4;
 	const uint32 byedge = h >> 4;
 
@@ -3575,14 +3587,14 @@ void ATVideoWriter::WriteRawAudio(const float *left, const float *right, uint32 
 					if (tcOut > 512)
 						tcOut = 512;
 
-					mResampleAccum = ATFilterResampleStereo16(buf, mResampleBuffers[0], mResampleBuffers[1], tcOut, mResampleAccum, mResampleRate);
+					mResampleAccum = ATFilterResampleStereo16(buf, mResampleBuffers[0], mResampleBuffers[1], tcOut, mResampleAccum, mResampleRate, true);
 
 					mpMediaEncoder->WriteAudio(buf, 2*sizeof(sint16)*tcOut);
 				} else {
 					if (tcOut > 1024)
 						tcOut = 1024;
 
-					mResampleAccum = ATFilterResampleMono16(buf, mResampleBuffers[0], tcOut, mResampleAccum, mResampleRate);
+					mResampleAccum = ATFilterResampleMono16(buf, mResampleBuffers[0], tcOut, mResampleAccum, mResampleRate, true);
 					mpMediaEncoder->WriteAudio(buf, sizeof(sint16)*tcOut);
 				}
 

@@ -24,6 +24,7 @@
 #include <at/atemulation/flash.h>
 
 class ATMemoryLayer;
+class IATDevicePortManager;
 
 class ATRapidusDevice final
 	: public ATDevice
@@ -127,11 +128,12 @@ private:
 	void SetHPCR(uint8 v);
 	void UpdateLoFlashWindow();
 	void UpdatePBIFirmware();
-	void UpdateSRAMWindows();
+	void UpdateSRAMWindows(uint8 windowMask = 0xFF);
 	void UpdateSDRAMWindow();
 	void UpdateHMA();
 	void UpdateKernelROM();
 	void UpdateHardwareProtect();
+	void UpdateBank3RAM();
 	void LoadNVRAM();
 	void SaveNVRAM();
 
@@ -141,6 +143,8 @@ private:
 	IATDeviceIndicatorManager *mpIndicatorMgr = nullptr;
 	ATFirmwareManager *mpFwMgr = nullptr;
 	IATSystemController *mpSystemController = nullptr;
+	IATDevicePortManager *mpPortMgr = nullptr;
+	int mPortOutput = -1;
 
 	bool mbPBIDeviceActive = false;
 	bool mbFirmwareUsable = false;
@@ -168,7 +172,7 @@ private:
 
 	ATMemoryLayer *mpLayerLoFlash = nullptr;				// $00:4000-7FFF read
 	ATMemoryLayer *mpLayerLoFlashControl = nullptr;			// $00:4000-7FFF read/write
-	ATMemoryLayer *mpLayerBank0RAM[5] {};					// 4 x 16KB in bank 0, last block fragmented into $C000-CFFF/D7FF and D800-FFFF
+	ATMemoryLayer *mpLayerBank0RAM[6] {};					// 4 x 16KB in bank 0, block 1 fragmented into $4000-4FFF/5800-7FFF and block 3 fragmented into $C000-CFFF/D7FF and D800-FFFF
 	ATMemoryLayer *mpLayerLoBank0RAMShadow = nullptr;		// $00:0000-3FFF write only
 	ATMemoryLayer *mpLayerHiBank0RAMShadow = nullptr;		// $00:4000-FFFF write only
 	ATMemoryLayer *mpLayerSRAM = nullptr;					// $01:0000-07:FFFF or 0F:FFFF

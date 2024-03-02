@@ -351,7 +351,6 @@ void ATConvertSAPToPlayer(const void *sap, uint32 len, vdfastvector<uint8>& resu
 
 		// parse remaining data
 		uint8 prevdat[9] = {0};
-		bool first = true;
 		size_t lastduroff = 0;
 		size_t lastcmd = 0;
 

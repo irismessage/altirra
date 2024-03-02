@@ -62,6 +62,11 @@ ATCassetteImageBlock::FindBitResult ATCassetteImageBlock::FindBit(uint32 pos, ui
 		return { limit, false };
 }
 
+void ATCassetteImageBlock::GetTransitionCounts(uint32 pos, uint32 n, bool lastPolarity, bool bypassFSK, uint32& xcount, uint32& mcount) const {
+	xcount = n && !lastPolarity ? 1 : 0;
+	mcount = n;
+}
+
 uint32 ATCassetteImageBlock::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const {
 	dst += n;
 
@@ -73,19 +78,6 @@ uint32 ATCassetteImageBlock::AccumulateAudio(float *&dst, uint32& posSample, uin
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-
-void ATCassetteImageBlockRawData::AddFSKPulse(bool polarity, uint32 duration10us) {
-	// convert duration to samples (with error accumulation)
-	// note: we are intentionally using unsigned negative numbers here to do rounding!
-	const uint64 samplesF32 = mFractionalDataLength + (uint64)((double)duration10us * ((double)kATCassetteDataSampleRate * 4294967296.0 / 10000.0));
-	const uint32 samples = samplesF32 < UINT64_C(0x8000000000000000) ? (uint32)((samplesF32 + UINT64_C(0x80000000)) >> 32) : 0;
-	mFractionalDataLength = samplesF32 - ((uint64)samples << 32);
-
-	if (!samples)
-		return;
-
-	AddFSKPulseSamples(polarity, samples);
-}
 
 void ATCassetteImageBlockRawData::AddFSKPulseSamples(bool polarity, uint32 samples) {
 	if (~mDataLength < samples)
@@ -99,7 +91,7 @@ void ATCassetteImageBlockRawData::AddFSKPulseSamples(bool polarity, uint32 sampl
 
 	// if we're writing mark bits, set bits in the FSK bitfield
 	if (polarity) {
-		SetBits(mDataLength, samples, true, true);
+		SetBits(true, mDataLength, samples, true);
 	}
 
 	// set bits in the raw bitfield
@@ -123,6 +115,29 @@ void ATCassetteImageBlockRawData::AddFSKPulseSamples(bool polarity, uint32 sampl
 		}
 	}
 
+
+	mDataLength += samples;
+}
+
+void ATCassetteImageBlockRawData::AddDirectPulseSamples(bool polarity, uint32 samples) {
+	if (~mDataLength < samples)
+		throw MyError("Tape too long (exceeds 2^32 samples)");
+
+	// compute new bitfield length and extend
+	uint32 newLength = (mDataLength + samples + 31) >> 5;
+
+	mDataFSK.resize(newLength, 0);
+	mDataRaw.resize(newLength, 0);
+
+	// if we're writing mark bits, set bits in the direct bitfield
+	if (polarity)
+		SetBits(false, mDataLength, samples, true);
+
+	// for now, just set the FSK data as mark tone
+	static constexpr const uint64 kIncMarkTone = (uint64)(0.5 + 3995.0 / kATCassetteDataSampleRate * 4294967296.0);
+
+	SetBits(true, mDataLength, samples, true);
+	mFSKPhaseAccum += kIncMarkTone * samples;
 
 	mDataLength += samples;
 }
@@ -214,6 +229,43 @@ ATCassetteImageBlockRawData::FindBitResult ATCassetteImageBlockRawData::FindBit(
 	return { (idx << 5), false };
 }
 
+void ATCassetteImageBlockRawData::GetTransitionCounts(uint32 pos, uint32 n, bool lastPolarity, bool bypassFSK, uint32& xcount, uint32& mcount) const {
+	const uint32 pos1 = pos;
+	const uint32 pos2 = pos + n - 1;
+	const uint32 firstWordMask = 0xFFFFFFFFU >> (pos1 & 31);
+	const uint32 lastWordMask = 0xFFFFFFFFU << (~pos2 & 31);
+	const uint32 idx1 = pos1 >> 5;
+	const uint32 idx2 = pos2 >> 5;
+
+	uint32 idx = idx1;
+	uint32 prevWord = lastPolarity ? ~UINT32_C(0) : 0;
+	const auto& dataSource = bypassFSK ? mDataRaw : mDataFSK;
+
+	uint32 v = (dataSource[idx] & firstWordMask) + (prevWord & ~firstWordMask);
+	uint32 delta = v ^ ((v >> 1) + (prevWord << 31));
+	prevWord = v;
+
+	v &= firstWordMask;
+	delta &= firstWordMask;
+
+	uint32 msum = 0;
+	uint32 xsum = 0;
+	while(idx != idx2) {
+		msum += VDCountBits(v);
+		xsum += VDCountBits(delta);
+		v = dataSource[++idx];
+		delta = v ^ ((v >> 1) + (prevWord << 31));
+		prevWord = v;
+	}
+
+	// do last word (which may also be the first word), omitting delta bits beyond last mask
+	msum += VDCountBits(v & lastWordMask);
+	xsum += VDCountBits(delta & lastWordMask);
+
+	xcount = xsum;
+	mcount = msum;
+}
+
 void ATCassetteImageBlockRawData::SetBits(bool fsk, uint32 startPos, uint32 n, bool polarity) {
 	const uint32 pos1 = startPos;
 	const uint32 pos2 = startPos + n - 1;
@@ -240,6 +292,26 @@ void ATCassetteImageBlockRawData::SetBits(bool fsk, uint32 startPos, uint32 n, b
 
 ///////////////////////////////////////////////////////////////////////////////
 
+void ATCassetteImageBlockRawAudio::GetMinMax(uint32 offset, uint32 len, uint8& minVal, uint8& maxVal) const {
+	uint8 minAccum = 255;
+	uint8 maxAccum = 0;
+
+	const uint8 *p = &mAudio[offset];
+
+	while(len--) {
+		uint8 v = *p++;
+
+		if (minAccum > v)
+			minAccum = v;
+
+		if (maxAccum < v)
+			maxAccum = v;
+	}
+
+	minVal = minAccum;
+	maxVal = maxAccum;
+}
+
 uint32 ATCassetteImageBlockRawAudio::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const {
 	for(uint32 i = 0; i < n; ++i) {
 		if (posSample >= mAudioLength)
@@ -265,6 +337,15 @@ uint32 ATCassetteImageBlockRawAudio::AccumulateAudio(float *&dst, uint32& posSam
 
 ATCassetteImageDataBlockStd::ATCassetteImageDataBlockStd() {
 	mPhaseSums.push_back(0);
+}
+
+uint32 ATCassetteImageDataBlockStd::EstimateNewBlockLen(uint32 bytes, uint32 baudRate) {
+	if (!baudRate)
+		return 0;
+
+	uint64 dataSamplesPerByteF32 = (uint64)(kATCassetteDataSampleRate * 10.0 * 4294967296.0 / (double)baudRate + 0.5);
+
+	return (uint32)((bytes * dataSamplesPerByteF32) >> 32);
 }
 
 void ATCassetteImageDataBlockStd::Init(uint32 baudRate) {
@@ -301,6 +382,18 @@ void ATCassetteImageDataBlockStd::AddData(const uint8 *data, uint32 len) {
 
 		*dst++ = phase;
 	}
+}
+
+uint32 ATCassetteImageDataBlockStd::EstimateAddData(uint32 len) const {
+	if (!len)
+		return 0;
+
+	uint32 dataLen = (uint32)mData.size();
+
+	const uint32 samples0 = (uint32)((dataLen * mDataSamplesPerByteF32) >> 32);
+	const uint32 samples1 = (uint32)(((dataLen + len) * mDataSamplesPerByteF32) >> 32);
+
+	return samples1 - samples0;
 }
 
 const uint8 *ATCassetteImageDataBlockStd::GetData() const {
@@ -387,6 +480,36 @@ ATCassetteImageDataBlockStd::FindBitResult ATCassetteImageDataBlockStd::FindBit(
 	uint32 foundSamplePos = (foundBytePosF32 - 1) / mBytesPerDataSampleF32 + 1;
 
 	return { foundSamplePos, (foundBytePosF32 >> 32) < mData.size() };
+}
+
+void ATCassetteImageDataBlockStd::GetTransitionCounts(uint32 pos, uint32 n, bool lastPolarity, bool bypassFSK, uint32& xcount, uint32& mcount) const {
+	uint32 msum = 0;
+	uint32 xsum = 0;
+
+	// space - lsb -> msb - mark
+	const uint32 limit = (uint32)mData.size();
+	uint64 bytePosF32 = mBytesPerDataSampleF32 * pos;
+
+	uint32 pbitval = lastPolarity ? 1 : 0;
+	while(n--) {
+		const uint32 byteIndex = (uint32)(bytePosF32 >> 32);
+
+		if (byteIndex >= limit)
+			break;
+
+		const uint32 byte = (uint32)mData[byteIndex] * 2 + 0x200;
+		const uint32 bit = (uint32)(((uint64)(uint32)bytePosF32 * 10) >> 32);
+		uint32 bitval = (byte >> bit) & 1;
+
+		msum += bitval;
+		xsum += bitval ^ pbitval;
+		pbitval = bitval;
+
+		bytePosF32 += mBytesPerDataSampleF32;
+	}
+
+	xcount = xsum;
+	mcount = msum;
 }
 
 uint32 ATCassetteImageDataBlockStd::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const {

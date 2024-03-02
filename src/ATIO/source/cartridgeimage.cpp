@@ -397,7 +397,7 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 		mCartSize = allocSize;
 	}
 
-	if (mCartMode == kATCartridgeMode_8K) {
+	if (mCartMode == kATCartridgeMode_8K || mCartMode == kATCartridgeMode_Phoenix_8K) {
 		// For the 8K cart, we have a special case if the ROM is 2K or 4K -- in that case,
 		// we mirror the existing ROM to fit.
 		uint8 *p = mCARTROM.data();

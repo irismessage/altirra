@@ -27,6 +27,7 @@ extern int cmd_lzunpack(int argc, const char *const *argv);
 extern int cmd_makereloc(int argc, const char *const *argv);
 extern int cmd_makereloc2(int argc, const char *const *argv);
 extern int cmd_makereloc3(int argc, const char *const *argv);
+extern int cmd_makereloc4(int argc, const char *const *argv);
 extern int cmd_mkfsdos2(int argc, const char *const *argv);
 extern int cmd_makeexports(int argc, const char *const *argv);
 
@@ -52,6 +53,8 @@ int VDCDECL main(int argc, const char *const *argv) {
 		return cmd_makereloc2(argc, argv);
 	else if (!strcmp(cmdname, "makereloc3"))
 		return cmd_makereloc3(argc, argv);
+	else if (!strcmp(cmdname, "makereloc4"))
+		return cmd_makereloc4(argc, argv);
 	else if (!strcmp(cmdname, "mkfsdos2"))
 		return cmd_mkfsdos2(argc, argv);
 	else if (!strcmp(cmdname, "makeexports"))

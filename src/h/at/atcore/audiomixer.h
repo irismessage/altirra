@@ -139,7 +139,9 @@ struct ATSyncAudioEdge {
 class ATSyncAudioEdgeBuffer final : public vdrefcount {
 public:
 	vdfastvector<ATSyncAudioEdge> mEdges;
-	float mVolume = 0;
+	float mLeftVolume = 0;
+	float mRightVolume = 0;
+	const char *mpDebugLabel = nullptr;
 };
 
 // Audio edge player

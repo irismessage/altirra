@@ -157,7 +157,6 @@ public:
 			{ 141,181,104, 32,147,113,236, 60,218,122,  0,196, 90,186,128,108 },
 		};
 
-		IDirect3DDevice9 *dev = pManager->GetDevice();
 		vdrefptr<IVDD3D9InitTexture> tex;
 		if (!pManager->CreateInitTexture(16, 16, 1, D3DFMT_A8R8G8B8, ~tex))
 			return false;
@@ -188,7 +187,6 @@ public:
 class VDD3D9TextureGeneratorHEvenOdd final : public vdrefcounted<IVDD3D9TextureGenerator> {
 public:
 	bool GenerateTexture(VDD3D9Manager *pManager, IVDD3D9Texture *pTexture) {
-		IDirect3DDevice9 *dev = pManager->GetDevice();
 		vdrefptr<IVDD3D9InitTexture> tex;
 		if (!pManager->CreateInitTexture(16, 1, 1, D3DFMT_A8R8G8B8, ~tex))
 			return false;
@@ -211,7 +209,6 @@ public:
 class VDD3D9TextureGeneratorCubicFilter final : public vdrefcounted<IVDD3D9TextureGenerator> {
 public:
 	bool GenerateTexture(VDD3D9Manager *pManager, IVDD3D9Texture *pTexture) {
-		IDirect3DDevice9 *dev = pManager->GetDevice();
 		vdrefptr<IVDD3D9InitTexture> tex;
 		if (!pManager->CreateInitTexture(256, 4, 1, D3DFMT_A8R8G8B8, ~tex))
 			return false;
@@ -234,9 +231,6 @@ protected:
 		int i;
 
 		uint32 *p0 = texture;
-		uint32 *p1 = vdptroffset(texture, pitch);
-		uint32 *p2 = vdptroffset(texture, pitch*2);
-		uint32 *p3 = vdptroffset(texture, pitch*3);
 
 		for(i=0; i<256; i++) {
 			double d = (double)(i&63) / 64.0;
@@ -1686,17 +1680,82 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 			v3 = ctx.mUV1Area.bottom;
 		}
 
-		if (Vertex *pvx = mpManager->LockVertices(4)) {
-			vd_seh_guard_try {
-				pvx[0].SetFF2(x0, y0, 0xFFFFFFFF, u0, v0, u2, v2);
-				pvx[1].SetFF2(x1, y0, 0xFFFFFFFF, u1, v0, u3, v2);
-				pvx[2].SetFF2(x0, y1, 0xFFFFFFFF, u0, v1, u2, v3);
-				pvx[3].SetFF2(x1, y1, 0xFFFFFFFF, u1, v1, u3, v3);
-			} vd_seh_guard_except {
+		const int numTiles = ctx.mOutputTessellationX * ctx.mOutputTessellationY;
+		const int numVertices = (ctx.mOutputTessellationX + 1) * (ctx.mOutputTessellationY + 1);
+		bool tessellated = false;
+		if (ctx.mOutputTessellationX > 1 || ctx.mOutputTessellationY > 1) {
+			if (Vertex *pvx = mpManager->LockVertices(numVertices)) {
+				vd_seh_guard_try {
+					for(int y = 0; y <= ctx.mOutputTessellationY; ++y) {
+						const float yf1 = (float)y / (float)ctx.mOutputTessellationY;
+						const float yf0 = 1.0f - yf1;
+
+						for(int x = 0; x <= ctx.mOutputTessellationX; ++x) {
+							const float xf1 = (float)x / (float)ctx.mOutputTessellationX;
+							const float xf0 = 1.0f - xf1;
+
+							(pvx++)->SetFF2(
+								x0*xf0 + x1*xf1,
+								y0*yf0 + y1*yf1,
+								0xFFFFFFFF,
+								u0*xf0 + u1*xf1,
+								v0*yf0 + v1*yf1,
+								u2*xf0 + u3*xf1,
+								v2*yf0 + v3*yf1
+							);
+						}
+					}
+				} vd_seh_guard_except {
+					validDraw = false;
+				}
+
+				mpManager->UnlockVertices();
+			} else {
 				validDraw = false;
 			}
 
-			mpManager->UnlockVertices();
+			if (validDraw) {
+				if (uint16 *idx = mpManager->LockIndices(numTiles * 6)) {
+					vd_seh_guard_try {
+						for(int y = 0; y < ctx.mOutputTessellationY; ++y) {
+							int idx0 = y * (ctx.mOutputTessellationX + 1);
+							int idx1 = idx0 + (ctx.mOutputTessellationX + 1);
+
+							for(int x = 0; x < ctx.mOutputTessellationX; ++x, ++idx0, ++idx1) {
+								*idx++ = idx0;
+								*idx++ = idx1;
+								*idx++ = idx0+1;
+								*idx++ = idx0+1;
+								*idx++ = idx1;
+								*idx++ = idx1+1;
+							}
+						}
+					} vd_seh_guard_except {
+						validDraw = false;
+					}
+
+					mpManager->UnlockIndices();
+				} else {
+					validDraw = false;
+				}
+			}
+
+			tessellated = true;
+		} else {
+			if (Vertex *pvx = mpManager->LockVertices(4)) {
+				vd_seh_guard_try {
+					pvx[0].SetFF2(x0, y0, 0xFFFFFFFF, u0, v0, u2, v2);
+					pvx[1].SetFF2(x1, y0, 0xFFFFFFFF, u1, v0, u3, v2);
+					pvx[2].SetFF2(x0, y1, 0xFFFFFFFF, u0, v1, u2, v3);
+					pvx[3].SetFF2(x1, y1, 0xFFFFFFFF, u1, v1, u3, v3);
+				} vd_seh_guard_except {
+					validDraw = false;
+				}
+
+				mpManager->UnlockVertices();
+			} else {
+				validDraw = false;
+			}
 		}
 
 		if (!validDraw) {
@@ -1707,7 +1766,19 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 		if (!mpManager->BeginScene())
 			return false;
 
-		hr = mpManager->DrawArrays(D3DPT_TRIANGLESTRIP, 0, 2);
+		if (ctx.mbOutputClear) {
+			hr = dev->Clear(0, nullptr, D3DCLEAR_TARGET, 0, 0, 0);
+
+			if (FAILED(hr)) {
+				VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to clear target! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
+				return false;
+			}
+		}
+
+		if (tessellated)
+			hr = mpManager->DrawElements(D3DPT_TRIANGLELIST, 0, numVertices, 0, numTiles * 2);
+		else
+			hr = mpManager->DrawArrays(D3DPT_TRIANGLESTRIP, 0, 2);
 
 		if (FAILED(hr)) {
 			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to draw primitive! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
@@ -2659,6 +2730,8 @@ protected:
 	bool InitBoxlinearPS11Filters(int w, int h, float facx, float facy);
 	void ShutdownBoxlinearPS11Filters();
 
+	bool UpdateSwapChain();
+	bool UpdateSwapChain(int w, int h, int displayW, int displayH);
 	bool UpdateBackbuffer(const RECT& rClient, UpdateMode updateMode);
 	bool UpdateScreen(const RECT& rClient, UpdateMode updateMode, bool polling);
 
@@ -2839,7 +2912,12 @@ bool VDVideoDisplayMinidriverDX9::Init(HWND hwnd, HMONITOR hmonitor, const VDVid
 
 	mErrorString.clear();
 
-	return true;
+	// Pre-create windowed swap chains immediately so we can report now if the device won't work. This is
+	// needed because Wine has the goofy habit of silently reporting a software emulated D3D9 device with
+	// only 1MB of VRAM, which tends to fail only once we try to create the swap chain. This forces an
+	// early failure so we know it's unrecoverable.
+
+	return UpdateSwapChain();
 }
 
 void VDVideoDisplayMinidriverDX9::LoadCustomEffect(const wchar_t *path) {
@@ -2989,7 +3067,6 @@ namespace {
 			double c2 = ((-(m+2.0)*d + 2.0*m+3.0)*d -   m)*d;
 			double c3 = ((-(m    )*d +     m    )*d      )*d;
 
-			double c03		= c0+c3;
 			double k1 = d < 0.5 ? d < 1e-5 ? -m : c2 / d : d > 1-1e-5 ? -m : c1 / (1-d);
 			double kx = d < 0.5 ? c1 - k1*(1-d) : c2 - k1*d;
 
@@ -3054,7 +3131,6 @@ namespace {
 
 		// Check if we need to reallocate the texture.
 		HRESULT hr;
-		D3DFORMAT format = D3DFMT_V8U8;
 		const bool useDefault = (pManager->GetDeviceEx() != NULL);
 
 		if (!pTexture || existingTexW != texw || existingTexH != texh) {
@@ -3408,10 +3484,106 @@ void VDVideoDisplayMinidriverDX9::Refresh(UpdateMode mode) {
 }
 
 bool VDVideoDisplayMinidriverDX9::Paint(HDC, const RECT& rClient, UpdateMode updateMode) {
-	return (mbSwapChainImageValid || UpdateBackbuffer(rClient, updateMode)) && UpdateScreen(rClient, updateMode, 0 != (updateMode & kModeVSync));
+	if (!mbSwapChainImageValid) {
+		if (!UpdateBackbuffer(rClient, updateMode)) {
+			VDDEBUG_DX9DISP("Paint() failed in UpdateBackbuffer()");
+			return false;
+		}
+	}
+
+	if (!UpdateScreen(rClient, updateMode, 0 != (updateMode & kModeVSync))) {
+		VDDEBUG_DX9DISP("Paint() failed in UpdateScreen()");
+		return false;
+	}
+
+	return true;
 }
 
 void VDVideoDisplayMinidriverDX9::SetLogicalPalette(const uint8 *pLogicalPalette) {
+}
+
+bool VDVideoDisplayMinidriverDX9::UpdateSwapChain() {
+	if (mbFullScreen)
+		return true;
+
+	RECT rClient {};
+	if (!GetClientRect(mhwnd, &rClient)) {
+		VDDEBUG_DX9DISP("UpdateSwapChain() unable to get client rect");
+		return false;
+	}
+
+	// If the client is currently zero size, bail out -- we don't need a swap chain anyway.
+	if (rClient.right <= 0 || rClient.bottom <= 0)
+		return true;
+
+	const D3DDISPLAYMODE& displayMode = mpManager->GetDisplayMode();
+	int rtw = displayMode.Width;
+	int rth = displayMode.Height;
+	RECT rClippedClient={0,0,std::min<int>(rClient.right, rtw), std::min<int>(rClient.bottom, rth)};
+
+	// Make sure the device is sane.
+	if (!mpManager->CheckDevice())
+		return false;
+
+	// Check if we need to create or resize the swap chain.
+	if (!UpdateSwapChain(rClippedClient.right, rClippedClient.bottom, rtw, rth))
+		return false;
+
+	return true;
+}
+
+bool VDVideoDisplayMinidriverDX9::UpdateSwapChain(int w, int h, int displayW, int displayH) {
+	// full screen mode uses the implicit swap chain
+	if (mbFullScreen)
+		return true;
+
+	if (mpManager->GetDeviceEx()) {
+		if (mSwapChainW != w || mSwapChainH != h) {
+			mpSwapChain = NULL;
+			mbSwapChainVsync = false;
+			mbSwapChainVsyncEvent = false;
+			mSwapChainW = 0;
+			mSwapChainH = 0;
+			mbSwapChainImageValid = false;
+		}
+
+		if (!mpSwapChain || mSwapChainW != w || mSwapChainH != h) {
+			int scw = std::min<int>(w, displayW);
+			int sch = std::min<int>(h, displayH);
+
+			if (!mpManager->CreateSwapChain(mhwnd, scw, sch, mbClipToMonitor, mSource.use16bit, ~mpSwapChain)) {
+				VDDEBUG_DX9DISP("Unable to create %dx%d swap chain", scw, sch);
+				return false;
+			}
+
+			mSwapChainW = scw;
+			mSwapChainH = sch;
+		}
+	} else {
+		if (mSwapChainW >= w + 128 || mSwapChainH >= h + 128) {
+			mpSwapChain = NULL;
+			mbSwapChainVsync = false;
+			mbSwapChainVsyncEvent = false;
+			mSwapChainW = 0;
+			mSwapChainH = 0;
+			mbSwapChainImageValid = false;
+		}
+
+		if (!mpSwapChain || mSwapChainW < w || mSwapChainH < h) {
+			int scw = std::min<int>((w + 127) & ~127, displayW);
+			int sch = std::min<int>((h + 127) & ~127, displayH);
+
+			if (!mpManager->CreateSwapChain(mhwnd, scw, sch, mbClipToMonitor, mSource.use16bit, ~mpSwapChain)) {
+				VDDEBUG_DX9DISP("Unable to create %dx%d swap chain", scw, sch);
+				return false;
+			}
+
+			mSwapChainW = scw;
+			mSwapChainH = sch;
+		}
+	}
+
+	return true;
 }
 
 bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateMode updateMode) {
@@ -3433,49 +3605,8 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 		return false;
 
 	// Check if we need to create or resize the swap chain.
-	if (!mbFullScreen) {
-		if (mpManager->GetDeviceEx()) {
-			if (mSwapChainW != rClippedClient.right || mSwapChainH != rClippedClient.bottom) {
-				mpSwapChain = NULL;
-				mbSwapChainVsync = false;
-				mbSwapChainVsyncEvent = false;
-				mSwapChainW = 0;
-				mSwapChainH = 0;
-				mbSwapChainImageValid = false;
-			}
-
-			if (!mpSwapChain || mSwapChainW != rClippedClient.right || mSwapChainH != rClippedClient.bottom) {
-				int scw = std::min<int>(rClippedClient.right, rtw);
-				int sch = std::min<int>(rClippedClient.bottom, rth);
-
-				if (!mpManager->CreateSwapChain(mhwnd, scw, sch, mbClipToMonitor, mSource.use16bit, ~mpSwapChain))
-					return false;
-
-				mSwapChainW = scw;
-				mSwapChainH = sch;
-			}
-		} else {
-			if (mSwapChainW >= rClippedClient.right + 128 || mSwapChainH >= rClippedClient.bottom + 128) {
-				mpSwapChain = NULL;
-				mbSwapChainVsync = false;
-				mbSwapChainVsyncEvent = false;
-				mSwapChainW = 0;
-				mSwapChainH = 0;
-				mbSwapChainImageValid = false;
-			}
-
-			if (!mpSwapChain || mSwapChainW < rClippedClient.right || mSwapChainH < rClippedClient.bottom) {
-				int scw = std::min<int>((rClippedClient.right + 127) & ~127, rtw);
-				int sch = std::min<int>((rClippedClient.bottom + 127) & ~127, rth);
-
-				if (!mpManager->CreateSwapChain(mhwnd, scw, sch, mbClipToMonitor, mSource.use16bit, ~mpSwapChain))
-					return false;
-
-				mSwapChainW = scw;
-				mSwapChainH = sch;
-			}
-		}
-	}
+	if (!UpdateSwapChain(rClippedClient.right, rClippedClient.bottom, rtw, rth))
+		return false;
 
 	VDDisplayCompositeInfo compInfo = {};
 
@@ -3587,9 +3718,6 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					D3DSURFACE_DESC desc;
 					hr = rt->GetDesc(&desc);
 					if (SUCCEEDED(hr)) {
-						uint32 clippedWidth = std::min<uint32>(srcWidth, rClient0.right);
-						uint32 clippedHeight = std::min<uint32>(srcHeight, rClient0.bottom);
-
 						D3DVIEWPORT9 vp = {};
 						vp.X = 0;
 						vp.Y = 0;
@@ -3894,7 +4022,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					if (mpManager->CreateInitTexture(1, texh, 1, D3DFMT_A8R8G8B8, ~initTex)) {
 						VDD3D9LockInfo lockInfo;
 						if (initTex->Lock(0, lockInfo)) {
-							VDDisplayCreateScanlineMaskTexture((uint32 *)lockInfo.mpData, lockInfo.mPitch, ctx.mSourceH, ctx.mOutputH, texh, mScreenFXInfo.mScanlineIntensity);
+							VDDisplayCreateScanlineMaskTexture((uint32 *)lockInfo.mpData, lockInfo.mPitch, ctx.mSourceH, ctx.mOutputH, texh, mScreenFXInfo.mScanlineIntensity, false);
 							initTex->Unlock(0);
 
 							vdrefptr<IVDD3D9Texture> tex;
@@ -3916,57 +4044,29 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					}
 				}
 
-				const TechniqueInfo *kTechniques[2][2][2][3] = {
+				const TechniqueInfo *kTechniques[2][2][3] = {
 					{
 						{
-							{
-								&g_technique_screenfx_ptlinear_noscanlines_linear,
-								&g_technique_screenfx_ptlinear_noscanlines_gamma,
-								&g_technique_screenfx_ptlinear_noscanlines_cc
-							},
-							{
-								&g_technique_screenfx_ptlinear_scanlines_linear,
-								&g_technique_screenfx_ptlinear_scanlines_gamma,
-								&g_technique_screenfx_ptlinear_scanlines_cc
-							},
+							&g_technique_screenfx_ptlinear_noscanlines_linear,
+							&g_technique_screenfx_ptlinear_noscanlines_gamma,
+							&g_technique_screenfx_ptlinear_noscanlines_cc
 						},
 						{
-							{
-								&g_technique_screenfx_sharp_noscanlines_linear,
-								&g_technique_screenfx_sharp_noscanlines_gamma,
-								&g_technique_screenfx_sharp_noscanlines_cc
-							},
-							{
-								&g_technique_screenfx_sharp_scanlines_linear,
-								&g_technique_screenfx_sharp_scanlines_gamma,
-								&g_technique_screenfx_sharp_scanlines_cc
-							},
+							&g_technique_screenfx_ptlinear_scanlines_linear,
+							&g_technique_screenfx_ptlinear_scanlines_gamma,
+							&g_technique_screenfx_ptlinear_scanlines_cc
 						},
 					},
 					{
 						{
-							{
-								&g_technique_screenfx_distort_ptlinear_noscanlines_linear,
-								&g_technique_screenfx_distort_ptlinear_noscanlines_gamma,
-								&g_technique_screenfx_distort_ptlinear_noscanlines_cc
-							},
-							{
-								&g_technique_screenfx_distort_ptlinear_scanlines_linear,
-								&g_technique_screenfx_distort_ptlinear_scanlines_gamma,
-								&g_technique_screenfx_distort_ptlinear_scanlines_cc
-							},
+							&g_technique_screenfx_sharp_noscanlines_linear,
+							&g_technique_screenfx_sharp_noscanlines_gamma,
+							&g_technique_screenfx_sharp_noscanlines_cc
 						},
 						{
-							{
-								&g_technique_screenfx_distort_sharp_noscanlines_linear,
-								&g_technique_screenfx_distort_sharp_noscanlines_gamma,
-								&g_technique_screenfx_distort_sharp_noscanlines_cc
-							},
-							{
-								&g_technique_screenfx_distort_sharp_scanlines_linear,
-								&g_technique_screenfx_distort_sharp_scanlines_gamma,
-								&g_technique_screenfx_distort_sharp_scanlines_cc
-							},
+							&g_technique_screenfx_sharp_scanlines_linear,
+							&g_technique_screenfx_sharp_scanlines_gamma,
+							&g_technique_screenfx_sharp_scanlines_cc
 						},
 					},
 				};
@@ -3980,11 +4080,25 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 				struct VSConstants {
 					float mScanlineInfo[4];
 					float mDistortionInfo[4];
+					float mDistortionScales[4];
+					float mImageUVSize[4];
 				} vsConstants {};
 
 				vsConstants.mScanlineInfo[0] = mCachedScanlineNormH;
 				vsConstants.mDistortionInfo[0] = 1.0f;
 				vsConstants.mDistortionInfo[1] = useDistortion ? -0.5f : 0.0f;
+
+				VDDisplayDistortionMapping distortionMapping;
+				distortionMapping.Init(mScreenFXInfo.mDistortionX, mScreenFXInfo.mDistortionYRatio, (float)ctx.mOutputW / (float)ctx.mOutputH);
+
+				vsConstants.mDistortionScales[0] = distortionMapping.mScaleX;
+				vsConstants.mDistortionScales[1] = distortionMapping.mScaleY;
+				vsConstants.mDistortionScales[2] = distortionMapping.mSqRadius;
+
+				vsConstants.mImageUVSize[0] = useSharpBilinear ? (float)ctx.mSourceW : (float)ctx.mSourceW / (float)ctx.mSourceTexW;
+				vsConstants.mImageUVSize[1] = useSharpBilinear ? (float)ctx.mSourceH : (float)ctx.mSourceH / (float)ctx.mSourceTexH;
+				vsConstants.mImageUVSize[2] = useScanlines ? useSharpBilinear ? 0.25f : 0.25f / (float)ctx.mSourceTexH : 0.0f;
+				vsConstants.mImageUVSize[3] = mCachedScanlineNormH;
 
 				struct PSConstants {
 					float mSharpnessInfo[4];
@@ -3998,8 +4112,14 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 				psConstants.mSharpnessInfo[2] = 1.0f / desc.Height;
 				psConstants.mSharpnessInfo[3] = 1.0f / desc.Width;
 	
-				VDDisplayDistortionMapping distortionMapping;
-				distortionMapping.Init(mScreenFXInfo.mDistortionX, mScreenFXInfo.mDistortionYRatio, (float)ctx.mOutputW / (float)ctx.mOutputH);
+				psConstants.mDistortionScales[0] = vsConstants.mDistortionScales[0];
+				psConstants.mDistortionScales[1] = vsConstants.mDistortionScales[1];
+				psConstants.mDistortionScales[2] = vsConstants.mDistortionScales[2];
+
+				psConstants.mImageUVSize[0] = vsConstants.mImageUVSize[0];
+				psConstants.mImageUVSize[1] = vsConstants.mImageUVSize[1];
+				psConstants.mImageUVSize[2] = vsConstants.mImageUVSize[2];
+				psConstants.mImageUVSize[3] = vsConstants.mImageUVSize[3];
 
 				psConstants.mDistortionScales[0] = distortionMapping.mScaleX;
 				psConstants.mDistortionScales[1] = distortionMapping.mScaleY;
@@ -4021,6 +4141,9 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 				psConstants.mColorCorrectMatrix[2][1] = mScreenFXInfo.mColorCorrectionMatrix[1][2];
 				psConstants.mColorCorrectMatrix[2][2] = mScreenFXInfo.mColorCorrectionMatrix[2][2];
 
+				psConstants.mColorCorrectMatrix[0][3] = 0.0f;
+				psConstants.mColorCorrectMatrix[1][3] = 1.0f;
+
 				mpD3DDevice->SetVertexShaderConstantF(16, (const float *)&vsConstants, sizeof(vsConstants)/16);
 				mpD3DDevice->SetPixelShaderConstantF(16, (const float *)&psConstants, sizeof(psConstants)/16);
 
@@ -4036,7 +4159,13 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					ctx.mUV0Scale = vdfloat2{(float)ctx.mSourceTexW, (float)ctx.mSourceTexH};
 				}
 
-				const TechniqueInfo& technique = *kTechniques[useDistortion][useSharpBilinear][useScanlines][useColorCorrection ? 2 : useGammaCorrection ? 1 : 0];
+				const TechniqueInfo& technique = *kTechniques[useSharpBilinear][useScanlines][useColorCorrection ? 2 : useGammaCorrection ? 1 : 0];
+
+				if (useDistortion) {
+					ctx.mbOutputClear = true;
+					ctx.mOutputTessellationX = 24;
+					ctx.mOutputTessellationY = 24;
+				}
 
 				if (mScreenFXInfo.mBloomRadius <= 0) {
 					bSuccess = mpVideoManager->RunEffect(ctx, technique, pRTMain);
@@ -4256,6 +4385,10 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 						bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, technique, prescaleSurface);
 					}
 
+					ctx.mOutputTessellationX = 1;
+					ctx.mOutputTessellationY = 1;
+					ctx.mbOutputClear = false;
+
 					ctx2.mbUseUV0Scale = false;
 
 					// prescale passes
@@ -4336,6 +4469,10 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					VDASSERT(bSuccess);
 
 				}
+
+				ctx.mbOutputClear = false;
+				ctx.mOutputTessellationX = 1;
+				ctx.mOutputTessellationY = 1;
 			} else if (mbHighPrecision && mpVideoManager->Is16FEnabled()) {
 				if (mPreferredFilter == kFilterPoint)
 					bSuccess = mpVideoManager->RunEffect(ctx, g_technique_point_2_0, pRTMain);
@@ -4401,6 +4538,46 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 		vp.MaxZ = 1;
 		mpD3DDevice->SetViewport(&vp);
 		DrawDebugInfo(mode, rClient);
+	}
+
+	if (bSuccess && CheckForCapturePending() && mSource.mpCB) {
+		VDPixmapBuffer buf;
+		IDirect3DDevice9 *d3d9 = mpManager->GetDevice();
+
+		vdrefptr<IDirect3DSurface9> rtsurf;
+		HRESULT hr = d3d9->GetRenderTarget(0, ~rtsurf);
+		if (SUCCEEDED(hr)) {
+			D3DSURFACE_DESC desc {};
+			hr = rtsurf->GetDesc(&desc);
+			if (SUCCEEDED(hr) && (desc.Format == D3DFMT_A8R8G8B8 || desc.Format == D3DFMT_X8R8G8B8)) {
+				uint32 copyw = std::min<uint32>(desc.Width, rClippedClient.right);
+				uint32 copyh = std::min<uint32>(desc.Height, rClippedClient.bottom);
+
+				buf.init(copyw, copyh, nsVDPixmap::kPixFormat_XRGB8888);
+
+				vdrefptr<IDirect3DSurface9> rbsurf;
+				hr = d3d9->CreateOffscreenPlainSurface(desc.Width, desc.Height, desc.Format, D3DPOOL_SYSTEMMEM, ~rbsurf, nullptr);
+				if (SUCCEEDED(hr)) {
+					hr = d3d9->GetRenderTargetData(rtsurf, rbsurf);
+					if (SUCCEEDED(hr)) {
+						D3DLOCKED_RECT lr {};
+						hr = rbsurf->LockRect(&lr, nullptr, D3DLOCK_READONLY);
+						if (SUCCEEDED(hr)) {
+							VDMemcpyRect(buf.data, buf.pitch, lr.pBits, lr.Pitch, 4 * copyw, copyh);
+
+							hr = rbsurf->UnlockRect();
+						}
+					}
+				}
+			}
+		}
+
+		if (SUCCEEDED(hr)) {
+			mSource.mpCB->OnFrameCaptured(&buf);
+			mpManager->CheckReturn(hr);
+		} else {
+			mSource.mpCB->OnFrameCaptured(nullptr);
+		}
 	}
 
 	if (bSuccess && !mpManager->EndScene())

@@ -81,6 +81,7 @@ extern const VDPixmapFormatInfo g_vdPixmapFormats[] = {
 	/* YUV420ib_Planar_FR */		{ "YUV420ib-FR",	false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
 	/* YUV420ib_Planar_709 */		{ "YUV420ib-709",	false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
 	/* YUV420ib_Planar_709_FR */	{ "YUV420ib-709-FR",false, 1, 1,  0,  0,  1, 2, 1, 1, 1,   0 },
+	/* ARGB32 */					{ "ARGB8888",	false, 1, 1,  0,  0,  4, 0, 0, 0, 0,   0 },
 };
 
 namespace {
@@ -245,9 +246,7 @@ uint32 VDPixmapCreateLinearLayout(VDPixmapLayout& layout, int format, vdpixsize 
 
 void VDPixmapFlipV(VDPixmap& px) {
 	const VDPixmapFormatInfo& srcinfo = VDPixmapGetInfo(px.format);
-	sint32		w			= px.w;
 	sint32		h			= px.h;
-	sint32		qw			= (w + srcinfo.qw - 1) / srcinfo.qw;
 	sint32		qh			= -(-h >> srcinfo.qhbits);
 	sint32		subh		= -(-h >> srcinfo.auxhbits);
 
@@ -267,9 +266,7 @@ void VDPixmapFlipV(VDPixmap& px) {
 
 void VDPixmapLayoutFlipV(VDPixmapLayout& layout) {
 	const VDPixmapFormatInfo& srcinfo = VDPixmapGetInfo(layout.format);
-	sint32		w			= layout.w;
 	sint32		h			= layout.h;
-	sint32		qw			= (w + srcinfo.qw - 1) / srcinfo.qw;
 	sint32		qh			= -(-h >> srcinfo.qhbits);
 	sint32		subh		= -(-h >> srcinfo.auxhbits);
 
@@ -289,9 +286,7 @@ void VDPixmapLayoutFlipV(VDPixmapLayout& layout) {
 
 uint32 VDPixmapLayoutGetMinSize(const VDPixmapLayout& layout) {
 	const VDPixmapFormatInfo& srcinfo = VDPixmapGetInfo(layout.format);
-	sint32		w			= layout.w;
 	sint32		h			= layout.h;
-	sint32		qw			= (w + srcinfo.qw - 1) / srcinfo.qw;
 	sint32		qh			= -(-h >> srcinfo.qhbits);
 	sint32		subh		= -(-h >> srcinfo.auxhbits);
 
@@ -390,20 +385,20 @@ VDPixmap VDPixmapExtractField(const VDPixmap& src, bool field2) {
 ///////////////////////////////////////////////////////////////////////////
 
 VDPixmapBuffer::VDPixmapBuffer(const VDPixmap& src)
-	: mpBuffer(NULL)
-	, mLinearSize(0)
+	: VDPixmap{}
 {
 	assign(src);
 }
 
 VDPixmapBuffer::VDPixmapBuffer(const VDPixmapBuffer& src)
-	: mpBuffer(NULL)
-	, mLinearSize(0)
+	: VDPixmap{}
 {
 	assign(src);
 }
 
-VDPixmapBuffer::VDPixmapBuffer(const VDPixmapLayout& layout) {
+VDPixmapBuffer::VDPixmapBuffer(const VDPixmapLayout& layout)
+	: VDPixmap{}
+{
 	init(layout);
 }
 
@@ -493,9 +488,7 @@ void VDPixmapBuffer::init(sint32 width, sint32 height, int f) {
 
 void VDPixmapBuffer::init(const VDPixmapLayout& layout, uint32 additionalPadding) {
 	const VDPixmapFormatInfo& srcinfo = VDPixmapGetInfo(layout.format);
-	sint32		qw			= (layout.w + srcinfo.qw - 1) / srcinfo.qw;
 	sint32		qh			= -(-layout.h >> srcinfo.qhbits);
-	sint32		subw		= -(-layout.w >> srcinfo.auxwbits);
 	sint32		subh		= -(-layout.h >> srcinfo.auxhbits);
 
 	sint64 mino=0, maxo=0;

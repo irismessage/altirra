@@ -1,6 +1,161 @@
 Altirra Change Log
 
-Version 3.91:
+Version 4.00:
+   [changes]
+   * Display: Dropped support for DirectDraw and OpenGL.
+   * Input: Relative mouse binding and 5200 trak-ball speeds have been adjusted for better uniformity. Existing input maps may need to have their speeds adjusted.
+   * Platform: Dropped support for Windows XP/Vista; Windows 7 or higher is now required.
+   * UI: Keyboard shortcuts have been reset to default to fix a bug with them being stored in the wrong place and to only store changes from default shortcuts.
+   * UI: Default shortcuts for toggling audio channels have been changed from Ctrl+Alt+[1-4] to Alt+Shift+[1-4] to fix a conflict with some AltGr+key bindings in the Spanish keyboard layout.
+
+   [features added]
+   * Additions: Replaced ALTXEP8F.SYS fast XEP80 driver with ultra-speed ALTXEP8U.SYS driver with symmetric 31Kbaud communication.
+   * Additions: Added ALTXEP8P.SYS and ALTXEPUP.SYS variants with auto-switching to PAL (50Hz) on initialization.
+   * Additions: Added XEPVHOLD.COM utility to improve XEP80 video timing compatibility with modern displays.
+   * Cassette: Added support for KSO Turbo 2000.
+   * Cassette: Added new level-based turbo decoding filter.
+   * Cassette: Added FLAC decoding support.
+   * Cassette: Added feature to hold data line across VBI to increase reliability of OS C: reads.
+   * Custom Devices: Scripting support added for break, while, do/while, and forward declarations.
+   * Custom Devices: Added support for creating alternate video outputs and PBI IRQs.
+   * Debugger: On-screen watches can now update continuously as well as per-frame.
+   * Debugger: Watch expression (wx) now has options for hex formatting.
+   * Debugger: Extended cartridge bank debugging support to MaxFlash 1Mbit and SDX 64K/128K cartridge types.
+   * Debugger: Memory window now supports scrolling, variable width, and graphics decoding.
+   * Debugger: Improved speed of console output window.
+   * Debugger: Added .fpaccel command to selectively toggle math pack acceleration routines.
+   * Debugger: Effective addresses are now shown in history in 65C816 mode.
+   * Debugger: Added .pagesums command.
+   * Debugger: lft -u option enables logging with microsecond timestamps, and -r enables raw timestamps.
+   * Debugger: "Auto-reload ROMs on cold reset" setting is now saved.
+   * Debugger: Go frame (gf) command now has a quiet (-q) option.
+   * Debugger: 65C816 M/X mode handling can now be configured in the disassembly window.
+   * Debugger: .diskdumpsec now has invert (-i) option.
+   * Debugger: Added debug link support to receive SDX symbol information from ATDEBUGX.SYS driver.
+   * Debugger: Added 'dbx' command to evaluate an expression over a range.
+   * Debugger: Added verifier options for detecting stack wrapping and stack in page zero.
+   * Devices: Added Percom AT88-SPD emulation.
+   * Devices: Percom AT-88 emulation now allows 1791/1795 FDC selection.
+   * Devices: Added SIDE 3 emulation.
+   * Devices: Added virtual hard disk device that translates a read-only host directory to a FAT16, FAT32, or SDFS partition image.
+   * Devices: Added temporary write filter hard disk device.
+   * Devices: Added preview SoundBoard 2.0 emulation.
+   * Devices: Added 1090 80 Column Video Card and Bit 3 Full-View 80 emulation.
+   * Devices: Added parallel port buses to all devices that support printer output and file writer device to sink printer output to a file.
+   * Disk: Disk rotational positions are now randomized on periperal reset.
+   * Disk: ATR loader now matches 77-track disk geometries for 8" disks.
+   * Disk: Added support for Happy 810 Autospeed mod.
+   * Disk: Percom RFD-40S1 double-clock mode is now implemented.
+   * Disk: Added option in Disk Drives dialog to show location of mounted disk images in File Explorer.
+   * Disk: Added full emulation for the Atari 815 disk drive (read only).
+   * Disk: Added support for reading from and writing to Indus GT CP/M 2.2 filesystems.
+   * Disk Explorer: Added options to import/export files with text (line ending) translation.
+   * Display: New Palette Solver in Adjust Colors dialog to derive color parameters from a palette file or photograph of a palette image.
+   * Display: Added white monochrome mode.
+   * Display: Added option to constrain mouse pointer to active display in full-screen mode.
+   * Display: Added high dynamic range (HDR) display support (requires Windows 10 / DXGI 1.6).
+   * Firmware: Warn if ROM image being added is blank.
+   * Firmware: Added autodetection of 1200XL rev. 11 OS and 1050 rev. H.
+   * HDevice: Lifted 16MB file size limit for untranslated access (H1-H4:).
+   * IDE: VHD differencing mode images can now be mounted.
+   * Input: Added support for XInput 1.4.
+   * Input: Added an option to use the Raw Input API (Configure System > Input).
+   * Input: Added an option for immediate potentiometer updates to reduce paddle and 5200 controller latency.
+   * Input: Mouse, trackball, and 5200 controllers now accept mouse delta bindings to Left/Right/Up/Down, and paddle controllers accept digital bindings to Left/Right.
+   * Input: Added preset template generator for input maps to make it easier to set up less common controller setups.
+   * Input: Ctrl/Shift are now optionally blocked from virtual key mappings when used by input maps with the 'share' option off. (They are still processed for character mappings due to OS limitations.)
+   * PerfAnalyzer: Added trace channel for SIO command state.
+   * Platform: Added option to poll virtual disk and H:/PCLink sources for systems that have broken file change notifications.
+   * POKEY: Improved audio filters for better performance and aliasing rejection.
+   * Simulator: Added centralized randomization control under boot options.
+   * Simulator: Throttling code updated with waitable timers for better efficiency.
+   * UI: Dark mode improved with reskinned buttons.
+   * UI: Added option to auto-hide menu in windowed mode.
+   * UI: Added advanced configuration dialog to expose hidden, unsupported parameters.
+   * UI: Performance analyzer now supports dark mode.
+   * UI: Added /reset to load last profile without the device tree.
+   * UI: Right-clicking on a menu item now provides a direct path to open Keyboard Shortcuts to bind a key to that menu item.
+   * UI: Added /tapepos to pre-seek tape to specified position.
+   * XEP80: Improved accuracy of XEP80 bit and byte timing based on measurements on real hardware.
+   * XEP80: Added NS405 FIFO timing emulation.
+
+   [bugs fixed]
+   * 5200: Rewrote noise implementation again to work around games with buggy joystick position filters (Galaxian) and to avoid drift for relative bindings.
+   * Additions: BOOT850 no longer leaves CRITIC set on failure.
+   * ANTIC: Fixed unstable horizontal scrolling in IR mode 3.
+   * ANTIC: JVB instructions now have the correct replayed height when ending a vertical scroll region.
+   * Audio: Changes to the default audio device are now tracked in WASAPI mode.
+   * Audio: Improved aliasing rejection of output audio filter.
+   * Cartridge: Fixed MegaCart 512K (3) banking disable behavior to only use bit 7.
+   * Cassette: Fixed regression with proceed/interrupt turbo modes not working.
+   * Cassette: Turbo decoding/filtering settings now apply to the "Analyze tape decoding" command.
+   * Cassette: Motor and play/record/pause state is no longer reset when switching tapes.
+   * Custom Devices: Fixed script compiler allowing async methods to be called from handler contexts that don't support async operations.
+   * Debugger: The Find Source File dialog now strips subdirectories when populating the file filter.
+   * Debugger: Fixed heat map not reflecting reads from some read-modify ALU instructions (e.g. ADC zp,X).
+   * Debugger: Improved performance of tracepoints that check return values by suppressing UI updates on the hidden breakpoint.
+   * Debugger: .disktrack command now works with geometries other than 18 sectors/track.
+   * Debugger: .diskreadsec now always uses the virtual sector length for consistency with .diskwritesec.
+   * Debugger: Fixed disassembler prescanner using the wrong instruction length for COP n instructions.
+   * Debugger: Removed JSR (abs,X) and added RTL and BRL to list of opcodes that trigger a procedure separator.
+   * Debugger: Fixed crash in 65C816 mode with access breakpoints with the same page address but different bank address.
+   * Debugger: Step Over at disassembly level now handles JSR (abs,X), JSL, and MVN/MVP opcodes.
+   * Debugger: Added .vbxe_pal command.
+   * Debugger: Fixed disassembly window repeatedly trying to scroll near the top of address space.
+   * Devices: Fixed a case where Rapidus could fail to cleanly switch from the 65C816 to the 6502.
+   * Devices: Fixed bug where debug reads from SIDE/SIDE2 flash windows could trigger side effects during sector erase operations.
+   * Devices: Rapidus fast RAM windows no longer have priority over ROM.
+   * Devices: Fixed Rapidus main RAM speed override sometimes being reverted; main RAM is now always at slow speed and extended RAM is also slow speed.
+   * Devices: Fixed R-Time 8 state being changed by debug reads in the debugger.
+   * Disk: Fixed name mangling on virtual SDFS disks for files and directories with names starting with periods.
+   * Disk: Fixed corrupted double-density ATRs being written in some cases from full disk drive emulators.
+   * Disk: Fixed bug with final write from full drive emulators not always triggering auto-flush.
+   * Disk: Fixed corruption of first byte sent by 810/1050 full drive emulators.
+   * Disk: Recalibrated ACK-to-Complete delays for the standard disk emulator for Status and Read PERCOM Block commands based on firmware timings.
+   * Disk: Virtual SDFS volumes now use creation timestamps for directories.
+   * Disk: Added workaround for 1050 Turbo firmware not detecting density if the drive is powered up with a disk already inserted.
+   * Disk: Fixed hang when loading ATX images with extra data pointing to out-of-range sectors.
+   * Disk: Fixed XF551 formatting side 2 of disks with incorrect interleave.
+   * Disk: Motor off timer adjusted for 1050 timing and to not count down during disk operations.
+   * Disk: Accurate sector timing mode now waits for the full length of long sectors in 1050-based emulation modes.
+   * Disk: Fixed broken audio output from Indus GT disk drives.
+   * Disk: Generic disk emulation profile supports XF551 acceleration again.
+   * Disk: Fixed several broken/missing instructions in Z80 emulation.
+   * Display: Fixed chroma signal having reversed phase in NTSC high artifacting mode, causing chroma artifacts in mono mode to move in the wrong direction.
+   * Display: D3D9 driver now allocates swap chain immediately to force a fallback with useless D3D drivers that report PS3.0 but only have 1MB of VRAM.
+   * Display: Fixed intensity scale color setting not affecting saturation in NTSC high artifacting mode.
+   * Display: Fixed issues in the high artifacting chroma filters causing some excessive banding.
+   * HDevice: Fixed burst writes not returning error status correctly.
+   * HLE: CRITIC is no longer zeroed from PBI-based SIO acceleration to fix key repeat issues with some versions of SpartaDOS X.
+   * IDE: Fixed Rev. S not supporting some Rev. D registers and being detected as Rev. C.
+   * Input: Fixed arrow keys getting stuck down in emulation when pressing Alt+arrow and then releasing Alt first, with arrow keys bound to a controller.
+   * Input: Quick maps are now always cycled in sorted name order.
+   * Input: Fixed controller triggers getting stuck down in some cases when detaching light gun controllers.
+   * Input: Fixed flipped horizontal relative movements for tablets.
+   * Input: Trigger targets are now collapsed properly so that multiple mappings to the same target cooperate, e.g. Left -> Numpad7, Up -> Numpad7, Up -> Numpad8, with both keys being pressed and released in any order.
+   * Input: Direct keyboard layout had incorrect mappings for Ctrl/Shift+Space.
+   * PCLink: Fixed reversed directory sort order.
+   * PCLink: Now uses last write timestamp for files instead of creation timestamp.
+   * PerfAnalyzer: Fixed painting bug with ANTIC DL event channel at some zoom levels and scroll positions.
+   * PerfAnalyzer: Fixed timing error for bytes sent to the computer from a full disk drive emulator, which were shown starting at their actual end times.
+   * POKEY: Channel mixing updated to use more representative per-channel non-linear steps.
+   * POKEY: Fixed channels occasionally having their timing disrupted when toggling timer IRQs.
+   * POKEY: Fixed extra audio pulse when timer 1/2 underflow coincides with two-tone timer reset.
+   * POKEY: Fixed keys not being re-reported in raw non-full scan mode when enabling debounce with keyboard scan already enabled.
+   * UI: Fixed mouse wheel scrolling when the system wheel scroll setting is set to pages instead of lines.
+   * UI: Profile editor no longer allows parenting a profile to itself or its children.
+   * UI: Settings load/save code now detects profile loops due to the profile editor bug and forces a reparent to the global profile so settings saving still works.
+   * UI: ARM64 emulation dialog no longer allows saving "OK" response.
+   * UI: Added 5 second timeout when notifying an existing instance in single instance mode to prevent processes piling up if the instance is hung.
+   * UI: Full-screen file browser scrolls back to top when changing folders.
+   * VBXE: Improved GTIA state syncing when toggling VBXE on the fly.
+   * XEP80: Scrolling now always removes one physical line, not a logical line as E: does.
+   * XEP80: Fixed an occasional issue with indeterminate state after cold reset.
+   * XEP80: Printing a char at the right margin now only inserts a line when EOL is overwritten.
+   * XEP80: Delete line can now slice a multi-line logical line like the real XEP80 does.
+   * XEP80: Fill EOL ($1C6) command was using the wrong fill byte.
+
+Version 3.91: [November 11, 2021]
    [bugs fixed]
    * AltirraOS: Adjusted internal variable usage of P: handler for better compatibility with programs that jump into it without opening P: (Monkey Wrench II).
    * AltirraOS: Fixed E: Put Byte routine sometimes returning Y=2 instead of Y=1.
@@ -56,6 +211,7 @@ Version 3.90: [June 14, 2020]
    * UI: Added audio scope for viewing raw POKEY output.
    * UI: Added options for controlling mouse pointer visibility.
    * UI: Audio monitor positioning can now be customized.
+   * UI: Audio monitor dims channels that have been toggled off.
    * Video: Added PERITEL adapter and monochrome monitor emulation.
 
    [bugs fixed]

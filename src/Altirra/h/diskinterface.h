@@ -78,7 +78,7 @@ public:
 	// not R/W capable.
 	bool TryEnableWrite();
 
-	const wchar_t *GetPath() const { return mPath.empty() ? NULL : mPath.c_str(); }
+	const wchar_t *GetPath() const { return mPath.c_str(); }
 	IATDiskImage *GetDiskImage() const { return mpDiskImage; }
 
 	ATMediaWriteMode GetWriteMode() const { return mWriteMode; }

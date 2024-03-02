@@ -117,12 +117,20 @@ ATTraceChannelTickBased::ATTraceChannelTickBased(uint64 tickOffset, double tickS
 }
 
 void ATTraceChannelTickBased::TruncateLastEvent(uint64 tick) {
-	if (!mEvents.empty()) {
-		const double t = (double)(tick - mTickOffset) * mTickScale;
+	const double t = (double)(sint64)(tick - mTickOffset) * mTickScale;
+
+	while(!mEvents.empty()) {
 		SimpleEvent& ev = mEvents.back();
 
-		if (ev.mEndTime > t)
+		if (ev.mEndTime <= t)
+			break;
+
+		if (ev.mStartTime <= t) {
 			ev.mEndTime = t;
+			break;
+		}
+
+		mEvents.pop_back();
 	}
 }
 
@@ -144,8 +152,9 @@ void ATTraceChannelTickBased::AddRawTickEvent(uint64 start, uint64 end, const vo
 
 	mEvents.push_back(
 		SimpleEvent {
-			(double)(start - mTickOffset) * mTickScale,
-			(double)(end - mTickOffset) * mTickScale,
+			// Important: We may get negative offsets here, particularly for ANTIC DL.
+			(double)(sint64)(start - mTickOffset) * mTickScale,
+			(double)(sint64)(end - mTickOffset) * mTickScale,
 			data,
 			bgColor,
 			fgColor
@@ -159,7 +168,7 @@ void ATTraceChannelTickBased::AddOpenRawTickEvent(uint64 start, const void *data
 
 	mEvents.push_back(
 		SimpleEvent {
-			(double)(start - mTickOffset) * mTickScale,
+			(double)(sint64)(start - mTickOffset) * mTickScale,
 			kATTraceTime_Infinity,
 			data,
 			bgColor,

@@ -46,6 +46,8 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
               Set cartridge mapper for untagged image
   /tape <image>
               Load cassette tape image
+  /tapepos [[hh:]mm:]ss.sss -or- [00h][00m][00.000s]
+              Pre-seek tape to specified time position
   /disk <image>
               Load disk image
   /run <image>
@@ -78,10 +80,8 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
   /artifact:none|ntsc|ntschi|pal|palhi
               Set video artifacting
   /gdi        Force GDI display mode
-  /ddraw      Force DirectDraw display mode
   /d3d9       Force Direct3D 9 display mode
   /d3d11      Force Direct3D 11 display mode
-  /opengl     Force OpenGL display mode
   /[no]vsync  Synchronize to vertical blank
 
                        -- Acceleration options --
@@ -106,9 +106,11 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
                      -- Program operation options --
 
   /resetall   Reset all settings to default
-  /reset:display,windowlayouts, ...
+  /reset:display,windowlayouts,advconfig,devices ...
               Reset specific categories of settings to default
-  /hostcpu:none|mmx|sse|sse2|sse2|sse3|ssse3|sse41
+  /advconfig
+              Display advanced configuration dialog before start
+  /hostcpu:none|mmx|sse|sse2|sse2|sse3|ssse3|sse41|sse42|avx|avx2
               Override host CPU detection
   /portable   Create Altirra.ini file and switch to portable mode
   /portablealt:<file>
@@ -121,6 +123,11 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
   /fullheapdump
               Generate full memory heap dump on crash
   /skipsetup  Skip first-run setup process
-  /startuplog Log early startup phases to the console
+  /startuplog[:<log-group1>[,<log-group2>...]
+              Log early startup phases to the console, optionally enabling
+              some log groups (or HOSTWINMSG)
+  /crash      Force crash after initialization
+  /[no]macwin64hack
+              Enable or disable workaround for crash due to broken GS: selector
 
 (end)

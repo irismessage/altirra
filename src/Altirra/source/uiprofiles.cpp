@@ -279,6 +279,18 @@ public:
 			s += L")";
 	}
 
+	bool IsSameOrChildOf(const ProfileNode *other) const {
+		if (!other)
+			return false;
+
+		for(const ProfileNode *p = this; p; p = p->mpParent) {
+			if (p == other)
+				return true;
+		}
+
+		return false;
+	}
+
 	uint32 mId;
 	VDStringW mName;
 	uintptr mTreeNode;
@@ -446,29 +458,32 @@ void ATUIDialogProfiles::OnMouseUpL(int x, int y) {
 	mbDragInProgress = false;
 	mProfileTree.SetDropTargetHighlight(NULL);
 
-	// relocate the root tree node
-	auto prevTreeNode = mpDragSource->mTreeNode;
+	// prevent a node from being parented to itself or any of its children
+	if (!mpDragTarget->IsSameOrChildOf(mpDragSource)) {
+		// relocate the root tree node
+		auto prevTreeNode = mpDragSource->mTreeNode;
 
-	mpDragSource->mTreeNode = mProfileTree.AddVirtualItem(mpDragTarget->mTreeNode, mProfileTree.kNodeLast, mpDragSource);
+		mpDragSource->mTreeNode = mProfileTree.AddVirtualItem(mpDragTarget->mTreeNode, mProfileTree.kNodeLast, mpDragSource);
 
-	// relocate children
-	mProfileTree.EnumChildrenRecursive(prevTreeNode,
-		[&,this](IVDUITreeViewVirtualItem *item) {
-			ProfileNode *node = static_cast<ProfileNode *>(item);
+		// relocate children
+		mProfileTree.EnumChildrenRecursive(prevTreeNode,
+			[&,this](IVDUITreeViewVirtualItem *item) {
+				ProfileNode *node = static_cast<ProfileNode *>(item);
 
-			node->mTreeNode = mProfileTree.AddVirtualItem(node->mpParent->mTreeNode, mProfileTree.kNodeLast, item);
-		}
-	);
+				node->mTreeNode = mProfileTree.AddVirtualItem(node->mpParent->mTreeNode, mProfileTree.kNodeLast, item);
+			}
+		);
 
-	// nuke the original and its descendants
-	mProfileTree.DeleteItem(prevTreeNode);
+		// nuke the original and its descendants
+		mProfileTree.DeleteItem(prevTreeNode);
 
-	// select and scroll to the new node
-	mProfileTree.SelectNode(mpDragSource->mTreeNode);
-	mProfileTree.MakeNodeVisible(mpDragSource->mTreeNode);
+		// select and scroll to the new node
+		mProfileTree.SelectNode(mpDragSource->mTreeNode);
+		mProfileTree.MakeNodeVisible(mpDragSource->mTreeNode);
 
-	// update the parent in the database
-	ATSettingsProfileSetParent(mpDragSource->mId, mpDragTarget->mId);
+		// update the parent in the database
+		ATSettingsProfileSetParent(mpDragSource->mId, mpDragTarget->mId);
+	}
 
 	mpDragSource = nullptr;
 	mpDragTarget = nullptr;
@@ -564,7 +579,7 @@ void ATUIDialogProfiles::OnSetDefault() {
 		ATSetDefaultProfileId(defaultProfile, newId);
 
 		mProfileTree.EnumChildrenRecursive(mProfileTree.kNodeRoot,
-			[node, oldId, newId, this](IVDUITreeViewVirtualItem *p) {
+			[oldId, newId, this](IVDUITreeViewVirtualItem *p) {
 				ProfileNode *node = static_cast<ProfileNode *>(p);
 				const uint32 id = node->mId;
 

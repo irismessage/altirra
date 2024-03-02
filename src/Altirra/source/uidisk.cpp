@@ -41,6 +41,7 @@
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/dragdrop.h>
 #include <at/atnativeui/messageloop.h>
+#include <at/atnativeui/theme.h>
 #include "resource.h"
 #include "disk.h"
 #include "simulator.h"
@@ -77,6 +78,8 @@ protected:
 	void OnDataExchange(bool write);
 	bool OnCommand(uint32 id, uint32 extcode);
 	void UpdateEnables();
+	void ExchangeGeometry(bool write);
+	bool IsCurrentFormatSupported() const;
 
 	int	mFormatTypeIndex;
 	ATDiskFormatFileSystem mDiskFFS;
@@ -90,8 +93,20 @@ protected:
 		const wchar_t *mpTag;
 	};
 
+	static int sLastFormatTypeIndex;
+	static ATDiskFormatFileSystem sLastDiskFFS;
+	static uint32 sLastSectorCount;
+	static uint32 sLastBootSectorCount;
+	static uint32 sLastSectorSize;
+
 	static const FormatType kFormatTypes[];
 };
+
+int ATNewDiskDialog::sLastFormatTypeIndex = 1;
+ATDiskFormatFileSystem ATNewDiskDialog::sLastDiskFFS;
+uint32 ATNewDiskDialog::sLastSectorCount = 720;
+uint32 ATNewDiskDialog::sLastBootSectorCount = 3;
+uint32 ATNewDiskDialog::sLastSectorSize = 128;
 
 const ATNewDiskDialog::FormatType ATNewDiskDialog::kFormatTypes[] = {
 	{ 0, 0, L"Custom" },
@@ -100,6 +115,10 @@ const ATNewDiskDialog::FormatType ATNewDiskDialog::kFormatTypes[] = {
 	{ 256,  720, L"Double density (720 sectors, 256 bytes/sector)" },
 	{ 256, 1440, L"Double-sided DD (1440 sectors, 256 bytes/sector)" },
 	{ 256, 2880, L"DSDD 80 tracks (2880 sectors, 256 bytes/sector)" },
+	{ 128, 2002, L"8\" single-sided (2002 sectors, 128 bytes/sector)" },
+	{ 128, 4004, L"8\" double-sided (4004 sectors, 128 bytes/sector)" },
+	{ 256, 2002, L"8\" single-sided DD (2002 sectors, 256 bytes/sector)" },
+	{ 256, 4004, L"8\" double-sided DD (4004 sectors, 256 bytes/sector)" },
 };
 
 ATNewDiskDialog::ATNewDiskDialog()
@@ -116,6 +135,12 @@ ATNewDiskDialog::~ATNewDiskDialog() {
 }
 
 bool ATNewDiskDialog::OnLoaded() {
+	mFormatTypeIndex = sLastFormatTypeIndex;
+	mDiskFFS = sLastDiskFFS;
+	mSectorCount = sLastSectorCount;
+	mBootSectorCount = sLastBootSectorCount;
+	mSectorSize = sLastSectorSize;
+
 	for(const auto& formatType : kFormatTypes)
 		CBAddString(IDC_FORMAT, formatType.mpTag);
 
@@ -130,8 +155,7 @@ bool ATNewDiskDialog::OnLoaded() {
 }
 
 void ATNewDiskDialog::OnDataExchange(bool write) {
-	ExchangeControlValueUint32(write, IDC_BOOT_SECTOR_COUNT, mBootSectorCount, 0, 255);
-	ExchangeControlValueUint32(write, IDC_SECTOR_COUNT, mSectorCount, mBootSectorCount, 65535);
+	ExchangeGeometry(write);
 
 	if (write) {
 		mSectorSize = 128;
@@ -142,71 +166,26 @@ void ATNewDiskDialog::OnDataExchange(bool write) {
 			mBootSectorCount = 0;
 		}
 
-		bool supported = false;
 		switch(CBGetSelectedIndex(IDC_FILESYSTEM)) {
-			case 0:
 			default:
-				mDiskFFS = kATDiskFFS_None;
-				supported = true;
-				break;
-
-			case 1:
-				// DOS 2.0S: 720 sectors, SD or DD (yes, DOS 2.0S supports DD!)
-				// DOS 2.5: adds 1040 sectors @ 128bps (ED)
-				if (mBootSectorCount != 3)
-					break;
-
-				if (mSectorSize != 128 && mSectorSize != 256)
-					break;
-
-				if (mSectorCount == 1040) {
-					if (mSectorSize != 128)
-						break;
-				} else if (mSectorCount != 720)
-					break;
-
-				mDiskFFS = kATDiskFFS_DOS2;
-				supported = true;
-				break;
-
-			case 2:
-				if (mSectorCount != 720 || mSectorSize != 128)
-					break;
-
-				mDiskFFS = kATDiskFFS_DOS1;
-				supported = true;
-				break;
-
-			case 3:
-				if ((mSectorCount != 720 && mSectorCount != 1040) || mSectorSize != 128)
-					break;
-
-				mDiskFFS = kATDiskFFS_DOS3;
-				supported = true;
-				break;
-
-			case 4:
-				if (mSectorCount < 720 || (mSectorSize != 128 && mSectorSize != 256))
-					break;
-
-				mDiskFFS = kATDiskFFS_MyDOS;
-				supported = true;
-				break;
-
-			case 5:
-				if (mSectorCount < 16)
-					break;
-
-				mDiskFFS = kATDiskFFS_SDFS;
-				supported = true;
-				break;
+			case 0: mDiskFFS = kATDiskFFS_None;		break;
+			case 1: mDiskFFS = kATDiskFFS_DOS2;		break;
+			case 2: mDiskFFS = kATDiskFFS_DOS1;		break;
+			case 3: mDiskFFS = kATDiskFFS_DOS3;		break;
+			case 4: mDiskFFS = kATDiskFFS_MyDOS;	break;
+			case 5: mDiskFFS = kATDiskFFS_SDFS;		break;
 		}
 
-		if (!supported) {
-			ShowError(L"The specified disk geometry is not supported for the selected filesystem.", L"Altirra Error");
-			FailValidation(IDC_FILESYSTEM);
+		if (!IsCurrentFormatSupported()) {
+			FailValidation(IDC_FILESYSTEM, L"The specified disk geometry is not supported for the selected filesystem.", L"Cannot format disk");
 			return;
 		}
+
+		sLastFormatTypeIndex = mFormatTypeIndex;
+		sLastDiskFFS = mDiskFFS;
+		sLastSectorCount = mSectorCount;
+		sLastBootSectorCount = mBootSectorCount;
+		sLastSectorSize = mSectorSize;
 	} else {
 		CheckButton(IDC_SECTOR_SIZE_128, mSectorSize == 128);
 		CheckButton(IDC_SECTOR_SIZE_256, mSectorSize == 256);
@@ -216,6 +195,63 @@ void ATNewDiskDialog::OnDataExchange(bool write) {
 
 		CBSetSelectedIndex(IDC_FILESYSTEM, mDiskFFS);
 	}
+}
+
+bool ATNewDiskDialog::IsCurrentFormatSupported() const {
+	bool supported = false;
+	switch(mDiskFFS) {
+		case kATDiskFFS_None:
+			supported = true;
+			break;
+
+		case kATDiskFFS_DOS2:
+			// DOS 2.0S: 720 sectors, SD or DD (yes, DOS 2.0S supports DD!)
+			// DOS 2.5: adds 1040 sectors @ 128bps (ED)
+			if (mBootSectorCount != 3)
+				break;
+
+			if (mSectorSize != 128 && mSectorSize != 256)
+				break;
+
+			if (mSectorCount == 1040) {
+				if (mSectorSize != 128)
+					break;
+			} else if (mSectorCount != 720)
+				break;
+
+			supported = true;
+			break;
+
+		case kATDiskFFS_DOS1:
+			if (mSectorCount != 720 || mSectorSize != 128)
+				break;
+
+			supported = true;
+			break;
+
+		case kATDiskFFS_DOS3:
+			if ((mSectorCount != 720 && mSectorCount != 1040) || mSectorSize != 128)
+				break;
+
+			supported = true;
+			break;
+
+		case kATDiskFFS_MyDOS:
+			if (mSectorCount < 720 || (mSectorSize != 128 && mSectorSize != 256))
+				break;
+
+			supported = true;
+			break;
+
+		case kATDiskFFS_SDFS:
+			if (mSectorCount < 16)
+				break;
+
+			supported = true;
+			break;
+	}
+
+	return supported;
 }
 
 bool ATNewDiskDialog::OnCommand(uint32 id, uint32 extcode) {
@@ -232,7 +268,7 @@ bool ATNewDiskDialog::OnCommand(uint32 id, uint32 extcode) {
 				mSectorCount = formatType.mSectorCount;
 				mSectorSize = formatType.mSectorSize;
 				mBootSectorCount = 3;
-				OnDataExchange(false);
+				ExchangeGeometry(false);
 			}
 		}
 	} else if ((id == IDC_SECTOR_SIZE_128 || id == IDC_SECTOR_SIZE_256 || id == IDC_SECTOR_SIZE_512)
@@ -251,6 +287,27 @@ void ATNewDiskDialog::UpdateEnables() {
 	EnableControl(IDC_SECTOR_SIZE_512, custom);
 	EnableControl(IDC_SECTOR_COUNT, custom);
 	EnableControl(IDC_BOOT_SECTOR_COUNT, custom && !IsButtonChecked(IDC_SECTOR_SIZE_512));
+}
+
+void ATNewDiskDialog::ExchangeGeometry(bool write) {
+	ExchangeControlValueUint32(write, IDC_BOOT_SECTOR_COUNT, mBootSectorCount, 0, 255);
+	ExchangeControlValueUint32(write, IDC_SECTOR_COUNT, mSectorCount, mBootSectorCount, 65535);
+
+	if (write) {
+		mSectorSize = 128;
+		if (IsButtonChecked(IDC_SECTOR_SIZE_256))
+			mSectorSize = 256;
+		else if (IsButtonChecked(IDC_SECTOR_SIZE_512)) {
+			mSectorSize = 512;
+			mBootSectorCount = 0;
+		}
+	} else {
+		CheckButton(IDC_SECTOR_SIZE_128, mSectorSize == 128);
+		CheckButton(IDC_SECTOR_SIZE_256, mSectorSize == 256);
+		CheckButton(IDC_SECTOR_SIZE_512, mSectorSize == 512);
+		CBSetSelectedIndex(IDC_FORMAT, mFormatTypeIndex);
+		UpdateEnables();
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -760,7 +817,7 @@ bool ATDiskDriveDialog::OnLoaded() {
 	Activate();
 
 	if (!mhEjectIcon) {
-		mhEjectIcon = (HICON)LoadImage(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDI_EJECT), IMAGE_ICON, 16, 16, 0);
+		mhEjectIcon = (HICON)LoadImage(VDGetLocalModuleHandleW32(), ATUIIsDarkThemeActive() ? MAKEINTRESOURCE(IDI_EJECT2) : MAKEINTRESOURCE(IDI_EJECT), IMAGE_ICON, 16, 16, 0);
 	}
 
 	if (mhEjectIcon) {
@@ -1030,10 +1087,12 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 							GetWindowRect(hwndItem, &r);
 
 						const bool haveDisk = diskIf.IsDiskLoaded();
-						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_SAVEDISK, haveDisk);
-						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_SAVEDISKAS, haveDisk);
+						const bool haveNonDynamicDisk = haveDisk && !diskIf.GetDiskImage()->IsDynamic();
+						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_SAVEDISK, haveNonDynamicDisk);
+						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_SAVEDISKAS, haveNonDynamicDisk);
 						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_EXPLOREDISK, haveDisk);
 						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_REVERTDISK, haveDisk && diskIf.CanRevert());
+						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_SHOWDISKFILEINEXPLORER, haveDisk && diskIf.IsDiskBacked() && ATVFSIsFilePath(diskIf.GetPath()));
 
 						TPMPARAMS params = {sizeof(TPMPARAMS)};
 						params.rcExclude = r;
@@ -1160,7 +1219,10 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 						break;
 
 					case ID_CONTEXT_SAVEDISK:
-						if (diskIf.IsDirty() && diskIf.GetDiskImage()->IsUpdatable()) {
+						if (!diskIf.IsDirty())
+							break;
+
+						if (diskIf.GetDiskImage()->IsUpdatable()) {
 							try {
 								// if the disk is in VirtR/W mode, switch to R/W mode
 								const auto writeMode = diskIf.GetWriteMode();
@@ -1173,8 +1235,10 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 							} catch(const MyError& e) {
 								ShowError(e);
 							}
+
+							break;
 						}
-						break;
+						[[fallthrough]];
 
 					case ID_CONTEXT_SAVEDISKAS:
 						if (diskIf.IsDiskLoaded() && !diskIf.GetDiskImage()->IsDynamic()) {
@@ -1340,6 +1404,12 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 
 					case ID_CONVERTTO_SPARTADOS_512:
 						Convert(diskIf, kATDiskFFS_SDFS, 512);
+						break;
+
+					case ID_CONTEXT_SHOWDISKFILEINEXPLORER:
+						if (const wchar_t *path = diskIf.GetPath(); ATVFSIsFilePath(path)) {
+							ATShowFileInSystemExplorer(path);
+						}
 						break;
 				}
 			}

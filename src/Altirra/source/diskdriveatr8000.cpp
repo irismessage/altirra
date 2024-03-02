@@ -68,7 +68,7 @@ bool ATDeviceDiskDriveATR8000::Drive::IsImageSupported(const IATDiskImage& image
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDeviceDiskDriveATR8000::SerialPort : public ATDeviceBus, public IATSchedulerCallback {
+class ATDeviceDiskDriveATR8000::SerialPort final : public ATDeviceBus, public IATSchedulerCallback {
 public:
 	enum Signal1Mode {
 		kSignal1_RTS,
@@ -461,7 +461,7 @@ void *ATDeviceDiskDriveATR8000::AsInterface(uint32 iid) {
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
 		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(&mAudioPlayer);
 		case IATDeviceButtons::kTypeID: return static_cast<IATDeviceButtons *>(this);
-		case IATDevicePrinter::kTypeID: return static_cast<IATDevicePrinter *>(this);
+		case IATDevicePrinterPort::kTypeID: return static_cast<IATDevicePrinterPort *>(this);
 		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(this);
 		case ATFDCEmulator::kTypeID: return &mFDC;
 		case ATCTCEmulator::kTypeID: return &mCTC;
@@ -521,6 +521,8 @@ bool ATDeviceDiskDriveATR8000::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATDeviceDiskDriveATR8000::Init() {
+	mParallelBus.Init(this, 1, IATPrinterOutput::kTypeID, "parallel", L"Parallel Printer Port", "parport");
+
 	mSerialXmitQueue.Init(mpScheduler, mpSIOMgr);
 
 	// The ATR8000 memory map:
@@ -556,7 +558,7 @@ void ATDeviceDiskDriveATR8000::Init() {
 
 	// Actually a 179X in the ATR8000, but the difference between the 179X and 279X is
 	// whether there is an internal data separator; this makes no difference to us.
-	mFDC.Init(&mDriveScheduler, 300.0f, 2.0f, ATFDCEmulator::kType_2793);
+	mFDC.Init(&mDriveScheduler, 300.0f, 1.0f, ATFDCEmulator::kType_2793);
 
 	mFDC.SetOnDrqChange([this](bool active) { OnFDCDrq(active); });
 	mFDC.SetOnIrqChange([this](bool active) { OnFDCIrq(active); });
@@ -584,6 +586,8 @@ void ATDeviceDiskDriveATR8000::Init() {
 }
 
 void ATDeviceDiskDriveATR8000::Shutdown() {
+	mParallelBus.Shutdown();
+
 	mpSerialPort->Shutdown();
 
 	mpPrinterOutput = nullptr;
@@ -728,12 +732,16 @@ void ATDeviceDiskDriveATR8000::ActivateButton(ATDeviceButton idx, bool state) {
 	}
 }
 
-void ATDeviceDiskDriveATR8000::SetPrinterOutput(IATPrinterOutput *out) {
+void ATDeviceDiskDriveATR8000::SetPrinterDefaultOutput(IATPrinterOutput *out) {
 	mpPrinterOutput = out;
 }
 
 IATDeviceBus *ATDeviceDiskDriveATR8000::GetDeviceBus(uint32 index) {
-	return index ? 0 : mpSerialPort;
+	switch(index) {
+		case 0: return mpSerialPort;
+		case 1: return &mParallelBus;
+		default: return nullptr;
+	}
 }
 
 void ATDeviceDiskDriveATR8000::OnScheduledEvent(uint32 id) {
@@ -939,7 +947,7 @@ uint8 ATDeviceDiskDriveATR8000::OnReadPort(uint8 addr) {
 			return mFDC.ReadByte(addr & 3);
 
 		case 5: {
-			uint8 v = ~0x86;
+			uint8 v = (uint8)~0x86;
 
 			bool signal2;
 			bool ring;
@@ -1055,8 +1063,12 @@ void ATDeviceDiskDriveATR8000::OnWritePort(uint8 addr, uint8 val) {
 						if (mbPrinterStrobeAsserted != state) {
 							mbPrinterStrobeAsserted = state;
 
-							if (state && mpPrinterOutput)
-								mpPrinterOutput->WriteASCII(&mPrinterData, 1);
+							if (state) {
+								if (auto *printer = mParallelBus.GetChild<IATPrinterOutput>())
+									printer->WriteASCII(&mPrinterData, 1);
+								else if (mpPrinterOutput)
+									mpPrinterOutput->WriteASCII(&mPrinterData, 1);
+							}
 						}
 						break;
 
@@ -1275,7 +1287,7 @@ void ATDeviceDiskDriveATR8000::UpdateFDCSpeed() {
 		Drive& drive = mDrives[firstDrive];
 
 		const float rpm = drive.mType == kDriveType_8 ? 360.0f : 300.0f;
-		mFDC.SetSpeeds(rpm, 2.0f, mbFastClock);
+		mFDC.SetSpeeds(rpm, 1.0f, mbFastClock);
 	}
 }
 

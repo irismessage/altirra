@@ -3,17 +3,15 @@
 #define INITGUID
 #include <guiddef.h>
 
-#ifdef NTDDI_WINBLUE
 #include <dxgi1_3.h>
-#endif
-
-#ifdef NTDDI_WIN10_RS1
 #include <dxgi1_5.h>
-#endif
+#include <dxgi1_6.h>
 
-#include <D3D11.h>
+#include <d3d11.h>
+#include <d3d11_1.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/w32assist.h>
+#include <vd2/Tessa/Config.h>
 #include <vd2/Tessa/Context.h>
 #include <vd2/Tessa/Format.h>
 #include "D3D11/Context_D3D11.h"
@@ -25,6 +23,9 @@ namespace {
 		switch(format) {
 			case kVDTF_B8G8R8A8:
 				return DXGI_FORMAT_B8G8R8A8_UNORM;
+
+			case kVDTF_B8G8R8A8_sRGB:
+				return DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
 
 			case kVDTF_R8G8B8A8:
 				return DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -38,6 +39,9 @@ namespace {
 			case kVDTF_R8:
 				return DXGI_FORMAT_R8_UNORM;
 
+			case kVDTF_R16G16B16A16F:
+				return DXGI_FORMAT_R16G16B16A16_FLOAT;
+
 			default:
 				return DXGI_FORMAT_UNKNOWN;
 		}
@@ -47,6 +51,9 @@ namespace {
 		switch(format) {
 			case DXGI_FORMAT_B8G8R8A8_UNORM:
 				return kVDTF_B8G8R8A8;
+
+			case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+				return kVDTF_B8G8R8A8_sRGB;
 
 			case DXGI_FORMAT_R8G8B8A8_UNORM:
 				return kVDTF_R8G8B8A8;
@@ -60,122 +67,14 @@ namespace {
 			case DXGI_FORMAT_R8_UNORM:
 				return kVDTF_R8;
 
+			case DXGI_FORMAT_R16G16B16A16_FLOAT:
+				return kVDTF_R16G16B16A16F;
+
 			default:
 				return kVDTF_Unknown;
 		}
 	}
 }
-
-///////////////////////////////////////////////////////////////////////////
-
-#ifndef NTDDI_WINBLUE
-
-typedef struct DXGI_SWAP_CHAIN_DESC1 DXGI_SWAP_CHAIN_DESC1;
-typedef struct DXGI_SWAP_CHAIN_FULLSCREEN_DESC DXGI_SWAP_CHAIN_FULLSCREEN_DESC;
-
-typedef struct DXGI_PRESENT_PARAMETERS {
-	UINT  DirtyRectsCount;
-	RECT  *pDirtyRects;
-	RECT  *pScrollRect;
-	POINT *pScrollOffset;
-} DXGI_PRESENT_PARAMETERS;
-
-typedef struct DXGI_RGBA DXGI_RGBA;
-
-struct __declspec(uuid("790a45f7-0d42-4876-983a-0a55cfe6f4aa")) IDXGISwapChain1 : public IDXGISwapChain {
-    virtual HRESULT STDMETHODCALLTYPE GetDesc1(DXGI_SWAP_CHAIN_DESC1 *pDesc) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetFullscreenDesc(DXGI_SWAP_CHAIN_FULLSCREEN_DESC *pDesc) = 0;
-
-    virtual HRESULT STDMETHODCALLTYPE GetHwnd(HWND *pHwnd) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetCoreWindow(REFIID refiid, void **ppUnk) = 0;
-
-    virtual HRESULT STDMETHODCALLTYPE Present1(UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters) = 0;
-    virtual BOOL STDMETHODCALLTYPE IsTemporaryMonoSupported() = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetRestrictToOutput(IDXGIOutput** ppRestrictToOutput) = 0;
-    virtual HRESULT STDMETHODCALLTYPE SetBackgroundColor(const DXGI_RGBA* pColor) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetBackgroundColor(DXGI_RGBA* pColor) = 0;
-    virtual HRESULT STDMETHODCALLTYPE SetRotation(DXGI_MODE_ROTATION Rotation) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetRotation(DXGI_MODE_ROTATION* pRotation) = 0;
-};
-
-const DXGI_SWAP_CHAIN_FLAG DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT = (DXGI_SWAP_CHAIN_FLAG)64;
-
-struct __declspec(uuid("50c83a1c-e072-4c48-87b0-3630fa36a6d0")) IDXGIFactory2 : public IDXGIFactory1 {
-	virtual BOOL STDMETHODCALLTYPE IsWindowedStereoEnabled() = 0;
-	virtual HRESULT STDMETHODCALLTYPE CreateSwapChainForHwnd(IUnknown *pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1 *pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *pFullscreenDesc, IDXGIOutput *pRestrictToOutput, IDXGISwapChain1 **ppSwapChain) = 0;
-	virtual HRESULT STDMETHODCALLTYPE CreateSwapChainForCoreWindow(IUnknown *pDevice, IUnknown *pWindow, const DXGI_SWAP_CHAIN_DESC1 *pDesc, IDXGIOutput *pRestrictToOutput, IDXGISwapChain1 **ppSwapChain) = 0;
-	virtual HRESULT STDMETHODCALLTYPE GetSharedResourceAdapterLuid(HANDLE hResource, LUID* pLuid) = 0;
-	virtual HRESULT STDMETHODCALLTYPE RegisterStereoStatusWindow(HWND WindowHandle, UINT wMsg, DWORD *pdwCookie) = 0;
-	virtual HRESULT STDMETHODCALLTYPE RegisterStereoStatusEvent(HANDLE hEvent, DWORD *pdwCookie) = 0;
-	virtual void STDMETHODCALLTYPE UnregisterStereoStatus(DWORD dwCookie) = 0;
-	virtual HRESULT STDMETHODCALLTYPE RegisterOcclusionStatusWindow(HWND WindowHandle, UINT wMsg, DWORD *pdwCookie) = 0;
-	virtual HRESULT STDMETHODCALLTYPE RegisterOcclusionStatusEvent(HANDLE hEvent, DWORD *pdwCookie) = 0;
-	virtual void STDMETHODCALLTYPE UnregisterOcclusionStatus(DWORD dwCookie) = 0;
-	virtual HRESULT STDMETHODCALLTYPE CreateSwapChainForComposition(IUnknown *pDevice, const DXGI_SWAP_CHAIN_DESC1 *pDesc, IDXGIOutput *pRestrictToOutput, IDXGISwapChain1 **ppSwapChain) = 0;
-};
-
-struct __declspec(uuid("25483823-cd46-4c7d-86ca-47aa95b837bd")) IDXGIFactory3 : public IDXGIFactory2 {
-	virtual UINT STDMETHODCALLTYPE GetCreationFlags() = 0;
-};
-
-struct IDXGIFactory4 : public IDXGIFactory3 {
-	virtual HRESULT STDMETHODCALLTYPE EnumAdapterByLuid(LUID AdapterLuid, REFIID riid, void *ppvAdapter) = 0;
-	virtual HRESULT STDMETHODCALLTYPE EnumWarpAdapter(REFIID riid, void *ppvAdapter) = 0;
-};
-
-typedef enum DXGI_FEATURE {
-	DXGI_FEATURE_PRESENT_ALLOW_TEARING
-} DXGI_FEATURE;
-
-struct __declspec(uuid("7632e1f5-ee65-4dca-87fd-84cd75f8838d")) IDXGIFactory5 : public IDXGIFactory4 {
-	virtual HRESULT STDMETHODCALLTYPE CheckFeatureSupport(DXGI_FEATURE Feature, void *pFeatureSupportData, UINT FeatureSupportDataSize) = 0;
-};
-
-typedef struct DXGI_MATRIX_3X2_F DXGI_MATRIX_3X2_F;
-
-struct __declspec(uuid("a8be2ac4-199f-4946-b331-79599fb98de7")) IDXGISwapChain2 : public IDXGISwapChain1 {
-	virtual HRESULT STDMETHODCALLTYPE SetSourceSize(UINT Width, UINT Height) = 0;
-	virtual HRESULT STDMETHODCALLTYPE GetSourceSize(UINT *pWidth,UINT *pHeight) = 0;
-	virtual HRESULT STDMETHODCALLTYPE SetMaximumFrameLatency(UINT MaxLatency) = 0;
-	virtual HRESULT STDMETHODCALLTYPE GetMaximumFrameLatency(UINT *pMaxLatency) = 0;
-	virtual HANDLE  STDMETHODCALLTYPE GetFrameLatencyWaitableObject() = 0;
-	virtual HRESULT STDMETHODCALLTYPE SetMatrixTransform(const DXGI_MATRIX_3X2_F *pMatrix) = 0;
-	virtual HRESULT STDMETHODCALLTYPE GetMatrixTransform(DXGI_MATRIX_3X2_F *pMatrix) = 0;
-};
-
-extern "C" constexpr GUID IID_IDXGIFactory2 = __uuidof(IDXGIFactory2);
-extern "C" constexpr GUID IID_IDXGIFactory3 = __uuidof(IDXGIFactory3);
-extern "C" constexpr GUID IID_IDXGIFactory5 = __uuidof(IDXGIFactory5);
-extern "C" constexpr GUID IID_IDXGISwapChain1 = __uuidof(IDXGISwapChain1);
-extern "C" constexpr GUID IID_IDXGISwapChain2 = __uuidof(IDXGISwapChain2);
-
-constexpr DXGI_SWAP_EFFECT DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL	= (DXGI_SWAP_EFFECT)3;
-constexpr DXGI_SWAP_EFFECT DXGI_SWAP_EFFECT_FLIP_DISCARD = (DXGI_SWAP_EFFECT)4;
-constexpr DXGI_SWAP_CHAIN_FLAG DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING = (DXGI_SWAP_CHAIN_FLAG)0x800;
-
-#ifndef DXGI_PRESENT_ALLOW_TEARING
-#define DXGI_PRESENT_ALLOW_TEARING 0x200UL
-#endif
-
-typedef struct DXGI_FRAME_STATISTICS_MEDIA DXGI_FRAME_STATISTICS_MEDIA;
-
-struct __declspec(uuid("dd95b90b-f05f-4f6a-bd65-25bfb264bd84")) IDXGISwapChainMedia : public IUnknown {
-public:
-	virtual HRESULT STDMETHODCALLTYPE GetFrameStatisticsMedia(DXGI_FRAME_STATISTICS_MEDIA *pStats) = 0;
-	virtual HRESULT STDMETHODCALLTYPE SetPresentDuration(UINT Duration) = 0;
-	virtual HRESULT STDMETHODCALLTYPE CheckPresentDurationSupport(UINT DesiredPresentDuration, UINT *pClosestSmallerPresentDuration, UINT *pClosestLargerPresentDuration) = 0;
-};
-
-extern "C" constexpr GUID IID_IDXGISwapChainMedia = __uuidof(IDXGISwapChainMedia);
-
-constexpr D3D11_FEATURE D3D11_FEATURE_SHADER_MIN_PRECISION_SUPPORT = (D3D11_FEATURE)8;
-
-typedef struct D3D11_FEATURE_DATA_SHADER_MIN_PRECISION_SUPPORT {
-    UINT PixelShaderMinPrecision;
-    UINT AllOtherShaderStagesMinPrecision;
-} D3D11_FEATURE_DATA_SHADER_MIN_PRECISION_SUPPORT;
-
-#endif
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -228,7 +127,10 @@ void *VDD3D11Holder::AsInterface(uint32 iid) {
 
 bool VDD3D11Holder::Init() {
 	if (!mhmodDXGI) {
-		mhmodDXGI = VDLoadSystemLibraryW32("dxgi");
+		if (VDTGetLibraryOverridesEnabled())
+			mhmodDXGI = VDLoadSystemLibraryWithAllowedOverrideW32("dxgi");
+		else
+			mhmodDXGI = VDLoadSystemLibraryW32("dxgi");
 
 		if (!mhmodDXGI) {
 			Shutdown();
@@ -249,7 +151,10 @@ bool VDD3D11Holder::Init() {
 		mpCreateDXGIFactory2Fn = (CreateDXGIFactory2Fn)GetProcAddress(mhmodDXGI, "CreateDXGIFactory2");
 
 	if (!mhmodD3D11) {
-		mhmodD3D11 = VDLoadSystemLibraryW32("D3D11");
+		if (VDTGetLibraryOverridesEnabled())
+			mhmodD3D11 = VDLoadSystemLibraryWithAllowedOverrideW32("D3D11");
+		else
+			mhmodD3D11 = VDLoadSystemLibraryW32("D3D11");
 
 		if (!mhmodD3D11) {
 			Shutdown();
@@ -436,6 +341,9 @@ bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 height,
 		case kVDTUsage_Render:
 			desc.BindFlags = D3D11_BIND_RENDER_TARGET;
 			break;
+
+		default:
+			break;
 	}
 
 	hr = dev->CreateTexture2D(&desc, NULL, &mpTexture);
@@ -444,7 +352,7 @@ bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 height,
 
 	if (usage == kVDTUsage_Render) {
 		D3D11_RENDER_TARGET_VIEW_DESC rtvdesc = {};
-		rtvdesc.Format = desc.Format;
+		rtvdesc.Format = dxgiFormat;
 		rtvdesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 		rtvdesc.Texture2D.MipSlice = 0;
 
@@ -453,6 +361,28 @@ bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 height,
 			Shutdown();
 			return false;
 		}
+
+		DXGI_FORMAT dxgiNonSrgbFormat = dxgiFormat;
+
+		// if this is an inherently sRGB based format, create a second render target view
+		// for non-sRGB pass through writes
+		if (dxgiNonSrgbFormat == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
+			dxgiNonSrgbFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+		else if (dxgiNonSrgbFormat == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB)
+			dxgiNonSrgbFormat = DXGI_FORMAT_B8G8R8X8_UNORM;
+		else if (dxgiNonSrgbFormat == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
+			dxgiNonSrgbFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+		if (dxgiNonSrgbFormat != dxgiFormat)
+		{
+			rtvdesc.Format = dxgiNonSrgbFormat;
+
+			hr = dev->CreateRenderTargetView(mpTexture, &rtvdesc, &mpRTViewNoSrgb);
+			if (FAILED(hr)) {
+				Shutdown();
+				return false;
+			}
+		}
 	}
 
 	parent->AddResource(this);
@@ -460,10 +390,12 @@ bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 height,
 	return SUCCEEDED(hr);
 }
 
-bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, bool rt, bool onlyMip) {
+bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, IVDTTexture *parentTexture, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, bool rt, bool onlyMip, bool forceSRGB) {
 	D3D11_TEXTURE2D_DESC desc = {};
 
 	tex->GetDesc(&desc);
+
+	mpParentTexture = parentTexture;
 
 	mMipLevel = mipLevel;
 	mbOnlyMip = onlyMip;
@@ -475,12 +407,42 @@ bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D11
 	if (rt) {
 		D3D11_RENDER_TARGET_VIEW_DESC rtvdesc = {};
 		rtvdesc.Format = desc.Format;
+
+		if (forceSRGB) {
+			switch(rtvdesc.Format) {
+				case DXGI_FORMAT_R8G8B8A8_UNORM:
+					rtvdesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+					break;
+
+				case DXGI_FORMAT_B8G8R8A8_UNORM:
+					rtvdesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+					break;
+
+				case DXGI_FORMAT_B8G8R8X8_UNORM:
+					rtvdesc.Format = DXGI_FORMAT_B8G8R8X8_UNORM_SRGB;
+					break;
+			}
+		}
+
 		rtvdesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 		rtvdesc.Texture2D.MipSlice = mipLevel;
 
 		HRESULT hr = parent->GetDeviceD3D11()->CreateRenderTargetView(tex, &rtvdesc, &mpRTView);
 		if (FAILED(hr))
 			return false;
+	} else if (texsys) {
+		ID3D11DeviceContext *devctx = parent->GetDeviceContextD3D11();
+
+		D3D11_MAPPED_SUBRESOURCE info;
+		HRESULT hr = devctx->Map(texsys, mMipLevel, D3D11_MAP_WRITE, 0, &info);
+		if (FAILED(hr))
+			return false;
+
+		const uint32 bpr = VDTGetBytesPerBlockRow(mDesc.mFormat, mDesc.mWidth);
+		const uint32 bh = VDTGetNumBlockRows(mDesc.mFormat, mDesc.mHeight);
+		VDMemset8Rect(info.pData, info.RowPitch, 0, bpr, bh);
+
+		devctx->Unmap(texsys, mMipLevel);
 	}
 
 	parent->AddResource(this);
@@ -498,7 +460,7 @@ void VDTSurfaceD3D11::Shutdown() {
 	if (mpParent)
 		static_cast<VDTContextD3D11 *>(mpParent)->UnsetRenderTarget(this);
 
-	vdsaferelease <<= mpRTView, mpTextureSys, mpTexture;
+	vdsaferelease <<= mpRTView, mpRTViewNoSrgb, mpTextureSys, mpTexture;
 
 	VDTResourceD3D11::Shutdown();
 }
@@ -559,7 +521,7 @@ void VDTSurfaceD3D11::GetDesc(VDTSurfaceDesc& desc) {
 	desc = mDesc;
 }
 
-bool VDTSurfaceD3D11::Lock(const vdrect32 *r, VDTLockData2D& lockData) {
+bool VDTSurfaceD3D11::Lock(const vdrect32 *r, bool discard, VDTLockData2D& lockData) {
 	if (!mpTextureSys)
 		return false;
 
@@ -577,7 +539,7 @@ bool VDTSurfaceD3D11::Lock(const vdrect32 *r, VDTLockData2D& lockData) {
 	ID3D11DeviceContext *devctx = parent->GetDeviceContextD3D11();
 
 	D3D11_MAPPED_SUBRESOURCE mapped;
-	HRESULT hr = devctx->Map(mpTextureSys, mMipLevel, D3D11_MAP_READ_WRITE, 0, &mapped);
+	HRESULT hr = devctx->Map(mpTextureSys, mMipLevel, discard ? D3D11_MAP_WRITE : D3D11_MAP_READ_WRITE, 0, &mapped);
 	if (FAILED(hr)) {
 		VDTContextD3D11 *parent = static_cast<VDTContextD3D11 *>(mpParent);
 		parent->ProcessHRESULT(hr);
@@ -702,7 +664,7 @@ bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 heigh
 	for(uint32 i=0; i<mipcount; ++i) {
 		vdrefptr<VDTSurfaceD3D11> surf(new VDTSurfaceD3D11);
 
-		surf->Init(parent, mpTexture, mpTextureSys, i, usage == kVDTUsage_Render, mipcount == 1);
+		surf->Init(parent, this, mpTexture, mpTextureSys, i, usage == kVDTUsage_Render, mipcount == 1, false);
 
 		mMipmaps.push_back(surf.release());
 	}
@@ -710,7 +672,7 @@ bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 heigh
 	return true;
 }
 
-bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D11Texture2D *texsys) {
+bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, bool forceSRGB) {
 	parent->AddResource(this);
 
 	D3D11_TEXTURE2D_DESC desc;
@@ -747,7 +709,7 @@ bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D
 	for(uint32 i=0; i<mMipCount; ++i) {
 		vdrefptr<VDTSurfaceD3D11> surf(new VDTSurfaceD3D11);
 
-		if (!surf->Init(parent, mpTexture, mpTextureSys, i, mUsage == kVDTUsage_Render, mMipCount == 1)) {
+		if (!surf->Init(parent, this, mpTexture, mpTextureSys, i, mUsage == kVDTUsage_Render, mMipCount == 1, forceSRGB)) {
 			Shutdown();
 			return false;
 		}
@@ -800,8 +762,8 @@ void VDTTexture2DD3D11::Load(uint32 mip, uint32 x, uint32 y, const VDTInitData2D
 	mMipmaps[mip]->Load(x, y, srcData, w, h);
 }
 
-bool VDTTexture2DD3D11::Lock(uint32 mip, const vdrect32 *r, VDTLockData2D& lockData) {
-	return mMipmaps[mip]->Lock(r, lockData);
+bool VDTTexture2DD3D11::Lock(uint32 mip, const vdrect32 *r, bool discard, VDTLockData2D& lockData) {
+	return mMipmaps[mip]->Lock(r, discard, lockData);
 }
 
 void VDTTexture2DD3D11::Unlock(uint32 mip) {
@@ -971,8 +933,17 @@ bool VDTIndexBufferD3D11::Load(uint32 offset, uint32 size, const void *data) {
 	VDTContextD3D11 *parent = static_cast<VDTContextD3D11 *>(mpParent);
 	ID3D11DeviceContext *devctx = parent->GetDeviceContextD3D11();
 
+	D3D11_MAP flags = D3D11_MAP_WRITE;
+
+	if (mbDynamic) {
+		if (offset)
+			flags = D3D11_MAP_WRITE_NO_OVERWRITE;
+		else
+			flags = D3D11_MAP_WRITE_DISCARD;
+	}
+
 	D3D11_MAPPED_SUBRESOURCE info;
-	HRESULT hr = devctx->Map(mpIB, 0, D3D11_MAP_WRITE, 0, &info);
+	HRESULT hr = devctx->Map(mpIB, 0, flags, 0, &info);
 	if (FAILED(hr)) {
 		static_cast<VDTContextD3D11 *>(mpParent)->ProcessHRESULT(hr);
 		return false;
@@ -980,9 +951,9 @@ bool VDTIndexBufferD3D11::Load(uint32 offset, uint32 size, const void *data) {
 
 	bool success = true;
 	if (mbDynamic)
-		success = VDMemcpyGuarded(info.pData, data, size);
+		success = VDMemcpyGuarded((char *)info.pData + offset, data, size);
 	else
-		memcpy(info.pData, data, size);
+		memcpy((char *)info.pData + offset, data, size);
 
 	devctx->Unmap(mpIB, 0);
 	return success;
@@ -1436,7 +1407,22 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 		scdesc.BufferDesc.RefreshRate.Denominator = 0;
 	}
 
-	scdesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	const UINT displayableAndRenderable = D3D11_FORMAT_SUPPORT_RENDER_TARGET | D3D11_FORMAT_SUPPORT_DISPLAY;
+	bool useSrgb = false;
+
+	if (desc.mbHDR) {
+		UINT rgba16FSupport = 0;
+		if (FAILED(parent->GetDeviceD3D11()->CheckFormatSupport(DXGI_FORMAT_R16G16B16A16_FLOAT, &rgba16FSupport)) || (rgba16FSupport & displayableAndRenderable) != displayableAndRenderable)
+			return false;
+
+		scdesc.BufferDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	} else {
+		if (desc.mbSRGB)
+			useSrgb = true;
+
+		scdesc.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	}
+
 	scdesc.BufferDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
 	scdesc.BufferDesc.Scaling = DXGI_MODE_SCALING_UNSPECIFIED;
 	scdesc.SampleDesc.Count = 1;
@@ -1507,7 +1493,20 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 	}
 
 	mpSwapChain->QueryInterface(IID_IDXGISwapChain1, (void **)&mpSwapChain1);
-	
+
+	// we need DXGI 1.4 for HDR
+	if (desc.mbHDR) {
+		vdrefptr<IDXGISwapChain3> swapChain3;
+
+		hr = mpSwapChain->QueryInterface(IID_IDXGISwapChain4, (void **)~swapChain3);
+		if (FAILED(hr)) {
+			Shutdown();
+			return false;
+		}
+
+		swapChain3->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709);
+	}
+
 	{
 		vdrefptr<IDXGIFactory> pSwapChainFactory;
 
@@ -1553,7 +1552,7 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 	}
 
 	vdrefptr<VDTTexture2DD3D11> tex(new VDTTexture2DD3D11);
-	if (!tex->Init(parent, d3dtex, NULL)) {
+	if (!tex->Init(parent, d3dtex, NULL, useSrgb)) {
 		Shutdown();
 		return false;
 	}
@@ -1611,7 +1610,7 @@ bool VDTSwapChainD3D11::ResizeBuffers(uint32 width, uint32 height) {
 		return false;
 
 	VDTContextD3D11 *parent = static_cast<VDTContextD3D11 *>(mpParent);
-	parent->SetRenderTarget(0, NULL);
+	parent->SetRenderTarget(0, NULL, false);
 
 	mpTexture->Shutdown();
 	vdsaferelease <<= mpTexture;
@@ -1631,7 +1630,7 @@ bool VDTSwapChainD3D11::ResizeBuffers(uint32 width, uint32 height) {
 	}
 
 	vdrefptr<VDTTexture2DD3D11> tex(new VDTTexture2DD3D11);
-	if (!tex->Init(parent, d3dtex, NULL)) {
+	if (!tex->Init(parent, d3dtex, NULL, false)) {
 		Shutdown();
 		return false;
 	}
@@ -1665,7 +1664,7 @@ void VDTSwapChainD3D11::Present() {
 
 	// If the swap chain is in flip mode, it'll unbind the render target, so we need to
 	// sync that state.
-	static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr);
+	static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr, false);
 
 	HRESULT hr = mpSwapChain->Present(0, mbAllowTearing ? DXGI_PRESENT_ALLOW_TEARING : 0);
 	mbWasOccluded = (hr == DXGI_STATUS_OCCLUDED);
@@ -1716,7 +1715,7 @@ void VDTSwapChainD3D11::PresentVSyncComplete() {
 
 	// If the swap chain is in flip mode, it'll unbind the render target, so we need to
 	// sync that state.
-	static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr);
+	static_cast<VDTContextD3D11 *>(mpParent)->SetRenderTarget(0, nullptr, false);
 
 	mbWasOccluded = (hr == DXGI_STATUS_OCCLUDED);
 }
@@ -1908,17 +1907,17 @@ int VDTContextD3D11::Release() {
 }
 
 void *VDTContextD3D11::AsInterface(uint32 iid) {
-	if (iid == IVDTProfiler::kTypeID)
-		return static_cast<IVDTProfiler *>(this);
-
 	return NULL;
 }
 
 bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGIAdapter1 *adapter, IDXGIFactory *factory, VDD3D11Holder *pD3DHolder) {
 	mpData = new PrivateData;
 
-	mpBeginEvent = (void *)GetProcAddress(pD3DHolder->GetD3D11(), "D3DPERF_BeginEvent");
-	mpEndEvent = (void *)GetProcAddress(pD3DHolder->GetD3D11(), "D3DPERF_EndEvent");
+	if (SUCCEEDED(devctx->QueryInterface(__uuidof(ID3DUserDefinedAnnotation), (void **)&mpD3DAnnotation))) {
+		// check if we actually have profiling enabled
+		if (!mpD3DAnnotation->GetStatus())
+			vdsaferelease <<= mpD3DAnnotation;
+	}
 
 	switch(dev->GetFeatureLevel()) {
 		case D3D_FEATURE_LEVEL_11_0:
@@ -2044,22 +2043,20 @@ void VDTContextD3D11::Shutdown() {
 
 	mpData->mFenceManager.Shutdown();
 
-	vdsaferelease <<= mpDXGIAdapter, mpDXGIFactory, mpD3DDeviceContext, mpD3DDevice, mpD3DHolder;
+	vdsaferelease <<= mpD3DAnnotation, mpD3DDeviceContext, mpD3DDevice;
+	vdsaferelease <<= mpDXGIAdapter, mpDXGIFactory, mpD3DHolder;
 
 	if (mpData) {
 		delete mpData;
 		mpData = NULL;
 	}
-
-	mpBeginEvent = NULL;
-	mpEndEvent = NULL;
 }
 
 void VDTContextD3D11::SetImplicitSwapChain(VDTSwapChainD3D11 *sc) {
 	mpSwapChain = sc;
 	sc->AddRef();
 
-	SetRenderTarget(0, NULL);
+	SetRenderTarget(0, NULL, false);
 }
 
 bool VDTContextD3D11::IsFormatSupportedTexture2D(VDTFormat format) {
@@ -2068,6 +2065,38 @@ bool VDTContextD3D11::IsFormatSupportedTexture2D(VDTFormat format) {
 
 	HRESULT hr = mpD3DDevice->CheckFormatSupport(dxgiFormat, &support);
 	return SUCCEEDED(hr) && (support & D3D11_FORMAT_SUPPORT_TEXTURE2D);
+}
+
+bool VDTContextD3D11::IsMonitorHDREnabled(void *monitor, bool& systemSupport) {
+	vdrefptr<IDXGIOutput> output;
+	systemSupport = false;
+
+	for(UINT i = 0; SUCCEEDED(mpDXGIAdapter->EnumOutputs(i, ~output)); ++i) {
+		vdrefptr<IDXGIOutput6> output6;
+		if (FAILED(output->QueryInterface(__uuidof(IDXGIOutput6), (void **)~output6)))
+			continue;
+
+		// If we got this far, we have DXGI 1.6, and thus OS support
+		systemSupport = true;
+
+		DXGI_OUTPUT_DESC1 desc;
+
+		if (FAILED(output6->GetDesc1(&desc)))
+			continue;
+
+		if (desc.Monitor == (HMONITOR)monitor) {
+			switch(desc.ColorSpace) {
+				case DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020:
+					return true;
+
+				default:
+					return false;
+			}
+			break;
+		}
+	}
+
+	return false;
 }
 
 bool VDTContextD3D11::CreateReadbackBuffer(uint32 width, uint32 height, VDTFormat format, IVDTReadbackBuffer **ppbuffer) {
@@ -2233,6 +2262,10 @@ IVDTSurface *VDTContextD3D11::GetRenderTarget(uint32 index) const {
 	return index ? NULL : mpCurrentRT;
 }
 
+bool VDTContextD3D11::GetRenderTargetBypass(uint32 index) const {
+	return index == 0 && mbCurrentRTBypass;
+}
+
 void VDTContextD3D11::SetVertexFormat(IVDTVertexFormat *format) {
 	if (format == mpCurrentVF)
 		return;
@@ -2285,34 +2318,41 @@ void VDTContextD3D11::SetIndexStream(IVDTIndexBuffer *buffer) {
 	mpD3DDeviceContext->IASetIndexBuffer(mpCurrentIB ? mpCurrentIB->mpIB : NULL, mpCurrentIB ? mpCurrentIB->mbIndex32 ? DXGI_FORMAT_R32_UINT : DXGI_FORMAT_R16_UINT : DXGI_FORMAT_UNKNOWN, 0);
 }
 
-void VDTContextD3D11::SetRenderTarget(uint32 index, IVDTSurface *surface) {
+void VDTContextD3D11::SetRenderTarget(uint32 index, IVDTSurface *surface, bool bypassConversion) {
 	VDASSERT(index == 0);
 
 	if (index == 0 && !surface && mpSwapChain)
 		surface = mpSwapChain->GetBackBuffer();
 
-	if (mpCurrentRT == surface)
+	if (mpCurrentRT == surface && mbCurrentRTBypass == bypassConversion)
 		return;
 
 	mpCurrentRT = static_cast<VDTSurfaceD3D11 *>(surface);
-
-	ID3D11RenderTargetView *rtv = NULL;
-	uint32 w = 1;
-	uint32 h = 1;
+	mbCurrentRTBypass = bypassConversion;
 
 	if (mpCurrentRT) {
-		rtv = mpCurrentRT->mpRTView;
+		IVDTTexture *parentTex = mpCurrentRT->mpParentTexture;
 
-		VDASSERT(rtv);
+		if (parentTex) {
+			IVDTTexture *nulltex = nullptr;
 
-		VDTSurfaceDesc desc;
-		mpCurrentRT->GetDesc(desc);
-
-		w = desc.mWidth;
-		h = desc.mHeight;
+			for(int i=0; i<(int)vdcountof(mpCurrentTextures); ++i) {
+				if (mpCurrentTextures[i] == parentTex)
+					this->SetTextures(i, 1, &nulltex);
+			}
+		}
 	}
 
-	mpD3DDeviceContext->OMSetRenderTargets(1, &rtv, NULL);
+	ID3D11RenderTargetView *rtv = nullptr;
+
+	if (mpCurrentRT) {
+		if (bypassConversion && mpCurrentRT->mpRTViewNoSrgb)
+			rtv = mpCurrentRT->mpRTViewNoSrgb;
+		else
+			rtv = mpCurrentRT->mpRTView;
+	}
+
+	mpD3DDeviceContext->OMSetRenderTargets(1, &rtv, nullptr);
 }
 
 void VDTContextD3D11::SetBlendState(IVDTBlendState *state) {
@@ -2358,6 +2398,17 @@ void VDTContextD3D11::SetTextures(uint32 baseIndex, uint32 count, IVDTTexture *c
 
 			ID3D11ShaderResourceView *pSRV = tex ? (ID3D11ShaderResourceView *)tex->AsInterface(VDTTextureD3D11::kTypeD3DShaderResView) : NULL;
 			mpD3DDeviceContext->PSSetShaderResources(stage, 1, &pSRV);
+		}
+	}
+}
+
+void VDTContextD3D11::ClearTexturesStartingAt(uint32 baseIndex) {
+	for(uint32 i = baseIndex; i < 16; ++i) {
+		if (mpCurrentTextures[i]) {
+			mpCurrentTextures[i] = nullptr;
+
+			ID3D11ShaderResourceView *srv = nullptr;
+			mpD3DDeviceContext->PSSetShaderResources(i, 1, &srv);
 		}
 	}
 }
@@ -2459,7 +2510,11 @@ namespace {
 }
 
 void VDTContextD3D11::DrawPrimitive(VDTPrimitiveType type, uint32 startVertex, uint32 primitiveCount) {
-	mpD3DDeviceContext->IASetPrimitiveTopology(kPTLookup[type]);
+	if (mLastPrimitiveType != (int)type) {
+		mLastPrimitiveType = (int)type;
+
+		mpD3DDeviceContext->IASetPrimitiveTopology(kPTLookup[type]);
+	}
 
 	UpdateConstants();
 
@@ -2483,7 +2538,11 @@ void VDTContextD3D11::DrawPrimitive(VDTPrimitiveType type, uint32 startVertex, u
 }
 
 void VDTContextD3D11::DrawIndexedPrimitive(VDTPrimitiveType type, uint32 baseVertexIndex, uint32 minVertex, uint32 vertexCount, uint32 startIndex, uint32 primitiveCount) {
-	mpD3DDeviceContext->IASetPrimitiveTopology(kPTLookup[type]);
+	if (mLastPrimitiveType != (int)type) {
+		mLastPrimitiveType = (int)type;
+
+		mpD3DDeviceContext->IASetPrimitiveTopology(kPTLookup[type]);
+	}
 
 	UpdateConstants();
 
@@ -2542,15 +2601,30 @@ void VDTContextD3D11::Present() {
 	// If the swap chain is in flip mode, it'll unbind the render target, so we need to
 	// sync that state.
 	if (mpSwapChain->mDesc.mbWindowed)
-		SetRenderTarget(0, nullptr);
+		SetRenderTarget(0, nullptr, false);
 }
 
 void VDTContextD3D11::BeginScope(uint32 color, const char *message) {
 	mProfChan.Begin(color, message);
+
+	if (mpD3DAnnotation) {
+		WCHAR buf[512];
+		int i = 0;
+
+		while(i < 511 && *message)
+			buf[i++] = (WCHAR)(unsigned char)*message++;
+
+		buf[i] = 0;
+		
+		mpD3DAnnotation->BeginEvent(buf);
+	}
 }
 
 void VDTContextD3D11::EndScope() {
 	mProfChan.End();
+
+	if (mpD3DAnnotation)
+		mpD3DAnnotation->EndEvent();
 }
 
 VDRTProfileChannel *VDTContextD3D11::GetProfileChannel() {
@@ -2584,7 +2658,7 @@ void VDTContextD3D11::UnsetIndexBuffer(IVDTIndexBuffer *buffer) {
 
 void VDTContextD3D11::UnsetRenderTarget(IVDTSurface *surface) {
 	if (mpCurrentRT == surface)
-		SetRenderTarget(0, NULL);
+		SetRenderTarget(0, NULL, false);
 }
 
 void VDTContextD3D11::UnsetBlendState(IVDTBlendState *state) {
@@ -2675,7 +2749,7 @@ bool VDTCreateContextD3D11(IVDTContext **ppctx) {
 
 	vdrefptr<ID3D11Device> dev;
 	vdrefptr<ID3D11DeviceContext> devctx;
-	UINT flags = D3D11_CREATE_DEVICE_SINGLETHREADED;
+	UINT flags = D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_BGRA_SUPPORT;
 
 #ifdef _DEBUG
 	flags |= D3D11_CREATE_DEVICE_DEBUG;

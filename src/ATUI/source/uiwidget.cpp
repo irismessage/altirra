@@ -537,7 +537,7 @@ void ATUIWidget::OnMouseUp(sint32 x, sint32 y, uint32 vk) {
 		OnMouseUpL(x, y);
 }
 
-bool ATUIWidget::OnMouseWheel(sint32 x, sint32 y, float delta) {
+bool ATUIWidget::OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages) {
 	return false;
 }
 

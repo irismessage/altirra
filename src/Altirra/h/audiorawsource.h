@@ -44,18 +44,9 @@ protected:
 	IATAudioMixer *mpAudioMixer = nullptr;
 
 	float	mLevel = {};
-	float	mStartLevel = {};
+	uint32	mNextEdgeIndex = 0;
 
-	struct Edge {
-		uint32 mTime;
-		float mLevel;
-
-		bool operator==(const Edge& other) const {
-			return mTime == other.mTime && mLevel == other.mLevel;
-		}
-	};
-
-	vdfastdeque<Edge> mLevelEdges;
+	vdfastvector<ATSyncAudioEdge> mLevelEdges;
 };
 
 #endif

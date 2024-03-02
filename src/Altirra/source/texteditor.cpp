@@ -1388,10 +1388,13 @@ void TextEditor::OnMouseWheel(int wheelClicks, WPARAM modifiers, int x, int y) {
 	if (clicks) {
 		mMouseWheelAccum -= clicks*120;
 
-		UINT linesPerClick = 1;
+		UINT linesPerClick = 3;
 		::SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &linesPerClick, FALSE);
 
-		int lines = clicks * linesPerClick;
+		if (linesPerClick == WHEEL_PAGESCROLL)
+			linesPerClick = (UINT)GetVisibleLineCount();
+
+		int lines = clicks * (int)linesPerClick;
 
 		ScrollTo(mScrollY - lines, true);
 	}

@@ -41,6 +41,8 @@ enum ATFirmwareId {
 	kATFirmwareId_RapidusFlash,
 	kATFirmwareId_RapidusPBI16,
 	kATFirmwareId_Kernel_816,
+	kATFirmwareId_1090Firmware,
+	kATFirmwareId_1090Charset,
 	kATFirmwareId_PredefCount1,
 	kATFirmwareId_PredefCount = kATFirmwareId_PredefCount1 - 1,
 	kATFirmwareId_Custom = 0x10000
@@ -94,10 +96,17 @@ enum ATFirmwareType : uint32 {
 	kATFirmwareType_810Turbo,
 	kATFirmwareType_AMDC,
 	kATFirmwareType_PercomAT,
+	kATFirmwareType_PercomATSPD,
+	kATFirmwareType_815,
+	kATFirmwareType_SIDE3,
+	kATFirmwareType_1090Firmware,
+	kATFirmwareType_1090Charset,
+	kATFirmwareType_Bit3Firmware,
+	kATFirmwareType_Bit3Charset,
 	kATFirmwareTypeCount
 };
 
-enum ATSpecificFirmwareType {
+enum ATSpecificFirmwareType : uint32 {
 	kATSpecificFirmwareType_None,
 	kATSpecificFirmwareType_BASICRevA,
 	kATSpecificFirmwareType_BASICRevB,

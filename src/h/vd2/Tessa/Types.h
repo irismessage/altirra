@@ -13,13 +13,15 @@ enum VDTFormat {
 	kVDTF_Unknown,
 	kVDTF_R8G8B8A8,
 	kVDTF_B8G8R8A8,
+	kVDTF_B8G8R8A8_sRGB,
 	kVDTF_U8V8,
 	kVDTF_L8A8,
 	kVDTF_R8G8,
 	kVDTF_B5G6R5,
 	kVDTF_B5G5R5A1,
 	kVDTF_L8,
-	kVDTF_R8
+	kVDTF_R8,
+	kVDTF_R16G16B16A16F
 };
 
 struct VDTInitData2D {
@@ -155,6 +157,8 @@ struct VDTSwapChainDesc {
 	uint32 mHeight;
 	void *mhWindow;
 	bool mbWindowed;
+	bool mbSRGB;
+	bool mbHDR;
 	uint32 mRefreshRateNumerator;
 	uint32 mRefreshRateDenominator;
 };
@@ -181,15 +185,9 @@ struct VDTData {
 class VDTDataView : public VDTData {
 public:
 	template<class T, size_t N>
-	constexpr VDTDataView(T (&array)[N]) {
-		mpData = array;
-		mLength = N * sizeof(T);
-	}
+	constexpr VDTDataView(T (&array)[N]) : VDTData{array, N * sizeof(T)} {}
 
-	constexpr VDTDataView(const void *p, uint32 len) {
-		mpData = p;
-		mLength = len;
-	}
+	constexpr VDTDataView(const void *p, uint32 len) : VDTData{p, len} {}
 };
 
 struct VDTDeviceCaps {

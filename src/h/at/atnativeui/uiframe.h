@@ -345,6 +345,8 @@ public:
 
 	void	AddTrackingNotification(ATFrameWindow *w);
 
+	virtual void TestMenuAutoShow(const vdpoint32& pointerScreenPos);
+
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -362,6 +364,7 @@ protected:
 
 	void UpdateMonitorDpi();
 	virtual void UpdateMonitorDpi(unsigned dpiY);
+	virtual bool IsAutoHideMenuEnabled() const;
 
 	ATFrameWindow *ChooseNewActiveFrame(ATFrameWindow *prevFrame);
 
@@ -401,6 +404,8 @@ public:
 		kFrameModeEdge,
 		kFrameModeFull
 	};
+
+	static constexpr bool kRootContentHasEdge = true;
 
 	ATFrameWindow(ATContainerWindow *container);
 	~ATFrameWindow();
@@ -515,6 +520,7 @@ protected:
 	uint32 const		mPaneId;
 	uint32				mDefaultWindowStyles;
 	int					mPreferredDockCode;
+	ATFrameWindow		*mpFrameWindow;
 };
 
 typedef bool (*ATPaneCreator)(ATUIPane **);
@@ -529,5 +535,7 @@ uint32 ATUIGetGlobalDpiW32();
 uint32 ATUIGetWindowDpiW32(HWND hwnd);
 uint32 ATUIGetMonitorDpiW32(HMONITOR hMonitor);
 HFONT ATUICreateDefaultFontForDpiW32(uint32 dpi);
+int ATUIGetDpiScaledSystemMetricW32(int index, uint32 dpi);
+int ATUIGetDpiScaledSystemMetricForWindowW32(HWND hwnd, int index);
 
 #endif

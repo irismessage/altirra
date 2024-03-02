@@ -31,7 +31,16 @@
 #include <vd2/system/seh.h>
 #include <vd2/system/cpuaccel.h>
 
-void *VDAlignedMalloc(size_t n, unsigned alignment) {
+void *VDAlignedMallocThrow(size_t n, unsigned alignment) {
+	void *p = VDAlignedMalloc(n, alignment);
+
+	if (!p)
+		throw std::bad_alloc();
+
+	return p;
+}
+
+void *VDAlignedMalloc(size_t n, unsigned alignment) vdnoexcept {
 #ifdef VD_COMPILER_MSVC
 	return _aligned_malloc(n, alignment);
 #else
@@ -48,7 +57,7 @@ void *VDAlignedMalloc(size_t n, unsigned alignment) {
 #endif
 }
 
-void VDAlignedFree(void *p) {
+void VDAlignedFree(void *p) vdnoexcept {
 #ifdef VD_COMPILER_MSVC
 	_aligned_free(p);
 #else

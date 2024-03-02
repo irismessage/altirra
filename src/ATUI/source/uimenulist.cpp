@@ -606,12 +606,21 @@ bool ATUIMenuList::HandleMouseDownL(sint32 x, sint32 y, bool nested, uint32& ite
 		if (selIndex == mSelectedIndex) {
 			if (mpSubMenu)
 				CloseSubMenu();
-			else if (selIndex >= 0)
+			else if (selIndex >= 0) {
+				if (mActivatingEvent)
+					mActivatingEvent(this);
+
 				OpenSubMenu();
+			}
 
 			active = (mpSubMenu != NULL);
 		} else {
 			active = (selIndex >= 0);
+
+			if (active && !mbActive) {
+				if (mActivatingEvent)
+					mActivatingEvent(this);
+			}
 
 			SetSelectedIndex(selIndex, true);
 

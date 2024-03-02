@@ -54,7 +54,8 @@ enum ATVFSProtocol : uint8 {
 	kATVFSProtocol_File,
 	kATVFSProtocol_Zip,
 	kATVFSProtocol_GZip,
-	kATVFSProtocol_Atfs
+	kATVFSProtocol_Atfs,
+	kATVFSProtocol_Blob
 };
 
 bool ATDecodeVFSPath(VDStringW& dst, const VDStringSpanW& src);
@@ -101,7 +102,9 @@ protected:
 };
 
 void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, ATVFSFileView **viewOut);
+void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, bool update, ATVFSFileView **viewOut);
 
 void ATVFSSetAtfsProtocolHandler(vdfunction<void(ATVFSFileView *, const wchar_t *, ATVFSFileView **)> handler);
+void ATVFSSetBlobProtocolHandler(vdfunction<void(const wchar_t *, bool, bool, ATVFSFileView **)> handler);
 
 #endif

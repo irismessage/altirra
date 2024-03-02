@@ -18,8 +18,8 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/math.h>
+#include <at/ataudio/audiofilters.h>
 #include "audiowriter.h"
-#include "audiofilters.h"
 #include "uirender.h"
 
 ATAudioWriterFilter::ATAudioWriterFilter(bool pal)
@@ -40,8 +40,8 @@ size_t ATAudioWriterFilter::Process(const float *src, size_t n) {
 		for(size_t i=0; i<n; ++i) {
 			int y = (int)floor(0.5f + src[i] * 32768.0f);
 
-			if (y < -32767)
-				y = -32767;
+			if (y < -32768)
+				y = -32768;
 			else if (y > 32767)
 				y = 32767;
 
@@ -56,9 +56,9 @@ size_t ATAudioWriterFilter::Process(const float *src, size_t n) {
 			break;
 
 		const uint32 fidx = (uint32)mAccum64 >> 26;
-		const sint16 *src2 = mSourceBuffer + offset;
-		const sint16 *filt1 = gATAudioResamplingKernel63To44[fidx];
-		const sint16 *filt2 = gATAudioResamplingKernel63To44[fidx+1];
+		const sint16 *VDRESTRICT src2 = mSourceBuffer + offset;
+		const sint16 *VDRESTRICT filt1 = gATAudioResamplingKernel63To44.mFilter[fidx];
+		const sint16 *VDRESTRICT filt2 = gATAudioResamplingKernel63To44.mFilter[fidx+1];
 		sint32 accum1 = 0x4000 << 4;
 		sint32 accum2 = 0x4000 << 4;
 
@@ -75,11 +75,15 @@ size_t ATAudioWriterFilter::Process(const float *src, size_t n) {
 			accum2 += (sint32)filt2[i + 24] * (sint32)src2[i + 24];
 		}
 
+		sint32 lerpfrac = ((uint32)mAccum64 >> 12) & 0x3fff;
+		sint32 accum1lo = accum1 & 0x7fff;
+		sint32 accum2lo = accum1 & 0x7fff;
+
 		accum1 >>= 15;
 		accum2 >>= 15;
 
-		sint32 lerpfrac = ((uint32)mAccum64 >> 12) & 0x3fff;
-		sint32 val = accum1 + (((accum2 - accum1) * lerpfrac) >> 12);
+		sint32 val = accum1 + (((accum2 - accum1) * lerpfrac) >> 14);
+		val += (accum1lo + (((accum2lo - accum1lo) * lerpfrac) >> 14)) >> 15;
 
 		if (val < -32768)
 			val = -32768;

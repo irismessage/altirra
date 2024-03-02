@@ -143,6 +143,13 @@ IATDiskFS *ATDiskMountImage(IATDiskImage *image, bool readOnly) {
 			}
 		}
 	}
+
+	// check for CP/M
+	if (image->GetSectorSize() == 256) {
+		static constexpr uint8 kCPMSignature[] { 0xF3, 0x22, 0x55, 0x7F };
+		if (image->ReadVirtualSector(0, secbuf, 128) >= 128 && !memcmp(secbuf, kCPMSignature, 4))
+			return ATDiskMountImageCPM(image, readOnly);
+	}
 	
 	// Check the VTOC - $00 in the first byte is not valid for DOS 2.x/MyDOS; $01 indicates DOS 1.
 	// Values above $23 are invalid for MyDOS because they would correspond to disks larger than

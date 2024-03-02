@@ -122,6 +122,15 @@ uint32 VDCRCTable::Process(uint32 crc, const void *src0, size_t count) const {
 	return crc;
 }
 
+constexpr VDCRCTable::VDCRCTable(uint32 crc, int)
+	: mTable{}
+{
+	InitConst(crc);
+}
+
+// This is broken out weirdly so we can share code between the constexpr and
+// non-constexpr paths without forcing the non-constexpr path to do a useless
+// runtime array pre-initialization, imposed by constexpr safety reqs.
 constexpr void VDCRCTable::InitConst(uint32 crc) {
 	for(int i=0; i<256; ++i) {
 		unsigned v = i;
@@ -132,15 +141,7 @@ constexpr void VDCRCTable::InitConst(uint32 crc) {
 	}
 }
 
-constexpr VDCRCTable VDCRCTable::MakeConst(uint32 crc) {
-	VDCRCTable table;
-
-	table.InitConst(crc);
-
-	return table;
-}
-
-constexpr VDCRCTable VDCRCTable::CRC32 = MakeConst(VDCRCTable::kCRC32);
+constexpr VDCRCTable VDCRCTable::CRC32(VDCRCTable::kCRC32, 0);
 
 ///////////////////////////////////////////////////////////////////////////
 

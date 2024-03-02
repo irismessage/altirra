@@ -219,7 +219,7 @@ public:
 	void OnMouseDownL(sint32 x, sint32 y) override;
 	void OnMouseUpL(sint32 x, sint32 y) override;
 	void OnMouseMove(sint32 x, sint32 y) override;
-	bool OnMouseWheel(sint32 x, sint32 y, float delta) override;
+	bool OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages) override;
 	void OnMouseLeave() override;
 	void OnActionStart(uint32 trid) override;
 	void OnActionRepeat(uint32 trid) override;

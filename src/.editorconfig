@@ -1,5 +1,13 @@
 root = true
 
+[*]
+guidelines = 80
+guidelines_style = 1px dotted ff807000
+
+[*.{cpp,h,inl,fx,fxh}]
+indent_style = tab
+indent_size = 4
+
 [cmdhelp.txt]
 indent_style = space
 indent_size = 4

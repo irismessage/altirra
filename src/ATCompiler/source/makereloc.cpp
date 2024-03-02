@@ -18,7 +18,7 @@
 
 #include <stdafx.h>
 
-void write_offset(FILE *fo, uint32 offset, const uint8 *extra) {
+static void write_offset(FILE *fo, uint32 offset, const uint8 *extra) {
 	fprintf(fo, "\tdta\t");
 
 	while(offset >= 255) {
@@ -64,7 +64,7 @@ int cmd_makereloc(int argc, const char *const *argv) {
 
 		if (i) {
 			if (srclen != len)
-				fail("source objects don't match in length: %d != %d", srclen != len);
+				fail("source objects don't match in length: %d != %d", srclen, len);
 		} else {
 			srclen = len;
 		}

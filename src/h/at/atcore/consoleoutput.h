@@ -26,4 +26,11 @@ public:
 	virtual void WriteLine(const char *s) = 0;
 };
 
+class ATConsoleOutputNull final : public ATConsoleOutput {
+public:
+	void WriteLine(const char *s) override;
+};
+
+extern ATConsoleOutputNull g_ATConsoleOutputNull;
+
 #endif

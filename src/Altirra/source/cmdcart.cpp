@@ -34,20 +34,20 @@ int ATUIShowDialogCartridgeMapper(VDGUIHandle h, uint32 cartSize, const void *da
 extern void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType = kATImageType_None, bool *suppressColdReset = NULL, int loadIndex = -1, bool autoProfile = false);
 
 void OnCommandAttachCartridge(bool cart2) {
-	if (!ATUIConfirmDiscardCartridge(ATUIGetMainWindow()))
+	if (!ATUIConfirmDiscardCartridge(ATUIGetNewPopupOwner()))
 		return;
 
 	if (!ATUIConfirmCartridgeChangeReset())
 		return;
 
-	VDStringW fn(VDGetLoadFileName('cart', ATUIGetMainWindow(), L"Load cartridge",
+	VDStringW fn(VDGetLoadFileName('cart', ATUIGetNewPopupOwner(), L"Load cartridge",
 		g_ATUIFileFilter_LoadCartridge,
 		L"bin"));
 
 	if (fn.empty())
 		return;
 
-	DoLoad(ATUIGetMainWindow(), fn.c_str(), nullptr, 0, kATImageType_Cartridge, nullptr, cart2 ? 1 : 0);
+	DoLoad(ATUIGetNewPopupOwner(), fn.c_str(), nullptr, 0, kATImageType_Cartridge, nullptr, cart2 ? 1 : 0);
 	ATUIConfirmCartridgeChangeResetComplete();
 }
 
@@ -60,7 +60,7 @@ void OnCommandAttachCartridge2() {
 }
 
 void OnCommandDetachCartridge() {
-	if (!ATUIConfirmDiscardCartridge(ATUIGetMainWindow()))
+	if (!ATUIConfirmDiscardCartridge(ATUIGetNewPopupOwner()))
 		return;
 
 	if (!ATUIConfirmCartridgeChangeReset())
@@ -75,7 +75,7 @@ void OnCommandDetachCartridge() {
 }
 
 void OnCommandDetachCartridge2() {
-	if (!ATUIConfirmDiscardCartridge(ATUIGetMainWindow()))
+	if (!ATUIConfirmDiscardCartridge(ATUIGetNewPopupOwner()))
 		return;
 
 	if (!ATUIConfirmCartridgeChangeReset())
@@ -86,7 +86,7 @@ void OnCommandDetachCartridge2() {
 }
 
 void OnCommandAttachNewCartridge(ATCartridgeMode mode) {
-	if (!ATUIConfirmDiscardCartridge(ATUIGetMainWindow()))
+	if (!ATUIConfirmDiscardCartridge(ATUIGetNewPopupOwner()))
 		return;
 
 	if (!ATUIConfirmCartridgeChangeReset())
@@ -97,7 +97,7 @@ void OnCommandAttachNewCartridge(ATCartridgeMode mode) {
 }
 
 void OnCommandAttachCartridgeBASIC() {
-	if (!ATUIConfirmDiscardCartridge(ATUIGetMainWindow()))
+	if (!ATUIConfirmDiscardCartridge(ATUIGetNewPopupOwner()))
 		return;
 
 	if (!ATUIConfirmCartridgeChangeReset())
@@ -135,7 +135,7 @@ void OnCommandSaveCartridge() {
 
 	int optval[1]={0};
 
-	VDStringW fn(VDGetSaveFileName('cart', ATUIGetMainWindow(), L"Save cartridge",
+	VDStringW fn(VDGetSaveFileName('cart', ATUIGetNewPopupOwner(), L"Save cartridge",
 		L"Cartridge image with header (*.car)\0*.car\0"
 		L"Raw cartridge image (*.bin)\0*.bin\0",
 

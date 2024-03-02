@@ -1109,7 +1109,7 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 									++s;
 
 								VDStringSpanA arg(s);
-								arg.trim(" \t");
+								arg = arg.trim(" \t");
 
 								if (!arg.empty()) {
 									Directive& dir = mDirectives.push_back();
@@ -1130,7 +1130,7 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 									++s;
 
 								VDStringSpanA arg(s);
-								arg.trim(" \t");
+								arg = arg.trim(" \t");
 
 								if (!arg.empty()) {
 									Directive& dir = mDirectives.push_back();
@@ -1149,7 +1149,6 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 								while(*s == ' ' || *s == '\t')
 									++s;
 
-								const char *bankStart = s;
 								unsigned bank = 0;
 								if (*s == '$') {
 									char *t = const_cast<char *>(s);

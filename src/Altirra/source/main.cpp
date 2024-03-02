@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2009-2015 Avery Lee
+//	Copyright (C) 2009-2021 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -19,11 +19,13 @@
 #include <windows.h>
 #include <tchar.h>
 #include <time.h>
+#include <regex>
 #include <mmsystem.h>
 #include <shlwapi.h>
 #include <commdlg.h>
 #include <commctrl.h>
 #include <ole2.h>
+#include <uxtheme.h>
 #include <winsock2.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/cpuaccel.h>
@@ -50,8 +52,11 @@
 #include <vd2/Dita/services.h>
 #include <at/atappbase/crthooks.h>
 #include <at/atappbase/exceptionfilter.h>
+#include <at/atcore/asyncdispatcher.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/constants.h>
 #include <at/atcore/checksum.h>
+#include <at/atcore/devicevideo.h>
 #include <at/atcore/enumparseimpl.h>
 #include <at/atcore/media.h>
 #include <at/atcore/profile.h>
@@ -121,6 +126,8 @@
 #include "trace.h"
 #include "mediamanager.h"
 #include "savestateio.h"
+#include "versioninfo.h"
+#include "directorywatcher.h"
 
 #include "firmwaremanager.h"
 #include <at/atcore/devicemanager.h>
@@ -159,6 +166,7 @@ bool ATUIShowDialogVideoEncoding(VDGUIHandle parent, bool hz50, ATVideoEncoding&
 	ATVideoRecordingScalingMode& scalingMode,
 	bool& halfRate, bool& encodeAll);
 void ATUIShowDialogSetupWizard(VDGUIHandle hParent);
+void ATUIShowDialogCheckForUpdates(VDGUIHandle hParent);
 
 void ATUILoadRegistry(const wchar_t *path);
 void ATUISaveRegistry(const wchar_t *fnpath);
@@ -177,9 +185,13 @@ void ATUIFlushDisplay();
 
 void ATUIInitFirmwareMenuCallbacks(ATFirmwareManager *fwmgr);
 void ATUIInitProfileMenuCallbacks();
+void ATUIInitVideoOutputMenuCallback(IATDeviceVideoManager& devMgr);
 
 void ATSaveRegisterTypes();
 void ATInitSaveStateDeserializer();
+
+void ATLoadConfigVars();
+void ATResetConfigVars();
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -203,6 +215,14 @@ void ATUILinkMainWindowToSimulator(ATContainerWindow& w);
 void ATUIUnlinkMainWindowFromSimulator();
 
 ///////////////////////////////////////////////////////////////////////////////
+
+ATConfigVarBool g_ATCVEngineUseWaitableTimer("engine.use_waitable_timer", true);
+ATConfigVarInt32 g_ATCVEngineTurboFPSDivisor("engine.turbo_fps_divisor", 16);
+ATConfigVarBool g_ATCVEngineAllowDisplayLibraryOverrides = ATConfigVarBool("engine.allow_display_library_overrides", false,
+	[] {
+		VDDSetLibraryOverridesEnabled(g_ATCVEngineAllowDisplayLibraryOverrides);
+	}
+);
 
 extern const wchar_t g_wszWarning[]=L"Altirra Warning";
 
@@ -242,7 +262,11 @@ bool g_showFps = false;
 bool g_xepViewEnabled = false;
 bool g_xepViewAutoswitchingEnabled = false;
 
-ATUIKeyboardOptions g_kbdOpts = { true, false };
+ATUIKeyboardOptions g_kbdOpts = {
+	.mbRawKeys = true,
+	.mbFullRawKeys = false,
+	.mbAllowInputMapModifierOverlap = true
+};
 
 ATDisplayFilterMode g_dispFilterMode = kATDisplayFilterMode_SharpBilinear;
 int g_dispFilterSharpness = +1;
@@ -697,7 +721,7 @@ vdrefptr<ATUIFutureWithResult<bool> > ATUIConfirmDiscardAllStorage(const wchar_t
 		return vdrefptr<ATUIFutureWithResult<bool> >(new ATUIFutureWithResult<bool>(true));
 
 	if (ATUIGetNativeDialogMode())
-		return vdmakerefptr(new ATUIFutureWithResult<bool>(ATUIConfirm(ATUIGetMainWindow(), "DiscardStorage", msg.c_str(), L"Unsaved Items")));
+		return vdmakerefptr(new ATUIFutureWithResult<bool>(ATUIConfirm(ATUIGetNewPopupOwner(), "DiscardStorage", msg.c_str(), L"Unsaved Items")));
 
 	return ATUIShowAlertWarningConfirm(msg.c_str(), L"Discarding modified storage");
 }
@@ -1253,14 +1277,14 @@ public:
 
 				mpConfirmResult.clear();
 				mpFileDialogResult = ATUIShowOpenFileDialog('load', L"Load disk, cassette, cartridge, or program image",
-					L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.zip;*.atz;*.gz;*.bas;*.arc;*.sap\0"
+					L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.flac;*.zip;*.atz;*.gz;*.bas;*.arc;*.sap\0"
 					L"Atari program (*.xex,*.obx,*.com)\0*.xex;*.obx;*.com\0"
 					L"BASIC program (*.bas)\0*.bas\0"
 					L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm;*.arc\0"
 					L"Protected disk image (*.pro)\0*.pro\0"
 					L"VAPI disk image (*.atx)\0*.atx\0"
 					L"Cartridge (*.rom,*.bin,*.a52,*.car)\0*.rom;*.bin;*.a52;*.car\0"
-					L"Cassette tape (*.cas,*.wav)\0*.cas;*.wav\0"
+					L"Cassette tape (*.cas,*.wav,*.flac)\0*.cas;*.wav;*.flac\0"
 					L"Zip archive (*.zip)\0*.zip\0"
 					L"gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
 					L".ARC archive (*.arc)\0*.arc\0"
@@ -1377,7 +1401,7 @@ void ATSetFullscreen(bool fs) {
 
 		g_ATWindowPreFSDpi = ATUIGetWindowDpiW32(g_hwnd);
 
-		SetMenu(g_hwnd, NULL);
+		ATUISetMenuFullScreenHidden(true);
 
 		// We must clear WS_CLIPCHILDREN for D3D9 exclusive fullscreen to work on Windows 10 build 1709 since
 		// the top-level window has to be used as the device window and we need the child windows to not be
@@ -1430,7 +1454,7 @@ void ATSetFullscreen(bool fs) {
 			ShowWindow(g_hwnd, SW_MAXIMIZE);
 
 		g_fullscreen = false;
-		SetMenu(g_hwnd, g_hMenu);
+		ATUISetMenuFullScreenHidden(false);
 		g_sim.SetFrameSkipEnabled(true);
 	}
 
@@ -1491,15 +1515,19 @@ void OnCommandGTIAVisualizationNext() {
 	}
 }
 
-bool ATUIGetXEPViewAutoswitchingEnabled() {
+bool ATUIGetAltViewAutoswitchingEnabled() {
 	return g_xepViewAutoswitchingEnabled;
 }
 
-void ATUISetXEPViewAutoswitchingEnabled(bool enabled) {
+void ATUISetAltViewAutoswitchingEnabled(bool enabled) {
 	g_xepViewAutoswitchingEnabled = enabled;
 }
 
-void OnCommandVideoToggleXEP80ViewAutoswitching() {
+void OnCommandVideoToggleXEP80Output() {
+	ATUIToggleAltOutput("xep80");
+}
+
+void OnCommandVideoToggleOutputAutoswitching() {
 	g_xepViewAutoswitchingEnabled = !g_xepViewAutoswitchingEnabled;
 }
 
@@ -1808,6 +1836,10 @@ void OnCommandBootImage() {
 	OnCommandOpen(true);
 }
 
+bool OnTestCommandQuickLoadState() {
+	return g_pATQuickState != nullptr;
+}
+
 void OnCommandQuickLoadState() {
 	try {
 		if (g_pATQuickState)
@@ -1844,20 +1876,8 @@ void OnCommandSaveState() {
 
 	if (!fn.empty()) {
 		try {
-			vdrefptr<IATSerializable> snapshot;
-			g_sim.CreateSnapshot(~snapshot);
-
-			vdautoptr<IATSaveStateSerializer> ser(ATCreateSaveStateSerializer());
-			VDFileStream fs(fn.c_str(), nsVDFile::kWrite | nsVDFile::kCreateAlways | nsVDFile::kSequential);
-			VDBufferedWriteStream bs(&fs, 4096);
-			vdautoptr<IVDZipArchiveWriter> zip(VDCreateZipArchiveWriter(bs));
-
-			ser->Serialize(*zip, *snapshot);
-			zip->Finalize();
-			bs.Flush();
-			fs.close();
+			g_sim.SaveState(fn.c_str());
 		} catch(const MyError& e) {
-			VDRemoveFile(fn.c_str());
 			ATUIShowError((VDGUIHandle)g_hwnd, e);
 		}
 	}
@@ -2253,9 +2273,10 @@ public:
 					bool dirtyDisks = false;
 
 					for(int i=0; i<15; ++i) {
-						if (g_sim.IsStorageDirty(ATStorageId(kATStorageId_Disk + i)))
+						if (g_sim.IsStorageDirty(ATStorageId(kATStorageId_Disk + i))) {
 							dirtyDisks = true;
 							break;
+						}
 					}
 
 					if (dirtyDisks) {
@@ -2653,7 +2674,7 @@ void OnCommandToolsOptionsDialog() {
 	ATUIShowDialogOptions((VDGUIHandle)g_hwnd);
 }
 
-void OnCommandToolsKeyboardShortcutsDialog() {
+void ATUIShowDialogEditAccelerators(const char *preSelectedCommand) {
 	vdfastvector<VDAccelToCommandEntry> commands;
 
 	g_ATUICommandMgr.ListCommands(commands);
@@ -2669,11 +2690,15 @@ void OnCommandToolsKeyboardShortcutsDialog() {
 	if (ATUIShowDialogEditAccelerators((VDGUIHandle)g_hwnd,
 		commands.data(),
 		(uint32)commands.size(),
-		ATUIGetAccelTables(), ATUIGetDefaultAccelTables(), kATUIAccelContextCount, kContextNames))
+		ATUIGetAccelTables(), ATUIGetDefaultAccelTables(), kATUIAccelContextCount, kContextNames, preSelectedCommand))
 	{
 		ATUISaveAccelTables();
 		ATUILoadMenu();
 	}
+}
+
+void OnCommandToolsKeyboardShortcutsDialog() {
+	ATUIShowDialogEditAccelerators(nullptr);
 }
 
 void OnCommandToolsSetupWizard() {
@@ -2696,6 +2721,14 @@ void OnCommandHelpChangeLog() {
 
 void OnCommandHelpCmdLine() {
 	ATUIShowDialogCmdLineHelp((VDGUIHandle)g_hwnd);
+}
+
+void OnCommandHelpOnline() {
+	ATLaunchURL(AT_PRIMARY_URL);
+}
+
+void OnCommandHelpCheckForUpdates() {
+	ATUIShowDialogCheckForUpdates((VDGUIHandle)g_hwnd);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2774,6 +2807,38 @@ void SetKernelType(ATFirmwareType type) {
 	g_sim.SetKernel(id ? id : kATFirmwareId_NoKernel);
 }
 
+class ATTimeArgumentParseException final : public MyError {
+public:
+	ATTimeArgumentParseException() : MyError("Invalid time argument format.") {}
+};
+
+float ATParseTimeArgument(const wchar_t *s) {
+	// Formats we support:
+
+	// [[hh:]mm:]ss.sss
+	const std::wregex timeRegex1(LR"--((?:(?:([0-9]+)\:|)([0-9]+)\:|)([0-9]+(?:|\.[0-9]+)))--", std::regex_constants::icase);
+
+	// [00h][00m][00.000s]
+	const std::wregex timeRegex2(LR"--((?:([0-9]+)h|)(?:([0-9]+)m|)(?:([0-9]+(?:|\.[0-9]+))s|))--", std::regex_constants::icase);
+
+	float t = 0;
+
+	std::match_results<const wchar_t *> m;
+	if (!std::regex_match(s, m, timeRegex1) && !std::regex_match(s, m, timeRegex2))
+		throw ATTimeArgumentParseException();
+
+	if (m[1].matched)
+		t += (float)wcstol(m[1].str().c_str(), nullptr, 10) * 3600.0f;
+
+	if (m[2].matched)
+		t += (float)wcstol(m[2].str().c_str(), nullptr, 10) * 60.0f;
+
+	if (m[3].matched)
+		t += (float)wcstod(m[3].str().c_str(), nullptr);
+
+	return t;
+}
+
 void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 	bool coldReset = false;
 	bool debugMode = false;
@@ -2782,6 +2847,11 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 	bool unloaded = false;
 	VDStringW keysToType;
 	int cartmapper = 0;
+
+	if (cmdLine.FindAndRemoveSwitch(L"crash")) {
+		volatile char *volatile ptr = nullptr;
+		*ptr = 0;
+	}
 
 	bool autoProfile = cmdLine.FindAndRemoveSwitch(L"autoprofile");
 
@@ -2794,6 +2864,8 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		autoProfile = false;
 
 	ATSettingsSetBootstrapProfileMode(autoProfile);
+
+	float tapePos = 0;
 
 	try {
 		// This is normally intercepted early. If we got here, it was because of
@@ -3250,6 +3322,9 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			coldReset = true;// required to set up cassette autoboot
 		}
 
+		if (cmdLine.FindAndRemoveSwitch(L"tapepos", arg))
+			tapePos = ATParseTimeArgument(arg);
+
 		// We don't actually need to do anything with this switch. Its mere presence would have
 		// suppressed the setup wizard as any other switch does.
 		cmdLine.FindAndRemoveSwitch(L"skipsetup");
@@ -3274,13 +3349,17 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		}
 
 	} catch(const MyError& e) {
-		e.post(hwnd, "Altirra error");
+		ATUIShowError2((VDGUIHandle)hwnd, VDTextAToW(e.c_str()).c_str(), L"Command-line error");
 	}
 
 	ATSettingsSetBootstrapProfileMode(false);
 
 	if (coldReset)
 		g_sim.ColdReset();
+
+	if (tapePos > 0) {
+		g_sim.GetCassette().SeekToTime(tapePos);
+	}
 
 	const VDStringW dbgInitPath(VDMakePath(VDGetProgramPath().c_str(), L"startup.atdbg"));
 
@@ -3329,10 +3408,38 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			key.setBool("ShownSetupWizard", true);
 
 			if (!g_ATCmdLineHadAnything && !g_ATRegistryHadAnything) {
-				ATUIShowDialogSetupWizard(ATUIGetMainWindow());
+				ATUIShowDialogSetupWizard(ATUIGetNewPopupOwner());
 			}
 		}
 	}
+
+#ifndef VD_CPU_ARM64
+	// check if we are running emulated on ARM64, and pop up warning if so
+	auto pIsWow64Process2 = (BOOL (WINAPI *)(HANDLE, USHORT *, USHORT *))GetProcAddress(GetModuleHandle(_T("kernel32")), "IsWow64Process2");
+
+	USHORT processMachine = IMAGE_FILE_MACHINE_UNKNOWN;
+	USHORT nativeMachine = IMAGE_FILE_MACHINE_UNKNOWN;
+	if (pIsWow64Process2 && pIsWow64Process2(GetCurrentProcess(), &processMachine, &nativeMachine)) {
+		// We ignore processMachine as it is UNKNOWN for AMD64 on ARM64, since technically there is no
+		// WOW64 layer involved.
+		if (nativeMachine == IMAGE_FILE_MACHINE_ARM64) {
+			ATUIGenericDialogOptions opts;
+			opts.mhParent = ATUIGetNewPopupOwner();
+			opts.mpTitle = L"Native ARM64 version available";
+			opts.mpMessage = L"This version of the program is running in emulation on this computer. A native ARM64 version is available that would run faster.\n\n"
+				L"Would you like to visit the download page?"
+				;
+			opts.mpIgnoreTag = "ARM64Emu";
+			opts.mIconType = kATUIGenericIconType_Info;
+			opts.mAspectLimit = 4.0f;
+			opts.mResultMask = kATUIGenericResultMask_OKCancel;
+			opts.mValidIgnoreMask = kATUIGenericResultMask_Cancel;
+			if (ATUIShowGenericDialogAutoCenter(opts) == kATUIGenericResult_OK) {
+				ATLaunchURL(AT_DOWNLOAD_URL);
+			}
+		}
+	}
+#endif
 }
 
 void LoadSettingsEarly() {
@@ -3492,6 +3599,11 @@ int RunMainLoop2(HWND hwnd) {
 	int rcode = 0;
 	bool lastIsRunning = false;
 
+	HANDLE hTimer = nullptr;
+
+	if (g_ATCVEngineUseWaitableTimer)
+		hTimer = CreateWaitableTimer(nullptr, FALSE, nullptr);
+
 	g_pATIdle = [&](bool modalLoop) -> bool {
 		if (modalLoop && g_ATOptions.mbPauseDuringMenu)
 			return false;
@@ -3520,6 +3632,9 @@ int RunMainLoop2(HWND hwnd) {
 		}
 
 		if (isRunning && (g_winActive || !g_pauseInactive)) {
+			uint64 curTime;
+			bool curTimeValid = false;
+
 			g_ATAutoFrameFlipping = true;
 
 			uint32 frame = antic.GetPresentedFrameCounter();
@@ -3532,7 +3647,8 @@ int RunMainLoop2(HWND hwnd) {
 
 				lastFrame = frame;
 
-				uint64 curTime = VDGetPreciseTick();
+				curTime = VDGetPreciseTick();
+				curTimeValid = true;
 
 				++ticks;
 
@@ -3561,11 +3677,10 @@ int RunMainLoop2(HWND hwnd) {
 					nextTickUpdate = ticks - ticks % 60 + 60;
 				}
 
-				sint64 delta = curTime - lastTime;
+				sint64 lastFrameDuration = curTime - lastTime;
+				lastTime = curTime;
 
-				error += delta;
-
-				error -= g_frameTicks;
+				error += lastFrameDuration - g_frameTicks;
 				frameTimeErrorAccum += g_frameSubTicks;
 
 				if (frameTimeErrorAccum >= 0x10000) {
@@ -3575,9 +3690,7 @@ int RunMainLoop2(HWND hwnd) {
 				}
 
 				if (error > g_frameErrorBound || error < -g_frameErrorBound)
-					error = 0;
-
-				lastTime = curTime;
+					error = -g_frameTicks;
 
 				nextFrameTimeValid = false;
 				if (g_sim.IsTurboModeEnabled())
@@ -3585,28 +3698,55 @@ int RunMainLoop2(HWND hwnd) {
 				else if (error < 0) {
 					nextFrameTimeValid = true;
 					nextFrameTime = curTime - error;
+
+					if (hTimer) {
+						int timerTicks = -(sint64)(-error * 10000000 / secondTime);
+
+						if (timerTicks >= 0)
+							timerTicks = -1;
+
+						LARGE_INTEGER deadline { .QuadPart = timerTicks };
+						SetWaitableTimerEx(hTimer, &deadline, 0, nullptr, nullptr, nullptr, 0);
+					}
 				}
 			}
 
-			bool dropFrame = g_sim.IsTurboModeEnabled() && (lastFrame & 15);
+			bool dropFrame = g_sim.IsTurboModeEnabled() && (lastFrame % std::clamp<uint32>(g_ATCVEngineTurboFPSDivisor, 1, 100)) != 0;
 			if (nextFrameTimeValid) {
-				uint64 curTime = VDGetPreciseTick();
+				if (hTimer) {
+					ATProfileBeginRegion(kATProfileRegion_Idle);
+					bool timerElapsed = ::MsgWaitForMultipleObjects(1, &hTimer, FALSE, INFINITE, QS_ALLINPUT) == WAIT_OBJECT_0;
+					ATProfileEndRegion(kATProfileRegion_Idle);
 
-				sint64 delta = nextFrameTime - curTime;
+					if (!timerElapsed)
+						return true;
 
-				if (delta <= 0 || delta > g_frameTimeout)
 					nextFrameTimeValid = false;
-				else {
-					int ticks = (int)(delta * 1000 / secondTime);
+				} else {
+					if (!curTimeValid) {
+						curTime = VDGetPreciseTick();
+						curTimeValid = true;
+					}
 
-					if (ticks <= 0)
+					sint64 ticksToNextFrame = nextFrameTime - curTime;
+
+					if (ticksToNextFrame <= 0 || ticksToNextFrame > g_frameTimeout) {
+						// we're already at or past next frame, or it's way off (>1 second);
+						// just render
 						nextFrameTimeValid = false;
-					else {
-						if (g_sim.IsTurboModeEnabled())
+					} else {
+						int msToDelay = (int)(ticksToNextFrame * 1000 / secondTime);
+
+						if (msToDelay <= 0) {
+							// sub-1ms delay not possible, so just render frame
+							nextFrameTimeValid = false;
+						} else if (g_sim.IsTurboModeEnabled()) {
+							// turbo mode, render frame but allow frame drop
 							dropFrame = true;
-						else {
+						} else {
+							// delay to next frame
 							ATProfileBeginRegion(kATProfileRegion_Idle);
-							::MsgWaitForMultipleObjects(0, NULL, FALSE, ticks, QS_ALLINPUT);
+							::MsgWaitForMultipleObjects(0, NULL, FALSE, msToDelay, QS_ALLINPUT);
 							ATProfileEndRegion(kATProfileRegion_Idle);
 							return true;
 						}
@@ -3614,7 +3754,7 @@ int RunMainLoop2(HWND hwnd) {
 				}
 			}
 
-			if (g_sim.GetAntic().GetBeamY() == 0)
+			if (g_sim.GetAntic().GetBeamY() == 248)
 				ATProfileMarkEvent(kATProfileEvent_BeginFrame);
 
 			ATProfileBeginRegion(kATProfileRegion_Simulation);
@@ -3627,9 +3767,9 @@ int RunMainLoop2(HWND hwnd) {
 				updateScreenPending = false;
 
 				if (ar == ATSimulator::kAdvanceResult_WaitingForFrame) {
-					ATProfileBeginRegion(kATProfileRegion_Idle);
+					ATProfileBeginRegion(kATProfileRegion_IdleFrameDelay);
 					::MsgWaitForMultipleObjects(0, NULL, FALSE, 1, QS_ALLINPUT);
-					ATProfileEndRegion(kATProfileRegion_Idle);
+					ATProfileEndRegion(kATProfileRegion_IdleFrameDelay);
 				}
 			}
 
@@ -3679,6 +3819,9 @@ int RunMainLoop2(HWND hwnd) {
 
 	}
 
+	if (hTimer)
+		CloseHandle(hTimer);
+
 	if (lastIsRunning) {
 		ATEndIdleJoystickPoll();
 		timeEndPeriod(1);
@@ -3698,14 +3841,14 @@ int RunMainLoop(HWND hwnd) {
 	return rc;
 }
 
-int RunInstance(int nCmdShow, class ATStartupLogger&);
+int RunInstance(int nCmdShow, class ATStartupLogger&, ATSettingsCategory categoriesToIgnore);
 
 void ATUISetCommandLine(const wchar_t *s) {
 	g_ATCmdLine.Init(s);
 	g_ATCmdLineRead = false;
 }
 
-bool ATInitRegistry() {
+bool ATInitRegistry(ATSettingsCategory& categoriesToIgnore) {
 	// setup registry
 	VDRegistryAppKey::setDefaultKey("Software\\virtualdub.org\\Altirra\\");
 
@@ -3781,6 +3924,10 @@ bool ATInitRegistry() {
 
 				for(const VDStringA& valueName : valuesToDelete)
 					appKey.removeValue(valueName.c_str());
+			} else if (resetToken == L"advconfig") {
+				ATResetConfigVars();
+			} else if (resetToken == L"devices") {
+				categoriesToIgnore = ATSettingsCategory(categoriesToIgnore | kATSettingsCategory_Devices);
 			} else {
 				VDStringW msg;
 				msg.sprintf(L"Unknown settings type to reset: '%*ls'", (int)resetToken.size(), resetToken.data());
@@ -3835,31 +3982,43 @@ void ATShutdownRegistry() {
 void ATInitCPUOptions() {
 	uint32 cpuext = CPUCheckForExtensions();
 
-	{
-		const wchar_t *token;
-		if (g_ATCmdLine.FindAndRemoveSwitch(L"hostcpu", token)) {
-			if (!vdwcsicmp(token, L"none"))
-				cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU;
-			else if (!vdwcsicmp(token, L"mmx"))
-				cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX;
-			else if (!vdwcsicmp(token, L"isse"))
-				cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE;
-			else if (!vdwcsicmp(token, L"sse"))
-				cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
-						| CPUF_SUPPORTS_SSE2;
-			else if (!vdwcsicmp(token, L"sse2"))
-				cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
-						| CPUF_SUPPORTS_SSE2;
-			else if (!vdwcsicmp(token, L"sse3"))
-				cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
-						| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3;
-			else if (!vdwcsicmp(token, L"ssse3"))
-				cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
-						| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3 | CPUF_SUPPORTS_SSSE3;
-			else if (!vdwcsicmp(token, L"sse41"))
-				cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
-						| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3 | CPUF_SUPPORTS_SSSE3 | CPUF_SUPPORTS_SSE41;
-		}
+	const wchar_t *token;
+	if (g_ATCmdLine.FindAndRemoveSwitch(L"hostcpu", token)) {
+#if VD_CPU_X86 || VD_CPU_X64
+		if (!vdwcsicmp(token, L"none"))
+			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU;
+		else if (!vdwcsicmp(token, L"mmx"))
+			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX;
+		else if (!vdwcsicmp(token, L"isse"))
+			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE;
+		else if (!vdwcsicmp(token, L"sse"))
+			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+					| CPUF_SUPPORTS_SSE2;
+		else if (!vdwcsicmp(token, L"sse2"))
+			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+					| CPUF_SUPPORTS_SSE2;
+		else if (!vdwcsicmp(token, L"sse3"))
+			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+					| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3;
+		else if (!vdwcsicmp(token, L"ssse3"))
+			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+					| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3 | CPUF_SUPPORTS_SSSE3;
+		else if (!vdwcsicmp(token, L"sse41"))
+			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+					| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3 | CPUF_SUPPORTS_SSSE3 | CPUF_SUPPORTS_SSE41;
+		else if (!vdwcsicmp(token, L"sse42"))
+			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+					| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3 | CPUF_SUPPORTS_SSSE3 | CPUF_SUPPORTS_SSE41
+					| CPUF_SUPPORTS_CLMUL;
+		else if (!vdwcsicmp(token, L"avx"))
+			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+					| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3 | CPUF_SUPPORTS_SSSE3 | CPUF_SUPPORTS_SSE41
+					| CPUF_SUPPORTS_CLMUL | CPUF_SUPPORTS_AVX;
+		else if (!vdwcsicmp(token, L"avx2"))
+			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+					| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3 | CPUF_SUPPORTS_SSSE3 | CPUF_SUPPORTS_SSE41
+					| CPUF_SUPPORTS_CLMUL | CPUF_SUPPORTS_LZCNT | CPUF_SUPPORTS_AVX | CPUF_SUPPORTS_AVX2;
+#endif
 	}
 
 	CPUEnableExtensions(cpuext);
@@ -3869,34 +4028,16 @@ void ATInitCPUOptions() {
 void ATInitDisplayOptions() {
 	if (g_ATCmdLine.FindAndRemoveSwitch(L"gdi")) {
 		g_ATOptions.mbDirty = true;
-		g_ATOptions.mbDisplayDDraw = false;
 		g_ATOptions.mbDisplayD3D9 = false;
 		g_ATOptions.mbDisplay3D = false;
-		g_ATOptions.mbDisplayOpenGL = false;
-	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"ddraw")) {
-		g_ATOptions.mbDirty = true;
-		g_ATOptions.mbDisplayDDraw = true;
-		g_ATOptions.mbDisplayD3D9 = false;
-		g_ATOptions.mbDisplay3D = false;
-		g_ATOptions.mbDisplayOpenGL = false;
-	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"opengl")) {
-		g_ATOptions.mbDirty = true;
-		g_ATOptions.mbDisplayDDraw = false;
-		g_ATOptions.mbDisplayD3D9 = false;
-		g_ATOptions.mbDisplay3D = false;
-		g_ATOptions.mbDisplayOpenGL = true;
 	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"d3d9")) {
 		g_ATOptions.mbDirty = true;
-		g_ATOptions.mbDisplayDDraw = false;
 		g_ATOptions.mbDisplayD3D9 = true;
 		g_ATOptions.mbDisplay3D = false;
-		g_ATOptions.mbDisplayOpenGL = false;
 	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"d3d11")) {
 		g_ATOptions.mbDirty = true;
-		g_ATOptions.mbDisplayDDraw = false;
 		g_ATOptions.mbDisplayD3D9 = false;
 		g_ATOptions.mbDisplay3D = true;
-		g_ATOptions.mbDisplayOpenGL = false;
 	}
 }
 
@@ -3919,43 +4060,420 @@ void ATInitRand() {
 
 	const uint64 hash = ATComputeBlockChecksum(kATBaseChecksum, &data, sizeof data);
 
-	srand((unsigned)(hash ^ (hash >> 32)));
+	uint32 hash32 = (uint32)(hash ^ (hash >> 32));
+	srand((unsigned)hash32);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
 class ATStartupLogger {
 public:
-	void Init() {
+	~ATStartupLogger() {
+		sCrashLogger = nullptr;
+		sHookLogger = nullptr;
+	}
+
+	void Init(const wchar_t *channels) {
 		mbEnabled = true;
 
 		// attach to parent console if we can, otherwise allocate a new one
 		if (!AttachConsole(ATTACH_PARENT_PROCESS))
 			AllocConsole();
 
-		mStartTick = VDGetCurrentTick();
+		DWORD actual;
+		WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), "\r\n", 2, &actual, nullptr);
+
+		mStartTick = VDGetPreciseTick();
+		mLastMsgTick = mStartTick;
+
+		ATSetExceptionPreFilter(ExceptionPreFilter);
+
+		sCrashLogger = this;
+
+		OSVERSIONINFOW osinfo { sizeof(OSVERSIONINFOW) };
+#pragma warning(push)
+#pragma warning(disable:4996)
+		if (GetVersionExW(&osinfo)) {
+#pragma warning(pop)
+			VDStringA s;
+			s.sprintf("Windows %u.%u.%u"
+				, osinfo.dwMajorVersion
+				, osinfo.dwMinorVersion
+				, osinfo.dwBuildNumber
+			);
+
+			Log(s.c_str());
+		}
+
+		if (channels && *channels) {
+			VDStringRefW s(channels);
+			VDStringA channelName;
+
+			for(;;) {
+				VDStringRefW token;
+				bool last = !s.split(L',', token);
+
+				if (last)
+					token = s;
+
+				bool found = false;
+				if (token.comparei(L"hostwinmsg") == 0) {
+					// special case -- hook message loop and log window messages
+					if (!sHookLogger) {
+						sHookLogger = this;
+						sMsgHook = SetWindowsHookExW(WH_CALLWNDPROC, LogWindowMessage, VDGetLocalModuleHandleW32(), GetCurrentThreadId());
+						sMsgHookRet = SetWindowsHookExW(WH_CALLWNDPROCRET, LogWindowMessageRet, VDGetLocalModuleHandleW32(), GetCurrentThreadId());
+					}
+
+					found = true;
+				} else if (token.comparei(L"time") == 0) {
+					mbShowTimeDeltas = true;
+					found = true;
+				} else {
+					for(ATLogChannel *p = ATLogGetFirstChannel();
+						p;
+						p = ATLogGetNextChannel(p))
+					{
+						if (token.comparei(VDTextU8ToW(VDStringSpanA(p->GetName()))) == 0) {
+							p->SetEnabled(true);
+							found = true;
+							break;
+						}
+					}
+				}
+
+				if (!found)
+					Log("Warning: A log channel specified in /startuplog was not found.");
+
+				if (last)
+					break;
+			}
+		}
+	}
+
+	bool IsEnabled() const {
+		return mbEnabled;
 	}
 
 	void Log(const char *msg) {
+		Log(VDStringSpanA(msg));
+	}
+
+	void Log(VDStringSpanA msg) {
 		if (mbEnabled) {
 			DWORD actual;
 			HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
 			char buf[32];
 
-			snprintf(buf, 32, "[%6.3f] ", (float)(VDGetCurrentTick() - mStartTick) / 1000.0f);
+			const uint64 t = VDGetPreciseTick();
+			const double scale = VDGetPreciseSecondsPerTick();
+			snprintf(buf, 32, "[%6.3f] ", (double)(t - mStartTick) * scale);
 			buf[31] = 0;
 
 			WriteFile(h, buf, (DWORD)strlen(buf), &actual, nullptr);
-			WriteFile(h, msg, (DWORD)strlen(msg), &actual, nullptr);
+
+			if (mbShowTimeDeltas) {
+				snprintf(buf, 32, "[%+6.3f] ", (double)(t - mLastMsgTick) * scale);
+				buf[31] = 0;
+
+				WriteFile(h, buf, (DWORD)strlen(buf), &actual, nullptr);
+
+				mLastMsgTick = t;
+			}
+
+			WriteFile(h, msg.data(), (DWORD)msg.size(), &actual, nullptr);
 			WriteFile(h, "\r\n", 2, &actual, nullptr);
 		}
 	}
 
+	static LRESULT CALLBACK LogWindowMessage(int code, WPARAM localSendFlag, LPARAM msgInfo) {
+		if (sHookLogger) {
+			CWPSTRUCT& cwp = *(CWPSTRUCT *)msgInfo;
+
+			VDStringA s;
+
+#if VD_PTR_SIZE > 4
+			s.sprintf("HOSTWINMSG: %c %08X %08X %016llX %016llX", localSendFlag ? L'S' : L'P',
+				(unsigned)(uintptr)cwp.hwnd,
+				(unsigned)cwp.message,
+				(unsigned long long)cwp.wParam,
+				(unsigned long long)cwp.lParam);
+#else
+			s.sprintf("HOSTWINMSG: %c %08X %08X %08X %08X", localSendFlag ? L'S' : L'P',
+				(unsigned)cwp.hwnd,
+				(unsigned)cwp.message,
+				(unsigned)cwp.wParam,
+				(unsigned)cwp.lParam);
+#endif
+
+			sHookLogger->Log(s);
+		}
+
+		return CallNextHookEx(sMsgHook, code, localSendFlag, msgInfo);
+	}
+
+	static LRESULT CALLBACK LogWindowMessageRet(int code, WPARAM localSendFlag, LPARAM msgInfo) {
+		if (sHookLogger) {
+			CWPRETSTRUCT& cwp = *(CWPRETSTRUCT *)msgInfo;
+
+			VDStringA s;
+
+#if VD_PTR_SIZE > 4
+			s.sprintf("HOSTWINMSG: R %08X %08X %016llX %016llX -> %016llX",
+				(unsigned)(uintptr)cwp.hwnd,
+				(unsigned)cwp.message,
+				(unsigned long long)cwp.wParam,
+				(unsigned long long)cwp.lParam,
+				(unsigned long long)cwp.lResult
+			);
+#else
+			s.sprintf("HOSTWINMSG: R %08X %08X %08X %08X -> %08X",
+				(unsigned)cwp.hwnd,
+				(unsigned)cwp.message,
+				(unsigned)cwp.wParam,
+				(unsigned)cwp.lParam,
+				(unsigned)cwp.lResult
+			);
+#endif
+
+			sHookLogger->Log(s);
+		}
+
+		return CallNextHookEx(sMsgHookRet, code, localSendFlag, msgInfo);
+	}
+
+	static void ExceptionPreFilter(DWORD code, const EXCEPTION_POINTERS *exptrs) {
+		// kill window message hook logging, we do not want to log any messages that
+		// might arrive due to the message box
+		sHookLogger = nullptr;
+
+		HMODULE hmod = VDGetLocalModuleHandleW32();
+		VDStringA s;
+
+#ifdef VD_CPU_X86
+		s.sprintf("CRASH: Code: %08X  PC: %08X  ExeBase: %08X", code, exptrs->ContextRecord->Eip, (unsigned)hmod);
+#elif defined(VD_CPU_AMD64)
+		s.sprintf("CRASH: Code: %08X  PC: %08X`%08X  ExeBase: %08X`%08X"
+			, code
+			, (unsigned)(exptrs->ContextRecord->Rip >> 32)
+			, (unsigned)exptrs->ContextRecord->Rip
+			, (unsigned)((uintptr)hmod >> 32)
+			, (unsigned)(uintptr)hmod
+		);
+#elif defined(VD_CPU_ARM64)
+		s.sprintf("CRASH: Code: %08X  PC: %08X`%08X  ExeBase: %08X`%08X"
+			, code
+			, (unsigned)(exptrs->ContextRecord->Pc >> 32)
+			, (unsigned)exptrs->ContextRecord->Pc
+			, (unsigned)((uintptr)hmod >> 32)
+			, (unsigned)(uintptr)hmod
+		);
+#else
+	#error Platform not supported
+#endif
+
+		sCrashLogger->Log(s);
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
+		MEMORY_BASIC_INFORMATION mbi {};
+		if (VirtualQuery(hmod, &mbi, sizeof mbi)) {
+			// try to determine extent
+			uintptr extent = 0;
+			while(mbi.AllocationBase == hmod && mbi.RegionSize > 0) {
+				extent += mbi.RegionSize;
+
+				if (!VirtualQuery((char *)hmod + extent, &mbi, sizeof mbi))
+					break;
+
+				// we shouldn't be this big, if we are then something's wrong
+				if ((extent | mbi.RegionSize) >= 0x10000000)
+					break;
+			}
+
+#ifdef VD_CPU_X86
+			const uintptr *sp = (const uintptr *)exptrs->ContextRecord->Esp;
+#elif defined(VD_CPU_AMD64)
+			const uintptr *sp = (const uintptr *)exptrs->ContextRecord->Rsp;
+#endif
+
+			int n = 0;
+			for(int i=0; i<500; ++i) {
+				bool valid = true;
+
+				// can't mix EH types in the same function, so...
+				uintptr v = [p = &sp[i], &valid]() -> uintptr {
+					__try {
+						return *p;
+					} __except(EXCEPTION_EXECUTE_HANDLER) {
+						valid = false;
+						return 0;
+					}
+				}();
+
+				if (!valid)
+					break;
+
+				// check if stack entry is within EXE range
+				uintptr offset = v - (uintptr)hmod;
+				if (offset < extent) {
+					// check if stack entry is in executable code
+					if (VirtualQuery((LPCVOID)v, &mbi, sizeof mbi) && (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))) {
+						s.sprintf("CRASH: [%2d] exe+%08X", n, (unsigned)offset);
+						sCrashLogger->Log(s);
+
+						if (++n >= 30)
+							break;
+					}
+				}
+			}
+		}
+#endif
+	}
+
+	static ATStartupLogger *sCrashLogger;
+	static ATStartupLogger *sHookLogger;
+	static HHOOK sMsgHook;
+	static HHOOK sMsgHookRet;
+
 	bool mbEnabled = false;
-	uint32 mStartTick = 0;
+	bool mbShowTimeDeltas = false;
+	uint64 mStartTick = 0;
+	uint64 mLastMsgTick = 0;
 };
 
+ATStartupLogger *ATStartupLogger::sCrashLogger;
+ATStartupLogger *ATStartupLogger::sHookLogger;
+HHOOK ATStartupLogger::sMsgHook;
+HHOOK ATStartupLogger::sMsgHookRet;
+
+#ifdef ATNRELEASE
+extern int ATTestMain();
+#endif
+
+#ifdef VD_CPU_X64
+
+extern "C" {
+	void __cdecl __acrt_get_process_end_policy();
+	void __cdecl __acrt_get_begin_thread_init_policy();
+}
+
+VDNOINLINE void ATEnableWin64MacOSWorkaround(ATStartupLogger& logger) {
+	// Wine64 5.7 on macOS has a critical problem with its ABI emulation where it
+	// can't properly emulate TEB access through the GS: selector due to macOS
+	// already using it for pthread local storage. It tries to work around this
+	// by hijacking the slots as gs:[30h] and gs:[58h] for the self and thread-
+	// local-storage pointers. Unfortunately, this runs afoul of code in the UCRT
+	// that directly accesses gs:[60h] to get to the PEB for Windows Runtime
+	// support... so, despite us not caring about UWP, we're screwed by this
+	// compatibility issue. The result is a null pointer crash in
+	// _beginthreadex(), typically when we try to spin up the display manager.
+	//
+	// Ultimately, this is a really bad bug that Wine64 needs to fix. It is
+	// rumored to be fixed in Crossover 20 betas, but in the meantime, while we
+	// don't *offically* support Wine or macOS, we have some users that are kind
+	// of stuck.
+	//
+	// To hack around it, we first check whether the environment has this problem
+	// by checking whether the direct TEB access returns the same PEB pointer as
+	// going through the TEB->Self pointer. This is a safe access because even
+	// Wine64 on macOS does set up a proper TEB/PEB. This check will pass under
+	// Windows or any environment where Wine64 can set up proper GS: addressing,
+	// such as Linux. If that check fails, then we scan the code segments around
+	// the pertinent UCRT functions for this offending instruction:
+	//
+	//		mov rax, qword ptr gs:[60h]
+	//
+	// ...and replace it with a call that effectively does NtCurrentTeb()->Peb instead:
+	//
+	//		call read_peb_indirect
+	//
+	//	read_peb_indirect:
+	//		mov rax, qword ptr gs:[30h]
+	//		mov rax, qword ptr [rax+60h]
+	//		ret
+	//
+	// As this is super ugly nasty hackery, currently this is opt-in only via
+	// the /macwine64hack switch or if Wine is detected by NTDLL export.
+	//
+	// More info:
+	//	https://bugs.winehq.org/show_bug.cgi?id=49802
+	//	https://developercommunity.visualstudio.com/t/64-bit-EXEs-built-with-VS2019-crash-unde/1248753
+
+	const auto readPebIndirect = []() -> unsigned long long {
+		unsigned long long tebSelf = __readgsqword(0x30);
+		unsigned long long pebIndirect = *(const unsigned long long *)(tebSelf + 0x60);
+
+		return pebIndirect;
+	};
+	
+	logger.Log("Wine64 on macOS hack enabled -- checking GS: access to TEB.");
+
+	unsigned long long pebDirect = __readgsqword(0x60);
+
+	if (pebDirect == readPebIndirect()) {
+		logger.Log("GS segment register points to proper TEB, no hack required.");
+	} else {
+		logger.Log("GS segment register points to bogus TEB, patching UCRT code.");
+
+		char *routines[2] {
+			(char *)__acrt_get_begin_thread_init_policy,
+			(char *)__acrt_get_process_end_policy
+		};
+
+		static const uint8 kBadCodeSequence[] = {
+			// mov rax,qword ptr gs:[60h]
+			0x65, 0x48, 0x8B, 0x04, 0x25, 0x60, 0x00, 0x00, 0x00
+		};
+
+		for (char *p : routines) {
+			for (int i=0; i<256; ++i) {
+				if (!memcmp(p + i, kBadCodeSequence, vdcountof(kBadCodeSequence))) {
+					// We got a hit. Encode a CALL rel32 instruction to the corrective thunk
+					// and patch it into the code segment.
+
+					uint8 fixSequence[] = {
+						// CALL rel32
+						0xE8, 0x00, 0x00, 0x00, 0x00,
+
+						// NOP dword ptr [rax]
+						0x0F, 0x1F, 0x40, 0x00
+					};
+
+					static_assert(vdcountof(kBadCodeSequence) == vdcountof(fixSequence));
+
+					uint32 offset = (uint32)((uint64)(unsigned long long (*)())readPebIndirect - (uint64)(p + i + 5));
+					memcpy(&fixSequence[1], &offset, 4);
+
+					// patch the code segment
+					DWORD dwOldProtect = 0;
+					if (VirtualProtect(p + i, vdcountof(kBadCodeSequence), PAGE_EXECUTE_READWRITE, &dwOldProtect)) {
+						memcpy(p + i, fixSequence, vdcountof(fixSequence));
+
+						DWORD dwOldProtect2 = 0;
+						VirtualProtect(p + i, vdcountof(kBadCodeSequence), dwOldProtect, &dwOldProtect2);
+					}
+					break;
+				}
+			}
+		}
+	}
+}
+#endif
+
 int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
+#ifdef ATNRELEASE
+	// In Debug and Profile configurations, the main Altirra executable now also
+	// doubles as the unit test driver so that code within the main project can
+	// be tested. However, we want unit tests to run in console mode for easier
+	// logging and batching. To deal with this, we check the PE header to see if
+	// the executable has been built or changed to the console subsystem. If so,
+	// we invoke the test driver instead of the main executable.
+	const IMAGE_NT_HEADERS *imageHeaders = (const IMAGE_NT_HEADERS *)((char *)&__ImageBase + ((const IMAGE_DOS_HEADER *)&__ImageBase)->e_lfanew);
+
+	if (imageHeaders->OptionalHeader.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI)
+		return ATTestMain();
+#endif
+
 	ATStartupLogger startupLogger;
 
 	ATSaveRegisterTypes();
@@ -3965,12 +4483,32 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 
 	ATUISetCommandLine(GetCommandLineW());
 
+	BOOL suppressTimerExceptions = FALSE;
+	::SetUserObjectInformation(GetCurrentProcess(), UOI_TIMERPROC_EXCEPTION_SUPPRESSION, &suppressTimerExceptions, sizeof suppressTimerExceptions);
 	::SetUnhandledExceptionFilter(ATUnhandledExceptionFilter);
 
-	if (g_ATCmdLine.FindAndRemoveSwitch(L"startuplog")) {
-		startupLogger.Init();
+	const wchar_t *token = nullptr;
+	if (g_ATCmdLine.FindAndRemoveSwitch(L"startuplog", token)) {
+		startupLogger.Init(token);
 		startupLogger.Log("Startup logging enabled.");
 	}
+
+#ifdef VD_CPU_X64
+	if (!g_ATCmdLine.FindAndRemoveSwitch(L"nomacwine64hack")) {
+		bool doTebCheck = g_ATCmdLine.FindAndRemoveSwitch(L"macwine64hack");
+
+		if (!doTebCheck) {
+			const HMODULE hmodNtdll = GetModuleHandleW(L"ntdll");
+			if (hmodNtdll && GetProcAddress(hmodNtdll, "wine_get_version")) {
+				startupLogger.Log("Wine detected -- checking TEB for Wine bug 49802.");
+				doTebCheck = true;
+			}
+		}
+
+		if (doTebCheck)
+			ATEnableWin64MacOSWorkaround(startupLogger);
+	}
+#endif
 
 	if (g_ATCmdLine.FindAndRemoveSwitch(L"fullheapdump"))
 		ATExceptionFilterSetFullHeapDump(true);
@@ -3986,9 +4524,12 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 	ATVFSInstallAtfsHandler();
 
 	InitCommonControls();
+	BufferedPaintInit();
+
+	startupLogger.Log("Initializing themes");
+	ATUIInitThemes();
 
 	int rval = 0;
-	const wchar_t *token;
 	if (g_ATCmdLine.FindAndRemoveSwitch(L"showfileassocdlg", token)) {
 		// We don't _really_ need to do this as Win64 kernel handles are documented as
 		// being 32-bit significant, but it's cheap.
@@ -4012,35 +4553,53 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 		if (hm)
 			FreeLibrary(hm);
 	} else {
-		if (!ATInitRegistry()) {
+		ATSettingsCategory categoriesToIgnore {};
+
+		if (!ATInitRegistry(categoriesToIgnore)) {
 			rval = 5;
 		} else {
-			startupLogger.Log("Loading options");
-			ATOptionsLoad();
+			if (g_ATCmdLine.FindAndRemoveSwitch(L"advconfig")) {
+				extern void ATUIShowDialogAdvancedConfiguration(VDGUIHandle h);
+				ATUIShowDialogAdvancedConfiguration(nullptr);
+			} else {
+				startupLogger.Log("Loading config var overrides");
+				ATLoadConfigVars();
 
-			startupLogger.Log("Loading settings");
-			LoadSettingsEarly();
+				startupLogger.Log("Loading options");
+				ATOptionsLoad();
 
-			ATInitDisplayOptions();
+				startupLogger.Log("Loading settings");
+				LoadSettingsEarly();
 
-			bool singleInstance = g_ATOptions.mbSingleInstance;
-			if (g_ATCmdLine.FindAndRemoveSwitch(L"singleinstance") ||
-				g_ATCmdLine.FindAndRemoveSwitch(L"si"))
-			{
-				singleInstance = true;
-			}
-			else if (g_ATCmdLine.FindAndRemoveSwitch(L"nosingleinstance") ||
-				g_ATCmdLine.FindAndRemoveSwitch(L"nosi"))
-			{
-				singleInstance = false;
-			}
+				ATInitDisplayOptions();
 
-			if (!singleInstance || !ATNotifyOtherInstance(g_ATCmdLine)) {
-				if (g_ATCmdLine.FindAndRemoveSwitch(L"lockd3d"))
-					g_d3d9Lock.Lock();
+				bool singleInstance = g_ATOptions.mbSingleInstance;
+				if (g_ATCmdLine.FindAndRemoveSwitch(L"singleinstance") ||
+					g_ATCmdLine.FindAndRemoveSwitch(L"si"))
+				{
+					singleInstance = true;
+				}
+				else if (g_ATCmdLine.FindAndRemoveSwitch(L"nosingleinstance") ||
+					g_ATCmdLine.FindAndRemoveSwitch(L"nosi"))
+				{
+					singleInstance = false;
+				}
 
-				startupLogger.Log("Running instance");
-				rval = RunInstance(nCmdShow, startupLogger);
+				ATNotifyOtherInstanceResult notifyResult = ATNotifyOtherInstanceResult::NoOtherInstance;
+				if (singleInstance) {
+					notifyResult = ATNotifyOtherInstance(g_ATCmdLine);
+
+					if (notifyResult == ATNotifyOtherInstanceResult::Failed)
+						rval = 20;
+				}
+
+				if (notifyResult == ATNotifyOtherInstanceResult::NoOtherInstance) {
+					if (g_ATCmdLine.FindAndRemoveSwitch(L"lockd3d"))
+						g_d3d9Lock.Lock();
+
+					startupLogger.Log("Running instance");
+					rval = RunInstance(nCmdShow, startupLogger, categoriesToIgnore);
+				}
 			}
 
 			startupLogger.Log("Shutting down registry");
@@ -4048,25 +4607,47 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 		}
 	}
 
+	BufferedPaintUnInit();
+
 	startupLogger.Log("Shutting down OLE");
 	OleUninitialize();
 
 	startupLogger.Log("Shutting down thunk allocator");
 	VDShutdownThunkAllocator();
 
+	startupLogger.Log("Exiting (end of log).");
 	return rval;
 }
 
-int RunInstance(int nCmdShow, ATStartupLogger& startupLogger) {
+class ATSystemLibraryLockW32 {
+public:
+	ATSystemLibraryLockW32(const char *name)
+		: mhmod(VDLoadSystemLibraryW32(name))
+	{
+	}
+
+	~ATSystemLibraryLockW32() {
+		if (mhmod)
+			FreeLibrary(mhmod);
+	}
+
+private:
+	HMODULE mhmod = nullptr;
+};
+
+int RunInstance(int nCmdShow, ATStartupLogger& startupLogger, ATSettingsCategory categoriesToIgnore) {
+	startupLogger.Log("Preloading DLLs");
+	ATSystemLibraryLockW32 lockd3d9("d3d9");
+	ATSystemLibraryLockW32 lockd3d11("d3d11");
+	ATSystemLibraryLockW32 lockdxgi("dxgi");
+	ATSystemLibraryLockW32 lockdwmapi("dwmapi");
+
 	g_hInst = VDGetLocalModuleHandleW32();
 
 	startupLogger.Log("Registering controls");
 	VDRegisterVideoDisplayControl();
 	VDUIRegisterHotKeyExControl();
 	ATUINativeWindow::Register();
-
-	startupLogger.Log("Initializing themes");
-	ATUIInitThemes();
 	
 	startupLogger.Log("Initializing frame system");
 	ATInitUIFrameSystem();
@@ -4083,17 +4664,14 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger) {
 	struct local {
 		static void DisplayUpdateFn(ATOptions& opts, const ATOptions *prevOpts, void *) {
 			if (prevOpts) {
-				if (prevOpts->mbDisplayDDraw == opts.mbDisplayDDraw
-					&& prevOpts->mbDisplayD3D9 == opts.mbDisplayD3D9
-					&& prevOpts->mbDisplayOpenGL == opts.mbDisplayOpenGL
+				if (prevOpts->mbDisplayD3D9 == opts.mbDisplayD3D9
 					&& prevOpts->mbDisplay3D == opts.mbDisplay3D
 					&& prevOpts->mbDisplay16Bit == opts.mbDisplay16Bit
 					)
 					return;
 			}
 
-			VDVideoDisplaySetFeatures(true, false, false, opts.mbDisplayOpenGL, opts.mbDisplayD3D9, false, false);
-			VDVideoDisplaySetDDrawEnabled(opts.mbDisplayDDraw);
+			VDVideoDisplaySetFeatures(true, false, false, opts.mbDisplayD3D9, false, false);
 			VDVideoDisplaySet3DEnabled(opts.mbDisplay3D);
 
 			IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
@@ -4115,6 +4693,12 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger) {
 		}
 	);
 
+	ATOptionsAddUpdateCallback(true,
+		[](ATOptions& opts, const ATOptions *prevOpts, void *) {
+			ATDirectoryWatcher::SetShouldUsePolling(opts.mbPollDirectories);
+		}
+	);
+
 	VDVideoDisplaySetDebugInfoEnabled(g_ATCmdLine.FindAndRemoveSwitch(L"displaydebug"));
 	VDVideoDisplaySetMonitorSwitchingDXEnabled(true);
 	VDVideoDisplaySetSecondaryDXEnabled(true);
@@ -4131,7 +4715,15 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger) {
 	ATInitUIPanes();
 
 	startupLogger.Log("Initializing logging");
-	ATInitDebuggerLogging();
+	ATInitDebuggerLogging(
+		startupLogger.IsEnabled()
+			? vdfunction<void(const char *)>([&startupLogger](const char *msg) {
+					VDStringRefA msg2(msg);
+
+					startupLogger.Log(msg2.trim_end("\r\n"));
+				})
+			: nullptr
+	);
 
 	startupLogger.Log("Initializing native UI");
 	ATInitProfilerUI();
@@ -4172,7 +4764,9 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger) {
 	// bring up simulator
 	startupLogger.Log("Initializing simulator");
 	g_sim.Init();
+	g_sim.SetRandomSeed(rand() ^ (rand() << 15));
 
+	ATUISetDispatcher(g_sim.GetDeviceManager()->GetService<IATAsyncDispatcher>());
 	ATUILinkMainWindowToSimulator(*g_pMainWindow);
 
 	startupLogger.Log("Initializing game controllers");
@@ -4184,18 +4778,24 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger) {
 	ATRegisterDevices(*g_sim.GetDeviceManager());
 
 	// initialize menus (requires simulator)
-	startupLogger.Log("Initializing menus");
+	startupLogger.Log("Initializing firmware menus");
 	ATUIInitFirmwareMenuCallbacks(g_sim.GetFirmwareManager());
+
+	startupLogger.Log("Initializing profile menus");
 	ATUIInitProfileMenuCallbacks();
 
+	startupLogger.Log("Initializing video output menu");
+	ATUIInitVideoOutputMenuCallback(*g_sim.GetDeviceManager()->GetService<IATDeviceVideoManager>());
+
+	startupLogger.Log("Loading menu");
 	try {
 		ATUILoadMenu();
 	} catch(const MyError& e) {
 		e.post(hwnd, "Altirra Error");
 	}
 
+	startupLogger.Log("Initializing port menus");
 	ATInitPortMenus(g_sim.GetInputManager());
-	SetMenu(hwnd, g_hMenu);
 
 	// bring up debugger
 	startupLogger.Log("Initializing debugger");
@@ -4217,9 +4817,11 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger) {
 	// load initial profile
 	const bool useHardwareBaseline = g_ATCmdLine.FindAndRemoveSwitch(L"baseline");
 
-	const ATSettingsCategory settingsToLoad = useHardwareBaseline
+	ATSettingsCategory settingsToLoad = useHardwareBaseline
 			? ATSettingsCategory(kATSettingsCategory_All & ~(kATSettingsCategory_FullScreen | kATSettingsCategory_Baseline))
 			: ATSettingsCategory(kATSettingsCategory_All & ~kATSettingsCategory_FullScreen);
+
+	settingsToLoad = ATSettingsCategory(settingsToLoad & ~categoriesToIgnore);
 
 	const wchar_t *profileName;
 	uint32 profileToLoad = kATProfileId_Invalid;
@@ -4270,8 +4872,10 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger) {
 		e.post(hwnd, "Altirra Error");
 	}
 
+	startupLogger.Log("Saving options");
 	ATOptionsSave();
 
+	startupLogger.Log("Starting emulation");
 	g_sim.Resume();
 	ATInitEmuErrorHandler((VDGUIHandle)g_hwnd, &g_sim);
 
@@ -4322,6 +4926,7 @@ int RunInstance(int nCmdShow, ATStartupLogger& startupLogger) {
 	ATShutdownJoysticks();
 
 	startupLogger.Log("Shutting down simulator");
+	ATUISetDispatcher(nullptr);
 	ATUIUnlinkMainWindowFromSimulator();
 	g_sim.Shutdown();
 

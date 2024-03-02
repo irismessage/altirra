@@ -356,9 +356,6 @@ void ATUIFileBrowser::Repopulate() {
 		VDDirectoryIterator it(VDMakePath(mpTextEditPath->GetText(), L"*.*").c_str());
 
 		while(it.Next()) {
-			if (it.IsDotDirectory())
-				continue;
-
 			vdrefptr<ATUIFileBrowserItem> item(new ATUIFileBrowserItem);
 
 			item->mName = it.GetName();
@@ -376,4 +373,5 @@ void ATUIFileBrowser::Repopulate() {
 	}
 
 	mpListView->SetSelectedItem(0);
+	mpListView->ScrollToPixel(0, true);
 }

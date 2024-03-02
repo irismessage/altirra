@@ -29,29 +29,14 @@
 #include <vd2/system/win32/intrin.h>
 #include <vd2/system/cpuaccel.h>
 
-static long g_lCPUExtensionsEnabled;
+long g_lCPUExtensionsEnabled;
 static long g_lCPUExtensionsAvailable;
 
 extern "C" {
 	bool FPU_enabled, MMX_enabled, SSE_enabled, ISSE_enabled, SSE2_enabled;
 };
 
-#if (!defined(VD_CPU_X86) && !defined(VD_CPU_AMD64)) || defined(__MINGW32__)
-long CPUCheckForExtensions() {
-	return 0;
-}
-#else
-
-namespace {
-#ifdef _M_IX86
-	bool VDIsAVXSupportedByOS() {
-		return (_xgetbv(0) & 0x06) == 0x06;
-	}
-#else
-	extern "C" bool VDCDECL VDIsAVXSupportedByOS();
-#endif
-}
-
+#if VD_CPU_X86 || VD_CPU_X64
 // This code used to use IsProcessorFeaturePresent(), but this function is somewhat
 // suboptimal in Win64 -- for one thing, it doesn't return true for MMX, at least
 // on Vista 64.
@@ -88,21 +73,38 @@ long CPUCheckForExtensions() {
 		if (sseSupported) {
 			flags |= CPUF_SUPPORTS_SSE | CPUF_SUPPORTS_INTEGER_SSE;
 
+			// EDX[26] = SSE2
 			if (cpuInfo[3] & (1 << 26))
 				flags |= CPUF_SUPPORTS_SSE2;
 
+			// ECX[0] = SSE3
 			if (cpuInfo[2] & 0x00000001)
 				flags |= CPUF_SUPPORTS_SSE3;
 
+			// ECX[9] = SSSE3
 			if (cpuInfo[2] & 0x00000200)
 				flags |= CPUF_SUPPORTS_SSSE3;
 
-			if (cpuInfo[2] & 0x00080000)
+			// ECX[19] = SSE4.1
+			if (cpuInfo[2] & 0x00080000) {
 				flags |= CPUF_SUPPORTS_SSE41;
+
+				// ECX[20] = SSE4.2
+				// ECX[1] = CLMUL/PCMULQDQ
+				//
+				// The oldest CPUs that support CLMUL are Intel Pentium 4 Westmere,
+				// AMD Bulldozer, and AMD Jaguar. Westmere supports SSE4.2,
+				// Bulldozer/Jaguar support AVX. 
+				//
+				if (cpuInfo[2] & (1 << 20)) {
+					if (cpuInfo[2] & (1 << 1))
+						flags |= CPUF_SUPPORTS_CLMUL;
+				}
+			}
 
 			// check OSXSAVE and AVX bits
 			if ((cpuInfo[2] & ((1 << 27) | (1 << 28))) == ((1 << 27) | (1 << 28))) {
-				if (VDIsAVXSupportedByOS()) {
+				if ((_xgetbv(0) & 0x06) == 0x06) {
 					flags |= CPUF_SUPPORTS_AVX;
 
 					if (cpuInfo[0] >= 7) {
@@ -125,43 +127,52 @@ long CPUCheckForExtensions() {
 		}
 	}
 
-	// check for 3DNow!, 3DNow! extensions
+	// check for AMD extensions
 	__cpuid(cpuInfo, 0x80000000);
 	if ((unsigned)cpuInfo[0] >= 0x80000001U) {
 		__cpuid(cpuInfo, 0x80000001);
 
-		if (cpuInfo[3] & (1 << 31))
-			flags |= CPUF_SUPPORTS_3DNOW;
-
-		if (cpuInfo[3] & (1 << 30))
-			flags |= CPUF_SUPPORTS_3DNOW_EXT;
-
 		if (cpuInfo[3] & (1 << 22))
 			flags |= CPUF_SUPPORTS_INTEGER_SSE;
+
+		// ECX[5] = LZCNT/ABM
+		if (cpuInfo[2] & (1 << 5))
+			flags |= CPUF_SUPPORTS_LZCNT;
 	}
 
 	return flags;
+}
+#elif VD_CPU_ARM64
+long CPUCheckForExtensions() {
+	long flags = 0;
+
+	if (IsProcessorFeaturePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE))
+		flags |= VDCPUF_SUPPORTS_CRYPTO;
+
+	return flags;
+}
+#else
+long CPUCheckForExtensions() {
+	return 0;
 }
 #endif
 
 long CPUEnableExtensions(long lEnableFlags) {
 	g_lCPUExtensionsEnabled = lEnableFlags;
 
+#if VD_CPU_X86 || VD_CPU_X64
 	MMX_enabled = !!(g_lCPUExtensionsEnabled & CPUF_SUPPORTS_MMX);
 	FPU_enabled = !!(g_lCPUExtensionsEnabled & CPUF_SUPPORTS_FPU);
 	SSE_enabled = !!(g_lCPUExtensionsEnabled & CPUF_SUPPORTS_SSE);
 	ISSE_enabled = !!(g_lCPUExtensionsEnabled & CPUF_SUPPORTS_INTEGER_SSE);
 	SSE2_enabled = !!(g_lCPUExtensionsEnabled & CPUF_SUPPORTS_SSE2);
+#endif
 
 	return g_lCPUExtensionsEnabled;
 }
 
 long CPUGetAvailableExtensions() {
 	return g_lCPUExtensionsAvailable;
-}
-
-long CPUGetEnabledExtensions() {
-	return g_lCPUExtensionsEnabled;
 }
 
 void VDCPUCleanupExtensions() {

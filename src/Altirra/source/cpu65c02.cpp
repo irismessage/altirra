@@ -320,12 +320,18 @@ bool ATCPUEmulator::Decode65C02(uint8 opcode) {
 			break;
 
 		case 0x5A:	// PHY
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
+
 			*mpDstState++ = kStateYtoD;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStatePush;
 			break;
 
 		case 0x7A:	// PLY
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
+
 			*mpDstState++ = kStatePop;
 			*mpDstState++ = kStateDSetSZ;
 			*mpDstState++ = kStateDtoY;
@@ -334,12 +340,18 @@ bool ATCPUEmulator::Decode65C02(uint8 opcode) {
 			break;
 
 		case 0xDA:	// PHX
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
+
 			*mpDstState++ = kStateXtoD;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStatePush;
 			break;
 
 		case 0xFA:	// PLX
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
+
 			*mpDstState++ = kStatePop;
 			*mpDstState++ = kStateDSetSZ;
 			*mpDstState++ = kStateDtoX;

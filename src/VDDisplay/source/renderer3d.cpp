@@ -4,19 +4,17 @@
 #include <vd2/Kasumi/pixmapops.h>
 #include "renderer3d.h"
 
-extern const VDTDataView g_VDDispVPView_RenderFill;
-extern const VDTDataView g_VDDispVPView_RenderBlit;
+extern const VDTDataView g_VDDispVPView_RenderFillLinear;
+extern const VDTDataView g_VDDispVPView_RenderFillGamma;
+extern const VDTDataView g_VDDispVPView_RenderBlitLinear;
+extern const VDTDataView g_VDDispVPView_RenderBlitGamma;
 extern const VDTDataView g_VDDispFPView_RenderFill;
 extern const VDTDataView g_VDDispFPView_RenderBlit;
-extern const VDTDataView g_VDDispFPView_RenderBlitRBSwap;
 extern const VDTDataView g_VDDispFPView_RenderBlitDirect;
-extern const VDTDataView g_VDDispFPView_RenderBlitDirectRBSwap;
+extern const VDTDataView g_VDDispFPView_RenderBlitLinear;
 extern const VDTDataView g_VDDispFPView_RenderBlitStencil;
-extern const VDTDataView g_VDDispFPView_RenderBlitStencilRBSwap;
 extern const VDTDataView g_VDDispFPView_RenderBlitColor;
-extern const VDTDataView g_VDDispFPView_RenderBlitColorRBSwap;
 extern const VDTDataView g_VDDispFPView_RenderBlitColor2;
-extern const VDTDataView g_VDDispFPView_RenderBlitColor2RBSwap;
 
 VDDisplayCachedImage3D::VDDisplayCachedImage3D() {
 	mListNodePrev = NULL;
@@ -35,7 +33,7 @@ void *VDDisplayCachedImage3D::AsInterface(uint32 iid) {
 	return NULL;
 }
 
-bool VDDisplayCachedImage3D::Init(IVDTContext& ctx, void *owner, const VDDisplayImageView& imageView) {
+bool VDDisplayCachedImage3D::Init(IVDTContext& ctx, void *owner, bool linear, const VDDisplayImageView& imageView) {
 	mpHiBltNode.clear();
 
 	const VDPixmap& px = imageView.GetImage();
@@ -51,7 +49,7 @@ bool VDDisplayCachedImage3D::Init(IVDTContext& ctx, void *owner, const VDDisplay
 	if (w > caps.mMaxTextureWidth || h > caps.mMaxTextureHeight)
 		return false;
 
-	if (!ctx.CreateTexture2D(w, h, ctx.IsFormatSupportedTexture2D(kVDTF_B8G8R8A8) ? kVDTF_B8G8R8A8 : kVDTF_R8G8B8A8, 1, kVDTUsage_Default, NULL, ~mpTexture))
+	if (!ctx.CreateTexture2D(w, h, linear ? kVDTF_B8G8R8A8_sRGB : kVDTF_B8G8R8A8, 1, kVDTUsage_Default, NULL, ~mpTexture))
 		return false;
 
 	mWidth = px.w;
@@ -82,7 +80,7 @@ void VDDisplayCachedImage3D::Update(const VDDisplayImageView& imageView) {
 		const uint32 numRects = imageView.GetDirtyListSize();
 
 		VDTLockData2D lockData;
-		if (mpTexture->Lock(0, NULL, lockData)) {
+		if (mpTexture->Lock(0, NULL, true, lockData)) {
 			VDPixmap dst = {};
 			dst.format = nsVDPixmap::kPixFormat_XRGB8888;
 			dst.w = mTexWidth;
@@ -99,40 +97,16 @@ void VDDisplayCachedImage3D::Update(const VDDisplayImageView& imageView) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-VDDisplayRenderer3D::VDDisplayRenderer3D()
-	: mColor(0)
-	, mNativeColor(0)
-	, mVBOffset(0)
-	, mpContext(NULL)
-	, mpVPFill(NULL)
-	, mpVPBlit(NULL)
-	, mpVFFill(NULL)
-	, mpVFBlit(NULL)
-	, mpFPFill(NULL)
-	, mpFPBlit(NULL)
-	, mpFPBlitDirect(NULL)
-	, mpFPBlitStencil(NULL)
-	, mpFPBlitColor(NULL)
-	, mpFPBlitColor2(NULL)
-	, mpVB(NULL)
-	, mpIB(NULL)
-	, mpSS(NULL)
-	, mpSSPoint(NULL)
-	, mpBS(NULL)
-	, mpBSStencil(NULL)
-	, mpBSColor(NULL)
-	, mpRS(NULL)
-	, mpDCtx(NULL)
-{
+VDDisplayRenderer3D::VDDisplayRenderer3D() {
 }
 
 bool VDDisplayRenderer3D::Init(IVDTContext& ctx) {
 	mpContext = &ctx;
 
-	bool rbswap = !ctx.IsFormatSupportedTexture2D(kVDTF_B8G8R8A8);
-
-	if (!ctx.CreateVertexProgram(kVDTPF_MultiTarget, g_VDDispVPView_RenderFill, &mpVPFill) ||
-		!ctx.CreateVertexProgram(kVDTPF_MultiTarget, g_VDDispVPView_RenderBlit, &mpVPBlit)) {
+	if (!ctx.CreateVertexProgram(kVDTPF_MultiTarget, g_VDDispVPView_RenderFillLinear, &mpVPFillLinear) ||
+		!ctx.CreateVertexProgram(kVDTPF_MultiTarget, g_VDDispVPView_RenderFillGamma, &mpVPFillGamma) ||
+		!ctx.CreateVertexProgram(kVDTPF_MultiTarget, g_VDDispVPView_RenderBlitLinear, &mpVPBlitLinear) ||
+		!ctx.CreateVertexProgram(kVDTPF_MultiTarget, g_VDDispVPView_RenderBlitGamma, &mpVPBlitGamma)) {
 		Shutdown();
 		return false;
 	}
@@ -193,14 +167,15 @@ bool VDDisplayRenderer3D::Init(IVDTContext& ctx) {
 	rsdesc.mbEnableScissor = true;
 	rsdesc.mCullMode = kVDTCull_None;
 
-	if (!ctx.CreateVertexFormat(kFillVertexFormat, 2, mpVPFill, &mpVFFill) ||
-		!ctx.CreateVertexFormat(kBlitVertexFormat, 3, mpVPBlit, &mpVFBlit) ||
+	if (!ctx.CreateVertexFormat(kFillVertexFormat, 2, mpVPFillLinear, &mpVFFill) ||
+		!ctx.CreateVertexFormat(kBlitVertexFormat, 3, mpVPBlitLinear, &mpVFBlit) ||
 		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderFill, &mpFPFill) ||
-		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, rbswap ? g_VDDispFPView_RenderBlitRBSwap : g_VDDispFPView_RenderBlit, &mpFPBlit) ||
-		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, rbswap ? g_VDDispFPView_RenderBlitDirectRBSwap : g_VDDispFPView_RenderBlitDirect, &mpFPBlitDirect) ||
-		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, rbswap ? g_VDDispFPView_RenderBlitStencilRBSwap : g_VDDispFPView_RenderBlitStencil, &mpFPBlitStencil) ||
-		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, rbswap ? g_VDDispFPView_RenderBlitColorRBSwap : g_VDDispFPView_RenderBlitColor, &mpFPBlitColor) ||
-		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, rbswap ? g_VDDispFPView_RenderBlitColor2RBSwap : g_VDDispFPView_RenderBlitColor2, &mpFPBlitColor2) ||
+		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlit, &mpFPBlit) ||
+		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlitLinear, &mpFPBlitLinear) ||
+		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlitDirect, &mpFPBlitDirect) ||
+		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlitStencil, &mpFPBlitStencil) ||
+		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlitColor, &mpFPBlitColor) ||
+		!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, g_VDDispFPView_RenderBlitColor2, &mpFPBlitColor2) ||
 		!ctx.CreateVertexBuffer(kVBSize, true, NULL, &mpVB) ||
 		!ctx.CreateIndexBuffer(256 * 6, false, false, indices, &mpIB) ||
 		!ctx.CreateSamplerState(ssdesc, &mpSS) ||
@@ -245,18 +220,22 @@ void VDDisplayRenderer3D::Shutdown() {
 		mpFPBlitColor2,
 		mpFPBlitStencil,
 		mpFPBlitDirect,
+		mpFPBlitLinear,
 		mpFPBlit,
 		mpFPFill,
 		mpVFBlit,
 		mpVFFill,
-		mpVPBlit,
-		mpVPFill;
+		mpVPBlitLinear,
+		mpVPBlitGamma,
+		mpVPFillLinear,
+		mpVPFillGamma;
 }
 
-void VDDisplayRenderer3D::Begin(int w, int h, VDDisplayNodeContext3D& dctx) {
+void VDDisplayRenderer3D::Begin(int w, int h, VDDisplayNodeContext3D& dctx, bool renderLinear) {
 	mWidth = w;
 	mHeight = h;
 	mpDCtx = &dctx;
+	mbRenderLinear = renderLinear;
 
 	ApplyBaselineState();
 
@@ -273,6 +252,19 @@ void VDDisplayRenderer3D::Begin(int w, int h, VDDisplayNodeContext3D& dctx) {
 	mClipRect.set(0, 0, w, h);
 	mOffsetX = 0;
 	mOffsetY = 0;
+	mSDRIntensity = dctx.mSDRBrightness / 80.0f;
+
+	const float cbuf[4] {
+		mSDRIntensity,
+		0.0f,
+		0.0f,
+		0.0f
+	};
+
+	if (mbRenderLinear) {
+		mpContext->SetFragmentProgramConstCount(1);
+		mpContext->SetFragmentProgramConstF(0, 1, cbuf);
+	}
 }
 
 void VDDisplayRenderer3D::End() {
@@ -399,7 +391,7 @@ void VDDisplayRenderer3D::AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint
 		if (mpVB->Load(mVBOffset, vtxbytes, src)) {
 			mpContext->SetBlendState(mpBS);
 			mpContext->SetVertexFormat(mpVFFill);
-			mpContext->SetVertexProgram(mpVPFill);
+			mpContext->SetVertexProgram(mbRenderLinear ? mpVPFillLinear : mpVPFillGamma);
 			mpContext->SetFragmentProgram(mpFPFill);
 			mpContext->SetVertexStream(0, mpVB, mVBOffset, sizeof(FillVertex));
 			mpContext->DrawPrimitive(kVDTPT_TriangleStrip, 0, numBatchPts - 2);
@@ -503,7 +495,7 @@ void VDDisplayRenderer3D::StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh,
 			vdrefptr<VDDisplayTextureSourceNode3D> src(new VDDisplayTextureSourceNode3D);
 			VDDisplaySourceTexMapping mapping = {};
 
-			mapping.Init(cachedImage->mWidth, cachedImage->mHeight, cachedImage->mTexWidth, cachedImage->mTexHeight, !mpContext->IsFormatSupportedTexture2D(kVDTF_B8G8R8A8));
+			mapping.Init(cachedImage->mWidth, cachedImage->mHeight, cachedImage->mTexWidth, cachedImage->mTexHeight);
 
 			if (src->Init(cachedImage->mpTexture, mapping)) {
 				// create blit node
@@ -518,7 +510,10 @@ void VDDisplayRenderer3D::StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh,
 
 		if (cachedImage->mpHiBltNode) {
 			cachedImage->mpHiBltNode->SetDestArea(dx, dy, dw, dh);
-			cachedImage->mpHiBltNode->Draw(*mpContext, *mpDCtx);
+
+			const VDDRenderView& renderView = mpDCtx->CaptureRenderView();
+			cachedImage->mpHiBltNode->Draw(*mpContext, *mpDCtx, renderView);
+			mpDCtx->ApplyRenderView(renderView);
 			ApplyBaselineState();
 			return;
 		}
@@ -765,7 +760,7 @@ void VDDisplayRenderer3D::AddLines(const FillVertex *p, uint32 n, bool alpha) {
 	if (mpVB->Load(mVBOffset, vtxbytes, p)) {
 		mpContext->SetBlendState(alpha ? mpBS : NULL);
 		mpContext->SetVertexFormat(mpVFFill);
-		mpContext->SetVertexProgram(mpVPFill);
+		mpContext->SetVertexProgram(mbRenderLinear ? mpVPFillLinear : mpVPFillGamma);
 		mpContext->SetFragmentProgram(mpFPFill);
 		mpContext->SetVertexStream(0, mpVB, mVBOffset, sizeof(FillVertex));
 		mpContext->DrawPrimitive(kVDTPT_Lines, 0, n);
@@ -783,7 +778,7 @@ void VDDisplayRenderer3D::AddLineStrip(const FillVertex *p, uint32 n, bool alpha
 	if (mpVB->Load(mVBOffset, vtxbytes, p)) {
 		mpContext->SetBlendState(alpha ? mpBS : NULL);
 		mpContext->SetVertexFormat(mpVFFill);
-		mpContext->SetVertexProgram(mpVPFill);
+		mpContext->SetVertexProgram(mbRenderLinear ? mpVPFillLinear : mpVPFillGamma);
 		mpContext->SetFragmentProgram(mpFPFill);
 		mpContext->SetVertexStream(0, mpVB, mVBOffset, sizeof(FillVertex));
 		mpContext->DrawPrimitive(kVDTPT_LineStrip, 0, n);
@@ -801,7 +796,7 @@ void VDDisplayRenderer3D::AddQuads(const FillVertex *p, uint32 n, bool alpha) {
 	if (mpVB->Load(mVBOffset, vtxbytes, p)) {
 		mpContext->SetBlendState(alpha ? mpBS : NULL);
 		mpContext->SetVertexFormat(mpVFFill);
-		mpContext->SetVertexProgram(mpVPFill);
+		mpContext->SetVertexProgram(mbRenderLinear ? mpVPFillLinear : mpVPFillGamma);
 		mpContext->SetFragmentProgram(mpFPFill);
 		mpContext->SetVertexStream(0, mpVB, mVBOffset, sizeof(FillVertex));
 		mpContext->DrawIndexedPrimitive(kVDTPT_Triangles, 0, 0, n * 4, 0, n * 2);
@@ -818,12 +813,12 @@ void VDDisplayRenderer3D::AddQuads(const BlitVertex *p, uint32 n, BltMode bltMod
 
 	if (mpVB->Load(mVBOffset, vtxbytes, p)) {
 		mpContext->SetVertexFormat(mpVFBlit);
-		mpContext->SetVertexProgram(mpVPBlit);
+		mpContext->SetVertexProgram(mbRenderLinear ? mpVPBlitLinear : mpVPBlitGamma);
 		mpContext->SetVertexStream(0, mpVB, mVBOffset, sizeof(BlitVertex));
 
 		switch(bltMode) {
 			case kBltMode_Normal:
-				mpContext->SetFragmentProgram(mpFPBlit);
+				mpContext->SetFragmentProgram(mbRenderLinear ? mpFPBlitLinear : mpFPBlit);
 				mpContext->SetBlendState(NULL);
 				break;
 
@@ -862,7 +857,7 @@ VDDisplayCachedImage3D *VDDisplayRenderer3D::GetCachedImage(VDDisplayImageView& 
 			return NULL;
 		
 		cachedImage->AddRef();
-		if (!cachedImage->Init(*mpContext, this, imageView)) {
+		if (!cachedImage->Init(*mpContext, this, mbRenderLinear, imageView)) {
 			cachedImage->Release();
 			return NULL;
 		}
@@ -885,15 +880,19 @@ void VDDisplayRenderer3D::ApplyBaselineState() {
 	float iw = 1.0f / (float)mWidth;
 	float ih = 1.0f / (float)mHeight;
 
-	const float trans2d[4]={
+	const float vsconst[8]={
 		2.0f * iw,
 		-2.0f * ih,
 		-1.0f,
-		1.0f
+		1.0f,
+		mSDRIntensity,
+		0.0f,
+		0.0f,
+		0.0f
 	};
 
 	mpContext->SetVertexProgramConstCount(2);
-	mpContext->SetVertexProgramConstF(0, 1, trans2d);
+	mpContext->SetVertexProgramConstF(0, 2, vsconst);
 	mpContext->SetIndexStream(mpIB);
 	mpContext->SetBlendState(mpBS);
 	mpContext->SetSamplerStates(0, 1, &mpSS);

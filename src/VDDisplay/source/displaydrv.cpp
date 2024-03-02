@@ -355,6 +355,10 @@ bool VDVideoDisplayMinidriver::IsScreenFXSupported() const {
 	return false;
 }
 
+VDDHDRAvailability VDVideoDisplayMinidriver::IsHDRCapable() const {
+	return VDDHDRAvailability::NoMinidriverSupport;
+}
+
 void VDVideoDisplayMinidriver::SetFilterMode(FilterMode mode) {
 }
 
@@ -397,6 +401,10 @@ void VDVideoDisplayMinidriver::SetPixelSharpness(float xfactor, float yfactor) {
 	mPixelSharpnessY = yfactor;
 }
 
+void VDVideoDisplayMinidriver::SetSDRBrightness(float nits) {
+	mSDRBrightness = nits;
+}
+
 bool VDVideoDisplayMinidriver::SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) {
 	return !screenFX;
 }
@@ -437,6 +445,10 @@ bool VDVideoDisplayMinidriver::Resize(int width, int height) {
 
 bool VDVideoDisplayMinidriver::Invalidate() {
 	return false;
+}
+
+void VDVideoDisplayMinidriver::RequestCapture() {
+	mbFrameCaptureRequested = true;
 }
 
 bool VDVideoDisplayMinidriver::SetSubrect(const vdrect32 *r) {
@@ -516,4 +528,12 @@ void VDVideoDisplayMinidriver::UpdateDrawRect() {
 
 		mBorderRectCount = r - mBorderRects;
 	}
+}
+
+bool VDVideoDisplayMinidriver::CheckForCapturePending() {
+	if (!mbFrameCaptureRequested)
+		return false;
+
+	mbFrameCaptureRequested = false;
+	return true;
 }

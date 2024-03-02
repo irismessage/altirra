@@ -79,4 +79,15 @@ const T vdpoly_cast(const IVDUnknown *pUnk) {
 	return pUnk ? (const T)pUnk->AsInterface(vdpoly_id_from_ptr(T(NULL))) : NULL;
 }
 
+///////////////////////////////////////////////////////////////////////////
+
+constexpr uint32 operator""_vdtypeid(const char *s, size_t n) {
+	uint32 h = 2166136261;
+
+	while(n--)
+		h = (h ^ (unsigned char)*s++) * 16777619;
+
+	return h;
+}
+
 #endif

@@ -21,6 +21,7 @@
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include <at/atcore/memoryutils.h>
+#include <at/atcore/randomization.h>
 #include <at/atcore/vfs.h>
 #include <at/atio/blobimage.h>
 #include "hleprogramloader.h"
@@ -149,8 +150,10 @@ void ATHLEProgramLoader::Shutdown() {
 	vdsaferelease <<= mpImage;
 }
 
-void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage *image, ATHLEProgramLoadMode launchMode) {
+void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage *image, ATHLEProgramLoadMode launchMode, bool randomizeLaunchDelay) {
 	vdsaferelease <<= mpImage;
+
+	mbRandomizeLaunchDelay = randomizeLaunchDelay;
 
 	uint32 len = image->GetSize();
 	const uint8 *const buf = (const uint8 *)image->GetBuffer();
@@ -399,11 +402,26 @@ uint8 ATHLEProgramLoader::StartLoad() {
 
 	mpSimEventMgr->NotifyEvent(kATSimEvent_EXELoad);
 
+	if (mbRandomizeLaunchDelay) {
+		// A delay of 28-35K cycles is necessary for VCOUNT to be randomized, and 131K for
+		// the 17-bit PRNG. The latter is 4.3 frames.
+		mLaunchTime = mpSim->GetScheduler()->GetTick64() + (g_ATRandomizationSeeds.mProgramLaunchDelay % 131071);
+	}
+
 	// load next segment
 	return OnLoadContinue(0);
 }
 
 uint8 ATHLEProgramLoader::OnLoadContinue(uint16 pc) {
+	if (mbRandomizeLaunchDelay) {
+		if (mLaunchTime > mpSim->GetScheduler()->GetTick64()) {
+			mpCPU->PushWord(0x01FE - 1);
+			return 0x60;
+		}
+
+		mLaunchTime = 0;
+	}
+
 	ATCPUEmulatorMemory *mem = mpCPU->GetMemory();
 	ATKernelDatabase kdb(mem);
 

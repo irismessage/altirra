@@ -21,4 +21,6 @@
 
 [[noreturn]] void fail(const char *msg, ...);
 
+std::vector<uint8> ATCReadFileContents(const char *path);
+
 #endif

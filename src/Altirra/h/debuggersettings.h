@@ -18,11 +18,25 @@
 #define f_AT_DEBUGGERSETTINGS_H
 
 #include <vd2/system/vdstl.h>
+#include <at/atcore/enumparse.h>
 
 class ATDebuggerSettingBase {
 protected:
 	static void Load(const char *name, bool& value);
 	static void Save(const char *name, const bool& value);
+
+	template<typename T, typename = typename std::enable_if<std::is_enum_v<T>>::type>
+	static void Load(const char *name, T& value) {
+		value = (T)LoadEnum(name, (uint32)value, ATGetEnumLookupTable<T>());
+	}
+
+	template<typename T, typename = typename std::enable_if<std::is_enum_v<T>>::type>
+	static void Save(const char *name, const T& value) {
+		SaveEnum(name, (uint32)value, ATGetEnumLookupTable<T>());
+	}
+
+	static uint32 LoadEnum(const char *name, uint32 value, const ATEnumLookupTable& enumTable);
+	static void SaveEnum(const char *name, uint32 value, const ATEnumLookupTable& enumTable);
 };
 
 template<typename T>
@@ -88,5 +102,19 @@ extern ATDebuggerSetting<bool> g_ATDbgSettingShowCallPreviews;
 extern ATDebuggerSetting<bool> g_ATDbgSettingCollapseLoops;
 extern ATDebuggerSetting<bool> g_ATDbgSettingCollapseCalls;
 extern ATDebuggerSetting<bool> g_ATDbgSettingCollapseInterrupts;
+
+enum class ATDebugger816PredictionMode : uint8 {
+	Auto,
+	CurrentContext,
+	M8X8,
+	M8X16,
+	M16X8,
+	M16X16,
+	Emulation,
+};
+
+AT_DECLARE_ENUM_TABLE(ATDebugger816PredictionMode);
+
+extern ATDebuggerSetting<ATDebugger816PredictionMode> g_ATDbgSetting816PredictionMode;
 
 #endif

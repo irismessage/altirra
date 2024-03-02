@@ -16,10 +16,13 @@
 
 #include "stdafx.h"
 #include <at/atui/uicommandmanager.h>
+#include <at/ataudio/pokey.h>
 #include "cmdhelpers.h"
+#include "simulator.h"
 #include "uiaccessors.h"
 #include "uikeyboard.h"
 
+extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
 
 bool ATUIShowDialogKeyboardCustomize(VDGUIHandle hParent);
@@ -93,6 +96,10 @@ void OnCommandInputToggleAllowInputMapKeyboardOverlap() {
 	g_kbdOpts.mbAllowInputMapOverlap = !g_kbdOpts.mbAllowInputMapOverlap;
 }
 
+void OnCommandInputToggleAllowInputMapKeyboardModifierOverlap() {
+	g_kbdOpts.mbAllowInputMapModifierOverlap = !g_kbdOpts.mbAllowInputMapModifierOverlap;
+}
+
 void OnCommandInputKeyboardCopyToCustomLayout() {
 	if (g_kbdOpts.mLayoutMode == ATUIKeyboardOptions::kLM_Custom)
 		return;
@@ -127,9 +134,21 @@ namespace ATCommands {
 		{ "Input.ToggleAllowShiftOnReset", OnCommandInputToggleKeyboardUnshiftOnReset, nullptr, [] { return ToChecked(g_kbdOpts.mbAllowShiftOnColdReset); } },
 		{ "Input.Toggle1200XLFunctionKeys", OnCommandInputToggle1200XLFunctionKeys, [] { return g_kbdOpts.mLayoutMode != ATUIKeyboardOptions::kLM_Custom; }, [] { return ToChecked(g_kbdOpts.mbEnableFunctionKeys); } },
 		{ "Input.ToggleAllowInputMapKeyboardOverlap", OnCommandInputToggleAllowInputMapKeyboardOverlap, nullptr, [] { return ToChecked(g_kbdOpts.mbAllowInputMapOverlap); } },
+		{ "Input.ToggleAllowInputMapKeyboardModifierOverlap", OnCommandInputToggleAllowInputMapKeyboardModifierOverlap, nullptr, [] { return ToChecked(g_kbdOpts.mbAllowInputMapModifierOverlap); } },
 
 		{ "Input.KeyboardCopyToCustomLayout", OnCommandInputKeyboardCopyToCustomLayout, [] { return g_kbdOpts.mLayoutMode != ATUIKeyboardOptions::kLM_Custom; } },
 		{ "Input.KeyboardCustomizeLayoutDialog", OnCommandInputKeyboardCustomizeLayout, [] { return g_kbdOpts.mLayoutMode == ATUIKeyboardOptions::kLM_Custom; } },
+
+		{ "Input.ToggleRawInputEnabled"
+			, [] { ATUISetRawInputEnabled(!ATUIGetRawInputEnabled()); }
+			, nullptr
+			, [] { return ToChecked(ATUIGetRawInputEnabled()); }
+		},
+		{ "Input.ToggleImmediatePotUpdate"
+			, [] { g_sim.GetPokey().SetImmediatePotUpdateEnabled(!g_sim.GetPokey().IsImmediatePotUpdateEnabled()); }
+			, nullptr
+			, [] { return ToChecked(g_sim.GetPokey().IsImmediatePotUpdateEnabled()); }
+		},
 	};
 }
 

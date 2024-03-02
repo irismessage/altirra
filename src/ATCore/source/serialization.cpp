@@ -36,7 +36,7 @@ const ATSerializationTypeDef *ATSerializationFindType(const char *name) {
 
 	auto it = std::find_if(g_ATSerializationTypes.begin(), g_ATSerializationTypes.end(),
 		[=](const ATSerializationTypeDef *e) {
-			return e->mNameHash && !strcmp(e->mpName, name);
+			return e->mNameHash == hash && !strcmp(e->mpName, name);
 		}
 	);
 

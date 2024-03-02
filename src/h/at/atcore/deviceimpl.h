@@ -51,6 +51,13 @@ public:
 	virtual bool GetErrorStatus(uint32 idx, VDStringW& error) override;
 
 protected:
+	void *GetService(uint32 iid) const;
+
+	template<typename T>
+	T *GetService() const {
+		return (T *)GetService(T::kTypeID);
+	}
+
 	IATDeviceManager *mpDeviceManager = nullptr;
 	IATDeviceParent *mpDeviceParent = nullptr;
 	uint32 mDeviceParentBusIndex = 0;

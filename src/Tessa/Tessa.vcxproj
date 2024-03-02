@@ -28,6 +28,7 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="source\Config.cpp" />
     <ClCompile Include="source\Context.cpp" />
     <ClCompile Include="source\Format.cpp" />
     <ClCompile Include="source\Program.cpp" />
@@ -40,6 +41,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\h\vd2\Tessa\Config.h" />
     <ClInclude Include="h\stdafx.h" />
     <ClInclude Include="..\h\vd2\Tessa\Context.h" />
     <ClInclude Include="..\h\vd2\Tessa\Format.h" />

@@ -57,14 +57,14 @@ extern const wchar_t g_ATUIFileFilter_LoadCartridge[]=
 			L"All files\0*.*\0";
 
 extern const wchar_t g_ATUIFileFilter_LoadTape[]=
-			L"All supported types\0*.wav;*.cas\0"
+			L"All supported types\0*.wav;*.flac;*.cas\0"
 			L"Atari cassette image (*.cas)\0*.cas\0"
-			L"Waveform audio (*.wav)\0*.wav\0"
+			L"Waveform audio (*.wav, *.flac)\0*.wav;*.flac\0"
 			L"All files\0*.*\0";
 
 extern const wchar_t g_ATUIFileFilter_LoadTapeAudio[]=
 			L"All supported types\0*.wav\0"
-			L"Waveform audio (*.wav)\0*.wav\0"
+			L"Waveform audio (*.wav, *.flac)\0*.wav;*.flac\0"
 			L"All files\0*.*\0";
 
 extern const wchar_t g_ATUIFileFilter_SaveTape[]=

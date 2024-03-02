@@ -191,18 +191,16 @@ public:
 			ptr->AddRef();
 	}
 
-	vdrefptr(vdrefptr&& src)
+	vdnothrow vdrefptr(vdrefptr&& src) vdnoexcept
 		: ptr(src.ptr)
 	{
 		src.ptr = nullptr;
 	}
 
-	template<class U, typename = std::enable_if<true, decltype(static_cast<T&&>(std::declval<U>()))>::value>
-	explicit vdrefptr(vdrefptr<U>&& src)
-		: ptr(static_cast<U *>(src.ptr))
+	template<class U, typename = typename std::enable_if<true, decltype(static_cast<T&&>(std::declval<U>()))>>
+	vdnothrow explicit vdrefptr(vdrefptr<U>&& src) vdnoexcept
+		: ptr(static_cast<T *>(src.release()))
 	{
-		if (ptr)
-			ptr->AddRef();
 	}
 
 	/// Destroys the smart pointer, releasing any held reference.
@@ -255,31 +253,31 @@ public:
 	T** operator~() {
 		if (ptr) {
 			ptr->Release();
-			ptr = NULL;
+			ptr = nullptr;
 		}
 		return &ptr;
 	}
 
 	/// Removes any held reference.
-	inline void clear() {
+	void clear() {
 		if (ptr)
 			ptr->Release();
-		ptr = NULL;
+		ptr = nullptr;
 	}
 
 	/// Removes any existing reference and moves a reference from another
 	/// smart pointer. The source pointer is cleared afterward.
-	inline void from(vdrefptr& src) {
+	void from(vdrefptr& src) {
 		if (ptr)
 			ptr->Release();
 		ptr = src.ptr;
-		src.ptr = NULL;
+		src.ptr = nullptr;
 	}
 
 	/// Removes any existing reference and accepts a reference to a new
 	/// object without actually obtaining one. This is useful if someone
 	/// has already addrefed an object for you.
-	inline void set(T* src) {
+	void set(T* src) {
 		if (ptr)
 			ptr->Release();
 
@@ -289,9 +287,9 @@ public:
 	/// Returns the held reference and clears the smart pointer without
 	/// releasing the reference. This is useful for holding onto a reference
 	/// in an exception-safe manner up until the last moment.
-	inline T *release() {
+	T *release() {
 		T *p = ptr;
-		ptr = NULL;
+		ptr = nullptr;
 		return p;
 	}
 

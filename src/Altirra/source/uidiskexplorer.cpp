@@ -1168,8 +1168,9 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 				}
 			}
 		}
-	} else if (id == ID_DISKEXP_IMPORTFILE) {
-		const VDStringW& fn = VDGetLoadFileName('dexp', (VDGUIHandle)mhdlg, L"Import binary file", L"All files (*.*)\0*.*\0", nullptr);
+	} else if (id == ID_DISKEXP_IMPORTFILE || id == ID_DISKEXP_IMPORTTEXT) {
+		const bool text = (id == ID_DISKEXP_IMPORTTEXT);
+		const VDStringW& fn = VDGetLoadFileName('dexp', (VDGUIHandle)mhdlg, text ? L"Import text file" : L"Import binary file", L"All files (*.*)\0*.*\0", nullptr);
 
 		if (!fn.empty()) {
 			VDFile f(fn.c_str());
@@ -1180,9 +1181,32 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 				throw MyError("File is too large to import: %llu bytes", (unsigned long long)len);
 
 			uint32 len2 = (uint32)len;
-			vdblock<char> buf(len2);
+			vdblock<uint8> buf(len2);
 			if (len2)
 				f.read(buf.data(), len2);
+
+			if (text) {
+				auto begin = buf.begin();
+				auto dst = begin;
+				auto src = dst;
+				auto end = buf.end();
+
+				while(src != end) {
+					uint8 c = *src++;
+
+					if (c == 0x0D) {
+						if (src != end && *src == 0x0A)
+							++src;
+
+						c = 0x9B;
+					} else if (c == 0x0A)
+						c = 0x9B;
+
+					*dst++ = c;
+				}
+
+				len2 = (uint32)(dst - begin);
+			}
 
 			const VDDate creationTime = f.getCreationTime();
 			f.closeNT();
@@ -1191,7 +1215,8 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 
 			OnFSModified();
 		}
-	} else if (id == ID_DISKEXP_EXPORTFILE) {
+	} else if (id == ID_DISKEXP_EXPORTFILE || id == ID_DISKEXP_EXPORTTEXT) {
+		const bool text = (id == ID_DISKEXP_EXPORTTEXT);
 		vdfastvector<int> indices;
 		mList.GetSelectedIndices(indices);
 
@@ -1206,8 +1231,33 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 				ATDiskFSEntryInfo fileInfo;
 				mpFS->GetFileInfo(fle->mFileKey, fileInfo);
 
+				if (text) {
+					const size_t numEOLs = std::count(buf.begin(), buf.end(), (uint8)0x9B);
+
+					if (numEOLs) {
+						const size_t origSize = buf.size();
+
+						buf.resize(origSize + numEOLs);
+
+						auto begin = buf.begin();
+						auto src = begin + origSize;
+						auto dst = buf.end();
+
+						while(dst != begin) {
+							uint8 c = *--src;
+
+							if (c == 0x9B) {
+								*--dst = 0x0A;
+								c = 0x0D;
+							}
+
+							*--dst = c;
+						}
+					}
+				}
+
 				VDSetLastLoadSaveFileName('dexp', fle->mFileName.c_str());
-				const VDStringW& fn = VDGetSaveFileName('dexp', (VDGUIHandle)mhdlg, L"Export binary file", L"All files (*.*)\0*.*\0", nullptr);
+				const VDStringW& fn = VDGetSaveFileName('dexp', (VDGUIHandle)mhdlg, text ? L"Export text file" : L"Export binary file", L"All files (*.*)\0*.*\0", nullptr);
 
 				if (!fn.empty()) {
 					VDFile f(fn.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
@@ -1848,6 +1898,7 @@ void ATUIDialogDiskExplorer::OnItemContextMenu(VDUIProxyListView *sender, const 
 	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_DELETE, idx >= 0 && writable);
 	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_NEWFOLDER, writable);
 	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_IMPORTFILE, writable);
+	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_IMPORTTEXT, writable);
 
 	bool fileSelected = false;
 
@@ -1859,6 +1910,7 @@ void ATUIDialogDiskExplorer::OnItemContextMenu(VDUIProxyListView *sender, const 
 	}
 
 	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_EXPORTFILE, fileSelected);
+	VDEnableMenuItemByCommandW32(mhMenuItemContext, ID_DISKEXP_EXPORTTEXT, fileSelected);
 
 	TrackPopupMenu(GetSubMenu(mhMenuItemContext, 0), TPM_LEFTALIGN | TPM_TOPALIGN, event.mX, event.mY, 0, mhdlg, NULL);
 }

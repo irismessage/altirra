@@ -29,3 +29,25 @@ void fail(const char *msg, ...) {
 
 	exit(20);
 }
+
+std::vector<uint8> ATCReadFileContents(const char *path) {
+	FILE *f = fopen(path, "rb");
+	if (!f)
+		fail("unable to open file for read: %s", path);
+	fseek(f, 0, SEEK_END);
+	long len = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	if (len < 0)
+		fail("unable to read file: %s", path);
+
+	std::vector<uint8> v;
+	v.resize(len);
+
+	if (1 != fread(v.data(), len, 1, f))
+		fail("unable to read file: %s", path);
+
+	fclose(f);
+
+	return v;
+}

@@ -64,6 +64,10 @@ struct ATDiskGeometryInfo {
 	// boot... though there is no requirement that the disk have that sector,
 	// nor that the drive uses it (some use sector 4).
 	bool	mbMFM;
+
+	// Indicates if the primary density of the disk is high density, using 2us
+	// bit cells for FM or 1us bit cells for MFM for 8" or high density 5.25"/3.5".
+	bool	mbHighDensity;
 };
 
 enum ATDiskImageFormat {
@@ -88,6 +92,8 @@ enum ATDiskInterleave {
 	kATDiskInterleave_DD_15_1,		// 1,7,13,6,12,18,5,11,17,4,10,16,3,9,15,2,8,14
 	kATDiskInterleave_DD_9_1,		// 1,3,5,7,9,11,13,15,17,2,4,6,8,10,12,14,16,18
 	kATDiskInterleave_DD_7_1,		// 1,14,9,4,17,12,7,2,15,10,5,18,13,8,3,16,11,6
+	kATDiskInterleave_SD26_14_1,	// 1,14,3,16,5,18,7,20,9,22,11,24,13,26,2,15,4,17,6,19,8,21,10,23,12,25
+	kATDiskInterleave_DD26_23_1,	// 1,18,9,26,17,8,25,16,7,24,15,6,23,14,5,22,13,4,21,12,3,20,11,2,19,10
 };
 
 // Disk image interface
@@ -193,7 +199,7 @@ public:
 void ATLoadDiskImage(const wchar_t *path, IATDiskImage **ppImage);
 void ATLoadDiskImage(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, IATDiskImage **ppImage);
 void ATMountDiskImageVirtualFolder(const wchar_t *path, uint32 sectorCount, IATDiskImage **ppImage);
-void ATMountDiskImageVirtualFolderSDFS(const wchar_t *path, uint32 sectorCount, uint64 uniquenessValue, IATDiskImage **ppImage);
+void ATMountDiskImageVirtualFolderSDFS(const wchar_t *path, uint32 sectorSize, uint64 uniquenessValue, IATDiskImage **ppImage);
 void ATCreateDiskImage(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize, IATDiskImage **ppImage);
 void ATCreateDiskImage(const ATDiskGeometryInfo& geometry, IATDiskImage **ppImage);
 

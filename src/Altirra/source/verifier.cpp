@@ -266,6 +266,14 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 			break;
 
 		case 0x20:	// JSR abs
+			if (mFlags & kATVerifierFlag_StackWrap) {
+				if (mpCPU->GetEmulationFlag() && mpCPU->GetS() < 0x03) {
+					return FailStackOverflow();
+				}
+			}
+
+			[[fallthrough]];
+
 		case 0x4C:	// JMP abs
 			if (mFlags & kATVerifierFlag_UndocumentedKernelEntry) {
 				uint16 pc = mpCPU->GetInsnPC();
@@ -324,6 +332,14 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 			}
 			break;
 
+		case 0x60:	// RTS
+			if (mFlags & kATVerifierFlag_StackWrap) {
+				if (mpCPU->GetEmulationFlag() && mpCPU->GetS() > 0xFD) {
+					return FailStackUnderflow();
+				}
+			}
+			break;
+
 		case 0x40:	// RTI
 			if (mFlags & kATVerifierFlag_InterruptRegs) {
 				StackRegState& rs = mStackRegState[mpCPU->GetS()];
@@ -337,8 +353,8 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 					if (rs.mA != a || rs.mX != x || rs.mY != y) {
 						ATConsolePrintf("\n");
 						ATConsolePrintf("VERIFIER: Register mismatch between interrupt handler entry and exit.\n");
-						ATConsolePrintf("          Entry: PC=%04x  A=%02x X=%02x Y=%02x\n", rs.mPC, rs.mA, rs.mX, rs.mY);
-						ATConsolePrintf("          Exit:  PC=%04x  A=%02x X=%02x Y=%02x\n", mpCPU->GetInsnPC(), a, x, y);
+						ATConsolePrintf("          Entry: PC=%04X  A=%02X X=%02X Y=%02X\n", rs.mPC, rs.mA, rs.mX, rs.mY);
+						ATConsolePrintf("          Exit:  PC=%04X  A=%02X X=%02X Y=%02X\n", mpCPU->GetInsnPC(), a, x, y);
 						mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
 						return;
 					}
@@ -351,6 +367,12 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 
 					if ((uint8)(s - mNMIStackLevel) < 8)
 						mbInNMIRoutine = false;
+				}
+			}
+
+			if (mFlags & kATVerifierFlag_StackWrap) {
+				if (mpCPU->GetEmulationFlag() && mpCPU->GetS() > 0xFC) {
+					return FailStackUnderflow();
 				}
 			}
 			break;
@@ -374,7 +396,7 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 				if (target < mpCPU->GetX()) {
 					ATConsolePrintf("\n");
 					ATConsolePrintf("VERIFIER: 64K address space wrap detected on abs,X indexing mode.\n");
-					ATConsolePrintf("          PC=%04x  X=%02x  Target=%04x\n", mpCPU->GetInsnPC(), mpCPU->GetX(), target);
+					ATConsolePrintf("          PC=%04X  X=%02X  Target=%04X\n", mpCPU->GetInsnPC(), mpCPU->GetX(), target);
 					mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
 					return;
 				}
@@ -394,7 +416,7 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 				if (target < mpCPU->GetY()) {
 					ATConsolePrintf("\n");
 					ATConsolePrintf("VERIFIER: 64K address space wrap detected on abs,Y indexing mode.\n");
-					ATConsolePrintf("          PC=%04x  Y=%02x  Target=%04x\n", mpCPU->GetInsnPC(), mpCPU->GetY(), target);
+					ATConsolePrintf("          PC=%04X  Y=%02X  Target=%04X\n", mpCPU->GetInsnPC(), mpCPU->GetY(), target);
 					mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
 					return;
 				}
@@ -407,17 +429,97 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 		case 0x71:	// ADC (zp),Y
 		case 0x91:	// STA (zp),Y
 		case 0xB1:	// LDA (zp),Y
-		case 0xD1:	// CMP (zp),Yn
+		case 0xD1:	// CMP (zp),Y
 		case 0xF1:	// SBC (zp),Y
 			if (mFlags & kATVerifierFlag_64KWrap) {
 				if (target < mpCPU->GetY()) {
 					ATConsolePrintf("\n");
 					ATConsolePrintf("VERIFIER: 64K address space wrap detected on (zp),Y indexing mode.\n");
-					ATConsolePrintf("          PC=%04x  Y=%02x  Target=%04x\n", mpCPU->GetInsnPC(), mpCPU->GetY(), target);
+					ATConsolePrintf("          PC=%04X  Y=%02X  Target=%04X\n", mpCPU->GetInsnPC(), mpCPU->GetY(), target);
 					mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
 					return;
 				}
 			}
+			break;
+
+		case 0x1B:	// TCS
+		case 0x9A:	// TXS
+			if (mFlags & kATVerifierFlag_StackInZP816) {
+				if (mpCPU->GetS16() < 0x100) {
+					ATConsolePrintf("\n");
+					ATConsolePrintf("VERIFIER: Stack pointer changed to point to page zero.\n");
+					ATConsolePrintf("          PC=%02X:%04X  S=%04X\n", mpCPU->GetK(), mpCPU->GetInsnPC(), mpCPU->GetS16(), target);
+					mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
+					return;
+				}
+			}
+			break;
+
+		case 0x4B:	// PHK - 1 byte
+		case 0x8B:	// PHB - 1 byte
+			if (mFlags & kATVerifierFlag_StackWrap) {
+				if (mpCPU->GetCPUMode() == kATCPUMode_65C816 && mpCPU->GetEmulationFlag() && mpCPU->GetS() < 0x01)
+					return FailStackOverflow();
+			}
+			break;
+
+		case 0x0B:	// PHD - 2 bytes
+			if (mFlags & kATVerifierFlag_StackWrap) {
+				if (mpCPU->GetCPUMode() == kATCPUMode_65C816 && mpCPU->GetEmulationFlag() && mpCPU->GetS() < 0x02)
+					return FailStackOverflow();
+			}
+			break;
+
+		case 0xFC:	// JSR (abs,X) - 2 bytes
+			if (mFlags & kATVerifierFlag_StackWrap) {
+				if (mpCPU->GetCPUMode() == kATCPUMode_65C816 && mpCPU->GetEmulationFlag() && mpCPU->GetS() < 0x02)
+					return FailStackOverflow();
+			}
+			break;
+
+		case 0x22:	// JSL long - 3 bytes
+			if (mFlags & kATVerifierFlag_StackWrap) {
+				if (mpCPU->GetCPUMode() == kATCPUMode_65C816 && mpCPU->GetEmulationFlag() && mpCPU->GetS() < 0x03)
+					return FailStackOverflow();
+			}
+			break;
+
+		case 0xDA:	// PHX - 1 byte (in emulation mode)
+		case 0x5A:	// PHY - 1 byte (in emulation mode)
+			if (mpCPU->GetCPUMode() == kATCPUMode_6502)
+				break;
+			[[fallthrough]];
+		case 0x48:	// PHA - 1 byte (in emulation mode)
+		case 0x08:	// PHP - 1 byte
+			if ((mFlags & kATVerifierFlag_StackWrap) && mpCPU->GetEmulationFlag() && mpCPU->GetS() < 0x01)
+				return FailStackOverflow();
+			break;
+
+		case 0xAB:	// PLB - 1 byte
+		case 0xD4:	// PEI (dp) - 1 byte
+			if (mFlags & kATVerifierFlag_StackWrap) {
+				if (mpCPU->GetCPUMode() == kATCPUMode_65C816 && mpCPU->GetEmulationFlag() && mpCPU->GetS() >= 0xFF)
+					return FailStackUnderflow();
+			}
+			break;
+
+		case 0x2B:	// PLD - 2 bytes
+		case 0xF4:	// PEA abs - 2 bytes
+			if (mFlags & kATVerifierFlag_StackWrap) {
+				if (mpCPU->GetCPUMode() == kATCPUMode_65C816 && mpCPU->GetEmulationFlag() && mpCPU->GetS() >= 0xFE)
+					return FailStackUnderflow();
+			}
+			break;
+
+		case 0xFA:	// PLX - 1 byte (in emulation mode)
+		case 0x7A:	// PLY - 1 byte (in emulation mode)
+			if (mpCPU->GetCPUMode() == kATCPUMode_6502)
+				break;
+			[[fallthrough]];
+		case 0x28:	// PLP
+		case 0x68:	// PLA
+			if ((mFlags & kATVerifierFlag_StackWrap) && mpCPU->GetEmulationFlag() && mpCPU->GetS() >= 0xFF)
+				return FailStackUnderflow();
 			break;
 	}
 }
@@ -428,4 +530,16 @@ void ATCPUVerifier::OnAbnormalDMA() {
 		ATConsolePrintf("VERIFIER: Abnormal playfield DMA detected.\n");
 		mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
 	}
+}
+
+void ATCPUVerifier::FailStackOverflow() {
+	ATConsolePrintf("\n");
+	ATConsolePrintf("VERIFIER: Stack overflow during push/call operation.\n");
+	mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
+}
+
+void ATCPUVerifier::FailStackUnderflow() {
+	ATConsolePrintf("\n");
+	ATConsolePrintf("VERIFIER: Stack underflow during pop/return operation.\n");
+	mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
 }

@@ -102,6 +102,8 @@ ATCPUEmulator::ATCPUEmulator()
 	, mpHeatMap(NULL)
 	, mpBkptManager(NULL)
 {
+	static_assert((vdcountof(mHistory) & (vdcountof(mHistory) - 1)) == 0, "History size must be power of two");
+
 	mSBrk = 0x100;
 	mbTrace = false;
 	mbStep = false;
@@ -1075,7 +1077,6 @@ namespace {
 			case kStateWriteH16:
 			case kStateWriteH16_DpBank:
 			case kState816ReadByte:
-			case kState816ReadByte_PBK:
 			case kStateReadL16:
 			case kStateReadH16:
 			case kStateReadH16_DpBank:
@@ -1600,7 +1601,7 @@ uint8 ATCPUEmulator::ProcessHook816() {
 
 template<bool is816, bool hispeed>
 void ATCPUEmulator::AddHistoryEntry(bool slowFlag) {
-	HistoryEntry * VDRESTRICT he = &mHistory[mHistoryIndex++ & 131071];
+	HistoryEntry * VDRESTRICT he = &mHistory[mHistoryIndex++ & (vdcountof(mHistory) - 1)];
 
 	ATCPU_PROFILE_OPCODE(mPC-1, mOpcode);
 
@@ -1643,10 +1644,12 @@ void ATCPUEmulator::AddHistoryEntry(bool slowFlag) {
 	he->mbNMI = mbMarkHistoryNMI;
 
 	if constexpr (is816) {
-		if (hispeed && !slowFlag)
-			he->mSubCycle = mSubCycles - mSubCyclesLeft;
-		else
-			he->mSubCycle = 0;
+		he->mSubCycle = 0;
+
+		if constexpr(hispeed) {
+			if (!slowFlag)
+				he->mSubCycle = mSubCycles - mSubCyclesLeft;
+		}
 
 		he->mbEmulation = mbEmulationFlag;
 		he->mExt.mSH = mSH;

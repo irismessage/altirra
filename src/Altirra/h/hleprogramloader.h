@@ -29,7 +29,7 @@ class ATSimulatorEventManager;
 struct ATCPUHookNode;
 class IATBlobImage;
 
-class ATHLEProgramLoader : public ATDeviceSIO {
+class ATHLEProgramLoader final : public ATDeviceSIO {
 	ATHLEProgramLoader(const ATHLEProgramLoader&) = delete;
 	ATHLEProgramLoader& operator=(const ATHLEProgramLoader&) = delete;
 public:
@@ -44,7 +44,7 @@ public:
 	IATBlobImage *GetCurrentImage() const { return mpImage; }
 	bool IsLaunchPending() const { return mbLaunchPending; }
 
-	void LoadProgram(const wchar_t *symbolHintPath, IATBlobImage *image, ATHLEProgramLoadMode launchMode);
+	void LoadProgram(const wchar_t *symbolHintPath, IATBlobImage *image, ATHLEProgramLoadMode launchMode, bool randomizeLaunchDelay);
 
 public:
 	void InitSIO(IATDeviceSIOManager *mgr) override;
@@ -68,12 +68,14 @@ protected:
 
 	IATBlobImage *mpImage = nullptr;
 	uint32		mProgramLoadIndex = 0;
+	uint64		mLaunchTime = 0;
 
 	bool		mbLastKernelEnabledState = false;
 	bool		mbType3PollActive = false;
 	bool		mbType3PollEnabled = false;
 	bool		mbDiskBootEnabled = true;
 
+	bool		mbRandomizeLaunchDelay = false;
 	bool		mbRandomizeMemoryOnLoad = false;
 	bool		mbLaunchPending = false;
 	uint32		mProgramModuleIds[4] = {};

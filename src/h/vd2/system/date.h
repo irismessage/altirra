@@ -41,15 +41,17 @@ struct VDDate {
 	bool operator>=(const VDDate& x) const { return mTicks >= x.mTicks; }
 };
 
+// Calendar-based date expansion. This is currently modeled after Win32
+// SYSTEMTIME.
 struct VDExpandedDate {
-	uint32	mYear;
-	uint8	mMonth;
-	uint8	mDayOfWeek;
-	uint8	mDay;
-	uint8	mHour;
-	uint8	mMinute;
-	uint8	mSecond;
-	uint16	mMilliseconds;
+	uint32	mYear;			// 1601+
+	uint8	mMonth;			// 1-12
+	uint8	mDayOfWeek;		// 0-6, starting with Sunday
+	uint8	mDay;			// 1-31
+	uint8	mHour;			// 0-23
+	uint8	mMinute;		// 0-59
+	uint8	mSecond;		// 0-59
+	uint16	mMilliseconds;	// 0-999
 };
 
 VDDate VDGetCurrentDate();

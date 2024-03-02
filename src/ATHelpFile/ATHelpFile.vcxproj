@@ -13,7 +13,7 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{B1076C28-FEB2-40A6-8224-A072C44DD2B8}</ProjectGuid>
     <RootNamespace>ATHelpFile</RootNamespace>
-    <PlatformToolset>v141</PlatformToolset>
+    <PlatformToolset>v142</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
@@ -127,6 +127,7 @@
       <SubType>Designer</SubType>
     </None>
     <Xml Include="source\customdev-intro.xml" />
+    <Xml Include="source\customdev-scriptingref.xml" />
     <Xml Include="source\customeffect.xml" />
     <Xml Include="source\debug-symboloptions.xml" />
     <Xml Include="source\devices-blackbox.xml" />

@@ -1060,8 +1060,10 @@ void ATMemoryManager::RebuildNodesSlow(Layers& VDRESTRICT pertinentLayers, PageT
 			if (!boundaryBits[page - bankPageStart]) {
 				*root = root[-1];
 
-				if (addrSpaceTable)
-					*addrSpaceTable++ = addrSpaceTable[-1];
+				if (addrSpaceTable) {
+					*addrSpaceTable = addrSpaceTable[-1];
+					++addrSpaceTable;
+				}
 				continue;
 			}
 

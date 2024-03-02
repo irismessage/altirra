@@ -38,7 +38,8 @@ struct ATKnownFirmware {
 	{ 0x0e86d61d, 10240, kATFirmwareType_Kernel800_OSB, L"Atari 400/800 OS-B NTSC", kATSpecificFirmwareType_OSB },
 	{ 0x3e28a1fe, 10240, kATFirmwareType_Kernel800_OSB, L"Atari 400/800 OS-B NTSC (patched)", kATSpecificFirmwareType_OSB },
 	{ 0x0c913dfc, 10240, kATFirmwareType_Kernel800_OSB, L"Atari 400/800 OS-B PAL" },
-	{ 0xc5c11546, 16384, kATFirmwareType_Kernel1200XL, L"Atari 1200XL OS" },
+	{ 0xc5c11546, 16384, kATFirmwareType_Kernel1200XL, L"Atari 1200XL OS rev. 10" },
+	{ 0x1A1D7B1B, 16384, kATFirmwareType_Kernel1200XL, L"Atari 1200XL OS rev. 11" },
 	{ 0x643bcc98, 16384, kATFirmwareType_KernelXL, L"Atari XL/XE OS ver.1" },
 	{ 0x1f9cd270, 16384, kATFirmwareType_KernelXL, L"Atari XL/XE OS ver.2", kATSpecificFirmwareType_XLOSr2 },
 	{ 0x29f133f7, 16384, kATFirmwareType_KernelXL, L"Atari XL/XE OS ver.3" },
@@ -55,10 +56,14 @@ struct ATKnownFirmware {
 	{ 0x19227d33,  2048, kATFirmwareType_810, L"Atari 810 firmware rev. B" },
 	{ 0x0896f03d,  2048, kATFirmwareType_810, L"Atari 810 firmware rev. C" },
 	{ 0xaad220f4,  2048, kATFirmwareType_810, L"Atari 810 firmware rev. E" },
+	{ 0xF9A7AFB2,  4096, kATFirmwareType_1050, L"Atari 1050 firmware rev. E" },
+	{ 0x6D9D589B,  4096, kATFirmwareType_1050, L"Atari 1050 firmware rev. H" },
 	{ 0x91ba303d,  4096, kATFirmwareType_1050, L"Atari 1050 firmware rev. J" },
 	{ 0x3abe7ef4,  4096, kATFirmwareType_1050, L"Atari 1050 firmware rev. K" },
 	{ 0xfb4b8757,  4096, kATFirmwareType_1050, L"Atari 1050 firmware rev. L" },
-	{ 0x942ec3d5,  4096, kATFirmwareType_Happy810, L"Happy 810 firmware (pre-v7)" },
+	{ 0x371F6973,  6144, kATFirmwareType_Happy810, L"Happy 810 firmware (v7, 6K functional ROM, modified)" },
+	{ 0x9CC7A207,  6144, kATFirmwareType_Happy810, L"Happy 810 firmware (v7, 6K functional ROM)" },
+	{ 0x982D825D,  8192, kATFirmwareType_Happy810, L"Happy 810 firmware (v7, 8K full ROM)" },
 	{ 0x19b6bfe5,  8192, kATFirmwareType_Happy1050, L"Happy 1050 firmware rev. 1" },
 	{ 0xf76eae16,  8192, kATFirmwareType_Happy1050, L"Happy 1050 firmware rev. 2" },
 	{ 0x739bab74,  4096, kATFirmwareType_ATR8000, L"ATR8000 firmware ver 3.02" },
@@ -69,9 +74,23 @@ struct ATKnownFirmware {
 	{ 0x5A396459,  2048, kATFirmwareType_Percom, L"Percom RFD V1.00" },
 	{ 0xE2D4A05C,  2048, kATFirmwareType_Percom, L"Percom RFD V1.10" },
 	{ 0xC6C73D23,  2048, kATFirmwareType_Percom, L"Percom RFD V1.20" },
+	{ 0xAC141045,  2048, kATFirmwareType_Percom, L"Percom RFD V2.10" },
 	{ 0x2AB65122,  2048, kATFirmwareType_Percom, L"Astra 1001/1620 (based on Percom RFD V1.10)" },
 	{ 0x2372FAE6,  2048, kATFirmwareType_PercomAT, L"Percom AT-88 V1.2 (460-0066-001)" },
 	{ 0xFD13A674,  2048, kATFirmwareType_PercomAT, L"Percom AT-88 V1.2 (damaged) (460-0066-001)" },
+	{ 0x518900E6,  4096, kATFirmwareType_PercomATSPD, L"Percom AT88-SPD V1.01 (0073)" },
+	{ 0x87A0D7E7,  4096, kATFirmwareType_PercomATSPD, L"Percom AT88-SPD V1.11 (1-9-84)" },
+	{ 0xFC6675F2,  4096, kATFirmwareType_PercomATSPD, L"Percom AT88-SPD V1.21 (5-4-84)" },
+	{ 0x55DFC9AC,  8192, kATFirmwareType_1050TurboII, L"1050 Turbo II V3.4" },
+	{ 0x4A69312B,  8192, kATFirmwareType_1050TurboII, L"1050 Turbo II V3.5" },
+	{ 0x1527D542,  4096, kATFirmwareType_815, L"Atari 815 firmware" },
+	{ 0x87809326,  2048, kATFirmwareType_1090Firmware, L"Atari 1090 80-column firmware rev. 9" },
+	{ 0x8F07D9A0,  2048, kATFirmwareType_1090Charset, L"Atari 1090 80-column charset" },
+	{ 0xB9D576DA,  4096, kATFirmwareType_Bit3Firmware, L"Bit 3 Full-View 80 firmware" },
+	{ 0X738C6AC1,  2048, kATFirmwareType_Bit3Charset, L"Bit 3 Full-View 80 charset" },
+
+	// overdump (only has 2K of unique data)
+	{ 0xA4534CEA,  4096, kATFirmwareType_Bit3Charset, L"Bit 3 Full-View 80 charset" },
 };
 
 bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {
@@ -82,6 +101,7 @@ bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {
 	switch(fileSize32) {
 		case 2048:		// 5200, 810
 		case 4096:		// 1050
+		case 6144:		// Happy 810 functional dump
 		case 8192:		// BASIC, MIO
 		case 10240:		// 800
 		case 16384:		// XL, XEGS, 1200XL, MIO
@@ -110,6 +130,64 @@ ATFirmwareDetection ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwar
 			info.mbVisible = true;
 			info.mFlags = 0;
 			specificType = kfw.mSpecificType;
+			return ATFirmwareDetection::SpecificImage;
+		}
+	}
+
+	// Special cases for Happy 810
+	//
+	// The pre-v7 4K firmware for the Happy 810 has a serial number at $7FE-7FF
+	// that we want to exclude for matching purposes and then note. However, due
+	// to dumping issues, there are a few configurations that we need to
+	// handle:
+	//
+	//	- 3K CPU controller visible only dump ($400-FFF)
+	//	- Full 4K dump including hidden $000-3FF region
+	//	- 6K/8K overdumps
+
+	uint32 happyLen = len;
+
+	// check for 6K/8K overdumps and reinterpret as 3K/4K if so
+	if (happyLen == 6144 && !memcmp(data, (const char *)data + 3072, 3072))
+		happyLen = 3072;
+
+	if (happyLen == 8192 && !memcmp(data, (const char *)data + 4096, 4096))
+		happyLen = 4096;
+
+	if (happyLen == 3072 || happyLen == 4096) {
+		uint32 happyCrc32;
+		const char *happyData = (const char *)data;
+		const uint8 dummyChk[2] {};
+
+		if (happyLen == 4096)
+			happyData += 1024;
+		
+		// checksum everything but the inaccessible part ($000-3FF) and serial
+		// ($7FE-7FF).
+		happyCrc32 = UINT32_C(0xFFFFFFFF);
+		happyCrc32 = VDCRCTable::CRC32.Process(happyCrc32, happyData, 0x3FE);
+		happyCrc32 = VDCRCTable::CRC32.Process(happyCrc32, dummyChk, 2);
+		happyCrc32 = VDCRCTable::CRC32.Process(happyCrc32, happyData + 0x400, 0x800);
+		happyCrc32 = ~happyCrc32;
+
+		if (happyCrc32 == 0xE52A98B2) {
+			// Okay, we've confirmed that we have the pre-v7 Happy 810 ROM, so
+			// we can report it along with the serial. If we had a 4K ROM, check
+			// the hidden area to see if it is genuine.
+
+			const uint16 serial = VDReadUnalignedLEU16(happyData + 0x3FE);
+			if (happyLen == 4096) {
+				if (VDCRCTable::CRC32.CRC(data, 1024) == 0x6AC58569)
+					info.mName.sprintf(L"Happy 810 firmware (pre-v7 serial $%04X; 4K original)", serial);
+				else
+					info.mName.sprintf(L"Happy 810 firmware (pre-v7 serial $%04X; 4K non-original)", serial);
+			} else
+				info.mName.sprintf(L"Happy 810 firmware (pre-v7 serial $%04X; 3K functional-only)", serial);
+
+			info.mType = kATFirmwareType_Happy810;
+			info.mbVisible = true;
+			info.mFlags = 0;
+			specificType = {};
 			return ATFirmwareDetection::SpecificImage;
 		}
 	}

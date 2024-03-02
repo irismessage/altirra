@@ -37,6 +37,7 @@ public:
 	virtual bool IsValid() override;
 	virtual bool IsFramePending() override;
 	virtual bool IsScreenFXSupported() const override;
+	virtual VDDHDRAvailability IsHDRCapable() const override;
 
 	virtual bool Resize(int w, int h) override;
 	virtual bool Update(UpdateMode) override;
@@ -58,7 +59,7 @@ private:
 	bool CreateSwapChain();
 	bool CreateImageNode();
 	void DestroyImageNode();
-	bool BufferNode(VDDisplayNode3D *srcNode, uint32 w, uint32 h, VDDisplaySourceNode3D **ppNode);
+	bool BufferNode(VDDisplayNode3D *srcNode, uint32 w, uint32 h, bool hdr, VDDisplaySourceNode3D **ppNode);
 	bool RebuildTree();
 
 	HWND mhwnd;
@@ -73,6 +74,8 @@ private:
 	bool mbCompositionTreeDirty;
 	bool mbFramePending;
 
+	bool mbRenderLinear = false;
+	bool mbHDR = false;
 	bool mbUseScreenFX = false;
 	VDVideoDisplayScreenFXInfo mScreenFXInfo {};
 

@@ -31,6 +31,7 @@ protected:
 
 	ATPropertySet& mPropSet;
 	VDUIProxyComboBoxControl mComboVersion;
+	VDUIProxyComboBoxControl mComboBaseAddress;
 };
 
 ATUIDialogDeviceSoundBoard::ATUIDialogDeviceSoundBoard(ATPropertySet& props)
@@ -40,34 +41,60 @@ ATUIDialogDeviceSoundBoard::ATUIDialogDeviceSoundBoard(ATPropertySet& props)
 }
 
 bool ATUIDialogDeviceSoundBoard::OnLoaded() {
-	AddProxy(&mComboVersion, IDC_VERSION);
+	AddProxy(&mComboVersion, IDC_COREVERSION);
+	AddProxy(&mComboBaseAddress, IDC_BASEADDRESS);
 
-	for(const wchar_t *s : { L"$D2C0-D2FF", L"$D600-D6FF", L"$D700-D7FF" } )
-		mComboVersion.AddItem(s);
+	mComboVersion.AddItem(L"1.1 (VBXE-based)");
+	mComboVersion.AddItem(L"1.2 (with multiplier)");
+	mComboVersion.AddItem(L"2.0 Preview");
 
-	mComboVersion.SetSelection(0);
+	for(const wchar_t *s : { L"$D280", L"$D2C0", L"$D600", L"$D700" } )
+		mComboBaseAddress.AddItem(s);
+
+	mComboBaseAddress.SetSelection(1);
 
 	return VDDialogFrameW32::OnLoaded();
 }
 
 void ATUIDialogDeviceSoundBoard::OnDataExchange(bool write) {
-	static const uint32 kBaseAddresses[] = { 0xD2C0, 0xD600, 0xD700 };
+	static const uint32 kBaseAddresses[] = { 0xD280, 0xD2C0, 0xD600, 0xD700 };
 
 	if (write) {
 		mPropSet.Clear();
 
-		int sel = mComboVersion.GetSelection();
+		int sel = mComboBaseAddress.GetSelection();
 
 		if (sel >= 0 && (unsigned)sel < vdcountof(kBaseAddresses))
 			mPropSet.SetUint32("base", kBaseAddresses[sel]);
+
+		uint32 enc = 0;
+
+		switch(mComboVersion.GetSelection()) {
+			case 0:		enc = 110; break;
+			case 1:
+			default:	enc = 120; break;
+			case 2:		enc = 200; break;
+		}
+
+		mPropSet.SetUint32("version", enc);
 	} else {
 		uint32 base;
 		if (mPropSet.TryGetUint32("base", base)) {
 			auto it = std::find(std::begin(kBaseAddresses), std::end(kBaseAddresses), base);
 
 			if (it != std::end(kBaseAddresses))
-				mComboVersion.SetSelection((int)(it - std::begin(kBaseAddresses)));
+				mComboBaseAddress.SetSelection((int)(it - std::begin(kBaseAddresses)));
 		}
+
+		int verIdx = 0;
+		switch(mPropSet.GetUint32("version")) {
+			case 110:	verIdx = 0; break;
+			case 120:
+			default:	verIdx = 1; break;
+			case 200:	verIdx = 2; break;
+		}
+
+		mComboVersion.SetSelection(verIdx);
 	}
 }
 

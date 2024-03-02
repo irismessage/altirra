@@ -447,8 +447,8 @@ class vdlist_iterator {
 public:
 	typedef ptrdiff_t difference_type;
 	typedef T value_type;
-	typedef T *pointer_type;
-	typedef T& reference_type;
+	typedef T *pointer;
+	typedef T& reference;
 	typedef std::bidirectional_iterator_tag iterator_category;
 
 	vdlist_iterator() {}
@@ -732,7 +732,7 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////////
 
-#if defined(_DEBUG) && defined(_MSC_VER)
+#if defined(_DEBUG) && defined(_MSC_VER) && !defined(__clang__)
 	#define VD_ACCELERATE_TEMPLATES
 #endif
 
@@ -1013,17 +1013,25 @@ public:
 	}
 
 	void push_back(const T& value) {
-		const T temp(value);		// copy in case value is inside container.
+		T temp(value);		// copy in case value is inside container.
 
 		if (mpEnd == m.eos)
 			_reserve_always_add_one();
 
-		*mpEnd++ = temp;
+		new(mpEnd++) T(std::move(temp));
 	}
 
 	void pop_back() {
 		VDASSERT(mpBegin != mpEnd);
 		--mpEnd;
+	}
+
+	template<typename... T_Args>
+	reference emplace_back(T_Args&&... args) {
+		if (mpEnd == m.eos)
+			_reserve_always_add_one();
+
+		return *new(mpEnd++) T{std::forward<T_Args>(args)...};
 	}
 
 	void resize(size_type n) {
@@ -1580,7 +1588,7 @@ protected:
 		kBlockSize = Block::kBlockSize,
 	};
 
-	struct M1 : public A::template rebind<Block *>::other {
+	struct M1 : public std::allocator_traits<A>::template rebind_alloc<Block *> {
 		Block **mapStartAlloc;		// start of map
 		Block **mapStartCommit;		// start of range of allocated blocks
 		Block **mapStart;			// start of range of active blocks
@@ -1589,7 +1597,7 @@ protected:
 		Block **mapEndAlloc;		// end of map
 	} m;
 
-	struct M2 : public A::template rebind<Block>::other {
+	struct M2 : public std::allocator_traits<A>::template rebind_alloc<Block> {
 		int startIndex;
 		int endIndex;
 	} mTails;

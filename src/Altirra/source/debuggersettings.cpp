@@ -16,7 +16,22 @@
 
 #include <stdafx.h>
 #include <vd2/system/registry.h>
+#include <at/atcore/enumparseimpl.h>
 #include "debuggersettings.h"
+
+////////////////////////////////////////////////////////////////////////////////
+
+AT_DEFINE_ENUM_TABLE_BEGIN(ATDebugger816PredictionMode)
+	{ ATDebugger816PredictionMode::Auto, "auto" },
+	{ ATDebugger816PredictionMode::CurrentContext, "current_context" },
+	{ ATDebugger816PredictionMode::M8X8, "m8x8" },
+	{ ATDebugger816PredictionMode::M8X16, "m8x16" },
+	{ ATDebugger816PredictionMode::M16X8, "m16x8" },
+	{ ATDebugger816PredictionMode::M16X16, "m16x16" },
+	{ ATDebugger816PredictionMode::Emulation, "emulation" },
+AT_DEFINE_ENUM_TABLE_END(ATDebugger816PredictionMode, ATDebugger816PredictionMode::Auto)
+
+////////////////////////////////////////////////////////////////////////////////
 
 void ATDebuggerSettingBase::Load(const char *name, bool& value) {
 	VDRegistryAppKey key("Settings", false);
@@ -29,6 +44,24 @@ void ATDebuggerSettingBase::Save(const char *name, const bool& value) {
 
 	key.setBool(name, value);
 }
+
+uint32 ATDebuggerSettingBase::LoadEnum(const char *name, uint32 value, const ATEnumLookupTable& enumTable) {
+	VDRegistryAppKey key("Settings", false);
+
+	VDStringW s;
+	if (!key.getString(name, s))
+		return value;
+
+	return ATParseEnum(enumTable, s).mValue;
+}
+
+void ATDebuggerSettingBase::SaveEnum(const char *name, uint32 value, const ATEnumLookupTable& enumTable) {
+	VDRegistryAppKey key("Settings", true);
+
+	key.setString(name, ATEnumToString(enumTable, value));
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 template<typename T>
 ATDebuggerSetting<T>::ATDebuggerSetting(const char *persistedName, const T& defaultValue)
@@ -107,6 +140,8 @@ ATDebuggerSettingView<T>& ATDebuggerSettingView<T>::operator=(const T& value) {
 
 template class ATDebuggerSetting<bool>;
 template class ATDebuggerSettingView<bool>;
+template class ATDebuggerSetting<ATDebugger816PredictionMode>;
+template class ATDebuggerSettingView<ATDebugger816PredictionMode>;
 
 ATDebuggerSetting<bool> g_ATDbgSettingHistoryShowPC					("Debugger: Show PC in History", true);
 ATDebuggerSetting<bool> g_ATDbgSettingHistoryShowGlobalPC			("Debugger: Show global PC in History", false);
@@ -121,3 +156,4 @@ ATDebuggerSetting<bool> g_ATDbgSettingShowCallPreviews				("Debugger: Show call 
 ATDebuggerSetting<bool> g_ATDbgSettingCollapseLoops					("Debugger: Collapse loops", true);
 ATDebuggerSetting<bool> g_ATDbgSettingCollapseCalls					("Debugger: Collapse calls", true);
 ATDebuggerSetting<bool> g_ATDbgSettingCollapseInterrupts			("Debugger: Collapse interrupts", true);
+ATDebuggerSetting<ATDebugger816PredictionMode> g_ATDbgSetting816PredictionMode	("Debugger: 816 prediction mode", ATDebugger816PredictionMode::Auto);

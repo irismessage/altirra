@@ -285,22 +285,18 @@ void ATChecksumUpdateSHA256_SHA(ATChecksumStateSHA256& VDRESTRICT state, const v
 void ATChecksumUpdateSHA256_Optimized(ATChecksumStateSHA256& VDRESTRICT state, const void *src, size_t numBlocks) {
 	// On an i5-6200U Skylake, BCrypt built-in SHA256 hashes a 64K block
 	// in 14.8 cycles/byte, using scalar code. Our routines here take 14.2 cpb with
-	// SSE2 and 12.73 cpb with SSSE3, so they're competitive and a bit faster. The
-	// SHA routine is disabled for now as it's only tested in emulation (SDE). On
-	// Windows 10, BCrypt does use SHA extensions, so it will outperform this until
-	// we can enable our SHA code, but its convenient to not have to hit that API.
+	// SSE2 and 12.73 cpb with SSSE3, so they're competitive and a bit faster. On
+	// Windows 10, BCrypt does use SHA extensions and our SHA code is only about 1%
+	// faster on a Ryzen 3700X, but its also convenient to not have to hit that API.
 
 	if (SSE2_enabled) {
 		auto ext = CPUGetEnabledExtensions();
 
-#if 0
 		// This code path currently works according to SDE but we're going to keep it
 		// disabled until 4.0 just to be sure.
 		if ((ext & (CPUF_SUPPORTS_SSSE3 | CPUF_SUPPORTS_SHA)) == (CPUF_SUPPORTS_SSSE3 | CPUF_SUPPORTS_SHA))
 			ATChecksumUpdateSHA256_SHA(state, src, numBlocks);
-		else
-#endif
-		if (ext & CPUF_SUPPORTS_SSSE3)
+		else if (ext & CPUF_SUPPORTS_SSSE3)
 			ATChecksumUpdateSHA256_SSE2<true>(state, src, numBlocks);
 		else
 			ATChecksumUpdateSHA256_SSE2<false>(state, src, numBlocks);

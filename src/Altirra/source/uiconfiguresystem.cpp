@@ -31,6 +31,7 @@
 #include "cartridge.h"
 #include "diskinterface.h"
 #include "simulator.h"
+#include "options.h"
 
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
@@ -1415,6 +1416,7 @@ protected:
 		{ "Video.MonitorModeMonoGreen",	L"Monochrome (green phosphor)" },
 		{ "Video.MonitorModeMonoAmber",	L"Monochrome (amber phosphor)" },
 		{ "Video.MonitorModeMonoBluishWhite",	L"Monochrome (bluish white phosphor)" },
+		{ "Video.MonitorModeMonoWhite",	L"Monochrome (white phosphor)" },
 		{ "Video.MonitorModePERITEL",	L"RGB through PERITEL/SCART CA061034 adapter" },
 	};
 
@@ -1641,13 +1643,26 @@ protected:
 
 	static constexpr CmdMapEntry sTurboTypeOptions[] = {
 		{ "Cassette.TurboModeNone", L"Disabled" },
-		{ "Cassette.TurboModeAlways", L"Enabled (always on)" },
-		{ "Cassette.TurboModeCommandControl", L"Enabled (command control)" },
-		{ "Cassette.TurboModeProceedSense", L"Enabled (proceed sense)" },
-		{ "Cassette.TurboModeInterruptSense", L"Enabled (interrupt sense)" },
+		{ "Cassette.TurboModeAlways", L"Always on" },
+		{ "Cassette.TurboModeCommandControl", L"SIO command (Turbo 2000)" },
+		{ "Cassette.TurboModeProceedSense", L"SIO proceed (Turbo 6000)" },
+		{ "Cassette.TurboModeInterruptSense", L"SIO interrupt (Rambit Turbo Tape)" },
+		{ "Cassette.TurboModeKSOTurbo2000", L"Joystick port 2 (KSO Turbo 2000)" },
 	};
 
 	CmdComboBinding mTurboTypeBinding { sTurboTypeOptions };
+
+	VDUIProxyComboBoxControl mTurboDecoderView;
+
+	static constexpr CmdMapEntry sTurboDecoderOptions[] = {
+		{ "Cassette.TurboDecoderPeakFilter", L"Peak + HPF (default)" },
+		{ "Cassette.TurboDecoderPeakLoHi", L"Peak + HPF + balance lo-hi" },
+		{ "Cassette.TurboDecoderPeakHiLo", L"Peak + HPF + balance hi-lo" },
+		{ "Cassette.TurboDecoderSlopeFilter", L"Slope + HPF (old 3.x default)" },
+		{ "Cassette.TurboDecoderSlopeNoFilter", L"Slope" },
+	};
+
+	CmdComboBinding mTurboDecoderBinding { sTurboDecoderOptions };
 
 	VDUIProxyComboBoxControl mDirectSenseView;
 
@@ -1675,17 +1690,27 @@ bool ATUIDialogSysConfigCassette::OnLoaded() {
 	BindCheckbox(IDC_AUTOREWIND, "Cassette.ToggleAutoRewind");
 	BindCheckbox(IDC_LOADDATAASAUDIO, "Cassette.ToggleLoadDataAsAudio");
 	BindCheckbox(IDC_RANDOMIZESTARTPOS, "Cassette.ToggleRandomizeStartPosition");
-	CmdBoolBinding *turboInvertBinding = BindCheckbox(IDC_TURBOINVERT, "Cassette.TogglePolarity");
-	BindCheckbox(IDC_TURBOPREFILTER, "Cassette.ToggleTurboPrefilter");
+	BindCheckbox(IDC_TURBOINVERT, "Cassette.TogglePolarity");
+	BindCheckbox(IDC_VBIAVOIDANCE, "Cassette.ToggleVBIAvoidance");
 
 	AddProxy(&mTurboTypeView, IDC_TURBOTYPE);
 	mTurboTypeBinding.Bind(&mTurboTypeView);
 	AddAutoReadBinding(&mTurboTypeBinding);
 
+	AddProxy(&mTurboDecoderView, IDC_TURBODECODER);
+	mTurboDecoderBinding.Bind(&mTurboDecoderView);
+	AddAutoReadBinding(&mTurboDecoderBinding);
+
 	mTurboTypeView.SetOnSelectionChanged(
-		[=](int) {
+		[this](int) {
 			mTurboTypeBinding.Write();
-			turboInvertBinding->Read();
+			mTurboDecoderBinding.Read();
+		}
+	);
+
+	mTurboDecoderView.SetOnSelectionChanged(
+		[this](int) {
+			mTurboDecoderBinding.Write();
 		}
 	);
 
@@ -1737,9 +1762,15 @@ with an inverted signal, since some turbo tape loaders are sensitive to the data
 improve noise immunity. This filter is not used with turbo decoding."
 		);
 
-	AddHelpEntry(IDC_TURBOPREFILTER, L"Prefilter before turbo decoding",
-		L"Apply high-pass filtering before decoding turbo data to reduce phase shifts from noise reduction \
-in audio-oriented tape players. This only takes effect when a raw tape in WAV format is loaded."
+	AddHelpEntry(IDC_TURBODECODER, L"Turbo decoder",
+		L"Decoding algorithm to apply when decoding turbo data. High-pass filtering reduces phase shifts from noise reduction \
+in audio-oriented tape players. This only takes effect when a raw tape in WAV or FLAC format is loaded. Balance modes \
+correct pulse duty cycles (recommended for KSO Turbo 2000)."
+		);
+
+	AddHelpEntry(IDC_VBIAVOIDANCE, L"Avoid OS C: random VBI-related errors",
+		L"Latch cassette data across the start of vertical blank to work around a bug in the Atari OS C: handler \
+that causes ~0.3% of C: block reads to fail. This adds a small amount of jitter to FSK sampling through SKSTAT."
 		);
 
 	OnDataExchange(false);
@@ -2305,6 +2336,7 @@ bool ATUIDialogSysConfigDebugger::OnLoaded() {
 
 	BindCheckbox(IDC_AUTOLOADSYSTEMSYMBOLS, "Debug.ToggleAutoLoadSystemSymbols");
 	BindCheckbox(IDC_AUTOLOADOSROMSYMBOLS, "Debug.ToggleAutoLoadKernelSymbols");
+	BindCheckbox(IDC_DEBUGLINK, "Debug.ToggleDebugLink");
 
 	AddHelpEntry(IDC_SYMBOLLOAD_PRESTART, L"Pre-start symbol load mode",
 		L"Whether symbols and scripts are loaded for images that are loaded while the debugger is disabled. The default "
@@ -2327,6 +2359,10 @@ bool ATUIDialogSysConfigDebugger::OnLoaded() {
 
 	AddHelpEntry(IDC_AUTOLOADOSROMSYMBOLS, L"Auto-load OS ROM symbols",
 		L"Automatically load symbols for the currently selected operating system ROM image, if present next to the image file."
+	);
+
+	AddHelpEntry(IDC_DEBUGLINK, L"Enable debug link",
+		L"Enable special debug link SIO device for additional debugger support. Currently supports SDX symbols with ATDEBUGX.SYS driver on Additions disk."
 	);
 
 	OnDataExchange(false);
@@ -2361,6 +2397,7 @@ bool ATUIDialogSysConfigDisplay::OnLoaded() {
 	BindCheckbox(IDC_HWACCEL_SCREENFX, "View.ToggleAccelScreenFX");
 	BindCheckbox(IDC_AUTOHIDEPOINTER, "View.ToggleAutoHidePointer");
 	BindCheckbox(IDC_HIDETARGETPOINTER, "View.ToggleTargetPointer");
+	BindCheckbox(IDC_CONSTRAINFULLSCREEN, "View.ToggleConstrainPointerFullScreen");
 
 	AddHelpEntry(IDC_SHOW_INDICATORS, L"Show indicators",
 		L"Draw on-screen overlays for device status.");
@@ -2383,6 +2420,39 @@ bool ATUIDialogSysConfigDisplay::OnLoaded() {
 		L"Auto-hide target pointer for absolute mouse input",
 		L"Hide the target reticle pointer that is normally displayed for mouse position based input maps, like ones for light pens and guns."
 	);
+	
+	AddHelpEntry(IDC_CONSTRAINFULLSCREEN,
+		L"Constrain mouse pointer in full-screen mode",
+		L"Restrict pointer movement to the active display when full-screen mode is enabled. Only matters on system with multiple displays."
+	);
+
+	OnDataExchange(false);
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogSysConfigUI final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigUI();
+
+protected:
+	bool OnLoaded() override;
+};
+
+ATUIDialogSysConfigUI::ATUIDialogSysConfigUI()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_UI)
+{
+}
+
+bool ATUIDialogSysConfigUI::OnLoaded() {
+	BindCheckbox(IDC_AUTOHIDEMENU, "View.ToggleAutoHideMenu");
+
+	AddHelpEntry(IDC_AUTOHIDEMENU,
+		L"Auto-hide menu",
+		L"Automatically hide menu in windowed mode except when mouse is in menu area."
+	);
 
 	OnDataExchange(false);
 
@@ -2397,8 +2467,15 @@ public:
 
 protected:
 	bool OnLoaded() override;
+	void OnDataExchange(bool write);
+	void UpdateCurrentSeedLabel();
+	void UpdateNextSeedLabel();
 
 	VDUIProxyComboBoxControl mProgramLoadModeView;
+	VDUIProxyControl mCurrentSeedView;
+	VDUIProxyControl mNextSeedView;
+	VDUIProxyEditControl mSpecificSeedView;
+	VDUIProxyButtonControl mUseSpecificSeedView;
 
 	static constexpr CmdMapEntry kProgramLoadModeOptions[] = {
 		{ "System.ProgramLoadModeDefault", L"Default" },
@@ -2416,14 +2493,44 @@ ATUIDialogSysConfigBoot::ATUIDialogSysConfigBoot()
 	: ATUIDialogSysConfigPage(IDD_CONFIGURE_BOOT)
 {
 	mProgramLoadModeView.SetOnSelectionChanged([this](int) { mProgramLoadModeBinding.Write(); });
+	mUseSpecificSeedView.SetOnClicked(
+		[this] {
+			const uint32 prevLockedSeed = g_sim.GetLockedRandomSeed();
+			const auto s = mSpecificSeedView.GetCaption();
+			wchar_t dummy;
+			unsigned seed = 0;
+
+			if (swscanf(s.c_str(), L" %c", &dummy) <= 0) {
+				if (prevLockedSeed) {
+					g_sim.SetLockedRandomSeed(0);
+					UpdateNextSeedLabel();
+				}
+			} else if (swscanf(s.c_str(), L"%u%c", &seed, &dummy) == 1 && seed != 0) {
+				if (prevLockedSeed == seed)
+					g_sim.SetLockedRandomSeed(0);
+				else
+					g_sim.SetLockedRandomSeed(seed);
+
+				UpdateNextSeedLabel();
+			} else {
+				SignalFailedValidation(mSpecificSeedView.GetWindowId());
+			}
+		}
+	);
 }
 
 bool ATUIDialogSysConfigBoot::OnLoaded() {
 	BindCheckbox(IDC_BOOTUNLOAD_CARTRIDGES, "Options.ToggleBootUnloadCartridges");
 	BindCheckbox(IDC_BOOTUNLOAD_DISKS, "Options.ToggleBootUnloadDisks");
 	BindCheckbox(IDC_BOOTUNLOAD_TAPES, "Options.ToggleBootUnloadTapes");
+	BindCheckbox(IDC_RANDOMIZELAUNCHDELAY, "System.ToggleProgramLaunchDelayRandomization");
 
 	AddProxy(&mProgramLoadModeView, IDC_PROGRAMLOADMODE);
+	AddProxy(&mCurrentSeedView, IDC_CURRENT_SEED);
+	AddProxy(&mNextSeedView, IDC_NEXT_SEED);
+	AddProxy(&mSpecificSeedView, IDC_SEED);
+	AddProxy(&mUseSpecificSeedView, IDC_USE_SEED);
+
 	mProgramLoadModeBinding.Bind(&mProgramLoadModeView);
 
 	AddAutoReadBinding(&mProgramLoadModeBinding);
@@ -2443,9 +2550,44 @@ handy to disable auto-unload for some types."
 	LinkHelpEntry(IDC_BOOTUNLOAD_DISKS, IDC_BOOTUNLOAD_CARTRIDGES);
 	LinkHelpEntry(IDC_BOOTUNLOAD_TAPES, IDC_BOOTUNLOAD_CARTRIDGES);
 
-	OnDataExchange(false);
+	AddHelpEntry(IDC_RANDOMIZELAUNCHDELAY, L"Randomize program load timing",
+		L"Start program after a random delay for programs that depend on non-deterministic start timing for random numbers."
+	);
+
+	AddHelpEntry(IDC_SEED, L"Use specific seed",
+		L"Lock randomized behavior to use a specific seed value to repeat the same behavior on each boot for debugging."
+	);
+
+	LinkHelpEntry(IDC_USE_SEED, IDC_SEED);
 
 	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+void ATUIDialogSysConfigBoot::OnDataExchange(bool write) {
+	if (!write) {
+		UpdateCurrentSeedLabel();
+		UpdateNextSeedLabel();
+	}
+
+	ATUIDialogSysConfigPage::OnDataExchange(write);
+}
+
+void ATUIDialogSysConfigBoot::UpdateCurrentSeedLabel() {
+	VDStringW s;
+	s.sprintf(L"Current seed: %u", (unsigned)g_sim.GetRandomSeed());
+	mCurrentSeedView.SetCaption(s.c_str());
+}
+
+void ATUIDialogSysConfigBoot::UpdateNextSeedLabel() {
+	uint32 seed = g_sim.GetLockedRandomSeed();
+
+	if (seed) {
+		VDStringW s;
+		s.sprintf(L"Next seed: %u", (unsigned)seed);
+		mNextSeedView.SetCaption(s.c_str());
+	} else {
+		mNextSeedView.SetCaption(L"Next seed: Auto");
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2536,6 +2678,8 @@ bool ATUIDialogSysConfigKeyboard::OnLoaded() {
 	mAllowShiftOnResetBinding.Bind(&mAllowShiftOnResetView);
 	mAllowInputMapOverlapBinding.Bind(&mAllowInputMapOverlapView);
 
+	BindCheckbox(IDC_ALLOW_INPUT_MODIFIER_OVERLAP, "Input.ToggleAllowInputMapKeyboardModifierOverlap");
+
 	AddHelpEntry(IDC_KEYMODE, L"Key press mode",
 L"Control how keys are sent to the emulation. Cooked mode sends key presses, reducing dropped or duplicate characters for easier typing in productivity \
 apps. Raw mode lets programs sense held keys for better compatibility with non-typing uses of the keyboard and is best for games. Full raw scan is the most accurate mode and emulates keyboard scanning delays (seldom needed).");
@@ -2559,10 +2703,14 @@ L"Control whether the emulation detects the SHIFT key if it is held when a cold 
 the default Shift+F5 shortcut for a cold reset doesn't also cause cartridges to see SHIFT held on boot. Enabling this option allows \
 SHIFT to be sensed.");
 
-	AddHelpEntry(IDC_ALLOW_INPUT_OVERLAP, L"Share host keys between keyboard and input maps",
-L"Allow the same key to be mapped by the keyboard and an input map. If disabled, input maps will have priority and any conflicting \
+	AddHelpEntry(IDC_ALLOW_INPUT_OVERLAP, L"Share non-modifier host keys between keyboard and input maps",
+L"Allow the same non-Ctrl/Shift key to be mapped by the keyboard and an input map. If disabled, input maps will have priority and any conflicting \
 keyboard mappings are ignored. If enabled, both the input map and keyboard mapping will activate. For instance, the joystick and keyboard \
 could both be activated by the host arrow keys.");
+
+	AddHelpEntry(IDC_ALLOW_INPUT_MODIFIER_OVERLAP, L"Share modifier host keys between keyboard and input maps",
+L"Allow Ctrl/Shift keys to be shared between the keyboard and input maps. If disabled, input maps using Ctrl/Shift will block those keys from the keyboard. \
+If enabled, both the keyboard and input maps will respond when those keys are bound.");
 
 	AddHelpEntry(IDC_ARROWKEYMODE, L"Arrow key mode",
 L"Controls how arrow keys are mapped in default layouts. The default mode flips Ctrl on the arrow keys so that they work as arrow keys \
@@ -2575,6 +2723,8 @@ but doesn't allow access to the non-arrow states of the keys. The third mode dir
 }
 
 void ATUIDialogSysConfigKeyboard::OnDataExchange(bool write) {
+	ATUIDialogSysConfigPage::OnDataExchange(write);
+
 	if (!write) {
 		mLayoutBinding.Read();
 		mModeBinding.Read();
@@ -2776,17 +2926,93 @@ void ATUIDialogSysConfigCaption::OnElementsClicked() {
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUIDialogSysConfigWorkarounds final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigWorkarounds();
+
+	const char *GetPageTag() const override { return "workarounds"; }
+
+protected:
+	bool OnLoaded() override;
+};
+
+constexpr ATUIDialogSysConfigPage::CmdMapEntry ATUIDialogSysConfigKeyboard::kModeOptions[];
+
+ATUIDialogSysConfigWorkarounds::ATUIDialogSysConfigWorkarounds()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_WORKAROUNDS)
+{
+}
+
+bool ATUIDialogSysConfigWorkarounds::OnLoaded() {
+	BindCheckbox(IDC_POLL_DIRECTORIES, "Options.ToggleDirectoryPolling");
+
+	AddHelpEntry(IDC_POLL_DIRECTORIES, L"Use directory polling instead of change notifications",
+L"For features that monitor host directories like virtual disks, continuously check for changes (poll) instead of using directory change notifications. This is less effective but can work around systems with broken change notifications (reportedly Wine on macOS).");
+
+	OnDataExchange(false);
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogSysConfigInput final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigInput();
+
+	const char *GetPageTag() const override { return "input"; }
+
+protected:
+	bool OnLoaded() override;
+};
+
+ATUIDialogSysConfigInput::ATUIDialogSysConfigInput()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_INPUT)
+{
+}
+
+bool ATUIDialogSysConfigInput::OnLoaded() {
+	BindCheckbox(IDC_USERAWINPUT, "Input.ToggleRawInputEnabled");
+	BindCheckbox(IDC_IMMEDIATEPOTS, "Input.ToggleImmediatePotUpdate");
+
+	AddHelpEntry(IDC_USERAWINPUT, L"Use Raw Input API for relative mouse input",
+L"Use the Raw Input API in Windows to track relative mouse movements instead of WM_MOUSEMOVE. Can bypass acceleration for better control, but may have compatibility issues with some setups.");
+
+	AddHelpEntry(IDC_IMMEDIATEPOTS, L"Use immediate potentiometer update",
+L"Allow the POT0-7 registers to update late after a pot scan. This slightly reduces accuracy but can reduce paddle latency.");
+
+	OnDataExchange(false);
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATUIDialogConfigureSystem final : public ATUIPagedDialog {
 public:
 	ATUIDialogConfigureSystem();
 
 protected:
+	bool OnLoaded();
+	void OnDestroy();
 	void OnPopulatePages();
 };
 
 ATUIDialogConfigureSystem::ATUIDialogConfigureSystem()
 	: ATUIPagedDialog(IDD_CONFIGURE)
 {
+}
+
+bool ATUIDialogConfigureSystem::OnLoaded() {
+	ATOptionsSuspendSave();
+
+	return ATUIPagedDialog::OnLoaded();
+}
+
+void ATUIDialogConfigureSystem::OnDestroy() {
+	ATUIPagedDialog::OnDestroy();
+
+	ATOptionsResumeSave();
 }
 
 void ATUIDialogConfigureSystem::OnPopulatePages() {
@@ -2815,7 +3041,10 @@ void ATUIDialogConfigureSystem::OnPopulatePages() {
 	AddPage(L"Debugger", vdmakeunique<ATUIDialogSysConfigDebugger>());
 	AddPage(L"Display", vdmakeunique<ATUIDialogSysConfigDisplay>());
 	AddPage(L"Ease of use", vdmakeunique<ATUIDialogSysConfigEaseOfUse>());
+	AddPage(L"Input", vdmakeunique<ATUIDialogSysConfigInput>());
+	AddPage(L"UI", vdmakeunique<ATUIDialogSysConfigUI>());
 	AddPage(L"Window caption", vdmakeunique<ATUIDialogSysConfigCaption>());
+	AddPage(L"Workarounds", vdmakeunique<ATUIDialogSysConfigWorkarounds>());
 	PopCategory();
 }
 

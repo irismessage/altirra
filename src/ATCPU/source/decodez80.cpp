@@ -1034,10 +1034,8 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnED(uint8 opcode) {
 
 		case 0xA0:		// LDI (16T)
 			*mpDstState++ = kZ80StateWait_3T;
-			*mpDstState++ = kZ80StateHLToAddr;
-			*mpDstState++ = kZ80StateRead;
+			*mpDstState++ = kZ80StateReadLD;
 			*mpDstState++ = kZ80StateWait_5T;
-			*mpDstState++ = kZ80StateDEToAddr;
 			*mpDstState++ = kZ80StateWrite;
 			*mpDstState++ = kZ80StateStep2I;
 			return true;
@@ -1047,7 +1045,7 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnED(uint8 opcode) {
 			*mpDstState++ = kZ80StateHLToAddr;
 			*mpDstState++ = kZ80StateRead;
 			*mpDstState++ = kZ80StateWait_5T;
-			*mpDstState++ = kZ80StateCpToA;
+			*mpDstState++ = kZ80StateCpToA2;
 			*mpDstState++ = kZ80StateStep1I;
 			return true;
 
@@ -1071,10 +1069,8 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnED(uint8 opcode) {
 
 		case 0xA8:		// LDD (16T)
 			*mpDstState++ = kZ80StateWait_3T;
-			*mpDstState++ = kZ80StateHLToAddr;
-			*mpDstState++ = kZ80StateRead;
+			*mpDstState++ = kZ80StateReadLD;
 			*mpDstState++ = kZ80StateWait_5T;
-			*mpDstState++ = kZ80StateDEToAddr;
 			*mpDstState++ = kZ80StateWrite;
 			*mpDstState++ = kZ80StateStep2D;
 			return true;
@@ -1084,7 +1080,7 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnED(uint8 opcode) {
 			*mpDstState++ = kZ80StateHLToAddr;
 			*mpDstState++ = kZ80StateRead;
 			*mpDstState++ = kZ80StateWait_5T;
-			*mpDstState++ = kZ80StateCpToA;
+			*mpDstState++ = kZ80StateCpToA2;
 			*mpDstState++ = kZ80StateStep1D;
 			return true;
 
@@ -1108,10 +1104,8 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnED(uint8 opcode) {
 
 		case 0xB0:		// LDIR (21/16T)
 			*mpDstState++ = kZ80StateWait_3T;
-			*mpDstState++ = kZ80StateHLToAddr;
-			*mpDstState++ = kZ80StateRead;
+			*mpDstState++ = kZ80StateReadLD;
 			*mpDstState++ = kZ80StateWait_5T;
-			*mpDstState++ = kZ80StateDEToAddr;
 			*mpDstState++ = kZ80StateWrite;
 			*mpDstState++ = kZ80StateStep2I;
 			*mpDstState++ = kZ80StateRep;
@@ -1122,7 +1116,7 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnED(uint8 opcode) {
 			*mpDstState++ = kZ80StateHLToAddr;
 			*mpDstState++ = kZ80StateRead;
 			*mpDstState++ = kZ80StateWait_5T;
-			*mpDstState++ = kZ80StateCpToA;
+			*mpDstState++ = kZ80StateCpToA2;
 			*mpDstState++ = kZ80StateStep1I;
 			*mpDstState++ = kZ80StateRepNZ;
 			return true;
@@ -1149,10 +1143,8 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnED(uint8 opcode) {
 
 		case 0xB8:		// LDDR (21/16T)
 			*mpDstState++ = kZ80StateWait_3T;
-			*mpDstState++ = kZ80StateHLToAddr;
-			*mpDstState++ = kZ80StateRead;
+			*mpDstState++ = kZ80StateReadLD;
 			*mpDstState++ = kZ80StateWait_5T;
-			*mpDstState++ = kZ80StateDEToAddr;
 			*mpDstState++ = kZ80StateWrite;
 			*mpDstState++ = kZ80StateStep2D;
 			*mpDstState++ = kZ80StateRep;
@@ -1163,7 +1155,7 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnED(uint8 opcode) {
 			*mpDstState++ = kZ80StateHLToAddr;
 			*mpDstState++ = kZ80StateRead;
 			*mpDstState++ = kZ80StateWait_5T;
-			*mpDstState++ = kZ80StateCpToA;
+			*mpDstState++ = kZ80StateCpToA2;
 			*mpDstState++ = kZ80StateStep1D;
 			*mpDstState++ = kZ80StateRepNZ;
 			return true;
@@ -1211,10 +1203,7 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnCB(uint8 opcode) {
 
 		case 0x06:		// RLC (HL) (15T)
 			*mpDstState++ = kZ80StateWait_3T;
-			if (T_UseIXIY) {
-				*mpDstState++ = kZ80StateReadIXdToAddr;
-				*mpDstState++ = kZ80StateWait_5T;
-			} else {
+			if (!T_UseIXIY) {
 				*mpDstState++ = kZ80StateHLToAddr;
 			}
 			*mpDstState++ = kZ80StateRead;
@@ -1237,10 +1226,7 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnCB(uint8 opcode) {
 
 		case 0x0E:		// RRC (HL) (15T)
 			*mpDstState++ = kZ80StateWait_3T;
-			if (T_UseIXIY) {
-				*mpDstState++ = kZ80StateReadIXdToAddr;
-				*mpDstState++ = kZ80StateWait_5T;
-			} else {
+			if (!T_UseIXIY) {
 				*mpDstState++ = kZ80StateHLToAddr;
 			}
 			*mpDstState++ = kZ80StateRead;
@@ -1263,10 +1249,7 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnCB(uint8 opcode) {
 
 		case 0x16:		// RL (HL) (15T)
 			*mpDstState++ = kZ80StateWait_3T;
-			if (T_UseIXIY) {
-				*mpDstState++ = kZ80StateReadIXdToAddr;
-				*mpDstState++ = kZ80StateWait_5T;
-			} else {
+			if (!T_UseIXIY) {
 				*mpDstState++ = kZ80StateHLToAddr;
 			}
 			*mpDstState++ = kZ80StateRead;
@@ -1289,10 +1272,7 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnCB(uint8 opcode) {
 
 		case 0x1E:		// RR (HL) (15T)
 			*mpDstState++ = kZ80StateWait_3T;
-			if (T_UseIXIY) {
-				*mpDstState++ = kZ80StateReadIXdToAddr;
-				*mpDstState++ = kZ80StateWait_5T;
-			} else {
+			if (!T_UseIXIY) {
 				*mpDstState++ = kZ80StateHLToAddr;
 			}
 			*mpDstState++ = kZ80StateRead;
@@ -1315,10 +1295,7 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnCB(uint8 opcode) {
 
 		case 0x26:		// SLA (HL) (15T)
 			*mpDstState++ = kZ80StateWait_3T;
-			if (T_UseIXIY) {
-				*mpDstState++ = kZ80StateReadIXdToAddr;
-				*mpDstState++ = kZ80StateWait_5T;
-			} else {
+			if (!T_UseIXIY) {
 				*mpDstState++ = kZ80StateHLToAddr;
 			}
 			*mpDstState++ = kZ80StateRead;
@@ -1341,10 +1318,7 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnCB(uint8 opcode) {
 
 		case 0x2E:		// SRA (HL) (15T)
 			*mpDstState++ = kZ80StateWait_3T;
-			if (T_UseIXIY) {
-				*mpDstState++ = kZ80StateReadIXdToAddr;
-				*mpDstState++ = kZ80StateWait_5T;
-			} else {
+			if (!T_UseIXIY) {
 				*mpDstState++ = kZ80StateHLToAddr;
 			}
 			*mpDstState++ = kZ80StateRead;
@@ -1361,20 +1335,17 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnCB(uint8 opcode) {
 		case 0x35:		// SLL L (8T)
 		case 0x37:		// SLL A (8T)
 			DecodeArgToData(opcode, false);
-			*mpDstState++ = kZ80StateSla;
+			*mpDstState++ = kZ80StateSll;
 			DecodeDataToArg(opcode, false);
 			return true;
 
 		case 0x36:		// SLL (HL) (15T)
 			*mpDstState++ = kZ80StateWait_3T;
-			if (T_UseIXIY) {
-				*mpDstState++ = kZ80StateReadIXdToAddr;
-				*mpDstState++ = kZ80StateWait_5T;
-			} else {
+			if (!T_UseIXIY) {
 				*mpDstState++ = kZ80StateHLToAddr;
 			}
 			*mpDstState++ = kZ80StateRead;
-			*mpDstState++ = kZ80StateSla;
+			*mpDstState++ = kZ80StateSll;
 			*mpDstState++ = kZ80StateWait_4T;
 			*mpDstState++ = kZ80StateWrite;
 			return true;
@@ -1393,10 +1364,7 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnCB(uint8 opcode) {
 
 		case 0x3E:		// SRL (HL) (15T)
 			*mpDstState++ = kZ80StateWait_3T;
-			if (T_UseIXIY) {
-				*mpDstState++ = kZ80StateReadIXdToAddr;
-				*mpDstState++ = kZ80StateWait_5T;
-			} else {
+			if (!T_UseIXIY) {
 				*mpDstState++ = kZ80StateHLToAddr;
 			}
 			*mpDstState++ = kZ80StateRead;
@@ -1416,8 +1384,12 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnCB(uint8 opcode) {
 		case 0x78:		case 0x79:		case 0x7A:		case 0x7B:		case 0x7C:		case 0x7D:		case 0x7E:		case 0x7F:
 			DecodeArgToData(opcode, T_UseIXIY);
 			*mpDstState++ = kZ80StateBit0 + ((opcode >> 3) & 7);
-			if ((opcode & 7) == 6 && !T_UseIXIY)
-				*mpDstState++ = kZ80StateWait_1T;
+			if ((opcode & 7) == 6) {
+				if (T_UseIXIY)
+					*mpDstState++ = kZ80StateBitAdjustIX;
+				else
+					*mpDstState++ = kZ80StateWait_1T;
+			}
 			return true;
 
 		// SET n,r
@@ -1468,7 +1440,7 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnDDFD(uint8 opcode) {
 			switch(opcode & 0x30) {
 				case 0x00: *mpDstState++ = kZ80StateBCToData; break;
 				case 0x10: *mpDstState++ = kZ80StateDEToData; break;
-				case 0x20: *mpDstState++ = kZ80StateHLToData; break;
+				case 0x20: *mpDstState++ = kZ80StateIXToData; break;
 				case 0x30: *mpDstState++ = kZ80StateSPToData; break;
 			}
 
@@ -1502,6 +1474,24 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnDDFD(uint8 opcode) {
 			*mpDstState++ = kZ80StateDataToIX;
 			return true;
 
+		case 0x24:		// INC IXH (8T)
+			*mpDstState++ = kZ80StateIXHToData;
+			*mpDstState++ = kZ80StateInc;
+			*mpDstState++ = kZ80StateDataToIXH;
+			return true;
+
+		case 0x25:		// DEC IXH (8T)
+			*mpDstState++ = kZ80StateIXHToData;
+			*mpDstState++ = kZ80StateDec;
+			*mpDstState++ = kZ80StateDataToIXH;
+			return true;
+
+		case 0x26:		// LD IXH,imm (11T)
+			*mpDstState++ = kZ80StateWait_3T;
+			*mpDstState++ = kZ80StateReadImm;
+			*mpDstState++ = kZ80StateDataToIXH;
+			return true;
+
 		case 0x2A:		// LD IX,(abs) (20T)
 			*mpDstState++ = kZ80StateWait_3T;
 			*mpDstState++ = kZ80StateReadImmAddr;
@@ -1521,6 +1511,46 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnDDFD(uint8 opcode) {
 			*mpDstState++ = kZ80StateDataToIX;
 			return true;
 
+		case 0x2C:		// INC IXL (8T)
+			*mpDstState++ = kZ80StateIXLToData;
+			*mpDstState++ = kZ80StateInc;
+			*mpDstState++ = kZ80StateDataToIXL;
+			return true;
+
+		case 0x2D:		// DEC IXL (8T)
+			*mpDstState++ = kZ80StateIXLToData;
+			*mpDstState++ = kZ80StateDec;
+			*mpDstState++ = kZ80StateDataToIXL;
+			return true;
+
+		case 0x2E:		// LD IXL,imm (11T)
+			*mpDstState++ = kZ80StateWait_3T;
+			*mpDstState++ = kZ80StateReadImm;
+			*mpDstState++ = kZ80StateDataToIXL;
+			return true;
+
+		case 0x34:		// INC (IX+d) (23T)
+			*mpDstState++ = kZ80StateWait_3T;
+			*mpDstState++ = kZ80StateReadIXdToAddr;
+			*mpDstState++ = kZ80StateWait_5T;
+			*mpDstState++ = kZ80StateRead;
+			*mpDstState++ = kZ80StateWait_4T;
+			*mpDstState++ = kZ80StateInc;
+			*mpDstState++ = kZ80StateWait_3T;
+			*mpDstState++ = kZ80StateWrite;
+			return true;
+
+		case 0x35:		// DEC (IX+d) (23T)
+			*mpDstState++ = kZ80StateWait_3T;
+			*mpDstState++ = kZ80StateReadIXdToAddr;
+			*mpDstState++ = kZ80StateWait_5T;
+			*mpDstState++ = kZ80StateRead;
+			*mpDstState++ = kZ80StateWait_4T;
+			*mpDstState++ = kZ80StateDec;
+			*mpDstState++ = kZ80StateWait_3T;
+			*mpDstState++ = kZ80StateWrite;
+			return true;
+
 		case 0x36:		// LD (IX+d),imm (19T)
 			*mpDstState++ = kZ80StateWait_3T;
 			*mpDstState++ = kZ80StateReadIXdToAddr;
@@ -1528,6 +1558,82 @@ bool ATCPUDecoderGeneratorZ80::DecodeInsnDDFD(uint8 opcode) {
 			*mpDstState++ = kZ80StateReadImm;
 			*mpDstState++ = kZ80StateWait_3T;
 			*mpDstState++ = kZ80StateWrite;
+			return true;
+
+		case 0x40:		// LD B,B (8T)
+		case 0x41:		// LD B,C (8T)
+		case 0x42:		// LD B,D (8T)
+		case 0x43:		// LD B,E (8T)
+		case 0x44:		// LD B,IXH (8T)
+		case 0x45:		// LD B,IXL (8T)
+		case 0x47:		// LD B,A (8T)
+		case 0x48:		// LD C,B (8T)
+		case 0x49:		// LD C,C (8T)
+		case 0x4A:		// LD C,D (8T)
+		case 0x4B:		// LD C,E (8T)
+		case 0x4C:		// LD C,IXH (8T)
+		case 0x4D:		// LD C,IXL (8T)
+		case 0x4F:		// LD C,A (8T)
+		case 0x50:		// LD D,B (8T)
+		case 0x51:		// LD D,C (8T)
+		case 0x52:		// LD D,D (8T)
+		case 0x53:		// LD D,E (8T)
+		case 0x54:		// LD D,IXH (8T)
+		case 0x55:		// LD D,IXL (8T)
+		case 0x57:		// LD D,A (8T)
+		case 0x58:		// LD E,B (8T)
+		case 0x59:		// LD E,C (8T)
+		case 0x5A:		// LD E,D (8T)
+		case 0x5B:		// LD E,E (8T)
+		case 0x5C:		// LD E,IXH (8T)
+		case 0x5D:		// LD E,IXL (8T)
+		case 0x5F:		// LD E,A (8T)
+		case 0x60:		// LD IXH,B (8T)
+		case 0x61:		// LD IXH,C (8T)
+		case 0x62:		// LD IXH,D (8T)
+		case 0x63:		// LD IXH,E (8T)
+		case 0x64:		// LD IXH,IXH (8T)
+		case 0x65:		// LD IXH,IXL (8T)
+		case 0x67:		// LD IXH,A (8T)
+		case 0x68:		// LD IXL,B (8T)
+		case 0x69:		// LD IXL,C (8T)
+		case 0x6A:		// LD IXL,D (8T)
+		case 0x6B:		// LD IXL,E (8T)
+		case 0x6C:		// LD IXL,IXH (8T)
+		case 0x6D:		// LD IXL,IXL (8T)
+		case 0x6F:		// LD IXL,A (8T)
+		case 0x78:		// LD A,B (8T)
+		case 0x79:		// LD A,C (8T)
+		case 0x7A:		// LD A,D (8T)
+		case 0x7B:		// LD A,E (8T)
+		case 0x7C:		// LD A,IXH (8T)
+		case 0x7D:		// LD A,IXL (8T)
+		case 0x7F:		// LD A,A (8T)
+			switch(opcode & 7) {
+				case 0:	*mpDstState++ = kZ80StateBToData; break;
+				case 1:	*mpDstState++ = kZ80StateCToData; break;
+				case 2:	*mpDstState++ = kZ80StateDToData; break;
+				case 3:	*mpDstState++ = kZ80StateEToData; break;
+				case 4:	*mpDstState++ = kZ80StateIXHToData; break;
+				case 5:	*mpDstState++ = kZ80StateIXLToData; break;
+				case 6:
+					VDFAIL("(IX+d) should not go through this path");
+					break;
+				case 7:	*mpDstState++ = kZ80StateAToData; break;
+			}
+
+			switch((opcode >> 3) & 7) {
+				case 0:	*mpDstState++ = kZ80StateDataToB; break;
+				case 1:	*mpDstState++ = kZ80StateDataToC; break;
+				case 2:	*mpDstState++ = kZ80StateDataToD; break;
+				case 3:	*mpDstState++ = kZ80StateDataToE; break;
+				case 4:	*mpDstState++ = kZ80StateDataToIXH; break;
+				case 5:	*mpDstState++ = kZ80StateDataToIXL; break;
+				case 6:
+					VDFAIL("(IX+d) should not go through this path");
+					break;
+				case 7:	*mpDstState++ = kZ80StateDataToA; break;
+			}
 			return true;
 
 		case 0x46:		// LD B,(IX+d) (19T)

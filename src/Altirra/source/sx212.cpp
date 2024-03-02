@@ -25,7 +25,6 @@
 #include <at/atcore/devicesioimpl.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
-#include "pokey.h"
 #include "pia.h"
 #include "cpu.h"
 #include "cpumemory.h"

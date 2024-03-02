@@ -39,6 +39,8 @@
 #include <vd2/VDDisplay/logging.h>
 #include <vd2/VDDisplay/internal/screenfx.h>
 
+#include <vd2/Tessa/config.h>
+
 #ifndef WM_TOUCH
 #define WM_TOUCH		0x0240
 #endif
@@ -104,10 +106,12 @@ protected:
 	void SetReturnFocus(bool fs) override;
 	void SetTouchEnabled(bool enable) override;
 	void SetUse16Bit(bool enable) override;
+	void SetHDREnabled(bool enable) override;
 	void SetFullScreen(bool fs, uint32 width, uint32 height, uint32 refresh) override;
 	void SetDestRect(const vdrect32 *r, uint32 backgroundColor) override;
 	void SetPixelSharpness(float xsharpness, float ysharpness) override;
 	void SetCompositor(IVDDisplayCompositor *comp) override;
+	void SetSDRBrightness(float nits) override;
 
 	void PostBuffer(VDVideoDisplayFrame *) override;
 	bool RevokeBuffer(bool allowFrameSkip, VDVideoDisplayFrame **ppFrame) override;
@@ -126,6 +130,7 @@ protected:
 	vdrect32 GetMonitorRect() override;
 
 	bool IsScreenFXPreferred() const override { return mbScreenFXSupported; }
+	VDDHDRAvailability IsHDRCapable() const override { return mHDRAvailability; }
 
 	bool MapNormSourcePtToDest(vdfloat2& pt) const override;
 	bool MapNormDestPtToSource(vdfloat2& pt) const override;
@@ -135,7 +140,10 @@ protected:
 
 		g_pVDVideoDisplayManager->SetProfileHook(profileHook);
 	}
+	
+	void RequestCapture(vdfunction<void(const VDPixmap *)> fn);
 
+public:
 	void OnTick() override {
 		if (mpMiniDriver)
 			mpMiniDriver->Poll();
@@ -145,6 +153,7 @@ private:
 	void ReleaseActiveFrame() override;
 	void RequestNextFrame() override;
 	void QueuePresent() override;
+	void OnFrameCaptured(const VDPixmap *px) override;
 
 	void DispatchNextFrame();
 	bool DispatchActiveFrame();
@@ -233,12 +242,14 @@ private:
 	bool		mbReturnFocus;
 	bool		mbTouchEnabled;
 	bool		mbUse16Bit;
+	bool		mbHDR = false;
 	bool		mbFullScreen;
 	uint32		mFullScreenWidth;
 	uint32		mFullScreenHeight;
 	uint32		mFullScreenRefreshRate;
 	bool		mbDestRectEnabled;
 	bool		mbScreenFXSupported = false;
+	VDDHDRAvailability mHDRAvailability = VDDHDRAvailability::NoMinidriverSupport;
 	float		mPixelSharpnessX;
 	float		mPixelSharpnessY;
 	vdrect32	mSourceSubrect;
@@ -249,37 +260,41 @@ private:
 	bool		mbDistortionMappingValid = false;
 	VDDisplayDistortionMapping mDistortionMapping {};
 
-	uint32				mSolidColorBuffer;
+	uint32		mSolidColorBuffer;
+	float		mSDRBrightness = 80.0f;
 
 	vdfunction<void(ProfileEvent)> mpProfileHook;
+	vdfunction<void(const VDPixmap *)> mpCaptureFn;
 
 	VDPixmapBuffer		mCachedImage;
+	VDPixmapBuffer		mCaptureBuffer;
 
 	uint32	mSourcePalette[256];
 
 	static ATOM				sChildWindowClass;
 
-	static const UINT MYWM_SETSOURCE			= WM_USER + 0x100;
-	static const UINT MYWM_UPDATE				= WM_USER + 0x101;
-	static const UINT MYWM_CACHE				= WM_USER + 0x102;
-	static const UINT MYWM_RESET				= WM_USER + 0x103;
-	static const UINT MYWM_SETSOURCEMSG			= WM_USER + 0x104;
-	static const UINT MYWM_PROCESSNEXTFRAME		= WM_USER + 0x105;
-	static const UINT MYWM_DESTROY				= WM_USER + 0x106;
-	static const UINT MYWM_SETFILTERMODE		= WM_USER + 0x107;
-	static const UINT MYWM_SETSOLIDCOLOR		= WM_USER + 0x108;
-	static const UINT MYWM_INVALIDATE			= WM_USER + 0x109;
-	static const UINT MYWM_QUEUEPRESENT			= WM_USER + 0x10A;
-	static const UINT MYWM_SETTOUCHENABLED		= WM_USER + 0x10B;
-	static const UINT MYWM_GETMONITORRECT		= WM_USER + 0x10C;
-	static const UINT MYWM_SETUSE16BIT			= WM_USER + 0x10D;
+	static constexpr UINT MYWM_SETSOURCE			= WM_USER + 0x100;
+	static constexpr UINT MYWM_UPDATE				= WM_USER + 0x101;
+	static constexpr UINT MYWM_CACHE				= WM_USER + 0x102;
+	static constexpr UINT MYWM_RESET				= WM_USER + 0x103;
+	static constexpr UINT MYWM_SETSOURCEMSG			= WM_USER + 0x104;
+	static constexpr UINT MYWM_PROCESSNEXTFRAME		= WM_USER + 0x105;
+	static constexpr UINT MYWM_DESTROY				= WM_USER + 0x106;
+	static constexpr UINT MYWM_SETFILTERMODE		= WM_USER + 0x107;
+	static constexpr UINT MYWM_SETSOLIDCOLOR		= WM_USER + 0x108;
+	static constexpr UINT MYWM_INVALIDATE			= WM_USER + 0x109;
+	static constexpr UINT MYWM_QUEUEPRESENT			= WM_USER + 0x10A;
+	static constexpr UINT MYWM_SETTOUCHENABLED		= WM_USER + 0x10B;
+	static constexpr UINT MYWM_GETMONITORRECT		= WM_USER + 0x10C;
+	static constexpr UINT MYWM_SETUSE16BIT			= WM_USER + 0x10D;
+	static constexpr UINT MYWM_FRAMECAPTURED		= WM_USER + 0x10F;
+	static constexpr UINT MYWM_REQUESTCAPTURE		= WM_USER + 0x110;
 
 public:
 	static bool		sbEnableDX;
 	static bool		sbEnableDXOverlay;
 	static bool		sbEnableD3D;
 	static bool		sbEnable3D;
-	static bool		sbEnableOGL;
 	static bool		sbEnableTS;
 	static bool		sbEnableDebugInfo;
 	static bool		sbEnableHighPrecision;
@@ -287,7 +302,6 @@ public:
 	static bool		sbEnableSecondaryMonitorDX;
 	static bool		sbEnableMonitorSwitchingDX;
 	static bool		sbEnableD3D9Ex;
-	static bool		sbEnableDDraw;
 	static bool		sbEnableTS3D;
 };
 
@@ -296,7 +310,6 @@ bool VDVideoDisplayWindow::sbEnableDX = true;
 bool VDVideoDisplayWindow::sbEnableDXOverlay = true;
 bool VDVideoDisplayWindow::sbEnableD3D;
 bool VDVideoDisplayWindow::sbEnable3D;
-bool VDVideoDisplayWindow::sbEnableOGL;
 bool VDVideoDisplayWindow::sbEnableTS;
 bool VDVideoDisplayWindow::sbEnableDebugInfo;
 bool VDVideoDisplayWindow::sbEnableHighPrecision;
@@ -304,7 +317,6 @@ bool VDVideoDisplayWindow::sbEnableBackgroundFallback;
 bool VDVideoDisplayWindow::sbEnableSecondaryMonitorDX;
 bool VDVideoDisplayWindow::sbEnableMonitorSwitchingDX;
 bool VDVideoDisplayWindow::sbEnableD3D9Ex;
-bool VDVideoDisplayWindow::sbEnableDDraw = true;
 bool VDVideoDisplayWindow::sbEnableTS3D = false;
 
 ///////////////////////////////////////////////////////////////////////////
@@ -332,11 +344,10 @@ void VDVideoDisplaySetTermServ3DEnabled(bool enable) {
 	VDVideoDisplayWindow::sbEnableTS3D = enable;
 }
 
-void VDVideoDisplaySetFeatures(bool enableDirectX, bool enableDirectXOverlay, bool enableTermServ, bool enableOpenGL, bool enableDirect3D, bool enableDirect3DFX, bool enableHighPrecision) {
+void VDVideoDisplaySetFeatures(bool enableDirectX, bool enableDirectXOverlay, bool enableTermServ, bool enableDirect3D, bool enableDirect3DFX, bool enableHighPrecision) {
 	VDVideoDisplayWindow::sbEnableDX = enableDirectX;
 	VDVideoDisplayWindow::sbEnableDXOverlay = enableDirectXOverlay;
 	VDVideoDisplayWindow::sbEnableD3D = enableDirect3D;
-	VDVideoDisplayWindow::sbEnableOGL = enableOpenGL;
 	VDVideoDisplayWindow::sbEnableTS = enableTermServ;
 	VDVideoDisplayWindow::sbEnableHighPrecision = enableHighPrecision;
 }
@@ -349,8 +360,12 @@ void VDVideoDisplaySet3DEnabled(bool enable) {
 	VDVideoDisplayWindow::sbEnable3D = enable;
 }
 
-void VDVideoDisplaySetDDrawEnabled(bool enable) {
-	VDVideoDisplayWindow::sbEnableDDraw = enable;
+void VDDSetLibraryOverridesEnabled(bool enabled) {
+	VDTSetLibraryOverridesEnabled(enabled);
+}
+
+bool VDDGetLibraryOverridesEnabled() {
+	return VDTGetLibraryOverridesEnabled();
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -472,6 +487,7 @@ bool VDVideoDisplayWindow::SetSource(bool bAutoUpdate, const VDPixmap& src, bool
 	params.bAllowConversion	= bAllowConversion;
 	params.bPersistent		= false;
 	params.use16bit			= mbUse16Bit;
+	params.mbHDR			= mbHDR;
 
 	const VDPixmapFormatInfo& info = VDPixmapGetInfo(src.format);
 	params.bpp = info.qsize >> info.qhbits;
@@ -493,6 +509,7 @@ bool VDVideoDisplayWindow::SetSourcePersistent(bool bAutoUpdate, const VDPixmap&
 	params.bAllowConversion	= bAllowConversion;
 	params.bPersistent		= true;
 	params.use16bit			= mbUse16Bit;
+	params.mbHDR			= mbHDR;
 
 	const VDPixmapFormatInfo& info = VDPixmapGetInfo(src.format);
 	params.bpp = info.qsize >> info.qhbits;
@@ -532,6 +549,10 @@ void VDVideoDisplayWindow::SetTouchEnabled(bool enable) {
 
 void VDVideoDisplayWindow::SetUse16Bit(bool enable) {
 	SendMessage(mhwnd, MYWM_SETUSE16BIT, enable, 0);
+}
+
+void VDVideoDisplayWindow::SetHDREnabled(bool hdr) {
+	mbHDR = hdr;
 }
 
 void VDVideoDisplayWindow::SetFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh) {
@@ -604,6 +625,18 @@ void VDVideoDisplayWindow::SetCompositor(IVDDisplayCompositor *comp) {
 		SyncReset();
 	else if (mpMiniDriver)
 		mpMiniDriver->SetCompositor(comp);
+}
+
+void VDVideoDisplayWindow::SetSDRBrightness(float nits) {
+	if (mSDRBrightness != nits) {
+		mSDRBrightness = nits;
+
+		if (mpMiniDriver) {
+			mpMiniDriver->SetSDRBrightness(nits);
+
+			Invalidate();
+		}
+	}
 }
 
 void VDVideoDisplayWindow::PostBuffer(VDVideoDisplayFrame *p) {
@@ -740,6 +773,20 @@ bool VDVideoDisplayWindow::MapNormDestPtToSource(vdfloat2& pt) const {
 	return !mbDistortionMappingValid || mDistortionMapping.MapScreenToImage(pt);
 }
 
+void VDVideoDisplayWindow::RequestCapture(vdfunction<void(const VDPixmap *)> fn) {
+	vdfunction<void(const VDPixmap *)> oldfn;
+
+	vdsynchronized(mMutex) {
+		oldfn = std::move(mpCaptureFn);
+		mpCaptureFn = std::move(fn);
+	}
+
+	if (oldfn)
+		oldfn(nullptr);
+
+	PostMessage(mhwnd, MYWM_REQUESTCAPTURE, 0, 0);
+}
+
 void VDVideoDisplayWindow::ReleaseActiveFrame() {
 	VDVideoDisplayFrame *pFrameToDiscard = NULL;
 	VDVideoDisplayFrame *pFrameToDiscard2 = NULL;
@@ -776,6 +823,17 @@ void VDVideoDisplayWindow::QueuePresent() {
 	PostMessage(mhwnd, MYWM_QUEUEPRESENT, 0, 0);
 }
 
+void VDVideoDisplayWindow::OnFrameCaptured(const VDPixmap *px) {
+	vdsynchronized(mMutex) {
+		if (px)
+			mCaptureBuffer.assign(*px);
+		else
+			mCaptureBuffer.clear();
+	}
+
+	PostMessage(mhwnd, MYWM_FRAMECAPTURED, 0, 0);
+}
+
 void VDVideoDisplayWindow::RequestNextFrame() {
 	PostMessage(mhwnd, MYWM_PROCESSNEXTFRAME, 0, 0);
 }
@@ -803,6 +861,7 @@ bool VDVideoDisplayWindow::DispatchActiveFrame() {
 		params.bAllowConversion	= mpActiveFrame->mbAllowConversion;
 		params.bPersistent		= false;
 		params.use16bit			= mbUse16Bit;
+		params.mbHDR			= mbHDR;
 
 		const VDPixmapFormatInfo& info = VDPixmapGetInfo(mpActiveFrame->mPixmap.format);
 		params.bpp = info.qsize >> info.qhbits;
@@ -1094,6 +1153,28 @@ LRESULT VDVideoDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		mbUse16Bit = (wParam != 0);
 		return 0;
 
+	case MYWM_FRAMECAPTURED:
+		{
+			vdfunction<void(const VDPixmap *)> fn;
+			VDPixmapBuffer buf;
+
+			vdsynchronized(mMutex) {
+				fn = std::move(mpCaptureFn);
+				buf = std::move(mCaptureBuffer);
+			}
+
+			if (buf.data)
+				fn(&buf);
+			else
+				fn(nullptr);
+		}
+		return 0;
+
+	case MYWM_REQUESTCAPTURE:
+		if (mpMiniDriver)
+			mpMiniDriver->RequestCapture();
+		return 0;
+
 	case WM_SIZE:
 		if (mhwndChild)
 			SetWindowPos(mhwndChild, NULL, 0, 0, LOWORD(lParam), HIWORD(lParam), SWP_NOMOVE|SWP_NOCOPYBITS|SWP_NOZORDER|SWP_NOACTIVATE);
@@ -1264,6 +1345,8 @@ bool VDVideoDisplayWindow::SyncInit(bool bAutoRefresh, bool bAllowNonpersistentS
 
 	bool bIsForeground = VDIsForegroundTaskW32();
 
+	CheckForMonitorChange();
+
 	do {
 		bool isTermServ = (sbEnableTS || sbEnableTS3D) && VDIsTerminalServicesClient();
 
@@ -1278,14 +1361,7 @@ bool VDVideoDisplayWindow::SyncInit(bool bAutoRefresh, bool bAllowNonpersistentS
 						SyncReset();
 					}
 
-					if (!mbUseSubrect && sbEnableOGL && (sbEnableTS3D || !isTermServ)) {
-						mpMiniDriver = VDCreateVideoDisplayMinidriverOpenGL();
-						if (InitMiniDriver())
-							break;
-						SyncReset();
-					}
-
-					if (sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX || !(CheckForMonitorChange(), IsOnSecondaryMonitor())) {
+					if (sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX || !IsOnSecondaryMonitor()) {
 						if (!mbUseSubrect && sbEnableD3D && (sbEnableTS3D || !isTermServ)) {
 							mpMiniDriver = VDCreateVideoDisplayMinidriverDX9(!sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX, sbEnableD3D9Ex);
 
@@ -1295,16 +1371,6 @@ bool VDVideoDisplayWindow::SyncInit(bool bAutoRefresh, bool bAllowNonpersistentS
 								break;
 							}
 
-							SyncReset();
-						}
-
-						if (sbEnableDDraw && (sbEnableTS || !isTermServ)) {
-							mpMiniDriver = VDCreateVideoDisplayMinidriverDirectDraw(sbEnableDXOverlay, sbEnableSecondaryMonitorDX);
-							if (InitMiniDriver()) {
-								mbMiniDriverSecondarySensitive = !sbEnableSecondaryMonitorDX;
-								mbMiniDriverClearOtherMonitors = sbEnableSecondaryMonitorDX || sbEnableMonitorSwitchingDX;
-								break;
-							}
 							SyncReset();
 						}
 					}
@@ -1427,6 +1493,7 @@ void VDVideoDisplayWindow::SyncSetSolidColor(uint32 color) {
 	info.bpp				= 4;
 	info.bpr				= 4;
 	info.use16bit			= mbUse16Bit;
+	info.mbHDR				= mbHDR;
 	info.mpCB				= this;
 	info.pixmap.data		= &mSolidColorBuffer;
 	info.pixmap.format		= nsVDPixmap::kPixFormat_XRGB8888;
@@ -1540,6 +1607,7 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 	mpMiniDriver->SetHighPrecision(sbEnableHighPrecision);
 	mpMiniDriver->SetDestRect(mbDestRectEnabled ? &mDestRect : NULL, mBackgroundColor);
 	mpMiniDriver->SetPixelSharpness(mPixelSharpnessX, mPixelSharpnessY);
+	mpMiniDriver->SetSDRBrightness(mSDRBrightness);
 
 	VDASSERT(mSource.pixmap.data);
 
@@ -1576,9 +1644,19 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 		mhwndChild = NULL;
 		return false;
 	}
+	
+	mHDRAvailability = mpMiniDriver->IsHDRCapable();
 
 	// Must be done after Init().
 	mpMiniDriver->SetCompositor(mpCompositor);
+
+	bool needCapture = false;
+	vdsynchronized(mMutex) {
+		needCapture = (mpCaptureFn != nullptr);
+	}
+
+	if (needCapture)
+		mpMiniDriver->RequestCapture();
 
 	return true;
 }

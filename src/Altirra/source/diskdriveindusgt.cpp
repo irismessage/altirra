@@ -67,7 +67,7 @@ void *ATDeviceDiskDriveIndusGT::AsInterface(uint32 iid) {
 		case IATDeviceFirmware::kTypeID: return static_cast<IATDeviceFirmware *>(&mFirmwareControl);
 		case IATDeviceDiskDrive::kTypeID: return static_cast<IATDeviceDiskDrive *>(this);
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
-		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(&mAudioPlayer);
+		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(this);
 		case IATDeviceButtons::kTypeID: return static_cast<IATDeviceButtons *>(this);
 		case ATFDCEmulator::kTypeID: return &mFDC;
 	}
@@ -192,7 +192,7 @@ void ATDeviceDiskDriveIndusGT::Init() {
 	mCoProc.SetPortReadHandler([this](uint8 port) -> uint8 { OnAccessPort(port); return 0xFF; });
 	mCoProc.SetPortWriteHandler([this](uint8 port, uint8 data) { OnAccessPort(port); });
 
-	mFDC.Init(&mDriveScheduler, 288.0f, 2.0f, ATFDCEmulator::kType_2793);
+	mFDC.Init(&mDriveScheduler, 288.0f, 1.0f, ATFDCEmulator::kType_2793);
 	mFDC.SetDiskInterface(mpDiskInterface);
 	mFDC.SetOnDrqChange([this](bool drq) {  });
 	mFDC.SetOnIrqChange([this](bool irq) {  });
@@ -471,7 +471,7 @@ void ATDeviceDiskDriveIndusGT::OnAudioModeChanged() {
 bool ATDeviceDiskDriveIndusGT::IsImageSupported(const IATDiskImage& image) const {
 	const auto& geo = image.GetGeometry();
 
-	return geo.mSideCount == 1 && geo.mSectorsPerTrack <= 26;
+	return geo.mTrackCount <= 40 && geo.mSideCount == 1 && geo.mSectorsPerTrack <= 26 && geo.mSectorSize <= 256 && !geo.mbHighDensity;
 }
 
 void ATDeviceDiskDriveIndusGT::Sync() {
@@ -732,7 +732,7 @@ void ATDeviceDiskDriveIndusGT::OnAccessPort(uint8 addr) {
 
 				const uint32 t = DriveTimeToMasterTime() + kAudioLatency;
 
-				const float level = state ? -1000.0f : 0.0f;
+				const float level = state ? -1.0f : 0.0f;
 
 				mAudioRawSource.SetOutput(t, level);
 			}

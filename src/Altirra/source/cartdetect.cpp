@@ -700,7 +700,6 @@ not_recommended:
 			// $8000-9FFF	$0000-1FFF	$2000-3FFF
 			// $A000-BFFF	$2000-3FFF	$2000-3FFF
 
-			int oneChipScore = 0;
 			int scores[4] = {0};
 
 			for(int i=0; i<0x3FDD; ++i) {

@@ -286,7 +286,11 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 			mPFDMALatchedVEnd = 0;
 			mPFDisplayStart = 110;
 			mPFDisplayEnd = 110;
-			mDLHistory[mY].mbValid = false;
+
+			DLHistoryEntry& ent = mDLHistory[mY];
+			ent.mDLAddress = mDLISTLatch;
+			ent.mDMACTL = mDMACTL;
+			ent.mbValid = false;
 
 			// Display start is at scanline 8.
 			if (mY == 8) {
@@ -316,16 +320,18 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 					mbDLExtraLoadsPending = false;
 			} else {
 				mRowCounter = 0;
+
+				// We need to reset this in case a JVB instruction ends a vertical scroll region,
+				// as the replays of that instruction will have the same vscroll bit and therefore
+				// won't be affected anymore.
+				mbRowStopUseVScroll = false;
 				
 				if (mbDLActive) {
 					mbDLExtraLoadsPending = false;
 					mDLControlPrev = mDLControl;
 
-					DLHistoryEntry& ent = mDLHistory[mY];
-					ent.mDLAddress = mDLISTLatch;
 					ent.mPFAddress = mPFRowDMAPtrBase + mPFRowDMAPtrOffset;
 					ent.mHVScroll = mHSCROL + (mVSCROL << 4);
-					ent.mDMACTL = mDMACTL;
 					ent.mCHBASE = mCHBASE >> 1;
 					ent.mbValid = true;
 
@@ -480,7 +486,6 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 					if ((scrollCur & 15) < 2)
 						scrollCur = 0;
 
-					mbRowStopUseVScroll = false;
 					if ((scrollCur ^ scrollPrev) & 0x20) {
 						if (scrollCur & 0x20)
 							mRowCounter = mVSCROL;
@@ -982,42 +987,67 @@ void ATAnticEmulator::Decode(int offset) {
 		0x80, 0x81, 0x82, 0x88,
 	};
 
-	static const uint16 kExpandMode6[4][16]={
+	struct U16 {
+		constexpr U16(uint16 v)
+			: x((unsigned char)(v & 0xFF))
+			, y((unsigned char)(v >> 8))
+		{
+		}
+
+		unsigned char x, y;
+	};
+
+	struct U32 {
+		constexpr U32(uint32 v)
+			: x((unsigned char)(v & 0xFF))
+			, y((unsigned char)(v >> 8))
+			, z((unsigned char)(v >> 16))
+			, w((unsigned char)(v >> 24))
+		{
+		}
+
+		unsigned char x, y, z, w;
+	};
+
+	static_assert(sizeof(U16) == sizeof(uint16));
+	static_assert(sizeof(U32) == sizeof(uint32));
+
+	static constexpr U16 kExpandMode6[4][16]={
 		{ 0x0000, 0x0100, 0x1000, 0x1100, 0x0001, 0x0101, 0x1001, 0x1101, 0x0010, 0x0110, 0x1010, 0x1110, 0x0011, 0x0111, 0x1011, 0x1111 },
 		{ 0x0000, 0x0200, 0x2000, 0x2200, 0x0002, 0x0202, 0x2002, 0x2202, 0x0020, 0x0220, 0x2020, 0x2220, 0x0022, 0x0222, 0x2022, 0x2222 },
 		{ 0x0000, 0x0400, 0x4000, 0x4400, 0x0004, 0x0404, 0x4004, 0x4404, 0x0040, 0x0440, 0x4040, 0x4440, 0x0044, 0x0444, 0x4044, 0x4444 },
 		{ 0x0000, 0x0800, 0x8000, 0x8800, 0x0008, 0x0808, 0x8008, 0x8808, 0x0080, 0x0880, 0x8080, 0x8880, 0x0088, 0x0888, 0x8088, 0x8888 },
 	};
 
-	static const uint32 kExpandMode8[16]={
+	static constexpr U32 kExpandMode8[16]={
 		0x00000000,	0x11110000,	0x22220000,	0x44440000,
 		0x00001111,	0x11111111,	0x22221111,	0x44441111,
 		0x00002222,	0x11112222,	0x22222222,	0x44442222,
 		0x00004444,	0x11114444,	0x22224444,	0x44444444,
 	};
 
-	static const uint32 kExpandMode9[16]={
+	static constexpr U32 kExpandMode9[16]={
 		0x00000000, 0x11000000, 0x00110000, 0x11110000,
 		0x00001100, 0x11001100, 0x00111100, 0x11111100,
 		0x00000011, 0x11000011, 0x00110011, 0x11110011,
 		0x00001111, 0x11001111, 0x00111111, 0x11111111,
 	};
 
-	static const uint16 kExpandModeA[16]={
+	static constexpr U16 kExpandModeA[16]={
 		0x0000,	0x1100,	0x2200,	0x4400,
 		0x0011,	0x1111,	0x2211,	0x4411,
 		0x0022,	0x1122,	0x2222,	0x4422,
 		0x0044,	0x1144,	0x2244,	0x4444,
 	};
 
-	static const uint16 kExpandModeB[16]={
+	static constexpr U16 kExpandModeB[16]={
 		0x0000, 0x0100, 0x1000, 0x1100, 0x0001, 0x0101, 0x1001, 0x1101, 0x0010, 0x0110, 0x1010, 0x1110, 0x0011, 0x0111, 0x1011, 0x1111,
 	};
 
-	static const uint8 kExpandModeAb8[4]={ 0x00, 0x11, 0x22, 0x44 };
-	static const uint8 kExpandModeAbB[4]={ 0x00, 0x01, 0x10, 0x11 };
+	static constexpr uint8 kExpandModeAb8[4]={ 0x00, 0x11, 0x22, 0x44 };
+	static constexpr uint8 kExpandModeAbB[4]={ 0x00, 0x01, 0x10, 0x11 };
 
-	static const uint8 kBits[16]={
+	static constexpr uint8 kBits[16]={
 		0x01,
 		0x02,
 		0x04,
@@ -1163,10 +1193,10 @@ void ATAnticEmulator::Decode(int offset) {
 			break;
 	}
 
-	const uint8 *src = &mPFDataBuffer[xoffset];
-	const uint8 *chdata = &mPFCharBuffer[xoffset];
+	const uint8 *VDRESTRICT src = &mPFDataBuffer[xoffset];
+	const uint8 *VDRESTRICT chdata = &mPFCharBuffer[xoffset];
 
-	uint8 *dst = &mPFDecodeBuffer[x];
+	uint8 *VDRESTRICT dst = &mPFDecodeBuffer[x];
 
 	// In text modes, data is fetched 3 clocks in advance.
 	// In graphics modes, data is fetched 4 clocks in advance.
@@ -1221,7 +1251,7 @@ void ATAnticEmulator::Decode(int offset) {
 				break;
 
 			case 3:		// 40 column text, 1.5 colors, 10 scanlines
-				for(; x < limit; ++x) {
+				for(; x < limit; x += 2) {
 					uint8 c = *src++;
 					uint8 d = *chdata++;
 
@@ -1268,9 +1298,9 @@ void ATAnticEmulator::Decode(int offset) {
 					uint8 c = *src++;
 					uint8 d = *chdata++;
 
-					const uint16 *tbl = kExpandMode6[c >> 6];
-					*(uint16 *)(dst+0) = tbl[d >> 4];
-					*(uint16 *)(dst+2) = tbl[d & 15];
+					const U16 *VDRESTRICT tbl = kExpandMode6[c >> 6];
+					*(U16 *)(dst+0) = tbl[d >> 4];
+					*(U16 *)(dst+2) = tbl[d & 15];
 					dst += 4;
 				}
 				break;
@@ -1279,8 +1309,8 @@ void ATAnticEmulator::Decode(int offset) {
 				for(; x < limit; x += 8) {
 					uint8 c = *src++;
 
-					*(uint32 *)(dst + 0) = kExpandMode8[c >> 4];
-					*(uint32 *)(dst + 4) = kExpandMode8[c & 15];
+					*(U32 *)(dst + 0) = kExpandMode8[c >> 4];
+					*(U32 *)(dst + 4) = kExpandMode8[c & 15];
 					dst += 8;
 				}
 				break;
@@ -1289,8 +1319,8 @@ void ATAnticEmulator::Decode(int offset) {
 				for(; x < limit; x += 8) {
 					uint8 c = *src++;
 
-					*(uint32 *)(dst + 0) = kExpandMode9[c >> 4];
-					*(uint32 *)(dst + 4) = kExpandMode9[c & 15];
+					*(U32 *)(dst + 0) = kExpandMode9[c >> 4];
+					*(U32 *)(dst + 4) = kExpandMode9[c & 15];
 					dst += 8;
 				}
 				break;
@@ -1299,8 +1329,8 @@ void ATAnticEmulator::Decode(int offset) {
 				for(; x < limit; x += 4) {
 					uint8 c = *src++;
 
-					*(uint16 *)(dst+0) = kExpandModeA[c >> 4];
-					*(uint16 *)(dst+2) = kExpandModeA[c & 15];
+					*(U16 *)(dst+0) = kExpandModeA[c >> 4];
+					*(U16 *)(dst+2) = kExpandModeA[c & 15];
 					dst += 4;
 				}
 				break;
@@ -1310,8 +1340,8 @@ void ATAnticEmulator::Decode(int offset) {
 				for(; x < limit; x += 4) {
 					uint8 c = *src++;
 
-					*(uint16 *)(dst+0) = kExpandModeB[c >> 4];
-					*(uint16 *)(dst+2) = kExpandModeB[c & 15];
+					*(U16 *)(dst+0) = kExpandModeB[c >> 4];
+					*(U16 *)(dst+2) = kExpandModeB[c & 15];
 					dst += 4;
 				}
 				break;
@@ -1365,7 +1395,6 @@ void ATAnticEmulator::Decode(int offset) {
 						uint8 d = mPFCharBuffer[mPFDecodeCharOffset++];
 
 						uint8 himask = (c & 128) ? 0xff : 0;
-						uint8 inv = himask & mCharInvert;
 
 						d &= (~himask | mCharBlink) & globalMask;
 
@@ -1481,7 +1510,7 @@ void ATAnticEmulator::Decode(int offset) {
 							mPFDecodeOffset = 0;
 					}
 
-					*dst++ = (uint8)kExpandMode6[mPFDecodeAbCharInv][mAbnormalDecodeShifter >> 4];
+					*dst++ = (uint8)kExpandMode6[mPFDecodeAbCharInv][mAbnormalDecodeShifter >> 4].x;
 				}
 				break;
 
@@ -2554,15 +2583,14 @@ inline void ATAnticSetDMACycles(void *dst0, uint32 start, uint32 end, uint8 cycl
 
 #if VD_CPU_X86 || VD_CPU_X64
 	ATAnticSetDMACycles_SSE2(dst0, start, end, cyclePattern, dmaMask);
-	return;
-#endif
-
+#else
 	uint8 *VDRESTRICT dst = (uint8 *)dst0;
 
 	for (uint32 i = start; i < end; ++i) {
 		if (cyclePattern & (1 << (i & 7)))
 			dst[i] |= dmaMask;
 	}
+#endif
 }
 
 inline void ATAnticSetRefreshCycles(uint8 *dmaPattern) {
@@ -2923,8 +2951,6 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 	mPFFetchWidth = mPFWidth;
 	if (mbHScrollEnabled && mPFFetchWidth != kPFDisabled && mPFFetchWidth != kPFWide)
 		mPFFetchWidth = (PFWidthMode)((int)mPFFetchWidth + 1);
-
-	bool pfActive = (uint32)(mX - mPFDisplayStart) < (uint32)(mPFDisplayEnd - mPFDisplayStart);
 
 	switch(mPFWidth) {
 		case kPFDisabled:

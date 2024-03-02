@@ -114,10 +114,10 @@ DEFINE_TEST(System_Int128) {
 	for(int i=0; i<64; ++i) {
 		auto a = vdint128(0x8000000000000000, 0) >> i;
 		TEST_ASSERT(a.getLo() == 0);
-		TEST_ASSERT(a.getHi() == (INT64_C(0x8000000000000000) >> i));
+		TEST_ASSERT(a.getHi() == ((-INT64_C(0x7FFFFFFFFFFFFFFF) - 1) >> i));
 
 		auto b = vdint128(0x8000000000000000, 0) >> (i + 64);
-		TEST_ASSERT(b.getLo() == (INT64_C(0x8000000000000000) >> i));
+		TEST_ASSERT(b.getLo() == ((-INT64_C(0x7FFFFFFFFFFFFFFF) - 1) >> i));
 		TEST_ASSERT(b.getHi() == -1);
 	}
 

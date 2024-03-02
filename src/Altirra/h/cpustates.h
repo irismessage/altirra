@@ -212,7 +212,6 @@ namespace AT6502States {
 		kStateWriteH16,
 		kStateWriteH16_DpBank,
 		kState816ReadByte,
-		kState816ReadByte_PBK,
 		kStateReadL16,
 		kStateReadH16,
 		kStateReadH16_DpBank,

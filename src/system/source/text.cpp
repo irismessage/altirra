@@ -293,7 +293,7 @@ VDStringW VDTextU8ToW(const char *s, int length) {
 		// Two cases here.  If we are using UTF-16, surrogates need to be split in half.  If we are using
 		// UTF-32, surrogates need to be combined.
 
-		if (sizeof(wchar_t) > 2) {
+		if constexpr (sizeof(wchar_t) > 2) {
 			if (VDIsUnicodeSurrogateSecond(wc)) {
 				if (temp.empty() || !VDIsUnicodeSurrogateFirst(temp.back())) {
 					VDASSERT(false);

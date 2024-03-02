@@ -59,6 +59,7 @@ public:
 
 	void SetAnalysisMode(bool analysisMode);
 	void SetDefaultPalette(const uint32 pal[256], ATPaletteCorrector *palcorr);
+	uint32 GetRawPaletteAndSEL(uint32 pal[1024]) const;
 
 	void SetTraceContext(ATTraceContext *context);
 
@@ -83,6 +84,7 @@ public:
 	void EndScanline();
 
 	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);
+	void SetRegisterImmediate(uint8 addr, uint8 value);
 
 public:
 	void OnScheduledEvent(uint32 id) override;

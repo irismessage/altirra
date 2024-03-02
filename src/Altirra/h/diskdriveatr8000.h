@@ -45,7 +45,7 @@ class ATDeviceDiskDriveATR8000 final : public ATDevice
 	, public IATDeviceDiskDrive
 	, public ATDeviceSIO
 	, public IATDeviceButtons
-	, public IATDevicePrinter
+	, public IATDevicePrinterPort
 	, public IATDeviceParent
 	, public ATDiskDriveDebugTargetControl
 	, public IATDeviceRawSIO
@@ -81,8 +81,8 @@ public:		// IATDeviceButtons
 	bool IsButtonDepressed(ATDeviceButton idx) const override;
 	void ActivateButton(ATDeviceButton idx, bool state) override;
 
-public:		// IATDevicePrinter
-	void SetPrinterOutput(IATPrinterOutput *out) override;
+public:		// IATDevicePrinterPort
+	void SetPrinterDefaultOutput(IATPrinterOutput *out) override;
 
 public:
 	IATDeviceBus *GetDeviceBus(uint32 index) override;
@@ -227,6 +227,7 @@ protected:
 
 	ATDebugTargetBreakpointsImpl mBreakpointsImpl;
 	ATDiskDriveFirmwareControl mFirmwareControl;
+	ATDeviceBusSingleChild mParallelBus;
 };
 
 #endif

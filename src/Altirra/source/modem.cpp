@@ -248,7 +248,7 @@ void ATModemEmulator::Init() {
 	mbIncomingConnection = false;
 	mbSuppressNoCarrier = false;
 	mbConnectionFailed = false;
-	mbNewConnectedState = 0;
+	mDriverConnectionState = (int)DriverConnectionState::Disconnected;
 	mConnectRate = 0;
 
 	mRegisters = mSavedRegisters;
@@ -684,7 +684,26 @@ void ATModemEmulator::Poll() {
 
 		RestoreListeningState();
 	} else {
-		bool nowConnected = (mbNewConnectedState != 0);
+		// If we are already connected, then we want to hold off reporting a
+		// disconnect until remaining data has been drained, since the remote
+		// server probably sent a burst of data before shutdown(). This avoids
+		// losing some or even all of the sent data. OTOH, if we haven't reached
+		// full connect on listening, we need to handle the disconnect
+		// immediately since we won't necessarily ever be reading data
+		// (repeated RING with no ATA).
+		DriverConnectionState driverConnState = (DriverConnectionState)(int)mDriverConnectionState;
+		bool nowConnected;
+		
+		switch(mConnectionState) {
+			case kConnectionState_Handshaking:
+			case kConnectionState_Connected:
+				nowConnected = driverConnState != DriverConnectionState::Disconnected;
+				break;
+
+			default:
+				nowConnected = driverConnState == DriverConnectionState::Connected;
+				break;
+		}
 
 		if (mbListening) {
 			if (mbIncomingConnection != nowConnected) {
@@ -811,11 +830,8 @@ void ATModemEmulator::Poll() {
 						mConnectionState = kConnectionState_Connected;
 						UpdateControlState();
 					} else if (mLostCarrierDelayCycles && ATSCHEDULER_GETTIME(mpScheduler) - mLostCarrierTime > mLostCarrierDelayCycles) {
-						TerminateCall();
-
 no_carrier:
-						mConnectionState = kConnectionState_NotConnected;
-
+						TerminateCall();
 						UpdateUIStatus();
 
 						if (mbSuppressNoCarrier)
@@ -1547,7 +1563,8 @@ void ATModemEmulator::TerminateCall() {
 		mpDriver = NULL;
 	}
 
-	mbNewConnectedState = false;
+	mDriverConnectionState = (int)DriverConnectionState::Disconnected;
+
 	mConnectionState = kConnectionState_NotConnected;
 	mbListening = false;
 	mbDeviceTransmitUnderflow = true;
@@ -2248,12 +2265,12 @@ void ATModemEmulator::OnWriteAvail(IATModemDriver *sender) {
 
 void ATModemEmulator::OnEvent(IATModemDriver *sender, ATModemPhase phase, ATModemEvent event) {
 	if (event == kATModemEvent_Connected)
-		mbNewConnectedState = true;
+		mDriverConnectionState = (int)DriverConnectionState::Connected;
 	else {
-		if (event == kATModemEvent_ConnectionClosing && !mbRinging)
-			return;
-
-		mbNewConnectedState = false;
+		if (event == kATModemEvent_ConnectionClosing)
+			mDriverConnectionState = (int)DriverConnectionState::Disconnecting;
+		else
+			mDriverConnectionState = (int)DriverConnectionState::Disconnected;
 
 		if (phase <= kATModemPhase_Connecting)
 			mbConnectionFailed = true;

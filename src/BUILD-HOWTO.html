@@ -39,6 +39,34 @@ h3 {
     margin-top: 25px;
     margin-bottom: 12px;
 }
+
+@media(prefers-color-scheme: dark) {
+	body {
+		background: #202020;
+		color: #d8d8d8;
+	}
+
+	h1 {
+		background: #35a;
+	}
+
+	h2 {
+		border-bottom-color: #d8d8d8;
+	}
+
+	tt {
+		color: #e44;
+	}
+
+	a:link {
+		color: #48f;
+	}
+
+	a:visited {
+		color: #d3f;
+	}
+}
+
 </style>
 	</head>
 	<body>
@@ -46,8 +74,7 @@ h3 {
 		<h2>Prerequisites</h2>
 		<h3>Build machine</h3>
 		<ul>
-			<li>Required: Windows 7 x64 or newer</li>
-			<li>Recommended: Windows 10 x64</li>
+			<li>Required: Windows 10 x64 or newer</li>
 			<li>Not supported: Windows XP or Vista (cannot run toolchain)</li>
 		</ul>
 		<p>
@@ -57,12 +84,12 @@ h3 {
 		</p>
 		<h3>Compiler</h3>
 		<ul>
-			<li>Recommended: Visual Studio 2017 version 15.9.15 (Professional or Community)</li>
+			<li>Required: Visual Studio 2019 version 16.10.0 or newer (Professional or Community)</li>
+			<li>Required: Windows 10 SDK (10.0.17763.0 or newer)</li>
 			<ul>
-				<li>Required feature: Windows XP support for C++</li>
-				<li>Required features for ARM64: Windows 10 SDK (10.0.17763.0), Visual C++ compilers and libraries for ARM64</li>
+				<li>Required features for ARM64: Visual C++ compilers and libraries for ARM64</li>
 			</ul>
-			<li>Not supported: VS2015 or earlier</li>
+			<li>Not supported: VS2017 or earlier</li>
 			<li>Not supported: MinGW, GCC, Clang, Clang/C2</li>
 		</ul>
 		<p>
@@ -107,7 +134,7 @@ h3 {
 			YASM 1.3.0 is needed for x86/x64 assembly language modules. (<a href="http://yasm.tortall.net/">http://yasm.tortall.net/</a>)
 		</p>
 		<p>
-			MADS 1.9.8 is needed for 6502 assembly language modules. (<a href="http://mads.atari8.info/">http://mads.atari8.info/</a>)
+			MADS 2.1.0 is needed for 6502 assembly language modules. (<a href="http://mads.atari8.info/">http://mads.atari8.info/</a>)
 		</p>
 		<p>
 			Newer versions of these tools should work but have not been tested. Older versions should be avoided;
@@ -156,10 +183,9 @@ h3 {
 			as a reference.
 		</p>
 		<p>
-			The build initially comes set to use the VS2015 compiler with XP targeting enabled
-			(<tt>v140_xp</tt>).To use the VS2015 compiler without XP targeting, edit <tt>PlatformSetup.props</tt>
-			or <tt>PlatformSetup.local.props</tt>
-            to select <tt>v140</tt> instead. This is necessary for Code Analysis. Note that
+			The build initially comes set to use the VS2019 compiler
+			(<tt>v142</tt>). To switch to a different toolchain or toolchain version, edit <tt>PlatformSetup.props</tt>
+			or <tt>PlatformSetup.local.props</tt>. Note that
 			Visual Studio should be restarted after editing any .props file manually as the IDE
 			does not reliably recognize external changes to property files.
 		</p>

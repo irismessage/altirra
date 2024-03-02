@@ -8,6 +8,7 @@
 extern ATSimulator g_sim;
 
 VDStringA g_ATDebuggerLogBuffer;
+vdfunction<void(const char *)> g_ATDebuggerSecondaryLogger;
 
 void ATConsoleLogWriteTag(ATLogChannel *channel);
 
@@ -16,6 +17,9 @@ void ATConsoleLogWrite(ATLogChannel *channel, const char *message) {
 
 	g_ATDebuggerLogBuffer.append(message);
 	ATConsoleWrite(g_ATDebuggerLogBuffer.c_str());
+
+	if (g_ATDebuggerSecondaryLogger)
+		g_ATDebuggerSecondaryLogger(g_ATDebuggerLogBuffer.c_str());
 }
 
 void ATConsoleLogWriteV(ATLogChannel *channel, const char *format, va_list val) {
@@ -24,6 +28,9 @@ void ATConsoleLogWriteV(ATLogChannel *channel, const char *format, va_list val) 
 	g_ATDebuggerLogBuffer.append_vsprintf(format, val);
 
 	ATConsoleWrite(g_ATDebuggerLogBuffer.c_str());
+
+	if (g_ATDebuggerSecondaryLogger)
+		g_ATDebuggerSecondaryLogger(g_ATDebuggerLogBuffer.c_str());
 }
 
 void ATConsoleLogWriteTag(ATLogChannel *channel) {
@@ -48,11 +55,26 @@ void ATConsoleLogWriteTag(ATLogChannel *channel) {
 		}
 	}
 
+	if (flags & kATLogFlags_TimestampUs) {
+		const uint64 ticks = g_sim.TimeSinceColdReset();
+		double dt = g_sim.GetScheduler()->GetRate().AsInverseDouble() * (double)ticks;
+
+		dt = fmod(dt, 100.0);
+
+		g_ATDebuggerLogBuffer.append_sprintf("(%9.6f) ", dt);
+	}
+
+	if (flags & kATLogFlags_TimestampRaw) {
+		g_ATDebuggerLogBuffer.append_sprintf("%08X | ", g_sim.GetScheduler()->GetTick());
+	}
+
 	g_ATDebuggerLogBuffer += channel->GetName();
 	g_ATDebuggerLogBuffer += ": ";
 }
 
-void ATInitDebuggerLogging() {
+void ATInitDebuggerLogging(vdfunction<void(const char *)> secondaryLogger) {
+	g_ATDebuggerSecondaryLogger = std::move(secondaryLogger);
+
 	ATLogSetWriteCallbacks(ATConsoleLogWrite, ATConsoleLogWriteV);
 }
 

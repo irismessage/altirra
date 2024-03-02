@@ -31,7 +31,7 @@ public:
 	~ATRTime8Emulator();
 
 	uint8 ReadControl(uint8 addr);
-	uint8 DebugReadControl(uint8 addr);
+	uint8 DebugReadControl(uint8 addr) const;
 	void WriteControl(uint8 addr, uint8 value);
 
 protected:
@@ -54,6 +54,7 @@ public: // IATDeviceMemMap
 	virtual bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
 
 private:
+	static sint32 DebugReadByte(void *thisptr0, uint32 addr);
 	static sint32 ReadByte(void *thisptr0, uint32 addr);
 	static bool WriteByte(void *thisptr0, uint32 addr, uint8 value);
 

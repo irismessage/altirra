@@ -52,6 +52,7 @@ ATUIProfilerWindow::ATUIProfilerWindow()
 	, mPreciseTicksToPixels(0)
 {
 	mbHitTransparent = true;
+	SetAlphaFillColor(0x80000000);
 
 	mMaxY = 200;
 	mFrameStartTime = VDGetPreciseTick();
@@ -135,11 +136,13 @@ void ATUIProfilerWindow::OnDestroy() {
 }
 
 void ATUIProfilerWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
-	static const uint32 kColors[]={
+	static constexpr uint32 kColors[]={
 		0x808080,
+		0xFFFFFF,
 		0x4060E0,
 		0xE02010,
 		0x20E010,
+		0xFFE010,
 	};
 
 	VDASSERTCT(vdcountof(kColors) == kATProfileRegionCount);
@@ -164,9 +167,11 @@ void ATUIProfilerWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 		int y = 204;
 		static const wchar_t *const kNames[]={
 			L"Idle",
+			L"Idle (frame delay)",
 			L"Simulation",
 			L"Native messages",
 			L"Display tick",
+			L"Display present",
 		};
 
 		VDASSERTCT(vdcountof(kNames) == kATProfileRegionCount);

@@ -380,8 +380,8 @@
 
     Set a breakpoint at a PC address.
     
-      bp [-n] [-k] [-q] [-g group] <xaddress> ["command"]
-      bp [-n] [-k] [-q] [-g group] `file:line` ["command"]
+      bp [-n] [-k] [-q] [-h] [-g group] <xaddress> ["command"]
+      bp [-n] [-k] [-q] [-h] [-g group] `file:line` ["command"]
       
     Sets a PC breakpoint in the CPU core, which cause the emulator to stop
     when the PC is equal to the address of a breakpoint. There are no
@@ -402,6 +402,9 @@
     numbering than the main user group and are not visible by default.
 
     -q suppresses normal output of the command.
+
+    -h marks the breakpoint as hidden, suppressing UI updates. This is useful
+    for temporary breakpoints set automatically, such as tracepoints.
     
     If a command is specified, the command is executed when the breakpoint
     fires. Multiple commands may be specified using ; as a separator.
@@ -462,10 +465,10 @@
 
     Set a tracepoint at a PC address.
     
-      bt [-k] [-q] [-g group] { <address> | `file:line` }
+      bt [-k] [-q] [-h] [-g group] { <address> | `file:line` }
              format [arguments...]
 
-      bt [-k] [-q] [-g group] { <address> | `file:line` }
+      bt [-k] [-q] [-h] [-g group] { <address> | `file:line` }
              format [arguments...] -- [return-arguments...]
       
     Sets a non-stopping breakpoint at a PC address or source location
@@ -474,7 +477,7 @@
     bp (set breakpoint) command and the formatting arguments are the same
     as for the .printf command.
 
-    The -k, -q, and -g options work the same as for the bp command.
+    The -k, -q, -g, and -h options work the same as for the bp command.
     
     This command is equivalent to using the bp -n command with a breakpoint
     command of the form:
@@ -501,7 +504,7 @@
 
     Set a tracepoint on access to a memory location or range.
     
-      bta [-k] [-q] [-g group] <mode> <address> [L<length>]
+      bta [-k] [-q] [-h] [-g group] <mode> <address> [L<length>]
              format [arguments...]
       
     Sets a non-stopping breakpoint at a memory location or range with a
@@ -510,7 +513,7 @@
     (break on memory access) command and the formatting arguments are the
     same as for the .printf command.
 
-    The -k, -q, and -g options work the same as for the bp command.
+    The -k, -q, -g, and -h options work the same as for the bp command.
     
     This command is equivalent to using the ba -n command with a breakpoint
     command of the form:
@@ -629,7 +632,22 @@
 
       -w <width>:
         Displays data with <width> bytes per row.
-    
+
++ dbx  Display bytes from expression
+
+    Evaluates an expression with sequential indices and displays the result
+    as a memory dump.
+
+      dbx [-w <width>] <expr> [L<length>]
+
+    The expression is evaluated up to <length> times (default 128) with the
+    current 0-based index as 'address', and the result displayed as bytes.
+
+    Example:
+
+      ;Display bytes at $4000 after XOR with $AA
+      dbx "db($4000+address) ^ $aa" L$100
+
 + dy   Display binary
 
     Shows the contents of memory as binary.
@@ -706,6 +724,14 @@
     switch preserves the current mode and the -s switch forces source mode.
     
     See also: .sourcemode
+
++ gcr  Go cycle relative
+
+    Resume execution for the given number of machine cycles.
+
+      gcr <count>
+
+    The number of cycles can include cycles where the CPU is halted.
 
 + gf   Go until frame end
 
@@ -964,12 +990,14 @@
 
 > lft  Enable logging channel with tagging
 
-      lft [-t] [-c] <channel>|*
+      lft [-t] [-c] [-u] [-r] <channel>|*
       
     Enables a logging channel with prefixes indicating running status:
     
       -t   Include beam position timestamp.
       -c   Include cassette tape position.
+      -u   Include timestamp in microseconds (us).
+      -r   Include raw 32-bit timestamp in cycles.
       
     If no switches are supplied, -t is assumed.
 
@@ -1145,7 +1173,7 @@
     that self-modifies its code with a vector address. The vt* commands allow
     the target list to be modified to exclude valid targets from detection.
 
-^ wb, wc, wl, ww, wx   Watch data
+^ wb, wc, wl, ww       Watch data
 > wb   Watch byte
 > wc   Watch clear
 > wl   Watch list
@@ -1156,19 +1184,31 @@
     
       wb <address>     (Watch byte)
       ww <address>     (Watch word)
-      wx <expr>        (Watch expression)
       wl               (List watches)
       wc <index>|*     (Clear watches)
       
     The wb and ww commands display the contents of a byte or word at the
     given address. Watched values are sampled and displayed each frame.
     Up to eight watches can be active at any one time.
+    
+    See also: ? (evaluate expression), wx (watch expression)
+
++ wx   Watch expression
+
+    Continuously display the value of an expression.
+
+      wx [-x8|x16|x32] <expr>
 
     The wx command displays the value of an expression, which is re-evaluated
     every frame. The expression can include memory reads (db/dw/etc.), which
     is useful for reading variables too complex for wb or ww.
-    
-    See also: ? (evaluate expression)
+
+    By default, the computed value is displayed in decimal. The -x8, -x16,
+    and -x32 options instead format the computed value as an 8-bit, 16-bit,
+    or 32-bit hex value.
+
+    See also: wb (watch byte), ww (watch word), wl (list watches),
+              wc (clear watches)
 
 + x    Examine symbols
 
@@ -1404,11 +1444,15 @@
 
     Displays raw sector data.
     
-      .diskdumpsec [-d <drive>] <virt-sector>
+      .diskdumpsec [-d <drive>] [-i] <virt-sector>
       
     Reads a raw sector from disk by virtual sector number and displays
     its contents. If phantom sectors are present, the first one is used.
     Dumping a sector does not disturb the drive's timing state.
+
+    If -i is specified, the data is inverted before being displayed. This is
+    useful for disk formats that are non-inverted on disk and thus inverted
+    from the view of the computer (Atari 815, Indus GT CP/M).
     
     WARNING: While this command doesn't disturb timing state, it will
              change virtual disk image state when reading sectors off
@@ -1455,6 +1499,11 @@
     Reads a raw sector from disk by virtual sector number and writes it
     into memory. If phantom sectors are present, the first one is used.
     Dumping a sector does not disturb the drive's timing state.
+
+    For sectors that have different virtual and physical sector sizes,
+    such as boot sectors, the virtual sector size is used. That is, on
+    a double density disk, the read size is 128 bytes for sectors 1-3
+    and 256 bytes for all other sectors.
     
     WARNING: While this command doesn't disturb timing state, it will
              change virtual disk image state when reading sectors off
@@ -1497,6 +1546,18 @@
     recorded information not found in the display list itself, such as the
     HSCROL, VSCROL, and DMACTL states when the display list instructions
     were executed.
+
+    In the event that a multi-line jump instruction occurs, the jumps on
+    each scanline are displayed:
+
+      120: BC30 BDF8 0 4   22   A2
+      124: BC31 BE20 0 4   22   81
+      125: BC34 ---- - -   22   81
+      126: 0202 ---- - -   22   81
+      127: C0CD ---- - -   22   81
+      128: 4068 ---- - -   22   81
+      129: 0000 BE20 0 4   22   00
+
 
 + .ds1305      Show DS1305 real-time clock status
 
@@ -1621,6 +1682,23 @@
                                      
     See also: .printf
 
++ .fpaccel     Control floating-point math pack acceleration
+
+    Selectively enables or disables math pack acceleration routines.
+
+      .fpaccel               (List enable/disable status)
+      .fpaccel -e address    (Enable acceleration for specific routine)
+      .fpaccel -d address    (Disable acceleration for specific routine)
+
+    Enables or disables specific routine hooks when floating-point acceleration
+    is enabled. The hook is selected by the calling address of the routine.
+    By default, all supported routines are enabled for acceleration. These hooks
+    and the .fpaccel command only have an effect when the global option for
+    FP acceleration is enabled.
+
+    Note that in mixed radix mode, FADD is the address $FADD; (FADD) must be
+    used to select the symbol.
+
 + .gtia        Display GTIA status
 
 + .ide         Display IDE emulator status
@@ -1719,6 +1797,19 @@
     intended to allow helper modules to be loaded into RAM.
     
     See also: .readmem, .writemem
+
++ .loadstate   Load simulation state
+
+      .loadstate <path>
+
+    Loads emulation state from the given save state file. This is the same
+    format as used when the Load State command in the UI is used, with the
+    default extension being .atstate2.
+
+    The .loadstate command cannot load the old Altirra V1 save state format
+    (*.altstate). Use the UI Load State command to load old save state files.
+
+    See also: .savestate
 
 + .loadsym     Load module symbols
 
@@ -1822,6 +1913,24 @@
     The on-exe commands only trigger when an executable is loaded
     by the simulator itself. They do not activate when an executable
     is loaded by DOS, which is invisible to the simulator.
+
++ .pagesums    Display checksum map of memory pages
+
+    Display a map of checksum bytes for all 256 pages of memory.
+
+      .pagesums
+
+    Each byte in the map is a checksum of all bytes in that page. This allows
+    for quick verification against another instance to see which pages are
+    the same or different. At the end of each line is a row checksum, which is
+    computed over all of the page checksums in that row; this allows for quick
+    checking of rows (16 x 256 bytes = 4KB).
+
+    The checksums are computed over the CPU memory space, so they will show
+    whatever data is currently visible to the CPU at that address in the current
+    cycle.
+    
+    For convenience, a zeroed page has a checksum of $00.
 
 ^ .pathdump, .pathrecord, .pathreset, .pathbreak   Manage execution path recording
 > .pathdump    Dump disassembly of recorded paths to a file
@@ -1973,6 +2082,26 @@
     in the system, particularly those in disk drives (full drive emulation
     only).
 
++ .savestate   Save simulation state
+
+      .savestate <path>
+
+    Saves emulation state to the given save state file. This is the same format
+    as used when the Save State command in the UI is used, with the default
+    extension being .atstate2.
+
+    Unlike the UI, the .savestate command does not attempt to step the
+    simulation to the next CPU instruction boundary and will save a state
+    mid-instruction.
+
+    See also: .loadstate
+
++ .side3       Dump SIDE3 status
+
+      .side3
+
+    Displays internal SIDE3 device state.
+
 + .sdx_loadsyms  Load SpartaDOS X symbols
 
     Loads symbols from the SpartaDOS X symbol table.
@@ -2112,8 +2241,24 @@
 + .unloadsym   Unload module symbols
 + .vbxe        Display VBXE status
 + .vbxe_bl     Display VBXE blit list (BL)
-+ .vbxe_xdl    Display VBXE extended display list (XDL)
+
++ .vbxe_pal    Display VBXE palette
+
+    Displays entries from the VBXE palette.
+
+       .vbxe_pal [<offset>] [L<length>]
+
+    Displays RGB colors from the VBXE palette memory, which has four banks
+    of 256 colors with 21 bits each. The values are displayed in RGB form as
+    24-bit integers; the LSB of each byte is zero as it does not exist.
+
+    By default, all 256 colors are displayed from the bank specified by
+    the PSEL register. If offset is specified, it is a value from 0-1023
+    selecting a specific color and bank ($304 = color $04 from bank 3). Length
+    specifies the number of colors to display.
+
 + .vbxe_traceblits    Toggle VBXE blit tracing
++ .vbxe_xdl    Display VBXE extended display list (XDL)
 + .vectors     Display kernel vectors
 
 + .warmreset   Warm reset simulation

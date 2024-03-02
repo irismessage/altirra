@@ -219,7 +219,8 @@ protected:
 	static bool WriteByte_CCTL_MicroCalc(void *thisptr0, uint32 address, uint8 value);
 
 	static sint32 ReadByte_CCTL_MegaCart3(void *thisptr0, uint32 address);
-	static bool WriteByte_CCTL_MegaCart3(void *thisptr0, uint32 address, uint8 value);
+	static bool WriteByte_CCTL_MegaCart3_512K(void *thisptr0, uint32 address, uint8 value);
+	static bool WriteByte_CCTL_MegaCart3_4M(void *thisptr0, uint32 address, uint8 value);
 
 	static sint32 ReadByte_CCTL_aDawliah_32K(void *thisptr0, uint32 address);
 	static sint32 ReadByte_CCTL_aDawliah_64K(void *thisptr0, uint32 address);

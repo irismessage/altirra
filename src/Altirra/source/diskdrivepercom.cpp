@@ -22,6 +22,7 @@
 #include <at/atcore/audiosource.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/deviceprinter.h>
 #include <at/atcore/deviceserial.h>
 #include "audiosampleplayer.h"
 #include "diskdrivepercom.h"
@@ -31,16 +32,17 @@
 
 extern ATLogChannel g_ATLCDiskEmu;
 
-template<bool T_AT88>
+template<ATDeviceDiskDrivePercom::HardwareType T_HardwareType>
 void ATCreateDeviceDiskDrivePercom(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDeviceDiskDrivePercom> p(new ATDeviceDiskDrivePercom(T_AT88));
+	vdrefptr<ATDeviceDiskDrivePercom> p(new ATDeviceDiskDrivePercom(T_HardwareType));
 	p->SetSettings(pset);
 
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercomRFD = { "diskdrivepercom", "diskdrivepercom", L"Percom RFD disk drive (full emulation)", ATCreateDeviceDiskDrivePercom<false> };
-extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercomAT = { "diskdrivepercomat", "diskdrivepercomat", L"Percom AT disk drive (full emulation)", ATCreateDeviceDiskDrivePercom<true> };
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercomRFD = { "diskdrivepercom", "diskdrivepercom", L"Percom RFD disk drive (full emulation)", ATCreateDeviceDiskDrivePercom<ATDeviceDiskDrivePercom::HardwareType::RFD> };
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercomAT = { "diskdrivepercomat", "diskdrivepercomat", L"Percom AT-88 disk drive (full emulation)", ATCreateDeviceDiskDrivePercom<ATDeviceDiskDrivePercom::HardwareType::AT88> };
+extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercomATSPD = { "diskdrivepercomatspd", "diskdrivepercomatspd", L"Percom AT88-SPD disk drive (full emulation)", ATCreateDeviceDiskDrivePercom<ATDeviceDiskDrivePercom::HardwareType::AT88SPD> };
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -66,8 +68,8 @@ bool ATDeviceDiskDrivePercom::Drive::IsImageSupported(const IATDiskImage& image)
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATDeviceDiskDrivePercom::ATDeviceDiskDrivePercom(bool at88)
-	: mbIsAT88(at88)
+ATDeviceDiskDrivePercom::ATDeviceDiskDrivePercom(HardwareType hardwareType)
+	: mHardwareType(hardwareType)
 {
 	mBreakpointsImpl.BindBPHandler(mCoProc);
 	mBreakpointsImpl.SetStepHandler(this);
@@ -81,7 +83,13 @@ ATDeviceDiskDrivePercom::ATDeviceDiskDrivePercom(bool at88)
 	mTargetHistoryProxy.Init(mCoProc);
 	InitTargetControl(mTargetHistoryProxy, 1000000.0, kATDebugDisasmMode_6809, &mBreakpointsImpl);
 
-	mFirmwareControl.Init(mROM, sizeof mROM, mbIsAT88 ? kATFirmwareType_PercomAT : kATFirmwareType_Percom);
+	const uint32 firmwareSize = (hardwareType == HardwareType::AT88SPD ? 4096 : 2048);
+
+	mFirmwareControl.Init(mROM, firmwareSize,
+		mHardwareType == HardwareType::AT88SPD ? kATFirmwareType_PercomATSPD
+		: mHardwareType == HardwareType::AT88 ? kATFirmwareType_PercomAT
+		: kATFirmwareType_Percom
+	);
 }
 
 ATDeviceDiskDrivePercom::~ATDeviceDiskDrivePercom() {
@@ -94,15 +102,30 @@ void *ATDeviceDiskDrivePercom::AsInterface(uint32 iid) {
 		case IATDeviceDiskDrive::kTypeID: return static_cast<IATDeviceDiskDrive *>(this);
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
 		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(&mAudioPlayer);
+		case IATDevicePrinterPort::kTypeID: return static_cast<IATDevicePrinterPort *>(this);
+		case IATDeviceParent::kTypeID: return mHardwareType == HardwareType::AT88SPD ? static_cast<IATDeviceParent *>(this) : nullptr;
 		case ATFDCEmulator::kTypeID: return &mFDC;
-		case ATPIAEmulator::kTypeID: return mbIsAT88 ? &mPIA : nullptr;
+		case ATPIAEmulator::kTypeID: return mHardwareType != HardwareType::RFD ? &mPIA : nullptr;
 	}
 
 	return ATDiskDriveDebugTargetControl::AsInterface(iid);
 }
 
 void ATDeviceDiskDrivePercom::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mpDef = mbIsAT88 ? &g_ATDeviceDefDiskDrivePercomAT : &g_ATDeviceDefDiskDrivePercomRFD;
+	switch(mHardwareType) {
+		case HardwareType::AT88SPD:
+			info.mpDef = &g_ATDeviceDefDiskDrivePercomATSPD;
+			break;
+
+		case HardwareType::AT88:
+			info.mpDef =  &g_ATDeviceDefDiskDrivePercomAT;
+			break;
+
+		case HardwareType::RFD:
+		default:
+			info.mpDef = &g_ATDeviceDefDiskDrivePercomRFD;
+			break;
+	}
 }
 
 void ATDeviceDiskDrivePercom::GetSettingsBlurb(VDStringW& buf) {
@@ -121,9 +144,9 @@ void ATDeviceDiskDrivePercom::GetSettingsBlurb(VDStringW& buf) {
 }
 
 void ATDeviceDiskDrivePercom::GetSettings(ATPropertySet& settings) {
-	if (mbIsAT88)
+	if (mHardwareType == HardwareType::AT88)
 		settings.SetBool("ddcapable", mbIsAT88DoubleDensity);
-	else
+	else if (mHardwareType == HardwareType::RFD)
 		settings.SetUint32("id", mDriveId);
 
 	VDStringA s;
@@ -157,14 +180,23 @@ bool ATDeviceDiskDrivePercom::SetSettings(const ATPropertySet& settings) {
 		}
 	}
 
-	if (mbIsAT88) {
+	if (mHardwareType == HardwareType::AT88 || mHardwareType == HardwareType::AT88SPD) {
+		bool use1795 = settings.GetBool("use1795", false);
+
+		if (mbAT1795Mode != use1795) {
+			mbAT1795Mode = use1795;
+			change = true;
+		}
+	}
+
+	if (mHardwareType == HardwareType::AT88) {
 		bool dd = settings.GetBool("ddcapable", true);
 
 		if (mbIsAT88DoubleDensity != dd) {
 			mbIsAT88DoubleDensity = dd;
 			change = true;
 		}
-	} else {
+	} else if (mHardwareType == HardwareType::RFD) {
 		uint32 newDriveId = settings.GetUint32("id", mDriveId) & 7;
 
 		if (mDriveId != newDriveId) {
@@ -177,6 +209,8 @@ bool ATDeviceDiskDrivePercom::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATDeviceDiskDrivePercom::Init() {
+	mParallelBus.Init(this, 0, IATPrinterOutput::kTypeID, "parallel", L"Parallel Printer Port", "parport");
+
 	mSerialCmdQueue.Init(&mDriveScheduler, mpSIOMgr);
 	mSerialXmitQueue.Init(mpScheduler, mpSIOMgr);
 
@@ -188,7 +222,46 @@ void ATDeviceDiskDrivePercom::Init() {
 	// initialize memory map
 	mmap.Clear(mDummyRead, mDummyWrite);
 
-	if (mbIsAT88) {
+	if (mHardwareType == HardwareType::AT88SPD) {
+		// AT88-SPD memory map:
+		//
+		//	$0000-0FFF		Hardware registers
+		//		$04-07			1771/1795 FDC
+		//		$08-0B			6821 PIA
+		//		$0C-0F			6851 ACIA
+		//	$1000-13FF		1K static RAM
+		//	$3000-3FFF		4K ROM
+		//	$4000-FFFF		Mirror of $0000-3FFF
+
+		mReadNodeHardware.mpThis = this;
+		mReadNodeHardware.mpRead = [](uint32 addr, void *thisPtr) { return ((ATDeviceDiskDrivePercom *)thisPtr)->OnHardwareReadAT(addr); };
+		mReadNodeHardware.mpDebugRead = [](uint32 addr, void *thisPtr) { return ((ATDeviceDiskDrivePercom *)thisPtr)->OnHardwareDebugReadAT(addr); };
+
+		mWriteNodeHardware.mpThis = this;
+		mWriteNodeHardware.mpWrite = [](uint32 addr, uint8 value, void *thisPtr) { ((ATDeviceDiskDrivePercom *)thisPtr)->OnHardwareWriteAT(addr, value); };
+
+		mmap.SetReadHandler(0x00, 0x10, mReadNodeHardware);
+		mmap.SetWriteHandler(0x00, 0x10, mWriteNodeHardware);
+		mmap.SetMemory(0x10, 0x04, mRAM);
+		mmap.MirrorFwd(0x14, 0x0C, 0x10);
+		mmap.SetReadMem(0x30, 0x10, mROM);
+		mmap.MirrorFwd(0x40, 0xC0, 0x00);
+
+		mPIA.Init(&mDriveScheduler);
+		mPIA.AllocInput();
+		mPIA.AllocOutput(
+			[](void *thisptr, uint32 state) {
+				((ATDeviceDiskDrivePercom *)thisptr)->OnPIAPortBChangedATSPD(state);
+			},
+			this, 0xFF00
+		);
+		mPIA.AllocOutput(
+			[](void *thisptr, uint32 state) {
+				((ATDeviceDiskDrivePercom *)thisptr)->OnPIACB2ChangedATSPD((state & kATPIAOutput_CB2) != 0);
+			},
+			this, kATPIAOutput_CB2
+		);
+	} else if (mHardwareType == HardwareType::AT88) {
 		// AT-88 memory map:
 		//
 		//	$0000-0FFF		Hardware registers
@@ -268,7 +341,7 @@ void ATDeviceDiskDrivePercom::Init() {
 	mACIA.SetMasterClockPeriod(13 * 16);
 	mACIA.SetTransmitFn([this](uint8 v, uint32 cyclesPerBit) { OnACIATransmit(v, cyclesPerBit); });
 
-	mFDC.Init(&mDriveScheduler, 288.0f, 2.0f, ATFDCEmulator::kType_2793);
+	mFDC.Init(&mDriveScheduler, 300.0f, 1.0f, mbAT1795Mode ? ATFDCEmulator::kType_2797 : ATFDCEmulator::kType_2793);
 	mFDC.SetAutoIndexPulse(true);
 	mFDC.SetOnDrqChange(
 		[this](bool drq) {
@@ -285,11 +358,11 @@ void ATDeviceDiskDrivePercom::Init() {
 
 	mFDC.SetOnStep([this](bool inward) { OnFDCStep(inward); });
 
-	if (mbIsAT88) {
+	if (mHardwareType == HardwareType::AT88) {
 		mFDC.SetDensity(true);
 		mFDC.SetAutoIndexPulse(false);
 
-		mFDC2.Init(&mDriveScheduler, 288.0f, 2.0f, ATFDCEmulator::kType_1771);
+		mFDC2.Init(&mDriveScheduler, 288.0f, 1.0f, ATFDCEmulator::kType_1771);
 		mFDC2.SetAutoIndexPulse(false);
 		mFDC2.SetOnDrqChange(
 			[this](bool drq) {
@@ -315,7 +388,7 @@ void ATDeviceDiskDrivePercom::Init() {
 				if (mSelectedDrive == driveIndex) {
 					mFDC.SetWriteProtectOverride(wpState);
 
-					if (mbIsAT88) {
+					if (mHardwareType == HardwareType::AT88) {
 						mFDC2.SetWriteProtectOverride(wpState);
 
 						// write protect -> PA6
@@ -327,7 +400,7 @@ void ATDeviceDiskDrivePercom::Init() {
 				if (mSelectedDrive == driveIndex) {
 					mFDC.SetDiskImageReady(readyState);
 
-					if (mbIsAT88)
+					if (mHardwareType == HardwareType::AT88)
 						mFDC2.SetDiskImageReady(readyState);
 				}
 			}
@@ -346,6 +419,8 @@ void ATDeviceDiskDrivePercom::Init() {
 }
 
 void ATDeviceDiskDrivePercom::Shutdown() {
+	mParallelBus.Shutdown();
+
 	mAudioPlayer.Shutdown();
 	mSerialCmdQueue.Shutdown();
 	mSerialXmitQueue.Shutdown();
@@ -368,6 +443,8 @@ void ATDeviceDiskDrivePercom::Shutdown() {
 	}
 
 	mpDiskDriveManager = nullptr;
+
+	vdsaferelease <<= mpPrinter;
 }
 
 uint32 ATDeviceDiskDrivePercom::GetComputerPowerOnDelay() const {
@@ -387,7 +464,7 @@ void ATDeviceDiskDrivePercom::PeripheralColdReset() {
 	mACIA.Reset();
 	mFDC.Reset();
 
-	if (mbIsAT88)
+	if (mHardwareType == HardwareType::AT88)
 		mFDC2.Reset();
 
 	mSerialCmdQueue.Reset();
@@ -415,7 +492,13 @@ void ATDeviceDiskDrivePercom::PeripheralColdReset() {
 	mFDC.SetWriteProtectOverride(false);
 	mFDC.SetSide(false);
 
-	if (mbIsAT88) {
+	if (mHardwareType == HardwareType::AT88SPD) {
+		mFDC.OnIndexPulse(true);
+		mFDC.SetAutoIndexPulse(false);
+
+		mbLastPrinterStrobe = true;
+		mPIA.ColdReset();
+	} else if (mHardwareType == HardwareType::AT88) {
 		mFDC.OnIndexPulse(true);
 
 		mFDC2.OnIndexPulse(true);
@@ -512,6 +595,21 @@ void ATDeviceDiskDrivePercom::OnReceiveByte(uint8 c, bool command, uint32 cycles
 void ATDeviceDiskDrivePercom::OnSendReady() {
 }
 
+void ATDeviceDiskDrivePercom::SetPrinterDefaultOutput(IATPrinterOutput *out) {
+	if (mpPrinter != out) {
+		vdsaferelease <<= mpPrinter;
+
+		mpPrinter = out;
+
+		if (out)
+			out->AddRef();
+	}
+}
+
+IATDeviceBus *ATDeviceDiskDrivePercom::GetDeviceBus(uint32 index) {
+	return index ? nullptr : &mParallelBus;
+}
+
 void ATDeviceDiskDrivePercom::OnDiskChanged(uint32 index, bool mediaRemoved) {
 	Drive& drive = mDrives[index];
 
@@ -531,7 +629,7 @@ void ATDeviceDiskDrivePercom::OnTimingModeChanged(uint32 index) {
 
 		mFDC.SetAccurateTimingEnabled(accurateTiming);
 
-		if (mbIsAT88)
+		if (mHardwareType == HardwareType::AT88)
 			mFDC2.SetAccurateTimingEnabled(accurateTiming);
 	}
 }
@@ -710,6 +808,7 @@ void ATDeviceDiskDrivePercom::OnHardwareWriteRFD(uint32 addr, uint8 value) {
 
 			mFDC.SetDensity((value & 4) != 0);
 			mFDC.SetAutoIndexPulse((value & 8) == 0);
+			mFDC.SetDoubleClock((value & 2) != 0);
 			break;
 		}
 
@@ -727,10 +826,22 @@ void ATDeviceDiskDrivePercom::OnFDCDataRequest(bool asserted) {
 }
 
 void ATDeviceDiskDrivePercom::OnFDCInterruptRequest(bool asserted) {
-	if (mbIsAT88)
-		mPIA.SetCA2(asserted);
-	else
-		UpdateNmi();
+	switch(mHardwareType) {
+		case HardwareType::AT88SPD:
+			if (asserted)
+				mCoProc.AssertIrq();
+			else
+				mCoProc.NegateIrq();
+			break;
+
+		case HardwareType::AT88:
+			mPIA.SetCA2(asserted);
+			break;
+
+		case HardwareType::RFD:
+			UpdateNmi();
+			break;
+	}
 }
 
 void ATDeviceDiskDrivePercom::OnFDCStep(bool inward) {
@@ -746,7 +857,7 @@ void ATDeviceDiskDrivePercom::OnFDCStep(bool inward) {
 
 			mFDC.SetCurrentTrack(drive.mCurrentTrack, drive.mCurrentTrack == 0);
 
-			if (mbIsAT88)
+			if (mHardwareType == HardwareType::AT88)
 				mFDC2.SetCurrentTrack(drive.mCurrentTrack, drive.mCurrentTrack == 0);
 		}
 
@@ -758,7 +869,7 @@ void ATDeviceDiskDrivePercom::OnFDCStep(bool inward) {
 
 			mFDC.SetCurrentTrack(drive.mCurrentTrack, drive.mCurrentTrack == 0);
 
-			if (mbIsAT88)
+			if (mHardwareType == HardwareType::AT88)
 				mFDC2.SetCurrentTrack(drive.mCurrentTrack, drive.mCurrentTrack == 0);
 
 			PlayStepSound();
@@ -792,13 +903,54 @@ void ATDeviceDiskDrivePercom::OnPIAPortBChanged(uint32 outputState) {
 	fdc.OnIndexPulse((outputState & 0x8000) == 0);
 }
 
+void ATDeviceDiskDrivePercom::OnPIAPortBChangedATSPD(uint32 outputState) {
+	//	PB7			Printer /BUSY
+	//	PB6			Printer FAULT
+	//	PB5			Index control
+	//	PB4			Density select (0=MFM)
+	//	PB3			Side select (1=side2)
+	//	PB2			Motor enable (1=on)
+	//	PB0-PB1		Drive select signals (00/10/01/11 -> D1-D4:)
+
+	SetMotorEnabled((outputState & 0x0400) != 0);
+
+	static const uint8 kDriveLookup[] = { 0, 2, 1, 3 };
+
+	SelectDrive(kDriveLookup[(outputState >> 8) & 3]);
+
+	auto& fdc = mbSelectFDC2 ? mFDC2 : mFDC;
+
+	fdc.SetDensity((outputState & 0x1000) == 0);
+	fdc.SetSide((outputState & 0x0800) != 0);
+	fdc.OnIndexPulse((outputState & 0x2000) == 0);
+}
+
+void ATDeviceDiskDrivePercom::OnPIACB2ChangedATSPD(bool value) {
+	if (mbLastPrinterStrobe == value)
+		return;
+
+	mbLastPrinterStrobe = value;
+
+	// shift out a byte on rising edge of CB2
+	if (value) {
+		// port A outputs inverted byte
+		const uint8 c = ~mPIA.GetPortAOutput();
+
+		if (auto *printer = mParallelBus.GetChild<IATPrinterOutput>())
+			printer->WriteASCII(&c, 1);
+		else if (mpPrinter)
+			mpPrinter->WriteASCII(&c, 1);
+	}
+}
+
+
 void ATDeviceDiskDrivePercom::SetMotorEnabled(bool enabled) {
 	if (mbMotorRunning != enabled) {
 		mbMotorRunning = enabled;
 
 		mFDC.SetMotorRunning(enabled);
 
-		if (mbIsAT88)
+		if (mHardwareType == HardwareType::AT88)
 			mFDC2.SetMotorRunning(enabled);
 
 		UpdateRotationStatus();
@@ -841,14 +993,14 @@ void ATDeviceDiskDrivePercom::UpdateDiskStatus() {
 
 		mFDC.SetDiskImage(image);
 
-		if (mbIsAT88)
+		if (mHardwareType == HardwareType::AT88)
 			mFDC2.SetDiskImage(image);
 
 		drive.mDiskChangeHandler.ForceOutputUpdate();
 	} else {
 		mFDC.SetDiskImage(nullptr, false);
 
-		if (mbIsAT88)
+		if (mHardwareType == HardwareType::AT88)
 			mFDC2.SetDiskImage(nullptr, false);
 	}
 }
@@ -874,7 +1026,7 @@ void ATDeviceDiskDrivePercom::SelectDrive(int index) {
 		mFDC.SetCurrentTrack(drive.mCurrentTrack, drive.mCurrentTrack == 0);
 		mFDC.SetSideMapping(ATFDCEmulator::SideMapping::Side2ReversedOffByOne, drive.mType == kDriveType_5_25_80Track ? 80 : 40);
 
-		if (mbIsAT88) {
+		if (mHardwareType == HardwareType::AT88) {
 			mFDC2.SetDiskInterface(drive.mpDiskInterface);
 			mFDC2.SetCurrentTrack(drive.mCurrentTrack, drive.mCurrentTrack == 0);
 			mFDC2.SetSideMapping(ATFDCEmulator::SideMapping::Side2ReversedOffByOne, drive.mType == kDriveType_5_25_80Track ? 80 : 40);
@@ -887,7 +1039,7 @@ void ATDeviceDiskDrivePercom::SelectDrive(int index) {
 		mFDC.SetDiskInterface(nullptr);
 		mFDC.SetCurrentTrack(20, false);
 
-		if (mbIsAT88) {
+		if (mHardwareType == HardwareType::AT88) {
 			mFDC2.SetDiskInterface(nullptr);
 			mFDC2.SetCurrentTrack(20, false);
 

@@ -13,8 +13,10 @@ struct ID3D11InputLayout;
 struct IDXGISwapChain;
 struct IDXGISwapChain1;
 struct IDXGIAdapter1;
+struct ID3DUserDefinedAnnotation;
 
 class VDTContextD3D11;
+class VDTTextureD3D11;
 class VDTResourceManagerD3D11;
 class VDD3D11Holder;
 
@@ -76,7 +78,7 @@ public:
 	void *AsInterface(uint32 iid) { return NULL; }
 
 	bool Init(VDTContextD3D11 *parent, uint32 width, uint32 height, VDTFormat format, VDTUsage usage);
-	bool Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, bool rt, bool onlyMip);
+	bool Init(VDTContextD3D11 *parent, IVDTTexture *owner, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, bool rt, bool onlyMip, bool forceSRGB);
 	void Shutdown();
 
 	bool Restore();
@@ -84,18 +86,20 @@ public:
 	void Load(uint32 dx, uint32 dy, const VDTInitData2D& srcData, uint32 bpr, uint32 h);
 	void Copy(uint32 dx, uint32 dy, IVDTSurface *src, uint32 sx, uint32 sy, uint32 w, uint32 h);
 	void GetDesc(VDTSurfaceDesc& desc);
-	bool Lock(const vdrect32 *r, VDTLockData2D& lockData);
+	bool Lock(const vdrect32 *r, bool discard, VDTLockData2D& lockData);
 	void Unlock();
 
 protected:
 	friend class VDTContextD3D11;
 
-	ID3D11Texture2D *mpTexture;
-	ID3D11Texture2D *mpTextureSys;
-	ID3D11RenderTargetView *mpRTView;
-	uint32 mMipLevel;
-	bool mbOnlyMip;
-	VDTSurfaceDesc mDesc;
+	IVDTTexture *mpParentTexture {};
+	ID3D11Texture2D *mpTexture {};
+	ID3D11Texture2D *mpTextureSys {};
+	ID3D11RenderTargetView *mpRTView {};
+	ID3D11RenderTargetView *mpRTViewNoSrgb {};
+	uint32 mMipLevel {};
+	bool mbOnlyMip {};
+	VDTSurfaceDesc mDesc {};
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -117,14 +121,14 @@ public:
 	void *AsInterface(uint32 id);
 
 	bool Init(VDTContextD3D11 *parent, uint32 width, uint32 height, VDTFormat format, uint32 mipcount, VDTUsage usage, const VDTInitData2D *initData);
-	bool Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D11Texture2D *texsys);
+	bool Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, bool forceSRGB);
 	void Shutdown();
 
 	bool Restore();
 	void GetDesc(VDTTextureDesc& desc);
 	IVDTSurface *GetLevelSurface(uint32 level);
 	void Load(uint32 mip, uint32 x, uint32 y, const VDTInitData2D& srcData, uint32 w, uint32 h);
-	bool Lock(uint32 mip, const vdrect32 *r, VDTLockData2D& lockData);
+	bool Lock(uint32 mip, const vdrect32 *r, bool discard, VDTLockData2D& lockData);
 	void Unlock(uint32 mip);
 
 protected:
@@ -360,7 +364,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTContextD3D11 final : public IVDTContext, public IVDTProfiler, public VDTResourceManagerD3D11, public VDAlignedObject<16> {
+class VDTContextD3D11 final : public IVDTContext, public VDTResourceManagerD3D11, public VDAlignedObject<16> {
 public:
 	VDTContextD3D11();
 	~VDTContextD3D11();
@@ -382,6 +386,7 @@ public:
 
 	const VDTDeviceCaps& GetDeviceCaps() { return mCaps; }
 	bool IsFormatSupportedTexture2D(VDTFormat format);
+	bool IsMonitorHDREnabled(void *monitor, bool& systemSupport);
 
 	bool CreateReadbackBuffer(uint32 width, uint32 height, VDTFormat format, IVDTReadbackBuffer **buffer);
 	bool CreateSurface(uint32 width, uint32 height, VDTFormat format, VDTUsage usage, IVDTSurface **surface);
@@ -399,17 +404,19 @@ public:
 	bool CreateSwapChain(const VDTSwapChainDesc& desc, IVDTSwapChain **swapChain);
 
 	IVDTSurface *GetRenderTarget(uint32 index) const;
+	bool GetRenderTargetBypass(uint32 index) const;
 
 	void SetVertexFormat(IVDTVertexFormat *format);
 	void SetVertexProgram(IVDTVertexProgram *program);
 	void SetFragmentProgram(IVDTFragmentProgram *program);
 	void SetVertexStream(uint32 index, IVDTVertexBuffer *buffer, uint32 offset, uint32 stride);
 	void SetIndexStream(IVDTIndexBuffer *buffer);
-	void SetRenderTarget(uint32 index, IVDTSurface *surface);
+	void SetRenderTarget(uint32 index, IVDTSurface *surface, bool bypassConversion);
 
 	void SetBlendState(IVDTBlendState *state);
 	void SetSamplerStates(uint32 baseIndex, uint32 count, IVDTSamplerState *const *states);
 	void SetTextures(uint32 baseIndex, uint32 count, IVDTTexture *const *textures);
+	void ClearTexturesStartingAt(uint32 baseIndex);
 
 	// rasterizer
 	void SetRasterizerState(IVDTRasterizerState *state);
@@ -484,8 +491,11 @@ protected:
 	bool mbVSConstDirty = true;
 	bool mbPSConstDirty = true;
 
+	int mLastPrimitiveType = -1;
+
 	VDTSwapChainD3D11 *mpSwapChain;
 	VDTSurfaceD3D11 *mpCurrentRT;
+	bool mbCurrentRTBypass = false;
 	VDTVertexBufferD3D11 *mpCurrentVB;
 	uint32 mCurrentVBOffset;
 	uint32 mCurrentVBStride;
@@ -508,9 +518,9 @@ protected:
 	VDTSamplerStateD3D11 *mpCurrentSamplerStates[16];
 	IVDTTexture *mpCurrentTextures[16];
 
-	void	*mpBeginEvent;
-	void	*mpEndEvent;
+	ID3DUserDefinedAnnotation *mpD3DAnnotation {};
 	VDRTProfileChannel	mProfChan;
+	VDStringW mProfBuffer;
 
 	alignas(16) float mVSConsts[16][4] = {};
 	alignas(16) float mPSConsts[16][4] = {};

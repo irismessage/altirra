@@ -307,16 +307,10 @@ void ATChecksumUpdateSHA256_Optimized(ATChecksumStateSHA256& VDRESTRICT state, c
 	// Some of this might be poor optimization from MSVC, but mainly it just seems to be that
 	// x64 CPUs are way more used to dealing with total crap scheduling-wise.
 
-	static void (*pfn)(ATChecksumStateSHA256&, const void*, size_t) =
-		[](ATChecksumStateSHA256& VDRESTRICT state2, const void* src2, size_t numBlocks2) {
-			pfn = IsProcessorFeaturePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE)
-				? ATChecksumUpdateSHA256_Crypto
-				: ATChecksumUpdateSHA256_NEON;
-
-			pfn(state2, src2, numBlocks2);
-		};
-
-	return pfn(state, src, numBlocks);
+	if (CPUGetEnabledExtensions() & VDCPUF_SUPPORTS_CRYPTO)
+		return ATChecksumUpdateSHA256_Crypto(state, src, numBlocks);
+	else
+		return ATChecksumUpdateSHA256_NEON(state, src, numBlocks);
 }
 
 #endif

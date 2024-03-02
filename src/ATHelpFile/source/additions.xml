@@ -14,13 +14,34 @@
       XEP80 Interface Module 80-column E:/S: driver.
     </dd>
 
-    <dt>ALTXEP8F.SYS</dt>
+    <dt>ALTXEP8U.SYS</dt>
     <dd>
-      Fast version of XEP80 driver. The fast driver uses 31.5Kbaud for transmission to the XEP80
-      instead of the standard 15.7Kbaud, for better output speed. Note that the XEP80 must be
-      powered off and back on again to work at standard speed after using the fast driver.
+      Ultra speed version of XEP80 driver. The ultra driver uses 31.5Kbaud for both transmission
+      and reception from the XEP80 instead of the standard 15.7Kbaud, for better output speed.
+      Note that the XEP80 must be powered off and back on again to work at standard speed
+      after using the ultra speed driver.
     </dd>
 
+    <dt>ALTXEP8P.SYS</dt>
+    <dt>ALTXEPUP.SYS</dt>
+    <dd>
+      PAL versions of the ALTXEP80.SYS and ALTXEP8U.SYS drivers. These versions automatically
+      emit the control codes to switch the XEP80 to a 50Hz display.
+    </dd>
+    
+    <dt>ALTXEPX.SYS</dt>
+    <p>
+      SpartaDOS X version of Altirra XEP80 driver, which loads low instead of high and supports
+      SDX features. Four switches are supported: /P to default to PAL, /V to adjust video
+      timing, /U to enable 31.5Kbaud ultra mode, and /1 to use port 1 instead of port 2.
+    </p>
+    
+    <dt>ATDEBUGX.SYS</dt>
+    <p>
+      Altirra debug link driver, to send SDX symbols to the debugger. Requires debug link to
+      be enabled in debugger options and for the debugger to be open when the driver loads.
+    </p>
+    
     <dt>BOOT850.COM</dt>
     <dd>
       Downloads R: handler software from an 850 Interface Module, for when it isn't
@@ -97,5 +118,18 @@
       mode is set to Type 3 Poll or Deferred. This can be renamed to AUTORUN.SYS to
       automatically trigger the program load once DOS has booted.
     </dd>
-  </dl>
+  
+    <dt>XEPVHOLD.COM</dt>
+    <dd>
+      Reprograms the XEP80 video timing chain to use a shorter character cell in NTSC
+      to reduce vertical overscan and improve compatibility with modern video displays
+      that may roll with standard XEP80 timing. May be used with either the Atari XEP80
+      driver or the Altirra XEP80 driver.
+    </dd>
+
+    <dt>XEPVHLDP.COM</dt>
+    <dd>
+      Reprograms the XEP80 video timing chain for more standard timing in PAL.
+    </dd>
+</dl>
 </topic>

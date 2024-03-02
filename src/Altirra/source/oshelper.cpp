@@ -1,7 +1,9 @@
 #include <stdafx.h>
 #include "oshelper.h"
 #include <windows.h>
+#include <shellapi.h>
 #include <shlwapi.h>
+#include <shlobj_core.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
@@ -472,6 +474,17 @@ void ATShowHelp(void *hwnd, const wchar_t *filename) {
 	}
 }
 
+void ATLaunchURL(const wchar_t *url) {
+	const VDStringW path = VDGetProgramFilePath();
+
+	SHELLEXECUTEINFOW execInfo = {sizeof(SHELLEXECUTEINFOW)};
+	execInfo.lpVerb = nullptr;
+	execInfo.lpFile = url;
+	execInfo.nShow = SW_SHOWNORMAL;
+
+	ShellExecuteExW(&execInfo);
+}
+
 bool ATIsUserAdministrator() {
 	if (!VDIsAtLeastVistaW32())
 		return TRUE;
@@ -504,4 +517,16 @@ void ATGenerateGuid(uint8 rawguid[16]) {
 	CoCreateGuid(&guid);
 
 	memcpy(rawguid, &guid, 16);
+}
+
+void ATShowFileInSystemExplorer(const wchar_t *filename) {
+	PIDLIST_ABSOLUTE pidl = ILCreateFromPath(VDGetFullPath(filename).c_str());
+	if (pidl) {
+		// This method is superior to launching explorer.exe with /select, because
+		// that has an issue on Windows 10 with spawning the new Explorer window
+		// in the background. Apparently with separate folder processes enabled
+		// it doesn't properly call AllowSetForegroundWindow() on the new process.
+		SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0);
+		ILFree(pidl);
+	}
 }

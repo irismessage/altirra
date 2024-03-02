@@ -1,11 +1,6 @@
 #ifndef f_DITA_STDAFX_H
 #define f_DITA_STDAFX_H
 
-#if defined(_MSC_VER) && _MSC_VER < 1300
-#pragma warning(disable: 4786)
-static const struct VD_MSVC_C4786Workaround { VD_MSVC_C4786Workaround() {} } g_VD_MSVC_C4786Workaround;
-#endif
-
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0600
 #elif _WIN32_WINNT < 0x0600
@@ -15,6 +10,7 @@ static const struct VD_MSVC_C4786Workaround { VD_MSVC_C4786Workaround() {} } g_V
 struct IUnknown;
 
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/win32/intrin.h>
 
 #include <windows.h>
 

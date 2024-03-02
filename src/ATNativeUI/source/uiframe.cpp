@@ -38,41 +38,6 @@
 #endif
 
 #pragma comment(lib, "uxtheme")
-
-// Requires Windows XP
-#ifndef WM_THEMECHANGED
-#define WM_THEMECHANGED 0x031A
-#endif
-
-#ifndef UIS_SET
-#define UIS_SET                         1
-#endif
-
-#ifndef UIS_CLEAR
-#define UIS_CLEAR                       2
-#endif
-
-#ifndef UIS_INITIALIZE
-#define UIS_INITIALIZE                  3
-#endif
-
-#ifndef UISF_HIDEFOCUS
-#define UISF_HIDEFOCUS                  0x1
-#endif
-
-#ifndef UISF_HIDEACCEL
-#define UISF_HIDEACCEL                  0x2
-#endif
-
-// Requires Windows Vista
-#if WINVER < 0x0600
-	typedef enum DEVICE_SCALE_FACTOR {
-		SCALE_100_PERCENT = 100,
-		SCALE_140_PERCENT = 140,
-		SCALE_180_PERCENT = 180
-	} DEVICE_SCALE_FACTOR;
-#endif
-
 #pragma comment(lib, "msimg32")
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -170,6 +135,23 @@ HFONT ATUICreateDefaultFontForDpiW32(uint32 dpi) {
 		hfont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
 	return hfont;
+}
+
+int ATUIGetDpiScaledSystemMetricW32(int index, uint32 dpi) {
+	if (!dpi)
+		dpi = ATUIGetGlobalDpiW32();
+
+	static const auto spGetSystemMetricsForDpi = (int (WINAPI *)(int, UINT))GetProcAddress(GetModuleHandleW(L"user32"), "GetSystemMetricsForDpi");
+
+	if (spGetSystemMetricsForDpi)
+		return spGetSystemMetricsForDpi(index, dpi);
+
+	sint32 globalDpi = (sint32)ATUIGetGlobalDpiW32();
+	return (GetSystemMetrics(index) * (sint32)dpi + (globalDpi >> 1)) / globalDpi;
+}
+
+int ATUIGetDpiScaledSystemMetricForWindowW32(VDZHWND hwnd, int index) {
+	return ATUIGetDpiScaledSystemMetricW32(index, ATUIGetWindowDpiW32(hwnd));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -950,6 +932,14 @@ ATContainerDockingPane *ATContainerDockingPane::Dock(ATFrameWindow *frame, int c
 
 					SendMessageW(mhwndTabControl, TCM_INSERTITEMW, 0, (LPARAM)&tci);
 				}
+
+				// if this is the root pane, the content we used to have has no frame and needs to have one added
+				if (!mpDockParent) {
+					mContent.front()->SetFrameMode(ATFrameWindow::kFrameModeEdge);
+
+					HWND hwndOther = mContent.front()->GetHandleW32();
+					SetWindowPos(hwndOther, NULL, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+				}
 			}
 
 			// add tab for new frame -- note that index must match new position in list
@@ -1069,14 +1059,16 @@ bool ATContainerDockingPane::Undock(ATFrameWindow *frame) {
 
 			// change the existing frame to non-tab mode
 			if (!mContent.empty()) {
-				if (mpDockParent) {
-					ATFrameWindow *otherFrame = mContent.front();
+				ATFrameWindow *otherFrame = mContent.front();
 
+				if (mpDockParent)
 					otherFrame->SetFrameMode(ATFrameWindow::kFrameModeFull);
-					HWND hwndOther = otherFrame->GetHandleW32();
-					if (hwndOther)
-						SetWindowPos(hwndOther, NULL, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-				}
+				else
+					otherFrame->SetFrameMode(ATFrameWindow::kRootContentHasEdge ? ATFrameWindow::kFrameModeEdge : ATFrameWindow::kFrameModeNone);
+
+				HWND hwndOther = otherFrame->GetHandleW32();
+				if (hwndOther)
+					SetWindowPos(hwndOther, NULL, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 
 				// do a relayout
 				if (mpParent->IsLayoutSuspended())
@@ -1745,7 +1737,11 @@ void ATContainerWindow::AutoSize() {
 		return;
 
 	RECT r = {0, 0, sz.w, sz.h};
-	if (!AdjustWindowRect(&r, GetWindowLong(mhwnd, GWL_STYLE), GetMenu(mhwnd) != NULL))
+	const bool autoHideMenu = IsAutoHideMenuEnabled();
+	const bool haveMenu = (GetMenu(mhwnd) != nullptr);
+	const DWORD dwStyle = GetWindowLong(mhwnd, GWL_STYLE);
+	const DWORD dwExStyle = GetWindowLong(mhwnd, GWL_EXSTYLE);
+	if (!AdjustWindowRectEx(&r, dwStyle, !autoHideMenu && haveMenu, dwExStyle))
 		return;
 
 	const int desiredWidth = (r.right - r.left);
@@ -1759,7 +1755,7 @@ void ATContainerWindow::AutoSize() {
 	// vertically due to wrapping -- in that case, measure the delta and attempt to
 	// apply a one time correction.
 	RECT r2;
-	if (GetWindowRect(mhwnd, &r2) && r2.right - r2.left == desiredWidth && r2.bottom - r2.top == desiredHeight) {
+	if (!autoHideMenu && haveMenu && GetWindowRect(mhwnd, &r2) && r2.right - r2.left == desiredWidth && r2.bottom - r2.top == desiredHeight) {
 		RECT rc;
 
 		if (GetClientRect(mhwnd, &rc) && rc.right == sz.w && rc.bottom < sz.h) {
@@ -1896,7 +1892,7 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 			}
 
 			if (!mpDragPaneTarget->GetParentPane() && mDragPaneTargetCode == kATContainerDockCenter)
-				frame->SetFrameMode(ATFrameWindow::kFrameModeEdge);
+				frame->SetFrameMode(mpDragPaneTarget->GetContentCount() == 0 && !ATFrameWindow::kRootContentHasEdge ? ATFrameWindow::kFrameModeNone : ATFrameWindow::kFrameModeEdge);
 			else
 				frame->SetFrameMode(ATFrameWindow::kFrameModeFull);
 
@@ -2208,11 +2204,16 @@ void ATContainerWindow::OnDestroy() {
 }
 
 void ATContainerWindow::OnSize() {
-	RECT r;
+	RECT r {};
 	GetClientRect(mhwnd, &r);
 
+	if (IsAutoHideMenuEnabled() && GetMenu(mhwnd)) {
+		int dy = ATUIGetDpiScaledSystemMetricForWindowW32(mhwnd, SM_CYMENU);
+		r.bottom += dy;
+	}
+	
 	ATContainerResizer resizer;
-	mpDockingPane->SetArea(resizer, vdrect32(0, 0, r.right, r.bottom), false);
+	mpDockingPane->SetArea(resizer, vdrect32(r.left, r.top, r.right, r.bottom), false);
 	resizer.Flush();
 }
 
@@ -2261,6 +2262,9 @@ void ATContainerWindow::AddTrackingNotification(ATFrameWindow *w) {
 	auto it = std::lower_bound(mTrackingNotifyFrames.begin(), mTrackingNotifyFrames.end(), w);
 	if (it == mTrackingNotifyFrames.end() || *it != w)
 		mTrackingNotifyFrames.insert(it, w);
+}
+
+void ATContainerWindow::TestMenuAutoShow(const vdpoint32& pointerScreenPos) {
 }
 
 void ATContainerWindow::OnKillFocus(HWND hwndNewFocus) {
@@ -2398,9 +2402,11 @@ void ATContainerWindow::UpdateMonitorDpi(unsigned dpiY) {
 	mpDockingPane->NotifyDpiChanged(dpiY);
 }
 
-ATFrameWindow *ATContainerWindow::ChooseNewActiveFrame(ATFrameWindow *prevFrame) {
-	ATFrameWindow *frameToActivate = nullptr;
+bool ATContainerWindow::IsAutoHideMenuEnabled() const {
+	return false;
+}
 
+ATFrameWindow *ATContainerWindow::ChooseNewActiveFrame(ATFrameWindow *prevFrame) {
 	for(ATContainerDockingPane *pane = prevFrame->GetPane(); pane; pane = pane->GetParentPane()) {
 		uint32 n = pane->GetContentCount();
 
@@ -2611,13 +2617,7 @@ bool ATFrameWindow::GetIdealSize(vdsize32& sz) {
 		sz.w = r.right - r.left;
 		sz.h = r.bottom - r.top;
 	} else if (mFrameMode != kFrameModeNone) {
-		NONCLIENTMETRICS ncm = {
-#if WINVER >= 0x0600
-			offsetof(NONCLIENTMETRICS, iPaddedBorderWidth)
-#else
-			sizeof(NONCLIENTMETRICS)
-#endif
-		};
+		NONCLIENTMETRICS ncm = { sizeof(NONCLIENTMETRICS) };
 		SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICS), &ncm, FALSE);
 
 		if (mFrameMode == kFrameModeFull)
@@ -3552,6 +3552,7 @@ ATUIPane::ATUIPane(uint32 paneId, const wchar_t *name)
 	, mPaneId(paneId)
 	, mDefaultWindowStyles(WS_CHILD|WS_CLIPCHILDREN)
 	, mPreferredDockCode(-1)
+	, mpFrameWindow(nullptr)
 {
 }
 
@@ -3566,10 +3567,14 @@ void *ATUIPane::AsInterface(uint32 iid) {
 }
 
 bool ATUIPane::Create(ATFrameWindow *frame) {
+	mpFrameWindow = frame;
+
 	HWND hwnd = CreateWindow((LPCTSTR)(uintptr_t)sWndClass, _T(""), mDefaultWindowStyles & ~WS_VISIBLE, 0, 0, 0, 0, frame->GetHandleW32(), (HMENU)100, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 
-	if (!hwnd)
+	if (!hwnd) {
+		mpFrameWindow = nullptr;
 		return false;
+	}
 
 	::ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 	return true;

@@ -121,6 +121,7 @@ namespace nsVDVecMath {
 		float y() const { return v[1]; }
 		float z() const { return v[2]; }
 		float w() const { return v[3]; }
+		vdfloat32x3 xyz() const { return vdfloat32x3 { { v[0], v[1], v[2], v[3] } }; }
 	};
 
 	inline vdfloat32x4 operator+(vdfloat32x4 x) { return x; }
@@ -140,6 +141,16 @@ namespace nsVDVecMath {
 	inline vdfloat32x4 operator-(float x, vdfloat32x4 y) { return vdfloat32x4 { x - y.v[0], x - y.v[1], x - y.v[2], x - y.v[3] }; }
 	inline vdfloat32x4 operator*(float x, vdfloat32x4 y) { return vdfloat32x4 { x * y.v[0], x * y.v[1], x * y.v[2], x * y.v[3] }; }
 	inline vdfloat32x4 operator/(float x, vdfloat32x4 y) { return vdfloat32x4 { x / y.v[0], x / y.v[1], x / y.v[2], x / y.v[3] }; }
+
+	inline vdfloat32x4& operator+=(vdfloat32x4& x, vdfloat32x4 y) { x.v[0] += y.v[0]; x.v[1] += y.v[1]; x.v[2] += y.v[2]; x.v[3] += y.v[3]; return x; }
+	inline vdfloat32x4& operator-=(vdfloat32x4& x, vdfloat32x4 y) { x.v[0] -= y.v[0]; x.v[1] -= y.v[1]; x.v[2] -= y.v[2]; x.v[3] -= y.v[3]; return x; }
+	inline vdfloat32x4& operator*=(vdfloat32x4& x, vdfloat32x4 y) { x.v[0] *= y.v[0]; x.v[1] *= y.v[1]; x.v[2] *= y.v[2]; x.v[3] *= y.v[3]; return x; }
+	inline vdfloat32x4& operator/=(vdfloat32x4& x, vdfloat32x4 y) { x.v[0] /= y.v[0]; x.v[1] /= y.v[1]; x.v[2] /= y.v[2]; x.v[3] /= y.v[3]; return x; }
+
+	inline vdfloat32x4& operator+=(vdfloat32x4& x, float y) { x.v[0] += y; x.v[1] += y; x.v[2] += y; x.v[3] += y; return x; }
+	inline vdfloat32x4& operator-=(vdfloat32x4& x, float y) { x.v[0] -= y; x.v[1] -= y; x.v[2] -= y; x.v[3] -= y; return x; }
+	inline vdfloat32x4& operator*=(vdfloat32x4& x, float y) { x.v[0] *= y; x.v[1] *= y; x.v[2] *= y; x.v[3] *= y; return x; }
+	inline vdfloat32x4& operator/=(vdfloat32x4& x, float y) { x.v[0] /= y; x.v[1] /= y; x.v[2] /= y; x.v[3] /= y; return x; }
 
 	inline vdmask32x4 operator< (vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { x.v[0] <  y.v[0] ? ~0U : 0U, x.v[1] <  y.v[1] ? ~0U : 0U, x.v[2] <  y.v[2] ? ~0U : 0U, x.v[3] <  y.v[3] ? ~0U : 0U }; }
 	inline vdmask32x4 operator<=(vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { x.v[0] <= y.v[0] ? ~0U : 0U, x.v[1] <= y.v[1] ? ~0U : 0U, x.v[2] <= y.v[2] ? ~0U : 0U, x.v[3] <= y.v[3] ? ~0U : 0U }; }
@@ -190,6 +201,14 @@ namespace nsVDVecMath {
 	}
 
 	//////////////////////////////////////////////////////////////////////////
+
+	inline bool all_bool(const vdmask32x4& a) {
+		return (a.v[0] & a.v[1] & a.v[2] & a.v[3]) >= UINT32_C(0x80000000);
+	}
+
+	inline vdfloat32x4 loadu(const vdfloat4& v) {
+		return vdfloat32x4 { v.x, v.y, v.z, v.w };
+	}
 
 	inline vdfloat32x3 select(vdmask32x3 mask, vdfloat32x3 x, vdfloat32x3 y) {
 		return vdfloat32x3 {

@@ -249,7 +249,6 @@ void ATCartridgePort::UpdateUpstreamSense(uint32 id) {
 	uint32 prevId = cartInfo.mCartPrev;
 	for(;;) {
 		auto& prevCart = mCarts[prevId];
-		bool changed = false;
 
 		if (prevCart.mbLeftMapSense == leftMapState)
 			break;

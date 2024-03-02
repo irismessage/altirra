@@ -28,13 +28,14 @@
 extern ATSimulator g_sim;
 
 void ATUIShowTapeControlDialog(VDGUIHandle hParent, ATCassetteEmulator& cassette);
+void ATUIShowDialogTapeEditor();
 
 void OnCommandCassetteLoadNew() {
 	g_sim.GetCassette().LoadNew();
 }
 
 void OnCommandCassetteLoad() {
-	VDStringW fn(VDGetLoadFileName('cass', ATUIGetNewPopupOwner(), L"Load cassette tape", g_ATUIFileFilter_LoadTape, L"wav"));
+	VDStringW fn(VDGetLoadFileName('cass', ATUIGetNewPopupOwner(), L"Load cassette tape", g_ATUIFileFilter_LoadTape, nullptr));
 
 	if (!fn.empty()) {
 		ATCassetteEmulator& cas = g_sim.GetCassette();
@@ -83,6 +84,10 @@ void OnCommandCassetteTapeControlDialog() {
 	ATUIShowTapeControlDialog(ATUIGetNewPopupOwner(), g_sim.GetCassette());
 }
 
+void OnCommandCassetteTapeEditorDialog() {
+	ATUIShowDialogTapeEditor();
+}
+
 void OnCommandCassetteToggleSIOPatch() {
 	g_sim.SetCassetteSIOPatchEnabled(!g_sim.IsCassetteSIOPatchEnabled());
 }
@@ -125,6 +130,10 @@ void OnCommandCassetteTurboModeInterruptSense() {
 	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_InterruptSense);
 }
 
+void OnCommandCassetteTurboModeKSOTurbo2000() {
+	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_KSOTurbo2000);
+}
+
 void OnCommandCassetteTurboModeAlways() {
 	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_Always);
 }
@@ -162,7 +171,31 @@ void OnCommandCassetteDirectSenseMaxSpeed() {
 void OnCommandCassetteToggleTurboPrefilter() {
 	auto& cas = g_sim.GetCassette();
 
-	cas.SetTurboPrefilterEnabled(!cas.IsTurboPrefilterEnabled());
+	cas.SetTurboDecodeAlgorithm(
+		cas.GetTurboDecodeAlgorithm() == ATCassetteTurboDecodeAlgorithm::SlopeNoFilter
+			? ATCassetteTurboDecodeAlgorithm::SlopeFilter
+			: ATCassetteTurboDecodeAlgorithm::SlopeNoFilter
+	);
+}
+
+void OnCommandCassetteToggleTurboDecoderSlopeNoFilter() {
+	g_sim.GetCassette().SetTurboDecodeAlgorithm(ATCassetteTurboDecodeAlgorithm::SlopeNoFilter);
+}
+
+void OnCommandCassetteToggleTurboDecoderSlopeFilter() {
+	g_sim.GetCassette().SetTurboDecodeAlgorithm(ATCassetteTurboDecodeAlgorithm::SlopeFilter);
+}
+
+void OnCommandCassetteToggleTurboDecoderPeakFilter() {
+	g_sim.GetCassette().SetTurboDecodeAlgorithm(ATCassetteTurboDecodeAlgorithm::PeakFilter);
+}
+
+void OnCommandCassetteToggleTurboDecoderPeakFilterLoHi() {
+	g_sim.GetCassette().SetTurboDecodeAlgorithm(ATCassetteTurboDecodeAlgorithm::PeakFilterBalanceLoHi);
+}
+
+void OnCommandCassetteToggleTurboDecoderPeakFilterHiLo() {
+	g_sim.GetCassette().SetTurboDecodeAlgorithm(ATCassetteTurboDecodeAlgorithm::PeakFilterBalanceHiLo);
 }
 
 namespace ATCommands {	
@@ -195,6 +228,7 @@ namespace ATCommands {
 		{ "Cassette.Save", OnCommandCassetteSave, IsCassetteLoaded },
 		{ "Cassette.ExportAudioTape", OnCommandCassetteExportAudioTape, IsCassetteLoaded },
 		{ "Cassette.TapeControlDialog", OnCommandCassetteTapeControlDialog, nullptr },
+		{ "Cassette.TapeEditorDialog", OnCommandCassetteTapeEditorDialog },
 		{ "Cassette.ToggleSIOPatch", OnCommandCassetteToggleSIOPatch, nullptr, CheckedIf<SimTest<&ATSimulator::IsCassetteSIOPatchEnabled> > },
 		{ "Cassette.ToggleAutoBoot", OnCommandCassetteToggleAutoBoot, nullptr, CheckedIf<SimTest<&ATSimulator::IsCassetteAutoBootEnabled> > },
 		{ "Cassette.ToggleAutoBasicBoot", OnCommandCassetteToggleAutoBasicBoot, nullptr, CheckedIf<SimTest<&ATSimulator::IsCassetteAutoBasicBootEnabled> > },
@@ -206,6 +240,7 @@ namespace ATCommands {
 		{ "Cassette.TurboModeCommandControl", OnCommandCassetteTurboModeCommandControl, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_CommandControl>> },
 		{ "Cassette.TurboModeProceedSense", OnCommandCassetteTurboModeProceedSense, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_ProceedSense>> },
 		{ "Cassette.TurboModeInterruptSense", OnCommandCassetteTurboModeInterruptSense, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_InterruptSense>> },
+		{ "Cassette.TurboModeKSOTurbo2000", OnCommandCassetteTurboModeKSOTurbo2000, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_KSOTurbo2000>> },
 		{ "Cassette.TogglePolarity", OnCommandCassetteTogglePolarity, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Inverted>> },
 		{ "Cassette.PolarityNormal", OnCommandCassettePolarityModeNormal, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Normal>> },
 		{ "Cassette.PolarityInverted", OnCommandCassettePolarityModeInverted, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Inverted>> },
@@ -213,7 +248,47 @@ namespace ATCommands {
 		{ "Cassette.DirectSenseLowSpeed", OnCommandCassetteDirectSenseLowSpeed, nullptr, [] { return ToChecked(g_sim.GetCassette().GetDirectSenseMode() == ATCassetteDirectSenseMode::LowSpeed); } },
 		{ "Cassette.DirectSenseHighSpeed", OnCommandCassetteDirectSenseHighSpeed, nullptr, [] { return ToChecked(g_sim.GetCassette().GetDirectSenseMode() == ATCassetteDirectSenseMode::HighSpeed); } },
 		{ "Cassette.DirectSenseMaxSpeed", OnCommandCassetteDirectSenseMaxSpeed, nullptr, [] { return ToChecked(g_sim.GetCassette().GetDirectSenseMode() == ATCassetteDirectSenseMode::MaxSpeed); } },
-		{ "Cassette.ToggleTurboPrefilter", OnCommandCassetteToggleTurboPrefilter, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, [] { return ATCommands::ToChecked(g_sim.GetCassette().IsTurboPrefilterEnabled()); } },
+		{ "Cassette.ToggleTurboPrefilter", OnCommandCassetteToggleTurboPrefilter, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, [] { return ATCommands::ToChecked(g_sim.GetCassette().GetTurboDecodeAlgorithm() != ATCassetteTurboDecodeAlgorithm::SlopeNoFilter); } },
+		{
+			"Cassette.TurboDecoderSlopeNoFilter",
+			OnCommandCassetteToggleTurboDecoderSlopeNoFilter,
+			Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>,
+			[] { return ATCommands::ToRadio(g_sim.GetCassette().GetTurboDecodeAlgorithm() == ATCassetteTurboDecodeAlgorithm::SlopeNoFilter); }
+		},
+		{
+			"Cassette.TurboDecoderSlopeFilter",
+			OnCommandCassetteToggleTurboDecoderSlopeFilter,
+			Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>,
+			[] { return ATCommands::ToRadio(g_sim.GetCassette().GetTurboDecodeAlgorithm() == ATCassetteTurboDecodeAlgorithm::SlopeFilter); }
+		},
+		{
+			"Cassette.TurboDecoderPeakFilter",
+			OnCommandCassetteToggleTurboDecoderPeakFilter,
+			Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>,
+			[] { return ATCommands::ToRadio(g_sim.GetCassette().GetTurboDecodeAlgorithm() == ATCassetteTurboDecodeAlgorithm::PeakFilter); }
+		},
+		{
+			"Cassette.TurboDecoderPeakLoHi",
+			OnCommandCassetteToggleTurboDecoderPeakFilterLoHi,
+			Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>,
+			[] { return ATCommands::ToRadio(g_sim.GetCassette().GetTurboDecodeAlgorithm() == ATCassetteTurboDecodeAlgorithm::PeakFilterBalanceLoHi); }
+		},
+		{
+			"Cassette.TurboDecoderPeakHiLo",
+			OnCommandCassetteToggleTurboDecoderPeakFilterHiLo,
+			Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>,
+			[] { return ATCommands::ToRadio(g_sim.GetCassette().GetTurboDecodeAlgorithm() == ATCassetteTurboDecodeAlgorithm::PeakFilterBalanceHiLo); }
+		},
+		{
+			"Cassette.ToggleVBIAvoidance",
+			[] {
+				auto& cassette = g_sim.GetCassette();
+
+				cassette.SetVBIAvoidanceEnabled(!cassette.IsVBIAvoidanceEnabled());
+			},
+			nullptr,
+			[] { return ATCommands::ToChecked(g_sim.GetCassette().IsVBIAvoidanceEnabled()); }
+		},
 	};
 }
 

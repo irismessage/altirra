@@ -38,6 +38,7 @@
     <ClCompile Include="source\makereloc.cpp" />
     <ClCompile Include="source\makereloc2.cpp" />
     <ClCompile Include="source\makereloc3.cpp" />
+    <ClCompile Include="source\makereloc4.cpp" />
     <ClCompile Include="source\mkfsdos2.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>

@@ -106,11 +106,11 @@ HWND ATFindOtherInstance() {
 	return helper.Run();
 }
 
-bool ATNotifyOtherInstance(VDCommandLine& cmdLine) {
+ATNotifyOtherInstanceResult ATNotifyOtherInstance(VDCommandLine& cmdLine) {
 	HWND hwndOther = ATFindOtherInstance();
 
 	if (!hwndOther)
-		return false;
+		return ATNotifyOtherInstanceResult::NoOtherInstance;
 
 	// remove switches normally handled in instance init and which won't be handled
 	// here, but we don't want to cause an error
@@ -188,6 +188,11 @@ bool ATNotifyOtherInstance(VDCommandLine& cmdLine) {
 	cds.cbData = (DWORD)rawdata.size();
 
 	SetForegroundWindow(hwndOther);
-	SendMessage(hwndOther, WM_COPYDATA, (WPARAM)hwndOther, (LPARAM)&cds);
-	return true;
+
+	const DWORD kTimeout = 5000;
+	DWORD_PTR dummyResult = 0;
+	if (!SendMessageTimeout(hwndOther, WM_COPYDATA, (WPARAM)hwndOther, (LPARAM)&cds, SMTO_NORMAL, kTimeout, &dummyResult))
+		return ATNotifyOtherInstanceResult::Failed;
+
+	return ATNotifyOtherInstanceResult::Succeeded;
 }

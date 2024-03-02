@@ -17,6 +17,12 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 ///////////////////////////////////////////////////////////////////////////
+// References:
+//	Z80 Flag Affection
+//	http://www.z80.info/z80sflag.htm
+//
+//	Z80 Documented
+//
 
 #define AT_CPU_READ_BYTE(addr) ATCP_READ_BYTE((addr))
 #define AT_CPU_READ_BYTE_ADDR16(addr) ATCP_READ_BYTE((addr))
@@ -218,6 +224,19 @@ while(mCyclesLeft) {
 			++mPC;
 			break;
 
+		case kZ80StateReadLD:		// read (HL), set addr to DE, set bits 3/5 from bits 3/1 of A+(HL)
+			{
+				mDataH = ATCP_READ_BYTE(mL + ((uint32)mH << 8));
+				uint8 temp = mDataH + mA;
+
+				mF &= 0xD7;
+				mF |= (temp & 0x08);
+				mF |= (temp & 0x02) << 4;
+
+				mAddr = mE + ((uint32)mD << 8);
+			}
+			break;
+
 		case kZ80StateWrite:
 			ATCP_WRITE_BYTE(mAddr, mDataH);
 			break;
@@ -398,9 +417,9 @@ while(mCyclesLeft) {
 				const uint8 carry7 = (uint8)((mA & 0x7f) + (mDataH & 0x7f));
 				const uint32 r = (uint32)mA + mDataH;
 
-				mF &= 0x28;
+				// copy S, bits 3 and 5 from result
+				mF = r & 0xA8;
 
-				mF |= (r & 0x80);
 				if (!(uint8)r)
 					mF |= 0x40;
 				mF |= (mA ^ mDataH ^ r) & 0x10;
@@ -416,9 +435,9 @@ while(mCyclesLeft) {
 				const uint8 carry7 = (uint8)((mA & 0x7f) + (mDataH & 0x7f) + (mF & 1));
 				const uint32 r = (uint32)mA + mDataH + (mF & 1);
 
-				mF &= 0x28;
+				// copy S, bits 3 and 5 from result
+				mF = r & 0xA8;
 
-				mF |= (r & 0x80);
 				if (!(uint8)r)
 					mF |= 0x40;
 				mF |= (mA ^ mDataH ^ r) & 0x10;
@@ -434,12 +453,12 @@ while(mCyclesLeft) {
 				const uint8 carry7 = (uint8)((mA & 0x7f) + (~mDataH & 0x7f) + 1);
 				const uint32 r = (uint32)mA + (uint8)~mDataH + 1;
 
-				mF &= 0x28;
+				// copy S, bits 3 and 5 from result
+				mF = r & 0xA8;
 
-				mF |= (r & 0x80);
 				if (!(uint8)r)
 					mF |= 0x40;
-				mF |= ~(mA ^ mDataH ^ r) & 0x10;
+				mF |= (mA ^ mDataH ^ r) & 0x10;
 				mF |= ((r >> 6) ^ (carry7 >> 5)) & 0x4;
 				mF |= ~(r >> 8) & 0x01;
 				mF |= 0x02;
@@ -450,15 +469,15 @@ while(mCyclesLeft) {
 
 		case kZ80StateSbcToA:	// SZHVNC changed
 			{
-				const uint8 carry7 = (uint8)((mA & 0x7f) + (~mDataH & 0x7f) + (~mF & 1));
+				const uint8 carry7 = (uint8)((mA & 0x7F) + (~mDataH & 0x7F) + (~mF & 1));
 				const uint32 r = (uint32)mA + (uint8)~mDataH + (~mF & 1);
 
-				mF &= 0x28;
+				// copy S, bits 3 and 5 from result
+				mF = r & 0xA8;
 
-				mF |= (r & 0x80);
 				if (!(uint8)r)
 					mF |= 0x40;
-				mF |= ~(mA ^ mDataH ^ r) & 0x10;
+				mF |= (mA ^ mDataH ^ r) & 0x10;
 				mF |= ((r >> 6) ^ (carry7 >> 5)) & 0x4;
 				mF |= ~(r >> 8) & 0x01;
 				mF |= 0x02;
@@ -469,25 +488,71 @@ while(mCyclesLeft) {
 
 		case kZ80StateCpToA:	// SZHVNC changed
 			{
-				const uint8 carry7 = (uint8)((mA & 0x7f) + (~mDataH & 0x7f) + 1);
+				const uint8 carry7 = (uint8)((mA & 0x7F) + (~mDataH & 0x7F) + 1);
 				const uint32 r = (uint32)mA + (uint8)~mDataH + 1;
 
-				mF &= 0x28;
+				// flags bits 3 and 5 copied from operand (NOT result)
+				mF = mDataH & 0x28;
 
+				// copy S from result
 				mF |= (r & 0x80);
+
+				// set Z if zero
 				if (!(uint8)r)
 					mF |= 0x40;
-				mF |= ~(mA ^ mDataH ^ r) & 0x10;
+
+				// set H if borrow from bit 4
+				mF |= (mA ^ mDataH ^ r) & 0x10;
+
+				// set V if carries out of bits 6/7 different
 				mF |= ((r >> 6) ^ (carry7 >> 5)) & 0x4;
+
+				// set C if borrow (inverse of sum bit 8)
 				mF |= ~(r >> 8) & 0x01;
+
+				// set N
 				mF |= 0x02;
+			}
+			break;
+
+		case kZ80StateCpToA2:	// SZHVN changed
+			{
+				const uint8 carry7 = (uint8)((mA & 0x7F) + (~mDataH & 0x7F) + 1);
+				const uint32 r = (uint32)mA + (uint8)~mDataH + 1;
+
+				// preserve only C
+				mF &= 0x01;
+
+				// copy S from result
+				mF |= (r & 0x80);
+
+				// set Z if zero
+				if (!(uint8)r)
+					mF |= 0x40;
+
+				// set H if borrow from bit 4
+				mF |= (mA ^ mDataH ^ r) & 0x10;
+
+				// set V if carries out of bits 6/7 different
+				mF |= ((r >> 6) ^ (carry7 >> 5)) & 0x4;
+
+				// set N
+				mF |= 0x02;
+
+				// compute altered undocumented flags (see Z80 Documented p.16)
+				const uint8 n = r - ((mF & 0x10) >> 4);
+
+				mF |= (n & 0x08);
+				mF |= (n & 0x02) << 4;
 			}
 			break;
 
 		case kZ80StateDec:		// SZHVN changed, C unaffected
 			--mDataH;
-			mF &= 0x29;
-			mF |= (mDataH & 0x80);
+			mF &= 0x01;
+
+			// flag bits 3 and 5 copied from result, as well as S
+			mF |= (mDataH & 0xA8);
 			if (!mDataH)
 				mF |= 0x40;
 			if ((mDataH & 0x0F) == 0x0F)
@@ -499,8 +564,11 @@ while(mCyclesLeft) {
 
 		case kZ80StateInc:		// SZHVN changed, C unaffected
 			++mDataH;
-			mF &= 0x29;
-			mF |= (mDataH & 0x80);
+			mF &= 0x01;
+
+			// flag bits 3 and 5 copied from result, as well as S
+			mF |= (mDataH & 0xA8);
+
 			if (!mDataH)
 				mF |= 0x40;
 			if ((mDataH & 0x0F) == 0)
@@ -509,9 +577,9 @@ while(mCyclesLeft) {
 				mF |= 0x04;
 			break;
 
-		case kZ80StateAndToA:
+		case kZ80StateAndToA:	// SZP changed, H set, NC cleared, bits 3/5 copied from result
 			mA &= mDataH;
-			mF = mA & 0x80;
+			mF = mA & 0xA8;
 			mF |= 0x10;
 			if (!mA)
 				mF |= 0x40;
@@ -519,18 +587,18 @@ while(mCyclesLeft) {
 			AT_SET_PARITY(mA);
 			break;
 
-		case kZ80StateOrToA:
+		case kZ80StateOrToA:	// SZP changed, HNC cleared, bits 3/5 copied from result
 			mA |= mDataH;
-			mF = mA & 0x80;
+			mF = mA & 0xA8;
 			if (!mA)
 				mF |= 0x40;
 
 			AT_SET_PARITY(mA);
 			break;
 
-		case kZ80StateXorToA:
+		case kZ80StateXorToA:	// SZP changed, HNC cleared, bits 3/5 copied from result
 			mA ^= mDataH;
-			mF = mA & 0x80;
+			mF = mA & 0xA8;
 			if (!mA)
 				mF |= 0x40;
 
@@ -547,86 +615,87 @@ while(mCyclesLeft) {
 				++mDataH;
 			break;
 
-		case kZ80StateRlca:		// C changed, NH reset
+		case kZ80StateRlca:		// C changed, NH reset, bits 5/3 from result
 			mA = (mA << 1) + (mA >> 7);
-			mF &= 0xEC;
-			mF |= (mA & 1);
+			mF &= 0xC4;
+			mF |= (mA & 0x29);
 			break;
 
-		case kZ80StateRla:		// C changed, NH reset
+		case kZ80StateRla:		// C changed, NH reset, bits 5/3 from result
 			{
 				const uint8 r = (mA << 1) + (mF & 1);
 
-				mF &= 0xEC;
+				mF &= 0xC4;
 				mF |= (mA >> 7);
+				mF |= (r & 0x28);
 
 				mA = r;
 			}
 			break;
 
-		case kZ80StateRrca:		// C changed, NH reset
-			mF &= 0xEC;
+		case kZ80StateRrca:		// C changed, NH reset, bits 5/3 from result
+			mF &= 0xC4;
 			mF |= (mA & 1);
 			mA = (mA >> 1) + (mA << 7);
+			mF |= (mA & 0x28);
 			break;
 
-		case kZ80StateRra:		// C changed, NH reset
+		case kZ80StateRra:		// C changed, NH reset, bits 5/3 from result
 			{
 				const uint8 r = (mA >> 1) + (mF << 7);
 
-				mF &= 0xEC;
+				mF &= 0xC4;
 				mF |= (mA & 1);
+				mF |= (r & 0x28);
 
 				mA = r;
 			}
 			break;
 
-		case kZ80StateRld:
+		case kZ80StateRld:		// SZP changed, H cleared, bits 5/3 from result
 			{
 				uint8 a = mA;
 
 				mA = (a & 0xF0) + (mDataH >> 4);
 				mDataH = (a & 0x0F) + (mDataH << 4);
 
-				mF &= 0x29;
-				mF |= (mA & 0x80);
+				mF &= 0x01;
+				mF |= (mA & 0xA8);
 				if (!mA)
 					mF |= 0x40;
-				AT_SET_PARITY(mF);
+				AT_SET_PARITY(mA);
 			}
 			break;
 
-		case kZ80StateRrd:
+		case kZ80StateRrd:	// SZP set, HN cleared, bits 3/5 from result
 			{
 				uint8 a = mA;
 
 				mA = (a & 0xF0) + (mDataH & 0x0F);
 				mDataH = ((a & 0x0F) << 4) + (mDataH >> 4);
 
-				mF &= 0x29;
-				mF |= (mA & 0x80);
+				mF &= 0x01;
+				mF |= (mA & 0xA8);
 				if (!mA)
 					mF |= 0x40;
-				AT_SET_PARITY(mF);
+				AT_SET_PARITY(mA);
 			}
 			break;
 
-		case kZ80StateRlc:		// SZPC changed, NH reset
+		case kZ80StateRlc:		// SZPC changed, NH reset, bits 3/5 from result
 			mDataH = (mDataH << 1) + (mDataH >> 7);
-			mF &= 0x28;
-			mF |= (mDataH & 0x81);
+			mF = mDataH & 0xA9;
 			if (!mDataH)
 				mF |= 0x40;
 			AT_SET_PARITY(mDataH);
 			break;
 
-		case kZ80StateRl:		// SZPC changed, NH reset
+		case kZ80StateRl:		// SZPC changed, NH reset, bits 3/5 from result
 			{
 				const uint8 r = (mDataH << 1) + (mF & 1);
 
-				mF &= 0x28;
+				mF = r & 0xA8;
 				mF |= (mDataH >> 7);
-				mF |= (r & 0x80);
 				if (!r)
 					mF |= 0x40;
 
@@ -635,26 +704,26 @@ while(mCyclesLeft) {
 			}
 			break;
 
-		case kZ80StateRrc:		// SZPC changed, NH reset
+		case kZ80StateRrc:		// SZPC changed, NH reset, bits 3/5 from result
 			{
 				const uint8 r = (mDataH >> 1) + (mDataH << 7);
 
-				mF &= 0x28;
+				mF = r & 0xA8;
 				mF |= (mDataH & 1);
-				mF |= (r & 0x80);
+				if (!r)
+					mF |= 0x40;
 
 				AT_SET_PARITY(r);
 				mDataH = r;
 			}
 			break;
 
-		case kZ80StateRr:		// SZPC changed, NH reset
+		case kZ80StateRr:		// SZPC changed, NH reset, bits 3/5 from result
 			{
 				const uint8 r = (mDataH >> 1) + (mF << 7);
 
-				mF &= 0x28;
+				mF = r & 0xA8;
 				mF |= (mDataH & 1);
-				mF |= (r & 0x80);
 
 				if (!r)
 					mF |= 0x40;
@@ -664,87 +733,136 @@ while(mCyclesLeft) {
 			}
 			break;
 
-		case kZ80StateSla:		// SZPC changed, HN reset
-			mF &= 0x28;
-			mF |= (mDataH >> 7);
-			mF |= mDataH & 0x80;
+		case kZ80StateSll:		// SZPC changed, HN reset, bits 3/5 from result
+			mF = (mDataH >> 7);
+			mDataH = (mDataH << 1) + 1;
+			if (!mDataH)
+				mF |= 0x40;
+			mF |= mDataH & 0xA8;
+			AT_SET_PARITY(mDataH);
+			break;
+
+		case kZ80StateSla:		// SZPC changed, HN reset, bits 3/5 from result
+			mF = (mDataH >> 7);
 			mDataH <<= 1;
 			if (!mDataH)
 				mF |= 0x40;
+			mF |= mDataH & 0xA8;
 			AT_SET_PARITY(mDataH);
 			break;
 
-		case kZ80StateSrl:		// SZPC changed, HN reset
-			mF &= 0x28;
-			mF |= (mDataH & 1);
+		case kZ80StateSrl:		// SZPC changed, HN reset, bits 3/5 from result
+			mF = (mDataH & 1);
 			mDataH >>= 1;
 			if (!mDataH)
 				mF |= 0x40;
+			mF |= mDataH & 0x28;
 			AT_SET_PARITY(mDataH);
 			break;
 
-		case kZ80StateSra:		// SZPC changed, HN reset
-			mF &= 0x28;
-			mF |= (mDataH & 0x81);
+		case kZ80StateSra:		// SZPC changed, HN reset, bits 3/5 from result
+			mF = (mDataH & 0x81);
 			mDataH = (mDataH & 0x80) + (mDataH >> 1);
 			if (!mDataH)
 				mF |= 0x40;
+			mF |= mDataH & 0x28;
 			AT_SET_PARITY(mDataH);
 			break;
 
-		case kZ80StateCplToA:
+		case kZ80StateCplToA:	// HN set, bits 3/5 from result
 			mA = ~mA;
-			mF |= 0x0A;
+			mF &= 0xC5;
+			mF |= (mA & 0x28);
+			mF |= 0x12;
 			break;
 
-		case kZ80StateNegA:		// SZHVC changed, N set
+		case kZ80StateNegA:		// SZHVC changed, N set, bits 3/5 from result
 			mA = (uint8)(0-mA);
-			mF &= 0x28;
-			if (!mA)
-				mF |= 0x40;
-			else
-				mF |= 0x11;
-			mF |= (mA & 0x80);
+			mF = mA & 0xA8;
+			if (!mA)				// set ZN, clear HVC
+				mF |= 0x42;
+			else if (mA == 0x80)	// set VNC, clear ZH
+				mF |= 0x07;
+			else if (mA & 0x0F)		// set HNC, clear ZV
+				mF |= 0x13;
+			else					// set NC, clear ZHV
+				mF |= 0x03;
 			break;
 
-		case kZ80StateDaa:		// SZHPC changed
-			if (mF & 2) {	// subtraction
-				uint32 r = mA;
+		case kZ80StateDaa:		// SZHPC changed, bits 3/5 from result
+			{
+				uint8 prevF = mF;
 
-				if (mF & 0x10) {
-					r -= 0x06;
-					mF |= 0x10;
-				}
+				// Rules for C and H -> C' and H', based on the public official:
+				// and unofficial tables:
+				//
+				// - H indicates binary carry or borrow from bit 3 to bit 4.
+				// - C indicates binary carry or borrow from bit 7 to bit 8.
+				//
+				// - H' is set whenever the low digit correction produces a
+				//   carry or borrow from the high nibble. It does NOT get
+				//   forced set to preserve the BCD carry/borrow state between
+				//   nibbles. H' is sensitive to the N state since that changes
+				//   the low correction applied.
+				//
+				// - C' is forced set if C was set even if no carry/borrow
+				//   occurs during correction. This ensures that the BCD
+				//   carry/borrow state is correct.
+				//
+				// - C'=1 with C=0 if there is a carry out according to
+				//   addition correction rules, ignoring N. This does not affect
+				//   normal operation since a BCD subtraction would never
+				//   produce an invalid BCD byte >99h without C=1, but it
+				//   does affect operation for invalid BCD+carry inputs.
+				//
+				// - The correction factors for both nibbles are computed the
+				//   same way regardless of N. However, correction is subtracted
+				//   if N=1, and this affects the computation of H.
 
-				if (mF & 0x01) {
-					r -= 0x60;
+				// preserve N, C (if there was a carry/borrow, there will be still be one after)
+				mF &= 0x03;
+
+				uint8 locorr = 0;
+				uint8 hicorr = 0;
+
+				// low correction occurs if there was a half carry/borrow or result nibble was
+				// invalid
+				if ((prevF & 0x10) || (mA & 0x0F) >= 0x0A)
+					locorr = 0x06;
+
+				// high correction occurs if there was a carry or the high nibble is invalid after
+				// low correction by *addition rules* (which implies a carry lookahead)
+				if ((prevF & 0x01) || mA >= 0x9A) {
+					hicorr = 0x60;
+
+					// if high correction occurs, an output carry is guaranteed
 					mF |= 0x01;
 				}
 
-				if (r >= 0x100)
-					mF |= 0x01;
-			} else {		// addition
-				uint32 r = mA;
+				if (mF & 0x02) {
+					// subtract the correction, and set HF if there was a low nibble borrow
+					uint8 corr1 = mA - locorr;
 
-				if ((mF & 0x10) || (r & 0x0F) >= 0x0A) {
-					r += 0x06;
-					mF |= 0x10;
+					mF |= ((mA ^ corr1) & 0x10);
+					mA = corr1 - hicorr;
+				} else {
+					// add the correction, and set HF if there was a low nibble carry
+					uint8 corr1 = mA + locorr;
+
+					mF |= ((mA ^ corr1) & 0x10);
+					mA = corr1 + hicorr;
 				}
 
-				if ((mF & 0x01) || (r & 0xF0) >= 0xA0) {
-					r += 0x60;
-					mF |= 0x01;
-				}
+				// set S from bit 7, and copy bit 3/5 into flags
+				mF |= mA & 0xA8;
 
-				if (r >= 0x100)
-					mF |= 0x01;
+				// set Z
+				if (!mA)
+					mF |= 0x40;
+
+				// set P
+				AT_SET_PARITY(mA);
 			}
-
-			mF &= 0x3B;
-			mF |= mA & 0x80;
-			if (!mA)
-				mF |= 0x40;
-			AT_SET_PARITY(mA);
 			break;
 
 		// The TOMS Turbo Drive firmware relies on the following sequence working to
@@ -753,14 +871,21 @@ while(mCyclesLeft) {
 		//	BIT 7,(HL)
 		//	JP M,addr
 		//
-		case kZ80StateBit0: mF |= 0x10; mF &= 0x3D; mF |= (mDataH & 0x80); if (!(mDataH & 0x01)) mF |= 0x40; break;
-		case kZ80StateBit1: mF |= 0x10; mF &= 0x3D; mF |= (mDataH & 0x80); if (!(mDataH & 0x02)) mF |= 0x40; break;
-		case kZ80StateBit2: mF |= 0x10; mF &= 0x3D; mF |= (mDataH & 0x80); if (!(mDataH & 0x04)) mF |= 0x40; break;
-		case kZ80StateBit3: mF |= 0x10; mF &= 0x3D; mF |= (mDataH & 0x80); if (!(mDataH & 0x08)) mF |= 0x40; break;
-		case kZ80StateBit4: mF |= 0x10; mF &= 0x3D; mF |= (mDataH & 0x80); if (!(mDataH & 0x10)) mF |= 0x40; break;
-		case kZ80StateBit5: mF |= 0x10; mF &= 0x3D; mF |= (mDataH & 0x80); if (!(mDataH & 0x20)) mF |= 0x40; break;
-		case kZ80StateBit6: mF |= 0x10; mF &= 0x3D; mF |= (mDataH & 0x80); if (!(mDataH & 0x40)) mF |= 0x40; break;
-		case kZ80StateBit7: mF |= 0x10; mF &= 0x3D; mF |= (mDataH & 0x80); if (!(mDataH & 0x80)) mF |= 0x40; break;
+		// Z changed, H set, N cleared, bits 3/5 copied from operand as if AND
+		//
+		case kZ80StateBit0: mF &= 0x01; mF |= 0x10; mF |= (mDataH & 0x00); if (!(mDataH & 0x01)) mF |= 0x44; break;
+		case kZ80StateBit1: mF &= 0x01; mF |= 0x10; mF |= (mDataH & 0x00); if (!(mDataH & 0x02)) mF |= 0x44; break;
+		case kZ80StateBit2: mF &= 0x01; mF |= 0x10; mF |= (mDataH & 0x00); if (!(mDataH & 0x04)) mF |= 0x44; break;
+		case kZ80StateBit3: mF &= 0x01; mF |= 0x10; mF |= (mDataH & 0x08); if (!(mDataH & 0x08)) mF |= 0x44; break;
+		case kZ80StateBit4: mF &= 0x01; mF |= 0x10; mF |= (mDataH & 0x00); if (!(mDataH & 0x10)) mF |= 0x44; break;
+		case kZ80StateBit5: mF &= 0x01; mF |= 0x10; mF |= (mDataH & 0x20); if (!(mDataH & 0x20)) mF |= 0x44; break;
+		case kZ80StateBit6: mF &= 0x01; mF |= 0x10; mF |= (mDataH & 0x00); if (!(mDataH & 0x40)) mF |= 0x44; break;
+		case kZ80StateBit7: mF &= 0x01; mF |= 0x10; mF |= (mDataH & 0x80); if (!(mDataH & 0x80)) mF |= 0x44; break;
+
+		case kZ80StateBitAdjustIX:	// BIT n,(IX+d) pulls bits 3/5 of F from address calc instead of AND operation
+			mF &= 0xD7;
+			mF |= (mAddr >> 8) & 0x28;
+			break;
 
 		case kZ80StateSet0: mDataH |= 0x01; break;
 		case kZ80StateSet1: mDataH |= 0x02; break;
@@ -779,37 +904,40 @@ while(mCyclesLeft) {
 		case kZ80StateRes6: mDataH &= 0xBF; break;
 		case kZ80StateRes7: mDataH &= 0x7F; break;
 
-		case kZ80StateCCF:		// H=C, C=!C, N reset
-			mF &= 0xED;
+		case kZ80StateCCF:		// H=C, C=!C, N reset, bits 3/5 from A
+			mF &= 0xC5;
 			if (mF & 0x01)
 				mF |= 0x10;
+			mF |= (mA & 0x28);
 			mF ^= 0x01;
 			break;
 
-		case kZ80StateSCF:		// C set, HN reset
-			mF &= 0xED;
+		case kZ80StateSCF:		// C set, HN reset, bits 3/5 from A
+			mF &= 0xC5;
+			mF |= (mA & 0x28);
 			mF |= 0x01;
 			break;
 
-		case kZ80StateAddToHL:	// HNC changed
+		case kZ80StateAddToHL:	// HNC changed, bits 3/5 from high byte
 			{
 				const uint32 hl = mL + ((uint32)mH << 8);
 				const uint32 arg = mDataL + ((uint32)mDataH << 8);
 				const uint32 r = hl + arg;
 
-				mF &= 0xEC;
+				mF &= 0xC4;
 
 				if ((hl ^ arg ^ r) & 0x1000)
 					mF |= 0x10;
 
 				mF |= (r >> 16) & 1;
+				mF |= (r >> 8) & 0x28;
 
 				mL = (uint8)r;
 				mH = (uint8)(r >> 8);
 			}
 			break;
 
-		case kZ80StateAdcToHL:	// SZHVNC changed
+		case kZ80StateAdcToHL:	// SZHVNC changed, bits 3/5 from high byte
 			{
 				const uint32 hl = mL + ((uint32)mH << 8);
 				const uint32 arg = mDataL + ((uint32)mDataH << 8);
@@ -817,12 +945,12 @@ while(mCyclesLeft) {
 				const uint32 carry15 = (hl & 0x7FFF) + (arg & 0x7FFF) + c;
 				const uint32 r = hl + (uint16)arg + c;
 
-				mF &= 0x28;
+				mF = (r >> 8) & 0xA8;
 
-				mF |= ((r >> 8) & 0x80);
 				if (!(uint16)r)
 					mF |= 0x40;
-				mF |= (mA ^ mDataH ^ r) & 0x1000;
+
+				mF |= ((hl ^ arg ^ r) & 0x1000) >> 8;
 				mF |= ((r >> 14) ^ (carry15 >> 13)) & 0x04;
 				mF |= (r >> 16) & 0x01;
 
@@ -831,7 +959,7 @@ while(mCyclesLeft) {
 			}
 			break;
 
-		case kZ80StateSbcToHL:	// SZHVNC changed
+		case kZ80StateSbcToHL:	// SZHVNC changed, bits 3/5 from high byte
 			{
 				const uint32 hl = mL + ((uint32)mH << 8);
 				const uint32 arg = mDataL + ((uint32)mDataH << 8);
@@ -839,12 +967,12 @@ while(mCyclesLeft) {
 				const uint32 carry15 = (hl & 0x7FFF) + (~arg & 0x7FFF) + nc;
 				const uint32 r = hl + (uint16)~arg + nc;
 
-				mF &= 0x28;
+				mF = (r >> 8) & 0xA8;
 
-				mF |= ((r >> 8) & 0x80);
 				if (!(uint16)r)
 					mF |= 0x40;
-				mF |= ~(mA ^ mDataH ^ r) & 0x1000;
+
+				mF |= ((hl ^ arg ^ r) & 0x1000) >> 8;
 				mF |= ((r >> 14) ^ (carry15 >> 13)) & 0x04;
 				mF |= ~(r >> 16) & 0x01;
 				mF |= 0x02;
@@ -854,7 +982,7 @@ while(mCyclesLeft) {
 			}
 			break;
 
-		case kZ80StateAddToIX:	// HNC changed
+		case kZ80StateAddToIX:	// HNC changed, bits 3/5 from high byte
 			{
 				uint8& ixl = mbUseIY ? mIYL : mIXL;
 				uint8& ixh = mbUseIY ? mIYH : mIXH;
@@ -862,7 +990,8 @@ while(mCyclesLeft) {
 				const uint32 arg = mDataL + ((uint32)mDataH << 8);
 				const uint32 r = hl + arg;
 
-				mF &= 0xEC;
+				mF &= 0xC4;
+				mF |= (r >> 8) & 0x28;
 
 				if ((hl ^ arg ^ r) & 0x1000)
 					mF |= 0x10;

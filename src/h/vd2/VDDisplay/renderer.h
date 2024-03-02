@@ -50,9 +50,17 @@ struct VDDisplayBltOptions {
 		kFilterMode_Bilinear
 	};
 
-	FilterMode mFilterMode;
-	float mSharpnessX;
-	float mSharpnessY;
+	FilterMode mFilterMode = kFilterMode_Point;
+	float mSharpnessX = 0.0f;
+	float mSharpnessY = 0.0f;
+
+	enum class AlphaBlendMode : uint8 {
+		None,
+		Over,
+		OverPreMultiplied
+	};
+
+	AlphaBlendMode mAlphaBlendMode = AlphaBlendMode::None;
 };
 
 class IVDDisplayRenderer {

@@ -57,6 +57,9 @@
     <ClCompile Include="source\stdafx.cpp">
       <Filter>Precompiled Header Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\Config.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\stdafx.h">
@@ -85,6 +88,9 @@
     </ClInclude>
     <ClInclude Include="h\D3D11\FenceManager_D3D11.h">
       <Filter>Header Files\D3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\vd2\Tessa\Config.h">
+      <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

@@ -36,6 +36,15 @@ typedef void (*ATPortOutputFn)(void *data, uint32 outputState);
 
 class IATDevicePortManager {
 public:
+	static constexpr uint32 kTypeID = "IATDevicePortManager"_vdtypeid;
+
+	static constexpr uint32 kMask_PortA = 0x00FF;
+	static constexpr uint32 kMask_PortB = 0xFF00;
+	static constexpr uint32 kMask_PB0 = 0x0100;
+	static constexpr uint32 kMask_PB1 = 0x0200;
+	static constexpr uint32 kMask_PB4 = 0x1000;
+	static constexpr uint32 kMask_PB7 = 0x8000;
+
 	// Allocate a new input to supply signals to the PIA. Returns an input index
 	// or -1 if no inputs are available.
 	virtual int AllocInput() = 0;

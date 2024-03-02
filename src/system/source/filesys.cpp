@@ -942,6 +942,9 @@ uint32 VDFileGetAttributesFromNativeW32(uint32 nativeAttrs) {
 	if (nativeAttrs & FILE_ATTRIBUTE_DIRECTORY)
 		attrs |= kVDFileAttr_Directory;
 
+	if (nativeAttrs & FILE_ATTRIBUTE_REPARSE_POINT)
+		attrs |= kVDFileAttr_Link;
+
 	return attrs;
 }
 
@@ -965,6 +968,9 @@ uint32 VDFileGetNativeAttributesFromAttrsW32(uint32 attrs) {
 
 	if (attrs & kVDFileAttr_Directory)
 		nativeAttrs |= FILE_ATTRIBUTE_DIRECTORY;
+
+	if (attrs & kVDFileAttr_Link)
+		nativeAttrs |= FILE_ATTRIBUTE_REPARSE_POINT;
 
 	return nativeAttrs;
 }
@@ -1011,41 +1017,57 @@ bool VDDirectoryIterator::Next() {
 	if (mbSearchComplete)
 		return false;
 
-	union {
-		WIN32_FIND_DATAW w;
-	} wfd;
+	for(;;) {
+		union {
+			WIN32_FIND_DATAW w;
+		} wfd;
 
-	uint32 attribs;
+		uint32 attribs;
 
-	if (mpHandle)
-		mbSearchComplete = !FindNextFileW((HANDLE)mpHandle, &wfd.w);
-	else {
-		mpHandle = FindFirstFileW(mSearchPath.c_str(), &wfd.w);
-		mbSearchComplete = (INVALID_HANDLE_VALUE == mpHandle);
+		if (mpHandle)
+			mbSearchComplete = !FindNextFileW((HANDLE)mpHandle, &wfd.w);
+		else {
+			mpHandle = FindFirstFileW(mSearchPath.c_str(), &wfd.w);
+			mbSearchComplete = (INVALID_HANDLE_VALUE == mpHandle);
+		}
+
+		if (mbSearchComplete)
+			return false;
+
+		mbDirectory = (wfd.w.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+
+		// reject . and .., which are just annoying and no one wants them
+		if (mbDirectory && wfd.w.cFileName[0] == L'.') {
+			if (!wfd.w.cFileName[1] || (wfd.w.cFileName[1] == L'.' && !wfd.w.cFileName[2]))
+				continue;
+		}
+
+		mFilename = wfd.w.cFileName;
+		mFileSize = wfd.w.nFileSizeLow + ((sint64)wfd.w.nFileSizeHigh << 32);
+		mLastWriteDate.mTicks = wfd.w.ftLastWriteTime.dwLowDateTime + ((uint64)wfd.w.ftLastWriteTime.dwHighDateTime << 32);
+		mCreationDate.mTicks = wfd.w.ftCreationTime.dwLowDateTime + ((uint64)wfd.w.ftCreationTime.dwHighDateTime << 32);
+
+		attribs = wfd.w.dwFileAttributes;
+
+		mAttributes = VDFileGetAttributesFromNativeW32(attribs);
+		return true;
 	}
-	if (mbSearchComplete)
-		return false;
-
-	mbDirectory = (wfd.w.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-	mFilename = wfd.w.cFileName;
-	mFileSize = wfd.w.nFileSizeLow + ((sint64)wfd.w.nFileSizeHigh << 32);
-	mLastWriteDate.mTicks = wfd.w.ftLastWriteTime.dwLowDateTime + ((uint64)wfd.w.ftLastWriteTime.dwHighDateTime << 32);
-	mCreationDate.mTicks = wfd.w.ftCreationTime.dwLowDateTime + ((uint64)wfd.w.ftCreationTime.dwHighDateTime << 32);
-
-	attribs = wfd.w.dwFileAttributes;
-
-	mAttributes = VDFileGetAttributesFromNativeW32(attribs);
-	return true;
 }
 
-bool VDDirectoryIterator::IsDotDirectory() const {
-	if (!mbDirectory)
-		return false;
+bool VDDirectoryIterator::ResolveLinkSize() {
+	if (IsDirectory() || !IsLink())
+		return true;
 
-	const wchar_t *s = mFilename.c_str();
+	bool success = false;
+	HANDLE h = CreateFile(GetFullPath().c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (h != INVALID_HANDLE_VALUE) {
+		LARGE_INTEGER sz {};
+		if (GetFileSizeEx(h, &sz)) {
+			mFileSize = sz.QuadPart;
+			success = true;
+		}
+	}
 
-	if (s[0] != L'.')
-		return false;
-
-	return !s[1] || (s[1] == L'.' && !s[2]);
+	VDVERIFY(CloseHandle(h));
+	return success;
 }

@@ -20,7 +20,6 @@
 
 #include <vd2/system/vdtypes.h>
 
-void ATChecksumUpdateSHA256(ATChecksumStateSHA256& VDRESTRICT state, const void *src, size_t numBlocks);
 void ATChecksumUpdateSHA256_Reference(ATChecksumStateSHA256& VDRESTRICT state, const void *src, size_t numBlocks);
 
 #if VD_CPU_X86 || VD_CPU_X64

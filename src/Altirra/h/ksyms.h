@@ -249,7 +249,7 @@ namespace ATKernelSymbols {
 	};
 
 	// hardware symbols
-	enum {
+	enum : uint32 {
 		COLPM0 = 0xD012,
 		COLPM1 = 0xD013,
 		COLPM2 = 0xD014,
@@ -270,6 +270,7 @@ namespace ATKernelSymbols {
 		AUDF4  = 0xD206,
 		AUDC4  = 0xD207,
 		AUDCTL = 0xD208,
+		STIMER = 0xD209,
 		IRQST  = 0xD20E,
 		IRQEN  = 0xD20E,
 		SKCTL  = 0xD20F,

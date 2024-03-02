@@ -141,6 +141,9 @@ bool ATDeviceDiskDriveXF551::SetSettings(const ATPropertySet& settings) {
 void ATDeviceDiskDriveXF551::Init() {
 	mDriveScheduler.SetRate(VDFraction(8333333, 15));
 
+	// We need to do this early to ensure that the clock divisor is set before we perform init processing.
+	ResetTargetControl();
+
 	mSerialXmitQueue.Init(mpScheduler, mpSIOMgr);
 	mSerialCmdQueue.Init(&mDriveScheduler, mpSIOMgr);
 
@@ -386,7 +389,9 @@ void ATDeviceDiskDriveXF551::OnAudioModeChanged() {
 }
 
 bool ATDeviceDiskDriveXF551::IsImageSupported(const IATDiskImage& image) const {
-	return true;
+	const auto& geo = image.GetGeometry();
+
+	return geo.mTrackCount <= 80 && geo.mSectorSize <= 256 && geo.mSectorsPerTrack <= 26 && !geo.mbHighDensity;
 }
 
 void ATDeviceDiskDriveXF551::Sync() {

@@ -18,6 +18,8 @@
 #ifndef f_AT_IRQCONTROLLER_H
 #define f_AT_IRQCONTROLLER_H
 
+#include <vd2/system/unknown.h>
+
 class ATCPUEmulator;
 
 enum ATIRQSource {
@@ -32,6 +34,8 @@ enum ATIRQSource {
 
 class ATIRQController {
 public:
+	static constexpr uint32 kTypeID = "ATIRQController"_vdtypeid;
+
 	ATIRQController();
 	~ATIRQController();
 

@@ -205,7 +205,7 @@ void ATDiskInterface::MountFolder(const wchar_t *path, bool sdfs) {
 
 	try {
 		if (sdfs)
-			ATMountDiskImageVirtualFolderSDFS(path, 65535, (uint64)this, ~mpDiskImage);
+			ATMountDiskImageVirtualFolderSDFS(path, 128, (uint64)this, ~mpDiskImage);
 		else
 			ATMountDiskImageVirtualFolder(path, 720, ~mpDiskImage);
 

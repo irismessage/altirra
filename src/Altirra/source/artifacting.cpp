@@ -15,6 +15,45 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
+////////////////////////////////////////////////////////////////////////////////
+// Artifacting engine
+//
+// The artifacting engine is essentially the software postprocessing engine for
+// the emulator. It provides the following post-process effects:
+//
+//	- Conversion from indexed color to RGB
+//	- Even/odd luma-chroma artifacts (NTSC artifacting)
+//	- Chroma line blending (PAL artifacting)
+//	- Full chroma artifacting (NTSC/PAL high artifacting)
+//	- Frame blending
+//	- Scanline rendering
+//
+// The artifacting engine can also work with the hardware screenFX support to
+// split post-processing between software and hardware paths.
+//
+//
+// Expanded range processing
+// -------------------------
+// The artifacting engine has a notion of 'expanded range' where colors are
+// encoded in the source color space in [-0.5, 1.5] within 8-bit instead of
+// 0-1. This allows capturing of colors that would otherwise be lost. For NTSC,
+// this allows preservation of color values above 1 in NTSC color that can
+// still be represented in WCG/HDR; for PAL, it preserves colors that can be
+// brought inside of sRGB by chroma blending. Some of these colors are
+// 'impossible' in linear sRGB or scRGB encoding due to negative values, and
+// thus the signed encoding in gamma space rather than a traditional linear
+// color space pipeline.
+//
+// Expanded range is designed to be fast to convert to and from normal range
+// encoding, as follows:
+//
+//	expanded = normal/2 + 64
+//	normal = expanded*2 - 128
+//
+// Note that the bias is thus not exactly 0.5, it is actually 64/255. This is
+// the value used when processing expanded range in the screenFX pipeline for
+// hardware accelerated chroma line blending or HDR output.
+
 #include <stdafx.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/math.h>
@@ -33,9 +72,9 @@ void ATArtifactPAL32(void *dst, void *delayLine, uint32 n, bool useSignedPalette
 
 #if VD_CPU_X86 || VD_CPU_X64
 	void ATArtifactBlend_SSE2(uint32 *dst, const uint32 *src, uint32 n);
-	void ATArtifactBlendLinear_SSE2(uint32 *dst, const uint32 *src, uint32 n);
+	void ATArtifactBlendLinear_SSE2(uint32 *dst, const uint32 *src, uint32 n, bool extendedRange);
 	void ATArtifactBlendExchange_SSE2(uint32 *dst, uint32 *blendDst, uint32 n);
-	void ATArtifactBlendExchangeLinear_SSE2(uint32 *dst, uint32 *blendDst, uint32 n);
+	void ATArtifactBlendExchangeLinear_SSE2(uint32 *dst, uint32 *blendDst, uint32 n, bool extendedRange);
 	void ATArtifactBlendScanlines_SSE2(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n, float intensity);
 	void ATArtifactNTSCFinal_SSE2(void *dst, const void *srcr, const void *srcg, const void *srcb, uint32 count);
 	void ATArtifactPAL32_SSE2(void *dst, void *delayLine, uint32 n, bool useSignedPalette);
@@ -68,8 +107,8 @@ void ATArtifactPAL32(void *dst, void *delayLine, uint32 n, bool useSignedPalette
 #ifdef VD_CPU_ARM64
 	void ATArtifactBlend_NEON(uint32 *dst, const uint32 *src, uint32 n);
 	void ATArtifactBlendExchange_NEON(uint32 *dst, uint32 *blendDst, uint32 n);
-	void ATArtifactBlendLinear_NEON(uint32 *dst, const uint32 *src, uint32 n);
-	void ATArtifactBlendExchangeLinear_NEON(uint32 *dst, uint32 *blendDst, uint32 n);
+	void ATArtifactBlendLinear_NEON(uint32 *dst, const uint32 *src, uint32 n, bool extendedRange);
+	void ATArtifactBlendExchangeLinear_NEON(uint32 *dst, uint32 *blendDst, uint32 n, bool extendedRange);
 	void ATArtifactBlendScanlines_NEON(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n, float intensity);
 
 	void ATArtifactNTSCAccum_NEON(void *rout, const void *table, const void *src, uint32 count);
@@ -289,10 +328,12 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 
 		if (matrix) {
 			mCorrectedPalette[i] = mPalette[i];
+			mCorrectedSignedPalette[i] = mSignedPalette[i];
 		} else {
 			rgb = pow(max0(rgb), gamma);
 
 			mCorrectedPalette[i] = packus8(permute<2,1,0>(rgb) * 255.0f) & 0xFFFFFF;
+			mCorrectedSignedPalette[i] = packus8(permute<2,1,0>(rgb) * 127.0f + 64.0f) & 0xFFFFFF;
 		}
 	}
 
@@ -345,6 +386,47 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 		}
 
 		ColorCorrect((uint8 *)mCorrectedPalette, 256);
+
+		// correct the signed palette manually
+		for(int i=0; i<256; ++i) {
+			uint32 c = mCorrectedSignedPalette[i];
+			float r = (float)((c >> 16) & 0xFF) - 64.0f;
+			float g = (float)((c >>  8) & 0xFF) - 64.0f;
+			float b = (float)((c >>  0) & 0xFF) - 64.0f;
+
+			if (r < 0.0f) r = 0.0f;
+			if (g < 0.0f) g = 0.0f;
+			if (b < 0.0f) b = 0.0f;
+
+			r = powf(r, nativeGamma);
+			g = powf(g, nativeGamma);
+			b = powf(b, nativeGamma);
+
+			vdfloat3 rgb{r, g, b};
+			vdfloat3 rgb2 = rgb * (*matrix);
+
+			r = rgb2.x;
+			g = rgb2.y;
+			b = rgb2.z;
+
+			if (r < 0.0f) r = 0.0f;
+			if (g < 0.0f) g = 0.0f;
+			if (b < 0.0f) b = 0.0f;
+
+			r = powf(r, 1.0f / nativeGamma) + 64.0f;
+			g = powf(g, 1.0f / nativeGamma) + 64.0f;
+			b = powf(b, 1.0f / nativeGamma) + 64.0f;
+
+			if (r > 255.0f) r = 255.0f;
+			if (g > 255.0f) g = 255.0f;
+			if (b > 255.0f) b = 255.0f;
+
+			uint32 ir = (uint32)(sint32)(r + 0.5f);
+			uint32 ig = (uint32)(sint32)(g + 0.5f);
+			uint32 ib = (uint32)(sint32)(b + 0.5f);
+
+			mCorrectedSignedPalette[i] = (ir << 16) + (ig << 8) + ib;
+		}
 	}
 
 	mbTintColorEnabled = (tintColor != nullptr);
@@ -365,6 +447,7 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 
 	mbHighNTSCTablesInited = false;
 	mbHighPALTablesInited = false;
+	mbActiveTablesInited = false;
 }
 
 void ATArtifactingEngine::SetArtifactingParams(const ATArtifactingParams& params) {
@@ -424,7 +507,8 @@ void ATArtifactingEngine::SuspendFrame() {
 	mbSavedBlendActive = mbBlendActive;
 	mbSavedBlendCopy = mbBlendCopy;
 	mbSavedBlendLinear = mbBlendLinear;
-	mbSavedUseSignedPalette = mbUseSignedPalette;
+	mbSavedExpandedRangeInput = mbExpandedRangeInput;
+	mbSavedExpandedRangeOutput = mbExpandedRangeOutput;
 }
 
 void ATArtifactingEngine::ResumeFrame() {
@@ -435,23 +519,31 @@ void ATArtifactingEngine::ResumeFrame() {
 	mbBlendActive = mbSavedBlendActive;
 	mbBlendCopy = mbSavedBlendCopy;
 	mbBlendLinear = mbSavedBlendLinear;
-	mbUseSignedPalette = mbSavedUseSignedPalette;
+	mbExpandedRangeInput = mbSavedExpandedRangeInput;
+	mbExpandedRangeOutput = mbSavedExpandedRangeOutput;
 }
 
-void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chromaArtifactHi, bool blendIn, bool blendOut, bool blendLinear, bool bypassOutputCorrection, bool useSignedPalette) {
+void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chromaArtifactHi, bool blendIn, bool blendOut, bool blendLinear, bool bypassOutputCorrection, bool extendedRangeInput, bool extendedRangeOutput) {
+	// we don't support expanding output in the artifacting engine
+	VDASSERT(!(!extendedRangeInput && extendedRangeOutput));
+
 	mbPAL = pal;
 	mbChromaArtifacts = chromaArtifacts;
 	mbChromaArtifactsHi = chromaArtifactHi;
 	mbBypassOutputCorrection = bypassOutputCorrection;
-	mbUseSignedPalette = useSignedPalette;
+	mbExpandedRangeInput = extendedRangeInput;
+	mbExpandedRangeOutput = extendedRangeOutput;
+
+	if (!mbActiveTablesInited || mbActiveTablesSigned != extendedRangeOutput)
+		RecomputeActiveTables(extendedRangeOutput);
 
 	if (chromaArtifactHi) {
 		if (pal) {
-			if (!mbHighPALTablesInited)
-				RecomputePALTables(mColorParams);
+			if (!mbHighPALTablesInited || mbHighTablesSigned != extendedRangeOutput)
+				RecomputePALTables(mColorParams, extendedRangeOutput);
 		} else {
-			if (!mbHighNTSCTablesInited)
-				RecomputeNTSCTables(mColorParams);
+			if (!mbHighNTSCTablesInited || mbHighTablesSigned != extendedRangeOutput)
+				RecomputeNTSCTables(mColorParams, extendedRangeOutput);
 		}
 	}
 
@@ -530,6 +622,8 @@ void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N],
 void ATArtifactingEngine::Artifact32(uint32 y, uint32 *dst, uint32 width, bool temporaryUpdate, bool includeHBlank) {
 	if (mbPAL && mbChromaArtifacts)
 		ArtifactPAL32(dst, width);
+	else if (mbExpandedRangeInput && !mbExpandedRangeOutput)
+		ArtifactCompressRange(dst, width);
 
 	if (mbBlendActive && y < M && width <= N*2) {
 		uint32 *blendDst = width > N ? mPrevFrame14MHz[y] : mPrevFrame7MHz[y];
@@ -575,7 +669,7 @@ void ATArtifactingEngine::InterpolateScanlines(uint32 *dst, const uint32 *src1, 
 }
 
 void ATArtifactingEngine::ArtifactPAL8(uint32 dst[N], const uint8 src[N]) {
-	const uint32 *VDRESTRICT palette = mbBypassOutputCorrection ? mPalette : mCorrectedPalette;
+	const uint32 *VDRESTRICT palette = mbBypassOutputCorrection ? mPalette : mbExpandedRangeOutput ? mCorrectedSignedPalette : mCorrectedPalette;
 
 	for(int i=0; i<N; ++i) {
 		uint8 prev = mPALDelayLine[i];
@@ -590,14 +684,56 @@ void ATArtifactingEngine::ArtifactPAL8(uint32 dst[N], const uint8 src[N]) {
 }
 
 void ATArtifactingEngine::ArtifactPAL32(uint32 *dst, uint32 width) {
+	bool compressOutput = mbExpandedRangeInput && !mbExpandedRangeOutput;
+
 #if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 	if (SSE2_enabled) {
-		ATArtifactPAL32_SSE2(dst, mPALDelayLine32, width, mbUseSignedPalette);
+		ATArtifactPAL32_SSE2(dst, mPALDelayLine32, width, compressOutput);
 		return;
 	}
 #endif
 
-	ATArtifactPAL32(dst, mPALDelayLine32, width, mbUseSignedPalette);
+	ATArtifactPAL32(dst, mPALDelayLine32, width, compressOutput);
+}
+
+void ATArtifactingEngine::ArtifactCompressRange(uint32 *dst, uint32 width) {
+#if defined(VD_COMPILER_MSVC) && (defined(VD_CPU_X86) || defined(VD_CPU_X64))
+	if (SSE2_enabled) {
+		uint32 preAlign = (((uintptr)16 - (uintptr)dst) & 15) >> 2;
+
+		if (width > preAlign) {
+			ArtifactCompressRange_Scalar(dst, preAlign);
+			dst += preAlign;
+			width -= preAlign;
+
+			if (width >= 4)
+				ArtifactCompressRange_SSE2(dst, width);
+
+			uint32 n2 = width & ~3;
+			dst += n2;
+			width &= 3;
+		}
+	}
+#endif
+
+	return ArtifactCompressRange_Scalar(dst, width);
+}
+
+void ATArtifactingEngine::ArtifactCompressRange_Scalar(uint32 *dst, uint32 width) {
+
+	while(width--) {
+		uint32 c = *dst;
+		uint32 r = (c >> 16) & 0xFF;
+		uint32 g = (c >>  8) & 0xFF;
+		uint32 b = (c >>  0) & 0xFF;
+
+		r = (r < 0x40) ? 0 : (r >= 0xC0) ? 0xFF : (r - 0x40)*2;
+		g = (g < 0x40) ? 0 : (g >= 0xC0) ? 0xFF : (g - 0x40)*2;
+		b = (b < 0x40) ? 0 : (b >= 0xC0) ? 0xFF : (b - 0x40)*2;
+
+		*dst = (c & 0xFF000000) + (r << 16) + (g << 8) + b;
+		++dst;
+	}
 }
 
 void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool includeHBlank) {
@@ -666,24 +802,24 @@ void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool s
 	// This has no physical basis -- it just looks OK.
 	uint32 *dst2 = dst;
 
-	if (mbEnableColorCorrection || mbGammaIdentity || mbBypassOutputCorrection) {
+	if (mbEnableColorCorrection || mbGammaIdentity || mbBypassOutputCorrection || mbExpandedRangeOutput) {
 		for(int x=0; x<N; ++x) {
 			uint8 p = src[x];
 			int art = inv[x]; 
 
 			if (!art) {
-				*dst2++ = mPalette[p];
+				*dst2++ = mActivePalette[p];
 			} else {
 				int c = p >> 4;
 
-				int cr = mChromaVectors[c][2];
-				int cg = mChromaVectors[c][1];
-				int cb = mChromaVectors[c][0];
-				int y = mLumaRamp[luma2[x]];
+				int cr = mActiveChromaVectors[c][2];
+				int cg = mActiveChromaVectors[c][1];
+				int cb = mActiveChromaVectors[c][0];
+				int y = mActiveLumaRamp[luma2[x]];
 
-				cr += mArtifactRamp[art+15][2] + y;
-				cg += mArtifactRamp[art+15][1] + y;
-				cb += mArtifactRamp[art+15][0] + y;
+				cr += mActiveArtifactRamp[art+15][2] + y;
+				cg += mActiveArtifactRamp[art+15][1] + y;
+				cb += mActiveArtifactRamp[art+15][0] + y;
 
 				cr >>= 6;
 				cg >>= 6;
@@ -711,6 +847,8 @@ void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool s
 		if (mbEnableColorCorrection && !mbBypassOutputCorrection)
 			ColorCorrect((uint8 *)dst, N);
 	} else {
+		// If we are going down this path we can't be using the signed palette, so we're OK not
+		// using the active arrays.
 		for(int x=0; x<N; ++x) {
 			uint8 p = src[x];
 			int art = inv[x]; 
@@ -1099,7 +1237,7 @@ void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], boo
 void ATArtifactingEngine::BlitNoArtifacts(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes) {
 	static_assert((N & 1) == 0);
 
-	const uint32 *VDRESTRICT palette = mbBypassOutputCorrection ? mbUseSignedPalette ? mSignedPalette : mPalette : mCorrectedPalette;
+	const uint32 *VDRESTRICT palette = mbBypassOutputCorrection ? mActivePalette : mbExpandedRangeOutput ? mCorrectedSignedPalette : mCorrectedPalette;
 
 	if (scanlineHasHiRes) {
 		for(size_t x=0; x<N; ++x)
@@ -1127,13 +1265,19 @@ void ATArtifactBlendExchange_Reference(uint32 *VDRESTRICT dst, T *VDRESTRICT src
 	}
 }
 
-template<typename T>
+template<bool T_ExtendedRange, typename T>
 void ATArtifactBlendExchangeLinear_Reference(uint32 *VDRESTRICT dst, T *VDRESTRICT src, uint32 n) {
 	for(uint32 x=0; x<n; ++x) {
 		union {
 			uint32 p;
 			uint8 b[4];
 		} a = { dst[x] }, b = { src[x] };
+
+		if constexpr(T_ExtendedRange) {
+			if (a.b[0] >= 0x40) a.b[0] -= 0x40; else a.b[0] = 0;
+			if (a.b[1] >= 0x40) a.b[1] -= 0x40; else a.b[1] = 0;
+			if (a.b[2] >= 0x40) a.b[2] -= 0x40; else a.b[2] = 0;
+		}
 
 		if constexpr(!std::is_const_v<T>) {
 			src[x] = a.p;
@@ -1143,6 +1287,12 @@ void ATArtifactBlendExchangeLinear_Reference(uint32 *VDRESTRICT dst, T *VDRESTRI
 		a.b[1] = (uint8)(0.5f + sqrtf(((float)a.b[1]*(float)a.b[1] + (float)b.b[1]*(float)b.b[1]) * 0.5f));
 		a.b[2] = (uint8)(0.5f + sqrtf(((float)a.b[2]*(float)a.b[2] + (float)b.b[2]*(float)b.b[2]) * 0.5f));
 
+		if constexpr(T_ExtendedRange) {
+			if (a.b[0] >= 0xC0) a.b[0] = 0xFF; else a.b[0] += 0x40;
+			if (a.b[1] >= 0xC0) a.b[1] = 0xFF; else a.b[1] += 0x40;
+			if (a.b[2] >= 0xC0) a.b[2] = 0xFF; else a.b[2] += 0x40;
+		}
+
 		dst[x] = a.p;
 	}
 }
@@ -1151,7 +1301,7 @@ void ATArtifactingEngine::Blend(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT
 #if VD_CPU_ARM64
 	if (!(n & 3)) {
 		if (mbBlendLinear)
-			ATArtifactBlendLinear_NEON(dst, src, n);
+			ATArtifactBlendLinear_NEON(dst, src, n, mbExpandedRangeOutput);
 		else
 			ATArtifactBlend_NEON(dst, src, n);
 		return;
@@ -1160,16 +1310,19 @@ void ATArtifactingEngine::Blend(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT
 #if VD_CPU_X86 || VD_CPU_X64
 	if (SSE2_enabled && !(((uintptr)dst | (uintptr)src) & 15) && !(n & 3)) {
 		if (mbBlendLinear)
-			ATArtifactBlendLinear_SSE2(dst, src, n);
+			ATArtifactBlendLinear_SSE2(dst, src, n, mbExpandedRangeOutput);
 		else
 			ATArtifactBlend_SSE2(dst, src, n);
 		return;
 	}
 #endif
 
-	if (mbBlendLinear)
-		ATArtifactBlendExchangeLinear_Reference(dst, src, n);
-	else
+	if (mbBlendLinear) {
+		if (mbExpandedRangeOutput)
+			ATArtifactBlendExchangeLinear_Reference<true>(dst, src, n);
+		else
+			ATArtifactBlendExchangeLinear_Reference<false>(dst, src, n);
+	} else
 		ATArtifactBlendExchange_Reference(dst, src, n);
 }
 
@@ -1177,7 +1330,7 @@ void ATArtifactingEngine::BlendExchange(uint32 *VDRESTRICT dst, uint32 *VDRESTRI
 #if VD_CPU_ARM64
 	if (!(n & 3)) {
 		if (mbBlendLinear)
-			ATArtifactBlendExchangeLinear_NEON(dst, blendDst, n);
+			ATArtifactBlendExchangeLinear_NEON(dst, blendDst, n, mbExpandedRangeOutput);
 		else
 			ATArtifactBlendExchange_NEON(dst, blendDst, n);
 		return;
@@ -1186,7 +1339,7 @@ void ATArtifactingEngine::BlendExchange(uint32 *VDRESTRICT dst, uint32 *VDRESTRI
 #if VD_CPU_X86 || VD_CPU_X64
 	if (SSE2_enabled && !(((uintptr)dst | (uintptr)blendDst) & 15) && !(n & 3)) {
 		if (mbBlendLinear)
-			ATArtifactBlendExchangeLinear_SSE2(dst, blendDst, n);
+			ATArtifactBlendExchangeLinear_SSE2(dst, blendDst, n, mbExpandedRangeOutput);
 		else
 			ATArtifactBlendExchange_SSE2(dst, blendDst, n);
 
@@ -1194,9 +1347,12 @@ void ATArtifactingEngine::BlendExchange(uint32 *VDRESTRICT dst, uint32 *VDRESTRI
 	}
 #endif
 
-	if (mbBlendLinear)
-		ATArtifactBlendExchangeLinear_Reference(dst, blendDst, n);
-	else
+	if (mbBlendLinear) {
+		if (mbExpandedRangeOutput)
+			ATArtifactBlendExchangeLinear_Reference<true>(dst, blendDst, n);
+		else
+			ATArtifactBlendExchangeLinear_Reference<false>(dst, blendDst, n);
+	} else
 		ATArtifactBlendExchange_Reference(dst, blendDst, n);
 }
 
@@ -1293,12 +1449,45 @@ namespace {
 	};
 }
 
-void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
+void ATArtifactingEngine::RecomputeActiveTables(bool signedOutput) {
+	mbActiveTablesInited = true;
+	mbActiveTablesSigned = signedOutput;
+
+	if (signedOutput) {
+		memcpy(mActivePalette, mSignedPalette, sizeof mActivePalette);
+
+		for(int i=0; i<16; ++i) {
+			mActiveChromaVectors[i][0] = (mChromaVectors[i][0] + 1) >> 1;
+			mActiveChromaVectors[i][1] = (mChromaVectors[i][1] + 1) >> 1;
+			mActiveChromaVectors[i][2] = (mChromaVectors[i][2] + 1) >> 1;
+			mActiveChromaVectors[i][3] = (mChromaVectors[i][3] + 1) >> 1;
+		}
+
+		for(int i=0; i<16; ++i)
+			mActiveLumaRamp[i] = (mLumaRamp[i] >> 1) + (0x40 << 6);
+
+		for(int i=0; i<31; ++i) {
+			mActiveArtifactRamp[i][0] = (mArtifactRamp[i][0] + 1) >> 1;
+			mActiveArtifactRamp[i][1] = (mArtifactRamp[i][1] + 1) >> 1;
+			mActiveArtifactRamp[i][2] = (mArtifactRamp[i][2] + 1) >> 1;
+			mActiveArtifactRamp[i][3] = (mArtifactRamp[i][3] + 1) >> 1;
+		}
+
+	} else {
+		memcpy(mActivePalette, mPalette, sizeof mActivePalette);
+		memcpy(mActiveChromaVectors, mChromaVectors, sizeof mActiveChromaVectors);
+		memcpy(mActiveLumaRamp, mLumaRamp, sizeof mActiveLumaRamp);
+		memcpy(mActiveArtifactRamp, mArtifactRamp, sizeof mActiveArtifactRamp);
+	}
+}
+
+void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params, bool signedOutput) {
 	mbHighNTSCTablesInited = true;
 	mbHighPALTablesInited = false;
+	mbHighTablesSigned = signedOutput;
 
-	vdfloat3 y_to_rgb[16][2][22] {};
-	vdfloat3 chroma_to_rgb[16][2][22] {};
+	vdfloat3 y_to_rgb[16][2][24] {};
+	vdfloat3 chroma_to_rgb[16][2][24] {};
 
 	// NTSC signal parameters:
 	//
@@ -1383,7 +1572,7 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 
 		// create chroma signal
 		for(int j=0; j<4; ++j) {
-			float v = sinf(phase + (0.25f * nsVDMath::kfTwoPi * j));
+			float v = sinf((0.25f * nsVDMath::kfTwoPi * j) - phase);
 
 			chromatab[j] = v;
 		}
@@ -1432,19 +1621,19 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 
 			// demodulate chroma axes by multiplying by sin/cos
 			//	t[0] = +I
-			//	t[1] = -Q
+			//	t[1] = +Q
 			//	t[2] = -I
-			//	t[3] = +Q
+			//	t[3] = -Q
 			//
 			for(int j=0; j<26; ++j) {
-				if ((j+1) & 2)
+				if (j & 2)
 					t[j] = -t[j];
 			}
 
 			// apply low-pass filter to chroma
 			float u[28] = {0};
 
-			for(int j=8; j<28; ++j) {
+			for(int j=6; j<28; ++j) {
 				u[j] = (  1 * t[j- 6])
 					 + (  0.9732320952f * t[j- 4])
 					 + (  0.9732320952f * t[j- 2])
@@ -1476,8 +1665,8 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 				vdfloat3 f0 = fc - fy;
 				vdfloat3 f1 = fc + fy;
 
-				rgbtab[0][j] = f0;
-				rgbtab[1][j] = f1;
+				rgbtab[0][j] = f0 * params.mIntensityScale;
+				rgbtab[1][j] = f1 * params.mIntensityScale;
 			}
 		}
 
@@ -1531,8 +1720,6 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 
 		if (mbTintColorEnabled) {
 			for(int j=0; j<22; ++j) {
-				float fy = ytab[j];
-
 				rgbtab[0][j] = rgbtab[1][j] = (ytab[j] * params.mIntensityScale) * mTintColor;
 			}
 		} else {
@@ -1594,14 +1781,14 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 	//	- For SSE2, create another set of 'quad' kernels that correspond to paired matching color
 	//	  clocks. This is used to accelerate solid bands of color.
 
+	const float encodingScale = 16.0f * 255.0f * (signedOutput ? 0.5f : 1.0f);
+
 #if defined(VD_CPU_AMD64) || defined(VD_CPU_ARM64)
 	if (true) {
 #else
 	if (SSE2_enabled) {
 #endif
 		memset(&m4x, 0, sizeof m4x);
-
-		const vdfloat3 round { 8.0f, 8.0f, 8.0f };
 
 		for(int idx=0; idx<256; ++idx) {
 			int cidx = idx >> 4;
@@ -1610,38 +1797,107 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 			const auto& c_waves = chroma_to_rgb[cidx];
 			const auto& y_waves = y_to_rgb[lidx];
 
+			auto& VDRESTRICT impulseR = m4x.mPalToR[idx];
+			auto& VDRESTRICT impulseG = m4x.mPalToG[idx];
+			auto& VDRESTRICT impulseB = m4x.mPalToB[idx];
+			auto& VDRESTRICT impulseTwinR = m4x.mPalToRTwin[idx];
+			auto& VDRESTRICT impulseTwinG = m4x.mPalToGTwin[idx];
+			auto& VDRESTRICT impulseTwinB = m4x.mPalToBTwin[idx];
+			auto& VDRESTRICT impulseQuadR = m4x.mPalToRQuad[idx];
+			auto& VDRESTRICT impulseQuadG = m4x.mPalToGQuad[idx];
+			auto& VDRESTRICT impulseQuadB = m4x.mPalToBQuad[idx];
+
+			vdfloat3 e0[12] {}, e1[12] {};
+
 			for(int k=0; k<4; ++k) {
-				for(int i=0; i<11; ++i) {
-					vdfloat3 pal_to_rgb0 = (c_waves[k&1][i*2+0] + y_waves[k&1][i*2+0]) * 16.0f * 255.0f;
-					vdfloat3 pal_to_rgb1 = (c_waves[k&1][i*2+1] + y_waves[k&1][i*2+1]) * 16.0f * 255.0f;
+				// Try to optimize color quality a bit. The hue can only change at pairs of pixels due to GTIA's design,
+				// so include the chroma signal for both pixels in the first pixel's impulse.
 
-					if (k == 0 && i < 4) {
-						pal_to_rgb0 += round;
-						pal_to_rgb1 += round;
+				if (k & 1) {
+					vdfloat3 rs0 {}, rs1{}, rs2{}, rs3{};
+					const float rse = (k == 3 ? 1.0f : 0.0f);
+					for(int i=0; i<12; ++i) {
+						vdfloat3 pal_to_rgb0 = (y_waves[1][i*2+0]) * encodingScale + e0[i] + rs0 * rse;
+						vdfloat3 pal_to_rgb1 = (y_waves[1][i*2+1]) * encodingScale + e1[i] + rs1 * rse;
+
+						const int r0 = VDRoundToInt32(pal_to_rgb0.x);
+						const int g0 = VDRoundToInt32(pal_to_rgb0.y);
+						const int b0 = VDRoundToInt32(pal_to_rgb0.z);
+						const int r1 = VDRoundToInt32(pal_to_rgb1.x);
+						const int g1 = VDRoundToInt32(pal_to_rgb1.y);
+						const int b1 = VDRoundToInt32(pal_to_rgb1.z);
+
+						rs0 = rs2;
+						rs1 = rs3;
+						rs2 = pal_to_rgb0 - vdfloat3{(float)r0, (float)g0, (float)b0};
+						rs3 = pal_to_rgb1 - vdfloat3{(float)r1, (float)g1, (float)b1};
+
+						e0[i] = pal_to_rgb0 - vdfloat3{(float)r0, (float)g0, (float)b0};
+						e1[i] = pal_to_rgb1 - vdfloat3{(float)r1, (float)g1, (float)b1};
+
+
+						impulseR[k][i+k] = (r0 & 0xffff) + ((uint32)r1 << 16);
+						impulseG[k][i+k] = (g0 & 0xffff) + ((uint32)g1 << 16);
+						impulseB[k][i+k] = (b0 & 0xffff) + ((uint32)b1 << 16);
 					}
+				} else {
+					for(int i=0; i<12; ++i) {
+						vdfloat3 pal_to_rgb0 = (c_waves[0][i*2+0] + c_waves[1][i*2+0] + y_waves[0][i*2+0]) * encodingScale + e0[i];
+						vdfloat3 pal_to_rgb1 = (c_waves[0][i*2+1] + c_waves[1][i*2+1] + y_waves[0][i*2+1]) * encodingScale + e1[i];
 
-					m4x.mPalToR[idx][k][i+k] = (VDRoundToInt32(pal_to_rgb0.x) & 0xffff) + (VDRoundToInt32(pal_to_rgb1.x) << 16);
-					m4x.mPalToG[idx][k][i+k] = (VDRoundToInt32(pal_to_rgb0.y) & 0xffff) + (VDRoundToInt32(pal_to_rgb1.y) << 16);
-					m4x.mPalToB[idx][k][i+k] = (VDRoundToInt32(pal_to_rgb0.z) & 0xffff) + (VDRoundToInt32(pal_to_rgb1.z) << 16);
+						const int r0 = VDRoundToInt32(pal_to_rgb0.x);
+						const int g0 = VDRoundToInt32(pal_to_rgb0.y);
+						const int b0 = VDRoundToInt32(pal_to_rgb0.z);
+						const int r1 = VDRoundToInt32(pal_to_rgb1.x);
+						const int g1 = VDRoundToInt32(pal_to_rgb1.y);
+						const int b1 = VDRoundToInt32(pal_to_rgb1.z);
+#if 0
+						e0 = e2;
+						e1 = e3;
+						e2 = pal_to_rgb0 - vdfloat3{(float)r0, (float)g0, (float)b0};
+						e3 = pal_to_rgb1 - vdfloat3{(float)r1, (float)g1, (float)b1};
+#else
+						e0[i] = pal_to_rgb0 - vdfloat3{(float)r0, (float)g0, (float)b0};
+						e1[i] = pal_to_rgb1 - vdfloat3{(float)r1, (float)g1, (float)b1};
+#endif
+
+						impulseR[k][i+k] = (r0 & 0xffff) + ((uint32)r1 << 16);
+						impulseG[k][i+k] = (g0 & 0xffff) + ((uint32)g1 << 16);
+						impulseB[k][i+k] = (b0 & 0xffff) + ((uint32)b1 << 16);
+					}
 				}
 			}
 
+			const uint32 bias = signedOutput ? 0x0408'0408 : 0x0008'0008;
+			impulseR[0][0] += bias;
+			impulseR[0][1] += bias;
+			impulseR[0][2] += bias;
+			impulseR[0][3] += bias;
+			impulseG[0][0] += bias;
+			impulseG[0][1] += bias;
+			impulseG[0][2] += bias;
+			impulseG[0][3] += bias;
+			impulseB[0][0] += bias;
+			impulseB[0][1] += bias;
+			impulseB[0][2] += bias;
+			impulseB[0][3] += bias;
+
 			for(int i=0; i<16; ++i) {
-				m4x.mPalToRTwin[idx][0][i] = m4x.mPalToR[idx][0][i] + m4x.mPalToR[idx][1][i];
-				m4x.mPalToGTwin[idx][0][i] = m4x.mPalToG[idx][0][i] + m4x.mPalToG[idx][1][i];
-				m4x.mPalToBTwin[idx][0][i] = m4x.mPalToB[idx][0][i] + m4x.mPalToB[idx][1][i];
+				impulseTwinR[0][i] = impulseR[0][i] + impulseR[1][i];
+				impulseTwinG[0][i] = impulseG[0][i] + impulseG[1][i];
+				impulseTwinB[0][i] = impulseB[0][i] + impulseB[1][i];
 			}
 
 			for(int i=0; i<16; ++i) {
-				m4x.mPalToRTwin[idx][1][i] = m4x.mPalToR[idx][2][i] + m4x.mPalToR[idx][3][i];
-				m4x.mPalToGTwin[idx][1][i] = m4x.mPalToG[idx][2][i] + m4x.mPalToG[idx][3][i];
-				m4x.mPalToBTwin[idx][1][i] = m4x.mPalToB[idx][2][i] + m4x.mPalToB[idx][3][i];
+				impulseTwinR[1][i] = impulseR[2][i] + impulseR[3][i];
+				impulseTwinG[1][i] = impulseG[2][i] + impulseG[3][i];
+				impulseTwinB[1][i] = impulseB[2][i] + impulseB[3][i];
 			}
 
 			for(int i=0; i<16; ++i) {
-				m4x.mPalToRQuad[idx][i] = m4x.mPalToRTwin[idx][0][i] + m4x.mPalToRTwin[idx][1][i];
-				m4x.mPalToGQuad[idx][i] = m4x.mPalToGTwin[idx][0][i] + m4x.mPalToGTwin[idx][1][i];
-				m4x.mPalToBQuad[idx][i] = m4x.mPalToBTwin[idx][0][i] + m4x.mPalToBTwin[idx][1][i];
+				impulseQuadR[i] = impulseTwinR[0][i] + impulseTwinR[1][i];
+				impulseQuadG[i] = impulseTwinG[0][i] + impulseTwinG[1][i];
+				impulseQuadB[i] = impulseTwinB[0][i] + impulseTwinB[1][i];
 			}
 		}
 	} else {
@@ -1653,13 +1909,22 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 
 			for(int k=0; k<2; ++k) {
 				for(int i=0; i<10; ++i) {
-					vdfloat3 pal_to_rgb0 = (chroma_to_rgb[cidx][k][i*2+0] + y_to_rgb[lidx][k][i*2+0]) * 16.0f * 255.0f;
-					vdfloat3 pal_to_rgb1 = (chroma_to_rgb[cidx][k][i*2+1] + y_to_rgb[lidx][k][i*2+1]) * 16.0f * 255.0f;
+					vdfloat3 pal_to_rgb0 = (chroma_to_rgb[cidx][k][i*2+0] + y_to_rgb[lidx][k][i*2+0]) * encodingScale;
+					vdfloat3 pal_to_rgb1 = (chroma_to_rgb[cidx][k][i*2+1] + y_to_rgb[lidx][k][i*2+1]) * encodingScale;
 
 					m2x.mPalToR[idx][k][i+k] = VDRoundToInt32(pal_to_rgb0.x) + (VDRoundToInt32(pal_to_rgb1.x) << 16);
 					m2x.mPalToG[idx][k][i+k] = VDRoundToInt32(pal_to_rgb0.y) + (VDRoundToInt32(pal_to_rgb1.y) << 16);
 					m2x.mPalToB[idx][k][i+k] = VDRoundToInt32(pal_to_rgb0.z) + (VDRoundToInt32(pal_to_rgb1.z) << 16);
 				}
+			}
+
+			if (signedOutput) {
+				m2x.mPalToR[idx][0][0] += 0x0400'0400;
+				m2x.mPalToR[idx][0][1] += 0x0400'0400;
+				m2x.mPalToG[idx][0][0] += 0x0400'0400;
+				m2x.mPalToG[idx][0][1] += 0x0400'0400;
+				m2x.mPalToB[idx][0][0] += 0x0400'0400;
+				m2x.mPalToB[idx][0][1] += 0x0400'0400;
 			}
 
 			for(int i=0; i<12; ++i) {
@@ -1671,9 +1936,10 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 	}
 }
 
-void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
+void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params, bool signedOutput) {
 	mbHighNTSCTablesInited = false;
 	mbHighPALTablesInited = true;
+	mbHighTablesSigned = signedOutput;
 
 	float lumaRamp[16];
 	ATComputeLumaRamp(params.mLumaRampMode, lumaRamp);
@@ -1804,11 +2070,22 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
 	const float ycphasec = cosf(ycphase);
 	const float ycphases = sinf(ycphase);
 
-	for(int i=0; i<8; ++i) {
+	// compute all fused direct and crosstalk encode+decode kernels
+	ATFilterKernel kerny2y[8];
+	ATFilterKernel kernu2y[8];
+	ATFilterKernel kernv2y[8];
+	ATFilterKernel kerny2u[8];
+	ATFilterKernel kernu2u[8];
+	ATFilterKernel kernv2u[8];
+	ATFilterKernel kerny2v[8];
+	ATFilterKernel kernu2v[8];
+	ATFilterKernel kernv2v[8];
+
+	for(int phase = 0; phase < 8; ++phase) {
 		const float yphase = 0;
 		const float cphase = 0;
 
-		ATFilterKernel kernbase2 = kernbase >> (5*i);
+		ATFilterKernel kernbase2 = kernbase >> (5*phase);
 		ATFilterKernel kernsignaly = kernbase2;
 
 		// downsample chroma and modulate
@@ -1816,130 +2093,225 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
 		ATFilterKernel kernsignalv = (kernbase2 * kerncfilt) ^ kernvmod;
 
 		// extract Y via low pass filter
-		ATFilterKernel kerny2y = ATFilterKernelSampleBicubic(kernsignaly * kernysep, yphase, 2.5f, -0.75f);
-		ATFilterKernel kernu2y = ATFilterKernelSampleBicubic(kernsignalu * kernysep, yphase, 2.5f, -0.75f);
-		ATFilterKernel kernv2y = ATFilterKernelSampleBicubic(kernsignalv * kernysep, yphase, 2.5f, -0.75f);
+		kerny2y[phase] = ATFilterKernelSampleBicubic(kernsignaly * kernysep, yphase, 2.5f, -0.75f);
+		kernu2y[phase] = ATFilterKernelSampleBicubic(kernsignalu * kernysep, yphase, 2.5f, -0.75f);
+		kernv2y[phase] = ATFilterKernelSampleBicubic(kernsignalv * kernysep, yphase, 2.5f, -0.75f);
 
 		// separate, low pass filter and demodulate chroma
-		ATFilterKernel kerny2u = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignaly * kerncsep) ^ kerncdemod, 0, 4), cphase     , 0.625f, -0.75f);
-		ATFilterKernel kernu2u = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalu * kerncsep) ^ kerncdemod, 0, 4), cphase     , 0.625f, -0.75f);
-		ATFilterKernel kernv2u = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalv * kerncsep) ^ kerncdemod, 0, 4), cphase     , 0.625f, -0.75f);
+		ATFilterKernel u = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignaly * kerncsep) ^ kerncdemod, 0, 4), cphase     , 0.625f, -0.75f);
+		kernu2u[phase] = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalu * kerncsep) ^ kerncdemod, 0, 4), cphase     , 0.625f, -0.75f);
+		kernv2u[phase] = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalv * kerncsep) ^ kerncdemod, 0, 4), cphase     , 0.625f, -0.75f);
 
-		ATFilterKernel kerny2v = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignaly * kerncsep) ^ kerncdemod, 2, 4), cphase-0.5f, 0.625f, -0.75f);
-		ATFilterKernel kernu2v = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalu * kerncsep) ^ kerncdemod, 2, 4), cphase-0.5f, 0.625f, -0.75f);
-		ATFilterKernel kernv2v = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalv * kerncsep) ^ kerncdemod, 2, 4), cphase-0.5f, 0.625f, -0.75f);
+		ATFilterKernel v = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignaly * kerncsep) ^ kerncdemod, 2, 4), cphase-0.5f, 0.625f, -0.75f);
+		kernu2v[phase] = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalu * kerncsep) ^ kerncdemod, 2, 4), cphase-0.5f, 0.625f, -0.75f);
+		kernv2v[phase] = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalv * kerncsep) ^ kerncdemod, 2, 4), cphase-0.5f, 0.625f, -0.75f);
 
-		ATFilterKernel u = std::move(kerny2u);
-		ATFilterKernel v = std::move(kerny2v);
-		kerny2u = u * ycphasec - v * ycphases;
-		kerny2v = u * ycphases + v * ycphasec;
+		kerny2u[phase] = u * ycphasec - v * ycphases;
+		kerny2v[phase] = u * ycphases + v * ycphasec;
 
 		if (mbTintColorEnabled) {
 			const float sensitivityFactor = 0.50f;
 
-			kernu2y = ATFilterKernelSampleBicubic(kernsignalu * ycphasec - kernsignalv * ycphases, yphase, 2.5f, -0.75f) * sensitivityFactor;
-			kernv2y = ATFilterKernelSampleBicubic(kernsignalu * ycphases + kernsignalv * ycphasec, yphase, 2.5f, -0.75f) * sensitivityFactor;
-			kerny2u *= 0;
-			kerny2v *= 0;
-			kernu2u *= 0;
-			kernu2v *= 0;
-			kernv2u *= 0;
-			kernv2v *= 0;
+			kernu2y[phase] = ATFilterKernelSampleBicubic(kernsignalu * ycphasec - kernsignalv * ycphases, yphase, 2.5f, -0.75f) * sensitivityFactor;
+			kernv2y[phase] = ATFilterKernelSampleBicubic(kernsignalu * ycphases + kernsignalv * ycphasec, yphase, 2.5f, -0.75f) * sensitivityFactor;
+			kerny2u[phase] *= 0;
+			kerny2v[phase] *= 0;
+			kernu2u[phase] *= 0;
+			kernu2v[phase] *= 0;
+			kernv2u[phase] *= 0;
+			kernv2v[phase] *= 0;
 		}
+	}
 
-		for(int k=0; k<2; ++k) {
-			float v_invert = k ? -1.0f : 1.0f;
+	for(int k=0; k<2; ++k) {
+		float v_invert = k ? -1.0f : 1.0f;
 
-			for(int j=0; j<256; ++j) {
-				float u = utab[k][j >> 4];
-				float v = vtab[k][j >> 4];
-				float y = ytab[j & 15];
+		for(int j=0; j<256; ++j) {
+			float u = utab[k][j >> 4];
+			float v = vtab[k][j >> 4];
+			float y = ytab[j & 15];
 
+			float scale = 64.0f * 255.0f;
+
+			if (signedOutput)
+				scale *= 0.5f;
+
+			// Error control
+			//
+			// Since we operate with relatively low 10.6 precision and have as many as 12 overlapping
+			// kernels contributing to each output pixel, it is critical to keep accumulated error as
+			// low as possible. Getting as much as +/-6 ulps of error in each of Y, U, and V is enough
+			// to proc a bunch of +/-1 errors in the final output for solid colors, which is ugly. To
+			// improve this, we track and accumulate errors across phases to reduce the cumulative
+			// error when the same pixel color is applied across multiple phases, with the idea that
+			// this case is much more important and noticeable than with different pixels.
+			//
+			// In scalar mode, we accumulate luma kernels like this (each row is a source hires pixel,
+			// each column is a pair of half-hires output pixels):
+			//
+			//		Luma                Chroma
+			//		0123456789ABCDEF    0123456789ABCDEF
+			//		< 0>                <---  0 --->
+			//		 < 1>                <---  1 --->
+			//		  < 2>                <---  2 --->
+			//		   < 3>                <---  3 --->
+			//		    < 4>                <---  4 --->
+			//		     < 5>                <---  5 --->
+			//		      < 6>                <---  6 --->
+			//		       < 7>                <---  7 --->
+			//		        < 0>                <---  0 --->
+			//
+			// The kernels advance a pair of output pixels each time and repeat every 16 output pixels, so 
+			// we accumulate errors in a rotating ring of 16 locations, advancing by 2 each time. As each
+			// kernel value is rounded, no more than +/-0.5ulp propagates in each location.
+			//
+			// In SSE2, the situation is a bit more complicated because of preshifted kernels:
+			//		Luma                Chroma
+			//		0123456789ABCDEF    0123456789ABCDEF
+			//		< 0>----            <---  0 --->----
+			//		-< 1>---            -<---  1 --->---
+			//		--< 2>--            --<---  2 --->--
+			//		---< 3>-            ---<---  3 --->-
+			//		    < 4>----            <---  4 --->----
+			//		    -< 5>---            -<---  5 --->---
+			//		    --< 6>--            --<---  6 --->--
+			//		    ---< 7>-            ---<---  7 --->-
+			//		        < 0>----        ----<---  0 --->----
+			//
+			// However, this is just zero padding on the ends and error correction proceeds the same way.
+			//
+			float yerror[8][2] {};
+			float uerror[8][2] {};
+			float verror[8][2] {};
+
+			for(int phase = 0; phase < 8; ++phase) {
 				float p2yw[8 + 8] = {0};
 				float p2uw[24 + 8] = {0};
 				float p2vw[24 + 8] = {0};
 
+#if VD_CPU_X86 || VD_CPU_X64
 				if (SSE2_enabled) {
-					int ypos = 3 - (i & 4)*2;
-					int cpos = 12 - (i & 4)*2;
+					const int phase4 = phase & 4;
+					int ypos = 3 - phase4*2;
+					int cpos = 12 - phase4*2;
 
-					ATFilterKernelAccumulateWindow(kerny2y, p2yw, ypos, 16, y);
-					ATFilterKernelAccumulateWindow(kernu2y, p2yw, ypos, 16, u);
-					ATFilterKernelAccumulateWindow(kernv2y, p2yw, ypos, 16, v);
+					ATFilterKernelAccumulateWindow(kerny2y[phase], p2yw, ypos, 16, y);
+					ATFilterKernelAccumulateWindow(kernu2y[phase], p2yw, ypos, 16, u);
+					ATFilterKernelAccumulateWindow(kernv2y[phase], p2yw, ypos, 16, v);
 
-					ATFilterKernelAccumulateWindow(kerny2u, p2uw, cpos, 32, y * co_ub);
-					ATFilterKernelAccumulateWindow(kernu2u, p2uw, cpos, 32, u * co_ub);
-					ATFilterKernelAccumulateWindow(kernv2u, p2uw, cpos, 32, v * co_ub);
+					ATFilterKernelAccumulateWindow(kerny2u[phase], p2uw, cpos, 32, y * co_ub);
+					ATFilterKernelAccumulateWindow(kernu2u[phase], p2uw, cpos, 32, u * co_ub);
+					ATFilterKernelAccumulateWindow(kernv2u[phase], p2uw, cpos, 32, v * co_ub);
 
-					ATFilterKernelAccumulateWindow(kerny2v, p2vw, cpos, 32, y * co_vr * v_invert);
-					ATFilterKernelAccumulateWindow(kernu2v, p2vw, cpos, 32, u * co_vr * v_invert);
-					ATFilterKernelAccumulateWindow(kernv2v, p2vw, cpos, 32, v * co_vr * v_invert);
+					ATFilterKernelAccumulateWindow(kerny2v[phase], p2vw, cpos, 32, y * co_vr * v_invert);
+					ATFilterKernelAccumulateWindow(kernu2v[phase], p2vw, cpos, 32, u * co_vr * v_invert);
+					ATFilterKernelAccumulateWindow(kernv2v[phase], p2vw, cpos, 32, v * co_vr * v_invert);
 
-					uint32 *kerny16 = mPal8x.mPalToY[k][j][i];
-					uint32 *kernu16 = mPal8x.mPalToU[k][j][i];
-					uint32 *kernv16 = mPal8x.mPalToV[k][j][i];
+					uint32 *kerny16 = mPal8x.mPalToY[k][j][phase];
+					uint32 *kernu16 = mPal8x.mPalToU[k][j][phase];
+					uint32 *kernv16 = mPal8x.mPalToV[k][j][phase];
 
 					for(int offset=0; offset<8; ++offset) {
-						sint32 w0 = VDRoundToInt32(p2yw[offset*2+0] * 64.0f * 255.0f);
-						sint32 w1 = VDRoundToInt32(p2yw[offset*2+1] * 64.0f * 255.0f);
+						float fw0 = p2yw[offset*2+0] * scale + yerror[offset][0];
+						float fw1 = p2yw[offset*2+1] * scale + yerror[offset][1];
+						
+						sint32 w0 = VDRoundToInt32(fw0);
+						sint32 w1 = VDRoundToInt32(fw1);
+						
+						yerror[offset][0] = fw0 - (float)w0;
+						yerror[offset][1] = fw1 - (float)w1;
 
-						kerny16[offset] = (w1 << 16) + (w0 & 0xFFFF);
+						kerny16[offset] = ((uint32)w1 << 16) + (w0 & 0xffff);
 					}
 
-					kerny16[i & 3] += 0x00200020;
+					kerny16[phase & 3] += signedOutput ? 0x1020'1020 : 0x0020'0020;
 
 					for(int offset=0; offset<16; ++offset) {
-						sint32 w0 = VDRoundToInt32(p2uw[offset*2+0] * 64.0f * 255.0f);
-						sint32 w1 = VDRoundToInt32(p2uw[offset*2+1] * 64.0f * 255.0f);
+						float fw0 = p2uw[offset*2+0] * scale + uerror[offset & 7][0];
+						float fw1 = p2uw[offset*2+1] * scale + uerror[offset & 7][1];
 
-						kernu16[offset] = (w1 << 16) + (w0 & 0xFFFF);
+						sint32 w0 = VDRoundToInt32(fw0);
+						sint32 w1 = VDRoundToInt32(fw1);
+
+						uerror[offset & 7][0] = fw0 - (float)w0;
+						uerror[offset & 7][1] = fw1 - (float)w1;
+
+						kernu16[offset] = ((uint32)w1 << 16) + (w0 & 0xffff);
 					}
 
 					for(int offset=0; offset<16; ++offset) {
-						sint32 w0 = VDRoundToInt32(p2vw[offset*2+0] * 64.0f * 255.0f);
-						sint32 w1 = VDRoundToInt32(p2vw[offset*2+1] * 64.0f * 255.0f);
+						float fw0 = p2vw[offset*2+0] * scale + verror[offset & 7][0];
+						float fw1 = p2vw[offset*2+1] * scale + verror[offset & 7][1];
 
-						kernv16[offset] = (w1 << 16) + (w0 & 0xFFFF);
+						sint32 w0 = VDRoundToInt32(fw0);
+						sint32 w1 = VDRoundToInt32(fw1);
+
+						verror[offset & 7][0] = fw0 - (float)w0;
+						verror[offset & 7][1] = fw1 - (float)w1;
+
+						kernv16[offset] = ((uint32)w1 << 16) + (w0 & 0xffff);
 					}
-				} else {
-					int ypos = 3 - i*2;
-					int cpos = 12 - i*2;
 
-					ATFilterKernelAccumulateWindow(kerny2y, p2yw, ypos, 8, y);
-					ATFilterKernelAccumulateWindow(kernu2y, p2yw, ypos, 8, u);
-					ATFilterKernelAccumulateWindow(kernv2y, p2yw, ypos, 8, v);
+					// Phases 4-7 are written 4 pixel pairs (128 bits) ahead, so rotate the errors
+					// around at the halfway point.
+					if (phase == 3) {
+						std::swap_ranges(yerror, yerror + 4, yerror + 4);
+						std::swap_ranges(uerror, uerror + 4, uerror + 4);
+						std::swap_ranges(verror, verror + 4, verror + 4);
+					}
+				} else
+#endif
+				{
+					int ypos = 3 - phase*2;
+					int cpos = 12 - phase*2;
 
-					ATFilterKernelAccumulateWindow(kerny2u, p2uw, cpos, 24, y * co_ub);
-					ATFilterKernelAccumulateWindow(kernu2u, p2uw, cpos, 24, u * co_ub);
-					ATFilterKernelAccumulateWindow(kernv2u, p2uw, cpos, 24, v * co_ub);
+					ATFilterKernelAccumulateWindow(kerny2y[phase], p2yw, ypos, 8, y);
+					ATFilterKernelAccumulateWindow(kernu2y[phase], p2yw, ypos, 8, u);
+					ATFilterKernelAccumulateWindow(kernv2y[phase], p2yw, ypos, 8, v);
 
-					ATFilterKernelAccumulateWindow(kerny2v, p2vw, cpos, 24, y * co_vr * v_invert);
-					ATFilterKernelAccumulateWindow(kernu2v, p2vw, cpos, 24, u * co_vr * v_invert);
-					ATFilterKernelAccumulateWindow(kernv2v, p2vw, cpos, 24, v * co_vr * v_invert);
+					ATFilterKernelAccumulateWindow(kerny2u[phase], p2uw, cpos, 24, y * co_ub);
+					ATFilterKernelAccumulateWindow(kernu2u[phase], p2uw, cpos, 24, u * co_ub);
+					ATFilterKernelAccumulateWindow(kernv2u[phase], p2uw, cpos, 24, v * co_ub);
 
-					uint32 *kerny16 = mPal2x.mPalToY[k][j][i];
-					uint32 *kernu16 = mPal2x.mPalToU[k][j][i];
-					uint32 *kernv16 = mPal2x.mPalToV[k][j][i];
+					ATFilterKernelAccumulateWindow(kerny2v[phase], p2vw, cpos, 24, y * co_vr * v_invert);
+					ATFilterKernelAccumulateWindow(kernu2v[phase], p2vw, cpos, 24, u * co_vr * v_invert);
+					ATFilterKernelAccumulateWindow(kernv2v[phase], p2vw, cpos, 24, v * co_vr * v_invert);
+
+					uint32 *kerny16 = mPal2x.mPalToY[k][j][phase];
+					uint32 *kernu16 = mPal2x.mPalToU[k][j][phase];
+					uint32 *kernv16 = mPal2x.mPalToV[k][j][phase];
 
 					for(int offset=0; offset<4; ++offset) {
-						sint32 w0 = VDRoundToInt32(p2yw[offset*2+0] * 64.0f * 255.0f);
-						sint32 w1 = VDRoundToInt32(p2yw[offset*2+1] * 64.0f * 255.0f);
+						float fw0 = p2yw[offset*2+0] * scale + yerror[(offset + phase) & 7][0];
+						float fw1 = p2yw[offset*2+1] * scale + yerror[(offset + phase) & 7][1];
+						sint32 w0 = VDRoundToInt32(fw0);
+						sint32 w1 = VDRoundToInt32(fw1);
+						yerror[(offset + phase) & 7][0] = fw0 - (float)w0;
+						yerror[(offset + phase) & 7][1] = fw1 - (float)w1;
 
 						kerny16[offset] = (w1 << 16) + w0;
 					}
 
-					kerny16[3] += 0x40004000;
+					kerny16[3] += signedOutput ? 0x50005000 : 0x40004000;
 
 					for(int offset=0; offset<12; ++offset) {
-						sint32 w0 = VDRoundToInt32(p2uw[offset*2+0] * 64.0f * 255.0f);
-						sint32 w1 = VDRoundToInt32(p2uw[offset*2+1] * 64.0f * 255.0f);
+						float fw0 = p2uw[offset*2+0] * scale + uerror[(offset + phase) & 7][0];
+						float fw1 = p2uw[offset*2+1] * scale + uerror[(offset + phase) & 7][1];
+						sint32 w0 = VDRoundToInt32(fw0);
+						sint32 w1 = VDRoundToInt32(fw1);
+						uerror[(offset + phase) & 7][0] = fw0 - (float)w0;
+						uerror[(offset + phase) & 7][1] = fw1 - (float)w1;
 
 						kernu16[offset] = (w1 << 16) + w0;
 					}
 
 					for(int offset=0; offset<12; ++offset) {
-						sint32 w0 = VDRoundToInt32(p2vw[offset*2+0] * 64.0f * 255.0f);
-						sint32 w1 = VDRoundToInt32(p2vw[offset*2+1] * 64.0f * 255.0f);
+						float fw0 = p2vw[offset*2+0] * scale + verror[(offset + phase) & 7][0];
+						float fw1 = p2vw[offset*2+1] * scale + verror[(offset + phase) & 7][1];
+						sint32 w0 = VDRoundToInt32(fw0);
+						sint32 w1 = VDRoundToInt32(fw1);
+						verror[(offset + phase) & 7][0] = fw0 - (float)w0;
+						verror[(offset + phase) & 7][1] = fw1 - (float)w1;
 
 						kernv16[offset] = (w1 << 16) + w0;
 					}
@@ -1954,6 +2326,7 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
 	// What we do here is precompute pairs of adjacent phase filter kernels added together. On
 	// any scanline that is lores only, we can use a faster twin-mode set of filter routines.
 
+#if VD_CPU_X86 || VD_CPU_X64
 	if (SSE2_enabled) {
 		for(int i=0; i<2; ++i) {
 			for(int j=0; j<256; ++j) {
@@ -1970,5 +2343,6 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
 			}
 		}
 	}
+#endif
 }
 

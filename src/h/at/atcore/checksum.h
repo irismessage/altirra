@@ -21,7 +21,7 @@
 #include <vd2/system/vdtypes.h>
 
 // FNV-1 offset.
-inline const uint64 kATBaseChecksum = 14695981039346656037;
+inline const uint64 kATBaseChecksum = UINT64_C(14695981039346656037);
 
 uint64 ATComputeOffsetChecksum(uint64 offset);
 uint64 ATComputeBlockChecksum(uint64 hash, const void *src, size_t len);
@@ -40,9 +40,12 @@ struct ATChecksumStateSHA256 {
 	alignas(16) uint32 H[8];
 };
 
+void ATChecksumUpdateSHA256(ATChecksumStateSHA256& VDRESTRICT state, const void *src, size_t numBlocks);
+
 struct ATChecksumEngineSHA256 {
 	ATChecksumEngineSHA256();
 
+	void Reset();
 	void Process(const void *src, size_t len);
 	ATChecksumSHA256 Finalize();
 

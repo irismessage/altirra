@@ -20,6 +20,8 @@
 #define f_AT_ATIO_DISKFSSDX2UTIL_H
 
 extern const uint8 kATSDFSBootSector0[128];
+extern const uint8 kATSDFSBootSector0_256b[128];
+extern const uint8 kATSDFSBootSector0_512b[128];
 extern const uint8 kATSDFSBootSector1[128];
 
 #endif

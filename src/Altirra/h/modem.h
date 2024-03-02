@@ -236,8 +236,15 @@ protected:
 	ATModemRegisters	mRegisters;
 	ATModemRegisters	mSavedRegisters;
 
-	VDAtomicInt mbNewConnectedState;
-	VDAtomicInt mbConnectionFailed;
+	enum class DriverConnectionState : int {
+		Disconnected,
+		Disconnecting,
+		Connected
+	};
+
+	VDAtomicInt mDriverConnectionState;
+
+	VDAtomicBool mbConnectionFailed;
 	uint32	mLastWriteTime;
 	uint32	mLastRingTime;
 	uint32	mConnectRate;

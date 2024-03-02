@@ -24,7 +24,7 @@
 //	IDE+2 rev. D
 //		ID change and write protect switches
 //
-//	IDE+2 rev. S
+//	IDE+2 rev. D/S
 //		Rev. D with Covox added
 //
 //	IDE+2 rev. E
@@ -648,6 +648,7 @@ uint32 ATKMKJZIDE::GetSupportedButtons() const {
 	switch(mRevision) {
 		case kRevision_V2_D:
 		case kRevision_V2_E:
+		case kRevision_V2_S:
 			return (1U << kATDeviceButton_IDEPlus2SwitchDisks) | (1U << kATDeviceButton_IDEPlus2WriteProtect) | (1U << kATDeviceButton_IDEPlus2SDX);
 
 		default:
@@ -659,6 +660,7 @@ bool ATKMKJZIDE::IsButtonDepressed(ATDeviceButton idx) const {
 	switch(mRevision) {
 		case kRevision_V2_D:
 		case kRevision_V2_E:
+		case kRevision_V2_S:
 			break;
 
 		default:
@@ -681,6 +683,7 @@ void ATKMKJZIDE::ActivateButton(ATDeviceButton idx, bool state) {
 	switch(mRevision) {
 		case kRevision_V2_D:
 		case kRevision_V2_E:
+		case kRevision_V2_S:
 			break;
 
 		default:
@@ -758,13 +761,13 @@ sint32 ATKMKJZIDE::OnControlDebugRead(void *thisptr0, uint32 addr) {
 			break;
 
 		case 0xFC:	// (rev.D) Write protect register (ID bit)
-			if (thisptr->mRevision == kRevision_V2_D)
+			if (thisptr->mRevision == kRevision_V2_D || thisptr->mRevision == kRevision_V2_S)
 				return thisptr->mbWriteProtect ? 0xFF ^ thisptr->mDeviceId : 0xFF;
 
 			break;
 
 		case 0xFD:	// (rev.D) IRQ enable status register (ID bit)
-			if (thisptr->mRevision == kRevision_V2_D)
+			if (thisptr->mRevision == kRevision_V2_D || thisptr->mRevision == kRevision_V2_S)
 				return thisptr->mbIrqEnabled ? 0xFF : 0xFF ^ thisptr->mDeviceId;
 			break;
 
@@ -890,7 +893,7 @@ bool ATKMKJZIDE::OnControlWrite(void *thisptr0, uint32 addr, uint8 value) {
 			return true;
 
 		case 0xF8:	// IRQ enable register (rev.D/E)
-			if (thisptr->mRevision == kRevision_V2_D || thisptr->mRevision == kRevision_V2_E) {
+			if (thisptr->mRevision == kRevision_V2_D || thisptr->mRevision == kRevision_V2_E || thisptr->mRevision == kRevision_V2_S) {
 				// D0=1 enables IRQ for device ID 0.
 				bool enable = (value & thisptr->mDeviceId) != 0;
 

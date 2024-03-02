@@ -31,7 +31,7 @@ void ATUIShowDialogDebugFont(VDGUIHandle hParent);
 void ATUIShowDialogVerifier(VDGUIHandle h, ATSimulator& sim);
 
 void OnCommandDebuggerOpenSourceFile() {
-	VDStringW fn(VDGetLoadFileName('src ', ATUIGetMainWindow(), L"Load source file", L"All files (*.*)\0*.*\0", NULL));
+	VDStringW fn(VDGetLoadFileName('src ', ATUIGetNewPopupOwner(), L"Load source file", L"All files (*.*)\0*.*\0", NULL));
 
 	if (!fn.empty()) {
 		ATOpenSourceWindow(fn.c_str());
@@ -63,7 +63,7 @@ void OnCommandDebugToggleAutoLoadSystemSymbols() {
 }
 
 void OnCommandDebugChangeFontDialog() {
-	ATUIShowDialogDebugFont(ATUIGetMainWindow());
+	ATUIShowDialogDebugFont(ATUIGetNewPopupOwner());
 }
 
 void OnCommandDebugToggleDebugger() {
@@ -152,7 +152,7 @@ void OnCommandDebugToggleBreakpoint() {
 }
 
 void OnCommandDebugVerifierDialog() {
-	ATUIShowDialogVerifier(ATUIGetMainWindow(), g_sim);
+	ATUIShowDialogVerifier(ATUIGetNewPopupOwner(), g_sim);
 }
 
 class ATTraceCollection;
@@ -220,6 +220,12 @@ namespace ATCommands {
 		MakeScriptLoadCommand<ATDebuggerScriptAutoLoadMode::Disabled>("Debug.ScriptAutoLoadDisabled"),
 		MakeScriptLoadCommand<ATDebuggerScriptAutoLoadMode::AskToLoad>("Debug.ScriptAutoLoadAskToLoad"),
 		MakeScriptLoadCommand<ATDebuggerScriptAutoLoadMode::Enabled>("Debug.ScriptAutoLoadEnabled"),
+
+		{ "Debug.ToggleDebugLink",
+			[] { IATDebugger& d = *ATGetDebugger(); d.SetDebugLinkEnabled(!d.GetDebugLinkEnabled()); },
+			nullptr,
+			[] { return ToChecked(ATGetDebugger()->GetDebugLinkEnabled()); }
+		},
 
 		{ "Debug.ChangeFontDialog", OnCommandDebugChangeFontDialog },
 		{ "Debug.ToggleDebugger", OnCommandDebugToggleDebugger, nullptr, CheckedIf<IsDebuggerEnabled> },

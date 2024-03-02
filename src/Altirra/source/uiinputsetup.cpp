@@ -504,7 +504,6 @@ bool ATUIDialogInputSetup::OnTimer(uint32 id) {
 		const ATJoystickState *states = mpJoyMan->PollForCapture(n);
 
 		ATJoystickState state = {};
-		bool foundLastUnit = false;
 		bool foundActiveUnit = false;
 
 		for(uint32 i=0; i<n; ++i, ++states) {

@@ -135,7 +135,6 @@ protected:
 	ATMemoryLayer *mpMemLayerCart2 = nullptr;
 	ATMemoryLayer *mpMemLayerCartControl = nullptr;
 	ATMemoryLayer *mpMemLayerCartControl2 = nullptr;
-	bool	mbExternalEnable = false;
 	bool	mbSDXEnable = false;
 	bool	mbTopEnable = false;
 	bool	mbTopLeftEnable = false;

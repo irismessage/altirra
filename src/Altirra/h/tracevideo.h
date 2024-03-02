@@ -32,7 +32,8 @@ public:
 
 	virtual IATTraceChannel *AsTraceChannel() = 0;
 
-	virtual const VDPixmap *GetNearestFrame(double startTime, double endTime, double& frameTime) = 0;
+	virtual sint32 GetNearestFrameIndex(double startTime, double endTime, double& frameTime) = 0;
+	virtual const VDPixmap *GetFrameByIndex(sint32 idx) = 0;
 	virtual uint64 GetTraceSize() const = 0;
 };
 

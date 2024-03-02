@@ -24,6 +24,7 @@
 #include "cmdhelpers.h"
 #include "simulator.h"
 #include "uirender.h"
+#include "uimenu.h"
 
 extern ATUIManager g_ATUIManager;
 extern ATSimulator g_sim;
@@ -142,10 +143,6 @@ void OnCommandViewToggleFPS() {
 	ATUISetShowFPS(!ATUIGetShowFPS());
 }
 
-void OnCommandVideoToggleXEP80View() {
-	ATUISetXEPViewEnabled(!ATUIGetXEPViewEnabled());
-}
-
 void OnCommandViewEffectReload() {
 	g_ATUIManager.SetCustomEffectPath(VDStringW(g_ATUIManager.GetCustomEffectPath()).c_str(), true);
 }
@@ -180,14 +177,25 @@ void OnCommandViewCustomizeHud() {
 	g_sim.GetUIRenderer()->BeginCustomization();
 }
 
+void OnCommandViewVideoOutputNormal() {
+	ATUISetAltViewEnabled(false);
+}
+
 namespace ATCommands {
-	static constexpr ATUICommand kATCommandsView[] = {
+	static constexpr ATUICommand kATCommandsView[] = 
+	{
 		{ "View.ToggleIndicatorMargin", OnCommandViewToggleIndicatorMargin, ATUIGetDisplayIndicators, [] { return ATUIGetDisplayPadIndicators() ? kATUICmdState_Checked : kATUICmdState_None; } },
 		{ "View.ToggleIndicators", OnCommandViewToggleIndicators, nullptr, [] { return ATUIGetDisplayIndicators() ? kATUICmdState_Checked : kATUICmdState_None; } },
 		{ "View.ToggleAccelScreenFX", OnCommandViewToggleAccelScreenFX, NULL, [] { return ToChecked(g_ATOptions.mbDisplayAccelScreenFX); } },
 		{ "View.ToggleAutoHidePointer", OnCommandViewToggleAutoHidePointer, nullptr, [] { return ToChecked(ATUIGetPointerAutoHide()); } },
+		{ "View.ToggleConstrainPointerFullScreen", [] { ATUISetConstrainMouseFullScreen(!ATUIGetConstrainMouseFullScreen()); }, nullptr, [] { return ToChecked(ATUIGetConstrainMouseFullScreen()); } },
 		{ "View.ToggleTargetPointer", OnCommandViewToggleTargetPointer, nullptr, [] { return ToChecked(!ATUIGetTargetPointerVisible()); } },
+		{ "View.ToggleAutoHideMenu", [] { ATUISetMenuAutoHideEnabled(!ATUIIsMenuAutoHideEnabled()); }, nullptr, [] { return ToChecked(ATUIIsMenuAutoHideEnabled()); } },
 		{ "View.CustomizeHUD", OnCommandViewCustomizeHud },
+
+		{ "View.VideoOutputNormal", OnCommandViewVideoOutputNormal, nullptr, [] { return ToRadio(!ATUIGetAltViewEnabled()); } },
+		{ "View.VideoOutputPrev", ATUISelectPrevAltOutput, ATUIIsAltOutputAvailable },
+		{ "View.VideoOutputNext", ATUISelectNextAltOutput, ATUIIsAltOutputAvailable },
 	};
 }
 

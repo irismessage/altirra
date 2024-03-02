@@ -101,6 +101,63 @@ namespace {
 
 ///////////////////////////////////////////////////////////////////////////
 
+struct ATFirmwareTypeEntry {
+	ATFirmwareType mType;
+	const wchar_t *mpName;
+};
+
+static constexpr ATFirmwareTypeEntry kATFirmwareTypeNames[]={
+	{ kATFirmwareType_Kernel800_OSA, L"400/800 Kernel (OS-A compatible)" },
+	{ kATFirmwareType_Kernel800_OSB, L"400/800 Kernel (OS-B compatible)" },
+	{ kATFirmwareType_KernelXL, L"XL/XE Kernel" },
+	{ kATFirmwareType_KernelXEGS, L"XEGS Kernel" },
+	{ kATFirmwareType_Game, L"XEGS Game" },
+	{ kATFirmwareType_Kernel1200XL, L"1200XL Kernel" },
+	{ kATFirmwareType_Kernel5200, L"5200 Kernel" },
+	{ kATFirmwareType_Basic, L"Internal BASIC (XL/XE/XEGS)" },
+	{ kATFirmwareType_U1MB, L"Ultimate1MB" },
+	{ kATFirmwareType_MyIDE2, L"MyIDE-II" },
+	{ kATFirmwareType_SIDE, L"SIDE" },
+	{ kATFirmwareType_SIDE2, L"SIDE 2" },
+	{ kATFirmwareType_SIDE3, L"SIDE 3" },
+	{ kATFirmwareType_KMKJZIDE, L"KMK/JZ IDE" },
+	{ kATFirmwareType_KMKJZIDE2, L"KMK/JZ IDE 2 (IDEPlus) main" },
+	{ kATFirmwareType_KMKJZIDE2_SDX, L"KMK/JZ IDE 2 (IDEPlus) SDX" },
+	{ kATFirmwareType_BlackBox, L"BlackBox" },
+	{ kATFirmwareType_MIO, L"MIO" },
+	{ kATFirmwareType_1030Firmware, L"1030 Modem Firmware" },
+	{ kATFirmwareType_810, L"810 Disk Drive Firmware" },
+	{ kATFirmwareType_Happy810, L"Happy 810 Disk Drive Firmware" },
+	{ kATFirmwareType_810Archiver, L"810 Archiver Disk Drive Firmware" },
+	{ kATFirmwareType_810Turbo, L"810 Turbo Disk Drive Firmware" },
+	{ kATFirmwareType_815, L"815 Disk Drive Firmware" },
+	{ kATFirmwareType_1050, L"1050 Disk Drive Firmware" },
+	{ kATFirmwareType_1050Duplicator, L"1050 Duplicator Disk Drive Firmware" },
+	{ kATFirmwareType_USDoubler, L"US Doubler Disk Drive Firmware" },
+	{ kATFirmwareType_Speedy1050, L"Speedy 1050 Disk Drive Firmware" },
+	{ kATFirmwareType_Happy1050, L"Happy 1050 Disk Drive Firmware" },
+	{ kATFirmwareType_SuperArchiver, L"Super Archiver Disk Drive Firmware" },
+	{ kATFirmwareType_TOMS1050, L"TOMS 1050 Disk Drive Firmware" },
+	{ kATFirmwareType_Tygrys1050, L"Tygrys 1050 Disk Drive Firmware" },
+	{ kATFirmwareType_IndusGT, L"Indus GT Disk Drive Firmware" },
+	{ kATFirmwareType_1050Turbo, L"1050 Turbo Disk Drive Firmware" },
+	{ kATFirmwareType_1050TurboII, L"1050 Turbo II Disk Drive Firmware" },
+	{ kATFirmwareType_ISPlate, L"I.S. Plate Disk Drive Firmware" },
+	{ kATFirmwareType_XF551, L"XF551 Disk Drive Firmware" },
+	{ kATFirmwareType_ATR8000, L"ATR8000 Disk Drive Firmware" },
+	{ kATFirmwareType_Percom, L"PERCOM RFD Disk Drive Firmware" },
+	{ kATFirmwareType_PercomAT, L"PERCOM AT-88 Disk Drive Firmware" },
+	{ kATFirmwareType_PercomATSPD, L"PERCOM AT88-SPD Disk Drive Firmware" },
+	{ kATFirmwareType_AMDC, L"Amdek AMDC-I/II Disk Drive Firmware" },
+	{ kATFirmwareType_RapidusFlash, L"Rapidus Flash Firmware" },
+	{ kATFirmwareType_RapidusCorePBI, L"Rapidus Core PBI Firmware" },
+	{ kATFirmwareType_WarpOS, L"APE Warp+ OS 32-in-1 Firmware" },
+	{ kATFirmwareType_1090Firmware, L"1090 80-Column Video Card Firmware" },
+	{ kATFirmwareType_1090Charset, L"1090 80-Column Video Card Charset" },
+	{ kATFirmwareType_Bit3Firmware, L"Bit 3 Full-View 80 Firmware" },
+	{ kATFirmwareType_Bit3Charset, L"Bit 3 Full-View 80 Charset" },
+};
+
 class ATUIDialogEditFirmwareSettings : public VDDialogFrameW32 {
 public:
 	ATUIDialogEditFirmwareSettings(FirmwareItem& item);
@@ -118,59 +175,7 @@ protected:
 
 	VDDelegate mDelTypeChanged;
 
-	struct TypeEntry {
-		ATFirmwareType mType;
-		const wchar_t *mpName;
-	};
-
-	const TypeEntry *mpSortedTypes[42];
-	
-	static const TypeEntry kTypeNames[];
-};
-
-const ATUIDialogEditFirmwareSettings::TypeEntry ATUIDialogEditFirmwareSettings::kTypeNames[]={
-	{ kATFirmwareType_Kernel800_OSA, L"400/800 Kernel (OS-A compatible)" },
-	{ kATFirmwareType_Kernel800_OSB, L"400/800 Kernel (OS-B compatible)" },
-	{ kATFirmwareType_KernelXL, L"XL/XE Kernel" },
-	{ kATFirmwareType_KernelXEGS, L"XEGS Kernel" },
-	{ kATFirmwareType_Game, L"XEGS Game" },
-	{ kATFirmwareType_Kernel1200XL, L"1200XL Kernel" },
-	{ kATFirmwareType_Kernel5200, L"5200 Kernel" },
-	{ kATFirmwareType_Basic, L"Internal BASIC (XL/XE/XEGS)" },
-	{ kATFirmwareType_U1MB, L"Ultimate1MB" },
-	{ kATFirmwareType_MyIDE2, L"MyIDE-II" },
-	{ kATFirmwareType_SIDE, L"SIDE" },
-	{ kATFirmwareType_SIDE2, L"SIDE 2" },
-	{ kATFirmwareType_KMKJZIDE, L"KMK/JZ IDE" },
-	{ kATFirmwareType_KMKJZIDE2, L"KMK/JZ IDE 2 (IDEPlus) main" },
-	{ kATFirmwareType_KMKJZIDE2_SDX, L"KMK/JZ IDE 2 (IDEPlus) SDX" },
-	{ kATFirmwareType_BlackBox, L"BlackBox" },
-	{ kATFirmwareType_MIO, L"MIO" },
-	{ kATFirmwareType_1030Firmware, L"1030 Modem Firmware" },
-	{ kATFirmwareType_810, L"810 Disk Drive Firmware" },
-	{ kATFirmwareType_Happy810, L"Happy 810 Disk Drive Firmware" },
-	{ kATFirmwareType_810Archiver, L"810 Archiver Disk Drive Firmware" },
-	{ kATFirmwareType_810Turbo, L"810 Turbo Disk Drive Firmware" },
-	{ kATFirmwareType_1050, L"1050 Disk Drive Firmware" },
-	{ kATFirmwareType_1050Duplicator, L"1050 Duplicator Disk Drive Firmware" },
-	{ kATFirmwareType_USDoubler, L"US Doubler Disk Drive Firmware" },
-	{ kATFirmwareType_Speedy1050, L"Speedy 1050 Disk Drive Firmware" },
-	{ kATFirmwareType_Happy1050, L"Happy 1050 Disk Drive Firmware" },
-	{ kATFirmwareType_SuperArchiver, L"Super Archiver Disk Drive Firmware" },
-	{ kATFirmwareType_TOMS1050, L"TOMS 1050 Disk Drive Firmware" },
-	{ kATFirmwareType_Tygrys1050, L"Tygrys 1050 Disk Drive Firmware" },
-	{ kATFirmwareType_IndusGT, L"Indus GT Disk Drive Firmware" },
-	{ kATFirmwareType_1050Turbo, L"1050 Turbo Disk Drive Firmware" },
-	{ kATFirmwareType_1050TurboII, L"1050 Turbo II Disk Drive Firmware" },
-	{ kATFirmwareType_ISPlate, L"I.S. Plate Disk Drive Firmware" },
-	{ kATFirmwareType_XF551, L"XF551 Disk Drive Firmware" },
-	{ kATFirmwareType_ATR8000, L"ATR8000 Disk Drive Firmware" },
-	{ kATFirmwareType_Percom, L"PERCOM RFD Disk Drive Firmware" },
-	{ kATFirmwareType_PercomAT, L"PERCOM AT-88 Disk Drive Firmware" },
-	{ kATFirmwareType_AMDC, L"Amdek AMDC-I/II Disk Drive Firmware" },
-	{ kATFirmwareType_RapidusFlash, L"Rapidus Flash Firmware" },
-	{ kATFirmwareType_RapidusCorePBI, L"Rapidus Core PBI Firmware" },
-	{ kATFirmwareType_WarpOS, L"APE Warp+ OS 32-in-1 Firmware" },
+	const ATFirmwareTypeEntry *mpSortedTypes[vdcountof(kATFirmwareTypeNames)];
 };
 
 ATUIDialogEditFirmwareSettings::ATUIDialogEditFirmwareSettings(FirmwareItem& item)
@@ -178,8 +183,6 @@ ATUIDialogEditFirmwareSettings::ATUIDialogEditFirmwareSettings(FirmwareItem& ite
 	, mItem(item)
 	, mFlagCount(0)
 {
-	static_assert(vdcountof(kTypeNames) == vdcountof(mpSortedTypes), "array mismatch");
-
 	mTypeList.OnSelectionChanged() += mDelTypeChanged.Bind(this, &ATUIDialogEditFirmwareSettings::OnTypeChanged);
 }
 
@@ -187,11 +190,11 @@ bool ATUIDialogEditFirmwareSettings::OnLoaded() {
 	AddProxy(&mOptionsView, IDC_OPTIONS);
 	AddProxy(&mTypeList, IDC_TYPE);
 
-	for(size_t i=0; i<vdcountof(kTypeNames); ++i)
-		mpSortedTypes[i] = &kTypeNames[i];
+	for(size_t i=0; i<vdcountof(kATFirmwareTypeNames); ++i)
+		mpSortedTypes[i] = &kATFirmwareTypeNames[i];
 
 	mTypeList.AddItem(L"(Type not set yet)");
-	for(size_t i=0; i<vdcountof(kTypeNames); ++i)
+	for(size_t i=0; i<vdcountof(kATFirmwareTypeNames); ++i)
 		mTypeList.AddItem(mpSortedTypes[i]->mpName);
 
 	mOptionsView.SetFullRowSelectEnabled(true);
@@ -375,60 +378,12 @@ void ATUIDialogFirmware::OnDataExchange(bool write) {
 		mTreeView.SetRedraw(false);
 		mTreeView.Clear();
 
-		static constexpr struct Category {
-			ATFirmwareType mType;
-			const wchar_t *mpName;
-		} kCategories[]={
-			{ kATFirmwareType_Kernel800_OSA, L"400/800 Kernel ROMs (OS-A compatible)" },
-			{ kATFirmwareType_Kernel800_OSB, L"400/800 Kernel ROMs (OS-B compatible)" },
-			{ kATFirmwareType_KernelXL, L"XL/XE Kernel ROMs" },
-			{ kATFirmwareType_KernelXEGS, L"XEGS Kernel ROMs" },
-			{ kATFirmwareType_Game, L"XEGS Game ROMs" },
-			{ kATFirmwareType_Kernel1200XL, L"1200XL Kernel ROMs" },
-			{ kATFirmwareType_Kernel5200, L"5200 Kernel ROMs" },
-			{ kATFirmwareType_Basic, L"Internal BASIC ROMs (XL/XE/XEGS)" },
-			{ kATFirmwareType_U1MB, L"Ultimate1MB ROMs" },
-			{ kATFirmwareType_MyIDE2, L"MyIDE-II ROMs" },
-			{ kATFirmwareType_SIDE, L"SIDE ROMs" },
-			{ kATFirmwareType_SIDE2, L"SIDE 2 ROMs" },
-			{ kATFirmwareType_KMKJZIDE, L"KMK/JZ IDE ROMs" },
-			{ kATFirmwareType_KMKJZIDE2, L"KMK/JZ IDE 2 (IDEPlus) main ROMs" },
-			{ kATFirmwareType_KMKJZIDE2_SDX, L"KMK/JZ IDE 2 (IDEPlus) SDX ROMs" },
-			{ kATFirmwareType_BlackBox, L"BlackBox ROMs" },
-			{ kATFirmwareType_MIO, L"MIO ROMs" },
-			{ kATFirmwareType_1030Firmware, L"1030 Modem Firmware" },
-			{ kATFirmwareType_810, L"810 Disk Drive Firmware" },
-			{ kATFirmwareType_Happy810, L"Happy 810 Disk Drive Firmware" },
-			{ kATFirmwareType_810Archiver, L"810 Archiver Disk Drive Firmware" },
-			{ kATFirmwareType_810Turbo, L"810 Turbo Disk Drive Firmware" },
-			{ kATFirmwareType_1050, L"1050 Disk Drive Firmware" },
-			{ kATFirmwareType_1050Duplicator, L"1050 Duplicator Disk Drive Firmware" },
-			{ kATFirmwareType_USDoubler, L"US Doubler Disk Drive Firmware" },
-			{ kATFirmwareType_Speedy1050, L"Speedy 1050 Disk Drive Firmware" },
-			{ kATFirmwareType_Happy1050, L"Happy 1050 Disk Drive Firmware" },
-			{ kATFirmwareType_SuperArchiver, L"Super Archiver Disk Drive Firmware" },
-			{ kATFirmwareType_TOMS1050, L"TOMS 1050 Disk Drive Firmware" },
-			{ kATFirmwareType_Tygrys1050, L"Tygrys 1050 Disk Drive Firmware" },
-			{ kATFirmwareType_1050Turbo, L"1050 Turbo Disk Drive Firmware" },
-			{ kATFirmwareType_1050TurboII, L"1050 Turbo II Disk Drive Firmware" },
-			{ kATFirmwareType_ISPlate, L"I.S. Plate Disk Drive Firmware" },
-			{ kATFirmwareType_IndusGT, L"Indus GT Disk Drive Firmware" },
-			{ kATFirmwareType_XF551, L"XF551 Disk Drive Firmware" },
-			{ kATFirmwareType_ATR8000, L"ATR8000 Disk Drive Firmware" },
-			{ kATFirmwareType_Percom, L"PERCOM RFD Disk Drive Firmware" },
-			{ kATFirmwareType_PercomAT, L"PERCOM AT-88 Disk Drive Firmware" },
-			{ kATFirmwareType_AMDC, L"Amdek AMDC-I/II Disk Drive Firmware" },
-			{ kATFirmwareType_RapidusFlash, L"Rapidus Flash Firmware" },
-			{ kATFirmwareType_RapidusCorePBI, L"Rapidus Core PBI Firmware" },
-			{ kATFirmwareType_WarpOS, L"APE Warp+ OS 32-in-1 Firmware" },
-		};
-
 		std::fill(mDefaultIds, mDefaultIds + vdcountof(mDefaultIds), 0);
 
-		for(size_t i=0; i<vdcountof(kCategories); ++i) {
-			const ATFirmwareType type = kCategories[i].mType;
+		for(size_t i=0; i<vdcountof(kATFirmwareTypeNames); ++i) {
+			const ATFirmwareType type = kATFirmwareTypeNames[i].mType;
 
-			mpCategories[type] = new FirmwareItem(0, type, true, kCategories[i].mpName, L"");
+			mpCategories[type] = new FirmwareItem(0, type, true, kATFirmwareTypeNames[i].mpName, L"");
 			mpCategories[type]->mNode = mTreeView.AddVirtualItem(mTreeView.kNodeRoot, mTreeView.kNodeLast, mpCategories[type]);
 
 			mDefaultIds[type] = mFwManager.GetDefaultFirmware(type);
@@ -548,6 +503,17 @@ void ATUIDialogFirmware::Add(const wchar_t *path) {
 			vdblock<char> buf(size32);
 
 			f.read(buf.data(), size32);
+
+			// check if the ROM file is a constant byte value
+			if (!buf.empty())
+			{
+				auto it = std::find_if_not(buf.begin(), buf.end(), [v = buf.front()](char c) { return c == v; });
+
+				if (it == buf.end()) {
+					if (!Confirm2("blankFirmware", L"The selected file is blank and has no firmware data. Use it anyway?", L"Blank firmware file"))
+						return;
+				}
+			}
 
 			ATFirmwareInfo info;
 			switch (ATFirmwareAutodetect(buf.data(), size32, info, specificType)) {

@@ -25,9 +25,11 @@ enum ATProfileEvent {
 
 enum ATProfileRegion {
 	kATProfileRegion_Idle,
+	kATProfileRegion_IdleFrameDelay,
 	kATProfileRegion_Simulation,
 	kATProfileRegion_NativeEvents,
 	kATProfileRegion_DisplayTick,
+	kATProfileRegion_DisplayPresent,
 	kATProfileRegionCount
 };
 

@@ -32,7 +32,6 @@ protected:
 		uint32 *dst = (uint32 *)dst0;
 		const uint8 *src = (const uint8 *)mpSrc->GetRow(y, mSrcIndex);
 		sint32 w = mWidth;
-		sint32 h = mHeight;
 
 		const uint32 *pal = mpPal;
 
@@ -69,7 +68,6 @@ protected:
 		uint32 *dst = (uint32 *)dst0;
 		const uint8 *src = (const uint8 *)mpSrc->GetRow(y, mSrcIndex);
 		sint32 w = mWidth;
-		sint32 h = mHeight;
 
 		const uint32 *pal = mpPal;
 
@@ -102,7 +100,6 @@ protected:
 		uint32 *dst = (uint32 *)dst0;
 		const uint8 *src = (const uint8 *)mpSrc->GetRow(y, mSrcIndex);
 		sint32 w = mWidth;
-		sint32 h = mHeight;
 
 		const uint32 *pal = mpPal;
 
@@ -133,7 +130,6 @@ protected:
 		uint32 *dst = (uint32 *)dst0;
 		const uint8 *src = (const uint8 *)mpSrc->GetRow(y, mSrcIndex);
 		sint32 w = mWidth;
-		sint32 h = mHeight;
 
 		const uint32 *pal = mpPal;
 

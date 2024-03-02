@@ -17,11 +17,11 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <at/atcore/audiomixer.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/scheduler.h>
 #include "slightsid.h"
-#include "audiooutput.h"
 #include "memorymanager.h"
 #include "console.h"
 
@@ -83,6 +83,7 @@ void ATSlightSIDEmulator::ColdReset() {
 	handlers.mpWriteHandler = StaticWriteControl;
 	mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, 0xD5, 0x01);
 
+	mpMemMan->SetLayerName(mpMemLayerControl, "SlightSID");
 	mpMemMan->EnableLayer(mpMemLayerControl, true);
 
 	WarmReset();

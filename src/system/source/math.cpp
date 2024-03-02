@@ -217,3 +217,57 @@ bool VDVerifyFiniteFloats(const float *p0, uint32 n) {
 
 	return true;
 }
+
+///////////////////////////////////////////////////////////////////////////
+
+static_assert(VDFloorToInt(-2147483648.0) == -0x7FFFFFFF - 1);
+static_assert(VDFloorToInt(-2.0) == -2);
+static_assert(VDFloorToInt(-1.5) == -2);
+static_assert(VDFloorToInt(-1.0) == -1);
+static_assert(VDFloorToInt(-0.5) == -1);
+static_assert(VDFloorToInt(0.0) == 0);
+static_assert(VDFloorToInt(+0.5) == 0);
+static_assert(VDFloorToInt(+1.0) == 1);
+static_assert(VDFloorToInt(+1.5) == 1);
+static_assert(VDFloorToInt(+2.0) == 2);
+static_assert(VDFloorToInt(+2147483647.0) == 0x7FFFFFFF);
+
+static_assert(VDFloorToInt64(-4294967296.0) == -0x100000000LL);
+static_assert(VDFloorToInt64(-2147483648.0) == -0x80000000LL);
+static_assert(VDFloorToInt64(-2.0) == -2);
+static_assert(VDFloorToInt64(-1.5) == -2);
+static_assert(VDFloorToInt64(-1.0) == -1);
+static_assert(VDFloorToInt64(-0.5) == -1);
+static_assert(VDFloorToInt64(0.0) == 0);
+static_assert(VDFloorToInt64(+0.5) == 0);
+static_assert(VDFloorToInt64(+1.0) == 1);
+static_assert(VDFloorToInt64(+1.5) == 1);
+static_assert(VDFloorToInt64(+2.0) == 2);
+static_assert(VDFloorToInt64(+2147483647.0) == 0x7FFFFFFF);
+static_assert(VDFloorToInt64(+4294967296.0) == 0x100000000LL);
+
+static_assert(VDCeilToInt(-2147483648.0) == -0x7FFFFFFF - 1);
+static_assert(VDCeilToInt(-2.0) == -2);
+static_assert(VDCeilToInt(-1.5) == -1);
+static_assert(VDCeilToInt(-1.0) == -1);
+static_assert(VDCeilToInt(-0.5) == 0);
+static_assert(VDCeilToInt(0.0) == 0);
+static_assert(VDCeilToInt(+0.5) == 1);
+static_assert(VDCeilToInt(+1.0) == 1);
+static_assert(VDCeilToInt(+1.5) == 2);
+static_assert(VDCeilToInt(+2.0) == 2);
+static_assert(VDCeilToInt(+2147483647.0) == 0x7FFFFFFF);
+
+static_assert(VDCeilToInt64(-4294967296.0) == -0x100000000LL);
+static_assert(VDCeilToInt64(-2147483648.0) == -0x80000000LL);
+static_assert(VDCeilToInt64(-2.0) == -2);
+static_assert(VDCeilToInt64(-1.5) == -1);
+static_assert(VDCeilToInt64(-1.0) == -1);
+static_assert(VDCeilToInt64(-0.5) == 0);
+static_assert(VDCeilToInt64(0.0) == 0);
+static_assert(VDCeilToInt64(+0.5) == 1);
+static_assert(VDCeilToInt64(+1.0) == 1);
+static_assert(VDCeilToInt64(+1.5) == 2);
+static_assert(VDCeilToInt64(+2.0) == 2);
+static_assert(VDCeilToInt64(+2147483647.0) == 0x7FFFFFFF);
+static_assert(VDCeilToInt64(+4294967296.0) == 0x100000000LL);

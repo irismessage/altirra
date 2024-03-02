@@ -164,7 +164,7 @@ void VDPixmapUberBlitter::Blit(const VDPixmap& dst, const VDPixmap& src) {
 void VDPixmapUberBlitter::Blit(const VDPixmap& dst, const vdrect32 *rDst, const VDPixmap& src) {
 	for(Sources::const_iterator it(mSources.begin()), itEnd(mSources.end()); it!=itEnd; ++it) {
 		const SourceEntry& se = *it;
-		const void *p;
+		const void *p = nullptr;
 		ptrdiff_t pitch;
 
 		switch(se.mSrcPlane) {
@@ -181,7 +181,7 @@ void VDPixmapUberBlitter::Blit(const VDPixmap& dst, const vdrect32 *rDst, const 
 				pitch = src.pitch3;
 				break;
 			default:
-				VDASSERT(false);
+				VDNEVERHERE;
 				break;
 		}
 

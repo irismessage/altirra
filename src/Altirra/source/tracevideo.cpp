@@ -36,7 +36,8 @@ public:
 	void AddFrame(const VDPixmap& px, double timestamp);
 
 	IATTraceChannel *AsTraceChannel() override { return this; } 
-	const VDPixmap *GetNearestFrame(double startTime, double endTime, double& frameTime) override;
+	sint32 GetNearestFrameIndex(double startTime, double endTime, double& frameTime) override;
+	const VDPixmap *GetFrameByIndex(sint32 idx) override;
 	uint64 GetTraceSize() const override { return mTraceSize; }
 
 public:
@@ -112,7 +113,7 @@ void ATTraceChannelVideo::AddFrame(const VDPixmap& px, double timestamp) {
 	mFrames.emplace_back(std::move(frame));
 }
 
-const VDPixmap *ATTraceChannelVideo::GetNearestFrame(double startTime, double endTime, double& frameTime) {
+sint32 ATTraceChannelVideo::GetNearestFrameIndex(double startTime, double endTime, double& frameTime) {
 	// find closest frame to middle time
 	double midTime = (startTime + endTime) * 0.5;
 
@@ -125,10 +126,17 @@ const VDPixmap *ATTraceChannelVideo::GetNearestFrame(double startTime, double en
 	// return frame if it is within time bracket
 	if (it != mFrames.end() && it->mTime >= startTime && it->mTime < endTime) {
 		frameTime = it->mTime;
-		return &mFrameBuffers[it->mFrameBufferIndex].mBuffer;
+		return (sint32)it->mFrameBufferIndex;
 	}
 
-	return nullptr;
+	return -1;
+}
+
+const VDPixmap *ATTraceChannelVideo::GetFrameByIndex(sint32 idx) {
+	if ((uint32)idx < mFrameBuffers.size())
+		return &mFrameBuffers[idx].mBuffer;
+	else
+		return nullptr;
 }
 
 void *ATTraceChannelVideo::AsInterface(uint32 iid) {
@@ -258,8 +266,8 @@ void ATVideoTracer::WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64
 
 	if (!mpResampler || mResampleSrcSize != srcSize || mResampleDstSize != dstSize) {
 		mpResampler = VDCreatePixmapResampler();
-		mpResampler->Init(dstSize.w, dstSize.h, nsVDPixmap::kPixFormat_XRGB8888, srcSize.w, srcSize.h, nsVDPixmap::kPixFormat_XRGB8888);
 		mpResampler->SetFilters(IVDPixmapResampler::kFilterLinear, IVDPixmapResampler::kFilterLinear, false);
+		mpResampler->Init(dstSize.w, dstSize.h, nsVDPixmap::kPixFormat_XRGB8888, srcSize.w, srcSize.h, nsVDPixmap::kPixFormat_XRGB8888);
 		mResampleSrcSize = srcSize;
 		mResampleDstSize = dstSize;
 	}

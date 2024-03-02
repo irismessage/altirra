@@ -1,3 +1,19 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2021 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #ifndef f_VD2_VDDISPLAY_RENDERER3D_H
 #define f_VD2_VDDISPLAY_RENDERER3D_H
 
@@ -15,8 +31,8 @@
 class VDDisplayNodeContext3D;
 
 class VDDisplayCachedImage3D : public vdrefcounted<IVDRefUnknown>, public vdlist_node {
-	VDDisplayCachedImage3D(const VDDisplayCachedImage3D&);
-	VDDisplayCachedImage3D& operator=(const VDDisplayCachedImage3D&);
+	VDDisplayCachedImage3D(const VDDisplayCachedImage3D&) = delete;
+	VDDisplayCachedImage3D& operator=(const VDDisplayCachedImage3D&) = delete;
 public:
 	enum { kTypeID = 'cim3' };
 
@@ -25,7 +41,7 @@ public:
 
 	void *AsInterface(uint32 iid);
 
-	bool Init(IVDTContext& ctx, void *owner, const VDDisplayImageView& imageView);
+	bool Init(IVDTContext& ctx, void *owner, bool linear, const VDDisplayImageView& imageView);
 	void Shutdown();
 
 	void Update(const VDDisplayImageView& imageView);
@@ -52,7 +68,7 @@ public:
 	bool Init(IVDTContext& ctx);
 	void Shutdown();
 
-	void Begin(int w, int h, VDDisplayNodeContext3D& dctx);
+	void Begin(int w, int h, VDDisplayNodeContext3D& dctx, bool renderLinear);
 	void End();
 
 public:
@@ -106,36 +122,41 @@ protected:
 	VDDisplayCachedImage3D *GetCachedImage(VDDisplayImageView& imageView);
 	void ApplyBaselineState();
 
-	uint32 mColor;
-	uint32 mNativeColor;
-	uint32	mVBOffset;
-	sint32	mWidth;
-	sint32	mHeight;
-	vdrect32 mClipRect;
-	sint32	mOffsetX;
-	sint32	mOffsetY;
+	uint32 mColor {};
+	uint32 mNativeColor {};
+	uint32	mVBOffset {};
+	sint32	mWidth {};
+	sint32	mHeight {};
+	vdrect32 mClipRect {};
+	sint32	mOffsetX {};
+	sint32	mOffsetY {};
+	bool mbRenderLinear {};
+	float mSDRIntensity {};
 
-	IVDTContext *mpContext;
-	IVDTVertexProgram *mpVPFill;
-	IVDTVertexProgram *mpVPBlit;
-	IVDTVertexFormat *mpVFFill;
-	IVDTVertexFormat *mpVFBlit;
-	IVDTFragmentProgram *mpFPFill;
-	IVDTFragmentProgram *mpFPBlit;
-	IVDTFragmentProgram *mpFPBlitDirect;
-	IVDTFragmentProgram *mpFPBlitStencil;
-	IVDTFragmentProgram *mpFPBlitColor;
-	IVDTFragmentProgram *mpFPBlitColor2;
-	IVDTVertexBuffer *mpVB;
-	IVDTIndexBuffer *mpIB;
-	IVDTSamplerState *mpSS;
-	IVDTSamplerState *mpSSPoint;
-	IVDTBlendState *mpBS;
-	IVDTBlendState *mpBSStencil;
-	IVDTBlendState *mpBSColor;
-	IVDTRasterizerState *mpRS;
+	IVDTContext *mpContext {};
+	IVDTVertexProgram *mpVPFillLinear {};
+	IVDTVertexProgram *mpVPFillGamma {};
+	IVDTVertexProgram *mpVPBlitLinear {};
+	IVDTVertexProgram *mpVPBlitGamma {};
+	IVDTVertexFormat *mpVFFill {};
+	IVDTVertexFormat *mpVFBlit {};
+	IVDTFragmentProgram *mpFPFill {};
+	IVDTFragmentProgram *mpFPBlit {};
+	IVDTFragmentProgram *mpFPBlitLinear {};
+	IVDTFragmentProgram *mpFPBlitDirect {};
+	IVDTFragmentProgram *mpFPBlitStencil {};
+	IVDTFragmentProgram *mpFPBlitColor {};
+	IVDTFragmentProgram *mpFPBlitColor2 {};
+	IVDTVertexBuffer *mpVB {};
+	IVDTIndexBuffer *mpIB {};
+	IVDTSamplerState *mpSS {};
+	IVDTSamplerState *mpSSPoint {};
+	IVDTBlendState *mpBS {};
+	IVDTBlendState *mpBSStencil {};
+	IVDTBlendState *mpBSColor {};
+	IVDTRasterizerState *mpRS {};
 
-	VDDisplayNodeContext3D *mpDCtx;
+	VDDisplayNodeContext3D *mpDCtx {};
 
 	vdlist<VDDisplayCachedImage3D> mCachedImages;
 

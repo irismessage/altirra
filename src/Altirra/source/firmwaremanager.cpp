@@ -77,6 +77,13 @@ const char *ATGetFirmwareTypeName(ATFirmwareType type) {
 		"810turbo",
 		"amdc",
 		"percom_at",
+		"percom_atspd",
+		"815",
+		"side3",
+		"1090firmware",
+		"1090charset",
+		"bit3firmware",
+		"bit3charset",
 	};
 
 	VDASSERTCT(vdcountof(kTypeNames) == kATFirmwareTypeCount);
@@ -131,6 +138,13 @@ ATFirmwareType ATGetFirmwareTypeFromName(const char *type) {
 	else if (!strcmp(type, "810turbo")) return kATFirmwareType_810Turbo;
 	else if (!strcmp(type, "amdc")) return kATFirmwareType_AMDC;
 	else if (!strcmp(type, "percom_at")) return kATFirmwareType_PercomAT;
+	else if (!strcmp(type, "percom_atspd")) return kATFirmwareType_PercomATSPD;
+	else if (!strcmp(type, "815")) return kATFirmwareType_815;
+	else if (!strcmp(type, "side3")) return kATFirmwareType_SIDE3;
+	else if (!strcmp(type, "1090firmware")) return kATFirmwareType_1090Firmware;
+	else if (!strcmp(type, "1090charset")) return kATFirmwareType_1090Charset;
+	else if (!strcmp(type, "bit3firmware")) return kATFirmwareType_Bit3Firmware;
+	else if (!strcmp(type, "bit3charset")) return kATFirmwareType_Bit3Charset;
 	else return kATFirmwareType_Unknown;
 }
 
@@ -207,7 +221,9 @@ bool ATLoadInternalFirmware(uint64 id, void *dst, uint32 offset, uint32 len, boo
 		IDR_NOGAME,
 		IDR_RAPIDUSFLASH,
 		IDR_RAPIDUSPBI16,
-		IDR_KERNEL816
+		IDR_KERNEL816,
+		0,
+		0
 	};
 
 	VDASSERTCT(vdcountof(kResourceIds) == kATFirmwareId_PredefCount);
@@ -232,7 +248,7 @@ bool ATLoadInternalFirmware(uint64 id, void *dst, uint32 offset, uint32 len, boo
 		*isUsable = usable;
 	}
 
-	uint32 resId = kResourceIds[id - 1];
+	uint32 resId = id ? kResourceIds[id - 1] : 0;
 
 	switch(resId) {
 		default:
@@ -241,6 +257,9 @@ bool ATLoadInternalFirmware(uint64 id, void *dst, uint32 offset, uint32 len, boo
 				return ATLoadKernelResource(resId, *dstbuf);
 			else
 				return ATLoadKernelResource(resId, dst, offset, len, true);
+
+		case 0:
+			break;
 
 		case IDR_U1MBBIOS:
 		case IDR_NOMIO:
@@ -251,7 +270,20 @@ bool ATLoadInternalFirmware(uint64 id, void *dst, uint32 offset, uint32 len, boo
 	}
 
 	vdfastvector<uint8> buffer;
-	ATLoadKernelResourceLZPacked(resId, buffer);
+
+	if (id == kATFirmwareId_1090Charset) {
+		if (!ATLoadKernelResource(IDR_KERNELXL, buffer) || buffer.size() != 16384)
+			return false;
+
+		// normal charset
+		memmove(buffer.data(), buffer.data() + 0x2000, 0x0400);
+
+		// int'l charset
+		memmove(buffer.data() + 0x0400, buffer.data() + 0xC00, 0x0400);
+
+		buffer.resize(0x0800);
+	} else if (resId)
+		ATLoadKernelResourceLZPacked(resId, buffer);
 
 	if (dstbuf) {
 		if (changed && *dstbuf != buffer)
@@ -323,6 +355,8 @@ bool ATFirmwareManager::GetFirmwareInfo(uint64 id, ATFirmwareInfo& fwinfo) const
 			{ true, true, kATFirmwareType_RapidusFlash, L"Altirra Rapidus Bootstrap Flash" },
 			{ true, true, kATFirmwareType_RapidusCorePBI, L"Altirra Rapidus Bootstrap 65816 PBI Firmware" },
 			{ false, true, kATFirmwareType_KernelXL, L"AltirraOS for 65C816" },
+			{ true, true, kATFirmwareType_1090Firmware, L"Altirra 1090 CVC Firmware" },
+			{ true, true, kATFirmwareType_1090Charset, L"Altirra 1090 CVC Charset" },
 		};
 
 		VDASSERTCT(vdcountof(kPredefFirmwares) == kATFirmwareId_PredefCount);
@@ -701,14 +735,5 @@ void ATFirmwareManager::RemoveFirmware(uint64 id) {
 	name.sprintf("%016llX", id);
 
 	VDRegistryAppKey key("Firmware\\Available");
-
-	{
-		VDRegistryKey key2(key, name.c_str());
-
-		VDRegistryValueIterator it(key);
-		while(const char *name = it.Next())
-			key.removeValue(name);
-	}
-
-	key.removeKey(name.c_str());
+	key.removeKeyRecursive(name.c_str());
 }

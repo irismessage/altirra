@@ -18,8 +18,6 @@
 #ifndef f_AT_PCLINK_H
 #define f_AT_PCLINK_H
 
-#include "pokey.h"
-
 class ATPokeyEmulator;
 class ATScheduler;
 class ATCPUEmulator;

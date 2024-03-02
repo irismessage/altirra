@@ -122,8 +122,6 @@ public:
 				hi = mid;
 		}
 
-		bool canInsert = true;
-
 		if (mCount == mCapacity) {
 			uint32 newCapacity = mCapacity < 64 ? 64 : mCapacity + (mCapacity >> 1);
 

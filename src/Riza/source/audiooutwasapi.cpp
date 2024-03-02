@@ -74,6 +74,29 @@ private:
 	vdrefptr<IMMDevice> mpDevice;
 	vdrefptr<IAudioClient> mpAudioClient;
 	vdrefptr<IAudioRenderClient> mpAudioRenderClient;
+
+	class ChangeNotifier final : public IMMNotificationClient {
+	public:
+		bool CheckForChange() {
+			return mbDefaultDeviceChanged.xchg(false);
+		}
+
+		ULONG STDMETHODCALLTYPE AddRef() override;
+		ULONG STDMETHODCALLTYPE Release() override;
+		HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvInterface) override;
+
+		HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(LPCWSTR pwstrDeviceId, DWORD dwNewState) override;
+		HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR pwstrDeviceId) override;
+		HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR pwstrDeviceId) override;
+		HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR pwstrDefaultDeviceId) override;
+		HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR pwstrDeviceId, const PROPERTYKEY key) override;
+
+	private:
+		VDAtomicInt mRefCount = 0;
+		VDAtomicBool mbDefaultDeviceChanged = false;
+	};
+
+	vdrefptr<ChangeNotifier> mpChangeNotifier { new ChangeNotifier };
 };
 
 IVDAudioOutput *VDCreateAudioOutputWASAPIW32() {
@@ -109,13 +132,18 @@ bool VDAudioOutputWASAPIW32::Init(uint32 bufsize, uint32 bufcount, const WAVEFOR
 	if (FAILED(hr))
 		return false;
 
+	mpDeviceEnum->RegisterEndpointNotificationCallback(mpChangeNotifier);
+
 	return InitAudioClient();
 }
 
 void VDAudioOutputWASAPIW32::Shutdown() {
 	ShutdownAudioClient();
 
-	mpDeviceEnum = nullptr;
+	if (mpDeviceEnum) {
+		mpDeviceEnum->UnregisterEndpointNotificationCallback(mpChangeNotifier);
+		mpDeviceEnum = nullptr;
+	}
 }
 
 void VDAudioOutputWASAPIW32::GoSilent() {
@@ -146,6 +174,9 @@ uint32 VDAudioOutputWASAPIW32::GetBufferLevel() {
 }
 
 uint32 VDAudioOutputWASAPIW32::EstimateHWBufferLevel(bool *underflowDetected) {
+	if (mpChangeNotifier->CheckForChange())
+		ReinitAudioClient(AUDCLNT_E_DEVICE_INVALIDATED);
+
 	if (!mpAudioClient)
 		return 0;
 
@@ -163,6 +194,9 @@ uint32 VDAudioOutputWASAPIW32::EstimateHWBufferLevel(bool *underflowDetected) {
 }
 
 bool VDAudioOutputWASAPIW32::Write(const void *data, uint32 len) {
+	if (mpChangeNotifier->CheckForChange())
+		ReinitAudioClient(AUDCLNT_E_DEVICE_INVALIDATED);
+
 	if (!mpAudioClient)
 		return false;
 
@@ -302,4 +336,55 @@ bool VDAudioOutputWASAPIW32::ReinitAudioClient(HRESULT hr) {
 
 	ShutdownAudioClient();
 	return InitAudioClient();
+}
+
+HRESULT STDMETHODCALLTYPE VDAudioOutputWASAPIW32::ChangeNotifier::QueryInterface(REFIID riid, void **ppvInterface) {
+	if (!ppvInterface)
+		return E_POINTER;
+
+	if (riid == __uuidof(IUnknown))
+		*ppvInterface = static_cast<IUnknown *>(this);
+	else if (riid == __uuidof(IMMNotificationClient))
+		*ppvInterface = static_cast<IMMNotificationClient *>(this);
+	else {
+		*ppvInterface = nullptr;
+		return E_NOINTERFACE;
+	}
+
+	AddRef();
+	return S_OK;
+}
+
+ULONG STDMETHODCALLTYPE VDAudioOutputWASAPIW32::ChangeNotifier::AddRef() {
+	return ++mRefCount;
+}
+
+ULONG STDMETHODCALLTYPE VDAudioOutputWASAPIW32::ChangeNotifier::Release() {
+	auto rc = --mRefCount;
+
+	if (!rc)
+		delete this;
+
+	return rc;
+}
+
+HRESULT STDMETHODCALLTYPE VDAudioOutputWASAPIW32::ChangeNotifier::OnDeviceStateChanged(LPCWSTR pwstrDeviceId, DWORD dwNewState) {
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE VDAudioOutputWASAPIW32::ChangeNotifier::OnDeviceAdded(LPCWSTR pwstrDeviceId) {
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE VDAudioOutputWASAPIW32::ChangeNotifier::OnDeviceRemoved(LPCWSTR pwstrDeviceId) {
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE VDAudioOutputWASAPIW32::ChangeNotifier::OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR pwstrDefaultDeviceId) {
+	mbDefaultDeviceChanged = true;
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE VDAudioOutputWASAPIW32::ChangeNotifier::OnPropertyValueChanged(LPCWSTR pwstrDeviceId, const PROPERTYKEY key) {
+	return S_OK;
 }

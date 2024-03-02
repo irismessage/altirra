@@ -23,8 +23,17 @@
 #include <vd2/system/w32assist.h>
 #include <vd2/system/win32/touch.h>
 #include <vd2/VDDisplay/display.h>
+#include <at/atcore/configvar.h>
+#include <at/atcore/devicemanager.h>
+#include <at/atcore/devicevideo.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/profile.h>
+#include <at/atui/uimanager.h>
+#include <at/atui/uimenulist.h>
+#include <at/atui/uicontainer.h>
+#include <at/atuicontrols/uitextedit.h>
+#include <at/atuicontrols/uibutton.h>
+#include <at/atuicontrols/uilistview.h>
 #include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/uiframe.h>
 #include "console.h"
@@ -36,15 +45,8 @@
 #include "uirender.h"
 #include "uitypes.h"
 #include "uicaptionupdater.h"
-#include <at/atui/uimanager.h>
 #include "uimenu.h"
 #include "uiportmenus.h"
-#include <at/atui/uimenulist.h>
-#include <at/atui/uicontainer.h>
-#include "uiprofiler.h"
-#include <at/atuicontrols/uitextedit.h>
-#include <at/atuicontrols/uibutton.h>
-#include <at/atuicontrols/uilistview.h>
 #include "uifilebrowser.h"
 #include "uivideodisplaywindow.h"
 #include "uimessagebox.h"
@@ -106,6 +108,8 @@ BOOL WINAPI ATCloseGestureInfoHandleW32(HGESTUREINFO hGestureInfo) {
 
 ///////////////////////////////////////////////////////////////////////////
 
+void ATUIUpdateNativeProfiler();
+
 extern ATSimulator g_sim;
 
 extern IVDVideoDisplay *g_pDisplay;
@@ -119,6 +123,9 @@ extern int g_dispFilterSharpness;
 extern ATDisplayStretchMode g_displayStretchMode;
 
 ATLogChannel g_ATLCHostKeys(false, false, "HOSTKEYS", "Host keyboard activity");
+ATLogChannel g_ATLCHostUI(false, false, "HOSTUI", "Host UI debug output");
+
+ATConfigVarBool g_ATCVUIShowNativeProfiler("ui.show_native_profiler", false, ATUIUpdateNativeProfiler);
 
 ATUIManager g_ATUIManager;
 
@@ -239,14 +246,7 @@ struct ATUIStepDoModalWindow final : public vdrefcount {
 class ATUINativeDisplay final : public IATUINativeDisplay, public IATUIClipboard {
 public:
 	ATUINativeDisplay()
-		: mhwnd(NULL)
-		, mpFrame(NULL)
-		, mModalCount(0)
-		, mbMouseConstrained(false)
-		, mbMouseCaptured(false)
-		, mbMouseMotionMode(false)
-		, mbCursorImageChangesEnabled(false)
-		, mhcurTarget((HCURSOR)LoadImage(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDC_TARGET), IMAGE_CURSOR, 0, 0, LR_SHARED))
+		: mhcurTarget((HCURSOR)LoadImage(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDC_TARGET), IMAGE_CURSOR, 0, 0, LR_SHARED))
 		, mhcurTargetOff((HCURSOR)LoadImage(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDC_TARGET_OFF), IMAGE_CURSOR, 0, 0, LR_SHARED))
 	{
 	}
@@ -260,20 +260,7 @@ public:
 	}
 
 	virtual void ConstrainCursor(bool constrain) {
-		if (constrain) {
-			if (mhwnd) {
-				RECT r;
-
-				if (::GetClientRect(mhwnd, &r)) {
-					::MapWindowPoints(mhwnd, NULL, (LPPOINT)&r, 2);
-					::ClipCursor(&r);
-				}
-			}
-			mbMouseConstrained = true;
-		} else {
-			::ClipCursor(NULL);
-			mbMouseConstrained = false;
-		}
+		UpdateCursorConstraint(mbMouseConstrainedByUI, constrain);
 	}
 
 	virtual void CaptureCursor(bool motionMode) {
@@ -285,7 +272,14 @@ public:
 		}
 
 		if (mbMouseMotionMode != motionMode) {
-			mbMouseMotionMode = motionMode;
+			UpdateCursorConstraint(mbMouseMotionMode, motionMode);
+
+			if (motionMode ? mbRawInputEnabled : mbRawInputActive) {
+				if (motionMode)
+					EnableRawInput();
+				else
+					DisableRawInput();
+			}
 
 			if (motionMode)
 				WarpCapturedMouse();
@@ -294,8 +288,11 @@ public:
 
 	virtual void ReleaseCursor() {
 		mbMouseCaptured = false;
-		mbMouseMotionMode = false;
-		mbMouseConstrained = false;
+		mbMouseConstrainedByUI = false;
+
+		UpdateCursorConstraint(mbMouseMotionMode, false);
+
+		DisableRawInput();
 
 		if (mhwnd)
 			::ReleaseCapture();
@@ -368,7 +365,7 @@ public:
 
 public:
 	bool IsMouseCaptured() const { return mbMouseCaptured; }
-	bool IsMouseConstrained() const { return mbMouseConstrained; }
+	bool IsMouseActuallyConstrained() const { return mbMouseActuallyConstrained; }
 	bool IsMouseMotionModeEnabled() const { return mbMouseMotionMode; }
 
 	void SetDisplay(HWND hwnd, ATFrameWindow *frame) {
@@ -399,7 +396,9 @@ public:
 	void OnCaptureLost() {
 		mbMouseCaptured = false;
 		mbMouseMotionMode = false;
-		mbMouseConstrained = false;
+		mbMouseConstrainedByUI = false;
+
+		EndConstrainingCursor();
 	}
 
 	void SetCursorImageChangesEnabled(bool enabled) {
@@ -470,20 +469,151 @@ public:
 		}
 	}
 
+	bool GetConstrainCursorByFullScreen() const { return mbMouseConstrainedByFullScreen; }
+	void SetConstrainCursorByFullScreen(bool enabled);
+
+	void SetMouseConstraintEnabled(bool enabled);
+	void SetRawInputEnabled(bool enabled) { mbRawInputEnabled = enabled; }
+	bool IsRawInputEnabled() const { return mbRawInputEnabled; }
+
+	void SetFullScreen(bool enabled);
+
 private:
-	HWND mhwnd;
-	ATFrameWindow *mpFrame;
-	uint32 mModalCount;
-	bool mbMouseCaptured;
-	bool mbMouseConstrained;
-	bool mbMouseMotionMode;
-	bool mbCursorImageChangesEnabled;
+	void UpdateCursorConstraint(bool& state, bool newValue);
+	bool ShouldConstrainCursor() const;
+	void BeginConstrainingCursor();
+	void EndConstrainingCursor();
+
+	void EnableRawInput();
+	void DisableRawInput();
+
+	HWND mhwnd = nullptr;
+	ATFrameWindow *mpFrame = nullptr;
+	uint32 mModalCount = 0;
+	bool mbMouseCaptured = false;
+	bool mbMouseActuallyConstrained = false;
+	bool mbMouseConstrainedByUI = false;
+	bool mbMouseConstrainedByFullScreen = false;
+	bool mbMouseConstraintEnabled = false;
+	bool mbMouseMotionMode = false;
+	bool mbRawInputEnabled = false;
+	bool mbRawInputActive = false;
+	bool mbCursorImageChangesEnabled = false;
 	bool mbIgnoreAutoFlipping = false;
-	HCURSOR	mhcurTarget;
-	HCURSOR	mhcurTargetOff;
+	bool mbFullScreen = false;
+	HCURSOR	mhcurTarget = nullptr;
+	HCURSOR	mhcurTargetOff = nullptr;
 } g_ATUINativeDisplay;
 
+void ATUINativeDisplay::SetConstrainCursorByFullScreen(bool enabled) {
+	UpdateCursorConstraint(mbMouseConstrainedByFullScreen, enabled);
+}
+
+void ATUINativeDisplay::SetMouseConstraintEnabled(bool enabled) {
+	UpdateCursorConstraint(mbMouseConstraintEnabled, enabled);
+}
+
+void ATUINativeDisplay::SetFullScreen(bool enabled) {
+	UpdateCursorConstraint(mbFullScreen, enabled);
+}
+
+void ATUINativeDisplay::UpdateCursorConstraint(bool& state, bool newValue) {
+	if (state != newValue) {
+		const bool oldShouldConstrain = ShouldConstrainCursor();
+		
+		state = newValue;
+
+		const bool newShouldConstrain = ShouldConstrainCursor();
+
+		if (oldShouldConstrain != newShouldConstrain) {
+			if (newShouldConstrain)
+				BeginConstrainingCursor();
+			else
+				EndConstrainingCursor();
+		}
+	}
+}
+
+bool ATUINativeDisplay::ShouldConstrainCursor() const {
+	if (mbMouseMotionMode)
+		return true;
+
+	if (mbMouseConstraintEnabled) {
+		if (mbMouseConstrainedByUI)
+			return true;
+
+		if (mbMouseConstrainedByFullScreen && mbFullScreen)
+			return true;
+	}
+
+	return false;
+}
+
+void ATUINativeDisplay::BeginConstrainingCursor() {
+	if (!mhwnd)
+		return;
+
+	RECT r;
+
+	if (::GetClientRect(mhwnd, &r)) {
+		::MapWindowPoints(mhwnd, NULL, (LPPOINT)&r, 2);
+		::ClipCursor(&r);
+
+		mbMouseActuallyConstrained = true;
+	}
+}
+
+void ATUINativeDisplay::EndConstrainingCursor() {
+	::ClipCursor(nullptr);
+	mbMouseActuallyConstrained = false;
+}
+
+void ATUINativeDisplay::EnableRawInput() {
+	if (mbRawInputActive)
+		return;
+
+	mbRawInputActive = true;
+
+	RAWINPUTDEVICE rid {};
+	rid.usUsagePage = 1;
+	rid.usUsage = 2;
+	rid.hwndTarget = mhwnd;
+	rid.dwFlags = 0;
+	RegisterRawInputDevices(&rid, 1, sizeof(RAWINPUTDEVICE));
+}
+
+void ATUINativeDisplay::DisableRawInput() {
+	if (!mbRawInputActive)
+		return;
+
+	mbRawInputActive = false;
+
+	RAWINPUTDEVICE rid {};
+	rid.usUsagePage = 1;
+	rid.usUsage = 2;
+	rid.hwndTarget = mhwnd;
+	rid.dwFlags = RIDEV_REMOVE;
+	RegisterRawInputDevices(&rid, 1, sizeof(RAWINPUTDEVICE));
+}
+
 ///////////////////////////////////////////////////////////////////////////
+
+void ATUISetRawInputEnabled(bool enabled) {
+	g_ATUINativeDisplay.SetRawInputEnabled(enabled);
+}
+
+bool ATUIGetRawInputEnabled() {
+	return g_ATUINativeDisplay.IsRawInputEnabled();
+}
+
+bool ATUIGetConstrainMouseFullScreen() {
+	return g_ATUINativeDisplay.GetConstrainCursorByFullScreen();
+}
+
+void ATUISetConstrainMouseFullScreen(bool enabled) {
+	g_ATUINativeDisplay.SetConstrainCursorByFullScreen(enabled);
+}
+
 
 void ATUIUpdateThemeScaleCallback(ATOptions& opts, const ATOptions *prevOpts, void *) {
 	sint32 scale = opts.mThemeScale;
@@ -497,6 +627,15 @@ void ATUIUpdateThemeScaleCallback(ATOptions& opts, const ATOptions *prevOpts, vo
 	g_ATUIManager.SetThemeScaleFactor((float)opts.mThemeScale / 100.0f);
 }
 
+void ATUIUpdateNativeProfiler() {
+	if (g_pATVideoDisplayWindow) {
+		if (g_ATCVUIShowNativeProfiler)
+			ATUIProfileCreateWindow(&g_ATUIManager);
+		else
+			ATUIProfileDestroyWindow();
+	}
+}
+
 void ATUIInitManager() {
 	ATOptionsAddUpdateCallback(true, ATUIUpdateThemeScaleCallback);
 	g_ATUIManager.Init(&g_ATUINativeDisplay);
@@ -504,7 +643,9 @@ void ATUIInitManager() {
 	VDDisplaySetImageDecoder(&gATDisplayImageDecoder);
 	g_pATVideoDisplayWindow = new ATUIVideoDisplayWindow;
 	g_pATVideoDisplayWindow->AddRef();
-	g_pATVideoDisplayWindow->Init(*g_sim.GetEventManager(), *g_sim.GetDeviceManager());
+
+	ATDeviceManager& devMgr = *g_sim.GetDeviceManager();
+	g_pATVideoDisplayWindow->Init(*g_sim.GetEventManager(), *devMgr.GetService<IATDeviceVideoManager>());
 	g_ATUIManager.GetMainWindow()->AddChild(g_pATVideoDisplayWindow);
 	g_pATVideoDisplayWindow->SetPlacementFill();
 
@@ -512,7 +653,7 @@ void ATUIInitManager() {
 
 	g_pATVideoDisplayWindow->Focus();
 
-//	ATUIProfileCreateWindow(&g_ATUIManager);
+	ATUIUpdateNativeProfiler();
 }
 
 void ATUIShutdownManager() {
@@ -568,12 +709,14 @@ public:
 	bool IsTextSelected() const { return g_pATVideoDisplayWindow->IsTextSelected(); }
 	void Copy(bool enableEscaping);
 	void CopyFrame(bool trueAspect);
+	bool CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf);
 	void SaveFrame(bool trueAspect, const wchar_t *path = nullptr);
 	void Paste();
 	void Paste(const wchar_t *s, size_t len);
 
 	void OnSize();
 	void UpdateFilterMode();
+	void RequestRenderedFrame(vdfunction<void(const VDPixmap *)> fn) override;
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
@@ -591,7 +734,7 @@ protected:
 	void UpdateTextDisplay(bool enabled);
 	void UpdateTextModeFont();
 
-	void OnMenuActivated(ATUIMenuList *);
+	void OnMenuActivating(ATUIMenuList *);
 	void OnMenuItemSelected(ATUIMenuList *sender, uint32 id);
 	void OnAllowContextMenu();
 	void OnDisplayContextMenu(const vdpoint32& pt);
@@ -601,9 +744,13 @@ protected:
 	HWND	mhwndDisplay = nullptr;
 	HMENU	mhmenuContext = nullptr;
 	IVDVideoDisplay *mpDisplay = nullptr;
+	bool	mbLastTrackMouseValid = false;
 	int		mLastTrackMouseX = 0;
 	int		mLastTrackMouseY = 0;
 	int		mMouseCursorLock = 0;
+
+	vdstructex<RAWINPUT> mRawInputBuffer;
+
 	int		mWidth = 0;
 	int		mHeight = 0;
 
@@ -676,7 +823,20 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			{
 				bool result = g_ATUIManager.OnKeyDown(ConvertVirtKeyEvent(wParam, lParam));
 
-				g_ATLCHostKeys("Received host vkey down: VK=$%02X LP=%08X (current key mask: %016llX)%s\n", LOWORD(wParam), (unsigned)lParam, g_sim.GetPokey().GetRawKeyMask(), (HIWORD(lParam) & KF_REPEAT) != 0 ? " (repeat)" : "");
+				if (g_ATLCHostKeys.IsEnabled()) {
+					g_ATLCHostKeys("Received host vkey down: VK=$%02X LP=%08X MOD=%c%c%c-%c%c%c (current key mask: %016llX)%s\n"
+						, LOWORD(wParam)
+						, (unsigned)lParam
+						, GetKeyState(VK_LCONTROL) < 0 ? 'C' : '.'
+						, GetKeyState(VK_LSHIFT) < 0 ? 'S' : '.'
+						, GetKeyState(VK_LMENU) < 0 ? 'A' : '.'
+						, GetKeyState(VK_RCONTROL) < 0 ? 'C' : '.'
+						, GetKeyState(VK_RSHIFT) < 0 ? 'S' : '.'
+						, GetKeyState(VK_RMENU) < 0 ? 'A' : '.'
+						, g_sim.GetPokey().GetRawKeyMask()
+						, (HIWORD(lParam) & KF_REPEAT) != 0 ? " (repeat)" : ""
+					);
+				}
 
 				if (result) {
 					if (LOWORD(wParam) == VK_CAPITAL)
@@ -717,6 +877,7 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (mpMenuBar)
 				mpMenuBar->SetVisible(wParam != 0);
 
+			g_ATUINativeDisplay.SetFullScreen(wParam != 0);
 			return 0;
 
 		case ATWM_ENDTRACKING:
@@ -765,7 +926,20 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 				g_ATUIManager.OnChar(event);
 
-				g_ATLCHostKeys("Received host char:      CH=$%02X LP=%08X (current key mask: %016llX)%s\n", LOWORD(wParam), (unsigned)lParam, g_sim.GetPokey().GetRawKeyMask(), event.mbIsRepeat ? " (repeat)" : "");
+				if (g_ATLCHostKeys.IsEnabled()) {
+					g_ATLCHostKeys("Received host char:      CH=$%02X LP=%08X MOD=%c%c%c-%c%c%c (current key mask: %016llX)%s\n"
+						, LOWORD(wParam)
+						, (unsigned)lParam
+						, GetKeyState(VK_LCONTROL) < 0 ? 'C' : '.'
+						, GetKeyState(VK_LSHIFT) < 0 ? 'S' : '.'
+						, GetKeyState(VK_LMENU) < 0 ? 'A' : '.'
+						, GetKeyState(VK_RCONTROL) < 0 ? 'C' : '.'
+						, GetKeyState(VK_RSHIFT) < 0 ? 'S' : '.'
+						, GetKeyState(VK_RMENU) < 0 ? 'A' : '.'
+						, g_sim.GetPokey().GetRawKeyMask()
+						, event.mbIsRepeat ? " (repeat)" : ""
+					);
+				}
 			}
 
 			return 0;
@@ -780,7 +954,7 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				g_ATUIManager.OnCharUp(event);
 			}
 
-			g_ATLCHostKeys("Received host char up:   LP=%08X (current key mask: %016llX)\n", (unsigned)lParam, g_sim.GetPokey().GetRawKeyMask());
+			g_ATLCHostKeys("Received host char up:          LP=%08X (current key mask: %016llX)\n", (unsigned)lParam, g_sim.GetPokey().GetRawKeyMask());
 			return 0;
 
 		case WM_PARENTNOTIFY:
@@ -893,9 +1067,16 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				POINT pt = { x, y };
 				ScreenToClient(mhwnd, &pt);
 
-				UINT lines = 0;
+				UINT lines = 1;
 				::SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &lines, FALSE);
-				g_ATUIManager.OnMouseWheel(pt.x, pt.y, (float)dz / (float)WHEEL_DELTA * (float)lines);
+
+				bool doPages = false;
+				if (lines == WHEEL_PAGESCROLL) {
+					lines = 1;
+					doPages = true;
+				}
+
+				g_ATUIManager.OnMouseWheel(pt.x, pt.y, (float)dz / (float)WHEEL_DELTA * (float)lines, doPages);
 			}
 			break;
 
@@ -951,18 +1132,71 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			}
 			return 0;
 
+		case WM_INPUT:
+			if (g_ATUINativeDisplay.IsMouseMotionModeEnabled() && g_ATUINativeDisplay.IsRawInputEnabled()) {
+				UINT cbSize = 0;
+				if (!GetRawInputData((HRAWINPUT)lParam, RID_INPUT, nullptr, &cbSize, sizeof(RAWINPUTHEADER)) && cbSize >= sizeof(RAWINPUTHEADER)) {
+					if (mRawInputBuffer.size() < cbSize)
+						mRawInputBuffer.resize(cbSize);
+
+					UINT cbSize2 = cbSize;
+					if (cbSize == GetRawInputData((HRAWINPUT)lParam, RID_INPUT, mRawInputBuffer.data(), &cbSize2, sizeof(RAWINPUTHEADER))) {
+						if (mRawInputBuffer->header.dwType == RIM_TYPEMOUSE) {
+							SetHaveMouse();
+
+							sint32 dx = 0;
+							sint32 dy = 0;
+							sint32 x = mRawInputBuffer->data.mouse.lLastX;
+							sint32 y = mRawInputBuffer->data.mouse.lLastY;
+							if (mRawInputBuffer->data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) {
+
+								const bool usingVirtualDesktopCoords = (mRawInputBuffer->data.mouse.usFlags & MOUSE_VIRTUAL_DESKTOP) != 0;
+
+								// This looks wrong since it would map the absolute bottom right to (w,h), but it's
+								// the conversion recommended by the raw mouse API documentation.
+								x = (sint32)(((float)x / 65535.0f) * GetSystemMetrics(usingVirtualDesktopCoords ? SM_CXVIRTUALSCREEN : SM_CXSCREEN));
+								y = (sint32)(((float)y / 65535.0f) * GetSystemMetrics(usingVirtualDesktopCoords ? SM_CYVIRTUALSCREEN : SM_CYSCREEN));
+
+								if (mbLastTrackMouseValid) {
+									dx = x - mLastTrackMouseX;
+									dy = y - mLastTrackMouseY;
+								}
+
+								mLastTrackMouseX = x;
+								mLastTrackMouseY = y;
+								mbLastTrackMouseValid = true;
+							} else {
+								dx = x;
+								dy = y;
+								mbLastTrackMouseValid = false;
+							}
+
+							// WM_SETCURSOR isn't set when mouse capture is enabled, in which case we must poll for a cursor
+							// update.
+							const uint32 id = g_ATUIManager.GetCurrentCursorImageId();
+
+							if (id)
+								g_ATUINativeDisplay.SetCursorImageDirect(id);
+
+							if (dx || dy)
+								g_ATUIManager.OnMouseRelativeMove(dx, dy);
+						}
+					}
+				}
+			}
+			break;
+
 		case WM_SETFOCUS:
 			// Remember that we are effectively nesting window managers here -- when the display
 			// window gains focus, to our window manager it is like a Win32 window becoming
 			// active.
 			g_ATUIManager.SetForeground(true);
+			g_ATUINativeDisplay.SetMouseConstraintEnabled(true);
 			break;
 
 		case WM_KILLFOCUS:
 			g_ATUIManager.SetForeground(false);
-
-			if (g_ATUINativeDisplay.IsMouseConstrained())
-				::ClipCursor(NULL);
+			g_ATUINativeDisplay.SetMouseConstraintEnabled(false);
 
 			if (::GetCapture() == mhwnd)
 				::ReleaseCapture();
@@ -973,6 +1207,8 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				g_ATUINativeDisplay.OnCaptureLost();
 				g_ATUIManager.OnCaptureLost();
 			}
+
+			mbLastTrackMouseValid = false;
 
 			if (mbHaveMouse) {
 				TRACKMOUSEEVENT tme = {sizeof(TRACKMOUSEEVENT)};
@@ -1131,12 +1367,16 @@ bool ATDisplayPane::OnCreate() {
 	if (!ATUIPane::OnCreate())
 		return false;
 
+	g_ATLCHostUI("Creating display window");
+
 	mhwndDisplay = (HWND)VDCreateDisplayWindowW32(WS_EX_NOPARENTNOTIFY, WS_CHILD|WS_VISIBLE, 0, 0, 0, 0, (VDGUIHandle)mhwnd);
 	if (!mhwndDisplay)
 		return false;
 
 	mpDisplay = VDGetIVideoDisplay((VDGUIHandle)mhwndDisplay);
 	g_pDisplay = mpDisplay;
+	
+	g_ATLCHostUI("Setting up display window");
 
 	mpDisplay->SetReturnFocus(true);
 	mpDisplay->SetTouchEnabled(true);
@@ -1144,6 +1384,8 @@ bool ATDisplayPane::OnCreate() {
 	UpdateFilterMode();
 	mpDisplay->SetAccelerationMode(IVDVideoDisplay::kAccelResetInForeground);
 	mpDisplay->SetCompositor(&g_ATUIManager);
+
+	g_ATLCHostUI("Pushing initial frame");
 
 	// We need to push in an initial frame for two reasons: (1) black out immediately, (2) force full
 	// screen mode to size the window correctly.
@@ -1170,9 +1412,13 @@ bool ATDisplayPane::OnCreate() {
 	if (!mpEnhTextEngine)
 		gtia.SetVideoOutput(mpDisplay);
 
+	g_ATLCHostUI("Pushing initial frame update");
+
 	gtia.UpdateScreen(true, true);
 
 	g_ATUINativeDisplay.SetIgnoreAutoFlipping(mpEnhTextEngine != nullptr);
+
+	g_ATLCHostUI("Creating local UI");
 
 	mpMenuBar = new ATUIMenuList;
 	mpMenuBar->SetVisible(false);
@@ -1180,7 +1426,7 @@ bool ATDisplayPane::OnCreate() {
 	mpMenuBar->SetFont(g_ATUIManager.GetThemeFont(kATUIThemeFont_Menu));
 	mpMenuBar->SetMenu(ATUIGetMenu());
 	mpMenuBar->SetAutoHide(true);
-	mpMenuBar->OnActivatedEvent() = ATBINDCALLBACK(this, &ATDisplayPane::OnMenuActivated);
+	mpMenuBar->OnActivatingEvent() = ATBINDCALLBACK(this, &ATDisplayPane::OnMenuActivating);
 	mpMenuBar->OnItemSelected() = ATBINDCALLBACK(this, &ATDisplayPane::OnMenuItemSelected);
 	mpMenuBar->SetPlacement(vdrect32f(0, 0, 1, 0), vdpoint32(0, 0), vdfloat2{0, 0});
 	mpMenuBar->SetSizeOffset(vdsize32(0, mpMenuBar->GetIdealHeight()));
@@ -1202,7 +1448,10 @@ bool ATDisplayPane::OnCreate() {
 	mIndicatorSafeAreaChangedFn = [this] { ResizeDisplay(); };
 	g_sim.GetUIRenderer()->AddIndicatorSafeHeightChangedHandler(&mIndicatorSafeAreaChangedFn);
 
+	g_ATLCHostUI("Initializing drag-drop");
 	ATUISetDragDropSubTarget((VDGUIHandle)mhwnd, &g_ATUIManager);
+
+	g_ATLCHostUI("Init complete");
 	return true;
 }
 
@@ -1252,6 +1501,12 @@ void ATDisplayPane::OnMouseMove(WPARAM wParam, LPARAM lParam) {
 
 	SetHaveMouse();
 
+	if (ATUIIsMenuAutoHideActive() && ATUIIsMenuAutoHidden() && mpFrameWindow->IsDocked()) {
+		ATContainerWindow *container = mpFrameWindow->GetContainer();
+		if (container)
+			container->TestMenuAutoShow(TransformClientToScreen(vdpoint32(x, y)));
+	}
+
 	// WM_SETCURSOR isn't set when mouse capture is enabled, in which case we must poll for a cursor
 	// update.
 	if (g_ATUINativeDisplay.IsMouseCaptured()) {
@@ -1262,16 +1517,18 @@ void ATDisplayPane::OnMouseMove(WPARAM wParam, LPARAM lParam) {
 	}
 
 	if (g_ATUINativeDisplay.IsMouseMotionModeEnabled()) {
-		int dx = x - mLastTrackMouseX;
-		int dy = y - mLastTrackMouseY;
+		if (!g_ATUINativeDisplay.IsRawInputEnabled()) {
+			int dx = x - mLastTrackMouseX;
+			int dy = y - mLastTrackMouseY;
 
-		if (dx | dy) {
-			// If this is the first move message we've gotten since getting the mouse,
-			// ignore the delta.
-			if (hadMouse)
-				g_ATUIManager.OnMouseRelativeMove(dx, dy);
+			if (dx | dy) {
+				// If this is the first move message we've gotten since getting the mouse,
+				// ignore the delta.
+				if (mbLastTrackMouseValid)
+					g_ATUIManager.OnMouseRelativeMove(dx, dy);
 
-			WarpCapturedMouse();
+				WarpCapturedMouse();
+			}
 		}
 	} else {
 		TRACKMOUSEEVENT tme = {sizeof(TRACKMOUSEEVENT)};
@@ -1359,6 +1616,10 @@ void ATDisplayPane::CopyFrame(bool trueAspect) {
 	g_pATVideoDisplayWindow->CopySaveFrame(false, trueAspect);
 }
 
+bool ATDisplayPane::CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf) {
+	return g_pATVideoDisplayWindow->CopyFrameImage(trueAspect, buf);
+}
+
 void ATDisplayPane::SaveFrame(bool trueAspect, const wchar_t *path) {
 	g_pATVideoDisplayWindow->CopySaveFrame(true, trueAspect, path);
 }
@@ -1376,7 +1637,7 @@ void ATDisplayPane::OnSize() {
 	RECT r;
 	GetClientRect(mhwnd, &r);
 
-	if (g_ATUINativeDisplay.IsMouseConstrained()) {
+	if (g_ATUINativeDisplay.IsMouseActuallyConstrained()) {
 		RECT rs = r;
 
 		MapWindowPoints(mhwnd, NULL, (LPPOINT)&rs, 2);
@@ -1438,9 +1699,19 @@ void ATDisplayPane::UpdateFilterMode() {
 	}
 }
 
+void ATDisplayPane::RequestRenderedFrame(vdfunction<void(const VDPixmap *)> fn) {
+	if (!mpDisplay)
+		fn(nullptr);
+	else {
+		mpDisplay->RequestCapture(std::move(fn));
+		mpDisplay->Invalidate();
+	}
+}
+
 void ATDisplayPane::SetHaveMouse() {
 	if (!mbHaveMouse) {
 		mbHaveMouse = true;
+		mbLastTrackMouseValid = false;
 
 		g_ATUINativeDisplay.SetCursorImageChangesEnabled(true);
 
@@ -1456,6 +1727,7 @@ void ATDisplayPane::WarpCapturedMouse() {
 
 	mLastTrackMouseX = pt.x;
 	mLastTrackMouseY = pt.y;
+	mbLastTrackMouseValid = true;
 }
 
 void ATDisplayPane::UpdateTextDisplay(bool enabled) {
@@ -1522,7 +1794,7 @@ void ATDisplayPane::UpdateTextModeFont() {
 	}
 }
 
-void ATDisplayPane::OnMenuActivated(ATUIMenuList *) {
+void ATDisplayPane::OnMenuActivating(ATUIMenuList *) {
 	ATUIUpdateMenu();
 	ATUpdatePortMenus();
 }

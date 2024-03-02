@@ -511,7 +511,7 @@ bool ATUIManager::OnMouseUp(sint32 x, sint32 y, uint32 vk) {
 	return true;
 }
 
-bool ATUIManager::OnMouseWheel(sint32 x, sint32 y, float delta) {
+bool ATUIManager::OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages) {
 	if (!mpMainWindow)
 		return false;
 
@@ -527,7 +527,7 @@ bool ATUIManager::OnMouseWheel(sint32 x, sint32 y, float delta) {
 	for(ATUIWidget *w = mpCursorWindow; w; w = w->GetParent()) {
 		vdpoint32 cpt;
 		if (w->TranslateScreenPtToClientPt(vdpoint32(x, y), cpt) || mbCursorCaptured) {
-			if (w->OnMouseWheel(cpt.x, cpt.y, delta))
+			if (w->OnMouseWheel(cpt.x, cpt.y, delta, doPages))
 				break;
 		}
 

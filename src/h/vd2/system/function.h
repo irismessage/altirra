@@ -182,7 +182,7 @@ template<class T>
 struct vdfunc_mode
 	: public std::integral_constant<unsigned,
 			sizeof(T) <= sizeof(vdfuncbase::Data) && std::alignment_of<void *>::value % std::alignment_of<T>::value == 0
-				? std::is_pod<T>::value
+				? std::is_trivial<T>::value
 					? 0
 					: 1
 				: 2

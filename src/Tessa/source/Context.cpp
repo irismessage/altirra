@@ -2,7 +2,7 @@
 #include <stdarg.h>
 #include <vd2/Tessa/Context.h>
 
-void VDTBeginScopeF(IVDTProfiler *profiler, uint32 color, const char *format, ...) {
+void VDTBeginScopeF(IVDTContext *profiler, uint32 color, const char *format, ...) {
 	va_list val;
 	char buf[256];
 

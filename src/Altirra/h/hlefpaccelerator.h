@@ -18,10 +18,18 @@
 #ifndef f_AT_HLEFPACCELERATOR_H
 #define f_AT_HLEFPACCELERATOR_H
 
+#include <vd2/system/vdstl.h>
+
 class ATCPUEmulator;
 class ATHLEFPAccelerator;
 
-ATHLEFPAccelerator *ATCreateHLEFPAccelerator(ATCPUEmulator *cpu);
-void ATDestroyHLEFPAccelerator(ATHLEFPAccelerator *accelerator);
+class IATHLEFPAccelerator {
+public:
+	virtual ~IATHLEFPAccelerator() = default;
+	virtual bool SetHookEnabled(uint32 addr, bool enabled) = 0;
+	virtual void ListHooks(vdfastvector<std::pair<uint32, bool>>& hooks) const = 0;
+};
+
+IATHLEFPAccelerator *ATCreateHLEFPAccelerator(ATCPUEmulator *cpu);
 
 #endif	// f_AT_HLEFPACCELERATOR_H

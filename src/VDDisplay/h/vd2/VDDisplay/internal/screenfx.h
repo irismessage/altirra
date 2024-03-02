@@ -22,7 +22,7 @@
 #include <vd2/system/vectors.h>
 
 void VDDisplayCreateGammaRamp(uint32 *gammaTex, uint32 len, bool enableInputConversion, bool useAdobeRgb, float outputGamma);
-void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, uint32 srcH, uint32 dstH, uint32 texSize, float intensity);
+void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, uint32 srcH, uint32 dstH, uint32 texSize, float intensity, bool renderLinear);
 
 struct VDDisplayDistortionMapping {
 	float mScaleX;

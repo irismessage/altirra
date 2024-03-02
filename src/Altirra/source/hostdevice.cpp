@@ -282,26 +282,18 @@ public:
 public:
 	VDFile	mFile;
 	vdfastvector<uint8>	mData;
-	uint32	mOffset;
-	uint32	mLength;
-	bool	mbWriteBackData;
-	bool	mbUsingRawData;
-	bool	mbTranslateEOL;
-	bool	mbOpen;
-	bool	mbReadEnabled;
-	bool	mbWriteEnabled;
+	uint32	mOffset = 0;
+	uint32	mLength = 0;
+	uint32	mMaxLength = UINT32_C(0xFFFFFF);
+	bool	mbWriteBackData = false;
+	bool	mbUsingRawData = false;
+	bool	mbTranslateEOL = false;
+	bool	mbOpen = false;
+	bool	mbReadEnabled = false;
+	bool	mbWriteEnabled = false;
 };
 
-ATHostDeviceChannel::ATHostDeviceChannel()
-	: mOffset(0)
-	, mLength(0)
-	, mbWriteBackData(false)
-	, mbUsingRawData(false)
-	, mbTranslateEOL(false)
-	, mbOpen(false)
-	, mbReadEnabled(false)
-	, mbWriteEnabled(false)
-{
+ATHostDeviceChannel::ATHostDeviceChannel() {
 }
 
 void ATHostDeviceChannel::Close() {
@@ -403,7 +395,7 @@ uint8 ATHostDeviceChannel::Read(void *dst, uint32 len, uint32& actual) {
 }
 
 uint8 ATHostDeviceChannel::Write(const void *buf, uint32 tc) {
-	if (0xFFFFFF - mOffset < tc)
+	if (mMaxLength - mOffset < tc)
 		return CIOStatDiskFull;
 
 	if (mbUsingRawData) {
@@ -490,18 +482,18 @@ protected:
 	VDStringA	mFilePattern;
 	VDStringW	mNativeRelPath;
 	VDStringW	mNativeDirPath;
-	int			mPathIndex;
-	bool		mbPathTranslate;
-	bool		mbReadOnly;
-	bool		mbLongNameEncoding;
-	bool		mbLowercaseNaming;
-	bool		mbFakeDisk;
+	int			mPathIndex = 0;
+	bool		mbPathTranslate = false;
+	bool		mbReadOnly = false;
+	bool		mbLongNameEncoding = false;
+	bool		mbLowercaseNaming = false;
+	bool		mbFakeDisk = false;
 
-	IATDeviceCIOManager *mpCIOMgr;
-	IATDeviceIndicatorManager	*mpUIRenderer;
+	IATDeviceCIOManager *mpCIOMgr = nullptr;
+	IATDeviceIndicatorManager	*mpUIRenderer = nullptr;
 
-	char		mFilename[128];
-	uint32		mFilenameEnd;
+	char		mFilename[128] {};
+	uint32		mFilenameEnd = 0;
 };
 
 void ATCreateDeviceHostFS(const ATPropertySet& pset, IATDevice **dev) {
@@ -512,17 +504,7 @@ void ATCreateDeviceHostFS(const ATPropertySet& pset, IATDevice **dev) {
 
 extern const ATDeviceDefinition g_ATDeviceDefHostDevice = { "hostfs", "hostfs", L"Host device (H:)", ATCreateDeviceHostFS };
 
-ATHostDeviceEmulator::ATHostDeviceEmulator()
-	: mPathIndex(0)
-	, mbPathTranslate(false)
-	, mbReadOnly(false)
-	, mbLongNameEncoding(false)
-	, mbLowercaseNaming(false)
-	, mbFakeDisk(false)
-	, mpCIOMgr(nullptr)
-	, mpUIRenderer(nullptr)
-	, mFilenameEnd(0)
-{
+ATHostDeviceEmulator::ATHostDeviceEmulator() {
 	ColdReset();
 }
 
@@ -933,13 +915,15 @@ sint32 ATHostDeviceEmulator::OnCIOOpen(int channel, uint8 deviceNo, uint8 mode, 
 
 				ch.mOffset = 0;
 				ch.mLength = (uint32)ch.mData.size();
+				ch.mMaxLength = 0xFFFFFF;
 
 				if (append)
 					ch.mOffset = ch.mLength;
 			} else {
 				sint64 size64 = ch.mFile.size();
 
-				ch.mLength = size64 > 0xFFFFFF ? 0xFFFFFF : (uint32)size64;
+				ch.mLength = size64 > UINT32_C(0xFFFFFFFF) ? UINT32_C(0xFFFFFFFF) : (uint32)size64;
+				ch.mMaxLength = UINT32_C(0xFFFFFFFF);
 
 				if (append) {
 					ch.mFile.seek(ch.mLength);
@@ -1442,9 +1426,6 @@ bool ATHostDeviceEmulator::GetNextMatch(VDDirectoryIterator& it, bool allowDirs,
 	for(;;) {
 		if (!it.Next())
 			return false;
-
-		if (it.IsDotDirectory())
-			continue;
 
 		if (!allowDirs && it.IsDirectory())
 			continue;

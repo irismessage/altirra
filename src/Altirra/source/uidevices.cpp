@@ -100,6 +100,11 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		"pbi",
 		{
 			{
+				"1090",
+				L"1090 80 Column Video Card",
+				L"PBI-based 80 column video display card for the 1090 XL expansion system."
+			},
+			{
 				"blackbox",
 				L"Black Box",
 				L"The CSS Black Box attaches to the PBI port to provide SCSI hard disk, RAM disk, "
@@ -152,6 +157,9 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 				L"Enhanced version of SIDE with enhanced banking, CompactFlash change detection support, "
 					L"and improved Ultimate1MB compatibility."
 			},
+			{ "side3", L"SIDE 3",
+				L"Third-generation SIDE device with SD card storage, cartridge emulation, and DMA support."
+			},
 			{ "slightsid", L"SlightSID",
 				L"A cartridge-shaped adapter for the C64's SID sound chip."
 			},
@@ -167,6 +175,9 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		{
 			{ "warpos", L"APE Warp+ OS 32-in-1",
 				L"Internal upgrade allowing for soft-switching between 32 different OS ROMs in an XL/XE system."
+			},
+			{ "bit3", L"Bit 3 Full-View 80",
+				L"Add-on 80 column video board for the 800 that replaces RAM slot 3."
 			},
 			{ "covox", L"Covox",
 				L"Provides a simple DAC for 8-bit digital sound."
@@ -217,7 +228,23 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		{
 			{ "harddisk", L"Hard disk",
 				L"Hard drive or solid state drive. This device can be added as a sub-device to any parent device "
-					L"that has an IDE, CompactFlash, or SCSI interface."
+					L"that has an IDE, CompactFlash, SCSI, or SD Card interface."
+			},
+			{ "hdtempwritefilter", L"Temporary write filter",
+				L"Allows writes to a read-only hard disk image by caching the writes in memory. Written data persists "
+					L"across an emulation warm/cold reset, but is lost when the device is removed or the emulator is closed."
+			},
+			{ "hdvirtfat16", L"Virtual FAT16 hard disk",
+				L"Virtual hard drive image created from files in a host directory, reflecting the files in a "
+					L"synthesized FAT16-formatted partition. This is limited to 256MB of file content."
+			},
+			{ "hdvirtfat32", L"Virtual FAT32 hard disk",
+				L"Virtual hard drive image created from files in a host directory, reflecting the files in a "
+					L"synthesized FAT32-formatted partition."
+			},
+			{ "hdvirtsdfs", L"Virtual SDFS hard disk",
+				L"Virtual hard drive image created from files in a host directory, reflecting the files in a "
+					L"synthesized SpartaDOS-formatted partition."
 			}
 		},
 	},
@@ -235,114 +262,138 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		}
 	},
 	{
-		L"Disk drives",
+		L"Parallel port devices",
+		"parallel",
+		{
+			{ "parfilewriter", L"Parallel port file writer",
+				L"Writes all data output through the parallel port to a file."
+			},
+		}
+	},
+	{
+		L"Disk drives (full emulation)",
 		"sio",
 		{
-			{ "diskdrive810", L"810 disk drive (full emulation)",
+			{ "diskdrive810", L"810",
 				L"Full 810 disk drive emulation, including 6507 CPU.\n"
 					L"The 810 has a 40-track drive and only reads single density disks. It is the lowest common denominator among all "
 					L"compatible disk drives and will not read any larger disk formats, such as enhanced or double density."
 			},
 
-			{ "diskdrive810archiver", L"810 Archiver disk drive (full emulation)",
+			{ "diskdrive810archiver", L"810 Archiver",
 				L"Full emulation for the 810 Archiver disk drive, a.k.a. 810 with \"The Chip\", including 6507 CPU."
 			},
 
-			{ "diskdrivehappy810", L"Happy 810 disk drive (full emulation)",
+			{ "diskdrivehappy810", L"Happy 810",
 				L"Full Happy 810 disk drive emulation, including 6507 CPU.\n"
 					L"The Happy 810 adds track buffering and custom code execution capabilities to the 810 drive. It does not support "
 					L"double density, however."
 			},
 
-			{ "diskdrive810turbo", L"810 Turbo disk drive (full emulation)",
+			{ "diskdrive810turbo", L"810 Turbo",
 				L"Full disk drive emulation for the 810 Turbo Double Density Conversion board, made by Neanderthal Computer Things (NCT). "
 				L"This add-on to the standard 810 disk drive boosts the CPU speed from 500KHz to 1MHz, adds double-density support, "
 				L"and adds 4K of memory.\n"
 				L"Note that the standard 810 Turbo firmware does not support enhanced (medium) disks."
 			},
 
-			{ "diskdrive1050", L"1050 disk drive (full emulation)",
+			{ "diskdrive815", L"815",
+				L"Full 815 disk drive emulation, including 6507 CPU.\n"
+					L"The 815 is a dual disk drive supporting ONLY double density disks (256 bytes/sector). Currently only read-only "
+					L"emulation is supported.\n"
+					L"The firmware for the 815 is contained in two 2K chips that need to be combined into a single 4K image. The "
+					L"chips are labeled A107 and A106 on the board and should be combined in that order."
+			},
+
+			{ "diskdrive1050", L"1050",
 				L"Full 1050 disk drive emulation, including 6507 CPU.\n"
 					L"The 1050 supports single density and enhanced density disks. True double density (256 bytes/sector) disks are not "
 					L"supported."
 			},
 
-			{ "diskdrive1050duplicator", L"1050 Duplicator disk drive (full emulation)",
+			{ "diskdrive1050duplicator", L"1050 Duplicator",
 				L"Full 1050 Duplicator disk drive emulation, including 6507 CPU."
 			},
 
-			{ "diskdriveusdoubler", L"US Doubler disk drive (full emulation)",
+			{ "diskdriveusdoubler", L"US Doubler",
 				L"Full US Doubler disk drive emulation, including 6507 CPU.\n"
 					L"The US Doubler is an enhanced 1050 drive that supports true double density and high speed operation."
 			},
 
-			{ "diskdrivespeedy1050", L"Speedy 1050 disk drive (full emulation)",
+			{ "diskdrivespeedy1050", L"Speedy 1050",
 				L"Full Speedy 1050 disk drive emulation, including 65C02 CPU.\n"
 					L"The Speedy 1050 is an enhanced 1050 that supports double density, track buffering, and high speed operation.\n"
 					L"NOTE: The Speedy 1050 may operate erratically in high-speed mode with NTSC computers due to marginal write timing. "
 					L"Version 1.6 or later firmware is needed for reliable high-speed writes in NTSC."
 			},
 
-			{ "diskdrivehappy1050", L"Happy 1050 disk drive (full emulation)",
+			{ "diskdrivehappy1050", L"Happy 1050",
 				L"Full Happy 1050 disk drive emulation, including 6502 CPU."
 			},
 
-			{ "diskdrivesuperarchiver", L"Super Archiver disk drive (full emulation)",
+			{ "diskdrivesuperarchiver", L"Super Archiver",
 				L"Full Super Archiver disk drive emulation, including 6507 CPU."
 			},
 
-			{ "diskdrivetoms1050", L"TOMS 1050 disk drive (full emulation)",
+			{ "diskdrivetoms1050", L"TOMS 1050",
 				L"Full TOMS 1050 disk drive emulation, including 6507 CPU."
 			},
 
-			{ "diskdrivetygrys1050", L"Tygrys 1050 disk drive (full emulation)",
+			{ "diskdrivetygrys1050", L"Tygrys 1050",
 				L"Full Tygrys 1050 disk drive emulation, including 6507 CPU."
 			},
 
-			{ "diskdrive1050turbo", L"1050 Turbo disk drive (full emulation)",
+			{ "diskdrive1050turbo", L"1050 Turbo",
 				L"Full emulation of the 1050 Turbo disk drive modification by Bernhard Engl, including 6507 CPU."
 			},
 
-			{ "diskdrive1050turboii", L"1050 Turbo II disk drive (full emulation)",
+			{ "diskdrive1050turboii", L"1050 Turbo II",
 				L"Full emulation of the 1050 Turbo II disk drive modification by Bernhard Engl, including 6507 CPU. This model is also known as Version 3.5 in some places."
 			},
 
-			{ "diskdriveisplate", L"I.S. Plate disk drive (full emulation)",
+			{ "diskdriveisplate", L"I.S. Plate",
 				L"Full emulation of the Innovated Software I.S. Plate modification for the 1050 disk drive (a.k.a. ISP or ISP Plate). The ISP "
 				L"supports single, medium, and double density disks and track buffering."
 			},
 
-			{ "diskdriveindusgt", L"Indus GT disk drive (full emulation)",
+			{ "diskdriveindusgt", L"Indus GT",
 				L"Full Indus GT disk drive emulation, including Z80 CPU and RamCharger. This will also work for TOMS Turbo Drive firmware.\n"
 					L"The Indus GT supports single density, double density, and enhanced density formats. It does not, however, support double-sided disks."
 			},
 
-			{ "diskdrivexf551", L"XF551 disk drive (full emulation)",
+			{ "diskdrivexf551", L"XF551",
 				L"Full XF551 disk drive emulation, including 8048 CPU.\n"
 					L"The XF551 supports single density, double density, enhanced density, and double-sided double density formats."
 			},
 
-			{ "diskdriveatr8000", L"ATR8000 disk drive (full emulation)",
+			{ "diskdriveatr8000", L"ATR8000",
 				L"Full ATR8000 disk drive emulation, including Z80 CPU.\n"
 					L"The ATR8000 supports up to four disk drives, either 5.25\" or 8\", as well as a built-in parallel "
 					L"printer port and RS-232 serial port."
 			},
 
-			{ "diskdrivepercom", L"Percom RFD-40S1 disk drive (full emulation)",
+			{ "diskdrivepercom", L"Percom RFD-40S1",
 				L"Full Percom RFD-40S1 disk drive emulation, including 6809 CPU.\n"
 					L"The RFD-40S1 supports up to four disk drives, which may be either single-sided or double-sided "
 					L"and 40 or 80 track. Both single-density and double-density are supported by the hardware.\n"
 					L"This will also work for the Astra 1001, which has compatible firmware with the RFD-40S1."
 			},
 
-			{ "diskdrivepercomat", L"Percom AT-88S1 disk drive (full emulation)",
+			{ "diskdrivepercomat", L"Percom AT-88S1",
 				L"Full Percom AT-88S1 disk drive emulation, including 6809 CPU.\n"
-					L"The AT-81S1 supports up to four disk drives, which may be either single-sided or double-sided "
+					L"The AT-88S1 supports up to four disk drives, which may be either single-sided or double-sided "
 					L"and 40 or 80 track. Both single-density and double-density are supported by the hardware.\n"
 					L"This device is the version without the printer interface; SPD firmware will not work on this device."
 			},
 
-			{ "diskdriveamdc", L"Amdek AMDC-I/II disk drive (full emulation)",
+			{ "diskdrivepercomatspd", L"Percom AT88-SPD",
+				L"Full Percom AT88-SPD disk drive emulation, including 6809 CPU.\n"
+					L"The AT88-SPD supports up to four disk drives, which may be either single-sided or double-sided "
+					L"and 40 or 80 track. Both single-density and double-density are supported by the hardware.\n"
+					L"This device is the version with the printer interface; non-SPD firmware will not work on this device."
+			},
+
+			{ "diskdriveamdc", L"Amdek AMDC-I/II",
 				L"Full Amdek AMDC-I/II emulation, including 6809 CPU.\n"
 					L"The AMDC-I/II has one or two internal 3\" disk drives, along with a port for two more external disk drives."
 			},
@@ -807,7 +858,7 @@ void ATUIControllerDevices::Add() {
 					throw;
 				}
 			} catch(const MyError& err) {
-				err.post(mParent.GetWindowHandle(), "Error");
+				mParent.ShowError2(err, L"Unable to create device");
 				return;
 			}
 
@@ -1043,9 +1094,17 @@ void ATUIControllerDevices::CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef p
 
 			IATDiskImage *image = di.GetDiskImage();
 			if (image && !diBinding.mpClient->IsImageSupported(*image)) {
-				VDStringW msg;
+				const ATDiskGeometryInfo& geometry = image->GetGeometry();
 
-				msg.sprintf(L"Disk drive model cannot read disk format in D%u:", (unsigned)diBinding.mInterfaceIndex + 1);
+				VDStringW msg;
+				msg.sprintf(L"Disk drive model cannot read disk format in D%u: (%u tracks of %u sectors%s%s%s)"
+					, (unsigned)diBinding.mInterfaceIndex + 1
+					, geometry.mTrackCount
+					, geometry.mSectorsPerTrack
+					, geometry.mSideCount > 1 ? L", double-sided" : L""
+					, geometry.mbMFM ? L", MFM" : L""
+					, geometry.mbHighDensity ? L", HD" : L""
+				);
 
 				auto node = mTreeView.AddItem(devnode, mTreeView.kNodeLast, msg.c_str());
 				mTreeView.SetNodeImage(node, 1);

@@ -20,6 +20,12 @@
 
 namespace nsVDTextDOM {
 
+#ifdef _DEBUG
+	static constexpr bool kValidationEnabled = true;
+#else
+	static constexpr bool kValidationEnabled = false;
+#endif
+
 ///////////////////////////////////////////////////////////////////////////////
 
 namespace {
@@ -128,6 +134,8 @@ void Paragraph::Insert(int line, int offset, const char *s, size_t len) {
 }
 
 void Paragraph::Append(const Paragraph& src) {
+	Validate();
+	src.Validate();
 	AppendSpans(src);
 	AppendLines(src);
 	mText.insert(mText.end(), src.mText.begin(), src.mText.end());
@@ -157,12 +165,22 @@ void Paragraph::AppendSpans(const Paragraph& src) {
 }
 
 void Paragraph::AppendLines(const Paragraph& src) {
-	Lines::const_iterator it1(src.mLines.begin());
-	Lines::const_iterator it2(src.mLines.end());
+	if (src.mLines.empty())
+		return;
 
-	// fixup positions on added lines
+	if (mLines.empty()) {
+		mLines = src.mLines;
+		mHeight = src.mHeight;
+		return;
+	}
+
+	// the last line of this paragraph should be fused with the first of the
+	// second
+	mLines.front().mLength += src.mLines.front().mLength;
+
+	// append remaining lines and fixup positions on added lines
 	int charDelta = (int)mText.size();
-	Lines::iterator it3(mLines.insert(mLines.end(), it1, it2));
+	Lines::iterator it3(mLines.insert(mLines.end(), src.mLines.begin() + 1, src.mLines.end()));
 	Lines::iterator it4(mLines.end());
 	for(; it3 != it4; ++it3) {
 		it3->mStart += charDelta;
@@ -322,19 +340,18 @@ void Paragraph::SplitLines(int line, int offset, Paragraph& dst) {
 	}
 }
 
-void Paragraph::Validate() {
-	VDASSERT(!mSpans.empty());
-	VDASSERT(!mLines.empty());
-	VDASSERT(mSpans.front().mStart == 0);
-	VDASSERT(mLines.front().mStart == 0);
+void Paragraph::Validate() const {
+	if constexpr (kValidationEnabled) {
+		VDASSERT(!mSpans.empty());
+		VDASSERT(!mLines.empty());
+		VDASSERT(mSpans.front().mStart == 0);
+		VDASSERT(mLines.front().mStart == 0);
 
-	Lines::const_iterator it(mLines.begin());
-	Lines::const_iterator itEnd(mLines.end());
-	for(; it != itEnd; ++it) {
-		const Line& ln = *it;
-
-		VDASSERT(ln.mStart >= 0 && (unsigned)ln.mStart <= mText.size());
-		VDASSERT((unsigned)(ln.mStart + ln.mLength) <= mText.size());
+		for(const Line& ln : mLines) {
+			VDASSERT(ln.mStart >= 0 && (unsigned)ln.mStart <= mText.size());
+			VDASSERT((unsigned)(ln.mStart + ln.mLength) <= mText.size());
+			VDASSERT(&ln == &mLines.back() || ln.mLength > 0);
+		}
 	}
 }
 
@@ -491,14 +508,16 @@ void Iterator::Swap(Iterator& src) {
 }
 
 void Iterator::Validate() {
-	if (mpParent) {
-		VDASSERT((unsigned)mPara < (unsigned)mpParent->GetParagraphCount());
+	if constexpr (kValidationEnabled) {
+		if (mpParent) {
+			VDASSERT((unsigned)mPara < (unsigned)mpParent->GetParagraphCount());
 
-		const Paragraph& para = *mpParent->GetParagraph(mPara);
-		VDASSERT(mLine < (int)para.mLines.size());
+			const Paragraph& para = *mpParent->GetParagraph(mPara);
+			VDASSERT(mLine < (int)para.mLines.size());
 
-		const Line& line = para.mLines[mLine];
-		VDASSERT(mOffset <= line.mLength);
+			const Line& line = para.mLines[mLine];
+			VDASSERT(mOffset <= line.mLength);
+		}
 	}
 }
 
@@ -660,27 +679,9 @@ namespace {
 }
 
 Document::Document()
-	: mpCB(NULL)
+	: mpCB(nullptr)
 {
-	Paragraph *para = new Paragraph;
-	mParagraphs.push_back(para);
-
-	para->mHeight = 0;
-	para->mYPos = 0;
-
-	para->mLines.resize(1);
-	Line& ln = para->mLines.back();
-	ln.mStart = 0;
-	ln.mLength = 0;
-	ln.mHeight = 0;
-
-	para->mSpans.resize(1);
-	Span& sp = para->mSpans.back();
-	sp.mStart = 0;
-	sp.mForeColor = -1;
-	sp.mBackColor = -1;
-
-	mTotalHeight = 0;
+	DeleteAll();
 }
 
 Document::~Document() {
@@ -770,40 +771,28 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 		splitRequired = true;
 	}
 
-	// validate iterators
-	for(Iterator *itp : mIterators)
-		itp->Validate();
-
-	// insert text into paragraph
-	int lastAdded = 0;
-	if (s > text) {
-		if (splitRequired) {
-			lastPara = new Paragraph;
-			lastPara->mHeight = 0;
-			lastPara->mYPos = para->mYPos;
-			
-			para->Split(it.mLine, it.mOffset, *lastPara);
-		}
-		para->Insert(it.mLine, it.mOffset, text, s-text);
-
-		for(Iterators::iterator itI(mIterators.begin()), itIEnd(mIterators.end()); itI!=itIEnd; ++itI) {
-			Iterator& it2 = **itI;
-
-			if (it2.mPara != paraIdx)
-				continue;
-
-			if (it2 > it)
-				it2.mOffset += (int)(s - text);
-
-			it2.Validate();
-
-		}
-
-		len -= (s-text);
-		text = s;
-
-		ReflowPara(paraIdx);
+	// validate iterators before we touch anything
+	if constexpr (kValidationEnabled) {
+		for(Iterator *itp : mIterators)
+			itp->Validate();
 	}
+
+	// if we have a newline, then split the current paragraph at the insertion
+	// point
+	if (splitRequired) {
+		lastPara = new Paragraph;
+		lastPara->mHeight = 0;
+		lastPara->mYPos = para->mYPos;
+			
+		para->Split(it.mLine, it.mOffset, *lastPara);
+	}
+
+	// insert initial text -- this is always at least one char or newline
+	const int frontAdded = (int)(s - text);
+	para->Insert(it.mLine, it.mOffset, text, frontAdded);
+
+	len -= frontAdded;
+	text = s;
 	
 	// generate new paragraphs
 	while(s = (const char *)memchr(text, '\n', len)) {
@@ -830,6 +819,8 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 		newParas.push_back(p);
 	}
 
+	// insert remaining text after final newline, if any
+	int lastAdded = 0;
 	if (lastPara) {
 		lastAdded = (int)len;
 		if (len)
@@ -841,77 +832,64 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 	// bump paragraphs
 	int parasAdded = (int)newParas.size();
 	if (parasAdded) {
-		const uint32 insertY = it.mPara + 1 >= (int)mParagraphs.size() ? mTotalHeight : mParagraphs[it.mPara + 1]->mYPos;
+		// capture Y start position for Y-pos shift
+		const uint32 insertY = mParagraphs[it.mPara]->GetYBottom();
 
+		// insert the new paragraphs and capture iterator start position for Y shift
 		const auto itParaInsert = mParagraphs.insert(mParagraphs.begin() + it.mPara + 1, newParas.begin(), newParas.end());
 
-		for(int i=0; i<parasAdded; ++i)
-			ReflowPara(paraIdx + i + 1);
-
 		// fixup iterators
 		for(Iterators::iterator itI(mIterators.begin()), itIEnd(mIterators.end()); itI!=itIEnd; ++itI) {
 			Iterator& it2 = **itI;
 
-			if (it2.mPara < it.mPara)
-				continue;
-			
+#ifdef _DEBUG
+			[[maybe_unused]] auto origPara = it2.mPara;
+			[[maybe_unused]] auto origLine = it2.mLine;
+			[[maybe_unused]] auto origOffset = it2.mOffset;
+#endif
+
 			if (it2.mPara > it.mPara) {
 				it2.mPara += parasAdded;
-				continue;
-			}
-
-			if (it2.mLine < it.mLine)
-				continue;
-
-			if (it2.mLine == it.mLine) {
-				if (it2.mOffset > it.mOffset) {
+			} else if (it2.mPara == it.mPara && it2.mLine >= it.mLine) {
+				if (it2.mLine > it.mLine) {
+					it2.mLine -= it.mLine;
 					it2.mPara += parasAdded;
+
+					if (atEndOfLine)
+						--it2.mLine;
+				} else if (it2.mOffset > it.mOffset) {
 					it2.mLine = 0;
-					it2.mOffset += lastAdded - it.mOffset;
+					it2.mOffset -= it.mOffset;
+					it2.mPara += parasAdded;
+
+					it2.mOffset += lastAdded;
 				}
-				continue;
 			}
 
-			it2.mLine -= it.mLine;
-			if (atEndOfLine)
-				--it2.mLine;
-
 			it2.Validate();
+
+#ifdef _DEBUG
+			// VC++ debugger unfortunately doesn't see vars as visible at end of block.
+			[[maybe_unused]] int block_var_view_sentinel = 0;
+#endif
 		}
 
+		// recompute paragraph positions
 		RecomputeParaPositions(insertY, itParaInsert);
-
-		if (after) {
-			// Note: *after may alias it!
-			after->Attach(*this);
-			after->mPara = paraIdx + parasAdded;
-			after->mLine = 0;
-			after->mOffset = lastAdded;
-			after->Validate();
-		}
-	} else {
-		// fixup iterators
-		for(Iterators::iterator itI(mIterators.begin()), itIEnd(mIterators.end()); itI!=itIEnd; ++itI) {
-			Iterator& it2 = **itI;
-
-			if (it2.mPara == it.mPara && it2.mLine == it.mLine && it2.mOffset > it.mOffset)
-				it2.mOffset += lastAdded;
-
-			it2.Validate();
-		}
-
-		if (after) {
-			// Note: *after may alias it!
-			int lineIdx = it.mLine;
-			int offset = it.mOffset;
-
-			after->Attach(*this);
-			after->mPara = paraIdx;
-			after->mLine = lineIdx;
-			after->mOffset = offset + lastAdded;
-			after->Validate();
-		}
 	}
+
+	if (after) {
+		// Note: *after may alias it!
+		after->Attach(*this);
+		after->mPara = paraIdx + parasAdded;
+		after->mLine = parasAdded ? 0 : it.mLine;
+		after->mOffset = parasAdded ? lastAdded : frontAdded + it.mOffset;
+		after->Validate();
+	}
+
+	// Reflow any added paragraphs as well as the last paragraph if we added
+	// to it.
+	ReflowParas(paraIdx, parasAdded + 1);
 
 	int bottomYNew = mParagraphs[paraIdx + parasAdded]->GetYBottom();
 
@@ -919,6 +897,48 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 		mpCB->VerticalShiftRows(bottomYOld, bottomYNew);
 		mpCB->InvalidateRows(topY, bottomYNew);
 	}
+}
+
+void Document::DeleteAll() {
+	while(mParagraphs.size() > 1) {
+		delete mParagraphs.back();
+		mParagraphs.pop_back();
+	}
+
+	if (mParagraphs.empty()) {
+		mParagraphs.push_back();
+		mParagraphs.back() = new Paragraph;
+	}
+
+	Paragraph *para = mParagraphs.back();
+
+	para->mHeight = 0;
+	para->mYPos = 0;
+
+	para->mLines.resize(1);
+	Line& ln = para->mLines.back();
+	ln.mStart = 0;
+	ln.mLength = 0;
+	ln.mHeight = 0;
+
+	para->mSpans.resize(1);
+	Span& sp = para->mSpans.back();
+	sp.mStart = 0;
+	sp.mForeColor = -1;
+	sp.mBackColor = -1;
+
+	for(Iterator *it : mIterators) {
+		it->mPara = 0;
+		it->mLine = 0;
+		it->mOffset = 0;
+	}
+
+	if (mpCB) {
+		mpCB->ChangeTotalHeight(0);
+		mpCB->InvalidateRows(0, mTotalHeight);
+	}
+
+	mTotalHeight = 0;
 }
 
 void Document::Delete(const Iterator& it1, const Iterator& it2) {
@@ -939,8 +959,10 @@ void Document::Delete(const Iterator& it1, const Iterator& it2) {
 	const int bottomYOld = mParagraphs[paraIdx2]->GetYBottom();
 
 	// validate iterators before we begin mucking with paragraphs
-	for(Iterator *itp : mIterators)
-		itp->Validate();
+	if constexpr (kValidationEnabled) {
+		for(Iterator *itp : mIterators)
+			itp->Validate();
+	}
 
 	// check for simpler case of deletion within paragraph
 	Paragraph& para1 = *mParagraphs[it1.mPara];
@@ -1006,6 +1028,11 @@ void Document::Delete(const Iterator& it1, const Iterator& it2) {
 		mpCB->VerticalShiftRows(bottomYOld, bottomYNew);
 		mpCB->InvalidateRows(topY, bottomYOld);
 	}
+}
+
+void Document::ReflowParas(int paraIdx, int count) {
+	for(int i=0; i<count; ++i)
+		ReflowPara(paraIdx + i);
 }
 
 void Document::ReflowPara(int paraIdx) {

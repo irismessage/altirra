@@ -500,7 +500,7 @@ wchar_t VDJSONReader::GetCharSlow() {
 		bool encodingError = false;
 
 		if (mbUTF32Mode) {
-			if (sizeof(wchar_t) >= 4) {
+			if constexpr (sizeof(wchar_t) >= 4) {
 				int tc = (mpSrcEnd - mpSrc) >> 2;
 
 				if (tc > kInputBufferSize - len)
@@ -584,7 +584,7 @@ wchar_t VDJSONReader::GetCharSlow() {
 				}
 			}
 		} else if (mbUTF16Mode) {
-			if (sizeof(wchar_t) > 2) {		// UTF-16 -> UTF-32 conversion
+			if constexpr (sizeof(wchar_t) > 2) {		// UTF-16 -> UTF-32 conversion
 				if (mbBigEndian) {
 					while(len < kInputBufferSize && (mpSrcEnd - mpSrc) > 2) {
 						uint32 c0 = ((uint32)mpSrc[0] << 8) + mpSrc[1];
@@ -714,7 +714,7 @@ wchar_t VDJSONReader::GetCharSlow() {
 					}
 
 					// fragment into surrogates if required
-					if (sizeof(wchar_t) <= 2) {
+					if constexpr (sizeof(wchar_t) <= 2) {
 						if (len >= kInputBufferSize - 1)
 							break;
 

@@ -229,6 +229,23 @@ public:
 	// Changes every time the serial input register in POKEY is reset.
 	virtual uint32 GetRecvResetCounter() const = 0;
 
+	// Gets the current time in the command queue, after all currently queued commands.
+	// This is different than the current time as it tracks delays in command steps that
+	// have not been processed yet. For an accelerated request, this may be advanced but
+	// not actually reflect time that will be taken.
+	//
+	// The queue time is not valid after a receive step until that step has occurred. Once
+	// the receive has occurred, the queue time is adjusted to the current time and is valid.
+	// Transfer times are estimated for sends and ignore burst I/O.
+	//
+	virtual uint64 GetCommandQueueTime() const = 0;
+
+	// Gets the time of the end of the command frame.
+	virtual uint64 GetCommandFrameEndTime() const = 0;
+
+	// Gets the time when the SIO command line was deasserted.
+	virtual uint64 GetCommandDeassertTime() const = 0;
+
 	// Saves active command state for the given device. Returns null if no command is
 	// active for the given device, or if the current active command is for another
 	// device.

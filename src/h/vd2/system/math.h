@@ -128,98 +128,42 @@ inline sint32 VDRoundToIntFastFullRange(double x) {
 	return (sint32)u.i[0];
 }
 
-#if !defined(VD_CPU_X86) || !defined(VD_COMPILER_MSVC) || defined(VD_COMPILER_MSVC_CLANG)
-	inline sint32 VDFloorToInt(double x) {
+inline constexpr sint32 VDFloorToInt(double x) {
+	if (std::is_constant_evaluated()) {
+		sint32 estimate = (sint32)x;
+
+		return x >= 0 || (double)estimate == x ? estimate : estimate - 1;
+	} else
 		return (sint32)floor(x);
-	}
+}
 
-	inline sint64 VDFloorToInt64(double x) {
+inline constexpr sint64 VDFloorToInt64(double x) {
+	if (std::is_constant_evaluated()) {
+		sint64 estimate = (sint64)x;
+
+		return x >= 0 || (double)estimate == x ? estimate : estimate - 1;
+	} else
 		return (sint64)floor(x);
-	}
-#else
-	#pragma warning(push)
-	#pragma warning(disable: 4035)		// warning C4035: 'VDFloorToInt' : no return value
-	inline sint32 VDFloorToInt(double x) {
-		sint32 temp;
+}
 
-		__asm {
-			fld x
-			fist temp
-			fild temp
-			mov eax, temp
-			fsub
-			fstp temp
-			cmp	temp, 80000001h
-			adc eax, -1
-		}
-	}
-	inline sint64 VDFloorToInt64(double x) {
-		sint64 temp;
-		sint32 temp2;
+inline constexpr sint32 VDCeilToInt(double x) {
+	if (std::is_constant_evaluated()) {
+		sint32 estimate = (sint32)x;
 
-		__asm {
-			fld x
-			fld st(0)
-			fistp qword ptr temp
-			fild qword ptr temp
-			mov eax, dword ptr temp
-			mov edx, dword ptr temp+4
-			fsub
-			fstp dword ptr temp2
-			cmp	dword ptr temp2, 80000001h
-			adc eax, -1
-			adc edx, -1
-		}
-	}
-	#pragma warning(pop)
-#endif
-
-#if !defined(VD_CPU_X86) || !defined(VD_COMPILER_MSVC) || defined(VD_COMPILER_MSVC_CLANG)
-	inline sint32 VDCeilToInt(double x) {
+		return x < 0 || (double)estimate == x ? estimate : estimate + 1;
+	} else
 		return (sint32)ceil(x);
-	}
+}
 
-	inline sint64 VDCeilToInt64(double x) {
+inline constexpr sint64 VDCeilToInt64(double x) {
+	if (std::is_constant_evaluated()) {
+		sint64 estimate = (sint64)x;
+
+		return x < 0 || (double)estimate == x ? estimate : estimate + 1;
+	} else
 		return (sint64)ceil(x);
-	}
-#else
-	#pragma warning(push)
-	#pragma warning(disable: 4035)		// warning C4035: 'VDCeilToInt' : no return value
-	inline sint32 VDCeilToInt(double x) {
-		sint32 temp;
+}
 
-		__asm {
-			fld x
-			fist temp
-			fild temp
-			mov eax, temp
-			fsubr
-			fstp temp
-			cmp	temp, 80000001h
-			sbb eax, -1
-		}
-	}
-
-	inline sint32 VDCeilToInt64(double x) {
-		sint64 temp;
-		sint32 temp2;
-
-		__asm {
-			fld x
-			fld st(0)
-			fistp temp
-			fild temp
-			mov eax, dword ptr temp
-			mov edx, dword ptr temp+4
-			fsubr
-			fstp temp2
-			cmp	temp2, 80000001h
-			sbb eax, -1
-			sbb edx, -1
-		}
-	}
-	#pragma warning(pop)
-#endif
 
 ///////////////////////////////////////////////////////////////////////////
 /// Convert a value from [-~1..1] to [-32768, 32767] with clamping.

@@ -1,11 +1,20 @@
 #include <stdafx.h>
+#include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/filesys.h>
+#include <at/atcore/checksum.h>
 #include <windows.h>
 #include "directorywatcher.h"
 
+bool ATDirectoryWatcher::sbShouldUsePolling;
+
+void ATDirectoryWatcher::SetShouldUsePolling(bool enabled) {
+	sbShouldUsePolling = enabled;
+}
+
 ATDirectoryWatcher::ATDirectoryWatcher()
-	: mhDir(INVALID_HANDLE_VALUE)
+	: VDThread("Altirra directory watcher")
+	, mhDir(INVALID_HANDLE_VALUE)
 	, mhExitEvent(NULL)
 	, mhDirChangeEvent(NULL)
 	, mpChangeBuffer(NULL)
@@ -18,25 +27,28 @@ ATDirectoryWatcher::~ATDirectoryWatcher() {
 	Shutdown();
 }
 
-void ATDirectoryWatcher::Init(const wchar_t *basePath) {
+void ATDirectoryWatcher::Init(const wchar_t *basePath, bool recursive) {
 	Shutdown();
 
 	mBasePath = VDGetLongPath(basePath);
+	mbRecursive = recursive;
 
 	try {
-		mChangeBufferSize = 32768;
-		mpChangeBuffer = new char[mChangeBufferSize];
+		if (!sbShouldUsePolling) {
+			mChangeBufferSize = 32768;
+			mpChangeBuffer = new char[mChangeBufferSize];
 
-		mhDir = CreateFileW(basePath, FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED | FILE_FLAG_BACKUP_SEMANTICS, NULL);
-		if (mhDir == INVALID_HANDLE_VALUE)
-			throw (DWORD)GetLastError();
+			mhDir = CreateFileW(basePath, FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED | FILE_FLAG_BACKUP_SEMANTICS, NULL);
+			if (mhDir == INVALID_HANDLE_VALUE)
+				throw (DWORD)GetLastError();
+
+			mhDirChangeEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+			if (!mhDirChangeEvent)
+				throw (DWORD)GetLastError();
+		}
 
 		mhExitEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
 		if (!mhExitEvent)
-			throw (DWORD)GetLastError();
-
-		mhDirChangeEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
-		if (!mhDirChangeEvent)
 			throw (DWORD)GetLastError();
 
 		ThreadStart();
@@ -69,6 +81,23 @@ void ATDirectoryWatcher::Shutdown() {
 	}
 }
 
+bool ATDirectoryWatcher::CheckForChanges() {
+	bool changed = false;
+
+	vdsynchronized(mMutex) {
+		changed = mbAllChanged;
+
+		if (changed) {
+			mbAllChanged = false;
+		} else if (!mChangedDirs.empty()) {
+			mChangedDirs.clear();
+			changed = true;
+		}
+	}
+
+	return changed;
+}
+
 bool ATDirectoryWatcher::CheckForChanges(vdfastvector<wchar_t>& strheap) {
 	bool allChanged = false;
 	strheap.clear();
@@ -97,6 +126,77 @@ bool ATDirectoryWatcher::CheckForChanges(vdfastvector<wchar_t>& strheap) {
 }
 
 void ATDirectoryWatcher::ThreadRun() {
+	if (mpChangeBuffer)
+		RunNotifyThread();
+	else
+		RunPollThread();
+}
+
+void ATDirectoryWatcher::RunPollThread() {
+	uint32 delay = 1000;
+	uint32 lastChecksum[8] {};
+	bool firstPoll = true;
+
+	for(;;) {
+		uint32 newChecksum[8] {};
+		PollDirectory(newChecksum, mBasePath, 0);
+
+		if (memcmp(newChecksum, lastChecksum, sizeof newChecksum) || firstPoll) {
+			memcpy(lastChecksum, newChecksum, sizeof lastChecksum);
+
+			if (firstPoll)
+				firstPoll = false;
+			else
+				NotifyAllChanged();
+		}
+
+		if (WAIT_TIMEOUT != WaitForSingleObject((HANDLE)mhExitEvent, delay))
+			break;
+	}
+}
+
+void ATDirectoryWatcher::PollDirectory(uint32 *orderIndependentChecksum, const VDStringSpanW& path, uint32 nestingLevel) {
+	ATChecksumEngineSHA256 mChecksumEngine;
+
+	VDDirectoryIterator it(VDMakePath(path, VDStringSpanW(L"*")).c_str());
+	while(it.Next()) {
+		const VDStringW& fullItemPath = it.GetFullPath();
+
+		mChecksumEngine.Reset();
+		mChecksumEngine.Process(fullItemPath.data(), fullItemPath.size() * sizeof(fullItemPath[0]));
+
+		const struct MiscData {
+			sint64 mSize;
+			uint64 mCreationDate;
+			uint64 mLastWriteDate;
+			uint32 mAttributes;
+			uint32 mPad;
+		} miscData = {
+			it.GetSize(),
+			it.GetCreationDate().mTicks,
+			it.GetLastWriteDate().mTicks,
+			it.GetAttributes()
+		};
+
+		mChecksumEngine.Process(&miscData, sizeof miscData);
+		const auto& checksum = mChecksumEngine.Finalize();
+
+		uint32 c = 0;
+		for(uint32 i=0; i<8; ++i) {
+			uint32 x = orderIndependentChecksum[i];
+			uint32 y = VDReadUnalignedU32(&checksum.mDigest[i*4]);
+			uint64 sum = (uint64)x + y + c;
+
+			orderIndependentChecksum[i] = (uint32)sum;
+			c = (uint32)(sum >> 32);
+		}
+
+		if (it.IsDirectory() && !it.IsLink() && nestingLevel < 8 && mbRecursive)
+			PollDirectory(orderIndependentChecksum, fullItemPath, nestingLevel + 1);
+	}
+}
+
+void ATDirectoryWatcher::RunNotifyThread() {
 	OVERLAPPED ov;
 	HANDLE h[2] = { (HANDLE)mhExitEvent, (HANDLE)mhDirChangeEvent };
 	const DWORD dwNotifyFilter
@@ -117,7 +217,7 @@ void ATDirectoryWatcher::ThreadRun() {
 
 		ResetEvent(ov.hEvent);
 
-		BOOL rdcResult = ReadDirectoryChangesW((HANDLE)mhDir, mpChangeBuffer, mChangeBufferSize, TRUE, dwNotifyFilter, &dummyActual, &ov, NULL);
+		BOOL rdcResult = ReadDirectoryChangesW((HANDLE)mhDir, mpChangeBuffer, mChangeBufferSize, mbRecursive ? TRUE : FALSE, dwNotifyFilter, &dummyActual, &ov, NULL);
 		DWORD waitResult = WaitForMultipleObjects(rdcResult != 0 ? 2 : 1, h, FALSE, INFINITE);
 
 		if (waitResult != WAIT_OBJECT_0 + 1) {

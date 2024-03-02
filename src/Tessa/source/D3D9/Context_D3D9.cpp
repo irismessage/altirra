@@ -168,7 +168,7 @@ bool VDTReadbackBufferD3D9::Lock(VDTLockData2D& lockData) {
 }
 
 void VDTReadbackBufferD3D9::Unlock() {
-	HRESULT hr = mpSurface->UnlockRect();
+	[[maybe_unused]] HRESULT hr = mpSurface->UnlockRect();
 	VDASSERT(SUCCEEDED(hr));
 }
 
@@ -597,7 +597,7 @@ void VDTTexture2DD3D9::Load(uint32 mip, uint32 x, uint32 y, const VDTInitData2D&
 	mMipmaps[mip]->Load(x, y, srcData, w, h);
 }
 
-bool VDTTexture2DD3D9::Lock(uint32 mip, const vdrect32 *r, VDTLockData2D& lockData) {
+bool VDTTexture2DD3D9::Lock(uint32 mip, const vdrect32 *r, bool discard, VDTLockData2D& lockData) {
 	return mMipmaps[mip]->Lock(r, lockData);
 }
 
@@ -1362,9 +1362,6 @@ int VDTContextD3D9::Release() {
 }
 
 void *VDTContextD3D9::AsInterface(uint32 iid) {
-	if (iid == IVDTProfiler::kTypeID)
-		return static_cast<IVDTProfiler *>(this);
-
 	return NULL;
 }
 
@@ -1511,6 +1508,12 @@ bool VDTContextD3D9::IsFormatSupportedTexture2D(VDTFormat format) {
 
 	hr = mpD3D->CheckDeviceFormat(mpData->mAdapter, mpData->mDeviceType, dm.Format, 0, D3DRTYPE_TEXTURE, d3dfmt);
 	return SUCCEEDED(hr);
+}
+
+bool VDTContextD3D9::IsMonitorHDREnabled(void *monitor, bool& systemSupport) {
+	// We don't check if the system supports it, so we avoid flagging this as a failure.
+	systemSupport = true;
+	return false;
 }
 
 bool VDTContextD3D9::CreateReadbackBuffer(uint32 width, uint32 height, VDTFormat format, IVDTReadbackBuffer **ppbuffer) {
@@ -1723,7 +1726,7 @@ void VDTContextD3D9::SetIndexStream(IVDTIndexBuffer *buffer) {
 		ProcessHRESULT(hr);
 }
 
-void VDTContextD3D9::SetRenderTarget(uint32 index, IVDTSurface *surface) {
+void VDTContextD3D9::SetRenderTarget(uint32 index, IVDTSurface *surface, bool bypassConversion) {
 	VDASSERT(index == 0);
 
 	if (!index && !surface)
@@ -1818,6 +1821,20 @@ void VDTContextD3D9::SetTextures(uint32 baseIndex, uint32 count, IVDTTexture *co
 			mpCurrentTextures[stage] = tex;
 
 			HRESULT hr = mpD3DDevice->SetTexture(stage, tex ? (IDirect3DBaseTexture9 *)tex->AsInterface(VDTTextureD3D9::kTypeD3DTexture) : NULL);
+			if (FAILED(hr)) {
+				ProcessHRESULT(hr);
+				break;
+			}
+		}
+	}
+}
+
+void VDTContextD3D9::ClearTexturesStartingAt(uint32 baseIndex) {
+	for(uint32 i=baseIndex; i<16; ++i) {
+		if (mpCurrentTextures[i]) {
+			mpCurrentTextures[i] = nullptr;
+
+			HRESULT hr = mpD3DDevice->SetTexture(i, nullptr);
 			if (FAILED(hr)) {
 				ProcessHRESULT(hr);
 				break;
@@ -2061,7 +2078,7 @@ void VDTContextD3D9::UnsetIndexBuffer(IVDTIndexBuffer *buffer) {
 
 void VDTContextD3D9::UnsetRenderTarget(IVDTSurface *surface) {
 	if (mpCurrentRT == surface)
-		SetRenderTarget(0, NULL);
+		SetRenderTarget(0, NULL, false);
 }
 
 void VDTContextD3D9::UnsetBlendState(IVDTBlendState *state) {

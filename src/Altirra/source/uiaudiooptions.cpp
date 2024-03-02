@@ -17,9 +17,9 @@
 
 #include <stdafx.h>
 #include <vd2/system/math.h>
+#include <at/ataudio/audiooutput.h>
 #include <at/atnativeui/dialog.h>
 #include "resource.h"
-#include "audiooutput.h"
 #include "simulator.h"
 #include "audiosampleplayer.h"
 
@@ -91,10 +91,7 @@ void ATAudioOptionsDialog::OnDataExchange(bool write) {
 		audioOut->SetExtraBuffer(mExtraBufferTick * 10);
 		audioOut->SetApi(GetSelectedApi());
 
-		if (IsButtonChecked(IDC_DEBUG))
-			audioOut->SetStatusRenderer(g_sim.GetUIRenderer());
-		else
-			audioOut->SetStatusRenderer(NULL);
+		g_sim.SetAudioStatusEnabled(IsButtonChecked(IDC_DEBUG));
 	} else {
 		const float volume = audioOut->GetVolume();
 		mVolumeTick = 200 + VDRoundToInt(100.0f * log10(volume));
@@ -131,7 +128,7 @@ void ATAudioOptionsDialog::OnDataExchange(bool write) {
 				break;
 		}
 
-		CheckButton(IDC_DEBUG, audioOut->GetStatusRenderer() != NULL);
+		CheckButton(IDC_DEBUG, g_sim.IsAudioStatusEnabled());
 
 		TBSetValue(IDC_VOLUME, mVolumeTick);
 		TBSetValue(IDC_DRIVEVOL, mDriveVolTick);

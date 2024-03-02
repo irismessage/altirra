@@ -57,24 +57,19 @@ protected:
 	void UpdateEnables();
 
 	VDStringW mPath;
-	uint32 mSectorCount;
-	uint32 mSizeInMB;
-	uint32 mHeads;
-	uint32 mSPT;
-	bool mbAutoGeometry;
-	bool mbDynamicDisk;
-	uint32 mInhibitUpdateLocks;
+	VDStringW mParentPath;
+	uint32 mSectorCount = 8*1024*2;		// 8MB
+	uint32 mSizeInMB = 8;
+	uint32 mHeads = 15;
+	uint32 mSPT = 63;
+	bool mbAutoGeometry = true;
+	bool mbDynamicDisk = true;
+	bool mbDifferencingDisk = false;
+	uint32 mInhibitUpdateLocks = 0;
 };
 
 ATUIDialogCreateVHDImage2::ATUIDialogCreateVHDImage2()
 	: VDDialogFrameW32(IDD_CREATE_VHD)
-	, mSectorCount(8*1024*2)		// 8MB
-	, mSizeInMB(8)
-	, mHeads(15)
-	, mSPT(63)
-	, mbAutoGeometry(true)
-	, mbDynamicDisk(true)
-	, mInhibitUpdateLocks(0)
 {
 }
 
@@ -90,18 +85,24 @@ bool ATUIDialogCreateVHDImage2::OnLoaded() {
 
 void ATUIDialogCreateVHDImage2::OnDataExchange(bool write) {
 	ExchangeControlValueString(write, IDC_PATH, mPath);
+	ExchangeControlValueString(write, IDC_PATH_PARENT, mParentPath);
 	ExchangeControlValueUint32(write, IDC_SIZE_SECTORS, mSectorCount, 2048, 0xFFFFFFFEU);
 	ExchangeControlValueUint32(write, IDC_SIZE_MB, mSizeInMB, 1, 4095);
 
 	if (write) {
 		mbAutoGeometry = IsButtonChecked(IDC_GEOMETRY_AUTO);
-		mbDynamicDisk = IsButtonChecked(IDC_TYPE_DYNAMIC);
+		mbDifferencingDisk = IsButtonChecked(IDC_TYPE_DIFFERENCING);
+		mbDynamicDisk = mbDifferencingDisk || IsButtonChecked(IDC_TYPE_DYNAMIC);
+
+		if (mbDifferencingDisk && mParentPath.empty())
+			FailValidation(IDC_PATH_PARENT, L"Parent path is needed for a differencing disk image.", L"Invalid configuration");
 	} else {
 		CheckButton(IDC_GEOMETRY_AUTO, mbAutoGeometry);
 		CheckButton(IDC_GEOMETRY_MANUAL, !mbAutoGeometry);
 
 		CheckButton(IDC_TYPE_FIXED, !mbDynamicDisk);
-		CheckButton(IDC_TYPE_DYNAMIC, mbDynamicDisk);
+		CheckButton(IDC_TYPE_DYNAMIC, mbDynamicDisk && !mbDifferencingDisk);
+		CheckButton(IDC_TYPE_DIFFERENCING, mbDynamicDisk && mbDifferencingDisk);
 	}
 
 	if (!write || mbAutoGeometry) {
@@ -115,21 +116,23 @@ bool ATUIDialogCreateVHDImage2::OnOK() {
 		return true;
 
 	// Okay, let's actually try to create the VHD image!
-
 	try {
+		ATIDEVHDImage parentVhd;
 		ATIDEVHDImage vhd;
-		vhd.InitNew(mPath.c_str(), mHeads, mSPT, mSectorCount, mbDynamicDisk);
+
+		if (mbDifferencingDisk)
+			parentVhd.Init(mParentPath.c_str(), false, true);
+
+		vhd.InitNew(mPath.c_str(), mHeads, mSPT, mSectorCount, mbDynamicDisk, mbDifferencingDisk ? &parentVhd : nullptr);
 		vhd.Flush();
 	} catch(const MyUserAbortError&) {
 		return true;
 	} catch(const MyError& e) {
-		VDStringW msg;
-		msg.sprintf(L"VHD creation failed: %hs", e.gets());
-		ShowError(msg.c_str(), L"Altirra Error");
+		ShowError2(e, L"Image creation failed");
 		return true;
 	}
 
-	ShowInfo(L"VHD creation was successful.", L"Altirra Notice");
+	ShowInfo2(L"VHD creation was successful.", L"Image created");
 	return false;
 }
 
@@ -143,6 +146,17 @@ bool ATUIDialogCreateVHDImage2::OnCommand(uint32 id, uint32 extcode) {
 			}
 			return true;
 
+		case IDC_BROWSE_PARENT:
+			{
+				VDStringW s(VDGetLoadFileName('vhd ', (VDGUIHandle)mhdlg, L"Select parent VHD image file", L"Virtual hard disk image\0*.vhd\0", L"vhd"));
+				if (!s.empty())
+					SetControlText(IDC_PATH_PARENT, s.c_str());
+			}
+			return true;
+
+		case IDC_TYPE_FIXED:
+		case IDC_TYPE_DYNAMIC:
+		case IDC_TYPE_DIFFERENCING:
 		case IDC_GEOMETRY_AUTO:
 		case IDC_GEOMETRY_MANUAL:
 			if (extcode == BN_CLICKED)
@@ -213,7 +227,20 @@ void ATUIDialogCreateVHDImage2::UpdateGeometry() {
 }
 
 void ATUIDialogCreateVHDImage2::UpdateEnables() {
-	bool enableManualControls = IsButtonChecked(IDC_GEOMETRY_MANUAL);
+	bool enableParent = IsButtonChecked(IDC_TYPE_DIFFERENCING);
+	bool enableGeometry = !enableParent;
+	bool enableManualControls = IsButtonChecked(IDC_GEOMETRY_MANUAL) && enableGeometry;
+
+	EnableControl(IDC_STATIC_PARENT, enableParent);
+	EnableControl(IDC_PATH_PARENT, enableParent);
+	EnableControl(IDC_BROWSE_PARENT, enableParent);
+	EnableControl(IDC_STATIC_SIZEMB, enableGeometry);
+	EnableControl(IDC_STATIC_SIZESECTORS, enableGeometry);
+	EnableControl(IDC_SIZE_MB, enableGeometry);
+	EnableControl(IDC_SIZE_SECTORS, enableGeometry);
+	EnableControl(IDC_STATIC_GEOMETRY, enableGeometry);
+	EnableControl(IDC_GEOMETRY_AUTO, enableGeometry);
+	EnableControl(IDC_GEOMETRY_MANUAL, enableGeometry);
 
 	EnableControl(IDC_STATIC_HEADS, enableManualControls);
 	EnableControl(IDC_STATIC_SPT, enableManualControls);
@@ -371,7 +398,7 @@ bool ATUIDialogDeviceHardDisk::OnCommand(uint32 id, uint32 extcode) {
 
 							SetCapacityBySectorCount(vhdImage->GetSectorCount());
 						} catch(const MyError& e) {
-							e.post(mhdlg, "Altirra Error");
+							ShowError2(e, L"VHD image mount failed");
 							return true;
 						}
 					} else {

@@ -22,18 +22,6 @@
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATInvalidSaveStateException::ATInvalidSaveStateException()
-	: MyError("The save state data is invalid.")
-{
-}
-
-ATUnsupportedSaveStateException::ATUnsupportedSaveStateException()
-	: MyError("The saved state uses features unsupported by this version of Altirra and cannot be loaded.")
-{
-}
-
-///////////////////////////////////////////////////////////////////////////
-
 ATSaveStateReader::ATSaveStateReader(const uint8 *src, uint32 len)
 	: mpSrc(src)
 	, mSize(len)

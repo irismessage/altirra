@@ -24,6 +24,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ClCompile Include="source\acceleditdialog.cpp" />
+    <ClCompile Include="source\canvas_win32.cpp" />
     <ClCompile Include="source\dialog.cpp" />
     <ClCompile Include="source\dragdrop.cpp" />
     <ClCompile Include="source\genericdialog.cpp" />
@@ -42,6 +43,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\h\at\atnativeui\canvas_win32.h" />
     <ClInclude Include="..\h\at\atnativeui\dragdrop.h" />
     <ClInclude Include="..\h\at\atnativeui\genericdialog.h" />
     <ClInclude Include="..\h\at\atnativeui\messagedispatcher.h" />

@@ -374,6 +374,12 @@ void ATVBXEEmulator::SetDefaultPalette(const uint32 pal[256], ATPaletteCorrector
 	RecorrectPalettes();
 }
 
+uint32 ATVBXEEmulator::GetRawPaletteAndSEL(uint32 pal[1024]) const {
+	memcpy(pal, mArchPalette, 1024 * 4);
+
+	return mPsel * 4 + mCsel;
+}
+
 void ATVBXEEmulator::SetTraceContext(ATTraceContext *context) {
 	if (context) {
 		ATTraceCollection *coll = context->mpCollection;
@@ -1473,6 +1479,16 @@ void ATVBXEEmulator::AddRegisterChange(uint8 pos, uint8 addr, uint8 value) {
 	mRegisterChanges.insert(it, change);
 
 	++mRCCount;
+}
+
+void ATVBXEEmulator::SetRegisterImmediate(uint8 addr, uint8 value) {
+	RegisterChange change;
+	change.mPos = 0;
+	change.mReg = addr;
+	change.mValue = value;
+	change.mPad = 0;
+
+	UpdateRegisters(&change, 1);
 }
 
 void ATVBXEEmulator::OnScheduledEvent(uint32 id) {
@@ -2583,15 +2599,19 @@ void ATVBXEEmulator::RenderOverlay(int x1, int x2) {
 						if (ovpri[0] && (v0 & 15) != 15) {
 							dst[0] = mPalette[(apx[0].mCtrl >> 4) & 3][v0];
 
-							if (T_EnableCollisions && (collMask & (1 << (v0 >> 5))))
-								collState |= prisrc[1];
+							if constexpr (T_EnableCollisions) {
+								if (collMask & (1 << (v0 >> 5)))
+									collState |= prisrc[1];
+							}
 						}
 
 						if (ovpri[1] && (v1 & 15) != 15) {
 							dst[1] = mPalette[(apx[0].mCtrl >> 4) & 3][v1];
 
-							if (T_EnableCollisions && (collMask & (1 << (v1 >> 5))))
-								collState |= prisrc[1];
+							if constexpr (T_EnableCollisions) {
+								if (collMask & (1 << (v1 >> 5)))
+									collState |= prisrc[1];
+							}
 						}
 					}
 
@@ -2612,15 +2632,19 @@ void ATVBXEEmulator::RenderOverlay(int x1, int x2) {
 						if (ovpri[0]) {
 							dst[0] = mPalette[(apx[0].mCtrl >> 4) & 3][v0];
 
-							if (T_EnableCollisions && (collMask & (1 << (v0 >> 5))))
-								collState |= prisrc[1];
+							if constexpr (T_EnableCollisions) {
+								if (collMask & (1 << (v0 >> 5)))
+									collState |= prisrc[1];
+							}
 						}
 
 						if (ovpri[1]) {
 							dst[1] = mPalette[(apx[0].mCtrl >> 4) & 3][v1];
 
-							if (T_EnableCollisions && (collMask & (1 << (v1 >> 5))))
-								collState |= prisrc[1];
+							if constexpr (T_EnableCollisions) {
+								if (collMask & (1 << (v1 >> 5)))
+									collState |= prisrc[1];
+							}
 						}
 					}
 
@@ -2643,15 +2667,19 @@ void ATVBXEEmulator::RenderOverlay(int x1, int x2) {
 						if (v0 && (v0 & 15) != 15) {
 							dst[0] = mPalette[(apx[0].mCtrl >> 4) & 3][v0];
 
-							if (T_EnableCollisions && (collMask & (1 << (v0 >> 5))))
-								collState |= prisrc[1];
+							if constexpr (T_EnableCollisions) {
+								if (collMask & (1 << (v0 >> 5)))
+									collState |= prisrc[1];
+							}
 						}
 
 						if (v1 && (v1 & 15) != 15) {
 							dst[1] = mPalette[(apx[0].mCtrl >> 4) & 3][v1];
 
-							if (T_EnableCollisions && (collMask & (1 << (v1 >> 5))))
-								collState |= prisrc[1];
+							if constexpr (T_EnableCollisions) {
+								if (collMask & (1 << (v1 >> 5)))
+									collState |= prisrc[1];
+							}
 						}
 					}
 
@@ -2671,15 +2699,19 @@ void ATVBXEEmulator::RenderOverlay(int x1, int x2) {
 						if (v0) {
 							dst[0] = mPalette[(apx[0].mCtrl >> 4) & 3][v0];
 
-							if (T_EnableCollisions && (collMask & (1 << (v0 >> 5))))
-								collState |= prisrc[1];
+							if constexpr (T_EnableCollisions) {
+								if (collMask & (1 << (v0 >> 5)))
+									collState |= prisrc[1];
+							}
 						}
 
 						if (v1) {
 							dst[1] = mPalette[(apx[0].mCtrl >> 4) & 3][v1];
 
-							if (T_EnableCollisions && (collMask & (1 << (v1 >> 5))))
-								collState |= prisrc[1];
+							if constexpr (T_EnableCollisions) {
+								if (collMask & (1 << (v1 >> 5)))
+									collState |= prisrc[1];
+							}
 						}
 					}
 
@@ -3081,8 +3113,6 @@ void ATVBXEEmulator::RunBlitter() {
 						}
 					} else {
 						for(uint8 i=0; i<mBlitZoomX; ++i) {
-							uint8 d = VBXE_FETCH(dstRowAddr);
-
 							VBXE_WRITE(dstRowAddr, 0);
 							dstRowAddr += mBlitDstStepX;
 						}

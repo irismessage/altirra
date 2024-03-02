@@ -3,10 +3,11 @@
 
 #include <vd2/VDDisplay/renderer.h>
 #include <vd2/VDDisplay/renderersoft.h>
+#include <vd2/VDDisplay/renderergdi.h>
 
 class VDDisplayCachedImageGDI;
 
-class VDDisplayRendererGDI final : public IVDDisplayRenderer {
+class VDDisplayRendererGDI final : public IVDDisplayRendererGDI {
 public:
 	VDDisplayRendererGDI();
 	~VDDisplayRendererGDI();
@@ -17,6 +18,15 @@ public:
 	bool Begin(HDC hdc, sint32 w, sint32 h);
 	void End();
 
+	void FillTri(const vdpoint32 *pts) override;
+
+	void SetTextFont(VDZHFONT hfont) override;
+	void SetTextColorRGB(uint32 c) override;
+	void SetTextBkTransp() override;
+	void SetTextBkColorRGB(uint32 c) override;
+	void SetTextAlignment(TextAlign align = TextAlign::Left, TextVAlign valign = TextVAlign::Top) override;
+	void DrawTextSpan(sint32 x, sint32 y, const wchar_t *text, uint32 numChars) override;
+
 	const VDDisplayRendererCaps& GetCaps();
 	VDDisplayTextRenderer *GetTextRenderer() { return NULL; }
 
@@ -24,7 +34,7 @@ public:
 	void FillRect(sint32 x, sint32 y, sint32 w, sint32 h);
 	void MultiFillRect(const vdrect32 *rects, uint32 n);
 
-	void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor) {}
+	void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor);
 	void AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor) {}
 
 	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
@@ -49,6 +59,9 @@ protected:
 	VDDisplayCachedImageGDI *GetCachedImage(VDDisplayImageView& imageView);
 
 	HDC		mhdc;
+	HDC		mhdc1x1;
+	HBITMAP	mhbm1x1;
+	HGDIOBJ	mhbm1x1Old;
 	int		mSavedDC;
 	uint32	mColor;
 	uint32	mPenColor;
@@ -60,6 +73,10 @@ protected:
 	sint32	mOffsetX;
 	sint32	mOffsetY;
 	vdrect32	mClipRect;
+
+	static constexpr uint32 kInvalidTextColor = 0x01000000;
+	uint32	mLastTextColor = kInvalidTextColor;
+	uint32	mLastTextBkColor = kInvalidTextColor;
 
 	VDDisplaySubRenderCache *mpCurrentSubRender;
 	sint32	mSubRenderX;

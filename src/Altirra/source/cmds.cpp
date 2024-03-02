@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/unknown.h>
+#include <at/ataudio/audiooutput.h>
 #include <at/atcore/device.h>
 #include <at/atcore/devicemanager.h>
 #include "firmwaremanager.h"
@@ -26,7 +27,6 @@
 #include "debugger.h"
 #include "disk.h"
 #include "simulator.h"
-#include "audiooutput.h"
 #include "uiaccessors.h"
 #include "uiconfirm.h"
 #include "uitypes.h"
@@ -45,9 +45,11 @@ void ATUIInitCommandMappingsInput(ATUICommandManager& cmdMgr);
 void ATUIInitCommandMappingsView(ATUICommandManager& cmdMgr);
 void ATUIInitCommandMappingsDebug(ATUICommandManager& cmdMgr);
 void ATUIInitCommandMappingsCassette(ATUICommandManager& cmdMgr);
+void ATUIInitCommandMappingsOption(ATUICommandManager& cmdMgr);
 
 void OnCommandOpenImage();
 void OnCommandBootImage();
+bool OnTestCommandQuickLoadState();
 void OnCommandQuickLoadState();
 void OnCommandQuickSaveState();
 void OnCommandLoadState();
@@ -71,7 +73,6 @@ void OnCommandCassetteLoad();
 void OnCommandCassetteUnload();
 void OnCommandCassetteSave();
 void OnCommandCassetteExportAudioTape();
-void OnCommandCassetteTapeControlDialog();
 void OnCommandCassetteToggleSIOPatch();
 void OnCommandCassetteToggleAutoBoot();
 void OnCommandCassetteToggleAutoBasicBoot();
@@ -137,8 +138,8 @@ void OnCommandViewResetWindowLayout();
 void OnCommandViewEffectReload();
 void OnCommandAnticVisualizationNext();
 void OnCommandGTIAVisualizationNext();
-void OnCommandVideoToggleXEP80View();
-void OnCommandVideoToggleXEP80ViewAutoswitching();
+void OnCommandVideoToggleXEP80Output();
+void OnCommandVideoToggleOutputAutoswitching();
 void OnCommandPane(uint32 paneId);
 void OnCommandEditCopyFrame();
 void OnCommandEditCopyFrameTrueAspect();
@@ -232,6 +233,7 @@ void OnCommandVideoToggleFrameBlending();
 void OnCommandVideoToggleLinearFrameBlending();
 void OnCommandVideoToggleInterlace();
 void OnCommandVideoToggleScanlines();
+void OnCommandVideoToggleBloom();
 void OnCommandVideoMonitorMode(ATMonitorMode mode);
 void OnCommandVideoToggleXEP80();
 void OnCommandVideoAdjustColorsDialog();
@@ -276,12 +278,15 @@ void OnCommandToolsCompatDBDialog();
 void OnCommandToolsSetupWizard();
 void OnCommandToolsExportROMSet();
 void OnCommandToolsAnalyzeTapeDecoding();
+void OnCommandToolsAdvancedConfiguration();
 void OnCommandWindowClose();
 void OnCommandWindowUndock();
 void OnCommandHelpContents();
 void OnCommandHelpAbout();
 void OnCommandHelpChangeLog();
 void OnCommandHelpCmdLine();
+void OnCommandHelpOnline();
+void OnCommandHelpCheckForUpdates();
 
 namespace ATCommands {
 	template<int Index>
@@ -301,20 +306,16 @@ namespace ATCommands {
 		return g_sim.GetDeviceManager()->GetDeviceByTag("rtime8") != NULL;
 	}
 
+	bool IsXEP80Enabled() {
+		return g_sim.GetDeviceManager()->GetDeviceByTag("xep80") != NULL;
+	}
+
 	template<ATFrameRateMode mode>
 	bool FrameRateModeIs() {
 		return ATUIGetFrameRateMode() == mode;
 	}
 
-	bool IsXEP80Enabled() {
-		return g_sim.GetDeviceManager()->GetDeviceByTag("xep80") != NULL;
-	}
-
-	bool IsXEP80ViewEnabled() {
-		return g_xepViewEnabled;
-	}
-
-	bool IsXEP80ViewAutoswitchingEnabled() {
+	bool IsVideoOutputAutoswitchingEnabled() {
 		return g_xepViewAutoswitchingEnabled;
 	}
 
@@ -630,7 +631,7 @@ namespace ATCommands {
 	constexpr struct ATUICommand kATCommands[]={
 		{ "File.OpenImage", OnCommandOpenImage, NULL },
 		{ "File.BootImage", OnCommandBootImage, NULL },
-		{ "File.QuickLoadState", OnCommandQuickLoadState, NULL },
+		{ "File.QuickLoadState", OnCommandQuickLoadState, OnTestCommandQuickLoadState },
 		{ "File.QuickSaveState", OnCommandQuickSaveState, NULL },
 		{ "File.LoadState", OnCommandLoadState, NULL },
 		{ "File.SaveState", OnCommandSaveState, NULL },
@@ -706,8 +707,9 @@ namespace ATCommands {
 		{ "View.NextANTICVisMode", OnCommandAnticVisualizationNext },
 		{ "View.NextGTIAVisMode", OnCommandGTIAVisualizationNext },
 
-		{ "View.ToggleXEP80View", OnCommandVideoToggleXEP80View, IsXEP80Enabled, CheckedIf<IsXEP80ViewEnabled> },
-		{ "View.ToggleXEP80ViewAutoswitching", OnCommandVideoToggleXEP80ViewAutoswitching, IsXEP80Enabled, CheckedIf<IsXEP80ViewAutoswitchingEnabled> },
+		{ "View.ToggleXEP80View", OnCommandVideoToggleXEP80Output, IsXEP80Enabled, CheckedIf<ATUIIsXEPViewEnabled> },
+		{ "View.ToggleXEP80ViewAutoswitching", OnCommandVideoToggleOutputAutoswitching, ATUIIsAltOutputAvailable, CheckedIf<IsVideoOutputAutoswitchingEnabled> },
+		{ "View.ToggleVideoOutputAutoswitching", OnCommandVideoToggleOutputAutoswitching, ATUIIsAltOutputAvailable, CheckedIf<IsVideoOutputAutoswitchingEnabled> },
 
 		{ "View.EffectReload", OnCommandViewEffectReload },
 
@@ -912,6 +914,14 @@ namespace ATCommands {
 		{ "System.ProgramLoadModeDiskBoot", OnCommandSystemProgramLoadModeDefault<kATHLEProgramLoadMode_DiskBoot>, nullptr, CheckedIf<ProgramLoadModeIs<kATHLEProgramLoadMode_DiskBoot>> },
 		{ "System.ProgramLoadModeType3Poll", OnCommandSystemProgramLoadModeDefault<kATHLEProgramLoadMode_Type3Poll>, nullptr, CheckedIf<ProgramLoadModeIs<kATHLEProgramLoadMode_Type3Poll>> },
 		{ "System.ProgramLoadModeDeferred", OnCommandSystemProgramLoadModeDefault<kATHLEProgramLoadMode_Deferred>, nullptr, CheckedIf<ProgramLoadModeIs<kATHLEProgramLoadMode_Deferred>> },
+		{ "System.ToggleProgramLaunchDelayRandomization",
+			[] {
+				g_sim.SetRandomProgramLaunchDelayEnabled(!g_sim.IsRandomProgramLaunchDelayEnabled());
+			},
+			nullptr,
+			CheckedIf<SimTest<&ATSimulator::IsRandomProgramLaunchDelayEnabled> >
+		},
+
 
 		{ "System.ToggleBASIC", OnCommandSystemToggleBASIC, SupportsBASIC, CheckedIf<And<SupportsBASIC, SimTest<&ATSimulator::IsBASICEnabled> > > },
 		{ "System.ToggleFastBoot", OnCommandSystemToggleFastBoot, IsNot5200, CheckedIf<SimTest<&ATSimulator::IsFastBootEnabled> > },
@@ -1046,6 +1056,7 @@ namespace ATCommands {
 		{ "Video.ToggleLinearFrameBlending", OnCommandVideoToggleLinearFrameBlending, GTIATest<&ATGTIAEmulator::IsBlendModeEnabled>, CheckedIf<GTIATest<&ATGTIAEmulator::IsLinearBlendEnabled> > },
 		{ "Video.ToggleInterlace", OnCommandVideoToggleInterlace, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsInterlaceEnabled> > },
 		{ "Video.ToggleScanlines", OnCommandVideoToggleScanlines, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::AreScanlinesEnabled> > },
+		{ "Video.ToggleBloom", OnCommandVideoToggleBloom, NULL, [] { return ToChecked(g_sim.GetGTIA().GetArtifactingParams().mbEnableBloom); } },
 		{ "Video.ToggleXEP80", OnCommandVideoToggleXEP80, NULL, CheckedIf<IsXEP80Enabled> },
 		{ "Video.AdjustColorsDialog", OnCommandVideoAdjustColorsDialog },
 		{ "Video.AdjustScreenEffectsDialog", OnCommandVideoAdjustScreenEffectsDialog },
@@ -1055,6 +1066,7 @@ namespace ATCommands {
 		{ "Video.MonitorModeMonoAmber",	[] { OnCommandVideoMonitorMode(ATMonitorMode::MonoAmber); }, NULL, [] { return ToRadio(g_sim.GetGTIA().GetMonitorMode() == ATMonitorMode::MonoAmber); } },
 		{ "Video.MonitorModeMonoGreen",	[] { OnCommandVideoMonitorMode(ATMonitorMode::MonoGreen); }, NULL, [] { return ToRadio(g_sim.GetGTIA().GetMonitorMode() == ATMonitorMode::MonoGreen); } },
 		{ "Video.MonitorModeMonoBluishWhite",	[] { OnCommandVideoMonitorMode(ATMonitorMode::MonoBluishWhite); }, NULL, [] { return ToRadio(g_sim.GetGTIA().GetMonitorMode() == ATMonitorMode::MonoBluishWhite); } },
+		{ "Video.MonitorModeMonoWhite",	[] { OnCommandVideoMonitorMode(ATMonitorMode::MonoWhite); }, NULL, [] { return ToRadio(g_sim.GetGTIA().GetMonitorMode() == ATMonitorMode::MonoWhite); } },
 
 		{ "Video.ArtifactingNone",		[]() { OnCommandVideoArtifacting(ATArtifactMode::None);		}, nullptr, RadioCheckedIf<VideoArtifactingModeIs<ATArtifactMode::None> > },
 		{ "Video.ArtifactingNTSC",		[]() { OnCommandVideoArtifacting(ATArtifactMode::NTSC);		}, nullptr, RadioCheckedIf<VideoArtifactingModeIs<ATArtifactMode::NTSC> > },
@@ -1115,6 +1127,7 @@ namespace ATCommands {
 		{ "Tools.SetupWizard", OnCommandToolsSetupWizard },
 		{ "Tools.ExportROMSet", OnCommandToolsExportROMSet },
 		{ "Tools.AnalyzeTapeDecoding", OnCommandToolsAnalyzeTapeDecoding },
+		{ "Tools.AdvancedConfiguration", OnCommandToolsAdvancedConfiguration},
 
 		{ "Options.ToggleAutoResetCartridge", OnCommandToggleAutoReset<kATUIResetFlag_CartridgeChange>, nullptr, CheckedIf<IsAutoResetEnabled<kATUIResetFlag_CartridgeChange>> },
 		{ "Options.ToggleAutoResetBasic", OnCommandToggleAutoReset<kATUIResetFlag_BasicChange>, nullptr, CheckedIf<IsAutoResetEnabled<kATUIResetFlag_BasicChange>> },
@@ -1131,6 +1144,8 @@ namespace ATCommands {
 		{ "Help.About", OnCommandHelpAbout },
 		{ "Help.ChangeLog", OnCommandHelpChangeLog },
 		{ "Help.CommandLine", OnCommandHelpCmdLine },
+		{ "Help.Online", OnCommandHelpOnline },
+		{ "Help.CheckForUpdates", OnCommandHelpCheckForUpdates },
 	};
 }
 
@@ -1143,4 +1158,5 @@ void ATUIInitCommandMappings(ATUICommandManager& cmdMgr) {
 	ATUIInitCommandMappingsView(cmdMgr);
 	ATUIInitCommandMappingsDebug(cmdMgr);
 	ATUIInitCommandMappingsCassette(cmdMgr);
+	ATUIInitCommandMappingsOption(cmdMgr);
 }

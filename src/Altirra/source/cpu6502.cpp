@@ -65,6 +65,9 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			break;
 
 		case 0x08:	// PHP
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
+
 			*mpDstState++ = kStatePtoD;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStatePush;
@@ -194,6 +197,9 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			break;
 
 		case 0x28:	// PLP
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
+
 			*mpDstState++ = kStatePop;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateDtoP;
@@ -320,6 +326,9 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			break;
 
 		case 0x48:	// PHA
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
+			
 			*mpDstState++ = kStateAtoD;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStatePush;
@@ -416,6 +425,9 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			break;
 
 		case 0x60:	// RTS
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
+
 			*mpDstState++ = kStatePopPCL;
 			*mpDstState++ = kStatePopPCHP1;
 			*mpDstState++ = kStateWait;
@@ -441,6 +453,9 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			break;
 
 		case 0x68:	// PLA
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
+
 			*mpDstState++ = kStatePop;
 			*mpDstState++ = kStateDSetSZToA;
 			*mpDstState++ = kStateWait;

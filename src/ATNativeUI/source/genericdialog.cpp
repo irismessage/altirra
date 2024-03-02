@@ -303,7 +303,6 @@ namespace {
 			float weightLeft = weightTotal;
 
 			for(Child& child : mChildren) {
-				const LayoutSpecs& childSpecs = child.mSpecs;
 				const float weight = child.mWeight * weightScale + weightAdd;
 
 				sint32 adjust = VDRoundToInt32((float)padding * (weight / weightLeft));
@@ -322,7 +321,6 @@ namespace {
 				sint32 changeCheck = 0;
 
 				for(Child& child : mChildren) {
-					const LayoutSpecs& childSpecs = child.mSpecs;
 					const float weight = child.mWeight * weightScale + weightAdd;
 
 					sint32 adjust = std::max<sint32>(child.mMinSize - child.mSize, VDRoundToInt32((float)padding * (weight / weightLeft)));
@@ -536,7 +534,6 @@ namespace {
 						if (!memcmp(overBlack.data(), overWhite.data(), bi.bmiHeader.biSizeImage)) {
 							// yes -- flood fill white to our new desired color (we're lazy)
 							COLORREF fillColor = VDSwizzleU32(newBgColor) >> 8;
-							COLORREF areaColor = RGB(255, 255, 255);
 
 							SetDCBrushColor(hdc, fillColor);
 							SelectObject(hdc, GetStockObject(DC_BRUSH));
@@ -796,7 +793,9 @@ bool ATGenericDialogW32::OnLoaded() {
 	if (bestWidth < std::end(widths)[-1])
 		bestWidth = std::end(widths)[-1];
 
-	const LayoutSpecs& layoutSpecs = mLayoutMainStack.MeasureInternal({ bestWidth, bestHeight });
+	// need to re-measure if the best width was not the last width tested
+	mLayoutMainStack.MeasureInternal({ bestWidth, bestHeight });
+
 	mLayoutMainStack.ArrangeInternal(vdrect32(0, 0, bestWidth, bestHeight));
 	mSplitY = mLayoutOptionsStack.GetArea().top;
 
@@ -816,6 +815,23 @@ bool ATGenericDialogW32::OnLoaded() {
 	layoutMainWindow.ArrangeInternal(rWin);
 
 	SendMessage(mhdlg, DM_REPOSITION, 0, 0);
+
+	switch(mOptions.mIconType) {
+		case kATUIGenericIconType_None:
+			break;
+
+		case kATUIGenericIconType_Info:
+			MessageBeep(MB_ICONINFORMATION);
+			break;
+
+		case kATUIGenericIconType_Warning:
+			MessageBeep(MB_ICONWARNING);
+			break;
+
+		case kATUIGenericIconType_Error:
+			MessageBeep(MB_ICONERROR);
+			break;
+	}
 
 	return true;
 }
@@ -1215,7 +1231,8 @@ ATUIGenericResult ATUIShowGenericDialog(const ATUIGenericDialogOptions& opts) {
 			// At this point, we've retrieved a previously saved setting. However,
 			// we need to validate it against the valid options in case it was saved
 			// from a version that had different options.
-			return value;
+			if (opts.mValidIgnoreMask & (UINT32_C(1) << (int)value))
+				return value;
 		}
 	}
 

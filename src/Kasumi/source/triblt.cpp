@@ -669,8 +669,8 @@ namespace {
 		uint32 *dstp = (uint32 *)((char *)dst.data + dstpitch * y);
 
 		VDTriBltInfo texinfo;
-		VDTriBltSpanFunction drawSpan;
-		uint32 cpuflags = CPUGetEnabledExtensions();
+		VDTriBltSpanFunction drawSpan = nullptr;
+		[[maybe_unused]] uint32 cpuflags = CPUGetEnabledExtensions();
 
 		bool triBlt16 = false;
 

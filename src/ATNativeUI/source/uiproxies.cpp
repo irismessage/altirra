@@ -155,6 +155,14 @@ VDZLRESULT VDUIProxyControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
 	return 0;
 }
 
+VDZLRESULT VDUIProxyControl::On_WM_HSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) {
+	return 0;
+}
+
+VDZLRESULT VDUIProxyControl::On_WM_VSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) {
+	return 0;
+}
+
 void VDUIProxyControl::OnFontChanged() {
 }
 
@@ -206,6 +214,25 @@ void VDUIProxyMessageDispatcherW32::RemoveAllControls(bool detach) {
 	}
 }
 
+bool VDUIProxyMessageDispatcherW32::TryDispatch(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result) {
+	if (msg == WM_COMMAND)
+		return TryDispatch_WM_COMMAND(wParam, lParam, result);
+
+	if (msg == WM_NOTIFY)
+		return TryDispatch_WM_NOTIFY(wParam, lParam, result);
+
+	if (msg == WM_HSCROLL)
+		return TryDispatch_WM_HSCROLL(wParam, lParam, result);
+
+	if (msg == WM_VSCROLL)
+		return TryDispatch_WM_VSCROLL(wParam, lParam, result);
+
+	if (msg == WM_DESTROY)
+		RemoveAllControls(true);
+
+	return false;
+}
+
 bool VDUIProxyMessageDispatcherW32::TryDispatch_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result) {
 	VDUIProxyControl *control = GetControl((HWND)lParam);
 
@@ -227,6 +254,30 @@ bool VDUIProxyMessageDispatcherW32::TryDispatch_WM_NOTIFY(VDZWPARAM wParam, VDZL
 	}
 
 	return false;
+}
+
+bool VDUIProxyMessageDispatcherW32::TryDispatch_WM_HSCROLL(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result) {
+	if (!lParam)
+		return false;
+
+	VDUIProxyControl *control = GetControl((HWND)lParam);
+	if (!control)
+		return false;
+
+	result = control->On_WM_HSCROLL(wParam, lParam);
+	return true;
+}
+
+bool VDUIProxyMessageDispatcherW32::TryDispatch_WM_VSCROLL(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result) {
+	if (!lParam)
+		return false;
+
+	VDUIProxyControl *control = GetControl((HWND)lParam);
+	if (!control)
+		return false;
+
+	result = control->On_WM_VSCROLL(wParam, lParam);
+	return true;
 }
 
 VDZLRESULT VDUIProxyMessageDispatcherW32::Dispatch_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -277,8 +328,6 @@ VDUIProxyControl *VDUIProxyMessageDispatcherW32::GetControl(VDZHWND hwnd) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-///////////////////////////////////////////////////////////////////////////////
-
 VDUIProxyListView::VDUIProxyListView() {
 }
 
@@ -293,11 +342,19 @@ void VDUIProxyListView::Attach(VDZHWND hwnd) {
 		ListView_SetBkColor(mhwnd, bg);
 		ListView_SetTextBkColor(mhwnd, bg);
 		ListView_SetTextColor(mhwnd, fg);
+
+		ListView_SetExtendedListViewStyleEx(mhwnd, LVS_EX_GRIDLINES, 0);
 	}
 }
 
 void VDUIProxyListView::Detach() {
 	Clear();
+
+	if (mBoldFont) {
+		DeleteObject(mBoldFont);
+		mBoldFont = nullptr;
+	}
+
 	VDUIProxyControl::Detach();
 }
 
@@ -420,7 +477,7 @@ void VDUIProxyListView::SetFullRowSelectEnabled(bool enabled) {
 }
 
 void VDUIProxyListView::SetGridLinesEnabled(bool enabled) {
-	ListView_SetExtendedListViewStyleEx(mhwnd, LVS_EX_GRIDLINES, enabled ? LVS_EX_GRIDLINES : 0);
+	ListView_SetExtendedListViewStyleEx(mhwnd, LVS_EX_GRIDLINES, enabled && !ATUIIsDarkThemeActive() ? LVS_EX_GRIDLINES : 0);
 }
 
 bool VDUIProxyListView::AreItemCheckboxesEnabled() const {
@@ -490,10 +547,13 @@ void VDUIProxyListView::InsertColumn(int index, const wchar_t *label, int width,
 
 	colw.mask		= LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
 	colw.fmt		= rightAligned ? LVCFMT_RIGHT : LVCFMT_LEFT;
-	colw.cx			= width;
+	colw.cx			= width < 0 ? 0 : width;
 	colw.pszText	= (LPWSTR)label;
 
-	SendMessageW(mhwnd, LVM_INSERTCOLUMNW, (WPARAM)index, (LPARAM)&colw);
+	int colIdx = SendMessageW(mhwnd, LVM_INSERTCOLUMNW, (WPARAM)index, (LPARAM)&colw);
+
+	if (colIdx >= 0 && width < 0)
+		SendMessageW(mhwnd, LVM_SETCOLUMNWIDTH, colIdx, LVSCW_AUTOSIZE_USEHEADER);
 }
 
 int VDUIProxyListView::InsertItem(int item, const wchar_t *text) {
@@ -641,27 +701,33 @@ bool VDUIProxyListView::GetItemScreenRect(int item, vdrect32& r) const {
 void VDUIProxyListView::Sort(IVDUIListViewIndexedComparer& comparer) {
 	VDASSERT(mbIndexedMode);
 
-	const auto sortAdapter = 
-		[](LPARAM x, LPARAM y, LPARAM cookie) {
+	struct local {
+		static int CALLBACK SortAdapter(LPARAM x, LPARAM y, LPARAM cookie) {
 			return ((IVDUIListViewIndexedComparer *)cookie)->Compare((uint32)x, (uint32)y);
 		};
+	};
 
-	ListView_SortItems(mhwnd, sortAdapter, (LPARAM)&comparer);
+	ListView_SortItems(mhwnd, local::SortAdapter, (LPARAM)&comparer);
 }
 
 void VDUIProxyListView::Sort(IVDUIListViewVirtualComparer& comparer) {
 	VDASSERT(!mbIndexedMode);
 
-	const auto sortAdapter = 
-		[](LPARAM x, LPARAM y, LPARAM cookie) {
+	struct local {
+		static int CALLBACK SortAdapter(LPARAM x, LPARAM y, LPARAM cookie) {
 			return ((IVDUIListViewVirtualComparer *)cookie)->Compare((IVDUIListViewVirtualItem *)x, (IVDUIListViewVirtualItem *)y);
 		};
+	};
 
-	ListView_SortItems(mhwnd, sortAdapter, (LPARAM)&comparer);
+	ListView_SortItems(mhwnd, local::SortAdapter, (LPARAM)&comparer);
 }
 
 void VDUIProxyListView::SetOnItemDoubleClicked(vdfunction<void(int)> fn) {
 	mpOnItemDoubleClicked = std::move(fn);
+}
+
+void VDUIProxyListView::SetOnItemCustomStyle(vdfunction<bool(IVDUIListViewVirtualItem&, sint32&, bool&)> fn) {
+	mpOnItemCustomStyle = std::move(fn);
 }
 
 VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -865,6 +931,48 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 					mpOnItemDoubleClicked(nmia->iItem);
 			}
 			return 0;
+
+		case NM_CUSTOMDRAW:
+			if (mpOnItemCustomStyle) {
+				NMLVCUSTOMDRAW& nmcd = *(NMLVCUSTOMDRAW *)hdr;
+
+				if (nmcd.nmcd.dwDrawStage == CDDS_PREPAINT) {
+					return CDRF_NOTIFYITEMDRAW;
+				} else if (nmcd.nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+					auto *item = (IVDUIListViewVirtualItem *)nmcd.nmcd.lItemlParam;
+
+					if (item) {
+						sint32 color = -1;
+						bool bold = false;
+
+						if (mpOnItemCustomStyle(*item, color, bold)) {
+							if (color >= 0)
+								nmcd.clrText = VDSwizzleU32((uint32)color) >> 8;
+
+							if (bold) {
+								if (!mBoldFont) {
+									HFONT hfont = (HFONT)SendMessage(mhwnd, WM_GETFONT, 0, 0);
+
+									if (hfont) {
+										LOGFONT lf {};
+
+										if (GetObject(hfont, sizeof lf, &lf)) {
+											lf.lfWeight = 700;
+
+											mBoldFont = CreateFontIndirect(&lf);
+										}
+									}
+								}
+
+								if (mBoldFont)
+									SelectObject(nmcd.nmcd.hdc, mBoldFont);
+							}
+						}
+					}
+				}
+			}
+
+			return CDRF_DODEFAULT;
 	}
 
 	return 0;
@@ -877,6 +985,11 @@ void VDUIProxyListView::OnFontChanged() {
 	if (AreItemCheckboxesEnabled()) {
 		ListView_SetView(mhwnd, LV_VIEW_LIST);
 		ListView_SetView(mhwnd, LV_VIEW_DETAILS);
+	}
+
+	if (mBoldFont) {
+		DeleteObject(mBoldFont);
+		mBoldFont = nullptr;
 	}
 }
 
@@ -1315,8 +1428,9 @@ VDZLRESULT VDUIProxyListBoxControl::ListBoxWndProc(VDZHWND hwnd, VDZUINT msg, VD
 							mAutoEditTimer = SetTimer(NULL, 0, 1000, VDGetThunkFunction<TIMERPROC>(mpEditTimerThunk));
 					}
 				}
+
+				return r;
 			}
-			break;
 
 		case WM_KEYDOWN:
 			if (wParam == VK_F2) {
@@ -1458,6 +1572,89 @@ void VDUIProxyComboBoxControl::OnRedrawSuspend() {
 }
 
 void VDUIProxyComboBoxControl::OnRedrawResume() {
+	SendMessage(mhwnd, CB_SETMINVISIBLE, kDefaultMinVisibleCount, 0);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+// Default for CB_SETMINVISIBLE per MSDN docs
+const uint32 VDUIProxyComboBoxExControl::kDefaultMinVisibleCount = 30;
+
+VDUIProxyComboBoxExControl::VDUIProxyComboBoxExControl() {
+}
+
+VDUIProxyComboBoxExControl::~VDUIProxyComboBoxExControl() {
+}
+
+void VDUIProxyComboBoxExControl::Clear() {
+	if (!mhwnd)
+		return;
+
+	SendMessageW(mhwnd, CB_RESETCONTENT, 0, 0);
+}
+
+void VDUIProxyComboBoxExControl::AddItem(const wchar_t *s) {
+	if (!mhwnd)
+		return;
+
+	COMBOBOXEXITEM item {};
+	item.mask = CBEIF_TEXT;
+	item.iItem = -1;
+	item.pszText = (LPWSTR)s;
+	SendMessage(mhwnd, CBEM_INSERTITEM, 0, (LPARAM)&item);
+}
+
+int VDUIProxyComboBoxExControl::GetSelection() const {
+	if (!mhwnd)
+		return -1;
+
+	return (int)SendMessage(mhwnd, CB_GETCURSEL, 0, 0);
+}
+
+void VDUIProxyComboBoxExControl::SetSelection(int index) {
+	if (mhwnd)
+		SendMessage(mhwnd, CB_SETCURSEL, index, 0);
+}
+
+void VDUIProxyComboBoxExControl::SetOnSelectionChanged(vdfunction<void(int)> fn) {
+	mpOnSelectionChangedFn = std::move(fn);
+}
+
+void VDUIProxyComboBoxExControl::SetOnEndEdit(vdfunction<bool(const wchar_t *)> fn) {
+	mpOnEndEditFn = std::move(fn);
+}
+
+VDZLRESULT VDUIProxyComboBoxExControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (HIWORD(wParam) == CBN_SELCHANGE) {
+		const int idx = GetSelection();
+
+		if (mpOnSelectionChangedFn)
+			mpOnSelectionChangedFn(idx);
+	}
+
+	return 0;
+}
+
+VDZLRESULT VDUIProxyComboBoxExControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
+	const NMHDR *hdr = (const NMHDR *)lParam;
+
+	if (hdr->code == CBEN_ENDEDIT) {
+		const NMCBEENDEDIT *info = (const NMCBEENDEDIT *)hdr;
+
+		if (mpOnEndEditFn && info->iWhy == CBENF_RETURN)
+			return mpOnEndEditFn(info->szText) ? FALSE : TRUE;
+	}
+
+	return 0;
+}
+
+void VDUIProxyComboBoxExControl::OnRedrawSuspend() {
+	// Drop SetMinVisible to prevent the combo box from spending time resizing the list box
+	// every time an item is added.
+	SendMessage(mhwnd, CB_SETMINVISIBLE, 1, 0);
+}
+
+void VDUIProxyComboBoxExControl::OnRedrawResume() {
 	SendMessage(mhwnd, CB_SETMINVISIBLE, kDefaultMinVisibleCount, 0);
 }
 
@@ -2273,6 +2470,11 @@ void VDUIProxyEditControl::SetText(const wchar_t *s) {
 		::SetWindowText(mhwnd, s);
 }
 
+void VDUIProxyEditControl::SelectAll() {
+	if (mhwnd)
+		::SendMessage(mhwnd, EM_SETSEL, 0, -1);
+}
+
 void VDUIProxyEditControl::SetOnTextChanged(vdfunction<void(VDUIProxyEditControl *)> fn) {
 	mpOnTextChanged = std::move(fn);
 }
@@ -2601,6 +2803,10 @@ VDUIProxyToolbarControl::VDUIProxyToolbarControl() {
 VDUIProxyToolbarControl::~VDUIProxyToolbarControl() {
 }
 
+void VDUIProxyToolbarControl::SetDarkModeEnabled(bool enable) {
+	mbDarkModeEnabled = enable;
+}
+
 void VDUIProxyToolbarControl::Clear() {
 	if (mhwnd) {
 		while(SendMessage(mhwnd, TB_DELETEBUTTON, 0, 0))
@@ -2805,6 +3011,23 @@ VDZLRESULT VDUIProxyToolbarControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lPa
 			mpOnClicked(tbhdr.iItem);
 
 		return TBDDRET_DEFAULT;
+	} else if (hdr.code == NM_CUSTOMDRAW) {
+		if (!mbDarkModeEnabled || !ATUIIsDarkThemeActive())
+			return CDRF_DODEFAULT;
+
+		NMTBCUSTOMDRAW& tbcd = *(NMTBCUSTOMDRAW *)&hdr;
+
+		switch(tbcd.nmcd.dwDrawStage) {
+			case CDDS_PREPAINT:
+				return CDRF_NOTIFYITEMDRAW;
+
+			case CDDS_ITEMPREPAINT:
+				tbcd.clrText = ATUIGetThemeColorsW32().mStaticFgCRef;
+				return TBCDRF_USECDCOLORS;
+
+			default:
+				return CDRF_DODEFAULT;
+		}
 	}
 
 	return 0;
@@ -2828,7 +3051,211 @@ VDZLRESULT VDUIProxySysLinkControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lPa
 	if (hdr.code == NM_CLICK) {
 		if (mpOnClicked)
 			mpOnClicked();
+	} else if (hdr.code == NM_CUSTOMTEXT) {
+		NMCUSTOMTEXT& ct = *(NMCUSTOMTEXT *)lParam;
+
+		if (ATUIIsDarkThemeActive()) {
+			const auto& colors = ATUIGetThemeColors();
+
+			if (ct.fLink)
+				SetTextColor(ct.hDC, VDSwizzleU32(colors.mHyperlinkText) >> 8);
+		}
 	}
 
 	return 0;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+VDUIProxyTrackbarControl::VDUIProxyTrackbarControl() {
+}
+
+VDUIProxyTrackbarControl::~VDUIProxyTrackbarControl() {
+}
+
+void VDUIProxyTrackbarControl::SetOnValueChanged(vdfunction<void(sint32, bool)> fn) {
+	mpFnOnValueChanged = std::move(fn);
+}
+
+sint32 VDUIProxyTrackbarControl::GetValue() const {
+	return mhwnd ? (sint32)SendMessage(mhwnd, TBM_GETPOS, 0, 0) : 0;
+}
+
+void VDUIProxyTrackbarControl::SetValue(sint32 v) {
+	if (mhwnd)
+		SendMessage(mhwnd, TBM_SETPOS, TRUE, (LPARAM)v);
+}
+
+void VDUIProxyTrackbarControl::SetRange(sint32 minVal, sint32 maxVal) {
+	if (mhwnd) {
+		SendMessage(mhwnd, TBM_SETRANGEMIN, FALSE, (LPARAM)minVal);
+		SendMessage(mhwnd, TBM_SETRANGEMAX, TRUE, (LPARAM)maxVal);
+	}
+}
+
+void VDUIProxyTrackbarControl::SetPageSize(sint32 pageSize) {
+	if (mhwnd)
+		SendMessage(mhwnd, TBM_SETPAGESIZE, TRUE, (LPARAM)pageSize);
+}
+
+VDZLRESULT VDUIProxyTrackbarControl::On_WM_HSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (mpFnOnValueChanged)
+		mpFnOnValueChanged(GetValue(), LOWORD(lParam) == TB_THUMBTRACK);
+
+	return 0;
+}
+
+VDZLRESULT VDUIProxyTrackbarControl::On_WM_VSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) {
+	return On_WM_HSCROLL(wParam, lParam);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+VDUIProxyScrollBarControl::VDUIProxyScrollBarControl() {
+}
+
+VDUIProxyScrollBarControl::~VDUIProxyScrollBarControl() {
+}
+
+void VDUIProxyScrollBarControl::SetOnValueChanged(vdfunction<void(sint32, bool)> fn) {
+	mpFnOnValueChanged = std::move(fn);
+}
+
+sint32 VDUIProxyScrollBarControl::GetValue() const {
+	if (!mhwnd)
+		return 0;
+
+	SCROLLINFO si { sizeof(SCROLLINFO) };
+	si.fMask = SIF_POS;
+	if (!GetScrollInfo(mhwnd, SB_CTL, &si))
+		return 0;
+
+	return si.nPos;
+}
+
+void VDUIProxyScrollBarControl::SetValue(sint32 v) {
+	if (!mhwnd)
+		return;
+
+	SCROLLINFO si { sizeof(SCROLLINFO) };
+	si.fMask = SIF_POS;
+	si.nPos = v;
+	SetScrollInfo(mhwnd, SB_CTL, &si, TRUE);
+}
+
+void VDUIProxyScrollBarControl::SetRange(sint32 minVal, sint32 maxVal) {
+	if (!mhwnd)
+		return;
+
+	SCROLLINFO si { sizeof(SCROLLINFO) };
+	si.fMask = SIF_ALL;
+	if (!GetScrollInfo(mhwnd, SB_CTL, &si))
+		return;
+
+	if (maxVal < minVal)
+		maxVal = minVal;
+
+	si.nMin = minVal;
+	si.nMax = maxVal;
+	si.nPos = std::clamp<sint32>(si.nPos, minVal, maxVal);
+
+	si.fMask = SIF_DISABLENOSCROLL | SIF_RANGE | SIF_POS;
+	SetScrollInfo(mhwnd, SB_CTL, &si, TRUE);
+}
+
+void VDUIProxyScrollBarControl::SetPageSize(sint32 pageSize) {
+	if (!mhwnd)
+		return;
+
+	SCROLLINFO si { sizeof(SCROLLINFO) };
+	si.fMask = SIF_PAGE | SIF_DISABLENOSCROLL;
+
+	si.nPage = std::max<sint32>(1, pageSize);
+
+	si.fMask = SIF_DISABLENOSCROLL | SIF_PAGE;
+	SetScrollInfo(mhwnd, SB_CTL, &si, TRUE);
+}
+
+VDZLRESULT VDUIProxyScrollBarControl::On_WM_HSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) {
+	SCROLLINFO si { sizeof(SCROLLINFO) };
+	si.fMask = SIF_ALL;
+
+	if (!GetScrollInfo(mhwnd, SB_CTL, &si))
+		return 0;
+
+	sint32 pos = si.nPos;
+
+	switch(LOWORD(wParam)) {
+		case SB_LEFT:
+			pos = si.nMin;
+			break;
+
+		case SB_RIGHT:
+			pos = si.nMax;
+			break;
+
+		case SB_LINELEFT:
+			if (pos > si.nMin)
+				--pos;
+			break;
+
+		case SB_LINERIGHT:
+			if (pos < si.nMax)
+				++pos;
+			break;
+
+		case SB_PAGELEFT:
+			if (pos > si.nMin && (uint32)pos - (uint32)si.nMin > (uint32)si.nPage)
+				pos -= si.nPage;
+			else
+				pos = si.nMin;
+			break;
+
+		case SB_PAGERIGHT:
+			if (pos < si.nMax && (uint32)si.nMax - (uint32)pos > (uint32)si.nPage)
+				pos += si.nPage;
+			else
+				pos = si.nMax;
+			break;
+
+		case SB_THUMBPOSITION:
+			if (mpFnOnValueChanged)
+				mpFnOnValueChanged(si.nPos, false);
+			return 0;
+
+		case SB_THUMBTRACK:
+			pos = si.nTrackPos;
+			break;
+	}
+
+	pos = std::clamp<sint32>(pos, si.nMin, si.nMax);
+
+	if (si.nPos != pos) {
+		si.nPos = pos;
+		si.fMask = SIF_POS;
+
+		SetScrollInfo(mhwnd, SB_CTL, &si, TRUE);
+
+		if (mpFnOnValueChanged)
+			mpFnOnValueChanged(si.nPos, LOWORD(lParam) == SB_THUMBTRACK);
+	}
+
+	return 0;
+}
+
+VDZLRESULT VDUIProxyScrollBarControl::On_WM_VSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) {
+	return On_WM_HSCROLL(wParam, lParam);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+VDUIProxyStatusBarControl::VDUIProxyStatusBarControl() {
+}
+
+VDUIProxyStatusBarControl::~VDUIProxyStatusBarControl() {
+}
+
+void VDUIProxyStatusBarControl::AutoLayout() {
+	if (mhwnd)
+		SendMessage(mhwnd, WM_SIZE, 0, 0);
 }

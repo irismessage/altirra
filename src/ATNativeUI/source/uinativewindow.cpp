@@ -64,6 +64,21 @@ ATOM ATUINativeWindow::RegisterCustom(const WNDCLASS& wc0) {
 	return sWndClassMain;
 }
 
+ATOM ATUINativeWindow::RegisterForClass(const WCHAR *className, WNDPROC classSpecificWndProc) {
+	WNDCLASS wc {};
+
+	wc.lpfnWndProc		= classSpecificWndProc;
+	wc.lpszClassName	= className;
+	wc.style			= CS_DBLCLKS;
+	wc.cbClsExtra		= 0;
+	wc.cbWndExtra		= sizeof(ATUINativeWindow *);
+	wc.hInstance		= (HINSTANCE)&__ImageBase;
+	wc.hCursor			= LoadCursor(NULL, IDC_ARROW);
+	wc.hbrBackground	= (HBRUSH)(COLOR_WINDOW + 1);
+
+	return RegisterClass(&wc);
+}
+
 void ATUINativeWindow::Unregister() {
 	if (sWndClass) {
 		UnregisterClass((LPCTSTR)(uintptr_t)sWndClass, (HINSTANCE)&__ImageBase);
@@ -106,6 +121,7 @@ LRESULT ATUINativeWindow::StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 
 	if (msg == WM_NCCREATE) {
 		p = (ATUINativeWindow *)((LPCREATESTRUCT)lParam)->lpCreateParams;
+
 		SetWindowLongPtr(hwnd, 0, (LONG_PTR)p);
 		p->AddRef();
 		p->mhwnd = hwnd;
@@ -118,11 +134,27 @@ LRESULT ATUINativeWindow::StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 	p->AddRef();
 	LRESULT result = p->WndProc(msg, wParam, lParam);
 
-	if (msg == WM_NCDESTROY && p) {
-		p->mhwnd = NULL;
+	if (msg == WM_NCDESTROY) {
+		p->mhwnd = nullptr;
 		p->Release();
-		SetWindowLongPtr(hwnd, 0, NULL);
+		SetWindowLongPtr(hwnd, 0, (LONG_PTR)nullptr);
 	}
+	p->Release();
+
+	return result;
+}
+
+LRESULT CALLBACK ATUINativeWindow::StaticWndProcClassSpecificCreate(HWND hwnd, ATUINativeWindow *(*factory)(), WPARAM wParam, LPARAM lParam) {
+	ATUINativeWindow *p = factory();
+	if (!p)
+		return FALSE;
+
+	SetWindowLongPtr(hwnd, 0, (LONG_PTR)p);
+	p->AddRef();
+	p->mhwnd = hwnd;
+
+	p->AddRef();
+	LRESULT result = p->WndProc(WM_NCCREATE, wParam, lParam);
 	p->Release();
 
 	return result;

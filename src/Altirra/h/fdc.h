@@ -92,6 +92,7 @@ public:
 
 	void SetAccurateTimingEnabled(bool enabled);
 	void SetMotorRunning(bool running);
+	void SetMotorSpeed(float rpm);
 	void SetCurrentTrack(uint32 halfTracks, bool track0);
 	void SetSide(bool side2);
 	void SetDensity(bool mfm);
@@ -109,10 +110,16 @@ public:
 	void SetWriteProtectOverride2(ATFDCWPOverride mode) { mWriteProtectOverride2 = mode; }
 
 	void SetAutoIndexPulse(bool enabled);
+	void SetDoubleClock(bool doubleClock);
 	void SetDiskImage(IATDiskImage *image, bool diskReady);
 	void SetDiskImage(IATDiskImage *image);
 	void SetDiskImageReady(std::optional<bool> diskReady);
 	void SetDiskInterface(ATDiskInterface *diskIf);
+
+	// Enable toggling the Not Ready flag ~20/sec while a disk is inserted until
+	// a non-interrupt command is received. This is automatically turned off once
+	// such a command is received or the disk mechanism is not ready.
+	void SetDiskChangeStartupHackEnabled(bool enabled);
 
 	enum class SideMapping : uint32 {
 		Side2Reversed,
@@ -250,9 +257,17 @@ protected:
 	SideMapping mSideMapping = SideMapping::Side2Reversed;
 	uint32 mSideMappingTrackCount = 40;
 
+	bool mbDiskChangeStartupHack = false;
+	bool mbDiskChangeStartupHackFDCCommandReceived = false;
+	uint64 mDiskChangeStartupHackBaseTime = 0;
+
 	bool mbUseAccurateTiming = false;
 	Type mType = {};
-	uint32 mCyclesPerRotation = 0;
+	uint32 mCyclesPerRotation = 1;
+	float mRotationPeriodSecs = 1;
+	float mPeriodAdjustFactor = 1;
+	float mBytesPerSecondFM = 1;
+	float mBytesPerSecondMFM = 1;
 	uint32 mCyclesPerByteFM = 1;
 	uint32 mCyclesPerByteMFM = 1;
 	uint32 mCyclesPerByte = 1;

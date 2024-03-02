@@ -261,8 +261,10 @@ void ATDiskDriveSerialBitTransmitQueue::OnTransmitEvent() {
 			const uint32 cyclesPerBit = mpSIOMgr->GetCyclesPerBitRecv();
 
 			// reject transmission speed below ~16000 baud (reduced for ATR8000) or above ~178Kbaud
-			if (cyclesPerBit < 10 || cyclesPerBit > mMaxCyclesPerBit)
+			if (cyclesPerBit < 10 || cyclesPerBit > mMaxCyclesPerBit) {
+				QueueNextTransmitEvent();
 				return;
+			}
 
 			mTransmitCyclesPerBit = cyclesPerBit;
 

@@ -27,20 +27,7 @@ class ATAudioMonitor;
 class ATSlightSIDEmulator;
 class IVDDisplayCompositor;
 class ATUIManager;
-
-struct ATUIAudioStatus {
-	int mUnderflowCount;
-	int mOverflowCount;
-	int mDropCount;
-	int mMeasuredMin;
-	int mMeasuredMax;
-	int mTargetMin;
-	int mTargetMax;
-	double mIncomingRate;
-	double mExpectedRate;
-	double mSamplingRate;
-	bool mbStereoMixing;
-};
+struct ATUIAudioStatus;
 
 class IATUIRenderer : public IVDRefCount, public IATDeviceIndicatorManager {
 public:
@@ -58,11 +45,20 @@ public:
 	virtual void SetPendingHeldButtons(uint8 consolMask) = 0;
 
 	virtual void ClearWatchedValue(int index) = 0;
-	virtual void SetWatchedValue(int index, uint32 value, int len) = 0;
+
+	enum class WatchFormat {
+		None,
+		Dec,
+		Hex8,
+		Hex16,
+		Hex32
+	};
+
+	virtual void SetWatchedValue(int index, uint32 value, WatchFormat format) = 0;
 
 	virtual void SetTracingSize(sint64 size) = 0;
 
-	virtual void SetAudioStatus(ATUIAudioStatus *status) = 0;
+	virtual void SetAudioStatus(const ATUIAudioStatus *status) = 0;
 
 	virtual void SetAudioMonitor(bool secondary, ATAudioMonitor *monitor) = 0;
 	virtual void SetAudioDisplayEnabled(bool secondary, bool enable) = 0;

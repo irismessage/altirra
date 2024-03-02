@@ -23,6 +23,7 @@
 #include <vd2/system/vdstl.h>
 #include <at/atcore/devicediskdrive.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/deviceparentimpl.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/devicesioimpl.h>
 #include <at/atcore/scheduler.h>
@@ -40,15 +41,24 @@
 #include "diskinterface.h"
 
 class ATIRQController;
+class IATPrinterOutput;
 
 class ATDeviceDiskDrivePercom final : public ATDevice
 	, public IATDeviceDiskDrive
 	, public ATDeviceSIO
 	, public ATDiskDriveDebugTargetControl
 	, public IATDeviceRawSIO
+	, public IATDevicePrinterPort
+	, public IATDeviceParent
 {
 public:
-	ATDeviceDiskDrivePercom(bool at88);
+	enum class HardwareType : uint8 {
+		RFD,
+		AT88,
+		AT88SPD
+	};
+
+	ATDeviceDiskDrivePercom(HardwareType hardwareType);
 	~ATDeviceDiskDrivePercom();
 
 	void *AsInterface(uint32 iid) override;
@@ -80,6 +90,12 @@ public:	// IATDeviceRawSIO
 	void OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) override;
 	void OnSendReady() override;
 
+public:	// IATDevicePrinterPort
+	void SetPrinterDefaultOutput(IATPrinterOutput *out) override;
+
+public:	// IATDeviceParent
+	IATDeviceBus *GetDeviceBus(uint32 index) override;
+
 public:
 	void OnDiskChanged(uint32 index, bool mediaRemoved);
 	void OnWriteModeChanged(uint32 index);
@@ -103,6 +119,8 @@ protected:
 
 	void OnACIATransmit(uint8 v, uint32 cyclesPerBit);
 	void OnPIAPortBChanged(uint32 outputState);
+	void OnPIAPortBChangedATSPD(uint32 outputState);
+	void OnPIACB2ChangedATSPD(bool value);
 
 	void SetMotorEnabled(bool enabled);
 	void PlayStepSound();
@@ -137,9 +155,13 @@ protected:
 	uint32 mLastStepSoundTime = 0;
 	uint32 mLastStepPhase = 0;
 	uint8 mDriveId = 0;
-	bool mbIsAT88 = false;
+	HardwareType mHardwareType {};
 	bool mbIsAT88DoubleDensity = true;
+	bool mbAT1795Mode = false;
 	bool mbSelectFDC2 = false;
+
+	bool mbLastPrinterStrobe = false;
+	IATPrinterOutput *mpPrinter = nullptr;
 
 	ATDiskDriveAudioPlayer mAudioPlayer;
 
@@ -184,13 +206,14 @@ protected:
 	
 	ATCoProc6809 mCoProc;
 
-	uint8 mROM[0x800] = {};
+	uint8 mROM[0x1000] = {};
 	uint8 mRAM[0x400] = {};
 	uint8 mDummyRead[256] = {};
 	uint8 mDummyWrite[256] = {};
 
 	ATDiskDriveFirmwareControl mFirmwareControl;
 	ATDebugTargetBreakpointsImpl mBreakpointsImpl;
+	ATDeviceBusSingleChild mParallelBus;
 
 	static const uint8 kPIALookup[4];
 };

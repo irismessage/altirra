@@ -37,6 +37,12 @@
 typedef sint32 (*ATMemoryReadHandler)(void *thisptr, uint32 addr);
 typedef bool (*ATMemoryWriteHandler)(void *thisptr, uint32 addr, uint8 value);
 
+template<typename T_Return, typename T_Class, typename... T_Args>
+std::remove_cvref_t<T_Class> *ATGetMemoryHandlerBaseType(T_Return (T_Class::*)(T_Args...));
+
+template<typename T_Return, typename T_Class, typename... T_Args>
+std::remove_cvref_t<T_Class> *ATGetMemoryHandlerBaseType(T_Return (T_Class::*)(T_Args...) const);
+
 struct ATMemoryHandlerTable {
 	// Set if a CPU or ANTIC read can go unhandled by the read handler or
 	// debug read handler, or a CPU write by the write handler, for the given
@@ -51,6 +57,21 @@ struct ATMemoryHandlerTable {
 	ATMemoryReadHandler mpDebugReadHandler;
 	ATMemoryReadHandler mpReadHandler;
 	ATMemoryWriteHandler mpWriteHandler;
+
+	template<auto T_Handler>
+	void BindDebugReadHandler() {
+		mpDebugReadHandler = [](void *thisptr0, uint32 address) { return (((decltype(ATGetMemoryHandlerBaseType(T_Handler)))thisptr0)->*T_Handler)(address); };
+	}
+
+	template<auto T_Handler>
+	void BindReadHandler() {
+		mpReadHandler = [](void *thisptr0, uint32 address) { return (((decltype(ATGetMemoryHandlerBaseType(T_Handler)))thisptr0)->*T_Handler)(address); };
+	}
+
+	template<auto T_Handler>
+	void BindWriteHandler() {
+		mpWriteHandler = [](void *thisptr0, uint32 address, uint8 data) { return (((decltype(ATGetMemoryHandlerBaseType(T_Handler)))thisptr0)->*T_Handler)(address, data); };
+	}
 
 	template<class T, sint32 (T::*T_Handler)(uint32 addr) const>
 	void BindDebugReadHandler() {

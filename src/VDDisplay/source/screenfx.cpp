@@ -38,7 +38,7 @@ void VDDisplayCreateGammaRamp(uint32 *gammaTex, uint32 len, bool enableInputConv
 	}
 }
 
-void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, uint32 srcH, uint32 dstH, uint32 texSize, float intensity) {
+void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, uint32 srcH, uint32 dstH, uint32 texSize, float intensity, bool renderLinear) {
 	vdblock<float> rawMask(dstH);
 
 	// Compute the stepping rate over the scanline mask pattern and check if we are
@@ -71,7 +71,9 @@ void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, ui
 	intensity *= intensity;
 	for(float& y : rawMask) {
 		y = y * (1.0f - intensity) + intensity;
-		y = sqrtf(y);
+
+		if (!renderLinear)
+			y = sqrtf(y);
 	}
 
 	// Convert the mask to texels.

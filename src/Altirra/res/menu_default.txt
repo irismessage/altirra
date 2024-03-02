@@ -30,6 +30,7 @@
 	---
 	Cassette
 		Tape Control...		{Cassette.TapeControlDialog}
+		Tape Editor...		{Cassette.TapeEditorDialog}
 		---
 		New Tape			{Cassette.LoadNew}
 		&Load...			{Cassette.Load}
@@ -113,8 +114,12 @@
 		&Next Mode				{View.NextANTICVisMode}
 	&Vertical Sync				{View.ToggleVSync}
 	Show FPS					{View.ToggleFPS}
-	&XEP80 View					{View.ToggleXEP80View}
-	&Auto-switch XEP80 View		{View.ToggleXEP80ViewAutoswitching}
+	Video O&utputs
+		&1 Computer Output		{View.VideoOutputNormal}
+		{$videooutputs}
+		---
+		Next Output					{View.VideoOutputNext}
+		&Auto-Switch Video Output		{View.ToggleVideoOutputAutoswitching}
 	Adjust Colors...			{Video.AdjustColorsDialog}
 	Adjust Screen Effects...	{Video.AdjustScreenEffectsDialog}
 	Customize HUD...			{View.CustomizeHUD}
@@ -260,6 +265,7 @@ Debu&g
 	&Options...							{Tools.OptionsDialog}
 	&Keyboard Shortcuts...				{Tools.KeyboardShortcutsDialog}
 	&Compatibility Database...			{Tools.CompatDBDialog}
+	Advanced Configuration...			{Tools.AdvancedConfiguration}
 	
 &Window
 	&Close								{Window.Close}
@@ -273,3 +279,5 @@ Help
 	&About								{Help.About}
 	&Change Log							{Help.ChangeLog}
 	Command-Line Help					{Help.CommandLine}
+	Check For Updates					{Help.CheckForUpdates}
+	Altirra Home...						{Help.Online}

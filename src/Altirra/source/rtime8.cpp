@@ -68,7 +68,7 @@ uint8 ATRTime8Emulator::ReadControl(uint8 addr) {
 	return v;
 }
 
-uint8 ATRTime8Emulator::DebugReadControl(uint8 addr) {
+uint8 ATRTime8Emulator::DebugReadControl(uint8 addr) const {
 	if (mPhase == 0)
 		return 0x00;		// 0000 = idle, 1111 = update pending
 
@@ -186,7 +186,7 @@ void ATDeviceRTime8::InitMemMap(ATMemoryManager *memmap) {
 	handlerTable.mbPassAnticReads = true;
 	handlerTable.mbPassReads = true;
 	handlerTable.mbPassWrites = true;
-	handlerTable.mpDebugReadHandler = ReadByte;
+	handlerTable.mpDebugReadHandler = DebugReadByte;
 	handlerTable.mpReadHandler = ReadByte;
 	handlerTable.mpWriteHandler = WriteByte;
 	mpMemLayerRT8 = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay, handlerTable, 0xD5, 0x01);
@@ -202,6 +202,17 @@ bool ATDeviceRTime8::GetMappedRange(uint32 index, uint32& lo, uint32& hi) const 
 	}
 
 	return false;
+}
+
+sint32 ATDeviceRTime8::DebugReadByte(void *thisptr0, uint32 addr) {
+	if (addr - 0xD5B8 < 8) {
+		const ATDeviceRTime8 *thisptr = (ATDeviceRTime8 *)thisptr0;
+
+		// The R-Time 8 only drives the lower four data lines.
+		return (thisptr->mRTime8.DebugReadControl((uint8)addr) & 0x0F) + (thisptr->mpMemMan->ReadFloatingDataBus() & 0xF0);
+	}
+
+	return -1;
 }
 
 sint32 ATDeviceRTime8::ReadByte(void *thisptr0, uint32 addr) {

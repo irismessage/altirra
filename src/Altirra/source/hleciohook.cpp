@@ -1053,11 +1053,8 @@ uint8 ATHLECIOHook::OnHookCIOV(uint16 pc) {
 					mpCPU->SetA(lastByte);
 				}
 
-				// set status in Y and flags
-				mpCPU->Ldy(status);
-
 				// all done
-				return 0x60;
+				return status;
 			};
 
 			return OnHookContinuation(0);

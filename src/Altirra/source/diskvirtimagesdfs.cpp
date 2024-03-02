@@ -1,5 +1,22 @@
-﻿#include <stdafx.h>
+﻿//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2021 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
+#include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/bitmath.h>
 #include <vd2/system/math.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
@@ -132,7 +149,7 @@ class ATDiskImageVirtualFolderSDFS final : public ATDiskImageVirtualFolderBase, 
 public:
 	ATDiskImageVirtualFolderSDFS();
 
-	void Init(const wchar_t *path, uint64 unique);
+	void Init(const wchar_t *path, uint64 unique, uint32 sectorSize);
 
 	ATDiskGeometryInfo GetGeometry() const override;
 	uint32 GetSectorSize() const override;
@@ -265,10 +282,16 @@ private:
 	VDStringW mPath;
 
 	vdlist<File> mFileLRU;
-	uint8 mVolumeName[8];
-	uint8 mVolSeqNumber;
-	uint8 mVolRandNumber;
-	bool mbVolChangePending;
+	uint8 mVolumeName[8] {};
+	uint8 mVolSeqNumber {};
+	uint8 mVolRandNumber {};
+	bool mbVolChangePending {};
+
+	uint32 mSectorSize {};
+	int mSectorSizeShift {};
+	uint32 mBootSectorCount {};
+	uint32 mBootSectorSize {};
+	uint32 mFixedSectorCount {};
 
 	VDLazyTimer mCloseTimer;
 	ATDirectoryWatcher mDirWatcher;
@@ -278,13 +301,13 @@ private:
 
 	// This is a hash table used to accelerate sector key searches. It is keyed
 	// off of all four bytes of the sector key added together.
-	uint32 mSectorHash[256];
-	File *mpFileHash[256];
+	uint32 mSectorHash[256] {};
+	File *mpFileHash[256] {};
 
-	File mFiles[2048];
+	File mFiles[2048] {};
 
 	// This array contains the sector key for each sector.
-	SectorNode mSectorPool[65535];	// 1MB!
+	SectorNode mSectorPool[65535] {};	// 1MB!
 };
 
 struct ATDiskImageVirtualFolderSDFS::XDirEntIndexPred {
@@ -311,8 +334,20 @@ struct ATDiskImageVirtualFolderSDFS::XDirEntNamePred {
 ATDiskImageVirtualFolderSDFS::ATDiskImageVirtualFolderSDFS() {
 }
 
-void ATDiskImageVirtualFolderSDFS::Init(const wchar_t *path, uint64 uniquenessValue) {
+void ATDiskImageVirtualFolderSDFS::Init(const wchar_t *path, uint64 uniquenessValue, uint32 sectorSize) {
+	VDASSERT(sectorSize >= 128 && sectorSize <= 512);
+
 	mPath = path;
+	mSectorSize = sectorSize;
+	mSectorSizeShift = VDFindHighestSetBit(sectorSize);
+
+	if (sectorSize < 512) {
+		mBootSectorSize = 128;
+		mBootSectorCount = 3;
+	} else {
+		mBootSectorSize = 512;
+		mBootSectorCount = 1;
+	}
 
 	// Compute volume name and signature.
 	//
@@ -344,24 +379,32 @@ void ATDiskImageVirtualFolderSDFS::Init(const wchar_t *path, uint64 uniquenessVa
 	// reset sector hash table
 	memset(mSectorHash, 0, sizeof mSectorHash);
 
+	// calculate bitmap size -- we need 8192 bitmap bytes to cover the full 64K sectors,
+	// since invalid sector 0 is given a bit
+	const uint32 numBitmapSectors = 8191 / mSectorSize + 1;
+
+	// calculate fixed sector count, which includes the boot sector(s), the bitmap, and
+	// the start of the root directory sector map
+	mFixedSectorCount = mBootSectorCount + numBitmapSectors + 1;
+
 	// reset sector pool - sectors 0-67 are special reserved, and sector 68
 	// is the root directory sector map start
 	memset(mSectorPool, 0, sizeof mSectorPool);
 
-	for(int i=0; i<67; ++i)
+	for(uint32 i = 0; i < mFixedSectorCount - 1; ++i)
 		mSectorPool[i].mSectorKey = i + 1;
 
-	mSectorPool[67].mSectorKey = (1 << kSectorKeyFileShift) + kSectorKeyMapBit;
+	mSectorPool[mFixedSectorCount - 1].mSectorKey = (1 << kSectorKeyFileShift) + kSectorKeyMapBit;
 
 	// link sectors 68-65534 into the free list
-	for(int i=65534; i>=68; --i) {
+	for(uint32 i=65534; i>=mFixedSectorCount; --i) {
 		mSectorPool[i].mLRUPrev = i+1;
 		mSectorPool[i].mLRUNext = i-1;
 	}
 
-	mSectorPool[68].mLRUNext = 0;
+	mSectorPool[mFixedSectorCount].mLRUNext = 0;
 	mSectorPool[65534].mLRUPrev = 0;
-	mSectorPool[0].mLRUPrev = 68;
+	mSectorPool[0].mLRUPrev = mFixedSectorCount;
 	mSectorPool[0].mLRUNext = 65534;
 
 	// set up file #1 (root)
@@ -383,9 +426,9 @@ void ATDiskImageVirtualFolderSDFS::Init(const wchar_t *path, uint64 uniquenessVa
 }
 
 ATDiskGeometryInfo ATDiskImageVirtualFolderSDFS::GetGeometry() const {
-	ATDiskGeometryInfo info;
-	info.mSectorSize = 128;
-	info.mBootSectorCount = 3;
+	ATDiskGeometryInfo info {};
+	info.mSectorSize = mSectorSize;
+	info.mBootSectorCount = GetBootSectorCount();
 	info.mTotalSectorCount = 65535;
 	info.mTrackCount = 1;
 	info.mSectorsPerTrack = 65535;
@@ -396,15 +439,17 @@ ATDiskGeometryInfo ATDiskImageVirtualFolderSDFS::GetGeometry() const {
 }
 
 uint32 ATDiskImageVirtualFolderSDFS::GetSectorSize() const {
-	return 128;
+	return mSectorSize;
 }
 
 uint32 ATDiskImageVirtualFolderSDFS::GetSectorSize(uint32 virtIndex) const {
-	return 128;
+	return virtIndex >= mBootSectorCount ? mBootSectorSize : mSectorSize;
 }
 
 uint32 ATDiskImageVirtualFolderSDFS::GetBootSectorCount() const {
-	return 3;
+	// 512b disks have a single boot sector, but in the disk interface boot sectors are
+	// 128-byte sectors, so for a 512b disk we report 0.
+	return mBootSectorSize > 128 ? 0 : mBootSectorCount;
 }
 
 uint32 ATDiskImageVirtualFolderSDFS::GetPhysicalSectorCount() const {
@@ -414,8 +459,8 @@ uint32 ATDiskImageVirtualFolderSDFS::GetPhysicalSectorCount() const {
 void ATDiskImageVirtualFolderSDFS::GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const {
 	info.mOffset = 0;
 	info.mDiskOffset = -1;
-	info.mPhysicalSize = 128;
-	info.mImageSize = 128;
+	info.mPhysicalSize = GetSectorSize(index);
+	info.mImageSize = info.mPhysicalSize;
 	info.mbDirty = false;
 	info.mbMFM = false;
 	info.mRotPos = mpInterleaveFn(index);
@@ -426,7 +471,10 @@ void ATDiskImageVirtualFolderSDFS::GetPhysicalSectorInfo(uint32 index, ATDiskPhy
 void ATDiskImageVirtualFolderSDFS::ReadPhysicalSector(uint32 index, void *data, uint32 len) {
 	memset(data, 0, len);
 
-	if (len != 128 || index >= 65535)
+	if (index >= 65535)
+		return;
+
+	if (len != GetSectorSize(index))		// GetSectorSize() takes virtIndex, but virtIndex == physIndex for us
 		return;
 
 	// Retrieve the sector key for this sector.
@@ -434,7 +482,7 @@ void ATDiskImageVirtualFolderSDFS::ReadPhysicalSector(uint32 index, void *data, 
 
 	if (sectorKey < 0x00010000) {
 		// This is a special sector. Check for a boot sector.
-		if (index < 3) {
+		if (index < mBootSectorCount) {
 			if (!index) {
 				// Check for a pending change.
 				if (mDirWatcher.CheckForChanges(mDirChanges)) {
@@ -443,7 +491,15 @@ void ATDiskImageVirtualFolderSDFS::ReadPhysicalSector(uint32 index, void *data, 
 				} else if (!mDirChanges.empty())
 					InvalidatePartial();
 
-				memcpy(data, kATSDFSBootSector0, sizeof kATSDFSBootSector0);
+				if (mSectorSize == 512) {
+					memcpy(data, kATSDFSBootSector0_512b, sizeof kATSDFSBootSector0);
+
+					// the boot sector is 512 bytes in a 512b partition
+					memset((char *)data + 128, 0, 384);
+				} else if (mSectorSize == 256) {
+					memcpy(data, kATSDFSBootSector0_256b, sizeof kATSDFSBootSector0);
+				} else
+					memcpy(data, kATSDFSBootSector0, sizeof kATSDFSBootSector0);
 
 				// increment the volume sequence now if a change is pending -- this ensures that
 				// we do not wrap the sequence counter before DOS sees it
@@ -492,7 +548,7 @@ void ATDiskImageVirtualFolderSDFS::ReadPhysicalSector(uint32 index, void *data, 
 			ScanDirectory(file);
 		
 		// Compute the range of sectors that it maps.
-		const uint32 sectorCount = (file.mSize + 127) >> 7;
+		const uint32 sectorCount = (file.mSize + mSectorSize - 1) >> mSectorSizeShift;
 		const uint32 sectorMapBase = subIndex * 62;
 
 		// Fill out the next pointer.
@@ -522,10 +578,10 @@ void ATDiskImageVirtualFolderSDFS::ReadPhysicalSector(uint32 index, void *data, 
 		// sectors. We conservatively reserve sector keys for all partially covered
 		// entries.
 		uint32 numEnts = (uint32)file.mXDirEnts.size();
-		uint32 ent = (subIndex << 7) / 23;
-		sint32 offset = (sint32)ent * 23 - (sint32)(subIndex << 7);
+		uint32 ent = (subIndex << mSectorSizeShift) / 23;
+		sint32 offset = (sint32)ent * 23 - (sint32)(subIndex << mSectorSizeShift);
 
-		while(offset < 128 && ent < numEnts) {
+		while(offset < (sint32)mSectorSize && ent < numEnts) {
 			XDirEnt& xde = file.mXDirEnts[ent];
 
 			// update the sector map pointer
@@ -596,7 +652,7 @@ void ATDiskImageVirtualFolderSDFS::ReadPhysicalSector(uint32 index, void *data, 
 		}
 
 		// Read sector data.
-		uint32 byteOffset = subIndex << 7;
+		uint32 byteOffset = subIndex << mSectorSizeShift;
 		uint32 validLen = 0;
 
 		if (byteOffset < file.mSize)
@@ -623,11 +679,13 @@ void ATDiskImageVirtualFolderSDFS::GetVirtualSectorInfo(uint32 index, ATDiskVirt
 }
 
 uint32 ATDiskImageVirtualFolderSDFS::ReadVirtualSector(uint32 index, void *data, uint32 len) {
-	if (len < 128)
+	uint32 vsize = GetSectorSize(index);
+
+	if (len < vsize)
 		return 0;
 
-	ReadPhysicalSector(index, data, len > 128 ? 128 : len);
-	return 128;
+	ReadPhysicalSector(index, data, len > vsize ? vsize : len);
+	return vsize;
 }
 
 bool ATDiskImageVirtualFolderSDFS::WriteVirtualSector(uint32 index, const void *data, uint32 len) {
@@ -731,10 +789,6 @@ void ATDiskImageVirtualFolderSDFS::ScanDirectory(File& dir) {
 	VDDirectoryIterator dirIt(VDMakePath(VDMakePath(mPath.c_str(), dir.mRelPath.c_str()).c_str(), L"*").c_str());
 
 	while(dirIt.Next() && dir.mXDirEnts.size() < 256) {
-		// skip dot directories
-		if (dirIt.IsDotDirectory())
-			continue;
-
 		// check if this is a super-secret file that Explorer likes to hide
 		const uint32 attr = dirIt.GetAttributes();
 
@@ -821,7 +875,7 @@ void ATDiskImageVirtualFolderSDFS::ScanDirectory(File& dir) {
 		xde.mDirEnt.mSize[2] = (uint8)(xde.mSize >> 16);
 
 		// encode date
-		VDDate fileDate = dirIt.GetLastWriteDate();
+		VDDate fileDate = dirIt.IsDirectory() ? dirIt.GetCreationDate() : dirIt.GetLastWriteDate();
 		const VDExpandedDate& expDate = VDGetLocalDate(fileDate);
 		xde.mDirEnt.mDay = expDate.mDay;
 		xde.mDirEnt.mMonth = expDate.mMonth;
@@ -856,8 +910,13 @@ void ATDiskImageVirtualFolderSDFS::ScanDirectory(File& dir) {
 			// determine how many spaces we have at the end of the name
 			int nameLen = 8;
 
-			while(nameLen > 1 && xde.mDirEnt.mName[nameLen - 1] == ' ')
+			while(nameLen > 0 && xde.mDirEnt.mName[nameLen - 1] == ' ')
 				--nameLen;
+
+			if (!nameLen) {
+				xde.mDirEnt.mName[0] = '0';
+				nameLen = 1;
+			}
 
 			// increment the name
 			for(int i=nameLen-1; i>=0; --i) {
@@ -1028,7 +1087,7 @@ uint32 ATDiskImageVirtualFolderSDFS::ReserveSector(uint32 sectorKey) {
 }
 
 void ATDiskImageVirtualFolderSDFS::PromoteSector(uint32 index) {
-	if (index >= 68 && index < 65535) {
+	if (index >= mFixedSectorCount && index < 65535) {
 		SectorNode& sc = mSectorPool[index];
 		SectorNode& sp = mSectorPool[sc.mLRUPrev];
 		SectorNode& sn = mSectorPool[sc.mLRUNext];
@@ -1110,9 +1169,9 @@ uint32 ATDiskImageVirtualFolderSDFS::HashSectorKey(uint32 sectorKey) const {
 
 ///////////////////////////////////////////////////////////////////////////
 
-void ATMountDiskImageVirtualFolderSDFS(const wchar_t *path, uint32 sectorCount, uint64 unique, IATDiskImage **ppImage) {
+void ATMountDiskImageVirtualFolderSDFS(const wchar_t *path, uint32 sectorSize, uint64 unique, IATDiskImage **ppImage) {
 	vdrefptr<ATDiskImageVirtualFolderSDFS> p(new ATDiskImageVirtualFolderSDFS);
 	
-	p->Init(path, unique);
+	p->Init(path, unique, sectorSize);
 	*ppImage = p.release();
 }

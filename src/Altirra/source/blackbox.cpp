@@ -107,7 +107,7 @@ void *ATBlackBoxEmulator::AsInterface(uint32 iid) {
 		case IATDeviceButtons::kTypeID: return static_cast<IATDeviceButtons *>(this);
 		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(this);
 		case IATDeviceIndicators::kTypeID: return static_cast<IATDeviceIndicators *>(this);
-		case IATDevicePrinter::kTypeID: return static_cast<IATDevicePrinter *>(this);
+		case IATDevicePrinterPort::kTypeID: return static_cast<IATDevicePrinterPort *>(this);
 	}
 
 	return nullptr;
@@ -159,6 +159,7 @@ bool ATBlackBoxEmulator::SetSettings(const ATPropertySet& settings) {
 
 void ATBlackBoxEmulator::Init() {
 	mSerialBus.Init(this, 0, IATDeviceSerial::kTypeID, "serial", L"Serial Port", "serport");
+	mParallelBus.Init(this, 2, IATPrinterOutput::kTypeID, "parallel", L"Parallel Printer Port", "parport");
 
 	mSerialBus.SetOnAttach(
 		[this] {
@@ -195,6 +196,7 @@ void ATBlackBoxEmulator::Init() {
 
 void ATBlackBoxEmulator::Shutdown() {
 	mSerialBus.Shutdown();
+	mParallelBus.Shutdown();
 
 	mSCSIBus.Shutdown();
 
@@ -408,7 +410,7 @@ void ATBlackBoxEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 
-void ATBlackBoxEmulator::SetPrinterOutput(IATPrinterOutput *out) {
+void ATBlackBoxEmulator::SetPrinterDefaultOutput(IATPrinterOutput *out) {
 	mpPrinterOutput = out;
 }
 
@@ -443,6 +445,9 @@ IATDeviceBus *ATBlackBoxEmulator::GetDeviceBus(uint32 index) {
 
 		case 1:
 			return this;
+
+		case 2:
+			return &mParallelBus;
 
 		default:
 			return nullptr;
@@ -677,15 +682,10 @@ void ATBlackBoxEmulator::OnVIAOutputChanged(void *thisptr0, uint32 val) {
 
 			g_ATLCParPrint("Sending byte to printer: $%02X\n", c);
 
-			// HACK
-			if (c != 0x0A) {
-				if (thisptr->mpPrinterOutput) {
-					if (c == 0x0D)
-						c = 0x0A;
-
-					thisptr->mpPrinterOutput->WriteASCII(&c, 1);
-				}
-			}
+			if (auto *printer = thisptr->mParallelBus.GetChild<IATPrinterOutput>())
+				printer->WriteASCII(&c, 1);
+			else if (thisptr->mpPrinterOutput)
+				thisptr->mpPrinterOutput->WriteASCII(&c, 1);
 		}
 	}
 

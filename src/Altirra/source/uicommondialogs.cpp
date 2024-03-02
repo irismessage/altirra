@@ -19,6 +19,7 @@
 #include <vd2/system/error.h>
 #include <vd2/system/text.h>
 #include <vd2/Dita/services.h>
+#include <at/atcore/configvar.h>
 #include <at/atnativeui/genericdialog.h>
 #include <at/atui/uianchor.h>
 #include <at/atui/uimanager.h>
@@ -31,10 +32,12 @@
 extern ATUIManager g_ATUIManager;
 extern HWND g_hwnd;
 
+ATConfigVarBool g_ATCVForceNonNativeDialogs("ui.force_non_native_dialogs", false);
+
 bool g_ATUINativeDialogsEnabled = true;
 
 bool ATUIGetNativeDialogMode() {
-	return g_ATUINativeDialogsEnabled;
+	return g_ATUINativeDialogsEnabled && !g_ATCVForceNonNativeDialogs;
 }
 
 void ATUISetNativeDialogMode(bool enabled) {

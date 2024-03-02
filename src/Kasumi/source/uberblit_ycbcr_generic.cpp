@@ -52,8 +52,6 @@ VDPixmapGenYCbCrToRGB32Generic::VDPixmapGenYCbCrToRGB32Generic(const VDPixmapGen
 		bias = 32768.0f;
 	}
 
-	float scale255 = scale * 255.0f;
-
 	mCoY = VDRoundToInt32(scale);
 	mCoRCr = VDRoundToInt32(basis.mToRGB[1][0] * scale);
 	mCoGCr = VDRoundToInt32(basis.mToRGB[1][1] * scale);

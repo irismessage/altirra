@@ -655,29 +655,32 @@ sint32 ATBreakpointManager::OnAccessTrapRead(void *thisptr0, uint32 addr) {
 	bool noisyBreak = false;
 
 	if (attr & kAttribReadBkpt) {
-		BreakpointIndices& bpidxs = thisptr->mAccessBreakpoints.find(addr)->second;
+		auto it = thisptr->mAccessBreakpoints.find(addr);
+		if (it != thisptr->mAccessBreakpoints.end()) {
+			BreakpointIndices& bpidxs = it->second;
 
-		for(BreakpointIndices::const_iterator it(bpidxs.begin()), itEnd(bpidxs.end()); it != itEnd; ++it) {
-			const uint32 idx = *it;
-			const BreakpointEntry& bpe = thisptr->mBreakpoints[idx - 1];
+			for(BreakpointIndices::const_iterator it(bpidxs.begin()), itEnd(bpidxs.end()); it != itEnd; ++it) {
+				const uint32 idx = *it;
+				const BreakpointEntry& bpe = thisptr->mBreakpoints[idx - 1];
 
-			if (!(bpe.mType & kBPT_Read))
-				continue;
+				if (!(bpe.mType & kBPT_Read))
+					continue;
 
-			ATBreakpointEvent ev;
-			ev.mIndex = idx;
-			ev.mTargetIndex = 0;
-			ev.mAddress = addr;
-			ev.mValue = 0;
-			ev.mbBreak = false;
-			ev.mbSilentBreak = false;
+				ATBreakpointEvent ev;
+				ev.mIndex = idx;
+				ev.mTargetIndex = 0;
+				ev.mAddress = addr;
+				ev.mValue = 0;
+				ev.mbBreak = false;
+				ev.mbSilentBreak = false;
 
-			thisptr->mEventBreakpointHit.Raise(thisptr, &ev);
+				thisptr->mEventBreakpointHit.Raise(thisptr, &ev);
 
-			if (ev.mbBreak) {
-				shouldBreak = true;
-				if (!ev.mbSilentBreak)
-					noisyBreak = true;
+				if (ev.mbBreak) {
+					shouldBreak = true;
+					if (!ev.mbSilentBreak)
+						noisyBreak = true;
+				}
 			}
 		}
 	}
@@ -732,29 +735,32 @@ bool ATBreakpointManager::OnAccessTrapWrite(void *thisptr0, uint32 addr, uint8 v
 	bool noisyBreak = false;
 
 	if (attr & kAttribWriteBkpt) {
-		BreakpointIndices& bpidxs = thisptr->mAccessBreakpoints.find(addr)->second;
+		auto it = thisptr->mAccessBreakpoints.find(addr);
 
-		for(BreakpointIndices::const_iterator it(bpidxs.begin()), itEnd(bpidxs.end()); it != itEnd; ++it) {
-			const uint32 idx = *it;
-			const BreakpointEntry& bpe = thisptr->mBreakpoints[idx - 1];
+		if (it != thisptr->mAccessBreakpoints.end()) {
+			BreakpointIndices& bpidxs = it->second;
 
-			if (!(bpe.mType & kBPT_Write))
-				continue;
+			for(const uint32 idx : bpidxs) {
+				const BreakpointEntry& bpe = thisptr->mBreakpoints[idx - 1];
 
-			ATBreakpointEvent ev;
-			ev.mIndex = idx;
-			ev.mTargetIndex = 0;
-			ev.mAddress = addr;
-			ev.mValue = value;
-			ev.mbBreak = false;
-			ev.mbSilentBreak = false;
+				if (!(bpe.mType & kBPT_Write))
+					continue;
 
-			thisptr->mEventBreakpointHit.Raise(thisptr, &ev);
+				ATBreakpointEvent ev;
+				ev.mIndex = idx;
+				ev.mTargetIndex = 0;
+				ev.mAddress = addr;
+				ev.mValue = value;
+				ev.mbBreak = false;
+				ev.mbSilentBreak = false;
 
-			if (ev.mbBreak) {
-				shouldBreak = true;
-				if (!ev.mbSilentBreak)
-					noisyBreak = true;
+				thisptr->mEventBreakpointHit.Raise(thisptr, &ev);
+
+				if (ev.mbBreak) {
+					shouldBreak = true;
+					if (!ev.mbSilentBreak)
+						noisyBreak = true;
+				}
 			}
 		}
 	}

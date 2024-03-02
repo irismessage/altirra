@@ -42,7 +42,8 @@ class ATDebuggerCmdParser;
 
 enum ATDebugEvent {
 	kATDebugEvent_BreakpointsChanged,
-	kATDebugEvent_SymbolsChanged
+	kATDebugEvent_SymbolsChanged,
+	kATDebugEvent_MemoryChanged
 };
 
 enum ATDebugSrcMode {
@@ -87,7 +88,7 @@ struct ATDebuggerSystemState {
 	uint16	mPCFileId;
 	uint16	mPCLine;
 
-	uint16	mFramePC;
+	uint32	mFrameExtPC;
 	bool	mbRunning;
 
 	uint32	mCycle;
@@ -101,9 +102,19 @@ struct ATCallStackFrame {
 	uint8	mP;
 };
 
+enum class ATDebuggerWatchMode : uint8 {
+	None,
+	ByteAtAddress,
+	WordAtAddress,
+	ExprDec,
+	ExprHex8,
+	ExprHex16,
+	ExprHex32
+};
+
 struct ATDebuggerWatchInfo {
 	uint32	mAddress;
-	uint32	mLen;
+	ATDebuggerWatchMode	mMode;
 	uint32	mTargetIndex;
 	ATDebugExpNode *mpExpr;
 };
@@ -157,12 +168,18 @@ public:
 
 	virtual const ATDebuggerExprParseOpts& GetExprOpts() const = 0;
 
+	virtual const char *GetTempString() const = 0;
+	virtual void SetTempString(const char *s) = 0;
+
 	virtual bool IsEnabled() const = 0;
 	virtual void SetEnabled(bool enabled) = 0;
 
 	virtual ATDebuggerScriptAutoLoadMode GetScriptAutoLoadMode() const = 0;
 	virtual void SetScriptAutoLoadMode(ATDebuggerScriptAutoLoadMode mode) = 0;
 	virtual void SetScriptAutoLoadConfirmFn(vdfunction<bool()> fn) = 0;
+
+	virtual bool GetDebugLinkEnabled() const = 0;
+	virtual void SetDebugLinkEnabled(bool enabled) = 0;
 
 	virtual void ShowBannerOnce() = 0;
 
@@ -181,6 +198,13 @@ public:
 	virtual void ToggleSourceBreakpoint(const char *fn, uint32 line) = 0;
 	virtual uint32 SetSourceBreakpoint(const char *fn, uint32 line, ATDebugExpNode *condexp, const char *command, bool continueExecution = false) = 0;
 
+	virtual int AddWatch(uint32 address, int length) = 0;
+	virtual int AddWatchExpr(ATDebugExpNode *expr, ATDebuggerWatchMode mode) = 0;
+	virtual bool ClearWatch(int idx) = 0;
+	virtual void ClearAllWatches() = 0;
+	virtual int FindWatch(uint32 address) const = 0;
+	virtual bool GetWatchInfo(int idx, ATDebuggerWatchInfo& info) = 0;
+
 	virtual void StepInto(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *stepRanges = NULL, uint32 stepRangeCount = 0) = 0;
 	virtual void StepOver(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *stepRanges = NULL, uint32 stepRangeCount = 0) = 0;
 	virtual void StepOut(ATDebugSrcMode sourceMode) = 0;
@@ -189,6 +213,8 @@ public:
 	virtual uint32 GetExtPC() const = 0;
 	virtual uint16 GetFramePC() const = 0;
 	virtual void SetFramePC(uint16 pc) = 0;
+	virtual uint32 GetFrameExtPC() const = 0;
+	virtual void SetFrameExtPC(uint32 pc) = 0;
 	virtual uint32 GetCallStack(ATCallStackFrame *dst, uint32 maxCount) = 0;
 	virtual void DumpCallStack() = 0;
 	virtual void ListModules() = 0;

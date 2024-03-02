@@ -20,7 +20,7 @@
 
 #include <at/atcore/scheduler.h>
 
-enum ATFlashType {
+enum ATFlashType : uint8 {
 	kATFlashType_Am29F010,	// AMD 128K x 8-bit
 	kATFlashType_Am29F010B,	// AMD 128K x 8-bit
 	kATFlashType_Am29F040,	// AMD 512K x 8-bit
@@ -37,6 +37,8 @@ enum ATFlashType {
 	kATFlashType_BM29F040,	// BRIGHT 512K x 8-bit
 	kATFlashType_M29F010B, 	// STMicroelectronics 128K x 8-bit (then Numonyx, now Micron)
 	kATFlashType_HY29F040A,	// Hynix HY29F040A 512K x 8-bit
+	kATFlashType_M29W800DT,	// Numonyx 1M x 8-bit, top device
+	kATFlashType_MX29LV640DT,// Macronyx 1M x 8-bit, top device
 };
 
 class ATFlashEmulator : public IATSchedulerCallback {
@@ -68,6 +70,7 @@ public:
 
 protected:
 	virtual void OnScheduledEvent(uint32 id);
+	void SectorErase(uint32 address);
 
 	uint8 *mpMemory;
 	ATScheduler *mpScheduler;

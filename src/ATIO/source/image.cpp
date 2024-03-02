@@ -115,6 +115,9 @@ ATImageType ATDetectImageType(const wchar_t *imagePath, IVDRandomAccessStream& s
 		return kATImageType_Tape;
 	}
 	
+	if (header[0] == 'f' && header[1] == 'L' && header[2] == 'a' && header[3] == 'C')
+		return kATImageType_Tape;
+
 	if (header[0] == 'F' && header[1] == 'U' && header[2] == 'J' && header[3] == 'I')
 		return kATImageType_Tape;
 
@@ -146,8 +149,6 @@ ATImageType ATDetectImageType(const wchar_t *imagePath, IVDRandomAccessStream& s
 }
 
 bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, ATImageLoadContext *loadCtx, VDStringW *resultPath, bool *canUpdate, IATImage **ppImage) {
-	sint64 size = 0;
-
 	const wchar_t *ext = imagePath ? VDFileSplitExt(imagePath) : L"";
 
 	ATImageType loadType = kATImageType_None;
@@ -330,7 +331,7 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 		*ppImage = cartImage.release();
 	} else if (loadType == kATImageType_Tape) {
 		vdrefptr<IATCassetteImage> tapeImage;
-		ATLoadCassetteImage(stream, nullptr, loadCtx->mpCassetteLoadContext ? *loadCtx->mpCassetteLoadContext : ATCassetteLoadContext(), ~tapeImage);
+		ATLoadCassetteImage(stream, nullptr, loadCtx && loadCtx->mpCassetteLoadContext ? *loadCtx->mpCassetteLoadContext : ATCassetteLoadContext(), ~tapeImage);
 
 		*ppImage = tapeImage.release();
 	} else if (loadType == kATImageType_Disk) {

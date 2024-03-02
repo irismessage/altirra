@@ -276,7 +276,7 @@ void ATDeviceDiskDriveAMDC::Init() {
 	mACIA.SetTransmitFn([this](uint8 v, uint32 cyclesPerBit) { OnACIATransmit(v, cyclesPerBit); });
 
 	// FDC in the AMDC-I/II is a 1797.
-	mFDC.Init(&mDriveScheduler, 300.0f, 2.0f, ATFDCEmulator::kType_2797);
+	mFDC.Init(&mDriveScheduler, 300.0f, 1.0f, ATFDCEmulator::kType_2797);
 
 	mFDC.SetAutoIndexPulse(true);
 	mFDC.SetOnDrqChange([this](bool drq) { OnFDCDataRequest(drq); });

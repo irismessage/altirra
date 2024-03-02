@@ -38,13 +38,12 @@
     <ClCompile Include="source\fontextract.cpp" />
     <ClCompile Include="source\fontrender.cpp" />
     <ClCompile Include="source\fxc10.cpp" />
-    <ClCompile Include="source\glc.cpp" />
-    <ClCompile Include="source\glc_atifs.cpp" />
-    <ClCompile Include="source\glc_nvrc.cpp" />
     <ClCompile Include="source\hash.cpp" />
     <ClCompile Include="source\main.cpp" />
     <ClCompile Include="source\makearray.cpp" />
     <ClCompile Include="source\maketables.cpp" />
+    <ClCompile Include="source\signexport.cpp" />
+    <ClCompile Include="source\signxml.cpp" />
     <ClCompile Include="source\utils.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
@@ -52,7 +51,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\filecreator.h" />
-    <ClInclude Include="h\glc.h" />
     <ClInclude Include="res\resource.h" />
     <ClInclude Include="h\symbols.h" />
     <ClInclude Include="h\utils.h" />

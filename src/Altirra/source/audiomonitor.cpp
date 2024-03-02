@@ -71,9 +71,18 @@ void ATAudioMonitor::SetMixedSampleCount(uint32 len) {
 	mLog.mMaxMixedSamples = len;
 }
 
-void ATAudioMonitor::Update(ATPokeyAudioLog **log, ATPokeyRegisterState **rstate) {
+uint8 ATAudioMonitor::Update(ATPokeyAudioLog **log, ATPokeyRegisterState **rstate) {
 	mpPokey->GetRegisterState(mRegisterState);
 
 	*log = &mLog;
 	*rstate = &mRegisterState;
+
+	uint8 chanMask = 0;
+
+	for(int i=0; i<4; ++i) {
+		if (mpPokey->IsChannelEnabled(i))
+			chanMask |= (1 << i);
+	}
+
+	return chanMask;
 }

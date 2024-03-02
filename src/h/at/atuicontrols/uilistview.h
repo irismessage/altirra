@@ -63,7 +63,7 @@ public:
 public:
 	virtual void OnMouseDownL(sint32 x, sint32 y) override;
 	virtual void OnMouseDblClkL(sint32 x, sint32 y) override;
-	virtual bool OnMouseWheel(sint32 x, sint32 y, float delta) override;
+	virtual bool OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages) override;
 
 	virtual void OnActionStart(uint32 id) override;
 	virtual void OnActionRepeat(uint32 id) override;

@@ -28,7 +28,8 @@
 #include <at/atcore/deferredevent.h>
 #include <at/atcore/scheduler.h>
 #include <at/atcore/devicesio.h>
-#include "pokey.h"
+#include <at/atio/cassetteimage.h>
+#include <at/ataudio/pokey.h>
 
 class VDFile;
 
@@ -39,11 +40,14 @@ class IATCassetteImage;
 struct ATTraceContext;
 class ATTraceChannelTape;
 
+enum class ATCassetteTurboDecodeAlgorithm : uint8;
+
 enum ATCassetteTurboMode : uint8 {
 	kATCassetteTurboMode_None,
 	kATCassetteTurboMode_CommandControl,
 	kATCassetteTurboMode_ProceedSense,
 	kATCassetteTurboMode_InterruptSense,
+	kATCassetteTurboMode_KSOTurbo2000,
 	kATCassetteTurboMode_Always
 };
 
@@ -85,7 +89,14 @@ public:
 	uint32 GetSampleLen() const { return mLength; }
 	uint32 GetSamplePos() const { return mPosition; }
 
-	void Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATScheduler *slowsched, IATAudioMixer *mixer, ATDeferredEventManager *defmgr, IATDeviceSIOManager *sioMgr);
+	// Return the number of cycles since the leading edge of the current sample.
+	sint32 GetSampleCycleOffset() const;
+
+	uint64 GetLastStopCycle() const { return mLastStopCycle; }
+	float GetLastStopPosition() const;
+	uint32 GetLastStopSamplePos() const { return mLastStopPosition; }
+
+	void Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATScheduler *slowsched, IATAudioMixer *mixer, ATDeferredEventManager *defmgr, IATDeviceSIOManager *sioMgr, IATDevicePortManager *portMgr);
 	void Shutdown();
 	void ColdReset();
 
@@ -98,7 +109,6 @@ public:
 	bool IsMotorRunning() const { return mbMotorRunning; }
 	bool IsLoadDataAsAudioEnabled() const { return mbLoadDataAsAudio; }
 	bool IsAutoRewindEnabled() const { return mbAutoRewind; }
-	bool IsTurboPrefilterEnabled() const { return mbTurboPrefilterEnabled; }
 
 	void LoadNew();
 	void Load(const wchar_t *fn);
@@ -106,22 +116,30 @@ public:
 	void Unload();
 	void SetImagePersistent(const wchar_t *fn);
 	void SetImageClean();
+	void SetImageDirty();
 
 	void SetLoadDataAsAudioEnable(bool enable);
 	void SetRandomizedStartEnabled(bool enable);
 	void SetAutoRewindEnabled(bool enable) { mbAutoRewind = enable; }
-	void SetTurboPrefilterEnabled(bool enable) { mbTurboPrefilterEnabled = enable; }
+
+	ATCassetteTurboDecodeAlgorithm GetTurboDecodeAlgorithm() const { return mTurboDecodeAlgorithm; }
+	void SetTurboDecodeAlgorithm(ATCassetteTurboDecodeAlgorithm algorithm) { mTurboDecodeAlgorithm = algorithm; }
 
 	ATCassetteDirectSenseMode GetDirectSenseMode() const { return mDirectSenseMode; }
 	void SetDirectSenseMode(ATCassetteDirectSenseMode mode);
 
-	bool IsFSKDecodingEnabled() const { return mbFSKDecoderEnabled; }
+	bool IsTurboDecodingEnabled() const { return !mbFSKDecoderEnabled || mbPortMotorState; }
 
 	ATCassetteTurboMode GetTurboMode() const { return mTurboMode; }
 	void SetTurboMode(ATCassetteTurboMode turboMode);
 
 	ATCassettePolarityMode GetPolarityMode() const;
 	void SetPolarityMode(ATCassettePolarityMode mode);
+
+	bool IsVBIAvoidanceEnabled() const;
+	void SetVBIAvoidanceEnabled(bool enable);
+
+	void SetNextVerticalBlankTime(uint64 t);
 
 	void SetTraceContext(ATTraceContext *context);
 
@@ -135,6 +153,9 @@ public:
 	void SeekToBitPos(uint32 bitPos);
 	void SkipForward(float seconds);
 
+	uint32 OnPreModifyTape();
+	void OnPostModifyTape(uint32 newPos);
+
 	uint8 ReadBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem);
 	uint8 WriteBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMemory *mpMem);
 
@@ -146,9 +167,11 @@ public:
 public:
 	ATDeferredEvent PositionChanged;
 	ATDeferredEvent PlayStateChanged;
-	ATDeferredEvent TapeChanging;
-	ATDeferredEvent TapeChanged;
+	ATNotifyList<const vdfunction<void()> *> TapeChanging;
+	ATNotifyList<const vdfunction<void()> *> TapeChanged;
 	ATDeferredEvent TapePeaksUpdated;
+	ATDeferredEvent TapeDirtyStateChanged;
+	ATNotifyList<const vdfunction<void(uint32 /* startBitLeadingEdgePos */, uint32 /* stopBitSamplePos */, uint8 /* dataByte */, bool /* framingError */, uint32 /* cyclesPerHalfBit */)> *> ByteDecoded;
 
 public:
 	void PokeyChangeSerialRate(uint32 divisor) override;
@@ -223,6 +246,7 @@ private:
 
 	void UpdateTraceState();
 	void UpdateDirectSenseParameters();
+	void ScheduleNextPortTransition();
 
 	uint32	mAudioPosition = 0;
 	uint32	mAudioLength = 0;
@@ -262,13 +286,19 @@ private:
 	bool	mbDataBitEdge = false;		// True if we are waiting for the edge of a data bit, false if we are sampling.
 	int		mDataBitCounter = 0;
 	int		mDataBitHalfPeriod = 0;
+	uint32	mStartBitPosition = 0;
 	uint32	mAveragingPeriod = 0;
 
 	bool	mbRandomizedStartEnabled = false;
+	bool	mbVBIAvoidanceEnabled = false;
+	uint64	mNextVBITime = 0;
 
 	ATEvent *mpPlayEvent = nullptr;
 	ATEvent *mpRecordEvent = nullptr;
 	uint32	mRecordLastTime = 0;
+
+	uint64	mLastStopCycle = 0;
+	uint32	mLastStopPosition = 0;
 
 	ATPokeyEmulator *mpPokey = nullptr;
 	ATScheduler *mpScheduler = nullptr;
@@ -280,13 +310,23 @@ private:
 	bool	mbImagePersistent = false;
 	bool	mbImageDirty = false;
 
+	ATCassetteWriteCursor mWriteCursor {};
+
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
 	bool	mbRegisteredRawSIO = false;
+
+	IATDevicePortManager *mpPortMgr = nullptr;
+	int		mPortInput = -1;
+	int		mPortOutput = -1;
+	ATEvent *mpPortUpdateEvent = nullptr;
+	bool	mbPortCurrentPolarity = false;
+	bool	mbPortMotorState = false;
+	uint32	mPortCurrentPosition = 0;
 
 	ATCassetteTurboMode mTurboMode = kATCassetteTurboMode_None;
 	bool	mbTurboProceedAsserted = false;
 	bool	mbTurboInterruptAsserted = false;
-	bool	mbTurboPrefilterEnabled = false;
+	ATCassetteTurboDecodeAlgorithm mTurboDecodeAlgorithm {};
 
 	struct AudioEvent {
 		uint32	mStartTime;

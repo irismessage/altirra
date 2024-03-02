@@ -395,8 +395,6 @@ reject_match:
 				pos = nextPos;
 			}
 
-			bool hashNode = true;
-
 			if (repeatOffset >= 0) {
 				if (repeatNode->mpParent == parent) {
 					mRepeatTreeRepeatNode[(mRepeatHead - repeatOffset) & kRepeatWindowMask] = repeatNode;

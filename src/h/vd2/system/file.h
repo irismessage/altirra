@@ -152,6 +152,7 @@ public:
 	void	setCreationTime(const VDDate& date);
 
 	VDDate	getLastWriteTime() const;
+	void	setLastWriteTime(const VDDate& date);
 
 	// unbuffered I/O requires aligned buffers ("unbuffers")
 	static void *AllocUnbuffer(size_t nBytes);

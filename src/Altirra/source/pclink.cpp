@@ -232,12 +232,10 @@ VDDate ATPCLinkDirEnt::DecodeDate(const uint8 tsdata[6]) {
 
 struct ATPCLinkDirEntSort {
 	bool operator()(const ATPCLinkDirEnt& x, const ATPCLinkDirEnt& y) {
-		// Note that we are sorting in reverse order here because we also
-		// pop them off in reverse order.
 		if ((x.mFlags ^ y.mFlags) & ATPCLinkDirEnt::kFlag_Directory)
-			return (x.mFlags & ATPCLinkDirEnt::kFlag_Directory) == 0;
+			return (x.mFlags & ATPCLinkDirEnt::kFlag_Directory) != 0;
 
-		return memcmp(x.mName, y.mName, 11) > 0;
+		return memcmp(x.mName, y.mName, 11) < 0;
 	}
 };
 
@@ -488,6 +486,7 @@ protected:
 	uint8	mFnextAttrFilter = 0;
 
 	VDFile	mFile;
+	VDDate	mPendingDate {};
 };
 
 ATPCLinkFileHandle::~ATPCLinkFileHandle() {
@@ -601,6 +600,9 @@ void ATPCLinkFileHandle::OpenAsDirectory(const ATPCLinkFileName& dirName, const 
 }
 
 void ATPCLinkFileHandle::Close() {
+	if (mbOpen && mPendingDate != VDDate{})
+		mFile.setLastWriteTime(mPendingDate);
+
 	mFile.closeNT();
 	mbOpen = false;
 	mbAllowRead = false;
@@ -720,8 +722,7 @@ uint8 ATPCLinkFileHandle::Write(const void *dst, uint32 len) {
 void ATPCLinkFileHandle::SetTimestamp(const uint8 tsdata[6]) {
 	VDDate date = ATPCLinkDirEnt::DecodeDate(tsdata);
 
-	if (date != VDDate {})
-		mFile.setCreationTime(date);
+	mPendingDate = date;
 }
 
 bool ATPCLinkFileHandle::GetNextDirEnt(ATPCLinkDirEnt& dirEnt) {
@@ -1340,12 +1341,6 @@ bool ATPCLinkDevice::OnPut() {
 
 					dirEnt.SetFlagsFromAttributes(it.GetAttributes());
 
-					if (it.IsDirectory()) {
-						// skip blasted . and .. dirs
-						if (it.IsDotDirectory())
-							continue;
-					}
-
 					if (!IsDirEntIncluded(dirEnt))
 						continue;
 
@@ -1355,7 +1350,7 @@ bool ATPCLinkDevice::OnPut() {
 					dirEnt.mLengthMid = (uint8)((uint32)len >> 8);
 					dirEnt.mLengthHi = (uint8)((uint32)len >> 16);
 					memcpy(dirEnt.mName, fn.mName, sizeof dirEnt.mName);
-					dirEnt.SetDate(it.GetCreationDate());
+					dirEnt.SetDate(it.IsDirectory() ? it.GetCreationDate() : it.GetLastWriteDate());
 
 					if (!openDir) {
 						matched = true;
@@ -1440,8 +1435,7 @@ bool ATPCLinkDevice::OnPut() {
 									nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kOpenAlways,
 									false, true, true);
 
-								if (fh.WasCreated())
-									setTimestamp = true;
+								setTimestamp = true;
 								break;
 
 							case 12:	// update
@@ -1451,6 +1445,8 @@ bool ATPCLinkDevice::OnPut() {
 									mStatusError = fh.OpenFile(nativeFilePath.c_str(),
 										nsVDFile::kReadWrite | nsVDFile::kDenyAll | nsVDFile::kOpenExisting,
 										true, true, false);
+
+									setTimestamp = true;
 								}
 								break;
 
@@ -1502,9 +1498,6 @@ bool ATPCLinkDevice::OnPut() {
 					bool matched = false;
 
 					while(it.Next()) {
-						if (it.IsDotDirectory())
-							continue;
-
 						ATPCLinkDirEnt dirEnt;
 						dirEnt.SetFlagsFromAttributes(it.GetAttributes());
 
@@ -1666,9 +1659,6 @@ bool ATPCLinkDevice::OnPut() {
 					bool matched = false;
 
 					while(it.Next()) {
-						if (it.IsDotDirectory())
-							continue;
-
 						ATPCLinkDirEnt dirEnt;
 						dirEnt.SetFlagsFromAttributes(it.GetAttributes());
 

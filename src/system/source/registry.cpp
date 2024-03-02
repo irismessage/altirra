@@ -338,9 +338,27 @@ VDRegistryKey::VDRegistryKey(VDRegistryKey& baseKey, const char *name, bool writ
 	mKey = rootKey ? provider->CreateKey(rootKey, name, write) : NULL;
 }
 
+VDRegistryKey::VDRegistryKey(VDRegistryKey&& src)
+	: mKey(src.mKey)
+{
+	src.mKey = nullptr;
+}
+
 VDRegistryKey::~VDRegistryKey() {
 	if (mKey)
 		VDGetRegistryProvider()->CloseKey(mKey);
+}
+
+VDRegistryKey& VDRegistryKey::operator=(VDRegistryKey&& src) {
+	if (&src != this) {
+		if (mKey)
+			VDGetRegistryProvider()->CloseKey(mKey);
+
+		mKey = src.mKey;
+		src.mKey = nullptr;
+	}
+
+	return *this;
 }
 
 bool VDRegistryKey::setBool(const char *name, bool v) const {

@@ -254,12 +254,10 @@ namespace {
 		for(uint32 i=0; i<(uint32)vdcountof(kDiskImageIds); ++i) {
 			ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
 
-			const wchar_t *path = diskIf.GetPath();
-
 			VDStringW s = VDGetMenuItemTextByCommandW32(hmenu2, kDiskImageIds[i]);
 
-			if (path)
-				s.append_sprintf(L" [%ls]", path);
+			if (diskIf.IsDiskLoaded())
+				s.append_sprintf(L" [%ls]", diskIf.GetPath());
 			else
 				s += L" (empty)";
 

@@ -1775,7 +1775,7 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 }
 
 const char *ATDebuggerCmdAssemble::ParseExpression(const char *s, sint32& value) {
-	enum {
+	enum : uint32 {
 		kOpAdd,
 		kOpSubtract,
 		kOpMultiply,
@@ -1785,11 +1785,9 @@ const char *ATDebuggerCmdAssemble::ParseExpression(const char *s, sint32& value)
 		kOpTakeHighByte
 	};
 
-	enum {
-		kPrecAdd = 0x100,
-		kPrecMul = 0x200,
-		kPrecUnary = 0x300
-	};
+	static constexpr uint32 kPrecAdd = 0x100;
+	static constexpr uint32 kPrecMul = 0x200;
+	static constexpr uint32 kPrecUnary = 0x300;
 
 	vdfastvector<sint32> valstack;
 	vdfastvector<uint32> opstack;

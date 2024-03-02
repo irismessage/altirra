@@ -11,12 +11,9 @@
 		icl		'sio.inc'
 		icl		'kerneldb.inc'
 		icl		'hardware.inc'
+		icl		'xep80config.inc'
 
 ciov	equ		$e456
-
-.ifndef XEP_OPTION_TURBO
-XEP_OPTION_TURBO = 0
-.endif
 
 ;==========================================================================
 .macro _ASSERT condition, message
@@ -34,7 +31,7 @@ basead	dta		a(0)
 srcptr	dta		a(0)
 dstptr	dta		a(0)
 
-		org		$3000
+		org		$3400
 		opt		o+
 
 ;==========================================================================
@@ -114,11 +111,21 @@ do_init:
 		jmp		(basead)
 
 msg_load_succeeded:
-.if XEP_OPTION_TURBO
-		dta		$7D,'Altirra XEP80 handler V0.5 loaded (fast mode).',$9B
+		dta		'Altirra XEP80 handler V0.93 loaded'
+
+.if XEP_OPTION_ULTRA
+		dta		' ('
+	.if XEP_DEFAULT_50HZ
+		dta		'PAL '
+	.else
+	.endif
+	dta		'ultra mode)'
 .else
-		dta		'Altirra XEP80 handler V0.5 loaded.',$9B
+	.if XEP_DEFAULT_50HZ
+		dta		' (PAL)'
+	.endif
 .endif
+		dta		'.', $9B
 
 msg_load_failed:
 		dta		'Failed to initialize XEP-80 on port 2.',$9B
@@ -209,19 +216,35 @@ get_ptr = *-2
 
 ;==========================================================================
 		opt		l-
-.if XEP_OPTION_TURBO
-		icl		'xep80handlerf-relocs.inc'
+.if XEP_OPTION_ULTRA
+	.if XEP_DEFAULT_50HZ
+			icl		'xep80handlerup-relocs.inc'
+	.else
+			icl		'xep80handleru-relocs.inc'
+	.endif
 .else
-		icl		'xep80handler-relocs.inc'
+	.if XEP_DEFAULT_50HZ
+			icl		'xep80handlerp-relocs.inc'
+	.else
+			icl		'xep80handler-relocs.inc'
+	.endif
 .endif
 		opt		l+
 
 ;==========================================================================
 .proc HandlerData
-.if XEP_OPTION_TURBO
-		ins		'xep80handler2f.bin'
+.if XEP_OPTION_ULTRA
+	.if XEP_DEFAULT_50HZ
+			ins		'xep80handler2up.bin'
+	.else
+			ins		'xep80handler2u.bin'
+	.endif
 .else
-		ins		'xep80handler2.bin'
+	.if XEP_DEFAULT_50HZ
+			ins		'xep80handler2p.bin'
+	.else
+			ins		'xep80handler2.bin'
+	.endif
 .endif
 .endp
 

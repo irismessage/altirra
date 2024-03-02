@@ -37,10 +37,12 @@
 #pragma comment(lib, "gdi32")
 #pragma comment(lib, "ole32")
 #pragma comment(lib, "advapi32")
+#pragma comment(lib, "crypt32")
+#pragma comment(lib, "bcrypt")
+#pragma comment(lib, "ncrypt")
 
 void tool_fxc10(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_makearray(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
-void tool_glc(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_fontextract(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_fontrender(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
@@ -48,6 +50,8 @@ void tool_filecreate(const vdfastvector<const char *>& args, const vdfastvector<
 void tool_maketables(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_checkimports(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_hash(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
+void tool_signxml(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
+void tool_signexport(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 
 int VDCDECL main(int argc, char **argv) {
 	--argc;
@@ -82,8 +86,6 @@ int VDCDECL main(int argc, char **argv) {
 			tool_fxc10(args, switches);
 		} else if (!_stricmp(s, "makearray")) {
 			tool_makearray(args, switches);
-		} else if (!_stricmp(s, "glc")) {
-			tool_glc(args, switches);
 		} else if (!_stricmp(s, "fontextract")) {
 			tool_fontextract(args, switches);
 		} else if (!_stricmp(s, "fontencode")) {
@@ -98,6 +100,10 @@ int VDCDECL main(int argc, char **argv) {
 			tool_checkimports(args, switches);
 		} else if (!_stricmp(s, "hash")) {
 			tool_hash(args, switches);
+		} else if (!_stricmp(s, "signxml")) {
+			tool_signxml(args, switches);
+		} else if (!_stricmp(s, "signexport")) {
+			tool_signexport(args, switches);
 		} else
 			help();
 	} catch(const char *s) {

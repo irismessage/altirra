@@ -124,6 +124,10 @@ struct ATArtifactingParams {
 	float mBloomDirectIntensity;
 	float mBloomIndirectIntensity;
 
+	bool mbEnableHDR;
+	float mSDRIntensity;
+	float mHDRIntensity;
+
 	static ATArtifactingParams GetDefault();
 };
 
@@ -144,6 +148,7 @@ enum class ATMonitorMode : uint8 {
 	MonoGreen,
 	MonoAmber,
 	MonoBluishWhite,
+	MonoWhite,
 	Count
 };
 
@@ -174,9 +179,12 @@ struct ATVideoFrameProperties {
 	bool mbOutputRgb32;
 
 	// True if the output is using a signed output where 0-1 maps to 64-191 instead of 0-255. This
-	// provides additional headroom for PAL artifacting. In 8-bit mode, this is in the palette, and
-	// in 32-bit mode, in the framebuffer. Currently this is synonymous with mbAccelPalArtifacting.
-	bool mbOutputSigned;
+	// provides additional headroom for PAL artifacting and for extended color in HDR mode. In 8-bit
+	// mode, this is in the palette, and in 32-bit mode, in the framebuffer.
+	bool mbOutputExtendedRange;
+
+	// True if the output is intended for WCG/HDR scenarios.
+	bool mbOutputHDR;
 
 	// Color correction is being performed through the palette.
 	bool mbPaletteOutputCorrection;
@@ -257,6 +265,17 @@ public:
 
 	bool IsFrameInProgress() const { return mpFrame != NULL; }
 	bool AreAcceleratedEffectsAvailable() const;
+
+	enum class HDRAvailability : uint8 {
+		NoMinidriverSupport,
+		NoSystemSupport,
+		NoHardwareSupport,
+		NoDisplaySupport,
+		AccelNotEnabled,
+		Available,
+	};
+
+	HDRAvailability IsHDRRenderingAvailable() const;
 
 	bool IsVsyncEnabled() const { return mbVsyncEnabled; }
 	void SetVsyncEnabled(bool enabled) { mbVsyncEnabled = enabled; }
@@ -474,7 +493,7 @@ protected:
 
 	// non-critical variables
 	IVDVideoDisplay *mpDisplay;
-	vdautoptr<vdfastvector<IATGTIAVideoTap *>> mpVideoTaps;
+	ATNotifyList<IATGTIAVideoTap *> mVideoTaps;
 	uint32	mY;
 
 	AnalysisMode	mAnalysisMode;

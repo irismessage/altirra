@@ -218,3 +218,16 @@ void ATUINativeWindowProxy::SetCaption(const wchar_t *caption) {
 	if (mhwnd)
 		VDSetWindowTextW32(mhwnd, caption);
 }
+
+void ATUINativeWindowProxy::Invalidate() {
+	if (mhwnd)
+		InvalidateRect(mhwnd, nullptr, TRUE);
+}
+
+void ATUINativeWindowProxy::InvalidateArea(const vdrect32& r) {
+	if (mhwnd && r.right > r.left && r.bottom > r.top) {
+		RECT r2 { r.left, r.top, r.right, r.bottom };
+
+		InvalidateRect(mhwnd, &r2, TRUE);
+	}
+}

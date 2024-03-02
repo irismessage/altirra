@@ -25,7 +25,7 @@ class ATUIMenu;
 class IATUIDynamicMenuProvider {
 public:
 	virtual bool IsRebuildNeeded() const = 0;
-	virtual void RebuildMenu(ATUIMenu& menu, uint32 idbase) = 0;
+	virtual void RebuildMenu(ATUIMenu& menu, uint32 pos, uint32 idbase) = 0;
 	virtual void UpdateMenu(ATUIMenu& menu, uint32 firstIndex, uint32 n) = 0;
 	virtual void HandleMenuCommand(uint32 index) = 0;
 };
@@ -34,15 +34,26 @@ enum ATUIDynamicMenu {
 	kATUIDynamicMenu_OS,
 	kATUIDynamicMenu_BASIC,
 	kATUIDynamicMenu_Profile,
+	kATUIDynamicMenu_VideoOutput,
 	kATUIDynamicMenuCount
 };
 
 ATUIMenu *ATUIGetMenu();
 void ATUILoadMenu();
 void ATUISetMenuEnabled(bool enabled);
+bool ATUIIsMenuAutoHideEnabled();
+bool ATUIIsMenuAutoHideActive();
+void ATUISetMenuAutoHideEnabled(bool autoHide);
+bool ATUIIsMenuAutoHidden();
+void ATUISetMenuAutoHidden(bool hidden);
+void ATUISetMenuHidden(bool hidden);
+void ATUISetMenuFullScreenHidden(bool hidden);
+bool ATUIIsMenuCharacter(wchar_t c);
 void ATUISetDynamicMenuProvider(int index, IATUIDynamicMenuProvider *provider);
 void ATUIRebuildDynamicMenu(int index);
 void ATUIUpdateMenu();
 bool ATUIHandleMenuCommand(uint32 id);
+bool ATUIIsCommandMappedMenuItem(uint32 id);
+const char *ATUIGetCommandForMenuItem(uint32 id);
 
 #endif

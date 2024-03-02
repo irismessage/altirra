@@ -18,7 +18,6 @@
 #ifndef f_AT_UIVIDEODISPLAY_H
 #define f_AT_UIVIDEODISPLAY_H
 
-#include <at/atcore/devicemanager.h>
 #include <at/atui/uiwidget.h>
 #include <at/atui/uicontainer.h>
 #include "callback.h"
@@ -30,11 +29,11 @@ class IATUIEnhancedTextEngine;
 class ATUILabel;
 class ATUIOnScreenKeyboard;
 class ATUISettingsWindow;
-class ATXEP80Emulator;
 class ATSimulatorEventManager;
 class IATDeviceVideoOutput;
+class IATDeviceVideoManager;
 
-class ATUIVideoDisplayWindow final : public ATUIContainer, public IATDeviceChangeCallback, public IATUIEnhancedTextOutput {
+class ATUIVideoDisplayWindow final : public ATUIContainer, public IATUIEnhancedTextOutput {
 public:
 	enum {
 		kActionOpenOSK = kActionCustom,
@@ -45,10 +44,11 @@ public:
 	ATUIVideoDisplayWindow();
 	~ATUIVideoDisplayWindow();
 
-	bool Init(ATSimulatorEventManager& sem, ATDeviceManager& devmgr);
+	bool Init(ATSimulatorEventManager& sem, IATDeviceVideoManager& videoMgr);
 	void Shutdown();
 
 	void Copy(bool enableEscaping);
+	bool CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf);
 	void CopySaveFrame(bool saveFrame, bool trueAspect, const wchar_t *path = nullptr);
 
 	void ToggleHoldKeys();
@@ -75,7 +75,6 @@ public:
 
 	void ClearHighlights();
 
-	void SetXEP(IATDeviceVideoOutput *xep);
 	void SetEnhancedTextEngine(IATUIEnhancedTextEngine *p);
 
 	void SetOnAllowContextMenu(const vdfunction<void()>& fn) { mpOnAllowContextMenu = fn; }
@@ -90,9 +89,8 @@ private:
 	void OnFrameTick();
 
 public:
-	virtual void OnDeviceAdded(uint32 iid, IATDevice *dev, void *iface) override;
-	virtual void OnDeviceRemoving(uint32 iid, IATDevice *dev, void *iface) override;
-	virtual void OnDeviceRemoved(uint32 iid, IATDevice *dev, void *iface) override;
+	void OnAddedVideoOutput(uint32 index);
+	void OnRemovingVideoOutput(uint32 index);
 
 protected:
 	virtual ATUITouchMode GetTouchModeAtPoint(const vdpoint32& pt) const;
@@ -135,6 +133,13 @@ protected:
 public:
 	void UpdateEnhTextSize();
 	void UpdateAltDisplay();
+	void SelectPrevOutput();
+	void SelectNextOutput();
+	void SelectAltOutputByIndex(sint32 idx);
+	sint32 GetCurrentAltOutputIndex() const;
+	bool IsAltOutputAvailable() const;
+	bool IsAltOutputAvailable(const char *name) const;
+	VDStringW GetCurrentOutputName() const;
 
 protected:
 	bool ProcessKeyDown(const ATUIKeyEvent& event, bool enableKeyInput);
@@ -144,6 +149,7 @@ protected:
 	void ToggleHeldKey(uint8 keycode);
 	void ToggleHeldConsoleButton(uint8 encoding);
 	void UpdateCtrlShiftState();
+	void ExcludeMappedCtrlShiftState(bool& ctrl, bool& shift) const;
 
 	uint32 ComputeCursorImage(const vdpoint32& pt) const;
 	void UpdateMousePosition(int x, int y);
@@ -228,9 +234,7 @@ protected:
 	uint32 mEventCallbackIdColdReset = 0;
 	uint32 mEventCallbackIdFrameTick = 0;
 
-	ATDeviceManager *mpDevMgr = nullptr;
-	IATDeviceVideoOutput *mpXEP = nullptr;
-	uint32 mXEPDataReceivedCount = 0;
+	IATDeviceVideoManager *mpVideoMgr = nullptr;
 
 	IATDeviceVideoOutput *mpAltVideoOutput = nullptr;
 	VDDisplayImageView mAltVOImageView;
@@ -245,6 +249,9 @@ protected:
 	vdfunction<void()> mpOnOSKChange;
 
 	vdrefptr<ATUIWidget> mpDropTargetOverlays[7];
+
+	vdfunction<void(uint32)> mpOnAddedVideoOutput;
+	vdfunction<void(uint32)> mpOnRemovingVideoOutput;
 
 	struct ActiveKey {
 		uint32 mVkey;

@@ -24,11 +24,13 @@
 #include <vd2/system/strutil.h>
 #include <at/atcore/deviceindicators.h>
 #include <at/atcore/media.h>
+#include <at/atcore/randomization.h>
 #include <at/atcore/sioutils.h>
 #include <at/atcore/snapshotimpl.h>
 #include <at/atcore/vfs.h>
+#include <at/atcore/wraptime.h>
 #include "disk.h"
-#include "pokey.h"
+#include "diskprofile.h"
 #include "console.h"
 #include "cpu.h"
 #include "savestate.h"
@@ -46,22 +48,9 @@ extern ATLogChannel g_ATLCDiskData;
 namespace {
 	// Cycles/second. This is only correct for NTSC, but it's close enough
 	// for PAL for disk emulation purposes.
-	const int kCyclesPerSecond = 7159090/4;
+	static constexpr int kCyclesPerSecond = 7159090/4;
 
-	// The 810 and 1050 rotate at 288 RPM.
-	// The XF551 rotates at 300 RPM.
-	const int kCyclesPerDiskRotation_288RPM = (kCyclesPerSecond * 60 + 144) / 288;
-	const int kCyclesPerDiskRotation_300RPM = (kCyclesPerSecond + 2) / 5;
-
-	// 810: 5.3ms step rate.
-	// 1050/IndusGT: 20ms step rate.
-	// XF551: 6ms step rate.
-	const int kCyclesPerTrackStep_810		= (kCyclesPerSecond *  53 + 5000) / 10000;
-	const int kCyclesPerTrackStep_810_3ms	= (kCyclesPerSecond *  30 + 5000) / 10000;
-	const int kCyclesPerTrackStep_1050		= (kCyclesPerSecond * 200 + 5000) / 10000;
-	const int kCyclesPerTrackStep_Speedy1050= (kCyclesPerSecond *  80 + 5000) / 10000;
-	const int kCyclesPerTrackStep_XF551		= (kCyclesPerSecond *  60 + 5000) / 10000;
-	const int kCyclesPerTrackStep_IndusGT	= (kCyclesPerSecond * 200 + 5000) / 10000;
+	static constexpr int kCyclesPerDiskRotation_288RPM = (kCyclesPerSecond * 60 + 144) / 288;
 
 	// Cycles for a fake rotation as seen by the FDC. Neither the 810 nor the 1050
 	// use the real index pulse; they fake it with the RIOT.
@@ -69,125 +58,37 @@ namespace {
 	// 810: ~522ms
 	// 1050: ~236ms
 	//
-	const int kCyclesPerFakeRot_810			= (kCyclesPerSecond * 522 + 5000) / 10000;
-	const int kCyclesPerFakeRot_1050		= (kCyclesPerSecond * 236 + 5000) / 10000;
+	static constexpr int kCyclesPerFakeRot_810		= (kCyclesPerSecond * 522 + 5000) / 10000;
+	static constexpr int kCyclesPerFakeRot_1050		= (kCyclesPerSecond * 236 + 5000) / 10000;
 
-	// 810: 10ms head settling time.
-	// 1050: 20ms head settling time.
-	const int kCyclesForHeadSettle_810 = 17898;
-	const int kCyclesForHeadSettle_1050 = 35795;
-
-	// The bit cell rate is 1MHz.
-	const int kBytesPerTrack = 26042;
-
-	// Approx. number of cycles it takes for the CPU to send out the request.
-	const int kCyclesToProcessRequest = 7000;
-
-	const int kCyclesToExitSIO = 350;
-
-	///////////////////////////////////////////////////////////////////////////////////
-	// SIO timing parameters
-	//
-	// WARNING: KARATEKA IS VERY SENSITIVE TO THESE PARAMETERS AS IT HAS STUPIDLY
-	//			CLOSE PHANTOM SECTORS.
-	//
-	// Actual 1050 numbers (to about 0.13ms, or VCOUNT precision):
-	//	- End of checksum byte to end of ACK byte: ~0.76ms
-	//	- End of complete byte to start of data byte: ~0.5-0.63ms
-	//	- Start of data byte to end of checksum byte: ~70.9ms
-	//
-
-	// The number of cycles per byte sent over the SIO bus -- approximately 19200 baud.
-	//
-	// 810: 26 cycles/bit, 265 cycles/byte @ 500KHz
-	// 1050: 51 cycles/bit, 549 cycles/byte @ 1MHz
-	// US Doubler low speed: 53 cycles/bit, 534 cycles/byte @ 1MHz
-	// US Doubler high speed: 19 cycles/bit, 220 cycles/byte @ 1MHz
-	// Speedy 1050 low speed: 52 cycles/bit, 525 cycles/byte @ 1MHz
-	// Speedy 1050 high speed: 18 cycles/bit, 214 cycles/byte @ 1MHz
-	// XF551 low speed: 29 cycles/bit, 290 cycles/byte @ 555.5KHz
-	// XF551 high speed: 14 cycles/bit, 140 cycles/byte @ 555.5KHz
-	//
-	// IndusGT numbers courtesy of sup8pdct (http://atariage.com/forums/topic/131515-indus-gt-rom-disassembly-pt-2/):
-	//	
-	//	208 t states /19200 $28 pokey divisor 18866-pal
-	//	104 t states 1st version of syncromesh /38400 $10 pokey divisor 38553-pal 38847-ntsc
-	//	76 t states usd version of rom /52631 $A pokey divisor 52160-pal 52558-ntsc
-	//	58 t states 2nd version of syncromesh /68965 $6 pokey divisor 68209-pal 68730-ntsc
-	//
-	static const int kCyclesPerSIOByte_810 = 949;
-	static const int kCyclesPerSIOByte_1050 = 984;			// calibrated against real 1050 -- ~70.9ms/129b
-	static const int kCyclesPerSIOByte_PokeyDiv0 = 140;
-	static const int kCyclesPerSIOByte_57600baud = 311;
-	static const int kCyclesPerSIOByte_USDoubler = 956;
-	static const int kCyclesPerSIOByte_USDoubler_Fast = 394;
-	static const int kCyclesPerSIOByte_Speedy1050 = 940;
-	static const int kCyclesPerSIOByte_Speedy1050_Fast = 383;
-	static const int kCyclesPerSIOByte_XF551 = 934;
-	static const int kCyclesPerSIOByte_XF551_Fast = 450;
-	static const int kCyclesPerSIOByte_Happy = 967;						// 540 cycles/byte @ 1MHz
-	static const int kCyclesPerSIOByte_Happy_Native_Fast = 564;			// 315 cycles/byte @ 1MHz
-	static const int kCyclesPerSIOByte_Happy_USD_Fast = 394;
-	static const int kCyclesPerSIOByte_1050Turbo = 982;
-	static const int kCyclesPerSIOByte_1050Turbo_Fast = 260;
-	static const int kCyclesPerSIOBit_810 = 94;
-	static const int kCyclesPerSIOBit_1050 = 91;
-	static const int kCyclesPerSIOBit_PokeyDiv0 = 14;
-	static const int kCyclesPerSIOBit_57600baud = 31;
-	static const int kCyclesPerSIOBit_USDoubler = 95;
-	static const int kCyclesPerSIOBit_USDoubler_Fast = 34;
-	static const int kCyclesPerSIOBit_Speedy1050 = 93;
-	static const int kCyclesPerSIOBit_Speedy1050_Fast = 32;
-	static const int kCyclesPerSIOBit_XF551 = 93;
-	static const int kCyclesPerSIOBit_XF551_Fast = 45;
-
-	static const int kCyclesPerSIOBit_IndusGT = 94;						// 19138.8 baud (209 T-states/bit)
-	static const int kCyclesPerSIOBit_IndusGT_OrigSynchromesh = 47;		// 38461.5 baud (guess)
-	static const int kCyclesPerSIOBit_IndusGT_Synchromesh = 47;			// 38461.5 baud (104 T-states/bit)
-	static const int kCyclesPerSIOBit_IndusGT_SuperSynchromesh = 26;	// 68965.5 baud
-
-	static const int kCyclesPerSIOByte_IndusGT = 930;
-	static const int kCyclesPerSIOByte_IndusGT_OrigSynchromesh = 520;	// 3439.4 bytes/sec (guess)
-	static const int kCyclesPerSIOByte_IndusGT_Synchromesh = 520;		// 3439.4 bytes/sec (1163 T-states/byte)
-	static const int kCyclesPerSIOByte_IndusGT_SuperSynchromesh = 268;	// 6689.0 bytes/sec (598 T-states/byte)
-
-	static const int kCyclesPerSIOBit_Happy = 95;
-	static const int kCyclesPerSIOBit_Happy_Native_Fast = 47;		// Native high speed (26 cycles/bit @ 1MHz)
-	static const int kCyclesPerSIOBit_Happy_USD_Fast = 34;			// USDoubler emulation
-
-	static const int kCyclesPerSIOBit_1050Turbo = 91;
-	static const int kCyclesPerSIOBit_1050Turbo_Fast = 26;
-
-	// Delay from command line deasserting to end of ACK byte.
-	//
-	// 810: ~294 cycles @ 500KHz = ~1053 cycles @ 1.79MHz.
-	static const int kCyclesACKDelay = 1053;
-	static const int kCyclesACKDelay_1050 = 500;
+	static constexpr int kCyclesPerSIOByte_Happy_Native_Fast = 564;			// 315 cycles/byte @ 1MHz
+	static constexpr int kCyclesPerSIOBit_Happy_Native_Fast = 47;		// Native high speed (26 cycles/bit @ 1MHz)
 
 	// Delay from end of ACK byte until FDC command is sent.
 	// 810: ~1608 cycles @ 500KHz = ~5756 cycles @ 1.79MHz.
-	static const int kCyclesFDCCommandDelay = 5756;
+	static constexpr int kCyclesFDCCommandDelay = 5756;
 
-	// Delay from end of ACK byte to end of first data byte, not counting rotational delay.
-	static const int kCyclesCompleteDelay_Fast = 2000;
-	static const int kCyclesCompleteDelay_Accurate = 28000;
-	static const int kCyclesCompleteDelay_Accurate_ED = 19100;
+	// Rotational delay in cycles when accurate sector timing is disabled.
+	static constexpr int kCyclesRotationalDelay_Fast = 2000;
 
-	// Delay from end of Complete byte to end of first data byte, at high speed.
-	static const int kCyclesToFirstDataHighSpeed = 945;
+	// Time from end of sector read to start of Complete byte (FDC reset and checksum):
+	//	810: ~2568 cycles @ 500KHz = 9192 cycles
+	//	1050: ~270 cycles @ 1MHz = 483 cycles
+	//
+	static constexpr uint32 kCyclesPostReadDelay_Fast = 1000;
+	static constexpr uint32 kCyclesPostReadDelay_810 = 9192;
+	static constexpr uint32 kCyclesPostReadDelay_1050 = 483;
 
 	enum {
 		kATDiskEventMotorOff = 1
 	};
 
-	static const int kAutoSaveDelay = 3579545;		// 2 seconds
-
-	static const uint8 kDefaultPERCOM[]={
+	static constexpr uint8 kDefaultPERCOM[]={
 	//	trk   step  spt         sd-1  enc   bps         online
 		0x28, 0x01, 0x00, 0x12, 0x00, 0x00, 0x00, 0x80, 0xFF, 0x00, 0x00, 0x00
 	};
 
-	static const uint8 kDefaultPERCOMED[]={
+	static constexpr uint8 kDefaultPERCOMED[]={
 		0x28, 0x01, 0x00, 0x1A, 0x00, 0x04, 0x00, 0x80, 0xFF, 0x00, 0x00, 0x00
 	};
 }
@@ -276,9 +177,13 @@ void ATDiskEmulator::Reset() {
 	mTransferLength = 0;
 	mPhantomSectorCounter = 0;
 	mRotationalCounter = 0;
-	mLastRotationUpdateCycle = ATSCHEDULER_GETTIME(mpScheduler);
+
+	// We use 288 RPM as the basis for random rotation; there will be a little
+	// overlap at 300 RPM, but that's fine.
+	uint32 rotationOffset = ATRandomizeAdvanceFast(g_ATRandomizationSeeds.mDiskStartPos) % kCyclesPerDiskRotation_288RPM;
+
+	mLastRotationUpdateCycle = ATSCHEDULER_GETTIME(mpScheduler) - rotationOffset;
 	mRotations = 0;
-	mbCommandMode = false;
 	mbLastOpError = false;
 
 	// Power-on status with no disk is $5F for 1050, $FF for XF551. The
@@ -373,8 +278,6 @@ void ATDiskEmulator::SetTraceContext(ATTraceContext *context) {
 		VDStringW name;
 		name.sprintf(L"Disk %u", mUnit + 1);
 		mpTraceChannel = coll->AddGroup(name.c_str())->AddFormattedChannel(context->mBaseTime, context->mBaseTickScale, L"Commands");
-
-		mTraceCommandStartTime = mpScheduler->GetTick64();
 	} else {
 		mpTraceChannel = nullptr;
 	}
@@ -388,6 +291,7 @@ public:
 		rw.Transfer("active_command_id", &mActiveCommandId);
 		rw.Transfer("active_command_state", &mActiveCommandState);
 		rw.Transfer("active_command_sector", &mActiveCommandSector);
+		rw.Transfer("active_command_timer", &mActiveCommandTimer);
 		rw.Transfer("rotational_pos", &mRotationalPos);
 		rw.Transfer("current_track", &mCurrentTrack);
 		rw.Transfer("active_command", &mpActiveCommand);
@@ -405,6 +309,7 @@ public:
 	}
 
 	uint32 mIdleTimer = 0;
+	uint32 mActiveCommandTimer = 0;
 	uint8 mActiveCommandId = 0;
 	uint32 mActiveCommandState = 0;
 	uint16 mActiveCommandSector = 0;
@@ -417,14 +322,20 @@ public:
 ATSERIALIZATION_DEFINE(ATSaveStateDisk);
 
 void ATDiskEmulator::SaveState(IATObjectState **pp) const {
+	const uint32 t = mMotorOffTime - mpScheduler->GetTick();
 	vdrefptr<ATSaveStateDisk> state(new ATSaveStateDisk);
 
 	if (mpMotorOffEvent)
-		state->mIdleTimer = mpSlowScheduler->GetTicksToEvent(mpMotorOffEvent) * 114;
+		state->mIdleTimer = mMotorOffTime - t;
 	else
 		state->mIdleTimer = 0;
 
-	state->mRotationalPos = (float)GetUpdatedRotationalCounter() / (float)mCyclesPerDiskRotation;
+	if (mActiveCommand)
+		state->mActiveCommandTimer = t - mActiveCommandStartTime;
+	else
+		state->mActiveCommandTimer = 0;
+
+	state->mRotationalPos = (float)GetUpdatedRotationalCounter() / (float)mpProfile->mCyclesPerDiskRotation;
 	state->mActiveCommandId = mActiveCommand;
 	state->mActiveCommandState = mActiveCommandState;
 	state->mActiveCommandSector = mActiveCommandSector;
@@ -438,15 +349,18 @@ void ATDiskEmulator::SaveState(IATObjectState **pp) const {
 
 void ATDiskEmulator::LoadState(const IATObjectState& state0) {
 	const ATSaveStateDisk& state = atser_cast<const ATSaveStateDisk&>(state0);
+	const uint32 t = mpScheduler->GetTick(); 
 
-	if (state.mIdleTimer >= 57) {
+	if (state.mIdleTimer > 0) {
 		TurnOnMotor();
-		mpSlowScheduler->SetEvent((state.mIdleTimer + 57) / 114, this, kATDiskEventMotorOff, mpMotorOffEvent);
+
+		mMotorOffTime = t + state.mIdleTimer;
+		SetMotorEvent();
 	} else {
 		TurnOffMotor();
 	}
 
-	uint32 rotPosCycles = (uint32)((state.mRotationalPos - floorf(state.mRotationalPos)) * (float)mCyclesPerDiskRotation + 0.5f);
+	uint32 rotPosCycles = (uint32)((state.mRotationalPos - floorf(state.mRotationalPos)) * (float)mpProfile->mCyclesPerDiskRotation + 0.5f);
 
 	if (rotPosCycles < mRotationalCounter)
 		++mRotations;
@@ -459,6 +373,9 @@ void ATDiskEmulator::LoadState(const IATObjectState& state0) {
 	mActiveCommandSector = state.mActiveCommandSector;
 	mCurrentTrack = state.mCurrentTrack;
 
+	if (mActiveCommand)
+		mActiveCommandStartTime = t - state.mActiveCommandTimer;
+
 	mpSIOMgr->LoadActiveCommandState(this, state.mpActiveCommand);
 }
 
@@ -466,7 +383,19 @@ void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 	if (id == kATDiskEventMotorOff) {
 		mpMotorOffEvent = nullptr;
 
-		TurnOffMotor();
+		// Motor idling is driven by the main loop of the drive, and as such can't
+		// occur during command processing. Furthermore, the timer is also usually
+		// driven in software, and so can't even count down outside of idle. If
+		// we hit the timer during a command, requeue the event and retry later;
+		// once the command ends the timer will be readjusted.
+
+		const uint32 t = mpScheduler->GetTick();
+		if (mActiveCommand) {
+			mpSlowScheduler->SetEvent(16, this, kATDiskEventMotorOff, mpMotorOffEvent);
+		} else if (ATWrapTime{t} >= mMotorOffTime)
+			TurnOffMotor();
+		else
+			SetMotorEvent();
 	}
 }
 
@@ -488,8 +417,8 @@ IATDeviceSIO::CmdResponse ATDiskEmulator::OnSerialBeginCommand(const ATDeviceSIO
 	if (cmd.mbStandardRate) {
 		mbCommandFrameHighSpeed = false;
 	} else {
-		if (!mbSupportedCmdFrameHighSpeed || cmd.mCyclesPerBit < mHighSpeedCmdFrameRateLo || cmd.mCyclesPerBit > mHighSpeedCmdFrameRateHi) {
-			g_ATLCDiskCmd("Rejecting command sent at wrong rate (cycles per bit = %d)\n", cmd.mCyclesPerBit);
+		if (!mpProfile->mbSupportedCmdFrameHighSpeed || cmd.mCyclesPerBit < mpProfile->mHighSpeedCmdFrameRateLo || cmd.mCyclesPerBit > mpProfile->mHighSpeedCmdFrameRateHi) {
+			g_ATLCDiskCmd("Rejecting command sent at wrong rate (cycles per bit = %d, expected [%d,%d])\n", cmd.mCyclesPerBit, mpProfile->mHighSpeedCmdFrameRateLo, mpProfile->mHighSpeedCmdFrameRateHi);
 			return kCmdResponse_NotHandled;
 		} else {
 			mbCommandFrameHighSpeed = true;
@@ -501,7 +430,6 @@ IATDeviceSIO::CmdResponse ATDiskEmulator::OnSerialBeginCommand(const ATDeviceSIO
 	UpdateRotationalCounter();
 
 	// interpret the command
-	mTraceCommandStartTime = mpScheduler->GetTick64();
 	mbCommandFrameHighSpeed = !cmd.mbStandardRate;
 
 	g_ATLCDiskCmd("Processing command: Unit %02X, Command %02X, Aux data %02X %02X%s\n"
@@ -515,7 +443,8 @@ IATDeviceSIO::CmdResponse ATDiskEmulator::OnSerialBeginCommand(const ATDeviceSIO
 	bool highSpeed = mbCommandFrameHighSpeed || (command & 0x80) != 0;
 
 	UpdateRotationalCounter();
-	mActiveCommandStartRotPos = (float)mRotations + (float)mRotationalCounter / (float)mCyclesPerDiskRotation;
+	mActiveCommandStartRotPos = (float)mRotations + (float)mRotationalCounter / (float)mpProfile->mCyclesPerDiskRotation;
+	mActiveCommandStartTime = mpScheduler->GetTick();
 
 	// check if this is a 1050 Turbo command
 	mActiveCommandSector = cmd.mAUX[0] + cmd.mAUX[1] * 256;
@@ -544,7 +473,7 @@ IATDeviceSIO::CmdResponse ATDiskEmulator::OnSerialBeginCommand(const ATDeviceSIO
 
 	// reject all high speed commands if not XF551 or generic
 
-	if (!mbSupportedCmdHighSpeed && (command & 0x80))
+	if (!mpProfile->mbSupportedCmdHighSpeed && (command & 0x80))
 		goto unsupported_command;
 
 	mLastAccelTimeSkew = mpSIOMgr->GetAccelTimeSkew();
@@ -641,13 +570,17 @@ unsupported_command:
 }
 
 void ATDiskEmulator::OnSerialAbortCommand() {
-	AbortCommand();
+	if (mActiveCommand) {
+		ExtendMotorTimeoutBy(mpScheduler->GetTick() - mActiveCommandStartTime);
+
+		AbortCommand();
+	}
 }
 
 void ATDiskEmulator::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
 	if (!checksumOK) {
 		mpSIOMgr->FlushQueue();
-		BeginTransferNAK();
+		BeginTransferNAKData();
 		EndCommand();
 		return;
 	}
@@ -658,19 +591,21 @@ void ATDiskEmulator::OnSerialReceiveComplete(uint32 id, const void *data, uint32
 
 void ATDiskEmulator::OnSerialFence(uint32 id) {
 	if (id == (uint32)0 - 1) {
+		ExtendMotorTimeoutBy(mpScheduler->GetTick() - mActiveCommandStartTime);
+
 		UpdateAccelTimeSkew();
 		mpDiskInterface->SetShowActivity(false, mLastSector);
 
 		if (mpTraceChannel) {
 			if (mOriginalCommand == 0x52) {
-				mpTraceChannel->AddTickEvent(mTraceCommandStartTime, mpScheduler->GetTick64(),
+				mpTraceChannel->AddTickEvent(mpSIOMgr->GetCommandDeassertTime(), mpScheduler->GetTick64(),
 					[sec = (uint16)mActiveCommandSector](VDStringW& s) {
 						s.sprintf(L"Read %u", sec);
 					},
 					kATTraceColor_IO_Read
 				);
 			} else {
-				mpTraceChannel->AddTickEvent(mTraceCommandStartTime, mpScheduler->GetTick64(),
+				mpTraceChannel->AddTickEvent(mpSIOMgr->GetCommandDeassertTime(), mpScheduler->GetTick64(),
 					[c = (uint8)mOriginalCommand, sec = (uint16)mActiveCommandSector](VDStringW& s) {
 						s.sprintf(L"%02X:%u", c, sec);
 					},
@@ -724,8 +659,8 @@ void ATDiskEmulator::UpdateAccelTimeSkew() {
 	if (mLastAccelTimeSkew != ats) {
 		mRotationalCounter += (ats - mLastAccelTimeSkew);
 
-		if (mRotationalCounter >= mCyclesPerDiskRotation) {
-			mRotationalCounter -= mCyclesPerDiskRotation;
+		if (mRotationalCounter >= mpProfile->mCyclesPerDiskRotation) {
+			mRotationalCounter -= mpProfile->mCyclesPerDiskRotation;
 			++mRotations;
 		}
 
@@ -772,26 +707,32 @@ void ATDiskEmulator::SetupTransferSpeed(bool highSpeed) {
 			case 0x70:
 			case 0x72:
 			case 0x77:
-				mpSIOMgr->SetTransferRate(kCyclesPerSIOBit_Happy_Native_Fast, kCyclesPerSIOByte_Happy_Native_Fast);
+				mCyclesPerSIOBitCurrent = kCyclesPerSIOBit_Happy_Native_Fast;
+				mCyclesPerSIOByteCurrent = kCyclesPerSIOByte_Happy_Native_Fast;
 				break;
 
 			default:
-				mpSIOMgr->SetTransferRate(mCyclesPerSIOBitHighSpeed, mCyclesPerSIOByteHighSpeed);
+				mCyclesPerSIOBitCurrent = mpProfile->mCyclesPerSIOBitHighSpeed;
+				mCyclesPerSIOByteCurrent = mpProfile->mCyclesPerSIOByteHighSpeed;
 				break;
 		}
-	} else
-		mpSIOMgr->SetTransferRate(mCyclesPerSIOBit, mCyclesPerSIOByte);
+	} else {
+		mCyclesPerSIOBitCurrent = mpProfile->mCyclesPerSIOBit;
+		mCyclesPerSIOByteCurrent = mpProfile->mCyclesPerSIOByte;
+	}
+
+	mpSIOMgr->SetTransferRate(mCyclesPerSIOBitCurrent, mCyclesPerSIOByteCurrent);
 }
 
 void ATDiskEmulator::BeginTransferACKCmd() {
 	SetupTransferSpeed(mbCommandFrameHighSpeed);
-	mpSIOMgr->Delay(mCyclesToACKSent);
+	mpSIOMgr->Delay(mpProfile->mCyclesToACKSent);
 	mpSIOMgr->SendACK();
 }
 
 void ATDiskEmulator::BeginTransferACK() {
 	SetupTransferSpeed(mbActiveCommandHighSpeed);
-	mpSIOMgr->Delay(mCyclesToACKSent);
+	mpSIOMgr->Delay(mpProfile->mCyclesToACKSent);
 	mpSIOMgr->SendACK();
 }
 
@@ -805,11 +746,35 @@ void ATDiskEmulator::BeginTransferError() {
 	mpSIOMgr->SendError(false);
 }
 
-void ATDiskEmulator::BeginTransferNAK() {
+void ATDiskEmulator::BeginTransferNAKCommand() {
+	SetupTransferSpeed(mbCommandFrameHighSpeed);
+
+	// Typically the drive firmware does the following:
+	//
+	//	- Process the command.
+	//	- Wait for the command line to deassert.
+	//	- Send the NAK.
+	//
+	// It is possible for the first step to take longer than the computer to
+	// deassert the command line, depending on the speed of the SIO routine.
+	// Therefore, we must compute both delays from the end of the command frame
+	// (precisely, the last data bit) and from the command line deasserting
+	// and take the maximum of the two.
+	//
+	const uint64 t = mpSIOMgr->GetCommandQueueTime();
+	const uint64 targetTime = std::max<uint64>(mpSIOMgr->GetCommandFrameEndTime() + mpProfile->mCyclesToNAKFromFrameEnd, mpSIOMgr->GetCommandDeassertTime() + mpProfile->mCyclesToNAKFromCmdDeassert);
+
+	if (targetTime > t)
+		mpSIOMgr->Delay((uint32)(targetTime - t));
+
+	mpSIOMgr->SendNAK();
+}
+
+void ATDiskEmulator::BeginTransferNAKData() {
 	// NAKs are only sent in response to the command itself and therefore must be sent at
 	// command frame speed.
 	SetupTransferSpeed(mbCommandFrameHighSpeed);
-	mpSIOMgr->Delay(mCyclesToACKSent);
+	mpSIOMgr->Delay(mpProfile->mCyclesToACKSent);
 	mpSIOMgr->SendNAK();
 }
 
@@ -820,9 +785,9 @@ void ATDiskEmulator::SendResult(bool successful, uint32 length) {
 		BeginTransferError();
 
 	if (mbActiveCommandHighSpeed)
-		mpSIOMgr->Delay(mCyclesCEToDataFrameHighSpeed + ((length * mCyclesCEToDataFrameHighSpeedPBDiv256 + 128) >> 8));
+		mpSIOMgr->Delay(mpProfile->mCyclesCEToDataFrameHighSpeed + ((length * mpProfile->mCyclesCEToDataFrameHighSpeedPBDiv256 + 128) >> 8));
 	else
-		mpSIOMgr->Delay(mCyclesCEToDataFrame + ((length * mCyclesCEToDataFramePBDiv256 + 128) >> 8));
+		mpSIOMgr->Delay(mpProfile->mCyclesCEToDataFrame + ((length * mpProfile->mCyclesCEToDataFramePBDiv256 + 128) >> 8));
 
 	Send(length);
 }
@@ -847,8 +812,8 @@ void ATDiskEmulator::BeginReceive(uint32 len) {
 void ATDiskEmulator::WarpOrDelay(uint32 cycles, uint32 minCycles) {
 	if (!mbAccurateSectorTiming && cycles > minCycles) {
 		mRotationalCounter += cycles - minCycles;
-		if (mRotationalCounter >= mCyclesPerDiskRotation) {
-			mRotationalCounter -= mCyclesPerDiskRotation;
+		if (mRotationalCounter >= mpProfile->mCyclesPerDiskRotation) {
+			mRotationalCounter -= mpProfile->mCyclesPerDiskRotation;
 			++mRotations;
 		}
 
@@ -856,6 +821,19 @@ void ATDiskEmulator::WarpOrDelay(uint32 cycles, uint32 minCycles) {
 	}
 
 	mpSIOMgr->Delay(cycles);
+}
+
+// This routine delays from the beginning of the stop bit of the last byte rather than
+// the end of the stop bit or byte. This models optimizations in drive firmware where
+// the firmware sets the output high for the stop bit and then immediately resumes
+// processing, since there is no further work needed on the serial hardware. This
+// simplifies specification of post-transmission delays with high speed since the
+// width of the stop bit varies but the work done after the start of the stop bit
+// largely doesn't.
+void ATDiskEmulator::WarpOrDelayFromStopBit(uint32 cycles) {
+	uint32 delay = std::max<uint32>(cycles, mCyclesPerSIOBitCurrent + 1) - mCyclesPerSIOBitCurrent;
+
+	WarpOrDelay(delay, delay);
 }
 
 void ATDiskEmulator::Wait(uint32 nextState) {
@@ -878,7 +856,7 @@ uint32 ATDiskEmulator::GetUpdatedRotationalCounter() const {
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 	uint32 dt = t - mLastRotationUpdateCycle;
 
-	return (mRotationalCounter + dt) % mCyclesPerDiskRotation;
+	return (mRotationalCounter + dt) % mpProfile->mCyclesPerDiskRotation;
 }
 
 void ATDiskEmulator::UpdateRotationalCounter() {
@@ -888,17 +866,16 @@ void ATDiskEmulator::UpdateRotationalCounter() {
 
 	mRotationalCounter += dt;
 
-	if (mRotationalCounter >= mCyclesPerDiskRotation) {
-		uint32 rotations = mRotationalCounter / mCyclesPerDiskRotation;
-		mRotationalCounter %= mCyclesPerDiskRotation;
+	if (mRotationalCounter >= mpProfile->mCyclesPerDiskRotation) {
+		uint32 rotations = mRotationalCounter / mpProfile->mCyclesPerDiskRotation;
+		mRotationalCounter %= mpProfile->mCyclesPerDiskRotation;
 		mRotations += rotations;
 	}
 }
 
 void ATDiskEmulator::ProcessUnsupportedCommand() {
-	BeginTransferNAK();
+	BeginTransferNAKCommand();
 
-	const char *desc = "?";
 	const char *extraDesc = "";
 
 	switch(mOriginalCommand) {
@@ -1011,19 +988,7 @@ void ATDiskEmulator::ProcessCommand() {
 void ATDiskEmulator::ProcessCommandStatus() {
 	BeginTransferACKCmd();
 
-	switch(mEmuMode) {
-		case kATDiskEmulationMode_Generic:
-		case kATDiskEmulationMode_Generic57600:
-		case kATDiskEmulationMode_FastestPossible:
-		case kATDiskEmulationMode_810:
-		case kATDiskEmulationMode_Happy1050:
-			mpSIOMgr->Delay(554);		// 155 cycles @ 500KHz
-			break;
-
-		default:
-			mpSIOMgr->Delay(1500);		// total guess
-			break;
-	}
+	WarpOrDelayFromStopBit(mpProfile->mCyclesACKStopBitToStatusComplete);
 
 	uint8 status = 0;
 
@@ -1052,7 +1017,7 @@ void ATDiskEmulator::ProcessCommandStatus() {
 	mSendPacket[0] = status;
 	mSendPacket[1] = mFDCStatus;
 
-	if (!mbSupportedNotReady)
+	if (!mpProfile->mbSupportedNotReady)
 		mSendPacket[1] |= 0x80;
 	else if (mTotalSectorCount == 0)
 		mSendPacket[1] &= 0x7F;
@@ -1091,15 +1056,15 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 				// The 1050 drive does an extra pair of half steps after a forward seek, one forward
 				// and one backward. This ensures that tracks are always read or written after the
 				// head has seeked backwards. The 810 does not do this.
-				if (trackDelta > 0 && mbReverseOnForwardSeeks) {
+				if (trackDelta > 0 && mpProfile->mbReverseOnForwardSeeks) {
 					PlaySeekSound(opDelay, tracksToStep + 1);
-					opDelay += (tracksToStep + 1) * mCyclesPerTrackStep;
+					opDelay += (tracksToStep + 1) * mpProfile->mCyclesPerTrackStep;
 				} else {
 					PlaySeekSound(opDelay, tracksToStep);
-					opDelay += tracksToStep * mCyclesPerTrackStep;
+					opDelay += tracksToStep * mpProfile->mCyclesPerTrackStep;
 				}
 
-				opDelay += mCyclesForHeadSettle;
+				opDelay += mpProfile->mCyclesForHeadSettle;
 			}
 
 			WarpOrDelay(opDelay);
@@ -1124,7 +1089,6 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 
 			// check if we have any sectors
 			ATDiskPhysicalSectorInfo psi;
-			bool havePhysSector = false;
 			uint32 postSeekPosition = 0;
 			uint32 physSector;
 
@@ -1132,7 +1096,7 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 				// choose a physical sector
 				if (mbAccurateSectorPrediction || mbAccurateSectorTiming) {
 					// compute post-seek rotational position
-					postSeekPosition = mRotationalCounter % mCyclesPerDiskRotation;
+					postSeekPosition = mRotationalCounter % mpProfile->mCyclesPerDiskRotation;
 
 					uint32 bestDelay = 0xFFFFFFFFU;
 					uint8 bestStatus = 0;
@@ -1146,10 +1110,10 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 						const ExtPhysSector& eps = mExtPhysSectors[vsi.mStartPhysSector + i];
 
 						// compute sector's rotational position in cycles
-						uint32 sectorPos = VDRoundToInt(psi.mRotPos * mCyclesPerDiskRotation);
+						uint32 sectorPos = VDRoundToInt(psi.mRotPos * mpProfile->mCyclesPerDiskRotation);
 
 						// compute rotational delay to sector
-						uint32 delay = sectorPos < postSeekPosition ? sectorPos + mCyclesPerDiskRotation - postSeekPosition : sectorPos - postSeekPosition;
+						uint32 delay = sectorPos < postSeekPosition ? sectorPos + mpProfile->mCyclesPerDiskRotation - postSeekPosition : sectorPos - postSeekPosition;
 
 						if (eps.mForcedOrder == evs.mPhantomSectorCounter) {
 							physSector = vsi.mStartPhysSector + i;
@@ -1253,7 +1217,7 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 				}
 
 				// set rotational delay
-				mTransferCompleteRotPos = VDRoundToInt(psi.mRotPos * mCyclesPerDiskRotation);
+				mTransferCompleteRotPos = VDRoundToInt(psi.mRotPos * mpProfile->mCyclesPerDiskRotation);
 				mActiveCommandPhysSector = physSector;
 			} else {
 				// indicate missing track/sector (record not found)
@@ -1271,29 +1235,29 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 			// If we have the sector, add rotational delay from the post seek position to the
 			// sector's position; otherwise, add two revs for the FDC's attempt to find it.
 			if (missingSector) {
-				if (mbRetryMode1050)
+				if (mpProfile->mbRetryMode1050)
 					secondByteDelay += kCyclesPerFakeRot_1050;
 				else
 					secondByteDelay += kCyclesPerFakeRot_810;
 			} else {
 				if (postSeekPosition > mTransferCompleteRotPos)
-					secondByteDelay += mCyclesPerDiskRotation;
+					secondByteDelay += mpProfile->mCyclesPerDiskRotation;
 
 				secondByteDelay += mTransferCompleteRotPos - postSeekPosition;
 			}
 
 			// Check if we got an error.
-			const uint32 maxRetryState = (mbRetryMode1050 ? 14 : 16);
+			const uint32 maxRetryState = (mpProfile->mbRetryMode1050 ? 14 : 16);
 			if (mFDCStatus != 0xFF && mActiveCommandState < maxRetryState) {
 				// Check if we're modeling the 810 or 1050. The 810 does four tries overall
 				// with a possible recalibrate between the first two and second two attempts;
 				// the 1050 does two tries with a recalibrate or restep in between.
-				if (!mbRetryMode1050) {
+				if (!mpProfile->mbRetryMode1050) {
 					// 810 -- add another (fake) rotation
 					if (missingSector)
 						secondByteDelay += kCyclesPerFakeRot_810;
 					else
-						secondByteDelay += mCyclesPerDiskRotation;
+						secondByteDelay += mpProfile->mCyclesPerDiskRotation;
 				}
 
 				// Compute the restep/recalibration delay.
@@ -1303,8 +1267,8 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 					// The 1050 has a track 0 sensor, so it only does the necessary number of steps
 					// when recalibrating. The 810, on the other hand, doesn't have one and just
 					// steps back 43 tracks.
-					const uint32 restoreSteps = mbRetryMode1050 ? mCurrentTrack : 43;
-					const uint32 seekTime1 = restoreSteps ? restoreSteps * mCyclesPerTrackStep + mCyclesForHeadSettle : 0;
+					const uint32 restoreSteps = mpProfile->mbRetryMode1050 ? mCurrentTrack : 43;
+					const uint32 seekTime1 = restoreSteps ? restoreSteps * mpProfile->mCyclesPerTrackStep + mpProfile->mCyclesForHeadSettle : 0;
 
 					if (restoreSteps) {
 						PlaySeekSound(secondByteDelay, restoreSteps);
@@ -1314,14 +1278,14 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 					// compute time to seek back -- no rotational delay to get back to sector, it
 					// doesn't exist (sectors don't magically reappear in our model).
 					if (mCurrentTrack) {
-						const uint32 tracksToStep = mbReverseOnForwardSeeks ? mCurrentTrack+1 : mCurrentTrack;
+						const uint32 tracksToStep = mpProfile->mbReverseOnForwardSeeks ? mCurrentTrack+1 : mCurrentTrack;
 
 						PlaySeekSound(secondByteDelay, tracksToStep);
-						secondByteDelay += tracksToStep * mCyclesPerTrackStep + mCyclesForHeadSettle;
+						secondByteDelay += tracksToStep * mpProfile->mCyclesPerTrackStep + mpProfile->mCyclesForHeadSettle;
 					}
 
 					// ...and do another fake rotation.
-					if (mbRetryMode1050)
+					if (mpProfile->mbRetryMode1050)
 						secondByteDelay += kCyclesPerFakeRot_1050;
 					else
 						secondByteDelay += kCyclesPerFakeRot_810;
@@ -1329,12 +1293,12 @@ bool ATDiskEmulator::ProcessCommandReadWriteCommon(bool isWrite) {
 					// Found sector but read with error. For the 810, we'll just fail three
 					// more times. For the 1050, we need to do a half step in and back, then
 					// retry once.
-					if (mbRetryMode1050) {
+					if (mpProfile->mbRetryMode1050) {
 						// seek in and out
 						PlaySeekSound(secondByteDelay, 1);
 
 						// apply seek delay
-						uint32 reseekDelay = mCyclesPerTrackStep + mCyclesForHeadSettle;
+						uint32 reseekDelay = mpProfile->mCyclesPerTrackStep + mpProfile->mCyclesForHeadSettle;
 
 						secondByteDelay += reseekDelay;
 					}
@@ -1375,7 +1339,7 @@ void ATDiskEmulator::ProcessCommandRead() {
 				// Address must be in $0800-1380.
 				if (sector < 0x0800 || sector > 0x1380) {
 					// NAK the command.
-					BeginTransferNAK();
+					BeginTransferNAKCommand();
 					WarpOrDelay(500, 500);
 					SendResult(false, mSectorSize);
 					EndCommand();
@@ -1393,7 +1357,7 @@ void ATDiskEmulator::ProcessCommandRead() {
 				// Address must be in $8000-97FF.
 				if (sector >= 0x9800) {
 					// NAK the command.
-					BeginTransferNAK();
+					BeginTransferNAKCommand();
 					WarpOrDelay(500, 500);
 					SendResult(false, mSectorSize);
 					EndCommand();
@@ -1429,8 +1393,8 @@ void ATDiskEmulator::ProcessCommandRead() {
 
 				// if the drive supports the not ready signal, return error immediately,
 				// otherwise simulate rotations trying to find a sector
-				if (!mbSupportedNotReady)
-					WarpOrDelay(mCyclesPerDiskRotation * 2, 1000);
+				if (!mpProfile->mbSupportedNotReady)
+					WarpOrDelay(mpProfile->mCyclesPerDiskRotation * 2, 1000);
 
 				// don't clear the sector buffer!
 				SendResult(false, 128);
@@ -1464,20 +1428,30 @@ void ATDiskEmulator::ProcessCommandRead() {
 				mActiveCommandPhysSector = -1;
 
 			ATDiskPhysicalSectorInfo psi = {};
-			if (image && mActiveCommandPhysSector >= 0)
+			if (mActiveCommandPhysSector >= 0)
 				image->GetPhysicalSectorInfo((uint32)mActiveCommandPhysSector, psi);
 
 			// Warp disk to beginning of sector, if it isn't already there.
 			UpdateRotationalCounter();
+
 			mRotationalCounter = mTransferCompleteRotPos;
+
+			// Check if this is a boot sector. If so, force the length to 128 bytes per protocol.
+			uint32 transferLength = mSectorSize;
+
+			if (image && sector <= image->GetBootSectorCount())
+				transferLength = 128;
 
 			// Add time to read sector and compute checksum.
 			//
 			// sector read: ~130 bytes at 125Kbits/sec = ~8.3ms = ~14891 cycles
+			const uint32 waitLength = mpProfile->mbWaitForLongSectors ? psi.mPhysicalSize : transferLength;
+			const uint32 sectorReadDelay = ((mbMFM ? 7445 : 14891) * waitLength + 64) / 128;
+
 			// FDC reset and checksum: ~2568 cycles @ 500KHz = 9192 cycles
-			const uint32 sectorReadDelay = (mbMFM && psi.mPhysicalSize == 128) ? 7445 : 14891;
-			const uint32 postReadDelay = mbMFM ? 0 : 9192;
-			WarpOrDelay(sectorReadDelay + postReadDelay, 1000);
+			const uint32 postReadDelay = mbMFM ? kCyclesPostReadDelay_1050 : kCyclesPostReadDelay_810;
+
+			WarpOrDelay(sectorReadDelay + postReadDelay, kCyclesPostReadDelay_Fast);
 
 			// check for missing sector
 			// note: must send ACK (41) + ERROR (45) -- BeachHead expects to get DERROR from SIO
@@ -1486,7 +1460,7 @@ void ATDiskEmulator::ProcessCommandRead() {
 
 				// sector not found....
 				// don't clear the sector buffer!
-				SendResult(false, image ? image->GetSectorSize(sector - 1) : 128);
+				SendResult(false, transferLength);
 
 				g_ATLCDisk("Reporting missing sector %d.\n", sector);
 				EndCommand();
@@ -1521,19 +1495,16 @@ void ATDiskEmulator::ProcessCommandRead() {
 				}
 			}
 
-			uint32 transferLength = readLength;
-
-			// Check if this is a boot sector. If so, force the length to 128 bytes per protocol.
-			if (sector <= image->GetBootSectorCount())
-				transferLength = 128;
-
 			SendResult(successful, transferLength);
 
 			if (g_ATLCDisk.IsEnabled()) {
 				Wait(21);
 				break;
 			}
+
+			[[fallthrough]];
 		}
+
 		case 21:
 			if (g_ATLCDisk.IsEnabled()) {
 				if (IATDiskImage *image = mpDiskInterface->GetDiskImage()) {
@@ -1554,7 +1525,7 @@ void ATDiskEmulator::ProcessCommandRead() {
 							, Checksum(mSendPacket, mTransferLength)
 							, mActiveCommandStartRotPos
 							, psi.mRotPos
-							, (float)mRotationalCounter / (float)mCyclesPerDiskRotation
+							, (float)mRotationalCounter / (float)mpProfile->mCyclesPerDiskRotation
 							,  psi.mWeakDataOffset >= 0 ? " (w/weak bits)"
 								: !(mFDCStatus & 0x02) ? " (w/long sector)"		// must use DRQ as lost data differs between drives
 								: !(mFDCStatus & 0x08) ? " (w/CRC error)"
@@ -1586,7 +1557,7 @@ void ATDiskEmulator::ProcessCommandWrite() {
 				if (mActiveCommandSector < 0x0800 || mActiveCommandSector > 0x1380) {
 					// NAK the command.
 					mbLastOpError = true;
-					BeginTransferNAK();
+					BeginTransferNAKCommand();
 					SendResult(false, mSectorSize);
 					EndCommand();
 					return;
@@ -1602,7 +1573,7 @@ void ATDiskEmulator::ProcessCommandWrite() {
 				if (mActiveCommandSector >= 0x9800) {
 					// NAK the command.
 					mbLastOpError = true;
-					BeginTransferNAK();
+					BeginTransferNAKCommand();
 					SendResult(false, mSectorSize);
 					EndCommand();
 					return;
@@ -1620,7 +1591,7 @@ void ATDiskEmulator::ProcessCommandWrite() {
 				// NAK the command immediately -- the 810 and 1050 both NAK commands
 				// with invalid sector numbers.
 				mbLastOpError = true;
-				BeginTransferNAK();
+				BeginTransferNAKCommand();
 				EndCommand();
 				g_ATLCDisk("Error writing sector %d.\n", mActiveCommandSector);
 				break;
@@ -1685,23 +1656,27 @@ void ATDiskEmulator::ProcessCommandWrite() {
 
 			mpDiskInterface->OnDiskModified();
 
-			uint32 rotDelay = kCyclesCompleteDelay_Fast;
+			uint32 rotDelay = kCyclesRotationalDelay_Fast;
 
 			if (mbAccurateSectorTiming) {
 				// compute rotational delay
 				UpdateRotationalCounter();
-				uint32 rotPos = VDRoundToInt(psi.mRotPos * mCyclesPerDiskRotation);
+				uint32 rotPos = VDRoundToInt(psi.mRotPos * mpProfile->mCyclesPerDiskRotation);
 
-				rotDelay = rotPos < mRotationalCounter ? (rotPos - mRotationalCounter) + mCyclesPerDiskRotation : (rotPos - mRotationalCounter);
+				rotDelay = rotPos < mRotationalCounter ? (rotPos - mRotationalCounter) + mpProfile->mCyclesPerDiskRotation : (rotPos - mRotationalCounter);
 
 				// add verify delay if we're doing write w/verify
 				if (mActiveCommand == 'W')
-					rotDelay += mCyclesPerDiskRotation;
+					rotDelay += mpProfile->mCyclesPerDiskRotation;
 
 				rotDelay += 10000;	// fudge factor
 			}
 
-			WarpOrDelay(rotDelay);
+			// If acceleration is disabled, wait a minimum of 400us + std byte to give SIO
+			// enough time to turn around between ACK and Complete. The SIO spec says 250us,
+			// but the stock OS really needs more time than that because it enables the IRQ
+			// too early.
+			WarpOrDelay(rotDelay, (716+932) - std::min<uint32>(932, mpProfile->mCyclesPerSIOByte));
 
 			if (mbLastOpError)
 				BeginTransferError();
@@ -1738,12 +1713,12 @@ void ATDiskEmulator::ProcessCommandWrite() {
 }
 
 void ATDiskEmulator::ProcessCommandReadPERCOMBlock() {
-	if (!mbSupportedCmdPERCOM)
+	if (!mpProfile->mbSupportedCmdPERCOM)
 		return ProcessUnsupportedCommand();
 
 	BeginTransferACKCmd();
 
-	WarpOrDelay(450, 450);
+	WarpOrDelayFromStopBit(mpProfile->mCyclesACKStopBitToReadPERCOMComplete);
 
 	memcpy(mSendPacket, mPERCOM, 12);
 
@@ -1763,7 +1738,7 @@ void ATDiskEmulator::ProcessCommandReadPERCOMBlock() {
 void ATDiskEmulator::ProcessCommandWritePERCOMBlock() {
 	switch(mActiveCommandState) {
 		case 0:
-			if (!mbSupportedCmdPERCOM)
+			if (!mpProfile->mbSupportedCmdPERCOM)
 				return ProcessUnsupportedCommand();
 
 			BeginTransferACKCmd();
@@ -1799,12 +1774,12 @@ void ATDiskEmulator::ProcessCommandWritePERCOMBlock() {
 }
 
 void ATDiskEmulator::ProcessCommandGetHighSpeedIndex() {
-	if (!mbSupportedCmdGetHighSpeedIndex)
+	if (!mpProfile->mbSupportedCmdGetHighSpeedIndex)
 		return ProcessUnsupportedCommand();
 
 	BeginTransferACKCmd();
 
-	mSendPacket[0] = mHighSpeedIndex;
+	mSendPacket[0] = mpProfile->mHighSpeedIndex;
 
 	WarpOrDelay(450, 450);
 
@@ -1900,13 +1875,13 @@ void ATDiskEmulator::ProcessCommandHappyHeadPosTest() {
 			if (tracksToStep) {
 				if (trackDelta > 0) {
 					PlaySeekSound(opDelay, tracksToStep + 1);
-					opDelay += (tracksToStep + 1) * mCyclesPerTrackStep;
+					opDelay += (tracksToStep + 1) * mpProfile->mCyclesPerTrackStep;
 				} else {
 					PlaySeekSound(opDelay, tracksToStep);
-					opDelay += tracksToStep * mCyclesPerTrackStep;
+					opDelay += tracksToStep * mpProfile->mCyclesPerTrackStep;
 				}
 
-				opDelay += mCyclesForHeadSettle;
+				opDelay += mpProfile->mCyclesForHeadSettle;
 			}
 
 			WarpOrDelay(opDelay);
@@ -1940,7 +1915,7 @@ void ATDiskEmulator::ProcessCommandHappyRPMTest() {
 		case 1:
 			// Wait for the index mark, then another index mark.
 			UpdateRotationalCounter();
-			WarpOrDelay(mCyclesPerDiskRotation + (mCyclesPerDiskRotation - mRotationalCounter));
+			WarpOrDelay(mpProfile->mCyclesPerDiskRotation + (mpProfile->mCyclesPerDiskRotation - mRotationalCounter));
 
 			memset(mSendPacket, 0, 128);
 
@@ -2007,7 +1982,7 @@ void ATDiskEmulator::ProcessCommandExecuteIndusGT() {
 			}
 			
 			if (mActiveCommandSector >= 0x100) {
-				BeginTransferNAK();
+				BeginTransferNAKCommand();
 				EndCommand();
 				break;
 			}
@@ -2067,20 +2042,11 @@ void ATDiskEmulator::ProcessCommandExecuteIndusGT() {
 
 					if (mCustomCodeState == 6) {
 						g_ATLCDisk("Firmware upload recognized. Enabling Synchromesh operation.\n");
-						mHighSpeedIndex = 10;
-						mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_IndusGT_Synchromesh;
-						mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_IndusGT_Synchromesh;
-						UpdateHighSpeedTiming();
+						mpProfile = &ATGetDiskProfileIndusGTSynchromesh();
 					} else if (mCustomCodeState == 11 || mCustomCodeState == 20) {
 						g_ATLCDisk("Firmware upload recognized. Enabling SuperSynchromesh operation.\n");
 
-						mHighSpeedIndex = 6;
-						mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_IndusGT_SuperSynchromesh;
-						mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_IndusGT_SuperSynchromesh;
-						mCyclesCEToDataFrameHighSpeed = 571;
-						mCyclesCEToDataFrameHighSpeedPBDiv256 = 3780;
-						UpdateHighSpeedTiming();
-
+						mpProfile = &ATGetDiskProfileIndusGTSuperSynchromesh();
 						if (mCustomCodeState == 11)
 							mCustomCodeState = 12;
 						else
@@ -2210,13 +2176,13 @@ void ATDiskEmulator::ProcessCommandFormat() {
 	switch(mActiveCommandState) {
 		case 0:
 			if (mOriginalCommand == 0xA3) {
-				if (mEmuMode != kATDiskEmulationMode_IndusGT || mHighSpeedIndex < 0)
+				if (!mpProfile->mbSupportedCmdFormatBoot)
 					return ProcessUnsupportedCommand();
 			} else if ((mOriginalCommand & 0x7F) == 0x22) {
 				if (mEmuMode == kATDiskEmulationMode_810)
 					return ProcessUnsupportedCommand();
 			} else if ((mOriginalCommand & 0x7F) == 0x66) {
-				if (!mbSupportedCmdFormatSkewed)
+				if (!mpProfile->mbSupportedCmdFormatSkewed)
 					return ProcessUnsupportedCommand();
 			} else if ((mOriginalCommand & 0x7F) == 0x21 && mEmuMode == kATDiskEmulationMode_XF551) {
 				// The XF551 does not allow command $21 to format medium density, forcing single
@@ -2305,14 +2271,27 @@ void ATDiskEmulator::ProcessCommandFormat() {
 			}
 
 			int formatSectorSize = VDReadUnalignedBEU16(&mPERCOM[6]);
-			int formatSectorCount = mPERCOM[0] * (sint32)VDReadUnalignedBEU16(&mPERCOM[2]) * (mPERCOM[4] + 1);
+			int formatTracks = mPERCOM[0];
+			int formatSides = mPERCOM[4] + 1;
+			int formatSectorsPerTrack = VDReadUnalignedBEU16(&mPERCOM[2]);
+			int formatSectorCount = formatTracks * formatSectorsPerTrack * formatSides;
 			int formatBootSectorCount = formatSectorSize >= 512 ? 0 : 3;
 
 			if (mOriginalCommand == 0xA3) {
 				g_ATLCDisk("Boot track format command received. Silently ignoring as we don't support partially formatted disks.\n");
 			} else {
 				g_ATLCDisk("FORMAT COMMAND RECEIVED. Reformatting disk as %u sectors of %u bytes each.\n", formatSectorCount, formatSectorSize);
-				mpDiskInterface->FormatDisk(formatSectorCount, formatBootSectorCount, formatSectorSize);
+
+				ATDiskGeometryInfo geometry {};
+				geometry.mSectorSize = formatSectorSize;
+				geometry.mBootSectorCount = formatBootSectorCount;
+				geometry.mTotalSectorCount = formatSectorCount;
+				geometry.mTrackCount = formatTracks;
+				geometry.mSectorsPerTrack = formatSectorsPerTrack;
+				geometry.mSideCount = formatSides;
+				geometry.mbMFM = (mPERCOM[5] & 4) != 0;
+				geometry.mbHighDensity = (mPERCOM[5] & 2) != 0;
+				mpDiskInterface->FormatDisk(geometry);
 			}
 
 			mActiveCommandSector = 0;
@@ -2353,9 +2332,9 @@ void ATDiskEmulator::ProcessCommandFormat() {
 				++mActiveCommandSector;
 
 				// delay for at least two revs regardless; we are assuming seek delay to blow a rev or more and then index-to-index format
-				uint32 delay = tracksToStep ? mCyclesPerTrackStep * tracksToStep + mCyclesForHeadSettle : 1;
+				uint32 delay = tracksToStep ? mpProfile->mCyclesPerTrackStep * tracksToStep + mpProfile->mCyclesForHeadSettle : 1;
 
-				delay = ((delay - 1) / mCyclesPerDiskRotation + 2) * mCyclesPerDiskRotation;
+				delay = ((delay - 1) / mpProfile->mCyclesPerDiskRotation + 2) * mpProfile->mCyclesPerDiskRotation;
 
 				mpSIOMgr->Delay(delay);
 				Wait(4);
@@ -2388,11 +2367,13 @@ void ATDiskEmulator::ComputeGeometry() {
 		mTrackCount = info.mTrackCount;
 		mSideCount = info.mSideCount;
 		mbMFM = info.mbMFM;
+		mbHighDensity = info.mbHighDensity;
 		mSectorsPerTrack = info.mSectorsPerTrack;
 	} else {
 		mTrackCount = 0;
 		mSideCount = 0;
 		mbMFM = false;
+		mbHighDensity = false;
 		mSectorsPerTrack = 0;
 	}
 }
@@ -2415,7 +2396,7 @@ void ATDiskEmulator::ComputePERCOMBlock() {
 	mPERCOM[4] = mSideCount ? mSideCount - 1 : 0;
 
 	// record method
-	mPERCOM[5] = mbMFM ? 4 : 0;
+	mPERCOM[5] = (mbMFM ? 4 : 0) + (mbHighDensity ? 2 : 0);
 
 	// bytes per sector
 	mPERCOM[6] = (uint8)(mSectorSize >> 8);
@@ -2431,311 +2412,7 @@ void ATDiskEmulator::ComputePERCOMBlock() {
 }
 
 void ATDiskEmulator::ComputeSupportedProfile() {
-	mHighSpeedCmdIndex = 0;
-
-	// We need a small delay here between the end of the complete byte and
-	// the start of the data frame byte at high speed. For the US Doubler,
-	// this is 74 cycles @ 1MHz, or 132 machine cycles. For an Indus GT,
-	// Synchromesh has no such delay, but SuperSynchromesh takes around
-	// 5500/9724 T-cycles @ 4MHz to compute checksums between C/E and
-	// the data frame. The XF551 does not use a delay.
-	mCyclesCEToDataFrame = 0;
-	mCyclesCEToDataFramePBDiv256 = 0;
-	mCyclesCEToDataFrameHighSpeed = 0;
-	mCyclesCEToDataFrameHighSpeedPBDiv256 = 0;
-
-	uint32 ackDelay = kCyclesACKDelay;
-
-	switch(mEmuMode) {
-		case kATDiskEmulationMode_Generic:
-		default:
-			mbSupportedNotReady = true;
-			mbSupportedCmdHighSpeed = true;
-			mbSupportedCmdFrameHighSpeed = true;
-			mbSupportedCmdPERCOM = true;
-			mbSupportedCmdFormatSkewed = true;
-			mbSupportedCmdGetHighSpeedIndex = false;
-			mHighSpeedIndex = 16;
-			mCyclesPerSIOByte = kCyclesPerSIOByte_810;
-			mCyclesPerSIOBit = kCyclesPerSIOBit_810;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_810;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_810;
-			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_810;
-			mCyclesForHeadSettle = kCyclesForHeadSettle_810;
-			mbSeekHalfTracks = false;
-			mbRetryMode1050 = false;
-			mbReverseOnForwardSeeks = false;
-			break;
-
-		case kATDiskEmulationMode_Generic57600:
-			mbSupportedNotReady = true;
-			mbSupportedCmdHighSpeed = true;
-			mbSupportedCmdFrameHighSpeed = true;
-			mbSupportedCmdPERCOM = true;
-			mbSupportedCmdFormatSkewed = true;
-			mbSupportedCmdGetHighSpeedIndex = true;
-			mHighSpeedIndex = 8;
-			mHighSpeedCmdIndex = 8;
-			mCyclesPerSIOByte = kCyclesPerSIOByte_810;
-			mCyclesPerSIOBit = kCyclesPerSIOBit_810;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_57600baud;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_57600baud;
-			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_810;
-			mCyclesForHeadSettle = kCyclesForHeadSettle_810;
-			mCyclesCEToDataFrameHighSpeed = 132;
-			mbSeekHalfTracks = false;
-			mbRetryMode1050 = false;
-			mbReverseOnForwardSeeks = false;
-			break;
-
-		case kATDiskEmulationMode_FastestPossible:
-			mbSupportedNotReady = true;
-			mbSupportedCmdHighSpeed = true;
-			mbSupportedCmdFrameHighSpeed = true;
-			mbSupportedCmdPERCOM = true;
-			mbSupportedCmdFormatSkewed = true;
-			mbSupportedCmdGetHighSpeedIndex = true;
-			mHighSpeedIndex = 0;
-			mHighSpeedCmdIndex = 0;
-			mCyclesPerSIOByte = kCyclesPerSIOByte_810;
-			mCyclesPerSIOBit = kCyclesPerSIOBit_810;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_PokeyDiv0;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_PokeyDiv0;
-			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_810_3ms;
-			mCyclesForHeadSettle = kCyclesForHeadSettle_810;
-			mCyclesCEToDataFrameHighSpeed = 132;
-			mbSeekHalfTracks = false;
-			mbRetryMode1050 = false;
-			mbReverseOnForwardSeeks = false;
-			break;
-
-		case kATDiskEmulationMode_810:
-			mbSupportedNotReady = false;
-			mbSupportedCmdHighSpeed = false;
-			mbSupportedCmdFrameHighSpeed = false;
-			mbSupportedCmdPERCOM = false;
-			mbSupportedCmdFormatSkewed = false;
-			mbSupportedCmdGetHighSpeedIndex = false;
-			mHighSpeedIndex = -1;
-			mCyclesPerSIOByte = kCyclesPerSIOByte_810;
-			mCyclesPerSIOBit = kCyclesPerSIOBit_810;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_810;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_810;
-			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_810;
-			mCyclesForHeadSettle = kCyclesForHeadSettle_810;
-			mbSeekHalfTracks = false;
-			mbRetryMode1050 = false;
-			mbReverseOnForwardSeeks = false;
-			break;
-
-		case kATDiskEmulationMode_1050:
-			mbSupportedNotReady = true;
-			mbSupportedCmdHighSpeed = false;
-			mbSupportedCmdFrameHighSpeed = false;
-			mbSupportedCmdPERCOM = false;
-			mbSupportedCmdFormatSkewed = false;
-			mbSupportedCmdGetHighSpeedIndex = false;
-			mHighSpeedIndex = -1;
-			ackDelay = kCyclesACKDelay_1050;
-			mCyclesPerSIOByte = kCyclesPerSIOByte_1050;
-			mCyclesPerSIOBit = kCyclesPerSIOBit_1050;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_1050;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_1050;
-			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_1050;
-			mCyclesForHeadSettle = kCyclesForHeadSettle_1050;
-			mbSeekHalfTracks = true;
-			mbRetryMode1050 = true;
-			mbReverseOnForwardSeeks = true;
-			break;
-
-		case kATDiskEmulationMode_XF551:
-			mbSupportedNotReady = false;
-			mbSupportedCmdHighSpeed = true;
-			mbSupportedCmdFrameHighSpeed = false;
-			mbSupportedCmdPERCOM = true;
-			mbSupportedCmdFormatSkewed = false;
-			mbSupportedCmdGetHighSpeedIndex = false;
-			mHighSpeedIndex = 16;
-			ackDelay = kCyclesACKDelay_1050;
-			mCyclesPerSIOByte = kCyclesPerSIOByte_XF551;
-			mCyclesPerSIOBit = kCyclesPerSIOBit_XF551;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_XF551_Fast;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_XF551_Fast;
-			mCyclesPerDiskRotation = kCyclesPerDiskRotation_300RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_XF551;
-			mCyclesForHeadSettle = kCyclesForHeadSettle_1050;
-			mbSeekHalfTracks = false;
-			mbRetryMode1050 = true;
-			mbReverseOnForwardSeeks = true;
-			break;
-
-		case kATDiskEmulationMode_USDoubler:
-			mbSupportedNotReady = true;
-			mbSupportedCmdHighSpeed = false;
-			mbSupportedCmdFrameHighSpeed = true;
-			mbSupportedCmdPERCOM = true;
-			mbSupportedCmdFormatSkewed = true;
-			mbSupportedCmdGetHighSpeedIndex = true;
-			mHighSpeedCmdIndex = 10;
-			mHighSpeedIndex = 10;
-			ackDelay = kCyclesACKDelay_1050;
-			mCyclesPerSIOByte = kCyclesPerSIOByte_USDoubler;
-			mCyclesPerSIOBit = kCyclesPerSIOBit_USDoubler;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_USDoubler_Fast;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_USDoubler_Fast;
-			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_1050;
-			mCyclesForHeadSettle = kCyclesForHeadSettle_1050;
-			mCyclesCEToDataFrameHighSpeed = 132;
-			mbSeekHalfTracks = true;
-			mbRetryMode1050 = true;
-			mbReverseOnForwardSeeks = true;
-			break;
-
-		case kATDiskEmulationMode_Speedy1050:
-			mbSupportedNotReady = true;
-			mbSupportedCmdHighSpeed = false;
-			mbSupportedCmdFrameHighSpeed = true;
-			mbSupportedCmdPERCOM = true;
-			mbSupportedCmdFormatSkewed = false;
-			mbSupportedCmdGetHighSpeedIndex = true;
-			mHighSpeedCmdIndex = 9;
-			mHighSpeedIndex = 9;
-			ackDelay = kCyclesACKDelay_1050;
-			mCyclesPerSIOByte = kCyclesPerSIOByte_Speedy1050;
-			mCyclesPerSIOBit = kCyclesPerSIOBit_Speedy1050;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_Speedy1050_Fast;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_Speedy1050_Fast;
-			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_Speedy1050;
-			mCyclesForHeadSettle = kCyclesForHeadSettle_1050;
-			mCyclesCEToDataFrameHighSpeed = 132;
-			mbSeekHalfTracks = true;
-			mbRetryMode1050 = true;
-			mbReverseOnForwardSeeks = true;
-			break;
-
-		case kATDiskEmulationMode_IndusGT:
-			mbSupportedNotReady = true;
-			mbSupportedCmdHighSpeed = true;
-			mbSupportedCmdFrameHighSpeed = false;
-			mbSupportedCmdPERCOM = true;
-			mbSupportedCmdFormatSkewed = false;
-			mbSupportedCmdGetHighSpeedIndex = false;
-			mHighSpeedIndex = -1;
-			ackDelay = kCyclesACKDelay_1050;
-			mCyclesPerSIOByte = kCyclesPerSIOByte_IndusGT;
-			mCyclesPerSIOBit = kCyclesPerSIOBit_IndusGT;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_IndusGT_Synchromesh;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_IndusGT_Synchromesh;
-			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_IndusGT;
-			mCyclesForHeadSettle = kCyclesForHeadSettle_1050;
-			mbSeekHalfTracks = true;
-			mbRetryMode1050 = true;
-			mbReverseOnForwardSeeks = false;
-			break;
-
-		case kATDiskEmulationMode_Happy810:
-			mbSupportedNotReady = false;
-			mbSupportedCmdHighSpeed = false;
-			mbSupportedCmdFrameHighSpeed = false;
-			mbSupportedCmdPERCOM = false;
-			mbSupportedCmdFormatSkewed = false;
-			mbSupportedCmdGetHighSpeedIndex = false;
-			mHighSpeedIndex = -1;
-			ackDelay = kCyclesACKDelay;
-			mCyclesPerSIOByte = kCyclesPerSIOByte_Happy;
-			mCyclesPerSIOBit = kCyclesPerSIOBit_Happy;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_Happy_USD_Fast;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_Happy_USD_Fast;
-			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_810;
-			mCyclesForHeadSettle = kCyclesForHeadSettle_810;
-			mCyclesCEToDataFrameHighSpeed = 132;
-			mbSeekHalfTracks = false;
-			mbRetryMode1050 = false;
-			mbReverseOnForwardSeeks = false;
-			break;
-
-		case kATDiskEmulationMode_Happy1050:
-			mbSupportedNotReady = true;
-			mbSupportedCmdHighSpeed = false;
-			mbSupportedCmdFrameHighSpeed = true;
-			mbSupportedCmdPERCOM = true;
-			mbSupportedCmdFormatSkewed = false;
-			mbSupportedCmdGetHighSpeedIndex = true;
-			mHighSpeedCmdIndex = 10;
-			mHighSpeedIndex = 10;
-			ackDelay = kCyclesACKDelay_1050;
-			mCyclesPerSIOByte = kCyclesPerSIOByte_Happy;
-			mCyclesPerSIOBit = kCyclesPerSIOBit_Happy;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_Happy_USD_Fast;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_Happy_USD_Fast;
-			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_1050;
-			mCyclesForHeadSettle = kCyclesForHeadSettle_1050;
-			mCyclesCEToDataFrameHighSpeed = 132;
-			mbSeekHalfTracks = true;
-			mbRetryMode1050 = true;
-			mbReverseOnForwardSeeks = true;
-			break;
-
-		case kATDiskEmulationMode_1050Turbo:
-			mbSupportedNotReady = true;
-			mbSupportedCmdHighSpeed = false;
-			mbSupportedCmdFrameHighSpeed = false;
-			mbSupportedCmdPERCOM = true;
-			mbSupportedCmdFormatSkewed = false;
-			mbSupportedCmdGetHighSpeedIndex = false;
-			mHighSpeedCmdIndex = 6;
-			mHighSpeedIndex = 6;
-			ackDelay = kCyclesACKDelay_1050;
-			mCyclesPerSIOByte = kCyclesPerSIOByte_1050Turbo;
-			mCyclesPerSIOBit = kCyclesPerSIOBit_1050Turbo;
-			mCyclesPerSIOByteHighSpeed = kCyclesPerSIOByte_1050Turbo_Fast;
-			mCyclesPerSIOBitHighSpeed = kCyclesPerSIOBit_1050Turbo_Fast;
-			mCyclesPerDiskRotation = kCyclesPerDiskRotation_288RPM;
-			mCyclesPerTrackStep = kCyclesPerTrackStep_1050;
-			mCyclesForHeadSettle = kCyclesForHeadSettle_1050;
-
-			// The V3.5 firmware takes 549 cycles @ 1MHz from leading edge of start bit of Complete byte
-			// to leading edge of the first data byte. Subtract off the 140 cycles it takes to send the
-			// C byte and we have a delay of 409 cycles @ 1MHz = 732 cycles @ 1.79MHz.
-			mCyclesCEToDataFrameHighSpeed = 732;
-
-			mbSeekHalfTracks = true;
-			mbRetryMode1050 = true;
-			mbReverseOnForwardSeeks = true;
-			break;
-	}
-
-	mCyclesToACKSent = ackDelay;
-	mCyclesToFDCCommand = mCyclesToACKSent + kCyclesFDCCommandDelay;
-	mCyclesToCompleteFast = kCyclesCompleteDelay_Fast;
-	mCyclesToCompleteAccurate = kCyclesCompleteDelay_Accurate;
-	mCyclesToCompleteAccurateED = kCyclesCompleteDelay_Accurate_ED;
-
-	UpdateHighSpeedTiming();
-}
-
-void ATDiskEmulator::UpdateHighSpeedTiming() {
-	mHighSpeedDataFrameRateLo = mCyclesPerSIOBitHighSpeed - (mCyclesPerSIOBitHighSpeed + 19) / 20;
-	mHighSpeedDataFrameRateHi = mCyclesPerSIOBitHighSpeed + (mCyclesPerSIOBitHighSpeed + 19) / 20;
-
-	mHighSpeedCmdFrameRateLo = 0;
-	mHighSpeedCmdFrameRateHi = 0;
-
-	if (mbSupportedCmdFrameHighSpeed) {
-		int rate = (mHighSpeedCmdIndex + 7) * 2;
-		mHighSpeedCmdFrameRateLo = rate - (rate + 19) / 20;
-		mHighSpeedCmdFrameRateHi = rate + (rate + 19) / 20;
-	}
+	mpProfile = &ATGetDiskProfile(mEmuMode);
 }
 
 bool ATDiskEmulator::SetPERCOMData(const uint8 *data) {
@@ -2840,23 +2517,44 @@ void ATDiskEmulator::TurnOffMotor() {
 }
 
 bool ATDiskEmulator::TurnOnMotor(uint32 delay) {
-	bool spinUpDelay = !mpMotorOffEvent;
+	const bool spinUpDelay = !mpMotorOffEvent;
+	
+	ExtendMotorTimeoutTo(mpProfile->mCyclesToMotorOff);
 
 	if (spinUpDelay) {
 		mpDiskInterface->SetShowMotorActive(true);
 
 		if (mpAudioSyncMixer && mbDriveSoundsEnabled && !mpRotationSoundGroup->IsAnySoundQueued())
 			mpAudioSyncMixer->AddLoopingSound(*mpRotationSoundGroup, delay, kATAudioSampleId_DiskRotation, 1.0f);
+
+		SetMotorEvent();
 	}
 
-	mpSlowScheduler->SetEvent(48041, this, kATDiskEventMotorOff, mpMotorOffEvent);
 
 	return spinUpDelay;
 }
 
-void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep) {
-	float v = 0.4f;
+void ATDiskEmulator::ExtendMotorTimeoutBy(uint32 additionalDelay) {
+	// We explicitly do NOT turn on the motor if it isn't already on, as this is
+	// called from places that are merely simulating not being able to update the
+	// idle timer. We also don't update the motor event here; it'll automatically
+	// requeue itself when the event fires and the deadline hasn't been met.
+	mMotorOffTime += additionalDelay;
+}
 
+void ATDiskEmulator::ExtendMotorTimeoutTo(uint32 delay) {
+	mMotorOffTime = mpScheduler->GetTick() + delay;
+
+	SetMotorEvent();
+}
+
+void ATDiskEmulator::SetMotorEvent() {
+	const uint32 t = mpScheduler->GetTick();
+
+	mpSlowScheduler->SetEvent(std::max<uint32>(1, (mMotorOffTime - t + 113) / 114), this, kATDiskEventMotorOff, mpMotorOffEvent);
+}
+
+void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep) {
 	if (!mbDriveSoundsEnabled)
 		return;
 
@@ -2869,11 +2567,11 @@ void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep) {
 			tracksToStep = 10;
 	}
 
-	if (mbSeekHalfTracks) {
+	if (mpProfile->mbSeekHalfTracks) {
 		for(uint32 i=0; i<tracksToStep; ++i) {
 			mpAudioSyncMixer->AddSound(*mpStepSoundGroup, stepDelay, kATAudioSampleId_DiskStep3, 1.0f);
 
-			stepDelay += mCyclesPerTrackStep;
+			stepDelay += mpProfile->mCyclesPerTrackStep;
 		}
 	} else {
 		switch(mEmuMode) {
@@ -2885,7 +2583,7 @@ void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep) {
 			for(uint32 i=0; i<tracksToStep; ++i) {
 				mpAudioSyncMixer->AddSound(*mpStepSoundGroup, stepDelay, kATAudioSampleId_DiskStep1, 0.3f + 0.7f * sinf(i * nsVDMath::kfPi * 0.5f));
 
-				stepDelay += mCyclesPerTrackStep;
+				stepDelay += mpProfile->mCyclesPerTrackStep;
 			}
 			break;
 
@@ -2896,7 +2594,7 @@ void ATDiskEmulator::PlaySeekSound(uint32 stepDelay, uint32 tracksToStep) {
 				else
 					mpAudioSyncMixer->AddSound(*mpStepSoundGroup, stepDelay, kATAudioSampleId_DiskStep2, 1.0f);
 
-				stepDelay += mCyclesPerTrackStep * 2;
+				stepDelay += mpProfile->mCyclesPerTrackStep * 2;
 			}
 			break;
 		}

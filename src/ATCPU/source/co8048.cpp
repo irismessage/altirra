@@ -88,9 +88,6 @@ void ATCoProc8048::SetPortWriteHandler(const vdfunction<void(uint8, uint8)>& fn)
 }
 
 void ATCoProc8048::SetBreakpointMap(const bool bpMap[65536], IATCPUBreakpointHandler *bpHandler) {
-	bool wasEnabled = (mpBreakpointMap != nullptr);
-	bool nowEnabled = (bpMap != nullptr);
-
 	mpBreakpointMap = bpMap;
 	mpBreakpointHandler = bpHandler;
 }

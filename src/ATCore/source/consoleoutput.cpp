@@ -27,3 +27,8 @@ void ATConsoleOutput::operator()(const char *format, ...) {
 		WriteLine(buf);
 	va_end(val);
 }
+
+void ATConsoleOutputNull::WriteLine(const char *s) {
+}
+
+ATConsoleOutputNull g_ATConsoleOutputNull;

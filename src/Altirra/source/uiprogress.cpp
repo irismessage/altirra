@@ -430,7 +430,7 @@ void ATUIProgressHandler::Begin(uint32 total, const wchar_t *status, const wchar
 	if (!mNestingCount++) {
 		mpDialog = new_nothrow ATUIProgressDialogW32;
 		if (mpDialog) {
-			mpDialog->Init(desc, status, total, ATUIGetProgressParent());
+			mpDialog->Init(desc, status, total, ATUIGetNewPopupOwner());
 		}
 	}
 }

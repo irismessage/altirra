@@ -2,10 +2,9 @@
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <_ProjectFileVersion>10.0.40219.1</_ProjectFileVersion>
-    <PlatformToolset Condition="'$(Configuration)'!='Analysis' and '$(Platform)'!='ARM64'">v141_xp</PlatformToolset>
-    <PlatformToolset Condition="'$(Configuration)'!='Analysis' and '$(Platform)'=='ARM64'">v141</PlatformToolset>
+    <PlatformToolset Condition="'$(Configuration)'!='Analysis' and '$(Platform)'!='ARM64'">v142</PlatformToolset>
+    <PlatformToolset Condition="'$(Configuration)'!='Analysis' and '$(Platform)'=='ARM64'">v142</PlatformToolset>
     <PlatformToolset Condition="'$(Configuration)'=='Analysis'">v142</PlatformToolset>
-    <WindowsTargetPlatformVersion Condition="$(Platform)=='ARM64'">10.0.17763.0</WindowsTargetPlatformVersion>
     <VCProjectUpgraderObjectName>NoUpgrade</VCProjectUpgraderObjectName>
   </PropertyGroup>
   <PropertyGroup Label="Globals">

@@ -23,15 +23,17 @@
 
 class IATPrinterOutput : public IVDRefCount {
 public:
+	static constexpr uint32 kTypeID = "IATPrinterOutput"_vdtypeid;
+
 	virtual void WriteASCII(const void *buf, size_t len) = 0;
 	virtual void WriteATASCII(const void *buf, size_t len) = 0;
 };
 
-class IATDevicePrinter {
+class IATDevicePrinterPort {
 public:
-	enum { kTypeID = 'adpr' };
+	enum { kTypeID = 'adpp' };
 
-	virtual void SetPrinterOutput(IATPrinterOutput *out) = 0;
+	virtual void SetPrinterDefaultOutput(IATPrinterOutput *out) = 0;
 };
 
 #endif

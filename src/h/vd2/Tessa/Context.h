@@ -39,7 +39,7 @@ public:
 
 	virtual IVDTSurface *GetLevelSurface(uint32 level) = 0;
 	virtual void Load(uint32 mip, uint32 x, uint32 y, const VDTInitData2D& srcData, uint32 w, uint32 h) = 0;
-	virtual bool Lock(uint32 mip, const vdrect32 *r, VDTLockData2D& lockData) = 0;
+	virtual bool Lock(uint32 mip, const vdrect32 *r, bool discard, VDTLockData2D& lockData) = 0;
 	virtual void Unlock(uint32 mip) = 0;
 };
 
@@ -61,6 +61,7 @@ public:
 class IVDTIndexBuffer : public IVDTResource {
 public:
 	virtual bool Restore() = 0;
+	virtual bool Load(uint32 offset, uint32 size, const void *data) = 0;
 };
 
 class IVDTBlendState: public IVDTResource {
@@ -99,6 +100,7 @@ class IVDTContext : public IVDRefUnknown {
 public:
 	virtual const VDTDeviceCaps& GetDeviceCaps() = 0;
 	virtual bool IsFormatSupportedTexture2D(VDTFormat format) = 0;
+	virtual bool IsMonitorHDREnabled(void *monitor, bool& systemSupport) = 0;
 
 	virtual bool CreateReadbackBuffer(uint32 width, uint32 height, VDTFormat format, IVDTReadbackBuffer **buffer) = 0;
 	virtual bool CreateSurface(uint32 width, uint32 height, VDTFormat format, VDTUsage usage, IVDTSurface **surface) = 0;
@@ -116,17 +118,19 @@ public:
 	virtual bool CreateSwapChain(const VDTSwapChainDesc& desc, IVDTSwapChain **swapChain) = 0;
 
 	virtual IVDTSurface *GetRenderTarget(uint32 index) const = 0;
+	virtual bool GetRenderTargetBypass(uint32 index) const = 0;
 
 	virtual void SetVertexFormat(IVDTVertexFormat *format) = 0;
 	virtual void SetVertexProgram(IVDTVertexProgram *program) = 0;
 	virtual void SetFragmentProgram(IVDTFragmentProgram *program) = 0;
 	virtual void SetVertexStream(uint32 index, IVDTVertexBuffer *buffer, uint32 offset, uint32 stride) = 0;
 	virtual void SetIndexStream(IVDTIndexBuffer *buffer) = 0;
-	virtual void SetRenderTarget(uint32 index, IVDTSurface *surface) = 0;
+	virtual void SetRenderTarget(uint32 index, IVDTSurface *surface, bool bypassConversion) = 0;
 
 	virtual void SetBlendState(IVDTBlendState *state) = 0;
 	virtual void SetSamplerStates(uint32 baseIndex, uint32 count, IVDTSamplerState *const *states) = 0;
 	virtual void SetTextures(uint32 baseIndex, uint32 count, IVDTTexture *const *textures) = 0;
+	virtual void ClearTexturesStartingAt(uint32 baseIndex) = 0;
 
 	// rasterizer
 	virtual void SetRasterizerState(IVDTRasterizerState *state) = 0;
@@ -156,17 +160,28 @@ public:
 	virtual void Present() = 0;
 
 	virtual void SetGpuPriority(int priority) = 0;
-};
-
-class IVDTProfiler : public IVDRefUnknown {
-public:
-	enum { kTypeID = '3prf' };
 
 	virtual void BeginScope(uint32 color, const char *message) = 0;
 	virtual void EndScope() = 0;
 	virtual VDRTProfileChannel *GetProfileChannel() = 0;
 };
 
-void VDTBeginScopeF(IVDTProfiler *profiler, uint32 color, const char *format, ...);
+void VDTBeginScopeF(IVDTContext *profiler, uint32 color, const char *format, ...);
+
+class VDTAutoScope{
+public:
+	VDTAutoScope(IVDTContext& ctx, const char *message, uint32 color = 0xFF808080)
+		: mContext(ctx)
+	{
+		ctx.BeginScope(color, message);
+	}
+
+	~VDTAutoScope() {
+		mContext.EndScope();
+	}
+
+private:
+	IVDTContext& mContext;
+};
 
 #endif	// f_VD2_TESSA_CONTEXT_H

@@ -23,13 +23,15 @@ extern const ATDeviceDefinition g_ATDeviceDefDiskDrive;
 extern const ATDeviceDefinition g_ATDeviceDefExeLoader;
 extern const ATDeviceDefinition g_ATDeviceDefCorvus;
 extern const ATDeviceDefinition g_ATDeviceDefLoopback;
+extern const ATDeviceDefinition g_ATDeviceDefParallelFileWriter;
 
 void ATRegisterDeviceLibrary(ATDeviceManager& dm) {
 	for(const auto *def : {
 		&g_ATDeviceDefDiskDrive,
 		&g_ATDeviceDefExeLoader,
 		&g_ATDeviceDefCorvus,
-		&g_ATDeviceDefLoopback
+		&g_ATDeviceDefLoopback,
+		&g_ATDeviceDefParallelFileWriter
 	})
 		dm.AddDeviceDefinition(def);
 }

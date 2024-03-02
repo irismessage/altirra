@@ -24,12 +24,13 @@
 #include <vd2/system/math.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/time.h>
+#include <at/ataudio/audiooutput.h>
 #include <at/atcore/devicemanager.h>
 #include <at/atcore/media.h>
+#include <at/atio/cassetteimage.h>
 #include <at/atio/image.h>
 #include <at/atui/uimanager.h>
 #include "audiosampleplayer.h"
-#include "audiooutput.h"
 #include "cartridge.h"
 #include "cassette.h"
 #include "debugger.h"
@@ -45,6 +46,7 @@
 #include "uiaccessors.h"
 #include "uiconfirm.h"
 #include "uikeyboard.h"
+#include "uimenu.h"
 #include "uiportmenus.h"
 #include "uitypes.h"
 
@@ -396,6 +398,7 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 	ATSettingsExchangeBool(write, key, "Display: Show indicators", ATUIGetDisplayIndicators, ATUISetDisplayIndicators);
 	ATSettingsExchangeBool(write, key, "Display: Indicator margin", ATUIGetDisplayPadIndicators, ATUISetDisplayPadIndicators);
 	ATSettingsExchangeBool(write, key, "Display: Auto-hide pointer", ATUIGetPointerAutoHide, ATUISetPointerAutoHide);
+	ATSettingsExchangeBool(write, key, "Display: Constrain pointer in full screen", ATUIGetConstrainMouseFullScreen, ATUISetConstrainMouseFullScreen);
 	ATSettingsExchangeBool(write, key, "Display: Show target pointer", ATUIGetTargetPointerVisible, ATUISetTargetPointerVisible);
 
 	if (write) {
@@ -407,11 +410,21 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 		g_ATUIManager.SetCustomEffectPath(path.c_str(), false);
 	}
 
+	ATSettingsExchangeBool(write, key, "View: Auto-hide menu", ATUIIsMenuAutoHideEnabled, ATUISetMenuAutoHideEnabled);
 	ATSettingsExchangeBool(write, key, "View: Show FPS", ATUIGetShowFPS, ATUISetShowFPS);
 	ATSettingsExchangeBool(write, key, "View: Vertical sync", [&]() { return gtia.IsVsyncEnabled(); }, [&](bool en) { gtia.SetVsyncEnabled(en); });
 
-	ATSettingsExchangeBool(write, key, "View: 80-column view enabled", ATUIGetXEPViewEnabled, ATUISetXEPViewEnabled);
-	ATSettingsExchangeBool(write, key, "View: 80-column view autoswitching enabled", ATUIGetXEPViewAutoswitchingEnabled, ATUISetXEPViewAutoswitchingEnabled);
+	if (write)
+		key.setString("View: Alt output name", ATUIGetCurrentAltOutputName());
+	else {
+		VDStringA name;
+		key.getString("View: Alt output name", name);
+
+		ATUISetCurrentAltOutputName(name.c_str());
+	}
+
+	ATSettingsExchangeBool(write, key, "View: 80-column view enabled", ATUIGetAltViewEnabled, ATUISetAltViewEnabled);
+	ATSettingsExchangeBool(write, key, "View: 80-column view autoswitching enabled", ATUIGetAltViewAutoswitchingEnabled, ATUISetAltViewAutoswitchingEnabled);
 
 	ATSettingsExchangeEnum<ATArtifactMode>(write, key, "GTIA: Artifacting mode", ATArtifactMode::Count,
 		[&]() { return gtia.GetArtifactingMode(); },
@@ -462,12 +475,19 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 		key.setInt("ScreenFX: Bloom indirect intensity", (int)(0.5f + aparams.mBloomIndirectIntensity * 100.0f));
 		key.setInt("ScreenFX: Distortion X View Angle", (int)(0.5f + aparams.mDistortionViewAngleX));
 		key.setInt("ScreenFX: Distortion Y Ratio", (int)(0.5f + aparams.mDistortionYRatio * 100.0f));
+		key.setBool("ScreenFX: Enable HDR", aparams.mbEnableHDR);
+
+		VDStringA s;
+		s.sprintf("%g", aparams.mSDRIntensity);
+		key.setString("ScreenFX: SDR intensity", s.c_str());
+		s.sprintf("%g", aparams.mHDRIntensity);
+		key.setString("ScreenFX: HDR intensity", s.c_str());
 	} else {
 		g_sim.SetDiskSectorCounterEnabled(key.getBool("Disk: Sector counter enabled", g_sim.IsDiskSectorCounterEnabled()));
 
 		ATUIResizeDisplay();
 
-		ATArtifactingParams aparams = gtia.GetArtifactingParams();
+		ATArtifactingParams aparams = ATArtifactingParams::GetDefault();
 		int sli = key.getInt("Scanline intensity", -1);
 		if (sli >= 0 && sli <= 100)
 			aparams.mScanlineIntensity = (float)sli / 100.0f;
@@ -497,6 +517,15 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 		if (disY >= 0 && disY <= 100)
 			aparams.mDistortionYRatio = (float)disY / 100.0f;
 
+		aparams.mbEnableHDR = key.getBool("ScreenFX: Enable HDR", aparams.mbEnableHDR);
+
+		VDStringA s;
+		if (key.getString("ScreenFX: SDR intensity", s))
+			aparams.mSDRIntensity = std::clamp((float)strtod(s.c_str(), nullptr), 1.0f, 10000.0f);
+
+		if (key.getString("ScreenFX: HDR intensity", s))
+			aparams.mHDRIntensity = std::clamp((float)strtod(s.c_str(), nullptr), 1.0f, 10000.0f);
+
 		gtia.SetArtifactingParams(aparams);
 	}
 }
@@ -516,6 +545,8 @@ void ATSettingsExchangeSpeed(bool write, VDRegistryKey& key) {
 void ATSettingsExchangeInput(bool write, VDRegistryKey& key) {
 	// native mouse
 	ATSettingsExchangeBool(write, key, "Mouse: Auto-capture", ATUIGetMouseAutoCapture, ATUISetMouseAutoCapture);
+
+	ATSettingsExchangeBool(write, key, "Mouse: Use raw input API", ATUIGetRawInputEnabled, ATUISetRawInputEnabled);
 
 	// light pen
 	ATLightPenPort *lpp = g_sim.GetLightPenPort();
@@ -542,6 +573,7 @@ void ATSettingsExchangeInput(bool write, VDRegistryKey& key) {
 		key.setBool("Keyboard: Allow shift on cold reset", g_kbdOpts.mbAllowShiftOnColdReset);
 		key.setBool("Keyboard: Enable function keys", g_kbdOpts.mbEnableFunctionKeys);
 		key.setBool("Keyboard: Allow input map overlap", g_kbdOpts.mbAllowInputMapOverlap);
+		key.setBool("Keyboard: Allow input map modifier overlap", g_kbdOpts.mbAllowInputMapModifierOverlap);
 	} else {
 		{
 			int kmlen = key.getBinaryLength("Keyboard: Custom Layout");
@@ -560,6 +592,7 @@ void ATSettingsExchangeInput(bool write, VDRegistryKey& key) {
 		g_kbdOpts.mbAllowShiftOnColdReset = key.getBool("Keyboard: Allow shift on cold reset", g_kbdOpts.mbAllowShiftOnColdReset);
 		g_kbdOpts.mbEnableFunctionKeys = key.getBool("Keyboard: Enable function keys", g_kbdOpts.mbEnableFunctionKeys);
 		g_kbdOpts.mbAllowInputMapOverlap = key.getBool("Keyboard: Allow input map overlap", g_kbdOpts.mbAllowInputMapOverlap);
+		g_kbdOpts.mbAllowInputMapModifierOverlap = key.getBool("Keyboard: Allow input map modifier overlap", g_kbdOpts.mbAllowInputMapModifierOverlap);
 		ATUIInitVirtualKeyMap(g_kbdOpts);
 	}
 
@@ -594,6 +627,12 @@ void ATSettingsExchangeInput(bool write, VDRegistryKey& key) {
 
 		g_sim.GetInputManager()->LoadSelections(key, defaultController);
 	}
+
+	// pots
+	ATSettingsExchangeBool(write, key, "Input: Allow immediate pot updates"
+		, [] { return g_sim.GetPokey().IsImmediatePotUpdateEnabled(); }
+		, [](bool enable) { g_sim.GetPokey().SetImmediatePotUpdateEnabled(enable); }
+	);
 }
 
 void ATSettingsExchangeInputMaps(bool write, VDRegistryKey& key) {
@@ -657,7 +696,6 @@ void ATSettingsExchangeHardware(bool write, VDRegistryKey& key) {
 		const ATHardwareMode hwmode = (ATHardwareMode)key.getEnumInt("Hardware mode", kATHardwareModeCount, g_sim.GetHardwareMode());
 		g_sim.SetHardwareMode(hwmode);
 
-		auto vs =  g_sim.GetVideoStandard();
 		const bool isPAL = key.getBool("PAL mode", false);
 		const bool isSECAM = key.getBool("SECAM mode", false);
 		const bool isMixed = key.getBool("Mixed video mode", false);
@@ -757,7 +795,7 @@ void ATSettingsExchangeFirmware(bool write, VDRegistryKey& key) {
 }
 
 void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
-	ATDiskEmulator& disk = g_sim.GetDiskDrive(0);
+	auto& cassette = g_sim.GetCassette();
 
 	if (write) {
 		key.setBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled());
@@ -765,10 +803,11 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		key.setBool("Cassette: Auto BASIC boot enabled", g_sim.IsCassetteAutoBasicBootEnabled());
 		key.setBool("Cassette: Auto-rewind enabled", g_sim.IsCassetteAutoRewindEnabled());
 		key.setBool("Cassette: Randomize start position", g_sim.IsCassetteRandomizedStartEnabled());
-		key.setString("Cassette: Turbo mode", ATEnumToString(g_sim.GetCassette().GetTurboMode()));
-		key.setString("Cassette: Polarity mode", ATEnumToString(g_sim.GetCassette().GetPolarityMode()));
-		key.setString("Cassette: Direct sense mode", ATEnumToString(g_sim.GetCassette().GetDirectSenseMode()));
-		key.setBool("Cassette: Turbo prefilter enabled", g_sim.GetCassette().IsTurboPrefilterEnabled());
+		key.setString("Cassette: Turbo mode", ATEnumToString(cassette.GetTurboMode()));
+		key.setString("Cassette: Polarity mode", ATEnumToString(cassette.GetPolarityMode()));
+		key.setString("Cassette: Direct sense mode", ATEnumToString(cassette.GetDirectSenseMode()));
+		key.setString("Cassette: Turbo decode mode", ATEnumToString(cassette.GetTurboDecodeAlgorithm()));
+		key.setBool("Cassette: VBI avoidance enabled", cassette.IsVBIAvoidanceEnabled());
 
 		key.setBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled());
 		key.setBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled());
@@ -800,8 +839,6 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		g_sim.SetCassetteAutoRewindEnabled(key.getBool("Cassette: Auto-rewind enabled", g_sim.IsCassetteAutoRewindEnabled()));
 		g_sim.SetCassetteRandomizedStartEnabled(key.getBool("Cassette: Randomize start position", g_sim.IsCassetteRandomizedStartEnabled()));
 
-		auto& cassette = g_sim.GetCassette();
-
 		VDStringA turboMode;
 		key.getString("Cassette: Turbo mode", turboMode);
 		cassette.SetTurboMode(ATParseEnum<ATCassetteTurboMode>(turboMode).mValue);
@@ -810,11 +847,15 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		key.getString("Cassette: Polarity mode", polarityMode);
 		cassette.SetPolarityMode(ATParseEnum<ATCassettePolarityMode>(polarityMode).mValue);
 		
-		cassette.SetTurboPrefilterEnabled(key.getBool("Cassette: Turbo prefilter enabled", cassette.IsTurboPrefilterEnabled()));
+		VDStringA turboDecodeMode;
+		key.getString("Cassette: Turbo decode mode", turboDecodeMode);
+		cassette.SetTurboDecodeAlgorithm(ATParseEnum<ATCassetteTurboDecodeAlgorithm>(turboDecodeMode).mValue);
 
 		VDStringA directSenseMode;
 		key.getString("Cassette: Direct sense mode", directSenseMode);
-		g_sim.GetCassette().SetDirectSenseMode(ATParseEnum<ATCassetteDirectSenseMode>(directSenseMode).mValue);
+		cassette.SetDirectSenseMode(ATParseEnum<ATCassetteDirectSenseMode>(directSenseMode).mValue);
+
+		cassette.SetVBIAvoidanceEnabled(key.getBool("Cassette: VBI avoidance enabled", false));
 
 		g_sim.SetFPPatchEnabled(key.getBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled()));
 		g_sim.SetFastBootEnabled(key.getBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled()));
@@ -977,7 +1018,7 @@ void ATSettingsExchangeSound(bool write, VDRegistryKey& key) {
 		key.setInt("Audio: Latency", audioOut->GetLatency());
 		key.setInt("Audio: Extra buffer", audioOut->GetExtraBuffer());
 		key.setInt("Audio: Api", audioOut->GetApi());
-		key.setBool("Audio: Show debug info", audioOut->GetStatusRenderer() != NULL);
+		key.setBool("Audio: Show debug info", g_sim.IsAudioStatusEnabled());
 
 		key.setBool("Audio: Monitor enabled", g_sim.IsAudioMonitorEnabled());
 		key.setBool("Audio: Scope enabled", g_sim.IsAudioScopeEnabled());
@@ -1002,10 +1043,7 @@ void ATSettingsExchangeSound(bool write, VDRegistryKey& key) {
 		audioOut->SetExtraBuffer(key.getInt("Audio: Extra buffer", 100));
 		audioOut->SetApi((ATAudioApi)key.getEnumInt("Audio: Api", kATAudioApiCount, kATAudioApi_WaveOut));
 
-		if (key.getBool("Audio: Show debug info", false))
-			audioOut->SetStatusRenderer(g_sim.GetUIRenderer());
-		else
-			audioOut->SetStatusRenderer(NULL);
+		g_sim.SetAudioStatusEnabled(key.getBool("Audio: Show debug info", false));
 
 		g_sim.SetAudioMonitorEnabled(key.getBool("Audio: Monitor enabled", false));
 		g_sim.SetAudioScopeEnabled(key.getBool("Audio: Scope enabled", false));
@@ -1027,8 +1065,6 @@ void ATSettingsExchangeSound(bool write, VDRegistryKey& key) {
 }
 
 void ATSettingsExchangeEnvironment(bool write, VDRegistryKey& key) {
-	ATPokeyEmulator& pokey = g_sim.GetPokey();
-
 	if (write) {
 		key.setBool("Pause when inactive", ATUIGetPauseWhenInactive());
 		key.setInt("Auto-reset flags", ATUIGetResetFlags());
@@ -1054,14 +1090,13 @@ void ATSettingsExchangeEnvironment(bool write, VDRegistryKey& key) {
 }
 
 void ATSettingsExchangeBoot(bool write, VDRegistryKey& key) {
-	ATPokeyEmulator& pokey = g_sim.GetPokey();
-
 	if (write) {
 		key.setInt("Unload on boot types", ATUIGetBootUnloadStorageMask());
 		key.setInt("Unload on boot mask", kATStorageTypeMask_All);
 
 		key.setString("ExeLoader: Mode", ATEnumToString(g_sim.GetHLEProgramLoadMode()));
-
+		
+		key.setBool("ExeLoader: Randomize launch delay", g_sim.IsRandomProgramLaunchDelayEnabled());
 	} else {
 		const uint32 bootUnloadFlags = key.getInt("Unload on boot types");
 		const uint32 bootUnloadFlagMask = key.getInt("Unload on boot mask");
@@ -1070,6 +1105,8 @@ void ATSettingsExchangeBoot(bool write, VDRegistryKey& key) {
 		VDStringA loadMode;
 		key.getString("ExeLoader: Mode", loadMode);
 		g_sim.SetHLEProgramLoadMode(ATParseEnum<ATHLEProgramLoadMode>(loadMode).mValue);
+
+		g_sim.SetRandomProgramLaunchDelayEnabled(key.getBool("ExeLoader: Randomize launch delay", true));
 	}
 }
 
@@ -1081,6 +1118,7 @@ void ATSettingsExchangeDebugging(bool write, VDRegistryKey& key) {
 		key.setBool("CPU: History enabled", cpu.IsHistoryEnabled());
 		key.setBool("CPU: Pathfinding enabled", cpu.IsPathfindingEnabled());
 		key.setBool("CPU: Stop on BRK", cpu.GetStopOnBRK());
+		key.setBool("Debugger: Auto-reload firmware", g_sim.IsROMAutoReloadEnabled());
 		key.setBool("Debugger: Auto-load OS ROM symbols", g_sim.IsAutoLoadKernelSymbolsEnabled());
 
 		IATDebugger *dbg = ATGetDebugger();
@@ -1090,12 +1128,14 @@ void ATSettingsExchangeDebugging(bool write, VDRegistryKey& key) {
 			key.setString("Debugger: Post-start symbol load mode", ATEnumToString(dbg->GetSymbolLoadMode(true)));
 			key.setString("Debugger: Script auto-load mode", ATEnumToString(dbg->GetScriptAutoLoadMode()));
 			key.setBool("Debugger: Auto-load system symbols", dbg->IsAutoLoadSystemSymbolsEnabled());
+			key.setBool("Debugger: Debug link enabled", dbg->GetDebugLinkEnabled());
 		}
 	} else {
 		g_sim.SetRandomFillEXEEnabled(key.getBool("Memory: Randomize on EXE load", g_sim.IsRandomFillEXEEnabled()));
 		cpu.SetHistoryEnabled(key.getBool("CPU: History enabled", cpu.IsHistoryEnabled()));
 		cpu.SetPathfindingEnabled(key.getBool("CPU: Pathfinding enabled", cpu.IsPathfindingEnabled()));
 		cpu.SetStopOnBRK(key.getBool("CPU: Stop on BRK", cpu.GetStopOnBRK()));
+		g_sim.SetROMAutoReloadEnabled(key.getBool("Debugger: Auto-reload firmware", g_sim.IsROMAutoReloadEnabled()));
 		g_sim.SetAutoLoadKernelSymbolsEnabled(key.getBool("Debugger: Auto-load OS ROM symbols", g_sim.IsAutoLoadKernelSymbolsEnabled()));
 
 		ATSyncCPUHistoryState();
@@ -1118,6 +1158,7 @@ void ATSettingsExchangeDebugging(bool write, VDRegistryKey& key) {
 
 
 			dbg->SetAutoLoadSystemSymbols(key.getBool("Debugger: Auto-load system symbols", dbg->IsAutoLoadSystemSymbolsEnabled()));
+			dbg->SetDebugLinkEnabled(key.getBool("Debugger: Debug link enabled", false));
 		}
 	}
 }
@@ -1483,8 +1524,15 @@ void ATExchangeSettings(bool write, ATSettingsCategory mask) {
 
 	uint32 profileId = g_ATCurrentProfileId;
 	for(;;) {
-		if (std::find(seenProfiles.begin(), seenProfiles.end(), profileId) != seenProfiles.end())
-			break;
+		if (std::find(seenProfiles.begin(), seenProfiles.end(), profileId) != seenProfiles.end()) {
+			// Due to a bug in the profile menu, it was possible to set a profile as its own parent, which
+			// farked up save/load for the profile. To work around this, we force the node to be parented
+			// to the global profile.
+			if (profileId)
+				profileId = 0;
+			else
+				break;
+		}
 
 		seenProfiles.push_back(profileId);
 

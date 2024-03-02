@@ -98,6 +98,10 @@ public:
 		int mOutputW;
 		int mOutputH;
 
+		bool mbOutputClear = false;
+		int mOutputTessellationX = 1;
+		int mOutputTessellationY = 1;
+
 		float mDefaultUVScaleCorrectionX;
 		float mDefaultUVScaleCorrectionY;
 		float mFieldOffset;

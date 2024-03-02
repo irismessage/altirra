@@ -20,12 +20,14 @@
 
 #include <at/atcore/blockdevice.h>
 #include <at/atcore/deviceimpl.h>
+#include <vd2/system/binary.h>
 #include <vd2/system/file.h>
 
 struct ATVHDFooter {
-	enum {
+	enum : uint32 {
 		kDiskTypeFixed = 2,
-		kDiskTypeDynamic = 3
+		kDiskTypeDynamic = 3,
+		kDiskTypeDifferencing = 4
 	};
 
 	uint8	mCookie[8];
@@ -46,6 +48,17 @@ struct ATVHDFooter {
 	uint8	mReserved[427];
 };
 
+struct ATVHDParentLocator {
+	static constexpr uint32 kCodeWindowsAbsPath = VDMAKEFOURCC('W', '2', 'k', 'u');
+	static constexpr uint32 kCodeWindowsRelPath = VDMAKEFOURCC('W', '2', 'r', 'u');
+
+	uint32	mCode;
+	uint32	mSpace;		// Documented in the VHD spec as sectors, but is actually bytes
+	uint32	mLength;	// Length in bytes; null terminator not present
+	uint32	mReserved;
+	uint64	mOffset;	// Absolute file position of data
+};
+
 struct ATVHDDynamicDiskHeader {
 	uint8	mCookie[8];
 	uint64	mDataOffset;
@@ -58,7 +71,7 @@ struct ATVHDDynamicDiskHeader {
 	uint32	mParentTimestamp;
 	uint32	mReserved;
 	uint16	mParentUnicodeName[256];
-	uint8	mParentLocatorEntry[8][24];
+	ATVHDParentLocator mParentLocators[8];
 	uint8	mReserved2[256];
 };
 
@@ -86,8 +99,14 @@ public:
 	ATBlockDeviceGeometry GetGeometry() const override;
 	uint32 GetSerialNumber() const override;
 
+	const wchar_t *GetAbsPath() const { return mAbsPath.c_str(); }
+	const void *GetUID() const { return mFooter.mUniqueId; }
+	uint32 GetVHDTimestamp() const;
+	uint8 GetVHDHeads() const { return (mFooter.mDiskGeometry >> 8) & 0xFF; }
+	uint8 GetVHDSectorsPerTrack() const { return mFooter.mDiskGeometry & 0xFF; }
+
 	void Init(const wchar_t *path, bool write, bool solidState);
-	void InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 totalSectorCount, bool dynamic);
+	void InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 totalSectorCount, bool dynamic, ATIDEVHDImage *parent);
 	void Init() override {}
 	void Shutdown() override;
 
@@ -96,7 +115,7 @@ public:
 	void ReadSectors(void *data, uint32 lba, uint32 n) override;
 	void WriteSectors(const void *data, uint32 lba, uint32 n) override;
 
-protected:
+private:
 	void InitCommon();
 	void ReadDynamicDiskSectors(void *data, uint32 lba, uint32 n);
 	void WriteDynamicDiskSectors(const void *data, uint32 lba, uint32 n);
@@ -104,8 +123,11 @@ protected:
 	void FlushCurrentBlockBitmap();
 	void AllocateBlock();
 
+	static uint32 ConvertToVHDTimestamp(const VDDate& date);
+
 	VDFile mFile;
 	VDStringW mPath;
+	VDStringW mAbsPath;
 	bool mbReadOnly;
 	bool mbSolidState;
 	sint64 mFooterLocation;
@@ -125,6 +147,8 @@ protected:
 
 	ATVHDFooter mFooter;
 	ATVHDDynamicDiskHeader mDynamicHeader;
+
+	vdrefptr<ATIDEVHDImage> mpParentImage;
 };
 
 #endif

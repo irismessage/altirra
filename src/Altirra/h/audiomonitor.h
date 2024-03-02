@@ -19,7 +19,7 @@
 #ifndef f_AT_AUDIOMONITOR_H
 #define f_AT_AUDIOMONITOR_H
 
-#include "pokey.h"
+#include <at/ataudio/pokey.h>
 
 class IATUIRenderer;
 
@@ -35,7 +35,7 @@ public:
 
 	void SetMixedSampleCount(uint32 len);
 
-	void Update(ATPokeyAudioLog **log, ATPokeyRegisterState **rstate);
+	uint8 Update(ATPokeyAudioLog **log, ATPokeyRegisterState **rstate);
 
 protected:
 	ATPokeyEmulator		*mpPokey;

@@ -23,7 +23,7 @@
 class ATUIProfileMenuProvider final : public IATUIDynamicMenuProvider {
 public:
 	bool IsRebuildNeeded() const override { return false; }
-	void RebuildMenu(ATUIMenu& menu, uint32 idbase) override;
+	void RebuildMenu(ATUIMenu& menu, uint32 pos, uint32 idbase) override;
 	void UpdateMenu(ATUIMenu& menu, uint32 firstIndex, uint32 n) override;
 	void HandleMenuCommand(uint32 index) override;
 
@@ -31,7 +31,7 @@ protected:
 	vdfastvector<uint32> mProfileIds;
 };
 
-void ATUIProfileMenuProvider::RebuildMenu(ATUIMenu& menu, uint32 idbase) {
+void ATUIProfileMenuProvider::RebuildMenu(ATUIMenu& menu, uint32 pos, uint32 idbase) {
 	mProfileIds.clear();
 
 	ATSettingsProfileEnum(mProfileIds);
@@ -61,7 +61,7 @@ void ATUIProfileMenuProvider::RebuildMenu(ATUIMenu& menu, uint32 idbase) {
 		ATUIMenuItem item;
 		item.mId = idbase++;
 		item.mText = profileNames[index];
-		menu.AddItem(item);
+		menu.InsertItem(pos++, item);
 	}
 
 	std::transform(profileSort.begin(), profileSort.end(), profileSort.begin(),

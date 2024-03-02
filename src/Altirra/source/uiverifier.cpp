@@ -49,6 +49,8 @@ const ATUIVerifierDialog::FlagInfo ATUIVerifierDialog::kVerifierFlags[] = {
 	{ kATVerifierFlag_LoadingOverDisplayList, L"Loading over active display list" },
 	{ kATVerifierFlag_AddressZero, L"Loading absolute address zero" },
 	{ kATVerifierFlag_NonCanonicalHardwareAddress, L"Non-canonical hardware address" },
+	{ kATVerifierFlag_StackWrap, L"Stack overflow/underflow" },
+	{ kATVerifierFlag_StackInZP816, L"65C816: Stack pointer changed to page zero" },
 };
 
 ATUIVerifierDialog::ATUIVerifierDialog(ATSimulator& sim)

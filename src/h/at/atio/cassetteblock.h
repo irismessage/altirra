@@ -19,7 +19,11 @@
 #ifndef f_AT_ATIO_CASSETTEBLOCK_H
 #define f_AT_ATIO_CASSETTEBLOCK_H
 
-enum ATCassetteImageBlockType {
+#include <vd2/system/vdtypes.h>
+#include <vd2/system/refcount.h>
+
+enum ATCassetteImageBlockType : uint8 {
+	kATCassetteImageBlockType_End,
 	kATCassetteImageBlockType_Blank,
 	kATCassetteImageBlockType_Std,
 	kATCassetteImageBlockType_FSK,
@@ -27,10 +31,8 @@ enum ATCassetteImageBlockType {
 };
 
 // Base class for all in-memory cassette image blocks.
-class ATCassetteImageBlock {
+class ATCassetteImageBlock : public vdrefcount {
 public:
-	virtual ~ATCassetteImageBlock() = default;
-
 	virtual ATCassetteImageBlockType GetBlockType() const = 0;
 
 	// Retrieve a bit at the given block-local offset. The position must be within
@@ -47,6 +49,8 @@ public:
 	};
 
 	virtual FindBitResult FindBit(uint32 pos, uint32 limit, bool polarity, bool bypassFSK) const;
+	
+	virtual void GetTransitionCounts(uint32 pos, uint32 n, bool lastPolarity, bool bypassFSK, uint32& xcount, uint32& mcount) const;
 
 	// Retrieve audio sync samples.
 	//
@@ -67,19 +71,28 @@ public:
 	virtual uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const;
 };
 
+template<ATCassetteImageBlockType T_BlockType>
+class ATCassetteImageBlockT : public ATCassetteImageBlock {
+public:
+	static constexpr ATCassetteImageBlockType kBlockType = T_BlockType;
+
+	ATCassetteImageBlockType GetBlockType() const override final {
+		return T_BlockType;
+	}
+};
+
 // Cassette image block type for standard framed bytes with 8-bits of data stored
 // in FSK encoding.
-class ATCassetteImageDataBlockStd final : public ATCassetteImageBlock {
+class ATCassetteImageDataBlockStd final : public ATCassetteImageBlockT<kATCassetteImageBlockType_Std> {
 public:
 	ATCassetteImageDataBlockStd();
+
+	static uint32 EstimateNewBlockLen(uint32 bytes, uint32 baudRate);
 
 	void Init(uint32 baudRate);
 
 	void AddData(const uint8 *data, uint32 len);
-
-	ATCassetteImageBlockType GetBlockType() const override {
-		return kATCassetteImageBlockType_Std;
-	}
+	uint32 EstimateAddData(uint32 len) const;
 
 	const uint8 *GetData() const;
 	const uint32 GetDataLen() const;
@@ -92,6 +105,8 @@ public:
 	uint32 GetBitSum(uint32 pos, uint32 n, bool bypassFSK) const override;
 
 	FindBitResult FindBit(uint32 pos, uint32 limit, bool polarity, bool bypassFSK) const override;
+
+	void GetTransitionCounts(uint32 pos, uint32 n, bool lastPolarity, bool bypassFSK, uint32& xcount, uint32& mcount) const;
 
 	// Note that volume here differs from the cassette image as it applies to signed samples, not normalized
 	// samples.
@@ -119,16 +134,12 @@ private:
 };
 
 /// Cassette image block for raw data.
-class ATCassetteImageBlockRawData final : public ATCassetteImageBlock {
+class ATCassetteImageBlockRawData final : public ATCassetteImageBlockT<kATCassetteImageBlockType_FSK> {
 public:
-	ATCassetteImageBlockType GetBlockType() const override {
-		return kATCassetteImageBlockType_FSK;
-	}
-
 	uint32 GetDataSampleCount() const { return mDataLength; }
 
-	void AddFSKPulse(bool polarity, uint32 duration10us);
 	void AddFSKPulseSamples(bool polarity, uint32 samples);
+	void AddDirectPulseSamples(bool polarity, uint32 samples);
 
 	// Extract pairs of 0/1 pulse lengths.
 	void ExtractPulses(vdfastvector<uint32>& pulses, bool bypassFSK) const;
@@ -138,22 +149,21 @@ public:
 
 	FindBitResult FindBit(uint32 pos, uint32 limit, bool polarity, bool bypassFSK) const override;
 
+	void GetTransitionCounts(uint32 pos, uint32 n, bool lastPolarity, bool bypassFSK, uint32& xcount, uint32& mcount) const override;
+
 	void SetBits(bool fsk, uint32 startPos, uint32 n, bool polarity);
 
 	uint32 mDataLength = 0;
 	vdfastvector<uint32> mDataRaw {};		// Storage is MSB first.
 	vdfastvector<uint32> mDataFSK {};		// Storage is MSB first.
 
-	uint64 mFractionalDataLength = 0;
 	uint64 mFSKPhaseAccum = 0;
 };
 
 /// Cassette image block type for raw audio data only.
-class ATCassetteImageBlockRawAudio final : public ATCassetteImageBlock {
+class ATCassetteImageBlockRawAudio final : public ATCassetteImageBlockT<kATCassetteImageBlockType_RawAudio> {
 public:
-	ATCassetteImageBlockType GetBlockType() const override {
-		return kATCassetteImageBlockType_RawAudio;
-	}
+	void GetMinMax(uint32 offset, uint32 len, uint8& minVal, uint8& maxVal) const;
 
 	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const override;
 
@@ -162,12 +172,8 @@ public:
 };
 
 /// Cassette image block type for blank tape.
-class ATCassetteImageBlockBlank final : public ATCassetteImageBlock {
+class ATCassetteImageBlockBlank final : public ATCassetteImageBlockT<kATCassetteImageBlockType_Blank> {
 public:
-	ATCassetteImageBlockType GetBlockType() const override {
-		return kATCassetteImageBlockType_Blank;
-	}
-
 	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const override;
 };
 

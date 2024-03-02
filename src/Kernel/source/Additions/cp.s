@@ -358,7 +358,7 @@ intrinsic_dispatch_hi:
 		jmp		($bffa)
 
 no_cartridge:
-		ldx		#<msg_no_cartridge
+		ldx		#msg_no_cartridge-msg_base
 		jmp		DupPrintMessage
 
 .endp

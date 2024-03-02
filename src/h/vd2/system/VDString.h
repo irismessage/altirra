@@ -76,42 +76,42 @@ public:
 
 	static const size_type npos = (size_type)-1;
 
-	vdnothrow VDStringSpanA() vdnoexcept
+	[[nodiscard]] vdnothrow VDStringSpanA() vdnoexcept
 		: mpBegin(const_cast<value_type *>(sNull))
 		, mpEnd(const_cast<value_type *>(sNull))
 	{
 	}
 
-	vdnothrow explicit VDStringSpanA(const value_type *s) vdnoexcept
+	[[nodiscard]] vdnothrow explicit VDStringSpanA(const value_type *s) vdnoexcept
 		: mpBegin(const_cast<value_type *>(s))
 		, mpEnd(const_cast<value_type *>(s) + strlen(s))
 	{
 	}
 
-	vdnothrow VDStringSpanA(const value_type *s, const value_type *t) vdnoexcept
+	[[nodiscard]] vdnothrow VDStringSpanA(const value_type *s, const value_type *t) vdnoexcept
 		: mpBegin(const_cast<value_type *>(s))
 		, mpEnd(const_cast<value_type *>(t))
 	{
 	}
 
 	// 21.3.2 iterators
-	const_iterator		begin() const		{ return mpBegin; }
-	const_iterator		end() const			{ return mpEnd; }
+	[[nodiscard]] const_iterator		begin() const		{ return mpBegin; }
+	[[nodiscard]] const_iterator		end() const			{ return mpEnd; }
 
 	// 21.3.3 capacity
-	size_type			size() const		{ return (size_type)(mpEnd - mpBegin); }
-	size_type			length() const		{ return (size_type)(mpEnd - mpBegin); }
-	bool				empty() const		{ return mpBegin == mpEnd; }
+	[[nodiscard]] size_type			size() const		{ return (size_type)(mpEnd - mpBegin); }
+	[[nodiscard]] size_type			length() const		{ return (size_type)(mpEnd - mpBegin); }
+	[[nodiscard]] bool				empty() const		{ return mpBegin == mpEnd; }
 
 	// 21.3.4 element access
-	const_reference		operator[](size_type pos) const	{ VDASSERT(pos < (size_type)(mpEnd - mpBegin)); return mpBegin[pos]; }
-	const_reference		at(size_type pos) const			{ VDASSERT(pos < (size_type)(mpEnd - mpBegin)); return mpBegin[pos]; }
+	[[nodiscard]] const_reference		operator[](size_type pos) const	{ VDASSERT(pos < (size_type)(mpEnd - mpBegin)); return mpBegin[pos]; }
+	[[nodiscard]] const_reference		at(size_type pos) const			{ VDASSERT(pos < (size_type)(mpEnd - mpBegin)); return mpBegin[pos]; }
 
-	const_reference		front() const		{ VDASSERT(mpBegin != mpEnd); return *mpBegin; }
-	const_reference		back() const		{ VDASSERT(mpBegin != mpEnd); return mpEnd[-1]; }
+	[[nodiscard]] const_reference		front() const		{ VDASSERT(mpBegin != mpEnd); return *mpBegin; }
+	[[nodiscard]] const_reference		back() const		{ VDASSERT(mpBegin != mpEnd); return mpEnd[-1]; }
 
 	// 21.3.6 string operations
-	const_pointer		data() const		{ return mpBegin; }
+	[[nodiscard]] const_pointer		data() const		{ return mpBegin; }
 
 	size_type copy(value_type *dst, size_type n, size_type pos = 0) const {
 		size_type len = (size_type)(mpEnd - mpBegin);
@@ -125,18 +125,18 @@ public:
 		return n;
 	}
 
-	size_type find(value_type c, size_type pos = 0) const {
+	[[nodiscard]] size_type find(value_type c, size_type pos = 0) const {
 		VDASSERT(pos <= (size_type)(mpEnd - mpBegin));
 		const void *p = memchr(mpBegin + pos, c, mpEnd - (mpBegin + pos));
 
 		return p ? (size_type)((const value_type *)p - mpBegin) : npos;
 	}
 
-	size_type find(const value_type *s, size_type pos = 0) const {
+	[[nodiscard]] size_type find(const value_type *s, size_type pos = 0) const {
 		return find(s, pos, (size_type)strlen(s));
 	}
 
-	size_type find(const value_type *s, size_type pos, size_type count) const {
+	[[nodiscard]] size_type find(const value_type *s, size_type pos, size_type count) const {
 		const size_type n = (size_type)(mpEnd - mpBegin);
 
 		if (pos <= n) {
@@ -166,11 +166,11 @@ public:
 		return npos;
 	}
 
-	size_type find_first_of(const value_type *charSet, size_type pos = 0) {
+	[[nodiscard]] size_type find_first_of(const value_type *charSet, size_type pos = 0) {
 		return find_first_of(VDCharMaskA(charSet), pos);
-
 	}
-	size_type find_first_of(const VDCharMaskA& charMask, size_type pos = 0) {
+
+	[[nodiscard]] size_type find_first_of(const VDCharMaskA& charMask, size_type pos = 0) {
 		const size_type n = (size_type)(mpEnd - mpBegin);
 
 		while(pos < n) {
@@ -185,11 +185,11 @@ public:
 		return npos;
 	}
 
-	size_type find_first_not_of(const value_type *charSet, size_type pos = 0) {
+	[[nodiscard]] size_type find_first_not_of(const value_type *charSet, size_type pos = 0) {
 		return find_first_not_of(VDCharMaskA(charSet), pos);
-
 	}
-	size_type find_first_not_of(const VDCharMaskA& charMask, size_type pos = 0) {
+
+	[[nodiscard]] size_type find_first_not_of(const VDCharMaskA& charMask, size_type pos = 0) {
 		const size_type n = (size_type)(mpEnd - mpBegin);
 
 		while(pos < n) {
@@ -204,7 +204,7 @@ public:
 		return npos;
 	}
 
-	size_type find_last_of(value_type c) const {
+	[[nodiscard]] size_type find_last_of(value_type c) const {
 		const value_type *s = mpEnd;
 
 		while(s != mpBegin) {
@@ -217,7 +217,7 @@ public:
 		return npos;
 	}
 
-	int compare(const VDStringSpanA& s) const {
+	[[nodiscard]] int compare(const VDStringSpanA& s) const {
 		size_type l1 = (size_type)(mpEnd - mpBegin);
 		size_type l2 = (size_type)(s.mpEnd - s.mpBegin);
 		size_type lm = l1 < l2 ? l1 : l2;
@@ -230,11 +230,11 @@ public:
 		return r;
 	}
 
-	int comparei(const char *s) const {
+	[[nodiscard]] int comparei(const char *s) const {
 		return comparei(VDStringSpanA(s));
 	}
 
-	int comparei(const VDStringSpanA& s) const {
+	[[nodiscard]] int comparei(const VDStringSpanA& s) const {
 		size_type l1 = (size_type)(mpEnd - mpBegin);
 		size_type l2 = (size_type)(s.mpEnd - s.mpBegin);
 		size_type lm = l1 < l2 ? l1 : l2;
@@ -253,20 +253,19 @@ public:
 		return (int)l1 - (int)l2;
 	}
 
-	const VDStringSpanA trim(const value_type *s) const {
+	[[nodiscard]] const VDStringSpanA trim(const value_type *s) const {
 		return trim(VDCharMaskA(s));
 	}
 
-	const VDStringSpanA trim(const VDCharMaskA& charMask) const {
-
+	[[nodiscard]] const VDStringSpanA trim(const VDCharMaskA& charMask) const {
 		return trim_start(charMask).trim_end(charMask);
 	}
 
-	const VDStringSpanA trim_start(const value_type *s) const {
+	[[nodiscard]] const VDStringSpanA trim_start(const value_type *s) const {
 		return trim_start(VDCharMaskA(s));
 	}
 
-	const VDStringSpanA trim_start(const VDCharMaskA& charMask) const {
+	[[nodiscard]] const VDStringSpanA trim_start(const VDCharMaskA& charMask) const {
 		const value_type *p = mpBegin;
 		const value_type *q = mpEnd;
 
@@ -276,11 +275,11 @@ public:
 		return VDStringSpanA(p, q);
 	}
 
-	const VDStringSpanA trim_end(const value_type *s) const {
-		return trim_start(VDCharMaskA(s));
+	[[nodiscard]] const VDStringSpanA trim_end(const value_type *s) const {
+		return trim_end(VDCharMaskA(s));
 	}
 
-	const VDStringSpanA trim_end(const VDCharMaskA& charMask) const {
+	[[nodiscard]] const VDStringSpanA trim_end(const VDCharMaskA& charMask) const {
 		const value_type *p = mpBegin;
 		const value_type *q = mpEnd;
 
@@ -290,7 +289,7 @@ public:
 		return VDStringSpanA(p, q);
 	}
 
-	const VDStringSpanA subspan(size_type pos = 0, size_type n = npos) const {
+	[[nodiscard]] const VDStringSpanA subspan(size_type pos = 0, size_type n = npos) const {
 		
 		size_type len = (size_type)(mpEnd - mpBegin);
 		VDASSERT(pos <= len);
@@ -1183,9 +1182,10 @@ public:
 		if (n < current) {
 			mpEnd = mpBegin + n;
 			mpEnd[0] = 0;
-		} else if (n > current)
+		} else if (n > current) {
 			resize_slow(n, current);
-		wmemset(mpBegin, v, n);
+			wmemset(mpBegin + current, v, n - current);
+		}
 	}
 
 	size_type			capacity() const	{ return (size_type)(mpEOS - mpBegin); }

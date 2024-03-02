@@ -42,8 +42,8 @@ namespace {
 //
 ///////////////////////////////////////////////////////////////////////////
 
-void VDResamplerAxis::Init(sint32 dudx) {
-	this->dudx = dudx;
+void VDResamplerAxis::Init(sint32 dudxIn) {
+	this->dudx = dudxIn;
 }
 
 void VDResamplerAxis::Compute(sint32 count, sint32 u0, sint32 w, sint32 kernel_width) {
@@ -51,7 +51,6 @@ void VDResamplerAxis::Compute(sint32 count, sint32 u0, sint32 w, sint32 kernel_w
 	dx = count;
 
 	sint32 du_kern	= (kernel_width-1) << 16;
-	sint32 u2		= u + dudx*(dx-1);
 	sint32 u_limit	= w << 16;
 
 	dx_precopy	= 0;
@@ -79,8 +78,7 @@ void VDResamplerAxis::Compute(sint32 count, sint32 u0, sint32 w, sint32 kernel_w
 		return;
 	}
 
-	sint32 dx_temp = dx;
-	sint32 u_start = u;
+	[[maybe_unused]] sint32 u_start = u;
 
 	// (desired - u0 + (dudx-1)) / dudx : first pixel >= desired
 
@@ -117,10 +115,10 @@ void VDResamplerAxis::Compute(sint32 count, sint32 u0, sint32 w, sint32 kernel_w
 	dx_postcopy	= dx - first_postcopy;
 
 	// sanity checks
-	sint32 pos0 = dx_precopy;
-	sint32 pos1 = pos0 + dx_preclip;
-	sint32 pos2 = pos1 + dx_active;
-	sint32 pos3 = pos2 + dx_postclip;
+	[[maybe_unused]] sint32 pos0 = dx_precopy;
+	[[maybe_unused]] sint32 pos1 = pos0 + dx_preclip;
+	[[maybe_unused]] sint32 pos2 = pos1 + dx_active;
+	[[maybe_unused]] sint32 pos3 = pos2 + dx_postclip;
 
 	VDASSERT(!((dx_precopy|dx_preclip|dx_active|dx_postcopy|dx_postclip) & 0x80000000));
 	VDASSERT(dx_precopy + dx_preclip + dx_active + dx_postcopy + dx_postclip == dx);

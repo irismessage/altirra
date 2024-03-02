@@ -39,15 +39,6 @@
     <ClCompile Include="source\fxc10.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\glc.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\glc_atifs.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\glc_nvrc.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\hash.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -69,12 +60,15 @@
     <ClCompile Include="..\VDDisplay\source\minid3dx.cpp">
       <Filter>Borrowed Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\signxml.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\signexport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\filecreator.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\glc.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="res\resource.h">

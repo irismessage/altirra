@@ -17,13 +17,13 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <at/atcore/audiomixer.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicesystemcontrol.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
 #include "covox.h"
-#include "audiooutput.h"
 #include "memorymanager.h"
 #include "console.h"
 

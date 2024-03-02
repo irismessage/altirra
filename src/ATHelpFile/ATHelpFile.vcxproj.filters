@@ -224,6 +224,9 @@
     <Xml Include="source\customdev-intro.xml">
       <Filter>Source Files</Filter>
     </Xml>
+    <Xml Include="source\customdev-scriptingref.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
     <Xml Include="source\customeffect.xml">
       <Filter>Source Files</Filter>
     </Xml>

@@ -22,10 +22,15 @@
 #include <vd2/system/error.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
+#include <vd2/system/strutil.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/progress.h>
 #include "idevhdimage.h"
 #include "oshelper.h"
+
+static_assert(sizeof(ATVHDFooter) == 512);
+static_assert(sizeof(ATVHDParentLocator) == 24);
+static_assert(sizeof(ATVHDDynamicDiskHeader) == 1024);
 
 namespace {
 	uint32 sumbytes(const uint8 *src, uint32 n) {
@@ -70,6 +75,15 @@ public:
 	ATUnsupportedVHDImageException(const wchar_t *path) : MyError("%ls is a valid but unsupported VHD image.", path) {}
 };
 
+class ATMissingParentVHDImageException : public MyError {
+public:
+	using MyError::MyError;
+};
+
+void ATSwapEndian(uint16& v) {
+	v = VDSwizzleU16(v);
+}
+
 void ATSwapEndian(uint32& v) {
 	v = VDSwizzleU32(v);
 }
@@ -82,6 +96,12 @@ template<class T>
 void ATSwapEndianArray(T *p, uint32 n) {
 	while(n--)
 		ATSwapEndian(*p++);
+}
+
+template<typename T, size_t N>
+void ATSwapEndianArray(T (&array)[N]) {
+	for(T& v : array)
+		ATSwapEndian(v);
 }
 
 void ATSwapEndian(ATVHDFooter& footer) {
@@ -99,6 +119,12 @@ void ATSwapEndian(ATVHDFooter& footer) {
 	ATSwapEndian(footer.mChecksum);
 }
 
+void ATSwapEndian(ATVHDParentLocator& locator) {
+	ATSwapEndian(locator.mSpace);
+	ATSwapEndian(locator.mLength);
+	ATSwapEndian(locator.mOffset);
+}
+
 void ATSwapEndian(ATVHDDynamicDiskHeader& header) {
 	ATSwapEndian(header.mDataOffset);
 	ATSwapEndian(header.mTableOffset);
@@ -106,6 +132,8 @@ void ATSwapEndian(ATVHDDynamicDiskHeader& header) {
 	ATSwapEndian(header.mMaxTableEntries);
 	ATSwapEndian(header.mBlockSize);
 	ATSwapEndian(header.mChecksum);
+	ATSwapEndianArray(header.mParentUnicodeName);
+	ATSwapEndianArray(header.mParentLocators);
 }
 
 ATIDEVHDImage::ATIDEVHDImage()
@@ -179,11 +207,16 @@ uint32 ATIDEVHDImage::GetSerialNumber() const {
 	return VDHashString32I(mPath.c_str());
 }
 
+uint32 ATIDEVHDImage::GetVHDTimestamp() const {
+	return ConvertToVHDTimestamp(mFile.getLastWriteTime());
+}
+
 void ATIDEVHDImage::Init(const wchar_t *path, bool write, bool solidState) {
 	Shutdown();
 
 	mPath = path;
-	mFile.open(path, write ? nsVDFile::kReadWrite | nsVDFile::kDenyAll | nsVDFile::kOpenAlways : nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
+	mAbsPath = VDGetFullPath(path);
+	mFile.open(path, write ? nsVDFile::kReadWrite | nsVDFile::kDenyAll | nsVDFile::kOpenExisting : nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
 	mbReadOnly = !write;
 	mbSolidState = solidState;
 
@@ -228,14 +261,14 @@ void ATIDEVHDImage::Init(const wchar_t *path, bool write, bool solidState) {
 		throw ATInvalidVHDImageException(path);
 
 	// check for a supported disk type
-	if (mFooter.mDiskType != ATVHDFooter::kDiskTypeFixed && mFooter.mDiskType != ATVHDFooter::kDiskTypeDynamic)
-		throw MyError("Only fixed and dynamic disk type VHD images are currently supported.");
+	if (mFooter.mDiskType != ATVHDFooter::kDiskTypeFixed && mFooter.mDiskType != ATVHDFooter::kDiskTypeDynamic && mFooter.mDiskType != ATVHDFooter::kDiskTypeDifferencing)
+		throw MyError("Only fixed, dynamic, and differencing disk type VHD images are currently supported.");
 
 	// read off drive size
 	mSectorCount = VDClampToUint32(mFooter.mCurrentSize >> 9);
 
-	// if we've got a dynamic disk, read the dyndisk header
-	if (mFooter.mDiskType == ATVHDFooter::kDiskTypeDynamic) {
+	// if we've got a dynamic or differencing disk, read the dyndisk header
+	if (mFooter.mDiskType == ATVHDFooter::kDiskTypeDynamic || mFooter.mDiskType == ATVHDFooter::kDiskTypeDifferencing) {
 		if (mFooter.mDataOffset >= size || size - mFooter.mDataOffset < sizeof(ATVHDDynamicDiskHeader))
 			throw ATInvalidVHDImageException(path);
 
@@ -312,22 +345,103 @@ void ATIDEVHDImage::Init(const wchar_t *path, bool write, bool solidState) {
 				}
 			}
 		}
+
+		// if this is a differencing disk, we need to open the parent
+		if (mFooter.mDiskType == ATVHDFooter::kDiskTypeDifferencing) {
+			// run down the locators and try the ones that we support in order
+			VDStringW parentPath;
+			VDStringW lastSeenRelPath;
+			VDStringW lastSeenAbsPath;
+
+			mpParentImage = new ATIDEVHDImage;
+
+			for(const ATVHDParentLocator& locator : mDynamicHeader.mParentLocators) {
+				if (locator.mCode != ATVHDParentLocator::kCodeWindowsAbsPath && locator.mCode != ATVHDParentLocator::kCodeWindowsRelPath)
+					continue;
+
+				// reject absurdly large or misaligned locator paths
+				if (!locator.mLength || locator.mLength > 1*1024*1024 || (locator.mLength & 1))
+					continue;
+
+				// read in the data
+				parentPath.clear();
+				parentPath.resize(locator.mLength >> 1);
+
+				mFile.seek(locator.mOffset);
+				mFile.read(&parentPath[0], locator.mLength);
+
+				if (locator.mCode == ATVHDParentLocator::kCodeWindowsRelPath) {
+					lastSeenRelPath = parentPath;
+				} else
+					lastSeenAbsPath = parentPath;
+			}
+
+			if (lastSeenRelPath.empty() && lastSeenAbsPath.empty())
+				throw ATMissingParentVHDImageException("Unable to open parent disk image for differencing disk as no referencing path is available for this platform.");
+
+			// try to open by relative path first, and if that fails, use absolute
+			bool initSucceeded = false;
+			if (!lastSeenRelPath.empty()) {
+				const auto baseDir = VDFileSplitPathLeftSpan(VDStringSpanW(path));
+
+				VDStringW resolvedRelPath;
+				if (!baseDir.empty())
+					resolvedRelPath = VDMakePath(baseDir, parentPath);
+				else
+					resolvedRelPath = lastSeenRelPath;
+
+				try {
+					mpParentImage->Init(resolvedRelPath.c_str(), false, solidState);
+					initSucceeded = true;
+				} catch(const ATMissingParentVHDImageException&) {
+					// we need to let these through -- if we catch and translate them, a misleading error will
+					// be produced for nested image chains A->B->C where a missing C would be reported as a missing B
+					throw;
+				} catch(...) {
+				}
+			}
+
+			if (!initSucceeded && !lastSeenAbsPath.empty()) {
+				try {
+					mpParentImage->Init(lastSeenAbsPath.c_str(), false, solidState);
+					initSucceeded = true;
+				} catch(const ATMissingParentVHDImageException&) {
+					// see above for rationale
+					throw;
+				} catch(...) {
+				}
+			}
+
+			if (!initSucceeded)
+				throw ATMissingParentVHDImageException("Unable to open parent disk image for differencing disk.\n\nAbsolute path: %ls\nRelative path: %ls", lastSeenAbsPath.c_str(), lastSeenRelPath.c_str());
+
+			if (memcmp(mpParentImage->GetUID(), mDynamicHeader.mParentUniqueId, 16))
+				throw ATMissingParentVHDImageException("The parent disk image has a different UID than expected by the differencing disk.");
+		}
 	}
 
 	InitCommon();
 }
 
-void ATIDEVHDImage::InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 totalSectorCount, bool dynamic) {
+void ATIDEVHDImage::InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 totalSectorCount, bool dynamic, ATIDEVHDImage *parent) {
 	Shutdown();
 
+	// if we are creating a differencing disk, force usage of parameters from the parent
+	if (parent) {
+		heads = parent->GetVHDHeads();
+		spt = parent->GetVHDSectorsPerTrack();
+		totalSectorCount = parent->GetSectorCount();
+		dynamic = true;
+	}
+
+	mPath = path;
+	mAbsPath = VDGetFullPath(path);
 	mSectorCount = totalSectorCount;
 	mFile.open(path, nsVDFile::kReadWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways | nsVDFile::kSequential);
 	mbReadOnly = false;
 	mbSolidState = false;
 
 	// set up footer
-	const uint64 vhdEpoch = 0x01bf53eb256d4000ull;	// January 1, 2000 midnight UTC in ticks
-
 	memset(&mFooter, 0, sizeof mFooter);
 
 	uint32 cylinders = totalSectorCount / ((uint32)heads * (uint32)spt);
@@ -339,14 +453,14 @@ void ATIDEVHDImage::InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 
 	mFooter.mFeatures = 0x2;
 	mFooter.mVersion = 0x00010000;
 	mFooter.mDataOffset = dynamic ? sizeof(mFooter) : 0xFFFFFFFFFFFFFFFFull;
-	mFooter.mTimestamp = (uint32)((VDGetCurrentDate().mTicks - vhdEpoch) / 10000000);
+	mFooter.mTimestamp = ConvertToVHDTimestamp(VDGetCurrentDate());
 	mFooter.mCreatorApplication = VDMAKEFOURCC('a', 'r', 't', 'A');
 	mFooter.mCreatorVersion = 0x00020000;
 	mFooter.mCreatorHostOS = 0x5769326B;	// Wi2k
 	mFooter.mOriginalSize = (uint64)totalSectorCount << 9;
 	mFooter.mCurrentSize = mFooter.mOriginalSize;
 	mFooter.mDiskGeometry = (cylinders << 16) + ((uint32)heads << 8) + spt;
-	mFooter.mDiskType = dynamic ? ATVHDFooter::kDiskTypeDynamic : ATVHDFooter::kDiskTypeFixed;
+	mFooter.mDiskType = parent ? ATVHDFooter::kDiskTypeDifferencing : dynamic ? ATVHDFooter::kDiskTypeDynamic : ATVHDFooter::kDiskTypeFixed;
 	ATGenerateGuid(mFooter.mUniqueId);
 	mFooter.mSavedState = 0;
 
@@ -369,17 +483,68 @@ void ATIDEVHDImage::InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 
 		mBlockBitmapSize = 0x200;
 
 		const uint32 blockCount = (totalSectorCount + 4095) >> 12;
-		const uint32 headerSize = sizeof(mFooter) + sizeof(mDynamicHeader);
+		uint32 headerSize = sizeof(mFooter) + sizeof(mDynamicHeader);
 		const uint32 batSize = (blockCount * 4 + 511) & ~511;
 
 		// set up the dynamic header
 		memset(&mDynamicHeader, 0, sizeof mDynamicHeader);
 		memcpy(mDynamicHeader.mCookie, kATVHDDynamicHeaderSignature, sizeof mDynamicHeader.mCookie);
 		mDynamicHeader.mDataOffset = 0xFFFFFFFFFFFFFFFFull;
-		mDynamicHeader.mTableOffset = headerSize;
 		mDynamicHeader.mHeaderVersion = 0x00010000;
 		mDynamicHeader.mMaxTableEntries = blockCount;
 		mDynamicHeader.mBlockSize = mBlockSize;
+
+		// if this is a differencing disk, set the parent information
+		static_assert(sizeof(wchar_t) == 2);
+		VDStringW parentAbsPath;
+		VDStringW parentRelPath;
+
+		if (parent) {
+			memcpy(mDynamicHeader.mParentUniqueId, parent->GetUID(), 16);
+			mDynamicHeader.mParentTimestamp = parent->GetVHDTimestamp();
+
+			vdwcslcpy((wchar_t *)mDynamicHeader.mParentUnicodeName, parent->GetAbsPath(), vdcountof(mDynamicHeader.mParentUnicodeName));
+
+			// compute absolute and relative paths
+			parentAbsPath = parent->GetAbsPath();
+			parentRelPath = VDFileGetRelativePath(VDFileSplitPathLeft(mAbsPath).c_str(), parentAbsPath.c_str(), true);
+
+			// allocate space for the locators, rounded up to sectors
+			ATVHDParentLocator *nextLocator = mDynamicHeader.mParentLocators;
+
+			if (!parentRelPath.empty()) {
+				uint32 relLocatorSize = (uint32)parentRelPath.size() * 2;
+				uint32 relLocatorCapacity = (relLocatorSize + 511) & ~511;
+
+				nextLocator->mCode = ATVHDParentLocator::kCodeWindowsRelPath;
+				nextLocator->mLength = relLocatorSize;
+				nextLocator->mSpace = relLocatorCapacity;
+				nextLocator->mOffset = headerSize;
+
+				parentRelPath.resize(relLocatorCapacity >> 1, 0);
+
+				headerSize += relLocatorCapacity;
+			}
+
+			if (!parentAbsPath.empty()) {
+				uint32 absLocatorSize = parentAbsPath.size() * 2;
+				uint32 absLocatorCapacity = (absLocatorSize + 511) & ~511;
+
+				nextLocator->mCode = ATVHDParentLocator::kCodeWindowsAbsPath;
+				nextLocator->mLength = absLocatorSize;
+				nextLocator->mSpace = absLocatorCapacity;
+				nextLocator->mOffset = headerSize;
+
+				parentAbsPath.resize(absLocatorCapacity >> 1, 0);
+
+				headerSize += absLocatorCapacity;
+			} else {
+				// this should not happen, but let's prevent an invalid VHD being created if it does
+				throw MyError("The parent disk does not have a persistent path that can be used to reference it.");
+			}
+		}
+
+		mDynamicHeader.mTableOffset = headerSize;
 
 		// compute checksum
 		mDynamicHeader.mChecksum = ComputeChecksum(mDynamicHeader);
@@ -388,6 +553,13 @@ void ATIDEVHDImage::InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 
 		ATVHDDynamicDiskHeader rawDynamicHeader(mDynamicHeader);
 		ATSwapEndian(rawDynamicHeader);
 		mFile.write(&rawDynamicHeader, sizeof(rawDynamicHeader));
+
+		// write out locators (without null terminators, but with capacity padding)
+		if (!parentRelPath.empty())
+			mFile.write(parentRelPath.data(), parentRelPath.size() * 2);
+
+		if (!parentAbsPath.empty())
+			mFile.write(parentAbsPath.data(), parentAbsPath.size() * 2);
 
 		// write out the BAT
 		vdblock<uint32> batBuf(16384);
@@ -459,7 +631,7 @@ void ATIDEVHDImage::Flush() {
 }
 
 void ATIDEVHDImage::ReadSectors(void *data, uint32 lba, uint32 n) {
-	if (mFooter.mDiskType == ATVHDFooter::kDiskTypeDynamic) {
+	if (mFooter.mDiskType == ATVHDFooter::kDiskTypeDynamic || mFooter.mDiskType == ATVHDFooter::kDiskTypeDifferencing) {
 		ReadDynamicDiskSectors(data, lba, n);
 	} else {
 		mFile.seek((sint64)lba << 9);
@@ -473,7 +645,7 @@ void ATIDEVHDImage::ReadSectors(void *data, uint32 lba, uint32 n) {
 }
 
 void ATIDEVHDImage::WriteSectors(const void *data, uint32 lba, uint32 n) {
-	if (mFooter.mDiskType == ATVHDFooter::kDiskTypeDynamic) {
+	if (mFooter.mDiskType == ATVHDFooter::kDiskTypeDynamic || mFooter.mDiskType == ATVHDFooter::kDiskTypeDifferencing) {
 		WriteDynamicDiskSectors(data, lba, n);
 	} else {
 		mFile.seek((sint64)lba << 9);
@@ -502,6 +674,11 @@ void ATIDEVHDImage::ReadDynamicDiskSectors(void *data, uint32 lba, uint32 n) {
 			if (mCurrentBlockBitmap[blockSectorOffset >> 3] & (0x80 >> (blockSectorOffset & 7))) {
 				mFile.seek(mCurrentBlockDataOffset + ((sint64)(blockSectorOffset + i) << 9));
 				mFile.read((char *)data + i*512, 512);
+			} else {
+				// if this is a differencing disk, we need to read from the parent if the block is not
+				// present in this disk
+				if (mpParentImage)
+					mpParentImage->ReadSectors((char *)data + i*512, lba + i, 1);
 			}
 		}
 
@@ -525,20 +702,24 @@ void ATIDEVHDImage::WriteDynamicDiskSectors(const void *data, uint32 lba, uint32
 		SetCurrentBlock(blockIndex);
 
 		// write sectors
-		uint32 blockSectorOffset = lba & mBlockLBAMask;
-
 		for(uint32 i=0; i<blockCount; ++i) {
+			const uint32 blockSectorOffset = (lba + i) & mBlockLBAMask;
 			uint8& sectorMaskByte = mCurrentBlockBitmap[blockSectorOffset >> 3];
 			const uint8 sectorBit = (0x80 >> (blockSectorOffset & 7));
 
-			// check if we're writing zeroes to this sector
+			// check if we're writing zeroes to this sector for a dynamic disk; for a differencing disk
+			// we just always keep the sector dirty
 			const uint8 *secsrc = (const uint8 *)data + i*512;
-			bool writingZero = true;
+			bool writingZero = false;
 
-			for(uint32 j=0; j<512; ++j) {
-				if (secsrc[j]) {
-					writingZero = false;
-					break;
+			if (mFooter.mDiskType == ATVHDFooter::kDiskTypeDynamic) {
+				writingZero = true;
+
+				for(uint32 j=0; j<512; ++j) {
+					if (secsrc[j]) {
+						writingZero = false;
+						break;
+					}
 				}
 			}
 
@@ -567,7 +748,7 @@ void ATIDEVHDImage::WriteDynamicDiskSectors(const void *data, uint32 lba, uint32
 			// write out new data if the sector is or was allocated (deallocated
 			// sectors must still be zero).
 			if (!writingZero || !wasZero) {
-				mFile.seek(mCurrentBlockDataOffset + ((sint64)(blockSectorOffset + i) << 9));
+				mFile.seek(mCurrentBlockDataOffset + ((sint64)blockSectorOffset << 9));
 				mFile.write(secsrc, 512);
 			}
 		}
@@ -683,4 +864,10 @@ void ATIDEVHDImage::AllocateBlock() {
 	// all done!
 	mCurrentBlockDataOffset = newBlockDataLoc;
 	mbCurrentBlockAllocated = true;
+}
+
+uint32 ATIDEVHDImage::ConvertToVHDTimestamp(const VDDate& date) {
+	const uint64 vhdEpoch = 0x01bf53eb256d4000ull;	// January 1, 2000 midnight UTC in ticks
+
+	return (uint32)((date.mTicks - vhdEpoch + 5000000) / 10000000);
 }

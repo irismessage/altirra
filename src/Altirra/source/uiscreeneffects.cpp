@@ -48,9 +48,12 @@ private:
 	void ResetToDefaults();
 	void OnBloomEnableChanged();
 	void OnBloomScanlineCompensationChanged();
+	void OnHDREnableChanged();
 
+	ATGTIAEmulator::HDRAvailability mLastHDRAvailability = ATGTIAEmulator::HDRAvailability::Available;
 	VDUIProxyButtonControl mBloomEnableView;
 	VDUIProxyButtonControl mBloomScanlineCompensationView;
+	VDUIProxyButtonControl mHDREnableView;
 	VDUIProxyButtonControl mResetToDefaultsView;
 };
 
@@ -65,6 +68,10 @@ ATAdjustScreenEffectsDialog::ATAdjustScreenEffectsDialog()
 
 	mBloomScanlineCompensationView.SetOnClicked(
 		[this] { OnBloomScanlineCompensationChanged(); }
+	);
+
+	mHDREnableView.SetOnClicked(
+		[this] { OnHDREnableChanged(); }
 	);
 
 	mResetToDefaultsView.SetOnClicked(
@@ -82,6 +89,7 @@ bool ATAdjustScreenEffectsDialog::OnLoaded() {
 
 	AddProxy(&mBloomEnableView, IDC_ENABLE_BLOOM);
 	AddProxy(&mBloomScanlineCompensationView, IDC_SCANLINECOMPENSATION);
+	AddProxy(&mHDREnableView, IDC_ENABLEHDR);
 	AddProxy(&mResetToDefaultsView, IDC_RESET);
 
 	TBSetRange(IDC_SCANLINE_INTENSITY, 1, 7);
@@ -91,6 +99,9 @@ bool ATAdjustScreenEffectsDialog::OnLoaded() {
 	TBSetRange(IDC_BLOOM_RADIUS, 0, 100);
 	TBSetRange(IDC_BLOOM_DIRECT_INTENSITY, 0, 200);
 	TBSetRange(IDC_BLOOM_INDIRECT_INTENSITY, 0, 200);
+
+	TBSetRange(IDC_SDRBRIGHTNESS, 0, 400);
+	TBSetRange(IDC_HDRBRIGHTNESS, 0, 400);
 
 	OnDataExchange(false);
 	SetFocusToControl(IDC_SCANLINE_INTENSITY);
@@ -111,6 +122,7 @@ void ATAdjustScreenEffectsDialog::OnDataExchange(bool write) {
 
 		mBloomEnableView.SetChecked(params.mbEnableBloom);
 		mBloomScanlineCompensationView.SetChecked(params.mbBloomScanlineCompensation);
+		mHDREnableView.SetChecked(params.mbEnableHDR);
 
 		TBSetValue(IDC_SCANLINE_INTENSITY, VDRoundToInt(params.mScanlineIntensity * 8.0f));
 		TBSetValue(IDC_DISTORTION_X, VDRoundToInt(params.mDistortionViewAngleX));
@@ -119,6 +131,8 @@ void ATAdjustScreenEffectsDialog::OnDataExchange(bool write) {
 		TBSetValue(IDC_BLOOM_RADIUS, VDRoundToInt(params.mBloomRadius * 5.0f));
 		TBSetValue(IDC_BLOOM_DIRECT_INTENSITY, VDRoundToInt(params.mBloomDirectIntensity * 100.0f));
 		TBSetValue(IDC_BLOOM_INDIRECT_INTENSITY, VDRoundToInt(params.mBloomIndirectIntensity * 100.0f));
+		TBSetValue(IDC_SDRBRIGHTNESS, VDRoundToInt(logf(params.mSDRIntensity / 80.0f) / logf(2.0f) * 100.0f));
+		TBSetValue(IDC_HDRBRIGHTNESS, VDRoundToInt(logf(params.mHDRIntensity / 80.0f) / logf(2.0f) * 100.0f));
 
 		UpdateLabel(IDC_SCANLINE_INTENSITY);
 		UpdateLabel(IDC_DISTORTION_X);
@@ -127,6 +141,8 @@ void ATAdjustScreenEffectsDialog::OnDataExchange(bool write) {
 		UpdateLabel(IDC_BLOOM_RADIUS);
 		UpdateLabel(IDC_BLOOM_DIRECT_INTENSITY);
 		UpdateLabel(IDC_BLOOM_INDIRECT_INTENSITY);
+		UpdateLabel(IDC_SDRBRIGHTNESS);
+		UpdateLabel(IDC_HDRBRIGHTNESS);
 		UpdateEnables();
 	}
 }
@@ -189,6 +205,20 @@ void ATAdjustScreenEffectsDialog::OnHScroll(uint32 id, int code) {
 			params.mBloomIndirectIntensity = v;
 			update = true;
 		}
+	} else if (id == IDC_SDRBRIGHTNESS) {
+		float v = 80.0f * powf(2.0f, (float)TBGetValue(id) / 100.0f);
+
+		if (fabsf(params.mSDRIntensity - v) > 1e-5f) {
+			params.mSDRIntensity = v;
+			update = true;
+		}
+	} else if (id == IDC_HDRBRIGHTNESS) {
+		float v = 80.0f * powf(2.0f, (float)TBGetValue(id) / 100.0f);
+
+		if (fabsf(params.mHDRIntensity - v) > 1e-5f) {
+			params.mHDRIntensity = v;
+			update = true;
+		}
 	}
 
 	if (update) {
@@ -222,13 +252,51 @@ void ATAdjustScreenEffectsDialog::UpdateLabel(uint32 id) {
 		case IDC_BLOOM_INDIRECT_INTENSITY:
 			SetControlTextF(IDC_STATIC_BLOOM_INDIRECT_INTENSITY, L"%.2f", params.mBloomIndirectIntensity);
 			break;
+		case IDC_SDRBRIGHTNESS:
+			SetControlTextF(IDC_SDRBRIGHTNESS_VALUE, L"%.0f nits", params.mSDRIntensity);
+			break;
+		case IDC_HDRBRIGHTNESS:
+			SetControlTextF(IDC_HDRBRIGHTNESS_VALUE, L"%.0f nits", params.mHDRIntensity);
+			break;
 	}
 }
 
 void ATAdjustScreenEffectsDialog::UpdateEnables() {
 	const bool hwSupport = g_sim.GetGTIA().AreAcceleratedEffectsAvailable();
+	const ATGTIAEmulator::HDRAvailability hdrAvailability = g_sim.GetGTIA().IsHDRRenderingAvailable();
+	const bool hwHdrSupport = hdrAvailability == ATGTIAEmulator::HDRAvailability::Available;
+
+	if (mLastHDRAvailability != hdrAvailability) {
+		mLastHDRAvailability = hdrAvailability;
+
+		switch(hdrAvailability) {
+			case ATGTIAEmulator::HDRAvailability::NoMinidriverSupport:
+				SetControlText(IDC_HDRWARNING, L"HDR display is not available with the currently selected graphics API. DirectX 11 is required for HDR support.");
+				break;
+
+			case ATGTIAEmulator::HDRAvailability::NoSystemSupport:
+				SetControlText(IDC_HDRWARNING, L"HDR display is not available with the current operating system. DXGI 1.6 (Windows 10 1703+) is required for HDR support.");
+				break;
+
+			case ATGTIAEmulator::HDRAvailability::NoHardwareSupport:
+				SetControlText(IDC_HDRWARNING, L"HDR display is not available with the current graphics driver.");
+				break;
+
+			case ATGTIAEmulator::HDRAvailability::NoDisplaySupport:
+				SetControlText(IDC_HDRWARNING, L"HDR is not available with the current display. HDR must be supported and enabled in Windows display settings.");
+				break;
+
+			case ATGTIAEmulator::HDRAvailability::AccelNotEnabled:
+				SetControlText(IDC_HDRWARNING, L"HDR display is not available because hardware accelerated display effects are not enabled in Configure System, Display.");
+				break;
+
+			case ATGTIAEmulator::HDRAvailability::Available:
+				break;
+		}
+	}
 
 	const bool bloomEnabled = hwSupport && mBloomEnableView.GetChecked();
+	const bool hdrEnabled = hwHdrSupport && mHDREnableView.GetChecked();
 
 	ShowControl(IDC_DISTORTION_X, hwSupport);
 	ShowControl(IDC_DISTORTION_Y, hwSupport);
@@ -257,6 +325,22 @@ void ATAdjustScreenEffectsDialog::UpdateEnables() {
 	EnableControl(IDC_BLOOM_DIRECT_INTENSITY, bloomEnabled);
 	EnableControl(IDC_BLOOM_INDIRECT_INTENSITY, bloomEnabled);
 	ShowControl(IDC_WARNING, !hwSupport);
+
+	ShowControl(IDC_HDRWARNING, !hwHdrSupport);
+	ShowControl(IDC_ENABLEHDR, hwHdrSupport);
+	ShowControl(IDC_STATIC_SDRBRIGHTNESS, hwHdrSupport);
+	ShowControl(IDC_STATIC_HDRBRIGHTNESS, hwHdrSupport);
+	ShowControl(IDC_SDRBRIGHTNESS, hwHdrSupport);
+	ShowControl(IDC_HDRBRIGHTNESS, hwHdrSupport);
+	ShowControl(IDC_SDRBRIGHTNESS_VALUE, hwHdrSupport);
+	ShowControl(IDC_HDRBRIGHTNESS_VALUE, hwHdrSupport);
+
+	EnableControl(IDC_STATIC_SDRBRIGHTNESS, hdrEnabled);
+	EnableControl(IDC_STATIC_HDRBRIGHTNESS, hdrEnabled);
+	EnableControl(IDC_SDRBRIGHTNESS, hdrEnabled);
+	EnableControl(IDC_HDRBRIGHTNESS, hdrEnabled);
+	EnableControl(IDC_SDRBRIGHTNESS_VALUE, hdrEnabled);
+	EnableControl(IDC_HDRBRIGHTNESS_VALUE, hdrEnabled);
 }
 
 void ATAdjustScreenEffectsDialog::ResetToDefaults() {
@@ -290,6 +374,20 @@ void ATAdjustScreenEffectsDialog::OnBloomScanlineCompensationChanged() {
 		params.mbBloomScanlineCompensation = enable;
 
 		gtia.SetArtifactingParams(params);
+	}
+}
+
+void ATAdjustScreenEffectsDialog::OnHDREnableChanged() {
+	auto& gtia = g_sim.GetGTIA();
+	auto params = gtia.GetArtifactingParams();
+	bool enable = mHDREnableView.GetChecked();
+
+	if (params.mbEnableHDR != enable) {
+		params.mbEnableHDR = enable;
+
+		gtia.SetArtifactingParams(params);
+
+		UpdateEnables();
 	}
 }
 

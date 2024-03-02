@@ -77,10 +77,10 @@ DEFINE_TEST_NONAUTO(System_Zip) {
 
 		ms.Reset();
 
-		VDInflateStream is;
-		is.Init(&ms, ms.mBuf.size(), false);
+		vdautoptr is(new VDInflateStream);
+		is->Init(&ms, ms.mBuf.size(), false);
 
-		is.Read(buf2.data(), buf2.size());
+		is->Read(buf2.data(), buf2.size());
 
 		TEST_ASSERT(!memcmp(buf.data(), buf2.data(), 65536));
 

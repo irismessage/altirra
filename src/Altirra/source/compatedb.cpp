@@ -499,7 +499,6 @@ void ATCompileCompatEDB(vdblock<char>& dst, const ATCompatEDB& edb) {
 	std::unordered_map<VDStringA, uint32, vdhash<VDStringA>, vdstringpred> tagLookup;
 
 	{
-		uint32 numAliases = 0;
 		uint32 numTags = 0;
 		uint32 titleId = 0;
 

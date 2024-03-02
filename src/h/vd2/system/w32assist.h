@@ -35,12 +35,16 @@ struct IUnknown;
 
 #include <vd2/system/VDString.h>
 
-inline bool VDIsWindowsNT() {
+constexpr bool VDIsWindowsNT() {
 	// We don't run on 9x anymore.
 	return true;
 }
 
-bool VDIsAtLeastVistaW32();
+constexpr bool VDIsAtLeastVistaW32() {
+	// We don't run on pre-Vista anymore.
+	return true;
+}
+
 bool VDIsAtLeast7W32();
 bool VDIsAtLeast8W32();
 bool VDIsAtLeast81W32();
@@ -74,6 +78,8 @@ VDStringW	VDGetWindowTextW32(HWND hwnd);
 void		VDAppendMenuW32(HMENU hmenu, UINT flags, UINT id, const wchar_t *text);
 bool		VDAppendPopupMenuW32(HMENU hmenu, UINT flags, HMENU hmenuPopup, const wchar_t *text);
 void		VDAppendMenuSeparatorW32(HMENU hmenu);
+void		VDInsertMenuW32(HMENU hmenu, UINT index, UINT flags, UINT id, const wchar_t *text);
+void		VDInsertMenuSeparatorW32(HMENU hmenu, UINT index);
 void		VDCheckMenuItemByPositionW32(HMENU hmenu, uint32 pos, bool checked);
 void		VDCheckMenuItemByCommandW32(HMENU hmenu, UINT cmd, bool checked);
 void		VDCheckRadioMenuItemByPositionW32(HMENU hmenu, uint32 pos, bool checked);
@@ -82,29 +88,25 @@ void		VDEnableMenuItemByCommandW32(HMENU hmenu, UINT cmd, bool checked);
 VDStringW	VDGetMenuItemTextByCommandW32(HMENU hmenu, UINT cmd);
 void		VDSetMenuItemTextByCommandW32(HMENU hmenu, UINT cmd, const wchar_t *text);
 
-LRESULT		VDDualCallWindowProcW32(WNDPROC wp, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-LRESULT		VDDualDefWindowProcW32(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
 EXECUTION_STATE VDSetThreadExecutionStateW32(EXECUTION_STATE esFlags);
 
 bool		VDSetFilePointerW32(HANDLE h, sint64 pos, DWORD dwMoveMethod);
 bool		VDGetFileSizeW32(HANDLE h, sint64& size);
 
-#if !defined(_MSC_VER) || _MSC_VER < 1300
-	HMODULE		VDGetLocalModuleHandleW32();
-#else
-	extern "C" IMAGE_DOS_HEADER __ImageBase;
-	inline HMODULE VDGetLocalModuleHandleW32() {
-		return (HINSTANCE)&__ImageBase;
-	}
-#endif
+extern "C" IMAGE_DOS_HEADER __ImageBase;
+inline HMODULE VDGetLocalModuleHandleW32() {
+	return (HINSTANCE)&__ImageBase;
+}
 
 bool		VDDrawTextW32(HDC hdc, const wchar_t *s, int nCount, LPRECT lpRect, UINT uFormat);
 
 bool		VDPatchModuleImportTableW32(HMODULE hmod, const char *srcModule, const char *name, void *pCompareValue, void *pNewValue, void *volatile *ppOldValue);
 bool		VDPatchModuleExportTableW32(HMODULE hmod, const char *name, void *pCompareValue, void *pNewValue, void *volatile *ppOldValue);
 
-/// Load a library from the Windows system directory.
+// Load a library from the Windows system directory.
 HMODULE		VDLoadSystemLibraryW32(const char *name);
+
+// Load a library from either the application directory or the Windows system directory.
+HMODULE		VDLoadSystemLibraryWithAllowedOverrideW32(const char *name);
 
 #endif

@@ -96,8 +96,12 @@ public:
 	typedef vdfloat4 self_type;
 	typedef float value_type;
 
+	static vdfloat4 splat(float v) { return vdfloat4 { v, v, v, v }; }
+
 	void setzero() { x=y=z=w = 0; }
 	void set(float x2, float y2, float z2, float w2) { x=x2; y=y2; z=z2; w=w2; }
+
+	static constexpr vdfloat4 zero() { return vdfloat4 { 0.0f, 0.0f, 0.0f, 0.0f }; }
 
 	float		lensq() const							{ return x*x + y*y + z*z + w*w; }
 
@@ -173,5 +177,37 @@ namespace nsVDMath {
 	VDFORCEINLINE constexpr vdfloat3 cross(const vdfloat3& a, const vdfloat3& b) {
 		const vdfloat3 r = {a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x};
 		return r;
+	}
+
+	VDFORCEINLINE constexpr vdfloat2 min(const vdfloat2& a, const vdfloat2& b) {
+		return vdfloat2 {
+			a.x < b.x ? a.x : b.x,
+			a.y < b.y ? a.y : b.y
+		};
+	}
+
+	VDFORCEINLINE constexpr vdfloat2 max(const vdfloat2& a, const vdfloat2& b) {
+		return vdfloat2 {
+			a.x > b.x ? a.x : b.x,
+			a.y > b.y ? a.y : b.y
+		};
+	}
+
+	VDFORCEINLINE constexpr vdfloat4 min(const vdfloat4& a, const vdfloat4& b) {
+		return vdfloat4 {
+			a.x < b.x ? a.x : b.x,
+			a.y < b.y ? a.y : b.y,
+			a.z < b.z ? a.z : b.z,
+			a.w < b.w ? a.w : b.w,
+		};
+	}
+
+	VDFORCEINLINE constexpr vdfloat4 max(const vdfloat4& a, const vdfloat4& b) {
+		return vdfloat4 {
+			a.x > b.x ? a.x : b.x,
+			a.y > b.y ? a.y : b.y,
+			a.z > b.z ? a.z : b.z,
+			a.w > b.w ? a.w : b.w,
+		};
 	}
 };

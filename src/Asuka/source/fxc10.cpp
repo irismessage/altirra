@@ -98,14 +98,14 @@ class FXC10IncludeHandler : public ID3D10Include {
 public:
 	FXC10IncludeHandler(const char *basePath) : mBasePath(VDTextAToW(basePath)) {}
 
-    HRESULT STDMETHODCALLTYPE Open(D3D10_INCLUDE_TYPE IncludeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes);
-    HRESULT STDMETHODCALLTYPE Close(LPCVOID pData);
+    COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE Open(D3D10_INCLUDE_TYPE IncludeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes);
+    COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE Close(LPCVOID pData);
 
 private:
 	const VDStringW mBasePath;
 };
 
-HRESULT STDMETHODCALLTYPE FXC10IncludeHandler::Open(D3D10_INCLUDE_TYPE IncludeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes) {
+COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE FXC10IncludeHandler::Open(D3D10_INCLUDE_TYPE IncludeType, LPCSTR pFileName, LPCVOID pParentData, LPCVOID *ppData, UINT *pBytes) {
 	try {
 		vdblock<char> buf;
 
@@ -130,7 +130,7 @@ HRESULT STDMETHODCALLTYPE FXC10IncludeHandler::Open(D3D10_INCLUDE_TYPE IncludeTy
 	return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE FXC10IncludeHandler::Close(LPCVOID pData) {
+COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE FXC10IncludeHandler::Close(LPCVOID pData) {
 	free((void *)pData);
 	return S_OK;
 }

@@ -152,5 +152,6 @@ IATDiskFS *ATDiskMountImage(IATDiskImage *image, bool readOnly);
 IATDiskFS *ATDiskMountImageARC(const wchar_t *path);
 IATDiskFS *ATDiskMountImageARC(IVDRandomAccessStream& stream, const wchar_t *path);
 IATDiskFS *ATDiskMountImageSDX2(IATDiskImage *image, bool readOnly);
+IATDiskFS *ATDiskMountImageCPM(IATDiskImage *image, bool readOnly);
 
 #endif	// f_AT_DISKFS_H

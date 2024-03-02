@@ -109,6 +109,17 @@ struct ATUIThemeColors {
 
 	uint32 mPendingHiMarkedFg;
 	uint32 mPendingHiMarkedBg;
+
+	uint32 mHardPosEdge;
+	uint32 mSoftPosEdge;
+	uint32 mSoftNegEdge;
+	uint32 mHardNegEdge;
+	uint32 mButtonBg;
+	uint32 mButtonPushedBg;
+	uint32 mButtonCheckedBg;
+	uint32 mButtonFg;
+
+	uint32 mFocusedBg;
 };
 
 const ATUIThemeColors& ATUIGetThemeColors();

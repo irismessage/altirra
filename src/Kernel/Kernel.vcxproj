@@ -45,6 +45,7 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeRe
   <ItemGroup>
     <None Include="source\1030\firmware.s" />
     <None Include="source\1030\handler.s" />
+    <None Include="source\Additions\atdebugx.s" />
     <None Include="source\Additions\autorun.s" />
     <None Include="source\Additions\boot1030.s" />
     <None Include="source\Additions\colormap.s" />
@@ -52,6 +53,9 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeRe
     <None Include="source\Additions\sx212.s" />
     <None Include="source\Additions\sx212handler.s" />
     <None Include="source\Additions\thnd1030.s" />
+    <None Include="source\Additions\xep80-sdx.s" />
+    <None Include="source\Additions\xep80config.inc" />
+    <None Include="source\Additions\xepvhold.s" />
     <None Include="source\ExeLoader\exeloader-hispeed.s" />
     <None Include="source\ExeLoader\exeloader-nobasic.s" />
     <None Include="source\ExeLoader\exeloader.s" />

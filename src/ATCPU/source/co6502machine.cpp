@@ -45,13 +45,13 @@
 
 #define INSN_FETCH() AT_CPU_EXT_READ_BYTE(mPC, 0); ++mPC
 #define INSN_FETCH_TO(dest) AT_CPU_EXT_READ_BYTE(mPC, 0); ++mPC; (dest) = readData
-#define INSN_FETCH_TO_2(dest, slowFlag) AT_CPU_EXT_READ_BYTE_2(mPC, 0, slowFlag); ++mPC; (dest) = readData
+#define INSN_FETCH_TO_2(dest) AT_CPU_EXT_READ_BYTE_2(mPC, 0); ++mPC; (dest) = readData
 #define INSN_DUMMY_FETCH_NOINC() AT_CPU_DUMMY_EXT_READ_BYTE(mPC, 0)
 #define INSN_FETCH_NOINC() AT_CPU_EXT_READ_BYTE(mPC, 0)
 
 #define AT_CPU_DUMMY_EXT_READ_BYTE(addr, bank) (0)
 #define AT_CPU_EXT_READ_BYTE(addr, bank) readData = ATCP_READ_BYTE((addr))
-#define AT_CPU_EXT_READ_BYTE_2(addr, bank, slowFlag) readData = AT_CPU_EXT_READ_BYTE((addr), (bank))
+#define AT_CPU_EXT_READ_BYTE_2(addr, bank) readData = AT_CPU_EXT_READ_BYTE((addr), (bank))
 #define AT_CPU_EXT_WRITE_BYTE(addr, bank, value) AT_CPU_WRITE_BYTE((addr), (value))
 #define END_SUB_CYCLE() goto next_cycle;
 
@@ -107,8 +107,7 @@ while(ATSCHEDULER_ADVANCE_STOPCHECK(&scheduler)) {
 					DoExtra();
 
 				{
-					bool slowFlag = false;
-					INSN_FETCH_TO_2(mOpcode, slowFlag);
+					INSN_FETCH_TO_2(mOpcode);
 					mpNextState = mDecoderTables.mDecodeHeap + mDecoderTables.mInsnPtrs[mOpcode];
 				}
 

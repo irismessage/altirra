@@ -70,6 +70,9 @@ public:
 	sint32 GetHighSpeedIndex() const override { return mHighSpeedBaudRate ? mHighSpeedDivisor : -1; }
 	uint32 GetCyclesPerBitRecv() const override { return 0; }
 	uint32 GetRecvResetCounter() const override { return 0; }
+	uint64 GetCommandQueueTime() const override { return 0; }
+	uint64 GetCommandFrameEndTime() const override { return 0; }
+	uint64 GetCommandDeassertTime() const override { return 0; }
 
 	void SaveActiveCommandState(const IATDeviceSIO *device, IATObjectState **state) const override { *state = nullptr; }
 	void LoadActiveCommandState(IATDeviceSIO *device, IATObjectState *state) override {}

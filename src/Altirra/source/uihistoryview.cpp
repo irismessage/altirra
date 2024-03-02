@@ -951,18 +951,21 @@ bool ATUIHistoryView::OnKeyDown(int code) {
 }
 
 void ATUIHistoryView::OnMouseWheel(int dz) {
-	mScrollWheelAccum += dz;
+	UINT linesPerAction = 3;
+	if (SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &linesPerAction, FALSE)) {
+		if (linesPerAction == WHEEL_PAGESCROLL)
+			linesPerAction = mPageItems;
+	}
 
-	int actions = mScrollWheelAccum / WHEEL_DELTA;
-	if (!actions)
+	mScrollWheelAccum += dz * (int)linesPerAction;
+
+	int lines = mScrollWheelAccum / WHEEL_DELTA;
+	if (!lines)
 		return;
 
-	mScrollWheelAccum -= actions * WHEEL_DELTA;
+	mScrollWheelAccum -= lines * WHEEL_DELTA;
 
-	UINT linesPerAction;
-	if (SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &linesPerAction, FALSE)) {
-		ScrollToPixel(mScrollY - (int)linesPerAction * actions * (int)mItemHeight);
-	}
+	ScrollToPixel(mScrollY - lines * (int)mItemHeight);
 }
 
 void ATUIHistoryView::OnHScroll(int code) {
@@ -1314,6 +1317,110 @@ namespace {
 
 		return 0;
 	}
+
+	template<char T_FormatChar>
+	struct FastFixedFormatTypeTraits;
+
+	template<>
+	struct FastFixedFormatTypeTraits<'x'> {
+		typedef uint8 ArgType;
+
+		static constexpr size_t kNumChars = 2;
+	};
+
+	template<>
+	struct FastFixedFormatTypeTraits<'X'> {
+		typedef uint16 ArgType;
+
+		static constexpr size_t kNumChars = 4;
+	};
+
+	template<char T_Token, typename T_Arg>
+	void FastFixedFormatArg(char *end, T_Arg) = delete;
+
+	template<>
+	void FastFixedFormatArg<'x'>(char *dst, uint8 v) {
+		dst[0] = kHexDig[v >> 4];
+		dst[1] = kHexDig[v & 15];
+	}
+
+	template<>
+	void FastFixedFormatArg<'X'>(char *dst, uint16 v) {
+		dst[0] = kHexDig[v >> 12];
+		dst[1] = kHexDig[(v >> 8) & 15];
+		dst[2] = kHexDig[(v >> 4) & 15];
+		dst[3] = kHexDig[v & 15];
+	}
+
+	template<char... T_Formats>
+	class FastFixedFormat {
+	public:
+		constexpr FastFixedFormat(const char *s);
+
+		template<size_t... T_Indices>
+		void AppendTo(VDStringA& s, typename FastFixedFormatTypeTraits<T_Formats>::ArgType... args) const {
+			AppendTo(s, args..., std::make_integer_sequence<size_t, sizeof...(T_Formats)>());
+		}
+
+		template<size_t... T_Indices>
+		void AppendTo(VDStringA& s, typename FastFixedFormatTypeTraits<T_Formats>::ArgType... args, std::integer_sequence<size_t, T_Indices...>) const {
+			s.append(mpText, mTextLen);
+
+			if constexpr(sizeof...(T_Formats) > 0) {
+				char *end = &s[0] + s.size();
+
+				(void)((..., FastFixedFormatArg<T_Formats>(end + mTokens[T_Indices].mEndOffset, args)));
+			}
+		}
+
+		enum TokenType : uint8 {
+			Hex08,
+			Hex016
+		};
+
+		struct TokenInfo {
+			sint16 mEndOffset;
+		};
+
+		TokenInfo mTokens[sizeof...(T_Formats)] {};
+		const char *mpText;
+		size_t mTextLen;
+	};
+
+	template<char... T_Formats>
+	constexpr FastFixedFormat<T_Formats...>::FastFixedFormat(const char *s)
+		: mpText(s)
+		, mTextLen()
+	{
+		const char *end = s;
+		while(*end)
+			++end;
+
+		mTextLen = (size_t)(end - s);
+
+		constexpr size_t kTokenLens[] = { FastFixedFormatTypeTraits<T_Formats>::kNumChars... };
+
+		constexpr size_t N = sizeof...(T_Formats);
+		int i = 0;
+
+		while(const char c = *s++) {
+			if (c == '-') {
+				if (i >= N)
+					throw;
+
+				size_t tokenLen = kTokenLens[i];
+				TokenInfo& tok = mTokens[i++];
+				tok.mEndOffset = (sint16)((s - 1) - end);
+
+				if (tokenLen >= 2) if (*s++ != '-') throw;
+				if (tokenLen >= 3) if (*s++ != '-') throw;
+				if (tokenLen >= 4) if (*s++ != '-') throw;
+			}
+		}
+
+		if (i != N)
+			throw;
+	}
 }
 
 const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
@@ -1445,6 +1552,11 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 						case kTsMode_UnhaltedCycles:
 							mTempLine = "NEXT  | ";
 							break;
+
+						case kTsMode_TapePositionSeconds:
+						case kTsMode_TapePositionSamples:
+							mTempLine = "NEXT     | ";
+							break;
 					}
 				}
 
@@ -1481,7 +1593,9 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 								);
 						}
 					} else if (mDisasmMode == kATDebugDisasmMode_6809) {
-						mTempLine.append_sprintf("A=%02X B=%02X X=%02X%02X Y=%02X%02X"
+						static constexpr FastFixedFormat<'x', 'x', 'x', 'x', 'x', 'x'> k6809Regs("A=-- B=-- X=---- Y=----");
+
+						k6809Regs.AppendTo(mTempLine
 							, hent.mA
 							, hent.mExt.mAH
 							, hent.mExt.mXH
@@ -1491,7 +1605,9 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 							);
 
 						if (mbShowSpecialRegisters) {
-							mTempLine.append_sprintf(" U=%04X S=%02X%02X DP=%02X CC=%02X"
+							static constexpr FastFixedFormat<'X', 'x', 'x', 'x', 'x'> k6809SpecialRegs(" U=---- S=---- DP=-- CC=--");
+
+							k6809SpecialRegs.AppendTo(mTempLine
 								, hent.mD
 								, hent.mExt.mSH
 								, hent.mS
@@ -2005,6 +2121,9 @@ void ATUIHistoryView::UpdateOpcodes(uint32 historyStart, uint32 historyEnd) {
 		while(dist) {
 			uint32 batchSize = std::min<uint32>(dist, vdcountof(htab));
 			batchSize = mpHistoryModel->ReadInsns(htab, hposnext, batchSize);
+
+			if (!batchSize)
+				break;
 		
 			hposnext += batchSize;
 			dist -= batchSize;
@@ -2140,8 +2259,6 @@ ATHTNode *ATUIHistoryView::InsertNode(ATHTNode *parent, ATHTNode *insertAfter, u
 
 void ATUIHistoryView::RemoveNode(ATHTNode *node) {
 	VDASSERT(node);
-
-	ATHTNode *successorNode = nullptr;
 	
 	if (!mbInvalidatesBlocked) {
 		// Check if this node is at the bottom of the tree. If so, we only need to invalidate this node.

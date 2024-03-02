@@ -183,7 +183,7 @@ for(;;) {
 			}
 
 			{
-				bool slowFlag = false;
+				[[maybe_unused]] bool slowFlag = false;
 				INSN_FETCH_TO_2(mOpcode, slowFlag);
 				mpNextState = mDecodeHeap + mDecodePtrs[mOpcode];
 
@@ -1567,9 +1567,12 @@ for(;;) {
 
 		case kStateAddEAToHistory:
 			{
-				HistoryEntry& he = mHistory[(mHistoryIndex - 1) & 131071];
+				HistoryEntry& he = mHistory[(mHistoryIndex - 1) & (vdcountof(mHistory) - 1)];
 
 				he.mEA = mAddr;
+#ifdef AT_CPU_MACHINE_65C816
+				he.mEA += (uint32)mAddrBank << 16;
+#endif
 			}
 			break;
 
@@ -1930,11 +1933,6 @@ for(;;) {
 
 		case kState816ReadByte:
 			AT_CPU_EXT_READ_BYTE(mAddr, mAddrBank);
-			mData = readData;
-			END_SUB_CYCLE();
-
-		case kState816ReadByte_PBK:
-			AT_CPU_EXT_READ_BYTE(mAddr, mK);
 			mData = readData;
 			END_SUB_CYCLE();
 

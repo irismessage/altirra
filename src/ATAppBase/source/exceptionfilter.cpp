@@ -33,8 +33,16 @@
 extern HWND g_hwnd;
 
 bool g_ATDumpWithFullHeap;
+void (*g_pATExceptionPreFilter)(DWORD code, const EXCEPTION_POINTERS *);
+
+void ATSetExceptionPreFilter(void (*fn)(DWORD code, const EXCEPTION_POINTERS *)) {
+	g_pATExceptionPreFilter = fn;
+}
 
 int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp) {
+	if (g_pATExceptionPreFilter)
+		g_pATExceptionPreFilter(code, exp);
+
 	if (IsDebuggerPresent())
 		return EXCEPTION_CONTINUE_SEARCH;
 

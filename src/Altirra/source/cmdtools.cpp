@@ -21,15 +21,21 @@
 #include <at/atio/cassetteimage.h>
 #include "uifilefilters.h"
 #include "uiaccessors.h"
+#include "cassette.h"
+#include "simulator.h"
+
+extern ATSimulator g_sim;
+
+void ATUIShowDialogAdvancedConfigurationModeless(VDGUIHandle h);
 
 void ATUIShowDialogCompatDB(VDGUIHandle hParent);
 
 void OnCommandToolsCompatDBDialog() {
-	ATUIShowDialogCompatDB(ATUIGetMainWindow());
+	ATUIShowDialogCompatDB(ATUIGetNewPopupOwner());
 }
 
 void OnCommandToolsAnalyzeTapeDecoding() {
-	VDGUIHandle h = ATUIGetMainWindow();
+	VDGUIHandle h = ATUIGetNewPopupOwner();
 	VDStringW fn1(VDGetLoadFileName('cass', h, L"Load cassette tape to analyze", g_ATUIFileFilter_LoadTapeAudio, L"wav"));
 	if (fn1.empty())
 		return;
@@ -42,5 +48,11 @@ void OnCommandToolsAnalyzeTapeDecoding() {
 	VDFileStream f2(fn2.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kSequential | nsVDFile::kCreateAlways);
 
 	vdrefptr<IATCassetteImage> image;
-	ATLoadCassetteImage(f1, &f2, {}, ~image);
+	ATCassetteLoadContext ctx;
+	ctx.mTurboDecodeAlgorithm = g_sim.GetCassette().GetTurboDecodeAlgorithm();
+	ATLoadCassetteImage(f1, &f2, ctx, ~image);
+}
+
+void OnCommandToolsAdvancedConfiguration() {
+	ATUIShowDialogAdvancedConfigurationModeless(nullptr);
 }

@@ -19,8 +19,10 @@
 #include <vd2/system/binary.h>
 #include <vd2/system/math.h>
 #include <at/atcore/consoleoutput.h>
+#include <at/atcore/crc.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/scheduler.h>
+#include <at/atcore/randomization.h>
 #include "diskinterface.h"
 #include "fdc.h"
 
@@ -161,7 +163,7 @@ void ATFDCEmulator::DumpStatus(ATConsoleOutput& out) {
 void ATFDCEmulator::Reset() {
 	AbortCommand();
 
-	mRotPos = 0;
+	mRotPos = ATRandomizeAdvanceFast(g_ATRandomizationSeeds.mDiskStartPos) % mCyclesPerRotation;
 	mRotTimeBase = mpScheduler->GetTick64();
 	mRotations = 0;
 
@@ -189,6 +191,7 @@ void ATFDCEmulator::Reset() {
 	mpFnHeadLoadChange(false);
 
 	mWeakBitLFSR = 1;
+	mbDiskChangeStartupHackFDCCommandReceived = false;
 
 	mpScheduler->UnsetEvent(mpStateEvent);
 
@@ -210,6 +213,10 @@ void ATFDCEmulator::SetMotorRunning(bool running) {
 	mbMotorRunning = running;
 
 	UpdateAutoIndexPulse();
+}
+
+void ATFDCEmulator::SetMotorSpeed(float rpm) {
+	SetSpeeds(rpm, mPeriodAdjustFactor, mbDoubleClock);
 }
 
 void ATFDCEmulator::SetCurrentTrack(uint32 halfTrack, bool track0) {
@@ -245,29 +252,50 @@ void ATFDCEmulator::SetAutoIndexPulse(bool enabled) {
 }
 
 void ATFDCEmulator::SetSpeeds(float rpm, float periodAdjustFactor, bool doubleClock) {
+	mPeriodAdjustFactor = periodAdjustFactor;
+
 	// Cycles per second for the scheduler. Note that this is not necessarily the same as the rate at which
 	// the FDC is clocked.
 	const double schRate = mpScheduler->GetRate().asDouble();
 
 	// Cycles per rotation of the disk. This depends only on RPM and not on FDC clock rate.
-	mCyclesPerRotation = VDRoundToInt32(schRate * 60.0 / rpm);
+	sint32 newCyclesPerRotation = VDRoundToInt32(schRate * 60.0 / rpm);
 
-	if (mRotPos >= mCyclesPerRotation)
-		mRotPos -= mCyclesPerRotation;
+	if (mCyclesPerRotation != newCyclesPerRotation) {
+		UpdateRotationalPosition();
 
+		float rotPosFrac = (float)mRotPos / (float)mCyclesPerRotation;
+
+		mCyclesPerRotation = newCyclesPerRotation;
+		mRotationPeriodSecs = 60.0f / rpm;
+
+		mRotPos = VDRoundToInt32(rotPosFrac * mCyclesPerRotation);
+
+		if (mRotPos >= mCyclesPerRotation)
+			mRotPos -= mCyclesPerRotation;
+	}
+
+	SetDoubleClock(doubleClock);
+}
+
+void ATFDCEmulator::SetDoubleClock(bool doubleClock) {
 	// Set if we have a 279X in undivided 2MHz mode for 8" drives.
 	mbDoubleClock = doubleClock;
 
 	// 4us per bit cell, 2 bit cells per data bit, 8 data bits per byte = 64us/byte. However,
-	// the 1771/279X FDC is spec'd for 2MHz, so we start with the standard timings and let the
-	// period adjust factor convert back to conventional Atari timings. The 1770/1772 provide
-	// 4us directly at 8MHz, so we must use a different value for it.
-	const double bytesPerSecondFM = (mType == kType_1770 || mType == kType_1772) ? 1000000.0 / 64.0 : 1000000.0 / 32.0;
-	const double bytesPerSecondMFM = bytesPerSecondFM * 2.0;
-	const double clockFactor = (doubleClock ? 0.5 : 1.0) * periodAdjustFactor;
+	// the 1771/279X FDC is spec'd for 2MHz, so when the 1050 runs it at 1MHz the timings are
+	// doubled. This is compensated for by wiring the FDC in 8" mode so it thinks it's using
+	// 2us FM / 1us MFM timings, which then get doubled back to 4us / 2us.
 
-	mCyclesPerByteFM = VDRoundToInt(schRate / bytesPerSecondFM * clockFactor);
-	mCyclesPerByteMFM = VDRoundToInt(schRate / bytesPerSecondMFM * clockFactor);
+	static constexpr double kRawBytesPerSecondFM = 1000000.0 / 64.0;
+	static constexpr double kRawBytesPerSecondMFM = 1000000.0 / 32.0;
+	const double clockFactor = (doubleClock ? 0.5 : 1.0) * mPeriodAdjustFactor;
+
+	const double schRate = mpScheduler->GetRate().asDouble();
+	mBytesPerSecondFM = kRawBytesPerSecondFM / clockFactor;
+	mBytesPerSecondMFM = kRawBytesPerSecondMFM / clockFactor;
+	mCyclesPerByteFM = VDRoundToInt(schRate / mBytesPerSecondFM);
+	mCyclesPerByteMFM = VDRoundToInt(schRate / mBytesPerSecondMFM);
 
 	UpdateDensity();
 }
@@ -298,6 +326,17 @@ void ATFDCEmulator::SetDiskInterface(ATDiskInterface *diskIf) {
 			mpDiskInterface->SetShowActivity(false, 0);
 
 		mpDiskInterface = diskIf;
+	}
+}
+
+void ATFDCEmulator::SetDiskChangeStartupHackEnabled(bool enabled) {
+	if (mbDiskChangeStartupHack != enabled && mbDiskReady) {
+		mbDiskChangeStartupHack = enabled;
+
+		if (enabled) {
+			mDiskChangeStartupHackBaseTime = mpScheduler->GetTick64();
+			mbDiskChangeStartupHackFDCCommandReceived = false;
+		}
 	}
 }
 
@@ -353,6 +392,15 @@ uint8 ATFDCEmulator::DebugReadByte(uint8 address) const {
 			} else {
 				if (!mbDiskReady)
 					v |= 0x80;
+				else if (mbDiskChangeStartupHack && !mbDiskChangeStartupHackFDCCommandReceived) {
+					const uint64 ticksPassed = mpScheduler->GetTick64() - mDiskChangeStartupHackBaseTime;
+					const double secondsPassed = (double)ticksPassed * mpScheduler->GetRate().AsInverseDouble();
+					const double blinksPassed = secondsPassed * 20.0;
+
+					if (blinksPassed - floor(blinksPassed) >= 0.5)
+						v |= 0x80;
+				}
+
 			}
 
 			return v;
@@ -455,6 +503,9 @@ void ATFDCEmulator::WriteByte(uint8 address, uint8 value) {
 
 				mRegCommand = value;
 				SetTransition(kState_BeginCommand, 1);
+
+				if (value >= 0x80 && (value & 0xF0) != 0xD0)
+					mbDiskChangeStartupHackFDCCommandReceived = true;
 			}
 			break;
 
@@ -476,6 +527,11 @@ void ATFDCEmulator::WriteByte(uint8 address, uint8 value) {
 				mpFnDrqChange(false);
 
 				mRegStatus &= 0xFD;
+
+				if (mState == kState_WriteTrack_InitialDrq) {
+					mpScheduler->UnsetEvent(mpStateEvent);
+					RunStateMachine();
+				}
 			}
 			break;
 	}
@@ -581,8 +637,8 @@ void ATFDCEmulator::AbortCommand() {
 
 		if (mpDiskImage && mActivePhysSector < mpDiskImage->GetPhysicalSectorCount() && mpDiskInterface->IsDiskWritable()) {
 			try {
-				mpDiskInterface->OnDiskModified();
 				mpDiskImage->WritePhysicalSector(mActivePhysSector, mTransferBuffer, mTransferIndex, mActivePhysSectorStatus);
+				mpDiskInterface->OnDiskModified();
 			} catch(...) {
 				// mark write fault
 				mRegStatus |= 0x20;
@@ -1037,22 +1093,8 @@ void ATFDCEmulator::RunStateMachine() {
 					mTransferBuffer[2] = addr.mSector;
 					mTransferBuffer[3] = (bestSectorSize >= 1024 ? 3 : bestSectorSize >= 512 ? 2 : bestSectorSize >= 256 ? 1 : 0);
 
-					// check for boot sector
-					if (bestSectorSize == 128 && bestVSec <= mDiskGeometry.mBootSectorCount && mbMFM && mDiskGeometry.mSectorSize > 128)
-						mTransferBuffer[3] = 1;
-
 					// start CRC calculation with sync bytes (MFM only) and IDAM included
-					uint16 crc = mbMFM ? 0xB230 : 0xEF21;
-					for(int i=0; i<4; ++i) {
-						const uint8 c = mTransferBuffer[i];
-
-						crc ^= (uint16_t)c << 8;
-						for(int j=0; j<8; ++j) {
-							uint16_t feedback = (crc & 0x8000) ? 0x1021 : 0;
-							crc += crc;
-							crc ^= feedback;
-						}
-					}
+					uint16 crc = ATComputeCRC16(mbMFM ? 0xB230 : 0xEF21, mTransferBuffer, 4);
 
 					VDWriteUnalignedBEU16(&mTransferBuffer[4], crc);
 
@@ -1383,10 +1425,6 @@ void ATFDCEmulator::RunStateMachine() {
 					if ((mActiveSectorStatus & 0x04) && mTransferLength < 256)
 						mTransferLength = 256;
 
-					// check for a boot sector on a double density disk
-					if (mTransferLength == 128 && vsec <= mDiskGeometry.mBootSectorCount && mDiskGeometry.mbMFM && mDiskGeometry.mSectorSize > 128)
-						mTransferLength = 256;
-
 					// check for non-standard sector size mode being used
 					if (mType == kType_1771) {
 						if (!(mRegCommand & 0x08)) {
@@ -1503,8 +1541,8 @@ void ATFDCEmulator::RunStateMachine() {
 				// between.
 				if (mpDiskImage && mActivePhysSector < mpDiskImage->GetPhysicalSectorCount() && mpDiskInterface->IsDiskWritable()) {
 					try {
-						mpDiskInterface->OnDiskModified();
 						mpDiskImage->WritePhysicalSector(mActivePhysSector, mTransferBuffer, mTransferLength, mActivePhysSectorStatus);
+						mpDiskInterface->OnDiskModified();
 					} catch(...) {
 						// mark write fault
 						mRegStatus |= 0x20;
@@ -1607,22 +1645,21 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 	if (!mpDiskImage || !mpDiskInterface->IsFormatAllowed())
 		return;
 
+	// compute the number of bytes we can fit in the track, and thus when the track will wrap -- we expect
+	// this to occur for most drives, which will deliberately overrun the track to ensure that it is fully
+	// written
+	const float bytesPerSec = mbMFM ? mBytesPerSecondMFM : mBytesPerSecondFM;
+
+	const uint32 maxBytesPerTrack = (uint32)(mRotationPeriodSecs * bytesPerSec);
+
 	const uint32 endPos = mWriteTrackIndex;
 
 	if (g_ATLCFDCWTData.IsEnabled() && endPos > 0) {
-		static constexpr float kMsPerRotation = 1000.0f * 60.0f / 288.0f;
+		g_ATLCFDCWTData("Estimating %u raw bytes per track (%s encoding, %.1f RPM%s)\n", maxBytesPerTrack, mbMFM ? "MFM" : "FM", 60.0f / mRotationPeriodSecs, mbDoubleClock ? ", double clock" : "");
 
-		// 2 or 4us/cell / 1000us/ms * 2 cells/bit * 8 bits/byte = ms/byte
-		static constexpr float kMsPerByteFM = 4.0f / 1000.0f * 2.0f * 8.0f;
-		static constexpr float kMsPerByteMFM = 2.0f / 1000.0f * 2.0f * 8.0f;
-		const float msPerByte = mbMFM ? kMsPerByteMFM : kMsPerByteFM;
+		// OK for this to underflow
+		uint32 trackOverwritePoint = endPos - maxBytesPerTrack;
 
-		static constexpr float kBytesPerTrackFM = kMsPerRotation / kMsPerByteFM;
-		static constexpr float kBytesPerTrackMFM = kMsPerRotation / kMsPerByteMFM;
-		const float bytesPerTrack = mbMFM ? kBytesPerTrackMFM : kBytesPerTrackFM;
-
-		uint32 count = 1;
-		uint8 last = mWriteTrackBuffer[0];
 		uint32 crcs = 0;
 		sint32 lastIDAM = -1;
 
@@ -1630,63 +1667,93 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 		for(uint32 i=0; i<endPos; ++i) {
 			const uint8 c = mWriteTrackBuffer[i];
 
-			if (i + 1 < endPos && c == mWriteTrackBuffer[i + 1])
+			if (i >= trackOverwritePoint) {
+				trackOverwritePoint = ~(uint32)0;
+
+				g_ATLCFDCWTData("--- track wrap point ---\n");
+			}
+
+			const char *desc = nullptr;
+			uint32 count = 1;
+
+			if (mbMFM) {
+				switch(c) {
+					case 0xF5:	desc = "  sync ($A1)"; break;
+					case 0xF6:	desc = "  index sync ($C2)"; break;
+					case 0xF7:	desc = "  CRC"; break;
+					case 0xF8:	desc = "  DAM (deleted)"; break;
+					case 0xF9:	desc = "  DAM (user defined)"; break;
+					case 0xFA:	desc = "  DAM (user defined)"; break;
+					case 0xFB:	desc = "  DAM"; break;
+					case 0xFE:	desc = "  IDAM"; break;
+					default:	break;
+				}
+			} else {
+				switch(c) {
+					case 0xF7:	desc = "  CRC"; break;
+					case 0xF8:	desc = "  DAM (deleted)"; break;
+					case 0xF9:	desc = "  DAM (user defined)"; break;
+					case 0xFA:	desc = "  DAM (user defined)"; break;
+					case 0xFB:	desc = "  DAM"; break;
+					case 0xFC:	desc = "  index mark"; break;
+					case 0xFE:	desc = "  IDAM"; break;
+					default:	break;
+				}
+			}
+
+			// see if we can spot a run or a pairwise run
+			uint32 maxCount = endPos - i;
+
+			// don't allow runs to cross the track overwrite point
+			if (i < trackOverwritePoint)
+				maxCount = std::min<uint32>(maxCount, trackOverwritePoint - i);
+
+			while(count < maxCount && mWriteTrackBuffer[i + count] == c)
 				++count;
-			else {
-				const char *desc = nullptr;
 
-				if (mbMFM) {
-					switch(c) {
-						case 0xF5:	desc = "  sync ($A1)"; break;
-						case 0xF6:	desc = "  index sync ($C2)"; break;
-						case 0xF7:	desc = "  CRC"; break;
-						case 0xF8:	desc = "  DAM (deleted)"; break;
-						case 0xF9:	desc = "  DAM (user defined)"; break;
-						case 0xFA:	desc = "  DAM (user defined)"; break;
-						case 0xFB:	desc = "  DAM"; break;
-						case 0xFE:	desc = "  IDAM"; break;
-						default:	break;
-					}
-				} else {
-					switch(c) {
-						case 0xF7:	desc = "  CRC"; break;
-						case 0xF8:	desc = "  DAM (deleted)"; break;
-						case 0xF9:	desc = "  DAM (user defined)"; break;
-						case 0xFA:	desc = "  DAM (user defined)"; break;
-						case 0xFB:	desc = "  DAM"; break;
-						case 0xFC:	desc = "  index mark"; break;
-						case 0xFE:	desc = "  IDAM"; break;
-						default:	break;
-					}
-				}
+			// if we couldn't detect a run, check if we can get a pairwise run
+			uint32 pairCount = 1;
+			uint8 d = 0;
 
+			if (count == 1 && maxCount >= 2 && !desc) {		// avoid pairwise runs for specials
+				uint32 maxPairCount = maxCount >> 1;
+
+				d = mWriteTrackBuffer[i + 1];
+
+				while(pairCount < maxPairCount && mWriteTrackBuffer[i + pairCount*2] == c && mWriteTrackBuffer[i + pairCount*2 + 1] == d)
+					++pairCount;
+			}
+
+			if (pairCount > 1) {
+				s.sprintf("%3u x $%02X%02X", pairCount, c, d);
+				i += pairCount*2 - 1;
+			} else {
 				s.sprintf("%3u x $%02X", count, c);
+				i += count - 1;
+			}
 
-				if (desc)
-					s += desc;
+			if (c == 0xFE) {
+				const sint32 pos = (sint32)(i + crcs);
 
-				if (c == 0xFE) {
-					const sint32 pos = (sint32)(i + crcs);
+				if (i + 6 < endPos)
+					s.append_sprintf(" track %u, sector %u", mWriteTrackBuffer[i+1], mWriteTrackBuffer[i+3]);
 
-					if (lastIDAM >= 0) {
-						const sint32 rawSectorLen = pos - lastIDAM;
-						s.append_sprintf(" (+%u encoded bytes since last / %.3f ms per sector)", rawSectorLen, (float)rawSectorLen * msPerByte );
-					}
+				if (lastIDAM >= 0) {
+					const sint32 rawSectorLen = pos - lastIDAM;
+					const float msPerByte = 1000.0f / bytesPerSec;
 
-					lastIDAM = pos;
+					s.append_sprintf(" (+%u encoded bytes since last / %.3f ms per sector)", rawSectorLen, (float)rawSectorLen * msPerByte );
 				}
 
-				s += '\n';
-
-				g_ATLCFDCWTData <<= s.c_str();
-
-				count = 1;
+				lastIDAM = pos;
 			}
 
 			if (c == 0xF7)
 				++crcs;
 
-			last = c;
+			s += '\n';
+
+			g_ATLCFDCWTData <<= s.c_str();
 		}
 
 		g_ATLCFDCWTData("Total %u bytes written (%u raw bytes)\n", endPos, endPos + crcs);
@@ -1699,7 +1766,6 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 	uint32 extraCrcLen = 0;
 	uint32 validLen = 0;
 
-	const uint32 maxBytesPerTrack = (mbMFM ? kMaxBytesPerTrackMFM : kMaxBytesPerTrackFM) * (mbDoubleClock ? 2 : 1);
 	while(validLen + extraCrcLen < maxBytesPerTrack) {
 		if (startPos == 0)
 			startPos = kWriteTrackBufferSize;
@@ -1901,12 +1967,21 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 	} else if (mbMFM) {
 		bytesPerSector = 256;
 
+		uint32 maxId = 0;
+		uint32 maxSize = 0;
+		uint32 minSize = ~0;
 		for(const auto& psec : parsedSectors) {
-			if (psec.mId > 18) {
-				bytesPerSector = 128;
-				sectorsPerTrack = 26;
-				break;
-			}
+			maxId = std::max<uint32>(maxId, psec.mId);
+			maxSize = std::max<uint32>(maxSize, psec.mLen);
+			minSize = std::min<uint32>(minSize, psec.mLen);
+		}
+
+		if (minSize == 512 && maxSize == 512 && maxId && maxId <= 9) {
+			bytesPerSector = 512;
+			sectorsPerTrack = maxId;
+		} else if (maxId > 18) {
+			bytesPerSector = 128;
+			sectorsPerTrack = 26;
 		}
 	}
 
@@ -1923,8 +1998,15 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 		for(uint32 i=0; i<sectorsPerTrack; ++i) {
 			newVirtSectors[i].mStartPhysSector = (uint32)newPhysSectors.size();
 
+			// if we're on side 2 of a disk that uses reversed sector ordering, we must reverse
+			// the order of virtual sectors on this track
+			uint32 psecId = i + 1;
+
+			if (mbSide2 && mSideMapping != SideMapping::Side2Forward)
+				psecId = sectorsPerTrack - i;
+
 			for(const auto& parsedSector : parsedSectors) {
-				if (parsedSector.mId != i+1)
+				if (parsedSector.mId != psecId)
 					continue;
 
 				++newVirtSectors[i].mNumPhysSectors;
@@ -1956,14 +2038,17 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 	// into us to change the disk image pointer, so careful.
 	const auto& geo = mpDiskImage->GetGeometry();
 
-	if (geo.mSectorSize != bytesPerSector || geo.mbMFM != mbMFM || geo.mSectorsPerTrack != sectorsPerTrack) {
+	bool isHD = mbDoubleClock && mPeriodAdjustFactor < 1.5f;
+
+	if (geo.mSectorSize != bytesPerSector || geo.mbMFM != mbMFM || geo.mSectorsPerTrack != sectorsPerTrack || geo.mbHighDensity != isHD) {
 		ATDiskGeometryInfo newGeometry = {};
 		newGeometry.mSectorSize = bytesPerSector;
-		newGeometry.mBootSectorCount = 3;
+		newGeometry.mBootSectorCount = bytesPerSector > 256 ? 0 : 3;
 		newGeometry.mTrackCount = 40;
 		newGeometry.mSectorsPerTrack = sectorsPerTrack;
 		newGeometry.mSideCount = 1;
 		newGeometry.mbMFM = mbMFM;
+		newGeometry.mbHighDensity = isHD;
 		newGeometry.mTotalSectorCount = newGeometry.mTrackCount * newGeometry.mSideCount * newGeometry.mSectorsPerTrack;
 
 		mpDiskInterface->FormatDisk(newGeometry);

@@ -1,5 +1,7 @@
 #include <stdafx.h>
 #include <stdio.h>
+#include <signal.h>
+#include <corecrt_startup.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/VDString.h>
@@ -24,6 +26,8 @@
 #include <windows.h>
 #endif
 
+extern void ATTestInitBlobHandler();
+
 namespace {
 	struct TestInfo {
 		TestFn		mpTestFn;
@@ -32,7 +36,11 @@ namespace {
 	};
 
 	typedef vdfastvector<TestInfo> Tests;
-	Tests g_tests;
+
+	Tests& GetTests() {
+		static Tests g_tests;
+		return g_tests;
+	}
 }
 
 void AddTest(TestFn f, const char *name, bool autoRun) {
@@ -40,26 +48,39 @@ void AddTest(TestFn f, const char *name, bool autoRun) {
 	ti.mpTestFn = f;
 	ti.mpName = name;
 	ti.mbAutoRun = autoRun;
-	g_tests.push_back(ti);
+	GetTests().push_back(ti);
 }
 
 void help() {
 	wprintf(L"\n");
 	wprintf(L"Available tests:\n");
 
-	for(Tests::const_iterator it(g_tests.begin()), itEnd(g_tests.end()); it!=itEnd; ++it) {
-		const TestInfo& ent = *it;
+	for(const TestInfo& ent : GetTests()) {
 
 		wprintf(L"\t%hs%s\n", ent.mpName, ent.mbAutoRun ? L"" : L"*");
 	}
 	wprintf(L"\tAll\n");
 }
 
-int VDCDECL wmain(int argc, wchar_t **argv) {
+int ATTestMain(int argc, wchar_t **argv);
+
+int ATTestMain() {
+	_configure_wide_argv(_crt_argv_unexpanded_arguments);
+
+	return ATTestMain(__argc, __wargv);
+}
+
+int ATTestMain(int argc, wchar_t **argv) {
 	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_CHECK_ALWAYS_DF | _CRTDBG_LEAK_CHECK_DF);
+	_CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+	_CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+	_CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+	_CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
 
 	wprintf(L"Altirra test harness utility for " BUILD L"\n");
-	wprintf(L"Copyright (C) 2016 Avery Lee. Licensed under GNU General Public License\n\n");
+	wprintf(L"Copyright (C) 2016-2020 Avery Lee. Licensed under GNU General Public License, version 2\n\n");
+
+	ATTestInitBlobHandler();
 
 	Tests selectedTests;
 
@@ -88,18 +109,14 @@ int VDCDECL wmain(int argc, wchar_t **argv) {
 #endif
 
 			if (!_wcsicmp(test, L"all")) {
-				for(Tests::const_iterator it(g_tests.begin()), itEnd(g_tests.end()); it!=itEnd; ++it) {
-					const TestInfo& ent = *it;
-
+				for(const TestInfo& ent : GetTests()) {
 					if (ent.mbAutoRun)
 						selectedTests.push_back(ent);
 				}
 				break;
 			}
 
-			for(Tests::const_iterator it(g_tests.begin()), itEnd(g_tests.end()); it!=itEnd; ++it) {
-				const TestInfo& ent = *it;
-
+			for(const TestInfo& ent : GetTests()) {
 				if (!_wcsicmp(VDTextAToW(ent.mpName).c_str(), test)) {
 					selectedTests.push_back(ent);
 					goto next;

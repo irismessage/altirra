@@ -2,21 +2,30 @@
 <Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="../Build/ProjectConfigurations.props" />
   <ItemGroup>
+    <ClCompile Include="source\blob.cpp" />
     <ClCompile Include="source\main.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="source\TestCoProc_6502.cpp" />
     <ClCompile Include="source\TestCore_Checksum.cpp" />
+    <ClCompile Include="source\TestCore_MD5.cpp" />
     <ClCompile Include="source\TestCore_VFS.cpp" />
     <ClCompile Include="source\TestDebugger_HistoryTree.cpp" />
+    <ClCompile Include="source\TestEmu_PokeyTimers.cpp" />
+    <ClCompile Include="source\TestIO_DiskImage.cpp" />
+    <ClCompile Include="source\TestIO_FLAC.cpp" />
+    <ClCompile Include="source\TestIO_TapeWrite.cpp" />
+    <ClCompile Include="source\TestIO_VirtFAT32.cpp" />
     <ClCompile Include="source\TestSystem_Function.cpp" />
     <ClCompile Include="source\TestSystem_Int128.cpp" />
     <ClCompile Include="source\TestSystem_Math.cpp" />
     <ClCompile Include="source\TestSystem_Zip.cpp" />
+    <ClCompile Include="source\TestUI_TextDOM.cpp" />
     <ClCompile Include="source\utils.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="h\blob.h" />
     <ClInclude Include="h\stdafx.h" />
     <ClInclude Include="h\test.h" />
   </ItemGroup>
@@ -28,7 +37,7 @@
   <Import Project="..\Build\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>StaticLibrary</ConfigurationType>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -41,6 +50,9 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(ProjectDir)..\Altirra\h;$(ProjectDir)..\ATIO\h</AdditionalIncludeDirectories>
+    </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <AdditionalDependencies>$(VDLibPath)\system.lib;$(VDLibPath)\atcore.lib;$(VDLibPath)\atcpu.lib;$(VDLibPath)\atdebugger.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>

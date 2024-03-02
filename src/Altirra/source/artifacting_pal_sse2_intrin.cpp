@@ -616,8 +616,8 @@ void ATArtifactPAL32_SSE2(void *dst, void *delayLine, uint32 n) {
 	}
 }
 
-void ATArtifactPAL32_SSE2(void *dst, void *delayLine, uint32 n, bool useSignedPalette) {
-	if (useSignedPalette)
+void ATArtifactPAL32_SSE2(void *dst, void *delayLine, uint32 n, bool compressExtendedRange) {
+	if (compressExtendedRange)
 		ATArtifactPAL32_SSE2<true>(dst, delayLine, n);
 	else
 		ATArtifactPAL32_SSE2<false>(dst, delayLine, n);

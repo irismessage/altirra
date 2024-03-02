@@ -88,3 +88,7 @@ void ATDevice::SetTraceContext(ATTraceContext *context) {
 bool ATDevice::GetErrorStatus(uint32 idx, VDStringW& error) {
 	return false;
 }
+
+void *ATDevice::GetService(uint32 iid) const {
+	return mpDeviceManager ? mpDeviceManager->GetService(iid) : nullptr;
+}

@@ -31,6 +31,8 @@
 #include "uiportmenus.h"
 #include "resource.h"
 
+void ATUIUpdateMenuVisibility();
+
 extern HWND g_hwnd;
 extern HMENU g_hMenu;
 extern ATUICommandManager g_ATUICommandMgr;
@@ -39,11 +41,16 @@ HMENU g_hMenuDynamic[kATUIDynamicMenuCount];
 ATUIMenu *g_pMenuDynamic[kATUIDynamicMenuCount];
 
 IATUIDynamicMenuProvider *g_pDynamicMenuProvider[kATUIDynamicMenuCount];
+int g_dynamicMenuItemBaseOffset[kATUIDynamicMenuCount];
 int g_dynamicMenuItemBaseCount[kATUIDynamicMenuCount];
 
 VDLinearAllocator g_ATUIMenuBoundCommandsAlloc;
 vdfastvector<std::pair<const char *, const wchar_t *> > g_ATUIMenuBoundCommands;
 vdrefptr<ATUIMenu> g_pATUIMenu;
+VDStringW g_ATUIMenuCharSet;
+bool g_ATUIMenuHidden = false;
+bool g_ATUIMenuFullScreenHidden;
+bool g_ATUIMenuAutoHide = false;
 
 ATUIMenu *ATUIGetMenu() {
 	return g_pATUIMenu;
@@ -59,6 +66,7 @@ void ATUILoadMenu() {
 	UINT id = 40000;
 
 	VDStringW menuItemText;
+	VDStringW menuItemChars;
 
 	g_pATUIMenu = new ATUIMenu;
 
@@ -160,6 +168,16 @@ void ATUILoadMenu() {
 			while(!menuItemText.empty() && menuItemText.back() == '\t')
 				menuItemText.pop_back();
 
+			// scan for menu characters
+			for(const wchar_t *s = menuItemText.c_str(); *s; ++s) {
+				if (*s == L'&') {
+					if (s[1] && s[1] != L'&') {
+						menuItemChars += towupper(s[1]);
+						++s;
+					}
+				}
+			}
+
 			// check for command
 			int specialidx = -1;
 
@@ -201,6 +219,8 @@ void ATUILoadMenu() {
 						specialidx = 6;
 					else if (cmdname == L"$profiles")
 						specialidx = 7;
+					else if (cmdname == L"$videooutputs")
+						specialidx = 8;
 					else if (cmdname == L"$port1none")
 						itemid = ID_INPUT_PORT1_NONE;
 					else if (cmdname == L"$port2none")
@@ -261,27 +281,42 @@ void ATUILoadMenu() {
 				}
 			}
 
-			// must be popup
-			HMENU hmenuPopup = CreatePopupMenu();
-			vdrefptr<ATUIMenu> pmenuPopup(new ATUIMenu);
+			if (menuItemText.empty()) {
+				// no text -- must be special inline menu
+				if (specialidx < 0)
+					throw MyError("Error parsing menu on line %u: only special items can be inline.", lineno);
 
-			if (!VDAppendPopupMenuW32(hmenuLevels[indent], MF_STRING | MF_ENABLED, hmenuPopup, menuItemText.c_str())) {
-				DestroyMenu(hmenuPopup);
-				throw MyError("Error parsing menu on line %u: unable to create popup menu.", lineno);
+				hmenuSpecialMenus[specialidx] = hmenuLevels[indent];
+				pmenuSpecialMenus[specialidx] = pmenuLevels[indent];
+
+				if (specialidx >= 5)
+					g_dynamicMenuItemBaseOffset[specialidx-5] = pmenuLevels[indent]->GetItemCount();
+			} else {
+				// have text - must be popup
+				HMENU hmenuPopup = CreatePopupMenu();
+				vdrefptr<ATUIMenu> pmenuPopup(new ATUIMenu);
+
+				if (!VDAppendPopupMenuW32(hmenuLevels[indent], MF_STRING | MF_ENABLED, hmenuPopup, menuItemText.c_str())) {
+					DestroyMenu(hmenuPopup);
+					throw MyError("Error parsing menu on line %u: unable to create popup menu.", lineno);
+				}
+
+				ATUIMenuItem popupItem;
+				popupItem.mText = menuItemText;
+				popupItem.mpSubMenu = pmenuPopup;
+				pmenuLevels[indent]->AddItem(popupItem);
+
+				if (specialidx >= 0) {
+					hmenuSpecialMenus[specialidx] = hmenuPopup;
+					pmenuSpecialMenus[specialidx] = pmenuPopup;
+
+					if (specialidx >= 5)
+						g_dynamicMenuItemBaseOffset[specialidx-5] = -1;
+				}
+
+				hmenuLevels[indent + 1] = hmenuPopup;
+				pmenuLevels[indent + 1] = pmenuPopup;
 			}
-
-			ATUIMenuItem popupItem;
-			popupItem.mText = menuItemText;
-			popupItem.mpSubMenu = pmenuPopup;
-			pmenuLevels[indent]->AddItem(popupItem);
-
-			if (specialidx >= 0) {
-				hmenuSpecialMenus[specialidx] = hmenuPopup;
-				pmenuSpecialMenus[specialidx] = pmenuPopup;
-			}
-
-			hmenuLevels[indent + 1] = hmenuPopup;
-			pmenuLevels[indent + 1] = pmenuPopup;
 		}
 	} catch(...) {
 		DestroyMenu(hmenu);
@@ -293,8 +328,11 @@ void ATUILoadMenu() {
 	HMENU hmenuPrev = g_hMenu;
 	g_hMenu = hmenu;
 
+	std::sort(menuItemChars.begin(), menuItemChars.end());
+	g_ATUIMenuCharSet.assign(menuItemChars.begin(), std::unique(menuItemChars.begin(), menuItemChars.end()));
+
 	if (g_hwnd) {
-		::SetMenu(g_hwnd, g_hMenu);
+		ATUIUpdateMenuVisibility();
 
 		if (hmenuPrev)
 			DestroyMenu(hmenuPrev);
@@ -309,6 +347,9 @@ void ATUILoadMenu() {
 		g_hMenuDynamic[i] = hmenuSpecialMenus[i+5];
 		g_pMenuDynamic[i] = pmenuSpecialMenus[i+5];
 		g_dynamicMenuItemBaseCount[i] = pmenuSpecialMenus[i+5] ? pmenuSpecialMenus[i+5]->GetItemCount() : 0;
+
+		if (g_dynamicMenuItemBaseOffset[i] < 0)
+			g_dynamicMenuItemBaseOffset[i] = g_dynamicMenuItemBaseCount[i];
 
 		ATUIRebuildDynamicMenu(i);
 	}
@@ -328,6 +369,65 @@ void ATUISetMenuEnabled(bool enabled) {
 	}
 }
 
+void ATUIUpdateMenuVisibility() {
+	if (g_hwnd && g_hMenu) {
+		if (g_ATUIMenuHidden || g_ATUIMenuFullScreenHidden)
+			::SetMenu(g_hwnd, nullptr);
+		else
+			::SetMenu(g_hwnd, g_hMenu);
+	}
+}
+
+bool ATUIIsMenuAutoHideEnabled() {
+	return g_ATUIMenuAutoHide;
+}
+
+bool ATUIIsMenuAutoHideActive() {
+	return g_ATUIMenuAutoHide && !g_ATUIMenuFullScreenHidden;
+}
+
+void ATUISetMenuAutoHideEnabled(bool autoHide) {
+	if (g_ATUIMenuAutoHide != autoHide) {
+		g_ATUIMenuAutoHide = autoHide;
+
+		if (autoHide)
+			ATUISetMenuHidden(true);
+		else
+			ATUISetMenuHidden(false);
+	}
+}
+
+bool ATUIIsMenuAutoHidden() {
+	return g_ATUIMenuHidden;
+}
+
+void ATUISetMenuAutoHidden(bool hidden) {
+	if (g_ATUIMenuAutoHide)
+		ATUISetMenuHidden(hidden);
+}
+
+void ATUISetMenuHidden(bool hidden) {
+	if (g_ATUIMenuHidden != hidden) {
+		g_ATUIMenuHidden = hidden;
+
+		ATUIUpdateMenuVisibility();
+	}
+}
+
+void ATUISetMenuFullScreenHidden(bool hidden) {
+	if (g_ATUIMenuFullScreenHidden != hidden) {
+		g_ATUIMenuFullScreenHidden = hidden;
+
+		ATUIUpdateMenuVisibility();
+	}
+}
+
+bool ATUIIsMenuCharacter(wchar_t c) {
+	c = towupper(c);
+
+	return std::binary_search(g_ATUIMenuCharSet.begin(), g_ATUIMenuCharSet.end(), c);
+}
+
 void ATUISetDynamicMenuProvider(int index, IATUIDynamicMenuProvider *provider) {
 	g_pDynamicMenuProvider[index] = provider;
 }
@@ -338,25 +438,26 @@ void ATUIRebuildDynamicMenu(int index) {
 	if (!menu)
 		return;
 
-	menu->RemoveItems(g_dynamicMenuItemBaseCount[index], menu->GetItemCount() - g_dynamicMenuItemBaseCount[index]);
+	menu->RemoveItems(g_dynamicMenuItemBaseOffset[index], menu->GetItemCount() - g_dynamicMenuItemBaseCount[index]);
 
 	if (g_pDynamicMenuProvider[index])
-		g_pDynamicMenuProvider[index]->RebuildMenu(*menu, ID_DYNAMIC_BASE + 100*index);
+		g_pDynamicMenuProvider[index]->RebuildMenu(*menu, g_dynamicMenuItemBaseOffset[index], ID_DYNAMIC_BASE + 100*index);
 
 	HMENU hmenu = g_hMenuDynamic[index];
 	if (hmenu) {
-		int count = ::GetMenuItemCount(hmenu);
-		for(int i=count-1; i>=g_dynamicMenuItemBaseCount[index]; --i)
-			::DeleteMenu(hmenu, i, MF_BYPOSITION);
+		const int baseIdx = g_dynamicMenuItemBaseOffset[index];
+		int count = ::GetMenuItemCount(hmenu) - g_dynamicMenuItemBaseCount[index];
+		for(int i=count - 1; i >= 0; --i)
+			::DeleteMenu(hmenu, baseIdx + i, MF_BYPOSITION);
 
 		uint32 n = menu->GetItemCount() - g_dynamicMenuItemBaseCount[index];
 		for(uint32 i=0; i<n; ++i) {
-			ATUIMenuItem *item = menu->GetItemByIndex(i + g_dynamicMenuItemBaseCount[index]);
+			ATUIMenuItem *item = menu->GetItemByIndex(i + baseIdx);
 
 			if (item->mbSeparator)
-				VDAppendMenuSeparatorW32(hmenu);
+				VDInsertMenuSeparatorW32(hmenu, i + baseIdx);
 			else
-				VDAppendMenuW32(hmenu, MF_STRING | (item->mbDisabled ? MF_DISABLED : MF_ENABLED), item->mId, item->mText.c_str());
+				VDInsertMenuW32(hmenu, i + baseIdx, MF_STRING | (item->mbDisabled ? MF_DISABLED : MF_ENABLED), item->mId, item->mText.c_str());
 		}
 	}
 }
@@ -426,7 +527,7 @@ void ATUIUpdateMenu() {
 				ATUIRebuildDynamicMenu(i);
 
 			ATUIMenu& menu = *g_pMenuDynamic[i];
-			const uint32 base = g_dynamicMenuItemBaseCount[i];
+			const uint32 base = g_dynamicMenuItemBaseOffset[i];
 			const uint32 n = menu.GetItemCount() - g_dynamicMenuItemBaseCount[i];
 
 			vdfastvector<uint8> oldState(n);
@@ -458,7 +559,7 @@ void ATUIUpdateMenu() {
 }
 
 bool ATUIHandleMenuCommand(uint32 id) {
-	if (id >= ID_DYNAMIC_BASE && id < ID_DYNAMIC_BASE + 300) {
+	if (id >= ID_DYNAMIC_BASE && id < ID_DYNAMIC_BASE + 100 * kATUIDynamicMenuCount) {
 		int dynOffset = id - ID_DYNAMIC_BASE;
 		int menuIndex = dynOffset / 100;
 		int itemIndex = dynOffset % 100;
@@ -480,4 +581,19 @@ bool ATUIHandleMenuCommand(uint32 id) {
 	}
 
 	return false;
+}
+
+bool ATUIIsCommandMappedMenuItem(uint32 id) {
+	const uint32 offset = id - 40000;
+
+	return offset < (uint32)g_ATUIMenuBoundCommands.size();
+}
+
+const char *ATUIGetCommandForMenuItem(uint32 id) {
+	const uint32 offset = id - 40000;
+
+	if (offset < (uint32)g_ATUIMenuBoundCommands.size())
+		return g_ATUIMenuBoundCommands[offset].first;
+	else
+		return nullptr;
 }

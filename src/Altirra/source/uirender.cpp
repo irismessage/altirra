@@ -29,6 +29,7 @@
 #include <vd2/VDDisplay/renderer.h>
 #include <vd2/VDDisplay/renderersoft.h>
 #include <vd2/VDDisplay/textrenderer.h>
+#include <at/ataudio/audiooutput.h>
 #include <at/atcore/notifylist.h>
 #include "uirender.h"
 #include "audiomonitor.h"
@@ -1240,7 +1241,7 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 	ATPokeyAudioLog *log;
 	ATPokeyRegisterState *rstate;
 
-	mpAudioMonitor->Update(&log, &rstate);
+	const uint8 chanMask = mpAudioMonitor->Update(&log, &rstate);
 
 	const uint8 audctl = rstate->mReg[8];
 	const uint8 skctl = rstate->mReg[15];
@@ -1293,7 +1294,7 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 		// draw frequency
 		swprintf(buf, 128, L"%.1f", (mCyclesPerSecond * 0.5) / divisors[ch]);
 
-		tr.SetColorRGB(0xFFFFFF);
+		tr.SetColorRGB(chanMask & (1 << ch) ? 0xFFFFFF : 0x808080);
 		tr.SetFont(mpBigFont);
 		tr.SetAlignment(VDDisplayTextRenderer::kAlignRight, VDDisplayTextRenderer::kVertAlignTop);
 		tr.DrawTextLine(x_waveform - 4, chanfreqy, buf);
@@ -1345,7 +1346,6 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 		// draw volume indicator
 		int vol = (ctl & 15) * (chanht - 3) / 15;
 
-		rdr.SetColorRGB(0xFFFFFF);
 		rdr.FillRect(x_waveform, chy + chanht - 1 - vol, 1, vol);
 
 		// draw waveform -- note that the log starts at scan 248, so we must rotate it around
@@ -1675,6 +1675,12 @@ void ATUIAudioScope::UpdateSampleCounts(int i) {
 }
 
 ///////////////////////////////////////////////////////////////////////////
+class ATUIImage final : public ATUIWidget {
+public:
+	void Paint(IVDDisplayRenderer& r, sint32 w, sint32 h) override {}
+};
+
+///////////////////////////////////////////////////////////////////////////
 class ATUIRenderer final : public vdrefcount, public IATUIRenderer, public IVDTimerCallback {
 public:
 	ATUIRenderer();
@@ -1700,6 +1706,7 @@ public:
 	void SetHActivity(bool write);
 	void SetPCLinkActivity(bool write);
 	void SetIDEActivity(bool write, uint32 lba);
+	void SetCartridgeActivity(sint32 color1, sint32 color2);
 	void SetFlashWriteActivity();
 
 	void SetCassetteIndicatorVisible(bool vis) { mbShowCassetteIndicator = vis; }
@@ -1722,8 +1729,8 @@ public:
 	void SetPendingHeldButtons(uint8 consolMask);
 
 	void ClearWatchedValue(int index);
-	void SetWatchedValue(int index, uint32 value, int len);
-	void SetAudioStatus(ATUIAudioStatus *status);
+	void SetWatchedValue(int index, uint32 value, WatchFormat format);
+	void SetAudioStatus(const ATUIAudioStatus *status);
 	void SetAudioMonitor(bool secondary, ATAudioMonitor *monitor) override;
 	void SetAudioDisplayEnabled(bool secondary, bool enable) override;
 	void SetAudioScopeEnabled(bool enable) override;
@@ -1796,7 +1803,7 @@ protected:
 	ATNotifyList<const vdfunction<void()> *> mIndicatorSafeAreaListeners;
 
 	uint32	mWatchedValues[8];
-	sint8	mWatchedValueLens[8];
+	WatchFormat mWatchedValueFormats[8];
 
 	ATAudioMonitor	*mpAudioMonitors[2] = {};
 	ATSlightSIDEmulator *mpSlightSID = nullptr;
@@ -1847,6 +1854,8 @@ protected:
 	vdrefptr<ATUIAudioDisplay> mpAudioDisplays[2];
 	vdrefptr<ATUIAudioScope> mpAudioScope;
 	vdrefptr<ATUIOverlayCustomization> mpOverlayCustomization;
+	vdrefptr<ATUIWidget> mpCartridgeActivityIcon1;
+	vdrefptr<ATUIWidget> mpCartridgeActivityIcon2;
 
 	struct ErrorEntry {
 		vdrefptr<ATUILabel> mpLabel;
@@ -1891,8 +1900,8 @@ ATUIRenderer::ATUIRenderer() {
 		mStatusLEDs[i] = -1;
 	}
 
-	for(int i=0; i<8; ++i)
-		mWatchedValueLens[i] = -1;
+	for(auto& v : mWatchedValueFormats)
+		v = WatchFormat::None;
 
 	mpContainer = new ATUIContainer;
 	mpContainer->SetPlacement(vdrect32f(0, 0, 1, 1), vdpoint32(0, 0), vdfloat2{0, 0});
@@ -2035,6 +2044,11 @@ ATUIRenderer::ATUIRenderer() {
 	mpOverlayCustomization->SetVisible(false);
 	mpOverlayCustomization->SetSizeOffset(vdsize32(0,0));
 
+	mpCartridgeActivityIcon1 = new ATUIImage;
+	mpCartridgeActivityIcon1->SetVisible(false);
+	mpCartridgeActivityIcon2 = new ATUIImage;
+	mpCartridgeActivityIcon2->SetVisible(false);
+
 	RelayoutStatic();
 }
 
@@ -2137,6 +2151,17 @@ void ATUIRenderer::SetIDEActivity(bool write, uint32 lba) {
 
 	mpHardDiskDeviceLabel->SetVisible(true);
 	mpHardDiskDeviceLabel->SetTextF(L"%lc%u", mbHardDiskWrite ? L'W' : L'R', mHardDiskLBA);
+}
+
+void ATUIRenderer::SetCartridgeActivity(sint32 color1, sint32 color2) {
+	mpCartridgeActivityIcon1->SetVisible(color1 >= 0);
+	mpCartridgeActivityIcon2->SetVisible(color2 >= 0);
+
+	if (color1 >= 0)
+		mpCartridgeActivityIcon1->SetFillColor((uint32)color1);
+
+	if (color2 >= 0)
+		mpCartridgeActivityIcon2->SetFillColor((uint32)color2);
 }
 
 void ATUIRenderer::SetFlashWriteActivity() {
@@ -2327,21 +2352,55 @@ void ATUIRenderer::SetCassettePosition(float pos, float len, bool recordMode, bo
 }
 
 void ATUIRenderer::ClearWatchedValue(int index) {
-	if (index >= 0 && index < 8) {
-		mWatchedValueLens[index] = -1;
-		mpWatchLabels[index]->SetVisible(false);
-	}
+	if ((unsigned)index >= 8)
+		return;
+
+	mWatchedValueFormats[index] = WatchFormat::None;
+	mpWatchLabels[index]->SetVisible(false);
 }
 
-void ATUIRenderer::SetWatchedValue(int index, uint32 value, int len) {
-	if (index >= 0 && index < 8) {
-		mWatchedValues[index] = value;
-		mWatchedValueLens[index] = len;
+void ATUIRenderer::SetWatchedValue(int index, uint32 value, WatchFormat format) {
+	if ((unsigned)index >= 8)
+		return;
+
+	bool changed = false;
+
+	if (mWatchedValueFormats[index] != format) {
+		mWatchedValueFormats[index] = format;
 		mpWatchLabels[index]->SetVisible(true);
+		changed = true;
+	}
+
+	if (mWatchedValues[index] != value) {
+		mWatchedValues[index] = value;
+		changed = true;
+	}
+
+	if (changed) {
+		// draw watched values
+		ATUILabel& label = *mpWatchLabels[index];
+
+		switch(format) {
+			case WatchFormat::Dec:
+				label.SetTextF(L"%d", (int)value);
+				break;
+
+			case WatchFormat::Hex8:
+				label.SetTextF(L"%02X", value);
+				break;
+
+			case WatchFormat::Hex16:
+				label.SetTextF(L"%04X", value);
+				break;
+
+			case WatchFormat::Hex32:
+				label.SetTextF(L"%08X", value);
+				break;
+		}
 	}
 }
 
-void ATUIRenderer::SetAudioStatus(ATUIAudioStatus *status) {
+void ATUIRenderer::SetAudioStatus(const ATUIAudioStatus *status) {
 	if (status) {
 		mpAudioStatusDisplay->Update(*status);
 		mpAudioStatusDisplay->SetVisible(true);
@@ -2582,6 +2641,9 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 		mpHoverTip->SetFont(mpSysHoverTipFont);
 		mpHoverTip->SetBoldFont(mpSysBoldHoverTipFont);
 
+		c->AddChild(mpCartridgeActivityIcon1);
+		c->AddChild(mpCartridgeActivityIcon2);
+
 		// update layout
 		RelayoutStatic();
 		InvalidateLayout();
@@ -2613,7 +2675,7 @@ void ATUIRenderer::Update() {
 		SetPendingHeldKey(0x00);
 		SetPendingHeldButtons(7);
 		for(int i=0; i<7; ++i)
-			SetWatchedValue(0, 0xFFFF, 2);
+			SetWatchedValue(0, 0xFFFF, WatchFormat::Hex16);
 		SetTracingSize(0xFFFFFFFF);
 		SetFpsIndicator(60.0f);
 		SetPaused(true);
@@ -2731,27 +2793,6 @@ void ATUIRenderer::Update() {
 			mpFlashWriteLabel->SetVisible(false);
 	}
 
-	// draw watched values
-	for(int i=0; i<8; ++i) {
-		int len = mWatchedValueLens[i];
-		if (len < 0)
-			continue;
-
-		ATUILabel& label = *mpWatchLabels[i];
-
-		switch(len) {
-			case 0:
-				label.SetTextF(L"%d", (int)mWatchedValues[i]);
-				break;
-			case 1:
-				label.SetTextF(L"%02X", mWatchedValues[i]);
-				break;
-			case 2:
-				label.SetTextF(L"%04X", mWatchedValues[i]);
-				break;
-		}
-	}
-
 	// update audio monitor
 	for(ATUIAudioDisplay *disp : mpAudioDisplays) {
 		if (disp)
@@ -2830,8 +2871,6 @@ void ATUIRenderer::RelayoutStatic() {
 	for(int i=0; i<8; ++i) {
 		ATUILabel& label = *mpWatchLabels[i];
 
-		int y = -4*mSysFontDigitHeight - (7 - i)*mSysMonoFontHeight;
-
 		label.SetPlacement(kAnchorBL, vdpoint32(64, - 4*mSysFontDigitHeight - (7 - i)*mSysMonoFontHeight), vdfloat2{0, 1});
 	}
 
@@ -2841,6 +2880,11 @@ void ATUIRenderer::RelayoutStatic() {
 	mpRecordingLabel->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 27, ystats), vdfloat2{0, 1});
 	mpTracingLabel->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 37, ystats), vdfloat2{0, 1});
 	mpFlashWriteLabel->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 47, ystats), vdfloat2{0, 1});
+	mpCartridgeActivityIcon1->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 49, ystats -(mSysFontDigitHeight >> 1)), vdfloat2{0, 1});
+	mpCartridgeActivityIcon1->SetSizeOffset(vdsize32(mSysFontDigitHeight >> 1, mSysFontDigitHeight >> 1));
+	mpCartridgeActivityIcon2->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 49, ystats), vdfloat2{0, 1});
+	mpCartridgeActivityIcon2->SetSizeOffset(vdsize32(mSysFontDigitHeight >> 1, (mSysFontDigitHeight + 1) >> 1));
+
 	mpPCLinkLabel->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 19, ystats), vdfloat2{0, 1});
 	mpHostDeviceLabel->SetPlacement(kAnchorBL, vdpoint32(mSysFontDigitWidth * 19, ystats), vdfloat2{0, 1});
 
@@ -2913,7 +2957,6 @@ void ATUIRenderer::UpdatePendingHoldLabel() {
 
 void ATUIRenderer::RelayoutErrors() {
 	vdrect32 r = mpStatusMessageLabel->GetArea();
-	int x = r.left;
 	int y = mpStatusMessageLabel->IsVisible() ? r.top : r.bottom;
 
 	for(auto it = mErrors.rbegin(), itEnd = mErrors.rend(); it != itEnd; ++it) {

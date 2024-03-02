@@ -22,7 +22,7 @@
 #include "inputcontroller.h"
 #include "inputmanager.h"
 #include "gtia.h"
-#include "pokey.h"
+#include <at/ataudio/pokey.h>
 #include "antic.h"
 #include "pia.h"
 
@@ -146,7 +146,7 @@ void ATPortController::FreePortInput(int index) {
 		return;
 	}
 
-	uint8 oldVal = (uint8)mPortInputs[index];
+	uint32 oldVal = mPortInputs[index];
 	if (oldVal) {
 		mPortInputs[index] = 0;
 		UpdatePortValue();
@@ -476,14 +476,27 @@ void ATMouseController::SetDigitalTrigger(uint32 trigger, bool state) {
 }
 
 void ATMouseController::ApplyImpulse(uint32 trigger, int ds) {
-	ds <<= 4;
+	ds <<= 5;
 
 	switch(trigger) {
+		case kATInputTrigger_Left:
+			mTargetX -= ds;
+			EnableUpdate();
+			break;
+
 		case kATInputTrigger_Axis0:
+		case kATInputTrigger_Right:
 			mTargetX += ds;
 			EnableUpdate();
 			break;
+
+		case kATInputTrigger_Up:
+			mTargetY -= ds;
+			EnableUpdate();
+			break;
+
 		case kATInputTrigger_Axis0+1:
+		case kATInputTrigger_Down:
 			mTargetY += ds;
 			EnableUpdate();
 			break;
@@ -648,10 +661,21 @@ void ATTrackballController::ApplyImpulse(uint32 trigger, int ds) {
 	ds <<= 5;
 
 	switch(trigger) {
+		case kATInputTrigger_Left:
+			mTargetX -= ds;
+			break;
+
 		case kATInputTrigger_Axis0:
+		case kATInputTrigger_Right:
 			mTargetX += ds;
 			break;
+
+		case kATInputTrigger_Up:
+			mTargetY -= ds;
+			break;
+
 		case kATInputTrigger_Axis0+1:
+		case kATInputTrigger_Down:
 			mTargetY += ds;
 			break;
 	}
@@ -666,7 +690,7 @@ void ATTrackballController::Update() {
 	bool changed = false;
 	uint8 dirBits = mPortBits & 5;
 
-	const uint32 posX = mTargetX >> 16;
+	const uint16 posX = mTargetX >> 16;
 	if (mAccumX != posX) {
 		if ((sint16)(mAccumX - posX) < 0) {
 			dirBits &= 0xFE;
@@ -676,12 +700,10 @@ void ATTrackballController::Update() {
 			--mAccumX;
 		}
 
-		mAccumX &= 0xffff;
-
 		changed = true;
 	}
 
-	const int posY = mTargetY >> 16;
+	const uint16 posY = mTargetY >> 16;
 	if (mAccumY != posY) {
 		if ((sint16)(mAccumY - posY) < 0) {
 			++mAccumY;
@@ -690,8 +712,6 @@ void ATTrackballController::Update() {
 			--mAccumY;
 			dirBits |= 0x04;
 		}
-
-		mAccumY &= 0xffff;
 
 		changed = true;
 	}
@@ -723,16 +743,7 @@ void ATTrackballController::OnDetach() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATPaddleController::ATPaddleController()
-	: mbSecond(false)
-	, mPortBits(0)
-	, mRawPos((228 << 16) + 0x8000)
-	, mRotIndex(0)
-	, mRotXLast(0)
-	, mRotYLast(0)
-{
-	memset(mRotX, 0, sizeof mRotX);
-	memset(mRotY, 0, sizeof mRotY);
+ATPaddleController::ATPaddleController() {
 }
 
 ATPaddleController::~ATPaddleController() {
@@ -769,21 +780,47 @@ void ATPaddleController::SetTrigger(bool enable) {
 }
 
 void ATPaddleController::SetDigitalTrigger(uint32 trigger, bool state) {
+	const auto setPot = [this](int pos, bool grounded) {
+		if (mRawPos != pos) {
+			mRawPos = pos;
+			SetPotHiPosition(mbSecond, pos, grounded);
+		}
+	};
+
 	if (trigger == kATInputTrigger_Button0)
 		SetTrigger(state);
 	else if (trigger == kATInputTrigger_Axis0) {
 		const int pos = state ? (1 << 16) + 0x8000 : (228 << 16) + 0x8000;
 
-		if (mRawPos != pos) {
-			mRawPos = pos;
-			SetPotHiPosition(mbSecond, pos, state);
+		setPot(pos, state);
+	} else if (trigger == kATInputTrigger_Left) {
+		if (mbLeft != state) {
+			mbLeft = state;
+
+			if (mbRight == state)
+				setPot(114 << 16, false);
+			else
+				setPot(state ? 1 << 16 : 227 << 16, false);
+		}
+	} else if (trigger == kATInputTrigger_Right) {
+		if (mbRight != state) {
+			mbRight = state;
+
+			if (mbLeft == state)
+				setPot(114 << 16, false);
+			else
+				setPot(state ? 227 << 16 : 1 << 16, false);
 		}
 	}
 }
 
 void ATPaddleController::ApplyAnalogInput(uint32 trigger, int ds) {
 	switch(trigger) {
+		case kATInputTrigger_Left:
+			ds = -ds;
+			[[fallthrough]];
 		case kATInputTrigger_Axis0:
+		case kATInputTrigger_Right:
 			{
 				int oldPos = mRawPos;
 				mRawPos = (114 << 16) + 0x8000 - ds * 114;
@@ -902,7 +939,7 @@ void ATTabletController::ApplyImpulse(uint32 trigger, int ds) {
 			ds = -ds;
 		case kATInputTrigger_Axis0:
 		case kATInputTrigger_Right:
-			AddDelta(0, -ds);
+			AddDelta(0, ds);
 			break;
 
 		case kATInputTrigger_Up:
@@ -1033,8 +1070,6 @@ void ATDrivingController::ApplyImpulse(uint32 trigger, int ds) {
 }
 
 void ATDrivingController::AddDelta(int delta) {
-	int oldPos = mRawPos;
-
 	// The driving controller does 16 clicks per rotation. We set this to
 	// achieve about the same rotational speed as the paddle.
 	mRawPos -= delta * 0x20000;
@@ -1097,12 +1132,14 @@ AT5200ControllerController::AT5200ControllerController(int index, bool trackball
 	, mbTrackball(trackball)
 	, mIndex(index)
 {
+	mJitterLFSR = (index + 1) * 0x10001;
+
+	memset(mbKeyMatrix, 0, sizeof mbKeyMatrix);
+
 	for(int i=0; i<2; ++i) {
 		mPot[i] = 114 << 16;
 		mJitter[i] = 0;
 	}
-
-	memset(mbKeyMatrix, 0, sizeof mbKeyMatrix);
 }
 
 AT5200ControllerController::~AT5200ControllerController() {
@@ -1147,9 +1184,9 @@ void AT5200ControllerController::SetDigitalTrigger(uint32 trigger, bool state) {
 				mbImpulseMode = false;
 
 				if (mbDown == state)
-					SetPot(1, 114 << 16);
+					SetPot(1, 114 << 16, true);
 				else
-					SetPot(1, state ? 1 << 16 : 227 << 16);
+					SetPot(1, state ? 1 << 16 : 227 << 16, true);
 			}
 			break;
 
@@ -1159,9 +1196,9 @@ void AT5200ControllerController::SetDigitalTrigger(uint32 trigger, bool state) {
 				mbImpulseMode = false;
 
 				if (mbUp == state)
-					SetPot(1, 114 << 16);
+					SetPot(1, 114 << 16, true);
 				else
-					SetPot(1, state ? 227 << 16 : 1 << 16);
+					SetPot(1, state ? 227 << 16 : 1 << 16, true);
 			}
 			break;
 
@@ -1171,9 +1208,9 @@ void AT5200ControllerController::SetDigitalTrigger(uint32 trigger, bool state) {
 				mbImpulseMode = false;
 
 				if (mbRight == state)
-					SetPot(0, 114 << 16);
+					SetPot(0, 114 << 16, true);
 				else
-					SetPot(0, state ? 1 << 16 : 227 << 16);
+					SetPot(0, state ? 1 << 16 : 227 << 16, true);
 			}
 			break;
 
@@ -1183,9 +1220,9 @@ void AT5200ControllerController::SetDigitalTrigger(uint32 trigger, bool state) {
 				mbImpulseMode = false;
 
 				if (mbLeft == state)
-					SetPot(0, 114 << 16);
+					SetPot(0, 114 << 16, true);
 				else
-					SetPot(0, state ? 227 << 16 : 1 << 16);
+					SetPot(0, state ? 227 << 16 : 1 << 16, true);
 			}
 			break;
 
@@ -1286,9 +1323,9 @@ void AT5200ControllerController::ApplyImpulse(uint32 trigger, int ds) {
 				if (mbTrackball) {
 					mbImpulseMode = true;
 
-					mImpulseAccum[index] += (float)ds * 1e-5f;
+					mImpulseAccum[index] += (float)ds / 32768.0f;
 				} else {
-					SetPot(index, mPot[index] + ds * 113);
+					SetPot(index, mPot[index] + ds * 113, false);
 				}
 			}
 			break;
@@ -1297,14 +1334,22 @@ void AT5200ControllerController::ApplyImpulse(uint32 trigger, int ds) {
 
 void AT5200ControllerController::ApplyAnalogInput(uint32 trigger, int ds) {
 	switch(trigger) {
+		case kATInputTrigger_Left:
+			ds = -ds;
+			[[fallthrough]];
 		case kATInputTrigger_Axis0:
+		case kATInputTrigger_Right:
 			mbImpulseMode = false;
-			SetPot(0, ds * 113 + (114 << 16) + 0x8000);
+			SetPot(0, ds * 113 + (114 << 16) + 0x8000, false);
 			break;
 
+		case kATInputTrigger_Up:
+			ds = -ds;
+			[[fallthrough]];
 		case kATInputTrigger_Axis0+1:
+		case kATInputTrigger_Down:
 			mbImpulseMode = false;
-			SetPot(1, ds * 113 + (114 << 16) + 0x8000);
+			SetPot(1, ds * 113 + (114 << 16) + 0x8000, false);
 			break;
 	}
 }
@@ -1320,7 +1365,7 @@ void AT5200ControllerController::Tick() {
 			if (v > 1.0f)
 				v = 1.0f;
 
-			mImpulseAccum2[i] += VDRoundToInt((v * 0.70f) * (float)(114 << 16));
+			mImpulseAccum2[i] += VDRoundToInt(v * (float)(114 << 16));
 			mImpulseAccum[i] = 0;
 
 			// We have a little bit of a cheat here. 5200 games commonly truncate LSBs, which causes
@@ -1329,16 +1374,24 @@ void AT5200ControllerController::Tick() {
 			int idx = (mImpulseAccum2[i] + (1 << 17)) >> 18;
 			mImpulseAccum2[i] -= idx << 18;
 
-			SetPot(i, (idx * 4 + 114 + (idx < 0 ? -2 : idx > 0 ? +2 : 0)) << 16);
+			SetPot(i, (idx * 4 + 114 + (idx < 0 ? -2 : idx > 0 ? +2 : 0)) << 16, false);
 		}
 	}
 
+	static constexpr uint32 kLFSRAdvanceTab[16] = {
+		0x00000000,0x14600000,0x28C00000,0x3CA00000,
+		0x51800000,0x45E00000,0x79400000,0x6D200000,
+		0xA3000000,0xB7600000,0x8BC00000,0x9FA00000,
+		0xF2800000,0xE6E00000,0xDA400000,0xCE200000
+	};
+
+	mJitterLFSR = (mJitterLFSR >> 4) ^ kLFSRAdvanceTab[mJitterLFSR & 15];
+
 	for(int i=0; i<2; ++i) {
-		if (mJitter[i]) {
-			mPot[i] += mJitter[i];
-			mJitter[i] = 0;
-			UpdatePot(i);
-		}
+		UpdatePot(i);
+
+		if (mJitter[i])
+			--mJitter[i];
 	}
 }
 
@@ -1375,7 +1428,7 @@ void AT5200ControllerController::UpdateTopButtonState() {
 	pokey.SetBreakKeyState(mbTopButton, false);
 }
 
-void AT5200ControllerController::SetPot(int index, int pos) {
+void AT5200ControllerController::SetPot(int index, int pos, bool forceJitter) {
 	// 5200 Galaxian has an awful bug in its calibration routine. It was meant to
 	// use separate calibration variables for controllers 1 and 2, but due to
 	// the following sequence:
@@ -1390,15 +1443,16 @@ void AT5200ControllerController::SetPot(int index, int pos) {
 	// apply a tiny jitter to the controller over a couple of frames.
 
 	int& pot = mPot[index];
-	int& jitter = mJitter[index];
+	int delta = abs(pot - pos);
 
-	if (pos > pot) {
-		pot = pos - (1 << 16);
-		jitter = (1 << 16);
-		UpdatePot(index);
-	} else if (pos < pot) {
-		pot = pos + (1 << 16);
-		jitter = -(1 << 16);
+	if (pot != pos) {
+		pot = pos;
+
+		// force jittering if we're getting large deltas, as this typically
+		// means that we're getting digital input as analog.
+		if (forceJitter || delta > (64 << 16))
+			mJitter[index] = 5;
+
 		UpdatePot(index);
 	}
 }
@@ -1410,22 +1464,19 @@ void AT5200ControllerController::UpdatePot(int index) {
 
 	int& pot = mPot[index];
 
+	static constexpr sint8 kJitterTable[4] = { -1, 0, 1, 0 };
+	int jitter = mJitter[index] ? kJitterTable[(mJitterLFSR >> (index * 2)) & 3] : 0;
+
 	if (mbTrackball) {
 		// Pengo barfs if the trackball returns values that are more than 80
 		// units from the center position.
-		if (pot < (38 << 16))
-			pot = (38 << 16);
-		else if (pot > (189 << 16))
-			pot = (189 << 16);
+		pot = std::clamp(pot, 38 << 16, 189 << 16);
 
-		SetPotPosition(index != 0, mbPotsEnabled ? pot >> 16 : 114);
+		SetPotPosition(index != 0, mbPotsEnabled ? (pot >> 16) + jitter : 114);
 	} else {
-		if (pot < (1 << 16))
-			pot = (1 << 16);
-		else if (pot > (227 << 16))
-			pot = (227 << 16);
+		pot = std::clamp(pot, 1 << 16, 227 << 16);
 
-		SetPotPosition(index != 0, mbPotsEnabled ? pot >> 16 : 228);
+		SetPotPosition(index != 0, mbPotsEnabled ? (pot >> 16) + jitter : 228);
 	}
 }
 

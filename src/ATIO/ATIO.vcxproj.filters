@@ -81,6 +81,24 @@
     <ClCompile Include="source\programimage.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\diskfscpm.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\tapepiecetable.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\audioreaderwav.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\audioreaderflac.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\audioreaderflac_x86.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\audioreaderflac_arm64.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\stdafx.h">
@@ -133,6 +151,18 @@
     </ClInclude>
     <ClInclude Include="..\h\at\atio\programimage.h">
       <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\at\atio\tapepiecetable.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\at\atio\audioreader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\at\atio\audioreaderwav.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\at\atio\audioreaderflac.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

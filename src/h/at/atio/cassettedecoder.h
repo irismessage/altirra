@@ -19,6 +19,8 @@
 #ifndef f_AT_ATIO_CASSETTEDECODER_H
 #define f_AT_ATIO_CASSETTEDECODER_H
 
+#include <at/atio/cassetteimage.h>
+
 class VDBufferedWriteStream;
 
 class ATCassetteDecoderFSK {
@@ -41,21 +43,61 @@ protected:
 
 ///////////////////////////////////////////////////////////////////////////////
 
-class ATCassetteDecoderDirect {
+class ATCassetteDecoderTurbo {
 public:
-	ATCassetteDecoderDirect();
+	ATCassetteDecoderTurbo();
+
+	void Init(ATCassetteTurboDecodeAlgorithm algorithm, bool enableAnalysis);
 
 	void Reset();
-	void Process(bool enablePrefilter, const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest);
+	void Process(const sint16 *samples, uint32 n, float *adest);
+	vdfastvector<uint32> Finalize();
 
 private:
-	template<bool T_DoAnalysis, bool T_EnablePreFilter>
-	void Process(const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest);
+	enum class PreFilterType : uint8 {
+		None,
+		HP_IIR,
+		HP_FIR
+	};
 
-	bool mbCurrentState;
-	float mPrevLevel;
-	float mAGC;
-	float mPrefilterState;
+	enum class DetectorType : uint8 {
+		Slope,
+		Level,
+		Peak
+	};
+
+	template<bool T_DoAnalysis, DetectorType T_Detector, PreFilterType T_PreFilter>
+	void Process(const sint16 *samples, uint32 n, float *adest) VDRESTRICT;
+
+	uint32 mBitAccum {};
+	uint32 mBitCounter {};
+	uint32 mWrittenBits {};
+
+	float mHPFFactor {};
+	bool mbCurrentState {};
+	float mAGC {};
+	float mPrevLevel {};
+	float mPrefilterState {};
+
+	// peak detector state
+	uint32 mPostFilterWindowIdx {};
+	bool mbLastStable {};
+	bool mbLastPolarity {};
+	sint32 mPeakSignCounter {};
+	uint32 mPeakOffset {};
+	uint32 mPeakWindowCount {};
+	float mPeakValue {};
+	float mPeakSign {};
+	uint64 mShiftReg {};
+
+	ATCassetteTurboDecodeAlgorithm mAlgorithm {};
+
+	float mHPFWindow[16] {};
+
+	float mPostFilterWindow[64] {};
+
+	void (ATCassetteDecoderTurbo::*mpAlgorithm)(const sint16 *samples, uint32 n, float *adest);
+	vdfastvector<uint32> mBitfield;
 };
 
 #endif

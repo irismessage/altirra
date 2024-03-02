@@ -125,17 +125,24 @@ tpVDPixBltTable VDGetPixBltTableX86MMX();
 
 class VDPixmapBuffer : public VDPixmap {
 public:
-	VDPixmapBuffer() : mpBuffer(NULL), mLinearSize(0) { data = NULL; format = 0; }
+	VDPixmapBuffer()
+		: VDPixmap{}
+	{
+	}
+
 	explicit VDPixmapBuffer(const VDPixmap& src);
 
-	VDPixmapBuffer(VDPixmapBuffer&& src) : mpBuffer(nullptr), mLinearSize(0) {
+	VDPixmapBuffer(VDPixmapBuffer&& src)
+		: VDPixmap{}
+	{
 		move_from(src);
 	}
 
 	VDPixmapBuffer(const VDPixmapBuffer& src);
-	VDPixmapBuffer(sint32 w, sint32 h, int format) : mpBuffer(NULL), mLinearSize(0) {
+	VDPixmapBuffer(sint32 w, sint32 h, int format) : VDPixmap{} {
 		init(w, h, format);
 	}
+
 	explicit VDPixmapBuffer(const VDPixmapLayout& layout);
 
 	~VDPixmapBuffer();
@@ -182,8 +189,8 @@ public:
 	void swap(VDPixmapBuffer&);
 
 protected:
-	char *mpBuffer;
-	size_t	mLinearSize;
+	char *mpBuffer = nullptr;
+	size_t	mLinearSize = 0;
 };
 
 

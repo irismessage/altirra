@@ -140,7 +140,7 @@ public:
 	bool OnMouseMove(sint32 x, sint32 y);
 	bool OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk);
 	bool OnMouseUp(sint32 x, sint32 y, uint32 vk);
-	bool OnMouseWheel(sint32 x, sint32 y, float delta);
+	bool OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages);
 	void OnMouseLeave();
 	void OnMouseHover(sint32 x, sint32 y);
 

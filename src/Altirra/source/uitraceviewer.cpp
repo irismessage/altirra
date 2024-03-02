@@ -23,9 +23,12 @@
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Kasumi/resample.h>
 #include <vd2/Riza/bitmap.h>
+#include <at/atcore/configvar.h>
 #include <at/atdebugger/target.h>
 #include <at/atio/cassetteimage.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/theme.h>
+#include <at/atnativeui/theme_win32.h>
 #include <at/atnativeui/uiframe.h>
 #include <windows.h>
 #include <commctrl.h>
@@ -46,10 +49,71 @@ extern ATSimulator g_sim;
 
 ///////////////////////////////////////////////////////////////////////////
 
+void ATUINotifyTraceViewerThemeChanged();
+
 namespace {
-	static constexpr uint32 kColor_PanelBackground = 0xD8D8D8;
-	static constexpr uint32 kColor_TimescaleBackground = 0xE8E8E8;
-	static constexpr uint32 kColor_ChannelBackground = 0xE6E4E4;
+	struct TraceViewerTheme {
+		ATConfigVarRGBColor mPanelBackground;
+		ATConfigVarRGBColor mTimescaleBackground;
+		ATConfigVarRGBColor mTimescaleText;
+		ATConfigVarRGBColor mChannelBackground;
+		ATConfigVarRGBColor mChannelText;
+		ATConfigVarRGBColor mChannelOutline;
+		ATConfigVarRGBColor mEventBackground;
+		ATConfigVarRGBColor mEventVBlank;
+		ATConfigVarRGBColor mEventVSync;
+		ATConfigVarRGBColor mEventOutline;
+	};
+
+	static const TraceViewerTheme kTraceViewerThemeDark {
+		.mPanelBackground		= ATConfigVarRGBColor("ui.theme.trace_viewer.dark.panel_bg", 0x303030, ATUINotifyThemeChanged),
+		.mTimescaleBackground	= ATConfigVarRGBColor("ui.theme.trace_viewer.dark.timescale_bg", 0x202020, ATUINotifyThemeChanged),
+		.mTimescaleText			= ATConfigVarRGBColor("ui.theme.trace_viewer.dark.timescale_text", 0xD0D0D0, ATUINotifyThemeChanged),
+		.mChannelBackground		= ATConfigVarRGBColor("ui.theme.trace_viewer.dark.channel_bg", 0x222424, ATUINotifyThemeChanged),
+		.mChannelText			= ATConfigVarRGBColor("ui.theme.trace_viewer.dark.channel_text", 0xD0D0D0, ATUINotifyThemeChanged),
+		.mChannelOutline		= ATConfigVarRGBColor("ui.theme.trace_viewer.dark.channel_outline", 0x505050, ATUINotifyThemeChanged),
+		.mEventBackground		= ATConfigVarRGBColor("ui.theme.trace_viewer.dark.event_bg", 0x202020, ATUINotifyThemeChanged),
+		.mEventVBlank			= ATConfigVarRGBColor("ui.theme.trace_viewer.dark.event_vblank", 0x2C2C2C, ATUINotifyThemeChanged),
+		.mEventVSync			= ATConfigVarRGBColor("ui.theme.trace_viewer.dark.event_vsync", 0x404040, ATUINotifyThemeChanged),
+		.mEventOutline			= ATConfigVarRGBColor("ui.theme.trace_viewer.dark.event_outline", 0x707070, ATUINotifyThemeChanged),
+	};
+
+	static const TraceViewerTheme kTraceViewerThemeLight {
+		.mPanelBackground		= ATConfigVarRGBColor("ui.theme.trace_viewer.light.panel_bg", 0xD8D8D8, ATUINotifyThemeChanged),
+		.mTimescaleBackground	= ATConfigVarRGBColor("ui.theme.trace_viewer.light.timescale_bg", 0xE8E8E8, ATUINotifyThemeChanged),
+		.mTimescaleText			= ATConfigVarRGBColor("ui.theme.trace_viewer.light.timescale_text", 0x000000, ATUINotifyThemeChanged),
+		.mChannelBackground		= ATConfigVarRGBColor("ui.theme.trace_viewer.light.channel_bg", 0xE6E4E4, ATUINotifyThemeChanged),
+		.mChannelText			= ATConfigVarRGBColor("ui.theme.trace_viewer.light.channel_text", 0x000000, ATUINotifyThemeChanged),
+		.mChannelOutline		= ATConfigVarRGBColor("ui.theme.trace_viewer.light.channel_outline", 0x505050, ATUINotifyThemeChanged),		// currently not used in light mode
+		.mEventBackground		= ATConfigVarRGBColor("ui.theme.trace_viewer.light.event_bg", 0xF0F0F0, ATUINotifyThemeChanged),
+		.mEventVBlank			= ATConfigVarRGBColor("ui.theme.trace_viewer.light.event_vblank", 0xC0C0C0, ATUINotifyThemeChanged),
+		.mEventVSync			= ATConfigVarRGBColor("ui.theme.trace_viewer.light.event_vsync", 0xE8E8E8, ATUINotifyThemeChanged),
+		.mEventOutline			= ATConfigVarRGBColor("ui.theme.trace_viewer.light.event_outline", 0x000000, ATUINotifyThemeChanged),
+	};
+
+	const TraceViewerTheme& GetTraceViewerTheme() {
+		return ATUIIsDarkThemeActive() ? kTraceViewerThemeDark : kTraceViewerThemeLight;
+	}
+
+	void RecolorToolstripImage(VDPixmap& px, std::initializer_list<uint32> indices) {
+		if (!ATUIIsDarkThemeActive() || px.format != nsVDPixmap::kPixFormat_XRGB8888)
+			return;
+
+		uint32 tileSize = (uint32)px.h;		// tile width/height = tilestrip height
+		uint32 n = (uint32)px.w / tileSize;
+
+		for(uint32 idx : indices) {
+			if (idx >= n)
+				continue;
+
+			for(uint32 y = 0; y < tileSize; ++y) {
+				uint32 *p = (uint32 *)((char *)px.data + px.pitch * y) + tileSize * idx;
+
+				for(uint32 x = 0; x < tileSize; ++x)
+					p[x] = (p[x] & 0xFF000000) | 0xC0C0C0;
+			}
+		}
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -160,6 +224,105 @@ typedef ATGDIObjectW32<HFONT> ATGDIFontHandleW32;
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATGDICachedImageW32 {
+	ATGDICachedImageW32(const ATGDICachedImageW32&) = delete;
+	ATGDICachedImageW32& operator=(const ATGDICachedImageW32&) = delete;
+
+public:
+	ATGDICachedImageW32() = default;
+	~ATGDICachedImageW32();
+
+	HDC GetHDC() const { return mhdc; }
+	uint32 GetWidth() const { return mWidth; }
+	uint32 GetHeight() const { return mHeight; }
+
+	void Clear();
+	void Load(HDC targetDC, const VDPixmap& px);
+
+private:
+	bool InitBitmap(HDC targetDC, uint32 w, uint32 h);
+
+	HDC mhdc = nullptr;
+	HBITMAP mhbm = nullptr;
+	HGDIOBJ mhbmOld = nullptr;
+
+	uint32 mWidth = 0;
+	uint32 mHeight = 0;
+};
+
+ATGDICachedImageW32::~ATGDICachedImageW32() {
+	Clear();
+}
+
+void ATGDICachedImageW32::Clear() {
+	if (mhdc) {
+		if (mhbmOld) {
+			SelectObject(mhdc, mhbmOld);
+			mhbmOld = nullptr;
+		}
+
+		DeleteDC(mhdc);
+		mhdc = nullptr;
+	}
+
+	if (mhbm) {
+		DeleteObject(mhbm);
+		mhbm = nullptr;
+	}
+}
+
+void ATGDICachedImageW32::Load(HDC targetDC, const VDPixmap& px) {
+	if (mhdc && (mWidth != (uint32)px.w || mHeight != (uint32)px.h))
+		Clear();
+
+	if (!mhdc && !InitBitmap(targetDC, px.w, px.h))
+		return;
+
+	BITMAPINFO bi = {
+		{
+			sizeof(BITMAPINFOHEADER),
+			(LONG)px.w,
+			(LONG)px.h,
+			1,
+			32,
+			0,
+			(DWORD)(px.w*px.h*4)
+		}
+	};
+
+	if (px.format != nsVDPixmap::kPixFormat_XRGB8888 || px.pitch != -(sint32)(px.w * 4)) {
+		VDPixmapLayout layout;
+		VDMakeBitmapCompatiblePixmapLayout(layout, px.w, px.h, nsVDPixmap::kPixFormat_XRGB8888, 0);
+
+		VDPixmapBuffer px2;
+		px2.init(layout);
+
+		VDPixmapBlt(px2, px);
+
+		SetDIBitsToDevice(mhdc, 0, 0, px.w, px.h, 0, 0, 0, px.h, px2.base(), &bi, DIB_RGB_COLORS);
+	} else {
+		SetDIBitsToDevice(mhdc, 0, 0, px.w, px.h, 0, 0, 0, px.h, (char *)px.data + px.pitch * (px.h - 1), &bi, DIB_RGB_COLORS);
+	}
+}
+
+bool ATGDICachedImageW32::InitBitmap(HDC targetDC, uint32 w, uint32 h) {
+	mhdc = CreateCompatibleDC(targetDC);
+
+	if (mhdc) {
+		mhbm = CreateCompatibleBitmap(targetDC, w, h);
+		if (mhbm) {
+			mhbmOld = SelectObject(mhdc, mhbm);
+			if (mhbmOld)
+				return true;
+		}
+	}
+
+	Clear();
+	return false;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 void ATTraceLoadDefaults(ATTraceSettings& settings) {
 	VDRegistryAppKey key("Debugger", false);
 
@@ -261,6 +424,10 @@ struct ATUITraceViewerChannel {
 	sint32 mHeight;
 	Type mType;
 	vdrefptr<IATTraceChannel> mpChannel;
+
+	static constexpr uint32 kNumCachedImages = 32;
+	ATGDICachedImageW32 mCachedBitmaps[kNumCachedImages];
+	sint32 mCachedImageIndices[kNumCachedImages];
 };
 
 struct ATUITraceViewerGroup {
@@ -553,6 +720,7 @@ ATUITraceViewerCPUProfileView::ATUITraceViewerCPUProfileView(ATUITraceViewerCont
 	, mContext(context)
 {
 	mToolbar.SetOnClicked([this](uint32 id) { OnToolbarClicked(id); });
+	mToolbar.SetDarkModeEnabled(true);
 }
 
 ATUITraceViewerCPUProfileView::~ATUITraceViewerCPUProfileView() {
@@ -600,6 +768,10 @@ bool ATUITraceViewerCPUProfileView::OnLoaded() {
 	VDPixmapBuffer pximg;
 	if (ATLoadImageResource(IDB_TOOLBAR_PROFILER2, pximg)) {
 		const uint32 n = pximg.w / pximg.h;
+
+		// Some icons need recolorization for dark mode.
+		RecolorToolstripImage(pximg, { 0, 2, 3, 4, 5, 6, 7, 9 });
+
 		mToolbar.InitImageList(n, iconSize, iconSize);
 		mToolbar.AddImages(n, pximg);
 	}
@@ -646,8 +818,16 @@ void ATUITraceViewerCPUProfileView::RemakeView() {
 			startEventIdx = mpChannel->FindEvent(mSelectionStartTime);
 			endEventIdx = mpChannel->FindEvent(mSelectionEndTime);
 
+			int digits = 2;
+			double deltaTime = mSelectionEndTime - mSelectionStartTime;
+
+			while(digits < 6 && deltaTime < 0.02) {
+				++digits;
+				deltaTime *= 10.0;
+			}
+
 			VDStringW s;
-			s.sprintf(L"Range: %.2fs - %.2fs \u00D7", mSelectionStartTime, mSelectionEndTime);
+			s.sprintf(L"Range: %.*fs - %.*fs \u00D7", digits, mSelectionStartTime, digits, mSelectionEndTime);
 			mToolbar.SetItemText(kToolbarId_Range, s.c_str());
 			mToolbar.SetItemVisible(kToolbarId_Range, true);
 		} else {
@@ -834,7 +1014,7 @@ private:
 	bool OnPaint() override;
 	void OnMouseDownL(int x, int y);
 	void OnDpiChanged() override;
-	sint32 GetBackgroundColor() const override { return kColor_ChannelBackground; }
+	sint32 GetBackgroundColor() const override { return GetTraceViewerTheme().mChannelBackground; }
 
 	ATUITraceViewerContext& mContext;
 	sint32 mScrollY = 0;
@@ -856,9 +1036,10 @@ bool ATUITraceViewerChannelView::OnPaint() {
 	int savedDC = SaveDC(hdc);
 
 	SelectObject(hdc, GetStockObject(DC_PEN));
-	SelectObject(hdc, GetStockObject(DC_BRUSH));
+	SelectObject(hdc, GetStockObject(NULL_BRUSH));
 	SelectObject(hdc, mContext.mChannelFont.get());
 
+	const TraceViewerTheme& theme = GetTraceViewerTheme();
 	const vdsize32& sz = GetClientArea().size();
 
 	for(const auto *group : mContext.mGroups) {
@@ -866,10 +1047,15 @@ bool ATUITraceViewerChannelView::OnPaint() {
 
 		SetBkMode(hdc, OPAQUE);
 		SetDCBrushColor(hdc, GetSysColor(COLOR_3DFACE));
-		DrawEdge(hdc, &rch, BDR_RAISED, BF_RECT | BF_FLAT);
+
+		if (ATUIIsDarkThemeActive()) {
+			SetDCPenColor(hdc, VDSwizzleU32(theme.mChannelOutline) >> 8);
+			Rectangle(hdc, rch.left, rch.top, rch.right, rch.bottom);
+		} else
+			DrawEdge(hdc, &rch, BDR_RAISED, BF_RECT | BF_FLAT);
 
 		SetBkMode(hdc, TRANSPARENT);
-		SetTextColor(hdc, RGB(0, 0, 0));
+		SetTextColor(hdc, VDSwizzleU32(theme.mChannelText) >> 8);
 
 		SetTextAlign(hdc, TA_LEFT | TA_TOP);
 		ExtTextOutW(hdc, rch.left + 10, rch.top + 10, 0, nullptr, group->mName.c_str(), group->mName.size(), nullptr);
@@ -1017,12 +1203,15 @@ private:
 	HDC mhdcSel = nullptr;
 	HBITMAP mhbmSel = nullptr;
 	HBITMAP mhbmSelOld = nullptr;
+
+	vdfunction<void()> mThemeChangedFn;
 };
 
 ATUITraceViewerEventView::ATUITraceViewerEventView(ATUITraceViewerContext& context)
 	: VDDialogFrameW32(IDD_TRACEVIEWER_EVENTS)
 	, mContext(context)
 {
+	mThemeChangedFn = [this] { Invalidate(); };
 }
 
 void ATUITraceViewerEventView::SetFrameChannel(IATTraceChannel *channel) {
@@ -1133,11 +1322,14 @@ bool ATUITraceViewerEventView::OnLoaded() {
 	VDDialogFrameW32::OnLoaded();
 
 	OnSize();
+	ATUIRegisterThemeChangeNotification(&mThemeChangedFn);
 
 	return false;
 }
 
 void ATUITraceViewerEventView::OnDestroy() {
+	ATUIUnregisterThemeChangeNotification(&mThemeChangedFn);
+
 	if (mhdcSel) {
 		if (mhbmSelOld) {
 			SelectObject(mhdcSel, mhbmSelOld);
@@ -1233,7 +1425,9 @@ void ATUITraceViewerEventView::OnCaptureLost() {
 }
 
 bool ATUITraceViewerEventView::OnErase(VDZHDC hdc) {
-	SetDCBrushColor(hdc, RGB(240, 240, 240));
+	const TraceViewerTheme& theme = GetTraceViewerTheme();
+
+	SetDCBrushColor(hdc, theme.mEventBackground);
 
 	RECT rClient;
 	if (GetClientRect(mhdlg, &rClient))
@@ -1269,11 +1463,13 @@ bool ATUITraceViewerEventView::OnPaint() {
 	//
 	// We cheat a little here to draw the blanking regions since we know that we're dealing
 	// with only either NTSC or PAL/SECAM timings.
+	const TraceViewerTheme& theme = GetTraceViewerTheme();
+
 	if (mpFrameChannel) {
 		mpFrameChannel->StartIteration(eventStartClip, eventEndClip, mSecondsPerPixel * 4);
 
-		SetDCPenColor(hdc, RGB(192, 192, 192));
-		SetDCBrushColor(hdc, RGB(232, 232, 232));
+		SetDCPenColor(hdc, VDSwizzleU32(theme.mEventVSync) >> 8);
+		SetDCBrushColor(hdc, VDSwizzleU32(theme.mEventVBlank) >> 8);
 
 		while(mpFrameChannel->GetNextEvent(ev)) {
 			if (ev.mpName) {
@@ -1310,7 +1506,7 @@ bool ATUITraceViewerEventView::OnPaint() {
 		for(const auto *group : mContext.mGroups) {
 			const sint32 groupY = group->mPosY;
 
-			for(const auto *ch : group->mChannels) {
+			for(auto *ch : group->mChannels) {
 				const sint32 y = ch->mPosY + groupY;
 
 				SetDCPenColor(hdc, RGB(160, 160, 160));
@@ -1329,7 +1525,6 @@ bool ATUITraceViewerEventView::OnPaint() {
 					// themselves take half a frame time on either side of that, so we expand the bracket by half
 					// a frame on either side.
 					double frameStartIndex = floor(eventStartClip / secondsPerFrame - 0.5);
-					double frameStartTime = frameStartIndex * secondsPerFrame;
 					double frameEndIndex = ceil(eventEndClip / secondsPerFrame + 0.5);
 					sint32 frameCount = (sint32)(frameEndIndex - frameStartIndex + 0.5);
 					double lastFrameTime = -DBL_MAX;
@@ -1337,17 +1532,11 @@ bool ATUITraceViewerEventView::OnPaint() {
 					for(sint32 i = 0; i < frameCount; ++i) {
 						double frameStartBracketTime = (frameStartIndex + (double)i) * secondsPerFrame;
 						double frameTime;
-						const VDPixmap *px = vch->GetNearestFrame(frameStartBracketTime, frameStartBracketTime + secondsPerFrame, frameTime);
-
+						sint32 frameIndex = vch->GetNearestFrameIndex(frameStartBracketTime, frameStartBracketTime + secondsPerFrame, frameTime);
+						
 						// skip if no frame lies within this bracket
-						if (!px)
+						if (frameIndex < 0)
 							continue;
-
-						// check if we just drew this frame
-						if (frameTime == lastFrameTime)
-							continue;
-
-						lastFrameTime = frameTime;
 
 						// compute the blit position for this frame
 						const sint32 imgx = (sint32)((frameTime - mStartTime - (double)imgw * mSecondsPerPixel * 0.5) / mSecondsPerPixel);
@@ -1356,41 +1545,51 @@ bool ATUITraceViewerEventView::OnPaint() {
 						if (imgx <= clipX1 - imgw || imgx >= clipX2)
 							continue;
 
-						mImageBufferSrc.init(px->w, px->h, nsVDPixmap::kPixFormat_XRGB8888);
-						VDPixmapBlt(mImageBufferSrc, *px);
+						// check if we just drew this frame
+						if (frameTime == lastFrameTime)
+							continue;
 
-						VDPixmapLayout layout;
-						VDMakeBitmapCompatiblePixmapLayout(layout, imgw, imgh, nsVDPixmap::kPixFormat_XRGB8888, 0);
-						mImageBufferDst.init(layout);
+						lastFrameTime = frameTime;
 
-						vdsize32 srcSize { px->w, px->h };
-						vdsize32 dstSize { imgw, imgh };
+						// select cache buffer
+						const uint32 cacheIndex = (uint32)frameIndex % ch->kNumCachedImages;
+						ATGDICachedImageW32& cachedBitmap = ch->mCachedBitmaps[cacheIndex];
 
-						if (!mpImageResampler) {
-							mpImageResampler = VDCreatePixmapResampler();
-							mpImageResampler->SetFilters(IVDPixmapResampler::kFilterLinear, IVDPixmapResampler::kFilterLinear, false);
-						}
+						// re-render cache image if not valid
+						if (!cachedBitmap.GetHDC() || ch->mCachedImageIndices[cacheIndex] != frameIndex || cachedBitmap.GetWidth() != imgw || cachedBitmap.GetHeight() != imgh) {
+							const VDPixmap *px = vch->GetFrameByIndex(frameIndex);
 
-						if (mImageResamplerSrcSize != srcSize || mImageResamplerDstSize != dstSize) {
-							mpImageResampler->Init(dstSize.w, dstSize.h, nsVDPixmap::kPixFormat_XRGB8888, srcSize.w, srcSize.h, nsVDPixmap::kPixFormat_XRGB8888);
-						}
+							if (!px)
+								continue;
 
-						mpImageResampler->Process(mImageBufferDst, mImageBufferSrc);
-						//VDPixmapResample(mImageBufferDst, mImageBufferSrc, IVDPixmapResampler::kFilterLinear);
+							mImageBufferSrc.init(px->w, px->h, nsVDPixmap::kPixFormat_XRGB8888);
+							VDPixmapBlt(mImageBufferSrc, *px);
 
-						BITMAPINFO bi = {
-							{
-								sizeof(BITMAPINFOHEADER),
-								(LONG)imgw,
-								(LONG)imgh,
-								1,
-								32,
-								0,
-								(DWORD)(imgw*imgh*4)
+							VDPixmapLayout layout;
+							VDMakeBitmapCompatiblePixmapLayout(layout, imgw, imgh, nsVDPixmap::kPixFormat_XRGB8888, 0);
+							mImageBufferDst.init(layout);
+
+							vdsize32 srcSize { px->w, px->h };
+							vdsize32 dstSize { imgw, imgh };
+
+							if (!mpImageResampler) {
+								mpImageResampler = VDCreatePixmapResampler();
+								mpImageResampler->SetFilters(IVDPixmapResampler::kFilterLinear, IVDPixmapResampler::kFilterLinear, false);
 							}
-						};
 
-						SetDIBitsToDevice(hdc, imgx, imgy, imgw, imgh, 0, 0, 0, imgh, mImageBufferDst.base(), &bi, DIB_RGB_COLORS);
+							if (mImageResamplerSrcSize != srcSize || mImageResamplerDstSize != dstSize) {
+								mpImageResampler->Init(dstSize.w, dstSize.h, nsVDPixmap::kPixFormat_XRGB8888, srcSize.w, srcSize.h, nsVDPixmap::kPixFormat_XRGB8888);
+							}
+
+							mpImageResampler->Process(mImageBufferDst, mImageBufferSrc);
+
+							cachedBitmap.Load(hdc, mImageBufferDst);
+							ch->mCachedImageIndices[cacheIndex] = frameIndex;
+						}
+
+						HDC hdcCached = cachedBitmap.GetHDC();
+						if (hdcCached)
+							BitBlt(hdc, imgx, imgy, imgw, imgh, hdcCached, 0, 0, SRCCOPY);
 					}
 				} else {
 					const sint32 eventY1 = y + (2 * mContext.mDpi + 48) / 96;
@@ -1484,7 +1683,7 @@ bool ATUITraceViewerEventView::OnPaint() {
 							}
 						}
 					} else {
-						SetDCPenColor(hdc, RGB(0, 0, 0));
+						SetDCPenColor(hdc, theme.mEventOutline);
 
 						SetBkMode(hdc, OPAQUE);
 						SetDCBrushColor(hdc, RGB(160, 255, 192));
@@ -1594,7 +1793,7 @@ public:
 private:
 	bool OnPaint() override;
 	void OnDpiChanged() override;
-	sint32 GetBackgroundColor() const override { return kColor_TimescaleBackground; }
+	sint32 GetBackgroundColor() const override { return GetTraceViewerTheme().mTimescaleBackground; }
 
 private:
 	ATUITraceViewerContext& mContext;
@@ -1653,10 +1852,12 @@ bool ATUITraceViewerTimescaleView::OnPaint() {
 	int savedDC = SaveDC(hdc);
 
 	const vdsize32& sz = GetClientArea().size();
+	const TraceViewerTheme& theme = GetTraceViewerTheme();
 
 	SelectObject(hdc, mContext.mTimestampFont.get());
 	SelectObject(hdc, GetStockObject(DC_PEN));
-	SetDCPenColor(hdc, RGB(0, 0, 0));
+	SetDCPenColor(hdc, VDSwizzleU32(theme.mTimescaleText) >> 8);
+	SetTextColor(hdc, VDSwizzleU32(theme.mTimescaleText) >> 8);
 	MoveToEx(hdc, 0, sz.h - 1, nullptr);
 	LineTo(hdc, sz.w, sz.h - 1);
 
@@ -1725,7 +1926,7 @@ private:
 	void OnSize() override;
 	void OnHScroll(uint32 id, int code) override;
 	void OnDpiChanged() override;
-	sint32 GetBackgroundColor() const override { return kColor_PanelBackground; }
+	sint32 GetBackgroundColor() const override { return GetTraceViewerTheme().mPanelBackground; }
 	bool PreNCDestroy() override { return true; }
 
 	void RebuildViews();
@@ -1779,6 +1980,8 @@ private:
 	ATUITraceViewerCPUHistoryView mCPUHistoryView;
 	ATUITraceViewerCPUProfileView mCPUProfileView;
 	VDUIProxyToolbarControl mToolbar;
+
+	vdfunction<void()> mThemeChangedFn;
 };
 
 ATUITraceViewer::ATUITraceViewer(ATTraceCollection *collection)
@@ -1794,7 +1997,10 @@ ATUITraceViewer::ATUITraceViewer(ATTraceCollection *collection)
 
 	ATTraceLoadDefaults(mSettings);
 
+	mToolbar.SetDarkModeEnabled(true);
 	mToolbar.SetOnClicked([this](uint32 id) { OnToolbarClicked(id); });
+
+	mThemeChangedFn = [this] { Invalidate(); };
 }
 
 double ATUITraceViewer::GetViewEndTime() const {
@@ -1957,10 +2163,14 @@ bool ATUITraceViewer::OnLoaded() {
 		mSimEventIdTraceLimited = g_sim.GetEventManager()->AddEventCallback(kATSimEvent_TracingLimitReached, [this] { StopTracing(); });
 	}
 
+	ATUIRegisterThemeChangeNotification(&mThemeChangedFn);
+
 	return VDDialogFrameW32::OnLoaded();
 }
 
 void ATUITraceViewer::OnDestroy() {
+	ATUIUnregisterThemeChangeNotification(&mThemeChangedFn);
+
 	mhwndHScrollbar = nullptr;
 
 	mTimescaleView.Destroy();
@@ -2150,6 +2360,8 @@ void ATUITraceViewer::RebuildToolbar() {
 		VDPixmapBuffer pximg;
 		if (ATLoadImageResource(IDB_TOOLBAR_TRACEVIEWER, pximg)) {
 			const sint32 iconSize = (GetDpiScaledMetric(SM_CXSMICON) + GetDpiScaledMetric(SM_CXICON)) / 2;
+
+			RecolorToolstripImage(pximg, { 0, 4, 5, 6 });
 
 			const uint32 n = pximg.w / pximg.h;
 			mToolbar.InitImageList(n, iconSize, iconSize);

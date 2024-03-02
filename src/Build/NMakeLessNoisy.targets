@@ -1,7 +1,16 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <UsingTask TaskName="SilentStop" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
     <Task>
-      <Code Type="Fragment" Language="cs">return false;</Code>
+      <Code Type="Fragment" Language="cs">
+        var silentProp = BuildEngine.GetType().GetProperty("AllowFailureWithoutError");
+        if (silentProp != null) {
+          // AllowFailureWithoutError is currently implemented backwards in versions of MSBuild through 15.8 (dotnet/msbuild#5701),
+          // but has now been fixed in 15.9.
+          silentProp.SetValue(BuildEngine, !(bool)silentProp.GetValue(BuildEngine));
+        }
+        
+        return false;
+      </Code>
     </Task>
   </UsingTask>
 

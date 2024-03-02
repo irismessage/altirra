@@ -20,7 +20,7 @@
 
 #include <at/atcore/devicesio.h>
 #include <at/atcore/scheduler.h>
-#include "pokey.h"
+#include <at/ataudio/pokey.h>
 
 class ATCPUEmulator;
 class ATCPUEmulatorMemory;
@@ -31,6 +31,7 @@ class ATPokeyEmulator;
 class ATPIAEmulator;
 
 struct ATTraceContext;
+class ATTraceChannelSimple;
 class ATTraceChannelFormatted;
 
 struct ATSIORequest {
@@ -48,6 +49,8 @@ class ATSIOManager final : public IATPokeySIODevice, public IATDeviceSIOManager,
 	ATSIOManager(const ATSIOManager&) = delete;
 	ATSIOManager& operator=(const ATSIOManager&) = delete;
 public:
+	static constexpr uint32 kMaxTransferSize = 65536;
+
 	ATSIOManager();
 	~ATSIOManager();
 
@@ -65,6 +68,8 @@ public:
 
 	bool GetBurstTransfersEnabled() const { return mbBurstTransfersEnabled; }
 	void SetBurstTransfersEnabled(bool enabled) { mbBurstTransfersEnabled = enabled; }
+
+	void SetDebuggerDeviceId(uint8 id);
 
 	void Init(ATCPUEmulator *cpu, ATSimulator *sim);
 	void Shutdown();
@@ -84,7 +89,7 @@ public:
 
 	void TryAccelPBIRequest();
 
-	bool TryAccelRequest(const ATSIORequest& req);
+	bool TryAccelRequest(const ATSIORequest& req, bool fromPBI);
 
 public:
 	virtual void PokeyAttachDevice(ATPokeyEmulator *pokey) override;
@@ -114,6 +119,9 @@ public:		// IATDeviceSIOManager
 	virtual sint32 GetHighSpeedIndex() const override { return 10; }
 	virtual uint32 GetCyclesPerBitRecv() const override;
 	virtual uint32 GetRecvResetCounter() const override;
+	virtual uint64 GetCommandQueueTime() const override { return mCommandQueueTime; }
+	virtual uint64 GetCommandFrameEndTime() const override { return mCommandFrameEndTime; }
+	virtual uint64 GetCommandDeassertTime() const override { return mCommandDeassertTime; }
 
 	virtual void SaveActiveCommandState(const IATDeviceSIO *device, IATObjectState **state) const;
 	virtual void LoadActiveCommandState(IATDeviceSIO *device, IATObjectState *state);
@@ -173,7 +181,7 @@ private:
 	void UpdateActiveDeviceDerivedValues();
 	void UpdateTransferRateDerivedValues();
 	void OnMotorStateChanged(bool asserted);
-	void TraceReceive(uint8 c, uint32 cyclesPerBit);
+	void TraceReceive(uint8 c, uint32 cyclesPerBit, bool postReceive);
 	void UpdatePollState(uint8 cmd, uint8 aux1, uint8 aux2);
 
 	ATCPUEmulator *mpCPU = nullptr;
@@ -197,17 +205,24 @@ private:
 	uint32	mTransferCyclesPerBitRecvMin = 0;
 	uint32	mTransferCyclesPerBitRecvMax = 0;
 	uint32	mTransferCyclesPerByte = 0;
+	uint32	mTransferStartTime = 0;
 	bool	mbTransferSend = false;
 	bool	mbTransferError = false;
 	bool	mbTransmitSynchronous = false;
 	bool	mbCommandState = false;
 	bool	mbMotorState = false;
 	bool	mbReadyState = false;
+	uint64	mCommandFrameEndTime = 0;
+	uint64	mCommandDeassertTime = 0;
+	uint64	mCommandQueueTime = 0;
+	uint32	mCommandQueueCyclesPerByte = 0;
+
 	bool	mbSIOPatchEnabled = false;
 	bool	mbOtherSIOAccelEnabled = false;
 	bool	mbDiskSIOAccelEnabled = false;
 	bool	mbBurstTransfersEnabled = false;
 	bool	mbDiskBurstTransfersEnabled = false;
+	uint8	mDebuggerDeviceId = 0;
 	uint8	mPollCount = 0;
 	uint32	mAccelTimeSkew = 0;
 	uint32	mAccelBufferAddress = 0;
@@ -260,11 +275,12 @@ private:
 	vdfastdeque<Step> mStepQueue;
 
 	ATTraceContext *mpTraceContext = nullptr;
+	ATTraceChannelSimple *mpTraceChannelBusCommand = nullptr;
 	ATTraceChannelFormatted *mpTraceChannelBusSend = nullptr;
 	ATTraceChannelFormatted *mpTraceChannelBusReceive = nullptr;
 	uint64 mTraceCommandStartTime = 0;
 
-	uint8 mTransferBuffer[65536] = {};
+	uint8 mTransferBuffer[kMaxTransferSize] = {};
 };
 
 #endif	// f_AT_SIOMANAGER_H

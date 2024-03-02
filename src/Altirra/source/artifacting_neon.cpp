@@ -50,7 +50,7 @@ void ATArtifactBlendExchange_NEON(uint32 *dst, uint32 *blendDst, uint32 n) {
 	ATArtifactBlendMayExchange_NEON(dst, blendDst, n);
 }
 
-template<typename T>
+template<bool T_ExtendedRange, typename T>
 void ATArtifactBlendMayExchangeLinear_NEON(uint32 *dst, T *blendDst, uint32 n) {
 	using blendType = std::conditional_t<std::is_const_v<T>, const uint8x16_t, uint8x16_t>;
 
@@ -62,8 +62,12 @@ void ATArtifactBlendMayExchangeLinear_NEON(uint32 *dst, T *blendDst, uint32 n) {
 	float32x4_t tiny = vmovq_n_f32(1e-8f);
 
 	while(n2--) {
-		const uint8x16_t x = *dst16;
+		uint8x16_t x = *dst16;
 		const uint8x16_t y = *blendDst16;
+
+		if constexpr(T_ExtendedRange) {
+			x = vqsubq_u8(x, vmovq_n_u8(0x40));
+		}
 
 		if constexpr(!std::is_const_v<T>) {
 			*blendDst16 = x;
@@ -87,17 +91,27 @@ void ATArtifactBlendMayExchangeLinear_NEON(uint32 *dst, T *blendDst, uint32 n) {
 		const uint32x4_t r2 = vcvtnq_u32_f32(vmulq_f32(f2, vrsqrteq_f32(vmaxq_f32(f2, tiny))));
 		const uint32x4_t r3 = vcvtnq_u32_f32(vmulq_f32(f3, vrsqrteq_f32(vmaxq_f32(f3, tiny))));
 		const uint32x4_t r4 = vcvtnq_u32_f32(vmulq_f32(f4, vrsqrteq_f32(vmaxq_f32(f4, tiny))));
+		const uint8x16_t rgb8 = vcombine_u8(vmovn_u16(vcombine_u32(vmovn_u32(r1), vmovn_u32(r2))), vmovn_u16(vcombine_u32(vmovn_u32(r3), vmovn_u32(r4))));
 		
-		*dst16++ = vcombine_u8(vmovn_u16(vcombine_u32(vmovn_u32(r1), vmovn_u32(r2))), vmovn_u16(vcombine_u32(vmovn_u32(r3), vmovn_u32(r4))));
+		if constexpr(T_ExtendedRange)
+			*dst16++ = vqaddq_u8(rgb8, vmovq_n_u8(0x40));
+		else
+			*dst16++ = rgb8;
 	}
 }
 
-void ATArtifactBlendLinear_NEON(uint32 *dst, const uint32 *src, uint32 n) {
-	ATArtifactBlendMayExchangeLinear_NEON(dst, src, n);
+void ATArtifactBlendLinear_NEON(uint32 *dst, const uint32 *src, uint32 n, bool extendedRange) {
+	if (extendedRange)
+		ATArtifactBlendMayExchangeLinear_NEON<true>(dst, src, n);
+	else
+		ATArtifactBlendMayExchangeLinear_NEON<false>(dst, src, n);
 }
 
-void ATArtifactBlendExchangeLinear_NEON(uint32 *dst, uint32 *blendDst, uint32 n) {
-	ATArtifactBlendMayExchangeLinear_NEON(dst, blendDst, n);
+void ATArtifactBlendExchangeLinear_NEON(uint32 *dst, uint32 *blendDst, uint32 n, bool extendedRange) {
+	if (extendedRange)
+		ATArtifactBlendMayExchangeLinear_NEON<true>(dst, blendDst, n);
+	else
+		ATArtifactBlendMayExchangeLinear_NEON<false>(dst, blendDst, n);
 }
 
 void ATArtifactBlendScanlines_NEON(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n, float intensity) {

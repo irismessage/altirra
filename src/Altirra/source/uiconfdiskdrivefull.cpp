@@ -45,6 +45,7 @@ bool ATUIDialogDeviceDiskDriveFull::OnLoaded() {
 	VDStringW s;
 	for(int i=1; i<=4; ++i) {
 		s.sprintf(L"Drive %d (D%d:)", i, i);
+
 		mComboDriveSelect.AddItem(s.c_str());
 	}
 

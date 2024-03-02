@@ -35,6 +35,14 @@ public:
 
 VDFORCEINLINE vdint2 operator*(const int s, const vdint2& v) { return v*s; }
 
+inline bool operator==(const vdint2& a, const vdint2& b) {
+	return a.x == b.x && a.y == b.y;
+}
+
+inline bool operator!=(const vdint2& a, const vdint2& b) {
+	return a.x != b.x || a.y != b.y;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 class vdint3 {

@@ -322,8 +322,8 @@ protected:
 	uint32	mPortBits;
 	uint32	mTargetX;
 	uint32	mTargetY;
-	uint32	mAccumX;
-	uint32	mAccumY;
+	uint16	mAccumX;
+	uint16	mAccumY;
 	bool	mbButtonState;
 
 	ATEvent *mpUpdateEvent;
@@ -353,14 +353,16 @@ public:
 	virtual void OnDetach();
 
 protected:
-	bool mbSecond;
-	uint32 mPortBits;
-	int mRawPos;
-	int mRotIndex;
-	int mRotX[4];
-	int mRotY[4];
-	float mRotXLast;
-	float mRotYLast;
+	bool mbSecond = false;
+	bool mbLeft = false;
+	bool mbRight = false;
+	uint32 mPortBits = 0;
+	int mRawPos = (228 << 16) + 0x8000;
+	int mRotIndex = 0;
+	int mRotX[4] {};
+	int mRotY[4] {};
+	float mRotXLast = 0;
+	float mRotYLast = 0;
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -372,9 +374,9 @@ public:
 	ATTabletController(int styUpPos, bool invertY);
 	~ATTabletController();
 
-	virtual void SetDigitalTrigger(uint32 trigger, bool state);
-	virtual void ApplyAnalogInput(uint32 trigger, int ds);
-	virtual void ApplyImpulse(uint32 trigger, int ds);
+	void SetDigitalTrigger(uint32 trigger, bool state) override;
+	void ApplyAnalogInput(uint32 trigger, int ds) override;
+	void ApplyImpulse(uint32 trigger, int ds) override;
 
 protected:
 	void AddDelta(int axis, int delta);
@@ -474,7 +476,7 @@ protected:
 	virtual void OnDetach();
 	void SetKeyState(uint8 index, bool state);
 	void UpdateTopButtonState();
-	void SetPot(int index, int pos);
+	void SetPot(int index, int pos, bool enableJitter);
 	void UpdatePot(int index);
 
 	bool mbActive;
@@ -483,6 +485,7 @@ protected:
 	int mIndex;
 	int mPot[2];
 	int mJitter[2];
+	uint32 mJitterLFSR = 1;
 
 	bool mbUp = false;
 	bool mbDown = false;

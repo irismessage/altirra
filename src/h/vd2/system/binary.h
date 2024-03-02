@@ -86,6 +86,90 @@
 	}
 #endif
 
+#if defined(__clang__) || defined(__GNUC__)
+template<typename T>
+struct VDUnalignedHelper {
+	T v __attribute__((packed));
+};
+
+inline uint16 VDReadUnalignedU16(const void *p) { return ((VDUnalignedHelper<uint16> __attribute__((may_alias)) *)p)->v; }
+inline sint16 VDReadUnalignedS16(const void *p) { return ((VDUnalignedHelper<sint16> __attribute__((may_alias)) *)p)->v; }
+inline uint32 VDReadUnalignedU32(const void *p) { return ((VDUnalignedHelper<uint32> __attribute__((may_alias)) *)p)->v; }
+inline sint32 VDReadUnalignedS32(const void *p) { return ((VDUnalignedHelper<sint32> __attribute__((may_alias)) *)p)->v; }
+inline uint64 VDReadUnalignedU64(const void *p) { return ((VDUnalignedHelper<uint64> __attribute__((may_alias)) *)p)->v; }
+inline sint64 VDReadUnalignedS64(const void *p) { return ((VDUnalignedHelper<sint64> __attribute__((may_alias)) *)p)->v; }
+inline float  VDReadUnalignedF  (const void *p) { return ((VDUnalignedHelper<float > __attribute__((may_alias)) *)p)->v; }
+inline double VDReadUnalignedD  (const void *p) { return ((VDUnalignedHelper<double> __attribute__((may_alias)) *)p)->v; }
+
+inline uint16 VDReadUnalignedLEU16(const void *p) { return ((VDUnalignedHelper<uint16> __attribute__((may_alias)) *)p)->v; }
+inline sint16 VDReadUnalignedLES16(const void *p) { return ((VDUnalignedHelper<sint16> __attribute__((may_alias)) *)p)->v; }
+inline uint32 VDReadUnalignedLEU32(const void *p) { return ((VDUnalignedHelper<uint32> __attribute__((may_alias)) *)p)->v; }
+inline sint32 VDReadUnalignedLES32(const void *p) { return ((VDUnalignedHelper<sint32> __attribute__((may_alias)) *)p)->v; }
+inline uint64 VDReadUnalignedLEU64(const void *p) { return ((VDUnalignedHelper<uint64> __attribute__((may_alias)) *)p)->v; }
+inline sint64 VDReadUnalignedLES64(const void *p) { return ((VDUnalignedHelper<sint64> __attribute__((may_alias)) *)p)->v; }
+inline float  VDReadUnalignedLEF  (const void *p) { return ((VDUnalignedHelper<float > __attribute__((may_alias)) *)p)->v; }
+inline double VDReadUnalignedLED  (const void *p) { return ((VDUnalignedHelper<double> __attribute__((may_alias)) *)p)->v; }
+
+inline uint16 VDReadUnalignedBEU16(const void *p) { return VDSwizzleU16(((VDUnalignedHelper<uint16> __attribute__((may_alias)) *)p)->v); }
+inline sint16 VDReadUnalignedBES16(const void *p) { return VDSwizzleS16(((VDUnalignedHelper<sint16> __attribute__((may_alias)) *)p)->v); }
+inline uint32 VDReadUnalignedBEU32(const void *p) { return VDSwizzleU32(((VDUnalignedHelper<uint32> __attribute__((may_alias)) *)p)->v); }
+inline sint32 VDReadUnalignedBES32(const void *p) { return VDSwizzleS32(((VDUnalignedHelper<sint32> __attribute__((may_alias)) *)p)->v); }
+inline uint64 VDReadUnalignedBEU64(const void *p) { return VDSwizzleU64(((VDUnalignedHelper<uint64> __attribute__((may_alias)) *)p)->v); }
+inline sint64 VDReadUnalignedBES64(const void *p) { return VDSwizzleS64(((VDUnalignedHelper<sint64> __attribute__((may_alias)) *)p)->v); }
+inline float VDReadUnalignedBEF(const void *p) {
+	union {
+		uint32 i;
+		float f;
+	} conv = {VDSwizzleU32(((VDUnalignedHelper<uint32> __attribute__((may_alias)) *)p)->v)};
+	return conv.f;
+}
+inline double VDReadUnalignedBED(const void *p) {
+	union {
+		uint64 i;
+		double d;
+	} conv = {VDSwizzleU64(((VDUnalignedHelper<uint64> __attribute__((may_alias)) *)p)->v)};
+	return conv.d;
+}
+
+inline void VDWriteUnalignedU16  (void *p, uint16 v) { ((VDUnalignedHelper<uint16> __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedS16  (void *p, sint16 v) { ((VDUnalignedHelper<sint16> __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedU32  (void *p, uint32 v) { ((VDUnalignedHelper<uint32> __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedS32  (void *p, sint32 v) { ((VDUnalignedHelper<sint32> __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedU64  (void *p, uint64 v) { ((VDUnalignedHelper<uint64> __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedS64  (void *p, sint64 v) { ((VDUnalignedHelper<sint64> __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedF    (void *p, float  v) { ((VDUnalignedHelper<float > __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedD    (void *p, double v) { ((VDUnalignedHelper<double> __attribute__((may_alias)) *)p)->v = v; }
+
+inline void VDWriteUnalignedLEU16(void *p, uint16 v) { ((VDUnalignedHelper<uint16> __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedLES16(void *p, sint16 v) { ((VDUnalignedHelper<sint16> __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedLEU32(void *p, uint32 v) { ((VDUnalignedHelper<uint32> __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedLES32(void *p, sint32 v) { ((VDUnalignedHelper<sint32> __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedLEU64(void *p, uint64 v) { ((VDUnalignedHelper<uint64> __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedLES64(void *p, sint64 v) { ((VDUnalignedHelper<sint64> __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedLEF  (void *p, float  v) { ((VDUnalignedHelper<float > __attribute__((may_alias)) *)p)->v = v; }
+inline void VDWriteUnalignedLED  (void *p, double v) { ((VDUnalignedHelper<double> __attribute__((may_alias)) *)p)->v = v; }
+
+inline void VDWriteUnalignedBEU16(void *p, uint16 v) { ((VDUnalignedHelper<uint16> __attribute__((may_alias)) *)p)->v = VDSwizzleU16(v); }
+inline void VDWriteUnalignedBES16(void *p, sint16 v) { ((VDUnalignedHelper<sint16> __attribute__((may_alias)) *)p)->v = VDSwizzleS16(v); }
+inline void VDWriteUnalignedBEU32(void *p, uint32 v) { ((VDUnalignedHelper<uint32> __attribute__((may_alias)) *)p)->v = VDSwizzleU32(v); }
+inline void VDWriteUnalignedBES32(void *p, sint32 v) { ((VDUnalignedHelper<sint32> __attribute__((may_alias)) *)p)->v = VDSwizzleS32(v); }
+inline void VDWriteUnalignedBEU64(void *p, uint64 v) { ((VDUnalignedHelper<uint64> __attribute__((may_alias)) *)p)->v = VDSwizzleU64(v); }
+inline void VDWriteUnalignedBES64(void *p, sint64 v) { ((VDUnalignedHelper<sint64> __attribute__((may_alias)) *)p)->v = VDSwizzleS64(v); }
+inline void VDWriteUnalignedBEF(void *p, float v) {
+	union {
+		float f;
+		uint32 i;
+	} conv = {v};
+	((VDUnalignedHelper<uint32> __attribute__((may_alias)) *)p)->v = VDSwizzleU32(conv.i);
+}
+inline void VDWriteUnalignedBED(void *p, double v) {
+	union {
+		double f;
+		uint64 i;
+	} conv = {v};
+	((VDUnalignedHelper<uint64> __attribute__((may_alias)) *)p)->v = VDSwizzleU64(conv.i);
+}
+#else
 inline uint16 VDReadUnalignedU16(const void *p) { return *(uint16 *)p; }
 inline sint16 VDReadUnalignedS16(const void *p) { return *(sint16 *)p; }
 inline uint32 VDReadUnalignedU32(const void *p) { return *(uint32 *)p; }
@@ -163,6 +247,7 @@ inline void VDWriteUnalignedBED(void *p, double v) {
 	} conv = {v};
 	*(uint64 *)p = VDSwizzleU64(conv.i);
 }
+#endif
 
 #define VDFromLE8(x)	(x)
 #define VDFromLE16(x)	(x)

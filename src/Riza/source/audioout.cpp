@@ -1107,7 +1107,6 @@ void VDAudioOutputDirectSoundW32::ThreadRun() {
 	}
 
 	ThreadState threadState = kThreadStateStop;
-	uint32 lastInitCount = 0;
 	bool underflow = false;
 	bool playing = false;
 	uint32 dsStreamWritePosition = 0;

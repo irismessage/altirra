@@ -23,7 +23,7 @@
 
 class ATUIDialogDevicePercom : public VDDialogFrameW32 {
 public:
-	ATUIDialogDevicePercom(ATPropertySet& props, bool atmode);
+	ATUIDialogDevicePercom(ATPropertySet& props, bool atmode, bool atspdmode);
 
 protected:
 	bool OnLoaded();
@@ -31,6 +31,7 @@ protected:
 
 	ATPropertySet& mPropSet;
 	bool mbATMode;
+	bool mbATSPDMode;
 	VDUIProxyComboBoxControl mComboFDCType;
 	VDUIProxyComboBoxControl mComboDriveSelect;
 	VDUIProxyComboBoxControl mComboDriveTypes[4];
@@ -45,17 +46,25 @@ const uint32 ATUIDialogDevicePercom::kDriveTypeIds[]={
 	IDC_DRIVETYPE4,
 };
 
-ATUIDialogDevicePercom::ATUIDialogDevicePercom(ATPropertySet& props, bool atmode)
+ATUIDialogDevicePercom::ATUIDialogDevicePercom(ATPropertySet& props, bool atmode, bool atspdmode)
 	: VDDialogFrameW32(atmode ? IDD_DEVICE_PERCOMAT : IDD_DEVICE_PERCOMRFD)
 	, mPropSet(props)
 	, mbATMode(atmode)
+	, mbATSPDMode(atspdmode)
 {
 }
 
 bool ATUIDialogDevicePercom::OnLoaded() {
-	if (mbATMode) {
+	if (mbATSPDMode) {
 		AddProxy(&mComboFDCType, IDC_FDCTYPE);
-		mComboFDCType.AddItem(L"1771+1795 (double density capable)");
+		mComboFDCType.AddItem(L"1791 (side compare optional)");
+		mComboFDCType.AddItem(L"1795 (side compare always on)");
+
+		mComboFDCType.SetSelection(1);
+	} else if (mbATMode) {
+		AddProxy(&mComboFDCType, IDC_FDCTYPE);
+		mComboFDCType.AddItem(L"1771+1791 (double density, side compare optional)");
+		mComboFDCType.AddItem(L"1771+1795 (double density, side compare always on)");
 		mComboFDCType.AddItem(L"1771 (single density only)");
 
 		mComboFDCType.SetSelection(1);
@@ -87,9 +96,16 @@ bool ATUIDialogDevicePercom::OnLoaded() {
 
 void ATUIDialogDevicePercom::OnDataExchange(bool write) {
 	if (write) {
-		if (mbATMode)
-			mPropSet.SetBool("ddcapable", mComboFDCType.GetSelection() == 0);
-		else
+		if (mbATMode) {
+			const int fdcSel = mComboFDCType.GetSelection();
+
+			if (mbATSPDMode) {
+				mPropSet.SetBool("use1795", fdcSel != 0);
+			} else {
+				mPropSet.SetBool("use1795", fdcSel == 1);
+				mPropSet.SetBool("ddcapable", fdcSel != 2);
+			}
+		} else
 			mPropSet.SetUint32("id", mComboDriveSelect.GetSelection());
 
 		VDStringA s;
@@ -104,21 +120,32 @@ void ATUIDialogDevicePercom::OnDataExchange(bool write) {
 			mComboDriveTypes[i].SetSelection(mPropSet.GetUint32(s.c_str(), i ? 0 : 1));
 		}
 
-		if (mbATMode)
-			mComboFDCType.SetSelection(mPropSet.GetBool("ddcapable", true) ? 0 : 1);
-		else
+		if (mbATMode) {
+			bool use1795 = mPropSet.GetBool("use1795", false);
+
+			if (mbATSPDMode)
+				mComboFDCType.SetSelection(use1795 ? 1 : 0);
+			else
+				mComboFDCType.SetSelection(mPropSet.GetBool("ddcapable", true) ? use1795 ? 1 : 0 : 2);
+		} else
 			mComboDriveSelect.SetSelection(mPropSet.GetUint32("id", 0));
 	}
 }
 
 bool ATUIConfDevPercomRFD(VDGUIHandle hParent, ATPropertySet& props) {
-	ATUIDialogDevicePercom dlg(props, false);
+	ATUIDialogDevicePercom dlg(props, false, false);
 
 	return dlg.ShowDialog(hParent) != 0;
 }
 
 bool ATUIConfDevPercomAT(VDGUIHandle hParent, ATPropertySet& props) {
-	ATUIDialogDevicePercom dlg(props, true);
+	ATUIDialogDevicePercom dlg(props, true, false);
+
+	return dlg.ShowDialog(hParent) != 0;
+}
+
+bool ATUIConfDevPercomATSPD(VDGUIHandle hParent, ATPropertySet& props) {
+	ATUIDialogDevicePercom dlg(props, true, true);
 
 	return dlg.ShowDialog(hParent) != 0;
 }

@@ -42,10 +42,12 @@
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/genericdialog.h>
 #include <at/atnativeui/theme.h>
+#include <at/atnativeui/theme_win32.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uiproxies.h>
 #include <at/atcore/address.h>
 #include <at/atcore/deviceprinter.h>
+#include <at/atcore/wraptime.h>
 #include <at/atdebugger/historytree.h>
 #include <at/atdebugger/historytreebuilder.h>
 #include <at/atdebugger/target.h>
@@ -138,6 +140,15 @@ bool ATConsoleShowSource(uint32 addr) {
 	w->FocusOnLine(lineInfo.mLine - 1);
 	return true;
 }
+
+///////////////////////////////////////////////////////////////////////////
+
+class IATUIDebuggerWatchPane {
+public:
+	static constexpr uint32 kTypeID = "IATUIDebuggerWatchPane"_vdtypeid;
+
+	virtual void AddWatch(const char *expr) = 0;
+};
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -261,7 +272,7 @@ private:
 	void OnSize();
 	void OnSetFocus();
 	void OnFontsUpdated();
-	bool OnCommand(UINT cmd);
+	bool OnCommand(UINT cmd, UINT code);
 	void PushAndJump(uint32 fromXAddr, uint32 toXAddr);
 	void GoPrev();
 	void GoNext();
@@ -309,6 +320,7 @@ private:
 	uint8	mViewBank = 0;
 	uint32	mViewAddrBank = 0;
 	uint32	mViewChecksum = 0;
+	bool	mbViewCanScrollUp = false;
 	uint16	mFocusAddr = 0;
 	int		mPCLine = -1;
 	uint32	mPCAddr = 0;
@@ -321,6 +333,7 @@ private:
 	ATDebuggerSettingView<bool> mbShowLabelNamespaces;
 	ATDebuggerSettingView<bool> mbShowProcedureBreaks;
 	ATDebuggerSettingView<bool> mbShowCallPreviews;
+	ATDebuggerSettingView<ATDebugger816PredictionMode> m816PredictionMode;
 	
 	ATDebuggerSystemState mLastState = {};
 
@@ -344,6 +357,7 @@ ATDisassemblyWindow::ATDisassemblyWindow()
 	mbShowLabelNamespaces.Attach(g_ATDbgSettingShowLabelNamespaces, refresh);
 	mbShowProcedureBreaks.Attach(g_ATDbgSettingShowProcedureBreaks, refresh);
 	mbShowCallPreviews.Attach(g_ATDbgSettingShowCallPreviews, refresh);
+	m816PredictionMode.Attach(g_ATDbgSetting816PredictionMode, refresh);
 }
 
 ATDisassemblyWindow::~ATDisassemblyWindow() {
@@ -382,12 +396,24 @@ LRESULT ATDisassemblyWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					if (hdr->code == CBEN_ENDEDIT) {
 						const NMCBEENDEDIT *info = (const NMCBEENDEDIT *)hdr;
 
-						sint32 addr = ATGetDebugger()->ResolveSymbol(VDTextWToA(info->szText).c_str(), true);
+						if (info->iWhy == CBENF_RETURN) {
+							VDStringW text(info->szText);
+							sint32 addr = ATGetDebugger()->ResolveSymbol(VDTextWToA(text).c_str(), true);
 
-						if (addr == -1)
-							MessageBeep(MB_ICONERROR);
-						else
-							SetPosition(addr);
+							if (addr == -1)
+								MessageBeep(MB_ICONERROR);
+							else {
+								SetPosition(addr);
+
+								SendMessageW(mhwndAddress, CBEM_DELETEITEM, 10, 0);
+
+								COMBOBOXEXITEMW item {};
+								item.mask = CBEIF_TEXT;
+								item.iItem = 0;
+								item.pszText = (LPWSTR)text.c_str();
+								SendMessageW(mhwndAddress, CBEM_INSERTITEMW, 0, (LPARAM)&item);
+							}
+						}
 
 						return FALSE;
 					}
@@ -396,7 +422,7 @@ LRESULT ATDisassemblyWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 
 		case WM_COMMAND:
-			if (OnCommand(LOWORD(wParam)))
+			if (OnCommand(LOWORD(wParam), HIWORD(wParam)))
 				return true;
 			break;
 	}
@@ -452,6 +478,16 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 				VDCheckMenuItemByCommandW32(menu, ID_CONTEXT_SHOWPROCEDUREBREAKS, mbShowProcedureBreaks);
 				VDCheckMenuItemByCommandW32(menu, ID_CONTEXT_SHOWCALLPREVIEWS, mbShowCallPreviews);
 
+				ATDebugger816PredictionMode predictMode = m816PredictionMode;
+
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_AUTO, predictMode == ATDebugger816PredictionMode::Auto);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_CURRENTCONTEXT, predictMode == ATDebugger816PredictionMode::CurrentContext);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_M16X16, predictMode == ATDebugger816PredictionMode::M16X16);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_M16X8, predictMode == ATDebugger816PredictionMode::M16X8);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_M8X16, predictMode == ATDebugger816PredictionMode::M8X16);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_M8X8, predictMode == ATDebugger816PredictionMode::M8X8);
+				VDCheckRadioMenuItemByCommandW32(menu, ID_65C816M_EMULATION, predictMode == ATDebugger816PredictionMode::Emulation);
+
 				if (x >= 0 && y >= 0) {
 					POINT pt = {x, y};
 
@@ -476,7 +512,14 @@ bool ATDisassemblyWindow::OnCreate() {
 	if (!VDCreateTextEditor(~mpTextEditor))
 		return false;
 
-	mhwndAddress = CreateWindowEx(0, WC_COMBOBOXEX, _T(""), WS_VISIBLE|WS_CHILD|WS_TABSTOP|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_HASSTRINGS|CBS_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)kID_Address, g_hInst, NULL);
+	// We cannot set CBS_HASSTRINGS here, because while ComboBox supports it, ComboBoxEx doesn't -- and in fact
+	// if you set it, it screws up the drop-down because the combobox has strings while the comboboxex is trying
+	// to owner draw it.
+	//
+	// Also, for some silly reason, the initial height here has to be greater than some unspecified threshold or
+	// the drop-down doesn't work, even though it is resized to the actual number of items. No amount of post-creation
+	// resizing will fix this.
+	mhwndAddress = CreateWindowEx(0, WC_COMBOBOXEXW, _T(""), WS_VISIBLE|WS_CHILD|WS_TABSTOP|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_AUTOHSCROLL, 0, 0, 0, 100, mhwnd, (HMENU)kID_Address, g_hInst, NULL);
 
 	mhwndButtonPrev = CreateWindowEx(0, WC_BUTTON, _T("<"), WS_VISIBLE|WS_CHILD|WS_TABSTOP|BS_PUSHBUTTON, 0, 0, 0, 0, mhwnd, (HMENU)kID_ButtonPrev, g_hInst, nullptr);
 	mhwndButtonNext = CreateWindowEx(0, WC_BUTTON, _T(">"), WS_VISIBLE|WS_CHILD|WS_TABSTOP|BS_PUSHBUTTON, 0, 0, 0, 0, mhwnd, (HMENU)kID_ButtonNext, g_hInst, nullptr);
@@ -505,13 +548,12 @@ void ATDisassemblyWindow::OnSize() {
 	if (GetClientRect(mhwnd, &r)) {
 		RECT rAddr = {0};
 		int comboHt = 0;
-		int comboX = 0;
 
 		if (mhwndAddress) {
 			GetWindowRect(mhwndAddress, &rAddr);
 
 			comboHt = rAddr.bottom - rAddr.top;
-			VDVERIFY(SetWindowPos(mhwndAddress, NULL, comboHt * 2, 0, r.right - comboHt * 2, comboHt, SWP_NOZORDER|SWP_NOACTIVATE));
+			VDVERIFY(SetWindowPos(mhwndAddress, NULL, comboHt * 2, 0, r.right - comboHt * 2, comboHt * 5, SWP_NOZORDER|SWP_NOACTIVATE));
 		}
 
 		if (mhwndButtonNext) {
@@ -532,10 +574,37 @@ void ATDisassemblyWindow::OnSetFocus() {
 	::SetFocus(mhwndTextEditor);
 }
 
-bool ATDisassemblyWindow::OnCommand(UINT cmd) {
+bool ATDisassemblyWindow::OnCommand(UINT cmd, UINT code) {
 	const auto UnsafeTruncateAddress = [](uint32 addr) { return (uint16)addr; };
 
 	switch(cmd) {
+		case 101:
+			if (code == CBN_SELENDOK) {
+				LRESULT idx = SendMessage(mhwndAddress, CB_GETCURSEL, 0, 0);
+				if (idx != CB_ERR) {
+					vdblock<WCHAR> buf(256);
+					COMBOBOXEXITEMW item {};
+					item.mask = CBEIF_TEXT;
+					item.iItem = idx;
+					item.cchTextMax = 255;
+					item.pszText = buf.data();
+
+					if (SendMessageW(mhwndAddress, CBEM_GETITEMW, 0, (LPARAM)&item)) {
+						buf.back() = 0;
+
+						sint32 addr = ATGetDebugger()->ResolveSymbol(VDTextWToA(item.pszText).c_str(), true);
+
+						if (addr == -1)
+							MessageBeep(MB_ICONERROR);
+						else
+							SetPosition(addr);
+					}
+				}
+
+				return true;
+			}
+			break;
+
 		case ID_CONTEXT_GOTOSOURCE:
 			{
 				int line = mpTextEditor->GetCursorLine();
@@ -589,6 +658,34 @@ bool ATDisassemblyWindow::OnCommand(UINT cmd) {
 		case ID_CONTEXT_SHOWCALLPREVIEWS:
 			mbShowCallPreviews = !mbShowCallPreviews;
 			return true;
+
+		case ID_65C816M_AUTO:
+			m816PredictionMode = ATDebugger816PredictionMode::Auto;
+			break;
+
+		case ID_65C816M_CURRENTCONTEXT:
+			m816PredictionMode = ATDebugger816PredictionMode::CurrentContext;
+			break;
+
+		case ID_65C816M_M8X8:
+			m816PredictionMode = ATDebugger816PredictionMode::M8X8;
+			break;
+
+		case ID_65C816M_M8X16:
+			m816PredictionMode = ATDebugger816PredictionMode::M8X16;
+			break;
+
+		case ID_65C816M_M16X8:
+			m816PredictionMode = ATDebugger816PredictionMode::M16X8;
+			break;
+
+		case ID_65C816M_M16X16:
+			m816PredictionMode = ATDebugger816PredictionMode::M16X16;
+			break;
+
+		case ID_65C816M_EMULATION:
+			m816PredictionMode = ATDebugger816PredictionMode::Emulation;
+			break;
 
 		case kID_ButtonPrev:
 			GoPrev();
@@ -752,8 +849,58 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 	const ATDebugDisasmMode disasmMode = target->GetDisasmMode();
 	bool autoModeSwitching = false;
 
-	if (disasmMode == kATDebugDisasmMode_65C816)
-		autoModeSwitching = true;
+	if (disasmMode == kATDebugDisasmMode_65C816) {
+		bool forcedMode = false;
+		uint8 forcedModeMX = 0;
+		bool forcedModeEmulation = false;
+
+		switch(m816PredictionMode) {
+			case ATDebugger816PredictionMode::Auto:
+				forcedMode = false;
+				autoModeSwitching = true;
+				break;
+
+			case ATDebugger816PredictionMode::CurrentContext:
+				forcedMode = false;
+				autoModeSwitching = false;
+				break;
+
+			case ATDebugger816PredictionMode::M8X8:
+				forcedMode = true;
+				forcedModeMX = 0x30;
+				forcedModeEmulation = false;
+				break;
+
+			case ATDebugger816PredictionMode::M8X16:
+				forcedMode = true;
+				forcedModeMX = 0x20;
+				forcedModeEmulation = false;
+				break;
+
+			case ATDebugger816PredictionMode::M16X8:
+				forcedMode = true;
+				forcedModeMX = 0x10;
+				forcedModeEmulation = false;
+				break;
+
+			case ATDebugger816PredictionMode::M16X16:
+				forcedMode = true;
+				forcedModeMX = 0x00;
+				forcedModeEmulation = false;
+				break;
+
+			case ATDebugger816PredictionMode::Emulation:
+				forcedMode = true;
+				forcedModeMX = 0x30;
+				forcedModeEmulation = true;
+				break;
+		}
+
+		if (forcedMode) {
+			hent.mP = (hent.mP & 0xCF) + forcedModeMX;
+			hent.mbEmulation = forcedModeEmulation;
+		}
+	}
 
 	const uint32 bankBase = startAddr & UINT32_C(0xFFFF0000);
 	const uint8 bank = (uint8)(bankBase >> 16);
@@ -773,10 +920,6 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 
 		kBM_EndBlock = 0x08,
 		kBM_Special = 0x10
-	};
-
-	struct BreakMap {
-		uint8 fl[256];
 	};
 
 	static constexpr std::array<uint8, 256> kBreakMap6502 = [] {
@@ -821,8 +964,11 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 		// JML al
 		breakMap[0x5C] |= kBM_EndBlock | kBM_ExpandAbs24;
 
-		// JSR (abs,X)
-		breakMap[0xFC] |= kBM_EndBlock;
+		// RTL
+		breakMap[0x6B] |= kBM_EndBlock;
+
+		// BRL rl
+		breakMap[0x82] |= kBM_EndBlock;
 
 		return breakMap;
 	}();
@@ -949,7 +1095,6 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 				}
 			}
 
-			bool isProcEnd = false;
 			if (breakInfo & kBM_EndBlock) {
 				if (stopOnProcedureEnd)
 					procBreak = true;
@@ -974,9 +1119,8 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 		}
 
 		// auto-switch mode if necessary
-		if (autoModeSwitching) {
+		if (autoModeSwitching)
 			ATDisassemblePredictContext(hent, disasmMode);
-		}
 
 		// don't allow disassembly to skip the desired PC
 		if (newpc > (uint16)focusAddr && pc < (uint16)focusAddr) {
@@ -1041,11 +1185,11 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 	if (mLastState.mpDebugTarget != state.mpDebugTarget) {
 		changed = true;
 		memoryViewChanged = true;
-	} else if (mLastState.mPC != state.mPC || mLastState.mFramePC != state.mFramePC || mLastState.mPCBank != state.mPCBank)
+	} else if (mLastState.mPC != state.mPC || mLastState.mFrameExtPC != state.mFrameExtPC || mLastState.mPCBank != state.mPCBank)
 		changed = true;
 
 	if (changed && !memoryViewChanged) {
-		if ((uint16)(state.mFramePC - mViewStart) >= mViewLength || state.mPCBank != mViewBank || g_sim.GetCPU().GetCPUSubMode() != mLastSubMode)
+		if ((uint32)(state.mFrameExtPC - (mViewAddrBank + mViewStart)) >= mViewLength || g_sim.GetCPU().GetCPUSubMode() != mLastSubMode)
 			memoryViewChanged = true;
 	}
 
@@ -1062,7 +1206,7 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 
 	mPCAddr = (uint32)state.mInsnPC + ((uint32)state.mPCBank << 16);
 	mPCLine = -1;
-	mFramePCAddr = (uint32)state.mFramePC + ((uint32)state.mPCBank << 16);
+	mFramePCAddr = state.mFrameExtPC;
 	mFramePCLine = -1;
 
 	if (changed && memoryViewChanged) {
@@ -1115,10 +1259,10 @@ void ATDisassemblyWindow::OnTextEditorScrolled(int firstVisiblePara, int lastVis
 		return;
 
 	if (!mLines.empty()) {
-		bool prev = (firstVisiblePara < visibleParaCount);
-		bool next = (lastVisiblePara >= totalParaCount - visibleParaCount);
+		const bool prev = (firstVisiblePara < visibleParaCount) && mbViewCanScrollUp;
+		const bool next = (lastVisiblePara >= totalParaCount - visibleParaCount);
 
-		if (prev ^ next) {
+		if (prev != next) {
 			int cenIdx = mpTextEditor->GetParagraphForYPos(mpTextEditor->GetVisibleHeight() >> 1);
 			
 			cenIdx = std::clamp(cenIdx, 0, (int)mLines.size() - 1);
@@ -1279,6 +1423,8 @@ void ATDisassemblyWindow::SetPosition(uint32 addr) {
 
 	mViewAddrBank = addr & 0xFFFF0000;
 	mViewBank = (uint8)(addr >> 16);
+	mbViewCanScrollUp = (addr16 > offset);
+
 	mViewStart = ATDisassembleGetFirstAnchor(dbg->GetTarget(), addr16 >= offset ? addr16 - offset : 0, addr16, mViewAddrBank);
 
 	RemakeView(addr);
@@ -1547,7 +1693,7 @@ protected:
 	void OnFontsUpdated();
 
 	HWND	mhwndList;
-	VDStringA	mState;
+	VDStringW	mState;
 
 	vdfastvector<uint16> mFrames;
 };
@@ -1632,6 +1778,8 @@ void ATCallStackWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState&
 
 	mFrames.resize(n);
 
+	int selIdx = (int)SendMessage(mhwndList, LB_GETCURSEL, 0, 0);
+
 	SendMessage(mhwndList, LB_RESETCONTENT, 0, 0);
 	for(uint32 i=0; i<n; ++i) {
 		const ATCallStackFrame& fr = frames[i];
@@ -1643,14 +1791,17 @@ void ATCallStackWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState&
 		if (dbs->LookupSymbol(fr.mPC, kATSymbol_Execute, sym))
 			symname = sym.mpName;
 
-		mState.sprintf("%c%04X: %c%04X (%s)"
-			, state.mFramePC == fr.mPC ? '>' : ' '
+		mState.sprintf(L"%c%04X: %c%04X (%hs)"
+			, (state.mFrameExtPC ^ fr.mPC) & 0xFFFF ? L' ' : L'>'		// not entirely correct, but we don't have full info
 			, fr.mSP
-			, fr.mP & 0x04 ? '*' : ' '
+			, fr.mP & 0x04 ? L'*' : L' '
 			, fr.mPC
 			, symname);
-		SendMessageA(mhwndList, LB_ADDSTRING, 0, (LPARAM)mState.c_str());
+		SendMessageW(mhwndList, LB_ADDSTRING, 0, (LPARAM)mState.c_str());
 	}
+
+	if (selIdx >= 0 && (uint32)selIdx < n)
+		SendMessageW(mhwndList, LB_SETCURSEL, selIdx, 0);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1717,11 +1868,11 @@ protected:
 	VDStringA mModulePath;
 	uint32	mModuleId;
 	uint16	mFileId;
-	sint32	mLastPC;
-	sint32	mLastFramePC;
+	sint32	mLastPC = -1;
+	uint32	mLastFrameExtPC = ~UINT32_C(0);
 
-	int		mPCLine;
-	int		mFramePCLine;
+	int		mPCLine = -1;
+	int		mFramePCLine = -1;
 
 	uint32	mEventCallbackId = 0;
 
@@ -1745,10 +1896,6 @@ protected:
 
 ATSourceWindow::ATSourceWindow(uint32 id, const wchar_t *name)
 	: ATUIDebuggerPane(id, name)
-	, mLastPC(-1)
-	, mLastFramePC(-1)
-	, mPCLine(-1)
-	, mFramePCLine(-1)
 {
 
 }
@@ -2176,10 +2323,10 @@ void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDText
 }
 
 void ATSourceWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
-	if (mLastFramePC == state.mFramePC && mLastPC == state.mPC)
+	if (mLastFrameExtPC == state.mFrameExtPC && mLastPC == state.mPC)
 		return;
 
-	mLastFramePC = state.mFramePC;
+	mLastFrameExtPC = state.mFrameExtPC;
 	mLastPC = state.mPC;
 
 	int pcline = -1;
@@ -2187,7 +2334,7 @@ void ATSourceWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& st
 
 	if (!state.mbRunning) {
 		pcline = GetLineForAddress(state.mInsnPC);
-		frameline = GetLineForAddress(state.mFramePC);
+		frameline = GetLineForAddress(state.mFrameExtPC);
 	}
 
 	if (pcline >= 0)
@@ -2380,9 +2527,10 @@ IATSourceWindow *ATOpenSourceWindow(const wchar_t *s) {
 		title += s;
 
 		static const wchar_t kCatchAllFilter[] = L"\0All files (*.*)\0*.*";
-		VDStringW filter(s);
+		const wchar_t *baseName = VDFileSplitPath(s);
+		VDStringW filter(baseName);
 		filter += L'\0';
-		filter += s;
+		filter += baseName;
 		filter.append(std::begin(kCatchAllFilter), std::end(kCatchAllFilter));		// !! intentionally capturing end null
 
 		fn = VDGetLoadFileName('src ', (VDGUIHandle)hwndParent, title.c_str(), filter.c_str(), NULL);
@@ -2588,26 +2736,37 @@ bool ATHistoryWindow::JumpToCycle(uint32 cycle) {
 
 double ATHistoryWindow::DecodeTapeSample(uint32 cycle) {
 	auto& cassette = g_sim.GetCassette();
-
-	if (!cassette.IsMotorRunning())
-		return -1;
+	const bool isRunning = cassette.IsMotorRunning();
 
 	auto& sch = *g_sim.GetScheduler();
+	uint32 referenceCycle = isRunning ? sch.GetTick() : (uint32)cassette.GetLastStopCycle();
+	double referencePos = isRunning ? cassette.GetSamplePos() : cassette.GetLastStopSamplePos();
+	sint32 referenceOffset = isRunning ? cassette.GetSampleCycleOffset() : 0;
+
+	if (!isRunning && ATWrapTime{cycle} >= referenceCycle)
+		return referencePos;
+
 	const sint32 tsDelta = (sint32)(cycle - sch.GetTick());
 
-	return (double)cassette.GetSamplePos() + (double)tsDelta / (double)kATCassetteCyclesPerDataSample;
+	return referencePos + ((double)(tsDelta + referenceOffset)) / (double)kATCassetteCyclesPerDataSample;
 }
 
 double ATHistoryWindow::DecodeTapeSeconds(uint32 cycle) {
 	auto& cassette = g_sim.GetCassette();
-
-	if (!cassette.IsMotorRunning())
-		return -1;
+	const bool isRunning = cassette.IsMotorRunning();
 
 	auto& sch = *g_sim.GetScheduler();
-	const sint32 tsDelta = (sint32)(cycle - sch.GetTick());
+	uint32 referenceCycle = isRunning ? sch.GetTick() : (uint32)cassette.GetLastStopCycle();
+	double referencePos = (isRunning ? cassette.GetSamplePos() : cassette.GetLastStopSamplePos()) / (double)kATCassetteDataSampleRate;
+	sint32 referenceOffset = isRunning ? cassette.GetSampleCycleOffset() : 0;
 
-	return (double)cassette.GetSamplePos() / (double)kATCassetteDataSampleRate + (double)tsDelta * sch.GetRate().AsInverseDouble();
+	if (!isRunning && ATWrapTime{cycle} >= referenceCycle)
+		return referencePos;
+
+	const sint32 tsDelta = (sint32)(cycle - referenceCycle);
+
+	// In PAL we run the tape slightly faster, so we need to use the tape rate here and not the actual machine cycle rate.
+	return referencePos + (double)(tsDelta + referenceOffset) / (kATCassetteDataSampleRateD * kATCassetteCyclesPerDataSample);
 }
 
 uint32 ATHistoryWindow::ConvertRawTimestamp(uint32 rawCycle) {
@@ -2712,8 +2871,7 @@ uint32 ATHistoryWindow::ReadInsns(const ATCPUHistoryEntry **ppInsns, uint32 star
 
 	IATDebugTargetHistory *history = vdpoly_cast<IATDebugTargetHistory *>(ATGetDebugger()->GetTarget());
 
-	history->ExtractHistory(ppInsns, startIndex, n);
-	return n;
+	return history->ExtractHistory(ppInsns, startIndex, n);
 }
 
 void ATHistoryWindow::OnEsc() {
@@ -2722,7 +2880,7 @@ void ATHistoryWindow::OnEsc() {
 }
 
 void ATHistoryWindow::JumpToInsn(uint32 pc) {
-	ATGetDebugger()->SetFramePC(pc);
+	ATGetDebugger()->SetFrameExtPC(pc);
 
 	ATActivateUIPane(kATUIPaneId_Disassembly, true);
 }
@@ -2807,14 +2965,18 @@ void ATHistoryWindow::OnPaint() {
 	int sdc = SaveDC(hdc);
 	if (sdc) {
 		if (mbHistoryError) {
+			const ATUIThemeColorsW32& tc = ATUIGetThemeColorsW32();
+
 			SelectObject(hdc, g_propFont);
 			SetBkMode(hdc, TRANSPARENT);
 
 			RECT rText {};
 			GetClientRect(mhwnd, &rText);
-			FillRect(hdc, &rText, (HBRUSH)(COLOR_WINDOW + 1));
+			FillRect(hdc, &rText, tc.mContentBgBrush);
 
 			InflateRect(&rText, -GetSystemMetrics(SM_CXEDGE)*2, -GetSystemMetrics(SM_CYEDGE)*2);
+
+			SetTextColor(hdc, tc.mContentFgCRef);
 
 			static const WCHAR kText[] = L"History cannot be displayed because CPU history tracking is not enabled. History tracking can be enabled in CPU Options.";
 			DrawTextW(hdc, kText, (sizeof kText / sizeof(kText[0])) - 1, &rText, DT_TOP | DT_LEFT | DT_NOPREFIX | DT_WORDBREAK);
@@ -2949,24 +3111,30 @@ protected:
 	VDFunctionThunkInfo	*mpCmdEditThunk;
 	WNDPROC	mCmdEditProc;
 
-	bool	mbRunState;
-	bool	mbEditShownDisabled;
-	bool	mbAppendTimerStarted;
+	bool	mbRunState = false;
+	bool	mbEditShownDisabled = false;
+	bool	mbAppendTimerStarted = false;
+	bool	mbAppendForceClear = false;
+	uint32	mAppendTimerStartTime = 0;
 
 	VDDelegate	mDelegatePromptChanged;
 	VDDelegate	mDelegateRunStateChanged;
 
 	enum { kHistorySize = 8192 };
 
-	char	mHistory[kHistorySize];
-	int		mHistoryFront;
-	int		mHistoryBack;
-	int		mHistorySize;
-	int		mHistoryCurrent;
+	int		mHistoryFront = 0;
+	int		mHistoryBack = 0;
+	int		mHistorySize = 0;
+	int		mHistoryCurrent = 0;
 
 	VDStringW	mAppendBuffer;
+	uint32	mAppendBufferLFCount = 0;
+	uint32	mAppendBufferSplitOffset = 0;
+	uint32	mAppendBufferSplitLFCount = 0;
 
 	vdfunction<void()> mpFnThemeUpdated;
+
+	char	mHistory[kHistorySize];
 };
 
 ATConsoleWindow *g_pConsoleWindow;
@@ -2981,13 +3149,6 @@ ATConsoleWindow::ATConsoleWindow()
 	, mLogProc(NULL)
 	, mpCmdEditThunk(NULL)
 	, mCmdEditProc(NULL)
-	, mbRunState(false)
-	, mbEditShownDisabled(false)
-	, mbAppendTimerStarted(false)
-	, mHistoryFront(0)
-	, mHistoryBack(0)
-	, mHistorySize(0)
-	, mHistoryCurrent(0)
 {
 	mPreferredDockCode = kATContainerDockBottom;
 }
@@ -3214,8 +3375,8 @@ void ATConsoleWindow::OnThemeUpdated() {
 	if (useDark) {
 		cf.dwMask |= CFM_COLOR | CFM_BACKCOLOR | CFM_EFFECTS;
 		cf.dwEffects = 0;
-		cf.crTextColor = RGB(216, 216, 216);
-		cf.crBackColor = RGB(32, 32, 32);
+		cf.crTextColor = ATUIGetThemeColorsW32().mContentFgCRef;
+		cf.crBackColor = ATUIGetThemeColorsW32().mContentBgCRef;
 	}
 
 	if (mhwndLog) {
@@ -3287,9 +3448,8 @@ void ATConsoleWindow::OnRunStateChanged(IATDebugger *target, bool rs) {
 }
 
 void ATConsoleWindow::Write(const char *s) {
-	if (mAppendBuffer.size() >= 4096)
-		FlushAppendBuffer();
-
+	uint32 newLFCount = 0;
+	uint32 newLFOffset = 0;
 	while(*s) {
 		const char *eol = strchr(s, '\n');
 		const char *end = eol;
@@ -3305,12 +3465,40 @@ void ATConsoleWindow::Write(const char *s) {
 
 		mAppendBuffer += '\r';
 		mAppendBuffer += '\n';
+		++newLFCount;
+		newLFOffset = (uint32)mAppendBuffer.size();
 
 		s = eol+1;
 	}
 
+	if (newLFCount) {
+		mAppendBufferLFCount += newLFCount;
+
+		if (mAppendBufferLFCount >= mAppendBufferSplitLFCount + 4000) {
+			if (mAppendBufferSplitLFCount) {
+				mAppendBuffer.erase(0, mAppendBufferSplitOffset);
+
+				newLFOffset -= mAppendBufferSplitOffset;
+				mAppendBufferLFCount -= mAppendBufferSplitLFCount;
+			}
+
+			mAppendBufferSplitOffset = newLFOffset;
+			mAppendBufferSplitLFCount = mAppendBufferLFCount;
+			mbAppendForceClear = true;
+
+			if (mbAppendTimerStarted && (uint32)(VDGetCurrentTick() - mAppendTimerStartTime) >= 50) {
+				FlushAppendBuffer();
+
+				KillTimer(mhwnd, kTimerId_AddText);
+				mbAppendTimerStarted = false;
+				return;
+			}
+		}
+	}
+
 	if (!mbAppendTimerStarted && !mAppendBuffer.empty()) {
 		mbAppendTimerStarted = true;
+		mAppendTimerStartTime = VDGetCurrentTick();
 
 		SetTimer(mhwnd, kTimerId_AddText, 10, NULL);
 	}
@@ -3524,30 +3712,211 @@ void ATConsoleWindow::AddToHistory(const char *s) {
 }
 
 void ATConsoleWindow::FlushAppendBuffer() {
-	if (SendMessage(mhwndLog, EM_GETLINECOUNT, 0, 0) > 5000) {
-		POINT pt;
-		SendMessage(mhwndLog, EM_GETSCROLLPOS, 0, (LPARAM)&pt);
-		int idx = (int)SendMessage(mhwndLog, EM_LINEINDEX, 2000, 0);
-		SendMessage(mhwndLog, EM_SETSEL, 0, idx);
-		SendMessage(mhwndLog, EM_REPLACESEL, FALSE, (LPARAM)_T(""));
-		SendMessage(mhwndLog, EM_SETSCROLLPOS, 0, (LPARAM)&pt);
+	bool redrawOff = false;
+
+	if (mbAppendForceClear) {
+		SETTEXTEX st { ST_DEFAULT | ST_UNICODE, 1200 };
+
+		redrawOff = true;
+		SendMessageW(mhwndLog, WM_SETREDRAW, FALSE, 0);
+		SendMessageW(mhwndLog, EM_SETTEXTEX, (WPARAM)&st, (LPARAM)mAppendBuffer.data());
+	} else {
+		redrawOff = true;
+		SendMessageW(mhwndLog, WM_SETREDRAW, FALSE, 0);
+
+		if (SendMessage(mhwndLog, EM_GETLINECOUNT, 0, 0) > 5000) {
+			POINT pt;
+			SendMessage(mhwndLog, EM_GETSCROLLPOS, 0, (LPARAM)&pt);
+			int idx = (int)SendMessage(mhwndLog, EM_LINEINDEX, 2000, 0);
+			SendMessage(mhwndLog, EM_SETSEL, 0, idx);
+			SendMessage(mhwndLog, EM_REPLACESEL, FALSE, (LPARAM)_T(""));
+			SendMessage(mhwndLog, EM_SETSCROLLPOS, 0, (LPARAM)&pt);
+		}
+
+		SendMessageW(mhwndLog, EM_SETSEL, -1, -1);
+		SendMessageW(mhwndLog, EM_REPLACESEL, FALSE, (LPARAM)mAppendBuffer.data());
 	}
 
 	SendMessageW(mhwndLog, EM_SETSEL, -1, -1);
-	SendMessageW(mhwndLog, EM_REPLACESEL, FALSE, (LPARAM)mAppendBuffer.data());
-	SendMessageW(mhwndLog, EM_SETSEL, -1, -1);
 	ShowEnd();
 
+	if (redrawOff) {
+		SendMessageW(mhwndLog, WM_SETREDRAW, TRUE, 0);
+		RedrawWindow(mhwndLog, nullptr, nullptr, RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+	}
+
 	mAppendBuffer.clear();
+	mbAppendForceClear = false;
+	mAppendBufferLFCount = 0;
+	mAppendBufferSplitLFCount = 0;
+	mAppendBufferSplitOffset = 0;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATMemoryWindowPanel final : public VDDialogFrameW32 {
+public:
+	ATMemoryWindowPanel();
+	~ATMemoryWindowPanel();
+
+	void SetOnRelayout(vdfunction<void()> fn);
+	void SetOnAddressSet(vdfunction<void(const wchar_t *)> fn);
+	void SetOnColumnsSet(vdfunction<bool(uint32&)> fn);
+
+	void SetColumns(uint32 cols);
+	void SetAddressText(const wchar_t *s);
+
+	void ToggleExpand();
+	sint32 GetDesiredHeight() const;
+
+public:
+	bool OnLoaded() override;
+
+private:
+	bool mbExpanded = false;
+
+	VDUIProxyButtonControl mExpandView;
+	VDUIProxyComboBoxExControl mAddressView;
+	VDUIProxyComboBoxExControl mColumnsView;
+
+	vdfunction<void()> mpOnRelayout;
+	vdfunction<void(const wchar_t *)> mpOnAddressSet;
+	vdfunction<bool(uint32&)> mpOnColumnsSet;
+
+	static constexpr uint32 kStdColumnCounts[] = {
+		1, 2, 4, 8, 16, 24, 32, 40, 48, 64, 80, 128, 256
+	};
+};
+
+ATMemoryWindowPanel::ATMemoryWindowPanel()
+	: VDDialogFrameW32(IDD_DEBUG_MEMORYCTL)
+{
+	mAddressView.SetOnEndEdit(
+		[this](const wchar_t *s) -> bool {
+			if (mpOnAddressSet)
+				mpOnAddressSet(s);
+
+			return true;
+		}
+	);
+
+	mColumnsView.SetOnSelectionChanged(
+		[this](int idx) {
+			if ((unsigned)idx < vdcountof(kStdColumnCounts)) {
+				uint32 cols = kStdColumnCounts[idx];
+				mpOnColumnsSet(cols);
+			}
+		}
+	);
+
+	mColumnsView.SetOnEndEdit(
+		[this](const wchar_t *s) -> bool {
+			uint32 columns = wcstoul(s, nullptr, 10);
+			if (mpOnColumnsSet) {
+				uint32 newCols = columns;
+				if (!mpOnColumnsSet(newCols))
+					MessageBeep(MB_ICONEXCLAMATION);
+
+				if (newCols != columns) {
+					VDStringW text;
+					text.sprintf(L"%u", (unsigned)newCols);
+					mColumnsView.SetCaption(text.c_str());
+				}
+			}
+
+			return true;
+		}
+	);
+
+	mExpandView.SetOnClicked(
+		[this] {
+			ToggleExpand();
+		}
+	);
+}
+
+ATMemoryWindowPanel::~ATMemoryWindowPanel()
+{
+}
+
+void ATMemoryWindowPanel::SetOnRelayout(vdfunction<void()> fn) {
+	mpOnRelayout = std::move(fn);
+}
+
+void ATMemoryWindowPanel::SetOnAddressSet(vdfunction<void(const wchar_t *)> fn) {
+	mpOnAddressSet = std::move(fn);
+}
+
+void ATMemoryWindowPanel::SetOnColumnsSet(vdfunction<bool(uint32&)> fn) {
+	mpOnColumnsSet = std::move(fn);
+}
+
+void ATMemoryWindowPanel::SetColumns(uint32 cols) {
+	VDStringW s;
+	s.sprintf(L"%u", cols);
+	mColumnsView.SetCaption(s.c_str());
+}
+
+void ATMemoryWindowPanel::SetAddressText(const wchar_t *s) {
+	mAddressView.SetCaption(s);
+}
+
+bool ATMemoryWindowPanel::OnLoaded() {
+	AddProxy(&mExpandView, IDC_EXPAND);
+	AddProxy(&mAddressView, IDC_ADDRESS);
+	AddProxy(&mColumnsView, IDC_COLUMNS);
+
+	VDStringW s;
+	for(const uint32 n : kStdColumnCounts) {
+		s.sprintf(L"%u", n);
+		mColumnsView.AddItem(s.c_str());
+	}
+
+	return VDDialogFrameW32::OnLoaded();
+}
+
+void ATMemoryWindowPanel::ToggleExpand() {
+	mbExpanded = !mbExpanded;
+
+	if (mpOnRelayout)
+		mpOnRelayout();
+}
+
+sint32 ATMemoryWindowPanel::GetDesiredHeight() const {
+	if (!mbExpanded) {
+		ATUINativeWindowProxy divider(GetControl(IDC_STATIC_DIVIDER));
+
+		if (divider.IsValid())
+			return divider.GetArea().top;
+	}
+
+	return ComputeTemplatePixelSize().h;
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
 class ATMemoryWindow final : public ATUIDebuggerPane,
-							public IATDebuggerClient,
-							public IVDUIMessageFilterW32
+							public IATDebuggerClient
 {
 public:
+	enum class ValueMode : uint8 {
+		HexBytes,
+		HexWords,
+		DecBytes,
+		DecWords
+	};
+
+	enum class InterpretMode : uint8 {
+		None,
+		Atascii,
+		Internal,
+		Font1Bpp,
+		Font2Bpp,
+		Graphics1Bpp,
+		Graphics2Bpp,
+		Graphics4Bpp,
+	};
+
 	ATMemoryWindow(uint32 id = kATUIPaneId_Memory);
 	~ATMemoryWindow();
 
@@ -3555,49 +3924,94 @@ public:
 	void OnDebuggerEvent(ATDebugEvent eventId);
 
 	void SetPosition(uint32 addr);
+	void SetColumns(uint32 cols, bool updateUI);
+
+	void SetValueMode(ValueMode mode);
+	void SetInterpretMode(InterpretMode mode);
 
 protected:
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 
-	bool OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
-
 	bool OnCreate();
 	void OnDestroy();
 	void OnSize();
 	void OnFontsUpdated();
+	void RecreateContentFont();
+	void UpdateContentFontMetrics();
+	void UpdateLineHeight();
+	void UpdateScrollRange();
+	void UpdateHScrollRange();
+	void AdjustColumnCount();
 	void OnThemeUpdated();
+	void OnMouseWheel(uint32 keyMask, float clicks);
 	void OnPaint();
-	void RemakeView(uint32 focusAddr);
+	void OnViewScroll(sint32 pos, bool tracking);
+	void OnViewHScroll(sint32 pos, bool tracking);
+	void RemakeView(uint32 focusAddr, bool fromScroll);
+	int GetAddressLength() const;
 	bool GetAddressFromPoint(int x, int y, uint32& addr) const;
+	void InvalidateAddress(uint32 addr);
 
-	HWND	mhwndAddress;
-	HMENU	mMenu;
+	HMENU	mMenu = nullptr;
+	HFONT	mhfontContents = nullptr;
 
-	RECT	mTextArea;
-	uint32	mViewStart;
-	bool	mbViewValid;
-	uint32	mCharWidth;
-	uint32	mLineHeight;
-	uintptr	mLastTarget;
+	RECT	mTextArea {};
+	uint32	mViewStart = 0;
+	bool	mbViewValid = false;
+	uint32	mCharWidth = 16;
+	uint32	mCharHeight = 16;
+	uint32	mLineHeight = 16;
+	uintptr	mLastTarget = 0;
+	sint32	mHScrollPos = 0;
+	sint32	mCompletelyVisibleRows = 0;
+	sint32	mPartiallyVisibleRows = 1;
+	float	mWheelAccum = 0;
+	float	mZoomFactor = 1;
+	uint32	mColumns = 16;
+	std::optional<uint32> mHighlightedAddress;
+
+	ValueMode mValueMode = ValueMode::HexBytes;
+	InterpretMode mInterpretMode = InterpretMode::Atascii;
 
 	VDStringW	mName;
 	VDStringA	mTempLine;
 	VDStringA	mTempLine2;
 
+	// the currently active view data
+	uint32 mViewDataStart = 0;
 	vdfastvector<uint8> mViewData;
+
+	// snapshot from last remake with current view (same view start)
+	vdfastvector<uint8> mRefViewData;
+	vdfastvector<uint8> mRefViewData2;
+
+	// snapshot from previous cycle and view
+	uint32 mOldViewDataStart = 0;
+	vdfastvector<uint8> mOldViewData;
+
+	uint32 mViewDataCycle = 0;
+	uint32 mCurrentCycle = 0;
+
+	uint32 mChangedBitsStartAddress = 0;
 	vdfastvector<uint32> mChangedBits;
+	vdfastvector<uint32> mNewChangedBits;
+
+	ATMemoryWindowPanel mControlPanel;
+	VDUIProxyScrollBarControl mScrollBar;
+	VDUIProxyScrollBarControl mHScrollBar;
+	VDUIProxyMessageDispatcherW32 mDispatcher;
+
+	uint8 mRenderLineData[256];
+
+	// Most of the time the image data is the same size, except when we have
+	// to render 2bpp data as 8bpp.
+	uint8 mRenderImageData[1024];
 };
 
 ATMemoryWindow::ATMemoryWindow(uint32 id)
 	: ATUIDebuggerPane(id, L"Memory")
-	, mhwndAddress(NULL)
 	, mMenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_MEMORY_CONTEXT_MENU)))
-	, mTextArea()
-	, mViewStart(0)
-	, mbViewValid(false)
-	, mLineHeight(16)
-	, mLastTarget(0)
 {
 	mPreferredDockCode = kATContainerDockRight;
 
@@ -3605,6 +4019,32 @@ ATMemoryWindow::ATMemoryWindow(uint32 id)
 		mName.sprintf(L"Memory %u", (id & kATUIPaneId_IndexMask) + 1);
 		SetName(mName.c_str());
 	}
+
+	mScrollBar.SetOnValueChanged([this](sint32 pos, bool tracking) { OnViewScroll(pos, tracking); });
+	mHScrollBar.SetOnValueChanged([this](sint32 pos, bool tracking) { OnViewHScroll(pos, tracking); });
+
+	mControlPanel.SetOnAddressSet(
+		[this](const wchar_t *s) {
+			sint32 addr = ATGetDebugger()->ResolveSymbol(VDTextWToU8(VDStringSpanW(s)).c_str(), true);
+
+			if (addr < 0)
+				MessageBeep(MB_ICONERROR);
+			else
+				SetPosition(addr);
+		}
+	);
+
+	mControlPanel.SetOnColumnsSet(
+		[this](uint32& cols) -> bool {
+			SetColumns(cols, false);
+
+			return mColumns == cols;
+		}
+	);
+
+	mControlPanel.SetOnRelayout(
+		[this] { OnSize(); }
+	);
 }
 
 ATMemoryWindow::~ATMemoryWindow() {
@@ -3613,30 +4053,13 @@ ATMemoryWindow::~ATMemoryWindow() {
 }
 
 LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+	LRESULT r;
+	if (mDispatcher.TryDispatch(msg, wParam, lParam, r))
+		return r;
+
 	switch(msg) {
 		case WM_SIZE:
 			OnSize();
-			break;
-
-		case WM_NOTIFY:
-			{
-				const NMHDR *hdr = (const NMHDR *)lParam;
-
-				if (hdr->idFrom == 101) {
-					if (hdr->code == CBEN_ENDEDIT) {
-						const NMCBEENDEDIT *info = (const NMCBEENDEDIT *)hdr;
-
-						sint32 addr = ATGetDebugger()->ResolveSymbol(VDTextWToA(info->szText).c_str(), true);
-
-						if (addr < 0)
-							MessageBeep(MB_ICONERROR);
-						else
-							SetPosition(addr);
-
-						return FALSE;
-					}
-				}
-			}
 			break;
 
 		case WM_ERASEBKGND:
@@ -3646,12 +4069,62 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			OnPaint();
 			return 0;
 
+		case WM_MOUSEMOVE:
+			{
+				TRACKMOUSEEVENT tme { sizeof(TRACKMOUSEEVENT) };
+				tme.dwFlags = TME_LEAVE;
+				tme.hwndTrack = mhwnd;
+				TrackMouseEvent(&tme);
+
+				int x = GET_X_LPARAM(lParam);
+				int y = GET_Y_LPARAM(lParam);
+				POINT pt = {x, y};
+				uint32 addr;
+
+				std::optional<uint32> highlightAddr;
+				if (GetAddressFromPoint(pt.x, pt.y, addr))
+					highlightAddr = addr;
+
+				if (mHighlightedAddress != highlightAddr) {
+					if (mHighlightedAddress.has_value())
+						InvalidateAddress(mHighlightedAddress.value());
+
+					mHighlightedAddress = highlightAddr;
+					if (highlightAddr.has_value())
+						InvalidateAddress(highlightAddr.value());
+				}
+			}
+			return 0;
+
+		case WM_MOUSELEAVE:
+			if (mHighlightedAddress) {
+				InvalidateAddress(mHighlightedAddress.value());
+				mHighlightedAddress.reset();
+			}
+			return 0;
+
+		case WM_MOUSEWHEEL:
+			OnMouseWheel(LOWORD(wParam), (float)(SHORT)HIWORD(wParam) / (float)WHEEL_DELTA);
+			return 0;
+
 		case WM_CONTEXTMENU:
 			{
 				int x = GET_X_LPARAM(lParam);
 				int y = GET_Y_LPARAM(lParam);
+
 				POINT pt = {x, y};
-				ScreenToClient(mhwnd, &pt);
+				if (x == -1 && y == -1) {
+					// keyboard activation - just use top-left of text area
+					pt.x = mTextArea.left;
+					pt.y = mTextArea.top;
+
+					auto [cx, cy] = TransformClientToScreen(vdpoint32(pt.x, pt.y));
+					x = cx;
+					y = cy;
+				} else {
+					// mouse activation
+					ScreenToClient(mhwnd, &pt);
+				}
 
 				uint32 addr;
 				const bool addrValid = GetAddressFromPoint(pt.x, pt.y, addr);
@@ -3660,18 +4133,113 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 				VDEnableMenuItemByCommandW32(hSubMenu, ID_CONTEXT_TOGGLEREADBREAKPOINT, addrValid);
 				VDEnableMenuItemByCommandW32(hSubMenu, ID_CONTEXT_TOGGLEWRITEBREAKPOINT, addrValid);
+				VDEnableMenuItemByCommandW32(hSubMenu, ID_CONTEXT_ADDTOWATCHWINDOW, addrValid);
+				VDEnableMenuItemByCommandW32(hSubMenu, ID_CONTEXT_ADDTOSCREENWATCH, addrValid);
+
+				VDCheckRadioMenuItemByCommandW32(hSubMenu, ID_SHOWVALUESAS_BYTES, mValueMode == ValueMode::HexBytes);
+				VDCheckRadioMenuItemByCommandW32(hSubMenu, ID_SHOWVALUESAS_WORDS, mValueMode == ValueMode::HexWords);
+				VDCheckRadioMenuItemByCommandW32(hSubMenu, ID_SHOWVALUESAS_DECBYTES, mValueMode == ValueMode::DecBytes);
+				VDCheckRadioMenuItemByCommandW32(hSubMenu, ID_SHOWVALUESAS_DECWORDS, mValueMode == ValueMode::DecWords);
+
+				VDCheckRadioMenuItemByCommandW32(hSubMenu, ID_CONTEXT_INTERPRET_NONE, mInterpretMode == InterpretMode::None);
+				VDCheckRadioMenuItemByCommandW32(hSubMenu, ID_CONTEXT_INTERPRET_ATASCII, mInterpretMode == InterpretMode::Atascii);
+				VDCheckRadioMenuItemByCommandW32(hSubMenu, ID_CONTEXT_INTERPRET_INTERNAL, mInterpretMode == InterpretMode::Internal);
+				VDCheckRadioMenuItemByCommandW32(hSubMenu, ID_CONTEXT_INTERPRET_1BPPFONT, mInterpretMode == InterpretMode::Font1Bpp);
+				VDCheckRadioMenuItemByCommandW32(hSubMenu, ID_CONTEXT_INTERPRET_2BPPFONT, mInterpretMode == InterpretMode::Font2Bpp);
+				VDCheckRadioMenuItemByCommandW32(hSubMenu, ID_CONTEXT_INTERPRET_1BPPGFX, mInterpretMode == InterpretMode::Graphics1Bpp);
+				VDCheckRadioMenuItemByCommandW32(hSubMenu, ID_CONTEXT_INTERPRET_2BPPGFX, mInterpretMode == InterpretMode::Graphics2Bpp);
+				VDCheckRadioMenuItemByCommandW32(hSubMenu, ID_CONTEXT_INTERPRET_4BPPGFX, mInterpretMode == InterpretMode::Graphics4Bpp);
 
 				UINT id = TrackPopupMenu(hSubMenu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, 0, mhwnd, NULL);
 
+				IATDebugger& d = *ATGetDebugger();
+
 				switch(id) {
+					case ID_SHOWVALUESAS_BYTES:
+						SetValueMode(ValueMode::HexBytes);
+						break;
+
+					case ID_SHOWVALUESAS_WORDS:
+						SetValueMode(ValueMode::HexWords);
+						break;
+
+					case ID_SHOWVALUESAS_DECBYTES:
+						SetValueMode(ValueMode::DecBytes);
+						break;
+
+					case ID_SHOWVALUESAS_DECWORDS:
+						SetValueMode(ValueMode::DecWords);
+						break;
+
+					case ID_CONTEXT_RESETZOOM:
+						if (mZoomFactor != 1.0f) {
+							mZoomFactor = 1.0f;
+
+							RecreateContentFont();
+						}
+						break;
+
+					case ID_CONTEXT_INTERPRET_NONE:
+						SetInterpretMode(InterpretMode::None);
+						break;
+
+					case ID_CONTEXT_INTERPRET_ATASCII:
+						SetInterpretMode(InterpretMode::Atascii);
+						break;
+
+					case ID_CONTEXT_INTERPRET_INTERNAL:
+						SetInterpretMode(InterpretMode::Internal);
+						break;
+
+					case ID_CONTEXT_INTERPRET_1BPPFONT:
+						SetInterpretMode(InterpretMode::Font1Bpp);
+						break;
+
+					case ID_CONTEXT_INTERPRET_2BPPFONT:
+						SetInterpretMode(InterpretMode::Font2Bpp);
+						break;
+
+					case ID_CONTEXT_INTERPRET_1BPPGFX:
+						SetInterpretMode(InterpretMode::Graphics1Bpp);
+						break;
+
+					case ID_CONTEXT_INTERPRET_2BPPGFX:
+						SetInterpretMode(InterpretMode::Graphics2Bpp);
+						break;
+
+					case ID_CONTEXT_INTERPRET_4BPPGFX:
+						SetInterpretMode(InterpretMode::Graphics4Bpp);
+						break;
+
 					case ID_CONTEXT_TOGGLEREADBREAKPOINT:
 						if (addrValid)
-							ATGetDebugger()->ToggleAccessBreakpoint(addr, false);
+							d.ToggleAccessBreakpoint(addr, false);
 						break;
 
 					case ID_CONTEXT_TOGGLEWRITEBREAKPOINT:
 						if (addrValid)
-							ATGetDebugger()->ToggleAccessBreakpoint(addr, true);
+							d.ToggleAccessBreakpoint(addr, true);
+						break;
+
+					case ID_CONTEXT_ADDTOWATCHWINDOW:
+						ATActivateUIPane(kATUIPaneId_WatchN + 0, true);
+
+						if (auto *watchPane = ATGetUIPaneAs<IATUIDebuggerWatchPane>(kATUIPaneId_WatchN + 0)) {
+							VDStringA s;
+
+							if (mValueMode == ValueMode::HexWords)
+								s.sprintf("dw $%04X", addr);
+							else
+								s.sprintf("db $%04X", addr);
+
+							watchPane->AddWatch(s.c_str());
+						}
+						
+						break;
+
+					case ID_CONTEXT_ADDTOSCREENWATCH:
+						if (d.AddWatch(addr, mValueMode == ValueMode::HexWords ? 2 : 1) < 0)
+							ATUIShowError2((VDGUIHandle)GetHandleW32(), L"The limit of on-screen watches has already been reached.", L"Too many watches");
 						break;
 				}
 			}
@@ -3682,19 +4250,29 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
 }
 
-bool ATMemoryWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result) {
-	return false;
-}
-
 bool ATMemoryWindow::OnCreate() {
 	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
-	mhwndAddress = CreateWindowEx(0, WC_COMBOBOXEX, _T(""), WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_HASSTRINGS|CBS_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)101, g_hInst, NULL);
-	if (!mhwndAddress)
+	if (!mControlPanel.Create((VDGUIHandle)mhwnd))
 		return false;
 
-	VDSetWindowTextFW32(mhwndAddress, L"%hs", ATGetDebugger()->GetAddressText(mViewStart, true).c_str());
+	mControlPanel.SetAddressText(VDTextU8ToW(ATGetDebugger()->GetAddressText(mViewStart, true)).c_str());
+
+	HWND hwndScrollBar = CreateWindowEx(0, WC_SCROLLBAR, _T(""), WS_VISIBLE|WS_CHILD|SBS_VERT, 0, 0, 0, 0, mhwnd, (HMENU)102, g_hInst, nullptr);
+	if (!hwndScrollBar)
+		return false;
+
+	mScrollBar.Attach(hwndScrollBar);
+	mDispatcher.AddControl(&mScrollBar);
+
+	HWND hwndScrollBar2 = CreateWindowEx(0, WC_SCROLLBAR, _T(""), WS_VISIBLE|WS_CHILD|SBS_HORZ, 0, 0, 0, 0, mhwnd, (HMENU)103, g_hInst, nullptr);
+	if (!hwndScrollBar2)
+		return false;
+	mHScrollBar.Attach(hwndScrollBar2);
+	mDispatcher.AddControl(&mHScrollBar);
+
+	UpdateScrollRange();
 
 	OnFontsUpdated();
 
@@ -3705,6 +4283,14 @@ bool ATMemoryWindow::OnCreate() {
 
 void ATMemoryWindow::OnDestroy() {
 	ATGetDebugger()->RemoveClient(this);
+
+	if (mhfontContents) {
+		DeleteObject(mhfontContents);
+		mhfontContents = nullptr;
+	}
+
+	mControlPanel.Destroy();
+
 	ATUIDebuggerPane::OnDestroy();
 }
 
@@ -3714,39 +4300,77 @@ void ATMemoryWindow::OnSize() {
 		return;
 
 	RECT rAddr = {0};
-	int comboHt = 0;
 
-	if (mhwndAddress) {
-		GetWindowRect(mhwndAddress, &rAddr);
+	sint32 panelHeight = mControlPanel.GetDesiredHeight();
 
-		comboHt = rAddr.bottom - rAddr.top;
-		VDVERIFY(SetWindowPos(mhwndAddress, NULL, 0, 0, r.right, comboHt, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE));
-	}
+	mControlPanel.SetArea(vdrect32(0, 0, r.right, panelHeight));
+	mControlPanel.SetColumns(mColumns);
 
+	uint32 dpi = ATUIGetWindowDpiW32(mhwnd);
+	uint32 globalDpi = ATUIGetGlobalDpiW32();
+	int rawVSWidth = GetSystemMetrics(SM_CXVSCROLL);
+	int rawHSHeight = GetSystemMetrics(SM_CYHSCROLL);
+	int vsWidth = dpi && globalDpi ? VDRoundToInt((float)rawVSWidth * (float)dpi / (float)globalDpi) : rawVSWidth;
+	int hsHeight = dpi && globalDpi ? VDRoundToInt((float)rawHSHeight * (float)dpi / (float)globalDpi) : rawHSHeight;
+	
 	mTextArea.left = 0;
-	mTextArea.top = comboHt;
-	mTextArea.right = r.right;
-	mTextArea.bottom = r.bottom;
+	mTextArea.top = panelHeight;
+	mTextArea.right = r.right - vsWidth;
+	mTextArea.bottom = r.bottom - hsHeight;
 
 	if (mTextArea.bottom < mTextArea.top)
 		mTextArea.bottom = mTextArea.top;
 
-	int rows = (mTextArea.bottom - mTextArea.top + mLineHeight - 1) / mLineHeight;
+	if (mTextArea.right < mTextArea.left)
+		mTextArea.right = mTextArea.left;
 
-	mChangedBits.resize(rows, 0);
+	mScrollBar.SetArea(vdrect32(mTextArea.right, mTextArea.top, mTextArea.right + vsWidth, mTextArea.bottom));
+	mHScrollBar.SetArea(vdrect32(0, mTextArea.bottom, mTextArea.right, mTextArea.bottom + hsHeight));
 
-	RemakeView(mViewStart);
+	mCompletelyVisibleRows = (mTextArea.bottom - mTextArea.top) / mLineHeight;
+	mPartiallyVisibleRows = (mTextArea.bottom - mTextArea.top + mLineHeight - 1) / mLineHeight;
+
+	mScrollBar.SetPageSize(std::max<sint32>(mCompletelyVisibleRows, 1));
+	mHScrollBar.SetPageSize(mTextArea.right - mTextArea.left);
+
+	mbViewValid = false;
+	RemakeView(mViewStart, false);
 }
 
 void ATMemoryWindow::OnFontsUpdated() {
+	RecreateContentFont();
+}
+
+void ATMemoryWindow::RecreateContentFont() {
+	if (mhfontContents) {
+		DeleteObject(mhfontContents);
+		mhfontContents = nullptr;
+	}
+
+	if (mZoomFactor != 1.0f) {
+		LOGFONT lf = g_monoFontDesc;
+
+		lf.lfHeight = std::min<int>(-1, VDRoundToInt((float)lf.lfHeight * mZoomFactor));
+
+		mhfontContents = CreateFontIndirect(&lf);
+	}
+
+	UpdateContentFontMetrics();
+}
+
+void ATMemoryWindow::UpdateContentFontMetrics() {
+	bool doUpdates = false;
+
 	HDC hdc = GetDC(mhwnd);
 	if (hdc) {
-		HGDIOBJ hOldFont = SelectObject(hdc, g_monoFont);
+		HGDIOBJ hOldFont = SelectObject(hdc, mhfontContents ? mhfontContents : g_monoFont);
 		if (hOldFont) {
 			TEXTMETRIC tm = {0};
 			if (GetTextMetrics(hdc, &tm)) {
 				mCharWidth = tm.tmAveCharWidth;
-				mLineHeight = tm.tmHeight;
+				mCharHeight = tm.tmHeight;
+
+				doUpdates = true;
 			}
 
 			SelectObject(hdc, hOldFont);
@@ -3755,11 +4379,139 @@ void ATMemoryWindow::OnFontsUpdated() {
 		ReleaseDC(mhwnd, hdc);
 	}
 
-	InvalidateRect(mhwnd, NULL, TRUE);
+	if (doUpdates) {
+		UpdateLineHeight();
+		UpdateHScrollRange();
+		Invalidate();
+	}
+}
+
+void ATMemoryWindow::UpdateLineHeight() {
+	uint32 lineHeight = mCharHeight;
+
+	switch(mInterpretMode) {
+		case InterpretMode::Font1Bpp:
+		case InterpretMode::Font2Bpp:
+			{
+				// compute min size as 24x24 characters at 96 dpi, scaling up for high DPI (this may be 0 if we couldn't
+				// get window DPI -- that's fine)
+				uint32 minHeight = VDRoundToInt((float)ATUIGetWindowDpiW32(mhwnd) * 24.0f / 96.0f * mZoomFactor);
+
+				// use the larger of char height and graphic height, rounded up to a multiple of 8 for clean scaling
+				lineHeight = (std::max<uint32>(minHeight, lineHeight) + 7) & ~7;
+			}
+			break;
+	}
+
+	if (mLineHeight != lineHeight) {
+		mLineHeight = lineHeight;
+
+		OnSize();
+		Invalidate();
+	}
+}
+
+void ATMemoryWindow::UpdateScrollRange() {
+	mScrollBar.SetRange(0, 0x10000 / mColumns);
+}
+
+void ATMemoryWindow::UpdateHScrollRange() {
+	// "ADDR:"
+	sint32 numChars = GetAddressLength() + 1;
+
+	// add in value data
+	switch (mValueMode) {
+		case ValueMode::HexBytes:
+			numChars += 3 * mColumns;
+			break;
+
+		case ValueMode::HexWords:
+			numChars += 5 * (mColumns >> 1);
+			break;
+
+		case ValueMode::DecBytes:
+			numChars += 4 * mColumns;
+			break;
+
+		case ValueMode::DecWords:
+			numChars += 6 * (mColumns >> 1);
+			break;
+	}
+
+	// add in interpret data
+	sint32 numPixels = 0;
+	switch (mInterpretMode) {
+		case InterpretMode::None:
+			break;
+
+		case InterpretMode::Atascii:
+		case InterpretMode::Internal:
+			numChars += 3 + mColumns;
+			break;
+
+		case InterpretMode::Font1Bpp:
+		case InterpretMode::Font2Bpp:
+			++numChars;
+			numPixels += mLineHeight * (mColumns >> 3);
+			break;
+
+		case InterpretMode::Graphics1Bpp:
+		case InterpretMode::Graphics2Bpp:
+		case InterpretMode::Graphics4Bpp:
+			++numChars;
+			numPixels += mColumns * 8 * std::max<uint32>(mLineHeight / 2, 1);
+			break;
+	}
+
+	mHScrollBar.SetRange(0, numPixels + numChars * mCharWidth);
+}
+
+void ATMemoryWindow::AdjustColumnCount() {
+	SetColumns(mColumns, true);
 }
 
 void ATMemoryWindow::OnThemeUpdated() {
-	InvalidateRect(mhwnd, NULL, TRUE);
+	Invalidate();
+}
+
+void ATMemoryWindow::OnMouseWheel(uint32 keyMask, float clicks) {
+	mWheelAccum += clicks;
+
+	sint32 actions = (sint32)(mWheelAccum + (mWheelAccum < 0 ? -0.01f : 0.01f));
+	mWheelAccum -= (float)actions;
+
+	if (!actions)
+		return;
+
+	if (keyMask & MK_CONTROL) {
+		float newZoomScale = std::clamp(mZoomFactor * powf(2.0f, 0.1f * actions), 0.1f, 10.0f);
+
+		if (fabsf(newZoomScale - 1.0f) < 0.05f)
+			newZoomScale = 1.0f;
+
+		if (mZoomFactor != newZoomScale) {
+			mZoomFactor = newZoomScale;
+
+			RecreateContentFont();
+		}
+	} else {
+		UINT linesPerAction = 3;
+		if (SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &linesPerAction, FALSE)) {
+			if (linesPerAction == WHEEL_PAGESCROLL)
+				linesPerAction = mCompletelyVisibleRows;
+		}
+
+		sint32 deltaLines = actions * linesPerAction;
+
+		if (deltaLines) {
+			sint32 v = mScrollBar.GetValue();
+		
+			v -= deltaLines;
+			mScrollBar.SetValue(v);
+
+			OnViewScroll(mScrollBar.GetValue(), false);
+		}
+	}
 }
 
 void ATMemoryWindow::OnPaint() {
@@ -3770,60 +4522,246 @@ void ATMemoryWindow::OnPaint() {
 
 	int saveHandle = ::SaveDC(hdc);
 	if (saveHandle) {
-		uint8 data[16];
+		struct {
+			BITMAPINFO bi;
+			RGBQUAD palext[15];
+		} imghdr;
+
+		imghdr.bi.bmiHeader.biSize				= sizeof(BITMAPINFOHEADER);
+		imghdr.bi.bmiHeader.biWidth				= mColumns;
+		imghdr.bi.bmiHeader.biHeight			= 8;
+		imghdr.bi.bmiHeader.biPlanes			= 1;
+		imghdr.bi.bmiHeader.biBitCount			= 1;
+		imghdr.bi.bmiHeader.biCompression		= BI_RGB;
+		imghdr.bi.bmiHeader.biSizeImage			= 0;
+		imghdr.bi.bmiHeader.biXPelsPerMeter		= 0;
+		imghdr.bi.bmiHeader.biYPelsPerMeter		= 0;
+		imghdr.bi.bmiHeader.biClrUsed			= 2;
+		imghdr.bi.bmiHeader.biClrImportant		= 2;
+		imghdr.bi.bmiColors[0] = RGBQUAD { 16, 16, 16, 0 };
+
+		switch(mInterpretMode) {
+			case InterpretMode::Font1Bpp:
+				imghdr.palext[0] = RGBQUAD { 240, 240, 240, 0 };
+				break;
+
+			case InterpretMode::Font2Bpp:
+				imghdr.bi.bmiHeader.biWidth				= mColumns >> 1;
+				imghdr.bi.bmiHeader.biBitCount			= 8;
+				imghdr.bi.bmiHeader.biClrUsed			= 4;
+				imghdr.bi.bmiHeader.biClrImportant		= 4;
+				imghdr.palext[0] = RGBQUAD {  91,  91,  91, 0 };
+				imghdr.palext[1] = RGBQUAD { 165, 165, 165, 0 };
+				imghdr.palext[2] = RGBQUAD { 240, 240, 240, 0 };
+				break;
+
+			case InterpretMode::Graphics1Bpp:
+				imghdr.bi.bmiHeader.biWidth = mColumns << 3;
+				imghdr.bi.bmiHeader.biHeight = 1;
+				imghdr.palext[0] = RGBQUAD { 240, 240, 240, 0 };
+				break;
+
+			case InterpretMode::Graphics2Bpp:
+				imghdr.bi.bmiHeader.biWidth = mColumns << 2;
+				imghdr.bi.bmiHeader.biHeight = 1;
+				imghdr.bi.bmiHeader.biBitCount = 8;
+				imghdr.bi.bmiHeader.biClrUsed = 4;
+				imghdr.bi.bmiHeader.biClrImportant = 4;
+				imghdr.palext[0] = RGBQUAD {  91,  91,  91, 0 };
+				imghdr.palext[1] = RGBQUAD { 165, 165, 165, 0 };
+				imghdr.palext[2] = RGBQUAD { 240, 240, 240, 0 };
+				break;
+
+			case InterpretMode::Graphics4Bpp:
+				imghdr.bi.bmiHeader.biWidth = mColumns << 1;
+				imghdr.bi.bmiHeader.biHeight = 1;
+				imghdr.bi.bmiHeader.biBitCount = 4;
+				imghdr.bi.bmiHeader.biClrUsed = 16;
+				imghdr.bi.bmiHeader.biClrImportant = 16;
+
+				for(int i=0; i<15; ++i) {
+					BYTE c = (BYTE)(16 + (240 * i + 7) / 15);
+
+					imghdr.palext[i] = RGBQUAD { c, c, c, 0 };
+				}
+				break;
+		}
+
+		const uint32 imgw = imghdr.bi.bmiHeader.biWidth;
+		const uint32 imgh = imghdr.bi.bmiHeader.biHeight;
 
 		const ATUIThemeColors& tc = ATUIGetThemeColors();
 
 		COLORREF normalTextColor = VDSwizzleU32(tc.mContentFg) >> 8;
 		COLORREF changedTextColor = ((normalTextColor & 0xFEFEFE) >> 1) | 0x0000FF;
+		COLORREF normalBkColor = VDSwizzleU32(tc.mContentBg) >> 8;
+		COLORREF highlightedBkColor = VDSwizzleU32(tc.mHighlightedBg) >> 8;
+		COLORREF highlightedTextColor = VDSwizzleU32(tc.mHighlightedFg) >> 8;
 
-		::SelectObject(hdc, g_monoFont);
+		::IntersectClipRect(hdc, mTextArea.left, mTextArea.top, mTextArea.right, mTextArea.bottom);
+
+		::SelectObject(hdc, mhfontContents ? mhfontContents : g_monoFont);
 		::SetTextAlign(hdc, TA_TOP | TA_LEFT);
 		::SetBkMode(hdc, TRANSPARENT);
-		::SetBkColor(hdc, VDSwizzleU32(tc.mContentBg) >> 8);
+		::SetBkColor(hdc, normalBkColor);
+		::SetStretchBltMode(hdc, STRETCH_DELETESCANS);
 
 		int rowStart	= (ps.rcPaint.top - mTextArea.top) / mLineHeight;
 		int rowEnd		= (ps.rcPaint.bottom - mTextArea.top + mLineHeight - 1) / mLineHeight;
 
+		int textOffsetY = ((int)mLineHeight - (int)mCharHeight) >> 1;
+
 		uint32 incMask = ATAddressGetSpaceSize(mViewStart) - 1;
 
 		IATDebugger *debugger = ATGetDebugger();
-		IATDebugTarget *target = debugger->GetTarget();
 
+		const auto changedBitsSize = mChangedBits.size();
+		const uint32 viewDataSize = (uint32)mViewData.size();
 		uint32 addrBase = mViewStart & ~incMask;
 		for(int rowIndex = rowStart; rowIndex < rowEnd; ++rowIndex) {
-			uint32 addr = addrBase + ((mViewStart + (rowIndex << 4)) & incMask);
+			uint32 addr = addrBase + ((mViewStart + rowIndex * mColumns) & incMask);
 
 			mTempLine.sprintf("%s:", debugger->GetAddressText(addr, false).c_str());
+			uint32 startCol = (uint32)mTempLine.size();
+
 			mTempLine2.clear();
-			mTempLine2.resize(mTempLine.size(), ' ');
+			mTempLine2.resize(startCol, ' ');
 
-			uint32 changeMask = (rowIndex < (int)mChangedBits.size()) ? mChangedBits[rowIndex] : 0;
-			for(int i=0; i<16; ++i) {
-				uint32 baddr = addrBase + ((addr + i) & incMask);
+			uint32 changeOffset = (uint32)(addr - mChangedBitsStartAddress);
+			uint32 changeWordOffset = changeOffset >> 5;
+			uint32 changeBitOffset = changeOffset & 31;
 
-				data[i] = target->DebugReadByte(baddr);
+			// The change detection routine pads the change mask to ensure that any range that might include
+			// set bits is mappable as a full row within the change mask; if we are even partially outside
+			// of the change mask, it means that all bits within it are guaranteed 0 and we can use this
+			// null mask instead.
+			uint32 changeMask[9] {};
 
-				if (changeMask & (1 << i)) {
-					mTempLine += "   ";
-					mTempLine2.append_sprintf(" %02X", data[i]);
+			if (changeWordOffset < mChangedBits.size() && changeWordOffset + 9 < mChangedBits.size()) {
+				const uint32 *changeSrc = &mChangedBits[changeWordOffset];
+
+				// If we have a bit offset, preshift the mask so we don't have to worry about spanning
+				// bitmasks when testing bit pairs for words.
+				if (changeBitOffset) {
+					for(int i=0; i<9; ++i)
+						changeMask[i] = (changeSrc[i] >> changeBitOffset) + (changeSrc[i + 1] << (32 - changeBitOffset));
+					
 				} else {
-					mTempLine.append_sprintf(" %02X", data[i]);
-					mTempLine2 += "   ";
+					for(int i=0; i<9; ++i)
+						changeMask[i] = changeSrc[i];
 				}
 			}
 
-			mTempLine += " |";
-			for(int i=0; i<16; ++i) {
-				uint8 c = data[i];
+			uint32 viewOffset = addr - mViewDataStart;
+			if (viewOffset < viewDataSize && viewDataSize - viewOffset < mColumns) {
+				memcpy(mRenderLineData, &mViewData[viewOffset], mColumns);
+			} else {
+				for(uint32 i=0; i<mColumns; ++i) {
+					if (viewOffset < viewDataSize)
+						mRenderLineData[i] = mViewData[viewOffset];
+					else
+						mRenderLineData[i] = 0;
 
-				if ((uint8)(c - 0x20) >= 0x5f)
-					c = '.';
-
-				mTempLine += c;
+					++viewOffset;
+				}
 			}
 
-			mTempLine += '|';
+			const uint32 *changeSrc = changeMask;
+
+			switch(mValueMode) {
+				case ValueMode::HexBytes:
+					for(uint32 i=0, changeBit = 1; i<mColumns; ++i) {
+						if (*changeSrc & changeBit) {
+							mTempLine += "   ";
+							mTempLine2.append_sprintf(" %02X", mRenderLineData[i]);
+						} else {
+							mTempLine.append_sprintf(" %02X", mRenderLineData[i]);
+							mTempLine2 += "   ";
+						}
+
+						changeBit += changeBit;
+						if (!changeBit) {
+							changeBit = 1;
+							++changeSrc;
+						}
+					}
+					break;
+
+				case ValueMode::DecBytes:
+					for(uint32 i=0, changeBit = 1; i<mColumns; ++i) {
+						if (*changeSrc & changeBit) {
+							mTempLine += "    ";
+							mTempLine2.append_sprintf(" %3d", mRenderLineData[i]);
+						} else {
+							mTempLine.append_sprintf(" %3d", mRenderLineData[i]);
+							mTempLine2 += "    ";
+						}
+
+						changeBit += changeBit;
+						if (!changeBit) {
+							changeBit = 1;
+							++changeSrc;
+						}
+					}
+					break;
+
+				case ValueMode::HexWords:
+					for(uint32 i=0, wcols = mColumns >> 1, changeBits = 3; i<wcols; ++i) {
+						if (*changeSrc & changeBits) {
+							mTempLine += "     ";
+							mTempLine2.append_sprintf(" %04X", VDReadUnalignedLEU16(&mRenderLineData[i*2]));
+						} else {
+							mTempLine.append_sprintf(" %04X", VDReadUnalignedLEU16(&mRenderLineData[i*2]));
+							mTempLine2 += "     ";
+						}
+
+						changeBits <<= 2;
+						if (!changeBits) {
+							changeBits = 3;
+							++changeSrc;
+						}
+					}
+					break;
+
+				case ValueMode::DecWords:
+					for(uint32 i=0, wcols = mColumns >> 1, changeBits = 3; i<wcols; ++i) {
+						if (*changeSrc & changeBits) {
+							mTempLine += "      ";
+							mTempLine2.append_sprintf(" %5d", VDReadUnalignedLEU16(&mRenderLineData[i*2]));
+						} else {
+							mTempLine.append_sprintf(" %5d", VDReadUnalignedLEU16(&mRenderLineData[i*2]));
+							mTempLine2 += "      ";
+						}
+
+						changeBits <<= 2;
+						if (!changeBits) {
+							changeBits = 3;
+							++changeSrc;
+						}
+					}
+					break;
+			}
+
+			uint32 interpretCol = (uint32)mTempLine.size();
+			if (mInterpretMode == InterpretMode::Atascii || mInterpretMode == InterpretMode::Internal) {
+				mTempLine += " |";
+				for(uint32 i=0; i<mColumns; ++i) {
+					uint8 c = mRenderLineData[i];
+
+					if (mInterpretMode == InterpretMode::Internal) {
+						static constexpr uint8 kXorTab[] = { 0x20, 0x60, 0x40, 0x00 };
+
+						c ^= kXorTab[(c >> 5) & 3];
+					}
+
+					if ((uint8)(c - 0x20) >= 0x5f)
+						c = '.';
+
+					mTempLine += c;
+				}
+
+				mTempLine += '|';
+			}
 
 			RECT rLine;
 			rLine.left = ps.rcPaint.left;
@@ -3832,77 +4770,285 @@ void ATMemoryWindow::OnPaint() {
 			rLine.bottom = rLine.top + mLineHeight;
 
 			::SetTextColor(hdc, normalTextColor);
-			::ExtTextOutA(hdc, mTextArea.left, rLine.top, ETO_OPAQUE, &rLine, mTempLine.data(), mTempLine.size(), NULL);
+			::ExtTextOutA(hdc, mTextArea.left - mHScrollPos, rLine.top + textOffsetY, ETO_OPAQUE, &rLine, mTempLine.data(), mTempLine.size(), NULL);
 
 			if (changeMask) {
 				::SetTextColor(hdc, changedTextColor);
-				::ExtTextOutA(hdc, mTextArea.left, rLine.top, 0, NULL, mTempLine2.data(), mTempLine2.size(), NULL);
+				::ExtTextOutA(hdc, mTextArea.left - mHScrollPos, rLine.top + textOffsetY, 0, NULL, mTempLine2.data(), mTempLine2.size(), NULL);
+			}
+
+			if (mInterpretMode == InterpretMode::Font1Bpp) {
+				uint32 ix = mTextArea.left + (interpretCol + 1) * mCharWidth - mHScrollPos;
+				uint32 iy = rLine.top;
+
+				// compute dword-aligned pitch
+				uint32 pitch = ((mColumns >> 3) + 3) & ~3;
+
+				for(int i=0; i<8; ++i) {
+					uint8 *dst = &mRenderImageData[i * pitch];
+					const uint8 *src = &mRenderLineData[7-i];
+
+					for(uint32 j = 0; j < mColumns; j += 8) 
+						*dst++ = src[j];
+				}
+
+				::StretchDIBits(hdc, ix, iy, mLineHeight*(mColumns >> 3), mLineHeight, 0, 0, imgw, 8, mRenderImageData, &imghdr.bi, DIB_RGB_COLORS, SRCCOPY);
+			} else if (mInterpretMode == InterpretMode::Font2Bpp) {
+				uint32 ix = mTextArea.left + (interpretCol + 1) * mCharWidth - mHScrollPos;
+				uint32 iy = rLine.top;
+
+				uint8 *dst = mRenderImageData;
+				for(int i=0; i<8; ++i) {
+					const uint8 *src = &mRenderLineData[7-i];
+
+					for(uint32 j = 0; j < mColumns; j += 8) {
+						uint8 c = src[j];
+
+						for(int k=0; k<4; ++k)
+							*dst++ = (c >> (6 - 2*k)) & 3;
+					}
+				}
+
+				::StretchDIBits(hdc, ix, iy, mLineHeight*(mColumns >> 3), mLineHeight, 0, 0, imgw, 8, mRenderImageData, &imghdr.bi, DIB_RGB_COLORS, SRCCOPY);
+			} else if (mInterpretMode == InterpretMode::Graphics1Bpp) {
+				uint32 ix = mTextArea.left + (interpretCol + 1) * mCharWidth - mHScrollPos;
+				uint32 iy = rLine.top;
+
+				uint32 pixelScale = std::max<uint32>(mLineHeight / 2, 1);
+				::StretchDIBits(hdc, ix, iy + (mLineHeight - pixelScale) / 2, pixelScale*imgw, pixelScale, 0, 0, imgw, 1, mRenderLineData, &imghdr.bi, DIB_RGB_COLORS, SRCCOPY);
+			} else if (mInterpretMode == InterpretMode::Graphics2Bpp) {
+				uint32 ix = mTextArea.left + (interpretCol + 1) * mCharWidth - mHScrollPos;
+				uint32 iy = rLine.top;
+
+				uint8 *dst = mRenderImageData;
+				for(uint32 i=0; i<mColumns; ++i) {
+					uint8 c = mRenderLineData[i];
+
+					dst[0] = (c >> 6) & 3;
+					dst[1] = (c >> 4) & 3;
+					dst[2] = (c >> 2) & 3;
+					dst[3] = (c >> 0) & 3;
+					dst += 4;
+				}
+
+				uint32 pixelScale = std::max<uint32>(mLineHeight / 2, 1);
+				::StretchDIBits(hdc, ix, iy + (mLineHeight - pixelScale) / 2, pixelScale*imgw*2, pixelScale, 0, 0, imgw, 1, mRenderImageData, &imghdr.bi, DIB_RGB_COLORS, SRCCOPY);
+			} else if (mInterpretMode == InterpretMode::Graphics4Bpp) {
+				uint32 ix = mTextArea.left + (interpretCol + 1) * mCharWidth - mHScrollPos;
+				uint32 iy = rLine.top;
+
+				uint32 pixelScale = std::max<uint32>(mLineHeight / 2, 1);
+				::StretchDIBits(hdc, ix, iy + (mLineHeight - pixelScale) / 2, pixelScale*imgw*4, pixelScale, 0, 0, imgw, 1, mRenderLineData, &imghdr.bi, DIB_RGB_COLORS, SRCCOPY);
+			}
+
+			if (mHighlightedAddress.has_value()) {
+				const uint32 hiAddr = mHighlightedAddress.value();
+
+				if ((uint32)(hiAddr - addr) < mColumns) {
+					uint32 hiOffset = hiAddr - addr;
+
+					::SetBkColor(hdc, highlightedBkColor);
+					::SetTextColor(hdc, highlightedTextColor);
+
+					RECT rHiRect = rLine;
+
+					if (mValueMode == ValueMode::HexWords) {
+						uint32 hiWordOffset = hiOffset >> 1;
+						rHiRect.left = mTextArea.left + (startCol + 1 + 5 * hiWordOffset) * mCharWidth - mHScrollPos;
+						rHiRect.right = rHiRect.left + 4 * mCharWidth;
+						::ExtTextOutA(hdc, rHiRect.left, rLine.top + textOffsetY, ETO_OPAQUE, &rHiRect, ((changeMask[hiWordOffset >> 4] & (3 << ((hiWordOffset*2) & 31))) ? mTempLine2.c_str() : mTempLine.c_str()) + startCol + 1 + 5 * hiWordOffset, 4, nullptr);
+					} else if (mValueMode == ValueMode::DecWords) {
+						uint32 hiWordOffset = hiOffset >> 1;
+						rHiRect.left = mTextArea.left + (startCol + 1 + 6 * hiWordOffset) * mCharWidth - mHScrollPos;
+						rHiRect.right = rHiRect.left + 5 * mCharWidth;
+						::ExtTextOutA(hdc, rHiRect.left, rLine.top + textOffsetY, ETO_OPAQUE, &rHiRect, ((changeMask[hiWordOffset >> 4] & (3 << ((hiWordOffset*2) & 31))) ? mTempLine2.c_str() : mTempLine.c_str()) + startCol + 1 + 6 * hiWordOffset, 5, nullptr);
+					} else if (mValueMode == ValueMode::DecBytes) {
+						rHiRect.left = mTextArea.left + (startCol + 1 + 4 * hiOffset) * mCharWidth - mHScrollPos;
+						rHiRect.right = rHiRect.left + 3 * mCharWidth;
+						::ExtTextOutA(hdc, rHiRect.left, rLine.top + textOffsetY, ETO_OPAQUE, &rHiRect, ((changeMask[hiOffset >> 5] & (1 << (hiOffset & 31))) ? mTempLine2.c_str() : mTempLine.c_str()) + startCol + 1 + 4 * hiOffset, 3, nullptr);
+					} else {
+						rHiRect.left = mTextArea.left + (startCol + 1 + 3 * hiOffset) * mCharWidth - mHScrollPos;
+						rHiRect.right = rHiRect.left + 2 * mCharWidth;
+						::ExtTextOutA(hdc, rHiRect.left, rLine.top + textOffsetY, ETO_OPAQUE, &rHiRect, ((changeMask[hiOffset >> 5] & (1 << (hiOffset & 31))) ? mTempLine2.c_str() : mTempLine.c_str()) + startCol + 1 + 3 * hiOffset, 2, nullptr);
+					}
+
+					::SetBkColor(hdc, normalBkColor);
+				}
 			}
 		}
 
 		::RestoreDC(hdc, saveHandle);
+
+		::ExcludeClipRect(hdc, mTextArea.left, mTextArea.top, mTextArea.right, mTextArea.bottom);
+		::FillRect(hdc, &ps.rcPaint, ATUIGetThemeColorsW32().mStaticBgBrush);
 	}
 
 	::EndPaint(mhwnd, &ps);
 }
 
-void ATMemoryWindow::RemakeView(uint32 focusAddr) {
+void ATMemoryWindow::OnViewScroll(sint32 pos, [[maybe_unused]] bool tracking) {
+	RemakeView((mViewStart & 0xFFFF0000) + (mViewStart & 0xFFFF) % mColumns + pos * mColumns, true);
+}
+
+void ATMemoryWindow::OnViewHScroll(sint32 pos, [[maybe_unused]] bool tracking) {
+	sint32 delta = pos - mHScrollPos;
+	if (!delta)
+		return;
+
+	mHScrollPos = pos;
+
+	::ScrollWindow(mhwnd, -delta, 0, &mTextArea, &mTextArea);
+}
+
+struct ATWrapRange32 {
+	uint32 mStart;
+	uint32 mLen;
+
+	bool operator==(const ATWrapRange32&) const = default;
+
+	ATWrapRange32 operator&(const ATWrapRange32& other) const {
+		ATWrapRange32 result { 0, 0 };
+
+		const uint32 offset = other.mStart - mStart;
+
+		if (offset < mLen) {
+			result = { other.mStart, std::min<uint32>(mLen - offset, other.mLen) };
+		} else if ((uint32)(0U - offset) < other.mLen) {
+			result = { mStart, std::min<uint32>(other.mLen + offset, mLen) };
+		}
+
+		if (!result.mLen)
+			result.mStart = 0;
+
+		return result;
+	}
+};
+
+void ATMemoryWindow::RemakeView(uint32 focusAddr, bool fromScroll) {
 	bool changed = false;
-	uint32 changeMask = 0xFFFFFFFFU;
 
 	if (mViewStart != focusAddr || !mbViewValid) {
 		mViewStart = focusAddr;
 		mbViewValid = true;
 		changed = true;
-		changeMask = 0;
 	}
 
-	int rows = (int)mChangedBits.size();
+	const uint32 rows = mPartiallyVisibleRows;
+	const uint32 len = rows * mColumns;
 
-	int limit = (int)mViewData.size();
+	// check if the tick has changed, and if so, snapshot the last data as old data
+	bool copyOldToRef = false;
 
-	if (limit != (rows << 4))
-		changed = true;
+	if (mViewDataCycle != mCurrentCycle) {
+		mViewDataCycle = mCurrentCycle;
 
-	mViewData.resize(rows << 4, 0);
+		mOldViewData.swap(mViewData);
+		mOldViewDataStart = mViewDataStart;
+		copyOldToRef = true;
+	}
 
-	for(int i=0; i<rows; ++i) {
-		uint32 mask = 0;
+	// read current view data
+	mViewData.clear();
+	mViewData.resize(len, 0);
+	
+	ATGetDebugger()->GetTarget()->DebugReadMemory(mViewStart, mViewData.data(), len);
 
-		for(int j=0; j<16; ++j) {
-			int offset = (i<<4) + j;
-			uint32 addr = mViewStart + offset;
-			uint8 c = g_sim.DebugExtReadByte(addr);
+	// scroll the reference view window to the new view
+	ATWrapRange32 newViewRange { mViewStart, len };
+	ATWrapRange32 refViewRange { mViewDataStart, (uint32)mRefViewData.size() };
+	ATWrapRange32 oldViewRange { mOldViewDataStart, (uint32)mOldViewData.size() };
 
-			if (offset < limit && mViewData[offset] != c)
-				mask |= (1 << j);
+	if (refViewRange != newViewRange) {
+		// start with new data
+		mRefViewData2 = mViewData;
 
-			mViewData[offset] = c;
+		// copy over previous reference data, if there is overlap
+		ATWrapRange32 refCommonRange = newViewRange & refViewRange;
+		if (refCommonRange.mLen) {
+			memcpy(
+				mRefViewData2.data() + (refCommonRange.mStart - newViewRange.mStart),
+				mRefViewData .data() + (refCommonRange.mStart - refViewRange.mStart),
+				refCommonRange.mLen
+			);
 		}
 
-		// clear the change mask if we are changing address
-		mask &= changeMask;
-
-		if (mChangedBits[i] | mask)
-			changed = true;
-
-		mChangedBits[i] = mask;
+		mRefViewData.swap(mRefViewData2);
+		copyOldToRef = true;
 	}
 
-	if (changed)
+	// copy over old data to reference
+	if (copyOldToRef) {
+		ATWrapRange32 oldCommonRange = oldViewRange & newViewRange;
+
+		if (oldCommonRange.mLen) {
+			memcpy(
+				mRefViewData.data() + (oldCommonRange.mStart - newViewRange.mStart),
+				mOldViewData.data() + (oldCommonRange.mStart - oldViewRange.mStart),
+				oldCommonRange.mLen
+			);
+		}
+	}
+
+	const uint32 newViewStart = mViewStart;
+	const uint32 newViewEnd = mViewStart + len;
+	const uint32 oldViewLen = (uint32)mOldViewData.size();
+	const uint32 oldViewStart = mOldViewDataStart;
+	const uint32 oldViewEnd = mOldViewDataStart + oldViewLen;
+
+	// if the new view range is not contained within the old view range, there
+	// is a change
+	if (newViewStart < oldViewStart || newViewEnd > oldViewEnd)
+		changed = true;
+
+	// overallocate the array to ensure that a full 256 bits + alignment bits is
+	// always available on either side regardless of the start offset -- this ensures
+	// that the row handler can avoid needing to range check in the
+	// middle of a row
+	const uint32 requiredMaskWords = ((len + 31) >> 5) + 18;
+
+	// compute new change mask
+	mNewChangedBits.clear();
+	mNewChangedBits.resize(requiredMaskWords, 0);
+	mChangedBitsStartAddress = mViewStart - 9*32;
+
+	{
+		const uint8 *VDRESTRICT ref = mRefViewData.data();
+		const uint8 *VDRESTRICT src = mViewData.data();
+		uint32 *VDRESTRICT p = mNewChangedBits.data() + 9;
+
+		uint32 bit = 1;
+		for(uint32 i=0; i<len; ++i) {
+			if (ref[i] != src[i]) {
+				*p += bit;
+				changed = true;
+			}
+
+			bit += bit;
+			if (!bit) {
+				bit = 1;
+				++p;
+			}
+		}
+	}
+
+	if (!changed && mChangedBits != mNewChangedBits) {
+		changed = true;
+	}
+
+	mChangedBits.swap(mNewChangedBits);
+
+	mViewDataStart = mViewStart;
+
+	if (changed) {
+		if (!fromScroll)
+			mScrollBar.SetValue((sint32)((mViewStart & 0xFFFF) / mColumns));
+
+		mHighlightedAddress.reset();
 		::InvalidateRect(mhwnd, NULL, TRUE);
+	}
 }
 
-bool ATMemoryWindow::GetAddressFromPoint(int x, int y, uint32& addr) const {
-	if (!mLineHeight || !mCharWidth)
-		return false;
-	
-	if ((uint32)(x - mTextArea.left) >= (uint32)(mTextArea.right - mTextArea.left))
-		return false;
-
-	if ((uint32)(y - mTextArea.top) >= (uint32)(mTextArea.bottom - mTextArea.top))
-		return false;
-
+int ATMemoryWindow::GetAddressLength() const {
 	int addrLen = 4;
 
 	switch(mViewStart & kATAddressSpaceMask) {
@@ -3926,19 +5072,79 @@ bool ATMemoryWindow::GetAddressFromPoint(int x, int y, uint32& addr) const {
 			break;
 	}
 
-	int xc = (x - mTextArea.left) / mCharWidth - addrLen;
+	return addrLen;
+}
+
+bool ATMemoryWindow::GetAddressFromPoint(int x, int y, uint32& addr) const {
+	if (!mLineHeight || !mCharWidth)
+		return false;
+	
+	if ((uint32)(x - mTextArea.left) >= (uint32)(mTextArea.right - mTextArea.left))
+		return false;
+
+	if ((uint32)(y - mTextArea.top) >= (uint32)(mTextArea.bottom - mTextArea.top))
+		return false;
+
+	const int addrLen = GetAddressLength();
+
+	int xc = (x - mTextArea.left + mHScrollPos) / mCharWidth - addrLen - 2;
 	int yc = (y - mTextArea.top) / mLineHeight;
 
 	// 0000: 00 00 00 00 00 00 00 00-00 00 00 00 00 00 00 00 |................|
-	if (xc >= 2 && xc < 50) {
-		addr = mViewStart + (uint16)((yc << 4) + (xc - 2)/3);
-		return true;
-	} else if (xc >= 51 && xc < 67) {
-		addr = mViewStart + (uint16)((yc << 4) + (xc - 51));
+	if (mValueMode == ValueMode::HexBytes) {
+		if (xc >= 0 && xc < (int)mColumns * 3) {
+			addr = mViewStart + (uint16)(yc * mColumns + xc/3);
+			return true;
+		}
+
+		xc -= mColumns * 3;
+	} else if (mValueMode == ValueMode::HexWords) {
+		if (xc >= 0 && xc < (int)((mColumns * 5) / 2)) {
+			addr = mViewStart + (uint16)(yc * mColumns + (xc/5) * 2);
+			return true;
+		}
+
+		xc -= (mColumns * 5)/2;
+	} else if (mValueMode == ValueMode::DecBytes) {
+		if (xc >= 0 && xc < (int)mColumns * 4) {
+			addr = mViewStart + (uint16)(yc * mColumns + xc/4);
+			return true;
+		}
+
+		xc -= mColumns * 4;
+	} else if (mValueMode == ValueMode::DecWords) {
+		if (xc >= 0 && xc < (int)mColumns * 3) {
+			addr = mViewStart + (uint16)(yc * mColumns + (xc/6) * 2);
+			return true;
+		}
+
+		xc -= mColumns * 3;
+	}
+
+	--xc;
+	if (xc >= 0 && xc < (int)mColumns && mInterpretMode != InterpretMode::None) {
+		addr = mViewStart + (uint16)(yc * mColumns + xc);
 		return true;
 	}
 
 	return false;
+}
+
+void ATMemoryWindow::InvalidateAddress(uint32 addr) {
+	uint32 offset = addr - mViewStart;
+	uint32 row = offset / mColumns;
+
+	uint32 visibleRows = ((uint32)(mTextArea.bottom - mTextArea.top) + mLineHeight - 1) / mLineHeight;
+
+	if (row < visibleRows) {
+		RECT r = mTextArea;
+		r.top += mLineHeight * row;
+		if (r.top < r.bottom) {
+			r.bottom = r.top + mLineHeight;
+
+			InvalidateRect(mhwnd, &r, TRUE);
+		}
+	}
 }
 
 void ATMemoryWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
@@ -3948,30 +5154,83 @@ void ATMemoryWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& st
 		mbViewValid = false;
 	}
 
-	RemakeView(mViewStart);
+	mCurrentCycle = state.mCycle;
+
+	RemakeView(mViewStart, false);
 }
 
 void ATMemoryWindow::OnDebuggerEvent(ATDebugEvent eventId) {
+	if (eventId == kATDebugEvent_MemoryChanged) {
+		RemakeView(mViewStart, false);
+	}
 }
 
 void ATMemoryWindow::SetPosition(uint32 addr) {
-	VDSetWindowTextFW32(mhwndAddress, L"%hs", ATGetDebugger()->GetAddressText(addr, true).c_str());
+	mControlPanel.SetAddressText(VDTextU8ToW(ATGetDebugger()->GetAddressText(addr, true)).c_str());
 
-	RemakeView(addr);
+	RemakeView(addr, false);
+}
+
+void ATMemoryWindow::SetColumns(uint32 cols, bool updateUI) {
+	cols = std::clamp<uint32>(cols, 1, 256);
+
+	if (mInterpretMode == InterpretMode::Font1Bpp || mInterpretMode == InterpretMode::Font2Bpp) {
+		cols = (cols + 7) & ~7;
+	}
+
+	if (mValueMode == ValueMode::DecWords || mValueMode == ValueMode::HexWords) {
+		cols = (cols + 1) & ~1;
+	}
+
+	if (mColumns != cols) {
+		mColumns = cols;
+
+		UpdateScrollRange();
+		UpdateHScrollRange();
+
+		mbViewValid = false;
+		RemakeView(mViewStart, false);
+
+		if (updateUI)
+			mControlPanel.SetColumns(mColumns);
+	}
+}
+
+void ATMemoryWindow::SetValueMode(ValueMode mode) {
+	if (mValueMode == mode)
+		return;
+
+	mValueMode = mode;
+
+	AdjustColumnCount();
+	Invalidate();
+}
+
+void ATMemoryWindow::SetInterpretMode(InterpretMode mode) {
+	if (mInterpretMode == mode)
+		return;
+
+	mInterpretMode = mode;
+
+	AdjustColumnCount();
+	UpdateLineHeight();
+	Invalidate();
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATWatchWindow : public ATUIDebuggerPane, public IATDebuggerClient
+class ATWatchWindow : public ATUIDebuggerPane, public IATDebuggerClient, public IATUIDebuggerWatchPane
 {
 public:
 	ATWatchWindow(uint32 id = kATUIPaneId_WatchN);
 	~ATWatchWindow();
 
+	void *AsInterface(uint32 iid) override;
+
+	void AddWatch(const char *expr);
+
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
 	void OnDebuggerEvent(ATDebugEvent eventId);
-
-	void SetPosition(uint32 addr);
 
 protected:
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
@@ -4066,6 +5325,24 @@ ATWatchWindow::~ATWatchWindow() {
 	if (mpListViewThunk) {
 		VDDestroyFunctionThunk(mpListViewThunk);
 		mpListViewThunk = NULL;
+	}
+}
+
+void *ATWatchWindow::AsInterface(uint32 iid) {
+	if (iid == IATUIDebuggerWatchPane::kTypeID)
+		return static_cast<IATUIDebuggerWatchPane *>(this);
+
+	return ATUIDebuggerPane::AsInterface(iid);
+}
+
+void ATWatchWindow::AddWatch(const char *expr) {
+	vdrefptr p{new WatchItem};
+	p->SetExpr(VDTextU8ToW(VDStringSpanA(expr)).c_str());
+	p->Update();
+	int idx = mListView.InsertVirtualItem(mListView.GetItemCount() - 1, p);
+	if (idx >= 0) {
+		mListView.SetSelectedIndex(idx);
+		mListView.AutoSizeColumns();
 	}
 }
 
@@ -4180,8 +5457,10 @@ LRESULT ATWatchWindow::ListViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
 					{
 						int idx = mListView.GetSelectedIndex();
 
-						if (idx >= 0 && idx < mListView.GetItemCount() - 1)
+						if (idx >= 0 && idx < mListView.GetItemCount() - 1) {
 							mListView.DeleteItem(idx);
+							mListView.SetSelectedIndex(idx);
+						}
 					}
 					return 0;
 
@@ -4621,8 +5900,9 @@ protected:
 	vdrefptr<IVDTextEditor> mpTextEditor;
 	HWND	mhwndTextEditor;
 
+	uint8		mDropNextChar = 0;
 	uint32		mLineBufIdx;
-	uint8		mLineBuf[132];
+	uint8		mLineBuf[133];
 };
 
 ATPrinterOutputWindow::ATPrinterOutputWindow()
@@ -4642,24 +5922,33 @@ void ATPrinterOutputWindow::WriteASCII(const void *buf, size_t len) {
 	while(len--) {
 		uint8 c = *s++;
 
-		if (c == 0x0D)
-			continue;
-
-		if (c != 0x0A) {
+		if (c != 0x0A && c != 0x0D) {
 			c &= 0x7f;
 			
 			if (c < 0x20 || c > 0x7F)
 				c = '?';
 		}
 
+		if (mDropNextChar) {
+			if (mDropNextChar == c) {
+				mDropNextChar = 0;
+
+				continue;
+			}
+
+			mDropNextChar = 0;
+		}
+
 		mLineBuf[mLineBufIdx++] = c;
 
 		if (mLineBufIdx >= 130) {
-			c = '\n';
+			c = 0x0A;
 			mLineBuf[mLineBufIdx++] = c;
 		}
 
-		if (c == '\n') {
+		if (c == 0x0D || c == 0x0A) {
+			mDropNextChar = c ^ (uint8)(0x0D ^ 0x0A);
+			mLineBuf[mLineBufIdx++] = 0x0A;
 			mLineBuf[mLineBufIdx] = 0;
 
 			if (mpTextEditor)
@@ -4761,12 +6050,12 @@ bool ATPrinterOutputWindow::OnCreate() {
 
 	OnSize();
 
-	g_sim.SetPrinterOutput(this);
+	g_sim.SetPrinterDefaultOutput(this);
 	return true;
 }
 
 void ATPrinterOutputWindow::OnDestroy() {
-	g_sim.SetPrinterOutput(nullptr);
+	g_sim.SetPrinterDefaultOutput(nullptr);
 
 	ATUIPane::OnDestroy();
 }
@@ -4979,7 +6268,7 @@ namespace {
 bool ATConsoleConfirmScriptLoad() {
 	ATUIGenericDialogOptions opts {};
 
-	opts.mhParent = ATUIGetMainWindow();
+	opts.mhParent = ATUIGetNewPopupOwner();
 	opts.mpTitle = L"Debugger script found";
 	opts.mpMessage =
 		L"Do you want to run the debugger script that is included with this image?\n"

@@ -36,7 +36,13 @@
     <ATOutPath>$(VDOutputPath)</ATOutPath>
     <ATMadsPath>mads.exe</ATMadsPath>
     <ATYasmPath>yasm.exe</ATYasmPath>
-    <XPDeprecationWarning>False</XPDeprecationWarning>  
+    <XPDeprecationWarning>False</XPDeprecationWarning>
+
+    <!-- Set to True to enable the Undefined Behavior Sanitizer (Clang only) -->
+    <ATEnableUBsan>False</ATEnableUBsan>
+
+    <!-- Set to True to enable the Undefined Behavior Sanitizer (Clang only; MSVC's version barfs on static CRT right now) -->
+    <ATEnableAsan>False</ATEnableAsan>
   </PropertyGroup>
   <ItemGroup>
     <BuildMacro Include="ATBuildToolPath">
@@ -52,19 +58,67 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>h;$([MSBuild]::MakeRelative($(ProjectDir),$(MSBuildThisFileDirectory)..\h));autogen;res;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalOptions>%(AdditionalOptions) /Zc:inline /permissive-</AdditionalOptions>
+      <AdditionalOptions>%(AdditionalOptions) /Zc:inline /Zc:externConstexpr /permissive-</AdditionalOptions>
       <AdditionalOptions Condition="'$(Configuration)'!='Debug'">%(AdditionalOptions) /Zo</AdditionalOptions>
       <AdditionalOptions Condition="'$(Configuration)'=='Analysis'">%(AdditionalOptions) /analyze:rulesetdirectory "$(VSInstallDir)Team Tools\Static Analysis Tools\Rule Sets" /analyze:ruleset "$(MSBuildThisFileDirectory)Altirra.ruleset"</AdditionalOptions>
+
+      <!--
+        For Clang builds, cut down on the noise a bit.
+
+        -Wno-nonportable-include-path: TODO because Windows builds are case insensitive, and Perforce has some problems changing case.
+        -Wno-switch: This collides with the current convention of having k*Count members, which are not actual valid values.
+        -Wno-parentheses: Cleanup TODO, too many right now.
+        -Wno-inconsistent-missing-override: Cleanup TODO, too many right now.
+        -Wno-missing-braces: Too much noise for insufficient benefit.
+        -Wno-reorder: Cleanup TODO, too much noise right now.
+        -Wno-unused-variable: Cleanup TODO, too much noise right now.
+        -Wno-unused-private-field: Cleanup TODO, too much noise right now.
+      -->
+      <AdditionalOptions Condition="'$(PlatformToolset)'=='llvm'">
+        %(AdditionalOptions)
+        -Wno-nonportable-include-path
+        -Wno-switch
+        -Wno-parentheses
+        -Wno-inconsistent-missing-override
+        -Wno-missing-braces
+        -Wno-reorder
+        -Wno-unused-variable
+        -Wno-unused-private-field
+      </AdditionalOptions>
+      <AdditionalOptions Condition="'$(PlatformToolset)'=='llvm' and $(ATEnableUBsan)">%(AdditionalOptions) -fsanitize=undefined</AdditionalOptions>
+      <AdditionalOptions Condition="'$(PlatformToolset)'=='llvm' and $(ATEnableAsan)">%(AdditionalOptions) -fsanitize=address</AdditionalOptions>
+
       <BasicRuntimeChecks Condition="'$(Configuration)'=='Debug'">EnableFastChecks</BasicRuntimeChecks>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <CallingConvention Condition="'$(Platform)'!='ARM64'">VectorCall</CallingConvention>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+
+      <!--
+        warning C4100: 'foo': unreferenced formal parameter
+        warning C4127: conditional expression is constant
+          - difficulties when non-type template arguments are used to gate runtime conditionals
+        warning C4245: 'argument': conversion from 'foo' to 'bar', signed/unsigned mismatch
+        warning C4310: cast truncates constant value
+          - as intended
+        warning C4324: 'foo': structure was padded due to alignment specifier
+          - as intended
+        warning C4389: '==': signed/unsigned mismatch
+        warning C4456: declaration of 'foo' hides previous local declaration
+        warning C4457: declaration of 'foo' hides function parameter
+        warning C4701: potentially uninitialized local variable 'foo' used
+        warning C4702: unreachable code
+          - currently produces hard to resolve warnings around VDNEVERHERE portable safeguards
+        warning C4706: assignment within conditional expression
+          - difficulties suppressing portably
+      -->
+      <DisableSpecificWarnings>4100;4127;4245;4310;4324;4389;4456;4457;4701;4702;4706;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <DisableSpecificWarnings Condition="$(Platform)!='x86'">4244;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <DisableSpecificWarnings Condition="$(Platform)=='ARM64'">4164;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <EnableEnhancedInstructionSet Condition="$(Platform)=='x86'">StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
       <FloatingPointModel>Fast</FloatingPointModel>
       <InlineFunctionExpansion Condition="'$(Configuration)'!='Debug'">AnySuitable</InlineFunctionExpansion>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
       <MinimalRebuild>false</MinimalRebuild>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <Optimization Condition="'$(Configuration)'=='Debug'">Disabled</Optimization>
@@ -81,7 +135,7 @@
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <StringPooling>true</StringPooling>
       <SuppressStartupBanner>true</SuppressStartupBanner>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <SupportJustMyCode>false</SupportJustMyCode>
     </ClCompile>
     <Lib>
@@ -101,6 +155,12 @@
       <EnableCOMDATFolding Condition="'$(Configuration)'!='Debug'">true</EnableCOMDATFolding>
 
       <AdditionalLibraryDirectories Condition="$(ATLinkUseLibPath)">%(AdditionalLibraryDirectories);$(ATLibPath)</AdditionalLibraryDirectories>
+
+      <!--
+        This is needed to fix __powidf2 link errors. We can't use the normal clang-cl switch to enable compiler-rt because clang-cl
+        is not driving the link.
+      -->
+      <AdditionalDependencies Condition="'$(PlatformToolset)'=='llvm'">%(AdditionalDependencies);$(LLVMInstallDir)lib\clang\9.0.0\lib\windows\clang_rt.builtins-x86_64.lib</AdditionalDependencies>
     </Link>
     <ResourceCompile>
       <PreprocessorDefinitions Condition="'$(Configuration)'!='Debug'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>

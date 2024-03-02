@@ -110,12 +110,12 @@ bool ATArtifactingEngine::ArtifactNTSC_SSE2(uint32 *dst0, const uint8 *src0, uin
 				int art = intensity.sb[x]; 
 
 				if (!art) {
-					*dst++ = mPalette[p];
+					*dst++ = mActivePalette[p];
 				} else {
 					int c = p >> 4;
 			
-					__m128i chroma = _mm_loadu_si64(&mChromaVectors[c][0]);
-					int y = mLumaRamp[luma.b[x]];
+					__m128i chroma = _mm_loadu_si64(&mActiveChromaVectors[c][0]);
+					int y = mActiveLumaRamp[luma.b[x]];
 
 					__m128i color = _mm_adds_epi16(chroma, _mm_shufflelo_epi16(_mm_cvtsi32_si128(y), 0));
 
@@ -131,6 +131,8 @@ bool ATArtifactingEngine::ArtifactNTSC_SSE2(uint32 *dst0, const uint8 *src0, uin
 		if (mbEnableColorCorrection && !mbBypassOutputCorrection)
 			ColorCorrect((uint8 *)dst0, N);
 	} else {
+		// If we are going down this path we can't be using the signed palette, so we're OK not
+		// using the active arrays.
 		const __m128i xFFw = _mm_set1_epi16(255);
 		uint32 *VDRESTRICT dst = dst0;
 

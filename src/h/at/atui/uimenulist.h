@@ -98,6 +98,7 @@ public:
 
 	virtual void OnCreate();
 
+	vdfunction<void(ATUIMenuList *)>& OnActivatingEvent() { return mActivatingEvent; }
 	vdfunction<void(ATUIMenuList *)>& OnActivatedEvent() { return mActivatedEvent; }
 	vdfunction<void(ATUIMenuList *, uint32)>& OnItemSelected() { return mItemSelectedEvent; }
 
@@ -151,6 +152,7 @@ protected:
 
 	vdrefptr<ATUIMenuList> mpSubMenu;
 
+	vdfunction<void(ATUIMenuList *)> mActivatingEvent;
 	vdfunction<void(ATUIMenuList *)> mActivatedEvent;
 	vdfunction<void(ATUIMenuList *, uint32)> mItemSelectedEvent;
 

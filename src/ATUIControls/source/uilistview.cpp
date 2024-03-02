@@ -262,7 +262,10 @@ void ATUIListView::OnMouseDblClkL(sint32 x, sint32 y) {
 	}
 }
 
-bool ATUIListView::OnMouseWheel(sint32 x, sint32 y, float delta) {
+bool ATUIListView::OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages) {
+	if (doPages && mItemHeight > 0)
+		delta *= (float)(mClientArea.height() / mItemHeight);
+
 	mScrollAccum += delta * (float)(sint32)mItemHeight;
 
 	int pixels = VDRoundToInt(mScrollAccum);

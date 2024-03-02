@@ -17,127 +17,10 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
-#include <at/atcore/audiosource.h>
-#include <at/atcore/deviceimpl.h>
-#include <at/atcore/deviceu1mb.h>
 #include <at/atcore/propertyset.h>
-#include <at/atcore/scheduler.h>
 #include "soundboard.h"
-#include "audiooutput.h"
+#include "irqcontroller.h"
 #include "memorymanager.h"
-
-class ATSoundBoardEmulator final : public VDAlignedObject<16>
-						, public ATDevice
-						, public IATDeviceAudioOutput
-						, public IATDeviceMemMap
-						, public IATDeviceScheduling
-						, public IATDeviceU1MBControllable
-						, public IATSyncAudioSource
-{
-	ATSoundBoardEmulator(const ATSoundBoardEmulator&) = delete;
-	ATSoundBoardEmulator& operator=(const ATSoundBoardEmulator&) = delete;
-public:
-	ATSoundBoardEmulator();
-	~ATSoundBoardEmulator();
-
-	void *AsInterface(uint32 id) override;
-
-	void SetMemBase(uint32 membase);
-
-public:
-	void InitAudioOutput(IATAudioMixer *mixer) override;
-
-public:
-	void InitMemMap(ATMemoryManager *memmap) override;
-	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const;
-
-public:
-	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
-
-public:
-	void GetDeviceInfo(ATDeviceInfo& info) override;
-	void GetSettings(ATPropertySet& settings) override;
-	bool SetSettings(const ATPropertySet& settings) override;
-	void Init() override;
-	void Shutdown() override;
-
-	void ColdReset() override;
-	void WarmReset() override;
-
-	void SetU1MBControl(ATU1MBControl control, sint32 value) override;
-
-	uint8 DebugReadControl(uint8 addr) const;
-	uint8 ReadControl(uint8 addr);
-	void WriteControl(uint8 addr, uint8 value);
-
-	void Run(uint32 cycles);
-
-public:
-	bool RequiresStereoMixingNow() const override { return true; }
-	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
-
-protected:
-	void Flush();
-	void UpdateControlLayer();
-
-	static sint32 StaticDebugReadD2xxControl(void *thisptr, uint32 addr);
-	static sint32 StaticReadD2xxControl(void *thisptr, uint32 addr);
-	static bool StaticWriteD2xxControl(void *thisptr, uint32 addr, uint8 value);
-
-	static sint32 StaticDebugReadD5xxControl(void *thisptr, uint32 addr);
-	static sint32 StaticReadD5xxControl(void *thisptr, uint32 addr);
-	static bool StaticWriteD5xxControl(void *thisptr, uint32 addr, uint8 value);
-
-	struct Channel {
-		uint32	mPhase;
-		uint32	mAddress;
-		uint32	mLength;
-		uint32	mRepeat;
-		uint32	mFreq;
-		uint8	mVolume;
-		uint8	mPan;
-		uint8	mAttack;
-		uint8	mDecay;
-		uint8	mSustain;
-		uint8	mRelease;
-		uint8	mControl;
-		sint16	mOverlapBuffer[8];
-	};
-
-	uint8	*mpMemory;
-	ATMemoryLayer *mpMemLayerControl;
-	ATScheduler *mpScheduler;
-	ATMemoryManager *mpMemMan;
-	IATAudioMixer *mpAudioMixer;
-	uint32	mMemBase;
-	sint32	mMemBaseOverride;
-	uint32	mLoadAddress;
-	Channel	*mpCurChan;
-	uint32	mAccumLevel;
-	uint32	mAccumPhase;
-	uint32	mAccumOffset;
-	uint32	mGeneratedCycles;
-
-	uint32	mLastUpdate;
-	uint32	mCycleAccum;
-
-	uint8	mMultiplierMode;
-	uint8	mMultiplierArg1[2];
-	uint8	mMultiplierArg2[2];
-	uint8	mMultiplierResult[4];
-
-	Channel mChannels[8];
-
-	enum {
-		kSampleBufferSize = 512,
-		kSampleBufferOverlap = 8,
-		kAccumBufferSize = 1536
-	};
-
-	VDALIGN(16) sint16 mSampleBuffer[kSampleBufferSize + kSampleBufferOverlap];
-	VDALIGN(16) float mAccumBufferLeft[kAccumBufferSize];
-	VDALIGN(16) float mAccumBufferRight[kAccumBufferSize];
-};
 
 void ATCreateDeviceSoundBoard(const ATPropertySet& pset, IATDevice **dev) {
 	vdrefptr<ATSoundBoardEmulator> p(new ATSoundBoardEmulator);
@@ -147,15 +30,7 @@ void ATCreateDeviceSoundBoard(const ATPropertySet& pset, IATDevice **dev) {
 
 extern const ATDeviceDefinition g_ATDeviceDefSoundBoard = { "soundboard", "soundboard", L"SoundBoard", ATCreateDeviceSoundBoard };
 
-ATSoundBoardEmulator::ATSoundBoardEmulator()
-	: mpMemory(NULL)
-	, mpMemLayerControl(NULL)
-	, mpScheduler(NULL)
-	, mpMemMan(NULL)
-	, mpAudioMixer(NULL)
-	, mMemBase(0xD2C0)
-	, mMemBaseOverride(-1)
-{
+ATSoundBoardEmulator::ATSoundBoardEmulator() {
 }
 
 ATSoundBoardEmulator::~ATSoundBoardEmulator() {
@@ -201,12 +76,17 @@ void ATSoundBoardEmulator::InitMemMap(ATMemoryManager *memmap) {
 }
 
 bool ATSoundBoardEmulator::GetMappedRange(uint32 index, uint32& lo, uint32& hi) const {
-	const uint32 membase = mMemBaseOverride >= 0 ? mMemBaseOverride : mMemBase;
+	const uint32 membase = mMemBaseOverride >= 0 && mCoreVersion != CoreVersion::Version20 ? mMemBaseOverride : mMemBase;
 
 	if (index)
 		return false;
 
 	switch(membase) {
+		case 0xD280:
+			lo = 0xD280;
+			hi = 0xD2C0;
+			return true;
+
 		case 0xD2C0:
 			lo = 0xD2C0;
 			hi = 0xD300;
@@ -234,22 +114,82 @@ void ATSoundBoardEmulator::GetDeviceInfo(ATDeviceInfo& info) {
 	info.mpDef = &g_ATDeviceDefSoundBoard;
 }
 
+void ATSoundBoardEmulator::GetSettingsBlurb(VDStringW& buf) {
+	switch(mCoreVersion) {
+		case CoreVersion::Version11:
+			buf += L"1.1";
+			break;
+
+		case CoreVersion::Version12:
+			buf += L"1.2";
+			break;
+
+		case CoreVersion::Version20:
+			buf += L"2.0 Preview";
+			break;
+	}
+
+	buf.append_sprintf(L" @ $%04X", mMemBase);
+}
+
 void ATSoundBoardEmulator::GetSettings(ATPropertySet& settings) {
 	settings.SetUint32("base", mMemBase);
+
+	uint32 versionId = 0;
+
+	switch(mCoreVersion) {
+		case CoreVersion::Version11: versionId = 110; break;
+		default:
+		case CoreVersion::Version12: versionId = 120; break;
+		case CoreVersion::Version20: versionId = 200; break;
+	}
+
+	settings.SetUint32("version", versionId);
 }
 
 bool ATSoundBoardEmulator::SetSettings(const ATPropertySet& settings) {
 	SetMemBase(settings.GetUint32("base", mMemBase));
+
+	auto oldCoreVer = mCoreVersion;
+	switch(settings.GetUint32("version")) {
+		case 110: mCoreVersion = CoreVersion::Version11; break;
+		default:
+		case 120: mCoreVersion = CoreVersion::Version12; break;
+		case 200: mCoreVersion = CoreVersion::Version20; break;
+	}
+
+	if (mCoreVersion != oldCoreVer && mCoreVersion == CoreVersion::Version20)
+		mChannelCount = 6;
+
+	ApplyCoreLimitations();
+	UpdateControlLayer();
+
 	return true;
 }
 
 void ATSoundBoardEmulator::Init() {
-	mpMemory = new uint8[524288];
+	mpMemory = new uint8[4*1024*1024];
+
+	mpIrqController = GetService<ATIRQController>();
+	mIrqBit = mpIrqController->AllocateIRQ();
+
+	mpLeftEdgeBuffer = new ATSyncAudioEdgeBuffer;
+	mpLeftEdgeBuffer->mLeftVolume = 1.0f;
+	mpLeftEdgeBuffer->mRightVolume = 0.0f;
+
+	mpRightEdgeBuffer = new ATSyncAudioEdgeBuffer;
+	mpRightEdgeBuffer->mLeftVolume = 0.0f;
+	mpRightEdgeBuffer->mRightVolume = 1.0f;
 
 	ColdReset();
 }
 
 void ATSoundBoardEmulator::Shutdown() {
+	if (mpIrqController) {
+		mpIrqController->FreeIRQ(mIrqBit);
+		mIrqBit = 0;
+	}
+
 	if (mpAudioMixer) {
 		mpAudioMixer->RemoveSyncAudioSource(this);
 		mpAudioMixer = nullptr;
@@ -268,11 +208,26 @@ void ATSoundBoardEmulator::Shutdown() {
 		delete[] mpMemory;
 		mpMemory = NULL;
 	}
+
+	if (mpScheduler) {
+		mpScheduler->UnsetEvent(mpChannelIrq);
+		mpScheduler = nullptr;
+	}
 }
 
 void ATSoundBoardEmulator::ColdReset() {
+	memset(mpMemory, 0, 0x400000);
+
+	ApplyCoreLimitations();
+
+	if (mCoreVersion == CoreVersion::Version20)
+		mChannelCount = 6;
+	else
+		mChannelCount = 8;
+
 	mLoadAddress = 0;
 	mpCurChan = &mChannels[0];
+	mCurChanIndex = 0;
 
 	mMultiplierMode = 0;
 	mMultiplierArg1[0] = 0xFF;
@@ -292,15 +247,17 @@ void ATSoundBoardEmulator::ColdReset() {
 void ATSoundBoardEmulator::WarmReset() {
 	memset(mChannels, 0, sizeof mChannels);
 
-	memset(mAccumBufferLeft, 0, sizeof mAccumBufferLeft);
-	memset(mAccumBufferRight, 0, sizeof mAccumBufferRight);
+	for(auto& deadline : mChannelIrqDeadlines)
+		deadline = ~UINT64_C(0);
 
-	mAccumLevel = 0;
-	mAccumPhase = 0;
-	mAccumOffset = 0;
-	mGeneratedCycles = 0;
-	mLastUpdate = ATSCHEDULER_GETTIME(mpScheduler);
-	mCycleAccum = 0;
+	mMainControl = 0;
+
+	mpLeftEdgeBuffer->mEdges.clear();
+	mpRightEdgeBuffer->mEdges.clear();
+
+	mLastUpdate = mpScheduler->GetTick64();
+
+	UpdateAllIrqDeadlines();
 }
 
 void ATSoundBoardEmulator::SetU1MBControl(ATU1MBControl control, sint32 value) {
@@ -314,16 +271,7 @@ void ATSoundBoardEmulator::SetU1MBControl(ATU1MBControl control, sint32 value) {
 	}
 }
 
-uint8 ATSoundBoardEmulator::DebugReadControl(uint8 addr) const {
-	switch(addr & 0x1F) {
-		case 0x13:
-			return mpMemory[mLoadAddress & 0x7ffff];
-	}
-
-	return const_cast<ATSoundBoardEmulator *>(this)->ReadControl(addr);
-}
-
-uint8 ATSoundBoardEmulator::ReadControl(uint8 addr) {
+uint8 ATSoundBoardEmulator::DebugReadControlV1(uint8 addr) const {
 	switch(addr & 0x1F) {
 		case 0x00:
 			return 0x53;
@@ -335,29 +283,59 @@ uint8 ATSoundBoardEmulator::ReadControl(uint8 addr) {
 			return 0x01;
 
 		case 0x03:		// minor version
-			return 0x02;
+			switch(mCoreVersion) {
+				case CoreVersion::Version11:
+					return 0x01;
+
+				case CoreVersion::Version12:
+					return 0x02;
+
+				default:
+					break;
+			}
+			break;
 
 		case 0x13:
-			return mpMemory[mLoadAddress++ & 0x7ffff];
+			return mpMemory[mLoadAddress & 0x7FFFF];
 
 		case 0x1A:
-			return mMultiplierResult[0];
+			if (mCoreVersion == CoreVersion::Version12)
+				return mMultiplierResult[0];
+			break;
 
 		case 0x1B:
-			return mMultiplierResult[1];
+			if (mCoreVersion == CoreVersion::Version12)
+				return mMultiplierResult[1];
+			break;
 
 		case 0x1C:
-			return mMultiplierResult[2];
+			if (mCoreVersion == CoreVersion::Version12)
+				return mMultiplierResult[2];
+			break;
 
 		case 0x1D:
-			return mMultiplierResult[3];
+			if (mCoreVersion == CoreVersion::Version12)
+				return mMultiplierResult[3];
+			break;
 
-		default:
-			return 0xFF;
 	}
+
+	return 0xFF;
 }
 
-void ATSoundBoardEmulator::WriteControl(uint8 addr, uint8 value) {
+uint8 ATSoundBoardEmulator::ReadControlV1(uint8 addr) {
+	switch(addr & 0x1F) {
+		case 0x13:
+			return mpMemory[mLoadAddress++ & 0x7FFFF];
+
+		default:
+			break;
+	}
+
+	return DebugReadControlV1(addr);
+}
+
+void ATSoundBoardEmulator::WriteControlV1(uint8 addr, uint8 value) {
 	if (addr < 0x14)
 		Flush();
 
@@ -423,10 +401,14 @@ void ATSoundBoardEmulator::WriteControl(uint8 addr, uint8 value) {
 			break;
 
 		case 0x0F:	// control
+			value &= 0x01;
+
 			mpCurChan->mControl = value;
 
-			if (!(value & 1))
+			if (!(value & 1)) {
 				mpCurChan->mPhase = 0;
+				mpCurChan->mbInRepeat = false;
+			}
 			break;
 
 		case 0x10:	// load address low
@@ -442,11 +424,17 @@ void ATSoundBoardEmulator::WriteControl(uint8 addr, uint8 value) {
 			break;
 
 		case 0x13:	// load byte
-			mpMemory[mLoadAddress++ & 0x7ffff] = value;
+			{
+				const uint32 offset = mLoadAddress++ & 0x7FFFF;
+
+				mpMemory[offset] = value;
+				mpMemory[offset + 0x80000] = value;
+			}
 			break;
 
 		case 0x14:	// channel select
 			mpCurChan = &mChannels[value & 7];
+			mCurChanIndex = value & 7;
 			break;
 
 		case 0x15:	// multiplier accumulation mode
@@ -508,322 +496,670 @@ void ATSoundBoardEmulator::WriteControl(uint8 addr, uint8 value) {
 	}
 }
 
-void ATSoundBoardEmulator::Run(uint32 cycles) {
-	cycles += mCycleAccum;
+uint8 ATSoundBoardEmulator::DebugReadControlV2(uint8 addr) const {
+	switch(addr & 0x1F) {
+		case 0x00:	// address low
+			return (uint8)(mpCurChan->mAddress >> 0);
 
-	while(cycles) {
-		// compute samples we can generate based on time
-		uint32 samplesToGenerate = cycles / 6;
+		case 0x01:	// address mid
+			return (uint8)(mpCurChan->mAddress >> 8);
 
-		// don't generate more than a sample buffer at a time
-		if (samplesToGenerate > kSampleBufferSize)
-			samplesToGenerate = kSampleBufferSize;
+		case 0x02:	// address high
+			return (uint8)(mpCurChan->mAddress >> 16);
 
-		// if we can't generate anything, we're done
-		if (!samplesToGenerate)
-			break;
+		case 0x03:	// length low
+			return (uint8)(mpCurChan->mLength >> 0);
 
-		// subtract cycles from budget
-		cycles -= samplesToGenerate * 6;
+		case 0x04:	// length high
+			return (uint8)(mpCurChan->mLength >> 8);
 
-		// determine how many samples we can accumulate at 1/28 rate
-		mGeneratedCycles += samplesToGenerate * 6;
+		case 0x05:	// repeat low
+			return (uint8)(mpCurChan->mRepeat >> 0);
 
-		const uint32 samplesToAccum = mGeneratedCycles / 28;
+		case 0x06:	// repeat high
+			return (uint8)(mpCurChan->mRepeat >> 8);
 
-		mGeneratedCycles -= samplesToAccum * 28;
+		case 0x07:	// freq low
+			return (uint8)(mpCurChan->mFreq >> 0);
 
-		VDASSERT(mAccumLevel + samplesToAccum <= kAccumBufferSize);
+		case 0x08:	// freq high
+			return (uint8)(mpCurChan->mFreq >> 8);
 
-		uint32 samplesEatenByAccum = 0;
+		case 0x09:	// volume
+			return mpCurChan->mVolume;
 
-		if (samplesToAccum) {
-			samplesEatenByAccum += 5 * samplesToAccum;
-			switch(mAccumPhase) {
-				case 0:
-					samplesEatenByAccum -= (samplesToAccum + 2) / 3;
-					break;
-				case 1:
-					samplesEatenByAccum -= (samplesToAccum + 0) / 3;
-					break;
-				case 2:
-					samplesEatenByAccum -= (samplesToAccum + 1) / 3;
-					break;
-			}
-		}
+		case 0x0A:	// pan
+			return mpCurChan->mPan;
 
-		for(int chidx = 0; chidx < 8; ++chidx) {
-			Channel *__restrict ch = &mChannels[chidx];
-			const uint32 vol = ch->mVolume;
+		case 0x0B:	// repeat low
+			return (uint8)(mpCurChan->mRepeatLen >> 0);
 
-			if (!vol || !(ch->mControl & 0x01)) {
-				// If the channel has DMA enabled but is shut off, we still have to update
-				// the phase.
-				if (ch->mControl & 0x01) {
-					uint32 phase = ch->mPhase;
-					uint32 freq = ch->mFreq;
-					uint32 length = ch->mLength << 16;
-					uint32 repeat = ch->mRepeat << 16;
+		case 0x0C:	// repeat high
+			return (uint8)(mpCurChan->mRepeatLen >> 8);
 
-					// this is pretty lame, but it correctly handles the lost phase on
-					// the repeat
-					for(uint32 i = 0; i < samplesToGenerate; ++i) {
-						phase += freq;
+		case 0x0D:	// offset low
+			return (uint8)(mpCurChan->mOffset >> 0);
 
-						if (phase >= length)
-							phase = repeat;
-					}
+		case 0x0E:	// offset high
+			return (uint8)(mpCurChan->mOffset >> 8);
 
-					ch->mPhase = phase;
-				}
+		case 0x0F:	// control
+			{
+				uint8 v = mpCurChan->mControl;
 
-				// Shift the overlap buffer.
-				if (samplesEatenByAccum) {
-					if (samplesEatenByAccum >= kSampleBufferOverlap)
-						memset(ch->mOverlapBuffer, 0, sizeof ch->mOverlapBuffer);
-					else {
-						memmove(ch->mOverlapBuffer, ch->mOverlapBuffer + samplesEatenByAccum, sizeof(ch->mOverlapBuffer[0]) * (kSampleBufferOverlap - samplesEatenByAccum));
-						memset(ch->mOverlapBuffer + (kSampleBufferOverlap - samplesEatenByAccum), 0, sizeof(ch->mOverlapBuffer[0]) * samplesEatenByAccum);
-					}
-				}
+				if ((v & 0x40) && mpScheduler->GetTick64() >= mChannelIrqDeadlines[mCurChanIndex])
+					v |= 0x80;
 
-				continue;
+				return v;
 			}
 
-			const uint32 panleft = 255 - ch->mPan;
-			const uint32 panright = ch->mPan;
-			const uint32 baseAddr = ch->mAddress;
-			uint32 phase = ch->mPhase;
-			uint32 freq = ch->mFreq;
-			uint32 length = ch->mLength << 16;
-			uint32 repeat = ch->mRepeat << 16;
-			sint16 *sdst = mSampleBuffer;
-			uint8 *const mem = mpMemory;
+		case 0x10:
+			return (uint8)mLoadAddress;
 
-			memcpy(sdst, ch->mOverlapBuffer, kSampleBufferOverlap*sizeof(sdst[0]));
-			sdst += kSampleBufferOverlap;
+		case 0x11:
+			return (uint8)(mLoadAddress >> 8);
 
-			for(uint32 i = 0; i < samplesToGenerate; ++i) {
-				const uint8 sample = mem[(baseAddr + (phase >> 16)) & 0x7ffff];
-				phase += freq;
+		case 0x12:
+			return (uint8)((mLoadAddress >> 16) & 0x1F);
 
-				if (phase >= length)
-					phase = repeat;
+		case 0x13:
+			return mpMemory[mLoadAddress & 0x1FFFFF];
 
-				*sdst++ = (sint16)((uint32)sample - 0x80);
-			}
+		case 0x14:
+			return (uint8)(mpCurChan - mChannels);
 
-			ch->mPhase = phase;
+		case 0x15:
+			return mMainControl + (mpScheduler->GetTick64() >= mGlobalIrqDeadline ? 0x80 : 0x00);
 
-			const sint16 *ssrc = mSampleBuffer + mAccumOffset;
-			float *dstLeft = mAccumBufferLeft + mAccumLevel;
-			float *dstRight = mAccumBufferRight + mAccumLevel;
-			float volf = (float)vol;
-			float volPanLeft = volf * (float)panleft;
-			float volPanRight = volf * (float)panright;
+		case 0x16:
+			return mChannelCount - 1;
 
-			uint32 accumCounter = samplesToAccum;
+		case 0x1D:
+			return 0x53;
 
-			if (accumCounter) {
-				// 6 6 6 6 4
-				//         2 6 6 6 6 2
-				//                   4 6 6 6 6
-				//
-				// We consume 14 samples in 84 cycles, or one sample every 6 cycles.
-				switch(mAccumPhase) {
-				case 0:
-					do {
-						float sample;
+		case 0x1E:
+			return 0x42;
 
-						sample = (float)ssrc[0] + (float)ssrc[1] + (float)ssrc[2] + (float)ssrc[3] + (2.0f/3.0f)*(float)ssrc[4];
-						*dstLeft++ += sample * volPanLeft;
-						*dstRight++ += sample * volPanRight;
-						ssrc += 4;
-
-						if (!--accumCounter)
-							break;
-
-				case 1:
-						sample = (1.0f/3.0f)*(float)ssrc[0] + (float)ssrc[1] + (float)ssrc[2] + (float)ssrc[3] + (float)ssrc[4] + (1.0f/3.0f)*(float)ssrc[5];
-						*dstLeft++ += sample * volPanLeft;
-						*dstRight++ += sample * volPanRight;
-						ssrc += 5;
-
-						if (!--accumCounter)
-							break;
-				case 2:
-						sample = (2.0f/3.0f)*(float)ssrc[0] + (float)ssrc[1] + (float)ssrc[2] + (float)ssrc[3] + (float)ssrc[4];
-						*dstLeft++ += sample * volPanLeft;
-						*dstRight++ += sample * volPanRight;
-						ssrc += 5;
-					} while(--accumCounter);
-				}
-			}
-
-			memcpy(ch->mOverlapBuffer, sdst - kSampleBufferOverlap, sizeof ch->mOverlapBuffer);
-		}
-
-		// update accumulator phase and offset
-		mAccumPhase = (mAccumPhase + samplesToAccum) % 3;
-		mAccumOffset += samplesToGenerate - samplesEatenByAccum;
-
-		VDASSERT(mAccumOffset < kSampleBufferOverlap);
-
-		// update accumulator level
-		mAccumLevel += samplesToAccum;
-		VDASSERT(mAccumLevel <= kAccumBufferSize);
+		case 0x1F:
+			return 0x20;
 	}
 
-	mCycleAccum = cycles;
+	return 0xFF;
+}
+
+uint8 ATSoundBoardEmulator::ReadControlV2(uint8 addr) {
+	switch(addr & 0x1F) {
+		case 0x13:
+			return mpMemory[mLoadAddress++ & 0x1FFFFF];
+
+		default:
+			break;
+	}
+
+	return DebugReadControlV2(addr);
+}
+
+void ATSoundBoardEmulator::WriteControlV2(uint8 addr, uint8 value) {
+	if (addr < 0x14)
+		Flush();
+
+	switch(addr) {
+		case 0x00:	// address low
+			mpCurChan->mAddress = (mpCurChan->mAddress & 0x1FFF00) + value;
+			break;
+
+		case 0x01:	// address mid
+			mpCurChan->mAddress = (mpCurChan->mAddress & 0x1F00FF) + ((uint32)value << 8);
+			break;
+
+		case 0x02:	// address high
+			mpCurChan->mAddress = (mpCurChan->mAddress & 0xFFFF) + ((uint32)(value & 0x1F) << 16);
+			break;
+
+		case 0x03:	// length low
+			mpCurChan->mLength = (mpCurChan->mLength & 0xff00) + value;
+			break;
+
+		case 0x04:	// length high
+			mpCurChan->mLength = (mpCurChan->mLength & 0x00ff) + ((uint32)value << 8);
+			break;
+
+		case 0x05:	// repeat low
+			mpCurChan->mRepeat = (mpCurChan->mRepeat & 0xff00) + value;
+			break;
+
+		case 0x06:	// repeat high
+			mpCurChan->mRepeat = (mpCurChan->mRepeat & 0x00ff) + ((uint32)value << 8);
+			break;
+
+		case 0x07:	// freq low
+			mpCurChan->mFreq = (mpCurChan->mFreq & 0xff00) + value;
+			break;
+
+		case 0x08:	// freq high
+			mpCurChan->mFreq = (mpCurChan->mFreq & 0x00ff) + ((uint32)value << 8);
+			break;
+
+		case 0x09:	// volume
+			mpCurChan->mVolume = value;
+			break;
+
+		case 0x0A:	// pan
+			mpCurChan->mPan = value;
+			break;
+
+		case 0x0B:	// repeat low
+			mpCurChan->mRepeatLen = (mpCurChan->mRepeatLen & 0xff00) + value;
+			break;
+
+		case 0x0C:	// repeat high
+			mpCurChan->mRepeatLen = (mpCurChan->mRepeatLen & 0x00ff) + ((uint32)value << 8);
+			break;
+
+		case 0x0D:	// offset low
+			mpCurChan->mOffset = (mpCurChan->mOffset & 0xff00) + value;
+			break;
+
+		case 0x0E:	// offset high
+			mpCurChan->mOffset = (mpCurChan->mOffset & 0x00ff) + ((uint32)value << 8);
+			break;
+
+		case 0x0F:	// control
+			mpCurChan->mControl = value & 0b0'01001111;
+
+			if (UpdateChannelIrqDeadline(*mpCurChan, mCurChanIndex, true))
+				UpdateIrqAndDeadline();
+
+			// reset phase on gate rearm, even if already active
+			if (!(value & 1)) {
+				mpCurChan->mPhase = (uint64)mpCurChan->mOffset << 47;
+
+				if (mpCurChan->mControl & 0x08)
+					mpCurChan->mPhase += mpCurChan->mPhase;
+
+				mpCurChan->mbInRepeat = false;
+			}
+			break;
+
+		case 0x10:	// load address low
+			mLoadAddress = (mLoadAddress & 0x1FFF00) + value;
+			break;
+
+		case 0x11:	// load address med
+			mLoadAddress = (mLoadAddress & 0x1F00FF) + ((uint32)value << 8);
+			break;
+
+		case 0x12:	// load address high
+			mLoadAddress = (mLoadAddress & 0x00FFFF) + ((uint32)(value & 0x1F) << 16);
+			break;
+
+		case 0x13:	// load byte
+			{
+				uint32 offset = mLoadAddress++ & 0x1FFFFF;
+				mpMemory[offset] = value;
+				mpMemory[offset + 0x200000] = value;
+			}
+			break;
+
+		case 0x14:	// channel select
+			mpCurChan = &mChannels[value & 31];
+			mCurChanIndex = value & 31;
+			break;
+
+		case 0x15:	// main control
+			// check if global IRQ is being toggled -- if so, we need to update all channel deadlines
+			if ((mMainControl ^ value) & 0x40) {
+				mMainControl ^= 0x40;
+
+				UpdateAllIrqDeadlines();
+			}
+			break;
+
+		case 0x16:	// channel count
+			{
+				uint8 newChannelCount = value > 31 ? 32 : value + 1;;
+
+				if (mChannelCount != newChannelCount) {
+					mChannelCount = newChannelCount;
+
+					UpdateAllIrqDeadlines();
+				}
+			}
+			break;
+	}
+
+	// if the frequency or length were changed with the IRQ enabled, then update the deadlines
+	if (mpCurChan->mControl & 0x40) {
+		switch(addr) {
+			case 0x03:	// length low
+			case 0x04:	// length high
+			case 0x07:	// freq low
+			case 0x08:	// freq high
+				if (UpdateChannelIrqDeadline(*mpCurChan, mCurChanIndex, false))
+					UpdateIrqAndDeadline();
+				break;
+		}
+	}
+}
+
+template<bool T_V2>
+void ATSoundBoardEmulator::Run(uint64 targetTime) {
+	uint32 dt = (uint32)(targetTime - mLastUpdate);
+
+	// if we can't generate anything, we're done
+	const uint32 cyclesPerSample = T_V2 ? mChannelCount : 6;
+	const uint32 channelCount = mChannelCount;
+	if (dt < channelCount)
+		return;
+
+	// compute samples we can generate based on time
+	const uint32 samplesToGenerate = dt / cyclesPerSample;
+
+	// advance tracked time
+	const uint32 baseTime = (uint32)mLastUpdate;
+	mLastUpdate += samplesToGenerate * cyclesPerSample;
+
+	// process channels
+	for(uint32 chidx = 0; chidx < mChannelCount; ++chidx) {
+		Channel *VDRESTRICT ch = &mChannels[chidx];
+
+		if (!(ch->mControl & 0x01))
+			continue;
+
+		if constexpr (!T_V2)
+			RunChannel<false, false>(ch, baseTime, cyclesPerSample, samplesToGenerate);
+		else  if (ch->mControl & (mMainControl & 0x40))
+			RunChannel<true, true>(ch, baseTime, cyclesPerSample, samplesToGenerate);
+		else
+			RunChannel<true, false>(ch, baseTime, cyclesPerSample, samplesToGenerate);
+	}
+}
+
+template<bool T_V2, bool T_OneShot>
+void ATSoundBoardEmulator::RunChannel(Channel *VDRESTRICT ch, uint32 baseTime, uint32 cyclesPerSample, uint32 samplesToGenerate) {
+	using PhaseValue = std::conditional_t<T_V2, uint64, uint32>;
+	constexpr int kPhaseShift = T_V2 ? 47 : 16;
+
+	const uint32 vol = ch->mVolume;
+
+	PhaseValue phase = T_V2 ? ch->mPhase : (PhaseValue)(ch->mPhase >> 31);
+	PhaseValue freq = (PhaseValue)ch->mFreq << (kPhaseShift - 16);
+	PhaseValue length = (PhaseValue)ch->mLength << kPhaseShift;
+	PhaseValue repeat = (PhaseValue)ch->mRepeat << kPhaseShift;
+	PhaseValue repeatLength = T_V2 && (ch->mControl & 0x04) ? (PhaseValue)ch->mRepeatLen << kPhaseShift : length;
+
+	if constexpr (T_V2) {
+		if (ch->mControl & 0x08) {
+			length += length;
+			repeat += repeat;
+			repeatLength += repeatLength;
+		}
+
+		if (mChannelCount > 8) {
+			freq += freq;
+
+			if (mChannelCount > 16)
+				freq += freq;
+		}
+	}
+
+	PhaseValue currentLength = T_V2 && ch->mbInRepeat ? repeatLength : length;
+
+	if (!vol) {
+		// If the channel has DMA enabled but is shut off, we still have to update
+		// the phase.
+
+		// this is pretty lame, but it correctly handles the lost phase on
+		// the repeat
+		for(uint32 i = 0; i < samplesToGenerate; ++i) {
+			phase += freq;
+
+			if (phase >= currentLength) {
+				if constexpr (T_OneShot) {
+					ch->mControl &= 0xFE;
+					break;
+				} else {
+					phase = repeat;
+
+					if constexpr (T_V2)
+						currentLength = repeatLength;
+
+					ch->mbInRepeat = true;
+				}
+			}
+		}
+
+		ch->mPhase = phase;
+		return;
+	}
+
+	const auto leftN0 = mpLeftEdgeBuffer->mEdges.size();
+	const auto rightN0 = mpRightEdgeBuffer->mEdges.size();
+
+	mpLeftEdgeBuffer->mEdges.resize(leftN0 + samplesToGenerate);
+	mpRightEdgeBuffer->mEdges.resize(rightN0 + samplesToGenerate);
+
+	auto *leftEdges0 = &*(mpLeftEdgeBuffer->mEdges.end() - samplesToGenerate);
+	auto *rightEdges0 = &*(mpRightEdgeBuffer->mEdges.end() - samplesToGenerate);
+
+	auto *VDRESTRICT leftEdges = leftEdges0;
+	auto *VDRESTRICT rightEdges = rightEdges0;
+
+	const uint32 panleft = 255 - ch->mPan;
+	const uint32 panright = ch->mPan;
+	float volf = (float)vol;
+	float volPanLeft = volf * (float)panleft;
+	float volPanRight = volf * (float)panright;
+
+	uint32 sampleTime = baseTime;
+	constexpr uint32 addrMask = T_V2 ? 0x1FFFFF : 0x7FFFF;
+	const uint8 *VDRESTRICT mem = mpMemory + (ch->mAddress & addrMask);
+
+	const int sampleXor = T_V2 && (ch->mControl & 0x02) ? 0x80 : 0x00;
+	float lastLeft = ch->mLastLeft;
+	float lastRight = ch->mLastRight;
+
+	for(uint32 i = 0; i < samplesToGenerate; ++i) {
+		float sample = (float)(((int)mem[(ptrdiff_t)(phase >> kPhaseShift)] ^ sampleXor) - 0x80);
+
+		phase += freq;
+
+		if (phase >= currentLength) {
+			if constexpr (T_OneShot) {
+				ch->mControl &= 0xFE;
+				break;
+			} else {
+				phase = repeat;
+
+				if constexpr (T_V2)
+					currentLength = repeatLength;
+
+				ch->mbInRepeat = true;
+			}
+		}
+
+		const float sampleL = sample * volPanLeft;
+		const float sampleR = sample * volPanRight;
+
+		float deltaLeft = sampleL - lastLeft;
+		float deltaRight = sampleR - lastRight;
+
+		sampleTime += cyclesPerSample;
+		leftEdges->mTime = sampleTime;
+		leftEdges->mDeltaValue = deltaLeft;
+		rightEdges->mTime = sampleTime;
+		rightEdges->mDeltaValue = deltaRight;
+
+		leftEdges += (deltaLeft != 0);
+		rightEdges += (deltaRight != 0);
+
+		lastLeft = sampleL;
+		lastRight = sampleR;
+	}
+
+	if constexpr (T_V2)
+		ch->mPhase = phase;
+	else
+		ch->mPhase = (uint64)phase << 31;
+
+	ch->mLastLeft = lastLeft;
+	ch->mLastRight = lastRight;
+
+	mpLeftEdgeBuffer->mEdges.resize(leftN0 + (leftEdges - leftEdges0));
+	mpRightEdgeBuffer->mEdges.resize(rightN0 + (rightEdges - rightEdges0));
 }
 
 void ATSoundBoardEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
-	const uint32 count = mixInfo.mCount;
-
 	Flush();
 
-	VDASSERT(count <= kAccumBufferSize);
-
-	// if we don't have enough samples, pad out; eventually we'll catch up enough
-	if (mAccumLevel < count) {
-		memset(mAccumBufferLeft + mAccumLevel, 0, sizeof(mAccumBufferLeft[0]) * (count - mAccumLevel));
-		memset(mAccumBufferRight + mAccumLevel, 0, sizeof(mAccumBufferRight[0]) * (count - mAccumLevel));
-
-		mAccumLevel = count;
-	}
-
-	// 3/14 corrects for sample accumulation factor incurred with different clocks.
 	// 1/255 for uint8 volume normalization.
 	// 1/255 for uint8 panning normalization.
 	// 1/127 for signed to normalized sample conversion.
 	// 1/4 for channel mixing (taking some clipping, vs. worst case 1/8)
-	static constexpr float kChannelScale = (3.0f / 14.0f) / 255.0f / 255.0f / 127.0f / 4.0f;
+	static constexpr float kChannelScale = 1.0f / 255.0f / 255.0f / 127.0f / 4.0f;
 	const float volume = mixInfo.mpMixLevels[kATAudioMix_Other] * kChannelScale;
 
-	// add output buffers to output stream
-	for(uint32 i=0; i<count; ++i) {
-		mixInfo.mpLeft[i] += mAccumBufferLeft[i] * volume;
-		mixInfo.mpRight[i] += mAccumBufferRight[i] * volume;
-	}
+	mpLeftEdgeBuffer->mLeftVolume = volume;
+	mpRightEdgeBuffer->mRightVolume = volume;
 
-	// shift down accumulation buffers
-	uint32 samplesLeft = mAccumLevel - count;
+	auto& edgePlayer = mpAudioMixer->GetEdgePlayer();
 
-	if (samplesLeft) {
-		memmove(mAccumBufferLeft, mAccumBufferLeft + count, samplesLeft * sizeof(mAccumBufferLeft[0]));
-		memmove(mAccumBufferRight, mAccumBufferRight + count, samplesLeft * sizeof(mAccumBufferRight[0]));
-	}
+	if (!mpLeftEdgeBuffer->mEdges.empty())
+		edgePlayer.AddEdgeBuffer(mpLeftEdgeBuffer);
 
-	memset(mAccumBufferLeft + samplesLeft, 0, sizeof(mAccumBufferLeft[0]) * count);
-	memset(mAccumBufferRight + samplesLeft, 0, sizeof(mAccumBufferRight[0]) * count);
+	if (!mpRightEdgeBuffer->mEdges.empty())
+		edgePlayer.AddEdgeBuffer(mpRightEdgeBuffer);
+}
 
-	mAccumLevel = samplesLeft;
+void ATSoundBoardEmulator::OnScheduledEvent(uint32 id) {
+	mpChannelIrq = nullptr;
+
+	if (mpScheduler->GetTick64() >= mGlobalIrqDeadline)
+		AssertIrq();
+	else
+		UpdateIrq();
 }
 
 void ATSoundBoardEmulator::Flush() {
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
-	uint32 dt = t - mLastUpdate;
-	mLastUpdate = t;
 
-	Run(dt);
+	if (mCoreVersion == CoreVersion::Version20)
+		Run<true>(t);
+	else
+		Run<false>(t);
+}
+
+void ATSoundBoardEmulator::UpdateAllIrqDeadlines() {
+	for(uint32 i = 0; i < mChannelCount; ++i)
+		UpdateChannelIrqDeadline(mChannels[i], i, false);
+
+	uint64 t = mpScheduler->GetTick64();
+
+	for(uint32 i = mChannelCount; i < 32; ++i) {
+		if (t >= mChannelIrqDeadlines[i])
+			mChannelIrqDeadlines[i] = ~UINT64_C(0);
+	}
+
+	if (mMainControl & 0x40)
+		mGlobalIrqDeadline = ~UINT64_C(0);
+	else
+		mGlobalIrqDeadline = ComputeNearestIrq();
+
+	UpdateIrq();
+}
+
+bool ATSoundBoardEmulator::UpdateChannelIrqDeadline(const Channel& ch, uint32 idx, bool resetIrq) {
+	uint64 deadline = ~UINT64_C(0);
+
+	if ((ch.mControl & 0x41) == 0x40 && ch.mFreq > 0 && (mMainControl & 0x40)) {
+		const uint32 length = ch.mbInRepeat && (ch.mControl & 0x04) ? ch.mRepeatLen : ch.mLength;
+		const uint64 phaseLimit = (uint64)length << 47;
+
+		uint64 samplesToIrq = ch.mPhase >= phaseLimit ? 1 : (((uint64)(phaseLimit - ch.mPhase) >> 31) + ch.mFreq - 1) / ch.mFreq;
+
+		deadline = mpScheduler->GetTick64() + samplesToIrq * mChannelCount;
+	}
+
+	// if the channel IRQ has already fired, do not clear it even if parameters have
+	// changed
+	if (resetIrq) {
+		if (mChannelIrqDeadlines[idx] == deadline)
+			return false;
+	} else {
+		if (mChannelIrqDeadlines[idx] <= deadline)
+			return false;
+	}
+
+	mChannelIrqDeadlines[idx] = deadline;
+	return true;
+}
+
+void ATSoundBoardEmulator::UpdateIrqAndDeadline() {
+	mGlobalIrqDeadline = ComputeNearestIrq();
+	UpdateIrq();
+}
+
+void ATSoundBoardEmulator::UpdateIrq() {
+	if ((mMainControl & 0x40) && mGlobalIrqDeadline != ~UINT64_C(0)) {
+		const uint64 t = mpScheduler->GetTick64();
+
+		if (t < mGlobalIrqDeadline) {
+			mpScheduler->SetEvent((uint32)std::min<uint64>(mGlobalIrqDeadline - t, 1000000), this, 1, mpChannelIrq);
+			return;
+		}
+
+		AssertIrq();
+		return;
+	}
+
+	mpScheduler->UnsetEvent(mpChannelIrq);
+	NegateIrq();
+}
+
+uint64 ATSoundBoardEmulator::ComputeNearestIrq() const {
+	uint64 earliest = ~UINT64_C(0);
+
+	for(const uint64 deadline : mChannelIrqDeadlines)
+		earliest = std::min<uint64>(earliest, deadline);
+
+	return earliest;
+}
+
+void ATSoundBoardEmulator::AssertIrq() {
+	mpIrqController->Assert(mIrqBit, false);
+}
+
+void ATSoundBoardEmulator::NegateIrq() {
+	mpIrqController->Negate(mIrqBit, false);
 }
 
 void ATSoundBoardEmulator::UpdateControlLayer() {
+	if (!mpMemMan)
+		return;
+
 	if (mpMemLayerControl) {
 		mpMemMan->DeleteLayer(mpMemLayerControl);
 		mpMemLayerControl = NULL;
 	}
 
-	uint32 membase = mMemBaseOverride >= 0 ? mMemBaseOverride : mMemBase;
+	uint32 membase = mMemBaseOverride >= 0 && mCoreVersion != CoreVersion::Version20 ? mMemBaseOverride : mMemBase;
 
 	ATMemoryHandlerTable handlers = {};
 	handlers.mpThis = this;
+	handlers.mbPassAnticReads = true;
+	handlers.mbPassReads = true;
+	handlers.mbPassWrites = true;
+
+	if (mCoreVersion == CoreVersion::Version20) {
+		handlers.BindDebugReadHandler<&ATSoundBoardEmulator::HandleDebugReadControlV2>();
+		handlers.BindReadHandler<&ATSoundBoardEmulator::HandleReadControlV2>();
+		handlers.BindWriteHandler<&ATSoundBoardEmulator::HandleWriteControlV2>();
+	} else {
+		handlers.BindDebugReadHandler<&ATSoundBoardEmulator::HandleDebugReadControlV1>();
+		handlers.BindReadHandler<&ATSoundBoardEmulator::HandleReadControlV1>();
+		handlers.BindWriteHandler<&ATSoundBoardEmulator::HandleWriteControlV1>();
+	}
 
 	switch(membase) {
 		case 0:
 			break;
 
+		case 0xD280:
 		case 0xD2C0:
-			handlers.mbPassAnticReads = true;
-			handlers.mbPassReads = true;
-			handlers.mbPassWrites = true;
-			handlers.mpDebugReadHandler = StaticDebugReadD2xxControl;
-			handlers.mpReadHandler = StaticReadD2xxControl;
-			handlers.mpWriteHandler = StaticWriteD2xxControl;
 			mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, 0xD2, 0x01);
 			break;
 
 		case 0xD500:
-			handlers.mbPassAnticReads = true;
-			handlers.mbPassReads = true;
-			handlers.mbPassWrites = true;
-			handlers.mpDebugReadHandler = StaticDebugReadD5xxControl;
-			handlers.mpReadHandler = StaticReadD5xxControl;
-			handlers.mpWriteHandler = StaticWriteD5xxControl;
 			mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, 0xD5, 0x01);
 			break;
 
 		case 0xD600:
-			handlers.mbPassAnticReads = true;
-			handlers.mbPassReads = true;
-			handlers.mbPassWrites = true;
-			handlers.mpDebugReadHandler = StaticDebugReadD5xxControl;
-			handlers.mpReadHandler = StaticReadD5xxControl;
-			handlers.mpWriteHandler = StaticWriteD5xxControl;
 			mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, 0xD6, 0x01);
 			break;
 	}
 
-	if (mpMemLayerControl)
+	if (mCoreVersion == CoreVersion::Version20)
+		mMemRange = 0x20;
+	else
+		mMemRange = 0x40;
+
+	if (mpMemLayerControl) {
+		mpMemMan->SetLayerName(mpMemLayerControl, "SoundBoard");
 		mpMemMan->EnableLayer(mpMemLayerControl, true);
+	}
 }
 
-sint32 ATSoundBoardEmulator::StaticDebugReadD2xxControl(void *thisptr, uint32 addr) {
-	uint8 addr8 = (uint8)addr;
-	if (addr8 < 0xC0)
+void ATSoundBoardEmulator::ApplyCoreLimitations() {
+	if (mCoreVersion != CoreVersion::Version20) {
+		std::fill(&mChannels[8], &mChannels[32], Channel{});
+
+		for(Channel& ch : mChannels) {
+			ch.mControl &= 0x01;
+			ch.mAddress &= 0x7FFFF;
+		}
+
+		mChannelCount = 8;
+
+		if (mpMemory)
+			memcpy(mpMemory + 0x80000, mpMemory, 0x80000);
+
+		for(uint64& deadline : mChannelIrqDeadlines)
+			deadline = ~UINT64_C(0);
+	} else {
+		if (mpMemory)
+			memcpy(mpMemory + 0x200000, mpMemory, 0x200000);
+	}
+
+	if (mpIrqController)
+		UpdateIrq();
+}
+
+sint32 ATSoundBoardEmulator::HandleDebugReadControlV1(uint32 addr) const {
+	const uint32 addrOffset = addr - mMemBase;
+	if (addrOffset >= mMemRange)
 		return -1;
 
-	return ((const ATSoundBoardEmulator *)thisptr)->DebugReadControl(addr8 & 0x3f);
+	return DebugReadControlV1(addrOffset & 0x3F);
 }
 
-sint32 ATSoundBoardEmulator::StaticReadD2xxControl(void *thisptr, uint32 addr) {
-	uint8 addr8 = (uint8)addr;
-	if (addr8 < 0xC0)
+sint32 ATSoundBoardEmulator::HandleReadControlV1(uint32 addr) {
+	const uint32 addrOffset = addr - mMemBase;
+	if (addrOffset >= mMemRange)
 		return -1;
 
-	return ((ATSoundBoardEmulator *)thisptr)->ReadControl(addr8 & 0x3f);
+	return ReadControlV1(addrOffset & 0x3F);
 }
 
-bool ATSoundBoardEmulator::StaticWriteD2xxControl(void *thisptr, uint32 addr, uint8 value) {
-	uint8 addr8 = (uint8)addr;
-	if (addr8 < 0xC0)
+bool ATSoundBoardEmulator::HandleWriteControlV1(uint32 addr, uint8 value) {
+	const uint32 addrOffset = addr - mMemBase;
+	if (addrOffset >= mMemRange)
 		return false;
 
-	((ATSoundBoardEmulator *)thisptr)->WriteControl(addr8 & 0x3f, value);
+	WriteControlV1(addrOffset & 0x3F, value);
 	return true;
 }
 
-sint32 ATSoundBoardEmulator::StaticDebugReadD5xxControl(void *thisptr, uint32 addr) {
-	uint8 addr8 = (uint8)addr;
-	if (addr8 >= 0x40)
+sint32 ATSoundBoardEmulator::HandleDebugReadControlV2(uint32 addr) const {
+	const uint32 addrOffset = addr - mMemBase;
+	if (addrOffset >= mMemRange)
 		return -1;
 
-	return ((const ATSoundBoardEmulator *)thisptr)->DebugReadControl(addr8);
+	return DebugReadControlV2(addrOffset & 0x3F);
 }
 
-sint32 ATSoundBoardEmulator::StaticReadD5xxControl(void *thisptr, uint32 addr) {
-	uint8 addr8 = (uint8)addr;
-	if (addr8 >= 0x40)
+sint32 ATSoundBoardEmulator::HandleReadControlV2(uint32 addr) {
+	const uint32 addrOffset = addr - mMemBase;
+	if (addrOffset >= mMemRange)
 		return -1;
 
-	return ((ATSoundBoardEmulator *)thisptr)->ReadControl(addr8);
+	return ReadControlV2(addrOffset & 0x3F);
 }
 
-bool ATSoundBoardEmulator::StaticWriteD5xxControl(void *thisptr, uint32 addr, uint8 value) {
-	uint8 addr8 = (uint8)addr;
-	if (addr8 >= 0x40)
+bool ATSoundBoardEmulator::HandleWriteControlV2(uint32 addr, uint8 value) {
+	const uint32 addrOffset = addr - mMemBase;
+	if (addrOffset >= mMemRange)
 		return false;
 
-	((ATSoundBoardEmulator *)thisptr)->WriteControl(addr8, value);
+	WriteControlV2(addrOffset & 0x3F, value);
 	return true;
 }

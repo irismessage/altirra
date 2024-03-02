@@ -12,3 +12,7 @@ struct IUnknown;
 #include <string>
 #include <vector>
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/vdstl.h>
+#include <vd2/system/vdstl_hashmap.h>
+#include <vd2/system/VDString.h>
+#include <vd2/system/win32/intrin.h>

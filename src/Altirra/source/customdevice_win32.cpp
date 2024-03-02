@@ -312,7 +312,6 @@ uint32 ATDeviceCustomNetworkEngine::Peek() {
 }
 
 void ATDeviceCustomNetworkEngine::ThreadRun() {
-	DWORD reconnectTimeout = 1000;
 	HANDLE handleTable[] = {
 		mSocketEvent.getHandle(),
 		mExitRequested.getHandle(),

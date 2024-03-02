@@ -78,4 +78,8 @@ float4 ConvertYCbCrToRGB(float y, float cb, float cr, uniform int colorSpace) {
 	return result;
 }
 
+float3 SrgbToLinear(float3 c) {
+	return c < 0.04045f ? c / 12.92f : pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
 #endif

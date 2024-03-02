@@ -25,6 +25,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/zip.h>
 #include <at/atcore/checksum.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/media.h>
 #include <at/atcore/vfs.h>
@@ -32,6 +33,8 @@
 #include <at/atio/diskfs.h>
 
 ATLogChannel g_ATLCDiskImage(false, false, "DISKIMAGE", "Disk image load details");
+
+ATConfigVarBool g_ATCVImageDiskATXFullSectorsEnabled("image.disk.atx.full_sector_support", false);
 
 namespace {
 	// FM uses 4us bit cells, of which there are clock and data cells.
@@ -87,6 +90,16 @@ namespace {
 		11, 23, 8, 20, 5, 17, 2, 14, 0, 12, 24, 9, 21, 6, 18, 3, 15, 1, 13, 25, 10, 22, 7, 19, 4, 16
 	};
 
+	// 1,14,3,16,5,18,7,20,9,22,11,24,13,26,2,15,4,17,6,19,8,21,10,23,12,25
+	static const int kTrackInterleaveSD26_14_1[26]={
+		0, 14, 2, 16, 4, 18, 6, 20, 8, 22, 10, 24, 12, 1, 15, 3, 17, 5, 19, 7, 21, 9, 23, 11, 25, 13
+	};
+
+	// 1,18,9,26,17,8,25,16,7,24,15,6,23,14,5,22,13,4,21,12,3,20,11,2,19,10
+	static const int kTrackInterleaveDD26_23_1[26]={
+		0, 23, 20, 17, 14, 11, 8, 5, 2, 25, 22, 19, 16, 13, 10, 7, 4, 1, 24, 21, 18, 15, 12, 9, 6, 3
+	};
+
 	struct ATDCMPassHeader {
 		uint8 mArchiveType;
 		uint8 mPassInfo;
@@ -127,6 +140,7 @@ namespace {
 	struct ATXTrackHeader {
 		enum : uint32 {
 			kFlag_MFM		= 0x00000002,		// track encoded as MFM
+			kFlag_FullSects	= 0x00000004,		// full sectors encoded for >128 bytes
 			kFlag_NoSkew	= 0x00000100,		// track-to-track relative skew not measured
 		};
 
@@ -134,10 +148,11 @@ namespace {
 		uint16	mType;
 		uint16	mReserved06;
 		uint8	mTrackNum;
-		uint8	mReserved09;
+		uint8	mSide;
 		uint16	mNumSectors;
 		uint16	mRate;
-		uint8	mFill2[2];
+		uint8	mDefSectSize;			// default sector size encoding (0-3 for 128-1024)
+		uint8	mFill2;
 		uint32	mFlags;
 		uint32	mDataOffset;
 		uint8	mFill4[8];
@@ -237,16 +252,15 @@ protected:
 	void LoadARC(IVDRandomAccessStream& stream, const wchar_t *origPath);
 	void ComputeGeometry();
 
-	void SaveATR(VDFile& f, PhysSectors& phySecs);
-	void SaveXFD(VDFile& f, PhysSectors& phySecs);
-	void SaveP2(VDFile& f, PhysSectors& phySecs);
-	void SaveP3(VDFile& f, PhysSectors& phySecs);
-	void SaveDCM(VDFile& f, PhysSectors& phySecs);
-	void SaveATX(VDFile& f, PhysSectors& phySecs);
+	void SaveATR(IVDRandomAccessStream& f, PhysSectors& phySecs);
+	void SaveXFD(IVDRandomAccessStream& f, PhysSectors& phySecs);
+	void SaveP2(IVDRandomAccessStream& f, PhysSectors& phySecs);
+	void SaveP3(IVDRandomAccessStream& f, PhysSectors& phySecs);
+	void SaveDCM(IVDRandomAccessStream& f, PhysSectors& phySecs);
+	void SaveATX(IVDRandomAccessStream& f, PhysSectors& phySecs);
 
 	uint32	mBootSectorCount = 0;
 	uint32	mSectorSize = 0;
-	uint32	mSectorsPerTrack = 0;
 
 	ATDiskImageFormat mImageFormat = {};
 	bool	mbDirty = false;
@@ -293,7 +307,7 @@ void ATDiskImage::Init(uint32 sectorCount, uint32 bootSectorCount, uint32 sector
 		psi.mOffset		= i < mBootSectorCount ? 128*i : 128*mBootSectorCount + mSectorSize*(i-mBootSectorCount);
 		psi.mDiskOffset= -1;
 		psi.mImageSize	= i < mBootSectorCount ? 128 : mSectorSize;
-		psi.mPhysicalSize = psi.mImageSize;
+		psi.mPhysicalSize = mSectorSize;
 		psi.mbDirty		= true;
 		psi.mbMFM		= mfm;
 		psi.mRotPos		= 0;
@@ -319,7 +333,6 @@ void ATDiskImage::Init(const ATDiskGeometryInfo& geometry) {
 
 	mGeometry = geometry;
 	mGeometry.mTotalSectorCount = sectorCount;
-	mSectorsPerTrack = geometry.mSectorsPerTrack;
 	mBootSectorCount = geometry.mBootSectorCount;
 	mSectorSize = geometry.mSectorSize;
 
@@ -340,7 +353,7 @@ void ATDiskImage::Init(const ATDiskGeometryInfo& geometry) {
 		psi.mOffset		= i < mBootSectorCount ? 128*i : 128*mBootSectorCount + mSectorSize*(i-mBootSectorCount);
 		psi.mDiskOffset= -1;
 		psi.mImageSize		= i < mBootSectorCount ? 128 : mSectorSize;
-		psi.mPhysicalSize	= psi.mImageSize;
+		psi.mPhysicalSize	= mSectorSize;
 		psi.mbDirty		= true;
 		psi.mbMFM		= geometry.mbMFM;
 		psi.mRotPos		= 0;
@@ -488,7 +501,7 @@ void ATDiskImage::LoadXFD(IVDRandomAccessStream& stream, sint64 fileSize) {
 		vsi.mNumPhysSectors = 1;
 
 		psi.mOffset		= mSectorSize*i;
-		psi.mDiskOffset= -1;
+		psi.mDiskOffset	= psi.mOffset;
 		psi.mImageSize		= mSectorSize;
 		psi.mPhysicalSize	= mSectorSize;
 		psi.mFDCStatus	= 0xFF;
@@ -638,7 +651,7 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 			psi.mOffset = (uint32)mImage.size();
 			psi.mDiskOffset = -1;
 			psi.mImageSize = sectorNum <= 3 ? 128 : sectorSize;
-			psi.mPhysicalSize = psi.mImageSize;
+			psi.mPhysicalSize = sectorSize;
 			psi.mRotPos = 0;
 			psi.mFDCStatus = 0xFF;
 			psi.mWeakDataOffset = -1;
@@ -680,7 +693,7 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 			psi.mOffset = (uint32)mImage.size();
 			psi.mDiskOffset = -1;
 			psi.mImageSize = secNum <= 3 ? 128 : mainSectorSize;
-			psi.mPhysicalSize = psi.mImageSize;
+			psi.mPhysicalSize = mainSectorSize;
 			psi.mFDCStatus = 0xFF;
 			psi.mWeakDataOffset = -1;
 			psi.mbDirty = false;
@@ -709,7 +722,6 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 
 	mImage.clear();
 	mBootSectorCount = 3;
-	mSectorSize = 128;
 
 	mImageChecksum = 0;
 
@@ -725,29 +737,41 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 
 	struct PhysicalSector {
 		ATDiskPhysicalSectorInfo mInfo;
-		uint32_t mNext;
+		sint32 mNext;
+	};
+
+	struct PhysicalSectorId {
+		uint8 mTrack;
+		uint8 mSide;
+		uint8 mSector;
+		sint32 mFirstPSec;
 	};
 
 	vdfastvector<PhysicalSector> psecs;
-	vdfastvector<sint32> vsecs(720, -1);
+	vdfastvector<PhysicalSectorId> psecIds;
+	vdfastvector<uint32> seenTracks(512, 0);
+	vdfastvector<sint32> trackIds;
 
 	bool isTrack0MFM = false;
+	uint32 numTracks = 40;
+	uint32 numSides = 1;
 
-	for(uint32 i=0; i<40; ++i) {
+	const auto streamLen = stream.Length();
+	for(;;) {
 		ATXTrackHeader trkhdr;
 		sint32 trackBaseOffset = (sint32)stream.Pos();
+
+		if (trackBaseOffset >= streamLen)
+			break;
 
 		stream.Read(&trkhdr, sizeof trkhdr);
 
 		// validate track
 		if (trackBaseOffset + trkhdr.mSize > imageSize)
-			throw MyError("Invalid ATX image: Chunk at %08x extends beyond end of file.", (uint32)trackBaseOffset);
+			throw MyError("Invalid ATX image: Chunk at %08X extends beyond end of file.", (uint32)trackBaseOffset);
 
 		if (trkhdr.mSize < sizeof trkhdr)
-			throw MyError("Invalid ATX image: Track header at %08x has invalid size.", (uint32)trackBaseOffset);
-
-		if (trkhdr.mType != 0)
-			throw MyError("Invalid ATX image: Track header at %08x has the wrong type.", (uint32)trackBaseOffset);
+			throw MyError("Invalid ATX image: Track header at %08X has invalid size.", (uint32)trackBaseOffset);
 
 		// read in the entire track chunk
 		if (trackBuf.size() < trkhdr.mSize)
@@ -755,6 +779,21 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 
 		memcpy(trackBuf.data(), &trkhdr, sizeof trkhdr);
 		stream.Read(trackBuf.data() + sizeof trkhdr, trkhdr.mSize - sizeof trkhdr);
+
+		// skip if not a track chunk
+		if (trkhdr.mType != 0)
+			continue;
+
+		// skip if unsupported side
+		if (trkhdr.mSide >= 2)
+			continue;
+
+		const uint32 track = trkhdr.mTrackNum;
+		const uint32 side = trkhdr.mSide;
+		if (seenTracks[track * 2 + side])
+			throw MyError("Invalid ATX image: Track header at %08X duplicates track %d, first seen at %08X.", (uint32)trackBaseOffset, track, seenTracks[track]);
+
+		seenTracks[track * 2 + side] = (uint32)trackBaseOffset;
 
 		// validate the chunk list and pull out the sector list
 		uint32 sectorDataStart = 0;
@@ -808,34 +847,50 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 		phySectorLookup.clear();
 		phySectorLookup.resize(trkhdr.mNumSectors, -1);
 
+		if (trkhdr.mNumSectors > 0) {
+			if (track >= numTracks)
+				numTracks = track + 1;
+
+			if (side >= numSides)
+				numSides = side + 1;
+		}
+
 		// check track density
 		const bool isTrackMFM = (trkhdr.mFlags & ATXTrackHeader::kFlag_MFM) != 0;
-		const bool isED = isTrackMFM;
+		const bool hasFullLongSectors = g_ATCVImageDiskATXFullSectorsEnabled && (trkhdr.mFlags & ATXTrackHeader::kFlag_FullSects) != 0;
+		const uint32 defaultSectorSize = g_ATCVImageDiskATXFullSectorsEnabled ? (128 << (trkhdr.mDefSectSize & 3)) : 128;
+		const uint32 defaultLongSectorSize = defaultSectorSize < 1024 ? defaultSectorSize * 2 : 1024;
 
-		if (i == 0)
+		if (track == 0)
 			isTrack0MFM = isTrackMFM;
-
-		// compute virtual sector range
-		const uint32 vsecsPerTrack = isED ? 26 : 18;
-		const uint32 vsecStart = i * vsecsPerTrack;
-		const uint32 vsecEnd = vsecStart + vsecsPerTrack;
-
-		// extend vsec array to ED if needed
-		if (isED && vsecs.size() < 1040)
-			vsecs.resize(1040, -1);
 
 		// scan all physical sectors and bin sort into virtual sectors
 		uint32 sectorsWithExtraData = 0;
 
+		trackIds.clear();
+
 		for(uint32 k=0; k<trkhdr.mNumSectors; ++k) {
 			const ATXSectorHeader& sechdr = sectorHeaders[k];
 
-			// drop sectors that can't be found with normal addressing (and don't fit into
-			// our vsec scheme)
-			if (!sechdr.mIndex || sechdr.mIndex > vsecsPerTrack) {
-				g_ATLCDiskImage("Dropping track %u, sector %u: inaccessible with standard disk drive", i, sechdr.mIndex);
-				continue;
+			// extended the track ID array if needed
+			if (trackIds.size() <= sechdr.mIndex)
+				trackIds.resize(sechdr.mIndex + 1, -1);
+
+			// assign a new track ID if needed
+			if (trackIds[sechdr.mIndex] < 0) {
+				trackIds[sechdr.mIndex] = (sint32)psecIds.size();
+
+				psecIds.push_back(
+					PhysicalSectorId {
+						.mTrack = (uint8)track,
+						.mSide = (uint8)side,
+						.mSector = sechdr.mIndex,
+						.mFirstPSec = -1
+					}
+				);
 			}
+
+			PhysicalSectorId& psecId = psecIds[trackIds[sechdr.mIndex]];
 
 			if (sechdr.mFDCStatus & 0x40)
 				++sectorsWithExtraData;
@@ -847,19 +902,19 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 			psi.mFDCStatus = ~sechdr.mFDCStatus | 0xc0;		// purpose of bit 7 is unknown
 			psi.mOffset = (sint32)mImage.size();
 			psi.mDiskOffset = trackBaseOffset + sechdr.mDataOffset;
-			psi.mImageSize = sechdr.mFDCStatus & 0x10 ? 0 : 128;
-			psi.mPhysicalSize = psi.mFDCStatus & 0x04 ? 128 : 256;
+			psi.mPhysicalSize = psi.mFDCStatus & 0x04 ? defaultSectorSize : defaultLongSectorSize;
+			psi.mImageSize = sechdr.mFDCStatus & 0x10 ? 0 : hasFullLongSectors ? psi.mPhysicalSize : defaultSectorSize;
 			psi.mRotPos = (float)sechdr.mTimingOffset / (float)kBitsPerTrackFM;
+			psi.mRotPos -= floorf(psi.mRotPos);
 			psi.mWeakDataOffset = -1;
 			psi.mbDirty = false;
 			psi.mbMFM = isTrackMFM;
 
-			auto& vsecLink = vsecs[vsecStart + sechdr.mIndex - 1];
-			psec.mNext = vsecLink;
-			vsecLink = (uint32)psecs.size() - 1;
+			psec.mNext = psecId.mFirstPSec;
+			psecId.mFirstPSec = (uint32)psecs.size() - 1;
 
 			g_ATLCDiskImage("Track %d, sector %d | pos %4.2f%s%s%s%s%s\n"
-				, i
+				, track
 				, sechdr.mIndex
 				, psi.mRotPos
 				, psi.mFDCStatus & 0x20 ? "" : " deleted"
@@ -871,13 +926,13 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 
 			// Missing sectors do not have data.
 			if (!(sechdr.mFDCStatus & 0x10)) {
-				uint32 dataEnd = sechdr.mDataOffset + 128;
+				uint32 dataEnd = sechdr.mDataOffset + psi.mImageSize;
 
 				if (sechdr.mDataOffset < sectorDataStart || (dataEnd - sectorDataStart) > sectorDataLen)
-					throw MyError("Invalid protected disk: track %u, sector %u extends outside of sector data region.", i, sechdr.mIndex);
+					throw MyError("Invalid protected disk: track %u, sector %u extends outside of sector data region.", track, sechdr.mIndex);
 
 				const uint8 *srcData = &trackBuf[sechdr.mDataOffset];
-				mImage.insert(mImage.end(), srcData, srcData + 128);
+				mImage.insert(mImage.end(), srcData, srcData + psi.mImageSize);
 
 				mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size()), srcData, psi.mImageSize);
 			}
@@ -902,6 +957,8 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 				int phyIndex = phySectorLookup[ch.mNum];
 				if (phyIndex < 0) {
 					VDASSERT(phyIndex >= 0);
+
+					chunkOffset += chunkSize;
 					continue;
 				}
 
@@ -931,23 +988,93 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 		}
 	}
 
+	// Now that we have all sectors, scan the first sectors of track 0 and do
+	// partial density detection.
+	mSectorSize = 128;
+	
+	if (isTrack0MFM) {
+		uint32 mask128 = 0;
+		uint32 mask256 = 0;
+		uint32 mask512 = 0;
+		uint32 mask1024 = 0;
+
+		for(const PhysicalSectorId& psecId : psecIds) {
+			if (psecId.mTrack != 0 || psecId.mSector == 0 || psecId.mSector > 9)
+				continue;
+
+			for(sint32 psIndex = psecId.mFirstPSec; psIndex >= 0; psIndex = psecs[psIndex].mNext) {
+				const PhysSectorInfo& psi = psecs[psIndex].mInfo;
+				const uint32 bit = 1 << (psecId.mSector - 1);
+
+				switch(psi.mPhysicalSize) {
+					case 128:
+						mask128 |= bit;
+						break;
+
+					case 256:
+						mask256 |= bit;
+						break;
+
+					case 512:
+						mask512 |= bit;
+						break;
+
+					case 1024:
+						mask1024 |= bit;
+						break;
+
+					default:
+						break;
+				}
+			}
+		}
+
+		// Use 512 bytes only if all sectors are of that size  on track 0, even
+		// boot sectors. (This is why we only checked 9 sectors.)
+		//
+		// Use 256 bytes if no 512 or 1024 byte boot sectors and no 128 byte
+		// non-boot sectors; allow 128 byte boot sectors for 1050 Duplicator.
+		//
+		if ((mask128 | mask256) == 0 && mask512)
+			mSectorSize = 512;
+		else if (((mask512 | mask1024) & 0x7) == 0 && (mask128 & 0x1F8) == 0)
+			mSectorSize = 256;
+	}
+
+	if (numSides > 1 && numTracks > 40) {
+		if (numTracks < 80)
+			numTracks = 80;
+	}
+
+	const uint8 vsecsPerTrack = isTrack0MFM && mSectorSize == 128 ? 26 : 18;
+	const uint32 numVsecs = vsecsPerTrack * numTracks * numSides;
+
 	// Serialize to master arrays. This has to be done at the end of all tracks because
 	// tracks may cover vsecs out of order if mixed FM/MFM tracks are present.
-	const uint32 numVsecs = (uint32)vsecs.size();
 
-	mVirtSectors.resize(numVsecs);
+	mVirtSectors.resize(numVsecs, {});
 	mPhysSectors.resize((uint32)psecs.size());
 
 	PhysSectorInfo *psi = mPhysSectors.data();
 	uint32 numPsecs = 0;
 
-	for(uint32 vsecIndex = 0; vsecIndex < numVsecs; ++vsecIndex) {
+	for(const PhysicalSectorId& psecId : psecIds) {
+		if (psecId.mSector == 0 || psecId.mSector > vsecsPerTrack) {
+			g_ATLCDiskImage("Dropping track %u, sector %u: inaccessible with standard disk drive", psecId.mTrack, psecId.mSector);
+			continue;
+		}
+
+		uint32 vsecIndex = psecId.mTrack * vsecsPerTrack + psecId.mSector - 1;
+
+		if (psecId.mSide > 0)
+			vsecIndex = (numVsecs - 1) - vsecIndex;
+
 		VirtSectorInfo& vsi = mVirtSectors[vsecIndex];
 
 		vsi.mStartPhysSector = numPsecs;
 		vsi.mNumPhysSectors = 0;
 
-		for(sint32 psecIndex = vsecs[vsecIndex]; psecIndex >= 0; ) {
+		for(sint32 psecIndex = psecId.mFirstPSec; psecIndex >= 0; ) {
 			const PhysicalSector& psec = psecs[psecIndex];
 
 			*psi++ = psec.mInfo;
@@ -958,10 +1085,29 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 		}
 	}
 
+	mPhysSectors.resize(numPsecs);
+
 	mTimingMode = kATDiskTimingMode_UsePrecise;
 	mImageFormat = kATDiskImageFormat_ATX;
 
+	// now that we have both sector size and total vsec count, compute the remainder
+	// of the geometry
 	ComputeGeometry();
+
+	// recompute lost data bits based on density detection
+	for(uint32 vsecIndex = 0; vsecIndex < numVsecs; ++vsecIndex) {
+		const VirtSectorInfo& vsi = mVirtSectors[vsecIndex];
+		const uint32 expectedSize = mGeometry.mSectorSize;
+
+		for(uint32 psecIndex = 0; psecIndex < vsi.mNumPhysSectors; ++psecIndex) {
+			PhysSectorInfo& psi = mPhysSectors[vsi.mStartPhysSector + psecIndex];
+
+			if (psi.mPhysicalSize > expectedSize)
+				psi.mFDCStatus &= ~0x04;
+			else
+				psi.mFDCStatus |= 0x04;
+		}
+	}
 
 	// ATX is a bit special as it's the only format so far that can support mixed
 	// tracks, and therefore confuse the geometry detection. Override the MFM flag
@@ -1127,8 +1273,6 @@ void ATDiskImage::LoadP3(IVDRandomAccessStream& stream, uint32 len, const uint8 
 
 		uint32 phantomSectorCount = sectorhdr[5];
 
-		float rotationalIncrement = phantomSectorCount ? (1.0f / (int)phantomSectorCount) : 0.0f;
-
 		mVirtSectors.push_back();
 		VirtSectorInfo& vsi = mVirtSectors.back();
 
@@ -1263,7 +1407,7 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 
 		psi.mDiskOffset = psi.mOffset + 16;
 		psi.mImageSize		= i < mBootSectorCount ? 128 : mSectorSize;
-		psi.mPhysicalSize	= psi.mImageSize;
+		psi.mPhysicalSize	= mSectorSize;
 		psi.mFDCStatus	= 0xFF;
 		psi.mRotPos		= interleaveFn(i);
 		psi.mWeakDataOffset = -1;
@@ -1430,59 +1574,17 @@ void ATDiskImage::Flush() {
 	);
 
 	// open file for rewriting
-	VDFile f(mPath.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kOpenExisting);
+	vdrefptr<ATVFSFileView> view;
+	ATVFSOpenFileView(mPath.c_str(), true, true, ~view);
+	VDBufferedWriteStream f(&view->GetStream(), 65536);
 
-	// check if we have enough dirty sectors to bother coalescing
-	if (dirtySectors.size() < 16) {
-		// no - write individual sectors
-		for(PhysSectorInfo* psi : dirtySectors) {
-			f.seek(psi->mDiskOffset);
-			f.write(&mImage[psi->mOffset], psi->mImageSize);
-		}
-	} else {
-		// yes - allocate coalescing buffer
-		const uint32 kWriteBufLen = 65536;
-		vdblock<uint8> writeBuf(kWriteBufLen);
-		uint32 wbLevel = 0;
-
-		DirtySectors::const_iterator it(dirtySectors.begin()), itEnd(dirtySectors.end());
-		while(it != itEnd) {
-			PhysSectorInfo *psi = *it;
-			sint32 writeOffset = psi->mDiskOffset;
-			sint32 writeLen = psi->mImageSize;
-			
-			f.seek(writeOffset);
-
-			for(;;) {
-				if (wbLevel + psi->mImageSize > kWriteBufLen) {
-					f.write(writeBuf.data(), wbLevel);
-					wbLevel = 0;
-				}
-
-				memcpy(writeBuf.data() + wbLevel, &mImage[psi->mOffset], psi->mImageSize);
-				wbLevel += psi->mImageSize;
-
-				if (++it == itEnd)
-					break;
-
-				psi = *it;
-
-				if (psi->mDiskOffset != writeOffset + writeLen)
-					break;
-
-				writeLen += psi->mImageSize;
-			}
-
-			if (wbLevel) {
-				f.write(writeBuf.data(), wbLevel);
-				wbLevel = 0;
-			}
-		}
+	for(PhysSectorInfo* psi : dirtySectors) {
+		f.Seek(psi->mDiskOffset);
+		f.Write(&mImage[psi->mOffset], psi->mImageSize);
+		psi->mbDirty = false;
 	}
 
-	// clear dirty flags on sectors
-	for(PhysSectorInfo* psi : dirtySectors)
-		psi->mbDirty = false;
+	f.Flush();
 
 	// clear global dirty flag
 	mbDirty = false;
@@ -1534,7 +1636,7 @@ void ATDiskImage::Save(const wchar_t *s, ATDiskImageFormat format) {
 			break;
 
 		case kATDiskImageFormat_ATX:
-			if (mSectorSize != 128)
+			if (g_ATCVImageDiskATXFullSectorsEnabled ? mSectorSize > 1024 : mSectorSize != 128)
 				throw MyError("Cannot save disk image: disk geometry is not supported.");
 
 			supportPhantoms = true;
@@ -1592,7 +1694,18 @@ void ATDiskImage::Save(const wchar_t *s, ATDiskImageFormat format) {
 	// but don't want to leave them trashed if the save fails midway
 	PhysSectors tempPhysSectors(mPhysSectors);
 
-	VDFile f(s, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
+	// invalidate all saved disk offsets in case not all sectors are written out, and
+	// mark the sectors as not dirty (if they weren't saved now, they won't ever get
+	// saved).
+	for(auto& psi : tempPhysSectors) {
+		psi.mDiskOffset = -1;
+		psi.mbDirty = false;
+	}
+
+	vdrefptr<ATVFSFileView> view;
+	ATVFSOpenFileView(s, true, ~view);
+
+	IVDRandomAccessStream& f = view->GetStream();
 
 	switch(format) {
 		case kATDiskImageFormat_ATR:
@@ -1622,13 +1735,6 @@ void ATDiskImage::Save(const wchar_t *s, ATDiskImageFormat format) {
 
 	// swap the new physical sector array in and clear the dirty flags
 	mPhysSectors.swap(tempPhysSectors);
-	for(PhysSectors::iterator it(mPhysSectors.begin()), itEnd(mPhysSectors.end());
-		it != itEnd;
-		++it)
-	{
-		PhysSectorInfo& psi = *it;
-		psi.mbDirty = false;
-	}
 
 	mPath = s;
 	mbDirty = false;
@@ -1713,10 +1819,12 @@ bool ATDiskImage::WriteVirtualSector(uint32 index, const void *data, uint32 len)
 
 	PhysSectorInfo& psi = mPhysSectors[vsi.mStartPhysSector];
 
-	if (len != psi.mImageSize)
-		return false;
-
-	memcpy(mImage.data() + psi.mOffset, data, len);
+	if (len < psi.mImageSize) {
+		memcpy(mImage.data() + psi.mOffset, data, len);
+		memset(mImage.data() + psi.mOffset + len, 0, psi.mImageSize - len);
+	} else {
+		memcpy(mImage.data() + psi.mOffset, data, std::min<uint32>(len, psi.mImageSize));
+	}
 	psi.mbDirty = true;
 	mbDirty = true;
 	mImageFileCRC.reset();
@@ -1872,14 +1980,14 @@ void ATDiskImage::Resize(uint32 newSectors) {
 				// interleave.
 				for(uint32 i = 0; i < sectorsToAdd; ++i) {
 					auto& ps = mPhysSectors[newPhysStart + i];
-					uint32 trackSec = (curSectors + i) % mSectorsPerTrack;
+					uint32 trackSec = (curSectors + i) % mGeometry.mSectorsPerTrack;
 
 					if (trackSec & 1)
-						trackSec += mSectorsPerTrack;
+						trackSec += mGeometry.mSectorsPerTrack;
 
 					trackSec >>= 1;
 
-					ps.mRotPos = (float)trackSec / (float)mSectorsPerTrack;
+					ps.mRotPos = (float)trackSec / (float)mGeometry.mSectorsPerTrack;
 				}
 
 				// Mark the disk dirty.
@@ -1959,7 +2067,7 @@ void ATDiskImage::FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskV
 			const auto& vsi = mVirtSectors[i];
 
 			numPhys = vsi.mNumPhysSectors;
-			srcPhys = &mPhysSectors[vsi.mStartPhysSector];
+			srcPhys = numPhys ? &mPhysSectors[vsi.mStartPhysSector] : nullptr;
 			srcImageBase = mImage.data();
 		}
 
@@ -2009,7 +2117,6 @@ void ATDiskImage::FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskV
 					break;
 				}
 			}
-
 		}
 	}
 }
@@ -2047,11 +2154,11 @@ void ATDiskImage::Reinterleave(ATDiskInterleave interleave) {
 
 void ATDiskImage::ComputeGeometry() {
 	uint32 sectorCount = (uint32)mVirtSectors.size();
-	mSectorsPerTrack = mSectorSize >= 512 ? sectorCount : mSectorSize >= 256 ? 18 : sectorCount > 720 && !(sectorCount % 26) ? 26 : 18;
 
 	mGeometry.mTrackCount = 1;
 	mGeometry.mSideCount = 1;
-	mGeometry.mbMFM = false;
+	mGeometry.mbMFM = (mGeometry.mSectorSize > 128);
+	mGeometry.mbHighDensity = false;
 	mGeometry.mSectorsPerTrack = sectorCount;
 	mGeometry.mBootSectorCount = mBootSectorCount;
 	mGeometry.mSectorSize = mSectorSize;
@@ -2065,37 +2172,96 @@ void ATDiskImage::ComputeGeometry() {
 						break;
 
 					// fall through
-				case 720:
+				case 720:		// 5.25" single density: 40 tracks, 26 sectors per track
 					mGeometry.mSectorsPerTrack = 18;
 					mGeometry.mSideCount = 1;
 					break;
 
-				case 1440:
+				case 1440:		// 5.25" single density: 40/80 tracks, double sided, 26 sectors per track
 				case 2880:
 					mGeometry.mSectorsPerTrack = 18;
 					mGeometry.mSideCount = 2;
 					break;
 
-				case 1040:
+				case 1040:		// 5.25" enhanced density: 40 tracks, 26 sectors per track
 					mGeometry.mSectorsPerTrack = 26;
 					mGeometry.mSideCount = 1;
-					mGeometry.mbMFM = true;
+					mGeometry.mbMFM = true;		// special case for enhanced density
+					break;
+
+				case 2002:		// 8" 77 tracks, single sided, 26 sectors per track
+					mGeometry.mSectorsPerTrack = 26;
+					mGeometry.mSideCount = 1;
+					mGeometry.mbHighDensity = true;
+					break;
+
+				case 4004:		// 8" 77 tracks, double sided, 26 sectors per track
+					mGeometry.mSectorsPerTrack = 26;
+					mGeometry.mSideCount = 2;
+					mGeometry.mbHighDensity = true;
 					break;
 			}
 		} else if (mGeometry.mSectorSize == 256) {
+			mGeometry.mbMFM = true;
+
 			switch(mGeometry.mTotalSectorCount) {
-				case 720:
+				case 720:		// 5.25" double density: 40 tracks, 18 sectors per track
 					mGeometry.mSectorsPerTrack = 18;
 					mGeometry.mSideCount = 1;
-					mGeometry.mbMFM = true;
 					break;
 
-				case 1440:
+				case 1440:		// 5.25" double density: 40/80 tracks, double sided, 18 sectors per track
 				case 2880:
 					mGeometry.mSectorsPerTrack = 18;
 					mGeometry.mSideCount = 2;
-					mGeometry.mbMFM = true;
 					break;
+
+				case 2002:		// 8" 77 tracks, single sided, 26 sectors per track
+					mGeometry.mSectorsPerTrack = 26;
+					mGeometry.mSideCount = 1;
+					mGeometry.mbHighDensity = true;
+					break;
+
+				case 4004:		// 8" 77 tracks, double sided, 26 sectors per track
+					mGeometry.mSectorsPerTrack = 26;
+					mGeometry.mSideCount = 2;
+					mGeometry.mbHighDensity = true;
+					break;
+
+				default:
+					break;
+			}
+		}
+	} else if (mGeometry.mSectorSize == 512) {
+		mGeometry.mbMFM = true;
+
+		// Specific PC geometries we want to support:
+		//
+		//  320		5.25" 8 sectors/track, 40 tracks (160K)
+		//  360		5.25" 9 sectors/track, 40 tracks (180K)
+		//  720		5.25" 9 sectors/track, 40 tracks double-sided (360K)
+		// 1440		3.5" 9 sectors/track, 80 tracks double-sided (720K)
+		// 2400		5.25" 15 sectors/track, 80 tracks double-sided high density (1.2M)
+		// 2880		3.5" 18 sectors/track, 80 tracks double-sided high density (1.2M)
+
+		if (mGeometry.mTotalSectorCount <= 2880) {
+			if (mGeometry.mTotalSectorCount <= 320)
+				mGeometry.mSectorsPerTrack = 8;
+			else if (mGeometry.mTotalSectorCount <= 360)
+				mGeometry.mSectorsPerTrack = 9;
+			else {
+				mGeometry.mSideCount = 2;
+					
+				if (mGeometry.mTotalSectorCount <= 1440)
+					mGeometry.mSectorsPerTrack = 9;
+				else {
+					mGeometry.mbHighDensity = true;
+
+					if (mGeometry.mTotalSectorCount <= 2400)
+						mGeometry.mSectorsPerTrack = 15;
+					else
+						mGeometry.mSectorsPerTrack = 18;
+				}
 			}
 		}
 	}
@@ -2107,16 +2273,12 @@ void ATDiskImage::ComputeGeometry() {
 		mGeometry.mTrackCount = (mGeometry.mTrackCount + 1) >> 1;
 }
 
-void ATDiskImage::SaveATR(VDFile& f, PhysSectors& phySecs) {
-	// compute total sector sizes
-	uint32 totalSize = mBootSectorCount * 128;
-	const uint32 numVsecs = (uint32)mVirtSectors.size();
-	for(uint32 vsIndex = mBootSectorCount; vsIndex < numVsecs; ++vsIndex) {
-		const VirtSectorInfo& vsi = mVirtSectors[vsIndex];
+void ATDiskImage::SaveATR(IVDRandomAccessStream& fs, PhysSectors& phySecs) {
+	VDBufferedWriteStream f(&fs, 65536);
 
-		const PhysSectorInfo& psi = phySecs[vsi.mStartPhysSector];
-		totalSize += psi.mImageSize;
-	}
+	// compute total sector sizes
+	const uint32 numVsecs = (uint32)mVirtSectors.size();
+	uint32 totalSize = mBootSectorCount * 128 + (std::max<uint32>(numVsecs, mBootSectorCount) - mBootSectorCount) * mSectorSize;
 
 	// create ATR header
 	uint8 header[16] = {0};
@@ -2126,7 +2288,7 @@ void ATDiskImage::SaveATR(VDFile& f, PhysSectors& phySecs) {
 	VDWriteUnalignedLEU16(header+4, mSectorSize);
 	header[6] = (uint8)(paras >> 16);
 
-	f.write(header, 16);
+	f.Write(header, 16);
 
 	uint32 diskOffset = 16;
 
@@ -2138,25 +2300,30 @@ void ATDiskImage::SaveATR(VDFile& f, PhysSectors& phySecs) {
 
 		const uint32 writeSize = vsIndex < mBootSectorCount ? 128 : mSectorSize;
 
-		if (psi.mImageSize <= writeSize) {
-			f.write(&mImage[psi.mOffset], psi.mImageSize);
+		if (psi.mImageSize >= writeSize) {
+			f.Write(&mImage[psi.mOffset], writeSize);
 		} else {
 			sectorBuffer.resize(writeSize);
 
-			const uint32 copyLen = std::min<uint32>(writeSize, psi.mImageSize);
+			const uint32 copyLen = psi.mImageSize;
 			if (copyLen)
 				memcpy(sectorBuffer.data(), &mImage[psi.mOffset], copyLen);
 
-			if (copyLen < writeSize)
-				memset(sectorBuffer.data() + copyLen, 0, writeSize - copyLen);
+			memset(sectorBuffer.data() + copyLen, 0, writeSize - copyLen);
+
+			f.Write(sectorBuffer.data(), writeSize);
 		}
 
 		psi.mDiskOffset = diskOffset;
+		psi.mImageSize = std::min<uint32>(psi.mImageSize, writeSize);
 		diskOffset += psi.mImageSize;
 	}
+
+	f.Flush();
 }
 
-void ATDiskImage::SaveXFD(VDFile& f, PhysSectors& phySecs) {
+void ATDiskImage::SaveXFD(IVDRandomAccessStream& fs, PhysSectors& phySecs) {
+	VDBufferedWriteStream f(&fs, 65536);
 	uint32 diskOffset = 0;
 
 	vdblock<char> sectorBuffer;
@@ -2177,16 +2344,19 @@ void ATDiskImage::SaveXFD(VDFile& f, PhysSectors& phySecs) {
 			if (copyLen < mSectorSize)
 				memset(sectorBuffer.data() + copyLen, 0, mSectorSize - copyLen);
 
-			f.write(sectorBuffer.data(), mSectorSize);
+			f.Write(sectorBuffer.data(), mSectorSize);
 		} else
-			f.write(&mImage[psi.mOffset], mSectorSize);
+			f.Write(&mImage[psi.mOffset], mSectorSize);
 
 		psi.mDiskOffset = diskOffset;
+		psi.mImageSize = std::min<uint32>(psi.mImageSize, mSectorSize);
 		diskOffset += mSectorSize;
 	}
+
+	f.Flush();
 }
 
-void ATDiskImage::SaveP2(VDFile& f, PhysSectors& phySecs) {
+void ATDiskImage::SaveP2(IVDRandomAccessStream& f, PhysSectors& phySecs) {
 	// select emulation mode
 	uint8 mode = 0x00;
 
@@ -2207,7 +2377,7 @@ void ATDiskImage::SaveP2(VDFile& f, PhysSectors& phySecs) {
 	header[3] = (uint8)'2';
 	header[4] = mode;
 
-	f.write(header, 16);
+	f.Write(header, 16);
 
 	vdfastvector<uint8> phantomSectorCounts(numSectors, 0);
 	vdfastvector<const PhysSectorInfo *> sectorOrdering(numSectors, nullptr);
@@ -2272,11 +2442,11 @@ void ATDiskImage::SaveP2(VDFile& f, PhysSectors& phySecs) {
 		for(uint32 i = 1; i <= sectorData.mPhantomCount; ++i)
 			sectorData.mPhantoms[i] = phantomIndex++;
 
-		f.write(&sectorData, sizeof sectorData);
+		f.Write(&sectorData, sizeof sectorData);
 	}
 }
 
-void ATDiskImage::SaveP3(VDFile& f, PhysSectors& phySecs) {
+void ATDiskImage::SaveP3(IVDRandomAccessStream& f, PhysSectors& phySecs) {
 	// select emulation mode
 	uint8 mode = 0x00;
 
@@ -2298,7 +2468,7 @@ void ATDiskImage::SaveP3(VDFile& f, PhysSectors& phySecs) {
 	header[4] = mode;
 	VDWriteUnalignedBEU16(&header[6], (uint16)numSectors);
 
-	f.write(header, 16);
+	f.Write(header, 16);
 
 	vdfastvector<uint8> phantomSectorCounts(numSectors, 0);
 	vdfastvector<const PhysSectorInfo *> sectorOrdering(numSectors, nullptr);
@@ -2363,11 +2533,11 @@ void ATDiskImage::SaveP3(VDFile& f, PhysSectors& phySecs) {
 		for(uint32 i = 1; i <= sectorData.mPhantomCount; ++i)
 			sectorData.mPhantoms[i] = phantomIndex++;
 
-		f.write(&sectorData, sizeof sectorData);
+		f.Write(&sectorData, sizeof sectorData);
 	}
 }
 
-void ATDiskImage::SaveDCM(VDFile& f, PhysSectors& phySecs) {
+void ATDiskImage::SaveDCM(IVDRandomAccessStream& f, PhysSectors& phySecs) {
 	uint8 packBuf[0x6200];
 	uint32 packBufLevel = 0;
 
@@ -2551,11 +2721,11 @@ void ATDiskImage::SaveDCM(VDFile& f, PhysSectors& phySecs) {
 			packBuf[1] &= 0x7F;
 
 			// write out the previous pass, NOT including this sector
-			f.write(packBuf, packBufSectorStart);
+			f.Write(packBuf, packBufSectorStart);
 
 			// write out pass end
 			const uint8 passEnd = 0x45;
-			f.write(&passEnd, 1);
+			f.Write(&passEnd, 1);
 
 			// move new data down
 			uint32_t newDataLen = packBufLevel - packBufSectorStart;
@@ -2597,26 +2767,22 @@ void ATDiskImage::SaveDCM(VDFile& f, PhysSectors& phySecs) {
 		packBuf[prevSectorFlagOffset] |= 0x80;
 
 	// write out final pass
-	f.write(packBuf, packBufLevel);
+	f.Write(packBuf, packBufLevel);
 	const uint8 passEnd = 0x45;
-	f.write(&passEnd, 1);
+	f.Write(&passEnd, 1);
 }
 
-void ATDiskImage::SaveATX(VDFile& f, PhysSectors& phySecs) {
-	ATXHeader hdr = {};
-	memcpy(hdr.mSignature, "AT8X", 4);
-	hdr.mVersionMajor = 1;
-	hdr.mVersionMinor = 1;
-	memcpy(&hdr.mCreator, "AT", 2);
-	hdr.mTrackDataOffset = 48;
-	hdr.mDensity = kATXDensity_SD;
-
-	f.write(&hdr, sizeof hdr);
+void ATDiskImage::SaveATX(IVDRandomAccessStream& fs, PhysSectors& phySecs) {
+	VDBufferedWriteStream f(&fs, 65536);
 
 	// scan all physical sectors and find highest FM and MFM vsecs
 	const uint32 totalVsecs = (uint32)mVirtSectors.size();
-	uint32 vsecLimitSD = 0;
-	uint32 vsecLimitED = 0;
+	uint32 vsecLimitFM = 0;
+	uint32 vsecLimitMFM = 0;
+
+	// allow down to 9 spt for 9 x 512 format, otherwise default to 18
+	uint32 mfmSectorsPerTrack = mGeometry.mSectorsPerTrack < 9 ? 18 : mGeometry.mSectorsPerTrack;
+
 	for(uint32 i = 0; i < totalVsecs; ++i) {
 		const VirtSectorInfo& vsi = mVirtSectors[i];
 
@@ -2624,192 +2790,260 @@ void ATDiskImage::SaveATX(VDFile& f, PhysSectors& phySecs) {
 			const PhysSectorInfo& psi = phySecs[vsi.mStartPhysSector + j];
 
 			if (psi.mbMFM)
-				vsecLimitED = i + 1;
+				vsecLimitMFM = i + 1;
 			else
-				vsecLimitSD = i + 1;
+				vsecLimitFM = i + 1;
 		}
 	}
 
-	// compute track count
-	const uint32 numTracksSD = (vsecLimitSD + 17) / 18;
-	const uint32 numTracksED = (vsecLimitED + 25) / 26;
-	const uint32 numTracks = std::max<uint32>(numTracksSD, numTracksED);
+	// compute track count -- we compute both FM and MFM track counts specifically
+	// to support mixing different tracks on the same disk
+	const uint32 numTracksFM = (vsecLimitFM + 17) / 18;
+	const uint32 numTracksMFM = (vsecLimitMFM + mfmSectorsPerTrack - 1) / mfmSectorsPerTrack;
+	const uint32 numTracks = std::max<uint32>(numTracksFM, numTracksMFM);
+
+	// set up and write provisional header
+	ATXHeader hdr = {};
+	memcpy(hdr.mSignature, "AT8X", 4);
+	hdr.mVersionMajor = 1;
+	hdr.mVersionMinor = 1;
+	memcpy(&hdr.mCreator, "AT", 2);
+	hdr.mTrackDataOffset = 48;
+
+	// set density according to the declared geometry
+	if (mGeometry.mSectorSize >= 256)
+		hdr.mDensity = kATXDensity_DD;
+	else if (mGeometry.mbMFM)
+		hdr.mDensity = kATXDensity_ED;
+	else
+		hdr.mDensity = kATXDensity_SD;
+
+	f.Write(&hdr, sizeof hdr);
+
+	// determine the default sector size for tracks -- use 128 if full sector support is disabled, otherwise
+	// use the main sector size in the geometry
+	uint32 defaultSectorSize = 128;
+
+	if (g_ATCVImageDiskATXFullSectorsEnabled)
+		defaultSectorSize = mGeometry.mSectorSize;
 
 	// write one track at a time
 	const uint32 numSectors = (uint32)mVirtSectors.size();
+	uint32 numSides = 1;
+
+	char zerobuf[1024] = {0};
 
 	vdfastvector<ATXSectorHeader> sechdrs;
 	vdfastvector<ATXTrackChunkHeader> xhdrs;
 	vdfastvector<PhysSectorInfo *> psecs;
+	vdfastvector<uint32> writeSizes;
 	vdfastvector<int> secorder;
-	for(uint32 track=0; track<numTracks; ++track) {
-		sechdrs.clear();
-		xhdrs.clear();
-		psecs.clear();
+	for(uint32 track = 0; track < numTracks; ++track) {
+		for(uint32 side = 0; side < numSides; ++side) {
+			sechdrs.clear();
+			xhdrs.clear();
+			psecs.clear();
+			writeSizes.clear();
 
-		uint32 dataOffset = 0;
+			// if there are any ED sectors, try to form an ED track first, otherwise use SD
+			bool isTrackMFM = true;
+			bool trackHasLongStoredSectors = false;
 
-		// if there are any ED sectors, try to form an ED track first, otherwise use SD
-		bool isTrackMFM = true;
+			for(int type=0; type<2; ++type) {
+				const uint32 vsecsPerTrack = type ? 18 : mfmSectorsPerTrack;
+				bool hasLongStoredSectors = false;
 
-		for(int type=0; type<2; ++type) {
-			const uint32 vsecsPerTrack = type ? 18 : 26;
+				uint32 vsecIndex = (side ? (numTracks * 2 - 1) - track : track) * vsecsPerTrack;
+				if (vsecIndex < numSectors) {
+					uint32 vsecCount = std::min<uint32>(numSectors - vsecIndex, vsecsPerTrack);
 
-			uint32 vsecIndex = track * vsecsPerTrack;
-			if (vsecIndex < numSectors) {
-				uint32 vsecCount = std::min<uint32>(numSectors - vsecIndex, vsecsPerTrack);
+					// prescan the track
+					for(uint32 i = 0; i < vsecCount; ++i) {
+						const VirtSectorInfo& vsi = mVirtSectors[vsecIndex + i];
 
-				for(uint32 i = 0; i < vsecCount; ++i) {
-					const VirtSectorInfo& vsi = mVirtSectors[vsecIndex + i];
+						for(uint32 j = 0; j < vsi.mNumPhysSectors; ++j) {
+							PhysSectorInfo& psi = phySecs[vsi.mStartPhysSector + j];
 
-					for(uint32 j = 0; j < vsi.mNumPhysSectors; ++j) {
-						PhysSectorInfo& psi = phySecs[vsi.mStartPhysSector + j];
+							if (psi.mbMFM != isTrackMFM)
+								continue;
 
-						if (psi.mbMFM != isTrackMFM)
-							continue;
-
-						ATXSectorHeader& sechdr = sechdrs.push_back();
-
-						sechdr.mIndex = i + 1;
-						sechdr.mFDCStatus = ~psi.mFDCStatus & 0x3F;
-						sechdr.mTimingOffset = (uint32)((psi.mRotPos - floorf(psi.mRotPos)) * kBitsPerTrackFM);
-						if (sechdr.mTimingOffset >= kBitsPerTrackFM)
-							sechdr.mTimingOffset -= kBitsPerTrackFM;
-
-						sechdr.mDataOffset = dataOffset;
-						dataOffset += psi.mFDCStatus & 0x10 ? 128 : 0;
-
-						if (psi.mWeakDataOffset >= 0) {
-							sechdr.mFDCStatus |= 0x40;
-
-							ATXTrackChunkHeader& xhdr = xhdrs.push_back();
-
-							xhdr.mSize = sizeof(xhdr);
-							xhdr.mType = xhdr.kTypeWeakBits;
-							xhdr.mNum = (uint8)(sechdrs.size() - 1);
-							xhdr.mData = (uint16)psi.mWeakDataOffset;
+							if (psi.mPhysicalSize > defaultSectorSize)
+								hasLongStoredSectors = true;
 						}
+					}
 
-						// if the physical sector is larger than 256 bytes, write an extended
-						// sector header entry so the real size is captured
-						if (psi.mPhysicalSize > 256) {
-							ATXTrackChunkHeader& xhdr = xhdrs.push_back();
+					// force full long sectors off if not enabled
+					if (!g_ATCVImageDiskATXFullSectorsEnabled)
+						hasLongStoredSectors = false;
 
-							xhdr.mSize = sizeof(xhdr);
-							xhdr.mType = xhdr.kTypeExtSectorHeader;
-							xhdr.mNum = (uint8)(sechdrs.size() - 1);
-							xhdr.mData = psi.mPhysicalSize <= 512 ? 2 : 3;							
+					for(uint32 i = 0; i < vsecCount; ++i) {
+						const VirtSectorInfo& vsi = mVirtSectors[vsecIndex + i];
+
+						for(uint32 j = 0; j < vsi.mNumPhysSectors; ++j) {
+							PhysSectorInfo& psi = phySecs[vsi.mStartPhysSector + j];
+
+							if (psi.mbMFM != isTrackMFM)
+								continue;
+
+							ATXSectorHeader& sechdr = sechdrs.push_back();
+
+							sechdr.mIndex = side? vsecCount - i : i + 1;
+							sechdr.mFDCStatus = ~psi.mFDCStatus & 0x3F;
+							sechdr.mTimingOffset = (uint32)((psi.mRotPos - floorf(psi.mRotPos)) * kBitsPerTrackFM);
+							if (sechdr.mTimingOffset >= kBitsPerTrackFM)
+								sechdr.mTimingOffset -= kBitsPerTrackFM;
+
+							if (psi.mWeakDataOffset >= 0) {
+								sechdr.mFDCStatus |= 0x40;
+
+								ATXTrackChunkHeader& xhdr = xhdrs.push_back();
+
+								xhdr.mSize = sizeof(xhdr);
+								xhdr.mType = xhdr.kTypeWeakBits;
+								xhdr.mNum = (uint8)(sechdrs.size() - 1);
+								xhdr.mData = (uint16)psi.mWeakDataOffset;
+							}
+
+							// if the physical sector size is different than the default size,
+							// write an extended sector header entry so the real size is captured
+							if (psi.mPhysicalSize && psi.mPhysicalSize != defaultSectorSize) {
+								ATXTrackChunkHeader& xhdr = xhdrs.push_back();
+
+								xhdr.mSize = sizeof(xhdr);
+								xhdr.mType = xhdr.kTypeExtSectorHeader;
+								xhdr.mNum = (uint8)(sechdrs.size() - 1);
+								xhdr.mData = psi.mPhysicalSize > 512 ? 3 : psi.mPhysicalSize > 256 ? 2 : psi.mPhysicalSize > 128 ? 1 : 0;
+							}
+
+							psecs.push_back(&psi);
 						}
-
-						psecs.push_back(&psi);
 					}
 				}
+
+				if (!psecs.empty()) {
+					trackHasLongStoredSectors = hasLongStoredSectors;
+					break;
+				}
+
+				isTrackMFM = false;
 			}
 
-			if (!psecs.empty())
-				break;
+			// resort physical sectors by disk position
+			const uint32 psecCount = (uint32)sechdrs.size();
+			secorder.resize(psecCount);
+			for(uint32 i = 0; i < psecCount; ++i)
+				secorder[i] = i;
 
-			isTrackMFM = false;
-		}
+			std::sort(secorder.begin(), secorder.end(),
+				[&](int x, int y) {
+					return sechdrs[x].mTimingOffset < sechdrs[y].mTimingOffset;
+				}
+			);
 
-		if (track == 0 && isTrackMFM)
-			hdr.mDensity = kATXDensity_ED;
+			// assign data offsets in ascending position order
+			const uint32 preDataSize = sizeof(ATXTrackHeader) + sizeof(ATXTrackChunkHeader) + sizeof(ATXSectorHeader)*psecCount + sizeof(ATXTrackChunkHeader);
+			uint32 dataOffset = preDataSize;
 
-		// now that we know the physical sector count for this track,
-		// adjust the data offsets to be relative to the start of the track chunk
-		const uint32 psecCount = (uint32)sechdrs.size();
-		const uint32 preDataSize = sizeof(ATXTrackHeader) + sizeof(ATXTrackChunkHeader) + sizeof(ATXSectorHeader)*psecCount + sizeof(ATXTrackChunkHeader);
+			writeSizes.resize(psecCount);
 
-		for(ATXSectorHeader& secHdr : sechdrs) {
-			secHdr.mDataOffset += preDataSize;
-		}
+			for(uint32 i = 0; i < psecCount; ++i) {
+				ATXSectorHeader& secHdr = sechdrs[secorder[i]];
+				const PhysSectorInfo& psi = *psecs[secorder[i]];
+				const uint32 writeSize = secHdr.mFDCStatus & 0x10 ? 0 : trackHasLongStoredSectors ? std::max<uint32>(defaultSectorSize, std::min<uint32>(1024, psi.mPhysicalSize)) : defaultSectorSize;
 
-		// resort physical sectors by disk position
-		secorder.resize(psecCount);
-		for(uint32 i = 0; i < psecCount; ++i)
-			secorder[i] = i;
-
-		std::sort(secorder.begin(), secorder.end(),
-			[&](int x, int y) {
-				return sechdrs[x].mTimingOffset < sechdrs[y].mTimingOffset;
+				secHdr.mDataOffset = dataOffset;
+				writeSizes[i] = writeSize;
+				dataOffset += writeSize;
 			}
-		);
 
-		// write track header
-		const sint32 trackChunkBase = (sint32)f.tell();
+			// write track header
+			const sint32 trackChunkBase = (sint32)f.Pos();
 
-		ATXTrackHeader trkhdr = {0};
-		trkhdr.mSize = preDataSize + dataOffset + sizeof(ATXTrackChunkHeader) * ((uint32)xhdrs.size() + 1);
-		trkhdr.mType = 0;
-		trkhdr.mTrackNum = track;
-		trkhdr.mNumSectors = psecCount;
-		trkhdr.mDataOffset = sizeof(ATXTrackHeader);
-		trkhdr.mFlags = isTrackMFM ? ATXTrackHeader::kFlag_MFM : 0;
+			ATXTrackHeader trkhdr = {0};
+			trkhdr.mSize = dataOffset + sizeof(ATXTrackChunkHeader) * ((uint32)xhdrs.size() + 1);
+			trkhdr.mType = 0;
+			trkhdr.mTrackNum = track;
+			trkhdr.mSide = side;
+			trkhdr.mNumSectors = psecCount;
+			trkhdr.mDefSectSize = defaultSectorSize > 512 ? 3 : defaultSectorSize > 256 ? 2 : defaultSectorSize > 128 ? 1 : 0;
+			trkhdr.mDataOffset = sizeof(ATXTrackHeader);
+			trkhdr.mFlags = isTrackMFM ? ATXTrackHeader::kFlag_MFM : 0;
 
-		f.write(&trkhdr, sizeof trkhdr);
+			if (trackHasLongStoredSectors)
+				trkhdr.mFlags |= ATXTrackHeader::kFlag_FullSects;
 
-		// write sector list header
-		ATXTrackChunkHeader slhdr = {0};
-		slhdr.mSize = sizeof(ATXTrackChunkHeader) + sizeof(ATXSectorHeader) * psecCount;
-		slhdr.mType = 1;
+			f.Write(&trkhdr, sizeof trkhdr);
 
-		f.write(&slhdr, sizeof slhdr);
+			// write sector list header
+			ATXTrackChunkHeader slhdr = {0};
+			slhdr.mSize = sizeof(ATXTrackChunkHeader) + sizeof(ATXSectorHeader) * psecCount;
+			slhdr.mType = 1;
 
-		// write sector list
-		for(uint32 i = 0; i < psecCount; ++i) {
-			f.write(&sechdrs[secorder[i]], sizeof(ATXSectorHeader));
-		}
+			f.Write(&slhdr, sizeof slhdr);
 
-		// write sector data header
-		ATXTrackChunkHeader sdhdr = {0};
-		sdhdr.mSize = sizeof(ATXTrackChunkHeader) + dataOffset;
-		sdhdr.mType = ATXTrackChunkHeader::kTypeSectorData;
+			// write sector list
+			for(uint32 i = 0; i < psecCount; ++i) {
+				f.Write(&sechdrs[secorder[i]], sizeof(ATXSectorHeader));
+			}
 
-		f.write(&sdhdr, sizeof sdhdr);
+			// write sector data header
+			ATXTrackChunkHeader sdhdr = {0};
+			sdhdr.mSize = sizeof(ATXTrackChunkHeader) + (dataOffset - preDataSize);
+			sdhdr.mType = ATXTrackChunkHeader::kTypeSectorData;
 
-		// write sector data
-		for(uint32 i = 0; i < psecCount; ++i) {
-			const ATXSectorHeader& sechdr = sechdrs[i];
-			PhysSectorInfo& psi = *psecs[i];
+			f.Write(&sdhdr, sizeof sdhdr);
 
-			psi.mDiskOffset = trackChunkBase + sechdr.mDataOffset;
+			// write out physical sectors
+			for(uint32 i = 0; i < psecCount; ++i) {
+				const ATXSectorHeader& sechdr = sechdrs[secorder[i]];
+				PhysSectorInfo& psi = *psecs[secorder[i]];
 
-			if (psi.mFDCStatus & 0x10) {
-				if (psi.mImageSize < 128) {
-					char buf[128] = {0};
+				psi.mDiskOffset = trackChunkBase + sechdr.mDataOffset;
 
-					if (psi.mImageSize)
-						memcpy(buf, &mImage[psi.mOffset], psi.mImageSize);
+				// if the sector has a missing data field, we don't write any data
+				// for it -- but if the sector did have data associated with it, we
+				// need to nuke it
+				if (psi.mFDCStatus & 0x10) {
+					const uint32 writeSize = writeSizes[i];
 
-					f.write(buf, 128);
+					if (psi.mImageSize < writeSize) {
+						f.Write(&mImage[psi.mOffset], psi.mImageSize);
+						f.Write(zerobuf, writeSize - psi.mImageSize);
+					} else {
+						f.Write(&mImage[psi.mOffset], writeSize);
+
+						if (psi.mImageSize > writeSize)
+							psi.mImageSize = writeSize;
+					}
 				} else
-					f.write(&mImage[psi.mOffset], 128);
-			}
-		}
-
-		// write extra sector data
-		if (!xhdrs.empty()) {
-			// adjust indices for sorting
-			for(auto& xhdr : xhdrs) {
-				auto it = std::find(secorder.begin(), secorder.end(), xhdr.mNum);
-
-				VDASSERT(it != secorder.end());
-				xhdr.mNum = (uint8)(it - secorder.begin());
+					psi.mImageSize = 0;
 			}
 
-			f.write(xhdrs.data(), (uint32)xhdrs.size() * sizeof(xhdrs[0]));
-		}
+			// write extra sector data
+			if (!xhdrs.empty()) {
+				// adjust indices for sorting
+				for(auto& xhdr : xhdrs) {
+					auto it = std::find(secorder.begin(), secorder.end(), xhdr.mNum);
 
-		// write sentinel
-		ATXTrackChunkHeader endhdr = {0};
-		f.write(&endhdr, sizeof endhdr);
+					VDASSERT(it != secorder.end());
+					xhdr.mNum = (uint8)(it - secorder.begin());
+				}
+
+				f.Write(xhdrs.data(), (uint32)xhdrs.size() * sizeof(xhdrs[0]));
+			}
+
+			// write sentinel
+			ATXTrackChunkHeader endhdr = {0};
+			f.Write(&endhdr, sizeof endhdr);
+		}
 	}
 
 	// backpatch size
-	hdr.mTotalSize = (uint32)f.tell();
+	hdr.mTotalSize = (uint32)f.Pos();
 
-	f.seek(0);
-	f.write(&hdr, sizeof hdr);
+	f.Seek(0);
+	f.Write(&hdr, sizeof hdr);
+	f.Flush();
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2887,12 +3121,24 @@ void ATDiskConvertPERCOMToGeometry(ATDiskGeometryInfo& geom, const uint8 percom[
 }
 
 ATDiskInterleave ATDiskGetDefaultInterleave(const ATDiskGeometryInfo& info) {
-	if (info.mSectorSize >= 256)
-		return kATDiskInterleave_DD_15_1;
-	else if (info.mSectorsPerTrack >= 26)
-		return kATDiskInterleave_ED_13_1;
-	else
-		return kATDiskInterleave_SD_9_1;
+	if (info.mSectorSize >= 512)
+		return kATDiskInterleave_1_1;
+
+	if (info.mbHighDensity) {
+		// 8" format
+		if (info.mSectorSize >= 256)
+			return kATDiskInterleave_DD26_23_1;
+		else
+			return kATDiskInterleave_SD26_14_1;
+	} else {
+		// 5.25" format
+		if (info.mSectorSize >= 256)
+			return kATDiskInterleave_DD_15_1;
+		else if (info.mSectorsPerTrack >= 26)
+			return kATDiskInterleave_ED_13_1;
+		else
+			return kATDiskInterleave_SD_9_1;
+	}
 }
 
 vdfunction<float(uint32)> ATDiskGetInterleaveFn(ATDiskInterleave interleave, const ATDiskGeometryInfo& info) {
@@ -2904,6 +3150,12 @@ vdfunction<float(uint32)> ATDiskGetInterleaveFn(ATDiskInterleave interleave, con
 
 	// XF551 sector spacing: 10.944ms
 	static constexpr float kTurnsPerSectorDD = 10.944f / (60000.0f / 288.0f);
+
+	// ATR8000 8" SD sector spacing: 10.944ms
+	static constexpr float kTurnsPerSectorSD26 = 6.016f / (60000.0f / 360.0f);
+
+	// ATR8000 8" DD sector spacing: 10.944ms
+	static constexpr float kTurnsPerSectorDD26 = 5.936f / (60000.0f / 360.0f);
 
 	if (interleave == kATDiskInterleave_Default)
 		interleave = ATDiskGetDefaultInterleave(info);
@@ -2941,5 +3193,11 @@ vdfunction<float(uint32)> ATDiskGetInterleaveFn(ATDiskInterleave interleave, con
 
 		case kATDiskInterleave_DD_7_1:
 			return [](uint32 secIdx) { return (float)kTrackInterleaveDD_7_1[secIdx % 18] * kTurnsPerSectorDD; };
+
+		case kATDiskInterleave_SD26_14_1:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveSD26_14_1[secIdx % 26] * kTurnsPerSectorSD26; };
+
+		case kATDiskInterleave_DD26_23_1:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveDD26_23_1[secIdx % 26] * kTurnsPerSectorDD26; };
 	}
 }

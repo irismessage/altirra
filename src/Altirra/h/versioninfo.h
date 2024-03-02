@@ -33,7 +33,8 @@
 
 #define AT_VERSION_STR AT_WIDESTR(AT_VERSION)
 
-#define AT_PROGRAM_NAME_STR L"Altirra"
+#define AT_PROGRAM_NAME_STR_ATASCII		"Altirra"
+#define AT_PROGRAM_NAME_STR				L"Altirra"
 
 #if defined(VD_CPU_ARM64)
 	#define AT_PROGRAM_PLATFORM_STR L"/ARM64"
@@ -50,5 +51,26 @@
 #endif
 
 #define AT_FULL_VERSION_STR AT_PROGRAM_NAME_STR AT_PROGRAM_PLATFORM_STR L" " AT_VERSION_STR AT_VERSION_DEBUG_STR AT_VERSION_PRERELEASE_STR
+
+#define AT_PRIMARY_URL		L"https://www.virtualdub.org/altirra.html"
+#define AT_DOWNLOAD_URL		L"https://www.virtualdub.org/altirra.html"
+
+#define AT_HTTP_USER_AGENT	(L"Altirra/" AT_VERSION_STR)
+
+#define AT_UPDATE_CHECK_URL_LOCAL_TEST		L"http://127.0.0.1:8000/altirra-update-dev.xml"
+#define AT_UPDATE_CHECK_URL_LOCAL_REL		L"http://127.0.0.1:8000/altirra-update-release.xml"
+#define AT_UPDATE_CHECK_URL_TEST	L"https://www.virtualdub.org/feeds/altirra-update-dev.xml"
+#define AT_UPDATE_CHECK_URL_REL		L"https://www.virtualdub.org/feeds/altirra-update-release.xml"
+
+#if defined(AT_VERSION_DEV) && (defined(_DEBUG) || defined(ATNRELEASE))
+	#define AT_UPDATE_CHECK_URL		    AT_UPDATE_CHECK_URL_TEST
+	#define AT_UPDATE_CHECK_URL_LOCAL	AT_UPDATE_CHECK_URL_LOCAL_TEST
+#elif defined(AT_VERSION_PRERELEASE)
+	#define AT_UPDATE_CHECK_URL	    	AT_UPDATE_CHECK_URL_TEST
+	#define AT_UPDATE_CHECK_URL_LOCAL	AT_UPDATE_CHECK_URL_LOCAL_TEST
+#else
+	#define AT_UPDATE_CHECK_URL	    	AT_UPDATE_CHECK_URL_REL
+	#define AT_UPDATE_CHECK_URL_LOCAL	AT_UPDATE_CHECK_URL_LOCAL_REL
+#endif
 
 #endif

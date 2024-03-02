@@ -182,6 +182,9 @@ vecset_loop:
 		bpl		vecset_loop
 		cli
 
+		;enter critical section
+		inc		critic
+
 		lda		#2
 		sta		dev_retries
 
@@ -191,9 +194,6 @@ retry_command:
 
 retry_send:
 		jsr		SerialInit
-
-		;enter critical section
-		inc		critic
 
 		;assert command line
 		lda		#$34

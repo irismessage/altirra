@@ -21,7 +21,7 @@
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/memory.h>
-#include "audiooutput.h"
+#include <at/ataudio/audiooutput.h>
 
 class IATUIRenderer;
 

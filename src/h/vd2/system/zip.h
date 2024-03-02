@@ -144,10 +144,11 @@ public:
 	static const VDCRCTable CRC32;
 
 private:
+	constexpr VDCRCTable(uint32 crc, int);
+	constexpr void InitConst(uint32 crc);
+
 	uint32 mTable[256];
 
-	constexpr void InitConst(uint32 crc);
-	constexpr static VDCRCTable MakeConst(uint32 crc);
 };
 
 class VDCRCChecker {

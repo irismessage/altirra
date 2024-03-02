@@ -33,7 +33,9 @@ enum {
 	kATVerifierFlag_AddressZero = 0x20,
 	kATVerifierFlag_LoadingOverDisplayList = 0x40,
 	kATVerifierFlag_CallingConventionViolations = 0x80,
-	kATVerifierFlag_NonCanonicalHardwareAddress = 0x100
+	kATVerifierFlag_NonCanonicalHardwareAddress = 0x100,
+	kATVerifierFlag_StackWrap = 0x200,
+	kATVerifierFlag_StackInZP816 = 0x400,
 };
 
 class ATCPUVerifier {
@@ -62,6 +64,9 @@ public:
 
 private:
 	void OnAbnormalDMA();
+
+	void FailStackOverflow();
+	void FailStackUnderflow();
 
 	ATCPUEmulator *mpCPU = nullptr;
 	ATCPUEmulatorMemory *mpMemory = nullptr;

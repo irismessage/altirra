@@ -66,6 +66,7 @@ namespace nsVDPixmap {
 		kPixFormat_YUV420ib_Planar_FR,
 		kPixFormat_YUV420ib_Planar_709,
 		kPixFormat_YUV420ib_Planar_709_FR,
+		kPixFormat_ARGB8888,
 		kPixFormat_Max_Standard
 	};
 }
@@ -88,6 +89,9 @@ struct VDPixmap {
 	vdpixoffset		pitch2;
 	void			*data3;		// Cr (V) for YCbCr
 	vdpixoffset		pitch3;
+
+	template<typename T>
+	T *GetPixelRow(sint32 y) const { return (T *)((char *)data + pitch * y); }
 };
 
 struct VDPixmapLayout {

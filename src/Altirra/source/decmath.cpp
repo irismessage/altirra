@@ -463,7 +463,7 @@ void ATAccelFADD(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	if (ATDecFloatAdd(fpr, fp0, fp1)) {
 		double r0 = fp0.ToDouble();
 		double r1 = fp1.ToDouble();
-		double rr = fpr.ToDouble();
+		[[maybe_unused]] double rr = fpr.ToDouble();
 
 		if (fabs(r0) > 1e-5 && fabs(r1) > 1e-5) {
 			if (r0 > r1) {

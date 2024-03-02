@@ -22,6 +22,12 @@
     <ClInclude Include="..\h\at\atdebugger\expression.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\h\at\atdebugger\debugdevice.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\at\atdebugger\internal\debugdevice.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Header Files">
@@ -50,6 +56,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\breakpointsimpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\debugdevice.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

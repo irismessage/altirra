@@ -49,7 +49,7 @@ namespace nsVDTextDOM {
 		}
 	};
 
-	class Paragraph {
+	class Paragraph final {
 	public:
 		int		mYPos;
 		int		mHeight;
@@ -74,7 +74,7 @@ namespace nsVDTextDOM {
 		void DeleteRange(int startLine, int startOffset, int endLine, int endOffset);
 		void Split(int line, int offset, Paragraph& dst);
 
-		void Validate();
+		void Validate() const;
 
 	protected:
 		void AppendSpans(const Paragraph& src);
@@ -84,7 +84,7 @@ namespace nsVDTextDOM {
 		void SplitLines(int line, int offset, Paragraph& dst);
 	};
 
-	class Iterator : public vdlist_node {
+	class Iterator final : public vdlist_node {
 	public:
 		Iterator();
 		Iterator(Document& doc, int para = 0, int line = 0, int offset = 0);
@@ -135,7 +135,7 @@ namespace nsVDTextDOM {
 		virtual void ChangeTotalHeight(int y) = 0;
 	};
 
-	class Document {
+	class Document final {
 		friend class Iterator;
 	public:
 		Document();
@@ -153,14 +153,16 @@ namespace nsVDTextDOM {
 		void GetText(const Iterator& it1, const Iterator& it2, bool forceCRLF, vdfastvector<char>& buf);
 
 		void Insert(const Iterator& it, const char *text, size_t len, Iterator *after);
+		void DeleteAll();
 		void Delete(const Iterator& it1, const Iterator& it2);
 
+		void ReflowParas(int paraIdx, int count);
 		void ReflowPara(int paraIdx);
 		void ReflowPara(int paraIdx, const Line *newLines, size_t cont);
 		void RecolorPara(int paraIdx);
 		void RecomputeParaPositions();
 
-	protected:
+	private:
 		typedef vdfastvector<Paragraph *> Paragraphs;
 		void RecomputeParaPositions(int y, Paragraphs::iterator it);
 

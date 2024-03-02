@@ -36,6 +36,9 @@ struct IUnknown;
 #define D3D11_NO_HELPERS
 
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/vdstl.h>
+#include <vd2/system/vdstl_hashmap.h>
+#include <vd2/system/win32/intrin.h>
 
 #endif	// f_STDAFX_H
 

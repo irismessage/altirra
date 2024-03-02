@@ -49,6 +49,7 @@ namespace ATCPUStatesZ80 {
 		kZ80StateReadL,
 		kZ80StateReadH,
 		kZ80StateReadIXdToAddr,
+		kZ80StateReadLD,
 
 		kZ80StateWrite,
 		kZ80StateWriteL,
@@ -122,6 +123,7 @@ namespace ATCPUStatesZ80 {
 		kZ80StateSubToA,
 		kZ80StateSbcToA,
 		kZ80StateCpToA,
+		kZ80StateCpToA2,	// special flags for CPI/CPD/CPIR/CPDR
 		kZ80StateDec,
 		kZ80StateInc,
 		kZ80StateAndToA,
@@ -143,6 +145,7 @@ namespace ATCPUStatesZ80 {
 		kZ80StateRl,
 		kZ80StateRrc,
 		kZ80StateRr,
+		kZ80StateSll,
 		kZ80StateSla,
 		kZ80StateSrl,
 		kZ80StateSra,
@@ -159,6 +162,7 @@ namespace ATCPUStatesZ80 {
 		kZ80StateBit5,
 		kZ80StateBit6,
 		kZ80StateBit7,
+		kZ80StateBitAdjustIX,
 
 		kZ80StateSet0,
 		kZ80StateSet1,

@@ -95,19 +95,19 @@ public:
 
 	explicit operator vdfloat32x4() const { return v; }
 
-	static VDColorRGB FromRGB8(uint32 c) {
+	static VDColorRGB FromBGR8(uint32 c) {
 		return VDColorRGB(vdfloat32x4::unpacku8((uint32)c) * (1.0f / 255.0f));
 	}
 
-	static VDColorRGB FromBGR8(uint32 c) {
+	static VDColorRGB FromRGB8(uint32 c) {
 		return VDColorRGB(nsVDVecMath::permute<2,1,0,3>(vdfloat32x4::unpacku8((uint32)c)) * (1.0f / 255.0f));
 	}
 
-	uint32 ToRGB8() const {
+	uint32 ToBGR8() const {
 		return packus8(v * 255.0f) & 0xFFFFFF;
 	}
 
-	uint32 ToBGR8() const {
+	uint32 ToRGB8() const {
 		return packus8(nsVDVecMath::permute<2,1,0,3>(v) * 255.0f) & 0xFFFFFF;
 	}
 

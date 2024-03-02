@@ -200,7 +200,7 @@ protected:
 	void SetCurrentSizeAsMinSize();
 	void SetCurrentSizeAsMaxSize(bool width, bool height);
 
-	VDZHWND GetControl(uint32 id);
+	VDZHWND GetControl(uint32 id) const;
 
 	VDZHWND GetFocusedWindow() const;
 	void SetFocusToControl(uint32 id);
@@ -304,6 +304,7 @@ protected:
 	virtual void OnSetFont(VDZHFONT hfont);
 	virtual void OnDpiChanging(uint16 newDpiX, uint16 newDpiY, const vdrect32 *suggestedRect);
 	virtual void OnDpiChanged();
+	virtual uint32 OnButtonCustomDraw(VDZLPARAM lParam);
 	virtual bool PreNCDestroy();
 	virtual bool ShouldSetDialogIcon() const;
 	virtual sint32 GetBackgroundColor() const;
@@ -313,6 +314,7 @@ protected:
 	void RegisterForMouseLeave();
 	void LoadAcceleratorTable(uint32 id);
 	sint32 GetDpiScaledMetric(int index);
+	vdsize32 ComputeTemplatePixelSize() const;
 
 	bool	mbValidationFailed;
 	bool	mbIsModal;
@@ -368,6 +370,8 @@ private:
 protected:
 	VDUIProxyMessageDispatcherW32 mMsgDispatcher;
 	VDDialogResizerW32 mResizer;
+
+	vdfastvector<uint32> mButtonIDs;
 };
 
 class VDResizableDialogFrameW32 : public VDDialogFrameW32 {

@@ -190,7 +190,7 @@ void ATArtifactPALFinalMono(uint32 *dst, const uint32 *ybuf, uint32 n, const uin
 	}
 }
 
-template<bool T_UseSignedPalette>
+template<bool T_CompressExtendedRange>
 void ATArtifactPAL32(void *dst, void *delayLine, uint32 n) {
 	// For this path, we assume that the alpha channel holds precomputed luminance. This works because
 	// the only source of raw RGB32 input is VBXE, and though it outputs 21-bit RGB, it can only do so
@@ -221,7 +221,7 @@ void ATArtifactPAL32(void *dst, void *delayLine, uint32 n) {
 		int gf = ((g1 + g2 + adj + 1) >> 1);
 		int bf = ((b1 + b2 + adj + 1) >> 1);
 
-		if (T_UseSignedPalette) {
+		if (T_CompressExtendedRange) {
 			rf = rf + rf - 128;
 			gf = gf + gf - 128;
 			bf = bf + bf - 128;
@@ -243,8 +243,8 @@ void ATArtifactPAL32(void *dst, void *delayLine, uint32 n) {
 	}
 }
 
-void ATArtifactPAL32(void *dst, void *delayLine, uint32 n, bool useSignedPalette) {
-	if (useSignedPalette)
+void ATArtifactPAL32(void *dst, void *delayLine, uint32 n, bool compressExtendedRange) {
+	if (compressExtendedRange)
 		ATArtifactPAL32<true>(dst, delayLine, n);
 	else
 		ATArtifactPAL32<false>(dst, delayLine, n);

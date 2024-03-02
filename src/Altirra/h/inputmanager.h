@@ -73,9 +73,31 @@ enum ATInputCode : uint32 {
 	kATInputCode_Key8			= 0x38,		//
 	kATInputCode_Key9			= 0x39,		//
 	kATInputCode_KeyA			= 0x41,		// VK_A
+	kATInputCode_KeyB			= 0x42,		//
+	kATInputCode_KeyC			= 0x43,		//
+	kATInputCode_KeyD			= 0x44,		//
+	kATInputCode_KeyE			= 0x45,		//
+	kATInputCode_KeyF			= 0x46,		//
+	kATInputCode_KeyG			= 0x47,		//
+	kATInputCode_KeyH			= 0x48,		//
+	kATInputCode_KeyI			= 0x49,		//
+	kATInputCode_KeyJ			= 0x4A,		//
+	kATInputCode_KeyK			= 0x4B,		//
+	kATInputCode_KeyL			= 0x4C,		//
+	kATInputCode_KeyM			= 0x4D,		//
+	kATInputCode_KeyN			= 0x4E,		//
+	kATInputCode_KeyO			= 0x4F,		//
 	kATInputCode_KeyP			= 0x50,		//
+	kATInputCode_Keyq			= 0x51,		//
 	kATInputCode_KeyR			= 0x52,		//
 	kATInputCode_KeyS			= 0x53,		//
+	kATInputCode_KeyT			= 0x54,		//
+	kATInputCode_KeyU			= 0x55,		//
+	kATInputCode_KeyV			= 0x56,		//
+	kATInputCode_KeyW			= 0x57,		//
+	kATInputCode_KeyX			= 0x58,		//
+	kATInputCode_KeyY			= 0x59,		//
+	kATInputCode_KeyZ			= 0x5A,		//
 	kATInputCode_KeyNumpad0		= 0x60,		// VK_NUMPAD0
 	kATInputCode_KeyNumpad1		= 0x61,		// VK_NUMPAD1
 	kATInputCode_KeyNumpad2		= 0x62,		// VK_NUMPAD2
@@ -127,6 +149,8 @@ enum ATInputCode : uint32 {
 	kATInputCode_MousePadY		= 0x1003,
 	kATInputCode_MouseBeamX		= 0x1004,
 	kATInputCode_MouseBeamY		= 0x1005,
+	kATInputCode_MouseEmuStickX	= 0x1006,
+	kATInputCode_MouseEmuStickY	= 0x1007,
 	kATInputCode_MouseLeft		= 0x1100,
 	kATInputCode_MouseRight		= 0x1101,
 	kATInputCode_MouseUp		= 0x1102,
@@ -458,6 +482,7 @@ public:
 	void OnMouseMove(int unit, int dx, int dy);
 	void SetMouseBeamPos(int x, int y);
 	void SetMousePadPos(int x, int y);
+	void SetMouseVirtualStickPos(int x, int y);
 	void ActivateFlag(uint32 id, bool state);
 	void ReleaseButtons(uint32 idmin, uint32 idmax);
 

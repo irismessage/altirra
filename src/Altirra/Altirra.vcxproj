@@ -27,177 +27,38 @@
     <TargetName Condition="'$(Platform)'=='x64'">Altirra64</TargetName>
     <TargetName Condition="'$(Platform)'=='ARM64'">AltirraARM64</TargetName>
   </PropertyGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-    </ClCompile>
+  <ItemDefinitionGroup>
     <ProjectReference>
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
-    <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(VDLibPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <SubSystem>Windows</SubSystem>
-    </Link>
-    <Manifest>
-      <AdditionalManifestFiles>manifest\win7.manifest;manifest\comctl6.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
-    </Manifest>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <AdditionalIncludeDirectories>autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
-    <ProjectReference>
-      <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
     <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions Condition="'$(Configuration)'=='Debug' or '$(Configuration)'=='Profile'">/wholearchive:attest.lib %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;atvm.lib;ataudio.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VDLibPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <SubSystem>Windows</SubSystem>
     </Link>
     <Manifest>
-      <AdditionalManifestFiles>manifest\win7.manifest;manifest\comctl6_x64.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
+      <AdditionalManifestFiles Condition="'$(Platform)'=='Win32'">manifest\win7.manifest;manifest\comctl6.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
+      <AdditionalManifestFiles Condition="'$(Platform)'=='x64'">manifest\win7.manifest;manifest\comctl6_x64.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
+      <AdditionalManifestFiles Condition="'$(Platform)'=='ARM64'">manifest\win7.manifest;manifest\comctl6_arm64.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
     </Manifest>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <ProjectReference>
-      <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
-    <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(VDLibPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <SubSystem>Windows</SubSystem>
-    </Link>
-    <Manifest>
-      <AdditionalManifestFiles>manifest\win7.manifest;manifest\comctl6_arm64.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
-    </Manifest>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <ProjectReference>
-      <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
-    <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(VDLibPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <SubSystem>Windows</SubSystem>
-    </Link>
-    <Manifest>
-      <AdditionalManifestFiles>manifest\win7.manifest;manifest\comctl6.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
-    </Manifest>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <ProjectReference>
-      <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
-    <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(VDLibPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <SubSystem>Windows</SubSystem>
-    </Link>
-    <Manifest>
-      <AdditionalManifestFiles>manifest\win7.manifest;manifest\comctl6_x64.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
-    </Manifest>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <ProjectReference>
-      <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
-    <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(VDLibPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <SubSystem>Windows</SubSystem>
-    </Link>
-    <Manifest>
-      <AdditionalManifestFiles>manifest\win7.manifest;manifest\comctl6_arm64.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
-    </Manifest>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <ProjectReference>
-      <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
-    <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(VDLibPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <SubSystem>Windows</SubSystem>
-    </Link>
-    <Manifest>
-      <AdditionalManifestFiles>manifest\win7.manifest;manifest\comctl6.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
-    </Manifest>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <ProjectReference>
-      <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
-    <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(VDLibPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <SubSystem>Windows</SubSystem>
-    </Link>
-    <Manifest>
-      <AdditionalManifestFiles>manifest\win7.manifest;manifest\comctl6_x64.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
-    </Manifest>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Profile|ARM64'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <ProjectReference>
-      <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
-    <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(VDLibPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <SubSystem>Windows</SubSystem>
-    </Link>
-    <Manifest>
-      <AdditionalManifestFiles>manifest\win7.manifest;manifest\comctl6_arm64.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
-    </Manifest>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Analysis|x64'">
-    <ClCompile>
-      <AdditionalIncludeDirectories>autobuild;autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <ProjectReference>
-      <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
-    <Link>
-      <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(VDLibPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <SubSystem>Windows</SubSystem>
-    </Link>
-    <Manifest>
-      <AdditionalManifestFiles>manifest\win7.manifest;manifest\comctl6_x64.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
-    </Manifest>
+    <ResourceCompile>
+      <PreprocessorDefinitions Condition="'$(Configuration)'=='Debug'">DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(Configuration)'!='Debug'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)autobuild;$(ProjectDir)autobuild_default;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="h\1090.h" />
     <ClInclude Include="h\audiorawsource.h" />
+    <ClInclude Include="h\asyncdownloader.h" />
+    <ClInclude Include="h\bit3.h" />
+    <ClInclude Include="h\blockdevdiskadapter.h" />
+    <ClInclude Include="h\blockdevvirtfat32.h" />
     <ClInclude Include="h\browser.h" />
     <ClInclude Include="h\cartridgeport.h" />
     <ClInclude Include="h\cmdhelpers.h" />
@@ -207,11 +68,10 @@
     <ClInclude Include="h\constants.h" />
     <ClInclude Include="h\cputracer.h" />
     <ClInclude Include="h\customdevice.h" />
-    <ClInclude Include="h\customdevicecompiler.h" />
-    <ClInclude Include="h\customdevicevm.h" />
     <ClInclude Include="h\customdevice_win32.h" />
     <ClInclude Include="h\debuggersettings.h" />
     <ClInclude Include="h\decode_png.h" />
+    <ClInclude Include="h\diskdrive815.h" />
     <ClInclude Include="h\diskdriveamdc.h" />
     <ClInclude Include="h\diskdriveatr8000.h" />
     <ClInclude Include="h\diskdrivefull.h" />
@@ -220,18 +80,25 @@
     <ClInclude Include="h\diskdrivepercom.h" />
     <ClInclude Include="h\diskdrivexf551.h" />
     <ClInclude Include="h\diskinterface.h" />
+    <ClInclude Include="h\diskprofile.h" />
     <ClInclude Include="h\diskvirtimagebase.h" />
     <ClInclude Include="h\fdc.h" />
     <ClInclude Include="h\mediamanager.h" />
+    <ClInclude Include="h\palettegenerator.h" />
+    <ClInclude Include="h\palettesolver.h" />
     <ClInclude Include="h\pbidisk.h" />
+    <ClInclude Include="h\pokeysavecompat.h" />
+    <ClInclude Include="h\pokeytrace.h" />
     <ClInclude Include="h\profilerui.h" />
     <ClInclude Include="h\rapidus.h" />
     <ClInclude Include="h\sapconverter.h" />
     <ClInclude Include="h\sapwriter.h" />
     <ClInclude Include="h\savestateio.h" />
     <ClInclude Include="h\settings.h" />
+    <ClInclude Include="h\side3.h" />
     <ClInclude Include="h\sio2sd.h" />
     <ClCompile Include="source\1030.cpp" />
+    <ClCompile Include="source\1090.cpp" />
     <ClCompile Include="source\about.cpp" />
     <ClCompile Include="source\allocator.cpp" />
     <ClCompile Include="source\antic.cpp" />
@@ -261,15 +128,17 @@
       <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="source\assembler.cpp" />
-    <ClCompile Include="source\audiofilters.cpp" />
     <ClCompile Include="source\audiomonitor.cpp" />
-    <ClCompile Include="source\audiooutput.cpp" />
     <ClCompile Include="source\audiorawsource.cpp" />
     <ClCompile Include="source\audiosampleplayer.cpp" />
     <ClCompile Include="source\audiowriter.cpp" />
     <ClCompile Include="source\aviwriter.cpp" />
+    <ClCompile Include="source\asyncdownloader_win32.cpp" />
+    <ClCompile Include="source\bit3.cpp" />
     <ClCompile Include="source\bkptmanager.cpp" />
     <ClCompile Include="source\blackbox.cpp" />
+    <ClCompile Include="source\blockdevdiskadapter.cpp" />
+    <ClCompile Include="source\blockdevvirtfat32.cpp" />
     <ClCompile Include="source\browser.cpp" />
     <ClCompile Include="source\cartdetect.cpp" />
     <ClCompile Include="source\cartridge.cpp" />
@@ -282,6 +151,7 @@
     <ClCompile Include="source\cmdcpu.cpp" />
     <ClCompile Include="source\cmddebug.cpp" />
     <ClCompile Include="source\cmdinput.cpp" />
+    <ClCompile Include="source\cmdoptions.cpp" />
     <ClCompile Include="source\cmds.cpp" />
     <ClCompile Include="source\cmdsystem.cpp" />
     <ClCompile Include="source\cmdtools.cpp" />
@@ -304,8 +174,6 @@
     <ClCompile Include="source\cputracer.cpp" />
     <ClCompile Include="source\cs8900a.cpp" />
     <ClCompile Include="source\customdevice.cpp" />
-    <ClCompile Include="source\customdevicecompiler.cpp" />
-    <ClCompile Include="source\customdevicevm.cpp" />
     <ClCompile Include="source\customdevice_win32.cpp" />
     <ClCompile Include="source\debugdisplay.cpp" />
     <ClCompile Include="source\debugger.cpp" />
@@ -320,6 +188,7 @@
     <ClCompile Include="source\directorywatcher.cpp" />
     <ClCompile Include="source\disasm.cpp" />
     <ClCompile Include="source\disk.cpp" />
+    <ClCompile Include="source\diskdrive815.cpp" />
     <ClCompile Include="source\diskdriveamdc.cpp" />
     <ClCompile Include="source\diskdriveatr8000.cpp" />
     <ClCompile Include="source\diskdrivefull.cpp" />
@@ -328,6 +197,7 @@
     <ClCompile Include="source\diskdrivepercom.cpp" />
     <ClCompile Include="source\diskdrivexf551.cpp" />
     <ClCompile Include="source\diskinterface.cpp" />
+    <ClCompile Include="source\diskprofile.cpp" />
     <ClCompile Include="source\diskvirtimage.cpp" />
     <ClCompile Include="source\diskvirtimagebase.cpp" />
     <ClCompile Include="source\diskvirtimagesdfs.cpp" />
@@ -368,15 +238,16 @@
     <ClCompile Include="source\myide.cpp" />
     <ClCompile Include="source\options.cpp" />
     <ClCompile Include="source\oshelper.cpp" />
+    <ClCompile Include="source\palettegenerator.cpp" />
+    <ClCompile Include="source\palettesolver.cpp" />
     <ClCompile Include="source\pbi.cpp" />
     <ClCompile Include="source\pbidisk.cpp" />
     <ClCompile Include="source\pclink.cpp" />
     <ClCompile Include="source\pclink_win32.cpp" />
     <ClCompile Include="source\pia.cpp" />
     <ClCompile Include="source\pocketmodem.cpp" />
-    <ClCompile Include="source\pokey.cpp" />
-    <ClCompile Include="source\pokeyrenderer.cpp" />
-    <ClCompile Include="source\pokeytables.cpp" />
+    <ClCompile Include="source\pokeysavecompat.cpp" />
+    <ClCompile Include="source\pokeytrace.cpp" />
     <ClCompile Include="source\printer.cpp" />
     <ClCompile Include="source\profiler.cpp" />
     <ClCompile Include="source\profilerui.cpp" />
@@ -393,6 +264,7 @@
     <ClCompile Include="source\sdrive.cpp" />
     <ClCompile Include="source\settings.cpp" />
     <ClCompile Include="source\side.cpp" />
+    <ClCompile Include="source\side3.cpp" />
     <ClCompile Include="source\simeventmanager.cpp" />
     <ClCompile Include="source\simulator.cpp" />
     <ClCompile Include="source\sio2sd.cpp" />
@@ -409,6 +281,8 @@
     <ClCompile Include="source\tracevideo.cpp" />
     <ClCompile Include="source\ui.cpp" />
     <ClCompile Include="source\uiabout.cpp" />
+    <ClCompile Include="source\uiaccessors.cpp" />
+    <ClCompile Include="source\uiadvancedconfiguration.cpp" />
     <ClCompile Include="source\uiaudiooptions.cpp" />
     <ClCompile Include="source\uicaptionupdater.cpp" />
     <ClCompile Include="source\uicartmapper.cpp" />
@@ -420,6 +294,7 @@
     <ClCompile Include="source\uicompatdb.cpp" />
     <ClCompile Include="source\uiconf850.cpp" />
     <ClCompile Include="source\uiconfblackbox.cpp" />
+    <ClCompile Include="source\uiconfdev815.cpp" />
     <ClCompile Include="source\uiconfdevamdc.cpp" />
     <ClCompile Include="source\uiconfdev1030.cpp" />
     <ClCompile Include="source\uiconfdevatr8000.cpp" />
@@ -427,12 +302,16 @@
     <ClCompile Include="source\uiconfdevcovox.cpp" />
     <ClCompile Include="source\uiconfdevcustom.cpp" />
     <ClCompile Include="source\uiconfdevdongle.cpp" />
+    <ClCompile Include="source\uiconfdevhappy810.cpp" />
     <ClCompile Include="source\uiconfdevkmkjzide.cpp" />
     <ClCompile Include="source\uiconfdevkmkjzide2.cpp" />
+    <ClCompile Include="source\uiconfdevparfilewriter.cpp" />
     <ClCompile Include="source\uiconfdevpercom.cpp" />
     <ClCompile Include="source\uiconfdevpocketmodem.cpp" />
+    <ClCompile Include="source\uiconfdevside3.cpp" />
     <ClCompile Include="source\uiconfdevsx212.cpp" />
     <ClCompile Include="source\uiconfdevvbxe.cpp" />
+    <ClCompile Include="source\uiconfdevhdvirtfat32.cpp" />
     <ClCompile Include="source\uiconfdevxep80.cpp" />
     <ClCompile Include="source\uiconfdiskdrivefull.cpp" />
     <ClCompile Include="source\uiconfharddisk.cpp" />
@@ -455,6 +334,7 @@
     <ClCompile Include="source\uihistoryview.cpp" />
     <ClCompile Include="source\uipageddialog.cpp" />
     <ClCompile Include="source\uiscreeneffects.cpp" />
+    <ClCompile Include="source\uitapeeditor.cpp" />
     <ClCompile Include="source\uitraceviewer.cpp" />
     <ClCompile Include="source\uiexportroms.cpp" />
     <ClCompile Include="source\uifileassoc.cpp" />
@@ -491,13 +371,19 @@
     <ClCompile Include="source\uisettingswindow.cpp" />
     <ClCompile Include="source\uisetupwizard.cpp" />
     <ClCompile Include="source\uitapecontrol.cpp" />
+    <ClCompile Include="source\uiupdatecheck.cpp" />
     <ClCompile Include="source\uiverifier.cpp" />
     <ClCompile Include="source\uivideodisplaywindow.cpp" />
+    <ClCompile Include="source\uivideooutputmenu.cpp" />
     <ClCompile Include="source\uivideorecording.cpp" />
     <ClCompile Include="source\ultimate1mb.cpp" />
+    <ClCompile Include="source\updatecheck.cpp" />
+    <ClCompile Include="source\updatefeed.cpp" />
+    <ClCompile Include="source\updatefeed_win32.cpp" />
     <ClCompile Include="source\vbxe.cpp" />
     <ClCompile Include="source\verifier.cpp" />
     <ClCompile Include="source\veronica.cpp" />
+    <ClCompile Include="source\videomanager.cpp" />
     <ClCompile Include="source\videowriter.cpp" />
     <ClCompile Include="source\virtualscreen.cpp" />
     <ClCompile Include="source\vs2013x64crashfix.cpp">
@@ -516,9 +402,7 @@
     <ClInclude Include="h\antic.h" />
     <ClInclude Include="h\artifacting.h" />
     <ClInclude Include="h\artifacting_filters.h" />
-    <ClInclude Include="h\audiofilters.h" />
     <ClInclude Include="h\audiomonitor.h" />
-    <ClInclude Include="h\audiooutput.h" />
     <ClInclude Include="h\audiosampleplayer.h" />
     <ClInclude Include="h\audiowriter.h" />
     <ClInclude Include="h\aviwriter.h" />
@@ -584,9 +468,6 @@
     <ClInclude Include="h\pbi.h" />
     <ClInclude Include="h\pclink.h" />
     <ClInclude Include="h\pia.h" />
-    <ClInclude Include="h\pokey.h" />
-    <ClInclude Include="h\pokeyrenderer.h" />
-    <ClInclude Include="h\pokeytables.h" />
     <ClInclude Include="h\profiler.h" />
     <ClInclude Include="h\scsidisk.h" />
     <ClInclude Include="h\sdrive.h" />
@@ -606,7 +487,11 @@
     <ClInclude Include="h\uihistoryview.h" />
     <ClInclude Include="h\uipageddialog.h" />
     <ClInclude Include="h\uisettingswindow.h" />
+    <ClInclude Include="h\uitapeeditor.h" />
+    <ClInclude Include="h\updatecheck.h" />
+    <ClInclude Include="h\updatefeed.h" />
     <ClInclude Include="h\veronica.h" />
+    <ClInclude Include="h\videomanager.h" />
     <ClInclude Include="h\warpos.h" />
     <ClInclude Include="h\xelcf.h" />
     <ClInclude Include="res\resource.h" />
@@ -771,10 +656,8 @@
     <None Include="res\TrackStep3.pcm" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="res\Altirra.rc">
-      <PreprocessorDefinitions Condition="'$(Configuration)'=='Debug'">DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PreprocessorDefinitions Condition="'$(Configuration)'!='Debug'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ResourceCompile>
+    <ResourceCompile Include="res\Altirra.rc" />
+    <ResourceCompile Include="res\AltirraVersion.rc" />
     <ResourceCompile Include="..\ATNativeUI\res\atnativeui.rc" />
   </ItemGroup>
   <ItemGroup>

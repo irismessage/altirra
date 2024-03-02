@@ -15,4 +15,8 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
+#include <functional>
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/function.h>
+#include <vd2/system/VDString.h>
+#include <vd2/system/win32/intrin.h>

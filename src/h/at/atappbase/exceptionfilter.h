@@ -21,6 +21,8 @@
 
 #include <Windows.h>
 
+void ATSetExceptionPreFilter(void (*fn)(DWORD code, const EXCEPTION_POINTERS *));
+
 int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp);
 LONG WINAPI ATUnhandledExceptionFilter(EXCEPTION_POINTERS *exp);
 void ATExceptionFilterSetFullHeapDump(bool enabled);

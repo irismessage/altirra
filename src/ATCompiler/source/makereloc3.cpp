@@ -18,7 +18,7 @@
 
 #include <stdafx.h>
 
-void write_offset(FILE *fo, uint32 offset) {
+static void write_offset(FILE *fo, uint32 offset) {
 	fprintf(fo, "\tdta\t");
 
 	while(offset >= 255) {

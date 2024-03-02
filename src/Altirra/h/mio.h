@@ -41,7 +41,7 @@ class ATMIOEmulator final : public ATDevice
 	, public IATDeviceParent
 	, public ATDeviceBus
 	, public IATDeviceIndicators
-	, public IATDevicePrinter
+	, public IATDevicePrinterPort
 	, public IATSCSIBusMonitor
 	, public IATSchedulerCallback
 {
@@ -93,7 +93,7 @@ public:
 	virtual void InitIndicators(IATDeviceIndicatorManager *r) override;
 
 public:
-	virtual void SetPrinterOutput(IATPrinterOutput *out) override;
+	virtual void SetPrinterDefaultOutput(IATPrinterOutput *out) override;
 
 public:
 	virtual void OnSCSIControlStateChanged(uint32 state) override;
@@ -164,6 +164,7 @@ protected:
 	ATSCSIBusEmulator mSCSIBus;
 
 	ATDeviceBusSingleChild mSerialBus;
+	ATDeviceBusSingleChild mParallelBus;
 
 	uint8 mFirmware[0x2000];
 	uint8 mRAM[0x100000];

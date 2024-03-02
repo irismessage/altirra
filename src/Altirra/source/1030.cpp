@@ -26,7 +26,6 @@
 #include <at/atcore/propertyset.h>
 #include <at/atcore/scheduler.h>
 #include <at/atcore/sioutils.h>
-#include "pokey.h"
 #include "pia.h"
 #include "cpu.h"
 #include "cpumemory.h"

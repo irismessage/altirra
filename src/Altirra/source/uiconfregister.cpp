@@ -40,10 +40,16 @@ bool ATUIConfDevDiskDriveFull(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevATR8000(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevPercomRFD(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevPercomAT(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevPercomATSPD(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevVBXE(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevAMDC(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevXEP80(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevHappy810(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDev815(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevCustom(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevHDVirtFAT32(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevSIDE3(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevParFileWriter(VDGUIHandle hParent, ATPropertySet& props);
 
 void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("harddisk", ATUIConfDevHardDisk);
@@ -67,15 +73,22 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("diskdriveatr8000", ATUIConfDevATR8000);
 	dev.AddDeviceConfigurer("diskdrivepercom", ATUIConfDevPercomRFD);
 	dev.AddDeviceConfigurer("diskdrivepercomat", ATUIConfDevPercomAT);
+	dev.AddDeviceConfigurer("diskdrivepercomatspd", ATUIConfDevPercomATSPD);
 	dev.AddDeviceConfigurer("diskdriveamdc", ATUIConfDevAMDC);
+	dev.AddDeviceConfigurer("diskdrivehappy810", ATUIConfDevHappy810);
+	dev.AddDeviceConfigurer("diskdrive815", ATUIConfDev815);
 	dev.AddDeviceConfigurer("vbxe", ATUIConfDevVBXE);
 	dev.AddDeviceConfigurer("xep80", ATUIConfDevXEP80);
 	dev.AddDeviceConfigurer("custom", ATUIConfDevCustom);
+	dev.AddDeviceConfigurer("hdvirtfat16", ATUIConfDevHDVirtFAT32);
+	dev.AddDeviceConfigurer("hdvirtfat32", ATUIConfDevHDVirtFAT32);
+	dev.AddDeviceConfigurer("hdvirtsdfs", ATUIConfDevHDVirtFAT32);
+	dev.AddDeviceConfigurer("side3", ATUIConfDevSIDE3);
+	dev.AddDeviceConfigurer("parfilewriter", ATUIConfDevParFileWriter);
 
 	static const char *const kDiskDriveFullTypes[]={
 		"diskdrive810",
 		"diskdrive810archiver",
-		"diskdrivehappy810",
 		"diskdrive1050",
 		"diskdriveusdoubler",
 		"diskdrivespeedy1050",

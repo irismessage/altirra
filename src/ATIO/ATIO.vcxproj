@@ -3,13 +3,18 @@
   <Import Project="../Build/ProjectConfigurations.props" />
   <ItemGroup>
     <ClCompile Include="source\atfs.cpp" />
+    <ClCompile Include="source\audioreaderflac.cpp" />
+    <ClCompile Include="source\audioreaderflac_arm64.cpp" />
+    <ClCompile Include="source\audioreaderflac_x86.cpp" />
     <ClCompile Include="source\cartridgeimage.cpp" />
     <ClCompile Include="source\cartridgetypes.cpp" />
     <ClCompile Include="source\cassetteblock.cpp" />
     <ClCompile Include="source\cassettedecoder.cpp" />
     <ClCompile Include="source\cassetteimage.cpp" />
+    <ClCompile Include="source\tapepiecetable.cpp" />
     <ClCompile Include="source\diskfs.cpp" />
     <ClCompile Include="source\diskfsarc.cpp" />
+    <ClCompile Include="source\diskfscpm.cpp" />
     <ClCompile Include="source\diskfsdos2.cpp" />
     <ClCompile Include="source\diskfsdos3.cpp" />
     <ClCompile Include="source\diskfssdx2.cpp" />
@@ -24,6 +29,7 @@
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="source\wav.cpp" />
+    <ClCompile Include="source\audioreaderwav.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atio\atfs.h" />
@@ -42,6 +48,10 @@
     <ClInclude Include="..\h\at\atio\programimage.h" />
     <ClInclude Include="..\h\at\atio\savestate.h" />
     <ClInclude Include="..\h\at\atio\wav.h" />
+    <ClInclude Include="h\at\atio\audioreader.h" />
+    <ClInclude Include="h\at\atio\audioreaderflac.h" />
+    <ClInclude Include="h\at\atio\tapepiecetable.h" />
+    <ClInclude Include="h\at\atio\audioreaderwav.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>
   <ItemGroup>

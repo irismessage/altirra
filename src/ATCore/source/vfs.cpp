@@ -24,6 +24,7 @@
 #include <at/atcore/vfs.h>
 
 vdfunction<void(ATVFSFileView *, const wchar_t *, ATVFSFileView **)> g_ATVFSAtfsHandler;
+vdfunction<void(const wchar_t *, bool, bool, ATVFSFileView **)> g_ATVFSBlobHandler;
 
 ATInvalidVFSPathException::ATInvalidVFSPathException(const wchar_t *badPath)
 	: MyError("Invalid VFS path: %ls.", badPath)
@@ -252,6 +253,11 @@ ATVFSProtocol ATParseVFSPath(const wchar_t *s, VDStringW& basePath, VDStringW& s
 			return kATVFSProtocol_None;
 
 		return kATVFSProtocol_Atfs;
+	} else if (protocol == L"blob") {
+		if (colon[3] && g_ATVFSBlobHandler) {
+			basePath = colon + 3;
+			return kATVFSProtocol_Blob;
+		}
 	}
 
 	return kATVFSProtocol_None;
@@ -348,8 +354,13 @@ VDStringW ATMakeVFSPathForZipFile(const wchar_t *path, const wchar_t *fileName) 
 
 class ATVFSFileViewDirect : public ATVFSFileView {
 public:
-	ATVFSFileViewDirect(const wchar_t *path, bool write)
-		: mFileStream(path, write ? nsVDFile::kCreateAlways | nsVDFile::kWrite | nsVDFile::kDenyAll : nsVDFile::kOpenExisting | nsVDFile::kRead | nsVDFile::kDenyNone)
+	ATVFSFileViewDirect(const wchar_t *path, bool write, bool update)
+		: mFileStream(path,
+			write
+			? update
+				? nsVDFile::kOpenExisting | nsVDFile::kWrite | nsVDFile::kDenyAll
+				: nsVDFile::kCreateAlways | nsVDFile::kWrite | nsVDFile::kDenyAll
+			: nsVDFile::kOpenExisting | nsVDFile::kRead | nsVDFile::kDenyNone)
 	{
 		mpStream = &mFileStream;
 		mFileName = VDFileSplitPath(path);
@@ -454,6 +465,10 @@ private:
 };
 
 void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, ATVFSFileView **viewOut) {
+	ATVFSOpenFileView(vfsPath, write, false, viewOut);
+}
+
+void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, bool update, ATVFSFileView **viewOut) {
 	VDStringW basePath;
 	VDStringW subPath;
 	ATVFSProtocol protocol = ATParseVFSPath(vfsPath, basePath, subPath);
@@ -465,7 +480,7 @@ void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, ATVFSFileView **viewO
 
 	switch(protocol) {
 		case kATVFSProtocol_File:
-			view = new ATVFSFileViewDirect(basePath.c_str(), write);
+			view = new ATVFSFileViewDirect(basePath.c_str(), write, update);
 			break;
 
 		case kATVFSProtocol_Zip:
@@ -500,6 +515,13 @@ void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, ATVFSFileView **viewO
 			}
 			break;
 
+		case kATVFSProtocol_Blob:
+			if (!g_ATVFSBlobHandler)
+				throw MyError("Blob URLs are not supported.");
+
+			g_ATVFSBlobHandler(basePath.c_str(), write, update, ~view);
+			break;
+
 		default:
 			throw ATUnsupportedVFSPathException(vfsPath);
 	}
@@ -509,4 +531,8 @@ void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, ATVFSFileView **viewO
 
 void ATVFSSetAtfsProtocolHandler(vdfunction<void(ATVFSFileView *, const wchar_t *, ATVFSFileView **)> handler) {
 	g_ATVFSAtfsHandler = std::move(handler);
+}
+
+void ATVFSSetBlobProtocolHandler(vdfunction<void(const wchar_t *, bool, bool, ATVFSFileView **)> handler) {
+	g_ATVFSBlobHandler = std::move(handler);
 }

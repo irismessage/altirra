@@ -23,13 +23,13 @@
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/resample.h>
 #include <vd2/VDDisplay/font.h>
+#include <at/ataudio/pokey.h>
 #include <at/atcore/device.h>
 #include <at/atcore/devicevideo.h>
 #include "console.h"
 #include "debugger.h"
 #include "inputmanager.h"
 #include "oshelper.h"
-#include "pokey.h"
 #include "simulator.h"
 #include "symbols.h"
 #include "uiaccessors.h"
@@ -59,7 +59,6 @@ extern bool g_mouseAutoCapture;
 extern bool g_ATUIPointerAutoHide;
 extern bool g_ATUITargetPointerVisible;
 extern ATUIKeyboardOptions g_kbdOpts;
-extern bool g_xepViewEnabled;
 extern bool g_xepViewAutoswitchingEnabled;
 extern ATDisplayStretchMode g_displayStretchMode;
 extern ATDisplayFilterMode g_dispFilterMode;
@@ -69,33 +68,76 @@ extern ATUIVideoDisplayWindow *g_pATVideoDisplayWindow;
 void ATCreateUISettingsScreenMain(IATUISettingsScreen **screen);
 void OnCommandEditPasteText();
 
-bool g_xepViewAvailable;
+VDStringA g_ATCurrentAltViewName;
+bool g_ATCurrentAltViewIsXEP;
 
 ///////////////////////////////////////////////////////////////////////////
 
-bool ATUIGetXEPViewEnabled() {
-	return g_xepViewEnabled;
+const char *ATUIGetCurrentAltOutputName() {
+	return g_ATCurrentAltViewName.c_str();
+}
+
+void ATUISetCurrentAltOutputName(const char *name) {
+	if (g_ATCurrentAltViewName != name) {
+		g_ATCurrentAltViewName = name;
+
+		g_ATCurrentAltViewIsXEP = !strcmp(name, "xep80");
+
+		if (g_pATVideoDisplayWindow)
+			g_pATVideoDisplayWindow->UpdateAltDisplay();
+	}
+}
+
+void ATUIToggleAltOutput(const char *name) {
+	if (!strcmp(ATUIGetCurrentAltOutputName(), name))
+		ATUISetCurrentAltOutputName("");
+	else if (g_pATVideoDisplayWindow && g_pATVideoDisplayWindow->IsAltOutputAvailable(name))
+		ATUISetCurrentAltOutputName(name);
+}
+
+sint32 ATUIGetCurrentAltViewIndex() {
+	return g_pATVideoDisplayWindow ? g_pATVideoDisplayWindow->GetCurrentAltOutputIndex() : -1;
+}
+
+void ATUISetAltViewByIndex(sint32 idx) {
+	if (g_pATVideoDisplayWindow)
+		g_pATVideoDisplayWindow->SelectAltOutputByIndex(idx);
+}
+
+void ATUISelectPrevAltOutput() {
+	if (g_pATVideoDisplayWindow)
+		g_pATVideoDisplayWindow->SelectPrevOutput();
+}
+
+void ATUISelectNextAltOutput() {
+	if (g_pATVideoDisplayWindow)
+		g_pATVideoDisplayWindow->SelectNextOutput();
+}
+
+bool ATUIIsAltOutputAvailable() {
+	return g_pATVideoDisplayWindow && g_pATVideoDisplayWindow->IsAltOutputAvailable();	
+}
+
+bool ATUIIsXEPViewEnabled() {
+	return g_ATCurrentAltViewIsXEP;
 }
 
 void ATUISetXEPViewEnabled(bool enabled) {
-	if (g_xepViewEnabled == enabled)
+	ATUIToggleAltOutput("xep80");
+}
+
+bool ATUIGetAltViewEnabled() {
+	return !g_ATCurrentAltViewName.empty();
+}
+
+void ATUISetAltViewEnabled(bool enabled) {
+	if (enabled == ATUIGetAltViewEnabled())
 		return;
 
-	g_xepViewEnabled = enabled;
-
-	if (g_xepViewAvailable) {
-		IATUIRenderer *uir = g_sim.GetUIRenderer();
-
-		if (uir) {
-			if (enabled)
-				uir->SetStatusMessage(L"XEP80 View");
-			else
-				uir->SetStatusMessage(L"Normal View");
-		}
-	}
-
-	if (g_pATVideoDisplayWindow)
-		g_pATVideoDisplayWindow->UpdateAltDisplay();
+	if (enabled)
+		ATUISelectNextAltOutput();
+	else
+		ATUISetCurrentAltOutputName("");
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -131,41 +173,42 @@ ATUIVideoDisplayWindow::ATUIVideoDisplayWindow()
 	, mpOSKPanel(nullptr)
 	, mpSidePanel(NULL)
 	, mpSEM(NULL)
-	, mpDevMgr(nullptr)
-	, mpXEP(NULL)
+	, mpVideoMgr(nullptr)
 	, mAltVOChangeCount(0)
 	, mAltVOLayoutChangeCount(0)
-	, mXEPDataReceivedCount(0)
 	, mpUILabelBadSignal(NULL)
 {
 	mbFastClip = true;
 	SetAlphaFillColor(0);
 	SetTouchMode(kATUITouchMode_Dynamic);
 	SetDropTarget(true);
+
+	mpOnAddedVideoOutput = [this](uint32 index) { OnAddedVideoOutput(index); };
+	mpOnRemovingVideoOutput = [this](uint32 index) { OnRemovingVideoOutput(index); };
 }
 
 ATUIVideoDisplayWindow::~ATUIVideoDisplayWindow() {
 	Shutdown();
 }
 
-bool ATUIVideoDisplayWindow::Init(ATSimulatorEventManager& sem, ATDeviceManager& devMgr) {
+bool ATUIVideoDisplayWindow::Init(ATSimulatorEventManager& sem, IATDeviceVideoManager& videoMgr) {
 	mpSEM = &sem;
 	mEventCallbackIdWarmReset = mpSEM->AddEventCallback(kATSimEvent_WarmReset, [this] { OnReset(); });
 	mEventCallbackIdColdReset = mpSEM->AddEventCallback(kATSimEvent_ColdReset, [this] { OnReset(); });
 	mEventCallbackIdFrameTick = mpSEM->AddEventCallback(kATSimEvent_FrameTick, [this] { OnFrameTick(); });
 
-	mpDevMgr = &devMgr;
-	mpDevMgr->AddDeviceChangeCallback(IATDeviceVideoOutput::kTypeID, this);
-
-	for(IATDeviceVideoOutput *vo : mpDevMgr->GetInterfaces<IATDeviceVideoOutput>(false, false))
-		SetXEP(vo);
+	mpVideoMgr = &videoMgr;
+	mpVideoMgr->OnAddedOutput().Add(&mpOnAddedVideoOutput);
+	mpVideoMgr->OnRemovingOutput().Add(&mpOnRemovingVideoOutput);
 
 	return true;
 }
 
 void ATUIVideoDisplayWindow::Shutdown() {
-	if (mpDevMgr) {
-		mpDevMgr->RemoveDeviceChangeCallback(IATDeviceVideoOutput::kTypeID, this);
+	if (mpVideoMgr) {
+		mpVideoMgr->OnAddedOutput().Remove(&mpOnAddedVideoOutput);
+		mpVideoMgr->OnRemovingOutput().Remove(&mpOnRemovingVideoOutput);
+		mpVideoMgr = nullptr;
 	}
 
 	if (mpSEM) {
@@ -299,7 +342,7 @@ void ATUIVideoDisplayWindow::Copy(bool enableEscaping) {
 	for(const TextSpan& ts : mDragPreviewSpans) {
 		int actual;
 
-		if (mpAltVideoOutput) {
+		if (mpAltVideoOutput && !mpAltVideoOutput->GetVideoInfo().mbSignalPassThrough) {
 			actual = mpAltVideoOutput->ReadRawText(data, ts.mX, ts.mY, 80);
 		} else {
 			actual = ReadText(data, ts.mY, ts.mCharX, ts.mCharWidth);
@@ -418,12 +461,12 @@ void ATUIVideoDisplayWindow::Copy(bool enableEscaping) {
 	}
 }
 
-void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect, const wchar_t *path) {
+bool ATUIVideoDisplayWindow::CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf) {
 	VDPixmapBuffer frameStorage;
 	VDPixmap frameView;
 	double par = 1;
 
-	if (mpAltVideoOutput) {
+	if (mpAltVideoOutput && !mpAltVideoOutput->GetVideoInfo().mbSignalPassThrough) {
 		const auto& videoInfo = mpAltVideoOutput->GetVideoInfo();
 		const auto& framebuffer = mpAltVideoOutput->GetFrameBuffer();
 
@@ -433,7 +476,7 @@ void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect, cons
 		ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
 		if (!gtia.GetLastFrameBuffer(frameStorage, frameView))
-			return;
+			return false;
 
 		int px = 2;
 		int py = 2;
@@ -447,7 +490,7 @@ void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect, cons
 
 	// We may get a really evil format like Pal1 from the XEP-80 layer, so first blit
 	// it to RGB32.
-	VDPixmapBuffer buf(frameView.w, frameView.h, nsVDPixmap::kPixFormat_XRGB8888);
+	buf.init(frameView.w, frameView.h, nsVDPixmap::kPixFormat_XRGB8888);
 
 	VDPixmapBlt(buf, frameView);
 
@@ -504,7 +547,14 @@ void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect, cons
 		buf.swap(buf2);
 	}
 
-	frameView = buf;
+	return true;
+}
+
+void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect, const wchar_t *path) {
+	VDPixmapBuffer buf;
+
+	if (!CopyFrameImage(trueAspect, buf))
+		return;
 
 	if (saveFrame) {
 		VDStringW fn;
@@ -515,9 +565,9 @@ void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect, cons
 			fn = VDGetSaveFileName('scrn', ATUIGetMainWindow(), L"Save Screenshot", L"Portable Network Graphics (*.png)\0*.png\0", L"png");
 
 		if (!fn.empty())
-			ATSaveFrame(frameView, fn.c_str());
+			ATSaveFrame(buf, fn.c_str());
 	} else
-		ATCopyFrameToClipboard(frameView);
+		ATCopyFrameToClipboard(buf);
 
 }
 
@@ -555,25 +605,6 @@ void ATUIVideoDisplayWindow::ClearHighlights() {
 	}
 }
 
-void ATUIVideoDisplayWindow::SetXEP(IATDeviceVideoOutput *xep) {
-	mpXEP = xep;
-
-	if (xep) {
-		const auto& vi = xep->GetVideoInfo();
-
-		// _don't_ force a data received event next frame
-		mXEPDataReceivedCount = xep->GetActivityCounter();
-
-		g_xepViewAvailable = true;
-	} else {
-		mAltVOImageView.SetImage();
-
-		g_xepViewAvailable = false;
-	}
-
-	UpdateAltDisplay();
-}
-
 void ATUIVideoDisplayWindow::SetEnhancedTextEngine(IATUIEnhancedTextEngine *p) {
 	if (mpEnhTextEngine == p)
 		return;
@@ -596,42 +627,29 @@ void ATUIVideoDisplayWindow::OnReset() {
 	mbHoldKeys = false;
 	g_sim.GetUIRenderer()->SetPendingHoldMode(false);
 
-	if (mpXEP) {
-		if (g_xepViewAutoswitchingEnabled)
-			ATUISetXEPViewEnabled(false);
+	if (g_xepViewAutoswitchingEnabled)
+		ATUISetAltViewEnabled(false);
 
-		mXEPDataReceivedCount = mpXEP->GetActivityCounter();
-	}
+	mpVideoMgr->CheckForNewlyActiveOutputs();
 }
 
 void ATUIVideoDisplayWindow::OnFrameTick() {
-	if (mpXEP) {
-		uint32 c = mpXEP->GetActivityCounter();
+	if (g_xepViewAutoswitchingEnabled) {
+		sint32 idx = mpVideoMgr->CheckForNewlyActiveOutputs();
 
-		if (mXEPDataReceivedCount != c) {
-			mXEPDataReceivedCount = c;
-
-			if (g_xepViewAutoswitchingEnabled && !g_xepViewEnabled)
-				ATUISetXEPViewEnabled(true);
-		}
+		if (idx >= 0)
+			ATUISetCurrentAltOutputName(mpVideoMgr->GetOutput(idx)->GetName());
 	}
 }
 
-void ATUIVideoDisplayWindow::OnDeviceAdded(uint32 iid, IATDevice *dev, void *iface) {
-	IATDeviceVideoOutput *vo = (IATDeviceVideoOutput *)iface;
-
-	if (vo)
-		SetXEP(vo);
+void ATUIVideoDisplayWindow::OnAddedVideoOutput(uint32 index) {
 }
 
-void ATUIVideoDisplayWindow::OnDeviceRemoving(uint32 iid, IATDevice *dev, void *iface) {
-}
+void ATUIVideoDisplayWindow::OnRemovingVideoOutput(uint32 index) {
+	IATDeviceVideoOutput *output = mpVideoMgr->GetOutput(index);
 
-void ATUIVideoDisplayWindow::OnDeviceRemoved(uint32 iid, IATDevice *dev, void *iface) {
-	IATDeviceVideoOutput *vo = (IATDeviceVideoOutput *)iface;
-
-	if (mpXEP == vo)
-		SetXEP(nullptr);
+	if (mpAltVideoOutput == output)
+		ATUISetCurrentAltOutputName("");
 }
 
 ATUITouchMode ATUIVideoDisplayWindow::GetTouchModeAtPoint(const vdpoint32& pt) const {
@@ -817,48 +835,61 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 
 	// If the mouse is mapped, it gets first crack at inputs unless Alt is down.
 	const bool alt = mpManager->IsKeyDown(kATUIVK_Alt);
-	if (im->IsMouseMapped() && g_sim.IsRunning() && !alt) {
+	if (im->IsMouseMapped() && !alt) {
+		if (g_sim.IsRunning()) {
+			// Check if auto-capture is on and we haven't captured the mouse yet. If so, we
+			// should capture the mouse but otherwise eat the click
+			if (g_mouseAutoCapture && !g_mouseCaptured) {
+				if (vk == kATUIVK_LButton) {
+					CaptureMouse();
+					return;
+				}
+			} else {
+				const bool absMode = im->IsMouseAbsoluteMode();
 
-		// Check if auto-capture is on and we haven't captured the mouse yet. If so, we
-		// should capture the mouse but otherwise eat the click
-		if (g_mouseAutoCapture && !g_mouseCaptured) {
-			if (vk == kATUIVK_LButton) {
-				CaptureMouse();
-				return;
+				// Check if the mouse is captured or we are in absolute mode. If we are in
+				// relative mode and haven't captured the mouse we should not route this
+				// shunt to the input manager.
+				if (g_mouseCaptured || absMode) {
+					if (absMode)
+						UpdateMousePosition(x, y);
+
+					switch(vk) {
+						case kATUIVK_LButton:
+							im->OnButtonDown(0, kATInputCode_MouseLMB);
+							break;
+
+						case kATUIVK_MButton:
+							if (im->IsInputMapped(0, kATInputCode_MouseMMB))
+								im->OnButtonDown(0, kATInputCode_MouseMMB);
+							else if (g_mouseCaptured)
+								ReleaseMouse();
+							break;
+
+						case kATUIVK_RButton:
+							im->OnButtonDown(0, kATInputCode_MouseRMB);
+							break;
+
+						case kATUIVK_XButton1:
+							im->OnButtonDown(0, kATInputCode_MouseX1B);
+							break;
+
+						case kATUIVK_XButton2:
+							im->OnButtonDown(0, kATInputCode_MouseX2B);
+							break;
+					}
+
+					return;
+				}
 			}
 		} else {
-			const bool absMode = im->IsMouseAbsoluteMode();
-
 			// Check if the mouse is captured or we are in absolute mode. If we are in
 			// relative mode and haven't captured the mouse we should not route this
 			// shunt to the input manager.
-			if (g_mouseCaptured || absMode) {
-				if (absMode)
-					UpdateMousePosition(x, y);
-
-				switch(vk) {
-					case kATUIVK_LButton:
-						im->OnButtonDown(0, kATInputCode_MouseLMB);
-						break;
-
-					case kATUIVK_MButton:
-						if (im->IsInputMapped(0, kATInputCode_MouseMMB))
-							im->OnButtonDown(0, kATInputCode_MouseMMB);
-						else if (g_mouseCaptured)
-							ReleaseMouse();
-						break;
-
-					case kATUIVK_RButton:
-						im->OnButtonDown(0, kATInputCode_MouseRMB);
-						break;
-
-					case kATUIVK_XButton1:
-						im->OnButtonDown(0, kATInputCode_MouseX1B);
-						break;
-
-					case kATUIVK_XButton2:
-						im->OnButtonDown(0, kATInputCode_MouseX2B);
-						break;
+			if (g_mouseCaptured) {
+				if (vk == kATUIVK_MButton) {
+					if (!im->IsInputMapped(0, kATInputCode_MouseMMB))
+						ReleaseMouse();
 				}
 
 				return;
@@ -877,7 +908,7 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 
 			bool valid = false;
 
-			if (mpAltVideoOutput) {
+			if (mpAltVideoOutput && !mpAltVideoOutput->GetVideoInfo().mbSignalPassThrough) {
 				const auto& videoInfo = mpAltVideoOutput->GetVideoInfo();
 				const vdrect32& rBlit = GetAltDisplayArea();
 				const vdrect32& rDisp = videoInfo.mDisplayArea;
@@ -991,8 +1022,9 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 				}
 			}
 
-			if (mpAltVideoOutput) {
-				mbDragActive = GetAltDisplayArea().contains(vdpoint32(x, y));
+			if (mpAltVideoOutput && !mpAltVideoOutput->GetVideoInfo().mbSignalPassThrough) {
+				const auto& vi = mpAltVideoOutput->GetVideoInfo();
+				mbDragActive = vi.mTextColumns > 0 && vi.mTextRows > 0 && !GetAltDisplayArea().empty();
 
 				if (mbDragActive) {
 					mDragAnchorX = x;
@@ -1131,6 +1163,9 @@ void ATUIVideoDisplayWindow::OnMouseLeave() {
 	ClearHoverTip();
 
 	mbOpenSidePanelDeferred = false;
+
+	ATInputManager *im = g_sim.GetInputManager();
+	im->SetMouseVirtualStickPos(0, 0);
 }
 
 void ATUIVideoDisplayWindow::OnMouseHover(sint32 x, sint32 y) {
@@ -1465,7 +1500,13 @@ void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) 
 
 			mpUILabelBadSignal->SetVisible(true);
 			mpUILabelBadSignal->SetTextAlign(ATUILabel::kAlignCenter);
-			mpUILabelBadSignal->SetTextF(L"Unsupported video mode\n%.3fKHz, %.1fHz", vi.mHorizScanRate / 1000.0f, vi.mVertScanRate);
+
+			if (vi.mHorizScanRate > 0 && vi.mVertScanRate > 0)
+				mpUILabelBadSignal->SetTextF(L"Unsupported video mode\n%.3fKHz, %.1fHz", vi.mHorizScanRate / 1000.0f, vi.mVertScanRate);
+			else
+				mpUILabelBadSignal->SetText(L"No signal");
+		} else if (vi.mbSignalPassThrough) {
+			mpUILabelBadSignal->SetVisible(false);
 		} else {
 			const vdrect32& dst = GetAltDisplayArea();
 
@@ -1573,20 +1614,66 @@ void ATUIVideoDisplayWindow::UpdateAltDisplay() {
 
 	if (mpEnhTextEngine)
 		mpAltVideoOutput = mpEnhTextEngine->GetVideoOutput();
-	else if (mpXEP && g_xepViewEnabled)
-		mpAltVideoOutput = mpXEP;
+	else if (!g_ATCurrentAltViewName.empty())
+		mpAltVideoOutput = mpVideoMgr->GetOutputByName(g_ATCurrentAltViewName.c_str());
 	else
 		mpAltVideoOutput = nullptr;
 
-	if (mpAltVideoOutput && prev != mpAltVideoOutput) {
-		const auto& vi = mpAltVideoOutput->GetVideoInfo();
+	if (prev != mpAltVideoOutput) {
+		if (mpAltVideoOutput) {
+			const auto& vi = mpAltVideoOutput->GetVideoInfo();
 
-		// do force a change event next frame
-		mAltVOChangeCount = vi.mFrameBufferChangeCount - 1;
-		mAltVOLayoutChangeCount = vi.mFrameBufferLayoutChangeCount - 1;
+			// do force a change event next frame
+			mAltVOChangeCount = vi.mFrameBufferChangeCount - 1;
+			mAltVOLayoutChangeCount = vi.mFrameBufferLayoutChangeCount - 1;
 
-		Invalidate();
+			Invalidate();
+		}
+
+		IATUIRenderer *uir = g_sim.GetUIRenderer();
+		if (uir)
+			uir->SetStatusMessage(GetCurrentOutputName().c_str());
 	}
+
+	mpVideoMgr->CheckForNewlyActiveOutputs();
+}
+
+void ATUIVideoDisplayWindow::SelectPrevOutput() {
+	const sint32 idx = mpVideoMgr->IndexOfOutput(mpAltVideoOutput);
+
+	SelectAltOutputByIndex(idx < 0 ? (sint32)mpVideoMgr->GetOutputCount() - 1 : idx - 1);
+}
+
+void ATUIVideoDisplayWindow::SelectNextOutput() {
+	SelectAltOutputByIndex(mpVideoMgr->IndexOfOutput(mpAltVideoOutput) + 1);
+}
+
+void ATUIVideoDisplayWindow::SelectAltOutputByIndex(sint32 idx) {
+	IATDeviceVideoOutput *next = idx >= 0 ? mpVideoMgr->GetOutput((uint32)idx) : nullptr;
+
+	if (next)
+		ATUISetCurrentAltOutputName(next->GetName());
+	else
+		ATUISetCurrentAltOutputName("");
+}
+
+sint32 ATUIVideoDisplayWindow::GetCurrentAltOutputIndex() const {
+	return mpVideoMgr->IndexOfOutput(mpAltVideoOutput);
+}
+
+bool ATUIVideoDisplayWindow::IsAltOutputAvailable() const {
+	return mpVideoMgr->GetOutputCount() > 0;
+}
+
+bool ATUIVideoDisplayWindow::IsAltOutputAvailable(const char *name) const {
+	return mpVideoMgr->GetOutputByName(name) != nullptr;
+}
+
+VDStringW ATUIVideoDisplayWindow::GetCurrentOutputName() const {
+	if (mpAltVideoOutput)
+		return VDStringW(mpAltVideoOutput->GetDisplayName()) + L" Output";
+	else
+		return VDStringW(L"Normal Output");
 }
 
 bool ATUIVideoDisplayWindow::ProcessKeyDown(const ATUIKeyEvent& event, bool enableKeyInput) {
@@ -1607,16 +1694,19 @@ bool ATUIVideoDisplayWindow::ProcessKeyDown(const ATUIKeyEvent& event, bool enab
 	}
 
 	const bool isRepeat = event.mbIsRepeat;
-	const bool shift = mpManager->IsKeyDown(kATUIVK_Shift);
-	const bool ctrl = mpManager->IsKeyDown(kATUIVK_Control);
-	const uint8 ctrlmod = (ctrl ? 0x80 : 0x00);
-	const uint8 shiftmod = (shift ? 0x40 : 0x00);
-
-	const uint8 modifier = ctrlmod + shiftmod;
+	bool shift = mpManager->IsKeyDown(kATUIVK_Shift);
+	bool ctrl = mpManager->IsKeyDown(kATUIVK_Control);
 	const bool ext = event.mbIsExtendedKey;
+
 	if (ATUIActivateVirtKeyMapping(key, alt, ctrl, shift, ext, false, kATUIAccelContext_Display)) {
 		return true;
 	} else {
+		// Check if L/R Ctrl/Shift are bound in input maps and mask out the Ctrl/Shift flags for
+		// the keyboard mapping if so. This is to prevent those keys from triggering Ctrl/Shift
+		// keys. Note that we only do this AFTER checking the accelerators above, as we do not
+		// want to block these for keyboard shortcuts, ESPECIALLY if AltGr is involved.
+		ExcludeMappedCtrlShiftState(ctrl, shift);
+
 		uint32 scanCode;
 		if (ATUIGetScanCodeForVirtualKey(key, alt, ctrl, shift, ext, scanCode)) {
 			if (!enableKeyInput)
@@ -1646,6 +1736,18 @@ bool ATUIVideoDisplayWindow::ProcessKeyUp(const ATUIKeyEvent& event, bool enable
 	const int key = event.mVirtKey;
 	const bool alt = mpManager->IsKeyDown(kATUIVK_Alt);
 
+	// Check if we need to release an active key. Do this before the Alt-check
+	// is done for the shunt to the input manager -- this is necessary if Alt+key
+	// was originally pressed and Alt is released first, but un-Alted key is
+	// bound in the input manager.
+	auto it = std::find_if(mActiveKeys.begin(), mActiveKeys.end(), [=](const ActiveKey& ak) { return ak.mVkey == key && ak.mNativeScanCode == 0; });
+	if (it != mActiveKeys.end()) {
+		g_sim.GetPokey().ReleaseRawKey(it->mScanCode, !g_kbdOpts.mbFullRawKeys);
+		*it = mActiveKeys.back();
+		mActiveKeys.pop_back();
+		UpdateCtrlShiftState();
+	}
+
 	if (!alt) {
 		int inputCode = event.mExtendedVirtKey;
 
@@ -1655,14 +1757,6 @@ bool ATUIVideoDisplayWindow::ProcessKeyUp(const ATUIKeyEvent& event, bool enable
 			if (!g_kbdOpts.mbAllowInputMapOverlap)
 				return true;
 		}
-	}
-
-	auto it = std::find_if(mActiveKeys.begin(), mActiveKeys.end(), [=](const ActiveKey& ak) { return ak.mVkey == key && ak.mNativeScanCode == 0; });
-	if (it != mActiveKeys.end()) {
-		g_sim.GetPokey().ReleaseRawKey(it->mScanCode, !g_kbdOpts.mbFullRawKeys);
-		*it = mActiveKeys.back();
-		mActiveKeys.pop_back();
-		UpdateCtrlShiftState();
 	}
 
 	for(uint32 i=0; i<(uint32)vdcountof(mActiveSpecialVKeys); ++i) {
@@ -1801,11 +1895,43 @@ void ATUIVideoDisplayWindow::UpdateCtrlShiftState() {
 		pokey.SetShiftKeyState(mbShiftDepressed, true);
 }
 
+void ATUIVideoDisplayWindow::ExcludeMappedCtrlShiftState(bool& ctrl, bool& shift) const {
+	if (g_kbdOpts.mbAllowInputMapModifierOverlap)
+		return;
+
+	ATInputManager *im = g_sim.GetInputManager();
+
+	if (shift) {
+		const bool lshiftBound = im->IsInputMapped(0, kATInputCode_KeyLShift);
+		const bool rshiftBound = im->IsInputMapped(0, kATInputCode_KeyRShift);
+
+		if (lshiftBound || rshiftBound) {
+			shift = !lshiftBound && mpManager->IsKeyDown(kATUIVK_LShift);
+
+			if (!shift)
+				shift = !rshiftBound && mpManager->IsKeyDown(kATUIVK_RShift);
+		}
+	}
+
+	if (ctrl) {
+		const bool lctrlBound = im->IsInputMapped(0, kATInputCode_KeyLControl);
+		const bool rctrlBound = im->IsInputMapped(0, kATInputCode_KeyRControl);
+
+		if (lctrlBound || rctrlBound) {
+			ctrl = !lctrlBound && mpManager->IsKeyDown(kATUIVK_LControl);
+
+			if (!shift)
+				ctrl = !rctrlBound && mpManager->IsKeyDown(kATUIVK_RControl);
+		}
+	}
+}
+
 uint32 ATUIVideoDisplayWindow::ComputeCursorImage(const vdpoint32& pt) const {
 	bool validBeamPosition;
 	
-	if (mpAltVideoOutput) {
-		validBeamPosition = GetAltDisplayArea().contains(pt);
+	if (mpAltVideoOutput && !mpAltVideoOutput->GetVideoInfo().mbSignalPassThrough) {
+		const auto& vi = mpAltVideoOutput->GetVideoInfo();
+		validBeamPosition = vi.mTextRows > 0 && vi.mTextColumns > 0 && GetAltDisplayArea().contains(pt);
 	} else {
 		int xs, ys;
 		validBeamPosition = (MapPixelToBeamPosition(pt.x, pt.y, xs, ys, false) && GetModeLineYPos(ys, true) >= 0);
@@ -1874,15 +2000,31 @@ void ATUIVideoDisplayWindow::UpdateMousePosition(int x, int y) {
 	im->SetMousePadPos(padX, padY);
 
 	float xc, yc;
-	if (!MapPixelToBeamPosition(x, y, xc, yc, false))
-		return;
+	if (MapPixelToBeamPosition(x, y, xc, yc, false)) {
+		// map cycles to normalized position (note that this must match the light pen
+		// computations)
+		float xn = (xc - 128.0f) * (65536.0f / 94.0f);
+		float yn = (yc - 128.0f) * (65536.0f / 188.0f);
 
-	// map cycles to normalized position (note that this must match the light pen
-	// computations)
-	float xn = (xc - 128.0f) * (65536.0f / 94.0f);
-	float yn = (yc - 128.0f) * (65536.0f / 188.0f);
+		im->SetMouseBeamPos(VDRoundToInt(xn), VDRoundToInt(yn));
+	}
 
-	im->SetMouseBeamPos(VDRoundToInt(xn), VDRoundToInt(yn));
+	// compute 50% rect within inscribed rect of window
+	im->SetMouseVirtualStickPos(0, 0);
+
+	if (size.w > 1 && size.h > 1) {
+		float sizeX = (float)size.w - 1.0f;
+		float sizeY = (float)size.h - 1.0f;
+		float normX = (float)x / sizeX * 2.0f - 1.0f;
+		float normY = (float)y / sizeY * 2.0f - 1.0f;
+
+		if (sizeX > sizeY)
+			normX *= sizeX / sizeY;
+		else if (sizeY > sizeX)
+			normY *= sizeY / sizeX;
+
+		im->SetMouseVirtualStickPos(VDRoundToInt32(normX * 0x1.0p+17), VDRoundToInt32(normY * 0x1.0p+17));
+	}
 }
 
 const vdrect32 ATUIVideoDisplayWindow::GetAltDisplayArea() const {
@@ -1896,7 +2038,7 @@ const vdrect32 ATUIVideoDisplayWindow::GetAltDisplayArea() const {
 	sint32 dw = w;
 	sint32 dh = h;
 
-	if (mpAltVideoOutput != mpXEP) {
+	if (vi.mbForceExactPixels) {
 		double ratio = std::min<double>(1, std::min<double>((double)dw / (double)r.width(), (double)dh / (double)r.height()));
 
 		dw = VDRoundToInt32((double)r.width() * ratio);
@@ -2009,7 +2151,7 @@ vdfloat2 ATUIVideoDisplayWindow::MapBeamPositionToPointF(vdfloat2 pt) const {
 }
 
 void ATUIVideoDisplayWindow::UpdateDragPreview(int x, int y) {
-	if (mpAltVideoOutput)
+	if (mpAltVideoOutput && !mpAltVideoOutput->GetVideoInfo().mbSignalPassThrough)
 		UpdateDragPreviewAlt(x, y);
 	else
 		UpdateDragPreviewAntic(x, y);
@@ -2190,7 +2332,7 @@ void ATUIVideoDisplayWindow::UpdateDragPreviewRects() {
 	if (mDragPreviewSpans.empty())
 		return;
 
-	if (mpAltVideoOutput) {
+	if (mpAltVideoOutput && !mpAltVideoOutput->GetVideoInfo().mbSignalPassThrough) {
 		const vdrect32& drawArea = GetAltDisplayArea();
 		const auto& vi = mpAltVideoOutput->GetVideoInfo();
 		const vdrect32& dispArea = vi.mDisplayArea;

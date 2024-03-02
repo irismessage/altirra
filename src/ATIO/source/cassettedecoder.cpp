@@ -17,9 +17,16 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
-#include <complex>
+#include <vd2/system/bitmath.h>
+#include <vd2/system/math.h>
+#include <at/atcore/configvar.h>
 #include <at/atio/cassettedecoder.h>
 #include <at/atio/cassetteimage.h>		// for constants
+
+ATConfigVarFloat g_ATCVTapeDecodeDirectHPFCutoff("tape.decode.slope.hpf_cutoff", 5327.0f);
+
+#pragma runtime_checks("", off)
+#pragma optimize("gt", on)
 
 ATCassetteDecoderFSK::ATCassetteDecoderFSK() {
 	Reset();
@@ -155,81 +162,385 @@ template void ATCassetteDecoderFSK::Process<true>(const sint16 *samples, uint32 
 
 ///////////////////////////////////////////////////////////////////////////////
 
-ATCassetteDecoderDirect::ATCassetteDecoderDirect() {
+ATCassetteDecoderTurbo::ATCassetteDecoderTurbo() {
+}
+
+void ATCassetteDecoderTurbo::Init(ATCassetteTurboDecodeAlgorithm algorithm, bool enableAnalysis) {
+	using AlgorithmPtr = void (ATCassetteDecoderTurbo::*)(const sint16 *samples, uint32 n, float *adest);
+
+	static constexpr AlgorithmPtr kAlgorithms[2][5] {
+		{
+			&ATCassetteDecoderTurbo::Process<false, DetectorType::Slope, PreFilterType::None>,
+			&ATCassetteDecoderTurbo::Process<false, DetectorType::Slope, PreFilterType::HP_IIR>,
+			&ATCassetteDecoderTurbo::Process<false, DetectorType::Peak, PreFilterType::HP_IIR>,
+			&ATCassetteDecoderTurbo::Process<false, DetectorType::Peak, PreFilterType::HP_IIR>,
+			&ATCassetteDecoderTurbo::Process<false, DetectorType::Peak, PreFilterType::HP_IIR>
+		},
+		{
+			&ATCassetteDecoderTurbo::Process<true, DetectorType::Slope, PreFilterType::None>,
+			&ATCassetteDecoderTurbo::Process<true, DetectorType::Slope, PreFilterType::HP_IIR>,
+			&ATCassetteDecoderTurbo::Process<true, DetectorType::Peak, PreFilterType::HP_IIR>,
+			&ATCassetteDecoderTurbo::Process<true, DetectorType::Peak, PreFilterType::HP_IIR>,
+			&ATCassetteDecoderTurbo::Process<true, DetectorType::Peak, PreFilterType::HP_IIR>
+		}
+	};
+
+	mAlgorithm = algorithm;
+	mpAlgorithm = kAlgorithms[(int)enableAnalysis][(int)algorithm];
+
 	Reset();
 }
 
-void ATCassetteDecoderDirect::Reset() {
-	mPrevLevel = 0;
+void ATCassetteDecoderTurbo::Reset() {
 	mAGC = 0;
 	mPrefilterState = 0;
+
+	mBitAccum = 0;
+	mBitCounter = 32;
+	mWrittenBits = 0;
+
+	mPostFilterWindowIdx = 0;
+	mbLastStable = true;
+	mbLastPolarity = true;
+	mPeakSignCounter = 3;
+	mPeakOffset = 0;
+	mPeakWindowCount = 0;
+	mPeakValue = 0;
+	mPeakSign = +1;
+	mShiftReg = ~UINT64_C(0);
+
+	std::fill(std::begin(mPostFilterWindow), std::end(mPostFilterWindow), 0);
+
+	// First-order HPF formed by subtracting first-order LPF from input.
+	if (g_ATCVTapeDecodeDirectHPFCutoff < 0) {
+		mHPFFactor = 0.9999f;
+	} else {
+		float y = 2.0f - cosf(2.0f * nsVDMath::kfPi / (float)kATCassetteDataSampleRateD * g_ATCVTapeDecodeDirectHPFCutoff);
+		mHPFFactor = y - sqrtf(y*y - 1.0f);
+	}
+
+	mPrevLevel = 0;
+
+	memset(mHPFWindow, 0, sizeof mHPFWindow);
+
+	mBitfield.clear();
 }
 
-template<bool T_DoAnalysis, bool T_EnablePreFilter>
-void ATCassetteDecoderDirect::Process(const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest) {
-	uint32 bitaccum = 0;
-	uint32 bitcounter = 32 - bitoffset;
+template<bool T_DoAnalysis, ATCassetteDecoderTurbo::DetectorType T_Detector, ATCassetteDecoderTurbo::PreFilterType T_PreFilter>
+void ATCassetteDecoderTurbo::Process(const sint16 *samples, uint32 n, float *adest0) VDRESTRICT {
+	float *VDRESTRICT adest = adest0;
+
+	uint32 bitaccum = mBitAccum;
+	uint32 bitcounter = mBitCounter;
+	uint32 *VDRESTRICT dst = &mBitfield[mWrittenBits >> 5];
+
+	mWrittenBits += n;
+
+#if VD_CPU_X86 || VD_CPU_X64
+	[[maybe_unused]] __m128 hpf0;
+	[[maybe_unused]] __m128 hpf1;
+	[[maybe_unused]] __m128 hpf2;
+	[[maybe_unused]] __m128 hpf3;
+
+	if constexpr (T_PreFilter == PreFilterType::HP_FIR) {
+		hpf0 = _mm_loadu_ps(mHPFWindow + 0);
+		hpf1 = _mm_loadu_ps(mHPFWindow + 4);
+		hpf2 = _mm_loadu_ps(mHPFWindow + 8);
+		hpf3 = _mm_loadu_ps(mHPFWindow + 12);
+	}
+#elif VD_CPU_ARM64
+	[[maybe_unused]] float32x4_t hpf0;
+	[[maybe_unused]] float32x4_t hpf1;
+	[[maybe_unused]] float32x4_t hpf2;
+	[[maybe_unused]] float32x4_t hpf3;
+
+	if constexpr (T_PreFilter == PreFilterType::HP_FIR) {
+		hpf0 = vld1q_f32(mHPFWindow +  0);
+		hpf1 = vld1q_f32(mHPFWindow +  4);
+		hpf2 = vld1q_f32(mHPFWindow +  8);
+		hpf3 = vld1q_f32(mHPFWindow + 12);
+	}
+#else
+	[[maybe_unused]] float hpf[16];
+
+	if constexpr (T_PreFilter == PrefilterType::HP_FIR) {
+		memcpy(hpf, mHPFWindow, sizeof hpf);
+	}
+#endif
 
 	do {
 		float x = *samples;
 		samples += 2;
 
-		if constexpr (T_EnablePreFilter) {
+		if constexpr (T_PreFilter == PreFilterType::HP_IIR) {
 			// To combat high-frequency attenuation ostensibly from Dolby-B decoding being
 			// improperly applied and to also cancel out low frequency components we don't
 			// care about, apply a high-pass filter at ~3.8KHz. This is just a
 			// simple single-pole filter with soft falloff so it doesn't distort too much.
-			static constexpr float kHPCoeff = 0.382f;
 
 			x -= mPrefilterState;
-			mPrefilterState += kHPCoeff * x;
+			mPrefilterState += mHPFFactor * x;
+		} else if constexpr (T_PreFilter == PreFilterType::HP_FIR) {
+			// To combat high-frequency attenuation ostensibly from Dolby-B decoding being
+			// improperly applied and to also cancel out low frequency components we don't
+			// care about, apply a high-pass filter at ~3.8KHz. This is just a
+			// simple single-pole filter with soft falloff so it doesn't distort too much.
+
+			alignas(16) static constexpr float kHPFKernel[16] {
+				-0.0123454f, -0.0246906f, -0.0370356f, -0.0493802f,
+				-0.0617247f, -0.0740689f, -0.0864128f, 0.901243f,
+				-0.0864091f, -0.074062f, -0.061715f, -0.0493684f,
+				-0.037022f, -0.0246758f, -0.0123299f, 0
+			};
+
+#if VD_CPU_X86 || VD_CPU_X64
+			__m128 xv = _mm_set1_ps(x);
+			hpf0 = _mm_add_ps(hpf0, _mm_mul_ps(_mm_load_ps(kHPFKernel +  0), xv));
+			hpf1 = _mm_add_ps(hpf1, _mm_mul_ps(_mm_load_ps(kHPFKernel +  4), xv));
+			hpf2 = _mm_add_ps(hpf2, _mm_mul_ps(_mm_load_ps(kHPFKernel +  8), xv));
+			hpf3 = _mm_add_ps(hpf3, _mm_mul_ps(_mm_load_ps(kHPFKernel + 12), xv));
+
+			x = _mm_cvtss_f32(hpf0);
+			hpf0 = _mm_move_ss(hpf0, hpf1);
+			hpf1 = _mm_move_ss(hpf1, hpf2);
+			hpf2 = _mm_move_ss(hpf2, hpf3);
+
+			hpf0 = _mm_shuffle_ps(hpf0, hpf0, 0b0'00'11'10'01);
+			hpf1 = _mm_shuffle_ps(hpf1, hpf1, 0b0'00'11'10'01);
+			hpf2 = _mm_shuffle_ps(hpf2, hpf2, 0b0'00'11'10'01);
+
+			hpf3 = _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(hpf3), 4));
+#elif VD_CPU_ARM64
+			hpf0 = vmlaq_n_f32(hpf0, vld1q_f32(kHPFKernel +  0), x);
+			hpf1 = vmlaq_n_f32(hpf1, vld1q_f32(kHPFKernel +  4), x);
+			hpf2 = vmlaq_n_f32(hpf2, vld1q_f32(kHPFKernel +  8), x);
+			hpf3 = vmlaq_n_f32(hpf3, vld1q_f32(kHPFKernel + 12), x);
+
+			x = vgetq_lane_f32(hpf0, 0);
+			hpf0 = vextq_f32(hpf0, hpf1, 1);
+			hpf1 = vextq_f32(hpf1, hpf2, 1);
+			hpf2 = vextq_f32(hpf2, hpf3, 1);
+			hpf3 = vextq_f32(hpf3, vmovq_n_f32(0), 1);
+#else
+			// VS2019 does well at autovectorizing this accumulation loop.
+			// Unfortunately, it barfs on the shift loop below it for both x86
+			// and ARM64, which is why we need the hand-vectorized versions above.
+			for(int i=0; i<16; ++i) {
+				hpf[i] += x * kHPFKernel[i];
+			}
+
+			x = hpf[0];
+
+			for(int i=0; i<15; ++i)
+				hpf[i] = hpf[i+1];
+
+			hpf[15] = 0;
+#endif
 		}
 
-		float y = x - mPrevLevel;
-		mPrevLevel = x;
+		if constexpr (T_Detector == DetectorType::Slope) {
+			float y = x - mPrevLevel;
+			mPrevLevel = x;
 
-		float z = fabsf(y);
-		const bool edge = (z > mAGC * 0.25f);
+			float z = fabsf(y);
+			const bool edge = (z > mAGC * 0.25f);
 
-		if (edge)
-			mbCurrentState = (y > 0);
+			if (edge)
+				mbCurrentState = (y > 0);
+
+			if (z > mAGC)
+				mAGC += (z - mAGC) * 0.40f;
+			else
+				mAGC += (z - mAGC) * 0.05f;
+
+			bitaccum += bitaccum;
+			if (mbCurrentState)
+				++bitaccum;
+
+			if (!--bitcounter) {
+				bitcounter = 32;
+				*dst++ = bitaccum;
+			}
+		} else if constexpr (T_Detector == DetectorType::Level) {
+			const bool polarity = (x > 0);
+
+			bitaccum += bitaccum;
+			if (polarity)
+				++bitaccum;
+
+			if (!--bitcounter) {
+				bitcounter = 32;
+				*dst++ = bitaccum;
+			}
+		} else if constexpr (T_Detector == DetectorType::Peak) {
+			int curVal = x >= 0 ? 1 : -1;
+
+			mPeakSignCounter += curVal;
+			mPeakSignCounter -= mPostFilterWindow[(mPostFilterWindowIdx - 3) & 63] >= 0 ? 1 : -1;
+			mPostFilterWindow[mPostFilterWindowIdx & 63] = x;
+			const float x2 = mPostFilterWindow[(mPostFilterWindowIdx - 1) & 63];
+			++mPostFilterWindowIdx;
+
+			bool polarity = ((mShiftReg >> 62) & 1) != 0;
+
+			const bool stable = (mPeakSignCounter <= -2 || mPeakSignCounter >= 2);
+			if (stable && !mbLastStable) {
+				bool newPolarity = x2 >= 0;
+
+				if (mPeakWindowCount) {
+					if (mbLastPolarity == newPolarity) {
+						if (!newPolarity) {
+							mShiftReg -= UINT64_C(1) << mPeakWindowCount;
+							mShiftReg += 1;
+						}
+					} else if (mPeakWindowCount < 63) {
+						if (!newPolarity) {
+							// +slope to -slope
+							mShiftReg -= UINT64_C(1) << (mPeakWindowCount - mPeakOffset);
+
+							mShiftReg += 1;
+						} else {
+							// -slope to +slope
+							mShiftReg -= UINT64_C(1) << mPeakWindowCount;
+							mShiftReg += UINT64_C(1) << (mPeakWindowCount - mPeakOffset);
+						}
+					}
+
+					mPeakWindowCount = 0;
+					mPeakOffset = 0;
+					mPeakValue = 0;
+				}
+
+				mbLastPolarity = newPolarity;
+				mPeakSign = newPolarity ? +1 : -1;
+			}
+
+			if (mPeakWindowCount < 64) {
+				float val = x2 * mPeakSign;
+				if (val > mPeakValue) {
+					mPeakValue = val;
+					mPeakOffset = mPeakWindowCount;
+				}
+
+				++mPeakWindowCount;
+			}
+
+			mShiftReg <<= 1;
+			++mShiftReg;
+
+			mbLastStable = stable;
+
+			bitaccum += bitaccum;
+			if (polarity)
+				++bitaccum;
+
+			if (!--bitcounter) {
+				bitcounter = 32;
+				*dst++ = bitaccum;
+			}
+		}
 
 		if constexpr (T_DoAnalysis) {
 			// slots 0-3 reserved for FSK decoder
-			adest[4] = mAGC * (1.0f / 32767.0f);
+			if constexpr (T_Detector == DetectorType::Peak)
+				adest[4] = mPostFilterWindow[mPostFilterWindowIdx & 63] * (1.0f / 32767.0f);
+			else
+				adest[4] = x * (1.0f / 32767.0f);
+
 			adest[5] = mbCurrentState ? 0.8f : -0.8f;
 			adest += 6;
 		}
-
-		if (z > mAGC)
-			mAGC += (z - mAGC) * 0.40f;
-		else
-			mAGC += (z - mAGC) * 0.05f;
-
-		bitaccum += bitaccum;
-		if (mbCurrentState)
-			++bitaccum;
-
-		if (!--bitcounter) {
-			bitcounter = 32;
-			*bitfield++ |= bitaccum;
-		}
 	} while(--n);
 
-	if (bitcounter < 32)
-		*bitfield++ |= bitaccum << bitcounter;
-}
+	mBitAccum = bitaccum;
+	mBitCounter = bitcounter;
 
-void ATCassetteDecoderDirect::Process(bool enablePrefilter, const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest) {
-	if (adest) {
-		if (enablePrefilter)
-			Process<true, true>(samples, n, bitfield, bitoffset, adest);
-		else
-			Process<true, false>(samples, n, bitfield, bitoffset, adest);
-	} else {
-		if (enablePrefilter)
-			Process<false, true>(samples, n, bitfield, bitoffset, nullptr);
-		else
-			Process<false, false>(samples, n, bitfield, bitoffset, nullptr);
+	if constexpr (T_PreFilter == PreFilterType::HP_FIR) {
+#if VD_CPU_X86 || VD_CPU_X64
+		_mm_storeu_ps(mHPFWindow +  0, hpf0);
+		_mm_storeu_ps(mHPFWindow +  4, hpf1);
+		_mm_storeu_ps(mHPFWindow +  8, hpf2);
+		_mm_storeu_ps(mHPFWindow + 12, hpf3);
+#elif VD_CPU_ARM64
+		vst1q_f32(mHPFWindow +  0, hpf0);
+		vst1q_f32(mHPFWindow +  4, hpf1);
+		vst1q_f32(mHPFWindow +  8, hpf2);
+		vst1q_f32(mHPFWindow + 12, hpf3);
+#else
+		memcpy(mHPFWindow, hpf, sizeof mHPFWindow);
+#endif
 	}
 }
+
+void ATCassetteDecoderTurbo::Process(const sint16 *samples, uint32 n, float *adest) {
+	mBitfield.resize((mWrittenBits + n + 31) >> 5, 0);
+
+	(this->*mpAlgorithm)(samples, n, adest);
+}
+
+vdfastvector<uint32> ATCassetteDecoderTurbo::Finalize() {
+	auto getBit = [this](uint32 i) {
+		return (mBitfield[i >> 5] & (0x80000000U >> (i & 31))) != 0;
+	};
+
+	auto setBit = [this](uint32 i, bool v) {
+		uint32& mask = mBitfield[i >> 5];
+		uint32 bit = 0x80000000U >> (i & 31);
+
+		if (v)
+			mask |= bit;
+		else
+			mask &= ~bit;
+	};
+
+	// capture range: 0.9KHz - 4.4KHz
+	const auto rebalance = [=, this](auto firstPolarity) {
+		constexpr uint32 kCaptureMin = (uint32)(kATCassetteDataSampleRate / 4400.0f + 0.5f);
+		constexpr uint32 kCaptureMax = (uint32)(kATCassetteDataSampleRate /  900.0f + 0.5f);
+
+		uint32 pos = 0;
+		uint32 n = mWrittenBits;
+
+		while(pos < n) {
+			uint32 pos0 = pos;
+			uint32 lo = 0;
+			while(pos < n && getBit(pos) == firstPolarity) {
+				++lo;
+				++pos;
+			}
+
+			uint32 hi = 0;
+			while(pos < n && getBit(pos) != firstPolarity) {
+				++hi;
+				++pos;
+			}
+
+			if (lo >= kCaptureMin && lo <= kCaptureMax
+				&& hi >= kCaptureMin && hi <= kCaptureMax)
+			{
+				uint32 tot = lo + hi;
+				uint32 newLo = tot >> 1;
+				uint32 newHi = (tot + 1) >> 1;
+
+				for(uint32 i = 0; i < newLo; ++i)
+					setBit(pos0++, false);
+
+				for(uint32 i = 0; i < newHi; ++i)
+					setBit(pos0++, true);
+			}
+		}
+	};
+
+	switch(mAlgorithm) {
+		case ATCassetteTurboDecodeAlgorithm::PeakFilterBalanceLoHi:
+			rebalance(std::false_type());
+			break;
+
+		case ATCassetteTurboDecodeAlgorithm::PeakFilterBalanceHiLo:
+			rebalance(std::true_type());
+			break;
+	}
+
+	return std::move(mBitfield);
+}
+

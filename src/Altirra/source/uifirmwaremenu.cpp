@@ -40,7 +40,7 @@ public:
 	void Init(bool basic);
 
 	bool IsRebuildNeeded() const override;
-	void RebuildMenu(ATUIMenu& menu, uint32 idbase) override;
+	void RebuildMenu(ATUIMenu& menu, uint32 pos, uint32 idbase) override;
 	void UpdateMenu(ATUIMenu& menu, uint32 firstIndex, uint32 n) override;
 	void HandleMenuCommand(uint32 index) override;
 
@@ -58,7 +58,7 @@ bool ATUIFirmwareMenuProvider::IsRebuildNeeded() const {
 	return !mbIsBasic && g_sim.GetHardwareMode() != mLastHardwareMode;
 }
 
-void ATUIFirmwareMenuProvider::RebuildMenu(ATUIMenu& menu, uint32 idbase) {
+void ATUIFirmwareMenuProvider::RebuildMenu(ATUIMenu& menu, uint32 pos, uint32 idbase) {
 	ATFirmwareManager *fwmgr = g_sim.GetFirmwareManager();
 
 	vdvector<ATFirmwareInfo> fws;
@@ -88,7 +88,7 @@ void ATUIFirmwareMenuProvider::RebuildMenu(ATUIMenu& menu, uint32 idbase) {
 		ATUIMenuItem item;
 		item.mId = idbase++;
 		item.mText = fwi.mName;
-		menu.AddItem(item);
+		menu.InsertItem(pos++, item);
 	}
 }
 

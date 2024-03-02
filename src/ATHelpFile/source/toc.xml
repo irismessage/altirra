@@ -65,6 +65,7 @@
     <t name="Custom devices">
       <t name="About Custom Devices" href="customdev-intro.html" />
       <t name="Specification" href="customdev-spec.html" />
+      <t name="Scripting reference" href="customdev-scriptingref.html" />
     </t>
   </t>
   <t name="Debugger">

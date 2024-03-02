@@ -328,6 +328,18 @@
     <None Include="source\Shared\version.inc">
       <Filter>Source Files\Shared</Filter>
     </None>
+    <None Include="source\Additions\xep80config.inc">
+      <Filter>Source Files\Additions</Filter>
+    </None>
+    <None Include="source\Additions\xepvhold.s">
+      <Filter>Source Files\Additions</Filter>
+    </None>
+    <None Include="source\Additions\xep80-sdx.s">
+      <Filter>Source Files\Additions</Filter>
+    </None>
+    <None Include="source\Additions\atdebugx.s">
+      <Filter>Source Files\Additions</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\Placeholders\noblackbox.s">

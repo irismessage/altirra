@@ -47,6 +47,7 @@ enum ATSimulatorEvent {
 	kATSimEvent_VBI,
 	kATSimEvent_VBLANK,
 	kATSimEvent_TracingLimitReached,
+	kATSimEvent_CPURestart,
 	kATSimEventCount
 };
 

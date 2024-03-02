@@ -10,3 +10,4 @@ IDI_XEX                 ICON                    "xex.ico"
 IDI_CART                ICON                    "cart.ico"
 
 IDI_EJECT               ICON                    "eject.ico"
+IDI_EJECT2              ICON                    "eject_dark.ico"

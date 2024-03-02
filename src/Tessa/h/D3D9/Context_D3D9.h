@@ -117,7 +117,7 @@ public:
 	void GetDesc(VDTTextureDesc& desc);
 	IVDTSurface *GetLevelSurface(uint32 level);
 	void Load(uint32 mip, uint32 x, uint32 y, const VDTInitData2D& srcData, uint32 w, uint32 h);
-	bool Lock(uint32 mip, const vdrect32 *r, VDTLockData2D& lockData);
+	bool Lock(uint32 mip, const vdrect32 *r, bool discard, VDTLockData2D& lockData);
 	void Unlock(uint32 mip);
 
 protected:
@@ -348,7 +348,7 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
-class VDTContextD3D9 final : public IVDTContext, public IVDTProfiler, public VDTResourceManagerD3D9 {
+class VDTContextD3D9 final : public IVDTContext, public VDTResourceManagerD3D9 {
 public:
 	VDTContextD3D9();
 	~VDTContextD3D9();
@@ -364,7 +364,8 @@ public:
 	IDirect3DDevice9Ex *GetDeviceD3D9Ex() const { return mpD3DDeviceEx; }
 
 	const VDTDeviceCaps& GetDeviceCaps() { return mCaps; }
-	bool IsFormatSupportedTexture2D(VDTFormat format);
+	bool IsFormatSupportedTexture2D(VDTFormat format) override;
+	bool IsMonitorHDREnabled(void *monitor, bool& systemSupport) override;
 
 	bool CreateReadbackBuffer(uint32 width, uint32 height, VDTFormat format, IVDTReadbackBuffer **buffer);
 	bool CreateSurface(uint32 width, uint32 height, VDTFormat format, VDTUsage usage, IVDTSurface **surface);
@@ -381,17 +382,19 @@ public:
 	bool CreateSamplerState(const VDTSamplerStateDesc& desc, IVDTSamplerState **state);
 
 	IVDTSurface *GetRenderTarget(uint32 index) const;
+	bool GetRenderTargetBypass(uint32 index) const { return false; }
 
 	void SetVertexFormat(IVDTVertexFormat *format);
 	void SetVertexProgram(IVDTVertexProgram *program);
 	void SetFragmentProgram(IVDTFragmentProgram *program);
 	void SetVertexStream(uint32 index, IVDTVertexBuffer *buffer, uint32 offset, uint32 stride);
 	void SetIndexStream(IVDTIndexBuffer *buffer);
-	void SetRenderTarget(uint32 index, IVDTSurface *surface);
+	void SetRenderTarget(uint32 index, IVDTSurface *surface, bool bypassConversion);
 
 	void SetBlendState(IVDTBlendState *state);
 	void SetSamplerStates(uint32 baseIndex, uint32 count, IVDTSamplerState *const *states);
 	void SetTextures(uint32 baseIndex, uint32 count, IVDTTexture *const *textures);
+	void ClearTexturesStartingAt(uint32 baseIndex);
 
 	void SetRasterizerState(IVDTRasterizerState *state);
 	VDTViewport GetViewport();

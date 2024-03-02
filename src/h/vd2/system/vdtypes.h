@@ -204,8 +204,8 @@ extern void VDDebugPrint(const char *format, ...);
 	}
 
 	#define VDFAIL(str)			if (VDAssert(#str, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
-	#define VDASSERT(exp)		if (!(exp) && VDAssert   (#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
-	#define VDASSERTPTR(exp) 	if (!(exp) && VDAssertPtr(#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
+	#define VDASSERT(exp)		if (std::is_constant_evaluated()) { if (!(exp)) *(char *)nullptr = 0; } else if (!(exp) && VDAssert  (#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
+	#define VDASSERTPTR(exp) 	if (std::is_constant_evaluated()) { if (!(exp)) *(char *)nullptr = 0; } else if (!(exp) && VDAssertPtr(#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
 	#define VDVERIFY(exp)		if (!(exp) && VDAssert   (#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
 	#define VDVERIFYPTR(exp) 	if (!(exp) && VDAssertPtr(#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
 

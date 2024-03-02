@@ -22,7 +22,8 @@ public:
 		VDAccelTableDefinition *tables,
 		const VDAccelTableDefinition *defaultTables,
 		uint32 tableCount,
-		const wchar_t *const *contextNames);
+		const wchar_t *const *contextNames,
+		const char *preSelectedCommand);
 	~VDDialogEditAccelerators();
 
 protected:
@@ -33,7 +34,7 @@ protected:
 	void OnDestroy();
 	bool OnErase(VDZHDC hdc);
 	void LoadTables(const VDAccelTableDefinition *tables);
-	void RefilterCommands(const char *pattern);
+	void RefilterCommands(const char *pattern, const char *defaultSelect = nullptr);
 	void RefreshBoundList();
 	void DestroyBoundCommands();
 
@@ -78,6 +79,7 @@ protected:
 	VDDelegate	mDelegateHotKeyChanged;
 
 	bool	mbBlockCommandUpdate;
+	VDStringA mDefaultSelectedCommand;
 };
 
 namespace {
@@ -143,7 +145,9 @@ VDDialogEditAccelerators::VDDialogEditAccelerators(
 	VDAccelTableDefinition *tables,
 	const VDAccelTableDefinition *defaultTables,
 	uint32 tableCount,
-	const wchar_t *const *contextNames)
+	const wchar_t *const *contextNames,
+	const char *preSelectedCommand
+)
 	: VDResizableDialogFrameW32(IDD_CONFIGURE_ACCEL)
 	, mTableCount(tableCount)
 	, mpContextNames(contextNames)
@@ -151,6 +155,7 @@ VDDialogEditAccelerators::VDDialogEditAccelerators(
 	, mpBoundCommandsResults(tables)
 	, mpBoundCommandsDefaults(defaultTables)
 	, mbBlockCommandUpdate(false)
+	, mDefaultSelectedCommand(preSelectedCommand ? preSelectedCommand : "")
 {
 	mBoundCommandSort.mSortAxes[0] = 0;
 	mBoundCommandSort.mSortAxes[1] = 4;
@@ -191,8 +196,6 @@ void VDDialogEditAccelerators::OnDataExchange(bool write) {
 }
 
 bool VDDialogEditAccelerators::OnLoaded() {
-	//VDSetDialogDefaultIcons(mhdlg);
-
 	mpHotKeyControl = VDGetUIHotKeyExControl((VDGUIHandle)GetControl(IDC_HOTKEY));
 	if (mpHotKeyControl)
 		mpHotKeyControl->OnChange() += mDelegateHotKeyChanged(this, &VDDialogEditAccelerators::OnHotKeyChanged);
@@ -232,11 +235,27 @@ bool VDDialogEditAccelerators::OnLoaded() {
 	mListViewBoundCommands.InsertColumn(2, L"Shortcut", 50);
 	mListViewBoundCommands.AutoSizeColumns();
 
-	RefilterCommands("*");
+	RefilterCommands("*", mDefaultSelectedCommand.empty() ? nullptr : mDefaultSelectedCommand.c_str());
 
 	VDDialogFrameW32::OnLoaded();
 
-	SetFocusToControl(IDC_FILTER);
+	if (mDefaultSelectedCommand.empty()) {
+		SetFocusToControl(IDC_FILTER);
+	} else {
+		int boundIdx = 0;
+		for(const BoundCommand *p : mBoundCommands) {
+			if (mDefaultSelectedCommand == p->mpCommand) {
+				mListViewBoundCommands.SetSelectedIndex(boundIdx);
+				mListViewBoundCommands.EnsureItemVisible(boundIdx);
+				break;
+			}
+
+			++boundIdx;
+		}
+
+		SetFocusToControl(IDC_HOTKEY);
+	}
+
 	return true;
 }
 
@@ -294,8 +313,16 @@ bool VDDialogEditAccelerators::OnCommand(uint32 id, uint32 extcode) {
 					bc->mContext = context;
 					bc->mpContextName = mpContextNames[context];
 
-					mBoundCommands.push_back(bc.release());
+					mBoundCommands.push_back(bc);
+					bc->AddRef();
 					RefreshBoundList();
+
+					auto it = std::find(mBoundCommands.begin(), mBoundCommands.end(), bc);
+					if (it != mBoundCommands.end()) {
+						int idx = (int)(it - mBoundCommands.begin());
+						mListViewBoundCommands.SetSelectedIndex(idx);
+						mListViewBoundCommands.EnsureItemVisible(idx);
+					}
 				}
 			}
 		}
@@ -352,24 +379,30 @@ bool VDDialogEditAccelerators::OnErase(VDZHDC hdc) {
 	return true;
 }
 
-void VDDialogEditAccelerators::RefilterCommands(const char *pattern) {
+void VDDialogEditAccelerators::RefilterCommands(const char *pattern, const char *defaultSelect) {
 	mFilteredCommands.clear();
 
 	LBClear(IDC_AVAILCOMMANDS);
 
-	Commands::const_iterator it(mAllCommands.begin()), itEnd(mAllCommands.end());
-	for(; it != itEnd; ++it) {
-		const VDAccelToCommandEntry& ent = **it;
+	int selIdx = -1;
+	int idx = 0;
+	for(const VDAccelToCommandEntry *p : mAllCommands) {
+		const VDAccelToCommandEntry& ent = *p;
 
 		if (VDFileWildMatch(pattern, ent.mpName)) {
 			const VDStringW s(VDTextAToW(ent.mpName));
 
+			if (defaultSelect && selIdx < 0 && !strcmp(ent.mpName, defaultSelect))
+				selIdx = idx;
+
 			mFilteredCommands.push_back(&ent);
 			LBAddString(IDC_AVAILCOMMANDS, s.c_str());
 		}
+
+		++idx;
 	}
 
-	LBSetSelectedIndex(IDC_AVAILCOMMANDS, 0);
+	LBSetSelectedIndex(IDC_AVAILCOMMANDS, selIdx < 0 ? 0 : selIdx);
 }
 
 void VDDialogEditAccelerators::LoadTables(const VDAccelTableDefinition *tables) {
@@ -515,9 +548,10 @@ bool ATUIShowDialogEditAccelerators(VDGUIHandle hParent,
 	VDAccelTableDefinition *accelTables,
 	const VDAccelTableDefinition *defaultTables,
 	uint32 tableCount,
-	const wchar_t *const *contextNames)
+	const wchar_t *const *contextNames,
+	const char *preSelectedCommand)
 {
-	VDDialogEditAccelerators dlg(commands, commandCount, accelTables, defaultTables, tableCount, contextNames);
+	VDDialogEditAccelerators dlg(commands, commandCount, accelTables, defaultTables, tableCount, contextNames, preSelectedCommand);
 
 	return dlg.ShowDialog(hParent) != 0;
 }

@@ -87,6 +87,11 @@ public:
 	/// are removed.
 	bool NotifyAndClear(const vdfunction<bool(T)>& fn);
 
+	// Invoke each element as a functor or a pointer to a functor, with
+	// the given arguments.
+	template<typename... Args>
+	void InvokeAll(Args&& ...);
+
 private:
 	typedef typename std::conditional<std::is_trivial<T>::value, vdfastvector<T>, vdvector<T>>::type List;
 
@@ -127,8 +132,6 @@ template<class T>
 void ATNotifyList<T>::NotifyAll(const vdfunction<void(T)>& fn) {
 	if (mList.empty())
 		return;
-
-	bool interrupted = false;
 
 	Iterator it = { mpIteratorList, mFirstValid, mList.size() };
 	mpIteratorList = &it;
@@ -220,6 +223,34 @@ bool ATNotifyList<T>::NotifyAndClear(const vdfunction<bool(T)>& fn) {
 	}
 
 	return interrupted;
+}
+
+template<typename T>
+template<typename... Args>
+void ATNotifyList<T>::InvokeAll(Args&& ...args) {
+	if (mList.empty())
+		return;
+
+	Iterator it = { mpIteratorList, mFirstValid, mList.size() };
+	mpIteratorList = &it;
+
+	try {
+		while(it.mIndex < it.mLength) {
+			auto v = mList[it.mIndex++];
+
+			if constexpr (std::is_pointer_v<T>)
+				(*v)(std::forward<Args>(args)...);
+			else
+				v(std::forward<Args>(args)...);
+		}
+	} catch(...) {
+		VDASSERT(mpIteratorList == &it);
+		mpIteratorList = it.mpNext;
+		throw;
+	}
+
+	VDASSERT(mpIteratorList == &it);
+	mpIteratorList = it.mpNext;
 }
 
 #endif

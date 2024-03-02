@@ -30,10 +30,8 @@ enum ATMediaWriteMode : uint8;
 
 struct ATOptions {
 	bool mbDirty;
-	bool mbDisplayDDraw;
 	bool mbDisplayD3D9;
 	bool mbDisplay3D;
-	bool mbDisplayOpenGL;
 	bool mbDisplay16Bit;
 	bool mbDisplayAccelScreenFX;
 
@@ -62,11 +60,16 @@ struct ATOptions {
 	bool mbCompatEnableExternalDB;
 	VDStringW mCompatExternalDBPath;
 
+	bool mbPollDirectories;
+
 	ATOptions();
 };
 
 void ATOptionsLoad();
 void ATOptionsSave();
+
+void ATOptionsSuspendSave();
+void ATOptionsResumeSave();
 
 typedef void (*ATOptionsUpdateCallback)(ATOptions& opts, const ATOptions *prevOpts, void *data);
 void ATOptionsAddUpdateCallback(bool runNow, ATOptionsUpdateCallback, void *data = 0);

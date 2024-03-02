@@ -585,6 +585,52 @@ void VDVideoDisplayMinidriverGDI::InternalRefresh(HDC hdc, const RECT& rClient, 
 		}
 	}
 
+	if (CheckForCapturePending() && mSource.mpCB) {
+		VDPixmapLayout layout {};
+		VDPixmapCreateLinearLayout(layout, nsVDPixmap::kPixFormat_XRGB8888, rClient.right, rClient.bottom, 4);
+		VDPixmapLayoutFlipV(layout);
+		VDPixmapBuffer pxbuf(layout);
+		bool succeeded = false;
+
+		if (HDC hdcCapture = CreateCompatibleDC(hdcComp)) {
+			if (HBITMAP hbmCapture = CreateCompatibleBitmap(hdcComp, rClient.right, rClient.bottom)) {
+				if (HGDIOBJ hgoCapture = SelectObject(hdcCapture, hbmCapture)) {
+					succeeded = 0 != BitBlt(hdcCapture, 0, 0, rClient.right, rClient.bottom, hdcComp, 0, 0, SRCCOPY);
+					SelectObject(hdcCapture, hgoCapture);
+
+					BITMAPINFO bmi {
+						{
+							sizeof(BITMAPINFOHEADER),
+							rClient.right,
+							rClient.bottom,
+							1,
+							32,
+							BI_RGB,
+							(DWORD)(rClient.right * rClient.bottom * 4),
+							0,
+							0,
+							0,
+							0
+						}
+					};
+
+					if (succeeded) {
+						succeeded = 0 != GetDIBits(hdcCapture, hbmCapture, 0, rClient.bottom, pxbuf.base(), &bmi, DIB_RGB_COLORS);
+					}
+				}
+
+				DeleteObject(hbmCapture);
+			}
+
+			DeleteDC(hdcCapture);
+		}
+
+		if (succeeded)
+			mSource.mpCB->OnFrameCaptured(&pxbuf);
+		else
+			mSource.mpCB->OnFrameCaptured(nullptr);
+	}
+
 	if (hdcComp != hdc) {
 		BitBlt(hdc, 0, 0, rClient.right, rClient.bottom, hdcComp, 0, 0, SRCCOPY);
 	}

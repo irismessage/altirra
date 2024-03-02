@@ -495,6 +495,7 @@ static const uint32 g_ATRawVKeyMap[]={
 	VKEYMAP_CSALL('1', 0x1F),
 
 	VKEYMAP_CSALL(VK_OEM_COMMA, 0x20),	// ,<
+	VKEYMAP_CSALL(VK_SPACE,		0x21),	// Space
 	VKEYMAP_CSALL(VK_OEM_PERIOD, 0x22),	// .>
 	VKEYMAP_CSALL('N', 0x23),
 	VKEYMAP_CSALL('M', 0x25),
@@ -978,10 +979,10 @@ namespace {
 		{ "Input.CaptureMouse", 0, { VK_F12, 0 } },
 		{ "View.ToggleFullScreen", 0, { VK_RETURN, ALT } },
 		{ "System.ToggleSlowMotion", 0, { VK_BACK, ALT } },
-		{ "Audio.ToggleChannel1", 0, { '1', CTRL+ALT } },
-		{ "Audio.ToggleChannel2", 0, { '2', CTRL+ALT } },
-		{ "Audio.ToggleChannel3", 0, { '3', CTRL+ALT } },
-		{ "Audio.ToggleChannel4", 0, { '4', CTRL+ALT } },
+		{ "Audio.ToggleChannel1", 0, { '1', ALT+SHIFT } },
+		{ "Audio.ToggleChannel2", 0, { '2', ALT+SHIFT } },
+		{ "Audio.ToggleChannel3", 0, { '3', ALT+SHIFT } },
+		{ "Audio.ToggleChannel4", 0, { '4', ALT+SHIFT } },
 		{ "Edit.PasteText", 0, { 'V', ALT+SHIFT } },
 		{ "Edit.SaveFrame", 0, { VK_F10, ALT } },
 		{ "Edit.CopyText", 0, { 'C', ALT+SHIFT } },
@@ -1035,13 +1036,13 @@ void ATUILoadAccelTables() {
 	VDStringA keyName;
 
 	for(int i=0; i<kATUIAccelContextCount; ++i) {
-		keyName.sprintf("AccelTables2\\%d", i);
+		keyName.sprintf("AccelTables3\\%d", i);
 
-		VDRegistryKey key(keyName.c_str(), false, false);
+		VDRegistryAppKey key(keyName.c_str(), false, false);
 
 		if (key.isReady()) {
 			try {
-				g_ATUIAccelTables[i].Load(key, commands.data(), (uint32)commands.size());
+				g_ATUIAccelTables[i].Load(key, g_ATUIDefaultAccelTables[i], commands.data(), (uint32)commands.size());
 			} catch(const MyError&) {
 				// eat load error
 			}
@@ -1053,10 +1054,10 @@ void ATUISaveAccelTables() {
 	VDStringA keyName;
 
 	for(int i=0; i<kATUIAccelContextCount; ++i) {
-		keyName.sprintf("AccelTables2\\%d", i);
+		keyName.sprintf("AccelTables3\\%d", i);
 
-		VDRegistryKey key(keyName.c_str());
-		g_ATUIAccelTables[i].Save(key);
+		VDRegistryAppKey key(keyName.c_str());
+		g_ATUIAccelTables[i].Save(key, g_ATUIDefaultAccelTables[i]);
 	}
 }
 

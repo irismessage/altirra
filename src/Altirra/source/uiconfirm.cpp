@@ -46,7 +46,7 @@ bool ATUIConfirmBasicChangeReset() {
 	if (!ATUIIsResetNeeded(kATUIResetFlag_BasicChange))
 		return true;
 
-	return ATUIConfirmReset(ATUIGetMainWindow(), "ResetBasicChange", L"This will reset the emulated computer. Are you sure?", L"Changing BASIC");
+	return ATUIConfirmReset(ATUIGetNewPopupOwner(), "ResetBasicChange", L"This will reset the emulated computer. Are you sure?", L"Changing BASIC");
 }
 
 void ATUIConfirmBasicChangeResetComplete() {
@@ -58,7 +58,7 @@ bool ATUIConfirmVideoStandardChangeReset() {
 	if (!ATUIIsResetNeeded(kATUIResetFlag_VideoStandardChange))
 		return true;
 
-	return ATUIConfirmReset(ATUIGetMainWindow(), "ResetVideoStandardChange", L"This will reset the emulated computer. Are you sure?", L"Changing video standard");
+	return ATUIConfirmReset(ATUIGetNewPopupOwner(), "ResetVideoStandardChange", L"This will reset the emulated computer. Are you sure?", L"Changing video standard");
 }
 
 void ATUIConfirmVideoStandardChangeResetComplete() {
@@ -70,7 +70,7 @@ bool ATUIConfirmCartridgeChangeReset() {
 	if (!ATUIIsResetNeeded(kATUIResetFlag_CartridgeChange))
 		return true;
 
-	return ATUIConfirmReset(ATUIGetMainWindow(), "ResetCartridgeChange", L"This will reset the emulated computer. Are you sure?", L"Changing cartridge");
+	return ATUIConfirmReset(ATUIGetNewPopupOwner(), "ResetCartridgeChange", L"This will reset the emulated computer. Are you sure?", L"Changing cartridge");
 }
 
 void ATUIConfirmCartridgeChangeResetComplete() {
@@ -79,7 +79,7 @@ void ATUIConfirmCartridgeChangeResetComplete() {
 }
 
 bool ATUIConfirmSystemChangeReset() {
-	return ATUIConfirmReset(ATUIGetMainWindow(), "ResetSystemChange", L"This will reset the emulated computer. Are you sure?", L"Changing system");
+	return ATUIConfirmReset(ATUIGetNewPopupOwner(), "ResetSystemChange", L"This will reset the emulated computer. Are you sure?", L"Changing system");
 }
 
 void ATUIConfirmSystemChangeResetComplete() {

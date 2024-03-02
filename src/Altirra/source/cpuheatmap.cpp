@@ -493,6 +493,7 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 				mPValid |= 0x02;
 
 			mPValid |= mAValid & 0x80;
+			mMemAccess[addr] |= kAccessRead;
 			break;
 
 		case 0x6D:	// ADC abs
@@ -514,6 +515,7 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 			mA = kTypeComputed + pc;
 			mAValid = (mAValid & mMemValid[addr]) == 0xFF && (mPValid & 0x01) ? 0xFF : 0x00;
 			mPValid = (mPValid & 0xFE) + (mAValid & 0x01);
+			mMemAccess[addr] |= kAccessRead;
 			break;
 
 		// update X
@@ -546,6 +548,7 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 			mPValid |= mMemValid[addr] & 0xC0;
 			if ((mAValid & mMemValid[addr]) == 0xFF)
 				mPValid |= 0x02;
+			mMemAccess[addr] |= kAccessRead;
 			break;
 
 		case 0xC1:	// CMP (zp,X)
@@ -559,6 +562,7 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 			mPValid &= 0x3C;
 			if ((mMemValid[addr] & mAValid) == 0xFF)
 				mPValid |= 0xC3;
+			mMemAccess[addr] |= kAccessRead;
 			break;
 
 		case 0xC4:	// CPY zp
@@ -567,6 +571,7 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 			mPValid &= 0x3C;
 			if ((mMemValid[addr] & mYValid) == 0xFF)
 				mPValid |= 0xC3;
+			mMemAccess[addr] |= kAccessRead;
 			break;
 
 		case 0xE4:	// CPX zp
@@ -575,6 +580,7 @@ void ATCPUHeatMap::ProcessInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ad
 			mPValid &= 0x3C;
 			if ((mMemValid[addr] & mXValid) == 0xFF)
 				mPValid |= 0xC3;
+			mMemAccess[addr] |= kAccessRead;
 			break;
 
 		// update P, no memory load (ignorable)

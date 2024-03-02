@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2008-2011 Avery Lee
+//	Copyright (C) 2008-2021 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -23,85 +23,39 @@
 #include <vd2/system/file.h>
 #include <vd2/system/math.h>
 #include <vd2/system/refcount.h>
+#include <vd2/system/vdstl_vectorview.h>
 #include <vd2/system/zip.h>
 #include <at/atcore/audiosource.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/progress.h>
+#include <at/atio/audioreader.h>
 #include <at/atio/cassetteblock.h>
 #include <at/atio/cassettedecoder.h>
 #include <at/atio/cassetteimage.h>
+#include <at/atio/tapepiecetable.h>
 #include <at/atio/wav.h>
+#include <at/atcore/enumparseimpl.h>
 #include <at/atcore/logging.h>
 
 #if VD_CPU_X86 || VD_CPU_X64
 #include <emmintrin.h>
 #endif
 
-#ifdef _DEBUG
-	#define AT_CASSETTE_VALIDATE() Validate()
-#else
-	#define AT_CASSETTE_VALIDATE() ((void)0)
-#endif
-
-using namespace nsVDWinFormats;
+ATConfigVarBool g_ATCVTapeFLACVerifyMD5("tape.flac.verify_md5", false);
 
 ATLogChannel g_ATLCCasImage(false, false, "CASIMAGE", "Cassette image processing");
+
+AT_DEFINE_ENUM_TABLE_BEGIN(ATCassetteTurboDecodeAlgorithm)
+	{ ATCassetteTurboDecodeAlgorithm::SlopeNoFilter, "slopeNoFilter" },
+	{ ATCassetteTurboDecodeAlgorithm::SlopeFilter, "slopeFilter" },
+	{ ATCassetteTurboDecodeAlgorithm::PeakFilter, "peakFilter" },
+	{ ATCassetteTurboDecodeAlgorithm::PeakFilterBalanceLoHi, "peakLoHi" },
+	{ ATCassetteTurboDecodeAlgorithm::PeakFilterBalanceHiLo, "peakHiLo" }
+AT_DEFINE_ENUM_TABLE_END(ATCassetteTurboDecodeAlgorithm, ATCassetteTurboDecodeAlgorithm::PeakFilter)
 
 ///////////////////////////////////////////////////////////////////////////
 
 namespace {
-	void ReadMono8(sint16 *dst, IVDRandomAccessStream& src, uint32 count) {
-		uint8 buf[1024];
-
-		while(count) {
-			uint32 tc = count > 1024 ? 1024 : count;
-			count -= tc;
-
-			src.Read(buf, tc);
-
-			for(uint32 i=0; i<tc; ++i) {
-				dst[0] = dst[1] = (buf[i] << 8) - 0x8000;
-				dst += 2;
-			}
-		}
-	}
-
-	void ReadMono16(sint16 *dst, IVDRandomAccessStream& src, uint32 count) {
-		sint16 buf[1024];
-
-		while(count) {
-			uint32 tc = count > 1024 ? 1024 : count;
-			count -= tc;
-
-			src.Read(buf, tc*2);
-
-			for(uint32 i=0; i<tc; ++i) {
-				dst[0] = dst[1] = buf[i];
-				dst += 2;
-			}
-		}
-	}
-
-	void ReadStereo8(sint16 *dst, IVDRandomAccessStream& src, uint32 count) {
-		uint8 buf[1024][2];
-
-		while(count) {
-			uint32 tc = count > 1024 ? 1024 : count;
-			count -= tc;
-
-			src.Read(buf, tc*2);
-
-			for(uint32 i=0; i<tc; ++i) {
-				dst[0] = (buf[i][0] << 8) - 0x8000;
-				dst[1] = (buf[i][1] << 8) - 0x8000;
-				dst += 2;
-			}
-		}
-	}
-
-	void ReadStereo16(sint16 *dst, IVDRandomAccessStream& src, uint32 count) {
-		src.Read(dst, count*4);
-	}
-
 	extern "C" VDALIGN(16) const sint16 kernel[32][8] = {
 		{+0x0000,+0x0000,+0x0000,+0x4000,+0x0000,+0x0000,+0x0000,+0x0000 },
 		{-0x000a,+0x0052,-0x0179,+0x3fe2,+0x019f,-0x005b,+0x000c,+0x0000 },
@@ -214,13 +168,43 @@ namespace {
 	}
 #endif
 
+#if VD_CPU_ARM64
+	uint64 resample16x2_NEON(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
+		do {
+			const sint16 *s2 = s + (uint32)(accum >> 32)*2;
+			const sint16 *f = kernel[(uint32)accum >> 27];
+			const int16x8_t coeff16 = vld1q_s16(f);
+
+			accum += inc;
+
+			const int16x8x2_t x = vld2q_s16(s2 + 0);
+
+			int32x4_t z0 = vmlal_high_s16(vmull_s16(vget_low_f32(x.val[0]), vget_low_f32(coeff16)), x.val[0], coeff16);
+			int32x4_t z1 = vmlal_high_s16(vmull_s16(vget_low_f32(x.val[1]), vget_low_f32(coeff16)), x.val[1], coeff16);
+
+			int16x4x2_t a;
+			a.val[0] = vrshr_n_s32(vmov_n_s32(vaddvq_s32(z0)), 14);
+			a.val[1] = vrshr_n_s32(vmov_n_s32(vaddvq_s32(z1)), 14);
+
+			vst2_lane_s16(d, a, 0);
+			d += 2;
+		} while(--count);
+
+		return accum;
+	}
+#endif
+
 	uint64 resample16x2(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
-#if VD_CPU_X86 || VD_CPU_X64
+#if VD_CPU_ARM64
+		return resample16x2_NEON(d, s, count, accum, inc);
+#elif VD_CPU_X86 || VD_CPU_X64
 		if (SSE2_enabled)
 			return resample16x2_SSE2(d, s, count, accum, inc);
 		else
-#endif
 			return resample16x2_scalar(d, s, count, accum, inc);
+#else
+			return resample16x2_scalar(d, s, count, accum, inc);
+#endif
 	}
 
 #if VD_CPU_X86 || VD_CPU_X64
@@ -308,6 +292,21 @@ public:
 	ATCassetteTooLongException() : MyError("Tape too long (exceeds 7 hours).") {}
 };
 
+////////////////////////////////////////////////////////////////////////////////
+
+class ATTapeImageClip final : public vdrefcounted<IATTapeImageClip> {
+	ATTapeImageClip(const ATTapeImageClip&) = delete;
+	ATTapeImageClip& operator=(const ATTapeImageClip&) = delete;
+public:
+	ATTapeImageClip() = default;
+
+	uint32 GetLength() const override { return mDataSpans.mLength; }
+
+	ATTapePieceList mDataSpans;
+	ATTapePieceList mAudioSpans;
+	bool mbHasAudioSpans = false;
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 
 class ATCassetteImage final : public vdrefcounted<IATCassetteImage> {
@@ -318,12 +317,13 @@ public:
 	void *AsInterface(uint32 id) override;
 
 	ATImageType GetImageType() const override { return kATImageType_Tape; }
-	std::optional<uint32> GetImageFileCRC() const { return mImageFileCRC; }
-	std::optional<ATChecksumSHA256> GetImageFileSHA256() const { return mImageFileSHA256; }
+	std::optional<uint32> GetImageFileCRC() const { return mbImageChecksumsValid ? std::optional(mImageFileCRC) : std::nullopt; }
+	std::optional<ATChecksumSHA256> GetImageFileSHA256() const { return mbImageChecksumsValid ? std::optional(mImageFileSHA256) : std::nullopt; }
 
-	uint32 GetDataLength() const override { return mDataLength; }
-	uint32 GetAudioLength() const override { return mAudioLength; }
-	bool IsAudioCreated() const override { return mbAudioCreated; }
+	uint32 GetDataLength() const override { return mDataTrack.mLength; }
+	uint32 GetAudioLength() const override { return (mbAudioCreated ? mAudioTrack : mDataTrack).mLength; }
+
+	bool IsAudioPresent() const override { return mbAudioPresent; }
 
 	bool GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshold, bool prevBit, bool bypassFSK) const override;
 	bool GetBit(uint32 pos, bool bypassFSK) const override;
@@ -331,14 +331,27 @@ public:
 	uint32 GetBitSum(uint32 pos, uint32 averagingPeriod, bool bypassFSK) const override;
 	NextBitInfo FindNextBit(uint32 pos, uint32 limit, bool level, bool bypassFSK) const override;
 
+	TransitionInfo GetTransitionInfo(uint32 pos, uint32 n, bool bypassFSK) const override;
+
 	void ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) override;
 	void AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const override;
 
-	uint32 GetWriteCursor() const override;
-	void SetWriteCursor(uint32 writePos) override;
-	void WriteBlankData(uint32 len) override;
-	void WriteStdData(uint8 byte, uint32 cyclesPerHalfBit) override;
-	void WriteFSKPulse(bool polarity, uint32 samples) override;
+	ATCassetteRegionInfo GetRegionInfo(uint32 pos) const;
+
+	void WriteBlankData(ATCassetteWriteCursor& cursor, uint32 len, bool insert) override;
+	void WriteStdData(ATCassetteWriteCursor& cursor, uint8 byte, uint32 cyclesPerHalfBit, bool insert) override;
+	void WritePulse(ATCassetteWriteCursor& cursor, bool polarity, uint32 samples, bool insert, bool fsk) override;
+
+	uint32 EstimateWriteStdData(ATCassetteWriteCursor& cursor, uint32 numBytes, uint32 baudRate) const override;
+
+	uint32 InsertRange(uint32 start, const IATTapeImageClip& clip) override;
+	uint32 ReplaceRange(uint32 start, const IATTapeImageClip& clip0) override;
+	void DeleteRange(uint32 start, uint32 end) override;
+	vdrefptr<IATTapeImageClip> CopyRange(uint32 start, uint32 len) override;
+
+	uint32 GetWaveformLength() const override;
+	uint32 ReadWaveform(uint8 *dst, uint32 pos, uint32 len, bool direct) const override;
+	MinMax ReadWaveformMinMax(uint32 pos, uint32 len, bool direct) const override;
 
 	void InitNew();
 	void Load(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, const ATCassetteLoadContext& ctx);
@@ -346,49 +359,36 @@ public:
 	void SaveWAV(IVDRandomAccessStream& file);
 
 protected:
-	struct SortedBlock {
-		uint32	mStart;
-		uint32	mOffset;
-		ATCassetteImageBlock *mpImageBlock;
-	};
+	typedef ATTapeImageSpan SortedBlock;
 
-	uint32 GetSortedDataBlock(uint32 pos) const;
-
-	uint32 SplitBlock(uint32 startBlockIdx, uint32 splitPt);
-
-	void Validate();
-
-	void ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, bool usePrefilter);
+	void ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, ATCassetteTurboDecodeAlgorithm directDecodeAlgorithm, bool isFLAC, bool storeWaveform);
 	void ParseCAS(IVDRandomAccessStream& file);
-	void ConvertDataToPeaks();
+	void UpdatePeakMaps();
 	void RefreshPeaksFromData(uint32 startSample, uint32 endSample);
+	void RefreshPeaksFromAudio(uint32 startSample, uint32 endSample);
+	void ValidatePeakMaps();
+	void InvalidatePeakMaps();
+	void InvalidatePeaksInRangeEnd(uint32 startSample, uint32 endSample);
+	void InvalidatePeaksInRangeLen(uint32 startSample, uint32 len);
+	void InvalidatePeaksStartingAt(uint32 startSample);
 	void InvalidateSignatures();
+	void CreateAudioTrack();
 
-	uint32 mDataLength = 0;
-	uint32 mAudioLength = 0;
-	bool mbAudioCreated = false;
+	ATTapePieceTable mDataTrack;
+	ATTapePieceTable mAudioTrack;
 
-	mutable int mCachedDataBlockIndex = 0;
-	uint32 mDataBlockCount = 0;
-	uint32 mAudioBlockCount = 0;
-
-	uint32 mWriteCursor = 0;
-	sint32 mCurrentWriteBlockIndex = -1;
-
-	typedef vdfastvector<SortedBlock> SortedBlocks;
-	SortedBlocks mDataBlocks;
-	SortedBlocks mAudioBlocks;
-
-	typedef vdfastvector<ATCassetteImageBlock *> ImageBlocks;
-	ImageBlocks mImageBlocks;
+	bool mbAudioCreated = false;		// audio track has been created (v.s. reusing data track)
+	bool mbAudioPresent = false;		// audio track actually came from audio (stereo WAV)
 
 	vdfastvector<uint8> mPeakMaps[2];
+	vdfastvector<uint8> mWaveforms[2];
 
-	uint32 mPeakDirtyStart = (uint32)0 - 1;
+	uint32 mPeakDirtyStart = ~(uint32)0;
 	uint32 mPeakDirtyEnd = 0;
 
-	std::optional<uint32> mImageFileCRC;
-	std::optional<ATChecksumSHA256> mImageFileSHA256;
+	uint32 mImageFileCRC {};
+	ATChecksumSHA256 mImageFileSHA256 {};
+	bool mbImageChecksumsValid = false;
 
 	static constexpr int kDataSamplesPerPeakSample = 1024;
 	static constexpr float kPeakSamplesPerSecond = kATCassetteDataSampleRate / (float)kDataSamplesPerPeakSample;
@@ -399,14 +399,6 @@ ATCassetteImage::ATCassetteImage() {
 }
 
 ATCassetteImage::~ATCassetteImage() {
-	while(!mImageBlocks.empty()) {
-		ATCassetteImageBlock *p = mImageBlocks.back();
-
-		if (p)
-			delete p;
-
-		mImageBlocks.pop_back();
-	}
 }
 
 void *ATCassetteImage::AsInterface(uint32 id) {
@@ -418,17 +410,20 @@ void *ATCassetteImage::AsInterface(uint32 id) {
 }
 
 uint32 ATCassetteImage::GetBitSum(uint32 pos, uint32 len, bool bypassFSK) const {
-	if (pos >= mDataLength)
+	if (!len)
+		return 0;
+
+	if (pos >= mDataTrack.mLength)
 		return len;
 
-	uint32 idx = GetSortedDataBlock(pos);
-	const auto *p = &mDataBlocks[idx];
+	uint32 idx = mDataTrack.FindSpan(pos);
+	const auto *p = &mDataTrack.mSpans[idx];
 	if (!p->mpImageBlock)
 		return len;
 
 	uint32 sum = 0;
 	uint32 offset = pos - p->mStart;
-	for(auto *p = &mDataBlocks[idx]; p->mpImageBlock; ++p) {
+	for(auto *p = &mDataTrack.mSpans[idx]; p->mpImageBlock; ++p) {
 		uint32 sectionLen = p[1].mStart - pos;
 
 		if (sectionLen > len)
@@ -459,16 +454,16 @@ bool ATCassetteImage::GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshol
 }
 
 bool ATCassetteImage::GetBit(uint32 pos, bool bypassFSK) const {
-	if (pos >= mDataLength)
+	if (pos >= mDataTrack.mLength)
 		return true;
 
-	uint32 idx = GetSortedDataBlock(pos);
-	const auto *p = &mDataBlocks[idx];
+	uint32 idx = mDataTrack.FindSpan(pos);
+	const auto *p = &mDataTrack.mSpans[idx];
 	if (!p->mpImageBlock)
 		return true;
 
 	uint32 offset = pos - p->mStart;
-	for(auto *p = &mDataBlocks[idx]; p->mpImageBlock; ++p) {
+	for(; p->mpImageBlock; ++p) {
 		uint32 sectionLen = p[1].mStart - pos;
 
 		if (sectionLen)
@@ -481,17 +476,17 @@ bool ATCassetteImage::GetBit(uint32 pos, bool bypassFSK) const {
 }
 
 ATCassetteImage::NextBitInfo ATCassetteImage::FindNextBit(uint32 pos, uint32 limit, bool level, bool bypassFSK) const {
-	if (pos >= mDataLength)
+	if (pos >= mDataTrack.mLength)
 		return { UINT32_C(0) - 1, true };
 
-	int idx = GetSortedDataBlock(pos);
-	const auto *p = &mDataBlocks[idx];
+	int idx = mDataTrack.FindSpan(pos);
+	const auto *p = &mDataTrack.mSpans[idx];
 	if (!p->mpImageBlock)
 		return { UINT32_C(0) - 1, true };
 
 	const uint32 levelValue = level ? 1 : 0;
 	uint32 offset = pos - p->mStart;
-	for(const auto *p = &mDataBlocks[idx]; p->mpImageBlock; ++p) {
+	for(const auto *p = &mDataTrack.mSpans[idx]; p->mpImageBlock; ++p) {
 		uint32 sectionEnd = p[1].mStart;
 		uint32 sectionOffset = p->mOffset - p->mStart;
 		ATCassetteImageBlock& imageBlock = *p->mpImageBlock;
@@ -523,13 +518,81 @@ ATCassetteImage::NextBitInfo ATCassetteImage::FindNextBit(uint32 pos, uint32 lim
 	return { UINT32_C(0) - 1, true };
 }
 
-void ATCassetteImage::ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) {
-	if (mPeakDirtyEnd > mPeakDirtyStart) {
-		RefreshPeaksFromData(mPeakDirtyStart, mPeakDirtyEnd);
-		mPeakDirtyStart = 0;
-		--mPeakDirtyStart;	// intentional underflow to -1
-		mPeakDirtyEnd = 0;
+ATCassetteImage::TransitionInfo ATCassetteImage::GetTransitionInfo(uint32 pos, uint32 n0, bool bypassFSK) const {
+	if (pos > mDataTrack.mLength)
+		return TransitionInfo { 0, 0, n0 };
+
+	const bool polarity0 = !pos || GetBit(pos - 1, bypassFSK);
+	if (pos >= mDataTrack.mLength)
+		return TransitionInfo { polarity0 ? 0U : 1U, 0, polarity0 ? n0 : n0-1 };
+
+	bool polarity = polarity0;
+
+	uint32 idx = mDataTrack.FindSpan(pos);
+	const auto *p = &mDataTrack.mSpans[idx];
+	uint32 xsum = 0;
+	uint32 msum = 0;
+	uint32 offset = pos - p->mStart;
+	
+	uint32 n = n0;
+	for(;;) {
+		if (!p->mpImageBlock)
+			break;
+
+		uint32 sectionLen = p[1].mStart - pos;
+
+		if (sectionLen > n)
+			sectionLen = n;
+
+		uint32 xcount = 0, mcount = 0;
+		p->mpImageBlock->GetTransitionCounts(offset + p->mOffset, sectionLen, polarity, bypassFSK, xcount, mcount);
+
+		if (xcount & 1)
+			polarity = !polarity;
+
+		xsum += xcount;
+		msum += mcount;
+
+		n -= sectionLen;
+		if (!n)
+			break;
+
+		offset = 0;
+		pos += sectionLen;
+		++p;
 	}
+
+	if (n && !polarity)
+		++xsum;
+
+	msum += n;
+
+	// Okay, now for the tricky part.
+	//
+	// We need the mark/space counts where a transition _didn't_ occur. This
+	// info isn't immediately available but we can deduce it from the initial
+	// polarity and the number of transitions. If the incoming polarity was
+	// a mark (1), then we have one more space-on-transition if the xsum is
+	// odd, and if incoming polarity was space (0), then one more mark in
+	// that case.
+
+	TransitionInfo ti {
+		.mTransitionBits = xsum,
+		.mSpaceBits = n0 - msum,
+		.mMarkBits = msum
+	};
+
+	ti.mMarkBits -= (xsum + (polarity0 ? 0 : 1)) >> 1;
+	ti.mSpaceBits -= (xsum + (polarity0 ? 1 : 0)) >> 1;
+
+	VDASSERT(ti.mMarkBits <= UINT32_C(0x80000000));
+	VDASSERT(ti.mSpaceBits <= UINT32_C(0x80000000));
+
+	return ti;
+}
+
+void ATCassetteImage::ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) {
+	UpdatePeakMaps();
 
 	if (mPeakMaps[0].empty()) {
 		memset(data, 0, sizeof(float)*n*2);
@@ -537,13 +600,16 @@ void ATCassetteImage::ReadPeakMap(float t0, float dt, uint32 n, float *data, flo
 		return;
 	}
 
-	const size_t m = mPeakMaps[0].size() >> 1;
+	const auto& dataPeakMap = mPeakMaps[0];
+	const auto& audioPeakMap = mbAudioCreated ? mPeakMaps[1] : mPeakMaps[0];
+
+	const size_t limit = std::min(dataPeakMap.size(), audioPeakMap.size()) >> 1;
 
 	float x0 = t0 * kPeakSamplesPerSecond;
 	float dx = dt * kPeakSamplesPerSecond;
 
-	const auto *peakMap0 = mPeakMaps[0].data();
-	const auto *peakMap1 = mPeakMaps[1].empty() ? peakMap0 : mPeakMaps[1].data();
+	const auto *peakMap0 = dataPeakMap.data();
+	const auto *peakMap1 = audioPeakMap.data();
 
 	while(n--) {
 		float x1 = x0 + dx;
@@ -551,11 +617,11 @@ void ATCassetteImage::ReadPeakMap(float t0, float dt, uint32 n, float *data, flo
 		sint32 ix1 = VDCeilToInt(x1 - 0.5f);
 		x0 = x1;
 
-		if ((uint32)ix0 >= m)
-			ix0 = (ix0 < 0) ? 0 : (sint32)(m-1);
+		if ((uint32)ix0 >= limit)
+			ix0 = (ix0 < 0) ? 0 : (sint32)(limit-1);
 
-		if ((uint32)ix1 >= m)
-			ix1 = (sint32)m;
+		if ((uint32)ix1 >= limit)
+			ix1 = (sint32)limit;
 
 		ix0 *= 2;
 		ix1 *= 2;
@@ -588,26 +654,8 @@ void ATCassetteImage::AccumulateAudio(float *&dst, uint32& posSample, uint32& po
 	if (!n)
 		return;
 
-	uint32 i = 0;
-	uint32 j = mAudioBlockCount;
-
-	const SortedBlock *p;
-	for(;;) {
-		uint32 mid = (i + j) >> 1;
-		p = &mAudioBlocks[mid];
-
-		if (i + 1 >= j) {
-			if (!p->mpImageBlock)
-				return;
-
-			break;
-		}
-
-		if (posSample < p->mStart)
-			j = mid;
-		else
-			i = mid;
-	}
+	const auto& track = mbAudioCreated ? mAudioTrack : mDataTrack;
+	const SortedBlock *p = &track.mSpans[track.FindSpan(posSample)];
 	
 	const uint32 posSample0 = posSample;
 	const uint32 posCycle0 = posCycle;
@@ -641,391 +689,202 @@ void ATCassetteImage::AccumulateAudio(float *&dst, uint32& posSample, uint32& po
 	}
 }
 
-uint32 ATCassetteImage::GetWriteCursor() const {
-	return mWriteCursor;
+ATCassetteRegionInfo ATCassetteImage::GetRegionInfo(uint32 pos) const {
+	if (pos >= mDataTrack.mLength)
+		return ATCassetteRegionInfo { ATCassetteRegionType::Mark, pos, 1 };
+
+	uint32 blockIdx = mDataTrack.FindSpan(pos);
+
+	const SortedBlock& blockInfo = mDataTrack.mSpans[blockIdx];
+
+	ATCassetteRegionInfo regionInfo;
+	regionInfo.mRegionStart = blockInfo.mStart;
+	regionInfo.mRegionLen = mDataTrack.mSpans[blockIdx + 1].mStart - blockInfo.mStart;
+
+	switch(blockInfo.mpImageBlock->GetBlockType()) {
+		case kATCassetteImageBlockType_Blank:
+		default:
+			regionInfo.mRegionType = ATCassetteRegionType::Mark;
+			break;
+
+		case kATCassetteImageBlockType_Std:
+			regionInfo.mRegionType = ATCassetteRegionType::DecodedData;
+			break;
+
+		case kATCassetteImageBlockType_FSK:
+			regionInfo.mRegionType = ATCassetteRegionType::Raw;
+			break;
+	}
+
+	return regionInfo;
 }
 
-void ATCassetteImage::SetWriteCursor(uint32 pos) {
-	if (pos > kATCassetteDataLimit)
-		pos = kATCassetteDataLimit;
+void ATCassetteImage::WriteBlankData(ATCassetteWriteCursor& cursor, uint32 len, bool insert) {
+	const uint32 basePos = cursor.mPosition;
+	auto acursor = cursor;
 
-	mWriteCursor = pos;
-	mCurrentWriteBlockIndex = -1;
-}
+	mDataTrack.WriteBlankData(cursor, len, insert);
 
-void ATCassetteImage::WriteBlankData(uint32 len) {
-	if (!len)
-		return;
+	if (mbAudioCreated)
+		mAudioTrack.WriteBlankData(acursor, len, insert);
 
-	// check if write would go beyond end and clamp
-	if (mWriteCursor >= kATCassetteDataLimit)
-		return;
+	if (insert)
+		InvalidatePeaksStartingAt(basePos);
+	else
+		InvalidatePeaksInRangeLen(basePos, len);
 
 	InvalidateSignatures();
-
-	if (len > kATCassetteDataLimit - mWriteCursor)
-		len = kATCassetteDataLimit - mWriteCursor;
-
-	// if write cursor is beyond end, extend start to current end
-	if (mWriteCursor > mDataLength) {
-		const uint32 extendLen = mWriteCursor - mDataLength;
-
-		mWriteCursor = mDataLength;
-		len += extendLen;
-	}
-
-	AT_CASSETTE_VALIDATE();
-
-	// check if we have a prev block
-	if (mCurrentWriteBlockIndex < 0) {
-		if (mWriteCursor)
-			mCurrentWriteBlockIndex = (sint32)GetSortedDataBlock(mWriteCursor - 1);
-		else
-			mCurrentWriteBlockIndex = 0;
-	}
-
-	// check if the current write block is compatible
-	if (!mDataBlocks[mCurrentWriteBlockIndex].mpImageBlock || mDataBlocks[mCurrentWriteBlockIndex].mpImageBlock->GetBlockType() != kATCassetteImageBlockType_Blank) {
-		// split it and insert a new blank block 
-		mCurrentWriteBlockIndex = SplitBlock(mCurrentWriteBlockIndex, mWriteCursor);
-
-		if (!mDataBlocks[mCurrentWriteBlockIndex].mpImageBlock || mDataBlocks[mCurrentWriteBlockIndex].mpImageBlock->GetBlockType() != kATCassetteImageBlockType_Blank) {
-			auto *emptyBlock = new ATCassetteImageBlockBlank;
-			auto emptyBlockHolder = vdmakeautoptr(emptyBlock);
-
-			mImageBlocks.push_back(emptyBlock);
-			emptyBlockHolder.release();
-
-			// insert null block at start
-			mDataBlocks.insert(mDataBlocks.begin() + mCurrentWriteBlockIndex, SortedBlock { mWriteCursor, 0, emptyBlock });
-			++mDataBlockCount;
-		}
-	}
-
-	AT_CASSETTE_VALIDATE();
-
-	VDASSERT(mDataBlocks[mCurrentWriteBlockIndex].mpImageBlock->GetBlockType() == kATCassetteImageBlockType_Blank);
-
-	// advance write cursor
-	if (mPeakDirtyStart > mWriteCursor)
-		mPeakDirtyStart = mWriteCursor;
-
-	mWriteCursor += len;
-
-	if (mPeakDirtyEnd < mWriteCursor)
-		mPeakDirtyEnd = mWriteCursor;
-
-	// truncate valid overlapping blocks
-	const uint32 nextIndex = mCurrentWriteBlockIndex + 1;
-	for(;;) {
-		auto& nextBlock = mDataBlocks[nextIndex];
-
-		// stop if the next block no longer overlaps the write range
-		if (nextBlock.mStart >= mWriteCursor)
-			break;
-
-		// stop if the next block is the sentinel
-		if (!nextBlock.mpImageBlock) {
-			// extend the end of tape and stop
-			nextBlock.mStart = mWriteCursor;
-			mDataLength = mWriteCursor;
-			break;
-		}
-
-		// check if the next block is also blank -- if so, we can trivially merge with it
-		if (nextBlock.mpImageBlock->GetBlockType() != kATCassetteImageBlockType_Blank) {
-			// check if the next block is entirely contained in the write
-			// range
-			auto& nextNextBlock = mDataBlocks[nextIndex + 1];
-
-			if (nextNextBlock.mStart > mWriteCursor) {
-				// no -- check if it is compatible
-				if (nextBlock.mpImageBlock->GetBlockType() != kATCassetteImageBlockType_Blank) {
-					// no -- truncate and stop
-					const uint32 truncOffset = mWriteCursor - nextBlock.mStart;
-
-					nextBlock.mOffset += truncOffset;
-					nextBlock.mStart = mWriteCursor;
-					break;
-				}
-			}
-
-			// yes -- fall through to delete the existing block (merge)
-		}
-
-		// yes -- delete the next block and continue
-		mDataBlocks.erase(mDataBlocks.begin() + nextIndex);
-		--mDataBlockCount;
-	}
-
-	AT_CASSETTE_VALIDATE();
 }
 
-void ATCassetteImage::WriteStdData(uint8 byte, uint32 baudRate) {
+void ATCassetteImage::WriteStdData(ATCassetteWriteCursor& cursor, uint8 byte, uint32 baudRate, bool insert) {
 	if (!baudRate)
 		return;
+	
+	const uint32 basePos = cursor.mPosition;
+	auto acursor = cursor;
 
-	// if write cursor is beyond end, insert an intermediate blank area
-	if (mWriteCursor > mDataLength) {
-		const uint32 extendLen = mWriteCursor - mDataLength;
+	mDataTrack.WriteStdData(cursor, &byte, 1, baudRate, insert);
 
-		WriteBlankData(extendLen);
-	}
+	if (mbAudioCreated)
+		mAudioTrack.WriteStdData(acursor, &byte, 1, baudRate, insert);
 
-	// check if we would go beyond end (with suitable buffer)
-	if (mWriteCursor >= kATCassetteDataLimit || kATCassetteDataLimit - mWriteCursor < kATCassetteDataWriteByteBuffer)
-		return;
-
-	AT_CASSETTE_VALIDATE();
+	if (insert)
+		InvalidatePeaksStartingAt(basePos);
+	else
+		InvalidatePeaksInRangeEnd(basePos, cursor.mPosition);
 
 	InvalidateSignatures();
-
-	// check if we have a prev block
-	if (mCurrentWriteBlockIndex < 0) {
-		if (mWriteCursor) {
-			mCurrentWriteBlockIndex = (sint32)GetSortedDataBlock(mWriteCursor - 1);
-
-			auto& prevBlock = mDataBlocks[mCurrentWriteBlockIndex];
-
-			// split the previous block, even if it's a standard data block
-			++mCurrentWriteBlockIndex;
-
-			auto *emptyBlock = new ATCassetteImageDataBlockStd;
-			auto emptyBlockHolder = vdmakeautoptr(emptyBlock);
-			
-			emptyBlock->Init(baudRate);
-
-			mImageBlocks.push_back(emptyBlock);
-			emptyBlockHolder.release();
-
-			const SortedBlock newBlocks[] = {
-				{ mWriteCursor, 0, emptyBlock },
-				{ mWriteCursor, mWriteCursor - prevBlock.mStart, prevBlock.mpImageBlock}
-			};
-
-			mDataBlocks.insert(mDataBlocks.begin() + mCurrentWriteBlockIndex,
-				std::begin(newBlocks), std::end(newBlocks));
-
-			mDataBlockCount += 2;
-		} else {
-			// insert new block at start
-			mCurrentWriteBlockIndex = 0;
-
-			auto *emptyBlock = new ATCassetteImageDataBlockStd;
-			auto emptyBlockHolder = vdmakeautoptr(emptyBlock);
-
-			emptyBlock->Init(baudRate);
-
-			mImageBlocks.push_back(emptyBlock);
-			emptyBlockHolder.release();
-
-			mDataBlocks.insert(mDataBlocks.begin(),
-				SortedBlock { 0, 0, emptyBlock } );
-
-			++mDataBlockCount;
-		}
-	} else {
-		// we have an existing block -- check if the baud rate is compatible
-		auto *curBlock = mDataBlocks[mCurrentWriteBlockIndex].mpImageBlock;
-
-		if (curBlock->GetBlockType() != kATCassetteImageBlockType_Std
-			|| static_cast<ATCassetteImageDataBlockStd *>(curBlock)->GetBaudRate() != baudRate)
-		{
-			// not compatible -- split the existing block if necessary, then insert a new block
-			mCurrentWriteBlockIndex = SplitBlock(mCurrentWriteBlockIndex, mWriteCursor);
-
-			VDASSERT(mDataBlocks[mCurrentWriteBlockIndex].mStart == mWriteCursor);
-
-			auto *emptyBlock = new ATCassetteImageDataBlockStd;
-			auto emptyBlockHolder = vdmakeautoptr(emptyBlock);
-
-			emptyBlock->Init(baudRate);
-
-			mImageBlocks.push_back(emptyBlock);
-			emptyBlockHolder.release();
-
-			mDataBlocks.insert(mDataBlocks.begin() + mCurrentWriteBlockIndex,
-				SortedBlock { mWriteCursor, 0, emptyBlock } );
-
-			++mDataBlockCount;
-		}
-	}
-
-	// add the new data
-	auto *dataBlockPtr = mDataBlocks[mCurrentWriteBlockIndex].mpImageBlock;
-	VDASSERT(dataBlockPtr->GetBlockType() == kATCassetteImageBlockType_Std);
-
-	auto *dataBlock = static_cast<ATCassetteImageDataBlockStd *>(dataBlockPtr);
-
-	VDASSERT(mDataBlocks[mCurrentWriteBlockIndex].mOffset == 0);
-	VDASSERT(dataBlock->GetBlockType() == kATCassetteImageBlockType_Std);
-	dataBlock->AddData(&byte, 1);
-
-	// advance write cursor
-	const uint32 newWriteCursor = mDataBlocks[mCurrentWriteBlockIndex].mStart + dataBlock->GetDataSampleCount();
-	VDASSERT(mWriteCursor <= newWriteCursor);
-
-	if (mPeakDirtyStart > mWriteCursor)
-		mPeakDirtyStart = mWriteCursor;
-
-	if (mPeakDirtyEnd < newWriteCursor)
-		mPeakDirtyEnd = newWriteCursor;
-
-	mWriteCursor = newWriteCursor;
-
-	// truncate valid overlapping blocks
-	const uint32 nextIndex = mCurrentWriteBlockIndex + 1;
-	for(;;) {
-		auto& nextBlock = mDataBlocks[nextIndex];
-
-		// stop if the next block no longer overlaps the write range
-		if (nextBlock.mStart >= mWriteCursor)
-			break;
-
-		// stop if the next block is the sentinel
-		if (!nextBlock.mpImageBlock) {
-			// extend end of tape and stop
-			nextBlock.mStart = mWriteCursor;
-			mDataLength = mWriteCursor;
-			break;
-		}
-
-		// check if the next block is entirely contained in the write
-		// range
-		auto& nextNextBlock = mDataBlocks[nextIndex + 1];
-
-		if (nextNextBlock.mStart > mWriteCursor) {
-			// no -- truncate and stop, even if it is also a data block
-			const uint32 truncOffset = nextNextBlock.mStart - mWriteCursor;
-
-			nextBlock.mOffset += truncOffset;
-			nextBlock.mStart = mWriteCursor;
-			break;
-		}
-
-		// yes -- delete the next block and continue
-		mDataBlocks.erase(mDataBlocks.begin() + nextIndex);
-		--mDataBlockCount;
-	}
-
-	AT_CASSETTE_VALIDATE();
 }
 
-void ATCassetteImage::WriteFSKPulse(bool polarity, uint32 samples) {
-	// if write cursor is beyond end, insert an intermediate blank area
-	if (mWriteCursor > mDataLength) {
-		const uint32 extendLen = mWriteCursor - mDataLength;
+void ATCassetteImage::WritePulse(ATCassetteWriteCursor& cursor, bool polarity, uint32 samples, bool insert, bool fsk) {
+	const ATTapePieceTable::Pulse pulse { polarity, samples };
 
-		WriteBlankData(extendLen);
-	}
+	const uint32 basePos = cursor.mPosition;
+	auto acursor = cursor;
 
-	// check if we have a prev block
-	if (mCurrentWriteBlockIndex < 0) {
-		if (mWriteCursor) {
-			mCurrentWriteBlockIndex = (sint32)GetSortedDataBlock(mWriteCursor - 1);
+	mDataTrack.WritePulses(cursor, &pulse, 1, samples, insert, fsk);
 
-			auto& prevBlock = mDataBlocks[mCurrentWriteBlockIndex];
+	if (mbAudioCreated)
+		mAudioTrack.WritePulses(acursor, &pulse, 1, samples, insert, fsk);
 
-			// split the previous block, even if it's an FSK data block
-			++mCurrentWriteBlockIndex;
+	if (insert)
+		InvalidatePeaksStartingAt(basePos);
+	else
+		InvalidatePeaksInRangeLen(basePos, samples);
 
-			auto *emptyBlock = new ATCassetteImageBlockRawData;
-			auto emptyBlockHolder = vdmakeautoptr(emptyBlock);
-
-			mImageBlocks.push_back(emptyBlock);
-			emptyBlockHolder.release();
-
-			const SortedBlock newBlocks[] = {
-				{ mWriteCursor, 0, emptyBlock },
-				{ mWriteCursor, mWriteCursor - prevBlock.mStart, prevBlock.mpImageBlock}
-			};
-
-			mDataBlocks.insert(mDataBlocks.begin() + mCurrentWriteBlockIndex,
-				std::begin(newBlocks), std::end(newBlocks));
-
-			mDataBlockCount += 2;
-		} else {
-			// insert new block at start
-			mCurrentWriteBlockIndex = 0;
-
-			auto *emptyBlock = new ATCassetteImageBlockRawData;
-			auto emptyBlockHolder = vdmakeautoptr(emptyBlock);
-
-			mImageBlocks.push_back(emptyBlock);
-			emptyBlockHolder.release();
-
-			mDataBlocks.insert(mDataBlocks.begin(),
-				SortedBlock { 0, 0, emptyBlock } );
-
-			++mDataBlockCount;
-		}
-	}
-
-	// add the new data
-	auto *fskBlock = static_cast<ATCassetteImageBlockRawData *>(mDataBlocks[mCurrentWriteBlockIndex].mpImageBlock);
-
-	VDASSERT(mDataBlocks[mCurrentWriteBlockIndex].mOffset == 0);
-	VDASSERT(fskBlock->GetBlockType() == kATCassetteImageBlockType_FSK);
-	fskBlock->AddFSKPulseSamples(polarity, samples);
-
-	// advance write cursor
-	mWriteCursor = mDataBlocks[mCurrentWriteBlockIndex].mStart + fskBlock->GetDataSampleCount();
-
-	// truncate valid overlapping blocks
-	const uint32 nextIndex = mCurrentWriteBlockIndex + 1;
-	for(;;) {
-		auto& nextBlock = mDataBlocks[nextIndex];
-
-		// stop if the next block no longer overlaps the write range
-		if (nextBlock.mStart >= mWriteCursor)
-			break;
-
-		// stop if the next block is the sentinel
-		if (!nextBlock.mpImageBlock) {
-			// extend end of tape and stop
-			nextBlock.mStart = mWriteCursor;
-			mDataLength = mWriteCursor;
-			break;
-		}
-
-		// check if the next block is entirely contained in the write
-		// range
-		auto& nextNextBlock = mDataBlocks[nextIndex + 1];
-
-		if (nextNextBlock.mStart < mWriteCursor) {
-			// no -- check if it is compatible
-			if (nextBlock.mpImageBlock->GetBlockType() != kATCassetteImageBlockType_Blank) {
-				// no -- truncate and stop
-				const uint32 truncOffset = nextNextBlock.mStart - mWriteCursor;
-
-				nextBlock.mOffset += truncOffset;
-				nextBlock.mStart = mWriteCursor;
-				break;
-			}
-
-			// yes -- fall through to delete the existing block (merge)
-		}
-
-		// yes -- delete the next block and continue
-		mDataBlocks.erase(mDataBlocks.begin() + nextIndex);
-		--mDataBlockCount;
-	}
-
+	// clear checksums as we just modified the tape
 	InvalidateSignatures();
+}
+
+uint32 ATCassetteImage::EstimateWriteStdData(ATCassetteWriteCursor& cursor, uint32 numBytes, uint32 baudRate) const {
+	if (!baudRate)
+		return cursor.mPosition;
+	
+	return mDataTrack.EstimateWriteStdData(cursor, numBytes, baudRate);
+}
+
+uint32 ATCassetteImage::InsertRange(uint32 start, const IATTapeImageClip& clip0) {
+	const ATTapeImageClip& clip = static_cast<const ATTapeImageClip&>(clip0);
+
+	const auto afterPos = mDataTrack.InsertRange(start, clip.mDataSpans);
+
+	if (clip.mbHasAudioSpans || mbAudioCreated) {
+		CreateAudioTrack();
+		mAudioTrack.InsertRange(start, clip.mAudioSpans);
+	}
+
+	InvalidatePeaksStartingAt(start);
+	InvalidateSignatures();
+
+	return afterPos;
+}
+
+uint32 ATCassetteImage::ReplaceRange(uint32 start, const IATTapeImageClip& clip0) {
+	const ATTapeImageClip& clip = static_cast<const ATTapeImageClip&>(clip0);
+
+	const auto afterPos = mDataTrack.ReplaceRange(start, clip.mDataSpans);
+
+	if (clip.mbHasAudioSpans || mbAudioCreated) {
+		CreateAudioTrack();
+		mAudioTrack.ReplaceRange(start, clip.mAudioSpans);
+	}
+
+	InvalidatePeaksInRangeLen(start, clip.GetLength());
+	InvalidateSignatures();
+
+	return afterPos;
+}
+
+void ATCassetteImage::DeleteRange(uint32 start, uint32 end) {
+	mDataTrack.DeleteRange(start, end);
+
+	if (mbAudioCreated)
+		mAudioTrack.DeleteRange(start, end);
+
+	InvalidatePeaksStartingAt(start);
+	InvalidateSignatures();
+}
+
+vdrefptr<IATTapeImageClip> ATCassetteImage::CopyRange(uint32 start, uint32 len) {
+	vdrefptr clip { new ATTapeImageClip };
+
+	mDataTrack.CopyRange(start, len, clip->mDataSpans);
+
+	if (mbAudioCreated) {
+		clip->mbHasAudioSpans = true;
+		mAudioTrack.CopyRange(start, len, clip->mAudioSpans);
+	}
+
+	return static_cast<vdrefptr<IATTapeImageClip>>(clip);
+}
+
+uint32 ATCassetteImage::GetWaveformLength() const {
+	return (uint32)mWaveforms[0].size();
+}
+
+uint32 ATCassetteImage::ReadWaveform(uint8 *dst, uint32 pos, uint32 len, bool direct) const {
+	const auto& wf = mWaveforms[direct ? 1 : 0];
+	const uint32 wflen = (uint32)wf.size();
+
+	if (pos >= wflen)
+		return 0;
+
+	len = std::min<uint32>(len, wflen - pos);
+	memcpy(dst, &wf[pos], len);
+	return len;
+}
+
+ATCassetteImage::MinMax ATCassetteImage::ReadWaveformMinMax(uint32 pos, uint32 len, bool direct) const {
+	const auto& wf = mWaveforms[direct ? 1 : 0];
+	const uint32 n = (uint32)wf.size();
+
+	if (pos >= n || !len)
+		return MinMax{};
+
+	if (len > n - pos)
+		len = n - pos;
+
+	uint8 mn = 255;
+	uint8 mx = 0;
+
+	const uint8 *VDRESTRICT src = &wf[pos];
+	for(uint32 i = 0; i < len; ++i) {
+		uint8 v = src[i];
+
+		if (mn > v)
+			mn = v;
+
+		if (mx < v)
+			mx = v;
+	}
+
+	return MinMax{mn, mx};
 }
 
 void ATCassetteImage::InitNew() {
-	mCachedDataBlockIndex = 0;
-	mWriteCursor = 0;
-	mCurrentWriteBlockIndex = -1;
-	mDataLength = 0;
-	mAudioLength = 0;
-
-	mDataBlocks.assign( { SortedBlock { 0, 0, nullptr } });
-	mDataBlockCount = 0;
-
-	mAudioBlocks.assign({ SortedBlock { 0, 0, nullptr } });
-	mAudioBlockCount = 1;
+	mDataTrack.Clear();
+	mAudioTrack.Clear();
+	mbAudioCreated = false;
 }
 
 void ATCassetteImage::Load(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, const ATCassetteLoadContext& ctx) {
@@ -1035,13 +894,13 @@ void ATCassetteImage::Load(IVDRandomAccessStream& file, IVDRandomAccessStream *a
 
 	file.Seek(0);
 
-	mCachedDataBlockIndex = 0;
-	mWriteCursor = 0;
-	mCurrentWriteBlockIndex = -1;
+	InitNew();
 
 	uint32 baseid = VDFromLE32(basehdr);
 	if (baseid == VDMAKEFOURCC('R', 'I', 'F', 'F'))
-		return ParseWAVE(file, afile, ctx.mbUseTurboPrefilter);
+		return ParseWAVE(file, afile, ctx.mTurboDecodeAlgorithm, false, ctx.mbStoreWaveform);
+	else if (baseid == VDMAKEFOURCC('f', 'L', 'a', 'C'))
+		return ParseWAVE(file, afile, ctx.mTurboDecodeAlgorithm, true, ctx.mbStoreWaveform);
 
 	if (afile)
 		throw MyError("Cannot write analysis file for this cassette format.");
@@ -1069,7 +928,7 @@ void ATCassetteImage::SaveCAS(IVDRandomAccessStream& file) {
 	vdfastvector<uint32> pulses32;
 	vdfastvector<uint16> pulses16;
 
-	for(const SortedBlock& blk : mDataBlocks) {
+	for(const SortedBlock& blk : mDataTrack.mSpans) {
 		if (!blk.mpImageBlock)
 			continue;
 
@@ -1318,7 +1177,7 @@ void ATCassetteImage::SaveWAV(IVDRandomAccessStream& file) {
 	static constexpr uint32 kPhaseInc1 = (uint32)(uint64)(0.5 + 5326.7 / kATCassetteDataSampleRate * 4294967296.0);
 	uint32 phaseAccum = 0;
 	uint32 pos = 0;
-	uint32 len = ((uint64)mDataLength << 32) / kSourceStepX32;
+	uint32 len = ((uint64)mDataTrack.mLength << 32) / kSourceStepX32;
 	bool currentBit = true;
 	uint32 currentPhaseInc = kPhaseInc1;
 
@@ -1360,75 +1219,6 @@ void ATCassetteImage::SaveWAV(IVDRandomAccessStream& file) {
 	file.Write(header, sizeof header);
 }
 
-uint32 ATCassetteImage::GetSortedDataBlock(uint32 pos) const {
-	uint32 i = 0;
-	uint32 j = mDataBlockCount;
-
-	if (pos < mDataBlocks[mCachedDataBlockIndex].mStart)
-		j = mCachedDataBlockIndex;
-	else if (pos >= mDataBlocks[mCachedDataBlockIndex + 1].mStart)
-		i = mCachedDataBlockIndex + 1;
-	else
-		return mCachedDataBlockIndex;
-
-	for(;;) {
-		uint32 mid = (i + j) >> 1;
-		const SortedBlock *p = &mDataBlocks[mid];
-
-		if (i + 1 >= j) {
-			if (p->mpImageBlock)
-				mCachedDataBlockIndex = mid;
-
-			return mid;
-		}
-
-		if (pos < p->mStart)
-			j = mid;
-		else
-			i = mid;
-	}
-}
-
-uint32 ATCassetteImage::SplitBlock(uint32 startBlockIdx, uint32 splitPt) {
-	VDASSERT(mDataBlocks.size() == mDataBlockCount + 1);
-	VDASSERT(startBlockIdx <= mDataBlockCount);
-
-	const uint32 pos1 = mDataBlocks[startBlockIdx].mStart;
-
-	VDASSERT(splitPt >= pos1);
-
-	if (splitPt == pos1)
-		return startBlockIdx;
-
-	const uint32 pos2 = mDataBlocks[startBlockIdx + 1].mStart;
-	VDASSERT(splitPt <= pos2);
-
-	if (splitPt != pos2) {
-		VDASSERT(startBlockIdx < mDataBlockCount);
-
-		SortedBlock newBlock = mDataBlocks[startBlockIdx];
-
-		newBlock.mStart = splitPt;
-		newBlock.mOffset = splitPt - pos1;
-
-		mDataBlocks.insert(mDataBlocks.begin() + startBlockIdx + 1, newBlock);
-		++mDataBlockCount;
-
-		AT_CASSETTE_VALIDATE();
-	}
-	
-	return startBlockIdx + 1;
-}
-
-void ATCassetteImage::Validate() {
-	VDASSERT(mDataBlocks.size() == mDataBlockCount + 1);
-	VDASSERT(!mDataBlocks.back().mpImageBlock);
-	VDASSERT(mDataLength == mDataBlocks.back().mStart);
-
-	VDASSERT(std::is_sorted(mDataBlocks.begin(), mDataBlocks.end(),
-		[](const SortedBlock& a, const SortedBlock& b) { return a.mStart < b.mStart; }));
-}
-
 namespace {
 	class PeakMapProcessor {
 	public:
@@ -1463,7 +1253,6 @@ namespace {
 	}
 
 	void PeakMapProcessor::Process(const sint16 *samples, uint32 n) {
-		uint32 peakSamples = 0;
 		while(n) {
 			while(mInputSamplesLeft == 0) {
 				mRateAccum += mRateAccumInc;
@@ -1525,77 +1314,20 @@ namespace {
 	}
 }
 
-void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, bool enablePrefilter) {
-	WaveFormatEx wf = {0};
-	sint64 limit = file.Length();
-	sint64 datapos = -1;
-	uint32 datalen = 0;
-
+void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, ATCassetteTurboDecodeAlgorithm directDecodeAlgorithm, bool isFLAC, bool storeWaveform) {
 	ATProgress progress;
 
-	for(;;) {
-		uint32 hdr[2];
-
-		if (file.Pos() >= limit)
-			break;
-
-		if (8 != file.ReadData(hdr, 8))
-			break;
-
-		uint32 fcc = hdr[0];
-		uint32 len = VDFromLE32(hdr[1]);
-
-		switch(fcc) {
-		case VDMAKEFOURCC('R', 'I', 'F', 'F'):
-			limit = file.Pos() + len;
-			if (len < 4)
-				throw MyError("'%ls' is an invalid WAV file.", file.GetNameForError());
-
-			file.Read(hdr, 4);
-			if (hdr[0] != VDMAKEFOURCC('W', 'A', 'V', 'E'))
-				throw MyError("'%ls' is not a WAV file.", file.GetNameForError());
-
-			len = 0;
-			break;
-
-		case VDMAKEFOURCC('f', 'm', 't', ' '):
-			{
-				uint32 toread = std::min<uint32>(sizeof(wf), len);
-
-				file.Read(&wf, toread);
-				len -= toread;
-
-				// validate format
-				if (wf.mFormatTag != kWAVE_FORMAT_PCM
-					|| (wf.mBitsPerSample != 8 && wf.mBitsPerSample != 16)
-					|| (wf.mChannels != 1 && wf.mChannels != 2)
-					|| (wf.mBlockAlign != wf.mBitsPerSample * wf.mChannels / 8)
-					|| wf.GetSamplesPerSec() < 8000)
-				{
-					throw MyError("'%ls' uses an unsupported WAV format.", file.GetNameForError());
-				}
-			}
-			break;
-
-		case VDMAKEFOURCC('d', 'a', 't', 'a'):
-			datapos = file.Pos();
-			datalen = len;
-			break;
-		}
-
-		if (len)
-			file.Seek(file.Pos() + len + (len & 1));
-	}
-
-	if (!wf.mBlockAlign || datapos < 0)
-		throw MyError("'%ls' is not a valid WAV file.", file.GetNameForError());
+	vdautoptr audioReader(isFLAC ? ATCreateAudioReaderFLAC(file, g_ATCVTapeFLACVerifyMD5) : ATCreateAudioReaderWAV(file));
 
 	// These are hard-coded into the 410 hardware.
 	ATCassetteDecoderFSK	fskDecoder;
-	ATCassetteDecoderDirect	directDecoder;
+	ATCassetteDecoderTurbo	directDecoder;
+	directDecoder.Init(directDecodeAlgorithm, afile != nullptr || storeWaveform);
+
+	const ATAudioReadFormatInfo audioFormat = audioReader->GetFormatInfo();
 
 	uint64	resampAccum = 0;
-	uint64	resampStep = VDRoundToInt64((double)wf.GetSamplesPerSec() / (double)kATCassetteImageAudioRate * 4294967296.0);
+	uint64	resampStep = VDRoundToInt64((double)audioFormat.mSamplesPerSec / (double)kATCassetteImageAudioRate * 4294967296.0);
 
 	sint16	inputBuffer[512][2] = {0};
 	uint32	inputBufferLevel = 0;
@@ -1604,7 +1336,7 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 	uint32	outputBufferIdx = 0;
 	uint32	outputBufferLevel = 0;
 
-	uint32	inputSamplesLeft = datalen / wf.mBlockAlign;
+	uint32	inputSamplesLeft = audioReader->GetFrameCount();
 
 	static const uint8 kHeader[]={
 		(uint8)'R', (uint8)'I', (uint8)'F', (uint8)'F',
@@ -1639,28 +1371,22 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 	uint32 analysisRepeatCounter = (uint32)((kAnalysisRepeatIntervalF32 + 0x80000000U) >> 32);
 	uint64 analysisRepeatCounterFrac = (uint32)(kAnalysisRepeatIntervalF32 + 0x80000000U);	// yes, this truncates
 
+	const bool needAnalysis = storeWaveform || afile != nullptr;
 	vdblock<float> analysisBuffer;
+	if (needAnalysis)
+		analysisBuffer.resize(4096 * 6);
+
 	vdautoptr<VDBufferedWriteStream> analysisWriteStream;
 	if (afile) {
-		analysisBuffer.resize(4096 * 6);
 		analysisWriteStream = new VDBufferedWriteStream(afile, 65536);
 
 		memcpy(header, kHeader, sizeof header);
 		analysisWriteStream->Write(header, sizeof header);
 	}
 
-	file.Seek(datapos);
+	vdrefptr pAudioBlock { new ATCassetteImageBlockRawAudio };
 
-	mImageBlocks.resize(2, (ATCassetteImageBlock *)NULL);
-
-	ATCassetteImageBlockRawData *pDataBlock = nullptr;
-	mDataBlocks.clear();
-	mDataBlockCount = 0;
-
-	ATCassetteImageBlockRawAudio *pAudioBlock = new ATCassetteImageBlockRawAudio;
-	mImageBlocks[1] = pAudioBlock;
-
-	progress.InitF((uint32)((uint64)datalen >> 10), L"Processed %uK / %uK", L"Processing raw waveform");
+	progress.InitF((uint32)(audioReader->GetDataSize() >> 10), L"Processed %uK / %uK", L"Processing raw waveform");
 
 	uint32 bitfieldOffset = 0;
 
@@ -1670,7 +1396,8 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 	bool outputTailAdded = false;
 	uint32 filterDiscardLeft = kFilterDelay;
 
-	PeakMapProcessor peakMapProcessor(wf.mChannels > 1, (double)wf.GetSamplesPerSec() / (double)kPeakSamplesPerSecond, mPeakMaps[1], mPeakMaps[0]);
+	PeakMapProcessor peakMapProcessor(audioFormat.mChannels > 1, (double)audioFormat.mSamplesPerSec / (double)kPeakSamplesPerSecond, mPeakMaps[1], mPeakMaps[0]);
+	vdfastvector<uint32> fskData;
 
 	for(;;) {
 		// check if we need to run the resampler
@@ -1684,19 +1411,10 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 
 				inputSamplesLeft -= toRead;
 
-				if (wf.mBlockAlign == 1) {
-					ReadMono8(inputBuffer[inputBufferLevel], file, toRead);
-				} else if (wf.mBlockAlign == 2) {
-					if (wf.mChannels == 1)
-						ReadMono16(inputBuffer[inputBufferLevel], file, toRead);
-					else
-						ReadStereo8(inputBuffer[inputBufferLevel], file, toRead);
-				} else if (wf.mBlockAlign == 4) {
-					ReadStereo16(inputBuffer[inputBufferLevel], file, toRead);
-				}
+				audioReader->ReadStereo16(inputBuffer[inputBufferLevel], toRead);
 	
 				// update progress UI
-				progress.Update((uint32)((uint64)(file.Pos() - datapos) >> 10));
+				progress.Update((uint32)(audioReader->GetDataPos() >> 10));
 
 				// update peak samples
 				peakMapProcessor.Process(&inputBuffer[inputBufferLevel][0], toRead);
@@ -1748,19 +1466,9 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 			outputBufferLevel = resampCount;
 		}
 
-		static_assert(kATCassetteAudioSamplesPerDataSample == 1, "Current decoder code requires 1:1 data samples.");
-
-		if (!pDataBlock) {
-			pDataBlock = new ATCassetteImageBlockRawData;
-			mImageBlocks.push_back(pDataBlock);
-
-			mDataBlocks.push_back(SortedBlock { mDataLength, 0, pDataBlock });
-		}
-
 		uint32 samplesToProcess = outputBufferLevel - outputBufferIdx;
 
 		if (samplesToProcess) {
-			bool discard = false;
 			if (filterDiscardLeft) {
 				if (samplesToProcess > filterDiscardLeft)
 					samplesToProcess = filterDiscardLeft;
@@ -1772,16 +1480,46 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 				fskDecoder.Process<false>(&outputBuffer[outputBufferIdx][1], samplesToProcess, &dummy, 0, nullptr);
 			} else {
 				// run the FSK decoder 12 samples ahead of the direct decoder
-				uint32 *dstFSK = ExtendBitfield(pDataBlock->mDataFSK, bitfieldOffset, samplesToProcess);
+				uint32 *dstFSK = ExtendBitfield(fskData, bitfieldOffset, samplesToProcess);
 
-				if (afile) {
+				if (needAnalysis) {
 					fskDecoder.Process<true>(&outputBuffer[outputBufferIdx + kFilterDelay][1], samplesToProcess, dstFSK, bitfieldOffset, analysisBuffer.data());
 				} else
 					fskDecoder.Process<false>(&outputBuffer[outputBufferIdx + kFilterDelay][1], samplesToProcess, dstFSK, bitfieldOffset, nullptr);
 
 				// run the direct decoder 12 samples behind the FSK decoder
-				uint32 *dstRaw = ExtendBitfield(pDataBlock->mDataRaw, bitfieldOffset, samplesToProcess);
-				directDecoder.Process(enablePrefilter, &outputBuffer[outputBufferIdx][1], samplesToProcess, dstRaw, bitfieldOffset, analysisBuffer.data());
+				directDecoder.Process(&outputBuffer[outputBufferIdx][1], samplesToProcess, analysisBuffer.data());
+
+				if (storeWaveform) {
+					// The channel allocations:
+					//	ch0: FSK - input value
+					//	ch1: FSK - space detect
+					//	ch2: FSK - mark detect
+					//	ch3: FSK - comparator output
+					//	ch4: Direct - post-filter output
+					//	ch5: Direct - decoder output
+
+					size_t basePos = mWaveforms[0].size();
+
+					for(int i=0; i<2; ++i) {
+						mWaveforms[i].resize(basePos + samplesToProcess);
+
+						uint8 *VDRESTRICT dst = mWaveforms[i].data() + basePos;
+						const float *VDRESTRICT src = analysisBuffer.data() + (i ? 4 : 0);
+
+						for(uint32 j = 0; j < samplesToProcess; ++j) {
+							float v = src[j * 6] * 127.0f + 128.5f;
+
+							if (v < 0.0f)
+								v = 0.0f;
+
+							if (v > 255.0f)
+								v = 255.0f;
+
+							dst[j] = (uint8)v;
+						}
+					}
+				}
 
 				if (afile) {
 					const float *src = analysisBuffer.data();
@@ -1817,26 +1555,49 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 	}
 
 	// finalize data stream
-	if (pDataBlock) {
-		pDataBlock->mDataLength = ((uint32)pDataBlock->mDataFSK.size() << 5) + bitfieldOffset - (bitfieldOffset ? 32 : 0);
+	if (!fskData.empty()) {
+		const uint32 dataSamples = ((uint32)fskData.size() << 5) + bitfieldOffset - (bitfieldOffset ? 32 : 0);
 
-		mDataLength += pDataBlock->mDataLength;
+		vdrefptr<ATCassetteImageBlockRawData> dataBlock { new ATCassetteImageBlockRawData };
+		dataBlock->mDataRaw = directDecoder.Finalize();
+		dataBlock->mDataFSK = std::move(fskData);
+		dataBlock->mDataLength = dataSamples;
+
+		mDataTrack.mSpans.insert(mDataTrack.mSpans.begin(), SortedBlock { 0, 0, kATCassetteImageBlockType_FSK, dataBlock });
+		dataBlock.release();
+
+		mDataTrack.mLength = dataSamples;
+		++mDataTrack.mSpanCount;
 	}
 
-	mDataBlockCount = (uint32)mDataBlocks.size();
-	mDataBlocks.push_back(SortedBlock { mDataLength });
+	mDataTrack.mSpans.back().mStart = mDataTrack.mLength;
 
 	// finalize audio stream
-	mAudioLength = pAudioBlock->mAudioLength = (uint32)pAudioBlock->mAudio.size();
+	mAudioTrack.mLength = pAudioBlock->mAudioLength = (uint32)pAudioBlock->mAudio.size();
 
-	mAudioBlocks.resize(2);
-	mAudioBlocks[0].mStart = 0;
-	mAudioBlocks[0].mOffset = 0;
-	mAudioBlocks[0].mpImageBlock = pAudioBlock;
-	mAudioBlocks[1].mStart = mAudioLength;
-	mAudioBlocks[1].mOffset = 0;
-	mAudioBlocks[1].mpImageBlock = NULL;
-	mAudioBlockCount = 1;
+	mAudioTrack.mSpans.resize(2, {});
+	mAudioTrack.mSpans[0] = ATTapeImageSpan {
+		.mStart = 0,
+		.mOffset = 0,
+		.mBlockType = pAudioBlock->GetBlockType(),
+		.mpImageBlock = pAudioBlock.release(),
+	};
+
+	mAudioTrack.mSpans[1] = ATTapeImageSpan {
+		.mStart = mAudioTrack.mLength,
+		.mOffset = 0,
+		.mBlockType = kATCassetteImageBlockType_End,
+		.mpImageBlock = nullptr,
+	};
+
+	mAudioTrack.mSpanCount = 1;
+	mbAudioCreated = true;
+	mbAudioPresent = (audioFormat.mChannels > 1);
+
+	if (!mbAudioPresent)
+		mPeakMaps[1] = mPeakMaps[0];
+
+	ValidatePeakMaps();
 
 	if (afile) {
 		analysisWriteStream->Flush();
@@ -1861,7 +1622,7 @@ namespace {
 
 		uint32 GetCRC() { return mCRC.CRC(); }
 		ATChecksumSHA256 GetSHA256() { return mSHA256.Finalize(); }
-		sint64 Pos() { return mPos; }
+		sint64 Pos() { return mPos + mBufferPos; }
 
 		void Read(void *buffer, uint32 bytes);
 		sint32 ReadData(void *buffer, uint32 bytes);
@@ -1885,7 +1646,7 @@ namespace {
 	void ChecksumStream::Read(void *buffer, uint32 bytes) {
 		sint64 pos = mPos;
 		if (bytes != ReadData(buffer, bytes))
-			throw MyError("Failed to read %u bytes at position %lld in file.", bytes, pos);
+			throw MyError("Failed to read %u bytes at position %lld in file.", bytes, pos + mBufferPos);
 	}
 
 	sint32 ChecksumStream::ReadData(void *buffer, uint32 bytes) {
@@ -1926,6 +1687,7 @@ namespace {
 		if (actual <= 0)
 			return false;
 
+		mPos += mBufferPos;
 		mBufferPos = 0;
 		mBufferLevel = (uint32)actual;
 
@@ -1944,35 +1706,21 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 	ATProgress progress;
 	progress.InitF((uint32)((uint64)cs.Length() >> 10), L"Processing %uK of %uK", L"Processing CAS file");
 
-	mDataLength = 0;
-
-	vdfastvector<ATCassetteImageDataBlockStd *> dataBlocks;
-
-	bool lastIsBlank = false;
-	bool lastIsFSK = false;
-	bool lastIsData = false;
-	uint32 lastBaudRate = 0;
+	ATCassetteWriteCursor cursor;
 
 	auto addGap = [&,this](float seconds) {
 		const uint32 samples = (uint32)(kATCassetteDataSampleRate * seconds);
 
-		if (!samples)
-			return;
-
-		if (!lastIsBlank) {
-			lastIsBlank = true;
-			lastIsFSK = false;
-			lastIsData = false;
-
-			mImageBlocks.push_back(new ATCassetteImageBlockBlank);
-			mDataBlocks.push_back({ mDataLength, 0, mImageBlocks.back() });
-		}
-
-		mDataLength += samples;
+		if (!mDataTrack.WriteBlankData(cursor, samples, false))
+			throw ATCassetteTooLongException();
 	};
 
 	// enforce at least a 10 second mark tone at beginning of tape
 	float minGap = 10.0f;
+
+	// subsample accumulator to increase precision due to mismatch between CAS rate
+	// and our data rate
+	uint64 subSampleAccum = 0;
 
 	for(;;) {
 		progress.Update((uint32)((uint64)cs.Pos() >> 10));
@@ -2006,7 +1754,7 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 				const sint32 gapms = hdr.aux1 + ((uint32)hdr.aux2 << 8);
 
 				if (g_ATLCCasImage.IsEnabled()) {
-					float pos = (float)mDataLength / (float)kATCassetteDataSampleRate;
+					float pos = (float)mDataTrack.mLength / (float)kATCassetteDataSampleRate;
 					int mins = (int)(pos / 60.0f);
 					float secs = pos - (float)mins * 60.0f;
 
@@ -2018,38 +1766,14 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 
 				// encode data bytes
 				if (len > 0) {
-					ATCassetteImageDataBlockStd *dataBlock = nullptr;
-					
-					if (lastIsData && lastBaudRate == baudRate)
-						dataBlock = static_cast<ATCassetteImageDataBlockStd *>(mDataBlocks.back().mpImageBlock);
-
-					if (!dataBlock) {
-						dataBlock = new ATCassetteImageDataBlockStd;
-						mImageBlocks.push_back(dataBlock);
-						mDataBlocks.push_back({ mDataLength, 0, dataBlock });
-						dataBlocks.push_back(dataBlock);
-						dataBlock->Init(baudRate);
-
-						lastBaudRate = baudRate;
-						lastIsBlank = false;
-						lastIsData = true;
-						lastIsFSK = false;
-					}
-
 					while(len > 0) {
 						auto [p, tc] = cs.LockRead(len);
 
-						dataBlock->AddData((const uint8 *)p, tc);
+						if (!mDataTrack.WriteStdData(cursor, (const uint8 *)p, tc, baudRate, false))
+							throw ATCassetteTooLongException();
 
 						len -= tc;
 					}
-
-					uint64 newDataLength = mDataBlocks.back().mStart + dataBlock->GetDataSampleCount64();
-
-					if (newDataLength > kATCassetteDataLimit)
-						throw ATCassetteTooLongException();
-
-					mDataLength = (uint32)newDataLength;
 				}
 				break;
 			}
@@ -2068,43 +1792,37 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 
 				// encode FSK bits
 				if (len > 0) {
-					ATCassetteImageBlockRawData *fskBlock = nullptr;
-					
-					if (lastIsFSK)
-						fskBlock = static_cast<ATCassetteImageBlockRawData *>(mDataBlocks.back().mpImageBlock);
-
-					if (!fskBlock) {
-						fskBlock = new ATCassetteImageBlockRawData;
-						mImageBlocks.push_back(fskBlock);
-						mDataBlocks.push_back({ mDataLength, 0, fskBlock });
-
-						lastIsBlank = false;
-						lastIsData = false;
-						lastIsFSK = true;
-					}
-
 					// FSK blocks can easily exceed the data limit even within a single block, so we
 					// monitor the length on the fly. Note that we might already have gone over a little
 					// bit due to addGap(); we just ignore that, knowing that it'll be caught later.
-					const uint32 maxBlockLen = mDataLength < kATCassetteDataLimit ? kATCassetteDataLimit - mDataLength : 0;
+					const uint32 numPulses = len >> 1;
+					uint32 numSamples = 0;
+
+					vdblock<uint16> pulseWidths(numPulses);
+					vdblock<ATTapePieceTable::Pulse> fskPulses(numPulses);
+
+					cs.Read(pulseWidths.data(), numPulses * 2);
+
 					bool polarity = false;
-					const uint32 transitions = len >> 1;
+					for(uint32 i = 0; i < numPulses; ++i) {
+						const uint32 duration10us = VDFromLE16(pulseWidths[i]);
 
-					while(len > 0) {
-						uint16 rawPulseWidth;
-						cs.Read(&rawPulseWidth, 2);
+						// convert duration to samples (with error accumulation)
+						// note: we are intentionally using unsigned negative numbers here to do rounding!
+						const uint64 samplesF32 = subSampleAccum + (uint64)((double)duration10us * ((double)kATCassetteDataSampleRate * 4294967296.0 / 10000.0));
+						const uint32 pulseSamples = samplesF32 < UINT64_C(0x8000000000000000) ? (uint32)((samplesF32 + UINT64_C(0x80000000)) >> 32) : 0;
+						subSampleAccum = samplesF32 - ((uint64)pulseSamples << 32);
 
-						fskBlock->AddFSKPulse(polarity, VDFromLE16(rawPulseWidth));
-
-						if (fskBlock->GetDataSampleCount() > maxBlockLen)
-							throw ATCassetteTooLongException();
-
+						fskPulses[i] = ATTapePieceTable::Pulse { polarity, pulseSamples };
 						polarity = !polarity;
-						len -= 2;
+						numSamples += pulseSamples;
 					}
 
+					if (!mDataTrack.WritePulses(cursor, fskPulses.data(), numPulses, numSamples, false, false))
+						throw ATCassetteTooLongException();
+
 					if (g_ATLCCasImage.IsEnabled()) {
-						float pos = (float)mDataLength / (float)kATCassetteDataSampleRate;
+						float pos = (float)mDataTrack.mLength / (float)kATCassetteDataSampleRate;
 						int mins = (int)(pos / 60.0f);
 						float secs = pos - (float)mins * 60.0f;
 
@@ -2112,12 +1830,12 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 							, mins
 							, secs
 							, gapms
-							, transitions
-							, transitions != 1 ? "s" : ""
-							, fskBlock->GetDataSampleCount() / kATCassetteDataSampleRate * 1000.0f);
+							, numPulses
+							, numPulses != 1 ? "s" : ""
+							, numSamples / kATCassetteDataSampleRate * 1000.0f);
 					}
 
-					mDataLength = mDataBlocks.back().mStart + fskBlock->GetDataSampleCount();
+					len = 0;
 				}
 
 				break;
@@ -2134,45 +1852,34 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file0) {
 
 		// we need to do a null read through the buffer to ensure that the checksum
 		// updates occur
-		cs.Read(nullptr, cs.Pos() + len);
+		cs.Read(nullptr, len);
 	}
 
 	// add two second footer
 	addGap(2.0f);
 
-	// final size check
-	if (mDataLength > kATCassetteDataLimit)
-		throw ATCassetteTooLongException();
-
-	// set up data blocks
-	mDataBlockCount = (uint32)mDataBlocks.size();
-	mDataBlocks.push_back( { mDataLength, 0, nullptr } );
-
-	ConvertDataToPeaks();
+	InvalidatePeakMaps();
+	UpdatePeakMaps();
 
 	// set up audio blocks
-	mbAudioCreated = true;
-	mAudioBlocks = mDataBlocks;
-
-	for(auto& block : mAudioBlocks)
-		block.mStart *= kATCassetteAudioSamplesPerDataSample;
-
-	mAudioBlockCount = mDataBlockCount;
-	mAudioLength = mDataLength * kATCassetteAudioSamplesPerDataSample;
-
-	mPeakMaps[1] = mPeakMaps[0];
+	mbAudioCreated = false;
 
 	mImageFileCRC = cs.GetCRC();
 	mImageFileSHA256 = cs.GetSHA256();
+	mbImageChecksumsValid = true;
 }
 
-void ATCassetteImage::ConvertDataToPeaks() {
-	RefreshPeaksFromData(0, mDataLength);
+void ATCassetteImage::UpdatePeakMaps() {
+	if (mPeakDirtyEnd > mPeakDirtyStart) {
+		RefreshPeaksFromData(mPeakDirtyStart, mPeakDirtyEnd);
+		RefreshPeaksFromAudio(mPeakDirtyStart, mPeakDirtyEnd);
+		ValidatePeakMaps();
+	}
 }
 
 void ATCassetteImage::RefreshPeaksFromData(uint32 startSample, uint32 endSample) {
-	if (endSample > mDataLength)
-		endSample = mDataLength;
+	if (endSample > mDataTrack.mLength)
+		endSample = mDataTrack.mLength;
 
 	if (endSample <= startSample)
 		return;
@@ -2186,7 +1893,7 @@ void ATCassetteImage::RefreshPeaksFromData(uint32 startSample, uint32 endSample)
 	
 	for(uint32 peak = firstPeak; peak <= lastPeak; ++peak) {
 		uint32 blockStart = peak * kDataSamplesPerPeakSample;
-		uint32 blockLen = std::min<uint32>(kDataSamplesPerPeakSample, mDataLength - blockStart);
+		uint32 blockLen = std::min<uint32>(kDataSamplesPerPeakSample, mDataTrack.mLength - blockStart);
 
 		int delta = 127 - (GetBitSum(blockStart, blockLen, false) * 127) / blockLen;
 
@@ -2195,9 +1902,96 @@ void ATCassetteImage::RefreshPeaksFromData(uint32 startSample, uint32 endSample)
 	}
 }
 
+void ATCassetteImage::RefreshPeaksFromAudio(uint32 startSample, uint32 endSample) {
+	if (endSample > mAudioTrack.mLength)
+		endSample = mAudioTrack.mLength;
+
+	if (endSample <= startSample)
+		return;
+
+	uint32 firstPeak = startSample / kDataSamplesPerPeakSample;
+	uint32 lastPeak = (endSample - 1) / kDataSamplesPerPeakSample;
+
+	uint32 reqAlloc = (lastPeak + 1) * 2;
+	if (mPeakMaps[1].size() < reqAlloc)
+		mPeakMaps[1].resize(reqAlloc, 0x80);
+	
+	for(uint32 peak = firstPeak; peak <= lastPeak; ++peak) {
+		uint32 rangeStart = peak * kDataSamplesPerPeakSample;
+		uint32 rangeEnd = rangeStart + std::min<uint32>(kDataSamplesPerPeakSample, mAudioTrack.mLength - rangeStart);
+
+		uint32 spanIdx = mAudioTrack.FindSpan(rangeStart);
+		uint32 minAccum = 0x80 * kDataSamplesPerPeakSample + (kDataSamplesPerPeakSample >> 1);
+		uint32 maxAccum = 0x80 * kDataSamplesPerPeakSample + (kDataSamplesPerPeakSample >> 1);
+
+		for(const auto *span = &mAudioTrack.mSpans[spanIdx]; span->mpImageBlock; ++span) {
+			if (span->mStart >= rangeEnd)
+				break;
+
+			const uint32 spanOffset = rangeStart - span->mStart + span->mOffset;
+			const uint32 spanLen = std::min(rangeEnd, span[1].mStart) - rangeStart;
+
+			if (span->mBlockType == kATCassetteImageBlockType_RawAudio) {
+				ATCassetteImageBlockRawAudio& rawAudioBlock = static_cast<ATCassetteImageBlockRawAudio&>(*span->mpImageBlock);
+
+				uint8 spanMin, spanMax;
+				rawAudioBlock.GetMinMax(spanOffset, spanLen, spanMin, spanMax);
+
+				minAccum += ((uint32)spanMin - 0x80) * spanLen;
+				maxAccum += ((uint32)spanMax - 0x80) * spanLen;
+			} else {
+				const sint32 spanValue = spanLen - span->mpImageBlock->GetBitSum(spanOffset, spanLen, false);
+
+				minAccum -= spanValue * 127;
+				maxAccum += spanValue * 127;
+			}
+
+			rangeStart += spanLen;
+		}
+
+		mPeakMaps[1][peak*2+0] = (uint8)(minAccum / kDataSamplesPerPeakSample);
+		mPeakMaps[1][peak*2+1] = (uint8)(maxAccum / kDataSamplesPerPeakSample);
+	}
+}
+
+void ATCassetteImage::ValidatePeakMaps() {
+	mPeakDirtyStart = ~UINT32_C(0);
+	mPeakDirtyEnd = 0;
+}
+
+void ATCassetteImage::InvalidatePeakMaps() {
+	mPeakDirtyStart = 0;
+	mPeakDirtyEnd = ~UINT32_C(0);
+}
+
+void ATCassetteImage::InvalidatePeaksInRangeEnd(uint32 startSample, uint32 endSample) {
+	if (startSample < endSample) {
+		mPeakDirtyStart = std::min(mPeakDirtyStart, startSample);
+		mPeakDirtyEnd = std::max(mPeakDirtyEnd, endSample);
+	}
+}
+
+void ATCassetteImage::InvalidatePeaksInRangeLen(uint32 startSample, uint32 len) {
+	if (len) {
+		mPeakDirtyStart = std::min(mPeakDirtyStart, startSample);
+		mPeakDirtyEnd = std::max(mPeakDirtyEnd, startSample + std::min(len, UINT32_MAX - startSample));
+	}
+}
+
+void ATCassetteImage::InvalidatePeaksStartingAt(uint32 startSample) {
+	mPeakDirtyStart = std::min(mPeakDirtyStart, startSample);
+	mPeakDirtyEnd = ~UINT32_C(0);
+}
+
 void ATCassetteImage::InvalidateSignatures() {
-	mImageFileCRC.reset();
-	mImageFileSHA256.reset();
+	// We call this a lot, so now this is a simple bool clear rather than nulling two optionals.
+	mbImageChecksumsValid = false;
+}
+
+void ATCassetteImage::CreateAudioTrack() {
+	mAudioTrack = mDataTrack;
+	mPeakMaps[1] = mPeakMaps[0];
+	mbAudioCreated = true;
 }
 
 ///////////////////////////////////////////////////////////////////////////

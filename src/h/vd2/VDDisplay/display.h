@@ -24,6 +24,9 @@ struct VDVideoDisplayScreenFXInfo {
 	float mDistortionX;
 	float mDistortionYRatio;
 
+	bool mbSignedRGBEncoding;
+	float mHDRIntensity;
+
 	bool mbColorCorrectAdobeRGB;
 	float mColorCorrectionMatrix[3][3];
 
@@ -39,6 +42,14 @@ public:
 	// not be modified, and the engine must keep the result image alive as long as the original submitted
 	// frame.
 	virtual VDPixmap ApplyScreenFX(const VDPixmap& px) = 0;
+};
+
+enum class VDDHDRAvailability : uint8 {
+	NoMinidriverSupport,
+	NoSystemSupport,
+	NoHardwareSupport,
+	NoDisplaySupport,
+	Available
 };
 
 class VDVideoDisplayFrame : public vdlist_node, public IVDRefCount {
@@ -93,11 +104,13 @@ public:
 	virtual void SetReturnFocus(bool enable) = 0;
 	virtual void SetTouchEnabled(bool enable) = 0;
 	virtual void SetUse16Bit(bool enable) = 0;
+	virtual void SetHDREnabled(bool hdr) = 0;
 
 	virtual void SetFullScreen(bool fs, uint32 width = 0, uint32 height = 0, uint32 refresh = 0) = 0;
 	virtual void SetDestRect(const vdrect32 *r, uint32 backgroundColor) = 0;
 	virtual void SetPixelSharpness(float xfactor, float yfactor) = 0;
 	virtual void SetCompositor(IVDDisplayCompositor *compositor) = 0;
+	virtual void SetSDRBrightness(float nits) = 0;
 
 	virtual void PostBuffer(VDVideoDisplayFrame *) = 0;
 	virtual bool RevokeBuffer(bool allowFrameSkip, VDVideoDisplayFrame **ppFrame) = 0;
@@ -128,6 +141,9 @@ public:
 	// doesn't support screen FX.
 	virtual bool IsScreenFXPreferred() const = 0;
 
+	// Returns if the current minidriver, adapter, and display are HDR capable.
+	virtual VDDHDRAvailability IsHDRCapable() const = 0;
+
 	// Map a normalized source point in [0,1] to the destination size. Returns true if the
 	// point was within the source, false if it was clamped. This is a no-op if distortion is
 	// off.
@@ -144,11 +160,12 @@ public:
 	};
 
 	virtual void SetProfileHook(const vdfunction<void(ProfileEvent)>& profileHook) = 0;
+
+	virtual void RequestCapture(vdfunction<void(const VDPixmap *)> fn) = 0;
 };
 
-void VDVideoDisplaySetFeatures(bool enableDirectX, bool enableOverlays, bool enableTermServ, bool enableOpenGL, bool enableDirect3D, bool enableD3DFX, bool enableHighPrecision);
+void VDVideoDisplaySetFeatures(bool enableDirectX, bool enableOverlays, bool enableTermServ, bool enableDirect3D, bool enableD3DFX, bool enableHighPrecision);
 void VDVideoDisplaySetD3D9ExEnabled(bool enable);
-void VDVideoDisplaySetDDrawEnabled(bool enable);
 void VDVideoDisplaySet3DEnabled(bool enable);
 void VDVideoDisplaySetDebugInfoEnabled(bool enable);
 void VDVideoDisplaySetBackgroundFallbackEnabled(bool enable);
@@ -165,5 +182,8 @@ public:
 };
 
 void VDDisplaySetImageDecoder(IVDDisplayImageDecoder *pfn);
+
+void VDDSetLibraryOverridesEnabled(bool enabled);
+bool VDDGetLibraryOverridesEnabled();
 
 #endif

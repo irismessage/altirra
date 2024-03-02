@@ -294,7 +294,6 @@ PNGDecodeError VDImageDecoderPNG::Decode(const void *src0, uint32 size) {
 
 	mbAlphaPresent = hasAlpha;
 
-	unsigned pitch = (hdr.width*3+3)&~3;
 	unsigned pngrowbytes	= (hdr.width * bitsperpixel + 7) >> 3;
 	unsigned pngbpp			= (bitsperpixel+7) >> 3;
 

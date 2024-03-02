@@ -18,15 +18,22 @@
 #ifndef f_AT_ATCORE_DEVICEVIDEO_H
 #define f_AT_ATCORE_DEVICEVIDEO_H
 
+#include <vd2/system/function.h>
 #include <vd2/system/unknown.h>
 #include <vd2/system/vectors.h>
+#include <at/atcore/notifylist.h>
 
 struct VDPixmap;
+class IATDeviceVideoOutput;
 
 struct ATDeviceVideoInfo {
 	// True if the device is producing a valid signal. This is used to signal
 	// if the device is programmed with valid scanning parameters or junk.
 	bool mbSignalValid;
+
+	// True if the device is passing the computer's video output through its
+	// own video output.
+	bool mbSignalPassThrough;
 
 	// Horizontal and vertical scan rates, in Hz.
 	float mHorizScanRate;
@@ -53,11 +60,45 @@ struct ATDeviceVideoInfo {
 
 	// #RRGGBB border color.
 	uint32 mBorderColor;
+
+	// If true, stretching and aspect ratio correction are disabled and
+	// pixels are rendered 1:1 to native if there is space, otherwise the
+	// image is scaled down.
+	bool mbForceExactPixels;
+};
+
+class IATDeviceVideoManager {
+protected:
+	~IATDeviceVideoManager() = default;
+
+public:
+	static constexpr uint32 kTypeID = "IATDeviceVideoManager"_vdtypeid;
+
+	virtual void ResetActivityCounters() = 0;
+	virtual sint32 CheckForNewlyActiveOutputs() = 0;
+
+	virtual uint32 GetOutputCount() const = 0;
+	virtual uint32 GetOutputListChangeCount() const = 0;
+	virtual IATDeviceVideoOutput *GetOutput(uint32 index) const = 0;
+	virtual IATDeviceVideoOutput *GetOutputByName(const char *name) const = 0;
+	virtual sint32 IndexOfOutput(IATDeviceVideoOutput *output) const = 0;
+
+	virtual void AddVideoOutput(IATDeviceVideoOutput *output) = 0;
+	virtual void RemoveVideoOutput(IATDeviceVideoOutput *output) = 0;
+
+	virtual ATNotifyList<const vdfunction<void(uint32 index)> *>& OnAddedOutput() = 0;
+	virtual ATNotifyList<const vdfunction<void(uint32 index)> *>& OnRemovingOutput() = 0;
 };
 
 class IATDeviceVideoOutput {
 public:
-	enum { kTypeID = 'advo' };
+	static constexpr uint32 kTypeID = "IATDeviceVideoOutput"_vdtypeid;
+
+	// Retrieve the internal name for the video output.
+	virtual const char *GetName() const = 0;
+
+	// Retrieve the display name for the video output.
+	virtual const wchar_t *GetDisplayName() const = 0;
 
 	// Advance by the given number of 300Hz ticks. 300Hz allows for rough
 	// matching between PAL and NTSC rates.

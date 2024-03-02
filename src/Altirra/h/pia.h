@@ -57,6 +57,7 @@ public:
 
 	ATPIAEmulator();
 
+	uint8 GetPortAOutput() const { return (uint8)mOutput; }
 	uint8 GetPortBOutput() const { return (uint8)(mOutput >> 8); }
 
 	int AllocInput() override;

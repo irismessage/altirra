@@ -65,6 +65,7 @@ typedef struct HDROP__	*VDZHDROP;
 typedef struct HFONT__	*VDZHFONT;
 typedef struct HACCEL__	*VDZHACCEL;
 typedef struct _IMAGELIST	*VDZHIMAGELIST;
+typedef struct tagPAINTSTRUCT	VDZPAINTSTRUCT;
 
 typedef VDZWORD			VDZATOM;
 

@@ -208,6 +208,7 @@ public:
 	}
 
 public:		// IATDeviceManager
+	using IATDeviceManager::GetService;
 	void *GetService(uint32 iid) override;
 
 protected:

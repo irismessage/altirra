@@ -166,7 +166,7 @@ int cmd_lzpack(int argc, const char *const *argv) {
 
 	putc(0, fo);
 
-	printf("%s(%d) -> %s(%d)\n", argv[1], len, argv[2], (int)ftell(fo));
+	printf("%s(%d) -> %s(%d)\n", argv[1], (int)len, argv[2], (int)ftell(fo));
 
 	fclose(fo);
 

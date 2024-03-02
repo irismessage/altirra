@@ -4,9 +4,11 @@
   <ItemGroup>
     <ClCompile Include="source\acia.cpp" />
     <ClCompile Include="source\acia6850.cpp" />
+    <ClCompile Include="source\crtc.cpp" />
     <ClCompile Include="source\ctc.cpp" />
     <ClCompile Include="source\eeprom.cpp" />
     <ClCompile Include="source\flash.cpp" />
+    <ClCompile Include="source\rtcmcp7951x.cpp" />
     <ClCompile Include="source\riot.cpp" />
     <ClCompile Include="source\rtcds1305.cpp" />
     <ClCompile Include="source\rtcv3021.cpp" />
@@ -19,11 +21,13 @@
   <ItemGroup>
     <ClInclude Include="..\h\at\atemulation\acia.h" />
     <ClInclude Include="..\h\at\atemulation\acia6850.h" />
+    <ClInclude Include="..\h\at\atemulation\crtc.h" />
     <ClInclude Include="..\h\at\atemulation\ctc.h" />
     <ClInclude Include="..\h\at\atemulation\eeprom.h" />
     <ClInclude Include="..\h\at\atemulation\flash.h" />
     <ClInclude Include="..\h\at\atemulation\riot.h" />
     <ClInclude Include="..\h\at\atemulation\rtcds1305.h" />
+    <ClInclude Include="..\h\at\atemulation\rtcmcp7951x.h" />
     <ClInclude Include="..\h\at\atemulation\rtcv3021.h" />
     <ClInclude Include="..\h\at\atemulation\scsi.h" />
     <ClInclude Include="..\h\at\atemulation\via.h" />

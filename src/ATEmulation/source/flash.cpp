@@ -78,6 +78,8 @@ void ATFlashEmulator::Init(void *mem, ATFlashType type, ATScheduler *sch) {
 		case kATFlashType_S29GL01P:
 		case kATFlashType_S29GL512P:
 		case kATFlashType_S29GL256P:
+		case kATFlashType_M29W800DT:
+		case kATFlashType_MX29LV640DT:
 			mbA12iUnlock = true;
 			break;
 	}
@@ -91,6 +93,8 @@ void ATFlashEmulator::Init(void *mem, ATFlashType type, ATScheduler *sch) {
 		case kATFlashType_Am29F010B:
 		case kATFlashType_M29F010B:
 		case kATFlashType_HY29F040A:
+		case kATFlashType_M29W800DT:
+		case kATFlashType_MX29LV640DT:
 			mSectorEraseTimeoutCycles = kSectorEraseTimeoutCycles50us;
 			break;
 
@@ -333,6 +337,14 @@ bool ATFlashEmulator::DebugReadByte(uint32 address, uint8& data) const {
 						case kATFlashType_HY29F040A:
 							data = 0xAD;	// XX00 Manufacturer ID: Hynix (Hyundai)
 							break;
+
+						case kATFlashType_M29W800DT:
+							data = 0x20;	// XX00 Manufacturer ID: Numonyx
+							break;
+
+						case kATFlashType_MX29LV640DT:
+							data = 0xC2;	// XX00 Manufacturer ID: Macronix
+							break;
 					}
 					break;
 
@@ -385,11 +397,45 @@ bool ATFlashEmulator::DebugReadByte(uint32 address, uint8& data) const {
 						case kATFlashType_HY29F040A:
 							data = 0xA4;
 							break;
+
+						case kATFlashType_S29GL01P:
+							data = 0xD7;
+							break;
+
+						case kATFlashType_M29W800DT:
+							data = 0xD7;
+							break;
+
+						case kATFlashType_MX29LV640DT:
+							data = 0xC2;
+							break;
+					}
+					break;
+
+				case 0x02:
+					switch(mFlashType) {
+						case kATFlashType_MX29LV640DT:
+							data = 0xC9;
+							break;
+						default:
+							data = 0x00;	// XX02 Sector Protect Verify: 00 not protected
+							break;
+					}
+					break;
+
+				case 0x03:
+					switch(mFlashType) {
+						case kATFlashType_MX29LV640DT:
+							data = 0xC9;
+							break;
+						default:
+							data = 0x00;
+							break;
 					}
 					break;
 
 				default:
-					data = 0x00;	// XX02 Sector Protect Verify: 00 not protected
+					data = 0x00;
 					break;
 			}
 			break;
@@ -460,6 +506,8 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 
 				case kATFlashType_S29GL01P:
 				case kATFlashType_S29GL512P:
+				case kATFlashType_M29W800DT:
+				case kATFlashType_MX29LV640DT:
 				case kATFlashType_S29GL256P:
 					if ((address & 0xFFF) == 0xAAA && value == 0xAA)
 						mCommandPhase = 1;
@@ -480,6 +528,8 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 					case kATFlashType_S29GL01P:
 					case kATFlashType_S29GL512P:
 					case kATFlashType_S29GL256P:
+					case kATFlashType_M29W800DT:
+					case kATFlashType_MX29LV640DT:
 						if ((address & 0xFFF) == 0x555)
 							mCommandPhase = 2;
 						break;
@@ -616,7 +666,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 					case kATFlashType_Am29F010:
 					case kATFlashType_Am29F010B:
 					case kATFlashType_M29F010B:
-						memset(mpMemory, 0xFF, 0x20000);
+						memset(mpMemory, 0xFF, 0x20000);		// 128K (1Mbit)
 						break;
 
 					case kATFlashType_Am29F040:
@@ -625,11 +675,16 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 					case kATFlashType_A29040:
 					case kATFlashType_BM29F040:
 					case kATFlashType_HY29F040A:
-						memset(mpMemory, 0xFF, 0x80000);
+						memset(mpMemory, 0xFF, 0x80000);		// 512K (4Mbit)
+						break;
+
+					case kATFlashType_M29W800DT:
+					case kATFlashType_MX29LV640DT:
+						memset(mpMemory, 0xFF, 0x800000);		// 8M (64Mbit)
 						break;
 
 					case kATFlashType_Am29F016D:
-						memset(mpMemory, 0xFF, 0x200000);
+						memset(mpMemory, 0xFF, 0x200000);		// 2M (16Mbit)
 						break;
 
 					case kATFlashType_Am29F032B:
@@ -655,54 +710,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 
 			} else if (value == 0x30) {
 				// sector erase
-				switch(mFlashType) {
-					case kATFlashType_Am29F010:
-					case kATFlashType_Am29F010B:
-					case kATFlashType_M29F010B:
-						address &= 0x1C000;
-						memset(mpMemory + address, 0xFF, 0x4000);
-						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0x3FFF);
-						break;
-					case kATFlashType_Am29F040:
-					case kATFlashType_Am29F040B:
-					case kATFlashType_A29040:
-					case kATFlashType_BM29F040:
-					case kATFlashType_HY29F040A:
-						address &= 0x70000;
-						memset(mpMemory + address, 0xFF, 0x10000);
-						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFFF);
-						break;
-					case kATFlashType_SST39SF040:
-						address &= 0x7F000;
-						memset(mpMemory + address, 0xFF, 0x1000);
-						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFF);
-						break;
-					case kATFlashType_Am29F016D:
-						address &= 0x1F0000;
-						memset(mpMemory + address, 0xFF, 0x10000);
-						g_ATLCFlash("Erasing sector $%06X-%06X\n", address, address + 0xFFFF);
-						break;
-					case kATFlashType_Am29F032B:
-						address &= 0x3F0000;
-						memset(mpMemory + address, 0xFF, 0x10000);
-						g_ATLCFlash("Erasing sector $%06X-%06X\n", address, address + 0xFFFF);
-						break;
-					case kATFlashType_S29GL01P:
-						address &= 0x7FF0000;
-						memset(mpMemory + address, 0xFF, 0x20000);
-						g_ATLCFlash("Erasing sector $%07X-%07X\n", address, address + 0x1FFFF);
-						break;
-					case kATFlashType_S29GL512P:
-						address &= 0x3FF0000;
-						memset(mpMemory + address, 0xFF, 0x20000);
-						g_ATLCFlash("Erasing sector $%07X-%07X\n", address, address + 0x1FFFF);
-						break;
-					case kATFlashType_S29GL256P:
-						address &= 0x1FF0000;
-						memset(mpMemory + address, 0xFF, 0x20000);
-						g_ATLCFlash("Erasing sector $%07X-%07X\n", address, address + 0x1FFFF);
-						break;
-				}
+				SectorErase(address);
 
 				mbWriteActivity = true;
 				mbDirty = true;
@@ -832,39 +840,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 		case 14:	// Multiple sector erase mode (AMD/Amic)
 			if (value == 0x30) {
 				// sector erase
-				switch(mFlashType) {
-					case kATFlashType_Am29F010:
-					case kATFlashType_Am29F010B:
-					case kATFlashType_M29F010B:
-						address &= 0x1C000;
-						memset(mpMemory + address, 0xFF, 0x4000);
-						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0x3FFF);
-						break;
-					case kATFlashType_Am29F040:
-					case kATFlashType_Am29F040B:
-					case kATFlashType_A29040:
-					case kATFlashType_BM29F040:
-					case kATFlashType_HY29F040A:
-						address &= 0x70000;
-						memset(mpMemory + address, 0xFF, 0x10000);
-						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFFF);
-						break;
-					case kATFlashType_SST39SF040:
-						address &= 0x7F000;
-						memset(mpMemory + address, 0xFF, 0x1000);
-						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFF);
-						break;
-					case kATFlashType_Am29F016D:
-						address &= 0x1F0000;
-						memset(mpMemory + address, 0xFF, 0x10000);
-						g_ATLCFlash("Erasing sector $%06X-%06X\n", address, address + 0xFFFF);
-						break;
-					case kATFlashType_Am29F032B:
-						address &= 0x3F0000;
-						memset(mpMemory + address, 0xFF, 0x10000);
-						g_ATLCFlash("Erasing sector $%06X-%06X\n", address, address + 0xFFFF);
-						break;
-				}
+				SectorErase(address);
 
 				mbWriteActivity = true;
 				mbDirty = true;
@@ -966,6 +942,105 @@ void ATFlashEmulator::OnScheduledEvent(uint32 id) {
 
 		default:
 			mCommandPhase = 0;
+			break;
+	}
+}
+
+void ATFlashEmulator::SectorErase(uint32 address) {
+	switch(mFlashType) {
+		case kATFlashType_Am29F010:
+		case kATFlashType_Am29F010B:
+		case kATFlashType_M29F010B:
+			address &= 0x1C000;
+			memset(mpMemory + address, 0xFF, 0x4000);
+			g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0x3FFF);
+			break;
+		case kATFlashType_Am29F040:
+		case kATFlashType_Am29F040B:
+		case kATFlashType_A29040:
+		case kATFlashType_BM29F040:
+		case kATFlashType_HY29F040A:
+			address &= 0x70000;
+			memset(mpMemory + address, 0xFF, 0x10000);
+			g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFFF);
+			break;
+		case kATFlashType_SST39SF040:
+			address &= 0x7F000;
+			memset(mpMemory + address, 0xFF, 0x1000);
+			g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFF);
+			break;
+		case kATFlashType_Am29F016D:
+			address &= 0x1F0000;
+			memset(mpMemory + address, 0xFF, 0x10000);
+			g_ATLCFlash("Erasing sector $%06X-%06X\n", address, address + 0xFFFF);
+			break;
+		case kATFlashType_Am29F032B:
+			address &= 0x3F0000;
+			memset(mpMemory + address, 0xFF, 0x10000);
+			g_ATLCFlash("Erasing sector $%06X-%06X\n", address, address + 0xFFFF);
+			break;
+		case kATFlashType_S29GL01P:
+			address &= 0x7FF0000;
+			memset(mpMemory + address, 0xFF, 0x20000);
+			g_ATLCFlash("Erasing sector $%07X-%07X\n", address, address + 0x1FFFF);
+			break;
+		case kATFlashType_S29GL512P:
+			address &= 0x3FF0000;
+			memset(mpMemory + address, 0xFF, 0x20000);
+			g_ATLCFlash("Erasing sector $%07X-%07X\n", address, address + 0x1FFFF);
+			break;
+		case kATFlashType_S29GL256P:
+			address &= 0x1FF0000;
+			memset(mpMemory + address, 0xFF, 0x20000);
+			g_ATLCFlash("Erasing sector $%07X-%07X\n", address, address + 0x1FFFF);
+			break;
+
+		case kATFlashType_M29W800DT:
+			{
+				// All blocks are 64K in the M29W800DT, except for the last 64K which
+				// is subdivided into 32K, 16K, 4K, 4K, and 8K, in that order.
+				uint32 blockSize = 0x10000;
+
+				address &= 0x7FF000;
+				if (address < 0x7F0000) {
+					address &= 0x7F0000;
+				} else if (address < 0x7F8000) {
+					address = 0x7F0000;
+					blockSize = 0x8000;
+				} else if (address < 0x7FC000) {
+					address = 0x7F8000;
+					blockSize = 0x4000;
+				} else if (address < 0x7FD000) {
+					address = 0x7FC000;
+					blockSize = 0x1000;
+				} else if (address < 0x7FE000) {
+					address = 0x7FD000;
+					blockSize = 0x1000;
+				} else {
+					address = 0x7FE000;
+					blockSize = 0x2000;
+				}
+
+				memset(mpMemory + address, 0xFF, blockSize);
+				g_ATLCFlash("Erasing block $%07X-%07X\n", address, address + blockSize - 1);
+			}
+			break;
+
+		case kATFlashType_MX29LV640DT:
+			{
+				// All blocks are 64K in the MX29LV640D, except for the last 64K which
+				// is subdivided into 8K blocks.
+				uint32 blockSize = 0x10000;
+
+				address &= 0x7FE000;
+				if (address < 0x7F0000)
+					address &= 0x7F0000;
+				else
+					blockSize = 0x2000;
+
+				memset(mpMemory + address, 0xFF, blockSize);
+				g_ATLCFlash("Erasing block $%07X-%07X\n", address, address + blockSize - 1);
+			}
 			break;
 	}
 }

@@ -559,7 +559,7 @@ bool VDPixmapFillRegion(const VDPixmap& dst, const VDPixmapRegion& region, int x
 	const uint32 *pSpan = &region.mSpans[start];
 	const uint32 *pEnd  = &region.mSpans[0] + end;
 	int lasty = -1;
-	uint32 *dstp;
+	uint32 *dstp = nullptr;
 
 	for(; pSpan != pEnd; pSpan += 2) {
 		uint32 span0 = pSpan[0];
@@ -729,7 +729,6 @@ bool VDPixmapFillRegionAntialiased_32x_32x(const VDPixmap& dst, const VDPixmapRe
 
 		sint32 px1 = (span0 & 0xffff) - 0x8000 + x;
 		sint32 px2 = (span1 & 0xffff) - 0x8000 + x;
-		sint32 w = span1-span0;
 
 		if (lasty != py) {
 			if (((lasty ^ py) & 0xFFFFFFE0)) {
@@ -841,7 +840,6 @@ bool VDPixmapFillRegionAntialiased_16x_16x(const VDPixmap& dst, const VDPixmapRe
 
 		sint32 px1 = (span0 & 0xffff) - 0x8000 + x;
 		sint32 px2 = (span1 & 0xffff) - 0x8000 + x;
-		sint32 w = span1-span0;
 
 		if (lasty != py) {
 			if (((lasty ^ py) & 0xFFFFFFF0)) {
@@ -953,7 +951,6 @@ bool VDPixmapFillRegionAntialiased_16x_8x(const VDPixmap& dst, const VDPixmapReg
 
 		sint32 px1 = (span0 & 0xffff) - 0x8000 + x;
 		sint32 px2 = (span1 & 0xffff) - 0x8000 + x;
-		sint32 w = span1-span0;
 
 		if (lasty != py) {
 			if (((lasty ^ py) & 0xFFFFFFF8)) {
@@ -1156,7 +1153,6 @@ bool VDPixmapFillRegionAntialiased8x(const VDPixmap& dst, const VDPixmapRegion& 
 
 		sint32 px1 = (span0 & 0xffff) - 0x8000 + x;
 		sint32 px2 = (span1 & 0xffff) - 0x8000 + x;
-		sint32 w = span1-span0;
 
 		if (lasty != py) {
 			if (((lasty ^ py) & 0xFFFFFFF8)) {
@@ -1244,7 +1240,6 @@ void VDPixmapConvolveRegion(VDPixmapRegion& dst, const VDPixmapRegion& r1, const
 	const uint32 *itAE	= itA + r1.mSpans.size();
 	const uint32 *itB	= r2.mSpans.data();
 	const uint32 *itBE	= itB + r2.mSpans.size();
-	uint32 *dstp0 = dst.mSpans.data();
 	uint32 *dstp = dst.mSpans.data();
 
 	uint32 offset1 = (dy<<16) + dx1;

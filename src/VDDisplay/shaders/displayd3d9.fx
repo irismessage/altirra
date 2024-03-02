@@ -161,7 +161,7 @@
 //	$$technique screenfx_ptlinear_noscanlines_cc
 //		$$pass
 //			$$vertex_shader vs_2_0 VP_ScreenFX
-//			$$pixel_shader ps_2_0 FP_ScreenFX_PtLinear_NoScanlines_CC
+//			$$pixel_shader ps_2_0 FP_ScreenFX_PtLinear_NoScanlines_GammaCC
 //			$$texture 0 vd_srctexture clamp clamp autobilinear
 //			$$texture 1 vd_src2atexture clamp clamp bilinear
 //
@@ -181,20 +181,20 @@
 //	$$technique screenfx_sharp_noscanlines_cc
 //		$$pass
 //			$$vertex_shader vs_2_0 VP_ScreenFX
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Sharp_NoScanlines_CC
+//			$$pixel_shader ps_2_0 FP_ScreenFX_Sharp_NoScanlines_GammaCC
 //			$$texture 0 vd_srctexture clamp clamp bilinear
 //			$$texture 1 vd_src2atexture clamp clamp bilinear
 //
 //	$$technique screenfx_ptlinear_scanlines_linear
 //		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFXScanlines
+//			$$vertex_shader vs_2_0 VP_ScreenFX
 //			$$pixel_shader ps_2_0 FP_ScreenFX_PtLinear_Scanlines_Linear
 //			$$texture 0 vd_srctexture clamp clamp autobilinear
 //			$$texture 2 vd_src2btexture clamp clamp point
 //
 //	$$technique screenfx_ptlinear_scanlines_gamma
 //		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFXScanlines
+//			$$vertex_shader vs_2_0 VP_ScreenFX
 //			$$pixel_shader ps_2_0 FP_ScreenFX_PtLinear_Scanlines_Gamma
 //			$$texture 0 vd_srctexture clamp clamp autobilinear
 //			$$texture 1 vd_src2atexture clamp clamp bilinear
@@ -202,22 +202,22 @@
 //
 //	$$technique screenfx_ptlinear_scanlines_cc
 //		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFXScanlines
-//			$$pixel_shader ps_2_0 FP_ScreenFX_PtLinear_Scanlines_CC
+//			$$vertex_shader vs_2_0 VP_ScreenFX
+//			$$pixel_shader ps_2_0 FP_ScreenFX_PtLinear_Scanlines_GammaCC
 //			$$texture 0 vd_srctexture clamp clamp autobilinear
 //			$$texture 1 vd_src2atexture clamp clamp bilinear
 //			$$texture 2 vd_src2btexture clamp clamp point
 //
 //	$$technique screenfx_sharp_scanlines_linear
 //		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFXScanlines
+//			$$vertex_shader vs_2_0 VP_ScreenFX
 //			$$pixel_shader ps_2_0 FP_ScreenFX_Sharp_Scanlines_Linear
 //			$$texture 0 vd_srctexture clamp clamp bilinear
 //			$$texture 2 vd_src2btexture clamp clamp point
 //
 //	$$technique screenfx_sharp_scanlines_gamma
 //		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFXScanlines
+//			$$vertex_shader vs_2_0 VP_ScreenFX
 //			$$pixel_shader ps_2_0 FP_ScreenFX_Sharp_Scanlines_Gamma
 //			$$texture 0 vd_srctexture clamp clamp bilinear
 //			$$texture 1 vd_src2atexture clamp clamp bilinear
@@ -225,102 +225,16 @@
 //
 //	$$technique screenfx_sharp_scanlines_cc
 //		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFXScanlines
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Sharp_Scanlines_CC
+//			$$vertex_shader vs_2_0 VP_ScreenFX
+//			$$pixel_shader ps_2_0 FP_ScreenFX_Sharp_Scanlines_GammaCC
 //			$$texture 0 vd_srctexture clamp clamp bilinear
 //			$$texture 1 vd_src2atexture clamp clamp bilinear
 //			$$texture 2 vd_src2btexture clamp clamp point
 
-//	$$technique screenfx_distort_ptlinear_noscanlines_linear
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFX
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Distort_PtLinear_NoScanlines_Linear
-//			$$texture 0 vd_srctexture clamp clamp autobilinear
-//
-//	$$technique screenfx_distort_ptlinear_noscanlines_gamma
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFX
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Distort_PtLinear_NoScanlines_Gamma
-//			$$texture 0 vd_srctexture clamp clamp autobilinear
-//			$$texture 1 vd_src2atexture clamp clamp bilinear
-//
-//	$$technique screenfx_distort_ptlinear_noscanlines_cc
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFX
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Distort_PtLinear_NoScanlines_CC
-//			$$texture 0 vd_srctexture clamp clamp autobilinear
-//			$$texture 1 vd_src2atexture clamp clamp bilinear
-//
-//	$$technique screenfx_distort_sharp_noscanlines_linear
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFX
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Distort_Sharp_NoScanlines_Linear
-//			$$texture 0 vd_srctexture clamp clamp bilinear
-//
-//	$$technique screenfx_distort_sharp_noscanlines_gamma
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFX
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Distort_Sharp_NoScanlines_Gamma
-//			$$texture 0 vd_srctexture clamp clamp bilinear
-//			$$texture 1 vd_src2atexture clamp clamp bilinear
-//
-//	$$technique screenfx_distort_sharp_noscanlines_cc
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFX
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Distort_Sharp_NoScanlines_CC
-//			$$texture 0 vd_srctexture clamp clamp bilinear
-//			$$texture 1 vd_src2atexture clamp clamp bilinear
-//
-//	$$technique screenfx_distort_ptlinear_scanlines_linear
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFXScanlines
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Distort_PtLinear_Scanlines_Linear
-//			$$texture 0 vd_srctexture clamp clamp autobilinear
-//			$$texture 2 vd_src2btexture clamp clamp bilinear
-//
-//	$$technique screenfx_distort_ptlinear_scanlines_gamma
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFXScanlines
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Distort_PtLinear_Scanlines_Gamma
-//			$$texture 0 vd_srctexture clamp clamp autobilinear
-//			$$texture 1 vd_src2atexture clamp clamp bilinear
-//			$$texture 2 vd_src2btexture clamp clamp bilinear
-//
-//	$$technique screenfx_distort_ptlinear_scanlines_cc
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFXScanlines
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Distort_PtLinear_Scanlines_CC
-//			$$texture 0 vd_srctexture clamp clamp autobilinear
-//			$$texture 1 vd_src2atexture clamp clamp bilinear
-//			$$texture 2 vd_src2btexture clamp clamp bilinear
-//
-//	$$technique screenfx_distort_sharp_scanlines_linear
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFXScanlines
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Distort_Sharp_Scanlines_Linear
-//			$$texture 0 vd_srctexture clamp clamp bilinear
-//			$$texture 2 vd_src2btexture clamp clamp bilinear
-//
-//	$$technique screenfx_distort_sharp_scanlines_gamma
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFXScanlines
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Distort_Sharp_Scanlines_Gamma
-//			$$texture 0 vd_srctexture clamp clamp bilinear
-//			$$texture 1 vd_src2atexture clamp clamp bilinear
-//			$$texture 2 vd_src2btexture clamp clamp bilinear
-//
-//	$$technique screenfx_distort_sharp_scanlines_cc
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_ScreenFXScanlines
-//			$$pixel_shader ps_2_0 FP_ScreenFX_Distort_Sharp_Scanlines_CC
-//			$$texture 0 vd_srctexture clamp clamp bilinear
-//			$$texture 1 vd_src2atexture clamp clamp bilinear
-//			$$texture 2 vd_src2btexture clamp clamp bilinear
-
 //	$$technique screenfx_bloom_prescale
 //		$$pass
 //			$$vertex_shader vs_2_0 VP_Bloom1
-//			$$pixel_shader ps_2_0 FP_Bloom1
+//			$$pixel_shader ps_2_0 FP_Bloom1_Gamma
 //			$$texture 0 vd_srctexture clamp clamp bilinear
 //
 //	$$technique screenfx_bloom_prescale2
@@ -338,14 +252,14 @@
 //	$$technique screenfx_bloom_final
 //		$$pass
 //			$$vertex_shader vs_2_0 VP_Bloom3
-//			$$pixel_shader ps_2_0 FP_Bloom3
+//			$$pixel_shader ps_2_0 FP_Bloom3_Gamma
 //			$$texture 0 vd_srctexture clamp clamp bilinear
 //			$$texture 1 vd_src2atexture clamp clamp point
 
 //	$$technique screenfx_palartifacting
 //		$$pass
 //			$$vertex_shader vs_2_0 VP_PALArtifacting
-//			$$pixel_shader ps_2_0 FP_PALArtifacting
+//			$$pixel_shader ps_2_0 FP_PALArtifacting_NormalOutput
 //			$$texture 0 vd_srctexture clamp clamp bilinear
 
 // $$emit_defs

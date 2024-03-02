@@ -171,8 +171,12 @@ rapidpbi16: $(OUT)\rapidpbi16.bin
 $(INT)\additions-license.txt: source\Additions\license.txt
 	copy "source\Additions\license.txt" "$(INT)\additions-license.txt"
 
-$(OUT)\Additions.atr: $(INT)\dos.sys source\Additions\filelist.txt $(INT)\boot850.xex $(INT)\rhnd850.xex $(INT)\xep80.sys $(INT)\xep80f.sys $(INT)\boot1030.xex $(INT)\thnd1030.xex $(INT)\autorun.sys $(INT)\atbasicx.xex $(INT)\sx212.xex $(INT)\colormap.xex $(INT)\additions-license.txt $(INT)\loadexe.xex
-	@"$(ATCOMPILER)"  mkfsdos2 source\Additions\filelist.txt $(INT)\ $(OUT)\Additions.atr
+$(OUT)\Additions.atr: $(INT)\dos.sys source\Additions\filelist.txt $(INT)\boot850.xex $(INT)\rhnd850.xex \
+		$(INT)\xep80.sys $(INT)\xep80u.sys $(INT)\xep80p.sys $(INT)\xep80up.sys $(INT)\xep80sdx.sys \
+		$(INT)\boot1030.xex $(INT)\thnd1030.xex $(INT)\autorun.sys $(INT)\atbasicx.xex $(INT)\sx212.xex \
+		$(INT)\colormap.xex $(INT)\additions-license.txt $(INT)\loadexe.xex $(INT)\xepvhold.xex $(INT)\xepvhldp.xex \
+		$(INT)\atdebugx.sys
+	@"$(ATCOMPILER)" mkfsdos2 source\Additions\filelist.txt $(INT)\ $(OUT)\Additions.atr
 
 $(OUT)\kernel.rom: $(SRCFILES) $(SHARED_SRCFILES)
 	@for %%x in (source\main.xasm) do "$(MADS)" -i:autobuild -i:autobuild_default -d:_KERNEL_XLXE=0 -s -p -i:source\Shared -b:$$d800 -l:$(OUT)\kernel.lst -t:$(OUT)\kernel.lab -o:$(OUT)\kernel.rom %~fx
@@ -214,14 +218,14 @@ $(INT)\nomio.rom: source\Placeholders\nomio.s $(SHARED_SRCFILES)
 	@"$(MADS)"  -s -p -i:source\Shared -l:$(OUT)\nomio.lst -o:$(INT)\nomio.rom source\Placeholders\nomio.s
 
 $(OUT)\nomio.lzrom: $(INT)\nomio.rom "$(ATCOMPILER)" 
-	copy /b "$(INT)\nomio.rom"+"$(INT)\nomio.rom"+"$(INT)\nomio.rom"+"$(INT)\nomio.rom" "$(INT)\nomio2.rom"
+	@copy /b "$(INT)\nomio.rom"+"$(INT)\nomio.rom"+"$(INT)\nomio.rom"+"$(INT)\nomio.rom" "$(INT)\nomio2.rom" 1>nul
 	@"$(ATCOMPILER)"  lzpack "$(INT)\nomio2.rom" "$(OUT)\nomio.lzrom"
 
 $(INT)\noblackbox.rom: source\Placeholders\noblackbox.s $(SHARED_SRCFILES)
 	@"$(MADS)"  -s -p -i:source\Shared -l:$(OUT)\noblackbox.lst -o:$(INT)\noblackbox.rom source\Placeholders\noblackbox.s
 
 $(OUT)\noblackbox.lzrom: $(INT)\noblackbox.rom "$(ATCOMPILER)" 
-	copy /b "$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom" "$(INT)\noblackbox2.rom"
+	@copy /b "$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom"+"$(INT)\noblackbox.rom" "$(INT)\noblackbox2.rom" 1>nul
 	@"$(ATCOMPILER)"  lzpack "$(INT)\noblackbox2.rom" "$(OUT)\noblackbox.lzrom"
 
 $(OUT)\nogame.rom: $(NOGAME_SRCFILES)
@@ -270,7 +274,7 @@ $(INT)\sx212handler-relocs.inc $(INT)\sx212handler.bin: $(INT)\sx212handler-2800
 	@"$(ATCOMPILER)"  makereloc $(INT)\sx212handler-2800.obx $(INT)\sx212handler-2801.obx $(INT)\sx212handler-a800.obx $(INT)\sx212handler-2800hi.obx $(INT)\sx212handler.bin $(INT)\sx212handler-relocs.inc
 
 $(INT)\sx212.xex: $(SHARED_SRCFILESINC) source\Additions\sx212.s $(INT)\sx212handler.bin
-	"$(MADS)"  -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\sx212.lst -t:$(INT)\sx212.lab -o:$(INT)\sx212.xex source\Additions\sx212.s
+	@"$(MADS)"  -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\sx212.lst -t:$(INT)\sx212.lab -o:$(INT)\sx212.xex source\Additions\sx212.s
 
 $(INT)\1030handler.bin: $(SHARED_SRCFILESINC) source\1030\handler.s
 	@"$(MADS)"  -s -p -D:BASEADDR=7424 -i:source\Shared -i:$(INT) -l:$(INT)\1030handler.lst -t:$(INT)\1030handler.lab -o:$(INT)\1030handler.bin source\1030\handler.s
@@ -285,43 +289,64 @@ $(INT)\boot850.xex: $(SHARED_SRCFILESINC) source\Additions\boot850.s
 	"$(MADS)"  -s -p -i:source\Shared -l:$(INT)\boot850.lst -t:$(INT)\boot850.lab -o:$(INT)\boot850.xex source\Additions\boot850.s
 
 $(INT)\rhnd850.xex: $(SHARED_SRCFILESINC) source\Additions\rhnd850.s $(OUT)\850relocator.bin $(OUT)\850handler.bin
-	"$(MADS)"  -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\rhnd850.lst -t:$(INT)\rhnd850.lab -o:$(INT)\rhnd850.xex source\Additions\rhnd850.s
+	@"$(MADS)"  -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\rhnd850.lst -t:$(INT)\rhnd850.lab -o:$(INT)\rhnd850.xex source\Additions\rhnd850.s
 
-$(INT)\xep80handler-2800.obx: $(SHARED_SRCFILESINC) source\Additions\xep80handler.s
+
+$(INT)\xep80handler2.bin: $(SHARED_SRCFILESINC) source\Additions\xep80handler.s source\Additions\xep80config.inc
 	"$(MADS)"  -D:BASEADDR=10240 -D:HIBUILD=0 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\xep80handler.lst -t:$(INT)\xep80handler.lab -o:$(INT)\xep80handler-2800.obx source\Additions\xep80handler.s
-
-$(INT)\xep80handler-2801.obx: $(SHARED_SRCFILESINC) source\Additions\xep80handler.s
 	"$(MADS)"  -D:BASEADDR=10241 -D:HIBUILD=0 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handler-2801.obx source\Additions\xep80handler.s
-
-$(INT)\xep80handler-a800.obx: $(SHARED_SRCFILESINC) source\Additions\xep80handler.s
 	"$(MADS)"  -D:BASEADDR=43008 -D:HIBUILD=0 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handler-a800.obx source\Additions\xep80handler.s
-
-$(INT)\xep80handler-2800hi.obx: $(SHARED_SRCFILESINC) source\Additions\xep80handler.s
 	"$(MADS)"  -D:BASEADDR=10240 -D:HIBUILD=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handler-2800hi.obx source\Additions\xep80handler.s
-	
-$(INT)\xep80handler2.bin: $(INT)\xep80handler-2800.obx $(INT)\xep80handler-2801.obx $(INT)\xep80handler-a800.obx $(INT)\xep80handler-2800hi.obx
 	"$(ATCOMPILER)"  makereloc $(INT)\xep80handler-2800.obx $(INT)\xep80handler-2801.obx $(INT)\xep80handler-a800.obx $(INT)\xep80handler-2800hi.obx $(INT)\xep80handler2.bin $(INT)\xep80handler-relocs.inc
 	
-$(INT)\xep80.sys: $(SHARED_SRCFILESINC) source\Additions\xep80.s $(INT)\xep80handler2.bin $(INT)\xep80handler-relocs.inc
+$(INT)\xep80.sys: $(SHARED_SRCFILESINC) source\Additions\xep80.s $(INT)\xep80handler2.bin $(INT)\xep80handler-relocs.inc source\Additions\xep80config.inc
 	"$(MADS)"  -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\xep80.lst -t:$(INT)\xep80.lab -o:$(INT)\xep80.sys source\Additions\xep80.s
 
-$(INT)\xep80handlerf-2800.obx: $(SHARED_SRCFILESINC) source\Additions\xep80handler.s
-	"$(MADS)"  -D:BASEADDR=10240 -D:HIBUILD=0 -D:XEP_OPTION_TURBO=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\xep80handlerf.lst -t:$(INT)\xep80handlerf.lab -o:$(INT)\xep80handlerf-2800.obx source\Additions\xep80handler.s
 
-$(INT)\xep80handlerf-2801.obx: $(SHARED_SRCFILESINC) source\Additions\xep80handler.s
-	"$(MADS)"  -D:BASEADDR=10241 -D:HIBUILD=0 -D:XEP_OPTION_TURBO=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handlerf-2801.obx source\Additions\xep80handler.s
-
-$(INT)\xep80handlerf-a800.obx: $(SHARED_SRCFILESINC) source\Additions\xep80handler.s
-	"$(MADS)"  -D:BASEADDR=43008 -D:HIBUILD=0 -D:XEP_OPTION_TURBO=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handlerf-a800.obx source\Additions\xep80handler.s
-
-$(INT)\xep80handlerf-2800hi.obx: $(SHARED_SRCFILESINC) source\Additions\xep80handler.s
-	"$(MADS)"  -D:BASEADDR=10240 -D:HIBUILD=1 -D:XEP_OPTION_TURBO=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handlerf-2800hi.obx source\Additions\xep80handler.s
+$(INT)\xep80handler2p.bin: $(SHARED_SRCFILESINC) source\Additions\xep80handler.s source\Additions\xep80config.inc
+	"$(MADS)"  -D:BASEADDR=10240 -D:HIBUILD=0 -D:XEP_DEFAULT_50HZ=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\xep80handlerp.lst -t:$(INT)\xep80handlerp.lab -o:$(INT)\xep80handlerp-2800.obx source\Additions\xep80handler.s
+	"$(MADS)"  -D:BASEADDR=10241 -D:HIBUILD=0 -D:XEP_DEFAULT_50HZ=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handlerp-2801.obx source\Additions\xep80handler.s
+	"$(MADS)"  -D:BASEADDR=43008 -D:HIBUILD=0 -D:XEP_DEFAULT_50HZ=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handlerp-a800.obx source\Additions\xep80handler.s
+	"$(MADS)"  -D:BASEADDR=10240 -D:HIBUILD=1 -D:XEP_DEFAULT_50HZ=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handlerp-2800hi.obx source\Additions\xep80handler.s
+	"$(ATCOMPILER)"  makereloc $(INT)\xep80handlerp-2800.obx $(INT)\xep80handlerp-2801.obx $(INT)\xep80handlerp-a800.obx $(INT)\xep80handlerp-2800hi.obx $(INT)\xep80handler2p.bin $(INT)\xep80handlerp-relocs.inc
 	
-$(INT)\xep80handler2f.bin: $(INT)\xep80handlerf-2800.obx $(INT)\xep80handlerf-2801.obx $(INT)\xep80handlerf-a800.obx $(INT)\xep80handlerf-2800hi.obx
-	"$(ATCOMPILER)"  makereloc $(INT)\xep80handlerf-2800.obx $(INT)\xep80handlerf-2801.obx $(INT)\xep80handlerf-a800.obx $(INT)\xep80handlerf-2800hi.obx $(INT)\xep80handler2f.bin $(INT)\xep80handlerf-relocs.inc
+$(INT)\xep80p.sys: $(SHARED_SRCFILESINC) source\Additions\xep80.s $(INT)\xep80handler2p.bin $(INT)\xep80handler-relocs.inc source\Additions\xep80config.inc
+	"$(MADS)"  -s -p -i:source\Shared -D:XEP_DEFAULT_50HZ=1 -i:$(OUT) -i:$(INT) -l:$(INT)\xep80p.lst -t:$(INT)\xep80p.lab -o:$(INT)\xep80p.sys source\Additions\xep80.s
+
+
+$(INT)\xep80handler2u.bin: $(SHARED_SRCFILESINC) source\Additions\xep80handler.s source\Additions\xep80config.inc
+	"$(MADS)"  -D:BASEADDR=10240 -D:HIBUILD=0 -D:XEP_OPTION_TURBO=1 -D:XEP_OPTION_ULTRA=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\xep80handleru.lst -t:$(INT)\xep80handleru.lab -o:$(INT)\xep80handleru-2800.obx source\Additions\xep80handler.s
+	"$(MADS)"  -D:BASEADDR=10241 -D:HIBUILD=0 -D:XEP_OPTION_TURBO=1 -D:XEP_OPTION_ULTRA=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handleru-2801.obx source\Additions\xep80handler.s
+	"$(MADS)"  -D:BASEADDR=43008 -D:HIBUILD=0 -D:XEP_OPTION_TURBO=1 -D:XEP_OPTION_ULTRA=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handleru-a800.obx source\Additions\xep80handler.s
+	"$(MADS)"  -D:BASEADDR=10240 -D:HIBUILD=1 -D:XEP_OPTION_TURBO=1 -D:XEP_OPTION_ULTRA=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handleru-2800hi.obx source\Additions\xep80handler.s
+	"$(ATCOMPILER)"  makereloc $(INT)\xep80handleru-2800.obx $(INT)\xep80handleru-2801.obx $(INT)\xep80handleru-a800.obx $(INT)\xep80handleru-2800hi.obx $(INT)\xep80handler2u.bin $(INT)\xep80handleru-relocs.inc
 	
-$(INT)\xep80f.sys: $(SHARED_SRCFILESINC) source\Additions\xep80.s $(INT)\xep80handler2f.bin $(INT)\xep80handlerf-relocs.inc
-	"$(MADS)"  -s -p -D:XEP_OPTION_TURBO=1 -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\xep80f.lst -t:$(INT)\xep80f.lab -o:$(INT)\xep80f.sys source\Additions\xep80.s
+$(INT)\xep80u.sys: $(SHARED_SRCFILESINC) source\Additions\xep80.s $(INT)\xep80handler2u.bin $(INT)\xep80handleru-relocs.inc source\Additions\xep80config.inc
+	"$(MADS)"  -s -p -D:XEP_OPTION_TURBO=1 -D:XEP_OPTION_ULTRA=1 -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\xep80u.lst -t:$(INT)\xep80u.lab -o:$(INT)\xep80u.sys source\Additions\xep80.s
+
+
+$(INT)\xep80handler2up.bin: $(SHARED_SRCFILESINC) source\Additions\xep80handler.s source\Additions\xep80config.inc
+	"$(MADS)"  -D:BASEADDR=10240 -D:HIBUILD=0 -D:XEP_OPTION_TURBO=1 -D:XEP_OPTION_ULTRA=1 -D:XEP_DEFAULT_50HZ=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\xep80handlerup.lst -t:$(INT)\xep80handlerup.lab -o:$(INT)\xep80handlerup-2800.obx source\Additions\xep80handler.s
+	"$(MADS)"  -D:BASEADDR=10241 -D:HIBUILD=0 -D:XEP_OPTION_TURBO=1 -D:XEP_OPTION_ULTRA=1 -D:XEP_DEFAULT_50HZ=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handlerup-2801.obx source\Additions\xep80handler.s
+	"$(MADS)"  -D:BASEADDR=43008 -D:HIBUILD=0 -D:XEP_OPTION_TURBO=1 -D:XEP_OPTION_ULTRA=1 -D:XEP_DEFAULT_50HZ=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handlerup-a800.obx source\Additions\xep80handler.s
+	"$(MADS)"  -D:BASEADDR=10240 -D:HIBUILD=1 -D:XEP_OPTION_TURBO=1 -D:XEP_OPTION_ULTRA=1 -D:XEP_DEFAULT_50HZ=1 -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -o:$(INT)\xep80handlerup-2800hi.obx source\Additions\xep80handler.s
+	"$(ATCOMPILER)"  makereloc $(INT)\xep80handlerup-2800.obx $(INT)\xep80handlerup-2801.obx $(INT)\xep80handlerup-a800.obx $(INT)\xep80handlerup-2800hi.obx $(INT)\xep80handler2up.bin $(INT)\xep80handlerup-relocs.inc
+	
+$(INT)\xep80up.sys: $(SHARED_SRCFILESINC) source\Additions\xep80.s $(INT)\xep80handler2up.bin $(INT)\xep80handlerup-relocs.inc source\Additions\xep80config.inc
+	"$(MADS)"  -s -p -D:XEP_OPTION_TURBO=1 -D:XEP_OPTION_ULTRA=1 -D:XEP_DEFAULT_50HZ=1 -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\xep80up.lst -t:$(INT)\xep80up.lab -o:$(INT)\xep80up.sys source\Additions\xep80.s
+
+$(INT)\xep80sdx.sys: $(SHARED_SRCFILESINC) source\Additions\xep80-sdx.s source\Additions\xep80handler.s source\Additions\xep80config.inc $(ATCOMPILER)
+	"$(MADS)"  -D:BASEADDR=10240 -D:HIBUILD=0 -s -p -i:source\Shared -o:$(INT)\xep80sdx-1.obx -t:$(INT)\xep80sdx.lab -l:$(OUT)\xep80sdx.lst source\Additions\xep80-sdx.s
+	"$(MADS)"  -D:BASEADDR=10241 -D:HIBUILD=0 -s -p -i:source\Shared -o:$(INT)\xep80sdx-2.obx source\Additions\xep80-sdx.s
+	"$(MADS)"  -D:BASEADDR=43008 -D:HIBUILD=0 -s -p -i:source\Shared -o:$(INT)\xep80sdx-3.obx source\Additions\xep80-sdx.s
+	"$(MADS)"  -D:BASEADDR=10240 -D:HIBUILD=1 -s -p -i:source\Shared -o:$(INT)\xep80sdx-4.obx source\Additions\xep80-sdx.s
+	"$(ATCOMPILER)" makereloc4 $(INT)\xep80sdx-1.obx $(INT)\xep80sdx-2.obx $(INT)\xep80sdx-3.obx $(INT)\xep80sdx-4.obx $(INT)\xep80sdx.sys
+
+$(INT)\xepvhold.xex: $(SHARED_SRCFILESINC) source\Additions\xepvhold.s
+	"$(MADS)"  -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -d:USE_PAL=0 -l:$(INT)\xepvhold.lst -t:$(INT)\xepvhold.lab -o:$(INT)\xepvhold.xex source\Additions\xepvhold.s
+
+$(INT)\xepvhldp.xex: $(SHARED_SRCFILESINC) source\Additions\xepvhold.s
+	"$(MADS)"  -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -d:USE_PAL=1 -l:$(INT)\xepvhldp.lst -t:$(INT)\xepvhldp.lab -o:$(INT)\xepvhldp.xex source\Additions\xepvhold.s
 
 $(INT)\dos.sys: $(SHARED_SRCFILESINC) source\Additions\dos.s source\Additions\cp.s
 	"$(MADS)"  -c -s -p -i:source\Shared -i:$(OUT) -i:$(INT) -l:$(INT)\dos.lst -t:$(INT)\dos.lab -o:$(INT)\dos.sys source\Additions\dos.s
@@ -400,3 +425,6 @@ $(OUT)\rapidflash.bin: $(INT)\rapidpbi8.bin $(INT)\rapidfirmware.bin source\Rapi
 
 $(INT)\rapidflash.lzrom: $(OUT)\rapidflash.bin
 	@"$(ATCOMPILER)"  lzpack "$(OUT)\rapidflash.bin" "$(INT)\rapidflash.lzrom"
+
+$(INT)\atdebugx.sys: $(SHARED_SRCFILESINC) source\Additions\atdebugx.s
+	@"$(MADS)" -s -p -i:source\Shared -i:$(INT) -t:$(INT)\atdebugx.lab -l:$(INT)\atdebugx.lst -o:$(INT)\atdebugx.sys source\Additions\atdebugx.s

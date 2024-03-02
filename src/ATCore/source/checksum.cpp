@@ -40,7 +40,6 @@ uint64 ATComputeBlockChecksum(uint64 hash, const void *src, size_t len) {
 
 uint64 ATComputeZeroBlockChecksum(uint64 hash, size_t len) {
 	const uint64 kFNV1Prime = 1099511628211;
-	const uint64 kFNV1Offset = 14695981039346656037;
 	uint64 multiplier = kFNV1Prime;
 
 	for(;;) {
@@ -150,6 +149,10 @@ void ATChecksumUpdateSHA256(ATChecksumStateSHA256& VDRESTRICT state, const void 
 }
 
 ATChecksumEngineSHA256::ATChecksumEngineSHA256() {
+	Reset();
+}
+
+void ATChecksumEngineSHA256::Reset() {
 	mState.H[0] = 0x6a09e667;
 	mState.H[1] = 0xbb67ae85;
 	mState.H[2] = 0x3c6ef372;

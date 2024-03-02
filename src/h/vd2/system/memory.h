@@ -28,13 +28,16 @@
 
 #include <vd2/system/vdtypes.h>
 
-void *VDAlignedMalloc(size_t n, unsigned alignment);
-void VDAlignedFree(void *p);
+void *VDAlignedMallocThrow(size_t n, unsigned alignment);
+void *VDAlignedMalloc(size_t n, unsigned alignment) vdnoexcept;
+void VDAlignedFree(void *p) vdnoexcept;
 
 template<unsigned alignment>
 struct VDAlignedObject {
-	inline void *operator new(size_t n) { return VDAlignedMalloc(n, alignment); }
-	inline void operator delete(void *p) { VDAlignedFree(p); }
+	[[nodiscard]] inline void *operator new(size_t n) { return VDAlignedMallocThrow(n, alignment); }
+	[[nodiscard]] inline void *operator new(size_t n, const std::nothrow_t&) vdnoexcept { return VDAlignedMalloc(n, alignment); }
+	inline void operator delete(void *p) vdnoexcept { VDAlignedFree(p); }
+	inline void operator delete(void *p, const std::nothrow_t&) vdnoexcept { VDAlignedFree(p); }
 };
 
 void *VDAlignedVirtualAlloc(size_t n);

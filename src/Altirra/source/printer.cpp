@@ -22,6 +22,8 @@
 #include <at/atcore/cio.h>
 #include <at/atcore/devicecio.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/deviceparent.h>
+#include <at/atcore/deviceparentimpl.h>
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/devicesio.h>
 #include "kerneldb.h"
@@ -30,7 +32,7 @@
 
 using namespace ATCIOSymbols;
 
-class ATDevicePrinter final : public ATDevice, public IATDevicePrinter, public IATDeviceCIO, public IATDeviceSIO {
+class ATDevicePrinter final : public ATDevice, public IATDevicePrinterPort, public IATDeviceCIO, public IATDeviceSIO, public IATDeviceParent {
 	ATDevicePrinter(const ATDevicePrinter&) = delete;
 	ATDevicePrinter& operator=(const ATDevicePrinter&) = delete;
 public:
@@ -44,6 +46,7 @@ public:
 	}
 
 	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void Init() override;
 	void Shutdown() override;
 	void WarmReset() override;
 	void ColdReset() override;
@@ -60,7 +63,7 @@ public:
 	void OnCIOAbortAsync() override;
 
 public:
-	void SetPrinterOutput(IATPrinterOutput *output) {
+	void SetPrinterDefaultOutput(IATPrinterOutput *output) {
 		mpOutput = output;
 	}
 
@@ -72,6 +75,9 @@ public:
 	virtual void OnSerialFence(uint32 id) override;
 	virtual CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
+public:
+	IATDeviceBus *GetDeviceBus(uint32 index) override;
+
 protected:
 	void Write(const uint8 *c, uint32 count);
 
@@ -82,6 +88,8 @@ protected:
 	uint8		mHookPageByte;
 	uint32		mLineBufIdx;
 	uint8		mLineBuf[132];
+
+	ATDeviceBusSingleChild mParallelBus;
 };
 
 void ATCreateDevicePrinter(const ATPropertySet& pset, IATDevice **dev) {
@@ -106,12 +114,14 @@ ATDevicePrinter::~ATDevicePrinter() {
 
 void *ATDevicePrinter::AsInterface(uint32 id) {
 	switch(id) {
-		case IATDevicePrinter::kTypeID:
-			return static_cast<IATDevicePrinter *>(this);
+		case IATDevicePrinterPort::kTypeID:
+			return static_cast<IATDevicePrinterPort *>(this);
 		case IATDeviceSIO::kTypeID:
 			return static_cast<IATDeviceSIO *>(this);
 		case IATDeviceCIO::kTypeID:
 			return static_cast<IATDeviceCIO *>(this);
+		case IATDeviceParent::kTypeID:
+			return static_cast<IATDeviceParent *>(this);
 	}
 
 	return ATDevice::AsInterface(id);
@@ -121,7 +131,13 @@ void ATDevicePrinter::GetDeviceInfo(ATDeviceInfo& info) {
 	info.mpDef = &g_ATDeviceDefPrinter;
 }
 
+void ATDevicePrinter::Init() {
+	mParallelBus.Init(this, 0, IATPrinterOutput::kTypeID, "parallel", L"Parallel Printer Port", "parport");
+}
+
 void ATDevicePrinter::Shutdown() {
+	mParallelBus.Shutdown();
+
 	if (mpCIOMgr) {
 		mpCIOMgr->RemoveCIODevice(this);
 		mpCIOMgr = nullptr;
@@ -236,9 +252,6 @@ void ATDevicePrinter::OnSerialAbortCommand() {
 }
 
 void ATDevicePrinter::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
-	if (!mpOutput)
-		return;
-
 	const uint8 *src = (const uint8 *)data;
 
 	while(len && (src[len - 1] == 0x20 || src[len - 1] == 0x9B))
@@ -251,7 +264,10 @@ void ATDevicePrinter::OnSerialReceiveComplete(uint32 id, const void *data, uint3
 	memcpy(buf, src, len);
 	buf[len] = 0x9B;
 
-	mpOutput->WriteATASCII(buf, len+1);
+	if (auto *printer = mParallelBus.GetChild<IATPrinterOutput>())
+		printer->WriteATASCII(buf, len+1);
+	else if (mpOutput)
+		mpOutput->WriteATASCII(buf, len+1);
 }
 
 void ATDevicePrinter::OnSerialFence(uint32 id) {
@@ -259,4 +275,8 @@ void ATDevicePrinter::OnSerialFence(uint32 id) {
 
 IATDeviceSIO::CmdResponse ATDevicePrinter::OnSerialAccelCommand(const ATDeviceSIORequest& request) {
 	return OnSerialBeginCommand(request);
+}
+
+IATDeviceBus *ATDevicePrinter::GetDeviceBus(uint32 index) {
+	return index ? nullptr : &mParallelBus;
 }

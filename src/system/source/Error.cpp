@@ -133,13 +133,13 @@ MyUserAbortError::MyUserAbortError() {
 }
 
 MyInternalError::MyInternalError(const char *format, ...) {
-	char buf[1024];
+	char tbuf[1024];
 	va_list val;
 
 	va_start(val, format);
-	_vsnprintf(buf, (sizeof buf) - 1, format, val);
-	buf[1023] = 0;
+	_vsnprintf(tbuf, (sizeof tbuf) - 1, format, val);
+	tbuf[1023] = 0;
 	va_end(val);
 
-	setf("Internal error: %s", buf);
+	setf("Internal error: %s", tbuf);
 }

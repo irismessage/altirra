@@ -453,7 +453,7 @@ void ATInputManager::Poll(float dt) {
 					float impulse = 0;
 
 					if (fabsf(mapping.mMotionDrag) < 1e-4f) {
-						// Undamped kinematics (d = vt + at^2)
+						// Undamped kinematics (d = vt + at^2/2)
 						impulse = (0.5f * mapping.mMotionAccel * dt + mapping.mMotionSpeed) * dt;
 
 						mapping.mMotionSpeed += mapping.mMotionAccel * dt;
@@ -636,8 +636,8 @@ void ATInputManager::OnMouseMove(int unit, int dx, int dy) {
 	mMouseAvgQueue[mMouseAvgIndex & 3] += (uint32)(dx + (dy << 16));
 
 	// Scale dx/dy to something reasonable in the +-1 range.
-	dx *= 0x100;
-	dy *= 0x100;
+	dx *= 0x80;
+	dy *= 0x80;
 
 	ActivateImpulseMappings(kATInputCode_MouseHoriz, dx);
 	ActivateImpulseMappings(kATInputCode_MouseHoriz | kATInputCode_SpecificUnit | (unit << kATInputCode_UnitShift), dx);
@@ -657,6 +657,13 @@ void ATInputManager::SetMousePadPos(int padX, int padY) {
 	ActivateAnalogMappings(kATInputCode_MousePadX | kATInputCode_SpecificUnit, padX, padX);
 	ActivateAnalogMappings(kATInputCode_MousePadY, padY, padY);
 	ActivateAnalogMappings(kATInputCode_MousePadY | kATInputCode_SpecificUnit, padY, padY);
+}
+
+void ATInputManager::SetMouseVirtualStickPos(int padX, int padY) {
+	ActivateAnalogMappings(kATInputCode_MouseEmuStickX, padX, padX);
+	ActivateAnalogMappings(kATInputCode_MouseEmuStickX | kATInputCode_SpecificUnit, padX, padX);
+	ActivateAnalogMappings(kATInputCode_MouseEmuStickY, padY, padY);
+	ActivateAnalogMappings(kATInputCode_MouseEmuStickY | kATInputCode_SpecificUnit, padY, padY);
 }
 
 void ATInputManager::GetNameForInputCode(uint32 code, VDStringW& name) const {
@@ -712,6 +719,14 @@ void ATInputManager::GetNameForInputCode(uint32 code, VDStringW& name) const {
 
 		case kATInputCode_MouseBeamY:
 			name = L"Mouse Pos Y (light pen)";
+			break;
+
+		case kATInputCode_MouseEmuStickX:
+			name = L"Mouse Pos X (virtual stick)";
+			break;
+
+		case kATInputCode_MouseEmuStickY:
+			name = L"Mouse Pos Y (virtual stick)";
 			break;
 
 		case kATInputCode_MouseLeft:
@@ -1185,38 +1200,50 @@ void ATInputManager::ActivateInputMap(ATInputMap *imap, bool enable) {
 }
 
 ATInputMap *ATInputManager::CycleQuickMaps() {
-	bool found = false;
-	ATInputMap *first = nullptr;
-	ATInputMap *active = nullptr;
+	using InputMapEntry = std::pair<ATInputMap * const, bool>;
+	vdfastvector<InputMapEntry *> quickMaps;
 
-	for(auto& entry : mInputMaps) {
-		ATInputMap *imap = entry.first;
+	// filter input maps to only quick maps
+	for (InputMapEntry& entry : mInputMaps) {
+		if (entry.first->IsQuickMap())
+			quickMaps.push_back(&entry);
+	}
 
-		if (!imap->IsQuickMap())
-			continue;
+	if (quickMaps.empty())
+		return nullptr;
 
-		if (!first)
-			first = imap;
+	// sort by name, case insensitive
+	std::sort(quickMaps.begin(), quickMaps.end(),
+		[](const InputMapEntry *p, const InputMapEntry *q) {
+			return vdwcsicmp(p->first->GetName(), q->first->GetName()) < 0;
+		}
+	);
 
-		if (found) {
-			if (!active) {
-				active = imap;
-				entry.second = true;
-			} else
-				entry.second = false;
-		} else if (entry.second) {
-			found = true;
-			entry.second = false;
+	// disable all quick maps and find last map that's currently enabled
+	auto it = quickMaps.end();
+
+	for (InputMapEntry *&e : quickMaps) {
+		if (e->second) {
+			it = quickMaps.begin() + (&e - quickMaps.data());
+			e->second = false;
 		}
 	}
 
-	if (!found) {
-		ActivateInputMap(first, true);
-		return first;
-	} else
-		RebuildMappings();
+	// advance one step, including the end iterator for disabled
+	if (it == quickMaps.end())
+		it = quickMaps.begin();
+	else
+		++it;
 
-	return active;
+	// enable the next map, if any
+	ATInputMap *newActive = nullptr;
+	if (it != quickMaps.end()) {
+		(*it)->second = true;
+		newActive = (*it)->first;
+	}
+
+	RebuildMappings();
+	return newActive;
 }
 
 uint32 ATInputManager::GetPresetInputMapCount() const {
@@ -1643,7 +1670,7 @@ void ATInputManager::RebuildMappings() {
 			for(uint32 j=0; j<triggerCount; ++j) {
 				const Trigger& t = mTriggers[j];
 
-				if (t.mId == m.mInputCode && t.mpController == pic) {
+				if (t.mId == m.mCode && t.mpController == pic) {
 					triggerIdx = j;
 					break;
 				}
@@ -1656,6 +1683,8 @@ void ATInputManager::RebuildMappings() {
 				t.mId = m.mCode;
 				t.mpController = pic;
 				t.mCount = 0;
+
+				++triggerCount;
 			}
 
 			uint32 inputCode = m.mInputCode;
@@ -1674,6 +1703,8 @@ void ATInputManager::RebuildMappings() {
 						case kATInputCode_MousePadY:
 						case kATInputCode_MouseBeamX:
 						case kATInputCode_MouseBeamY:
+						case kATInputCode_MouseEmuStickX:
+						case kATInputCode_MouseEmuStickY:
 							mbMouseAbsMode = true;
 							ci.mbBoundToMouseAbs = true;
 							break;
@@ -1835,10 +1866,13 @@ void ATInputManager::ActivateAnalogMappings(uint32 id, int ds, int dsdead) {
 			case kATInputTriggerMode_Relative:
 				{
 					const int speedIndex = ((trigger.mId & kATInputTriggerSpeed_Mask) >> kATInputTriggerSpeed_Shift);
+					const int accelIndex = ((trigger.mId & kATInputTriggerAccel_Mask) >> kATInputTriggerAccel_Shift);
 					const float speedVal = kSpeedScaleTable[speedIndex];
+					const float accelVal = kAccelScaleTable[accelIndex];
+					float frac = ((float)dsdead / (float)0x10000);
 
-					mapping.mMotionSpeed = ((float)dsdead / (float)0x10000) * speedVal;
-					mapping.mMotionAccel = 0;
+					mapping.mMotionSpeed = frac * speedVal;
+					mapping.mMotionAccel = frac * accelVal;
 				}
 
 				mapping.mMotionDrag = 0;

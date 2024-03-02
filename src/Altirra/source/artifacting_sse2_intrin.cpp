@@ -19,6 +19,7 @@
 #include <stdafx.h>
 #include <intrin.h>
 #include <emmintrin.h>
+#include "artifacting.h"
 
 void ATArtifactBlend_SSE2(uint32 *dst, const uint32 *src, uint32 n) {
 	      __m128i *VDRESTRICT dst16 = (      __m128i *)dst;
@@ -48,7 +49,7 @@ void ATArtifactBlendExchange_SSE2(uint32 *dst, uint32 *blendDst, uint32 n) {
 	}
 }
 
-template<typename T_BlendSrc>
+template<bool T_ExtendedRange, typename T_BlendSrc>
 void ATArtifactBlendMayExchangeLinear_SSE2(uint32 *dst, T_BlendSrc *blendDst, uint32 n) {
 	__m128i *VDRESTRICT blendDst16 = (__m128i *)blendDst;
 	__m128i *VDRESTRICT dst16      = (__m128i *)dst;
@@ -60,13 +61,21 @@ void ATArtifactBlendMayExchangeLinear_SSE2(uint32 *dst, T_BlendSrc *blendDst, ui
 	__m128 rround = _mm_set1_ps(0x8000);
 	__m128 ground = _mm_set1_ps(0x80);
 	__m128 tiny = _mm_set1_ps(1e-8f);
+	[[maybe_unused]] __m128i erBias = _mm_set1_epi8(0x40);
 
 	uint32 n2 = n >> 2;
 
 	while(n2--) {
-		const __m128i dc = *dst16;
+		__m128i dc = *dst16;
 		const __m128i sc = *blendDst16;
 
+		// for extended range, remove the 64/255 bias and blend; this will be at half range, but
+		// this is OK as our blending math is associative with scaling
+		if constexpr (T_ExtendedRange) {
+			dc = _mm_subs_epu8(dc, erBias);
+		}
+
+		// if we're doing a blend-and-exchange, update the blend source
 		if constexpr(!std::is_const_v<T_BlendSrc>) {
 			*blendDst16 = dc;
 		}
@@ -88,20 +97,33 @@ void ATArtifactBlendMayExchangeLinear_SSE2(uint32 *dst, T_BlendSrc *blendDst, ui
 		__m128 fg = _mm_mul_ps(_mm_rsqrt_ps(_mm_max_ps(fg2, tiny)), fg2);
 		__m128 fb = _mm_mul_ps(_mm_rsqrt_ps(_mm_max_ps(fb2, tiny)), fb2);
 
+		fr = _mm_min_ps(fr, _mm_set1_ps(255.0f * 65536.0f));
+		fg = _mm_min_ps(fg, _mm_set1_ps(255.0f * 256.0f));
+		fb = _mm_min_ps(fb, _mm_set1_ps(255.0f));
+
 		__m128i ir = _mm_and_si128(_mm_cvttps_epi32(_mm_add_ps(fr, rround)), rmask);
 		__m128i ig = _mm_and_si128(_mm_cvttps_epi32(_mm_add_ps(fg, ground)), gmask);
 		__m128i ib = _mm_cvtps_epi32(fb);
 
-		*dst16++ = _mm_or_si128(ir, _mm_or_si128(ig, ib));;
+		if constexpr (T_ExtendedRange)
+			*dst16++ = _mm_adds_epu8(_mm_or_si128(ir, _mm_or_si128(ig, ib)), _mm_set1_epi8(0x40));
+		else
+			*dst16++ = _mm_or_si128(ir, _mm_or_si128(ig, ib));
 	}
 }
 
-void ATArtifactBlendLinear_SSE2(uint32 *dst, const uint32 *src, uint32 n) {
-	ATArtifactBlendMayExchangeLinear_SSE2(dst, src, n);
+void ATArtifactBlendLinear_SSE2(uint32 *dst, const uint32 *src, uint32 n, bool extendedRange) {
+	if (extendedRange)
+		ATArtifactBlendMayExchangeLinear_SSE2<true>(dst, src, n);
+	else
+		ATArtifactBlendMayExchangeLinear_SSE2<false>(dst, src, n);
 }
 
-void ATArtifactBlendExchangeLinear_SSE2(uint32 *dst, uint32 *blendDst, uint32 n) {
-	ATArtifactBlendMayExchangeLinear_SSE2(dst, blendDst, n);
+void ATArtifactBlendExchangeLinear_SSE2(uint32 *dst, uint32 *blendDst, uint32 n, bool extendedRange) {
+	if (extendedRange)
+		ATArtifactBlendMayExchangeLinear_SSE2<true>(dst, blendDst, n);
+	else
+		ATArtifactBlendMayExchangeLinear_SSE2<false>(dst, blendDst, n);
 }
 
 template<int T_Intensity>
@@ -188,3 +210,18 @@ void ATArtifactNTSCFinal_SSE2(void *dst0, const void *srcr0, const void *srcg0, 
 		*dst++ = _mm_unpackhi_epi8(rb8b, gg8b);
 	} while(--n8);
 }
+
+void ATArtifactingEngine::ArtifactCompressRange_SSE2(uint32 *dst0, uint32 width) {
+	__m128i *VDRESTRICT dst = (__m128i *)dst0;
+	uint32 n4 = width >> 2;
+
+	__m128i x40b = _mm_set1_epi8(0x40);
+
+	while(n4--) {
+		__m128i c = _mm_subs_epu8(*dst, x40b);
+
+		*dst = _mm_adds_epu8(c, c);
+		++dst;
+	}
+}
+

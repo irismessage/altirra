@@ -97,9 +97,13 @@ public:
 	// Raise a window to the top of the Z-order amongst its siblings.
 	void BringToFront();
 
-	/// Retrieve or set the caption text of a window.
+	// Retrieve or set the caption text of a window.
 	VDStringW GetCaption() const;
 	void SetCaption(const wchar_t *caption);
+
+	// Force a full redraw of the window.
+	void Invalidate();
+	void InvalidateArea(const vdrect32& r);
 
 protected:
 	union {

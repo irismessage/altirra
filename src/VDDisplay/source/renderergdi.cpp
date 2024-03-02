@@ -107,7 +107,7 @@ void VDDisplayCachedImageGDI::Update(const VDDisplayImageView& imageView) {
 		const VDPixmap& px = imageView.GetImage();
 
 		VDPixmapLayout layout;
-		VDPixmapCreateLinearLayout(layout, nsVDPixmap::kPixFormat_XRGB8888, mWidth, mHeight, 4);
+		VDPixmapCreateLinearLayout(layout, px.format == nsVDPixmap::kPixFormat_ARGB8888 ? nsVDPixmap::kPixFormat_ARGB8888 : nsVDPixmap::kPixFormat_XRGB8888, mWidth, mHeight, 4);
 		VDPixmapLayoutFlipV(layout);
 
 		VDPixmapBuffer buf;
@@ -130,8 +130,15 @@ void VDDisplayCachedImageGDI::Update(const VDDisplayImageView& imageView) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+IVDDisplayRendererGDI *VDDisplayCreateRendererGDI() {
+	return new VDDisplayRendererGDI;
+}
+
 VDDisplayRendererGDI::VDDisplayRendererGDI()
-	: mhdc(NULL)
+	: mhdc(nullptr)
+	, mhdc1x1(nullptr)
+	, mhbm1x1(nullptr)
+	, mhbm1x1Old(nullptr)
 	, mSavedDC(0)
 	, mPenColor(0)
 	, mhPen((HPEN)::GetStockObject(BLACK_PEN))
@@ -160,6 +167,21 @@ void VDDisplayRendererGDI::Shutdown() {
 
 		img->Shutdown();
 	}
+
+	if (mhdc1x1) {
+		if (mhbm1x1Old) {
+			SelectObject(mhdc1x1, mhbm1x1Old);
+			mhbm1x1Old = nullptr;
+		}
+
+		if (mhbm1x1) {
+			DeleteObject(mhbm1x1);
+			mhbm1x1 = nullptr;
+		}
+
+		DeleteDC(mhdc1x1);
+		mhdc1x1 = nullptr;
+	}
 }
 
 bool VDDisplayRendererGDI::Begin(HDC hdc, sint32 w, sint32 h) {
@@ -181,6 +203,11 @@ bool VDDisplayRendererGDI::Begin(HDC hdc, sint32 w, sint32 h) {
 	mOffsetX = 0;
 	mOffsetY = 0;
 
+	mLastTextColor = kInvalidTextColor;
+	mLastTextBkColor = kInvalidTextColor;
+
+	SetStretchBltMode(hdc, STRETCH_DELETESCANS);
+
 	return true;
 }
 
@@ -201,6 +228,109 @@ void VDDisplayRendererGDI::End() {
 		DeleteObject(mhBrush);
 		mhBrush = NULL;
 	}
+}
+
+void VDDisplayRendererGDI::FillTri(const vdpoint32 *pts) {
+	TRIVERTEX vx[3];
+	const uint32 r = (mColor >> 8) & 0xFF00;
+	const uint32 g = (mColor >> 0) & 0xFF00;
+	const uint32 b = (mColor << 8) & 0xFF00;
+
+	for(int i=0; i<3; ++i) {
+		vx[i].x = pts[i].x;
+		vx[i].y = pts[i].y;
+		vx[i].Red = r;
+		vx[i].Green = g;
+		vx[i].Blue = b;
+		vx[i].Alpha = 255;
+	}
+
+	GRADIENT_TRIANGLE tri { 0, 1, 2 };
+
+	::GradientFill(mhdc, vx, 3, &tri, 1, GRADIENT_FILL_TRIANGLE);
+}
+
+void VDDisplayRendererGDI::SetTextFont(VDZHFONT hfont) {
+	VDASSERT(hfont);
+
+	::SelectObject(mhdc, hfont);
+}
+
+void VDDisplayRendererGDI::SetTextColorRGB(uint32 c) {
+	if (mLastTextColor != c) {
+		mLastTextColor = c;
+
+		::SetTextColor(mhdc, VDSwizzleU32(c) >> 8);
+	}
+}
+
+void VDDisplayRendererGDI::SetTextBkTransp() {
+	if (mLastTextBkColor != 0) {
+		mLastTextBkColor = 0;
+		::SetBkMode(mhdc, TRANSPARENT);
+	}
+}
+
+void VDDisplayRendererGDI::SetTextBkColorRGB(uint32 c) {
+	const uint32 rgb = VDSwizzleU32(c) >> 8;
+	const uint32 argb = rgb + 0xFF000000;
+
+	if (mLastTextBkColor != argb) {
+		if (mLastTextBkColor < 0xFF000000)
+			::SetBkMode(mhdc, OPAQUE);
+
+		::SetBkColor(mhdc, rgb);
+
+		mLastTextBkColor = argb;
+	}
+}
+
+void VDDisplayRendererGDI::SetTextAlignment(TextAlign align, TextVAlign valign) {
+	UINT gdiAlign = 0;
+
+	switch(align) {
+		case TextAlign::Left:
+		default:
+			gdiAlign = TA_LEFT;
+			break;
+
+		case TextAlign::Center:
+			gdiAlign = TA_CENTER;
+			break;
+
+		case TextAlign::Right:
+			gdiAlign = TA_RIGHT;
+			break;
+	}
+
+	switch(valign) {
+		case TextVAlign::Top:
+			gdiAlign |= TA_TOP;
+			break;
+
+		case TextVAlign::Baseline:
+			gdiAlign |= TA_BASELINE;
+			break;
+
+		case TextVAlign::Bottom:
+			gdiAlign |= TA_BOTTOM;
+			break;
+	}
+
+	::SetTextAlign(mhdc, gdiAlign);
+}
+
+void VDDisplayRendererGDI::DrawTextSpan(sint32 x, sint32 y, const wchar_t *text, uint32 numChars) {
+	if (!numChars)
+		return;
+
+	if (mLastTextColor == kInvalidTextColor)
+		SetTextColorRGB(0);
+
+	if (mLastTextBkColor == kInvalidTextColor)
+		SetTextBkTransp();
+
+	::ExtTextOutW(mhdc, mOffsetX + x, mOffsetY + y, 0, nullptr, text, numChars, nullptr);
 }
 
 const VDDisplayRendererCaps& VDDisplayRendererGDI::GetCaps() {
@@ -237,8 +367,29 @@ void VDDisplayRendererGDI::MultiFillRect(const vdrect32 *rects, uint32 n) {
 	while(n--) {
 		const vdrect32& r = *rects++;
 
-		RECT r2 = { r.left + mOffsetX, r.top + mOffsetY, r.right + mOffsetX, r.bottom + mOffsetY };
-		::FillRect(mhdc, &r2, mhBrush);
+		if (r.right > r.left && r.bottom > r.top) {
+			RECT r2 = { r.left + mOffsetX, r.top + mOffsetY, r.right + mOffsetX, r.bottom + mOffsetY };
+			::FillRect(mhdc, &r2, mhBrush);
+		}
+	}
+}
+
+void VDDisplayRendererGDI::AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor) {
+	x += mOffsetX;
+	y += mOffsetY;
+
+	if (w > 0 && h > 0) {
+		if (!mhdc1x1) {
+			mhdc1x1 = CreateCompatibleDC(mhdc);
+
+			mhbm1x1 = CreateCompatibleBitmap(mhdc, 1, 1);
+			if (mhbm1x1)
+				mhbm1x1Old = SelectObject(mhdc1x1, mhbm1x1);
+		}
+
+		::SetPixel(mhdc1x1, 0, 0, VDSwizzleU32(alphaColor) >> 8);
+
+		::AlphaBlend(mhdc, x, y, w, h, mhdc1x1, 0, 0, 1, 1, BLENDFUNCTION { AC_SRC_OVER, 0, alphaColor >> 24, 0 });
 	}
 }
 
@@ -304,7 +455,16 @@ void VDDisplayRendererGDI::StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh
 	if (dw <= 0 || dh <= 0)
 		return;
 
-	::StretchBlt(mhdc, dx, dy, dw, dh, cachedImage->mhdc, sx, sy, sw, sh, SRCCOPY);
+	switch(opts.mAlphaBlendMode) {
+		case VDDisplayBltOptions::AlphaBlendMode::None:
+		default:
+			::StretchBlt(mhdc, dx, dy, dw, dh, cachedImage->mhdc, sx, sy, sw, sh, SRCCOPY);
+			break;
+
+		case VDDisplayBltOptions::AlphaBlendMode::OverPreMultiplied:
+			::AlphaBlend(mhdc, dx, dy, dw, dh, cachedImage->mhdc, sx, sy, sw, sh, BLENDFUNCTION { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA });
+			break;
+	}
 }
 
 void VDDisplayRendererGDI::MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode) {

@@ -31,6 +31,8 @@ public:
 	
 	void SetPortIndex(uint8 portIndex);
 
+	void SetOnPrinterOutput(vdfunction<void(uint8)> fn);
+
 	bool IsVideoSignalValid() const { return mbValidSignal; }
 	float GetVideoHorzRate() const { return mHorzRate; }
 	float GetVideoVertRate() const { return mVertRate; }
@@ -63,8 +65,8 @@ private:
 	static const CommandInfo *LookupCommand(uint8 ch);
 
 	void OnReceiveByte(uint32 ch);
-	void SendCursor(uint8 offset);
-	void BeginWrite(uint8 len);
+	void SendCursor(uint8 offset, uint32 delay = 1);
+	void BeginWrite(uint8 len, uint32 delay = 1);
 
 	void OnChar(uint8);
 	void OnCmdSetCursorHPos(uint8);
@@ -185,18 +187,19 @@ private:
 	uint8 mUnderlineStart;
 	uint8 mUnderlineEnd;
 
-	uint8 mUARTPrescale;
-	uint8 mUARTBaud;
-	uint8 mUARTMultiplex;
-	uint32 mCyclesPerBitXmit;
-	uint32 mCyclesPerBitRecv;
+	uint8 mUARTPrescale = 0;
+	uint8 mUARTBaud = 0;
+	uint8 mUARTMultiplex = 0;
+	uint32 mXmitTimingAccum = 0;
+	uint32 mCyclesPerBitXmitX256 = 0;
+	uint32 mCyclesPerBitRecv = 0;
 
-	uint8 mCharWidth;
-	uint8 mCharHeight;
-	uint8 mGfxColumns;
-	uint8 mGfxRowMid;
-	uint8 mGfxRowBot;
-	uint8 mTCP;
+	uint8 mCharWidth = 0;
+	uint8 mCharHeight = 0;
+	uint8 mGfxColumns = 0;
+	uint8 mGfxRowMid = 0;
+	uint8 mGfxRowBot = 0;
+	uint8 mTCP = 0;
 
 	uint8 mHorzCount;
 	uint8 mHorzBlankStart;
@@ -214,21 +217,25 @@ private:
 
 	bool mbInvalidBlockGraphics;
 	bool mbInvalidActiveFont;
+
+	uint16 mPrefetchLFSR = 0x41;
 	
-	IATDevicePortManager *mpPIA;
+	IATDevicePortManager *mpPIA = nullptr;
 	int mPIAInput;
 	int mPIAOutput;
 	uint32 mPIAInputBit;		// XEP80 -> Computer
 	uint32 mPIAOutputBit;		// Computer -> XEP80
 	uint8 mPortIndex;
 
-	ATScheduler *mpScheduler;
-	ATEvent *mpReadBitEvent;
-	ATEvent *mpWriteBitEvent;
+	ATScheduler *mpScheduler = nullptr;
+	ATEvent *mpReadBitEvent = nullptr;
+	ATEvent *mpWriteBitEvent = nullptr;
 
 	uint32 mFrameLayoutChangeCount;
 	uint32 mFrameChangeCount;
 	uint32 mDataReceivedCount;
+
+	vdfunction<void(uint8)> mpOnPrinterOutput;
 
 	VDPixmapBuffer mFrame;
 

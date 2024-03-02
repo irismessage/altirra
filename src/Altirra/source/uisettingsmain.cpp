@@ -1,5 +1,5 @@
 ﻿//	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2009-2014 Avery Lee
+//	Copyright (C) 2009-2021 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -11,22 +11,21 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
 #include <vd2/system/math.h>
 #include <vd2/system/filesys.h>
+#include <at/ataudio/audiooutput.h>
+#include <at/ataudio/pokey.h>
 #include <at/atcore/media.h>
 #include <at/atio/image.h>
 #include "uisettingswindow.h"
 
-#include "audiooutput.h"
 #include "audiosampleplayer.h"
 #include "simulator.h"
 #include "gtia.h"
-#include "pokey.h"
 #include "disk.h"
 #include "options.h"
 #include "uitypes.h"
@@ -398,14 +397,14 @@ public:
 		es.release();
 
 		bs = new ATUIBoolSetting(L"XEP-80 view");
-		bs->SetGetter([]() { return ATUIGetXEPViewEnabled(); });
-		bs->SetImmediateSetter([](bool b) { ATUISetXEPViewEnabled(b); });
+		bs->SetGetter([]() { return ATUIGetAltViewEnabled(); });
+		bs->SetImmediateSetter([](bool b) { ATUISetAltViewEnabled(b); });
 		target->AddSetting(bs);
 		bs.release();
 
 		bs = new ATUIBoolSetting(L"XEP-80 view autoswitch");
-		bs->SetGetter([]() { return ATUIGetXEPViewAutoswitchingEnabled(); });
-		bs->SetImmediateSetter([](bool b) { ATUISetXEPViewAutoswitchingEnabled(b); });
+		bs->SetGetter([]() { return ATUIGetAltViewAutoswitchingEnabled(); });
+		bs->SetImmediateSetter([](bool b) { ATUISetAltViewAutoswitchingEnabled(b); });
 		target->AddSetting(bs);
 		bs.release();
 	}

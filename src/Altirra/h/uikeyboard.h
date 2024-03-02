@@ -41,6 +41,7 @@ struct ATUIKeyboardOptions {
 	bool mbEnableFunctionKeys;
 	bool mbAllowShiftOnColdReset;
 	bool mbAllowInputMapOverlap;
+	bool mbAllowInputMapModifierOverlap;
 	ArrowKeyMode mArrowKeyMode;
 	LayoutMode mLayoutMode;
 };

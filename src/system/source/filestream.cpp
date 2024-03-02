@@ -289,11 +289,13 @@ sint64 VDBufferedWriteStream::Length() {
 }
 
 void VDBufferedWriteStream::Seek(sint64 offset) {
-	Flush();
+	if (Pos() != offset) {
+		Flush();
 
-	// issue seek
-	mpSrc->Seek(offset);
-	mBasePosition = offset;
+		// issue seek
+		mpSrc->Seek(offset);
+		mBasePosition = offset;
+	}
 }
 
 void VDBufferedWriteStream::Skip(sint64 size) {

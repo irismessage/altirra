@@ -49,13 +49,17 @@ BOOL WINAPI ATSetDialogDpiChangeBehaviorDetectW32(HWND hDlg, DIALOG_DPI_CHANGE_B
 
 tpSetDialogDpiChangeBehavior g_pATSetDialogDpiChangeBehaviorW32 = ATSetDialogDpiChangeBehaviorDetectW32;
 
+BOOL WINAPI ATSetDialogDpiChangeBehaviorDummyW32(HWND hDlg, DIALOG_DPI_CHANGE_BEHAVIORS mask, DIALOG_DPI_CHANGE_BEHAVIORS values) {
+	return TRUE;
+}
+
 BOOL WINAPI ATSetDialogDpiChangeBehaviorDetectW32(HWND hDlg, DIALOG_DPI_CHANGE_BEHAVIORS mask, DIALOG_DPI_CHANGE_BEHAVIORS values) {
 	auto p = GetProcAddress(GetModuleHandleW(L"user32"), "SetDialogDpiChangeBehavior");
 
 	if (p)
 		g_pATSetDialogDpiChangeBehaviorW32 = (tpSetDialogDpiChangeBehavior)p;
 	else
-		g_pATSetDialogDpiChangeBehaviorW32 = [](HWND hDlg, DIALOG_DPI_CHANGE_BEHAVIORS mask, DIALOG_DPI_CHANGE_BEHAVIORS values) { return TRUE; };
+		g_pATSetDialogDpiChangeBehaviorW32 = ATSetDialogDpiChangeBehaviorDummyW32;
 
 	return g_pATSetDialogDpiChangeBehaviorW32(hDlg, mask, values);
 }
@@ -67,13 +71,17 @@ BOOL WINAPI ATSetDialogControlDpiChangeBehaviorDetectW32(HWND hDlg, DIALOG_CONTR
 
 tpSetDialogControlDpiChangeBehavior g_pATSetDialogControlDpiChangeBehaviorW32 = ATSetDialogControlDpiChangeBehaviorDetectW32;
 
+BOOL WINAPI ATSetDialogControlDpiChangeBehaviorDummyW32(HWND hwnd, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS mask, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS values) {
+	return TRUE;
+}
+
 BOOL WINAPI ATSetDialogControlDpiChangeBehaviorDetectW32(HWND hwnd, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS mask, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS values) {
 	auto p = GetProcAddress(GetModuleHandleW(L"user32"), "SetDialogControlDpiChangeBehavior");
 
 	if (p)
 		g_pATSetDialogControlDpiChangeBehaviorW32 = (tpSetDialogControlDpiChangeBehavior)p;
 	else
-		g_pATSetDialogControlDpiChangeBehaviorW32 = [](HWND hwnd, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS mask, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS values) { return TRUE; };
+		g_pATSetDialogControlDpiChangeBehaviorW32 = ATSetDialogControlDpiChangeBehaviorDummyW32;
 
 	return g_pATSetDialogControlDpiChangeBehaviorW32(hwnd, mask, values);
 }
@@ -85,15 +93,17 @@ BOOL WINAPI ATAdjustWindowRectExForDpiDetectW32(LPRECT lpRect, DWORD dwStyle, BO
 
 tpATAdjustWindowRectExForDpiW32 g_pATAdjustWindowRectExForDpiW32 = ATAdjustWindowRectExForDpiDetectW32;
 
+BOOL WINAPI ATAdjustWindowRectExForDpiDummyW32(LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD dwExStyle, UINT dpi) {
+	return AdjustWindowRectEx(lpRect, dwStyle, bMenu, dwExStyle);
+}
+
 BOOL WINAPI ATAdjustWindowRectExForDpiDetectW32(LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD dwExStyle, UINT dpi) {
 	auto p = GetProcAddress(GetModuleHandleW(L"user32"), "AdjustWindowRectExForDpi");
 
 	if (p)
 		g_pATAdjustWindowRectExForDpiW32 = (tpATAdjustWindowRectExForDpiW32)p;
 	else
-		g_pATAdjustWindowRectExForDpiW32 = [](LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD dwExStyle, UINT dpi) {
-			return AdjustWindowRectEx(lpRect, dwStyle, bMenu, dwExStyle);
-		};
+		g_pATAdjustWindowRectExForDpiW32 = ATAdjustWindowRectExForDpiDummyW32;
 
 	return g_pATAdjustWindowRectExForDpiW32(lpRect, dwStyle, bMenu, dwExStyle, dpi);
 }
@@ -309,7 +319,7 @@ void VDDialogFrameW32::SetCurrentSizeAsMaxSize(bool width, bool height) {
 		mbResizableHeight = false;
 }
 
-VDZHWND VDDialogFrameW32::GetControl(uint32 id) {
+VDZHWND VDDialogFrameW32::GetControl(uint32 id) const {
 	if (!mhdlg)
 		return NULL;
 
@@ -764,8 +774,14 @@ int VDDialogFrameW32::ActivateMenuButton(uint32 id, const wchar_t *const *items)
 		return -1;
 
 	UINT commandId = 100;
-	while(const wchar_t *s = *items++)
-		VDAppendMenuW32(hmenu, MF_ENABLED, commandId++, s);
+	while(const wchar_t *s = *items++) {
+		if (!wcscmp(s, L"---"))
+			VDAppendMenuSeparatorW32(hmenu);
+		else
+			VDAppendMenuW32(hmenu, MF_ENABLED, commandId, s);
+
+		++commandId;
+	}
 
 	TPMPARAMS params = { sizeof(TPMPARAMS) };
 	params.rcExclude = r;
@@ -951,6 +967,7 @@ void VDDialogFrameW32::OnPreLoaded() {
 
 	mResizer.Init(mhdlg);
 	mResizer.SetRefUnits(mDialogUnits.mWidth4, mDialogUnits.mHeight8);
+	mButtonIDs.clear();
 
 	// Instantiate controls
 	const bool darkMode = ATUIIsDarkThemeActive();
@@ -979,6 +996,9 @@ void VDDialogFrameW32::OnPreLoaded() {
 				VDASSERT(!"Invalid control type token in dialog item template.");
 				return;
 			}
+
+			if (token == 0x80)
+				mButtonIDs.push_back(hdr.id);
 
 			className = kBuiltinClasses[token - 0x80];
 
@@ -1083,6 +1103,8 @@ void VDDialogFrameW32::OnPreLoaded() {
 		// for combo boxes to work.
 		mResizer.Add(hwnd, x, y, cx, cy, alignment);
 	}
+
+	std::sort(mButtonIDs.begin(), mButtonIDs.end());
 
 	if (defId)
 		SendMessageW(mhdlg, DM_SETDEFID, defId, 0);
@@ -1238,6 +1260,107 @@ void VDDialogFrameW32::OnDpiChanging(uint16 newDpiX, uint16 newDpiY, const vdrec
 void VDDialogFrameW32::OnDpiChanged() {
 }
 
+uint32 VDDialogFrameW32::OnButtonCustomDraw(VDZLPARAM lParam) {
+	NMCUSTOMDRAW& hdr = *(NMCUSTOMDRAW *)lParam;
+
+	if (hdr.dwDrawStage == CDDS_PREERASE) {
+		return CDRF_NOTIFYPOSTERASE;
+	} else if (hdr.dwDrawStage == CDDS_PREPAINT) {
+		int savedDC = SaveDC(hdr.hdc);
+		if (savedDC) {
+			const ATUIThemeColors& tc = ATUIGetThemeColors();
+			RECT r = hdr.rc;
+
+			HBRUSH dcBrush = (HBRUSH)GetStockObject(DC_BRUSH);
+			const bool pushed = (hdr.uItemState & CDIS_SELECTED) != 0;
+			const bool checked = SendMessage(hdr.hdr.hwndFrom, BM_GETCHECK, 0, 0) == BST_CHECKED;	// CDIS_CHECKED does not work
+			const bool showPrefix = (hdr.uItemState & CDIS_SHOWKEYBOARDCUES) != 0;
+			const bool disabled = (hdr.uItemState & CDIS_DISABLED) != 0;
+			const bool focused = (hdr.uItemState & CDIS_FOCUS) != 0;
+
+			SetDCBrushColor(hdr.hdc, VDSwizzleU32(pushed ? tc.mHardNegEdge : tc.mHardPosEdge) >> 8);
+			{ RECT r1 { r.left, r.top, r.right, r.top + 1 }; FillRect(hdr.hdc, &r1, dcBrush); }
+			{ RECT r2 { r.left, r.top + 1, r.left + 1, r.bottom - 1 }; FillRect(hdr.hdc, &r2, dcBrush); }
+
+			SetDCBrushColor(hdr.hdc, VDSwizzleU32(pushed ? tc.mHardPosEdge : tc.mHardNegEdge) >> 8);
+			{ RECT r3 { r.left, r.bottom - 1, r.right, r.bottom }; FillRect(hdr.hdc, &r3, dcBrush); }
+			{ RECT r4 { r.right - 1, r.top + 1, r.right, r.bottom - 1 }; FillRect(hdr.hdc, &r4, dcBrush); }
+
+			SetDCBrushColor(hdr.hdc, VDSwizzleU32(pushed ? tc.mSoftNegEdge : tc.mSoftPosEdge) >> 8);
+			{ RECT r5 { r.left + 1, r.top + 1, r.right - 1, r.top + 2 }; FillRect(hdr.hdc, &r5, dcBrush); }
+			{ RECT r6 { r.left + 1, r.top + 2, r.left + 2, r.bottom - 2 }; FillRect(hdr.hdc, &r6, dcBrush); }
+
+			SetDCBrushColor(hdr.hdc, VDSwizzleU32(pushed ? tc.mSoftPosEdge : tc.mSoftNegEdge) >> 8);
+			{ RECT r7 { r.left + 1, r.bottom - 2, r.right - 1, r.bottom - 1 }; FillRect(hdr.hdc, &r7, dcBrush); }
+			{ RECT r8 { r.right - 2, r.top + 2, r.right - 1, r.bottom - 2 }; FillRect(hdr.hdc, &r8, dcBrush); }
+
+			COLORREF bkColor = VDSwizzleU32(pushed ? tc.mButtonPushedBg : checked ? tc.mButtonCheckedBg : focused ? tc.mFocusedBg : tc.mButtonBg) >> 8;
+			SetDCBrushColor(hdr.hdc, bkColor);
+			r.left += 2;
+			r.top += 2;
+			r.right -= 2;
+			r.bottom -= 2;
+
+			FillRect(hdr.hdc, &r, dcBrush);
+
+			SetTextColor(hdr.hdc, VDSwizzleU32(disabled ? tc.mDisabledFg : tc.mButtonFg) >> 8);
+			SetBkMode(hdr.hdc, TRANSPARENT);
+
+			BUTTON_IMAGELIST imgList {};
+			int imgWidth = 0;
+			int imgHeight = 0;
+			if (!(GetWindowLongPtr(hdr.hdr.hwndFrom, GWL_STYLE) & (BS_ICON | BS_BITMAP)) && Button_GetImageList(hdr.hdr.hwndFrom, &imgList) && imgList.himl && ImageList_GetIconSize(imgList.himl, &imgWidth, &imgHeight)) {
+				// We must intercept this case first as BM_GETIMAGE returns bogus handles -- this
+				// is used implicitly when BCM_SETSHIELD is called. The style check is necessary as
+				// otherwise the button returns an image list anyway (#$&).
+
+				VDStringW label = VDGetWindowTextW32(hdr.hdr.hwndFrom);
+
+				label.insert(label.begin(), L' ');
+
+				SIZE sz {};
+				GetTextExtentPoint32W(hdr.hdc, label.c_str(), label.size(), &sz);
+
+				int fullWidth = imgWidth + imgList.margin.left + imgList.margin.right + sz.cx;
+				int iconX = r.left + ((r.right - r.left - fullWidth) >> 1) + imgList.margin.left;
+				int iconY = r.top + ((r.bottom - r.top - imgHeight) >> 1);
+				int textX = iconX + imgList.margin.right + imgWidth;
+
+				IntersectClipRect(hdr.hdc, r.left, r.top, r.right, r.bottom);
+
+				ImageList_DrawEx(imgList.himl, 0, hdr.hdc, iconX, iconY, 0, 0, bkColor, CLR_NONE, ILD_NORMAL);
+
+				RECT rText = r;
+				rText.left = textX;
+				DrawTextW(hdr.hdc, label.c_str(), (int)label.size(), &rText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | (showPrefix ? 0 : DT_HIDEPREFIX));
+			} else if (HICON hIcon = (HICON)SendMessage(hdr.hdr.hwndFrom, BM_GETIMAGE, IMAGE_ICON, 0); hIcon) {
+				ICONINFO ii {};
+				if (GetIconInfo(hIcon, &ii)) {
+					if (ii.hbmColor) {
+						BITMAP bm {};
+
+						if (GetObject(ii.hbmColor, sizeof bm, &bm))
+							DrawIconEx(hdr.hdc, r.left + (r.right - r.left - bm.bmWidth + 1)/2, r.top + (r.bottom - r.top - bm.bmHeight + 1)/2, hIcon, 0, 0, 0, nullptr, DI_NORMAL);
+
+						DeleteObject(ii.hbmColor);
+					}
+
+					if (ii.hbmMask)
+						DeleteObject(ii.hbmMask);
+				}
+			} else {
+				const VDStringW& label = VDGetWindowTextW32(hdr.hdr.hwndFrom);
+				DrawTextW(hdr.hdc, label.c_str(), (int)label.size(), &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | (showPrefix ? 0 : DT_HIDEPREFIX));
+			}
+
+			RestoreDC(hdr.hdc, savedDC);
+		}
+		return CDRF_SKIPDEFAULT;
+	}
+
+	return CDRF_DODEFAULT;
+}
+
 bool VDDialogFrameW32::PreNCDestroy() {
 	return false;
 }
@@ -1277,13 +1400,7 @@ void VDDialogFrameW32::LoadAcceleratorTable(uint32 id) {
 }
 
 sint32 VDDialogFrameW32::GetDpiScaledMetric(int index) {
-	static const auto spGetSystemMetricsForDpi = (int (WINAPI *)(int, UINT))GetProcAddress(GetModuleHandleW(L"user32"), "GetSystemMetricsForDpi");
-
-	if (spGetSystemMetricsForDpi)
-		return spGetSystemMetricsForDpi(index, mCurrentDpi);
-
-	sint32 globalDpi = (sint32)ATUIGetGlobalDpiW32();
-	return (GetSystemMetrics(index) * (sint32)mCurrentDpi + (globalDpi >> 1)) / globalDpi;
+	return ATUIGetDpiScaledSystemMetricW32(index, mCurrentDpi);
 }
 
 void VDDialogFrameW32::ExecutePostedCalls() {
@@ -1344,6 +1461,10 @@ VDDialogFrameW32::DialogUnits VDDialogFrameW32::ComputeDialogUnits(VDZHFONT hFon
 
 void VDDialogFrameW32::RecomputeDialogUnits() {
 	mDialogUnits = ComputeDialogUnits(mhfont);
+}
+
+vdsize32 VDDialogFrameW32::ComputeTemplatePixelSize() const {
+	return ComputeTemplatePixelSize(mDialogUnits, mCurrentDpi);
 }
 
 vdsize32 VDDialogFrameW32::ComputeTemplatePixelSize(const DialogUnits& dialogUnits, uint32 dpi) const {
@@ -1605,7 +1726,10 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			return TRUE;
 
 		case WM_NOTIFY:
-			SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, mMsgDispatcher.Dispatch_WM_NOTIFY(wParam, lParam));
+			if (NMHDR& hdr = *(NMHDR *)lParam; ATUIIsDarkThemeActive() && hdr.code == NM_CUSTOMDRAW && std::binary_search(mButtonIDs.begin(), mButtonIDs.end(), hdr.idFrom))
+				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, OnButtonCustomDraw(lParam));
+			else
+				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, mMsgDispatcher.Dispatch_WM_NOTIFY(wParam, lParam));
 			return TRUE;
 
 		case WM_CLOSE:
@@ -1635,15 +1759,25 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 
 		case WM_DROPFILES:
 			OnDropFiles((VDZHDROP)wParam);
-			return 0;
+			return TRUE;
 
 		case WM_HSCROLL:
+			if (LRESULT r; mMsgDispatcher.TryDispatch_WM_HSCROLL(wParam, lParam, r)) {
+				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, r);
+				return TRUE;
+			}
+
 			OnHScroll(lParam ? GetWindowLong((HWND)lParam, GWL_ID) : 0, LOWORD(wParam));
-			return 0;
+			return TRUE;
 
 		case WM_VSCROLL:
+			if (LRESULT r; mMsgDispatcher.TryDispatch_WM_VSCROLL(wParam, lParam, r)) {
+				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, r);
+				return TRUE;
+			}
+
 			OnVScroll(lParam ? GetWindowLong((HWND)lParam, GWL_ID) : 0, LOWORD(wParam));
-			return 0;
+			return TRUE;
 
 		case WM_ERASEBKGND:
 			{

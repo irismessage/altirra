@@ -48,6 +48,9 @@ public:
 	
 	virtual VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 	virtual VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
+	virtual VDZLRESULT On_WM_HSCROLL(VDZWPARAM wParam, VDZLPARAM lParam);
+	virtual VDZLRESULT On_WM_VSCROLL(VDZWPARAM wParam, VDZLPARAM lParam);
+
 	virtual void OnFontChanged();
 
 	virtual void OnRedrawSuspend();
@@ -63,8 +66,11 @@ public:
 	void RemoveControl(VDZHWND hwnd);
 	void RemoveAllControls(bool detach);
 
+	bool TryDispatch(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
 	bool TryDispatch_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
 	bool TryDispatch_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
+	bool TryDispatch_WM_HSCROLL(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
+	bool TryDispatch_WM_VSCROLL(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
 	VDZLRESULT Dispatch_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 	VDZLRESULT Dispatch_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
 	void DispatchFontChanged();
@@ -206,6 +212,8 @@ public:
 		return mEventItemBeginRDrag;
 	}
 
+	void SetOnItemCustomStyle(vdfunction<bool(IVDUIListViewVirtualItem&, sint32&, bool&)>);
+
 public:
 	void Attach(VDZHWND hwnd) override;
 	void Detach() override;
@@ -220,6 +228,7 @@ protected:
 	IVDUIListViewIndexedProvider *mpIndexedProvider = nullptr;
 	VDStringW	mTextW[3];
 	VDStringA	mTextA[3];
+	VDZHFONT	mBoldFont = nullptr;
 
 	vdfastvector<int>	mColumnWidthCache;
 
@@ -233,6 +242,7 @@ protected:
 	VDEvent<VDUIProxyListView, LabelChangedEvent *> mEventItemLabelEdited;
 	VDEvent<VDUIProxyListView, int> mEventItemBeginDrag;
 	VDEvent<VDUIProxyListView, int> mEventItemBeginRDrag;
+	vdfunction<bool(IVDUIListViewVirtualItem&, sint32&, bool&)> mpOnItemCustomStyle;
 };
 
 /////////////////////////////////////////////////////////////////////////////
@@ -376,6 +386,35 @@ protected:
 
 	VDEvent<VDUIProxyComboBoxControl, int> mSelectionChanged;
 	vdfunction<void(int)> mpOnSelectionChangedFn;
+
+	static const uint32 kDefaultMinVisibleCount;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+
+class VDUIProxyComboBoxExControl final : public VDUIProxyControl {
+public:
+	VDUIProxyComboBoxExControl();
+	~VDUIProxyComboBoxExControl();
+
+	void Clear();
+	void AddItem(const wchar_t *s);
+
+	int GetSelection() const;
+	void SetSelection(int index);
+
+	void SetOnSelectionChanged(vdfunction<void(int)> fn);
+	void SetOnEndEdit(vdfunction<bool(const wchar_t *)> fn);
+
+protected:
+	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) override;
+	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) override;
+
+	void OnRedrawSuspend() override;
+	void OnRedrawResume() override;
+
+	vdfunction<void(int)> mpOnSelectionChangedFn;
+	vdfunction<bool(const wchar_t *)> mpOnEndEditFn;
 
 	static const uint32 kDefaultMinVisibleCount;
 };
@@ -563,6 +602,8 @@ public:
 	VDStringW GetText() const;
 	void SetText(const wchar_t *s);
 
+	void SelectAll();
+
 	void SetOnTextChanged(vdfunction<void(VDUIProxyEditControl *)> fn);
 
 private:
@@ -651,6 +692,8 @@ public:
 	VDUIProxyToolbarControl();
 	~VDUIProxyToolbarControl();
 
+	void SetDarkModeEnabled(bool enable);
+
 	void Clear();
 
 	void AddButton(uint32 id, sint32 imageIndex, const wchar_t *label);
@@ -686,6 +729,7 @@ private:
 	VDZHIMAGELIST mImageList = nullptr;
 	uint32 mImageWidth = 0;
 	uint32 mImageHeight = 0;
+	bool mbDarkModeEnabled = false;
 };
 
 /////////////////////////////////////////////////////////////////////////////
@@ -701,6 +745,58 @@ private:
 	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) override;
 
 	vdfunction<void()> mpOnClicked;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+
+class VDUIProxyTrackbarControl final : public VDUIProxyControl {
+public:
+	VDUIProxyTrackbarControl();
+	~VDUIProxyTrackbarControl();
+
+	void SetOnValueChanged(vdfunction<void(sint32, bool)> fn);
+
+	sint32 GetValue() const;
+	void SetValue(sint32 v);
+	void SetRange(sint32 minVal, sint32 maxVal);
+	void SetPageSize(sint32 pageSize);
+
+private:
+	VDZLRESULT On_WM_HSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) override;
+	VDZLRESULT On_WM_VSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) override;
+
+	vdfunction<void(sint32, bool)> mpFnOnValueChanged;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+
+class VDUIProxyScrollBarControl final : public VDUIProxyControl {
+public:
+	VDUIProxyScrollBarControl();
+	~VDUIProxyScrollBarControl();
+
+	void SetOnValueChanged(vdfunction<void(sint32, bool)> fn);
+
+	sint32 GetValue() const;
+	void SetValue(sint32 v);
+	void SetRange(sint32 minVal, sint32 maxVal);
+	void SetPageSize(sint32 pageSize);
+
+private:
+	VDZLRESULT On_WM_HSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) override;
+	VDZLRESULT On_WM_VSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) override;
+
+	vdfunction<void(sint32, bool)> mpFnOnValueChanged;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+
+class VDUIProxyStatusBarControl final : public VDUIProxyControl {
+public:
+	VDUIProxyStatusBarControl();
+	~VDUIProxyStatusBarControl();
+
+	void AutoLayout();
 };
 
 #endif

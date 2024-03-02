@@ -33,8 +33,12 @@ void ATUIEnableEditControlAutoComplete(void *hwnd);
 VDStringW ATGetHelpPath();
 void ATShowHelp(void *hwnd, const wchar_t *filename);
 
+void ATLaunchURL(const wchar_t *url);
+
 bool ATIsUserAdministrator();
 
 void ATGenerateGuid(uint8 guid[16]);
+
+void ATShowFileInSystemExplorer(const wchar_t *filename);
 
 #endif

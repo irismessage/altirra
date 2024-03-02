@@ -19,12 +19,12 @@
 #define f_AT_SIMULATOR_H
 
 #include <at/atcore/scheduler.h>
+#include <at/ataudio/pokey.h>
 #include "cpu.h"
 #include "cpumemory.h"
 #include "memorymanager.h"
 #include "antic.h"
 #include "gtia.h"
-#include "pokey.h"
 #include "pia.h"
 #include "simeventmanager.h"
 #include "constants.h"
@@ -39,7 +39,7 @@ class ATSIOManager;
 class ATUltimate1MBEmulator;
 class ATHLEBasicLoader;
 class ATHLEProgramLoader;
-class ATHLEFPAccelerator;
+class IATHLEFPAccelerator;
 class ATHLEFastBootHook;
 class IATHLECIOHook;
 class ATAudioSamplePlayer;
@@ -155,9 +155,10 @@ public:
 	IATDeviceSIOManager *GetDeviceSIOManager();
 	IATDeviceCIOManager *GetDeviceCIOManager();
 	ATHLEProgramLoader *GetProgramLoader() { return mpHLEProgramLoader; }
+	IATHLEFPAccelerator *GetFPAccelerator() const { return mpHLEFPAccelerator; }
 
 	IATPrinterOutput *GetPrinterOutput() { return mpPrinterOutput; }
-	void SetPrinterOutput(IATPrinterOutput *p);
+	void SetPrinterDefaultOutput(IATPrinterOutput *p);
 
 	ATPortController *GetPortControllerA() { return mpPortAController; }
 	ATPortController *GetPortControllerB() { return mpPortBController; }
@@ -236,6 +237,9 @@ public:
 	bool IsRandomFillEXEEnabled() const { return mbRandomFillEXEEnabled; }
 	void SetRandomFillEXEEnabled(bool enabled);
 
+	bool IsRandomProgramLaunchDelayEnabled() const { return mbRandomizeLaunchDelay; }
+	void SetRandomProgramLaunchDelayEnabled(bool enabled) { mbRandomizeLaunchDelay = enabled; }
+
 	ATHLEProgramLoadMode GetHLEProgramLoadMode() const { return mProgramLoadMode; }
 	void SetHLEProgramLoadMode(ATHLEProgramLoadMode mode) { mProgramLoadMode = mode; }
 
@@ -310,6 +314,9 @@ public:
 	bool IsAudioScopeEnabled() const { return mbAudioScopeEnabled; }
 	void SetAudioScopeEnabled(bool enable);
 
+	bool IsAudioStatusEnabled() const { return mbAudioStatusEnabled; }
+	void SetAudioStatusEnabled(bool enable);
+
 	bool IsVirtualScreenEnabled() const { return mpVirtualScreenHandler != NULL; }
 	void SetVirtualScreenEnabled(bool enable);
 
@@ -333,6 +340,11 @@ public:
 	void SetTracingEnabled(const ATTraceSettings *settings);
 
 	uint64 TimeSinceColdReset() const;
+
+	uint32 GetRandomSeed() const;
+	void SetRandomSeed(uint32 seed);
+	uint32 GetLockedRandomSeed() const;
+	void SetLockedRandomSeed(uint32 seed);
 
 	void ColdReset();
 	void ColdResetComputerOnly();
@@ -409,6 +421,7 @@ public:
 	uint32 GetConfigChangeCounter() const { return mConfigChangeCounter; }
 
 	bool LoadState(ATSaveStateReader& reader, ATStateLoadContext *context);
+	void SaveState(const wchar_t *path);
 
 	void CreateSnapshot(IATSerializable**);
 	bool ApplySnapshot(const IATSerializable& snapshot, ATStateLoadContext *context);
@@ -486,6 +499,7 @@ private:
 	bool SupportsInternalBasic() const;
 
 	void UpdateAudioMonitors();
+	void UpdateAudioStatus();
 
 	bool mbRunning;
 	bool mbRunSingleCycle = false;
@@ -499,6 +513,7 @@ private:
 	ATMemoryClearMode mMemoryClearMode;
 	bool mbFloatingIoBus;
 	bool mbRandomFillEXEEnabled;
+	bool mbRandomizeLaunchDelay = true;
 	bool mbDiskSIOOverrideDetectEnabled;
 	bool mbDiskSectorCounterEnabled;
 	bool mbCassetteSIOPatchEnabled;
@@ -521,6 +536,7 @@ private:
 	bool mbShadowCartridge;
 	bool mbAudioMonitorEnabled = false;
 	bool mbAudioScopeEnabled = false;
+	bool mbAudioStatusEnabled = false;
 	int mBreakOnScanline;
 	ATHLEProgramLoadMode mProgramLoadMode {};
 
@@ -583,7 +599,7 @@ private:
 
 	ATHLEBasicLoader *mpHLEBasicLoader;
 	ATHLEProgramLoader *mpHLEProgramLoader;
-	ATHLEFPAccelerator *mpHLEFPAccelerator;
+	IATHLEFPAccelerator *mpHLEFPAccelerator;
 	ATHLEFastBootHook *mpHLEFastBootHook;
 	IATHLECIOHook *mpHLECIOHook;
 

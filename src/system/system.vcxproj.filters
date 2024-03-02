@@ -138,12 +138,6 @@
     <ClCompile Include="source\vdalloc.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\VDNamespace.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\VDScheduler.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\vdstl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -296,16 +290,10 @@
     <ClInclude Include="..\h\VD2\system\vdalloc.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\h\VD2\system\VDNamespace.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="..\h\VD2\system\VDQueue.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\VD2\system\VDRingBuffer.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\h\VD2\system\VDScheduler.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\vd2\system\vdstdc.h">
@@ -390,9 +378,6 @@
     </YASM>
     <YASM Include="source\a_thunk.asm">
       <Filter>Assembly Files %28x86%29</Filter>
-    </YASM>
-    <YASM Include="source\a64_cpuaccel.asm">
-      <Filter>Assembly Files %28AMD64%29</Filter>
     </YASM>
     <YASM Include="source\a64_fraction.asm">
       <Filter>Assembly Files %28AMD64%29</Filter>

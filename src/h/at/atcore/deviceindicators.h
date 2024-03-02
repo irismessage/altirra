@@ -42,6 +42,7 @@ public:
 	virtual void SetPCLinkActivity(bool write) = 0;
 
 	virtual void SetFlashWriteActivity() = 0;
+	virtual void SetCartridgeActivity(sint32 color1, sint32 color2) = 0;
 
 	virtual void SetCassetteIndicatorVisible(bool vis) = 0;
 	virtual void SetCassettePosition(float pos, float len, bool recordMode, bool fskMode) = 0;

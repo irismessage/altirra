@@ -243,6 +243,7 @@ DEFINE_TEST(Core_Checksum) {
 
 	long ex = CPUCheckForExtensions();
 
+#if VD_CPU_X86 || VD_CPU_X64
 	CPUEnableExtensions(ex & (CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE));
 	test("Scalar");
 
@@ -260,7 +261,16 @@ DEFINE_TEST(Core_Checksum) {
 			}
 		}
 	}
-	
+#else
+	CPUEnableExtensions(0);
+	test("Scalar");
+
+	if (ex & VDCPUF_SUPPORTS_CRYPTO) {
+		CPUEnableExtensions(ex & VDCPUF_SUPPORTS_CRYPTO);
+		test("Crypto");
+	}
+#endif
+
 	return 0;
 }
 
@@ -284,7 +294,7 @@ DEFINE_TEST_NONAUTO(Core_ChecksumSpeed) {
 			volatile unsigned long long t1 = __rdtsc();
 #endif
 		
-			volatile ATChecksumSHA256 ck = fn(buf.data(), buf.size());
+			[[maybe_unused]] volatile ATChecksumSHA256 ck = fn(buf.data(), buf.size());
 
 #ifdef VD_CPU_ARM64
 			volatile unsigned long long t2 = _ReadStatusReg(ARM64_PMCCNTR_EL0) - t1;
@@ -306,6 +316,7 @@ DEFINE_TEST_NONAUTO(Core_ChecksumSpeed) {
 
 	long ex = CPUCheckForExtensions();
 
+#if VD_CPU_X86 || VD_CPU_X64
 	CPUEnableExtensions(ex & (CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE));
 	test("Scalar", ATComputeChecksumSHA256);
 
@@ -323,6 +334,15 @@ DEFINE_TEST_NONAUTO(Core_ChecksumSpeed) {
 			}
 		}
 	}
+#else
+	CPUEnableExtensions(0);
+	test("Scalar", ATComputeChecksumSHA256);
+
+	if (ex & VDCPUF_SUPPORTS_CRYPTO) {
+		CPUEnableExtensions(ex & VDCPUF_SUPPORTS_CRYPTO);
+		test("Crypto", ATComputeChecksumSHA256);
+	}
+#endif
 	
 	CPUEnableExtensions(ex);
 	return 0;
@@ -373,7 +393,7 @@ DEFINE_TEST_NONAUTO(Core_ChecksumSpeedSystem) {
 	}
 
 	printf("%llu %llu %llu (min %.2f cpb, avg %.2f cpb)\n", tmin, tmax, (tsum + 500) / 1000, (double)tmin / 65536.0, (double)tsum / 65536000.0);
-	return 0;
-
 	BCryptCloseAlgorithmProvider(h, 0);
+
+	return 0;
 }

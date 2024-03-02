@@ -18,7 +18,7 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <at/atcore/wraptime.h>
-#include "audiooutput.h"
+#include <at/ataudio/audiooutput.h>
 #include "audiorawsource.h"
 
 ATAudioRawSource::ATAudioRawSource() {
@@ -42,15 +42,17 @@ void ATAudioRawSource::Shutdown() {
 }
 
 void ATAudioRawSource::SetOutput(uint32 t, float level) {
-	if (level == mLevel)
+	float diff = level - mLevel;
+
+	if (diff == 0.0f)
 		return;
 
 	mLevel = level;
 
-	if (!mLevelEdges.empty() && ATWrapTime{mLevelEdges.back().mTime} >= t)
-		mLevelEdges.back().mLevel = level;
+	if (mLevelEdges.size() > mNextEdgeIndex && ATWrapTime{mLevelEdges.back().mTime} >= t)
+		mLevelEdges.back().mDeltaValue += diff;
 	else
-		mLevelEdges.push_back({ t, level });
+		mLevelEdges.push_back({ t, diff });
 }
 
 bool ATAudioRawSource::RequiresStereoMixingNow() const {
@@ -61,98 +63,28 @@ void ATAudioRawSource::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 	const uint32 baseTime = mixInfo.mStartTime;
 	const uint32 timeSpan = mixInfo.mCount * 28;
 	const uint32 numSamples = mixInfo.mCount;
+	const float volume = mixInfo.mpMixLevels[kATAudioMix_Other];
 
-	// drop samples that are before the start time, updating the base
-	// level
-	while(!mLevelEdges.empty() && ATWrapTime{mLevelEdges.front().mTime} <= baseTime) {
-		mStartLevel = mLevelEdges.front().mLevel;
-		mLevelEdges.pop_front();
-	}
+	// change all samples before the start time to coincide on the start, so they
+	// get accumulated
+	const uint32 endIndex = (uint32)mLevelEdges.size();
 
-	// check if we have any remaining edges within the time span
-	if (mLevelEdges.empty() || (uint32)(mLevelEdges.front().mTime - baseTime) >= timeSpan) {
-		// no -- do DC mixing
-		*mixInfo.mpDCLeft += mStartLevel;
-		*mixInfo.mpDCRight += mStartLevel;
-	} else {
-		// yes -- do full mixing
-		float level = mStartLevel;
-		float *dstL = mixInfo.mpLeft;
-		float *dstR = mixInfo.mpRight;
+	while(mNextEdgeIndex < endIndex && ATWrapTime{mLevelEdges[mNextEdgeIndex].mTime} <= baseTime)
+		mLevelEdges[mNextEdgeIndex++].mTime = baseTime;
 
-		float *end = dstL + numSamples;
-		uint32 relt = 0;
-		uint32 offset = 0;
-		float accum = 0;
+	// find appropriate end point for mixing
+	auto itEnd = std::upper_bound(mLevelEdges.begin() + mNextEdgeIndex, mLevelEdges.end(), ATSyncAudioEdge{ baseTime + timeSpan - 1, 0 },
+		[](const ATSyncAudioEdge& edge1, const ATSyncAudioEdge& edge2) { return ATWrapTime{edge1.mTime} < edge2.mTime; });
 
-		constexpr float kInvSubTicks = 1.0f / 28.0f;
+	const uint32 endMixIndex = (uint32)(itEnd - mLevelEdges.begin());
 
-		while(relt < timeSpan) {
-			uint32 timeNext = timeSpan;
-			float spanLevel = level;
+	mpAudioMixer->GetEdgePlayer().AddEdges(mLevelEdges.data() + mNextEdgeIndex, endMixIndex - mNextEdgeIndex, volume);
 
-			if (!mLevelEdges.empty()) {
-				uint32 timeNext2 = mLevelEdges.front().mTime - baseTime;
+	mNextEdgeIndex = endMixIndex;
 
-				if (timeNext > timeNext2)
-					timeNext = timeNext2;
-
-				level = mLevelEdges.front().mLevel;
-				mLevelEdges.pop_front();
-			}
-
-			if (relt >= timeNext)
-				continue;
-
-			uint32 subTicks = timeNext - relt;
-			relt = timeNext;
-
-			if (offset) {
-				uint32 startSubTicks = 28 - offset;
-
-				if (startSubTicks > subTicks)
-					startSubTicks = subTicks;
-
-				subTicks -= startSubTicks;
-				accum += (float)startSubTicks * spanLevel;
-				offset += startSubTicks;
-
-				if (offset >= 28) {
-					offset = 0;
-
-					accum *= kInvSubTicks;
-					(*dstL++) += accum;
-
-					if (dstR)
-						(*dstR++) += accum;
-
-					accum = 0;
-				}
-			}
-
-			if (subTicks) {
-				if (dstR) {
-					while(subTicks >= 28) {
-						subTicks -= 28;
-
-						(*dstL++) += spanLevel;
-						(*dstR++) += spanLevel;
-					}
-				} else {
-					while(subTicks >= 28) {
-						subTicks -= 28;
-
-						(*dstL++) += spanLevel;
-					}
-				}
-
-				accum = (float)subTicks * spanLevel;
-				offset = subTicks;
-			}
-		}
-
-		mStartLevel = level;
-
-		VDASSERT(dstL == end);
+	// if occupancy is below one-quarter, shift the array
+	if (mLevelEdges.size() < mNextEdgeIndex * 4) {
+		mLevelEdges.erase(mLevelEdges.begin(), mLevelEdges.begin() + mNextEdgeIndex);
+		mNextEdgeIndex = 0;
 	}
 }

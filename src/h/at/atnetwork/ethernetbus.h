@@ -4,7 +4,7 @@
 #include <vd2/system/vdstl.h>
 #include <at/atnetwork/ethernet.h>
 
-class ATEthernetBus : public IATEthernetSegment, protected IATEthernetClockEventSink {
+class ATEthernetBus final : public IATEthernetSegment, protected IATEthernetClockEventSink {
 	ATEthernetBus(const ATEthernetBus&);
 	ATEthernetBus& operator=(const ATEthernetBus&);
 public:

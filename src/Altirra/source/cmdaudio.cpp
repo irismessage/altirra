@@ -17,7 +17,7 @@
 
 #include <stdafx.h>
 #include <at/atcore/devicemanager.h>
-#include "audiooutput.h"
+#include <at/ataudio/audiooutput.h>
 #include "simulator.h"
 #include "uiaccessors.h"
 

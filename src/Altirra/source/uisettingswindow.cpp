@@ -969,8 +969,8 @@ void ATUISettingsWindow::OnMouseMove(sint32 x, sint32 y) {
 	}
 }
 
-bool ATUISettingsWindow::OnMouseWheel(sint32 x, sint32 y, float delta) {
-	mScrollAccum += delta * (float)mRowHeight;
+bool ATUISettingsWindow::OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages) {
+	mScrollAccum += delta * (float)(doPages ? mpScrollPane->GetClientArea().height() : mRowHeight);
 
 	sint32 idelta = (sint32)mScrollAccum;
 	mScrollAccum -= (float)idelta;

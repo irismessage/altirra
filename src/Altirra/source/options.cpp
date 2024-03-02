@@ -20,12 +20,12 @@
 #include <at/atcore/media.h>
 #include "options.h"
 
+uint32 g_ATOptionsSaveSuspended;
+
 ATOptions::ATOptions()
 	: mbDirty(false)
-	, mbDisplayDDraw(true)
 	, mbDisplayD3D9(true)
 	, mbDisplay3D(false)
-	, mbDisplayOpenGL(false)
 	, mbDisplay16Bit(false)
 	, mbSingleInstance(false)
 	, mbPauseDuringMenu(false)
@@ -42,6 +42,7 @@ ATOptions::ATOptions()
 	, mbCompatEnableInternalDB(true)
 	, mbCompatEnableExternalDB(false)
 	, mCompatExternalDBPath()
+	, mbPollDirectories(false)
 {
 }
 
@@ -90,10 +91,8 @@ void ATOptionsExchangeEnum(VDRegistryKey& key, bool write, const char *name, T& 
 
 void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Startup: Reuse program instance", opts.mbSingleInstance);
-	ATOptionsExchange(key, write, "Display: DirectDraw", opts.mbDisplayDDraw);
 	ATOptionsExchange(key, write, "Display: Direct3D9", opts.mbDisplayD3D9);
 	ATOptionsExchange(key, write, "Display: 3D", opts.mbDisplay3D);
-	ATOptionsExchange(key, write, "Display: OpenGL", opts.mbDisplayOpenGL);
 	ATOptionsExchange(key, write, "Display: Use 16-bit surfaces", opts.mbDisplay16Bit);
 	ATOptionsExchange(key, write, "Display: Accelerate screen FX", opts.mbDisplayAccelScreenFX);
 	ATOptionsExchangeEnum(key, write, "Simulator: Error mode", opts.mErrorMode, kATErrorModeCount);
@@ -114,6 +113,8 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "CompatDB: Enable internal DB", opts.mbCompatEnableInternalDB);
 	ATOptionsExchange(key, write, "CompatDB: Enable external DB", opts.mbCompatEnableExternalDB);
 	ATOptionsExchange(key, write, "CompatDB: External DB path", opts.mCompatExternalDBPath);
+
+	ATOptionsExchange(key, write, "System: Force directory change polling", opts.mbPollDirectories);
 }
 
 void ATOptionsLoad() {
@@ -124,13 +125,26 @@ void ATOptionsLoad() {
 }
 
 void ATOptionsSave() {
-	if (!g_ATOptions.mbDirty)
+	if (!g_ATOptions.mbDirty || g_ATOptionsSaveSuspended)
 		return;
 
 	VDRegistryAppKey key("Settings");
 
 	ATOptionsExchange(key, true, g_ATOptions);
 	g_ATOptions.mbDirty = false;
+}
+
+void ATOptionsSuspendSave() {
+	++g_ATOptionsSaveSuspended;
+
+	VDASSERT(g_ATOptionsSaveSuspended > 0 && g_ATOptionsSaveSuspended < 100);
+}
+
+void ATOptionsResumeSave() {
+	VDASSERT(g_ATOptionsSaveSuspended > 0 && g_ATOptionsSaveSuspended < 100);
+
+	if (!--g_ATOptionsSaveSuspended)
+		ATOptionsSave();
 }
 
 ///////////////////////////////////////////////////////////////////////////

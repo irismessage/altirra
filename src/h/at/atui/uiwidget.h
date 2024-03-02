@@ -332,7 +332,8 @@ public:
 	virtual void OnMouseUpL(sint32 x, sint32 y);
 	virtual void OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk);
 	virtual void OnMouseUp(sint32 x, sint32 y, uint32 vk);
-	virtual bool OnMouseWheel(sint32 x, sint32 y, float delta);
+
+	virtual bool OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages);
 	virtual void OnMouseLeave();
 	virtual void OnMouseHover(sint32 x, sint32 y);
 

@@ -49,9 +49,15 @@ uint32 ATIRQController::AllocateIRQ() {
 }
 
 void ATIRQController::FreeIRQ(uint32 irqbit) {
+	if (!irqbit)
+		return;
+
 	VDASSERT(irqbit >= 0x10000 && !(mFreeCustomIRQs & irqbit));
 
 	mFreeCustomIRQs += irqbit;
+
+	if (mActiveIRQs & irqbit)
+		Negate(irqbit, false);
 }
 
 void ATIRQController::Assert(uint32 sources, bool cpuBased)

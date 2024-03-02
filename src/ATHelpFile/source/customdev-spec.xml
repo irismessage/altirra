@@ -148,6 +148,12 @@
     which is a string that determines the display name of the device in UI. Another is <tt>"network"</tt>,
     which enables a connection to the network server.
   </p>
+  <p>
+    The option <tt>"debug"</tt> is handled by the compiler itself. The option value is either <tt>true</tt>
+    or <tt>false</tt> and determines whether conditional code prefixed by the <tt>[debug]</tt> attribute
+    is compiled. This allows logging statements and debugging code to be quickly turned on and off by
+    changing the option value.
+  </p>
   
   <h3>Comments and whitespace</h3>
   <p>
@@ -284,7 +290,7 @@
   <pre><![CDATA[  segment: {
     source: <segment-variable>,
     offset: <byte offset from start of segment>,
-    mode: "r|ro|w|rw"
+    mode: "r|ro|w|rw|wt"
   }]]></pre>
 
   <p>
@@ -302,7 +308,9 @@
     reads and writes, respectively. A "r" mode mapping will handle reads but
     allow writes to pass through to lower priority layers; an "rw" mapping will
     handle both reads and writes. An "ro" mode layer is read-only and will block
-    writes to lower layers without modifying the mapped segment.
+    writes to lower layers without modifying the mapped segment. "wt" selects
+    write-through mode, where writes are stored in the segment without blocking
+    the writes from lower priority layers.
   </p>
   <p>
     Mapping overlapping segment ranges in more than one memory layer
@@ -410,7 +418,7 @@
     </dd>
     <dd>
       If <tt>debug_script</tt> is not specified, the same <tt>script</tt> is used for
-      both debug and non-debug reads. The <tt>[debug]</tt> and <tt>[!debug]</tt>
+      both debug and non-debug reads. The <tt>[debug_read]</tt> and <tt>[!debug_read]</tt>
       attributes can be used to conditionally compile statements for only one of
       the modes. See Conditional Compilation in the scripting section for details.
     </dd>
@@ -824,11 +832,12 @@
 
   <h2>Parallel Bus Interface (PBI)</h2>
   <p>
-    A <tt>pbi_device</tt> section enables Parallel Bus Interface (PBI) support. It has one member,
-    the <tt>device_id</tt> for the PBI device:
+    A <tt>pbi_device</tt> section enables Parallel Bus Interface (PBI) support. It has two member,
+    the required <tt>device_id</tt> for the PBI device, and an optional IRQ enable:
   </p>
   <pre>  PBIDevice pbi_device: {
-      device_id: $40
+      device_id: $40,   // required
+      has_irq: true     // optional
   };</pre>
   <p>
     Exactly one bit must be set in the device ID, with $01..$80 corresponding to PBI devices 0-7.
@@ -864,6 +873,51 @@
     Additionally, any auto-PBI layer mapped to within <tt>$D800-DFFF</tt> also automatically disables
     emulation hooks in the math pack ROM when it is active so that they do not interfere with PBI firmware.
   </p>
+  <h3>PBI interrupts</h3>
+  <p>
+    Setting <tt>has_irq: true</tt> enables IRQ support for the PBI device. The <tt>assert_irq()</tt> and
+    <tt>negate_irq()</tt> methods are used to request a device IRQ.
+  </p>
+  <p>
+    As with other IRQs, the PBI IRQ is a level-based maskable interrupt and must be held asserted until
+    the CPU has a chance to service the interrupt. This is done by calling <tt>assert_irq()</tt> on
+    the <tt>PBIDevice</tt> object. Once called, this will continually request a maskable interrupt
+    on the CPU until <tt>negate_irq()</tt> is called. This is necessary since the CPU may have IRQs
+    masked or may be servicing higher priority IRQs from other devices, and the IRQ must continue to
+    be requested until either the CPU gets to the PBI device.
+  </p>
+  <p>
+    Once the device IRQ handler runs, it then <i>acknowledges</i>
+    the IRQ by a device-specific method so an IRQ is no longer requested by the device, which in this case
+    means a call to <tt>negate_irq()</tt>. As there is no generic way to control or acknowledge device
+    IRQs, the device IRQ must be disabled on reset until the handler has initialized and set the device's
+    ID bit in the operating system's <tt>PDMSK</tt> variable to enable the device's IRQ handler.
+    If the IRQ is asserted too early before interrupt handling is in place, the system will typically
+    hang as the CPU is forced to re-run the system IRQ dispatcher without having a way to acknowledge the
+    device interrupt. To assist in complying with this, the PBI device IRQ is automatically negated whenever a cold or warm reset occurs.
+  </p>
+  <p>
+    As required by the PBI specification, the device's IRQ status bit is also automatically exposed on
+    reads from <tt>$D1FF</tt> when the IRQ is enabled so the operating system can identify the source
+    of the PBI interrupt. Only the device's ID bit is driven on the bus,
+    so other bits in <tt>$D1FF</tt> will reflect open bus data if not driven by another PBI device in
+    the system.
+  </p>
+  <p>
+    Putting it all together, the following is an example of a working PBI interrupt implementation:
+  </p>
+  <ul>
+    <li>$D1F0 [W] enables the device interrupt.</li>
+    <li>$D1F1 [W] acknowledges the device interrupt.</li>
+    <li>
+      The PBI firmware's initialization handler sets the device bit in <tt>PDMSK</tt> to enable
+      OS interrupt handling for the device, and then writes <tt>$D1F0</tt> to enable the device
+      interrupt.
+    </li>
+    <li>
+      
+    </li>
+  </ul>
 
   <h2>Controller ports</h2>
   <p>
@@ -881,6 +935,184 @@
   </p>
 
 
+  <h2>Video outputs</h2>
+  <p>
+    Devices with auxiliary video outputs, like 80-column video boards, can be emulated by declaring
+    a <tt>VideoOutput</tt> object. This allows the custom device to add an entry to the video output
+    list, which when selected displays an image maintained by the custom device.
+  </p>
+  <h3>Creating the video output</h3>
+  <p>
+    Defining a <tt>VideoOutput</tt> object automatically creates it and adds it to the list of
+    available video outputs. The only required property is <tt>display_name</tt>, which sets the
+    name of the video output in the UI.
+  </p>
+  <pre><![CDATA[  VideoOutput video_output: {
+      display_name: "XEP80"
+  };]]></pre>
+  <p>
+    This is sufficient to enable the video output, but it is not very useful as it will simply
+    show "no signal". For the video output to actually show something it needs to have an
+    <tt>Image</tt> bound to it to provide the image data for the video output:
+  </p>
+  <pre><![CDATA[  Image frame_buffer: {
+      width: 320,
+      height: 192
+  };
+  
+  event "init": function {
+      video_output.set_image(frame_buffer);
+      frame_buffer.clear(0);
+  };]]></pre>
+  <p>
+    The video output will then begin displaying the contents of the bound image each frame.
+    Images are full 24-bit RGB and can be as colorful as the host can display.
+  </p>
+  <p>
+    The image object contains several methods for drawing on the image, and any changes
+    made to the image are shown when the next refresh occurs, which is either at the end
+    of the frame or whenever the displays are redrawn. Multiple framebuffer images can
+    also be
+    used and the video output rebound to different images on the fly; this can be
+    useful to emulate page flipping hardware.
+  </p>
+  <h3>Drawing the image</h3>
+  <p>
+    While image does provide a <tt>put_pixel()</tt> method, using it to draw the whole
+    image every frame would be absurdly slow and painful. <tt>Image</tt> provides several
+    methods to draw on the image, including clear, rectangle fill, and rectangle copies
+    (blits).
+  </p>
+  <p>
+    One particular blit that is of interest is a <i>tile map blit</i>, provided by
+    <tt>blt_tile_map()</tt>. This is a powerful blit type that uses a tile map to select
+    regular sized tile images from a tile source. This can be used to emulate both
+    graphical tile and character modes and is much faster than doing an individual blit
+    per tile.
+  </p>
+  <p>
+    Multiple <tt>Image</tt> objects can be declared, and off-screen images are useful as
+    blit sources. An image can be pre-initialized from the contents of a PNG file. The
+    <tt>blt_expand_1()</tt> call is also useful for expanding monochrome bitmap data
+    from ROM data into an image object.
+  </p>
+  <p>
+    The image bound to a framebuffer does not need to be redrawn every frame if its
+    contents don't need to change. Left alone, an <tt>Image</tt> object will retain its
+    image data and display the same on the next frame. Thus, it can be useful to maintain
+    a dirty flag indicating when a redraw is needed. The <tt>composite</tt> event on
+    a video object is triggered right before a video output is redrawn and is useful for
+    deferring redraw work until actually needed, avoiding it entirely if the video output
+    is not actually shown or has not changed. A valid strategy is to just maintain the
+    contents of video RAM from the emulation bindings and only convert it to a displayable image on
+    the composite event if a write has occurred to the video hardware or VRAM since
+    the last composite.
+  </p>
+
+  <h3>Drawing character displays</h3>
+  <p>
+    It is common for text mode video hardware to use bit 7 as an inverse video bit, and some
+    hardware uses non-ASCII character codes. These can be handled efficiently by pre-transforming
+    the character graphics. Inverse video can be supported by copying the character or
+    image data from the first 128 characters to the second 128 characters and then inverting
+    the graphics for the second half. For a different ordering like INTERNAL, permute the
+    characters in the character set to fit the code ordering.
+  </p>
+  <p>
+    Character-mode video hardware, particularly those driven by a CRTC, often implement
+    hardware scrolling by adjusting the display start address. This can tricky to emulate
+    when it involves wrapping around the VRAM address space since the wrap can occur not
+    only between rows but even within a row. This can be handled by manually unwrapping
+    the character map into a temporary segment, but this involves a bunch of temporary
+    copies.
+  </p>
+  <p>
+    An alternate way to handle this is to pre-unwrap video memory by maintaining two
+    copies of it, back-to-back. This can be done simply by adjusting the size of the
+    VRAM segment to twice the size of VRAM and writing each byte written to both halves
+    of the segment. Wrapping is then supported during blits by seamlessly reading from
+    the first copy to the second copy of VRAM within the segment, producing the same
+    data as wrapping within a single copy.
+  </p>
+  
+  <h3>Fine-tuning image display</h3>
+  <p>
+    The stretching filter used to display a video output is unspecified and under user
+    control; it may be nearest neighbor (point sampling), bilinear interpolation, or
+    a more specialized filter. It's a good idea to use an image resolution that matches
+    any pixel replication performed by the hardware. For instance, hardware that displays
+    a 160x100 image by doubling each scanline to produce a 200 line high image is best
+    displayed as 160x200 or 320x200 to avoid overly blurring the display.
+  </p>
+  <p>
+    It is common for video hardware of the time to display images with non-square pixels,
+    and replicting that is important to avoid misrepresenting the hardware and distorting
+    the output. Almost no hardware of the time actually displayed completely square pixels,
+    although some PAL video outputs were close (within 4%). The <tt>set_par()</tt> method
+    on the video output allows the pixel aspect ratio (PAR) to be specified so the video
+    output can properly scale the image output. This aspect ratio compensation is accelerated
+    with graphics hardware at native display resolution whenever possible and is much faster
+    than can be done within an <tt>Image</tt>.
+  </p>
+  
+  <h3>Pass-through</h3>
+  <p>
+    Some video hardware supports <i>pass-through</i> in that they also have a video input
+    and can switch between their own video signal or passing through the input signal.
+    This allows software-driven switching between two video outputs through one connector,
+    without requiring manual plugging and unplugging. This can be emulated in a custom
+    device with <tt>set_pass_through()</tt>, which allows the standard ANTIC+GTIA display
+    to appear for the custom display. It should only used for hardware that actually had
+    that arrangement, however, as otherwise forcing pass-through could preclude the sometimes
+    useful and real scenario of dual monitors on dual video outputs.
+  </p>
+  
+  <h3>Activity detection</h3>
+  <p>
+    For better usability with a single host display, video outputs have provision for
+    <i>activity detection</i>. This allows the emulator to start with the video output
+    for boot and then automatically switch to an alternate video output when it is initialized
+    and starts to be used. Activity-based switching is optional under user control.
+  </p>
+  <p>
+    The mechanism for activity detection is simple: <tt>mark_active()</tt> is called on
+    the video output whenever activity is detected, usually a non-trivial write to the
+    video hardware. It only needs to be called whenever a switch might need to occur,
+    with once per frame in <tt>composite</tt> being a good time.
+  </p>
+  <p>
+    <tt>mark_active()</tt> is designed to be fast in case it is called many times in a
+    row, but it's still a good idea to be careful about insertion points and use dirty
+    flags to minimize calls. For instance, with a video port that has both address and
+    data registers and requires a write to both ports to change a byte in VRAM, it is
+    sufficient to instrument only the data write port and not the address port.
+  </p>
+  
+  <h3>Supporting text copy</h3>
+  <p>
+    For video outputs that display text, a custom device can also support copying
+    text from the video output to the clipboard. This is done by supplying a mapping
+    from the video output image to a character grid and an ATASCII text backing store
+    for the grid. This then allows drag selection over the video output image and
+    copy-to-clipboard operations.
+  </p>
+  <p>
+    The mapping from positions in the video output image to character cells is supplied
+    with <tt>set_text_area()</tt>, which sets the size of the character grid in
+    columns and rows. This is used only to map drag positions to character cell
+    positions and to draw a selection highlight; it does not automatically render
+    characters into the video output. The text area mapping can be changed on
+    the fly, including setting it to 0x0 for graphical modes that have no text.
+  </p>
+  <p>
+    The actual text to copy is set by <tt>set_copy_text_source()</tt>, which
+    maps character cells in the text area to ATASCII bytes in a segment buffer.
+    For some video hardware, this can map directly to the raw VRAM which already
+    holds ASCII or ATASCII character codes. Otherwise, the <tt>pre_copy</tt>
+    event allows script to generate an ATASCII representation of the framebuffer
+    on the fly only when it is needed.
+  </p>
+  
   <h2>Scripting</h2>
   <p>
     Custom device behaviors are driven through scripts. These are small fragments
@@ -1177,6 +1409,47 @@
     virtual machine guards against this and will force a script to terminate
     if it takes too long and would hang the emulator.
   </p>
+  <p>
+    A <tt>while</tt> loop executes its controlled statement as long as the
+    while condition is true:
+  </p>
+  <pre>  while (i &lt; 128) {
+      seg.write_byte(i, i);
+      i = i + 1;
+  }</pre>
+  <p>
+    The loop condition is tested before the loop begins and each time the
+    loop restarts. It is not tested while the loop body executes. If the
+    loop condition is false at the beginning of the loop, the whole while
+    loop is skipped without being executed once.
+  </p>
+  <p>
+    A <tt>do...while</tt> loop repeats its controlled statement as long
+    as the while condition is true:
+  </p>
+  <pre>  do {
+      seg.write_byte(i, i);
+      i = i + 1;
+  } while (i &lt; 128);</pre>
+  <p>
+    The loop condition is only checked at the end of each loop, so unlike a
+    while loop, the body of a do-while loop always runs at least once.
+  </p>
+  <p>
+    Finally, the <tt>break</tt> statement allows for early exit from the
+    a loop, continuing execution after the loop:
+  </p>
+  <pre>  loop {
+      if (seg.read_byte(i) &gt;= 128)
+          break;
+          
+      seg.write_byte(i, 0);
+      i = i + 1;
+  }</pre>
+  <p>
+    If a break occurs within nested loops, only the innermost loop is exited.
+    Using a <tt>break</tt> statement outside of a loop is an error.
+  </p>
 
   <h3>Conditional compilation</h3>
   <p>
@@ -1188,19 +1461,29 @@
     suppressing side effects for the debug read case.
   </p>
   <p>
-    A statement is conditionally compiled by prefixing it with either the
-    <tt>[debug]</tt> or <tt>[!debug]</tt> attributes:
+    A statement is conditionally compiled by prefixing it with an attribute
+    consisting of a conditional name within square brackets, optionally
+    prefixed by ! for inversion:
   </p>
-  <pre>  [!debug] layer.set_modes(0, 0);
+  <pre>  [!debug_read] layer.set_modes(0, 0);
 
   [debug]
   if (condition)
-      debug.log("condition false");
+      Debug.log("condition false");
   else
-      debug.log("condition true");</pre>
+      Debug.log("condition true");</pre>
   <p>
-    The <tt>[debug]</tt> attribute only includes the next statement for a debug read,
-    while the <tt>[!debug]</tt> attribute only includes it for a non-debug read. For
+    The <tt>[debug]</tt> attribute is used to guard code that should only be enabled
+    for debugging. Code marked with it is compiled out unless the <tt>debug</tt>
+    option is enabled:
+  </p>
+  <pre><![CDATA[  option "debug": true;
+  
+  [debug]
+  Debug.log("condition hit");]]></pre>
+  <p>
+    The <tt>[debug_read]</tt> attribute only includes the next statement for a debug read,
+    while the <tt>[!debug_read]</tt> attribute only includes it for a non-debug read. For
     a <tt>loop</tt> statement, this includes the body of the loop, and for an <tt>if</tt>
     statement, this includes the controlled statement along with any associated <tt>else</tt>
     clause. The conditional statement can also be a block:
@@ -1263,6 +1546,33 @@
     Functions can call other functions, but if a recursion loop occurs the function
     call chain will be truncated to prevent a crash.
   </p>
+  <p>
+    A function must be declared before it can be called, so calling a function
+    that appears later in the source code won't work. This can be worked around
+    by <i>declaring</i> the function first, which specifies its name and types
+    without the function body, which can be provided later. This is done with
+    the same syntax as a function definition, just ending after the argument
+    parentheses instead of following with the function body:
+  </p>
+  <pre>  Thread thread_a;
+  Thread thread_b;
+  
+  function void threadfn_b();
+
+  function void threadfn_a() {
+      loop {
+        thread_b.run(threadfn_b);
+        thread_b.join();
+      }
+  }
+  
+  function void threadfn_b() {
+      int i = 0;
+      while (i &lt; 10) {
+          Debug.log_int("i = ", i);
+          Thread.sleep(500);
+      }
+  }</pre>
 
   <h3>Calling methods</h3>
   <p>
@@ -1310,7 +1620,7 @@
   </p>
   <pre>  cmd_thread.run(cmd_handler);</pre>
   <p>
-    Threads are cooperatively scheduled, meaning that only one thread
+    Threads are cooperatively scheduled with no preemption, meaning that only one thread
     is running at a time until either it completes execution of the top-level
     function that was passed to <tt>run()</tt> or it is suspended in a method
     call. Between those points, script execution on the currently running
@@ -1401,556 +1711,6 @@
     <dt>"network_interrupt"</dt>
     <dd>
       Called when a network server sends an interrupt request.
-    </dd>
-  </dl>
-
-  <h2>Scripting method reference</h2>
-  <p>
-    All methods are described in terms of C prototypes for recognizability, even
-    though the scripting language does not use such syntax. Argument types should
-    be omitted and the names do not have to be used. For instance, for a method
-    with the following prototype:
-  </p>
-  <pre>  void copy_from(int offset, Segment *arg2);</pre>
-  <p>
-    It could be called as follows:
-  </p>
-  <pre>  segment1.copy_from(0, segment2);</pre>
-  <p>
-    A <tt>static</tt> method is one that is called with the class name instead of
-    an object instance:
-  </p>
-  <pre>  Thread.sleep(100);</pre>
-
-  <h3>Segments</h3>
-  <dl class="scripting-ref">
-    <dt>void clear(int value);</dt>
-    <dd>
-      Clears the entire segment segment with the given byte value.
-    </dd>
-
-    <dt>void fill(int offset, int value, int size);</dt>
-    <dd>
-      Fills a portion of a segment with the given starting byte offset, byte
-      value, and number of bytes to fill. The range to fill must be fully
-      contained within the segment.
-    </dd>
-
-    <dt>void copy(int dest_offset, Segment *src_segment, int src_offset, int size);</dt>
-    <dd>
-      Copies a range from a source segment to this segment, given starting
-      byte offsets in both segments and the number of bytes to copy. The
-      source and destination ranges must be fully contained within the
-      respective segments. size=0 is silently ignored.
-    </dd>
-    <dd>
-      The source and destination segments can be the same. If the copy ranges
-      overlap, the copy direction is selected to preserve the contents of the
-      copied range at the new location (memmove semantics).
-    </dd>
-    <dd>
-      Copying large amounts of data with copy() is slow and should not be used
-      to implement memory banking. Changing the offset of a memory layer is
-      faster.
-    </dd>
-
-    <dt>int read_byte(int offset);</dt>
-    <dd>
-      Reads the byte at the given offset within the segment, as value 0-255.
-      The offset must be within the segment.
-    </dd>
-
-    <dt>void write_byte(int offset, int value);</dt>
-    <dd>
-      Writes a byte value at the given offset within the segment. The byte
-      value to be written is 0-255, but other values may be given, in which
-      case the lowest 8 bits are used.
-    </dd>
-  </dl>
-
-  <h3>Memory layers</h3>
-  <dl class="scripting-ref">
-    <dt>void set_offset(int offset);</dt>
-    <dd>
-      Sets the starting byte offset of a direct-mapped layer within its mapped
-      segment. For instance, a value of $2000 for a layer size of $1000 will map
-      $2000-3FFF, which requires that the mapped segment be at least $4000 bytes.
-      Attempting to call this for a binding-controlled segment or with an invalid
-      offset is an error.
-    </dd>
-
-    <dt>void set_segment_and_offset(Segment *seg, int offset);</dt>
-    <dd>
-      Sets both the mapped segment and offset within that segment used by
-      a direct-mapped memory layer. The offset must satisfy the requirements
-      of <tt>set_offset()</tt> for the new segment.
-    </dd>
-
-    <dt>void set_modes(int read_enable, int write_enable);</dt>
-    <dd>
-      Enables or disables the layer for read or write accesses. For a read-only
-      layer, the write enable controls whether the layer blocks write accesses
-      to lower layers; it will not enable write accesses into the layer itself.
-    </dd>
-    <dd>
-      For cartridge-enabled or auto-PBI layers, <tt>set_modes()</tt> will not
-      enable a layer when the cartridge is disabled or PBI device is deselected.
-      However, the desired mode is still changed and will become active when the
-      cartridge or PBI device is enabled.
-    </dd>
-
-    <dt>void set_read_only(int enabled);</dt>
-    <dd>
-      Sets or clears the read-only state for a memory layer. A memory layer
-      that is read-only and mapped for write access will intercept writes
-      from lower memory layers but not change the contents of the backing
-      segment. The read-only state has no effect if the memory layer is not
-      mapped for write.
-    </dd>
-  </dl>
-
-  <h3>Network connection</h3>
-  <p>
-    The network connection is accessed through the <tt>$network</tt> object.
-  </p>
-  <dl class="scripting-ref">
-    <dt>int send_message(int param1, int param2);</dt>
-    <dd>
-      Sends a message to the network server and waits for an integer response,
-      servicing requests from the server during the transaction. The meaning
-      of the two parameters and the return value are user-defined and up to
-      the server implementation.
-    </dd>
-
-    <dt>void post_message(int param1, int param2);</dt>
-    <dd>
-      Posts a message to the network server without waiting for a response.
-      The meaning of the two parameters and the return value are user-defined
-      and up to the server implementation.
-    </dd>
-    <dd>
-      This is faster than <tt>send_message</tt> because it does not require
-      the emulator to wait for the server.
-    </dd>
-  </dl>
-
-  <h3>SIO connection</h3>
-  <p>
-    The serial I/O (SIO) bus is accessed through the <tt>$sio</tt> object.
-    The methods on this object are only valid in scripts that are processing
-    SIO requests.
-  </p>
-  <p>
-    For methods in this class, "send" and "receive" are from the standpoint
-    of the device. A send operation transmits data from the device to the computer,
-    and a receive operation transmits data from the computer to the device.
-  </p>
-  <dl class="scripting-ref">
-    <dt>void ack();</dt>
-    <dd>
-      Send an ACK byte ($41) to the computer. This is used to affirm reception
-      of a valid command or data frame.
-    </dd>
-    <dd>
-      There is a built-in delay of 850 &#181;s before the A byte when an ACK is
-      sent after a received data frame to ensure that SIO protocol requirements
-      are met and the OS can receive the byte properly.
-    </dd>
-
-    <dt>void nak();</dt>
-    <dd>
-      Send an NAK byte ($4E) to the computer. This is used to signal an invalid
-      command or a corrupted data frame.
-    </dd>
-    <dd>
-      There is a built-in delay of 850 &#181;s before the N byte when an ACK is
-      sent after a received data frame to ensure that SIO protocol requirements
-      are met and the OS can receive the byte properly.
-    </dd>
-
-    <dt>void error();</dt>
-    <dd>
-      Send an Error byte ($45) to the computer. This is used to signal completion
-      of a failed command.
-    </dd>
-    <dd>
-      There is a built-in delay of 250 &#181;s before the E byte is sent to ensure
-      that SIO protocol requirements are met and the OS can receive the byte properly.
-    </dd>
-
-    <dt>void complete();</dt>
-    <dd>
-      Send a Complete byte ($43) to the computer. This is used to signal completion
-      of a successful command.
-    </dd>
-    <dd>
-      There is a built-in delay of 250 &#181;s before the C byte is sent to ensure
-      that SIO protocol requirements are met and the OS can receive the byte properly.
-    </dd>
-
-    <dt>void send_frame(Segment *seg, int offset, int length);</dt>
-    <dd>
-      Send a data frame to the computer from the given segment, starting at offset
-      and with length bytes, not including the checksum. The range must fit within
-      the segment. A standard SIO checksum is automatically appended at the end of
-      the frame (1's complement of all payload bytes). Script execution is suspended
-      until the send completes.
-    </dd>
-    <dd>
-      Data is copied from the segment to an internal buffer as soon as the send request
-      is queued, so any modifications to the segment after that are not reflected in
-      the transfer. This is possible since memory access handlers can run in parallel
-      to SIO transactions.
-    </dd>
-    <dd>
-      There is a limit of 8192 bytes per frame sent.
-    </dd>
-
-    <dt>void recv_frame(int length);</dt>
-    <dd>
-      Receive a data frame from the computer with the given number of bytes, not
-      including the checksum. The checksum is automatically checked and if it fails,
-      a NAK is automatically sent and command processing is terminated. Script
-      execution is suspended until the receive completes.
-    </dd>
-    <dd>
-      When the frame is received, script execution is resumed. The received frame
-      is available in a special segment called <tt>$sioframe</tt>. This segment
-      is only valid during the current script until it exits or is suspended; if
-      the data is required beyond that it should be copied into another segment.
-      The <tt>$sioframe</tt> segment is read-only and cannot be mapped into a
-      memory layer.
-    </dd>
-    <dd>
-      There is a limit of 8192 bytes per frame received.
-    </dd>
-
-    <dt>void delay(int cycles);</dt>
-    <dd>
-      Suspend execution of the script for the given number of machine cycles.
-    </dd>
-
-    <dt>int command_asserted();</dt>
-    <dd>
-      Returns true if the SIO COMMAND line is asserted, indicating that a command
-      frame is being transferred.
-    </dd>
-
-    <dt>int motor_asserted();</dt>
-    <dd>
-      Returns true if the SIO MOTOR line is asserted, meaning that the computer is
-      requesting a tape deck to run or a communications device to take control of
-      the SIO bus for non command frame based transfers.
-    </dd>
-
-    <dt>void enable_raw(int enable);</dt>
-    <dd>
-      Enables or disables raw SIO. This is needed to send raw bytes, signals on
-      the SIO PROCEED or INTERRUPT lines, or to receive raw SIO events. However,
-      performance is impacted when this is enabled, so it should only be enabled
-      when needed. The default is disabled.
-    </dd>
-    <dd>
-      Disabling raw SIO automatically deasserts the PROCEED and INTERRUPT lines,
-      if they have been asserted.
-    </dd>
-
-    <dt>void set_proceed(int asserted);</dt>
-    <dd>
-      Asserts or deasserts the SIO PROCEED control line.
-    </dd>
-    <dd>
-      Raw SIO must be enabled to use this method.
-    </dd>
-
-    <dt>void set_interrupt(int asserted);</dt>
-    <dd>
-      Asserts or deasserts the SIO INTERRUPT control line.
-    </dd>
-    <dd>
-      Raw SIO must be enabled to use this method and it must be called on a script thread.
-    </dd>
-
-    <dt>int send_raw_byte(int ch, int cycles_per_bit);</dt>
-    <dd>
-      Send a raw byte on the SIO bus from the device to the computer's SIO DATA IN
-      line.
-    </dd>
-    <dd>
-      ch is the data byte to send, as it will be received in POKEY's SERIN register.
-      Start and stop bits are automatically added around this byte, for a total of
-      10 bits to transfer.
-    </dd>
-    <dd>
-      While cycles_per_bit is the number of computer machine cycles between each bit.
-      A value 93 is used for 19200 baud (19069-19245 baud).
-    </dd>
-    <dd>
-      Raw SIO must be enabled to use this method and it must be called on a script thread.
-      Thread execution is suspended until the byte is fully sent.
-    </dd>
-
-    <dt>int recv_raw_byte();</dt>
-    <dd>
-      Wait for a byte to arrive on the SIO bus and return the byte received. The bit rate
-      in cycles per bit is stored in the thread-local <tt>$aux</tt> variable.
-    </dd>
-    <dd>
-      Raw SIO must be enabled to use this method and it must be called on a script thread.
-    </dd>
-    <dd>
-      <tt>recv_raw_byte()</tt> will not work if the <tt>sio_received_byte</tt> script
-      event is bound.
-    </dd>
-
-    <dt>void wait_command();</dt>
-    <dd>
-      Wait for the SIO command line to assert, signaling the beginning of a command
-      frame. Only a leading edge resumes execution; if SIO command is already asserted
-      when this method is called, the method waits until the signal is deasserted and
-      re-asserted.
-    </dd>
-    <dd>
-      This method is intended for waiting for the beginning of a command frame.
-    </dd>
-    <dd>
-      Raw SIO must be enabled to use this method and it must be called on a script thread.
-    </dd>
-
-    <dt>void wait_command_off();</dt>
-    <dd>
-      Wait for the SIO command line to be deasserted, signaling the not-command-frame
-      state. If SIO command is already deasserted when this method is called, execution
-      continues immediately.
-    </dd>
-    <dd>
-      This method is intended for waiting until the computer is ready to receive the device
-      ACK/NAK response to the command frame.
-    </dd>
-    <dd>
-      Raw SIO must be enabled to use this method and it must be called on a script thread.
-    </dd>
-
-    <dt>void wait_motor_changed();</dt>
-    <dd>
-      Wait for the SIO motor line to change state from the current polarity. The
-      <tt>motor_asserted()</tt> method can be used to check the state before or after this
-      call.
-    </dd>
-    <dd>
-      Raw SIO must be enabled to use this method and it must be called on a script thread.
-    </dd>
-
-    <dt>void reset_recv_checksum();</dt>
-    <dd>
-      Resets the checksum value accumulator for receive operations to zero.
-    </dd>
-
-    <dt>void reset_send_checksum();</dt>
-    <dd>
-      Resets the checksum value accumulators for send operations to zero.
-    </dd>
-
-    <dt>int get_send_checksum();</dt>
-    <dd>
-      Reads the computed SIO checksum for all bytes sent with raw SIO since the last call to <tt>reset_send_checksum()</tt>.
-      This is the 8-bit one's complement sum of all bytes.
-    </dd>
-    <dd>
-      Typically this is called after the payload of a data frame is sent, with the checksum
-      computed by this method being sent afterward.
-    </dd>
-
-    <dt>int get_recv_checksum();</dt>
-    <dd>
-      Reads the computed SIO checksum for all bytes received with raw SIO since the last call to <tt>reset_recv_checksum()</tt>.
-      This is the 8-bit one's complement sum of all bytes.
-    </dd>
-    <dd>
-      When using this to verify the received checksum for a command or data frame, <tt>get_recv_checksum()</tt>
-      should be called before the checksum is received, or else the checksum computation will also include the
-      received checksum byte. For instance, when receiving a 128 byte data frame, the sequence would be:
-      <tt>reset_recv_checksum()</tt>, 128x <tt>recv_raw_byte()</tt>, <tt>get_recv_checksum()</tt>, <tt>recv_raw_byte()</tt>,
-      then compare the computed and received checksum bytes.
-    </dd>
-    <dd>
-      The checksum accumulator is updated whenever a script receives a byte with <tt>recv_raw_byte()</tt>. It is
-      not updated if a byte is received when a script is not waiting to receive (thus missing the byte).
-    </dd>
-
-    <dt>int check_recv_checksum();</dt>
-    <dd>
-      Compares the last byte received against the computed SIO checksum for all bytes received with raw SIO since
-      the last call to <tt>reset_recv_checksum()</tt>, not including the last byte, and returns true if they
-      match. This is a shortcut for saving the result of <tt>get_recv_checksum()</tt> and comparing it after receiving
-      the checksum byte, allowing:
-    </dd>
-    <dd>
-      <pre>  $sio.recv_raw_byte();
-  if ($sio.check_recv_checksum())
-    ...</pre>
-    </dd>
-  </dl>
-
-  <h3>Clock</h3>
-  <p>
-    The <tt>$clock</tt> object provides methods to access the host real-time clock
-    for emulating real-time clock devices.
-  </p>
-  <dl class="scripting-ref">
-    <dt>void capture_local_time();</dt>
-    <dd>
-      Snapshot the current time in the current local time zone. This captures the local
-      time in one pass so that accesses to individual fields are consistent. The local time is cached so
-      that the time is not fetched more than once per script; it cannot be used to measure
-      execution time within a script.
-    </dd>
-
-    <dt>int local_year();</dt>
-    <dd>
-      Return the year of the last captured local time as a four-digit value, e.g. 2020.
-    </dd>
-
-    <dt>int local_month();</dt>
-    <dd>
-      Return the month of the last captured local time (1-12).
-    </dd>
-
-    <dt>int local_day();</dt>
-    <dd>
-      Return the day of the month of the last captured local time (1-31).
-    </dd>
-
-    <dt>int local_dayofweek();</dt>
-    <dd>
-      Return the day of the week of the last captured local time as a value 0-6, where 0 means Sunday.
-    </dd>
-
-    <dt>int local_hour();</dt>
-    <dd>
-      Return the hour of the last captured local time (0-23).
-    </dd>
-
-    <dt>int local_minute();</dt>
-    <dd>
-      Return the minute of the last captured local time (0-59).
-    </dd>
-
-    <dt>int local_second();</dt>
-    <dd>
-      Return the second of the last captured local time (0-59).
-    </dd>
-  </dl>
-
-  <h3>Controller ports</h3>
-  <p>
-    Controller port objects represent one of the 9-pin controller ports on
-    the system, bound to a scripting variable with the <tt>controller_ports</tt>
-    section.
-  </p>
-  <p>
-    On a computer with only two controller ports (XL/XE), the third and fourth
-    controller ports are disabled; they maintain state and all functions can be
-    called, but the controller state is not applied to hardware state.
-  </p>
-  <dl class="scripting-ref">
-    <dt>void set_paddle_a(int pos);</dt>
-    <dt>void set_paddle_b(int pos);</dt>
-    <dd>
-      Sets the position of paddle A or paddle B, as the value returned from the
-      <tt>POT0-7</tt> register and as reflected by the BASIC <tt>PADDLE()</tt>
-      function. The valid range is 1-228; other values are clamped to this range.
-    </dd>
-
-    <dt>void set_trigger(int down);</dt>
-    <dd>
-      Sets the joystick trigger button state, where false means up and true
-      means down.
-    </dd>
-
-    <dt>void set_dirs(int mask);</dt>
-    <dd>
-      Sets a bitmask of which joystick direction inputs should be asserted.
-      Bits 0-3 correspond to up, down, left, and right, with a '1' bit meaning
-      that the direction is active (grounded). This is inverted from the
-      state as reflected in the PORTA/PORTB registers or reported by the
-      BASIC <tt>STICK()</tt> function. Zero deactivates all inputs (joystick
-      centered).
-    </dd>
-    <dd>
-      As on the real hardware, the left and right inputs (bits 2-3) also
-      double as the paddle triggers.
-    </dd>
-    <dd>
-      When emulating a joystick, it is the responsibility of the device to not
-      send both left+right or up+down to the computer. This is a valid input
-      hardware-wise, but generally not possible with joystick hardware and some
-      programs that use joysticks will malfunction if this is seen.
-    </dd>
-  </dl>
-
-  <h3>Debug class</h3>
-  <p>
-    The <tt>Debug</tt> class contains methods to aid in development of custom
-    devices.
-  </p>
-  <dl class="scripting-ref">
-    <dt>static void log(String *s);</dt>
-    <dd>
-      Prints a string to the CUSTOMDEV logging channel in the debugger.
-    </dd>
-
-    <dt>static void log_int(String *s, int value);</dt>
-    <dd>
-      Prints a string to the CUSTOMDEV logging channel in the debugger, followed
-      by an integer value formatted as decimal.
-    </dd>
-  </dl>
-
-  <h3>Thread class</h3>
-  <p>
-    The <tt>Thread</tt> class contains methods to control execution of script
-    threads. These methods only work with explicitly declared script threads; they
-    cannot be used on the implicit threads created for direct script handlers or
-    SIO command execution. However, those threads can control script threads.
-  </p>
-  <dl class="scripting-ref">
-    <dt>int is_running();</dt>
-    <dd>
-      Returns true if the thread is currently running. This includes being temporarily
-      suspended in a method call, or while waiting for its turn to execute (since
-      only one thread can execute at a time).
-    </dd>
-
-    <dt>int run(function f);</dt>
-    <dd>
-      Starts execution of the specified function on the given thread. The function must
-      return <tt>void</tt>. If the thread is currently running, it is stopped before
-      being restarted at the beginning of the given function.
-    </dd>
-    <dd>
-      <tt>run()</tt> cannot be called on the current thread.
-    </dd>
-
-    <dt>void interrupt();</dt>
-    <dd>
-      Stops execution on the thread, interrupting all currently executing functions on
-      the thread's stack. For threads stopped in a yielding method, what side effects
-      if any occur from the interrupted method call depend on the specific method.
-    </dd>
-    <dd>
-      The currently executing thread cannot interrupt itself.
-    </dd>
-
-    <dt>static void sleep(int cycles);</dt>
-    <dd>
-      Suspends execution of the thread for the specified number of machine cycles (at 1.77/1.79MHz).
-      Negative or zero values are silently ignored.
-    </dd>
-    <dd>
-      This method cannot be used in an SIO command handler script, which must use <tt>$sio.delay()</tt>
-      instead. The reason for this is that SIO command handling is sequenced through the SIO manager's
-      action queue and it may virtualize actions that would ordinarily take time.
     </dd>
   </dl>
 
@@ -2295,6 +2055,13 @@
   };]]></pre>
   <h2>Changes</h2>
   <dl>
+    <dt>v0.4</dt>
+    <dd>
+      <ul>
+        <li>Added <tt>Image</tt> and <tt>VideoOutput</tt> classes.</li>
+      </ul>
+    </dd>
+
     <dt>v0.3</dt>
     <dd>
       <ul>

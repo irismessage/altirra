@@ -23,7 +23,7 @@
 #include "cpuhookmanager.h"
 #include "decmath.h"
 
-class ATHLEFPAcceleratorBase {
+class ATHLEFPAcceleratorBase : public IATHLEFPAccelerator {
 public:
 	ATHLEFPAcceleratorBase()
 		: mpCPU(NULL)
@@ -79,7 +79,7 @@ static const struct {
 
 };
 
-class ATHLEFPAccelerator : public ATHLEFPAcceleratorBase {
+class ATHLEFPAccelerator final : public ATHLEFPAcceleratorBase {
 	ATHLEFPAccelerator(const ATHLEFPAccelerator&);
 	ATHLEFPAccelerator& operator=(const ATHLEFPAccelerator&);
 public:
@@ -89,14 +89,16 @@ public:
 	void Init(ATCPUEmulator *cpu);
 	void Shutdown();
 
+	bool SetHookEnabled(uint32 addr, bool enabled) override;
+	void ListHooks(vdfastvector<std::pair<uint32, bool>>& hooks) const override;
+
 private:
 	void OnHook(uint16 pc);
 
-	ATCPUHookNode *mpHookNodes[vdcountof(kATHLEFPHookMethods)];
+	ATCPUHookNode *mpHookNodes[vdcountof(kATHLEFPHookMethods)] {};
 };
 
 ATHLEFPAccelerator::ATHLEFPAccelerator() {
-	std::fill(mpHookNodes, mpHookNodes + vdcountof(mpHookNodes), (ATCPUHookNode *)NULL);
 }
 
 ATHLEFPAccelerator::~ATHLEFPAccelerator() {
@@ -124,7 +126,35 @@ void ATHLEFPAccelerator::Shutdown() {
 	}
 }
 
-ATHLEFPAccelerator *ATCreateHLEFPAccelerator(ATCPUEmulator *cpu) {
+bool ATHLEFPAccelerator::SetHookEnabled(uint32 addr, bool enabled) {
+	ATCPUHookManager& hookMgr = *mpCPU->GetHookManager();
+
+	for(size_t i = 0; i < vdcountof(mpHookNodes); ++i) {
+		if (kATHLEFPHookMethods[i].mPC == addr) {
+			if (enabled) {
+				if (!mpHookNodes[i])
+					hookMgr.SetHookMethod(mpHookNodes[i], kATCPUHookMode_MathPackROMOnly, kATHLEFPHookMethods[i].mPC, 0, this, kATHLEFPHookMethods[i].mpMethod);
+			} else {
+				hookMgr.UnsetHook(mpHookNodes[i]);
+			}
+
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void ATHLEFPAccelerator::ListHooks(vdfastvector<std::pair<uint32, bool>>& hooks) const {
+	hooks.resize(vdcountof(mpHookNodes));
+
+	for(size_t i = 0; i < vdcountof(mpHookNodes); ++i) {
+		hooks[i] = { kATHLEFPHookMethods[i].mPC, mpHookNodes[i] != nullptr };
+	}
+}
+
+
+IATHLEFPAccelerator *ATCreateHLEFPAccelerator(ATCPUEmulator *cpu) {
 	vdautoptr<ATHLEFPAccelerator> accel(new ATHLEFPAccelerator);
 
 	accel->Init(cpu);
