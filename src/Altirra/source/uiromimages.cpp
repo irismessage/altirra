@@ -16,11 +16,13 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <windows.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
 #include <vd2/Dita/services.h>
-#include "Dialog.h"
+#include <at/atui/dialog.h>
 #include "resource.h"
+#include "oshelper.h"
 #include "simulator.h"
 
 class ATUIDialogROMImages : public VDDialogFrameW32 {
@@ -28,125 +30,184 @@ public:
 	ATUIDialogROMImages(ATSimulator& sim);
 
 protected:
+	bool OnLoaded();
 	void OnDataExchange(bool write);
 	bool OnCommand(uint32 id, uint32 extcode);
-	void Browse(ATROMImage image);
+	void Browse();
+
+	void OnSelChanged(VDUIProxyListView *sender, int idx);
+
+	struct ROMImageItem : public vdrefcounted<IVDUIListViewVirtualItem> {
+		ROMImageItem(ATROMImage image)
+			: mImage(image)
+		{
+		}
+
+		void GetText(int subItem, VDStringW& s) const;
+
+		const ATROMImage mImage;
+		VDStringW mPath;
+	};
 
 	ATSimulator& mSim;
+	int mEditLockCount;
 
-	static const uint32 kPathControlIds[kATROMImageCount];
+	vdrefptr<ROMImageItem> mItems[kATROMImageCount];
+
+	VDUIProxyListView mListView;
+
+	VDDelegate mDelSelChanged;
+
+	static const wchar_t *const kPathNames[kATROMImageCount];
+	static const ATROMImage kPathIds[kATROMImageCount];
 };
 
-const uint32 ATUIDialogROMImages::kPathControlIds[kATROMImageCount] = {
-	IDC_PATH_OSA,
-	IDC_PATH_OSB,
-	IDC_PATH_XL,
-	IDC_PATH_XEGS,
-	IDC_PATH_OTHER,
-	IDC_PATH_5200,
-	IDC_PATH_BASIC,
-	IDC_PATH_GAME,
-	IDC_PATH_KMKJZIDE,
-	IDC_PATH_KMKJZIDEV2,
-	IDC_PATH_KMKJZIDEV2_SDX,
-	IDC_PATH_SIDE_SDX,
-	IDC_PATH_1200XL
+const wchar_t *const ATUIDialogROMImages::kPathNames[kATROMImageCount] = {
+	L"OS-A",
+	L"OS-B",
+	L"XL/XE",
+	L"1200XL",
+	L"Other",
+	L"5200",
+	L"XEGS kernel",
+	L"BASIC",
+	L"XEGS game",
+	L"KMK/JZ IDE",
+	L"IDEPlus 2.0 (Main)",
+	L"IDEPlus 2.0 (SDX)",
+	L"SIDE (SDX)",
+	L"MyIDE II",
+	L"Ultimate1MB",
 };
+
+const ATROMImage ATUIDialogROMImages::kPathIds[kATROMImageCount] = {
+	kATROMImage_OSA,
+	kATROMImage_OSB,
+	kATROMImage_XL,
+	kATROMImage_1200XL,
+	kATROMImage_Other,
+	kATROMImage_5200,
+	kATROMImage_XEGS,
+	kATROMImage_Basic,
+	kATROMImage_Game,
+	kATROMImage_KMKJZIDE,
+	kATROMImage_KMKJZIDEV2,
+	kATROMImage_KMKJZIDEV2_SDX,
+	kATROMImage_SIDE_SDX,
+	kATROMImage_MyIDEII,
+	kATROMImage_Ultimate1MB,
+};
+
+void ATUIDialogROMImages::ROMImageItem::GetText(int subItem, VDStringW& s) const {
+	if (subItem)
+		s = mPath;
+	else
+		s = kPathNames[mImage];
+}
 
 ATUIDialogROMImages::ATUIDialogROMImages(ATSimulator& sim)
 	: VDDialogFrameW32(IDD_ROM_IMAGES)
 	, mSim(sim)
+	, mEditLockCount(0)
 {
+}
+
+bool ATUIDialogROMImages::OnLoaded() {
+	AddProxy(&mListView, IDC_LIST);
+
+	mListView.SetRedraw(false);
+	mListView.InsertColumn(0, L"ROM Name", 0);
+	mListView.InsertColumn(1, L"Path", 0);
+	mListView.SetFullRowSelectEnabled(true);
+
+	for(int i=0; i<kATROMImageCount; ++i) {
+		mItems[i] = new ROMImageItem((ATROMImage)i);
+
+		mListView.InsertVirtualItem(i, mItems[i]);
+	}
+
+	OnDataExchange(false);
+
+	mListView.AutoSizeColumns(true);
+	mListView.SetRedraw(true);
+
+	ATUIEnableEditControlAutoComplete(GetControl(IDC_PATH));
+
+	EnableControl(IDC_PATH, false);
+	EnableControl(IDC_BROWSE, false);
+	mListView.OnItemSelectionChanged() += mDelSelChanged.Bind(this, &ATUIDialogROMImages::OnSelChanged);
+
+	SetFocusToControl(IDC_LIST);
+	return true;
 }
 
 void ATUIDialogROMImages::OnDataExchange(bool write) {
 	if (write) {
-		VDStringW s;
-
-		for(uint32 i=0; i<kATROMImageCount; ++i) {
-			if (GetControlText(kPathControlIds[i], s))
-				mSim.SetROMImagePath((ATROMImage)i, s.c_str());
-		}
+		for(uint32 i=0; i<kATROMImageCount; ++i)
+			mSim.SetROMImagePath(kPathIds[i], mItems[i]->mPath.c_str());
 	} else {
-		VDStringW s;
+		for(uint32 i=0; i<kATROMImageCount; ++i)
+			mSim.GetROMImagePath(kPathIds[i], mItems[i]->mPath);
 
-		for(uint32 i=0; i<kATROMImageCount; ++i) {
-			mSim.GetROMImagePath((ATROMImage)i, s);
-
-			SetControlText(kPathControlIds[i], s.c_str());
-		}
+		mListView.RefreshAllItems();
 	}
 }
 
 bool ATUIDialogROMImages::OnCommand(uint32 id, uint32 extcode) {
 	switch(id) {
-		case IDC_BROWSE_OSA:
-			Browse(kATROMImage_OSA);
+		case IDC_BROWSE:
+			Browse();
 			break;
 
-		case IDC_BROWSE_OSB:
-			Browse(kATROMImage_OSB);
-			break;
+		case IDC_PATH:
+			if (extcode == EN_CHANGE) {
+				VDStringW s;
+				if (GetControlText(IDC_PATH, s)) {
+					ROMImageItem *item = static_cast<ROMImageItem *>(mListView.GetSelectedVirtualItem());
 
-		case IDC_BROWSE_XL:
-			Browse(kATROMImage_XL);
-			break;
+					if (item) {
+						item->mPath = s;
+						mListView.RefreshItem(item->mImage);
+					}
+				}
+			}
 
-		case IDC_BROWSE_1200XL:
-			Browse(kATROMImage_1200XL);
-			break;
-
-		case IDC_BROWSE_XEGS:
-			Browse(kATROMImage_XEGS);
-			break;
-
-		case IDC_BROWSE_OTHER:
-			Browse(kATROMImage_Other);
-			break;
-
-		case IDC_BROWSE_5200:
-			Browse(kATROMImage_5200);
-			break;
-
-		case IDC_BROWSE_BASIC:
-			Browse(kATROMImage_Basic);
-			break;
-
-		case IDC_BROWSE_GAME:
-			Browse(kATROMImage_Game);
-			break;
-
-		case IDC_BROWSE_KMKJZIDE:
-			Browse(kATROMImage_KMKJZIDE);
-			break;
-
-		case IDC_BROWSE_KMKJZIDEV2:
-			Browse(kATROMImage_KMKJZIDEV2);
-			break;
-
-		case IDC_BROWSE_KMKJZIDEV2_SDX:
-			Browse(kATROMImage_KMKJZIDEV2_SDX);
-			break;
-
-		case IDC_BROWSE_SIDE_SDX:
-			Browse(kATROMImage_SIDE_SDX);
 			break;
 	}
 
 	return false;
 }
 
-void ATUIDialogROMImages::Browse(ATROMImage image) {
+void ATUIDialogROMImages::Browse() {
+	ROMImageItem *item = static_cast<ROMImageItem *>(mListView.GetSelectedVirtualItem());
+	if (!item)
+		return;
+
 	const VDStringW& s = VDGetLoadFileName('ROMI', (VDGUIHandle)mhdlg, L"Browse for ROM image", L"ROM image (*.rom)\0*.rom\0All files\0*.*\0", NULL);
 
 	if (!s.empty()) {
 		const VDStringW& programPath = VDGetProgramPath();
 		const VDStringW& relPath = VDFileGetRelativePath(programPath.c_str(), s.c_str(), false);
+		const VDStringW *path = relPath.empty() ? &s : &relPath;
 
-		if (!relPath.empty())
-			SetControlText(kPathControlIds[image], relPath.c_str());
-		else
-			SetControlText(kPathControlIds[image], s.c_str());
+		SetControlText(IDC_PATH, path->c_str());
+		
+		item->mPath = *path;
+
+		mListView.RefreshItem(item->mImage);
+	}
+}
+
+void ATUIDialogROMImages::OnSelChanged(VDUIProxyListView *sender, int idx) {
+	if (idx >= 0 && idx < kATROMImageCount) {
+		++mEditLockCount;
+		SetControlText(IDC_PATH, mItems[idx]->mPath.c_str());
+		--mEditLockCount;
+		EnableControl(IDC_PATH, true);
+		EnableControl(IDC_BROWSE, true);
+	} else {
+		EnableControl(IDC_PATH, false);
+		EnableControl(IDC_BROWSE, false);
 	}
 }
 

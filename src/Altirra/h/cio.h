@@ -21,6 +21,7 @@
 namespace ATCIOSymbols {
 	enum {
 		CIOStatSuccess		= 0x01,
+		CIOStatSuccessEOF	= 0x03,	// succeeded, but at end of file (undocumented)
 		CIOStatBreak		= 0x80,	// break key abort
 		CIOStatIOCBInUse	= 0x81,	// IOCB in use
 		CIOStatUnkDevice	= 0x82,	// unknown device

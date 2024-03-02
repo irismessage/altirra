@@ -28,8 +28,10 @@ void ATPBIManager::Init(ATMemoryManager *memman) {
 }
 
 void ATPBIManager::Shutdown() {
-	if (mpSelDevice)
+	if (mpSelDevice) {
 		mpSelDevice->Select(false);
+		mpSelDevice = NULL;
+	}
 
 	while(!mDevices.empty()) {
 		IATPBIDevice *dev = mDevices.back();

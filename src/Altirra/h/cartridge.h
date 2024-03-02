@@ -20,6 +20,7 @@
 
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
+#include "flash.h"
 
 class ATSaveStateReader;
 class ATSaveStateWriter;
@@ -27,6 +28,7 @@ class IVDRandomAccessStream;
 class IATUIRenderer;
 class ATMemoryManager;
 class ATMemoryLayer;
+class ATScheduler;
 
 enum ATCartridgeMode {
 	kATCartridgeMode_None,
@@ -122,7 +124,7 @@ public:
 	ATCartridgeEmulator();
 	~ATCartridgeEmulator();
 
-	void Init(ATMemoryManager *memman, int basePriority);
+	void Init(ATMemoryManager *memman, ATScheduler *sch, int basePriority);
 	void Shutdown();
 
 	void SetUIRenderer(IATUIRenderer *r);
@@ -139,11 +141,8 @@ public:
 
 	ATCartridgeMode GetMode() const { return mCartMode; }
 
-	void LoadSuperCharger3D();
 	void Load5200Default();
-	void LoadFlash1Mb(bool altbank);
-	void LoadFlash8Mb(bool newer);
-	void LoadFlashSIC();
+	void LoadNewCartridge(ATCartridgeMode mode);
 	bool Load(const wchar_t *fn, ATCartLoadContext *loadCtx);
 	bool Load(const wchar_t *origPath, IVDRandomAccessStream& stream, ATCartLoadContext *loadCtx);
 	void Unload();
@@ -152,8 +151,11 @@ public:
 
 	void ColdReset();
 
-	void LoadState(ATSaveStateReader& reader);
-	void SaveState(ATSaveStateWriter& writer);
+	void BeginLoadState(ATSaveStateReader& reader);
+	void LoadStatePrivate(ATSaveStateReader& reader);
+	void EndLoadState(ATSaveStateReader& reader);
+	void BeginSaveState(ATSaveStateWriter& writer);
+	void SaveStatePrivate(ATSaveStateWriter& writer);
 
 protected:
 	template<class T> void ExchangeState(T& io);
@@ -258,6 +260,7 @@ protected:
 	IATUIRenderer *mpUIRenderer;
 	IATCartridgeCallbacks *mpCB;
 	ATMemoryManager *mpMemMan;
+	ATScheduler *mpScheduler;
 	ATMemoryLayer *mpMemLayerFixedBank1;
 	ATMemoryLayer *mpMemLayerFixedBank2;
 	ATMemoryLayer *mpMemLayerVarBank1;
@@ -273,6 +276,8 @@ protected:
 	};
 
 	FlashReadMode mFlashReadMode;
+
+	ATFlashEmulator mFlashEmu;
 
 	uint8	mSC3D[4];
 

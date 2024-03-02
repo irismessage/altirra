@@ -1022,17 +1022,31 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(ATRACT, "ATRACT", 1);
 	symstore->AddSymbol(DRKMSK, "DRKMSK", 1);
 	symstore->AddSymbol(COLRSH, "COLRSH", 1);
+	symstore->AddSymbol(HOLD1 , "HOLD1" , 1);
 	symstore->AddSymbol(LMARGN, "LMARGN", 1);
 	symstore->AddSymbol(RMARGN, "RMARGN", 1);
 	symstore->AddSymbol(ROWCRS, "ROWCRS", 1);
 	symstore->AddSymbol(COLCRS, "COLCRS", 2);
+	symstore->AddSymbol(OLDROW, "OLDROW", 1);
+	symstore->AddSymbol(OLDCOL, "OLDCOL", 2);
 	symstore->AddSymbol(DINDEX, "DINDEX", 1);
 	symstore->AddSymbol(SAVMSC, "SAVMSC", 2);
+	symstore->AddSymbol(OLDADR, "OLDADR", 2);
+	symstore->AddSymbol(PALNTS, "PALNTS", 1);
 	symstore->AddSymbol(LOGCOL, "LOGCOL", 1);
+	symstore->AddSymbol(ADRESS, "ADRESS", 2);
+	symstore->AddSymbol(TOADR , "TOADR" , 2);
 	symstore->AddSymbol(RAMTOP, "RAMTOP", 1);
 	symstore->AddSymbol(BUFCNT, "BUFCNT", 1);
 	symstore->AddSymbol(BUFSTR, "BUFSTR", 2);
+	symstore->AddSymbol(BITMSK, "BITMSK", 1);
+	symstore->AddSymbol(DELTAR, "DELTAR", 1);
+	symstore->AddSymbol(DELTAC, "DELTAC", 2);
+	symstore->AddSymbol(ROWINC, "ROWINC", 1);
+	symstore->AddSymbol(COLINC, "COLINC", 1);
 	symstore->AddSymbol(KEYDEF, "KEYDEF", 2);	// XL/XE
+	symstore->AddSymbol(SWPFLG, "SWPFLG", 1);
+	symstore->AddSymbol(COUNTR, "COUNTR", 2);
 
 	symstore->AddSymbol(FR0, "FR0", 1);
 	symstore->AddSymbol(FR1, "FR1", 1);
@@ -1109,6 +1123,9 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->AddSymbol(TINDEX, "TINDEX", 1);
 	symstore->AddSymbol(TXTMSC, "TXTMSC", 2);
 	symstore->AddSymbol(TXTOLD, "TXTOLD", 2);
+	symstore->AddSymbol(HOLD2 , "HOLD2" , 1);
+	symstore->AddSymbol(DMASK , "DMASK" , 1);
+	symstore->AddSymbol(ESCFLG, "ESCFLG", 1);
 	symstore->AddSymbol(TABMAP, "TABMAP", 15);
 	symstore->AddSymbol(LOGMAP, "LOGMAP", 4);
 	symstore->AddSymbol(SHFLOK, "SHFLOK", 1);

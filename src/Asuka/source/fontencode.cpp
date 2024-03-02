@@ -100,6 +100,7 @@ void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<
 	vdfastvector<uint8> outheap;
 	vdfastvector<uint8> chardata(cellWidth * cellHeight);
 
+	const bool bigfont = (cellWidth | cellHeight) >= 16;
 	int maxCells = std::min<int>(256, gridWidth * gridHeight);
 	vdfastvector<uint32> posdata;
 
@@ -149,7 +150,10 @@ void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<
 				posdata.resize(posdata.size() + emptyCharRun, cellWidth);
 
 			emptyCharRun = 0;
-			posdata.push_back(((outheap.size() / cellHeight + 1) << 4) + cw);
+			if (bigfont)
+				posdata.push_back(((outheap.size() / cellHeight + 1) << 8) + cw);
+			else
+				posdata.push_back(((outheap.size() / cellHeight + 1) << 4) + cw);
 			outheap.insert(outheap.end(), chardata.data(), chardata.data() + cw * cellHeight);
 			endChar = i;
 		}
@@ -191,14 +195,20 @@ void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<
 
 	fprintf(f, "};\n\n");
 
-	fprintf(f, "const uint16 %s_PosData[]={\n", args[9]);
+	if (bigfont)
+		fprintf(f, "const uint32 %s_PosData[]={\n", args[9]);
+	else
+		fprintf(f, "const uint16 %s_PosData[]={\n", args[9]);
 
 	int poscount = posdata.size();
 	for(int i=0; i<poscount; ++i) {
 		if (!(i & 15))
 			fputc('\t', f);
 
-		fprintf(f, "0x%04x,", posdata[i]);
+		if (bigfont)
+			fprintf(f, "0x%08x,", posdata[i]);
+		else
+			fprintf(f, "0x%04x,", posdata[i]);
 
 		if ((i & 15) == 15)
 			fputc('\n', f);
@@ -212,12 +222,18 @@ void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<
 	// top-level data structure
 	fprintf(f, "const VDBitmapFontInfo %s_FontInfo={\n", args[9]);
 	fprintf(f, "\t%s_FontData,\n", args[9]);
-	fprintf(f, "\t%s_PosData,\n", args[9]);
+	if (bigfont) {
+		fprintf(f, "\tNULL,\n", args[9]);
+		fprintf(f, "\t%s_PosData,\n", args[9]);
+	} else {
+		fprintf(f, "\t%s_PosData,\n", args[9]);
+		fprintf(f, "\tNULL,\n");
+	}
 	fprintf(f, "\t%d, %d,\n", startChar, endChar);
 	fprintf(f, "\t%d, %d,\n", cellWidth, cellHeight);
 	fprintf(f, "\t%d, %d,\n", cellAscent, cellAdvance);
 	fprintf(f, "\t%d,\n", lineGap);
 	fprintf(f, "};\n");
 
-	printf("Asuka: %d bytes.\n", datalen);
+	printf("Asuka: %d bytes.\n", (int)((datalen >> 3) + (bigfont ? posdata.size() << 2 : posdata.size() << 1)));
 }

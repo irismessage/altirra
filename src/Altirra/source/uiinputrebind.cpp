@@ -1,6 +1,6 @@
 #include "stdafx.h"
 #include <windows.h>
-#include "Dialog.h"
+#include <at/atui/dialog.h>
 #include "inputmanager.h"
 #include "inputcontroller.h"
 #include "resource.h"

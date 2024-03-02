@@ -16,9 +16,10 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <vd2/system/binary.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/math.h>
-#include <vd2/Riza/display.h>
+#include <vd2/VDDisplay/display.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
@@ -297,6 +298,8 @@ vdrect32 ATGTIAEmulator::GetFrameScanArea() const {
 		case kOverscanOSScreen:
 			xlo = 48;
 			xhi = 208;
+			ylo = 32;
+			yhi = 224;
 			break;
 	}
 
@@ -586,23 +589,28 @@ void ATGTIAEmulator::DumpStatus() {
 }
 
 template<class T>
-void ATGTIAEmulator::ExchangeState(T& io) {
+void ATGTIAEmulator::ExchangeStateArch(T& io) {
+	// P/M pos
 	for(int i=0; i<4; ++i)
 		io != mPlayerPos[i];
 
 	for(int i=0; i<4; ++i)
 		io != mMissilePos[i];
 
+	// P/M size
 	for(int i=0; i<4; ++i)
 		io != mPlayerSize[i];
 
 	io != mMissileSize;
 
+	// graphics latches
 	for(int i=0; i<4; ++i)
 		io != mPlayerData[i];
 
 	io != mMissileData;
 
+
+	// colors
 	for(int i=0; i<4; ++i)
 		io != mPMColor[i];
 
@@ -610,11 +618,16 @@ void ATGTIAEmulator::ExchangeState(T& io) {
 		io != mPFColor[i];
 
 	io != mPFBAK;
+
+	// misc registers
 	io != mPRIOR;
 	io != mVDELAY;
 	io != mGRACTL;
 	io != mSwitchOutput;
+}
 
+template<class T>
+void ATGTIAEmulator::ExchangeStatePrivate(T& io) {
 	for(int i=0; i<4; ++i)
 		io != mPlayerCollFlags[i];
 
@@ -624,10 +637,23 @@ void ATGTIAEmulator::ExchangeState(T& io) {
 	io != mbHiresMode;
 }
 
-void ATGTIAEmulator::LoadState(ATSaveStateReader& reader) {
-	ExchangeState(reader);
+void ATGTIAEmulator::BeginLoadState(ATSaveStateReader& reader) {
+	reader.RegisterHandlerMethod(kATSaveStateSection_Arch, VDMAKEFOURCC('G', 'T', 'I', 'A'), this, &ATGTIAEmulator::LoadStateArch);
+	reader.RegisterHandlerMethod(kATSaveStateSection_Private, VDMAKEFOURCC('G', 'T', 'I', 'A'), this, &ATGTIAEmulator::LoadStatePrivate);
+	reader.RegisterHandlerMethod(kATSaveStateSection_ResetPrivate, 0, this, &ATGTIAEmulator::LoadStateResetPrivate);
+	reader.RegisterHandlerMethod(kATSaveStateSection_End, 0, this, &ATGTIAEmulator::EndLoadState);
+}
+
+void ATGTIAEmulator::LoadStateArch(ATSaveStateReader& reader) {
+	ExchangeStateArch(reader);
+}
+
+void ATGTIAEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
+	ExchangeStatePrivate(reader);
 
 	// read register changes
+	mRCCount = reader.ReadUint32();
+	mRCIndex = 0;
 	mRegisterChanges.resize(mRCCount);
 	for(int i=0; i<mRCCount; ++i) {
 		RegisterChange& rc = mRegisterChanges[i];
@@ -638,7 +664,25 @@ void ATGTIAEmulator::LoadState(ATSaveStateReader& reader) {
 	}
 
 	mpRenderer->LoadState(reader);
+}
 
+void ATGTIAEmulator::LoadStateResetPrivate(ATSaveStateReader& reader) {
+	for(int i=0; i<4; ++i)
+		mPlayerCollFlags[i] = 0;
+
+	for(int i=0; i<4; ++i)
+		mMissileCollFlags[i] = 0;
+
+	mbHiresMode = false;
+	
+	mRegisterChanges.clear();
+	mRCCount = 0;
+	mRCIndex = 0;
+
+	mpRenderer->ResetState();
+}
+
+void ATGTIAEmulator::EndLoadState(ATSaveStateReader& writer) {
 	// recompute derived state
 	mpConn->GTIASetSpeaker(0 != (mSwitchOutput & 8));
 
@@ -659,11 +703,24 @@ void ATGTIAEmulator::LoadState(ATSaveStateReader& reader) {
 	mpRenderer->EndScanline();
 }
 
-void ATGTIAEmulator::SaveState(ATSaveStateWriter& writer) {
-	ExchangeState(writer);
+void ATGTIAEmulator::BeginSaveState(ATSaveStateWriter& writer) {
+	writer.RegisterHandlerMethod(kATSaveStateSection_Arch, this, &ATGTIAEmulator::SaveStateArch);
+	writer.RegisterHandlerMethod(kATSaveStateSection_Private, this, &ATGTIAEmulator::SaveStatePrivate);	
+}
+
+void ATGTIAEmulator::SaveStateArch(ATSaveStateWriter& writer) {
+	writer.BeginChunk(VDMAKEFOURCC('G', 'T', 'I', 'A'));
+	ExchangeStateArch(writer);
+	writer.EndChunk();
+}
+
+void ATGTIAEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
+	writer.BeginChunk(VDMAKEFOURCC('G', 'T', 'I', 'A'));
+	ExchangeStatePrivate(writer);
 
 	// write register changes
-	for(int i=0; i<mRCCount; ++i) {
+	writer.WriteUint32(mRCCount - mRCIndex);
+	for(int i=mRCIndex; i<mRCCount; ++i) {
 		const RegisterChange& rc = mRegisterChanges[i];
 
 		writer.WriteUint8(rc.mPos);
@@ -672,6 +729,7 @@ void ATGTIAEmulator::SaveState(ATSaveStateWriter& writer) {
 	}
 
 	mpRenderer->SaveState(writer);
+	writer.EndChunk();
 }
 
 void ATGTIAEmulator::GetRegisterState(ATGTIARegisterState& state) const {
@@ -813,8 +871,11 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 }
 
 void ATGTIAEmulator::BeginScanline(int y, bool hires) {
-	// flush remaining register changes (required for PRIOR to interact properly with hires)
-	Sync();
+	// Flush remaining register changes (required for PRIOR to interact properly with hires)
+	//
+	// Note that we must use a cycle offset of -1 here because we haven't done DMA fetches
+	// for this cycle yet!
+	Sync(-1);
 
 	mbMixedRendering = false;
 	mbANTICHiresMode = hires;
@@ -1083,12 +1144,12 @@ namespace {
 	}
 }
 
-void ATGTIAEmulator::Sync() {
+void ATGTIAEmulator::Sync(int offset) {
 	// obey VBLANK
 	if (mVBlankMode == kVBlankModeOn)
 		return;
 
-	mpConn->GTIARequestAnticSync();
+	mpConn->GTIARequestAnticSync(offset);
 
 	int xend = (int)mpConn->GTIAGetXClock() + 2;
 
@@ -1609,9 +1670,6 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 
 		if (mpVideoTap)
 			mpVideoTap->WriteFrame(mpFrame->mPixmap, mFrameTimestamp);
-
-		if (mpUIRenderer)
-			mpUIRenderer->Render(mpFrame->mPixmap, mPalette);
 
 		if (mbTurbo)
 			mpFrame->mFlags |= IVDVideoDisplay::kDoNotWait;

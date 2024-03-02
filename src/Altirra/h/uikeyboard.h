@@ -18,6 +18,9 @@
 #ifndef f_AT_UIKEYBOARD_H
 #define f_AT_UIKEYBOARD_H
 
+struct VDAccelTableEntry;
+class VDAccelTableDefinition;
+
 struct ATUIKeyboardOptions {
 	enum ArrowKeyMode {
 		kAKM_InvertCtrl,	// Ctrl state is inverted between host and emulation
@@ -35,5 +38,20 @@ struct ATUIKeyboardOptions {
 bool ATUIGetScanCodeForCharacter(char c, uint8& ch);
 void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions& options);
 bool ATUIGetScanCodeForVirtualKey(uint32 virtKey, bool alt, bool ctrl, bool shift, uint8& scanCode);
+
+enum ATUIAccelContext {
+	kATUIAccelContext_Global,
+	kATUIAccelContext_Display,
+	kATUIAccelContextCount
+};
+
+void ATUIInitDefaultAccelTables();
+void ATUILoadAccelTables();
+void ATUISaveAccelTables();
+const VDAccelTableDefinition *ATUIGetDefaultAccelTables();
+VDAccelTableDefinition *ATUIGetAccelTables();
+
+const VDAccelTableEntry *ATUIGetAccelByCommand(ATUIAccelContext context, const char *command);
+bool ATUIActivateVirtKeyMapping(uint32 vk, bool alt, bool ctrl, bool shift, bool ext, bool up, ATUIAccelContext context);
 
 #endif

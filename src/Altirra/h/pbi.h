@@ -33,6 +33,7 @@ public:
 	void Init(ATMemoryManager *memman);
 	void Shutdown();
 
+	uint8 GetSelectRegister() const { return mSelRegister; }
 	bool IsROMOverlayActive() const;
 
 	void AddDevice(IATPBIDevice *dev);

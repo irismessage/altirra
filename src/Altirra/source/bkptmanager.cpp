@@ -593,7 +593,7 @@ bool ATBreakpointManager::OnAccessTrapWrite(void *thisptr0, uint32 addr, uint8 v
 				ATBreakpointEvent ev;
 				ev.mIndex = idx;
 				ev.mAddress = addr;
-				ev.mValue = 0;
+				ev.mValue = value;
 				ev.mbBreak = false;
 				ev.mbSilentBreak = false;
 

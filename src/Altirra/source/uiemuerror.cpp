@@ -17,7 +17,7 @@
 
 #include "stdafx.h"
 #include <windows.h>
-#include "Dialog.h"
+#include <at/atui/dialog.h>
 #include "resource.h"
 #include "simulator.h"
 #include "debugger.h"
@@ -264,6 +264,7 @@ void ATEmuErrorHandler::OnDebuggerOpen(IATDebugger *dbg, ATDebuggerOpenEvent *ev
 			return;
 
 		case kATErrorMode_Pause:
+			mpSim->Pause();
 			event->mbAllowOpen = false;
 			return;
 
@@ -280,6 +281,7 @@ void ATEmuErrorHandler::OnDebuggerOpen(IATDebugger *dbg, ATDebuggerOpenEvent *ev
 			break;
 
 		case kATErrorAction_Pause:
+			mpSim->Pause();
 			event->mbAllowOpen = false;
 			break;
 

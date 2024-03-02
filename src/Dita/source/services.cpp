@@ -28,6 +28,7 @@
 #include <vd2/system/filesys.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/text.h>
+#include <vd2/system/refcount.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/vdalloc.h>
@@ -66,6 +67,13 @@ typedef std::map<long, FilespecEntry> tFilespecMap;
 // static construction.
 tFilespecMap *g_pFilespecMap;
 VDCriticalSection g_csFilespecMap;
+
+struct DirspecEntry {
+	wchar_t szFile[MAX_PATH];
+};
+
+typedef std::map<long, DirspecEntry> tDirspecMap;
+tDirspecMap *g_pDirspecMap;
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -250,6 +258,11 @@ void VDInitFilespecSystem() {
 		static vdautoptr<tFilespecMap> spFilespecMap(new tFilespecMap);
 		g_pFilespecMap = spFilespecMap;
 	}
+
+	if (!g_pDirspecMap) {
+		static vdautoptr<tDirspecMap> spDirspecMap(new tDirspecMap);
+		g_pDirspecMap = spDirspecMap;
+	}
 }
 
 void VDSaveFilespecSystemData() {
@@ -274,7 +287,7 @@ void VDLoadFilespecSystemData() {
 		VDInitFilespecSystem();
 
 		if (g_pFilespecMap) {
-			VDRegistryAppKey key("Saved filespecs");
+			VDRegistryAppKey key("Saved filespecs", false);
 			VDRegistryValueIterator it(key);
 
 			VDStringW value;
@@ -283,6 +296,27 @@ void VDLoadFilespecSystemData() {
 				if (key.getString(s, value))
 					VDSetLastLoadSavePath(specKey, value.c_str());
 			}
+		}
+	}
+}
+
+void VDClearFilespecSystemData() {
+	vdsynchronized(g_csFilespecMap) {
+		if (g_pFilespecMap) {
+			g_pFilespecMap->clear();
+		}
+
+		if (g_pDirspecMap) {
+			g_pDirspecMap->clear();
+		}
+
+		VDRegistryAppKey key("Saved filespecs");
+
+		VDRegistryValueIterator it(key);
+
+		VDStringW value;
+		while(const char *s = it.Next()) {
+			key.removeValue(s);
 		}
 	}
 }
@@ -655,18 +689,84 @@ void VDSetLastLoadSaveFileName(long nKey, const wchar_t *fileName) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-struct DirspecEntry {
-	wchar_t szFile[MAX_PATH];
+#ifndef __IFileDialog_INTERFACE_DEFINED__
+#define __IFileDialog_INTERFACE_DEFINED__
+
+struct IFileDialogEvents;
+struct IShellItemFilter;
+
+enum _FILEOPENDIALOGOPTIONS {
+	FOS_OVERWRITEPROMPT		= 0x2,
+	FOS_STRICTFILETYPES		= 0x4,
+	FOS_NOCHANGEDIR			= 0x8,
+	FOS_PICKFOLDERS			= 0x20,
+	FOS_FORCEFILESYSTEM		= 0x40,
+	FOS_ALLNONSTORAGEITEMS	= 0x80,
+	FOS_NOVALIDATE			= 0x100,
+	FOS_ALLOWMULTISELECT	= 0x200,
+	FOS_PATHMUSTEXIST		= 0x800,
+	FOS_FILEMUSTEXIST		= 0x1000,
+	FOS_CREATEPROMPT		= 0x2000,
+	FOS_SHAREAWARE			= 0x4000,
+	FOS_NOREADONLYRETURN	= 0x8000,
+	FOS_NOTESTFILECREATE	= 0x10000,
+	FOS_HIDEMRUPLACES		= 0x20000,
+	FOS_HIDEPINNEDPLACES	= 0x40000,
+	FOS_NODEREFERENCELINKS	= 0x100000,
+	FOS_DONTADDTORECENT		= 0x2000000,
+	FOS_FORCESHOWHIDDEN		= 0x10000000,
+	FOS_DEFAULTNOMINIMODE	= 0x20000000,
+	FOS_FORCEPREVIEWPANEON	= 0x40000000
 };
 
-typedef std::map<long, DirspecEntry> tDirspecMap;
-tDirspecMap *g_pDirspecMap;
+typedef enum FDAP {
+	FDAP_BOTTOM	= 0,
+	FDAP_TOP	= 1
+} FDAP;
+
+typedef DWORD FILEOPENDIALOGOPTIONS;
+
+typedef struct _COMDLG_FILTERSPEC {
+	LPCWSTR pszName;
+	LPCWSTR pszSpec;
+} COMDLG_FILTERSPEC;
+
+struct __declspec(uuid("42f85136-db7e-439c-85f1-e4075d135fc8")) IFileDialog : public IModalWindow
+{
+public:
+    virtual HRESULT STDMETHODCALLTYPE SetFileTypes(UINT cFileTypes, const COMDLG_FILTERSPEC *rgFilterSpec) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetFileTypeIndex(UINT iFileType) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetFileTypeIndex(UINT *piFileType) = 0;
+    virtual HRESULT STDMETHODCALLTYPE Advise(IFileDialogEvents *pfde, DWORD *pdwCookie) = 0;
+    virtual HRESULT STDMETHODCALLTYPE Unadvise(DWORD dwCookie) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetOptions(FILEOPENDIALOGOPTIONS fos) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetOptions(FILEOPENDIALOGOPTIONS *pfos) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetDefaultFolder(IShellItem *psi) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetFolder(IShellItem *psi) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetFolder(IShellItem **ppsi) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetCurrentSelection(IShellItem **ppsi) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetFileName(LPCWSTR pszName) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetFileName(LPWSTR *pszName) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetTitle(LPCWSTR pszTitle) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetOkButtonLabel(LPCWSTR pszText) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetFileNameLabel(LPCWSTR pszLabel) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetResult(IShellItem **ppsi) = 0;
+    virtual HRESULT STDMETHODCALLTYPE AddPlace(IShellItem *psi, FDAP fdap) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetDefaultExtension(LPCWSTR pszDefaultExtension) = 0;
+    virtual HRESULT STDMETHODCALLTYPE Close(HRESULT hr) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetClientGuid(REFGUID guid) = 0;
+    virtual HRESULT STDMETHODCALLTYPE ClearClientData() = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetFilter(IShellItemFilter *pFilter) = 0;
+};
+
+class __declspec(uuid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")) FileOpenDialog;
+
+#endif
 
 ///////////////////////////////////////////////////////////////////////////
 
 const VDStringW VDGetDirectory(long nKey, VDGUIHandle ctxParent, const wchar_t *pszTitle) {
-	if (!g_pDirspecMap)
-		g_pDirspecMap = new tDirspecMap;
+	VDInitFilespecSystem();
 
 	tDirspecMap::iterator it = g_pDirspecMap->find(nKey);
 
@@ -687,64 +787,98 @@ const VDStringW VDGetDirectory(long nKey, VDGUIHandle ctxParent, const wchar_t *
 	bool bSuccess = false;
 
 	if (SUCCEEDED(CoInitialize(NULL))) {
-		IMalloc *pMalloc;
+		if (VDIsAtLeastVistaW32()) {
+			vdrefptr<IFileDialog> pfd;
 
-		if (SUCCEEDED(SHGetMalloc(&pMalloc))) {
+			HRESULT hr = CoCreateInstance(__uuidof(FileOpenDialog), NULL, CLSCTX_ALL, __uuidof(IFileDialog), (void **)~pfd);
+			if (SUCCEEDED(hr)) {
+				FILEOPENDIALOGOPTIONS opts;
+				hr = pfd->GetOptions(&opts);
+				if (SUCCEEDED(hr)) {
+					hr = pfd->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
 
-			if ((LONG)GetVersion() < 0) {		// Windows 9x
-				char *pszBuffer;
+					if (SUCCEEDED(hr)) {
+						hr = pfd->Show((HWND)ctxParent);
+						
+						if (SUCCEEDED(hr)) {
+							vdrefptr<IShellItem> isi;
 
-				if (pszBuffer = (char *)pMalloc->Alloc(MAX_PATH)) {
-					BROWSEINFOA bi;
-					ITEMIDLIST *pidlBrowse;
+							hr = pfd->GetResult(~isi);
 
-					VDStringA tempA(VDTextWToA(pszTitle));
+							if (SUCCEEDED(hr)) {
+								LPOLESTR path = NULL;
 
-					bi.hwndOwner		= (HWND)ctxParent;
-					bi.pidlRoot			= NULL;
-					bi.pszDisplayName	= pszBuffer;
-					bi.lpszTitle		= tempA.c_str();
-					bi.ulFlags			= BIF_EDITBOX | /*BIF_NEWDIALOGSTYLE |*/ BIF_RETURNONLYFSDIRS | BIF_VALIDATE;
-					bi.lpfn				= NULL;
-
-					if (pidlBrowse = SHBrowseForFolderA(&bi)) {
-						if (SHGetPathFromIDListA(pidlBrowse, pszBuffer)) {
-							VDTextAToW(fsent.szFile, MAX_PATH, pszBuffer);
-							bSuccess = true;
+								hr = isi->GetDisplayName(SIGDN_FILESYSPATH, &path);
+								if (SUCCEEDED(hr)) {
+									vdwcslcpy(fsent.szFile, path, vdcountof(fsent.szFile));
+									bSuccess = true;
+									CoTaskMemFree(path);
+								}
+							}
 						}
-
-						pMalloc->Free(pidlBrowse);
 					}
-					pMalloc->Free(pszBuffer);
 				}
-			} else {
-				HMODULE hmod = GetModuleHandle("shell32.dll");		// We know shell32 is loaded because we hard link to SHBrowseForFolderA.
-				typedef LPITEMIDLIST (APIENTRY *tpSHBrowseForFolderW)(LPBROWSEINFOW);
-				typedef BOOL (APIENTRY *tpSHGetPathFromIDListW)(LPCITEMIDLIST pidl, LPWSTR pszPath);
-				tpSHBrowseForFolderW pSHBrowseForFolderW = (tpSHBrowseForFolderW)GetProcAddress(hmod, "SHBrowseForFolderW");
-				tpSHGetPathFromIDListW pSHGetPathFromIDListW = (tpSHGetPathFromIDListW)GetProcAddress(hmod, "SHGetPathFromIDListW");
+			}
+		} else {
+			IMalloc *pMalloc;
 
-				if (pSHBrowseForFolderW && pSHGetPathFromIDListW) {
-					if (wchar_t *pszBuffer = (wchar_t *)pMalloc->Alloc(MAX_PATH * sizeof(wchar_t))) {
-						BROWSEINFOW bi;
+			if (SUCCEEDED(SHGetMalloc(&pMalloc))) {
+
+				if ((LONG)GetVersion() < 0) {		// Windows 9x
+					char *pszBuffer;
+
+					if (pszBuffer = (char *)pMalloc->Alloc(MAX_PATH)) {
+						BROWSEINFOA bi;
 						ITEMIDLIST *pidlBrowse;
+
+						VDStringA tempA(VDTextWToA(pszTitle));
 
 						bi.hwndOwner		= (HWND)ctxParent;
 						bi.pidlRoot			= NULL;
 						bi.pszDisplayName	= pszBuffer;
-						bi.lpszTitle		= pszTitle;
+						bi.lpszTitle		= tempA.c_str();
 						bi.ulFlags			= BIF_EDITBOX | /*BIF_NEWDIALOGSTYLE |*/ BIF_RETURNONLYFSDIRS | BIF_VALIDATE;
 						bi.lpfn				= NULL;
 
-						if (pidlBrowse = pSHBrowseForFolderW(&bi)) {
-							if (pSHGetPathFromIDListW(pidlBrowse, pszBuffer)) {
-								wcscpy(fsent.szFile, pszBuffer);
+						if (pidlBrowse = SHBrowseForFolderA(&bi)) {
+							if (SHGetPathFromIDListA(pidlBrowse, pszBuffer)) {
+								VDTextAToW(fsent.szFile, MAX_PATH, pszBuffer);
 								bSuccess = true;
 							}
 
 							pMalloc->Free(pidlBrowse);
 						}
 						pMalloc->Free(pszBuffer);
+					}
+				} else {
+					HMODULE hmod = GetModuleHandle("shell32.dll");		// We know shell32 is loaded because we hard link to SHBrowseForFolderA.
+					typedef LPITEMIDLIST (APIENTRY *tpSHBrowseForFolderW)(LPBROWSEINFOW);
+					typedef BOOL (APIENTRY *tpSHGetPathFromIDListW)(LPCITEMIDLIST pidl, LPWSTR pszPath);
+					tpSHBrowseForFolderW pSHBrowseForFolderW = (tpSHBrowseForFolderW)GetProcAddress(hmod, "SHBrowseForFolderW");
+					tpSHGetPathFromIDListW pSHGetPathFromIDListW = (tpSHGetPathFromIDListW)GetProcAddress(hmod, "SHGetPathFromIDListW");
+
+					if (pSHBrowseForFolderW && pSHGetPathFromIDListW) {
+						if (wchar_t *pszBuffer = (wchar_t *)pMalloc->Alloc(MAX_PATH * sizeof(wchar_t))) {
+							BROWSEINFOW bi;
+							ITEMIDLIST *pidlBrowse;
+
+							bi.hwndOwner		= (HWND)ctxParent;
+							bi.pidlRoot			= NULL;
+							bi.pszDisplayName	= pszBuffer;
+							bi.lpszTitle		= pszTitle;
+							bi.ulFlags			= BIF_EDITBOX | /*BIF_NEWDIALOGSTYLE |*/ BIF_RETURNONLYFSDIRS | BIF_VALIDATE;
+							bi.lpfn				= NULL;
+
+							if (pidlBrowse = pSHBrowseForFolderW(&bi)) {
+								if (pSHGetPathFromIDListW(pidlBrowse, pszBuffer)) {
+									wcscpy(fsent.szFile, pszBuffer);
+									bSuccess = true;
+								}
+
+								pMalloc->Free(pidlBrowse);
+							}
+							pMalloc->Free(pszBuffer);
+						}
 					}
 				}
 			}

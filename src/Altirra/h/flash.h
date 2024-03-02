@@ -22,9 +22,12 @@
 
 enum ATFlashType {
 	kATFlashType_Am29F010,	// AMD 128K x 8-bit
+	kATFlashType_Am29F040,	// AMD 512K x 8-bit
 	kATFlashType_Am29F040B,	// AMD 512K x 8-bit
 	kATFlashType_AT29C010A,	// Atmel 128K x 8-bit
-	kATFlashType_AT29C040	// Atmel 512K x 8-bit
+	kATFlashType_AT29C040,	// Atmel 512K x 8-bit
+	kATFlashType_SST39F040,	// SST 512K x 8-bit
+	kATFlashType_A29040,	// Amic 512K x 8-bit
 };
 
 class ATFlashEmulator : public IATSchedulerCallback {
@@ -50,7 +53,7 @@ public:
 
 	bool IsControlReadEnabled() const { return mReadMode != kReadMode_Normal; }
 
-	bool ReadByte(uint32 address, uint8& value);
+	bool ReadByte(uint32 address, uint8& value) const;
 	bool WriteByte(uint32 address, uint8 value);
 
 protected:
@@ -71,6 +74,7 @@ protected:
 	bool mbDirty;
 	bool mbWriteActivity;
 	bool mbAtmelSDP;
+	uint32	mSectorEraseTimeoutCycles;
 	uint32	mWriteSector;
 	ATEvent *mpWriteEvent;
 };

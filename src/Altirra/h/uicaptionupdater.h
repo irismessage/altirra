@@ -53,6 +53,7 @@ protected:
 	bool			mbLastBASICState;
 	bool			mbLastVBXEState;
 	bool			mbLastSoundBoardState;
+	bool			mbLastU1MBState;
 	bool			mbForceUpdate;
 	bool			mbLastDebugging;
 	bool			mbLastShowFPS;

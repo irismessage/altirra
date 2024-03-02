@@ -27,6 +27,7 @@
 .endp
 
 .proc	EditorClose
+	ldy		#1
 	rts
 .end
 
@@ -57,7 +58,7 @@ haveLine:
 		ScreenSwap(false);
 		
 		mpCPU->SetA(rval);
-		mpCPU->Ldy(0);
+		mpCPU->Ldy(1);
 	#}
 	rts
 .endp
@@ -120,7 +121,7 @@ isEOL:
 			if (mpMemory->ReadByte(addr + x))
 				lastLen = curLen;
 				
-			if (++x >= kdb.RMARGN) {
+			if (++x > kdb.RMARGN) {
 				x = kdb.LMARGN;
 				++y;
 				
@@ -147,7 +148,7 @@ isEOL:
 	#}
 	
 	lda		#$9b
-	ldy		#0
+	ldy		#1
 	rts
 .endp
 
@@ -261,6 +262,7 @@ suspendloop:
 			EditorResetLogicalLineStart();
 			
 			ScreenShowCursor();
+			mpCPU->Ldy(1);
 			return;
 		}
 
@@ -292,15 +294,18 @@ suspendloop:
 					if (++kdb.ROWCRS >= kdb.BOTSCR)
 						kdb.ROWCRS = 0;
 						
-					if (EditorIsLogicalLineStart(kdb.ROWCRS))
+					if (EditorIsLogicalLineStart(kdb.ROWCRS)) {
 						EditorResetLogicalLineStart();
+						kdb.LOGCOL = (uint8)kdb.COLCRS;
+					} else
+						kdb.LOGCOL = kdb.LOGCOL + 40;
 						
 					moveexit = true;
 					break;
 					
 				case 0x1E:	// left
 					if (kdb.COLCRS <= kdb.LMARGN) {
-						kdb.LOGCOL = kdb.LOGCOL - (uint8)kdb.COLCRS + kdb.RMARGN - 1;
+						kdb.LOGCOL = kdb.LOGCOL - (uint8)kdb.COLCRS + kdb.RMARGN;
 						kdb.COLCRS = kdb.RMARGN - 1;
 					} else {
 						--kdb.COLCRS;
@@ -312,7 +317,7 @@ suspendloop:
 					
 				case 0x1F:	// right
 					if (kdb.COLCRS >= kdb.RMARGN) {
-						kdb.LOGCOL = kdb.LOGCOL - (uint8)kdb.COLCRS + kdb.LMARGN - 1;
+						kdb.LOGCOL = kdb.LOGCOL - (uint8)kdb.COLCRS + kdb.LMARGN;
 						kdb.COLCRS = kdb.LMARGN;
 					} else {
 						++kdb.COLCRS;
@@ -432,7 +437,7 @@ suspendloop:
 			if (moveexit) {
 				ScreenHideCursor();
 				ScreenShowCursor();
-				mpCPU->SetY(0);
+				mpCPU->SetY(1);
 				return;
 			}
 		}
@@ -449,10 +454,10 @@ suspendloop:
 		// inc pos		
 		int logcol = kdb.LOGCOL + 1;
 		int rmargn = kdb.RMARGN;
-		if (++kdb.COLCRS >= rmargn) {
+		if (++kdb.COLCRS > rmargn) {
 			int lmargn = kdb.LMARGN;
 			
-			logcol -= rmargn;
+			logcol -= (rmargn+1);
 			logcol += 40;
 			logcol += lmargn;
 						
@@ -477,6 +482,8 @@ suspendloop:
 		
 		ScreenShowCursor();
 		ScreenSwap(false);
+		
+		mpCPU->Ldy(1);
 	#}
 	rts
 .endp

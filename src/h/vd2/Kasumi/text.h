@@ -61,7 +61,8 @@ void VDPixmapConvertTextToPath(VDPixmapPathRasterizer& rast, const VDOutlineFont
 
 struct VDBitmapFontInfo {
 	const uint8 *mpBitsArray;
-	const uint16 *mpPosArray;
+	const uint16 *mpPos16Array;
+	const uint32 *mpPos32Array;
 	uint8		mStartChar;
 	uint8		mEndChar;
 	int			mCellWidth;
@@ -71,6 +72,6 @@ struct VDBitmapFontInfo {
 	int			mLineGap;
 };
 
-void VDPixmapDrawText(const VDPixmap& pxdst, const VDBitmapFontInfo *font, int x, int y, uint32 fore, uint32 back, const char *pText);
+void VDPixmapDrawText(const VDPixmap& pxdst, const VDBitmapFontInfo *font, int x, int y, uint32 fore, uint32 *back, const char *pText, vdrect32 *extents = NULL);
 
 #endif

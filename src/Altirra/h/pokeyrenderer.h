@@ -56,6 +56,10 @@ public:
 
 	uint32 EndBlock();
 
+	void LoadState(ATSaveStateReader& reader);
+	void ResetState();
+	void SaveState(ATSaveStateWriter& writer);
+
 protected:
 	struct Edge;
 

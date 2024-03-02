@@ -35,11 +35,11 @@
 #include <vd2/system/registry.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
-#include <vd2/Riza/display.h>
+#include <vd2/VDDisplay/display.h>
 #include "console.h"
 #include "ui.h"
 #include "uiframe.h"
-#include "uiproxies.h"
+#include <at/atui/uiproxies.h>
 #include "texteditor.h"
 #include "simulator.h"
 #include "debugger.h"
@@ -48,7 +48,7 @@
 #include "disasm.h"
 #include "symbols.h"
 #include "printer.h"
-#include "dialog.h"
+#include <at/atui/dialog.h>
 #include "debugdisplay.h"
 
 extern HINSTANCE g_hInst;
@@ -1835,6 +1835,7 @@ ATHistoryWindow::ATHistoryWindow()
 	, mHiBaseUnhaltedCycles(0)
 	, mLastLoCycles(0)
 	, mLastLoUnhaltedCycles(0)
+	, mNodeCount(0)
 	, mpNodeFreeList(NULL)
 	, mpNodeBlocks(NULL)
 {
@@ -2389,82 +2390,105 @@ void ATHistoryWindow::OnPaint() {
 	EndPaint(mhwnd, &ps);
 }
 
-void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, uint32 itemEnd, TreeNode *node, uint32 pos, uint32 level) {
-	bool is65C816 = g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816;
-	uint32 basePos = pos;
+void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, uint32 itemEnd, TreeNode *baseNode, uint32 pos, uint32 level) {
+	if (!baseNode)
+		return;
 
-	while(node) {
-		VDASSERT(basePos + node->mRelYPos == pos);
+	const bool is65C816 = g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816;
+	TreeNode *baseParent = baseNode->mpParent;
+	TreeNode *node = baseNode;
+
+	for(;;) {
 		if (pos >= itemEnd)
 			return;
 
-		if (pos >= itemStart) {
-			bool selected = false;
+		// Check if the node is visible at all. If not, we can skip rendering and traversal.
+		if (pos + node->mHeight <= itemStart) {
+			pos += node->mHeight;
+		} else {
+			if (pos >= itemStart) {
+				bool selected = false;
 
-			if (mpSelectedNode == node) {
-				selected = true;
-				SetBkColor(hdc, GetSysColor(COLOR_HIGHLIGHT));
-				SetTextColor(hdc, GetSysColor(COLOR_HIGHLIGHTTEXT));
-			} else {
-				SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
-				SetTextColor(hdc, GetSysColor(COLOR_WINDOWTEXT));
-			}
+				if (mpSelectedNode == node) {
+					selected = true;
+					SetBkColor(hdc, GetSysColor(COLOR_HIGHLIGHT));
+					SetTextColor(hdc, GetSysColor(COLOR_HIGHLIGHTTEXT));
+				} else {
+					SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
+					SetTextColor(hdc, GetSysColor(COLOR_WINDOWTEXT));
+				}
 
-			int x = mItemHeight * level;
-			int y = pos * mItemHeight + mHeaderHeight - mScrollY;
+				int x = mItemHeight * level;
+				int y = pos * mItemHeight + mHeaderHeight - mScrollY;
 
-			RECT rOpaque;
-			rOpaque.left = x;
-			rOpaque.top = y;
-			rOpaque.right = mWidth;
-			rOpaque.bottom = y + mItemHeight;
+				RECT rOpaque;
+				rOpaque.left = x;
+				rOpaque.top = y;
+				rOpaque.right = mWidth;
+				rOpaque.bottom = y + mItemHeight;
 
-			const VDStringA *s = GetNodeText(node);
+				const VDStringA *s = GetNodeText(node);
 
-			ExtTextOutA(hdc, x + mItemHeight, rOpaque.top + mItemTextVOffset, ETO_OPAQUE | ETO_CLIPPED, &rOpaque, s->data(), s->size(), NULL);
+				ExtTextOutA(hdc, x + mItemHeight, rOpaque.top + mItemTextVOffset, ETO_OPAQUE | ETO_CLIPPED, &rOpaque, s->data(), s->size(), NULL);
 
-			RECT rPad;
-			rPad.left = rPaint->left;
-			rPad.top = y;
-			rPad.right = x;
-			rPad.bottom = y + mItemHeight;
+				RECT rPad;
+				rPad.left = rPaint->left;
+				rPad.top = y;
+				rPad.right = x;
+				rPad.bottom = y + mItemHeight;
 
-			FillRect(hdc, &rPad, (HBRUSH)(COLOR_WINDOW + 1));
+				FillRect(hdc, &rPad, (HBRUSH)(COLOR_WINDOW + 1));
 
-			if (node->mpFirstChild) {
-				SelectObject(hdc, selected ? GetStockObject(WHITE_PEN) : GetStockObject(BLACK_PEN));
+				if (node->mpFirstChild) {
+					SelectObject(hdc, selected ? GetStockObject(WHITE_PEN) : GetStockObject(BLACK_PEN));
 
-				int boxsize = (mItemHeight - 5) & ~1;
-				int x1 = x + 2;
-				int y1 = y + 2;
-				int x2 = x1 + boxsize;
-				int y2 = y1 + boxsize;
+					int boxsize = (mItemHeight - 5) & ~1;
+					int x1 = x + 2;
+					int y1 = y + 2;
+					int x2 = x1 + boxsize;
+					int y2 = y1 + boxsize;
 
-				MoveToEx(hdc, x1, y1, NULL);
-				LineTo(hdc, x2, y1);
-				LineTo(hdc, x2, y2);
-				LineTo(hdc, x1, y2);
-				LineTo(hdc, x1, y1);
+					MoveToEx(hdc, x1, y1, NULL);
+					LineTo(hdc, x2, y1);
+					LineTo(hdc, x2, y2);
+					LineTo(hdc, x1, y2);
+					LineTo(hdc, x1, y1);
 
-				int xh = (x1 + x2) >> 1;
-				int yh = (y1 + y2) >> 1;
-				MoveToEx(hdc, x1 + 2, yh, NULL);
-				LineTo(hdc, x2 - 1, yh);
+					int xh = (x1 + x2) >> 1;
+					int yh = (y1 + y2) >> 1;
+					MoveToEx(hdc, x1 + 2, yh, NULL);
+					LineTo(hdc, x2 - 1, yh);
 
-				if (!node->mbExpanded) {
-					MoveToEx(hdc, xh, y1 + 2, NULL);
-					LineTo(hdc, xh, y2 - 1);
+					if (!node->mbExpanded) {
+						MoveToEx(hdc, xh, y1 + 2, NULL);
+						LineTo(hdc, xh, y2 - 1);
+					}
 				}
 			}
+
+			// Check if we should recurse.
+			if (node->mbExpanded && node->mpFirstChild) {
+				++pos;
+				++level;
+
+				node = node->mpFirstChild;
+				continue;
+			} else
+				pos += node->mHeight;
 		}
 
-		if (pos + node->mHeight > itemStart) {
-			if (node->mbExpanded && node->mpFirstChild)
-				PaintItems(hdc, rPaint, itemStart, itemEnd, node->mpFirstChild, pos + 1, level + 1);
-		}
+		for(;;) {
+			if (node == baseParent)
+				return;
 
-		pos += node->mHeight;
-		node = node->mpNextSibling;
+			if (node->mpNextSibling) {
+				node = node->mpNextSibling;
+				break;
+			} else {
+				node = node->mpParent;
+				--level;
+			}
+		}
 	}
 }
 
@@ -2973,16 +2997,26 @@ void ATHistoryWindow::UpdateOpcodes() {
 		}
 
 		// If we're higher on the stack than before (pop/return), pop entries off the tree parent stack.
-		while(hent.mS > mLastS)
-			mStackLevels[mLastS++] = NULL;
+		// Note that we try to gracefully handle wrapping here. The idea is that generally the stack
+		// won't go down by more than 8 entries or so (JSL+interrupt), whereas it may go up way more
+		// than that when TXS is used.
+
+		if (mLastS != hent.mS) {
+			if ((uint8)(mLastS - hent.mS) >= 8) {		// hent.mS > mLastS, with some wraparound slop
+				while(hent.mS != mLastS)				// note that mLastS is a uint8 and will wrap
+					mStackLevels[mLastS++] = NULL;
+			} else {
+				while(hent.mS != mLastS)				// note that mLastS is a uint8 and will wrap
+					mStackLevels[--mLastS] = NULL;
+			}
+		}
 
 		// Check if we have a parent to use.
 		TreeNode *parent = mStackLevels[hent.mS];
 
 		if (!parent) {
-			uint8 s;
-
-			for(s = hent.mS + 1; s; ++s) {
+			uint8 s = hent.mS + 1;
+			for(int i=0; i<8; ++i, ++s) {
 				parent = mStackLevels[s];
 
 				if (parent)
@@ -3007,32 +3041,34 @@ void ATHistoryWindow::UpdateOpcodes() {
 
 		// Note that there is a serious problem here in that we are only tracking an 8-bit
 		// stack, when the stack is 16-bit in 65C816 native mode.
+		mLastS = hent.mS;
+
 		switch(hent.mOpcode[0]) {
 			case 0x48:	// PHA
 			case 0x08:	// PHP
-				mStackLevels[(uint8)(hent.mS - 1)] = parent;
+				mStackLevels[(uint8)--mLastS] = parent;
 				break;
 
 			case 0x6A:	// PHY
 			case 0xDA:	// PHX
 				if (is65C02 || is65C816)
-					mStackLevels[(uint8)(hent.mS - 1)] = parent;
+					mStackLevels[(uint8)--mLastS] = parent;
 				break;
 
 			case 0x8B:	// PHB
 			case 0x4B:	// PHK
 				if (is65C816)
-					mStackLevels[(uint8)(hent.mS - 1)] = parent;
+					mStackLevels[(uint8)--mLastS] = parent;
 				break;
 
 			case 0x0B:	// PHD
-				if (is65C816)
-					mStackLevels[(uint8)(hent.mS - 2)] = parent;
+				if (is65C816) {
+					mLastS -= 2;
+					mStackLevels[(uint8)mLastS] = parent;
+				}
 				break;
 		}
 
-		mLastS = hent.mS;
-		
 		// add new node
 		last = InsertNode(parent, parent->mpLastChild, "", &hent, kNodeTypeInsn);
 
@@ -3152,6 +3188,8 @@ void ATHistoryWindow::ClearAllNodes() {
 	mRootNode.mHeight = 1;
 	mRootNode.mRepeatCount = 0;
 
+	UpdateScrollMax();
+
 	if (mhwnd)
 		InvalidateRect(mhwnd, NULL, TRUE);
 }
@@ -3224,10 +3262,9 @@ void ATHistoryWindow::InsertNode(TreeNode *parent, TreeNode *insertAfter, TreeNo
 
 		for(TreeNode *ps = p->mpNextSibling; ps; ps = ps->mpNextSibling)
 			++ps->mRelYPos;
-
-		if (p == &mRootNode)
-			mScrollMax += mItemHeight;
 	}
+
+	UpdateScrollMax();
 
 	if (!mbInvalidatesBlocked)
 		InvalidateStartingAtNode(node);
@@ -4426,7 +4463,7 @@ protected:
 			mpExpr.reset();
 
 			try {
-				mpExpr = ATDebuggerParseExpression(VDTextWToA(expr).c_str(), ATGetDebugger());
+				mpExpr = ATDebuggerParseExpression(VDTextWToA(expr).c_str(), ATGetDebugger(), ATGetDebugger()->GetExprOpts());
 			} catch(const ATDebuggerExprParseException& ex) {
 				mValueStr = L"<Evaluation error: ";
 				mValueStr += VDTextAToW(ex.gets());
@@ -4442,6 +4479,7 @@ protected:
 			ctx.mpCPU = &g_sim.GetCPU();
 			ctx.mpMemory = &g_sim.GetCPUMemory();
 			ctx.mpAntic = &g_sim.GetAntic();
+			ctx.mpMMU = g_sim.GetMMU();
 
 			sint32 result;
 			if (mpExpr->Evaluate(result, ctx))
@@ -4731,10 +4769,6 @@ LRESULT ATDebugDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				VDCheckRadioMenuItemByCommandW32(menu, ID_FILTERMODE_POINT, filterMode == IVDVideoDisplay::kFilterPoint);
 				VDCheckRadioMenuItemByCommandW32(menu, ID_FILTERMODE_BILINEAR, filterMode == IVDVideoDisplay::kFilterBilinear);
 				VDCheckRadioMenuItemByCommandW32(menu, ID_FILTERMODE_BICUBIC, filterMode == IVDVideoDisplay::kFilterBicubic);
-
-				const ATDebugDisplay::Mode sourceMode = mDebugDisplay.GetMode();
-				VDCheckRadioMenuItemByCommandW32(menu, ID_SOURCEMODE_DLHISTORY, sourceMode == ATDebugDisplay::kMode_AnticHistory);
-				VDCheckRadioMenuItemByCommandW32(menu, ID_SOURCEMODE_HISTORYSTART, sourceMode == ATDebugDisplay::kMode_AnticHistoryStart);
 
 				const ATDebugDisplay::PaletteMode paletteMode = mDebugDisplay.GetPaletteMode();
 				VDCheckRadioMenuItemByCommandW32(menu, ID_PALETTE_CURRENTREGISTERVALUES, paletteMode == ATDebugDisplay::kPaletteMode_Registers);

@@ -23,6 +23,7 @@
 #include "gtia.h"
 #include "pokey.h"
 #include "antic.h"
+#include "pia.h"
 
 class ATAnticEmulator;
 
@@ -74,17 +75,35 @@ ATPortController::ATPortController()
 	, mbTrigger1(false)
 	, mbTrigger2(false)
 	, mMultiMask(0x0F000000)
+	, mpGTIA(NULL)
+	, mpPokey(NULL)
+	, mpPIA(NULL)
+	, mTriggerIndex(0)
+	, mpLightPen(NULL)
 {
 }
 
 ATPortController::~ATPortController() {
+	Shutdown();
 }
 
-void ATPortController::Init(ATGTIAEmulator *gtia, ATPokeyEmulator *pokey, ATLightPenPort *lightPen, int index) {
+void ATPortController::Init(ATGTIAEmulator *gtia, ATPokeyEmulator *pokey, ATPIAEmulator *pia, ATLightPenPort *lightPen, int index) {
+	VDASSERT(index == 0 || index == 2);
+
 	mpGTIA = gtia;
 	mpPokey = pokey;
+	mpPIA = pia;
 	mTriggerIndex = index;
 	mpLightPen = lightPen;
+
+	mPIAIndex = mpPIA->AllocInput();
+}
+
+void ATPortController::Shutdown() {
+	if (mpPIA) {
+		mpPIA->FreeInput(mPIAIndex);
+		mpPIA = NULL;
+	}
 }
 
 void ATPortController::SetMultiMask(uint8 mask) {
@@ -168,6 +187,11 @@ void ATPortController::UpdatePortValue() {
 	}
 
 	mPortValue = ~(uint8)portval;
+
+	if (mTriggerIndex)
+		mpPIA->SetInput(mPIAIndex, ((uint32)mPortValue << 8) | 0xFF);
+	else
+		mpPIA->SetInput(mPIAIndex, (uint32)mPortValue | 0xFF00);
 
 	bool trigger1 = (portval & 0x100) != 0;
 	bool trigger2 = (portval & 0x1000) != 0;
@@ -515,11 +539,11 @@ void ATPaddleController::AddDelta(int delta) {
 
 	mRawPos -= delta * 113;
 
-	if (mRawPos < (1 << 16) + 0x8000)
-		mRawPos = (1 << 16) + 0x8000;
+	if (mRawPos < (0 << 16) + 0x8000)
+		mRawPos = (0 << 16) + 0x8000;
 
-	if (mRawPos > (227 << 16) + 0x8000)
-		mRawPos = (227 << 16) + 0x8000;
+	if (mRawPos > (228 << 16) + 0x8000)
+		mRawPos = (228 << 16) + 0x8000;
 
 	int newPos = mRawPos >> 16;
 
@@ -546,7 +570,13 @@ void ATPaddleController::ApplyAnalogInput(uint32 trigger, int ds) {
 		case kATInputTrigger_Axis0:
 			{
 				int oldPos = mRawPos >> 16;
-				mRawPos = (114 << 16) + 0x8000 - ds * 113;
+				mRawPos = (114 << 16) + 0x8000 - ds * 114;
+
+				if (mRawPos < (0 << 16) + 0x8000)
+					mRawPos = (0 << 16) + 0x8000;
+
+				if (mRawPos > (228 << 16) + 0x8000)
+					mRawPos = (228 << 16) + 0x8000;
 
 				int newPos = mRawPos >> 16;
 
@@ -590,11 +620,11 @@ void ATPaddleController::Tick() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATTabletController::ATTabletController(int styDownPos, bool invertY)
+ATTabletController::ATTabletController(int styUpPos, bool invertY)
 	: mPortBits(0)
-	, mbStylusDown(true)
+	, mbStylusUp(false)
 	, mbInvertY(invertY)
-	, mStylusDownPos(styDownPos)
+	, mStylusUpPos(styUpPos)
 {
 	mRawPos[0] = 0;
 	mRawPos[1] = 0;
@@ -622,7 +652,7 @@ void ATTabletController::SetDigitalTrigger(uint32 trigger, bool state) {
 		else
 			newBits &= ~8;
 	} else if (trigger == kATInputTrigger_Button0+3) {
-		mbStylusDown = state;
+		mbStylusUp = state;
 
 		SetPos(0, mRawPos[0]);
 		SetPos(1, mRawPos[1]);
@@ -681,7 +711,7 @@ void ATTabletController::SetPos(int axis, int pos) {
 		pos = 0x10000;
 
 	int oldPos = (mRawPos[axis] * 114 + 0x728000) >> 16;
-	int newPos = mbStylusDown ? mStylusDownPos : (pos * 114 + 0x728000) >> 16;
+	int newPos = mbStylusUp ? mStylusUpPos : (pos * 114 + 0x728000) >> 16;
 
 	mRawPos[axis] = pos;
 

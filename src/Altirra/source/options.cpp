@@ -22,6 +22,7 @@
 ATOptions::ATOptions()
 	: mbDisplayDDraw(true)
 	, mbDisplayD3D9(true)
+	, mbDisplay3D(false)
 	, mbDisplayOpenGL(false)
 	, mbSingleInstance(false)
 	, mErrorMode(kATErrorMode_Dialog)
@@ -57,6 +58,7 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Startup: Reuse program instance", opts.mbSingleInstance);
 	ATOptionsExchange(key, write, "Display: DirectDraw", opts.mbDisplayDDraw);
 	ATOptionsExchange(key, write, "Display: Direct3D9", opts.mbDisplayD3D9);
+	ATOptionsExchange(key, write, "Display: 3D", opts.mbDisplay3D);
 	ATOptionsExchange(key, write, "Display: OpenGL", opts.mbDisplayOpenGL);
 	ATOptionsExchangeEnum(key, write, "Simulator: Error mode", opts.mErrorMode, kATErrorModeCount);
 	ATOptionsExchange(key, write, "Display: Full screen mode width", opts.mFullScreenWidth);

@@ -83,6 +83,8 @@ public:
 	virtual void RenameFile(uintptr key, const char *newFileName) = 0;
 };
 
+IATDiskFS *ATDiskFormatImageDOS2(IATDiskImage *image);
+
 IATDiskFS *ATDiskMountImage(IATDiskImage *image, bool readOnly);
 IATDiskFS *ATDiskMountImageARC(const wchar_t *path);
 IATDiskFS *ATDiskMountImageSDX2(IATDiskImage *image, bool readOnly);

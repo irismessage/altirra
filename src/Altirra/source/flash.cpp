@@ -18,15 +18,26 @@
 #include <stdafx.h>
 #include "flash.h"
 #include "scheduler.h"
+#include "debuggerlog.h"
+
+ATDebuggerLogChannel g_ATLCFlash(false, false, "FLASH", "Flash memory erase operations");
+ATDebuggerLogChannel g_ATLCFlashWrite(false, false, "FLASHWR", "Flash memory write operations");
 
 namespace {
 	// 150us timeout for writes to Atmel devices
 	const uint32 kAtmelWriteTimeoutCycles = 268;
+
+	// 80us timeout for multiple sector erase (AMD)
+	const uint32 kAMDSectorEraseTimeoutCycles = 143;
+
+	// 50us timeout for multiple sector erase (Amic)
+	const uint32 kAmicSectorEraseTimeoutCycles = 89;
 }
 
 ATFlashEmulator::ATFlashEmulator()
 	: mpMemory(NULL)
 	, mpScheduler(NULL)
+	, mpWriteEvent(NULL)
 {
 }
 
@@ -43,6 +54,22 @@ void ATFlashEmulator::Init(void *mem, ATFlashType type, ATScheduler *sch) {
 	mbDirty = false;
 	mbWriteActivity = false;
 	mbAtmelSDP = (type == kATFlashType_AT29C010A || type == kATFlashType_AT29C040);
+
+	switch(mFlashType) {
+		case kATFlashType_A29040:
+			mSectorEraseTimeoutCycles = kAmicSectorEraseTimeoutCycles;
+			break;
+
+		case kATFlashType_Am29F010:
+		case kATFlashType_Am29F040:
+		case kATFlashType_Am29F040B:
+			mSectorEraseTimeoutCycles = kAMDSectorEraseTimeoutCycles;
+			break;
+
+		default:
+			mSectorEraseTimeoutCycles = 0;
+			break;
+	}
 
 	ColdReset();
 }
@@ -63,7 +90,7 @@ void ATFlashEmulator::ColdReset() {
 	mCommandPhase = 0;
 }
 
-bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) {
+bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) const {
 	data = 0xFF;
 
 	switch(mReadMode) {
@@ -76,6 +103,7 @@ bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) {
 				case 0x00:
 					switch(mFlashType) {
 						case kATFlashType_Am29F010:
+						case kATFlashType_Am29F040:
 						case kATFlashType_Am29F040B:
 							data = 0x01;	// XX00 Manufacturer ID: AMD
 							break;
@@ -83,6 +111,14 @@ bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) {
 						case kATFlashType_AT29C010A:
 						case kATFlashType_AT29C040:
 							data = 0x1F;	// XX00 Manufacturer ID: Atmel
+							break;
+
+						case kATFlashType_SST39F040:
+							data = 0xBF;	// XX00 Manufacturer ID: SST
+							break;
+
+						case kATFlashType_A29040:
+							data = 0x37;	// XX00 Manufacturer ID: AMIC
 							break;
 					}
 					break;
@@ -93,7 +129,10 @@ bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) {
 							data = 0x21;
 							break;
 					
+						case kATFlashType_Am29F040:
 						case kATFlashType_Am29F040B:
+							// Yes, the 29F040 and 29F040B both have the same code even though
+							// the 040 validates A0-A14 and the 040B only does A0-A10.
 							data = 0xA4;
 							break;
 
@@ -103,6 +142,14 @@ bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) {
 
 						case kATFlashType_AT29C040:
 							data = 0x5B;
+							break;
+
+						case kATFlashType_SST39F040:
+							data = 0xB7;
+							break;
+
+						case kATFlashType_A29040:
+							data = 0x86;
 							break;
 					}
 					break;
@@ -123,7 +170,10 @@ bool ATFlashEmulator::ReadByte(uint32 address, uint8& data) {
 
 bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 	uint32 address15 = address & 0x7fff;
+	uint32 address11 = address & 0x7ff;
 	bool resetMapping = false;
+
+	g_ATLCFlashWrite("Write[$%05X] = $%05X\n", address, value);
 
 	switch(mCommandPhase) {
 		case 0:
@@ -132,13 +182,15 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 				if (!mReadMode)
 					break;
 
+				g_ATLCFlash("Exiting autoselect mode.\n");
 				mReadMode = kReadMode_Normal;
 				return true;
 			}
 
 			switch(mFlashType) {
 				case kATFlashType_Am29F010:
-				case kATFlashType_Am29F040B:
+				case kATFlashType_Am29F040:
+				case kATFlashType_SST39F040:
 					if (address15 == 0x5555 && value == 0xAA)
 						mCommandPhase = 1;
 					break;
@@ -148,43 +200,76 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 					if (address == 0x5555 && value == 0xAA)
 						mCommandPhase = 7;
 					break;
+
+				case kATFlashType_A29040:
+				case kATFlashType_Am29F040B:
+					if ((address & 0x7FF) == 0x555 && value == 0xAA)
+						mCommandPhase = 1;
+					break;
 			}
+
+			if (mCommandPhase)
+				g_ATLCFlash("Unlock: step 1 OK.\n");
+			else
+				g_ATLCFlash("Unlock: step 1 FAILED [($%05X) = $%02X].\n", address, value);
 			break;
 
 		case 1:
-			if (address15 == 0x2AAA && value == 0x55)
-				mCommandPhase = 2;
-			else {
-				mCommandPhase = 0;
+			mCommandPhase = 0;
+
+			if (value == 0x55) {
+				switch(mFlashType) {
+					case kATFlashType_A29040:
+					case kATFlashType_Am29F040B:
+						if ((address & 0x7FF) == 0x2AA)
+							mCommandPhase = 2;
+						break;
+
+					default:
+						if (address15 == 0x2AAA)
+							mCommandPhase = 2;
+						break;
+				}
 			}
+
+			if (mCommandPhase)
+				g_ATLCFlash("Unlock: step 2 OK.\n");
+			else
+				g_ATLCFlash("Unlock: step 2 FAILED [($%05X) = $%02X].\n", address, value);
 			break;
 
 		case 2:
-			if (address15 != 0x5555) {
+			if (mFlashType == kATFlashType_A29040 || mFlashType == kATFlashType_Am29F040B ? (address & 0x7FF) != 0x555 : address15 != 0x5555) {
+				g_ATLCFlash("Unlock: step 3 FAILED [($%05X) = $%02X].\n", address, value);
 				mCommandPhase = 0;
 				break;
 			}
 
 			switch(value) {
 				case 0x80:	// $80: sector or chip erase
+					g_ATLCFlash("Entering sector erase mode.\n");
 					mCommandPhase = 3;
 					break;
 
 				case 0x90:	// $90: autoselect mode
+					g_ATLCFlash("Entering autoselect mode.\n");
 					mReadMode = kReadMode_Autoselect;
 					mCommandPhase = 0;
 					return true;
 
 				case 0xA0:	// $A0: program mode
+					g_ATLCFlash("Entering program mode.\n");
 					mCommandPhase = 6;
 					break;
 
 				case 0xF0:	// $F0: reset
+					g_ATLCFlash("Exiting autoselect mode.\n");
 					mCommandPhase = 0;
 					mReadMode = kReadMode_Normal;
 					return true;
 
 				default:
+					g_ATLCFlash("Unknown command $%02X.\n", value);
 					mCommandPhase = 0;
 					break;
 			}
@@ -192,51 +277,109 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 			break;
 
 		case 3:		// 5555[AA] 2AAA[55] 5555[80]
-			if (address15 != 0x5555 || value != 0xAA) {
-				mCommandPhase = 0;
-				break;
+			mCommandPhase = 0;
+			if (value == 0xAA) {
+				switch(mFlashType) {
+					case kATFlashType_A29040:
+					case kATFlashType_Am29F040B:
+						if (address11 == 0x555)
+							mCommandPhase = 4;
+						break;
+
+					default:
+						if (address15 == 0x5555)
+							mCommandPhase = 4;
+						break;
+				}
 			}
 
-			mCommandPhase = 4;
+			if (mCommandPhase)
+				g_ATLCFlash("Erase: step 4 OK.\n");
+			else
+				g_ATLCFlash("Erase: step 4 FAILED [($%05X) = $%02X].\n", address, value);
 			break;
 
 		case 4:		// 5555[AA] 2AAA[55] 5555[80] 5555[AA]
-			if (address15 != 0x2AAA || value != 0x55) {
-				mCommandPhase = 0;
-				break;
+			mCommandPhase = 0;
+			if (value == 0x55) {
+				switch(mFlashType) {
+					case kATFlashType_A29040:
+					case kATFlashType_Am29F040B:
+						if (address11 == 0x2AA)
+							mCommandPhase = 5;
+						break;
+
+					default:
+						if (address15 == 0x2AAA)
+							mCommandPhase = 5;
+						break;
+				}
 			}
 
-			mCommandPhase = 5;
+			if (mCommandPhase)
+				g_ATLCFlash("Erase: step 5 OK.\n");
+			else
+				g_ATLCFlash("Erase: step 5 FAILED [($%05X) = $%02X].\n", address, value);
 			break;
 
 		case 5:		// 5555[AA] 2AAA[55] 5555[80] 5555[AA] 2AAA[55]
-			if (address15 == 0x5555 && value == 0x10) {
+			if (value == 0x10 && (mFlashType == kATFlashType_A29040 || mFlashType == kATFlashType_Am29F040B ? address11 == 0x555 : address15 == 0x5555)) {
 				// full chip erase
 				switch(mFlashType) {
 					case kATFlashType_Am29F010:
 						memset(mpMemory, 0xFF, 0x20000);
 						break;
+
+					case kATFlashType_Am29F040:
 					case kATFlashType_Am29F040B:
+					case kATFlashType_SST39F040:
+					case kATFlashType_A29040:
 						memset(mpMemory, 0xFF, 0x80000);
 						break;
 				}
+
+				g_ATLCFlash("Erasing entire flash chip.\n");
+				mbWriteActivity = true;
+				mbDirty = true;
+
 			} else if (value == 0x30) {
 				// sector erase
 				switch(mFlashType) {
 					case kATFlashType_Am29F010:
 						address &= 0x1C000;
 						memset(mpMemory + address, 0xFF, 0x4000);
+						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0x3FFF);
 						break;
+					case kATFlashType_Am29F040:
 					case kATFlashType_Am29F040B:
+					case kATFlashType_A29040:
 						address &= 0x70000;
 						memset(mpMemory + address, 0xFF, 0x10000);
+						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFFF);
+						break;
+					case kATFlashType_SST39F040:
+						address &= 0x7F000;
+						memset(mpMemory + address, 0xFF, 0x1000);
+						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFF);
 						break;
 				}
+
+				mbWriteActivity = true;
+				mbDirty = true;
+
+				if (mSectorEraseTimeoutCycles) {
+					// Once a sector erase has happened, other sector erase commands
+					// may be issued... but ONLY sector erase commands. This window is
+					// only guaranteed to last between 50us and 80us.
+					mpScheduler->SetEvent(mSectorEraseTimeoutCycles, this, 2, mpWriteEvent);
+					mCommandPhase = 14;
+					return true;
+				}
+			} else {
+				g_ATLCFlash("Erase: step 6 FAILED [($%05X) = $%02X].\n", address, value);
 			}
 
-			mbDirty = true;
-			mbWriteActivity = true;
-
+			// unknown command
 			mCommandPhase = 0;
 			mReadMode = kReadMode_Normal;
 			return true;
@@ -344,6 +487,36 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 			mbWriteActivity = true;
 			mpScheduler->SetEvent(kAtmelWriteTimeoutCycles, this, 1, mpWriteEvent);
 			return true;
+
+		case 14:	// Multiple sector erase mode (AMD/Amic)
+			if (value == 0x30) {
+				// sector erase
+				switch(mFlashType) {
+					case kATFlashType_Am29F010:
+						address &= 0x1C000;
+						memset(mpMemory + address, 0xFF, 0x4000);
+						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0x3FFF);
+						break;
+					case kATFlashType_Am29F040:
+					case kATFlashType_Am29F040B:
+					case kATFlashType_A29040:
+						address &= 0x70000;
+						memset(mpMemory + address, 0xFF, 0x10000);
+						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFFF);
+						break;
+					case kATFlashType_SST39F040:
+						address &= 0x7F000;
+						memset(mpMemory + address, 0xFF, 0x1000);
+						g_ATLCFlash("Erasing sector $%05X-%05X\n", address, address + 0xFFF);
+						break;
+				}
+
+				mbWriteActivity = true;
+				mbDirty = true;
+
+				mpScheduler->SetEvent(mSectorEraseTimeoutCycles, this, 2, mpWriteEvent);
+			}
+			return true;
 	}
 
 	return false;
@@ -352,6 +525,7 @@ bool ATFlashEmulator::WriteByte(uint32 address, uint8 value) {
 void ATFlashEmulator::OnScheduledEvent(uint32 id) {
 	mpWriteEvent = NULL;
 
+	g_ATLCFlash("Ending multiple sector tiemout.\n");
 	mReadMode = kReadMode_Normal;
 
 	switch(mFlashType) {

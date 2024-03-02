@@ -25,6 +25,7 @@
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
+#include <vd2/system/VDString.h>
 #include "ui.h"
 
 #ifndef ATWM_FONTSUPDATED
@@ -34,6 +35,11 @@
 #ifndef ATWM_GETAUTOSIZE
 #define ATWM_GETAUTOSIZE (WM_APP+201)
 #endif
+
+#define ATWM_PRESYSKEYDOWN (WM_APP + 0x120)
+#define ATWM_PRESYSKEYUP (WM_APP + 0x121)
+#define ATWM_PREKEYDOWN (WM_APP + 0x122)
+#define ATWM_PREKEYUP (WM_APP + 0x123)
 
 void ATInitUIFrameSystem();
 void ATShutdownUIFrameSystem();
@@ -150,6 +156,7 @@ public:
 
 	void	RecalcFrame();
 
+	void	UpdateModalState(ATFrameWindow *modalFrame);
 	void	UpdateActivationState(ATFrameWindow *frame);
 
 	void	CreateDragHandles();
@@ -232,7 +239,11 @@ public:
 	ATContainerDockingPane *DockFrame(ATFrameWindow *frame);
 	void	AddUndockedFrame(ATFrameWindow *frame);
 	void	UndockFrame(ATFrameWindow *frame, bool visible = true);
+
 	void	SetFullScreenFrame(ATFrameWindow *frame);
+
+	void	SetModalFrame(ATFrameWindow *frame);
+
 	void	ActivateFrame(ATFrameWindow *frame);
 
 	void	RemoveAnyEmptyNodes();
@@ -259,6 +270,7 @@ protected:
 	ATContainerDockingPane *mpDragPaneTarget;
 	ATFrameWindow *mpActiveFrame;
 	ATFrameWindow *mpFullScreenFrame;
+	ATFrameWindow *mpModalFrame;
 	int mDragPaneTargetCode;
 	bool mbBlockActiveUpdates;
 	HFONT mhfontCaption;

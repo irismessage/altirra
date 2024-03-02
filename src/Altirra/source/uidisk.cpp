@@ -18,15 +18,22 @@
 #include "stdafx.h"
 #include <windows.h>
 #include <vd2/system/error.h>
+#include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
-#include "Dialog.h"
+#include <at/atui/dialog.h>
 #include "resource.h"
 #include "disk.h"
+#include "diskfs.h"
 #include "simulator.h"
 
 extern ATSimulator g_sim;
 
 void ATUIShowDialogDiskExplorer(VDGUIHandle h, IATDiskImage *image, const wchar_t *imageName, bool writeEnabled, bool autoFlush);
+
+enum ATDiskFormatFileSystem {
+	kATDiskFFS_None,
+	kATDiskFFS_DOS2
+};
 
 class ATNewDiskDialog : public VDDialogFrameW32 {
 public:
@@ -36,6 +43,7 @@ public:
 	uint32 GetSectorCount() const { return mSectorCount; }
 	uint32 GetBootSectorCount() const { return mBootSectorCount; }
 	uint32 GetSectorSize() const { return mSectorSize; }
+	ATDiskFormatFileSystem GetFormatFFS() const { return mDiskFFS; }
 
 protected:
 	bool OnLoaded();
@@ -51,6 +59,7 @@ protected:
 	};
 
 	Format	mFormat;
+	ATDiskFormatFileSystem mDiskFFS;
 	uint32	mSectorCount;
 	uint32	mBootSectorCount;
 	uint32	mSectorSize;
@@ -59,6 +68,7 @@ protected:
 ATNewDiskDialog::ATNewDiskDialog()
 	: VDDialogFrameW32(IDD_CREATE_DISK)
 	, mFormat(kFormatSingle)
+	, mDiskFFS(kATDiskFFS_None)
 	, mSectorCount(720)
 	, mBootSectorCount(3)
 	, mSectorSize(128)
@@ -74,6 +84,9 @@ bool ATNewDiskDialog::OnLoaded() {
 	CBAddString(IDC_FORMAT, L"Double density (720 sectors, 256 bytes/sector)");
 	CBAddString(IDC_FORMAT, L"Custom");
 
+	CBAddString(IDC_FILESYSTEM, L"None (unformatted)");
+	CBAddString(IDC_FILESYSTEM, L"DOS 2");
+
 	return VDDialogFrameW32::OnLoaded();
 }
 
@@ -87,12 +100,32 @@ void ATNewDiskDialog::OnDataExchange(bool write) {
 			mSectorSize = 256;
 		else if (IsButtonChecked(IDC_SECTOR_SIZE_512))
 			mSectorSize = 512;
+
+		switch(CBGetSelectedIndex(IDC_FILESYSTEM)) {
+			case 0:
+			default:
+				mDiskFFS = kATDiskFFS_None;
+				break;
+
+			case 1:
+				if (mSectorSize != 128 || mSectorCount != 720 || mBootSectorCount != 3) {
+					ShowError(L"The specified disk geometry is not supported for the selected filesystem.", L"Altirra Error");
+					FailValidation(IDC_FILESYSTEM);
+					return;
+				}
+
+				mDiskFFS = kATDiskFFS_DOS2;
+				break;
+		}
+
 	} else {
 		CheckButton(IDC_SECTOR_SIZE_128, mSectorSize == 128);
 		CheckButton(IDC_SECTOR_SIZE_256, mSectorSize == 256);
 		CheckButton(IDC_SECTOR_SIZE_512, mSectorSize == 512);
 		CBSetSelectedIndex(IDC_FORMAT, (int)mFormat);
 		UpdateEnables();
+
+		CBSetSelectedIndex(IDC_FILESYSTEM, mDiskFFS);
 	}
 }
 
@@ -160,17 +193,27 @@ protected:
 	
 	bool mbHighDrives;
 	HBRUSH mDirtyDiskBrush;
+	HBRUSH mVirtualDiskBrush;
+	HBRUSH mVirtualFolderBrush;
+	HICON mhEjectIcon;
 	COLORREF mDirtyDiskColor;
+	COLORREF mVirtualDiskColor;
+	COLORREF mVirtualFolderColor;
 };
 
 ATDiskDriveDialog::ATDiskDriveDialog()
 	: VDDialogFrameW32(IDD_DISK_DRIVES)
 	, mbHighDrives(false)
 	, mDirtyDiskBrush(NULL)
+	, mVirtualDiskBrush(NULL)
+	, mVirtualFolderBrush(NULL)
+	, mhEjectIcon(NULL)
 {
 }
 
 ATDiskDriveDialog::~ATDiskDriveDialog() {
+	if (mhEjectIcon)
+		DeleteObject(mhEjectIcon);
 }
 
 namespace {
@@ -206,9 +249,33 @@ namespace {
 		IDC_WRITEMODE7,
 		IDC_WRITEMODE8
 	};
+
+	const uint32 kEjectID[]={
+		IDC_EJECT1,
+		IDC_EJECT2,
+		IDC_EJECT3,
+		IDC_EJECT4,
+		IDC_EJECT5,
+		IDC_EJECT6,
+		IDC_EJECT7,
+		IDC_EJECT8,
+	};
 }
 
 bool ATDiskDriveDialog::OnLoaded() {
+	if (!mhEjectIcon) {
+		mhEjectIcon = (HICON)LoadImage(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDI_EJECT), IMAGE_ICON, 16, 16, 0);
+	}
+
+	if (mhEjectIcon) {
+		for(size_t i=0; i<vdcountof(kEjectID); ++i) {
+			HWND hwndControl = GetControl(kEjectID[i]);
+
+			if (hwndControl)
+				SendMessage(hwndControl, BM_SETIMAGE, IMAGE_ICON, (LPARAM)mhEjectIcon);
+		}
+	}
+
 	if (!mDirtyDiskBrush) {
 		DWORD c = GetSysColor(COLOR_3DFACE);
 
@@ -219,6 +286,30 @@ bool ATDiskDriveDialog::OnLoaded() {
 
 		mDirtyDiskBrush = CreateSolidBrush(c);
 		mDirtyDiskColor = c;
+	}
+
+	if (!mVirtualDiskBrush) {
+		DWORD c = GetSysColor(COLOR_3DFACE);
+
+		// bluify the color
+		uint32 d = RGB(64, 128, 255);
+
+		c = (c|d) - (((c^d) & 0xfefefe)>>1);
+
+		mVirtualDiskBrush = CreateSolidBrush(c);
+		mVirtualDiskColor = c;
+	}
+
+	if (!mVirtualFolderBrush) {
+		DWORD c = GetSysColor(COLOR_3DFACE);
+
+		// yellowify the color
+		uint32 d = RGB(255, 224, 128);
+
+		c = (c|d) - (((c^d) & 0xfefefe)>>1);
+
+		mVirtualFolderBrush = CreateSolidBrush(c);
+		mVirtualFolderColor = c;
 	}
 
 	for(int i=0; i<8; ++i) {
@@ -250,6 +341,16 @@ void ATDiskDriveDialog::OnDestroy() {
 		DeleteObject(mDirtyDiskBrush);
 		mDirtyDiskBrush = NULL;
 	}
+
+	if (mVirtualDiskBrush) {
+		DeleteObject(mVirtualDiskBrush);
+		mVirtualDiskBrush = NULL;
+	}
+
+	if (mVirtualFolderBrush) {
+		DeleteObject(mVirtualFolderBrush);
+		mVirtualFolderBrush = NULL;
+	}
 }
 
 void ATDiskDriveDialog::OnDataExchange(bool write) {
@@ -265,6 +366,7 @@ void ATDiskDriveDialog::OnDataExchange(bool write) {
 		ShowControl(IDC_NEWDISK8, !mbHighDrives);
 		ShowControl(IDC_SAVEAS8, !mbHighDrives);
 		ShowControl(IDC_EXPLORE8, !mbHighDrives);
+		ShowControl(IDC_FOLDER8, !mbHighDrives);
 
 		for(int i=0; i<8; ++i) {
 			int driveIdx = i;
@@ -387,6 +489,19 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 					disk.CreateDisk(dlg.GetSectorCount(), dlg.GetBootSectorCount(), dlg.GetSectorSize());
 					disk.SetWriteFlushMode(true, false);
 
+					switch(dlg.GetFormatFFS()) {
+						case kATDiskFFS_DOS2:
+							try {
+								vdautoptr<IATDiskFS> fs(ATDiskFormatImageDOS2(disk.GetDiskImage()));
+
+								fs->Flush();
+							} catch(const MyError& e) {
+								e.post(mhdlg, "Format error");
+							}
+							break;
+
+					}
+
 					SetControlText(kDiskPathID[index], disk.GetPath());
 					CBSetSelectedIndex(kWriteModeID[index], 2);
 				}
@@ -408,7 +523,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 
 				ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
 
-				if (disk.GetPath()) {
+				if (disk.IsDiskLoaded() && !disk.GetDiskImage()->IsDynamic()) {
 					VDStringW s(VDGetSaveFileName(
 							'disk',
 							(VDGUIHandle)mhdlg,
@@ -457,6 +572,34 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 				} else {
 					disk.SetEnabled(true);
 					disk.SetWriteFlushMode(mode > 1, mode == 3);
+				}
+			}
+			return true;
+
+		case IDC_FOLDER8:		++index;
+		case IDC_FOLDER7:		++index;
+		case IDC_FOLDER6:		++index;
+		case IDC_FOLDER5:		++index;
+		case IDC_FOLDER4:		++index;
+		case IDC_FOLDER3:		++index;
+		case IDC_FOLDER2:		++index;
+		case IDC_FOLDER1:
+			{
+				int driveIndex = index;
+				if (mbHighDrives)
+					driveIndex += 8;
+
+				ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
+				const VDStringW& path = VDGetDirectory('vfol', (VDGUIHandle)mhdlg, L"Select folder for virtual disk image");
+
+				if (!path.empty()) {
+					try {
+						disk.MountFolder(path.c_str());
+
+						OnDataExchange(false);
+					} catch(const MyError& e) {
+						e.post(mhdlg, "Mount error");
+					}
 				}
 			}
 			return true;
@@ -541,6 +684,18 @@ VDZINT_PTR ATDiskDriveDialog::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM l
 
 							SetBkColor(hdc, mDirtyDiskColor);
 							return (VDZINT_PTR)mDirtyDiskBrush;
+						} else if (disk.IsDiskLoaded()) {
+							if (wcschr(disk.GetPath(), L'*')) {
+								HDC hdc = (HDC)wParam;
+
+								SetBkColor(hdc, mVirtualFolderColor);
+								return (VDZINT_PTR)mVirtualFolderBrush;
+							} else if (!disk.IsDiskBacked()) {
+								HDC hdc = (HDC)wParam;
+
+								SetBkColor(hdc, mVirtualDiskColor);
+								return (VDZINT_PTR)mVirtualDiskBrush;
+							}
 						}
 					}
 					break;

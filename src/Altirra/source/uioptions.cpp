@@ -22,8 +22,8 @@
 #include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
 #include <vd2/Dita/services.h>
-#include "Dialog.h"
-#include "uiproxies.h"
+#include <at/atui/dialog.h>
+#include <at/atui/uiproxies.h>
 #include "resource.h"
 #include "options.h"
 
@@ -320,6 +320,7 @@ ATUIDialogOptionsPageDisplay::ATUIDialogOptionsPageDisplay(ATOptions& opts)
 bool ATUIDialogOptionsPageDisplay::OnLoaded() {
 	AddHelpEntry(IDC_GRAPHICS_DDRAW, L"DirectDraw", L"Enable DirectDraw support. This is used if D3D9/OpenGL are disabled or not available.");
 	AddHelpEntry(IDC_GRAPHICS_D3D9, L"Direct3D 9", L"Enable Direct3D 9 support. This is the best option for speed and quality, and also enables the filtering options.");
+	AddHelpEntry(IDC_GRAPHICS_3D, L"Direct3D 11", L"Enable Direct3D 11 support. This is an experimental driver.");
 	AddHelpEntry(IDC_GRAPHICS_OPENGL, L"OpenGL", L"Enable OpenGL support. Direct3D 9 is a better option, but this is a reasonable fallback.");
 	AddHelpEntry(IDC_FSMODE_DESKTOP, L"Full screen mode: Match desktop", L"Uses the desktop resolution for full screen mode. This avoids a mode switch.");
 	AddHelpEntry(IDC_FSMODE_CUSTOM, L"Full screen mode: Custom", L"Use a specific video mode for full screen mode. Zero for refresh rate allows any rate.");
@@ -334,6 +335,7 @@ bool ATUIDialogOptionsPageDisplay::OnLoaded() {
 void ATUIDialogOptionsPageDisplay::OnDataExchange(bool write) {
 	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_DDRAW, mOptions.mbDisplayDDraw);
 	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_D3D9, mOptions.mbDisplayD3D9);
+	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_3D, mOptions.mbDisplay3D);
 	ExchangeControlValueBoolCheckbox(write, IDC_GRAPHICS_OPENGL, mOptions.mbDisplayOpenGL);
 
 	if (write) {

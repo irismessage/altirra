@@ -34,8 +34,8 @@ public:
 	ATSIDEEmulator();
 	~ATSIDEEmulator();
 
-	bool IsSDXEnabled() const { return mbSDXEnabled; }
-	bool IsSDXFlashDirty() const { return mSDXCtrl.IsDirty(); }
+	bool IsCartEnabled() const { return (mbSDXEnable && mSDXBank >= 0) || ((mbTopEnable || !mbSDXEnable) && mTopBank >= 0); }
+	bool IsSDXFlashDirty() const { return mFlashCtrl.IsDirty(); }
 
 	void LoadFirmware(const void *ptr, uint32 len);
 	void LoadFirmware(const wchar_t *path);
@@ -44,6 +44,12 @@ public:
 	void Init(ATIDEEmulator *ide, ATScheduler *sch, IATUIRenderer *uir, ATMemoryManager *memman, ATSimulator *sim);
 	void Shutdown();
 
+	void SetExternalEnable(bool enable);
+
+	bool IsSDXEnabled() const { return mbSDXEnable; }
+	void SetSDXEnabled(bool enable);
+
+	void ResetCartBank();
 	void ColdReset();
 
 	void LoadNVRAM();
@@ -52,28 +58,35 @@ public:
 	void DumpRTCStatus();
 
 protected:
+	void SetSDXBank(sint32 bank, bool topEnable);
+	void SetTopBank(sint32 bank);
+
 	static sint32 OnDebugReadByte(void *thisptr, uint32 addr);
 	static sint32 OnReadByte(void *thisptr, uint32 addr);
 	static bool OnWriteByte(void *thisptr, uint32 addr, uint8 value);
 
-	static sint32 OnSDXRead(void *thisptr, uint32 addr);
-	static bool OnSDXWrite(void *thisptr, uint32 addr, uint8 value);
+	static sint32 OnCartRead(void *thisptr, uint32 addr);
+	static bool OnCartWrite(void *thisptr, uint32 addr, uint8 value);
 
-	void UpdateMemoryLayersSDX();
+	void UpdateMemoryLayersCart();
 
 	ATIDEEmulator *mpIDE;
 	IATUIRenderer	*mpUIRenderer;
 	ATMemoryManager *mpMemMan;
 	ATSimulator *mpSim;
 	ATMemoryLayer *mpMemLayerIDE;
-	ATMemoryLayer *mpMemLayerSDX;
-	ATMemoryLayer *mpMemLayerSDXControl;
-	bool	mbSDXEnabled;
-	uint32	mSDXBankOffset;
-	ATFlashEmulator	mSDXCtrl;
+	ATMemoryLayer *mpMemLayerCart;
+	ATMemoryLayer *mpMemLayerCartControl;
+	bool	mbExternalEnable;
+	bool	mbSDXEnable;
+	bool	mbTopEnable;
+	sint32	mSDXBank;
+	sint32	mTopBank;
+	sint32	mBankOffset;
+	ATFlashEmulator	mFlashCtrl;
 	ATRTCDS1305Emulator mRTC;
 
-	VDALIGN(4) uint8	mSDX[0x80000];
+	VDALIGN(4) uint8	mFlash[0x80000];
 };
 
 #endif

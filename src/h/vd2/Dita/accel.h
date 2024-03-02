@@ -10,7 +10,8 @@ struct VDUIAccelerator {
 		kModCtrl		= 0x01,
 		kModShift		= 0x02,
 		kModAlt			= 0x04,
-		kModExtended	= 0x08
+		kModExtended	= 0x08,
+		kModUp			= 0x10
 	};
 
 	uint32		mVirtKey;
@@ -39,9 +40,11 @@ public:
 	uint32 GetSize() const;
 
 	const VDAccelTableEntry& operator[](uint32 index) const;
+	const VDAccelTableEntry* operator()(const VDUIAccelerator& accel) const;
 
 	void Clear();
 	void Add(const VDAccelTableEntry& ent);
+	void AddRange(const VDAccelTableEntry *ent, uint32 n);
 	void RemoveAt(uint32 index);
 
 	void Swap(VDAccelTableDefinition& dst);

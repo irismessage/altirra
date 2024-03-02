@@ -270,12 +270,12 @@ vblwait:
 	cmp		RTCLOK+2
 	beq		vblwait
 	
-	ldy		#0
+	ldy		#1
 	rts		
 .endp
 
 .proc ScreenClose
-	ldy		#0
+	ldy		#1
 	rts
 .endp
 
@@ -295,7 +295,7 @@ vblwait:
 		uint8 c = ScreenRead();
 		mpCPU->SetA(c);
 	#}
-	ldy		#0
+	ldy		#1
 	rts
 .endp
 
@@ -308,7 +308,7 @@ uint8 ScreenRead() {
 	uint8 c = ScreenRead2(x, y, mode);		
 	
 	if (mode == 0) {
-		if (++kdb.COLCRS >= kdb.RMARGN) {
+		if (++kdb.COLCRS > kdb.RMARGN) {
 			kdb.COLCRS = kdb.LMARGN;
 			
 			if (++kdb.ROWCRS >= kdb.BOTSCR)
@@ -418,7 +418,7 @@ uint8 ScreenRead2(uint32 x, uint32 y, uint32 mode) {
 		uint8 d = mpCPU->GetA();
 		ScreenWrite(d);		
 	#}	
-	ldy		#0
+	ldy		#1
 	rts
 .endp
 
@@ -456,7 +456,7 @@ void ScreenWrite(uint8 d) {
 
 		++x;
 		if (mode == 0) {
-			if (x >= kdb.RMARGN)
+			if (x > kdb.RMARGN)
 				x = kdb.LMARGN;
 		} else {
 			if (x >= kScreenPixelsPerRow[mode])

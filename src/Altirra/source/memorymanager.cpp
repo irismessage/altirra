@@ -94,6 +94,9 @@ void ATMemoryManager::DumpStatus() {
 			s += "hardware";
 		}
 
+		if (layer.mpName)
+			s.append_sprintf(" [%s]", layer.mpName);
+
 		s += '\n';
 		ATConsoleWrite(s.c_str());
 	}
@@ -113,6 +116,7 @@ ATMemoryLayer *ATMemoryManager::CreateLayer(int priority, const uint8 *base, uin
 	layer->mPageOffset = pageOffset;
 	layer->mPageCount = pageCount;
 	layer->mAddrMask = 0xFFFFFFFFU;
+	layer->mpName = NULL;
 
 	mLayers.insert(std::lower_bound(mLayers.begin(), mLayers.end(), layer, MemoryLayerPred()), layer);
 	return layer;
@@ -131,6 +135,7 @@ ATMemoryLayer *ATMemoryManager::CreateLayer(int priority, const ATMemoryHandlerT
 	layer->mPageCount = pageCount;
 	layer->mHandlers = handlers;
 	layer->mAddrMask = 0xFFFFFFFFU;
+	layer->mpName = NULL;
 
 	mLayers.insert(std::lower_bound(mLayers.begin(), mLayers.end(), layer, MemoryLayerPred()), layer);
 	return layer;
@@ -223,6 +228,12 @@ void ATMemoryManager::SetLayerMemory(ATMemoryLayer *layer0, const uint8 *base, u
 		if (layer->mbEnabled[kATMemoryAccessMode_CPUWrite])
 			RebuildNodes(&mCPUWritePageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_CPUWrite);
 	}
+}
+
+void ATMemoryManager::SetLayerName(ATMemoryLayer *layer0, const char *name) {
+	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
+
+	layer->mpName = name;
 }
 
 uint8 ATMemoryManager::AnticReadByte(uint32 address) {
@@ -326,7 +337,7 @@ uint8 ATMemoryManager::CPUDebugExtReadByte(uint16 address, uint8 bank) {
 		const MemoryNode& node = *(const MemoryNode *)(p - 1);
 
 		if (node.mpDebugReadHandler) {
-			uint8 v = node.mpDebugReadHandler(node.mpThis, addr32);
+			sint32 v = node.mpDebugReadHandler(node.mpThis, addr32);
 			if (v >= 0)
 				return (uint8)v;
 		}

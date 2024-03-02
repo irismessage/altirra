@@ -22,14 +22,17 @@
 #include <vd2/system/w32assist.h>
 #include "inputmanager.h"
 #include "resource.h"
+#include "uimenulist.h"
 
 class ATInputPortMenu {
 public:
 	ATInputPortMenu();
 	~ATInputPortMenu();
 
-	void Init(ATInputManager *im, int portIdx, uint32 baseId, HMENU subMenu);
+	void Init(ATInputManager *im, int portIdx, uint32 baseId);
 	void Shutdown();
+
+	void SetMenuHandles(HMENU hSubMenu, ATUIMenu *pMenu);
 
 	void Reload();
 	void UpdateMenu();
@@ -39,6 +42,7 @@ protected:
 	int mPortIdx;
 	uint32 mBaseId;
 	HMENU mhmenu;
+	ATUIMenu *mpMenu;
 	ATInputManager *mpInputMgr;
 
 	typedef vdfastvector<ATInputMap *> InputMaps;
@@ -57,6 +61,7 @@ ATInputPortMenu::ATInputPortMenu()
 	: mPortIdx(0)
 	, mBaseId(0)
 	, mhmenu(NULL)
+	, mpMenu(NULL)
 	, mpInputMgr(NULL)
 {
 }
@@ -65,11 +70,15 @@ ATInputPortMenu::~ATInputPortMenu() {
 	Shutdown();
 }
 
-void ATInputPortMenu::Init(ATInputManager *im, int portIdx, uint32 baseId, HMENU subMenu) {
+void ATInputPortMenu::Init(ATInputManager *im, int portIdx, uint32 baseId) {
 	mpInputMgr = im;
 	mPortIdx = portIdx;
 	mBaseId = baseId;
+}
+
+void ATInputPortMenu::SetMenuHandles(HMENU subMenu, ATUIMenu *pmenu) {
 	mhmenu = subMenu;
+	mpMenu = pmenu;
 }
 
 void ATInputPortMenu::Shutdown() {
@@ -78,17 +87,23 @@ void ATInputPortMenu::Shutdown() {
 		mInputMaps.pop_back();
 	}
 
+	mpInputMgr = NULL;
 	mhmenu = NULL;
 }
 
 void ATInputPortMenu::Reload() {
-	if (!mhmenu)
+	if (!mpInputMgr)
 		return;
 
 	// clear existing items
-	int count = ::GetMenuItemCount(mhmenu);
-	for(int i=count; i>=1; --i)
-		::DeleteMenu(mhmenu, i, MF_BYPOSITION);
+	if (mhmenu) {
+		int count = ::GetMenuItemCount(mhmenu);
+		for(int i=count-1; i>=1; --i)
+			::DeleteMenu(mhmenu, i, MF_BYPOSITION);
+	}
+
+	if (mpMenu)
+		mpMenu->RemoveItems(1, mpMenu->GetItemCount());
 
 	while(!mInputMaps.empty()) {
 		mInputMaps.back()->Release();
@@ -115,7 +130,15 @@ void ATInputPortMenu::Reload() {
 	for(uint32 i=0; i<entryCount; ++i) {
 		ATInputMap *imap = mInputMaps[i];
 
-		VDAppendMenuW32(mhmenu, MF_STRING, mBaseId + i + 1, imap->GetName());
+		if (mhmenu)
+			VDAppendMenuW32(mhmenu, MF_STRING, mBaseId + i + 1, imap->GetName());
+
+		if (mpMenu) {
+			ATUIMenuItem item;
+			item.mText = imap->GetName();
+			item.mId = mBaseId + i + 1;
+			mpMenu->AddItem(item);
+		}
 	}
 }
 
@@ -131,10 +154,26 @@ void ATInputPortMenu::UpdateMenu() {
 			anyActive = true;
 		}
 
-		VDCheckRadioMenuItemByPositionW32(mhmenu, i+1, active);
+		if (mhmenu)
+			VDCheckRadioMenuItemByPositionW32(mhmenu, i+1, active);
+
+		if (mpMenu) {
+			ATUIMenuItem *item = mpMenu->GetItemByIndex(i+1);
+
+			if (item)
+				item->mbRadioChecked = active;
+		}
 	}
 
-	VDCheckRadioMenuItemByPositionW32(mhmenu, 0, !anyActive);
+	if (mhmenu)
+		VDCheckRadioMenuItemByPositionW32(mhmenu, 0, !anyActive);
+
+	if (mpMenu) {
+		ATUIMenuItem *item = mpMenu->GetItemByIndex(0);
+
+		if (item)
+			item->mbRadioChecked = !anyActive;
+	}
 }
 
 void ATInputPortMenu::HandleCommand(uint32 id) {
@@ -167,20 +206,24 @@ HMENU ATFindParentMenuW32(HMENU hmenuStart, UINT id) {
 	return NULL;
 }
 
-void ATInitPortMenus(HMENU hmenu, ATInputManager *im) {
-	HMENU hSubMenu;
+void ATInitPortMenus(ATInputManager *im) {
+	const uint32 kBaseIds[]={
+		ID_INPUT_PORT1_NONE,
+		ID_INPUT_PORT2_NONE,
+		ID_INPUT_PORT3_NONE,
+		ID_INPUT_PORT4_NONE,
+	};
 
-	hSubMenu = ATFindParentMenuW32(hmenu, ID_INPUT_PORT1_NONE);
-	g_portMenus[0].Init(im, 0, ID_INPUT_PORT1_NONE, hSubMenu);
+	for(int i=0; i<4; ++i) {
+		g_portMenus[i].Init(im, i, kBaseIds[i]);
+		g_portMenus[i].Reload();
+	}
+}
 
-	hSubMenu = ATFindParentMenuW32(hmenu, ID_INPUT_PORT2_NONE);
-	g_portMenus[1].Init(im, 1, ID_INPUT_PORT2_NONE, hSubMenu);
 
-	hSubMenu = ATFindParentMenuW32(hmenu, ID_INPUT_PORT3_NONE);
-	g_portMenus[2].Init(im, 2, ID_INPUT_PORT3_NONE, hSubMenu);
-
-	hSubMenu = ATFindParentMenuW32(hmenu, ID_INPUT_PORT4_NONE);
-	g_portMenus[3].Init(im, 3, ID_INPUT_PORT4_NONE, hSubMenu);
+void ATSetPortMenu(int idx, HMENU hmenu, ATUIMenu *pmenu) {
+	g_portMenus[idx].SetMenuHandles(hmenu, pmenu);
+	g_portMenus[idx].Reload();
 }
 
 void ATUpdatePortMenus() {
@@ -198,7 +241,7 @@ void ATReloadPortMenus() {
 		g_portMenus[i].Reload();
 }
 
-bool ATUIHandlePortMenuCommand(UINT id) {
+bool ATUIHandlePortMenuCommand(uint32 id) {
 	if ((id - ID_INPUT_PORT1_NONE) < 100) {
 		g_portMenus[0].HandleCommand(id);
 		return true;

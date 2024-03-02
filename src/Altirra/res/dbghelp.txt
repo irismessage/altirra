@@ -20,6 +20,9 @@
      Constants
       iii      Integer
       $hhh     Hex integer
+      %bbbb    Binary integer
+      ii:iiii  Banked address (decimal)
+      $hh:hhhh Banked address (hex)
 
      Variables
       pc       PC register
@@ -31,6 +34,9 @@
       vpos     ANTIC vertical position counter
       address  PC or memory address from current breakpoint
       value    Value written from current access write breakpoint
+      xbankreg  Bank register value for PORTB extended memory
+      xbankcpu  PORTB extended memory bank (CPU)
+      xbankantic  PORTB extended memory bank (ANTIC)
      
      Grouping
       (exp)    Subexpression
@@ -38,7 +44,8 @@
      Unary operators
       db addr  Read memory unsigned byte
       dsb addr Read memory signed byte
-      dw addr  Read memory word
+      dw addr  Read memory unsigned word
+      dsw addr Read memory signed word
       +        Unary plus
       -        Unary minus
       <        Unary low byte (bits 0-7, as unsigned byte)
@@ -47,8 +54,8 @@
       
      Multiplicative operators
       *        Multiply
-      /        Divide
-      %        Modulus
+      /        Integer division (truncation toward zero)
+      %        Modulus (a%b = a - a/b*b)
       
      Additive operators
       +        Add
@@ -75,15 +82,18 @@
      Logical operators 2
       or       Logical OR
       
+    Spaces are not significant except to delimit tokens. 
+    
     Symbol names may also be used in expressions, but care should be taken
     to distinguish between "symbol", which evaluates to the symbol's address,
     and "db symbol" or "dw symbol", which reads a byte or word at the address.
-    Spaces are not significant except to delimit tokens.
+    Symbols that conflict with other tokens can be forced by prefixing with
+    #, i.e. #address.
     
     All expressions are evaluated with 32-bit signed two's-complement integer
-    arithmetic. Logical operators operate according to C rules, where 0
-    signifies false, a non-zero value is interpreted as true, and true is
-    encoded as 1.
+    arithmetic. Logical operators operate according to the rules of the C
+    programming language, where 0 signifies false, a non-zero value is
+    interpreted as true, and true is encoded as 1.
     
     Examples:
     
@@ -776,17 +786,45 @@
 + .antic       Display ANTIC status
 + .bank        Show memory bank state
 
++ .base        Set numeric parsing base
+
+    Selects decimal or hexadecimal as the default parsing base for numbers.
+
+      .base dec            (Set base 10 for numbers)
+      .base hex            (Set base 16 for numbers)
+      .base mixed          (Set base 10 with 16 shortcut for numbers)
+      
+    The .base command changes whether numbers in expressions are by default
+    parsed as decimal (base 10) or hexadecimal (base 16). The default is
+    mixed, which selects hex for simple numbers/addresses and decimal for
+    complex expressions. This permits unprefixed hex for simple addresses
+    while avoiding unexpected hex values in expressions.
+    
+    Examples of how various expressions are interpreted:
+    
+       Expression       Hex        Dec        Mixed
+       ---------------------------------------------------------------
+       10               $10        $0A        $0A
+       $10              $10        $10        $10
+       A5               $A5        error      $A5
+       (10)             $10        $0A        $0A
+       (A5)             $A5        error      error
+       01:2000          $012000    $0107D0    $012000
+       $01:2000         $012000    $012000    $012000
+       
+    See also: ? (evaluate expression)
+
 + .basic       Dump BASIC table pointers
 
     Displays the addresses and sizes of BASIC tables.
     
       .basic
 
-+ .basic_line  Dump BASIC program line
++ .basic_dumpline  Dump BASIC program line
 
     Lists the statements contained within a BASIC line.
     
-      .basic_line <address>
+      .basic_dumpline <address>
 
 + .basic_vars  Dump BASIC variables
 
@@ -812,6 +850,23 @@
       .ciodevs
 
 + .covox       Dump Covox sound extension status
+
++ .diskdumpsec Dump disk sector data
+
+    Displays raw sector data.
+    
+      .diskdumpsec [-d <drive>] <virt-sector>
+      
+    Reads a raw sector from disk by virtual sector number and displays
+    its contents. If phantom sectors are present, the first one is used.
+    Dumping a sector does not disturb the drive's timing state.
+    
+    WARNING: While this command doesn't disturb timing state, it will
+             change virtual disk image state when reading sectors off
+             a drive with a mounted folder.
+    
+    See also: .diskorder (set forced phantom sector ordering),
+              .disktrack (show sector order within track)
 
 + .diskorder   Set forced phantom sector ordering
 
@@ -839,7 +894,21 @@
     The DISK logging channel is useful for examining the sector load order
     initiated by a program.
     
-    See also: lfe (enable log channel), lft (enable tagged log channel)
+    See also: lfe (enable log channel), lft (enable tagged log channel),
+              .disktrack (show sector order within track)
+
++ .disktrack   Show sector order within track
+
+    Displays all sectors within a track on D1: in rotational order.
+    
+      .disktrack <track>
+      
+    The sectors are shown with their virtual sector number and phantom
+    index, followed by the position of the sector in fractions of a
+    rotation. For a standard drive at 288 RPM, there are about 4.8
+    rotations per second.
+    
+    See also: .diskorder (set phantom sector ordering), 
 
 + .dlhistory   Show ANTIC display list execution history
 
@@ -856,7 +925,7 @@
 + .ds1305      Show DS1305 real-time clock status
 
     Displays status of the DS1305 real-time clock chip in the SIDE
-    interface.
+    or Ultimate1MB hardware.
     
       .ds1305
 
@@ -972,6 +1041,51 @@
     
       .ide
 
++ .ide_dumpsec Dump IDE raw sector
+
+    Dumps the contents of a raw IDE hard disk sector.
+    
+      .ide_dumpsec [-l] <lba>
+      
+    Reads a sector by linear block address (LBA) and displays the contents.
+    This bypasses the ATA interface, so it can be done unobtrusively even if
+    the emulated device is in reset state or in the middle of a command.
+    
+      -l    Dump only every other byte (16-bit mode on 8-bit bus).
+      
+    See also: .ide_rdsec, .ide_wrsec
+
++ .ide_rdsec   Read IDE sector into memory
+
+    Reads an IDE sector into CPU memory.
+    
+      .ide_rdsec [-l] <lba> <address>
+      
+    Reads a sector by linear block address (LBA) into CPU memory. This
+    bypasses the ATA interface, so it can be done unobtrusively even if the
+    emulated device is in reset state or in the middle of a command. 512
+    bytes are read by default, or 256 if -l is specified.
+
+      -l    Read only every other byte (16-bit mode on 8-bit bus).
+      
+    See also: .ide_dumpsec, .ide_wrsec
+
++ .ide_wrsec   Write IDE sector from memory
+
+    Writes an IDE sector from CPU memory.
+    
+      .ide_wrsec [-l] <lba> <address>
+      
+    Writes a sector by linear block address (LBA) from CPU memory. This
+    bypasses the ATA interface, so it can be done unobtrusively even if the
+    emulated device is in reset state or in the middle of a command. 512
+    bytes are read by default, or 256 if -l is specified.
+
+      -l    Write only every other byte (16-bit mode on 8-bit bus). The
+            high byte is set to $FF.
+      
+    See also: .ide_dumpsec, .ide_wrsec
+
 + .iocb        Display CIO I/O control blocks
 + .loadksym    Load kernel symbols
 + .loadsym     Load module symbols
@@ -1042,7 +1156,9 @@
     in a large frame loop, as the body of the loop can be captured and
     then .pathbreak enabled to capture the exit path.
 
++ .pbi         Display Parallel Bus Interface (PBI) status
 + .pclink      Display PCLink status
++ .pia         Display Peripheral Interface Adapter (PIA) status 
 + .pokey       Display POKEY status
 
 + .printf      Display message with formatted fields
@@ -1173,13 +1289,30 @@
 
 + .tracecio    Toggle CIO call tracing
 + .traceser    Toggle serial I/O port tracing
+
++ .ultimate    Dump Ultimate1MB status
+
+    Displays the state of the Ultimate1MB expansion hardware.
+    
+       .ultimate1mb
+       
+    See also: .ds1305
+
 + .unloadsym   Unload module symbols
 + .vbxe        Display VBXE status
 + .vbxe_bl     Display VBXE blit list (BL)
 + .vbxe_xdl    Display VBXE extended display list (XDL)
 + .vbxe_traceblits    Toggle VBXE blit tracing
 + .vectors     Display kernel vectors
+
 + .warmreset   Warm reset simulation
+
+    Resets the simulation hardware (XL/XE) or triggers the System Reset
+    button logic (400/800).
+    
+       .warmreset
+       
+    See also: .restart
 
 + .writemem    Write memory to disk
 

@@ -18,10 +18,16 @@
 #ifndef f_AT_UIPORTMENUS_H
 #define f_AT_UIPORTMENUS_H
 
-void ATInitPortMenus(HMENU hmenu, ATInputManager *im);
+#include <windows.h>
+
+class ATInputManager;
+class ATUIMenu;
+
+void ATInitPortMenus(ATInputManager *im);
+void ATSetPortMenu(int idx, HMENU hmenu, ATUIMenu *pMenu);
 void ATUpdatePortMenus();
 void ATShutdownPortMenus();
 void ATReloadPortMenus();
-bool ATUIHandlePortMenuCommand(UINT id);
+bool ATUIHandlePortMenuCommand(uint32 id);
 
 #endif // f_AT_UIPORTMENUS_H

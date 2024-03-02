@@ -141,7 +141,8 @@ static const struct ATCartDetectInfo {
 {	kATCartridgeMode_Blizzard_16K,				kType800,	kSize16K,	kWrsNone,	kBankAny,		kInit16K,	kHeaderLast16B,					},
 {	kATCartridgeMode_Blizzard_4K,				kType800,	kSize4K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderLast16B,					},
 {	kATCartridgeMode_SIC,						kType800,	kSize128K |
-															kSize256K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst16K_PreferAll16K,	},
+															kSize256K |
+															kSize512K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst16K_PreferAll16K,	},
 {	kATCartridgeMode_AST_32K,					kType800,	kSize32K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Turbosoft_64K,				kType800,	kSize64K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Turbosoft_128K,			kType800,	kSize128K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},

@@ -78,6 +78,7 @@ public:
 	void EnableLayer(ATMemoryLayer *layer, ATMemoryAccessMode mode, bool enable);
 	void SetLayerMemory(ATMemoryLayer *layer, const uint8 *base);
 	void SetLayerMemory(ATMemoryLayer *layer, const uint8 *base, uint32 pageOffset, uint32 pages, uint32 addrMask = 0xFFFFFFFFU, int readOnly = -1);
+	void SetLayerName(ATMemoryLayer *layer, const char *name);
 
 	uint8 AnticReadByte(uint32 address);
 	uint8 DebugAnticReadByte(uint16 address);
@@ -99,6 +100,7 @@ protected:
 		uint32 mPageOffset;
 		uint32 mPageCount;
 		ATMemoryHandlerTable mHandlers;
+		const char *mpName;
 	};
 
 	struct MemoryLayerPred {

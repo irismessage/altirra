@@ -35,6 +35,7 @@ public:
 
 	bool IsDirty() const;
 	bool IsUpdatable() const;
+	bool IsDynamic() const { return false; }
 	bool Flush();
 
 	void SetPathATR(const wchar_t *path);
@@ -47,13 +48,13 @@ public:
 	uint32 GetPhysicalSectorCount() const;
 	void GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const;
 
-	void ReadPhysicalSector(uint32 index, void *data, uint32 len) const;
+	void ReadPhysicalSector(uint32 index, void *data, uint32 len);
 	void WritePhysicalSector(uint32 index, const void *data, uint32 len);
 
 	uint32 GetVirtualSectorCount() const;
 	void GetVirtualSectorInfo(uint32 index, ATDiskVirtualSectorInfo& info) const;
 
-	uint32 ReadVirtualSector(uint32 index, void *data, uint32 len) const;
+	uint32 ReadVirtualSector(uint32 index, void *data, uint32 len);
 	bool WriteVirtualSector(uint32 index, const void *data, uint32 len);
 
 protected:
@@ -136,7 +137,7 @@ void ATDiskImage::Load(const wchar_t *s) {
 void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream) {
 	sint64 fileSize = stream.Length();
 
-	if (fileSize <= 65535 * 128 && !vdwcsicmp(VDFileSplitExt(imagePath), L".xfd")) {
+	if (fileSize <= 65535 * 128 && imagePath && !vdwcsicmp(VDFileSplitExt(imagePath), L".xfd")) {
 		sint32 len = (sint32)fileSize;
 
 		mImage.resize(len);
@@ -186,11 +187,18 @@ void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRan
 		} else if (header[0] == 0x96 && header[1] == 0x02) {
 			LoadATR(stream, len, origPath, header);
 		} else {
-			throw MyError("Disk image \"%ls\" is corrupt or uses an unsupported format.", VDFileSplitPath(origPath));
+			if (origPath)
+				throw MyError("Disk image is corrupt or uses an unsupported format.");
+			else
+				throw MyError("Disk image \"%ls\" is corrupt or uses an unsupported format.", VDFileSplitPath(origPath));
 		}
 	}
 
-	mPath = origPath;
+	if (origPath)
+		mPath = origPath;
+	else
+		mPath.clear();
+
 	ComputeSectorsPerTrack();
 	mbDirty = false;
 	mbDiskFormatDirty = false;
@@ -199,9 +207,11 @@ void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRan
 
 class ATInvalidDiskFormatException : public MyError {
 public:
-	ATInvalidDiskFormatException(const wchar_t *path)
-		: MyError("Disk image \"%ls\" is corrupt or uses an unsupported format.", VDFileSplitPath(path))
-	{
+	ATInvalidDiskFormatException(const wchar_t *path) {
+		if (path)
+			setf("Disk image \"%ls\" is corrupt or uses an unsupported format.", VDFileSplitPath(path));
+		else
+			setf("Disk image is corrupt or uses an unsupported format.");
 	}
 };
 
@@ -757,8 +767,12 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 	} else
 		mBootSectorCount = 0;
 
-	if (mSectorSize > 512)
-		throw MyError("Disk image \"%ls\" uses an unsupported sector size of %u bytes.", VDFileSplitPath(origPath), mSectorSize);
+	if (mSectorSize > 512) {
+		if (origPath)
+			throw MyError("Disk image \"%ls\" uses an unsupported sector size of %u bytes.", VDFileSplitPath(origPath), mSectorSize);
+		else
+			throw MyError("Disk image uses an unsupported sector size of %u bytes.", mSectorSize);
+	}
 
 	mReWriteOffset = 16;
 
@@ -946,7 +960,7 @@ void ATDiskImage::GetVirtualSectorInfo(uint32 index, ATDiskVirtualSectorInfo& in
 	info = mVirtSectors[index];
 }
 
-void ATDiskImage::ReadPhysicalSector(uint32 index, void *data, uint32 len) const {
+void ATDiskImage::ReadPhysicalSector(uint32 index, void *data, uint32 len) {
 	const PhysSectorInfo& psec = mPhysSectors[index];
 
 	memcpy(data, mImage.data() + psec.mOffset, std::min<uint32>(len, psec.mSize));
@@ -960,7 +974,7 @@ void ATDiskImage::WritePhysicalSector(uint32 index, const void *data, uint32 len
 	mbDirty = true;
 }
 
-uint32 ATDiskImage::ReadVirtualSector(uint32 index, void *data, uint32 len) const {
+uint32 ATDiskImage::ReadVirtualSector(uint32 index, void *data, uint32 len) {
 	if (index >= (uint32)mVirtSectors.size())
 		return 0;
 

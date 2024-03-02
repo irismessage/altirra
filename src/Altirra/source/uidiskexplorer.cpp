@@ -31,8 +31,8 @@
 #include <vd2/Dita/services.h>
 #include "resource.h"
 #include "diskimage.h"
-#include "dialog.h"
-#include "uiproxies.h"
+#include <at/atui/dialog.h>
+#include <at/atui/uiproxies.h>
 #include "diskfs.h"
 
 struct ATUIDiskExplorerFileEntry {

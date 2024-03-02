@@ -79,6 +79,14 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\debug-diagnostics.xml"
+				>
+			</File>
+			<File
+				RelativePath=".\source\debug-expressions.xml"
+				>
+			</File>
+			<File
 				RelativePath=".\source\debug-intro.xml"
 				>
 			</File>
@@ -148,6 +156,10 @@
 			</File>
 			<File
 				RelativePath=".\source\troubleshooting.xml"
+				>
+			</File>
+			<File
+				RelativePath=".\source\ultimate1mb.xml"
 				>
 			</File>
 		</Filter>

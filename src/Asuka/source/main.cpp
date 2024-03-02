@@ -40,16 +40,18 @@ void tool_verinc(bool amd64);
 void tool_lookup(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches, bool amd64);
 void tool_mapconv(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches, bool amd64);
 void tool_fxc(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches, bool amd64);
-void tool_fxc10(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches, bool amd64);
+void tool_fxc10(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_makearray(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_glc(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_fontextract(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_fontencode(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
+void tool_fontrender(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_snapsetup();
 void tool_filecreate(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_maketables(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_psa(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_checkimports(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
+void tool_hash(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 
 int main(int argc, char **argv) {
 	--argc;
@@ -91,7 +93,7 @@ int main(int argc, char **argv) {
 		} else if (!_stricmp(s, "fxc")) {
 			tool_fxc(args, switches, amd64);
 		} else if (!_stricmp(s, "fxc10")) {
-			tool_fxc10(args, switches, amd64);
+			tool_fxc10(args, switches);
 		} else if (!_stricmp(s, "makearray")) {
 			tool_makearray(args, switches);
 		} else if (!_stricmp(s, "glc")) {
@@ -100,6 +102,8 @@ int main(int argc, char **argv) {
 			tool_fontextract(args, switches);
 		} else if (!_stricmp(s, "fontencode")) {
 			tool_fontencode(args, switches);
+		} else if (!_stricmp(s, "fontrender")) {
+			tool_fontrender(args, switches);
 		} else if (!_stricmp(s, "snapsetup")) {
 			tool_snapsetup();
 		} else if (!_stricmp(s, "filecreate")) {
@@ -110,6 +114,8 @@ int main(int argc, char **argv) {
 			tool_psa(args, switches);
 		} else if (!_stricmp(s, "checkimports")) {
 			tool_checkimports(args, switches);
+		} else if (!_stricmp(s, "hash")) {
+			tool_hash(args, switches);
 		} else
 			help();
 	} catch(const char *s) {

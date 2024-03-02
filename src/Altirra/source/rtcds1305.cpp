@@ -21,7 +21,9 @@
 #include "debuggerlog.h"
 #include "console.h"
 
-ATDebuggerLogChannel g_ATLCDS1305(false, false, "DS1305", "DS1305 real time clock accesses");
+ATDebuggerLogChannel g_ATLCDS1305CRead(false, false, "DS1305CR", "DS1305 real time clock reads");
+ATDebuggerLogChannel g_ATLCDS1305URead(false, false, "DS1305UR", "DS1305 real time clock user reads");
+ATDebuggerLogChannel g_ATLCDS1305Write(false, false, "DS1305W", "DS1305 real time clock writes");
 
 namespace {
 	uint8 ToBCD(uint8 v) {
@@ -72,7 +74,7 @@ void ATRTCDS1305Emulator::WriteState(bool chipEnable, bool clock, bool data) {
 		}
 	}
 
-	if (mbSPIClock != clock) {
+	if (chipEnable && mbSPIClock != clock) {
 		mbSPIClock = clock;
 
 		if (clock) {	// read (0 -> 1 clock transition)
@@ -187,11 +189,14 @@ void ATRTCDS1305Emulator::ReadRegister() {
 	else
 		mValue = 0xFF;
 
-	g_ATLCDS1305("Read[$%02X] = $%02X\n", mAddress, mValue);
+	if (mAddress < 0x20)
+		g_ATLCDS1305CRead("Read[$%02X] = $%02X\n", mAddress, mValue);
+	else
+		g_ATLCDS1305URead("Read[$%02X] = $%02X\n", mAddress, mValue);
 }
 
 void ATRTCDS1305Emulator::WriteRegister() {
-	g_ATLCDS1305("Write[$%02X] = $%02X\n", mAddress, mValue);
+	g_ATLCDS1305Write("Write[$%02X] = $%02X\n", mAddress, mValue);
 
 	if (mAddress < 0x92) {
 		static const uint8 kRegisterWriteMasks[0x12]={

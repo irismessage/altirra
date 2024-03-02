@@ -19,7 +19,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <vd2/system/error.h>
-#include "Dialog.h"
+#include <at/atui/dialog.h>
 #include "resource.h"
 #include "uiprogress.h"
 

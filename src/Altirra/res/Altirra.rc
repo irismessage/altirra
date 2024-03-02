@@ -52,368 +52,6 @@ END
 // Menu
 //
 
-IDR_MENU1 MENU 
-BEGIN
-    POPUP "&File"
-    BEGIN
-        MENUITEM "&Boot Image...\tAlt+B",       ID_FILE_BOOTIMAGE
-        MENUITEM "&Recently Booted",            ID_FILE_RECENTLYBOOTED
-        MENUITEM SEPARATOR
-        MENUITEM "&Open Image...\tAlt+O",       ID_FILE_OPENIMAGE
-        MENUITEM "Dis&k Drives...\tAlt+Shift+D", ID_FILE_DISKDRIVES
-        POPUP "Cassette"
-        BEGIN
-            MENUITEM "Load...",                     ID_CASSETTE_LOAD
-            MENUITEM "&Unload",                     ID_CASSETTE_UNLOAD
-            MENUITEM "Tape Control...",             ID_CASSETTE_TAPECONTROL
-        END
-        MENUITEM SEPARATOR
-        MENUITEM "Quick load state",            ID_FILE_QUICKLOADSTATE
-        MENUITEM "Quick save state",            ID_FILE_QUICKSAVESTATE
-        MENUITEM SEPARATOR
-        POPUP "Attach Special Cartridge"
-        BEGIN
-            MENUITEM "&SuperCharger 3D",            ID_ATTACHSPECIALCARTRIDGE_SUPERCHARGER3D
-            MENUITEM "&Empty 128K / 1Mbit flash cartridge", ID_ATTACHSPECIALCARTRIDGE_EMPTY1MB
-            MENUITEM "&Empty 128K / 1Mbit flash cartridge (MyIDE banking)", ID_ATTACHSPECIALCARTRIDGE_EMPTY1MBMYIDE
-            MENUITEM "Empty 1M / 8Mbit flash cartridge (older - bank 127)", ID_ATTACHSPECIALCARTRIDGE_EMPTY8MB
-            MENUITEM "Empty 1M / 8Mbit flash cartridge (newer - bank 0)", ID_ATTACHSPECIALCARTRIDGE_EMPTY8MB_NEWER
-            MENUITEM "Empty SIC flash cartridge",   ID_ATTACHSPECIALCARTRIDGE_EMPTYSIC
-            MENUITEM "BASIC",                       ID_ATTACHSPECIALCARTRIDGE_BASIC
-        END
-        POPUP "Secondary Cartridge"
-        BEGIN
-            MENUITEM "&Attach...",                  ID_CART2_ATTACH
-            MENUITEM "&Detach",                     ID_CART2_DETACH
-        END
-        MENUITEM "&Attach Cartridge...",        ID_FILE_ATTACHCARTRIDGE
-        MENUITEM "&Detach Cartridge",           ID_FILE_DETACHCARTRIDGE
-        POPUP "Save Firmware"
-        BEGIN
-            MENUITEM "&Save Cartridge...",          ID_FILE_SAVECARTRIDGE
-            MENUITEM "Save KMK/JZ IDE Main Flash...", ID_FILE_SAVEKMKJZMAIN
-            MENUITEM "Save KMK/JZ IDE SDX Flash...", ID_FILE_SAVEKMKJZSDX
-            MENUITEM "Save SIDE Flash...",          ID_FILE_SAVESIDESDX
-        END
-        MENUITEM SEPARATOR
-        MENUITEM "E&xit",                       ID_FILE_EXIT
-    END
-    POPUP "&View"
-    BEGIN
-        MENUITEM "&Full Screen\tAlt+Enter",     ID_VIEW_FULLSCREEN
-        MENUITEM "Adjust Window Size",          ID_VIEW_ADJUSTWINDOWSIZE
-        MENUITEM SEPARATOR
-        POPUP "Fi&lter Mode"
-        BEGIN
-            MENUITEM "Next Mode\tCtrl+F1",          ID_FILTERMODE_NEXTMODE
-            MENUITEM SEPARATOR
-            MENUITEM "Point",                       ID_FILTERMODE_POINT
-            MENUITEM "Bilinear",                    ID_FILTERMODE_BILINEAR
-            MENUITEM "Sharp Bilinear",              ID_FILTERMODE_SHARPBILINEAR
-            MENUITEM "Bicubic",                     ID_FILTERMODE_BICUBIC
-            MENUITEM "Any Suitable",                ID_FILTERMODE_ANYSUITABLE
-        END
-        POPUP "Filter Sharpness"
-        BEGIN
-            MENUITEM "Softer",                      ID_FILTERSHARPNESS_SOFTER
-            MENUITEM "Soft",                        ID_FILTERSHARPNESS_SOFT
-            MENUITEM "Normal",                      ID_FILTERSHARPNESS_NORMAL
-            MENUITEM "Sharp",                       ID_FILTERSHARPNESS_SHARP
-            MENUITEM "Sharper",                     ID_FILTERSHARPNESS_SHARPER
-        END
-        POPUP "&Stretch Mode"
-        BEGIN
-            MENUITEM "&Fit to Window",              ID_STRETCHMODE_FITTOWINDOW
-            MENUITEM "&Preserve Aspect Ratio",      ID_STRETCHMODE_PRESERVEASPECTRATIO
-            MENUITEM "P&reserve Aspect Ratio (fixed multiples only)", ID_STRETCHMODE_INTEGRALPRESERVEASPECTRATIO
-            MENUITEM "&Square Pixels",              ID_STRETCHMODE_SQUAREPIXELS
-            MENUITEM "S&quare Pixels (fixed multiples only)", ID_STRETCHMODE_INTEGRALSQUAREPIXELS
-        END
-        POPUP "&Overscan Mode"
-        BEGIN
-            MENUITEM "&OS Screen Only",             ID_OVERSCAN_OSSCREEN
-            MENUITEM "&Normal",                     ID_OVERSCAN_NORMAL
-            MENUITEM "&Extended",                   ID_OVERSCAN_EXTENDED
-            MENUITEM "&Full",                       ID_OVERSCAN_FULL
-            MENUITEM SEPARATOR
-            MENUITEM "Extended PAL Height",         ID_OVERSCAN_PALEXTENDED
-        END
-        POPUP "&GTIA Visualization"
-        BEGIN
-            MENUITEM "&Next Mode\tCtrl+F8",         ID_GTIAVISUALIZATION_NEXTMODE
-        END
-        POPUP "&ANTIC Visualization"
-        BEGIN
-            MENUITEM "&Next Mode\tShift+F8",        ID_ANTICVISUALIZATION_NEXTMODE
-        END
-        MENUITEM "&Vertical Sync",              ID_VIEW_VSYNC
-        MENUITEM "Show FPS",                    ID_VIEW_SHOWFPS
-        MENUITEM SEPARATOR
-        MENUITEM "&Display\tAlt+1",             ID_VIEW_DISPLAY
-        MENUITEM "&Printer Output\tAlt+8",      ID_VIEW_PRINTEROUTPUT
-        MENUITEM SEPARATOR
-        MENUITEM "Reset Window Layout",         ID_VIEW_RESETWINDOWLAYOUT
-        MENUITEM SEPARATOR
-        MENUITEM "Copy Frame To Clipboard\tAlt+Shift+M", ID_VIEW_COPYFRAMETOCLIPBOARD
-        MENUITEM "Copy Text\tAlt+Shift+C",      ID_VIEW_COPY
-        MENUITEM "Paste Text\tAlt+Shift+V",     ID_VIEW_PASTE
-        MENUITEM "Save Frame...\tAlt+F10",      ID_VIEW_SAVEFRAME
-    END
-    POPUP "&System"
-    BEGIN
-        MENUITEM "Warm Reset\tF5",              ID_SYSTEM_WARMRESET
-        MENUITEM "&Cold Reset\tShift+F5",       ID_SYSTEM_COLDRESET
-        MENUITEM "Pause\tF9",                   ID_SYSTEM_PAUSE
-        MENUITEM SEPARATOR
-        MENUITEM "&Warp Speed\tF1",             ID_SYSTEM_WARPSPEED
-        MENUITEM "Pause When Inactive",         ID_SYSTEM_PAUSEWHENINACTIVE
-        MENUITEM "Speed Options...",            ID_SYSTEM_SPEEDOPTIONS
-        MENUITEM SEPARATOR
-        POPUP "&Hardware"
-        BEGIN
-            MENUITEM "800",                         ID_HARDWARE_800
-            MENUITEM "800XL",                       ID_HARDWARE_800XL
-            MENUITEM "1200XL",                      ID_HARDWARE_1200XL
-            MENUITEM "XEGS",                        ID_HARDWARE_XEGS
-            MENUITEM "5200",                        ID_HARDWARE_5200
-        END
-        POPUP "&Firmware"
-        BEGIN
-            MENUITEM "Default",                     40089
-            MENUITEM "800 (OS-A)",                  ID_FIRMWARE_OSA
-            MENUITEM "800 (OS-B)",                  ID_FIRMWARE_OSB
-            MENUITEM "600XL/800XL",                 40091
-            MENUITEM "1200XL",                      ID_FIRMWARE_1200XL
-            MENUITEM "XEGS",                        ID_FIRMWARE_XEGS
-            MENUITEM "Other",                       ID_FIRMWARE_OTHER
-            MENUITEM "HLE Kernel",                  ID_FIRMWARE_HLE
-            MENUITEM "LLE Kernel",                  ID_FIRMWARE_LLE
-            MENUITEM "5200",                        ID_FIRMWARE_5200
-            MENUITEM "5200 LLE Kernel",             ID_FIRMWARE_5200LLE
-            MENUITEM SEPARATOR
-            MENUITEM "BASIC (Boot Without Option Key)", ID_FIRMWARE_BASIC
-            MENUITEM SEPARATOR
-            MENUITEM "Fast Boot",                   ID_FIRMWARE_FASTBOOT
-            MENUITEM "Accelerated Floating-Point",  ID_SYSTEM_FPPATCH
-            MENUITEM SEPARATOR
-            MENUITEM "ROM Images...",               ID_FIRMWARE_ROMIMAGES
-        END
-        POPUP "&Memory Size"
-        BEGIN
-            MENUITEM "16K (400/800/600XL/5200)",    40300
-            MENUITEM "&48K (800)",                  ID_MEMORYSIZE_48K
-            MENUITEM "&64K (800XL/1200XL)",         ID_MEMORYSIZE_64K
-            MENUITEM "&128K (130XE)",               ID_MEMORYSIZE_128K
-            MENUITEM SEPARATOR
-            MENUITEM "320K (Rambo)",                ID_MEMORYSIZE_320K
-            MENUITEM "320K (Compy)",                ID_MEMORYSIZE_320K_COMPY
-            MENUITEM "576K",                        ID_MEMORYSIZE_576K
-            MENUITEM "576K (Compy)",                ID_MEMORYSIZE_576K_COMPY
-            MENUITEM "1088K",                       ID_MEMORYSIZE_1088K
-            MENUITEM SEPARATOR
-            MENUITEM "8K (800)",                    ID_MEMORYSIZE_8K
-            MENUITEM "24K (800)",                   ID_MEMORYSIZE_24K
-            MENUITEM "32K (800)",                   ID_MEMORYSIZE_32K
-            MENUITEM "40K (800)",                   ID_MEMORYSIZE_40K
-            MENUITEM "52K (800)",                   ID_MEMORYSIZE_52K
-            MENUITEM SEPARATOR
-            MENUITEM "MapRAM",                      ID_MEMORY_MAPRAM
-        END
-        POPUP "&Video"
-        BEGIN
-            MENUITEM "&NTSC",                       ID_SYSTEM_NTSC
-            MENUITEM "&PAL",                        ID_SYSTEM_PAL
-            MENUITEM "SECAM",                       ID_SYSTEM_SECAM
-            MENUITEM SEPARATOR
-            MENUITEM "&Frame Blending",             ID_VIDEO_FRAMEBLENDING
-            MENUITEM "&Interlace",                  ID_VIDEO_INTERLACE
-            MENUITEM "&Scanlines",                  ID_VIDEO_SCANLINES
-            MENUITEM SEPARATOR
-            MENUITEM "VB&XE (FX1.20 core)",         ID_VIDEO_VBXE
-            MENUITEM "Use VBXE memory for expansion", ID_VIDEO_VBXESHAREDMEMORY
-            MENUITEM "Use $D7xx for VBXE registers", ID_VIDEO_VBXEALTPAGE
-            MENUITEM SEPARATOR
-            MENUITEM "No Artifacting",              ID_VIDEO_NOARTIFACTING
-            MENUITEM "NTSC &Artifacting (Standard)", ID_VIDEO_NTSCARTIFACTING
-            MENUITEM "NTSC Artifacting (High)",     ID_VIDEO_NTSCARTIFACTINGHI
-            MENUITEM "PA&L Artifacting (Standard)", ID_VIDEO_PALARTIFACTING
-            MENUITEM "PA&L Artifacting (High)",     ID_VIDEO_PALARTIFACTINGHI
-            MENUITEM SEPARATOR
-            MENUITEM "Standard Video Only",         ID_VIDEO_STANDARDVIDEO
-            MENUITEM "Enhanced Text (Hardware Intercept)", ID_VIDEO_ENHANCEDTEXT
-            MENUITEM "Enhanced Text (CIO Intercept)", ID_VIDEO_ENHANCEDTEXTCIO
-            MENUITEM SEPARATOR
-            MENUITEM "Adjust Colors...",            ID_VIDEO_ADJUSTCOLORS
-            MENUITEM "Enhanced Text Font...",       ID_VIDEO_ENHANCEDTEXTFONT
-        END
-        POPUP "&Disk Drive"
-        BEGIN
-            MENUITEM "&Enabled",                    ID_DISKDRIVE_ENABLED
-            MENUITEM SEPARATOR
-            MENUITEM "&SIO Patch",                  ID_DISKDRIVE_SIOPATCH
-            MENUITEM "SIO Override Detection",      ID_DISKDRIVE_SIOOVERRIDEDETECTION
-            MENUITEM SEPARATOR
-            MENUITEM "&Accurate Sector Timing",     ID_DISKDRIVE_ACCURATESECTORTIMING
-            MENUITEM SEPARATOR
-            MENUITEM "No burst transfers",          ID_DISKDRIVE_BURSTDISABLED
-            MENUITEM "Burst (standard)",            ID_DISKDRIVE_BURSTSTANDARD
-            MENUITEM "Burst (polled / SDX compatible)", ID_DISKDRIVE_BURSTPOLLED
-            MENUITEM SEPARATOR
-            MENUITEM "Show Sector &Counter",        ID_DISKDRIVE_SHOWSECTORCOUNTER
-            MENUITEM "Drive Sounds",                ID_DISKDRIVE_DRIVESOUNDS
-        END
-        POPUP "&Cassette"
-        BEGIN
-            MENUITEM "&SIO Patch",                  ID_CASSETTE_SIOPATCH
-            MENUITEM "&Auto-boot on Startup",       ID_CASSETTE_AUTOBOOT
-            MENUITEM "Load &Data as Audio",         ID_CASSETTE_LOADDATAASAUDIO
-        END
-        POPUP "Audio"
-        BEGIN
-            MENUITEM "&Stereo",                     ID_AUDIO_STEREO
-            MENUITEM "&Non-linear Mixing",          ID_AUDIO_NONLINEARMIXING
-            MENUITEM "Audio &Monitor",              ID_AUDIO_AUDIOMONITOR
-            MENUITEM SEPARATOR
-            MENUITEM "M&ute",                       ID_AUDIO_MUTE
-            MENUITEM "Channel &1\tCtrl+Alt+1",      ID_AUDIO_CHANNEL1
-            MENUITEM "Channel &2\tCtrl+Alt+2",      ID_AUDIO_CHANNEL2
-            MENUITEM "Channel &3\tCtrl+Alt+3",      ID_AUDIO_CHANNEL3
-            MENUITEM "Channel &4\tCtrl+Alt+4",      ID_AUDIO_CHANNEL4
-            MENUITEM SEPARATOR
-            MENUITEM "&Options...",                 ID_AUDIO_OPTIONS
-        END
-        MENUITEM "CP&U Options...",             ID_SYSTEM_CPUOPTIONS
-        MENUITEM "Ha&rd Disk...",               ID_SYSTEM_HARDDISK
-        MENUITEM "Host Device (H:)...",         ID_SYSTEM_HOSTDEVICE
-        MENUITEM "PCLink...",                   ID_SYSTEM_PCLINK
-        MENUITEM "&Printer",                    ID_SYSTEM_PRINTER
-        MENUITEM "&R-Time 8",                   ID_SYSTEM_RTIME8
-        MENUITEM "Serial Ports...",             ID_SYSTEM_SERIALPORTS
-        POPUP "SoundBoard"
-        BEGIN
-            MENUITEM "Enabled",                     ID_SOUNDBOARD_ENABLED
-            MENUITEM SEPARATOR
-            MENUITEM "Use $D2C0-D2FF",              ID_SOUNDBOARD_ADDR_D2C0
-            MENUITEM "Use $D500-D5FF",              ID_SOUNDBOARD_ADDR_D500
-            MENUITEM "Use $D600-D6FF",              ID_SOUNDBOARD_ADDR_D600
-        END
-        POPUP "Console Switches"
-        BEGIN
-            MENUITEM "Keyboard Present (XEGS)",     ID_CONSOLESWITCHES_KEYBOARDPRESENT
-            MENUITEM "Force Self-Test",             ID_CONSOLESWITCHES_FORCESELFTEST
-        END
-        POPUP "Slight-SID"
-        BEGIN
-            MENUITEM "Enabled",                     ID_SLIGHTSID_ENABLED
-        END
-        POPUP "Covox"
-        BEGIN
-            MENUITEM "Enabled",                     ID_COVOX_ENABLED
-        END
-    END
-    POPUP "&Input"
-    BEGIN
-        MENUITEM "Capture Mouse\tF12",          ID_INPUT_CAPTUREMOUSE
-        MENUITEM "Auto-capture Mouse",          ID_INPUT_AUTOCAPTUREMOUSE
-        MENUITEM SEPARATOR
-        MENUITEM "Input Mappings...",           ID_INPUT_INPUTMAPPINGS
-        MENUITEM "&Keyboard...",                ID_INPUT_KEYBOARD
-        MENUITEM "Light Pen/Gun...",            ID_INPUT_LIGHTPEN
-        MENUITEM SEPARATOR
-        POPUP "Port &1"
-        BEGIN
-            MENUITEM "&None",                       ID_INPUT_PORT1_NONE
-        END
-        POPUP "Port &2"
-        BEGIN
-            MENUITEM "&None",                       ID_INPUT_PORT2_NONE
-        END
-        POPUP "Port &3"
-        BEGIN
-            MENUITEM "&None",                       ID_INPUT_PORT3_NONE
-        END
-        POPUP "Port &4"
-        BEGIN
-            MENUITEM "&None",                       ID_INPUT_PORT4_NONE
-        END
-    END
-    POPUP "&Cheat"
-    BEGIN
-        MENUITEM "&Cheater...\tAlt+Shift+H",    ID_CHEAT_CHEATER
-        MENUITEM SEPARATOR
-        MENUITEM "Disable P/M &Collisions",     ID_CHEAT_DISABLEPMCOLLISIONS
-        MENUITEM "Disable &Playfield Collisions", ID_CHEAT_DISABLEPFCOLLISIONS
-    END
-    POPUP "&Debug"
-    BEGIN
-        MENUITEM "Enable Debugger",             ID_DEBUG_ENABLEDEBUGGER
-        MENUITEM "Open Source File...\tAlt+Shift+O", ID_DEBUG_OPENSOURCE
-        POPUP "&Window"
-        BEGIN
-            MENUITEM "&Console\tAlt+2",             ID_VIEW_CONSOLE
-            MENUITEM "&Registers\tAlt+3",           ID_VIEW_REGISTERS
-            MENUITEM "D&isassembly\tAlt+4",         ID_VIEW_DISASSEMBLY
-            MENUITEM "Call Stac&k\tAlt+5",          ID_VIEW_CALLSTACK
-            MENUITEM "&History\tAlt+6",             ID_VIEW_HISTORY
-            POPUP "&Memory"
-            BEGIN
-                MENUITEM "Memory &1\tAlt+7",            ID_VIEW_MEMORY
-                MENUITEM "Memory &2",                   ID_VIEW_MEMORY2
-                MENUITEM "Memory &3",                   ID_VIEW_MEMORY3
-                MENUITEM "Memory &4",                   ID_VIEW_MEMORY4
-            END
-            POPUP "&Watch"
-            BEGIN
-                MENUITEM "Watch &1",                    ID_VIEW_WATCH1
-                MENUITEM "Watch &2",                    ID_VIEW_WATCH2
-                MENUITEM "Watch &3",                    ID_VIEW_WATCH3
-                MENUITEM "Watch &4",                    ID_VIEW_WATCH4
-            END
-            MENUITEM "Debug Display",               ID_VIEW_DEBUGDISPLAY
-        END
-        POPUP "Options"
-        BEGIN
-            MENUITEM "Auto-Reload ROMs on Cold Reset", ID_DEBUG_AUTORELOADROMS
-            MENUITEM "Auto-Load Kernel Symbols",    ID_DEBUG_AUTOLOADKERNELSYMBOLS
-            MENUITEM "&Randomize Memory At Cold Reset", ID_MEMORY_RANDOMIZE
-            MENUITEM "&Break At EXE Run Address",   ID_DEBUG_BREAKATEXERUNADDRESS
-            MENUITEM SEPARATOR
-            MENUITEM "Change Font...",              ID_DEBUG_CHANGEFONT
-        END
-        MENUITEM SEPARATOR
-        MENUITEM "Run/Break\tF8",               ID_DEBUG_RUN
-        MENUITEM "Break\tCtrl+Break",           ID_DEBUG_BREAK
-        MENUITEM SEPARATOR
-        MENUITEM "Step Into\tF11",              ID_DEBUG_STEPINTO
-        MENUITEM "Step Over\tF10",              ID_DEBUG_STEPOVER
-        MENUITEM "Step Out\tShift+F11",         ID_DEBUG_STEPOUT
-        MENUITEM SEPARATOR
-        POPUP "&Profile"
-        BEGIN
-            MENUITEM "&Profile View\tAlt+Shift+0",  ID_PROFILE_PROFILEVIEW
-        END
-        MENUITEM "&Verifier...",                ID_DEBUG_VERIFIER
-    END
-    POPUP "&Record"
-    BEGIN
-        MENUITEM "&Record Raw Audio...",        ID_RECORD_RECORDRAWAUDIO
-        MENUITEM "&Record Video...",            ID_RECORD_RECORDVIDEO
-        MENUITEM "Stop Recording",              ID_RECORD_STOPRECORDING
-    END
-    POPUP "&Tools"
-    BEGIN
-        MENUITEM "Disk Explorer...",            ID_TOOLS_DISKEXPLORER
-        MENUITEM SEPARATOR
-        MENUITEM "&Options...",                 ID_TOOLS_OPTIONS
-    END
-    POPUP "&Help"
-    BEGIN
-        MENUITEM "Contents",                    ID_HELP_CONTENTS
-        MENUITEM "&About...",                   ID_HELP_ABOUT
-        MENUITEM "&Change Log...",              ID_HELP_CHANGELOG
-    END
-END
-
 IDR_DEBUGGER_MENU MENU 
 BEGIN
     POPUP "Context"
@@ -567,32 +205,6 @@ BEGIN
     VK_F8,          ID_DEBUG_RUN,           VIRTKEY, NOINVERT
 END
 
-IDR_ACCELERATOR1 ACCELERATORS 
-BEGIN
-    "1",            ID_AUDIO_CHANNEL1,      VIRTKEY, CONTROL, ALT, NOINVERT
-    "2",            ID_AUDIO_CHANNEL2,      VIRTKEY, CONTROL, ALT, NOINVERT
-    "3",            ID_AUDIO_CHANNEL3,      VIRTKEY, CONTROL, ALT, NOINVERT
-    "4",            ID_AUDIO_CHANNEL4,      VIRTKEY, CONTROL, ALT, NOINVERT
-    "H",            ID_CHEAT_CHEATER,       VIRTKEY, SHIFT, ALT, NOINVERT
-    "O",            ID_DEBUG_OPENSOURCE,    VIRTKEY, SHIFT, ALT, NOINVERT
-    "B",            ID_FILE_BOOTIMAGE,      VIRTKEY, ALT, NOINVERT
-    "D",            ID_FILE_DISKDRIVES,     VIRTKEY, SHIFT, ALT, NOINVERT
-    "O",            ID_FILE_OPENIMAGE,      VIRTKEY, ALT, NOINVERT
-    "0",            ID_PROFILE_PROFILEVIEW, VIRTKEY, SHIFT, ALT, NOINVERT
-    "5",            ID_VIEW_CALLSTACK,      VIRTKEY, ALT, NOINVERT
-    "2",            ID_VIEW_CONSOLE,        VIRTKEY, ALT, NOINVERT
-    "C",            ID_VIEW_COPY,           VIRTKEY, SHIFT, ALT, NOINVERT
-    "4",            ID_VIEW_DISASSEMBLY,    VIRTKEY, ALT, NOINVERT
-    "1",            ID_VIEW_DISPLAY,        VIRTKEY, ALT, NOINVERT
-    "6",            ID_VIEW_HISTORY,        VIRTKEY, ALT, NOINVERT
-    "7",            ID_VIEW_MEMORY,         VIRTKEY, ALT, NOINVERT
-    "V",            ID_VIEW_PASTE,          VIRTKEY, SHIFT, ALT, NOINVERT
-    "8",            ID_VIEW_PRINTEROUTPUT,  VIRTKEY, ALT, NOINVERT
-    "3",            ID_VIEW_REGISTERS,      VIRTKEY, ALT, NOINVERT
-    VK_F10,         ID_VIEW_SAVEFRAME,      VIRTKEY, ALT, NOINVERT
-    "M",            ID_VIEW_COPYFRAMETOCLIPBOARD, VIRTKEY, SHIFT, ALT, NOINVERT
-END
-
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -628,72 +240,80 @@ BEGIN
     EDITTEXT        IDC_DISKPATH1,34,19,164,12,ES_AUTOHSCROLL | ES_READONLY
     PUSHBUTTON      "...",IDC_BROWSE1,198,19,12,12
     COMBOBOX        IDC_WRITEMODE1,211,19,46,64,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "New",IDC_NEWDISK1,258,19,20,12
-    PUSHBUTTON      "Explore",IDC_EXPLORE1,279,19,31,12
-    PUSHBUTTON      "Save",IDC_SAVEAS1,311,19,25,12
-    PUSHBUTTON      "Eject",IDC_EJECT1,338,19,26,12
+    PUSHBUTTON      "+",IDC_NEWDISK1,258,19,15,12,BS_CENTER
+    PUSHBUTTON      "F",IDC_FOLDER1,274,19,15,12,BS_CENTER
+    PUSHBUTTON      "Explore",IDC_EXPLORE1,291,19,31,12
+    PUSHBUTTON      "Save",IDC_SAVEAS1,323,19,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT1,350,19,14,12,BS_ICON | BS_CENTER
     LTEXT           "Drive &2",IDC_STATIC_D2,7,33,25,12,SS_CENTERIMAGE
     EDITTEXT        IDC_DISKPATH2,34,33,164,12,ES_AUTOHSCROLL | ES_READONLY
     PUSHBUTTON      "...",IDC_BROWSE2,198,33,12,12
     COMBOBOX        IDC_WRITEMODE2,211,33,46,62,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "New",IDC_NEWDISK2,258,33,20,12
-    PUSHBUTTON      "Explore",IDC_EXPLORE2,279,33,31,12
-    PUSHBUTTON      "Save",IDC_SAVEAS2,311,33,25,12
-    PUSHBUTTON      "Eject",IDC_EJECT2,338,33,26,12
+    PUSHBUTTON      "+",IDC_NEWDISK2,258,33,15,12,BS_CENTER
+    PUSHBUTTON      "F",IDC_FOLDER2,274,33,15,12,BS_CENTER
+    PUSHBUTTON      "Explore",IDC_EXPLORE2,291,33,31,12
+    PUSHBUTTON      "Save",IDC_SAVEAS2,323,33,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT2,350,33,14,12,BS_ICON | BS_CENTER
     LTEXT           "Drive &3",IDC_STATIC_D3,7,47,25,12,SS_CENTERIMAGE
     EDITTEXT        IDC_DISKPATH3,34,47,164,12,ES_AUTOHSCROLL | ES_READONLY
     PUSHBUTTON      "...",IDC_BROWSE3,198,47,12,12
     COMBOBOX        IDC_WRITEMODE3,211,47,46,68,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "New",IDC_NEWDISK3,258,47,20,12
-    PUSHBUTTON      "Explore",IDC_EXPLORE3,279,47,31,12
-    PUSHBUTTON      "Save",IDC_SAVEAS3,311,47,25,12
-    PUSHBUTTON      "Eject",IDC_EJECT3,338,47,26,12
+    PUSHBUTTON      "+",IDC_NEWDISK3,258,47,15,12,BS_CENTER
+    PUSHBUTTON      "F",IDC_FOLDER3,274,47,15,12,BS_CENTER
+    PUSHBUTTON      "Explore",IDC_EXPLORE3,291,47,31,12
+    PUSHBUTTON      "Save",IDC_SAVEAS3,323,47,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT3,350,47,14,12,BS_ICON | BS_CENTER
     LTEXT           "Drive &4",IDC_STATIC_D4,7,61,25,12,SS_CENTERIMAGE
     EDITTEXT        IDC_DISKPATH4,34,61,164,12,ES_AUTOHSCROLL | ES_READONLY
     PUSHBUTTON      "...",IDC_BROWSE4,198,61,12,12
     COMBOBOX        IDC_WRITEMODE4,211,61,46,81,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "New",IDC_NEWDISK4,258,61,20,12
-    PUSHBUTTON      "Explore",IDC_EXPLORE4,279,61,31,12
-    PUSHBUTTON      "Save",IDC_SAVEAS4,311,61,25,12
-    PUSHBUTTON      "Eject",IDC_EJECT4,338,61,26,12
+    PUSHBUTTON      "+",IDC_NEWDISK4,258,61,15,12,BS_CENTER
+    PUSHBUTTON      "F",IDC_FOLDER4,274,61,15,12,BS_CENTER
+    PUSHBUTTON      "Explore",IDC_EXPLORE4,291,61,31,12
+    PUSHBUTTON      "Save",IDC_SAVEAS4,323,61,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT4,350,61,14,12,BS_ICON | BS_CENTER
     LTEXT           "Drive &5",IDC_STATIC_D5,7,75,25,12,SS_CENTERIMAGE
     EDITTEXT        IDC_DISKPATH5,34,75,164,12,ES_AUTOHSCROLL | ES_READONLY
     PUSHBUTTON      "...",IDC_BROWSE5,198,75,12,12
     COMBOBOX        IDC_WRITEMODE5,211,75,46,64,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "New",IDC_NEWDISK5,258,75,20,12
-    PUSHBUTTON      "Explore",IDC_EXPLORE5,279,75,31,12
-    PUSHBUTTON      "Save",IDC_SAVEAS5,311,75,25,12
-    PUSHBUTTON      "Eject",IDC_EJECT5,338,75,26,12
+    PUSHBUTTON      "+",IDC_NEWDISK5,258,75,15,12,BS_CENTER
+    PUSHBUTTON      "F",IDC_FOLDER5,274,75,15,12,BS_CENTER
+    PUSHBUTTON      "Explore",IDC_EXPLORE5,291,75,31,12
+    PUSHBUTTON      "Save",IDC_SAVEAS5,323,75,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT5,350,75,14,12,BS_ICON | BS_CENTER
     LTEXT           "Drive &6",IDC_STATIC_D6,7,89,25,12,SS_CENTERIMAGE
     EDITTEXT        IDC_DISKPATH6,34,89,164,12,ES_AUTOHSCROLL | ES_READONLY
     PUSHBUTTON      "...",IDC_BROWSE6,198,89,12,12
     COMBOBOX        IDC_WRITEMODE6,211,89,46,62,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "New",IDC_NEWDISK6,258,89,20,12
-    PUSHBUTTON      "Explore",IDC_EXPLORE6,279,89,31,12
-    PUSHBUTTON      "Save",IDC_SAVEAS6,311,89,25,12
-    PUSHBUTTON      "Eject",IDC_EJECT6,338,89,26,12
+    PUSHBUTTON      "+",IDC_NEWDISK6,258,89,15,12,BS_CENTER
+    PUSHBUTTON      "F",IDC_FOLDER6,274,89,15,12,BS_CENTER
+    PUSHBUTTON      "Explore",IDC_EXPLORE6,291,89,31,12
+    PUSHBUTTON      "Save",IDC_SAVEAS6,323,89,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT6,350,89,14,12,BS_ICON | BS_CENTER
     LTEXT           "Drive &7",IDC_STATIC_D7,7,103,25,12,SS_CENTERIMAGE
     EDITTEXT        IDC_DISKPATH7,34,103,164,12,ES_AUTOHSCROLL | ES_READONLY
     PUSHBUTTON      "...",IDC_BROWSE7,198,103,12,12
     COMBOBOX        IDC_WRITEMODE7,211,103,46,68,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "New",IDC_NEWDISK7,258,103,20,12
-    PUSHBUTTON      "Explore",IDC_EXPLORE7,279,103,31,12
-    PUSHBUTTON      "Save",IDC_SAVEAS7,311,103,25,12
-    PUSHBUTTON      "Eject",IDC_EJECT7,338,103,26,12
+    PUSHBUTTON      "+",IDC_NEWDISK7,258,103,15,12,BS_CENTER
+    PUSHBUTTON      "F",IDC_FOLDER7,274,103,15,12,BS_CENTER
+    PUSHBUTTON      "Explore",IDC_EXPLORE7,291,103,31,12
+    PUSHBUTTON      "Save",IDC_SAVEAS7,323,103,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT7,350,103,14,12,BS_ICON | BS_CENTER
     LTEXT           "Drive &8",IDC_STATIC_D8,7,117,25,12,SS_CENTERIMAGE
     EDITTEXT        IDC_DISKPATH8,34,117,164,12,ES_AUTOHSCROLL | ES_READONLY
     PUSHBUTTON      "...",IDC_BROWSE8,198,117,12,12
     COMBOBOX        IDC_WRITEMODE8,211,117,46,81,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "New",IDC_NEWDISK8,258,117,20,12
-    PUSHBUTTON      "Explore",IDC_EXPLORE8,279,117,31,12
-    PUSHBUTTON      "Save",IDC_SAVEAS8,311,117,25,12
-    PUSHBUTTON      "Eject",IDC_EJECT8,338,117,26,12
+    PUSHBUTTON      "+",IDC_NEWDISK8,258,117,15,12,BS_CENTER
+    PUSHBUTTON      "F",IDC_FOLDER8,274,117,15,12,BS_CENTER
+    PUSHBUTTON      "Explore",IDC_EXPLORE8,291,117,31,12
+    PUSHBUTTON      "Save",IDC_SAVEAS8,323,117,25,12
+    PUSHBUTTON      "Eject",IDC_EJECT8,350,117,14,12,BS_ICON | BS_CENTER
     LTEXT           "Emulation le&vel",IDC_STATIC,7,138,49,12,SS_CENTERIMAGE
     COMBOBOX        IDC_EMULATION_LEVEL,65,138,192,30,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     DEFPUSHBUTTON   "OK",IDOK,314,136,50,14
 END
 
-IDD_CREATE_DISK DIALOGEX 0, 0, 307, 117
+IDD_CREATE_DISK DIALOGEX 0, 0, 307, 134
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Create new disk"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
@@ -701,15 +321,17 @@ BEGIN
     LTEXT           "Disk format",IDC_STATIC,7,7,70,12,SS_CENTERIMAGE
     COMBOBOX        IDC_FORMAT,77,7,223,83,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "Sector count",IDC_STATIC,7,22,70,14,SS_CENTERIMAGE
-    EDITTEXT        IDC_SECTOR_COUNT,77,22,223,14,ES_AUTOHSCROLL
+    EDITTEXT        IDC_SECTOR_COUNT,77,22,92,14,ES_AUTOHSCROLL
     LTEXT           "Boot sector count",IDC_STATIC,7,39,70,14,SS_CENTERIMAGE
-    EDITTEXT        IDC_BOOT_SECTOR_COUNT,77,39,223,14,ES_AUTOHSCROLL
+    EDITTEXT        IDC_BOOT_SECTOR_COUNT,77,39,92,14,ES_AUTOHSCROLL
     LTEXT           "Sector size",IDC_STATIC,7,57,70,10,SS_CENTERIMAGE
     CONTROL         "128 bytes (SD)",IDC_SECTOR_SIZE_128,"Button",BS_AUTORADIOBUTTON | WS_GROUP,77,57,64,10
     CONTROL         "256 bytes (DD)",IDC_SECTOR_SIZE_256,"Button",BS_AUTORADIOBUTTON,77,68,65,10
     CONTROL         "512 bytes",IDC_SECTOR_SIZE_512,"Button",BS_AUTORADIOBUTTON,77,79,48,10
-    DEFPUSHBUTTON   "OK",IDOK,198,96,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,250,96,50,14
+    LTEXT           "Filesystem",IDC_STATIC,7,92,34,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_FILESYSTEM,77,92,223,42,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON   "OK",IDOK,198,113,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,250,113,50,14
 END
 
 IDD_ABOUT DIALOGEX 0, 0, 310, 134
@@ -730,38 +352,35 @@ BEGIN
     CONTROL         "",IDC_TEXT,"RICHEDIT",TCS_HOTTRACK | TCS_RAGGEDRIGHT | TCS_MULTISELECT | WS_BORDER | WS_VSCROLL | WS_TABSTOP,7,7,336,166
 END
 
-IDD_HARD_DISK DIALOGEX 0, 0, 320, 167
+IDD_HARD_DISK DIALOGEX 0, 0, 320, 181
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Hard disk setup"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    GROUPBOX        "",IDC_STATIC,7,7,306,134
+    GROUPBOX        "",IDC_STATIC,7,7,306,148
     CONTROL         "Enable IDE hard disk",IDC_IDE_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,7,81,10
     LTEXT           "&Image path",IDC_STATIC_IDE_IMAGEPATH,16,18,46,12,SS_CENTERIMAGE
     EDITTEXT        IDC_IDE_IMAGEPATH,67,18,203,12,ES_AUTOHSCROLL
     PUSHBUTTON      "File...",IDC_IDE_IMAGEBROWSE,273,18,32,12
-    PUSHBUTTON      "Disk...",IDC_IDE_DISKBROWSE,257,34,48,12
-    LTEXT           "&Geometry",IDC_STATIC_IDE_GEOMETRY,16,36,46,12,SS_CENTERIMAGE
-    LTEXT           "Cylinders",IDC_STATIC_IDE_CYLINDERS,67,36,80,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_IDE_CYLINDERS,147,36,83,12,ES_AUTOHSCROLL | ES_NUMBER,WS_EX_RIGHT
-    LTEXT           "Heads",IDC_STATIC_IDE_HEADS,67,49,80,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_IDE_HEADS,147,49,83,12,ES_AUTOHSCROLL | ES_NUMBER,WS_EX_RIGHT
-    LTEXT           "Sectors per track",IDC_STATIC_IDE_SPT,67,62,60,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_IDE_SPT,147,62,83,12,ES_AUTOHSCROLL | ES_NUMBER,WS_EX_RIGHT
-    LTEXT           "Resulting size (MB)",IDC_STATIC_IDE_SIZE,67,74,80,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_IDE_SIZE,147,74,83,12,ES_AUTOHSCROLL | ES_NUMBER,WS_EX_RIGHT
-    CONTROL         "R&ead only",IDC_IDEREADONLY,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,67,87,48,10
-    LTEXT           "Hardware",IDC_STATIC_IDE_IOREGION,16,100,46,10
-    CONTROL         "$D1xx (internal MyIDE)",IDC_IDE_D1XX,"Button",BS_AUTORADIOBUTTON | WS_GROUP,67,100,91,10
-    CONTROL         "$D500-D51F (external MyIDE)",IDC_IDE_D5XX,"Button",BS_AUTORADIOBUTTON,162,100,113,10
-    CONTROL         "KMK/JZ version 1",IDC_IDE_KMKJZV1,"Button",BS_AUTORADIOBUTTON,67,111,71,10
-    CONTROL         "KMK/JZ version 2",IDC_IDE_KMKJZV2,"Button",BS_AUTORADIOBUTTON,162,111,71,10
-    CONTROL         "SIDE",IDC_IDE_SIDE,"Button",BS_AUTORADIOBUTTON,256,111,49,10
-    LTEXT           "Device speed",IDC_STATIC_IDE_SPEED,16,122,46,10
-    CONTROL         "Solid-state (fast)",IDC_SPEED_FAST,"Button",BS_AUTORADIOBUTTON,67,122,70,10
-    CONTROL         "Spinning platter (slow)",IDC_SPEED_SLOW,"Button",BS_AUTORADIOBUTTON,146,122,87,10
-    DEFPUSHBUTTON   "OK",IDOK,210,146,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,263,146,50,14
+    PUSHBUTTON      "C&reate VHD Image...",IDC_CREATE_VHD,67,33,81,12
+    PUSHBUTTON      "Physical Disk...",IDC_IDE_DISKBROWSE,231,33,74,12
+    LTEXT           "&Geometry",IDC_STATIC_IDE_GEOMETRY,16,50,46,12,SS_CENTERIMAGE
+    LTEXT           "Cylinders",IDC_STATIC_IDE_CYLINDERS,67,50,80,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_IDE_CYLINDERS,147,50,83,12,ES_AUTOHSCROLL | ES_NUMBER,WS_EX_RIGHT
+    LTEXT           "Heads",IDC_STATIC_IDE_HEADS,67,63,80,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_IDE_HEADS,147,63,83,12,ES_AUTOHSCROLL | ES_NUMBER,WS_EX_RIGHT
+    LTEXT           "Sectors per track",IDC_STATIC_IDE_SPT,67,76,60,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_IDE_SPT,147,76,83,12,ES_AUTOHSCROLL | ES_NUMBER,WS_EX_RIGHT
+    LTEXT           "Resulting size (MB)",IDC_STATIC_IDE_SIZE,67,88,80,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_IDE_SIZE,147,88,83,12,ES_AUTOHSCROLL | ES_NUMBER,WS_EX_RIGHT
+    CONTROL         "R&ead only",IDC_IDEREADONLY,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,67,101,48,10
+    LTEXT           "Hardware",IDC_STATIC_IDE_IOREGION,16,114,46,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_HW_MODE,67,114,238,30,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Device speed",IDC_STATIC_IDE_SPEED,16,136,46,10
+    CONTROL         "Solid-state (fast)",IDC_SPEED_FAST,"Button",BS_AUTORADIOBUTTON,67,136,70,10
+    CONTROL         "Spinning platter (slow)",IDC_SPEED_SLOW,"Button",BS_AUTORADIOBUTTON,146,136,87,10
+    DEFPUSHBUTTON   "OK",IDOK,210,160,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,263,160,50,14
 END
 
 IDD_INPUT_MAPPINGS DIALOGEX 0, 0, 300, 199
@@ -1063,52 +682,17 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,129,64,50,14
 END
 
-IDD_ROM_IMAGES DIALOGEX 0, 0, 300, 223
+IDD_ROM_IMAGES DIALOGEX 0, 0, 300, 180
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "ROM Images"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    LTEXT           "OS-A",IDC_STATIC,7,7,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_OSA,88,7,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_OSA,277,7,15,12
-    LTEXT           "OS-B",IDC_STATIC,7,22,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_OSB,88,22,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_OSB,277,22,15,12
-    LTEXT           "800XL/130XE",IDC_STATIC,7,37,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_XL,88,37,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_XL,277,37,15,12
-    LTEXT           "1200XL",IDC_STATIC,7,51,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_1200XL,88,51,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_1200XL,277,51,15,12
-    LTEXT           "Other",IDC_STATIC,7,66,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_OTHER,88,66,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_OTHER,277,66,15,12
-    LTEXT           "5200",IDC_STATIC,7,81,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_5200,88,81,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_5200,277,81,15,12
-    LTEXT           "BASIC",IDC_STATIC,7,96,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_BASIC,88,96,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_BASIC,277,96,15,12
-    LTEXT           "XEGS kernel",IDC_STATIC,7,110,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_XEGS,88,110,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_XEGS,277,110,15,12
-    LTEXT           "XEGS game",IDC_STATIC,7,124,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_GAME,88,124,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_GAME,277,124,15,12
-    LTEXT           "KMK/JZ IDE",IDC_STATIC,7,139,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_KMKJZIDE,88,139,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_KMKJZIDE,277,139,15,12
-    LTEXT           "IDEPlus 2.0 (Main)",IDC_STATIC,7,154,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_KMKJZIDEV2,88,154,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_KMKJZIDEV2,277,154,15,12
-    LTEXT           "IDEPlus 2.0 (SDX)",IDC_STATIC,7,169,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_KMKJZIDEV2_SDX,88,169,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_KMKJZIDEV2_SDX,277,169,15,12
-    LTEXT           "SIDE (SDX)",IDC_STATIC,7,183,77,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_PATH_SIDE_SDX,88,183,186,12,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",IDC_BROWSE_SIDE_SDX,277,183,15,12
-    DEFPUSHBUTTON   "OK",IDOK,190,202,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,243,202,50,14
+    CONTROL         "",IDC_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_ALIGNLEFT | LVS_NOSORTHEADER | WS_TABSTOP,7,7,286,131,WS_EX_CLIENTEDGE
+    LTEXT           "Path",IDC_STATIC,7,141,42,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_PATH,52,141,221,12,ES_AUTOHSCROLL
+    PUSHBUTTON      "&...",IDC_BROWSE,276,141,17,12
+    DEFPUSHBUTTON   "OK",IDOK,190,159,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,243,159,50,14
 END
 
 IDD_PROGRAM_ERROR DIALOGEX 0, 0, 232, 161
@@ -1139,7 +723,7 @@ STYLE DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFR
 CAPTION "Disk Explorer"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    EDITTEXT        IDC_FILENAME,1,3,276,12,ES_AUTOHSCROLL | ES_READONLY
+    EDITTEXT        IDC_FILENAME,1,3,276,12,ES_AUTOHSCROLL | ES_READONLY | NOT WS_BORDER,WS_EX_STATICEDGE
     PUSHBUTTON      "...",IDC_BROWSE,279,3,20,12
     CONTROL         "",IDC_DISK_CONTENTS,"SysListView32",LVS_REPORT | LVS_SHOWSELALWAYS | LVS_SHAREIMAGELISTS | LVS_EDITLABELS | LVS_ALIGNLEFT | WS_TABSTOP,1,18,298,138,WS_EX_CLIENTEDGE
     LTEXT           "",IDC_STATUS,2,156,296,14,SS_CENTERIMAGE
@@ -1222,8 +806,8 @@ STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
     CONTROL         "DirectDraw",IDC_GRAPHICS_DDRAW,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,10,51,10
-    CONTROL         "Direct3D 9",IDC_GRAPHICS_D3D9,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,22,49,10
-    CONTROL         "OpenGL",IDC_GRAPHICS_OPENGL,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,35,41,10
+    CONTROL         "Direct3D 9",IDC_GRAPHICS_D3D9,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,20,49,10
+    CONTROL         "OpenGL",IDC_GRAPHICS_OPENGL,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,81,10,41,10
     GROUPBOX        "Graphics API support",IDC_STATIC,0,0,218,52
     GROUPBOX        "Full screen video mode",IDC_STATIC,1,55,221,40
     CONTROL         "Match desktop resolution",IDC_FSMODE_DESKTOP,"Button",BS_AUTORADIOBUTTON | WS_GROUP,7,65,96,10
@@ -1235,6 +819,7 @@ BEGIN
     EDITTEXT        IDC_FSMODE_REFRESH,133,76,20,12,ES_AUTOHSCROLL | ES_NUMBER
     LTEXT           "Hz",IDC_STATIC,153,76,11,12,SS_CENTERIMAGE
     PUSHBUTTON      "...",IDC_FSMODE_BROWSE,165,76,17,12
+    CONTROL         "Direct3D 11 (EXPERIMENTAL)",IDC_GRAPHICS_3D,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,30,110,10
 END
 
 IDD_OPTIONS_ERRORS DIALOGEX 0, 0, 222, 108
@@ -1324,6 +909,32 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,263,120,50,14
 END
 
+IDD_CREATE_VHD DIALOGEX 0, 0, 250, 158
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Create VHD Image"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "&Path",IDC_STATIC,7,7,28,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_PATH,58,7,166,12,ES_AUTOHSCROLL
+    PUSHBUTTON      "...",IDC_BROWSE,225,7,18,12
+    LTEXT           "&Type",IDC_STATIC,7,24,51,10,SS_CENTERIMAGE
+    CONTROL         "&Fixed size disk image",IDC_TYPE_FIXED,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,62,24,181,10
+    CONTROL         "&Dynamic disk image",IDC_TYPE_DYNAMIC,"Button",BS_AUTORADIOBUTTON,62,35,181,10
+    LTEXT           "Size (&MB)",IDC_STATIC,7,48,51,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_SIZE_MB,62,48,72,12,ES_AUTOHSCROLL
+    LTEXT           "&Size (sectors)",IDC_STATIC,7,64,51,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_SIZE_SECTORS,62,64,72,12,ES_AUTOHSCROLL
+    LTEXT           "&Geometry",IDC_STATIC,7,80,51,8
+    CONTROL         "&Auto",IDC_GEOMETRY_AUTO,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,62,80,31,10
+    CONTROL         "Manua&l",IDC_GEOMETRY_MANUAL,"Button",BS_AUTORADIOBUTTON,62,91,39,10
+    LTEXT           "&Heads",IDC_STATIC_HEADS,74,104,60,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_HEADS,138,104,105,12,ES_AUTOHSCROLL
+    LTEXT           "Se&ctors per track",IDC_STATIC_SPT,74,118,60,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_SPT,138,118,105,12,ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "OK",IDOK,141,137,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,193,137,50,14
+END
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -1349,8 +960,8 @@ BEGIN
         VERTGUIDE, 101
         VERTGUIDE, 147
         VERTGUIDE, 198
-        VERTGUIDE, 244
-        VERTGUIDE, 257
+        VERTGUIDE, 258
+        VERTGUIDE, 273
         TOPMARGIN, 7
         BOTTOMMARGIN, 150
     END
@@ -1360,8 +971,9 @@ BEGIN
         LEFTMARGIN, 7
         RIGHTMARGIN, 300
         VERTGUIDE, 77
+        VERTGUIDE, 169
         TOPMARGIN, 7
-        BOTTOMMARGIN, 110
+        BOTTOMMARGIN, 127
     END
 
     IDD_ABOUT, DIALOG
@@ -1390,7 +1002,7 @@ BEGIN
         VERTGUIDE, 288
         VERTGUIDE, 305
         TOPMARGIN, 7
-        BOTTOMMARGIN, 160
+        BOTTOMMARGIN, 174
     END
 
     IDD_INPUT_MAPPINGS, DIALOG
@@ -1543,12 +1155,8 @@ BEGIN
     BEGIN
         LEFTMARGIN, 7
         RIGHTMARGIN, 293
-        VERTGUIDE, 84
-        VERTGUIDE, 88
-        VERTGUIDE, 274
-        VERTGUIDE, 277
         TOPMARGIN, 7
-        BOTTOMMARGIN, 216
+        BOTTOMMARGIN, 173
     END
 
     IDD_PROGRAM_ERROR, DIALOG
@@ -1648,6 +1256,19 @@ BEGIN
         TOPMARGIN, 7
         BOTTOMMARGIN, 134
     END
+
+    IDD_CREATE_VHD, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 243
+        VERTGUIDE, 58
+        VERTGUIDE, 62
+        VERTGUIDE, 74
+        VERTGUIDE, 134
+        VERTGUIDE, 138
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 151
+    END
 END
 #endif    // APSTUDIO_INVOKED
 
@@ -1658,8 +1279,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 2,1,0,0
- PRODUCTVERSION 2,1,0,0
+ FILEVERSION 2,2,0,0
+ PRODUCTVERSION 2,2,0,0
  FILEFLAGSMASK 0x17L
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -1675,12 +1296,12 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "FileDescription", "Altirra 8-bit computer emulator"
-            VALUE "FileVersion", "2, 1, 0, 0"
+            VALUE "FileVersion", "2, 2, 0, 0"
             VALUE "InternalName", "Altirra"
-            VALUE "LegalCopyright", "Copyright (C) 2008-2012 Avery Lee, All Rights Reserved."
+            VALUE "LegalCopyright", "Copyright (C) 2008-2013 Avery Lee, All Rights Reserved."
             VALUE "OriginalFilename", "Altirra.exe"
             VALUE "ProductName", "Altirra"
-            VALUE "ProductVersion", "2.1"
+            VALUE "ProductVersion", "2.2"
         END
     END
     BLOCK "VarFileInfo"
@@ -1707,6 +1328,20 @@ IDR_KERNEL              KERNEL                  "..\\..\\..\\out\\release\\kerne
 IDR_KERNEL$(DEBUG)      KERNEL                  "..\\..\\..\\out\\debug\\kernel.rom"
 #else
 IDR_KERNEL              KERNEL                  "..\\..\\..\\out\\debug\\kernel.rom"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(NDEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_KERNELXL$(NDEBUG)   KERNEL                  "..\\..\\..\\out\\release\\kernelxl.rom"
+#else
+IDR_KERNELXL            KERNEL                  "..\\..\\..\\out\\release\\kernelxl.rom"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(DEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_KERNELXL$(DEBUG)    KERNEL                  "..\\..\\..\\out\\debug\\kernelxl.rom"
+#else
+IDR_KERNELXL            KERNEL                  "..\\..\\..\\out\\debug\\kernelxl.rom"
 #endif
 #endif
 #if defined(APSTUDIO_INVOKED) || defined(NDEBUG)
@@ -1807,6 +1442,20 @@ IDR_NOGAME$(NDEBUG)     KERNEL                  "..\\..\\..\\out\\Release\\nogam
 IDR_NOGAME              KERNEL                  "..\\..\\..\\out\\Release\\nogame.rom"
 #endif
 #endif
+#if defined(APSTUDIO_INVOKED) || defined(DEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_U1MBBIOS$(DEBUG)    KERNEL                  "..\\..\\..\\out\\debug\\ultimate.lzrom"
+#else
+IDR_U1MBBIOS            KERNEL                  "..\\..\\..\\out\\debug\\ultimate.lzrom"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(NDEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_U1MBBIOS$(NDEBUG)   KERNEL                  "..\\..\\..\\out\\release\\ultimate.lzrom"
+#else
+IDR_U1MBBIOS            KERNEL                  "..\\..\\..\\out\\release\\ultimate.lzrom"
+#endif
+#endif
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -1832,7 +1481,22 @@ IDR_DISKLOADER128$(NDEBUG) STUFF                   "..\\..\\..\\out\\Release\\at
 IDR_DISKLOADER128       STUFF                   "..\\..\\..\\out\\Release\\atdiskloader128.bin"
 #endif
 #endif
+#if defined(APSTUDIO_INVOKED) || defined(DEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_BOOTSECTOR_DOS2$(DEBUG) STUFF                   "..\\..\\..\\out\\debug\\bootsecdos2.bin"
+#else
+IDR_BOOTSECTOR_DOS2     STUFF                   "..\\..\\..\\out\\debug\\bootsecdos2.bin"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(NDEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_BOOTSECTOR_DOS2$(NDEBUG) STUFF                   "..\\..\\..\\out\\release\\bootsecdos2.bin"
+#else
+IDR_BOOTSECTOR_DOS2     STUFF                   "..\\..\\..\\out\\release\\bootsecdos2.bin"
+#endif
+#endif
 IDR_ABOUT               STUFF                   "about.txt"
+IDR_MENU_DEFAULT        STUFF                   "menu_default.txt"
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -1847,6 +1511,7 @@ IDB_TOOLBAR_PROFILER    BITMAP                  "profilerToolbar.bmp"
 //
 
 IDC_TARGET              CURSOR                  "target.cur"
+IDC_TARGET_OFF          CURSOR                  "targetoff.cur"
 #endif    // English (U.S.) resources
 /////////////////////////////////////////////////////////////////////////////
 

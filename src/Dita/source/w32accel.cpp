@@ -84,6 +84,16 @@ void VDUIGetAcceleratorStringInternal(const VDUIAccelerator& accel, VDStringW& s
 void VDUIGetAcceleratorString(const VDUIAccelerator& accel, VDStringW& s) {
 	s.clear();
 
+	if (accel.mModifiers & VDUIAccelerator::kModUp)
+		s = L"^";
+
+	// Rationale for ordering:
+	//
+	//	Ctrl+Alt+Del
+	//	Alt+Shift+PrtSc
+	//
+	// Therefore, we use Ctrl+Alt+Shift+key ordering.
+
 	if (accel.mModifiers & VDUIAccelerator::kModCtrl) {
 		VDUIAccelerator accelCtrl;
 		accelCtrl.mVirtKey = VK_CONTROL;
@@ -93,20 +103,20 @@ void VDUIGetAcceleratorString(const VDUIAccelerator& accel, VDStringW& s) {
 		s += L"+";
 	}
 
-	if (accel.mModifiers & VDUIAccelerator::kModShift) {
-		VDUIAccelerator accelShift;
-		accelShift.mVirtKey = VK_SHIFT;
-		accelShift.mModifiers = 0;
-		VDUIGetAcceleratorStringInternal(accelShift, s);
-
-		s += L"+";
-	}
-
 	if (accel.mModifiers & VDUIAccelerator::kModAlt) {
 		VDUIAccelerator accelAlt;
 		accelAlt.mVirtKey = VK_MENU;
 		accelAlt.mModifiers = 0;
 		VDUIGetAcceleratorStringInternal(accelAlt, s);
+
+		s += L"+";
+	}
+
+	if (accel.mModifiers & VDUIAccelerator::kModShift) {
+		VDUIAccelerator accelShift;
+		accelShift.mVirtKey = VK_SHIFT;
+		accelShift.mModifiers = 0;
+		VDUIGetAcceleratorStringInternal(accelShift, s);
 
 		s += L"+";
 	}

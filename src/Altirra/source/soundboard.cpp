@@ -37,7 +37,13 @@ ATSoundBoardEmulator::~ATSoundBoardEmulator() {
 }
 
 void ATSoundBoardEmulator::SetMemBase(uint32 membase) {
+	if (mMemBase == membase)
+		return;
+
 	mMemBase = membase;
+
+	if (mpMemMan)
+		UpdateControlLayer();
 }
 
 void ATSoundBoardEmulator::Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioOutput *audioOut) {
@@ -86,48 +92,7 @@ void ATSoundBoardEmulator::ColdReset() {
 	mMultiplierResult[2] = 0xFF;
 	mMultiplierResult[3] = 0xFF;
 
-	if (mpMemLayerControl) {
-		mpMemMan->DeleteLayer(mpMemLayerControl);
-		mpMemLayerControl = NULL;
-	}
-
-	ATMemoryHandlerTable handlers = {};
-	handlers.mpThis = this;
-
-	switch(mMemBase) {
-		case 0xD2C0:
-		default:
-			handlers.mbPassAnticReads = true;
-			handlers.mbPassReads = true;
-			handlers.mbPassWrites = true;
-			handlers.mpDebugReadHandler = StaticDebugReadD2xxControl;
-			handlers.mpReadHandler = StaticReadD2xxControl;
-			handlers.mpWriteHandler = StaticWriteD2xxControl;
-			mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, 0xD2, 0x01);
-			break;
-
-		case 0xD500:
-			handlers.mbPassAnticReads = false;
-			handlers.mbPassReads = true;
-			handlers.mbPassWrites = true;
-			handlers.mpDebugReadHandler = StaticDebugReadD5xxControl;
-			handlers.mpReadHandler = StaticReadD5xxControl;
-			handlers.mpWriteHandler = StaticWriteD5xxControl;
-			mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, 0xD5, 0x01);
-			break;
-
-		case 0xD600:
-			handlers.mbPassAnticReads = false;
-			handlers.mbPassReads = true;
-			handlers.mbPassWrites = true;
-			handlers.mpDebugReadHandler = StaticDebugReadD5xxControl;
-			handlers.mpReadHandler = StaticReadD5xxControl;
-			handlers.mpWriteHandler = StaticWriteD5xxControl;
-			mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, 0xD6, 0x01);
-			break;
-	}
-
-	mpMemMan->EnableLayer(mpMemLayerControl, true);
+	UpdateControlLayer();
 
 	WarmReset();
 }
@@ -551,6 +516,54 @@ void ATSoundBoardEmulator::Flush() {
 	mLastUpdate = t;
 
 	Run(dt);
+}
+
+void ATSoundBoardEmulator::UpdateControlLayer() {
+	if (mpMemLayerControl) {
+		mpMemMan->DeleteLayer(mpMemLayerControl);
+		mpMemLayerControl = NULL;
+	}
+
+	if (!mMemBase)
+		return;
+
+	ATMemoryHandlerTable handlers = {};
+	handlers.mpThis = this;
+
+	switch(mMemBase) {
+		case 0xD2C0:
+		default:
+			handlers.mbPassAnticReads = true;
+			handlers.mbPassReads = true;
+			handlers.mbPassWrites = true;
+			handlers.mpDebugReadHandler = StaticDebugReadD2xxControl;
+			handlers.mpReadHandler = StaticReadD2xxControl;
+			handlers.mpWriteHandler = StaticWriteD2xxControl;
+			mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, 0xD2, 0x01);
+			break;
+
+		case 0xD500:
+			handlers.mbPassAnticReads = false;
+			handlers.mbPassReads = true;
+			handlers.mbPassWrites = true;
+			handlers.mpDebugReadHandler = StaticDebugReadD5xxControl;
+			handlers.mpReadHandler = StaticReadD5xxControl;
+			handlers.mpWriteHandler = StaticWriteD5xxControl;
+			mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, 0xD5, 0x01);
+			break;
+
+		case 0xD600:
+			handlers.mbPassAnticReads = false;
+			handlers.mbPassReads = true;
+			handlers.mbPassWrites = true;
+			handlers.mpDebugReadHandler = StaticDebugReadD5xxControl;
+			handlers.mpReadHandler = StaticReadD5xxControl;
+			handlers.mpWriteHandler = StaticWriteD5xxControl;
+			mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay, handlers, 0xD6, 0x01);
+			break;
+	}
+
+	mpMemMan->EnableLayer(mpMemLayerControl, true);
 }
 
 sint32 ATSoundBoardEmulator::StaticDebugReadD2xxControl(void *thisptr, uint32 addr) {

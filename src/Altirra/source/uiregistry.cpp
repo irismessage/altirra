@@ -125,7 +125,10 @@ void ATUILoadRegistry(const wchar_t *path) {
 						case '\'':	break;
 						case '"':	break;
 						case 'x':
+						case 'u':
 							{
+								int limit = (c == 'u') ? 4 : 100;
+
 								c = *s++;
 								if (!isxdigit((uint8)c))
 									goto stop;
@@ -135,11 +138,11 @@ void ATUILoadRegistry(const wchar_t *path) {
 									v = (v << 4) + kUnhexTab[c & 0x1f];
 
 									c = *s++;
-								} while(isxdigit((uint8)c));
+								} while(isxdigit((uint8)c) && --limit);
 
 								--s;
 
-								strvalue.push_back((wchar_t)c);
+								strvalue.push_back((wchar_t)v);
 							}
 							continue;
 
@@ -237,7 +240,7 @@ void ATUISaveRegistryPath(VDTextOutputStream& os, VDStringA& path, bool global) 
 							case L'\\':	os.Write("\\\\");		break;
 							default:
 								lastWasHexEscape = true;
-								os.Format("\\x%X", c);
+								os.Format("\\u%04X", c);
 								break;
 						}
 					}

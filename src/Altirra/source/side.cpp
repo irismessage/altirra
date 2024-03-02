@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <vd2/system/file.h>
 #include <vd2/system/registry.h>
 #include "side.h"
 #include "memorymanager.h"
@@ -29,11 +30,16 @@ ATSIDEEmulator::ATSIDEEmulator()
 	, mpMemMan(NULL)
 	, mpSim(NULL)
 	, mpMemLayerIDE(NULL)
-	, mpMemLayerSDX(NULL)
-	, mpMemLayerSDXControl(NULL)
-	, mbSDXEnabled(false)
+	, mpMemLayerCart(NULL)
+	, mpMemLayerCartControl(NULL)
+	, mbExternalEnable(false)
+	, mbSDXEnable(true)
+	, mbTopEnable(false)
+	, mSDXBank(0)
+	, mTopBank(0)
+	, mBankOffset(0)
 {
-	memset(mSDX, 0xFF, sizeof mSDX);
+	memset(mFlash, 0xFF, sizeof mFlash);
 
 	mRTC.Init();
 
@@ -45,18 +51,18 @@ ATSIDEEmulator::~ATSIDEEmulator() {
 }
 
 void ATSIDEEmulator::LoadFirmware(const void *ptr, uint32 len) {
-	if (len > sizeof mSDX)
-		len = sizeof mSDX;
+	if (len > sizeof mFlash)
+		len = sizeof mFlash;
 
-	memcpy(mSDX, ptr, len);
-	mSDXCtrl.SetDirty(false);
+	memcpy(mFlash, ptr, len);
+	mFlashCtrl.SetDirty(false);
 }
 
 void ATSIDEEmulator::LoadFirmware(const wchar_t *path) {
-	void *flash = mSDX;
-	uint32 flashSize = sizeof mSDX;
+	void *flash = mFlash;
+	uint32 flashSize = sizeof mFlash;
 
-	mSDXCtrl.SetDirty(false);
+	mFlashCtrl.SetDirty(false);
 
 	memset(flash, 0xFF, flashSize);
 
@@ -66,14 +72,14 @@ void ATSIDEEmulator::LoadFirmware(const wchar_t *path) {
 }
 
 void ATSIDEEmulator::SaveFirmware(const wchar_t *path) {
-	void *flash = mSDX;
-	uint32 flashSize = sizeof mSDX;
+	void *flash = mFlash;
+	uint32 flashSize = sizeof mFlash;
 
 	VDFile f;
 	f.open(path, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 	f.write(flash, flashSize);
 
-	mSDXCtrl.SetDirty(false);
+	mFlashCtrl.SetDirty(false);
 }
 
 void ATSIDEEmulator::Init(ATIDEEmulator *ide, ATScheduler *sch, IATUIRenderer *uir, ATMemoryManager *memman, ATSimulator *sim) {
@@ -82,7 +88,7 @@ void ATSIDEEmulator::Init(ATIDEEmulator *ide, ATScheduler *sch, IATUIRenderer *u
 	mpMemMan = memman;
 	mpSim = sim;
 
-	mSDXCtrl.Init(mSDX, kATFlashType_Am29F040B, sch);
+	mFlashCtrl.Init(mFlash, kATFlashType_Am29F040B, sch);
 
 	ATMemoryHandlerTable handlerTable = {};
 
@@ -94,31 +100,36 @@ void ATSIDEEmulator::Init(ATIDEEmulator *ide, ATScheduler *sch, IATUIRenderer *u
 	handlerTable.mpReadHandler = OnReadByte;
 	handlerTable.mpWriteHandler = OnWriteByte;
 	mpMemLayerIDE = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay, handlerTable, 0xD5, 0x01);
+	mpMemMan->SetLayerName(mpMemLayerIDE, "SIDE registers");
 	mpMemMan->EnableLayer(mpMemLayerIDE, true);
 
-	mpMemLayerSDX = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay, mSDX, 0xA0, 0x20, true);
+	mpMemLayerCart = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay, mFlash, 0xA0, 0x20, true);
+	mpMemMan->SetLayerName(mpMemLayerCart, "SIDE cartridge window");
 
 	handlerTable.mbPassReads = false;
 	handlerTable.mbPassWrites = false;
 	handlerTable.mbPassAnticReads = false;
-	handlerTable.mpDebugReadHandler = OnSDXRead;
-	handlerTable.mpReadHandler = OnSDXRead;
-	handlerTable.mpWriteHandler = OnSDXWrite;
+	handlerTable.mpDebugReadHandler = OnCartRead;
+	handlerTable.mpReadHandler = OnCartRead;
+	handlerTable.mpWriteHandler = OnCartWrite;
 
-	mpMemLayerSDXControl = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay+1, handlerTable, 0xA0, 0x20);
+	mpMemLayerCartControl = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay+1, handlerTable, 0xA0, 0x20);
+	mpMemMan->SetLayerName(mpMemLayerCartControl, "SIDE flash control");
+
+	mbExternalEnable = true;
 }
 
 void ATSIDEEmulator::Shutdown() {
-	mSDXCtrl.Shutdown();
+	mFlashCtrl.Shutdown();
 
-	if (mpMemLayerSDXControl) {
-		mpMemMan->DeleteLayer(mpMemLayerSDXControl);
-		mpMemLayerSDXControl = NULL;
+	if (mpMemLayerCartControl) {
+		mpMemMan->DeleteLayer(mpMemLayerCartControl);
+		mpMemLayerCartControl = NULL;
 	}
 
-	if (mpMemLayerSDX) {
-		mpMemMan->DeleteLayer(mpMemLayerSDX);
-		mpMemLayerSDX = NULL;
+	if (mpMemLayerCart) {
+		mpMemMan->DeleteLayer(mpMemLayerCart);
+		mpMemLayerCart = NULL;
 	}
 
 	if (mpMemLayerIDE) {
@@ -132,16 +143,33 @@ void ATSIDEEmulator::Shutdown() {
 	mpSim = NULL;
 }
 
+void ATSIDEEmulator::SetExternalEnable(bool enable) {
+	if (mbExternalEnable == enable)
+		return;
+	
+	mbExternalEnable = enable;
+
+	UpdateMemoryLayersCart();
+}
+
+void ATSIDEEmulator::SetSDXEnabled(bool enable) {
+	if (mbSDXEnable == enable)
+		return;
+
+	mbSDXEnable = enable;
+	UpdateMemoryLayersCart();
+}
+
+void ATSIDEEmulator::ResetCartBank() {
+	SetSDXBank(0, false);
+	SetTopBank(0x20);
+}
+
 void ATSIDEEmulator::ColdReset() {
-	mSDXCtrl.ColdReset();
+	mFlashCtrl.ColdReset();
 	mRTC.ColdReset();
 
-	mpMemMan->SetLayerMemory(mpMemLayerSDX, mSDX + (63 << 13));
-
-	mSDXBankOffset = (63 << 13) - 0xA000;
-	mbSDXEnabled = true;
-
-	UpdateMemoryLayersSDX();
+	ResetCartBank();
 }
 
 void ATSIDEEmulator::LoadNVRAM() {
@@ -169,6 +197,27 @@ void ATSIDEEmulator::DumpRTCStatus() {
 	mRTC.DumpStatus();
 }
 
+void ATSIDEEmulator::SetSDXBank(sint32 bank, bool topEnable) {
+	if (mSDXBank == bank && mbTopEnable == topEnable)
+		return;
+
+	mSDXBank = bank;
+	mbTopEnable = topEnable;
+
+	UpdateMemoryLayersCart();
+	mpSim->UpdateXLCartridgeLine();
+}
+
+void ATSIDEEmulator::SetTopBank(sint32 bank) {
+	if (mTopBank == bank)
+		return;
+
+	mTopBank = bank;
+
+	UpdateMemoryLayersCart();
+	mpSim->UpdateXLCartridgeLine();
+}
+
 sint32 ATSIDEEmulator::OnDebugReadByte(void *thisptr0, uint32 addr) {
 	ATSIDEEmulator *thisptr = (ATSIDEEmulator *)thisptr0;
 
@@ -192,7 +241,7 @@ sint32 ATSIDEEmulator::OnDebugReadByte(void *thisptr0, uint32 addr) {
 		case 0xD5F7:
 			return (uint8)thisptr->mpIDE->DebugReadByte((uint8)addr & 7);
 
-		case 0xD5FC:	return 'S';
+		case 0xD5FC:	return thisptr->mbSDXEnable ? 'S' : ' ';
 		case 0xD5FD:	return 'I';
 		case 0xD5FE:	return 'D';
 		case 0xD5FF:	return 'E';
@@ -225,7 +274,7 @@ sint32 ATSIDEEmulator::OnReadByte(void *thisptr0, uint32 addr) {
 		case 0xD5F7:
 			return (uint8)thisptr->mpIDE->ReadByte((uint8)addr & 7);
 
-		case 0xD5FC:	return 'S';
+		case 0xD5FC:	return thisptr->mbSDXEnable ? 'S' : ' ';
 		case 0xD5FD:	return 'I';
 		case 0xD5FE:	return 'D';
 		case 0xD5FF:	return 'E';
@@ -243,21 +292,7 @@ bool ATSIDEEmulator::OnWriteByte(void *thisptr0, uint32 addr, uint8 value) {
 
 	switch(addr) {
 		case 0xD5E0:
-			{
-				uint32 offset = ((uint32)(~value & 0x3f) << 13);
-
-				thisptr->mSDXBankOffset = offset - 0xA000;
-
-				thisptr->mpMemMan->SetLayerMemory(thisptr->mpMemLayerSDX, thisptr->mSDX + offset);
-
-				bool en = !(value & 0x80);
-				
-				if (thisptr->mbSDXEnabled != en) {
-					thisptr->mbSDXEnabled = en;
-					thisptr->UpdateMemoryLayersSDX();
-					thisptr->mpSim->UpdateXLCartridgeLine();
-				}
-			}
+			thisptr->SetSDXBank(value & 0x80 ? -1 : (value & 0x3f), !(value & 0x40));
 			break;
 
 		case 0xD5E2:	// DS1305 RTC
@@ -265,6 +300,7 @@ bool ATSIDEEmulator::OnWriteByte(void *thisptr0, uint32 addr, uint8 value) {
 			break;
 
 		case 0xD5E4:	// top cartridge bank switching
+			thisptr->SetTopBank(value & 0x80 ? -1 : (value & 0x3f) ^ 0x20);
 			break;
 
 		case 0xD5F0:
@@ -289,42 +325,50 @@ bool ATSIDEEmulator::OnWriteByte(void *thisptr0, uint32 addr, uint8 value) {
 	return true;
 }
 
-sint32 ATSIDEEmulator::OnSDXRead(void *thisptr0, uint32 addr) {
+sint32 ATSIDEEmulator::OnCartRead(void *thisptr0, uint32 addr) {
 	ATSIDEEmulator *thisptr = (ATSIDEEmulator *)thisptr0;
 
 	uint8 value;
-	if (thisptr->mSDXCtrl.ReadByte(thisptr->mSDXBankOffset + addr, value)) {
+	if (thisptr->mFlashCtrl.ReadByte(thisptr->mBankOffset + (addr - 0xA000), value)) {
 		if (thisptr->mpUIRenderer) {
-			if (thisptr->mSDXCtrl.CheckForWriteActivity())
+			if (thisptr->mFlashCtrl.CheckForWriteActivity())
 				thisptr->mpUIRenderer->SetFlashWriteActivity();
 		}
 
-		thisptr->UpdateMemoryLayersSDX();
+		thisptr->UpdateMemoryLayersCart();
 	}
 
 	return value;
 }
 
-bool ATSIDEEmulator::OnSDXWrite(void *thisptr0, uint32 addr, uint8 value) {
+bool ATSIDEEmulator::OnCartWrite(void *thisptr0, uint32 addr, uint8 value) {
 	ATSIDEEmulator *thisptr = (ATSIDEEmulator *)thisptr0;
 
-	if (thisptr->mSDXCtrl.WriteByte(thisptr->mSDXBankOffset + addr, value)) {
+	if (thisptr->mFlashCtrl.WriteByte(thisptr->mBankOffset + (addr - 0xA000), value)) {
 		if (thisptr->mpUIRenderer) {
-			if (thisptr->mSDXCtrl.CheckForWriteActivity())
+			if (thisptr->mFlashCtrl.CheckForWriteActivity())
 				thisptr->mpUIRenderer->SetFlashWriteActivity();
 		}
 
-		thisptr->UpdateMemoryLayersSDX();
+		thisptr->UpdateMemoryLayersCart();
 	}
 
 	return true;
 }
 
-void ATSIDEEmulator::UpdateMemoryLayersSDX() {
-	const bool controlRead = mbSDXEnabled && mSDXCtrl.IsControlReadEnabled();
+void ATSIDEEmulator::UpdateMemoryLayersCart() {
+	if (mSDXBank >= 0 && mbSDXEnable)
+		mBankOffset = mSDXBank << 13;
+	else if (mTopBank >= 0 && (mbTopEnable || !mbSDXEnable))
+		mBankOffset = mTopBank << 13;
 
-	mpMemMan->EnableLayer(mpMemLayerSDXControl, kATMemoryAccessMode_AnticRead, controlRead);
-	mpMemMan->EnableLayer(mpMemLayerSDXControl, kATMemoryAccessMode_CPURead, controlRead);
-	mpMemMan->EnableLayer(mpMemLayerSDXControl, kATMemoryAccessMode_CPUWrite, mbSDXEnabled);
-	mpMemMan->EnableLayer(mpMemLayerSDX, mbSDXEnabled);
+	mpMemMan->SetLayerMemory(mpMemLayerCart, mFlash + mBankOffset);
+
+	const bool flashRead = (mbSDXEnable && mSDXBank >= 0) || ((mbTopEnable || !mbSDXEnable) && mTopBank >= 0);
+	const bool controlRead = flashRead && mFlashCtrl.IsControlReadEnabled();
+
+	mpMemMan->EnableLayer(mpMemLayerCartControl, kATMemoryAccessMode_AnticRead, controlRead && mbExternalEnable);
+	mpMemMan->EnableLayer(mpMemLayerCartControl, kATMemoryAccessMode_CPURead, controlRead && mbExternalEnable);
+	mpMemMan->EnableLayer(mpMemLayerCartControl, kATMemoryAccessMode_CPUWrite, flashRead && mbExternalEnable);
+	mpMemMan->EnableLayer(mpMemLayerCart, flashRead && mbExternalEnable);
 }

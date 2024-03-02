@@ -1463,6 +1463,8 @@ HRESULT VDD3D9Manager::PresentFullScreen(bool wait) {
 #define REQUIRECAPS(capsflag, bits, reason) REQUIRE(!(~mDevCaps.capsflag & (bits)), reason)
 
 bool VDD3D9Manager::Is3DCardLame() {
+	// The dither check has been removed since WARP11 doesn't have it set. Note
+	// that the SW check is still in place -- WARP11 sets the HW rast and TnL flags!
 	REQUIRE(mDevCaps.DeviceType != D3DDEVTYPE_SW, "software device detected");
 	REQUIRECAPS(PrimitiveMiscCaps, D3DPMISCCAPS_CULLNONE, "primitive misc caps check failed");
 	REQUIRECAPS(TextureCaps, D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP, "texture caps failed");

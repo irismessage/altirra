@@ -21,7 +21,7 @@
 		icl		'includes.xasm'
 
 		org		$f800
-		ins		'../atarifont.bin',$0,$400
+		ins		'atarifont.bin',$0,$400
 
 ;=========================================================================
 .proc	irq

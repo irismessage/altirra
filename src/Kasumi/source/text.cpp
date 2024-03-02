@@ -191,9 +191,12 @@ namespace {
 	}
 }
 
-void VDPixmapDrawText(const VDPixmap& pxdst, const VDBitmapFontInfo *font, int x, int y, uint32 fore, uint32 back, const char *pText) {
-	if (pxdst.format != nsVDPixmap::kPixFormat_Pal8 && pxdst.format != nsVDPixmap::kPixFormat_XRGB8888)
+void VDPixmapDrawText(const VDPixmap& pxdst, const VDBitmapFontInfo *font, int x, int y, uint32 fore, uint32 *back, const char *pText, vdrect32 *extents) {
+	if (pxdst.format != nsVDPixmap::kPixFormat_Pal8 && pxdst.format != nsVDPixmap::kPixFormat_XRGB8888) {
+		if (extents)
+			extents->set(0, 0, 0, 0);
 		return;
+	}
 
 	int textWidth = 0;
 
@@ -202,13 +205,19 @@ void VDPixmapDrawText(const VDPixmap& pxdst, const VDBitmapFontInfo *font, int x
 
 		if (c < font->mStartChar || c > font->mEndChar)
 			textWidth += font->mCellWidth;
+		else if (font->mpPos32Array)
+			textWidth += font->mpPos32Array[c - font->mStartChar] & 255;
 		else
-			textWidth += font->mpPosArray[c - font->mStartChar] & 15;
+			textWidth += font->mpPos16Array[c - font->mStartChar] & 15;
 
 		textWidth += font->mCellAdvance;
 	}
 
-	Fill(pxdst, x, y, textWidth + font->mCellAdvance, font->mCellHeight + 1, back);
+	if (back)
+		Fill(pxdst, x, y, textWidth + font->mCellAdvance, font->mCellHeight + 1, *back);
+
+	if (extents)
+		extents->set(x, y, x + textWidth + font->mCellAdvance, y + font->mCellHeight + 1);
 
 	x += font->mCellAdvance;
 	++y;
@@ -230,9 +239,9 @@ void VDPixmapDrawText(const VDPixmap& pxdst, const VDBitmapFontInfo *font, int x
 			continue;
 		}
 
-		uint32 posInfo = font->mpPosArray[c - font->mStartChar];
+		uint32 posInfo = font->mpPos32Array ? font->mpPos32Array[c - font->mStartChar] : font->mpPos16Array[c - font->mStartChar];
 		int cx = x;
-		int cw = posInfo & 15;
+		int cw = font->mpPos32Array ? posInfo & 255 : posInfo & 15;
 		int cy = y;
 		int ch = font->mCellHeight;
 
@@ -242,7 +251,7 @@ void VDPixmapDrawText(const VDPixmap& pxdst, const VDBitmapFontInfo *font, int x
 		if (posInfo < 16)
 			continue;
 
-		uint32 bitOffset = ((posInfo >> 4) - 1) * font->mCellHeight;
+		uint32 bitOffset = ((font->mpPos32Array ? posInfo >> 8 : posInfo >> 4) - 1) * font->mCellHeight;
 
 		if (cy < 0) {
 			if (cy < -ch)

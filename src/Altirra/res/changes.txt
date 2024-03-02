@@ -1,5 +1,71 @@
 Altirra Change Log
 
+Version 2.20 [January 6, 2013]:
+   [features added]
+   * UI: Overlays are now rendered through composition at native resolution instead of simulated resolution.
+   * UI: Text can now be copied out when the simulation is stopped.
+   * UI: Keyboard shortcuts are now configurable.
+   * UI: Drag-and-drop from compressed folders in Explorer is now supported.
+   * UI: Shift-hover over a BASIC or DOS error message now displays error help.
+   * UI: Mouse cursor changes when light pen/gun is moved on and off the virtual screen.
+   * Debugger: Holding SHIFT with the mouse over the display pane now shows the beam coordinates for that point.
+   * Debugger: Added .pbi and .ultimate1mb commands.
+   * Debugger: Extended many commands to accept expressions for address and length arguments.
+   * Debugger: The default numeric base for addresses can now be changed (.base).
+   * Debugger: Added extended memory bank variable to expression parser.
+   * Debugger: Symbols using reserved expression operator names can now be escaped with #.
+   * Debugger: e (enter) command now accepts extended addresses.
+   * Debugger: .map command now displays layer names.
+   * Debugger: bs (break on sector) command now accepts expressions.
+   * Debugger: Added .ide_rdsec and .ide_wrsec commands.
+   * Debugger: Added .diskdumpsec command.
+   * Debugger: Added deref signed word (dsw) operator.
+   * Debugger: .tracecio gives more detailed output.
+   * Disk: Added option to format new disks with a DOS 2 filesystem.
+   * Disk: Folders can now be mounted as virtual DOS 2 disk images.
+   * MyIDE II emulation support.
+   * Ultimate1MB emulation support.
+   * Save states: Initial support for external save state files.
+   * SIDE: Implemented top cartridge register and un-reversed image order.
+   * Input: Input map editor now shows more specific button and axis labels.
+   * IDE: Selecting a physical disk now updates the CHS mapping.
+   * IDE: Fixed-size and dynamic .VHD images can now be mounted.
+   * HLE/LLE: Added boot screen.
+   
+   [bugs fixed]
+   * ANTIC: Fixed regression with the first byte in a wide scanline occasionally being decoded before being fetched.
+   * ANTIC: Fixed display list pointer corruption when a jump instruction executes across vertical blank (fixes Spindizzy load).
+   * Serial: Fixed R: not going into concurrent mode on open with AUX1 bit 0 set.
+   * Cartridge: Re-added missing 512K detection size for SIC! cartridges.
+   * Cartridge: 5200 4K/8K/16K cartridges now mirror to the full 32K region.
+   * Display: Fixed offset on display in sharp bilinear mode on downlevel graphics cards.
+   * Debugger: Fixed debug reads not seeing some partially overlaid memory layers.
+   * Debugger: Fixed memory leak when an error occurs during expression parsing.
+   * Debugger: Fixed 'value' operator returning incorrect value when used in a range write breakpoint conditional expression.
+   * Debugger: Debug display now displays IR modes 8-10 correctly.
+   * Debugger: Fixed history pane bugs with stack wrapping and with the scroll bar being flaky after a clear.
+   * Disk: Fixed writes being gated by rotational timing even if accurate sector timing was turned off.
+   * Disk Explorer: Fixed file deletion on DOS 2 volumes to not leave orphaned directory entries.
+   * Disk Explorer: DOS 2 validator now allows both DOS 2 719 sector and MyDOS 720 sector VTOCs.
+   * Disk Explorer: Fixed crash with large MyDOS file systems.
+   * Display: Fixed text highlighting in "OS Display" overscan mode.
+   * HDevice: Get Bytes command now returns $03 status code on impending EOF (fixes BLOAD from Turbo Basic XL).
+   * HLE: Fixed off-by-one handling of RMARGN in screen editor.
+   * HLE: Fixed some errors in updating LOGCOL on vertical cursor movement.
+   * HLE: Fixed crash when disk boot sector signals a boot error (C=1).
+   * HLE: Added missing international font.
+   * HLE: Fixed many compatibility issues.
+   * Input: Extended paddle and tablet range to 0-228.
+   * Input: Tablet stylus is now always touching the tablet when the raise stylus input (button 4) is unbound.
+   * Input: The "warm reset" input of the console controller was issuing a cold reset.
+   * LLE: Improved display editor.
+   * LLE: Fixed many compatibility issues.
+   * Flash: Multiple sector erase commands are now supported.
+   * Flash: Fixed Am29F040B flash to only validate A0-A10 for commands (the Am29F040 is the one that does A0-A14).
+   * POKEY: Attempting to use synchronous clocking mode during serial input now produces framing errors.
+   * UI: Tabs now paste properly.
+   * UI: Non-ASCII characters are now saved correctly into the Altirra.ini file in portable mode.
+
 Version 2.10 [August 13, 2012]:
    [features added]
    * SlightSID emulation support.

@@ -19,16 +19,63 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <shlwapi.h>
+#include <shlobj.h>
 #include <vd2/system/atomic.h>
 #include <vd2/system/error.h>
+#include <vd2/system/file.h>
 #include <vd2/system/vdstl.h>
 #include "simulator.h"
 
 extern HWND g_hwnd;
 extern ATSimulator g_sim;
 
-extern void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmapper, ATLoadType loadType = kATLoadType_Other);
+extern void DoLoad(VDGUIHandle h, const wchar_t *path, bool vrw, bool rw, int cartmapper, ATLoadType loadType = kATLoadType_Other, bool *suppressColdReset = NULL);
+extern void DoLoadStream(VDGUIHandle h, const wchar_t *fileName, IVDRandomAccessStream& stream, bool vrw, int cartmapper, ATLoadType loadType = kATLoadType_Other, bool *suppressColdReset = NULL);
 extern void DoBootWithConfirm(const wchar_t *path, bool vrw, bool rw, int cartmapper);
+extern void DoBootStreamWithConfirm(const wchar_t *fileName, IVDRandomAccessStream& stream, bool vrw, int cartmapper);
+
+///////////////////////////////////////////////////////////////////////////////
+
+void ATReadCOMStreamIntoMemory(vdfastvector<char>& data, IStream *stream) {
+	char buf[65536];
+
+	for(;;) {
+		ULONG actual;
+		HRESULT hr = stream->Read(buf, sizeof buf, &actual);
+
+		if (FAILED(hr))
+			throw MyError("An error was encountered while reading from the input stream.");
+
+		if (hr != S_OK && hr != S_FALSE)
+			break;
+		
+		if (64*1024*1024 - data.size() < actual)
+			throw MyError("The dragged file is too large to load (>64MB).");
+
+		data.insert(data.end(), buf, buf + actual);
+
+		if (actual < sizeof buf || hr == S_FALSE)
+			break;
+	}
+}
+
+void ATReadCOMBufferIntoMemory(vdfastvector<char>& data, HGLOBAL hglobal, uint32 knownSize) {
+	uint32 size = GlobalSize(hglobal);
+
+	// the global buffer may be a bit big, so truncate it if we know the real
+	// size
+	if (knownSize && knownSize > size)
+		size = knownSize;
+
+	data.resize(size);
+
+	// lock the memory block
+	void *src = GlobalLock(hglobal);
+	if (src) {
+		memcpy(data.data(), src, size);
+		GlobalUnlock(hglobal);
+	}
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -48,6 +95,9 @@ protected:
 	VDAtomicInt mRefCount;
 	DWORD mDropEffect;
 	HWND mhwnd;
+	UINT mClipFormatFileDescriptorA;
+	UINT mClipFormatFileDescriptorW;
+	UINT mClipFormatFileContents;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -57,6 +107,9 @@ ATUIDragDropHandler::ATUIDragDropHandler(HWND hwnd)
 	, mDropEffect(DROPEFFECT_NONE)
 	, mhwnd(hwnd)
 {
+	mClipFormatFileDescriptorA = RegisterClipboardFormat(CFSTR_FILEDESCRIPTORA);
+	mClipFormatFileDescriptorW = RegisterClipboardFormat(CFSTR_FILEDESCRIPTORW);
+	mClipFormatFileContents = RegisterClipboardFormat(CFSTR_FILECONTENTS);
 }
 
 ULONG STDMETHODCALLTYPE ATUIDragDropHandler::AddRef() {
@@ -100,11 +153,38 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::DragEnter(IDataObject *pDataObj, 
 
 		HRESULT hr = pDataObj->QueryGetData(&etc);
 
-		if (SUCCEEDED(hr)) {
+		// Note that we get S_FALSE if the format is not supported.
+		if (hr == S_OK) {
 			if (grfKeyState & MK_SHIFT)
 				mDropEffect = DROPEFFECT_COPY;
 			else
 				mDropEffect = DROPEFFECT_MOVE;
+		} else {
+			etc.cfFormat = mClipFormatFileDescriptorA;
+			etc.lindex = -1;
+			etc.tymed = TYMED_HGLOBAL;
+
+			hr = pDataObj->QueryGetData(&etc);
+
+			if (hr != S_OK) {
+				etc.cfFormat = mClipFormatFileDescriptorW;
+
+				hr = pDataObj->QueryGetData(&etc);
+			}
+
+			if (hr == S_OK) {
+				etc.lindex = 0;
+				etc.cfFormat = mClipFormatFileContents;
+
+				hr = pDataObj->QueryGetData(&etc);
+
+				if (hr == S_OK) {
+					if (grfKeyState & MK_SHIFT)
+						mDropEffect = DROPEFFECT_COPY;
+					else
+						mDropEffect = DROPEFFECT_MOVE;
+				}
+			}
 		}
 	}
 
@@ -145,7 +225,7 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 	medium.pUnkForRelease = NULL;
 	HRESULT hr = pDataObj->GetData(&etc, &medium);
 
-	if (SUCCEEDED(hr)) {
+	if (hr == S_OK) {
 		HDROP hdrop = (HDROP)medium.hGlobal;
 
 		UINT count = DragQueryFileW(hdrop, 0xFFFFFFFF, NULL, 0);
@@ -157,20 +237,135 @@ HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::Drop(IDataObject *pDataObj, DWORD
 			if (DragQueryFileW(hdrop, 0, buf.data(), len+1)) {
 				const bool coldBoot = !(grfKeyState & MK_SHIFT);
 
-				if (coldBoot) {
-					DoBootWithConfirm(buf.data(), false, false, 0);
-				} else {
-					try {
+				try {
+					if (coldBoot)
+						DoBootWithConfirm(buf.data(), false, false, 0);
+					else
 						DoLoad((VDGUIHandle)g_hwnd, buf.data(), false, false, 0);
-					} catch(const MyError& e) {
-						e.post(g_hwnd, "Altirra Error");
-					}
+				} catch(const MyError& e) {
+					e.post(g_hwnd, "Altirra Error");
 				}
+			}
+		}
+	} else {
+		// Okay, that can't get an HDROP. Let's see if we can get a file contents stream.
+		etc.cfFormat = mClipFormatFileDescriptorW;
+		etc.dwAspect = DVASPECT_CONTENT;
+		etc.lindex = -1;
+		etc.ptd = NULL;
+		etc.tymed = TYMED_HGLOBAL;
+
+		medium.tymed = TYMED_HGLOBAL;
+		medium.hGlobal = NULL;
+		medium.pUnkForRelease = NULL;
+
+		hr = pDataObj->GetData(&etc, &medium);
+
+		bool foundFile = false;
+		FILEDESCRIPTORW fd;
+
+		if (hr == S_OK) {
+			HGLOBAL hgDesc = (HGLOBAL)medium.hGlobal;
+
+			FILEGROUPDESCRIPTORW *groupDesc = (FILEGROUPDESCRIPTORW *)GlobalLock(hgDesc);
+			if (groupDesc) {
+				if (groupDesc->cItems) {
+					fd = groupDesc->fgd[0];
+					foundFile = true;
+				}
+
+				GlobalUnlock(hgDesc);
+			}
+
+			ReleaseStgMedium(&medium);
+		} else {
+			etc.cfFormat = mClipFormatFileDescriptorA;
+
+			hr = pDataObj->GetData(&etc, &medium);
+
+			if (hr == S_OK) {
+				HGLOBAL hgDesc = (HGLOBAL)medium.hGlobal;
+
+				FILEGROUPDESCRIPTORA *groupDesc = (FILEGROUPDESCRIPTORA *)GlobalLock(hgDesc);
+				if (groupDesc) {
+					if (groupDesc->cItems) {
+						const FILEDESCRIPTORA& fda = groupDesc->fgd[0];
+
+						fd.dwFlags = fda.dwFlags;
+						fd.clsid = fda.clsid;
+						fd.sizel = fda.sizel;
+						fd.pointl = fda.pointl;
+						fd.dwFileAttributes = fda.dwFileAttributes;
+						fd.ftCreationTime = fda.ftCreationTime;
+						fd.ftLastAccessTime = fda.ftLastAccessTime;
+						fd.ftLastWriteTime = fda.ftLastWriteTime;
+						fd.nFileSizeHigh = fda.nFileSizeHigh;
+						fd.nFileSizeLow = fda.nFileSizeLow;
+
+						fd.cFileName[0] = 0;
+						VDTextAToW(fd.cFileName, vdcountof(fd.cFileName), fda.cFileName);
+						fd.cFileName[vdcountof(fd.cFileName) - 1] = 0;
+
+						foundFile = true;
+					}
+
+					GlobalUnlock(hgDesc);
+				}
+
+				ReleaseStgMedium(&medium);
+			}
+		}
+
+		medium.hGlobal = NULL;
+		medium.pUnkForRelease = NULL;
+
+		if (foundFile) {
+			try {
+				uint32 knownSize = 0;
+
+				if (fd.dwFlags & FD_FILESIZE) {
+					if (fd.nFileSizeHigh || fd.nFileSizeLow > 64*1024*1024)
+						throw MyError("The dragged file is too large to load (>64MB).");
+
+					knownSize = fd.nFileSizeLow;
+				}
+
+				etc.cfFormat = mClipFormatFileContents;
+				etc.dwAspect = DVASPECT_CONTENT;
+				etc.lindex = 0;
+				etc.ptd = NULL;
+				etc.tymed = TYMED_ISTREAM | TYMED_HGLOBAL;
+
+				medium.tymed = TYMED_ISTREAM;
+
+				hr = pDataObj->GetData(&etc, &medium);
+
+				if (hr == S_OK) {
+					vdfastvector<char> data;
+
+					data.reserve(knownSize);
+
+					if (medium.tymed == TYMED_ISTREAM)
+						ATReadCOMStreamIntoMemory(data, medium.pstm);
+					else if (medium.tymed == TYMED_HGLOBAL)
+						ATReadCOMBufferIntoMemory(data, medium.hGlobal, knownSize);
+
+					const bool coldBoot = !(grfKeyState & MK_SHIFT);
+
+					if (coldBoot)
+						DoBootStreamWithConfirm(fd.cFileName, VDMemoryStream(data.data(), data.size()), false, 0);
+					else
+						DoLoadStream((VDGUIHandle)g_hwnd, fd.cFileName, VDMemoryStream(data.data(), data.size()), false, 0);
+				}
+
+			} catch(const MyError& e) {
+				e.post(g_hwnd, "Altirra Error");
 			}
 		}
 	}
 
 	ReleaseStgMedium(&medium);
+
 	return S_OK;
 }
 

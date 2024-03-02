@@ -82,19 +82,19 @@ NotDLI:
 
 	;decrement timer 1 and check for underflow
 	lda		cdtmv1				;check low byte
-	bne		Timer1DecCheck		;if non-zero, decrement and check for fire
+	bne		timer1_lobytezero	;if non-zero, decrement and check for fire
 	lda		cdtmv1+1			;check high byte
-	beq		Timer1Done			;if clear, timer's not running
+	beq		timer1_done			;if clear, timer's not running
 	dec		cdtmv1+1			;decrement high byte
 	dec		cdtmv1				;decrement low byte
-	bne		Timer1Done			;we're done
-Timer1DecCheck:
+	bne		timer1_done			;we're done
+timer1_lobytezero:
 	dec		cdtmv1				;decrement low byte
-	bne		Timer1Done
-	lda		cdtmv1+1
-	bne		Timer1Done
-	jsr		Timer1Dispatch
-Timer1Done:
+	bne		timer1_done
+	lda		cdtmv1+1			;check if high byte is zero
+	bne		timer1_done			;if it's not, we're not done yet ($xx00 > 0)
+	jsr		timer1_dispatch		;jump through timer vector
+timer1_done:
 
 	;check for critical operation
 	lda		critic			;is the critical flag set?
@@ -111,7 +111,7 @@ xit:
 	pla
 	rti
 
-Timer1Dispatch:
+timer1_dispatch:
 	jmp		(cdtma1)
 .endp
 
@@ -145,39 +145,29 @@ VBlankExit = VBlankImmediate.xit
 	#}
 	
 	;decrement timer 2 and check for underflow
-	lda		cdtmv2				;check low byte
-	bne		Timer2DecCheck		;if non-zero, decrement and check for fire
-	lda		cdtmv2+1			;check high byte
-	beq		Timer2Done			;if clear, timer's not running
-	dec		cdtmv2+1			;decrement high byte
-	dec		cdtmv2				;decrement low byte
-	bne		Timer2Done			;we're done
-Timer2DecCheck
-	dec		cdtmv2				;decrement low byte
-	bne		Timer2Done
-	jsr		Timer2Dispatch
-Timer2Done
+	ldx		#2
+	jsr		VBIDecrementTimer
+	sne:jsr	Timer2Dispatch
 
 	;decrement timers 3-5 and set flags
-	ldx		#4
-TimerNLoop:
-	lda		cdtmv3,x			;check low byte
-	bne		TimerNDecCheck		;if non-zero, decrement and check for fire
-	lda		cdtmv3+1,x			;check high byte
-	beq		TimerNDone			;if clear, timer's not running
-	dec		cdtmv3+1,x			;decrement high byte
-	dec		cdtmv3,x			;decrement low byte
-	bne		TimerNDone			;we're done
-TimerNDecCheck:
-	dec		cdtmv3,x			;decrement low byte
-	bne		TimerNDone
-	mva		#0 cdtmf3,x
-TimerNDone:
+	ldx		#8
+timer_n_loop:
+	jsr		VBIDecrementTimer
+	sne:mva	#0 cdtmf3-4,x
 	dex
 	dex
-	bpl		TimerNLoop
+	cpx		#4
+	bcs		timer_n_loop
 	
-	;TODO: read POKEY keyboard register and handle auto-repeat
+	;Read POKEY keyboard register and handle auto-repeat
+	lda		skstat				;get key status
+	and		#$04				;check if key is down
+	bne		no_repeat			;skip if not
+	dec		srtimr				;decrement repeat timer
+	bne		no_repeat			;skip if not time to repeat yet
+	mva		#$06 srtimr			;reset repeat timer
+	mva		kbcode ch			;repeat last key
+no_repeat:
 	
 	;decrement keyboard debounce counter
 	lda		keydel
@@ -246,6 +236,35 @@ Timer2Dispatch
 
 .proc VBlankDeferred	
 	jmp		VBlankExit
+.endp
+
+;==========================================================================
+; VBIDecrementTimer
+;
+; Entry:
+;	X = timer index (0-4)
+;
+; Exit:
+;	Z = 0 if timer not fired, 1 if fired
+;
+.proc VBIDecrementTimer
+	lda		cdtmv1,x			;check low byte
+	bne		lobyte_nonzero		;if non-zero, decrement and check for fire
+	lda		cdtmv1+1,x			;check high byte
+	bne		running_lobytezero	;if non-zero, decrement both bytes
+	lda		#1					;counter=0, so timer isn't running
+	rts							;ret Z=0
+running_lobytezero:
+	dec		cdtmv1+1,x			;decrement high byte
+	dec		cdtmv1,x			;decrement low byte ($FF)
+	rts							;we're done (return Z=0)
+	
+lobyte_nonzero:
+	dec		cdtmv1,x			;decrement low byte
+	bne		done
+	lda		cdtmv1+1,x			;return as fired if high byte zero
+done:
+	rts
 .endp
 
 .proc SetVBlankVector

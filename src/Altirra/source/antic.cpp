@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <vd2/system/binary.h>
 #include "antic.h"
 #include "gtia.h"
 #include "console.h"
@@ -582,6 +583,10 @@ void ATAnticEmulator::AdvanceScanline() {
 		++mFrame;
 	} else if (mY >= 248) {
 		mbDLActive = false;		// needed because The Empire Strikes Back has a 259-line display list (!)
+
+		// Don't allow jumps to continue into vertical blank; needed because Spindizzy
+		// wraps a dlist with jump instructions.
+		mbDLExtraLoadsPending = false;
 	}
 
 	mpConn->AnticEndScanline();
@@ -1195,9 +1200,10 @@ void ATAnticEmulator::DumpDMAActivityMap() {
 
 template<class T>
 void ATAnticEmulator::ExchangeState(T& io) {
+	// We don't save the frame here as it must monotonically increase.
+
 	io != mX;
 	io != mY;
-	io != mFrame;
 	io != mScanlineLimit;
 	io != mScanlineMax;
 
@@ -1249,13 +1255,12 @@ void ATAnticEmulator::ExchangeState(T& io) {
 	io != mPFDMALatchedStart;
 	io != mPFDMALatchedVEnd;
 	io != mPFDMALatchedEnd;
-	io != mPFDMAPatternCacheKey;
 
 	io != mDLControlPrev;
 	io != mDLControl;
 	io != mDLNext;
 
-	io != mDMAPattern;
+	// DMA pattern is recomputed.
 
 	io != mPFDataBuffer;
 	io != mPFCharBuffer;
@@ -1267,7 +1272,13 @@ void ATAnticEmulator::ExchangeState(T& io) {
 	io != mWSYNCPending;
 }
 
-void ATAnticEmulator::LoadState(ATSaveStateReader& reader) {
+void ATAnticEmulator::BeginLoadState(ATSaveStateReader& reader) {
+	reader.RegisterHandlerMethod(kATSaveStateSection_Arch, VDMAKEFOURCC('A', 'N', 'T', 'C'), this, &ATAnticEmulator::LoadStateArch);
+	reader.RegisterHandlerMethod(kATSaveStateSection_Private, VDMAKEFOURCC('A', 'N', 'T', 'C'), this, &ATAnticEmulator::LoadStatePrivate);
+	reader.RegisterHandlerMethod(kATSaveStateSection_End, 0, this, &ATAnticEmulator::EndLoadState);
+}
+
+void ATAnticEmulator::LoadStateArch(ATSaveStateReader& reader) {
 	mDMACTL	= reader.ReadUint8();
 	mCHACTL	= reader.ReadUint8();
 	mDLIST	= reader.ReadUint16();
@@ -1277,7 +1288,9 @@ void ATAnticEmulator::LoadState(ATSaveStateReader& reader) {
 	mCHBASE	= reader.ReadUint8();
 	mNMIEN	= reader.ReadUint8();
 	mNMIST	= reader.ReadUint8();
+}
 
+void ATAnticEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
 	ExchangeState(reader);
 
 	mpPFCharFetchPtr = mPFCharBuffer;
@@ -1310,7 +1323,13 @@ void ATAnticEmulator::LoadState(ATSaveStateReader& reader) {
 		ru.mReg = reader.ReadUint8();
 		ru.mValue = reader.ReadUint8();
 	}
+}
 
+void ATAnticEmulator::EndLoadState(ATSaveStateReader& reader) {
+	// Bump the frame counter in case we went backwards in beam direction.
+	++mFrame;
+
+	// Synchronize other state.
 	switch(mDMACTL & 3) {
 	case 0:
 		mPFWidth = kPFDisabled;
@@ -1330,13 +1349,23 @@ void ATAnticEmulator::LoadState(ATSaveStateReader& reader) {
 	mCharBlink = (mCHACTL & 0x01) ? 0x00 : 0xFF;
 	mCharBaseAddr128 = (uint32)(mCHBASE & 0xfc) << 8;
 	mCharBaseAddr64 = (uint32)(mCHBASE & 0xfe) << 8;
+
+	mPFDMAPatternCacheKey = 0xFFFFFFFF;
+
 	UpdateCurrentCharRow();
 	UpdatePlayfieldDataPointers();
+	UpdateDMAPattern();
 
 	ExecuteQueuedUpdates();
 }
 
-void ATAnticEmulator::SaveState(ATSaveStateWriter& writer) {
+void ATAnticEmulator::BeginSaveState(ATSaveStateWriter& writer) {
+	writer.RegisterHandlerMethod(kATSaveStateSection_Arch, this, &ATAnticEmulator::SaveStateArch);
+	writer.RegisterHandlerMethod(kATSaveStateSection_Private, this, &ATAnticEmulator::SaveStatePrivate);
+}
+
+void ATAnticEmulator::SaveStateArch(ATSaveStateWriter& writer) {
+	writer.BeginChunk(VDMAKEFOURCC('A', 'N', 'T', 'C'));
 	writer.WriteUint8(mDMACTL);
 	writer.WriteUint8(mCHACTL);
 	writer.WriteUint16(mDLIST);
@@ -1346,7 +1375,11 @@ void ATAnticEmulator::SaveState(ATSaveStateWriter& writer) {
 	writer.WriteUint8(mCHBASE);
 	writer.WriteUint8(mNMIEN);
 	writer.WriteUint8(mNMIST);
+	writer.EndChunk();
+}
 
+void ATAnticEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
+	writer.BeginChunk(VDMAKEFOURCC('A', 'N', 'T', 'C'));
 	ExchangeState(writer);
 
 	uint32 i = mRegisterUpdateHeadIdx;
@@ -1360,6 +1393,7 @@ void ATAnticEmulator::SaveState(ATSaveStateWriter& writer) {
 		writer.WriteUint8(ru.mReg);
 		writer.WriteUint8(ru.mValue);
 	}
+	writer.EndChunk();
 }
 
 void ATAnticEmulator::GetRegisterState(ATAnticRegisterState& state) const {
@@ -1374,7 +1408,11 @@ void ATAnticEmulator::GetRegisterState(ATAnticRegisterState& state) const {
 	state.mNMIEN	= mNMIEN;
 }
 
-void ATAnticEmulator::UpdateDMAPattern(int dmaStart, int dmaEnd, int dmaVEnd, uint8 mode) {
+void ATAnticEmulator::UpdateDMAPattern() {
+	int dmaStart = mPFDMAStart;
+	int dmaEnd = mPFDMAEnd;
+	int dmaVEnd = mPFDMAVEnd;
+	uint8 mode = mDLControl & 15;
 	uint32 key = (dmaStart << 16) + (dmaVEnd << 8) + mode + (mbPFDMAActive ? 0x8000 : 0x0000) + (mbPFDMAEnabled ? 0x4000 : 0x0000);
 
 	if (key != mPFDMAPatternCacheKey) {
@@ -1656,7 +1694,7 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 	// Note that this check must be <= because we can be hit on cycle 10.
 	mbPFDMAActive = mPFDMALatchedStart || mX <= std::max<uint32>(10, mPFDMAStart - (mode < 8 ? 2 : 4));
 
-	UpdateDMAPattern(mPFDMAStart, mPFDMAEnd, mPFDMAVEnd, mDLControl & 15);
+	UpdateDMAPattern();
 }
 
 void ATAnticEmulator::UpdatePlayfieldDataPointers() {

@@ -17,6 +17,34 @@
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 .proc Blackboard
+	#{
+		// check if we have at least 32K of memory
+		if (kdb.RAMTOP >= 0x80) {
+			// load the self-test module out of the LLE-XL kernel
+			uint8 buf[2048];
+			ATLoadKernelResource(IDR_KERNELXL, buf, 0x1000, 0x800);
+			
+			// patch the name to say HLE instead of LLE
+			for(int i=0; i<2048-3; ++i) {
+				if (buf[i] == 'L'-0x20 && buf[i+1] == 'L'-0x20 && buf[i+2] == 'E'-0x20) {
+					buf[i] = 'H'-0x20;
+					break;
+				}
+			}
+			
+			// force off self-test ROM, if it exists
+			kdb.PORTB |= 0x80;
+			
+			// write into memory at 0x5000
+			for(int i=0; i<2048; ++i)
+				mpMemory->WriteByte(0x5000 + i, buf[i]);
+				
+			// jump to 0x5000
+			mpCPU->Jump(0x5000);
+			return;
+		}
+	#}
+	
 	;print banner
 	ldx		#0
 	mva		#$0b	iccmd		;put characters
@@ -86,9 +114,10 @@ atloop:
 
 banner:
 	dta 'Altirra internal HLE BIOS - memo mode',$9B
+	dta	$9B
 
 ;	     0123456789012345678901234567890123456
-	dta 'No bootable disk images or cartridges'
+	dta 'No bootable disk images or cartridges',$9B
 	dta 'were found.',$9B
 	dta $9B
 	dta 'This is a internal substitute for',$9B

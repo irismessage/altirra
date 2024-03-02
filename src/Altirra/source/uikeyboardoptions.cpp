@@ -18,9 +18,9 @@
 #include "stdafx.h"
 #include <vd2/system/error.h>
 #include <vd2/Dita/services.h>
-#include "Dialog.h"
+#include <at/atui/dialog.h>
 #include "resource.h"
-#include "uiproxies.h"
+#include <at/atui/uiproxies.h>
 #include "uikeyboard.h"
 
 class ATUIDialogKeyboardOptions : public VDDialogFrameW32 {

@@ -17,14 +17,8 @@
 
 #include "stdafx.h"
 #include "uicaptionupdater.h"
-#include "version.h"
+#include "versioninfo.h"
 #include "console.h"
-
-#ifdef _DEBUG
-	#define AT_VERSION_DEBUG "-debug"
-#else
-	#define AT_VERSION_DEBUG ""
-#endif
 
 ATUIWindowCaptionUpdater::ATUIWindowCaptionUpdater()
 	: mbLastRunning(false)
@@ -38,20 +32,11 @@ ATUIWindowCaptionUpdater::ATUIWindowCaptionUpdater()
 	, mbLastBASICState(false)
 	, mbLastVBXEState(false)
 	, mbLastSoundBoardState(false)
+	, mbLastU1MBState(false)
 	, mbLastDebugging(false)
 	, mbForceUpdate(false)
 {
-	mBasePrefix =
-#if defined(VD_CPU_AMD64)
-		L"Altirra/x64 "
-#else
-		L"Altirra "
-#endif
-		_T(AT_VERSION) _T(AT_VERSION_DEBUG)
-#if AT_VERSION_PRERELEASE
-		L" [prerelease]"
-#endif
-		;
+	mBasePrefix = AT_FULL_VERSION_STR;
 }
 
 ATUIWindowCaptionUpdater::~ATUIWindowCaptionUpdater() {
@@ -141,6 +126,12 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 		change = true;
 	}
 
+	bool u1mb = mpSim->IsUltimate1MBEnabled();
+	if (mbLastU1MBState != u1mb) {
+		mbLastU1MBState = u1mb;
+		change = true;
+	}
+
 	bool debugging = ATIsDebugConsoleActive();
 	if (mbLastDebugging != debugging) {
 		mbLastDebugging = debugging;
@@ -225,7 +216,27 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 			mPrefix += L" HLE";
 			break;
 
-		case kATKernelMode_LLE:
+		case kATKernelMode_LLE_OSB:
+			if (hwmode == kATHardwareMode_800)
+				mPrefix += L" LLE";
+			else
+				mPrefix += L" LLE[OSB]";
+			break;
+
+		case kATKernelMode_LLE_XL:
+			switch(hwmode) {
+				case kATHardwareMode_800XL:
+				case kATHardwareMode_1200XL:
+				case kATHardwareMode_XEGS:
+					mPrefix += L" LLE";
+					break;
+
+				default:
+					mPrefix += L" LLE[XL]";
+					break;
+			}
+			break;
+
 		case kATKernelMode_5200_LLE:
 			mPrefix += L" LLE";
 			break;
@@ -254,62 +265,66 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 
 	mPrefix += L" / ";
 
-	switch(mpSim->GetMemoryMode()) {
-		case kATMemoryMode_8K:
-			mPrefix += L"8K";
-			break;
+	if (mpSim->IsUltimate1MBEnabled()) {
+		mPrefix += L"U1MB";
+	} else {
+		switch(mpSim->GetMemoryMode()) {
+			case kATMemoryMode_8K:
+				mPrefix += L"8K";
+				break;
 
-		case kATMemoryMode_16K:
-			mPrefix += L"16K";
-			break;
+			case kATMemoryMode_16K:
+				mPrefix += L"16K";
+				break;
 
-		case kATMemoryMode_24K:
-			mPrefix += L"24K";
-			break;
+			case kATMemoryMode_24K:
+				mPrefix += L"24K";
+				break;
 
-		case kATMemoryMode_32K:
-			mPrefix += L"32K";
-			break;
+			case kATMemoryMode_32K:
+				mPrefix += L"32K";
+				break;
 
-		case kATMemoryMode_40K:
-			mPrefix += L"40K";
-			break;
+			case kATMemoryMode_40K:
+				mPrefix += L"40K";
+				break;
 
-		case kATMemoryMode_48K:
-			mPrefix += L"48K";
-			break;
+			case kATMemoryMode_48K:
+				mPrefix += L"48K";
+				break;
 
-		case kATMemoryMode_52K:
-			mPrefix += L"52K";
-			break;
+			case kATMemoryMode_52K:
+				mPrefix += L"52K";
+				break;
 
-		case kATMemoryMode_64K:
-			mPrefix += L"64K";
-			break;
+			case kATMemoryMode_64K:
+				mPrefix += L"64K";
+				break;
 
-		case kATMemoryMode_128K:
-			mPrefix += L"128K";
-			break;
+			case kATMemoryMode_128K:
+				mPrefix += L"128K";
+				break;
 
-		case kATMemoryMode_320K:
-			mPrefix += L"320K Rambo";
-			break;
+			case kATMemoryMode_320K:
+				mPrefix += L"320K Rambo";
+				break;
 
-		case kATMemoryMode_320K_Compy:
-			mPrefix += L"320K Compy";
-			break;
+			case kATMemoryMode_320K_Compy:
+				mPrefix += L"320K Compy";
+				break;
 
-		case kATMemoryMode_576K:
-			mPrefix += L"576K";
-			break;
+			case kATMemoryMode_576K:
+				mPrefix += L"576K";
+				break;
 
-		case kATMemoryMode_576K_Compy:
-			mPrefix += L"576K Compy";
-			break;
+			case kATMemoryMode_576K_Compy:
+				mPrefix += L"576K Compy";
+				break;
 
-		case kATMemoryMode_1088K:
-			mPrefix += L"1088K";
-			break;
+			case kATMemoryMode_1088K:
+				mPrefix += L"1088K";
+				break;
+		}
 	}
 
 	if (basic && showBasic)

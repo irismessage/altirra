@@ -91,7 +91,7 @@ technique bilinear_2_0 {
 
 void VertexShaderBoxlinear_2_0(VertexInput IN, out float4 oPos : POSITION, out float2 oT0 : TEXCOORD0) {
 	oPos = IN.pos;
-	oT0 = IN.uv2 * vd_texsize.xy;
+	oT0 = IN.uv2 * vd_srcsize.xy;
 }
 
 float4 PixelShaderBoxlinear_2_0(float2 t0 : TEXCOORD0) : COLOR0 {

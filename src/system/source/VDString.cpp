@@ -282,3 +282,13 @@ VDStringW *vdmove_backward(VDStringW *src1, VDStringW *src2, VDStringW *dst) {
 
 	return dst;
 }
+
+template<>
+void vdmove<VDStringA>(VDStringA& dst, VDStringA& src) {
+	dst.move_from(src);
+}
+
+template<>
+void vdmove<VDStringW>(VDStringW& dst, VDStringW& src) {
+	dst.move_from(src);
+}

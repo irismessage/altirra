@@ -22,6 +22,8 @@
 #include "ksyms.h"
 #include "kerneldb.h"
 #include "decmath.h"
+#include "resource.h"
+#include "oshelper.h"
 
 extern ATSimulator g_sim;
 

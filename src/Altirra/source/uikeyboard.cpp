@@ -16,8 +16,18 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <vd2/system/error.h>
+#include <vd2/system/registry.h>
+#include <vd2/system/VDString.h>
+#include <vd2/Dita/accel.h>
 #include "uikeyboard.h"
+#include "uicommandmanager.h"
 #include <windows.h>
+
+extern ATUICommandManager g_ATUICommandMgr;
+
+VDAccelTableDefinition g_ATUIDefaultAccelTables[kATUIAccelContextCount];
+VDAccelTableDefinition g_ATUIAccelTables[kATUIAccelContextCount];
 
 struct ATUICookedKeyMap {
 	uint8	mScanCode[256];
@@ -214,6 +224,7 @@ static const uint32 g_ATDefaultVKeyMap[]={
 	VKEYMAP_CSALL(VK_RETURN,	0x0C),	// Enter
 	VKEYMAP_CSALL(VK_ESCAPE,	0x1C),	// Esc
 	VKEYMAP_CSALL(VK_END,		0x27),	// Fuji
+	VKEYMAP_CSALL(VK_F6,		0x11),	// Help
 	VKEYMAP(VK_OEM_1, kCtrl,	0x82),	// ;:
 	VKEYMAP(VK_OEM_1, kCtrl + kShift, 0xC2),	// ;:
 	VKEYMAP(VK_OEM_PLUS, kCtrl,			0x86),	// +
@@ -358,4 +369,178 @@ bool ATUIGetScanCodeForVirtualKey(uint32 virtKey, bool alt, bool ctrl, bool shif
 
 	scanCode = kbcode;
 	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+#define CTRL VDUIAccelerator::kModCtrl
+#define SHIFT VDUIAccelerator::kModShift
+#define ALT VDUIAccelerator::kModAlt
+#define UP VDUIAccelerator::kModUp
+#define EXT VDUIAccelerator::kModExtended
+
+const VDAccelTableEntry kATDefaultAccelTableDisplay[]={
+	{ "System.PulseWarpOn", 0, { VK_F1, 0 } },
+	{ "System.PulseWarpOff", 0, { VK_F1, UP } },
+	{ "View.NextFilterMode", 0, { VK_F1, CTRL } },
+	{ "System.WarmReset", 0, { VK_F5, 0 } },
+	{ "System.ColdReset", 0, { VK_F5, SHIFT } },
+	{ "Video.ToggleStandardNTSCPAL", 0, { VK_F7, CTRL } },
+	{ "View.NextANTICVisMode", 0, { VK_F8, SHIFT } },
+	{ "View.NextGTIAVisMode", 0, { VK_F8, CTRL } },
+	{ "Debug.RunStop", 0, { VK_F8, 0 } },
+	{ "System.TogglePause", 0, { VK_F9, 0 } },
+	{ "Input.CaptureMouse", 0, { VK_F12, 0 } },
+	{ "Debug.Break", 0, { VK_CANCEL, CTRL + EXT } },
+	{ "View.ToggleFullScreen", 0, { VK_RETURN, ALT } },
+	{ "System.ToggleSlowMotion", 0, { VK_BACK, ALT } },
+	{ "Audio.ToggleChannel1", 0, { '1', CTRL+ALT } },
+	{ "Audio.ToggleChannel2", 0, { '2', CTRL+ALT } },
+	{ "Audio.ToggleChannel3", 0, { '3', CTRL+ALT } },
+	{ "Audio.ToggleChannel4", 0, { '4', CTRL+ALT } },
+	{ "Edit.PasteText", 0, { 'V', ALT+SHIFT } },
+	{ "Edit.SaveFrame", 0, { VK_F10, ALT } },
+	{ "Edit.CopyText", 0, { 'C', ALT+SHIFT } },
+	{ "Edit.CopyFrame", 0, { 'M', ALT+SHIFT } },
+};
+
+const VDAccelTableEntry kATDefaultAccelTableGlobal[]={
+	{ "Cheat.CheatDialog", 0, { 'H', ALT+SHIFT } },
+	{ "File.BootImage", 0, { 'B', ALT } },
+	{ "File.OpenImage", 0, { 'O', ALT } },
+	{ "Debug.OpenSourceFile", 0, { 'O', ALT+SHIFT } },
+	{ "Disk.DrivesDialog", 0, { 'D', ALT+SHIFT } },
+	{ "Pane.Display", 0, { '1', ALT } },
+	{ "Pane.Console", 0, { '2', ALT } },
+	{ "Pane.Registers", 0, { '3', ALT } },
+	{ "Pane.Disassembly", 0, { '4', ALT } },
+	{ "Pane.CallStack", 0, { '5', ALT } },
+	{ "Pane.History", 0, { '6', ALT } },
+	{ "Pane.Memory1", 0, { '7', ALT } },
+	{ "Pane.PrinterOutput", 0, { '8', ALT } },
+	{ "Pane.ProfileView", 0, { '0', ALT+SHIFT } },
+};
+
+#undef UP
+#undef EXT
+#undef ALT
+#undef SHIFT
+#undef CTRL
+
+void ATUIInitDefaultAccelTables() {
+	g_ATUIDefaultAccelTables[kATUIAccelContext_Global].AddRange(kATDefaultAccelTableGlobal, vdcountof(kATDefaultAccelTableGlobal));
+	g_ATUIDefaultAccelTables[kATUIAccelContext_Display].AddRange(kATDefaultAccelTableDisplay, vdcountof(kATDefaultAccelTableDisplay));
+
+	for(int i=0; i<kATUIAccelContextCount; ++i)
+		g_ATUIAccelTables[i] = g_ATUIDefaultAccelTables[i];
+}
+
+void ATUILoadAccelTables() {
+	vdfastvector<VDAccelToCommandEntry> commands;
+
+	g_ATUICommandMgr.ListCommands(commands);
+
+	VDStringA keyName;
+
+	for(int i=0; i<kATUIAccelContextCount; ++i) {
+		keyName.sprintf("AccelTables\\%d", i);
+
+		VDRegistryKey key(keyName.c_str(), false, false);
+
+		if (key.isReady()) {
+			try {
+				g_ATUIAccelTables[i].Load(key, commands.data(), commands.size());
+			} catch(const MyError&) {
+				// eat load error
+			}
+		}
+	}
+}
+
+void ATUISaveAccelTables() {
+	VDStringA keyName;
+
+	for(int i=0; i<kATUIAccelContextCount; ++i) {
+		keyName.sprintf("AccelTables\\%d", i);
+
+		VDRegistryKey key(keyName.c_str());
+		g_ATUIAccelTables[i].Save(key);
+	}
+}
+
+const VDAccelTableDefinition *ATUIGetDefaultAccelTables() {
+	return g_ATUIDefaultAccelTables;
+}
+
+VDAccelTableDefinition *ATUIGetAccelTables() {
+	return g_ATUIAccelTables;
+}
+
+const VDAccelTableEntry *ATUIGetAccelByCommand(ATUIAccelContext context, const char *command) {
+	for(;;) {
+		const VDAccelTableDefinition& table = g_ATUIAccelTables[context];
+		uint32 numAccels = table.GetSize();
+		for(uint32 i=0; i<numAccels; ++i) {
+			const VDAccelTableEntry& entry = table[i];
+
+			if (!strcmp(entry.mpCommand, command))
+				return &entry;
+		}
+
+		if (context == kATUIAccelContext_Global)
+			break;
+
+		context = kATUIAccelContext_Global;
+	}
+
+	return NULL;
+}
+
+bool ATUIActivateVirtKeyMapping(uint32 vk, bool alt, bool ctrl, bool shift, bool ext, bool up, ATUIAccelContext context) {
+	uint8 flags = 0;
+
+	if (ctrl)
+		flags += VDUIAccelerator::kModCtrl;
+
+	if (shift)
+		flags += VDUIAccelerator::kModShift;
+
+	if (alt)
+		flags += VDUIAccelerator::kModAlt;
+
+	if (ext)
+		flags += VDUIAccelerator::kModExtended;
+
+	if (up)
+		flags += VDUIAccelerator::kModUp;
+
+	for(;;) {
+		VDUIAccelerator accel;
+		accel.mVirtKey = vk;
+		accel.mModifiers = flags;
+
+		const VDAccelTableDefinition& table = g_ATUIAccelTables[context];
+		const VDAccelTableEntry *entry = table(accel);
+
+		if (entry) {
+			g_ATUICommandMgr.ExecuteCommand(entry->mpCommand);
+			return true;
+		}
+
+		if (up) {
+			// It looks like we're doing an up and might have only a down mapping.
+			// If we don't find a direct up mapping by the end, we should eat this
+			// keystroke anyway to prevent other systems from seeing just the up.
+
+			accel.mModifiers -= VDUIAccelerator::kModUp;
+
+			if (table(accel))
+				return true;
+		}
+
+		if (context == kATUIAccelContext_Global)
+			return false;
+
+		context = kATUIAccelContext_Global;
+	}
 }

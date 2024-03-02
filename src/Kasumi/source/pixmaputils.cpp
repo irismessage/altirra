@@ -423,11 +423,11 @@ void VDPixmapBuffer::init(sint32 width, sint32 height, int f) {
 	totalsize64 += 28;
 #endif
 
-	size_t totalsize = (uint32)totalsize64;
-
 	// reject huge allocations
-	if (totalsize > (size_t)-1 - 4096)
+	if (totalsize64 > (size_t)-1 - 4096)
 		throw MyMemoryError();
+
+	size_t totalsize = (uint32)totalsize64;
 
 	if (mLinearSize != totalsize) {
 		clear();
@@ -490,49 +490,56 @@ void VDPixmapBuffer::init(const VDPixmapLayout& layout, uint32 additionalPadding
 	sint32		subw		= -(-layout.w >> srcinfo.auxwbits);
 	sint32		subh		= -(-layout.h >> srcinfo.auxhbits);
 
-	ptrdiff_t mino=0, maxo=0;
+	sint64 mino=0, maxo=0;
 
 	if (layout.pitch < 0) {
-		mino = std::min<ptrdiff_t>(mino, layout.data + layout.pitch * (qh-1));
-		maxo = std::max<ptrdiff_t>(maxo, layout.data - layout.pitch);
+		mino = std::min<sint64>(mino, layout.data + (sint64)layout.pitch * (qh-1));
+		maxo = std::max<sint64>(maxo, layout.data - (sint64)layout.pitch);
 	} else {
-		mino = std::min<ptrdiff_t>(mino, layout.data);
-		maxo = std::max<ptrdiff_t>(maxo, layout.data + layout.pitch*qh);
+		mino = std::min<sint64>(mino, layout.data);
+		maxo = std::max<sint64>(maxo, layout.data + (sint64)layout.pitch*qh);
 	}
 
 	if (srcinfo.auxbufs >= 1) {
 		if (layout.pitch2 < 0) {
-			mino = std::min<ptrdiff_t>(mino, layout.data2 + layout.pitch2 * (subh-1));
-			maxo = std::max<ptrdiff_t>(maxo, layout.data2 - layout.pitch2);
+			mino = std::min<sint64>(mino, layout.data2 + (sint64)layout.pitch2 * (subh-1));
+			maxo = std::max<sint64>(maxo, layout.data2 - (sint64)layout.pitch2);
 		} else {
-			mino = std::min<ptrdiff_t>(mino, layout.data2);
-			maxo = std::max<ptrdiff_t>(maxo, layout.data2 + layout.pitch2*subh);
+			mino = std::min<sint64>(mino, layout.data2);
+			maxo = std::max<sint64>(maxo, layout.data2 + (sint64)layout.pitch2*subh);
 		}
 
 		if (srcinfo.auxbufs >= 2) {
 			if (layout.pitch3 < 0) {
-				mino = std::min<ptrdiff_t>(mino, layout.data3 + layout.pitch3 * (subh-1));
-				maxo = std::max<ptrdiff_t>(maxo, layout.data3 - layout.pitch3);
+				mino = std::min<sint64>(mino, layout.data3 + (sint64)layout.pitch3 * (subh-1));
+				maxo = std::max<sint64>(maxo, layout.data3 - (sint64)layout.pitch3);
 			} else {
-				mino = std::min<ptrdiff_t>(mino, layout.data3);
-				maxo = std::max<ptrdiff_t>(maxo, layout.data3 + layout.pitch3*subh);
+				mino = std::min<sint64>(mino, layout.data3);
+				maxo = std::max<sint64>(maxo, layout.data3 + (sint64)layout.pitch3*subh);
 			}
 		}
 	}
 
-	ptrdiff_t linsize = ((maxo - mino + 3) & ~(uintptr)3);
+	sint64 linsize64 = ((maxo - mino + 3) & ~(uint64)3);
 
-	ptrdiff_t totalsize = linsize + 4*srcinfo.palsize + additionalPadding;
+	sint64 totalsize64 = linsize64 + 4*srcinfo.palsize + additionalPadding;
 
 #ifdef _DEBUG
-	totalsize += 28;
+	totalsize64 += 28;
 #endif
+
+	// reject huge allocations
+	if (totalsize64 > (size_t)-1 - 4096)
+		throw MyMemoryError();
+
+	size_t totalsize = (uint32)totalsize64;
+	ptrdiff_t linsize = (uint32)linsize64;
 
 	if (mLinearSize != totalsize) {
 		clear();
 		mpBuffer = new_nothrow char[totalsize + 15];
 		if (!mpBuffer)
-			throw MyMemoryError();
+			throw MyMemoryError(totalsize + 15);
 		mLinearSize = totalsize;
 	}
 

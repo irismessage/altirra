@@ -403,6 +403,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\fontrender.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\fxc.cpp"
 				>
 			</File>
@@ -420,6 +424,10 @@
 			</File>
 			<File
 				RelativePath=".\source\glc_nvrc.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\hash.cpp"
 				>
 			</File>
 			<File

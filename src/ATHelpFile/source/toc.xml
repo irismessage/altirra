@@ -12,10 +12,13 @@
   <t name="Debugger">
     <t name="Starting the debugger" href="debug-intro.html"/>
     <t name="Source-level debugging" href="debug-source.html"/>
+    <t name="Addresses and expressions" href="debug-expressions.html"/>
+    <t name="Diagnostics" href="debug-diagnostics.html"/>
   </t>
   <t name="Reference">
     <t name="Options" href="options.html"/>
     <t name="MyIDE emulation" href="myide.html"/>
+    <t name="Ultimate1MB emulation" href="ultimate1mb.html"/>
     <t name="Serial port emulation" href="serial.html"/>
     <t name="PCLink support" href="pclink.html"/>
     <t name="Host device" href="host-device.html"/>

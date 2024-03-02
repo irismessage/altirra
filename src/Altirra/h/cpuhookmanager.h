@@ -66,6 +66,8 @@ public:
 	void Init(ATCPUEmulator *cpu, ATMMUEmulator *mmu, ATPBIManager *pbi);
 	void Shutdown();
 
+	void EnableOSHooks(bool enabled) { mbOSHooksEnabled = enabled; }
+
 	uint8 OnHookHit(uint16 pc) const;
 
 	template<class T, typename Method>
@@ -99,6 +101,8 @@ private:
 	ATCPUEmulator *mpCPU;
 	ATMMUEmulator *mpMMU;
 	ATPBIManager *mpPBI;
+	bool mbOSHooksEnabled;
+
 	HashNode *mpFreeList;
 
 	HashNode *mpHashTable[256];

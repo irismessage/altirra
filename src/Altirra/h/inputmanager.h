@@ -420,6 +420,7 @@ public:
 	bool IsInputMapped(int unit, uint32 inputCode) const;
 	bool IsMouseMapped() const { return mbMouseMapped; }
 	bool IsMouseAbsoluteMode() const { return mbMouseAbsMode; }
+	bool IsMouseActiveTarget() const { return mbMouseActiveTarget; }
 
 	void OnButtonDown(int unit, int id);
 	void OnButtonUp(int unit, int id);
@@ -468,6 +469,7 @@ protected:
 	bool mb5200PotsEnabled;
 	bool mbMouseAbsMode;
 	bool mbMouseMapped;
+	bool mbMouseActiveTarget;
 
 	uint32 mMouseAvgQueue[4];
 	int mMouseAvgIndex;
@@ -506,7 +508,12 @@ protected:
 	typedef std::map<ATInputMap *, bool> InputMaps;
 	InputMaps mInputMaps;
 
-	typedef std::map<uint32, ATPortInputController *> InputControllers;
+	struct ControllerInfo {
+		ATPortInputController *mpInputController;
+		bool mbBoundToMouseAbs;
+	};
+
+	typedef vdfastvector<ControllerInfo> InputControllers;
 	InputControllers mInputControllers;
 
 	uint32	mAllocatedUnits;

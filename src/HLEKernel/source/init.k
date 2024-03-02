@@ -188,6 +188,9 @@ hwclear:
 
 ;==============================================================================
 .proc InitEnvironment
+	;required for Translator to work
+	mva		tramsz ramsiz
+	
 	; 9. set screen margins
 	mva		#2 lmargn
 	mva		#39 rmargn
@@ -224,7 +227,7 @@ hwclear:
 	;jsr	CassetteInit
 	jsr		cioinv
 	jsr		SIOInit
-	;jsr	InterruptProcInit
+	jsr		InitInterrupts
 	
 	; check for START key, and if so, set cassette boot flag
 	lda		consol

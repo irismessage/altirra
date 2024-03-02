@@ -23,6 +23,8 @@
 struct VDPixmap;
 class ATAudioMonitor;
 class ATSlightSIDEmulator;
+class IVDDisplayCompositor;
+class ATUIManager;
 
 struct ATUIAudioStatus {
 	int mUnderflowCount;
@@ -56,7 +58,7 @@ public:
 	virtual void SetCassettePosition(float pos) = 0;
 
 	virtual void SetRecordingPosition() = 0;
-	virtual void SetRecordingPosition(float time) = 0;
+	virtual void SetRecordingPosition(float time, sint64 size) = 0;
 
 	virtual void SetModemConnection(const char *str) = 0;
 
@@ -71,10 +73,16 @@ public:
 
 	virtual void SetSlightSID(ATSlightSIDEmulator *emu) = 0;
 
-	virtual void ClearXorRects() = 0;
-	virtual void AddXorRect(int x, int y, int w, int h) = 0;
+	virtual void SetFpsIndicator(float fps) = 0;
 
-	virtual void Render(const VDPixmap& px, const uint32 *palette) = 0;
+	virtual void SetHoverTip(int px, int py, const wchar_t *text) = 0;
+
+	virtual void SetPaused(bool paused) = 0;
+
+	virtual void SetUIManager(ATUIManager *mgr) = 0;
+	virtual void Relayout(int w, int h) = 0;
+
+	virtual void Update() = 0;
 };
 
 void ATCreateUIRenderer(IATUIRenderer **r);

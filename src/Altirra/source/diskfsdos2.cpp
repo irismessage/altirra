@@ -1,8 +1,11 @@
 #include "stdafx.h"
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
+#include <vd2/system/vdalloc.h>
 #include "diskfs.h"
 #include "diskimage.h"
+#include "oshelper.h"
+#include "resource.h"
 
 class ATDiskFSDOS2 : public IATDiskFS {
 public:
@@ -10,6 +13,7 @@ public:
 	~ATDiskFSDOS2();
 
 public:
+	void InitNew(IATDiskImage *image);
 	void Init(IATDiskImage *image, bool readOnly);
 	void GetInfo(ATDiskFSInfo& info);
 
@@ -80,6 +84,43 @@ ATDiskFSDOS2::ATDiskFSDOS2() {
 ATDiskFSDOS2::~ATDiskFSDOS2() {
 }
 
+void ATDiskFSDOS2::InitNew(IATDiskImage *image) {
+	uint32 sectorSize = image->GetSectorSize();
+	if (sectorSize != 128 && sectorSize != 256)
+		throw MyError("Unsupported sector size for DOS 2.x image: %d bytes.", sectorSize);
+
+	mpImage = image;
+	mbDirty = true;
+	mbReadOnly = false;
+
+	// initialize directory
+	memset(mDirectory, 0, sizeof mDirectory);
+
+	// initialize VTOC
+	memset(mVTOCSector, 0, sizeof mVTOCSector);
+
+	mVTOCSector[0] = 0x02;
+	VDWriteUnalignedLEU16(mVTOCSector + 1, 707);
+	VDWriteUnalignedLEU16(mVTOCSector + 3, 707);
+
+	// mark all sectors as free (720 sectors)
+	memset(mVTOCSector + 10, 0xFF, 90);
+
+	// allocate sectors 0 (reserved) and 1-3 (boot) -> 716
+	mVTOCSector[10] &= 0x0f;
+
+	// allocate sectors 360 (VTOC), 361-367 (directory) -> 708
+	mVTOCSector[55] = 0;
+	mVTOCSector[56] &= 0x7f;
+
+	// initialize boot sectors
+	vdfastvector<uint8> buf;
+	if (ATLoadMiscResource(IDR_BOOTSECTOR_DOS2, buf) && buf.size() == 0x180) {
+		for(int i=0; i<3; ++i)
+			image->WriteVirtualSector(0, buf.data() + 128*i, 128);
+	}
+}
+
 void ATDiskFSDOS2::Init(IATDiskImage *image, bool readOnly) {
 	mpImage = image;
 	mbDirty = false;
@@ -94,10 +135,15 @@ void ATDiskFSDOS2::Init(IATDiskImage *image, bool readOnly) {
 	if (sectorSize == 256)
 		mbReadOnly = true;
 
+	// if there are more than 720 sectors, we must mount as read-only as it is a
+	// is a DOS 2.5 or MyDOS disk with an extended VTOC
+	const uint32 sectorCount = mpImage->GetVirtualSectorCount();
+	if (sectorCount > 720)
+		mbReadOnly = true;
+
 	// read VTOC
 	mpImage->ReadVirtualSector(359, mVTOCSector, sectorSize);
 
-	const uint32 sectorCount = mpImage->GetVirtualSectorCount();
 	mTempSectorMap.resize(sectorCount, 0);
 
 	// initialize directory
@@ -119,14 +165,13 @@ void ATDiskFSDOS2::Init(IATDiskImage *image, bool readOnly) {
 			const uint8 *dirent = mSectorBuffer + 16*i;
 			const uint8 flags = dirent[0];
 
-			// MyDOS hack
-			if (sectorSize >= 256 && !flags)
+			if (!flags)
 				goto directory_end;
 
 			DirEnt& de = mDirectory[fileId];
 
 			de.mFlags = flags;
-			de.mFirstSector = VDReadUnalignedLEU32(dirent + 3);
+			de.mFirstSector = VDReadUnalignedLEU16(dirent + 3);
 
 			const uint8 *fnstart = dirent + 5;
 			const uint8 *fnend = dirent + 13;
@@ -219,15 +264,21 @@ bool ATDiskFSDOS2::Validate(ATDiskFSValidationReport& report) {
 
 	uint32 sectorsAvailable = 707;
 
-	// mark all sectors as free
+	// mark all sectors as free (720 sectors)
 	memset(newVTOC + 10, 0xFF, 90);
 
-	// allocate sectors 0 (reserved) and 1-3 (boot)
+	// allocate sectors 0 (reserved) and 1-3 (boot) -> 716
 	newVTOC[10] &= 0x0f;
 
-	// allocate sectors 360 (VTOC), 361-367 (directory)
+	// allocate sectors 360 (VTOC), 361-367 (directory) -> 708
 	newVTOC[55] = 0;
 	newVTOC[56] &= 0x7f;
+
+	// Mark sector 720 as free, if it was in the existing VTOC. MyDOS does this.
+	if (mVTOCSector[100] & 0x80) {
+		newVTOC[100] |= 0x80;
+		++sectorsAvailable;
+	}
 
 	for(uint32 i=0; i<64; ++i) {
 		const DirEnt& de = mDirectory[i];
@@ -274,6 +325,14 @@ bool ATDiskFSDOS2::Validate(ATDiskFSValidationReport& report) {
 		}
 	}
 
+	// If sector 720 is still free and we are one more compared to the existing VTOC, throw
+	// it out. DOS 2.0S cannot use sector 720, but MyDOS can.
+	if (sectorsAvailable == VDReadUnalignedLEU16(mVTOCSector + 3) + 1
+		&& (newVTOC[100] & 0x80))
+	{
+		--sectorsAvailable;
+	}
+
 	VDWriteUnalignedLEU16(newVTOC + 3, sectorsAvailable);
 
 	if (memcmp(newVTOC, mVTOCSector, sectorSize)) {
@@ -299,7 +358,7 @@ void ATDiskFSDOS2::Flush() {
 		for(uint32 j=0; j<dirEntsPerSec; ++j) {
 			const DirEnt& de = *pde++;
 
-			if (!(de.mFlags & DirEnt::kFlagInUse))
+			if (!(de.mFlags & (DirEnt::kFlagInUse | DirEnt::kFlagDeleted)))
 				continue;
 
 			uint8 *rawde = &mSectorBuffer[16*j];
@@ -348,6 +407,9 @@ bool ATDiskFSDOS2::FindNext(uintptr searchKey, ATDiskFSEntryInfo& info) {
 	while(h->mPos < 64) {
 		const DirEnt& de = mDirectory[h->mPos++];
 
+		if (!de.mFlags)
+			break;
+
 		if (!(de.mFlags & DirEnt::kFlagInUse))
 			continue;
 
@@ -388,6 +450,10 @@ uintptr ATDiskFSDOS2::LookupFile(uintptr parentKey, const char *filename) {
 
 	for(uint32 i=0; i<64; ++i) {
 		const DirEnt& de = mDirectory[i];
+
+		// The first entry with flags=$00 is the end of the directory.
+		if (!de.mFlags)
+			break;
 
 		if (!(de.mFlags & DirEnt::kFlagInUse))
 			continue;
@@ -482,7 +548,7 @@ void ATDiskFSDOS2::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
 		if (sectorSize != mpImage->ReadVirtualSector(sector - 1, mSectorBuffer, sectorSize))
 			throw ATDiskFSException(kATDiskFSError_CorruptedFileSystem);
 
-		const uint8 sectorDataBytes = sectorSize > 128 ? mSectorBuffer[sectorSize - 1] : mSectorBuffer[sectorSize - 1] & 127;
+		const uint8 sectorDataBytes = mSectorBuffer[sectorSize - 1];
 		const uint8 sectorFileId = mSectorBuffer[sectorSize - 3] >> 2;
 
 		if (fileId != sectorFileId || sectorDataBytes > sectorSize - 3)
@@ -549,7 +615,7 @@ void ATDiskFSDOS2::WriteFile(uintptr parentKey, const char *filename, const void
 
 		mSectorBuffer[sectorSize - 3] = (dirIdx << 2) + (nextSector >> 8);
 		mSectorBuffer[sectorSize - 2] = (uint8)nextSector;
-		mSectorBuffer[sectorSize - 1] = sectorSize > 128 ? dataBytes : dataBytes < 125 ? 0x80 + dataBytes : 125;
+		mSectorBuffer[sectorSize - 1] = dataBytes;
 
 		uint32 sector = sectorsToUse[i];
 		mpImage->WriteVirtualSector(sector - 1, mSectorBuffer, sectorSize);
@@ -668,10 +734,18 @@ bool ATDiskFSDOS2::IsValidFileName(const char *filename) {
 
 ///////////////////////////////////////////////////////////////////////////
 
+IATDiskFS *ATDiskFormatImageDOS2(IATDiskImage *image) {
+	vdautoptr<ATDiskFSDOS2> fs(new ATDiskFSDOS2);
+
+	fs->InitNew(image);
+
+	return fs.release();
+}
+
 IATDiskFS *ATDiskMountImageDOS2(IATDiskImage *image, bool readOnly) {
-	ATDiskFSDOS2 *fs = new ATDiskFSDOS2;
+	vdautoptr<ATDiskFSDOS2> fs(new ATDiskFSDOS2);
 
 	fs->Init(image, readOnly);
 
-	return fs;
+	return fs.release();
 }

@@ -2271,7 +2271,7 @@ void ATVideoWriter::WriteFrame(const VDPixmap& px, uint32 timestamp) {
 	}
 
 	if (mpUIRenderer)
-		mpUIRenderer->SetRecordingPosition((float)((timestamp - mFirstVideoTimestamp) / mTimestampRate));
+		mpUIRenderer->SetRecordingPosition((float)((timestamp - mFirstVideoTimestamp) / mTimestampRate), mFile->GetCurrentSize());
 
 	try {
 		bool intra = false;

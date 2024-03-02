@@ -30,6 +30,7 @@ struct ATOptions {
 	bool mbDirty;
 	bool mbDisplayDDraw;
 	bool mbDisplayD3D9;
+	bool mbDisplay3D;
 	bool mbDisplayOpenGL;
 
 	bool mbSingleInstance;

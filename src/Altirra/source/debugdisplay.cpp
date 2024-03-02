@@ -16,7 +16,7 @@
 //	Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 #include "stdafx.h"
-#include <vd2/Riza/display.h>
+#include <vd2/VDDisplay/display.h>
 #include "debugdisplay.h"
 #include "antic.h"
 #include "gtia.h"
@@ -433,7 +433,7 @@ void ATDebugDisplay::Update() {
 							dst32[2] = dst32[3] = pal[(c >> 4) & 3];
 							dst32[4] = dst32[5] = pal[(c >> 2) & 3];
 							dst32[6] = dst32[7] = pal[(c >> 0) & 3];
-							dst += 4;
+							dst32 += 4;
 						}
 					}
 					break;
@@ -456,7 +456,7 @@ void ATDebugDisplay::Update() {
 							dst32[5] = (c & 0x04) ? fore : back;
 							dst32[6] = (c & 0x02) ? fore : back;
 							dst32[7] = (c & 0x01) ? fore : back;
-							dst += 8;
+							dst32 += 8;
 						}
 					}
 					break;
@@ -479,7 +479,7 @@ void ATDebugDisplay::Update() {
 							dst32[1] = pal[(c >> 4) & 3];
 							dst32[2] = pal[(c >> 2) & 3];
 							dst32[3] = pal[(c >> 0) & 3];
-							dst += 4;
+							dst32 += 4;
 						}
 					}
 					break;

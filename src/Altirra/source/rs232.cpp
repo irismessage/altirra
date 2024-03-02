@@ -279,7 +279,7 @@ uint8 ATRS232Channel850::Open(uint8 aux1, uint8 aux2) {
 	//	bit 0 = concurrent mode
 	//	bit 2 = input mode
 	//	bit 3 = output mode
-	mbConcurrentMode = false;
+	mbConcurrentMode = (aux1 & 1) != 0;
 
 	mbSuspended = false;
 
@@ -1064,7 +1064,7 @@ void ATRS232Channel1030::OnControlStateChanged(const ATRS232ControlState& status
 		mControlState &= ~0x80;
 
 	if ((oldState ^ mControlState) & 0x80)
-		mpPIA->PIAAssertInterrupt();
+		mpPIA->AssertInterrupt();
 }
 
 void ATRS232Channel1030::OnScheduledEvent(uint32 id) {
@@ -1422,7 +1422,7 @@ void ATRS232Emulator::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) 
 			if (command) {
 				mpChannels[0]->ExecuteDeviceCommand(c);
 
-				mpPIA->PIAAssertProceed();
+				mpPIA->AssertProceed();
 			} else if (!mpChannels[0]->IsSuspended())
 				mpChannels[0]->PutByte(c);
 		}

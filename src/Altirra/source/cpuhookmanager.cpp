@@ -25,6 +25,7 @@ ATCPUHookManager::ATCPUHookManager()
 	: mpCPU(NULL)
 	, mpMMU(NULL)
 	, mpPBI(NULL)
+	, mbOSHooksEnabled(false)
 	, mpFreeList(NULL)
 {
 	std::fill(mpHashTable, mpHashTable + 256, (HashNode *)NULL);
@@ -76,12 +77,12 @@ uint8 ATCPUHookManager::OnHookHit(uint16 pc) const {
 					break;
 
 				case kATCPUHookMode_KernelROMOnly:
-					if (!mpMMU->IsKernelROMEnabled())
+					if (!mbOSHooksEnabled || !mpMMU->IsKernelROMEnabled())
 						continue;
 					break;
 
 				case kATCPUHookMode_MathPackROMOnly:
-					if (!mpMMU->IsKernelROMEnabled())
+					if (!mbOSHooksEnabled || !mpMMU->IsKernelROMEnabled())
 						continue;
 
 					if (mpPBI->IsROMOverlayActive())

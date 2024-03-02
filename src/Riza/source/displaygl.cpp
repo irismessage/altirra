@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <vd2/system/bitmath.h>
 #include <vd2/system/profile.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vdalloc.h>
@@ -8,10 +9,664 @@
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Riza/opengl.h>
-#include "displaydrv.h"
+#include <vd2/VDDisplay/compositor.h>
+#include <vd2/VDDisplay/displaydrv.h>
+#include <vd2/VDDisplay/renderer.h>
+#include <vd2/VDDisplay/textrenderer.h>
 
 #define VDDEBUG_DISP (void)sizeof printf
 //#define VDDEBUG_DISP VDDEBUG
+
+///////////////////////////////////////////////////////////////////////////
+
+struct VDDisplayRendererBaseOpenGL {
+	vdfastvector<GLuint> mZombieTextures;
+};
+
+class VDDisplayCachedImageOpenGL : public vdrefcounted<IVDRefUnknown>, public vdlist_node {
+	VDDisplayCachedImageOpenGL(const VDDisplayCachedImageOpenGL&);
+	VDDisplayCachedImageOpenGL& operator=(const VDDisplayCachedImageOpenGL&);
+public:
+	enum { kTypeID = 'cimG' };
+
+	VDDisplayCachedImageOpenGL();
+	~VDDisplayCachedImageOpenGL();
+
+	void *AsInterface(uint32 iid);
+
+	bool Init(VDOpenGLBinding *pgl, VDDisplayRendererBaseOpenGL *owner, const VDDisplayImageView& imageView);
+	void Shutdown();
+
+	void Update(const VDDisplayImageView& imageView);
+
+public:
+	VDDisplayRendererBaseOpenGL *mpOwner;
+	VDOpenGLBinding *mpGL;
+	GLuint	mTexture;
+	sint32	mWidth;
+	sint32	mHeight;
+	sint32	mTexWidth;
+	sint32	mTexHeight;
+	uint32	mUniquenessCounter;
+};
+
+VDDisplayCachedImageOpenGL::VDDisplayCachedImageOpenGL()
+	: mTexture(0)
+{
+	mListNodePrev = NULL;
+	mListNodeNext = NULL;
+}
+
+VDDisplayCachedImageOpenGL::~VDDisplayCachedImageOpenGL() {
+	if (mListNodePrev)
+		vdlist_base::unlink(*this);
+}
+
+void *VDDisplayCachedImageOpenGL::AsInterface(uint32 iid) {
+	if (iid == kTypeID)
+		return this;
+
+	return NULL;
+}
+
+bool VDDisplayCachedImageOpenGL::Init(VDOpenGLBinding *pgl, VDDisplayRendererBaseOpenGL *owner, const VDDisplayImageView& imageView) {
+	mpGL = pgl;
+
+	const VDPixmap& px = imageView.GetImage();
+	int w = VDCeilToPow2(px.w);
+	int h = VDCeilToPow2(px.h);
+
+	pgl->glGenTextures(1, &mTexture);
+	pgl->glBindTexture(GL_TEXTURE_2D, mTexture);
+	pgl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_BGRA_EXT, GL_UNSIGNED_BYTE, NULL);
+	pgl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	pgl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	pgl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE_EXT);
+	pgl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE_EXT);
+	pgl->glBindTexture(GL_TEXTURE_2D, 0);
+	VDASSERT(mpGL->glGetError() == GL_NO_ERROR);
+
+	mWidth = px.w;
+	mHeight = px.h;
+	mTexWidth = w;
+	mTexHeight = h;
+	mpOwner = owner;
+
+	Update(imageView);
+	return true;
+}
+
+void VDDisplayCachedImageOpenGL::Shutdown() {
+	if (mpOwner) {
+		mpOwner->mZombieTextures.push_back(mTexture);
+		mpOwner = NULL;
+		mTexture = 0;
+	}
+}
+
+void VDDisplayCachedImageOpenGL::Update(const VDDisplayImageView& imageView) {
+	uint32 newCounter = imageView.GetUniquenessCounter();
+	bool partialUpdateOK = (mUniquenessCounter + 1) == newCounter;
+	mUniquenessCounter = newCounter;
+
+	if (mTexture) {
+		const VDPixmap& px = imageView.GetImage();
+
+		VDPixmapLayout layout;
+		VDPixmapBuffer buf;
+
+		mpGL->glBindTexture(GL_TEXTURE_2D, mTexture);
+		mpGL->glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+		mpGL->glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+
+		uint32 dirtyRectCount = imageView.GetDirtyListSize();
+		if (partialUpdateOK && dirtyRectCount) {
+			const vdrect32 *rects = imageView.GetDirtyList();
+			uint32 maxTexels = 0;
+			for(uint32 i=0; i<dirtyRectCount; ++i)
+				maxTexels = std::max<uint32>(maxTexels, rects[i].area());
+
+			vdblock<uint32> buffer(maxTexels);
+
+			for(uint32 i=0; i<dirtyRectCount; ++i) {
+				const vdrect32& r = rects[i];
+
+				VDPixmapCreateLinearLayout(layout, nsVDPixmap::kPixFormat_XRGB8888, r.width(), r.height(), 4);
+				VDPixmap pxbuf = VDPixmapFromLayout(layout, buffer.data());
+				VDPixmapFlipV(pxbuf);
+
+				VDPixmapBlt(pxbuf, 0, 0, px, r.left, r.top, r.width(), r.height());
+
+				mpGL->glTexSubImage2D(GL_TEXTURE_2D, 0, r.left, mHeight - r.bottom, r.width(), r.height(), GL_BGRA_EXT, GL_UNSIGNED_BYTE, buffer.data());
+			}
+		} else {
+			VDPixmapCreateLinearLayout(layout, nsVDPixmap::kPixFormat_XRGB8888, mWidth, mHeight, 4);
+			VDPixmapLayoutFlipV(layout);
+
+			buf.init(layout);
+
+			VDPixmapBlt(buf, px);
+
+			mpGL->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, mWidth, mHeight, GL_BGRA_EXT, GL_UNSIGNED_BYTE, buf.base());
+			mpGL->glBindTexture(GL_TEXTURE_2D, 0);
+		}
+
+		VDASSERT(mpGL->glGetError() == GL_NO_ERROR);
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class VDDisplayRendererOpenGL : public IVDDisplayRenderer, public VDDisplayRendererBaseOpenGL {
+public:
+	VDDisplayRendererOpenGL();
+
+	void Init(VDOpenGLBinding *glbinding);
+	void Shutdown();
+
+	void Begin(sint32 w, sint32 h);
+	void End();
+
+public:
+	const VDDisplayRendererCaps& GetCaps();
+
+	VDDisplayTextRenderer *GetTextRenderer() { return &mTextRenderer; }
+
+	void SetColorRGB(uint32 color);
+	void FillRect(sint32 x, sint32 y, sint32 w, sint32 h);
+	void MultiFillRect(const vdrect32 *rects, uint32 n);
+
+	void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor);
+
+	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
+	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h);
+	void MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView);
+	void MultiColorBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView);
+
+	void PolyLine(const vdpoint32 *points, uint32 numLines);
+
+	virtual bool PushViewport(const vdrect32& r, sint32 x, sint32 y);
+	virtual void PopViewport();
+
+	virtual IVDDisplayRenderer *BeginSubRender(const vdrect32& r, VDDisplaySubRenderCache& cache);
+	virtual void EndSubRender();
+
+protected:
+	void UpdateViewport();
+	VDDisplayCachedImageOpenGL *GetCachedImage(VDDisplayImageView& imageView);
+	void DeleteZombieTextures();
+
+	VDOpenGLBinding *mpGL;
+	uint32	mColor;
+	float	mColorRed;
+	float	mColorGreen;
+	float	mColorBlue;
+
+	sint32	mRenderWidth;
+	sint32	mRenderHeight;
+	vdrect32	mScissor;
+	sint32	mOffsetX;
+	sint32	mOffsetY;
+
+	vdlist<VDDisplayCachedImageOpenGL> mCachedImages;
+
+	struct Context {
+		uint32 mColor;
+	};
+
+	typedef vdfastvector<Context> ContextStack;
+	ContextStack mContextStack;
+
+	struct Viewport {
+		vdrect32 mScissor;
+		sint32 mOffsetX;
+		sint32 mOffsetY;
+	};
+
+	typedef vdfastvector<Viewport> ViewportStack;
+	ViewportStack mViewportStack;
+
+	VDDisplayTextRenderer mTextRenderer;
+};
+
+VDDisplayRendererOpenGL::VDDisplayRendererOpenGL()
+	: mpGL(NULL)
+{
+}
+
+void VDDisplayRendererOpenGL::Init(VDOpenGLBinding *glbinding) {
+	mpGL = glbinding;
+
+	mTextRenderer.Init(this, 512, 512);
+}
+
+void VDDisplayRendererOpenGL::Shutdown() {
+	while(!mCachedImages.empty()) {
+		VDDisplayCachedImageOpenGL *img = mCachedImages.front();
+		mCachedImages.pop_front();
+
+		img->mListNodePrev = NULL;
+		img->mListNodeNext = NULL;
+
+		img->Shutdown();
+	}
+
+	DeleteZombieTextures();
+
+	mpGL = NULL;
+}
+
+void VDDisplayRendererOpenGL::Begin(sint32 w, sint32 h) {
+	DeleteZombieTextures();
+
+	mRenderWidth = w;
+	mRenderHeight = h;
+	mOffsetX = 0;
+	mOffsetY = 0;
+	mScissor.set(0, 0, w, h);
+
+	VDASSERT(mpGL->glGetError() == GL_NO_ERROR);
+
+	mpGL->glDisable(GL_BLEND);
+	mpGL->glDisable(GL_CULL_FACE);
+	mpGL->glDisable(GL_ALPHA_TEST);
+	mpGL->glDisable(GL_DEPTH_TEST);
+	mpGL->glDisable(GL_STENCIL_TEST);
+	mpGL->glDisable(GL_LIGHTING);
+	mpGL->glDisable(GL_TEXTURE_2D);
+	VDASSERT(mpGL->glGetError() == GL_NO_ERROR);
+
+	mpGL->glMatrixMode(GL_PROJECTION);
+	mpGL->glLoadIdentity();
+	mpGL->glOrtho(0, w, h, 0, 0, 1);
+	VDASSERT(mpGL->glGetError() == GL_NO_ERROR);
+
+	mpGL->glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	VDASSERT(mpGL->glGetError() == GL_NO_ERROR);
+
+	mColorRed = 0;
+	mColorGreen = 0;
+	mColorBlue = 0;
+
+	UpdateViewport();
+	mpGL->glEnable(GL_SCISSOR_TEST);
+}
+
+void VDDisplayRendererOpenGL::End() {
+	mpGL->glDisable(GL_SCISSOR_TEST);
+
+	DeleteZombieTextures();
+}
+
+const VDDisplayRendererCaps& VDDisplayRendererOpenGL::GetCaps() {
+	static const VDDisplayRendererCaps kCaps = {
+		true,
+		true
+	};
+
+	return kCaps;
+}
+
+void VDDisplayRendererOpenGL::SetColorRGB(uint32 color) {
+	mColor = color;
+	mColorRed = ((color >> 16) & 0xff) / 255.0f;
+	mColorGreen = ((color >> 8) & 0xff) / 255.0f;
+	mColorBlue = ((color >> 0) & 0xff) / 255.0f;
+}
+
+void VDDisplayRendererOpenGL::FillRect(sint32 x, sint32 y, sint32 w, sint32 h) {
+	mpGL->glDisable(GL_TEXTURE_2D);
+
+	mpGL->glColor4f(mColorRed, mColorGreen, mColorBlue, 1.0f);
+	mpGL->glBegin(GL_TRIANGLE_STRIP);
+	mpGL->glVertex2i(x, y);
+	mpGL->glVertex2i(x, y + h);
+	mpGL->glVertex2i(x + w, y);
+	mpGL->glVertex2i(x + w, y + h);
+	mpGL->glEnd();
+}
+
+void VDDisplayRendererOpenGL::MultiFillRect(const vdrect32 *rects, uint32 n) {
+	if (!n)
+		return;
+
+	mpGL->glDisable(GL_TEXTURE_2D);
+
+	mpGL->glColor4f(mColorRed, mColorGreen, mColorBlue, 1.0f);
+	mpGL->glBegin(GL_QUADS);
+
+	while(n--) {
+		const vdrect32& r = *rects++;
+		const sint32 x1 = r.left;
+		const sint32 y1 = r.top;
+		const sint32 x2 = r.right;
+		const sint32 y2 = r.bottom;
+
+		mpGL->glVertex2i(x1, y1);
+		mpGL->glVertex2i(x1, y2);
+		mpGL->glVertex2i(x2, y2);
+		mpGL->glVertex2i(x2, y1);
+	}
+
+	mpGL->glEnd();
+}
+
+void VDDisplayRendererOpenGL::AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor) {
+	mpGL->glDisable(GL_TEXTURE_2D);
+	mpGL->glEnable(GL_BLEND);
+	mpGL->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	mpGL->glColor4f(
+		(float)((alphaColor >> 16) & 0xff) / 255.0f,
+		(float)((alphaColor >>  8) & 0xff) / 255.0f,
+		(float)((alphaColor >>  0) & 0xff) / 255.0f,
+		(float)((alphaColor >> 24) & 0xff) / 255.0f
+		);
+
+	mpGL->glBegin(GL_QUADS);
+
+	mpGL->glVertex2i(x, y);
+	mpGL->glVertex2i(x, y+h);
+	mpGL->glVertex2i(x+w, y+h);
+	mpGL->glVertex2i(x+w, y);
+
+	mpGL->glEnd();
+
+	mpGL->glDisable(GL_BLEND);
+}
+
+void VDDisplayRendererOpenGL::Blt(sint32 x, sint32 y, VDDisplayImageView& imageView) {
+	VDDisplayCachedImageOpenGL *cachedImage = GetCachedImage(imageView);
+
+	if (!cachedImage)
+		return;
+
+	const float u0 = 0;
+	const float v0 = (float)cachedImage->mHeight / (float)cachedImage->mTexHeight;
+	const float u1 = (float)cachedImage->mWidth / (float)cachedImage->mTexWidth;
+	const float v1 = 0;
+
+	mpGL->glEnable(GL_TEXTURE_2D);
+	mpGL->glBindTexture(GL_TEXTURE_2D, cachedImage->mTexture);
+
+	mpGL->glColor4f(1, 1, 1, 1);
+	mpGL->glBegin(GL_TRIANGLE_STRIP);
+	mpGL->glTexCoord2f(u0, v0);
+	mpGL->glVertex2i(x, y);
+	mpGL->glTexCoord2f(u0, v1);
+	mpGL->glVertex2i(x, y + cachedImage->mHeight);
+	mpGL->glTexCoord2f(u1, v0);
+	mpGL->glVertex2i(x + cachedImage->mWidth, y);
+	mpGL->glTexCoord2f(u1, v1);
+	mpGL->glVertex2i(x + cachedImage->mWidth, y + cachedImage->mHeight);
+	mpGL->glEnd();
+
+	mpGL->glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void VDDisplayRendererOpenGL::Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h) {
+	VDDisplayCachedImageOpenGL *cachedImage = GetCachedImage(imageView);
+
+	if (!cachedImage)
+		return;
+
+	// do source clipping
+	if (sx < 0) { x -= sx; w += sx; sx = 0; }
+	if (sy < 0) { y -= sy; h += sy; sy = 0; }
+
+	if ((w|h) < 0)
+		return;
+
+	if (sx + w > cachedImage->mWidth) { w = cachedImage->mWidth - sx; }
+	if (sy + h > cachedImage->mHeight) { h = cachedImage->mHeight - sy; }
+
+	if (w <= 0 || h <= 0)
+		return;
+
+	const float invsw = 1.0f / (float)cachedImage->mTexWidth;
+	const float invsh = 1.0f / (float)cachedImage->mTexHeight;
+	const float u0 = (float)sx * invsw;
+	const float v0 = (float)(cachedImage->mHeight - sy) * invsh;
+	const float u1 = (float)(sx + w) * invsw;
+	const float v1 = (float)(cachedImage->mHeight - (sy + h)) * invsh;
+
+	mpGL->glEnable(GL_TEXTURE_2D);
+	mpGL->glBindTexture(GL_TEXTURE_2D, cachedImage->mTexture);
+
+	mpGL->glColor4f(1, 1, 1, 1);
+	mpGL->glBegin(GL_TRIANGLE_STRIP);
+	mpGL->glTexCoord2f(u0, v0);
+	mpGL->glVertex2i(x, y);
+	mpGL->glTexCoord2f(u0, v1);
+	mpGL->glVertex2i(x, y + h);
+	mpGL->glTexCoord2f(u1, v0);
+	mpGL->glVertex2i(x + w, y);
+	mpGL->glTexCoord2f(u1, v1);
+	mpGL->glVertex2i(x + w, y + h);
+	mpGL->glEnd();
+
+	mpGL->glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void VDDisplayRendererOpenGL::MultiStencilBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
+	if (!n)
+		return;
+
+	VDDisplayCachedImageOpenGL *cachedImage = GetCachedImage(imageView);
+
+	if (!cachedImage)
+		return;
+
+	const float invsw = 1.0f / (float)cachedImage->mTexWidth;
+	const float invsh = 1.0f / (float)cachedImage->mTexHeight;
+	float vmax = (float)cachedImage->mHeight * invsh;
+
+	mpGL->glBindTexture(GL_TEXTURE_2D, cachedImage->mTexture);
+	mpGL->glEnable(GL_BLEND);
+	mpGL->glEnable(GL_TEXTURE_2D);
+
+	mpGL->glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	mpGL->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_COLOR);
+
+	for(int pass=0; pass<3; ++pass) {
+		switch(pass) {
+			case 0:
+				mpGL->glColor4f(1.0f, 0.0f, 0.0f, mColorRed);
+				break;
+
+			case 1:
+				mpGL->glColor4f(0.0f, 1.0f, 0.0f, mColorGreen);
+				break;
+
+			case 2:
+				mpGL->glColor4f(0.0f, 0.0f, 1.0f, mColorBlue);
+				break;
+		}
+
+		mpGL->glBegin(GL_QUADS);
+
+		for(uint32 i=0; i<n; ++i) {
+			const VDDisplayBlt& blt = blts[i];
+			sint32 x = blt.mDestX;
+			sint32 y = blt.mDestY;
+			sint32 sx = blt.mSrcX;
+			sint32 sy = blt.mSrcY;
+			sint32 w = blt.mWidth;
+			sint32 h = blt.mHeight;
+
+			// do source clipping
+			if (sx < 0) { x -= sx; w += sx; sx = 0; }
+			if (sy < 0) { y -= sy; h += sy; sy = 0; }
+
+			if ((w|h) < 0)
+				continue;
+
+			if (sx + w > cachedImage->mWidth) { w = cachedImage->mWidth - sx; }
+			if (sy + h > cachedImage->mHeight) { h = cachedImage->mHeight - sy; }
+
+			if (w <= 0 || h <= 0)
+				continue;
+
+			const float u0 = (float)sx * invsw;
+			const float u1 = (float)(sx + w) * invsw;
+			const float v0 = vmax - (float)sy * invsh;
+			const float v1 = vmax - (float)(sy + h) * invsh;
+
+			mpGL->glTexCoord2f(u0, v0);
+			mpGL->glVertex2i(x, y);
+
+			mpGL->glTexCoord2f(u0, v1);
+			mpGL->glVertex2i(x, y+h);
+
+			mpGL->glTexCoord2f(u1, v1);
+			mpGL->glVertex2i(x+w, y+h);
+
+			mpGL->glTexCoord2f(u1, v0);
+			mpGL->glVertex2i(x+w, y);
+		}
+
+		mpGL->glEnd();
+	}
+
+	mpGL->glDisable(GL_TEXTURE_2D);
+	mpGL->glDisable(GL_BLEND);
+	mpGL->glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void VDDisplayRendererOpenGL::MultiColorBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView) {
+	return MultiStencilBlt(blts, n, imageView);
+}
+
+void VDDisplayRendererOpenGL::PolyLine(const vdpoint32 *points, uint32 numLines) {
+	if (!numLines)
+		return;
+
+	mpGL->glDisable(GL_TEXTURE_2D);
+
+	mpGL->glColor4f(mColorRed, mColorGreen, mColorBlue, 1.0f);
+	mpGL->glBegin(GL_LINE_STRIP);
+
+	do {
+		mpGL->glVertex2f((float)points->x + 0.5f, (float)points->y + 0.5f);
+		++points;
+	} while(numLines--);
+
+	mpGL->glEnd();
+}
+
+bool VDDisplayRendererOpenGL::PushViewport(const vdrect32& r, sint32 x, sint32 y) {
+	vdrect32 scissor(r);
+
+	scissor.translate(mOffsetX, mOffsetY);
+
+	if (scissor.left < mScissor.left)
+		scissor.left = mScissor.left;
+
+	if (scissor.top < mScissor.top)
+		scissor.top = mScissor.top;
+
+	if (scissor.right > mScissor.right)
+		scissor.right = mScissor.right;
+
+	if (scissor.bottom > mScissor.bottom)
+		scissor.bottom = mScissor.bottom;
+
+	if (scissor.empty())
+		return false;
+
+	Viewport& vp = mViewportStack.push_back();
+	vp.mOffsetX = mOffsetX;
+	vp.mOffsetY = mOffsetY;
+	vp.mScissor = mScissor;
+
+	mScissor = scissor;
+	mOffsetX = x;
+	mOffsetY = y;
+
+	UpdateViewport();
+	return true;
+}
+
+void VDDisplayRendererOpenGL::PopViewport() {
+	const Viewport& vp = mViewportStack.back();
+
+	mOffsetX = vp.mOffsetX;
+	mOffsetY = vp.mOffsetY;
+	mScissor = vp.mScissor;
+
+	mViewportStack.pop_back();
+
+	UpdateViewport();
+}
+
+IVDDisplayRenderer *VDDisplayRendererOpenGL::BeginSubRender(const vdrect32& r, VDDisplaySubRenderCache& cache) {
+	if (!PushViewport(r, r.left, r.top))
+		return NULL;
+
+	Context& c = mContextStack.push_back();
+	c.mColor = mColor;
+
+	SetColorRGB(0);
+	return this;
+}
+
+void VDDisplayRendererOpenGL::EndSubRender() {
+	const Context& c = mContextStack.back();
+
+	SetColorRGB(c.mColor);
+
+	mContextStack.pop_back();
+
+	PopViewport();
+}
+
+void VDDisplayRendererOpenGL::UpdateViewport() {
+	mpGL->glScissor(mScissor.left, mRenderHeight - mScissor.bottom, mScissor.width(), mScissor.height());
+	mpGL->glMatrixMode(GL_MODELVIEW);
+	mpGL->glLoadIdentity();
+	mpGL->glTranslatef((float)mOffsetX, (float)mOffsetY, 0.0f);
+}
+
+VDDisplayCachedImageOpenGL *VDDisplayRendererOpenGL::GetCachedImage(VDDisplayImageView& imageView) {
+	VDDisplayCachedImageOpenGL *cachedImage = static_cast<VDDisplayCachedImageOpenGL *>(imageView.GetCachedImage(VDDisplayCachedImageOpenGL::kTypeID));
+
+	if (cachedImage && cachedImage->mpOwner != this)
+		cachedImage = NULL;
+
+	if (!cachedImage) {
+		DeleteZombieTextures();
+
+		cachedImage = new_nothrow VDDisplayCachedImageOpenGL;
+
+		if (!cachedImage)
+			return NULL;
+		
+		cachedImage->AddRef();
+		if (!cachedImage->Init(mpGL, this, imageView)) {
+			cachedImage->Release();
+			return NULL;
+		}
+
+		imageView.SetCachedImage(VDDisplayCachedImageOpenGL::kTypeID, cachedImage);
+		mCachedImages.push_back(cachedImage);
+
+		cachedImage->Release();
+	} else {
+		uint32 c = imageView.GetUniquenessCounter();
+
+		if (cachedImage->mUniquenessCounter != c)
+			cachedImage->Update(imageView);
+	}
+
+	return cachedImage;
+}
+
+void VDDisplayRendererOpenGL::DeleteZombieTextures() {
+	if (!mZombieTextures.empty()) {
+		mpGL->glDeleteTextures(mZombieTextures.size(), mZombieTextures.data());
+		mZombieTextures.clear();
+	}
+}
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -251,6 +906,8 @@ protected:
 	VDVideoTextureTilePatternOpenGL		mTexPattern[2];
 	VDVideoDisplaySourceInfo			mSource;
 
+	VDDisplayRendererOpenGL	mRenderer;
+
 	VDRTProfileChannel	mProfChan;
 	VDOpenGLBinding	mGL;
 
@@ -352,6 +1009,8 @@ bool VDVideoDisplayMinidriverOpenGL::Init(HWND hwnd, HMONITOR hmonitor, const VD
 
 void VDVideoDisplayMinidriverOpenGL::Shutdown() {
 	ShutdownBicubic();
+
+	mRenderer.Shutdown();
 
 	if (mhwndOGL) {
 		DestroyWindow(mhwndOGL);
@@ -635,6 +1294,8 @@ bool VDVideoDisplayMinidriverOpenGL::OnOpenGLInit() {
 				mGL.End();
 				ReleaseDC(mhwndOGL, hdc);
 
+				mRenderer.Init(&mGL);
+
 				VDDEBUG_DISP("VideoDisplay: Using OpenGL for %dx%d display.\n", mSource.pixmap.w, mSource.pixmap.h);
 				return true;
 			}
@@ -693,6 +1354,7 @@ void VDVideoDisplayMinidriverOpenGL::OnPaint() {
 	RECT r;
 	GetClientRect(mhwndOGL, &r);
 
+	const int vpw = r.right;
 	const int vph = r.bottom;
 
 	FilterMode mode = mPreferredFilter;
@@ -993,6 +1655,18 @@ void VDVideoDisplayMinidriverOpenGL::OnPaint() {
 					mGL.glEnd();
 				}
 			}
+		}
+
+		if (mpCompositor) {
+			VDDisplayCompositeInfo compInfo = {};
+			compInfo.mWidth = vpw;
+			compInfo.mHeight = vph;
+
+			mGL.glViewport(0, 0, vpw, vph);
+
+			mRenderer.Begin(vpw, vph);
+			mpCompositor->Composite(mRenderer, compInfo);
+			mRenderer.End();
 		}
 
 		VDASSERT(mGL.glGetError() == GL_NO_ERROR);

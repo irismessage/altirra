@@ -6,6 +6,12 @@
 static const struct VD_MSVC_C4786Workaround { VD_MSVC_C4786Workaround() {} } g_VD_MSVC_C4786Workaround;
 #endif
 
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0500
+#elif _WIN32_WINNT < 0x0500
+#error _WIN32_WINNT is less than 5.0. This will break the places bar on the load/save dialog.
+#endif
+
 #include <vd2/system/vdtypes.h>
 #include <vd2/Dita/interface.h>
 

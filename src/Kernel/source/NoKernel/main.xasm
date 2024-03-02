@@ -89,7 +89,7 @@ nmires	equ	$d40f
 :2048	dta		$12
 
 	org		$e000
-	ins		'../atarifont.bin',$0,$400
+	icl		'atarifont.inc'
 
 	org		$e400
 

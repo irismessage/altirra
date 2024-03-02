@@ -21,6 +21,7 @@
 #include "pokeytables.h"
 #include <float.h>
 #include <vd2/system/math.h>
+#include <vd2/system/binary.h>
 
 #include <math.h>
 
@@ -284,6 +285,18 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 		mSERIN = mSerialInputShiftRegister;
 	}
 
+	// check for attempted read in synchronous mode
+	if (!(mSKCTL & 0x10)) {
+		// blown read -- trash the byte by faking a dropped bit
+		c = (c & 0x0f) + ((c & 0xe0) >> 1) + 0x80;
+
+		// set the framing error bit
+		mSKSTAT &= 0x7F;
+
+		if (mbTraceSIO)
+			ATConsoleTaggedPrintf("POKEY: Trashing byte $%02x and signaling framing error due to asynchronous input mode not being enabled.\n", c);
+	}
+
 	// check for mismatched baud rate
 	if (cyclesPerBit) {
 		uint32 expectedCPB = GetSerialCyclesPerBit();
@@ -295,7 +308,7 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 			mSKSTAT &= 0x7F;
 
 			if (mbTraceSIO)
-				ATConsoleTaggedPrintf("POKEY: Signaling overrun due to receive rate mismatch (expected %d cycles/bit, got %d)\n", expectedCPB, cyclesPerBit);
+				ATConsoleTaggedPrintf("POKEY: Signaling framing error due to receive rate mismatch (expected %d cycles/bit, got %d)\n", expectedCPB, cyclesPerBit);
 		}
 	}
 
@@ -1146,6 +1159,8 @@ void ATPokeyEmulator::SetupTimers(uint8 channels) {
 
 	const bool slowTickValid = (mSKCTL & 3) != 0;
 
+	VDASSERT(!slowTickValid || (cyclesToNextSlowTick >= -114 && cyclesToNextSlowTick <= 0));
+
 	if (channels & 0x01) {
 		mpScheduler->UnsetEvent(mpTimerBorrowEvents[0]);
 		FlushDeferredTimerEvents(0);
@@ -1177,7 +1192,7 @@ void ATPokeyEmulator::SetupTimers(uint8 channels) {
 				ticks += 3;
 			}
 
-			VDASSERT(ticks > 0);
+			VDASSERT((sint32)ticks > 0);
 
 			if (!mbAllowDeferredTimer[0])
 				mpTimerBorrowEvents[0] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer1Borrow);
@@ -1236,7 +1251,7 @@ void ATPokeyEmulator::SetupTimers(uint8 channels) {
 					ticks += 3;
 				}
 
-				VDASSERT(ticks > 0);
+				VDASSERT((sint32)ticks > 0);
 
 				if (!mbAllowDeferredTimer[1])
 					mpTimerBorrowEvents[1] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer2Borrow);
@@ -1270,7 +1285,7 @@ void ATPokeyEmulator::SetupTimers(uint8 channels) {
 					ticks += 3;
 				}
 
-				VDASSERT(ticks > 0);
+				VDASSERT((sint32)ticks > 0);
 
 				if (!mbAllowDeferredTimer[1]) {
 					mpTimerBorrowEvents[1] = mpScheduler->AddEvent(ticks, this, kATPokeyEventTimer2Borrow);
@@ -1329,7 +1344,7 @@ void ATPokeyEmulator::SetupTimers(uint8 channels) {
 					ticks += 3;
 				}
 
-				VDASSERT(ticks > 0);
+				VDASSERT((sint32)ticks > 0);
 
 				// Check if we need an active event or if we can go to deferred mode. We only need an
 				// active event if timers are linked, timer 1 IRQ is enabled, or two-tone mode is active.
@@ -1973,24 +1988,71 @@ void ATPokeyEmulator::DumpStatus() {
 	}
 }
 
-void ATPokeyEmulator::LoadState(ATSaveStateReader& reader) {
-	mAUDF[0] = reader.ReadUint8();
-	mAUDF[1] = reader.ReadUint8();
-	mAUDF[2] = reader.ReadUint8();
-	mAUDF[3] = reader.ReadUint8();
-	mAUDC[0] = reader.ReadUint8();
-	mAUDC[1] = reader.ReadUint8();
-	mAUDC[2] = reader.ReadUint8();
-	mAUDC[3] = reader.ReadUint8();
+void ATPokeyEmulator::BeginLoadState(ATSaveStateReader& reader) {
+	reader.RegisterHandlerMethod(kATSaveStateSection_Arch, VDMAKEFOURCC('P', 'O', 'K', 'Y'), this, &ATPokeyEmulator::LoadStateArch);
+	reader.RegisterHandlerMethod(kATSaveStateSection_Private, VDMAKEFOURCC('P', 'O', 'K', 'Y'), this, &ATPokeyEmulator::LoadStatePrivate);
+	reader.RegisterHandlerMethod(kATSaveStateSection_ResetPrivate, 0, this, &ATPokeyEmulator::LoadStateResetPrivate);
+	reader.RegisterHandlerMethod(kATSaveStateSection_End, 0, this, &ATPokeyEmulator::EndLoadState);
+
+	if (mpSlave)
+		mpSlave->BeginLoadState(reader);
+}
+
+void ATPokeyEmulator::LoadStateArch(ATSaveStateReader& reader) {
+	for(int i=0; i<4; ++i) {
+		mAUDF[i] = reader.ReadUint8();
+		mAUDC[i] = reader.ReadUint8();
+	}
+
 	mAUDCTL = reader.ReadUint8();
-	mCounter[0] = reader.ReadUint32();
-	mCounter[1] = reader.ReadUint32();
-	mCounter[2] = reader.ReadUint32();
-	mCounter[3] = reader.ReadUint32();
-	mALLPOT = reader.ReadUint8();
 	mIRQEN = reader.ReadUint8();
 	mIRQST = reader.ReadUint8();
 	mSKCTL = reader.ReadUint8();
+}
+
+void ATPokeyEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+	mALLPOT = reader.ReadUint8();
+	mKBCODE = reader.ReadUint8();
+	
+	for(int i=0; i<4; ++i)
+		reader != mCounter[i];
+
+	for(int i=0; i<4; ++i)
+		reader != mCounterBorrow[i];
+
+	mLast15KHzTime = t - reader.ReadUint8();
+	mLast64KHzTime = t - reader.ReadUint8();
+
+	mPoly9Counter = reader.ReadUint16() % 511;
+	mPoly17Counter = reader.ReadUint32() % 131071;
+
+	mpRenderer->LoadState(reader);
+}
+
+void ATPokeyEmulator::LoadStateResetPrivate(ATSaveStateReader& reader) {
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+	mALLPOT = 0xFF;
+	mKBCODE = 0xFF;
+
+	for(int i=0; i<4; ++i) {
+		mCounter[i] = 1;
+		mCounterBorrow[i] = 0;
+	}
+
+	mLast15KHzTime = t;
+	mLast64KHzTime = t;
+
+	mPoly9Counter = 0;
+	mPoly17Counter = 0;
+
+	mpRenderer->ResetState();
+}
+
+void ATPokeyEmulator::EndLoadState(ATSaveStateReader& reader) {
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 
 	mbFastTimer1 = (mAUDCTL & 0x40) != 0;
 	mbFastTimer3 = (mAUDCTL & 0x20) != 0;
@@ -1998,11 +2060,16 @@ void ATPokeyEmulator::LoadState(ATSaveStateReader& reader) {
 	mbLinkedTimers34 = (mAUDCTL & 0x08) != 0;
 	mbUse15KHzClock = (mAUDCTL & 0x01) != 0;
 
+	mpRenderer->SetInitMode((mSKCTL & 3) == 0);
 	mpRenderer->SetAUDCTL(mAUDCTL);
 	for(int i=0; i<4; ++i) {
 		mAUDFP1[i] = mAUDF[i] + 1;
 		mpRenderer->SetAUDCx(i, mAUDC[i]);
 	}
+
+	mLastPolyTime = t;
+
+	mpScheduler->SetEvent(114 - (t - mLast15KHzTime), this, kATPokeyEvent15KHzTick, mp15KHzEvent);
 
 	RecomputeTimerPeriod<0>();
 	RecomputeTimerPeriod<1>();
@@ -2011,31 +2078,67 @@ void ATPokeyEmulator::LoadState(ATSaveStateReader& reader) {
 	RecomputeAllowedDeferredTimers();
 
 	SetupTimers(0x0f);
+
+	if (mpSlave)
+		mpSlave->EndLoadState(reader);
 }
 
-void ATPokeyEmulator::SaveState(ATSaveStateWriter& writer) {
+void ATPokeyEmulator::BeginSaveState(ATSaveStateWriter& writer) {
 	UpdateTimerCounter<0>();
 	UpdateTimerCounter<1>();
 	UpdateTimerCounter<2>();
 	UpdateTimerCounter<3>();
 
-	writer.WriteUint8(mAUDF[0]);
-	writer.WriteUint8(mAUDF[1]);
-	writer.WriteUint8(mAUDF[2]);
-	writer.WriteUint8(mAUDF[3]);
-	writer.WriteUint8(mAUDC[0]);
-	writer.WriteUint8(mAUDC[1]);
-	writer.WriteUint8(mAUDC[2]);
-	writer.WriteUint8(mAUDC[3]);
+	writer.RegisterHandlerMethod(kATSaveStateSection_Arch, this, &ATPokeyEmulator::SaveStateArch);
+	writer.RegisterHandlerMethod(kATSaveStateSection_Private, this, &ATPokeyEmulator::SaveStatePrivate);
+}
+
+void ATPokeyEmulator::SaveStateArch(ATSaveStateWriter& writer) {
+	writer.BeginChunk(VDMAKEFOURCC('P', 'O', 'K', 'Y'));
+
+	for(int i=0; i<4; ++i) {
+		writer.WriteUint8(mAUDF[i]);
+		writer.WriteUint8(mAUDC[i]);
+	}
+
 	writer.WriteUint8(mAUDCTL);
-	writer.WriteUint32(mCounter[0]);
-	writer.WriteUint32(mCounter[1]);
-	writer.WriteUint32(mCounter[2]);
-	writer.WriteUint32(mCounter[3]);
-	writer.WriteUint8(mALLPOT);
 	writer.WriteUint8(mIRQEN);
 	writer.WriteUint8(mIRQST);
 	writer.WriteUint8(mSKCTL);
+
+	writer.EndChunk();
+
+	if (mpSlave)
+		mpSlave->SaveStateArch(writer);
+}
+
+void ATPokeyEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+	writer.BeginChunk(VDMAKEFOURCC('P', 'O', 'K', 'Y'));
+
+	writer.WriteUint8(mALLPOT);
+	writer.WriteUint8(mKBCODE);
+
+	for(int i=0; i<4; ++i)
+		writer != mCounter[i];
+
+	for(int i=0; i<4; ++i)
+		writer != mCounterBorrow[i];
+
+	writer.WriteUint8(t - mLast15KHzTime);
+	writer.WriteUint8(t - mLast64KHzTime);
+
+	int polyDelta = t - mLastPolyTime;
+	writer.WriteUint16((mPoly9Counter + polyDelta) % 511);
+	writer.WriteUint32((mPoly17Counter + polyDelta) % 131071);
+
+	mpRenderer->SaveState(writer);
+
+	writer.EndChunk();
+
+	if (mpSlave)
+		mpSlave->SaveStatePrivate(writer);
 }
 
 void ATPokeyEmulator::GetRegisterState(ATPokeyRegisterState& state) const {

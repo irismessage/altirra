@@ -55,6 +55,7 @@ public:
 
 protected:
 	void Flush();
+	void UpdateControlLayer();
 
 	static sint32 StaticDebugReadD2xxControl(void *thisptr, uint32 addr);
 	static sint32 StaticReadD2xxControl(void *thisptr, uint32 addr);

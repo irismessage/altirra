@@ -240,8 +240,17 @@ public:
 
 	void	DumpStatus();
 
-	void	LoadState(ATSaveStateReader& reader);
-	void	SaveState(ATSaveStateWriter& writer);
+	void	BeginLoadState(ATSaveStateReader& reader);
+	void	LoadState6502(ATSaveStateReader& reader);
+	void	LoadState65C816(ATSaveStateReader& reader);
+	void	LoadStatePrivate(ATSaveStateReader& reader);
+	void	LoadStateResetPrivate(ATSaveStateReader& reader);
+	void	EndLoadState(ATSaveStateReader& reader);
+
+	void	BeginSaveState(ATSaveStateWriter& writer);
+	void	SaveStateArch(ATSaveStateWriter& writer);
+	void	SaveStatePrivate(ATSaveStateWriter& writer);
+	void	EndSaveState(ATSaveStateWriter& writer);
 
 	void	SetHLEDelay(int delay) { mHLEDelay = delay; }
 	void	InjectOpcode(uint8 op);

@@ -20,10 +20,12 @@
 
 #include <vd2/system/VDString.h>
 
+class ATUIMenu;
+
 void ATClearMRUList();
 void ATAddMRUListItem(const wchar_t *path);
 VDStringW ATGetMRUListItem(uint32 index);
 void ATPromoteMRUListItem(uint32 index);
-void ATUpdateMRUListMenu(HMENU menu, UINT baseId, UINT clearId);
+void ATUpdateMRUListMenu(HMENU hmenu, ATUIMenu *pmenu, UINT baseId, UINT clearId);
 
 #endif

@@ -9,6 +9,7 @@ class VDStringA;
 class ATCPUEmulator;
 class ATCPUEmulatorMemory;
 class ATAnticEmulator;
+class ATMMUEmulator;
 class IATDebugger;
 
 enum ATDebugExpNodeType {
@@ -37,6 +38,7 @@ enum ATDebugExpNodeType {
 	kATDebugExpNodeType_DerefByte,
 	kATDebugExpNodeType_DerefSignedByte,
 	kATDebugExpNodeType_DerefWord,
+	kATDebugExpNodeType_DerefSignedWord,
 	kATDebugExpNodeType_Invert,
 	kATDebugExpNodeType_Negate,
 	kATDebugExpNodeType_Const,
@@ -47,13 +49,18 @@ enum ATDebugExpNodeType {
 	kATDebugExpNodeType_LoByte,
 	kATDebugExpNodeType_HiByte,
 	kATDebugExpNodeType_Address,
-	kATDebugExpNodeType_Value
+	kATDebugExpNodeType_Value,
+	kATDebugExpNodeType_XBankReg,
+	kATDebugExpNodeType_XBankCPU,
+	kATDebugExpNodeType_XBankANTIC,
+	kATDebugExpNodeType_AddrSpace
 };
 
 struct ATDebugExpEvalContext {
 	ATCPUEmulator *mpCPU;
 	ATCPUEmulatorMemory *mpMemory;
 	ATAnticEmulator *mpAntic;
+	ATMMUEmulator *mpMMU;
 
 	bool mbAccessValid;
 	bool mbAccessReadValid;
@@ -87,6 +94,8 @@ public:
 	virtual bool Optimize(ATDebugExpNode **result) { return false; }
 	virtual bool OptimizeInvert(ATDebugExpNode **result) { return false; }
 
+	virtual bool IsAddress() const { return false; }
+
 	virtual bool CanOptimizeInvert() const { return false; }
 
 	virtual void ToString(VDStringA& s) {
@@ -96,7 +105,12 @@ public:
 	virtual void ToString(VDStringA& s, int prec) = 0;
 };
 
-ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg);
+struct ATDebuggerExprParseOpts {
+	bool mbDefaultHex;
+	bool mbAllowUntaggedHex;
+};
+
+ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const ATDebuggerExprParseOpts& opts);
 ATDebugExpNode *ATDebuggerInvertExpression(ATDebugExpNode *node);
 
 class ATDebuggerExprParseException : public MyError {

@@ -84,6 +84,7 @@ struct VDAPITableOpenGL {
 	void	(APIENTRY *glReadBuffer)(GLenum mode);
 	void	(APIENTRY *glReadPixels)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLvoid *pixels);
 	GLint	(APIENTRY *glRenderMode)(GLenum);
+	void	(APIENTRY *glScissor)(GLint x, GLint y, GLsizei width, GLsizei height);
 	void	(APIENTRY *glTexCoord2d)(GLdouble s, GLdouble t);
 	void	(APIENTRY *glTexCoord2f)(GLfloat s, GLfloat t);
 	void	(APIENTRY *glTexCoord2fv)(const GLfloat *v);
@@ -95,6 +96,7 @@ struct VDAPITableOpenGL {
 	void	(APIENTRY *glTexParameteri)(GLenum target, GLenum pname, GLint param);
 	void	(APIENTRY *glTexSubImage1D)(GLenum target, GLint level, GLint xoffset, GLsizei width, GLenum format, GLenum type, const GLvoid *pixels);
 	void	(APIENTRY *glTexSubImage2D)(GLenum target, GLint level, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, const GLvoid *pixels);
+	void	(APIENTRY *glTranslatef)(GLfloat x, GLfloat y, GLfloat z);
 	void	(APIENTRY *glVertex2d)(GLdouble x, GLdouble y);
 	void	(APIENTRY *glVertex2f)(GLfloat x, GLfloat y);
 	void	(APIENTRY *glVertex2i)(GLint x, GLint y);

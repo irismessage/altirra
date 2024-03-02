@@ -20,8 +20,11 @@
 #include <vd2/system/error.h>
 #include <vd2/system/hash.h>
 #include <vd2/system/math.h>
+#include <vd2/system/strutil.h>
 #include "ide.h"
 #include "idephysdisk.h"
+#include "iderawimage.h"
+#include "idevhdimage.h"
 #include "console.h"
 #include "scheduler.h"
 #include "uirender.h"
@@ -69,9 +72,10 @@ struct ATIDEEmulator::DecodedCHS {
 };
 
 ATIDEEmulator::ATIDEEmulator()
-	: mpPhysDisk(NULL)
+	: mpDisk(NULL)
 {
-	mbReset = false;
+	mbHardwareReset = false;
+	mbSoftwareReset = false;
 	mTransferLength = 0;
 	mTransferIndex = 0;
 	mSectorCount = 0;
@@ -106,25 +110,43 @@ void ATIDEEmulator::OpenImage(bool write, bool fast, uint32 cylinders, uint32 he
 		mbWriteEnabled = write;
 
 		if (ATIDEIsPhysicalDiskPath(filename)) {
-			mpPhysDisk = new ATIDEPhysicalDisk;
-			mpPhysDisk->Init(filename);
+			vdrefptr<ATIDEPhysicalDisk> physDisk(new ATIDEPhysicalDisk);
+			physDisk->Init(filename);
 
-			mSectorCount = mpPhysDisk->GetSectorCount();
+			mpDisk = physDisk.release();
+			mSectorCount = mpDisk->GetSectorCount();
 			mHeadCount = heads;
 			mSectorsPerTrack = sectors;
 			mCylinderCount = mSectorCount / (mHeadCount * mSectorsPerTrack);
 			mbWriteEnabled = false;
 		} else {
-			mFile.open(filename, write ? nsVDFile::kReadWrite | nsVDFile::kDenyAll | nsVDFile::kOpenAlways : nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
+			size_t pathlen = wcslen(filename);
 
-			mSectorCount = cylinders * heads * sectors;
+			if (pathlen > 4 && !vdwcsicmp(filename + pathlen - 4, L".vhd")) {
+				vdrefptr<ATIDEVHDImage> vhd(new ATIDEVHDImage);
+				vhd->Init(filename, write);
 
-			if (sectors > 63)
-				sectors = 63;
+				mpDisk = vhd.release();
+				mSectorCount = mpDisk->GetSectorCount();
+				mHeadCount = heads;
+				mSectorsPerTrack = sectors;
+				mCylinderCount = mSectorCount / (mHeadCount * mSectorsPerTrack);
+			} else {
+				vdrefptr<ATIDERawImage> rawImage(new ATIDERawImage);
 
-			mCylinderCount = cylinders;
-			mHeadCount = heads;
-			mSectorsPerTrack = sectors;
+				rawImage->Init(filename, write);
+
+				mpDisk = rawImage.release();
+
+				mSectorCount = cylinders * heads * sectors;
+
+				if (sectors > 63)
+					sectors = 63;
+
+				mCylinderCount = cylinders;
+				mHeadCount = heads;
+				mSectorsPerTrack = sectors;
+			}
 		}
 
 		ResetCHSTranslation();
@@ -141,12 +163,10 @@ void ATIDEEmulator::OpenImage(bool write, bool fast, uint32 cylinders, uint32 he
 }
 
 void ATIDEEmulator::CloseImage() {
-	if (mpPhysDisk) {
-		delete mpPhysDisk;
-		mpPhysDisk = NULL;
-	}
+	mFlushTimer.Stop();
 
-	mFile.close();
+	vdsaferelease <<= mpDisk;
+
 	mSectorCount = 0;
 	mCylinderCount = 0;
 	mHeadCount = 0;
@@ -164,11 +184,12 @@ const wchar_t *ATIDEEmulator::GetImagePath() const {
 }
 
 void ATIDEEmulator::ColdReset() {
-	mbReset = false;
+	mbHardwareReset = false;
+	mbSoftwareReset = false;
 	ResetDevice();
 
-	if (mpPhysDisk)
-		mpPhysDisk->RequestUpdate();
+	if (mpDisk)
+		mpDisk->RequestUpdate();
 }
 
 void ATIDEEmulator::DumpStatus() const {
@@ -179,31 +200,41 @@ void ATIDEEmulator::DumpStatus() const {
 	ATConsolePrintf("CHS translation: %u cylinders, %u heads, %u sectors/track\n", mCurrentCylinderCount, mCurrentHeadCount, mCurrentSectorsPerTrack);
 	ATConsolePrintf("Active command:  $%02x\n", mActiveCommand);
 	ATConsolePrintf("Transfer mode:   %d-bit\n", mbTransfer16Bit ? 16 : 8);
-	ATConsolePrintf("Reset line:      %s\n", mbReset ? "asserted" : "negated");
+	ATConsolePrintf("Reset line:      %s\n", mbHardwareReset ? "asserted" : "negated");
+	ATConsolePrintf("Software reset:  %s\n", mbSoftwareReset ? "asserted" : "negated");
 }
 
 void ATIDEEmulator::SetReset(bool asserted) {
-	if (mbReset == asserted)
+	if (mbHardwareReset == asserted)
 		return;
 
-	mbReset = asserted;
+	mbHardwareReset = asserted;
 
-	if (asserted)
+	if (asserted && !mbSoftwareReset)
 		ResetDevice();
 }
 
 uint32 ATIDEEmulator::ReadDataLatch(bool advance) {
-	if (mbReset)
+	if (mbHardwareReset || mbSoftwareReset || !mpDisk)
 		return 0xFFFF;
 
-	uint32 v = mTransferBuffer[mTransferIndex];
+	uint32 v = 0xFF;
+	
+	if (mTransferIndex < mTransferBuffer.size()) {
+		v = mTransferBuffer[mTransferIndex];
 
-	if (mbTransfer16Bit)
-		v += (uint32)mTransferBuffer[mTransferIndex + 1] << 8;
-	else
-		v += 0xFF00;
+		if (mbTransfer16Bit) {
+			VDASSERT((mTransferIndex & 1) == 0);
 
-	if (!mbTransferAsWrites && mTransferIndex < mTransferLength) {
+			if (mTransferIndex + 1 < mTransferBuffer.size())
+				v += (uint32)mTransferBuffer[mTransferIndex + 1] << 8;
+			else
+				v += 0xFF00;
+		} else
+			v += 0xFF00;
+	}
+
+	if (advance && !mbTransferAsWrites && mTransferIndex < mTransferLength) {
 		++mTransferIndex;
 
 		if (mbTransfer16Bit)
@@ -217,7 +248,7 @@ uint32 ATIDEEmulator::ReadDataLatch(bool advance) {
 }
 
 void ATIDEEmulator::WriteDataLatch(uint8 lo, uint8 hi) {
-	if (mbReset)
+	if (mbHardwareReset || mbSoftwareReset || !mpDisk)
 		return;
 
 	if (mbTransferAsWrites && mTransferIndex < mTransferLength) {
@@ -226,8 +257,11 @@ void ATIDEEmulator::WriteDataLatch(uint8 lo, uint8 hi) {
 		++mTransferIndex;
 
 		if (mbTransfer16Bit) {
-			mTransferBuffer[mTransferIndex] = hi;
-			++mTransferIndex;
+			if (mTransferIndex < mTransferLength) {
+				mTransferBuffer[mTransferIndex] = hi;
+
+				++mTransferIndex;
+			}
 		}
 
 		if (mTransferIndex >= mTransferLength) {
@@ -240,7 +274,7 @@ void ATIDEEmulator::WriteDataLatch(uint8 lo, uint8 hi) {
 }
 
 uint8 ATIDEEmulator::DebugReadByte(uint8 address) {
-	if (mbReset)
+	if (mbHardwareReset || mbSoftwareReset || !mpDisk)
 		return 0xD0;
 
 	if (address >= 8)
@@ -269,7 +303,7 @@ uint8 ATIDEEmulator::DebugReadByte(uint8 address) {
 }
 
 uint8 ATIDEEmulator::ReadByte(uint8 address) {
-	if (mbReset)
+	if (mbHardwareReset || mbSoftwareReset || !mpDisk)
 		return 0xD0;
 
 	if (address >= 8)
@@ -300,7 +334,7 @@ uint8 ATIDEEmulator::ReadByte(uint8 address) {
 }
 
 void ATIDEEmulator::WriteByte(uint8 address, uint8 value) {
-	if (address >= 8 || mbReset)
+	if (address >= 8 || mbHardwareReset || mbSoftwareReset || !mpDisk)
 		return;
 
 	uint32 idx = address & 7;
@@ -350,6 +384,80 @@ void ATIDEEmulator::WriteByte(uint8 address, uint8 value) {
 	}
 }
 
+uint8 ATIDEEmulator::ReadByteAlt(uint8 address) {
+	switch(address & 7) {
+		default:
+			return 0xFF;
+
+		case 0x06:	// alternate status
+			if (mbHardwareReset || mbSoftwareReset)
+				return 0xD0;
+
+			UpdateStatus();
+			return mRFile.mStatus;
+
+		case 0x07:	// device address (drive address)
+			UpdateStatus();
+
+			return ((mRFile.mHead & 0x10) ? 0x01 : 0x02) + ((~mRFile.mHead & 0x0f) << 2) + (mbWriteInProgress ? 0x00 : 0x40);
+	}
+}
+
+void ATIDEEmulator::WriteByteAlt(uint8 address, uint8 value) {
+	if ((address & 7) == 6) {	// device control
+		// bit 2 = SRST (software reset)
+		// bit 1 = nIEN (inverted interrupt enable)
+
+		bool srst = (value & 0x02) != 0;
+
+		if (mbSoftwareReset != srst) {
+			mbSoftwareReset = srst;
+
+			if (srst && !mbHardwareReset)
+				ResetDevice();
+		}
+	}
+}
+
+void ATIDEEmulator::DebugReadSector(uint32 lba, void *dst, uint32 len) {
+	if (!mpDisk)
+		throw MyError("No disk image is attached.");
+
+	if (lba >= mSectorCount)
+		throw MyError("Invalid LBA %u.", lba);
+
+	if (len != 512)
+		throw MyError("Incorrect sector length.");
+
+	mpDisk->ReadSectors(dst, lba, 1);
+}
+
+void ATIDEEmulator::DebugWriteSector(uint32 lba, const void *dst, uint32 len) {
+	if (!mpDisk)
+		throw MyError("No disk image is attached.");
+
+	if (lba >= mSectorCount)
+		throw MyError("Invalid LBA %u.", lba);
+
+	if (len != 512)
+		throw MyError("Incorrect sector length.");
+
+	if (!mbWriteEnabled)
+		throw MyError("The disk image is write protected.");
+
+	mpDisk->WriteSectors(dst, lba, 1);
+}
+
+void ATIDEEmulator::TimerCallback() {
+	if (mpDisk) {
+		try {
+			mpDisk->Flush();
+		} catch(const MyError& e) {
+			g_ATLCIDEError("IDE: I/O ERROR ON DELAYED FLUSH: %s\n", e.gets());
+		}
+	}
+}
+
 void ATIDEEmulator::ResetDevice() {
 	mActiveCommand = 0;
 	mActiveCommandNextTime = 0;
@@ -368,11 +476,13 @@ void ATIDEEmulator::ResetDevice() {
 	mFeatures = 0;
 	mbTransfer16Bit = true;
 
+	mbWriteInProgress = false;
+
 	memset(mTransferBuffer.data(), 0, mTransferBuffer.size());
 }
 
 void ATIDEEmulator::UpdateStatus() {
-	if (!mActiveCommandState)
+	if (!mActiveCommandState || !mpDisk)
 		return;
 
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
@@ -435,17 +545,7 @@ void ATIDEEmulator::UpdateStatus() {
 							CompleteCommand();
 						} else {
 							try {
-								if (mpPhysDisk) {
-									mpPhysDisk->ReadSectors(mTransferBuffer.data(), lba, nsecs);
-								} else {
-									mFile.seek((sint64)lba << 9);
-
-									uint32 requested = nsecs << 9;
-									uint32 actual = mFile.readData(mTransferBuffer.data(), requested);
-
-									if (requested < actual)
-										memset(mTransferBuffer.data() + actual, 0, requested - actual);
-								}
+								mpDisk->ReadSectors(mTransferBuffer.data(), lba, nsecs);
 							} catch(const MyError& e) {
 								g_ATLCIDEError("IDE: I/O ERROR: %s\n", e.gets());
 								AbortCommand(kATIDEError_UNC);
@@ -516,23 +616,21 @@ void ATIDEEmulator::UpdateStatus() {
 						break;
 
 					try {
-						if (mpPhysDisk) {
-							mpPhysDisk->WriteSectors(mTransferBuffer.data(), mTransferLBA, mTransferSectorCount);
-						} else {
-							mFile.seek((sint64)mTransferLBA << 9);
-							mFile.write(mTransferBuffer.data(), 512 * mTransferSectorCount);
-						}
+						mpDisk->WriteSectors(mTransferBuffer.data(), mTransferLBA, mTransferSectorCount);
 					} catch(const MyError& e) {
 						g_ATLCIDEError("IDE: I/O ERROR: %s\n", e.gets());
 						AbortCommand(kATIDEError_UNC);
 						return;
 					}
 
+					ScheduleLazyFlush();
+
 					WriteLBA(mTransferLBA + mTransferSectorCount - 1);
 
 					mRFile.mStatus |= kATIDEStatus_BSY;
 					++mActiveCommandState;
 					mActiveCommandNextTime = t + mIODelaySetting;
+					mbWriteInProgress = true;
 					break;
 
 				case 4:
@@ -895,10 +993,15 @@ void ATIDEEmulator::UpdateStatus() {
 									// fall through
 
 								default:
-									g_ATLCIDEError("Unsupported transfer mode: %02x", mRFile.mSectorCount);
+									g_ATLCIDEError("Unsupported transfer mode: %02x\n", mRFile.mSectorCount);
 									AbortCommand(0);
 									break;
 							}
+							break;
+
+						case 0x05:	// Enable advanced power management
+						case 0x0A:	// Enable CFA power mode 1
+							CompleteCommand();
 							break;
 
 						case 0x81:		// disable 8-bit data transfers
@@ -907,7 +1010,7 @@ void ATIDEEmulator::UpdateStatus() {
 							break;
 
 						default:
-							g_ATLCIDEError("Unsupported set feature parameter: %02x", mFeatures);
+							g_ATLCIDEError("Unsupported set feature parameter: %02x\n", mFeatures);
 							AbortCommand(0);
 							break;
 					}
@@ -958,6 +1061,7 @@ void ATIDEEmulator::CompleteCommand() {
 	mRFile.mStatus &= ~kATIDEStatus_DRQ;
 	mActiveCommand = 0;
 	mActiveCommandState = 0;
+	mbWriteInProgress = false;
 }
 
 void ATIDEEmulator::AbortCommand(uint8 error) {
@@ -967,6 +1071,7 @@ void ATIDEEmulator::AbortCommand(uint8 error) {
 	mRFile.mErrors = error | kATIDEError_ABRT;
 	mActiveCommand = 0;
 	mActiveCommandState = 0;
+	mbWriteInProgress = false;
 }
 
 bool ATIDEEmulator::ReadLBA(uint32& lba) {
@@ -1071,4 +1176,8 @@ ATIDEEmulator::DecodedCHS ATIDEEmulator::DecodeCHS(uint32 lba) {
 	}
 
 	return s;
+}
+
+void ATIDEEmulator::ScheduleLazyFlush() {
+	mFlushTimer.SetOneShot(this, 3000);
 }

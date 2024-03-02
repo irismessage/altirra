@@ -33,7 +33,7 @@ public:
 	virtual uint32 GTIAGetTimestamp() const = 0;
 	virtual void GTIASetSpeaker(bool state) = 0;
 	virtual void GTIASelectController(uint8 index, bool potsEnabled) = 0;
-	virtual void GTIARequestAnticSync() = 0;
+	virtual void GTIARequestAnticSync(int offset) = 0;
 	virtual uint32 GTIAGetLineEdgeTimingId(uint32 offset) const = 0;
 };
 
@@ -192,8 +192,14 @@ public:
 
 	void DumpStatus();
 
-	void LoadState(ATSaveStateReader& reader);
-	void SaveState(ATSaveStateWriter& writer);
+	void BeginLoadState(ATSaveStateReader& reader);
+	void LoadStateArch(ATSaveStateReader& reader);
+	void LoadStatePrivate(ATSaveStateReader& reader);
+	void LoadStateResetPrivate(ATSaveStateReader& reader);
+	void EndLoadState(ATSaveStateReader& reader);
+	void BeginSaveState(ATSaveStateWriter& writer);
+	void SaveStateArch(ATSaveStateWriter& writer);
+	void SaveStatePrivate(ATSaveStateWriter& writer);
 
 	void GetRegisterState(ATGTIARegisterState& state) const;
 
@@ -214,7 +220,7 @@ public:
 	void UpdatePlayfield160(uint32 x, const uint8 *src, uint32 n);
 	void UpdatePlayfield320(uint32 x, uint8 byte);
 	void UpdatePlayfield320(uint32 x, const uint8 *src, uint32 n);
-	void Sync();
+	void Sync(int offset = 0);
 
 	void RenderActivityMap(const uint8 *src);
 	void UpdateScreen(bool immediate, bool forceAnyScreen);
@@ -232,7 +238,8 @@ protected:
 		uint8 mPad;
 	};
 
-	template<class T> void ExchangeState(T& io);
+	template<class T> void ExchangeStateArch(T& io);
+	template<class T> void ExchangeStatePrivate(T& io);
 	void SyncTo(int x1, int targetX);
 	void ApplyArtifacting();
 	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);

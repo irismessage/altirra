@@ -22,7 +22,7 @@
 #include <vd2/system/math.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
-#include "Dialog.h"
+#include <at/atui/dialog.h>
 #include "resource.h"
 #include "gtia.h"
 #include "simulator.h"

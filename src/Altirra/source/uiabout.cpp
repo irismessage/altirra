@@ -16,7 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
-#include "dialog.h"
+#include <at/atui/dialog.h>
 #include "resource.h"
 #include <windows.h>
 #include "oshelper.h"

@@ -17,10 +17,10 @@
 
 #include "stdafx.h"
 #include <vd2/system/strutil.h>
-#include "Dialog.h"
+#include <at/atui/dialog.h>
 #include "inputmanager.h"
 #include "inputcontroller.h"
-#include "uiproxies.h"
+#include <at/atui/uiproxies.h>
 #include "resource.h"
 #include "joystick.h"
 
@@ -731,7 +731,7 @@ const uint32 ATUIDialogEditInputMapping::kTargetModes[] = {
 };
 
 ATUIDialogEditInputMapping::ATUIDialogEditInputMapping(ATInputManager& iman, IATJoystickManager *ijoy, uint32 inputCode, uint32 targetCode)
-	: VDDialogFrameW32(IDD_INPUTMAP_ADD)
+	: VDDialogFrameW32(IDD_INPUTMAP_ADDMAPPING)
 	, mInputCode(inputCode)
 	, mTargetCode(targetCode)
 	, mInputMan(iman)

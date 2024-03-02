@@ -240,6 +240,7 @@ color4	= $02c8			;shadow for COLBK ($D01A)
 dsctln	= $02d5			;disk sector length (1200XL and newer only)
 		; $02d6
 noclik	= $02db			;key click disable (XL/XE only)
+ramsiz	= $02e4			;ram size in pages
 memtop	= $02e5			;highest location for programs and data
 memlo	= $02e7			;base of application memory
 dvstat	= $02ea			;DISK: Status request buffer area (4 bytes)
@@ -288,6 +289,7 @@ icax4	= $034d			;
 icax5	= $034e			;
 icax6	= $034f			;
 basicf	= $03f8			;XL/XE: BASIC flag (0 = enabled)
+gintlk	= $03fa			;XL/XE: Cartridge interlock (clone of TRIG3). 
 casbuf	= $03fd			;Cassette buffer (03FD-047F)
 
 	opt		h-o+f+
@@ -300,7 +302,8 @@ casbuf	= $03fd			;Cassette buffer (03FD-047F)
 ;
 		#include <xlext.k>
 		
-:$d000-*	dta		$12
+:$cc00-*	dta		$12
+		ins		'..\..\src\kernel\source\Shared\atariifont.bin',$0,$400
 
 ;============================================================================
 ;	5000-57FF	SELF-TEST ROM
@@ -321,7 +324,7 @@ casbuf	= $03fd			;Cassette buffer (03FD-047F)
 ;	E000-FFFF	UPPER OS ROM
 ;
 	org		$e000
-	ins		'..\..\src\kernel\source\atarifont.bin',$0,$400
+	ins		'..\..\src\kernel\source\Shared\atarifont.bin',$0,$400
 
 		org		$e400
 editrv	dta		a(EditorOpen-1)
@@ -463,6 +466,7 @@ DefaultHandler_RTI:
 ; Dispatched from INTINV. Used by SpartaDOS X.
 .proc InitInterrupts
 	mva		#$40 nmien
+	mva		trig3 gintlk		;required by all XEGS carts
 	rts
 	.endp
 

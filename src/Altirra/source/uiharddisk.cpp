@@ -18,12 +18,18 @@
 #include "stdafx.h"
 #include <windows.h>
 #include <vd2/system/error.h>
+#include <vd2/system/math.h>
+#include <vd2/system/strutil.h>
 #include <vd2/Dita/services.h>
-#include "Dialog.h"
+#include <at/atui/dialog.h>
 #include "resource.h"
 #include "ide.h"
+#include "idephysdisk.h"
+#include "idevhdimage.h"
 #include "simulator.h"
 #include "oshelper.h"
+#include "uiprogress.h"
+#include <at/atui/uiproxies.h>
 
 #ifndef BCM_SETSHIELD
 #define BCM_SETSHIELD	0x160C
@@ -32,6 +38,198 @@
 extern ATSimulator g_sim;
 
 VDStringW ATUIShowDialogBrowsePhysicalDisks(VDGUIHandle hParent);
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogCreateVHDImage : public VDDialogFrameW32 {
+public:
+	ATUIDialogCreateVHDImage();
+	~ATUIDialogCreateVHDImage();
+
+	uint32 GetSectorCount() const { return mSectorCount; }
+	const wchar_t *GetPath() const { return mPath.c_str(); }
+
+protected:
+	bool OnLoaded();
+	void OnDataExchange(bool write);
+	bool OnOK();
+	bool OnCommand(uint32 id, uint32 extcode);
+	void UpdateGeometry();
+	void UpdateEnables();
+
+	VDStringW mPath;
+	uint32 mSectorCount;
+	uint32 mSizeInMB;
+	uint32 mHeads;
+	uint32 mSPT;
+	bool mbAutoGeometry;
+	bool mbDynamicDisk;
+	uint32 mInhibitUpdateLocks;
+};
+
+ATUIDialogCreateVHDImage::ATUIDialogCreateVHDImage()
+	: VDDialogFrameW32(IDD_CREATE_VHD)
+	, mSectorCount(8*1024*2)		// 8MB
+	, mSizeInMB(8)
+	, mHeads(15)
+	, mSPT(63)
+	, mbAutoGeometry(true)
+	, mbDynamicDisk(true)
+	, mInhibitUpdateLocks(0)
+{
+}
+
+ATUIDialogCreateVHDImage::~ATUIDialogCreateVHDImage() {
+}
+
+bool ATUIDialogCreateVHDImage::OnLoaded() {
+	UpdateGeometry();
+	UpdateEnables();
+
+	return VDDialogFrameW32::OnLoaded();
+}
+
+void ATUIDialogCreateVHDImage::OnDataExchange(bool write) {
+	ExchangeControlValueString(write, IDC_PATH, mPath);
+	ExchangeControlValueUint32(write, IDC_SIZE_SECTORS, mSectorCount, 2048, 0xFFFFFFFEU);
+	ExchangeControlValueUint32(write, IDC_SIZE_MB, mSizeInMB, 1, 4095);
+
+	if (write) {
+		mbAutoGeometry = IsButtonChecked(IDC_GEOMETRY_AUTO);
+		mbDynamicDisk = IsButtonChecked(IDC_TYPE_DYNAMIC);
+	} else {
+		CheckButton(IDC_GEOMETRY_AUTO, mbAutoGeometry);
+		CheckButton(IDC_GEOMETRY_MANUAL, !mbAutoGeometry);
+
+		CheckButton(IDC_TYPE_FIXED, !mbDynamicDisk);
+		CheckButton(IDC_TYPE_DYNAMIC, mbDynamicDisk);
+	}
+
+	if (!write || mbAutoGeometry) {
+		ExchangeControlValueUint32(write, IDC_HEADS, mHeads, 1, 16);
+		ExchangeControlValueUint32(write, IDC_SPT, mHeads, 1, 255);
+	}
+}
+
+bool ATUIDialogCreateVHDImage::OnOK() {
+	if (VDDialogFrameW32::OnOK())
+		return true;
+
+	// Okay, let's actually try to create the VHD image!
+	VDZHWND prevProgressParent = ATUISetProgressWindowParentW32(mhdlg);
+
+	try {
+		ATIDEVHDImage vhd;
+		vhd.InitNew(mPath.c_str(), mHeads, mSPT, mSectorCount, mbDynamicDisk);
+		vhd.Flush();
+	} catch(const MyUserAbortError&) {
+		ATUISetProgressWindowParentW32(prevProgressParent);
+		return true;
+	} catch(const MyError& e) {
+		VDStringW msg;
+		msg.sprintf(L"VHD creation failed: %hs", e.gets());
+		ShowError(msg.c_str(), L"Altirra Error");
+		ATUISetProgressWindowParentW32(prevProgressParent);
+		return true;
+	}
+
+	ATUISetProgressWindowParentW32(prevProgressParent);
+
+	ShowInfo(L"VHD creation was successful.", L"Altirra Notice");
+	return false;
+}
+
+bool ATUIDialogCreateVHDImage::OnCommand(uint32 id, uint32 extcode) {
+	int index = 0;
+
+	switch(id) {
+		case IDC_BROWSE:
+			{
+				VDStringW s(VDGetSaveFileName('vhd ', (VDGUIHandle)mhdlg, L"Select location for new VHD image file", L"Virtual hard disk image\0*.vhd\0", L"vhd"));
+				if (!s.empty())
+					SetControlText(IDC_PATH, s.c_str());
+			}
+			return true;
+
+		case IDC_GEOMETRY_AUTO:
+		case IDC_GEOMETRY_MANUAL:
+			if (extcode == BN_CLICKED)
+				UpdateEnables();
+			return true;
+
+		case IDC_SIZE_MB:
+			if (extcode == EN_UPDATE && !mInhibitUpdateLocks) {
+				uint32 mb = GetControlValueUint32(IDC_SIZE_MB);
+
+				if (mb) {
+					++mInhibitUpdateLocks;
+					SetControlTextF(IDC_SIZE_SECTORS, L"%u", mb * 2048);
+					--mInhibitUpdateLocks;
+				}
+			}
+			return true;
+
+		case IDC_SIZE_SECTORS:
+			if (extcode == EN_UPDATE && !mInhibitUpdateLocks) {
+				uint32 sectors = GetControlValueUint32(IDC_SIZE_SECTORS);
+
+				if (sectors) {
+					++mInhibitUpdateLocks;
+					SetControlTextF(IDC_SIZE_MB, L"%u", sectors >> 11);
+					--mInhibitUpdateLocks;
+				}
+			}
+			return true;
+	}
+
+	return false;
+}
+
+void ATUIDialogCreateVHDImage::UpdateGeometry() {
+	// This calculation is from the VHD spec.
+	uint32 secCount = std::min<uint32>(mSectorCount, 65535*16*255);
+
+	if (secCount >= 65535*16*63) {
+		mSPT = 255;
+		mHeads = 16;
+	} else {
+		mSPT = 17;
+
+		uint32 tracks = secCount / 17;
+		uint32 heads = (tracks + 1023) >> 10;
+
+		if (heads < 4) {
+			heads = 4;
+		}
+		
+		if (tracks >= (heads * 1024) || heads > 16) {
+			mSPT = 31;
+			heads = 16;
+			tracks = secCount / 31;
+		}
+
+		if (tracks >= (heads * 1024)) {
+			mSPT = 63;
+			heads = 16;
+		}
+
+		mHeads = heads;
+	}
+
+	SetControlTextF(IDC_HEADS, L"%u", mHeads);
+	SetControlTextF(IDC_SPT, L"%u", mSPT);
+}
+
+void ATUIDialogCreateVHDImage::UpdateEnables() {
+	bool enableManualControls = IsButtonChecked(IDC_GEOMETRY_MANUAL);
+
+	EnableControl(IDC_STATIC_HEADS, enableManualControls);
+	EnableControl(IDC_STATIC_SPT, enableManualControls);
+	EnableControl(IDC_HEADS, enableManualControls);
+	EnableControl(IDC_SPT, enableManualControls);
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 class ATUIDialogHardDisk : public VDDialogFrameW32 {
 public:
@@ -45,10 +243,13 @@ public:
 
 protected:
 	void UpdateEnables();
-	void UpdateCapacity();
 	void UpdateGeometry();
+	void UpdateCapacity();
+	void SetCapacityBySectorCount(uint64 sectors);
 
 	uint32 mInhibitUpdateLocks;
+
+	VDUIProxyComboBoxControl mComboHWMode;
 };
 
 ATUIDialogHardDisk::ATUIDialogHardDisk()
@@ -67,6 +268,17 @@ bool ATUIDialogHardDisk::OnLoaded() {
 		if (hwndItem)
 			SendMessage(hwndItem, BCM_SETSHIELD, 0, TRUE);
 	}
+
+	AddProxy(&mComboHWMode, IDC_HW_MODE);
+
+	ATUIEnableEditControlAutoComplete(GetControl(IDC_IDE_IMAGEPATH));
+
+	mComboHWMode.AddItem(L"MyIDE internal ($D1xx)");
+	mComboHWMode.AddItem(L"MyIDE external ($D5xx)");
+	mComboHWMode.AddItem(L"MyIDE II");
+	mComboHWMode.AddItem(L"KMK/JZ IDE V1");
+	mComboHWMode.AddItem(L"KMK/JZ IDE V2 (IDEPlus)");
+	mComboHWMode.AddItem(L"SIDE");
 
 	return VDDialogFrameW32::OnLoaded();
 }
@@ -97,17 +309,23 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 			UpdateCapacity();
 
 			ATIDEHardwareMode hwmode = g_sim.GetIDEHardwareMode();
-			CheckButton(IDC_IDE_D1XX, hwmode == kATIDEHardwareMode_MyIDE_D1xx);
-			CheckButton(IDC_IDE_D5XX, hwmode == kATIDEHardwareMode_MyIDE_D5xx);
-			CheckButton(IDC_IDE_KMKJZV1, hwmode == kATIDEHardwareMode_KMKJZ_V1);
-			CheckButton(IDC_IDE_KMKJZV2, hwmode == kATIDEHardwareMode_KMKJZ_V2);
-			CheckButton(IDC_IDE_SIDE, hwmode == kATIDEHardwareMode_SIDE);
+			int hwidx = 0;
+			switch(hwmode) {
+				case kATIDEHardwareMode_MyIDE_D1xx: hwidx = 0; break;
+				case kATIDEHardwareMode_MyIDE_D5xx: hwidx = 1; break;
+				case kATIDEHardwareMode_MyIDE_V2_D5xx: hwidx = 2; break;
+				case kATIDEHardwareMode_KMKJZ_V1: hwidx = 3; break;
+				case kATIDEHardwareMode_KMKJZ_V2: hwidx = 4; break;
+				case kATIDEHardwareMode_SIDE: hwidx = 5; break;
+			}
+
+			mComboHWMode.SetSelection(hwidx);
 
 			bool fast = ide->IsFastDevice();
 			CheckButton(IDC_SPEED_FAST, fast);
 			CheckButton(IDC_SPEED_SLOW, !fast);
 		} else {
-			CheckButton(IDC_IDE_D5XX, true);
+			mComboHWMode.SetSelection(1);		// MyIDE D5xx
 			CheckButton(IDC_SPEED_FAST, true);
 		}
 
@@ -119,14 +337,15 @@ void ATUIDialogHardDisk::OnDataExchange(bool write) {
 		ATIDEEmulator *ide = g_sim.GetIDEEmulator();
 		if (IsButtonChecked(IDC_IDE_ENABLE)) {
 			ATIDEHardwareMode hwmode = kATIDEHardwareMode_MyIDE_D5xx;
-			if (IsButtonChecked(IDC_IDE_D1XX))
-				hwmode = kATIDEHardwareMode_MyIDE_D1xx;
-			else if (IsButtonChecked(IDC_IDE_KMKJZV1))
-				hwmode = kATIDEHardwareMode_KMKJZ_V1;
-			else if (IsButtonChecked(IDC_IDE_KMKJZV2))
-				hwmode = kATIDEHardwareMode_KMKJZ_V2;
-			else if (IsButtonChecked(IDC_IDE_SIDE))
-				hwmode = kATIDEHardwareMode_SIDE;
+
+			switch(mComboHWMode.GetSelection()) {
+				case 0: hwmode = kATIDEHardwareMode_MyIDE_D1xx; break;
+				case 1: hwmode = kATIDEHardwareMode_MyIDE_D5xx; break;
+				case 2: hwmode = kATIDEHardwareMode_MyIDE_V2_D5xx; break;
+				case 3: hwmode = kATIDEHardwareMode_KMKJZ_V1; break;
+				case 4: hwmode = kATIDEHardwareMode_KMKJZ_V2; break;
+				case 5: hwmode = kATIDEHardwareMode_SIDE; break;
+			}
 
 			const bool write = !IsButtonChecked(IDC_IDEREADONLY);
 			const bool fast = IsButtonChecked(IDC_SPEED_FAST);
@@ -201,8 +420,22 @@ bool ATUIDialogHardDisk::OnCommand(uint32 id, uint32 extcode) {
 				};
 
 				VDStringW s(VDGetSaveFileName('ide ', (VDGUIHandle)mhdlg, L"Select IDE image file", L"All files\0*.*\0", NULL, kOpts, optvals));
-				if (!s.empty())
+				if (!s.empty()) {
+					if (s.size() >= 4 && !vdwcsicmp(s.c_str() + s.size() - 4, L".vhd")) {
+						try {
+							vdrefptr<ATIDEVHDImage> vhdImage(new ATIDEVHDImage);
+
+							vhdImage->Init(s.c_str(), false);
+
+							SetCapacityBySectorCount(vhdImage->GetSectorCount());
+						} catch(const MyError& e) {
+							e.post(mhdlg, "Altirra Error");
+							return true;
+						}
+					}
+
 					SetControlText(IDC_IDE_IMAGEPATH, s.c_str());
+				}
 			}
 			return true;
 
@@ -224,10 +457,22 @@ bool ATUIDialogHardDisk::OnCommand(uint32 id, uint32 extcode) {
 				if (!path.empty()) {
 					SetControlText(IDC_IDE_IMAGEPATH, path.c_str());
 					CheckButton(IDC_READONLY, true);
-					SetControlText(IDC_IDE_CYLINDERS, L"1");
-					SetControlText(IDC_IDE_HEADS, L"15");
-					SetControlText(IDC_IDE_SPT, L"255");
-					UpdateCapacity();
+
+					sint64 size = ATIDEGetPhysicalDiskSize(path.c_str());
+					uint64 sectors = (uint64)size >> 9;
+
+					SetCapacityBySectorCount(sectors);
+				}
+			}
+			return true;
+
+		case IDC_CREATE_VHD:
+			{
+				ATUIDialogCreateVHDImage createVHDDlg;
+
+				if (createVHDDlg.ShowDialog((VDGUIHandle)mhdlg)) {
+					SetCapacityBySectorCount(createVHDDlg.GetSectorCount());
+					SetControlText(IDC_IDE_IMAGEPATH, createVHDDlg.GetPath());
 				}
 			}
 			return true;
@@ -260,6 +505,7 @@ void ATUIDialogHardDisk::UpdateEnables() {
 	EnableControl(IDC_IDE_IMAGEPATH, ideenable);
 	EnableControl(IDC_IDE_IMAGEBROWSE, ideenable);
 	EnableControl(IDC_IDE_DISKBROWSE, ideenable);
+	EnableControl(IDC_CREATE_VHD, ideenable);
 	EnableControl(IDC_IDEREADONLY, ideenable);
 	EnableControl(IDC_STATIC_IDE_GEOMETRY, ideenable);
 	EnableControl(IDC_STATIC_IDE_CYLINDERS, ideenable);
@@ -271,11 +517,7 @@ void ATUIDialogHardDisk::UpdateEnables() {
 	EnableControl(IDC_IDE_SPT, ideenable);
 	EnableControl(IDC_IDE_SIZE, ideenable);
 	EnableControl(IDC_STATIC_IDE_IOREGION, ideenable);
-	EnableControl(IDC_IDE_D1XX, ideenable);
-	EnableControl(IDC_IDE_D5XX, ideenable);
-	EnableControl(IDC_IDE_KMKJZV1, ideenable);
-	EnableControl(IDC_IDE_KMKJZV2, ideenable);
-	EnableControl(IDC_IDE_SIDE, ideenable);
+	EnableControl(IDC_HW_MODE, ideenable);
 	EnableControl(IDC_STATIC_IDE_SPEED, ideenable);
 	EnableControl(IDC_SPEED_SLOW, ideenable);
 	EnableControl(IDC_SPEED_FAST, ideenable);
@@ -327,6 +569,21 @@ void ATUIDialogHardDisk::UpdateCapacity() {
 		SetControlText(IDC_IDE_SIZE, L"--");
 
 	--mInhibitUpdateLocks;
+}
+
+void ATUIDialogHardDisk::SetCapacityBySectorCount(uint64 sectors) {
+	uint32 spt = 63;
+	uint32 heads = 15;
+	uint32 cylinders = 1;
+
+	if (sectors)
+		cylinders = VDClampToUint32((sectors - 1) / (heads * spt) + 1);
+
+	SetControlTextF(IDC_IDE_CYLINDERS, L"%u", cylinders);
+	SetControlTextF(IDC_IDE_HEADS, L"%u", heads);
+	SetControlTextF(IDC_IDE_SPT, L"%u", spt);
+
+	UpdateCapacity();
 }
 
 void ATUIShowHardDiskDialog(VDGUIHandle hParent) {

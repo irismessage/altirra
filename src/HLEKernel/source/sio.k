@@ -25,8 +25,6 @@ SIOErrorChecksum	= $8F
 SIOErrorDeviceDone	= $90
 
 .proc SIOInit
-	mwa		#SIOCountdown1Handler	cdtma1
-
 	;turn off POKEY init mode so polynomial counters and audio run
 	mva		#3 skctl
 	mva		#3 sskctl
@@ -105,7 +103,7 @@ ackOK:
 	bmi		xit
 	lda		temp
 	cmp		#'C'
-	bpl		completeOK
+	beq		completeOK
 	
 	ldy		#SIOErrorNAK
 	jmp		xit
@@ -158,6 +156,11 @@ dataSendOK:
 ;SIO base init routine
 ;
 .proc SIOInitBaseTransfers
+	;set timeout timer address -- MUST be done on each call to SIO, or
+	;Cross-Town Crazy Eight hangs on load due to taking over this vector
+	;previously
+	mwa		#SIOCountdown1Handler	cdtma1
+
 	;clock channel 3 and 4 together at 1.79MHz
 	mva		#$28	audctl
 

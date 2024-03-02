@@ -19,14 +19,15 @@
 #define f_AT_IDE_H
 
 #include <vd2/system/vdstl.h>
-#include <vd2/system/file.h>
 #include <vd2/system/VDString.h>
+#include <vd2/system/time.h>
 
 class ATScheduler;
 class IATUIRenderer;
 class ATIDEPhysicalDisk;
+class IATIDEDisk;
 
-class ATIDEEmulator {
+class ATIDEEmulator : protected IVDTimerCallback {
 	ATIDEEmulator(const ATIDEEmulator&);
 	ATIDEEmulator& operator=(const ATIDEEmulator&);
 public:
@@ -45,6 +46,7 @@ public:
 	uint32 GetHeadCount() const { return mHeadCount; }
 	uint32 GetSectorsPerTrack() const { return mSectorsPerTrack; }
 
+	bool GetReset() const { return mbHardwareReset; }
 	void SetReset(bool asserted);
 
 	void ColdReset();
@@ -57,6 +59,16 @@ public:
 	uint8 DebugReadByte(uint8 address);
 	uint8 ReadByte(uint8 address);
 	void WriteByte(uint8 address, uint8 value);
+
+	// alternate read/write registers
+	uint8 ReadByteAlt(uint8 address);
+	void WriteByteAlt(uint8 address, uint8 value);
+
+	void DebugReadSector(uint32 lba, void *dst, uint32 len);
+	void DebugWriteSector(uint32 lba, const void *dst, uint32 len);
+
+protected:
+	void TimerCallback();
 
 protected:
 	struct DecodedCHS;
@@ -73,6 +85,7 @@ protected:
 	void ResetCHSTranslation();
 	void AdjustCHSTranslation();
 	DecodedCHS DecodeCHS(uint32 lba);
+	void ScheduleLazyFlush();
 
 	union {
 		uint8	mRegisters[8];
@@ -112,14 +125,17 @@ protected:
 	bool mbTransferAsWrites;
 	bool mbTransfer16Bit;
 	bool mbWriteEnabled;
+	bool mbWriteInProgress;
 	bool mbFastDevice;
-	bool mbReset;
+	bool mbHardwareReset;
+	bool mbSoftwareReset;
 
 	vdfastvector<uint8> mTransferBuffer;
 
-	ATIDEPhysicalDisk *mpPhysDisk;
-	VDFile mFile;
+	IATIDEDisk *mpDisk;
 	VDStringW mPath;
+
+	VDLazyTimer mFlushTimer;
 };
 
 #endif

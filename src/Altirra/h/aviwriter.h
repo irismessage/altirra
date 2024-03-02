@@ -104,6 +104,7 @@ public:
 	virtual void setTextInfo(uint32 ckid, const char *text) = 0;
 
 	virtual uint32 bufferStatus(uint32 *lplBufferSize) = 0;
+	virtual sint64 GetCurrentSize() const = 0;
 };
 
 IVDMediaOutputAVIFile *VDCreateMediaOutputAVIFile();

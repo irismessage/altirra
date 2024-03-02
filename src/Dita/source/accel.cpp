@@ -47,6 +47,23 @@ const VDAccelTableEntry& VDAccelTableDefinition::operator[](uint32 index) const 
 	return mAccelerators[index];
 }
 
+const VDAccelTableEntry* VDAccelTableDefinition::operator()(const VDUIAccelerator& accel) const {
+	for(Accelerators::const_iterator it(mAccelerators.begin()), itEnd(mAccelerators.end());
+		it != itEnd;
+		++it)
+	{
+		const VDAccelTableEntry& entry = *it;
+
+		if (entry.mAccel.mVirtKey == accel.mVirtKey
+			&& entry.mAccel.mModifiers == accel.mModifiers)
+		{
+			return &entry;
+		}
+	}
+
+	return NULL;
+}
+
 void VDAccelTableDefinition::Clear() {
 	while(!mAccelerators.empty()) {
 		VDAccelTableEntry& ent = mAccelerators.back();
@@ -65,6 +82,11 @@ void VDAccelTableDefinition::Add(const VDAccelTableEntry& src) {
 	acc.mpCommand = s;
 	acc.mCommandId = src.mCommandId;
 	acc.mAccel = src.mAccel;
+}
+
+void VDAccelTableDefinition::AddRange(const VDAccelTableEntry *ent, uint32 n) {
+	while(n--)
+		Add(*ent++);
 }
 
 void VDAccelTableDefinition::RemoveAt(uint32 index) {

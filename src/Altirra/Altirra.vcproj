@@ -54,7 +54,7 @@
 				Name="VCCLCompilerTool"
 				Optimization="0"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0400"
+				PreprocessorDefinitions="WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500"
 				MinimalRebuild="true"
 				BasicRuntimeChecks="1"
 				RuntimeLibrary="1"
@@ -79,7 +79,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				LinkLibraryDependencies="false"
-				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
 				LinkIncremental="2"
 				AdditionalLibraryDirectories="..\..\lib\$(ConfigurationName)"
 				GenerateDebugInformation="true"
@@ -141,7 +141,7 @@
 				Name="VCCLCompilerTool"
 				Optimization="0"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0400"
+				PreprocessorDefinitions="WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500"
 				MinimalRebuild="true"
 				BasicRuntimeChecks="1"
 				RuntimeLibrary="1"
@@ -166,7 +166,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				LinkLibraryDependencies="false"
-				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
 				OutputFile="$(OutDir)\Altirra64.exe"
 				LinkIncremental="2"
 				AdditionalLibraryDirectories="..\..\lib\$(ConfigurationName)AMD64"
@@ -232,7 +232,7 @@
 				Optimization="3"
 				InlineFunctionExpansion="2"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0400"
+				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500"
 				RuntimeLibrary="0"
 				BufferSecurityCheck="false"
 				FloatingPointModel="2"
@@ -256,7 +256,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				LinkLibraryDependencies="false"
-				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
 				LinkIncremental="1"
 				AdditionalLibraryDirectories="..\..\lib\$(ConfigurationName)"
 				GenerateDebugInformation="true"
@@ -322,7 +322,7 @@
 				Optimization="3"
 				InlineFunctionExpansion="2"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0400"
+				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500"
 				RuntimeLibrary="0"
 				BufferSecurityCheck="false"
 				FloatingPointModel="2"
@@ -346,7 +346,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				LinkLibraryDependencies="false"
-				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
 				OutputFile="$(OutDir)\Altirra64.exe"
 				LinkIncremental="1"
 				AdditionalLibraryDirectories="..\..\lib\$(ConfigurationName)AMD64"
@@ -416,7 +416,7 @@
 				Optimization="3"
 				InlineFunctionExpansion="2"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\Release\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0400"
+				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500"
 				RuntimeLibrary="0"
 				BufferSecurityCheck="false"
 				FloatingPointModel="2"
@@ -440,7 +440,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				LinkLibraryDependencies="false"
-				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
 				LinkIncremental="1"
 				AdditionalLibraryDirectories="..\..\lib\Release"
 				GenerateDebugInformation="true"
@@ -506,7 +506,7 @@
 				Optimization="3"
 				InlineFunctionExpansion="2"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\Release\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0400"
+				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500"
 				RuntimeLibrary="0"
 				BufferSecurityCheck="false"
 				FloatingPointModel="2"
@@ -530,7 +530,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				LinkLibraryDependencies="false"
-				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
 				OutputFile="$(OutDir)\Altirra64.exe"
 				LinkIncremental="1"
 				AdditionalLibraryDirectories="..\..\lib\ReleaseAMD64"
@@ -733,10 +733,6 @@
 				>
 			</File>
 			<File
-				RelativePath=".\source\Dialog.cpp"
-				>
-			</File>
-			<File
 				RelativePath=".\source\disasm.cpp"
 				>
 			</File>
@@ -762,6 +758,10 @@
 			</File>
 			<File
 				RelativePath=".\source\diskimage.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\diskvirtimage.cpp"
 				>
 			</File>
 			<File
@@ -817,6 +817,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\hostdeviceutils.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\ide.cpp"
 				>
 			</File>
@@ -825,11 +829,23 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\iderawimage.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\idevhdimage.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\inputcontroller.cpp"
 				>
 			</File>
 			<File
 				RelativePath=".\source\inputmanager.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\irqcontroller.cpp"
 				>
 			</File>
 			<File
@@ -882,6 +898,10 @@
 			</File>
 			<File
 				RelativePath=".\source\pclink_win32.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\pia.cpp"
 				>
 			</File>
 			<File
@@ -985,6 +1005,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uibutton.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uicaptionupdater.cpp"
 				>
 			</File>
@@ -1001,6 +1025,14 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uicommandmanager.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uicontainer.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uicpuoptions.cpp"
 				>
 			</File>
@@ -1014,6 +1046,10 @@
 			</File>
 			<File
 				RelativePath=".\source\uidiskexplorer.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uidisplay.cpp"
 				>
 			</File>
 			<File
@@ -1037,6 +1073,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uifilebrowser.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uiframe.cpp"
 				>
 			</File>
@@ -1057,6 +1097,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uiinstance.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uikeyboard.cpp"
 				>
 			</File>
@@ -1065,7 +1109,27 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uilabel.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uilightpen.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uilistview.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uimanager.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uimenu.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uimenulist.cpp"
 				>
 			</File>
 			<File
@@ -1089,11 +1153,11 @@
 				>
 			</File>
 			<File
-				RelativePath=".\source\uiprogress.cpp"
+				RelativePath=".\source\uiprofiler.cpp"
 				>
 			</File>
 			<File
-				RelativePath=".\source\uiproxies.cpp"
+				RelativePath=".\source\uiprogress.cpp"
 				>
 			</File>
 			<File
@@ -1113,11 +1177,31 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uispeedoptions.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uitapecontrol.cpp"
 				>
 			</File>
 			<File
+				RelativePath=".\source\uitextedit.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uiverifier.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uivideorecording.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uiwidget.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\ultimate1mb.cpp"
 				>
 			</File>
 			<File
@@ -1142,6 +1226,10 @@
 			Filter="h;hpp;hxx;hm;inl;inc;xsd"
 			UniqueIdentifier="{93995380-89BD-4b04-88EB-625FBE52EBFB}"
 			>
+			<File
+				RelativePath=".\h\address.h"
+				>
+			</File>
 			<File
 				RelativePath=".\h\antic.h"
 				>
@@ -1188,6 +1276,10 @@
 			</File>
 			<File
 				RelativePath=".\h\bkptmanager.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\callback.h"
 				>
 			</File>
 			<File
@@ -1267,10 +1359,6 @@
 				>
 			</File>
 			<File
-				RelativePath=".\h\Dialog.h"
-				>
-			</File>
-			<File
 				RelativePath=".\h\disasm.h"
 				>
 			</File>
@@ -1339,11 +1427,27 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\hostdeviceutils.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\ide.h"
 				>
 			</File>
 			<File
+				RelativePath=".\h\idedisk.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\idephysdisk.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\iderawimage.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\idevhdimage.h"
 				>
 			</File>
 			<File
@@ -1356,6 +1460,10 @@
 			</File>
 			<File
 				RelativePath=".\h\inputmanager.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\irqcontroller.h"
 				>
 			</File>
 			<File
@@ -1435,6 +1543,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\ATUI\res\resource.h"
+				>
+			</File>
+			<File
 				RelativePath=".\res\resource.h"
 				>
 			</File>
@@ -1507,7 +1619,23 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\uibutton.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\uicaptionupdater.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uicommandmanager.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uicontainer.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uidisplay.h"
 				>
 			</File>
 			<File
@@ -1515,11 +1643,39 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\uifilebrowser.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\uiframe.h"
 				>
 			</File>
 			<File
+				RelativePath=".\h\uiinstance.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\uikeyboard.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uilabel.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uilistview.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uimanager.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uimenu.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uimenulist.h"
 				>
 			</File>
 			<File
@@ -1531,15 +1687,31 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\uiprofiler.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\uiprogress.h"
 				>
 			</File>
 			<File
-				RelativePath=".\h\uiproxies.h"
+				RelativePath=".\h\uirender.h"
 				>
 			</File>
 			<File
-				RelativePath=".\h\uirender.h"
+				RelativePath=".\h\uitextedit.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uitypes.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\uiwidget.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\ultimate1mb.h"
 				>
 			</File>
 			<File
@@ -1548,6 +1720,10 @@
 			</File>
 			<File
 				RelativePath=".\h\verifier.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\versioninfo.h"
 				>
 			</File>
 			<File
@@ -1633,11 +1809,23 @@
 				>
 			</File>
 			<File
+				RelativePath="..\ATUI\res\atui.rc"
+				>
+			</File>
+			<File
 				RelativePath="..\..\out\debug\basic.rom"
 				>
 			</File>
 			<File
 				RelativePath="..\..\out\release\basic.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\release\bootsecdos2.bin"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\debug\bootsecdos2.bin"
 				>
 			</File>
 			<File
@@ -1653,6 +1841,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\res\eject.ico"
+				>
+			</File>
+			<File
 				RelativePath="..\..\out\release\hlekernel.rom"
 				>
 			</File>
@@ -1661,19 +1853,31 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\kernel.rom"
-				>
-			</File>
-			<File
 				RelativePath="..\..\out\debug\kernel.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Debug\nocartridge.rom"
+				RelativePath="..\..\out\release\kernel.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\release\kernelxl.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\debug\kernelxl.rom"
+				>
+			</File>
+			<File
+				RelativePath=".\res\menu_default.txt"
 				>
 			</File>
 			<File
 				RelativePath="..\..\out\Release\nocartridge.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\Debug\nocartridge.rom"
 				>
 			</File>
 			<File
@@ -1685,19 +1889,19 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\nohdbios.rom"
-				>
-			</File>
-			<File
 				RelativePath="..\..\out\debug\nohdbios.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\nokernel.rom"
+				RelativePath="..\..\out\release\nohdbios.rom"
 				>
 			</File>
 			<File
 				RelativePath="..\..\out\release\nokernel.rom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\debug\nokernel.rom"
 				>
 			</File>
 			<File
@@ -1709,15 +1913,19 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Debug\superkernel.rom"
-				>
-			</File>
-			<File
 				RelativePath="..\..\out\Release\superkernel.rom"
 				>
 			</File>
 			<File
+				RelativePath="..\..\out\Debug\superkernel.rom"
+				>
+			</File>
+			<File
 				RelativePath=".\res\target.cur"
+				>
+			</File>
+			<File
+				RelativePath=".\res\targetoff.cur"
 				>
 			</File>
 			<File
@@ -1726,6 +1934,14 @@
 			</File>
 			<File
 				RelativePath=".\res\TrackStep2.pcm"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\release\ultimate.lzrom"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\debug\ultimate.lzrom"
 				>
 			</File>
 		</Filter>
@@ -1812,6 +2028,216 @@
 		<Filter
 			Name="Data Files"
 			>
+			<File
+				RelativePath=".\data\font10x16.bmp"
+				>
+				<FileConfiguration
+					Name="Debug|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 10x16 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\debug\asuka&quot; fontencode &quot;$(InputPath)&quot; 10 16 16 16 14 0 0 &quot;$(InputDir)\..\h\font10x16.inl&quot; g_ATFont10x16&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Debug\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font10x16.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Debug|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 10x16 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\debug\asuka&quot; fontencode &quot;$(InputPath)&quot; 10 16 16 16 14 0 0 &quot;$(InputDir)\..\h\font10x16.inl&quot; g_ATFont10x16&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Debug\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font10x16.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 10x16 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 10 16 16 16 14 0 0 &quot;$(InputDir)\..\h\font10x16.inl&quot; g_ATFont10x16&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font10x16.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 10x16 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 10 16 16 16 14 0 0 &quot;$(InputDir)\..\h\font10x16.inl&quot; g_ATFont10x16&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font10x16.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 10x16 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 10 16 16 16 14 0 0 &quot;$(InputDir)\..\h\font10x16.inl&quot; g_ATFont10x16&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font10x16.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 10x16 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 10 16 16 16 14 0 0 &quot;$(InputDir)\..\h\font10x16.inl&quot; g_ATFont10x16&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font10x16.inl&quot;"
+					/>
+				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\data\font13x16p.bmp"
+				>
+				<FileConfiguration
+					Name="Debug|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 13x16p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\debug\asuka&quot; fontencode &quot;$(InputPath)&quot; 13 16 16 16 14 0 0 &quot;$(InputDir)\..\h\font13x16p.inl&quot; g_ATFont13x16p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Debug\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font13x16p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Debug|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 13x16p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\debug\asuka&quot; fontencode &quot;$(InputPath)&quot; 13 16 16 16 14 0 0 &quot;$(InputDir)\..\h\font13x16p.inl&quot; g_ATFont13x16p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Debug\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font13x16p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 13x16p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 13 16 16 16 14 0 0 &quot;$(InputDir)\..\h\font13x16p.inl&quot; g_ATFont13x16p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font13x16p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 13x16p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 13 16 16 16 14 0 0 &quot;$(InputDir)\..\h\font13x16p.inl&quot; g_ATFont13x16p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font13x16p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 13x16p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 13 16 16 16 14 0 0 &quot;$(InputDir)\..\h\font13x16p.inl&quot; g_ATFont13x16p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font13x16p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 13x16p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 13 16 16 16 14 0 0 &quot;$(InputDir)\..\h\font13x16p.inl&quot; g_ATFont13x16p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font13x16p.inl&quot;"
+					/>
+				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\data\font21x24p.bmp"
+				>
+				<FileConfiguration
+					Name="Debug|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 21x24p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\debug\asuka&quot; fontencode &quot;$(InputPath)&quot; 21 24 16 16 14 0 0 &quot;$(InputDir)\..\h\font21x24p.inl&quot; g_ATFont21x24p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Debug\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font21x24p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Debug|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 21x24p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\debug\asuka&quot; fontencode &quot;$(InputPath)&quot; 21 24 16 16 14 0 0 &quot;$(InputDir)\..\h\font21x24p.inl&quot; g_ATFont21x24p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Debug\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font21x24p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 21x24p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 21 24 16 16 14 0 0 &quot;$(InputDir)\..\h\font21x24p.inl&quot; g_ATFont21x24p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font21x24p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 21x24p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 21 24 16 16 14 0 0 &quot;$(InputDir)\..\h\font21x24p.inl&quot; g_ATFont21x24p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font21x24p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 21x24p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 21 24 16 16 14 0 0 &quot;$(InputDir)\..\h\font21x24p.inl&quot; g_ATFont21x24p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font21x24p.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 21x24p font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 21 24 16 16 14 0 0 &quot;$(InputDir)\..\h\font21x24p.inl&quot; g_ATFont21x24p&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font21x24p.inl&quot;"
+					/>
+				</FileConfiguration>
+			</File>
 			<File
 				RelativePath=".\data\font3x5.bmp"
 				>
@@ -2019,6 +2445,76 @@
 						CommandLine="&quot;$(ProjectDir)..\..\out\Release\asuka&quot; fontencode &quot;$(InputPath)&quot; 5 8 16 16 7 1 0 &quot;$(InputDir)\..\h\font5x8p.inl&quot; g_ATFont5x8p&#x0D;&#x0A;"
 						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
 						Outputs="&quot;$(InputDir)\..\h\font5x8p.inl&quot;"
+					/>
+				</FileConfiguration>
+			</File>
+			<File
+				RelativePath=".\data\font5x9.bmp"
+				>
+				<FileConfiguration
+					Name="Debug|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 5x9 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\debug\asuka&quot; fontencode &quot;$(InputPath)&quot; 5 9 16 16 14 0 0 &quot;$(InputDir)\..\h\font5x9.inl&quot; g_ATFont5x9&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Debug\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font5x9.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Debug|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 5x9 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\debug\asuka&quot; fontencode &quot;$(InputPath)&quot; 5 9 16 16 14 0 0 &quot;$(InputDir)\..\h\font5x9.inl&quot; g_ATFont5x9&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Debug\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font5x9.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 5x9 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 5 9 16 16 14 0 0 &quot;$(InputDir)\..\h\font5x9.inl&quot; g_ATFont5x9&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font5x9.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Release|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 5x9 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 5 9 16 16 14 0 0 &quot;$(InputDir)\..\h\font5x9.inl&quot; g_ATFont5x9&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font5x9.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|Win32"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 5x9 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 5 9 16 16 14 0 0 &quot;$(InputDir)\..\h\font5x9.inl&quot; g_ATFont5x9&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font5x9.inl&quot;"
+					/>
+				</FileConfiguration>
+				<FileConfiguration
+					Name="Profile|x64"
+					>
+					<Tool
+						Name="VCCustomBuildTool"
+						Description="Building 5x9 font file...."
+						CommandLine="&quot;$(ProjectDir)..\..\out\release\asuka&quot; fontencode &quot;$(InputPath)&quot; 5 9 16 16 14 0 0 &quot;$(InputDir)\..\h\font5x9.inl&quot; g_ATFont5x9&#x0D;&#x0A;"
+						AdditionalDependencies="&quot;$(ProjectDir)..\..\out\Release\asuka.exe&quot;"
+						Outputs="&quot;$(InputDir)\..\h\font5x9.inl&quot;"
 					/>
 				</FileConfiguration>
 			</File>

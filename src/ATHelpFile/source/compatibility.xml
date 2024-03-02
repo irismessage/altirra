@@ -25,6 +25,11 @@
   <!-- *************************************************** -->
 
   <h2>Demos</h2>
+  <h3>1st Top Demo 1989</h3>
+  <p>
+    Contains a direct jump into the XL/XE OS at $C0E2 and may fail with other OSes.
+  </p>
+  
   <h3>Cup of Tea</h3>
   <p>
     There is a bug in the IRQ handling that causes it to occasionally crash after playing
@@ -42,6 +47,11 @@
 
   <h2>Games</h2>
 
+  <h3>Alien Garden</h3>
+  <p>
+    Erroneously trips GTIA video modes, resulting in colored garbage on screen during transitions.
+  </p>
+  
   <h3>Assault Force 3D</h3>
   <p>
     This game requires the SuperCharger 3D cartridge, which is used for hardware multiply/divide.
@@ -68,9 +78,22 @@
   <h3>Castle Wolfenstein</h3>
   <stockref id="diskrw"/>
 
+  <h3>Choplifter (cartridge)</h3>
+  <p>
+    Copies out OS ROM at addresses $E500-FEFF and $C500-CBFF, and so can fail with OSes other
+    than the stock XL/XE OS.
+  </p>
+
   <h3>DARG</h3>
   <p>
     The clock runs too quickly if accelerated floating-point is enabled.
+  </p>
+
+  <h3>E.T. Phone Home!</h3>
+  <p>
+    This cartridge has a protection check which requires the OS to boot within a certain
+    amount of time. The XL/XE OS takes more time to initialize and can cause this check to
+    fail on NTSC systems.
   </p>
   
   <h3>Gruds in Space</h3>
@@ -81,6 +104,10 @@
     Version 1.0 has a bug that can cause it to crash if the opening animation is interrupted due
     to infinite DLI interrupts. The workaround is to hit a key during the title screen instead.
     This bug is fixed in version 1.01.
+  </p>
+  <p>
+    This game will not work with some custom OSes due to copying out parts of the OS ROM for
+    private use (the SIO routines, to be specific).
   </p>
 
   <h3>Mr. DO!</h3>
@@ -93,6 +120,16 @@
   <h3>M.U.L.E.</h3>
   <p>
     The tiny sound glitches that occur when notes are played happen on a real Atari, too.
+  </p>
+
+  <h3>Parsec XL</h3>
+  <p>
+    Directly jumps into XL/XE OS at $C28A and may fail with other OSes.
+  </p>
+
+  <h3>Preppie II</h3>
+  <p>
+    Has hidden a function in the game that skips levels if the button on paddle 4 or 5 is pressed.
   </p>
   
   <h3>Transylvania</h3>

@@ -8,3 +8,5 @@ IDI_DISK                ICON                    "disk.ico"
 IDI_TAPE                ICON                    "tape.ico"
 IDI_XEX                 ICON                    "xex.ico"
 IDI_CART                ICON                    "cart.ico"
+
+IDI_EJECT               ICON                    "eject.ico"

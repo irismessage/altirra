@@ -19,6 +19,7 @@
 #include <vd2/system/registry.h>
 #include <vd2/system/w32assist.h>
 #include "uimrulist.h"
+#include "uimenulist.h"
 
 void ATClearMRUList() {
 	VDRegistryAppKey key("MRU List", true);
@@ -101,17 +102,19 @@ void ATPromoteMRUListItem(uint32 index) {
 	}
 }
 
-void ATUpdateMRUListMenu(HMENU hmenu, UINT baseId, UINT clearId) {
-	if (!hmenu)
-		return;
-
+void ATUpdateMRUListMenu(HMENU hmenu, ATUIMenu *pmenu, UINT baseId, UINT clearId) {
 	// clear the menu
-	int n = GetMenuItemCount(hmenu);
+	if (hmenu) {
+		int n = GetMenuItemCount(hmenu);
 
-	for(int i=0; i<n; ++i) {
-		if (!DeleteMenu(hmenu, 0, MF_BYPOSITION))
-			break;
+		for(int i=0; i<n; ++i) {
+			if (!DeleteMenu(hmenu, 0, MF_BYPOSITION))
+				break;
+		}
 	}
+
+	if (pmenu)
+		pmenu->RemoveAllItems();
 
 	VDRegistryAppKey key("MRU List", false);
 	
@@ -130,17 +133,51 @@ void ATUpdateMRUListMenu(HMENU hmenu, UINT baseId, UINT clearId) {
 
 			if (key.getString(valuename, path)) {
 				menustr.sprintf(L"&%c %s", index == 9 ? L'0' : L'1' + index, path.c_str());
-				VDAppendMenuW32(hmenu, MF_STRING, baseId + index, menustr.c_str());
+
+				if (hmenu)
+					VDAppendMenuW32(hmenu, MF_STRING, baseId + index, menustr.c_str());
+
+				if (pmenu) {
+					ATUIMenuItem item;
+					item.mText = menustr;
+					item.mId = baseId + index;
+
+					pmenu->AddItem(item);
+				}
+
 				stringsAdded = true;
 			}
 		}
 	}
 
 	if (stringsAdded) {
-		VDAppendMenuSeparatorW32(hmenu);
-		VDAppendMenuW32(hmenu, MF_STRING, clearId, L"Clear list");
+		if (hmenu) {
+			VDAppendMenuSeparatorW32(hmenu);
+			VDAppendMenuW32(hmenu, MF_STRING, clearId, L"Clear list");
+		}
+
+		if (pmenu) {
+			pmenu->AddSeparator();
+
+			ATUIMenuItem item;
+			item.mText = L"Clear list";
+			item.mId = clearId;
+
+			pmenu->AddItem(item);
+		}
 	} else {
-		VDAppendMenuW32(hmenu, MF_STRING, baseId, L"Recently used list");
-		EnableMenuItem(hmenu, 0, MF_BYPOSITION | MF_GRAYED);
+		if (hmenu) {
+			VDAppendMenuW32(hmenu, MF_STRING, baseId, L"Recently used list");
+			EnableMenuItem(hmenu, 0, MF_BYPOSITION | MF_GRAYED);
+		}
+
+		if (pmenu) {
+			ATUIMenuItem item;
+			item.mText = L"Recently used list";
+			item.mId = baseId;
+			item.mbDisabled = true;
+
+			pmenu->AddItem(item);
+		}
 	}
 }

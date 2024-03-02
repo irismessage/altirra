@@ -127,8 +127,14 @@ public:
 	void DumpDMAPattern();
 	void DumpDMAActivityMap();
 
-	void	LoadState(ATSaveStateReader& reader);
-	void	SaveState(ATSaveStateWriter& writer);
+	void	BeginLoadState(ATSaveStateReader& reader);
+	void	LoadStateArch(ATSaveStateReader& reader);
+	void	LoadStatePrivate(ATSaveStateReader& reader);
+	void	EndLoadState(ATSaveStateReader& reader);
+
+	void	BeginSaveState(ATSaveStateWriter& writer);
+	void	SaveStateArch(ATSaveStateWriter& writer);
+	void	SaveStatePrivate(ATSaveStateWriter& writer);
 
 	void	GetRegisterState(ATAnticRegisterState& state) const;
 
@@ -138,7 +144,7 @@ protected:
 
 	uint8	AdvanceSpecial();
 	void	AdvanceScanline();
-	void	UpdateDMAPattern(int dmaStart, int dmaEnd, int dmaVEnd, uint8 mode);
+	void	UpdateDMAPattern();
 	void	LatchPlayfieldEdges();
 	void	UpdateCurrentCharRow();
 	void	UpdatePlayfieldTiming();

@@ -29,7 +29,7 @@
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Riza/direct3d.h>
 #include "d3dxfx.h"
-#include "displaydrv.h"
+#include <vd2/VDDisplay/displaydrv.h>
 #include <vd2/Riza/displaydrvdx9.h>
 
 ///////////////////////////////////////////////////////////////////////////

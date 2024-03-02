@@ -92,6 +92,7 @@ public:
 	void SetRegisterImmediate(uint8 addr, uint8 value);
 
 	void LoadState(ATSaveStateReader& reader);
+	void ResetState();
 	void SaveState(ATSaveStateWriter& writer);
 
 protected:
@@ -120,6 +121,7 @@ protected:
 	void RenderMode10Transition2(int x1);
 	void RenderMode10Transition3(int x1);
 	void RenderMode11(int x1, int x2);
+	void RenderMode11Fast(int x1, int x2);
 
 	const uint8 *mpMergeBuffer;
 	const uint8 *mpAnticBuffer;

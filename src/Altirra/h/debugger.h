@@ -31,6 +31,7 @@ struct ATSymbol;
 struct ATSourceLineInfo;
 class ATDebugExpNode;
 class IATDebuggerClient;
+struct ATDebuggerExprParseOpts;
 
 enum ATDebugEvent {
 	kATDebugEvent_BreakpointsChanged,
@@ -106,6 +107,8 @@ public:
 	virtual bool IsRunning() const = 0;
 	virtual bool AreCommandsQueued() const = 0;
 
+	virtual const ATDebuggerExprParseOpts& GetExprOpts() const = 0;
+
 	virtual void Detach() = 0;
 	virtual void SetSourceMode(ATDebugSrcMode src) = 0;
 	virtual bool Tick() = 0;
@@ -142,7 +145,7 @@ public:
 	virtual void UnloadSymbols(uint32 moduleId) = 0;
 	virtual void ProcessSymbolDirectives(uint32 id) = 0;
 
-	virtual sint32 ResolveSymbol(const char *s, bool allowGlobal = false) = 0;
+	virtual sint32 ResolveSymbol(const char *s, bool allowGlobal = false, bool allowShortBase = false) = 0;
 
 	virtual void AddCustomSymbol(uint32 address, uint32 len, const char *name, uint32 rwxmode, uint32 moduleId = 0) = 0;
 	virtual void RemoveCustomSymbol(uint32 address) = 0;

@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "stdafx.h"
+#include <vd2/system/binary.h>
 #include "cpu.h"
 #include "cpustates.h"
 #include "console.h"
@@ -503,29 +504,97 @@ void ATCPUEmulator::DumpStatus() {
 	ATDisassembleInsn(mInsnPC);
 }
 
-void ATCPUEmulator::LoadState(ATSaveStateReader& reader) {
+void ATCPUEmulator::BeginLoadState(ATSaveStateReader& reader) {
+	reader.RegisterHandlerMethod(kATSaveStateSection_Arch, VDMAKEFOURCC('6', '5', '0', '2'), this, &ATCPUEmulator::LoadState6502);
+	reader.RegisterHandlerMethod(kATSaveStateSection_Arch, VDMAKEFOURCC('C', '8', '1', '6'), this, &ATCPUEmulator::LoadState65C816);
+	reader.RegisterHandlerMethod(kATSaveStateSection_Private, VDMAKEFOURCC('6', '5', '0', '2'), this, &ATCPUEmulator::LoadStatePrivate);
+	reader.RegisterHandlerMethod(kATSaveStateSection_ResetPrivate, 0, this, &ATCPUEmulator::LoadStateResetPrivate);
+	reader.RegisterHandlerMethod(kATSaveStateSection_End, 0, this, &ATCPUEmulator::EndLoadState);
+}
+
+void ATCPUEmulator::LoadState6502(ATSaveStateReader& reader) {
+	SetPC(reader.ReadUint16());
 	mA		= reader.ReadUint8();
 	mX		= reader.ReadUint8();
 	mY		= reader.ReadUint8();
 	mS		= reader.ReadUint8();
 	mP		= reader.ReadUint8();
+}
+
+void ATCPUEmulator::LoadState65C816(ATSaveStateReader& reader) {
+	mDP		= reader.ReadUint16();
+	mAH		= reader.ReadUint8();
+	mXH		= reader.ReadUint8();
+	mYH		= reader.ReadUint8();
+	mSH		= reader.ReadUint8();
+	mbEmulationFlag	= (reader.ReadUint8() & 1) != 0;
+	mB		= reader.ReadUint8();
+	mK		= reader.ReadUint8();
 	SetPC(reader.ReadUint16());
 	mIntFlags = reader.ReadUint8();
+}
+
+void ATCPUEmulator::LoadStatePrivate(ATSaveStateReader& reader) {
+	const uint32 t = mpCallbacks->CPUGetUnhaltedCycle();
+
+	mbUnusedCycle = reader.ReadBool();
+	mIntFlags = reader.ReadUint8();
+	mIRQAssertTime = reader.ReadUint32() + t;
+	mIRQAcknowledgeTime = reader.ReadUint32() + t;
+	mNMIAssertTime = reader.ReadUint32() + t;
+}
+
+void ATCPUEmulator::LoadStateResetPrivate(ATSaveStateReader& reader) {
+	mIRQAssertTime = mpCallbacks->CPUGetUnhaltedCycle() - 10;
+	mIRQAcknowledgeTime = mIRQAssertTime;
+	mbUnusedCycle	= false;
+}
+
+void ATCPUEmulator::EndLoadState(ATSaveStateReader& reader) {
 	mHLEDelay		= 0;
 }
 
-void ATCPUEmulator::SaveState(ATSaveStateWriter& writer) {
+void ATCPUEmulator::BeginSaveState(ATSaveStateWriter& writer) {
+	writer.RegisterHandlerMethod(kATSaveStateSection_Arch, this, &ATCPUEmulator::SaveStateArch);
+	writer.RegisterHandlerMethod(kATSaveStateSection_Private, this, &ATCPUEmulator::SaveStatePrivate);
+}
+
+void ATCPUEmulator::SaveStateArch(ATSaveStateWriter& writer) {
+	writer.BeginChunk(VDMAKEFOURCC('6','5','0','2'));
+
+	// We write PC and not InsnPC here because the opcode fetch hasn't happened yet.
+	writer.WriteUint16(mPC);
 	writer.WriteUint8(mA);
 	writer.WriteUint8(mX);
 	writer.WriteUint8(mY);
 	writer.WriteUint8(mS);
 	writer.WriteUint8(mP);
-	writer.WriteUint16(mPC);
+	writer.EndChunk();
 
+	if (mCPUMode == kATCPUMode_65C816) {
+		writer.BeginChunk(VDMAKEFOURCC('C', '8', '1', '6'));
+		writer.WriteUint16(mDP);
+		writer.WriteUint8(mAH);
+		writer.WriteUint8(mXH);
+		writer.WriteUint8(mYH);
+		writer.WriteUint8(mSH);
+		writer.WriteUint8(mbEmulationFlag ? 1 : 0);
+		writer.WriteUint8(mB);
+		writer.WriteUint8(mK);
+		writer.EndChunk();
+	}
+}
+
+void ATCPUEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
+	const uint32 t = mpCallbacks->CPUGetUnhaltedCycle();
+
+	writer.BeginChunk(VDMAKEFOURCC('6','5','0','2'));
+	writer.WriteUint8(mbUnusedCycle);
 	writer.WriteUint8(mIntFlags);
-
-	mIRQAssertTime = mpCallbacks->CPUGetUnhaltedCycle() - 10;
-	mIRQAcknowledgeTime = mIRQAssertTime;
+	writer.WriteUint32(mIRQAssertTime - t);
+	writer.WriteUint32(mIRQAcknowledgeTime - t);
+	writer.WriteUint32(mNMIAssertTime - t);
+	writer.EndChunk();
 }
 
 void ATCPUEmulator::InjectOpcode(uint8 op) {

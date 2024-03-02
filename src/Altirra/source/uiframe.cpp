@@ -846,6 +846,21 @@ void ATContainerDockingPane::RecalcFrame() {
 		mpContent->RecalcFrame();
 }
 
+void ATContainerDockingPane::UpdateModalState(ATFrameWindow *frame) {
+	if (mpContent) {
+		HWND hwndContent = mpContent->GetHandleW32();
+
+		EnableWindow(hwndContent, (mpContent == frame));
+	}
+
+	Children::const_iterator it(mChildren.begin()), itEnd(mChildren.end());
+	for(; it!=itEnd; ++it) {
+		ATContainerDockingPane *pane = *it;
+
+		pane->UpdateModalState(frame);
+	}
+}
+
 void ATContainerDockingPane::UpdateActivationState(ATFrameWindow *frame) {
 	if (mpContent) {
 		HWND hwndContent = mpContent->GetHandleW32();
@@ -1287,6 +1302,8 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 	if (!mpDragPaneTarget)
 		return NULL;
 
+	HWND hwndActive = NULL;
+
 	if (frame) {
 		UndockedFrames::iterator it = std::find(mUndockedFrames.begin(), mUndockedFrames.end(), frame);
 		if (it != mUndockedFrames.end())
@@ -1295,7 +1312,7 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 		HWND hwndFrame = frame->GetHandleW32();
 
 		if (hwndFrame) {
-			HWND hwndActive = ::GetFocus();
+			hwndActive = ::GetFocus();
 			if (hwndActive && ::GetAncestor(hwndActive, GA_ROOT) != hwndFrame)
 				hwndActive = NULL;
 
@@ -1341,7 +1358,7 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 
 	mpDragPaneTarget->Dock(newPane, mDragPaneTargetCode);
 
-	if (frame)
+	if (frame && hwndActive)
 		NotifyFrameActivated(mpActiveFrame);
 
 	return newPane;
@@ -1368,7 +1385,7 @@ void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible) {
 	}
 
 	if (mpFullScreenFrame == frame) {
-		mpFullScreenFrame = frame;
+		mpFullScreenFrame = NULL;
 		frame->SetFullScreen(false);
 	}
 
@@ -1409,21 +1426,30 @@ void ATContainerWindow::SetFullScreenFrame(ATFrameWindow *frame) {
 	if (mpFullScreenFrame == frame)
 		return;
 
+	if (mpFullScreenFrame)
+		mpFullScreenFrame->SetFullScreen(false);
+
 	mpFullScreenFrame = frame;
 
-	LONG exStyle = GetWindowLong(mhwnd, GWL_EXSTYLE);
-
-//	if (frame)
-//		exStyle &= ~WS_EX_CLIENTEDGE;
-//	else
-//		exStyle |= WS_EX_CLIENTEDGE;
-
-	SetWindowLong(mhwnd, GWL_EXSTYLE, exStyle);
-	SetWindowPos(mhwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+	if (frame)
+		frame->SetFullScreen(true);
 
 	ATContainerResizer resizer;
 	mpDockingPane->Relayout(resizer);
 	resizer.Flush();
+}
+
+void ATContainerWindow::SetModalFrame(ATFrameWindow *frame) {
+	if (mpModalFrame == frame)
+		return;
+
+	mpModalFrame = frame;
+
+	if (frame)
+		ActivateFrame(frame);
+
+	if (mpDockingPane)
+		mpDockingPane->UpdateModalState(frame);
 }
 
 void ATContainerWindow::ActivateFrame(ATFrameWindow *frame) {
@@ -1673,11 +1699,11 @@ void ATFrameWindow::SetFullScreen(bool fs) {
 
 	mbFullScreen = fs;
 
-	if (mpContainer)
-		mpContainer->SetFullScreenFrame(fs ? this : NULL);
-
 	if (mpDockingPane)
 		mpDockingPane->UpdateFullScreenState();
+
+	if (mpContainer)
+		mpContainer->SetFullScreenFrame(fs ? this : NULL);
 
 	if (mhwnd) {
 		LONG style = GetWindowLong(mhwnd, GWL_STYLE);

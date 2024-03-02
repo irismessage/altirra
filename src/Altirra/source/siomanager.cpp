@@ -258,6 +258,13 @@ uint8 ATSIOManager::OnHookDSKINV(uint16) {
 			return 0;
 	}
 
+	// Set sector size. If we have an XL bios, use DSCTLN, otherwise force 128 bytes.
+	// Since hooks only trigger from ROM, we can check if the lower ROM exists.
+	if (mpSim->IsKernelROMLocation(0xC000))
+		kdb.DBYTLO_DBYTHI = kdb.DSCTLN;
+	else
+		kdb.DBYTLO_DBYTHI = 0x80;
+
 	// set device and invoke SIOV
 	kdb.DDEVIC = 0x31;
 

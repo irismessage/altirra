@@ -33,8 +33,8 @@
     be repeated using the up and down arrow keys.
   </p>
   <p>
-    The <tt>?</tt> command gives a list of available commands. You can also specify a command name,
-    i.e. <tt>? s</tt>, in order to get help on a specific command.
+    The <tt>.help</tt> command gives a list of available commands. You can also specify a command name,
+    i.e. <tt>.help s</tt>, in order to get help on a specific command.
   </p>
   <h2>Execution control</h2>
   <p>
@@ -88,7 +88,8 @@
   </p>
   <p>
     Altirra also supports memory access breakpoints, which allow detection of reads or writes to
-    a particular address. These are set and cleared using the ba (break on access) command. Unlike PC
-    breakpoints, currently there can only be one read and one write access breakpoint active.
+    a particular address. These are set and cleared using the ba (break on access) command. Memory
+    range breakpoints can also be set, which trip whenever any location within the memory range is
+    accessed.
   </p>
 </topic>

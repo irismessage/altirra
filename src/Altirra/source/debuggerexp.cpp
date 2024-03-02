@@ -7,6 +7,8 @@
 #include "cpumemory.h"
 #include "debugger.h"
 #include "antic.h"
+#include "mmu.h"
+#include "address.h"
 
 namespace {
 	void FreeNodes(vdfastvector<ATDebugExpNode *>& nodes) {
@@ -33,14 +35,16 @@ namespace {
 
 class ATDebugExpNodeConst : public ATDebugExpNode {
 public:
-	ATDebugExpNodeConst(sint32 v, bool hex)
+	ATDebugExpNodeConst(sint32 v, bool hex, bool addr)
 		: ATDebugExpNode(kATDebugExpNodeType_Const)
 		, mVal(v)
 		, mbHex(hex)
+		, mbAddress(addr)
 	{
 	}
 
 	bool IsHex() const { return mbHex; }
+	bool IsAddress() const { return mbAddress; }
 
 	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
 		result = mVal;
@@ -48,12 +52,37 @@ public:
 	}
 
 	void ToString(VDStringA& s, int prec) {
+		sint32 v = mVal;
+
+		if (mbAddress) {
+			switch((uint32)v & kATAddressSpaceMask) {
+				case kATAddressSpace_ANTIC:
+					s += "a:";
+					break;
+
+				case kATAddressSpace_PORTB:
+					s += "x:";
+					break;
+
+				case kATAddressSpace_RAM:
+					s += "r:";
+					break;
+
+				case kATAddressSpace_VBXE:
+					s += "v:";
+					break;
+			}
+
+			v &= kATAddressOffsetMask;
+		}
+
 		s.append_sprintf(mbHex ? mVal >= 0x100 ? mVal >= 0x10000 ? "$%08X" : "$%04X" : "$%02X" : "%d", mVal);
 	}
 
 protected:
 	const sint32 mVal;
 	const bool mbHex;
+	const bool mbAddress;
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -76,7 +105,7 @@ public:
 			sint32 v;
 
 			if (Evaluate(v, ATDebugExpEvalContext())) {
-				*result = new ATDebugExpNodeConst(v, static_cast<ATDebugExpNodeConst *>(&*mpArg)->IsHex());
+				*result = new ATDebugExpNodeConst(v, static_cast<ATDebugExpNodeConst *>(&*mpArg)->IsHex(), false);
 				return true;
 			}
 		}
@@ -99,11 +128,16 @@ protected:
 
 class ATDebugExpNodeBinary : public ATDebugExpNode {
 public:
-	ATDebugExpNodeBinary(ATDebugExpNodeType type, ATDebugExpNode *left, ATDebugExpNode *right)
+	ATDebugExpNodeBinary(ATDebugExpNodeType type, ATDebugExpNode *left, ATDebugExpNode *right, bool inheritAddress)
 		: ATDebugExpNode(type)
 		, mpLeft(left)
 		, mpRight(right)
+		, mbAddress(inheritAddress && (left->IsAddress() || right->IsAddress()))
 	{
+	}
+
+	bool IsAddress() const {
+		return mbAddress;
 	}
 
 	bool Optimize(ATDebugExpNode **result) {
@@ -120,7 +154,8 @@ public:
 			if (Evaluate(v, ATDebugExpEvalContext())) {
 				*result = new ATDebugExpNodeConst(v,
 					static_cast<ATDebugExpNodeConst *>(&*mpLeft)->IsHex()
-					|| static_cast<ATDebugExpNodeConst *>(&*mpRight)->IsHex()
+					|| static_cast<ATDebugExpNodeConst *>(&*mpRight)->IsHex(),
+					mbAddress
 					);
 				return true;
 			}
@@ -153,6 +188,7 @@ protected:
 
 	vdautoptr<ATDebugExpNode> mpLeft;
 	vdautoptr<ATDebugExpNode> mpRight;
+	bool mbAddress;
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -160,7 +196,7 @@ protected:
 class ATDebugExpNodeAnd : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeAnd(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_And, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_And, x, y, false)
 	{
 	}
 
@@ -172,7 +208,7 @@ public:
 			sint32 v;
 
 			if (mpLeft->Evaluate(v, ATDebugExpEvalContext()) && !v) {
-				*result = new ATDebugExpNodeConst(0, false);
+				*result = new ATDebugExpNodeConst(0, false, false);
 				return true;
 			}
 		}
@@ -181,7 +217,7 @@ public:
 			sint32 v;
 
 			if (mpRight->Evaluate(v, ATDebugExpEvalContext()) && !v) {
-				*result = new ATDebugExpNodeConst(0, false);
+				*result = new ATDebugExpNodeConst(0, false, false);
 				return true;
 			}
 		}
@@ -279,7 +315,7 @@ public:
 class ATDebugExpNodeOr : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeOr(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_Or, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_Or, x, y, false)
 	{
 	}
 
@@ -303,7 +339,7 @@ public:
 			sint32 v;
 
 			if (mpLeft->Evaluate(v, ATDebugExpEvalContext()) && v) {
-				*result = new ATDebugExpNodeConst(1, false);
+				*result = new ATDebugExpNodeConst(1, false, false);
 				return true;
 			}
 		}
@@ -312,7 +348,7 @@ public:
 			sint32 v;
 
 			if (mpRight->Evaluate(v, ATDebugExpEvalContext()) && v) {
-				*result = new ATDebugExpNodeConst(1, false);
+				*result = new ATDebugExpNodeConst(1, false, false);
 				return true;
 			}
 		}
@@ -377,7 +413,7 @@ bool ATDebugExpNodeOr::OptimizeInvert(ATDebugExpNode **result) {
 class ATDebugExpNodeBitwiseAnd : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeBitwiseAnd(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_BitwiseAnd, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_BitwiseAnd, x, y, true)
 	{
 	}
 
@@ -405,7 +441,7 @@ public:
 class ATDebugExpNodeBitwiseOr : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeBitwiseOr(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_BitwiseOr, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_BitwiseOr, x, y, true)
 	{
 	}
 
@@ -433,7 +469,7 @@ public:
 class ATDebugExpNodeBitwiseXor : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeBitwiseXor(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_BitwiseXor, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_BitwiseXor, x, y, true)
 	{
 	}
 
@@ -461,7 +497,7 @@ public:
 class ATDebugExpNodeAdd : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeAdd(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_Add, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_Add, x, y, true)
 	{
 	}
 
@@ -489,7 +525,7 @@ public:
 class ATDebugExpNodeSub : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeSub(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_Sub, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_Sub, x, y, true)
 	{
 	}
 
@@ -516,7 +552,7 @@ public:
 class ATDebugExpNodeMul : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeMul(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_Mul, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_Mul, x, y, true)
 	{
 	}
 
@@ -544,7 +580,7 @@ public:
 class ATDebugExpNodeMod : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeMod(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_Div, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_Div, x, y, false)
 	{
 	}
 
@@ -574,7 +610,7 @@ public:
 class ATDebugExpNodeDiv : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeDiv(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_Div, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_Div, x, y, false)
 	{
 	}
 
@@ -604,7 +640,7 @@ public:
 class ATDebugExpNodeLT : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeLT(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_LT, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_LT, x, y, false)
 	{
 	}
 
@@ -656,7 +692,7 @@ public:
 class ATDebugExpNodeLE : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeLE(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_LT, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_LE, x, y, false)
 	{
 	}
 
@@ -708,7 +744,7 @@ public:
 class ATDebugExpNodeGT : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeGT(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_GT, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_GT, x, y, false)
 	{
 	}
 
@@ -760,7 +796,7 @@ public:
 class ATDebugExpNodeGE : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeGE(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_GE, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_GE, x, y, false)
 	{
 	}
 
@@ -812,7 +848,7 @@ public:
 class ATDebugExpNodeEQ : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeEQ(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_EQ, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_EQ, x, y, false)
 	{
 	}
 
@@ -862,7 +898,7 @@ public:
 class ATDebugExpNodeNE : public ATDebugExpNodeBinary {
 public:
 	ATDebugExpNodeNE(ATDebugExpNode *x, ATDebugExpNode *y)
-		: ATDebugExpNodeBinary(kATDebugExpNodeType_NE, x, y)
+		: ATDebugExpNodeBinary(kATDebugExpNodeType_NE, x, y, false)
 	{
 	}
 
@@ -1046,6 +1082,35 @@ public:
 
 	void EmitUnaryOp(VDStringA& s) {
 		s += "dsb ";
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeDerefSignedWord : public ATDebugExpNodeUnary {
+public:
+	ATDebugExpNodeDerefSignedWord(ATDebugExpNode *x)
+		: ATDebugExpNodeUnary(kATDebugExpNodeType_DerefSignedWord, x)
+	{
+	}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		sint32 x;
+
+		if (!mpArg->Evaluate(x, context))
+			return false;
+
+		if (!context.mpMemory)
+			return false;
+
+		uint8 c0 = context.mpMemory->DebugReadByte(x & 0xffff);
+		uint8 c1 = context.mpMemory->DebugReadByte((x+1) & 0xffff);
+		result = (sint16)(c0 + (c1 << 8));
+		return true;
+	}
+
+	void EmitUnaryOp(VDStringA& s) {
+		s += "dsw ";
 	}
 };
 
@@ -1347,9 +1412,113 @@ public:
 	}
 };
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeXBankReg : public ATDebugExpNode {
+public:
+	ATDebugExpNodeXBankReg() : ATDebugExpNode(kATDebugExpNodeType_XBankReg) {}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		if (!context.mpMMU)
+			return false;
+
+		result = context.mpMMU->GetBankRegister();
+		return true;
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		s += "xbankreg";
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeXBankCPU : public ATDebugExpNode {
+public:
+	ATDebugExpNodeXBankCPU() : ATDebugExpNode(kATDebugExpNodeType_XBankCPU) {}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		if (!context.mpMMU)
+			return false;
+
+		result = (sint32)context.mpMMU->GetCPUBankBase() - 0x10000;
+		return true;
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		s += "xbankcpu";
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+class ATDebugExpNodeXBankANTIC : public ATDebugExpNode {
+public:
+	ATDebugExpNodeXBankANTIC() : ATDebugExpNode(kATDebugExpNodeType_XBankANTIC) {}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		if (!context.mpMMU)
+			return false;
+
+		result = context.mpMMU->GetAnticBankBase() - 0x10000;
+		return true;
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		s += "xbankantic";
+	}
+};
+
 //////////////////////////////////////////////////////
 
-ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
+class ATDebugExpNodeAddrSpace : public ATDebugExpNodeUnary {
+public:
+	ATDebugExpNodeAddrSpace(uint32 space, ATDebugExpNode *x)
+		: ATDebugExpNodeUnary(kATDebugExpNodeType_AddrSpace, x)
+		, mSpace(space)
+	{
+	}
+
+	bool IsAddress() const { return true; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		sint32 x;
+
+		if (!mpArg->Evaluate(x, context))
+			return false;
+
+		result = (sint32)(((uint32)x & kATAddressOffsetMask) + mSpace);
+		return true;
+	}
+
+	void EmitUnaryOp(VDStringA& s) {
+		switch(mSpace) {
+			case kATAddressSpace_ANTIC:
+				s += "n:";
+				break;
+
+			case kATAddressSpace_CPU:
+				break;
+
+			case kATAddressSpace_PORTB:
+				s += "x:";
+				break;
+
+			case kATAddressSpace_RAM:
+				s += "r:";
+				break;
+
+			case kATAddressSpace_VBXE:
+				s += "v:";
+				break;
+		}
+	}
+
+private:
+	const uint32 mSpace;
+};
+
+ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const ATDebuggerExprParseOpts& opts) {
 	enum {
 		kOpNone,
 		kOpOpenParen,
@@ -1374,9 +1543,11 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 		kOpNegate,
 		kOpDerefByte,
 		kOpDerefSignedByte,
+		kOpDerefSignedWord,
 		kOpDerefWord,
 		kOpLoByte,
-		kOpHiByte
+		kOpHiByte,
+		kOpAddrSpace
 	};
 
 	static const uint8 kOpPrecedence[]={
@@ -1413,7 +1584,10 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 		9,9,9,
 
 		// unary
-		10,10,10,10,10
+		10,10,10,10,10,10,10,10,
+
+		// addr space
+		11
 	};
 
 	enum {
@@ -1422,6 +1596,7 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 		kTokDB,
 		kTokDSB,
 		kTokDW,
+		kTokDSW,
 		kTokAnd,
 		kTokOr,
 		kTokLT,
@@ -1441,7 +1616,11 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 		kTokHpos,
 		kTokVpos,
 		kTokAddress,
-		kTokValue
+		kTokValue,
+		kTokAddrSpace,
+		kTokXBankReg,
+		kTokXBankCPU,
+		kTokXBankANTIC
 	};
 
 	vdfastvector<ATDebugExpNode *> valstack;
@@ -1451,477 +1630,615 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg) {
 	sint32 intVal;
 	bool hexVal;
 
-	for(;;) {
-		char c = *s++;
-		int tok = c;
+	if (dbg && opts.mbAllowUntaggedHex) {
+		intVal = dbg->ResolveSymbol(s, true, true);
 
-		if (c == ' ')
-			continue;
+		if (intVal >= 0) {
+			s += strlen(s);
+			needValue = false;
 
-		if (!strchr("+-*/%()&|^", c)) {
-			if (!c) {
-				tok = kTokEOL;
-			} else if (c == '<') {
-				if (*s == '=') {
-					++s;
-					tok = kTokLE;
-				} else
-					tok = kTokLT;
-			} else if (c == '>') {
-				if (*s == '=') {
-					++s;
-					tok = kTokGE;
-				} else
-					tok = kTokGT;
-			} else if (c == '=') {
-				tok = kTokEQ;
-			} else if (c == '!') {
-				if (*s == '=') {
-					++s;
-					tok = kTokNE;
-				}
-				// fall through if just !
-			} else if (c == '$') {
-				c = *s;
+			valstack.push_back(new ATDebugExpNodeConst(intVal, opts.mbAllowUntaggedHex, true));
+		}
+	}
 
-				if (!isxdigit((unsigned char)c)) {
-					FreeNodes(valstack);
-					throw ATDebuggerExprParseException("Expected hex number after $");
-				}
+	try {
+		for(;;) {
+			char c = *s++;
+			int tok = c;
 
-				++s;
+			if (c == ' ')
+				continue;
 
-				uint32 v = 0;
-				for(;;) {
-					v = (v << 4) + (c & 0x0f);
-
-					if (c & 0x40)
-						v += 9;
-
-					c = *s;
-
-					if (!isxdigit((unsigned char)c))
-						break;
-
-					++s;
-				}
-
-				intVal = v;
-				hexVal = true;
-				tok = kTokInt;
-			} else if (isdigit((unsigned char)c)) {
-				uint32 v = (unsigned char)(c - '0');
-
-				for(;;) {
-					c = *s;
-
-					if (!isdigit((unsigned char)c))
-						break;
-
-					++s;
-
-					v = (v * 10) + ((unsigned char)c - '0');
-				}
-
-				intVal = v;
-				tok = kTokInt;
-				hexVal = false;
-			} else if (isalpha((unsigned char)c) || c == '_') {
-				const char *idstart = s-1;
-
-				while(*s && (isalnum((unsigned char)*s) || *s == '_' || *s == '.'))
-					++s;
-
-				VDStringSpanA ident(idstart, s);
-
-				if (ident == "pc")
-					tok = kTokPC;
-				else if (ident == "a")
-					tok = kTokA;
-				else if (ident == "x")
-					tok = kTokX;
-				else if (ident == "y")
-					tok = kTokY;
-				else if (ident == "s")
-					tok = kTokS;
-				else if (ident == "p")
-					tok = kTokP;
-				else if (ident == "db")
-					tok = kTokDB;
-				else if (ident == "dsb")
-					tok = kTokDSB;
-				else if (ident == "dw")
-					tok = kTokDW;
-				else if (ident == "and")
-					tok = kTokAnd;
-				else if (ident == "or")
-					tok = kTokOr;
-				else if (ident == "read")
-					tok = kTokRead;
-				else if (ident == "write")
-					tok = kTokWrite;
-				else if (ident == "hpos")
-					tok = kTokHpos;
-				else if (ident == "vpos")
-					tok = kTokVpos;
-				else if (ident == "address")
-					tok = kTokAddress;
-				else if (ident == "value")
-					tok = kTokValue;
-				else {
-					IATDebuggerSymbolLookup *symlookup = ATGetDebuggerSymbolLookup();
-
-					VDString identstr(ident);
-					if (dbg && (intVal = dbg->ResolveSymbol(identstr.c_str())) >= 0) {
-						tok = kTokInt;
-						hexVal = true;
-					} else {
-						FreeNodes(valstack);
-						throw ATDebuggerExprParseException("Unable to resolve symbol \"%s\"", identstr.c_str());
+			if (!strchr("+-*/%()&|^", c)) {
+				if (!c) {
+					tok = kTokEOL;
+				} else if (c == '<') {
+					if (*s == '=') {
+						++s;
+						tok = kTokLE;
+					} else
+						tok = kTokLT;
+				} else if (c == '>') {
+					if (*s == '=') {
+						++s;
+						tok = kTokGE;
+					} else
+						tok = kTokGT;
+				} else if (c == '=') {
+					tok = kTokEQ;
+				} else if (c == '!') {
+					if (*s == '=') {
+						++s;
+						tok = kTokNE;
 					}
+					// fall through if just !
+				} else if (c == '$' || (isxdigit((unsigned char)c) && opts.mbDefaultHex)) {
+					if (c == '$') {
+						c = *s;
+
+						if (!isxdigit((unsigned char)c)) {
+							FreeNodes(valstack);
+							throw ATDebuggerExprParseException("Expected hex number after $");
+						}
+
+						++s;
+					}
+
+					bool has_bank = false;
+					uint32 bank = 0;
+					uint32 v = 0;
+					for(;;) {
+						v = (v << 4) + (c & 0x0f);
+
+						if (c & 0x40)
+							v += 9;
+
+						c = *s;
+
+						if (!has_bank && c == ':') {
+							has_bank = true;
+
+							if (v > 0xff)
+								throw ATDebuggerExprParseException("Bank too large");
+
+							bank = v << 16;
+							v = 0;
+							c = 0;
+						} else if (!isxdigit((unsigned char)c))
+							break;
+
+						++s;
+					}
+
+					if (has_bank)
+						v = (v & 0xffff) + bank;
+
+					intVal = v;
+					hexVal = true;
+					tok = kTokInt;
+				} else if (isdigit((unsigned char)c)) {
+					uint32 v = (unsigned char)(c - '0');
+					bool has_bank = false;
+					uint32 bank = 0;
+
+					for(;;) {
+						c = *s;
+
+						if (!has_bank && c == ':') {
+							has_bank = true;
+
+							if (v > 0xff)
+								throw ATDebuggerExprParseException("Bank too large");
+
+							bank = v << 16;
+							v = 0;
+						} else if (isdigit((unsigned char)c))
+							v = (v * 10) + ((unsigned char)c - '0');
+						else
+							break;
+
+						++s;
+
+					}
+
+					if (has_bank)
+						v += bank;
+
+					intVal = v;
+					tok = kTokInt;
+					hexVal = false;
+				} else if (isalpha((unsigned char)c) || c == '_' || c == '#') {
+					const char *idstart = s-1;
+
+					if (c == '#')
+						++idstart;
+
+					while(*s && (isalnum((unsigned char)*s) || *s == '_' || *s == '.'))
+						++s;
+
+					VDStringSpanA ident(idstart, s);
+
+					if (c == '#')
+						goto force_ident;
+
+					if (*s == ':') {
+						++s;
+
+						if (ident == "v")
+							intVal = (sint32)kATAddressSpace_VBXE;
+						else if (ident == "n")
+							intVal = (sint32)kATAddressSpace_ANTIC;
+						else if (ident == "x")
+							intVal = (sint32)kATAddressSpace_PORTB;
+						else if (ident == "r")
+							intVal = (sint32)kATAddressSpace_RAM;
+						else
+							throw ATDebuggerExprParseException("Unknown address space: '%.*s'", ident.size(), ident.data());
+
+						tok = kTokAddrSpace;
+					} else if (ident == "pc")
+						tok = kTokPC;
+					else if (ident == "a")
+						tok = kTokA;
+					else if (ident == "x")
+						tok = kTokX;
+					else if (ident == "y")
+						tok = kTokY;
+					else if (ident == "s")
+						tok = kTokS;
+					else if (ident == "p")
+						tok = kTokP;
+					else if (ident == "db")
+						tok = kTokDB;
+					else if (ident == "dsb")
+						tok = kTokDSB;
+					else if (ident == "dw")
+						tok = kTokDW;
+					else if (ident == "dsw")
+						tok = kTokDSW;
+					else if (ident == "and")
+						tok = kTokAnd;
+					else if (ident == "or")
+						tok = kTokOr;
+					else if (ident == "read")
+						tok = kTokRead;
+					else if (ident == "write")
+						tok = kTokWrite;
+					else if (ident == "hpos")
+						tok = kTokHpos;
+					else if (ident == "vpos")
+						tok = kTokVpos;
+					else if (ident == "address")
+						tok = kTokAddress;
+					else if (ident == "value")
+						tok = kTokValue;
+					else if (ident == "xbankreg")
+						tok = kTokXBankReg;
+					else if (ident == "xbankcpu")
+						tok = kTokXBankCPU;
+					else if (ident == "xbankantic")
+						tok = kTokXBankANTIC;
+					else {
+force_ident:
+						IATDebuggerSymbolLookup *symlookup = ATGetDebuggerSymbolLookup();
+
+						VDString identstr(ident);
+						if (dbg && (intVal = dbg->ResolveSymbol(identstr.c_str(), false, false)) >= 0) {
+							tok = kTokInt;
+							hexVal = opts.mbDefaultHex;
+						} else {
+							FreeNodes(valstack);
+							throw ATDebuggerExprParseException("Unable to resolve symbol \"%s\"", identstr.c_str());
+						}
+					}
+				} else
+					throw ATDebuggerExprParseException("Unexpected character '%c'", c);
+			}
+
+			if (needValue) {
+				if (tok == '(') {
+					opstack.push_back(kOpOpenParen);
+				} else if (tok == '+') {
+					// unary plus - nothing to do
+				} else if (tok == '-') {
+					// unary minus
+					opstack.push_back(kOpNegate);
+				} else if (tok == '!') {
+					// unary minus
+					opstack.push_back(kOpInvert);
+				} else if (tok == '%') {
+					// binary number
+					if (*s != '0' && *s != '1')
+						throw ATDebuggerExprParseException("Invalid binary number.");
+
+					intVal = 0;
+					do {
+						intVal = (intVal << 1) + (*s == '1');
+						++s;
+					} while(*s == '0' || *s == '1');
+
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeConst(intVal, true, false));
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+
+				} else if (tok == kTokPC) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodePC);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokA) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeA);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokX) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeX);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokY) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeY);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokS) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeS);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokP) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeP);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokRead) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeRead);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokWrite) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeWrite);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokHpos) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeHPOS);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokVpos) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeVPOS);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokDB) {
+					opstack.push_back(kOpDerefByte);
+				} else if (tok == kTokDSB) {
+					opstack.push_back(kOpDerefSignedByte);
+				} else if (tok == kTokDW) {
+					opstack.push_back(kOpDerefWord);
+				} else if (tok == kTokDSW) {
+					opstack.push_back(kOpDerefSignedWord);
+				} else if (tok == kTokInt) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeConst(intVal, hexVal, false));
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokLT) {
+					opstack.push_back(kOpLoByte);
+				} else if (tok == kTokGT) {
+					opstack.push_back(kOpHiByte);
+				} else if (tok == kTokAddress) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeAddress);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokValue) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeValue);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokAddrSpace) {
+					valstack.push_back(new ATDebugExpNodeConst(intVal, true, true));
+					opstack.push_back(kOpAddrSpace);
+				} else if (tok == kTokXBankReg) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeXBankReg);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokXBankCPU) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeXBankCPU);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokXBankANTIC) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeXBankANTIC);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else {
+					throw ATDebuggerExprParseException("Expected value");
 				}
-			} else
-				throw ATDebuggerExprParseException("Unexpected character '%c'", c);
-		}
-
-		if (needValue) {
-			if (tok == '(') {
-				opstack.push_back(kOpOpenParen);
-			} else if (tok == '+') {
-				// unary plus - nothing to do
-			} else if (tok == '-') {
-				// unary minus
-				opstack.push_back(kOpNegate);
-			} else if (tok == '!') {
-				// unary minus
-				opstack.push_back(kOpInvert);
-			} else if (tok == kTokPC) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodePC);
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
-			} else if (tok == kTokA) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeA);
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
-			} else if (tok == kTokX) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeX);
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
-			} else if (tok == kTokY) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeY);
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
-			} else if (tok == kTokS) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeS);
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
-			} else if (tok == kTokP) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeP);
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
-			} else if (tok == kTokRead) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeRead);
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
-			} else if (tok == kTokWrite) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeWrite);
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
-			} else if (tok == kTokHpos) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeHPOS);
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
-			} else if (tok == kTokVpos) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeVPOS);
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
-			} else if (tok == kTokDB) {
-				opstack.push_back(kOpDerefByte);
-			} else if (tok == kTokDSB) {
-				opstack.push_back(kOpDerefSignedByte);
-			} else if (tok == kTokDW) {
-				opstack.push_back(kOpDerefWord);
-			} else if (tok == kTokInt) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeConst(intVal, hexVal));
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
-			} else if (tok == kTokLT) {
-				opstack.push_back(kOpLoByte);
-			} else if (tok == kTokGT) {
-				opstack.push_back(kOpHiByte);
-			} else if (tok == kTokAddress) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeAddress);
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
-			} else if (tok == kTokValue) {
-				vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeValue);
-
-				valstack.push_back(node);
-				node.release();
-
-				needValue = false;
 			} else {
-				throw ATDebuggerExprParseException("Expected value");
-			}
-		} else {
-			uint8 op;
+				uint8 op;
 
-			switch(tok) {
-				case ')':
-					op = kOpCloseParen;
-					break;
+				switch(tok) {
+					case ')':
+						op = kOpCloseParen;
+						break;
 
-				case '&':
-					op = kOpBitwiseAnd;
-					break;
+					case '&':
+						op = kOpBitwiseAnd;
+						break;
 
-				case '|':
-					op = kOpBitwiseOr;
-					break;
+					case '|':
+						op = kOpBitwiseOr;
+						break;
 
-				case '^':
-					op = kOpBitwiseXor;
-					break;
+					case '^':
+						op = kOpBitwiseXor;
+						break;
 
-				case kTokEOL:
-					op = kOpNone;
-					break;
+					case kTokEOL:
+						op = kOpNone;
+						break;
 
-				case kTokAnd:
-					op = kOpAnd;
-					break;
 
-				case kTokOr:
-					op = kOpOr;
-					break;
+					case kTokAnd:
+						op = kOpAnd;
+						break;
 
-				case kTokLT:
-					op = kOpLT;
-					break;
+					case kTokOr:
+						op = kOpOr;
+						break;
 
-				case kTokLE:
-					op = kOpLE;
-					break;
+					case kTokLT:
+						op = kOpLT;
+						break;
 
-				case kTokGT:
-					op = kOpGT;
-					break;
+					case kTokLE:
+						op = kOpLE;
+						break;
 
-				case kTokGE:
-					op = kOpGE;
-					break;
+					case kTokGT:
+						op = kOpGT;
+						break;
 
-				case kTokEQ:
-					op = kOpEQ;
-					break;
+					case kTokGE:
+						op = kOpGE;
+						break;
 
-				case kTokNE:
-					op = kOpNE;
-					break;
+					case kTokEQ:
+						op = kOpEQ;
+						break;
 
-				case '+':
-					op = kOpAdd;
-					break;
+					case kTokNE:
+						op = kOpNE;
+						break;
 
-				case '-':
-					op = kOpSub;
-					break;
+					case '+':
+						op = kOpAdd;
+						break;
 
-				case '*':
-					op = kOpMul;
-					break;
+					case '-':
+						op = kOpSub;
+						break;
 
-				case '/':
-					op = kOpDiv;
-					break;
+					case '*':
+						op = kOpMul;
+						break;
 
-				case '%':
-					op = kOpMod;
-					break;
+					case '/':
+						op = kOpDiv;
+						break;
 
-				default:
-					throw ATDebuggerExprParseException("Expected operator");
-			}
+					case '%':
+						op = kOpMod;
+						break;
 
-			// begin reduction
-			uint8 prec = kOpPrecedence[op];
-			for(;;) {
-				if (opstack.empty()) {
-					if (op == kOpCloseParen)
-						throw ATDebuggerExprParseException("Unmatched '('");
-					break;
+					default:
+						throw ATDebuggerExprParseException("Expected operator");
 				}
 
-				uint8 redop = opstack.back();
+				// begin reduction
+				uint8 prec = kOpPrecedence[op];
+				for(;;) {
+					if (opstack.empty()) {
+						if (op == kOpCloseParen)
+							throw ATDebuggerExprParseException("Unmatched '('");
+						break;
+					}
 
-				if (kOpPrecedence[redop] < prec)
-					break;
+					uint8 redop = opstack.back();
 
-				opstack.pop_back();
+					if (kOpPrecedence[redop] < prec)
+						break;
 
-				if (redop == kOpOpenParen) {
-					if (op == kOpNone)
-						throw ATDebuggerExprParseException("Unmatched ')'");
-					break;
+					opstack.pop_back();
+
+					if (redop == kOpOpenParen) {
+						if (op == kOpNone)
+							throw ATDebuggerExprParseException("Unmatched ')'");
+						break;
+					}
+
+					vdautoptr<ATDebugExpNode> node;
+					ATDebugExpNode **sp = &valstack.back();
+
+					int argcount = 2;
+
+					switch(redop) {
+						case kOpOr:
+							node = new ATDebugExpNodeOr(sp[-1], sp[0]);
+							break;
+
+						case kOpAnd:
+							node = new ATDebugExpNodeAnd(sp[-1], sp[0]);
+							break;
+
+						case kOpLT:
+							node = new ATDebugExpNodeLT(sp[-1], sp[0]);
+							break;
+
+						case kOpLE:
+							node = new ATDebugExpNodeLE(sp[-1], sp[0]);
+							break;
+
+						case kOpGT:
+							node = new ATDebugExpNodeGT(sp[-1], sp[0]);
+							break;
+
+						case kOpGE:
+							node = new ATDebugExpNodeGE(sp[-1], sp[0]);
+							break;
+
+						case kOpEQ:
+							node = new ATDebugExpNodeEQ(sp[-1], sp[0]);
+							break;
+
+						case kOpNE:
+							node = new ATDebugExpNodeNE(sp[-1], sp[0]);
+							break;
+
+						case kOpAdd:
+							node = new ATDebugExpNodeAdd(sp[-1], sp[0]);
+							break;
+
+						case kOpSub:
+							node = new ATDebugExpNodeSub(sp[-1], sp[0]);
+							break;
+
+						case kOpMul:
+							node = new ATDebugExpNodeMul(sp[-1], sp[0]);
+							break;
+
+						case kOpDiv:
+							node = new ATDebugExpNodeDiv(sp[-1], sp[0]);
+							break;
+
+						case kOpMod:
+							node = new ATDebugExpNodeMod(sp[-1], sp[0]);
+							break;
+
+						case kOpInvert:
+							node = new ATDebugExpNodeInvert(sp[0]);
+							argcount = 1;
+							break;
+
+
+						case kOpNegate:
+							node = new ATDebugExpNodeNegate(sp[0]);
+							argcount = 1;
+							break;
+
+						case kOpDerefByte:
+							node = new ATDebugExpNodeDerefByte(sp[0]);
+							argcount = 1;
+							break;
+
+						case kOpDerefWord:
+							node = new ATDebugExpNodeDerefWord(sp[0]);
+							argcount = 1;
+							break;
+
+						case kOpDerefSignedByte:
+							node = new ATDebugExpNodeDerefSignedByte(sp[0]);
+							argcount = 1;
+							break;
+
+						case kOpDerefSignedWord:
+							node = new ATDebugExpNodeDerefSignedWord(sp[0]);
+							argcount = 1;
+							break;
+
+						case kOpLoByte:
+							node = new ATDebugExpNodeLoByte(sp[0]);
+							argcount = 1;
+							break;
+
+						case kOpHiByte:
+							node = new ATDebugExpNodeHiByte(sp[0]);
+							argcount = 1;
+							break;
+
+						case kOpBitwiseAnd:
+							node = new ATDebugExpNodeBitwiseAnd(sp[-1], sp[0]);
+							break;
+
+						case kOpBitwiseOr:
+							node = new ATDebugExpNodeBitwiseOr(sp[-1], sp[0]);
+							break;
+
+						case kOpBitwiseXor:
+							node = new ATDebugExpNodeBitwiseXor(sp[-1], sp[0]);
+							break;
+
+						case kOpAddrSpace:
+							sp[-1]->Evaluate(intVal, ATDebugExpEvalContext());
+							delete sp[-1];
+							sp[-1] = NULL;
+							node = new ATDebugExpNodeAddrSpace(intVal, sp[0]);
+							break;
+					}
+
+					while(argcount--)
+						valstack.pop_back();
+
+					valstack.push_back(node);
+					node.release();
 				}
 
-				vdautoptr<ATDebugExpNode> node;
-				ATDebugExpNode **sp = &valstack.back();
+				if (op == kOpNone)
+					break;
 
-				int argcount = 2;
-
-				switch(redop) {
-					case kOpOr:
-						node = new ATDebugExpNodeOr(sp[-1], sp[0]);
-						break;
-
-					case kOpAnd:
-						node = new ATDebugExpNodeAnd(sp[-1], sp[0]);
-						break;
-
-					case kOpLT:
-						node = new ATDebugExpNodeLT(sp[-1], sp[0]);
-						break;
-
-					case kOpLE:
-						node = new ATDebugExpNodeLE(sp[-1], sp[0]);
-						break;
-
-					case kOpGT:
-						node = new ATDebugExpNodeGT(sp[-1], sp[0]);
-						break;
-
-					case kOpGE:
-						node = new ATDebugExpNodeGE(sp[-1], sp[0]);
-						break;
-
-					case kOpEQ:
-						node = new ATDebugExpNodeEQ(sp[-1], sp[0]);
-						break;
-
-					case kOpNE:
-						node = new ATDebugExpNodeNE(sp[-1], sp[0]);
-						break;
-
-					case kOpAdd:
-						node = new ATDebugExpNodeAdd(sp[-1], sp[0]);
-						break;
-
-					case kOpSub:
-						node = new ATDebugExpNodeSub(sp[-1], sp[0]);
-						break;
-
-					case kOpMul:
-						node = new ATDebugExpNodeMul(sp[-1], sp[0]);
-						break;
-
-					case kOpDiv:
-						node = new ATDebugExpNodeDiv(sp[-1], sp[0]);
-						break;
-
-					case kOpMod:
-						node = new ATDebugExpNodeMod(sp[-1], sp[0]);
-						break;
-
-					case kOpInvert:
-						node = new ATDebugExpNodeInvert(sp[0]);
-						argcount = 1;
-						break;
-
-					case kOpNegate:
-						node = new ATDebugExpNodeNegate(sp[0]);
-						argcount = 1;
-						break;
-
-					case kOpDerefByte:
-						node = new ATDebugExpNodeDerefByte(sp[0]);
-						argcount = 1;
-						break;
-
-					case kOpDerefSignedByte:
-						node = new ATDebugExpNodeDerefSignedByte(sp[0]);
-						argcount = 1;
-						break;
-
-					case kOpDerefWord:
-						node = new ATDebugExpNodeDerefWord(sp[0]);
-						argcount = 1;
-						break;
-
-					case kOpLoByte:
-						node = new ATDebugExpNodeLoByte(sp[0]);
-						argcount = 1;
-						break;
-
-					case kOpHiByte:
-						node = new ATDebugExpNodeHiByte(sp[0]);
-						argcount = 1;
-						break;
-
-					case kOpBitwiseAnd:
-						node = new ATDebugExpNodeBitwiseAnd(sp[-1], sp[0]);
-						break;
-
-					case kOpBitwiseOr:
-						node = new ATDebugExpNodeBitwiseOr(sp[-1], sp[0]);
-						break;
-
-					case kOpBitwiseXor:
-						node = new ATDebugExpNodeBitwiseXor(sp[-1], sp[0]);
-						break;
+				if (op != kOpCloseParen) {
+					opstack.push_back(op);
+					needValue = true;
 				}
-
-				while(argcount--)
-					valstack.pop_back();
-
-				valstack.push_back(node);
-				node.release();
-			}
-
-			if (op == kOpNone)
-				break;
-
-			if (op != kOpCloseParen) {
-				opstack.push_back(op);
-				needValue = true;
 			}
 		}
+	} catch(const ATDebuggerExprParseException&) {
+		while(!valstack.empty()) {
+			delete valstack.back();
+			valstack.pop_back();
+		}
+
+		throw;
 	}
 
 	VDASSERT(valstack.size() == 1);

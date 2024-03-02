@@ -20,6 +20,7 @@
 #define f_VD2_RIZA_DISPLAYDRVDX9_H
 
 #include <vd2/system/refcount.h>
+#include <vd2/VDDisplay/renderer.h>
 
 struct IDirect3DTexture9;
 
@@ -34,6 +35,17 @@ public:
 };
 
 bool VDCreateFontRendererD3D9(IVDFontRendererD3D9 **);
+
+class VDINTERFACE IVDDisplayRendererD3D9 : public IVDRefCount, public IVDDisplayRenderer {
+public:
+	virtual bool Init(VDD3D9Manager *d3dmgr) = 0;
+	virtual void Shutdown() = 0;
+
+	virtual bool Begin() = 0;
+	virtual void End() = 0;
+};
+
+bool VDCreateDisplayRendererD3D9(IVDDisplayRendererD3D9 **);
 
 class VDINTERFACE IVDVideoDisplayDX9Manager : public IVDRefCount {
 public:

@@ -22,8 +22,78 @@
 #pragma once
 #endif
 
+#include <vd2/system/error.h>
+#include <vd2/system/linearalloc.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/vdstl_hashmap.h>
 
+extern const uint8 kATSaveStateHeader[12];
+
+enum ATSaveStateSection {
+	// architectural state
+	kATSaveStateSection_Arch,
+
+	// Altirra private state
+	kATSaveStateSection_Private,
+
+	kATSaveStateSection_ResetPrivate,
+	kATSaveStateSection_End,
+
+	kATSaveStateSectionCount
+};
+
+class ATSaveStateReader;
+class ATSaveStateWriter;
+
+class ATInvalidSaveStateException : public MyError {
+public:
+	ATInvalidSaveStateException();
+};
+
+class ATUnsupportedSaveStateException : public MyError {
+public:
+	ATUnsupportedSaveStateException();
+};
+
+///////////////////////////////////////////////////////////////////////////
+struct ATSaveStateReadHandler {
+	size_t mSize;
+	void (*mpDispatchFn)(ATSaveStateReader& reader, const ATSaveStateReadHandler *handler);
+};
+
+template<class T, class M>
+struct ATSaveStateMethodReadHandler {
+	ATSaveStateReadHandler mHandler;
+	T *mpThis;
+	M mpMethod;
+
+	static void DispatchFn(ATSaveStateReader& reader, const ATSaveStateReadHandler *handler) {
+		ATSaveStateMethodReadHandler *thisptr = (ATSaveStateMethodReadHandler *)handler;
+
+		((thisptr->mpThis)->*(thisptr->mpMethod))(reader);
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+struct ATSaveStateWriteHandler {
+	size_t mSize;
+	void (*mpDispatchFn)(ATSaveStateWriter& writer, const ATSaveStateWriteHandler *handler);
+};
+
+template<class T, class M>
+struct ATSaveStateMethodWriteHandler {
+	ATSaveStateWriteHandler mHandler;
+	T *mpThis;
+	M mpMethod;
+
+	static void DispatchFn(ATSaveStateWriter& writer, const ATSaveStateWriteHandler *handler) {
+		ATSaveStateMethodWriteHandler *thisptr = (ATSaveStateMethodWriteHandler *)handler;
+
+		((thisptr->mpThis)->*(thisptr->mpMethod))(writer);
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
 class ATSaveStateReader {
 	ATSaveStateReader(const ATSaveStateReader&);
 	ATSaveStateReader& operator=(const ATSaveStateReader&);
@@ -31,7 +101,26 @@ public:
 	ATSaveStateReader(const uint8 *src, uint32 len);
 	~ATSaveStateReader();
 
+	void RegisterHandler(ATSaveStateSection section, uint32 fcc, const ATSaveStateReadHandler& handler);
+
+	template<class T, typename M>
+	void RegisterHandlerMethod(ATSaveStateSection section, uint32 fcc, T *thisptr, M method) {
+		const ATSaveStateMethodReadHandler<T,M> handler = {
+			{ sizeof(ATSaveStateMethodReadHandler<T,M>), ATSaveStateMethodReadHandler<T,M>::DispatchFn },
+			thisptr,
+			method
+		};
+
+		RegisterHandler(section, fcc, handler.mHandler);
+	}
+
 	bool CheckAvailable(uint32 size) const;
+	uint32 GetAvailable() const;
+
+	void OpenChunk(uint32 length);
+	void CloseChunk();
+
+	void DispatchChunk(ATSaveStateSection section, uint32 fcc);
 
 	bool ReadBool();
 	sint8 ReadSint8();
@@ -52,8 +141,21 @@ protected:
 	const uint8 *mpSrc;
 	uint32 mPosition;
 	uint32 mSize;
+
+	vdfastvector<uint32> mChunkStack;
+
+	struct HandlerEntry {
+		HandlerEntry *mpNext;
+		const ATSaveStateReadHandler *mpHandler;
+	};
+
+	typedef vdhashmap<uint32, HandlerEntry *> HandlerMap;
+	HandlerMap mHandlers[kATSaveStateSectionCount];
+
+	VDLinearAllocator mLinearAlloc;
 };
 
+///////////////////////////////////////////////////////////////////////////
 class ATSaveStateWriter {
 	ATSaveStateWriter(const ATSaveStateWriter&);
 	ATSaveStateWriter& operator=(const ATSaveStateWriter&);
@@ -62,6 +164,24 @@ public:
 
 	ATSaveStateWriter(Storage& dst);
 	~ATSaveStateWriter();
+
+	void RegisterHandler(ATSaveStateSection section, const ATSaveStateWriteHandler& handler);
+
+	template<class T, typename M>
+	void RegisterHandlerMethod(ATSaveStateSection section, T *thisptr, M method) {
+		const ATSaveStateMethodWriteHandler<T,M> handler = {
+			{ sizeof(ATSaveStateMethodWriteHandler<T,M>), ATSaveStateMethodWriteHandler<T,M>::DispatchFn },
+			thisptr,
+			method
+		};
+
+		RegisterHandler(section, handler.mHandler);
+	}
+
+	void WriteSection(ATSaveStateSection section);
+
+	void BeginChunk(uint32 id);
+	void EndChunk();
 
 	void WriteBool(bool b);
 	void WriteSint8(sint8 v);
@@ -79,7 +199,15 @@ public:
 	void WriteData(const void *src, uint32 count);
 
 protected:
+
 	Storage& mDst;
+
+	vdfastvector<size_t> mChunkStack;
+
+	typedef vdfastvector<const ATSaveStateWriteHandler *> HandlerList;
+	HandlerList mHandlers[kATSaveStateSectionCount];
+
+	VDLinearAllocator mLinearAlloc;
 };
 
 #endif	// f_AT_SAVESTATE_H

@@ -24,7 +24,9 @@ void ATClearPokeyTimersOnDiskIo(ATKernelDatabase& kdb) {
 		kdb.AUDC1[i+i] = 0;
 
 	// Turn off serial interrupts.
-	kdb.IRQEN = kdb.POKMSK & 0xC7;
+	uint8 newMask = kdb.POKMSK & 0xC7;
+	kdb.POKMSK = newMask;
+	kdb.IRQEN = newMask;
 
 	// Set AUDCTL to 1.79MHz 3, use 16-bit 3+4
 	kdb.AUDCTL = 0x28;

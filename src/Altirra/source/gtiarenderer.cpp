@@ -203,7 +203,10 @@ void ATGTIARenderer::RenderScanline(int xend, bool pfgraphics, bool pmgraphics, 
 				break;
 
 			case 0xC0:
-				RenderMode11(x1, x2);
+				if (pmgraphics || mixed)
+					RenderMode11(x1, x2);
+				else
+					RenderMode11Fast(x1, x2);
 				break;
 		}
 
@@ -277,6 +280,15 @@ void ATGTIARenderer::LoadState(ATSaveStateReader& reader) {
 		rc.mReg = reader.ReadUint8();
 		rc.mValue = reader.ReadUint8();
 	}
+}
+
+void ATGTIARenderer::ResetState() {
+	mRegisterChanges.clear();
+	mRCIndex = 0;
+	mRCCount = 0;
+	mbHiresMode = false;
+	mPRIOR = 0;
+	mX = 0;
 }
 
 void ATGTIARenderer::SaveState(ATSaveStateWriter& writer) {
@@ -999,5 +1011,73 @@ void ATGTIARenderer::RenderMode11(int x1, int x2) {
 
 		dst[0] = dst[1] = c0;
 		dst += 2;
+	}
+}
+
+// This is a faster version of the mode 11 renderer for when we know there are
+// no P/M graphics or mid-line switches involved.
+void ATGTIARenderer::RenderMode11Fast(int x1, int x2) {
+	const uint8 *VDRESTRICT colorTable = mpColorTable;
+	const uint8 *VDRESTRICT priTable = mpPriTable;
+
+	uint8 *VDRESTRICT dst = mpDst + x1*2;
+
+	// 16 colors / 1 luma
+	//
+	// In this mode, PF0-PF3 are forced off, so no playfield collisions ever register
+	// and the playfield always registers as the background color. Chroma is
+	// ORed in after the priority logic, but its substitution is gated by all P/M bits
+	// and so it does not affect players or missiles. It does, however, affect PF3 if
+	// the fifth player is enabled.
+
+	static const uint8 kMode11FastLookup[7]={
+		0xf0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+	};
+
+	int w = x2 - x1;
+
+	const uint8 pri0 = colorTable[priTable[0]];
+	const uint8 *VDRESTRICT lumasrc = &mpAnticBuffer[x1 & ~1];
+
+	if (x1 & 1) {
+		uint8 l0 = lumasrc[0];
+		uint8 l1 = lumasrc[1];
+
+		uint8 chroma = (l0 << 6) + (l1 << 4);
+
+		uint8 c0 = (pri0 | chroma) & kMode11FastLookup[l0 + l1];
+
+		dst[0] = dst[1] = c0;
+		dst += 2;
+
+		--w;
+		lumasrc += 2;
+	}
+
+	uint32 w2 = w >> 1;
+	if (w2) {
+		do {
+			uint8 l0 = lumasrc[0];
+			uint8 l1 = lumasrc[1];
+
+			uint8 chroma = (l0 << 6) + (l1 << 4);
+
+			uint8 c0 = (pri0 | chroma) & kMode11FastLookup[l0 + l1];
+
+			dst[0] = dst[1] = dst[2] = dst[3] = c0;
+			dst += 4;
+			lumasrc += 2;
+		} while(--w2);
+	}
+
+	if (w & 1) {
+		uint8 l0 = lumasrc[0];
+		uint8 l1 = lumasrc[1];
+
+		uint8 chroma = (l0 << 6) + (l1 << 4);
+
+		uint8 c0 = (pri0 | chroma) & kMode11FastLookup[l0 + l1];
+
+		dst[0] = dst[1] = c0;
 	}
 }

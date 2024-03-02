@@ -150,8 +150,15 @@ public:
 
 	void	DumpStatus();
 
-	void	LoadState(ATSaveStateReader& reader);
-	void	SaveState(ATSaveStateWriter& writer);
+	void	BeginLoadState(ATSaveStateReader& reader);
+	void	LoadStateArch(ATSaveStateReader& reader);
+	void	LoadStatePrivate(ATSaveStateReader& reader);
+	void	LoadStateResetPrivate(ATSaveStateReader& reader);
+	void	EndLoadState(ATSaveStateReader& reader);
+	void	BeginSaveState(ATSaveStateWriter& writer);
+	void	SaveStateArch(ATSaveStateWriter& writer);
+	void	SaveStatePrivate(ATSaveStateWriter& writer);
+
 	void	GetRegisterState(ATPokeyRegisterState& state) const;
 	void	GetAudioState(ATPokeyAudioState& state) const;
 

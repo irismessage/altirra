@@ -39,7 +39,8 @@ enum ATSimulatorEvent {
 	kATSimEvent_FrameTick,
 	kATSimEvent_EXELoad,
 	kATSimEvent_EXEInitSegment,
-	kATSimEvent_EXERunSegment
+	kATSimEvent_EXERunSegment,
+	kATSimEvent_StateLoaded
 };
 
 class IATSimulatorCallback {

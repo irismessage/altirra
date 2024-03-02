@@ -356,20 +356,27 @@ void ATDiskEmulator::Reset() {
 }
 
 void ATDiskEmulator::LoadDisk(const wchar_t *s) {
+	size_t len = wcslen(s);
+
+	if (!wcscmp(s + len - 2, L"\\*")) {
+		VDStringW t(s, s + len - 2);
+		return MountFolder(t.c_str());
+	}
+
 	VDFileStream f(s);
 
 	LoadDisk(s, s, f);
 }
 
-void ATDiskEmulator::LoadDisk(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream) {
+void ATDiskEmulator::MountFolder(const wchar_t *path) {
 	UnloadDisk();
 
 	try {
-		mpDiskImage = ATLoadDiskImage(origPath, imagePath, stream);
+		mpDiskImage = ATMountDiskImageVirtualFolder(path, 720, false);
 
 		InitSectorInfoArrays();
 
-		mPath = origPath;
+		mPath = VDMakePath(path, L"*");
 	} catch(const MyError&) {
 		UnloadDisk();
 		throw;
@@ -384,12 +391,43 @@ void ATDiskEmulator::LoadDisk(const wchar_t *origPath, const wchar_t *imagePath,
 	mbHasDiskSource = true;
 }
 
+void ATDiskEmulator::LoadDisk(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream) {
+	UnloadDisk();
+
+	try {
+		mpDiskImage = ATLoadDiskImage(origPath, imagePath, stream);
+
+		InitSectorInfoArrays();
+
+		if (origPath)
+			mPath = origPath;
+		else if (imagePath)
+			mPath = imagePath;
+		else
+			mPath.clear();
+	} catch(const MyError&) {
+		UnloadDisk();
+		throw;
+	}
+
+	ComputeGeometry();
+	ComputePERCOMBlock();
+	mCurrentTrack = mTrackCount - 1;
+	mbEnabled = true;
+	mbWriteEnabled = false;
+	mbAutoFlush = false;
+	mbHasDiskSource = (origPath != NULL);
+}
+
 void ATDiskEmulator::UpdateDisk() {
 	if (!mpDiskImage->Flush())
 		throw MyError("The current disk image cannot be updated.");
 }
 
 void ATDiskEmulator::SaveDisk(const wchar_t *s) {
+	if (mpDiskImage->IsDynamic())
+		throw MyError("The current disk image is dynamic and cannot be saved.");
+
 	mpDiskImage->SaveATR(s);
 
 	mPath = s;
@@ -1597,22 +1635,24 @@ void ATDiskEmulator::ProcessCommandTransmitCompleted() {
 			mFDCStatus = 0xFF;
 			mbLastOpError = false;
 
-			// compute rotational delay
-			UpdateRotationalCounter();
-			uint32 rotPos = VDRoundToInt(psi.mRotPos * mCyclesPerDiskRotation);
-
-			uint32 rotDelay = rotPos < mRotationalCounter ? (rotPos - mRotationalCounter) + mCyclesPerDiskRotation : (rotPos - mRotationalCounter);
-
-			rotDelay += 10000;	// fudge factor
-
 			mActiveCommand = 0;
 
 			if (mbAutoFlush)
 				QueueAutoSave();
 
-			if (mpOperationEvent)
-				mpScheduler->RemoveEvent(mpOperationEvent);
-			mpOperationEvent = mpScheduler->AddEvent(rotDelay, this, kATDiskEventWriteCompleted);
+			uint32 rotDelay = kCyclesCompleteDelay_Fast;
+
+			if (mbAccurateSectorTiming) {
+				// compute rotational delay
+				UpdateRotationalCounter();
+				uint32 rotPos = VDRoundToInt(psi.mRotPos * mCyclesPerDiskRotation);
+
+				rotDelay = rotPos < mRotationalCounter ? (rotPos - mRotationalCounter) + mCyclesPerDiskRotation : (rotPos - mRotationalCounter);
+
+				rotDelay += 10000;	// fudge factor
+			}
+
+			mpScheduler->SetEvent(rotDelay, this, kATDiskEventWriteCompleted, mpOperationEvent);
 		}
 	} else if (mActiveCommand == 0x4F) {		// write PERCOM block
 		if (mActiveCommandState == 0) {

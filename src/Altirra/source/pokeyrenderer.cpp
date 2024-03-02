@@ -20,6 +20,7 @@
 #include "pokeyrenderer.h"
 #include "pokeytables.h"
 #include "scheduler.h"
+#include "savestate.h"
 
 ATPokeyRenderer::ATPokeyRenderer()
 	: mpScheduler(NULL)
@@ -71,6 +72,9 @@ void ATPokeyRenderer::ColdReset() {
 
 		mDeferredEvents[i].mbEnabled = false;
 	}
+
+	mHighPassFF[0] = 1;
+	mHighPassFF[1] = 1;
 
 	mOutputLevel = 0;
 
@@ -259,6 +263,70 @@ uint32 ATPokeyRenderer::EndBlock() {
 	VDASSERT(t - mLastOutputSampleTime <= 28);
 
 	return sampleCount;
+}
+
+void ATPokeyRenderer::LoadState(ATSaveStateReader& reader) {
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+	// Careful -- we save the polynomial counters in simulation time, but we
+	// have to roll them back to where sound generation currently is.
+
+	mPoly4Counter = (reader.ReadUint8() + 15 - (t - mLastPoly4Time) % 15) % 15;
+	mPoly5Counter = (reader.ReadUint8() + 31 - (t - mLastPoly5Time) % 31) % 31;
+	mPoly9Counter = (reader.ReadUint16() + 511 - (t - mLastPoly9Time) % 511) % 511;
+	mPoly17Counter = (reader.ReadUint32() + 131071 - (t - mLastPoly17Time) % 131071) % 131071;
+
+	for(int i=0; i<4; ++i)
+		mNoiseFF[i] = reader.ReadUint8() & 1;
+
+	for(int i=0; i<2; ++i)
+		mHighPassFF[i] = reader.ReadUint8() & 1;
+
+	for(int i=0; i<4; ++i)
+		mOutputs[i] = reader.ReadUint8() & 1;
+}
+
+void ATPokeyRenderer::ResetState() {
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+	mPoly4Counter = (15 - (t - mLastPoly4Time) % 15) % 15;
+	mPoly5Counter = (31 - (t - mLastPoly5Time) % 31) % 31;
+	mPoly9Counter = (511 - (t - mLastPoly9Time) % 511) % 511;
+	mPoly17Counter = (131071 - (t - mLastPoly17Time) % 131071) % 131071;
+	
+	for(int i=0; i<4; ++i) {
+		mNoiseFF[i] = 0;
+		mOutputs[i] = 1;
+	}
+
+	for(int i=0; i<2; ++i)
+		mHighPassFF[i] = 1;
+}
+
+void ATPokeyRenderer::SaveState(ATSaveStateWriter& writer) {
+	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+	// Careful -- we can't update polynomial counters here like we do in the
+	// main POKEY module. That's because the polynomial counters have to be
+	// advanced by sound rendering and not by the simulation.
+
+	writer.WriteUint8((mPoly4Counter + (mbInitMode ? 0 : mLastPoly4Time - t)) % 15);
+	writer.WriteUint8((mPoly5Counter + (mbInitMode ? 0 : mLastPoly5Time - t)) % 31);
+	writer.WriteUint16((mPoly9Counter + (mbInitMode ? 0 : mLastPoly9Time - t)) % 511);
+	writer.WriteUint32((mPoly17Counter + (mbInitMode ? 0 : mLastPoly17Time - t)) % 131071);
+
+	for(int i=0; i<4; ++i)
+		writer.WriteUint8(mNoiseFF[i]);
+
+	for(int i=0; i<2; ++i)
+		writer.WriteUint8(mHighPassFF[i]);
+
+	for(int i=0; i<4; ++i)
+		writer.WriteUint8(mOutputs[i]);
+
+	// mbInitMode is restored by the POKEY emulator.
+	// AUDCTL is restored by the POKEY emulator.
+	// AUDCx are restored by the POKEY emulator.
 }
 
 void ATPokeyRenderer::FlushDeferredEvents(int channel, uint32 t) {
@@ -680,6 +748,8 @@ void ATPokeyRenderer::GenerateSamples(uint32 t) {
 
 			while((t - mLastOutputSampleTime) >= 28)
 				mLastOutputSampleTime += 28;
+
+			mLastOutputTime = mLastOutputSampleTime;
 			return;
 		}
 	}

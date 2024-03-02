@@ -21,7 +21,7 @@
 #include <commctrl.h>
 #include <tchar.h>
 #include "uiframe.h"
-#include "uiproxies.h"
+#include <at/atui/uiproxies.h>
 #include "console.h"
 #include "resource.h"
 #include "simulator.h"

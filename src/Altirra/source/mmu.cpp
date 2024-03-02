@@ -23,7 +23,9 @@
 
 ATMMUEmulator::ATMMUEmulator()
 	: mHardwareMode(0)
+	, mHardwareModeOverride(-1)
 	, mMemoryMode(0)
+	, mMemoryModeOverride(-1)
 	, mpMemMan(NULL)
 	, mpMemory(NULL)
 	, mpLayerExtRAM(NULL)
@@ -34,6 +36,7 @@ ATMMUEmulator::ATMMUEmulator()
 	, mpLayerGame(NULL)
 	, mpLayerHiddenRAM(NULL)
 	, mpHLE(NULL)
+	, mCurrentBank(0xFF)
 	, mCPUBase(0)
 	, mAnticBase(0)
 	, mCurrentBankInfo(0)
@@ -70,9 +73,15 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 	mCPUBase = 0;
 	mAnticBase = 0;
 
+	RebuildMappingTables();
+}
+
+void ATMMUEmulator::RebuildMappingTables() {
+	const ATMemoryMode memmode = (ATMemoryMode)(mMemoryModeOverride >= 0 ? mMemoryModeOverride : mMemoryMode);
+	const ATHardwareMode hwmode = (ATHardwareMode)(mHardwareModeOverride >= 0 ? mHardwareModeOverride : mHardwareMode);
 	uint8 extbankmask = 0;
 
-	switch(mMemoryMode) {
+	switch(memmode) {
 		case kATMemoryMode_128K:		// 4 banks * 16K = 64K
 			extbankmask = 0x03;
 			break;
@@ -92,14 +101,14 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 			break;
 	}
 
-	const int kernelBankMask = (mHardwareMode == kATHardwareMode_800XL ||
-		mHardwareMode == kATHardwareMode_1200XL ||
-		mHardwareMode == kATHardwareMode_XEGS) ? 0x00 : 0x01;
+	const int kernelBankMask = (hwmode == kATHardwareMode_800XL ||
+		hwmode == kATHardwareMode_1200XL ||
+		hwmode == kATHardwareMode_XEGS) ? 0x00 : 0x01;
 
 	const int cpuBankBit = (extbankmask != 0) ? 0x10 : 0x00;
 	int anticBankBit = 0;
 
-	switch(mMemoryMode) {
+	switch(memmode) {
 		case kATMemoryMode_128K:
 		case kATMemoryMode_320K_Compy:
 		case kATMemoryMode_576K_Compy:
@@ -116,7 +125,7 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 	}
 
 	uint32 extbankoffset = 0x04;
-	switch(mMemoryMode) {
+	switch(memmode) {
 		case kATMemoryMode_128K:
 		case kATMemoryMode_320K:
 		case kATMemoryMode_320K_Compy:
@@ -127,7 +136,7 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 	}
 
 	bool blockExtBasic = false;
-	switch(mMemoryMode) {
+	switch(memmode) {
 		case kATMemoryMode_576K:
 		case kATMemoryMode_576K_Compy:
 		case kATMemoryMode_1088K:
@@ -136,7 +145,7 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 	}
 
 	uint8 basicMask = 0x02;
-	switch(mHardwareMode) {
+	switch(hwmode) {
 		case kATHardwareMode_800XL:
 		case kATHardwareMode_XEGS:
 			basicMask = 0;
@@ -160,7 +169,7 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 			// 576K COMPY:	bits 1, 2, 3, 6, 7
 			encodedBankInfo = ((~portb & 0x0c) >> 2);
 
-			switch(mMemoryMode) {
+			switch(memmode) {
 				case kATMemoryMode_320K_Compy:
 				case kATMemoryMode_576K_Compy:
 					encodedBankInfo += (uint32)(~portb & 0xc0) >> 4;
@@ -197,7 +206,7 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 			if ((portb & 0x81) == 0x01) {
 				// If bit 7 is reused for banking, it must not enable the self-test
 				// ROM when extbanking is enabled.
-				switch(mMemoryMode) {
+				switch(memmode) {
 					case kATMemoryMode_320K_Compy:
 					case kATMemoryMode_576K_Compy:
 					case kATMemoryMode_1088K:
@@ -220,7 +229,7 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 		if ((portb | kernelBankMask) & 0x01)
 			encodedBankInfo += kMapInfo_Kernel;
 
-		if (mHardwareMode == kATHardwareMode_XEGS && !(encodedBankInfo & kMapInfo_BASIC) && !(portb & 0x40))
+		if (hwmode == kATHardwareMode_XEGS && !(encodedBankInfo & kMapInfo_BASIC) && !(portb & 0x40))
 			encodedBankInfo += kMapInfo_Game;
 
 		if (mpLayerHiddenRAM && (portb & 0xb1) == 0x30)
@@ -230,8 +239,9 @@ void ATMMUEmulator::Init(int hwmode, int memoryMode, void *mem,
 	}
 
 	// force bank reinit
-	mCurrentBankInfo = ~mBankMap[0xFF];
-	SetBankRegister(0xFF);
+	mCurrentBankInfo = ~mBankMap[mCurrentBank];
+	mCurrentBank = ~mCurrentBank;
+	SetBankRegister(~mCurrentBank);
 }
 
 void ATMMUEmulator::Shutdown() {
@@ -249,7 +259,36 @@ void ATMMUEmulator::Shutdown() {
 	mAnticBase = 0;
 }
 
+void ATMMUEmulator::GetMemoryMapState(ATMemoryMapState& state) const {
+	state.mbKernelEnabled = (mCurrentBankInfo & kMapInfo_Kernel) != 0;
+	state.mbBASICEnabled = (mCurrentBankInfo & kMapInfo_BASIC) != 0;
+	state.mbSelfTestEnabled = (mCurrentBankInfo & kMapInfo_SelfTest) != 0;
+	state.mbGameEnabled = (mCurrentBankInfo & kMapInfo_Game) != 0;
+	state.mbExtendedCPU = (mCurrentBankInfo & kMapInfo_ExtendedCPU) != 0;
+	state.mbExtendedANTIC = (mCurrentBankInfo & kMapInfo_ExtendedANTIC) != 0;
+	state.mExtendedBank = (mCurrentBankInfo & kMapInfo_BankMask);
+}
+
+void ATMMUEmulator::ClearModeOverrides() {
+	SetModeOverrides(-1, -1);
+}
+
+void ATMMUEmulator::SetModeOverrides(int memoryMode, int hwmode) {
+	if (mMemoryModeOverride == memoryMode && mHardwareModeOverride == hwmode)
+		return;
+
+	mMemoryModeOverride = memoryMode;
+	mHardwareModeOverride = hwmode;
+
+	RebuildMappingTables();
+}
+
 void ATMMUEmulator::SetBankRegister(uint8 bank) {
+	if (mCurrentBank == bank)
+		return;
+
+	mCurrentBank = bank;
+
 	const uint32 bankInfo = mBankMap[bank];
 
 	if (mCurrentBankInfo == bankInfo)

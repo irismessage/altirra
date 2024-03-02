@@ -1270,6 +1270,10 @@
 				</FileConfiguration>
 			</File>
 			<File
+				RelativePath=".\source\vdalloc.cpp"
+				>
+			</File>
+			<File
 				RelativePath="source\VDNamespace.cpp"
 				>
 				<FileConfiguration

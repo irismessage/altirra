@@ -140,14 +140,19 @@ dispatch:
 	
 	;IOCB isn't open - issue error
 	;
-	;don't issue an error for close ($0C); you can "close #5" as much as you
-	;want from basic
+	;Special cases;
+	; - No error issued for close ($0C). This is needed so that extra CLOSE
+	;   commands from BASIC don't trip errors.
+	; - Get status ($0D) and special ($0E+) do soft open and close if needed.
+	;   $0D case is required for Top Dos 1.5a to boot; $0E+ case is encountered
+	;   with R: device XIO commands.
+	;
 	ldy		#1
 	lda		iccomz
 	cmp		#CIOCmdClose
 	beq		ignoreOpen
-	cmp		#CIOCmdSpecial
-	bcs		preOpen				;closed IOCB is OK for special
+	cmp		#CIOCmdGetStatus
+	bcs		preOpen				;closed IOCB is OK for get status and special
 	ldy		#CIOStatNotOpen
 ignoreOpen:
 	jmp		xit
@@ -159,8 +164,10 @@ preOpen:
 isOpen:
 	;check for special command
 	lda		iccomz
+	cmp		#CIOCmdGetStatus
+	beq		cmdGetStatusSoftOpen
 	cmp		#CIOCmdSpecial
-	bcs		cmdSpecial
+	bcs		cmdSpecialSoftOpen
 	
 	;dispatch through command table
 	lda		commandTable-1,x
@@ -169,14 +176,33 @@ isOpen:
 	pha
 	rts
 	
+;--------------------------------------------------------------------------
+cmdGetStatusSoftOpen:
+	ldy		#9
+	jsr		invoke
+	jsr		soft_close
+	jmp		xit
+
+cmdGetStatus:
+	ldy		#9
+	jsr		invoke
+	jmp		xit
+
+;--------------------------------------------------------------------------
+cmdSpecialSoftOpen:
+	ldy		#11
+	jsr		invoke
+	jsr		soft_close
+	jmp		xit
+	
 cmdSpecial:
 	ldy		#11
 	jsr		invoke
 	jmp		xit
 		
-	;--------------------------------------------------------------------------
-	;	OPEN
-	;
+;--------------------------------------------------------------------------
+; Open command ($03).
+;
 cmdOpen:
 	;check if the IOCB is already open
 	lda		ichidz
@@ -217,17 +243,31 @@ openOK:
 	ldy		#1
 	jmp		xit	
 
-invoke:
+load_vector:
 	ldx		ichidz
 	mwa		hatabs+1,x icax3z
 	lda		(icax3z),y
-	pha
+	tax
 	dey
 	lda		(icax3z),y
+	sta		icax3z
+	stx		icax3z+1
+	rts
+
+;This routine must NOT touch CIOCHR. The DOS 2.5 Ramdisk depends on seeing
+;the last character from PUT RECORD before the EOL is pushed by CIO, so we
+;can't force a write of that EOL into CIOCHR to dispatch it here.
+invoke:
+	jsr		load_vector		
+invoke_vector:
+	tay
+	lda		icax3z+1
 	pha
+	lda		icax3z
+	pha
+	tya
 	ldy		#CIOStatNotSupported
 	ldx		icidno
-	lda		ciochr
 	rts
 
 xit:
@@ -240,6 +280,18 @@ xit:
 	plp
 	rts
 	
+;--------------------------------------------------------------------------
+soft_close:
+	tya
+	pha
+	ldx		icidno
+	ldy		#3
+	jsr		invoke
+	pla
+	tay
+	rts
+	
+;--------------------------------------------------------------------------
 cmdGetRecordBufferFull:
 	;read byte to discard
 	ldy		#5
@@ -255,6 +307,9 @@ cmdGetRecordXitTrunc:
 	jmp		cmdGetRecordXit
 
 cmdGetRecord:
+	ldy		#5
+	jsr		load_vector
+cmdGetRecordLoop:
 	;check if buffer is full
 	lda		icbllz
 	bne		cmdGetRecordGetByte
@@ -262,8 +317,7 @@ cmdGetRecord:
 	beq		cmdGetRecordBufferFull
 cmdGetRecordGetByte:
 	;fetch byte
-	ldy		#5
-	jsr		invoke
+	jsr		invoke_vector
 	cpy		#0
 	bmi		cmdGetRecordXit
 	
@@ -277,10 +331,11 @@ cmdGetRecordGetByte:
 	
 	;loop back for more bytes if not EOL
 	cmp		#$9b
-	bne		cmdGetRecordGetByte
+	bne		cmdGetRecordLoop
 
 	;update byte count in IOCB
 cmdGetRecordXit:
+cmdGetPutDone:
 	ldx		icidno
 	sec
 	lda		icbll,x
@@ -289,15 +344,22 @@ cmdGetRecordXit:
 	lda		icblh,x
 	sbc		icblhz
 	sta		icblh,x
+	
+	;Several of the routines will exit with return code 0 on success;
+	;we need to change that to 1. (required by Pacem in Terris)
+	tya
+	sne:iny
 	jmp		xit
 	
+;--------------------------------------------------------------------------
 cmdGetChars:
+	ldy		#5
+	jsr		load_vector
 	lda		icbllz
 	ora		icblhz
 	beq		cmdGetCharsSingle
 cmdGetCharsLoop:
-	ldy		#5
-	jsr		invoke
+	jsr		invoke_vector
 	cpy		#0
 	bmi		cmdGetCharsError
 	ldy		#0
@@ -308,22 +370,33 @@ cmdGetCharsLoop:
 	lda		icblhz
 	bne		cmdGetCharsLoop
 cmdGetCharsError:
-	jmp		cmdGetRecordXit
+	jmp		cmdGetPutDone
 	
 cmdGetCharsSingle:
-	ldy		#5
-	jsr		invoke
+	jsr		invoke_vector
 	sta		ciochr
 	jmp		xit
 	
+;--------------------------------------------------------------------------
+; PUT RECORD handler ($09)
+;
+; Exit:
+;	ICBAL/ICBAH: Not changed
+;	ICBLL/ICBLH: Number of bytes processed
+;
+; If the string does not contain an EOL character, one is printed at the
+; end. Also, in this case CIOCHR must reflect the last character in the
+; buffer and not the EOL. (Required by Atari DOS 2.5 RAMDISK banner)
+;
 cmdPutRecord:
+	ldy		#7
+	jsr		load_vector
 	lda		icbllz
 	ora		icblhz
 	beq		cmdPutRecordEOL
 	ldy		#0
 	mva		(icbalz),y	ciochr
-	ldy		#7
-	jsr		invoke
+	jsr		invoke_vector
 	tya
 	bmi		cmdPutRecordError
 	inw		icbalz
@@ -332,49 +405,44 @@ cmdPutRecord:
 	cmp		ciochr
 	beq		cmdPutRecordDone
 	bne		cmdPutRecord
-	ldy		#7
-	jsr		invoke
-cmdPutRecordError:
-cmdPutRecordDone:
-	jmp		xit
+	
 cmdPutRecordEOL:
 	lda		#$9b
-	ldy		#7
-	jsr		invoke
-	jmp		xit
+	sta		ciochr
+	jsr		invoke_vector
+cmdPutRecordError:
+cmdPutRecordDone:
+	jmp		cmdGetPutDone
 	
+;--------------------------------------------------------------------------
 cmdPutChars:
+	ldy		#7
+	jsr		load_vector
 	lda		icbllz
 	ora		icblhz
 	beq		cmdPutCharsSingle
 cmdPutCharsLoop:
 	ldy		#0
 	mva		(icbalz),y	ciochr
-	ldy		#7
-	jsr		invoke
+	jsr		invoke_vector
 	inw		icbalz
 	dew		icbllz
 	bne		cmdPutCharsLoop
 	lda		icblhz
 	bne		cmdPutCharsLoop
-	jmp		xit
+	jmp		cmdGetPutDone
 cmdPutCharsSingle:
 	lda		ciochr
-	ldy		#7
-	jsr		invoke
+	jsr		invoke_vector
 	jmp		xit
 	
+;--------------------------------------------------------------------------
 cmdClose:
 	ldy		#3
 	jsr		invoke
 	
 	ldx		icidno
 	mva		#$ff	ichid,x
-	jmp		xit
-	
-cmdGetStatus:
-	ldy		#9
-	jsr		invoke
 	jmp		xit
 
 parsePath:
@@ -406,13 +474,17 @@ foundHandler:
 	;default to device #1
 	mva		#1 icdnoz
 	
-	;check for a device number
+	;Check for a device number.
+	;
+	; - D1:-D9: is supported. D0: also gives unit 1, and any digits beyond
+	;   the first are ignored.
+	;
 	iny
 	lda		(icbalz),y
 	sec
 	sbc		#'0'
 	beq		nodevnum
-	cmp		#4
+	cmp		#10
 	bcs		nodevnum
 	
 	sta		icdnoz
@@ -436,13 +508,13 @@ foundColon:
 	rts
 
 commandTable:
-	dta		a(cmdInvalid-1)		;$04
+	dta		a(cmdGetRecord-1)	;$04
 	dta		a(cmdGetRecord-1)	;$05
-	dta		a(cmdInvalid-1)		;$06
+	dta		a(cmdGetChars-1)	;$06
 	dta		a(cmdGetChars-1)	;$07
-	dta		a(cmdInvalid-1)		;$08
+	dta		a(cmdPutRecord-1)	;$08
 	dta		a(cmdPutRecord-1)	;$09
-	dta		a(cmdInvalid-1)		;$0A
+	dta		a(cmdPutChars-1)	;$0A
 	dta		a(cmdPutChars-1)	;$0B
 	dta		a(cmdClose-1)		;$0C
 	dta		a(cmdGetStatus-1)	;$0D

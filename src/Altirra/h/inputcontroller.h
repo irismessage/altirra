@@ -25,6 +25,7 @@ class ATGTIAEmulator;
 class ATPokeyEmulator;
 class ATInputManager;
 class ATAnticEmulator;
+class ATPIAEmulator;
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -130,7 +131,9 @@ public:
 	ATPortController();
 	~ATPortController();
 
-	void Init(ATGTIAEmulator *gtia, ATPokeyEmulator *pokey, ATLightPenPort *lightPen, int index);
+	void Init(ATGTIAEmulator *gtia, ATPokeyEmulator *pokey, ATPIAEmulator *pia, ATLightPenPort *lightPen, int index);
+	void Shutdown();
+
 	void SetMultiMask(uint8 mask);
 
 	ATGTIAEmulator& GetGTIA() const { return *mpGTIA; }
@@ -145,6 +148,7 @@ public:
 	void SetPotPosition(int offset, uint8 pos);
 
 protected:
+	uint8 mPIAIndex;
 	uint8 mPortValue;
 	bool mbTrigger1;
 	bool mbTrigger2;
@@ -152,6 +156,8 @@ protected:
 
 	ATGTIAEmulator *mpGTIA;
 	ATPokeyEmulator *mpPokey;
+	ATPIAEmulator *mpPIA;
+
 	ATLightPenPort *mpLightPen;
 	int mTriggerIndex;
 
@@ -174,6 +180,8 @@ public:
 	void Detach();
 
 	virtual void Tick() {}
+
+	virtual bool IsActive() const { return true; }
 
 	virtual bool Select5200Controller(int index, bool potsEnabled) { return false; }
 	virtual void SetDigitalTrigger(uint32 trigger, bool state) {}
@@ -309,7 +317,7 @@ class ATTabletController : public ATPortInputController {
 	ATTabletController(const ATTabletController&);
 	ATTabletController& operator=(const ATTabletController&);
 public:
-	ATTabletController(int styDownPos, bool invertY);
+	ATTabletController(int styUpPos, bool invertY);
 	~ATTabletController();
 
 	virtual void SetDigitalTrigger(uint32 trigger, bool state);
@@ -323,8 +331,8 @@ protected:
 	uint32 mPortBits;
 	int mRawPos[2];
 	bool	mbInvertY;
-	bool	mbStylusDown;
-	int		mStylusDownPos;
+	bool	mbStylusUp;
+	int		mStylusUpPos;
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -424,6 +432,8 @@ public:
 	~ATLightPenController();
 
 	void Init(ATScheduler *fastScheduler, ATLightPenPort *lpp);
+
+	virtual bool IsActive() const { return mbPenDown; }
 
 	virtual void SetDigitalTrigger(uint32 trigger, bool state);
 	virtual void ApplyImpulse(uint32 trigger, int ds);

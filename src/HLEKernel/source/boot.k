@@ -69,7 +69,8 @@ loaddone:
 
 	mva		#1 boot?
 	jsr		multiboot
-	jmp		appinit
+	bcs		failmsg
+	jmp		(dosini)
 	
 multiboot:
 	lda		bootad
@@ -81,10 +82,6 @@ multiboot:
 	txa
 	pha
 	rts
-	
-appinit:
-	jmp		(dosini)
-
 .endp
 
 ;============================================================================
@@ -98,11 +95,18 @@ appinit:
 	bmi		load_failure
 	
 	mva		casbuf+4 iccomt
-	mwa		casbuf+5 bufadr
 	mwa		casbuf+7 casini
 	
 	;copy init address
-	mwa		bufadr ramlo
+	lda		casbuf+5
+	sta		bufadr
+	clc
+	adc		#6				;loader is at load address + 6
+	sta		ramlo
+	lda		casbuf+6
+	sta		bufadr+1
+	adc		#0
+	sta		ramlo+1
 
 block_loop:
 	ldy		#$7f

@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "oshelper.h"
 #include <windows.h>
+#include <shlwapi.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
@@ -32,6 +33,64 @@ bool ATLoadKernelResource(int id, void *dst, uint32 offset, uint32 size) {
 		return false;
 
 	memcpy(dst, (const char *)p + offset, size);
+
+	return true;
+}
+
+bool ATLoadKernelResourceLZPacked(int id, vdfastvector<uint8>& data) {
+	HMODULE hmod = VDGetLocalModuleHandleW32();
+
+	HRSRC hrsrc = FindResourceA(hmod, MAKEINTRESOURCEA(id), "KERNEL");
+	if (!hrsrc)
+		return false;
+
+	HGLOBAL hg = LoadResource(hmod, hrsrc);
+	const void *p = LockResource(hg);
+
+	if (!p)
+		return false;
+
+	uint32 len = VDReadUnalignedLEU32(p);
+
+	data.clear();
+	data.resize(len);
+
+	uint8 *dst = data.data();
+	const uint8 *src = (const uint8 *)p + 4;
+
+	for(;;) {
+		uint8 c = *src++;
+
+		if (!c)
+			break;
+
+		if (c & 1) {
+			int distm1 = *src++;
+			int len;
+
+			if (c & 2) {
+				distm1 += (c & 0xfc) << 6;
+				len = *src++;
+			} else {
+				distm1 += ((c & 0x1c) << 6);
+				len = c >> 5;
+			}
+
+			len += 3;
+
+			const uint8 *csrc = dst - distm1 - 1;
+
+			do {
+				*dst++ = *csrc++;
+			} while(--len);
+		} else {
+			c >>= 1;
+
+			memcpy(dst, src, c);
+			src += c;
+			dst += c;
+		}
+	}
 
 	return true;
 }
@@ -192,6 +251,10 @@ void ATUIRestoreWindowPlacement(void *hwnd, const char *name, int nCmdShow) {
 	}
 }
 
+void ATUIEnableEditControlAutoComplete(void *hwnd) {
+	if (hwnd)
+		SHAutoComplete((HWND)hwnd, SHACF_FILESYSTEM | SHACF_AUTOAPPEND_FORCE_OFF);
+}
 
 VDStringW ATGetHelpPath() {
 	return VDMakePath(VDGetProgramPath().c_str(), L"Altirra.chm");
@@ -275,4 +338,11 @@ bool ATIsUserAdministrator() {
 	}
 
 	return isAdmin != 0;
+}
+
+void ATGenerateGuid(uint8 rawguid[16]) {
+	GUID guid = {0};
+	CoCreateGuid(&guid);
+
+	memcpy(rawguid, &guid, 16);
 }

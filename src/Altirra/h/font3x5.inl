@@ -27,6 +27,7 @@ const uint16 g_ATFont3x5_PosData[]={
 const VDBitmapFontInfo g_ATFont3x5_FontInfo={
 	g_ATFont3x5_FontData,
 	g_ATFont3x5_PosData,
+	NULL,
 	33, 126,
 	3, 5,
 	4, 1,

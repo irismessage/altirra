@@ -69,6 +69,7 @@ ATVBXEEmulator::ATVBXEEmulator()
 	, mMemAcBankA(0)
 	, mMemAcBankB(0)
 	, mb5200Mode(false)
+	, mRegBase(0)
 	, mXdlBaseAddr(0)
 	, mXdlAddr(0)
 	, mbXdlActive(false)
@@ -259,6 +260,9 @@ void ATVBXEEmulator::Set5200Mode(bool enable) {
 }
 
 void ATVBXEEmulator::SetRegisterBase(uint8 page) {
+	if (mRegBase == page)
+		return;
+
 	mRegBase = page;
 
 	if (mpMemMan) {
@@ -764,15 +768,17 @@ void ATVBXEEmulator::InitMemoryMaps() {
 
 	mpMemMan->EnableLayer(mpMemLayerGTIAOverlay, kATMemoryAccessMode_CPUWrite, true);
 
-	handler.mbPassReads			= true;
-	handler.mbPassAnticReads	= true;
-	handler.mbPassWrites		= true;
-	handler.mpThis				= this;
-	handler.mpDebugReadHandler	= StaticReadControl;
-	handler.mpReadHandler		= StaticReadControl;
-	handler.mpWriteHandler		= StaticWriteControl;
-	mpMemLayerRegisters = mpMemMan->CreateLayer(kATMemoryPri_Hardware, handler, mRegBase, 0x01);
-	mpMemMan->EnableLayer(mpMemLayerRegisters, true);
+	if (mRegBase) {
+		handler.mbPassReads			= true;
+		handler.mbPassAnticReads	= true;
+		handler.mbPassWrites		= true;
+		handler.mpThis				= this;
+		handler.mpDebugReadHandler	= StaticReadControl;
+		handler.mpReadHandler		= StaticReadControl;
+		handler.mpWriteHandler		= StaticWriteControl;
+		mpMemLayerRegisters = mpMemMan->CreateLayer(kATMemoryPri_Hardware, handler, mRegBase, 0x01);
+		mpMemMan->EnableLayer(mpMemLayerRegisters, true);
+	}
 }
 
 void ATVBXEEmulator::ShutdownMemoryMaps() {

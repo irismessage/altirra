@@ -22,6 +22,16 @@ class ATMemoryLayer;
 class ATMemoryManager;
 class IATHLEKernel;
 
+struct ATMemoryMapState {
+	bool mbKernelEnabled;
+	bool mbBASICEnabled;
+	bool mbSelfTestEnabled;
+	bool mbGameEnabled;
+	bool mbExtendedCPU;
+	bool mbExtendedANTIC;
+	uint32 mExtendedBank;
+};
+
 class ATMMUEmulator {
 	ATMMUEmulator(const ATMMUEmulator&);
 	ATMMUEmulator& operator=(const ATMMUEmulator&);
@@ -45,14 +55,24 @@ public:
 
 	bool IsKernelROMEnabled() const { return (mCurrentBankInfo & kMapInfo_Kernel) != 0; }
 
+	void GetMemoryMapState(ATMemoryMapState& state) const;
+
 	uint32 GetCPUBankBase() const { return mCPUBase; }
 	uint32 GetAnticBankBase() const { return mAnticBase; }
 
+	void ClearModeOverrides();
+	void SetModeOverrides(int memoryMode, int hwmode);
+
+	uint8 GetBankRegister() const { return mCurrentBank; }
 	void SetBankRegister(uint8 bank);
 
 protected:
+	void RebuildMappingTables();
+
 	int mHardwareMode;
+	int mHardwareModeOverride;
 	int mMemoryMode;
+	int mMemoryModeOverride;
 	ATMemoryManager *mpMemMan;
 	uint8 *mpMemory;
 	ATMemoryLayer *mpLayerExtRAM;
@@ -64,6 +84,7 @@ protected:
 	ATMemoryLayer *mpLayerHiddenRAM;
 	IATHLEKernel *mpHLE;
 	bool		mbBASICForced;
+	uint8		mCurrentBank;
 
 	uint32		mCPUBase;
 	uint32		mAnticBase;

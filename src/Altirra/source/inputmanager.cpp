@@ -230,9 +230,13 @@ ATInputManager::ATInputManager()
 	, mb5200PotsEnabled(true)
 	, mbMouseMapped(false)
 	, mbMouseAbsMode(false)
+	, mbMouseActiveTarget(false)
 	, mMouseAvgIndex(0)
 {
 	InitPresetMaps();
+
+	mpPorts[0] = NULL;
+	mpPorts[1] = NULL;
 
 	std::fill(mMouseAvgQueue, mMouseAvgQueue + sizeof(mMouseAvgQueue)/sizeof(mMouseAvgQueue[0]), 0x20002000);
 }
@@ -285,12 +289,12 @@ void ATInputManager::Update5200Controller() {
 	// We do two passes here to make sure that everything is disconnected before
 	// we connect a new controller.
 	for(InputControllers::const_iterator it(mInputControllers.begin()), itEnd(mInputControllers.end()); it != itEnd; ++it) {
-		ATPortInputController *pc = it->second;
+		ATPortInputController *pc = it->mpInputController;
 		pc->Select5200Controller(-1, false);
 	}
 
 	for(InputControllers::const_iterator it(mInputControllers.begin()), itEnd(mInputControllers.end()); it != itEnd; ++it) {
-		ATPortInputController *pc = it->second;
+		ATPortInputController *pc = it->mpInputController;
 		pc->Select5200Controller(m5200ControllerIndex, mb5200PotsEnabled);
 	}
 }
@@ -367,10 +371,15 @@ void ATInputManager::Poll() {
 		}
 	}
 
+	mbMouseActiveTarget = false;
+
 	for(InputControllers::iterator it(mInputControllers.begin()), itEnd(mInputControllers.end()); it != itEnd; ++it) {
-		ATPortInputController *c = it->second;
+		ATPortInputController *c = it->mpInputController;
 
 		c->Tick();
+
+		if (it->mbBoundToMouseAbs && c->IsActive())
+			mbMouseActiveTarget = true;
 	}
 }
 
@@ -699,6 +708,25 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 		L"Esc"
 	};
 
+	static const wchar_t *const kLightPenButtons[]={
+		L"Gun trigger / inverted pen switch",
+		L"Secondary button",
+		L"On-screen",
+	};
+
+	static const wchar_t *const kTabletButtons[]={
+		L"Stylus button",
+		L"Left tablet button",
+		L"Right tablet button",
+		L"Raise stylus",
+	};
+
+	static const wchar_t *const kPaddleAxes[]={
+		L"Paddle knob (linear)",
+		L"Paddle knob (2D rotation X)",
+		L"Paddle knob (2D rotation Y)"
+	};
+
 	name.clear();
 
 	uint32 index = code & 0xFF;
@@ -711,11 +739,35 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 						return;
 					}
 					break;
+
+				case kATInputControllerType_Tablet:
+				case kATInputControllerType_KoalaPad:
+					if (index < sizeof(kTabletButtons)/sizeof(kTabletButtons[0])) {
+						name = kTabletButtons[index];
+						return;
+					}
+					break;
+
+				case kATInputControllerType_LightPen:
+					if (index < sizeof(kLightPenButtons)/sizeof(kLightPenButtons[0])) {
+						name = kLightPenButtons[index];
+						return;
+					}
+					break;
 			}
 
 			name.sprintf(L"Button %d", index + 1);
 			break;
 		case kATInputTrigger_Axis0:
+			switch(type) {
+				case kATInputControllerType_Paddle:
+					if (index < sizeof(kPaddleAxes)/sizeof(kPaddleAxes[0])) {
+						name = kPaddleAxes[index];
+						return;
+					}
+					break;
+			}
+
 			name.sprintf(L"Axis %d", index + 1);
 			break;
 		case kATInputTrigger_Flag0:
@@ -957,7 +1009,7 @@ void ATInputManager::RebuildMappings() {
 	ClearTriggers();
 
 	for(InputControllers::const_iterator it(mInputControllers.begin()), itEnd(mInputControllers.end()); it != itEnd; ++it) {
-		ATPortInputController *pc = it->second;
+		ATPortInputController *pc = it->mpInputController;
 		pc->Detach();
 		delete pc;
 	}
@@ -969,13 +1021,18 @@ void ATInputManager::RebuildMappings() {
 
 	mbMouseAbsMode = false;
 	mbMouseMapped = false;
+	mbMouseActiveTarget = false;
 
-	mpPorts[0]->ResetPotPositions();
-	mpPorts[1]->ResetPotPositions();
+	for(int i=0; i<2; ++i) {
+		if (mpPorts[i])
+			mpPorts[i]->ResetPotPositions();
+	}
 	
 	uint32 triggerCount = 0;
 
-	vdfastvector<ATPortInputController *> controllerTable;
+	vdfastvector<int> controllerTable;
+	typedef vdhashmap<uint32, int> ControllerMap;
+	ControllerMap controllerMap;
 	for(InputMaps::iterator it(mInputMaps.begin()), itEnd(mInputMaps.end()); it != itEnd; ++it) {
 		const bool enabled = it->second;
 		if (!enabled)
@@ -989,15 +1046,15 @@ void ATInputManager::RebuildMappings() {
 		const uint32 controllerCount = imap->GetControllerCount();
 		int specificUnit = imap->GetSpecificInputUnit();
 
-		controllerTable.resize(controllerCount);
+		controllerTable.resize(controllerCount, -1);
 		for(uint32 i=0; i<controllerCount; ++i) {
 			const ATInputMap::Controller& c = imap->GetController(i);
 
 			uint32 code = (c.mType << 16) + c.mIndex;
-			InputControllers::iterator itC(mInputControllers.find(code));
+			ControllerMap::iterator itC(controllerMap.find(code));
 			ATPortInputController *pic = NULL;
-			if (itC != mInputControllers.end()) {
-				pic = itC->second;
+			if (itC != controllerMap.end()) {
+				controllerTable[i] = itC->second;
 			} else {
 				switch(c.mType) {
 					case kATInputControllerType_Joystick:
@@ -1113,20 +1170,27 @@ void ATInputManager::RebuildMappings() {
 						break;
 				}
 
-				if (pic)
-					mInputControllers.insert(InputControllers::value_type(code, pic));
-			}
+				if (pic) {
+					controllerMap.insert(ControllerMap::value_type(code, (int)mInputControllers.size()));
+					controllerTable[i] = (int)mInputControllers.size();
 
-			controllerTable[i] = pic;
+					ControllerInfo& ci = mInputControllers.push_back();
+					ci.mpInputController = pic;
+					ci.mbBoundToMouseAbs = false;
+				}
+			}
 		}
 
 		const uint32 mappingCount = imap->GetMappingCount();
 		for(uint32 i=0; i<mappingCount; ++i) {
 			const ATInputMap::Mapping& m = imap->GetMapping(i);
-			ATPortInputController *pic = controllerTable[m.mControllerId];
+			const int controllerIndex = controllerTable[m.mControllerId];
 
-			if (!pic)
+			if (controllerIndex < 0)
 				continue;
+
+			ControllerInfo& ci = mInputControllers[controllerIndex];
+			ATPortInputController *pic = ci.mpInputController;
 
 			int32 triggerIdx = -1;
 			for(uint32 j=0; j<triggerCount; ++j) {
@@ -1164,6 +1228,7 @@ void ATInputManager::RebuildMappings() {
 						case kATInputCode_MouseBeamX:
 						case kATInputCode_MouseBeamY:
 							mbMouseAbsMode = true;
+							ci.mbBoundToMouseAbs = true;
 							break;
 					}
 					break;

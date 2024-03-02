@@ -20,6 +20,7 @@
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include "hostdevice.h"
+#include "hostdeviceutils.h"
 #include "kerneldb.h"
 #include "oshelper.h"
 #include "cio.h"
@@ -30,58 +31,6 @@ using namespace ATCIOSymbols;
 uint8 ATTranslateWin32ErrorToSIOError(uint32 err);
 
 ///////////////////////////////////////////////////////////////////////////
-namespace {
-	const wchar_t *const kReservedDeviceNames[]={
-		L"CON",
-		L"PRN",
-		L"AUX",
-		L"NUL",
-		L"COM1",
-		L"COM2",
-		L"COM3",
-		L"COM4",
-		L"COM5",
-		L"COM6",
-		L"COM7",
-		L"COM8",
-		L"COM9",
-		L"LPT1",
-		L"LPT2",
-		L"LPT3",
-		L"LPT4",
-		L"LPT5",
-		L"LPT6",
-		L"LPT7",
-		L"LPT8",
-		L"LPT9",
-		NULL
-	};
-}
-
-///////////////////////////////////////////////////////////////////////////
-bool ATHostDeviceIsDevice(const wchar_t *s) {
-	const wchar_t *ext = wcschr(s, L'.');
-
-	VDStringSpanW fname(s, ext ? ext : s + wcslen(s));
-	for(const wchar_t *const *pp = kReservedDeviceNames; *pp; ++pp) {
-		if (fname == *pp)
-			return true;
-	}
-
-	return false;
-}
-
-bool ATHostDeviceIsPathWild(const wchar_t *s) {
-	return wcschr(s, L'*') || wcschr(s, L'?');
-}
-
-bool ATHostDeviceIsValidPathChar(uint8 c) {
-	return c == '_' || (uint8)(c - '0') < 10 || (uint8)(c - 'A') < 26;
-}
-
-bool ATHostDeviceIsValidPathCharWide(wchar_t c) {
-	return c == '_' || (uint32)(c - '0') < 10 || (uint32)(c - 'A') < 26;
-}
 
 void ATHostDeviceMergeWildPath(VDStringW& dst, const wchar_t *s, const wchar_t *pat) {
 	int charsLeft = 8;
@@ -327,6 +276,7 @@ public:
 	VDFile	mFile;
 	vdfastvector<uint8>	mData;
 	uint32	mOffset;
+	uint32	mLength;
 	bool	mbWriteBackData;
 	bool	mbUsingRawData;
 	bool	mbTranslateEOL;
@@ -337,6 +287,7 @@ public:
 
 ATHostDeviceChannel::ATHostDeviceChannel()
 	: mOffset(0)
+	, mLength(0)
 	, mbWriteBackData(false)
 	, mbUsingRawData(false)
 	, mbTranslateEOL(false)
@@ -399,9 +350,7 @@ bool ATHostDeviceChannel::GetLength(uint32& len) {
 
 uint8 ATHostDeviceChannel::Seek(uint32 pos) {
 	if (!mbWriteEnabled) {
-		const sint64 len = mbUsingRawData ? (uint32)mData.size() : mFile.size();
-
-		if (pos > len)
+		if (pos > mLength)
 			return CIOStatInvPoint;
 	}
 
@@ -436,6 +385,8 @@ uint8 ATHostDeviceChannel::Read(void *dst, uint32 len, uint32& actual) {
 
 		if (!actual)
 			status = CIOStatEndOfFile;
+		else if (mOffset >= mLength)
+			status = CIOStatSuccessEOF;
 
 	} catch(const MyError&) {
 		return CIOStatFatalDiskIO;
@@ -451,7 +402,7 @@ uint8 ATHostDeviceChannel::Write(const void *buf, uint32 tc) {
 	if (mbUsingRawData) {
 		uint32 end = mOffset + tc;
 
-		if (end > (uint32)mData.size())
+		if (end > mLength)
 			mData.resize(end, 0);
 
 		memcpy(mData.data() + mOffset, buf, tc);
@@ -465,6 +416,9 @@ uint8 ATHostDeviceChannel::Write(const void *buf, uint32 tc) {
 	}
 
 	mOffset += tc;
+
+	if (mLength < mOffset)
+		mLength = mOffset;
 
 	return CIOStatSuccess;
 }
@@ -881,6 +835,8 @@ void ATHostDeviceEmulator::DoOpen(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem) 
 			t[16] = 0x9B;
 		}
 
+		ch.mLength = (uint32)ch.mData.size();
+
 		cpu->Ldy(1);
 	} else {
 		// attempt to open file
@@ -944,13 +900,18 @@ void ATHostDeviceEmulator::DoOpen(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem) 
 				}
 
 				ch.mOffset = 0;
+				ch.mLength = (uint32)ch.mData.size();
 
 				if (append)
-					ch.mOffset = (uint32)ch.mData.size();
+					ch.mOffset = ch.mLength;
 			} else {
+				sint64 size64 = ch.mFile.size();
+
+				ch.mLength = size64 > 0xFFFFFF ? 0xFFFFFF : (uint32)size64;
+
 				if (append) {
-					ch.mFile.seek(0, nsVDFile::kSeekEnd);
-					ch.mOffset = (uint32)ch.mFile.tell();
+					ch.mFile.seek(ch.mLength);
+					ch.mOffset = ch.mLength;
 				} else
 					ch.mOffset = 0;
 			}
@@ -1537,7 +1498,6 @@ bool ATHostDeviceEmulator::ReadFilename(ATCPUEmulator *cpu, ATCPUEmulatorMemory 
 
 bool ATHostDeviceEmulator::GetNextMatch(VDDirectoryIterator& it, bool allowDirs, VDStringA *encodedName) {
 	char xlName[13];
-	char xlExt[4];
 
 	for(;;) {
 		if (!it.Next())
@@ -1549,76 +1509,7 @@ bool ATHostDeviceEmulator::GetNextMatch(VDDirectoryIterator& it, bool allowDirs,
 		if (!allowDirs && it.IsDirectory())
 			continue;
 
-		const VDStringA& name8 = VDTextWToU8(it.GetName(), -1);
-		const char *name = name8.c_str();
-
-		if (name[0] == L'$')
-			++name;
-
-		const char *ext = strrchr(name, '.');
-
-		if (!ext)
-			ext = name + strlen(name);
-
-		int xlNameLen = 0;
-		int xlExtLen = 0;
-		uint32 hash32 = 2166136261;
-		bool encode = false;
-
-		for(const char *s = name; s != ext; ++s) {
-			char c = *s;
-
-			if ((uint8)(c - 'a') < 26)
-				c &= 0xdf;
-
-			if (ATHostDeviceIsValidPathCharWide(c)) {
-				if (xlNameLen >= 5)
-					hash32 = (hash32 ^ (uint8)c) * 16777619;
-
-				if (xlNameLen < 8)
-					xlName[xlNameLen++] = (char)c;
-				else
-					encode = true;
-			} else {
-				hash32 = (hash32 ^ (uint8)c) * 16777619;
-				encode = true;
-			}
-		}
-
-		if (*ext == '.')
-			++ext;
-
-		for(const char *s = ext, *end = ext + strlen(ext); s != end; ++s) {
-			char c = *s;
-
-			if ((uint8)(c - 'a') < 26)
-				c &= 0xdf;
-
-			if (ATHostDeviceIsValidPathCharWide(c) && xlExtLen < 3)
-				xlExt[xlExtLen++] = (char)c;
-			else {
-				hash32 = (hash32 ^ (uint8)c) * 16777619;
-				encode = true;
-			}
-		}
-
-		if (encode && mbLongNameEncoding) {
-			if (xlNameLen > 5)
-				xlNameLen = 5;
-
-			uint32 hash10 = hash32 ^ (hash32 >> 10) ^ (hash32 >> 20) ^ (hash32 >> 30);
-
-			int x = (hash10 >> 5) & 31;
-			int y = hash10 & 31;
-
-			xlName[xlNameLen++] = '_';
-			xlName[xlNameLen++] = x >= 10 ? 'A' + (x - 10) : '0' + x;
-			xlName[xlNameLen++] = y >= 10 ? 'A' + (y - 10) : '0' + y;
-		}
-
-		xlName[xlNameLen++] = '.';
-		memcpy(xlName + xlNameLen, xlExt, xlExtLen);
-		xlName[xlNameLen + xlExtLen] = 0;
+		ATHostDeviceEncodeName(xlName, it.GetName(), mbLongNameEncoding);
 
 		if (VDFileWildMatch(mFilePattern.c_str(), xlName)) {
 			if (encodedName)
