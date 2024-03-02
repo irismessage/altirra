@@ -12,17 +12,6 @@ class IATUIAnchor;
 class ATUIContainer;
 class ATUIManager;
 
-enum ATUICursorImage {
-	kATUICursorImage_None,
-	kATUICursorImage_Hidden,
-	kATUICursorImage_Arrow,
-	kATUICursorImage_IBeam,
-	kATUICursorImage_Cross,
-	kATUICursorImage_Query,
-	kATUICursorImage_Target,
-	kATUICursorImage_TargetOff
-};
-
 // Currently these need to match the Win32 definitions.
 enum ATUIVirtKey {
 	kATUIVK_LButton	= 0x01,

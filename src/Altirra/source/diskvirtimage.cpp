@@ -107,12 +107,6 @@
 
 ATDebuggerLogChannel g_ATLCVDisk(false, false, "VDISK", "Virtual disk activity");
 
-namespace {
-	static const uint8 kTrackInterleave18[18]={
-		0, 9, 1, 10, 2, 11, 3, 12, 4, 13, 5, 14, 6, 15, 7, 16, 8, 17
-	};
-}
-
 class ATDiskImageVirtualFolder final : public vdrefcounted<IATDiskImage>, public IVDTimerCallback {
 public:
 	ATDiskImageVirtualFolder();
@@ -155,6 +149,9 @@ public:
 
 	void Resize(uint32 sectors) override;
 	void FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskVirtualSectorInfo *vsecs, uint32 psCount, const ATDiskPhysicalSectorInfo *psecs, const uint8 *psecData) override;
+
+	bool IsSafeToReinterleave() const override;
+	void Reinterleave(ATDiskInterleave interleave) override;
 
 public:
 	void TimerCallback() override;
@@ -213,6 +210,8 @@ protected:
 	VDDate mBootFileLastDate;
 	int mDosEntry;
 
+	vdfunction<float(uint32)> mpInterleaveFn;
+
 	VDLazyTimer mCloseTimer;
 	VDFileWatcher mFileWatcher;
 
@@ -227,6 +226,7 @@ protected:
 ATDiskImageVirtualFolder::ATDiskImageVirtualFolder()
 	: mSectorCount(720)
 {
+	mpInterleaveFn = ATDiskGetInterleaveFn(kATDiskInterleave_Default, GetGeometry());
 }
 
 void ATDiskImageVirtualFolder::Init(const wchar_t *path) {
@@ -317,7 +317,7 @@ void ATDiskImageVirtualFolder::GetPhysicalSectorInfo(uint32 index, ATDiskPhysica
 	info.mSize = 128;
 	info.mbDirty = false;
 	info.mbMFM = false;
-	info.mRotPos = (float)kTrackInterleave18[index % 18] / 18.0f;
+	info.mRotPos = mpInterleaveFn(index);
 	info.mFDCStatus = 0xFF;
 	info.mWeakDataOffset = -1;
 }
@@ -538,6 +538,14 @@ void ATDiskImageVirtualFolder::Resize(uint32 sectors) {
 
 void ATDiskImageVirtualFolder::FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskVirtualSectorInfo *vsecs, uint32 psCount, const ATDiskPhysicalSectorInfo *psecs, const uint8 *psecData) {
 	throw MyError("A virtual disk cannot be formatted.");
+}
+
+bool ATDiskImageVirtualFolder::IsSafeToReinterleave() const {
+	return true;
+}
+
+void ATDiskImageVirtualFolder::Reinterleave(ATDiskInterleave interleave) {
+	mpInterleaveFn = ATDiskGetInterleaveFn(interleave, GetGeometry());
 }
 
 void ATDiskImageVirtualFolder::TimerCallback() {

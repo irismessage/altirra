@@ -65,7 +65,6 @@ ATCPUEmulator::ATCPUEmulator()
 
 	RebuildDecodeTables();
 
-	VDASSERTCT(kStateStandard_Count <= kStateUpdateHeatMap);
 	VDASSERTCT(kStateCount < 256);
 	
 	VDASSERTCT((int)kATCPUMode_6502 == (int)kATDebugDisasmMode_6502);
@@ -81,6 +80,10 @@ bool ATCPUEmulator::Init(ATCPUEmulatorMemory *mem, ATCPUHookManager *hookmgr, AT
 	mpHookMgr = hookmgr;
 	mpCallbacks = callbacks;
 
+	mbStep = false;
+	mbTrace = false;
+	mDebugFlags &= ~(kDebugFlag_Step | kDebugFlag_StepNMI | kDebugFlag_Trace);
+
 	ColdReset();
 
 	memset(mHistory, 0, sizeof mHistory);
@@ -94,9 +97,6 @@ void ATCPUEmulator::SetBreakpointManager(ATBreakpointManager *bkptmanager) {
 }
 
 void ATCPUEmulator::ColdReset() {
-	mbStep = false;
-	mbTrace = false;
-	mDebugFlags &= ~(kDebugFlag_Step | kDebugFlag_StepNMI | kDebugFlag_Trace);
 	WarmReset();
 	mNMIIgnoreUnhaltedCycle = 0xFFFFFFFFU;
 }
@@ -248,6 +248,10 @@ bool ATCPUEmulator::IsNextCycleWrite() const {
 				return true;
 		}
 	}
+}
+
+uint32 ATCPUEmulator::GetXPC() const {
+	return mpMemory->mpCPUReadAddressPageMap[(uint8)(mPC >> 8)] + mPC;
 }
 
 void ATCPUEmulator::SetEmulationFlag(bool emu) {
@@ -836,6 +840,10 @@ void ATCPUEmulator::PeriodicCleanup() {
 		mIRQAcknowledgeTime += 0x40000000;
 }
 
+#ifdef VD_COMPILER_MSVC
+#pragma runtime_checks("scu", off)
+#endif
+
 int ATCPUEmulator::Advance() {
 	if (mCPUMode == kATCPUMode_65C816) {
 		if (mSubCycles > 1)
@@ -846,52 +854,27 @@ int ATCPUEmulator::Advance() {
 		return Advance6502();
 }
 
-int ATCPUEmulator::Advance6502() {
-	#include "cpumachine.inl"
-}
+#include "cpumachine.inl"
 
-int ATCPUEmulator::Advance65816() {
 #define AT_CPU_MACHINE_65C816
-	#include "cpumachine.inl"
+#include "cpumachine.inl"
 #undef AT_CPU_MACHINE_65C816
-}
 
-int ATCPUEmulator::Advance65816HiSpeed(bool dma) {
-	if (dma) {
-		if (!--mSubCyclesLeft) {
-			mSubCyclesLeft = mSubCycles;
-			return kATSimEvent_None;
-		}
-	}
+#define AT_CPU_MACHINE_65C816
+#define AT_CPU_MACHINE_65C816_HISPEED
+#include "cpumachine.inl"
+#undef AT_CPU_MACHINE_65C816_HISPEED
+#undef AT_CPU_MACHINE_65C816
 
-	for(;;) {
-		#define AT_CPU_MACHINE_65C816
-		#define AT_CPU_MACHINE_65C816_HISPEED
-		#include "cpumachine.inl"
-		#undef AT_CPU_MACHINE_65C816_HISPEED
-		#undef AT_CPU_MACHINE_65C816
-
-end_sub_cycle:
-		if (!--mSubCyclesLeft) {
-wait_slow_cycle:
-			if (mbForceNextCycleSlow) {
-				mbForceNextCycleSlow = false;
-				mSubCyclesLeft = 1;
-			} else {
-				mSubCyclesLeft = mSubCycles;
-			}
-			break;
-		}
-	}
-
-	return kATSimEvent_None;
-}
+#ifdef VD_COMPILER_MSVC
+#pragma runtime_checks("scu", restore)
+#endif
 
 uint8 ATCPUEmulator::ProcessDebugging() {
 	uint8 iflags = mInsnFlags[mPC];
 
 	if (iflags & kInsnFlagBreakPt) {
-		ATSimulatorEvent event = (ATSimulatorEvent)mpBkptManager->TestPCBreakpoint((uint32)mPC + ((uint32)mK << 16));
+		ATSimulatorEvent event = (ATSimulatorEvent)mpBkptManager->TestPCBreakpoint(0, (uint32)mPC + ((uint32)mK << 16));
 		if (event) {
 			mbUnusedCycle = true;
 			RedecodeInsnWithoutBreak();
@@ -1105,27 +1088,23 @@ void ATCPUEmulator::AddHistoryEntry(bool slowFlag) {
 	he->mbIRQ = mbMarkHistoryIRQ;
 	he->mbNMI = mbMarkHistoryNMI;
 
-	if (is816) {
+	if constexpr (is816) {
 		if (hispeed && !slowFlag)
 			he->mSubCycle = mSubCycles - mSubCyclesLeft;
 		else
 			he->mSubCycle = 0;
 
 		he->mbEmulation = mbEmulationFlag;
-		he->mSH = mSH;
-		he->mAH = mAH;
-		he->mXH = mXH;
-		he->mYH = mYH;
+		he->mExt.mSH = mSH;
+		he->mExt.mAH = mAH;
+		he->mExt.mXH = mXH;
+		he->mExt.mYH = mYH;
 		he->mB = mB;
 		he->mK = mK;
 		he->mD = mDP;
 	} else {
 		he->mbEmulation = true;
 		he->mSubCycle = 0;
-		he->mSH = 1;
-		he->mAH = 0;
-		he->mXH = 0;
-		he->mYH = 0;
 		he->mB = 0;
 		he->mK = 0;
 		he->mD = 0;
@@ -1137,12 +1116,14 @@ void ATCPUEmulator::AddHistoryEntry(bool slowFlag) {
 	const uint16 pc = mPC;
 	const uint8 k = mK;
 	const ATCPUEmulatorMemory * VDRESTRICT mem = mpMemory;
-	if (is816) {
+	if constexpr (is816) {
 		for(int i=0; i<3; ++i)
 			he->mOpcode[i+1] = mem->DebugExtReadByte(pc+i, k);
 	} else {
 		for(int i=0; i<2; ++i)
 			he->mOpcode[i+1] = mem->DebugReadByte(pc+i);
+
+		he->mGlobalPCBase = mem->mpCPUReadAddressPageMap[(mPC - 1) >> 8];
 	}
 }
 

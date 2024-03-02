@@ -33,7 +33,7 @@ class VDFile;
 
 class ATCPUEmulatorMemory;
 class IVDRandomAccessStream;
-class IATAudioOutput;
+class IATAudioMixer;
 class IATCassetteImage;
 struct ATTraceContext;
 class ATTraceChannelTape;
@@ -68,13 +68,14 @@ public:
 	IATCassetteImage *GetImage() const { return mpImage; }
 	const wchar_t *GetPath() const { return mImagePath.c_str(); }
 	bool IsImagePersistent() const { return mbImagePersistent; }
+	bool IsImageDirty() const { return mbImageDirty; }
 
 	float GetLength() const;
 	float GetPosition() const;
 	uint32 GetSampleLen() const { return mLength; }
 	uint32 GetSamplePos() const { return mPosition; }
 
-	void Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATScheduler *slowsched, IATAudioOutput *audioOut, ATDeferredEventManager *defmgr, IATDeviceSIOManager *sioMgr);
+	void Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATScheduler *slowsched, IATAudioMixer *mixer, ATDeferredEventManager *defmgr, IATDeviceSIOManager *sioMgr);
 	void Shutdown();
 	void ColdReset();
 
@@ -93,6 +94,8 @@ public:
 	void Load(const wchar_t *fn);
 	void Load(IATCassetteImage *image, const wchar_t *path, bool persistent);
 	void Unload();
+	void SetImagePersistent(const wchar_t *fn);
+	void SetImageClean();
 
 	void SetLogDataEnable(bool enable);
 	void SetLoadDataAsAudioEnable(bool enable);
@@ -212,11 +215,12 @@ private:
 	ATPokeyEmulator *mpPokey = nullptr;
 	ATScheduler *mpScheduler = nullptr;
 	ATScheduler *mpSlowScheduler = nullptr;
-	IATAudioOutput *mpAudioOutput = nullptr;
+	IATAudioMixer *mpAudioMixer = nullptr;
 
 	IATCassetteImage *mpImage = nullptr;
 	VDStringW mImagePath;
 	bool	mbImagePersistent = false;
+	bool	mbImageDirty = false;
 
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
 	bool	mbRegisteredRawSIO = false;

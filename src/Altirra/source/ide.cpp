@@ -292,7 +292,7 @@ uint8 ATIDEEmulator::DebugReadByte(uint8 address) {
 	// ATA/ATAPI-4 9.16.0 -- when device 1 is selected with only device 0 present,
 	// status and alternate status return 00h, while all other reads are the same as
 	// device 0.
-	if (mbIsSingle && mbIsSlave) {
+	if (mbIsSingle) {
 		if (mRFile.mHead & 0x10) {
 			if (idx == 7)
 				return 0;
@@ -323,7 +323,7 @@ uint8 ATIDEEmulator::ReadByte(uint8 address) {
 	// ATA/ATAPI-4 9.16.0 -- when device 1 is selected with only device 0 present,
 	// status and alternate status return 00h, while all other reads are the same as
 	// device 0.
-	if (mbIsSingle && mbIsSlave) {
+	if (mbIsSingle) {
 		if (mRFile.mHead & 0x10) {
 			if (idx == 7)
 				return 0;
@@ -399,7 +399,7 @@ uint8 ATIDEEmulator::ReadByteAlt(uint8 address) {
 			return 0xFF;
 
 		case 0x06:	// alternate status
-			if (mbIsSingle && !mbIsSlave)
+			if (mbIsSingle && (mRFile.mHead & 0x10))
 				return 0;
 
 			if (mbHardwareReset || mbSoftwareReset)

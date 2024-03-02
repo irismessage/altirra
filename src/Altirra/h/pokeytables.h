@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2008-2014 Avery Lee
+//	Copyright (C) 2008-2018 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -21,10 +21,10 @@
 struct ATPokeyTables {
 	float	mMixTable[61];
 
-	// Integral of c*e^-kx for 0-28 steps, to simulate the first high pass
+	// Integral of c*e^-kx for 0-56 steps, to simulate the first high pass
 	// filter.
-	float	mHPTable[29];
-	float	mHPIntegralTable[29];
+	float	mHPTable[57];
+	float	mHPIntegralTable[57];
 
 	// Bit 0 = 17-bit polynomial
 	// Bit 1 = 9-bit polynomial

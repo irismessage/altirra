@@ -16,12 +16,17 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #define INITGUID
+struct IUnknown;
 #include <windows.h>
 #include <mmsystem.h>
 #include <cguid.h>
 #include <dsound.h>
 #include <mmdeviceapi.h>
+
+#pragma warning(push)
+#pragma warning(disable: 4091)
 #include <audioclient.h>
+#pragma warning(pop)
 
 #include <vd2/system/math.h>
 #include <vd2/system/refcount.h>
@@ -42,8 +47,6 @@
 #define DRV_QUERYFUNCTIONINSTANCEIDSIZE	(DRV_RESERVED + 18)
 #endif
 
-extern HINSTANCE g_hInst;
-
 class VDAudioOutputWaveOutW32 final : public IVDAudioOutput {
 public:
 	VDAudioOutputWaveOutW32();
@@ -59,10 +62,12 @@ public:
 	bool	IsFrozen() override;
 	uint32	GetAvailSpace() override;
 	uint32	GetBufferLevel() override;
-	uint32	EstimateHWBufferLevel() override;
+	uint32	EstimateHWBufferLevel(bool *underflowDetected) override;
 	sint32	GetPosition() override;
 	sint32	GetPositionBytes() override;
 	double	GetPositionTime() override;
+
+	uint32	GetMixingRate() const override;
 
 	bool	Start() override;
 	bool	Stop() override;
@@ -282,6 +287,10 @@ bool VDAudioOutputWaveOutW32::IsSilent() {
 	return mCurState == kStateSilent;
 }
 
+uint32 VDAudioOutputWaveOutW32::GetMixingRate() const {
+	return mSamplesPerSec;
+}
+
 bool VDAudioOutputWaveOutW32::Start() {
 	if (mCurState == kStateSilent)
 		return true;
@@ -368,7 +377,7 @@ uint32 VDAudioOutputWaveOutW32::GetBufferLevel() {
 	return level;
 }
 
-uint32 VDAudioOutputWaveOutW32::EstimateHWBufferLevel() {
+uint32 VDAudioOutputWaveOutW32::EstimateHWBufferLevel(bool *underflowDetected) {
 	return GetBufferLevel();
 }
 
@@ -594,10 +603,12 @@ public:
 	bool	IsFrozen() override;
 	uint32	GetAvailSpace() override;
 	uint32	GetBufferLevel() override;
-	uint32	EstimateHWBufferLevel() override;
+	uint32	EstimateHWBufferLevel(bool *underflowDetected) override;
 	sint32	GetPosition() override;
 	sint32	GetPositionBytes() override;
 	double	GetPositionTime() override;
+
+	uint32	GetMixingRate() const override;
 
 	bool	Start() override;
 	bool	Stop() override;
@@ -796,7 +807,7 @@ uint32 VDAudioOutputDirectSoundW32::GetBufferLevel() {
 	return level;
 }
 
-uint32 VDAudioOutputDirectSoundW32::EstimateHWBufferLevel() {
+uint32 VDAudioOutputDirectSoundW32::EstimateHWBufferLevel(bool *underflowDetected) {
 	mMutex.Lock();
 	uint32 level = mBufferLevel + mDSBufferedBytes;
 	mMutex.Unlock();
@@ -822,6 +833,10 @@ sint32 VDAudioOutputDirectSoundW32::GetPositionBytes() {
 
 double VDAudioOutputDirectSoundW32::GetPositionTime() {
 	return GetPosition() / 1000.0;
+}
+
+uint32 VDAudioOutputDirectSoundW32::GetMixingRate() const {
+	return mInitFormat->nSamplesPerSec;
 }
 
 bool VDAudioOutputDirectSoundW32::Start() {

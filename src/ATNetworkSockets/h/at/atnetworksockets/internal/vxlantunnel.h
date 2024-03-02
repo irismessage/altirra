@@ -24,7 +24,7 @@ private:
 	LRESULT WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	void OnReadPacket(uint32 len);
 
-	VDFunctionThunk *mpWndThunk = nullptr;
+	VDFunctionThunkInfo *mpWndThunk = nullptr;
 	ATOM mWndClass = 0;
 	HWND mhwnd = nullptr;
 

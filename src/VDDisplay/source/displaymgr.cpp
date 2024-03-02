@@ -17,6 +17,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <windows.h>
+#include <mmsystem.h>
 #include <vd2/system/w32assist.h>
 #include "displaymgr.h"
 
@@ -119,7 +120,7 @@ bool VDVideoDisplayManager::Init() {
 			return false;
 		}
 
-		mhwnd = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)mWndClass, "", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), this);
+		mhwnd = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)mWndClass, L"", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), this);
 		if (!mhwnd) {
 			Shutdown();
 			return false;
@@ -272,7 +273,7 @@ void VDVideoDisplayManager::ThreadRun() {
 
 void VDVideoDisplayManager::ThreadRunFullRemote() {
 	if (RegisterWindowClass()) {
-		mhwnd = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)mWndClass, "", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), this);
+		mhwnd = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)mWndClass, L"", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), this);
 
 		if (mhwnd) {
 			MSG msg;
@@ -455,8 +456,8 @@ bool VDVideoDisplayManager::RegisterWindowClass() {
 	wc.hbrBackground	= 0;
 	wc.lpszMenuName		= 0;
 
-	char buf[64];
-	sprintf(buf, "VDVideoDisplayManager(%p)", this);
+	wchar_t buf[64];
+	swprintf(buf, vdcountof(buf), L"VDVideoDisplayManager(%p)", this);
 	wc.lpszClassName	= buf;
 
 	mWndClass = RegisterClass(&wc);

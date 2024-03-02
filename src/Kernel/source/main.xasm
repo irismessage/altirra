@@ -13,7 +13,11 @@
 	_KERNEL_PBI_SUPPORT = 1
 	_KERNEL_USE_BOOT_SCREEN = 1
 	.macro _KERNELSTR_BIOS_NAME_INTERNAL
+.ifdef _KERNEL_816
+		dta		d" for 65C816"
+.else
 		dta		d" for XL/XE/XEGS"
+.endif
 	.endm
 .else
 	_KERNEL_PBI_SUPPORT = 0
@@ -30,6 +34,10 @@
 
 	opt		h-o+f+
 
+.ifdef _KERNEL_816
+	opt		c+
+.endif
+
 .if _KERNEL_XLXE
 	org		$c000
 	
@@ -44,11 +52,29 @@
 	dta		$00
 
 	_KERNEL_REPORT_MODULE_MARK
+
+	.ifdef _KERNEL_816
+	icl		'vbi816.s'
+	.else
 	icl		'vbi.s'
+	.endif
+
 	_KERNEL_REPORT_MODULE_SIZE	'VBI routines', 0
+
+	.ifdef _KERNEL_816
+	icl		'interrupt816.s'
+	.else
 	icl		'interrupt.s'
+	.endif
+
 	_KERNEL_REPORT_MODULE_SIZE	'Base interrupt routines', 0
+
+	.ifdef _KERNEL_816
+	icl		'irq816.s'
+	.else
 	icl		'irq.s'
+	.endif
+
 	_KERNEL_REPORT_MODULE_SIZE	'IRQ routines', 0
 	
 	icl		'pbi.s'
@@ -56,6 +82,11 @@
 	icl		'phandler.s'
 	_KERNEL_REPORT_MODULE_SIZE	'Peripheral Handler routines', 0
 	
+	.ifdef _KERNEL_816
+	icl		'syscall816.s'
+	icl		'sysdev816.s'
+	.endif
+
 	org		$cc00
 	icl		'atariifont.inc'
 	
@@ -197,7 +228,13 @@ gpdvv	PBI_VECTOR_TABLE			;$E48F	XL/XE: Generic device vector
 	_KERNEL_REPORT_MODULE_MARK
 	
 	icl		'cio.inc'
+
+	.ifdef _KERNEL_816
+	icl		'cio816.s'
+	.else
 	icl		'cio.s'
+	.endif
+
 	_KERNEL_REPORT_MODULE_SIZE 'Central Input/Output (CIO)', $E6D5-$E4A6
 
 	.if !_KERNEL_XLXE
@@ -220,16 +257,32 @@ gpdvv	PBI_VECTOR_TABLE			;$E48F	XL/XE: Generic device vector
 	icl		'cassette.s'
 	_KERNEL_REPORT_MODULE_SIZE 'Cassette Handler', $F0E3-$EF41
 	
+	.ifdef _KERNEL_816
+	icl		'init816.s'
+	.else
 	icl		'init.s'
+	.endif
+
 	icl		'boot.s'
 	_KERNEL_REPORT_MODULE_SIZE 'Monitor routines', $F3E4-$F0E3
 	
 	icl		'screen.s'
 	icl		'editor.s'
+
+	.ifdef _KERNEL_816
+	icl		'screenext816.s'
+	.else
 	icl		'screenext.s'
+	.endif
+
 	_KERNEL_REPORT_MODULE_SIZE 'Display routines', 0
 	
+	.ifdef _KERNEL_816
+	icl		'keyboard816.s'
+	.else
 	icl		'keyboard.s'
+	.endif
+
 	icl		'keytable.s'
 	_KERNEL_REPORT_MODULE_SIZE 'Keyboard routines', 0
 
@@ -243,7 +296,21 @@ gpdvv	PBI_VECTOR_TABLE			;$E48F	XL/XE: Generic device vector
 ; version block (XL/XE)
 ;==============================================================================
 
-	.if _KERNEL_XLXE
+	.ifdef _KERNEL_816
+	org		$ffe4
+	dta		a(IntDispatchNativeCop)		;$FFE4
+	dta		a(IntDispatchNativeBreak)	;$FFE6
+	dta		a(IntDispatchNativeAbort)	;$FFE8
+	dta		a(IntDispatchNativeNmi)		;$FFEA
+	dta		a(0)						;$FFEC
+	dta		a(IntDispatchNativeIrq)		;$FFEE
+	dta		$13							;$FFF0
+	dta		$02							;$FFF1 option byte - !!CHECKED BY ARCHON
+	dta		'CX'						;$FFF2
+	dta		a(IntDispatchCop)			;$FFF4
+	dta		a(0)						;$FFF6
+	dta		a(IntDispatchAbort)			;$FFF8
+	.elif _KERNEL_XLXE
 	org		$ffee
 	dta		$01,$01,$13
 	dta		$02					;option byte - !!CHECKED BY ARCHON

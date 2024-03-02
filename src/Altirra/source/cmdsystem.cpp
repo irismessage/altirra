@@ -18,20 +18,24 @@
 #include <stdafx.h>
 #include <at/atcore/devicemanager.h>
 #include <at/atcore/propertyset.h>
+#include <at/atnativeui/uiframe.h>
 #include "console.h"
 #include "firmwaremanager.h"
 #include "simulator.h"
 #include "uiaccessors.h"
+#include "uiconfirm.h"
 #include "uidisplay.h"
 #include "uikeyboard.h"
 #include "uimenu.h"
+#include "uitypes.h"
 
 void ATUIShowCPUOptionsDialog(VDGUIHandle h);
 void ATUIShowDialogSpeedOptions(VDGUIHandle parent);
-void ATUIShowDialogDevices(VDGUIHandle parent, ATDeviceManager& devMgr);
+void ATUIShowDialogDevices(VDGUIHandle parent);
 void ATUIShowDialogFirmware(VDGUIHandle hParent, ATFirmwareManager& fwm, bool *anyChanges);
 void ATUIShowDialogProfiles(VDGUIHandle hParent);
 void ATUIOpenAdjustColorsDialog(VDGUIHandle hParent);
+void ATUIShowDialogConfigureSystem(VDGUIHandle hParent);
 
 void ATSyncCPUHistoryState();
 void ATUIUpdateSpeedTiming();
@@ -41,6 +45,7 @@ void ATUIResizeDisplay();
 
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
+extern ATFrameRateMode g_frameRateMode;
 
 void OnCommandSystemTogglePause() {
 	if (g_sim.IsRunning())
@@ -56,6 +61,14 @@ void OnCommandSystemWarmReset() {
 
 void OnCommandSystemColdReset() {
 	g_sim.ColdReset();
+	g_sim.Resume();
+
+	if (!g_kbdOpts.mbAllowShiftOnColdReset)
+		g_sim.GetPokey().SetShiftKeyState(false, true);
+}
+
+void OnCommandSystemColdResetComputerOnly() {
+	g_sim.ColdResetComputerOnly();
 	g_sim.Resume();
 
 	if (!g_kbdOpts.mbAllowShiftOnColdReset)
@@ -96,7 +109,7 @@ void OnCommandSystemSpeedOptionsDialog() {
 }
 
 void OnCommandSystemDevicesDialog() {
-	ATUIShowDialogDevices(ATUIGetMainWindow(), *g_sim.GetDeviceManager());
+	ATUIShowDialogDevices(ATUIGetMainWindow());
 }
 
 void OnCommandSystemToggleKeyboardPresent() {
@@ -125,15 +138,23 @@ void OnCommandSystemMemoryMode(ATMemoryMode mode) {
 
 void OnCommandSystemAxlonMemoryMode(uint8 bankBits) {
 	if (g_sim.GetHardwareMode() != kATHardwareMode_5200 && g_sim.GetAxlonMemoryMode() != bankBits) {
+		if (!ATUIConfirmSystemChangeReset())
+			return;
+
 		g_sim.SetAxlonMemoryMode(bankBits);
-		g_sim.ColdReset();
+		
+		ATUIConfirmSystemChangeResetComplete();
 	}
 }
 
 void OnCommandSystemHighMemBanks(sint32 banks) {
 	if (g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816 && g_sim.GetHighMemoryBanks() != banks) {
+		if (!ATUIConfirmSystemChangeReset())
+			return;
+
 		g_sim.SetHighMemoryBanks(banks);
-		g_sim.ColdReset();
+
+		ATUIConfirmSystemChangeResetComplete();
 	}
 }
 
@@ -142,13 +163,25 @@ void OnCommandSystemToggleMapRAM() {
 }
 
 void OnCommandSystemToggleUltimate1MB() {
+	if (!ATUIConfirmSystemChangeReset())
+		return;
+
 	g_sim.SetUltimate1MBEnabled(!g_sim.IsUltimate1MBEnabled());
-	g_sim.ColdReset();
+
+	ATUIConfirmSystemChangeResetComplete();
 }
 
 void OnCommandSystemToggleFloatingIoBus() {
+	if (!ATUIConfirmSystemChangeReset())
+		return;
+
 	g_sim.SetFloatingIoBusEnabled(!g_sim.IsFloatingIoBusEnabled());
-	g_sim.ColdReset();
+
+	ATUIConfirmSystemChangeResetComplete();
+}
+
+void OnCommandSystemTogglePreserveExtRAM() {
+	g_sim.SetPreserveExtRAMEnabled(!g_sim.IsPreserveExtRAMEnabled());
 }
 
 void OnCommandSystemMemoryClearMode(ATMemoryClearMode mode) {
@@ -160,7 +193,12 @@ void OnCommandSystemToggleMemoryRandomizationEXE() {
 }
 
 void OnCommandSystemToggleBASIC() {
+	if (!ATUIConfirmBasicChangeReset())
+		return;
+
 	g_sim.SetBASICEnabled(!g_sim.IsBASICEnabled());
+
+	ATUIConfirmBasicChangeResetComplete();
 }
 
 void OnCommandSystemToggleFastBoot() {
@@ -169,7 +207,7 @@ void OnCommandSystemToggleFastBoot() {
 
 void OnCommandSystemROMImagesDialog() {
 	bool anyChanges = false;
-	ATUIShowDialogFirmware(ATUIGetMainWindow(), *g_sim.GetFirmwareManager(), &anyChanges);
+	ATUIShowDialogFirmware(ATUIGetNewPopupOwner(), *g_sim.GetFirmwareManager(), &anyChanges);
 
 	if (anyChanges) {
 		if (g_sim.LoadROMs())
@@ -187,6 +225,18 @@ void OnCommandSystemToggleRTime8() {
 		dm->RemoveDevice("rtime8");
 	else
 		dm->AddDevice("rtime8", ATPropertySet(), false, false);
+}
+
+void OnCommandSystemSpeedMatchHardware() {
+	ATUISetFrameRateMode(kATFrameRateMode_Hardware);
+}
+
+void OnCommandSystemSpeedMatchBroadcast() {
+	ATUISetFrameRateMode(kATFrameRateMode_Broadcast);
+}
+
+void OnCommandSystemSpeedInteger() {
+	ATUISetFrameRateMode(kATFrameRateMode_Integral);
 }
 
 void OnCommandVideoToggleCTIA() {
@@ -227,14 +277,35 @@ void OnCommandVideoArtifacting(ATGTIAEmulator::ArtifactMode mode) {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
 	gtia.SetArtifactingMode(mode);
+
+	// We have to adjust the display filter if it is in sharp bilinear
+	// mode, since the horizontal crisping is disabled if high artifacting
+	// is on.
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->UpdateFilterMode();
 }
 
 void OnCommandVideoStandard(ATVideoStandard mode) {
+	if (g_sim.GetHardwareMode() == kATHardwareMode_5200)
+		return;
+
+	if (g_sim.GetVideoStandard() == mode)
+		return;
+
+	if (!ATUIConfirmVideoStandardChangeReset())
+		return;
+
 	ATSetVideoStandard(mode);
+
+	ATUIConfirmVideoStandardChangeResetComplete();
 }
 
 void OnCommandVideoToggleStandardNTSCPAL() {
 	if (g_sim.GetHardwareMode() == kATHardwareMode_5200)
+		return;
+
+	if (!ATUIConfirmVideoStandardChangeReset())
 		return;
 
 	if (g_sim.GetVideoStandard() == kATVideoStandard_NTSC)
@@ -247,6 +318,8 @@ void OnCommandVideoToggleStandardNTSCPAL() {
 	IATDisplayPane *pane = ATGetUIPaneAs<IATDisplayPane>(kATUIPaneId_Display);
 	if (pane)
 		pane->OnSize();
+
+	ATUIConfirmVideoStandardChangeResetComplete();
 }
 
 void OnCommandVideoEnhancedModeNone() {
@@ -264,4 +337,8 @@ void OnCommandVideoEnhancedModeCIO() {
 void OnCommandSystemEditProfilesDialog() {
 	ATUIShowDialogProfiles(ATUIGetMainWindow());
 	ATUIRebuildDynamicMenu(kATUIDynamicMenu_Profile);
+}
+
+void OnCommandConfigureSystem() {
+	ATUIShowDialogConfigureSystem(ATUIGetMainWindow());
 }

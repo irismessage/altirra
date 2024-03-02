@@ -28,7 +28,8 @@ struct VDDisplayCustomShaderPassInfo {
 	float mTiming;
 	uint32 mOutputWidth;
 	uint32 mOutputHeight;
-	bool mbOutputFloat;
+	bool mbOutputFloat;			// output surface is float type (float or half)
+	bool mbOutputHalfFloat;		// output surface is half-float
 };
 
 class IVDDisplayCustomShaderPipelineD3D9 {

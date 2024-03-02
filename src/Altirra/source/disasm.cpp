@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <at/atcore/address.h>
 #include <at/atcpu/execstate.h>
 #include <at/atdebugger/target.h>
 #include "simulator.h"
@@ -1089,12 +1090,12 @@ void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent) {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 	hent.mP = cpu.GetP();
 	hent.mX = cpu.GetX();
-	hent.mXH = cpu.GetXH();
+	hent.mExt.mXH = cpu.GetXH();
 	hent.mY = cpu.GetY();
-	hent.mYH = cpu.GetYH();
+	hent.mExt.mYH = cpu.GetYH();
 	hent.mD = cpu.GetD();
 	hent.mS = cpu.GetS();
-	hent.mSH = cpu.GetSH();
+	hent.mExt.mSH = cpu.GetSH();
 	hent.mB = cpu.GetB();
 	hent.mK = cpu.GetK();
 	hent.mbEmulation = cpu.GetEmulationFlag();
@@ -1125,9 +1126,9 @@ void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent, const ATCPUExe
 			hent.mZ80_B		= stateZ80.mB;
 			hent.mZ80_C		= stateZ80.mC;
 			hent.mZ80_D		= stateZ80.mD;
-			hent.mZ80_E		= stateZ80.mE;
-			hent.mZ80_H		= stateZ80.mH;
-			hent.mZ80_L		= stateZ80.mL;
+			hent.mExt.mZ80_E		= stateZ80.mE;
+			hent.mExt.mZ80_H		= stateZ80.mH;
+			hent.mExt.mZ80_L		= stateZ80.mL;
 			hent.mZ80_SP	= stateZ80.mSP;
 			hent.mbEmulation = true;
 			break;
@@ -1137,14 +1138,14 @@ void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent, const ATCPUExe
 			const ATCPUExecState6809& state6809 = execState.m6809;
 			hent.mP		= state6809.mCC;
 			hent.mA		= state6809.mA;
-			hent.mAH	= state6809.mB;
+			hent.mExt.mAH	= state6809.mB;
 			hent.mX		= (uint8)state6809.mX;
-			hent.mXH	= (uint8)(state6809.mX >> 8);
+			hent.mExt.mXH	= (uint8)(state6809.mX >> 8);
 			hent.mY		= (uint8)state6809.mY;
-			hent.mYH	= (uint8)(state6809.mY >> 8);
+			hent.mExt.mYH	= (uint8)(state6809.mY >> 8);
 			hent.mD		= state6809.mDP;
 			hent.mS		= (uint8)state6809.mS;
-			hent.mSH	= (uint8)(state6809.mS >> 8);
+			hent.mExt.mSH	= (uint8)(state6809.mS >> 8);
 			hent.mB		= state6809.mB;
 			hent.mbEmulation = true;
 			break;
@@ -1154,12 +1155,12 @@ void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent, const ATCPUExe
 			const ATCPUExecState6502& state6502 = execState.m6502;
 			hent.mP		= state6502.mP;
 			hent.mX		= state6502.mX;
-			hent.mXH	= state6502.mXH;
+			hent.mExt.mXH	= state6502.mXH;
 			hent.mY		= state6502.mY;
-			hent.mYH	= state6502.mYH;
+			hent.mExt.mYH	= state6502.mYH;
 			hent.mD		= state6502.mDP;
 			hent.mS		= state6502.mS;
-			hent.mSH	= state6502.mSH;
+			hent.mExt.mSH	= state6502.mSH;
 			hent.mB		= state6502.mB;
 			hent.mK		= state6502.mK;
 			hent.mbEmulation = state6502.mbEmulationFlag;
@@ -1183,6 +1184,22 @@ void ATDisassembleCaptureInsnContext(uint16 addr, uint8 bank, ATCPUHistoryEntry&
 	hent.mOpcode[3] = byte3;
 }
 
+void ATDisassembleCaptureInsnContext(uint32 globalAddr, ATCPUHistoryEntry& hent) {
+	const uint32 bankSpace = globalAddr & 0xFFFF0000;
+	uint8 opcode = g_sim.DebugGlobalReadByte(globalAddr);
+	uint8 byte1 = g_sim.DebugGlobalReadByte(bankSpace + ((globalAddr+1) & 0xffff));
+	uint8 byte2 = g_sim.DebugGlobalReadByte(bankSpace + ((globalAddr+2) & 0xffff));
+	uint8 byte3 = g_sim.DebugGlobalReadByte(bankSpace + ((globalAddr+3) & 0xffff));
+
+	hent.mPC = (uint16)globalAddr;
+	hent.mK = (uint8)(globalAddr >> 16);
+	hent.mGlobalPCBase = bankSpace;
+	hent.mOpcode[0] = opcode;
+	hent.mOpcode[1] = byte1;
+	hent.mOpcode[2] = byte2;
+	hent.mOpcode[3] = byte3;
+}
+
 void ATDisassembleCaptureInsnContext(IATDebugTarget *target, uint16 addr, uint8 bank, ATCPUHistoryEntry& hent) {
 	hent.mPC = addr;
 	hent.mK = bank;
@@ -1191,6 +1208,16 @@ void ATDisassembleCaptureInsnContext(IATDebugTarget *target, uint16 addr, uint8 
 	const uint32 bank24 = ((uint32)bank << 16);
 	for(uint32 i=0; i<4; ++i)
 		hent.mOpcode[i] = target->DebugReadByte(bank24 + ((addr + i) & 0xffff));
+}
+
+void ATDisassembleCaptureInsnContext(IATDebugTarget *target, uint32 globalAddr, ATCPUHistoryEntry& hent) {
+	hent.mPC = globalAddr & 0xFFFF;
+	hent.mK = 0;
+	hent.mGlobalPCBase = globalAddr & 0xFFFF0000;
+
+	// Instructions don't wrap across banks on the 65C816.
+	for(uint32 i=0; i<4; ++i)
+		hent.mOpcode[i] = target->DebugReadByte(hent.mGlobalPCBase + ((globalAddr + i) & 0xffff));
 }
 
 uint16 ATDisassembleInsn(char *buf, uint16 addr, bool decodeReferences) {
@@ -1646,16 +1673,16 @@ uint16 ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 
 					switch(regIdx) {
 						case 0:
-							rval = hent.mX + ((uint32)hent.mXH << 8);
+							rval = hent.mX + ((uint32)hent.mExt.mXH << 8);
 							break;
 						case 1:
-							rval = hent.mY + ((uint32)hent.mYH << 8);
+							rval = hent.mY + ((uint32)hent.mExt.mYH << 8);
 							break;
 						case 2:
 							rval = hent.mD;
 							break;
 						case 3:
-							rval = hent.mS + ((uint32)hent.mSH << 8);
+							rval = hent.mS + ((uint32)hent.mExt.mSH << 8);
 							break;
 					}
 
@@ -1687,7 +1714,7 @@ uint16 ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 								break;
 							case 0b000'00101:
 								line.append_sprintf("B,%c", reg);
-								ea = rval + hent.mAH;
+								ea = rval + hent.mExt.mAH;
 								break;
 							case 0b000'00110:
 								line.append_sprintf("A,%c", reg);
@@ -1703,7 +1730,7 @@ uint16 ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 								break;
 							case 0b000'01011:
 								line.append_sprintf("D,%c", reg);
-								ea = (rval + hent.mA + ((uint32)hent.mAH << 8)) & 0xffff;
+								ea = (rval + hent.mA + ((uint32)hent.mExt.mAH << 8)) & 0xffff;
 								break;
 							case 0b000'01100:
 								line.append_sprintf("%d,PCR", (sint8)arg[1]);
@@ -1816,7 +1843,8 @@ uint16 ATDisassembleInsn(VDStringA& line,
 	bool lowercaseOps,
 	bool wideOpcode,
 	bool showLabelNamespaces,
-	bool showSymbols)
+	bool showSymbols,
+	bool showGlobalPC)
 {
 	if (disasmMode == kATDebugDisasmMode_8048)
 		return ATDisassembleInsn8048(line, hent, showCodeBytes, lowercaseOps);
@@ -1868,25 +1896,64 @@ uint16 ATDisassembleInsn(VDStringA& line,
 	const uint8 pbk = (disasmMode == kATDebugDisasmMode_65C816) ? hent.mK : 0;
 	const uint32 d = hent.mD;
 	const uint32 dpmask = !hent.mbEmulation || (uint8)d ? 0xffff : 0xff;
-	const uint32 x = hent.mX + ((uint32)hent.mXH << 8);
-	const uint32 y = hent.mY + ((uint32)hent.mYH << 8);
-	const uint32 s16 = ((uint32)hent.mSH << 8) + hent.mS;
+	const uint32 x = hent.mX + ((uint32)hent.mExt.mXH << 8);
+	const uint32 y = hent.mY + ((uint32)hent.mExt.mYH << 8);
+	const uint32 s16 = ((uint32)hent.mExt.mSH << 8) + hent.mS;
 	
 	const uint8 (*const tbl)[2] = kModeTbl[subMode];
 	const uint8 mode = tbl[opcode][0];
 	const uint8 opid = tbl[opcode][1];
+	const uint16 addr = hent.mPC;
 
-	if (showPCAddress) {
-		const char kPCTemplate[]="  :    : ";
+	uint32 xpc = addr;
 
-		if (disasmMode == kATDebugDisasmMode_65C816) {
-			line += kPCTemplate;
-			WriteHex8(line, 9, hent.mK);
-		} else {
-			line += kPCTemplate + 3;
+	if (showGlobalPC && disasmMode == kATDebugDisasmMode_6502) {
+		if (hent.mGlobalPCBase)
+			xpc = hent.mGlobalPCBase + hent.mPC;
+
+		if (showPCAddress) {
+			if ((xpc & kATAddressSpaceMask) == kATAddressSpace_PORTB) {
+				static const char kXPCTemplate[]=" 00'0000: ";
+
+				line += kXPCTemplate;
+				WriteHex8(line, 9, (uint8)(xpc >> 16));
+				WriteHex16(line, 6, (uint16)(xpc & 0xFFFF));
+			} else {
+				const auto addrStart = line.size();
+
+				line += ATAddressGetSpacePrefix(xpc);
+
+				const auto prefixLen = line.size() - addrStart;
+				if (prefixLen < 4)
+					line.append(4 - prefixLen, ' ');
+				
+				static const char kGPCTemplate[]="    : ";
+				line += kGPCTemplate;
+
+				// if address is above bank 0 or non-CPU address space is more than 16-bit,
+				// go to 6 digits
+				if (xpc >= 0x10000 && ATAddressGetSpaceSize(xpc) > 0x10000) {
+					WriteHex8(line, 8, (uint8)(xpc >> 16));
+				}
+
+				WriteHex16(line, 6, (uint16)xpc);
+			}
 		}
+	} else {
+		xpc += ((uint32)pbk << 16);
 
-		WriteHex16(line, 6, hent.mPC);
+		if (showPCAddress) {
+			static const char kPCTemplate[]="  :    : ";
+
+			if (disasmMode == kATDebugDisasmMode_65C816) {
+				line += kPCTemplate;
+				WriteHex8(line, 9, hent.mK);
+			} else {
+				line += kPCTemplate + 3;
+			}
+
+			WriteHex16(line, 6, hent.mPC);
+		}
 	}
 
 	int opsize = kBytesPerModeTables[subMode][mode];
@@ -1915,14 +1982,13 @@ uint16 ATDisassembleInsn(VDStringA& line,
 	size_t startPos = line.size();
 
 	const ATCPUEmulator& cpu = g_sim.GetCPU();
-	const uint16 addr = hent.mPC;
 
 	if (showLabels) {
 		VDStringA tempLabel;
 
 		const char *label = NULL;
 		
-		label = ATGetSymbolName(addr + ((uint32)pbk << 16), false);
+		label = ATGetSymbolName(xpc, false);
 
 		if (!label && cpu.IsPathfindingEnabled() && cpu.IsPathStart(addr)) {
 			tempLabel.sprintf("L%04X", addr);
@@ -2064,12 +2130,17 @@ uint16 ATDisassembleInsn(VDStringA& line,
 				break;
 
 			case kModeZp:
+				if (d)
+					dolabel = false;
 			case kModeBit:
 				base = byte1;
 				ea = (d + byte1) & 0xffff;
 				break;
 
 			case kModeZpX:
+				if (d)
+					dolabel = false;
+
 				base = byte1;
 				ea = (d + ((byte1 + x) & dpmask)) & 0xffff;
 
@@ -2078,6 +2149,9 @@ uint16 ATDisassembleInsn(VDStringA& line,
 				break;
 
 			case kModeZpY:
+				if (d)
+					dolabel = false;
+
 				base = byte1;
 				ea = (d + ((byte1 + y) & dpmask)) & 0xffff;
 
@@ -2231,6 +2305,9 @@ uint16 ATDisassembleInsn(VDStringA& line,
 				break;
 
 			case kModeDpIndLong:
+				if (d)
+					dolabel = false;
+
 				base = byte1;
 
 				if (decodeRefsHistory)
@@ -2239,12 +2316,15 @@ uint16 ATDisassembleInsn(VDStringA& line,
 					uint16 dpaddr = d + byte1;
 
 					ea = (uint32)target->DebugReadByte(dpaddr++);
-					ea = (uint32)target->DebugReadByte(dpaddr++) << 8;
-					ea = (uint32)target->DebugReadByte(dpaddr) << 16;
+					ea += (uint32)target->DebugReadByte(dpaddr++) << 8;
+					ea += (uint32)target->DebugReadByte(dpaddr) << 16;
 				}
 				break;
 
 			case kModeDpIndLongY:
+				if (d)
+					dolabel = false;
+
 				base = byte1;
 
 				if (decodeRefsHistory)
@@ -2253,8 +2333,8 @@ uint16 ATDisassembleInsn(VDStringA& line,
 					uint16 dpaddr = d + byte1;
 
 					ea = (uint32)target->DebugReadByte(dpaddr++);
-					ea = (uint32)target->DebugReadByte(dpaddr++) << 8;
-					ea = (uint32)target->DebugReadByte(dpaddr) << 16;
+					ea += (uint32)target->DebugReadByte(dpaddr++) << 8;
+					ea += (uint32)target->DebugReadByte(dpaddr) << 16;
 					ea += y;
 				}
 				break;
@@ -2491,7 +2571,7 @@ uint16 ATDisassembleInsn(uint16 addr, uint8 bank) {
 	return addr;
 }
 
-uint16 ATDisassembleGetFirstAnchor(IATDebugTarget *target, uint16 addr, uint16 targetAddr, uint8 bank) {
+uint16 ATDisassembleGetFirstAnchor(IATDebugTarget *target, uint16 addr, uint16 targetAddr, uint32 addrBank) {
 	ATCPUSubMode subMode = kATCPUSubMode_6502;
 
 	const auto disasmMode = target->GetDisasmMode();
@@ -2548,7 +2628,7 @@ uint16 ATDisassembleGetFirstAnchor(IATDebugTarget *target, uint16 addr, uint16 t
 			if (offset < results.size() && results[offset])
 				break;
 
-			uint8 opcode = target->DebugReadByte(ip + ((uint32)bank << 16));
+			uint8 opcode = target->DebugReadByte(ip + addrBank);
 			uint8 mode = tbl[opcode][0];
 
 			uint8 oplen = modetbl[mode];

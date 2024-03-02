@@ -30,8 +30,11 @@
 #include "joystick.h"
 #include "inputmanager.h"
 
-#pragma comment(lib, "dinput8")
 #pragma comment(lib, "setupapi")
+
+#ifndef DIDFT_OPTIONAL 
+#define DIDFT_OPTIONAL          0x80000000 
+#endif 
 
 // This code is similar to that from the "XInput and DirectInput" article on MSDN to detect
 // XInput controllers. However, it uses the Setup API to get access to the hardware IDs
@@ -635,7 +638,66 @@ bool ATControllerDirectInput::Init(LPCDIDEVICEINSTANCE devInst, HWND hwnd, ATInp
 	if (FAILED(hr))
 		return false;
 
-	hr = mpDevice->SetDataFormat(&c_dfDIJoystick);
+	// c_dfDIJoystick requires dinput8.lib, which is not available on ARM64.
+	// That's the only thing we need from that lib, so hardcoding the definition here saves
+	// linking it in at all.
+	DIOBJECTDATAFORMAT kJoystickObjectDataFormat[] = {
+		{ &GUID_XAxis,	DIJOFS_X,			DIDFT_OPTIONAL | DIDFT_AXIS		| DIDFT_ANYINSTANCE, DIDOI_ASPECTPOSITION },
+		{ &GUID_YAxis,	DIJOFS_Y,			DIDFT_OPTIONAL | DIDFT_AXIS		| DIDFT_ANYINSTANCE, DIDOI_ASPECTPOSITION },
+		{ &GUID_ZAxis,	DIJOFS_Z,			DIDFT_OPTIONAL | DIDFT_AXIS		| DIDFT_ANYINSTANCE, DIDOI_ASPECTPOSITION },
+		{ &GUID_RxAxis,	DIJOFS_RX,			DIDFT_OPTIONAL | DIDFT_AXIS		| DIDFT_ANYINSTANCE, DIDOI_ASPECTPOSITION },
+		{ &GUID_RyAxis,	DIJOFS_RY,			DIDFT_OPTIONAL | DIDFT_AXIS		| DIDFT_ANYINSTANCE, DIDOI_ASPECTPOSITION },
+		{ &GUID_RzAxis,	DIJOFS_RZ,			DIDFT_OPTIONAL | DIDFT_AXIS		| DIDFT_ANYINSTANCE, DIDOI_ASPECTPOSITION },
+		{ &GUID_Slider,	DIJOFS_SLIDER(0),	DIDFT_OPTIONAL | DIDFT_AXIS		| DIDFT_ANYINSTANCE, DIDOI_ASPECTPOSITION },
+		{ &GUID_Slider,	DIJOFS_SLIDER(1),	DIDFT_OPTIONAL | DIDFT_AXIS		| DIDFT_ANYINSTANCE, DIDOI_ASPECTPOSITION },
+		{ &GUID_POV,	DIJOFS_POV(0),		DIDFT_OPTIONAL | DIDFT_POV		| DIDFT_ANYINSTANCE, 0 },
+		{ &GUID_POV,	DIJOFS_POV(1),		DIDFT_OPTIONAL | DIDFT_POV		| DIDFT_ANYINSTANCE, 0 },
+		{ &GUID_POV,	DIJOFS_POV(2),		DIDFT_OPTIONAL | DIDFT_POV		| DIDFT_ANYINSTANCE, 0 },
+		{ &GUID_POV,	DIJOFS_POV(3),		DIDFT_OPTIONAL | DIDFT_POV		| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(0),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(1),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(2),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(3),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(4),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(5),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(6),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(7),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(8),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(9),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(10),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(11),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(12),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(13),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(14),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(15),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(16),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(17),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(18),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(19),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(20),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(21),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(22),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(23),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(24),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(25),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(26),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(27),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(28),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(29),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(30),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+		{ nullptr,		DIJOFS_BUTTON(31),	DIDFT_OPTIONAL | DIDFT_BUTTON	| DIDFT_ANYINSTANCE, 0 },
+	};
+
+	DIDATAFORMAT kJoystickDataFormat = {
+		sizeof(DIDATAFORMAT),
+		sizeof(DIOBJECTDATAFORMAT),
+		DIDF_ABSAXIS,
+		sizeof(DIJOYSTATE),
+		vdcountof(kJoystickObjectDataFormat),
+		&kJoystickObjectDataFormat[0],
+	};
+
+	hr = mpDevice->SetDataFormat(&kJoystickDataFormat);
 	if (FAILED(hr)) {
 		Shutdown();
 		return false;
@@ -985,6 +1047,7 @@ protected:
 	BOOL JoystickCallback(LPCDIDEVICEINSTANCE devInst);
 
 	bool mbCOMInitialized = false;
+	bool mbDIAttempted = false;
 	bool mbCaptureMode = false;
 	HWND mhwnd = nullptr;
 	vdrefptr<IDirectInput8> mpDI;
@@ -1032,17 +1095,13 @@ bool ATJoystickManager::Init(void *hwnd, ATInputManager *inputMan) {
 		mbCOMInitialized = true;
 	}
 
-	if (!mpDI) {
+	if (!mbDIAttempted) {
+		mbDIAttempted = true;
 		hr = CoCreateInstance(CLSID_DirectInput8, NULL, CLSCTX_INPROC_SERVER, IID_IDirectInput8, (void **)~mpDI);
-		if (FAILED(hr)) {
-			Shutdown();
-			return false;
-		}
-
-		hr = mpDI->Initialize(GetModuleHandle(NULL), DIRECTINPUT_VERSION);
-		if (FAILED(hr)) {
-			Shutdown();
-			return false;
+		if (SUCCEEDED(hr)) {
+			hr = mpDI->Initialize(GetModuleHandle(NULL), DIRECTINPUT_VERSION);
+			if (FAILED(hr))
+				mpDI = nullptr;
 		}
 	}
 
@@ -1149,25 +1208,27 @@ void ATJoystickManager::RescanForDevices() {
 
 	std::sort(mXInputDeviceIds.begin(), mXInputDeviceIds.end());
 
-	mpDI->EnumDevices(DI8DEVCLASS_GAMECTRL, StaticJoystickCallback, this, DIEDFL_ATTACHEDONLY);
+	if (mpDI) {
+		mpDI->EnumDevices(DI8DEVCLASS_GAMECTRL, StaticJoystickCallback, this, DIEDFL_ATTACHEDONLY);
 
-	// garbage collect dead controllers
-	it = mControllers.begin();
-	while(it != mControllers.end()) {
-		ATController *ctrl = *it;
+		// garbage collect dead controllers
+		it = mControllers.begin();
+		while(it != mControllers.end()) {
+			ATController *ctrl = *it;
 
-		if (ctrl->IsMarked()) {
-			++it;
-		} else {
-			delete ctrl;
+			if (ctrl->IsMarked()) {
+				++it;
+			} else {
+				delete ctrl;
 
-			if (&*it == &mControllers.back()) {
+				if (&*it == &mControllers.back()) {
+					mControllers.pop_back();
+					break;
+				}
+
+				*it = mControllers.back();
 				mControllers.pop_back();
-				break;
 			}
-
-			*it = mControllers.back();
-			mControllers.pop_back();
 		}
 	}
 }

@@ -129,7 +129,6 @@ const wchar_t *VDDialogFrameW32::spDefaultCaption = L"";
 
 VDDialogFrameW32::VDDialogFrameW32(uint32 dlgid)
 	: mbIsModal(false)
-	, mhdlg(NULL)
 	, mhfont(nullptr)
 	, mMinWidth(0)
 	, mMinHeight(0)
@@ -161,16 +160,6 @@ bool VDDialogFrameW32::Create(VDDialogFrameW32 *parent) {
 	return Create((VDGUIHandle)parent->mhdlg);
 }
 
-void VDDialogFrameW32::Destroy() {
-	if (mhdlg)
-		DestroyWindow(mhdlg);
-}
-
-void VDDialogFrameW32::Close() {
-	if (mhdlg)
-		SendMessage(mhdlg, WM_CLOSE, 0, 0);
-}
-
 sintptr VDDialogFrameW32::ShowDialog(VDGUIHandle parent) {
 	return DoCreate((VDZHWND)parent, true);
 }
@@ -179,91 +168,23 @@ sintptr VDDialogFrameW32::ShowDialog(VDDialogFrameW32 *parent) {
 	return ShowDialog((VDGUIHandle)parent->mhdlg);
 }
 
-void VDDialogFrameW32::Show() {
-	if (mhdlg)
-		ShowWindow(mhdlg, SW_SHOWNA);
-}
-
-void VDDialogFrameW32::Hide() {
-	if (mhdlg)
-		ShowWindow(mhdlg, SW_HIDE);
-}
-
 void VDDialogFrameW32::Sync(bool write) {
 	if (mhdlg)
 		OnDataExchange(write);
 }
 
-vdsize32 VDDialogFrameW32::GetSize() const {
-	if (!mhdlg)
-		return vdsize32(0, 0);
-
-	RECT r;
-	if (!GetWindowRect(mhdlg, &r))
-		return vdsize32(0, 0);
-
-	return vdsize32(r.right - r.left, r.bottom - r.top);
-}
-
-void VDDialogFrameW32::BringToFront() {
-	if (!mhdlg)
-		return;
-
-	SetWindowPos(mhdlg, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);	
-}
-
 void VDDialogFrameW32::SetSize(const vdsize32& sz, bool repositionSafe) {
-	if (!mhdlg)
-		return;
-
-	SetWindowPos(mhdlg, NULL, 0, 0, sz.w, sz.h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+	SetSize(sz);
 
 	if (repositionSafe)
-		SendMessage(mhdlg, DM_REPOSITION, 0, 0);
-}
-
-vdrect32 VDDialogFrameW32::GetArea() const {
-	if (!mhdlg)
-		return vdrect32(0, 0, 0, 0);
-
-	RECT r;
-	if (!GetWindowRect(mhdlg, &r))
-		return vdrect32(0, 0, 0, 0);
-
-	HWND hwndParent = GetAncestor(mhdlg, GA_PARENT);
-	if (hwndParent) {
-		SetLastError(0);
-
-		if (!MapWindowPoints(NULL, hwndParent, (LPPOINT)&r, 2) && GetLastError())
-			return vdrect32(0, 0, 0, 0);
-	}
-
-	return vdrect32(r.left, r.top, r.right, r.bottom);
+		AdjustPosition();
 }
 
 void VDDialogFrameW32::SetArea(const vdrect32& r, bool repositionSafe) {
-	if (mhdlg) {
-		SetWindowPos(mhdlg, NULL, r.left, r.top, std::max<sint32>(0, r.width()), std::max<sint32>(0, r.height()), SWP_NOZORDER | SWP_NOACTIVATE);
+	SetArea(r);
 
-		if (repositionSafe)
-			SendMessage(mhdlg, DM_REPOSITION, 0, 0);
-	}
-}
-
-void VDDialogFrameW32::SetPosition(const vdpoint32& pt) {
-	if (!mhdlg)
-		return;
-
-	SetWindowPos(mhdlg, NULL, pt.x, pt.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-}
-
-vdrect32 VDDialogFrameW32::GetClientArea() const {
-	if (!mhdlg)
-		return vdrect32(0,0,0,0);
-
-	RECT r = {0};
-	GetClientRect(mhdlg, &r);
-	return vdrect32(r.left, r.top, r.right, r.bottom);
+	if (repositionSafe)
+		AdjustPosition();
 }
 
 VDZHFONT VDDialogFrameW32::GetFont() const {
@@ -290,15 +211,6 @@ void VDDialogFrameW32::SetFont(VDZHFONT hfont) {
 	OnSetFont(mhfont);
 
 	DeleteObject(hOldFont);
-}
-
-VDStringW VDDialogFrameW32::GetCaption() const {
-	return mhdlg ? VDGetWindowTextW32(mhdlg) : VDStringW();
-}
-
-void VDDialogFrameW32::SetCaption(const wchar_t *caption) {
-	if (mhdlg)
-		VDSetWindowTextW32(mhdlg, caption);
 }
 
 void VDDialogFrameW32::AdjustPosition() {
@@ -354,6 +266,11 @@ void VDDialogFrameW32::AddProxy(VDUIProxyControl *proxy, uint32 id) {
 	}
 }
 
+void VDDialogFrameW32::AddProxy(VDUIProxyControl *proxy, VDZHWND hwnd) {
+	proxy->Attach(hwnd);
+	mMsgDispatcher.AddControl(proxy);
+}
+
 void VDDialogFrameW32::SetCurrentSizeAsMinSize() {
 	RECT r;
 	if (GetWindowRect(mhdlg, &r)) {
@@ -390,6 +307,10 @@ VDZHWND VDDialogFrameW32::GetControl(uint32 id) {
 		return NULL;
 
 	return GetDlgItem(mhdlg, id);
+}
+
+VDZHWND VDDialogFrameW32::GetFocusedWindow() const {
+	return ::GetFocus();
 }
 
 void VDDialogFrameW32::SetFocusToControl(uint32 id) {
@@ -1001,6 +922,11 @@ void VDDialogFrameW32::OnPreLoaded() {
 				src += 2;
 
 			src += 2;
+
+			// Reclass RichEdit 2.0 controls to RichEdit 5.0, since we need the latter for
+			// proper high-DPI operation.
+			if (!wcscmp(className, L"RichEdit20W"))
+				className = L"RichEdit50W";
 		}
 
 		// read title
@@ -1111,6 +1037,9 @@ void VDDialogFrameW32::OnDestroy() {
 	mMsgDispatcher.RemoveAllControls(true);
 }
 
+void VDDialogFrameW32::OnEnable(bool enabled) {
+}
+
 bool VDDialogFrameW32::OnErase(VDZHDC hdc) {
 	return false;
 }
@@ -1148,6 +1077,10 @@ void VDDialogFrameW32::OnMouseWheel(int x, int y, sint32 delta) {
 void VDDialogFrameW32::OnMouseLeave() {
 }
 
+bool VDDialogFrameW32::OnSetCursor(ATUICursorImage& image) {
+	return false;
+}
+
 void VDDialogFrameW32::OnCaptureLost() {
 }
 
@@ -1162,6 +1095,9 @@ void VDDialogFrameW32::OnDropFiles(IVDUIDropFileList *dropFileList) {
 }
 
 void VDDialogFrameW32::OnHelp() {
+}
+
+void VDDialogFrameW32::OnInitMenu(VDZHMENU hmenu) {
 }
 
 void VDDialogFrameW32::OnContextMenu(uint32 id, int x, int y) {
@@ -1259,8 +1195,8 @@ void VDDialogFrameW32::ExecutePostedCalls() {
 		fn();
 	}
 }
-
 namespace {
+
 	BOOL CALLBACK SetDialogIconCallback(HMODULE hModule, LPCTSTR lpszType, LPTSTR lpszName, LONG_PTR lParam) {
 		HWND hdlg = (HWND)lParam;
 
@@ -1499,6 +1435,38 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			break;
 		}
 
+		case WM_SETCURSOR: {
+			ATUICursorImage image {};
+
+			if (OnSetCursor(image)) {
+				switch(image) {
+					case kATUICursorImage_Hidden:
+						::SetCursor(NULL);
+						break;
+
+					case kATUICursorImage_Arrow:
+						::SetCursor(::LoadCursor(NULL, IDC_ARROW));
+						break;
+
+					case kATUICursorImage_IBeam:
+						::SetCursor(::LoadCursor(NULL, IDC_IBEAM));
+						break;
+
+					case kATUICursorImage_Cross:
+						::SetCursor(::LoadCursor(NULL, IDC_CROSS));
+						break;
+
+					case kATUICursorImage_Query:
+						::SetCursor(::LoadCursor(NULL, IDC_HELP));
+						break;
+				}
+
+				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, TRUE);
+				return TRUE;
+			}
+			break;
+		}
+
 		case WM_CAPTURECHANGED:
 			OnCaptureLost();
 			break;
@@ -1540,6 +1508,10 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			if (OnClose())
 				return TRUE;
 			break;
+
+		case WM_ENABLE:
+			OnEnable(wParam != 0);
+			return TRUE;
 
 		case WM_DESTROY:
 			OnDestroy();
@@ -1608,6 +1580,10 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			OnHelp();
 			return TRUE;
 
+		case WM_INITMENU:
+			OnInitMenu((HMENU)wParam);
+			break;
+
 		case WM_CONTEXTMENU:
 			{
 				uint32 id = 0;
@@ -1639,6 +1615,8 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 					const int refX = mDialogUnits.mWidth4;
 					const int refY = mDialogUnits.mHeight8;
 					mResizer.Relayout(&refX, &refY);
+
+					OnDpiChanged();
 				}
 			}
 			return TRUE;
@@ -1650,6 +1628,10 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 				vdrect32 r2(r->left, r->top, r->right, r->bottom);
 				OnDpiChanging((uint16)LOWORD(wParam), (uint16)HIWORD(wParam), &r2);
 			}
+			return TRUE;
+
+		case ATWM_INHERIT_DPICHANGED:
+			OnDpiChanging((uint16)LOWORD(wParam), (uint16)HIWORD(wParam), nullptr);
 			return TRUE;
 
 		case WM_GETDPISCALEDSIZE: 

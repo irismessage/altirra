@@ -228,6 +228,11 @@ void ATUltimate1MBEmulator::Shutdown() {
 		mpCartridgePort = nullptr;
 	}
 
+	if (mpSystemController) {
+		mpSystemController->OnU1MBConfigPreLocked(false);
+		mpSystemController = nullptr;
+	}
+
 	mpMemory = nullptr;
 	mpHookMgr = nullptr;
 
@@ -352,6 +357,8 @@ void ATUltimate1MBEmulator::WarmReset() {
 
 	// The $D1xx layer is always enabled after reset since config is unlocked.
 	mpMemMan->EnableLayer(mpLayerPBIControl, true);
+
+	mpSystemController->OnU1MBConfigPreLocked(true);
 }
 
 void ATUltimate1MBEmulator::LoadNVRAM() {
@@ -432,6 +439,10 @@ void ATUltimate1MBEmulator::SetROMLayers(
 
 	if (mpMemMan)
 		UpdateKernelBank();
+}
+
+void ATUltimate1MBEmulator::OnU1MBConfigPreLocked(bool inPreLockState) {
+	// we trigger this ourselves, so don't respond to the notification
 }
 
 void ATUltimate1MBEmulator::SetKernelBank(uint8 bank) {
@@ -753,6 +764,8 @@ bool ATUltimate1MBEmulator::WriteByteD3xx(void *thisptr0, uint32 addr, uint8 val
 					if (validOS) {
 						thisptr->mpHookMgr->EnableOSHooks(true);
 					}
+
+					thisptr->mpSystemController->OnU1MBConfigPreLocked(false);
 				}
 			} else if (addr == 0xD381) {
 				// UAUX (write only)
@@ -814,7 +827,7 @@ sint32 ATUltimate1MBEmulator::ReadByteD5xx(void *thisptr0, uint32 addr) {
 	ATUltimate1MBEmulator *const thisptr = (ATUltimate1MBEmulator *)thisptr0;
 
 	if (addr <= 0xD5BF) {
-		if (thisptr->mbPBISelected)
+		if (thisptr->mbPBISelected || !thisptr->mbControlLocked)
 			return thisptr->mpMemory[addr];
 	}
 
@@ -825,7 +838,7 @@ bool ATUltimate1MBEmulator::WriteByteD5xx(void *thisptr0, uint32 addr, uint8 val
 	ATUltimate1MBEmulator *const thisptr = (ATUltimate1MBEmulator *)thisptr0;
 
 	if (addr < 0xD5BF) {
-		if (thisptr->mbPBISelected) {
+		if (thisptr->mbPBISelected || !thisptr->mbControlLocked) {
 			thisptr->mpMemory[addr] = value;
 			return true;
 		}

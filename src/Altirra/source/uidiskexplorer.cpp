@@ -366,7 +366,7 @@ void ATUIFileViewer::ReloadFile() {
 struct ATUIDiskExplorerFileEntry {
 public:
 	VDStringW mFileName;
-	uint32 mFileKey;
+	ATDiskFSKey mFileKey;
 	uint32 mSectors;
 	uint32 mBytes;
 	bool mbIsDirectory;
@@ -389,7 +389,7 @@ public:
 namespace {
 	class IATDropTargetNotify {
 	public:
-		virtual uint32 GetDropTargetParentKey() const = 0;
+		virtual ATDiskFSKey GetDropTargetParentKey() const = 0;
 		virtual void OnFSModified() = 0;
 	};
 
@@ -398,18 +398,23 @@ namespace {
 		DropTarget(HWND hwnd, IATDropTargetNotify *notify);
 
 		void SetFS(IATDiskFS *fs) { mpFS = fs; }
+		void SetStrictNames(bool strict) { mbStrictNames = strict; }
+		void SetAdjustNames(bool adjust) { mbAdjustNames = adjust; }
 
 		HRESULT STDMETHODCALLTYPE DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) override;
 		HRESULT STDMETHODCALLTYPE DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) override;
 		HRESULT STDMETHODCALLTYPE Drop(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) override;
 
 	protected:
-		void WriteFromStorageMedium(STGMEDIUM *medium, const char *filename, uint32 len);
+		void WriteFromStorageMedium(STGMEDIUM *medium, const char *filename, uint32 len, const FILETIME& creationTime);
+		void WriteFile(const char *filename, const void *data, uint32 len, const VDDate& creationTime);
 
 		HWND mhwnd = nullptr;
 
 		IATDiskFS *mpFS = nullptr;
 		IATDropTargetNotify *mpNotify = nullptr;
+		bool mbAdjustNames = false;
+		bool mbStrictNames = true;
 	};
 
 	DropTarget::DropTarget(HWND hwnd, IATDropTargetNotify *notify)
@@ -488,7 +493,8 @@ namespace {
 			if (descriptors) {
 				// read out the files, one at a time
 				for(uint32 i = 0; i < descriptors->cItems; ++i) {
-					uint64 len64 = descriptors->fgd[i].nFileSizeLow + ((uint64)descriptors->fgd[i].nFileSizeHigh << 32);
+					const FILEDESCRIPTORA& fd = descriptors->fgd[i];
+					uint64 len64 = fd.nFileSizeLow + ((uint64)fd.nFileSizeHigh << 32);
 
 					if (len64 > 0x4000000)
 						continue;
@@ -507,7 +513,7 @@ namespace {
 
 					if (SUCCEEDED(hr)) {
 						try {
-							WriteFromStorageMedium(&medium2, descriptors->fgd[i].cFileName, (uint32)len64);
+							WriteFromStorageMedium(&medium2, fd.cFileName, (uint32)len64, fd.ftCreationTime);
 						} catch(const MyError& e) {
 							e.post(mhwnd, "Altirra Error");
 							break;
@@ -531,7 +537,8 @@ namespace {
 				if (descriptors) {
 					// read out the files, one at a time
 					for(uint32 i = 0; i < descriptors->cItems; ++i) {
-						uint64 len64 = descriptors->fgd[i].nFileSizeLow + ((uint64)descriptors->fgd[i].nFileSizeHigh << 32);
+						const FILEDESCRIPTORW& fd = descriptors->fgd[i];
+						uint64 len64 = fd.nFileSizeLow + ((uint64)fd.nFileSizeHigh << 32);
 
 						if (len64 > 0x4000000)
 							continue;
@@ -550,7 +557,7 @@ namespace {
 
 						if (SUCCEEDED(hr)) {
 							try {
-								WriteFromStorageMedium(&medium2, VDTextWToA(descriptors->fgd[i].cFileName).c_str(), (uint32)len64);
+								WriteFromStorageMedium(&medium2, VDTextWToA(fd.cFileName).c_str(), (uint32)len64, fd.dwFlags & FD_CREATETIME ? fd.ftCreationTime : FILETIME {});
 							} catch(const MyError& e) {
 								e.post(mhwnd, "Altirra Error");
 								break;
@@ -597,7 +604,7 @@ namespace {
 								const wchar_t *fn = VDFileSplitPath(buf.data());
 								const VDStringA fn8(VDTextWToA(fn));
 
-								mpFS->WriteFile(mpNotify->GetDropTargetParentKey(), fn8.c_str(), databuf.data(), len32);
+								WriteFile(fn8.c_str(), databuf.data(), len32, f.getCreationTime());
 							}
 						} catch(const MyError& e) {
 							e.post(mhwnd, "Altirra Error");
@@ -614,7 +621,7 @@ namespace {
 		return S_OK;
 	}
 
-	void DropTarget::WriteFromStorageMedium(STGMEDIUM *medium, const char *filename, uint32 len32) {
+	void DropTarget::WriteFromStorageMedium(STGMEDIUM *medium, const char *filename, uint32 len32, const FILETIME& creationTime) {
 		vdrefptr<IStream> stream;
 		if (medium->tymed == TYMED_HGLOBAL) {
 			CreateStreamOnHGlobal(medium->hGlobal, FALSE, ~stream);
@@ -640,15 +647,132 @@ namespace {
 			else
 				hr = S_OK;
 
-			if (SUCCEEDED(hr))
-				mpFS->WriteFile(mpNotify->GetDropTargetParentKey(), filename, buf.data(), actual);
+			if (SUCCEEDED(hr)) {
+				const uint64 ticks = creationTime.dwLowDateTime + ((uint64)creationTime.dwHighDateTime << 32);
+				WriteFile(filename, buf.data(), actual, VDDate { ticks });
+			}
 		}
 
 		stream.clear();
 	}
+
+	void DropTarget::WriteFile(const char *filename, const void *data, uint32 len, const VDDate& creationTime) {
+		const bool requireFirstAlpha = mbStrictNames;
+		char fnbuf[12];
+		int pass = 0;
+		int nameLen = 0;
+
+		for(;;) {
+			try {
+				const auto fileKey = mpFS->WriteFile(mpNotify->GetDropTargetParentKey(), filename, data, len);
+
+				if (creationTime != VDDate{})
+					mpFS->SetFileTimestamp(fileKey, VDGetLocalDate(creationTime));
+			} catch(const ATDiskFSException& e) {
+				if (!mbAdjustNames || (e.GetErrorCode() != kATDiskFSError_InvalidFileName
+					&& e.GetErrorCode() != kATDiskFSError_FileExists))
+					throw;
+
+				if (++pass >= 100)
+					throw;
+
+				// For a first try, just strip out all non-conformant characters.
+				if (pass == 1) {
+					int sectionLen = 0;
+					int sectionLimit = 8;
+					bool inExt = false;
+					char *dst = fnbuf;
+
+					for(const char *s = filename; *s; ++s) {
+						char c = *s;
+
+						if (c == '.') {
+							if (inExt)
+								break;
+
+							inExt = true;
+							nameLen = sectionLen;
+							sectionLen = 0;
+							sectionLimit = 3;
+							*dst++ = '.';
+						} else if (sectionLen < sectionLimit) {
+							if (c >= 'a' && c <= 'z')
+								c &= 0xDF;
+
+							if (c >= '0' && c <= '9') {
+								if (!inExt && !sectionLen && requireFirstAlpha) {
+									*dst++ = 'X';
+									++sectionLen;
+								}
+							} else if (c < 'A' || c > 'Z') {
+								if (mbStrictNames || c != '@' && c != '_')
+									continue;
+							}
+
+							*dst++ = c;
+							++sectionLen;
+						}
+					}
+
+					if (!inExt)
+						nameLen = sectionLen;
+
+					*dst = 0;
+
+					filename = fnbuf;
+				} else {
+					// increment number on filename
+					int pos = nameLen - 1;
+					bool incSucceeded = false;
+					while(pos >= 0) {
+						char c = fnbuf[pos];
+
+						if (c >= '0' && c <= '8') {
+							++fnbuf[pos];
+							incSucceeded = true;
+							break;
+						} else if (c == '9') {
+							fnbuf[pos] = '0';
+							--pos;
+						} else
+							break;
+					}
+
+					if (incSucceeded)
+						continue;
+
+					// no more room to increment current number -- try to add
+					// another digit
+					if (nameLen >= 8) {
+						// no more room in the filename -- try to steal another char
+						if (pos < 4)
+							throw;
+
+						fnbuf[pos] = '1';
+						continue;
+					}
+
+					// shift in a new digit after the current stopping position (which
+					// may be -1 if we're at the start).
+					if (pos < 0 && requireFirstAlpha) {
+						memmove(fnbuf + 1, fnbuf, sizeof(fnbuf[0]) * (vdcountof(fnbuf) - 1));
+
+						fnbuf[0] = 'X';
+					}
+
+					memmove(fnbuf + pos + 2, fnbuf + pos + 1, sizeof(fnbuf[0]) * (vdcountof(fnbuf) - (pos + 2)));
+					fnbuf[pos + 1] = '1';
+					++nameLen;
+				}
+				continue;
+			}
+
+			break;
+		}
+	}
 }
 
-class ATUIDialogDiskExplorer : public VDResizableDialogFrameW32, public IATDropTargetNotify {
+class ATUIDialogDiskExplorer final : public VDResizableDialogFrameW32, public IATDropTargetNotify {
 public:
 	ATUIDialogDiskExplorer(IATDiskImage *image = NULL, const wchar_t *imageName = NULL, bool writeEnabled = true, bool autoFlush = true);
 	~ATUIDialogDiskExplorer();
@@ -657,6 +781,8 @@ protected:
 	bool OnLoaded();
 	void OnDestroy();
 	bool OnErase(VDZHDC hdc);
+	bool OnInit();
+	void OnInitMenu(VDZHMENU hmenu);
 	bool OnCommand(uint32 id, uint32 extcode);
 
 	void OnItemBeginDrag(VDUIProxyListView *sender, int item);
@@ -664,7 +790,7 @@ protected:
 	void OnItemLabelChanged(VDUIProxyListView *sender, VDUIProxyListView::LabelChangedEvent *event);
 	void OnItemDoubleClick(VDUIProxyListView *sender, int item);
 
-	virtual uint32 GetDropTargetParentKey() const { return mCurrentDirKey; }
+	virtual ATDiskFSKey GetDropTargetParentKey() const { return mCurrentDirKey; }
 	void OnFSModified();
 
 	void RefreshList();
@@ -689,9 +815,11 @@ protected:
 
 	uint32	mIconFile;
 	uint32	mIconFolder;
-	uint32	mCurrentDirKey;
+	ATDiskFSKey	mCurrentDirKey;
 	bool	mbWriteEnabled;
 	bool	mbAutoFlush;
+	bool	mbAdjustFilenames = true;
+	bool	mbStrictFilenames = true;
 
 	IATDiskImage *mpImage;
 	vdrefptr<IATDiskImage> mpImageAlloc;
@@ -703,7 +831,7 @@ protected:
 	vdrefptr<DropTarget> mpDropTarget;
 
 	HWND	mhwndList;
-	VDFunctionThunk *mpListViewThunk;
+	VDFunctionThunkInfo *mpListViewThunk;
 	WNDPROC mListViewWndProc;
 
 	VDDelegate mDelBeginDrag;
@@ -714,7 +842,7 @@ protected:
 };
 
 void ATUIDialogDiskExplorer::FileListEntry::GetText(int subItem, VDStringW& s) const {
-	if (subItem && !mFileKey)
+	if (subItem && mFileKey == ATDiskFSKey::None)
 		return;
 
 	switch(subItem) {
@@ -766,6 +894,10 @@ ATUIDialogDiskExplorer::~ATUIDialogDiskExplorer() {
 }
 
 bool ATUIDialogDiskExplorer::OnLoaded() {
+	VDRegistryAppKey key("Settings", false);
+	mbStrictFilenames = key.getBool("Disk Explorer: Strict filenames", mbStrictFilenames);
+	mbAdjustFilenames = key.getBool("Disk Explorer: Adjust filenames", mbAdjustFilenames);
+
 	HINSTANCE hInst = VDGetLocalModuleHandleW32();
 	HICON hIcon = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED);
 	if (hIcon)
@@ -785,7 +917,7 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 		mListViewWndProc = (WNDPROC)GetWindowLongPtr(mhwndList, GWLP_WNDPROC);
 		mpListViewThunk = VDCreateFunctionThunkFromMethod(this, &ATUIDialogDiskExplorer::ListViewSubclassProc, true);
 		if (mpListViewThunk)
-			SetWindowLongPtr(mhwndList, GWLP_WNDPROC, (LONG_PTR)mpListViewThunk);
+			SetWindowLongPtr(mhwndList, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpListViewThunk));
 	}
 
 	AddProxy(&mList, IDC_DISK_CONTENTS);
@@ -794,11 +926,13 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 	mList.InsertColumn(0, L"Filename", 0);
 	mList.InsertColumn(1, L"Sectors", 0);
 	mList.InsertColumn(2, L"Size", 0);
-	mList.InsertColumn(3, L"Date", 0);
+	mList.InsertColumn(3, L"Creation Date", 0);
 
 	mhMenuItemContext = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_DISK_EXPLORER_CONTEXT_MENU));
 
 	mpDropTarget = new DropTarget(mhdlg, this);
+	mpDropTarget->SetStrictNames(mbStrictFilenames);
+	mpDropTarget->SetAdjustNames(mbAdjustFilenames);
 	RegisterDragDrop(mList.GetHandle(), mpDropTarget);
 
 	SHFILEINFOW infoFile = {0};
@@ -825,9 +959,10 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 				throw MyError("Unable to detect the file system on the disk image.");
 
 			mpFS.from(fs);
+			mpFS->SetStrictNameChecking(mbStrictFilenames);
 			mpDropTarget->SetFS(mpFS);
 
-			mCurrentDirKey = 0;
+			mCurrentDirKey = ATDiskFSKey::None;
 
 			if (mbWriteEnabled) {
 				if (mpFS->IsReadOnly()) {
@@ -888,6 +1023,10 @@ void ATUIDialogDiskExplorer::OnDestroy() {
 		mpListViewThunk = NULL;
 	}
 
+	VDRegistryAppKey key("Settings", true);
+	key.setBool("Disk Explorer: Strict filenames", mbStrictFilenames);
+	key.setBool("Disk Explorer: Adjust filenames", mbAdjustFilenames);
+
 	VDDialogFrameW32::OnDestroy();
 }
 
@@ -896,8 +1035,14 @@ bool ATUIDialogDiskExplorer::OnErase(VDZHDC hdc) {
 	return true;
 }
 
+void ATUIDialogDiskExplorer::OnInitMenu(VDZHMENU hmenu) {
+	VDCheckMenuItemByCommandW32(hmenu, ID_ADJUST_FILENAMES, mbAdjustFilenames);
+	VDCheckRadioMenuItemByCommandW32(hmenu, ID_NAMECHECKING_STRICT, mbStrictFilenames);
+	VDCheckRadioMenuItemByCommandW32(hmenu, ID_NAMECHECKING_RELAXED, !mbStrictFilenames);
+}
+
 bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
-	if (id == IDC_BROWSE) {
+	if (id == IDC_BROWSE || id == ID_FILE_OPENIMAGE) {
 		if (mpImageName)
 			return true;
 
@@ -935,13 +1080,15 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 				if (!fs)
 					throw MyError("Unable to detect the file system on the disk image.");
 
+				fs->SetStrictNameChecking(mbStrictFilenames);
+
 				mpImageAlloc = std::move(image);
 				mpImage = mpImageAlloc;
 
 				mpFS.from(fs);
 				mpDropTarget->SetFS(mpFS);
 
-				mCurrentDirKey = 0;
+				mCurrentDirKey = ATDiskFSKey::None;
 
 				SetControlText(IDC_FILENAME, fn.c_str());
 
@@ -978,7 +1125,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 			{
 				FileListEntry *fle = static_cast<FileListEntry *>(mList.GetVirtualItem(*it));
 
-				if (fle && fle->mFileKey) {
+				if (fle && fle->mFileKey != ATDiskFSKey::None) {
 					try {
 						mpFS->DeleteFile(fle->mFileKey);
 					} catch(const MyError& e) {
@@ -997,7 +1144,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 		vdrefptr<FileListEntry> fle(new FileListEntry);
 
 		fle->mFileName = L"New folder";
-		fle->mFileKey = 0;
+		fle->mFileKey = ATDiskFSKey::None;
 		fle->mSectors = 0;
 		fle->mBytes = 0;
 		fle->mbIsDirectory = true;
@@ -1019,7 +1166,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 			if (fle) {
 				if (fle->mbIsDirectory) {
 					OnItemDoubleClick(nullptr, index);
-				} else if (fle->mFileKey) {
+				} else if (fle->mFileKey != ATDiskFSKey::None) {
 					vdfastvector<uint8> buf;
 
 					try {
@@ -1036,6 +1183,24 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 				}
 			}
 		}
+	} else if (id == ID_NAMECHECKING_STRICT) {
+		mbStrictFilenames = true;
+
+		if (mpFS)
+			mpFS->SetStrictNameChecking(mbStrictFilenames);
+
+		mpDropTarget->SetStrictNames(mbStrictFilenames);
+	} else if (id == ID_NAMECHECKING_RELAXED) {
+		mbStrictFilenames = false;
+
+		if (mpFS)
+			mpFS->SetStrictNameChecking(mbStrictFilenames);
+
+		mpDropTarget->SetStrictNames(mbStrictFilenames);
+	} else if (id == ID_ADJUST_FILENAMES) {
+		mbAdjustFilenames = !mbAdjustFilenames;
+		mpDropTarget->SetAdjustNames(mbAdjustFilenames);
+		return true;
 	}
 
 	return false;
@@ -1562,6 +1727,15 @@ namespace {
 			fd->nFileSizeHigh = 0;
 			fd->dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
 
+			if (fle->mbDateValid) {
+				const VDDate creationDate = VDDateFromLocalDate(fle->mDate);
+
+				fd->ftCreationTime.dwLowDateTime = (uint32)creationDate.mTicks;
+				fd->ftCreationTime.dwHighDateTime = (uint32)(creationDate.mTicks >> 32);
+				fd->ftLastWriteTime = fd->ftCreationTime;
+				fd->dwFlags |= FD_CREATETIME | FD_WRITESTIME;
+			}
+
 			vdstrlcpy(fd->cFileName, VDTextWToA(fle->mFileName).c_str(), MAX_PATH);
 		}
 	}
@@ -1581,6 +1755,15 @@ namespace {
 			fd->nFileSizeHigh = 0;
 			fd->dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
 
+			if (fle->mbDateValid) {
+				const VDDate creationDate = VDDateFromLocalDate(fle->mDate);
+
+				fd->ftCreationTime.dwLowDateTime = (uint32)creationDate.mTicks;
+				fd->ftCreationTime.dwHighDateTime = (uint32)(creationDate.mTicks >> 32);
+				fd->ftLastWriteTime = fd->ftCreationTime;
+				fd->dwFlags |= FD_CREATETIME | FD_WRITESTIME;
+			}
+
 			vdwcslcpy(fd->cFileName, fle->mFileName.c_str(), MAX_PATH);
 		}
 	}
@@ -1598,7 +1781,7 @@ void ATUIDialogDiskExplorer::OnItemBeginDrag(VDUIProxyListView *sender, int item
 	{
 		FileListEntry *fle = static_cast<FileListEntry *>(mList.GetVirtualItem(*it));
 
-		if (fle->mFileKey)
+		if (fle->mFileKey != ATDiskFSKey::None)
 			dataObject->AddFile(fle);
 	}
 
@@ -1660,7 +1843,7 @@ void ATUIDialogDiskExplorer::OnItemLabelChanged(VDUIProxyListView *sender, VDUIP
 		return;
 	}
 
-	if (!fle->mFileKey || !event->mpNewLabel)
+	if (fle->mFileKey == ATDiskFSKey::None || !event->mpNewLabel)
 		return;
 
 	try {
@@ -1684,7 +1867,7 @@ void ATUIDialogDiskExplorer::OnItemDoubleClick(VDUIProxyListView *sender, int it
 	if (!fle->mbIsDirectory)
 		return;
 
-	if (fle->mFileKey)
+	if (fle->mFileKey != ATDiskFSKey::None)
 		mCurrentDirKey = fle->mFileKey;
 	else
 		mCurrentDirKey = mpFS->GetParentDirectory(mCurrentDirKey);
@@ -1707,11 +1890,11 @@ void ATUIDialogDiskExplorer::RefreshList() {
 	if (!mpFS)
 		return;
 
-	if (mCurrentDirKey) {
+	if (mCurrentDirKey != ATDiskFSKey::None) {
 		vdrefptr<FileListEntry> fle(new FileListEntry);
 
 		fle->mFileName = L"..";
-		fle->mFileKey = 0;
+		fle->mFileKey = ATDiskFSKey::None;
 		fle->mbIsDirectory = true;
 		fle->mbIsCreate = false;
 
@@ -1723,12 +1906,12 @@ void ATUIDialogDiskExplorer::RefreshList() {
 	// Read directory
 	ATDiskFSEntryInfo einfo;
 
-	uintptr searchKey = mpFS->FindFirst(mCurrentDirKey, einfo);
+	ATDiskFSFindHandle searchKey = mpFS->FindFirst(mCurrentDirKey, einfo);
 
 	vdfastvector<FileListEntry *> fles;
 
 	try {
-		if (searchKey) {
+		if (searchKey != ATDiskFSFindHandle::Invalid) {
 			do {
 				vdrefptr<FileListEntry> fle(new FileListEntry);
 

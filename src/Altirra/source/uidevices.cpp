@@ -24,6 +24,7 @@
 #include <vd2/system/math.h>
 #include <vd2/system/registry.h>
 #include <vd2/Dita/services.h>
+#include <vd2/Kasumi/pixmaputils.h>
 #include <at/atcore/device.h>
 #include <at/atcore/deviceparent.h>
 #include <at/atcore/devicemanager.h>
@@ -32,21 +33,25 @@
 #include "oshelper.h"
 #include "resource.h"
 #include "simulator.h"
+#include "uidevices.h"
+#include "uiconfirm.h"
 
 extern ATSimulator g_sim;
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogDeviceNew : public VDResizableDialogFrameW32 {
+class ATUIDialogDeviceNew final : public VDResizableDialogFrameW32 {
 public:
 	ATUIDialogDeviceNew(const vdfunction<bool(const char *)>& filter);
 
 	const char *GetDeviceTag() const { return mpDeviceTag; }
 
 protected:
-	bool OnLoaded();
-	void OnDestroy();
-	void OnDataExchange(bool write);
+	bool OnLoaded() override;
+	void OnDestroy() override;
+	bool OnOK() override;
+	void OnDataExchange(bool write) override;
+
 	void OnItemSelectionChanged(VDUIProxyTreeViewControl *sender, int);
 	void UpdateHelpText();
 	void AppendRTF(VDStringA& rtf, const wchar_t *text);
@@ -175,6 +180,9 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 			{ "xelcf", L"XEL-CF CompactFlash Adapter",
 				L"CompactFlash adapter attached to internal port, using the $D1xx address range. Includes reset strobe."
 			},
+			{ "xelcf3", L"XEL-CF3 CompactFlash Adapter",
+				L"CompactFlash adapter attached to internal port, using the $D1xx address range. Includes reset strobe and swap button."
+			},
 		}
 	},
 	{
@@ -210,6 +218,10 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		L"Serial devices",
 		"serial",
 		{
+			{ "loopback", L"Loopback",
+				L"Simple plug that connects the transmit and receive lines together, looping back all transmitted data "
+				L"to the receiver. Commonly used for testing."
+			},
 			{ "modem", L"Modem",
 				L"Hayes compatible modem with connection simulated over TCP/IP."
 			}
@@ -278,6 +290,11 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 
 			{ "diskdrive1050turboii", L"1050 Turbo II disk drive (full emulation)",
 				L"Full 1050 Turbo disk drive emulation, including 6507 CPU. This model is also known as Version 3.5 in some places."
+			},
+
+			{ "diskdriveisplate", L"I.S. Plate disk drive (full emulation)",
+				L"Full emulation of the Innovated Software I.S. Plate modification for the 1050 disk drive (a.k.a. ISP or ISP Plate). The ISP "
+				L"supports single, medium, and double density disks and track buffering."
 			},
 
 			{ "diskdriveindusgt", L"Indus GT disk drive (full emulation)",
@@ -386,7 +403,7 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 					L"for software that bypasses P:."
 			},
 			{ "browser", L"Browser (B:)",
-				L"Adds an B: device parses HTTP/HTTPS URLs written to it a line at a time and launches them in a web browser."
+				L"Adds a B: device that parses HTTP/HTTPS URLs written to it a line at a time and launches them in a web browser."
 			},
 		}
 	}
@@ -450,6 +467,18 @@ bool ATUIDialogDeviceNew::OnLoaded() {
 
 void ATUIDialogDeviceNew::OnDestroy() {
 	ATUISaveWindowPlacement(mhdlg, "Add new device");
+}
+
+bool ATUIDialogDeviceNew::OnOK() {
+	if (VDResizableDialogFrameW32::OnOK())
+		return true;
+
+	if (!strncmp(mpDeviceTag, "diskdrive", 9)) {
+		if (!ATUIConfirmAddFullDrive())
+			return true;
+	}
+
+	return false;
 }
 
 void ATUIDialogDeviceNew::OnDataExchange(bool write) {
@@ -523,127 +552,73 @@ void ATUIDialogDeviceNew::AppendRTF(VDStringA& rtf, const wchar_t *text) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogDevices : public VDResizableDialogFrameW32 {
-public:
-	ATUIDialogDevices(ATDeviceManager& devMgr);
+struct ATUIControllerDevices::DeviceNode final : public vdrefcounted<IVDUITreeViewVirtualItem> {
+	DeviceNode(IATDevice *dev, const wchar_t *prefix) : mpDev(dev) {
+		ATDeviceInfo info;
+		dev->GetDeviceInfo(info);
 
-	bool IsRebootPending() const { return mbRebootPending; }
+		mName = prefix;
+		mName.append(info.mpDef->mpName);
+		mbHasSettings = info.mpDef->mpConfigTag != nullptr;
+	}
 
-protected:
-	bool OnLoaded();
-	void OnDestroy();
-	void OnDataExchange(bool write);
-	bool OnCommand(uint32 id, uint32 extcode);
-	void Add();
-	void Remove();
-	void RemoveAll();
-	void Settings();
-	void CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef parentNode, IATDevice *dev, const wchar_t *prefix);
-	void SaveSettings(const char *configTag, const ATPropertySet& props);
+	DeviceNode(IATDeviceParent *parent, uint32 busIndex) {
+		mpDevParent = parent;
+		mBusIndex = busIndex;
 
-	void OnItemSelectionChanged(VDUIProxyTreeViewControl *sender, int idx);
-	void OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bool *handled);
-	void OnItemGetDisplayAttributes(VDUIProxyTreeViewControl *sender, VDUIProxyTreeViewControl::GetDispAttrEvent *event);
+		mpDevBus = parent->GetDeviceBus(busIndex);
 
-	ATDeviceManager& mDevMgr;
-	VDUIProxyTreeViewControl mTreeView;
-	bool mbRebootPending = false;
+		mName = mpDevBus->GetBusName();
+		mbHasSettings = false;
+	}
 
-	struct DeviceNode : public vdrefcounted<IVDUITreeViewVirtualItem> {
-		DeviceNode(IATDevice *dev, const wchar_t *prefix) : mpDev(dev) {
-			ATDeviceInfo info;
-			dev->GetDeviceInfo(info);
+	DeviceNode(DeviceNode *parent, const wchar_t *label) {
+		mName = label;
+		mpParent = parent;
+	}
 
-			mName = prefix;
-			mName.append(info.mpDef->mpName);
-			mbHasSettings = info.mpDef->mpConfigTag != nullptr;
-		}
+	void *AsInterface(uint32 id) {
+		return nullptr;
+	}
 
-		DeviceNode(IATDeviceParent *parent, uint32 busIndex) {
-			mpDevParent = parent;
-			mBusIndex = busIndex;
+	void GetText(VDStringW& s) const override {
+		s = mName;
 
-			mpDevBus = parent->GetDeviceBus(busIndex);
+		if (mpDev) {
+			VDStringW buf;
+			mpDev->GetSettingsBlurb(buf);
 
-			mName = mpDevBus->GetBusName();
-			mbHasSettings = false;
-		}
-
-		DeviceNode(DeviceNode *parent, const wchar_t *label) {
-			mName = label;
-			mpParent = parent;
-		}
-
-		void *AsInterface(uint32 id) {
-			return nullptr;
-		}
-
-		virtual void GetText(VDStringW& s) const {
-			s = mName;
-
-			if (mpDev) {
-				VDStringW buf;
-				mpDev->GetSettingsBlurb(buf);
-
-				if (!buf.empty()) {
-					s += L" - ";
-					s += buf;
-				}
+			if (!buf.empty()) {
+				s += L" - ";
+				s += buf;
 			}
 		}
+	}
 
-		IATDevice *mpDev = nullptr;
-		IATDeviceParent *mpDevParent = nullptr;
-		uint32 mBusIndex = 0;
-		IATDeviceBus *mpDevBus = nullptr;
-		VDStringW mName;
-		bool mbHasSettings = false;
-		VDUIProxyTreeViewControl::NodeRef mNode = {};
-		VDUIProxyTreeViewControl::NodeRef mChildNode = {};
-		DeviceNode *mpParent = nullptr;
-	};
-
-	VDDelegate mDelSelectionChanged;
-	VDDelegate mDelDoubleClicked;
-	VDDelegate mDelGetDisplayAttributes;
+	IATDevice *mpDev = nullptr;
+	IATDeviceParent *mpDevParent = nullptr;
+	uint32 mBusIndex = 0;
+	IATDeviceBus *mpDevBus = nullptr;
+	VDStringW mName;
+	bool mbHasSettings = false;
+	VDUIProxyTreeViewControl::NodeRef mNode = {};
+	VDUIProxyTreeViewControl::NodeRef mChildNode = {};
+	DeviceNode *mpParent = nullptr;
 };
 
-ATUIDialogDevices::ATUIDialogDevices(ATDeviceManager& devMgr)
-	: VDResizableDialogFrameW32(IDD_DEVICES)
+ATUIControllerDevices::ATUIControllerDevices(VDDialogFrameW32& parent, ATDeviceManager& devMgr, VDUIProxyTreeViewControl& treeView, VDUIProxyButtonControl& settingsView, VDUIProxyButtonControl& removeView)
+	: mParent(parent)
 	, mDevMgr(devMgr)
+	, mTreeView(treeView)
+	, mSettingsView(settingsView)
+	, mRemoveView(removeView)
 {
-	mTreeView.OnItemSelectionChanged() += mDelSelectionChanged.Bind(this, &ATUIDialogDevices::OnItemSelectionChanged);
-	mTreeView.OnItemDoubleClicked() += mDelDoubleClicked.Bind(this, &ATUIDialogDevices::OnItemDoubleClicked);
-	mTreeView.OnItemGetDisplayAttributes() += mDelGetDisplayAttributes.Bind(this, &ATUIDialogDevices::OnItemGetDisplayAttributes);
+	mTreeView.OnItemSelectionChanged() += mDelSelectionChanged.Bind(this, &ATUIControllerDevices::OnItemSelectionChanged);
+	mTreeView.OnItemDoubleClicked() += mDelDoubleClicked.Bind(this, &ATUIControllerDevices::OnItemDoubleClicked);
+	mTreeView.OnItemGetDisplayAttributes() += mDelGetDisplayAttributes.Bind(this, &ATUIControllerDevices::OnItemGetDisplayAttributes);
 }
 
-bool ATUIDialogDevices::OnLoaded() {
-	AddProxy(&mTreeView, IDC_TREE);
-
-	mResizer.Add(IDC_TREE, mResizer.kMC);
-	mResizer.Add(IDC_ADD, mResizer.kBL);
-	mResizer.Add(IDC_REMOVE, mResizer.kBL);
-	mResizer.Add(IDC_REMOVEALL, mResizer.kBL);
-	mResizer.Add(IDC_SETTINGS, mResizer.kBL);
-	mResizer.Add(IDOK, mResizer.kBR);
-
-	ATUIRestoreWindowPlacement(mhdlg, "Devices", -1, true);
-
-	OnDataExchange(false);
-
-	SetFocusToControl(IDC_LIST);
-	return true;
-}
-
-void ATUIDialogDevices::OnDestroy() {
-	ATUISaveWindowPlacement(mhdlg, "Devices");
-
-	mTreeView.Clear();
-
-	VDDialogFrameW32::OnDestroy();
-}
-
-void ATUIDialogDevices::OnDataExchange(bool write) {
+void ATUIControllerDevices::OnDataExchange(bool write) {
 	if (write) {
 	} else {
 		mTreeView.SetRedraw(false);
@@ -660,29 +635,11 @@ void ATUIDialogDevices::OnDataExchange(bool write) {
 	}
 }
 
-bool ATUIDialogDevices::OnCommand(uint32 id, uint32 extcode) {
-	switch(id) {
-		case IDC_ADD:
-			Add();
-			return true;
-
-		case IDC_REMOVE:
-			Remove();
-			return true;
-
-		case IDC_REMOVEALL:
-			RemoveAll();
-			return true;
-
-		case IDC_SETTINGS:
-			Settings();
-			return true;
-	}
-
-	return false;
+void ATUIControllerDevices::OnDpiChanged() {
+	UpdateIcons();
 }
 
-void ATUIDialogDevices::Add() {
+void ATUIControllerDevices::Add() {
 	IATDeviceParent *devParent = nullptr;
 	IATDeviceBus *devBus = nullptr;
 	uint32 busIndex = 0;
@@ -751,7 +708,7 @@ void ATUIDialogDevices::Add() {
 	}
 
 	ATUIDialogDeviceNew dlg(filter);
-	if (dlg.ShowDialog(this)) {
+	if (dlg.ShowDialog(&mParent)) {
 		const ATDeviceDefinition *def = mDevMgr.GetDeviceDefinition(dlg.GetDeviceTag());
 
 		if (!def) {
@@ -771,14 +728,12 @@ void ATUIDialogDevices::Add() {
 
 		ATDeviceConfigureFn cfn = mDevMgr.GetDeviceConfigureFn(dlg.GetDeviceTag());
 
-		if (!cfn || cfn((VDGUIHandle)mhdlg, props)) {
+		if (!cfn || cfn((VDGUIHandle)mParent.GetWindowHandle(), props)) {
 			const bool needsReboot = (def->mFlags & kATDeviceDefFlag_RebootOnPlug) != 0;
 
-			if (needsReboot && !mbRebootPending) {
-				if (!Confirm2("AddDevicesAndReboot", L"The emulated computer will be rebooted to add this device. Are you sure?", L"Adding device and rebooting"))
+			if (needsReboot) {
+				if (!ATUIConfirmReset((VDGUIHandle)mParent.GetWindowHandle(), "AddDevicesAndReboot", L"The emulated computer will be rebooted to add this device. Are you sure?", L"Adding device and rebooting"))
 					return;
-
-				mbRebootPending = true;
 			}
 
 			try {
@@ -806,16 +761,19 @@ void ATUIDialogDevices::Add() {
 					throw;
 				}
 			} catch(const MyError& err) {
-				err.post(mhdlg, "Error");
+				err.post(mParent.GetWindowHandle(), "Error");
 				return;
 			}
+
+			if (needsReboot)
+				ATUIConfirmResetComplete();
 
 			OnDataExchange(false);
 		}
 	}
 }
 
-void ATUIDialogDevices::Remove() {
+void ATUIControllerDevices::Remove() {
 	auto *p = static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem());
 
 	if (!p || !p->mpDev)
@@ -836,11 +794,9 @@ void ATUIDialogDevices::Remove() {
 		needsReboot = true;
 
 	if (childDevices.empty()) {
-		if (needsReboot && !mbRebootPending) {
-			if (!Confirm2("RemoveDevicesAndReboot", L"The emulated computer will be rebooted to remove this device. Are you sure?", L"Removing devices and rebooting"))
+		if (needsReboot) {
+			if (!ATUIConfirmReset((VDGUIHandle)mParent.GetWindowHandle(), "RemoveDevicesAndReboot", L"The emulated computer will be rebooted to remove this device. Are you sure?", L"Removing devices and rebooting"))
 				return;
-
-			mbRebootPending = true;
 		}
 	} else {
 		for(IATDevice *dev : childDevices) {
@@ -870,12 +826,10 @@ void ATUIDialogDevices::Remove() {
 		msg += L"\nProceed?";
 
 		if (needsReboot) {
-			if (!Confirm2("RemoveDevicesAndReboot", msg.c_str(), L"Removing devices and rebooting"))
+			if (!ATUIConfirmReset((VDGUIHandle)mParent.GetWindowHandle(), "RemoveDevicesAndReboot", msg.c_str(), L"Removing devices and rebooting"))
 				return;
-
-			mbRebootPending = true;
 		} else {
-			if (!Confirm2("RemoveDevices", msg.c_str(), L"Removing devices"))
+			if (!mParent.Confirm2("RemoveDevices", msg.c_str(), L"Removing devices"))
 				return;
 		}
 	}
@@ -895,10 +849,13 @@ void ATUIDialogDevices::Remove() {
 		mDevMgr.RemoveDevice(child);
 	}
 
+	if (needsReboot)
+		ATUIConfirmResetComplete();
+
 	OnDataExchange(false);
 }
 
-void ATUIDialogDevices::RemoveAll() {
+void ATUIControllerDevices::RemoveAll() {
 	bool needsReboot = false;
 
 	for(IATDevice *dev : mDevMgr.GetDevices(false, true)) {
@@ -912,21 +869,22 @@ void ATUIDialogDevices::RemoveAll() {
 	}
 
 	if (needsReboot) {
-		if (!Confirm2("RemoveAllDevicesAndReboot", L"This will remove all devices and reboot the emulated computer. Are you sure?", L"Removing devices and rebooting"))
+		if (!ATUIConfirmReset((VDGUIHandle)mParent.GetWindowHandle(), "RemoveAllDevicesAndReboot", L"This will remove all devices and reboot the emulated computer. Are you sure?", L"Removing devices and rebooting"))
 			return;
-
-		mbRebootPending = true;
 	} else {
-		if (!Confirm2("RemoveAllDevices", L"This will remove all devices. Are you sure?", L"Removing devices"))
+		if (!mParent.Confirm2("RemoveAllDevices", L"This will remove all devices. Are you sure?", L"Removing devices"))
 			return;
 	}
 
 	mDevMgr.RemoveAllDevices(false);
 
+	if (needsReboot)
+		ATUIConfirmResetComplete();
+
 	OnDataExchange(false);
 }
 
-void ATUIDialogDevices::Settings() {
+void ATUIControllerDevices::Settings() {
 	auto *p = static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem());
 
 	if (!p || !p->mpDev)
@@ -951,7 +909,7 @@ void ATUIDialogDevices::Settings() {
 	ATPropertySet pset;
 	dev->GetSettings(pset);
 	
-	if (fn((VDGUIHandle)mhdlg, pset)) {
+	if (fn((VDGUIHandle)mParent.GetWindowHandle(), pset)) {
 		try {
 			if (dev->SetSettings(pset)) {
 				mDevMgr.IncrementChangeCounter();
@@ -1002,7 +960,7 @@ void ATUIDialogDevices::Settings() {
 
 			SaveSettings(configTag.c_str(), pset);
 		} catch(const MyError& err) {
-			err.post(mhdlg, "Error");
+			err.post(mParent.GetWindowHandle(), "Error");
 
 			// We may have lost the previous device, so we need to reinit the tree.
 			OnDataExchange(false);
@@ -1011,11 +969,18 @@ void ATUIDialogDevices::Settings() {
 	}
 }
 
-void ATUIDialogDevices::CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef parentNode, IATDevice *dev, const wchar_t *prefix) {
+void ATUIControllerDevices::CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef parentNode, IATDevice *dev, const wchar_t *prefix) {
 	auto nodeObject = vdmakerefptr(new DeviceNode(dev, prefix));
 	auto devnode = mTreeView.AddVirtualItem(parentNode, mTreeView.kNodeLast, nodeObject);
 
 	nodeObject->mNode = devnode;
+
+	if (IATDeviceFirmware *fw = vdpoly_cast<IATDeviceFirmware *>(dev)) {
+		if (!fw->IsUsableFirmwareLoaded()) {
+			auto node = mTreeView.AddItem(devnode, mTreeView.kNodeLast, L"Missing firmware for device");
+			mTreeView.SetNodeImage(node, 1);
+		}
+	}
 
 	IATDeviceParent *devParent = vdpoly_cast<IATDeviceParent *>(dev);
 	if (devParent) {
@@ -1056,7 +1021,7 @@ void ATUIDialogDevices::CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef paren
 	mTreeView.ExpandNode(devnode, true);
 }
 
-void ATUIDialogDevices::SaveSettings(const char *configTag, const ATPropertySet& props) {
+void ATUIControllerDevices::SaveSettings(const char *configTag, const ATPropertySet& props) {
 	VDRegistryAppKey key("Device config history", true);
 	if (props.IsEmpty()) {
 		key.removeValue(configTag);
@@ -1067,34 +1032,31 @@ void ATUIDialogDevices::SaveSettings(const char *configTag, const ATPropertySet&
 	}
 }
 
-void ATUIDialogDevices::OnItemSelectionChanged(VDUIProxyTreeViewControl *sender, int idx) {
+void ATUIControllerDevices::OnItemSelectionChanged(VDUIProxyTreeViewControl *sender, int idx) {
 	const auto *node = static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem());
 	bool enabled = node && node->mbHasSettings;
 
-	EnableControl(IDC_SETTINGS, enabled);
-	EnableControl(IDC_REMOVE, node != nullptr);
+	mSettingsView.SetEnabled(enabled);
+	mRemoveView.SetEnabled(node != nullptr && node->mpDev);
 }
 
-void ATUIDialogDevices::OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bool *handled) {
+void ATUIControllerDevices::OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bool *handled) {
 	Settings();
 
 	*handled = true;
 }
 
-void ATUIDialogDevices::OnItemGetDisplayAttributes(VDUIProxyTreeViewControl *sender, VDUIProxyTreeViewControl::GetDispAttrEvent *event) {
+void ATUIControllerDevices::OnItemGetDisplayAttributes(VDUIProxyTreeViewControl *sender, VDUIProxyTreeViewControl::GetDispAttrEvent *event) {
 	const auto *node = static_cast<DeviceNode *>(event->mpItem);
 
 	if (node && node->mpParent)
 		event->mbIsMuted = true;
 }
 
-///////////////////////////////////////////////////////////////////////////
+void ATUIControllerDevices::UpdateIcons() {
+	mTreeView.InitImageList(1, 0, 0);
 
-void ATUIShowDialogDevices(VDGUIHandle hParent, ATDeviceManager& devMgr) {
-	ATUIDialogDevices dlg(devMgr);
-
-	dlg.ShowDialog(hParent);
-
-	if (dlg.IsRebootPending())
-		g_sim.ColdReset();
+	VDPixmapBuffer pxbuf;
+	if (ATLoadImageResource(IDB_WARNING, pxbuf))
+		mTreeView.AddImage(pxbuf);
 }

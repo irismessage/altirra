@@ -32,7 +32,7 @@
 #include "cpu.h"
 #include "simulator.h"
 #include "debuggerlog.h"
-#include "audiosyncmixer.h"
+#include "audiosampleplayer.h"
 #include "cio.h"
 #include "trace.h"
 #include "uirender.h"
@@ -174,19 +174,6 @@ namespace {
 	// Delay from end of Complete byte to end of first data byte, at high speed.
 	static const int kCyclesToFirstDataHighSpeed = 945;
 
-	static const int kTrackInterleave18[18]={
-//		17, 8, 16, 7, 15, 6, 14, 5, 13, 4, 12, 3, 11, 2, 10, 1, 9, 0
-		0, 9, 1, 10, 2, 11, 3, 12, 4, 13, 5, 14, 6, 15, 7, 16, 8, 17
-	};
-
-	static const int kTrackInterleaveDD[18]={
-		15, 12, 9, 6, 3, 0, 16, 13, 10, 7, 4, 1, 17, 14, 11, 8, 5, 2
-	};
-
-	static const int kTrackInterleave26[26]={
-		0, 13, 1, 14, 2, 15, 3, 16, 4, 17, 5, 18, 6, 19, 7, 20, 8, 21, 9, 22, 10, 23, 11, 24, 12, 25
-	};
-
 	enum {
 		kATDiskEventMotorOff = 1
 	};
@@ -212,7 +199,7 @@ ATDiskEmulator::~ATDiskEmulator() {
 	Shutdown();
 }
 
-void ATDiskEmulator::Init(int unit, ATDiskInterface *dif, ATScheduler *sched, ATScheduler *slowsched, ATAudioSyncMixer *mixer) {
+void ATDiskEmulator::Init(int unit, ATDiskInterface *dif, ATScheduler *sched, ATScheduler *slowsched, ATAudioSamplePlayer *mixer) {
 	mpDiskInterface = dif;
 	dif->AddClient(this);
 
@@ -275,9 +262,9 @@ void ATDiskEmulator::Reset() {
 		mpSlowScheduler->UnsetEvent(mpMotorOffEvent);
 
 	if (mpAudioSyncMixer) {
-		if (mRotationSoundId) {
+		if (mRotationSoundId != ATSoundId::Invalid) {
 			mpAudioSyncMixer->StopSound(mRotationSoundId);
-			mRotationSoundId = 0;
+			mRotationSoundId = ATSoundId::Invalid;
 		}
 	}
 
@@ -630,9 +617,9 @@ void ATDiskEmulator::OnAudioModeChanged() {
 	mbDriveSoundsEnabled = mpDiskInterface->AreDriveSoundsEnabled();
 
 	if (!mbDriveSoundsEnabled && mpAudioSyncMixer) {
-		if (mRotationSoundId) {
+		if (mRotationSoundId != ATSoundId::Invalid) {
 			mpAudioSyncMixer->StopSound(mRotationSoundId);
-			mRotationSoundId = 0;
+			mRotationSoundId = ATSoundId::Invalid;
 		}
 	}
 }
@@ -2679,9 +2666,9 @@ void ATDiskEmulator::TurnOffMotor() {
 	mpDiskInterface->SetShowMotorActive(false);
 
 	if (mpAudioSyncMixer) {
-		if (mRotationSoundId) {
+		if (mRotationSoundId != ATSoundId::Invalid) {
 			mpAudioSyncMixer->StopSound(mRotationSoundId);
-			mRotationSoundId = 0;
+			mRotationSoundId = ATSoundId::Invalid;
 		}
 	}
 
@@ -2698,7 +2685,7 @@ bool ATDiskEmulator::TurnOnMotor(uint32 delay) {
 	if (spinUpDelay) {
 		mpDiskInterface->SetShowMotorActive(true);
 
-		if (!mRotationSoundId && mbDriveSoundsEnabled)
+		if (mRotationSoundId == ATSoundId::Invalid && mbDriveSoundsEnabled)
 			mRotationSoundId = mpAudioSyncMixer->AddLoopingSound(kATAudioMix_Drive, delay, kATAudioSampleId_DiskRotation, 1.0f);
 	}
 

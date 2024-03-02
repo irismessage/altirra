@@ -34,6 +34,8 @@ enum ATUIGenericResult {
 	kATUIGenericResult_OK,
 	kATUIGenericResult_Allow,
 	kATUIGenericResult_Deny,
+	kATUIGenericResult_Yes,
+	kATUIGenericResult_No,
 };
 
 enum ATUIGenericResultMask : uint32 {
@@ -41,8 +43,11 @@ enum ATUIGenericResultMask : uint32 {
 	kATUIGenericResultMask_OK = UINT32_C(1) << kATUIGenericResult_OK,
 	kATUIGenericResultMask_Allow = UINT32_C(1) << kATUIGenericResult_Allow,
 	kATUIGenericResultMask_Deny = UINT32_C(1) << kATUIGenericResult_Deny,
+	kATUIGenericResultMask_Yes = UINT32_C(1) << kATUIGenericResult_Yes,
+	kATUIGenericResultMask_No = UINT32_C(1) << kATUIGenericResult_No,
 
 	kATUIGenericResultMask_OKCancel = kATUIGenericResultMask_OK | kATUIGenericResultMask_Cancel,
+	kATUIGenericResultMask_YesNoCancel = kATUIGenericResultMask_Yes | kATUIGenericResultMask_No | kATUIGenericResultMask_Cancel,
 	kATUIGenericResultMask_AllowDeny = kATUIGenericResultMask_Allow | kATUIGenericResultMask_Deny
 };
 
@@ -56,12 +61,14 @@ public:
 	uint32 mValidIgnoreMask = 0;
 	uint32 mResultMask = 0;
 	vdrect32 mCenterTarget { 0, 0, 0, 0 };
+	float mAspectLimit = 0;
 	ATUIGenericIconType mIconType {};
 };
 
 void ATUISetDefaultGenericDialogCaption(const wchar_t *s);
 void ATUIGenericDialogUndoAllIgnores();
 ATUIGenericResult ATUIShowGenericDialog(const ATUIGenericDialogOptions& opts);
+ATUIGenericResult ATUIShowGenericDialogAutoCenter(const ATUIGenericDialogOptions& opts);
 bool ATUIConfirm(VDGUIHandle hParent, const char *ignoreTag, const wchar_t *message, const wchar_t *title = nullptr);
 
 #endif

@@ -88,10 +88,14 @@ public:
 	vdautoptr(const vdautoptr&) = delete;
 	vdautoptr& operator=(vdautoptr&) = delete;
 
-	explicit vdautoptr(T *p = nullptr) : ptr(p) {}
+	vdnothrow explicit vdautoptr(T *p = nullptr) noexcept : ptr(p) {}
 
-	vdautoptr(vdautoptr&& src) : ptr(src.ptr) {
+	vdnothrow vdautoptr(vdautoptr&& src) noexcept : ptr(src.ptr) {
 		src.ptr = nullptr;
+	}
+
+	template<class U, typename = std::enable_if<std::is_convertible_v<U, T>>>
+	vdnothrow vdautoptr(vdautoptr<U>&& src) noexcept : ptr(src.release()) {
 	}
 
 	~vdautoptr() {
@@ -100,7 +104,7 @@ public:
 		delete ptr;
 	}
 
-	vdautoptr& operator=(vdautoptr&& src) {
+	vdnothrow vdautoptr& operator=(vdautoptr&& src) noexcept {
 		delete ptr;
 		ptr = nullptr;
 
@@ -145,6 +149,11 @@ public:
 
 template<class T>
 vdautoptr<T> vdmakeautoptr(T *p) { return vdautoptr<T>(p); }
+
+template<class T, class... Args>
+vdautoptr<T> vdmakeunique(Args&&... args) {
+	return vdautoptr<T>(new T(std::forward<Args>(args)...));
+}
 
 template<class T> class vdautoarrayptr {
 protected:

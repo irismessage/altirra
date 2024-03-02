@@ -40,6 +40,7 @@ enum ATFirmwareId {
 	kATFirmwareId_NoGame,
 	kATFirmwareId_RapidusFlash,
 	kATFirmwareId_RapidusPBI16,
+	kATFirmwareId_Kernel_816,
 	kATFirmwareId_PredefCount1,
 	kATFirmwareId_PredefCount = kATFirmwareId_PredefCount1 - 1,
 	kATFirmwareId_Custom = 0x10000
@@ -88,6 +89,7 @@ enum ATFirmwareType {
 	kATFirmwareType_Percom,
 	kATFirmwareType_RapidusFlash,
 	kATFirmwareType_RapidusCorePBI,
+	kATFirmwareType_ISPlate,
 	kATFirmwareTypeCount
 };
 
@@ -126,7 +128,7 @@ void ATSetFirmwarePathPortabilityMode(bool portable);
 const char *ATGetFirmwareTypeName(ATFirmwareType type);
 ATFirmwareType ATGetFirmwareTypeFromName(const char *type);
 uint64 ATGetFirmwareIdFromPath(const wchar_t *path);
-bool ATLoadInternalFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed = nullptr, uint32 *actualLen = nullptr, vdfastvector<uint8> *dstbuf = nullptr);
+bool ATLoadInternalFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed = nullptr, uint32 *actualLen = nullptr, vdfastvector<uint8> *dstbuf = nullptr, bool *isUsable = nullptr);
 
 class ATFirmwareManager {
 	ATFirmwareManager(const ATFirmwareManager&) = delete;
@@ -149,7 +151,7 @@ public:
 	uint64 GetSpecificFirmware(ATSpecificFirmwareType types) const;
 	void SetSpecificFirmware(ATSpecificFirmwareType types, uint64 id);
 
-	bool LoadFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed = nullptr, uint32 *actualLen = nullptr, vdfastvector<uint8> *dstbuf = nullptr, const uint8 *fill = nullptr);
+	bool LoadFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed = nullptr, uint32 *actualLen = nullptr, vdfastvector<uint8> *dstbuf = nullptr, const uint8 *fill = nullptr, bool *isUsable = nullptr);
 
 	void AddFirmware(const ATFirmwareInfo& info);
 	void RemoveFirmware(uint64 id);

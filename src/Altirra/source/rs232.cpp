@@ -91,39 +91,39 @@ protected:
 	void PollDevice(bool unthrottled);
 	void EnqueueReceivedByte(uint8 c);
 
-	int mIndex;
-	IATRS232ChannelCallback *mpCB;
-	ATScheduler	*mpScheduler;
-	ATEvent	*mpEvent;
+	int mIndex = 0;
+	IATRS232ChannelCallback *mpCB = nullptr;
+	ATScheduler	*mpScheduler = nullptr;
+	ATEvent	*mpEvent = nullptr;
 	vdrefptr<IATDeviceSerial> mpDeviceSerial;
-	IATDeviceCIOManager *mpCIOMgr;
-	IATDeviceSIOManager *mpSIOMgr;
+	IATDeviceCIOManager *mpCIOMgr = nullptr;
+	IATDeviceSIOManager *mpSIOMgr = nullptr;
 
 	uint32	mCyclesPerByte;
 	uint32	mCyclesPerByteDevice;
 
-	bool	mbAddLFAfterEOL;
-	bool	mbTranslationEnabled;
-	bool	mbTranslationHeavy;
-	bool	mbLFPending;
-	bool	mbConcurrentMode;
-	bool	mbSuspended;
-	uint8	mWontTranslateChar;
+	bool	mbAddLFAfterEOL = false;
+	bool	mbTranslationEnabled = false;
+	bool	mbTranslationHeavy = false;
+	bool	mbLFPending = false;
+	bool	mbConcurrentMode = false;
+	bool	mbSuspended = true;
+	uint8	mWontTranslateChar = 0;
 
-	uint8	mInputParityMask;
+	uint8	mInputParityMask = 0;
 
-	uint8	mOpenPerms;		// Mirror of ICAX1 at open time.
-	uint8	mControlState;
+	uint8	mOpenPerms = 0;		// Mirror of ICAX1 at open time.
+	uint8	mControlState = 0;
 
 	// These must match the error flags returned by STATUS.
 	enum {
 		kErrorFlag850_FramingError = 0x80
 	};
 
-	uint8	mErrorFlags;
-	uint8	mWordSize;
+	uint8	mErrorFlags = 0;
+	uint8	mWordSize = 8;
 
-	uint32	mBaudRate;
+	uint32	mBaudRate = 300;
 
 	// These must match bits 0-1 of AUX1 as passed to XIO 38.
 	enum OutputParityMode {
@@ -133,7 +133,7 @@ protected:
 		kOutputParitySet	= 0x03
 	};
 
-	OutputParityMode	mOutputParityMode;
+	OutputParityMode	mOutputParityMode = kOutputParityNone;
 
 	ATDeviceSerialTerminalState	mTerminalState;
 
@@ -143,52 +143,25 @@ protected:
 		kMonitorLine_DSR = 0x04
 	};
 
-	uint8	mControlMonitorMask;
+	uint8	mControlMonitorMask = 0;
 
-	int		mInputReadOffset;
-	int		mInputWriteOffset;
-	int		mInputLevel;
-	int		mInputBufferSize;
-	uint16	mInputBufAddr;
-	int		mOutputReadOffset;
-	int		mOutputWriteOffset;
-	int		mOutputLevel;
+	int		mInputReadOffset = 0;
+	int		mInputWriteOffset = 0;
+	int		mInputLevel = 0;
+	int		mInputBufferSize = 0;
+	uint16	mInputBufAddr = 0;
+	int		mOutputReadOffset = 0;
+	int		mOutputWriteOffset = 0;
+	int		mOutputLevel = 0;
 
 	// This buffer is 32 bytes long internally for R:.
-	uint8	mInputBuffer[32];
-	uint8	mOutputBuffer[32];
+	uint8	mInputBuffer[32] {};
+	uint8	mOutputBuffer[32] {};
 
 	ATRS232Config mConfig;
 };
 
-ATRS232Channel850::ATRS232Channel850()
-	: mpCB(NULL)
-	, mpScheduler(NULL)
-	, mpEvent(NULL)
-	, mpDeviceSerial()
-	, mpCIOMgr(nullptr)
-	, mpSIOMgr(nullptr)
-	, mbAddLFAfterEOL(false)
-	, mbTranslationEnabled(false)
-	, mbTranslationHeavy(false)
-	, mbSuspended(true)
-	, mWontTranslateChar(0)
-	, mInputParityMask(0)
-	, mOpenPerms(0)
-	, mControlState(0)
-	, mErrorFlags(0)
-	, mBaudRate(300)
-	, mOutputParityMode(kOutputParityNone)
-	, mControlMonitorMask(0)
-	, mInputReadOffset(0)
-	, mInputWriteOffset(0)
-	, mInputLevel(0)
-	, mInputBufferSize(0)
-	, mInputBufAddr(0)
-	, mOutputReadOffset(0)
-	, mOutputWriteOffset(0)
-	, mOutputLevel(0)
-{
+ATRS232Channel850::ATRS232Channel850() {
 }
 
 void ATRS232Channel850::SetSerialDevice(IATDeviceSerial *dev) {
@@ -759,6 +732,7 @@ public:	// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override { return nullptr; }
 	bool IsWritableFirmwareDirty(uint32 idx) const override { return false; }
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override {}
+	bool IsUsableFirmwareLoaded() const override;
 
 public:	// IATDeviceScheduling
 	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
@@ -807,6 +781,8 @@ protected:
 
 	ATRS232Channel850 *mpChannels[4];
 	ATRS232Config mConfig;
+
+	bool	mbFirmwareUsable = false;
 
 	sint8	mActiveConcurrentIndex;
 	uint8	mActiveCommandData;
@@ -986,8 +962,13 @@ void ATRS232Emulator::InitFirmware(ATFirmwareManager *fwman) {
 
 bool ATRS232Emulator::ReloadFirmware() {
 	bool changed = false;
-	mpFwMgr->LoadFirmware(kATFirmwareId_850Relocator, nullptr, 0, 0, &changed, nullptr, &mRelocator);
-	mpFwMgr->LoadFirmware(kATFirmwareId_850Handler, nullptr, 0, 0, &changed, nullptr, &mHandler);
+
+	bool relocatorUsable = false;
+	bool handlerUsable = false;
+	mpFwMgr->LoadFirmware(kATFirmwareId_850Relocator, nullptr, 0, 0, &changed, nullptr, &mRelocator, nullptr, &relocatorUsable);
+	mpFwMgr->LoadFirmware(kATFirmwareId_850Handler, nullptr, 0, 0, &changed, nullptr, &mHandler, nullptr, &handlerUsable);
+
+	mbFirmwareUsable = relocatorUsable && handlerUsable;
 
 	if (mRelocator.size() > 2048)
 		mRelocator.resize(2048);
@@ -996,6 +977,10 @@ bool ATRS232Emulator::ReloadFirmware() {
 		mHandler.resize(2048);
 
 	return changed;
+}
+
+bool ATRS232Emulator::IsUsableFirmwareLoaded() const {
+	return mbFirmwareUsable;
 }
 
 void ATRS232Emulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
@@ -1343,9 +1328,10 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 
 		// The data payload from the stream command is 9 bytes to set
 		// to POKEY.
-		uint32 cyclesPerHalfBit = (ch.GetCyclesPerByte() + 10) / 20;
-		uint8 divlo = (uint8)cyclesPerHalfBit;
-		uint8 divhi = (uint8)(cyclesPerHalfBit >> 8);
+		const uint32 cyclesPerHalfBit = (ch.GetCyclesPerByte() + 10) / 20;
+		const uint32 divisor = cyclesPerHalfBit - 7;
+		uint8 divlo = (uint8)divisor;
+		uint8 divhi = (uint8)(divisor >> 8);
 
 		uint8 buf[9];
 		buf[0] = divlo;

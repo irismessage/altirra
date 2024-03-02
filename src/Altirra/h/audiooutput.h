@@ -23,9 +23,11 @@
 #endif
 
 #include <at/atcore/audiosource.h>
+#include <at/atcore/audiomixer.h>
 
 class IATUIRenderer;
 class IATSyncAudioSource;
+class IATAudioMixer;
 
 class IATAudioTap {
 public:
@@ -35,6 +37,9 @@ public:
 enum ATAudioApi {
 	kATAudioApi_WaveOut,
 	kATAudioApi_DirectSound,
+	kATAudioApi_XAudio2,
+	kATAudioApi_WASAPI,
+	kATAudioApi_Auto,
 	kATAudioApiCount
 };
 
@@ -42,7 +47,7 @@ class IATAudioOutput {
 public:
 	virtual ~IATAudioOutput() {}
 
-	virtual void Init() = 0;
+	virtual void Init(IATSyncAudioSamplePlayer *samplePlayer) = 0;
 
 	virtual ATAudioApi GetApi() = 0;
 	virtual void SetApi(ATAudioApi api) = 0;
@@ -52,8 +57,7 @@ public:
 	virtual IATUIRenderer *GetStatusRenderer() = 0;
 	virtual void SetStatusRenderer(IATUIRenderer *uir) = 0;
 
-	virtual void AddSyncAudioSource(IATSyncAudioSource *src) = 0;
-	virtual void RemoveSyncAudioSource(IATSyncAudioSource *src) = 0;
+	virtual IATAudioMixer& AsMixer() = 0;
 
 	virtual void SetCyclesPerSecond(double cps, double repeatfactor) = 0;
 
@@ -80,7 +84,7 @@ public:
 	virtual void WriteAudio(
 		const float *left,
 		const float *right,
-		uint32 count, bool pushAudio, uint32 timestamp) = 0;
+		uint32 count, bool pushAudio, uint64 timestamp) = 0;
 };
 
 IATAudioOutput *ATCreateAudioOutput();

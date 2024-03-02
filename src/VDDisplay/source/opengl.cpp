@@ -271,7 +271,7 @@ VDOpenGLBinding::~VDOpenGLBinding() {
 }
 
 bool VDOpenGLBinding::Init() {
-	mhmodOGL = LoadLibrary("opengl32");
+	mhmodOGL = LoadLibraryW(L"opengl32");
 	if (!mhmodOGL)
 		return false;
 

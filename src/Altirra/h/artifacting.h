@@ -21,6 +21,8 @@
 #include <vd2/system/memory.h>
 #include "gtia.h"
 
+class vdfloat3x3;
+
 class ATArtifactingEngine : public VDAlignedObject<16> {
 	ATArtifactingEngine(const ATArtifactingEngine&);
 	ATArtifactingEngine& operator=(const ATArtifactingEngine&);
@@ -28,7 +30,7 @@ public:
 	ATArtifactingEngine();
 	~ATArtifactingEngine();
 
-	void SetColorParams(const ATColorParams& params);
+	void SetColorParams(const ATColorParams& params, const vdfloat3x3 *matrix);
 
 	ATArtifactingParams GetArtifactingParams() const { return mArtifactingParams; }
 	void SetArtifactingParams(const ATArtifactingParams& params);
@@ -50,9 +52,11 @@ protected:
 	void ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
 	void ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes);
 	void ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes, bool oddline);
-	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N]);
+	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
 	void Blend(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n);
 	void BlendExchange(uint32 *VDRESTRICT dst, uint32 *VDRESTRICT blendDst, uint32 n);
+
+	void ColorCorrect(uint8 *VDRESTRICT dst8, uint32 n);
 
 	void RecomputeNTSCTables(const ATColorParams& params);
 	void RecomputePALTables(const ATColorParams& params);
@@ -66,6 +70,10 @@ protected:
 	bool mbBlendCopy;
 	bool mbScanlineDelayValid;
 	bool mbGammaIdentity;
+	bool mbEnableColorCorrection = false;
+
+	vdfloat3x3 mColorMatchingMatrix {};
+	sint16 mColorMatchingMatrix16[3][3] {};
 
 	int mYScale;
 	int mYBias;
@@ -79,7 +87,10 @@ protected:
 	int mChromaVectors[16][3];
 	int mLumaRamp[16];
 	uint8 mGammaTable[256];
+	sint16 mCorrectLinearTable[256];
+	uint8 mCorrectGammaTable[1024];
 	uint32 mPalette[256];
+	uint32 mCorrectedPalette[256];
 
 	union {
 		uint8 mPALDelayLine[N];

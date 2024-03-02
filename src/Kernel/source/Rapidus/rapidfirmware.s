@@ -39,79 +39,111 @@ i2c_cr		= $FF008D
 ;==========================================================================
 ; Entry points
 ;
+;--------------------------------------------------------------------------
 ;$F00010
+;
 		jmp		MenuCheck_L
 		nop
 
+;--------------------------------------------------------------------------
 ;$F00014
+;
 		jsl		$F00000+BugcheckInvalidEntryPoint
 
+;--------------------------------------------------------------------------
 ;$F00018
 		jsl		$F00000+BugcheckInvalidEntryPoint
 
+;--------------------------------------------------------------------------
 ;$F0001C
 		jsl		$F00000+BugcheckInvalidEntryPoint
 
+;--------------------------------------------------------------------------
 ;$F00020
 		jmp		MenuVBIHandler
 		nop
 
-;$F00024
+;--------------------------------------------------------------------------
+;$F00024 - initialize EEPROM access (not EEPROM data)
+;
 		jmp		EEPROMInit
 		nop
 
-;$F00028
+;--------------------------------------------------------------------------
+;$F00028 - write default configuration to EEPROM
+;
 		jmp		EEPROMReset
 		nop
 
-;$F0002C
+;--------------------------------------------------------------------------
+;$F0002C - apply hardware configuration from EEPROM
+;
 		jmp		ApplyConfig
 		nop
 
-;$F00030
+;--------------------------------------------------------------------------
+;$F00030 - read configuration EEPROM data
+;
 		jmp		EEPROMRead
 		nop
 
+;--------------------------------------------------------------------------
 ;$F00034
 		jsl		$F00000+BugcheckInvalidEntryPoint
 
-;$F00038
+;--------------------------------------------------------------------------
+;$F00038 - compute EEPROM checksum
+;
 		jmp		EEPROMCheck
 		nop
 
+;--------------------------------------------------------------------------
 ;$F0003C
+;
 		jmp		Syscall
 		nop
 
-;$F00040
-		jsl		$F00000+BugcheckInvalidEntryPoint
+;--------------------------------------------------------------------------
+;$F00040 - 65C816 aware OS initialization
+;
+		jmp		Init816OS
+		nop
 
+;--------------------------------------------------------------------------
 ;$F00044
 		jsl		$F00000+BugcheckInvalidEntryPoint
 
+;--------------------------------------------------------------------------
 ;$F00048
 		jmp		Init
 		nop
 
+;--------------------------------------------------------------------------
 ;$F0004C
 		jsl		$F00000+BugcheckInvalidEntryPoint
 
+;--------------------------------------------------------------------------
 ;$F00050
 		jmp		Cleanup
 		nop
 
+;--------------------------------------------------------------------------
 ;$F00054
 		jsl		$F00000+BugcheckInvalidEntryPoint
 
+;--------------------------------------------------------------------------
 ;$F00058
 		jsl		$F00000+BugcheckInvalidEntryPoint
 
+;--------------------------------------------------------------------------
 ;$F0005C
 		jsl		$F00000+BugcheckInvalidEntryPoint
 
+;--------------------------------------------------------------------------
 ;$F00060
 		jsl		$F00000+BugcheckInvalidEntryPoint
 
+;--------------------------------------------------------------------------
 ;$F00064
 		jsl		$F00000+BugcheckInvalidEntryPoint
 
@@ -139,6 +171,10 @@ _va_args = $26
 		php
 		sei
 
+		;save A
+		rep		#$20
+		sta.l	_a
+
 		;disable NMIs
 		sep		#$30
 		lda		#0
@@ -152,8 +188,7 @@ _va_args = $26
 		lda.w	#$00FF
 		sta		$FF0080
 
-		;save A/DP and reset DP=0
-		sta.l	_a
+		;save DP and reset DP=0
 		tdc
 		sta.l	_dp
 		lda.w	#0
@@ -383,10 +418,14 @@ dl_end:
 
 ;==========================================================================
 .proc BugcheckInvalidEntryPoint
-		sep		#$30
+		rep		#$20
 		lda		1,s
+		dec
+		dec
+		dec
+		sep		#$30
 		tay
-		lda		2,s
+		xba
 		tax
 		lda		3,s
 		jsl		$F00000+Bugcheck
@@ -604,6 +643,17 @@ write_loop:
 		dta		$80		;SCR: Cache enabled, bank disabled
 		dta		$00		;ACR: Nothing
 		dta		$00		;6502C mode disabled
+.endp
+
+;==========================================================================
+; 65C816 aware OS initialization
+;
+; In the standard Rapidus flash, this allocates some memory from an 816
+; aware OS for firmware use by means of kmalloc (COP #1 / $0001). We don't
+; currently have a use for this and silently ignore the call.
+;
+.proc Init816OS
+		rtl
 .endp
 
 ;==========================================================================

@@ -15,10 +15,11 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#ifndef f_AT_COVOX_H
-#define f_AT_COVOX_H
+#ifndef f_AT_AUDIORAWSOURCE_H
+#define f_AT_AUDIORAWSOURCE_H
 
 #include <vd2/system/vdstl.h>
+#include <at/atcore/audiomixer.h>
 #include <at/atcore/audiosource.h>
 
 class IATAudioOutput;
@@ -30,7 +31,7 @@ public:
 	ATAudioRawSource();
 	~ATAudioRawSource();
 	
-	void Init(IATAudioOutput *audioOut);
+	void Init(IATAudioMixer *mixer);
 	void Shutdown();
 
 	void SetOutput(uint32 t, float level);
@@ -40,7 +41,7 @@ public:
 	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
 protected:
-	IATAudioOutput *mpAudioOut = nullptr;
+	IATAudioMixer *mpAudioMixer = nullptr;
 
 	float	mLevel = {};
 	float	mStartLevel = {};

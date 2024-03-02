@@ -688,17 +688,23 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			DecodeReadZp();
 			*mpDstState++ = kStateDSetSZ;
 			*mpDstState++ = kStateDtoY;
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
 			break;
 
 		case 0xA5:	// LDA zp
 			*mpDstState++ = kStateReadAddrL;
 			*mpDstState++ = kStateReadSetSZToA;
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
 			break;
 
 		case 0xA6:	// LDX zp
 			DecodeReadZp();
 			*mpDstState++ = kStateDSetSZ;
 			*mpDstState++ = kStateDtoX;
+			if (mpVerifier)
+				*mpDstState++ = kStateVerifyInsn;
 			break;
 
 		case 0xA8:	// TAY

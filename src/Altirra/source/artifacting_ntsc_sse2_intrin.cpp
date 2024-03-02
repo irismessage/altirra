@@ -66,7 +66,7 @@ slow_path:
 			acc2 = _mm_add_epi16(acc2, impulse3[6]);
 		}
 
-		acc0 = _mm_srai_epi16(acc0, 5);
+		acc0 = _mm_srai_epi16(acc0, 4);
 		acc0 = _mm_packus_epi16(acc0, acc0);
 		_mm_storel_epi64((__m128i *)dst, acc0);
 		dst += 8;
@@ -78,8 +78,8 @@ slow_path:
 	} while (--count);
 
 xit:
-	acc0 = _mm_srai_epi16(acc0, 5);
-	acc1 = _mm_srai_epi16(acc1, 5);
+	acc0 = _mm_srai_epi16(acc0, 4);
+	acc1 = _mm_srai_epi16(acc1, 4);
 	acc0 = _mm_packus_epi16(acc0, acc0);
 	acc1 = _mm_packus_epi16(acc1, acc1);
 	_mm_storel_epi64((__m128i *)dst, acc0);
@@ -107,7 +107,7 @@ fast_path:
 		acc0 = _mm_add_epi16(acc0, fast_impulse0);
 		acc1 = _mm_add_epi16(acc1, fast_impulse1);
 
-		acc0 = _mm_srai_epi16(acc0, 5);
+		acc0 = _mm_srai_epi16(acc0, 4);
 		acc0 = _mm_packus_epi16(acc0, acc0);
 		_mm_storel_epi64((__m128i *)dst, acc0);
 		dst += 8;
@@ -181,7 +181,7 @@ slow_path:
 			acc2 = _mm_add_epi16(acc2, impulse1[6]);
 		}
 
-		acc0 = _mm_srai_epi16(acc0, 5);
+		acc0 = _mm_srai_epi16(acc0, 4);
 		acc0 = _mm_packus_epi16(acc0, acc0);
 		_mm_storel_epi64((__m128i *)dst, acc0);
 		dst += 8;
@@ -191,8 +191,8 @@ slow_path:
 	} while(--count);
 
 xit:
-	acc0 = _mm_srai_epi16(acc0, 5);
-	acc1 = _mm_srai_epi16(acc1, 5);
+	acc0 = _mm_srai_epi16(acc0, 4);
+	acc1 = _mm_srai_epi16(acc1, 4);
 	acc0 = _mm_packus_epi16(acc0, acc0);
 	acc1 = _mm_packus_epi16(acc1, acc1);
 	_mm_storel_epi64((__m128i *)dst, acc0);
@@ -222,7 +222,7 @@ fast_path:
 		acc0 = _mm_add_epi16(acc0, fast_impulse0);
 		acc1 = _mm_add_epi16(acc1, fast_impulse1);
 
-		acc0 = _mm_srai_epi16(acc0, 5);
+		acc0 = _mm_srai_epi16(acc0, 4);
 		acc0 = _mm_packus_epi16(acc0, acc0);
 		_mm_storel_epi64((__m128i *)dst, acc0);
 		dst += 8;

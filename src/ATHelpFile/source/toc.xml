@@ -51,6 +51,8 @@
       <t name="Introduction" href="devices-fulldisk.html"/>
       <t name="Atari XF551" href="devices-xf551.html"/>
       <t name="Indus GT" href="devices-indusgt.html"/>
+      <t name="I.S. Plate" href="devices-isplate.html"/>
+      <t name="Speedy 1050" href="devices-speedy1050.html"/>
     </t>
     <t name="High-level emulation (HLE) devices">
       <t name="Host (H:) device" href="host-device.html"/>

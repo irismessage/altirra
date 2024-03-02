@@ -24,6 +24,16 @@
 #include <at/atnativeui/uiframe.h>
 
 ATNotifyList<HWND> g_ATModelessDialogs;
+ATNotifyList<HWND> g_ATUITopLevelWindows;
+bool g_ATUIGlobalEnable = true;
+
+void ATUIRegisterTopLevelWindow(VDZHWND h) {
+	g_ATUITopLevelWindows.Add(h);
+}
+
+void ATUIUnregisterTopLevelWindow(VDZHWND h) {
+	g_ATUITopLevelWindows.Remove(h);
+}
 
 void ATUIRegisterModelessDialog(VDZHWND h) {
 	g_ATModelessDialogs.Add(h);
@@ -31,6 +41,20 @@ void ATUIRegisterModelessDialog(VDZHWND h) {
 
 void ATUIUnregisterModelessDialog(VDZHWND h) {
 	g_ATModelessDialogs.Remove(h);
+}
+
+void ATUIShowModelessDialogs(bool visible, VDZHWND parent) {
+	const int showFlags = visible ? SW_SHOWNOACTIVATE : SW_HIDE; 
+
+	g_ATModelessDialogs.Notify(
+		[&](HWND hwnd) {
+			if (GetParent(hwnd) == parent) {
+				ShowWindow(hwnd, showFlags);
+			}
+
+			return false;
+		}
+	);
 }
 
 bool ATUIProcessModelessDialogs(MSG *msg) {
@@ -44,12 +68,22 @@ bool ATUIProcessModelessDialogs(MSG *msg) {
 	);
 }
 
-void ATUIEnableModelessDialogs(VDZHWND parent, bool enable) {
-	g_ATModelessDialogs.Notify(
-		[parent,enable](HWND hwnd) {
-			if (GetParent(hwnd) == parent)
-				EnableWindow(hwnd, enable);
+void ATUISetGlobalEnableState(bool enable) {
+	if (g_ATUIGlobalEnable == enable)
+		return;
 
+	g_ATUIGlobalEnable = enable;
+
+	g_ATModelessDialogs.Notify(
+		[enable](HWND hwnd) {
+			EnableWindow(hwnd, enable);
+			return false;
+		}
+	);
+
+	g_ATUITopLevelWindows.Notify(
+		[enable](HWND hwnd) {
+			EnableWindow(hwnd, enable);
 			return false;
 		}
 	);

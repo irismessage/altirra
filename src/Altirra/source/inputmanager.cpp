@@ -61,6 +61,16 @@ namespace {
 	};
 }
 
+struct ATInputManager::PresetMapDef {
+	bool mbDefault;
+	bool mbDefaultQuick;
+	const wchar_t *mpName;
+	sint8 mUnit;
+
+	std::initializer_list<ATInputMap::Controller> mControllers;
+	std::initializer_list<ATInputMap::Mapping> mMappings;
+};
+
 ATInputMap::ATInputMap()
 	: mSpecificInputUnit(-1)
 	, mbQuickMap(false)
@@ -271,8 +281,6 @@ ATInputManager::ATInputManager()
 	, mbMouseActiveTarget(false)
 	, mMouseAvgIndex(0)
 {
-	InitPresetMaps();
-
 	mpPorts[0] = NULL;
 	mpPorts[1] = NULL;
 
@@ -281,10 +289,6 @@ ATInputManager::ATInputManager()
 }
 
 ATInputManager::~ATInputManager() {
-	while(!mPresetMaps.empty()) {
-		mPresetMaps.back()->Release();
-		mPresetMaps.pop_back();
-	}
 }
 
 void ATInputManager::Init(ATScheduler *fastSched, ATScheduler *slowSched, ATPortController *porta, ATPortController *portb, ATLightPenPort *lightPen) {
@@ -310,10 +314,20 @@ void ATInputManager::Set5200Mode(bool is5200) {
 void ATInputManager::ResetToDefaults() {
 	RemoveAllInputMaps();
 
-	for(ATInputMap *map : mPresetMaps) {
-		const uint32 ccnt = map->GetControllerCount();
+	for(uint32 i=0; ; ++i) {
+		const PresetMapDef *def = GetPresetMapDef(i);
+		if (!def)
+			break;
+
+		if (!def->mbDefault)
+			continue;
+
+		vdrefptr<ATInputMap> imap;
+		InitPresetMap(*def, ~imap);
+
+		const uint32 ccnt = imap->GetControllerCount();
 		for(uint32 i=0; i<ccnt; ++i) {
-			const auto& controller = map->GetController(i);
+			const auto& controller = imap->GetController(i);
 
 			switch(controller.mType) {
 				case kATInputControllerType_5200Controller:
@@ -338,7 +352,7 @@ void ATInputManager::ResetToDefaults() {
 			}
 		}
 
-		AddInputMap(vdmakerefptr(new ATInputMap(*map)));
+		AddInputMap(imap);
 reject:
 		;
 	}
@@ -1193,15 +1207,17 @@ ATInputMap *ATInputManager::CycleQuickMaps() {
 }
 
 uint32 ATInputManager::GetPresetInputMapCount() const {
-	return (uint32)mPresetMaps.size();
+	return GetPresetMapDefCount();
 }
 
 bool ATInputManager::GetPresetInputMapByIndex(uint32 index, ATInputMap **imap) const {
-	if (index >= mPresetMaps.size())
+	const PresetMapDef *def = GetPresetMapDef(index);
+
+	if (!def)
 		return false;
 
-	*imap = mPresetMaps[index];
-	(*imap)->AddRef();
+	InitPresetMap(*def, imap);
+	(*imap)->SetQuickMap(false);
 	return true;
 }
 
@@ -1934,16 +1950,6 @@ void ATInputManager::SetTrigger(Mapping& mapping, bool state) {
 	}
 }
 
-struct ATInputManager::PresetMapDef {
-	bool mbDefault;
-	bool mbDefaultQuick;
-	const wchar_t *mpName;
-	sint8 mUnit;
-
-	std::initializer_list<ATInputMap::Controller> mControllers;
-	std::initializer_list<ATInputMap::Mapping> mMappings;
-};
-
 const ATInputManager::PresetMapDef ATInputManager::kPresetMapDefs[] = {
 	{
 		true, true, L"Arrow Keys -> Joystick (port 1)", -1,
@@ -2232,9 +2238,56 @@ const ATInputManager::PresetMapDef ATInputManager::kPresetMapDefs[] = {
 			{ kATInputCode_JoyStick2Up,		0, kATInputTrigger_UIRightShift },
 		}
 	},
+	{
+		false, false, L"Mouse -> Light Gun (XG-1)", -1,
+		{
+			{ kATInputControllerType_LightPen, 0 },
+		},
+		{
+			{ kATInputCode_MouseBeamX,		0, kATInputTrigger_Axis0 },
+			{ kATInputCode_MouseBeamY,		0, kATInputTrigger_Axis0+1 },
+			{ kATInputCode_MouseLMB,		0, kATInputTrigger_Button0 },
+			{ kATInputCode_None,			0, kATInputTrigger_Button0+2 | kATInputTriggerMode_Inverted },
+		}
+	},
+	{
+		false, false, L"Mouse -> Light Pen (CX-70/CX-75)", -1,
+		{
+			{ kATInputControllerType_LightPen, 0 },
+		},
+		{
+			{ kATInputCode_MouseBeamX,		0, kATInputTrigger_Axis0 },
+			{ kATInputCode_MouseBeamY,		0, kATInputTrigger_Axis0+1 },
+			{ kATInputCode_MouseLMB,		0, kATInputTrigger_Button0 | kATInputTriggerMode_Inverted },
+			{ kATInputCode_MouseRMB,		0, kATInputTrigger_Button0+1 },
+			{ kATInputCode_None,			0, kATInputTrigger_Button0+2 | kATInputTriggerMode_Inverted },
+		}
+	},
+	{
+		false, false, L"Keyboard -> Driving Controller (CX-20)", -1,
+		{
+			{ kATInputControllerType_Driving, 0 },
+		},
+		{
+			{ kATInputCode_KeyLeft,			0, kATInputTrigger_Left | kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift) },
+			{ kATInputCode_KeyRight,		0, kATInputTrigger_Right | kATInputTriggerMode_Relative | (5 << kATInputTriggerSpeed_Shift) },
+			{ kATInputCode_KeyLControl,		0, kATInputTrigger_Button0 },
+		}
+	},
 };
 
-void ATInputManager::InitPresetMap(const PresetMapDef& def, ATInputMap **ppMap) {
+uint32 ATInputManager::GetPresetMapDefCount() const {
+	return vdcountof(kPresetMapDefs);
+}
+
+const ATInputManager::PresetMapDef *ATInputManager::GetPresetMapDef(uint32 index) const {
+	if (index >= std::size(kPresetMapDefs))
+		return nullptr;
+
+	return &kPresetMapDefs[index];
+}
+
+void ATInputManager::InitPresetMap(const PresetMapDef& def, ATInputMap **ppMap) const {
 	vdrefptr<ATInputMap> imap(new ATInputMap);
 
 	imap->SetName(def.mpName);
@@ -2244,20 +2297,9 @@ void ATInputManager::InitPresetMap(const PresetMapDef& def, ATInputMap **ppMap) 
 
 	imap->AddControllers(def.mControllers);
 	imap->AddMappings(def.mMappings);
+	imap->SetQuickMap(def.mbDefaultQuick);
 
 	*ppMap = imap.release();
-}
-
-void ATInputManager::InitPresetMaps() {
-	vdrefptr<ATInputMap> imap;
-	
-	for(const auto& def : kPresetMapDefs) {
-		InitPresetMap(def, ~imap);
-
-		imap->SetQuickMap(def.mbDefaultQuick);
-		mPresetMaps.push_back(imap);
-		imap.release();
-	}
 }
 
 bool ATInputManager::IsTriggerRestricted(const Trigger& trigger) const {

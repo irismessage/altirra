@@ -2275,10 +2275,12 @@ vdrect32 VDTContextD3D11::GetScissorRect() {
 }
 
 void VDTContextD3D11::SetScissorRect(const vdrect32& r) {
-	D3D10_RECT dr = { r.left, r.top, r.right, r.bottom };
+	if (mScissorRect != r) {
+		mScissorRect = r;
 
-	mpD3DDeviceContext->RSSetScissorRects(1, &dr);
-	mScissorRect = r;
+		D3D10_RECT dr = { r.left, r.top, r.right, r.bottom };
+		mpD3DDeviceContext->RSSetScissorRects(1, &dr);
+	}
 }
 
 void VDTContextD3D11::SetVertexProgramConstCount(uint32 count) {

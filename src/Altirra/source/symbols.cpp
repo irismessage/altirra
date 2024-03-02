@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/vdstl_vectorview.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
@@ -36,6 +37,12 @@ public:
 
 class ATSymbolStore : public vdrefcounted<IATCustomSymbolStore> {
 public:
+	struct SymbolInfo {
+		uint32 mOffset;
+		const char *mpName;
+		uint32 mSize;
+	};
+
 	ATSymbolStore();
 	~ATSymbolStore();
 
@@ -45,6 +52,7 @@ public:
 	void Init(uint32 moduleBase, uint32 moduleSize);
 	void RemoveSymbol(uint32 offset);
 	void AddSymbol(uint32 offset, const char *name, uint32 size = 1, uint32 flags = kATSymbol_Read | kATSymbol_Write | kATSymbol_Execute, uint16 fileid = 0, uint16 lineno = 0);
+	void AddSymbols(vdvector_view<const SymbolInfo> symbols);
 	void AddReadWriteRegisterSymbol(uint32 offset, const char *writename, const char *readname = NULL);
 	uint16 AddFileName(const wchar_t *filename);
 	void AddSourceLine(uint16 fileId, uint16 line, uint32 moduleOffset, uint32 len = 0);
@@ -227,6 +235,11 @@ void ATSymbolStore::AddSymbol(uint32 offset, const char *name, uint32 size, uint
 	mNameBytes.insert(mNameBytes.end(), name, name + strlen(name) + 1);
 
 	mbSymbolsNeedSorting = true;
+}
+
+void ATSymbolStore::AddSymbols(vdvector_view<const SymbolInfo> symbols) {
+	for(const SymbolInfo& si : symbols)
+		AddSymbol(si.mOffset, si.mpName, si.mSize);
 }
 
 void ATSymbolStore::AddReadWriteRegisterSymbol(uint32 offset, const char *writename, const char *readname) {
@@ -1277,220 +1290,225 @@ bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 	symstore->Init(0x0000, 0x0400);
 
 	using namespace ATKernelSymbols;
-	symstore->AddSymbol(CASINI, "CASINI", 2);
-	symstore->AddSymbol(RAMLO , "RAMLO" , 2);
-	symstore->AddSymbol(TRAMSZ, "TRAMSZ", 1);
-	symstore->AddSymbol(WARMST, "WARMST", 1);
-	symstore->AddSymbol(DOSVEC, "DOSVEC", 2);
-	symstore->AddSymbol(DOSINI, "DOSINI", 2);
-	symstore->AddSymbol(APPMHI, "APPMHI", 2);
-	symstore->AddSymbol(POKMSK, "POKMSK", 1);
-	symstore->AddSymbol(BRKKEY, "BRKKEY", 1);
-	symstore->AddSymbol(RTCLOK, "RTCLOK", 3);
-	symstore->AddSymbol(BUFADR, "BUFADR", 2);
-	symstore->AddSymbol(ICHIDZ, "ICHIDZ", 1);
-	symstore->AddSymbol(ICDNOZ, "ICDNOZ", 1);
-	symstore->AddSymbol(ICCOMZ, "ICCOMZ", 1);
-	symstore->AddSymbol(ICSTAZ, "ICSTAZ", 1);
-	symstore->AddSymbol(ICBALZ, "ICBALZ", 1);
-	symstore->AddSymbol(ICBAHZ, "ICBAHZ", 1);
-	symstore->AddSymbol(ICBLLZ, "ICBLLZ", 1);
-	symstore->AddSymbol(ICBLHZ, "ICBLHZ", 1);
-	symstore->AddSymbol(ICAX1Z, "ICAX1Z", 1);
-	symstore->AddSymbol(ICAX2Z, "ICAX2Z", 1);
-	symstore->AddSymbol(ICAX3Z, "ICAX3Z", 1);
-	symstore->AddSymbol(ICAX4Z, "ICAX4Z", 1);
-	symstore->AddSymbol(ICAX5Z, "ICAX5Z", 1);
-	symstore->AddSymbol(STATUS, "STATUS", 1);
-	symstore->AddSymbol(CHKSUM, "CHKSUM", 1);
-	symstore->AddSymbol(BUFRLO, "BUFRLO", 1);
-	symstore->AddSymbol(BUFRHI, "BUFRHI", 1);
-	symstore->AddSymbol(BFENLO, "BFENLO", 1);
-	symstore->AddSymbol(BFENHI, "BFENHI", 1);
-	symstore->AddSymbol(BUFRFL, "BUFRFL", 1);
-	symstore->AddSymbol(RECVDN, "RECVDN", 1);
-	symstore->AddSymbol(CHKSNT, "CHKSNT", 1);
-	symstore->AddSymbol(SOUNDR, "SOUNDR", 1);
-	symstore->AddSymbol(CRITIC, "CRITIC", 1);
-	symstore->AddSymbol(CKEY,   "CKEY"  , 1);
-	symstore->AddSymbol(CASSBT, "CASSBT", 1);
-	symstore->AddSymbol(ATRACT, "ATRACT", 1);
-	symstore->AddSymbol(DRKMSK, "DRKMSK", 1);
-	symstore->AddSymbol(COLRSH, "COLRSH", 1);
-	symstore->AddSymbol(HOLD1 , "HOLD1" , 1);
-	symstore->AddSymbol(LMARGN, "LMARGN", 1);
-	symstore->AddSymbol(RMARGN, "RMARGN", 1);
-	symstore->AddSymbol(ROWCRS, "ROWCRS", 1);
-	symstore->AddSymbol(COLCRS, "COLCRS", 2);
-	symstore->AddSymbol(OLDROW, "OLDROW", 1);
-	symstore->AddSymbol(OLDCOL, "OLDCOL", 2);
-	symstore->AddSymbol(OLDCHR, "OLDCHR", 1);
-	symstore->AddSymbol(DINDEX, "DINDEX", 1);
-	symstore->AddSymbol(SAVMSC, "SAVMSC", 2);
-	symstore->AddSymbol(OLDADR, "OLDADR", 2);
-	symstore->AddSymbol(PALNTS, "PALNTS", 1);
-	symstore->AddSymbol(LOGCOL, "LOGCOL", 1);
-	symstore->AddSymbol(ADRESS, "ADRESS", 2);
-	symstore->AddSymbol(TOADR , "TOADR" , 2);
-	symstore->AddSymbol(RAMTOP, "RAMTOP", 1);
-	symstore->AddSymbol(BUFCNT, "BUFCNT", 1);
-	symstore->AddSymbol(BUFSTR, "BUFSTR", 2);
-	symstore->AddSymbol(BITMSK, "BITMSK", 1);
-	symstore->AddSymbol(DELTAR, "DELTAR", 1);
-	symstore->AddSymbol(DELTAC, "DELTAC", 2);
-	symstore->AddSymbol(ROWINC, "ROWINC", 1);
-	symstore->AddSymbol(COLINC, "COLINC", 1);
-	symstore->AddSymbol(KEYDEF, "KEYDEF", 2);	// XL/XE
-	symstore->AddSymbol(SWPFLG, "SWPFLG", 1);
-	symstore->AddSymbol(COUNTR, "COUNTR", 2);
 
-	symstore->AddSymbol(FR0, "FR0", 1);
-	symstore->AddSymbol(FR1, "FR1", 1);
-	symstore->AddSymbol(CIX, "CIX", 1);
+	static constexpr ATSymbolStore::SymbolInfo kSymbols[] = {
+		{ CASINI, "CASINI", 2 },
+		{ RAMLO , "RAMLO" , 2 },
+		{ TRAMSZ, "TRAMSZ", 1 },
+		{ WARMST, "WARMST", 1 },
+		{ DOSVEC, "DOSVEC", 2 },
+		{ DOSINI, "DOSINI", 2 },
+		{ APPMHI, "APPMHI", 2 },
+		{ POKMSK, "POKMSK", 1 },
+		{ BRKKEY, "BRKKEY", 1 },
+		{ RTCLOK, "RTCLOK", 3 },
+		{ BUFADR, "BUFADR", 2 },
+		{ ICHIDZ, "ICHIDZ", 1 },
+		{ ICDNOZ, "ICDNOZ", 1 },
+		{ ICCOMZ, "ICCOMZ", 1 },
+		{ ICSTAZ, "ICSTAZ", 1 },
+		{ ICBALZ, "ICBALZ", 1 },
+		{ ICBAHZ, "ICBAHZ", 1 },
+		{ ICBLLZ, "ICBLLZ", 1 },
+		{ ICBLHZ, "ICBLHZ", 1 },
+		{ ICAX1Z, "ICAX1Z", 1 },
+		{ ICAX2Z, "ICAX2Z", 1 },
+		{ ICAX3Z, "ICAX3Z", 1 },
+		{ ICAX4Z, "ICAX4Z", 1 },
+		{ ICAX5Z, "ICAX5Z", 1 },
+		{ STATUS, "STATUS", 1 },
+		{ CHKSUM, "CHKSUM", 1 },
+		{ BUFRLO, "BUFRLO", 1 },
+		{ BUFRHI, "BUFRHI", 1 },
+		{ BFENLO, "BFENLO", 1 },
+		{ BFENHI, "BFENHI", 1 },
+		{ BUFRFL, "BUFRFL", 1 },
+		{ RECVDN, "RECVDN", 1 },
+		{ CHKSNT, "CHKSNT", 1 },
+		{ SOUNDR, "SOUNDR", 1 },
+		{ CRITIC, "CRITIC", 1 },
+		{ CKEY,   "CKEY"  , 1 },
+		{ CASSBT, "CASSBT", 1 },
+		{ ATRACT, "ATRACT", 1 },
+		{ DRKMSK, "DRKMSK", 1 },
+		{ COLRSH, "COLRSH", 1 },
+		{ HOLD1 , "HOLD1" , 1 },
+		{ LMARGN, "LMARGN", 1 },
+		{ RMARGN, "RMARGN", 1 },
+		{ ROWCRS, "ROWCRS", 1 },
+		{ COLCRS, "COLCRS", 2 },
+		{ OLDROW, "OLDROW", 1 },
+		{ OLDCOL, "OLDCOL", 2 },
+		{ OLDCHR, "OLDCHR", 1 },
+		{ DINDEX, "DINDEX", 1 },
+		{ SAVMSC, "SAVMSC", 2 },
+		{ OLDADR, "OLDADR", 2 },
+		{ PALNTS, "PALNTS", 1 },
+		{ LOGCOL, "LOGCOL", 1 },
+		{ ADRESS, "ADRESS", 2 },
+		{ TOADR , "TOADR" , 2 },
+		{ RAMTOP, "RAMTOP", 1 },
+		{ BUFCNT, "BUFCNT", 1 },
+		{ BUFSTR, "BUFSTR", 2 },
+		{ BITMSK, "BITMSK", 1 },
+		{ DELTAR, "DELTAR", 1 },
+		{ DELTAC, "DELTAC", 2 },
+		{ ROWINC, "ROWINC", 1 },
+		{ COLINC, "COLINC", 1 },
+		{ KEYDEF, "KEYDEF", 2 },	// XL/XE
+		{ SWPFLG, "SWPFLG", 1 },
+		{ COUNTR, "COUNTR", 2 },
 
-	symstore->AddSymbol(INBUFF, "INBUFF", 1);
-	symstore->AddSymbol(FLPTR, "FLPTR", 1);
+		{ FR0, "FR0", 1 },
+		{ FR1, "FR1", 1 },
+		{ CIX, "CIX", 1 },
 
-	symstore->AddSymbol(VDSLST, "VDSLST", 2);
-	symstore->AddSymbol(VPRCED, "VPRCED", 2);
-	symstore->AddSymbol(VINTER, "VINTER", 2);
-	symstore->AddSymbol(VBREAK, "VBREAK", 2);
-	symstore->AddSymbol(VKEYBD, "VKEYBD", 2);
-	symstore->AddSymbol(VSERIN, "VSERIN", 2);
-	symstore->AddSymbol(VSEROR, "VSEROR", 2);
-	symstore->AddSymbol(VSEROC, "VSEROC", 2);
-	symstore->AddSymbol(VTIMR1, "VTIMR1", 2);
-	symstore->AddSymbol(VTIMR2, "VTIMR2", 2);
-	symstore->AddSymbol(VTIMR4, "VTIMR4", 2);
-	symstore->AddSymbol(VIMIRQ, "VIMIRQ", 2);
-	symstore->AddSymbol(CDTMV1, "CDTMV1", 2);
-	symstore->AddSymbol(CDTMV2, "CDTMV2", 2);
-	symstore->AddSymbol(CDTMV3, "CDTMV3", 2);
-	symstore->AddSymbol(CDTMV4, "CDTMV4", 2);
-	symstore->AddSymbol(CDTMV5, "CDTMV5", 2);
-	symstore->AddSymbol(VVBLKI, "VVBLKI", 2);
-	symstore->AddSymbol(VVBLKD, "VVBLKD", 2);
-	symstore->AddSymbol(CDTMA1, "CDTMA1", 1);
-	symstore->AddSymbol(CDTMA2, "CDTMA2", 1);
-	symstore->AddSymbol(CDTMF3, "CDTMF3", 1);
-	symstore->AddSymbol(CDTMF4, "CDTMF4", 1);
-	symstore->AddSymbol(CDTMF5, "CDTMF5", 1);
-	symstore->AddSymbol(SDMCTL, "SDMCTL", 1);
-	symstore->AddSymbol(SDLSTL, "SDLSTL", 1);
-	symstore->AddSymbol(SDLSTH, "SDLSTH", 1);
-	symstore->AddSymbol(SSKCTL, "SSKCTL", 1);
-	symstore->AddSymbol(LPENH , "LPENH" , 1);
-	symstore->AddSymbol(LPENV , "LPENV" , 1);
-	symstore->AddSymbol(BRKKY , "BRKKY" , 2);
-	symstore->AddSymbol(VPIRQ , "VPIRQ" , 2);	// XL/XE
-	symstore->AddSymbol(COLDST, "COLDST", 1);
-	symstore->AddSymbol(PDVMSK, "PDVMSK", 1);
-	symstore->AddSymbol(SHPDVS, "SHPDVS", 1);
-	symstore->AddSymbol(PDMSK , "PDMSK" , 1);	// XL/XE
-	symstore->AddSymbol(CHSALT, "CHSALT", 1);	// XL/XE
-	symstore->AddSymbol(GPRIOR, "GPRIOR", 1);
-	symstore->AddSymbol(PADDL0, "PADDL0", 1);
-	symstore->AddSymbol(PADDL1, "PADDL1", 1);
-	symstore->AddSymbol(PADDL2, "PADDL2", 1);
-	symstore->AddSymbol(PADDL3, "PADDL3", 1);
-	symstore->AddSymbol(PADDL4, "PADDL4", 1);
-	symstore->AddSymbol(PADDL5, "PADDL5", 1);
-	symstore->AddSymbol(PADDL6, "PADDL6", 1);
-	symstore->AddSymbol(PADDL7, "PADDL7", 1);
-	symstore->AddSymbol(STICK0, "STICK0", 1);
-	symstore->AddSymbol(STICK1, "STICK1", 1);
-	symstore->AddSymbol(STICK2, "STICK2", 1);
-	symstore->AddSymbol(STICK3, "STICK3", 1);
-	symstore->AddSymbol(PTRIG0, "PTRIG0", 1);
-	symstore->AddSymbol(PTRIG1, "PTRIG1", 1);
-	symstore->AddSymbol(PTRIG2, "PTRIG2", 1);
-	symstore->AddSymbol(PTRIG3, "PTRIG3", 1);
-	symstore->AddSymbol(PTRIG4, "PTRIG4", 1);
-	symstore->AddSymbol(PTRIG5, "PTRIG5", 1);
-	symstore->AddSymbol(PTRIG6, "PTRIG6", 1);
-	symstore->AddSymbol(PTRIG7, "PTRIG7", 1);
-	symstore->AddSymbol(STRIG0, "STRIG0", 1);
-	symstore->AddSymbol(STRIG1, "STRIG1", 1);
-	symstore->AddSymbol(STRIG2, "STRIG2", 1);
-	symstore->AddSymbol(STRIG3, "STRIG3", 1);
-	symstore->AddSymbol(JVECK , "JVECK" , 1);
-	symstore->AddSymbol(TXTROW, "TXTROW", 1);
-	symstore->AddSymbol(TXTCOL, "TXTCOL", 2);
-	symstore->AddSymbol(TINDEX, "TINDEX", 1);
-	symstore->AddSymbol(TXTMSC, "TXTMSC", 2);
-	symstore->AddSymbol(TXTOLD, "TXTOLD", 2);
-	symstore->AddSymbol(HOLD2 , "HOLD2" , 1);
-	symstore->AddSymbol(DMASK , "DMASK" , 1);
-	symstore->AddSymbol(ESCFLG, "ESCFLG", 1);
-	symstore->AddSymbol(TABMAP, "TABMAP", 15);
-	symstore->AddSymbol(LOGMAP, "LOGMAP", 4);
-	symstore->AddSymbol(SHFLOK, "SHFLOK", 1);
-	symstore->AddSymbol(BOTSCR, "BOTSCR", 1);
-	symstore->AddSymbol(PCOLR0, "PCOLR0", 1);
-	symstore->AddSymbol(PCOLR1, "PCOLR1", 1);
-	symstore->AddSymbol(PCOLR2, "PCOLR2", 1);
-	symstore->AddSymbol(PCOLR3, "PCOLR3", 1);
-	symstore->AddSymbol(COLOR0, "COLOR0", 1);
-	symstore->AddSymbol(COLOR1, "COLOR1", 1);
-	symstore->AddSymbol(COLOR2, "COLOR2", 1);
-	symstore->AddSymbol(COLOR3, "COLOR3", 1);
-	symstore->AddSymbol(COLOR4, "COLOR4", 1);
-	symstore->AddSymbol(DSCTLN, "DSCTLN", 1);	// XL/XE
-	symstore->AddSymbol(KRPDEL, "KRPDEL", 1);	// XL/XE
-	symstore->AddSymbol(KEYREP, "KEYREP", 1);	// XL/XE
-	symstore->AddSymbol(NOCLIK, "NOCLIK", 1);	// XL/XE
-	symstore->AddSymbol(HELPPG, "HELPPG", 1);	// XL/XE
-	symstore->AddSymbol(DMASAV, "DMASAV", 1);	// XL/XE
-	symstore->AddSymbol(RUNAD , "RUNAD" , 2);
-	symstore->AddSymbol(INITAD, "INITAD", 2);
-	symstore->AddSymbol(MEMTOP, "MEMTOP", 2);
-	symstore->AddSymbol(MEMLO , "MEMLO" , 2);
-	symstore->AddSymbol(DVSTAT, "DVSTAT", 4);
-	symstore->AddSymbol(CRSINH, "CRSINH", 1);
-	symstore->AddSymbol(KEYDEL, "KEYDEL", 1);
-	symstore->AddSymbol(CH1   , "CH1"   , 1);
-	symstore->AddSymbol(CHACT , "CHACT" , 1);
-	symstore->AddSymbol(CHBAS , "CHBAS" , 1);
-	symstore->AddSymbol(ATACHR, "ATACHR", 1);
-	symstore->AddSymbol(CH    , "CH"    , 1);
-	symstore->AddSymbol(FILDAT, "FILDAT", 1);
-	symstore->AddSymbol(DSPFLG, "DSPFLG", 1);
-	symstore->AddSymbol(DDEVIC, "DDEVIC", 1);
-	symstore->AddSymbol(DUNIT , "DUNIT" , 1);
-	symstore->AddSymbol(DCOMND, "DCOMND", 1);
-	symstore->AddSymbol(DSTATS, "DSTATS", 1);
-	symstore->AddSymbol(DBUFLO, "DBUFLO", 1);
-	symstore->AddSymbol(DBUFHI, "DBUFHI", 1);
-	symstore->AddSymbol(DTIMLO, "DTIMLO", 1);
-	symstore->AddSymbol(DBYTLO, "DBYTLO", 1);
-	symstore->AddSymbol(DBYTHI, "DBYTHI", 1);
-	symstore->AddSymbol(DAUX1 , "DAUX1" , 1);
-	symstore->AddSymbol(DAUX2 , "DAUX2" , 1);
-	symstore->AddSymbol(TIMER1, "TIMER1", 2);
-	symstore->AddSymbol(TIMER2, "TIMER2", 2);
-	symstore->AddSymbol(TIMFLG, "TIMFLG", 1);
-	symstore->AddSymbol(STACKP, "STACKP", 1);
-	symstore->AddSymbol(HATABS, "HATABS", 38);
-	symstore->AddSymbol(ICHID , "ICHID" , 1);
-	symstore->AddSymbol(ICDNO , "ICDNO" , 1);
-	symstore->AddSymbol(ICCMD , "ICCMD" , 1);
-	symstore->AddSymbol(ICSTA , "ICSTA" , 1);
-	symstore->AddSymbol(ICBAL , "ICBAL" , 1);
-	symstore->AddSymbol(ICBAH , "ICBAH" , 1);
-	symstore->AddSymbol(ICPTL , "ICPTL" , 1);
-	symstore->AddSymbol(ICPTH , "ICPTH" , 1);
-	symstore->AddSymbol(ICBLL , "ICBLL" , 1);
-	symstore->AddSymbol(ICBLH , "ICBLH" , 1);
-	symstore->AddSymbol(ICAX1 , "ICAX1" , 1);
-	symstore->AddSymbol(ICAX2 , "ICAX2" , 1);
-	symstore->AddSymbol(ICAX3 , "ICAX3" , 1);
-	symstore->AddSymbol(ICAX4 , "ICAX4" , 1);
-	symstore->AddSymbol(ICAX5 , "ICAX5" , 1);
-	symstore->AddSymbol(ICAX6 , "ICAX6" , 1);
-	symstore->AddSymbol(BASICF, "BASICF", 1);
-	symstore->AddSymbol(GINTLK, "GINTLK", 1);
-	symstore->AddSymbol(CASBUF, "CASBUF", 131);
-	symstore->AddSymbol(LBUFF , "LBUFF" , 128);
+		{ INBUFF, "INBUFF", 1 },
+		{ FLPTR, "FLPTR", 1 },
+
+		{ VDSLST, "VDSLST", 2 },
+		{ VPRCED, "VPRCED", 2 },
+		{ VINTER, "VINTER", 2 },
+		{ VBREAK, "VBREAK", 2 },
+		{ VKEYBD, "VKEYBD", 2 },
+		{ VSERIN, "VSERIN", 2 },
+		{ VSEROR, "VSEROR", 2 },
+		{ VSEROC, "VSEROC", 2 },
+		{ VTIMR1, "VTIMR1", 2 },
+		{ VTIMR2, "VTIMR2", 2 },
+		{ VTIMR4, "VTIMR4", 2 },
+		{ VIMIRQ, "VIMIRQ", 2 },
+		{ CDTMV1, "CDTMV1", 2 },
+		{ CDTMV2, "CDTMV2", 2 },
+		{ CDTMV3, "CDTMV3", 2 },
+		{ CDTMV4, "CDTMV4", 2 },
+		{ CDTMV5, "CDTMV5", 2 },
+		{ VVBLKI, "VVBLKI", 2 },
+		{ VVBLKD, "VVBLKD", 2 },
+		{ CDTMA1, "CDTMA1", 1 },
+		{ CDTMA2, "CDTMA2", 1 },
+		{ CDTMF3, "CDTMF3", 1 },
+		{ CDTMF4, "CDTMF4", 1 },
+		{ CDTMF5, "CDTMF5", 1 },
+		{ SDMCTL, "SDMCTL", 1 },
+		{ SDLSTL, "SDLSTL", 1 },
+		{ SDLSTH, "SDLSTH", 1 },
+		{ SSKCTL, "SSKCTL", 1 },
+		{ LPENH , "LPENH" , 1 },
+		{ LPENV , "LPENV" , 1 },
+		{ BRKKY , "BRKKY" , 2 },
+		{ VPIRQ , "VPIRQ" , 2 },	// XL/XE
+		{ COLDST, "COLDST", 1 },
+		{ PDVMSK, "PDVMSK", 1 },
+		{ SHPDVS, "SHPDVS", 1 },
+		{ PDMSK , "PDMSK" , 1 },	// XL/XE
+		{ CHSALT, "CHSALT", 1 },	// XL/XE
+		{ GPRIOR, "GPRIOR", 1 },
+		{ PADDL0, "PADDL0", 1 },
+		{ PADDL1, "PADDL1", 1 },
+		{ PADDL2, "PADDL2", 1 },
+		{ PADDL3, "PADDL3", 1 },
+		{ PADDL4, "PADDL4", 1 },
+		{ PADDL5, "PADDL5", 1 },
+		{ PADDL6, "PADDL6", 1 },
+		{ PADDL7, "PADDL7", 1 },
+		{ STICK0, "STICK0", 1 },
+		{ STICK1, "STICK1", 1 },
+		{ STICK2, "STICK2", 1 },
+		{ STICK3, "STICK3", 1 },
+		{ PTRIG0, "PTRIG0", 1 },
+		{ PTRIG1, "PTRIG1", 1 },
+		{ PTRIG2, "PTRIG2", 1 },
+		{ PTRIG3, "PTRIG3", 1 },
+		{ PTRIG4, "PTRIG4", 1 },
+		{ PTRIG5, "PTRIG5", 1 },
+		{ PTRIG6, "PTRIG6", 1 },
+		{ PTRIG7, "PTRIG7", 1 },
+		{ STRIG0, "STRIG0", 1 },
+		{ STRIG1, "STRIG1", 1 },
+		{ STRIG2, "STRIG2", 1 },
+		{ STRIG3, "STRIG3", 1 },
+		{ JVECK , "JVECK" , 1 },
+		{ TXTROW, "TXTROW", 1 },
+		{ TXTCOL, "TXTCOL", 2 },
+		{ TINDEX, "TINDEX", 1 },
+		{ TXTMSC, "TXTMSC", 2 },
+		{ TXTOLD, "TXTOLD", 2 },
+		{ HOLD2 , "HOLD2" , 1 },
+		{ DMASK , "DMASK" , 1 },
+		{ ESCFLG, "ESCFLG", 1 },
+		{ TABMAP, "TABMAP", 15 },
+		{ LOGMAP, "LOGMAP", 4 },
+		{ SHFLOK, "SHFLOK", 1 },
+		{ BOTSCR, "BOTSCR", 1 },
+		{ PCOLR0, "PCOLR0", 1 },
+		{ PCOLR1, "PCOLR1", 1 },
+		{ PCOLR2, "PCOLR2", 1 },
+		{ PCOLR3, "PCOLR3", 1 },
+		{ COLOR0, "COLOR0", 1 },
+		{ COLOR1, "COLOR1", 1 },
+		{ COLOR2, "COLOR2", 1 },
+		{ COLOR3, "COLOR3", 1 },
+		{ COLOR4, "COLOR4", 1 },
+		{ DSCTLN, "DSCTLN", 1 },	// XL/XE
+		{ KRPDEL, "KRPDEL", 1 },	// XL/XE
+		{ KEYREP, "KEYREP", 1 },	// XL/XE
+		{ NOCLIK, "NOCLIK", 1 },	// XL/XE
+		{ HELPPG, "HELPPG", 1 },	// XL/XE
+		{ DMASAV, "DMASAV", 1 },	// XL/XE
+		{ RUNAD , "RUNAD" , 2 },
+		{ INITAD, "INITAD", 2 },
+		{ MEMTOP, "MEMTOP", 2 },
+		{ MEMLO , "MEMLO" , 2 },
+		{ DVSTAT, "DVSTAT", 4 },
+		{ CRSINH, "CRSINH", 1 },
+		{ KEYDEL, "KEYDEL", 1 },
+		{ CH1   , "CH1"   , 1 },
+		{ CHACT , "CHACT" , 1 },
+		{ CHBAS , "CHBAS" , 1 },
+		{ ATACHR, "ATACHR", 1 },
+		{ CH    , "CH"    , 1 },
+		{ FILDAT, "FILDAT", 1 },
+		{ DSPFLG, "DSPFLG", 1 },
+		{ DDEVIC, "DDEVIC", 1 },
+		{ DUNIT , "DUNIT" , 1 },
+		{ DCOMND, "DCOMND", 1 },
+		{ DSTATS, "DSTATS", 1 },
+		{ DBUFLO, "DBUFLO", 1 },
+		{ DBUFHI, "DBUFHI", 1 },
+		{ DTIMLO, "DTIMLO", 1 },
+		{ DBYTLO, "DBYTLO", 1 },
+		{ DBYTHI, "DBYTHI", 1 },
+		{ DAUX1 , "DAUX1" , 1 },
+		{ DAUX2 , "DAUX2" , 1 },
+		{ TIMER1, "TIMER1", 2 },
+		{ TIMER2, "TIMER2", 2 },
+		{ TIMFLG, "TIMFLG", 1 },
+		{ STACKP, "STACKP", 1 },
+		{ HATABS, "HATABS", 38 },
+		{ ICHID , "ICHID" , 1 },
+		{ ICDNO , "ICDNO" , 1 },
+		{ ICCMD , "ICCMD" , 1 },
+		{ ICSTA , "ICSTA" , 1 },
+		{ ICBAL , "ICBAL" , 1 },
+		{ ICBAH , "ICBAH" , 1 },
+		{ ICPTL , "ICPTL" , 1 },
+		{ ICPTH , "ICPTH" , 1 },
+		{ ICBLL , "ICBLL" , 1 },
+		{ ICBLH , "ICBLH" , 1 },
+		{ ICAX1 , "ICAX1" , 1 },
+		{ ICAX2 , "ICAX2" , 1 },
+		{ ICAX3 , "ICAX3" , 1 },
+		{ ICAX4 , "ICAX4" , 1 },
+		{ ICAX5 , "ICAX5" , 1 },
+		{ ICAX6 , "ICAX6" , 1 },
+		{ BASICF, "BASICF", 1 },
+		{ GINTLK, "GINTLK", 1 },
+		{ CASBUF, "CASBUF", 131 },
+		{ LBUFF , "LBUFF" , 128 },
+	};
+
+	symstore->AddSymbols(kSymbols);
 
 	*ppStore = symstore.release();
 	return true;
@@ -1502,37 +1520,42 @@ bool ATCreateDefaultVariableSymbolStore5200(IATSymbolStore **ppStore) {
 	symstore->Init(0x0000, 0x0400);
 
 	using namespace ATKernelSymbols5200;
-	symstore->AddSymbol(POKMSK, "POKMSK", 1);
-	symstore->AddSymbol(RTCLOK, "RTCLOK", 1);
-	symstore->AddSymbol(CRITIC, "CRITIC", 1);
-	symstore->AddSymbol(ATRACT, "ATRACT", 1);
-	symstore->AddSymbol(SDMCTL, "SDMCTL", 1);
-	symstore->AddSymbol(SDLSTL, "SDLSTL", 1);
-	symstore->AddSymbol(SDLSTH, "SDLSTH", 1);
-	symstore->AddSymbol(PCOLR0, "PCOLR0", 1);
-	symstore->AddSymbol(PCOLR1, "PCOLR1", 1);
-	symstore->AddSymbol(PCOLR2, "PCOLR2", 1);
-	symstore->AddSymbol(PCOLR3, "PCOLR3", 1);
-	symstore->AddSymbol(COLOR0, "COLOR0", 1);
-	symstore->AddSymbol(COLOR1, "COLOR1", 1);
-	symstore->AddSymbol(COLOR2, "COLOR2", 1);
-	symstore->AddSymbol(COLOR3, "COLOR3", 1);
-	symstore->AddSymbol(COLOR4, "COLOR4", 1);
 
-	symstore->AddSymbol(VIMIRQ, "VIMIRQ", 2);
-	symstore->AddSymbol(VVBLKI, "VVBLKI", 2);
-	symstore->AddSymbol(VVBLKD, "VVBLKD", 2);
-	symstore->AddSymbol(VDSLST, "VDSLST", 2);
-	symstore->AddSymbol(VTRIGR, "VTRIGR", 2);
-	symstore->AddSymbol(VBRKOP, "VBRKOP", 2);
-	symstore->AddSymbol(VKYBDI, "VKYBDI", 2);
-	symstore->AddSymbol(VKYBDF, "VKYBDF", 2);
-	symstore->AddSymbol(VSERIN, "VSERIN", 2);
-	symstore->AddSymbol(VSEROR, "VSEROR", 2);
-	symstore->AddSymbol(VSEROC, "VSEROC", 2);
-	symstore->AddSymbol(VTIMR1, "VTIMR1", 2);
-	symstore->AddSymbol(VTIMR2, "VTIMR2", 2);
-	symstore->AddSymbol(VTIMR4, "VTIMR4", 2);
+	static constexpr ATSymbolStore::SymbolInfo kSymbols[] = {
+		{ POKMSK, "POKMSK", 1 },
+		{ RTCLOK, "RTCLOK", 1 },
+		{ CRITIC, "CRITIC", 1 },
+		{ ATRACT, "ATRACT", 1 },
+		{ SDMCTL, "SDMCTL", 1 },
+		{ SDLSTL, "SDLSTL", 1 },
+		{ SDLSTH, "SDLSTH", 1 },
+		{ PCOLR0, "PCOLR0", 1 },
+		{ PCOLR1, "PCOLR1", 1 },
+		{ PCOLR2, "PCOLR2", 1 },
+		{ PCOLR3, "PCOLR3", 1 },
+		{ COLOR0, "COLOR0", 1 },
+		{ COLOR1, "COLOR1", 1 },
+		{ COLOR2, "COLOR2", 1 },
+		{ COLOR3, "COLOR3", 1 },
+		{ COLOR4, "COLOR4", 1 },
+
+		{ VIMIRQ, "VIMIRQ", 2 },
+		{ VVBLKI, "VVBLKI", 2 },
+		{ VVBLKD, "VVBLKD", 2 },
+		{ VDSLST, "VDSLST", 2 },
+		{ VTRIGR, "VTRIGR", 2 },
+		{ VBRKOP, "VBRKOP", 2 },
+		{ VKYBDI, "VKYBDI", 2 },
+		{ VKYBDF, "VKYBDF", 2 },
+		{ VSERIN, "VSERIN", 2 },
+		{ VSEROR, "VSEROR", 2 },
+		{ VSEROC, "VSEROC", 2 },
+		{ VTIMR1, "VTIMR1", 2 },
+		{ VTIMR2, "VTIMR2", 2 },
+		{ VTIMR4, "VTIMR4", 2 },
+	};
+
+	symstore->AddSymbols(kSymbols);
 
 	*ppStore = symstore.release();
 	return true;
@@ -1544,50 +1567,54 @@ bool ATCreateDefaultKernelSymbolStore(IATSymbolStore **ppStore) {
 	vdrefptr<ATSymbolStore> symstore(new ATSymbolStore);
 
 	symstore->Init(0xD800, 0x0D00);
-	symstore->AddSymbol(AFP, "AFP", 1);
-	symstore->AddSymbol(FASC, "FASC", 1);
-	symstore->AddSymbol(IPF, "IPF", 1);
-	symstore->AddSymbol(FPI, "FPI", 1);
-	symstore->AddSymbol(ZFR0, "ZFR0", 1);
-	symstore->AddSymbol(ZF1, "ZF1", 1);
-	symstore->AddSymbol(FADD, "FADD", 1);
-	symstore->AddSymbol(FSUB, "FSUB", 1);
-	symstore->AddSymbol(FMUL, "FMUL", 1);
-	symstore->AddSymbol(FDIV, "FDIV", 1);
-	symstore->AddSymbol(PLYEVL, "PLYEVL", 1);
-	symstore->AddSymbol(FLD0R, "FLD0R", 1);
-	symstore->AddSymbol(FLD0P, "FLD0P", 1);
-	symstore->AddSymbol(FLD1R, "FLD1R", 1);
-	symstore->AddSymbol(FLD1P, "FLD1P", 1);
-	symstore->AddSymbol(FST0R, "FST0R", 1);
-	symstore->AddSymbol(FST0P, "FST0P", 1);
-	symstore->AddSymbol(FMOVE, "FMOVE", 1);
-	symstore->AddSymbol(EXP, "EXP", 1);
-	symstore->AddSymbol(EXP10, "EXP10", 1);
-	symstore->AddSymbol(LOG, "LOG", 1);
-	symstore->AddSymbol(LOG10, "LOG10", 1);
-	symstore->AddSymbol(0xE400, "EDITRV", 3);
-	symstore->AddSymbol(0xE410, "SCRENV", 3);
-	symstore->AddSymbol(0xE420, "KEYBDV", 3);
-	symstore->AddSymbol(0xE430, "PRINTV", 3);
-	symstore->AddSymbol(0xE440, "CASETV", 3);
-	symstore->AddSymbol(0xE450, "DISKIV", 3);
-	symstore->AddSymbol(0xE453, "DSKINV", 3);
-	symstore->AddSymbol(0xE456, "CIOV", 3);
-	symstore->AddSymbol(0xE459, "SIOV", 3);
-	symstore->AddSymbol(0xE45C, "SETVBV", 3);
-	symstore->AddSymbol(0xE45F, "SYSVBV", 3);
-	symstore->AddSymbol(0xE462, "XITVBV", 3);
-	symstore->AddSymbol(0xE465, "SIOINV", 3);
-	symstore->AddSymbol(0xE468, "SENDEV", 3);
-	symstore->AddSymbol(0xE46B, "INTINV", 3);
-	symstore->AddSymbol(0xE46E, "CIOINV", 3);
-	symstore->AddSymbol(0xE471, "BLKBDV", 3);
-	symstore->AddSymbol(0xE474, "WARMSV", 3);
-	symstore->AddSymbol(0xE477, "COLDSV", 3);
-	symstore->AddSymbol(0xE47A, "RBLOKV", 3);
-	symstore->AddSymbol(0xE47D, "CSOPIV", 3);
-	symstore->AddSymbol(0xE480, "VCTABL", 3);
+	static constexpr ATSymbolStore::SymbolInfo kSymbols[] = {
+		{ AFP, "AFP", 1 },
+		{ FASC, "FASC", 1 },
+		{ IPF, "IPF", 1 },
+		{ FPI, "FPI", 1 },
+		{ ZFR0, "ZFR0", 1 },
+		{ ZF1, "ZF1", 1 },
+		{ FADD, "FADD", 1 },
+		{ FSUB, "FSUB", 1 },
+		{ FMUL, "FMUL", 1 },
+		{ FDIV, "FDIV", 1 },
+		{ PLYEVL, "PLYEVL", 1 },
+		{ FLD0R, "FLD0R", 1 },
+		{ FLD0P, "FLD0P", 1 },
+		{ FLD1R, "FLD1R", 1 },
+		{ FLD1P, "FLD1P", 1 },
+		{ FST0R, "FST0R", 1 },
+		{ FST0P, "FST0P", 1 },
+		{ FMOVE, "FMOVE", 1 },
+		{ EXP, "EXP", 1 },
+		{ EXP10, "EXP10", 1 },
+		{ LOG, "LOG", 1 },
+		{ LOG10, "LOG10", 1 },
+		{ 0xE400, "EDITRV", 3 },
+		{ 0xE410, "SCRENV", 3 },
+		{ 0xE420, "KEYBDV", 3 },
+		{ 0xE430, "PRINTV", 3 },
+		{ 0xE440, "CASETV", 3 },
+		{ 0xE450, "DISKIV", 3 },
+		{ 0xE453, "DSKINV", 3 },
+		{ 0xE456, "CIOV", 3 },
+		{ 0xE459, "SIOV", 3 },
+		{ 0xE45C, "SETVBV", 3 },
+		{ 0xE45F, "SYSVBV", 3 },
+		{ 0xE462, "XITVBV", 3 },
+		{ 0xE465, "SIOINV", 3 },
+		{ 0xE468, "SENDEV", 3 },
+		{ 0xE46B, "INTINV", 3 },
+		{ 0xE46E, "CIOINV", 3 },
+		{ 0xE471, "BLKBDV", 3 },
+		{ 0xE474, "WARMSV", 3 },
+		{ 0xE477, "COLDSV", 3 },
+		{ 0xE47A, "RBLOKV", 3 },
+		{ 0xE47D, "CSOPIV", 3 },
+		{ 0xE480, "VCTABL", 3 },
+	};
+
+	symstore->AddSymbols(kSymbols);
 
 	*ppStore = symstore.release();
 	return true;

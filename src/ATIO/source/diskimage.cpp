@@ -36,16 +36,53 @@ namespace {
 	// The bit cell rate is 1MHz.
 	static const int kBytesPerTrack = 26042;
 
-	static const int kTrackInterleave18[18]={
+	// Tables for encoding the angular position of each sector. Note that these are
+	// indexed by virtual sector and not physical sector, so they are inverted from
+	// the usual way that interleave patterns are written.
+
+	// 1,8,15,4,11,18,7,14,3,10,17,6,13,2,9,16,5,12
+	static const int kTrackInterleaveSD_12_1[18]={
+		0, 13, 8, 3, 16, 11, 6, 1, 14, 9, 4, 17, 12, 7, 2, 15, 10, 5
+	};
+
+	// 1,3,5,7,9,11,13,15,17,2,4,6,8,10,12,14,16,18
+	static const int kTrackInterleaveSD_9_1[18]={
 		0, 9, 1, 10, 2, 11, 3, 12, 4, 13, 5, 14, 6, 15, 7, 16, 8, 17
 	};
 
-	static const int kTrackInterleaveDD[18]={
-		15, 12, 9, 6, 3, 0, 16, 13, 10, 7, 4, 1, 17, 14, 11, 8, 5, 2
+	// 17,15,13,11,9,7,5,3,1,18,16,14,12,10,8,6,4,2
+	static const int kTrackInterleaveSD_9_1_REV[18]={
+		8, 17, 7, 16, 6, 15, 5, 14, 4, 13, 3, 12, 2, 11, 1, 10, 9, 0
 	};
 
-	static const int kTrackInterleave26[26]={
+	// 4,8,12,16,1,5,9,13,17,2,6,10,14,18,3,7,11,15
+	static const int kTrackInterleaveSD_5_1[18]={
+		4, 9, 14, 0, 5, 10, 15, 1, 6, 11, 16, 2, 7, 12, 17, 3, 8, 13
+	};
+
+	// 1,7,13,6,12,18,5,11,17,4,10,16,3,9,15,2,8,14
+	static const int kTrackInterleaveDD_15_1[18]={
+		0, 15, 12, 9, 6, 3, 1, 16, 13, 10, 7, 4, 2, 17, 14, 11, 8, 5
+	};
+
+	// 1,3,5,7,9,11,13,15,17,2,4,6,8,10,12,14,16,18
+	static const int kTrackInterleaveDD_9_1[18]={
+		0, 9, 1, 10, 2, 11, 3, 12, 4, 13, 5, 14, 6, 15, 7, 16, 8, 17
+	};
+
+	// 1,14,9,4,17,12,7,2,15,10,5,18,13,8,3,16,11,6
+	static const int kTrackInterleaveDD_7_1[18]={
+		0, 7, 14, 3, 10, 17, 6, 13, 2, 9, 16, 5, 12, 1, 8, 15, 4, 11
+	};
+
+	// 1,3,5,7,9,11,13,15,17,19,21,23,25,2,4,6,8,10,12,14,16,18,20,22,24,26
+	static const int kTrackInterleaveED_13_1[26]={
 		0, 13, 1, 14, 2, 15, 3, 16, 4, 17, 5, 18, 6, 19, 7, 20, 8, 21, 9, 22, 10, 23, 11, 24, 12, 25
+	};
+
+	// 9,18,7,16,25,5,14,23,3,12,21,1,10,19,8,17,26,6,15,24,4,13,22,2,11,20
+	static const int kTrackInterleaveED_12_1[26]={
+		11, 23, 8, 20, 5, 17, 2, 14, 0, 12, 24, 9, 21, 6, 18, 3, 15, 1, 13, 25, 10, 22, 7, 19, 4, 16
 	};
 
 	struct ATDCMPassHeader {
@@ -177,6 +214,9 @@ public:
 	void Resize(uint32 sectors) override;
 	void FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskVirtualSectorInfo *vsecs, uint32 psCount, const ATDiskPhysicalSectorInfo *psecs, const uint8 *psecData) override;
 
+	bool IsSafeToReinterleave() const override;
+	void Reinterleave(ATDiskInterleave interleave) override;
+
 protected:
 	typedef ATDiskVirtualSectorInfo VirtSectorInfo;
 	typedef ATDiskPhysicalSectorInfo PhysSectorInfo;
@@ -248,14 +288,14 @@ void ATDiskImage::Init(uint32 sectorCount, uint32 bootSectorCount, uint32 sector
 		psi.mSize		= i < mBootSectorCount ? 128 : mSectorSize;
 		psi.mbDirty		= true;
 		psi.mbMFM		= mfm;
-		psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f
-			: mSectorsPerTrack >= 26 ? (float)kTrackInterleave26[i % 26] / 26.0f
-			: (float)kTrackInterleave18[i % 18] / 18.0f;
+		psi.mRotPos		= 0;
 		psi.mFDCStatus	= 0xFF;
 		psi.mWeakDataOffset = -1;
 
 		mImageChecksum += ATComputeZeroBlockChecksum(ATComputeOffsetChecksum(i + 1), psi.mSize);
 	}
+
+	Reinterleave(kATDiskInterleave_Default);
 
 	mbDirty = true;
 	mbDiskFormatDirty = true;
@@ -292,14 +332,14 @@ void ATDiskImage::Init(const ATDiskGeometryInfo& geometry) {
 		psi.mSize		= i < mBootSectorCount ? 128 : mSectorSize;
 		psi.mbDirty		= true;
 		psi.mbMFM		= geometry.mbMFM;
-		psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f
-			: mSectorsPerTrack >= 26 ? (float)kTrackInterleave26[i % 26] / 26.0f
-			: (float)kTrackInterleave18[i % 18] / 18.0f;
+		psi.mRotPos		= 0;
 		psi.mFDCStatus	= 0xFF;
 		psi.mWeakDataOffset = -1;
 
 		mImageChecksum += ATComputeZeroBlockChecksum(ATComputeOffsetChecksum(i + 1), psi.mSize);
 	}
+
+	Reinterleave(kATDiskInterleave_Default);
 
 	mbDirty = true;
 	mbDiskFormatDirty = true;
@@ -402,6 +442,8 @@ void ATDiskImage::LoadXFD(IVDRandomAccessStream& stream, sint64 fileSize) {
 
 	mPhysSectors.resize(sectorCount);
 	mVirtSectors.resize(sectorCount);
+	
+	ComputeGeometry();
 
 	const bool isDD = (mSectorSize == 256);
 	const bool isED = (len == 1040 * 128);
@@ -419,9 +461,7 @@ void ATDiskImage::LoadXFD(IVDRandomAccessStream& stream, sint64 fileSize) {
 		psi.mDiskOffset= -1;
 		psi.mSize		= mSectorSize;
 		psi.mFDCStatus	= 0xFF;
-		psi.mRotPos		= isDD ? (float)kTrackInterleaveDD[i % 18] / 18.0f
-						: isED ? (float)kTrackInterleave26[i % 26] / 26.0f
-						: (float)kTrackInterleave18[i % 18] / 18.0f;
+		psi.mRotPos		= 0;
 		psi.mWeakDataOffset = -1;
 		psi.mbDirty		= false;
 		psi.mbMFM		= mfm;
@@ -429,7 +469,7 @@ void ATDiskImage::LoadXFD(IVDRandomAccessStream& stream, sint64 fileSize) {
 		mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(i + 1), mImage.data() + psi.mOffset, psi.mSize);
 	}
 
-	ComputeGeometry();
+	Reinterleave(kATDiskInterleave_Default);
 }
 
 void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar_t *origPath, const uint8 *header) {
@@ -573,20 +613,6 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 			psi.mbDirty = false;
 			psi.mbMFM = mfm;
 
-			switch(diskType) {
-				case kATDCMDiskType_SD:
-					psi.mRotPos = (float)kTrackInterleave18[(sectorNum - 1) % 18] / 18.0f;
-					break;
-
-				case kATDCMDiskType_DD:
-					psi.mRotPos = (float)kTrackInterleaveDD[(sectorNum - 1) % 18] / 18.0f;
-					break;
-
-				case kATDCMDiskType_ED:
-					psi.mRotPos = (float)kTrackInterleave26[(sectorNum - 1) % 26] / 26.0f;
-					break;
-			}
-
 			mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(sectorNum), sectorBuffer, psi.mSize);
 
 			mImage.insert(mImage.end(), sectorBuffer, sectorBuffer + psi.mSize);
@@ -626,20 +652,7 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 			psi.mWeakDataOffset = -1;
 			psi.mbDirty = false;
 			psi.mbMFM = mfm;
-
-			switch(diskType) {
-				case kATDCMDiskType_SD:
-					psi.mRotPos = (float)kTrackInterleave18[(secNum - 1) % 18] / 18.0f;
-					break;
-
-				case kATDCMDiskType_DD:
-					psi.mRotPos = (float)kTrackInterleaveDD[(secNum - 1) % 18] / 18.0f;
-					break;
-
-				case kATDCMDiskType_ED:
-					psi.mRotPos = (float)kTrackInterleave26[(secNum - 1) % 26] / 26.0f;
-					break;
-			}
+			psi.mRotPos = 0;
 
 			mImageChecksum += ATComputeZeroBlockChecksum(ATComputeOffsetChecksum(secNum), psi.mSize);
 			mImage.resize(mImage.size() + psi.mSize, 0);
@@ -651,6 +664,7 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 	mImageFormat = kATDiskImageFormat_DCM;
 
 	ComputeGeometry();
+	Reinterleave(kATDiskInterleave_Default);
 }
 
 void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8 *header) {
@@ -963,7 +977,7 @@ void ATDiskImage::LoadP2(IVDRandomAccessStream& stream, uint32 len, const uint8 
 		psi.mDiskOffset = psi.mOffset + 16;
 		psi.mSize		= 128;
 		psi.mFDCStatus	= sectorhdr[1];
-		psi.mRotPos		= (float)kTrackInterleave18[i % 18] / 18.0f;
+		psi.mRotPos		= 0;
 		psi.mWeakDataOffset = -1;
 		psi.mbDirty		= false;
 		psi.mbMFM		= false;
@@ -1000,7 +1014,7 @@ void ATDiskImage::LoadP2(IVDRandomAccessStream& stream, uint32 len, const uint8 
 				psi.mDiskOffset = psi.mOffset + 16;
 				psi.mSize		= 128;
 				psi.mFDCStatus	= sectorhdr2[1];
-				psi.mRotPos		= (float)kTrackInterleave18[i % 18] / 18.0f + (1.0f / ((float)phantomSectorCount + 1)) * (j+1);
+				psi.mRotPos		= 0;
 				psi.mWeakDataOffset = -1;
 				psi.mbDirty		= false;
 				psi.mbMFM		= false;
@@ -1015,6 +1029,7 @@ void ATDiskImage::LoadP2(IVDRandomAccessStream& stream, uint32 len, const uint8 
 	}
 
 	ComputeGeometry();
+	Reinterleave(kATDiskInterleave_Default);
 }
 
 void ATDiskImage::LoadP3(IVDRandomAccessStream& stream, uint32 len, const uint8 *header) {
@@ -1065,7 +1080,6 @@ void ATDiskImage::LoadP3(IVDRandomAccessStream& stream, uint32 len, const uint8 
 
 		uint32 phantomSectorCount = sectorhdr[5];
 
-		float rotationalPosition = (float)kTrackInterleave18[i % 18] / 18.0f; 
 		float rotationalIncrement = phantomSectorCount ? (1.0f / (int)phantomSectorCount) : 0.0f;
 
 		mVirtSectors.push_back();
@@ -1090,7 +1104,7 @@ void ATDiskImage::LoadP3(IVDRandomAccessStream& stream, uint32 len, const uint8 
 			psi.mDiskOffset = psi.mOffset + 16;
 			psi.mSize		= 128;
 			psi.mFDCStatus	= sectorhdr2[1];
-			psi.mRotPos		= rotationalPosition;
+			psi.mRotPos		= 0;
 			psi.mWeakDataOffset = -1;
 			psi.mbDirty		= false;
 			psi.mbMFM		= false;
@@ -1100,12 +1114,11 @@ void ATDiskImage::LoadP3(IVDRandomAccessStream& stream, uint32 len, const uint8 
 			} else {
 				mImageChecksum += ATComputeBlockChecksum(ATComputeOffsetChecksum(mVirtSectors.size()), &mImage[psi.mDiskOffset], psi.mSize);
 			}
-
-			rotationalPosition += rotationalIncrement;
 		}
 	}
 
 	ComputeGeometry();
+	Reinterleave(kATDiskInterleave_Default);
 }
 
 void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar_t *origPath, const uint8 *header) {
@@ -1185,6 +1198,8 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 
 	ComputeGeometry();	// needed earlier for interleave
 
+	const auto interleaveFn = ATDiskGetInterleaveFn(kATDiskInterleave_Default, mGeometry);
+
 	for(uint32 i=0; i<sectorCount; ++i) {
 		PhysSectorInfo& psi = mPhysSectors[i];
 		VirtSectorInfo& vsi = mVirtSectors[i];
@@ -1201,9 +1216,7 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 		psi.mDiskOffset = psi.mOffset + 16;
 		psi.mSize		= i < mBootSectorCount ? 128 : mSectorSize;
 		psi.mFDCStatus	= 0xFF;
-		psi.mRotPos		= mSectorSize >= 256 ? (float)kTrackInterleaveDD[i % 18] / 18.0f
-						: mSectorsPerTrack >= 26 ? (float)kTrackInterleave26[i % 26] / 26.0f
-						: (float)kTrackInterleave18[i % 18] / 18.0f;
+		psi.mRotPos		= interleaveFn(i);
 		psi.mWeakDataOffset = -1;
 		psi.mbDirty		= false;
 		psi.mbMFM		= mGeometry.mbMFM;
@@ -1229,8 +1242,8 @@ void ATDiskImage::LoadARC(IVDRandomAccessStream& stream, const wchar_t *origPath
 	uint32 fileCount = 0;
 
 	ATDiskFSEntryInfo entryInfo;
-	uintptr fh = arcfs->FindFirst(0, entryInfo);
-	if (fh) {
+	ATDiskFSFindHandle fh = arcfs->FindFirst(ATDiskFSKey::None, entryInfo);
+	if (fh != ATDiskFSFindHandle::Invalid) {
 		try {
 			do {
 				uint32 size = entryInfo.mBytes;
@@ -1266,7 +1279,16 @@ void ATDiskImage::LoadARC(IVDRandomAccessStream& stream, const wchar_t *origPath
 		bitmapSectors = t;
 	}
 
-	const uint32 totalSectors = bitmapSectors + nonBitmapSectors;
+	// compute total sector count needed
+	uint32 totalSectors = bitmapSectors + nonBitmapSectors;
+
+	// increase to a "nice" disk size if too small
+	if (totalSectors < 720)
+		totalSectors = 720;
+	else if (totalSectors < 1040)
+		totalSectors = 1040;
+	else if (totalSectors < 1440)
+		totalSectors = 1440;
 
 	// initialize a new disk image (on us!)
 	Init(totalSectors, bootSectors, 128);
@@ -1275,13 +1297,13 @@ void ATDiskImage::LoadARC(IVDRandomAccessStream& stream, const wchar_t *origPath
 	vdautoptr<IATDiskFS> sdfs(ATDiskFormatImageSDX2(this, origPath ? VDTextWToA(VDFileSplitPath(origPath)).c_str() : NULL));
 
 	// copy over files
-	uintptr fh2 = arcfs->FindFirst(0, entryInfo);
-	if (fh2) {
+	ATDiskFSFindHandle fh2 = arcfs->FindFirst(ATDiskFSKey::None, entryInfo);
+	if (fh2 != ATDiskFSFindHandle::Invalid) {
 		try {
 			vdfastvector<uint8> buf;
 			do {
 				arcfs->ReadFile(entryInfo.mKey, buf);
-				uintptr fileKey = sdfs->WriteFile(0, entryInfo.mFileName.c_str(), buf.data(), (uint32)buf.size());
+				ATDiskFSKey fileKey = sdfs->WriteFile(ATDiskFSKey::None, entryInfo.mFileName.c_str(), buf.data(), (uint32)buf.size());
 				sdfs->SetFileTimestamp(fileKey, entryInfo.mDate);
 			} while(arcfs->FindNext(fh2, entryInfo));
 
@@ -1914,9 +1936,40 @@ void ATDiskImage::FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskV
 	}
 }
 
+bool ATDiskImage::IsSafeToReinterleave() const {
+	for(const ATDiskVirtualSectorInfo& vsi : mVirtSectors) {
+		if (vsi.mNumPhysSectors > 1)
+			return false;
+	}
+
+	return true;
+}
+
+void ATDiskImage::Reinterleave(ATDiskInterleave interleave) {
+	const auto interleaveFn = ATDiskGetInterleaveFn(interleave, mGeometry);
+	uint32 vsIndex = 0;
+
+	for(const ATDiskVirtualSectorInfo& vsi : mVirtSectors) {
+		const uint32 n = vsi.mNumPhysSectors;
+
+		if (n) {
+			const uint32 psec0 = vsi.mStartPhysSector;
+			float pos = interleaveFn(vsIndex);
+			float posInc = 1.0f / (float)n;
+
+			for(uint32 i=0; i<n; ++i) {
+				mPhysSectors[psec0 + i].mRotPos = pos;
+				pos += posInc;
+			}
+		}
+
+		++vsIndex;
+	}
+}
+
 void ATDiskImage::ComputeGeometry() {
 	uint32 sectorCount = (uint32)mVirtSectors.size();
-	mSectorsPerTrack = mSectorSize >= 256 ? 18 : sectorCount > 720 && !(sectorCount % 26) ? 26 : 18;
+	mSectorsPerTrack = mSectorSize >= 512 ? sectorCount : mSectorSize >= 256 ? 18 : sectorCount > 720 && !(sectorCount % 26) ? 26 : 18;
 
 	mGeometry.mTrackCount = 1;
 	mGeometry.mSideCount = 1;
@@ -2704,4 +2757,62 @@ void ATDiskConvertPERCOMToGeometry(ATDiskGeometryInfo& geom, const uint8 percom[
 	geom.mbMFM = (percom[5] & 4) != 0;
 	geom.mBootSectorCount = geom.mSectorSize < 512 ? 3 : 0;
 	geom.mTotalSectorCount = geom.mSectorsPerTrack * geom.mSideCount * geom.mTrackCount;
+}
+
+ATDiskInterleave ATDiskGetDefaultInterleave(const ATDiskGeometryInfo& info) {
+	if (info.mSectorSize >= 256)
+		return kATDiskInterleave_DD_15_1;
+	else if (info.mSectorsPerTrack >= 26)
+		return kATDiskInterleave_ED_13_1;
+	else
+		return kATDiskInterleave_SD_9_1;
+}
+
+vdfunction<float(uint32)> ATDiskGetInterleaveFn(ATDiskInterleave interleave, const ATDiskGeometryInfo& info) {
+	// 810/1050/XF551 sector spacing: 11.072ms
+	static constexpr float kTurnsPerSectorSD = 11.072f / (60000.0f / 288.0f);
+
+	// 1050/XF551 sector spacing: 7.680ms
+	static constexpr float kTurnsPerSectorED = 7.680f / (60000.0f / 288.0f);
+
+	// XF551 sector spacing: 10.944ms
+	static constexpr float kTurnsPerSectorDD = 10.944f / (60000.0f / 288.0f);
+
+	if (interleave == kATDiskInterleave_Default)
+		interleave = ATDiskGetDefaultInterleave(info);
+
+	switch(interleave) {
+		case kATDiskInterleave_Default:
+		default:
+			VDFAIL("Invalid interleave passed to ATDiskGetInterleaveFn().");
+		case kATDiskInterleave_1_1:
+			return [spt = (uint32)info.mSectorsPerTrack, secLen = 1.0f / (float)info.mSectorsPerTrack](uint32 secIdx) { return (float)(secIdx % spt) * secLen; };
+
+		case kATDiskInterleave_SD_12_1:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveSD_12_1[secIdx % 18] * kTurnsPerSectorSD; };
+
+		case kATDiskInterleave_SD_9_1:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveSD_9_1[secIdx % 18] * kTurnsPerSectorSD; };
+
+		case kATDiskInterleave_SD_9_1_REV:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveSD_9_1_REV[secIdx % 18] * kTurnsPerSectorSD; };
+
+		case kATDiskInterleave_SD_5_1:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveSD_5_1[secIdx % 18] * kTurnsPerSectorSD; };
+
+		case kATDiskInterleave_ED_13_1:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveED_13_1[secIdx % 26] * kTurnsPerSectorED; };
+
+		case kATDiskInterleave_ED_12_1:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveED_12_1[secIdx % 26] * kTurnsPerSectorED; };
+
+		case kATDiskInterleave_DD_15_1:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveDD_15_1[secIdx % 18] * kTurnsPerSectorDD; };
+
+		case kATDiskInterleave_DD_9_1:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveDD_9_1[secIdx % 18] * kTurnsPerSectorDD; };
+
+		case kATDiskInterleave_DD_7_1:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveDD_7_1[secIdx % 18] * kTurnsPerSectorDD; };
+	}
 }

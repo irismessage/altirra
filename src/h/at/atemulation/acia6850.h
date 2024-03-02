@@ -15,8 +15,8 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#ifndef f_AT_ACIA_H
-#define f_AT_ACIA_H
+#ifndef f_AT_ACIA6850_H
+#define f_AT_ACIA6850_H
 
 #include <vd2/system/function.h>
 #include <at/atcore/scheduler.h>

@@ -34,6 +34,30 @@
 #include "simeventmanager.h"
 #include "simulator.h"
 
+const uint8 ATHLEProgramLoader::kHandlerData[]={
+	// text record
+	0x00, 0x11,
+		0x00, 0x00,			//	relative load address (0)
+		0x00, 0x00,			//			dta		a(DevOpen-1)
+		0x00, 0x00,			//			dta		a(DevClose-1)
+		0x00, 0x00,			//			dta		a(DevGetByte-1)
+		0x00, 0x00,			//			dta		a(DevPutByte-1)
+		0x00, 0x00,			//			dta		a(DevGetStatus-1)
+		0x00, 0x00,			//			dta		a(DevSpecial-1)
+		0x4C, 0xFF, 0x01,	//			jmp		$01FF		;initiate launch through hook
+
+	// end
+	0x0B, 0x00, 0x00, 0x00
+};
+
+const uint8 ATHLEProgramLoader::kBootSector[]={
+	0x00,				// flags
+	0x01,				// boot sector count
+	0x00, 0x07,			// load address
+	0xC0, 0xE4,			// init address (KnownRTS)
+	0x4C, 0xFF, 0x01,	// initiate launch process
+};
+
 ATHLEProgramLoader::ATHLEProgramLoader() {
 }
 
@@ -41,15 +65,21 @@ ATHLEProgramLoader::~ATHLEProgramLoader() {
 	Shutdown();
 }
 
-void ATHLEProgramLoader::Init(ATCPUEmulator *cpu, ATSimulatorEventManager *simEventMgr, ATSimulator *sim) {
+void ATHLEProgramLoader::Init(ATCPUEmulator *cpu, ATSimulatorEventManager *simEventMgr, ATSimulator *sim, IATDeviceSIOManager *sioMgr) {
 	mpCPU = cpu;
 	mpCPUHookMgr = cpu->GetHookManager();
 	mpSimEventMgr = simEventMgr;
 	mpSim = sim;
+	mpSIOMgr = sioMgr;
 }
 
 void ATHLEProgramLoader::Shutdown() {
 	UnloadProgramSymbols();
+
+	if (mpSIOMgr) {
+		mpSIOMgr->RemoveDevice(this);
+		mpSIOMgr = nullptr;
+	}
 
 	if (mpCPUHookMgr) {
 		mpCPUHookMgr->UnsetHook(mpLoadContinueHook);
@@ -66,7 +96,7 @@ void ATHLEProgramLoader::Shutdown() {
 	vdsaferelease <<= mpImage;
 }
 
-void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage *image) {
+void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage *image, ATHLEProgramLoadMode launchMode) {
 	vdsaferelease <<= mpImage;
 
 	uint32 len = image->GetSize();
@@ -77,7 +107,24 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage
 	if (len >= 4 && (buf[0] == 0xfe || buf[0] == 0xfa) && buf[1] == 0xff)
 		throw MyError("Program load failed: this program must be loaded under SpartaDOS X.");
 
-	mpCPUHookMgr->SetHookMethod(mpLaunchHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::DSKINV, 10, this, &ATHLEProgramLoader::OnDSKINV);
+	mpSIOMgr->RemoveDevice(this);
+	mbType3PollActive = false;
+	mbType3PollEnabled = false;
+	mbDiskBootEnabled = false;
+
+	if (launchMode == kATHLEProgramLoadMode_Default)
+		mpCPUHookMgr->SetHookMethod(mpLaunchHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::DSKINV, 10, this, &ATHLEProgramLoader::OnDSKINV);
+	else {
+		mpCPUHookMgr->SetHookMethod(mpLaunchHook, kATCPUHookMode_Always, 0x1FF, 0, this, &ATHLEProgramLoader::OnDeferredLaunch);
+		mpSIOMgr->AddDevice(this);
+
+		if (launchMode == kATHLEProgramLoadMode_DiskBoot)
+			mbDiskBootEnabled = true;
+		else if (launchMode == kATHLEProgramLoadMode_Type3Poll) {
+			mbType3PollActive = true;
+			mbType3PollEnabled = true;
+		}
+	}
 
 	// try to load symbols
 	UnloadProgramSymbols();
@@ -147,7 +194,121 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage
 	mpImage = image;
 }
 
+void ATHLEProgramLoader::InitSIO(IATDeviceSIOManager *mgr) {
+}
+
+ATHLEProgramLoader::CmdResponse ATHLEProgramLoader::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
+	if (!cmd.mbStandardRate)
+		return kCmdResponse_NotHandled;
+
+	// check for type 3 poll
+	uint8 buf[128];
+
+	if (mbType3PollEnabled && cmd.mDevice == 0x4F && cmd.mCommand == 0x40 && cmd.mAUX[0] == cmd.mAUX[1]) {
+		if (cmd.mAUX[0] == 0x00 && cmd.mPollCount == 1 && mbType3PollActive) {
+			mbType3PollActive = false;
+
+			// send back handler info
+			buf[0] = (uint8)(sizeof(kHandlerData) >> 0);
+			buf[1] = (uint8)(sizeof(kHandlerData) >> 8);
+			buf[2] = 0x7D;
+			buf[3] = 0x00;
+
+			mpSIOMgr->BeginCommand();
+			mpSIOMgr->SendACK();
+			mpSIOMgr->SendComplete();
+			mpSIOMgr->SendData(buf, 4, true);
+			mpSIOMgr->EndCommand();
+
+			return kCmdResponse_Start;
+		} else if (cmd.mAUX[0] == 0x4F) {
+			// Poll Reset -- do not respond, but re-enable poll
+			mbType3PollActive = true;
+			return kCmdResponse_NotHandled;
+		}
+	}
+
+	if (cmd.mDevice == 0x31 && mbDiskBootEnabled) {
+		if (cmd.mCommand == 0x52) {		// read sector
+			// get sector number
+			const uint32 sector = VDReadUnalignedLEU16(cmd.mAUX);
+
+			// fail with NAK if outside of SD disk
+			if (sector == 0 || sector > 720)
+				return kCmdResponse_Fail_NAK;
+
+			// send back sector
+			memset(buf, 0, sizeof buf);
+
+			if (sector == 1) {
+				static_assert(sizeof(kBootSector) <= sizeof(buf));
+				memcpy(buf, kBootSector, sizeof kBootSector);
+			}
+
+			mpSIOMgr->BeginCommand();
+			mpSIOMgr->SendACK();
+			mpSIOMgr->SendComplete();
+			mpSIOMgr->SendData(buf, 128, true);
+			mpSIOMgr->EndCommand();
+
+			return kCmdResponse_Start;
+		} else if (cmd.mCommand == 0x53) {	// status
+			buf[0] = 0x00;		// drive status
+			buf[1] = 0xFF;		// inverted FDC status
+			buf[2] = 0xE0;		// format timeout
+			buf[3] = 0;
+
+			mpSIOMgr->BeginCommand();
+			mpSIOMgr->SendACK();
+			mpSIOMgr->SendComplete();
+			mpSIOMgr->SendData(buf, 4, true);
+			mpSIOMgr->EndCommand();
+
+			return kCmdResponse_Start;
+		}
+
+		return kCmdResponse_Fail_NAK;
+	}
+
+	if (cmd.mDevice == 0x7D) {
+		if (cmd.mCommand == 0x26) {
+			// compute block number and check if it is valid
+			const uint32 block = cmd.mAUX[0];
+
+			if (block * 128 >= sizeof kHandlerData)
+				return kCmdResponse_Fail_NAK;
+
+			// return handler data
+			memset(buf, 0, sizeof buf);
+
+			const uint32 offset = block * 128;
+			memcpy(buf, kHandlerData + offset, std::min<uint32>(128, sizeof(kHandlerData) - offset));
+
+			mpSIOMgr->BeginCommand();
+			mpSIOMgr->SendACK();
+			mpSIOMgr->SendComplete();
+			mpSIOMgr->SendData(buf, 128, true);
+			mpSIOMgr->EndCommand();
+
+			return kCmdResponse_Start;
+		}
+
+		// eh, we don't know this command
+		return kCmdResponse_Fail_NAK;
+	}
+
+	return kCmdResponse_NotHandled;
+}
+
 uint8 ATHLEProgramLoader::OnDSKINV(uint16) {
+	return StartLoad();
+}
+
+uint8 ATHLEProgramLoader::OnDeferredLaunch(uint16) {
+	return StartLoad();
+}
+
+uint8 ATHLEProgramLoader::StartLoad() {
 	ATKernelDatabase kdb(mpCPU->GetMemory());
 
 	mbLaunchPending = false;
@@ -173,6 +334,11 @@ uint8 ATHLEProgramLoader::OnDSKINV(uint16) {
 
 	// reset DSKINV stub
 	mpCPUHookMgr->UnsetHook(mpLaunchHook);
+
+	// detach serial device
+	if (mpSIOMgr) {
+		mpSIOMgr->RemoveDevice(this);
+	}
 
 	// set COLDST so kernel doesn't think we were in the middle of init (required for
 	// some versions of Alley Cat)

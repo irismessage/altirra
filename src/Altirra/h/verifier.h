@@ -29,7 +29,10 @@ enum {
 	kATVerifierFlag_RecursiveNMI = 0x02,
 	kATVerifierFlag_InterruptRegs = 0x04,
 	kATVerifierFlag_64KWrap = 0x08,
-	kATVerifierFlag_AbnormalDMA = 0x10
+	kATVerifierFlag_AbnormalDMA = 0x10,
+	kATVerifierFlag_AddressZero = 0x20,
+	kATVerifierFlag_LoadingOverDisplayList = 0x40,
+	kATVerifierFlag_CallingConventionViolations = 0x80
 };
 
 class ATCPUVerifier {
@@ -54,7 +57,6 @@ public:
 	void OnReset();
 	void OnIRQEntry();
 	void OnNMIEntry();
-	void OnReturn();
 	void VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 target);
 
 private:

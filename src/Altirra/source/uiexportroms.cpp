@@ -35,6 +35,7 @@ void OnCommandToolsExportROMSet() {
 		{ kATFirmwareId_Basic_ATBasic, L"atbasic.rom" },
 		{ kATFirmwareId_Kernel_LLE, L"altirraos-800.rom" },
 		{ kATFirmwareId_Kernel_LLEXL, L"altirraos-xl.rom" },
+		{ kATFirmwareId_Kernel_816, L"altirraos-816.rom" },
 		{ kATFirmwareId_5200_LLE, L"altirraos-5200.rom" },
 	};
 

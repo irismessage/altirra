@@ -57,6 +57,12 @@
     <ClCompile Include="source\genericdialog.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\nativewindowproxy.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\messagedispatcher.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="res\resource.h">
@@ -96,6 +102,12 @@
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atnativeui\genericdialog.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atnativeui\nativewindowproxy.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atnativeui\messagedispatcher.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>

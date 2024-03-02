@@ -16,12 +16,6 @@
 
 extern ATDebuggerLogChannel g_ATLCVDisk;
 
-namespace {
-	static const uint8 kTrackInterleave18[18]={
-		0, 9, 1, 10, 2, 11, 3, 12, 4, 13, 5, 14, 6, 15, 7, 16, 8, 17
-	};
-}
-
 // General SDFS virtual disk layout:
 //
 // +------+-----------+----------------+------------------------------------------+
@@ -177,6 +171,9 @@ public:
 	void Resize(uint32 sectors) override;
 	void FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskVirtualSectorInfo *vsecs, uint32 psCount, const ATDiskPhysicalSectorInfo *psecs, const uint8 *psecData) override;
 
+	bool IsSafeToReinterleave() const override;
+	void Reinterleave(ATDiskInterleave interleave) override;
+
 protected:
 	struct DirEnt;
 
@@ -293,6 +290,8 @@ private:
 	VDLazyTimer mCloseTimer;
 	ATDirectoryWatcher mDirWatcher;
 	vdfastvector<wchar_t> mDirChanges;
+	
+	vdfunction<float(uint32)> mpInterleaveFn;
 
 	// This is a hash table used to accelerate sector key searches. It is keyed
 	// off of all four bytes of the sector key added together.
@@ -389,6 +388,9 @@ void ATDiskImageVirtualFolderSDFS::Init(const wchar_t *path, uint64 uniquenessVa
 	for(size_t i=2; i<vdcountof(mFiles); ++i)
 		mFileLRU.push_front(&mFiles[i]);
 
+	// set interleave
+	Reinterleave(kATDiskInterleave_Default);
+
 	// init watcher (OK if this fails)
 	try {
 		mDirWatcher.Init(mPath.c_str());
@@ -446,7 +448,7 @@ void ATDiskImageVirtualFolderSDFS::GetPhysicalSectorInfo(uint32 index, ATDiskPhy
 	info.mSize = 128;
 	info.mbDirty = false;
 	info.mbMFM = false;
-	info.mRotPos = (float)kTrackInterleave18[index % 18] / 18.0f;
+	info.mRotPos = mpInterleaveFn(index);
 	info.mFDCStatus = 0xFF;
 	info.mWeakDataOffset = -1;
 }
@@ -668,6 +670,14 @@ void ATDiskImageVirtualFolderSDFS::Resize(uint32 sectors) {
 
 void ATDiskImageVirtualFolderSDFS::FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskVirtualSectorInfo *vsecs, uint32 psCount, const ATDiskPhysicalSectorInfo *psecs, const uint8 *psecData) {
 	throw MyError("A virtual disk cannot be formatted.");
+}
+
+bool ATDiskImageVirtualFolderSDFS::IsSafeToReinterleave() const {
+	return true;
+}
+
+void ATDiskImageVirtualFolderSDFS::Reinterleave(ATDiskInterleave interleave) {
+	mpInterleaveFn = ATDiskGetInterleaveFn(interleave, GetGeometry());
 }
 
 void ATDiskImageVirtualFolderSDFS::InitRoot() {

@@ -38,10 +38,15 @@ public:
 	virtual bool	IsFrozen() = 0;
 	virtual uint32	GetAvailSpace() = 0;
 	virtual uint32	GetBufferLevel() = 0;
-	virtual uint32	EstimateHWBufferLevel() = 0;
+	virtual uint32	EstimateHWBufferLevel(bool *underflowDetected) = 0;
 	virtual sint32	GetPosition() = 0;
 	virtual sint32	GetPositionBytes() = 0;
 	virtual double	GetPositionTime() = 0;
+
+	// Returns the mixing rate in Hz. This is the rate at which audio must be produced.
+	// This will differ for WASAPI; WaveOut, DirectSound, and XAudio2 will always return
+	// the requested rate.
+	virtual uint32	GetMixingRate() const = 0;
 
 	virtual bool	Start() = 0;
 	virtual bool	Stop() = 0;
@@ -53,5 +58,7 @@ public:
 
 IVDAudioOutput *VDCreateAudioOutputWaveOutW32();
 IVDAudioOutput *VDCreateAudioOutputDirectSoundW32();
+IVDAudioOutput *VDCreateAudioOutputXAudio2W32();
+IVDAudioOutput *VDCreateAudioOutputWASAPIW32();
 
 #endif

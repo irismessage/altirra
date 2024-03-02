@@ -44,15 +44,16 @@ public:
 	typedef std::reverse_iterator<iterator>			reverse_iterator;
 	typedef std::reverse_iterator<const_iterator>	const_reverse_iterator;
 
-	vdvector_view() : mpBegin(nullptr), mSize(0) {}
-	vdvector_view(T *p, size_t n) : mpBegin(p), mSize(n) {}
+	constexpr vdvector_view() : mpBegin(nullptr), mSize(0) {}
+	constexpr vdvector_view(T *p, size_t n) : mpBegin(p), mSize(n) {}
 
-	vdvector_view(const vdvector_view<std::remove_const_t<T>>& v)
+	constexpr vdvector_view(const vdvector_view<std::remove_const_t<T>>& v)
 		: mpBegin(v.data())
 		, mSize(v.size())
 	{
 	}
 
+	// do not make this constexpr -- 15.7.3/15.8.0p3 has broken constexpr array arithmetic
 	template<typename U>
 	vdvector_view(const U& v)
 		: mpBegin(&*std::begin(v))
@@ -66,8 +67,8 @@ public:
 
 	iterator				begin() const { return mpBegin; }
 	const_iterator			cbegin() const { return mpBegin; }
-	reverse_iterator		rbegin() const { return reverse_iterator(mpEnd + mSize); }
-	const_reverse_iterator	crbegin() const { return const_reverse_iterator(mpEnd + mSize); }
+	reverse_iterator		rbegin() const { return reverse_iterator(mpBegin + mSize); }
+	const_reverse_iterator	crbegin() const { return const_reverse_iterator(mpBegin + mSize); }
 
 	iterator				end() const { return mpBegin + mSize; }
 	const_iterator			cend() const { return mpBegin + mSize; }

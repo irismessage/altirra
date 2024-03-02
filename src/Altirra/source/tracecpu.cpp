@@ -137,12 +137,18 @@ uint32 ATTraceChannelCPUHistory::ReadHistoryEvents(const ATCPUHistoryEntry **ppE
 	n = std::min<uint32>(n, mEventCount - fetchPos);
 
 	if (ppEvents) {
-		n = std::min<uint32>(n, kBlockSize - (fetchPos & (kBlockSize - 1)));
+		uint32 left = n;
 
-		const ATCPUHistoryEntry *he = UnpackBlock(fetchPos >> kBlockSizeBits) + (fetchPos & (kBlockSize - 1));
+		while(left) {
+			uint32 span = std::min<uint32>(left, kBlockSize - (fetchPos & (kBlockSize - 1)));
+			left -= span;
 
-		for(uint32 i=0; i<n; ++i)
-			*ppEvents++ = he++;
+			const ATCPUHistoryEntry *he = UnpackBlock(fetchPos >> kBlockSizeBits) + (fetchPos & (kBlockSize - 1));
+			fetchPos += span;
+
+			for(uint32 i=0; i<span; ++i)
+				*ppEvents++ = he++;
+		}
 	}
 
 	return n;

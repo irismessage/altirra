@@ -16,7 +16,6 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
-#include <windows.h>
 #include <vd2/system/error.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>

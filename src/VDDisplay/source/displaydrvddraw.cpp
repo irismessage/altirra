@@ -198,7 +198,7 @@ bool VDDirectDrawManager::Init(IVDDirectDrawClient *pClient) {
 
 	if (mhMonitor) {
 		typedef BOOL (APIENTRY *tpGetMonitorInfoA)(HMONITOR mon, LPMONITORINFO lpmi);
-		tpGetMonitorInfoA pGetMonitorInfoA = (tpGetMonitorInfoA)GetProcAddress(GetModuleHandle("user32"), "GetMonitorInfoA");
+		tpGetMonitorInfoA pGetMonitorInfoA = (tpGetMonitorInfoA)GetProcAddress(GetModuleHandleW(L"user32"), "GetMonitorInfoA");
 
 		if (pGetMonitorInfoA) {
 			MONITORINFO monInfo = {sizeof(MONITORINFO)};

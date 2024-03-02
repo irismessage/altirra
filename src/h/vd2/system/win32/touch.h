@@ -43,7 +43,7 @@
 	#define TOUCHINPUTMASKF_EXTRAINFO		0x0002
 	#define TOUCHINPUTMASKF_TIMEFROMSYSTEM	0x0001
 
-	typedef struct _TOUCHINPUT {
+	typedef struct tagTOUCHINPUT {
 		LONG		x;
 		LONG		y;
 		HANDLE		hSource;
@@ -109,7 +109,7 @@
 
 	#define WM_GESTURENOTIFY	0x011A
 
-	typedef struct _GESTURECONFIG {
+	typedef struct tagGESTURECONFIG {
 		DWORD dwID;
 		DWORD dwWant;
 		DWORD dwBlock;

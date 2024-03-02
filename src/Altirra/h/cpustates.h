@@ -23,7 +23,6 @@ namespace AT6502States {
 		kStateNop,
 		kStateReadOpcode,
 		kStateReadOpcodeNoBreak,
-		kStateAddToHistory,
 		kStateAddEAToHistory,
 		kStateReadDummyOpcode,
 		kStateAddAsPathStart,
@@ -135,6 +134,12 @@ namespace AT6502States {
 		kStateJnoAddToPath,
 		kStateJccFalseRead,
 		kStateStepOver,
+
+		// verifier states
+		kStateUpdateHeatMap,
+		kStateVerifyInsn,
+		kStateVerifyNMIEntry,
+		kStateVerifyIRQEntry,
 
 		// 65C02 states
 		kStateResetBit,
@@ -262,13 +267,6 @@ namespace AT6502States {
 		kState816_Per,
 		kState816_SetBank0,
 		kState816_SetBankPBR,
-
-		kStateStandard_Count,
-
-		kStateUpdateHeatMap		= 0xF7,
-		kStateVerifyInsn		= 0xF8,
-		kStateVerifyNMIEntry,
-		kStateVerifyIRQEntry,
 
 		kStateCount
 	};

@@ -45,31 +45,32 @@ public:
 	bool IsReadOnly() { return mbReadOnly; }
 	void SetReadOnly(bool readOnly);
 	void SetAllowExtend(bool allow) {}
+	void SetStrictNameChecking(bool strict) { mbStrictNames = strict; }
 
 	bool Validate(ATDiskFSValidationReport& report);
 	void Flush();
 
-	uintptr FindFirst(uint32 key, ATDiskFSEntryInfo& info);
-	bool FindNext(uintptr searchKey, ATDiskFSEntryInfo& info);
-	void FindEnd(uintptr searchKey);
+	ATDiskFSFindHandle FindFirst(ATDiskFSKey key, ATDiskFSEntryInfo& info);
+	bool FindNext(ATDiskFSFindHandle searchKey, ATDiskFSEntryInfo& info);
+	void FindEnd(ATDiskFSFindHandle searchKey);
 
-	void GetFileInfo(uint32 key, ATDiskFSEntryInfo& info);
-	uint32 GetParentDirectory(uint32 dirKey);
+	void GetFileInfo(ATDiskFSKey key, ATDiskFSEntryInfo& info);
+	ATDiskFSKey GetParentDirectory(ATDiskFSKey dirKey);
 
-	uint32 LookupFile(uint32 parentKey, const char *filename);
+	ATDiskFSKey LookupFile(ATDiskFSKey parentKey, const char *filename);
 
-	void DeleteFile(uint32 key);
-	void ReadFile(uint32 key, vdfastvector<uint8>& dst);
-	uint32 WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len);
-	void RenameFile(uint32 key, const char *newFileName);
-	void SetFileTimestamp(uint32 key, const VDExpandedDate& date) {}
+	void DeleteFile(ATDiskFSKey key);
+	void ReadFile(ATDiskFSKey key, vdfastvector<uint8>& dst);
+	ATDiskFSKey WriteFile(ATDiskFSKey parentKey, const char *filename, const void *src, uint32 len);
+	void RenameFile(ATDiskFSKey key, const char *newFileName);
+	void SetFileTimestamp(ATDiskFSKey key, const VDExpandedDate& date) {}
 
-	uint32 CreateDir(uint32 parentKey, const char *filename);
+	ATDiskFSKey CreateDir(ATDiskFSKey parentKey, const char *filename);
 
 protected:
 	struct DirEnt;
 	
-	uint32 LookupEntry(const char *filename) const;
+	ATDiskFSKey LookupEntry(const char *filename) const;
 
 	void DecodeDirEnt(DirEnt& de, const uint8 *src) const;
 
@@ -93,12 +94,13 @@ protected:
 	bool IsValidFileName(const char *filename) const;
 
 	void FlushDirectoryCache();
-	void LoadDirectory(uintptr key);
+	void LoadDirectory(ATDiskFSKey key);
 	void LoadDirectoryByStart(uint32 startSector);
 
 	IATDiskImage *mpImage;
 	bool mbDirty;
 	bool mbReadOnly;
+	bool mbStrictNames = true;
 	bool mbDOS1;
 	bool mbDOS25;
 	bool mbMyDOS;
@@ -139,7 +141,7 @@ protected:
 
 	vdfastvector<uint8> mTempSectorMap;
 
-	vdhashmap<uintptr, uintptr> mDirStartToKeyMap;
+	vdhashmap<uint32, uint32> mDirStartToKeyMap;
 };
 
 ATDiskFSDOS2::ATDiskFSDOS2() {
@@ -235,6 +237,8 @@ void ATDiskFSDOS2::InitNew(IATDiskImage *image, bool mydos, bool dos1) {
 
 	} else if (mbDOS25)
 		vtocSectorCount = 2;
+	else if (mbDOS1)
+		vtocCode = 0x01;
 
 	mVTOCBitmap.resize(vtocSectorCount * mSectorSize, 0);
 
@@ -626,18 +630,18 @@ void ATDiskFSDOS2::Flush() {
 	mbDirty = false;
 }
 
-uintptr ATDiskFSDOS2::FindFirst(uint32 key, ATDiskFSEntryInfo& info) {
+ATDiskFSFindHandle ATDiskFSDOS2::FindFirst(ATDiskFSKey key, ATDiskFSEntryInfo& info) {
 	// determine the starting sector
 	uint32 directoryStart = 361;
 
-	if (key) {
+	if (key != ATDiskFSKey::None) {
 		// load the parent directory
-		LoadDirectoryByStart(key >> 6);
+		LoadDirectoryByStart((uint32)key >> 6);
 
 		// check the directory entry to see if it's actually a dir
-		const DirEnt& de = mDirectory[key & 63];
+		const DirEnt& de = mDirectory[(uint32)key & 63];
 		if (!(de.mFlags & DirEnt::kFlagSubDir))
-			return 0;
+			return ATDiskFSFindHandle::Invalid;
 
 		directoryStart = de.mFirstSector;
 	}
@@ -646,14 +650,14 @@ uintptr ATDiskFSDOS2::FindFirst(uint32 key, ATDiskFSEntryInfo& info) {
 	h->mPos = 0;
 	h->mDirectoryStart = directoryStart;
 
-	if (!FindNext((uintptr)h.get(), info)) {
-		return 0;
+	if (!FindNext((ATDiskFSFindHandle)(uintptr)h.get(), info)) {
+		return ATDiskFSFindHandle::Invalid;
 	}
 
-	return (uintptr)h.release();
+	return (ATDiskFSFindHandle)(uintptr)h.release();
 }
 
-bool ATDiskFSDOS2::FindNext(uintptr searchKey, ATDiskFSEntryInfo& info) {
+bool ATDiskFSDOS2::FindNext(ATDiskFSFindHandle searchKey, ATDiskFSEntryInfo& info) {
 	FindHandle *h = (FindHandle *)searchKey;
 
 	// reload the directory, just in case something happened in the meantime
@@ -668,21 +672,21 @@ bool ATDiskFSDOS2::FindNext(uintptr searchKey, ATDiskFSEntryInfo& info) {
 		if (!IsVisible(de))
 			continue;
 
-		GetFileInfo((h->mDirectoryStart << 6) + h->mPos - 1, info);
+		GetFileInfo((ATDiskFSKey)((h->mDirectoryStart << 6) + h->mPos - 1), info);
 		return true;
 	}
 
 	return false;
 }
 
-void ATDiskFSDOS2::FindEnd(uintptr searchKey) {
+void ATDiskFSDOS2::FindEnd(ATDiskFSFindHandle searchKey) {
 	delete (FindHandle *)searchKey;
 }
 
-void ATDiskFSDOS2::GetFileInfo(uint32 key, ATDiskFSEntryInfo& info) {
-	LoadDirectoryByStart(key >> 6);
+void ATDiskFSDOS2::GetFileInfo(ATDiskFSKey key, ATDiskFSEntryInfo& info) {
+	LoadDirectoryByStart((uint32)key >> 6);
 
-	const DirEnt& de = mDirectory[key & 63];
+	const DirEnt& de = mDirectory[(uint32)key & 63];
 
 	int nameLen = 8;
 	int extLen = 3;
@@ -706,22 +710,22 @@ void ATDiskFSDOS2::GetFileInfo(uint32 key, ATDiskFSEntryInfo& info) {
 	}
 }
 
-uint32 ATDiskFSDOS2::GetParentDirectory(uint32 dirKey) {
-	auto it = mDirStartToKeyMap.find(dirKey >> 6);
+ATDiskFSKey ATDiskFSDOS2::GetParentDirectory(ATDiskFSKey dirKey) {
+	auto it = mDirStartToKeyMap.find((uint32)dirKey >> 6);
 
 	if (it != mDirStartToKeyMap.end())
-		return it->second;
+		return (ATDiskFSKey)it->second;
 
-	return 0;
+	return ATDiskFSKey::None;
 }
 
-uint32 ATDiskFSDOS2::LookupFile(uint32 parentKey, const char *filename) {
+ATDiskFSKey ATDiskFSDOS2::LookupFile(ATDiskFSKey parentKey, const char *filename) {
 	LoadDirectory(parentKey);
 
 	return LookupEntry(filename);
 }
 
-uint32 ATDiskFSDOS2::LookupEntry(const char *filename) const {
+ATDiskFSKey ATDiskFSDOS2::LookupEntry(const char *filename) const {
 	for(uint32 i=0; i<64; ++i) {
 		const DirEnt& de = mDirectory[i];
 
@@ -733,22 +737,22 @@ uint32 ATDiskFSDOS2::LookupEntry(const char *filename) const {
 			break;
 
 		if (!vdstricmp(de.mName, filename))
-			return ((uintptr)mDirectoryStart << 6) + (uintptr)(i + 1);
+			return (ATDiskFSKey)(((uintptr)mDirectoryStart << 6) + (uintptr)(i + 1));
 	}
 
-	return 0;
+	return ATDiskFSKey::None;
 }
 
-void ATDiskFSDOS2::DeleteFile(uint32 key) {
+void ATDiskFSDOS2::DeleteFile(ATDiskFSKey key) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
-	if (!key)
+	if (key == ATDiskFSKey::None)
 		return;
 
-	LoadDirectoryByStart(key >> 6);
+	LoadDirectoryByStart((uint32)key >> 6);
 
-	uint8 fileId = (uint8)(key & 63);
+	uint8 fileId = (uint8)key & 63;
 	DirEnt& de = mDirectory[fileId];
 
 	if (!IsVisible(de))
@@ -769,7 +773,7 @@ void ATDiskFSDOS2::DeleteFile(uint32 key) {
 		}
 
 		// reload the parent directory
-		LoadDirectoryByStart(key >> 6);
+		LoadDirectoryByStart((uint32)key >> 6);
 
 		if ((uint32)(de.mFirstSector + 8) > mpImage->GetVirtualSectorCount())
 			throw ATDiskFSException(kATDiskFSError_CorruptedFileSystem);
@@ -832,12 +836,12 @@ void ATDiskFSDOS2::DeleteFile(uint32 key) {
 	mbDirty = true;
 }
 
-void ATDiskFSDOS2::ReadFile(uint32 key, vdfastvector<uint8>& dst) {
-	VDASSERT(key);
+void ATDiskFSDOS2::ReadFile(ATDiskFSKey key, vdfastvector<uint8>& dst) {
+	VDASSERT(key != ATDiskFSKey::None);
 
-	LoadDirectoryByStart(key >> 6);
+	LoadDirectoryByStart((uint32)key >> 6);
 
-	const uint8 fileId = (uint8)(key & 63);
+	const uint8 fileId = (uint8)((uint32)key & 63);
 	const DirEnt& de = mDirectory[fileId];
 
 	uint32 sector = de.mFirstSector;
@@ -868,7 +872,7 @@ void ATDiskFSDOS2::ReadFile(uint32 key, vdfastvector<uint8>& dst) {
 	}
 }
 
-uint32 ATDiskFSDOS2::WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len) {
+ATDiskFSKey ATDiskFSDOS2::WriteFile(ATDiskFSKey parentKey, const char *filename, const void *src, uint32 len) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -876,7 +880,7 @@ uint32 ATDiskFSDOS2::WriteFile(uint32 parentKey, const char *filename, const voi
 		throw ATDiskFSException(kATDiskFSError_InvalidFileName);
 
 	// load directory and check for a duplicate file
-	if (LookupFile(parentKey, filename))
+	if (LookupFile(parentKey, filename) != ATDiskFSKey::None)
 		throw ATDiskFSException(kATDiskFSError_FileExists);
 
 	// find an empty directory entry
@@ -905,7 +909,9 @@ uint32 ATDiskFSDOS2::WriteFile(uint32 parentKey, const char *filename, const voi
 		maxSector = 719;
 
 	vdfastvector<uint32> sectorsToUse;
-	uint32 sectorCount = (len + dataBytesPerSector - 1) / dataBytesPerSector;
+
+	// force at least one data sector for zero byte files (DOS 2.0S / MyDOS behavior)
+	uint32 sectorCount = len ? (len + dataBytesPerSector - 1) / dataBytesPerSector : 1;
 	uint32 sectorsToAllocate = sectorCount;
 	for(uint32 i = 1; i <= maxSector; ++i) {
 		if (mVTOCBitmap[10 + (i >> 3)] & (0x80 >> (i & 7))) {
@@ -961,6 +967,7 @@ uint32 ATDiskFSDOS2::WriteFile(uint32 parentKey, const char *filename, const voi
 		uint32 sector = sectorsToUse[i];
 		mpImage->WriteVirtualSector(sector - 1, mSectorBuffer, sectorSize);
 
+		VDASSERT(!IsSectorAllocated(sector));
 		AllocateSector(sector);
 	}
 
@@ -985,10 +992,10 @@ uint32 ATDiskFSDOS2::WriteFile(uint32 parentKey, const char *filename, const voi
 	mbDirty = true;
 	mbDirectoryDirty = true;
 
-	return mDirectoryBaseKey + dirIdx;
+	return (ATDiskFSKey)(mDirectoryBaseKey + dirIdx);
 }
 
-void ATDiskFSDOS2::RenameFile(uint32 key, const char *filename) {
+void ATDiskFSDOS2::RenameFile(ATDiskFSKey key, const char *filename) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -996,23 +1003,23 @@ void ATDiskFSDOS2::RenameFile(uint32 key, const char *filename) {
 		throw ATDiskFSException(kATDiskFSError_InvalidFileName);
 
 	// load directory and look for conflicting name
-	LoadDirectoryByStart(key >> 6);
+	LoadDirectoryByStart((uint32)key >> 6);
 
-	uintptr conflictingKey = LookupEntry(filename);
+	ATDiskFSKey conflictingKey = LookupEntry(filename);
 
 	// check if we're renaming a file/dir to itself
 	if (conflictingKey == key)
 		return;
 
-	if (conflictingKey)
+	if (conflictingKey != ATDiskFSKey::None)
 		throw ATDiskFSException(kATDiskFSError_FileExists);
 
-	WriteFileName(mDirectory[key & 63], filename);
+	WriteFileName(mDirectory[(uint32)key & 63], filename);
 	mbDirty = true;
 	mbDirectoryDirty = true;
 }
 
-uint32 ATDiskFSDOS2::CreateDir(uint32 parentKey, const char *filename) {
+ATDiskFSKey ATDiskFSDOS2::CreateDir(ATDiskFSKey parentKey, const char *filename) {
 	if (!mbMyDOS)
 		throw ATDiskFSException(kATDiskFSError_NotSupported);
 
@@ -1023,9 +1030,9 @@ uint32 ATDiskFSDOS2::CreateDir(uint32 parentKey, const char *filename) {
 		throw ATDiskFSException(kATDiskFSError_InvalidFileName);
 	
 	// load directory and look for conflicting name
-	uintptr conflictingKey = LookupFile(parentKey, filename);
+	ATDiskFSKey conflictingKey = LookupFile(parentKey, filename);
 
-	if (conflictingKey)
+	if (conflictingKey != ATDiskFSKey::None)
 		throw ATDiskFSException(kATDiskFSError_FileExists);
 
 	// find an empty directory entry
@@ -1050,6 +1057,8 @@ uint32 ATDiskFSDOS2::CreateDir(uint32 parentKey, const char *filename) {
 
 		for(int i=0; i<8; ++i) {
 			if ((mask & vtocBits) == mask) {
+				VDASSERT(!IsSectorAllocated(start + i));
+
 				// allocate the sectors and exit
 				VDWriteUnalignedBEU16(vtocptr, vtocBits - mask);
 				goto found;
@@ -1069,6 +1078,10 @@ uint32 ATDiskFSDOS2::CreateDir(uint32 parentKey, const char *filename) {
 		throw ATDiskFSException(kATDiskFSError_DiskFull);
 
 found:
+	// allocate the sectors
+	for(int i=0; i<8; ++i)
+		AllocateSector(start + i);
+
 	// write new directory entry
 	DirEnt& de = mDirectory[dirIdx];
 
@@ -1081,11 +1094,13 @@ found:
 	mbDirectoryDirty = true;
 	mbDirty = true;
 
-	// clear first directory sector
+	// clear all directory sectors
 	memset(mSectorBuffer, 0, sizeof mSectorBuffer);
-	mpImage->WriteVirtualSector(start, mSectorBuffer, mSectorSize);
 
-	return mDirectoryBaseKey + dirIdx;
+	for(int i=0; i<8; ++i)
+		mpImage->WriteVirtualSector(start - 1 + i, mSectorBuffer, mSectorSize);
+
+	return (ATDiskFSKey)(mDirectoryBaseKey + dirIdx);
 }
 
 void ATDiskFSDOS2::DecodeDirEnt(DirEnt& de, const uint8 *src) const {
@@ -1271,8 +1286,10 @@ bool ATDiskFSDOS2::IsValidFileName(const char *filename) const {
 		return false;
 
 	// first character must not be a number
-	if ((uint8)((uint8)*filename - 0x30) < 10)
-		return false;
+	if (mbStrictNames) {
+		if ((uint8)((uint8)*filename - 0x30) < 10)
+			return false;
+	}
 
 	// up to 8 alphanumeric characters are allowed in the filename
 	int count = 0;
@@ -1282,7 +1299,7 @@ bool ATDiskFSDOS2::IsValidFileName(const char *filename) const {
 
 		if ((uint8)(c - 0x30) >= 10 && (uint8)((c & 0xdf) - 0x41) >= 26) {
 			// MyDOS also allows _ and @
-			if (!mbMyDOS || (c != '@' && c != '_'))
+			if ((mbStrictNames && !mbMyDOS) || (c != '@' && c != '_'))
 				break;
 		}
 
@@ -1306,7 +1323,7 @@ bool ATDiskFSDOS2::IsValidFileName(const char *filename) const {
 		uint8 c = *filename++;
 
 		if ((uint8)(c - 0x30) >= 10 && (uint8)((c & 0xdf) - 0x41) >= 26) {
-			if (!mbMyDOS || (c != '@' && c != '_'))
+			if ((mbStrictNames && !mbMyDOS) || (c != '@' && c != '_'))
 				break;
 		}
 
@@ -1331,7 +1348,8 @@ void ATDiskFSDOS2::FlushDirectoryCache() {
 	while(pdeEnd != pde && !IsVisible(pdeEnd[-1]))
 		--pdeEnd;
 
-	for(uint32 i=0; i<8; ++i) {
+	uint32 maxSectors = std::min<uint32>(((uint32)(pdeEnd - pde) + 8) >> 3, 8);
+	for(uint32 i=0; i<maxSectors; ++i) {
 		memset(mSectorBuffer, 0, sizeof mSectorBuffer);
 
 		for(uint32 j=0; j<8; ++j) {
@@ -1362,21 +1380,19 @@ void ATDiskFSDOS2::FlushDirectoryCache() {
 		}
 
 		mpImage->WriteVirtualSector(mDirectoryStart - 1 + i, mSectorBuffer, mSectorSize);
-		if (pde == pdeEnd)
-			break;
 	}
 
 	mbDirectoryDirty = false;
 }
 
-void ATDiskFSDOS2::LoadDirectory(uintptr key) {
-	if (!key)
+void ATDiskFSDOS2::LoadDirectory(ATDiskFSKey key) {
+	if (key == ATDiskFSKey::None)
 		LoadDirectoryByStart(361);
 	else {
-		const uint32 parentDirStart = key >> 6;
+		const uint32 parentDirStart = (uint32)key >> 6;
 		LoadDirectoryByStart(parentDirStart);
 
-		const uint32 newDirStart = mDirectory[key & 63].mFirstSector;
+		const uint32 newDirStart = mDirectory[(uint32)key & 63].mFirstSector;
 		LoadDirectoryByStart(newDirStart);
 	}
 }
@@ -1459,10 +1475,7 @@ void ATDiskFSDOS2::LoadDirectoryByStart(uint32 directoryStart) {
 
 directory_end:
 	mDirectoryStart = directoryStart;
-
-	// We need to check for the root since we refer to it with a parent starting
-	// sector of 0 rather than the actual location (361).
-	mDirectoryBaseKey = (directoryStart == 361) ? 0 : (directoryStart << 6) + 1;
+	mDirectoryBaseKey = directoryStart << 6;
 }
 
 ///////////////////////////////////////////////////////////////////////////

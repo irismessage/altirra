@@ -236,8 +236,8 @@ void ATCoProc8048::Run() {
 			he->mP = mPSW;
 			he->m8048_P1 = mP1;
 			he->m8048_P2 = mP2;
-			he->m8048_R0 = mpRegBank[0];
-			he->m8048_R1 = mpRegBank[1];
+			he->mExt.m8048_R0 = mpRegBank[0];
+			he->mExt.m8048_R1 = mpRegBank[1];
 			he->mB = 0;
 			he->mK = 0;
 			he->mS = ~mPSW & 0x07;

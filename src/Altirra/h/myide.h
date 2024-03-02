@@ -80,6 +80,7 @@ public:		// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
 	bool IsWritableFirmwareDirty(uint32 idx) const override;
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
+	bool IsUsableFirmwareLoaded() const override;
 
 public:		// IATDeviceParent
 	IATDeviceBus *GetDeviceBus(uint32 index) override;
@@ -130,6 +131,7 @@ protected:
 	const bool mbVersion2;
 	bool mbVersion2Ex = false;
 	const bool mbUseD5xx;
+	bool mbFirmwareUsable = false;
 
 	IATDeviceCartridgePort *mpCartridgePort = nullptr;
 	uint32 mCartId = 0;

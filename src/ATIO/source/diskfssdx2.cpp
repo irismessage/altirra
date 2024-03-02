@@ -38,47 +38,48 @@ public:
 public:
 	void GetInfo(ATDiskFSInfo& info);
 
-	bool IsReadOnly() { return mbReadOnly; }
-	void SetReadOnly(bool readOnly);
-	void SetAllowExtend(bool allow) { mbAllowExtend = allow; }
+	bool IsReadOnly() override { return mbReadOnly; }
+	void SetReadOnly(bool readOnly) override;
+	void SetAllowExtend(bool allow) override { mbAllowExtend = allow; }
+	void SetStrictNameChecking(bool strict) override { mbStrictNames = strict; }
 
-	bool Validate(ATDiskFSValidationReport& report);
+	bool Validate(ATDiskFSValidationReport& report) override;
 	bool Validate(ATDiskFSValidationReport& report, bool& lastSectorIncluded);
-	void Flush();
+	void Flush() override;
 
-	uintptr FindFirst(uint32 key, ATDiskFSEntryInfo& info);
-	bool FindNext(uintptr searchKey, ATDiskFSEntryInfo& info);
-	void FindEnd(uintptr searchKey);
+	ATDiskFSFindHandle FindFirst(ATDiskFSKey key, ATDiskFSEntryInfo& info) override;
+	bool FindNext(ATDiskFSFindHandle searchKey, ATDiskFSEntryInfo& info) override;
+	void FindEnd(ATDiskFSFindHandle searchKey) override;
 
-	void GetFileInfo(uint32 key, ATDiskFSEntryInfo& info);
-	uint32 GetParentDirectory(uint32 dirKey);
+	void GetFileInfo(ATDiskFSKey key, ATDiskFSEntryInfo& info) override;
+	ATDiskFSKey GetParentDirectory(ATDiskFSKey dirKey) override;
 
-	uint32 LookupFile(uint32 parentKey, const char *filename);
+	ATDiskFSKey LookupFile(ATDiskFSKey parentKey, const char *filename) override;
 
-	void DeleteFile(uint32 key);
-	void ReadFile(uint32 key, vdfastvector<uint8>& dst);
-	uint32 WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len);
-	void RenameFile(uint32 key, const char *newFileName);
-	void SetFileTimestamp(uint32 key, const VDExpandedDate& date);
+	void DeleteFile(ATDiskFSKey key) override;
+	void ReadFile(ATDiskFSKey key, vdfastvector<uint8>& dst) override;
+	ATDiskFSKey WriteFile(ATDiskFSKey parentKey, const char *filename, const void *src, uint32 len) override;
+	void RenameFile(ATDiskFSKey key, const char *newFileName) override;
+	void SetFileTimestamp(ATDiskFSKey key, const VDExpandedDate& date) override;
 
-	uint32 CreateDir(uint32 parentKey, const char *filename);
+	ATDiskFSKey CreateDir(ATDiskFSKey parentKey, const char *filename) override;
 
 protected:
 	struct DirEnt;
 	struct FileHandle;
 
-	void	GetFileInfo(const uint8 *dirEnt, uintptr key, ATDiskFSEntryInfo& info);
-	uint32 LookupFileByDirHandle(uint32 sectorMapStart, FileHandle& dh, const char *filename, int *freeOffset);
+	void	GetFileInfo(const uint8 *dirEnt, ATDiskFSKey key, ATDiskFSEntryInfo& info);
+	ATDiskFSKey LookupFileByDirHandle(uint32 sectorMapStart, FileHandle& dh, const char *filename, int *freeOffset);
 
-	uint32	WriteEntry(uint32 parentKey, const char *filename, const void *src, uint32 len, bool isDir);
+	ATDiskFSKey	WriteEntry(ATDiskFSKey parentKey, const char *filename, const void *src, uint32 len, bool isDir);
 
-	void	OpenFile(FileHandle& fh, uint32 sectorMapStart, uint32 fileKey = 0);
+	void	OpenFile(FileHandle& fh, uint32 sectorMapStart, ATDiskFSKey fileKey = ATDiskFSKey::None);
 	void	SeekFile(FileHandle& fh, uint32 offset, bool allowExtend);
 	void	ReadFile(FileHandle& fh, void *dst, uint32 len);
 	void	WriteFile(FileHandle& fh, const void *dst, uint32 len);
 	void	FlushFile(FileHandle& fh);
 
-	uint32	GetDirectorySectorMap(uintptr sec);
+	uint32	GetDirectorySectorMap(ATDiskFSKey sec);
 
 	void	ReadSector(uint32 sector, void *buf);
 	void	WriteSector(uint32 sector, void *buf);
@@ -109,6 +110,7 @@ protected:
 	bool	mbSuperBlockDirty;
 	bool	mbReadOnly;
 	bool	mbAllowExtend = false;
+	bool	mbStrictNames = true;
 	uint32	mFreeSectors;
 	uint32	mLastAllocSector;
 
@@ -198,7 +200,7 @@ void ATDiskFSSDX2::InitNew(IATDiskImage *image, const char *volNameHint) {
 	mBitmapSectorShift = mSectorShift + 3;
 
 	// init disk layout
-	const uint32 bootSectorCount = 3;
+	const uint32 bootSectorCount = mSectorSize >= 512 ? 1 : 3;
 	const uint32 bitmapSectorCount = ComputeBitmapSectorCount(mTotalSectors);
 	const uint32 specialSectorCount = bootSectorCount + bitmapSectorCount + 2;
 	const uint32 rootDirMapSector = specialSectorCount - 1;
@@ -207,6 +209,7 @@ void ATDiskFSSDX2::InitNew(IATDiskImage *image, const char *volNameHint) {
 	mBitmapStartSector = bootSectorCount + 1;
 
 	// init superblock / first boot sector
+	memset(mSuperBlock, 0, sizeof mSuperBlock);
 	memcpy(mSuperBlock, kATSDFSBootSector0, sizeof kATSDFSBootSector0);
 	mbSuperBlockDirty = true;
 
@@ -216,9 +219,25 @@ void ATDiskFSSDX2::InitNew(IATDiskImage *image, const char *volNameHint) {
 	mSuperBlock[15] = bitmapSectorCount;
 	VDWriteUnalignedLEU16(mSuperBlock + 16, mBitmapStartSector);
 	mSuperBlock[30] = geo.mTrackCount;
-	mSuperBlock[31] = mSectorSize;
+	mSuperBlock[31] = mSectorSize < 512 ? (uint8)mSectorSize : 1;
 	VDWriteUnalignedLEU16(mSuperBlock + 33, mSectorSize);
 	VDWriteUnalignedLEU16(mSuperBlock + 35, mSectorsPerMapPage);
+
+	// do adjustments as needed for DD 512
+	mSuperBlock[1] = (uint8)bootSectorCount;
+
+	if (mSectorSize >= 512) {
+		// DD 512 needs to use $0400 as the load address and $07E0 as the init
+		// address. CLX 1.9 checks this.
+		mSuperBlock[2] = 0x00;		// load to $0440
+		mSuperBlock[3] = 0x04;
+		mSuperBlock[4] = 0xE0;		// set init to $07E0
+		mSuperBlock[5] = 0x07;
+
+		mSuperBlock[6] = 0x4C;		// launch -> JMP $0440
+		mSuperBlock[7] = 0x40;
+		mSuperBlock[8] = 0x04;
+	}
 
 	// set volume name, VSN, and random ID
 	uint64 volHash64 = VDGetCurrentDate().mTicks;
@@ -283,6 +302,7 @@ void ATDiskFSSDX2::InitNew(IATDiskImage *image, const char *volNameHint) {
 
 	// initialize root directory
 	memset(mSectorBuffer, 0, sizeof mSectorBuffer);
+	mSectorBuffer[0] = 0x28;
 	mSectorBuffer[3] = 23;		// directory length = one entry (23 bytes)
 	memcpy(&mSectorBuffer[6], "MAIN       ", 11);
 
@@ -502,9 +522,16 @@ bool ATDiskFSSDX2::Validate(ATDiskFSValidationReport& report, bool& lastSectorIn
 										report.mbOpenWriteFiles = true;
 
 									// push entry to traverse
+									const uint32 entryFirstMapSector = VDReadUnalignedLEU16(dirEntBuf+1);
+
+									if (entryFirstMapSector && entryFirstMapSector > mTotalSectors) {
+										report.mbBrokenFiles = true;
+										return false;
+									}
+
 									traversalStack.push_back(
 										{
-											VDReadUnalignedLEU16(dirEntBuf+1),
+											entryFirstMapSector,
 											firstMapSector,
 											0,
 											(deStatus & 0x20) != 0
@@ -624,7 +651,7 @@ void ATDiskFSSDX2::Flush() {
 	mbDirty = false;
 }
 
-uintptr ATDiskFSSDX2::FindFirst(uint32 key, ATDiskFSEntryInfo& info) {
+ATDiskFSFindHandle ATDiskFSSDX2::FindFirst(ATDiskFSKey key, ATDiskFSEntryInfo& info) {
 	uint32 sectorMapStart = GetDirectorySectorMap(key);
 
 	FindHandle *h = new FindHandle;
@@ -638,15 +665,15 @@ uintptr ATDiskFSSDX2::FindFirst(uint32 key, ATDiskFSEntryInfo& info) {
 	h->mSize = dirHdr[3] + ((uint32)dirHdr[4] << 8) + ((uint32)dirHdr[5] << 16);
 	h->mBaseKey = sectorMapStart << 16;
 
-	if (!FindNext((uintptr)h, info)) {
+	if (!FindNext((ATDiskFSFindHandle)(uintptr)h, info)) {
 		delete h;
-		return 0;
+		return ATDiskFSFindHandle::Invalid;
 	}
 
-	return (uintptr)h;
+	return (ATDiskFSFindHandle)(uintptr)h;
 }
 
-bool ATDiskFSSDX2::FindNext(uintptr searchKey, ATDiskFSEntryInfo& info) {
+bool ATDiskFSSDX2::FindNext(ATDiskFSFindHandle searchKey, ATDiskFSEntryInfo& info) {
 	FindHandle *h = (FindHandle *)searchKey;
 
 	while(h->mPos < h->mSize) {
@@ -659,7 +686,7 @@ bool ATDiskFSSDX2::FindNext(uintptr searchKey, ATDiskFSEntryInfo& info) {
 			continue;
 		}
 
-		GetFileInfo(rawde, h->mBaseKey + h->mPos / 23, info);
+		GetFileInfo(rawde, (ATDiskFSKey)(h->mBaseKey + h->mPos / 23), info);
 
 		h->mPos += 23;
 		return true;
@@ -668,13 +695,13 @@ bool ATDiskFSSDX2::FindNext(uintptr searchKey, ATDiskFSEntryInfo& info) {
 	return false;
 }
 
-void ATDiskFSSDX2::FindEnd(uintptr searchKey) {
+void ATDiskFSSDX2::FindEnd(ATDiskFSFindHandle searchKey) {
 	delete (FindHandle *)searchKey;
 }
 
-void ATDiskFSSDX2::GetFileInfo(uint32 key, ATDiskFSEntryInfo& info) {
-	uint32 dirSectorMap = key >> 16;
-	uint32 fileIndex = key & 0xffff;
+void ATDiskFSSDX2::GetFileInfo(ATDiskFSKey key, ATDiskFSEntryInfo& info) {
+	uint32 dirSectorMap = (uint32)key >> 16;
+	uint32 fileIndex = (uint32)key & 0xffff;
 
 	FileHandle fh;
 	OpenFile(fh, dirSectorMap);
@@ -686,8 +713,8 @@ void ATDiskFSSDX2::GetFileInfo(uint32 key, ATDiskFSEntryInfo& info) {
 	GetFileInfo(dirEnt, key, info);
 }
 
-uint32 ATDiskFSSDX2::GetParentDirectory(uint32 dirKey) {
-	const uint32 dirSectorMapStart = dirKey >> 16;
+ATDiskFSKey ATDiskFSSDX2::GetParentDirectory(ATDiskFSKey dirKey) {
+	const uint32 dirSectorMapStart = (uint32)dirKey >> 16;
 
 	FileHandle fh;
 	OpenFile(fh, dirSectorMapStart);
@@ -699,7 +726,7 @@ uint32 ATDiskFSSDX2::GetParentDirectory(uint32 dirKey) {
 
 	// check for root
 	if (!parentSectorMapStart)
-		return 0;
+		return ATDiskFSKey::None;
 
 	// search parent directory
 	OpenFile(fh, parentSectorMapStart);
@@ -714,16 +741,16 @@ uint32 ATDiskFSSDX2::GetParentDirectory(uint32 dirKey) {
 		ReadFile(fh, dirEnt, 23);
 
 		if (VDReadUnalignedLEU16(dirEnt + 1) == dirSectorMapStart)
-			return (parentSectorMapStart << 16) + index;
+			return (ATDiskFSKey)((parentSectorMapStart << 16) + index);
 
 		++index;
 		pos += 23;
 	}
 
-	return 0;
+	return ATDiskFSKey::None;
 }
 
-void ATDiskFSSDX2::GetFileInfo(const uint8 *rawde, uintptr key, ATDiskFSEntryInfo& info) {
+void ATDiskFSSDX2::GetFileInfo(const uint8 *rawde, ATDiskFSKey key, ATDiskFSEntryInfo& info) {
 	const uint8 *fnstart = rawde + 6;
 	const uint8 *fnend = fnstart + 8;
 
@@ -772,9 +799,9 @@ void ATDiskFSSDX2::GetFileInfo(const uint8 *rawde, uintptr key, ATDiskFSEntryInf
 	}
 }
 
-uint32 ATDiskFSSDX2::LookupFile(uint32 parentKey, const char *filename) {
+ATDiskFSKey ATDiskFSSDX2::LookupFile(ATDiskFSKey parentKey, const char *filename) {
 	if (!IsValidFileName(filename))
-		return 0;
+		return ATDiskFSKey::None;
 
 	uint32 sectorMapStart = GetDirectorySectorMap(parentKey);
 
@@ -784,7 +811,7 @@ uint32 ATDiskFSSDX2::LookupFile(uint32 parentKey, const char *filename) {
 	return LookupFileByDirHandle(sectorMapStart, fh, filename, NULL);
 }
 
-uint32 ATDiskFSSDX2::LookupFileByDirHandle(uint32 sectorMapStart, FileHandle& fh, const char *filename, int *freeOffset) {
+ATDiskFSKey ATDiskFSSDX2::LookupFileByDirHandle(uint32 sectorMapStart, FileHandle& fh, const char *filename, int *freeOffset) {
 	uint8 dirEnt[23];
 	SeekFile(fh, 0, false);
 	ReadFile(fh, dirEnt, 23);
@@ -805,7 +832,7 @@ uint32 ATDiskFSSDX2::LookupFileByDirHandle(uint32 sectorMapStart, FileHandle& fh
 
 		if (dirEnt[0] & 0x08) {
 			if (!memcmp(dirEnt + 6, fn, 11))
-				return (sectorMapStart << 16) + index;
+				return (ATDiskFSKey)((sectorMapStart << 16) + index);
 		} else if (freeOffset && !*freeOffset)
 			*freeOffset = pos;
 
@@ -817,17 +844,17 @@ uint32 ATDiskFSSDX2::LookupFileByDirHandle(uint32 sectorMapStart, FileHandle& fh
 		pos += 23;
 	}
 
-	return 0;
+	return ATDiskFSKey::None;
 }
 
-void ATDiskFSSDX2::DeleteFile(uint32 key) {
+void ATDiskFSSDX2::DeleteFile(ATDiskFSKey key) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
 	FileHandle fh;
-	OpenFile(fh, key >> 16);
+	OpenFile(fh, (uint32)key >> 16);
 
-	uint32 dirOffset = (key & 0xffff)*23;
+	uint32 dirOffset = ((uint32)key & 0xffff)*23;
 	SeekFile(fh, dirOffset, false);
 
 	uint8 dirEnt[23];
@@ -890,10 +917,10 @@ void ATDiskFSSDX2::DeleteFile(uint32 key) {
 	MarkVolumeChanged();
 }
 
-void ATDiskFSSDX2::ReadFile(uint32 key, vdfastvector<uint8>& dst) {
+void ATDiskFSSDX2::ReadFile(ATDiskFSKey key, vdfastvector<uint8>& dst) {
 	FileHandle fh;
-	OpenFile(fh, key >> 16);
-	SeekFile(fh, (key & 0xffff)*23, false);
+	OpenFile(fh, (uint32)key >> 16);
+	SeekFile(fh, ((uint32)key & 0xffff)*23, false);
 
 	uint8 dirEnt[23];
 	ReadFile(fh, dirEnt, 23);
@@ -906,11 +933,11 @@ void ATDiskFSSDX2::ReadFile(uint32 key, vdfastvector<uint8>& dst) {
 	ReadFile(fh, dst.data(), len);
 }
 
-uint32 ATDiskFSSDX2::WriteFile(uint32 parentKey, const char *filename, const void *src, uint32 len) {
+ATDiskFSKey ATDiskFSSDX2::WriteFile(ATDiskFSKey parentKey, const char *filename, const void *src, uint32 len) {
 	return WriteEntry(parentKey, filename, src, len, false);
 }
 
-uint32 ATDiskFSSDX2::CreateDir(uint32 parentKey, const char *filename) {
+ATDiskFSKey ATDiskFSSDX2::CreateDir(ATDiskFSKey parentKey, const char *filename) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -919,6 +946,10 @@ uint32 ATDiskFSSDX2::CreateDir(uint32 parentKey, const char *filename) {
 
 	uint8 dirEnt[23] = {0};
 
+	// SpartaDOS itself doesn't care about the flags on the base directory
+	// entry. However, CLX 1.9 does and complains a lot if it's wrong.
+	dirEnt[0] = 0x28;
+
 	dirEnt[3] = 23;
 
 	WriteFileName(dirEnt + 6, filename);
@@ -926,7 +957,7 @@ uint32 ATDiskFSSDX2::CreateDir(uint32 parentKey, const char *filename) {
 	return WriteEntry(parentKey, filename, dirEnt, 23, true);
 }
 
-uint32 ATDiskFSSDX2::WriteEntry(uint32 parentKey, const char *filename, const void *src, uint32 len, bool isDir) {
+ATDiskFSKey ATDiskFSSDX2::WriteEntry(ATDiskFSKey parentKey, const char *filename, const void *src, uint32 len, bool isDir) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -959,7 +990,7 @@ uint32 ATDiskFSSDX2::WriteEntry(uint32 parentKey, const char *filename, const vo
 	uint32 dirLen = dirEnt[3] + ((uint32)dirEnt[4] << 8) + ((uint32)dirEnt[5] << 16);
 
 	int dirEntOffset = 0;
-	if (LookupFileByDirHandle(dirSectorMap, fh, filename, &dirEntOffset))
+	if (LookupFileByDirHandle(dirSectorMap, fh, filename, &dirEntOffset) != ATDiskFSKey::None)
 		throw ATDiskFSException(kATDiskFSError_FileExists);
 
 	uint32 dataSectorCount = (len + (mSectorSize - 1)) >> mSectorShift;
@@ -986,7 +1017,7 @@ uint32 ATDiskFSSDX2::WriteEntry(uint32 parentKey, const char *filename, const vo
 	EnsureFreeSpace(totalAllocCount);
 
 	uint8 dirEnt2[23] = {0x00};
-	const uintptr fileKey = (dirSectorMap << 16) + (dirEntOffset / 23);
+	const ATDiskFSKey fileKey = (ATDiskFSKey)((dirSectorMap << 16) + (dirEntOffset / 23));
 
 	if (extendDir) {
 		// precreate the new directory entry
@@ -1043,7 +1074,7 @@ uint32 ATDiskFSSDX2::WriteEntry(uint32 parentKey, const char *filename, const vo
 	return fileKey;
 }
 
-void ATDiskFSSDX2::RenameFile(uint32 key, const char *filename) {
+void ATDiskFSSDX2::RenameFile(ATDiskFSKey key, const char *filename) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -1051,16 +1082,16 @@ void ATDiskFSSDX2::RenameFile(uint32 key, const char *filename) {
 		throw ATDiskFSException(kATDiskFSError_InvalidFileName);
 
 	FileHandle dh;
-	OpenFile(dh, key >> 16);
-	uintptr conflictingKey = LookupFileByDirHandle(key >> 16, dh, filename, NULL);
+	OpenFile(dh, (uint32)key >> 16);
+	ATDiskFSKey conflictingKey = LookupFileByDirHandle((uint32)key >> 16, dh, filename, NULL);
 
 	if (conflictingKey == key)
 		return;
 
-	if (conflictingKey)
+	if (conflictingKey != ATDiskFSKey::None)
 		throw ATDiskFSException(kATDiskFSError_FileExists);
 
-	uint32 dirOffset = 23*(key & 0xffff);
+	uint32 dirOffset = 23*((uint32)key & 0xffff);
 	SeekFile(dh, dirOffset, false);
 
 	uint8 dirEnt[23];
@@ -1091,11 +1122,11 @@ void ATDiskFSSDX2::RenameFile(uint32 key, const char *filename) {
 	MarkVolumeChanged();
 }
 
-void ATDiskFSSDX2::SetFileTimestamp(uint32 key, const VDExpandedDate& date) {
+void ATDiskFSSDX2::SetFileTimestamp(ATDiskFSKey key, const VDExpandedDate& date) {
 	FileHandle dh;
 
-	const uint32 dirOffset = 23*(key & 0xffff);
-	OpenFile(dh, key >> 16);
+	const uint32 dirOffset = 23*((uint32)key & 0xffff);
+	OpenFile(dh, (uint32)key >> 16);
 	SeekFile(dh, dirOffset, false);
 
 	uint8 newDate[6];
@@ -1124,15 +1155,15 @@ void ATDiskFSSDX2::SetFileTimestamp(uint32 key, const VDExpandedDate& date) {
 	}
 }
 
-void ATDiskFSSDX2::OpenFile(FileHandle& fh, uint32 sectorMapStart, uint32 fileKey) {
-	if (!sectorMapStart && fileKey) {
+void ATDiskFSSDX2::OpenFile(FileHandle& fh, uint32 sectorMapStart, ATDiskFSKey fileKey) {
+	if (!sectorMapStart && fileKey != ATDiskFSKey::None) {
 		sectorMapStart = AllocateSector();
 		memset(fh.mMapBuffer, 0, sizeof fh.mMapBuffer);
 		fh.mbMapBufferDirty = true;
 
 		FileHandle dh;
-		OpenFile(dh, fileKey >> 16);
-		SeekFile(dh, 23 * (fileKey & 0xffff) + 1, false);
+		OpenFile(dh, (uint32)fileKey >> 16);
+		SeekFile(dh, 23 * ((uint32)fileKey & 0xffff) + 1, false);
 
 		uint8 secMapAddr[2];
 		VDWriteUnalignedLEU16(secMapAddr, sectorMapStart);
@@ -1315,13 +1346,13 @@ void ATDiskFSSDX2::FlushFile(FileHandle& fh) {
 	}
 }
 
-uint32 ATDiskFSSDX2::GetDirectorySectorMap(uintptr key) {
-	if (!key)
+uint32 ATDiskFSSDX2::GetDirectorySectorMap(ATDiskFSKey key) {
+	if (key == ATDiskFSKey::None)
 		return VDReadUnalignedLEU16(mSuperBlock + 9);
 
 	FileHandle fh;
-	OpenFile(fh, key >> 16);
-	SeekFile(fh, (key & 0xffff) * 23, false);
+	OpenFile(fh, (uint32)key >> 16);
+	SeekFile(fh, ((uint32)key & 0xffff) * 23, false);
 
 	uint8 dirEnt[23];
 	ReadFile(fh, dirEnt, 23);
@@ -1418,6 +1449,19 @@ void ATDiskFSSDX2::EnsureFreeSpace(uint32 minFreeSectors) {
 	uint32 oldBitmapSectorCount = mSuperBlock[15];
 	uint32 newBitmapSectorCount = ComputeBitmapSectorCount(requiredNewSize);
 
+	// Make sure we're extending the disk by at least 20%, up to the limit
+	// of 64K-1 sectors. This is so we don't spend all our time resizing the
+	// filesystem by tiny amounts.
+	uint32 minResize = std::min<uint32>(65535, mTotalSectors + (mTotalSectors / 5));
+
+	if (requiredNewSize < minResize) {
+		requiredNewSize = minResize;
+
+		// We can never add more bitmap sectors than we add total sectors and
+		// we aren't depending on the extra sectors here, so no loop required.
+		newBitmapSectorCount = ComputeBitmapSectorCount(requiredNewSize);
+	}
+
 	// Check if we need to extend the bitmap. If so, make sure the disk is
 	// extended by at least the size of the bitmap; we can't be sure that
 	// enough contiguous sectors are available and we're too lazy to check.
@@ -1437,23 +1481,11 @@ void ATDiskFSSDX2::EnsureFreeSpace(uint32 minFreeSectors) {
 		}
 	}
 
-	// Make sure we're extending the disk by at least 20%, up to the limit
-	// of 64K-1 sectors. This is so we don't spend all our time resizing the
-	// filesystem by tiny amounts.
-	uint32 minResize = std::min<uint32>(65535, mTotalSectors + (mTotalSectors / 5));
-
-	if (requiredNewSize < minResize) {
-		requiredNewSize = minResize;
-
-		// We can never add more bitmap sectors than we add total sectors and
-		// we aren't depending on the extra sectors here, so no loop required.
-		newBitmapSectorCount = ComputeBitmapSectorCount(requiredNewSize);
-	}
-
 	// Extend the disk.
 	mpImage->Resize(requiredNewSize);
 
 	// Relocate the bitmap.
+	uint32 firstNewFreeSector = mTotalSectors + 1;
 	if (bitmapRelocationRequired) {
 		for(uint32 i = 0; i < oldBitmapSectorCount; ++i) {
 			LoadBitmapSector(mBitmapStartSector + i);
@@ -1466,17 +1498,25 @@ void ATDiskFSSDX2::EnsureFreeSpace(uint32 minFreeSectors) {
 
 		// Free the old bitmap.
 		for(uint32 i = 0; i < oldBitmapSectorCount; ++i) {
+			VDASSERT(IsSectorAllocated(oldBitmapStartSector + i));
 			FreeSector(oldBitmapStartSector + i);
 		}
 
 		// Update the superblock with the new bitmap location.
 		VDWriteUnalignedLEU16(mSuperBlock + 16, mBitmapStartSector);
 		MarkVolumeChanged();
+
+		// Allocate all new bitmap sectors. Note that we need to free them
+		// first to put them in the pool.
+		for(uint32 i = 0; i < newBitmapSectorCount; ++i) {
+			FreeSector(firstNewFreeSector);
+			AllocateSector(firstNewFreeSector++);
+		}
 	}
 
 	// Mark all new sectors as free. Note that we have no idea what are in
 	// those bits, so it's important that FreeSector() not check.
-	for(uint32 i = mTotalSectors + 1; i <= requiredNewSize; ++i) {
+	for(uint32 i = firstNewFreeSector; i <= requiredNewSize; ++i) {
 		FreeSector(i);
 	}
 
@@ -1486,9 +1526,23 @@ void ATDiskFSSDX2::EnsureFreeSpace(uint32 minFreeSectors) {
 	if (!lastSectorIncluded)
 		FreeSector(mTotalSectors);
 
+	// If the superblock is not at least V2.1, upgrade it now.
+	if (mSuperBlock[32] < 0x21) {
+		mSuperBlock[32] = 0x21;
+
+		// reset cluster size
+		mSuperBlock[37] = 0x01;
+	}
+
 	// Update total sector count internally and in superblock.
+	const ATDiskGeometryInfo& geo = mpImage->GetGeometry();
 	mTotalSectors = requiredNewSize;
 	VDWriteUnalignedLEU16(mSuperBlock + 11, mTotalSectors);
+	mSuperBlock[15] = newBitmapSectorCount;
+	mSuperBlock[30] = geo.mTrackCount;
+	mSuperBlock[31] = mSectorSize < 512 ? (uint8)mSectorSize : 1;
+	VDWriteUnalignedLEU16(mSuperBlock + 33, mSectorSize);
+	VDWriteUnalignedLEU16(mSuperBlock + 35, mSectorsPerMapPage);
 	MarkVolumeChanged();
 
 	// Flush everything to be safe.

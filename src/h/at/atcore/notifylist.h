@@ -1,6 +1,6 @@
 //	Altirra - Atari 800/800XL/5200 emulator
 //	Core library - notification list
-//	Copyright (C) 2009-2016 Avery Lee
+//	Copyright (C) 2009-2018 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -12,14 +12,31 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #ifndef f_AT_ATCORE_NOTIFYLIST_H
 #define f_AT_ATCORE_NOTIFYLIST_H
 
+#include <vd2/system/function.h>
 #include <vd2/system/vdstl.h>
+
+class ATNotifyListBase {
+protected:
+	struct Iterator {
+		Iterator *mpNext;
+		size_t mIndex;
+		size_t mLength;
+	};
+
+	void ResetIterators();
+	void AdjustIteratorsForAdd(size_t pos);
+	void AdjustIteratorsForRemove(size_t pos);
+	void AdjustIteratorsForRemove(size_t start, size_t end);
+
+	Iterator *mpIteratorList = nullptr;
+	size_t mFirstValid = 0;
+};
 
 /// Reentrancy-safe notification list.
 ///
@@ -42,7 +59,7 @@
 /// However, the notification list is not thread-safe.
 ///
 template<class T>
-class ATNotifyList {
+class ATNotifyList : public ATNotifyListBase {
 public:
 	void Clear();
 
@@ -69,25 +86,14 @@ public:
 private:
 	typedef typename std::conditional<std::is_trivial<T>::value, vdfastvector<T>, vdvector<T>>::type List;
 
-	struct Iterator {
-		Iterator *mpNext;
-		typename List::size_type mIndex;
-		typename List::size_type mLength;
-	};
-
 	List mList;
-	Iterator *mpIteratorList = nullptr;
-	typename List::size_type mFirstValid = 0;
 };
 
 template<class T>
 void ATNotifyList<T>::Clear() {
 	mList.clear();
 	
-	for(Iterator *p = mpIteratorList; p; p = p->mpNext) {
-		p->mIndex = 0;
-		p->mLength = 0;
-	}
+	ResetIterators();
 }
 
 template<class T>
@@ -100,15 +106,9 @@ void ATNotifyList<T>::Remove(T v) {
 	auto it = std::find(mList.begin() + mFirstValid, mList.end(), v);
 
 	if (it != mList.end()) {
-		typename List::size_type pos = (typename List::size_type)(it - mList.begin());
+		size_t pos = (size_t)(it - mList.begin());
 
-		for(Iterator *p = mpIteratorList; p; p = p->mpNext) {
-			VDASSERT(p->mLength > 0);
-			--p->mLength;
-
-			if (p->mIndex > pos)
-				--p->mIndex;
-		}
+		AdjustIteratorsForRemove(pos);
 
 		mList.erase(it);
 	}
@@ -124,13 +124,19 @@ bool ATNotifyList<T>::Notify(const vdfunction<bool(T)>& fn) {
 	Iterator it = { mpIteratorList, mFirstValid, mList.size() };
 	mpIteratorList = &it;
 
-	while(it.mIndex < it.mLength) {
-		auto v = mList[it.mIndex++];
+	try {
+		while(it.mIndex < it.mLength) {
+			auto v = mList[it.mIndex++];
 
-		if (fn(v)) {
-			interrupted = true;
-			break;
+			if (fn(v)) {
+				interrupted = true;
+				break;
+			}
 		}
+	} catch(...) {
+		VDASSERT(mpIteratorList == &it);
+		mpIteratorList = it.mpNext;
+		throw;
 	}
 
 	VDASSERT(mpIteratorList == &it);
@@ -149,16 +155,22 @@ bool ATNotifyList<T>::NotifyAndClear(const vdfunction<bool(T)>& fn) {
 	Iterator it = { mpIteratorList, 0, mList.size() };
 	mpIteratorList = &it;
 
-	while(it.mIndex < it.mLength) {
-		auto v = mList[it.mIndex++];
+	try {
+		while(it.mIndex < it.mLength) {
+			auto v = mList[it.mIndex++];
 
-		if (mFirstValid < it.mIndex)
-			mFirstValid = it.mIndex;
+			if (mFirstValid < it.mIndex)
+				mFirstValid = it.mIndex;
 
-		if (fn(v)) {
-			interrupted = true;
-			break;
+			if (fn(v)) {
+				interrupted = true;
+				break;
+			}
 		}
+	} catch(...) {
+		VDASSERT(mpIteratorList == &it);
+		mpIteratorList = it.mpNext;
+		throw;
 	}
 
 	VDASSERT(mpIteratorList == &it);
@@ -167,15 +179,7 @@ bool ATNotifyList<T>::NotifyAndClear(const vdfunction<bool(T)>& fn) {
 	if (mFirstValid > 0) {
 		mList.erase(mList.begin(), mList.begin() + mFirstValid);
 
-		for(Iterator *p = mpIteratorList; p; p = p->mpNext) {
-			VDASSERT(p->mLength >= mFirstValid);
-			p->mLength -= mFirstValid;
-
-			if (p->mIndex >= mFirstValid)
-				p->mIndex -= mFirstValid;
-			else
-				p->mIndex = 0;
-		}
+		AdjustIteratorsForRemove(0, mFirstValid);
 
 		mFirstValid = 0;
 	}

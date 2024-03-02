@@ -17,6 +17,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <ole2.h>
 #include <vd2/system/cmdline.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/error.h>

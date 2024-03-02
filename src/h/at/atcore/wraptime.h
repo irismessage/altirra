@@ -16,8 +16,8 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#ifndef f_AT_ATCORE_INTRIN_SSE2_H
-#define f_AT_ATCORE_INTRIN_SSE2_H
+#ifndef f_AT_ATCORE_WRAPTIME_H
+#define f_AT_ATCORE_WRAPTIME_H
 
 #include <vd2/system/vdtypes.h>
 

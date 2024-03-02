@@ -2400,14 +2400,14 @@ void ATVideoWriter::WriteRawAudio(const float *left, const float *right, uint32 
 					if (tcOut > 512)
 						tcOut = 512;
 
-					mResampleAccum = ATFilterResampleStereo(buf, mResampleBuffers[0], mResampleBuffers[1], tcOut, mResampleAccum, mResampleRate);
+					mResampleAccum = ATFilterResampleStereo16(buf, mResampleBuffers[0], mResampleBuffers[1], tcOut, mResampleAccum, mResampleRate);
 
 					mAudioStream->partialWrite(buf, 2*sizeof(sint16)*tcOut);
 				} else {
 					if (tcOut > 1024)
 						tcOut = 1024;
 
-					mResampleAccum = ATFilterResampleMono(buf, mResampleBuffers[0], tcOut, mResampleAccum, mResampleRate);
+					mResampleAccum = ATFilterResampleMono16(buf, mResampleBuffers[0], tcOut, mResampleAccum, mResampleRate);
 					mAudioStream->partialWrite(buf, sizeof(sint16)*tcOut);
 				}
 

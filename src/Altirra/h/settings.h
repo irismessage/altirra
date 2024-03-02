@@ -39,8 +39,9 @@ enum ATSettingsCategory : uint32 {
 	kATSettingsCategory_MountedImages	= 0x00001000,
 	kATSettingsCategory_FullScreen		= 0x00002000,
 	kATSettingsCategory_Sound			= 0x00004000,
+	kATSettingsCategory_Boot			= 0x00008000,
 
-	kATSettingsCategory_AllCategories	= 0x00007FFF,
+	kATSettingsCategory_AllCategories	= 0x0000FFFF,
 
 	kATSettingsCategory_Baseline =
 		kATSettingsCategory_Hardware |
@@ -98,6 +99,7 @@ VDStringW ATSettingsProfileGetName(uint32 profileId);
 void ATSettingsProfileSetName(uint32 profileId, const wchar_t *name);
 
 uint32 ATSettingsGetCurrentProfileId();
+bool ATSettingsIsCurrentProfileADefault();
 void ATSettingsSwitchProfile(uint32 profileId);
 
 void ATSettingsLoadProfile(uint32 profileId, ATSettingsCategory mask);
@@ -105,6 +107,9 @@ void ATSettingsLoadLastProfile(ATSettingsCategory mask);
 
 bool ATSettingsGetTemporaryProfileMode();
 void ATSettingsSetTemporaryProfileMode(bool temporary);
+
+bool ATSettingsGetBootstrapProfileMode();
+void ATSettingsSetBootstrapProfileMode(bool bootstrap);
 
 // A scheduled reset causes all settings to be nuked on exit, or if something
 // goes wrong, on the next startup.

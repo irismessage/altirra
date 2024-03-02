@@ -19,6 +19,7 @@
 #ifndef f_AT_ATIO_DISKIMAGE_H
 #define f_AT_ATIO_DISKIMAGE_H
 
+#include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
 #include <at/atio/image.h>
 
@@ -70,6 +71,20 @@ enum ATDiskImageFormat {
 	kATDiskImageFormat_P3,
 	kATDiskImageFormat_ATX,
 	kATDiskImageFormat_DCM
+};
+
+enum ATDiskInterleave {
+	kATDiskInterleave_Default,
+	kATDiskInterleave_1_1,			// 1,2,3,...
+	kATDiskInterleave_SD_12_1,		// 1,8,15,4,11,18,7,14,3,10,17,6,13,2,9,16,5,12
+	kATDiskInterleave_SD_9_1,		// 1,3,5,7,9,11,13,15,17,2,4,6,8,10,12,14,16,18
+	kATDiskInterleave_SD_9_1_REV,	// 17,15,13,11,9,7,5,3,1,18,16,14,12,10,8,6,4,2
+	kATDiskInterleave_SD_5_1,		// 4,8,12,16,1,5,9,13,17,2,6,10,14,18,3,7,11,15
+	kATDiskInterleave_ED_13_1,		// 1,3,5,7,9,11,13,15,17,19,21,23,25,2,4,6,8,10,12,14,16,18,20,22,24,26
+	kATDiskInterleave_ED_12_1,		// 9,18,7,16,25,5,14,23,3,12,21,1,10,19,8,17,26,6,15,24,4,13,22,2,11,20
+	kATDiskInterleave_DD_15_1,		// 1,7,13,6,12,18,5,11,17,4,10,16,3,9,15,2,8,14
+	kATDiskInterleave_DD_9_1,		// 1,3,5,7,9,11,13,15,17,2,4,6,8,10,12,14,16,18
+	kATDiskInterleave_DD_7_1,		// 1,14,9,4,17,12,7,2,15,10,5,18,13,8,3,16,11,6
 };
 
 // Disk image interface
@@ -163,6 +178,13 @@ public:
 
 	// Replace a series of virtual sectors with new ones.
 	virtual void FormatTrack(uint32 vsIndexStart, uint32 vsCount, const ATDiskVirtualSectorInfo *vsecs, uint32 psCount, const ATDiskPhysicalSectorInfo *psecs, const uint8 *psecData) = 0;
+
+	// Returns true if the disk has standard sectors and can safely be reinterleaved;
+	// false if it has phantom sectors that can't be safely reordered.
+	virtual bool IsSafeToReinterleave() const = 0;
+
+	// Reorder sectors with a different interleave pattern.
+	virtual void Reinterleave(ATDiskInterleave interleave) = 0;
 };
 
 void ATLoadDiskImage(const wchar_t *path, IATDiskImage **ppImage);
@@ -174,5 +196,10 @@ void ATCreateDiskImage(const ATDiskGeometryInfo& geometry, IATDiskImage **ppImag
 
 void ATDiskConvertGeometryToPERCOM(uint8 percom[12], const ATDiskGeometryInfo& geom);
 void ATDiskConvertPERCOMToGeometry(ATDiskGeometryInfo& geom, const uint8 percom[12]);
+
+ATDiskInterleave ATDiskGetDefaultInterleave(const ATDiskGeometryInfo& info);
+
+vdfunction<float(uint32)> ATDiskGetInterleaveFn(ATDiskInterleave interleave, const ATDiskGeometryInfo& info);
+
 
 #endif	// f_AT_ATIO_DISKIMAGE_H

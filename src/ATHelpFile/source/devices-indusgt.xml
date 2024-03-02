@@ -40,10 +40,24 @@
 	<img src="pics/indus-cpm.png" />
 	<h2>Interleaving performance issue</h2>
 	<p>
-		When using Indus CP/M, it's best to leave the Accurate Disk Timing option disabled. The
-		reason is that the emulator is unable to determine that the CP/M disk image should have
-		a different sector interleave than a normal double-density disk, and so it will apply
-		a 15:1 interleave to the disk. This will make CP/M load extremely slowly since it,
-		operating directly on the disk drive, expects a 1:1 interleave instead.
-	</p>
+    Indus CP/M will boot very slowly by default if the Accurate Sector Timing option is enabled.
+    The reason for this is that the ATR and XFD disk image formats lack interleave information,
+    so the emulator assumes an interleave appropriate for normal Atari disks. Indus CP/M expects
+    its disks to be formatted with a 1:1 interleave and runs very slowly with the standard
+    Atari 9:1 or 15:1 interleave.
+  </p>
+  <p>
+    There are two solutions to this problem. One is to reinterleave the disk image to 1:1 through
+    the Disk Drives dialog. This restores expected and authentic performance, but unfortunately
+    it can't be saved back to the disk image file. The other is to disable the Accurate Sector
+    Timing Option.
+  </p>
+  <h2>Problems with enhanced density disks</h2>
+  <p>
+    Indus GT drives with version 1.1 firmware cannot read enhanced density disks properly.
+    They will appear to work and then fail with error 139 when trying to read beyond the
+    single density size (90K). This bug is fixed in version 1.2. Unfortunately, there is
+    an image of firmware 1.1 floating around the Internet that is mislabeled as version 1.4,
+    which has added some confusion.
+  </p>
 </topic>

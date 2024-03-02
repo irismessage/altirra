@@ -18,8 +18,10 @@
 #include <stdafx.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/deviceserial.h>
+#include <at/atcore/enumparseimpl.h>
 #include <at/atcore/scheduler.h>
 #include <at/atcore/wraptime.h>
+#include <at/atdevices/modemsound.h>
 #include "modem.h"
 #include "uirender.h"
 #include "console.h"
@@ -28,10 +30,16 @@
 ATDebuggerLogChannel g_ATLCModem(false, false, "MODEM", "Modem activity");
 ATDebuggerLogChannel g_ATLCModemTCP(false, false, "MODEMTCP", "Modem TCP/IP activity");
 
+AT_DEFINE_ENUM_TABLE_BEGIN(ATModemNetworkMode)
+	{ ATModemNetworkMode::None, "none" },
+	{ ATModemNetworkMode::Minimal, "minimal" },
+	{ ATModemNetworkMode::Full, "full" }
+AT_DEFINE_ENUM_TABLE_END(ATModemNetworkMode, ATModemNetworkMode::Full)
+
 namespace {
 	enum {
 		// 1.0s guard time
-		kGuardTime = 7159090 / 4,
+		kGuardTime50 = 7159090 / 4,
 		kCommandTimeout = 7159090 * 30 / 4,
 
 		// 0.125s delay after a command completes
@@ -43,7 +51,7 @@ namespace {
 		// four seconds of not ringing
 		kRingOffTime = 7159090 * 4 / 4,
 
-		// two seconds from dial/answer to CONNECT
+		// two seconds from dial/answer to CONNECT (skipped if dial flow is active)
 		kConnectTime = 7159090/2
 	};
 }
@@ -67,7 +75,9 @@ ATModemRegisters::ATModemRegisters()
 	, mCommandEditChar(0x08)
 	, mDialToneWaitTime(2)
 	, mDialCarrierWaitTime(50)
+	, mDialPauseTime(2)
 	, mLostCarrierWaitTime(14)
+	, mDTMFToneDuration(95)
 	, mEscapePromptDelay(50)
 	, mbReportCarrier(true)
 	, mDTRMode(2)
@@ -82,7 +92,7 @@ ATModemRegisters::ATModemRegisters()
 	, mbLoopbackMode(false)
 	, mbFullDuplex(true)
 	, mbOriginateMode(false)
-	, mFlowControlMode(ATModemFlowControl::RTS_CTS)
+	, mFlowControlMode(ATModemFlowControl::None)
 {
 }
 
@@ -91,18 +101,16 @@ ATModemEmulator::ATModemEmulator()
 	, mpSlowScheduler(NULL)
 	, mpUIRenderer(nullptr)
 	, mpDriver(NULL)
-	, mpEventEnterCommandMode(NULL)
-	, mpEventCommandModeTimeout(NULL)
-	, mpEventCommandTermDelay(NULL)
-	, mpEventPoll(nullptr)
 	, mbCommandMode(false)
 	, mbListenEnabled(false)
+	, mbListening(false)
 	, mbLoggingState(false)
 	, mbRinging(false)
 	, mCommandState(kCommandState_Idle)
 	, mLostCarrierDelayCycles(0)
 	, mCommandRate(9600)
 {
+	mpModemSound = new ATModemSoundEngine;
 }
 
 ATModemEmulator::~ATModemEmulator() {
@@ -130,6 +138,9 @@ void *ATModemEmulator::AsInterface(uint32 iid) {
 
 		case IATDeviceSerial::kTypeID:
 			return static_cast<IATDeviceSerial *>(this);
+
+		case IATDeviceAudioOutput::kTypeID:
+			return static_cast<IATDeviceAudioOutput *>(mpModemSound);
 
 		case IATRS232Device::kTypeID:
 			return static_cast<IATRS232Device *>(this);
@@ -180,6 +191,8 @@ void ATModemEmulator::GetSettings(ATPropertySet& settings) {
 
 	if (!mConfig.mDialService.empty())
 		settings.SetString("dialsvc", VDTextAToW(mConfig.mDialService).c_str());
+
+	settings.SetString("netmode", VDTextAToW(ATEnumToString(mConfig.mNetworkMode)).c_str());
 }
 
 bool ATModemEmulator::SetSettings(const ATPropertySet& settings) {
@@ -192,8 +205,16 @@ bool ATModemEmulator::SetSettings(const ATPropertySet& settings) {
 	mConfig.mbDisableThrottling = settings.GetBool("unthrottled");
 	mConfig.mbRequireMatchedDTERate = settings.GetBool("check_rate");
 	mConfig.mConnectionSpeed = settings.GetUint32("connect_rate");
+
+	// enforce civilized speeds (0 is particularly not good)
+	if (mConfig.mConnectionSpeed < 300)
+		mConfig.mConnectionSpeed = 300;
+	else if (mConfig.mConnectionSpeed > 230400)
+		mConfig.mConnectionSpeed = 230400;
+
 	mConfig.mDialAddress = VDTextWToA(settings.GetString("dialaddr", L""));
 	mConfig.mDialService = VDTextWToA(settings.GetString("dialsvc", L""));
+	mConfig.mNetworkMode = ATParseEnum<ATModemNetworkMode>(VDTextWToA(settings.GetString("netmode", L"full"))).mValue;
 
 	UpdateConfig();
 	return true;
@@ -211,9 +232,10 @@ void ATModemEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 
-void ATModemEmulator::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir) {
+void ATModemEmulator::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATAudioMixer *mixer) {
 	InitScheduling(sched, slowsched);
 	InitIndicators(uir);
+	mpModemSound->InitAudioOutput(mixer);
 	Init();
 }
 
@@ -251,6 +273,12 @@ void ATModemEmulator::Shutdown() {
 
 	TerminateCall();
 
+	if (mpModemSound) {
+		mpModemSound->Shutdown();
+		delete mpModemSound;
+		mpModemSound = nullptr;
+	}
+
 	if (mpSlowScheduler) {
 		if (mpEventPoll) {
 			mpSlowScheduler->RemoveEvent(mpEventPoll);
@@ -261,20 +289,10 @@ void ATModemEmulator::Shutdown() {
 	}
 
 	if (mpScheduler) {
-		if (mpEventCommandTermDelay) {
-			mpScheduler->RemoveEvent(mpEventCommandTermDelay);
-			mpEventCommandTermDelay = NULL;
-		}
-
-		if (mpEventEnterCommandMode) {
-			mpScheduler->RemoveEvent(mpEventEnterCommandMode);
-			mpEventEnterCommandMode = NULL;
-		}
-
-		if (mpEventCommandModeTimeout) {
-			mpScheduler->RemoveEvent(mpEventCommandModeTimeout);
-			mpEventCommandModeTimeout = NULL;
-		}
+		mpScheduler->UnsetEvent(mpEventCommandTermDelay);
+		mpScheduler->UnsetEvent(mpEventEnterCommandMode);
+		mpScheduler->UnsetEvent(mpEventCommandModeTimeout);
+		mpScheduler->UnsetEvent(mpEventConnectionStateMachine);
 
 		mpScheduler = NULL;
 	}
@@ -286,22 +304,13 @@ void ATModemEmulator::Shutdown() {
 }
 
 void ATModemEmulator::ColdReset() {
-	if (mpEventCommandTermDelay) {
-		mpScheduler->RemoveEvent(mpEventCommandTermDelay);
-		mpEventCommandTermDelay = NULL;
-	}
-
-	if (mpEventEnterCommandMode) {
-		mpScheduler->RemoveEvent(mpEventEnterCommandMode);
-		mpEventEnterCommandMode = NULL;
-	}
-
-	if (mpEventCommandModeTimeout) {
-		mpScheduler->RemoveEvent(mpEventCommandModeTimeout);
-		mpEventCommandModeTimeout = NULL;
-	}
+	mpScheduler->UnsetEvent(mpEventCommandTermDelay);
+	mpScheduler->UnsetEvent(mpEventEnterCommandMode);
+	mpScheduler->UnsetEvent(mpEventCommandModeTimeout);
+	mpScheduler->UnsetEvent(mpEventConnectionStateMachine);
 
 	TerminateCall();
+	mpModemSound->Reset();
 
 	mCommandRate = 9600;
 
@@ -403,7 +412,7 @@ bool ATModemEmulator::Read(uint32& baudRate, uint8& c) {
 		return true;
 	}
 
-	if (mbCommandMode)
+	if (mbCommandMode || mConnectionState != kConnectionState_Connected)
 		return false;
 
 	if (!mpDriver)
@@ -524,6 +533,13 @@ void ATModemEmulator::Write(uint32 baudRate, uint8 c) {
 					mpScheduler->SetEvent(kCommandTimeout, this, 2, mpEventCommandModeTimeout);
 				}
 				break;
+
+			case kCommandState_Dialing:
+				HangUp();
+				SendResponse(kResponseOK);
+
+				// suppress echo
+				return;
 		}
 
 		if (mRegisters.mbEchoMode) {
@@ -532,9 +548,11 @@ void ATModemEmulator::Write(uint32 baudRate, uint8 c) {
 		}
 	} else {
 		if ((c & 0x7f) == mRegisters.mEscapeChar && mConfig.mDeviceMode != kATRS232DeviceMode_1030) {
-			if (delay >= kGuardTime || mGuardCharCounter) {
+			const uint32 guardTime = (kGuardTime50 * mRegisters.mEscapePromptDelay) / 50;
+
+			if (delay >= guardTime || mGuardCharCounter) {
 				if (++mGuardCharCounter >= 3)
-					mpScheduler->SetEvent(kGuardTime, this, 1, mpEventEnterCommandMode);
+					mpScheduler->SetEvent(guardTime, this, 1, mpEventEnterCommandMode);
 			}
 		} else {
 			mGuardCharCounter = 0;
@@ -590,13 +608,21 @@ bool ATModemEmulator::IsToneDialingMode() const {
 }
 
 void ATModemEmulator::HangUp() {
+	if (mCommandState == kCommandState_Dialing) {
+		mCommandState = kCommandState_Idle;
+	}
+	
+	mpModemSound->Reset();
+
 	mbSuppressNoCarrier = true;
 
 	TerminateCall();
+
+	mbConnectionFailed = false;
 	RestoreListeningState();
 }
 
-void ATModemEmulator::Dial(const char *address, const char *service) {
+void ATModemEmulator::Dial(const char *address, const char *service, const char *desc) {
 	TerminateCall();
 
 	mbConnectionFailed = false;
@@ -604,13 +630,16 @@ void ATModemEmulator::Dial(const char *address, const char *service) {
 	mAddress = address;
 	mService = service;
 
-	mpDriver = ATCreateModemDriverTCP();
-	mpDriver->SetConfig(mConfig);
-	if (!mpDriver->Init(mAddress.c_str(), mService.c_str(), 0, g_ATLCModemTCP.IsEnabled(), this)) {
-		SendResponse(kResponseError);
-		RestoreListeningState();
-		return;
+	if (desc) {
+		mRemoteName = desc;
+	} else {
+		SetRemoteNameFromAddress();
 	}
+
+	mCommandState = kCommandState_Dialing;
+	mConnectionState = kConnectionState_Dialing;
+	mConnectionSubState = 0;
+	mpScheduler->SetEvent(1, this, kEventId_ConnectionStateMachine, mpEventConnectionStateMachine);
 
 	UpdateUIStatus();
 }
@@ -628,6 +657,10 @@ void ATModemEmulator::Answer() {
 	if (mbIncomingConnection) {
 		mbListening = false;
 		mRegisters.mbOriginateMode = false;
+		mConnectionState = kConnectionState_Handshaking;
+		mConnectionSubState = 0;
+		SetConnectRate();
+		AdvanceConnectionStateMachine();
 		return;
 	}
 
@@ -649,6 +682,7 @@ void ATModemEmulator::Poll() {
 
 		UpdateUIStatus();
 
+		HangUp();
 		SendResponse(kResponseNoAnswer);
 
 		EnterCommandMode(false, false);
@@ -673,6 +707,8 @@ void ATModemEmulator::Poll() {
 						mService.clear();
 					}
 
+					SetRemoteNameFromAddress();
+					
 					UpdateUIStatus();
 					UpdateControlState();
 				} else {
@@ -680,6 +716,8 @@ void ATModemEmulator::Poll() {
 					UpdateUIStatus();
 
 					if (!mbCommandMode) {
+						HangUp();
+
 						if (mbSuppressNoCarrier)
 							mbSuppressNoCarrier = false;
 						else
@@ -698,7 +736,7 @@ void ATModemEmulator::Poll() {
 
 				// If DTR is low in AT&D2 mode, we should not auto-answer (level triggered).
 				if (mRegisters.mAutoAnswerRings && (mRegisters.mDTRMode != 2 || mTerminalState.mbDataTerminalReady)) {
-					mbListening = false;
+					Answer();
 					// we will fall through to connection code next
 				} else if (mCommandLength == 0) {
 					uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
@@ -727,11 +765,24 @@ void ATModemEmulator::Poll() {
 			switch(mConnectionState) {
 				case kConnectionState_NotConnected:
 					if (nowConnected) {
+						SetConnectRate();
 						mConnectionState = kConnectionState_Connecting;
+						mConnectionSubState = 0;
 						mConnectStartTime = ATSCHEDULER_GETTIME(mpScheduler);
 						mbCommandMode = false;
 						UpdateControlState();
 						UpdateUIStatus();
+						AdvanceConnectionStateMachine();
+					}
+					break;
+
+				case kConnectionState_Ringing:
+					if (nowConnected) {
+						SetConnectRate();
+						mConnectionState = kConnectionState_Handshaking;
+						mConnectionSubState = 0;
+						UpdateUIStatus();
+						AdvanceConnectionStateMachine();
 					}
 					break;
 
@@ -740,24 +791,6 @@ void ATModemEmulator::Poll() {
 						goto no_carrier;
 					} else if (ATWrapTime{ATSCHEDULER_GETTIME(mpScheduler)} > mConnectStartTime + kConnectTime) {
 						mConnectionState = kConnectionState_Connected;
-
-						if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212) {
-							const bool highSpeed = mConfig.mConnectionSpeed > 600;
-
-							mConnectRate = highSpeed ? 1200 : 300;
-
-							if (mControlState.mbHighSpeed != highSpeed) {
-								mControlState.mbHighSpeed = highSpeed;
-
-								if (mpCB)
-									mpCB(mControlState);
-							}
-						} else {
-							mConnectRate = mConfig.mConnectionSpeed;
-
-							if (!mConnectRate)
-								mConnectRate = 9600;
-						}
 
 						SendConnectResponse();
 
@@ -1055,12 +1088,32 @@ void ATModemEmulator::ParseCommand() {
 						servicenameend = s;
 					}
 
+					// Check if either the hostname or service have invalid characters or if
+					// the address is empty and reject the connection if so.
+					const auto invalidChar = [](char c) { return (((unsigned char)c - 0x20) & 0xFF) >= 0x5F; };
+					if (hostname == hostnameend || std::any_of(hostname, hostnameend, invalidChar) || std::any_of(servicename, servicenameend, invalidChar)) {
+						SendResponse(kResponseNoAnswer);
+						return;
+					}
+
+					// 555-01xx numbers are reserved for fictional telephone numbers in North
+					// America.
+					mDialString = "3210555";
+
 					Dial(VDStringA(hostname, hostnameend).c_str(), VDStringA(servicename, servicenameend).c_str());
-				} else if (!mConfig.mDialAddress.empty() && !mConfig.mDialService.empty()) {
-					Dial(mConfig.mDialAddress.c_str(), mConfig.mDialService.c_str());
 				} else {
-					SendResponse(kResponseNoAnswer);
-					return;
+					mDialString.assign(s, t);
+					std::reverse(mDialString.begin(), mDialString.end());
+
+					if (!mConfig.mDialAddress.empty() && !mConfig.mDialService.empty())
+						Dial(mConfig.mDialAddress.c_str(), mConfig.mDialService.c_str());
+					else {
+						VDStringA desc(s, t);
+
+						desc.erase(std::remove_if(desc.begin(), desc.end(), [](char c) { return c < 0x20 || c >= 0x7f; }), desc.end());
+
+						Dial("", "", desc.c_str());
+					}
 				}
 				return;
 
@@ -1123,6 +1176,7 @@ void ATModemEmulator::ParseCommand() {
 					SendResponse(kResponseError);
 					return;
 				}
+				mpModemSound->SetSpeakerEnabled(number > 0);
 				break;
 
 			case 'O':	// on-hook
@@ -1461,16 +1515,18 @@ void ATModemEmulator::ReportRegisters(const ATModemRegisters& reg, bool stored) 
 		);
 
 	if (stored) {
-		SendResponseF("S00:%03u S02:%03u S06:%03u S07:%03u S10:%03u S12:%03u"
+		SendResponseF("S00:%03u S02:%03u S06:%03u S07:%03u S08:%03u S10:%03u S11:%03u S12:%03u"
 			, reg.mAutoAnswerRings
 			, reg.mEscapeChar
 			, reg.mDialToneWaitTime
 			, reg.mDialCarrierWaitTime
+			, reg.mDialPauseTime
 			, reg.mLostCarrierWaitTime
+			, reg.mDTMFToneDuration
 			, reg.mEscapePromptDelay
 			);
 	} else {
-		SendResponseF("S00:%03u S02:%03u S03:%03u S04:%03u S05:%03u S06:%03u S07:%03u"
+		SendResponseF("S00:%03u S02:%03u S03:%03u S04:%03u S05:%03u S06:%03u S07:%03u S08:%03u"
 			, reg.mAutoAnswerRings
 			, reg.mEscapeChar
 			, reg.mLineTermChar
@@ -1478,10 +1534,12 @@ void ATModemEmulator::ReportRegisters(const ATModemRegisters& reg, bool stored) 
 			, reg.mCommandEditChar
 			, reg.mDialToneWaitTime
 			, reg.mDialCarrierWaitTime
+			, reg.mDialPauseTime
 			);
 
-		SendResponseF("S10:%03u S12:%03u"
+		SendResponseF("S10:%03u S11:%03u S12:%03u"
 			, reg.mLostCarrierWaitTime
+			, reg.mDTMFToneDuration
 			, reg.mEscapePromptDelay
 			);
 	}
@@ -1574,27 +1632,29 @@ void ATModemEmulator::UpdateUIStatus() {
 
 		case kConnectionState_Connecting:
 		case kConnectionState_Connected:
-			{
-				const char *preBracket = "";
-				const char *postBracket = "";
-
-				if (mAddress.find(':') != VDStringA::npos) {
-					preBracket = "[";
-					postBracket = "]";
-				}
-
-				str.sprintf("%s to %s%s%s:%s%s"
-					, mConnectionState == kConnectionState_Connecting ? "Establishing connection" : "Connected"
-					, preBracket
-					, mAddress.c_str()
-					, postBracket
-					, mService.c_str()
-					, mbCommandMode ? " (in command mode)" : "");
-			}
+			str.sprintf("%s to %s"
+				, mConnectionState == kConnectionState_Connecting ? "Establishing connection" : "Connected"
+				, mRemoteName.c_str()
+				, mbCommandMode ? " (in command mode)" : "");
 			break;
 
 		case kConnectionState_LostCarrier:
 			str = "Lost carrier (modem still in online state)";
+			break;
+	
+		case kConnectionState_Dialing:
+			str.sprintf("Dialing out to %s", mRemoteName.c_str());
+			break;
+
+		case kConnectionState_Ringing:
+			if (mpDriver)
+				str.sprintf("Connecting to %s", mRemoteName.c_str());
+			else
+				str.sprintf("Dialing out to %s", mRemoteName.c_str());
+			break;
+
+		case kConnectionState_Handshaking:
+			str.sprintf("Connected to %s", mRemoteName.c_str());
 			break;
 	}
 
@@ -1685,7 +1745,9 @@ int ATModemEmulator::GetRegisterValue(uint32 reg) const {
 		case 5:		return mRegisters.mCommandEditChar;
 		case 6:		return mRegisters.mDialToneWaitTime;
 		case 7:		return mRegisters.mDialCarrierWaitTime;
+		case 8:		return mRegisters.mDialPauseTime;
 		case 10:	return mRegisters.mLostCarrierWaitTime;
+		case 11:	return mRegisters.mDTMFToneDuration;
 		case 12:	return mRegisters.mEscapePromptDelay;
 
 		case 15:
@@ -1725,10 +1787,21 @@ bool ATModemEmulator::SetRegisterValue(uint32 reg, uint8 value) {
 		case 7:
 			mRegisters.mDialCarrierWaitTime = value;
 			return true;
+		
+		case 8:
+			mRegisters.mDialPauseTime = value;
+			return true;
 
 		case 10:
 			mRegisters.mLostCarrierWaitTime = value;
 			UpdateDerivedRegisters();
+			return true;
+
+		case 11:
+			if (value < 50)
+				return false;
+
+			mRegisters.mDTMFToneDuration = value;
 			return true;
 
 		case 12:
@@ -1746,6 +1819,373 @@ bool ATModemEmulator::SetRegisterValue(uint32 reg, uint8 value) {
 
 void ATModemEmulator::UpdateDerivedRegisters() {
 	mLostCarrierDelayCycles = mRegisters.mLostCarrierWaitTime == 255 ? 0 : 715909 * mRegisters.mLostCarrierWaitTime / 4 + 1;
+}
+
+void ATModemEmulator::ConnectPhoneLine() {
+	if (mpDriver)
+		return;
+
+	mpDriver = ATCreateModemDriverTCP();
+	mpDriver->SetConfig(mConfig);
+	if (!mpDriver->Init(mAddress.c_str(), mService.c_str(), 0, g_ATLCModemTCP.IsEnabled(), this)) {
+		HangUp();
+		SendResponse(kResponseError);
+		RestoreListeningState();
+		return;
+	}
+
+	UpdateUIStatus();
+}
+
+void ATModemEmulator::AdvanceConnectionStateMachine() {
+	mpScheduler->UnsetEvent(mpEventConnectionStateMachine);
+
+	for(;;) {
+		float nextDelay = 0;
+
+		switch(mConnectionState) {
+			case kConnectionState_Dialing:
+			case kConnectionState_Ringing:
+				mpModemSound->SetAudioEnabledByPhase(mConfig.mNetworkMode != ATModemNetworkMode::None);
+				break;
+
+			case kConnectionState_Handshaking:
+				mpModemSound->SetAudioEnabledByPhase(mConfig.mNetworkMode == ATModemNetworkMode::Full);
+				break;
+
+			default:
+				mpModemSound->SetAudioEnabledByPhase(false);
+				break;
+		}
+
+		switch(mConnectionState) {
+			default:
+				return;
+
+			case kConnectionState_Dialing:
+				switch(mConnectionSubState) {
+					case 0:
+						if (!mDialString.empty()) {
+							mpModemSound->PlayDialTone();
+
+							nextDelay = 1.5f;
+						}
+
+						++mConnectionSubState;
+						break;
+
+					case 1:
+						if (mDialString.empty()) {
+							mConnectionSubState = 10;
+							break;
+						} else {
+							const char c = mDialString.back();
+							mDialString.pop_back();
+
+							if (c >= '0' && c <= '9') {
+								mpModemSound->PlayDTMFTone((uint32)(c - '0'));
+								nextDelay = (float)mRegisters.mDTMFToneDuration * 0.001f;
+								mConnectionSubState = 2;
+							} else if (c == '*') {
+								mpModemSound->PlayDTMFTone(10);
+								nextDelay = (float)mRegisters.mDTMFToneDuration * 0.001f;
+								mConnectionSubState = 2;
+							} else if (c == '#') {
+								mpModemSound->PlayDTMFTone(11);
+								nextDelay = (float)mRegisters.mDTMFToneDuration * 0.001f;
+								mConnectionSubState = 2;
+							} else if (c == 'T') {
+								// tone dialing -- ignore
+							} else if (c == 'P') {
+								// tone dialing -- ignore
+							} else if (c == '@') {
+								// wait 5s silence
+								nextDelay = 5.0f;
+							} else if (c == ',') {
+								// pause (S8)
+								nextDelay = (float)mRegisters.mDialPauseTime;
+							} else {
+								// ()- and space ignored, invalid characters ignored
+							}
+						}
+						break;
+
+					case 2:
+						mpModemSound->Stop();
+						nextDelay = 0.05f;
+
+						mConnectionSubState = 1;
+						break;
+
+					case 10:
+					default:
+						mpModemSound->Stop();
+						mConnectionState = kConnectionState_Ringing;
+						mConnectionSubState = 0;
+						nextDelay = 0.5f;
+						UpdateUIStatus();
+						break;
+				}
+				break;
+
+			case kConnectionState_Ringing:
+				if ((mConnectionSubState & 1) == 0) {
+					if (mConnectionSubState == 2) {
+						if (!mAddress.empty())
+							ConnectPhoneLine();
+					} else if (mConnectionSubState == 8) {
+						if (mAddress.empty()) {
+							HangUp();
+							SendResponse(kResponseNoAnswer);
+							break;
+						}
+					}
+
+					mpModemSound->PlayRingingTone();
+					++mConnectionSubState;
+					nextDelay = 2.0f;
+				} else {
+					mpModemSound->Stop();
+					++mConnectionSubState;
+					nextDelay = 4.0f;
+				}
+				break;
+
+			case kConnectionState_Handshaking:
+				switch(mConnectionSubState) {
+					case 0:
+						// We set this here so that kConnectTime is essentially defeated when
+						// we are skipping this connection flow.
+						mConnectStartTime = ATSCHEDULER_GETTIME(mpScheduler);
+
+						if (mConnectRate < 1200) {
+							// 300 baud - Bell 103
+							mConnectionSubState = 100;
+						} else if (mConnectRate < 4800) {
+							// 1200 baud - Bell 212A
+							mConnectionSubState = 200;
+						} else {
+							// 4800/9600 baud - V.32
+							mConnectionSubState = 400;
+						}
+						break;
+
+					//--- Bell 103 modulation (300 baud)
+					case 100:
+						mpModemSound->PlayAnswerTone(true);
+						nextDelay = 0.155f + 0.456f;
+						++mConnectionSubState;
+						break;
+
+					case 101:
+						mpModemSound->PlayOriginatingToneBell103();
+						nextDelay = 0.270f + 0.765f;
+						++mConnectionSubState;
+						break;
+
+					//--- suppress echo cancellation tone
+					case 200:
+					case 202:
+					case 204:
+						mpModemSound->PlayEchoSuppressionTone();
+						nextDelay = 0.450f;
+						++mConnectionSubState;
+						break;
+
+					case 201:
+					case 203:
+					case 205:
+						mpModemSound->Stop();
+						nextDelay = 0.02f;
+						++mConnectionSubState;
+						break;
+
+					case 206:
+						// 1200/2400 baud - Bell 212A
+						mConnectionSubState = 300;
+						break;
+
+					//--- Bell 212A modulation (1200/2400 baud)
+					case 300:
+						// play answer tone at 2225Hz (Bell 212A)
+						mpModemSound->PlayAnswerTone(true);
+						
+						// detect answer tone in 155+/-50 ms and wait
+						// 456+/-10ms
+						nextDelay = 0.155f + 0.456f;
+						++mConnectionSubState;
+						break;
+
+					case 301:
+						// play binary 1 at 1200Hz
+						mpModemSound->PlayModemDataV22(false, true);
+
+						// detect in 270+/-40ms
+						nextDelay = 0.270f;
+						++mConnectionSubState;
+						break;
+
+					case 302:
+						// switch to scrambled 1 at 2400Hz
+						mpModemSound->PlayModemDataV22(true, true);
+
+						// detect in 270+/-40ms and wait 765+/-10ms
+						nextDelay = 0.270f + 0.765f;
+						++mConnectionSubState;
+						break;
+
+					// V.32 modulation (4800/9600 baud)
+					case 406:
+						mpModemSound->PlayOriginatingToneV32();
+						// fall through
+					case 400:
+					case 402:
+					case 404:
+					case 408:
+						mpModemSound->PlayEchoSuppressionTone();
+						nextDelay = 0.450f;
+						++mConnectionSubState;
+						break;
+
+					case 401:
+					case 403:
+					case 405:
+					case 407:
+					case 409:
+						mpModemSound->Stop1();
+						nextDelay = 0.02f;
+						++mConnectionSubState;
+						break;
+
+					case 410:
+					case 412:
+					case 414:
+						// begin training answering receiver
+						mpModemSound->Stop();
+						mpModemSound->PlayTrainingToneV32();
+						nextDelay = 256.0f / 2400.0f;
+						++mConnectionSubState;
+						break;
+					
+					case 411:
+					case 413:
+					case 415:
+						mpModemSound->Stop();
+						nextDelay = 0.01f;
+						++mConnectionSubState;
+						break;
+
+					case 416:
+						mConnectionSubState = 421;
+						break;
+
+					case 421:
+						// train answering receiver
+						mpModemSound->Stop();
+						mpModemSound->PlayModemData(0.8f);
+						nextDelay = 2.5f;
+						++mConnectionSubState;
+						break;
+
+					case 422:
+						// begin training calling receiver
+						mpModemSound->Stop();
+						mpModemSound->PlayTrainingToneV32();
+						nextDelay = 256.0f / 2400.0f;
+						++mConnectionSubState;
+						break;
+
+					case 423:
+						// train calling receiver
+						mpModemSound->Stop();
+						mpModemSound->PlayModemData(0.5f);
+						nextDelay = 2.5f;
+						++mConnectionSubState;
+						break;
+
+					case 424:
+						// begin training answering receiver while originating still transmitting
+						mpModemSound->Stop();
+						mpModemSound->PlayTrainingToneV32();
+						nextDelay = 256.0f / 2400.0f;
+						++mConnectionSubState;
+						break;
+
+					case 425:
+						// train calling receiver
+						mpModemSound->Stop();
+						mpModemSound->PlayModemData(0.8f);
+						nextDelay = 2.5;
+						++mConnectionSubState;
+						break;
+
+					default:
+						mpModemSound->Stop();
+
+						mbCommandMode = false;
+						UpdateControlState();
+						mConnectionState = kConnectionState_Connecting;
+						mConnectionSubState = 0;
+						UpdateUIStatus();
+						break;
+				}
+				break;
+		}
+
+		if (nextDelay > 0) {
+			uint32 nextDelayCycles = (uint32)(0.5f + mpScheduler->GetRate().asDouble() * nextDelay);
+
+			switch(mConnectionState) {
+				case kConnectionState_Dialing:
+				case kConnectionState_Ringing:
+					if (mConfig.mNetworkMode == ATModemNetworkMode::None)
+						nextDelayCycles = 1;
+					break;
+
+				case kConnectionState_Handshaking:
+					if (mConfig.mNetworkMode != ATModemNetworkMode::Full)
+						nextDelayCycles = 1;
+					break;
+			}
+
+			if (nextDelayCycles) {
+				mpScheduler->SetEvent(nextDelayCycles, this, kEventId_ConnectionStateMachine, mpEventConnectionStateMachine);
+				break;
+			}
+		}
+	}
+}
+
+void ATModemEmulator::SetConnectRate() {
+	if (mConfig.mDeviceMode == kATRS232DeviceMode_SX212) {
+		const bool highSpeed = mConfig.mConnectionSpeed > 600;
+
+		mConnectRate = highSpeed ? 1200 : 300;
+
+		if (mControlState.mbHighSpeed != highSpeed) {
+			mControlState.mbHighSpeed = highSpeed;
+
+			if (mpCB)
+				mpCB(mControlState);
+		}
+	} else {
+		mConnectRate = mConfig.mConnectionSpeed;
+
+		if (!mConnectRate)
+			mConnectRate = 9600;
+	}
+}
+
+void ATModemEmulator::SetRemoteNameFromAddress() {
+	const char *preBracket = "";
+	const char *postBracket = "";
+
+	if (mAddress.find(':') != VDStringA::npos) {
+		preBracket = "[";
+		postBracket = "]";
+	}
+
+	mRemoteName.sprintf("%s%s%s:%s", preBracket, mAddress.c_str(), postBracket, mService.c_str());
 }
 
 void ATModemEmulator::OnScheduledEvent(uint32 id) {
@@ -1771,6 +2211,10 @@ void ATModemEmulator::OnScheduledEvent(uint32 id) {
 	} else if (id == 4) {
 		mpEventCommandTermDelay = NULL;
 		ParseCommand();
+	} else if (id == kEventId_ConnectionStateMachine) {
+		mpEventConnectionStateMachine = nullptr;
+
+		AdvanceConnectionStateMachine();
 	}
 }
 

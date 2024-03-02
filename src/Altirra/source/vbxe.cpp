@@ -1849,18 +1849,20 @@ template<bool T_Version126>
 void ATVBXEEmulator::RenderMode8(int x1h, int x2h) {
 	const uint8 *__restrict colorTable = mpColorTable;
 
-	const uint8 *lumasrc = &mpAnticBuffer[x1h >> 1];
-	uint32 *dst = mpDst + x1h*2;
-	uint8 *priDst = mOvPriDecode + x1h * 2;
-	const uint8 *src = mpMergeBuffer + (x1h >> 1);
+	const uint8 *__restrict lumasrc = &mpAnticBuffer[x1h >> 1];
+	uint32 *__restrict dst = mpDst + x1h*2;
+	uint8 *__restrict priDst = mOvPriDecode + x1h * 2;
+	const uint8 *__restrict src = mpMergeBuffer + (x1h >> 1);
+	const AttrPixel *__restrict apx = &mAttrPixels[x1h];
+	const uint8 (*__restrict priTable)[2] = mpPriTableHi;
 
 	if (mbExtendedColor) {
-		const uint8 (*__restrict priTable)[2] = mpPriTableHi;
-		const AttrPixel *apx = &mAttrPixels[x1h];
-
 		if (x1h & 1) {
 			uint8 lb = *lumasrc++;
 			uint8 i1 = *src++;
+
+			// For V1.26+, use PF1 priority for set pixels.
+			// For V1.25-, only do so for the color.
 			uint8 ic1 = i1;
 
 			if (lb & 1)
@@ -1958,6 +1960,9 @@ void ATVBXEEmulator::RenderMode8(int x1h, int x2h) {
 		if (x2h & 1) {
 			uint8 lb = *lumasrc++;
 			uint8 i0 = *src++;
+
+			// For V1.26+, use PF1 priority for set pixels.
+			// For V1.25-, only do so for the color.
 			uint8 ic0 = i0;
 
 			if (lb & 2)
@@ -1987,9 +1992,6 @@ void ATVBXEEmulator::RenderMode8(int x1h, int x2h) {
 			}
 		}
 	} else {
-		const AttrPixel *apx = &mAttrPixels[x1h];
-		const uint8 (*__restrict priTable)[2] = mpPriTableHi;
-
 		if (x1h & 1) {
 			uint8 lb = *lumasrc++;
 			uint8 i0 = *src++;
@@ -2008,11 +2010,11 @@ void ATVBXEEmulator::RenderMode8(int x1h, int x2h) {
 			dst[0] = dst[1] = mPalette[apx->mCtrl >> 6][c1];
 
 			if (T_Version126) {
-				const uint8 pri = kPriorityTranslation.v[((i1 & ~PF2) | (lb & 1 ? PF2 : 0))];
+				const uint8 pri = kPriorityTranslation.v[i1];
 				priDst[0] = apx->mPriority & pri;
 				priDst[1] = (pri & 0xF7) | (apx->mCtrl & 0x08);
 			} else {
-				const uint8 pri = ((i1 & ~PF2) | (lb & 1 ? PF2 : 0));
+				const uint8 pri = i1;
 				priDst[0] = apx->mPriority & pri;
 				priDst[1] = kCollisionLookup.v[pri] | (apx->mCtrl & 0x08);
 			}
@@ -2051,16 +2053,16 @@ void ATVBXEEmulator::RenderMode8(int x1h, int x2h) {
 			dst[2] = dst[3] = mPalette[apx[1].mCtrl >> 6][c1];
 
 			if (T_Version126) {
-				const uint8 pri0 = kPriorityTranslation.v[((i0 & ~PF2) | (lb & 2 ? PF2 : 0))];
-				const uint8 pri1 = kPriorityTranslation.v[((i1 & ~PF2) | (lb & 1 ? PF2 : 0))];
+				const uint8 pri0 = kPriorityTranslation.v[i0];
+				const uint8 pri1 = kPriorityTranslation.v[i1];
 
 				priDst[0] = apx[0].mPriority & pri0;
 				priDst[1] = (pri0 & 0xF7) | (apx[0].mCtrl & 0x08);
 				priDst[2] = apx[1].mPriority & pri1;
 				priDst[3] = (pri1 & 0xF7) | (apx[1].mCtrl & 0x08);
 			} else {
-				const uint8 pri0 = (i0 & ~PF2) | (lb & 2 ? PF2 : 0);
-				const uint8 pri1 = (i1 & ~PF2) | (lb & 1 ? PF2 : 0);
+				const uint8 pri0 = i0;
+				const uint8 pri1 = i1;
 
 				priDst[0] = apx[0].mPriority & pri0;
 				priDst[1] = kCollisionLookup.v[pri0] | (apx[0].mCtrl & 0x08);
@@ -2089,11 +2091,11 @@ void ATVBXEEmulator::RenderMode8(int x1h, int x2h) {
 			dst[0] = dst[1] = mPalette[apx[0].mCtrl >> 6][c0];
 
 			if (T_Version126) {
-				const uint8 pri0 = kPriorityTranslation.v[((i0 & ~PF2) | (lb & 2 ? PF2 : 0))];
+				const uint8 pri0 = kPriorityTranslation.v[i0];
 				priDst[0] = apx[0].mPriority & pri0;
 				priDst[1] = (pri0 & 0xF7) | (apx[0].mCtrl & 0x08);
 			} else {
-				const uint8 pri0 = (i0 & ~PF2) | (lb & 2 ? PF2 : 0);
+				const uint8 pri0 = i0;
 				priDst[0] = apx[0].mPriority & pri0;
 				priDst[1] = kCollisionLookup.v[pri0] | (apx[0].mCtrl & 0x08);
 			}
@@ -2108,9 +2110,9 @@ void ATVBXEEmulator::RenderMode9(int x1h, int x2h) {
 	const uint8 *__restrict colorTable = mpColorTable;
 	const uint8 (*__restrict priTable)[2] = mpPriTable;
 
-	uint32 *dst = mpDst + x1h*2;
-	uint8 *priDst = mOvPriDecode + x1h*2;
-	const uint8 *src = mpMergeBuffer + (x1h >> 1);
+	uint32 *__restrict dst = mpDst + x1h*2;
+	uint8 *__restrict priDst = mOvPriDecode + x1h*2;
+	const uint8 *__restrict src = mpMergeBuffer + (x1h >> 1);
 
 	// 1 color / 16 luma mode
 	//
@@ -2120,7 +2122,7 @@ void ATVBXEEmulator::RenderMode9(int x1h, int x2h) {
 	// and so it does not affect players or missiles. It does, however, affect PF3 if
 	// the fifth player is enabled.
 
-	const AttrPixel *apx = &mAttrPixels[x1h];
+	const AttrPixel *__restrict apx = &mAttrPixels[x1h];
 
 	if (x1h & 1) {
 		uint8 i0 = *src++ & (P0|P1|P2|P3|PF3);
@@ -2210,9 +2212,9 @@ void ATVBXEEmulator::RenderMode10(int x1h, int x2h) {
 	const uint8 *__restrict colorTable = mpColorTable;
 	const uint8 (*__restrict priTable)[2] = mpPriTable;
 
-	uint32 *dst = mpDst + x1h*2;
-	uint8 *priDst = mOvPriDecode + x1h*2;
-	const uint8 *src = mpMergeBuffer + (x1h >> 1);
+	uint32 *__restrict dst = mpDst + x1h*2;
+	uint8 *__restrict priDst = mOvPriDecode + x1h*2;
+	const uint8 *__restrict src = mpMergeBuffer + (x1h >> 1);
 
 	// 9 colors
 	//
@@ -2330,9 +2332,9 @@ void ATVBXEEmulator::RenderMode11(int x1h, int x2h) {
 	const uint8 *__restrict colorTable = mpColorTable;
 	const uint8 (*__restrict priTable)[2] = mpPriTable;
 
-	uint32 *dst = mpDst + x1h*2;
-	uint8 *priDst = mOvPriDecode + x1h*2;
-	const uint8 *src = mpMergeBuffer + (x1h >> 1);
+	uint32 *__restrict dst = mpDst + x1h*2;
+	uint8 *__restrict priDst = mOvPriDecode + x1h*2;
+	const uint8 *__restrict src = mpMergeBuffer + (x1h >> 1);
 
 	// 16 colors / 1 luma
 	//

@@ -278,9 +278,13 @@ bool ATMIOEmulator::ReloadFirmware() {
 	memset(mFirmware, 0xFF, sizeof mFirmware);
 
 	uint32 actual = 0;
-	mpFwMan->LoadFirmware(mpFwMan->GetCompatibleFirmware(kATFirmwareType_MIO), mFirmware, 0, sizeof mFirmware, nullptr, &actual);
+	mpFwMan->LoadFirmware(mpFwMan->GetCompatibleFirmware(kATFirmwareType_MIO), mFirmware, 0, sizeof mFirmware, nullptr, &actual, nullptr, nullptr, &mbFirmwareUsable);
 
 	return checksum != VDHash128(mFirmware, sizeof mFirmware);
+}
+
+bool ATMIOEmulator::IsUsableFirmwareLoaded() const {
+	return mbFirmwareUsable;
 }
 
 void ATMIOEmulator::InitIRQSource(ATIRQController *irqc) {

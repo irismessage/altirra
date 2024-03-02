@@ -26,6 +26,30 @@ class ATCPUEmulatorMemory;
 class ATCPUEmulatorCallbacks;
 class IATCPUTimestampDecoderProvider;
 
+enum ATProfileMode {
+	kATProfileMode_Insns,
+	kATProfileMode_Functions,
+	kATProfileMode_CallGraph,
+	kATProfileMode_BasicBlock,
+	kATProfileMode_BasicLines,
+	kATProfileModeCount
+};
+
+enum ATProfileCounterMode {
+	kATProfileCounterMode_None,
+	kATProfileCounterMode_BranchTaken,
+	kATProfileCounterMode_BranchNotTaken,
+	kATProfileCounterMode_PageCrossing,
+	kATProfileCounterMode_RedundantOp,
+};
+
+enum ATProfileBoundaryRule {
+	kATProfileBoundaryRule_None,
+	kATProfileBoundaryRule_VBlank,
+	kATProfileBoundaryRule_PCAddress,
+	kATProfileBoundaryRule_PCAddressFunction
+};
+
 struct ATProfileRecord {
 	uint32 mAddress;
 	uint32 mCalls;
@@ -70,43 +94,129 @@ struct ATProfileFrame {
 	uint32	mTotalInsns;
 };
 
+struct ATProfileMergedFrame : public vdrefcount, public ATProfileFrame {
+	vdfastvector<ATProfileCallGraphInclusiveRecord> mInclusiveRecords;
+};
+
 class ATProfileSession {
 	ATProfileSession(const ATProfileSession&) = delete;
 	ATProfileSession& operator=(const ATProfileSession&) = delete;
 public:
 	ATProfileSession() = default;
+	vdnothrow ATProfileSession(ATProfileSession&& src) vdnoexcept;
 	~ATProfileSession();
 
-	ATProfileSession& operator=(ATProfileSession&& src);
+	vdnothrow ATProfileSession& operator=(ATProfileSession&& src) vdnoexcept;
 
+	ATProfileMode mProfileMode;
+	vdfastvector<ATProfileCounterMode> mCounterModes;
 	vdfastvector<ATProfileFrame *> mpFrames;
 
 	typedef vdfastvector<ATProfileCallGraphContext> CGContexts;
 	CGContexts mContexts;
 };
 
-enum ATProfileMode {
-	kATProfileMode_Insns,
-	kATProfileMode_Functions,
-	kATProfileMode_CallGraph,
-	kATProfileMode_BasicBlock,
-	kATProfileMode_BasicLines,
-	kATProfileModeCount
-};
+void ATProfileMergeFrames(const ATProfileSession& session, uint32 startFrame, uint32 endFrame, ATProfileMergedFrame **mergedFrame);
 
-enum ATProfileCounterMode {
-	kATProfileCounterMode_None,
-	kATProfileCounterMode_BranchTaken,
-	kATProfileCounterMode_BranchNotTaken,
-	kATProfileCounterMode_PageCrossing,
-	kATProfileCounterMode_RedundantOp,
-};
+///////////////////////////////////////////////////////////////////////////
 
-enum ATProfileBoundaryRule {
-	kATProfileBoundaryRule_None,
-	kATProfileBoundaryRule_VBlank,
-	kATProfileBoundaryRule_PCAddress,
-	kATProfileBoundaryRule_PCAddressFunction
+// CPU profile builder
+//
+// The CPU profiler builder converts CPU execution history into profiling data. It is isolated
+// from the emulation so that it can be fed historical data for offline analysis. The typical
+// method of operation is:
+//
+// - Initialize the builder and set boundary rules, if applicable.
+// - Set the initial stack pointer.
+// - Open the initial frame.
+// - Pump history entries through Update() or UpdateBasicLines().
+// - As needed, close and reopen new frames.
+// - Finalize the builder.
+// - Take the session from it.
+//
+class ATCPUProfileBuilder {
+	ATCPUProfileBuilder(const ATCPUProfileBuilder&) = delete;
+	ATCPUProfileBuilder& operator=(const ATCPUProfileBuilder&) = delete;
+
+public:
+	ATCPUProfileBuilder();
+	~ATCPUProfileBuilder();
+
+	void Init(ATProfileMode mode, ATProfileCounterMode c1, ATProfileCounterMode c2);
+	void SetBoundaryRule(ATProfileBoundaryRule rule, uint32 param, uint32 param2);
+
+	void SetS(uint8 s);
+
+	void AdvanceFrame(uint32 cycle, uint32 unhaltedCycle, bool enableCollection, const ATCPUTimestampDecoder& tsDecoder);
+
+	// Mark the beginning of a frame.
+	void OpenFrame(uint32 cycle, uint32 unhaltedCycle, const ATCPUTimestampDecoder& tsDecoder);
+
+	// Mark the end of a frame. If keepFrame=false, the detailed frame data is discarded instead of kept.
+	// Frame must be closed exactly once.
+	void CloseFrame(uint32 cycle, uint32 unhaltedCycle, bool keepFrame);
+
+	// End collection and finalize profiling data. The last frame must be closed before calling this.
+	void Finalize();
+
+	// Retrieve the profile session data (destructive).
+	void TakeSession(ATProfileSession& session);
+
+	// Process new history entries, in chronological order. History entry arrays must always overlap by
+	// one entry between updates, and consequently the array must have one more entry than specified by
+	// the count. The first N entries are the ones processed; the last one is used only for timestamp
+	// delta purposes.
+	void Update(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool enableGlobalAddrs);
+	void UpdateBasicLines(const ATCPUTimestampDecoder& tsDecoder, uint32 lineNo, const ATCPUHistoryEntry *const *hents, uint32 n);
+
+private:
+	void UpdateCallGraph(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool enableGlobalAddrs);
+	void ClearContexts();
+	void UpdateCounters(uint32 *p, const ATCPUHistoryEntry& he);
+	uint32 ScanForFrameBoundary(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n);
+
+	struct HashLink {
+		HashLink *mpNext;
+		ATProfileRecord mRecord;
+	};
+
+	struct CallGraphHashLink {
+		CallGraphHashLink *mpNext;
+		uint32	mParentContext;
+		uint32	mScope;
+		uint32	mContext;
+	};
+	
+	bool mbAdjustStackNext;
+	bool mbCountersEnabled;
+	bool mbKeepNextFrame;
+
+	uint8 mLastS;
+	sint32	mCurrentFrameAddress;
+	sint32	mCurrentContext;
+	uint32 mTotalSamples;
+	uint32 mTotalContexts;
+	uint32 mStartCycleTime;
+	uint32 mStartUnhaltedCycleTime;
+	uint32 mNextAutoFrameTime;
+
+	ATProfileMode mProfileMode;
+	ATProfileBoundaryRule mBoundaryRule = kATProfileBoundaryRule_None;
+	uint32	mBoundaryParam = 0;
+	uint32	mBoundaryParam2 = 0;
+
+	ATProfileCounterMode mCounterModes[2] {};
+
+	VDLinearAllocator mHashLinkAllocator { 262144 - 128 };
+	VDLinearAllocator mCGHashLinkAllocator { 262144 - 128 };
+	ATProfileSession mSession;
+	ATProfileFrame *mpCurrentFrame = nullptr;
+
+	HashLink *mpHashTable[256] {};
+	HashLink *mpBlockHashTable[256] {};
+	CallGraphHashLink *mpCGHashTable[256] {};
+
+	sint32	mStackTable[256];
 };
 
 class ATCPUProfiler final : public IATSchedulerCallback {
@@ -128,19 +238,12 @@ public:
 
 	void GetSession(ATProfileSession& session);
 
-protected:
+private:
 	void OnScheduledEvent(uint32 id);
 	void Update();
-	void UpdateCallGraph();
 	void AdvanceFrame(bool enableCollection);
-	void AdvanceFrame(uint32 cycle, uint32 unhaltedCycle, bool enableCollection);
 	void OpenFrame();
-	void OpenFrame(uint32 cycle, uint32 unhaltedCycle);
 	void CloseFrame();
-	void CloseFrame(uint32 cycle, uint32 unhaltedCycle, bool keepFrame);
-	void ClearContexts();
-	void UpdateCounters(uint32 *p, const ATCPUHistoryEntry& he);
-	uint32 ScanForFrameBoundary(uint32 n);
 
 	IATCPUTimestampDecoderProvider *mpTSDProvider;
 	ATCPUEmulator *mpCPU;
@@ -151,51 +254,11 @@ protected:
 	ATEvent *mpUpdateEvent;
 
 	ATProfileMode mProfileMode;
-	uint32 mStartCycleTime;
-	uint32 mStartUnhaltedCycleTime;
-	uint32 mNextFrameTime;
 	uint32 mFramePeriod;
 	uint32 mLastHistoryCounter;
-	uint32 mTotalSamples;
-	uint32 mTotalContexts;
-	bool mbAdjustStackNext;
-	bool mbCountersEnabled;
-	bool mbKeepNextFrame;
-	ATProfileCounterMode mCounterModes[2];
-	uint8 mLastS;
-	sint32	mCurrentFrameAddress;
-	sint32	mCurrentContext;
+	bool mbDropFirstSample;
 
-	ATProfileBoundaryRule mBoundaryRule = kATProfileBoundaryRule_None;
-	uint32	mBoundaryParam = 0;
-	uint32	mBoundaryParam2 = 0;
-
-	struct HashLink {
-		HashLink *mpNext;
-		ATProfileRecord mRecord;
-	};
-
-	struct CallGraphHashLink {
-		CallGraphHashLink *mpNext;
-		uint32	mParentContext;
-		uint32	mScope;
-		uint32	mContext;
-	};
-
-	VDLinearAllocator mHashLinkAllocator;
-	VDLinearAllocator mCGHashLinkAllocator;
-	ATProfileSession mSession;
-	ATProfileFrame *mpCurrentFrame = nullptr;
-
-	struct AddressHashTable {
-		HashLink *mpBuckets[256];
-	};
-
- 	HashLink *mpHashTable[256];
- 	HashLink *mpBlockHashTable[256];
-	CallGraphHashLink *mpCGHashTable[256];
-
-	sint32	mStackTable[256];
+	ATCPUProfileBuilder mBuilder;
 };
 
 #endif	// f_AT_PROFILER_H

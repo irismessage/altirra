@@ -23,6 +23,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
 #include <vd2/Kasumi/pixmap.h>
+#include <at/atcore/enumparse.h>
 
 class IVDVideoDisplay;
 class VDVideoDisplayFrame;
@@ -57,6 +58,14 @@ enum ATLumaRampMode : uint8 {
 	kATLumaRampModeCount
 };
 
+enum class ATColorMatchingMode : uint8 {
+	None,
+	SRGB,
+	AdobeRGB
+};
+
+AT_DECLARE_ENUM_TABLE(ATColorMatchingMode);
+
 struct ATColorParams {
 	float mHueStart;
 	float mHueRange;
@@ -75,6 +84,7 @@ struct ATColorParams {
 	float mBluScale;
 	bool mbUsePALQuirks;
 	ATLumaRampMode mLumaRampMode;
+	ATColorMatchingMode mColorMatchingMode;
 };
 
 struct ATColorSettings {
@@ -121,6 +131,8 @@ public:
 		kArtifactPAL,
 		kArtifactNTSCHi,
 		kArtifactPALHi,
+		kArtifactAuto,
+		kArtifactAutoHi,
 		kArtifactCount
 	};
 

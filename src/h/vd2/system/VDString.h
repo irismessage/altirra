@@ -76,19 +76,19 @@ public:
 
 	static const size_type npos = (size_type)-1;
 
-	VDStringSpanA() vdnoexcept
+	vdnothrow VDStringSpanA() vdnoexcept
 		: mpBegin(const_cast<value_type *>(sNull))
 		, mpEnd(const_cast<value_type *>(sNull))
 	{
 	}
 
-	explicit VDStringSpanA(const value_type *s) vdnoexcept
+	vdnothrow explicit VDStringSpanA(const value_type *s) vdnoexcept
 		: mpBegin(const_cast<value_type *>(s))
 		, mpEnd(const_cast<value_type *>(s) + strlen(s))
 	{
 	}
 
-	VDStringSpanA(const value_type *s, const value_type *t) vdnoexcept
+	vdnothrow VDStringSpanA(const value_type *s, const value_type *t) vdnoexcept
 		: mpBegin(const_cast<value_type *>(s))
 		, mpEnd(const_cast<value_type *>(t))
 	{
@@ -420,7 +420,7 @@ public:
 		assign(x);
 	}
 
-	VDStringA(this_type&& x) vdnoexcept
+	vdnothrow VDStringA(this_type&& x) vdnoexcept
 		: mpEOS(x.mpEOS)
 	{
 		mpBegin = x.mpBegin;
@@ -470,7 +470,7 @@ public:
 		return *this;
 	}
 
-	this_type& operator=(this_type&& x) vdnoexcept {
+	vdnothrow this_type& operator=(this_type&& x) vdnoexcept {
 		if (mpBegin != sNull)
 			delete[] mpBegin;
 
@@ -847,15 +847,6 @@ inline VDStringA operator+(VDStringA&& str, char c) {
 	return std::move(str);
 }
 
-namespace std {
-	template<>
-	struct less<VDStringA> : binary_function<VDStringA, VDStringA, bool> {
-		bool operator()(const VDStringA& x, const VDStringA& y) const {
-			return x.compare(y) < 0;
-		}
-	};
-}
-
 ///////////////////////////////////////////////////////////////////////////
 
 class VDStringSpanW {
@@ -872,19 +863,19 @@ public:
 
 	static const size_type npos = (size_type)-1;
 
-	VDStringSpanW() vdnoexcept
+	vdnothrow VDStringSpanW() vdnoexcept
 		: mpBegin(const_cast<value_type *>(sNull))
 		, mpEnd(const_cast<value_type *>(sNull))
 	{
 	}
 
-	explicit VDStringSpanW(const value_type *s) vdnoexcept
+	vdnothrow explicit VDStringSpanW(const value_type *s) vdnoexcept
 		: mpBegin(const_cast<value_type *>(s))
 		, mpEnd(const_cast<value_type *>(s) + wcslen(s))
 	{
 	}
 
-	VDStringSpanW(const value_type *s, const value_type *t) vdnoexcept
+	vdnothrow VDStringSpanW(const value_type *s, const value_type *t) vdnoexcept
 		: mpBegin(const_cast<value_type *>(s))
 		, mpEnd(const_cast<value_type *>(t))
 	{
@@ -1081,7 +1072,7 @@ public:
 
 	// 21.3.1 construct/copy/destroy
 
-	VDStringW() vdnoexcept
+	vdnothrow VDStringW() vdnoexcept
 		: mpEOS(const_cast<value_type *>(sNull))
 	{
 	}
@@ -1098,7 +1089,7 @@ public:
 		assign(x);
 	}
 
-	VDStringW(this_type&& x) vdnoexcept
+	vdnothrow VDStringW(this_type&& x) vdnoexcept
 		: mpEOS(x.mpEOS)
 	{
 		mpBegin = x.mpBegin;
@@ -1133,7 +1124,7 @@ public:
 		assign(s, t);
 	}
 
-	~VDStringW() vdnoexcept {
+	vdnothrow ~VDStringW() vdnoexcept {
 		if (mpBegin != sNull)
 			delete[] mpBegin;
 	}
@@ -1148,7 +1139,7 @@ public:
 		return *this;
 	}
 
-	this_type& operator=(this_type&& x) vdnoexcept {
+	vdnothrow this_type& operator=(this_type&& x) vdnoexcept {
 		if (mpBegin != sNull)
 			delete[] mpBegin;
 

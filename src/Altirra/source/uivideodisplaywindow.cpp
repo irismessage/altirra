@@ -45,7 +45,7 @@
 
 extern ATSimulator g_sim;
 
-extern ATUIWindowCaptionUpdater g_winCaptionUpdater;
+extern IATUIWindowCaptionUpdater *g_winCaptionUpdater;
 
 extern bool g_fullscreen;
 extern bool g_mouseClipped;
@@ -198,7 +198,7 @@ void ATUIVideoDisplayWindow::CaptureMouse() {
 
 		}
 
-		g_winCaptionUpdater.SetMouseCaptured(true, !im->IsInputMapped(0, kATInputCode_MouseMMB));
+		g_winCaptionUpdater->SetMouseCaptured(true, !im->IsInputMapped(0, kATInputCode_MouseMMB));
 	}
 }
 
@@ -868,11 +868,12 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 					&& GetModeLineYPos(mDragAnchorY, true) >= 0;
 			}
 
+			mDragStartTime = VDGetCurrentTick();
+			
 			if (mbDragActive) {
 				// We specifically don't clear the drag preview here as that would make it
 				// impossible to use Copy from the context menu with touch.
 				mbDragInitial = true;
-				mDragStartTime = VDGetCurrentTick();
 				mbMouseHidden = false;
 				CaptureCursor();
 			}
@@ -899,6 +900,9 @@ void ATUIVideoDisplayWindow::OnMouseUp(sint32 x, sint32 y, uint32 vk) {
 			ReleaseCursor();
 			UpdateDragPreview(x, y);
 			return;
+		} else if (!mDragPreviewSpans.empty()) {
+			if (VDGetCurrentTick() - mDragStartTime < 250)
+				ClearDragPreview();
 		}
 
 		if (mbOpenSidePanelDeferred) {
@@ -1240,7 +1244,7 @@ void ATUIVideoDisplayWindow::OnCaptureLost() {
 	mbDragActive = false;
 	g_mouseCaptured = false;
 	g_mouseClipped = false;
-	g_winCaptionUpdater.SetMouseCaptured(false, false);
+	g_winCaptionUpdater->SetMouseCaptured(false, false);
 }
 
 void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {

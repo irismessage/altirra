@@ -5,9 +5,9 @@
 
 extern "C" VDALIGN(16) const sint16 gATAudioResamplingKernel63To44[65][64];
 
-uint64 ATFilterResampleMono(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc);
-uint64 ATFilterResampleMonoToStereo(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc);
-uint64 ATFilterResampleStereo(sint16 *d, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc);
+uint64 ATFilterResampleMono16(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc);
+uint64 ATFilterResampleMonoToStereo16(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc);
+uint64 ATFilterResampleStereo16(sint16 *d, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc);
 
 void ATFilterComputeSymmetricFIR_8_32F(float *dst, const float *src, size_t n, const float *kernel);
 void ATFilterComputeSymmetricFIR_8_32F(float *dst, size_t n, const float *kernel);

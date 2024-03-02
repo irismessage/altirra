@@ -205,6 +205,20 @@ void ATCPUVerifier::OnNMIEntry() {
 
 void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 target) {
 	switch(opcode) {
+		case 0xA5:	// LDA dp
+		case 0xA6:	// LDX dp
+		case 0xA4:	// LDY dp
+			if (mFlags & kATVerifierFlag_AddressZero) {
+				if (target == 0) {
+					ATConsolePrintf("\n");
+					ATConsolePrintf("VERIFIER: Possibly incorrect direct load of absolute address zero instead of immediate zero.\n");
+					ATConsolePrintf("          PC: %04X   Fault address: %04X\n", mpCPU->GetPC(), target);
+					ATConsolePrintf("\n");
+					mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
+				}
+			}
+			break;
+
 		case 0x20:	// JSR abs
 		case 0x4C:	// JMP abs
 			if (mFlags & kATVerifierFlag_UndocumentedKernelEntry) {
@@ -228,6 +242,39 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 				ATConsolePrintf("          PC: %04X   Fault address: %04X\n", pc, target);
 				ATConsolePrintf("\n");
 				mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
+			}
+
+			if (mFlags & kATVerifierFlag_CallingConventionViolations) {
+				if (target == ATKernelSymbols::SIOV && mpSimulator->IsKernelROMLocation(target)) {
+					if (mpCPU->GetP() & AT6502::kFlagI) {
+						ATConsolePrintf("\n");
+						ATConsolePrintf("VERIFIER: OS calling convention violation -- calling into SIO with I flag set (will hang)\n");
+						ATConsolePrintf("          PC: %04X   Fault address: %04X\n", mpCPU->GetPC(), target);
+						ATConsolePrintf("\n");
+						mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
+					}
+				}
+			}
+
+			if (mFlags & kATVerifierFlag_LoadingOverDisplayList) {
+				if (target == ATKernelSymbols::SIOV && mpSimulator->IsKernelROMLocation(target)) {
+					uint8 dir = mpSimulator->DebugReadByte(ATKernelSymbols::DSTATS);
+
+					if (dir & 0x40) {
+						const ATAnticEmulator& antic = mpSimulator->GetAntic();
+
+						uint16 ptr = mpSimulator->DebugReadWord(ATKernelSymbols::DBUFLO);
+						uint16 len = mpSimulator->DebugReadWord(ATKernelSymbols::DBYTLO);
+						uint16 dlist = antic.GetDisplayListPtr();
+
+						if (antic.IsDisplayListEnabled() && ((dlist - ptr) & 0xffff) < len) {
+							ATConsolePrintf("\n");
+							ATConsolePrintf("VERIFIER: Loading over active display list.\n");
+							ATConsolePrintf("          PC: $%04X   Read range: $%04X-%04X  DLIST: $%04X\n", mpCPU->GetPC(), ptr, ptr + len - 1, dlist);
+							ATConsolePrintf("\n");
+						}
+					}
+				}
 			}
 			break;
 

@@ -45,7 +45,7 @@ public:
 	void SetMemBase(uint32 membase);
 
 public:
-	void InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) override;
+	void InitAudioOutput(IATAudioMixer *mixer) override;
 
 public:
 	void InitMemMap(ATMemoryManager *memmap) override;
@@ -108,7 +108,7 @@ protected:
 	ATMemoryLayer *mpMemLayerControl;
 	ATScheduler *mpScheduler;
 	ATMemoryManager *mpMemMan;
-	IATAudioOutput *mpAudioOut;
+	IATAudioMixer *mpAudioMixer;
 	uint32	mMemBase;
 	sint32	mMemBaseOverride;
 	uint32	mLoadAddress;
@@ -152,7 +152,7 @@ ATSoundBoardEmulator::ATSoundBoardEmulator()
 	, mpMemLayerControl(NULL)
 	, mpScheduler(NULL)
 	, mpMemMan(NULL)
-	, mpAudioOut(NULL)
+	, mpAudioMixer(NULL)
 	, mMemBase(0xD2C0)
 	, mMemBaseOverride(-1)
 {
@@ -190,10 +190,10 @@ void ATSoundBoardEmulator::SetMemBase(uint32 membase) {
 		UpdateControlLayer();
 }
 
-void ATSoundBoardEmulator::InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) {
-	mpAudioOut = output;
+void ATSoundBoardEmulator::InitAudioOutput(IATAudioMixer *mixer) {
+	mpAudioMixer = mixer;
 
-	output->AddSyncAudioSource(this);
+	mixer->AddSyncAudioSource(this);
 }
 
 void ATSoundBoardEmulator::InitMemMap(ATMemoryManager *memmap) {
@@ -250,9 +250,9 @@ void ATSoundBoardEmulator::Init() {
 }
 
 void ATSoundBoardEmulator::Shutdown() {
-	if (mpAudioOut) {
-		mpAudioOut->RemoveSyncAudioSource(this);
-		mpAudioOut = nullptr;
+	if (mpAudioMixer) {
+		mpAudioMixer->RemoveSyncAudioSource(this);
+		mpAudioMixer = nullptr;
 	}
 
 	if (mpMemMan) {

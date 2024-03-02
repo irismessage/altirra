@@ -209,7 +209,7 @@ bool ATNetSockWorker::Init(IATNetUdpStack *udp, IATNetTcpStack *tcp, bool extern
 	_sntprintf(className, vdcountof(className), _T("ATNetSockWorker_%p"), this);
 
 	WNDCLASS wc = {0};
-	wc.lpfnWndProc = (WNDPROC)mpWndThunk;
+	wc.lpfnWndProc = VDGetThunkFunction<WNDPROC>(mpWndThunk);
 	wc.hInstance = VDGetLocalModuleHandleW32();
 	wc.lpszClassName = className;
 

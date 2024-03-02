@@ -49,13 +49,7 @@
     <ClCompile Include="source\artifacting.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\artifacting_ntsc_mmx.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\artifacting_ntsc_sse2.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\artifacting_pal_mmx.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\artifacting_pal_scalar.cpp">
@@ -80,9 +74,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\audiooutput.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\audiosyncmixer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\audiowriter.cpp">
@@ -131,9 +122,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\cpu65c816.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="cpuheatmap.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\cpuhookmanager.cpp">
@@ -361,9 +349,6 @@
     <ClCompile Include="source\uicommondialogs.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\uicpuoptions.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\uidebugfont.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -418,9 +403,6 @@
     <ClCompile Include="source\uikeyboard.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\uikeyboardoptions.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\uilightpen.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -461,9 +443,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\uirender.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\uispeedoptions.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\uitapecontrol.cpp">
@@ -754,11 +733,41 @@
     <ClCompile Include="source\rapidus.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\cpuheatmap.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uipageddialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfiguresystem.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cmdcpu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfirm.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\constants.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cmdinput.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\audiosampleplayer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\diskdrivefullbase.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\artifacting_ntsc_neon.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\artifacting_neon.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="h\address.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\antic.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -775,9 +784,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\audiooutput.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="h\audiosyncmixer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\audiowriter.h">
@@ -1218,6 +1224,33 @@
     <ClInclude Include="h\rapidus.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="h\profilerui.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uipageddialog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\constants.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uifirmwaremenu.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidevices.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\audiosampleplayer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\diskdrivefullbase.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uiconfmodem.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\mediamanager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="h\cpumachine.inl">
@@ -1416,6 +1449,14 @@
     <None Include="..\..\out\Release\rapidpbi16.bin">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="..\..\out\release\kernel816.rom" />
+    <None Include="manifest\comctl6_arm64.manifest" />
+    <None Include="h\gtiarenderer_neon.inl">
+      <Filter>Header Files</Filter>
+    </None>
+    <None Include="h\gtia_neon.inl">
+      <Filter>Header Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="res\Altirra.rc">
@@ -1481,5 +1522,16 @@
     <Image Include="res\traceViewerToolbar.png">
       <Filter>Resource Files</Filter>
     </Image>
+    <Image Include="res\profilerToolbar.png">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="res\warning.png">
+      <Filter>Resource Files</Filter>
+    </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="res\cmdhelp.txt">
+      <Filter>Resource Files</Filter>
+    </Text>
   </ItemGroup>
 </Project>

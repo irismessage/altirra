@@ -16,6 +16,8 @@
 	#define BUILD L"80x86"
 #elif defined(_M_AMD64)
 	#define BUILD L"AMD64"
+#elif defined(_M_ARM64)
+	#define BUILD L"ARM64"
 #endif
 
 namespace {

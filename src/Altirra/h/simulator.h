@@ -15,20 +15,8 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#ifndef AT_SIMULATOR_H
-#define AT_SIMULATOR_H
-
-#ifdef _MSC_VER
-	#pragma once
-#endif
-
-#ifndef VDNOINLINE
-	#ifdef _MSC_VER
-		#define VDNOINLINE __declspec(noinline)
-	#else
-		#define VDNOINLINE
-	#endif
-#endif
+#ifndef f_AT_SIMULATOR_H
+#define f_AT_SIMULATOR_H
 
 #include <at/atcore/scheduler.h>
 #include "cpu.h"
@@ -39,7 +27,9 @@
 #include "pokey.h"
 #include "pia.h"
 #include "simeventmanager.h"
-#include "address.h"
+#include "constants.h"
+
+enum ATAddressSpace : uint32;
 
 struct ATCartLoadContext;
 class ATMemoryManager;
@@ -52,7 +42,7 @@ class ATHLEProgramLoader;
 class ATHLEFPAccelerator;
 class ATHLEFastBootHook;
 class IATHLECIOHook;
-class ATAudioSyncMixer;
+class ATAudioSamplePlayer;
 class ATFirmwareManager;
 class ATDeviceManager;
 class IATDeviceSIOManager;
@@ -69,91 +59,7 @@ class ATTraceCollection;
 struct ATTraceSettings;
 
 enum ATMediaWriteMode : uint8;
-
-enum ATMemoryMode : uint32 {
-	kATMemoryMode_48K,
-	kATMemoryMode_52K,
-	kATMemoryMode_64K,
-	kATMemoryMode_128K,
-	kATMemoryMode_320K,
-	kATMemoryMode_576K,
-	kATMemoryMode_1088K,
-	kATMemoryMode_16K,
-	kATMemoryMode_8K,
-	kATMemoryMode_24K,
-	kATMemoryMode_32K,
-	kATMemoryMode_40K,
-	kATMemoryMode_320K_Compy,
-	kATMemoryMode_576K_Compy,
-	kATMemoryMode_256K,
-	kATMemoryModeCount
-};
-
-enum ATHardwareMode : uint32 {
-	kATHardwareMode_800,
-	kATHardwareMode_800XL,
-	kATHardwareMode_5200,
-	kATHardwareMode_XEGS,
-	kATHardwareMode_1200XL,
-	kATHardwareMode_130XE,
-	kATHardwareModeCount
-};
-
-enum ATROMImage {
-	kATROMImage_OSA,
-	kATROMImage_OSB,
-	kATROMImage_XL,
-	kATROMImage_XEGS,
-	kATROMImage_Other,
-	kATROMImage_5200,
-	kATROMImage_Basic,
-	kATROMImage_Game,
-	kATROMImage_KMKJZIDE,
-	kATROMImage_KMKJZIDEV2,
-	kATROMImage_KMKJZIDEV2_SDX,
-	kATROMImage_SIDE_SDX,
-	kATROMImage_1200XL,
-	kATROMImage_MyIDEII,
-	kATROMImage_Ultimate1MB,
-	kATROMImage_SIDE2_SDX,
-	kATROMImageCount
-};
-
-enum ATKernelMode {
-	kATKernelMode_Default,
-	kATKernelMode_800,
-	kATKernelMode_XL,
-	kATKernelMode_5200,
-	kATKernelModeCount
-};
-
-enum ATStorageId {
-	kATStorageId_None,
-	kATStorageId_UnitMask	= 0x00FF,
-	kATStorageId_Disk		= 0x0100,
-	kATStorageId_Cartridge	= 0x0200,
-	kATStorageId_Firmware	= 0x0300,
-	kATStorageId_TypeMask	= 0xFF00,
-	kATStorageId_All
-};
-
-enum ATVideoStandard : uint32 {
-	kATVideoStandard_NTSC,
-	kATVideoStandard_PAL,
-	kATVideoStandard_SECAM,
-	kATVideoStandard_PAL60,
-	kATVideoStandard_NTSC50,
-	kATVideoStandardCount
-};
-
-enum ATMemoryClearMode : uint8 {
-	kATMemoryClearMode_Zero,
-	kATMemoryClearMode_Random,
-	kATMemoryClearMode_DRAM1,
-	kATMemoryClearMode_DRAM2,
-	kATMemoryClearMode_DRAM3,
-	kATMemoryClearModeCount
-};
+struct ATMediaLoadContext;
 
 class ATSaveStateReader;
 class ATSaveStateWriter;
@@ -237,7 +143,6 @@ public:
 	ATCartridgeEmulator *GetCartridge(uint32 unit) { return mpCartridge[unit]; }
 	IATUIRenderer *GetUIRenderer() { return mpUIRenderer; }
 	IATAudioOutput *GetAudioOutput() { return mpAudioOutput; }
-	ATAudioSyncMixer *GetAudioSyncMixer() { return mpAudioSyncMixer; }
 	ATLightPenPort *GetLightPenPort() { return mpLightPen; }
 	ATUltimate1MBEmulator *GetUltimate1MB() { return mpUltimate1MB; }
 	IATVirtualScreenHandler *GetVirtualScreenHandler() { return mpVirtualScreenHandler; }
@@ -326,6 +231,9 @@ public:
 	bool IsRandomFillEXEEnabled() const { return mbRandomFillEXEEnabled; }
 	void SetRandomFillEXEEnabled(bool enabled);
 
+	ATHLEProgramLoadMode GetHLEProgramLoadMode() const { return mProgramLoadMode; }
+	void SetHLEProgramLoadMode(ATHLEProgramLoadMode mode) { mProgramLoadMode = mode; }
+
 	void SetBreakOnFrameEnd(bool enabled) { mbBreakOnFrameEnd = enabled; }
 	void SetBreakOnScanline(int scanline) { mBreakOnScanline = scanline; }
 	void SetTurboModeEnabled(bool turbo);
@@ -381,6 +289,9 @@ public:
 	bool IsMapRAMEnabled() const { return mbMapRAM; }
 	void SetMapRAMEnabled(bool enable);
 
+	bool IsPreserveExtRAMEnabled() const { return mbPreserveExtRAM; }
+	void SetPreserveExtRAMEnabled(bool enable) { mbPreserveExtRAM = enable; }
+
 	bool IsUltimate1MBEnabled() const { return mpUltimate1MB != NULL; }
 	void SetUltimate1MBEnabled(bool enable);
 
@@ -412,7 +323,10 @@ public:
 	bool GetTracingEnabled() const;
 	void SetTracingEnabled(const ATTraceSettings *settings);
 
+	uint64 TimeSinceColdReset() const;
+
 	void ColdReset();
+	void ColdResetComputerOnly();
 	void WarmReset();
 	void Resume();
 	void ResumeSingleCycle();
@@ -421,7 +335,7 @@ public:
 
 	void FlushDeferredEvents();
 
-	void GetDirtyStorage(vdfastvector<ATStorageId>& ids, ATStorageId mediaId = kATStorageId_None) const;
+	void GetDirtyStorage(vdfastvector<ATStorageId>& ids, uint32 storageTypeMask = ~(uint32)0) const;
 	bool IsStorageDirty(ATStorageId mediaId) const;
 	bool IsStoragePresent(ATStorageId mediaId) const;
 	void SaveStorage(ATStorageId storageId, const wchar_t *path);
@@ -429,10 +343,12 @@ public:
 	void SwapDrives(int src, int dst);
 	void RotateDrives(int count, int delta);
 
-	void UnloadAll();
+	void UnloadAll(uint32 storageTypeMask = ~(uint32)0);
+
 	bool Load(const wchar_t *path, ATMediaWriteMode writeMode, ATImageLoadContext *loadCtx);
 	bool Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, ATMediaWriteMode writeMode, ATImageLoadContext *loadCtx);
 	bool Load(const wchar_t *origPath, const wchar_t *imagePath, IATImage *image, ATMediaWriteMode writeMode, ATImageLoadContext *loadCtx);
+	bool Load(ATMediaLoadContext& ctx);
 
 	bool IsCartridgeAttached(uint32 index) const;
 
@@ -473,6 +389,8 @@ public:
 	bool IsKernelROMLocation(uint16 address) const;
 
 	uint32 ComputeKernelChecksum() const;
+
+	uint32 GetConfigChangeCounter() const { return mConfigChangeCounter; }
 
 	bool LoadState(ATSaveStateReader& reader, ATStateLoadContext *context);
 	void SaveState(ATSaveStateWriter& writer);
@@ -530,7 +448,6 @@ private:
 	void PokeyBreak() override;
 	bool PokeyIsInInterrupt() const override;
 	bool PokeyIsKeyPushOK(uint8 c, bool cooldownExpired) const override;
-	uint32 PokeyGetTimestamp() const override;
 
 	void ReinitHookPage();
 	void SetupPendingHeldButtons();
@@ -567,9 +484,11 @@ private:
 	bool mbForcedSelfTest;
 	bool mbCartridgeSwitch;
 	bool mbMapRAM;
+	bool mbPreserveExtRAM;
 	bool mbShadowROM;
 	bool mbShadowCartridge;
 	int mBreakOnScanline;
+	ATHLEProgramLoadMode mProgramLoadMode {};
 
 	int	mPowerOnDelay = -1;
 	uint32	mPoweronDelayCounter = 0;
@@ -607,7 +526,7 @@ private:
 	ATPokeyEmulator	mPokey;
 	ATPokeyEmulator	mPokey2;
 	IATAudioOutput	*mpAudioOutput;
-	ATAudioSyncMixer *mpAudioSyncMixer;
+	ATAudioSamplePlayer *mpAudioSamplePlayer;
 	ATPokeyTables	*mpPokeyTables;
 	ATScheduler		mScheduler;
 	ATScheduler		mSlowScheduler;
@@ -640,6 +559,8 @@ private:
 	uint8	mAxlonMemoryBits;
 	bool	mbAxlonAliasingEnabled;
 	sint32	mHighMemoryBanks;
+
+	uint32	mConfigChangeCounter;
 
 	const uint8 *mpKernelUpperROM;
 	const uint8 *mpKernelLowerROM;

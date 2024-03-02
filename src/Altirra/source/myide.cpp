@@ -309,7 +309,7 @@ bool ATMyIDEEmulator::ReloadFirmware() {
 	memset(flash, 0xFF, flashSize);
 
 	const uint64 id = mpFirmwareManager->GetCompatibleFirmware(kATFirmwareType_MyIDE2);
-	mpFirmwareManager->LoadFirmware(id, flash, 0, flashSize);
+	mpFirmwareManager->LoadFirmware(id, flash, 0, flashSize, nullptr, nullptr, nullptr, nullptr, &mbFirmwareUsable);
 
 	return oldHash != VDHash128(flash, flashSize);
 }
@@ -331,6 +331,10 @@ void ATMyIDEEmulator::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 
 		mFlash.SetDirty(false);
 	}
+}
+
+bool ATMyIDEEmulator::IsUsableFirmwareLoaded() const {
+	return !mbVersion2 || mbFirmwareUsable;
 }
 
 IATDeviceBus *ATMyIDEEmulator::GetDeviceBus(uint32 index) {
@@ -769,6 +773,8 @@ bool ATMyIDEEmulator::WriteByte_Cart_V2(void *thisptr0, uint32 address, uint8 va
 	if (thisptr->mFlash.CheckForWriteActivity()) {
 		if (thisptr->mpUIRenderer)
 			thisptr->mpUIRenderer->SetFlashWriteActivity();
+
+		thisptr->mbFirmwareUsable = true;
 	}
 
 	if (remap) {

@@ -34,6 +34,7 @@
 #include <at/atdebugger/target.h>
 #include <at/atemulation/acia6850.h>
 #include "fdc.h"
+#include "diskdrivefullbase.h"
 #include "diskinterface.h"
 
 class ATIRQController;
@@ -43,7 +44,6 @@ class ATDeviceDiskDrivePercom final : public ATDevice
 	, public IATDeviceFirmware
 	, public IATDeviceDiskDrive
 	, public ATDeviceSIO
-	, public IATDeviceAudioOutput
 	, public IATDeviceDebugTarget
 	, public IATDebugTarget
 	, public IATDebugTargetHistory
@@ -78,15 +78,13 @@ public:		// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
 	bool IsWritableFirmwareDirty(uint32 idx) const override;
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
+	bool IsUsableFirmwareLoaded() const override;
 
 public:		// IATDeviceDiskDrive
 	void InitDiskDrive(IATDiskDriveManager *ddm) override;
 
 public:		// ATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
-
-public:		// IATDeviceAudioOutput
-	void InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) override;
 
 public:	// IATDeviceDebugTarget
 	IATDebugTarget *GetDebugTarget(uint32 index) override;
@@ -199,7 +197,6 @@ protected:
 	IATDiskDriveManager *mpDiskDriveManager = nullptr;
 
 	ATFirmwareManager *mpFwMgr = nullptr;
-	ATAudioSyncMixer *mpAudioSyncMixer = nullptr;
 
 	static constexpr uint32 kDiskChangeStepMS = 50;
 
@@ -220,15 +217,17 @@ protected:
 
 	uint32 mClockDivisor = 0;
 
+	bool mbFirmwareUsable = false;
 	bool mbSoundsEnabled = false;
 	bool mbForcedIndexPulse = false;
 	bool mbMotorRunning = false;
 	bool mbExtendedRAMEnabled = false;
-	uint32 mRotationSoundId = 0;
 	uint32 mLastStepSoundTime = 0;
 	uint32 mLastStepPhase = 0;
 	uint8 mDiskChangeState = 0;
 	uint8 mDriveId = 0;
+
+	ATDiskDriveAudioPlayer mAudioPlayer;
 
 	enum DriveType : uint32 {
 		kDriveType_None,

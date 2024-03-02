@@ -12,6 +12,8 @@ static const struct VD_MSVC_C4786Workaround { VD_MSVC_C4786Workaround() {} } g_V
 #error _WIN32_WINNT is less than 5.0. This will break the places bar on the load/save dialog.
 #endif
 
+struct IUnknown;
+
 #include <vd2/system/vdtypes.h>
 
 #include <windows.h>

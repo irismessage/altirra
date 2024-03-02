@@ -206,5 +206,11 @@
     <Xml Include="source\devices-rapidus.xml">
       <Filter>Source Files</Filter>
     </Xml>
+    <Xml Include="source\devices-speedy1050.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\devices-isplate.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
   </ItemGroup>
 </Project>

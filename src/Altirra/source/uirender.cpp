@@ -28,6 +28,7 @@
 #include <vd2/VDDisplay/renderer.h>
 #include <vd2/VDDisplay/renderersoft.h>
 #include <vd2/VDDisplay/textrenderer.h>
+#include <at/atcore/notifylist.h>
 #include "uirender.h"
 #include "audiomonitor.h"
 #include "slightsid.h"
@@ -144,7 +145,11 @@ void ATUIAudioStatusDisplay::FormatLine(int idx, const ATUIAudioStatus& status) 
 		break;
 
 	case 3:
-		mText.sprintf(L"Measured range: %5d-%5d", status.mMeasuredMin, status.mMeasuredMax);
+		mText.sprintf(L"Measured range: %5d-%5d (%.1f ms)"
+			, status.mMeasuredMin
+			, status.mMeasuredMax
+			, (float)status.mMeasuredMin * 1000.0f / (status.mSamplingRate * 4.0f)
+		);
 		break;
 
 	case 4:
@@ -418,7 +423,7 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 	const int y = 0;
 
 	const int x_link = x;
-	const int x_clock = x + 2*fontsmw;
+	const int x_clock = x + 1*fontsmw;
 	const int x_highpass = x + 5*fontsmw + (fontsmw >> 1);
 	const int x_mode = x + 7*fontsmw;
 	const int x_noise = x + 9*fontsmw;
@@ -453,7 +458,7 @@ void ATUIAudioDisplay::PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer
 		else if ((ch == 0 && (audctl & 0x40)) || (ch == 2 && (audctl & 0x20)))
 			tr.DrawTextLine(x_clock, chandetaily, L"1.79");
 		else
-			tr.DrawTextLine(x_clock, chandetaily, audctl & 1 ? L"15K" : L"64K");
+			tr.DrawTextLine(x_clock, chandetaily, audctl & 1 ? L" 15K" : L" 64K");
 
 		// draw high-pass indicator
 		if ((ch == 0 && (audctl & 4)) || (ch == 1 && (audctl & 2)))
@@ -564,6 +569,11 @@ public:
 	void Relayout(int w, int h);
 	void Update();
 
+	sint32 GetIndicatorSafeHeight() const;
+
+	void AddIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn);
+	void RemoveIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn);
+
 public:
 	virtual void TimerCallback();
 
@@ -607,6 +617,9 @@ protected:
 	VDStringW	mStatusMessage;
 
 	uint8	mLedStatus = 0;
+
+	sint32 mIndicatorSafeHeight = 0;
+	ATNotifyList<const vdfunction<void()> *> mIndicatorSafeAreaListeners;
 
 	uint32	mWatchedValues[8];
 	sint8	mWatchedValueLens[8];
@@ -1409,6 +1422,27 @@ void ATUIRenderer::Update() {
 	// update audio monitor
 	for(ATUIAudioDisplay *disp : mpAudioDisplays)
 		disp->Update();
+
+	// update indicator safe area
+	sint32 ish = mSysFontDigitHeight * 2 + 6;
+
+	if (mIndicatorSafeHeight != ish) {
+		mIndicatorSafeHeight = ish;
+
+		mIndicatorSafeAreaListeners.Notify([](const vdfunction<void()> *pfn) { (*pfn)(); return false; });
+	}
+}
+
+sint32 ATUIRenderer::GetIndicatorSafeHeight() const {
+	return mIndicatorSafeHeight;
+}
+
+void ATUIRenderer::AddIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn) {
+	mIndicatorSafeAreaListeners.Add(pfn);
+}
+
+void ATUIRenderer::RemoveIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn) {
+	mIndicatorSafeAreaListeners.Remove(pfn);
 }
 
 void ATUIRenderer::TimerCallback() {

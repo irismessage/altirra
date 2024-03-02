@@ -24,16 +24,20 @@
 #include "simulator.h"
 #include "uiaccessors.h"
 #include "uifilefilters.h"
+#include "uiconfirm.h"
 
 extern ATSimulator g_sim;
 
 bool ATUIConfirmDiscardCartridge(VDGUIHandle h);
 int ATUIShowDialogCartridgeMapper(VDGUIHandle h, uint32 cartSize, const void *data);
 
-extern void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType = kATImageType_None, bool *suppressColdReset = NULL, int loadIndex = -1);
+extern void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType = kATImageType_None, bool *suppressColdReset = NULL, int loadIndex = -1, bool autoProfile = false);
 
 void OnCommandAttachCartridge(bool cart2) {
 	if (!ATUIConfirmDiscardCartridge(ATUIGetMainWindow()))
+		return;
+
+	if (!ATUIConfirmCartridgeChangeReset())
 		return;
 
 	VDStringW fn(VDGetLoadFileName('cart', ATUIGetMainWindow(), L"Load cartridge",
@@ -44,7 +48,7 @@ void OnCommandAttachCartridge(bool cart2) {
 		return;
 
 	DoLoad(ATUIGetMainWindow(), fn.c_str(), nullptr, 0, kATImageType_Cartridge, nullptr, cart2 ? 1 : 0);
-	g_sim.ColdReset();
+	ATUIConfirmCartridgeChangeResetComplete();
 }
 
 void OnCommandAttachCartridge() {
@@ -56,35 +60,51 @@ void OnCommandAttachCartridge2() {
 }
 
 void OnCommandDetachCartridge() {
-	if (ATUIConfirmDiscardCartridge(ATUIGetMainWindow())) {
-		if (g_sim.GetHardwareMode() == kATHardwareMode_5200)
-			g_sim.LoadCartridge5200Default();
-		else
-			g_sim.UnloadCartridge(0);
+	if (!ATUIConfirmDiscardCartridge(ATUIGetMainWindow()))
+		return;
 
-		g_sim.ColdReset();
-	}
+	if (!ATUIConfirmCartridgeChangeReset())
+		return;
+
+	if (g_sim.GetHardwareMode() == kATHardwareMode_5200)
+		g_sim.LoadCartridge5200Default();
+	else
+		g_sim.UnloadCartridge(0);
+
+	ATUIConfirmCartridgeChangeResetComplete();
 }
 
 void OnCommandDetachCartridge2() {
-	if (ATUIConfirmDiscardCartridge(ATUIGetMainWindow())) {
-		g_sim.UnloadCartridge(1);
-		g_sim.ColdReset();
-	}
+	if (!ATUIConfirmDiscardCartridge(ATUIGetMainWindow()))
+		return;
+
+	if (!ATUIConfirmCartridgeChangeReset())
+		return;
+
+	g_sim.UnloadCartridge(1);
+	ATUIConfirmCartridgeChangeResetComplete();
 }
 
 void OnCommandAttachNewCartridge(ATCartridgeMode mode) {
-	if (ATUIConfirmDiscardCartridge(ATUIGetMainWindow())) {
-		g_sim.LoadNewCartridge(mode);
-		g_sim.ColdReset();
-	}
+	if (!ATUIConfirmDiscardCartridge(ATUIGetMainWindow()))
+		return;
+
+	if (!ATUIConfirmCartridgeChangeReset())
+		return;
+
+	g_sim.LoadNewCartridge(mode);
+	ATUIConfirmCartridgeChangeResetComplete();
 }
 
 void OnCommandAttachCartridgeBASIC() {
-	if (ATUIConfirmDiscardCartridge(ATUIGetMainWindow())) {
-		g_sim.LoadCartridgeBASIC();
-		g_sim.ColdReset();
-	}
+	if (!ATUIConfirmDiscardCartridge(ATUIGetMainWindow()))
+		return;
+
+	if (!ATUIConfirmCartridgeChangeReset())
+		return;
+
+	g_sim.LoadCartridgeBASIC();
+	ATUIConfirmCartridgeChangeResetComplete();
 }
 
 void OnCommandCartActivateMenuButton() {
@@ -116,8 +136,8 @@ void OnCommandSaveCartridge() {
 	int optval[1]={0};
 
 	VDStringW fn(VDGetSaveFileName('cart', ATUIGetMainWindow(), L"Save cartridge",
-		L"Cartridge image with header\0*.bin;*.car;*.rom\0"
-		L"Raw cartridge image\0*.bin;*.car;*.rom;*.a52\0",
+		L"Cartridge image with header (*.car)\0*.car\0"
+		L"Raw cartridge image (*.bin)\0*.bin\0",
 
 		L"car", opts, optval));
 

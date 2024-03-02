@@ -298,6 +298,33 @@
     <None Include="source\Rapidus\rapidos.s">
       <Filter>Source Files\Rapidus</Filter>
     </None>
+    <None Include="source\Shared\irq816.s">
+      <Filter>Source Files\Shared</Filter>
+    </None>
+    <None Include="source\Shared\interrupt816.s">
+      <Filter>Source Files\Shared</Filter>
+    </None>
+    <None Include="source\Shared\vbi816.s">
+      <Filter>Source Files\Shared</Filter>
+    </None>
+    <None Include="source\Shared\init816.s">
+      <Filter>Source Files\Shared</Filter>
+    </None>
+    <None Include="source\Shared\keyboard816.s">
+      <Filter>Source Files\Shared</Filter>
+    </None>
+    <None Include="source\Shared\screenext816.s">
+      <Filter>Source Files\Shared</Filter>
+    </None>
+    <None Include="source\Shared\syscall816.s">
+      <Filter>Source Files\Shared</Filter>
+    </None>
+    <None Include="source\Shared\sysdev816.s">
+      <Filter>Source Files\Shared</Filter>
+    </None>
+    <None Include="source\Shared\cio816.s">
+      <Filter>Source Files\Shared</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\Placeholders\noblackbox.s">
@@ -306,6 +333,9 @@
   </ItemGroup>
   <ItemGroup>
     <Text Include="source\Additions\license.txt">
+      <Filter>Source Files\Additions</Filter>
+    </Text>
+    <Text Include="source\Additions\loadexe.s">
       <Filter>Source Files\Additions</Filter>
     </Text>
   </ItemGroup>

@@ -32,19 +32,11 @@ ATDiskInterface::~ATDiskInterface() {
 	mFlushTimer.Stop();
 }
 
-void ATDiskInterface::Rename(uint32 index) {
-	if (mIndex != index) {
-		mpUIRenderer->SetDiskMotorActivity(mIndex, false);
-		mpUIRenderer->ResetStatusFlags(1 << mIndex);
-		mpUIRenderer->SetDiskErrorState(mIndex, false);
-
-		mIndex = index;
-	}
-}
-
 void ATDiskInterface::SwapSettings(ATDiskInterface& other) {
 	if (&other == this)
 		return;
+
+	NotifyStateSuspend();
 
 	const auto timingA = this->mbAccurateSectorTiming;
 	const auto timingB = other.mbAccurateSectorTiming;
@@ -84,6 +76,12 @@ void ATDiskInterface::SwapSettings(ATDiskInterface& other) {
 
 	this->SetWriteMode(writeModeB);
 	other.SetWriteMode(writeModeA);
+
+	// update modified states
+	this->CheckForModifiedChange();
+	other.CheckForModifiedChange();
+
+	NotifyStateResume(false);
 }
 
 void ATDiskInterface::Init(uint32 index, IATUIRenderer *uirenderer) {
@@ -165,11 +163,39 @@ void ATDiskInterface::SetWriteMode(ATMediaWriteMode mode) {
 
 		for(auto *client : mClients)
 			client->OnWriteModeChanged();
+
+		NotifyStateChange();
 	}
 }
 
 void ATDiskInterface::Flush() {
 	Flush(false);
+}
+
+bool ATDiskInterface::CanRevert() const {
+	if (!IsDirty())
+		return false;
+
+	if (!mbHasPersistentSource)
+		return false;
+
+	if (mWriteMode & kATMediaWriteMode_AutoFlush)
+		return false;
+
+	return true;
+}
+
+bool ATDiskInterface::RevertDisk() {
+	if (!IsDirty())
+		return true;
+
+	if (!CanRevert())
+		return false;
+
+	ATMediaWriteMode writeMode = mWriteMode;
+	LoadDisk(mPath.c_str());
+	SetWriteMode(writeMode);
+	return true;
 }
 
 void ATDiskInterface::MountFolder(const wchar_t *path, bool sdfs) {
@@ -193,6 +219,10 @@ void ATDiskInterface::MountFolder(const wchar_t *path, bool sdfs) {
 }
 
 void ATDiskInterface::LoadDisk(const wchar_t *s) {
+	// copy the path in case it's an alias for an internal var (mPath)
+	VDStringW path(s);
+	s = path.c_str();
+
 	size_t len = wcslen(s);
 
 	if (len >= 3) {
@@ -208,10 +238,11 @@ void ATDiskInterface::LoadDisk(const wchar_t *s) {
 	vdrefptr<ATVFSFileView> view;
 	ATVFSOpenFileView(s, false, ~view);
 
-	UnloadDisk();
-
 	vdrefptr<IATDiskImage> image;
 	ATLoadDiskImage(s, view->GetFileName(), view->GetStream(), ~image);
+
+	UnloadDisk();
+
 	LoadDisk(s, view->GetFileName(), image);
 }
 
@@ -250,6 +281,8 @@ void ATDiskInterface::SaveDiskAs(const wchar_t *s, ATDiskImageFormat format) {
 	mPath = s;
 	mbHasPersistentSource = true;
 	SetFlushError(false);
+
+	CheckForModifiedChange();
 }
 
 void ATDiskInterface::CreateDisk(uint32 sectorCount, uint32 bootSectorCount, uint32 sectorSize) {
@@ -305,6 +338,8 @@ void ATDiskInterface::UnloadDisk() {
 }
 
 void ATDiskInterface::OnDiskModified() {
+	CheckForModifiedChange();
+
 	if (CanFlush(false)) {
 		if (!mFlushTimeStart)
 			mFlushTimer.SetPeriodicFn([this] { OnFlushTimerFire(); }, 500);
@@ -315,10 +350,14 @@ void ATDiskInterface::OnDiskModified() {
 }
 
 void ATDiskInterface::OnDiskChanged(bool mediaRemoved) {
+	NotifyStateSuspend();
+
 	OnDiskModified();
 
 	for(auto *client : mClients)
 		client->OnDiskChanged(mediaRemoved);
+
+	NotifyStateResume(true);
 }
 
 void ATDiskInterface::OnDiskError() {
@@ -379,6 +418,14 @@ bool ATDiskInterface::GetSectorInfo(uint16 sector, int phantomIdx, SectorInfo& i
 	info.mRotPos = psi.mRotPos;
 	info.mFDCStatus = psi.mFDCStatus;
 	return true;
+}
+
+void ATDiskInterface::AddStateChangeHandler(const vdfunction<void()> *fn) {
+	mStateChangeHandlers.Add(fn);
+}
+
+void ATDiskInterface::RemoveStateChangeHandler(const vdfunction<void()> *fn) {
+	mStateChangeHandlers.Remove(fn);
 }
 
 size_t ATDiskInterface::GetClientCount() const {
@@ -452,6 +499,8 @@ void ATDiskInterface::Flush(bool ignoreAutoFlush) {
 			SetFlushError(true);
 		}
 	}
+
+	CheckForModifiedChange();
 }
 
 bool ATDiskInterface::CanFlush(bool ignoreAutoFlush) const {
@@ -483,4 +532,40 @@ void ATDiskInterface::OnFlushTimerFire() {
 
 void ATDiskInterface::SetFlushError(bool error) {
 	mpUIRenderer->SetDiskErrorState(mIndex, error);
+}
+
+void ATDiskInterface::CheckForModifiedChange() {
+	const bool modified = mpDiskImage && mpDiskImage->IsDirty();
+
+	if (mbModified != modified) {
+		mbModified = modified;
+
+		NotifyStateChange();
+	}
+}
+
+void ATDiskInterface::NotifyStateSuspend() {
+	mStateChangeSuspendCount += 2;
+}
+
+void ATDiskInterface::NotifyStateResume(bool notify) {
+	if (mStateChangeSuspendCount < 4) {
+		if (mStateChangeSuspendCount & 1)
+			notify = true;
+
+		mStateChangeSuspendCount = 0;
+
+		if (notify)
+			NotifyStateChange();
+	} else {
+		mStateChangeSuspendCount -= 2;
+	}
+}
+
+void ATDiskInterface::NotifyStateChange() {
+	if (mStateChangeSuspendCount >= 2) {
+		mStateChangeSuspendCount |= 1;
+	} else {
+		mStateChangeHandlers.Notify([](auto fn) -> bool { (*fn)(); return false; });
+	}
 }

@@ -215,6 +215,7 @@ uint8 ATHLEFastBootHook::OnHookMemClear(uint16 pc) {
 			mem.WriteByte(addr + i, fillByte);
 
 		addr += 0x100;
+		y = 0;
 	} while(--x);
 
 	mem.WriteByte(ATKernelSymbols::TOADR + 1, (uint8)(addr >> 8));

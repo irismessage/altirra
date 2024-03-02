@@ -105,6 +105,7 @@ public:		// IATDeviceSystemControl
 		ATMemoryLayer *layerSelfTestROM,
 		ATMemoryLayer *layerGameROM,
 		const void *kernelROM) override;
+	void OnU1MBConfigPreLocked(bool inPreLockState) override;
 
 protected:
 	void SetKernelBank(uint8 bank);

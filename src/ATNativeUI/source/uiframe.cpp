@@ -30,6 +30,10 @@
 #include <at/atui/constants.h>
 #include <at/atnativeui/uiframe.h>
 
+#ifdef NTDDI_WIN10_RS3
+#include <shellscalingapi.h>
+#endif
+
 #pragma comment(lib, "uxtheme")
 
 // Requires Windows XP
@@ -264,6 +268,13 @@ void ATContainerSplitterBar::Shutdown() {
 		DestroyWindow(mhwnd);
 }
 
+void ATContainerSplitterBar::BeginDrag(int screenX, int screenY) {
+	POINT pt = { screenX, screenY };
+	MapWindowPoints(nullptr, GetParent(mhwnd), &pt, 1);
+
+	InternalBeginDrag(pt.x, pt.y);
+}
+
 LRESULT ATContainerSplitterBar::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch(msg) {
 	case WM_SIZE:
@@ -322,29 +333,7 @@ void ATContainerSplitterBar::OnLButtonDown(WPARAM wParam, int x, int y) {
 	POINT pt = {x, y};
 	MapWindowPoints(mhwnd, GetParent(mhwnd), &pt, 1);
 
-	RECT r;
-	if (!GetClientRect(mhwnd, &r))
-		return;
-
-	const vdrect32& rPane = mpControlledPane->GetArea();
-
-	switch(mpControlledPane->GetDockCode()) {
-	case kATContainerDockLeft:
-		mDistanceOffset = rPane.width() - pt.x;
-		break;
-	case kATContainerDockRight:
-		mDistanceOffset = rPane.width() + pt.x;
-		break;
-	case kATContainerDockTop:
-		mDistanceOffset = rPane.height() - pt.y;
-		break;
-	case kATContainerDockBottom:
-		mDistanceOffset = rPane.height() + pt.y;
-		break;
-	}
-
-	SetCapture(mhwnd);
-	InvalidateRect(mhwnd, NULL, FALSE);
+	InternalBeginDrag(pt.x, pt.y);
 }
 
 void ATContainerSplitterBar::OnLButtonUp(WPARAM wParam, int x, int y) {
@@ -384,8 +373,30 @@ void ATContainerSplitterBar::OnMouseMove(WPARAM wParam, int x, int y) {
 void ATContainerSplitterBar::OnCaptureChanged(HWND hwndNewCapture) {
 }
 
-bool ATContainerSplitterBar::IsTouchHitTestCapable() const {
-	return true;
+void ATContainerSplitterBar::InternalBeginDrag(int x, int y) {
+	RECT r;
+	if (!GetClientRect(mhwnd, &r))
+		return;
+
+	const vdrect32& rPane = mpControlledPane->GetArea();
+
+	switch(mpControlledPane->GetDockCode()) {
+	case kATContainerDockLeft:
+		mDistanceOffset = rPane.width() - x;
+		break;
+	case kATContainerDockRight:
+		mDistanceOffset = rPane.width() + x;
+		break;
+	case kATContainerDockTop:
+		mDistanceOffset = rPane.height() - y;
+		break;
+	case kATContainerDockBottom:
+		mDistanceOffset = rPane.height() + y;
+		break;
+	}
+
+	SetCapture(mhwnd);
+	InvalidateRect(mhwnd, NULL, FALSE);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -803,6 +814,14 @@ bool ATContainerDockingPane::GetFrameSizeForContent(vdsize32& sz) {
 	return true;
 }
 
+void ATContainerDockingPane::SetSplitterEdges(uint8 edgeMask) {
+	if (mSplitterEdges != edgeMask) {
+		mSplitterEdges = edgeMask;
+
+		UpdateChildEdgeFlags();
+	}
+}
+
 int ATContainerDockingPane::GetDockCode() const {
 	return mDockCode;
 }
@@ -880,6 +899,8 @@ void ATContainerDockingPane::AddContent(ATFrameWindow *frame, bool deferResize) 
 	mContent.push_back(frame);
 	frame->AddRef();
 	frame->SetPane(this);
+
+	UpdateChildEdgeFlags();
 
 	if (mpParent->IsLayoutSuspended())
 		InvalidateLayout();
@@ -993,6 +1014,8 @@ ATContainerDockingPane *ATContainerDockingPane::Dock(ATFrameWindow *frame, int c
 		pane->CreateSplitter();
 
 		newPane = pane;
+
+		UpdateChildEdgeFlags();
 	}
 
 	if (mpParent->IsLayoutSuspended())
@@ -1082,6 +1105,14 @@ void ATContainerDockingPane::NotifyFontsUpdated() {
 
 	for(ATContainerDockingPane *child : mChildren)
 		child->NotifyFontsUpdated();
+}
+
+void ATContainerDockingPane::NotifyDpiChanged(uint32 dpi) {
+	for(ATFrameWindow *frame : mContent)
+		frame->NotifyDpiChanged(dpi);
+
+	for(ATContainerDockingPane *child : mChildren)
+		child->NotifyDpiChanged(dpi);
 }
 
 void ATContainerDockingPane::RecalcFrame() {
@@ -1303,6 +1334,104 @@ bool ATContainerDockingPane::HitTestDragHandles(int screenX, int screenY, int& c
 	return false;
 }
 
+void ATContainerDockingPane::ActivateNearbySplitter(int screenX, int screenY, uint8 edgeFlags) {
+	ATContainerDockingPane *parent = this;
+	ATContainerDockingPane *child = nullptr;
+
+	// Ascend the hierarchy, checking parents and older siblings. We are looking for splitters
+	// facing the target, so this time we are looking for a splitter on the same side, i.e.
+	// top docked pane matching top request.
+	do {
+		// find child in parent
+		const auto chBegin = parent->mChildren.begin();
+		const auto chEnd = parent->mChildren.end();
+		auto it = chEnd;
+		
+		if (child) {
+			it = std::find(chBegin, chEnd, child);
+
+			if (it == chEnd) {
+				VDASSERT(!"Docking child not found in parent.");
+			}
+		} else {
+			if (it != chBegin)
+				--it;
+		}
+
+		if (it != chEnd) {
+			for(;;) {
+				ATContainerDockingPane *sibling = *it;
+
+				if (sibling->mpSplitter) {
+					bool activate = false;
+
+					if (sibling == child) {
+						// For the local docking pane, check if it is docked on a side. If so, it will have a
+						// splitter on the opposite side, i.e. a left docked pane will have a splitter on the
+						// right that can satisfy a right request.
+						switch(sibling->mDockCode) {
+							case kATContainerDockLeft:
+								if (edgeFlags & (uint8)ATUIContainerEdgeFlags::Right)
+									activate = true;
+								break;
+
+							case kATContainerDockTop:
+								if (edgeFlags & (uint8)ATUIContainerEdgeFlags::Bottom)
+									activate = true;
+								break;
+
+							case kATContainerDockRight:
+								if (edgeFlags & (uint8)ATUIContainerEdgeFlags::Left)
+									activate = true;
+								break;
+
+							case kATContainerDockBottom:
+								if (edgeFlags & (uint8)ATUIContainerEdgeFlags::Top)
+									activate = true;
+								break;
+						}
+					} else {
+						switch(sibling->mDockCode) {
+							case kATContainerDockLeft:
+								if (edgeFlags & (uint8)ATUIContainerEdgeFlags::Left)
+									activate = true;
+								break;
+
+							case kATContainerDockTop:
+								if (edgeFlags & (uint8)ATUIContainerEdgeFlags::Top)
+									activate = true;
+								break;
+
+							case kATContainerDockRight:
+								if (edgeFlags & (uint8)ATUIContainerEdgeFlags::Right)
+									activate = true;
+								break;
+
+							case kATContainerDockBottom:
+								if (edgeFlags & (uint8)ATUIContainerEdgeFlags::Bottom)
+									activate = true;
+								break;
+						}
+					}
+
+					if (activate) {
+						sibling->mpSplitter->BeginDrag(screenX, screenY);
+						return;
+					}
+				}
+
+				if (it == chBegin)
+					break;
+
+				--it;
+			}
+		}
+
+		child = parent;
+		parent = parent->mpDockParent;
+	} while(parent);
+}
+
 void ATContainerDockingPane::UpdateFullScreenState() {
 	mbFullScreen = false;
 
@@ -1460,13 +1589,44 @@ void ATContainerDockingPane::RemoveEmptyNode() {
 		parent->RemoveEmptyNode();
 }
 
+void ATContainerDockingPane::UpdateChildEdgeFlags() {
+	uint8 contentEdgeFlags = mSplitterEdges;
+
+	for(ATContainerDockingPane *child : mChildren) {
+		switch(child->GetDockCode()) {
+			case kATContainerDockLeft:
+				child->SetSplitterEdges(contentEdgeFlags | (uint8)ATUIContainerEdgeFlags::Right);
+				contentEdgeFlags |= (uint8)ATUIContainerEdgeFlags::Left;
+				break;
+
+			case kATContainerDockTop:
+				child->SetSplitterEdges(contentEdgeFlags | (uint8)ATUIContainerEdgeFlags::Bottom);
+				contentEdgeFlags |= (uint8)ATUIContainerEdgeFlags::Top;
+				break;
+
+			case kATContainerDockRight:
+				child->SetSplitterEdges(contentEdgeFlags | (uint8)ATUIContainerEdgeFlags::Left);
+				contentEdgeFlags |= (uint8)ATUIContainerEdgeFlags::Right;
+				break;
+
+			case kATContainerDockBottom:
+				child->SetSplitterEdges(contentEdgeFlags | (uint8)ATUIContainerEdgeFlags::Top);
+				contentEdgeFlags |= (uint8)ATUIContainerEdgeFlags::Bottom;
+				break;
+		}
+	}
+
+	if (mhwndTabControl || mbFullScreen)
+		contentEdgeFlags = 0;
+
+	for(ATFrameWindow *content : mContent)
+		content->SetSplitterEdges(contentEdgeFlags);
+}
+
 void ATContainerDockingPane::OnTabChange(HWND hwndSender) {
 	if (hwndSender != mhwndTabControl) {
-		for(Children::const_iterator it(mChildren.begin()), itEnd(mChildren.end()); it != itEnd; ++it) {
-			ATContainerDockingPane *child = *it;
-
+		for(ATContainerDockingPane *child : mChildren)
 			child->OnTabChange(hwndSender);
-		}
 	} else {
 		int idx = (int)SendMessageW(hwndSender, TCM_GETCURSEL, 0, 0);
 
@@ -2202,6 +2362,7 @@ void ATContainerWindow::UpdateMonitorDpi() {
 }
 
 void ATContainerWindow::UpdateMonitorDpi(unsigned dpiY) {
+	mpDockingPane->NotifyDpiChanged(dpiY);
 }
 
 ATFrameWindow *ATContainerWindow::ChooseNewActiveFrame(ATFrameWindow *prevFrame) {
@@ -2238,6 +2399,17 @@ ATFrameWindow *ATFrameWindow::GetFrameWindow(HWND hwnd) {
 	}
 
 	return NULL;
+}
+
+ATFrameWindow *ATFrameWindow::GetFrameWindowFromContent(HWND hwnd) {
+	if (!hwnd)
+		return nullptr;
+
+	HWND hwndParent = GetParent(hwnd);
+	if (!hwndParent)
+		return nullptr;
+
+	return GetFrameWindow(hwndParent);
 }
 
 void *ATFrameWindow::AsInterface(uint32 iid) {
@@ -2321,6 +2493,15 @@ void ATFrameWindow::SetFrameMode(FrameMode fm) {
 		mbActivelyMovingSizing = false;
 }
 
+void ATFrameWindow::SetSplitterEdges(uint8 flags) {
+	mSplitterEdgeFlags = flags;
+}
+
+void ATFrameWindow::ActivateFrame() {
+	if (mpContainer)
+		mpContainer->ActivateFrame(this);
+}
+
 void ATFrameWindow::EnableEndTrackNotification() {
 	VDASSERT(IsActivelyMovingSizing());
 
@@ -2338,6 +2519,15 @@ void ATFrameWindow::NotifyFontsUpdated() {
 
 		if (hwndChild)
 			SendMessage(hwndChild, ATWM_FONTSUPDATED, 0, 0);
+	}
+}
+
+void ATFrameWindow::NotifyDpiChanged(uint32 dpi) {
+	if (mhwnd) {
+		HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
+
+		if (hwndChild)
+			SendMessage(hwndChild, ATWM_INHERIT_DPICHANGED, MAKELONG(dpi, dpi), 0);
 	}
 }
 
@@ -2456,7 +2646,7 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_PARENTNOTIFY:
 			if (LOWORD(wParam) == WM_CREATE)
-				OnSize();
+				PostMessage(mhwnd, WM_USER+100, 0, 0);
 			break;
 
 		case WM_NCLBUTTONDOWN:
@@ -2556,8 +2746,20 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			}
 			break;
 
-		case WM_CHILDACTIVATE:
 		case WM_MOUSEACTIVATE:
+			if (mFrameMode != kFrameModeUndocked) {
+				// Suppress activation on click for areas that we pass onto nearby splitters.
+				switch(LOWORD(lParam)) {
+					case HTLEFT:
+					case HTRIGHT:
+					case HTTOP:
+					case HTBOTTOM:
+						return MA_NOACTIVATE;
+				}
+			}
+
+			[[fallthrough]];
+		case WM_CHILDACTIVATE:
 			if (ATContainerWindow *cont = ATContainerWindow::GetContainerWindow(GetAncestor(mhwnd, GA_ROOTOWNER))) {
 				cont->NotifyFrameActivated(this);
 
@@ -2610,12 +2812,12 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				const int x = r.left;
 				const int y = r.top;
 
-				if (mbFullScreen) {
-					mCaptionRect.set(0, 0, 0, 0);
-				} else if (mFrameMode == kFrameModeEdge) {
-					mCaptionRect.set(0, 0, 0, 0);
-					mCloseRect.set(0, 0, 0, 0);
+				mCaptionRect.set(0, 0, 0, 0);
+				mCloseRect.set(0, 0, 0, 0);
 
+				if (mbFullScreen) {
+					mInsideBorderRect = { r.left, r.top, r.right, r.bottom };
+				} else if (mFrameMode == kFrameModeEdge) {
 					if (r.top > r.bottom)
 						r.top = r.bottom;
 
@@ -2631,7 +2833,25 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 					if (r.bottom < r.top)
 						r.bottom = r.top;
+
+					mInsideBorderRect = { r.left, r.top, r.right, r.bottom };
 				} else if (mFrameMode == kFrameModeFull) {
+					const int xe = GetSystemMetrics(SM_CXEDGE);
+					const int ye = GetSystemMetrics(SM_CYEDGE);
+
+					mInsideBorderRect = { 0, 0, r.right, r.bottom };
+
+					mInsideBorderRect.left += xe;
+					mInsideBorderRect.top += ye;
+					mInsideBorderRect.right -= xe;
+					mInsideBorderRect.bottom -= ye;
+
+					if (mInsideBorderRect.right < mInsideBorderRect.left)
+						mInsideBorderRect.right = mInsideBorderRect.left;
+
+					if (mInsideBorderRect.bottom < mInsideBorderRect.top)
+						mInsideBorderRect.bottom = mInsideBorderRect.top;
+
 					const int h = mpContainer->GetCaptionHeight();
 
 					mCaptionRect.set(0, 0, r.right, h);
@@ -2644,8 +2864,6 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					if (r.top > r.bottom)
 						r.top = r.bottom;
 
-					int xe = GetSystemMetrics(SM_CXEDGE);
-					int ye = GetSystemMetrics(SM_CYEDGE);
 					r.left += xe;
 					r.top += ye;
 					r.right -= xe;
@@ -2679,24 +2897,71 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				int x = GET_X_LPARAM(lParam);
 				int y = GET_Y_LPARAM(lParam);
 
-				RECT r = {};
-				GetWindowRect(mhwnd, &r);
+				POINT pt0 { x, y };
 
-				x -= r.left;
-				y -= r.top;
+				ScreenToClient(mhwnd, &pt0);
 
-				const vdpoint32 pt(x, y);
+				pt0.x += mClientRect.left;
+				pt0.y += mClientRect.top;
 
-				if (mCloseRect.contains(pt))
+				const vdpoint32 windowPt(pt0.x, pt0.y);
+
+				if (!mInsideBorderRect.contains(windowPt)) {
+					uint8 edgeFlags = 0;
+
+					if (windowPt.x < mInsideBorderRect.left)
+						edgeFlags |= (uint8)ATUIContainerEdgeFlags::Left;
+
+					if (windowPt.y < mInsideBorderRect.top)
+						edgeFlags |= (uint8)ATUIContainerEdgeFlags::Top;
+
+					if (windowPt.x >= mInsideBorderRect.right)
+						edgeFlags |= (uint8)ATUIContainerEdgeFlags::Right;
+
+					if (windowPt.y >= mInsideBorderRect.bottom)
+						edgeFlags |= (uint8)ATUIContainerEdgeFlags::Bottom;
+
+					edgeFlags &= mSplitterEdgeFlags;
+
+					if (edgeFlags & (uint8)ATUIContainerEdgeFlags::Left)
+						return HTLEFT;
+
+					if (edgeFlags & (uint8)ATUIContainerEdgeFlags::Right)
+						return HTRIGHT;
+
+					if (edgeFlags & (uint8)ATUIContainerEdgeFlags::Top)
+						return HTTOP;
+
+					if (edgeFlags & (uint8)ATUIContainerEdgeFlags::Bottom)
+						return HTBOTTOM;
+				}
+
+				if (mCloseRect.contains(windowPt))
 					return HTCLOSE;
 
-				if (mCaptionRect.contains(pt))
+				if (mCaptionRect.contains(windowPt))
 					return HTCAPTION;
 
-				if (mClientRect.contains(pt))
+				if (mClientRect.contains(windowPt))
 					return HTCLIENT;
 
 				return HTBORDER;
+			}
+			break;
+
+		case WM_SETCURSOR:
+			if (wParam == (WPARAM)mhwnd) {
+				switch(LOWORD(lParam)) {
+					case HTLEFT:
+					case HTRIGHT:
+						SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+						return TRUE;
+
+					case HTTOP:
+					case HTBOTTOM:
+						SetCursor(LoadCursor(nullptr, IDC_SIZENS));
+						return TRUE;
+				}
 			}
 			break;
 
@@ -2735,9 +3000,29 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				SetWindowPos(mhwnd, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
 				RedrawWindow(mhwnd, NULL, NULL, RDW_INVALIDATE);
 
+				HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
+
+				if (hwndChild)
+					SendMessage(mhwnd, ATWM_INHERIT_DPICHANGED, wParam, 0);
+
 				return 0;
 			}
 			break;
+
+		case ATWM_INHERIT_DPICHANGED:
+			if (mFrameMode == kFrameModeUndocked) {
+				HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
+
+				if (hwndChild)
+					SendMessage(mhwnd, ATWM_INHERIT_DPICHANGED, wParam, 0);
+
+				return 0;
+			}
+			break;
+
+		case WM_USER + 100:
+			OnSize();
+			return 0;
 	}
 
 	return ATUINativeWindow::WndProc(msg, wParam, lParam);
@@ -2902,6 +3187,28 @@ void ATFrameWindow::OnSize() {
 }
 
 bool ATFrameWindow::OnNCLButtonDown(int code, int x, int y) {
+	if (mpDockingPane) {
+		if (code == HTLEFT) {
+			mpDockingPane->ActivateNearbySplitter(x, y, (uint8)ATUIContainerEdgeFlags::Left);
+			return true;
+		}
+
+		if (code == HTRIGHT) {
+			mpDockingPane->ActivateNearbySplitter(x, y, (uint8)ATUIContainerEdgeFlags::Right);
+			return true;
+		}
+
+		if (code == HTTOP) {
+			mpDockingPane->ActivateNearbySplitter(x, y, (uint8)ATUIContainerEdgeFlags::Top);
+			return true;
+		}
+
+		if (code == HTBOTTOM) {
+			mpDockingPane->ActivateNearbySplitter(x, y, (uint8)ATUIContainerEdgeFlags::Bottom);
+			return true;
+		}
+	}
+
 	if (code != HTCAPTION)
 		return false;
 

@@ -23,7 +23,7 @@
 #include "uisettingswindow.h"
 
 #include "audiooutput.h"
-#include "audiosyncmixer.h"
+#include "audiosampleplayer.h"
 #include "simulator.h"
 #include "gtia.h"
 #include "pokey.h"
@@ -387,6 +387,8 @@ public:
 				{ ATGTIAEmulator::kArtifactNTSCHi, L"NTSC High" },
 				{ ATGTIAEmulator::kArtifactPAL, L"PAL" },
 				{ ATGTIAEmulator::kArtifactPALHi, L"PAL High" },
+				{ ATGTIAEmulator::kArtifactAuto, L"NTSC/PAL (auto-switch)" },
+				{ ATGTIAEmulator::kArtifactAutoHi, L"NTSC/PAL High (auto-switch)" },
 			}
 		);
 

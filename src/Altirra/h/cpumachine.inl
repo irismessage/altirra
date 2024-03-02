@@ -15,6 +15,22 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
+#if !defined(AT_CPU_MACHINE_65C816)
+int ATCPUEmulator::Advance6502() {
+#elif !defined(AT_CPU_MACHINE_65C816_HISPEED)
+int ATCPUEmulator::Advance65816() {
+#else
+int ATCPUEmulator::Advance65816HiSpeed(bool dma) {
+	if (dma) {
+		if (!--mSubCyclesLeft) {
+			mSubCyclesLeft = mSubCycles;
+			return kATSimEvent_None;
+		}
+	}
+
+	for(;;) {
+#endif
+
 #define AT_CPU_READ_BYTE(addr) ((mpMemory->mBusValue) = (mpMemory->ReadByte((addr))))
 #define AT_CPU_READ_BYTE_ADDR16(addr) ((mpMemory->mBusValue) = (mpMemory->ReadByteAddr16((addr))))
 #define AT_CPU_DUMMY_READ_BYTE(addr) ((mpMemory->mBusValue) = (mpMemory->ReadByte((addr))))
@@ -2525,3 +2541,22 @@ for(;;) {
 #undef INSN_FETCH_TO_2
 #undef INSN_FETCH_NOINC
 #undef INSN_DUMMY_FETCH_NOINC
+
+#ifdef AT_CPU_MACHINE_65C816_HISPEED
+end_sub_cycle:
+		if (!--mSubCyclesLeft) {
+wait_slow_cycle:
+			if (mbForceNextCycleSlow) {
+				mbForceNextCycleSlow = false;
+				mSubCyclesLeft = 1;
+			} else {
+				mSubCyclesLeft = mSubCycles;
+			}
+			break;
+		}
+	}
+
+	return kATSimEvent_None;
+#endif
+
+}

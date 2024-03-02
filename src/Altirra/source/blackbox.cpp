@@ -332,7 +332,7 @@ bool ATBlackBoxEmulator::ReloadFirmware() {
 	memset(mFirmware, 0xFF, sizeof mFirmware);
 
 	uint32 actual = 0;
-	mpFwMan->LoadFirmware(mpFwMan->GetCompatibleFirmware(kATFirmwareType_BlackBox), mFirmware, 0, sizeof mFirmware, nullptr, &actual);
+	mpFwMan->LoadFirmware(mpFwMan->GetCompatibleFirmware(kATFirmwareType_BlackBox), mFirmware, 0, sizeof mFirmware, nullptr, &actual, nullptr, nullptr, &mbFirmwareUsable);
 
 	// check if we had a 16K ROM
 	if (actual <= 0x4000) {
@@ -383,6 +383,10 @@ bool ATBlackBoxEmulator::ReloadFirmware() {
 	}
 
 	return checksum != VDHash128(mFirmware, sizeof mFirmware);
+}
+
+bool ATBlackBoxEmulator::IsUsableFirmwareLoaded() const {
+	return mbFirmwareUsable;
 }
 
 void ATBlackBoxEmulator::InitIRQSource(ATIRQController *irqc) {

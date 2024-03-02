@@ -25,9 +25,9 @@
 #include <at/atcpu/states6809.h>
 
 #define ATCP_MEMORY_CONTEXT	\
-	uint16 tmpaddr;		\
-	uintptr tmpbase;	\
-	uint8 tmpval;
+	[[maybe_unused]] uint16 tmpaddr;		\
+	[[maybe_unused]] uintptr tmpbase;	\
+	[[maybe_unused]] uint8 tmpval;
 
 #define ATCP_DUMMY_READ_BYTE(addr) ((void)(0))
 #define ATCP_DEBUG_READ_BYTE(addr) (tmpaddr = (addr), tmpbase = mReadMap[(uint8)(tmpaddr >> 8)], (tmpbase & 1 ? DebugReadByteSlow(tmpbase, tmpaddr) : *(uint8 *)(tmpbase + tmpaddr)))
@@ -244,13 +244,13 @@ void ATCoProc6809::RecordInterrupt(bool irq, bool nmi) {
 	he->mPC = mPC - 1;
 	he->mP = mCC;
 	he->mA = mA;
-	he->mAH = mB;
+	he->mExt.mAH = mB;
 	he->mX = (uint8)mX;
-	he->mXH = (uint8)(mX >> 8);
+	he->mExt.mXH = (uint8)(mX >> 8);
 	he->mY = (uint8)mY;
-	he->mYH = (uint8)(mY >> 8);
+	he->mExt.mYH = (uint8)(mY >> 8);
 	he->mS = (uint8)mS;
-	he->mSH = (uint8)(mS >> 8);
+	he->mExt.mSH = (uint8)(mS >> 8);
 	he->mbIRQ = irq;
 	he->mbNMI = nmi;
 	he->mSubCycle = 0;

@@ -23,7 +23,7 @@
 #include <at/atcore/logging.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/deviceserial.h>
-#include "audiosyncmixer.h"
+#include "audiosampleplayer.h"
 #include "diskdrivepercom.h"
 #include "memorymanager.h"
 #include "firmwaremanager.h"
@@ -74,7 +74,7 @@ void *ATDeviceDiskDrivePercom::AsInterface(uint32 iid) {
 		case IATDeviceFirmware::kTypeID: return static_cast<IATDeviceFirmware *>(this);
 		case IATDeviceDiskDrive::kTypeID: return static_cast<IATDeviceDiskDrive *>(this);
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
-		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(this);
+		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(&mAudioPlayer);
 		case IATDeviceDebugTarget::kTypeID: return static_cast<IATDeviceDebugTarget *>(this);
 		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(&mBreakpointsImpl);
 		case IATDebugTargetHistory::kTypeID: return static_cast<IATDebugTargetHistory *>(this);
@@ -212,10 +212,7 @@ void ATDeviceDiskDrivePercom::Init() {
 }
 
 void ATDeviceDiskDrivePercom::Shutdown() {
-	if (mRotationSoundId) {
-		mpAudioSyncMixer->StopSound(mRotationSoundId);
-		mRotationSoundId = 0;
-	}
+	mAudioPlayer.Shutdown();
 
 	if (mpSlowScheduler) {
 		mpSlowScheduler->UnsetEvent(mpRunEvent);
@@ -323,7 +320,7 @@ bool ATDeviceDiskDrivePercom::ReloadFirmware() {
 	
 	uint32 len = 0;
 	bool changed = false;
-	mpFwMgr->LoadFirmware(id, mROM, 0, sizeof mROM, &changed, &len);
+	mpFwMgr->LoadFirmware(id, mROM, 0, sizeof mROM, &changed, &len, nullptr, nullptr, &mbFirmwareUsable);
 
 	return changed;
 }
@@ -337,6 +334,10 @@ bool ATDeviceDiskDrivePercom::IsWritableFirmwareDirty(uint32 idx) const {
 }
 
 void ATDeviceDiskDrivePercom::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
+}
+
+bool ATDeviceDiskDrivePercom::IsUsableFirmwareLoaded() const {
+	return mbFirmwareUsable;
 }
 
 void ATDeviceDiskDrivePercom::InitDiskDrive(IATDiskDriveManager *ddm) {
@@ -361,10 +362,6 @@ void ATDeviceDiskDrivePercom::InitDiskDrive(IATDiskDriveManager *ddm) {
 void ATDeviceDiskDrivePercom::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
 	mpSIOMgr->AddRawDevice(this);
-}
-
-void ATDeviceDiskDrivePercom::InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) {
-	mpAudioSyncMixer = syncmixer;
 }
 
 IATDebugTarget *ATDeviceDiskDrivePercom::GetDebugTarget(uint32 index) {
@@ -1011,7 +1008,7 @@ void ATDeviceDiskDrivePercom::PlayStepSound() {
 	if (t - mLastStepSoundTime > 50000)
 		mLastStepPhase = 0;
 
-	mpAudioSyncMixer->AddSound(kATAudioMix_Drive, 0, kATAudioSampleId_DiskStep2, 0.3f + 0.7f * cosf((float)mLastStepPhase++ * nsVDMath::kfPi));
+	mAudioPlayer.PlayStepSound(kATAudioSampleId_DiskStep2, 0.3f + 0.7f * cosf((float)mLastStepPhase++ * nsVDMath::kfPi));
 
 	mLastStepSoundTime = t;
 }
@@ -1023,16 +1020,12 @@ void ATDeviceDiskDrivePercom::UpdateRotationStatus() {
 		drive.mpDiskInterface->SetShowMotorActive(mbMotorRunning);
 
 		if (mbMotorRunning && mbSoundsEnabled) {
-			if (!mRotationSoundId)
-				mRotationSoundId = mpAudioSyncMixer->AddLoopingSound(kATAudioMix_Drive, 0, kATAudioSampleId_DiskRotation, 1.0f);
+			mAudioPlayer.SetRotationSoundEnabled(true);
 			return;
 		}
 	}
 
-	if (mRotationSoundId) {
-		mpAudioSyncMixer->StopSound(mRotationSoundId);
-		mRotationSoundId = 0;
-	}
+	mAudioPlayer.SetRotationSoundEnabled(false);
 }
 
 void ATDeviceDiskDrivePercom::UpdateDiskStatus() {

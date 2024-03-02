@@ -367,9 +367,13 @@ void VDPixmapGenResampleRow::Compute32(void *dst0, sint32 y) {
 
 	// process dual-clip region
 	if (uint32 count = mAxis.dx_dualclip) {
-		VDMemset32(p, src[0], mRowFiltW);
-		memcpy(p + mRowFiltW, src+1, (mSrcWidth-2)*sizeof(uint32));
-		VDMemset32(p + mRowFiltW + (mSrcWidth-2), src[mSrcWidth-1], mRowFiltW);
+		if (mSrcWidth < 2) {
+			VDMemset32(p, src[0], mRowFiltW*2-1);
+		} else {
+			VDMemset32(p, src[0], mRowFiltW);
+			memcpy(p + mRowFiltW, src+1, (mSrcWidth-2)*sizeof(uint32));
+			VDMemset32(p + mRowFiltW + (mSrcWidth-2), src[mSrcWidth-1], mRowFiltW);
+		}
 
 		mpRowStage->Process(dst, p, count, u + ((mRowFiltW-1)<<16), dudx);
 		u += dudx*count;

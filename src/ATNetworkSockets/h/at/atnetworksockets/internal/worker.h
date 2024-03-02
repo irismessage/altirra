@@ -6,6 +6,7 @@
 
 class ATNetSockWorker;
 class IATNetTcpStack;
+class VDFunctionThunkInfo;
 
 class ATNetSockBridgeHandler final : public vdrefcounted<IATSocketHandler> {
 public:
@@ -92,7 +93,7 @@ private:
 	LRESULT WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	void ProcessUdpDatagram(SOCKET s, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort);
 
-	VDFunctionThunk *mpWndThunk = nullptr;
+	VDFunctionThunkInfo *mpWndThunk = nullptr;
 	ATOM mWndClass = 0;
 	HWND mhwnd = nullptr;
 

@@ -31,8 +31,7 @@ class ATPropertySet;
 class IATDevice;
 class IATDeviceParent;
 class IATUIRenderer;
-class IATAudioOutput;
-class ATAudioSyncMixer;
+class IATAudioMixer;
 class ATConsoleOutput;
 class ATPIAEmulator;
 class IATDeviceCartridge;
@@ -95,6 +94,8 @@ public:
 	virtual const wchar_t *GetWritableFirmwareDesc(uint32 idx) const = 0;
 	virtual bool IsWritableFirmwareDirty(uint32 idx) const = 0;
 	virtual void SaveWritableFirmware(uint32 idx, IVDStream& stream) = 0;
+
+	virtual bool IsUsableFirmwareLoaded() const = 0;
 };
 
 class IATDeviceIRQSource {
@@ -136,6 +137,7 @@ enum ATDeviceButton : uint32 {
 	kATDeviceButton_HappyWPEnable,
 	kATDeviceButton_HappyWPDisable,
 	kATDeviceButton_ATR8000Reset,
+	kATDeviceButton_XELCFSwap
 };
 
 class IATDeviceButtons {
@@ -158,7 +160,7 @@ class IATDeviceAudioOutput {
 public:
 	enum { kTypeID = 'adao' };
 
-	virtual void InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) = 0;
+	virtual void InitAudioOutput(IATAudioMixer *output) = 0;
 };
 
 class IATDeviceDiagnostics {

@@ -24,14 +24,14 @@
 
 class ATBreakpointManager::TargetBPHandler final : public IATCPUBreakpointHandler {
 public:
-	TargetBPHandler(ATBreakpointManager *parent, uint32 targetOffset)
+	TargetBPHandler(ATBreakpointManager *parent, uint32 targetIndex)
 		: mpParent(parent)
-		, mTargetOffset(targetOffset)
+		, mTargetIndex(targetIndex)
 	{
 	}
 
 	bool CheckBreakpoint(uint32 pc) override {
-		int code = mpParent->TestPCBreakpoint(pc + mTargetOffset);
+		int code = mpParent->TestPCBreakpoint(mTargetIndex, pc);
 		if (code) {
 			mpParent->OnTargetPCBreakpoint(code);
 			return true;
@@ -41,8 +41,8 @@ public:
 	}
 
 private:
-	ATBreakpointManager *mpParent;
-	uint32 mTargetOffset;
+	ATBreakpointManager *const mpParent;
+	const uint32 mTargetIndex;
 };
 
 ATBreakpointManager::ATBreakpointManager()
@@ -89,10 +89,11 @@ void ATBreakpointManager::AttachTarget(uint32 targetIndex, IATDebugTarget *targe
 	if (mTargets.size() <= targetIndex) {
 		mTargets.resize(targetIndex + 1, {});
 		mInsnBreakpoints.resize(targetIndex + 1);
+		mCPUBreakpoints.resize(targetIndex + 1);
 	}
 
 	auto *bps = vdpoly_cast<IATDebugTargetBreakpoints *>(target);
-	mTargets[targetIndex] = { target, bps, new TargetBPHandler(this, targetIndex << 24) };
+	mTargets[targetIndex] = { target, bps, new TargetBPHandler(this, targetIndex) };
 
 	if (bps)
 		bps->SetBreakpointHandler(mTargets[targetIndex].mpBPHandler);
@@ -126,10 +127,11 @@ void ATBreakpointManager::GetAll(ATBreakpointIndices& indices) const {
 	}
 }
 
-void ATBreakpointManager::GetAtPC(uint32 pc, ATBreakpointIndices& indices) const {
-	BreakpointsByAddress::const_iterator it(mCPUBreakpoints.find(pc & 0xFFFF));
+void ATBreakpointManager::GetAtPC(uint32 targetIndex, uint32 pc, ATBreakpointIndices& indices) const {
+	const auto& bps = mCPUBreakpoints[targetIndex];
+	BreakpointsByAddress::const_iterator it(bps.find(pc & 0xFFFF));
 
-	if (it == mCPUBreakpoints.end()) {
+	if (it == bps.end()) {
 		indices.clear();
 		return;
 	}
@@ -166,8 +168,8 @@ bool ATBreakpointManager::GetInfo(uint32 idx, ATBreakpointInfo& info) const {
 	if (!be.mType)
 		return false;
 
-	info.mTargetIndex = be.mAddress >> 24;
-	info.mAddress = be.mAddress & 0xFFFFFF;
+	info.mTargetIndex = be.mTargetIndex;
+	info.mAddress = be.mAddress;
 	info.mLength = 1;
 	info.mbBreakOnPC = (be.mType & kBPT_PC) != 0;
 	info.mbBreakOnInsn = (be.mType & kBPT_Insn) != 0;
@@ -194,7 +196,8 @@ uint32 ATBreakpointManager::SetInsnBP(uint32 targetIndex) {
 	const uint32 id = AllocBreakpoint();
 
 	BreakpointEntry& be = mBreakpoints[id - 1];
-	be.mAddress = targetIndex << 24;
+	be.mTargetIndex = targetIndex;
+	be.mAddress = 0;
 	be.mType = kBPT_Insn;
 
 	auto& insnBPs = mInsnBreakpoints[targetIndex];
@@ -213,16 +216,19 @@ uint32 ATBreakpointManager::SetInsnBP(uint32 targetIndex) {
 }
 
 uint32 ATBreakpointManager::SetAtPC(uint32 targetIndex, uint32 pc) {
-	pc = (pc & 0xFFFFFF) + (targetIndex << 24);
+	// global PC breakpoints are only supported for target 0
+	if (targetIndex)
+		pc &= 0xffffff;
 
 	const uint32 idx = AllocBreakpoint();
 
 	BreakpointEntry& be = mBreakpoints[idx - 1];
+	be.mTargetIndex = targetIndex;
 	be.mAddress = pc;
 	be.mType = kBPT_PC;
 
-	const uint32 encodedBPC = pc & 0xFF00FFFF;
-	BreakpointsByAddress::insert_return_type r(mCPUBreakpoints.insert(encodedBPC));
+	const uint32 encodedBPC = pc & 0x0000FFFF;
+	BreakpointsByAddress::insert_return_type r(mCPUBreakpoints[targetIndex].insert(encodedBPC));
 
 	if (r.second) {
 		if (targetIndex)
@@ -243,6 +249,7 @@ uint32 ATBreakpointManager::SetAccessBP(uint32 address, bool read, bool write) {
 	const uint32 idx = AllocBreakpoint();
 
 	BreakpointEntry& be = mBreakpoints[idx - 1];
+	be.mTargetIndex = 0;
 	be.mAddress = address;
 	be.mType = (read ? kBPT_Read : 0) + (write ? kBPT_Write : 0);
 
@@ -276,6 +283,7 @@ uint32 ATBreakpointManager::SetAccessRangeBP(uint32 address, uint32 len, bool re
 	const uint32 idx = AllocBreakpoint();
 
 	BreakpointEntry& be = mBreakpoints[idx - 1];
+	be.mTargetIndex = 0;
 	be.mAddress = address;
 	be.mType = (read ? kBPT_Read : 0) + (write ? kBPT_Write : 0) + kBPT_Range;
 
@@ -415,9 +423,11 @@ bool ATBreakpointManager::Clear(uint32 id) {
 		}
 	}
 
+	const uint32 targetIndex = be.mTargetIndex;
 	if (be.mType & kBPT_PC) {
-		BreakpointsByAddress::iterator it(mCPUBreakpoints.find(address & 0xFF00FFFF));
-		VDASSERT(it != mCPUBreakpoints.end());
+		auto& bps = mCPUBreakpoints[targetIndex];
+		auto it = bps.find((uint16)address);
+		VDASSERT(it != bps.end());
 
 		BreakpointIndices& indices = it->second;
 		BreakpointIndices::iterator itIndex(std::find(indices.begin(), indices.end(), id));
@@ -426,9 +436,7 @@ bool ATBreakpointManager::Clear(uint32 id) {
 		indices.erase(itIndex);
 
 		if (indices.empty()) {
-			mCPUBreakpoints.erase(it);
-
-			const uint32 targetIndex = address >> 24;
+			bps.erase(it);
 
 			if (mInsnBreakpoints[targetIndex].empty()) {
 				if (targetIndex)
@@ -440,7 +448,6 @@ bool ATBreakpointManager::Clear(uint32 id) {
 	}
 
 	if (be.mType & kBPT_Insn) {
-		const uint32 targetIndex = address >> 24;
 		auto& insnBps = mInsnBreakpoints[targetIndex];
 		auto it = std::lower_bound(insnBps.begin(), insnBps.end(), id);
 
@@ -569,22 +576,37 @@ void ATBreakpointManager::OnTargetPCBreakpoint(int code) {
 	mpSim->PostInterruptingEvent((ATSimulatorEvent)code);
 }
 
-int ATBreakpointManager::CheckPCBreakpoints(uint32 bpc, const BreakpointIndices *bpidxs) {
+int ATBreakpointManager::CheckPCBreakpoints(uint32 targetIndex, uint32 bpc, const BreakpointIndices *bpidxs) {
 	bool shouldBreak = false;
 	bool noisyBreak = false;
 
-	const uint32 pc = bpc & 0xFFFFFF;
-	const uint32 targetIndex = bpc >> 24;
+	uint32 xpc;
+	bool haveXpc = false;
 	if (bpidxs) {
 		for(const uint32 idx : *bpidxs) {
 			const BreakpointEntry& bpe = mBreakpoints[idx - 1];
-			if (bpe.mAddress != bpc)
-				continue;
+
+			// check if we have a global address breakpoint
+			if (bpe.mAddress >= 0x1000000) {
+				// global breakpoint -- fetch XPC if we don't have it
+				// already and check it
+				if (!haveXpc) {
+					haveXpc = true;
+					xpc = mpCPU->GetXPC();
+				}
+
+				if (bpe.mAddress != xpc)
+					continue;
+			} else {
+				// regular breakpoint -- check PBK:PC
+				if (bpe.mAddress != bpc)
+					continue;
+			}
 
 			ATBreakpointEvent ev;
 			ev.mIndex = idx;
 			ev.mTargetIndex = targetIndex;
-			ev.mAddress = pc;
+			ev.mAddress = bpc;
 			ev.mValue = 0;
 			ev.mbBreak = false;
 			ev.mbSilentBreak = false;
@@ -605,7 +627,7 @@ int ATBreakpointManager::CheckPCBreakpoints(uint32 bpc, const BreakpointIndices 
 		ATBreakpointEvent ev;
 		ev.mIndex = id;
 		ev.mTargetIndex = targetIndex;
-		ev.mAddress = pc;
+		ev.mAddress = bpc;
 		ev.mValue = 0;
 		ev.mbBreak = false;
 		ev.mbSilentBreak = false;

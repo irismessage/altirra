@@ -28,16 +28,16 @@ ATAudioRawSource::~ATAudioRawSource() {
 	Shutdown();
 }
 
-void ATAudioRawSource::Init(IATAudioOutput *audioOut) {
-	mpAudioOut = audioOut;
+void ATAudioRawSource::Init(IATAudioMixer *mixer) {
+	mpAudioMixer = mixer;
 
-	audioOut->AddSyncAudioSource(this);
+	mixer->AddSyncAudioSource(this);
 }
 
 void ATAudioRawSource::Shutdown() {
-	if (mpAudioOut) {
-		mpAudioOut->RemoveSyncAudioSource(this);
-		mpAudioOut = NULL;
+	if (mpAudioMixer) {
+		mpAudioMixer->RemoveSyncAudioSource(this);
+		mpAudioMixer = nullptr;
 	}
 }
 

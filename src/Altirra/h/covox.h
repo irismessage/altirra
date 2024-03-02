@@ -24,7 +24,7 @@
 class ATScheduler;
 class ATMemoryManager;
 class ATMemoryLayer;
-class IATAudioOutput;
+class IATAudioMixer;
 class ATConsoleOutput;
 
 class ATCovoxEmulator final : public VDAlignedObject<16>, public IATSyncAudioSource {
@@ -38,7 +38,7 @@ public:
 	void SetFourChannels(bool ch4) { mbFourCh = ch4; }
 	void SetAddressRange(uint32 lo, uint32 hi, bool passWrites);
 
-	void Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioOutput *audioOut);
+	void Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioMixer *mixer);
 	void Shutdown();
 
 	void ColdReset();
@@ -65,7 +65,7 @@ protected:
 	ATMemoryLayer *mpMemLayerControl = nullptr;
 	ATScheduler *mpScheduler = nullptr;
 	ATMemoryManager *mpMemMan = nullptr;
-	IATAudioOutput *mpAudioOut = nullptr;
+	IATAudioMixer *mpAudioMixer = nullptr;
 
 	uint8	mVolume[4] = {};
 

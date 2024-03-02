@@ -32,7 +32,22 @@
 		to boot off the disk drive,
 		and in particular prevents entry into internal BASIC without booting DOS.
 	</p>
-	<h2>Limitations</h2>
+  <h2>Power-on delay</h2>
+  <p>
+    Some disk drives take an abnormally long time to initialize before they are ready to
+    accept commands from the computer, as long as several seconds. This is worst for drives
+    like the ATR-8000 and Percom RFD-40S1 that have multiple mechanisms to reset on power-up.
+    If the computer is
+    powered on too quickly after the drives, the computer can time out on the disk commands
+    before the drive becomes ready.
+  </p>
+  <p>
+    With real hardware, this is handled by powering on the drives first and then the computer
+    instead of both at the same time (i.e. not by a common power strip). In Altirra, this is
+    simulated using the Power-on Delay setting. The "Auto" value selects a value appropriate
+    for the typical firmware for the drive type selected.
+  </p>
+  <h2>Limitations</h2>
 	<p>
 		While full drive emulation is more precise, it is also more expensive performance-wise and
 		limits the ability of the emulator to monitor and enhance disk drive operation. The
@@ -41,7 +56,7 @@
 	<ul>
 		<li>
 			D1: acceleration is not possible, either with SIOV/PBI patch or burst I/O. However,
-			rotational delays can still be disabled (Accurate Disk Timing option disabled).
+			rotational delays can still be disabled (Accurate Sector Timing option disabled).
 		</li>
 		<li>
 			Only disk types actually supported by the physical drive and firmware can be read and

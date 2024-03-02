@@ -71,6 +71,7 @@ enum ATCartridgeMode : uint32 {
 	kATCartridgeMode_Williams_32K,
 	kATCartridgeMode_Phoenix_8K,
 	kATCartridgeMode_Blizzard_16K,
+	kATCartridgeMode_Blizzard_32K,
 	kATCartridgeMode_SIC,
 	kATCartridgeMode_Atrax_SDX_128K,
 	kATCartridgeMode_OSS_043M,
@@ -96,8 +97,14 @@ enum ATCartridgeMode : uint32 {
 	kATCartridgeMode_TheCart_128M,
 	kATCartridgeMode_MegaMax_2M,
 	kATCartridgeMode_BountyBob5200Alt,		// Same as cart mapper 7 except that the fixed bank is first.
+	kATCartridgeMode_XEGS_64K_Alt,			// (type 67)
+	kATCartridgeMode_Atrax_128K_Raw,		// (type 68)
+	kATCartridgeMode_aDawliah_32K,			// (type 69)
+	kATCartridgeMode_aDawliah_64K,			// (type 70)
 	kATCartridgeModeCount
 };
+
+static constexpr uint32 kATCartridgeMapper_Max = 70;
 
 ATCartridgeMode ATGetCartridgeModeForMapper(int mapper);
 int ATGetCartridgeMapperForMode(ATCartridgeMode mode, uint32 size);

@@ -1,51 +1,24 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <ItemGroup Label="ProjectConfigurations">
-    <ProjectConfiguration Include="Debug|Win32">
-      <Configuration>Debug</Configuration>
-      <Platform>Win32</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Debug|x64">
-      <Configuration>Debug</Configuration>
-      <Platform>x64</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Profile|Win32">
-      <Configuration>Profile</Configuration>
-      <Platform>Win32</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Profile|x64">
-      <Configuration>Profile</Configuration>
-      <Platform>x64</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Release|Win32">
-      <Configuration>Release</Configuration>
-      <Platform>Win32</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Release|x64">
-      <Configuration>Release</Configuration>
-      <Platform>x64</Platform>
-    </ProjectConfiguration>
-  </ItemGroup>
+  <Import Project="../Build/ProjectConfigurations.props" />
   <ItemGroup>
     <ClCompile Include="source\corvus.cpp" />
     <ClCompile Include="source\devices.cpp" />
     <ClCompile Include="source\diskdrive.cpp" />
     <ClCompile Include="source\dongle.cpp" />
     <ClCompile Include="source\exeloader.cpp" />
+    <ClCompile Include="source\loopback.cpp" />
+    <ClCompile Include="source\modemsound.cpp" />
     <ClCompile Include="source\sioclock.cpp" />
     <ClCompile Include="source\stdafx.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">Create</PrecompiledHeader>
+      <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="source\testdevicesiohs.cpp" />
     <ClCompile Include="source\testdevicesiopoll.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atdevices\devices.h" />
+    <ClInclude Include="..\h\at\atdevices\modemsound.h" />
     <ClInclude Include="h\at\atdevices\corvus.h" />
     <ClInclude Include="h\at\atdevices\dongle.h" />
     <ClInclude Include="h\diskdrive.h" />
@@ -55,53 +28,28 @@
   <ItemGroup>
     <PackResource Include="..\..\obj\Release\Kernel\exeloader.bin">
       <FileType>Document</FileType>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATFirmwareExeLoader</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATFirmwareExeLoader</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATFirmwareExeLoader</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATFirmwareExeLoader</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATFirmwareExeLoader</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATFirmwareExeLoader</SymbolName>
+      <SymbolName>g_ATFirmwareExeLoader</SymbolName>
     </PackResource>
   </ItemGroup>
   <ItemGroup>
     <PackResource Include="..\..\obj\Release\Kernel\exeloader-0700.bin">
       <FileType>Document</FileType>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATFirmwareExeLoader0700</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATFirmwareExeLoader0700</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATFirmwareExeLoader0700</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATFirmwareExeLoader0700</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATFirmwareExeLoader0700</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATFirmwareExeLoader0700</SymbolName>
+      <SymbolName>g_ATFirmwareExeLoader0700</SymbolName>
     </PackResource>
     <PackResource Include="..\..\obj\Release\Kernel\exeloader-hispeed-0700.bin">
       <FileType>Document</FileType>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATFirmwareExeLoaderHiSpeed0700</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATFirmwareExeLoaderHiSpeed0700</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATFirmwareExeLoaderHiSpeed0700</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATFirmwareExeLoaderHiSpeed0700</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATFirmwareExeLoaderHiSpeed0700</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATFirmwareExeLoaderHiSpeed0700</SymbolName>
+      <SymbolName>g_ATFirmwareExeLoaderHiSpeed0700</SymbolName>
     </PackResource>
     <PackResource Include="..\..\obj\Release\Kernel\exeloader-nobasic.bin">
       <FileType>Document</FileType>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATFirmwareExeLoaderNoBasic</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATFirmwareExeLoaderNoBasic</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATFirmwareExeLoaderNoBasic</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATFirmwareExeLoaderNoBasic</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATFirmwareExeLoaderNoBasic</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATFirmwareExeLoaderNoBasic</SymbolName>
+      <SymbolName>g_ATFirmwareExeLoaderNoBasic</SymbolName>
     </PackResource>
     <None Include="autogen\exeloader-0700.inl" />
     <None Include="autogen\exeloader-hispeed-0700.inl" />
     <None Include="autogen\exeloader-hispeed.inl" />
     <PackResource Include="..\..\obj\Release\Kernel\exeloader-hispeed.bin">
       <FileType>Document</FileType>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">g_ATFirmwareExeLoaderHiSpeed</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">g_ATFirmwareExeLoaderHiSpeed</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">g_ATFirmwareExeLoaderHiSpeed</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ATFirmwareExeLoaderHiSpeed</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATFirmwareExeLoaderHiSpeed</SymbolName>
-      <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATFirmwareExeLoaderHiSpeed</SymbolName>
+      <SymbolName>g_ATFirmwareExeLoaderHiSpeed</SymbolName>
     </PackResource>
     <None Include="autogen\exeloader-nobasic.inl" />
     <None Include="autogen\exeloader.inl" />
@@ -110,174 +58,24 @@
     <ProjectGuid>{A94FE49D-01DE-4117-8AE9-009930C466F5}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>ATDevices</RootNamespace>
-    <SccProjectName>
-    </SccProjectName>
-    <SccAuxPath>
-    </SccAuxPath>
-    <SccLocalPath>
-    </SccLocalPath>
-    <SccProvider>
-    </SccProvider>
-    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
-  <Import Project="..\PlatformSetup.props" />
+  <Import Project="..\Build\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+  <PropertyGroup Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
-    <UseDebugLibraries>true</UseDebugLibraries>
-    <CharacterSet>Unicode</CharacterSet>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>StaticLibrary</ConfigurationType>
-    <UseDebugLibraries>true</UseDebugLibraries>
-    <CharacterSet>Unicode</CharacterSet>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
-    <ConfigurationType>StaticLibrary</ConfigurationType>
-    <UseDebugLibraries>false</UseDebugLibraries>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
-    <CharacterSet>Unicode</CharacterSet>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'" Label="Configuration">
-    <ConfigurationType>StaticLibrary</ConfigurationType>
-    <UseDebugLibraries>false</UseDebugLibraries>
-    <WholeProgramOptimization>false</WholeProgramOptimization>
-    <CharacterSet>Unicode</CharacterSet>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>StaticLibrary</ConfigurationType>
-    <UseDebugLibraries>false</UseDebugLibraries>
-    <WholeProgramOptimization>true</WholeProgramOptimization>
-    <CharacterSet>Unicode</CharacterSet>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Profile|x64'" Label="Configuration">
-    <ConfigurationType>StaticLibrary</ConfigurationType>
-    <UseDebugLibraries>false</UseDebugLibraries>
-    <WholeProgramOptimization>false</WholeProgramOptimization>
-    <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
-    <Import Project="..\PackResource.props" />
+    <Import Project="..\Build\PackResource.props" />
   </ImportGroup>
-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+  <ImportGroup Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="..\Altirra.props" />
-  </ImportGroup>
-  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="PropertySheets">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="..\Altirra.props" />
-  </ImportGroup>
-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="..\Altirra.props" />
-  </ImportGroup>
-  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'" Label="PropertySheets">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="..\Altirra.props" />
-  </ImportGroup>
-  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="PropertySheets">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="..\Altirra.props" />
-  </ImportGroup>
-  <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Profile|x64'" Label="PropertySheets">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="..\Altirra.props" />
+    <Import Project="..\Build\Altirra.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup />
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <ClCompile>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <WarningLevel>Level3</WarningLevel>
-      <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <MinimalRebuild>false</MinimalRebuild>
-    </ClCompile>
-    <Link>
-      <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <ClCompile>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <WarningLevel>Level3</WarningLevel>
-      <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <MinimalRebuild>false</MinimalRebuild>
-    </ClCompile>
-    <Link>
-      <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <Optimization>MaxSpeed</Optimization>
-      <FunctionLevelLinking>true</FunctionLevelLinking>
-      <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <Link>
-      <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <OptimizeReferences>true</OptimizeReferences>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Profile|Win32'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <Optimization>MaxSpeed</Optimization>
-      <FunctionLevelLinking>true</FunctionLevelLinking>
-      <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <Link>
-      <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <OptimizeReferences>true</OptimizeReferences>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <Optimization>MaxSpeed</Optimization>
-      <FunctionLevelLinking>true</FunctionLevelLinking>
-      <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <Link>
-      <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <OptimizeReferences>true</OptimizeReferences>
-    </Link>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">
-    <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <Optimization>MaxSpeed</Optimization>
-      <FunctionLevelLinking>true</FunctionLevelLinking>
-      <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <Link>
-      <SubSystem>Windows</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-      <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <OptimizeReferences>true</OptimizeReferences>
-    </Link>
-  </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
-    <Import Project="..\PackResource.targets" />
+    <Import Project="..\Build\PackResource.targets" />
   </ImportGroup>
 </Project>

@@ -119,7 +119,7 @@ protected:
 	void				reset();
 
 	A mAllocator;
-	typename A::template rebind<vdhashtable_base_node *>::other mBucketAllocator;
+	typename std::allocator_traits<A>::template rebind_alloc<vdhashtable_base_node *> mBucketAllocator;
 	Hash mHasher;
 	Pred mPred;
 };

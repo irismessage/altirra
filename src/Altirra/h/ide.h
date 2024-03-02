@@ -37,13 +37,19 @@ public:
 	~ATIDEEmulator();
 
 	void Init(ATScheduler *mpScheduler, IATDeviceIndicatorManager *uirenderer, bool isSingle = true, bool isSlave = false);
+	
+	// Set whether a device is the lone device on the bus, particularly a master with no
+	// slave. This is needed so that the master can respond appropriately to commands to
+	// the slave -- for the most part mirroring the master registers except for status
+	// and alternate status returning $00. For this to work properly the master emulator
+	// must handle read requests when the slave is selected but not absent.
 	void SetIsSingle(bool single);
+
 	void Shutdown();
 
 	void OpenImage(IATBlockDevice *dev);
 	void CloseImage();
 
-	const wchar_t *GetImagePath() const;
 	bool IsWriteEnabled() const { return mbWriteEnabled; }
 	bool IsFastDevice() const { return mbFastDevice; }
 	uint32 GetImageSizeMB() const { return mSectorCount >> 11; }

@@ -8,6 +8,8 @@
 // Select Windows XP baseline.
 #define _WIN32_WINNT 0x0501
 
+struct IUnknown;
+
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/atomic.h>
 #include <vd2/system/thread.h>

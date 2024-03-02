@@ -24,6 +24,7 @@
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Kasumi/triblt.h>
+#include <at/atcore/enumparseimpl.h>
 #include "gtia.h"
 #include "gtiatables.h"
 #include "gtiarenderer.h"
@@ -35,6 +36,12 @@
 
 using namespace ATGTIA;
 
+AT_DEFINE_ENUM_TABLE_BEGIN(ATColorMatchingMode)
+	{ ATColorMatchingMode::None, "none" },
+	{ ATColorMatchingMode::SRGB, "srgb" },
+	{ ATColorMatchingMode::AdobeRGB, "adobergb" },
+AT_DEFINE_ENUM_TABLE_END(ATColorMatchingMode, ATColorMatchingMode::None)
+
 #ifdef VD_CPU_X86
 extern "C" void VDCDECL atasm_update_playfield_160_sse2(
 	void *dst,
@@ -45,6 +52,8 @@ extern "C" void VDCDECL atasm_update_playfield_160_sse2(
 
 #ifdef VD_CPU_AMD64
 #include "gtia_sse2_intrin.inl"
+#elif defined(VD_CPU_ARM64)
+#include "gtia_neon.inl"
 #endif
 
 class ATFrameTracker : public vdrefcounted<IVDRefCount> {
@@ -404,6 +413,7 @@ void ATGTIAEmulator::ResetColors() {
 		colpa.mBluScale = 1.50f;
 		colpa.mbUsePALQuirks = false;
 		colpa.mLumaRampMode = kATLumaRampMode_XL;
+		colpa.mColorMatchingMode = ATColorMatchingMode::None;
 	}
 
 	{
@@ -414,8 +424,8 @@ void ATGTIAEmulator::ResetColors() {
 		colpa.mContrast = 1.0f;
 		colpa.mSaturation = 0.29f;
 		colpa.mGammaCorrect = 1.0f;
-		colpa.mArtifactHue = 96.0f;
-		colpa.mArtifactSat = 2.76f;
+		colpa.mArtifactHue = 80.0f;
+		colpa.mArtifactSat = 0.80f;
 		colpa.mArtifactSharpness = 0.50f;
 		colpa.mRedShift = 0.0f;
 		colpa.mRedScale = 1.0f;
@@ -425,6 +435,7 @@ void ATGTIAEmulator::ResetColors() {
 		colpa.mBluScale = 1.0f;
 		colpa.mbUsePALQuirks = true;
 		colpa.mLumaRampMode = kATLumaRampMode_XL;
+		colpa.mColorMatchingMode = ATColorMatchingMode::None;
 	}
 
 	mColorSettings.mbUsePALParams = true;
@@ -590,7 +601,7 @@ void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
 	if (mbInterlaceEnabled || mbScanlinesEnabled)
 		h *= 2;
 
-	if (mpVBXE != NULL || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi)
+	if (mpVBXE != NULL || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi || mArtifactMode == kArtifactAutoHi)
 		w *= 2;
 }
 
@@ -653,7 +664,7 @@ void ATGTIAEmulator::GetFrameSize(int& w, int& h) const {
 			break;
 	}
 
-	if (mpVBXE != NULL || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi || mbInterlaceEnabled || mbScanlinesEnabled) {
+	if (mpVBXE != NULL || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi || mArtifactMode == kArtifactAutoHi || mbInterlaceEnabled || mbScanlinesEnabled) {
 		w *= 2;
 		h *= 2;
 	}
@@ -666,7 +677,7 @@ void ATGTIAEmulator::GetPixelAspectMultiple(int& x, int& y) const {
 	if (mbInterlaceEnabled || mbScanlinesEnabled)
 		iy = 2;
 
-	if (mpVBXE != NULL || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi)
+	if (mpVBXE != NULL || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi || mArtifactMode == kArtifactAutoHi)
 		ix = 2;
 
 	x = ix;
@@ -975,6 +986,7 @@ void ATGTIAEmulator::LoadStateResetPrivate(ATSaveStateReader& reader) {
 	mRCIndex = 0;
 
 	mpRenderer->ResetState();
+	mpRenderer->SetRegisterImmediate(0x1B, mPRIOR);
 }
 
 void ATGTIAEmulator::EndLoadState(ATSaveStateReader& writer) {
@@ -1140,7 +1152,7 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 		}
 	}
 
-	bool use14MHz = (mpVBXE != NULL) || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi;
+	bool use14MHz = (mpVBXE != NULL) || mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi || mArtifactMode == kArtifactAutoHi;
 
 	if (mpFrame) {
 		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
@@ -1159,8 +1171,8 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 		mbPostProcessThisFrame = (mArtifactMode || mbBlendMode || mbScanlinesEnabledThisFrame) && !mpVBXE;
 
 		const bool useArtifacting = mArtifactMode != kArtifactNone;
-		const bool usePalArtifacting = mArtifactMode == kArtifactPAL || mArtifactMode == kArtifactPALHi;
-		const bool useHighArtifacting = mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi;
+		const bool usePalArtifacting = mArtifactMode == kArtifactPAL || mArtifactMode == kArtifactPALHi || ((mArtifactMode == kArtifactAuto || mArtifactMode == kArtifactAutoHi) && mbPALThisFrame);
+		const bool useHighArtifacting = mArtifactMode == kArtifactNTSCHi || mArtifactMode == kArtifactPALHi || mArtifactMode == kArtifactAutoHi;
 
 		if (mbPostProcessThisFrame) {
 			mPreArtifactFrame.h = mbOverscanPALExtendedThisFrame ? 312 : 262;
@@ -1516,6 +1528,8 @@ void ATGTIAEmulator::UpdatePlayfield160(uint32 x, const uint8 *__restrict src, u
 
 #ifdef VD_CPU_AMD64
 	atasm_update_playfield_160_sse2(dst, src, n);
+#elif defined(VD_CPU_ARM64)
+	atasm_update_playfield_160_neon(dst, src, n);
 #else
 	do {
 		const uint8 byte = *src++;
@@ -1543,7 +1557,7 @@ void ATGTIAEmulator::UpdatePlayfield320(uint32 x, const uint8 *src, uint32 n) {
 
 	memset(&mMergeBuffer[x], PF2, n*2);
 	
-	uint8 *dst = &mAnticData[x];
+	uint8 *VDRESTRICT dst = &mAnticData[x];
 	do {
 		const uint8 byte = *src++;
 		dst[0] = (byte >> 2) & 3;
@@ -1880,12 +1894,13 @@ void ATGTIAEmulator::RenderActivityMap(const uint8 *src) {
 		return;
 
 	ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
-	uint8 *dst = (uint8 *)fb->mBuffer.data;
+	const VDPixmap& pxdst = mbPostProcessThisFrame ? mPreArtifactFrame : fb->mBuffer;
+	uint8 *dst = (uint8 *)pxdst.data;
 
 	// if PAL extended is enabled, there are 16 lines wrapped from the bottom to the top
 	// of the framebuffer that we must skip and loop back to
 	if (mbOverscanPALExtendedThisFrame)
-		dst += 16 * fb->mBuffer.pitch;
+		dst += 16 * pxdst.pitch;
 
 	int h = this->mbOverscanPALExtendedThisFrame ? 312 : 262;
 
@@ -1902,10 +1917,10 @@ void ATGTIAEmulator::RenderActivityMap(const uint8 *src) {
 		}
 
 		src += 114;
-		dst += fb->mBuffer.pitch;
+		dst += pxdst.pitch;
 
 		if (y == 312 - 16 - 1)
-			dst = (uint8 *)fb->mBuffer.data;
+			dst = (uint8 *)pxdst.data;
 	}
 }
 
@@ -2037,6 +2052,54 @@ void ATGTIAEmulator::RecomputePalette() {
 	co_g = vdfloat2x2::rotation(params.mGrnShift * (nsVDMath::kfPi / 180.0f)) * co_g * params.mGrnScale;
 	co_b = vdfloat2x2::rotation(params.mBluShift * (nsVDMath::kfPi / 180.0f)) * co_b * params.mBluScale;
 
+	static constexpr vdfloat3x3 fromNTSC = vdfloat3x3 {
+		{ 0.6068909f, 0.1735011f, 0.2003480f },
+		{ 0.2989164f, 0.5865990f, 0.1144845f },
+		{ 0.0000000f, 0.0660957f, 1.1162243f },
+	}.transpose();
+
+	static constexpr vdfloat3x3 fromPAL = vdfloat3x3 {
+		{ 0.4306190f, 0.3415419f, 0.1783091f },
+		{ 0.2220379f, 0.7066384f, 0.0713236f },
+		{ 0.0201853f, 0.1295504f, 0.9390944f },
+	}.transpose();
+
+	static constexpr vdfloat3x3 tosRGB = vdfloat3x3 {
+		{  3.2404542f, -1.5371385f, -0.4985314f },
+		{ -0.9692660f,  1.8760108f,  0.0415560f },
+		{  0.0556434f, -0.2040259f,  1.0572252f },
+	}.transpose();
+
+	static constexpr vdfloat3x3 toAdobeRGB = vdfloat3x3 {
+		{  2.0413690f, -0.5649464f, -0.3446944f },
+		{ -0.9692660f,  1.8760108f,  0.0415560f },
+		{  0.0134474f, -0.1183897f,  1.0154096f },
+	}.transpose();
+
+	vdfloat3x3 mx;
+	bool useMatrix = false;
+	const vdfloat3x3 *toMat = nullptr;
+
+	switch(params.mColorMatchingMode) {
+		case ATColorMatchingMode::SRGB:
+			toMat = &tosRGB;
+			break;
+
+		case ATColorMatchingMode::AdobeRGB:
+			toMat = &toAdobeRGB;
+			break;
+	}
+
+	if (toMat) {
+		const vdfloat3x3 *fromMat = palQuirks ? &fromPAL : &fromNTSC;
+
+		mx = (*fromMat) * (*toMat);
+
+		useMatrix = true;
+	}
+
+	const float nativeGamma = 2.2f;
+
 	for(int hue=0; hue<16; ++hue) {
 		float i = 0;
 		float q = 0;
@@ -2091,6 +2154,28 @@ void ATGTIAEmulator::RecomputePalette() {
 			float g = y + cg;
 			float b = y + cb;
 
+			if (useMatrix) {
+				if (r < 0.0f) r = 0.0f;
+				if (g < 0.0f) g = 0.0f;
+				if (b < 0.0f) b = 0.0f;
+
+				r = powf(r, nativeGamma);
+				g = powf(g, nativeGamma);
+				b = powf(b, nativeGamma);
+
+				vdfloat3 rgb = vdfloat3 { r, g, b } * mx;
+
+				if (params.mColorMatchingMode == ATColorMatchingMode::AdobeRGB) {
+					r = (rgb.x < 0) ? 0.0f : powf(rgb.x, 1.0f / 2.2f);
+					g = (rgb.y < 0) ? 0.0f : powf(rgb.y, 1.0f / 2.2f);
+					b = (rgb.z < 0) ? 0.0f : powf(rgb.z, 1.0f / 2.2f);
+				} else {
+					r = (rgb.x < 0.0031308f) ? rgb.x * 12.92f : 1.055f * powf(rgb.x, 1.0f / 2.4f) - 0.055f;
+					g = (rgb.y < 0.0031308f) ? rgb.y * 12.92f : 1.055f * powf(rgb.y, 1.0f / 2.4f) - 0.055f;
+					b = (rgb.z < 0.0031308f) ? rgb.z * 12.92f : 1.055f * powf(rgb.z, 1.0f / 2.4f) - 0.055f;
+				}
+			}
+
 			if (r > 0.0f)
 				r = powf(r, gamma);
 
@@ -2109,7 +2194,7 @@ void ATGTIAEmulator::RecomputePalette() {
 	if (mpVBXE)
 		mpVBXE->SetDefaultPalette(mPalette);
 
-	mpArtifactingEngine->SetColorParams(params);
+	mpArtifactingEngine->SetColorParams(params, useMatrix ? &mx : nullptr);
 }
 
 uint8 ATGTIAEmulator::ReadByte(uint8 reg) {

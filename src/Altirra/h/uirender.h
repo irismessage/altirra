@@ -18,6 +18,7 @@
 #ifndef f_AT_UIRENDER_H
 #define f_AT_UIRENDER_H
 
+#include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
 #include <at/atcore/deviceindicators.h>
 
@@ -37,6 +38,7 @@ struct ATUIAudioStatus {
 	int mTargetMax;
 	double mIncomingRate;
 	double mExpectedRate;
+	double mSamplingRate;
 	bool mbStereoMixing;
 };
 
@@ -73,6 +75,12 @@ public:
 	virtual void Relayout(int w, int h) = 0;
 
 	virtual void Update() = 0;
+
+	// Return the amount of height being taken up the the indicators at the bottom.
+	virtual sint32 GetIndicatorSafeHeight() const = 0;
+
+	virtual void AddIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn) = 0;
+	virtual void RemoveIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn) = 0;
 };
 
 void ATCreateUIRenderer(IATUIRenderer **r);

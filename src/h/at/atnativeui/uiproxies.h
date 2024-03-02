@@ -16,8 +16,8 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#ifndef f_AT_ATUI_UIPROXIES_H
-#define f_AT_ATUI_UIPROXIES_H
+#ifndef f_AT_ATNATIVEUI_UIPROXIES_H
+#define f_AT_ATNATIVEUI_UIPROXIES_H
 
 #include <vd2/system/event.h>
 #include <vd2/system/function.h>
@@ -28,12 +28,13 @@
 #include <vd2/system/VDString.h>
 #include <vd2/system/win32/miniwindows.h>
 
-#include <vd2/system/function.h>
+#include <at/atnativeui/nativewindowproxy.h>
 
+struct VDPixmap;
 struct VDUIAccelerator;
-class VDFunctionThunk;
+class VDFunctionThunkInfo;
 
-class VDUIProxyControl : public vdlist_node {
+class VDUIProxyControl : public vdlist_node, public ATUINativeWindowProxy {
 public:
 	VDUIProxyControl();
 
@@ -42,20 +43,13 @@ public:
 	virtual void Attach(VDZHWND hwnd);
 	virtual void Detach();
 
-	vdrect32 GetArea() const;
-	void SetArea(const vdrect32& r);
-
-	void SetEnabled(bool);
 	void SetRedraw(bool);
 	
-	bool IsVisible() const;
-
 	virtual VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 	virtual VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
 	virtual void OnFontChanged();
 
 protected:
-	VDZHWND	mhwnd;
 	int mRedrawInhibitCount;
 };
 
@@ -65,6 +59,8 @@ public:
 	void RemoveControl(VDZHWND hwnd);
 	void RemoveAllControls(bool detach);
 
+	bool TryDispatch_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
+	bool TryDispatch_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
 	VDZLRESULT Dispatch_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 	VDZLRESULT Dispatch_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
 	void DispatchFontChanged();
@@ -91,9 +87,21 @@ public:
 	virtual int Compare(IVDUIListViewVirtualItem *x, IVDUIListViewVirtualItem *y) = 0;
 };
 
+class IVDUIListViewIndexedProvider {
+public:
+	virtual void GetText(uint32 itemId, uint32 subItem, VDStringW& s) const = 0;
+};
+
+class IVDUIListViewIndexedComparer {
+public:
+	virtual int Compare(uint32 x, uint32 y) = 0;
+};
+
 class VDUIProxyListView : public VDUIProxyControl {
 public:
 	VDUIProxyListView();
+
+	void SetIndexedProvider(IVDUIListViewIndexedProvider *p);
 
 	void AutoSizeColumns(bool expandlast = false);
 	void Clear();
@@ -103,6 +111,7 @@ public:
 	int GetItemCount() const;
 	int GetSelectedIndex() const;
 	void SetSelectedIndex(int index);
+	uint32 GetSelectedItemId() const;
 	IVDUIListViewVirtualItem *GetSelectedItem() const;
 	void GetSelectedIndices(vdfastvector<int>& indices) const;
 	void SetFullRowSelectEnabled(bool enabled);
@@ -114,9 +123,11 @@ public:
 	void SetVisibleTopIndex(int index);
 	IVDUIListViewVirtualItem *GetSelectedVirtualItem() const;
 	IVDUIListViewVirtualItem *GetVirtualItem(int index) const;
+	uint32 GetItemId(int index) const;
 	void InsertColumn(int index, const wchar_t *label, int width, bool rightAligned = false);
 	int InsertItem(int item, const wchar_t *text);
 	int InsertVirtualItem(int item, IVDUIListViewVirtualItem *lvvi);
+	int InsertIndexedItem(int item, uint32 id);
 	void RefreshItem(int item);
 	void RefreshAllItems();
 	void EditItemLabel(int item);
@@ -131,6 +142,7 @@ public:
 
 	bool GetItemScreenRect(int item, vdrect32& r) const;
 
+	void Sort(IVDUIListViewIndexedComparer& comparer);
 	void Sort(IVDUIListViewVirtualComparer& comparer);
 
 	VDEvent<VDUIProxyListView, int>& OnColumnClicked() {
@@ -140,6 +152,8 @@ public:
 	VDEvent<VDUIProxyListView, int>& OnItemSelectionChanged() {
 		return mEventItemSelectionChanged;
 	}
+
+	void SetOnItemDoubleClicked(vdfunction<void(int)> fn);
 
 	VDEvent<VDUIProxyListView, int>& OnItemDoubleClicked() {
 		return mEventItemDoubleClicked;
@@ -191,12 +205,13 @@ public:
 protected:
 	void Detach();
 
-	static int VDZCALLBACK SortAdapter(VDZLPARAM x, VDZLPARAM y, VDZLPARAM cookie);
 	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) override;
 	void OnFontChanged() override;
 
-	int			mChangeNotificationLocks;
-	int			mNextTextIndex;
+	int			mChangeNotificationLocks = 0;
+	int			mNextTextIndex = 0;
+	bool		mbIndexedMode = false;
+	IVDUIListViewIndexedProvider *mpIndexedProvider = nullptr;
 	VDStringW	mTextW[3];
 	VDStringA	mTextA[3];
 
@@ -205,6 +220,7 @@ protected:
 	VDEvent<VDUIProxyListView, int> mEventColumnClicked;
 	VDEvent<VDUIProxyListView, int> mEventItemSelectionChanged;
 	VDEvent<VDUIProxyListView, int> mEventItemDoubleClicked;
+	vdfunction<void(int)> mpOnItemDoubleClicked;
 	VDEvent<VDUIProxyListView, int> mEventItemCheckedChanged;
 	VDEvent<VDUIProxyListView, CheckedChangingEvent *> mEventItemCheckedChanging;
 	VDEvent<VDUIProxyListView, ContextMenuEvent> mEventItemContextMenu;
@@ -313,11 +329,11 @@ protected:
 	int mEditItem = -1;
 	VDZHWND mhwndEdit = nullptr;
 	void (*mPrevEditWndProc)() = nullptr;
-	VDFunctionThunk *mpEditWndProcThunk = nullptr;
+	VDFunctionThunkInfo *mpEditWndProcThunk = nullptr;
 	
 	void (*mPrevWndProc)() = nullptr;
-	VDFunctionThunk *mpWndProcThunk = nullptr;
-	VDFunctionThunk *mpEditTimerThunk = nullptr;
+	VDFunctionThunkInfo *mpWndProcThunk = nullptr;
+	VDFunctionThunkInfo *mpEditTimerThunk = nullptr;
 	VDZUINT_PTR mAutoEditTimer = 0;
 
 	vdfunction<void(int)> mpFnSelectionChanged;
@@ -334,10 +350,13 @@ public:
 	VDUIProxyComboBoxControl();
 	~VDUIProxyComboBoxControl();
 
+	void Clear();
 	void AddItem(const wchar_t *s);
 
 	int GetSelection() const;
 	void SetSelection(int index);
+
+	void SetOnSelectionChanged(vdfunction<void(int)> fn);
 
 	VDEvent<VDUIProxyComboBoxControl, int>& OnSelectionChanged() {
 		return mSelectionChanged;
@@ -347,6 +366,7 @@ protected:
 	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 
 	VDEvent<VDUIProxyComboBoxControl, int> mSelectionChanged;
+	vdfunction<void(int)> mpOnSelectionChangedFn;
 };
 
 /////////////////////////////////////////////////////////////////////////////
@@ -359,6 +379,16 @@ public:
 class IVDUITreeViewVirtualItemComparer {
 public:
 	virtual int Compare(IVDUITreeViewVirtualItem& x, IVDUITreeViewVirtualItem& y) const = 0;
+};
+
+class IVDUITreeViewIndexedProvider {
+public:
+	virtual void GetText(uint32 id, VDStringW& s) const = 0;
+};
+
+class IVDUITreeViewIndexedItemComparer {
+public:
+	virtual int Compare(uint32 x, uint32 y) const = 0;
 };
 
 class VDUIProxyTreeViewControl final : public VDUIProxyControl {
@@ -375,17 +405,22 @@ public:
 	virtual void Attach(VDZHWND hwnd);
 	virtual void Detach();
 
+	void SetIndexedProvider(IVDUITreeViewIndexedProvider *p);
+
+	uint32 GetSelectedItemId() const;
 	IVDUITreeViewVirtualItem *GetSelectedVirtualItem() const;
 
 	template<class T>
 	T *GetSelectedVirtualItem() const { return static_cast<T *>(GetSelectedVirtualItem()); }
 
 	IVDUITreeViewVirtualItem *GetVirtualItem(NodeRef ref) const;
+	uint32 GetItemId(NodeRef ref) const;
 
 	void Clear();
 	void DeleteItem(NodeRef ref);
 	NodeRef AddItem(NodeRef parent, NodeRef insertAfter, const wchar_t *label);
 	NodeRef AddVirtualItem(NodeRef parent, NodeRef insertAfter, IVDUITreeViewVirtualItem *item);
+	NodeRef AddIndexedItem(NodeRef parent, NodeRef insertAfter, uint32 id);
 
 	void MakeNodeVisible(NodeRef node);
 	void SelectNode(NodeRef node);
@@ -397,6 +432,13 @@ public:
 	void EnumChildrenRecursive(NodeRef parent, const vdfunction<void(IVDUITreeViewVirtualItem *)>& callback);
 	void SortChildren(NodeRef parent, IVDUITreeViewVirtualItemComparer& comparer);
 
+	void InitImageList(uint32 n, uint32 width = 0, uint32 height = 0);
+	void AddImage(const VDPixmap& px);
+	void AddImages(uint32 n, const VDPixmap& px);
+	void SetNodeImage(NodeRef node, uint32 imageIndex);
+
+	void SetOnItemSelectionChanged(vdfunction<void()> fn);
+
 	VDEvent<VDUIProxyTreeViewControl, int>& OnItemSelectionChanged() {
 		return mEventItemSelectionChanged;
 	}
@@ -407,7 +449,12 @@ public:
 
 	struct BeginEditEvent {
 		NodeRef mNode;
-		IVDUITreeViewVirtualItem *mpItem;
+
+		union {
+			IVDUITreeViewVirtualItem *mpItem;
+			uint32 mItemId;
+		};
+
 		bool mbAllowEdit;
 		bool mbOverrideText;
 		VDStringW mOverrideText;
@@ -419,7 +466,12 @@ public:
 
 	struct EndEditEvent {
 		NodeRef mNode;
-		IVDUITreeViewVirtualItem *mpItem;
+
+		union {
+			IVDUITreeViewVirtualItem *mpItem;
+			uint32 mItemId;
+		};
+
 		const wchar_t *mpNewText;
 	};
 
@@ -428,7 +480,11 @@ public:
 	}
 
 	struct GetDispAttrEvent {
-		IVDUITreeViewVirtualItem *mpItem;
+		union {
+			IVDUITreeViewVirtualItem *mpItem;
+			uint32 mItemId;
+		};
+
 		bool mbIsBold;
 		bool mbIsMuted;
 	};
@@ -439,7 +495,12 @@ public:
 
 	struct BeginDragEvent {
 		NodeRef mNode;
-		IVDUITreeViewVirtualItem *mpItem;
+		
+		union {
+			IVDUITreeViewVirtualItem *mpItem;
+			uint32 mItemId;
+		};
+
 		vdpoint32 mPos;
 	};
 
@@ -461,16 +522,24 @@ protected:
 	VDStringA mTextA[3];
 	VDZHFONT	mhfontBold;
 	bool		mbCreatedBoldFont;
+	bool		mbIndexedMode;
+
+	IVDUITreeViewIndexedProvider *mpIndexedProvider;
 
 	void (*mPrevEditWndProc)();
-	VDFunctionThunk *mpEditWndProcThunk;
+	VDFunctionThunkInfo *mpEditWndProcThunk;
 
 	VDEvent<VDUIProxyTreeViewControl, int> mEventItemSelectionChanged;
 	VDEvent<VDUIProxyTreeViewControl, bool *> mEventItemDoubleClicked;
 	VDEvent<VDUIProxyTreeViewControl, BeginEditEvent *> mEventItemBeginEdit;
 	VDEvent<VDUIProxyTreeViewControl, EndEditEvent *> mEventItemEndEdit;
 	VDEvent<VDUIProxyTreeViewControl, GetDispAttrEvent *> mEventItemGetDisplayAttributes;
+	vdfunction<void()> mpOnItemSelectionChanged;
 	vdfunction<void(const BeginDragEvent& event)> mpOnBeginDrag;
+
+	VDZHIMAGELIST mImageList = nullptr;
+	uint32 mImageWidth = 0;
+	uint32 mImageHeight = 0;
 };
 
 /////////////////////////////////////////////////////////////////////////////
@@ -500,16 +569,28 @@ public:
 
 	static void AppendEscapedRTF(VDStringA& buf, const wchar_t *str);
 
+	bool IsSelectionPresent() const;
+
 	void EnsureCaretVisible();
+
+	void SelectAll();
+	void Copy();
 
 	void SetCaretPos(int lineIndex, int charIndex);
 
 	void SetText(const wchar_t *s);
 	void SetTextRTF(const char *s);
+	void ReplaceSelectedText(const wchar_t *s);
 
+	void SetFontFamily(const wchar_t *family);
+
+	void SetBackgroundColor(uint32 c);
 	void SetReadOnlyBackground();
+	void SetPlainTextMode();
 
 	void SetOnTextChanged(vdfunction<void()> fn);
+
+	void UpdateMargins(sint32 xpad, sint32 ypad);
 
 private:
 	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
@@ -533,6 +614,50 @@ private:
 	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 
 	vdfunction<void()> mpOnClicked;
+};
+
+/////////////////////////////////////////////////////////////////////////////
+
+class VDUIProxyToolbarControl final : public VDUIProxyControl {
+public:
+	VDUIProxyToolbarControl();
+	~VDUIProxyToolbarControl();
+
+	void Clear();
+
+	void AddButton(uint32 id, sint32 imageIndex, const wchar_t *label);
+	void AddDropdownButton(uint32 id, sint32 imageIndex, const wchar_t *label);
+	void AddSeparator();
+
+	void SetItemVisible(uint32 id, bool visible);
+	void SetItemEnabled(uint32 id, bool visible);
+	void SetItemPressed(uint32 id, bool visible);
+	void SetItemText(uint32 id, const wchar_t *text);
+	void SetItemImage(uint32 id, sint32 imageIndex);
+
+	void InitImageList(uint32 n, uint32 width = 0, uint32 height = 0);
+	void AddImage(const VDPixmap& px);
+	void AddImages(uint32 n, const VDPixmap& px);
+
+	void AutoSize();
+
+	sint32 ShowDropDownMenu(uint32 id, const wchar_t *const *items);
+	uint32 ShowDropDownMenu(uint32 id, VDZHMENU hmenu);
+
+	void SetOnClicked(vdfunction<void(uint32)> fn);
+
+public:
+	void Attach(VDZHWND hwnd) override;
+	void Detach() override;
+
+private:
+	VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) override;
+	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) override;
+
+	vdfunction<void(uint32)> mpOnClicked;
+	VDZHIMAGELIST mImageList = nullptr;
+	uint32 mImageWidth = 0;
+	uint32 mImageHeight = 0;
 };
 
 #endif

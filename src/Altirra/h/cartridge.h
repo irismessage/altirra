@@ -95,6 +95,9 @@ protected:
 
 	template<class T> void ExchangeState(T& io);
 
+	static sint32 ReadByte_Unmapped(void *thisptr0, uint32 address);
+	static bool WriteByte_Unmapped(void *thisptr0, uint32 address, uint8 value);
+
 	static sint32 ReadByte_BB5200_1(void *thisptr0, uint32 address);
 	static sint32 ReadByte_BB5200_2(void *thisptr0, uint32 address);
 	static bool WriteByte_BB5200_1(void *thisptr0, uint32 address, uint8 value);
@@ -121,6 +124,9 @@ protected:
 
 	static bool WriteByte_CCTL_Phoenix(void *thisptr0, uint32 address, uint8 value);
 
+	static sint32 ReadByte_CCTL_Blizzard_32K(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_Blizzard_32K(void *thisptr0, uint32 address, uint8 value);
+
 	template<uint8 T_Mask>
 	static bool WriteByte_CCTL_AddressToBank(void *thisptr0, uint32 address, uint8 value);
 
@@ -132,6 +138,8 @@ protected:
 
 	template<uint8 T_Mask>
 	static bool WriteByte_CCTL_DataToBank(void *thisptr0, uint32 address, uint8 value);
+
+	static bool WriteByte_CCTL_XEGS_64K_Alt(void *thisptr0, uint32 address, uint8 value);
 
 	template<uint8 T_Mask>
 	static bool WriteByte_CCTL_DataToBank_Switchable(void *thisptr0, uint32 address, uint8 value);
@@ -201,6 +209,11 @@ protected:
 
 	static sint32 ReadByte_CCTL_MegaCart3(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_MegaCart3(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_aDawliah_32K(void *thisptr0, uint32 address);
+	static sint32 ReadByte_CCTL_aDawliah_64K(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_aDawliah_32K(void *thisptr0, uint32 address, uint8 value);
+	static bool WriteByte_CCTL_aDawliah_64K(void *thisptr0, uint32 address, uint8 value);
 
 	void InitFromImage();
 	void InitMemoryLayers();

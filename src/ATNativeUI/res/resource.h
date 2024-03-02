@@ -2,6 +2,7 @@
 // Microsoft Visual C++ generated include file.
 // Used by atnativeui.rc
 //
+#define IDYES2                          7
 #define IDD_GENERIC_DIALOG              228
 #define IDD_CONFIGURE_ACCEL             301
 #define IDC_STATIC_AVAILABLECOMMANDS    1001

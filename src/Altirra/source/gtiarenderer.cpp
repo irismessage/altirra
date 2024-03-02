@@ -38,8 +38,10 @@ extern "C" void VDCDECL atasm_gtia_render_mode8_fast_ssse3(
 	uint32 n,
 	const uint8 *color_table
 );
-#else
+#elif VD_CPU_X64
 #include "gtiarenderer_ssse3_intrin.inl"
+#elif VD_CPU_ARM64
+#include "gtiarenderer_neon.inl"
 #endif
 
 ATGTIARenderer::ATGTIARenderer()
@@ -314,6 +316,8 @@ void ATGTIARenderer::LoadState(ATSaveStateReader& reader) {
 		rc.mReg = reader.ReadUint8();
 		rc.mValue = reader.ReadUint8();
 	}
+
+	UpdatePriorityTable();
 }
 
 void ATGTIARenderer::ResetState() {
@@ -434,7 +438,8 @@ void ATGTIARenderer::UpdateRegisters(const RegisterChange *rc, int count) {
 			}
 
 			mPRIOR = value;
-			mpPriTable = mPriorityTables[(value & 15) + (value&32 ? 16 : 0)];
+
+			UpdatePriorityTable();
 
 			if (value & 0xC0)
 				mbHiresMode = false;
@@ -498,6 +503,9 @@ void ATGTIARenderer::RenderLoresFast(int x1, int x2) {
 
 		return;
 	}
+#elif defined(VD_CPU_ARM64)
+	atasm_gtia_render_lores_fast_neon(dst, src, x2 - x1, colorTable);
+	return;
 #endif
 
 	int w = x2 - x1;
@@ -582,6 +590,15 @@ void ATGTIARenderer::RenderMode8Fast(int x1, int x2) {
 
 		return;
 	}
+#elif defined(VD_CPU_ARM64)
+	atasm_gtia_render_mode8_fast_neon(
+		dst,
+		src,
+		lumasrc,
+		x2 - x1,
+		colorTable
+	);
+	return;
 #endif
 
 	const uint8 luma1 = mpColorTable[5] & 0xf;
@@ -1138,4 +1155,8 @@ void ATGTIARenderer::RenderMode11Fast(int x1, int x2) {
 
 		dst[0] = dst[1] = c0;
 	}
+}
+
+void ATGTIARenderer::UpdatePriorityTable() {
+	mpPriTable = mPriorityTables[(mPRIOR & 15) + (mPRIOR & 32 ? 16 : 0)];
 }

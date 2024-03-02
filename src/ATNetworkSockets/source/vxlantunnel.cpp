@@ -34,7 +34,7 @@ bool ATNetSockVxlanTunnel::Init(uint32 tunnelAddr, uint16 tunnelSrcPort, uint16 
 	_sntprintf(className, vdcountof(className), _T("ATNetSockVxlanTunnel_%p"), this);
 
 	WNDCLASS wc = {0};
-	wc.lpfnWndProc = (WNDPROC)mpWndThunk;
+	wc.lpfnWndProc = VDGetThunkFunction<WNDPROC>(mpWndThunk);
 	wc.hInstance = VDGetLocalModuleHandleW32();
 	wc.lpszClassName = className;
 
@@ -96,7 +96,7 @@ void ATNetSockVxlanTunnel::Shutdown() {
 
 	if (mpWndThunk) {
 		VDDestroyFunctionThunk(mpWndThunk);
-		mpWndThunk = NULL;
+		mpWndThunk = nullptr;
 	}
 }
 

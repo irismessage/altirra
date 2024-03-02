@@ -29,6 +29,7 @@ ATLogChannel g_ATLCFDC(true, false, "FDC", "Floppy drive controller");
 ATLogChannel g_ATLCFDCCommand(false, false, "FDCCMD", "Floppy drive controller commands");
 ATLogChannel g_ATLCFDCCommandFI(false, false, "FDCCMDFI", "Floppy drive controller extra forced interrupt commands");
 ATLogChannel g_ATLCFDCData(false, false, "FDCDATA", "Floppy drive controller data transfer");
+ATLogChannel g_ATLCFDCWTData(false, false, "FDCWTDATA", "Floppy drive controller write track data");
 
 ATFDCEmulator::ATFDCEmulator() {
 	mpFnDrqChange = [](bool drq) {};
@@ -1402,10 +1403,80 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 	if (!mpDiskImage || !mpDiskInterface->IsFormatAllowed())
 		return;
 
+	const uint32 endPos = mWriteTrackIndex;
+
+	if (g_ATLCFDCWTData.IsEnabled() && endPos > 0) {
+		uint32 count = 1;
+		uint8 last = mWriteTrackBuffer[0];
+		uint32 crcs = 0;
+		sint32 lastIDAM = -1;
+
+		VDStringA s;
+		for(uint32 i=0; i<endPos; ++i) {
+			const uint8 c = mWriteTrackBuffer[i];
+
+			if (i + 1 < endPos && c == mWriteTrackBuffer[i + 1])
+				++count;
+			else {
+				const char *desc = nullptr;
+
+				if (mbMFM) {
+					switch(c) {
+						case 0xF5:	desc = "  sync ($A1)"; break;
+						case 0xF6:	desc = "  index sync ($C2)"; break;
+						case 0xF7:	desc = "  CRC"; break;
+						case 0xF8:	desc = "  DAM (deleted)"; break;
+						case 0xF9:	desc = "  DAM (user defined)"; break;
+						case 0xFA:	desc = "  DAM (user defined)"; break;
+						case 0xFB:	desc = "  DAM"; break;
+						case 0xFE:	desc = "  IDAM"; break;
+						default:	break;
+					}
+				} else {
+					switch(c) {
+						case 0xF7:	desc = "  CRC"; break;
+						case 0xF8:	desc = "  DAM (deleted)"; break;
+						case 0xF9:	desc = "  DAM (user defined)"; break;
+						case 0xFA:	desc = "  DAM (user defined)"; break;
+						case 0xFB:	desc = "  DAM"; break;
+						case 0xFC:	desc = "  index mark"; break;
+						case 0xFE:	desc = "  IDAM"; break;
+						default:	break;
+					}
+				}
+
+				s.sprintf("%3u x $%02X", count, c);
+
+				if (desc)
+					s += desc;
+
+				if (c == 0xFE) {
+					if (lastIDAM >= 0) {
+						s.append_sprintf(" (+%u encoded bytes since last)", (sint32)(i + crcs) - lastIDAM);
+					}
+
+					lastIDAM = (sint32)(i + crcs);
+				}
+
+				s += '\n';
+
+				g_ATLCFDCWTData <<= s.c_str();
+
+				count = 1;
+			}
+
+			if (c == 0xF7)
+				++crcs;
+
+			last = c;
+		}
+
+		g_ATLCFDCWTData("Total %u bytes written (%u raw bytes)\n", endPos, endPos + crcs);
+	}
+
 	// $F7 bytes actually produce two raw bytes, so we can easily have more than the allowed
 	// number of bytes in the track. Work backwards from the end until we have the max number
 	// of bytes; everything before that would have been overwritten by track wrap.
-	uint32 endPos = mWriteTrackIndex;
 	uint32 startPos = endPos;
 	uint32 extraCrcLen = 0;
 	uint32 validLen = 0;

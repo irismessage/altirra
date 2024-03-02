@@ -19,7 +19,7 @@
 #include <crtdbg.h>
 #include <intrin.h>
 
-#ifdef VD_CPU_AMD64
+#if VD_PTR_SIZE > 4
 	extern "C" char __ImageBase;
 	#define ENCODED_RETURN_ADDRESS ((int)((uintptr_t)_ReturnAddress() - (uintptr_t)&__ImageBase))
 #else

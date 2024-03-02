@@ -142,8 +142,8 @@ bool ATKMKJZIDE::SetSettings(const ATPropertySet& settings) {
 
 			mRevision = newRevision;
 
-			if (newRevision == kRevision_V2_S && mpAudioOutput)
-				mCovox.Init(nullptr, mpScheduler, mpAudioOutput);
+			if (newRevision == kRevision_V2_S && mpAudioMixer)
+				mCovox.Init(nullptr, mpScheduler, mpAudioMixer);
 		}
 
 		mbWriteProtect = settings.GetBool("writeprotect", false);
@@ -171,7 +171,7 @@ bool ATKMKJZIDE::SetSettings(const ATPropertySet& settings) {
 
 void ATKMKJZIDE::Init() {
 	if (mRevision == kRevision_V2_S)
-		mCovox.Init(nullptr, mpScheduler, mpAudioOutput);
+		mCovox.Init(nullptr, mpScheduler, mpAudioMixer);
 
 	for(size_t i=0; i<2; ++i)
 		mIDE[i].Init(mpScheduler, mpUIRenderer, !mpBlockDevices[i ^ 1], i > 0);
@@ -363,7 +363,7 @@ bool ATKMKJZIDE::ReloadFirmware() {
 		vduint128 oldHash = VDHash128(flash, flashSize);
 		memset(flash, 0xFF, flashSize);
 
-		mpFwManager->LoadFirmware(id, flash, 0, flashSize);
+		mpFwManager->LoadFirmware(id, flash, 0, flashSize, nullptr, nullptr, nullptr, nullptr, &mbFirmwareUsable);
 		if (oldHash != VDHash128(flash, flashSize))
 			changed = true;
 	}
@@ -420,6 +420,10 @@ void ATKMKJZIDE::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 		mSDXCtrl.SetDirty(false);
 	else
 		mFlashCtrl.SetDirty(false);
+}
+
+bool ATKMKJZIDE::IsUsableFirmwareLoaded() const {
+	return mbFirmwareUsable;
 }
 
 void ATKMKJZIDE::InitMemMap(ATMemoryManager *memman) {
@@ -691,8 +695,8 @@ void ATKMKJZIDE::ActivateButton(ATDeviceButton idx, bool state) {
 	}
 }
 
-void ATKMKJZIDE::InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) {
-	mpAudioOutput = output;
+void ATKMKJZIDE::InitAudioOutput(IATAudioMixer *mixer) {
+	mpAudioMixer = mixer;
 }
 
 sint32 ATKMKJZIDE::OnControlDebugRead(void *thisptr0, uint32 addr) {
@@ -730,16 +734,10 @@ sint32 ATKMKJZIDE::OnControlDebugRead(void *thisptr0, uint32 addr) {
 		case 0x15:
 		case 0x16:
 		case 0x17:
-			if (!thisptr->mpBlockDevices[thisptr->mbIDESlaveSelected])
-				return 0xFF;
-
-			return thisptr->mIDE[thisptr->mbIDESlaveSelected].DebugReadByte(addr8 & 0x07);
+			return thisptr->mIDE[thisptr->mbIDESlaveSelected && thisptr->mpBlockDevices[1] ? 1 : 0].DebugReadByte(addr8 & 0x07);
 
 		case 0x1E:	// alternate status register
-			if (!thisptr->mpBlockDevices[thisptr->mbIDESlaveSelected])
-				return 0xFF;
-
-			return thisptr->mIDE[thisptr->mbIDESlaveSelected].DebugReadByte(0x07);
+			return thisptr->mIDE[thisptr->mbIDESlaveSelected && thisptr->mpBlockDevices[1] ? 1 : 0].DebugReadByte(0x07);
 
 		case 0x20:
 			return thisptr->mRTC.DebugReadBit() ? 0xFF : 0x7F;
@@ -782,11 +780,8 @@ sint32 ATKMKJZIDE::OnControlRead(void *thisptr0, uint32 addr) {
 
 	switch(addr8) {
 		case 0x10:
-			if (!thisptr->mpBlockDevices[thisptr->mbIDESlaveSelected])
-				return 0xFF;
-
 			{
-				uint32 v = thisptr->mIDE[thisptr->mbIDESlaveSelected].ReadDataLatch(true);
+				uint32 v = thisptr->mIDE[thisptr->mbIDESlaveSelected && thisptr->mpBlockDevices[1] ? 1 : 0].ReadDataLatch(true);
 
 				thisptr->mHighDataLatch = (uint8)(v >> 8);
 				return (uint8)v;
@@ -799,16 +794,10 @@ sint32 ATKMKJZIDE::OnControlRead(void *thisptr0, uint32 addr) {
 		case 0x15:
 		case 0x16:
 		case 0x17:
-			if (!thisptr->mpBlockDevices[thisptr->mbIDESlaveSelected])
-				return 0xFF;
-
-			return thisptr->mIDE[thisptr->mbIDESlaveSelected].ReadByte(addr8 & 0x07);
+			return thisptr->mIDE[thisptr->mbIDESlaveSelected && thisptr->mpBlockDevices[1] ? 1 : 0].ReadByte(addr8 & 0x07);
 
 		case 0x1E:	// alternate status register
-			if (!thisptr->mpBlockDevices[thisptr->mbIDESlaveSelected])
-				return 0xFF;
-
-			return thisptr->mIDE[thisptr->mbIDESlaveSelected].ReadByte(0x07);
+			return thisptr->mIDE[thisptr->mbIDESlaveSelected && thisptr->mpBlockDevices[1] ? 1 : 0].ReadByte(0x07);
 
 		case 0x20:
 			return thisptr->mRTC.ReadBit() ? 0xFF : 0x7F;
@@ -992,8 +981,10 @@ bool ATKMKJZIDE::OnFlashWrite(void *thisptr0, uint32 addr, uint8 value) {
 
 	if (thisptr->mFlashCtrl.WriteByte(thisptr->mFlashBankOffset + addr, value)) {
 		if (thisptr->mpUIRenderer) {
-			if (thisptr->mFlashCtrl.CheckForWriteActivity())
+			if (thisptr->mFlashCtrl.CheckForWriteActivity()) {
 				thisptr->mpUIRenderer->SetFlashWriteActivity();
+				thisptr->mbFirmwareUsable = true;
+			}
 		}
 
 		thisptr->UpdateMemoryLayersFlash();

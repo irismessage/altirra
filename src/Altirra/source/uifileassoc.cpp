@@ -100,28 +100,28 @@ struct ATFileAssociation {
 		L"xex",
 		L"Altirra.bin.1",
 		L"Atari 8-bit Executable",
-		L"/run \"%1\"",
+		L"/launch /run \"%1\"",
 		IDI_XEX
 	},
 	{
 		L"bin|car|rom|a52",
 		L"Altirra.crt.1",
 		L"Atari 8-bit Cartridge Image",
-		L"/cart \"%1\"",
+		L"/launch /cart \"%1\"",
 		IDI_CART
 	},
 	{
 		L"atr|dcm|atz|xfd|pro|atx",
 		L"Altirra.dsk.1",
 		L"Atari 8-bit Disk Image",
-		L"/disk \"%1\"",
+		L"/launch /disk \"%1\"",
 		IDI_DISK
 	},
 	{
 		L"cas",
 		L"Altirra.tap.1",
 		L"Atari 8-bit Tape Image",
-		L"/tape \"%1\"",
+		L"/launch /tape \"%1\"",
 		IDI_TAPE
 	},
 };

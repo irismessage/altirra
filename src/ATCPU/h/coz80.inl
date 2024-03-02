@@ -152,9 +152,9 @@ while(mCyclesLeft) {
 				he->mSubCycle = 0;
 				he->mbEmulation = true;
 				he->mZ80_D = mD;
-				he->mZ80_E = mE;
-				he->mZ80_H = mH;
-				he->mZ80_L = mL;
+				he->mExt.mZ80_E = mE;
+				he->mExt.mZ80_H = mH;
+				he->mExt.mZ80_L = mL;
 				he->mB = 0;
 				he->mK = 0;
 				he->mZ80_SP = mSP;

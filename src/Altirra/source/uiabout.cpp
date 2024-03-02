@@ -18,7 +18,6 @@
 #include <stdafx.h>
 #include <at/atnativeui/dialog.h>
 #include "resource.h"
-#include <windows.h>
 #include "oshelper.h"
 
 class ATUIDialogAbout : public VDResizableDialogFrameW32 {

@@ -274,9 +274,6 @@ protected:
 	int					mFullScreenCount;
 	uint32				mFSFence;
 
-	uint32				mLastPresentTime;
-	uint32				mLastPresentScanLine;
-
 	IDirect3DVertexDeclaration9	*mpD3DVD;
 	IDirect3DVertexBuffer9	*mpD3DVB;
 	IDirect3DIndexBuffer9	*mpD3DIB;

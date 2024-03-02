@@ -23,6 +23,7 @@
 #include <richedit.h>
 
 #include "resource.h"
+#include "oshelper.h"
 
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
@@ -256,5 +257,105 @@ bool ATUIDialogChangeLog::OnLoaded() {
 
 void ATShowChangeLog(VDGUIHandle hParent) {
 	ATUIDialogChangeLog dlg;
+	dlg.ShowDialog(hParent);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogCmdLineHelp final : public VDResizableDialogFrameW32 {
+public:
+	ATUIDialogCmdLineHelp();
+
+private:
+	bool OnLoaded() override;
+	void OnSize() override;
+	void OnContextMenu(uint32 id, int x, int y) override;
+
+	void UpdateMargins();
+
+	VDUIProxyRichEditControl mTextView;
+};
+
+ATUIDialogCmdLineHelp::ATUIDialogCmdLineHelp()
+	: VDResizableDialogFrameW32(IDD_CMDLINEHELP)
+{
+}
+
+bool ATUIDialogCmdLineHelp::OnLoaded() {
+	SetCurrentSizeAsMinSize();
+
+	AddProxy(&mTextView, IDC_TEXT);
+
+	mResizer.Add(IDC_TEXT, mResizer.kMC | mResizer.kAvoidFlicker | mResizer.kSuppressFontChange);
+	mResizer.Add(IDOK, mResizer.kAnchorX1_C | mResizer.kAnchorX2_C | mResizer.kAnchorY1_B | mResizer.kAnchorY2_B);
+
+	vdfastvector<uint8> data;
+	ATLoadMiscResource(IDR_CMDLINEHELP, data);
+
+	const VDStringW& str = VDTextU8ToW(VDStringSpanA((const char *)data.begin(), (const char *)data.end()));
+	VDStringA rtfStr;
+
+	rtfStr =	"{\\rtf"
+				"{\\fonttbl"
+					"{\\f0\\fmodern Lucida Console;}"
+				"}"
+				"{\\colortbl;\\red160\\green160\\blue160;\\red248\\green248\\blue248;}"
+				"\\fs18 ";
+
+	VDStringW lineBuf;
+	for(const wchar_t c : str) {
+		if (c == '\r')
+			continue;
+
+		if (c == '\n') {
+			// hack to find headings
+			if (wcsstr(lineBuf.c_str(), L"--"))
+				rtfStr += "\\cf2 ";
+			else
+				rtfStr += "\\cf1 ";
+
+			mTextView.AppendEscapedRTF(rtfStr, lineBuf.c_str());
+			lineBuf.clear();
+			rtfStr += "\\line ";
+		} else
+			lineBuf.push_back(c);
+	}
+
+	rtfStr.push_back('}');
+	
+	mTextView.SetBackgroundColor(0);
+	mTextView.SetTextRTF(rtfStr.c_str());
+
+	UpdateMargins();
+
+	return VDResizableDialogFrameW32::OnLoaded();
+}
+
+void ATUIDialogCmdLineHelp::OnSize() {
+	VDResizableDialogFrameW32::OnSize();
+
+	UpdateMargins();
+}
+
+void ATUIDialogCmdLineHelp::OnContextMenu(uint32 id, int x, int y) {
+	static constexpr const wchar_t *kMenuItems[]={
+		L"Copy\tCtrl+C",
+		nullptr
+	};
+
+	if (ActivatePopupMenu(x, y, kMenuItems) >= 0) {
+		if (!mTextView.IsSelectionPresent())
+			mTextView.SelectAll();
+
+		mTextView.Copy();
+	}
+}
+
+void ATUIDialogCmdLineHelp::UpdateMargins() {
+	mTextView.UpdateMargins(mCurrentDpi/6, mCurrentDpi/6);
+}
+
+void ATUIShowDialogCmdLineHelp(VDGUIHandle hParent) {
+	ATUIDialogCmdLineHelp dlg;
 	dlg.ShowDialog(hParent);
 }

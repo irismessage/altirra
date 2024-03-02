@@ -472,7 +472,12 @@ size_t ATHLECIOHook::ReadFilename(uint8 *buf, size_t buflen, uint16 filenameAddr
 	while(n + 1 < buflen) {
 		uint8 c = mem.ReadByte(filenameAddr + n);
 
-		if (c == 0x00 || c == 0x9B)
+		// The original CIO specification in the OS manual says that paths are supposed to
+		// terminated by an EOL character, but this is pretty widely violated. The most common
+		// offender is a null byte ($00), but MultiBASIC 0.33 also has a bug where it fails to
+		// terminate strings passed to DIR and frequently returns the end of statement ($14)
+		// or end of line ($16) tokens instead. Just end on any non-printable character.
+		if (c < 0x20 || c > 0x7F)
 			break;
 
 		*buf++ = c;

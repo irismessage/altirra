@@ -37,6 +37,7 @@
 #include <vd2/system/seh.h>
 #include <vd2/system/time.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/vdstl_vectorview.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Kasumi/blitter.h>
 #include <vd2/Kasumi/pixmap.h>
@@ -3922,7 +3923,13 @@ void VDVideoDisplayMinidriverDX9::DrawDebugInfo(FilterMode mode, const RECT& rCl
 				if (i + 1 == numTimings)
 					mDebugString.sprintf("Total: %7.2fms %ux%u", passInfos[i].mTiming * 1000.0f, mbDestRectEnabled ? mDestRect.width() : rClient.right, mbDestRectEnabled ? mDestRect.height() : rClient.bottom);
 				else
-					mDebugString.sprintf("Pass #%-2u: %7.2fms %ux%u%s", i + 1, passInfos[i].mTiming * 1000.0f, passInfos[i].mOutputWidth, passInfos[i].mOutputHeight, passInfos[i].mbOutputFloat ? " float" : "");
+					mDebugString.sprintf("Pass #%-2u: %7.2fms %ux%u%s"
+						, i + 1
+						, passInfos[i].mTiming * 1000.0f
+						, passInfos[i].mOutputWidth
+						, passInfos[i].mOutputHeight
+						, passInfos[i].mbOutputFloat ? passInfos[i].mbOutputHalfFloat ? " half" : " float" : ""
+					);
 				mpFontRenderer->DrawTextLine(10, 10 + 14*i, 0xFFFFFF00, 0, mDebugString.c_str());
 			}
 		}

@@ -99,6 +99,7 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (ATContainerWindow::WndProc(msg, wParam, lParam) < 0)
 				return -1;
 
+			ATUIRegisterTopLevelWindow(mhwnd);
 			ATUIRegisterDragDropHandler((VDGUIHandle)mhwnd);
 			SetIcons();
 			return 0;
@@ -120,6 +121,7 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 
 		case WM_DESTROY:
+			ATUIUnregisterTopLevelWindow(mhwnd);
 			ATUIDestroyModelessDialogs(mhwnd);
 
 			// We can't use the normal save placement function because the non-fullscreen state
@@ -214,7 +216,7 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 					ATSetFullscreen(false);
 			}
 
-			ATUIEnableModelessDialogs(mhwnd, wParam != 0);
+			ATUISetGlobalEnableState(wParam != 0);
 			break;
 
 		case WM_ENTERIDLE:

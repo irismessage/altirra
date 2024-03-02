@@ -23,6 +23,7 @@
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/messageloop.h>
 #include "resource.h"
 #include "gtia.h"
 #include "simulator.h"
@@ -127,16 +128,18 @@ public:
 	ATAdjustColorsDialog();
 
 protected:
-	bool OnLoaded();
-	void OnDestroy();
-	void OnDataExchange(bool write);
-	bool OnCommand(uint32 id, uint32 extcode);
-	void OnHScroll(uint32 id, int code);
-	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
+	bool OnLoaded() override;
+	void OnDestroy() override;
+	void OnDataExchange(bool write) override;
+	void OnEnable(bool enable) override;
+	bool OnCommand(uint32 id, uint32 extcode) override;
+	void OnHScroll(uint32 id, int code) override;
+	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) override;
 	void UpdateLabel(uint32 id);
 	void UpdateColorImage();
 	void ExportPalette(const wchar_t *s);
 	void OnLumaRampChanged(VDUIProxyComboBoxControl *sender, int sel);
+	void OnColorModeChanged(VDUIProxyComboBoxControl *sender, int sel);
 	void LoadPreset(uint32 id);
 
 	ATColorSettings mSettings;
@@ -145,7 +148,9 @@ protected:
 	HMENU mPresetsPopupMenu;
 
 	VDUIProxyComboBoxControl mLumaRampCombo;
+	VDUIProxyComboBoxControl mColorModeCombo;
 	VDDelegate mDelLumaRampChanged;
+	VDDelegate mDelColorModeChanged;
 
 	ATAdjustArtifactingDialog mArtDialog;
 };
@@ -157,14 +162,22 @@ ATAdjustColorsDialog::ATAdjustColorsDialog()
 	, mPresetsPopupMenu(NULL)
 {
 	mLumaRampCombo.OnSelectionChanged() += mDelLumaRampChanged.Bind(this, &ATAdjustColorsDialog::OnLumaRampChanged);
+	mColorModeCombo.OnSelectionChanged() += mDelColorModeChanged.Bind(this, &ATAdjustColorsDialog::OnColorModeChanged);
 }
 
 bool ATAdjustColorsDialog::OnLoaded() {
+	ATUIRegisterModelessDialog(mhwnd);
+
 	mPresetsPopupMenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_COLOR_PRESETS_MENU));
 
 	AddProxy(&mLumaRampCombo, IDC_LUMA_RAMP);
 	mLumaRampCombo.AddItem(L"Linear");
 	mLumaRampCombo.AddItem(L"XL/XE");
+
+	AddProxy(&mColorModeCombo, IDC_COLORMATCHING_MODE);
+	mColorModeCombo.AddItem(L"None");
+	mColorModeCombo.AddItem(L"NTSC/PAL to sRGB");
+	mColorModeCombo.AddItem(L"NTSC/PAL to Adobe RGB");
 
 	TBSetRange(IDC_HUESTART, -120, 360);
 	TBSetRange(IDC_HUERANGE, 0, 540);
@@ -205,6 +218,8 @@ void ATAdjustColorsDialog::OnDestroy() {
 		DestroyMenu(mPresetsPopupMenu);
 		mPresetsPopupMenu = NULL;
 	}
+
+	ATUIUnregisterModelessDialog(mhwnd);
 
 	VDDialogFrameW32::OnDestroy();
 }
@@ -255,6 +270,7 @@ void ATAdjustColorsDialog::OnDataExchange(bool write) {
 		TBSetValue(IDC_BLU_SCALE, VDRoundToInt(mpParams->mBluScale * 100.0f));
 
 		mLumaRampCombo.SetSelection(mpParams->mLumaRampMode);
+		mColorModeCombo.SetSelection((int)mpParams->mColorMatchingMode);
 
 		UpdateLabel(IDC_HUESTART);
 		UpdateLabel(IDC_HUERANGE);
@@ -273,6 +289,10 @@ void ATAdjustColorsDialog::OnDataExchange(bool write) {
 		UpdateLabel(IDC_BLU_SCALE);
 		UpdateColorImage();
 	}
+}
+
+void ATAdjustColorsDialog::OnEnable(bool enable) {
+	ATUISetGlobalEnableState(enable);
 }
 
 bool ATAdjustColorsDialog::OnCommand(uint32 id, uint32 extcode) {
@@ -629,6 +649,17 @@ void ATAdjustColorsDialog::OnLumaRampChanged(VDUIProxyComboBoxControl *sender, i
 	}
 }
 
+void ATAdjustColorsDialog::OnColorModeChanged(VDUIProxyComboBoxControl *sender, int sel) {
+	ATColorMatchingMode newMode = (ATColorMatchingMode)sel;
+
+	if (mpParams->mColorMatchingMode != newMode) {
+		mpParams->mColorMatchingMode = newMode;
+
+		OnDataExchange(true);
+		UpdateColorImage();
+	}
+}
+
 void ATAdjustColorsDialog::LoadPreset(uint32 id) {
 	mpParams->mRedShift = 0;
 	mpParams->mRedScale = 1;
@@ -638,6 +669,7 @@ void ATAdjustColorsDialog::LoadPreset(uint32 id) {
 	mpParams->mBluScale = 1;
 	mpParams->mArtifactSharpness = 0.50f;
 	mpParams->mbUsePALQuirks = false;
+	mpParams->mColorMatchingMode = ATColorMatchingMode::None;
 
 	switch(id) {
 		case ID_COLORS_DEFAULTNTSC_XL:
@@ -670,8 +702,8 @@ void ATAdjustColorsDialog::LoadPreset(uint32 id) {
 			mpParams->mContrast = 1.0f;
 			mpParams->mSaturation = 0.29f;
 			mpParams->mGammaCorrect = 1.0f;
-			mpParams->mArtifactHue = -96.0f;
-			mpParams->mArtifactSat = 2.76f;
+			mpParams->mArtifactHue = 80.0f;
+			mpParams->mArtifactSat = 0.80f;
 			mpParams->mbUsePALQuirks = true;
 			break;
 		case ID_COLORS_NTSCXL_1702:
@@ -734,8 +766,8 @@ void ATAdjustColorsDialog::LoadPreset(uint32 id) {
 			mpParams->mContrast = 0.941149f;
 			mpParams->mSaturation = 0.195861f;
 			mpParams->mGammaCorrect = 1.0f;
-			mpParams->mArtifactHue = -96.0f;
-			mpParams->mArtifactSat = 2.76f;
+			mpParams->mArtifactHue = 80.0f;
+			mpParams->mArtifactSat = 0.80f;
 			break;
 	}
 

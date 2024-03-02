@@ -19,11 +19,13 @@
 #define f_AT_UINATIVEWINDOW_H
 
 #include <windows.h>
+#include <vd2/system/atomic.h>
 #include <vd2/system/unknown.h>
 #include <vd2/system/vectors.h>
+#include <at/atnativeui/nativewindowproxy.h>
 #include <at/atui/constants.h>
 
-class ATUINativeWindow : public IVDUnknown {
+class ATUINativeWindow : public IVDUnknown, public ATUINativeWindowProxy {
 public:
 	ATUINativeWindow();
 	virtual ~ATUINativeWindow();
@@ -34,13 +36,9 @@ public:
 
 	int AddRef();
 	int Release();
-	void *AsInterface(uint32 iid);
+	void *AsInterface(uint32 iid) override;
 
-	void Close();
 	bool CreateChild(HWND hwndParent, UINT id, int x, int y, int w, int h, DWORD styles, DWORD exstyles = 0, const wchar_t *text = nullptr);
-	void Destroy();
-
-	HWND GetHandleW32() const { return mhwnd; }
 
 	// Enables immediate response to touch taps, disabling the touch delay for
 	// right-clicks. Useful on windows that have no right-click actions or need
@@ -55,8 +53,7 @@ protected:
 
 	void UpdateTouchMode(ATUITouchMode touchMode);
 
-	int mRefCount;
-	HWND mhwnd;
+	VDAtomicInt mRefCount;
 
 	ATUITouchMode mTouchMode;
 

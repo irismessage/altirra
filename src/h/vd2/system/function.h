@@ -228,7 +228,8 @@ public:
 	vdfunction(vdfunction& src) : vdfuncbase(src) {}	// needed to avoid invoking (F&&)
 	vdfunction(const vdfunction& src) : vdfuncbase(src) {}
 	template<class F> vdfunction(std::reference_wrapper<F> f);
-	template<class F> vdfunction(F&& f);
+	template<class F, typename = decltype(std::declval<F>()(std::declval<Args>()...))>
+	vdfunction(F&& f);
 
 	vdfunction& operator=(std::nullptr_t) { vdfuncbase::clear(); return *this; }
 
@@ -247,7 +248,7 @@ public:
 		return *this;
 	}
 
-	template<class F>
+	template<class F, typename = decltype(std::declval<F>()(std::declval<Args>()...))>
 	vdfunction& operator=(F&& f) {
 		vdfuncbase::operator=(std::move(vdfunction(std::forward<F>(f))));
 		return *this;
@@ -288,7 +289,7 @@ vdfunction<R(Args...)>::vdfunction(std::reference_wrapper<F> f) {
 }
 
 template<class R, class... Args>
-template<class F>
+template<class F, typename>
 vdfunction<R(Args...)>::vdfunction(F&& f) {
 	typedef decltype(f((*(typename std::remove_reference<Args>::type *)nullptr)...)) validity_test;
 	(void)sizeof(validity_test*);

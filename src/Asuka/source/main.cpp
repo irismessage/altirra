@@ -34,7 +34,9 @@
 
 #include "utils.h"
 
-using namespace std;
+#pragma comment(lib, "gdi32")
+#pragma comment(lib, "ole32")
+#pragma comment(lib, "advapi32")
 
 void tool_fxc10(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_makearray(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);

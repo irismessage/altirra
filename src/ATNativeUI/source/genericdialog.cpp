@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <windows.h>
+#include <shellapi.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/w32assist.h>
 #include <at/atnativeui/dialog.h>
@@ -499,6 +500,7 @@ private:
 	void OnDestroy() override;
 	bool PreNCDestroy() override;
 	bool OnErase(VDZHDC hdc) override;
+	bool OnCommand(uint32 id, uint32 extcode) override;
 	bool OnOK() override;
 	bool OnCancel() override;
 	void OnSetFont(VDZHFONT hfont) override;
@@ -518,6 +520,7 @@ private:
 	bool mbIgnoreEnabled = false;
 
 	HFONT mhFontTitle = nullptr;
+	HICON mhIcon = nullptr;
 
 	HWND mhwndTitle = nullptr;
 	HWND mhwndDisableButton = nullptr;
@@ -530,6 +533,8 @@ private:
 	LayoutWindow	mLayoutText;
 	LayoutCustom	mLayoutTextCustom;
 	LayoutWindow	mLayoutDisable;
+	LayoutWindow	mLayoutYes;
+	LayoutWindow	mLayoutNo;
 	LayoutWindow	mLayoutOK;
 	LayoutWindow	mLayoutCancel;
 	LayoutStack		mLayoutMainStack;
@@ -570,15 +575,25 @@ bool ATGenericDialogW32::OnLoaded() {
 	SetCaption(mOptions.mpCaption ? mOptions.mpCaption : sDefaultCaption.c_str());
 	SetControlText(IDC_GENERIC_TEXT, mOptions.mpMessage);
 
+	if (!(mOptions.mResultMask & kATUIGenericResultMask_Yes)) {
+		EnableControl(IDYES, false);
+		ShowControl(IDYES, false);
+	}
+
+	if (!(mOptions.mResultMask & kATUIGenericResultMask_No)) {
+		EnableControl(IDNO, false);
+		ShowControl(IDNO, false);
+	}
+
 	if (mOptions.mResultMask & kATUIGenericResultMask_Allow)
-		SetControlText(IDOK, L"Allow");
+		SetControlText(IDOK, L"&Allow");
 	else if (!(mOptions.mResultMask & (kATUIGenericResultMask_Allow | kATUIGenericResultMask_OK))) {
 		EnableControl(IDOK, false);
 		ShowControl(IDOK, false);
 	}
 
 	if (mOptions.mResultMask & kATUIGenericResultMask_Deny)
-		SetControlText(IDCANCEL, L"Deny");
+		SetControlText(IDCANCEL, L"&Deny");
 	else if (!(mOptions.mResultMask & (kATUIGenericResultMask_Deny | kATUIGenericResultMask_Cancel))) {
 		EnableControl(IDCANCEL, false);
 		ShowControl(IDCANCEL, false);
@@ -607,26 +622,56 @@ bool ATGenericDialogW32::OnLoaded() {
 
 	const sint32 workAreaWidth = rWorkArea.right - rWorkArea.left;
 
+	// init default MessageBox-like widths (Vista algorithm)
 	vdsize32 pad = MapDialogUnitSize(vdsize32 { 278, 1 });
 
-	const sint32 widths[]={
+	vdfastvector<sint32> widths {
 		workAreaWidth,
 		(workAreaWidth * 7) / 8,
 		(workAreaWidth * 3) / 4,
 		(workAreaWidth * 5) / 8,
-		pad.w
 	};
+
+	// add all half multiples of 278 DLUs below half screen width
+	for(sint32 i = workAreaWidth / pad.w; i > 2; --i) {
+		widths.push_back((pad.w * i + 1) >> 1);
+	}
+
+	widths.push_back(pad.w);
 
 	sint32 bestHeight = INT32_MAX;
 	sint32 bestWidth = workAreaWidth;
 
+	float bestAspect = FLT_MAX;
+
 	for(sint32 width : widths) {
 		const LayoutSpecs& layoutSpecs = mLayoutMainStack.MeasureInternal({ width, rWorkArea.bottom - rWorkArea.top});
 
-		if (bestHeight > layoutSpecs.mPreferredSize.h || (bestHeight == layoutSpecs.mPreferredSize.h && bestWidth > layoutSpecs.mPreferredSize.w)) {
-			bestWidth = layoutSpecs.mPreferredSize.w;
-			bestHeight = layoutSpecs.mPreferredSize.h;
+		// - If aspect ratio limiting is enabled:
+		//   - If one layout is within ratio limit, it has priority.
+		//   - If two layouts are both above ratio limit, lower ratio wins.
+		// - If heights differ, lower height wins.
+		// - Lower width wins.
+
+		float testAspect = 0;
+		if (mOptions.mAspectLimit > 0)
+			testAspect = std::max<float>(mOptions.mAspectLimit, (float)layoutSpecs.mPreferredSize.w / (float)layoutSpecs.mPreferredSize.h);
+
+		if (testAspect > bestAspect) {
+			continue;
+		} else if (testAspect == bestAspect) {
+			if (bestHeight < layoutSpecs.mPreferredSize.h)
+				continue;
+
+			if (bestHeight == layoutSpecs.mPreferredSize.h) {
+				if (bestWidth <= layoutSpecs.mPreferredSize.w)
+					continue;
+			}
 		}
+
+		bestWidth = layoutSpecs.mPreferredSize.w;
+		bestHeight = layoutSpecs.mPreferredSize.h;
+		bestAspect = testAspect;
 	}
 
 	if (bestWidth < std::end(widths)[-1])
@@ -662,6 +707,11 @@ void ATGenericDialogW32::OnDestroy() {
 }
 
 bool ATGenericDialogW32::PreNCDestroy() {
+	if (mhIcon) {
+		VDVERIFY(DestroyIcon(mhIcon));
+		mhIcon = nullptr;
+	}
+
 	if (mhFontTitle) {
 		DeleteObject(mhFontTitle);
 		mhFontTitle = nullptr;
@@ -686,6 +736,24 @@ bool ATGenericDialogW32::OnErase(VDZHDC hdc) {
 	return true;
 }
 
+bool ATGenericDialogW32::OnCommand(uint32 id, uint32 extcode) {
+	if (id == IDYES) {
+		if (mOptions.mResultMask & kATUIGenericResultMask_Yes) {
+			mResult = kATUIGenericResult_Yes;
+			End(true);
+			return true;
+		}
+	} else if (id == IDNO) {
+		if (mOptions.mResultMask & kATUIGenericResultMask_No) {
+			mResult = kATUIGenericResult_No;
+			End(false);
+			return true;
+		}
+	}
+
+	return false;
+}
+
 bool ATGenericDialogW32::OnOK() {
 	if (mOptions.mResultMask & kATUIGenericResultMask_Allow)
 		mResult = kATUIGenericResult_Allow;
@@ -701,13 +769,17 @@ bool ATGenericDialogW32::OnCancel() {
 	// available positive response.
 	mResult = kATUIGenericResult_Cancel;
 
-	if (mOptions.mResultMask & kATUIGenericResultMask_Deny)
-		mResult = kATUIGenericResult_Deny;
-	else if (!(mOptions.mResultMask & kATUIGenericResultMask_Cancel)) {
-		if (mOptions.mResultMask & kATUIGenericResultMask_Allow)
+	if (!(mOptions.mResultMask & kATUIGenericResultMask_Cancel)) {
+		if (mOptions.mResultMask & kATUIGenericResultMask_No)
+			mResult = kATUIGenericResult_No;
+		else if (mOptions.mResultMask & kATUIGenericResultMask_Deny)
+			mResult = kATUIGenericResult_Deny;
+		else if (mOptions.mResultMask & kATUIGenericResultMask_Allow)
 			mResult = kATUIGenericResult_Allow;
 		else if (mOptions.mResultMask & kATUIGenericResultMask_OK)
 			mResult = kATUIGenericResult_OK;
+		else if (mOptions.mResultMask & kATUIGenericResultMask_Yes)
+			mResult = kATUIGenericResult_Yes;
 	}
 
 	return false;
@@ -834,6 +906,11 @@ void ATGenericDialogW32::ReinitLayout() {
 
 		SendDlgItemMessageW(mhdlg, IDC_GENERIC_ICON, STM_SETICON, (WPARAM)hIcon, 0);
 
+		if (mhIcon)
+			VDVERIFY(DestroyIcon(mhIcon));
+
+		mhIcon = hIcon;
+
 		if (HDC hdc = GetDC(mhdlg)) {
 			SelectObject(hdc, hFontTitle);
 
@@ -859,6 +936,8 @@ void ATGenericDialogW32::ReinitLayout() {
 	else
 		ShowControl(IDC_DISABLE, false);
 
+	mLayoutYes.Init(GetControl(IDYES), vdrect32f(0.5f, 0.5f, 0.5f, 0.5f));
+	mLayoutNo.Init(GetControl(IDNO), vdrect32f(0.5f, 0.5f, 0.5f, 0.5f));
 	mLayoutOK.Init(GetControl(IDOK), vdrect32f(0.5f, 0.5f, 0.5f, 0.5f));
 	mLayoutCancel.Init(GetControl(IDCANCEL), vdrect32f(0.5f, 0.5f, 0.5f, 0.5f));
 
@@ -922,6 +1001,12 @@ void ATGenericDialogW32::ReinitLayout() {
 	else
 		mLayoutOptionsStack.AddChild(nullptr, 1);
 
+	if (mOptions.mResultMask & kATUIGenericResultMask_Yes)
+		mLayoutOptionsStack.AddChild(&mLayoutYes, 0);
+
+	if (mOptions.mResultMask & kATUIGenericResultMask_No)
+		mLayoutOptionsStack.AddChild(&mLayoutNo, 0);
+
 	if (mOptions.mResultMask & (kATUIGenericResultMask_Allow | kATUIGenericResultMask_OK))
 		mLayoutOptionsStack.AddChild(&mLayoutOK, 0);
 
@@ -960,6 +1045,8 @@ ATUIGenericResult ATUIShowGenericDialog(const ATUIGenericDialogOptions& opts) {
 		{ kATUIGenericResult_OK, "ok" },
 		{ kATUIGenericResult_Allow, "allow" },
 		{ kATUIGenericResult_Deny, "deny" },
+		{ kATUIGenericResult_Yes, "yes" },
+		{ kATUIGenericResult_No, "no" },
 	};
 
 	if (opts.mpIgnoreTag) {
@@ -1005,25 +1092,35 @@ ATUIGenericResult ATUIShowGenericDialog(const ATUIGenericDialogOptions& opts) {
 	return result;
 }
 
-bool ATUIConfirm(VDGUIHandle hParent, const char *ignoreTag, const wchar_t *message, const wchar_t *title) {
-	ATUIGenericDialogOptions opts {};
-
-	HWND hwnd = (HWND)hParent;
+ATUIGenericResult ATUIShowGenericDialogAutoCenter(const ATUIGenericDialogOptions& opts0) {
+	ATUIGenericDialogOptions opts(opts0);
+	HWND hwnd = (HWND)opts.mhParent;
 
 	RECT rTarget;
 	if (GetWindowRect(hwnd ? hwnd : GetDesktopWindow(), &rTarget))
 		opts.mCenterTarget = vdrect32(rTarget.left, rTarget.top, rTarget.right, rTarget.bottom);
 
-	if (HWND parent = GetAncestor(hwnd, GA_ROOT))
-		hwnd = parent;
-
+	if (hwnd) {
+		if (HWND parent = GetAncestor(hwnd, GA_ROOT))
+			hwnd = parent;
+	}
+	
 	opts.mhParent = (VDGUIHandle)hwnd;
+
+	return ATUIShowGenericDialog(opts);
+}
+
+bool ATUIConfirm(VDGUIHandle hParent, const char *ignoreTag, const wchar_t *message, const wchar_t *title) {
+	ATUIGenericDialogOptions opts {};
+
+	opts.mhParent = hParent;
 	opts.mpTitle = title;
 	opts.mpMessage = message;
 	opts.mpIgnoreTag = ignoreTag;
 	opts.mIconType = kATUIGenericIconType_Warning;
 	opts.mResultMask = kATUIGenericResultMask_OKCancel;
 	opts.mValidIgnoreMask = kATUIGenericResultMask_OK;
+	opts.mAspectLimit = 4.0f;
 
-	return ATUIShowGenericDialog(opts) == kATUIGenericResult_OK;
+	return ATUIShowGenericDialogAutoCenter(opts) == kATUIGenericResult_OK;
 }

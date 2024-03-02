@@ -286,28 +286,6 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 		loadCtx->mLoadType = loadType;
 
 	// Load the resource.
-	const bool checkMode = (loadCtx && loadCtx->mbReturnOnModeIncompatibility);
-	const bool isComputer = (loadCtx->mbIsComputer);
-
-	switch(loadType) {
-		case kATImageType_Disk:
-		case kATImageType_Tape:
-		case kATImageType_Program:
-		case kATImageType_BasicProgram:
-			if (checkMode && !isComputer) {
-				loadCtx->mbModeComputerRequired = true;
-				return false;
-			}
-			break;
-
-		case kATImageType_Cartridge:
-		case kATImageType_SaveState:
-		case kATImageType_Zip:
-		case kATImageType_GZip:
-		case kATImageType_SAP:
-			break;
-	}
-
 	vdrefptr<IATImage> image;
 	if (loadType == kATImageType_Program) {
 		vdrefptr<IATBlobImage> programImage;
@@ -337,12 +315,12 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 		*ppImage = diskImage.release();
 	} else if (loadType == kATImageType_SaveState) {
 		vdrefptr<IATBlobImage> saveStateImage;
-		ATLoadBlobImage(kATImageType_SaveState, imagePath, ~saveStateImage);
+		ATLoadBlobImage(kATImageType_SaveState, stream, ~saveStateImage);
 
 		*ppImage = saveStateImage.release();
 	} else if (loadType == kATImageType_SAP) {
 		vdrefptr<IATBlobImage> sapImage;
-		ATLoadBlobImage(kATImageType_SAP, imagePath, ~sapImage);
+		ATLoadBlobImage(kATImageType_SAP, stream, ~sapImage);
 
 		*ppImage = sapImage.release();
 	} else {

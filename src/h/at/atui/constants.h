@@ -18,7 +18,9 @@
 #ifndef f_AT_ATUI_CONSTANTS_H
 #define f_AT_ATUI_CONSTANTS_H
 
-enum ATUITouchMode {
+#include <vd2/system/vdtypes.h>
+
+enum ATUITouchMode : uint32 {
 	kATUITouchMode_Default,
 	kATUITouchMode_Immediate,
 	kATUITouchMode_Direct,
@@ -29,6 +31,17 @@ enum ATUITouchMode {
 	kATUITouchMode_MultiTouchImmediate,
 	kATUITouchMode_Dynamic,
 	kATUITouchMode_MultiTouchDynamic
+};
+
+enum ATUICursorImage : uint32 {
+	kATUICursorImage_None,
+	kATUICursorImage_Hidden,
+	kATUICursorImage_Arrow,
+	kATUICursorImage_IBeam,
+	kATUICursorImage_Cross,
+	kATUICursorImage_Query,
+	kATUICursorImage_Target,
+	kATUICursorImage_TargetOff
 };
 
 #endif

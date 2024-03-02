@@ -38,6 +38,7 @@ struct ATOptions {
 
 	bool mbSingleInstance;
 	bool mbPauseDuringMenu;
+	bool mbLaunchAutoProfile;
 	
 	sint32 mThemeScale;
 

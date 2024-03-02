@@ -261,7 +261,7 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req) {
 			return false;
 	}
 	
-	if (allowAccel) {
+	while(allowAccel) {
 		// Convert the request to a device request.
 		ATDeviceSIORequest devreq = {};
 		devreq.mDevice = req.mDevice;
@@ -270,7 +270,7 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req) {
 		devreq.mAUX[1] = req.mAUX[1];
 		devreq.mCyclesPerBit = 93;
 		devreq.mbStandardRate = true;
-		devreq.mPollCount = 0;
+		devreq.mPollCount = mPollCount;
 		devreq.mMode = req.mMode;
 		devreq.mTimeout = req.mTimeout;
 		devreq.mLength = req.mLength;
@@ -320,6 +320,21 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req) {
 			if (response != IATDeviceSIO::kCmdResponse_NotHandled)
 				goto handled;
 		}
+
+		// Check if the command is a type 3 poll command and we have fast boot enabled.
+		// If so, keep looping until we hit 26 retries. This gives accelerated devices
+		// a chance to intercept fast boot.
+		if (mpSim->IsFastBootEnabled()) {
+			// type 3 poll (??/40/00/00)
+			if (devreq.mCommand == 0x40 && devreq.mAUX[0] == 0x00 && devreq.mAUX[1] == 0x00) {
+				++mPollCount;
+
+				if (mPollCount <= 26)
+					continue;
+			}
+		}
+
+		break;
 	}
 
 	// Check hard-coded devices.
@@ -363,6 +378,8 @@ fastbootignore:
 	}
 
 handled:
+	UpdatePollState(req.mCommand, req.mAUX[0], req.mAUX[1]);
+
 	// If this is anything other than a cassette request, reset timers 3+4 to 19200 baud and set
 	// asynchronous receive mode. Wayout needs this to not play garbage on channels 3+4 on the
 	// title screen.
@@ -512,19 +529,7 @@ void ATSIOManager::PokeyEndCommand() {
 
 		// Check if this is a type 3 poll command -- we provide assistance for these.
 		// Note that we've already recorded the poll count above.
-		if (cmd.mCommand == 0x40 && cmd.mAUX[0] == cmd.mAUX[1]) {
-			if (cmd.mAUX[0] == 0x00)		// Type 3 poll (??/40/00/00) - increment counter
-				++mPollCount;
-			else {
-				// Any command that is not a type 3 poll command resets the counter. This
-				// This includes the null poll (??/40/4E/4E) and poll reset (??/40/4F/4F).
-				mPollCount = 0;
-			}
-		} else {
-			// Any command to any dveice that is not a type 3 poll command resets
-			// the counter.
-			mPollCount = 0;
-		}
+		UpdatePollState(cmd.mCommand, cmd.mAUX[0], cmd.mAUX[1]);
 
 		mTransferStart = 0;
 		mTransferIndex = 0;
@@ -1255,5 +1260,21 @@ void ATSIOManager::TraceReceive(uint8 c, uint32 cyclesPerBit) {
 			[c](VDStringW& s) { s.sprintf(L"%02X", c); },
 			kATTraceColor_IO_Read
 		);
+	}
+}
+
+void ATSIOManager::UpdatePollState(uint8 cmd, uint8 aux1, uint8 aux2) {
+	if (cmd == 0x40 && aux1 == aux2) {
+		if (aux1 == 0x00)		// Type 3 poll (??/40/00/00) - increment counter
+			++mPollCount;
+		else {
+			// Any command that is not a type 3 poll command resets the counter. This
+			// This includes the null poll (??/40/4E/4E) and poll reset (??/40/4F/4F).
+			mPollCount = 0;
+		}
+	} else {
+		// Any command to any dveice that is not a type 3 poll command resets
+		// the counter.
+		mPollCount = 0;
 	}
 }

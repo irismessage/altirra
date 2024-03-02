@@ -16,7 +16,6 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
-#include <windows.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
@@ -124,7 +123,7 @@ protected:
 		const wchar_t *mpName;
 	};
 
-	const TypeEntry *mpSortedTypes[37];
+	const TypeEntry *mpSortedTypes[38];
 	
 	static const TypeEntry kTypeNames[];
 };
@@ -162,6 +161,7 @@ const ATUIDialogEditFirmwareSettings::TypeEntry ATUIDialogEditFirmwareSettings::
 	{ kATFirmwareType_IndusGT, L"Indus GT Disk Drive Firmware" },
 	{ kATFirmwareType_1050Turbo, L"1050 Turbo Disk Drive Firmware" },
 	{ kATFirmwareType_1050TurboII, L"1050 Turbo II Disk Drive Firmware" },
+	{ kATFirmwareType_ISPlate, L"I.S. Plate Disk Drive Firmware" },
 	{ kATFirmwareType_XF551, L"XF551 Disk Drive Firmware" },
 	{ kATFirmwareType_ATR8000, L"ATR8000 Disk Drive Firmware" },
 	{ kATFirmwareType_Percom, L"PERCOM Disk Drive Firmware" },
@@ -345,7 +345,7 @@ bool ATUIDialogFirmware::OnLoaded() {
 	mResizer.Add(IDC_CLEAR, RS::kBL);
 	mResizer.Add(IDOK, RS::kBR);
 
-	ATUIRestoreWindowPlacement(mhdlg, "Firmware dialog", SW_SHOW);
+	ATUIRestoreWindowPlacement(mhdlg, "Firmware dialog");
 
 	OnDataExchange(false);
 
@@ -408,6 +408,7 @@ void ATUIDialogFirmware::OnDataExchange(bool write) {
 			{ kATFirmwareType_Tygrys1050, L"Tygrys 1050 Disk Drive Firmware" },
 			{ kATFirmwareType_1050Turbo, L"1050 Turbo Disk Drive Firmware" },
 			{ kATFirmwareType_1050TurboII, L"1050 Turbo II Disk Drive Firmware" },
+			{ kATFirmwareType_ISPlate, L"I.S. Plate Disk Drive Firmware" },
 			{ kATFirmwareType_IndusGT, L"Indus GT Disk Drive Firmware" },
 			{ kATFirmwareType_XF551, L"XF551 Disk Drive Firmware" },
 			{ kATFirmwareType_ATR8000, L"ATR8000 Disk Drive Firmware" },

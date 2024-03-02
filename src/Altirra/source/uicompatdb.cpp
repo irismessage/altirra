@@ -389,7 +389,7 @@ void ATUIDialogCompatDB::ShowModeless(VDGUIHandle parent, const vdfunction<void(
 }
 
 bool ATUIDialogCompatDB::OnLoaded() {
-	ATUIRegisterModelessDialog(mhdlg);
+	ATUIUnregisterModelessDialog(mhdlg);
 
 	mBaseCaption = GetCaption();
 

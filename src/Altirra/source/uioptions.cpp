@@ -35,6 +35,7 @@
 #include "settings.h"
 #include "compatengine.h"
 #include "uifilefilters.h"
+#include "uipageddialog.h"
 
 // This is actually deprecated in earlier SDKs (VS2005) and undeprecated
 // in later ones (Win7). Interesting.
@@ -230,87 +231,18 @@ void ATUIDialogFullScreenMode::OnSelectedItemChanged(VDUIProxyListView *sender, 
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogOptionsPage : public VDDialogFrameW32 {
+class ATUIDialogOptionsPage : public ATUIDialogPage {
 public:
 	ATUIDialogOptionsPage(uint32 id, ATOptions& opts);
-	virtual ~ATUIDialogOptionsPage();
-
-	struct HelpEntry {
-		uint32 mId;
-		uint32 mLinkedId;
-		vdrect32 mArea;
-		VDStringW mLabel;
-		VDStringW mText;
-	};
-
-	const HelpEntry *GetHelpEntry(const vdpoint32& pt) const;
-
-	virtual void ExchangeOtherSettings(bool write) {}
 
 protected:
-	void AddHelpEntry(uint32 id, const wchar_t *label, const wchar_t *s);
-	void LinkHelpEntry(uint32 id, uint32 linkedId);
-	void ClearHelpEntries();
-
 	ATOptions& mOptions;
-
-	typedef std::list<HelpEntry> HelpEntries;
-	HelpEntries mHelpEntries;
 };
 
 ATUIDialogOptionsPage::ATUIDialogOptionsPage(uint32 id, ATOptions& opts)
-	: VDDialogFrameW32(id)
+	: ATUIDialogPage(id)
 	, mOptions(opts)
 {
-}
-
-ATUIDialogOptionsPage::~ATUIDialogOptionsPage() {
-}
-
-void ATUIDialogOptionsPage::AddHelpEntry(uint32 id, const wchar_t *label, const wchar_t *s) {
-	mHelpEntries.push_back(HelpEntry());
-	HelpEntry& e = mHelpEntries.back();
-	e.mId = id;
-	e.mLinkedId = 0;
-	e.mArea = GetControlPos(id);
-	e.mLabel = label;
-	e.mText = s;
-}
-
-void ATUIDialogOptionsPage::LinkHelpEntry(uint32 id, uint32 linkedId) {
-	mHelpEntries.push_back(HelpEntry());
-	HelpEntry& e = mHelpEntries.back();
-	e.mId = id;
-	e.mLinkedId = linkedId;
-	e.mArea = GetControlPos(id);
-}
-
-void ATUIDialogOptionsPage::ClearHelpEntries() {
-	mHelpEntries.clear();
-}
-
-const ATUIDialogOptionsPage::HelpEntry *ATUIDialogOptionsPage::GetHelpEntry(const vdpoint32& pt) const {
-	for(HelpEntries::const_iterator it = mHelpEntries.begin(), itEnd = mHelpEntries.end();
-		it != itEnd;
-		++it)
-	{
-		const HelpEntry& e = *it;
-
-		if (e.mArea.contains(pt)) {
-			if (e.mLinkedId) {
-				for(it = mHelpEntries.begin(); it != itEnd; ++it) {
-					if (it->mId == e.mLinkedId)
-						return &*it;
-				}
-
-				return NULL;
-			}
-
-			return &e;
-		}
-	}
-
-	return NULL;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -336,7 +268,7 @@ bool ATUIDialogOptionsPageDisplay::OnLoaded() {
 	AddHelpEntry(IDC_GRAPHICS_3D, L"Direct3D 11", L"Enable Direct3D 11 support. This is an experimental driver.");
 	AddHelpEntry(IDC_GRAPHICS_OPENGL, L"OpenGL", L"Enable OpenGL support. Direct3D 9 is a better option, but this is a reasonable fallback.");
 	AddHelpEntry(IDC_16BIT, L"Use 16-bit surfaces", L"Use 16-bit surfaces for faster speed on low-end graphics cards. May reduce visual quality.");
-	AddHelpEntry(IDC_FSMODE_BORDERLESS, L"Full screen mode: Match desktop", L"Use a full-screen borderless window without switching to full screen mode.");
+	AddHelpEntry(IDC_FSMODE_BORDERLESS, L"Full screen mode: Borderless mode", L"Use a full-screen borderless window without switching to exclusive full screen mode.");
 	AddHelpEntry(IDC_FSMODE_DESKTOP, L"Full screen mode: Match desktop", L"Uses the desktop resolution for full screen mode. This avoids a mode switch.");
 	AddHelpEntry(IDC_FSMODE_CUSTOM, L"Full screen mode: Custom", L"Use a specific video mode for full screen mode. Zero for refresh rate allows any rate.");
 	LinkHelpEntry(IDC_FSMODE_WIDTH, IDC_FSMODE_CUSTOM);
@@ -569,6 +501,7 @@ public:
 protected:
 	bool OnLoaded();
 	bool OnCommand(uint32 id, uint32 extcode);
+	void OnDataExchange(bool write);
 };
 
 ATUIDialogOptionsPageFileAssoc::ATUIDialogOptionsPageFileAssoc(ATOptions& opts)
@@ -589,6 +522,9 @@ bool ATUIDialogOptionsPageFileAssoc::OnLoaded() {
 			SendMessage(hwndItem, BCM_SETSHIELD, 0, TRUE);
 	}	
 
+	AddHelpEntry(IDC_AUTO_PROFILE, L"Launch images with auto-profile",
+		L"Automatically switch to default profile for image type when launched as the default program. (If you have set up file associations with a previous version, re-add file associations to enable this feature.)");
+
 	return ATUIDialogOptionsPage::OnLoaded();
 }
 
@@ -606,6 +542,10 @@ bool ATUIDialogOptionsPageFileAssoc::OnCommand(uint32 id, uint32 extcode) {
 	}
 
 	return false;
+}
+
+void ATUIDialogOptionsPageFileAssoc::OnDataExchange(bool write) {
+	ExchangeControlValueBoolCheckbox(write, IDC_AUTO_PROFILE, mOptions.mbLaunchAutoProfile);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -900,191 +840,33 @@ void ATUIDialogOptionsPageCompat::UpdateEnables() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogOptions final : public VDDialogFrameW32 {
+class ATUIDialogOptions final : public ATUIPagedDialog {
 public:
 	ATUIDialogOptions(ATOptions& opts);
 
 protected:
-	enum {
-		kTimerID_Help = 10
-	};
-
-	bool OnLoaded();
-	void OnDataExchange(bool write);
-	void OnDestroy();
-	bool OnTimer(uint32 id);
-	bool OnCommand(uint32 id, uint32 extcode);
-	void SelectPage(int index);
-	void AppendRTF(VDStringA& rtf, const wchar_t *text);
-
-	int mSelectedPage;
-	uint32 mLastHelpId;
-	HWND mhwndHelp;
-
-	ATUIDialogOptionsPage *mpPages[10];
+	void OnPopulatePages();
 
 	ATOptions& mOptions;
 };
 
 ATUIDialogOptions::ATUIDialogOptions(ATOptions& opts)
-	: VDDialogFrameW32(IDD_OPTIONS)
+	: ATUIPagedDialog(IDD_OPTIONS)
 	, mOptions(opts) 
 {
 }
 
-bool ATUIDialogOptions::OnLoaded() {
-	mhwndHelp = GetDlgItem(mhdlg, IDC_HELP_INFO);
-	if (mhwndHelp) {
-		SendMessage(mhwndHelp, EM_SETBKGNDCOLOR, FALSE, GetSysColor(COLOR_3DFACE));
-	}
-
-	mLastHelpId = 0;
-
-	SetPeriodicTimer(kTimerID_Help, 1000);
-
-	ShowControl(IDC_PAGE_AREA, false);
-
-	mpPages[0] = new ATUIDialogOptionsPageStartup(mOptions);
-	mpPages[1] = new ATUIDialogOptionsPageDisplay(mOptions);
-	mpPages[2] = new ATUIDialogOptionsPageDisplayEffects(mOptions);
-	mpPages[3] = new ATUIDialogOptionsPageErrors(mOptions);
-	mpPages[4] = new ATUIDialogOptionsPageFileAssoc(mOptions);
-	mpPages[5] = new ATUIDialogOptionsPageFlash(mOptions);
-	mpPages[6] = new ATUIDialogOptionsPageMedia(mOptions);
-	mpPages[7] = new ATUIDialogOptionsPageUI(mOptions);
-	mpPages[8] = new ATUIDialogOptionsPageSettings(mOptions);
-	mpPages[9] = new ATUIDialogOptionsPageCompat(mOptions);
-	mSelectedPage = -1;
-
-	OnDataExchange(false);
-
-	LBAddString(IDC_PAGE_LIST, L"Startup");
-	LBAddString(IDC_PAGE_LIST, L"Display");
-	LBAddString(IDC_PAGE_LIST, L"Display Effects");
-	LBAddString(IDC_PAGE_LIST, L"Error Handling");
-	LBAddString(IDC_PAGE_LIST, L"File Types");
-	LBAddString(IDC_PAGE_LIST, L"Flash Emulation");
-	LBAddString(IDC_PAGE_LIST, L"Media");
-	LBAddString(IDC_PAGE_LIST, L"UI");
-	LBAddString(IDC_PAGE_LIST, L"Settings");
-	LBAddString(IDC_PAGE_LIST, L"Compatibility");
-
-	SelectPage(0);
-	LBSetSelectedIndex(IDC_PAGE_LIST, 0);
-
-	return VDDialogFrameW32::OnLoaded();
-}
-
-void ATUIDialogOptions::OnDataExchange(bool write) {
-	for(auto *page : mpPages) {
-		page->Sync(true);
-		page->ExchangeOtherSettings(write);
-	}
-}
-
-void ATUIDialogOptions::OnDestroy() {
-	for(size_t i = 0; i < sizeof(mpPages)/sizeof(mpPages[0]); ++i) {
-		if (mpPages[i]) {
-			ATUIDialogOptionsPage *page = mpPages[i];
-			page->Destroy();
-			delete page;
-			mpPages[i] = NULL;
-		}
-	}
-}
-
-bool ATUIDialogOptions::OnTimer(uint32 id) {
-	if (id == kTimerID_Help) {
-		HWND hwndFocus = GetFocus();
-
-		if (mhwndHelp && hwndFocus && mSelectedPage >= 0) {
-			ATUIDialogOptionsPage *page = mpPages[mSelectedPage];
-
-			RECT r;
-			if (GetWindowRect(hwndFocus, &r)) {
-				POINT pt = { (r.left + r.right) >> 1, (r.top + r.bottom) >> 1 };
-
-				if (ScreenToClient(page->GetWindowHandle(), &pt)) {
-					const ATUIDialogOptionsPage::HelpEntry *he = page->GetHelpEntry(vdpoint32(pt.x, pt.y));
-
-					if (he && he->mId != mLastHelpId) {
-						mLastHelpId = he->mId;
-
-						VDStringA s;
-
-						s = "{\\rtf {\\b ";
-						AppendRTF(s, he->mLabel.c_str());
-						s += "}\\par ";
-						AppendRTF(s, he->mText.c_str());
-						s += "}";
-
-						SETTEXTEX stex;
-						stex.flags = ST_DEFAULT;
-						stex.codepage = CP_ACP;
-						SendMessage(mhwndHelp, EM_SETTEXTEX, (WPARAM)&stex, (LPARAM)s.c_str());
-					}
-				}
-			}
-		}
-
-		return true;
-	}
-
-	return false;
-}
-
-bool ATUIDialogOptions::OnCommand(uint32 id, uint32 extcode) {
-	if (id == IDC_PAGE_LIST) {
-		SelectPage(LBGetSelectedIndex(IDC_PAGE_LIST));
-		return true;
-	}
-
-	return false;
-}
-
-void ATUIDialogOptions::SelectPage(int index) {
-	if (mSelectedPage == index)
-		return;
-
-	if (mSelectedPage >= 0) {
-		ATUIDialogOptionsPage *page = mpPages[mSelectedPage];
-		page->Sync(true);
-
-		mResizer.Remove(page->GetWindowHandle());
-		page->Destroy();
-		mLastHelpId = 0;
-		if (mhwndHelp)
-			SetWindowText(mhwndHelp, _T(""));
-	}
-
-	mSelectedPage = index;
-
-	if (mSelectedPage >= 0) {
-		ATUIDialogOptionsPage *page = mpPages[mSelectedPage];
-
-		if (page->Create((VDGUIHandle)mhdlg)) {
-			const auto& r = GetControlPos(IDC_PAGE_AREA);
-
-			page->SetArea(r, false);
-			mResizer.Add(page->GetWindowHandle(), r.left, r.top, r.width(), r.height(), mResizer.kTL);
-			page->Show();
-		}
-	}
-}
-
-void ATUIDialogOptions::AppendRTF(VDStringA& rtf, const wchar_t *text) {
-	const VDStringA& texta = VDTextWToA(text);
-	for(VDStringA::const_iterator it = texta.begin(), itEnd = texta.end();
-		it != itEnd;
-		++it)
-	{
-		const unsigned char c = *it;
-
-		if (c < 0x20 || c > 0x80 || c == '{' || c == '}' || c == '\\')
-			rtf.append_sprintf("\\'%02x", c);
-		else
-			rtf += c;
-	}
+void ATUIDialogOptions::OnPopulatePages() {
+	AddPage(L"Startup", vdmakeunique<ATUIDialogOptionsPageStartup>(mOptions));
+	AddPage(L"Display", vdmakeunique<ATUIDialogOptionsPageDisplay>(mOptions));
+	AddPage(L"Display Effects", vdmakeunique<ATUIDialogOptionsPageDisplayEffects>(mOptions));
+	AddPage(L"Error Handling", vdmakeunique<ATUIDialogOptionsPageErrors>(mOptions));
+	AddPage(L"File Types", vdmakeunique<ATUIDialogOptionsPageFileAssoc>(mOptions));
+	AddPage(L"Flash Emulation", vdmakeunique<ATUIDialogOptionsPageFlash>(mOptions));
+	AddPage(L"Media", vdmakeunique<ATUIDialogOptionsPageMedia>(mOptions));
+	AddPage(L"UI", vdmakeunique<ATUIDialogOptionsPageUI>(mOptions));
+	AddPage(L"Settings", vdmakeunique<ATUIDialogOptionsPageSettings>(mOptions));
+	AddPage(L"Compatibility", vdmakeunique<ATUIDialogOptionsPageCompat>(mOptions));
 }
 
 ///////////////////////////////////////////////////////////////////////////

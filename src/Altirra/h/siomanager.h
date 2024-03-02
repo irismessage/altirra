@@ -144,6 +144,7 @@ private:
 	void ResetTransfer();
 	void OnMotorStateChanged(bool asserted);
 	void TraceReceive(uint8 c, uint32 cyclesPerBit);
+	void UpdatePollState(uint8 cmd, uint8 aux1, uint8 aux2);
 
 	ATCPUEmulator *mpCPU = nullptr;
 	ATCPUEmulatorMemory *mpMemory = nullptr;

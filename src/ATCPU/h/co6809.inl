@@ -1662,13 +1662,13 @@ void ATCoProc6809::Run() {
 					he->mPC = mPC - 1;
 					he->mP = mCC;
 					he->mA = mA;
-					he->mAH = mB;
+					he->mExt.mAH = mB;
 					he->mX = (uint8)mX;
-					he->mXH = (uint8)(mX >> 8);
+					he->mExt.mXH = (uint8)(mX >> 8);
 					he->mY = (uint8)mY;
-					he->mYH = (uint8)(mY >> 8);
+					he->mExt.mYH = (uint8)(mY >> 8);
 					he->mS = (uint8)mS;
-					he->mSH = (uint8)(mS >> 8);
+					he->mExt.mSH = (uint8)(mS >> 8);
 					he->mbIRQ = false;
 					he->mbNMI = false;
 					he->mSubCycle = 0;

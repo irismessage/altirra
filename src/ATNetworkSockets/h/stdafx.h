@@ -1,5 +1,4 @@
-#define WIN32_LEAN_AND_MEAN
-#define _SECURE_SCL 0
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 
 #include <vd2/system/vdtypes.h>
 #include <windows.h>

@@ -1050,7 +1050,7 @@ bool VDVideoDisplayMinidriverOpenGL::Init(HWND hwnd, HMONITOR hmonitor, const VD
 	// If we use the main window instead then the app will bomb the moment we unload
 	// OpenGL.
 
-	mhwndOGL = CreateWindowEx(WS_EX_TRANSPARENT, (LPCSTR)wndClass, "", WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, 0, 0, r.right, r.bottom, mhwnd, NULL, VDGetLocalModuleHandleW32(), this);
+	mhwndOGL = CreateWindowEx(WS_EX_TRANSPARENT, (LPCWSTR)wndClass, L"", WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, 0, 0, r.right, r.bottom, mhwnd, NULL, VDGetLocalModuleHandleW32(), this);
 	if (!mhwndOGL)
 		return false;
 
@@ -1251,7 +1251,7 @@ ATOM VDVideoDisplayMinidriverOpenGL::Register() {
 	wc.hCursor			= 0;
 	wc.hbrBackground	= 0;
 	wc.lpszMenuName		= 0;
-	wc.lpszClassName	= "phaeronOpenGLVideoDisplay";
+	wc.lpszClassName	= L"phaeronOpenGLVideoDisplay";
 
 	return RegisterClass(&wc);
 }

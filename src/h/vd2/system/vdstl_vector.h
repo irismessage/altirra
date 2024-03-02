@@ -54,10 +54,10 @@ public:
 	template <class InputIterator>
 	vdvector(InputIterator first, InputIterator last, const A& = A());
 	vdvector(const vdvector<T,A>& x);
-	vdvector(vdvector<T,A>&& x) vdnoexcept;
+	vdnothrow vdvector(vdvector<T,A>&& x) vdnoexcept;
 	~vdvector();
 	vdvector<T,A>& operator=(const vdvector<T,A>& x);
-	vdvector<T,A>& operator=(vdvector<T,A>&& x) vdnoexcept;
+	vdnothrow vdvector<T,A>& operator=(vdvector<T,A>&& x) vdnoexcept;
 	template <class InputIterator>
 	void assign(InputIterator first, InputIterator last);
 	void			assign(size_type n, const T& u);
@@ -169,7 +169,7 @@ vdvector<T,A>::vdvector(const vdvector<T,A>& x)
 }
 
 template <class T, class A>
-vdvector<T,A>::vdvector(vdvector<T,A>&& x) vdnoexcept
+vdnothrow vdvector<T,A>::vdvector(vdvector<T,A>&& x) vdnoexcept
 	: m(std::move(static_cast<A&>(x.m)))
 {
 	m.mpBegin = x.m.mpBegin;
@@ -200,7 +200,7 @@ vdvector<T,A>& vdvector<T,A>::operator=(const vdvector<T,A>& x) {
 }
 
 template <class T, class A>
-vdvector<T,A>& vdvector<T,A>::operator=(vdvector<T,A>&& x) vdnoexcept {
+vdnothrow vdvector<T,A>& vdvector<T,A>::operator=(vdvector<T,A>&& x) vdnoexcept {
 	clear();
 
 	if (m.mpBegin)

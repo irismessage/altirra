@@ -28,6 +28,7 @@
 #include "simulator.h"
 #include "audiooutput.h"
 #include "uiaccessors.h"
+#include "uiconfirm.h"
 #include "uitypes.h"
 #include "uiclipboard.h"
 #include "uidisplay.h"
@@ -39,6 +40,9 @@ extern ATSimulator g_sim;
 extern bool g_xepViewEnabled;
 extern bool g_xepViewAutoswitchingEnabled;
 extern bool g_showFps;
+
+void ATUIInitCommandMappingsInput(ATUICommandManager& cmdMgr);
+void ATUIInitCommandMappingsView(ATUICommandManager& cmdMgr);
 
 void OnCommandOpenImage();
 void OnCommandBootImage();
@@ -76,6 +80,7 @@ void OnCommandCassetteTurboModeCommandControl();
 void OnCommandCassetteTurboModeProceedSense();
 void OnCommandCassetteTurboModeInterruptSense();
 void OnCommandCassetteTurboModeAlways();
+void OnCommandCassetteTogglePolarity();
 void OnCommandCassettePolarityModeNormal();
 void OnCommandCassettePolarityModeInverted();
 void OnCommandDebuggerOpenSourceFile();
@@ -134,6 +139,7 @@ void OnCommandEditCopyText();
 void OnCommandEditPasteText();
 void OnCommandSystemWarmReset();
 void OnCommandSystemColdReset();
+void OnCommandSystemColdResetComputerOnly();
 void OnCommandSystemTogglePause();
 void OnCommandSystemTogglePauseWhenInactive();
 void OnCommandSystemToggleSlowMotion();
@@ -146,6 +152,22 @@ void OnCommandSystemSpeedOptionsDialog();
 void OnCommandSystemDevicesDialog();
 void OnCommandSystemToggleKeyboardPresent();
 void OnCommandSystemToggleForcedSelfTest();
+void OnCommandSystemCPUMode6502();
+void OnCommandSystemCPUMode65C02();
+void OnCommandSystemCPUMode65C816();
+void OnCommandSystemCPUMode65C816x2();
+void OnCommandSystemCPUMode65C816x4();
+void OnCommandSystemCPUMode65C816x6();
+void OnCommandSystemCPUMode65C816x8();
+void OnCommandSystemCPUMode65C816x10();
+void OnCommandSystemCPUMode65C816x12();
+void OnCommandSystemCPUToggleHistory();
+void OnCommandSystemCPUTogglePathTracing();
+void OnCommandSystemCPUToggleIllegalInstructions();
+void OnCommandSystemCPUToggleStopOnBRK();
+void OnCommandSystemCPUToggleNMIBlocking();
+void OnCommandSystemCPUToggleShadowROM();
+void OnCommandSystemCPUToggleShadowCarts();
 void OnCommandConsoleHoldKeys();
 void OnCommandConsoleBlackBoxDumpScreen();
 void OnCommandConsoleBlackBoxMenu();
@@ -160,6 +182,7 @@ void OnCommandConsoleHappyToggleFastSlow();
 void OnCommandConsoleHappyToggleWriteProtect();
 void OnCommandConsoleHappyToggleWriteEnable();
 void OnCommandConsoleATR8000Reset();
+void OnCommandConsoleXELCFSwap();
 void OnCommandSystemHardwareMode(ATHardwareMode mode);
 void OnCommandSystemKernel(ATFirmwareId id);
 void OnCommandSystemBasic(ATFirmwareId id);
@@ -169,6 +192,7 @@ void OnCommandSystemHighMemBanks(sint32 banks);
 void OnCommandSystemToggleMapRAM();
 void OnCommandSystemToggleUltimate1MB();
 void OnCommandSystemToggleFloatingIoBus();
+void OnCommandSystemTogglePreserveExtRAM();
 void OnCommandSystemMemoryClearMode(ATMemoryClearMode mode);
 void OnCommandSystemToggleMemoryRandomizationEXE();
 void OnCommandSystemToggleBASIC();
@@ -176,6 +200,10 @@ void OnCommandSystemToggleFastBoot();
 void OnCommandSystemROMImagesDialog();
 void OnCommandSystemToggleRTime8();
 void OnCommandSystemEditProfilesDialog();
+void OnCommandSystemSpeedMatchHardware();
+void OnCommandSystemSpeedMatchBroadcast();
+void OnCommandSystemSpeedInteger();
+void OnCommandConfigureSystem();
 void OnCommandDiskDrivesDialog();
 void OnCommandDiskToggleSIOPatch();
 void OnCommandDiskToggleSIOOverrideDetection();
@@ -236,6 +264,7 @@ void OnCommandWindowUndock();
 void OnCommandHelpContents();
 void OnCommandHelpAbout();
 void OnCommandHelpChangeLog();
+void OnCommandHelpCmdLine();
 
 namespace ATCommands {
 	template<int Index>
@@ -275,6 +304,11 @@ namespace ATCommands {
 
 	bool IsRTime8Enabled() {
 		return g_sim.GetDeviceManager()->GetDeviceByTag("rtime8") != NULL;
+	}
+
+	template<ATFrameRateMode mode>
+	bool FrameRateModeIs() {
+		return ATUIGetFrameRateMode() == mode;
 	}
 
 	bool IsXEP80Enabled() {
@@ -340,8 +374,26 @@ namespace ATCommands {
 		return g_sim.GetMemoryClearMode() == T_Mode;
 	}
 
+	bool Is6502() {
+		return g_sim.GetCPU().GetCPUMode() == kATCPUMode_6502;
+	}
+
+	bool Is65C02() {
+		return g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C02;
+	}
+
 	bool Is65C816() {
 		return g_sim.GetCPU().GetCPUMode() == kATCPUMode_65C816;
+	}
+
+	bool Is65C816Accel() {
+		return g_sim.GetCPU().GetSubCycles() > 1;
+	}
+
+	template<uint32 N>
+	bool Is65C816AccelN() {
+		auto& cpu = g_sim.GetCPU();
+		return cpu.GetCPUMode() == kATCPUMode_65C816 && cpu.GetSubCycles() == N;
 	}
 
 	template<sint32 T_Banks>
@@ -555,8 +607,40 @@ namespace ATCommands {
 	bool PokeyTest() {
 		return (g_sim.GetPokey().*T_Method)();
 	}
+	
+	template<ATUIResetFlag T_ResetFlag>
+	void OnCommandToggleAutoReset() {
+		ATUIModifyResetFlag(T_ResetFlag, !ATUIIsResetNeeded(T_ResetFlag));
+	}
+	
+	template<ATUIResetFlag T_ResetFlag>
+	bool IsAutoResetEnabled() {
+		return ATUIIsResetNeeded(T_ResetFlag);
+	}
 
-	const struct ATUICommand kATCommands[]={
+	template<ATStorageTypeMask T_StorageTypeFlag>
+	void OnCommandToggleBootUnload() {
+		uint32 mask = ATUIGetBootUnloadStorageMask();
+
+		ATUISetBootUnloadStorageMask(mask ^ T_StorageTypeFlag);
+	}
+	
+	template<ATStorageTypeMask T_StorageFlag>
+	bool IsBootUnloadEnabled() {
+		return (ATUIGetBootUnloadStorageMask() & T_StorageFlag) != 0;
+	}
+
+	template<ATHLEProgramLoadMode T_Mode>
+	void OnCommandSystemProgramLoadModeDefault() {
+		g_sim.SetHLEProgramLoadMode(T_Mode);
+	}
+	
+	template<ATHLEProgramLoadMode T_Mode>
+	bool ProgramLoadModeIs() {
+		return g_sim.GetHLEProgramLoadMode() == T_Mode;
+	}
+
+	constexpr struct ATUICommand kATCommands[]={
 		{ "File.OpenImage", OnCommandOpenImage, NULL },
 		{ "File.BootImage", OnCommandBootImage, NULL },
 		{ "File.QuickLoadState", OnCommandQuickLoadState, NULL },
@@ -587,6 +671,8 @@ namespace ATCommands {
 		{ "Cart.ActivateMenuButton", OnCommandCartActivateMenuButton, IsCartResetButtonPresent },
 		{ "Cart.ToggleSwitch", OnCommandCartToggleSwitch, IsCartSDXSwitchPresent, CheckedIf<SimTest<&ATSimulator::GetCartridgeSwitch> > },
 
+		{ "System.Configure", OnCommandConfigureSystem },
+
 		{ "System.SaveFirmwareIDEMain", OnCommandSaveFirmwareIDEMain, IsStoragePresent<kATStorageId_Firmware> },
 		{ "System.SaveFirmwareIDESDX", OnCommandSaveFirmwareIDESDX, IsStoragePresent<(ATStorageId)(kATStorageId_Firmware + 1)> },
 		{ "System.SaveFirmwareU1MB", OnCommandSaveFirmwareU1MB, IsStoragePresent<(ATStorageId)(kATStorageId_Firmware + 2)> },
@@ -609,8 +695,9 @@ namespace ATCommands {
 		{ "Cassette.TurboModeCommandControl", OnCommandCassetteTurboModeCommandControl, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_CommandControl>> },
 		{ "Cassette.TurboModeProceedSense", OnCommandCassetteTurboModeProceedSense, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_ProceedSense>> },
 		{ "Cassette.TurboModeInterruptSense", OnCommandCassetteTurboModeInterruptSense, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_InterruptSense>> },
-		{ "Cassette.PolarityNormal", OnCommandCassettePolarityModeNormal, NULL, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Normal>> },
-		{ "Cassette.PolarityInverted", OnCommandCassettePolarityModeInverted, NULL, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Inverted>> },
+		{ "Cassette.TogglePolarity", OnCommandCassetteTogglePolarity, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Inverted>> },
+		{ "Cassette.PolarityNormal", OnCommandCassettePolarityModeNormal, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Normal>> },
+		{ "Cassette.PolarityInverted", OnCommandCassettePolarityModeInverted, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Inverted>> },
 
 		{ "Debug.OpenSourceFile", OnCommandDebuggerOpenSourceFile, NULL },
 		{ "Debug.ToggleBreakAtExeRun", OnCommandDebuggerToggleBreakAtExeRun, NULL, CheckedIf<IsBreakAtExeRunAddrEnabled> },
@@ -700,6 +787,7 @@ namespace ATCommands {
 
 		{ "System.WarmReset", OnCommandSystemWarmReset },
 		{ "System.ColdReset", OnCommandSystemColdReset },
+		{ "System.ColdResetComputerOnly", OnCommandSystemColdResetComputerOnly },
 
 		{ "System.TogglePause", OnCommandSystemTogglePause },
 		{ "System.TogglePauseWhenInactive", OnCommandSystemTogglePauseWhenInactive, NULL, CheckedIf<ATUIGetPauseWhenInactive> },
@@ -720,6 +808,23 @@ namespace ATCommands {
 		{ "System.PowerOnDelay1s", [] { g_sim.SetPowerOnDelay(10); }, nullptr, [] { return g_sim.GetPowerOnDelay() == 10 ? kATUICmdState_RadioChecked : kATUICmdState_None; } },
 		{ "System.PowerOnDelay2s", [] { g_sim.SetPowerOnDelay(20); }, nullptr, [] { return g_sim.GetPowerOnDelay() == 20 ? kATUICmdState_RadioChecked : kATUICmdState_None; } },
 		{ "System.PowerOnDelay3s", [] { g_sim.SetPowerOnDelay(30); }, nullptr, [] { return g_sim.GetPowerOnDelay() == 30 ? kATUICmdState_RadioChecked : kATUICmdState_None; } },
+
+		{ "System.CPUMode6502", OnCommandSystemCPUMode6502, nullptr, CheckedIf<Is6502> },
+		{ "System.CPUMode65C02", OnCommandSystemCPUMode65C02, nullptr, CheckedIf<Is65C02> },
+		{ "System.CPUMode65C816", OnCommandSystemCPUMode65C816, nullptr, CheckedIf<Is65C816AccelN<1>> },
+		{ "System.CPUMode65C816x2", OnCommandSystemCPUMode65C816x2, nullptr, CheckedIf<Is65C816AccelN<2>> },
+		{ "System.CPUMode65C816x4", OnCommandSystemCPUMode65C816x4, nullptr, CheckedIf<Is65C816AccelN<4>> },
+		{ "System.CPUMode65C816x6", OnCommandSystemCPUMode65C816x6, nullptr, CheckedIf<Is65C816AccelN<6>> },
+		{ "System.CPUMode65C816x8", OnCommandSystemCPUMode65C816x8, nullptr, CheckedIf<Is65C816AccelN<8>> },
+		{ "System.CPUMode65C816x10", OnCommandSystemCPUMode65C816x10, nullptr, CheckedIf<Is65C816AccelN<10>> },
+		{ "System.CPUMode65C816x12", OnCommandSystemCPUMode65C816x12, nullptr, CheckedIf<Is65C816AccelN<12>> },
+		{ "System.ToggleCPUHistory", OnCommandSystemCPUToggleHistory, nullptr, [] { return g_sim.GetCPU().IsHistoryEnabled() ? kATUICmdState_Checked : kATUICmdState_None; } },
+		{ "System.ToggleCPUPathTracing", OnCommandSystemCPUTogglePathTracing, nullptr, [] { return g_sim.GetCPU().IsPathfindingEnabled() ? kATUICmdState_Checked : kATUICmdState_None; } },
+		{ "System.ToggleCPUIllegalInstructions", OnCommandSystemCPUToggleIllegalInstructions, nullptr, [] { return g_sim.GetCPU().AreIllegalInsnsEnabled() ? kATUICmdState_Checked : kATUICmdState_None; } },
+		{ "System.ToggleCPUStopOnBRK", OnCommandSystemCPUToggleStopOnBRK, nullptr, [] { return g_sim.GetCPU().GetStopOnBRK() ? kATUICmdState_Checked : kATUICmdState_None; } },
+		{ "System.ToggleCPUNMIBlocking", OnCommandSystemCPUToggleNMIBlocking, nullptr, [] { return g_sim.GetCPU().IsNMIBlockingEnabled() ? kATUICmdState_Checked : kATUICmdState_None; } },
+		{ "System.ToggleShadowROM", OnCommandSystemCPUToggleShadowROM, Is65C816Accel, [] { return g_sim.GetShadowROMEnabled() ? kATUICmdState_Checked : kATUICmdState_None; } },
+		{ "System.ToggleShadowCarts", OnCommandSystemCPUToggleShadowCarts, Is65C816Accel, [] { return g_sim.GetShadowCartridgeEnabled() ? kATUICmdState_Checked : kATUICmdState_None; } },
 
 		{ "Console.HoldKeys", OnCommandConsoleHoldKeys },
 		{ "Console.BlackBoxDumpScreen", OnCommandConsoleBlackBoxDumpScreen, []() { return ATUIGetDeviceButtonSupported(kATDeviceButton_BlackBoxDumpScreen); } },
@@ -774,6 +879,10 @@ namespace ATCommands {
 			OnCommandConsoleATR8000Reset,
 			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_ATR8000Reset); }
 		},
+		{ "Console.XELCFSwap",
+			OnCommandConsoleXELCFSwap,
+			[] { return ATUIGetDeviceButtonSupported(kATDeviceButton_XELCFSwap); }
+		},
 
 		{ "System.HardwareMode800",		[]() { OnCommandSystemHardwareMode(kATHardwareMode_800); }, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_800> > },
 		{ "System.HardwareMode800XL",	[]() { OnCommandSystemHardwareMode(kATHardwareMode_800XL); }, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_800XL> > },
@@ -817,7 +926,7 @@ namespace ATCommands {
 
 		{ "System.ToggleAxlonAliasing",
 			[]() { g_sim.SetAxlonAliasingEnabled(!g_sim.GetAxlonAliasingEnabled()); },
-			IsNot5200,
+			And<IsNot5200, Not<AxlonMemoryModeIs<0>>>,
 			[]() {
 				return g_sim.GetAxlonAliasingEnabled() ? kATUICmdState_Checked : kATUICmdState_None;
 			}
@@ -834,6 +943,7 @@ namespace ATCommands {
 		{ "System.ToggleMapRAM", OnCommandSystemToggleMapRAM, NULL, CheckedIf<SimTest<&ATSimulator::IsMapRAMEnabled> > },
 		{ "System.ToggleUltimate1MB", OnCommandSystemToggleUltimate1MB, NULL, CheckedIf<SimTest<&ATSimulator::IsUltimate1MBEnabled> > },
 		{ "System.ToggleFloatingIOBus", OnCommandSystemToggleFloatingIoBus, Is800, CheckedIf<SimTest<&ATSimulator::IsFloatingIoBusEnabled> > },
+		{ "System.TogglePreserveExtRAM", OnCommandSystemTogglePreserveExtRAM, nullptr, CheckedIf<SimTest<&ATSimulator::IsPreserveExtRAMEnabled> > },
 		{ "System.MemoryClearZero",		[]() { OnCommandSystemMemoryClearMode(kATMemoryClearMode_Zero); }, NULL, RadioCheckedIf<MemoryClearModeIs<kATMemoryClearMode_Zero>> },
 		{ "System.MemoryClearRandom",	[]() { OnCommandSystemMemoryClearMode(kATMemoryClearMode_Random); }, NULL, RadioCheckedIf<MemoryClearModeIs<kATMemoryClearMode_Random>> },
 		{ "System.MemoryClearDRAM1",	[]() { OnCommandSystemMemoryClearMode(kATMemoryClearMode_DRAM1); }, NULL, RadioCheckedIf<MemoryClearModeIs<kATMemoryClearMode_DRAM1>> },
@@ -841,10 +951,19 @@ namespace ATCommands {
 		{ "System.MemoryClearDRAM3",	[]() { OnCommandSystemMemoryClearMode(kATMemoryClearMode_DRAM3); }, NULL, RadioCheckedIf<MemoryClearModeIs<kATMemoryClearMode_DRAM3>> },
 		{ "System.ToggleMemoryRandomizationEXE", OnCommandSystemToggleMemoryRandomizationEXE, NULL, CheckedIf<SimTest<&ATSimulator::IsRandomFillEXEEnabled> > },
 
+		{ "System.ProgramLoadModeDefault", OnCommandSystemProgramLoadModeDefault<kATHLEProgramLoadMode_Default>, nullptr, CheckedIf<ProgramLoadModeIs<kATHLEProgramLoadMode_Default>> },
+		{ "System.ProgramLoadModeDiskBoot", OnCommandSystemProgramLoadModeDefault<kATHLEProgramLoadMode_DiskBoot>, nullptr, CheckedIf<ProgramLoadModeIs<kATHLEProgramLoadMode_DiskBoot>> },
+		{ "System.ProgramLoadModeType3Poll", OnCommandSystemProgramLoadModeDefault<kATHLEProgramLoadMode_Type3Poll>, nullptr, CheckedIf<ProgramLoadModeIs<kATHLEProgramLoadMode_Type3Poll>> },
+		{ "System.ProgramLoadModeDeferred", OnCommandSystemProgramLoadModeDefault<kATHLEProgramLoadMode_Deferred>, nullptr, CheckedIf<ProgramLoadModeIs<kATHLEProgramLoadMode_Deferred>> },
+
 		{ "System.ToggleBASIC", OnCommandSystemToggleBASIC, SupportsBASIC, CheckedIf<And<SupportsBASIC, SimTest<&ATSimulator::IsBASICEnabled> > > },
 		{ "System.ToggleFastBoot", OnCommandSystemToggleFastBoot, IsNot5200, CheckedIf<SimTest<&ATSimulator::IsFastBootEnabled> > },
 		{ "System.ROMImagesDialog", OnCommandSystemROMImagesDialog },
 		{ "System.ToggleRTime8", OnCommandSystemToggleRTime8, NULL, CheckedIf<IsRTime8Enabled> },
+
+		{ "System.FrameRateModeHardware", OnCommandSystemSpeedMatchHardware, nullptr, CheckedIf<FrameRateModeIs<kATFrameRateMode_Hardware>> },
+		{ "System.FrameRateModeBroadcast", OnCommandSystemSpeedMatchBroadcast, nullptr, CheckedIf<FrameRateModeIs<kATFrameRateMode_Broadcast>> },
+		{ "System.FrameRateModeIntegral", OnCommandSystemSpeedInteger, nullptr, CheckedIf<FrameRateModeIs<kATFrameRateMode_Integral>> },
 
 		{ "System.EditProfilesDialog", OnCommandSystemEditProfilesDialog  },
 		{ "System.ToggleTemporaryProfile",
@@ -977,6 +1096,8 @@ namespace ATCommands {
 		{ "Video.ArtifactingNTSCHi",	[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactNTSCHi); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactNTSCHi> > },
 		{ "Video.ArtifactingPAL",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactPAL); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactPAL> > },
 		{ "Video.ArtifactingPALHi",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactPALHi); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactPALHi> > },
+		{ "Video.ArtifactingAuto",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactAuto); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactAuto> > },
+		{ "Video.ArtifactingAutoHi",	[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactAutoHi); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactAutoHi> > },
 
 		{ "Video.EnhancedModeNone", OnCommandVideoEnhancedModeNone, NULL, RadioCheckedIf<VideoEnhancedTextModeIs<0> > },
 		{ "Video.EnhancedModeHardware", OnCommandVideoEnhancedModeHardware, NULL, RadioCheckedIf<VideoEnhancedTextModeIs<1> > },
@@ -1024,17 +1145,29 @@ namespace ATCommands {
 		{ "Tools.ExportROMSet", OnCommandToolsExportROMSet },
 		{ "Tools.AnalyzeTapeDecoding", OnCommandToolsAnalyzeTapeDecoding },
 
+		{ "Options.ToggleAutoResetCartridge", OnCommandToggleAutoReset<kATUIResetFlag_CartridgeChange>, nullptr, CheckedIf<IsAutoResetEnabled<kATUIResetFlag_CartridgeChange>> },
+		{ "Options.ToggleAutoResetBasic", OnCommandToggleAutoReset<kATUIResetFlag_BasicChange>, nullptr, CheckedIf<IsAutoResetEnabled<kATUIResetFlag_BasicChange>> },
+		{ "Options.ToggleAutoResetVideoStandard", OnCommandToggleAutoReset<kATUIResetFlag_VideoStandardChange>, nullptr, CheckedIf<IsAutoResetEnabled<kATUIResetFlag_VideoStandardChange>> },
+
+		{ "Options.ToggleBootUnloadCartridges", OnCommandToggleBootUnload<kATStorageTypeMask_Cartridge>, nullptr, CheckedIf<IsBootUnloadEnabled<kATStorageTypeMask_Cartridge>> },
+		{ "Options.ToggleBootUnloadDisks", OnCommandToggleBootUnload<kATStorageTypeMask_Disk>, nullptr, CheckedIf<IsBootUnloadEnabled<kATStorageTypeMask_Disk>> },
+		{ "Options.ToggleBootUnloadTapes", OnCommandToggleBootUnload<kATStorageTypeMask_Tape>, nullptr, CheckedIf<IsBootUnloadEnabled<kATStorageTypeMask_Tape>> },
+
 		{ "Window.Close", OnCommandWindowClose, ATUICanManipulateWindows },
 		{ "Window.Undock", OnCommandWindowUndock, ATUICanManipulateWindows },
 
 		{ "Help.Contents", OnCommandHelpContents },
 		{ "Help.About", OnCommandHelpAbout },
 		{ "Help.ChangeLog", OnCommandHelpChangeLog },
+		{ "Help.CommandLine", OnCommandHelpCmdLine },
 	};
 }
 
 void ATUIInitCommandMappings(ATUICommandManager& cmdMgr) {
 	using namespace ATCommands;
 
-	cmdMgr.RegisterCommands(kATCommands, sizeof(kATCommands)/sizeof(kATCommands[0]));
+	cmdMgr.RegisterCommands(kATCommands, vdcountof(kATCommands));
+
+	ATUIInitCommandMappingsInput(cmdMgr);
+	ATUIInitCommandMappingsView(cmdMgr);
 }

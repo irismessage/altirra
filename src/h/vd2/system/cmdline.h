@@ -65,12 +65,11 @@ public:
 	bool GetNextArgument(VDCommandLineIterator& index, const wchar_t *& token, bool& isSwitch) const;
 	bool GetNextNonSwitchArgument(VDCommandLineIterator& index, const wchar_t *& token) const;
 	bool GetNextSwitchArgument(VDCommandLineIterator& index, const wchar_t *& token) const;
+	bool FindSwitch(const wchar_t *name) const;
 	bool FindAndRemoveSwitch(const wchar_t *name);
 	bool FindAndRemoveSwitch(const wchar_t *name, const wchar_t *& token);
 
 protected:
-	void RemoveArgument(int index);
-
 	vdfastvector<wchar_t>	mLine;
 
 	struct Token {

@@ -54,21 +54,30 @@ struct ATCPUHistoryEntry {
 	bool	mbEmulation : 1;
 	uint8	mSubCycle : 5;
 	uint8	mOpcode[4];
-	uint8	mSH;
+
 	union {
-		uint8	mAH;
-		uint8	mZ80_E;
-		uint8	m8048_R0;
+		struct {
+			union {
+				uint8	mAH;
+				uint8	mZ80_E;
+				uint8	m8048_R0;
+			};
+			union {
+				uint8	mXH;
+				uint8	mZ80_H;
+				uint8	m8048_R1;
+			};
+			union {
+				uint8	mYH;
+				uint8	mZ80_L;
+			};
+
+			uint8	mSH;
+		} mExt;
+
+		uint32 mGlobalPCBase;
 	};
-	union {
-		uint8	mXH;
-		uint8	mZ80_H;
-		uint8	m8048_R1;
-	};
-	union {
-		uint8	mYH;
-		uint8	mZ80_L;
-	};
+
 	uint8	mB;
 	uint8	mK;
 

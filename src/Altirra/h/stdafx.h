@@ -26,14 +26,22 @@
 #include <stdio.h>
 #include <math.h>
 #include <tchar.h>
+#include <vd2/system/error.h>
+#include <vd2/system/fraction.h>
 #include <vd2/system/function.h>
 #include <vd2/system/linearalloc.h>
 #include <vd2/system/refcount.h>
+#include <vd2/system/time.h>
 #include <vd2/system/unknown.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
+#include <vd2/system/vectors.h>
+#include <vd2/Kasumi/pixmap.h>
+#include <at/atcore/device.h>
+#include <at/atcore/enumparse.h>
+#include <atomic>
 #include <deque>
 #include <iterator>
 

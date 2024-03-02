@@ -43,7 +43,6 @@ public:
 	virtual void PokeyBreak() = 0;
 	virtual bool PokeyIsInInterrupt() const = 0;
 	virtual bool PokeyIsKeyPushOK(uint8 scanCode, bool cooldownExpired) const = 0;
-	virtual uint32 PokeyGetTimestamp() const = 0;
 };
 
 class IATPokeySIODevice {
@@ -139,7 +138,7 @@ public:
 	void	SetPotPosHires(unsigned idx, int pos, bool grounded);
 
 	void	AdvanceScanLine();
-	void	AdvanceFrame(bool pushAudio);
+	void	AdvanceFrame(bool pushAudio, uint64 timestamp);
 
 	uint8	DebugReadByte(uint8 reg) const;
 	uint8	ReadByte(uint8 reg);
@@ -159,7 +158,7 @@ public:
 	void	GetRegisterState(ATPokeyRegisterState& state) const;
 	void	GetAudioState(ATPokeyAudioState& state) const;
 
-	void	FlushAudio(bool pushAudio);
+	void	FlushAudio(bool pushAudio, uint64 timestamp);
 
 	void	SetTraceContext(ATTraceContext *context);
 

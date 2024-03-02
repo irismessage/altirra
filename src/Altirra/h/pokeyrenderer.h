@@ -37,7 +37,7 @@ public:
 	void SyncTo(const ATPokeyRenderer& src);
 
 	void GetAudioState(ATPokeyAudioState& state);
-	bool GetChannelOutput(int index) const { return mOutputs[index] != 0; }
+	bool GetChannelOutput(int index) const { return (mChannelOutputMask & (1 << index)) != 0; }
 	const float *GetOutputBuffer() const { return mRawOutputBuffer; }
 
 	bool IsChannelEnabled(int channel) const { return mbChannelEnabled[channel]; }
@@ -66,37 +66,28 @@ public:
 	void SaveState(ATSaveStateWriter& writer);
 
 protected:
-	struct Edge;
-
 	void FlushDeferredEvents(int channel, uint32 t);
 	void Flush(const uint32 t);
-	void MergeEvents(const Edge *src1, const Edge *src2, Edge *dst);
+	void Flush2(const uint32 t);
+	static void MergeOutputEvents(const uint32 *VDRESTRICT src1, const uint32 *VDRESTRICT src2, uint32 *VDRESTRICT dst);
 
-	typedef void (ATPokeyRenderer::*FireTimerRoutine)(uint32 t);
+	typedef uint32 *(ATPokeyRenderer::*FireTimerRoutine)(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n, uint32 timeBase);
+	FireTimerRoutine GetFireTimerRoutine(int ch) const;
 	template<int activeChannel>
 	FireTimerRoutine GetFireTimerRoutine() const;
 
-	template<int activeChannel, uint8 audcn, bool outputAffectsSignal, bool highPassEnabled>
-	void FireTimer(uint32 t);
+	template<int activeChannel, uint8 audcn, bool outputAffectsSignal, bool T_UsePoly9>
+	uint32 *FireTimer(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n, uint32 timeBase);
 
+	void ProcessOutputEdges(uint32 timeBase, const uint32 *edges, uint32 n);
 	void UpdateVolume(int channel);
-	void UpdateOutput();
 	void UpdateOutput(uint32 t);
-	void GenerateSamples(uint32 t);
-	void UpdatePoly17Counter(uint32 t);
-	void UpdatePoly9Counter(uint32 t);
-	void UpdatePoly5Counter(uint32 t);
-	void UpdatePoly4Counter(uint32 t);
+	void UpdateOutput2(uint32 t2);
+	void UpdateOutput2(uint32 t2, int vpok);
+	void GenerateSamples(uint32 t2);
 
 	ATScheduler *mpScheduler;
 	ATPokeyTables *mpTables;
-	uintptr mPoly4Offset;
-	uintptr mPoly5Offset;
-	uintptr mPoly9Offset;
-	uintptr mPoly17Offset;
-#if !defined(VD_CPU_X86)
-	uint32	mPolyBaseTime;
-#endif
 	bool mbInitMode;
 
 	float	mAccum;
@@ -104,22 +95,38 @@ protected:
 	float	mSpeakerAccum;
 	float	mOutputLevel;
 	float	mSpeakerLevel;
-	uint32	mLastOutputTime;
-	uint32	mLastOutputSampleTime;
-	int		mAudioInput2;
+	uint32	mLastFlushTime;
+	uint32	mLastOutputTime2;			// last output update in half-ticks
+	uint32	mLastOutputSampleTime2;		// last output sample boundary in half-ticks
 	int		mExternalInput;
 
 	bool	mbSpeakerState;
 
-	int		mOutputs[4];
+	// Noise/tone flip-flop state for all four channels. This is the version updated by the
+	// FireTimer() routines; change events are then produced to update the analogous bits 0-3
+	// in the channel output mask.
+	uint8	mNoiseFlipFlops = 0;
+
+	// Noise/tone and high-pass flip-flop states. Bits 0-3 contain the noise flip-flop states,
+	// updated by the output code from change events generated from mNoiseFlipFlops; bits 4-5
+	// contain the high-pass flip-flops for ch1-2.
+	uint8	mChannelOutputMask = 0;
+
+	// Bits 0-3 set if ch1-4 is in volume-only mode (AUDCx bit 4 = 1).
+	uint8	mVolumeOnlyMask = 0;
+
+	// Bits 0-3 set if AUDCx bit 0-3 > 0. Note that this includes muting, so we cannot use
+	// this for architectural state.
+	uint8	mNonZeroVolumeMask = 0;
+
 	int		mChannelVolume[4];
-	uint8	mNoiseFF[4];
-	uint8	mHighPassFF[2];
 
 	// AUDCx broken out fields
 	uint8	mAUDCTL;
 	uint8	mAUDC[4];
 
+	// True if the channel is enabled for update or muted. This does NOT affect architectural
+	// state; it must not affect whether flip-flops are updated.
 	bool	mbChannelEnabled[4];
 
 	struct DeferredEvent {
@@ -145,29 +152,52 @@ protected:
 		uint32	mHiLoOffset;
 	};
 
-	DeferredEvent mDeferredEvents[4];
+	DeferredEvent mDeferredEvents[4] {};
 
-	uint32	mLastPoly17Time;
-	uint32	mPoly17Counter;
-	uint32	mLastPoly9Time;
-	uint32	mPoly9Counter;
-	uint32	mLastPoly5Time;
-	uint32	mPoly5Counter;
-	uint32	mLastPoly4Time;
-	uint32	mPoly4Counter;
+	struct PolyState {
+		uint32	mInitMask = 0;
+
+		uintptr mPoly4Offset = 0;
+		uintptr mPoly5Offset = 0;
+		uintptr mPoly9Offset = 0;
+		uintptr mPoly17Offset = 0;
+
+		uint32	mLastPoly17Time = 0;
+		uint32	mPoly17Counter = 0;
+		uint32	mLastPoly9Time = 0;
+		uint32	mPoly9Counter = 0;
+		uint32	mLastPoly5Time = 0;
+		uint32	mPoly5Counter = 0;
+		uint32	mLastPoly4Time = 0;
+		uint32	mPoly4Counter = 0;
+
+		void UpdatePoly17Counter(uint32 t);
+		void UpdatePoly9Counter(uint32 t);
+		void UpdatePoly5Counter(uint32 t);
+		void UpdatePoly4Counter(uint32 t);
+	} mPolyState;
 
 	uint32	mOutputSampleCount;
 
-	struct Edge {
-		uint32 t;
-		int channel;
-	};
-
-	typedef vdfastvector<Edge> SortedEdges;
+	// The sorted edge lists hold ordered output change events. The events are stored as
+	// packed bitfields for fast merging:
+	//
+	//	bits 14-31 (18): half-cycle offset from beginning of flush operation
+	//	bits  8-13 (6): AND mask to apply to flip/flops
+	//	bits  0-5 (6): OR mask to apply to flip/flops
+	//
+	// Bits 4-5 of the masks are special as they apply to the high-pass flip/flops. The OR
+	// mask for these bits is ANDed with the ch1/2 outputs, so they update the HP F/Fs instead
+	// of setting them.
+	typedef vdfastvector<uint32> SortedEdges;
 	SortedEdges mSortedEdgesTemp[4];
+	SortedEdges mSortedEdgesHpTemp1;
+	SortedEdges mSortedEdgesHpTemp2;
 	SortedEdges mSortedEdgesTemp2[2];
 	SortedEdges mSortedEdges;
 
+	// The channel edge lists hold an ordered list of timer underflow events. The ticks are
+	// in system time (from ATScheduler).
 	typedef vdfastvector<uint32> ChannelEdges;
 	ChannelEdges mChannelEdges[4];
 
@@ -181,6 +211,9 @@ protected:
 	};
 
 	float	mRawOutputBuffer[kBufferSize];
+
+	template<int activeChannel, bool T_UsePoly9>
+	static const FireTimerRoutine kFireRoutines[2][16];
 };
 
 #endif	// f_AT_POKEYRENDERER_H

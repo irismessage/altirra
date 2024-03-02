@@ -27,7 +27,7 @@
 #include <at/atcore/deviceparentimpl.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/wraptime.h>
-#include "audiosyncmixer.h"
+#include "audiosampleplayer.h"
 #include "diskdriveatr8000.h"
 #include "memorymanager.h"
 #include "firmwaremanager.h"
@@ -443,7 +443,7 @@ void *ATDeviceDiskDriveATR8000::AsInterface(uint32 iid) {
 		case IATDeviceFirmware::kTypeID: return static_cast<IATDeviceFirmware *>(this);
 		case IATDeviceDiskDrive::kTypeID: return static_cast<IATDeviceDiskDrive *>(this);
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
-		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(this);
+		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(&mAudioPlayer);
 		case IATDeviceButtons::kTypeID: return static_cast<IATDeviceButtons *>(this);
 		case IATDevicePrinter::kTypeID: return static_cast<IATDevicePrinter *>(this);
 		case IATDeviceDebugTarget::kTypeID: return static_cast<IATDeviceDebugTarget *>(this);
@@ -574,10 +574,7 @@ void ATDeviceDiskDriveATR8000::Shutdown() {
 
 	mpPrinterOutput = nullptr;
 
-	if (mRotationSoundId) {
-		mpAudioSyncMixer->StopSound(mRotationSoundId);
-		mRotationSoundId = 0;
-	}
+	mAudioPlayer.Shutdown();
 
 	mDriveScheduler.UnsetEvent(mpEventDriveReceiveBit);
 
@@ -718,7 +715,7 @@ bool ATDeviceDiskDriveATR8000::ReloadFirmware() {
 	uint8 firmware[sizeof(mROM)] = {};
 
 	uint32 len = 0;
-	mpFwMgr->LoadFirmware(id, firmware, 0, sizeof mROM, nullptr, &len);
+	mpFwMgr->LoadFirmware(id, firmware, 0, sizeof mROM, nullptr, &len, nullptr, nullptr, &mbFirmwareUsable);
 
 	memcpy(mROM, firmware, sizeof mROM);
 
@@ -736,6 +733,10 @@ bool ATDeviceDiskDriveATR8000::IsWritableFirmwareDirty(uint32 idx) const {
 }
 
 void ATDeviceDiskDriveATR8000::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
+}
+
+bool ATDeviceDiskDriveATR8000::IsUsableFirmwareLoaded() const {
+	return mbFirmwareUsable;
 }
 
 void ATDeviceDiskDriveATR8000::InitDiskDrive(IATDiskDriveManager *ddm) {
@@ -760,10 +761,6 @@ void ATDeviceDiskDriveATR8000::InitDiskDrive(IATDiskDriveManager *ddm) {
 void ATDeviceDiskDriveATR8000::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
 	mpSIOMgr->AddRawDevice(this);
-}
-
-void ATDeviceDiskDriveATR8000::InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) {
-	mpAudioSyncMixer = syncmixer;
 }
 
 uint32 ATDeviceDiskDriveATR8000::GetSupportedButtons() const {
@@ -1705,7 +1702,7 @@ void ATDeviceDiskDriveATR8000::PlayStepSound() {
 	if (t - mLastStepSoundTime > 50000)
 		mLastStepPhase = 0;
 
-	mpAudioSyncMixer->AddSound(kATAudioMix_Drive, 0, kATAudioSampleId_DiskStep2H, 0.3f + 0.7f * cosf((float)mLastStepPhase++ * nsVDMath::kfPi));
+	mAudioPlayer.PlayStepSound(kATAudioSampleId_DiskStep2H, 0.3f + 0.7f * cosf((float)mLastStepPhase++ * nsVDMath::kfPi));
 
 	mLastStepSoundTime = t;
 }
@@ -1728,10 +1725,7 @@ void ATDeviceDiskDriveATR8000::UpdateMemoryMap() {
 
 void ATDeviceDiskDriveATR8000::UpdateRotationStatus() {
 	if (mSelectedDrives == 0) {
-		if (mRotationSoundId) {
-			mpAudioSyncMixer->StopSound(mRotationSoundId);
-			mRotationSoundId = 0;
-		}
+		mAudioPlayer.SetRotationSoundEnabled(false);
 		return;
 	}
 
@@ -1742,15 +1736,7 @@ void ATDeviceDiskDriveATR8000::UpdateRotationStatus() {
 			mDrives[i].mpDiskInterface->SetShowMotorActive(driveMotorRunning);
 	}
 
-	if (driveMotorRunning && mbSoundsEnabled) {
-		if (!mRotationSoundId)
-			mRotationSoundId = mpAudioSyncMixer->AddLoopingSound(kATAudioMix_Drive, 0, kATAudioSampleId_DiskRotation, 1.0f);
-	} else {
-		if (mRotationSoundId) {
-			mpAudioSyncMixer->StopSound(mRotationSoundId);
-			mRotationSoundId = 0;
-		}
-	}
+	mAudioPlayer.SetRotationSoundEnabled(driveMotorRunning && mbSoundsEnabled);
 }
 
 void ATDeviceDiskDriveATR8000::UpdateDiskStatus() {

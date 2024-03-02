@@ -20,6 +20,12 @@
     <ClCompile Include="source\bitmap.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\audiooutxa2.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\audiooutwasapi.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\vd2\Riza\audioout.h">

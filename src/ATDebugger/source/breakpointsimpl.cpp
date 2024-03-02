@@ -32,6 +32,8 @@ void ATDebugTargetBreakpointsBase::SetStepActive(bool active) {
 	if (mbStepActive == active)
 		return;
 
+	mbStepActive = active;
+
 	if (active)
 		mpSetBPTable(mpStepBreakpointMap, mpStepHandler);
 	else if (mBreakpointCount)

@@ -174,9 +174,11 @@ public:
 	typedef vdrefptr<T> self_type;
 	typedef T			element_type;
 
+	vdrefptr() : ptr(nullptr) {}
+
 	/// Creates a new smart pointer and obtains a new reference on the
 	/// specified object.
-	explicit vdrefptr(T *p = nullptr) : ptr(p) {
+	explicit vdrefptr(T *p) : ptr(p) {
 		if (p)
 			p->AddRef();
 	}
@@ -241,10 +243,10 @@ public:
 		return *this;
 	}
 
- 	operator T*() const vdnoexcept { return ptr; }
-	T& operator*() const vdnoexcept { return *ptr; }
-	T *operator->() const vdnoexcept { return ptr; }
-	T *get() const vdnoexcept { return ptr; }
+	vdnothrow operator T*() const vdnoexcept { return ptr; }
+	vdnothrow T& operator*() const vdnoexcept { return *ptr; }
+	vdnothrow T *operator->() const vdnoexcept { return ptr; }
+	vdnothrow T *get() const vdnoexcept { return ptr; }
 
 	/// Removes any old reference and returns a double-pointer to the nulled
 	/// internal pointer. This is useful for passing to IUnknown-derived

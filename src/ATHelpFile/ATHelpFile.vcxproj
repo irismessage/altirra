@@ -13,15 +13,7 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{B1076C28-FEB2-40A6-8224-A072C44DD2B8}</ProjectGuid>
     <RootNamespace>ATHelpFile</RootNamespace>
-    <SccProjectName>
-    </SccProjectName>
-    <SccAuxPath>
-    </SccAuxPath>
-    <SccLocalPath>
-    </SccLocalPath>
-    <SccProvider>
-    </SccProvider>
-    <PlatformToolset>v120</PlatformToolset>
+    <PlatformToolset>v141</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
@@ -137,10 +129,12 @@
     <Xml Include="source\devices-indusgt.xml">
       <SubType>Designer</SubType>
     </Xml>
+    <Xml Include="source\devices-isplate.xml" />
     <Xml Include="source\devices-mio.xml" />
     <Xml Include="source\devices-pocketmodem.xml" />
     <Xml Include="source\devices-rapidus.xml" />
     <Xml Include="source\devices-rtime8.xml" />
+    <Xml Include="source\devices-speedy1050.xml" />
     <Xml Include="source\devices-xf551.xml" />
     <Xml Include="source\dragoncart.xml" />
     <Xml Include="source\options-accel.xml" />

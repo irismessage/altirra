@@ -28,6 +28,10 @@
 #include <vd2/system/vectors.h>
 #include <vd2/system/vdstl_vectorview.h>
 #include <vd2/system/w32assist.h>
+#include <vd2/Kasumi/pixmap.h>
+#include <vd2/Kasumi/pixmapops.h>
+#include <vd2/Kasumi/pixmaputils.h>
+#include <vd2/VDDisplay/display.h>
 #include <vd2/VDDisplay/direct3d.h>
 #include <vd2/VDDisplay/minid3dx.h>
 #include <vd2/VDDisplay/internal/customshaderd3d9.h>
@@ -36,6 +40,12 @@ namespace {
 	bool IsTrueValue(const VDStringSpanA& s) {
 		return s != "false" && s != "0";
 	}
+
+	IVDDisplayImageDecoder *g_pVDDisplayImageDecoder;
+}
+
+void VDDisplaySetImageDecoder(IVDDisplayImageDecoder *p) {
+	g_pVDDisplayImageDecoder = p;
 }
 
 class VDFileParseException : public MyError {
@@ -97,6 +107,7 @@ public:
 	~VDDisplayCustomShaderD3D9();
 
 	bool HasScalingFactor() const { return mbHasScalingFactor; }
+	bool IsOutputHalfFloat() const { return mbHalfFloatFramebuffer; }
 	bool IsOutputFloat() const { return mbFloatFramebuffer; }
 
 	void Init(const char *shaderPath, const VDDisplayCustomShaderProps& propLookup, const vdhashmap<VDStringA, TextureSpec>& customTextureLookup, const TextureSpec *passSpecs, uint32 pass, const wchar_t *basePath, bool& inputUseLinear, uint32& maxPrevFrames);
@@ -1450,6 +1461,7 @@ const VDDisplayCustomShaderPassInfo *VDDisplayCustomShaderPipelineD3D9::GetPassT
 		info.mOutputWidth = texInfo.mImageWidth;
 		info.mOutputHeight = texInfo.mImageHeight;
 		info.mbOutputFloat = mPasses[i]->IsOutputFloat();
+		info.mbOutputHalfFloat = mPasses[i]->IsOutputHalfFloat();
 	}
 
 	return mPassInfos.data();
@@ -1684,158 +1696,196 @@ void VDDisplayCustomShaderPipelineD3D9::LoadTexture(const char *name, const wcha
 	uint8 header[18];
 	bs.Read(header, 18);
 
-	const uint8 idSize = header[0];
-	const uint8 dataType = header[2];
-	const uint32 width = VDReadUnalignedLEU16(&header[12]);
-	const uint32 height = VDReadUnalignedLEU16(&header[14]);
-	const uint8 imagePixelSize = header[16];
-	const uint8 imageAlphaBits = header[17] & 15;
-
-	if (!width || !height || width > 16384 || height > 16384 || (width & (width - 1)) || (height & (height - 1)))
-		throw MyError("Unsupported TARGA image size: %ux%u", width, height);
-
-	uint32 bpp;
-	if ((dataType == 2 || dataType == 10) && imagePixelSize == 24 && imageAlphaBits == 0) {
-		bpp = 3;
-	} else if ((dataType == 2 || dataType == 10) && imagePixelSize == 32 && imageAlphaBits == 0) {
-		bpp = 4;
-	} else if ((dataType == 2 || dataType == 10) && imagePixelSize == 32 && imageAlphaBits == 8) {
-		bpp = 4;
-	} else
-		throw MyError("TARGA image must be 24-bit or 32-bit.");
-
-	// read image raw buffer
-	vdblock<uint8> rawBuffer;
-	
-	if (dataType == 10)
-		rawBuffer.resize(std::min<uint32>(bpp * width * height * 2, (uint32)(fs.size() - (18 + idSize))));
-	else
-		rawBuffer.resize(bpp * width * height);
-
-	bs.Seek(18 + idSize);
-	bs.Read(rawBuffer.data(), (sint32)rawBuffer.size());
-
-	// read/decompress image
-	class DecompressionException : public MyError {
-	public:
-		DecompressionException() : MyError("TARGA decompression error.") {}
+	// check if it might actually be a PNG
+	static constexpr uint8 kPNGHeader[8]={
+		137, 80, 78, 71, 13, 10, 26, 10
 	};
 
-	if (dataType == 10) {
-		vdblock<uint8> decompBuffer(bpp * width * height);
-
-		const uint8 *src = rawBuffer.data();
-		const uint8 *srcEnd = src + rawBuffer.size();
-		uint8 *dst = decompBuffer.data();
-		uint8 *dstEnd = dst + decompBuffer.size();
-
-		while(dstEnd != dst) {
-			if ((size_t)(srcEnd - src) < bpp + 1)
-				throw DecompressionException();
-
-			const uint8 code = *src++;
-			const uint32 rawcnt = (uint32)(code & 0x7F) + 1;
-			const uint32 rawlen = rawcnt * bpp;
-			if ((size_t)(dstEnd - dst) < rawlen)
-				throw DecompressionException();
-
-			if (code & 0x80) {
-				uint8 c0 = *src++;
-				uint8 c1 = *src++;
-				uint8 c2 = *src++;
-				if (bpp == 3) {
-					for(uint32 i=0; i<rawcnt; ++i) {
-						*dst++ = c0;
-						*dst++ = c1;
-						*dst++ = c2;
-					}
-				} else {
-					uint8 c3 = *src++;
-
-					for(uint32 i=0; i<rawcnt; ++i) {
-						*dst++ = c0;
-						*dst++ = c1;
-						*dst++ = c2;
-						*dst++ = c3;
-					}
-				}
-			} else {
-				if ((size_t)(srcEnd - src) < rawlen)
-					throw DecompressionException();
-
-				memcpy(dst, src, rawlen);
-				dst += rawlen;
-				src += rawlen;
-			}
-		}
-
-		rawBuffer.swap(decompBuffer);
-	}
-
-	// allocate texture
 	IDirect3DDevice9 *dev = mpManager->GetDevice();
 	vdrefptr<IDirect3DTexture9> tex;
-	HRESULT hr = dev->CreateTexture(width, height, 1, 0, D3DFMT_A8R8G8B8, mpManager->IsD3D9ExEnabled() ? D3DPOOL_SYSTEMMEM : D3DPOOL_MANAGED, ~tex, nullptr);
-	if (hr != D3D_OK)
-		throw VDD3D9Exception(hr);
+	uint32 width = 0;
+	uint32 height = 0;
+	HRESULT hr;
+	if (g_pVDDisplayImageDecoder && !memcmp(header, kPNGHeader, 8)) {
+		VDPixmapBuffer buf;
+		bs.Seek(0);
+		if (!g_pVDDisplayImageDecoder->DecodeImage(buf, bs))
+			throw MyError("Unsupported image format: %s", name);
 
-	D3DLOCKED_RECT lr;
-	hr = tex->LockRect(0, &lr, nullptr, 0);
-	if (hr != D3D_OK)
-		throw VDD3D9Exception(hr);
+		width = buf.w;
+		height = buf.h;
 
-	const void *src0 = rawBuffer.data();
-	ptrdiff_t srcModulo = 0;
+		hr = dev->CreateTexture(width, height, 1, 0, D3DFMT_A8R8G8B8, mpManager->IsD3D9ExEnabled() ? D3DPOOL_SYSTEMMEM : D3DPOOL_MANAGED, ~tex, nullptr);
+		if (hr != D3D_OK)
+			throw VDD3D9Exception(hr);
 
-	if (!(header[17] & 0x20)) {
-		src0 = (const char *)src0 + width * bpp * (height - 1);
-		srcModulo = 0 - 2*width*bpp;
-	}
+		D3DLOCKED_RECT lr;
+		hr = tex->LockRect(0, &lr, nullptr, 0);
+		if (hr != D3D_OK)
+			throw VDD3D9Exception(hr);
 
-	try {
-		if (bpp == 3) {
-			const uint8 *src = (const uint8 *)src0;
-			uint8 *dstRow = (uint8 *)lr.pBits;
+		VDPixmap pxdst {};
+		pxdst.format = nsVDPixmap::kPixFormat_XRGB8888;
+		pxdst.w = width;
+		pxdst.h = height;
+		pxdst.pitch = lr.Pitch;
+		pxdst.data = lr.pBits;
+		VDPixmapBlt(pxdst, buf);
 
-			for(uint32 y=0; y<height; ++y) {
-				uint8 *dst = dstRow;
-				dstRow += lr.Pitch;
+		tex->UnlockRect(0);
+	} else {
+		// load as TARGA
+		const uint8 idSize = header[0];
+		const uint8 dataType = header[2];
+		const uint32 width = VDReadUnalignedLEU16(&header[12]);
+		const uint32 height = VDReadUnalignedLEU16(&header[14]);
+		const uint8 imagePixelSize = header[16];
+		const uint8 imageAlphaBits = header[17] & 15;
 
-				for(uint32 x=0; x<width; ++x) {
-					dst[0] = src[0];
-					dst[1] = src[1];
-					dst[2] = src[2];
-					dst[3] = (uint8)0xFF;
-					dst += 4;
-					src += 3;
+		if (!width || !height || width > 16384 || height > 16384 || (width & (width - 1)) || (height & (height - 1)))
+			throw MyError("Unsupported TARGA image size: %ux%u", width, height);
+
+		uint32 bpp;
+		if ((dataType == 2 || dataType == 10) && imagePixelSize == 24 && imageAlphaBits == 0) {
+			bpp = 3;
+		} else if ((dataType == 2 || dataType == 10) && imagePixelSize == 32 && imageAlphaBits == 0) {
+			bpp = 4;
+		} else if ((dataType == 2 || dataType == 10) && imagePixelSize == 32 && imageAlphaBits == 8) {
+			bpp = 4;
+		} else
+			throw MyError("TARGA image must be 24-bit or 32-bit.");
+
+		// read image raw buffer
+		vdblock<uint8> rawBuffer;
+	
+		if (dataType == 10)
+			rawBuffer.resize(std::min<uint32>(bpp * width * height * 2, (uint32)(fs.size() - (18 + idSize))));
+		else
+			rawBuffer.resize(bpp * width * height);
+
+		bs.Seek(18 + idSize);
+		bs.Read(rawBuffer.data(), (sint32)rawBuffer.size());
+
+		// read/decompress image
+		class DecompressionException : public MyError {
+		public:
+			DecompressionException() : MyError("TARGA decompression error.") {}
+		};
+
+		if (dataType == 10) {
+			vdblock<uint8> decompBuffer(bpp * width * height);
+
+			const uint8 *src = rawBuffer.data();
+			const uint8 *srcEnd = src + rawBuffer.size();
+			uint8 *dst = decompBuffer.data();
+			uint8 *dstEnd = dst + decompBuffer.size();
+
+			while(dstEnd != dst) {
+				if ((size_t)(srcEnd - src) < bpp + 1)
+					throw DecompressionException();
+
+				const uint8 code = *src++;
+				const uint32 rawcnt = (uint32)(code & 0x7F) + 1;
+				const uint32 rawlen = rawcnt * bpp;
+				if ((size_t)(dstEnd - dst) < rawlen)
+					throw DecompressionException();
+
+				if (code & 0x80) {
+					uint8 c0 = *src++;
+					uint8 c1 = *src++;
+					uint8 c2 = *src++;
+					if (bpp == 3) {
+						for(uint32 i=0; i<rawcnt; ++i) {
+							*dst++ = c0;
+							*dst++ = c1;
+							*dst++ = c2;
+						}
+					} else {
+						uint8 c3 = *src++;
+
+						for(uint32 i=0; i<rawcnt; ++i) {
+							*dst++ = c0;
+							*dst++ = c1;
+							*dst++ = c2;
+							*dst++ = c3;
+						}
+					}
+				} else {
+					if ((size_t)(srcEnd - src) < rawlen)
+						throw DecompressionException();
+
+					memcpy(dst, src, rawlen);
+					dst += rawlen;
+					src += rawlen;
 				}
-
-				src += srcModulo;
 			}
-		} else if (bpp == 4) {
-			if (imageAlphaBits == 0) {
-				const uint32 *src = (const uint32 *)src0;
-				uint32 *dstRow = (uint32 *)lr.pBits;
+
+			rawBuffer.swap(decompBuffer);
+		}
+
+		// allocate texture
+		hr = dev->CreateTexture(width, height, 1, 0, D3DFMT_A8R8G8B8, mpManager->IsD3D9ExEnabled() ? D3DPOOL_SYSTEMMEM : D3DPOOL_MANAGED, ~tex, nullptr);
+		if (hr != D3D_OK)
+			throw VDD3D9Exception(hr);
+
+		D3DLOCKED_RECT lr;
+		hr = tex->LockRect(0, &lr, nullptr, 0);
+		if (hr != D3D_OK)
+			throw VDD3D9Exception(hr);
+
+		const void *src0 = rawBuffer.data();
+		ptrdiff_t srcModulo = 0;
+
+		if (!(header[17] & 0x20)) {
+			src0 = (const char *)src0 + width * bpp * (height - 1);
+			srcModulo = 0 - 2*width*bpp;
+		}
+
+		try {
+			if (bpp == 3) {
+				const uint8 *src = (const uint8 *)src0;
+				uint8 *dstRow = (uint8 *)lr.pBits;
 
 				for(uint32 y=0; y<height; ++y) {
-					uint32 *dst = dstRow;
-					dstRow = (uint32 *)((char *)dstRow + lr.Pitch);
+					uint8 *dst = dstRow;
+					dstRow += lr.Pitch;
 
 					for(uint32 x=0; x<width; ++x) {
-						dst[x] = src[x] | UINT32_C(0xFF000000);
+						dst[0] = src[0];
+						dst[1] = src[1];
+						dst[2] = src[2];
+						dst[3] = (uint8)0xFF;
+						dst += 4;
+						src += 3;
 					}
 
-					src = (const uint32 *)((const char *)(src + width) + srcModulo);
-				}				
-			} else
-				VDMemcpyRect(lr.pBits, lr.Pitch, rawBuffer.data(), width*4, width*4, height);
-		}
-	} catch(...) {
-		tex->UnlockRect(0);
-		throw;
-	}
+					src += srcModulo;
+				}
+			} else if (bpp == 4) {
+				if (imageAlphaBits == 0) {
+					const uint32 *src = (const uint32 *)src0;
+					uint32 *dstRow = (uint32 *)lr.pBits;
 
-	tex->UnlockRect(0);
+					for(uint32 y=0; y<height; ++y) {
+						uint32 *dst = dstRow;
+						dstRow = (uint32 *)((char *)dstRow + lr.Pitch);
+
+						for(uint32 x=0; x<width; ++x) {
+							dst[x] = src[x] | UINT32_C(0xFF000000);
+						}
+
+						src = (const uint32 *)((const char *)(src + width) + srcModulo);
+					}				
+				} else
+					VDMemcpyRect(lr.pBits, lr.Pitch, rawBuffer.data(), width*4, width*4, height);
+			}
+		} catch(...) {
+			tex->UnlockRect(0);
+			throw;
+		}
+
+		tex->UnlockRect(0);
+	}
 
 	if (mpManager->IsD3D9ExEnabled()) {
 		vdrefptr<IDirect3DTexture9> tex2;

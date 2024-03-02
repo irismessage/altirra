@@ -33,6 +33,7 @@
 #include <at/atdebugger/target.h>
 #include <at/atcore/scheduler.h>
 #include "fdc.h"
+#include "diskdrivefullbase.h"
 #include "diskinterface.h"
 #include "audiorawsource.h"
 
@@ -79,6 +80,7 @@ public:		// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
 	bool IsWritableFirmwareDirty(uint32 idx) const override;
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
+	bool IsUsableFirmwareLoaded() const override;
 
 public:		// IATDeviceDiskDrive
 	void InitDiskDrive(IATDiskDriveManager *ddm) override;
@@ -87,7 +89,7 @@ public:		// ATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
 
 public:		// IATDeviceAudioOutput
-	void InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) override;
+	void InitAudioOutput(IATAudioMixer *mixer) override;
 
 public:		// IATDeviceButtons
 	uint32 GetSupportedButtons() const;
@@ -200,7 +202,6 @@ protected:
 	ATDiskInterface *mpDiskInterface = nullptr;
 
 	ATFirmwareManager *mpFwMgr = nullptr;
-	ATAudioSyncMixer *mpAudioSyncMixer = nullptr;
 
 	static constexpr uint32 kClockDivisorNTSC = 229;
 	static constexpr uint32 kClockDivisorPAL = 227;
@@ -239,11 +240,11 @@ protected:
 
 	uint32 mClockDivisor = 0;
 
+	bool mbFirmwareUsable = false;
 	bool mbSoundsEnabled = false;
 	bool mbForcedIndexPulse = false;
 	bool mbMotorRunning = false;
 	bool mbExtendedRAMEnabled = false;
-	uint32 mRotationSoundId = 0;
 	uint32 mLastStepSoundTime = 0;
 	uint32 mLastStepPhase = 0;
 	uint8 mDiskChangeState = 0;
@@ -261,6 +262,7 @@ protected:
 
 	ATScheduler mDriveScheduler;
 
+	ATDiskDriveAudioPlayer mAudioPlayer;
 	ATAudioRawSource mAudioRawSource;
 
 	ATFDCEmulator mFDC;

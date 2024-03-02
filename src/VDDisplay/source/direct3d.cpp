@@ -654,8 +654,8 @@ bool VDD3D9Manager::Init() {
 		wc.hInstance		= hInst;
 		wc.lpfnWndProc		= StaticDeviceWndProc;
 
-		char buf[64];
-		sprintf(buf, "RizaD3DDeviceWindow_%p", this);
+		wchar_t buf[64];
+		swprintf(buf, vdcountof(buf), L"RizaD3DDeviceWindow_%p", this);
 		wc.lpszClassName	= buf;
 		wc.lpszMenuName		= NULL;
 		wc.style			= 0;
@@ -667,7 +667,7 @@ bool VDD3D9Manager::Init() {
 
 	mThreadID = VDGetCurrentThreadID();
 
-	mhwndDevice = CreateWindow(MAKEINTATOM(mDevWndClass), "", WS_POPUP, 0, 0, 0, 0, NULL, NULL, hInst, this);
+	mhwndDevice = CreateWindow(MAKEINTATOM(mDevWndClass), L"", WS_POPUP, 0, 0, 0, 0, NULL, NULL, hInst, this);
 	if (!mhwndDevice) {
 		Shutdown();
 		return false;
@@ -854,6 +854,19 @@ bool VDD3D9Manager::Init() {
 		Shutdown();
 		return false;
 	}
+
+	VDDEBUG_D3D("VideoDisplay/DX9: Successfully created Direct3D 9%s device.", mpD3DEx ? "Ex" : "");
+	VDDEBUG_D3D("Device: %s (%s)", mAdapterIdentifier.Driver, mAdapterIdentifier.Description);
+	VDDEBUG_D3D("DeviceCaps: VS%u.%u, PS%u.%u, MaxTex %ux%u, ReadScanline %s, %s"
+		, (mDevCaps.VertexShaderVersion >> 8) & 0xFF
+		, mDevCaps.VertexShaderVersion & 0xFF
+		, (mDevCaps.PixelShaderVersion >> 8) & 0xFF
+		, mDevCaps.PixelShaderVersion & 0xFF
+		, mDevCaps.MaxTextureWidth
+		, mDevCaps.MaxTextureHeight
+		, mDevCaps.Caps & D3DCAPS_READ_SCANLINE ? "Yes" : "No"
+		, mDevCaps.DevCaps & D3DDEVCAPS_HWTRANSFORMANDLIGHT ? "HWVP" : "SWVP"
+	);
 
 	// Check for Virge/Rage Pro/Riva128
 	if (Is3DCardLame()) {
@@ -1733,8 +1746,10 @@ HRESULT VDD3D9Manager::Present(const RECT *src, HWND hwndDest, bool vsync, float
 				syncdelta -= 1.0f;
 
 			hr = mpD3DDevice->Present(src, NULL, hwndDest, NULL);
-			if (FAILED(hr))
+			if (FAILED(hr)) {
+				VDDEBUG_D3D("VideoDisplay/DX9: Present() failed (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 				return hr;
+			}
 
 			D3DRASTER_STATUS rastStatus2;
 			hr = mpD3DDevice->GetRasterStatus(0, &rastStatus2);
@@ -1750,12 +1765,18 @@ HRESULT VDD3D9Manager::Present(const RECT *src, HWND hwndDest, bool vsync, float
 
 					history.mPresentDelay += (delta - history.mPresentDelay) * 0.01f;
 				}
+			} else {
+				VDDEBUG_D3D("VideoDisplay/DX9: GetRasterStatus() failed (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 			}
 		}
 	} else {
 		syncdelta = 0.0f;
 
 		hr = mpD3DDevice->Present(src, NULL, hwndDest, NULL);
+
+		if (FAILED(hr)) {
+			VDDEBUG_D3D("VideoDisplay/DX9: Present() failed (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
+		}
 	}
 
 	return hr;
@@ -1777,8 +1798,13 @@ HRESULT VDD3D9Manager::PresentFullScreen(bool wait) {
 	for(;;) {
 		hr = pSwapChain->Present(NULL, NULL, NULL, NULL, D3DPRESENT_DONOTWAIT);
 
-		if (SUCCEEDED(hr) || hr != D3DERR_WASSTILLDRAWING)
+		if (SUCCEEDED(hr) || hr != D3DERR_WASSTILLDRAWING) {
+			if (FAILED(hr)) {
+				VDDEBUG_D3D("VideoDisplay/DX9: Present() failed (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
+			}
+
 			break;
+		}
 
 		if (!wait) {
 			pSwapChain->Release();
@@ -1789,16 +1815,6 @@ HRESULT VDD3D9Manager::PresentFullScreen(bool wait) {
 	}
 
 	mFSFence = InsertFence();
-
-	// record raster status and time of this present
-	mLastPresentTime = VDGetAccurateTick();
-	mLastPresentScanLine = 0;
-	if (mDevCaps.Caps & D3DCAPS_READ_SCANLINE) {
-		D3DRASTER_STATUS rastStatus;
-		hr = mpD3DDevice->GetRasterStatus(0, &rastStatus);
-		if (SUCCEEDED(hr) && !rastStatus.InVBlank)
-			mLastPresentScanLine = rastStatus.InVBlank;
-	}
 
 	pSwapChain->Release();
 
@@ -1978,6 +1994,10 @@ HRESULT VDD3D9Manager::PresentSwapChain(IVDD3D9SwapChain *pSwapChain, const RECT
 			::Sleep(1);
 		}
 
+		if (FAILED(hr)) {
+			VDDEBUG_D3D("VideoDisplay/DX9: Present() failed (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
+		}
+
 		history.mAveragePresentTime += ((VDGetPreciseTick() - history.mPresentStartTime)*VDGetPreciseSecondsPerTick() - history.mAveragePresentTime) * 0.01f;
 		history.mbPresentPending = false;
 		return hr;
@@ -2055,8 +2075,10 @@ HRESULT VDD3D9Manager::PresentSwapChain(IVDD3D9SwapChain *pSwapChain, const RECT
 
 		D3DRASTER_STATUS rastStatus;
 		hr = pD3DSwapChain->GetRasterStatus(&rastStatus);
-		if (FAILED(hr))
+		if (FAILED(hr)) {
+			VDDEBUG_D3D("VideoDisplay/DX9: GetRasterStatus() failed (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 			return hr;
+		}
 
 		if (rastStatus.InVBlank)
 			rastStatus.ScanLine = 0;
@@ -2105,8 +2127,10 @@ HRESULT VDD3D9Manager::PresentSwapChain(IVDD3D9SwapChain *pSwapChain, const RECT
 		hr = pD3DSwapChain->Present(srcRect, NULL, hwndDest, NULL, 0);
 
 	history.mbPresentPending = false;
-	if (FAILED(hr))
+	if (FAILED(hr)) {
+		VDDEBUG_D3D("VideoDisplay/DX9: Present() failed (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 		return hr;
+	}
 
 	history.mAverageEndScanline += ((float)history.mLastScanline - history.mAverageEndScanline) * 0.01f;
 	history.mAveragePresentTime += ((VDGetPreciseTick() - history.mPresentStartTime)*VDGetPreciseSecondsPerTick() - history.mAveragePresentTime) * 0.01f;
@@ -2167,6 +2191,8 @@ HRESULT VDD3D9Manager::PresentSwapChain(IVDD3D9SwapChain *pSwapChain, const RECT
 
 			history.mPresentDelay += (delta - history.mPresentDelay) * 0.01f;
 		}
+	} else {
+		VDDEBUG_D3D("VideoDisplay/DX9: GetRasterStatus() failed (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 	}
 
 	return hr;

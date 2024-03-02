@@ -67,7 +67,7 @@ public:
 	void DetachTarget(uint32 targetIndex);
 
 	void GetAll(ATBreakpointIndices& indices) const;
-	void GetAtPC(uint32 pc, ATBreakpointIndices& indices) const;
+	void GetAtPC(uint32 targetIndex, uint32 pc, ATBreakpointIndices& indices) const;
 	void GetAtAccessAddress(uint32 addr, ATBreakpointIndices& indices) const;
 	bool GetInfo(uint32 idx, ATBreakpointInfo& info) const;
 
@@ -80,7 +80,7 @@ public:
 
 	VDEvent<ATBreakpointManager, ATBreakpointEvent *>& OnBreakpointHit() { return mEventBreakpointHit; }
 
-	inline int TestPCBreakpoint(uint32 pc);
+	inline int TestPCBreakpoint(uint32 targetIndex, uint32 pc);
 
 protected:
 	typedef ATBreakpointIndices BreakpointIndices;
@@ -102,6 +102,7 @@ protected:
 	};
 
 	struct BreakpointEntry {
+		uint32	mTargetIndex;
 		uint32	mAddress;
 		uint8	mType;
 	};
@@ -141,7 +142,7 @@ protected:
 	void UnregisterAccessPage(uint32 address, bool read, bool write);
 
 	void OnTargetPCBreakpoint(int code);
-	int CheckPCBreakpoints(uint32 pc, const BreakpointIndices *bps);	
+	int CheckPCBreakpoints(uint32 targetIndex, uint32 pc, const BreakpointIndices *bps);	
 	static sint32 OnAccessTrapRead(void *thisptr, uint32 addr);
 	static bool OnAccessTrapWrite(void *thisptr, uint32 addr, uint8 value);
 
@@ -157,7 +158,7 @@ protected:
 	vdvector<vdfastvector<uint32>> mInsnBreakpoints;
 
 	typedef vdhashmap<uint32, BreakpointIndices> BreakpointsByAddress;
-	BreakpointsByAddress mCPUBreakpoints;
+	vdvector<BreakpointsByAddress> mCPUBreakpoints;
 	BreakpointsByAddress mAccessBreakpoints;
 
 	typedef vdfastvector<BreakpointRangeEntry> AccessRangeBreakpoints;
@@ -184,16 +185,17 @@ protected:
 	uint8 mAttrib[0x10000];
 };
 
-inline int ATBreakpointManager::TestPCBreakpoint(uint32 bpc) {
-	BreakpointsByAddress::const_iterator it(mCPUBreakpoints.find(bpc & 0xFF00FFFF));
-	if (it == mCPUBreakpoints.end()) {
-		if (mInsnBreakpoints[bpc >> 24].empty())
+inline int ATBreakpointManager::TestPCBreakpoint(uint32 targetIndex, uint32 bpc) {
+	const BreakpointsByAddress& bps = mCPUBreakpoints[targetIndex];
+	BreakpointsByAddress::const_iterator it(bps.find((uint16)bpc));
+	if (it == bps.end()) {
+		if (mInsnBreakpoints[targetIndex].empty())
 			return 0;
 
-		return CheckPCBreakpoints(bpc, nullptr);
+		return CheckPCBreakpoints(targetIndex, bpc, nullptr);
 	}
 
-	return CheckPCBreakpoints(bpc, &it->second);
+	return CheckPCBreakpoints(targetIndex, bpc, &it->second);
 }
 
 #endif	// f_AT_BKPTMANAGER_H

@@ -33,6 +33,10 @@ class ATSimulatorEventManager;
 struct ATTraceContext;
 class ATTraceChannelSimple;
 
+#ifdef VD_COMPILER_MSVC
+#pragma runtime_checks("scu", off)
+#endif
+
 class ATAnticEmulatorConnections {
 public:
 	VDFORCEINLINE uint8 AnticReadByteFast(uint32 address) {
@@ -113,6 +117,14 @@ public:
 
 	const DLHistoryEntry *GetDLHistory() const { return mDLHistory; }
 	const uint8 *GetActivityMap() const { return mActivityMap[0]; }
+
+	bool IsDisplayListEnabled() const {
+		return (mDMACTL & 0x20) != 0;
+	}
+
+	uint16 GetDisplayListPtr() const {
+		return mDLIST;
+	}
 
 	void Init(ATAnticEmulatorConnections *conn, ATGTIAEmulator *gtia, ATScheduler *sch, ATSimulatorEventManager *simevmgr);
 	void ColdReset();
@@ -538,5 +550,9 @@ VDFORCEINLINE void ATAnticEmulator::PostAdvance(uint8 fetchMode) {
 
 	mHaltedCycles += busActive;
 }
+
+#ifdef VD_COMPILER_MSVC
+#pragma runtime_checks("scu", restore)
+#endif
 
 #endif

@@ -35,12 +35,15 @@
 #include <at/atcore/vfs.h>
 #include <at/atio/diskfs.h>
 #include <at/atio/diskfsutil.h>
+#include <at/atio/diskimage.h>
 #include <at/atio/image.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/dragdrop.h>
+#include <at/atnativeui/messageloop.h>
 #include "resource.h"
 #include "disk.h"
 #include "simulator.h"
+#include "uiaccessors.h"
 #include "uifilefilters.h"
 #include "options.h"
 #include "oshelper.h"
@@ -133,8 +136,10 @@ void ATNewDiskDialog::OnDataExchange(bool write) {
 		mSectorSize = 128;
 		if (IsButtonChecked(IDC_SECTOR_SIZE_256))
 			mSectorSize = 256;
-		else if (IsButtonChecked(IDC_SECTOR_SIZE_512))
+		else if (IsButtonChecked(IDC_SECTOR_SIZE_512)) {
 			mSectorSize = 512;
+			mBootSectorCount = 0;
+		}
 
 		bool supported = false;
 		switch(CBGetSelectedIndex(IDC_FILESYSTEM)) {
@@ -229,6 +234,9 @@ bool ATNewDiskDialog::OnCommand(uint32 id, uint32 extcode) {
 				OnDataExchange(false);
 			}
 		}
+	} else if ((id == IDC_SECTOR_SIZE_128 || id == IDC_SECTOR_SIZE_256 || id == IDC_SECTOR_SIZE_512)
+		&& extcode == BN_CLICKED) {
+		UpdateEnables();
 	}
 
 	return false;
@@ -241,7 +249,7 @@ void ATNewDiskDialog::UpdateEnables() {
 	EnableControl(IDC_SECTOR_SIZE_256, custom);
 	EnableControl(IDC_SECTOR_SIZE_512, custom);
 	EnableControl(IDC_SECTOR_COUNT, custom);
-	EnableControl(IDC_BOOT_SECTOR_COUNT, custom);
+	EnableControl(IDC_BOOT_SECTOR_COUNT, custom && !IsButtonChecked(IDC_SECTOR_SIZE_512));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -554,10 +562,11 @@ public:
 	ATDiskDriveDialog();
 	~ATDiskDriveDialog();
 
-	bool OnLoaded();
-	void OnDestroy();
-	void OnDataExchange(bool write);
-	bool OnCommand(uint32 id, uint32 extcode);
+	bool OnLoaded() override;
+	void OnDestroy() override;
+	void OnEnable(bool enable) override;
+	void OnDataExchange(bool write) override;
+	bool OnCommand(uint32 id, uint32 extcode) override;
 
 public:
 	int FindDropTarget(sint32 x, sint32 y) const override;
@@ -567,25 +576,48 @@ public:
 protected:
 	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) override;
 	void OnDpiChanged() override;
+	bool PreNCDestroy() override;
+
+	void AttachToInterfaces();
+	void DetachFromInterfaces();
 	void UpdateFonts();
 	void UpdateActionButtons();
-	void RefreshDriveColor(int driveIndex);
+	void RefreshDrive(int driveIndex, bool forceViewUpdate = false);
+	void RefreshDriveColor(int driveIndex, bool forceViewUpdate = false);
+	void Eject(int driveIndex);
 	bool ConfirmEject(int driveIndex);
+	void Reinterleave(ATDiskInterface& diskIf, ATDiskInterleave interleave);
+	void Convert(ATDiskInterface& diskIf, ATDiskFormatFileSystem ffs, uint32 sectorSize);
+
+	int GetVisibleDriveOffset(int driveIndex) const;
 	
+	enum DriveColor {
+		kDriveColor_Default,
+		kDriveColor_Dirty,
+		kDriveColor_Virtual,
+		kDriveColor_VirtualFolder,
+		kDriveColor_Highlighted,
+		kDriveColorCount
+	};
+
+	struct DriveEntry {
+		VDStringW mPath;
+		DriveColor mColor = kDriveColor_Default;
+		ATMediaWriteMode mWriteMode = {};
+		vdfunction<void()> mUpdateFn;
+	};
+
 	bool mbHighDrives = false;
 	int mSelectedDrive = -1;
 	int mHighlightedDrive = -1;
 	bool mbSwapMode = false;
-	HBRUSH mDirtyDiskBrush = nullptr;
-	HBRUSH mVirtualDiskBrush = nullptr;
-	HBRUSH mVirtualFolderBrush = nullptr;
-	HBRUSH mHighlightedBrush = nullptr;
+	uint32 mInDriveUpdateCount = 0;
+	HBRUSH mDriveColorBrushes[kDriveColorCount] {};
 	HICON mhEjectIcon = nullptr;
 	HFONT mhFontMarlett = nullptr;
-	COLORREF mDirtyDiskColor = 0;
-	COLORREF mVirtualDiskColor = 0;
-	COLORREF mVirtualFolderColor = 0;
-	COLORREF mHighlightedColor = 0;
+	COLORREF mDriveColors[kDriveColorCount] {};
+
+	DriveEntry mDriveEntries[15];
 
 	vdrefptr<ATDiskDriveDropTargetW32> mpDropTarget;
 
@@ -596,6 +628,8 @@ protected:
 		const wchar_t *mpLabel;
 	} kEmuModes[];
 };
+
+ATDiskDriveDialog *g_pATDiskDriveDialog;
 
 const ATDiskDriveDialog::EmulationModeEntry ATDiskDriveDialog::kEmuModes[] = {
 	{ kATDiskEmulationMode_Generic, L"Generic emulation (288 RPM)" },
@@ -616,9 +650,13 @@ ATDiskDriveDialog::ATDiskDriveDialog()
 	: VDResizableDialogFrameW32(IDD_DISK_DRIVES)
 {
 	mpDropTarget = new ATDiskDriveDropTargetW32(mhdlg, this);
+
+	g_pATDiskDriveDialog = this;
 }
 
 ATDiskDriveDialog::~ATDiskDriveDialog() {
+	g_pATDiskDriveDialog = nullptr;
+
 	if (mhEjectIcon)
 		DeleteObject(mhEjectIcon);
 
@@ -695,6 +733,9 @@ namespace {
 }
 
 bool ATDiskDriveDialog::OnLoaded() {
+	if (!mbIsModal)
+		ATUIRegisterModelessDialog(mhwnd);
+
 	for(uint32 id : kMoreIds)
 		mResizer.Add(id, mResizer.kTR | mResizer.kSuppressFontChange);
 
@@ -731,7 +772,7 @@ bool ATDiskDriveDialog::OnLoaded() {
 
 	UpdateFonts();
 
-	if (!mDirtyDiskBrush) {
+	if (!mDriveColors[kDriveColor_Dirty]) {
 		DWORD c = GetSysColor(COLOR_3DFACE);
 
 		// redden the color
@@ -739,11 +780,11 @@ bool ATDiskDriveDialog::OnLoaded() {
 
 		c = (c|d) - (((c^d) & 0xfefefe)>>1);
 
-		mDirtyDiskBrush = CreateSolidBrush(c);
-		mDirtyDiskColor = c;
+		mDriveColorBrushes[kDriveColor_Dirty] = CreateSolidBrush(c);
+		mDriveColors[kDriveColor_Dirty] = c;
 	}
 
-	if (!mVirtualDiskBrush) {
+	if (!mDriveColors[kDriveColor_Virtual]) {
 		DWORD c = GetSysColor(COLOR_3DFACE);
 
 		// bluify the color
@@ -751,11 +792,11 @@ bool ATDiskDriveDialog::OnLoaded() {
 
 		c = (c|d) - (((c^d) & 0xfefefe)>>1);
 
-		mVirtualDiskBrush = CreateSolidBrush(c);
-		mVirtualDiskColor = c;
+		mDriveColorBrushes[kDriveColor_Virtual] = CreateSolidBrush(c);
+		mDriveColors[kDriveColor_Virtual] = c;
 	}
 
-	if (!mVirtualFolderBrush) {
+	if (!mDriveColors[kDriveColor_VirtualFolder]) {
 		DWORD c = GetSysColor(COLOR_3DFACE);
 
 		// yellowify the color
@@ -763,13 +804,13 @@ bool ATDiskDriveDialog::OnLoaded() {
 
 		c = (c|d) - (((c^d) & 0xfefefe)>>1);
 
-		mVirtualFolderBrush = CreateSolidBrush(c);
-		mVirtualFolderColor = c;
+		mDriveColorBrushes[kDriveColor_VirtualFolder] = CreateSolidBrush(c);
+		mDriveColors[kDriveColor_VirtualFolder] = c;
 	}
 
-	if (!mHighlightedBrush) {
-		mHighlightedBrush = (HBRUSH)GetStockObject(WHITE_BRUSH);
-		mHighlightedColor = RGB(255, 255, 255);
+	if (!mDriveColors[kDriveColor_Highlighted]) {
+		mDriveColorBrushes[kDriveColor_Highlighted] = (HBRUSH)GetStockObject(WHITE_BRUSH);
+		mDriveColors[kDriveColor_Highlighted] = RGB(255, 255, 255);
 	}
 
 	for(int i=0; i<8; ++i) {
@@ -801,10 +842,14 @@ bool ATDiskDriveDialog::OnLoaded() {
 
 	RegisterDragDrop(mhdlg, mpDropTarget);
 
+	AttachToInterfaces();
+
 	return VDDialogFrameW32::OnLoaded();
 }
 
 void ATDiskDriveDialog::OnDestroy() {
+	DetachFromInterfaces();
+
 	ATUISaveWindowPlacement(mhdlg, "Disk drives");
 
 	if (mpDropTarget) {
@@ -814,25 +859,20 @@ void ATDiskDriveDialog::OnDestroy() {
 
 	RevokeDragDrop(mhdlg);
 
-	if (mDirtyDiskBrush) {
-		DeleteObject(mDirtyDiskBrush);
-		mDirtyDiskBrush = NULL;
+	for(HBRUSH& hbr : mDriveColorBrushes) {
+		if (hbr) {
+			DeleteObject(hbr);
+			hbr = nullptr;
+		}
 	}
 
-	if (mVirtualDiskBrush) {
-		DeleteObject(mVirtualDiskBrush);
-		mVirtualDiskBrush = NULL;
-	}
+	if (!mbIsModal)
+		ATUIRegisterModelessDialog(mhwnd);
+}
 
-	if (mVirtualFolderBrush) {
-		DeleteObject(mVirtualFolderBrush);
-		mVirtualFolderBrush = NULL;
-	}
-
-	if (mHighlightedBrush) {
-		DeleteObject(mHighlightedBrush);
-		mHighlightedBrush = NULL;
-	}
+void ATDiskDriveDialog::OnEnable(bool enable) {
+	if (!mbIsModal)
+		ATUISetGlobalEnableState(enable);
 }
 
 void ATDiskDriveDialog::OnDataExchange(bool write) {
@@ -862,19 +902,7 @@ void ATDiskDriveDialog::OnDataExchange(bool write) {
 			else
 				SetControlTextF(kDriveLabelID[i], L"D1&%c:", '0' + (driveIdx - 9));
 
-			ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIdx);
-			ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveIdx);
-			SetControlText(kDiskPathID[i], diskIf.GetPath());
-
-			const auto writeMode = diskIf.GetWriteMode();
-
-			CBSetSelectedIndex(kWriteModeID[i],
-				!disk.IsEnabled() && diskIf.GetClientCount() < 2
-				? 0
-				: (writeMode & kATMediaWriteMode_AllowWrite)
-					? (writeMode & kATMediaWriteMode_AutoFlush) ? 4
-						: (writeMode & kATMediaWriteMode_AllowFormat) ? 3 : 2
-					: 1);
+			RefreshDrive(driveIdx, true);
 		}
 
 		UpdateActionButtons();
@@ -907,18 +935,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 				if (mbHighDrives)
 					driveIndex += 8;
 
-				ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveIndex);
-				ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
-
-				if (diskIf.IsDiskLoaded()) {
-					if (ConfirmEject(driveIndex)) {
-						diskIf.UnloadDisk();
-						SetControlText(kDiskPathID[index], L"");
-					}
-				} else {
-					disk.SetEnabled(false);
-					CBSetSelectedIndex(kWriteModeID[index], 0);
-				}
+				Eject(driveIndex);
 			}
 			return true;
 
@@ -995,6 +1012,9 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 				int driveIndex = index;
 				if (mbHighDrives)
 					driveIndex += 8;
+				
+				ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
+				ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveIndex);
 
 				UINT selectedId = 0;
 
@@ -1007,6 +1027,12 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 						if (HWND hwndItem = GetDlgItem(mhdlg, id))
 							GetWindowRect(hwndItem, &r);
 
+						const bool haveDisk = diskIf.IsDiskLoaded();
+						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_SAVEDISK, haveDisk);
+						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_SAVEDISKAS, haveDisk);
+						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_EXPLOREDISK, haveDisk);
+						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_REVERTDISK, haveDisk && diskIf.CanRevert());
+
 						TPMPARAMS params = {sizeof(TPMPARAMS)};
 						params.rcExclude = r;
 						selectedId = (UINT)TrackPopupMenuEx(hsubmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | TPM_NONOTIFY | TPM_RETURNCMD, r.right, r.top, mhdlg, &params);
@@ -1015,14 +1041,11 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 					DestroyMenu(hmenu);
 				}
 
-				ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
-				ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveIndex);
-
 				switch(selectedId) {
 					case ID_CONTEXT_NEWDISK:
 						if (ConfirmEject(driveIndex)) {
 							ATNewDiskDialog dlg;
-							if (dlg.ShowDialog((VDGUIHandle)mhdlg)) {
+							if (dlg.ShowDialog(ATUIGetNewPopupOwner())) {
 								diskIf.UnloadDisk();
 								diskIf.CreateDisk(dlg.GetSectorCount(), dlg.GetBootSectorCount(), dlg.GetSectorSize());
 
@@ -1073,7 +1096,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 							imageName.sprintf(L"Mounted disk on D%u:", driveIndex + 1);
 
 							const auto writeMode = diskIf.GetWriteMode();
-							ATUIShowDialogDiskExplorer((VDGUIHandle)mhdlg, image, imageName.c_str(),
+							ATUIShowDialogDiskExplorer(ATUIGetNewPopupOwner(), image, imageName.c_str(),
 								(writeMode & kATMediaWriteMode_AllowWrite) != 0,
 								(writeMode & kATMediaWriteMode_AutoFlush) != 0);
 
@@ -1144,7 +1167,6 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 								}
 
 								diskIf.SaveDisk();
-								RefreshDriveColor(driveIndex);
 							} catch(const MyError& e) {
 								ShowError(e);
 							}
@@ -1217,6 +1239,11 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 						}
 						break;
 
+					case ID_CONTEXT_REVERTDISK:
+						if (Confirm2("RevertDisk", L"All unsaved changes will be lost.", L"Reverting modified disk"))
+							diskIf.RevertDisk();
+						break;
+
 					case ID_CONTEXT_SWAPWITHANOTHERDRIVE:
 						mSelectedDrive = driveIndex;
 						mbSwapMode = true;
@@ -1237,8 +1264,25 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 									diskIf.SetWriteMode(kATMediaWriteMode_VRWSafe);
 
 								vdautoptr<IATDiskFS> fs(ATDiskMountImage(diskIf.GetDiskImage(), false));
+								if (!fs)
+									throw MyError("The disk image does not have a recognized filesystem.");
+
 								fs->SetAllowExtend(true);
-								uint32 expanded = ATDiskRecursivelyExpandARCs(*fs);
+								uint32 expanded;
+								
+								try {
+									expanded = ATDiskRecursivelyExpandARCs(*fs);
+								} catch(...) {
+									// If we failed, try to put the filesystem in a consistent state
+									// before we bail.
+									try {
+										fs->Flush();
+									} catch(...) {
+									}
+
+									throw;
+								}
+
 								fs->Flush();
 
 								ShowInfo(VDStringW().sprintf(L"Archives expanded: %u", expanded).c_str());
@@ -1249,6 +1293,50 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 							diskIf.OnDiskChanged(true);
 							OnDataExchange(false);
 						}
+						break;
+
+					case ID_CHANGEINTERLEAVE_DEFAULT:		Reinterleave(diskIf, kATDiskInterleave_Default); break;
+					case ID_CHANGEINTERLEAVE_1_1:			Reinterleave(diskIf, kATDiskInterleave_1_1); break;
+					case ID_CHANGEINTERLEAVE_SD_12_1:		Reinterleave(diskIf, kATDiskInterleave_SD_12_1); break;
+					case ID_CHANGEINTERLEAVE_SD_9_1:		Reinterleave(diskIf, kATDiskInterleave_SD_9_1); break;
+					case ID_CHANGEINTERLEAVE_SD_9_1_REV:	Reinterleave(diskIf, kATDiskInterleave_SD_9_1_REV); break;
+					case ID_CHANGEINTERLEAVE_SD_5_1:		Reinterleave(diskIf, kATDiskInterleave_SD_5_1); break;
+					case ID_CHANGEINTERLEAVE_ED_13_1:		Reinterleave(diskIf, kATDiskInterleave_ED_13_1); break;
+					case ID_CHANGEINTERLEAVE_ED_12_1:		Reinterleave(diskIf, kATDiskInterleave_ED_12_1); break;
+					case ID_CHANGEINTERLEAVE_DD_15_1:		Reinterleave(diskIf, kATDiskInterleave_DD_15_1); break;
+					case ID_CHANGEINTERLEAVE_DD_9_1:		Reinterleave(diskIf, kATDiskInterleave_DD_9_1); break;
+					case ID_CHANGEINTERLEAVE_DD_7_1:		Reinterleave(diskIf, kATDiskInterleave_DD_7_1); break;
+
+					case ID_CONVERTTO_DOS1_SD:
+						Convert(diskIf, kATDiskFFS_DOS1, 128);
+						break;
+
+					case ID_CONVERTTO_DOS2_SDED:
+						Convert(diskIf, kATDiskFFS_DOS2, 128);
+						break;
+
+					case ID_CONVERTTO_DOS2_DD:
+						Convert(diskIf, kATDiskFFS_DOS2, 256);
+						break;
+
+					case ID_CONVERTTO_MYDOS_SDED:
+						Convert(diskIf, kATDiskFFS_MyDOS, 128);
+						break;
+
+					case ID_CONVERTTO_MYDOS_DD:
+						Convert(diskIf, kATDiskFFS_MyDOS, 256);
+						break;
+
+					case ID_CONVERTTO_SPARTADOS_SDED:
+						Convert(diskIf, kATDiskFFS_SDFS, 128);
+						break;
+
+					case ID_CONVERTTO_SPARTADOS_DD:
+						Convert(diskIf, kATDiskFFS_SDFS, 256);
+						break;
+
+					case ID_CONVERTTO_SPARTADOS_512:
+						Convert(diskIf, kATDiskFFS_SDFS, 512);
 						break;
 				}
 			}
@@ -1262,7 +1350,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 		case IDC_WRITEMODE3:	++index;
 		case IDC_WRITEMODE2:	++index;
 		case IDC_WRITEMODE1:
-			{
+			if (!mInDriveUpdateCount) {
 				int driveIndex = index;
 				if (mbHighDrives)
 					driveIndex += 8;
@@ -1272,9 +1360,17 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 				ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
 
 				if (mode == 0) {
-					if (ConfirmEject(driveIndex)) {
+					// We may get more than one message -- protect against reentrancy
+					// while the confirmation is up.
+					++mInDriveUpdateCount;
+					bool confirmed = ConfirmEject(driveIndex);
+					--mInDriveUpdateCount;
+
+					if (confirmed) {
 						diskIf.UnloadDisk();
 						disk.SetEnabled(false);
+					} else {
+						RefreshDrive(driveIndex, true);
 					}
 				} else {
 					if (diskIf.GetClientCount() < 2)
@@ -1342,10 +1438,11 @@ int ATDiskDriveDialog::FindDropTarget(sint32 x, sint32 y) const {
 
 void ATDiskDriveDialog::SetDropTargetHighlight(int index) {
 	if (mHighlightedDrive != index) {
-		if (mHighlightedDrive >= 0)
-			RefreshDriveColor(mHighlightedDrive);
-
+		int oldHighlight = mHighlightedDrive;
 		mHighlightedDrive = index;
+
+		if (oldHighlight >= 0)
+			RefreshDriveColor(oldHighlight);
 
 		if (index >= 0)
 			RefreshDriveColor(index);
@@ -1390,25 +1487,10 @@ VDZINT_PTR ATDiskDriveDialog::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM l
 							driveIndex += 8;
 
 						const HDC hdc = (HDC)wParam;
-						if (mHighlightedDrive == driveIndex) {
-							SetBkColor(hdc, mHighlightedColor);
-							return (VDZINT_PTR)mHighlightedBrush;
-						}
 
-						ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveIndex);
-						if (diskIf.IsDirty()) {
-							SetBkColor(hdc, mDirtyDiskColor);
-							return (VDZINT_PTR)mDirtyDiskBrush;
-						} else if (diskIf.IsDiskLoaded()) {
-							const wchar_t *path = diskIf.GetPath();
-							if (path && wcschr(path, L'*')) {
-								SetBkColor(hdc, mVirtualFolderColor);
-								return (VDZINT_PTR)mVirtualFolderBrush;
-							} else if (!diskIf.IsDiskBacked()) {
-								SetBkColor(hdc, mVirtualDiskColor);
-								return (VDZINT_PTR)mVirtualDiskBrush;
-							}
-						}
+						DriveColor dcl = mDriveEntries[driveIndex].mColor;
+						SetBkColor(hdc, mDriveColors[dcl]);
+						return (VDZINT_PTR)mDriveColorBrushes[dcl];
 					}
 					break;
 			}
@@ -1422,6 +1504,30 @@ void ATDiskDriveDialog::OnDpiChanged() {
 	VDResizableDialogFrameW32::OnDpiChanged();
 
 	UpdateFonts();
+}
+
+bool ATDiskDriveDialog::PreNCDestroy() {
+	return !mbIsModal;
+}
+
+void ATDiskDriveDialog::AttachToInterfaces() {
+	for(int i=0; i<15; ++i) {
+		ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
+
+		mDriveEntries[i].mUpdateFn = [i,this] { RefreshDrive(i); };
+		
+		diskIf.AddStateChangeHandler(&mDriveEntries[i].mUpdateFn);
+
+		RefreshDrive(i);
+	}
+}
+
+void ATDiskDriveDialog::DetachFromInterfaces() {
+	for(int i=0; i<15; ++i) {
+		ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
+
+		diskIf.RemoveStateChangeHandler(&mDriveEntries[i].mUpdateFn);
+	}
 }
 
 void ATDiskDriveDialog::UpdateFonts() {
@@ -1478,16 +1584,102 @@ void ATDiskDriveDialog::UpdateActionButtons() {
 	}
 }
 
-void ATDiskDriveDialog::RefreshDriveColor(int driveIndex) {
-	int index = driveIndex;
-	if (mbHighDrives)
-		index -= 8;
+void ATDiskDriveDialog::RefreshDrive(int driveIndex, bool forceViewUpdate) {
+	ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveIndex);
+	DriveEntry& de = mDriveEntries[driveIndex];
+	const wchar_t *path = diskIf.GetPath();
 
-	if ((unsigned)index < 8) {
-		HWND hwndPathControl = GetControl(kDiskPathID[index]);
+	if (!path)
+		path = L"";
 
-		if (hwndPathControl)
-			InvalidateRect(hwndPathControl, NULL, TRUE);
+	const int visIndex = GetVisibleDriveOffset(driveIndex);
+	bool pathChanged = forceViewUpdate;
+
+	if (de.mPath != path) {
+		de.mPath = path;
+		pathChanged = true;
+	}
+
+	if (visIndex >= 0 && pathChanged)
+		SetControlText(kDiskPathID[visIndex], path);
+
+	RefreshDriveColor(driveIndex, forceViewUpdate);
+
+	const auto writeMode = diskIf.GetWriteMode();
+	bool writeModeChanged = forceViewUpdate;
+	if (de.mWriteMode != writeMode) {
+		de.mWriteMode = writeMode;
+
+		writeModeChanged = true;
+	}
+
+	if (visIndex >= 0 && writeModeChanged) {
+		ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
+		int selIndex = 0;
+
+		if (!disk.IsEnabled() && diskIf.GetClientCount() < 2)
+			selIndex = 0;
+		else if (!(writeMode & kATMediaWriteMode_AllowWrite))
+			selIndex = 1;
+		else if (writeMode & kATMediaWriteMode_AutoFlush)
+			selIndex = 4;
+		else if (writeMode & kATMediaWriteMode_AllowFormat)
+			selIndex = 3;
+		else
+			selIndex = 2;
+
+		++mInDriveUpdateCount;
+		CBSetSelectedIndex(kWriteModeID[visIndex], selIndex);
+		--mInDriveUpdateCount;
+	}
+}
+
+void ATDiskDriveDialog::RefreshDriveColor(int driveIndex, bool forceViewUpdate) {
+	ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveIndex);
+	DriveEntry& de = mDriveEntries[driveIndex];
+	DriveColor dcl = kDriveColor_Default;
+
+	if (mHighlightedDrive == driveIndex)
+		dcl = kDriveColor_Highlighted;
+	else if (diskIf.IsDirty())
+		dcl = kDriveColor_Dirty;
+	else if (diskIf.IsDiskLoaded()) {
+		if (de.mPath.find(L'*') != VDStringW::npos)
+			dcl = kDriveColor_VirtualFolder;
+		else if (!diskIf.IsDiskBacked())
+			dcl = kDriveColor_Virtual;
+	}
+
+	bool colorChanged = forceViewUpdate;
+	if (de.mColor != dcl) {
+		de.mColor = dcl;
+		colorChanged = true;
+	}
+
+	if (colorChanged) {
+		int visIndex = GetVisibleDriveOffset(driveIndex);
+		if (visIndex >= 0) {
+			HWND hwndPathControl = GetControl(kDiskPathID[visIndex]);
+
+			if (hwndPathControl)
+				InvalidateRect(hwndPathControl, NULL, TRUE);
+		}
+	}
+}
+
+void ATDiskDriveDialog::Eject(int driveIndex) {
+	ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveIndex);
+	ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
+	int visIndex = GetVisibleDriveOffset(driveIndex);
+
+	if (diskIf.IsDiskLoaded()) {
+		if (ConfirmEject(driveIndex))
+			diskIf.UnloadDisk();
+	} else {
+		disk.SetEnabled(false);
+
+		if (visIndex >= 0)
+			CBSetSelectedIndex(kWriteModeID[visIndex], 0);
 	}
 }
 
@@ -1502,8 +1694,99 @@ bool ATDiskDriveDialog::ConfirmEject(int driveIndex) {
 	return Confirm(message.c_str());
 }
 
+void ATDiskDriveDialog::Reinterleave(ATDiskInterface& diskIf, ATDiskInterleave interleave) {
+	IATDiskImage *img = diskIf.GetDiskImage();
+	if (!img)
+		return;
+
+	if (!img->IsSafeToReinterleave()) {
+		if (!Confirm2("ReinterleaveProtectedDisk", L"This disk image may not work correctly with its sectors reordered. Are you sure?", L"Reinterleaving disk"))
+			return;
+	}
+
+	img->Reinterleave(interleave);
+}
+
+void ATDiskDriveDialog::Convert(ATDiskInterface& diskIf, ATDiskFormatFileSystem ffs, uint32 sectorSize) {
+	IATDiskImage *img = diskIf.GetDiskImage();
+	if (!img)
+		return;
+
+	try {
+		vdautoptr<IATDiskFS> fs(ATDiskMountImage(img, true));
+		vdrefptr<IATDiskImage> newImage;
+		vdautoptr<IATDiskFS> newfs;
+		uint32 diskSize;
+
+		switch(ffs) {
+			case kATDiskFFS_DOS1:
+				diskSize = 720;
+				ATCreateDiskImage(diskSize, 3, sectorSize, ~newImage);
+				newfs = ATDiskFormatImageDOS1(newImage);
+				break;
+
+			case kATDiskFFS_DOS2:
+				diskSize = ATDiskFSEstimateDOS2SectorsNeeded(*fs, sectorSize);
+				ATCreateDiskImage(diskSize, 3, sectorSize, ~newImage);
+				newfs = ATDiskFormatImageDOS2(newImage);
+				break;
+
+			case kATDiskFFS_MyDOS:
+				diskSize = ATDiskFSEstimateMyDOSSectorsNeeded(*fs, sectorSize);
+				ATCreateDiskImage(diskSize, 3, sectorSize, ~newImage);
+				newfs = ATDiskFormatImageMyDOS(newImage);
+				break;
+
+			case kATDiskFFS_SDFS:
+				diskSize = ATDiskFSEstimateSDX2SectorsNeeded(*fs, sectorSize);
+
+				// DD 512 disks do have a boot sector, but it is not a 128-byte special kind
+				// of boot sector.
+				ATCreateDiskImage(diskSize, sectorSize >= 512 ? 0 : 3, sectorSize, ~newImage);
+				newfs = ATDiskFormatImageSDX2(newImage);
+				break;
+
+			default:
+				return;
+		}
+
+		// copy everything over
+		ATDiskFSCopyTree(*newfs, ATDiskFSKey::None, *fs, ATDiskFSKey::None, true);
+
+		// unmount filesystems
+		fs = nullptr;
+
+		newfs->Flush();
+		newfs = nullptr;
+
+		// mount new image
+		VDStringW origName { VDFileSplitPath(diskIf.GetPath()) };
+		diskIf.LoadDisk(nullptr, origName.c_str(), newImage);
+	} catch(const MyError& e) {
+		ShowError(e);
+	}
+}
+
+int ATDiskDriveDialog::GetVisibleDriveOffset(int driveIndex) const {
+	if ((unsigned)driveIndex >= 15)
+		return -1;
+
+	if (mbHighDrives)
+		driveIndex -= 8;
+
+	if ((unsigned)driveIndex >= 8)
+		return -1;
+
+	return driveIndex;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void ATUIShowDiskDriveDialog(VDGUIHandle hParent) {
-	ATDiskDriveDialog().ShowDialog(hParent);
+	if (!g_pATDiskDriveDialog) {
+		g_pATDiskDriveDialog = new ATDiskDriveDialog;
+		g_pATDiskDriveDialog->Create(ATUIGetMainWindow());
+	} else {
+		g_pATDiskDriveDialog->Activate();
+	}
 }

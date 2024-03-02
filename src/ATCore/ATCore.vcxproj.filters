@@ -52,6 +52,12 @@
     <ClCompile Include="source\devicesioimpl.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\notifylist.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\address.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atcore\device.h">
@@ -172,6 +178,15 @@
       <Filter>Interface Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atcore\devicesystemcontrol.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\audiomixer.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\address.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\intrin_neon.h">
       <Filter>Interface Files</Filter>
     </ClInclude>
   </ItemGroup>

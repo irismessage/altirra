@@ -35,27 +35,24 @@ using namespace nsVDPixmapSpanUtils;
 
 namespace {
 	struct YCbCrToRGB {
-		sint16 y_tab[256];
-		sint16 r_cr_tab[256];
-		sint16 b_cb_tab[256];
-		sint16 g_cr_tab[256];
-		sint16 g_cb_tab[256];
-		uint8 cliptab[277+256+279];
-		uint16 cliptab15[277+256+279];
-		uint16 cliptab16[277+256+279];
+		sint16 y_tab[256] {};
+		sint16 r_cr_tab[256] {};
+		sint16 b_cb_tab[256] {};
+		sint16 g_cr_tab[256] {};
+		sint16 g_cb_tab[256] {};
+		uint8 cliptab[277+256+279] {};
+		uint16 cliptab15[277+256+279] {};
+		uint16 cliptab16[277+256+279] {};
 
-		YCbCrToRGB() {
-			int i;
+		constexpr YCbCrToRGB() {
+			for(int i=0; i<279; ++i) {
+				cliptab[277+256+i] = 255;
 
-			memset(cliptab, 0, 277);
-			memset(cliptab+277+256, 255, 279);
+				cliptab15[277+256+i] = 0xff;
+				cliptab16[277+256+i] = 0xff;
+			}
 
-			memset(cliptab15, 0, sizeof cliptab15[0] * 277);
-			memset(cliptab16, 0, sizeof cliptab16[0] * 277);
-			memset(cliptab15+277+256, 0xff, sizeof cliptab15[0] * 279);
-			memset(cliptab16+277+256, 0xff, sizeof cliptab16[0] * 279);
-
-			for(i=0; i<256; ++i) {
+			for(int i=0; i<256; ++i) {
 				y_tab[i] = (sint16)(((i-16) * 76309 + 32768) >> 16);
 				r_cr_tab[i] = (sint16)(((i-128) * 104597 + 32768) >> 16);
 				b_cb_tab[i] = (sint16)(((i-128) * 132201 + 32768) >> 16);
@@ -66,7 +63,9 @@ namespace {
 				cliptab16[i+277] = 0x801 * ((unsigned)i>>3) + 0x20 * ((unsigned)i>>2);
 			}
 		}
-	} colorconv;
+	};
+
+	constexpr YCbCrToRGB colorconv;
 
 	struct YCbCrFormatInfo {
 		ptrdiff_t	ystep;

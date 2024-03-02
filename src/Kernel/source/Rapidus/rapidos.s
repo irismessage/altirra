@@ -20,11 +20,35 @@
 
 		ins		'atarifont.bin'
 
+		org		$E450
+		jmp		dummy
+		jmp		dummy
+		jmp		dummy
+		jmp		dummy
+		jmp		dummy
+		jmp		dummy
+		jmp		dummy
+		jmp		dummy
+		jmp		dummy
+		jmp		dummy
+		jmp		dummy
+		jmp		dummy
+
 		org		$E474
 warmsv	jmp		main
 
 		org		$E477
 coldsv	jmp		main
+
+		org		$E4C0
+		rts
+
+		;Make sure we clear ALL standard OS vectors.
+		org		$E4C1
+
+.proc	dummy
+		rts
+.endp
 
 .proc	main
 		cld

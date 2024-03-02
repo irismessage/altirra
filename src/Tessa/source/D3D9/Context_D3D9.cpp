@@ -2324,7 +2324,7 @@ bool VDDirect3DHolder::Init() {
 	}
 
 	if (!mhwnd) {
-		mhwnd = CreateWindowA(MAKEINTATOM(mWndClass), _T(""), WS_POPUP, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), NULL);
+		mhwnd = CreateWindow(MAKEINTATOM(mWndClass), _T(""), WS_POPUP, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), NULL);
 
 		if (!mhwnd) {
 			Shutdown();

@@ -53,19 +53,24 @@ enum {
 	kATCyclesPerSyncSample = 28
 };
 
-enum ATAudioMix {
-	kATAudioMix_Drive,
-	kATAudioMix_Covox,
-	kATAudioMixCount
-};
-
 struct ATSyncAudioMixInfo {
-	// Start time in machine cycles (NOT samples).
-	uint32 mStartTime;
+	// Start time in machine cycles (NOT samples). This time is guaranteed
+	// to be monotonic but not necessarily continuous -- the mixer is
+	// allowed to drop samples. This is considered a glitch and sources
+	// do not need to produce perfect audio across such discontinuities.
+	uint64 mStartTime;
 
 	// Number of samples to mix. This may vary but is normally about a
 	// frame's worth of samples (~1050-1300).
 	uint32 mCount;
+
+	// Mixing sample frequency in Hz. Note that this is related to actual
+	// playback frequency and is NOT equal to the system clock rate divided
+	// by kATCyclesPerSyncSample. Depending on the frame rate mode it may
+	// be tweaked up and down by a small amount. However, it is not
+	// affected by warp or slow-mo as we handle that by a time shifter.
+	// The mixing rate is nominally around 63.9KHz.
+	float mMixingRate;
 
 	// Mix buffers. Audio must be *added* into these buffers. mpRight is
 	// null if mono mixing is occurring. Because the mix operation is
@@ -95,9 +100,10 @@ public:
 	// _actually_ producing stereo. The mixer calls this on all sources before
 	// calling WriteAudio() on all of them.
 	//
-	// If a source requires stereo mixing, it will receive both left and right
-	// channels. However, a source that does not require stereo mixing may
-	// still be required to do so because another source does.
+	// Starting with Altirra 3.10, audio sources are sorted so that mono
+	// sources are always asked to mix mono and stereo sources are always
+	// asked to mix stereo. A mono source is no longer required to support
+	// mixing into stereo buffers.
 	virtual bool RequiresStereoMixingNow() const = 0;
 
 	// Mix audio into the mixbus.

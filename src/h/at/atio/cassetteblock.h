@@ -39,8 +39,7 @@ public:
 
 	/// Retrieve audio sync samples.
 	///
-	/// dstLeft: Auto-incremented pointer to left channel buffer.
-	/// dstRight: Optional auto-incremented pointer to right channel buffer.
+	/// dst: Auto-incremented pointer to output buffer.
 	/// posSample: Auto-incremented integer audio sample counter.
 	/// posCycle: Auto-updated fractional audio sample counter.
 	/// n: Number of sync samples requested.
@@ -54,7 +53,7 @@ public:
 	/// same audio as the left buffer. The buffer must be initialized on entry
 	/// such that the buffers need not be touched if there is no audio.
 	///
-	virtual uint32 AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const;
+	virtual uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const;
 };
 
 /// Cassette image block type for standard framed bytes with 8-bits of data stored
@@ -79,7 +78,7 @@ public:
 	uint64 GetDataSampleCount64() const;
 
 	uint32 GetBitSum(uint32 pos, uint32 n, bool bypassFSK) const override;
-	uint32 AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const override;
+	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const override;
 
 private:
 	uint64 mDataSamplesPerByteF32 = 0;
@@ -136,7 +135,7 @@ public:
 		return kATCassetteImageBlockType_RawAudio;
 	}
 
-	uint32 AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const override;
+	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const override;
 
 	vdfastvector<uint8> mAudio;
 	uint32 mAudioLength;
@@ -149,7 +148,7 @@ public:
 		return kATCassetteImageBlockType_Blank;
 	}
 
-	uint32 AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const override;
+	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const override;
 };
 
 

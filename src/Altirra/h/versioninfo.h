@@ -35,7 +35,9 @@
 
 #define AT_PROGRAM_NAME_STR L"Altirra"
 
-#if defined(VD_CPU_AMD64)
+#if defined(VD_CPU_ARM64)
+	#define AT_PROGRAM_PLATFORM_STR L"/ARM64"
+#elif defined(VD_CPU_AMD64)
 	#define AT_PROGRAM_PLATFORM_STR L"/x64"
 #else
 	#define AT_PROGRAM_PLATFORM_STR L""

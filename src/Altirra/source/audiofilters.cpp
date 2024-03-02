@@ -1,10 +1,15 @@
 #include <stdafx.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/math.h>
-#include <vd2/system/win32/intrin.h>
 #include "audiofilters.h"
 
-extern "C" VDALIGN(16) const float gVDCaptureAudioResamplingKernel[32][8] = {
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+#include <vd2/system/win32/intrin.h>
+#elif defined(VD_CPU_ARM64)
+#include <arm64_neon.h>
+#endif
+
+alignas(16) constexpr sint16 g_ATAudioResamplingKernel[32][8] = {
 	{+0x0000,+0x0000,+0x0000,+0x4000,+0x0000,+0x0000,+0x0000,+0x0000 },
 	{-0x000a,+0x0052,-0x0179,+0x3fe2,+0x019f,-0x005b,+0x000c,+0x0000 },
 	{-0x0013,+0x009c,-0x02cc,+0x3f86,+0x0362,-0x00c0,+0x001a,+0x0000 },
@@ -38,6 +43,25 @@ extern "C" VDALIGN(16) const float gVDCaptureAudioResamplingKernel[32][8] = {
 	{+0x0000,+0x001a,-0x00c0,+0x0362,+0x3f86,-0x02cc,+0x009c,-0x0013 },
 	{+0x0000,+0x000c,-0x005b,+0x019f,+0x3fe2,-0x0179,+0x0052,-0x000a },
 };
+
+struct ATAudioResamplingKernel32x8 {
+	float kernel[32][8];
+};
+
+constexpr ATAudioResamplingKernel32x8 ATComputeAudioResamplingKernel(float scale) {
+	ATAudioResamplingKernel32x8 k {};
+
+	for(int i=0; i<32; ++i) {
+		for(int j=0; j<8; ++j) {
+			k.kernel[i][j] = (float)g_ATAudioResamplingKernel[i][j] * scale;
+		}
+	}
+
+	return k;
+}
+
+constexpr ATAudioResamplingKernel32x8 g_ATAudioResamplingKernel1 = ATComputeAudioResamplingKernel(1.0f / 16384.0f);
+constexpr ATAudioResamplingKernel32x8 g_ATAudioResamplingKernel2 = ATComputeAudioResamplingKernel(2.0f);
 
 extern "C" VDALIGN(16) const sint16 gATAudioResamplingKernel63To44[65][64] = {
 {9,10,-86,-74,249,266,-486,-680,761,1444,-971,-2691,940,4547,-384,-7089,-1087,10317,4006,-14122,-9069,18286,17314,-22484,-956,823,1674,-919,-3214,983,10339,15375,10339,983,-3214,-919,1674,823,-956,-702,17314,18286,-9069,-14122,4006,10317,-1087,-7089,-384,4547,940,-2691,-971,1444,761,-680,-486,266,249,-74,-86,10,9,0},
@@ -119,10 +143,10 @@ void ATFilterNormalizeKernel(float *v, size_t n, float scale) {
 		v[i] *= scale;
 }
 
-uint64 ATFilterResampleMono(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc) {
+uint64 ATFilterResampleMono16_Scalar(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc) {
 	do {
 		const float *s2 = s + (accum >> 32);
-		const float *f = gVDCaptureAudioResamplingKernel[(uint32)accum >> 27];
+		const float *f = g_ATAudioResamplingKernel1.kernel[(uint32)accum >> 27];
 
 		accum += inc;
 
@@ -135,16 +159,20 @@ uint64 ATFilterResampleMono(sint16 *d, const float *s, uint32 count, uint64 accu
 				+ s2[6]*f[6]
 				+ s2[7]*f[7];
 
-		*d++ = VDClampedRoundFixedToInt16Fast(v * (1.0f / 16384.0f));
+		*d++ = VDClampedRoundFixedToInt16Fast(v);
 	} while(--count);
 
 	return accum;
 }
 
-uint64 ATFilterResampleMonoToStereo(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc) {
+uint64 ATFilterResampleMono16(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc) {
+	return ATFilterResampleMono16_Scalar(d, s, count, accum, inc);
+}
+
+uint64 ATFilterResampleMonoToStereo16_Scalar(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc) {
 	do {
 		const float *s2 = s + (accum >> 32);
-		const float *f = gVDCaptureAudioResamplingKernel[(uint32)accum >> 27];
+		const float *f = g_ATAudioResamplingKernel1.kernel[(uint32)accum >> 27];
 
 		accum += inc;
 
@@ -157,18 +185,86 @@ uint64 ATFilterResampleMonoToStereo(sint16 *d, const float *s, uint32 count, uin
 				+ s2[6]*f[6]
 				+ s2[7]*f[7];
 
-		d[0] = d[1] = VDClampedRoundFixedToInt16Fast(v * (1.0f / 16384.0f));
+		d[0] = d[1] = VDClampedRoundFixedToInt16Fast(v);
 		d += 2;
 	} while(--count);
 
 	return accum;
 }
 
-uint64 ATFilterResampleStereo(sint16 *d, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc) {
+#if VD_CPU_X86 || VD_CPU_X64
+uint64 ATFilterResampleMonoToStereo16_SSE2(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc) {
+	do {
+		const float *s2 = s + (accum >> 32);
+		const float *f = g_ATAudioResamplingKernel2.kernel[(uint32)accum >> 27];
+
+		accum += inc;
+
+		__m128 c0 = _mm_load_ps(f);
+		__m128 c1 = _mm_load_ps(f + 4);
+		__m128 x0 = _mm_loadu_ps(s2);
+		__m128 x1 = _mm_loadu_ps(s2 + 4);
+		__m128 y0 = _mm_mul_ps(c0, x0);
+		__m128 y1 = _mm_mul_ps(c1, x1);
+		__m128 y2 = _mm_add_ps(y0, y1);
+		__m128 y3 = _mm_add_ps(y2, _mm_movehl_ps(y2, y2));
+		__m128 y4 = _mm_add_ps(y3, _mm_shuffle_ps(y3, y3, 0b00010001));
+
+		__m128i z0 = _mm_cvtps_epi32(y4);
+		__m128i z1 = _mm_packs_epi32(z0, z0);
+
+		*(int *)d = _mm_cvtsi128_si32(z1);
+		d += 2;
+	} while(--count);
+
+	return accum;
+}
+#endif
+
+#if VD_CPU_ARM64
+uint64 ATFilterResampleMonoToStereo16_NEON(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc) {
+	do {
+		const float *s2 = s + (accum >> 32);
+		const float *VDRESTRICT f = g_ATAudioResamplingKernel2.kernel[(uint32)accum >> 27];
+
+		accum += inc;
+
+		float32x4x2_t c = vld2q_f32(f);
+		float32x4x2_t x = vld2q_f32(s2);
+		float32x4_t y0 = vmulq_f32(c.val[0], x.val[0]);
+		float32x4_t y1 = vfmaq_f32(y0, c.val[1], x.val[1]);
+		float32x2_t y2 = vpadd_f32(vget_low_f32(y1), vget_high_f32(y1));
+		float32x2_t y3 = vadd_f32(y2, vrev64_f32(y2));
+
+		int32x2_t z0 = vcvtn_s32_f32(y3);
+		int16x4_t z1 = vqmovn_s32(vcombine_f32(z0, z0));
+
+		vst1_lane_s32((int32_t *)d, vreinterpret_s32_s16(z1), 0);
+		d += 2;
+	} while(--count);
+
+	return accum;
+}
+#endif
+
+uint64 ATFilterResampleMonoToStereo16(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc) {
+#if VD_CPU_X86 || VD_CPU_X64
+	if (SSE2_enabled)
+		return ATFilterResampleMonoToStereo16_SSE2(d, s, count, accum, inc);
+#endif
+
+#if VD_CPU_ARM64
+	return ATFilterResampleMonoToStereo16_NEON(d, s, count, accum, inc);
+#endif
+
+	return ATFilterResampleMonoToStereo16_Scalar(d, s, count, accum, inc);
+}
+
+uint64 ATFilterResampleStereo16(sint16 *d, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc) {
 	do {
 		const float *r1 = s1 + (accum >> 32);
 		const float *r2 = s2 + (accum >> 32);
-		const float *f = gVDCaptureAudioResamplingKernel[(uint32)accum >> 27];
+		const float *f = g_ATAudioResamplingKernel1.kernel[(uint32)accum >> 27];
 
 		accum += inc;
 
@@ -190,13 +286,15 @@ uint64 ATFilterResampleStereo(sint16 *d, const float *s1, const float *s2, uint3
 				+ r2[6]*f[6]
 				+ r2[7]*f[7];
 
-		d[0] = VDClampedRoundFixedToInt16Fast(a * (1.0f / 16384.0f));
-		d[1] = VDClampedRoundFixedToInt16Fast(b * (1.0f / 16384.0f));
+		d[0] = VDClampedRoundFixedToInt16Fast(a);
+		d[1] = VDClampedRoundFixedToInt16Fast(b);
 		d += 2;
 	} while(--count);
 
 	return accum;
 }
+
+///////////////////////////////////////////////////////////////////////////
 
 void ATFilterComputeSymmetricFIR_8_32F_Scalar(float *dst, const float *src, size_t n, const float *kernel) {
 	const float k0 = kernel[0];
@@ -395,6 +493,55 @@ xloop:
 }
 #endif
 
+#ifdef VD_CPU_ARM64
+void ATFilterComputeSymmetricFIR_8_32F_NEON(float *dst, const float *src, size_t n, const float *kernel) {
+	float32x4_t zero = vdupq_n_f32(0);
+	float32x4_t x0 = zero;
+	float32x4_t x1 = zero;
+	float32x4_t x2 = zero;
+	float32x4_t x3 = zero;
+
+	// init filter
+	float32x4_t k0 = vld1q_f32(kernel);
+	float32x4_t k1 = vld1q_f32(kernel + 4);
+
+	float32x4_t f0 = vrev64q_f32(vcombine_f32(vget_high_f32(k1), vget_low_f32(k1)));
+	float32x4_t f1 = vrev64q_f32(vcombine_f32(vget_high_f32(k0), vget_low_f32(k0)));
+	float32x4_t f2 = vextq_f32(k0, k1, 1);
+	float32x4_t f3 = vextq_f32(k1, zero, 1);
+
+	// prime (skip write)
+	for(int i=0; i<14; ++i) {
+		x0 = vextq_f32(x0, x1, 1);
+		x1 = vextq_f32(x1, x2, 1);
+		x2 = vextq_f32(x2, x3, 1);
+		x3 = vextq_f32(x3, zero, 1);
+
+		float32x4_t s = vld1q_dup_f32(src++);
+		x0 = vfmaq_f32(x0, f0, s);
+		x1 = vfmaq_f32(x1, f1, s);
+		x2 = vfmaq_f32(x2, f2, s);
+		x3 = vfmaq_f32(x3, f3, s);
+	}
+
+	// pipeline
+	do {
+		x0 = vextq_f32(x0, x1, 1);
+		x1 = vextq_f32(x1, x2, 1);
+		x2 = vextq_f32(x2, x3, 1);
+		x3 = vextq_f32(x3, zero, 1);
+
+		float32x4_t s = vld1q_dup_f32(src++);
+		x0 = vfmaq_f32(x0, f0, s);
+		x1 = vfmaq_f32(x1, f1, s);
+		x2 = vfmaq_f32(x2, f2, s);
+		x3 = vfmaq_f32(x3, f3, s);
+
+		vst1q_lane_f32(dst++, x0, 0);
+	} while(--n);
+}
+#endif
+
 void ATFilterComputeSymmetricFIR_8_32F(float *dst, const float *src, size_t n, const float *kernel) {
 #if defined(VD_CPU_X86) && defined(VD_COMPILER_MSVC) && !defined(VD_COMPILER_MSVC_CLANG)
 	if (SSE_enabled) {
@@ -416,6 +563,8 @@ void ATFilterComputeSymmetricFIR_8_32F(float *dst, size_t n, const float *kernel
 	ATFilterComputeSymmetricFIR_8_32F_Scalar(dst, dst, n, kernel);
 #elif defined(VD_CPU_X64)
 	ATFilterComputeSymmetricFIR_8_32F_SSE(dst, dst, n, kernel);
+#elif defined(VD_CPU_ARM64)
+	ATFilterComputeSymmetricFIR_8_32F_NEON(dst, dst, n, kernel);
 #else
 	ATFilterComputeSymmetricFIR_8_32F_Scalar(dst, dst, n, kernel);
 #endif
@@ -472,6 +621,9 @@ void ATAudioFilter::SetActiveMode(bool active) {
 }
 
 void ATAudioFilter::PreFilter(float * VDRESTRICT dst, uint32 count, float dcLevel) {
+	if (!count)
+		return;
+
 	const float scale = mScale;
 	const float hiCoeff = mHiCoeff;
 	float hiAccum = mHiPassAccum - dcLevel;

@@ -30,7 +30,10 @@
 #include <at/atio/cassetteimage.h>
 #include <at/atio/wav.h>
 #include <at/atcore/logging.h>
+
+#if VD_CPU_X86 || VD_CPU_X64
 #include <emmintrin.h>
+#endif
 
 #ifdef _DEBUG
 	#define AT_CASSETTE_VALIDATE() Validate()
@@ -176,6 +179,7 @@ namespace {
 		return accum;
 	}
 
+#if VD_CPU_X86 || VD_CPU_X64
 	uint64 resample16x2_SSE2(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
 		__m128i round = _mm_set1_epi32(0x2000);
 
@@ -207,14 +211,18 @@ namespace {
 
 		return accum;
 	}
+#endif
 
 	uint64 resample16x2(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
+#if VD_CPU_X86 || VD_CPU_X64
 		if (SSE2_enabled)
 			return resample16x2_SSE2(d, s, count, accum, inc);
 		else
+#endif
 			return resample16x2_scalar(d, s, count, accum, inc);
 	}
 
+#if VD_CPU_X86 || VD_CPU_X64
 	void minMax16x2_SSE2(const sint16 * VDRESTRICT src, uint32 n, sint32& minvL, sint32& maxvL, sint32& minvR, sint32& maxvR) {
 		// We do unaligned loads from this array, so it's important that we
 		// avoid data cache unit (DCU) split penalties on older CPUs.
@@ -267,6 +275,7 @@ namespace {
 		maxvL = (sint16)_mm_extract_epi16(maxAcc, 0);
 		maxvR = (sint16)_mm_extract_epi16(maxAcc, 1);
 	}
+#endif
 
 	void minMax16x2_scalar(const sint16 * VDRESTRICT src, uint32 n, sint32& minvL, sint32& maxvL, sint32& minvR, sint32& maxvR) {
 		for(uint32 i=0; i<n; ++i) {
@@ -282,9 +291,11 @@ namespace {
 	}
 
 	void minMax16x2(const sint16 * VDRESTRICT src, uint32 n, sint32& minvL, sint32& maxvL, sint32& minvR, sint32& maxvR) {
-		if (SSE2_enabled) {
+#if VD_CPU_X86 || VD_CPU_X64
+		if (SSE2_enabled)
 			minMax16x2_SSE2(src, n, minvL, maxvL, minvR, maxvR);
-		} else
+		else
+#endif
 			minMax16x2_scalar(src, n, minvL, maxvL, minvR, maxvR);
 	}
 }
@@ -314,7 +325,7 @@ public:
 	bool GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshold, bool prevBit, bool bypassFSK) const override;
 	bool GetTurboBit(uint32 pos) const override;
 	void ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) override;
-	void AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const override;
+	void AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const override;
 
 	uint32 GetWriteCursor() const override;
 	void SetWriteCursor(uint32 writePos) override;
@@ -520,7 +531,7 @@ void ATCassetteImage::ReadPeakMap(float t0, float dt, uint32 n, float *data, flo
 	}
 }
 
-void ATCassetteImage::AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const {
+void ATCassetteImage::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const {
 	if (!n)
 		return;
 
@@ -563,7 +574,7 @@ void ATCassetteImage::AccumulateAudio(float *&dstLeft, float *&dstRight, uint32&
 		if (tc > audioSampleLimit)
 			tc = audioSampleLimit;
 
-		n -= p->mpImageBlock->AccumulateAudio(dstLeft, dstRight, posSample, posCycle, tc);
+		n -= p->mpImageBlock->AccumulateAudio(dst, posSample, posCycle, tc);
 
 		posSample -= p->mOffset;
 		posSample += p->mStart;

@@ -26,34 +26,65 @@ public:
 	ATUIVerifierDialog(ATSimulator& sim);
 
 protected:
+	bool OnLoaded();
 	void OnDataExchange(bool write);
 
 	ATSimulator& mSim;
+	VDUIProxyListView mOptionsView;
+	VDDelegate mDelOnDoubleClick;
 
-	static const uint32 kVerifierFlags[][2];
+	static const struct FlagInfo {
+		uint32 mFlag;
+		const wchar_t *mpLabel;
+	} kVerifierFlags[];
 };
 
-const uint32 ATUIVerifierDialog::kVerifierFlags[][2] = {
-	{ kATVerifierFlag_UndocumentedKernelEntry, IDC_FLAG_UNDOCOSENTRY },
-	{ kATVerifierFlag_RecursiveNMI, IDC_FLAG_RECURSIVENMI },
-	{ kATVerifierFlag_InterruptRegs, IDC_FLAG_INTERRUPTREGS },
-	{ kATVerifierFlag_64KWrap, IDC_FLAG_WRAP64K },
-	{ kATVerifierFlag_AbnormalDMA, IDC_FLAG_ABNORMALDMA },
+const ATUIVerifierDialog::FlagInfo ATUIVerifierDialog::kVerifierFlags[] = {
+	{ kATVerifierFlag_UndocumentedKernelEntry, L"Undocumented OS entry" },
+	{ kATVerifierFlag_RecursiveNMI, L"Recursive NMI execution" },
+	{ kATVerifierFlag_InterruptRegs, L"Interrupt handler register corruption" },
+	{ kATVerifierFlag_64KWrap, L"Address indexing across 64K boundary" },
+	{ kATVerifierFlag_AbnormalDMA, L"Abnormal playfield DMA" },
+	{ kATVerifierFlag_CallingConventionViolations, L"OS calling convention violations" },
+	{ kATVerifierFlag_LoadingOverDisplayList, L"Loading over active display list" },
+	{ kATVerifierFlag_AddressZero, L"Loading absolute address zero" },
 };
 
 ATUIVerifierDialog::ATUIVerifierDialog(ATSimulator& sim)
 	: VDDialogFrameW32(IDD_VERIFIER)
 	, mSim(sim)
 {
+	mOptionsView.SetOnItemDoubleClicked([this](int index) {
+		mOptionsView.SetItemChecked(index, !mOptionsView.IsItemChecked(index));
+	});
+}
+
+bool ATUIVerifierDialog::OnLoaded() {
+	AddProxy(&mOptionsView, IDC_OPTIONS);
+	mResizer.Add(IDC_OPTIONS, mResizer.kMC | mResizer.kAvoidFlicker);
+
+	mOptionsView.SetFullRowSelectEnabled(true);
+	mOptionsView.SetItemCheckboxesEnabled(true);
+	mOptionsView.InsertColumn(0, L"", 0);
+
+	for(const auto& entry : kVerifierFlags) {
+		mOptionsView.InsertItem(-1, entry.mpLabel);
+	}
+
+	mOptionsView.AutoSizeColumns(true);
+
+	OnDataExchange(false);
+	SetFocusToControl(IDC_OPTIONS);
+	return true;
 }
 
 void ATUIVerifierDialog::OnDataExchange(bool write) {
 	if (write) {
 		uint32 flags = 0;
 
-		for(uint32 i=0; i<sizeof(kVerifierFlags)/sizeof(kVerifierFlags[0]); ++i) {
-			if (IsButtonChecked(kVerifierFlags[i][1]))
-				flags |= kVerifierFlags[i][0];
+		for(uint32 i=0; i<vdcountof(kVerifierFlags); ++i) {
+			if (mOptionsView.IsItemChecked(i))
+				flags |= kVerifierFlags[i].mFlag;
 		}
 
 		if (!flags)
@@ -70,8 +101,9 @@ void ATUIVerifierDialog::OnDataExchange(bool write) {
 
 		if (ver) {
 			uint32 flags = ver->GetFlags();
-			for(uint32 i=0; i<sizeof(kVerifierFlags)/sizeof(kVerifierFlags[0]); ++i)
-				CheckButton(kVerifierFlags[i][1], (flags & kVerifierFlags[i][0]) != 0);
+
+			for(uint32 i=0; i<vdcountof(kVerifierFlags); ++i)
+				mOptionsView.SetItemChecked(i, (flags & kVerifierFlags[i].mFlag) != 0);
 		}
 	}
 }

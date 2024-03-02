@@ -1185,10 +1185,7 @@ while(cyclesLeft > 0) {
 					he->mbNMI = false;
 					he->mSubCycle = 0;
 					he->mbEmulation = false;
-					he->mSH = 0;
-					he->mAH = 0;
-					he->mXH = 0;
-					he->mYH = 0;
+					he->mGlobalPCBase = 0;
 					he->mB = 0;
 					he->mK = 0;
 					he->mD = 0;

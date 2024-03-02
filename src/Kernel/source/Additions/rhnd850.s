@@ -127,7 +127,7 @@ do_init:
 		jmp		(basead)
 
 msg_banner:
-		dta		'Altirra 850 R: Handler V0.1',$9B
+		dta		'Altirra 850 R: Handler V0.2',$9B
 		
 msg_already_loaded:
 		dta		'R: handler already loaded.',$9B

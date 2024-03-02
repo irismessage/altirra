@@ -31,7 +31,6 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/tls.h>
-#include <vd2/system/protscope.h>
 #include <vd2/system/bitmath.h>
 
 namespace {
@@ -163,8 +162,10 @@ void *VDThread::ThreadLocation() const {
 	return (void *)ctx.Rip;
 #elif defined(VD_CPU_X86)
 	return (void *)ctx.Eip;
-#elif defined(VD_CPU_ARM)
+#elif defined(VD_CPU_ARM64)
 	return (void *)ctx.Pc;
+#else
+#error Unhandled platform
 #endif
 }
 
@@ -180,9 +181,7 @@ unsigned __stdcall VDThread::StaticThreadStart(void *pThisAsVoid) {
 
 	VDInitThreadData(pThis->mpszDebugName);
 
-	vdprotected1("running thread \"%.64s\"", const char *, pThis->mpszDebugName) {
-		pThis->ThreadRun();
-	}
+	pThis->ThreadRun();
 
 	// NOTE: Do not put anything referencing this here, since our object
 	//       may have been destroyed by the threaded code.

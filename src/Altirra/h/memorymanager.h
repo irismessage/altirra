@@ -138,6 +138,7 @@ public:
 	void SetLayerModes(ATMemoryLayer *layer, ATMemoryAccessMode modes);
 	void SetLayerMemory(ATMemoryLayer *layer, const uint8 *base);
 	void SetLayerMemory(ATMemoryLayer *layer, const uint8 *base, uint32 pageOffset, uint32 pages, uint32 addrMask = 0xFFFFFFFFU, int readOnly = -1);
+	void SetLayerMemoryAndAddressSpace(ATMemoryLayer *layer, const uint8 *base, uint32 pageOffset, uint32 pages, uint32 addressSpace, uint32 addrMask = 0xFFFFFFFFU, int readOnly = -1);
 	void SetLayerAddressRange(ATMemoryLayer *layer0, uint32 pageOffset, uint32 pageCount);
 	void SetLayerName(ATMemoryLayer *layer, const char *name);
 	void SetLayerTag(ATMemoryLayer *layer, const void *tag);
@@ -150,6 +151,8 @@ public:
 
 	void ClearLayerMaskRange(ATMemoryLayer *layer);
 	void SetLayerMaskRange(ATMemoryLayer *layer, uint32 pageStart, uint32 pageCount);
+
+	void SetLayerAddressSpace(ATMemoryLayer *layer, uint32 addressSpace);
 
 	uint8 ReadFloatingDataBus() const;
 
@@ -173,6 +176,8 @@ public:
 	void RedirectWriteByte(uint32 addr, uint8 value, const void *excludeTag);
 
 protected:
+	static constexpr uint32 kAddrSpaceInvalid = 0;
+	
 	struct MemoryLayer : public ATMemoryLayer {
 		sint8 mPriority;
 		uint8 mFlags;
@@ -189,6 +194,9 @@ protected:
 		uint32 mMaskRangeEnd;
 		uint32 mEffectiveStart;
 		uint32 mEffectiveEnd;
+
+		uint32 mAddressSpace = kAddrSpaceInvalid;
+
 		const void *mpTag;
 		ATMemoryManager *mpParent;
 
@@ -263,6 +271,7 @@ protected:
 	VDALIGN(32) PageTable mCPUReadPageMap;
 	PageTable		mCPUWritePageMap;
 	PageTable		mAnticReadPageMap;
+	uint32			mCPUReadAddressSpaceMap[256];
 
 	PageTable		*mReadBankTable[256];
 	PageTable		*mWriteBankTable[256];

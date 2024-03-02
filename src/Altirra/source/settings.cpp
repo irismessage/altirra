@@ -27,7 +27,7 @@
 #include <at/atcore/media.h>
 #include <at/atio/image.h>
 #include <at/atui/uimanager.h>
-#include "audiosyncmixer.h"
+#include "audiosampleplayer.h"
 #include "audiooutput.h"
 #include "cartridge.h"
 #include "cassette.h"
@@ -42,6 +42,7 @@
 #include "settings.h"
 #include "simulator.h"
 #include "uiaccessors.h"
+#include "uiconfirm.h"
 #include "uikeyboard.h"
 #include "uiportmenus.h"
 #include "uitypes.h"
@@ -52,6 +53,7 @@ extern ATUIManager g_ATUIManager;
 
 uint32 g_ATCurrentProfileId = 0;
 bool g_ATProfileTemporary = false;
+bool g_ATProfileBootstrap = false;
 
 uint32 g_ATDefaultProfileIds[kATDefaultProfileCount];
 
@@ -78,6 +80,7 @@ namespace {
 		L"mountedimages",
 		L"fullscreen",
 		L"sound",
+		L"boot",
 	};
 }
 
@@ -383,6 +386,7 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 	ATSettingsExchangeEnum<ATDisplayFilterMode>(write, key, "Display: Filter mode", kATDisplayFilterModeCount, ATUIGetDisplayFilterMode, ATUISetDisplayFilterMode);
 	ATSettingsExchangeInt32(write, key, "Display: Filter sharpness", ATUIGetViewFilterSharpness, ATUISetViewFilterSharpness);
 	ATSettingsExchangeEnum<ATDisplayStretchMode>(write, key, "Display: Stretch mode", kATDisplayStretchModeCount, ATUIGetDisplayStretchMode, ATUISetDisplayStretchMode);
+	ATSettingsExchangeBool(write, key, "Display: Indicator margin", ATUIGetDisplayPadIndicators, ATUISetDisplayPadIndicators);
 
 	if (write) {
 		key.setString("Display: Custom effect path", g_ATUIManager.GetCustomEffectPath());
@@ -574,6 +578,7 @@ void ATSettingsExchangeHardware(bool write, VDRegistryKey& key) {
 		key.setBool("Memory: MapRAM", g_sim.IsMapRAMEnabled());
 		key.setBool("Memory: Ultimate1MB", g_sim.IsUltimate1MBEnabled());
 		key.setBool("Memory: Floating IO bus", g_sim.IsFloatingIoBusEnabled());
+		key.setBool("Memory: Preserve extRAM", g_sim.IsPreserveExtRAMEnabled());
 		key.setInt("Memory: Cold start pattern", g_sim.GetMemoryClearMode());
 
 		key.setBool("CPU: Allow NMI blocking", cpu.IsNMIBlockingEnabled());
@@ -628,6 +633,7 @@ void ATSettingsExchangeHardware(bool write, VDRegistryKey& key) {
 		g_sim.SetMapRAMEnabled(key.getBool("Memory: MapRAM", false));
 		g_sim.SetUltimate1MBEnabled(key.getBool("Memory: Ultimate1MB", false));
 		g_sim.SetFloatingIoBusEnabled(key.getBool("Memory: Floating IO bus", false));
+		g_sim.SetPreserveExtRAMEnabled(key.getBool("Memory: Preserve extRAM", false));
 		g_sim.SetMemoryClearMode((ATMemoryClearMode)key.getEnumInt("Memory: Cold start pattern", kATMemoryClearModeCount, kATMemoryClearMode_DRAM1));
 
 		cpu.SetNMIBlockingEnabled(key.getBool("CPU: Allow NMI blocking", false));
@@ -788,6 +794,10 @@ void LoadColorParams(VDRegistryKey& key, ATColorParams& colpa) {
 
 	colpa.mbUsePALQuirks = key.getBool("PAL quirks", colpa.mbUsePALQuirks);
 	colpa.mLumaRampMode = (ATLumaRampMode)key.getEnumInt("Luma ramp mode", (int)kATLumaRampModeCount, (int)colpa.mLumaRampMode);
+
+	VDStringA s;
+	key.getString("Color matching mode", s);
+	colpa.mColorMatchingMode = ATParseEnum<ATColorMatchingMode>(s).mValue;
 }
 
 void SaveColorParams(VDRegistryKey& key, const ATColorParams& colpa) {
@@ -813,6 +823,8 @@ void SaveColorParams(VDRegistryKey& key, const ATColorParams& colpa) {
 
 	key.setBool("PAL quirks", colpa.mbUsePALQuirks);
 	key.setInt("Luma ramp mode", colpa.mLumaRampMode);
+
+	key.setString("Color matching mode", ATEnumToString(colpa.mColorMatchingMode));
 }
 
 void ATSettingsExchangeColor(bool write, VDRegistryKey& key) {
@@ -907,8 +919,45 @@ void ATSettingsExchangeEnvironment(bool write, VDRegistryKey& key) {
 
 	if (write) {
 		key.setBool("Pause when inactive", ATUIGetPauseWhenInactive());
+		key.setInt("Auto-reset flags", ATUIGetResetFlags());
+		key.setInt("Auto-reset flag mask", kATUIResetFlag_All);
+
+		const char *wctemp = ATUIGetWindowCaptionTemplate();
+
+		if (wctemp && *wctemp)
+			key.setString("Window caption template", VDTextU8ToW(VDStringSpanA(wctemp)).c_str());
+		else
+			key.removeValue("Window caption template");
 	} else {
 		ATUISetPauseWhenInactive(key.getBool("Pause when inactive", ATUIGetPauseWhenInactive()));
+
+		const uint32 resetFlags = key.getInt("Auto-reset flags");
+		const uint32 resetFlagMask = key.getInt("Auto-reset flag mask");
+		ATUISetResetFlags(kATUIResetFlag_Default ^ ((kATUIResetFlag_Default ^ resetFlags) & resetFlagMask));
+
+		VDStringW s;
+		key.getString("Window caption template", s);
+		ATUISetWindowCaptionTemplate(VDTextWToU8(s).c_str());
+	}
+}
+
+void ATSettingsExchangeBoot(bool write, VDRegistryKey& key) {
+	ATPokeyEmulator& pokey = g_sim.GetPokey();
+
+	if (write) {
+		key.setInt("Unload on boot types", ATUIGetBootUnloadStorageMask());
+		key.setInt("Unload on boot mask", kATStorageTypeMask_All);
+
+		key.setString("ExeLoader: Mode", ATEnumToString(g_sim.GetHLEProgramLoadMode()));
+
+	} else {
+		const uint32 bootUnloadFlags = key.getInt("Unload on boot types");
+		const uint32 bootUnloadFlagMask = key.getInt("Unload on boot mask");
+		ATUISetBootUnloadStorageMask(kATStorageTypeMask_All ^ ((kATStorageTypeMask_All ^ bootUnloadFlags) & bootUnloadFlagMask));
+
+		VDStringA loadMode;
+		key.getString("ExeLoader: Mode", loadMode);
+		g_sim.SetHLEProgramLoadMode(ATParseEnum<ATHLEProgramLoadMode>(loadMode).mValue);
 	}
 }
 
@@ -1117,11 +1166,15 @@ void LoadMountedImages(VDRegistryKey& rootKey) {
 		}
 	}
 
+	const bool is5200 = g_sim.GetHardwareMode() == kATHardwareMode_5200;
+
 	for(uint32 cartUnit = 0; cartUnit < 2; ++cartUnit) {
 		VDStringA keyName;
 		VDStringA keyNameMode;
 		keyName.sprintf("Cartridge %u", cartUnit);
 		keyNameMode.sprintf("Cartridge %u Mode", cartUnit);
+
+		const bool need5200Default = is5200 && !cartUnit;
 
 		if (key.getString(keyName.c_str(), imagestr)) {
 			int cartMode = key.getInt(keyNameMode.c_str(), 0);
@@ -1136,9 +1189,11 @@ void LoadMountedImages(VDRegistryKey& rootKey) {
 				else
 					g_sim.LoadCartridge(cartUnit, imagestr.c_str(), &cartLoadCtx);
 			} catch(const MyError&) {
+				if (need5200Default)
+					g_sim.LoadCartridge5200Default();
 			}
 		} else {
-			if (!cartUnit && g_sim.GetHardwareMode() == kATHardwareMode_5200)
+			if (need5200Default)
 				g_sim.LoadCartridge5200Default();
 			else
 				g_sim.UnloadCartridge(cartUnit);
@@ -1275,6 +1330,7 @@ namespace {
 		{ kATSettingsCategory_MountedImages,	ATSettingsExchangeMountedImages },
 		{ kATSettingsCategory_FullScreen,		ATSettingsExchangeFullScreen },
 		{ kATSettingsCategory_Sound,			ATSettingsExchangeSound },
+		{ kATSettingsCategory_Boot,				ATSettingsExchangeBoot },
 	};
 }
 
@@ -1348,7 +1404,7 @@ void ATLoadSettings(ATSettingsCategory mask) {
 }
 
 void ATSaveSettings(ATSettingsCategory mask) {
-	if (g_ATProfileTemporary)
+	if (g_ATProfileTemporary || g_ATProfileBootstrap)
 		return;
 
 	ATExchangeSettings(true, mask);
@@ -1356,6 +1412,10 @@ void ATSaveSettings(ATSettingsCategory mask) {
 
 uint32 ATSettingsGetCurrentProfileId() {
 	return g_ATCurrentProfileId;
+}
+
+bool ATSettingsIsCurrentProfileADefault() {
+	return std::find(std::begin(g_ATDefaultProfileIds), std::end(g_ATDefaultProfileIds), g_ATCurrentProfileId) != std::end(g_ATDefaultProfileIds);
 }
 
 void ATSettingsSwitchProfile(uint32 profileId) {
@@ -1374,6 +1434,7 @@ void ATSettingsSwitchProfile(uint32 profileId) {
 
 void ATSettingsLoadProfile(uint32 profileId, ATSettingsCategory mask) {
 	g_ATProfileTemporary = false;
+	g_ATProfileBootstrap = false;
 	g_ATCurrentProfileId = profileId;
 
 	ATLoadSettings(mask);
@@ -1390,6 +1451,14 @@ bool ATSettingsGetTemporaryProfileMode() {
 
 void ATSettingsSetTemporaryProfileMode(bool temporary) {
 	g_ATProfileTemporary = temporary;
+}
+
+bool ATSettingsGetBootstrapProfileMode() {
+	return g_ATProfileBootstrap;
+}
+
+void ATSettingsSetBootstrapProfileMode(bool temporary) {
+	g_ATProfileBootstrap = temporary;
 }
 
 ///////////////////////////////////////////////////////////////////////////

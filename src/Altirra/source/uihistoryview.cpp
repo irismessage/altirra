@@ -113,7 +113,7 @@ protected:
 	HWND mhwndPanel = nullptr;
 	HWND mhwndClear = nullptr;
 	HWND mhwndEdit = nullptr;
-	VDFunctionThunk	*mpEditThunk = nullptr;
+	VDFunctionThunkInfo	*mpEditThunk = nullptr;
 	WNDPROC	mEditProc = nullptr;
 	HMENU mMenu = nullptr;
 	RECT mContentRect = {};
@@ -151,6 +151,7 @@ protected:
 	bool	mbDirtyHScrollBar = false;
 	bool	mbSearchActive = false;
 	bool	mbShowPCAddress = false;
+	bool	mbShowGlobalPCAddress = false;
 	bool	mbShowRegisters = false;
 	bool	mbShowSpecialRegisters = false;
 	bool	mbShowFlags = false;
@@ -459,6 +460,8 @@ LRESULT ATUIHistoryView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				HMENU menu = GetSubMenu(mMenu, 0);
 
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWPCADDRESS, mbShowPCAddress);
+				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWGLOBALPCADDRESS, mbShowGlobalPCAddress);
+				VDEnableMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWGLOBALPCADDRESS, mbShowPCAddress);
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWREGISTERS, mbShowRegisters);
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWSPECIALREGISTERS, mbShowSpecialRegisters);
 				VDEnableMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWSPECIALREGISTERS, mbShowRegisters);
@@ -500,6 +503,10 @@ LRESULT ATUIHistoryView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 				case ID_HISTORYCONTEXTMENU_SHOWPCADDRESS:
 					mbShowPCAddress = !mbShowPCAddress;
+					InvalidateRect(mhwnd, NULL, TRUE);
+					return true;
+				case ID_HISTORYCONTEXTMENU_SHOWGLOBALPCADDRESS:
+					mbShowGlobalPCAddress = !mbShowGlobalPCAddress;
 					InvalidateRect(mhwnd, NULL, TRUE);
 					return true;
 				case ID_HISTORYCONTEXTMENU_SHOWREGISTERS:
@@ -633,7 +640,7 @@ bool ATUIHistoryView::OnCreate() {
 
 	mpEditThunk = VDCreateFunctionThunkFromMethod(this, &ATUIHistoryView::EditWndProc, true);
 	mEditProc = (WNDPROC)GetWindowLongPtr(mhwndEdit, GWLP_WNDPROC);
-	SetWindowLongPtr(mhwndEdit, GWLP_WNDPROC, (LONG_PTR)mpEditThunk);
+	SetWindowLongPtr(mhwndEdit, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpEditThunk));
 
 	OnSize();
 	Reset();
@@ -761,6 +768,8 @@ void ATUIHistoryView::OnLButtonDown(int x, int y, int mods) {
 	int level = 0;
 	for(ATHTNode *p = it.mpNode->mpParent; p; p = p->mpParent)
 		++level;
+
+	x += mScrollX;
 
 	if (x >= level * (int)mItemHeight) {
 		SelectLine(it);
@@ -1385,8 +1394,8 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 						mTempLine.append_sprintf("A=%02X PSW=%02X R0=%02X R1=%02X"
 							, hent.mA
 							, hent.mP
-							, hent.mX
-							, hent.mY
+							, hent.mExt.m8048_R0
+							, hent.mExt.m8048_R1
 							);
 
 						if (mbShowSpecialRegisters) {
@@ -1401,9 +1410,9 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 							, hent.mZ80_B
 							, hent.mZ80_C
 							, hent.mZ80_D
-							, hent.mZ80_E
-							, hent.mZ80_H
-							, hent.mZ80_L
+							, hent.mExt.mZ80_E
+							, hent.mExt.mZ80_H
+							, hent.mExt.mZ80_L
 							);
 
 						if (mbShowSpecialRegisters) {
@@ -1415,17 +1424,17 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 					} else if (mDisasmMode == kATDebugDisasmMode_6809) {
 						mTempLine.append_sprintf("A=%02X B=%02X X=%02X%02X Y=%02X%02X"
 							, hent.mA
-							, hent.mAH
-							, hent.mXH
+							, hent.mExt.mAH
+							, hent.mExt.mXH
 							, hent.mX
-							, hent.mYH
+							, hent.mExt.mYH
 							, hent.mY
 							);
 
 						if (mbShowSpecialRegisters) {
 							mTempLine.append_sprintf(" U=%04X S=%02X%02X DP=%02X CC=%02X"
 								, hent.mD
-								, hent.mSH
+								, hent.mExt.mSH
 								, hent.mS
 								, hent.mK
 								, hent.mP
@@ -1435,12 +1444,12 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 						if (!hent.mbEmulation) {
 							if (hent.mP & AT6502::kFlagM) {
 								mTempLine.append_sprintf("C=%02X%02X"
-									, hent.mAH
+									, hent.mExt.mAH
 									, hent.mA
 									);
 							} else {
 								mTempLine.append_sprintf("A=%02X%02X"
-									, hent.mAH
+									, hent.mExt.mAH
 									, hent.mA
 									);
 							}
@@ -1452,16 +1461,16 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 									);
 							} else {
 								mTempLine.append_sprintf(" X=%02X%02X Y=%02X%02X"
-									, hent.mXH
+									, hent.mExt.mXH
 									, hent.mX
-									, hent.mYH
+									, hent.mExt.mYH
 									, hent.mY
 									);
 							}
 
 							if (mbShowSpecialRegisters) {
 								mTempLine.append_sprintf(" S=%02X%02X B=%02X D=%04X P=%02X"
-									, hent.mSH
+									, hent.mExt.mSH
 									, hent.mS
 									, hent.mB
 									, hent.mD
@@ -1470,14 +1479,14 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 							}
 						} else {
 							mTempLine.append_sprintf("A=%02X:%02X X=%02X Y=%02X"
-								, hent.mAH
+								, hent.mExt.mAH
 								, hent.mA
 								, hent.mX
 								, hent.mY
 								);
 
 							if (mbShowSpecialRegisters) {
-								mTempLine.append_sprintf(" S=%02X B=%02X D=%04D P=%02X"
+								mTempLine.append_sprintf(" S=%02X B=%02X D=%04X P=%02X"
 									, hent.mS
 									, hent.mB
 									, hent.mD
@@ -1496,7 +1505,7 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 							mTempLine.append(axybuf, axybuf + 14);
 						} else {
 							FastFormat02X(axybuf+17, hent.mS);
-							FastFormat02X(axybuf+12, hent.mP);
+							FastFormat02X(axybuf+22, hent.mP);
 							mTempLine.append(axybuf, axybuf + 24);
 						}
 					}
@@ -1559,7 +1568,7 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 				if (hent.mbIRQ && hent.mbNMI && mDisasmMode != kATDebugDisasmMode_6809)
 					mTempLine.append_sprintf("%04X: -- High level emulation --", hent.mPC);
 				else
-					ATDisassembleInsn(mTempLine, nullptr, mDisasmMode, hent, false, true, mbShowPCAddress, mbShowCodeBytes, mbShowLabels, false, false, mbShowLabelNamespaces);
+					ATDisassembleInsn(mTempLine, nullptr, mDisasmMode, hent, false, true, mbShowPCAddress, mbShowCodeBytes, mbShowLabels, false, false, mbShowLabelNamespaces, true, mbShowGlobalPCAddress);
 
 				s = mTempLine.c_str();
 			}
@@ -1620,8 +1629,14 @@ void ATUIHistoryView::InvalidateStartingAtNode(ATHTNode *node) {
 	VDASSERT(node->mpParent);
 	int y = mHistoryTree.GetNodeYPos(node) * mItemHeight;
 
-	if ((uint32)y < mScrollY + (mContentRect.bottom - mContentRect.top))
+	if ((uint32)y < mScrollY + (mContentRect.bottom - mContentRect.top)) {
+		RECT r;
+		r.left = 0;
+		r.top = (int)y - (int)mScrollY + mHeaderHeight;
+		r.right = mWidth;
+		r.bottom = mContentRect.bottom;
 		InvalidateRect(mhwnd, NULL, TRUE);
+	}
 }
 
 void ATUIHistoryView::InvalidateLine(const ATHTLineIterator& it) {
@@ -1997,12 +2012,9 @@ void ATUIHistoryView::RemoveNode(ATHTNode *node) {
 	ATHTNode *successorNode = nullptr;
 	
 	if (!mbInvalidatesBlocked)
-		successorNode = mHistoryTree.GetNextNode(node);
+		InvalidateStartingAtNode(node);
 
 	mHistoryTree.RemoveNode(node);
-
-	if (successorNode)
-		InvalidateStartingAtNode(successorNode);
 }
 
 void ATUIHistoryView::CopyVisibleLines() {

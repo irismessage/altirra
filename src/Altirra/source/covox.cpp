@@ -53,12 +53,12 @@ void ATCovoxEmulator::SetAddressRange(uint32 addrLo, uint32 addrHi, bool passWri
 	}
 }
 
-void ATCovoxEmulator::Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioOutput *audioOut) {
+void ATCovoxEmulator::Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioMixer *mixer) {
 	mpMemMan = memMan;
 	mpScheduler = sch;
-	mpAudioOut = audioOut;
+	mpAudioMixer = mixer;
 
-	audioOut->AddSyncAudioSource(this);
+	mixer->AddSyncAudioSource(this);
 
 	InitMapping();
 
@@ -77,9 +77,9 @@ void ATCovoxEmulator::Shutdown() {
 		mpMemMan = NULL;
 	}
 
-	if (mpAudioOut) {
-		mpAudioOut->RemoveSyncAudioSource(this);
-		mpAudioOut = NULL;
+	if (mpAudioMixer) {
+		mpAudioMixer->RemoveSyncAudioSource(this);
+		mpAudioMixer = nullptr;
 	}
 }
 
@@ -325,7 +325,7 @@ public:	// IATDeviceScheduling
 	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:	// IATDeviceAudioOutput
-	virtual void InitAudioOutput(IATAudioOutput *out, ATAudioSyncMixer *syncmixer) override;
+	virtual void InitAudioOutput(IATAudioMixer *mixer) override;
 
 public:	// IATDeviceDiagnostics
 	virtual void DumpStatus(ATConsoleOutput& output) override;
@@ -333,7 +333,7 @@ public:	// IATDeviceDiagnostics
 private:
 	ATMemoryManager *mpMemMan = nullptr;
 	ATScheduler *mpScheduler = nullptr;
-	IATAudioOutput *mpAudioOutput = nullptr;
+	IATAudioMixer *mpAudioMixer = nullptr;
 
 	uint32 mAddrLo = 0xD600;
 	uint32 mAddrHi = 0xD6FF;
@@ -413,13 +413,13 @@ bool ATDeviceCovox::SetSettings(const ATPropertySet& settings) {
 
 void ATDeviceCovox::Init() {
 	mCovox.SetAddressRange(mAddrLo, mAddrHi, mAddrLo != 0xD280);
-	mCovox.Init(mpMemMan, mpScheduler, mpAudioOutput);
+	mCovox.Init(mpMemMan, mpScheduler, mpAudioMixer);
 }
 
 void ATDeviceCovox::Shutdown() {
 	mCovox.Shutdown();
 
-	mpAudioOutput = nullptr;
+	mpAudioMixer = nullptr;
 	mpScheduler = nullptr;
 	mpMemMan = nullptr;
 }
@@ -442,8 +442,8 @@ void ATDeviceCovox::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpScheduler = sch;
 }
 
-void ATDeviceCovox::InitAudioOutput(IATAudioOutput *out, ATAudioSyncMixer *syncmixer) {
-	mpAudioOutput = out;
+void ATDeviceCovox::InitAudioOutput(IATAudioMixer *mixer) {
+	mpAudioMixer = mixer;
 }
 
 void ATDeviceCovox::DumpStatus(ATConsoleOutput& output) {

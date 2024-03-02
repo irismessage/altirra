@@ -91,6 +91,7 @@ public:		// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
 	bool IsWritableFirmwareDirty(uint32 idx) const override;
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
+	bool IsUsableFirmwareLoaded() const override;
 
 public:		// IATDeviceMemMap
 	void InitMemMap(ATMemoryManager *memman) override;
@@ -107,7 +108,7 @@ public:		// IATPBIDevice
 	uint8 ReadPBIStatus(uint8 busData, bool debugOnly) override;
 
 public:		// IATDeviceParent
-	IATDeviceBus *ATKMKJZIDE::GetDeviceBus(uint32 index) override;
+	IATDeviceBus *GetDeviceBus(uint32 index) override;
 
 public:		// IATDeviceBus
 	const wchar_t *GetBusName() const override;
@@ -134,7 +135,7 @@ public:		// IATDeviceButtons
 	void ActivateButton(ATDeviceButton idx, bool state) override;
 
 public:		// IATDeviceAudioOutput
-	void InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) override;
+	void InitAudioOutput(IATAudioMixer *mixer) override;
 
 protected:
 	static sint32 OnControlDebugRead(void *thisptr, uint32 addr);
@@ -179,6 +180,7 @@ protected:
 
 	Revision	mRevision = kRevision_V2_D;
 	const bool	mbVersion2;
+	bool	mbFirmwareUsable = false;	
 	bool	mbSDXSwitchEnabled = true;
 	bool	mbSDXEnabled = false;
 	bool	mbSDXUpstreamEnabled = false;
@@ -199,7 +201,7 @@ protected:
 	bool	mbIrqEnabled = false;
 	bool	mbIrqActive = false;
 
-	IATAudioOutput *mpAudioOutput = nullptr;
+	IATAudioMixer *mpAudioMixer = nullptr;
 
 	ATFlashEmulator	mFlashCtrl;
 	ATFlashEmulator	mSDXCtrl;

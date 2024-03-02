@@ -12,6 +12,8 @@ VDGUIHandle VDCreateDisplayWindowW32(uint32 dwExFlags, uint32 dwFlags, int x, in
 
 class IVDVideoDisplay;
 class IVDDisplayCompositor;
+class VDPixmapBuffer;
+class VDBufferedStream;
 
 class VDVideoDisplayFrame : public vdlist_node, public IVDRefCount {
 public:
@@ -122,5 +124,12 @@ void VDVideoDisplaySetTermServ3DEnabled(bool enable);
 
 IVDVideoDisplay *VDGetIVideoDisplay(VDGUIHandle hwnd);
 bool VDRegisterVideoDisplayControl();
+
+class IVDDisplayImageDecoder {
+public:
+	virtual bool DecodeImage(VDPixmapBuffer& buf, VDBufferedStream& stream) = 0;
+};
+
+void VDDisplaySetImageDecoder(IVDDisplayImageDecoder *pfn);
 
 #endif

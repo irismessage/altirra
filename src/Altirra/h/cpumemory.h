@@ -42,6 +42,7 @@ public:
 	uint8	mBusValue;
 	PageTablePtr mpCPUReadPageMap;
 	PageTablePtr mpCPUWritePageMap;
+	const uint32 *mpCPUReadAddressPageMap;
 	const BankTable *mpCPUReadBankMap;
 	const BankTable *mpCPUWriteBankMap;
 

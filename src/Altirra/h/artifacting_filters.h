@@ -72,6 +72,7 @@ struct ATFilterKernel {
 	}
 
 	inline ATFilterKernel& operator+=(const ATFilterKernel& src);
+	inline ATFilterKernel& operator-=(const ATFilterKernel& src);
 	inline ATFilterKernel& operator*=(float scale);
 	inline ATFilterKernel& operator*=(const ATFilterKernel& src);
 
@@ -287,8 +288,38 @@ inline ATFilterKernel operator+(const ATFilterKernel& x, const ATFilterKernel& y
 	return r;
 }
 
+inline ATFilterKernel operator-(const ATFilterKernel& x, const ATFilterKernel& y) {
+	ATFilterKernel r;
+
+	r.mOffset = std::min(x.mOffset, y.mOffset);
+
+	size_t m = x.mCoeffs.size();
+	size_t n = y.mCoeffs.size();
+	r.mCoeffs.resize(std::max(x.mOffset + (int)m, y.mOffset + (int)n) - r.mOffset, 0);
+
+	float *dst = r.mCoeffs.data();
+	const float *src = y.mCoeffs.data();
+
+	memcpy(dst + (x.mOffset - r.mOffset), x.mCoeffs.data(), m * sizeof(float));
+
+	dst += (y.mOffset - r.mOffset);
+	for(size_t i = 0; i < n; ++i)
+		dst[i] -= src[i];
+
+	return r;
+}
+
 inline ATFilterKernel& ATFilterKernel::operator+=(const ATFilterKernel& x) {
 	ATFilterKernel r(*this + x);
+
+	mCoeffs.swap(r.mCoeffs);
+	mOffset = r.mOffset;
+
+	return *this;
+}
+
+inline ATFilterKernel& ATFilterKernel::operator-=(const ATFilterKernel& x) {
+	ATFilterKernel r(*this - x);
 
 	mCoeffs.swap(r.mCoeffs);
 	mOffset = r.mOffset;

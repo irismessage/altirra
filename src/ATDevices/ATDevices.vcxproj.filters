@@ -51,6 +51,12 @@
     <ClCompile Include="source\testdevicesiopoll.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\loopback.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\modemsound.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\stdafx.h">
@@ -69,6 +75,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\at\atdevices\dongle.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atdevices\modemsound.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

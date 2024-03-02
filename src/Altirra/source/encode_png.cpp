@@ -20,8 +20,6 @@
 #endif
 
 namespace {
-	const uint8 kPNGSignature[8]={137,80,78,71,13,10,26,10};
-
 	const unsigned len_tbl[32]={
 		3,4,5,6,7,8,9,10,
 		11,13,15,17,19,23,27,31,
@@ -48,20 +46,6 @@ namespace {
 	const unsigned char hclen_tbl[]={
 		16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15
 	};
-
-	int PNGPaethPredictor(int a, int b, int c) {
-		int p  = a + b - c;
-		int pa = abs(p - a);
-		int pb = abs(p - b);
-		int pc = abs(p - c);
-
-		if (pa <= pb && pa <= pc)
-			return a;
-		else if (pb <= pc)
-			return b;
-		else
-			return c;
-	}
 
 	void PNGPredictEncodeNone(uint8 *dst, const uint8 *row, const uint8 *prevrow, uint32 rowbytes, uint32 bpp) {
 		memcpy(dst, row, rowbytes);
@@ -101,6 +85,8 @@ namespace {
 	}
 
 	void PNGPredictEncodePaeth(uint8 *dst, const uint8 *row, const uint8 *prevrow, uint32 rowbytes, uint32 bpp) {
+		using namespace nsVDPNG;
+
 		if (prevrow) {
 			for(uint32 i=0; i<bpp; ++i)
 				dst[i] = row[i] - PNGPaethPredictor(0, prevrow[i], 0);
@@ -1018,6 +1004,8 @@ VDImageEncoderPNG::~VDImageEncoderPNG() {
 }
 
 void VDImageEncoderPNG::Encode(const VDPixmap& px, const void *&p, uint32& len, bool quick) {
+	using namespace nsVDPNG;
+
 	mOutput.assign(kPNGSignature, kPNGSignature + 8);
 
 	struct IHDR {

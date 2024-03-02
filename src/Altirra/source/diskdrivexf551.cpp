@@ -23,7 +23,7 @@
 #include <at/atcore/logging.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/deviceserial.h>
-#include "audiosyncmixer.h"
+#include "audiosampleplayer.h"
 #include "diskdrivexf551.h"
 #include "memorymanager.h"
 #include "firmwaremanager.h"
@@ -56,7 +56,7 @@ void *ATDeviceDiskDriveXF551::AsInterface(uint32 iid) {
 		case IATDeviceFirmware::kTypeID: return static_cast<IATDeviceFirmware *>(this);
 		case IATDeviceDiskDrive::kTypeID: return static_cast<IATDeviceDiskDrive *>(this);
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
-		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(this);
+		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(&mAudioPlayer);
 		case IATDeviceDebugTarget::kTypeID: return static_cast<IATDeviceDebugTarget *>(this);
 		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(&mBreakpointsImpl);
 		case IATDebugTargetHistory::kTypeID: return static_cast<IATDebugTargetHistory *>(this);
@@ -120,10 +120,7 @@ void ATDeviceDiskDriveXF551::Init() {
 }
 
 void ATDeviceDiskDriveXF551::Shutdown() {
-	if (mRotationSoundId) {
-		mpAudioSyncMixer->StopSound(mRotationSoundId);
-		mRotationSoundId = 0;
-	}
+	mAudioPlayer.Shutdown();
 
 	mDriveScheduler.UnsetEvent(mpEventDriveReceiveBit);
 
@@ -242,7 +239,7 @@ bool ATDeviceDiskDriveXF551::ReloadFirmware() {
 	uint8 firmware[4096] = {};
 
 	uint32 len = 0;
-	mpFwMgr->LoadFirmware(id, firmware, 0, sizeof firmware, nullptr, &len);
+	mpFwMgr->LoadFirmware(id, firmware, 0, sizeof firmware, nullptr, &len, nullptr, nullptr, &mbFirmwareUsable);
 
 	memcpy(mROM[0], firmware, 2048);
 	memcpy(mROM[1], firmware + 2048, 2048);
@@ -265,6 +262,10 @@ bool ATDeviceDiskDriveXF551::IsWritableFirmwareDirty(uint32 idx) const {
 void ATDeviceDiskDriveXF551::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 }
 
+bool ATDeviceDiskDriveXF551::IsUsableFirmwareLoaded() const {
+	return mbFirmwareUsable;
+}
+
 void ATDeviceDiskDriveXF551::InitDiskDrive(IATDiskDriveManager *ddm) {
 	mpDiskDriveManager = ddm;
 	mpDiskInterface = ddm->GetDiskInterface(mDriveId);
@@ -274,10 +275,6 @@ void ATDeviceDiskDriveXF551::InitDiskDrive(IATDiskDriveManager *ddm) {
 void ATDeviceDiskDriveXF551::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
 	mpSIOMgr->AddRawDevice(this);
-}
-
-void ATDeviceDiskDriveXF551::InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) {
-	mpAudioSyncMixer = syncmixer;
 }
 
 IATDebugTarget *ATDeviceDiskDriveXF551::GetDebugTarget(uint32 index) {
@@ -994,23 +991,15 @@ void ATDeviceDiskDriveXF551::PlayStepSound() {
 	if (t - mLastStepSoundTime > 50000)
 		mLastStepPhase = 0;
 
-	mpAudioSyncMixer->AddSound(kATAudioMix_Drive, 0, kATAudioSampleId_DiskStep2, 0.3f + 0.7f * cosf((float)mLastStepPhase++ * nsVDMath::kfPi));
+	mAudioPlayer.PlayStepSound(kATAudioSampleId_DiskStep2, 0.3f + 0.7f * cosf((float)mLastStepPhase++ * nsVDMath::kfPi));
 
 	mLastStepSoundTime = t;
 }
 
 void ATDeviceDiskDriveXF551::UpdateRotationStatus() {
-		mpDiskInterface->SetShowMotorActive(mbMotorRunning);
+	mpDiskInterface->SetShowMotorActive(mbMotorRunning);
 
-	if (mbMotorRunning && mbSoundsEnabled) {
-		if (!mRotationSoundId)
-			mRotationSoundId = mpAudioSyncMixer->AddLoopingSound(kATAudioMix_Drive, 0, kATAudioSampleId_DiskRotation, 1.0f);
-	} else {
-		if (mRotationSoundId) {
-			mpAudioSyncMixer->StopSound(mRotationSoundId);
-			mRotationSoundId = 0;
-		}
-	}
+	mAudioPlayer.SetRotationSoundEnabled(mbMotorRunning && mbSoundsEnabled);
 }
 
 void ATDeviceDiskDriveXF551::UpdateDiskStatus() {

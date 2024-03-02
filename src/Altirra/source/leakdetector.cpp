@@ -335,7 +335,7 @@ void VDCDECL ATDumpMemoryLeaksVC() {
 			s += wsprintfA(buf, "    #%-5d %p (%8ld bytes)", pHdr->reqnum, pHdr->data, (long)pHdr->size);
 
 			if (pHdr->pFilename && !strcmp(pHdr->pFilename, "return address")) {
-#ifdef VD_CPU_AMD64
+#if VD_PTR_SIZE > 4
 				void *pRet = (void *)((size_t)pHdr->line + (size_t)&__ImageBase);
 #else
 				void *pRet = (void *)pHdr->line;

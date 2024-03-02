@@ -109,7 +109,7 @@ int ATExceptionFilter(DWORD code, EXCEPTION_POINTERS *exp) {
 		L"Exception code: %08x  PC: %08x", code, exp->ContextRecord->Eip);
 #elif defined(VD_CPU_AMD64)
 		L"Exception code: %08x  PC: %08x`%08x", code, (uint32)(exp->ContextRecord->Rip >> 32), (uint32)exp->ContextRecord->Rip);
-#elif defined(VD_CPU_ARM)
+#elif defined(VD_CPU_ARM64)
 		L"Exception code: %08x  PC: %08x", code, exp->ContextRecord->Pc);
 #else
 	#error Platform not supported

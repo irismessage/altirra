@@ -1706,10 +1706,10 @@ for(;;) {
 				he->mbNMI = false;
 				he->mSubCycle = 0;
 				he->mbEmulation = mbEmulationFlag;
-				he->mSH = rSH;
-				he->mAH = rAH;
-				he->mXH = rXH;
-				he->mYH = rYH;
+				he->mExt.mSH = rSH;
+				he->mExt.mAH = rAH;
+				he->mExt.mXH = rXH;
+				he->mExt.mYH = rYH;
 				he->mB = rB;
 				he->mK = rK;
 				he->mD = rDP;

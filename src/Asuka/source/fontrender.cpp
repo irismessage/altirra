@@ -45,7 +45,7 @@ void tool_fontrender(const vdfastvector<const char *>& args, const vdfastvector<
 	const int weight = atoi(args[4]);
 	const char *outname = args[5];
 
-	HDC hdc0 = CreateDC("DISPLAY", NULL, NULL, NULL);
+	HDC hdc0 = CreateDCW(L"DISPLAY", NULL, NULL, NULL);
 	HDC hdc = CreateCompatibleDC(hdc0);
 	DeleteDC(hdc0);
 
@@ -120,7 +120,7 @@ void tool_fontrender(const vdfastvector<const char *>& args, const vdfastvector<
 	SetBkColor(hdc, RGB(0, 0, 255));
 
 	RECT r = {0, 0, bi.bmiHeader.biWidth, bi.bmiHeader.biHeight };
-	ExtTextOut(hdc, 0, 0, ETO_OPAQUE | ETO_IGNORELANGUAGE, &r, "", 0, NULL);
+	ExtTextOutW(hdc, 0, 0, ETO_OPAQUE | ETO_IGNORELANGUAGE, &r, L"", 0, NULL);
 
 	SetBkColor(hdc, RGB(255, 255, 255));
 	SetTextColor(hdc, RGB(0, 0, 0));

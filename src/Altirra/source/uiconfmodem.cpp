@@ -23,6 +23,98 @@
 #include <at/atnativeui/uiproxies.h>
 #include <at/atcore/propertyset.h>
 #include "rs232.h"
+#include "uiconfmodem.h"
+
+static constexpr const wchar_t *kATModemTerminalTypes[]={
+	// RFC 1010, and now IANA, maintains a list of terminal types to be used
+	// with Telnet terminal type negotation (RFC 1091). This is intended to
+	// provide a list of common names... which of course, modern systems
+	// gladly ignore. CentOS 5.2 doesn't even allow DEC-VT100, requiring
+	// VT100 instead.
+	//
+	// Note that the terminal names must be sent in uppercase. This conversion
+	// is done in the Telnet module.
+
+	L"ansi",
+	L"dec-vt52",
+	L"dec-vt100",
+	L"vt52",
+	L"vt100",
+	L"vt102",
+	L"vt320",
+};
+
+void ATUIPopulateModemTermTypeList(VDUIProxyComboBoxControl& ctl) {
+	ctl.AddItem(L"(None)");
+
+	for(const wchar_t *termtype : kATModemTerminalTypes)
+		ctl.AddItem(termtype);
+}
+
+void ATUIExchangeModemTermTypeList(bool write, ATPropertySet& pset, VDUIProxyComboBoxControl& ctl) {
+	if (write) {
+		int termIdx = ctl.GetSelection();
+
+		if (termIdx != 0) {
+			const VDStringW& s = ctl.GetCaption();
+			pset.SetString("termtype", s.c_str());
+		}
+	} else {
+		const wchar_t *termType = pset.GetString("termtype");
+		if (termType && *termType) {
+			int termIdx = 0;
+
+			for(size_t i=0; i<vdcountof(kATModemTerminalTypes); ++i) {
+				if (!wcscmp(termType, kATModemTerminalTypes[i]))
+					termIdx = (int)i + 1;
+			}
+
+			if (termIdx)
+				ctl.SetSelection(termIdx);
+			else {
+				ctl.SetSelection(-1);
+				ctl.SetCaption(termType);
+			}
+		} else
+			ctl.SetSelection(0);
+	}
+}
+
+const wchar_t *const kATUINetworkModeLabels[]={
+	L"Disabled - no audio or delays",
+	L"Minimal - simulate dialing but skip handshaking phase",
+	L"Full - simulate dialing and handshaking",
+};
+
+const wchar_t *const kATUINetworkModeValues[]={
+	L"none",
+	L"minimal",
+	L"full"
+};
+
+void ATUIPopulateModemNetworkModeList(VDUIProxyComboBoxControl& ctl) {
+	for(const wchar_t *s : kATUINetworkModeLabels)
+		ctl.AddItem(s);
+}
+
+void ATUIExchangeModemNetworkModeList(bool write, ATPropertySet& pset, VDUIProxyComboBoxControl& ctl) {
+	if (write) {
+		int netModeIdx = ctl.GetSelection();
+		if ((unsigned)netModeIdx < vdcountof(kATUINetworkModeValues))
+			pset.SetString("netmode", kATUINetworkModeValues[netModeIdx]);
+	} else {
+		const wchar_t *netmode = pset.GetString("netmode", L"full");
+		int netmodeidx = 2;		// default to full
+		for(size_t i=0; i<vdcountof(kATUINetworkModeValues); ++i) {
+			if (!wcscmp(netmode, kATUINetworkModeValues[i])) {
+				netmodeidx = i;
+				break;
+			}
+		}
+
+		ctl.SetSelection(netmodeidx);
+	}
+}
 
 class ATUIDialogDeviceModem : public VDDialogFrameW32 {
 public:
@@ -40,10 +132,9 @@ protected:
 	bool mbTelnet;
 	VDUIProxyComboBoxControl mComboConnectSpeed;
 	VDUIProxyComboBoxControl mComboTermType;
+	VDUIProxyComboBoxControl mComboNetworkMode;
 
 	static const uint32 kConnectionSpeeds[];
-
-	static const wchar_t *const kTerminalTypes[];
 };
 
 const uint32 ATUIDialogDeviceModem::kConnectionSpeeds[]={
@@ -63,25 +154,6 @@ const uint32 ATUIDialogDeviceModem::kConnectionSpeeds[]={
 	230400
 };
 
-const wchar_t *const ATUIDialogDeviceModem::kTerminalTypes[]={
-	// RFC 1010, and now IANA, maintains a list of terminal types to be used
-	// with Telnet terminal type negotation (RFC 1091). This is intended to
-	// provide a list of common names... which of course, modern systems
-	// gladly ignore. CentOS 5.2 doesn't even allow DEC-VT100, requiring
-	// VT100 instead.
-	//
-	// Note that the terminal names must be sent in uppercase. This conversion
-	// is done in the Telnet module.
-
-	L"ansi",
-	L"dec-vt52",
-	L"dec-vt100",
-	L"vt52",
-	L"vt100",
-	L"vt102",
-	L"vt320",
-};
-
 ATUIDialogDeviceModem::ATUIDialogDeviceModem(ATPropertySet& pset)
 	: VDDialogFrameW32(IDD_DEVICE_MODEM)
 	, mPropSet(pset)
@@ -91,18 +163,17 @@ ATUIDialogDeviceModem::ATUIDialogDeviceModem(ATPropertySet& pset)
 bool ATUIDialogDeviceModem::OnLoaded() {
 	AddProxy(&mComboConnectSpeed, IDC_CONNECTION_SPEED);
 	AddProxy(&mComboTermType, IDC_TERMINAL_TYPE);
+	AddProxy(&mComboNetworkMode, IDC_NETWORKMODE);
 
 	VDStringW s;
 
-	for(uint32 i=0; i<sizeof(kConnectionSpeeds)/sizeof(kConnectionSpeeds[0]); ++i) {
-		s.sprintf(L"%u baud", kConnectionSpeeds[i]);
+	for(uint32 speed : kConnectionSpeeds) {
+		s.sprintf(L"%u baud", speed);
 		mComboConnectSpeed.AddItem(s.c_str());
 	}
 
-	mComboTermType.AddItem(L"(None)");
-
-	for(size_t i=0; i<vdcountof(kTerminalTypes); ++i)
-		mComboTermType.AddItem(kTerminalTypes[i]);
+	ATUIPopulateModemTermTypeList(mComboTermType);
+	ATUIPopulateModemNetworkModeList(mComboNetworkMode);
 
 	return VDDialogFrameW32::OnLoaded();
 }
@@ -123,16 +194,6 @@ void ATUIDialogDeviceModem::OnDataExchange(bool write) {
 		}
 
 		mPropSet.SetBool("outbound", mbOutbound);
-
-		int termIdx = mComboTermType.GetSelection();
-
-		if (termIdx != 0) {
-			VDStringW s;
-
-			GetControlText(IDC_TERMINAL_TYPE, s);
-			mPropSet.SetString("termtype", s.c_str());
-		}
-
 		mPropSet.SetBool("telnet", IsButtonChecked(IDC_TELNET));
 		mPropSet.SetBool("telnetlf", IsButtonChecked(IDC_TELNET_LFCONVERSION));
 		mPropSet.SetBool("ipv6", IsButtonChecked(IDC_ACCEPT_IPV6));
@@ -156,24 +217,6 @@ void ATUIDialogDeviceModem::OnDataExchange(bool write) {
 		mbAccept = port > 0;
 		mbTelnet = mPropSet.GetBool("telnet", true);
 		mbOutbound = mPropSet.GetBool("outbound", true);
-
-		const wchar_t *termType = mPropSet.GetString("termtype");
-		if (termType && *termType) {
-			int termIdx = 0;
-
-			for(size_t i=0; i<vdcountof(kTerminalTypes); ++i) {
-				if (!wcscmp(termType, kTerminalTypes[i]))
-					termIdx = (int)i + 1;
-			}
-
-			if (termIdx)
-				mComboTermType.SetSelection(termIdx);
-			else {
-				mComboTermType.SetSelection(-1);
-				SetControlText(IDC_TERMINAL_TYPE, termType);
-			}
-		} else
-			mComboTermType.SetSelection(0);
 
 		CheckButton(IDC_TELNET, mbTelnet);
 		CheckButton(IDC_TELNET_LFCONVERSION, mPropSet.GetBool("telnetlf", true));
@@ -204,6 +247,9 @@ void ATUIDialogDeviceModem::OnDataExchange(bool write) {
 
 		UpdateEnables();
 	}
+
+	ATUIExchangeModemTermTypeList(write, mPropSet, mComboTermType);
+	ATUIExchangeModemNetworkModeList(write, mPropSet, mComboNetworkMode);
 }
 
 bool ATUIDialogDeviceModem::OnCommand(uint32 id, uint32 extcode) {

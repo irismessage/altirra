@@ -2,8 +2,8 @@
 setlocal enableextensions enabledelayedexpansion
 
 rem ---echo banner
-echo Altirra Build Release Utility Version 3.00
-echo Copyright (C) Avery Lee 2014-2017. Licensed under GNU General Public License
+echo Altirra Build Release Utility Version 3.10
+echo Copyright (C) Avery Lee 2014-2018. Licensed under GNU General Public License
 echo.
 
 rem ---parse command line arguments
@@ -12,8 +12,9 @@ set _packonly=false
 set _verid=
 set _anyvc=false
 set _checkvc=false
-set _clversionexp=19.11.25547
-set _clversionexpdesc=Visual Studio 2017 Version 15.4.1
+set _arm64=false
+set _clversionexp=19.14.26433
+set _clversionexpdesc=Visual Studio 2017 Version 15.7.5
 
 :arglist
 if "%1"=="" goto endargs
@@ -26,6 +27,8 @@ if "%1"=="/packonly" (
 	set _anyvc=true
 ) else if "%1"=="/checkvc" (
 	set _checkvc=true
+) else if "%1"=="/arm64" (
+	set _arm64=true
 ) else if "%1"=="/?" (
 	goto :usage
 ) else if "%1"=="/h" (
@@ -40,7 +43,7 @@ shift /1
 goto :arglist
 
 :usage
-echo Usage: release [/inc] [/packonly] [/anyvc] [/checkvc] ^<version-id^>
+echo Usage: release [/inc] [/packonly] [/anyvc] [/checkvc] [/arm64] ^<version-id^>
 echo.
 exit /b 5
 
@@ -156,6 +159,14 @@ if not !_packonly!==true (
 		goto :cleanup
 	)
 
+	if !_arm64!==true (
+		devenv src\Altirra.sln !_buildswitch! Release^|ARM64 /Out publish\build-arm64.log
+		if errorlevel 1 (
+			call :reportBuildFailure publish\build-arm64.log
+			goto :cleanup
+		)
+	)
+
 	devenv src\ATHelpFile.sln !_buildswitch! Release /Out publish\build-help.log
 	if errorlevel 1 (
 		call :reportBuildFailure publish\build-x64-debug.log
@@ -265,6 +276,28 @@ if errorlevel 1 (
 
 copy out\release\Altirra.pdb publish\Altirra-!_verid!.pdb
 copy out\releaseamd64\Altirra64.pdb publish\Altirra64-!_verid!.pdb
+
+if !_arm64!==true (
+	zip -9 -X -j publish\Altirra-!_verid!-ARM64.zip ^
+		out\releasearm64\AltirraARM64.exe ^
+		Copying ^
+		out\Helpfile\Altirra.chm ^
+		out\Release\Additions.atr
+
+	if errorlevel 1 (
+		echo Packaging step failed.
+		exit /b 0
+	)
+
+	advzip -z -3 publish\Altirra-!_verid!-ARM64.zip
+
+	if errorlevel 1 (
+		echo Packaging step failed.
+		exit /b 0
+	)
+
+	copy out\releasearm64\AltirraARM64.pdb publish\AltirraARM64-!_verid!.pdb
+)
 
 dir publish
 if exist src\Altirra\autobuild\version.h del src\Altirra\autobuild\version.h

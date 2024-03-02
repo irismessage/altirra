@@ -19,6 +19,7 @@
 #include <stdafx.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <vd2/system/time.h>
 #include <at/atcore/cio.h>
 #include <at/atnativeui/genericdialog.h>
 #include "uiaccessors.h"
@@ -85,6 +86,17 @@ sint32 ATDeviceBrowser::OnCIOGetBytes(int channel, uint8 deviceNo, void *buf, ui
 }
 
 sint32 ATDeviceBrowser::OnCIOPutBytes(int channel, uint8 deviceNo, const void *buf, uint32 len, uint32& actual) {
+	// check if the cooldown timer is active. If so, wait until that amount of
+	// time has passed before allowing another attempt.
+	if (mLastDenyRealTick) {
+		uint32 delta = VDGetCurrentTick() - mLastDenyRealTick;
+
+		if (delta + mCooldownTimer < mCooldownTimer * 2)
+			return -1;
+
+		mLastDenyRealTick = 0;
+	}
+
 	const uint8 *src = (const uint8 *)buf;
 	actual = len;
 
@@ -156,6 +168,17 @@ void ATDeviceBrowser::FlushUrl() {
 
 			if (result == kATUIGenericResult_Allow) {
 				ShellExecuteW((HWND)ATUIGetMainWindow(), L"open", VDTextAToW(mUrl).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+
+				mCooldownTimer = 0;
+			} else {
+				// start at 2s, then double to 4s
+				if (!mCooldownTimer)
+					mCooldownTimer = 2000;
+				else if (mCooldownTimer < 4000)
+					mCooldownTimer *= 2;
+
+				// set cooldown time base (ensuring never 0)
+				mLastDenyRealTick = VDGetCurrentTick() | 1;
 			}
 		}
 	}

@@ -78,6 +78,7 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 		"diskdrivetygrys1050",
 		"diskdrive1050turbo",
 		"diskdrive1050turboii",
+		"diskdriveisplate",
 		"diskdriveindusgt",
 		"diskdrivexf551",
 	};

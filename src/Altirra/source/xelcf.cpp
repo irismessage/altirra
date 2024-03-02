@@ -25,15 +25,19 @@
 #include "ide.h"
 #include "uirender.h"
 
+template<bool V3>
 void ATCreateDeviceXELCF(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATXELCFEmulator> p(new ATXELCFEmulator);
+	vdrefptr<ATXELCFEmulator> p(new ATXELCFEmulator(V3));
 
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefXELCF = { "xelcf", nullptr, L"XEL-CF", ATCreateDeviceXELCF };
+extern const ATDeviceDefinition g_ATDeviceDefXELCF = { "xelcf", nullptr, L"XEL-CF", ATCreateDeviceXELCF<false> };
+extern const ATDeviceDefinition g_ATDeviceDefXELCF3 = { "xelcf3", nullptr, L"XEL-CF3", ATCreateDeviceXELCF<true> };
 
-ATXELCFEmulator::ATXELCFEmulator() {
+ATXELCFEmulator::ATXELCFEmulator(bool isV3)
+	: mbIsV3(isV3)
+{
 }
 
 ATXELCFEmulator::~ATXELCFEmulator() {
@@ -45,6 +49,13 @@ void *ATXELCFEmulator::AsInterface(uint32 id) {
 		case IATDeviceMemMap::kTypeID:		return static_cast<IATDeviceMemMap *>(this);
 		case IATDeviceIndicators::kTypeID:	return static_cast<IATDeviceIndicators *>(this);
 		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(this);
+
+		case IATDeviceButtons::kTypeID:
+			if (mbIsV3)
+				return static_cast<IATDeviceButtons *>(this);
+			else
+				return nullptr;
+
 		case ATIDEEmulator::kTypeID:		return static_cast<ATIDEEmulator *>(&mIDE[0]);
 		default:
 			return nullptr;
@@ -92,7 +103,7 @@ void ATXELCFEmulator::Shutdown() {
 
 
 void ATXELCFEmulator::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mpDef = &g_ATDeviceDefXELCF;
+	info.mpDef = mbIsV3 ? &g_ATDeviceDefXELCF3 : &g_ATDeviceDefXELCF;
 }
 
 void ATXELCFEmulator::ColdReset() {
@@ -130,6 +141,25 @@ void ATXELCFEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 
 IATDeviceBus *ATXELCFEmulator::GetDeviceBus(uint32 index) {
 	return index ? 0 : this;
+}
+
+uint32 ATXELCFEmulator::GetSupportedButtons() const {
+	return UINT32_C(1) << kATDeviceButton_XELCFSwap;
+}
+
+bool ATXELCFEmulator::IsButtonDepressed(ATDeviceButton idx) const {
+	return idx == kATDeviceButton_XELCFSwap && mbSwapDepressed;
+}
+
+void ATXELCFEmulator::ActivateButton(ATDeviceButton idx, bool state) {
+	if (idx == kATDeviceButton_XELCFSwap) {
+		if (mbSwapDepressed != state) {
+			mbSwapDepressed = state;
+
+			if (state)
+				mbSwapActive = true;
+		}
+	}
 }
 
 const wchar_t *ATXELCFEmulator::GetBusName() const {
@@ -192,7 +222,11 @@ sint32 ATXELCFEmulator::OnDebugReadByte(void *thisptr0, uint32 addr) {
 
 	switch(addr & 0xFFF8) {
 		case 0xD1C0:
-			return thisptr->mpMemMan->ReadFloatingDataBus();
+			// The XEL has pull-ups on the data bus, and the XEL-CF requires the MPBI specific to the
+			// 1088XEL, so we can safely assume that the data bus is pulled up here. V2 simply doesn't
+			// drive the bus, while V3 pulls D6 low as a signature bit and pulls D7 low if the swap
+			// latch is set.
+			return thisptr->mbIsV3 ? 0x3F + (thisptr->mbSwapActive ? 0x00 : 0x80) : 0xFF;
 
 		case 0xD1E0:
 			{
@@ -213,12 +247,15 @@ sint32 ATXELCFEmulator::OnReadByte(void *thisptr0, uint32 addr) {
 
 	switch(addr & 0xFFF8) {
 		case 0xD1C0:
-			for(int i=0; i<2; ++i) {
-				if (thisptr->mpBlockDevices[i])
-					thisptr->mIDE[i].ColdReset();
+			// XEL-CF2 does a reset on any access to $D1C0-D1DF. XEL-CF3 only does so on writes.
+			if (!thisptr->mbIsV3) {
+				for(int i=0; i<2; ++i) {
+					if (thisptr->mpBlockDevices[i])
+						thisptr->mIDE[i].ColdReset();
+				}
 			}
 
-			return thisptr->mpMemMan->ReadFloatingDataBus();
+			return OnDebugReadByte(thisptr0, addr);
 
 		case 0xD1E0:
 			{
@@ -240,11 +277,23 @@ bool ATXELCFEmulator::OnWriteByte(void *thisptr0, uint32 addr, uint8 value) {
 
 	switch(addr & 0xFFF8) {
 		case 0xD1C0:
-			for(int i=0; i<2; ++i) {
-				if (thisptr->mpBlockDevices[i])
-					thisptr->mIDE[i].ColdReset();
+			// XEL-CF2: Always reset device
+			// XEL-CF3: Always reset swap latch, also reset device if D0=0
+			if (!thisptr->mbIsV3 || !(value & 0x01)) {
+				for(int i=0; i<2; ++i) {
+					if (thisptr->mpBlockDevices[i])
+						thisptr->mIDE[i].ColdReset();
+				}
 			}
 
+			// The XEL-CF3's swap latch is a classic S-R latch, with the Q output
+			// sensed by the CPU and /Q shown by LED. This means that if both
+			// set and reset inputs are asserted, both Q and /Q both temporarily
+			// go high and the the last input to deassert wins. Since the CPU
+			// can't reset and read the latch at the same time, holding down the
+			// button will always win.
+			if (!thisptr->mbSwapDepressed)
+				thisptr->mbSwapActive = false;
 			break;
 
 		case 0xD1E0:

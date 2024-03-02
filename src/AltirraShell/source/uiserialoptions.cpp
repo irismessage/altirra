@@ -18,6 +18,7 @@
 
 #include <stdafx.h>
 #include <setupapi.h>
+#include <winioctl.h>
 #include <vd2/system/error.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/uiproxies.h>

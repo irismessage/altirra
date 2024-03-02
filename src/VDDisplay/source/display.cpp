@@ -45,6 +45,7 @@
 #define VDDEBUG_DISP(...) VDDispLogF(__VA_ARGS__)
 
 extern const char g_szVideoDisplayControlName[] = "phaeronVideoDisplay";
+extern const wchar_t g_wszVideoDisplayControlName[] = L"phaeronVideoDisplay";
 
 extern void VDMemcpyRect(void *dst, ptrdiff_t dststride, const void *src, ptrdiff_t srcstride, size_t w, size_t h);
 
@@ -348,7 +349,7 @@ ATOM VDVideoDisplayWindow::Register() {
 		wc.hCursor			= LoadCursor(NULL, IDC_ARROW);
 		wc.hbrBackground	= (HBRUSH)(BLACK_BRUSH + 1);
 		wc.lpszMenuName		= 0;
-		wc.lpszClassName	= "phaeronVideoDisplayChild";
+		wc.lpszClassName	= L"phaeronVideoDisplayChild";
 
 		sChildWindowClass = RegisterClass(&wc);
 		if (!sChildWindowClass)
@@ -364,7 +365,7 @@ ATOM VDVideoDisplayWindow::Register() {
 	wc.hCursor			= LoadCursor(NULL, IDC_ARROW);
 	wc.hbrBackground	= (HBRUSH)(COLOR_3DFACE + 1);
 	wc.lpszMenuName		= 0;
-	wc.lpszClassName	= g_szVideoDisplayControlName;
+	wc.lpszClassName	= g_wszVideoDisplayControlName;
 
 	return RegisterClass(&wc);
 }
@@ -1480,7 +1481,7 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 
 	RECT r;
 	GetClientRect(mhwnd, &r);
-	mhwndChild = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)(uintptr)sChildWindowClass, "", WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS, 0, 0, r.right, r.bottom, mhwnd, NULL, VDGetLocalModuleHandleW32(), this);
+	mhwndChild = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)(uintptr)sChildWindowClass, L"", WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS, 0, 0, r.right, r.bottom, mhwnd, NULL, VDGetLocalModuleHandleW32(), this);
 	if (!mhwndChild)
 		return false;
 
@@ -1678,7 +1679,7 @@ VDGUIHandle VDCreateDisplayWindowW32(uint32 dwExFlags, uint32 dwFlags, int x, in
 
 		static void Dispatch(void *p0) {
 			RemoteCreateCall *p = (RemoteCreateCall *)p0;
-			p->hwndResult = CreateWindowEx(p->dwExFlags, g_szVideoDisplayControlName, "", p->dwFlags, p->x, p->y, p->width, p->height, p->hwndParent, NULL, VDGetLocalModuleHandleW32(), p->vdm);
+			p->hwndResult = CreateWindowEx(p->dwExFlags, g_wszVideoDisplayControlName, L"", p->dwFlags, p->x, p->y, p->width, p->height, p->hwndParent, NULL, VDGetLocalModuleHandleW32(), p->vdm);
 		}
 	} rmc = {dwExFlags, dwFlags | WS_CLIPCHILDREN, x, y, width, height, (HWND)hwndParent, vdm};
 

@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2017 Avery Lee
+//	Copyright (C) 2017-2018 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 #include <vd2/system/time.h>
 #include <vd2/system/vdtypes.h>
 #include <at/atcore/media.h>
+#include <at/atcore/notifylist.h>
 #include <at/atio/diskimage.h>
 
 class IATUIRenderer;
@@ -35,6 +36,12 @@ public:
 	virtual void OnAudioModeChanged() = 0;
 };
 
+// ATDiskInterface
+//
+// A disk interface object represents a numbered disk drive slot, i.e. D1:.
+// It allows a common interface between disk drive emulation and front-end
+// components that control media and settings associated with each slot.
+//
 class ATDiskInterface {
 	ATDiskInterface(const ATDiskInterface&) = delete;
 	ATDiskInterface& operator=(const ATDiskInterface&) = delete;
@@ -42,7 +49,6 @@ public:
 	ATDiskInterface();
 	~ATDiskInterface();
 
-	void Rename(uint32 index);
 	void SwapSettings(ATDiskInterface& other);
 
 	void Init(uint32 index, IATUIRenderer *uirenderer);
@@ -90,6 +96,12 @@ public:
 	// whenever the disk is modified.
 	void Flush();
 
+	// Reload the existing bound disk, discarding any changes. Returns false if the
+	// disk image cannot be reloaded (has no suitable backing store). Silently
+	// succeeds if the disk is not dirty.
+	bool CanRevert() const;
+	bool RevertDisk();
+
 	void MountFolder(const wchar_t *path, bool sdfs);
 	void LoadDisk(const wchar_t *s);
 	void LoadDisk(const wchar_t *origPath, const wchar_t *imagePath, IATDiskImage *image);
@@ -133,6 +145,9 @@ public:
 
 	bool GetSectorInfo(uint16 sector, int phantomIdx, SectorInfo& info) const;
 
+	void AddStateChangeHandler(const vdfunction<void()> *fn);
+	void RemoveStateChangeHandler(const vdfunction<void()> *fn);
+
 public:
 	size_t GetClientCount() const;
 	void AddClient(IATDiskInterfaceClient *client);
@@ -150,6 +165,12 @@ private:
 	void OnFlushTimerFire();
 	void SetFlushError(bool);
 
+	void CheckForModifiedChange();
+
+	void NotifyStateSuspend();
+	void NotifyStateResume(bool notify);
+	void NotifyStateChange();
+
 	uint32 mIndex;
 	IATUIRenderer *mpUIRenderer;
 
@@ -158,12 +179,17 @@ private:
 	bool mbShowSectorCounter = false;
 	bool mbHasPersistentSource = false;
 
+	bool mbModified = false;
+
 	sint32 mSectorBreakpoint = -1;
 	ATMediaWriteMode mWriteMode = {};
 	VDStringW mPath;
 	vdrefptr<IATDiskImage> mpDiskImage;
 
 	vdfastfixedvector<IATDiskInterfaceClient *, 1> mClients;
+
+	ATNotifyList<const vdfunction<void()> *> mStateChangeHandlers;
+	uint32 mStateChangeSuspendCount = 0;
 
 	uint32 mFlushTimeStart = 0;
 	VDLazyTimer mFlushTimer;

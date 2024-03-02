@@ -50,7 +50,7 @@ class ATRS232ChannelSX212 final : public IATSchedulerCallback {
 public:
 	ATRS232ChannelSX212();
 
-	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev);
+	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer);
 	void Shutdown();
 
 	void ColdReset();
@@ -174,14 +174,14 @@ ATRS232ChannelSX212::ATRS232ChannelSX212()
 	mpDevice->SetSX212Mode();
 }
 
-void ATRS232ChannelSX212::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev) {
+void ATRS232ChannelSX212::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer) {
 	mpScheduler = sched;
 	mpCIOMgr = ciomgr;
 	mpSIOMgr = siomgr;
 	mpSIODev = siodev;
 
 	mpDevice->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
-	mpDevice->Init(sched, slowsched, uir);
+	mpDevice->Init(sched, slowsched, uir, mixer);
 
 	// compute initial control state
 	ATDeviceSerialStatus cstate(mpDevice->GetStatus());
@@ -502,7 +502,8 @@ void ATRS232ChannelSX212::EnqueueReceivedByte(uint8 c, bool highSpeed) {
 class ATDeviceSX212 final
 	: public ATDevice
 	, public IATDeviceScheduling
-	, public IATDeviceIndicators					
+	, public IATDeviceIndicators
+	, public IATDeviceAudioOutput
 	, public IATDeviceCIO
 	, public ATDeviceSIO
 	, public IATDeviceRawSIO
@@ -529,6 +530,9 @@ public:	// IATDeviceScheduling
 public:	// IATDeviceIndicators
 	void InitIndicators(IATDeviceIndicatorManager *r) override;
 
+public:	// IATAudioOutput
+	void InitAudioOutput(IATAudioMixer *mixer) override;
+
 public:	// IATDeviceCIO
 	void InitCIO(IATDeviceCIOManager *mgr) override;
 	void GetCIODevices(char *buf, size_t len) const override;
@@ -550,16 +554,17 @@ public:	// IATDeviceRawSIO
 	void OnSendReady() override;
 
 protected:
-	ATScheduler *mpScheduler;
-	ATScheduler *mpSlowScheduler;
-	IATDeviceIndicatorManager *mpUIRenderer;
-	IATDeviceCIOManager *mpCIOMgr;
-	IATDeviceSIOManager *mpSIOMgr;
+	ATScheduler *mpScheduler {};
+	ATScheduler *mpSlowScheduler {};
+	IATDeviceIndicatorManager *mpUIRenderer {};
+	IATDeviceCIOManager *mpCIOMgr {};
+	IATDeviceSIOManager *mpSIOMgr {};
+	IATAudioMixer *mpAudioMixer {};
 
-	ATRS232ChannelSX212 *mpChannel;
+	ATRS232ChannelSX212 *mpChannel {};
 
-	AT850SIOEmulationLevel mEmulationLevel;
-	bool mbSIOMotorState;
+	AT850SIOEmulationLevel mEmulationLevel = kAT850SIOEmulationLevel_None;
+	bool mbSIOMotorState = false;
 };
 
 void ATCreateDeviceSX212(const ATPropertySet& pset, IATDevice **dev) {
@@ -570,16 +575,7 @@ void ATCreateDeviceSX212(const ATPropertySet& pset, IATDevice **dev) {
 
 extern const ATDeviceDefinition g_ATDeviceDefSX212 = { "sx212", "sx212", L"SX212 Modem", ATCreateDeviceSX212 };
 
-ATDeviceSX212::ATDeviceSX212()
-	: mpScheduler(nullptr)
-	, mpSlowScheduler(nullptr)
-	, mpUIRenderer(nullptr)
-	, mpCIOMgr(nullptr)
-	, mpSIOMgr(nullptr)
-	, mpChannel(nullptr)
-	, mEmulationLevel(kAT850SIOEmulationLevel_None)
-	, mbSIOMotorState(false)
-{
+ATDeviceSX212::ATDeviceSX212() {
 	// We have to init this early so it can accept settings.
 	mpChannel = new ATRS232ChannelSX212;
 }
@@ -592,6 +588,7 @@ void *ATDeviceSX212::AsInterface(uint32 id) {
 	switch(id) {
 		case IATDeviceScheduling::kTypeID:	return static_cast<IATDeviceScheduling *>(this);
 		case IATDeviceIndicators::kTypeID:	return static_cast<IATDeviceIndicators *>(this);
+		case IATDeviceAudioOutput::kTypeID:	return static_cast<IATDeviceAudioOutput *>(this);
 		case IATDeviceCIO::kTypeID:			return static_cast<IATDeviceCIO *>(this);
 		case IATDeviceSIO::kTypeID:			return static_cast<IATDeviceSIO *>(this);
 		case IATDeviceRawSIO::kTypeID:		return static_cast<IATDeviceRawSIO *>(this);
@@ -643,7 +640,7 @@ bool ATDeviceSX212::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATDeviceSX212::Init() {
-	mpChannel->Init(mpScheduler, mpSlowScheduler, mpUIRenderer, mpCIOMgr, mpSIOMgr, this);
+	mpChannel->Init(mpScheduler, mpSlowScheduler, mpUIRenderer, mpCIOMgr, mpSIOMgr, this, mpAudioMixer);
 }
 
 void ATDeviceSX212::Shutdown() {
@@ -667,7 +664,8 @@ void ATDeviceSX212::Shutdown() {
 	mpScheduler = nullptr;
 	mpSlowScheduler = nullptr;
 
-	mpUIRenderer = NULL;
+	mpUIRenderer = nullptr;
+	mpAudioMixer = nullptr;
 }
 
 void ATDeviceSX212::ColdReset() {
@@ -684,6 +682,10 @@ void ATDeviceSX212::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 
 void ATDeviceSX212::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
+}
+
+void ATDeviceSX212::InitAudioOutput(IATAudioMixer *mixer) {
+	mpAudioMixer = mixer;
 }
 
 void ATDeviceSX212::InitCIO(IATDeviceCIOManager *mgr) {

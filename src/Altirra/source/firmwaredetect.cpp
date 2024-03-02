@@ -48,6 +48,7 @@ struct ATKnownFirmware {
 	{ 0xa6a9e3d6,  8192, kATFirmwareType_MIO, L"MIO ver. 1.41 (64Kbit)" },
 	{ 0x1d400131, 16384, kATFirmwareType_MIO, L"MIO ver. 1.41 (128Kbit)" },
 	{ 0xe2f4b3a8, 32768, kATFirmwareType_MIO, L"MIO ver. 1.41 (256Kbit)" },
+	{ 0x19227d33,  2048, kATFirmwareType_810, L"Atari 810 firmware rev. B" },
 	{ 0x0896f03d,  2048, kATFirmwareType_810, L"Atari 810 firmware rev. C" },
 	{ 0xaad220f4,  2048, kATFirmwareType_810, L"Atari 810 firmware rev. E" },
 	{ 0x91ba303d,  4096, kATFirmwareType_1050, L"Atari 1050 firmware rev. J" },
@@ -57,6 +58,9 @@ struct ATKnownFirmware {
 	{ 0x19b6bfe5,  8192, kATFirmwareType_Happy1050, L"Happy 1050 firmware rev. 1" },
 	{ 0xf76eae16,  8192, kATFirmwareType_Happy1050, L"Happy 1050 firmware rev. 2" },
 	{ 0x739bab74,  4096, kATFirmwareType_ATR8000, L"ATR8000 firmware ver 3.02" },
+	{ 0xd125caad,  4096, kATFirmwareType_IndusGT, L"Indus GT firmware ver. 1.1" },
+	{ 0xd8504b4a,  4096, kATFirmwareType_IndusGT, L"Indus GT firmware ver. 1.2" },
+	{ 0x605b7153,  4096, kATFirmwareType_USDoubler, L"US Doubler firmware" },
 };
 
 bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {

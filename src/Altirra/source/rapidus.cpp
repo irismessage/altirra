@@ -250,27 +250,24 @@ void ATRapidusDevice::Shutdown() {
 		mpMemMan = nullptr;
 	}
 
-	mpLayerLowerKernel = nullptr;
-	mpLayerUpperKernel = nullptr;
-	mpLayerSelfTest = nullptr;
-
 	mpFwMgr = nullptr;
 }
 
 void ATRapidusDevice::ColdReset() {
-	mFPGAConfigReg = 0;
+	// reset FPGA, force boot on 6502
+	mFPGAConfigReg = 0x40;
 
+	mMCR = 0xFF;
+	m6502CR = 0;
 	WarmReset();
 }
 
 void ATRapidusDevice::WarmReset() {
 	mFPGABankReg = 0;
-	mFPGAConfigReg = (mFPGAConfigReg & 0x80) | 0x40;		// running on 6502, preserve core load status
-	mMCR = 0xFF;
+	mMCR |= 0x7F;		// need to preserve bit 7 or RapidOS can't warmstart
 	mCMCR = 0;
 	mSCR = 0xFF;
 	mAR = 0;
-	m6502CR = 0;
 	mHPCR = 0;
 	mI2CDataReg = 0;
 	mEEPROMAddress = 0;
@@ -313,8 +310,13 @@ bool ATRapidusDevice::ReloadFirmware() {
 
 	mFlashEmu.SetDirty(false);
 
-	mpFwMgr->LoadFirmware(mpFwMgr->GetCompatibleFirmware(kATFirmwareType_RapidusFlash), mFlash, 0, sizeof mFlash, &changed, nullptr, nullptr, &fill);
-	mpFwMgr->LoadFirmware(mpFwMgr->GetCompatibleFirmware(kATFirmwareType_RapidusCorePBI), mPBIFirmware816, 0, sizeof mPBIFirmware816, &changed, nullptr, nullptr, &fill);
+	bool flashUsable = false;
+	bool pbiUsable = false;
+
+	mpFwMgr->LoadFirmware(mpFwMgr->GetCompatibleFirmware(kATFirmwareType_RapidusFlash), mFlash, 0, sizeof mFlash, &changed, nullptr, nullptr, &fill, &flashUsable);
+	mpFwMgr->LoadFirmware(mpFwMgr->GetCompatibleFirmware(kATFirmwareType_RapidusCorePBI), mPBIFirmware816, 0, sizeof mPBIFirmware816, &changed, nullptr, nullptr, &fill, &pbiUsable);
+
+	mbFirmwareUsable = flashUsable && pbiUsable;
 
 	return changed;
 }
@@ -337,6 +339,10 @@ void ATRapidusDevice::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 		mFlashEmu.SetDirty(false);
 	} else if (idx == 4)
 		stream.Write(mPBIFirmware816, sizeof mPBIFirmware816);
+}
+
+bool ATRapidusDevice::IsUsableFirmwareLoaded() const {
+	return mbFirmwareUsable;
 }
 
 void ATRapidusDevice::InitIndicators(IATDeviceIndicatorManager *indMgr) {
@@ -363,6 +369,8 @@ void ATRapidusDevice::SelectPBIDevice(bool enable) {
 	mbPBIDeviceActive = enable;
 	mpMemMan->EnableLayer(mpLayerLoRegisters, enable);
 	mpMemMan->EnableLayer(mpLayerPBIFirmware, enable);
+
+	UpdateLoFlashWindow();
 }
 
 bool ATRapidusDevice::IsPBIOverlayActive() const {
@@ -385,18 +393,38 @@ void ATRapidusDevice::SetROMLayers(
 	ATMemoryLayer *layerGameROM,
 	const void *kernelROM)
 {
-	mpLayerLowerKernel = layerLowerKernelROM;
-	mpLayerUpperKernel = layerUpperKernelROM;
-	mpLayerSelfTest = layerSelfTestROM;
-	mpKernelROM = kernelROM;
+	if (mpMemMan)
+		UpdateKernelROM();
+}
 
+void ATRapidusDevice::OnU1MBConfigPreLocked(bool inPreLockState) {
 	if (mpMemMan)
 		UpdateKernelROM();
 }
 
 void ATRapidusDevice::DumpStatus(ATConsoleOutput& output) {
-	output("$FF0080 Memory CR:     $%02X", mMCR);
-	output("$FF0081 Cm. memory CR: $%02X", mCMCR);
+	output("$D190 FPGA Config:     $%02X (%s, %s, %s, %s)"
+		, mFPGAConfigReg
+		, (mFPGAConfigReg & 0x01) ? "+sel" : "-sel"
+		, (mFPGAConfigReg & 0x02) ? "+clear" : "-clear"
+		, (mFPGAConfigReg & 0x40) ? "6502" : "65C816"
+		, (mFPGAConfigReg & 0x80) ? "configured" : "cleared"
+	);
+	output("$FF0080 Memory CR:     $%02X (%s, %s, %s, %s, %s, %s, %s)"
+		, mMCR
+		, (mMCR & 0x80) ? "BaseOS" : "RapidOS"
+		, (mMCR & 0x40) ? "I/O enabled" : "I/O disabled"
+		, (mMCR & 0x20) ? "write-through on" : "write-through off"
+		, (mMCR & 0x08) ? "slow3" : "fast3"
+		, (mMCR & 0x04) ? "slow2" : "fast2"
+		, (mMCR & 0x02) ? "slow1" : "fast1"
+		, (mMCR & 0x01) ? "slow0" : "fast0"
+	);
+	output("$FF0081 Cm. memory CR: $%02X (%s, %s)"
+		, mCMCR
+		, (mCMCR & 0x40) ? "fastwrite3" : "nofastwrite3"
+		, (mCMCR & 0x20) ? "wrap64K" : "nowrap64K"
+	);
 	output("$FF0082 SDRAM CR:      $%02X", mSCR);
 	output("$FF0083 6502 CR:       $%02X", m6502CR);
 	output("$FF0084 Add-on CR:     $%02X", mAR);
@@ -455,6 +483,8 @@ bool ATRapidusDevice::WriteLoFlash(uint32 address, uint8 value) {
 	if (mFlashEmu.CheckForWriteActivity()) {
 		if (mpIndicatorMgr)
 			mpIndicatorMgr->SetFlashWriteActivity();
+
+		mbFirmwareUsable = true;
 	}
 
 	return true;
@@ -488,6 +518,8 @@ bool ATRapidusDevice::WriteHiFlash(uint32 address, uint8 value) {
 	if (mFlashEmu.CheckForWriteActivity()) {
 		if (mpIndicatorMgr)
 			mpIndicatorMgr->SetFlashWriteActivity();
+
+		mbFirmwareUsable = true;
 	}
 
 	return true;
@@ -825,8 +857,8 @@ void ATRapidusDevice::WriteI2CCommand(uint8 value) {
 }
 
 void ATRapidusDevice::UpdateLoFlashWindow() {
-	// check that window is enabled and 6502 is running
-	if ((mFPGABankReg & 0x10) && (mFPGAConfigReg & 0x40)) {
+	// check that window is enabled, 6502 is running, and PBI device is enabled
+	if ((mFPGABankReg & 0x10) && (mFPGAConfigReg & 0x40) && mbPBIDeviceActive) {
 		// ptb docs are wrong, bits 3 and 4 are swapped
 		//const uint32 flashOffset = (uint32)((value & 0x17) + (value & 0x07)) << 13;
 		const uint32 flashOffset = (uint32)(mFPGABankReg & 0x0F) << 14;
@@ -895,10 +927,10 @@ void ATRapidusDevice::UpdateHMA() {
 }
 
 void ATRapidusDevice::UpdateKernelROM() {
-	const void *kernel = mpKernelROM;
+	const void *kernel = nullptr;
 	sint8 highSpeedOverride = 0;
 
-	if (!(mFPGAConfigReg & 0x40) && !(mMCR & 0x80)) {
+	if (!(mFPGAConfigReg & 0x40) && !(mMCR & 0x80) && !mpSystemController->IsU1MBConfigPreLocked()) {
 		// 65C816 active and OS flash disable clear -- use flash $0C000-0FFFF
 		kernel = mFlash + 0xC000;
 		highSpeedOverride = 1;

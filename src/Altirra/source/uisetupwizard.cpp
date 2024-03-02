@@ -295,7 +295,7 @@ void ATUIDialogSetupWizardExperience::OnDataExchange(bool write) {
 						break;
 				}
 
-				g_sim.GetGTIA().SetArtifactingMode(isNTSC ? ATGTIAEmulator::kArtifactNTSCHi : ATGTIAEmulator::kArtifactPALHi);
+				g_sim.GetGTIA().SetArtifactingMode(ATGTIAEmulator::kArtifactAutoHi);
 
 				g_sim.SetCassetteSIOPatchEnabled(false);
 				g_sim.SetDiskSIOPatchEnabled(false);

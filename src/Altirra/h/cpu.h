@@ -125,6 +125,7 @@ public:
 	bool	GetEmulationFlag() const { return mbEmulationFlag; }
 	uint16	GetInsnPC() const { return mInsnPC; }
 	uint16	GetPC() const { return mPC; }
+	uint32	GetXPC() const;
 	uint8	GetP() const { return mP; }
 	uint8	GetS() const { return mS; }
 	uint16	GetS16() const { return mS + ((uint32)mSH << 8); }

@@ -8,7 +8,7 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
 
-class VDFunctionThunk;
+class VDFunctionThunkInfo;
 
 class IVDFileWatcherCallback {
 public:
@@ -29,7 +29,11 @@ public:
 	bool Wait(uint32 delay = 0xFFFFFFFFU);
 
 protected:
+#if VD_PTR_SIZE > 4
+	void StaticTimerCallback(void *, unsigned, unsigned __int64, unsigned long);
+#else
 	void StaticTimerCallback(void *, unsigned, unsigned, unsigned long);
+#endif
 
 	void *mChangeHandle;
 	uint64 mLastWriteTime;
@@ -40,7 +44,7 @@ protected:
 
 	bool mbRepeatRequested;
 	bool mbThunksInited;
-	VDFunctionThunk *mpThunk;
+	VDFunctionThunkInfo *mpThunk;
 	uint32 mTimerId;
 };
 

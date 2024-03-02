@@ -101,8 +101,8 @@ siov	= $e459
 .proc RDevOpen
 		;check if the unit is valid (1-4)
 		ldx		icdnoz
-		beq		invalid_unit
-		cpx		#5
+		dex
+		cpx		#4
 		bcc		valid_unit
 		
 invalid_unit:
@@ -111,6 +111,7 @@ invalid_unit:
 		
 invalid_mode:
 		ldy		#CIOStatInvalidCmd
+		rts
 
 valid_unit:
 		;validate permissions -- must be at least read or write
@@ -120,12 +121,12 @@ valid_unit:
 		
 		;stash permission flags for this channel
 		lda		icax1z
-		sta		serialPerms-1,x
+		sta		serialPerms,x
 		
 		;reset handler-side state for the new channel
 		lda		#0
-		sta		serialOutTail-1,x
-		sta		serialErrors-1,x
+		sta		serialOutTail,x
+		sta		serialErrors,x
 		ldy		#1
 		rts
 .endp
@@ -139,14 +140,16 @@ valid_unit:
 		bne		not_concurrent
 		
 		;yes -- wait for output to flush
-		;note -- must check concurrent flag in this loop in case BREAK is
-		;hit
-		;note 2 -- must wait for transmission to actually finish!
 wait_loop:
+		;check if concurrent I/O stops on its own (break key)
 		lda		serialConcurrentNum
 		beq		concurrent_stopped
+
+		;wait for output buffer to drain
 		lda		serialOutIdle
 		bpl		wait_loop
+
+		;wait for transmission to finish (only valid after SEROR)
 		lda		irqst
 		and		#$08
 		bne		wait_loop
@@ -235,8 +238,8 @@ no_parity:
 
 		;check for translation
 		lda		serialXlatMode-1,x
-		clc
-		adc		#$e0
+		and		#$30
+		cmp		#$20
 		bcs		done
 		tay
 		
@@ -245,9 +248,11 @@ no_parity:
 		cmp		#$0d
 		beq		receive_cr
 		
-		;check for heavy translation
+		;check for light translation
 		cpy		#0
 		beq		done_2
+
+		;heavy translation - reject if not in $20-7C
 		cmp		#$20
 		bcc		reject_char
 		cmp		#$7d
@@ -378,9 +383,8 @@ put_loop:
 		sta		$ffff,y
 outBuf = *-2
 		iny
-		cpy		#$20
-		scc:ldy	#0
 		tya
+		and		#$1f
 		sta		serialOutTail-1,x
 		inc		SerialOutputIrqHandler.outLevel
 		bne		concurrent_output_complete
@@ -406,21 +410,32 @@ concurrent_conflict:
 		rts
 
 not_concurrent:
+		;save byte to write
 		pha
+
+		;load and increment tail
 		lda		serialOutTail-1,x
-		and		#$1f
+		inc		serialOutTail-1,x
+
+		;check if we are filling buffer and set carry flag
+		cmp		#$20
+
+		;compute unified buffer offset
 		ora		serialOutBufOffsets-1,x
+
+		;write byte to buffer
 		tay
 		pla
 		sta		outputBuffer0,y
-		inc		serialOutTail-1,x
 		
-		;if we just wrote a CR or the buffer is full, do a flush
+		;flush if we filled the buffer
+		bcs		force_flush
+
+		;flush if we wrote a CR
 		cmp		#$0d
 		beq		force_flush
-		tya
-		and		#$1f
-		beq		force_flush
+
+		;all done
 		ldy		#1
 		rts
 		
@@ -615,6 +630,10 @@ buf_empty:
 ;		D0=1	Monitor CRX
 ;
 .proc RDevXio36
+		;stash stop bit mode
+		lda		icax1z
+		sta		serial2SBMode-1,x
+
 		lda		#'B'
 		jmp		SerialDoIoSimple
 .endp
@@ -624,7 +643,8 @@ buf_empty:
 ;
 .proc RDevXio38
 		;stash mode
-		mva		icax1z serialXlatMode-1,x
+		lda		icax1z
+		sta		serialXlatMode-1,x
 		
 		;stash won't translate char
 		mva		icax2z serialXlatChar-1,x
@@ -697,6 +717,7 @@ external_buflen_nonzero:
 		;copy input length
 		sta		serialInSize
 		sta		serialInSpaceLo
+		ldy		icblhz
 		sty		serialInSize+1
 		sty		serialInSpaceHi
 
@@ -745,13 +766,23 @@ post_input_buffer:
 		;init POKEY
 		ldx		#8
 		mva:rpl	outputBuffer0,x $d200,x-
-
+		
+		;mark concurrent mode active		
 		sei
+		ldx		icdnoz
+		stx		serialConcurrentNum
 
-		ldx		#3
+		;select one/two stop bit serial routines
+		ldy		#5
+		lda		serial2SBMode-1,x
+		spl:ldy	#11
+
+		;swap in interrupt handlers
+		ldx		#5
 copy_loop:
 		mva		vserin,x serialVecSave,x
-		mva		serialVecs,x vserin,x
+		mva		serialVecs,y vserin,x
+		dey
 		dex
 		bpl		copy_loop
 		
@@ -773,8 +804,6 @@ copy_loop:
 		cli
 
 		;all done
-		ldx		icdnoz
-		stx		serialConcurrentNum
 		ldy		#1
 fail:
 		rts
@@ -792,13 +821,15 @@ brk_vec:
 ;	ICDNOZ = device unit (1-4)
 ;	DBUFLO/DBUFHI = dest buffer (if Y>0)
 ;
-SerialDoIo = SerialDoIoSimple.complex_entry
 .proc SerialDoIoSimple
-		mvx		icax1z daux1
-		mvx		icax2z daux2
+		ldx		icax1z
+		ldy		icax2z
+.def :SerialDoIo_AUX_XY = *
+		stx		daux1
+		sty		daux2
 		ldx		#0
 		ldy		#0
-complex_entry:
+.def :SerialDoIo = *
 		sta		dcomnd
 		stx		dstats
 		sty		dbytlo
@@ -811,7 +842,7 @@ complex_entry:
 		bpl		done
 		
 		;check for device error
-		cmp		#$90
+		cpy		#$90
 		bne		done2
 		
 		;set device error flag
@@ -852,7 +883,7 @@ done:
 		sta		irqen
 
 		;restore interrupt vectors
-		ldx		#3
+		ldx		#5
 		mva:rpl	serialVecSave,x vserin,x-
 		
 		mwa		brkVecSave brkky
@@ -868,10 +899,8 @@ done:
 		lda		#'W'		;write block command
 		ldx		#0			;no data frame
 		ldy		#0			;zero bytes
-		sty		daux1
-		sty		daux2
 		cli
-		jsr		SerialDoIo
+		jsr		SerialDoIo_AUX_XY
 		sei
 		
 not_active:
@@ -922,11 +951,6 @@ no_wrap:
 		dec		serialInSpaceLo
 		
 xit:
-		;ack and exit
-		lda		#$df
-		sta		irqen
-		lda		pokmsk
-		sta		irqen
 		pla
 		rti
 		
@@ -944,6 +968,34 @@ is_full:
 .endp
 
 ;==========================================================================
+; Serial output ready IRQ handler for two stop bits.
+;
+.proc SerialOutputIrqHandler2SB
+		;turn on complete IRQ
+		lda		pokmsk
+		ora		#$08
+		sta		pokmsk
+		sta		irqen
+		pla
+		rti
+.endp
+
+;==========================================================================
+; Serial output complete IRQ handler for two stop bits.
+;
+.proc SerialCompleteIrqHandler2SB
+		;turn off complete IRQ
+		lda		pokmsk
+		and		#$f7
+		sta		pokmsk
+		sta		irqen
+
+		;fall through!
+.endp
+
+;==========================================================================
+; Serial output ready IRQ handler for one stop bit.
+;
 .proc SerialOutputIrqHandler
 		lda		#0
 outLevel = *-1
@@ -957,18 +1009,13 @@ outIndex = *-1
 outBuf = *-2
 		sta		serout
 		inx
-		cpx		#$20
-		bne		no_wrap
-		ldx		#0
-no_wrap:
-		stx		outIndex
+		txa
+		and		#$1f
+		sta		outIndex
 		pla
 		tax
 xit:
-		lda		#$ef
-		sta		irqen
-		lda		pokmsk
-		sta		irqen
+.def :SerialCompleteIrqHandler = *
 		pla
 		rti
 is_empty:
@@ -1050,9 +1097,15 @@ dev_entry:
 serialVecs:
 		dta		a(SerialInputIrqHandler)
 		dta		a(SerialOutputIrqHandler)
+		dta		a(SerialCompleteIrqHandler)
+
+serialVecs2SB:
+		dta		a(SerialInputIrqHandler)
+		dta		a(SerialOutputIrqHandler2SB)
+		dta		a(SerialCompleteIrqHandler2SB)
 
 serialOutBufOffsets:
-		dta		$00,$40,$80,$c0
+		dta		$00,$20,$40,$60
 
 ;==========================================================================
 bss_start = *
@@ -1077,25 +1130,26 @@ bss_start = *
 serialOutIdle	.ds		1
 serialInSize	.ds		2
 serialPerms		.ds		4
-serialVecSave	.ds		4
+serialVecSave	.ds		6
 serialOutTail	.ds		4
 serialErrors	.ds		4
 
 ;these are cleared together
 serialClearBegin = *
-serialXlatMode	.ds		4
+serial2SBMode	.ds		4		;two stop bits flag (bit 7)
+serialXlatMode	.ds		4		;translation/parity
 serialXlatChar	.ds		4
 serialConcurrentNum	.ds	1
 serialClearEnd = *
 
 brkVecSave		.ds		2
-inputBuffer		.ds		64
-outputBuffer0	.ds		64
-outputBuffer1	.ds		64
-outputBuffer2	.ds		64
-outputBuffer3	.ds		64
+inputBuffer		.ds		32
+outputBuffer0	.ds		32
+outputBuffer1	.ds		32
+outputBuffer2	.ds		32
+outputBuffer3	.ds		32
 
-bss_end = outputBuffer3 + $40
+bss_end = outputBuffer3 + $20
 
 ;==========================================================================
 

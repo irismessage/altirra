@@ -148,6 +148,7 @@ public:
 
 	const wchar_t *getFilenameForError() const { return mpFilename; }
 
+	VDDate	getCreationTime() const;
 	void	setCreationTime(const VDDate& date);
 
 	// unbuffered I/O requires aligned buffers ("unbuffers")

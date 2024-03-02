@@ -62,7 +62,8 @@ enum ATDebugExpNodeType {
 	kATDebugExpNodeType_ReturnAddress,
 	kATDebugExpNodeType_Frame,
 	kATDebugExpNodeType_Clock,
-	kATDebugExpNodeType_CpuClock
+	kATDebugExpNodeType_CpuClock,
+	kATDebugExpNodeType_XPC
 };
 
 struct ATDebugExpEvalContext {
@@ -76,6 +77,9 @@ struct ATDebugExpEvalContext {
 
 	uint32 (*mpCpuClockFn)(void *p);
 	void *mpCpuClockFnData;
+
+	uint32 (*mpXPCFn)(void *p);
+	void *mpXPCFnData;
 
 	bool mbAccessValid;
 	bool mbAccessReadValid;

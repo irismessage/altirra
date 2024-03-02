@@ -234,6 +234,17 @@ bool VDCommandLine::GetNextSwitchArgument(VDCommandLineIterator& it, const wchar
 	return true;
 }
 
+bool VDCommandLine::FindSwitch(const wchar_t *name) const {
+	int count = (int)mTokens.size();
+
+	for(int i=1; i<count; ++i) {
+		if (mTokens[i].mbIsSwitch && !_wcsicmp(name, mLine.data() + mTokens[i].mTokenIndex + 1))
+			return true;
+	}
+
+	return false;
+}
+
 bool VDCommandLine::FindAndRemoveSwitch(const wchar_t *name) {
 	int count = (int)mTokens.size();
 

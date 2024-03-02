@@ -36,6 +36,7 @@
 #include <at/atcore/scheduler.h>
 #include <at/atemulation/ctc.h>
 #include "fdc.h"
+#include "diskdrivefullbase.h"
 #include "diskinterface.h"
 
 class ATIRQController;
@@ -45,7 +46,6 @@ class ATDeviceDiskDriveATR8000 final : public ATDevice
 	, public IATDeviceFirmware
 	, public IATDeviceDiskDrive
 	, public ATDeviceSIO
-	, public IATDeviceAudioOutput
 	, public IATDeviceButtons
 	, public IATDevicePrinter
 	, public IATDeviceParent
@@ -85,15 +85,13 @@ public:		// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
 	bool IsWritableFirmwareDirty(uint32 idx) const override;
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
+	bool IsUsableFirmwareLoaded() const override;
 
 public:		// IATDeviceDiskDrive
 	void InitDiskDrive(IATDiskDriveManager *ddm) override;
 
 public:		// ATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
-
-public:		// IATDeviceAudioOutput
-	void InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) override;
 
 public:		// IATDeviceButtons
 	uint32 GetSupportedButtons() const override;
@@ -216,7 +214,7 @@ protected:
 	IATDiskDriveManager *mpDiskDriveManager = nullptr;
 
 	ATFirmwareManager *mpFwMgr = nullptr;
-	ATAudioSyncMixer *mpAudioSyncMixer = nullptr;
+	bool mbFirmwareUsable = false;
 
 	static constexpr uint32 kDiskChangeStepMS = 50;
 
@@ -255,7 +253,8 @@ protected:
 	bool mbFastClock = false;
 	bool mbMotorRunning = false;
 	bool mbROMEnabled = false;
-	uint32 mRotationSoundId = 0;
+
+	ATDiskDriveAudioPlayer mAudioPlayer;
 	uint32 mLastStepSoundTime = 0;
 	uint32 mLastStepPhase = 0;
 

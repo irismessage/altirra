@@ -28,8 +28,7 @@ class IVDRandomAccessStream;
 
 enum ATCartLoadStatus {
 	kATCartLoadStatus_Ok,
-	kATCartLoadStatus_UnknownMapper,
-	kATCartLoadStatus_HardwareMismatch
+	kATCartLoadStatus_UnknownMapper
 };
 
 struct ATCartLoadContext {
@@ -37,7 +36,6 @@ struct ATCartLoadContext {
 	bool mbIgnoreChecksum = false;
 	bool mbReturnOnUnknownMapper = false;
 	int mCartMapper = -1;
-	int mb5200ModeCheck = -1;
 	uint32 mCartSize = 0;
 	uint64 mRawImageChecksum = 0;
 

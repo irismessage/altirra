@@ -41,7 +41,7 @@ void OnCommandAudioToggleMute() {
 }
 
 void OnCommandAudioOptionsDialog() {
-	ATUIShowAudioOptionsDialog(ATUIGetMainWindow());
+	ATUIShowAudioOptionsDialog(ATUIGetNewPopupOwner());
 }
 
 void OnCommandAudioToggleNonlinearMixing() {

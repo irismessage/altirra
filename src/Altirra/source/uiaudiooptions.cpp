@@ -21,7 +21,7 @@
 #include "resource.h"
 #include "audiooutput.h"
 #include "simulator.h"
-#include "audiosyncmixer.h"
+#include "audiosampleplayer.h"
 
 extern ATSimulator g_sim;
 
@@ -39,23 +39,36 @@ protected:
 	void UpdateCovoxVolumeLabel();
 	void UpdateLatencyLabel();
 	void UpdateExtraBufferLabel();
+	void UpdateBufferingEnables();
+	ATAudioApi GetSelectedApi();
 
 	int mVolumeTick;
 	int mDriveVolTick;
 	int mCovoxVolTick;
 	int mLatencyTick;
 	int mExtraBufferTick;
+
+	VDUIProxyComboBoxControl mApiCombo;
 };
 
 ATAudioOptionsDialog::ATAudioOptionsDialog()
 	: VDDialogFrameW32(IDD_AUDIO_OPTIONS)
 {
+	mApiCombo.SetOnSelectionChanged([this](int) { UpdateBufferingEnables(); });
 }
 
 ATAudioOptionsDialog::~ATAudioOptionsDialog() {
 }
 
 bool ATAudioOptionsDialog::OnLoaded() {
+	AddProxy(&mApiCombo, IDC_AUDIOAPI);
+
+	mApiCombo.AddItem(L"Auto");
+	mApiCombo.AddItem(L"WaveOut");
+	mApiCombo.AddItem(L"DirectSound");
+	mApiCombo.AddItem(L"XAudio 2.7/2.8");
+	mApiCombo.AddItem(L"WASAPI");
+
 	TBSetRange(IDC_VOLUME, 0, 200);
 	TBSetRange(IDC_DRIVEVOL, 0, 200);
 	TBSetRange(IDC_COVOXVOL, 0, 200);
@@ -76,7 +89,7 @@ void ATAudioOptionsDialog::OnDataExchange(bool write) {
 		audioOut->SetMixLevel(kATAudioMix_Covox, powf(10.0f, (mCovoxVolTick - 200) * 0.01f));
 		audioOut->SetLatency(mLatencyTick * 10);
 		audioOut->SetExtraBuffer(mExtraBufferTick * 10);
-		audioOut->SetApi(IsButtonChecked(IDC_API_DIRECTSOUND) ? kATAudioApi_DirectSound : kATAudioApi_WaveOut);
+		audioOut->SetApi(GetSelectedApi());
 
 		if (IsButtonChecked(IDC_DEBUG))
 			audioOut->SetStatusRenderer(g_sim.GetUIRenderer());
@@ -95,7 +108,29 @@ void ATAudioOptionsDialog::OnDataExchange(bool write) {
 		mLatencyTick = (audioOut->GetLatency() + 5) / 10;
 		mExtraBufferTick = (audioOut->GetExtraBuffer() + 5) / 10;
 
-		CheckButton(audioOut->GetApi() == kATAudioApi_DirectSound ? IDC_API_DIRECTSOUND : IDC_API_WAVEOUT, true);
+		switch(audioOut->GetApi()) {
+			case kATAudioApi_Auto:
+			default:
+				mApiCombo.SetSelection(0);
+				break;
+
+			case kATAudioApi_WaveOut:
+				mApiCombo.SetSelection(1);
+				break;
+
+			case kATAudioApi_DirectSound:
+				mApiCombo.SetSelection(2);
+				break;
+
+			case kATAudioApi_XAudio2:
+				mApiCombo.SetSelection(3);
+				break;
+
+			case kATAudioApi_WASAPI:
+				mApiCombo.SetSelection(4);
+				break;
+		}
+
 		CheckButton(IDC_DEBUG, audioOut->GetStatusRenderer() != NULL);
 
 		TBSetValue(IDC_VOLUME, mVolumeTick);
@@ -108,6 +143,7 @@ void ATAudioOptionsDialog::OnDataExchange(bool write) {
 		UpdateCovoxVolumeLabel();
 		UpdateLatencyLabel();
 		UpdateExtraBufferLabel();
+		UpdateBufferingEnables();
 	}
 }
 
@@ -168,6 +204,45 @@ void ATAudioOptionsDialog::UpdateLatencyLabel() {
 
 void ATAudioOptionsDialog::UpdateExtraBufferLabel() {
 	SetControlTextF(IDC_STATIC_EXTRABUFFER, L"%d ms", mExtraBufferTick * 10);
+}
+
+void ATAudioOptionsDialog::UpdateBufferingEnables() {
+	bool enabled = true;
+	
+	switch(GetSelectedApi()) {
+		default:
+			break;
+
+		case kATAudioApi_XAudio2:
+		case kATAudioApi_WASAPI:
+			enabled = false;
+			break;
+	}
+
+	EnableControl(IDC_LATENCY, enabled);
+	EnableControl(IDC_EXTRABUFFER, enabled);
+	EnableControl(IDC_STATIC_LATENCY, enabled);
+	EnableControl(IDC_STATIC_EXTRABUFFER, enabled);
+}
+
+ATAudioApi ATAudioOptionsDialog::GetSelectedApi() {
+	switch(mApiCombo.GetSelection()) {
+		case 0:
+		default:
+			return kATAudioApi_Auto;
+
+		case 1:
+			return kATAudioApi_WaveOut;
+
+		case 2:
+			return kATAudioApi_DirectSound;
+
+		case 3:
+			return kATAudioApi_XAudio2;
+
+		case 4:
+			return kATAudioApi_WASAPI;
+	}
 }
 
 void ATUIShowAudioOptionsDialog(VDGUIHandle hParent) {

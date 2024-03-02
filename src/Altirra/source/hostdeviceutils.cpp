@@ -3,7 +3,7 @@
 #include "hostdeviceutils.h"
 
 namespace {
-	const wchar_t *const kReservedDeviceNames[]={
+	const wchar_t *const kReservedDeviceNamesW[]={
 		L"CON",
 		L"PRN",
 		L"AUX",
@@ -34,7 +34,7 @@ bool ATHostDeviceIsDevice(const wchar_t *s) {
 	const wchar_t *ext = wcschr(s, L'.');
 
 	VDStringSpanW fname(s, ext ? ext : s + wcslen(s));
-	for(const wchar_t *const *pp = kReservedDeviceNames; *pp; ++pp) {
+	for(const wchar_t *const *pp = kReservedDeviceNamesW; *pp; ++pp) {
 		if (!fname.comparei(*pp))
 			return true;
 	}

@@ -16,7 +16,6 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
-#include <windows.h>
 #include <at/atnativeui/dialog.h>
 #include "resource.h"
 #include "simulator.h"

@@ -186,6 +186,38 @@ shpdvs	= $0248			;PBI device selection register shadow ($D1FF) (XL/XE)
 pdmsk	= $0249			;PBI device interrupt mask (XL/XE)
 reladr	= $024a			;Relocating loader: temp address (XL/XE)
 		; $024b
+
+.if _KERNEL_816
+vabte	= $024f			;(816) Emulation ABORT vector
+		; $0250
+vcope	= $0251			;(816) Emulation COP vector
+		; $0252
+vabtn	= $0253			;(816) Native ABORT vector
+		; $0254
+		; $0255
+vcopn	= $0256			;(816) Native COP vector
+		; $0257
+		; $0258
+vnmin	= $0259			;(816) Native NMI vector
+		; $025a
+		; $025b
+virqn	= $025c			;(816) Native IRQ vector
+		; $025d
+		; $025e
+vbrkn	= $025f			;(816) Native BREAK vector
+		; $0260
+		; $0261
+vcop0	= $0262			;(816) Native COP #0 vector
+		; $0263
+		; $0264
+vcopu	= $0265			;(816) Native COP #1-127 vector
+		; $0266
+		; $0267
+vcopc	= $0268			;(816) Native COP #128-255 vector
+		; $0269
+		; $026a
+.endif
+
 fine	= $026e			;fine scrolling flag (XL/XE)
 gprior	= $026f			;shadow for PRIOR ($D01B)
 paddl0	= $0270			;shadow for POT0 ($D200)

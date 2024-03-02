@@ -61,11 +61,11 @@ public:
 
 	vdhashmap();
 	vdhashmap(const vdhashmap&);
-	vdhashmap(vdhashmap&&) vdnoexcept;
+	vdnothrow vdhashmap(vdhashmap&&) vdnoexcept;
 	~vdhashmap();
 
 	vdhashmap& operator=(const vdhashmap&);
-	vdhashmap& operator=(vdhashmap&&) vdnoexcept;
+	vdnothrow vdhashmap& operator=(vdhashmap&&) vdnoexcept;
 
 	mapped_type&		operator[](const K& key);
 
@@ -134,7 +134,7 @@ protected:
 	void				reset();
 
 	A mAllocator;
-	typename A::template rebind<vdhashtable_base_node *>::other mBucketAllocator;
+	typename std::allocator_traits<A>::template	rebind_alloc<vdhashtable_base_node *> mBucketAllocator;
 	Hash mHasher;
 	Pred mPred;
 };
@@ -172,7 +172,7 @@ vdhashmap<K, V, Hash, Pred, A>::vdhashmap(const vdhashmap& src)
 }
 
 template<class K, class V, class Hash, class Pred, class A>
-vdhashmap<K, V, Hash, Pred, A>::vdhashmap(vdhashmap&& src) vdnoexcept
+vdnothrow vdhashmap<K, V, Hash, Pred, A>::vdhashmap(vdhashmap&& src) vdnoexcept
 	: mHasher(src.mHasher)
 	, mPred(src.mPred)
 {
@@ -214,7 +214,7 @@ vdhashmap<K, V, Hash, Pred, A>& vdhashmap<K, V, Hash, Pred, A>::operator=(const 
 }
 
 template<class K, class V, class Hash, class Pred, class A>
-vdhashmap<K, V, Hash, Pred, A>& vdhashmap<K, V, Hash, Pred, A>::operator=(vdhashmap&& src) vdnoexcept {
+vdnothrow vdhashmap<K, V, Hash, Pred, A>& vdhashmap<K, V, Hash, Pred, A>::operator=(vdhashmap&& src) vdnoexcept {
 	clear();
 
 	mHasher = src.mHasher;

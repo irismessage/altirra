@@ -27,23 +27,18 @@
 void ATArtifactPALLuma(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 void ATArtifactPALChroma(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 void ATArtifactPALFinal(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, const uint32 *vbuf, uint32 *ulbuf, uint32 *vlbuf, uint32 n);
-void ATArtifactBlend_SSE2(uint32 *dst, const uint32 *src, uint32 n);
-void ATArtifactBlendExchange_SSE2(uint32 *dst, uint32 *blendDst, uint32 n);
-void ATArtifactNTSCFinal_SSE2(void *dst, const void *srcr, const void *srcg, const void *srcb, uint32 count);
+
+#if VD_CPU_X86 || VD_CPU_X64
+	void ATArtifactBlend_SSE2(uint32 *dst, const uint32 *src, uint32 n);
+	void ATArtifactBlendExchange_SSE2(uint32 *dst, uint32 *blendDst, uint32 n);
+	void ATArtifactBlendScanlines_SSE2(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n);
+	void ATArtifactNTSCFinal_SSE2(void *dst, const void *srcr, const void *srcg, const void *srcb, uint32 count);
+#endif
 
 #ifdef VD_CPU_X86
-	void __cdecl ATArtifactNTSCAccum_MMX(void *rout, const void *table, const void *src, uint32 count);
-	void __cdecl ATArtifactNTSCAccumTwin_MMX(void *rout, const void *table, const void *src, uint32 count);
-	void __cdecl ATArtifactNTSCFinal_MMX(void *dst, const void *srcr, const void *srcg, const void *srcb, uint32 count);
-
 	void __cdecl ATArtifactNTSCAccum_SSE2(void *rout, const void *table, const void *src, uint32 count);
 	void __cdecl ATArtifactNTSCAccumTwin_SSE2(void *rout, const void *table, const void *src, uint32 count);
 
-	void __stdcall ATArtifactPALLuma_MMX(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
-	void __stdcall ATArtifactPALLumaTwin_MMX(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
-	void __stdcall ATArtifactPALChroma_MMX(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
-	void __stdcall ATArtifactPALChromaTwin_MMX(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
-	void __stdcall ATArtifactPALFinal_MMX(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, const uint32 *vbuf, uint32 *ulbuf, uint32 *vlbuf, uint32 n);
 	void __stdcall ATArtifactPALLuma_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 	void __stdcall ATArtifactPALLumaTwin_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 	void __stdcall ATArtifactPALChroma_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
@@ -60,6 +55,16 @@ void ATArtifactNTSCFinal_SSE2(void *dst, const void *srcr, const void *srcg, con
 	void ATArtifactPALChroma_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 	void ATArtifactPALChromaTwin_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 	void ATArtifactPALFinal_SSE2(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, const uint32 *vbuf, uint32 *ulbuf, uint32 *vlbuf, uint32 n);
+#endif
+
+#ifdef VD_CPU_ARM64
+	void ATArtifactBlend_NEON(uint32 *dst, const uint32 *src, uint32 n);
+	void ATArtifactBlendExchange_NEON(uint32 *dst, uint32 *blendDst, uint32 n);
+	void ATArtifactBlendScanlines_NEON(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n);
+
+	void ATArtifactNTSCAccum_NEON(void *rout, const void *table, const void *src, uint32 count);
+	void ATArtifactNTSCAccumTwin_NEON(void *rout, const void *table, const void *src, uint32 count);
+	void ATArtifactNTSCFinal_NEON(void *dst0, const void *srcr0, const void *srcg0, const void *srcb0, uint32 count);
 #endif
 
 namespace {
@@ -79,7 +84,7 @@ ATArtifactingEngine::ATArtifactingEngine()
 ATArtifactingEngine::~ATArtifactingEngine() {
 }
 
-void ATArtifactingEngine::SetColorParams(const ATColorParams& params) {
+void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfloat3x3 *matrix) {
 	mColorParams = params;
 
 	float lumaRamp[16];
@@ -161,7 +166,18 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params) {
 		mLumaRamp[i] = VDRoundToInt32(y);
 	}
 
+	// compute gamma correction table
 	const float gamma = 1.0f / params.mGammaCorrect;
+	mbGammaIdentity = fabsf(params.mGammaCorrect - 1.0f) < 1e-5f;
+
+	if (mbGammaIdentity) {
+		for(int i=0; i<256; ++i)
+			mGammaTable[i] = (uint8)i;
+	} else {
+		for(int i=0; i<256; ++i)
+			mGammaTable[i] = (uint8)VDRoundToInt32(powf((float)i / 255.0f, gamma) * 255.0f);
+	}
+
 	for(int i=0; i<256; ++i) {
 		int c = i >> 4;
 
@@ -178,23 +194,80 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params) {
 		float g = cg / 65280.0f;
 		float b = cb / 65280.0f;
 
-		if (r > 0.0f)
-			r = powf(r, gamma);
+		mPalette[i]
+			= (VDClampedRoundFixedToUint8Fast((float)r) << 16)
+			+ (VDClampedRoundFixedToUint8Fast((float)g) <<  8)
+			+ (VDClampedRoundFixedToUint8Fast((float)b)      );
 
-		if (g > 0.0f)
-			g = powf(g, gamma);
+		if (matrix) {
+			mCorrectedPalette[i] = mPalette[i];
+		} else {
+			if (r > 0.0f)
+				r = powf(r, gamma);
 
-		if (b > 0.0f)
-			b = powf(b, gamma);
+			if (g > 0.0f)
+				g = powf(g, gamma);
 
-		mPalette[i]	= (VDClampedRoundFixedToUint8Fast((float)r) << 16)
-					+ (VDClampedRoundFixedToUint8Fast((float)g) <<  8)
-					+ (VDClampedRoundFixedToUint8Fast((float)b)      );
+			if (b > 0.0f)
+				b = powf(b, gamma);
 
-		mGammaTable[i] = (uint8)VDRoundToInt32(powf((float)i / 255.0f, gamma) * 255.0f);
+			mCorrectedPalette[i]
+				= (VDClampedRoundFixedToUint8Fast((float)r) << 16)
+				+ (VDClampedRoundFixedToUint8Fast((float)g) <<  8)
+				+ (VDClampedRoundFixedToUint8Fast((float)b)      );
+		}
 	}
 
-	mbGammaIdentity = fabsf(params.mGammaCorrect - 1.0f) < 1e-5f;
+	mbEnableColorCorrection = matrix != nullptr;
+
+	if (matrix) {
+		mColorMatchingMatrix = *matrix;
+
+		mColorMatchingMatrix16[0][0] = VDRoundToInt32(mColorMatchingMatrix.x.x * 16384.0f);
+		mColorMatchingMatrix16[0][1] = VDRoundToInt32(mColorMatchingMatrix.x.y * 16384.0f);
+		mColorMatchingMatrix16[0][2] = VDRoundToInt32(mColorMatchingMatrix.x.z * 16384.0f);
+		mColorMatchingMatrix16[1][0] = VDRoundToInt32(mColorMatchingMatrix.y.x * 16384.0f);
+		mColorMatchingMatrix16[1][1] = VDRoundToInt32(mColorMatchingMatrix.y.y * 16384.0f);
+		mColorMatchingMatrix16[1][2] = VDRoundToInt32(mColorMatchingMatrix.y.z * 16384.0f);
+		mColorMatchingMatrix16[2][0] = VDRoundToInt32(mColorMatchingMatrix.z.x * 16384.0f);
+		mColorMatchingMatrix16[2][1] = VDRoundToInt32(mColorMatchingMatrix.z.y * 16384.0f);
+		mColorMatchingMatrix16[2][2] = VDRoundToInt32(mColorMatchingMatrix.z.z * 16384.0f);
+
+		// The PAL/SECAM standards specify a gamma of 2.8. However, there is apparently
+		// a lot of deviation from this in the real world, where 2.2 and 2.5 are found instead.
+		// 2.5 and 2.8 seem to be too extreme compared to actual screenshots of a color map
+		// on an actual PAL system and display, so for now we just use 2.2.
+		const float nativeGamma = 2.2f;
+
+		for(int i=0; i<256; ++i) {
+			float x = (float)i / 255.0f;
+			float y = powf(x, nativeGamma);
+
+			mCorrectLinearTable[i] = (sint16)floor(0.5f + y * 8191.0f);
+		}
+
+		if (params.mColorMatchingMode == ATColorMatchingMode::AdobeRGB) {
+			for(int i=0; i<1024; ++i) {
+				float x = (float)i / 1023.0f;
+				float y = (x < 0) ? 0.0f : powf(x, 1.0f / 2.2f);
+
+				y = powf(y, gamma);
+
+				mCorrectGammaTable[i] = (uint8)(y * 255.0f + 0.5f);
+			}
+		} else {
+			for(int i=0; i<1024; ++i) {
+				float x = (float)i / 1023.0f;
+				float y = (x < 0.0031308f) ? x * 12.92f : 1.055f * powf(x, 1.0f / 2.4f) - 0.055f;
+
+				y = powf(y, gamma);
+
+				mCorrectGammaTable[i] = (uint8)(y * 255.0f + 0.5f);
+			}
+		}
+
+		ColorCorrect((uint8 *)mCorrectedPalette, 256);
+	}
 
 	mbHighNTSCTablesInited = false;
 	mbHighPALTablesInited = false;
@@ -228,7 +301,7 @@ void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chroma
 			memset(mPALDelayLineUV, 0, sizeof mPALDelayLineUV);
 #else
 #if defined(VD_CPU_X86)
-			if (MMX_enabled || SSE2_enabled) {
+			if (SSE2_enabled) {
 				memset(mPALDelayLineUV, 0, sizeof mPALDelayLineUV);
 			} else
 #endif
@@ -251,7 +324,7 @@ void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chroma
 
 void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool temporaryUpdate) {
 	if (!mbChromaArtifacts)
-		BlitNoArtifacts(dst, src);
+		BlitNoArtifacts(dst, src, scanlineHasHiRes);
 	else if (mbPAL) {
 		if (mbChromaArtifactsHi)
 			ArtifactPALHi(dst, src, scanlineHasHiRes, (y & 1) != 0);
@@ -300,29 +373,23 @@ void ATArtifactingEngine::Artifact32(uint32 y, uint32 *dst, uint32 width, bool t
 }
 
 void ATArtifactingEngine::InterpolateScanlines(uint32 *dst, const uint32 *src1, const uint32 *src2, uint32 n) {
+#if VD_CPU_X86 || VD_CPU_X64
 	if (SSE2_enabled) {
-		const uint32 n4 = n >> 2;
-		const __m128i zero = _mm_setzero_si128();
+		ATArtifactBlendScanlines_SSE2(dst, src1, src2, n);
+		return;
+	}
+#elif VD_CPU_ARM64
+	ATArtifactBlendScanlines_NEON(dst, src1, src2, n);
+	return;
+#endif
 
-		for(uint32 i=0; i<n4; ++i) {
-			__m128i prev = *(const __m128i *)src1;
-			__m128i next = *(const __m128i *)src2;
-			__m128i r = _mm_avg_epu8(prev, next);
+	for(uint32 i=0; i<n; ++i) {
+		uint32 prev = src1[i];
+		uint32 next = src2[i];
+		uint32 r = (prev | next) - (((prev ^ next) & 0xfefefe) >> 1);
 
-			*(__m128i *)dst = _mm_avg_epu8(r, _mm_avg_epu8(r, zero));
-			src1 += 4;
-			src2 += 4;
-			dst += 4;
-		}
-	} else {
-		for(uint32 i=0; i<n; ++i) {
-			uint32 prev = src1[i];
-			uint32 next = src2[i];
-			uint32 r = (prev | next) - (((prev ^ next) & 0xfefefe) >> 1);
-
-			r -= (r & 0xfcfcfc) >> 2;
-			dst[i] = r;
-		}
+		r -= (r & 0xfcfcfc) >> 2;
+		dst[i] = r;
 	}
 }
 
@@ -330,8 +397,8 @@ void ATArtifactingEngine::ArtifactPAL8(uint32 dst[N], const uint8 src[N]) {
 	for(int i=0; i<N; ++i) {
 		uint8 prev = mPALDelayLine[i];
 		uint8 next = src[i];
-		uint32 prevColor = mPalette[(prev & 0xf0) + (next & 0x0f)];
-		uint32 nextColor = mPalette[next];
+		uint32 prevColor = mCorrectedPalette[(prev & 0xf0) + (next & 0x0f)];
+		uint32 nextColor = mCorrectedPalette[next];
 
 		dst[i] = (prevColor | nextColor) - (((prevColor ^ nextColor) & 0xfefefe) >> 1);
 	}
@@ -384,7 +451,7 @@ void ATArtifactingEngine::ArtifactPAL32(uint32 *dst, uint32 width) {
 
 void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes) {
 	if (!scanlineHasHiRes) {
-		BlitNoArtifacts(dst, src);
+		BlitNoArtifacts(dst, src, false);
 		return;
 	}
 
@@ -432,7 +499,7 @@ void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool s
 	}
 
 	if (!artsum) {
-		BlitNoArtifacts(dst, src);
+		BlitNoArtifacts(dst, src, true);
 		return;
 	}
 
@@ -440,49 +507,95 @@ void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool s
 	const int artr = mArtifactRed;
 	const int artg = mArtifactGreen;
 	const int artb = mArtifactBlue;
+	uint32 *dst2 = dst;
 
-	for(int x=0; x<N; ++x) {
-		uint8 p = src[x];
-		int art = inv[x]; 
+	if (mbEnableColorCorrection) {
+		for(int x=0; x<N; ++x) {
+			uint8 p = src[x];
+			int art = inv[x]; 
 
-		if (!art) {
-			*dst++ = mPalette[p];
-		} else {
-			int c = p >> 4;
+			if (!art) {
+				*dst2++ = mPalette[p];
+			} else {
+				int c = p >> 4;
 
-			int cr = mChromaVectors[c][0];
-			int cg = mChromaVectors[c][1];
-			int cb = mChromaVectors[c][2];
-			int y = mLumaRamp[luma2[x]];
+				int cr = mChromaVectors[c][0];
+				int cg = mChromaVectors[c][1];
+				int cb = mChromaVectors[c][2];
+				int y = mLumaRamp[luma2[x]];
 
-			cr += artr * art + y;
-			cg += artg * art + y;
-			cb += artb * art + y;
+				cr += artr * art + y;
+				cg += artg * art + y;
+				cb += artb * art + y;
 
-			cr >>= 8;
-			cg >>= 8;
-			cb >>= 8;
+				cr >>= 8;
+				cg >>= 8;
+				cb >>= 8;
 
-			if (cr < 0)
-				cr = 0;
-			else if (cr > 255)
-				cr = 255;
+				if (cr < 0)
+					cr = 0;
+				else if (cr > 255)
+					cr = 255;
 
-			if (cg < 0)
-				cg = 0;
-			else if (cg > 255)
-				cg = 255;
+				if (cg < 0)
+					cg = 0;
+				else if (cg > 255)
+					cg = 255;
 
-			if (cb < 0)
-				cb = 0;
-			else if (cb > 255)
-				cb = 255;
+				if (cb < 0)
+					cb = 0;
+				else if (cb > 255)
+					cb = 255;
 
-			cr = mGammaTable[cr];
-			cg = mGammaTable[cg];
-			cb = mGammaTable[cb];
+				*dst2++ = cb + (cg << 8) + (cr << 16);
+			}
+		}
 
-			*dst++ = cb + (cg << 8) + (cr << 16);
+		ColorCorrect((uint8 *)dst, N);
+	} else {
+		for(int x=0; x<N; ++x) {
+			uint8 p = src[x];
+			int art = inv[x]; 
+
+			if (!art) {
+				*dst2++ = mCorrectedPalette[p];
+			} else {
+				int c = p >> 4;
+
+				int cr = mChromaVectors[c][0];
+				int cg = mChromaVectors[c][1];
+				int cb = mChromaVectors[c][2];
+				int y = mLumaRamp[luma2[x]];
+
+				cr += artr * art + y;
+				cg += artg * art + y;
+				cb += artb * art + y;
+
+				cr >>= 8;
+				cg >>= 8;
+				cb >>= 8;
+
+				if (cr < 0)
+					cr = 0;
+				else if (cr > 255)
+					cr = 255;
+
+				if (cg < 0)
+					cg = 0;
+				else if (cg > 255)
+					cg = 255;
+
+				if (cb < 0)
+					cb = 0;
+				else if (cb > 255)
+					cb = 255;
+
+				cr = mGammaTable[cr];
+				cg = mGammaTable[cg];
+				cb = mGammaTable[cb];
+
+				*dst2++ = cb + (cg << 8) + (cr << 16);
+			}
 		}
 	}
 }
@@ -564,12 +677,12 @@ namespace {
 			const uint32 rp = *srcr++;
 			const uint32 gp = *srcg++;
 			const uint32 bp = *srcb++;
-			int r0 = ((int)(rp & 0xffff) - 0x3ff0) >> 5;
-			int g0 = ((int)(gp & 0xffff) - 0x3ff0) >> 5;
-			int b0 = ((int)(bp & 0xffff) - 0x3ff0) >> 5;
-			int r1 = (int)((rp >> 16) - 0x3ff0) >> 5;
-			int g1 = (int)((gp >> 16) - 0x3ff0) >> 5;
-			int b1 = (int)((bp >> 16) - 0x3ff0) >> 5;
+			int r0 = ((int)(rp & 0xffff) - 0x7ff8) >> 4;
+			int g0 = ((int)(gp & 0xffff) - 0x7ff8) >> 4;
+			int b0 = ((int)(bp & 0xffff) - 0x7ff8) >> 4;
+			int r1 = ((int)(rp >> 16) - 0x7ff8) >> 4;
+			int g1 = ((int)(gp >> 16) - 0x7ff8) >> 4;
+			int b1 = ((int)(bp >> 16) - 0x7ff8) >> 4;
 
 			if (r0 < 0) r0 = 0; else if (r0 > 255) r0 = 255;
 			if (g0 < 0) g0 = 0; else if (g0 > 255) g0 = 255;
@@ -600,6 +713,85 @@ namespace {
 	}
 }
 
+void ATArtifactColorCorrect_Scalar(uint8 *VDRESTRICT dst8, uint32 N, const sint16 linearTab[256], const uint8 gammaTab[1024], const sint16 matrix16[3][3]) {
+	for(uint32 i=0; i<N; ++i) {
+		// convert NTSC gamma to linear (2.2)
+		sint32 r = linearTab[dst8[2]];
+		sint32 g = linearTab[dst8[1]];
+		sint32 b = linearTab[dst8[0]];
+
+		// convert to new color space
+		sint32 r2
+			= r * matrix16[0][0]
+			+ g * matrix16[1][0]
+			+ b * matrix16[2][0];
+
+		sint32 g2
+			= r * matrix16[0][1]
+			+ g * matrix16[1][1]
+			+ b * matrix16[2][1];
+
+		sint32 b2
+			= r * matrix16[0][2]
+			+ g * matrix16[1][2]
+			+ b * matrix16[2][2];
+
+		r2 >>= 17;
+		g2 >>= 17;
+		b2 >>= 17;
+
+		if (r2 < 0) r2 = 0;
+		if (g2 < 0) g2 = 0;
+		if (b2 < 0) b2 = 0;
+		if (r2 > 1023) r2 = 1023;
+		if (g2 > 1023) g2 = 1023;
+		if (b2 > 1023) b2 = 1023;
+
+		dst8[2] = gammaTab[r2];
+		dst8[1] = gammaTab[g2];
+		dst8[0] = gammaTab[b2];
+		dst8 += 4;
+	}
+}
+
+#if VD_CPU_X86 || VD_CPU_X64
+void ATArtifactColorCorrect_SSE2(uint8 *VDRESTRICT dst8, uint32 N, const sint16 linearTab[256], const uint8 gammaTab[1024], const sint16 matrix16[3][3]) {
+	__m128i m0 = _mm_loadl_epi64((const __m128i *)matrix16[0]);
+	__m128i m1 = _mm_loadl_epi64((const __m128i *)matrix16[1]);
+	__m128i m2 = _mm_loadl_epi64((const __m128i *)matrix16[2]);
+	__m128i zero = _mm_setzero_si128();
+	__m128i limit = _mm_set_epi16(0, 0, 0, 0, 0, 1023, 1023, 1023);
+
+	for(uint32 i=0; i<N; ++i) {
+		// convert NTSC gamma to linear (2.2)
+		__m128i r = _mm_cvtsi32_si128((uint16)linearTab[dst8[2]]);
+		__m128i g = _mm_cvtsi32_si128((uint16)linearTab[dst8[1]]);
+		__m128i b = _mm_cvtsi32_si128((uint16)linearTab[dst8[0]]);
+
+		// convert to new color space
+		__m128i rgb = _mm_mulhi_epi16(_mm_shufflelo_epi16(r, 0), m0);
+		rgb = _mm_add_epi16(rgb, _mm_mulhi_epi16(_mm_shufflelo_epi16(g, 0), m1));
+		rgb = _mm_add_epi16(rgb, _mm_mulhi_epi16(_mm_shufflelo_epi16(b, 0), m2));
+
+		__m128i indices = _mm_max_epi16(zero, _mm_min_epi16(limit, _mm_srai_epi16(rgb, 1)));
+
+		dst8[2] = gammaTab[(uint32)_mm_extract_epi16(indices, 0)];
+		dst8[1] = gammaTab[(uint32)_mm_extract_epi16(indices, 1)];
+		dst8[0] = gammaTab[(uint32)_mm_extract_epi16(indices, 2)];
+		dst8 += 4;
+	}
+}
+#endif
+
+void ATArtifactingEngine::ColorCorrect(uint8 *VDRESTRICT dst8, uint32 n) {
+#if VD_CPU_X86 || VD_CPU_X64
+	if (SSE2_enabled)
+		ATArtifactColorCorrect_SSE2(dst8, n, mCorrectLinearTable, mCorrectGammaTable, mColorMatchingMatrix16);
+	else
+#endif
+		ATArtifactColorCorrect_Scalar(dst8, n, mCorrectLinearTable, mCorrectGammaTable, mColorMatchingMatrix16);
+}
+
 void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes) {
 	// We are using a 21 tap filter, so we're going to need arrays of N*2+20 (since we are
 	// transforming 7MHz input to 14MHz output). However, we hold two elements in each int,
@@ -609,7 +801,17 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 	VDALIGN(16) uint32 gout[N+16];
 	VDALIGN(16) uint32 bout[N+16];
 
-#if defined(VD_CPU_AMD64)
+#if defined(VD_CPU_ARM64)
+	if (scanlineHasHiRes) {
+		ATArtifactNTSCAccum_NEON(rout+2, m4x.mPalToR, src, N);
+		ATArtifactNTSCAccum_NEON(gout+2, m4x.mPalToG, src, N);
+		ATArtifactNTSCAccum_NEON(bout+2, m4x.mPalToB, src, N);
+	} else {
+		ATArtifactNTSCAccumTwin_NEON(rout+2, m4x.mPalToRTwin, src, N);
+		ATArtifactNTSCAccumTwin_NEON(gout+2, m4x.mPalToGTwin, src, N);
+		ATArtifactNTSCAccumTwin_NEON(bout+2, m4x.mPalToBTwin, src, N);
+	}
+#elif defined(VD_CPU_AMD64)
 	if (scanlineHasHiRes) {
 		ATArtifactNTSCAccum_SSE2(rout+2, m4x.mPalToR, src, N);
 		ATArtifactNTSCAccum_SSE2(gout+2, m4x.mPalToG, src, N);
@@ -632,21 +834,11 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 			ATArtifactNTSCAccumTwin_SSE2(gout+2, m4x.mPalToGTwin, src, N);
 			ATArtifactNTSCAccumTwin_SSE2(bout+2, m4x.mPalToBTwin, src, N);
 		}
-	} else if (MMX_enabled) {
-		if (scanlineHasHiRes) {
-			ATArtifactNTSCAccum_MMX(rout, m2x.mPalToR, src, N);
-			ATArtifactNTSCAccum_MMX(gout, m2x.mPalToG, src, N);
-			ATArtifactNTSCAccum_MMX(bout, m2x.mPalToB, src, N);
-		} else {
-			ATArtifactNTSCAccumTwin_MMX(rout, m2x.mPalToRTwin, src, N);
-			ATArtifactNTSCAccumTwin_MMX(gout, m2x.mPalToGTwin, src, N);
-			ATArtifactNTSCAccumTwin_MMX(bout, m2x.mPalToBTwin, src, N);
-		}
 	} else
 #endif
 	{
 		for(int i=0; i<N+16; ++i)
-			rout[i] = 0x40004000;
+			rout[i] = 0x80008000;
 
 		if (scanlineHasHiRes)
 			accum(rout, m2x.mPalToR, src, N);
@@ -654,7 +846,7 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 			accum_twin(rout, m2x.mPalToRTwin, src, N);
 
 		for(int i=0; i<N+16; ++i)
-			gout[i] = 0x40004000;
+			gout[i] = 0x80008000;
 
 		if (scanlineHasHiRes)
 			accum(gout, m2x.mPalToG, src, N);
@@ -662,7 +854,7 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 			accum_twin(gout, m2x.mPalToGTwin, src, N);
 
 		for(int i=0; i<N+16; ++i)
-			bout[i] = 0x40004000;
+			bout[i] = 0x80008000;
 
 		if (scanlineHasHiRes)
 			accum(bout, m2x.mPalToB, src, N);
@@ -673,19 +865,20 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 
 	////////////////////////// 14MHz SECTION //////////////////////////////
 
-	if (SSE2_enabled) {
+#if VD_CPU_ARM64
+	ATArtifactNTSCFinal_NEON(dst, rout+4, gout+4, bout+4, N);
+#else
+#if VD_CPU_X86 || VD_CPU_X64
+	if (SSE2_enabled)
 		ATArtifactNTSCFinal_SSE2(dst, rout+4, gout+4, bout+4, N);
-	} else
-#if defined(VD_COMPILER_MSVC) && defined(VD_CPU_X86)
-	if (MMX_enabled) {
-		ATArtifactNTSCFinal_MMX(dst, rout+4, gout+4, bout+4, N);
-	} else
+	else
 #endif
-	{
 		final(dst, rout+4, gout+4, bout+4, N);
-	}
+#endif
 
-	if (!mbGammaIdentity)
+	if (mbEnableColorCorrection)
+		ColorCorrect((uint8 *)dst, N*2);
+	else if (!mbGammaIdentity)
 		GammaCorrect((uint8 *)dst, N*2, mGammaTable);
 }
 
@@ -700,34 +893,21 @@ void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], boo
 
 #if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
 	if (SSE2_enabled) {
-		if (scanlineHasHiRes)
+		if (scanlineHasHiRes) {
 			ATArtifactPALLuma_SSE2(ybuf, src, N, &mPal8x.mPalToY[oddLine][0][0][0]);
-		else
+
+			ATArtifactPALChroma_SSE2(ubuf, src, N, &mPal8x.mPalToU[oddLine][0][0][0]);
+			ATArtifactPALChroma_SSE2(vbuf, src, N, &mPal8x.mPalToV[oddLine][0][0][0]);
+		} else {
 			ATArtifactPALLumaTwin_SSE2(ybuf, src, N, &mPal8x.mPalToYTwin[oddLine][0][0][0]);
 
-		ATArtifactPALChromaTwin_SSE2(ubuf, src, N, &mPal8x.mPalToUTwin[oddLine][0][0][0]);
-		ATArtifactPALChromaTwin_SSE2(vbuf, src, N, &mPal8x.mPalToVTwin[oddLine][0][0][0]);
+			ATArtifactPALChromaTwin_SSE2(ubuf, src, N, &mPal8x.mPalToUTwin[oddLine][0][0][0]);
+			ATArtifactPALChromaTwin_SSE2(vbuf, src, N, &mPal8x.mPalToVTwin[oddLine][0][0][0]);
+		}
 
 		ATArtifactPALFinal_SSE2(dst, ybuf, ubuf, vbuf, ulbuf, vlbuf, N);
-		return;
-	}
+	} else 
 #endif
-	
-#ifdef VD_CPU_X86
-	if (MMX_enabled) {
-		if (scanlineHasHiRes)
-			ATArtifactPALLuma_MMX(ybuf, src, N, &mPal4x.mPalToY[oddLine][0][0][0]);
-		else
-			ATArtifactPALLumaTwin_MMX(ybuf, src, N, &mPal4x.mPalToYTwin[oddLine][0][0][0]);
-
-		ATArtifactPALChromaTwin_MMX(ubuf, src, N, &mPal4x.mPalToUTwin[oddLine][0][0][0]);
-		ATArtifactPALChromaTwin_MMX(vbuf, src, N, &mPal4x.mPalToVTwin[oddLine][0][0][0]);
-
-		ATArtifactPALFinal_MMX(dst, ybuf, ubuf, vbuf, ulbuf, vlbuf, N);
-		return;
-	}
-#endif
-
 	{
 		VDMemset32(ubuf, 0x20002000, sizeof(ubuf)/sizeof(ubuf[0]));
 		VDMemset32(vbuf, 0x20002000, sizeof(vbuf)/sizeof(vbuf[0]));
@@ -737,18 +917,41 @@ void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], boo
 		ATArtifactPALChroma(vbuf, src, N, &mPal2x.mPalToV[oddLine][0][0][0]);
 		ATArtifactPALFinal(dst, ybuf, ubuf, vbuf, ulbuf, vlbuf, N);
 	}
+
+	if (mbEnableColorCorrection)
+		ColorCorrect((uint8 *)dst, N*2);
+	else if (!mbGammaIdentity)
+		GammaCorrect((uint8 *)dst, N*2, mGammaTable);
 }
 
-void ATArtifactingEngine::BlitNoArtifacts(uint32 dst[N], const uint8 src[N]) {
-	for(size_t x=0; x<N; ++x)
-		dst[x] = mPalette[src[x]];
+void ATArtifactingEngine::BlitNoArtifacts(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes) {
+	static_assert((N & 1) == 0);
+
+	if (scanlineHasHiRes) {
+		for(size_t x=0; x<N; ++x)
+			dst[x] = mCorrectedPalette[src[x]];
+	} else {
+		for(size_t x=0; x<N; x += 2) {
+			const uint32 c = mCorrectedPalette[src[x]];
+			dst[x+0] = c;
+			dst[x+1] = c;
+		}
+	}
 }
 
 void ATArtifactingEngine::Blend(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n) {
+#if VD_CPU_ARM64
+	if (!(n & 3)) {
+		ATArtifactBlend_NEON(dst, src, n);
+		return;
+	}
+#endif
+#if VD_CPU_X86 || VD_CPU_X64
 	if (SSE2_enabled && !(((uintptr)dst | (uintptr)src) & 15) && !(n & 3)) {
 		ATArtifactBlend_SSE2(dst, src, n);
 		return;
 	}
+#endif
 
 	for(uint32 x=0; x<n; ++x) {
 		const uint32 a = dst[x];
@@ -759,10 +962,18 @@ void ATArtifactingEngine::Blend(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT
 }
 
 void ATArtifactingEngine::BlendExchange(uint32 *VDRESTRICT dst, uint32 *VDRESTRICT blendDst, uint32 n) {
+#if VD_CPU_ARM64
+	if (!(n & 3)) {
+		ATArtifactBlendExchange_NEON(dst, blendDst, n);
+		return;
+	}
+#endif
+#if VD_CPU_X86 || VD_CPU_X64
 	if (SSE2_enabled && !(((uintptr)dst | (uintptr)blendDst) & 15) && !(n & 3)) {
 		ATArtifactBlendExchange_SSE2(dst, blendDst, n);
 		return;
 	}
+#endif
 
 	for(uint32 x=0; x<n; ++x) {
 		const uint32 a = dst[x];
@@ -871,7 +1082,8 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 	mbHighNTSCTablesInited = true;
 	mbHighPALTablesInited = false;
 
-	vdint3 chroma_to_rgb[16][2][11] = {};
+	vdfloat3 y_to_rgb[16][2][22] {};
+	vdfloat3 chroma_to_rgb[16][2][22] {};
 
 	// NTSC signal parameters:
 	//
@@ -1026,7 +1238,7 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 			}
 		}
 
-		vdint3 rgbtab[2][22];
+		vdfloat3 rgbtab[2][22];
 
 		for(int j=0; j<22; ++j) {
 			float fy = ytab[j] * chromaSignalAmplitude;
@@ -1037,8 +1249,8 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 			vdfloat3 f0 = fc - fy;
 			vdfloat3 f1 = fc + fy;
 
-			rgbtab[0][j] = nsVDMath::intround(f0 * 32.0f * 255.0f);
-			rgbtab[1][j] = nsVDMath::intround(f1 * 32.0f * 255.0f);
+			rgbtab[0][j] = f0;
+			rgbtab[1][j] = f1;
 		}
 
 		for(int k=0; k<2; ++k) {
@@ -1047,98 +1259,12 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 				rgbtab[k][j+18] = { 0, 0, 0 };
 			}
 
-			for(int j=0; j<11; ++j) {
-				chroma_to_rgb[i+1][k][j] = rgbtab[k][j*2+0] + (rgbtab[k][j*2+1] << 16);
-			}
-
-#if 0
-			VDDEBUG("r[%2u][%u] = [%6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d]\n"
-				, i
-				, k
-				, rgbtab[k][ 0].x
-				, rgbtab[k][ 1].x
-				, rgbtab[k][ 2].x
-				, rgbtab[k][ 3].x
-				, rgbtab[k][ 4].x
-				, rgbtab[k][ 5].x
-				, rgbtab[k][ 6].x
-				, rgbtab[k][ 7].x
-				, rgbtab[k][ 8].x
-				, rgbtab[k][ 9].x
-				, rgbtab[k][10].x
-				, rgbtab[k][11].x
-				, rgbtab[k][12].x
-				, rgbtab[k][13].x
-				, rgbtab[k][14].x
-				, rgbtab[k][15].x
-				, rgbtab[k][16].x
-				, rgbtab[k][17].x
-				, rgbtab[k][18].x
-				, rgbtab[k][19].x
-				, rgbtab[k][20].x
-				, rgbtab[k][21].x
-				);
-
-			VDDEBUG("g[%2u][%u] = [%6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d]\n"
-				, i
-				, k
-				, rgbtab[k][ 0].y
-				, rgbtab[k][ 1].y
-				, rgbtab[k][ 2].y
-				, rgbtab[k][ 3].y
-				, rgbtab[k][ 4].y
-				, rgbtab[k][ 5].y
-				, rgbtab[k][ 6].y
-				, rgbtab[k][ 7].y
-				, rgbtab[k][ 8].y
-				, rgbtab[k][ 9].y
-				, rgbtab[k][10].y
-				, rgbtab[k][11].y
-				, rgbtab[k][12].y
-				, rgbtab[k][13].y
-				, rgbtab[k][14].y
-				, rgbtab[k][15].y
-				, rgbtab[k][16].y
-				, rgbtab[k][17].y
-				, rgbtab[k][18].y
-				, rgbtab[k][19].y
-				, rgbtab[k][20].y
-				, rgbtab[k][21].y
-				);
-
-			VDDEBUG("b[%2u][%u] = [%6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d]\n"
-				, i
-				, k
-				, rgbtab[k][ 0].z
-				, rgbtab[k][ 1].z
-				, rgbtab[k][ 2].z
-				, rgbtab[k][ 3].z
-				, rgbtab[k][ 4].z
-				, rgbtab[k][ 5].z
-				, rgbtab[k][ 6].z
-				, rgbtab[k][ 7].z
-				, rgbtab[k][ 8].z
-				, rgbtab[k][ 9].z
-				, rgbtab[k][10].z
-				, rgbtab[k][11].z
-				, rgbtab[k][12].z
-				, rgbtab[k][13].z
-				, rgbtab[k][14].z
-				, rgbtab[k][15].z
-				, rgbtab[k][16].z
-				, rgbtab[k][17].z
-				, rgbtab[k][18].z
-				, rgbtab[k][19].z
-				, rgbtab[k][20].z
-				, rgbtab[k][21].z
-				);
-#endif
+			for(int j=0; j<22; ++j)
+				chroma_to_rgb[i+1][k][j] = rgbtab[k][j];
 		}
 	}
 
 	////////////////////////// 28MHz SECTION //////////////////////////////
-
-	vdint3 y_to_rgb[16][2][11];
 
 	const float lumaSharpness = params.mArtifactSharpness;
 	float lumapulse[16] = {
@@ -1195,7 +1321,7 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 			ytab[j] -= (cs*itab[j] + sn*qtab[j]) * antiChromaScale;
 		}
 
-		vdint3 rgbtab[2][22];
+		vdfloat3 rgbtab[2][22];
 
 		for(int j=0; j<22; ++j) {
 			float fy = ytab[j];
@@ -1206,8 +1332,8 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 			vdfloat3 f0 = fy + fc;
 			vdfloat3 f1 = fy - fc;
 
-			rgbtab[0][j] = nsVDMath::intround(f0 * (32.0f * 255.0f));
-			rgbtab[1][j] = nsVDMath::intround(f1 * (32.0f * 255.0f));
+			rgbtab[0][j] = f0;
+			rgbtab[1][j] = f1;
 		}
 
 		for(int k=0; k<2; ++k) {
@@ -1216,89 +1342,8 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 				rgbtab[k][j+18] = { 0, 0, 0 };
 			}
 
-			for(int j=0; j<11; ++j) {
-				y_to_rgb[i][k][j] = rgbtab[k][j*2+0] + (rgbtab[k][j*2+1] << 16);
-			}
-
-#if 0
-			VDDEBUG("r[%2u][%u] = [%6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d]\n"
-				, i
-				, k
-				, rgbtab[k][ 0].x
-				, rgbtab[k][ 1].x
-				, rgbtab[k][ 2].x
-				, rgbtab[k][ 3].x
-				, rgbtab[k][ 4].x
-				, rgbtab[k][ 5].x
-				, rgbtab[k][ 6].x
-				, rgbtab[k][ 7].x
-				, rgbtab[k][ 8].x
-				, rgbtab[k][ 9].x
-				, rgbtab[k][10].x
-				, rgbtab[k][11].x
-				, rgbtab[k][12].x
-				, rgbtab[k][13].x
-				, rgbtab[k][14].x
-				, rgbtab[k][15].x
-				, rgbtab[k][16].x
-				, rgbtab[k][17].x
-				, rgbtab[k][18].x
-				, rgbtab[k][19].x
-				, rgbtab[k][20].x
-				, rgbtab[k][21].x);
-
-			VDDEBUG("g[%2u][%u] = [%6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d]\n"
-				, i
-				, k
-				, rgbtab[k][ 0].y
-				, rgbtab[k][ 1].y
-				, rgbtab[k][ 2].y
-				, rgbtab[k][ 3].y
-				, rgbtab[k][ 4].y
-				, rgbtab[k][ 5].y
-				, rgbtab[k][ 6].y
-				, rgbtab[k][ 7].y
-				, rgbtab[k][ 8].y
-				, rgbtab[k][ 9].y
-				, rgbtab[k][10].y
-				, rgbtab[k][11].y
-				, rgbtab[k][12].y
-				, rgbtab[k][13].y
-				, rgbtab[k][14].y
-				, rgbtab[k][15].y
-				, rgbtab[k][16].y
-				, rgbtab[k][17].y
-				, rgbtab[k][18].y
-				, rgbtab[k][19].y
-				, rgbtab[k][20].y
-				, rgbtab[k][21].y);
-
-			VDDEBUG("b[%2u][%u] = [%6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d %6d]\n"
-				, i
-				, k
-				, rgbtab[k][ 0].z
-				, rgbtab[k][ 1].z
-				, rgbtab[k][ 2].z
-				, rgbtab[k][ 3].z
-				, rgbtab[k][ 4].z
-				, rgbtab[k][ 5].z
-				, rgbtab[k][ 6].z
-				, rgbtab[k][ 7].z
-				, rgbtab[k][ 8].z
-				, rgbtab[k][ 9].z
-				, rgbtab[k][10].z
-				, rgbtab[k][11].z
-				, rgbtab[k][12].z
-				, rgbtab[k][13].z
-				, rgbtab[k][14].z
-				, rgbtab[k][15].z
-				, rgbtab[k][16].z
-				, rgbtab[k][17].z
-				, rgbtab[k][18].z
-				, rgbtab[k][19].z
-				, rgbtab[k][20].z
-				, rgbtab[k][21].z);
-#endif
+			for(int j=0; j<22; ++j)
+				y_to_rgb[i][k][j] = rgbtab[k][j];
 		}
 	}
 
@@ -1307,37 +1352,42 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 	// kernels together to produce all 256 color kernels in both phases. We then need to produce a
 	// few variants:
 	//
-	//	- For MMX, delay the phase 1 kernels by two output pixels.
 	//	- For SSE2, double the phases to 4 and add 2/4/6 output pixel delays.
 	//	- Create a set of 'twin' kernels that correspond to paired pixels with the same color.
 	//	  This is used to accelerate 160 resolution graphics.
 	//	- For SSE2, create another set of 'quad' kernels that correspond to paired matching color
 	//	  clocks. This is used to accelerate solid bands of color.
 
-#ifdef VD_CPU_AMD64
+#if defined(VD_CPU_AMD64) || defined(VD_CPU_ARM64)
 	if (true) {
 #else
 	if (SSE2_enabled) {
 #endif
 		memset(&m4x, 0, sizeof m4x);
 
+		const vdfloat3 round { 8.0f, 8.0f, 8.0f };
+
 		for(int idx=0; idx<256; ++idx) {
 			int cidx = idx >> 4;
 			int lidx = idx & 15;
 
+			const auto& c_waves = chroma_to_rgb[cidx];
+			const auto& y_waves = y_to_rgb[lidx];
+
 			for(int k=0; k<4; ++k) {
 				for(int i=0; i<11; ++i) {
-					vdint3 pal_to_rgb = chroma_to_rgb[cidx][k&1][i] + y_to_rgb[lidx][k&1][i];
-					m4x.mPalToR[idx][k][i+k] = pal_to_rgb.x;
-					m4x.mPalToG[idx][k][i+k] = pal_to_rgb.y;
-					m4x.mPalToB[idx][k][i+k] = pal_to_rgb.z;
-				}
-			}
+					vdfloat3 pal_to_rgb0 = (c_waves[k&1][i*2+0] + y_waves[k&1][i*2+0]) * 16.0f * 255.0f;
+					vdfloat3 pal_to_rgb1 = (c_waves[k&1][i*2+1] + y_waves[k&1][i*2+1]) * 16.0f * 255.0f;
 
-			for(int i=0; i<4; ++i) {
-				m4x.mPalToR[idx][0][8+i] += 0x00100010;
-				m4x.mPalToG[idx][0][8+i] += 0x00100010;
-				m4x.mPalToB[idx][0][8+i] += 0x00100010;
+					if (k == 0 && i < 4) {
+						pal_to_rgb0 += round;
+						pal_to_rgb1 += round;
+					}
+
+					m4x.mPalToR[idx][k][i+k] = (VDRoundToInt32(pal_to_rgb0.x) & 0xffff) + (VDRoundToInt32(pal_to_rgb1.x) << 16);
+					m4x.mPalToG[idx][k][i+k] = (VDRoundToInt32(pal_to_rgb0.y) & 0xffff) + (VDRoundToInt32(pal_to_rgb1.y) << 16);
+					m4x.mPalToB[idx][k][i+k] = (VDRoundToInt32(pal_to_rgb0.z) & 0xffff) + (VDRoundToInt32(pal_to_rgb1.z) << 16);
+				}
 			}
 
 			for(int i=0; i<16; ++i) {
@@ -1367,22 +1417,14 @@ void ATArtifactingEngine::RecomputeNTSCTables(const ATColorParams& params) {
 
 			for(int k=0; k<2; ++k) {
 				for(int i=0; i<10; ++i) {
-					vdint3 pal_to_rgb = chroma_to_rgb[cidx][k][i] + y_to_rgb[lidx][k][i];
-					m2x.mPalToR[idx][k][i+k] = pal_to_rgb.x;
-					m2x.mPalToG[idx][k][i+k] = pal_to_rgb.y;
-					m2x.mPalToB[idx][k][i+k] = pal_to_rgb.z;
-				}
-			}
+					vdfloat3 pal_to_rgb0 = (chroma_to_rgb[cidx][k][i*2+0] + y_to_rgb[lidx][k][i*2+0]) * 16.0f * 255.0f;
+					vdfloat3 pal_to_rgb1 = (chroma_to_rgb[cidx][k][i*2+1] + y_to_rgb[lidx][k][i*2+1]) * 16.0f * 255.0f;
 
-#ifdef VD_CPU_X86
-			if (MMX_enabled) {
-				for(int i=0; i<2; ++i) {
-					m2x.mPalToR[idx][0][8+i] += 0x40004000;
-					m2x.mPalToG[idx][0][8+i] += 0x40004000;
-					m2x.mPalToB[idx][0][8+i] += 0x40004000;
+					m2x.mPalToR[idx][k][i+k] = VDRoundToInt32(pal_to_rgb0.x) + (VDRoundToInt32(pal_to_rgb1.x) << 16);
+					m2x.mPalToG[idx][k][i+k] = VDRoundToInt32(pal_to_rgb0.y) + (VDRoundToInt32(pal_to_rgb1.y) << 16);
+					m2x.mPalToB[idx][k][i+k] = VDRoundToInt32(pal_to_rgb0.z) + (VDRoundToInt32(pal_to_rgb1.z) << 16);
 				}
 			}
-#endif
 
 			for(int i=0; i<12; ++i) {
 				m2x.mPalToRTwin[idx][i] = m2x.mPalToR[idx][0][i] + m2x.mPalToR[idx][1][i];
@@ -1416,8 +1458,8 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
 	// All of the above is baked into a series of filter kernels that run at 1.66xFsc/1xHR.
 	// This avoids the high cost of actually synthesizing an 8xFsc signal.
 
-	const float sat1 = 0.4f;
-	const float sat2 = mColorParams.mSaturation / sat1;
+	const float sat2 = mColorParams.mArtifactSat;
+	const float sat1 = mColorParams.mSaturation / std::max<float>(0.001f, sat2);
 
 	const float chromaPhaseStep = -mColorParams.mHueRange * (nsVDMath::kfTwoPi / (360.0f * 15.0f));
 
@@ -1535,6 +1577,10 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
 
 	memset(&mPal8x, 0, sizeof mPal8x);
 
+	const float ycphase = mColorParams.mArtifactHue * nsVDMath::kfPi / 180.0f;
+	const float ycphasec = cosf(ycphase);
+	const float ycphases = sinf(ycphase);
+
 	for(int i=0; i<8; ++i) {
 		const float yphase = 0;
 		const float cphase = 0;
@@ -1559,6 +1605,11 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
 		ATFilterKernel kerny2v = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignaly * kerncsep) ^ kerncdemod, 2, 4), cphase-0.5f, 0.625f, -0.75f);
 		ATFilterKernel kernu2v = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalu * kerncsep) ^ kerncdemod, 2, 4), cphase-0.5f, 0.625f, -0.75f);
 		ATFilterKernel kernv2v = ATFilterKernelSampleBicubic(ATFilterKernelSamplePoint((kernsignalv * kerncsep) ^ kerncdemod, 2, 4), cphase-0.5f, 0.625f, -0.75f);
+
+		ATFilterKernel u = std::move(kerny2u);
+		ATFilterKernel v = std::move(kerny2v);
+		kerny2u = u * ycphasec - v * ycphases;
+		kerny2v = u * ycphases + v * ycphasec;
 
 		for(int k=0; k<2; ++k) {
 			float v_invert = k ? -1.0f : 1.0f;
@@ -1609,46 +1660,6 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
 					}
 
 					for(int offset=0; offset<16; ++offset) {
-						sint32 w0 = VDRoundToInt32(p2vw[offset*2+0] * 64.0f * 255.0f);
-						sint32 w1 = VDRoundToInt32(p2vw[offset*2+1] * 64.0f * 255.0f);
-
-						kernv16[offset] = (w1 << 16) + w0;
-					}
-				} else if (MMX_enabled) {
-					int ypos = 3 - (i & 6)*2;
-					int cpos = 12 - (i & 6)*2;
-
-					ATFilterKernelAccumulateWindow(kerny2y, p2yw, ypos, 12, y);
-					ATFilterKernelAccumulateWindow(kernu2y, p2yw, ypos, 12, u);
-					ATFilterKernelAccumulateWindow(kernv2y, p2yw, ypos, 12, v);
-
-					ATFilterKernelAccumulateWindow(kerny2u, p2uw, cpos, 28, y * co_ub);
-					ATFilterKernelAccumulateWindow(kernu2u, p2uw, cpos, 28, u * co_ub);
-					ATFilterKernelAccumulateWindow(kernv2u, p2uw, cpos, 28, v * co_ub);
-
-					ATFilterKernelAccumulateWindow(kerny2v, p2vw, cpos, 28, y * co_vr * v_invert);
-					ATFilterKernelAccumulateWindow(kernu2v, p2vw, cpos, 28, u * co_vr * v_invert);
-					ATFilterKernelAccumulateWindow(kernv2v, p2vw, cpos, 28, v * co_vr * v_invert);
-
-					uint32 *kerny16 = mPal4x.mPalToY[k][j][i];
-					uint32 *kernu16 = mPal4x.mPalToU[k][j][i];
-					uint32 *kernv16 = mPal4x.mPalToV[k][j][i];
-
-					for(int offset=0; offset<6; ++offset) {
-						sint32 w0 = VDRoundToInt32(p2yw[offset*2+0] * 64.0f * 255.0f);
-						sint32 w1 = VDRoundToInt32(p2yw[offset*2+1] * 64.0f * 255.0f);
-
-						kerny16[offset] = (w1 << 16) + w0;
-					}
-
-					for(int offset=0; offset<14; ++offset) {
-						sint32 w0 = VDRoundToInt32(p2uw[offset*2+0] * 64.0f * 255.0f);
-						sint32 w1 = VDRoundToInt32(p2uw[offset*2+1] * 64.0f * 255.0f);
-
-						kernu16[offset] = (w1 << 16) + w0;
-					}
-
-					for(int offset=0; offset<14; ++offset) {
 						sint32 w0 = VDRoundToInt32(p2vw[offset*2+0] * 64.0f * 255.0f);
 						sint32 w1 = VDRoundToInt32(p2vw[offset*2+1] * 64.0f * 255.0f);
 
@@ -1719,21 +1730,6 @@ void ATArtifactingEngine::RecomputePALTables(const ATColorParams& params) {
 
 					for(int l=0; l<16; ++l)
 						mPal8x.mPalToVTwin[i][j][k][l] = mPal8x.mPalToV[i][j][k*2][l] + mPal8x.mPalToV[i][j][k*2+1][l];
-				}
-			}
-		}
-	} else if (MMX_enabled) {
-		for(int i=0; i<2; ++i) {
-			for(int j=0; j<256; ++j) {
-				for(int k=0; k<4; ++k) {
-					for(int l=0; l<6; ++l)
-						mPal4x.mPalToYTwin[i][j][k][l] = mPal4x.mPalToY[i][j][k*2][l] + mPal4x.mPalToY[i][j][k*2+1][l];
-
-					for(int l=0; l<16; ++l)
-						mPal4x.mPalToUTwin[i][j][k][l] = mPal4x.mPalToU[i][j][k*2][l] + mPal4x.mPalToU[i][j][k*2+1][l];
-
-					for(int l=0; l<16; ++l)
-						mPal4x.mPalToVTwin[i][j][k][l] = mPal4x.mPalToV[i][j][k*2][l] + mPal4x.mPalToV[i][j][k*2+1][l];
 				}
 			}
 		}

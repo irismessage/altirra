@@ -38,6 +38,7 @@ namespace {
 		L"Mounted images",
 		L"Full screen",
 		L"Audio",
+		L"Boot",
 	};
 
 	const wchar_t *const kCategoryDescs[]={
@@ -56,6 +57,7 @@ namespace {
 		L"Includes attached disk and cartridge images.",
 		L"Includes the windowed / full screen state.",
 		L"Includes audio settings.",
+		L"Includes settings related to the Boot Image command.",
 	};
 		
 	static_assert(vdcountof(kCategoryNames) == vdcountof(kCategoryDescs), "Category arrays out of sync");

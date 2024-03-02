@@ -1,5 +1,96 @@
 Altirra Change Log
 
+Version 3.10: [August 12, 2018]
+   [changes]
+   * Default keyboard shortcuts have changed. Reset in Tools > Keyboard Shortcuts to use the new bindings.
+   * Modems now default to handshaking disabled rather than RTS/CTS due to differences in default RTS state for R: devices. Use AT&K0 to disable handshaking and AT&K3 to use RTS/CTS.
+
+   [features added]
+   * AltirraOS: Added 65C816 native mode capable version.
+   * Audio: Added support for XAudio2 and WASAPI sound APIs.
+   * Cartridge: Added support for .CAR types 60, 67-70 (Blizzard 32K, XEGS 64K alternate, Atrax 128K raw ordered, aDawliah 32K/64K).
+   * Cartridge: Added show-all override to cartridge mapper dialog.
+   * Debugger: Added FDCWTDATA logging channel to dump the raw track stream for Write Track commands.
+   * Debugger: Added several new verifier modes.
+   * Debugger: .basic_rebuildvnt now has a -t option for TurboBasic XL support.
+   * Debugger: Added extended memory bank tracking support to the history window and breakpoint systems.
+   * Debugger: Add custom symbol (ya) command can now add read-only and write-only symbols.
+   * Devices: Added loopback serial device.
+   * Devices: UI now shows when a device is missing firmware.
+   * Disk: Adjusted default sector interleave patterns to more accurately match real disks.
+   * Disk: Added options to UI disk dialog to reinterleave disk images and to convert disk images to different filesystems.
+   * Disk: Added option to revert a disk in virtual read/write mode back to last saved contents.
+   * Disk: Added full emulation for the I.S. Plate disk drive.
+   * Disk Explorer: Added options to relax filename checking and automatically rename conflicting filenames.
+   * Display: Added option for color correction from NTSC/PAL colors to sRGB and Adobe RGB color spaces.
+   * Display: Added option for auto-switching between NTSC and PAL artifacting modes.
+   * Firmware: 400/800 firmware ROM images can now use XL-like 16K layout for $Cxxx extension firmware.
+   * HLE: Program loader now has modes to allow the load to be triggered by a type 3 poll or a loader program.
+   * HLE: Program loader detects conflicts with and offers to disable internal BASIC.
+   * HLE: Fixed main memory not being completed cleared on startup in some cases with Fast Boot enabled.
+   * PerfAnalyzer: Profiler view can now be opened on trace sections.
+   * PerfAnalyzer: Writes to WSYNC are now considered idle processing.
+   * Platforms: Added native ARM64 build.
+   * Serial: Added support for emulating modem dialing and handshake sound.
+   * Serial: Modem registers S8 and S11 are now supported.
+   * Simulator: Added command to cold reset (power-cycle) the computer without power cycling peripherals.
+   * UI: Combined many menu options into a combined system configuration dialog.
+   * UI: Clicking on non-text area now clears text selection.
+   * UI: Added /d3d9 and /d3d11 command-line switches.
+   * UI: Reworked command-line help (/?).
+   * UI: More system configuration changes now confirm before resetting the computer.
+   * UI: Automatic reset for configuration changes is now configurable.
+   * UI: The image types automatically unloaded in the Boot Image command can now be configured.
+   * UI: The Disk Drives dialog is now modeless.
+   * UI: Added overscan option to reserve bottom margin space on screen for the indicators.
+   * UI: Enlarged the hit area for dockable pane splitters to make them easier to hit.
+   * UI: Main window caption can now be customized.
+   * UI: Added option to automatically switch to default profile when launched to start images.
+   * VFS: Added support for accessing files within filesystems in disk images (atfs://).
+
+   [bugs fixed]
+   * 5200: Default cartridge is now correctly loaded if last mounted cartridge fails to load.
+   * Cartridge: Fixed XEGS banking modes in The!Cart emulation.
+   * Cassette: Dirty state is now tracked for tapes.
+   * Debugger: .dumpdsm command can now be used above bank 0.
+   * Debugger: Fixed Y/P register display issues in history with special registers enabled.
+   * Debugger: Fixed repaint issue in history window related to removing NEXT node.
+   * Debugger: .vectors now reports the native IRQ and emulation COP vectors correctly and no longer reports a bogus native reset vector.
+   * Debugger: Fixed invalid effective address being displayed in disassembly for [dp] and [dp],Y addressing modes.
+   * Debugger: Suppress operand label decoding for direct page modes in 65C816 mode if D<>0.
+   * Debugger: 6502 coprocessors no longer show a 65C816-style 16-bit accumulator in register dumps.
+   * Debugger: Fixed power-on delay option clearing pending step operations immediately after cold reset.
+   * Devices: Added cooldown timer to browser (B:) device on deny to prevent modal dialog spamming.
+   * Devices: Fixed kernel ROM override conflict between Rapidus and U1MB.
+   * Devices: Rapidus no longer switches back to 6502 on warm reset.
+   * Disk: Fixed crash when attempting to recursively expand .ARC files on disk image with unrecognized filesystem.
+   * Disk: Fixed some issues with zero-byte file and subdirectory creation on MyDOS disks.
+   * Disk: Fixed occasional filesystem errors when expanding .ARC files on an SDFS disk.
+   * Disk: Adjusted DD 512 SDFS boot sector to pass CLX validation.
+   * Disk: Attempting to boot an .ARC sourced disk image no longer crashes in the boot process.
+   * Disk: DOS 1 format now uses correct VTOC signature.
+   * Disk: Fixed directory update bug on DOS2/MyDOS disks when deleting the last file on the last directory sector.
+   * Disk Explorer: Creation timestamp is now preserved when dragging files in and out of an SDFS volume.
+   * Display: Added workaround for fullscreen mode failing on some versions of VMWare SVGA 3D driver.
+   * Display: Gamma correction setting now works in PAL high artifacting mode.
+   * Display: ANTIC DMA analysis mode now displays when artifacting is enabled.
+   * Display: Fixed bug with PAL high artifacting ignoring odd hires pixels.
+   * Display: Artifacting phase and saturation are now hooked up for PAL high artifacting.
+   * HLE: Improve tolerance for nonstandard CIO path termination (fixes MultiBASIC DIR command with H:).
+   * Input: Fixed startup crash when DirectInput 8 is not available.
+   * Input: Fixed "allow Shift key to be detected on cold reset" option not working when disabled and full raw keyboard scan was enabled.
+   * MMU: Fixed another Axlon/PORTB memory aliasing issue.
+   * POKEY: Improved accuracy of high-pass filter.
+   * Serial: Fixed crash in R-Verter emulation if remote connection sent characters before the CONNECT message had been sent.
+   * Serial: Fixed slightly inaccurate baud rates at high speeds with 850 full emulation.
+   * Serial: Fixed block output mode, two stop bit mode, external input buffer sizing, and other misc bugs in the full 850 handler.
+   * Serial: Modem S12 register now controls command sequence guard time.
+   * Serial: Socket handling rewritten so that hanging up while a connection is still in progress no longer hangs the emulator until the connection attempt times out.
+   * Simulator: Corrected mapping issue for 24K/32K/40K memory modes.
+   * U1MB: $D500-D5BF memory is now forced on in config unlocked state.
+   * UI: Save states and SAP files now load correctly when dragged from .zip files.
+   * VBXE: ANTIC hires pixels now always have PF2/PF3 priority except with XCOLOR=1 on FX1.26 core where enabled pixels have PF1 priority.
+
 Version 3.00: [December 28, 2017]
    [changes]
    * Devices: Internal device tree storage has changed. Device trees may need to be remade.
@@ -266,7 +357,7 @@ Version 2.80 [September 3, 2016]:
    * Disk: Fixed density detection issue with Set PERCOM Block command in XF551 mode (again).
    * Disk: Fixed crash when mounting .ARC file with no decodable files in it.
    * Disk: Retuned command ACK timings for 1050-based drives.
-   * Disk: 850 and 1050 emulation modes now implement proper respective behavior with long sectors.
+   * Disk: 810 and 1050 emulation modes now implement proper respective behavior with long sectors.
    * Disk: Allow loading of truncated .ATRs with a partial final sector.
    * Disk: Fixed handling of sectors with bad address field CRCs.
    * Disk: Fixed record type bits in FDC status in 810 mode.

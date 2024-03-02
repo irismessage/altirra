@@ -60,6 +60,8 @@ private:
 	char mUrl[1024];
 	uint32 mUrlLen = 0;
 	bool mbUrlValid = false;
+	uint32_t mLastDenyRealTick = 0;
+	uint32_t mCooldownTimer = 0;
 };
 
 #endif

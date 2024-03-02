@@ -42,44 +42,44 @@ public:
 
 	void set(float x2, float y2, float z2) { x=x2; y=y2; z=z2; }
 
-	float		lensq() const							{ return x*x + y*y + z*z; }
+	constexpr float		lensq() const							{ return x*x + y*y + z*z; }
 
-	vdfloat2	project() const							{ const float inv(float(1)/z); const vdfloat2 a = {x*inv, y*inv}; return a; }
-	vdfloat2	as2d() const							{ const vdfloat2 a = {x, y}; return a; }
+	constexpr vdfloat2	project() const							{ const float inv(float(1)/z); const vdfloat2 a = {x*inv, y*inv}; return a; }
+	constexpr vdfloat2	as2d() const							{ const vdfloat2 a = {x, y}; return a; }
 
-	self_type	operator+() const						{ return *this; }
-	self_type	operator-() const						{ return vdfloat3 {-x, -y, -z}; }
+	constexpr self_type	operator+() const						{ return *this; }
+	constexpr self_type	operator-() const						{ return vdfloat3 {-x, -y, -z}; }
 
-	self_type	operator+(float s) const				{ return vdfloat3 { x+s, y+s, z+s }; }
-	self_type	operator-(float s) const				{ return vdfloat3 { x-s, y-s, z-s }; }
+	constexpr self_type	operator+(float s) const				{ return vdfloat3 { x+s, y+s, z+s }; }
+	constexpr self_type	operator-(float s) const				{ return vdfloat3 { x-s, y-s, z-s }; }
 
-	self_type	operator+(const self_type& r) const		{ return vdfloat3 { x+r.x, y+r.y, z+r.z }; }
-	self_type	operator-(const self_type& r) const		{ return vdfloat3 { x-r.x, y-r.y, z-r.z }; }
+	constexpr self_type	operator+(const self_type& r) const		{ return vdfloat3 { x+r.x, y+r.y, z+r.z }; }
+	constexpr self_type	operator-(const self_type& r) const		{ return vdfloat3 { x-r.x, y-r.y, z-r.z }; }
 
-	self_type&	operator+=(const self_type& r)			{ x+=r.x; y+=r.y; z+=r.z; return *this; }
-	self_type&	operator-=(const self_type& r)			{ x-=r.x; y-=r.y; z-=r.z; return *this; }
+	constexpr self_type&	operator+=(const self_type& r)		{ x+=r.x; y+=r.y; z+=r.z; return *this; }
+	constexpr self_type&	operator-=(const self_type& r)		{ x-=r.x; y-=r.y; z-=r.z; return *this; }
 
-	self_type	operator*(const float s) const			{ return vdfloat3 { x*s, y*s, z*s }; }
-	self_type&	operator*=(const float s)				{ x*=s; y*=s; z*=s; return *this; }
+	constexpr self_type	operator*(const float s) const			{ return vdfloat3 { x*s, y*s, z*s }; }
+	constexpr self_type&	operator*=(const float s)			{ x*=s; y*=s; z*=s; return *this; }
 
-	self_type	operator/(const float s) const			{ const float inv(1.0f/s); return vdfloat3 { x*inv, y*inv, z*inv }; }
-	self_type&	operator/=(const float s)				{ const float inv(1.0f/s); x*=inv; y*=inv; z*=inv; return *this; }
+	constexpr self_type	operator/(const float s) const			{ const float inv(1.0f/s); return vdfloat3 { x*inv, y*inv, z*inv }; }
+	constexpr self_type&	operator/=(const float s)			{ const float inv(1.0f/s); x*=inv; y*=inv; z*=inv; return *this; }
 
-	self_type	operator*(const self_type& r) const		{ return vdfloat3 { x*r.x, y*r.y, z*r.z }; }
-	self_type&	operator*=(const self_type& r)			{ x*=r.x; y*=r.y; z*=r.z; return *this; }
+	constexpr self_type	operator*(const self_type& r) const		{ return vdfloat3 { x*r.x, y*r.y, z*r.z }; }
+	constexpr self_type&	operator*=(const self_type& r)		{ x*=r.x; y*=r.y; z*=r.z; return *this; }
 
-	self_type	operator/(const self_type& r) const		{ return vdfloat3 { x/r.x, y/r.y, z/r.z }; }
-	self_type&	operator/=(const self_type& r)			{ x/=r.x; y/=r.y; z/=r.z; return *this; }
+	constexpr self_type	operator/(const self_type& r) const		{ return vdfloat3 { x/r.x, y/r.y, z/r.z }; }
+	constexpr self_type&	operator/=(const self_type& r)		{ x/=r.x; y/=r.y; z/=r.z; return *this; }
 
 	float x;
 	float y;
 	float z;
 };
 
-VDFORCEINLINE vdfloat3 operator+(float s, const vdfloat3& v) { return vdfloat3 { s+v.x, s+v.y, s+v.z }; }
-VDFORCEINLINE vdfloat3 operator-(float s, const vdfloat3& v) { return vdfloat3 { s-v.x, s-v.y, s-v.z }; }
-VDFORCEINLINE vdfloat3 operator*(float s, const vdfloat3& v) { return vdfloat3 { s*v.x, s*v.y, s*v.z }; }
-VDFORCEINLINE vdfloat3 operator/(float s, const vdfloat3& v) { return vdfloat3 { s/v.x, s/v.y, s/v.z }; }
+VDFORCEINLINE constexpr vdfloat3 operator+(float s, const vdfloat3& v) { return vdfloat3 { s+v.x, s+v.y, s+v.z }; }
+VDFORCEINLINE constexpr vdfloat3 operator-(float s, const vdfloat3& v) { return vdfloat3 { s-v.x, s-v.y, s-v.z }; }
+VDFORCEINLINE constexpr vdfloat3 operator*(float s, const vdfloat3& v) { return vdfloat3 { s*v.x, s*v.y, s*v.z }; }
+VDFORCEINLINE constexpr vdfloat3 operator/(float s, const vdfloat3& v) { return vdfloat3 { s/v.x, s/v.y, s/v.z }; }
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -150,19 +150,19 @@ namespace nsVDMath {
 		return a / length(a);
 	}
 
-	VDFORCEINLINE float dot(const vdfloat2& a, const vdfloat2& b) {
+	VDFORCEINLINE constexpr float dot(const vdfloat2& a, const vdfloat2& b) {
 		return a.x*b.x + a.y*b.y;
 	}
 
-	VDFORCEINLINE float dot(const vdfloat3& a, const vdfloat3& b) {
+	VDFORCEINLINE constexpr float dot(const vdfloat3& a, const vdfloat3& b) {
 		return a.x*b.x + a.y*b.y + a.z*b.z;
 	}
 
-	VDFORCEINLINE float dot(const vdfloat4& a, const vdfloat4& b) {
+	VDFORCEINLINE constexpr float dot(const vdfloat4& a, const vdfloat4& b) {
 		return a.x*b.x + a.y*b.y + a.z*b.z + a.w*b.w;
 	}
 
-	VDFORCEINLINE vdfloat3 cross(const vdfloat3& a, const vdfloat3& b) {
+	VDFORCEINLINE constexpr vdfloat3 cross(const vdfloat3& a, const vdfloat3& b) {
 		const vdfloat3 r = {a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x};
 		return r;
 	}

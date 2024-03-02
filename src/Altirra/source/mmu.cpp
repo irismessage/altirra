@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcore/address.h>
 #include "mmu.h"
 #include "memorymanager.h"
 #include "simulator.h"
@@ -156,6 +157,17 @@ void ATMMUEmulator::RebuildMappingTables() {
 			// emulation easier (it emulates RAMBO in its high 256K).
 			extbankoffset = 0x14;
 			break;
+	}
+
+	switch(memmode) {
+		case kATMemoryMode_128K:		mCPUBankMask = 0x1C; break;
+		case kATMemoryMode_320K:		mCPUBankMask = 0x7C; break;
+		case kATMemoryMode_576K:		mCPUBankMask = 0x7E; break;
+		case kATMemoryMode_1088K:		mCPUBankMask = 0xFE; break;
+		case kATMemoryMode_320K_Compy:	mCPUBankMask = 0xDC; break;
+		case kATMemoryMode_576K_Compy:	mCPUBankMask = 0xDE; break;
+		case kATMemoryMode_256K:		mCPUBankMask = 0x7C; break;
+		default:						mCPUBankMask = 0x00; break;
 	}
 
 	bool blockExtBasic = false;
@@ -365,6 +377,15 @@ void ATMMUEmulator::GetMemoryMapState(ATMemoryMapState& state) const {
 	state.mAxlonBankMask = mAxlonBankMask;
 }
 
+uint32 ATMMUEmulator::ExtBankToMemoryOffset(uint8 bank) const {
+	const uint32 bankInfo = mBankMap[bank];
+
+	if (!(bankInfo & (kMapInfo_ExtendedCPU | kMapInfo_ExtendedANTIC)))
+		return 0x4000;
+
+	return (bankInfo & kMapInfo_BankMask) << 14;
+}
+
 void ATMMUEmulator::ClearModeOverrides() {
 	SetModeOverrides(-1, false);
 }
@@ -398,8 +419,12 @@ void ATMMUEmulator::SetBankRegister(uint8 bank) {
 	if (bankInfo & (kMapInfo_ExtendedCPU | kMapInfo_ExtendedANTIC)) {
 		// If settings are in flux, we may temporarily have the mapping mode set to
 		// enable extended memory while not having an extRAM layer.
-		if (mpLayerExtRAM)
-			mpMemMan->SetLayerMemory(mpLayerExtRAM, bankbase, 0x40, 0x40);
+		if (mpLayerExtRAM) {
+			uint32 addressSpace = bankOffset < 0x10000
+				? kATAddressSpace_RAM + bankOffset
+				: kATAddressSpace_PORTB + 0x4000 + ((uint32)(bank | (mCPUBankMask ^ 0xFF)) << 16);
+			mpMemMan->SetLayerMemoryAndAddressSpace(mpLayerExtRAM, bankbase, 0x40, 0x40, addressSpace);
+		}
 	} else
 		UpdateAxlonBank();
 
@@ -468,7 +493,7 @@ void ATMMUEmulator::SetAxlonBank(uint8 bank) {
 void ATMMUEmulator::UpdateAxlonBank() {
 	if (mpLayerExtRAM && !(mCurrentBankInfo & (kMapInfo_ExtendedCPU | kMapInfo_ExtendedANTIC))) {
 		if (mAxlonBank > 0) {
-			mpMemMan->SetLayerMemory(mpLayerExtRAM, (uint8 *)mpMemory + 0x10000 + ((uint32)mAxlonBank << 14), 0x40, 0x40);
+			mpMemMan->SetLayerMemory(mpLayerExtRAM, (uint8 *)mpAxlonMemory + ((uint32)(mAxlonBank - 1) << 14), 0x40, 0x40);
 			mpMemMan->EnableLayer(mpLayerExtRAM, true);
 		} else {
 			mpMemMan->EnableLayer(mpLayerExtRAM, false);

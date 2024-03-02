@@ -29,6 +29,7 @@ ATOptions::ATOptions()
 	, mbDisplay16Bit(false)
 	, mbSingleInstance(false)
 	, mbPauseDuringMenu(false)
+	, mbLaunchAutoProfile(true)
 	, mThemeScale(100)
 	, mErrorMode(kATErrorMode_Dialog)
 	, mbFullScreenBorderless(false)
@@ -102,6 +103,7 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Flash: Ultimate1MB flash mode", opts.mU1MBFlashChip);
 	ATOptionsExchange(key, write, "UI: Theme scale factor", opts.mThemeScale);
 	ATOptionsExchange(key, write, "UI: Pause during menus", opts.mbPauseDuringMenu);
+	ATOptionsExchange(key, write, "UI: Launch with automatic profile", opts.mbLaunchAutoProfile);
 	ATOptionsExchangeEnum(key, write, "Media: Default write mode", opts.mDefaultWriteMode, (ATMediaWriteMode)(kATMediaWriteMode_All + 1));
 
 	ATOptionsExchange(key, write, "CompatDB: Enable", opts.mbCompatEnable);

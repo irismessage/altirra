@@ -44,7 +44,7 @@
 const int kClearTypePadding = 1;
 
 bool VDCreateDisplaySystemFont(int height, bool bold, const char *fontName, IVDDisplayFont **font) {
-	HFONT hfont = ::CreateFont(height,
+	HFONT hfont = ::CreateFontA(height,
 		0,
 		0,
 		0,

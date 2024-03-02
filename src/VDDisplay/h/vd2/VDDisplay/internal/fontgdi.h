@@ -7,6 +7,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/VDDisplay/font.h>
 #include <windows.h>
+#include <unknwn.h>
 #include <mlang.h>
 
 struct IMLangFontLink2;

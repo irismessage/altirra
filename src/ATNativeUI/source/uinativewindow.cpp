@@ -27,7 +27,6 @@ ATOM ATUINativeWindow::sWndClassMain;
 
 ATUINativeWindow::ATUINativeWindow()
 	: mRefCount(0)
-	, mhwnd(NULL)
 	, mTouchMode(kATUITouchMode_Default)
 {
 }
@@ -89,19 +88,9 @@ void *ATUINativeWindow::AsInterface(uint32 iid) {
 	return NULL;
 }
 
-void ATUINativeWindow::Close() {
-	if (mhwnd)
-		::SendMessage(mhwnd, WM_CLOSE, 0, 0);
-}
-
 bool ATUINativeWindow::CreateChild(HWND hwndParent, UINT id, int x, int y, int w, int h, DWORD styles, DWORD exstyles, const wchar_t *text) {
 	VDASSERT(styles & WS_CHILD);
 	return CreateWindowExW(exstyles, MAKEINTATOM(sWndClass), text ? text : L"", styles, x, y, w, h, hwndParent, (HMENU)(INT_PTR)id, VDGetLocalModuleHandleW32(), this) != nullptr;
-}
-
-void ATUINativeWindow::Destroy() {
-	if (mhwnd)
-		DestroyWindow(mhwnd);
 }
 
 void ATUINativeWindow::SetTouchMode(ATUITouchMode touchMode) {

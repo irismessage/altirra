@@ -32,7 +32,7 @@
 #include "pokey.h"
 
 class ATPokeyEmulator;
-class ATAudioSyncMixer;
+class ATAudioSamplePlayer;
 
 class ATCPUEmulatorMemory;
 class VDFile;
@@ -44,6 +44,7 @@ struct ATTraceContext;
 class ATTraceChannelFormatted;
 
 enum ATMediaWriteMode : uint8;
+enum class ATSoundId : uint32;
 
 enum ATDiskEmulationMode {
 	kATDiskEmulationMode_Generic,
@@ -70,7 +71,7 @@ public:
 	ATDiskEmulator();
 	~ATDiskEmulator();
 
-	void Init(int unit, ATDiskInterface *dif, ATScheduler *sched, ATScheduler *slowsched, ATAudioSyncMixer *mixer);
+	void Init(int unit, ATDiskInterface *dif, ATScheduler *sched, ATScheduler *slowsched, ATAudioSamplePlayer *mixer);
 	void Shutdown();
 
 	void Rename(int unit);
@@ -155,7 +156,7 @@ protected:
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
 	ATScheduler *mpScheduler = nullptr;
 	ATScheduler *mpSlowScheduler = nullptr;
-	ATAudioSyncMixer *mpAudioSyncMixer = nullptr;
+	ATAudioSamplePlayer *mpAudioSyncMixer = nullptr;
 	int		mUnit = 0;
 
 	ATEvent		*mpMotorOffEvent = nullptr;
@@ -202,7 +203,7 @@ protected:
 	int		mSectorSize = 0;
 	uint32	mLastSector = 0;
 
-	uint32	mRotationSoundId = 0;
+	ATSoundId	mRotationSoundId = {};
 
 	uint8	mPERCOM[12] = {};
 	int		mFormatSectorSize = 0;

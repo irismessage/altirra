@@ -102,14 +102,13 @@ public:
 
 	/// Read audio.
 	///
-	/// dstLeft: Auto-incremented dest pointer to left channel.
-	/// dstRight: Auto-incremented dest pointer to right channel.
+	/// dst: Auto-incremented dest pointer to output channel.
 	/// posSample/posCycle: Auto-incremented integer/fractional audio sample position.
 	/// n: Number of samples requested.
 	///
 	/// Returns number of samples provided. If the end of the audio track is hit,
 	/// fewer than requested samples may be returned.
-	virtual void AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const = 0;
+	virtual void AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const = 0;
 
 	virtual uint32 GetWriteCursor() const = 0;
 	virtual void SetWriteCursor(uint32 pos) = 0;

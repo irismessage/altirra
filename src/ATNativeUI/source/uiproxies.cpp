@@ -4,16 +4,114 @@
 #include <commctrl.h>
 
 #include <vd2/system/w32assist.h>
+#include <vd2/system/strutil.h>
 #include <vd2/system/thunk.h>
+#include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/Dita/accel.h>
+#include <vd2/Kasumi/pixmap.h>
+#include <vd2/Kasumi/pixmaputils.h>
+#include <vd2/Kasumi/resample.h>
+#include <vd2/Riza/bitmap.h>
 #include <at/atnativeui/uiproxies.h>
+
+namespace {
+	union AlphaBitmapHeader {
+		BITMAPV5HEADER v5;
+		VDAVIBitmapInfoHeader bi;
+
+		AlphaBitmapHeader(uint32 w, uint32 h);
+	};
+
+	AlphaBitmapHeader::AlphaBitmapHeader(uint32 w, uint32 h) {
+		v5 = {};
+		v5.bV5Size = sizeof(BITMAPV5HEADER);
+		v5.bV5Width = w;
+		v5.bV5Height = h;
+		v5.bV5Planes = 1;
+		v5.bV5BitCount = 32;
+		v5.bV5Compression = BI_BITFIELDS;
+		v5.bV5SizeImage = w*h*4;
+		v5.bV5XPelsPerMeter = 0;
+		v5.bV5YPelsPerMeter = 0;
+		v5.bV5ClrUsed = 0;
+		v5.bV5ClrImportant = 0;
+		v5.bV5RedMask = 0x00FF0000;
+		v5.bV5GreenMask = 0x0000FF00;
+		v5.bV5BlueMask = 0x000000FF;
+		v5.bV5AlphaMask = 0xFF000000;
+		v5.bV5CSType = LCS_WINDOWS_COLOR_SPACE;
+		v5.bV5Intent = LCS_GM_BUSINESS;
+		v5.bV5ProfileSize = 0;
+	}
+
+	void AddImagesToImageList(HIMAGELIST hImageList, const VDPixmap& px, uint32 imgw, uint32 imgh) {
+		if (px.format != nsVDPixmap::kPixFormat_XRGB8888) {
+			VDFAIL("Image list not in correct format.");
+			return;
+		}
+
+		if (!hImageList)
+			return;
+
+		HDC hdc2 = nullptr;
+
+		if (HDC hdc = GetDC(nullptr)) {
+			hdc2 = CreateCompatibleDC(hdc);
+			ReleaseDC(nullptr, hdc);
+		}
+
+		if (hdc2) {
+			AlphaBitmapHeader hdr(imgw, imgh);
+
+			void *bits;
+
+			HBITMAP hbm = CreateDIBSection(hdc2, (BITMAPINFO *)&hdr, DIB_RGB_COLORS, &bits, nullptr, 0);
+			if (hbm) {
+				VDPixmap pxbuf = VDGetPixmapForBitmap(hdr.bi, bits);
+				const uint32 srcw = px.w;
+				const uint32 srch = px.h;
+				VDPixmapBuffer alphasrc(srcw, srch, nsVDPixmap::kPixFormat_XRGB8888);
+				VDPixmapBuffer alphadst(imgw, imgh, nsVDPixmap::kPixFormat_XRGB8888);
+
+				GdiFlush();
+
+				VDPixmapResample(pxbuf, px, IVDPixmapResampler::kFilterCubic);
+
+				// We can't guarantee that the resampler will handle alpha, so resample alpha as color
+				// and remerge.
+				VDMemcpyRect(alphasrc.data, alphasrc.pitch, px.data, px.pitch, srcw*4, srch);
+
+				uint32 numDwords = alphasrc.size() / 4;
+				for(uint32 i = 0; i < numDwords; ++i) {
+					((uint32 *)alphasrc.data)[i] >>= 24;
+				}
+
+				VDPixmapResample(alphadst, alphasrc, IVDPixmapResampler::kFilterCubic);
+
+				for(uint32 y=0; y<imgh; ++y) {
+					const uint32 *VDRESTRICT src = (const uint32 *)((const char *)alphadst.data + alphadst.pitch * y);
+					uint32 *VDRESTRICT dst = (uint32 *)((char *)pxbuf.data + pxbuf.pitch * y);
+
+					for(uint32 x=0; x<imgw; ++x) {
+						dst[x] = (dst[x] & 0x00FFFFFF) + (src[x] << 24);
+					}
+				}
+					
+				ImageList_Add(hImageList, hbm, nullptr);
+
+				DeleteObject(hbm);
+			}
+
+			DeleteDC(hdc2);
+		}
+	}
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 
 VDUIProxyControl::VDUIProxyControl()
-	: mhwnd(NULL)
-	, mRedrawInhibitCount(0)
+	: mRedrawInhibitCount(0)
 {
 }
 
@@ -24,33 +122,6 @@ void VDUIProxyControl::Attach(VDZHWND hwnd) {
 
 void VDUIProxyControl::Detach() {
 	mhwnd = NULL;
-}
-
-vdrect32 VDUIProxyControl::GetArea() const {
-	if (mhwnd) {
-		RECT r;
-		if (GetWindowRect(mhwnd, &r)) {
-			HWND hwndParent = GetAncestor(mhwnd, GA_PARENT);
-
-			if (hwndParent) {
-				SetLastError(0);
-				if (MapWindowPoints(NULL, hwndParent, (LPPOINT)&r, 2) || !GetLastError())
-					return vdrect32(r.left, r.top, r.right, r.bottom);
-			}
-		}
-	}
-
-	return vdrect32(0, 0, 0, 0);
-}
-
-void VDUIProxyControl::SetArea(const vdrect32& r) {
-	if (mhwnd)
-		SetWindowPos(mhwnd, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
-}
-
-void VDUIProxyControl::SetEnabled(bool enabled) {
-	if (mhwnd)
-		EnableWindow(mhwnd, enabled);
 }
 
 void VDUIProxyControl::SetRedraw(bool redraw) {
@@ -65,10 +136,6 @@ void VDUIProxyControl::SetRedraw(bool redraw) {
 				SendMessage(mhwnd, WM_SETREDRAW, FALSE, 0);
 		}
 	}
-}
-
-bool VDUIProxyControl::IsVisible() const {
-	return mhwnd && (GetWindowLong(mhwnd, GWL_STYLE) & WS_VISIBLE);
 }
 
 VDZLRESULT VDUIProxyControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -125,6 +192,29 @@ void VDUIProxyMessageDispatcherW32::RemoveAllControls(bool detach) {
 	}
 }
 
+bool VDUIProxyMessageDispatcherW32::TryDispatch_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result) {
+	VDUIProxyControl *control = GetControl((HWND)lParam);
+
+	if (control) {
+		result = control->On_WM_COMMAND(wParam, lParam);
+		return true;
+	}
+
+	return false;
+}
+
+bool VDUIProxyMessageDispatcherW32::TryDispatch_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result) {
+	const NMHDR *hdr = (const NMHDR *)lParam;
+	VDUIProxyControl *control = GetControl(hdr->hwndFrom);
+
+	if (control) {
+		result = control->On_WM_NOTIFY(wParam, lParam);
+		return true;
+	}
+
+	return false;
+}
+
 VDZLRESULT VDUIProxyMessageDispatcherW32::Dispatch_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
 	VDUIProxyControl *control = GetControl((HWND)lParam);
 
@@ -175,15 +265,17 @@ VDUIProxyControl *VDUIProxyMessageDispatcherW32::GetControl(VDZHWND hwnd) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-VDUIProxyListView::VDUIProxyListView()
-	: mChangeNotificationLocks(0)
-	, mNextTextIndex(0)
-{
+VDUIProxyListView::VDUIProxyListView() {
 }
 
 void VDUIProxyListView::Detach() {
 	Clear();
 	VDUIProxyControl::Detach();
+}
+
+void VDUIProxyListView::SetIndexedProvider(IVDUIListViewIndexedProvider *p) {
+	mbIndexedMode = true;
+	mpIndexedProvider = p;
 }
 
 void VDUIProxyListView::AutoSizeColumns(bool expandlast) {
@@ -264,6 +356,15 @@ void VDUIProxyListView::SetSelectedIndex(int index) {
 	ListView_SetItemState(mhwnd, index, LVIS_SELECTED|LVIS_FOCUSED, LVIS_SELECTED|LVIS_FOCUSED);
 }
 
+uint32 VDUIProxyListView::GetSelectedItemId() const {
+	int idx = GetSelectedIndex();
+
+	if (idx < 0)
+		return 0;
+
+	return GetItemId(idx);
+}
+
 IVDUIListViewVirtualItem *VDUIProxyListView::GetSelectedItem() const {
 	int idx = GetSelectedIndex();
 
@@ -340,6 +441,20 @@ IVDUIListViewVirtualItem *VDUIProxyListView::GetVirtualItem(int index) const {
 	return NULL;
 }
 
+uint32 VDUIProxyListView::GetItemId(int index) const {
+	if (index < 0)
+		return 0;
+
+	LVITEMW itemw={};
+	itemw.mask = LVIF_PARAM;
+	itemw.iItem = index;
+	itemw.iSubItem = 0;
+	if (SendMessage(mhwnd, LVM_GETITEMW, 0, (LPARAM)&itemw))
+		return (uint32)itemw.lParam;
+
+	return 0;
+}
+
 void VDUIProxyListView::InsertColumn(int index, const wchar_t *label, int width, bool rightAligned) {
 	VDASSERT(index || !rightAligned);
 
@@ -367,7 +482,7 @@ int VDUIProxyListView::InsertItem(int item, const wchar_t *text) {
 }
 
 int VDUIProxyListView::InsertVirtualItem(int item, IVDUIListViewVirtualItem *lvvi) {
-	int index;
+	VDASSERT(!mbIndexedMode);
 
 	if (item < 0)
 		item = 0x7FFFFFFF;
@@ -381,12 +496,35 @@ int VDUIProxyListView::InsertVirtualItem(int item, IVDUIListViewVirtualItem *lvv
 	itemw.pszText	= LPSTR_TEXTCALLBACKW;
 	itemw.lParam	= (LPARAM)lvvi;
 
-	index = (int)SendMessageW(mhwnd, LVM_INSERTITEMW, 0, (LPARAM)&itemw);
+	const int index = (int)SendMessageW(mhwnd, LVM_INSERTITEMW, 0, (LPARAM)&itemw);
 
 	--mChangeNotificationLocks;
 
 	if (index >= 0)
 		lvvi->AddRef();
+
+	return index;
+}
+
+int VDUIProxyListView::InsertIndexedItem(int item, uint32 id) {
+	VDASSERT(mbIndexedMode);
+	VDASSERT(id);
+
+	if (item < 0)
+		item = 0x7FFFFFFF;
+
+	++mChangeNotificationLocks;
+
+	LVITEMW itemw = {};
+
+	itemw.mask		= LVIF_TEXT | LVIF_PARAM;
+	itemw.iItem		= item;
+	itemw.pszText	= LPSTR_TEXTCALLBACKW;
+	itemw.lParam	= (LPARAM)id;
+
+	const int index = (int)SendMessageW(mhwnd, LVM_INSERTITEMW, 0, (LPARAM)&itemw);
+
+	--mChangeNotificationLocks;
 
 	return index;
 }
@@ -472,12 +610,30 @@ bool VDUIProxyListView::GetItemScreenRect(int item, vdrect32& r) const {
 	return true;
 }
 
-void VDUIProxyListView::Sort(IVDUIListViewVirtualComparer& comparer) {
-	ListView_SortItems(mhwnd, SortAdapter, (LPARAM)&comparer);
+void VDUIProxyListView::Sort(IVDUIListViewIndexedComparer& comparer) {
+	VDASSERT(mbIndexedMode);
+
+	const auto sortAdapter = 
+		[](LPARAM x, LPARAM y, LPARAM cookie) {
+			return ((IVDUIListViewIndexedComparer *)cookie)->Compare((uint32)x, (uint32)y);
+		};
+
+	ListView_SortItems(mhwnd, sortAdapter, (LPARAM)&comparer);
 }
 
-int VDZCALLBACK VDUIProxyListView::SortAdapter(LPARAM x, LPARAM y, LPARAM cookie) {
-	return ((IVDUIListViewVirtualComparer *)cookie)->Compare((IVDUIListViewVirtualItem *)x, (IVDUIListViewVirtualItem *)y);
+void VDUIProxyListView::Sort(IVDUIListViewVirtualComparer& comparer) {
+	VDASSERT(!mbIndexedMode);
+
+	const auto sortAdapter = 
+		[](LPARAM x, LPARAM y, LPARAM cookie) {
+			return ((IVDUIListViewVirtualComparer *)cookie)->Compare((IVDUIListViewVirtualItem *)x, (IVDUIListViewVirtualItem *)y);
+		};
+
+	ListView_SortItems(mhwnd, sortAdapter, (LPARAM)&comparer);
+}
+
+void VDUIProxyListView::SetOnItemDoubleClicked(vdfunction<void(int)> fn) {
+	mpOnItemDoubleClicked = std::move(fn);
 }
 
 VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -487,12 +643,19 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 		case LVN_GETDISPINFOA:
 			{
 				NMLVDISPINFOA *dispa = (NMLVDISPINFOA *)hdr;
-				IVDUIListViewVirtualItem *lvvi = (IVDUIListViewVirtualItem *)dispa->item.lParam;
 
 				if (dispa->item.mask & LVIF_TEXT) {
 					mTextW[0].clear();
-					if (lvvi)
-						lvvi->GetText(dispa->item.iSubItem, mTextW[0]);
+
+					if (mbIndexedMode) {
+						if (mpIndexedProvider)
+							mpIndexedProvider->GetText((uint32)dispa->item.lParam, dispa->item.iSubItem, mTextW[0]);
+					} else {
+						IVDUIListViewVirtualItem *lvvi = (IVDUIListViewVirtualItem *)dispa->item.lParam;
+						if (lvvi)
+							lvvi->GetText(dispa->item.iSubItem, mTextW[0]);
+					}
+
 					mTextA[mNextTextIndex] = VDTextWToA(mTextW[0]);
 					dispa->item.pszText = (LPSTR)mTextA[mNextTextIndex].c_str();
 
@@ -505,12 +668,19 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 		case LVN_GETDISPINFOW:
 			{
 				NMLVDISPINFOW *dispw = (NMLVDISPINFOW *)hdr;
-				IVDUIListViewVirtualItem *lvvi = (IVDUIListViewVirtualItem *)dispw->item.lParam;
 
 				if (dispw->item.mask & LVIF_TEXT) {
 					mTextW[mNextTextIndex].clear();
-					if (lvvi)
-						lvvi->GetText(dispw->item.iSubItem, mTextW[mNextTextIndex]);
+
+					if (mbIndexedMode) {
+						if (mpIndexedProvider)
+							mpIndexedProvider->GetText((uint32)dispw->item.lParam, dispw->item.iSubItem, mTextW[mNextTextIndex]);
+					} else {
+						IVDUIListViewVirtualItem *lvvi = (IVDUIListViewVirtualItem *)dispw->item.lParam;
+						if (lvvi)
+							lvvi->GetText(dispw->item.iSubItem, mTextW[mNextTextIndex]);
+					}
+
 					dispw->item.pszText = (LPWSTR)mTextW[mNextTextIndex].c_str();
 
 					if (++mNextTextIndex >= 3)
@@ -520,7 +690,7 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 			break;
 
 		case LVN_DELETEITEM:
-			{
+			if (!mbIndexedMode) {
 				const NMLISTVIEW *nmlv = (const NMLISTVIEW *)hdr;
 				IVDUIListViewVirtualItem *lvvi = (IVDUIListViewVirtualItem *)nmlv->lParam;
 
@@ -651,9 +821,20 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 
 		case NM_DBLCLK:
 			{
-				int selIndex = ListView_GetNextItem(mhwnd, -1, LVNI_ALL | LVNI_SELECTED);
+				const NMITEMACTIVATE *nmia = (const NMITEMACTIVATE *)hdr;
 
-				mEventItemDoubleClicked.Raise(this, selIndex);
+				// skip handling if the double click is on the checkbox
+				LVHITTESTINFO hti {};
+				hti.pt = nmia->ptAction;
+
+				SendMessage(mhwnd, LVM_SUBITEMHITTEST, 0, (LPARAM)&hti);
+
+				if (hti.flags & LVHT_ONITEMSTATEICON)
+					return 0;
+
+				mEventItemDoubleClicked.Raise(this, nmia->iItem);
+				if (mpOnItemDoubleClicked)
+					mpOnItemDoubleClicked(nmia->iItem);
 			}
 			return 0;
 	}
@@ -834,7 +1015,7 @@ void VDUIProxyListBoxControl::EnableAutoItemEditing() {
 		if (!mpWndProcThunk)
 			mpWndProcThunk = VDCreateFunctionThunkFromMethod(this, &VDUIProxyListBoxControl::ListBoxWndProc, true);
 
-		SetWindowLongPtr(mhwnd, GWLP_WNDPROC, (LONG_PTR)mpWndProcThunk);
+		SetWindowLongPtr(mhwnd, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpWndProcThunk));
 	}
 }
 
@@ -945,7 +1126,7 @@ void VDUIProxyListBoxControl::EditItem(int index) {
 		mPrevEditWndProc = (void (*)())(WNDPROC)GetWindowLongPtrW(mhwndEdit, GWLP_WNDPROC);
 
 		if (mPrevEditWndProc)
-			SetWindowLongPtrW(mhwndEdit, GWLP_WNDPROC, (LONG_PTR)mpEditWndProcThunk);
+			SetWindowLongPtrW(mhwndEdit, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpEditWndProcThunk));
 	}
 
 	ShowWindow(mhwndEdit, SW_SHOWNOACTIVATE);
@@ -1103,7 +1284,7 @@ VDZLRESULT VDUIProxyListBoxControl::ListBoxWndProc(VDZHWND hwnd, VDZUINT msg, VD
 							mpEditTimerThunk = VDCreateFunctionThunkFromMethod(this, &VDUIProxyListBoxControl::AutoEditTimerProc, true);
 
 						if (mpEditTimerThunk)
-							mAutoEditTimer = SetTimer(NULL, 0, 1000, (TIMERPROC)mpEditTimerThunk);
+							mAutoEditTimer = SetTimer(NULL, 0, 1000, VDGetThunkFunction<TIMERPROC>(mpEditTimerThunk));
 					}
 				}
 			}
@@ -1196,6 +1377,13 @@ VDUIProxyComboBoxControl::VDUIProxyComboBoxControl() {
 VDUIProxyComboBoxControl::~VDUIProxyComboBoxControl() {
 }
 
+void VDUIProxyComboBoxControl::Clear() {
+	if (!mhwnd)
+		return;
+
+	SendMessageW(mhwnd, CB_RESETCONTENT, 0, 0);
+}
+
 void VDUIProxyComboBoxControl::AddItem(const wchar_t *s) {
 	if (!mhwnd)
 		return;
@@ -1215,9 +1403,18 @@ void VDUIProxyComboBoxControl::SetSelection(int index) {
 		SendMessage(mhwnd, CB_SETCURSEL, index, 0);
 }
 
+void VDUIProxyComboBoxControl::SetOnSelectionChanged(vdfunction<void(int)> fn) {
+	mpOnSelectionChangedFn = std::move(fn);
+}
+
 VDZLRESULT VDUIProxyComboBoxControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
 	if (HIWORD(wParam) == CBN_SELCHANGE) {
-		mSelectionChanged.Raise(this, GetSelection());
+		const int idx = GetSelection();
+
+		if (mpOnSelectionChangedFn)
+			mpOnSelectionChangedFn(idx);
+
+		mSelectionChanged.Raise(this, idx);
 	}
 
 	return 0;
@@ -1233,6 +1430,8 @@ VDUIProxyTreeViewControl::VDUIProxyTreeViewControl()
 	: mNextTextIndex(0)
 	, mhfontBold(NULL)
 	, mbCreatedBoldFont(false)
+	, mbIndexedMode(false)
+	, mpIndexedProvider(nullptr)
 	, mpEditWndProcThunk(NULL)
 {
 }
@@ -1244,6 +1443,11 @@ VDUIProxyTreeViewControl::~VDUIProxyTreeViewControl() {
 		VDDestroyFunctionThunk(mpEditWndProcThunk);
 		mpEditWndProcThunk = NULL;
 	}
+}
+
+void VDUIProxyTreeViewControl::SetIndexedProvider(IVDUITreeViewIndexedProvider *p) {
+	mbIndexedMode = true;
+	mpIndexedProvider = p;
 }
 
 IVDUITreeViewVirtualItem *VDUIProxyTreeViewControl::GetSelectedVirtualItem() const {
@@ -1264,6 +1468,24 @@ IVDUITreeViewVirtualItem *VDUIProxyTreeViewControl::GetSelectedVirtualItem() con
 	return (IVDUITreeViewVirtualItem *)itemw.lParam;
 }
 
+uint32 VDUIProxyTreeViewControl::GetSelectedItemId() const {
+	if (!mhwnd)
+		return 0;
+
+	HTREEITEM hti = TreeView_GetSelection(mhwnd);
+
+	if (!hti)
+		return 0;
+
+	TVITEMW itemw = {0};
+
+	itemw.mask = LVIF_PARAM;
+	itemw.hItem = hti;
+
+	SendMessageW(mhwnd, TVM_GETITEMW, 0, (LPARAM)&itemw);
+	return (uint32)itemw.lParam;
+}
+
 IVDUITreeViewVirtualItem *VDUIProxyTreeViewControl::GetVirtualItem(NodeRef ref) const {
 	if (!mhwnd)
 		return NULL;
@@ -1276,6 +1498,20 @@ IVDUITreeViewVirtualItem *VDUIProxyTreeViewControl::GetVirtualItem(NodeRef ref) 
 	SendMessageW(mhwnd, TVM_GETITEMW, 0, (LPARAM)&itemw);
 
 	return (IVDUITreeViewVirtualItem *)itemw.lParam;
+}
+
+uint32 VDUIProxyTreeViewControl::GetItemId(NodeRef ref) const {
+	if (!mhwnd)
+		return NULL;
+
+	TVITEMW itemw = {0};
+
+	itemw.mask = LVIF_PARAM;
+	itemw.hItem = (HTREEITEM)ref;
+
+	SendMessageW(mhwnd, TVM_GETITEMW, 0, (LPARAM)&itemw);
+
+	return (uint32)itemw.lParam;
 }
 
 void VDUIProxyTreeViewControl::Clear() {
@@ -1306,6 +1542,8 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddItem(NodeRef pare
 }
 
 VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddVirtualItem(NodeRef parent, NodeRef insertAfter, IVDUITreeViewVirtualItem *item) {
+	VDASSERT(!mbIndexedMode);
+
 	if (!mhwnd)
 		return NULL;
 
@@ -1328,6 +1566,30 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddVirtualItem(NodeR
 
 		item->AddRef();
 	}
+
+	return (NodeRef)hti;
+}
+
+VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddIndexedItem(NodeRef parent, NodeRef insertAfter, uint32 id) {
+	VDASSERT(mbIndexedMode);
+
+	if (!mhwnd)
+		return NULL;
+
+	HTREEITEM hti;
+
+	TVINSERTSTRUCTW isw = { 0 };
+
+	isw.hParent = (HTREEITEM)parent;
+	isw.hInsertAfter = (HTREEITEM)insertAfter;
+	isw.item.mask = TVIF_PARAM | TVIF_TEXT;
+	isw.item.lParam = (LPARAM)id;
+	isw.item.pszText = LPSTR_TEXTCALLBACKW;
+
+	hti = (HTREEITEM)SendMessageW(mhwnd, TVM_INSERTITEMW, 0, (LPARAM)&isw);
+
+	if (hti && parent != kNodeRoot)
+		TreeView_Expand(mhwnd, (HTREEITEM)parent, TVE_EXPAND);
 
 	return (NodeRef)hti;
 }
@@ -1460,6 +1722,84 @@ void VDUIProxyTreeViewControl::SortChildren(NodeRef parent, IVDUITreeViewVirtual
 	SendMessageW(mhwnd, TVM_SORTCHILDRENCB, 0, (LPARAM)&scb);
 }
 
+void VDUIProxyTreeViewControl::InitImageList(uint32 n, uint32 width, uint32 height) {
+	if (!mhwnd)
+		return;
+
+	if (!width || !height) {
+		width = 16;
+
+		if (HFONT hfont = (HFONT)SendMessage(mhwnd, WM_GETFONT, 0, 0)) {
+			if (HDC hdc = GetDC(mhwnd)) {
+				if (HGDIOBJ hOldFont = SelectObject(hdc, hfont)) {
+					TEXTMETRICW tm = {};
+					
+					if (GetTextMetricsW(hdc, &tm)) {
+						width = tm.tmAscent + tm.tmDescent;
+					}
+
+					SelectObject(hdc, hOldFont);
+				}
+
+				ReleaseDC(mhwnd, hdc);
+			}
+		}
+
+		height = width;
+	}
+
+	mImageWidth = width;
+	mImageHeight = height;
+	HIMAGELIST imageList = ImageList_Create(width, height, ILC_COLOR32, 0, n);
+
+	SendMessage(mhwnd, TVM_SETIMAGELIST, TVSIL_STATE, (LPARAM)imageList);
+
+	if (mImageList)
+		ImageList_Destroy(mImageList);
+
+	mImageList = imageList;
+
+	uint32 c = 0;
+	VDPixmap pxEmpty {};
+	pxEmpty.format = nsVDPixmap::kPixFormat_XRGB8888;
+	pxEmpty.data = &c;
+	pxEmpty.w = 1;
+	pxEmpty.h = 1;
+	AddImage(pxEmpty);
+}
+
+void VDUIProxyTreeViewControl::AddImage(const VDPixmap& px) {
+	AddImagesToImageList(mImageList, px, mImageWidth, mImageHeight);
+}
+
+void VDUIProxyTreeViewControl::AddImages(uint32 n, const VDPixmap& px) {
+	if (!mhwnd || !n)
+		return;
+
+	VDASSERT(px.w % n == 0);
+	uint32 imageWidth = px.w / n;
+
+	for(uint32 i=0; i<n; ++i) {
+		AddImage(VDPixmapClip(px, imageWidth * i, 0, imageWidth, px.h));
+	}
+}
+
+void VDUIProxyTreeViewControl::SetNodeImage(NodeRef node, uint32 imageIndex) {
+	if (!mhwnd || !node)
+		return;
+
+	TVITEMEX tvi {};
+	tvi.hItem = (HTREEITEM)node;
+	tvi.mask = TVIF_STATE;
+	tvi.state = INDEXTOSTATEIMAGEMASK(imageIndex);
+	tvi.stateMask = TVIS_STATEIMAGEMASK;
+	SendMessage(mhwnd, TVM_SETITEM, 0, (LPARAM)&tvi);
+}
+
+void VDUIProxyTreeViewControl::SetOnItemSelectionChanged(vdfunction<void()> fn) {
+	mpOnItemSelectionChanged = fn;
+}
+
 void VDUIProxyTreeViewControl::SetOnBeginDrag(const vdfunction<void(const BeginDragEvent& event)>& fn) {
 	mpOnBeginDrag = fn;
 }
@@ -1494,7 +1834,16 @@ void VDUIProxyTreeViewControl::Attach(VDZHWND hwnd) {
 void VDUIProxyTreeViewControl::Detach() {
 	DeleteFonts();
 
-	EnumChildrenRecursive(kNodeRoot, [](IVDUITreeViewVirtualItem *vi) { vi->Release(); });
+	if (mImageList) {
+		if (mhwnd)
+			SendMessage(mhwnd, TB_SETIMAGELIST, 0, 0);
+
+		ImageList_Destroy(mImageList);
+		mImageList = nullptr;
+	}
+
+	if (!mbIndexedMode)
+		EnumChildrenRecursive(kNodeRoot, [](IVDUITreeViewVirtualItem *vi) { vi->Release(); });
 }
 
 VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -1504,10 +1853,17 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 		case TVN_GETDISPINFOA:
 			{
 				NMTVDISPINFOA *dispa = (NMTVDISPINFOA *)hdr;
-				IVDUITreeViewVirtualItem *lvvi = (IVDUITreeViewVirtualItem *)dispa->item.lParam;
 
 				mTextW[0].clear();
-				lvvi->GetText(mTextW[0]);
+
+				if (mbIndexedMode) {
+					if (mpIndexedProvider)
+						mpIndexedProvider->GetText((uint32)dispa->item.lParam, mTextW[0]);
+				} else {
+					IVDUITreeViewVirtualItem *lvvi = (IVDUITreeViewVirtualItem *)dispa->item.lParam;
+					lvvi->GetText(mTextW[0]);
+				}
+
 				mTextA[mNextTextIndex] = VDTextWToA(mTextW[0]);
 				dispa->item.pszText = (LPSTR)mTextA[mNextTextIndex].c_str();
 
@@ -1519,10 +1875,17 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 		case TVN_GETDISPINFOW:
 			{
 				NMTVDISPINFOW *dispw = (NMTVDISPINFOW *)hdr;
-				IVDUITreeViewVirtualItem *lvvi = (IVDUITreeViewVirtualItem *)dispw->item.lParam;
 
 				mTextW[mNextTextIndex].clear();
-				lvvi->GetText(mTextW[mNextTextIndex]);
+
+				if (mbIndexedMode) {
+					if (mpIndexedProvider)
+						mpIndexedProvider->GetText((uint32)dispw->item.lParam, mTextW[mNextTextIndex]);
+				} else {
+					IVDUITreeViewVirtualItem *lvvi = (IVDUITreeViewVirtualItem *)dispw->item.lParam;
+					lvvi->GetText(mTextW[mNextTextIndex]);
+				}
+
 				dispw->item.pszText = (LPWSTR)mTextW[mNextTextIndex].c_str();
 
 				if (++mNextTextIndex >= 3)
@@ -1531,7 +1894,7 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 			break;
 
 		case TVN_DELETEITEMA:
-			{
+			if (!mbIndexedMode) {
 				const NMTREEVIEWA *nmtv = (const NMTREEVIEWA *)hdr;
 				IVDUITreeViewVirtualItem *lvvi = (IVDUITreeViewVirtualItem *)nmtv->itemOld.lParam;
 
@@ -1541,7 +1904,7 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 			break;
 
 		case TVN_DELETEITEMW:
-			{
+			if (!mbIndexedMode) {
 				const NMTREEVIEWW *nmtv = (const NMTREEVIEWW *)hdr;
 				IVDUITreeViewVirtualItem *lvvi = (IVDUITreeViewVirtualItem *)nmtv->itemOld.lParam;
 
@@ -1552,16 +1915,24 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 
 		case TVN_SELCHANGEDA:
 		case TVN_SELCHANGEDW:
+			if (mpOnItemSelectionChanged)
+				mpOnItemSelectionChanged();
+
 			mEventItemSelectionChanged.Raise(this, 0);
 			break;
 
 		case TVN_BEGINLABELEDITA:
 			{
 				const NMTVDISPINFOA& dispInfo = *(const NMTVDISPINFOA *)hdr;
-				BeginEditEvent event;
+				BeginEditEvent event {};
 
 				event.mNode = (NodeRef)dispInfo.item.hItem;
-				event.mpItem = (IVDUITreeViewVirtualItem *)dispInfo.item.lParam;
+
+				if (mbIndexedMode)
+					event.mItemId = (uint32)dispInfo.item.lParam;
+				else
+					event.mpItem = (IVDUITreeViewVirtualItem *)dispInfo.item.lParam;
+
 				event.mbAllowEdit = true;
 				event.mbOverrideText = false;
 
@@ -1578,7 +1949,7 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 							mPrevEditWndProc = (void (*)())(WNDPROC)GetWindowLongPtrA(hwndEdit, GWLP_WNDPROC);
 
 							if (mPrevEditWndProc)
-								SetWindowLongPtrA(hwndEdit, GWLP_WNDPROC, (LONG_PTR)mpEditWndProcThunk);
+								SetWindowLongPtrA(hwndEdit, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpEditWndProcThunk));
 						}
 
 						if (event.mbOverrideText)
@@ -1592,10 +1963,15 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 		case TVN_BEGINLABELEDITW:
 			{
 				const NMTVDISPINFOW& dispInfo = *(const NMTVDISPINFOW *)hdr;
-				BeginEditEvent event;
+				BeginEditEvent event {};
 
 				event.mNode = (NodeRef)dispInfo.item.hItem;
-				event.mpItem = (IVDUITreeViewVirtualItem *)dispInfo.item.lParam;
+
+				if (mbIndexedMode)
+					event.mItemId = (uint32)dispInfo.item.lParam;
+				else
+					event.mpItem = (IVDUITreeViewVirtualItem *)dispInfo.item.lParam;
+
 				event.mbAllowEdit = true;
 				event.mbOverrideText = false;
 
@@ -1612,7 +1988,7 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 							mPrevEditWndProc = (void (*)())(WNDPROC)GetWindowLongPtrW(hwndEdit, GWLP_WNDPROC);
 
 							if (mPrevEditWndProc)
-								SetWindowLongPtrW(hwndEdit, GWLP_WNDPROC, (LONG_PTR)mpEditWndProcThunk);
+								SetWindowLongPtrW(hwndEdit, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpEditWndProcThunk));
 						}
 
 						if (event.mbOverrideText)
@@ -1628,10 +2004,14 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 				const NMTVDISPINFOA& dispInfo = *(const NMTVDISPINFOA *)hdr;
 
 				if (dispInfo.item.pszText) {
-					EndEditEvent event;
+					EndEditEvent event {};
 
 					event.mNode = (NodeRef)dispInfo.item.hItem;
-					event.mpItem = (IVDUITreeViewVirtualItem *)dispInfo.item.lParam;
+
+					if (mbIndexedMode)
+						event.mItemId = (uint32)dispInfo.item.lParam;
+					else
+						event.mpItem = (IVDUITreeViewVirtualItem *)dispInfo.item.lParam;
 
 					const VDStringW& text = VDTextAToW(dispInfo.item.pszText);
 					event.mpNewText = text.c_str();
@@ -1649,7 +2029,12 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 					EndEditEvent event;
 
 					event.mNode = (NodeRef)dispInfo.item.hItem;
-					event.mpItem = (IVDUITreeViewVirtualItem *)dispInfo.item.lParam;
+
+					if (mbIndexedMode)
+						event.mItemId = (uint32)dispInfo.item.lParam;
+					else
+						event.mpItem = (IVDUITreeViewVirtualItem *)dispInfo.item.lParam;
+
 					event.mpNewText = dispInfo.item.pszText;
 
 					mEventItemEndEdit.Raise(this, &event);
@@ -1660,10 +2045,15 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 		case TVN_BEGINDRAGA:
 			{
 				const NMTREEVIEWA& info = *(const NMTREEVIEWA *)hdr;
-				BeginDragEvent event = {};
+				BeginDragEvent event {};
 
 				event.mNode = (NodeRef)info.itemNew.hItem;
-				event.mpItem = (IVDUITreeViewVirtualItem *)info.itemNew.lParam;
+
+				if (mbIndexedMode)
+					event.mItemId = (uint32)info.itemNew.lParam;
+				else
+					event.mpItem = (IVDUITreeViewVirtualItem *)info.itemNew.lParam;
+
 				event.mPos = vdpoint32(info.ptDrag.x, info.ptDrag.y);
 
 				if (mpOnBeginDrag)
@@ -1674,10 +2064,15 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 		case TVN_BEGINDRAGW:
 			{
 				const NMTREEVIEWW& info = *(const NMTREEVIEWW *)hdr;
-				BeginDragEvent event = {};
+				BeginDragEvent event {};
 
 				event.mNode = (NodeRef)info.itemNew.hItem;
-				event.mpItem = (IVDUITreeViewVirtualItem *)info.itemNew.lParam;
+
+				if (mbIndexedMode)
+					event.mItemId = (uint32)info.itemNew.lParam;
+				else
+					event.mpItem = (IVDUITreeViewVirtualItem *)info.itemNew.lParam;
+
 				event.mPos = vdpoint32(info.ptDrag.x, info.ptDrag.y);
 
 				if (mpOnBeginDrag)
@@ -1687,6 +2082,23 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 
 		case NM_DBLCLK:
 			{
+				HTREEITEM hti = TreeView_GetSelection(mhwnd);
+				if (!hti)
+					return false;
+
+				// check if the double click is to the left of the label and suppress it if
+				// so -- this is to prevent acting on the expand/contract button
+				RECT r {};
+				TreeView_GetItemRect(mhwnd, hti, &r, TRUE);
+
+				DWORD pos = GetMessagePos();
+				POINT pt = { (short)LOWORD(pos), (short)HIWORD(pos) };
+
+				ScreenToClient(mhwnd, &pt);
+
+				if (pt.x < r.left)
+					return false;
+
 				bool handled = false;
 				mEventItemDoubleClicked.Raise(this, &handled);
 				return handled;
@@ -1700,8 +2112,13 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 					if (cd.nmcd.dwDrawStage == CDDS_PREPAINT) {
 						return CDRF_NOTIFYITEMDRAW;
 					} else if (cd.nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
-						GetDispAttrEvent event;
-						event.mpItem = (IVDUITreeViewVirtualItem *)cd.nmcd.lItemlParam;
+						GetDispAttrEvent event {};
+						
+						if (mbIndexedMode)
+							event.mItemId = (uint32)cd.nmcd.lItemlParam;
+						else
+							event.mpItem = (IVDUITreeViewVirtualItem *)cd.nmcd.lItemlParam;
+
 						event.mbIsBold = false;
 						event.mbIsMuted = false;
 
@@ -1830,9 +2247,29 @@ void VDUIProxyRichEditControl::AppendEscapedRTF(VDStringA& buf, const wchar_t *t
 	}
 }
 
+bool VDUIProxyRichEditControl::IsSelectionPresent() const {
+	if (!mhwnd)
+		return false;
+
+	DWORD start = 0, end = 0;
+	::SendMessage(mhwnd, EM_GETSEL, (WPARAM)&start, (WPARAM)&end);
+
+	return end > start;
+}
+
 void VDUIProxyRichEditControl::EnsureCaretVisible() {
 	if (mhwnd)
 		::SendMessage(mhwnd, EM_SCROLLCARET, 0, 0);
+}
+
+void VDUIProxyRichEditControl::SelectAll() {
+	if (mhwnd)
+		::SendMessage(mhwnd, EM_SETSEL, 0, -1);
+}
+
+void VDUIProxyRichEditControl::Copy() {
+	if (mhwnd)
+		::SendMessage(mhwnd, WM_COPY, 0, 0);
 }
 
 void VDUIProxyRichEditControl::SetCaretPos(int lineIndex, int charIndex) {
@@ -1863,13 +2300,54 @@ void VDUIProxyRichEditControl::SetTextRTF(const char *s) {
 	SendMessageA(mhwnd, EM_SETTEXTEX, (WPARAM)&stex, (LPARAM)s);
 }
 
+void VDUIProxyRichEditControl::ReplaceSelectedText(const wchar_t *s) {
+	if (!mhwnd)
+		return;
+
+	SendMessage(mhwnd, EM_REPLACESEL, TRUE, (LPARAM)s);
+}
+
+void VDUIProxyRichEditControl::SetFontFamily(const wchar_t *family) {
+	if (!mhwnd)
+		return;
+
+	CHARFORMAT cf {};
+	cf.cbSize = sizeof(CHARFORMAT);
+	cf.dwMask = CFM_FACE;
+	vdwcslcpy(cf.szFaceName, family, vdcountof(cf.szFaceName));
+
+	SendMessage(mhwnd, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&cf);
+}
+
+void VDUIProxyRichEditControl::SetBackgroundColor(uint32 c) {
+	if (mhwnd)
+		SendMessage(mhwnd, EM_SETBKGNDCOLOR, FALSE, VDSwizzleU32(c) >> 8);
+}
+
 void VDUIProxyRichEditControl::SetReadOnlyBackground() {
 	if (mhwnd)
 		SendMessage(mhwnd, EM_SETBKGNDCOLOR, FALSE, GetSysColor(COLOR_3DFACE));
 }
 
+void VDUIProxyRichEditControl::SetPlainTextMode() {
+	if (mhwnd)
+		SendMessage(mhwnd, EM_SETTEXTMODE, TM_RICHTEXT, 0);
+}
+
 void VDUIProxyRichEditControl::SetOnTextChanged(vdfunction<void()> fn) {
 	mpOnTextChanged = std::move(fn);
+
+	if (mhwnd)
+		SendMessage(mhwnd, EM_SETEVENTMASK, 0, ENM_CHANGE);
+}
+
+void VDUIProxyRichEditControl::UpdateMargins(sint32 xpad, sint32 ypad) {
+	if (mhwnd) {
+		vdrect32 cr = GetClientArea();
+		// inset rect
+		RECT r { xpad, ypad, cr.right-xpad, cr.bottom-ypad };
+		SendMessage(mhwnd, EM_SETRECT, 0, (LPARAM)&r);
+	}
 }
 
 VDZLRESULT VDUIProxyRichEditControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -1909,4 +2387,221 @@ VDZLRESULT VDUIProxyButtonControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lPa
 
 void VDUIProxyButtonControl::SetOnClicked(vdfunction<void()> fn) {
 	mpOnClicked = std::move(fn);
+}
+
+/////////////////////////////////////////////////////////////////////////////
+
+VDUIProxyToolbarControl::VDUIProxyToolbarControl() {
+}
+
+VDUIProxyToolbarControl::~VDUIProxyToolbarControl() {
+}
+
+void VDUIProxyToolbarControl::Clear() {
+	if (mhwnd) {
+		while(SendMessage(mhwnd, TB_DELETEBUTTON, 0, 0))
+			;
+	}
+}
+
+void VDUIProxyToolbarControl::AddButton(uint32 id, sint32 imageIndex, const wchar_t *label) {
+	if (!mhwnd)
+		return;
+
+	TBBUTTON tb {};
+	tb.iBitmap = imageIndex >= 0 ? imageIndex : I_IMAGENONE;
+	tb.idCommand = id;
+	tb.fsState = TBSTATE_ENABLED;
+	tb.fsStyle = TBSTYLE_BUTTON | BTNS_AUTOSIZE | (label ? BTNS_SHOWTEXT : 0);
+	tb.iString = (INT_PTR)label;
+
+	SendMessage(mhwnd, TB_ADDBUTTONS, 1, (LPARAM)&tb);
+}
+
+void VDUIProxyToolbarControl::AddDropdownButton(uint32 id, sint32 imageIndex, const wchar_t *label) {
+	if (!mhwnd)
+		return;
+
+	TBBUTTON tb {};
+	tb.iBitmap = imageIndex >= 0 ? imageIndex : I_IMAGENONE;
+	tb.idCommand = id;
+	tb.fsState = TBSTATE_ENABLED;
+	tb.fsStyle = BTNS_WHOLEDROPDOWN | BTNS_AUTOSIZE | (label ? BTNS_SHOWTEXT : 0);
+	tb.iString = (INT_PTR)label;
+
+	SendMessage(mhwnd, TB_ADDBUTTONS, 1, (LPARAM)&tb);
+}
+
+void VDUIProxyToolbarControl::AddSeparator() {
+	if (!mhwnd)
+		return;
+
+	TBBUTTON tb {};
+	tb.fsState = TBSTATE_ENABLED;
+	tb.fsStyle = TBSTYLE_SEP;
+
+	SendMessage(mhwnd, TB_ADDBUTTONS, 1, (LPARAM)&tb);
+}
+
+void VDUIProxyToolbarControl::SetItemVisible(uint32 id, bool visible) {
+	if (!mhwnd)
+		return;
+
+	SendMessage(mhwnd, TB_HIDEBUTTON, id, !visible);
+}
+
+void VDUIProxyToolbarControl::SetItemEnabled(uint32 id, bool enabled) {
+	if (!mhwnd)
+		return;
+
+	SendMessage(mhwnd, TB_ENABLEBUTTON, id, enabled);
+}
+
+void VDUIProxyToolbarControl::SetItemPressed(uint32 id, bool enabled) {
+	if (!mhwnd)
+		return;
+
+	SendMessage(mhwnd, TB_PRESSBUTTON, id, enabled);
+}
+
+void VDUIProxyToolbarControl::SetItemText(uint32 id, const wchar_t *text) {
+	if (!mhwnd)
+		return;
+
+	TBBUTTONINFO info {};
+
+	info.cbSize = sizeof(TBBUTTONINFO);
+	info.dwMask = TBIF_TEXT;
+	info.pszText = (LPWSTR)text;
+
+	SendMessage(mhwnd, TB_SETBUTTONINFO, id, (LPARAM)&info);
+}
+
+void VDUIProxyToolbarControl::SetItemImage(uint32 id, sint32 imageIndex) {
+	if (!mhwnd)
+		return;
+
+	SendMessage(mhwnd, TB_CHANGEBITMAP, id, imageIndex >= 0 ? imageIndex : I_IMAGENONE);
+}
+
+void VDUIProxyToolbarControl::InitImageList(uint32 n, uint32 width, uint32 height) {
+	if (!mhwnd)
+		return;
+
+	mImageWidth = width;
+	mImageHeight = height;
+	HIMAGELIST imageList = ImageList_Create(width, height, ILC_COLOR32, 0, n);
+
+	SendMessage(mhwnd, TB_SETIMAGELIST, 0, (LPARAM)imageList);
+
+	if (mImageList)
+		ImageList_Destroy(mImageList);
+
+	mImageList = imageList;
+}
+
+void VDUIProxyToolbarControl::AddImage(const VDPixmap& px) {
+	AddImagesToImageList(mImageList, px, mImageWidth, mImageHeight);
+}
+
+void VDUIProxyToolbarControl::AddImages(uint32 n, const VDPixmap& px) {
+	if (!mhwnd || !n)
+		return;
+
+	VDASSERT(px.w % n == 0);
+	uint32 imageWidth = px.w / n;
+
+	for(uint32 i=0; i<n; ++i) {
+		AddImage(VDPixmapClip(px, imageWidth * i, 0, imageWidth, px.h));
+	}
+}
+
+void VDUIProxyToolbarControl::AutoSize() {
+	if (mhwnd)
+		SendMessage(mhwnd, TB_AUTOSIZE, 0, 0);
+}
+
+sint32 VDUIProxyToolbarControl::ShowDropDownMenu(uint32 itemId, const wchar_t *const *items) {
+	if (!mhwnd)
+		return -1;
+
+	RECT r {};
+	SendMessage(mhwnd, TB_GETRECT, itemId, (LPARAM)&r);
+	MapWindowPoints(mhwnd, NULL, (LPPOINT)&r, 2);
+
+	HMENU hmenu = CreatePopupMenu();
+
+	uint32 id = 1;
+	while(const wchar_t *s = *items++) {
+		AppendMenu(hmenu, MF_STRING | MF_ENABLED, id++, s);
+	}
+
+	uint32 selectedId = ShowDropDownMenu(itemId, hmenu);
+
+	DestroyMenu(hmenu);
+
+	return (sint32)selectedId - 1;
+}
+
+uint32 VDUIProxyToolbarControl::ShowDropDownMenu(uint32 itemId, VDZHMENU hmenu) {
+	if (!mhwnd)
+		return -1;
+
+	RECT r {};
+	SendMessage(mhwnd, TB_GETRECT, itemId, (LPARAM)&r);
+	MapWindowPoints(mhwnd, NULL, (LPPOINT)&r, 2);
+
+	TPMPARAMS tpm;
+	tpm.cbSize = sizeof(TPMPARAMS);
+	tpm.rcExclude = r;
+	uint32 selectedId = (uint32)TrackPopupMenuEx(hmenu, TPM_LEFTALIGN | TPM_LEFTBUTTON | TPM_VERTICAL | TPM_RETURNCMD, r.left, r.bottom, mhwnd, &tpm);
+
+	return selectedId;
+}
+
+void VDUIProxyToolbarControl::SetOnClicked(vdfunction<void(uint32)> fn) {
+	mpOnClicked = std::move(fn);
+}
+
+void VDUIProxyToolbarControl::Attach(VDZHWND hwnd) {
+	VDUIProxyControl::Attach(hwnd);
+
+	SendMessage(mhwnd, TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_DRAWDDARROWS | TBSTYLE_EX_MIXEDBUTTONS);
+	SendMessage(mhwnd, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
+}
+
+void VDUIProxyToolbarControl::Detach() {
+	if (mImageList) {
+		if (mhwnd)
+			SendMessage(mhwnd, TB_SETIMAGELIST, 0, 0);
+
+		ImageList_Destroy(mImageList);
+		mImageList = nullptr;
+	}
+
+	VDUIProxyControl::Detach();
+}
+
+VDZLRESULT VDUIProxyToolbarControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (HIWORD(wParam) == BN_CLICKED) {
+		if (mpOnClicked)
+			mpOnClicked(LOWORD(wParam));
+	}
+
+	return 0;
+}
+
+VDZLRESULT VDUIProxyToolbarControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
+	const NMHDR& hdr = *(const NMHDR *)lParam;
+
+	if (hdr.code == TBN_DROPDOWN) {
+		const NMTOOLBAR& tbhdr = *(const NMTOOLBAR *)lParam;
+
+		if (mpOnClicked)
+			mpOnClicked(tbhdr.iItem);
+
+		return TBDDRET_DEFAULT;
+	}
+
+	return 0;
 }

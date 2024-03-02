@@ -131,7 +131,7 @@ public:
 
 class vdfloat3x3 {
 public:
-	static vdfloat3x3 zero() {
+	static constexpr vdfloat3x3 zero() {
 		return vdfloat3x3 {
 			{ 0, 0, 0 },
 			{ 0, 0, 0 },
@@ -139,7 +139,7 @@ public:
 		};
 	}
 
-	static vdfloat3x3 identity() {
+	static constexpr vdfloat3x3 identity() {
 		return vdfloat3x3 {
 			{ 1, 0, 0 },
 			{ 0, 1, 0 },
@@ -180,7 +180,7 @@ public:
 		};
 	}
 
-	vdfloat3x3 operator*(const vdfloat3x3& v) const {
+	constexpr vdfloat3x3 operator*(const vdfloat3x3& v) const {
 		return vdfloat3x3 {
 #define DO(i,j) i.x*v.x.j + i.y*v.y.j + i.z*v.z.j
 		{ DO(x,x), DO(x,y), DO(x,z) },
@@ -190,14 +190,14 @@ public:
 		};
 	}
 
-	vdfloat3 operator*(const vdfloat3& r) const {
+	constexpr vdfloat3 operator*(const vdfloat3& r) const {
 		return vdfloat3 {
 				x.x*r.x + x.y*r.y + x.z*r.z,
 				y.x*r.x + y.y*r.y + y.z*r.z,
 				z.x*r.x + z.y*r.y + z.z*r.z };
 	}
 
-	vdfloat3x3 transpose() const {
+	constexpr vdfloat3x3 transpose() const {
 		return vdfloat3x3 {
 			{ x.x, y.x, z.x },
 			{ x.y, y.y, z.y },
@@ -205,7 +205,7 @@ public:
 		};
 	}
 
-	vdfloat3x3 adjunct() const {
+	constexpr vdfloat3x3 adjunct() const {
 		using namespace nsVDMath;
 
 		vdfloat3x3 res = {
@@ -217,7 +217,7 @@ public:
 		return res.transpose();
 	}
 
-	float det() const {
+	constexpr float det() const {
 		return	+ x.x * y.y * z.z
 				+ y.x * z.y * x.z
 				+ z.x * x.y * y.z
@@ -226,11 +226,11 @@ public:
 				- z.x * y.y * x.z;
 	}
 
-	vdfloat3x3 operator~() const {
+	constexpr vdfloat3x3 operator~() const {
 		return adjunct() / det();
 	}
 
-	vdfloat3x3& operator*=(float factor) {
+	constexpr vdfloat3x3& operator*=(float factor) {
 		x *= factor;
 		y *= factor;
 		z *= factor;
@@ -238,15 +238,15 @@ public:
 		return *this;
 	}
 
-	vdfloat3x3& operator/=(float factor) {
+	constexpr vdfloat3x3& operator/=(float factor) {
 		return operator*=(1.0f/factor);
 	}
 
-	vdfloat3x3 operator*(float factor) const {
+	constexpr vdfloat3x3 operator*(float factor) const {
 		return vdfloat3x3 { x*factor, y*factor, z*factor };
 	}
 
-	vdfloat3x3 operator/(float factor) const {
+	constexpr vdfloat3x3 operator/(float factor) const {
 		float inv = 1.0f / factor;
 		return vdfloat3x3 { x*inv, y*inv, z*inv };
 	}

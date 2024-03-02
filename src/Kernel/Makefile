@@ -20,6 +20,7 @@ source\Shared\atariifont.bin \
 source\Shared\atarifont.inc \
 source\Shared\atariifont.inc \
 source\Shared\boot.s \
+source\Shared\bootscreen.s \
 source\Shared\blackboard.s \
 source\Shared\cio.inc \
 source\Shared\cio.s \
@@ -47,6 +48,17 @@ source\Shared\driveimage.inc \
 source\Shared\selftestentry.s \
 source\Shared\printer.s
 
+SHARED_SRCFILES816 = \
+source\Shared\cio816.s \
+source\Shared\init816.s \
+source\Shared\interrupt816.s \
+source\Shared\irq816.s \
+source\Shared\keyboard816.s \
+source\Shared\screenext816.s \
+source\Shared\syscall816.s \
+source\Shared\sysdev816.s \
+source\Shared\vbi816.s
+
 NOKERNEL_SRCFILES = source\nokernel\main.xasm
 BASIC_SRCFILES = source\basic\main.xasm
 SUPERKERNEL_SRCFILES = source\superkernel\main.xasm source\superkernel\includes.xasm
@@ -60,7 +72,7 @@ SOFTKICK_SRCFILES = source\softkick.s
 
 VERSION_SRCFILES = autobuild\version*.inc autobuild_default\version.inc
 
-all: kernel kernelxl kernelxlsoftkick \
+all: kernel kernelxl kernelxlsoftkick kernel816 \
 	nokernel basic superkernel nocartridge \
 	atdiskloader64 atdiskloader128 \
 	nohdbios nomio noblackbox \
@@ -75,6 +87,7 @@ all: kernel kernelxl kernelxlsoftkick \
 clean:
 	if exist "$(OUT)\kernel.rom" del "$(OUT)\kernel.rom"
 	if exist "$(OUT)\kernelxl.rom" del "$(OUT)\kernelxl.rom"
+	if exist "$(OUT)\kernel816.rom" del "$(OUT)\kernel816.rom"
 	if exist "$(OUT)\nokernel.rom" del "$(OUT)\nokernel.rom"
 	if exist "$(OUT)\basic.rom" del "$(OUT)\basic.rom"
 	if exist "$(OUT)\superkernel.rom" del "$(OUT)\superkernel.rom"
@@ -102,6 +115,8 @@ kernel: $(OUT)\kernel.rom
 kernelxl: $(OUT)\kernelxl.rom
 
 kernelxlsoftkick: $(OUT)\kernelxlsoftkick.xex
+
+kernel816: $(OUT)\kernel816.rom
 
 nokernel: $(OUT)\nokernel.rom
 
@@ -146,7 +161,7 @@ rapidpbi16: $(OUT)\rapidpbi16.bin
 $(INT)\additions-license.txt: source\Additions\license.txt
 	copy "source\Additions\license.txt" "$(INT)\additions-license.txt"
 
-$(OUT)\Additions.atr: $(INT)\dos.sys source\Additions\filelist.txt $(INT)\boot850.xex $(INT)\rhnd850.xex $(INT)\xep80.sys $(INT)\xep80f.sys $(INT)\boot1030.xex $(INT)\thnd1030.xex $(INT)\autorun.sys $(INT)\atbasicx.xex $(INT)\sx212.xex $(INT)\colormap.xex $(INT)\additions-license.txt
+$(OUT)\Additions.atr: $(INT)\dos.sys source\Additions\filelist.txt $(INT)\boot850.xex $(INT)\rhnd850.xex $(INT)\xep80.sys $(INT)\xep80f.sys $(INT)\boot1030.xex $(INT)\thnd1030.xex $(INT)\autorun.sys $(INT)\atbasicx.xex $(INT)\sx212.xex $(INT)\colormap.xex $(INT)\additions-license.txt $(INT)\loadexe.xex
 	@$(ATCOMPILER) mkfsdos2 source\Additions\filelist.txt $(INT)\ $(OUT)\Additions.atr
 
 $(OUT)\kernel.rom: $(SRCFILES) $(SHARED_SRCFILES)
@@ -160,6 +175,9 @@ $(OUT)\kernelxlsoftkick.xex: $(SRCFILES) $(SHARED_SRCFILES) $(VERSION_SRCFILES) 
 
 $(OUT)\kernelxlsoft.bin: $(SRCFILES) $(SHARED_SRCFILES) $(VERSION_SRCFILES)
 	@for %%x in (source\main.xasm) do $(MADS) -i:autobuild -i:autobuild_default -d:_KERNEL_XLXE=1 -d:_KERNEL_SOFTKICK=1 -s -p -i:source\Shared -b:$$c000 -l:$(OUT)\kernelxlsoft.lst -t:$(OUT)\kernelxlsoft.lab -o:$(OUT)\kernelxlsoft.bin %~fx
+
+$(OUT)\kernel816.rom: $(SRCFILES) $(SHARED_SRCFILES816) $(VERSION_SRCFILES)
+	@for %%x in (source\main.xasm) do $(MADS) -i:autobuild -i:autobuild_default -d:_KERNEL_XLXE=1 -d:_KERNEL_816=1 -s -p -i:source\Shared -b:$$c000 -l:$(OUT)\kernel816.lst -t:$(OUT)\kernel816.lab -o:$(OUT)\kernel816.rom %~fx
 
 $(OUT)\nokernel.rom: $(NOKERNEL_SRCFILES) $(SHARED_SRCFILESMIN)
 	@$(MADS) -s -p -i:source\shared -b:$$c000 -l:$(OUT)\nokernel.lst -o:$(OUT)\nokernel.rom source\nokernel\main.xasm
@@ -333,6 +351,9 @@ $(INT)\exeloader-nobasic.bin: $(SHARED_SRCFILESINC) source\ExeLoader\exeloader-n
 
 $(INT)\colormap.xex: $(SHARED_SRCFILESINC) source\Additions\colormap.s
 	$(MADS) -s -p -i:source\Shared -l:$(INT)\colormap.lst -t:$(INT)\colormap.lab -o:$(INT)\colormap.xex source\Additions\colormap.s
+
+$(INT)\loadexe.xex: $(SHARED_SRCFILESINC) source\Additions\loadexe.s
+	$(MADS) -s -p -i:source\Shared -l:$(INT)\loadexe.lst -t:$(INT)\loadexe.lab -o:$(INT)\loadexe.xex source\Additions\loadexe.s
 
 $(INT)\playsap-b.xex: $(SHARED_SRCFILESINC) source\SAPPlayers\playsap-b.s
 	$(MADS) -s -p -i:source\Shared -l:$(INT)\playsap-b.lst -t:$(INT)\playsap-b.lab -o:$(INT)\playsap-b.xex source\SAPPlayers\playsap-b.s

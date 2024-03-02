@@ -52,7 +52,7 @@ class ATRS232Channel1030 final : public IATSchedulerCallback {
 public:
 	ATRS232Channel1030();
 
-	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev);
+	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer);
 	void Shutdown();
 
 	void ColdReset();
@@ -192,14 +192,14 @@ ATRS232Channel1030::ATRS232Channel1030()
 	mpDevice->Set1030Mode();
 }
 
-void ATRS232Channel1030::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev) {
+void ATRS232Channel1030::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer) {
 	mpScheduler = sched;
 	mpCIOMgr = ciomgr;
 	mpSIOMgr = siomgr;
 	mpSIODev = siodev;
 
 	mpDevice->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
-	mpDevice->Init(sched, slowsched, uir);
+	mpDevice->Init(sched, slowsched, uir, mixer);
 
 	// compute initial control state
 	ATDeviceSerialStatus cstate(mpDevice->GetStatus());
@@ -725,7 +725,8 @@ class ATDevice1030Modem final
 	: public ATDevice
 	, public IATDeviceFirmware
 	, public IATDeviceScheduling
-	, public IATDeviceIndicators					
+	, public IATDeviceIndicators		
+	, public IATDeviceAudioOutput		
 	, public IATDeviceCIO
 	, public ATDeviceSIO
 	, public IATDeviceRawSIO
@@ -752,12 +753,16 @@ public:	// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override { return nullptr; }
 	bool IsWritableFirmwareDirty(uint32 idx) const override { return false; }
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override {}
+	bool IsUsableFirmwareLoaded() const override;
 
 public:	// IATDeviceScheduling
 	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:	// IATDeviceIndicators
 	void InitIndicators(IATDeviceIndicatorManager *r) override;
+
+public:	// IATDeviceAudioOutput
+	void InitAudioOutput(IATAudioMixer *mixer) override;
 
 public:	// IATDeviceCIO
 	void InitCIO(IATDeviceCIOManager *mgr) override;
@@ -781,18 +786,20 @@ public:	// IATDeviceRawSIO
 	void OnSendReady() override;
 
 protected:
-	ATScheduler *mpScheduler;
-	ATScheduler *mpSlowScheduler;
-	IATDeviceIndicatorManager *mpUIRenderer;
-	IATDeviceCIOManager *mpCIOMgr;
-	IATDeviceSIOManager *mpSIOMgr;
-	ATFirmwareManager *mpFwMgr;
+	ATScheduler *mpScheduler = nullptr;
+	ATScheduler *mpSlowScheduler = nullptr;
+	IATDeviceIndicatorManager *mpUIRenderer = nullptr;
+	IATAudioMixer *mpAudioMixer = nullptr;
+	IATDeviceCIOManager *mpCIOMgr = nullptr;
+	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	ATFirmwareManager *mpFwMgr = nullptr;
 
-	ATRS232Channel1030 *mpChannel;
+	ATRS232Channel1030 *mpChannel = nullptr;
 
-	AT850SIOEmulationLevel mEmulationLevel;
+	AT850SIOEmulationLevel mEmulationLevel {};
 
-	uint32 mDiskCounter;
+	uint32 mDiskCounter = 0;
+	bool mbFirmwareUsable = false;
 
 	// AUTORUN.SYS and BOOT1030.COM style loaders hardcode a handler size of 0xB30, which
 	// we must use. This comes from within 0x1100-1C2F in the ModemLink firmware. We also
@@ -809,14 +816,7 @@ void ATCreateDevice1030Modem(const ATPropertySet& pset, IATDevice **dev) {
 extern const ATDeviceDefinition g_ATDeviceDef1030Modem = { "1030", "1030", L"1030 Modem", ATCreateDevice1030Modem };
 
 ATDevice1030Modem::ATDevice1030Modem()
-	: mpScheduler(nullptr)
-	, mpSlowScheduler(nullptr)
-	, mpUIRenderer(nullptr)
-	, mpCIOMgr(nullptr)
-	, mpSIOMgr(nullptr)
-	, mpFwMgr(nullptr)
-	, mpChannel(nullptr)
-	, mEmulationLevel(kAT850SIOEmulationLevel_None)
+	: mEmulationLevel(kAT850SIOEmulationLevel_None)
 	, mDiskCounter(0)
 {
 	// We have to init this early so it can accept settings.
@@ -832,6 +832,7 @@ void *ATDevice1030Modem::AsInterface(uint32 id) {
 		case IATDeviceFirmware::kTypeID:	return static_cast<IATDeviceFirmware *>(this);
 		case IATDeviceScheduling::kTypeID:	return static_cast<IATDeviceScheduling *>(this);
 		case IATDeviceIndicators::kTypeID:	return static_cast<IATDeviceIndicators *>(this);
+		case IATDeviceAudioOutput::kTypeID:	return static_cast<IATDeviceAudioOutput *>(this);
 		case IATDeviceCIO::kTypeID:			return static_cast<IATDeviceCIO *>(this);
 		case IATDeviceSIO::kTypeID:			return static_cast<IATDeviceSIO *>(this);
 		case IATDeviceRawSIO::kTypeID:		return static_cast<IATDeviceRawSIO *>(this);
@@ -883,7 +884,7 @@ bool ATDevice1030Modem::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATDevice1030Modem::Init() {
-	mpChannel->Init(mpScheduler, mpSlowScheduler, mpUIRenderer, mpCIOMgr, mpSIOMgr, this);
+	mpChannel->Init(mpScheduler, mpSlowScheduler, mpUIRenderer, mpCIOMgr, mpSIOMgr, this, mpAudioMixer);
 }
 
 void ATDevice1030Modem::Shutdown() {
@@ -908,7 +909,8 @@ void ATDevice1030Modem::Shutdown() {
 	mpSlowScheduler = nullptr;
 	mpFwMgr = nullptr;
 
-	mpUIRenderer = NULL;
+	mpUIRenderer = nullptr;
+	mpAudioMixer = nullptr;
 }
 
 void ATDevice1030Modem::ColdReset() {
@@ -927,9 +929,13 @@ void ATDevice1030Modem::InitFirmware(ATFirmwareManager *fwmgr) {
 bool ATDevice1030Modem::ReloadFirmware() {
 	bool changed = false;
 
-	mpFwMgr->LoadFirmware(mpFwMgr->GetCompatibleFirmware(kATFirmwareType_1030Firmware), mFirmware, 0, sizeof mFirmware, &changed);
+	mpFwMgr->LoadFirmware(mpFwMgr->GetCompatibleFirmware(kATFirmwareType_1030Firmware), mFirmware, 0, sizeof mFirmware, &changed, nullptr, nullptr, nullptr, &mbFirmwareUsable);
 
 	return changed;
+}
+
+bool ATDevice1030Modem::IsUsableFirmwareLoaded() const {
+	return mbFirmwareUsable;
 }
 
 void ATDevice1030Modem::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
@@ -939,6 +945,10 @@ void ATDevice1030Modem::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 
 void ATDevice1030Modem::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
+}
+
+void ATDevice1030Modem::InitAudioOutput(IATAudioMixer *mixer) {
+	mpAudioMixer = mixer;
 }
 
 void ATDevice1030Modem::InitCIO(IATDeviceCIOManager *mgr) {

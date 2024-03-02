@@ -11,7 +11,7 @@
     <RootNamespace>Kernel</RootNamespace>
     <Keyword>MakeFileProj</Keyword>
   </PropertyGroup>
-  <Import Project="..\PlatformSetup.props" />
+  <Import Project="..\Build\PlatformSetup.props" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Makefile</ConfigurationType>
@@ -21,7 +21,7 @@
   </ImportGroup>
   <ImportGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="PropertySheets">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="..\Altirra.props" />
+    <Import Project="..\Build\Altirra.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
@@ -68,7 +68,16 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeRe
     <None Include="source\SAPPlayers\playsap-c.s" />
     <None Include="source\SAPPlayers\playsap-d.s" />
     <None Include="source\SAPPlayers\playsap-r.s" />
+    <None Include="source\Shared\cio816.s" />
+    <None Include="source\Shared\init816.s" />
+    <None Include="source\Shared\interrupt816.s" />
+    <None Include="source\Shared\irq816.s" />
     <None Include="source\Shared\kernel.inc" />
+    <None Include="source\Shared\keyboard816.s" />
+    <None Include="source\Shared\screenext816.s" />
+    <None Include="source\Shared\syscall816.s" />
+    <None Include="source\Shared\sysdev816.s" />
+    <None Include="source\Shared\vbi816.s" />
     <None Include="source\softkick.s" />
     <None Include="source\BASIC\main.xasm" />
     <None Include="source\NoKernel\main.xasm" />
@@ -132,6 +141,7 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeRe
   </ItemGroup>
   <ItemGroup>
     <Text Include="source\Additions\license.txt" />
+    <Text Include="source\Additions\loadexe.s" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

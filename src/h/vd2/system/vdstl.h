@@ -1065,7 +1065,7 @@ protected:
 		_reserve_always(nextCapacity);
 	}
 
-	struct : A, S {
+	struct Misc : A, S {
 		T *eos;
 	} m;
 
@@ -1128,7 +1128,7 @@ public:
 		memcpy(mpBegin, x.mpBegin, sizeof(T) * n);
 	}
 
-	vdfastvector(vdfastvector&& x) vdnoexcept {
+	vdnothrow vdfastvector(vdfastvector&& x) vdnoexcept {
 		mpBegin = x.mpBegin;
 		mpEnd = x.mpEnd;
 		m.eos = x.m.eos;
@@ -1157,7 +1157,7 @@ public:
 		return *this;
 	}
 
-	vdfastvector& operator=(vdfastvector&& x) vdnoexcept {
+	vdnothrow vdfastvector& operator=(vdfastvector&& x) vdnoexcept {
 		if (mpBegin)
 			m.deallocate(mpBegin, m.eos - mpBegin);
 
@@ -1341,7 +1341,7 @@ public:
 
 	vdfastdeque_iterator() = default;
 	vdfastdeque_iterator(const vdfastdeque_iterator<T_Base, T_Base, kBlockSizeBits>&);
-	vdfastdeque_iterator(vdfastdeque_block<T_Base, kBlockSizeBits> **pMapEntry, uint32 index);
+	vdfastdeque_iterator(vdfastdeque_block<T_Base, kBlockSizeBits> **pMapEntry, size_t index);
 
 	T& operator *() const;
 	T* operator ->() const;
@@ -1357,9 +1357,11 @@ public:
 	vdfastdeque_iterator& operator-=(difference_type n);
 
 public:
+	typedef size_t size_type;
+
 	vdfastdeque_block<T_Base, kBlockSizeBits> **mpMap;
 	vdfastdeque_block<T_Base, kBlockSizeBits> *mpBlock;
-	uint32 mIndex;
+	size_type mIndex;
 };
 
 template<class T, class T_Base, int kBlockSizeBits>
@@ -1371,7 +1373,7 @@ vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::vdfastdeque_iterator(const vdfa
 }
 
 template<class T, class T_Base, int kBlockSizeBits>
-vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::vdfastdeque_iterator(vdfastdeque_block<T_Base, kBlockSizeBits> **pMapEntry, uint32 index)
+vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::vdfastdeque_iterator(vdfastdeque_block<T_Base, kBlockSizeBits> **pMapEntry, size_t index)
 	: mpMap(pMapEntry)
 	, mpBlock(mpMap ? *mpMap : NULL)
 	, mIndex(index)
@@ -1440,14 +1442,14 @@ vdfastdeque_iterator<T, T_Base, kBlockSizeBits> vdfastdeque_iterator<T, T_Base, 
 
 template<class T, class T_Base, int kBlockSizeBits>
 typename vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::difference_type vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator-(const vdfastdeque_iterator& other) const {
-	return ((sint32)mIndex - (sint32)other.mIndex) + ((mpMap - other.mpMap) << kBlockSizeBits);
+	return ((difference_type)mIndex - (difference_type)other.mIndex) + ((mpMap - other.mpMap) << kBlockSizeBits);
 }
 
 template<class T, class T_Base, int kBlockSizeBits>
 vdfastdeque_iterator<T, T_Base, kBlockSizeBits>& vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator+=(difference_type n) {
-	sint32 i = (sint32)mIndex + n;
+	difference_type i = (difference_type)mIndex + n;
 
-	mIndex = (uint32)i & (vdfastdeque_block<T, kBlockSizeBits>::kBlockSize - 1);
+	mIndex = (size_type)i & (vdfastdeque_block<T, kBlockSizeBits>::kBlockSize - 1);
 	mpMap += i >> kBlockSizeBits;
 	mpBlock = *mpMap;
 
@@ -1494,10 +1496,8 @@ bool operator>=(const vdfastdeque_iterator<T, T_Base, kBlockSizeBits>& x,const v
 template<class T, class A = vdallocator<T>, int kBlockSizeBits = 5>
 class vdfastdeque {
 public:
-	typedef	typename A::reference		reference;
-	typedef	typename A::const_reference	const_reference;
-	typedef	typename A::pointer			pointer;
-	typedef	typename A::const_pointer	const_pointer;
+	typedef T&					reference;
+	typedef	const T&			const_reference;
 	typedef	T					value_type;
 	typedef A					allocator_type;
 	typedef	size_t				size_type;

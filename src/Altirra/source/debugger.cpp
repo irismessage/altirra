@@ -26,6 +26,7 @@
 #include <vd2/system/unknown.h>
 #include <vd2/system/vdstl_hashset.h>
 #include <vd2/system/vdstl_hashmap.h>
+#include <at/atcore/address.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/device.h>
 #include <at/atcore/devicemanager.h>
@@ -1057,7 +1058,7 @@ void ATDebugger::ClearAllBreakpoints(bool notify) {
 bool ATDebugger::IsBreakpointAtPC(uint32 pc) const {
 	ATBreakpointIndices indices;
 
-	mpBkptManager->GetAtPC(pc, indices);
+	mpBkptManager->GetAtPC(mCurrentTargetIndex, pc, indices);
 
 	for(const auto& sysidx : indices) {
 		auto it = mSysBPToUserBPMap.find(sysidx);
@@ -1072,7 +1073,7 @@ bool ATDebugger::IsBreakpointAtPC(uint32 pc) const {
 void ATDebugger::ToggleBreakpoint(uint32 addr) {
 	ATBreakpointIndices indices;
 
-	mpBkptManager->GetAtPC(addr, indices);
+	mpBkptManager->GetAtPC(mCurrentTargetIndex, addr, indices);
 
 	// try to find an index we know about
 	sint32 useridx = -1;
@@ -1194,7 +1195,7 @@ sint32 ATDebugger::LookupUserBreakpointByNum(uint32 number, const char *groupNam
 
 sint32 ATDebugger::LookupUserBreakpointByAddr(uint32 address) const {
 	ATBreakpointIndices indices;
-	mpBkptManager->GetAtPC(address, indices);
+	mpBkptManager->GetAtPC(mCurrentTargetIndex, address, indices);
 
 	while(!indices.empty()) {
 		SysBPToUserBPMap::const_iterator it(mSysBPToUserBPMap.find(indices.back()));
@@ -2268,7 +2269,21 @@ void ATDebugger::DumpState(bool verbose, const ATCPUExecState *state) {
 			pc = state6502.mPC;
 			k = state6502.mK;
 
-			if (state->m6502.mbEmulationFlag) {
+			if (disasmMode != kATDebugDisasmMode_65C816) {
+				s.append_sprintf("A=%02X X=%02X Y=%02X S=%02X P=%02X (%c%c%c%c%c%c)  "
+					, state6502.mA
+					, state6502.mX
+					, state6502.mY
+					, state6502.mS
+					, state6502.mP
+					, state6502.mP & 0x80 ? 'N' : ' '
+					, state6502.mP & 0x40 ? 'V' : ' '
+					, state6502.mP & 0x08 ? 'D' : ' '
+					, state6502.mP & 0x04 ? 'I' : ' '
+					, state6502.mP & 0x02 ? 'Z' : ' '
+					, state6502.mP & 0x01 ? 'C' : ' '
+					);
+			} else if (state->m6502.mbEmulationFlag) {
 				s.append_sprintf("C=%02X%02X X=%02X Y=%02X S=%02X P=%02X (%c%c%c%c%c%c)  "
 					, state6502.mAH
 					, state6502.mA
@@ -3007,20 +3022,25 @@ sint32 ATDebugger::ResolveSymbol(const char *s, bool allowGlobal, bool allowShor
 	if (allowGlobal) {
 		if (!strncmp(s, "v:", 2)) {
 			addressSpace = kATAddressSpace_VBXE;
-			addressLimit = 0x7ffff;
 			s += 2;
 		} else if (!strncmp(s, "n:", 2)) {
 			addressSpace = kATAddressSpace_ANTIC;
 			s += 2;
 		} else if (!strncmp(s, "x:", 2)) {
-			addressSpace = kATAddressSpace_PORTB;
-			addressLimit = 0xfffff;
+			addressSpace = kATAddressSpace_EXTRAM;
 			s += 2;
 		} else if (!strncmp(s, "r:", 2)) {
 			addressSpace = kATAddressSpace_RAM;
-			addressLimit = 0xffff;
+			s += 2;
+		} else if (!strncmp(s, "rom:", 4)) {
+			addressSpace = kATAddressSpace_ROM;
+			s += 2;
+		} else if (!strncmp(s, "cart:", 5)) {
+			addressSpace = kATAddressSpace_CART;
 			s += 2;
 		}
+
+		addressLimit = ATAddressGetSpaceSize(addressSpace) - 1;
 	}
 
 	if (!vdstricmp(s, "pc"))
@@ -3076,6 +3096,16 @@ sint32 ATDebugger::ResolveSymbol(const char *s, bool allowGlobal, bool allowShor
 			return -1;
 
 		return (result << 16) + offset;
+	} else if (*t == '\'' && addressSpace == kATAddressSpace_CPU && allowGlobal) {
+		if (result > 0xff)
+			return -1;
+
+		s = t+1;
+		uint32 offset = strtoul(s, &t, base);
+		if (offset > 0xffff || *t)
+			return -1;
+
+		return (result << 16) + offset + kATAddressSpace_PORTB;
 	} else {
 		if (result > addressLimit || *t)
 			return -1;
@@ -3286,11 +3316,20 @@ VDStringA ATDebugger::GetAddressText(uint32 globalAddr, bool useHexSpecifier, bo
 		case kATAddressSpace_ANTIC:
 			s.sprintf("n:%s%04X", prefix, globalAddr & 0xffff);
 			break;
-		case kATAddressSpace_PORTB:
+		case kATAddressSpace_EXTRAM:
 			s.sprintf("x:%s%05X", prefix, globalAddr & 0xfffff);
 			break;
 		case kATAddressSpace_RAM:
 			s.sprintf("r:%s%04X", prefix, globalAddr & 0xffff);
+			break;
+		case kATAddressSpace_ROM:
+			s.sprintf("rom:%s%04X", prefix, globalAddr & 0xffff);
+			break;
+		case kATAddressSpace_CART:
+			s.sprintf("cart:%s%04X", prefix, globalAddr & 0xffffff);
+			break;
+		case kATAddressSpace_PORTB:
+			s.sprintf("%s%02X'%04X", prefix, (globalAddr >> 16) & 0xff, globalAddr & 0xffff);
 			break;
 	}
 
@@ -3323,20 +3362,7 @@ sint32 ATDebugger::EvaluateThrow(const char *s) {
 }
 
 ATDebugExpEvalContext ATDebugger::GetEvalContext() const {
-	ATDebugExpEvalContext ctx = {};
-	ctx.mpAntic = &g_sim.GetAntic();
-	ctx.mpTarget = mpCurrentTarget;
-	ctx.mpMMU = g_sim.GetMMU();
-	ctx.mpTemporaries = mExprTemporaries;
-	ctx.mpClockFn = [](void *) -> uint32 { return ATSCHEDULER_GETTIME(g_sim.GetScheduler()); };
-	ctx.mpCpuClockFn = [](void *) -> uint32 { return g_sim.GetCpuCycleCounter(); };
-	ctx.mbAccessValid = true;
-	ctx.mbAccessReadValid = false;
-	ctx.mbAccessWriteValid = false;
-	ctx.mAccessAddress = mExprAddress;
-	ctx.mAccessValue = mExprValue;
-
-	return ctx;
+	return GetEvalContextForTarget(mCurrentTargetIndex);
 }
 
 ATDebugExpEvalContext ATDebugger::GetEvalContextForTarget(uint32 targetIndex) const {
@@ -3345,6 +3371,19 @@ ATDebugExpEvalContext ATDebugger::GetEvalContextForTarget(uint32 targetIndex) co
 	if (!targetIndex) {
 		ctx.mpAntic = &g_sim.GetAntic();
 		ctx.mpMMU = g_sim.GetMMU();
+		ctx.mpXPCFn = [](void *) -> uint32 {
+			const auto& cpu = g_sim.GetCPU();
+
+			uint8 bank = cpu.GetK();
+			uint32 xpc = cpu.GetPC();
+
+			if (bank)
+				xpc += (uint32)bank << 16;
+			else
+				xpc += cpu.GetMemory()->mpCPUReadAddressPageMap[xpc >> 8];
+
+			return xpc;
+		};
 	}
 
 	ctx.mpTarget = mDebugTargets[targetIndex];
@@ -3761,6 +3800,13 @@ bool ATDebugger::LookupSymbol(uint32 addr, uint32 flags, ATSymbol& symbol) {
 }
 
 bool ATDebugger::LookupSymbol(uint32 addr, uint32 flags, ATDebuggerSymbol& symbol) {
+	uint32 addrSpaceOffset = 0;
+
+	if ((addr & kATAddressSpaceMask) == kATAddressSpace_PORTB) {
+		addrSpaceOffset = kATAddressSpace_PORTB;
+		addr &= 0xffffff;
+	}
+
 	Modules::const_iterator it(mModules.begin()), itEnd(mModules.end());
 	int bestDelta = INT_MAX;
 	bool valid = false;
@@ -3777,6 +3823,7 @@ bool ATDebugger::LookupSymbol(uint32 addr, uint32 flags, ATDebuggerSymbol& symbo
 			ATDebuggerSymbol tempSymbol;
 			if (mod.mpSymbols->LookupSymbol(offset, flags, tempSymbol.mSymbol)) {
 				tempSymbol.mSymbol.mOffset += mod.mBase;
+				tempSymbol.mSymbol.mOffset += addrSpaceOffset;
 				tempSymbol.mModuleId = mod.mId;
 
 				int delta = (int)tempSymbol.mSymbol.mOffset - (int)addr;
@@ -3785,6 +3832,9 @@ bool ATDebugger::LookupSymbol(uint32 addr, uint32 flags, ATDebuggerSymbol& symbo
 					bestDelta = delta;
 					symbol = tempSymbol;
 					valid = true;
+
+					if (!bestDelta)
+						break;
 				}
 			}
 		}
@@ -3796,6 +3846,9 @@ bool ATDebugger::LookupSymbol(uint32 addr, uint32 flags, ATDebuggerSymbol& symbo
 bool ATDebugger::LookupLine(uint32 addr, bool searchUp, uint32& moduleId, ATSourceLineInfo& lineInfo) {
 	if (mCurrentTargetIndex)
 		return false;
+
+	if ((addr & kATAddressSpaceMask) == kATAddressSpace_PORTB)
+		addr &= 0xffffff;
 
 	Modules::const_iterator it(mModules.begin()), itEnd(mModules.end());
 	uint32 bestOffset = 0xFFFFFFFFUL;
@@ -5834,13 +5887,17 @@ void ATConsoleCmdBreakpt(ATDebuggerCmdParser& parser) {
 				ATConsolePrintf("Breakpoint %s set at `%s:%u` ($%04X)\n", g_debugger.GetBreakpointName(useridx).c_str(), filename.c_str(), line, bpinfo.mAddress);
 		}
 	} else {
-		const uint32 addr = (uint32)g_debugger.EvaluateThrow(s) & 0xFFFFFF;
+		const uint32 addr = (uint32)g_debugger.EvaluateThrow(s);
+		if (addr >= 0x1000000 && g_debugger.GetTargetIndex()) {
+			throw MyError("Global PC breakpoints are only supported on target 0.");
+		}
+
 		const uint32 sysidx = bpm->SetAtPC(g_debugger.GetTargetIndex(), addr);
 		useridx = g_debugger.RegisterSystemBreakpoint(sysidx, NULL, command.IsValid() ? command->c_str() : NULL, nonStopArg);
 
 		g_debugger.RegisterUserBreakpoint(useridx, groupNameArg.GetValue());
 		if (!quietArg)
-			ATConsolePrintf("Breakpoint %s set at $%04X.\n", g_debugger.GetBreakpointName(useridx).c_str(), addr);
+			ATConsolePrintf("Breakpoint %s set at %s.\n", g_debugger.GetBreakpointName(useridx).c_str(), g_debugger.GetAddressText(addr, true, true).c_str());
 	}
 
 	if (clearOnResetArg)
@@ -6372,7 +6429,7 @@ void ATConsoleCmdUnassemble(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdSwitch x16Arg("x16", false);
 	ATDebuggerCmdSwitch emulationModeArg("e", false);
 	ATDebuggerCmdSwitch noLabelsArg("n", false);
-	ATDebuggerCmdExprAddr address(false, false);
+	ATDebuggerCmdExprAddr address(true, false);
 	ATDebuggerCmdLength length(20, false, &address);
 
 	parser >> noPredictArg >> m8Arg >> m16Arg >> x8Arg >> x16Arg >> emulationModeArg >> noLabelsArg >> address >> length >> 0;
@@ -6386,7 +6443,8 @@ void ATConsoleCmdUnassemble(ATDebuggerCmdParser& parser) {
 	else
 		addr = g_debugger.GetContinuationAddress();
 
-	uint8 bank = (uint8)(addr >> 16);
+	const uint32 addrSpaceAndBank = addr & 0xFFFF0000;
+	const uint8 bank = addr < 0x1000000 ? (uint8)(addr >> 16) : 0;
 	uint32 n = length;
 
 	IATDebugTarget *target = g_debugger.GetTarget();
@@ -6416,10 +6474,13 @@ void ATConsoleCmdUnassemble(ATDebuggerCmdParser& parser) {
 
 	VDStringA s;
 	for(uint32 i=0; i<n; ++i) {
-		ATDisassembleCaptureInsnContext(target, (uint16)addr, (uint8)(addr >> 16), hent);
+		if (disasmMode == kATDebugDisasmMode_6502)
+			ATDisassembleCaptureInsnContext(target, addr, hent);
+		else
+			ATDisassembleCaptureInsnContext(target, (uint16)addr, bank, hent);
 
 		s.clear();
-		addr = (addr & 0xff0000) + (uint16)ATDisassembleInsn(s, target, disasmMode, hent, false, false, true, true, showLabels, false, false, true, showLabels);
+		addr = addrSpaceAndBank + (uint16)ATDisassembleInsn(s, target, disasmMode, hent, false, false, true, true, showLabels, false, false, true, showLabels, true);
 
 		if (predict)
 			ATDisassemblePredictContext(hent, disasmMode);
@@ -6455,6 +6516,7 @@ void ATConsoleCmdRegisters(ATDebuggerCmdParser& parser) {
 		g_debugger.SetExprTemp(regName[1] - '0', v);
 	} else {
 		bool resetContinuationAddr = false;
+		bool suppressExecStateUpdate = false;
 		IATDebugTarget *target = g_debugger.GetTarget();
 
 		ATCPUExecState state;
@@ -6591,9 +6653,10 @@ void ATConsoleCmdRegisters(ATDebuggerCmdParser& parser) {
 			ATCPUExecState6502& state6502 = state.m6502;
 
 			if (regName == "pc") {
-				if (g_debugger.GetTargetIndex())
+				if (!g_debugger.GetTargetIndex()) {
 					g_debugger.SetPC(v);
-				else
+					suppressExecStateUpdate = true;
+				} else
 					state6502.mPC = v;
 				resetContinuationAddr = true;
 			} else if (regName == "x") {
@@ -6650,7 +6713,8 @@ void ATConsoleCmdRegisters(ATDebuggerCmdParser& parser) {
 				g_debugger.SetContinuationAddress(((uint32)state6502.mK << 16) + state6502.mPC);
 		}
 
-		target->SetExecState(state);
+		if (!suppressExecStateUpdate)
+			target->SetExecState(state);
 	}
 
 	g_debugger.SendRegisterUpdate();
@@ -7318,15 +7382,17 @@ void ATConsoleCmdSymbolAdd(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdName name(true);
 	ATDebuggerCmdExprAddr addr(false, true);
 	ATDebuggerCmdLength len(1, false, &addr);
+	ATDebuggerCmdSwitch swR("r", false);
+	ATDebuggerCmdSwitch swW("w", false);
 
-	parser >> name >> addr >> len >> 0;
+	parser >> swR >> swW >> name >> addr >> len >> 0;
 
 	VDStringA s(name->c_str());
 
 	for(VDStringA::iterator it(s.begin()), itEnd(s.end()); it != itEnd; ++it)
 		*it = toupper((unsigned char)*it);
 
-	g_debugger.AddCustomSymbol(addr.GetValue(), len, s.c_str(), kATSymbol_Any);
+	g_debugger.AddCustomSymbol(addr.GetValue(), len, s.c_str(), swR ? kATSymbol_Read | kATSymbol_Execute : swW ? kATSymbol_Write : kATSymbol_Any);
 }
 
 void ATConsoleCmdSymbolClear(ATDebuggerCmdParser& parser) {
@@ -8432,8 +8498,8 @@ void ATConsoleCmdDumpDsm(ATDebuggerCmdParser& parser) {
 	uint32 addr = addrArg.GetValue();
 	uint32 addrEnd = addr + lenArg;
 
-	if (addrEnd > 0x10000)
-		addrEnd = addr;
+	if (addrEnd > 0x1000000)
+		addrEnd = 0x1000000;
 
 	FILE *f = fopen(filename->c_str(), "w");
 	if (!f) {
@@ -8458,10 +8524,11 @@ void ATConsoleCmdDumpDsm(ATDebuggerCmdParser& parser) {
 
 	uint32 pc = addr;
 	while(pc < addrEnd) {	
-		ATDisassembleCaptureInsnContext(target, pc, hent.mK, hent);
+		ATDisassembleCaptureInsnContext(target, (uint16)pc, (uint8)(pc >> 16), hent);
 
 		s.clear();
 		uint32 pc2 = ATDisassembleInsn(s, target, disasmMode, hent, false, false, showPCAddress, showCodeBytes, showLabels, lowercaseOps, useTabs);
+		pc2 += (pc & 0xff0000);
 
 		while(!s.empty() && s.back() == ' ')
 			s.pop_back();
@@ -8562,24 +8629,7 @@ void ATConsoleCmdReadMem(ATDebuggerCmdParser& parser) {
 	uint32 addr = addressArg.GetValue();
 	uint32 len = lengthArg.IsValid() ? (uint32)lengthArg : 0x0FFFFFFFU;
 
-	uint32 limit = 0;
-	switch(addr & kATAddressSpaceMask) {
-		case kATAddressSpace_CPU:
-			limit = kATAddressSpace_CPU + 0x1000000;
-			break;
-		case kATAddressSpace_ANTIC:
-			limit = kATAddressSpace_ANTIC + 0x10000;
-			break;
-		case kATAddressSpace_VBXE:
-			limit = kATAddressSpace_VBXE + 0x80000;
-			break;
-		case kATAddressSpace_PORTB:
-			limit = kATAddressSpace_PORTB + 0x100000;
-			break;
-		case kATAddressSpace_RAM:
-			limit = kATAddressSpace_RAM + 0x10000;
-			break;
-	}
+	const uint32 limit = (addr & kATAddressSpaceMask) + ATAddressGetSpaceSize(addr);
 
 	if (addr >= limit)
 		throw MyError("Invalid start address: %s\n", g_debugger.GetAddressText(addr, false).c_str());
@@ -8631,25 +8681,7 @@ void ATConsoleCmdWriteMem(ATDebuggerCmdParser& parser) {
 	uint32 addr = addressArg.GetValue();
 	uint32 len = lengthArg;
 
-	uint32 limit = 0;
-	switch(addr & kATAddressSpaceMask) {
-		case kATAddressSpace_CPU:
-			limit = kATAddressSpace_CPU + 0x1000000;
-			break;
-		case kATAddressSpace_ANTIC:
-			limit = kATAddressSpace_ANTIC + 0x10000;
-			break;
-		case kATAddressSpace_VBXE:
-			limit = kATAddressSpace_VBXE + 0x80000;
-			break;
-		case kATAddressSpace_PORTB:
-			limit = kATAddressSpace_PORTB + 0x100000;
-			break;
-		case kATAddressSpace_RAM:
-			limit = kATAddressSpace_RAM + 0x10000;
-			break;
-	}
-
+	const uint32 limit = (addr & kATAddressSpaceMask) + ATAddressGetSpaceSize(addr);
 	if (addr >= limit)
 		throw MyError("Invalid start address: %s\n", g_debugger.GetAddressText(addr, false).c_str());
 
@@ -8878,20 +8910,19 @@ void ATConsoleCmdVectors(ATDebuggerCmdParser& parser) {
 	}
 
 	if (target.GetDisasmMode() == kATDebugDisasmMode_65C816) {
-		uint16_t natvecs[16];
-		target.DebugReadMemory(0xFFE4, natvecs, 10);
+		uint16_t natvecs[9];
+		target.DebugReadMemory(0xFFE4, natvecs, sizeof natvecs);
 
 		ATConsolePrintf("Native COP     %04X\n", VDFromLE16(natvecs[0]));		// FFE4
 		ATConsolePrintf("Native BRK     %04X\n", VDFromLE16(natvecs[1]));		// FFE6
 		ATConsolePrintf("Native ABORT   %04X\n", VDFromLE16(natvecs[2]));		// FFE8
 		ATConsolePrintf("Native NMI     %04X\n", VDFromLE16(natvecs[3]));		// FFEA
-		ATConsolePrintf("Native Reset   %04X\n", VDFromLE16(natvecs[4]));		// FFEC
 		ATConsolePrintf("Native IRQ     %04X\n", VDFromLE16(natvecs[5]));		// FFEE
 		ATConsolePrintf("COP            %04X\n", VDFromLE16(natvecs[8]));		// FFF4
 	}
 
 	uint16_t emuvecs[3];
-	target.DebugReadMemory(0xFFFA, emuvecs, 6);
+	target.DebugReadMemory(0xFFFA, emuvecs, sizeof emuvecs);
 
 	ATConsolePrintf("NMI            %04X\n", VDFromLE16(emuvecs[0]));
 	ATConsolePrintf("Reset          %04X\n", VDFromLE16(emuvecs[1]));
@@ -10066,7 +10097,8 @@ void ATConsoleCmdBasicVars(ATDebuggerCmdParser& parser) {
 }
 
 void ATConsoleCmdBasicRebuildVnt(ATDebuggerCmdParser& parser) {
-	parser >> 0;
+	ATDebuggerCmdSwitch tbxlSw("t", false);
+	parser >> tbxlSw >> 0;
 
 	uint16 pointers[9];
 
@@ -10096,13 +10128,14 @@ void ATConsoleCmdBasicRebuildVnt(ATDebuggerCmdParser& parser) {
 
 	vdfastvector<uint8> vnt;
 
+	const bool tbxl = tbxlSw;
 	uint32 vvptr = vvtp;
 	int typecnt[3] = { 0, 0, 0 };
 	int varidx = 0;
 	while(vvptr < stmtab) {
 		uint8 vartype = g_sim.DebugReadByte(vvptr) >> 6;
 
-		if (vartype == 3)
+		if (vartype == 3 && !tbxl)
 			ATConsolePrintf("WARNING: Variable $%02X has invalid type.\n", varidx + 0x80);
 
 		int varnameidx = typecnt[vartype]++;
@@ -10116,6 +10149,7 @@ void ATConsoleCmdBasicRebuildVnt(ATDebuggerCmdParser& parser) {
 
 		switch(vartype) {
 			case 0:
+			case 3:
 				vnt.back() |= 0x80;
 				break;
 
@@ -11342,6 +11376,8 @@ void ATConsoleCmdEval(const char *s) {
 		ATConsoleWrite("(parse error)\n");
 	else if (!node->Evaluate(result, ctx))
 		ATConsoleWrite("(evaluation error)\n");
+	else if (node->IsAddress() && (result & kATAddressSpaceMask))
+		ATConsolePrintf("%d (%s)\n", result, g_debugger.GetAddressText(result, true, true).c_str());
 	else
 		ATConsolePrintf("%d ($%0*X)\n", result, (uint32)result >= 0x10000 ? 8 : 4, result);
 }

@@ -1,5 +1,22 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2018 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
 #include <ctype.h>
+#include <at/atcore/address.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
 #include "debuggerexp.h"
@@ -8,7 +25,6 @@
 #include "debugger.h"
 #include "antic.h"
 #include "mmu.h"
-#include "address.h"
 
 namespace {
 	void FreeNodes(vdfastvector<ATDebugExpNode *>& nodes) {
@@ -30,6 +46,14 @@ namespace {
 		kNodePrecMul,
 		kNodePrecUnary
 	};
+
+	uint32 AdjustAddress(uint32 addr) {
+		// Correct for underflow from CPU space.
+		if (addr >= 0xFF800000)
+			addr = (addr + 0x800000) & 0xFFFFFF;
+
+		return addr;
+	}
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -81,23 +105,7 @@ public:
 		sint32 v = mVal;
 
 		if (mbAddress) {
-			switch((uint32)v & kATAddressSpaceMask) {
-				case kATAddressSpace_ANTIC:
-					s += "a:";
-					break;
-
-				case kATAddressSpace_PORTB:
-					s += "x:";
-					break;
-
-				case kATAddressSpace_RAM:
-					s += "r:";
-					break;
-
-				case kATAddressSpace_VBXE:
-					s += "v:";
-					break;
-			}
+			s += ATAddressGetSpacePrefix((uint32)v);
 
 			v &= kATAddressOffsetMask;
 		}
@@ -1226,7 +1234,7 @@ public:
 		if (!context.mpTarget)
 			return false;
 
-		result = context.mpTarget->DebugReadByte(x & 0xffffff);
+		result = context.mpTarget->DebugReadByte(AdjustAddress(x));
 		return true;
 	}
 
@@ -1255,7 +1263,7 @@ public:
 		if (!context.mpTarget)
 			return false;
 
-		result = (sint8)context.mpTarget->DebugReadByte(x & 0xffffff);
+		result = (sint8)context.mpTarget->DebugReadByte(AdjustAddress(x));
 		return true;
 	}
 
@@ -1284,8 +1292,8 @@ public:
 		if (!context.mpTarget)
 			return false;
 
-		uint8 c0 = context.mpTarget->DebugReadByte(x & 0xffffff);
-		uint8 c1 = context.mpTarget->DebugReadByte((x+1) & 0xffffff);
+		uint8 c0 = context.mpTarget->DebugReadByte(AdjustAddress(x));
+		uint8 c1 = context.mpTarget->DebugReadByte(AdjustAddress(x+1));
 		result = (sint16)(c0 + (c1 << 8));
 		return true;
 	}
@@ -1315,10 +1323,10 @@ public:
 		if (!context.mpTarget)
 			return false;
 
-		uint8 c0 = context.mpTarget->DebugReadByte(x & 0xffffff);
-		uint8 c1 = context.mpTarget->DebugReadByte((x+1) & 0xffffff);
-		uint8 c2 = context.mpTarget->DebugReadByte((x+2) & 0xffffff);
-		uint8 c3 = context.mpTarget->DebugReadByte((x+3) & 0xffffff);
+		uint8 c0 = context.mpTarget->DebugReadByte(AdjustAddress(x));
+		uint8 c1 = context.mpTarget->DebugReadByte(AdjustAddress(x+1));
+		uint8 c2 = context.mpTarget->DebugReadByte(AdjustAddress(x+2));
+		uint8 c3 = context.mpTarget->DebugReadByte(AdjustAddress(x+3));
 		result = (sint32)(c0 + (c1 << 8) + (c2 << 16) + (c3 << 24));
 		return true;
 	}
@@ -1348,8 +1356,8 @@ public:
 		if (!context.mpTarget)
 			return false;
 
-		result = context.mpTarget->DebugReadByte(x & 0xffffff)
-			+ ((sint32)context.mpTarget->DebugReadByte((x + 1) & 0xffffff) << 8);
+		result = context.mpTarget->DebugReadByte(AdjustAddress(x))
+			+ ((sint32)context.mpTarget->DebugReadByte(AdjustAddress(x + 1)) << 8);
 		return true;
 	}
 
@@ -1790,7 +1798,7 @@ public:
 			case kATAddressSpace_CPU:
 				break;
 
-			case kATAddressSpace_PORTB:
+			case kATAddressSpace_EXTRAM:
 				s += "x:";
 				break;
 
@@ -1800,6 +1808,18 @@ public:
 
 			case kATAddressSpace_VBXE:
 				s += "v:";
+				break;
+
+			case kATAddressSpace_ROM:
+				s += "rom:";
+				break;
+
+			case kATAddressSpace_CART:
+				s += "cart:";
+				break;
+
+			case kATAddressSpace_PORTB:
+				s += "portb:";
 				break;
 		}
 	}
@@ -2123,6 +2143,38 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATDebugExpNodeXPC final : public ATDebugExpNode {
+public:
+	ATDebugExpNodeXPC() : ATDebugExpNode(kATDebugExpNodeType_XPC) {}
+
+	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeXPC; }
+
+	bool IsAddress() const override { return true; }
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+		if (context.mpXPCFn) {
+			result = context.mpXPCFn(context.mpXPCFnData);
+		} else {
+			const ATCPUExecState *state = cache.GetExecState(context);
+			if (!state)
+				return false;
+
+			if (cache.mExecMode == kATDebugDisasmMode_Z80)
+				result = state->mZ80.mPC;
+			else
+				result = state->m6502.mPC;
+		}
+
+		return true;
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		s += "@xpc";
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////
+
 ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup *dbg, const ATDebuggerExprParseOpts& opts) {
 	enum {
 		kOpNone,
@@ -2252,7 +2304,8 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 		kTokReturnAddr,
 		kTokFrame,
 		kTokClock,
-		kTokCpuClock
+		kTokCpuClock,
+		kTokXPC
 	};
 
 	vdfastvector<ATDebugExpNode *> valstack;
@@ -2265,6 +2318,21 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 	if (dbg && opts.mbAllowUntaggedHex && *s && isxdigit((unsigned char)*s)) {
 		char *t = const_cast<char *>(s);
 		unsigned long result = strtoul(s, &t, 16);
+
+		if (*t == '\'' || *t == ':') {
+			bool is_portb = (*t == '\'');
+			++t;
+			unsigned long result2 = strtoul(t, &t, 16);
+
+			if (!*t && result < 0x100 && result2 < 0x10000) {
+				result = (result << 16) + result2;
+				
+				if (is_portb)
+					result += kATAddressSpace_PORTB;
+			} else {
+				--t;	// force failure
+			}
+		}
 
 		if (!*t) {
 			s = t;
@@ -2318,6 +2386,7 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 					}
 
 					bool has_bank = false;
+					bool is_portb = false;
 					uint32 bank = 0;
 					uint32 v = 0;
 					for(;;) {
@@ -2328,8 +2397,9 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 
 						c = *s;
 
-						if (!has_bank && c == ':') {
+						if (!has_bank && (c == ':' || c == '\'')) {
 							has_bank = true;
+							is_portb = (c == '\'');
 
 							if (v > 0xff)
 								throw ATDebuggerExprParseException("Bank too large");
@@ -2343,8 +2413,12 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 						++s;
 					}
 
-					if (has_bank)
+					if (has_bank) {
 						v = (v & 0xffff) + bank;
+
+						if (is_portb)
+							v += kATAddressSpace_PORTB;
+					}
 
 					intVal = v;
 					hexVal = true;
@@ -2423,9 +2497,13 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebuggerSymbolLookup
 						else if (ident == "n")
 							intVal = (sint32)kATAddressSpace_ANTIC;
 						else if (ident == "x")
-							intVal = (sint32)kATAddressSpace_PORTB;
+							intVal = (sint32)kATAddressSpace_EXTRAM;
 						else if (ident == "r")
 							intVal = (sint32)kATAddressSpace_RAM;
+						else if (ident == "rom")
+							intVal = (sint32)kATAddressSpace_ROM;
+						else if (ident == "cart")
+							intVal = (sint32)kATAddressSpace_CART;
 						else
 							throw ATDebuggerExprParseException("Unknown address space: '%.*s'", ident.size(), ident.data());
 
@@ -2505,14 +2583,16 @@ force_ident:
 					} else {
 						VDStringSpanA name(nameStart, nameEnd);
 
-						if (name == "frame") {
+						if (name == "frame")
 							tok = kTokFrame;
-						} else if (name == "clk") {
+						else if (name == "clk")
 							tok = kTokClock;
-						} else if (name == "cclk") {
+						else if (name == "cclk")
 							tok = kTokCpuClock;
-						} else if (name == "pc")
+						else if (name == "pc")
 							tok = kTokPC;
+						else if (name == "xpc")
+							tok = kTokXPC;
 						else if (name == "a")
 							tok = kTokA;
 						else if (name == "x")
@@ -2579,6 +2659,13 @@ force_ident:
 
 				} else if (tok == kTokPC) {
 					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodePC);
+
+					valstack.push_back(node);
+					node.release();
+
+					needValue = false;
+				} else if (tok == kTokXPC) {
+					vdautoptr<ATDebugExpNode> node(new ATDebugExpNodeXPC);
 
 					valstack.push_back(node);
 					node.release();

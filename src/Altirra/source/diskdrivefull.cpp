@@ -23,7 +23,7 @@
 #include <at/atcore/logging.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/deviceserial.h>
-#include "audiosyncmixer.h"
+#include "audiosampleplayer.h"
 #include "diskdrivefull.h"
 #include "memorymanager.h"
 #include "firmwaremanager.h"
@@ -122,6 +122,13 @@ void ATCreateDeviceDiskDrive1050TurboII(const ATPropertySet& pset, IATDevice **d
 	*dev = p.release();
 }
 
+void ATCreateDeviceDiskDriveISPlate(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDeviceDiskDriveFull> p(new ATDeviceDiskDriveFull(true, ATDeviceDiskDriveFull::kDeviceType_ISPlate));
+	p->SetSettings(pset);
+
+	*dev = p.release();
+}
+
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive810				= { "diskdrive810",				"diskdrive810",				L"810 disk drive (full emulation)", ATCreateDeviceDiskDrive810 };
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive810Archiver		= { "diskdrive810archiver",		"diskdrive810archiver",		L"810 Archiver disk drive (full emulation)", ATCreateDeviceDiskDrive810Archiver };
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveHappy810			= { "diskdrivehappy810",		"diskdrivehappy810",		L"Happy 810 disk drive (full emulation)", ATCreateDeviceDiskDriveHappy810 };
@@ -135,6 +142,7 @@ extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050Duplicator	= { "diskdr
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveTygrys1050		= { "diskdrivetygrys1050",		"diskdrivetygrys1050",		L"Tygrys 1050 disk drive (full emulation)", ATCreateDeviceDiskDriveTygrys1050 };
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050Turbo			= { "diskdrive1050turbo",		"diskdrive1050turbo",		L"1050 Turbo disk drive (full emulation)", ATCreateDeviceDiskDrive1050Turbo };
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050TurboII		= { "diskdrive1050turboii",		"diskdrive1050turboii",		L"1050 Turbo II disk drive (full emulation)", ATCreateDeviceDiskDrive1050TurboII };
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveISPlate			= { "diskdriveisplate",			"diskdriveisplate",			L"I.S. Plate disk drive (full emulation)", ATCreateDeviceDiskDriveISPlate };
 
 ATDeviceDiskDriveFull::ATDeviceDiskDriveFull(bool is1050, DeviceType deviceType)
 	: mb1050(is1050)
@@ -156,7 +164,7 @@ void *ATDeviceDiskDriveFull::AsInterface(uint32 iid) {
 		case IATDeviceFirmware::kTypeID: return static_cast<IATDeviceFirmware *>(this);
 		case IATDeviceDiskDrive::kTypeID: return static_cast<IATDeviceDiskDrive *>(this);
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
-		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(this);
+		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(&mAudioPlayer);
 		case IATDeviceButtons::kTypeID: return static_cast<IATDeviceButtons *>(this);
 		case IATDeviceDebugTarget::kTypeID: return static_cast<IATDeviceDebugTarget *>(this);
 		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(&mBreakpointsImpl);
@@ -184,6 +192,7 @@ void ATDeviceDiskDriveFull::GetDeviceInfo(ATDeviceInfo& info) {
 		&g_ATDeviceDefDiskDrive1050Duplicator,
 		&g_ATDeviceDefDiskDrive1050Turbo,
 		&g_ATDeviceDefDiskDrive1050TurboII,
+		&g_ATDeviceDefDiskDriveISPlate,
 	};
 
 	static_assert(vdcountof(kDeviceDefs) == kDeviceTypeCount, "Device def array missized");
@@ -640,6 +649,64 @@ void ATDeviceDiskDriveFull::Init() {
 			writemap[0xBF] =
 			writemap[0xEF] =
 			writemap[0xFF] = (uintptr)&mWriteNodeROMBankSwitch + 1;
+	} else if (mDeviceType == kDeviceType_ISPlate) {
+		// The I.S. Plate uses a 6502 instead of a 6507, so no 8K mirroring:
+		//	$0000-7FFF	I/O (6507 $0000-0FFF mirrored 8x)
+		//	$8000-9FFF	RAM (4K #1)
+		//	$C000-DFFF	RAM (4K #2)
+		//	$E000-FFFF	ROM (4K mirrored)
+
+		for(int i=0; i<0x80; i+=0x10) {
+			const uintptr ramBase = (uintptr)mRAM - (i << 8);
+
+			writemap[i+0] = ramBase;
+			writemap[i+1] = ramBase - 0x100;
+			writemap[i+2] = (uintptr)&mWriteNodeRIOTRegisters + 1;
+			writemap[i+3] = (uintptr)&mWriteNodeRIOTRegisters + 1;
+			writemap[i+4] = (uintptr)&mWriteNodeFDCRAM + 1;
+			writemap[i+5] = (uintptr)&mWriteNodeFDCRAM + 1;
+			writemap[i+6] = (uintptr)&mWriteNodeFDCRAM + 1;
+			writemap[i+7] = (uintptr)&mWriteNodeFDCRAM + 1;
+			writemap[i+8] = ramBase - 0x800;
+			writemap[i+9] = ramBase - 0x900;
+			writemap[i+10] = (uintptr)&mWriteNodeRIOTRegisters + 1;
+			writemap[i+11] = (uintptr)&mWriteNodeRIOTRegisters + 1;
+			writemap[i+12] = (uintptr)&mWriteNodeFDCRAM + 1;
+			writemap[i+13] = (uintptr)&mWriteNodeFDCRAM + 1;
+			writemap[i+14] = (uintptr)&mWriteNodeFDCRAM + 1;
+			writemap[i+15] = (uintptr)&mWriteNodeFDCRAM + 1;
+
+			readmap[i+0] = ramBase;
+			readmap[i+1] = ramBase - 0x100;
+			readmap[i+2] = (uintptr)&mReadNodeRIOTRegisters + 1;
+			readmap[i+3] = (uintptr)&mReadNodeRIOTRegisters + 1;
+			readmap[i+4] = (uintptr)&mReadNodeFDCRAM + 1;
+			readmap[i+5] = (uintptr)&mReadNodeFDCRAM + 1;
+			readmap[i+6] = (uintptr)&mReadNodeFDCRAM + 1;
+			readmap[i+7] = (uintptr)&mReadNodeFDCRAM + 1;
+			readmap[i+8] = ramBase - 0x800;
+			readmap[i+9] = ramBase - 0x900;
+			readmap[i+10] = (uintptr)&mReadNodeRIOTRegisters + 1;
+			readmap[i+11] = (uintptr)&mReadNodeRIOTRegisters + 1;
+			readmap[i+12] = (uintptr)&mReadNodeFDCRAM + 1;
+			readmap[i+13] = (uintptr)&mReadNodeFDCRAM + 1;
+			readmap[i+14] = (uintptr)&mReadNodeFDCRAM + 1;
+			readmap[i+15] = (uintptr)&mReadNodeFDCRAM + 1;
+		}
+
+		// Map 8K of RAM to $8000-9FFF and another 8K to $C000-DFFF.
+		for(int i=0; i<32; ++i) {
+			readmap[i + 0x80] = (uintptr)(mRAM + 0x100) - 0x8000;
+			readmap[i + 0xC0] = (uintptr)(mRAM + 0x2100) - 0xC000;
+			writemap[i + 0x80] = (uintptr)(mRAM + 0x100) - 0x8000;
+			writemap[i + 0xC0] = (uintptr)(mRAM + 0x2100) - 0xC000;
+		}
+
+		// map 8K ROM to $E000-FFFF
+		for(int i=0; i<32; ++i) {
+			readmap[i+0xE0] = (uintptr)mROM - 0xE000;
+		}
+
 	} else if (mDeviceType == kDeviceType_Speedy1050) {
 		// The Speedy 1050 uses a 65C02 instead of a 6507, so no 8K mirroring.
 		// Fortunately, its hardware map is well documented.
@@ -1006,10 +1073,7 @@ void ATDeviceDiskDriveFull::Init() {
 }
 
 void ATDeviceDiskDriveFull::Shutdown() {
-	if (mRotationSoundId) {
-		mpAudioSyncMixer->StopSound(mRotationSoundId);
-		mRotationSoundId = 0;
-	}
+	mAudioPlayer.Shutdown();
 
 	mDriveScheduler.UnsetEvent(mpEventDriveReceiveBit);
 
@@ -1156,6 +1220,7 @@ bool ATDeviceDiskDriveFull::ReloadFirmware() {
 		kATFirmwareType_1050Duplicator,
 		kATFirmwareType_1050Turbo,
 		kATFirmwareType_1050TurboII,
+		kATFirmwareType_ISPlate,
 	};
 
 	static const uint32 kFirmwareSizes[]={
@@ -1171,7 +1236,8 @@ bool ATDeviceDiskDriveFull::ReloadFirmware() {
 		0x1000,
 		0x2000,
 		0x4000,
-		0x2000
+		0x2000,
+		0x1000
 	};
 
 	static_assert(vdcountof(kFirmwareTypes) == kDeviceTypeCount, "firmware type array missized");
@@ -1184,7 +1250,7 @@ bool ATDeviceDiskDriveFull::ReloadFirmware() {
 	uint8 firmware[sizeof(mROM)] = {};
 
 	uint32 len = 0;
-	mpFwMgr->LoadFirmware(id, firmware, 0, kFirmwareSizes[mDeviceType], nullptr, &len);
+	mpFwMgr->LoadFirmware(id, firmware, 0, kFirmwareSizes[mDeviceType], nullptr, &len, nullptr, nullptr, &mbFirmwareUsable);
 
 	// If we're in Happy 810 mode, check whether we only have the visible 3K/6K of the
 	// ROM or a full 4K/8K image. Both are supported.
@@ -1206,6 +1272,10 @@ bool ATDeviceDiskDriveFull::ReloadFirmware() {
 	if (mDeviceType == kDeviceType_Speedy1050 && len == 0x2000)
 		memcpy(firmware + 0x2000, firmware, 0x2000);
 
+	// double-up 4K I.S. Plate firmware to 8K
+	if (mDeviceType == kDeviceType_ISPlate && len == 0x1000)
+		memcpy(firmware + 0x1000, firmware, 0x1000);
+
 	memcpy(mROM, firmware, sizeof mROM);
 
 	const vduint128 newHash = VDHash128(mROM, sizeof mROM);
@@ -1224,6 +1294,10 @@ bool ATDeviceDiskDriveFull::IsWritableFirmwareDirty(uint32 idx) const {
 void ATDeviceDiskDriveFull::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 }
 
+bool ATDeviceDiskDriveFull::IsUsableFirmwareLoaded() const {
+	return mbFirmwareUsable;
+}
+
 void ATDeviceDiskDriveFull::InitDiskDrive(IATDiskDriveManager *ddm) {
 	mpDiskDriveManager = ddm;
 	mpDiskInterface = ddm->GetDiskInterface(mDriveId);
@@ -1233,10 +1307,6 @@ void ATDeviceDiskDriveFull::InitDiskDrive(IATDiskDriveManager *ddm) {
 void ATDeviceDiskDriveFull::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
 	mpSIOMgr->AddRawDevice(this);
-}
-
-void ATDeviceDiskDriveFull::InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) {
-	mpAudioSyncMixer = syncmixer;
 }
 
 uint32 ATDeviceDiskDriveFull::GetSupportedButtons() const {
@@ -1623,7 +1693,13 @@ void ATDeviceDiskDriveFull::OnWriteModeChanged() {
 }
 
 void ATDeviceDiskDriveFull::OnTimingModeChanged() {
-	mFDC.SetAccurateTimingEnabled(mpDiskInterface->IsAccurateSectorTimingEnabled());
+	// The I.S. Plate requires accurate sector timing because of a bug in its
+	// firmware where it overwrites the stack if more than about 100 sectors are
+	// found during one disk rotation. Since it doesn't check the index mark,
+	// having accurate sector timing disabled allows the firmware to see the same
+	// sectors over and over, causing it to overwrite the stack through page 0-1
+	// mirroring.
+	mFDC.SetAccurateTimingEnabled(mDeviceType == kDeviceType_ISPlate || mpDiskInterface->IsAccurateSectorTimingEnabled());
 }
 
 void ATDeviceDiskDriveFull::OnAudioModeChanged() {
@@ -1953,9 +2029,9 @@ void ATDeviceDiskDriveFull::PlayStepSound() {
 		mLastStepPhase = 0;
 
 	if (mb1050)
-		mpAudioSyncMixer->AddSound(kATAudioMix_Drive, 0, kATAudioSampleId_DiskStep2H, 0.3f + 0.7f * cosf((float)mLastStepPhase++ * nsVDMath::kfPi));
+		mAudioPlayer.PlayStepSound(kATAudioSampleId_DiskStep2H, 0.3f + 0.7f * cosf((float)mLastStepPhase++ * nsVDMath::kfPi));
 	else
-		mpAudioSyncMixer->AddSound(kATAudioMix_Drive, 0, kATAudioSampleId_DiskStep1, 0.3f + 0.7f * cosf((float)mLastStepPhase++ * nsVDMath::kfPi * 0.5f));
+		mAudioPlayer.PlayStepSound(kATAudioSampleId_DiskStep1, 0.3f + 0.7f * cosf((float)mLastStepPhase++ * nsVDMath::kfPi * 0.5f));
 
 	mLastStepSoundTime = t;
 }
@@ -1970,16 +2046,7 @@ void ATDeviceDiskDriveFull::UpdateRotationStatus() {
 
 	mpDiskInterface->SetShowMotorActive(motorEnabled);
 
-	if (motorEnabled && mbSoundsEnabled) {
-		if (!mRotationSoundId) {
-			mRotationSoundId = mpAudioSyncMixer->AddLoopingSound(kATAudioMix_Drive, 0, kATAudioSampleId_DiskRotation, 1.0f);
-		}
-	} else {
-		if (mRotationSoundId) {
-			mpAudioSyncMixer->StopSound(mRotationSoundId);
-			mRotationSoundId = 0;
-		}
-	}
+	mAudioPlayer.SetRotationSoundEnabled(motorEnabled && mbSoundsEnabled);
 }
 
 void ATDeviceDiskDriveFull::UpdateROMBank() {

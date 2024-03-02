@@ -53,7 +53,7 @@ void VDFileWatcher::Init(const wchar_t *file, IVDFileWatcherCallback *callback) 
 			mpThunk = VDCreateFunctionThunkFromMethod(this, &VDFileWatcher::StaticTimerCallback, true);
 
 			if (mpThunk) {
-				mTimerId = SetTimer(NULL, 0, 1000, (TIMERPROC)mpThunk);
+				mTimerId = SetTimer(NULL, 0, 1000, VDGetThunkFunction<TIMERPROC>(mpThunk));
 			}
 		}
 	}
@@ -87,7 +87,7 @@ void VDFileWatcher::InitDir(const wchar_t *path, bool subdirs, IVDFileWatcherCal
 			mpThunk = VDCreateFunctionThunkFromMethod(this, &VDFileWatcher::StaticTimerCallback, true);
 
 			if (mpThunk) {
-				mTimerId = SetTimer(NULL, 0, 1000, (TIMERPROC)mpThunk);
+				mTimerId = SetTimer(NULL, 0, 1000, VDGetThunkFunction<TIMERPROC>(mpThunk));
 			}
 		}
 	}
@@ -136,7 +136,11 @@ bool VDFileWatcher::Wait(uint32 delay) {
 	return true;
 }
 
+#if VD_PTR_SIZE > 4
+void VDFileWatcher::StaticTimerCallback(void *, unsigned, unsigned __int64, unsigned long) {
+#else
 void VDFileWatcher::StaticTimerCallback(void *, unsigned, unsigned, unsigned long) {
+#endif
 	if (mbRepeatRequested) {
 		if (mpCB)
 			mbRepeatRequested = !mpCB->OnFileUpdated(mPath.c_str());

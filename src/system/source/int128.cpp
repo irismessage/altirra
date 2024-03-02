@@ -393,8 +393,6 @@
 	}
 
 	void vdint128::setSquare(sint64 v) {
-		vdint128 r;
-
 		uint32 u0 = (uint32)v;
 		uint32 u1 = (uint32)(v >> 32);
 		uint64 m0 = u0*u0;
@@ -410,11 +408,11 @@
 		d[0] = s0;
 
 		d[1] = s1a + s1b;
-		if (d[1] < s1b)
+		if ((uint32)d[1] < s1b)
 			++q[1];
 
 		d[1] += s1b;
-		if (d[1] < s1b)
+		if ((uint32)d[1] < s1b)
 			++q[1];
 	}
 

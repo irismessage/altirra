@@ -48,6 +48,22 @@ void ATArtifactBlendExchange_SSE2(uint32 *dst, uint32 *blendDst, uint32 n) {
 	}
 }
 
+void ATArtifactBlendScanlines_SSE2(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n) {
+	__m128i *VDRESTRICT dst = (__m128i *)dst0;
+	const __m128i *VDRESTRICT src1 = (const __m128i *)src10;
+	const __m128i *VDRESTRICT src2 = (const __m128i *)src20;
+	const uint32 n4 = n >> 2;
+	const __m128i zero = _mm_setzero_si128();
+
+	for(uint32 i=0; i<n4; ++i) {
+		__m128i prev = *src1++;
+		__m128i next = *src2++;
+		__m128i r = _mm_avg_epu8(prev, next);
+
+		*dst++ = _mm_avg_epu8(r, _mm_avg_epu8(r, zero));
+	}
+}
+
 void ATArtifactNTSCFinal_SSE2(void *dst0, const void *srcr0, const void *srcg0, const void *srcb0, uint32 count) {
 	const __m128i *VDRESTRICT srcr = (const __m128i *)srcr0;
 	const __m128i *VDRESTRICT srcg = (const __m128i *)srcg0;

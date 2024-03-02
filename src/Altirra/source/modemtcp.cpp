@@ -74,6 +74,7 @@ protected:
 	void OnCommandLocked();
 	void OnRead(uint32 bytes);
 	void OnWrite();
+	void OnError(int code);
 	void QueueRead();
 	void QueueWrite();
 	void FlushSpecialReplies();
@@ -99,16 +100,12 @@ protected:
 	SOCKET mSocket;
 	SOCKET mSocket2;
 	WSAEVENT mCommandEvent;
-	WSAEVENT mReadEvent;
-	WSAEVENT mWriteEvent;
-	WSAEVENT mExtraEvent;
-	bool	mbReadPending;
+	WSAEVENT mNetworkEvent;
+	WSAEVENT mNetwork2Event;
 	bool	mbReadEOF;
 	bool	mbConnected;
 	bool	mbListenIPv6;
 	VDStringA	mTelnetTermType;
-	WSABUF		mReadHeader;
-	WSABUF		mWriteHeader;
 	WSAOVERLAPPED mOverlappedRead;
 	WSAOVERLAPPED mOverlappedWrite;
 
@@ -117,7 +114,6 @@ protected:
 	// begin mutex protected members
 	VDCriticalSection	mMutex;
 	uint32	mWriteQueuedBytes;
-	bool	mbWritePending;
 	bool	mbExit;
 
 	VDStringA	mLogMessages;
@@ -177,9 +173,8 @@ ATModemDriverTCP::ATModemDriverTCP()
 	: mSocket(INVALID_SOCKET)
 	, mSocket2(INVALID_SOCKET)
 	, mCommandEvent(WSA_INVALID_EVENT)
-	, mReadEvent(WSA_INVALID_EVENT)
-	, mWriteEvent(WSA_INVALID_EVENT)
-	, mExtraEvent(WSA_INVALID_EVENT)
+	, mNetworkEvent(WSA_INVALID_EVENT)
+	, mNetwork2Event(WSA_INVALID_EVENT)
 	, mbListenIPv6(true)
 	, mbLoggingEnabled(false)
 	, mbTelnetEmulation(false)
@@ -383,8 +378,6 @@ uint32 ATModemDriverTCP::Write(const void *data, uint32 len, bool escapeChars) {
 }
 
 void ATModemDriverTCP::ThreadRun() {
-	mbReadPending = false;
-	mbWritePending = false;
 	mbConnected = false;
 	mbReadEOF = false;
 	mTelnetState = kTS_WaitingForIAC;
@@ -397,14 +390,12 @@ void ATModemDriverTCP::ThreadRun() {
 	mSpecialReplyIndex = 0;
 
 	mCommandEvent = WSACreateEvent();
-	mReadEvent = WSACreateEvent();
-	mWriteEvent = WSACreateEvent();
-	mExtraEvent = WSACreateEvent();
+	mNetworkEvent = WSACreateEvent();
+	mNetwork2Event = WSACreateEvent();
 
 	if (mCommandEvent == WSA_INVALID_EVENT ||
-		mReadEvent == WSA_INVALID_EVENT ||
-		mWriteEvent == WSA_INVALID_EVENT ||
-		mExtraEvent == WSA_INVALID_EVENT)
+		mNetworkEvent == WSA_INVALID_EVENT ||
+		mNetwork2Event == WSA_INVALID_EVENT)
 	{
 		VDDEBUG("ModemTCP: Unable to create events.\n");
 		if (mpCB)
@@ -415,6 +406,8 @@ void ATModemDriverTCP::ThreadRun() {
 	}
 
 	mThreadInited.signal();
+
+	LONG networkEventMask = 0;
 
 	if (mAddress.empty()) {
 		// create IPv4 listening socket
@@ -463,7 +456,7 @@ void ATModemDriverTCP::ThreadRun() {
 			return;
 		}
 
-		if (SOCKET_ERROR == WSAEventSelect(mSocket, mReadEvent, FD_ACCEPT)) {
+		if (SOCKET_ERROR == WSAEventSelect(mSocket, mNetworkEvent, FD_ACCEPT | FD_READ | FD_WRITE | FD_CLOSE)) {
 			VDDEBUG("ModemTCP: Unable to enable asynchronous accept.\n");
 			if (mpCB)
 				mpCB->OnEvent(this, kATModemPhase_Accept, kATModemEvent_GenericError);
@@ -486,7 +479,7 @@ void ATModemDriverTCP::ThreadRun() {
 					setsockopt(mSocket2, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse, sizeof reuse);
 
 					if (!listen(mSocket2, 1)) {
-						if (SOCKET_ERROR == WSAEventSelect(mSocket2, mWriteEvent, FD_ACCEPT)) {
+						if (SOCKET_ERROR == WSAEventSelect(mSocket2, mNetwork2Event, FD_ACCEPT | FD_READ | FD_WRITE | FD_CLOSE)) {
 							closesocket(mSocket2);
 							mSocket2 = INVALID_SOCKET;
 						}
@@ -515,10 +508,28 @@ void ATModemDriverTCP::ThreadRun() {
 			if (sock2 != INVALID_SOCKET) {
 				closesocket(mSocket);
 
-				if (mSocket2 != INVALID_SOCKET)
+				if (mSocket2 != INVALID_SOCKET) {
 					closesocket(mSocket2);
+					mSocket2 = INVALID_SOCKET;
+				}
 
+				WSACloseEvent(mNetworkEvent);
+
+				mNetworkEvent = WSACreateEvent();
 				mSocket = sock2;
+
+				if (mNetworkEvent == WSA_INVALID_EVENT) {
+					VDDEBUG("ModemTCP: unable to create accepted socket listening event.\n");
+
+					if (mpCB)
+						mpCB->OnEvent(this, kATModemPhase_Accept, kATModemEvent_GenericError);
+
+					WorkerShutdown();
+					return;
+				}
+
+				WSAEventSelect(mSocket, mNetworkEvent, FD_READ | FD_WRITE | FD_CLOSE);
+				networkEventMask = FD_CONNECT;
 
 				// we're connected... grab the incoming address before we send the connected
 				// event
@@ -550,7 +561,7 @@ void ATModemDriverTCP::ThreadRun() {
 				return;
 			}
 
-			HANDLE h[3] = { mCommandEvent, mReadEvent, mWriteEvent };
+			HANDLE h[3] = { mCommandEvent, mNetworkEvent, mNetwork2Event };
 			for(;;) {
 				DWORD r = WSAWaitForMultipleEvents(mSocket2 != INVALID_SOCKET ? 3 : 2, h, FALSE, INFINITE, FALSE);
 
@@ -568,13 +579,11 @@ void ATModemDriverTCP::ThreadRun() {
 					}
 				} else if (r == WAIT_OBJECT_0 + 1) {
 					WSANETWORKEVENTS events;
-					WSAEnumNetworkEvents(mSocket, mReadEvent, &events);
+					WSAEnumNetworkEvents(mSocket, mNetworkEvent, &events);
 					break;
 				} else if (r == WAIT_OBJECT_0 + 2) {
 					WSANETWORKEVENTS events;
-					WSAEnumNetworkEvents(mSocket2, mWriteEvent, &events);
-
-					std::swap(mSocket, mSocket2);
+					WSAEnumNetworkEvents(mSocket2, mNetwork2Event, &events);
 					break;
 				} else {
 					VDDEBUG("ModemTCP: WFME() failed.\n");
@@ -626,11 +635,13 @@ void ATModemDriverTCP::ThreadRun() {
 			if (p->ai_family != PF_INET && p->ai_family != PF_INET6)
 				continue;
 
-			mSocket = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-			if (mSocket != INVALID_SOCKET)
-				cr = connect(mSocket, p->ai_addr, (int)p->ai_addrlen);
+			mSocket = WSASocket(p->ai_family, p->ai_socktype, p->ai_protocol, nullptr, 0, WSA_FLAG_OVERLAPPED);
+			if (mSocket != INVALID_SOCKET) {
+				if (SOCKET_ERROR != WSAEventSelect(mSocket, mNetworkEvent, FD_CONNECT | FD_READ | FD_WRITE | FD_CLOSE))
+					cr = connect(mSocket, p->ai_addr, (int)p->ai_addrlen);
+			}
 
-			if (!cr)
+			if (!cr || WSAGetLastError() == WSAEWOULDBLOCK)
 				break;
 
 			closesocket(mSocket);
@@ -639,7 +650,7 @@ void ATModemDriverTCP::ThreadRun() {
 
 		freeaddrinfo(results);
 
-		if (cr) {
+		if (mSocket == INVALID_SOCKET) {
 			VDDEBUG("ModemTCP: Unable to connect.\n");
 			if (mpCB)
 				mpCB->OnEvent(this, kATModemPhase_Connecting, kATModemEvent_ConnectFailed);
@@ -662,36 +673,19 @@ void ATModemDriverTCP::ThreadRun() {
 	BOOL oobinline = TRUE;
 	setsockopt(mSocket, SOL_SOCKET, SO_OOBINLINE, (const char *)&oobinline, sizeof oobinline);
 
-	if (mpCB)
-		mpCB->OnEvent(this, kATModemPhase_Connected, kATModemEvent_Connected);
-
-	WSAEventSelect(mSocket, mExtraEvent, FD_CLOSE);
-
-	mbConnected = true;
 	mbTelnetWaitingForEchoResponse = false;
 	mbTelnetWaitingForSGAResponse = false;
 
-	QueueRead();
-
-	if (mbTelnetListeningMode && mbTelnetEmulation) {
-		// Ask the client to begin line mode negotiation.
-		mSpecialReplies.push_back(0xFF);	// IAC
-		mSpecialReplies.push_back(0xFB);	// WILL
-		mSpecialReplies.push_back(0x01);	// ECHO
-		mSpecialReplies.push_back(0xFF);	// IAC
-		mSpecialReplies.push_back(0xFD);	// DO
-		mSpecialReplies.push_back(0x03);	// SUPPRESS-GO-AHEAD
-		mSpecialReplies.push_back(0xFF);	// IAC
-		mSpecialReplies.push_back(0xFD);	// DO
-		mSpecialReplies.push_back(0x22);	// LINEMODE (RFC 1184)
-		mbTelnetWaitingForEchoResponse = true;
-		mbTelnetWaitingForSGAResponse = true;
-
-		FlushSpecialReplies();
-	}
-
 	mbTelnetSawIncomingCR = false;
 	mbTelnetSawIncomingATASCII = false;
+
+	WSAEVENT events[2] = {
+		mCommandEvent,
+		mNetworkEvent,
+	};
+
+	QueueRead();
+	QueueWrite();
 
 	for(;;) {
 		if (!mbConnected && mbReadEOF) {
@@ -707,136 +701,100 @@ void ATModemDriverTCP::ThreadRun() {
 			}
 		}
 
-		WSAEVENT events[4];
-		enum {
-			kEventCommand,
-			kEventExtra,
-			kEventRead,
-			kEventWrite
-		} eventIds[4];
-		DWORD numEvents = 0;
+		if (networkEventMask & FD_CONNECT) {
+			if (!mbConnected) {
+				mbConnected = true;
 
-		events[numEvents] = mCommandEvent;
-		eventIds[numEvents] = kEventCommand;
-		++numEvents;
+				if (mbTelnetListeningMode && mbTelnetEmulation) {
+					// Ask the client to begin line mode negotiation.
+					mSpecialReplies.push_back(0xFF);	// IAC
+					mSpecialReplies.push_back(0xFB);	// WILL
+					mSpecialReplies.push_back(0x01);	// ECHO
+					mSpecialReplies.push_back(0xFF);	// IAC
+					mSpecialReplies.push_back(0xFD);	// DO
+					mSpecialReplies.push_back(0x03);	// SUPPRESS-GO-AHEAD
+					mSpecialReplies.push_back(0xFF);	// IAC
+					mSpecialReplies.push_back(0xFD);	// DO
+					mSpecialReplies.push_back(0x22);	// LINEMODE (RFC 1184)
+					mbTelnetWaitingForEchoResponse = true;
+					mbTelnetWaitingForSGAResponse = true;
 
-		if (mbReadPending) {
-			events[numEvents] = mReadEvent;
-			eventIds[numEvents] = kEventRead;
-			++numEvents;
+					FlushSpecialReplies();
+				}
+
+				if (mpCB)
+					mpCB->OnEvent(this, kATModemPhase_Connected, kATModemEvent_Connected);
+			}
 		}
 
-		// this needs to be after the read event
-		events[numEvents] = mExtraEvent;
-		eventIds[numEvents] = kEventExtra;
-		++numEvents;
+		if (networkEventMask & FD_CLOSE) {
+			mbConnected = false;
+			mbReadEOF = true;
 
-		if (mbWritePending) {
-			events[numEvents] = mWriteEvent;
-			eventIds[numEvents] = kEventWrite;
-			++numEvents;
+			if (mpCB)
+				mpCB->OnEvent(this, kATModemPhase_Connected, kATModemEvent_ConnectionClosing);
+
+			// loop back around, begin waiting for drain
+			continue;
 		}
 
-		DWORD waitResult = WSAWaitForMultipleEvents(numEvents, events, FALSE, INFINITE, TRUE);
+		if (networkEventMask & FD_READ) {
+			QueueRead();
+		}
 
-		if (waitResult >= WSA_WAIT_EVENT_0 && waitResult < WSA_WAIT_EVENT_0 + numEvents) {
-			switch(eventIds[waitResult - WSA_WAIT_EVENT_0]) {
-				case kEventCommand:
-					{
-						mMutex.Lock();
-						OnCommandLocked();
-						WSAResetEvent(mCommandEvent);
-						bool exit = mbExit;
+		if (networkEventMask & FD_WRITE) {
+			QueueWrite();
+		}
 
-						if (exit) {
-							mMutex.Unlock();
-							WorkerShutdown();
-							return;
-						}
+		networkEventMask = 0;
 
-						bool shouldWrite = !mbWritePending && mWriteQueuedBytes;
-						bool shouldRead = !mbReadPending && mReadIndex >= mReadLevel;
-						mMutex.Unlock();
+		DWORD waitResult = WSAWaitForMultipleEvents(2, events, FALSE, INFINITE, TRUE);
 
-						if (shouldWrite)
-							QueueWrite();
+		if (waitResult == WSA_WAIT_EVENT_0) {
+			mMutex.Lock();
+			OnCommandLocked();
+			WSAResetEvent(mCommandEvent);
+			bool exit = mbExit;
 
-						if (shouldRead)
-							QueueRead();
-					}
-					break;
+			if (exit) {
+				mMutex.Unlock();
+				WorkerShutdown();
+				return;
+			}
 
-				case kEventExtra:
-					{
-						WSANETWORKEVENTS events;
+			bool shouldWrite = mWriteQueuedBytes;
+			bool shouldRead = mReadIndex >= mReadLevel;
+			mMutex.Unlock();
 
-						if (!WSAEnumNetworkEvents(mSocket, mExtraEvent, &events)) {
-							if (events.lNetworkEvents & FD_CLOSE) {
-								DWORD err = events.iErrorCode[FD_CLOSE_BIT];
+			if (shouldWrite)
+				QueueWrite();
 
-								mbConnected = false;
-								mbReadEOF = true;
+			if (shouldRead)
+				QueueRead();
+		} else if (waitResult == WSA_WAIT_EVENT_0 + 1) {
+			WSANETWORKEVENTS events {};
 
-								if (err) {
-									mReadIndex = 0;
-									mReadLevel = 0;
-								}
+			if (!WSAEnumNetworkEvents(mSocket, mNetworkEvent, &events)) {
+				networkEventMask = events.lNetworkEvents;
 
+				for(int i=0; i<FD_MAX_EVENTS; ++i) {
+					if (networkEventMask & (1 << i)) {
+						if (events.iErrorCode[i]) {
+							OnError(events.iErrorCode[i]);
+
+							if (i == FD_CONNECT_BIT) {
+								networkEventMask = 0;
 								if (mpCB)
-									mpCB->OnEvent(this, kATModemPhase_Connected, kATModemEvent_ConnectionClosing);
+									mpCB->OnEvent(this, kATModemPhase_Connecting, kATModemEvent_ConnectFailed);
+
+								WorkerShutdown();
+								return;
 							}
-						} else {
-							WSAResetEvent(mExtraEvent);
 						}
 					}
-					break;
-
-				case kEventRead:
-					{
-						DWORD actual = 0;
-						DWORD flags = 0;
-
-						mbReadPending = false;
-
-						if (WSAGetOverlappedResult(mSocket, &mOverlappedRead, &actual, TRUE, &flags)) {
-							if (actual)
-								OnRead(actual);
-						}
-
-						QueueRead();
-					}
-					break;
-
-				case kEventWrite:
-					{
-						DWORD actual;
-						DWORD flags;
-						
-						mMutex.Lock();
-						mbWritePending = false;
-						mMutex.Unlock();
-						
-						if (WSAGetOverlappedResult(mSocket, &mOverlappedWrite, &actual, TRUE, &flags)) {
-							mMutex.Lock();
-							if (mWriteQueuedBytes > actual) {
-								memmove(mWriteBuffer, mWriteBuffer + actual, mWriteQueuedBytes - actual);
-								mWriteQueuedBytes -= actual;
-							} else {
-								mWriteQueuedBytes = 0;
-							}
-							mMutex.Unlock();
-
-							OnWrite();
-						} else {
-							// Ugh... just pretend we sent everything.
-							mMutex.Lock();
-							mWriteQueuedBytes = 0;
-							mMutex.Unlock();
-						}
-
-						QueueWrite();
-					}
-					break;
+				}
+			} else {
+				WSAResetEvent(mNetworkEvent);
 			}
 		} else if (waitResult == WAIT_FAILED)
 			break;
@@ -863,25 +821,14 @@ void ATModemDriverTCP::WorkerShutdown() {
 		mCommandEvent = WSA_INVALID_EVENT;
 	}
 
-	if (mExtraEvent != WSA_INVALID_EVENT) {
-		WSACloseEvent(mExtraEvent);
-		mExtraEvent = WSA_INVALID_EVENT;
+	if (mNetworkEvent != WSA_INVALID_EVENT) {
+		WSACloseEvent(mNetworkEvent);
+		mNetworkEvent = WSA_INVALID_EVENT;
 	}
 
-	if (mWriteEvent != WSA_INVALID_EVENT) {
-		if (mbWritePending)
-			WSAWaitForMultipleEvents(1, &mWriteEvent, FALSE, INFINITE, FALSE);
-
-		WSACloseEvent(mWriteEvent);
-		mWriteEvent = WSA_INVALID_EVENT;
-	}
-
-	if (mReadEvent != WSA_INVALID_EVENT) {
-		if (mbReadPending)
-			WSAWaitForMultipleEvents(1, &mReadEvent, FALSE, INFINITE, FALSE);
-
-		WSACloseEvent(mReadEvent);
-		mReadEvent = WSA_INVALID_EVENT;
+	if (mNetwork2Event != WSA_INVALID_EVENT) {
+		WSACloseEvent(mNetwork2Event);
+		mNetwork2Event = WSA_INVALID_EVENT;
 	}
 }
 
@@ -1206,49 +1153,38 @@ void ATModemDriverTCP::OnWrite() {
 		mpCB->OnWriteAvail(this);
 }
 
+void ATModemDriverTCP::OnError(int err) {
+	if (!err || err == WSAEWOULDBLOCK)
+		return;
+
+	if (mpCB) {
+		ATModemEvent ev = kATModemEvent_GenericError;
+
+		if (err == WSAECONNABORTED || err == WSAECONNRESET) {
+			ev = kATModemEvent_ConnectionDropped;
+			mbConnected = false;
+			mbReadEOF = true;
+		}
+
+		mpCB->OnEvent(this, kATModemPhase_Connected, ev);
+	}
+}
+
 void ATModemDriverTCP::QueueRead() {
-	for(;;) {
-		if (mbReadPending || mbReadEOF || mReadIndex < mReadLevel)
-			break;
+	if (mbReadEOF || mReadIndex < mReadLevel)
+		return;
 
-		mMutex.Lock();
-		mReadIndex = 0;
-		mReadLevel = 0;
-		mReadHeader.buf = (char *)mReadBuffer;
-		mReadHeader.len = sizeof mReadBuffer;
-		mbReadPending = true;
-		mMutex.Unlock();
+	mMutex.Lock();
+	mReadIndex = 0;
+	mReadLevel = 0;
+	mMutex.Unlock();
 
-		mOverlappedRead.hEvent = mReadEvent;
+	int actual = recv(mSocket, (char *)mReadBuffer, sizeof mReadBuffer, 0);
 
-		DWORD actual = 0;
-		DWORD flags = 0;
-		WSAResetEvent(mReadEvent);
-		int result = WSARecv(mSocket, &mReadHeader, 1, &actual, &flags, &mOverlappedRead, NULL);
-
-		if (result == 0) {
-			mMutex.Lock();
-			mbReadPending = false;
-			mMutex.Unlock();
-			OnRead(actual);
-			continue;
-		}
-
-		DWORD err = WSAGetLastError();
-		if (err == WSA_IO_PENDING)
-			break;
-
-		mbReadPending = false;
-
-		if (mpCB) {
-			ATModemEvent ev = kATModemEvent_GenericError;
-
-			if (err == WSAECONNABORTED || err == WSAECONNRESET)
-				ev = kATModemEvent_ConnectionDropped;
-
-			mpCB->OnEvent(this, kATModemPhase_Connected, ev);
-			break;
-		}
+	if (actual >= 0) {
+		OnRead(actual);
+	} else {
+		OnError(WSAGetLastError());
 	}
 }
 
@@ -1261,59 +1197,41 @@ void ATModemDriverTCP::QueueWrite() {
 			break;
 		}
 
-		if (!mWriteQueuedBytes || mbWritePending)
+		if (!mWriteQueuedBytes)
 			break;
 
-		mWriteHeader.buf = (char *)mWriteBuffer;
-		mWriteHeader.len = mWriteQueuedBytes;
-		mbWritePending = true;
+		const uint32 bytesQueued = mWriteQueuedBytes;
 
 		mMutex.Unlock();
 
-		mOverlappedWrite.hEvent = mWriteEvent;
-
-		DWORD actual = 0;
-		WSAResetEvent(mWriteEvent);
-		int result = WSASend(mSocket, &mWriteHeader, 1, &actual, 0, &mOverlappedWrite, NULL);
+		int actual = send(mSocket, (char *)mWriteBuffer, bytesQueued, 0);
 
 		mMutex.Lock();
 
-		if (result == 0) {
-			mbWritePending = false;
-
-			if (actual >= mWriteQueuedBytes) {
-				mWriteQueuedBytes = 0;
-			} else {
-				memmove(mWriteBuffer, mWriteBuffer + actual, mWriteQueuedBytes - actual);
-				mWriteQueuedBytes -= actual;
+		if (actual <= 0) {
+			if (actual < 0) {
+				mMutex.Unlock();
+				OnError(WSAGetLastError());
+				return;
 			}
 
-			mMutex.Unlock();
-
-			OnWrite();
-
-			mMutex.Lock();
-			continue;
-		}
-
-		DWORD err = WSAGetLastError();
-
-		if (err == WSA_IO_PENDING)
-			break;
-
-		mbWritePending = false;
-
-		if (mpCB) {
-			ATModemEvent ev = kATModemEvent_GenericError;
-
-			if (err == WSAECONNABORTED || err == WSAECONNRESET)
-				ev = kATModemEvent_ConnectionDropped;
-
-			mpCB->OnEvent(this, kATModemPhase_Connected, ev);
 			break;
 		}
 
+		if ((uint32)actual >= mWriteQueuedBytes) {
+			mWriteQueuedBytes = 0;
+		} else {
+			memmove(mWriteBuffer, mWriteBuffer + actual, mWriteQueuedBytes - actual);
+			mWriteQueuedBytes -= actual;
+		}
+
+		mMutex.Unlock();
+
+		OnWrite();
+
+		mMutex.Lock();
 	}
+
 	mMutex.Unlock();
 }
 

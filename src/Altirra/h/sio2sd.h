@@ -15,8 +15,8 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#ifndef f_AT_SDRIVE_H
-#define f_AT_SDRIVE_H
+#ifndef f_AT_SIO2SD_H
+#define f_AT_SIO2SD_H
 
 #include <vd2/system/vdstl.h>
 #include <vd2/system/refcount.h>

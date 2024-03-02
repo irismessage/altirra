@@ -493,7 +493,9 @@ protected:
 	void ClearTriggers();
 	void SetTrigger(Mapping& mapping, bool state);
 	void Update5200Controller();
-	void InitPresetMap(const PresetMapDef& def, ATInputMap **ppMap);
+	uint32 GetPresetMapDefCount() const;
+	const PresetMapDef *GetPresetMapDef(uint32 index) const;
+	void InitPresetMap(const PresetMapDef& def, ATInputMap **ppMap) const;
 	void InitPresetMaps();
 	bool IsTriggerRestricted(const Trigger& trigger) const;
 
@@ -562,9 +564,6 @@ protected:
 	ATInputUnitIdentifier mUnitIds[32];
 	VDStringW	mUnitNames[32];
 	IATInputUnitNameSource *mpUnitNameSources[32];
-
-	typedef vdfastvector<ATInputMap *> PresetMaps;
-	PresetMaps mPresetMaps;
 
 	static const PresetMapDef kPresetMapDefs[];
 };

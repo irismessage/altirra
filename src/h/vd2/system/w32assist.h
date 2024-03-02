@@ -41,18 +41,6 @@ bool VDIsAtLeast8W32();
 bool VDIsAtLeast81W32();
 bool VDIsAtLeast10W32();
 
-// useful constants missing from the Platform SDK
-
-enum {
-#ifdef _M_AMD64
-	MENUITEMINFO_SIZE_VERSION_400A = sizeof(MENUITEMINFOA),
-	MENUITEMINFO_SIZE_VERSION_400W = sizeof(MENUITEMINFOW)
-#else
-	MENUITEMINFO_SIZE_VERSION_400A = (offsetof(MENUITEMINFOA, cch) + sizeof(UINT)),
-	MENUITEMINFO_SIZE_VERSION_400W = (offsetof(MENUITEMINFOW, cch) + sizeof(UINT))
-#endif
-};
-
 // Requires Windows 8.1
 #ifndef WM_DPICHANGED
 #define WM_DPICHANGED 0x02E0

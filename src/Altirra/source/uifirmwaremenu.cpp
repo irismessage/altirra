@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #include "oshelper.h"
 #include "firmwaremanager.h"
+#include "uifirmwaremenu.h"
 #include "uimenu.h"
 #include <at/atui/uimenulist.h>
 #include "simulator.h"
@@ -60,70 +61,19 @@ bool ATUIFirmwareMenuProvider::IsRebuildNeeded() const {
 void ATUIFirmwareMenuProvider::RebuildMenu(ATUIMenu& menu, uint32 idbase) {
 	ATFirmwareManager *fwmgr = g_sim.GetFirmwareManager();
 
-	typedef vdvector<ATFirmwareInfo> Firmwares;
-	Firmwares fws;
+	vdvector<ATFirmwareInfo> fws;
 
 	fwmgr->GetFirmwareList(fws);
 
 	typedef vdfastvector<const ATFirmwareInfo *> SortedFirmwares;
 	SortedFirmwares sortedFirmwares;
 
-	if (!mbIsBasic)
+	if (mbIsBasic) {
+		ATUIGetBASICFirmwareList(fws, sortedFirmwares);
+	} else {
 		mLastHardwareMode = g_sim.GetHardwareMode();
-
-	for(Firmwares::const_iterator it(fws.begin()), itEnd(fws.end());
-		it != itEnd;
-		++it)
-	{
-		const ATFirmwareInfo& fwi = *it;
-
-		if (!fwi.mbVisible)
-			continue;
-
-		switch(fwi.mType) {
-			case kATFirmwareType_Kernel800_OSA:
-			case kATFirmwareType_Kernel800_OSB:
-				if (mbIsBasic)
-					continue;
-
-				if (mLastHardwareMode == kATHardwareMode_5200)
-					continue;
-				break;
-
-			case kATFirmwareType_KernelXL:
-			case kATFirmwareType_KernelXEGS:
-			case kATFirmwareType_Kernel1200XL:
-				if (mbIsBasic)
-					continue;
-
-				if (mLastHardwareMode != kATHardwareMode_1200XL &&
-					mLastHardwareMode != kATHardwareMode_130XE &&
-					mLastHardwareMode != kATHardwareMode_800XL &&
-					mLastHardwareMode != kATHardwareMode_XEGS)
-					continue;
-				break;
-
-			case kATFirmwareType_Kernel5200:
-				if (mbIsBasic)
-					continue;
-
-				if (mLastHardwareMode != kATHardwareMode_5200)
-					continue;
-				break;
-
-			case kATFirmwareType_Basic:
-				if (!mbIsBasic)
-					continue;
-				break;
-
-			default:
-				continue;
-		}
-
-		sortedFirmwares.push_back(&fwi);
+		ATUIGetKernelFirmwareList(mLastHardwareMode, fws, sortedFirmwares);
 	}
-
-	std::sort(sortedFirmwares.begin(), sortedFirmwares.end(), SortFirmwarePtrsByName());
 
 	mFirmwareIds.clear();
 
@@ -172,4 +122,62 @@ void ATUIInitFirmwareMenuCallbacks(ATFirmwareManager *fwmgr) {
 
 	g_ATUIFirmwareMenuProviders[1].Init(true);
 	ATUISetDynamicMenuProvider(1, &g_ATUIFirmwareMenuProviders[1]);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+void ATUIGetKernelFirmwareList(ATHardwareMode hwmode, vdvector<ATFirmwareInfo>& firmwareList, vdfastvector<const ATFirmwareInfo *>& sortedFirmwareList) {
+	ATFirmwareManager *fwmgr = g_sim.GetFirmwareManager();
+
+	fwmgr->GetFirmwareList(firmwareList);
+
+	for(const ATFirmwareInfo& fwi : firmwareList) {
+		if (!fwi.mbVisible)
+			continue;
+
+		switch(fwi.mType) {
+			case kATFirmwareType_Kernel800_OSA:
+			case kATFirmwareType_Kernel800_OSB:
+				if (hwmode == kATHardwareMode_5200)
+					continue;
+				break;
+
+			case kATFirmwareType_KernelXL:
+			case kATFirmwareType_KernelXEGS:
+			case kATFirmwareType_Kernel1200XL:
+				if (hwmode != kATHardwareMode_1200XL &&
+					hwmode != kATHardwareMode_130XE &&
+					hwmode != kATHardwareMode_800XL &&
+					hwmode != kATHardwareMode_XEGS)
+					continue;
+				break;
+
+			case kATFirmwareType_Kernel5200:
+				if (hwmode != kATHardwareMode_5200)
+					continue;
+				break;
+
+			default:
+				continue;
+		}
+
+		sortedFirmwareList.push_back(&fwi);
+	}
+
+	std::sort(sortedFirmwareList.begin(), sortedFirmwareList.end(),
+		[](const ATFirmwareInfo *x, const ATFirmwareInfo *y) { return x->mName.comparei(y->mName) < 0; });
+}
+
+void ATUIGetBASICFirmwareList(vdvector<ATFirmwareInfo>& firmwareList, vdfastvector<const ATFirmwareInfo *>& sortedFirmwareList) {
+	ATFirmwareManager *fwmgr = g_sim.GetFirmwareManager();
+
+	fwmgr->GetFirmwareList(firmwareList);
+
+	for(const ATFirmwareInfo& fwi : firmwareList) {
+		if (fwi.mbVisible && fwi.mType == kATFirmwareType_Basic)
+			sortedFirmwareList.push_back(&fwi);
+	}
+
+	std::sort(sortedFirmwareList.begin(), sortedFirmwareList.end(),
+		[](const ATFirmwareInfo *x, const ATFirmwareInfo *y) { return x->mName.comparei(y->mName) < 0; });
 }

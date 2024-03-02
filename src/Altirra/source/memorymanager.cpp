@@ -67,6 +67,7 @@ ATMemoryManager::ATMemoryManager() {
 	mpCPUWriteBankMap = &mWriteBankTable;
 	mpCPUReadPageMap = &mCPUReadPageMap;
 	mpCPUWritePageMap = &mCPUWritePageMap;
+	mpCPUReadAddressPageMap = mCPUReadAddressSpaceMap;
 }
 
 ATMemoryManager::~ATMemoryManager() {
@@ -391,6 +392,36 @@ void ATMemoryManager::SetLayerMemory(ATMemoryLayer *layer0, const uint8 *base, u
 	}
 }
 
+void ATMemoryManager::SetLayerMemoryAndAddressSpace(ATMemoryLayer *layer0, const uint8 *base, uint32 pageOffset, uint32 pageCount, uint32 addressSpace, uint32 addrMask, int readOnly) {
+	VDASSERT(base);
+	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
+
+	bool ro = (readOnly >= 0) ? readOnly != 0 : layer->mbReadOnly;
+
+	if (base != layer->mpBase || layer->mPageOffset != pageOffset || layer->mPageCount != pageCount || addrMask != layer->mAddrMask || ro != layer->mbReadOnly
+		|| addressSpace != layer->mAddressSpace) {
+		uint32 oldBegin = layer->mEffectiveStart;
+		uint32 oldEnd = layer->mEffectiveEnd;
+
+		layer->mpBase = base;
+		layer->mAddrMask = addrMask;
+		layer->mPageOffset = pageOffset;
+		layer->mPageCount = pageCount;
+		layer->mbReadOnly = ro;
+		layer->mAddressSpace = addressSpace;
+
+		layer->UpdateEffectiveRange();
+
+		uint32 newBegin = layer->mEffectiveStart;
+		uint32 newEnd = layer->mEffectiveEnd;
+
+		uint32 rewriteOffset = std::min<uint32>(oldBegin, newBegin);
+		uint32 rewriteCount = std::max<uint32>(oldEnd, newEnd) - rewriteOffset;
+
+		RebuildAllNodes(rewriteOffset, rewriteCount, layer->mFlags);
+	}
+}
+
 void ATMemoryManager::SetLayerAddressRange(ATMemoryLayer *layer0, uint32 pageOffset, uint32 pageCount) {
 	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
 
@@ -500,6 +531,17 @@ void ATMemoryManager::SetLayerMaskRange(ATMemoryLayer *layer0, uint32 pageStart,
 
 	if (changed) {
 		RebuildAllNodes(layer->mPageOffset, layer->mPageCount, layer->mFlags);
+	}
+}
+
+void ATMemoryManager::SetLayerAddressSpace(ATMemoryLayer *layer0, uint32 addressSpace) {
+	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
+
+	if (layer->mAddressSpace != addressSpace) {
+		layer->mAddressSpace = addressSpace;
+
+		if (layer->mFlags & kATMemoryAccessMode_R)
+			RebuildAllNodes(layer->mPageOffset, layer->mPageCount, kATMemoryAccessMode_R);
 	}
 }
 
@@ -889,6 +931,16 @@ void ATMemoryManager::RebuildNodes(PageTable **bankTable, uint32 base, uint32 n,
 
 		if (layer->mpBase && layer->mAddrMask == 0xFFFFFFFFU && !mbFastBusEnabled && !mbFloatingIoBus) {
 			RebuildNodesFast(layer, bankTable, base, n, accessMode);
+
+			// if bank 0 and read, fill the address space map
+			if ((accessMode & kATMemoryAccessMode_R) && base < 0x100) {
+				uint32 addressSpace = layer->mAddressSpace ? layer->mAddressSpace - (layer->mPageOffset << 8) : 0;
+				const uint32 asPagesToFill = std::min<uint32>(0x100 - base, n);
+
+				for (uint32 i = 0; i < asPagesToFill; ++i)
+					mCPUReadAddressSpaceMap[base + i] = addressSpace;
+			}
+
 			pertinentLayers.swap(mLayerTempList);
 			return;
 		}
@@ -958,8 +1010,14 @@ void ATMemoryManager::RebuildNodesSlow(Layers& VDRESTRICT pertinentLayers, PageT
 			boundaryBits[layerStartInBank - bankPageStart] = true;
 			boundaryBits[layerEndInBank - bankPageStart] = true;
 
-			if (layer->mAddrMask != ~(uint32)0) {
-				uint32 step = layer->mAddrMask & ~(layer->mAddrMask - 1);
+			if (layer->mAddrMask < UINT32_C(0x80000000)) {
+				const auto lowestZeroBit = [](uint32 v) { return ~v & (v + 1); };
+
+				static_assert(lowestZeroBit(0) == 1);
+				static_assert(lowestZeroBit(1) == 2);
+				static_assert(lowestZeroBit(59) == 4);
+
+				uint32 step = lowestZeroBit(layer->mAddrMask);
 
 				for(uint32 page = layerStartInBank; page < layerEndInBank; page += step)
 					boundaryBits[page - bankPageStart] = true;
@@ -968,12 +1026,16 @@ void ATMemoryManager::RebuildNodesSlow(Layers& VDRESTRICT pertinentLayers, PageT
 
 		PageTable& pageTable = *bankTable[bank];
 		uintptr *dst = bank == startingBank ? &pageTable[pageStart & 255] : &pageTable[0];
+		uint32 *addrSpaceTable = (bank == 0 && accessMode == kATMemoryAccessMode_R) ? &mCPUReadAddressSpaceMap[pageStart & 255] : nullptr;
 
 		for(uint32 page = pageStart; page < pageEnd; ++page) {
 			uintptr *root = dst++;
 
 			if (!boundaryBits[page - bankPageStart]) {
 				*root = root[-1];
+
+				if (addrSpaceTable)
+					*addrSpaceTable++ = addrSpaceTable[-1];
 				continue;
 			}
 
@@ -1022,10 +1084,15 @@ void ATMemoryManager::RebuildNodesSlow(Layers& VDRESTRICT pertinentLayers, PageT
 					}
 					break;
 
-				case kATMemoryAccessMode_CPURead:
+				case kATMemoryAccessMode_CPURead: {
+					uint32 addrSpace = kAddrSpaceInvalid;
+
 					for(MemoryLayer *layer : pertinentLayers) {
 						if (page < layer->mEffectiveStart || page >= layer->mEffectiveEnd)
 							continue;
+
+						if (layer->mAddressSpace != kAddrSpaceInvalid && addrSpace == kAddrSpaceInvalid)
+							addrSpace = layer->mAddressSpace - (layer->mPageOffset << 8);
 
 						if (mbFloatingIoBus && layer->mbIoBus) {
 							MemoryNode *node = AllocNode(allocSet);
@@ -1072,7 +1139,11 @@ void ATMemoryManager::RebuildNodesSlow(Layers& VDRESTRICT pertinentLayers, PageT
 							}
 						}
 					}
+
+					if (addrSpaceTable)
+						*addrSpaceTable++ = addrSpace;
 					break;
+				}
 
 				case kATMemoryAccessMode_CPUWrite:
 					for(MemoryLayer *layer : pertinentLayers) {

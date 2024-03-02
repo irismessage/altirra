@@ -17,6 +17,8 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <mmsystem.h>
+#include <winioctl.h>
 #include <vd2/system/error.h>
 #include <vd2/system/math.h>
 #include <vd2/system/time.h>

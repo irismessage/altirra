@@ -35,13 +35,14 @@ class ATXELCFEmulator final
 	, public IATDeviceScheduling
 	, public IATDeviceMemMap
 	, public IATDeviceIndicators
+	, public IATDeviceButtons
 	, public IATDeviceParent
 	, public ATDeviceBus
 {
 	ATXELCFEmulator(const ATXELCFEmulator&) = delete;
 	ATXELCFEmulator& operator=(const ATXELCFEmulator&) = delete;
 public:
-	ATXELCFEmulator();
+	ATXELCFEmulator(bool v3);
 	~ATXELCFEmulator();
 
 	void *AsInterface(uint32 id) override;
@@ -64,6 +65,11 @@ public:		// IATDeviceIndicators
 public:		// IATDeviceBus
 	IATDeviceBus *GetDeviceBus(uint32 index) override;
 
+public:		// IATDeviceButtons
+	uint32 GetSupportedButtons() const override;
+	bool IsButtonDepressed(ATDeviceButton idx) const override;
+	void ActivateButton(ATDeviceButton idx, bool state) override;
+
 public:		// IATDeviceParent
 	const wchar_t *GetBusName() const override;
 	const char *GetSupportedType(uint32 index) override;
@@ -81,7 +87,10 @@ protected:
 	ATScheduler *mpScheduler = nullptr;
 	ATMemoryLayer *mpMemLayerIDE = nullptr;
 
+	bool mbIsV3 = false;
 	bool mbSelectSlave = false;
+	bool mbSwapActive = false;
+	bool mbSwapDepressed = false;
 
 	vdrefptr<IATBlockDevice> mpBlockDevices[2];
 

@@ -238,7 +238,7 @@ bool VDFile::extendValidNT(sint64 pos) {
 	// The SetFileValidData() API is only available on XP and Server 2003.
 
 	typedef BOOL (APIENTRY *tpSetFileValidData)(HANDLE hFile, LONGLONG ValidDataLength);		// Windows XP, Server 2003
-	static tpSetFileValidData pSetFileValidData = (tpSetFileValidData)GetProcAddress(GetModuleHandle("kernel32"), "SetFileValidData");
+	static tpSetFileValidData pSetFileValidData = (tpSetFileValidData)GetProcAddress(GetModuleHandleW(L"kernel32"), "SetFileValidData");
 
 	if (!pSetFileValidData) {
 		SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
@@ -433,6 +433,16 @@ uint32 VDFile::getAttributes() {
 		return 0;
 
 	return VDFileGetAttributesFromNativeW32(info.dwFileAttributes);
+}
+
+VDDate VDFile::getCreationTime() const {
+	FILETIME creationTime {};
+
+	if (!mhFile || !GetFileTime(mhFile, &creationTime, nullptr, nullptr))
+		return VDDate {};
+
+	const uint64 ticks = ULARGE_INTEGER { { creationTime.dwLowDateTime, creationTime.dwHighDateTime } }.QuadPart;
+	return VDDate { ticks };
 }
 
 void VDFile::setCreationTime(const VDDate& date) {

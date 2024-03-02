@@ -23,6 +23,7 @@
 #include <shlwapi.h>
 #include <commdlg.h>
 #include <commctrl.h>
+#include <ole2.h>
 #include <winsock2.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/cpuaccel.h>
@@ -53,6 +54,7 @@
 #include <at/atcore/media.h>
 #include <at/atcore/profile.h>
 #include <at/atdevices/devices.h>
+#include <at/atio/atfs.h>
 #include <at/atio/cassetteimage.h>
 #include <at/atio/image.h>
 #include <at/atui/constants.h>
@@ -114,12 +116,18 @@
 #include "compatengine.h"
 #include "uicompat.h"
 #include "trace.h"
+#include "mediamanager.h"
 
 #include "firmwaremanager.h"
 #include <at/atcore/devicemanager.h>
 
 #pragma comment(lib, "comctl32")
 #pragma comment(lib, "shlwapi")
+#pragma comment(lib, "gdi32")
+#pragma comment(lib, "shell32")
+#pragma comment(lib, "ole32")
+#pragma comment(lib, "comdlg32")
+#pragma comment(lib, "advapi32")
 
 void ATUITriggerButtonDown(uint32 vk);
 void ATUITriggerButtonUp(uint32 vk);
@@ -167,9 +175,10 @@ void ATInitProfilerUI();
 void ATInitUIPanes();
 void ATShutdownUIPanes();
 void ATShowChangeLog(VDGUIHandle hParent);
+void ATUIShowDialogCmdLineHelp(VDGUIHandle hParent);
 void ATUIInitCommandMappings(ATUICommandManager& cmdMgr);
 
-void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType = kATImageType_None, bool *suppressColdReset = NULL, int loadIndex = -1);
+void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType = kATImageType_None, bool *suppressColdReset = NULL, int loadIndex = -1, bool autoProfile = false);
 void DoBootWithConfirm(const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper);
 
 void LoadBaselineSettings();
@@ -222,20 +231,36 @@ LOGFONTW g_enhancedTextFont;
 
 ATSaveStateWriter::Storage g_quickSave;
 
+uint32 g_ATUIBootUnloadStorageMask = 0;
+
 vdautoptr<ATAudioWriter> g_pAudioWriter;
 vdautoptr<IATVideoWriter> g_pVideoWriter;
 vdautoptr<IATSAPWriter> g_pSapWriter;
 
 ATDisplayStretchMode g_displayStretchMode = kATDisplayStretchMode_PreserveAspectRatio;
 
-ATUIWindowCaptionUpdater g_winCaptionUpdater;
+IATUIWindowCaptionUpdater *g_winCaptionUpdater;
+VDStringA g_winCaptionTemplate;
 
 ATUICommandManager g_ATUICommandMgr;
 
 ///////////////////////////////////////////////////////////////////////////////
 
+ATUICommandManager& ATUIGetCommandManager() {
+	return g_ATUICommandMgr;
+}
+
 VDGUIHandle ATUIGetMainWindow() {
 	return (VDGUIHandle)g_hwnd;
+}
+
+VDGUIHandle ATUIGetNewPopupOwner() {
+	HWND hwnd = GetFocus();
+
+	if (!hwnd)
+		hwnd = GetActiveWindow();
+
+	return (VDGUIHandle)GetAncestor(hwnd, GA_ROOT);
 }
 
 bool ATUIGetAppActive() {
@@ -244,6 +269,17 @@ bool ATUIGetAppActive() {
 
 void ATUISetAppActive(bool active) {
 	g_winActive = active;
+}
+
+void ATUISetWindowCaptionTemplate(const char *s) {
+	g_winCaptionTemplate = s;
+
+	if (g_winCaptionUpdater)
+		g_winCaptionUpdater->SetTemplate(s);
+}
+
+const char *ATUIGetWindowCaptionTemplate() {
+	return g_winCaptionTemplate.c_str();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -484,14 +520,14 @@ bool ATUIConfirmDiscardCartridge(VDGUIHandle h) {
 	return IDYES == MessageBoxW((HWND)h, L"Modified cartridge image has not been saved. Discard it anyway?", L"Altirra Warning", MB_ICONEXCLAMATION | MB_YESNO);
 }
 
-VDStringW ATUIConfirmDiscardAllStorageGetMessage(const wchar_t *prompt, bool includeUnmountables, ATStorageId storageType = kATStorageId_None, bool includeMemory = false) {
+VDStringW ATUIConfirmDiscardAllStorageGetMessage(const wchar_t *prompt, bool includeUnmountables, uint32 storageTypeMask = ~(uint32)0, bool includeMemory = false) {
 	typedef vdfastvector<ATStorageId> DirtyIds;
 	DirtyIds dirtyIds;
 
 	typedef vdfastvector<ATDebuggerStorageId> DbgDirtyIds;
 	DbgDirtyIds dbgDirtyIds;
 
-	g_sim.GetDirtyStorage(dirtyIds, storageType);
+	g_sim.GetDirtyStorage(dirtyIds, storageTypeMask);
 
 	if (includeUnmountables) {
 		IATDebugger *dbg = ATGetDebugger();
@@ -528,6 +564,10 @@ VDStringW ATUIConfirmDiscardAllStorageGetMessage(const wchar_t *prompt, bool inc
 
 			case kATStorageId_Disk:
 				msg.append_sprintf(L"\tDisk (D%u:)", unit + 1);
+				break;
+
+			case kATStorageId_Tape:
+				msg += L"\tTape";
 				break;
 
 			case kATStorageId_Firmware:
@@ -578,8 +618,16 @@ bool ATUIConfirmDiscardMemory(VDGUIHandle h, const wchar_t *title) {
 	return ATUIConfirm(h, "DiscardMemory", L"Any unsaved work in emulation memory will be lost. Are you sure?", title);
 }
 
+bool ATUIConfirmReset(VDGUIHandle h, const char *key, const wchar_t *message, const wchar_t *title) {
+	return g_sim.TimeSinceColdReset() == 0 || ATUIConfirm(h, key, message, title);
+}
+
+void ATUIConfirmResetComplete() {
+	g_sim.ColdReset();
+}
+
 bool ATUIConfirmDiscardAll(VDGUIHandle h, const wchar_t *title, const wchar_t *prompt) {
-	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, true, kATStorageId_None, true);
+	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, true, ~(uint32)0, true);
 
 	if (msg.empty())
 		return ATUIConfirmDiscardMemory(h, title);
@@ -587,8 +635,8 @@ bool ATUIConfirmDiscardAll(VDGUIHandle h, const wchar_t *title, const wchar_t *p
 	return ATUIConfirm(h, "DiscardStorage", msg.c_str(), title);
 }
 
-bool ATUIConfirmDiscardAllStorage(VDGUIHandle h, const wchar_t *prompt, bool includeUnmountables = false) {
-	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, includeUnmountables);
+bool ATUIConfirmDiscardAllStorage(VDGUIHandle h, const wchar_t *prompt, bool includeUnmountables, uint32 storageTypeMask) {
+	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, includeUnmountables, storageTypeMask);
 
 	if (msg.empty())
 		return true;
@@ -596,8 +644,8 @@ bool ATUIConfirmDiscardAllStorage(VDGUIHandle h, const wchar_t *prompt, bool inc
 	return ATUIConfirm(h, "DiscardStorage", msg.c_str(), L"Unsaved Items");
 }
 
-vdrefptr<ATUIFutureWithResult<bool> > ATUIConfirmDiscardAllStorage(const wchar_t *prompt, bool includeUnmountables, ATStorageId storageType = kATStorageId_None) {
-	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, includeUnmountables, storageType);
+vdrefptr<ATUIFutureWithResult<bool> > ATUIConfirmDiscardAllStorage(const wchar_t *prompt, bool includeUnmountables, uint32 storageTypeMask) {
+	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, includeUnmountables);
 
 	if (msg.empty())
 		return vdrefptr<ATUIFutureWithResult<bool> >(new ATUIFutureWithResult<bool>(true));
@@ -647,7 +695,7 @@ bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode, bool switchProfi
 	const bool switching5200 = (mode == kATHardwareMode_5200 || prevMode == kATHardwareMode_5200);
 	if (switching5200 || switchingProfile) {
 		// check if it's OK to unload everything
-		if (h && !ATUIConfirmDiscardAll(h, L"Changing hardware type", L"OK to switch hardware mode and discard everything?"))
+		if (!ATSettingsGetBootstrapProfileMode() && h && !ATUIConfirmDiscardAll(h, L"Changing hardware type", L"OK to switch hardware mode and discard everything?"))
 			return false;
 	}
 
@@ -881,7 +929,7 @@ void DoCompatibilityCheck() {
 	}
 }
 
-void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream *stream, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType, bool *suppressColdReset, int loadIndex) {
+void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream *stream, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType, bool *suppressColdReset, int loadIndex, bool autoProfile) {
 	vdfastvector<uint8> captureBuffer;
 
 	ATCartLoadContext cartctx = {};
@@ -904,50 +952,66 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageNa
 	ctx.mLoadIndex = loadIndex;
 	ctx.mpCartLoadContext = &cartctx;
 	ctx.mpStateLoadContext = &statectx;
-	ctx.mbReturnOnModeIncompatibility = true;
 
-	const ATMediaWriteMode defaultWriteMode = g_ATOptions.mDefaultWriteMode;
-
-	if (!writeMode)
-		writeMode = &defaultWriteMode;
+	ATMediaLoadContext mctx;
+	mctx.mOriginalPath = origPath ? origPath : L"";
+	mctx.mImageName = imageName ? imageName : L"";
+	mctx.mpStream = stream;
+	mctx.mWriteMode = writeMode ? *writeMode : g_ATOptions.mDefaultWriteMode;
+	mctx.mbStopOnModeIncompatibility = true;
+	mctx.mbStopAfterImageLoaded = true;
+	mctx.mbStopOnMemoryConflictBasic = true;
+	mctx.mpImageLoadContext = &ctx;
 
 	int safetyCounter = 10;
 	for(;;) {
-		cartctx.mb5200ModeCheck = g_sim.GetHardwareMode() == kATHardwareMode_5200;
-
-		if (stream) {
-			if (g_sim.Load(origPath, imageName, *stream, *writeMode, &ctx))
-				break;
-		} else {
-			if (g_sim.Load(origPath, *writeMode, &ctx))
-				break;
-		}
+		if (g_sim.Load(mctx))
+			break;
 
 		if (!--safetyCounter)
 			return;
 
-		if (ctx.mbMode5200Required) {
+		if (mctx.mbStopAfterImageLoaded)
+			mctx.mbStopAfterImageLoaded = false;
+
+		if (mctx.mbMode5200Required) {
 			if (!ATUISwitchHardwareMode5200(h))
 				return;
-		} else if (ctx.mbModeComputerRequired) {
-			if (!ATUISwitchHardwareModeComputer(h))
+
+			continue;
+		} else if (mctx.mbModeComputerRequired) {
+			if (autoProfile) {
+				if (!ATUISwitchHardwareMode(h, kATHardwareMode_800XL, true))
+					return;
+			} else {
+				if (!ATUISwitchHardwareModeComputer(h))
+					return;
+			}
+
+			continue;
+		} else if (mctx.mbMemoryConflictBasic) {
+			mctx.mbStopOnMemoryConflictBasic = false;
+
+			ATUIGenericDialogOptions opts {};
+			opts.mhParent = h;
+			opts.mpTitle = L"Memory Conflict";
+			opts.mpMessage = L"The program being loaded overlaps internal BASIC and may not work with it enabled. Disable internal BASIC?";
+			opts.mpIgnoreTag = "MemoryConflictBasic";
+			opts.mIconType = kATUIGenericIconType_Warning;
+			opts.mResultMask = kATUIGenericResultMask_YesNoCancel;
+			opts.mValidIgnoreMask = kATUIGenericResultMask_Yes | kATUIGenericResultMask_No;
+			const auto result = ATUIShowGenericDialogAutoCenter(opts);
+
+			if (result == kATUIGenericResult_Cancel)
 				return;
+
+			if (result == kATUIGenericResult_Yes)
+				g_sim.SetBASICEnabled(false);
 
 			continue;
 		}
 
 		if (ctx.mLoadType == kATImageType_Cartridge) {
-			if (cartctx.mLoadStatus == kATCartLoadStatus_HardwareMismatch) {
-				if (g_sim.GetHardwareMode() == kATHardwareMode_5200) {
-					if (!ATUISwitchHardwareModeComputer(h))
-						return;
-				} else {
-					if (!ATUISwitchHardwareMode5200(h))
-						return;
-				}
-				continue;
-			}
-
 			vdfastvector<ATCompatKnownTag> tags;
 			const auto markers = {
 				ATCompatMarker { kATCompatRuleType_CartChecksum, cartctx.mRawImageChecksum }
@@ -1009,43 +1073,59 @@ void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageNa
 }
 
 void DoLoadStream(VDGUIHandle h, const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream& stream, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType, bool *suppressColdReset, int loadIndex) {
-	DoLoadStream(h, origPath, imageName, &stream, writeMode, cartmapper, loadType, suppressColdReset, loadIndex);
+	DoLoadStream(h, origPath, imageName, &stream, writeMode, cartmapper, loadType, suppressColdReset, loadIndex, false);
 }
 
-void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType, bool *suppressColdReset, int loadIndex) {
-	DoLoadStream(h, path, path, nullptr, writeMode, cartmapper, loadType, suppressColdReset, loadIndex);
+void DoLoad(VDGUIHandle h, const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper, ATImageType loadType, bool *suppressColdReset, int loadIndex, bool autoProfile) {
+	DoLoadStream(h, path, path, nullptr, writeMode, cartmapper, loadType, suppressColdReset, loadIndex, autoProfile);
+}
+
+uint32 ATUIGetBootUnloadStorageMask() {
+	return g_ATUIBootUnloadStorageMask;
+}
+
+void ATUISetBootUnloadStorageMask(uint32 mask) {
+	g_ATUIBootUnloadStorageMask = mask;
+}
+
+void ATUIUnloadStorageForBoot() {
+	g_sim.UnloadAll(g_ATUIBootUnloadStorageMask);
 }
 
 void DoBootWithConfirm(const wchar_t *path, const ATMediaWriteMode *writeMode, int cartmapper) {
-	if (!ATUIConfirmDiscardAllStorage((VDGUIHandle)g_hwnd, L"OK to discard?"))
+	if (!ATUIConfirmDiscardAllStorage((VDGUIHandle)g_hwnd, L"OK to discard?", false, g_ATUIBootUnloadStorageMask))
 		return;
 
+	bool suppressColdReset = false;
 	try {
-		g_sim.UnloadAll();
+		ATUIUnloadStorageForBoot();
 
-		DoLoad((VDGUIHandle)g_hwnd, path, writeMode, cartmapper);
-
-		g_sim.ColdReset();
+		DoLoad((VDGUIHandle)g_hwnd, path, writeMode, cartmapper, kATImageType_None, &suppressColdReset);
 
 		ATAddMRUListItem(path);
 	} catch(const MyError& e) {
 		e.post(g_hwnd, "Altirra Error");
 	}
+
+	if (!suppressColdReset)
+		g_sim.ColdReset();
 }
 
 void DoBootStreamWithConfirm(const wchar_t *origPath, const wchar_t *imageName, IVDRandomAccessStream& stream, const ATMediaWriteMode *writeMode, int cartmapper) {
-	if (!ATUIConfirmDiscardAllStorage((VDGUIHandle)g_hwnd, L"OK to discard?"))
+	if (!ATUIConfirmDiscardAllStorage((VDGUIHandle)g_hwnd, L"OK to discard?", false, g_ATUIBootUnloadStorageMask))
 		return;
 
+	bool suppressColdReset = false;
 	try {
-		g_sim.UnloadAll();
+		ATUIUnloadStorageForBoot();
 
-		DoLoadStream((VDGUIHandle)g_hwnd, origPath, imageName, stream, writeMode, cartmapper, kATImageType_None, NULL, -1);
-
-		g_sim.ColdReset();
+		DoLoadStream((VDGUIHandle)g_hwnd, origPath, imageName, stream, writeMode, cartmapper, kATImageType_None, &suppressColdReset, -1);
 	} catch(const MyError& e) {
 		e.post(g_hwnd, "Altirra Error");
 	}
+
+	if (!suppressColdReset)
+		g_sim.ColdReset();
 }
 
 class ATUIFutureOpenBootImage : public ATUIFuture {
@@ -1059,7 +1139,7 @@ public:
 		switch(mStage) {
 			case 0:
 				if (mbColdBoot) {
-					mpConfirmResult = ATUIConfirmDiscardAllStorage(L"OK to discard?", false);
+					mpConfirmResult = ATUIConfirmDiscardAllStorage(L"OK to discard?", false, g_ATUIBootUnloadStorageMask);
 					Wait(mpConfirmResult);
 				}
 				++mStage;
@@ -1094,7 +1174,7 @@ public:
 			case 2:
 				if (mpFileDialogResult->mbAccepted) {
 					if (mbColdBoot)
-						g_sim.UnloadAll();
+						ATUIUnloadStorageForBoot();
 
 					DoLoad((VDGUIHandle)g_hwnd, mpFileDialogResult->mPath.c_str(), nullptr, 0);
 
@@ -1166,6 +1246,7 @@ void ATSetFullscreen(bool fs) {
 	bool displayFS = fs && !g_ATOptions.mbFullScreenBorderless;
 
 	ATUISetNativeDialogMode(!displayFS);
+	ATUIShowModelessDialogs(!displayFS, g_hwnd);
 
 	if (frame)
 		frame->SetFullScreen(fs);
@@ -1252,7 +1333,7 @@ void ATSetFullscreen(bool fs) {
 		g_sim.SetFrameSkipEnabled(true);
 	}
 
-	g_winCaptionUpdater.SetFullScreen(g_fullscreen);
+	g_winCaptionUpdater->SetFullScreen(g_fullscreen);
 }
 
 bool ATUICanManipulateWindows() {
@@ -1324,7 +1405,7 @@ void OnCommandVideoToggleXEP80ViewAutoswitching() {
 void OnCommandVideoEnhancedTextFontDialog() {
 	CHOOSEFONTW cf = {sizeof(CHOOSEFONTW)};
 
-	cf.hwndOwner	= g_hwnd;
+	cf.hwndOwner	= (VDZHWND)ATUIGetNewPopupOwner();
 	cf.hDC			= NULL;
 	cf.lpLogFont	= &g_enhancedTextFont;
 	cf.iPointSize	= 0;
@@ -1629,6 +1710,7 @@ void OnCommandCassetteSave() {
 	VDFileStream f(fn.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kSequential | nsVDFile::kCreateAlways);
 
 	ATSaveCassetteImageCAS(f, cas.GetImage());
+	cas.SetImageClean();
 }
 
 void OnCommandCassetteExportAudioTape() {
@@ -1644,6 +1726,7 @@ void OnCommandCassetteExportAudioTape() {
 	VDFileStream f(fn.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kSequential | nsVDFile::kCreateAlways);
 
 	ATSaveCassetteImageWAV(f, cas.GetImage());
+	cas.SetImageClean();
 }
 
 void OnCommandCassetteTapeControlDialog() {
@@ -1690,6 +1773,12 @@ void OnCommandCassetteTurboModeInterruptSense() {
 
 void OnCommandCassetteTurboModeAlways() {
 	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_Always);
+}
+
+void OnCommandCassetteTogglePolarity() {
+	auto& cas = g_sim.GetCassette();
+
+	cas.SetPolarityMode(cas.GetPolarityMode() == kATCassettePolarityMode_Normal ? kATCassettePolarityMode_Inverted : kATCassettePolarityMode_Normal);
 }
 
 void OnCommandCassettePolarityModeNormal() {
@@ -1763,7 +1852,7 @@ bool ATUIGetShowFPS() {
 
 void ATUISetShowFPS(bool enabled) {
 	g_showFps = enabled;
-	g_winCaptionUpdater.SetShowFps(enabled);
+	g_winCaptionUpdater->SetShowFps(enabled);
 
 	if (enabled)
 		g_sim.GetUIRenderer()->SetFpsIndicator(-1.0f);
@@ -1905,6 +1994,13 @@ void OnCommandConsoleATR8000Reset() {
 	}
 }
 
+void OnCommandConsoleXELCFSwap() {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false)) {
+		p->ActivateButton(kATDeviceButton_XELCFSwap, true);
+		p->ActivateButton(kATDeviceButton_XELCFSwap, false);
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void OnCommandDiskDrivesDialog() {
@@ -2029,7 +2125,7 @@ public:
 					}
 
 					if (dirtyDisks) {
-						mpConfirmResult = ATUIConfirmDiscardAllStorage(L"OK to discard?", false);
+						mpConfirmResult = ATUIConfirmDiscardAllStorage(L"OK to discard?", false, kATStorageTypeMask_Disk);
 						Wait(mpConfirmResult);
 					}
 				} else {
@@ -2419,6 +2515,10 @@ void OnCommandHelpChangeLog() {
 	ATShowChangeLog((VDGUIHandle)g_hwnd);
 }
 
+void OnCommandHelpCmdLine() {
+	ATUIShowDialogCmdLineHelp((VDGUIHandle)g_hwnd);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 uint32 g_ATDeviceButtonChangeCount = 0;
@@ -2503,6 +2603,18 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 	bool unloaded = false;
 	VDStringA keysToType;
 	int cartmapper = 0;
+
+	bool autoProfile = cmdLine.FindAndRemoveSwitch(L"autoprofile");
+
+	if (cmdLine.FindAndRemoveSwitch(L"launch")) {
+		if (g_ATOptions.mbLaunchAutoProfile)
+			autoProfile = true;
+	}
+
+	if (cmdLine.FindAndRemoveSwitch(L"noautoprofile"))
+		autoProfile = false;
+
+	ATSettingsSetBootstrapProfileMode(autoProfile);
 
 	try {
 		// This is normally intercepted early. If we got here, it was because of
@@ -2908,61 +3020,13 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			g_sim.GetCheatEngine()->Load(arg);
 		}
 
-		if (cmdLine.FindAndRemoveSwitch(L"?")) {
-			MessageBox(g_hwnd,
-				_T("Usage: Altirra [switches] <disk/cassette/cartridge images...>\n")
-				_T("\n")
-				_T("/resetall - Reset all settings to default\n")
-				_T("/baseline - Reset hardware settings to default\n")
-				_T("/ntsc - select NTSC timing and behavior\n")
-				_T("/pal - select PAL timing and behavior\n")
-				_T("/secam - select SECAM timing and behavior\n")
-				_T("/artifact:none|ntsc|ntschi|pal|palhi - set video artifacting\n")
-				_T("/[no]burstio - control SIO burst I/O mode\n")
-				_T("/[no]siopatch[safe] - control SIO kernel patch\n")
-				_T("/[no]fastboot - control fast kernel boot initialization\n")
-				_T("/[no]casautoboot - control cassette auto-boot\n")
-				_T("/[no]accuratedisk - control accurate sector timing\n")
-				_T("/[no]basic - enable/disable BASIC ROM\n")
-				_T("/[no]soundboard:d2c0|d500|d600 - enable/disable SoundBoard\n")
-				_T("/kernel:default|osa|osb|xl|lle|hle|other|5200|5200lle - select kernel ROM\n")
-				_T("/hardware:800|800xl|5200 - select hardware type\n")
-				_T("/memsize:16K|48K|52K|64K|128K|320K|576K|1088K - select memory size\n")
-				_T("/[no]stereo - enable dual pokeys\n")
-				_T("/gdi - force GDI display mode\n")
-				_T("/ddraw - force DirectDraw display mode\n")
-				_T("/opengl - force OpenGL display mode\n")
-				_T("/[no]vsync - synchronize to vertical blank\n")
-				_T("/debug - launch in debugger mode")
-				_T("/[no]debugbrkrun - break into debugger at EXE run address\n")
-				_T("/f - start full screen")
-				_T("/bootvrw - boot disk images in virtual R/W mode\n")
-				_T("/bootrw - boot disk images in read/write mode\n")
-				_T("/type \"keys\" - type keys on keyboard (~ for enter, ` for \")\n")
-				_T("/[no]hdpath|hdpathrw <path> - mount H: device\n")
-				_T("/[no]rawkeys - enable/disable raw keyboard presses\n")
-				_T("/cartmapper <mapper> - set cartridge mapper for untagged image\n")
-				_T("/portable - create Altirra.ini file and switch to portable mode\n")
-				_T("/portablealt:<file> - temporarily enable portable mode with alternate INI file\n")
-				_T("/[no]pclink:ro|rw,path - set PCLink emulation\n")
-				_T("/hostcpu:none|mmx|sse|sse2|sse2|sse3|ssse3|sse41 - override host CPU detection\n")
-				_T("/cart <image> - load cartridge image\n")
-				_T("/tape <image> - load cassette tape image\n")
-				_T("/disk <image> - load disk image\n")
-				_T("/run <image> - run binary program")
-				_T("/runbas <image> - run BASIC program")
-				_T("/[no]cheats <file> - load cheats")
-				,
-				_T("Altirra command-line help"), MB_OK | MB_ICONINFORMATION);
-		}
-
 		while(cmdLine.FindAndRemoveSwitch(L"cart", arg)) {
 			if (!unloaded) {
 				unloaded = true;
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_Cartridge);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_Cartridge, nullptr, -1, autoProfile);
 			coldReset = true;// required to set up cassette autoboot
 		}
 
@@ -2973,7 +3037,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_Disk, nullptr, diskIndex++);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_Disk, nullptr, diskIndex++, autoProfile);
 			coldReset = true;// required to set up cassette autoboot
 		}
 
@@ -2983,7 +3047,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_Program);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_Program, nullptr, -1, autoProfile);
 			coldReset = true;// required to set up cassette autoboot
 		}
 
@@ -2993,7 +3057,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_BasicProgram);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_BasicProgram, nullptr, -1, autoProfile);
 			coldReset = true;// required to set up cassette autoboot
 		}
 
@@ -3003,7 +3067,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_Tape);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_Tape, nullptr, -1, autoProfile);
 			coldReset = true;// required to set up cassette autoboot
 		}
 
@@ -3023,7 +3087,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_None, &suppressColdReset);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_None, &suppressColdReset, -1, autoProfile);
 
 			VDSetLastLoadSavePath('load', VDGetFullPath(arg).c_str());
 
@@ -3033,6 +3097,8 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 	} catch(const MyError& e) {
 		e.post(hwnd, "Altirra error");
 	}
+
+	ATSettingsSetBootstrapProfileMode(false);
 
 	if (coldReset)
 		g_sim.ColdReset();
@@ -3242,7 +3308,7 @@ int RunMainLoop2(HWND hwnd) {
 	bool updateScreenPending = false;
 	uint64 lastCPUTime = 0;
 
-	g_winCaptionUpdater.Update(true, 0, 0, 0);
+	g_winCaptionUpdater->Update(true, 0, 0, 0);
 
 	int rcode = 0;
 	bool lastIsRunning = false;
@@ -3310,7 +3376,7 @@ int RunMainLoop2(HWND hwnd) {
 					g_sim.GetUIRenderer()->SetFpsIndicator(g_fullscreen && g_showFps ? fps : -1.0f);
 
 					if (!g_fullscreen)
-						g_winCaptionUpdater.Update(true, ticks, fps, cpu);
+						g_winCaptionUpdater->Update(true, ticks, fps, cpu);
 
 					lastStatusTime = curTime;
 					nextTickUpdate = ticks - ticks % 60 + 60;
@@ -3410,7 +3476,7 @@ int RunMainLoop2(HWND hwnd) {
 				g_sim.GetGTIA().UpdateScreen(true, false);
 			}
 
-			g_winCaptionUpdater.Update(false, 0, 0, 0);
+			g_winCaptionUpdater->Update(false, 0, 0, 0);
 			nextTickUpdate = ticks - ticks % 60;
 
 			g_sim.FlushDeferredEvents();
@@ -3583,6 +3649,18 @@ void ATInitDisplayOptions() {
 		g_ATOptions.mbDisplayD3D9 = false;
 		g_ATOptions.mbDisplay3D = false;
 		g_ATOptions.mbDisplayOpenGL = true;
+	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"d3d9")) {
+		g_ATOptions.mbDirty = true;
+		g_ATOptions.mbDisplayDDraw = false;
+		g_ATOptions.mbDisplayD3D9 = true;
+		g_ATOptions.mbDisplay3D = false;
+		g_ATOptions.mbDisplayOpenGL = false;
+	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"d3d11")) {
+		g_ATOptions.mbDirty = true;
+		g_ATOptions.mbDisplayDDraw = false;
+		g_ATOptions.mbDisplayD3D9 = false;
+		g_ATOptions.mbDisplay3D = true;
+		g_ATOptions.mbDisplayOpenGL = false;
 	}
 }
 
@@ -3625,6 +3703,7 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 	OleInitialize(NULL);
 
 	ATInitRand();
+	ATVFSInstallAtfsHandler();
 
 	InitCommonControls();
 
@@ -3644,6 +3723,14 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 
 		if (1 == swscanf(token, L"%llx%c", &hwndParent, &dummy))
 			ATUIShowDialogRemoveFileAssociations((VDGUIHandle)(UINT_PTR)hwndParent, false, false);
+	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"?")) {
+		// This is normally done by ATInitUIPanes(), but we are skipping that here.
+		HMODULE hm = VDLoadSystemLibraryW32("msftedit");
+
+		OnCommandHelpCmdLine();
+
+		if (hm)
+			FreeLibrary(hm);
 	} else {
 		if (!ATInitRegistry()) {
 			rval = 5;
@@ -3754,7 +3841,8 @@ int RunInstance(int nCmdShow) {
 	if (!(GetWindowLong(hwnd, GWL_STYLE) & WS_VISIBLE))
 		ShowWindow(hwnd, nCmdShow);
 
-	g_winCaptionUpdater.Init([hwnd](const wchar_t *s) { SetWindowTextW(hwnd, s); } );
+	ATUICreateWindowCaptionUpdater(&g_winCaptionUpdater);
+	g_winCaptionUpdater->Init([hwnd](const wchar_t *s) { SetWindowTextW(hwnd, s); } );
 
 	// Init Winsock. We want to delay this as much as possible, but it must be done before we
 	// attempt to bring up a modem (which LoadSettings or a command prompt can do).
@@ -3769,7 +3857,8 @@ int RunInstance(int nCmdShow) {
 	ATInitJoysticks();
 
 	g_sim.GetInputManager()->SetConsoleCallback(&g_inputConsoleCallback);
-	g_winCaptionUpdater.InitMonitoring(&g_sim);
+	g_winCaptionUpdater->InitMonitoring(&g_sim);
+	g_winCaptionUpdater->SetTemplate(g_winCaptionTemplate.c_str());
 	ATRegisterDevices(*g_sim.GetDeviceManager());
 
 	// initialize menus (requires simulator)
@@ -3835,6 +3924,9 @@ int RunInstance(int nCmdShow) {
 	if (g_ATCmdLine.FindAndRemoveSwitch(L"tempprofile"))
 		ATSettingsSetTemporaryProfileMode(true);
 
+	if (g_ATCmdLine.FindSwitch(L"autoprofile"))
+		ATSettingsSetBootstrapProfileMode(true);
+
 	if (useHardwareBaseline)
 		LoadBaselineSettings();
 
@@ -3890,6 +3982,9 @@ int RunInstance(int nCmdShow) {
 	g_pMainWindow->Release();
 	g_pMainWindow = NULL;
 	g_hwnd = NULL;
+
+	g_winCaptionUpdater->Release();
+	g_winCaptionUpdater = nullptr;
 
 	ATShutdownPortMenus();
 

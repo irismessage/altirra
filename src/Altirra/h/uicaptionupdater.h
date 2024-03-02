@@ -19,55 +19,28 @@
 #define f_AT_UICAPTIONUPDATER_H
 
 #include <vd2/system/function.h>
-#include "simulator.h"
+#include <vd2/system/refcount.h>
 
-class ATUIWindowCaptionUpdater {
+class ATSimulator;
+
+class IATUIWindowCaptionUpdater : public IVDRefCount {
 public:
-	ATUIWindowCaptionUpdater();
-	~ATUIWindowCaptionUpdater();
+	virtual void Init(const vdfunction<void(const wchar_t *)>& fn) = 0;
+	virtual void InitMonitoring(ATSimulator *sim) = 0;
 
-	void Init(const vdfunction<void(const wchar_t *)>& fn);
-	void InitMonitoring(ATSimulator *sim);
+	virtual bool SetTemplate(const char *s, uint32 *errorPos = nullptr) = 0;
 
-	void SetShowFps(bool showFps) { mbShowFps = showFps; }
-	void SetFullScreen(bool fs) { mbFullScreen = fs; }
-	void SetMouseCaptured(bool captured, bool mmbRelease) { mbCaptured = captured; mbCaptureMMBRelease = mmbRelease; }
+	virtual void SetShowFps(bool showFps) = 0;
+	virtual void SetFullScreen(bool fs) = 0;
+	virtual void SetMouseCaptured(bool captured, bool mmbRelease) = 0;
 
-	void Update(bool running, int ticks, float fps, float cpu);
-	void CheckForStateChange(bool force);
-
-protected:
-	template<class T> void DetectChange(bool& changed, T& cachedValue, const T& currentValue);
-
-	ATSimulator *mpSim = nullptr;
-	bool mbLastRunning = false;
-	bool mbLastCaptured = false;
-
-	bool mbShowFps = false;
-	bool mbFullScreen = false;
-	bool mbCaptured = false;
-	bool mbCaptureMMBRelease = false;
-
-	VDStringW	mBasePrefix;
-	VDStringW	mPrefix;
-	VDStringW	mBuffer;
-
-	ATHardwareMode	mLastHardwareMode = kATHardwareModeCount;
-	uint64			mLastKernelId = 0;
-	ATMemoryMode	mLastMemoryMode = kATMemoryModeCount;
-	ATVideoStandard	mLastVideoStd = kATVideoStandardCount;
-	bool			mbLastBASICState = false;
-	bool			mbLastVBXEState = false;
-	bool			mbLastSoundBoardState = false;
-	bool			mbLastU1MBState = false;
-	bool			mbForceUpdate = false;
-	bool			mbLastDebugging = false;
-	bool			mbLastShowFPS = false;;
-	bool			mbTemporaryProfile = false;
-	ATCPUMode		mLastCPUMode = kATCPUModeCount;
-	uint32			mLastCPUSubCycles = 0;
-
-	vdfunction<void(const wchar_t *)> mpUpdateFn;
+	virtual void Update(bool running, int ticks, float fps, float cpu) = 0;
+	virtual void CheckForStateChange(bool force) = 0;
 };
+
+void ATUICreateWindowCaptionUpdater(IATUIWindowCaptionUpdater **ptr);
+
+sint32 ATUIParseWindowCaptionFormat(const char *str);
+const char *ATUIGetDefaultWindowCaptionTemplate();
 
 #endif	// f_AT_UICAPTIONUPDATER_H

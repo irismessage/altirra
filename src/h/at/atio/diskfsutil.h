@@ -19,7 +19,69 @@
 #ifndef f_AT_ATIO_DISKFSUTIL_H
 #define f_AT_ATIO_DISKFSUTIL_H
 
-class IATDiskFS;
+#include <at/atio/diskfs.h>
+
+class ATDiskFSDirScanIterator;
+
+class ATDiskFSDirScan {
+public:
+	ATDiskFSDirScan(IATDiskFS& fs, ATDiskFSKey key);
+	~ATDiskFSDirScan();
+
+	ATDiskFSDirScanIterator begin();
+	ATDiskFSDirScanIterator end();
+
+private:
+	friend class ATDiskFSDirScanIterator;
+
+	IATDiskFS& mFS;
+	ATDiskFSFindHandle mFH;
+	ATDiskFSEntryInfo mEntry;
+};
+
+class ATDiskFSDirScanIteratorProxy {
+public:
+	ATDiskFSDirScanIteratorProxy(const ATDiskFSEntryInfo& e);
+
+	const ATDiskFSEntryInfo& operator*() const { return mEntry; }
+
+private:
+	ATDiskFSEntryInfo mEntry;
+};
+
+class ATDiskFSDirScanIterator {
+public:
+	typedef ptrdiff_t difference_type;
+	typedef const ATDiskFSEntryInfo value_type;
+	typedef const ATDiskFSEntryInfo *pointer;
+	typedef const ATDiskFSEntryInfo& reference_type;
+	typedef std::input_iterator_tag iterator_category;
+
+	ATDiskFSDirScanIterator(ATDiskFSDirScan *parent)
+		: mpParent(parent) {}
+
+	ATDiskFSDirScanIterator& operator++();
+	ATDiskFSDirScanIteratorProxy operator++(int);
+
+	const ATDiskFSEntryInfo& operator*() const { return mpParent->mEntry; }
+	const ATDiskFSEntryInfo *operator->() const { return &mpParent->mEntry; }
+
+	bool operator==(const ATDiskFSDirScanIterator& other) const {
+		return mpParent == other.mpParent;
+	}
+
+	bool operator!=(const ATDiskFSDirScanIterator& other) const {
+		return mpParent != other.mpParent;
+	}
+
+private:
+	ATDiskFSDirScan *mpParent;
+};
+
+void ATDiskFSCopyTree(IATDiskFS& dst, ATDiskFSKey dstKey, IATDiskFS& src, ATDiskFSKey srcKey, bool allowNameRehashing);
+uint32 ATDiskFSEstimateDOS2SectorsNeeded(IATDiskFS& src, uint32 sectorSize);
+uint32 ATDiskFSEstimateMyDOSSectorsNeeded(IATDiskFS& src, uint32 sectorSize);
+uint32 ATDiskFSEstimateSDX2SectorsNeeded(IATDiskFS& src, uint32 sectorSize);
 
 uint32 ATDiskRecursivelyExpandARCs(IATDiskFS& fs);
 

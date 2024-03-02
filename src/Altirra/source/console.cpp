@@ -40,6 +40,7 @@
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uiproxies.h>
+#include <at/atcore/address.h>
 #include <at/atcore/deviceprinter.h>
 #include <at/atdebugger/historytree.h>
 #include <at/atdebugger/historytreebuilder.h>
@@ -239,6 +240,7 @@ protected:
 	uint32	mViewStart;
 	uint32	mViewLength;
 	uint8	mViewBank;
+	uint32	mViewAddrBank;
 	uint16	mFocusAddr;
 	int		mPCLine;
 	uint32	mPCAddr;
@@ -284,7 +286,7 @@ bool ATDisassemblyWindow::OnPaneCommand(ATUIPaneCommandId id) {
 				size_t line = (size_t)mpTextEditor->GetCursorLine();
 
 				if (line < mAddressesByLine.size())
-					ATGetDebugger()->ToggleBreakpoint(mAddressesByLine[line] + ((uint32)mViewBank << 16));
+					ATGetDebugger()->ToggleBreakpoint(mAddressesByLine[line] + mViewBank);
 
 				return true;
 			}
@@ -308,7 +310,7 @@ LRESULT ATDisassemblyWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					if (hdr->code == CBEN_ENDEDIT) {
 						const NMCBEENDEDIT *info = (const NMCBEENDEDIT *)hdr;
 
-						sint32 addr = ATGetDebugger()->ResolveSymbol(VDTextWToA(info->szText).c_str());
+						sint32 addr = ATGetDebugger()->ResolveSymbol(VDTextWToA(info->szText).c_str(), true);
 
 						if (addr < 0)
 							MessageBeep(MB_ICONERROR);
@@ -552,9 +554,14 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 				hent = hent0;
 
 			mAddressesByLine.push_back(pc);
-			ATDisassembleCaptureInsnContext(target, pc, mViewBank, hent);
+
+			if (disasmMode == kATDebugDisasmMode_6502)
+				ATDisassembleCaptureInsnContext(target, mViewAddrBank + pc, hent);
+			else
+				ATDisassembleCaptureInsnContext(target, pc, mViewBank, hent);
+
 			buf.clear();
-			uint16 newpc = ATDisassembleInsn(buf, target, disasmMode, hent, false, false, true, mbShowCodeBytes, mbShowLabels);
+			uint16 newpc = ATDisassembleInsn(buf, target, disasmMode, hent, false, false, true, mbShowCodeBytes, mbShowLabels, false, false, true, true, true);
 			buf += '\n';
 
 			// auto-switch mode if necessary
@@ -709,8 +716,9 @@ void ATDisassemblyWindow::SetPosition(uint32 addr) {
 	if (offset < 0x80)
 		offset = 0x80;
 
+	mViewAddrBank = addr & 0xFFFF0000;
 	mViewBank = (uint8)(addr >> 16);
-	mViewStart = ATDisassembleGetFirstAnchor(dbg->GetTarget(), addr16 >= offset ? addr16 - offset : 0, addr16, mViewBank);
+	mViewStart = ATDisassembleGetFirstAnchor(dbg->GetTarget(), addr16 >= offset ? addr16 - offset : 0, addr16, mViewAddrBank);
 
 	RemakeView(addr);
 }
@@ -1974,10 +1982,10 @@ bool ATHistoryWindow::UpdatePreviewNode(ATCPUHistoryEntry& he) {
 		hentLast.mPC = state6502.mPC;
 		hentLast.mP = state6502.mP;
 		hentLast.mbEmulation = state6502.mbEmulationFlag;
-		hentLast.mSH = state6502.mSH;
-		hentLast.mAH = state6502.mAH;
-		hentLast.mXH = state6502.mXH;
-		hentLast.mYH = state6502.mYH;
+		hentLast.mExt.mSH = state6502.mSH;
+		hentLast.mExt.mAH = state6502.mAH;
+		hentLast.mExt.mXH = state6502.mXH;
+		hentLast.mExt.mYH = state6502.mYH;
 		hentLast.mB = state6502.mB;
 		hentLast.mK = state6502.mK;
 		hentLast.mD = state6502.mDP;
@@ -1999,9 +2007,9 @@ bool ATHistoryWindow::UpdatePreviewNode(ATCPUHistoryEntry& he) {
 		hentLast.mZ80_B = stateZ80.mB;
 		hentLast.mZ80_C = stateZ80.mC;
 		hentLast.mZ80_D = stateZ80.mD;
-		hentLast.mZ80_E = stateZ80.mE;
-		hentLast.mZ80_H = stateZ80.mH;
-		hentLast.mZ80_L = stateZ80.mL;
+		hentLast.mExt.mZ80_E = stateZ80.mE;
+		hentLast.mExt.mZ80_H = stateZ80.mH;
+		hentLast.mExt.mZ80_L = stateZ80.mL;
 		hentLast.mZ80_SP = stateZ80.mSP;
 		hentLast.mPC = stateZ80.mPC;
 		hentLast.mbEmulation = true;
@@ -2256,9 +2264,9 @@ protected:
 	HWND	mhwndPrompt;
 	HMENU	mMenu;
 
-	VDFunctionThunk	*mpLogThunk;
+	VDFunctionThunkInfo	*mpLogThunk;
 	WNDPROC	mLogProc;
-	VDFunctionThunk	*mpCmdEditThunk;
+	VDFunctionThunkInfo	*mpCmdEditThunk;
 	WNDPROC	mCmdEditProc;
 
 	bool	mbRunState;
@@ -2402,12 +2410,12 @@ bool ATConsoleWindow::OnCreate() {
 	mpLogThunk = VDCreateFunctionThunkFromMethod(this, &ATConsoleWindow::LogWndProc, true);
 
 	mLogProc = (WNDPROC)GetWindowLongPtr(mhwndLog, GWLP_WNDPROC);
-	SetWindowLongPtr(mhwndLog, GWLP_WNDPROC, (LONG_PTR)mpLogThunk);
+	SetWindowLongPtr(mhwndLog, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpLogThunk));
 
 	mpCmdEditThunk = VDCreateFunctionThunkFromMethod(this, &ATConsoleWindow::CommandEditWndProc, true);
 
 	mCmdEditProc = (WNDPROC)GetWindowLongPtr(mhwndEdit, GWLP_WNDPROC);
-	SetWindowLongPtr(mhwndEdit, GWLP_WNDPROC, (LONG_PTR)mpCmdEditThunk);
+	SetWindowLongPtr(mhwndEdit, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpCmdEditThunk));
 
 	OnFontsUpdated();
 
@@ -3034,17 +3042,7 @@ void ATMemoryWindow::OnPaint() {
 		int rowStart	= (ps.rcPaint.top - mTextArea.top) / mLineHeight;
 		int rowEnd		= (ps.rcPaint.bottom - mTextArea.top + mLineHeight - 1) / mLineHeight;
 
-		uint32 incMask = 0xffff;
-
-		switch(mViewStart & kATAddressSpaceMask) {
-			case kATAddressSpace_PORTB:
-				incMask = 0xfffff;
-				break;
-
-			case kATAddressSpace_VBXE:
-				incMask = 0x7ffff;
-				break;
-		}
+		uint32 incMask = ATAddressGetSpaceSize(mViewStart) - 1;
 
 		IATDebugger *debugger = ATGetDebugger();
 		IATDebugTarget *target = debugger->GetTarget();
@@ -3172,6 +3170,7 @@ bool ATMemoryWindow::GetAddressFromPoint(int x, int y, uint32& addr) const {
 
 		case kATAddressSpace_ANTIC:
 		case kATAddressSpace_RAM:
+		case kATAddressSpace_ROM:
 			addrLen = 6;
 			break;
 
@@ -3179,7 +3178,7 @@ bool ATMemoryWindow::GetAddressFromPoint(int x, int y, uint32& addr) const {
 			addrLen = 7;
 			break;
 
-		case kATAddressSpace_PORTB:
+		case kATAddressSpace_EXTRAM:
 			addrLen = 7;
 			break;
 	}
@@ -3247,7 +3246,7 @@ protected:
 
 	VDStringW	mName;
 
-	VDFunctionThunk	*mpListViewThunk;
+	VDFunctionThunkInfo	*mpListViewThunk;
 
 	VDUIProxyListView mListView;
 	VDUIProxyMessageDispatcherW32 mDispatcher;
@@ -3363,7 +3362,7 @@ bool ATWatchWindow::OnCreate() {
 		return false;
 
 	mpListViewPrevWndProc = (WNDPROC)GetWindowLongPtrW(mhwndList, GWLP_WNDPROC);
-	SetWindowLongPtrW(mhwndList, GWLP_WNDPROC, (LONG_PTR)(WNDPROC)mpListViewThunk);
+	SetWindowLongPtrW(mhwndList, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpListViewThunk));
 
 	mListView.Attach(mhwndList);
 	mDispatcher.AddControl(&mListView);
@@ -3516,8 +3515,8 @@ protected:
 	HMENU	mhmenu;
 	int		mComboResizeInProgress;
 
-	VDFunctionThunk *mpThunkDLEditCombo;
-	VDFunctionThunk *mpThunkPFEditCombo;
+	VDFunctionThunkInfo *mpThunkDLEditCombo;
+	VDFunctionThunkInfo *mpThunkPFEditCombo;
 	WNDPROC	mWndProcDLAddrEdit;
 	WNDPROC	mWndProcPFAddrEdit;
 
@@ -3672,7 +3671,7 @@ bool ATDebugDisplayWindow::OnCreate() {
 		COMBOBOXINFO cbi = {sizeof(COMBOBOXINFO)};
 		if (mpThunkDLEditCombo && GetComboBoxInfo(mhwndDLAddrCombo, &cbi)) {
 			mWndProcDLAddrEdit = (WNDPROC)GetWindowLongPtrW(cbi.hwndItem, GWLP_WNDPROC);
-			SetWindowLongPtrW(cbi.hwndItem, GWLP_WNDPROC, (LONG_PTR)mpThunkDLEditCombo);
+			SetWindowLongPtrW(cbi.hwndItem, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpThunkDLEditCombo));
 		}
 	}
 
@@ -3686,7 +3685,7 @@ bool ATDebugDisplayWindow::OnCreate() {
 		COMBOBOXINFO cbi = {sizeof(COMBOBOXINFO)};
 		if (mpThunkPFEditCombo && GetComboBoxInfo(mhwndPFAddrCombo, &cbi)) {
 			mWndProcPFAddrEdit = (WNDPROC)GetWindowLongPtrW(cbi.hwndItem, GWLP_WNDPROC);
-			SetWindowLongPtrW(cbi.hwndItem, GWLP_WNDPROC, (LONG_PTR)mpThunkPFEditCombo);
+			SetWindowLongPtrW(cbi.hwndItem, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpThunkPFEditCombo));
 		}
 	}
 

@@ -71,7 +71,6 @@
 	
 &View
 	&Full Screen			{View.ToggleFullScreen}
-	Adjust Window Size		{View.AdjustWindowSize}
 	---
 	Fi&lter Mode
 		Next Mode			{View.NextFilterMode}
@@ -106,6 +105,7 @@
 			&Extended				{View.VerticalOverrideExtended}
 			&Full					{View.VerticalOverrideFull}
 		&Extended PAL Height	{View.TogglePALExtended}
+		&Indicator Margin		{View.ToggleIndicatorMargin}
 	&GTIA Visualization
 		&Next Mode				{View.NextGTIAVisMode}
 	&ANTIC Visualization
@@ -114,11 +114,10 @@
 	Show FPS					{View.ToggleFPS}
 	&XEP80 View					{View.ToggleXEP80View}
 	&Auto-switch XEP80 View		{View.ToggleXEP80ViewAutoswitching}
+	Adjust Colors...		{Video.AdjustColorsDialog}
 	---
 	&Display					{Pane.Display}
 	&Printer Output				{Pane.PrinterOutput}
-	---
-	Reset Window Layout			{View.ResetWindowLayout}
 	---
 	Copy Frame to Clipboard		{Edit.CopyFrame}
 	Copy Frame to Clipboard (True Aspect)		{Edit.CopyFrameTrueAspect}
@@ -127,174 +126,31 @@
 	Copy Text					{Edit.CopyText}
 	Paste Text					{Edit.PasteText}
 
-&System
+S&ystem
 	&Profiles					{$profiles}
 		&Edit Profiles...		{System.EditProfilesDialog}
 		Temporary Profile		{System.ToggleTemporaryProfile}
 		---
+	Configure System...			{System.Configure}
 	---
 	Warm Reset					{System.WarmReset}
 	Cold Reset					{System.ColdReset}
+	Cold Reset (Computer Only)	{System.ColdResetComputerOnly}
 	Pause						{System.TogglePause}
-	Hold Keys For Reset			{Console.HoldKeys}
+	---
+	&Warp Speed					{System.ToggleWarpSpeed}
+	Pause When Inactive			{System.TogglePauseWhenInactive}
+	---
 	Power-On Delay
 		&Auto					{System.PowerOnDelayAuto}
 		&None					{System.PowerOnDelayNone}
 		&1 Second				{System.PowerOnDelay1s}
 		&2 Seconds				{System.PowerOnDelay2s}
 		&3 Seconds				{System.PowerOnDelay3s}
+	Hold Keys For Reset			{Console.HoldKeys}
+	Internal BASIC (Boot Without Option Key)	{System.ToggleBASIC}
+	Auto-Boot Tape (Hold Start)		{Cassette.ToggleAutoBoot}
 	---
-	&Warp Speed					{System.ToggleWarpSpeed}
-	Pause When Inactive			{System.TogglePauseWhenInactive}
-	Speed Options...			{System.SpeedOptionsDialog}
-	---
-	D&evices...					{System.DevicesDialog}
-	---
-	&Hardware
-		400/800					{System.HardwareMode800}
-		600XL/800XL				{System.HardwareMode800XL}
-		65XE/130XE				{System.HardwareMode130XE}
-		1200XL					{System.HardwareMode1200XL}
-		XEGS					{System.HardwareModeXEGS}
-		5200					{System.HardwareMode5200}
-	&Firmware
-		Operating System		{$firmware_os}
-			Autoselect				{System.KernelModeDefault}
-			---
-		BASIC					{$firmware_basic}
-			Autoselect				{System.BasicDefault}
-			---
-		---
-		Internal BASIC (Boot Without Option Key)	{System.ToggleBASIC}
-		---
-		Firmware Images...		{System.ROMImagesDialog}
-	&Acceleration
-		Fast Boot					{System.ToggleFastBoot}
-		Fast FP Math				{System.ToggleFPPatch}
-		---
-		&C: patch (Cassette SIO)	{Cassette.ToggleSIOPatch}
-		&D: patch (Disk SIO)		{Disk.ToggleSIOPatch}
-		PRT: patch (Other SIO)		{Devices.ToggleSIOPatch}
-		SIO Override Detection		{Disk.ToggleSIOOverrideDetection}
-		SIO Burst Transfers
-			Disk (D:)				{Disk.ToggleBurstTransfers}
-			Other (PRT:)			{Devices.ToggleSIOBurstTransfers}
-		SIO Acceleration Mode
-			SIOV Patch Only			{Devices.SIOAccelModePatch}
-			PBI Device Only (ID 7)	{Devices.SIOAccelModePBI}
-			Both SIOV+PBI			{Devices.SIOAccelModeBoth}
-		---
-		&H: (Host device CIO)		{Devices.ToggleCIOPatchH}
-		&P: (Printer CIO)			{Devices.ToggleCIOPatchP}
-		&R: (RS-232 CIO)			{Devices.ToggleCIOPatchR}
-		&T: (1030 Serial CIO)		{Devices.ToggleCIOPatchT}
-		CIO Burst Transfers			{Devices.ToggleCIOBurstTransfers}
-		
-	&Memory Config
-		16K (400/800/600XL/5200)	{System.MemoryMode16K}
-		&48K (800)					{System.MemoryMode48K}
-		&64K (800XL/1200XL)			{System.MemoryMode64K}
-		&128K (130XE)				{System.MemoryMode128K}
-		---
-		320K (Rambo)				{System.MemoryMode320K}
-		320K (Compy)				{System.MemoryMode320KCompy}
-		576K						{System.MemoryMode576K}
-		576K (Compy)				{System.MemoryMode576KCompy}
-		1088K						{System.MemoryMode1088K}
-		---
-		8K (800)					{System.MemoryMode8K}
-		24K (800)					{System.MemoryMode24K}
-		32K (800)					{System.MemoryMode32K}
-		40K (800)					{System.MemoryMode40K}
-		52K (800)					{System.MemoryMode52K}
-		256K (Rambo)				{System.MemoryMode256K}
-		---
-		Power-up &Pattern
-			&Cleared				{System.MemoryClearZero}
-			&SRAM (random)			{System.MemoryClearRandom}
-			DRAM &1					{System.MemoryClearDRAM1}
-			DRAM &2					{System.MemoryClearDRAM2}
-			DRAM &3					{System.MemoryClearDRAM3}
-		Axlon Ramdisk
-			None					{System.AxlonMemoryNone}
-			64K (4 banks)			{System.AxlonMemory64K}
-			128K (8 banks)			{System.AxlonMemory128K}
-			256K (16 banks)			{System.AxlonMemory256K}
-			512K (32 banks)			{System.AxlonMemory512K}
-			1024K (64 banks)		{System.AxlonMemory1024K}
-			2048K (128 banks)		{System.AxlonMemory2048K}
-			4096K (256 banks)		{System.AxlonMemory4096K}
-			---
-			Enable Bank Register Aliasing	{System.ToggleAxlonAliasing}
-		High Memory
-			None (16-bit addressing)	{System.HighMemoryNA}
-			None (24-bit addressing)	{System.HighMemoryNone}
-			64K (bank $01)			{System.HighMemory64K}
-			192K (banks $01-$03)	{System.HighMemory192K}
-			1MB (banks $01-$0F)		{System.HighMemory960K}
-			4MB (banks $01-$3F)		{System.HighMemory4032K}
-			16MB (banks $01-$FF)	{System.HighMemory16320K}
-		---
-		MapRAM						{System.ToggleMapRAM}
-		Ultimate1MB					{System.ToggleUltimate1MB}
-		Floating I/O Bus			{System.ToggleFloatingIOBus}
-	&Video
-		&NTSC						{Video.StandardNTSC}
-		&PAL						{Video.StandardPAL}
-		SECAM						{Video.StandardSECAM}
-		&NTSC-50					{Video.StandardNTSC50}
-		&PAL-60						{Video.StandardPAL60}
-		---
-		CTIA mode					{Video.ToggleCTIA}
-		&Frame Blending				{Video.ToggleFrameBlending}
-		&Interlace					{Video.ToggleInterlace}
-		&Scanlines					{Video.ToggleScanlines}
-		---
-		No Artifacting					{Video.ArtifactingNone}
-		NTSC &Artifacting (Standard)	{Video.ArtifactingNTSC}
-		NTSC Artifacting (High)			{Video.ArtifactingNTSCHi}
-		PA&L Artifacting (Standard)		{Video.ArtifactingPAL}
-		PAL Artifacting (High)			{Video.ArtifactingPALHi}
-		---
-		Standard Video						{Video.EnhancedModeNone}
-		Enhanced Text (Hardware Intercept)	{Video.EnhancedModeHardware}
-		Enhanced Text (CIO Intercept)		{Video.EnhancedModeCIO}
-		---
-		Adjust Colors...				{Video.AdjustColorsDialog}
-		Enhanced Text Font...			{Video.EnhancedTextFontDialog}
-	&Disk Drive
-		&Accurate Sector Timing			{Disk.ToggleAccurateSectorTiming}
-		---
-		Show Sector Counter				{Disk.ToggleSectorCounter}
-		Drive Sounds					{Disk.ToggleDriveSounds}
-	&Cassette
-		&Auto-Boot on Startup			{Cassette.ToggleAutoBoot}
-		Auto-Re&wind on Startup			{Cassette.ToggleAutoRewind}
-		Load &Data as Audio				{Cassette.ToggleLoadDataAsAudio}
-		&Randomize Starting Position	{Cassette.ToggleRandomizeStartPosition}
-		---
-		&Normal							{Cassette.TurboModeNone}
-		&Turbo Enabled (Always On)		{Cassette.TurboModeAlways}
-		&Turbo Enabled (Command Control)	{Cassette.TurboModeCommandControl}
-		&Turbo Enabled (Proceed Sense)	{Cassette.TurboModeProceedSense}
-		&Turbo Enabled (Interrupt Sense)	{Cassette.TurboModeInterruptSense}
-		---
-		&Normal Polarity				{Cassette.PolarityNormal}
-		&Inverted Polarity				{Cassette.PolarityInverted}
-	Audio
-		&Stereo							{Audio.ToggleStereo}
-		&Non-linear Mixing				{Audio.ToggleNonlinearMixing}
-		Se&rial Noise					{Audio.ToggleSerialNoise}
-		Audio &Monitor					{Audio.ToggleMonitor}
-		---
-		M&ute							{Audio.ToggleMute}
-		Channel &1						{Audio.ToggleChannel1}
-		Channel &2						{Audio.ToggleChannel2}
-		Channel &3						{Audio.ToggleChannel3}
-		Channel &4						{Audio.ToggleChannel4}
-		---
-		&Options...						{Audio.OptionsDialog}
-	CP&U Options...						{System.CPUOptionsDialog}
 	Console Switches
 		Keyboard Present (XEGS)			{System.ToggleKeyboardPresent}
 		Force Self-Test					{System.ToggleForcedSelfTest}
@@ -313,6 +169,7 @@
 		Happy 1050: Write protect disk	{Console.HappyToggleWriteProtect}
 		Happy 1050: Write enable disk	{Console.HappyToggleWriteEnable}
 		ATR8000: Reset					{Console.ATR8000Reset}
+		XEL-CF3: Swap					{Console.XELCFSwap}
 
 &Input
 	Input Mappings...					{Input.InputMappingsDialog}
@@ -322,7 +179,6 @@
 	Capture Mouse						{Input.CaptureMouse}
 	Auto-capture Mouse					{Input.ToggleAutoCaptureMouse}
 	---
-	&Keyboard...						{Input.KeyboardDialog}
 	Light Pen/Gun...					{Input.LightPenDialog}
 	---
 	Port &1								{$port1}
@@ -334,13 +190,13 @@
 	Port &4								{$port4}
 		&None							{$port4none}
 
-&Cheat
+C&heat
 	Cheater...							{Cheat.CheatDialog}
 	---
 	Disable P/M &Collisions				{Cheat.ToggleDisablePMCollisions}
 	Disable &Playfield Collisions		{Cheat.ToggleDisablePFCollisions}
 	
-&Debug
+Debu&g
 	Enable Debugger						{Debug.ToggleDebugger}
 	Open Source File...					{Debug.OpenSourceFile}
 	&Window
@@ -403,8 +259,12 @@
 &Window
 	&Close								{Window.Close}
 	&Undock								{Window.Undock}
+	---
+	Adjust Window Size					{View.AdjustWindowSize}
+	Reset Window Layout					{View.ResetWindowLayout}
 
-&Help
+Help
 	Contents							{Help.Contents}
 	&About								{Help.About}
 	&Change Log							{Help.ChangeLog}
+	Command-Line Help					{Help.CommandLine}

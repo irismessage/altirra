@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcore/address.h>
 #include <at/atcore/scheduler.h>
 #include "cpu.h"
 #include "cpumemory.h"
@@ -27,7 +28,11 @@ ATProfileSession::~ATProfileSession() {
 		delete p;
 }
 
-ATProfileSession& ATProfileSession::operator=(ATProfileSession&& src) {
+vdnothrow ATProfileSession::ATProfileSession(ATProfileSession&& src) vdnoexcept {
+	*this = std::move(src);
+}
+
+vdnothrow ATProfileSession& ATProfileSession::operator=(ATProfileSession&& src) vdnoexcept {
 	if (!mpFrames.empty()) {
 		for(auto *p : mpFrames)
 			delete p;
@@ -37,6 +42,9 @@ ATProfileSession& ATProfileSession::operator=(ATProfileSession&& src) {
 
 	mpFrames = std::move(src.mpFrames);
 	mContexts = std::move(src.mContexts);
+
+	mProfileMode = src.mProfileMode;
+	mCounterModes = std::move(src.mCounterModes);
 	return *this;
 }
 
@@ -65,63 +73,124 @@ void ATProfileComputeInclusiveStats(
 	}
 }
 
-///////////////////////////////////////////////////////////////////////////
+namespace {
+	void MergeRecords(ATProfileFrame& dst, const ATProfileSession& srcSession, uint32 start, uint32 end, ATProfileFrame::Records ATProfileFrame::*field) {
+		auto& dstRecords = dst.*field;
 
-ATCPUProfiler::ATCPUProfiler()
-	: mpTSDProvider(nullptr)
-	, mpCPU(nullptr)
-	, mpMemory(nullptr)
-	, mpCallbacks(nullptr)
-	, mpFastScheduler(nullptr)
-	, mpSlowScheduler(nullptr)
-	, mpUpdateEvent(nullptr)
-	, mHashLinkAllocator(262144 - 128)
-	, mCGHashLinkAllocator(262144 - 128)
-{
-	memset(mpHashTable, 0, sizeof mpHashTable);
-	memset(mpBlockHashTable, 0, sizeof mpBlockHashTable);
-	memset(mpCGHashTable, 0, sizeof mpCGHashTable);
+		vdhashmap<uint32, uint32> addressLookup;
+
+		for(uint32 i = start; i < end; ++i) {
+			const auto& srcFrame = *srcSession.mpFrames[i];
+			const auto& srcRecords = srcFrame.*field;
+
+			for(const auto& srcRecord : srcRecords) {
+				auto r = addressLookup.insert(srcRecord.mAddress);
+
+				if (r.second) {
+					uint32 newIndex = (uint32)dstRecords.size();
+					r.first->second = newIndex;
+
+					dstRecords.push_back(srcRecord);
+				} else {
+					auto& dstRecord = dstRecords[r.first->second];
+
+					dstRecord.mCalls += srcRecord.mCalls;
+					dstRecord.mInsns += srcRecord.mInsns;
+					dstRecord.mCycles += srcRecord.mCycles;
+					dstRecord.mUnhaltedCycles += srcRecord.mUnhaltedCycles;
+
+					for(uint32 j = 0; j < vdcountof(srcRecord.mCounters); ++j)
+						dstRecord.mCounters[j] += srcRecord.mCounters[j];
+				}
+			}
+		}
+	}
+
+	void MergeCallGraphContextRecords(ATProfileFrame& dst, const ATProfileSession& srcSession, uint32 start, uint32 end) {
+		auto& dstRecords = dst.mCallGraphRecords;
+
+		for(uint32 i = start; i < end; ++i) {
+			const auto& srcFrame = *srcSession.mpFrames[i];
+			const auto& srcRecords = srcFrame.mCallGraphRecords;
+
+			const uint32 srcCount = (uint32)srcRecords.size();
+			const uint32 dstCount = (uint32)dstRecords.size();
+			const uint32 minCount = std::min(srcCount, dstCount);
+			
+			dstRecords.resize(std::max(srcCount, dstCount));
+
+			for(uint32 j=0; j<minCount; ++j) {
+				auto& dstRecord = dstRecords[j];
+				const auto& srcRecord = srcRecords[j];
+
+				dstRecord.mInsns += srcRecord.mInsns;
+				dstRecord.mCycles += srcRecord.mCycles;
+				dstRecord.mUnhaltedCycles += srcRecord.mUnhaltedCycles;
+				dstRecord.mCalls += srcRecord.mCalls;
+			}
+
+			if (srcCount > dstCount)
+				std::copy(srcRecords.begin() + dstCount, srcRecords.end(), dstRecords.begin() + dstCount);
+		}
+	}
 }
 
-ATCPUProfiler::~ATCPUProfiler() {
+void ATProfileMergeFrames(const ATProfileSession& session, uint32 start, uint32 end, ATProfileMergedFrame **mergedFrameOut) {
+	vdrefptr<ATProfileMergedFrame> mergedFrame { new ATProfileMergedFrame };
+
+	MergeRecords(*mergedFrame, session, start, end, &ATProfileFrame::mRecords);
+	MergeRecords(*mergedFrame, session, start, end, &ATProfileFrame::mBlockRecords);
+	MergeCallGraphContextRecords(*mergedFrame, session, start, end);
+
+	mergedFrame->mTotalCycles = 0;
+	mergedFrame->mTotalUnhaltedCycles = 0;
+	mergedFrame->mTotalInsns = 0;
+
+	for(uint32 i = start; i < end; ++i) {
+		const auto& frame = *session.mpFrames[i];
+
+		mergedFrame->mTotalCycles += frame.mTotalCycles;
+		mergedFrame->mTotalUnhaltedCycles += frame.mTotalUnhaltedCycles;
+		mergedFrame->mTotalInsns += frame.mTotalInsns;
+	}
+
+	const size_t numRecs = mergedFrame->mCallGraphRecords.size();
+	mergedFrame->mInclusiveRecords.resize(numRecs, {});
+
+	ATProfileComputeInclusiveStats(mergedFrame->mInclusiveRecords.data(), mergedFrame->mCallGraphRecords.data(), session.mContexts.data(), numRecs);
+
+	*mergedFrameOut = mergedFrame.release();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+ATCPUProfileBuilder::ATCPUProfileBuilder() {
+}
+
+ATCPUProfileBuilder::~ATCPUProfileBuilder() {
 	ClearContexts();
 }
 
-void ATCPUProfiler::SetBoundaryRule(ATProfileBoundaryRule rule, uint32 param, uint32 param2) {
-	mBoundaryRule = rule;
-	mBoundaryParam = param;
-	mBoundaryParam2 = param2;
-}
-
-void ATCPUProfiler::Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATCPUEmulatorCallbacks *callbacks, ATScheduler *scheduler, ATScheduler *slowScheduler, IATCPUTimestampDecoderProvider *tsdprovider) {
-	mpTSDProvider = tsdprovider;
-	mpCPU = cpu;
-	mpMemory = mem;
-	mpCallbacks = callbacks;
-	mpFastScheduler = scheduler;
-	mpSlowScheduler = slowScheduler;
-}
-
-void ATCPUProfiler::Start(ATProfileMode mode, ATProfileCounterMode c1, ATProfileCounterMode c2) {
+void ATCPUProfileBuilder::Init(ATProfileMode mode, ATProfileCounterMode c1, ATProfileCounterMode c2) {
 	mProfileMode = mode;
-	mLastHistoryCounter = mpCPU->GetHistoryCounter();
 	mbAdjustStackNext = false;
 	mbKeepNextFrame = true;
-	mLastS = mpCPU->GetS();
-	mCurrentFrameAddress = 0xFFFFFF;
+	mCurrentFrameAddress = 0x1FFFFFF;
 	mCurrentContext = 0;
 	mTotalContexts = 0;
 
 	mbCountersEnabled = c1 || c2;
 	mCounterModes[0] = c1;
 	mCounterModes[1] = c2;
-
-	if (mode == kATProfileMode_BasicLines)
-		mpUpdateEvent = mpSlowScheduler->AddEvent(2, this, 2);
-	else
-		mpUpdateEvent = mpSlowScheduler->AddEvent(32, this, 1);
-
 	std::fill(mStackTable, mStackTable+256, -1);
+
+	mSession.mProfileMode = mode;
+
+	if (c1)
+		mSession.mCounterModes.push_back(c1);
+
+	if (c2)
+		mSession.mCounterModes.push_back(c2);
 
 	ClearContexts();
 
@@ -130,107 +199,128 @@ void ATCPUProfiler::Start(ATProfileMode mode, ATProfileCounterMode c1, ATProfile
 
 		mSession.mContexts.resize(4);
 		mSession.mContexts[0] = ATProfileCallGraphContext { 0, 0 };
-		mSession.mContexts[1] = ATProfileCallGraphContext { 0, 0x2000000 };
-		mSession.mContexts[2] = ATProfileCallGraphContext { 0, 0x3000000 };
-		mSession.mContexts[3] = ATProfileCallGraphContext { 0, 0x4000000 };
+		mSession.mContexts[1] = ATProfileCallGraphContext { 0, 0x4000000 };
+		mSession.mContexts[2] = ATProfileCallGraphContext { 0, 0x6000000 };
+		mSession.mContexts[3] = ATProfileCallGraphContext { 0, 0x8000000 };
 	} else {
 		mSession.mContexts.clear();
 	}
-
-	OpenFrame();
-
-	auto&& tsd = mpTSDProvider->GetTimestampDecoder();
-	mNextFrameTime = tsd.GetFrameStartTime(mpCallbacks->CPUGetCycle() - 248*114) + 248*114 + tsd.mCyclesPerFrame;
 }
 
-void ATCPUProfiler::BeginFrame() {
-	Update();
-	AdvanceFrame(true);
+void ATCPUProfileBuilder::SetBoundaryRule(ATProfileBoundaryRule rule, uint32 param, uint32 param2) {
+	mBoundaryRule = rule;
+	mBoundaryParam = param;
+	mBoundaryParam2 = param2;
 }
 
-void ATCPUProfiler::EndFrame() {
-	Update();
-	AdvanceFrame(false);
+void ATCPUProfileBuilder::SetS(uint8 s) {
+	mLastS = s;
 }
 
-void ATCPUProfiler::End() {
-	Update();
+void ATCPUProfileBuilder::AdvanceFrame(uint32 cycle, uint32 unhaltedCycle, bool enableCollection, const ATCPUTimestampDecoder& tsDecoder) {
+	CloseFrame(cycle, unhaltedCycle, mbKeepNextFrame);
+	OpenFrame(cycle, unhaltedCycle, tsDecoder);
+	mbKeepNextFrame = enableCollection;
+}
 
-	if (mpUpdateEvent) {
-		mpSlowScheduler->RemoveEvent(mpUpdateEvent);
-		mpUpdateEvent = NULL;
+void ATCPUProfileBuilder::OpenFrame(uint32 cycle, uint32 unhaltedCycle, const ATCPUTimestampDecoder& tsDecoder) {
+	VDASSERT(!mpCurrentFrame);
+
+	mTotalSamples = 0;
+	mStartCycleTime = cycle;
+	mStartUnhaltedCycleTime = unhaltedCycle;
+	mNextAutoFrameTime = tsDecoder.GetFrameStartTime(cycle - 248*114) + 248*114 + tsDecoder.mCyclesPerFrame;
+
+	mSession.mpFrames.push_back(nullptr);
+	mpCurrentFrame = new ATProfileFrame;
+	mSession.mpFrames.back() = mpCurrentFrame;
+
+	if (mProfileMode == kATProfileMode_CallGraph) {
+		mpCurrentFrame->mCallGraphRecords.resize(4);
+
+		for(int i=0; i<4; ++i) {
+			ATProfileCallGraphRecord& rmain = mpCurrentFrame->mCallGraphRecords[i];
+			memset(&rmain, 0, sizeof rmain);
+		}
 	}
 
-	CloseFrame();
+	mpCurrentFrame->mCallGraphRecords.resize(mTotalContexts, ATProfileCallGraphRecord());
+}
 
+void ATCPUProfileBuilder::CloseFrame(uint32 cycle, uint32 unhaltedCycle, bool keepFrame) {
+	VDASSERT(mpCurrentFrame);
+
+	ATProfileFrame& frame = *mpCurrentFrame;
+
+	frame.mTotalCycles = cycle - mStartCycleTime;
+	frame.mTotalUnhaltedCycles = unhaltedCycle - mStartUnhaltedCycleTime;
+	frame.mTotalInsns = mTotalSamples;
+
+	for(const HashLink *hl : mpHashTable) {
+		for(; hl; hl = hl->mpNext)
+			frame.mRecords.push_back(hl->mRecord);
+	}
+
+	for(const HashLink *hl : mpBlockHashTable) {
+		for(; hl; hl = hl->mpNext)
+			frame.mBlockRecords.push_back(hl->mRecord);
+	}
+
+	if (!keepFrame) {
+		mSession.mpFrames.pop_back();
+		delete mpCurrentFrame;
+	}
+
+	mpCurrentFrame = nullptr;
+
+	std::fill(std::begin(mpHashTable), std::end(mpHashTable), nullptr);
+	std::fill(std::begin(mpBlockHashTable), std::end(mpBlockHashTable), nullptr);
+
+	mHashLinkAllocator.Clear();
+}
+
+void ATCPUProfileBuilder::Finalize() {
 	ClearContexts();
 }
 
-void ATCPUProfiler::GetSession(ATProfileSession& session) {
+void ATCPUProfileBuilder::TakeSession(ATProfileSession& session) {
 	session = std::move(mSession);
 }
 
-void ATCPUProfiler::OnScheduledEvent(uint32 id) {
-	if (id == 1) {
-		mpUpdateEvent = mpSlowScheduler->AddEvent(32, this, 1);
+void ATCPUProfileBuilder::Update(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool enableGlobalAddrs) {
+	VDASSERT(mProfileMode != kATProfileMode_BasicLines);
 
-		Update();
-	} else if (id == 2) {
-		mpUpdateEvent = mpSlowScheduler->AddEvent(2, this, 1);
-
-		Update();
-	}
-}
-
-void ATCPUProfiler::Update() {
 	if (mProfileMode == kATProfileMode_CallGraph) {
-		UpdateCallGraph();
+		UpdateCallGraph(tsDecoder, hents, n, enableGlobalAddrs);
 		return;
 	}
 
-	uint32 nextHistoryCounter = mpCPU->GetHistoryCounter();
-	uint32 count = (nextHistoryCounter - mLastHistoryCounter) & (mpCPU->GetHistoryLength() - 1);
-	mLastHistoryCounter = nextHistoryCounter;
-
-	if (!count)
-		return;
-
-	if (!mTotalSamples) {
-		if (!--count)
-			return;
-	}
-
-	uint32 lineNo = 0;
-
-	if (mProfileMode == kATProfileMode_BasicLines) {
-		uint32 lineAddr = (uint32)mpMemory->DebugReadByte(0x8A) + ((uint32)mpMemory->DebugReadByte(0x8B) << 8);
-		lineNo = (uint32)mpMemory->DebugReadByte(lineAddr) + ((uint32)mpMemory->DebugReadByte(lineAddr + 1) << 8);
-	}
-
-	const auto& tsdecoder = mpTSDProvider->GetTimestampDecoder();
-
-	const ATCPUHistoryEntry *hentp = &mpCPU->GetHistory(count);
-	uint32 pos = count;
-	while(pos) {
-		uint32 leftInSegment = ScanForFrameBoundary(pos);
+	while(n) {
+		uint32 leftInSegment = ScanForFrameBoundary(tsDecoder, hents, n);
 
 		mTotalSamples += leftInSegment;
+		n -= leftInSegment;
 
 		while(leftInSegment--) {
-			const ATCPUHistoryEntry *hentn = &mpCPU->GetHistory(--pos);
+			const ATCPUHistoryEntry *hentp = *hents++;
+			const ATCPUHistoryEntry *hentn = *hents;
+
 			uint32 cycles = (uint16)(hentn->mCycle - hentp->mCycle);
 			uint32 unhaltedCycles = (uint16)(hentn->mUnhaltedCycle - hentp->mUnhaltedCycle);
 			uint32 extpc = hentp->mPC + (hentp->mK << 16);
+			
+			if (enableGlobalAddrs && (hentp->mGlobalPCBase & kATAddressSpaceMask) == kATAddressSpace_PORTB) {
+				extpc |= 0x1000000 + (hentp->mGlobalPCBase & 0xFF0000);
+			}
+
 			uint32 addr = extpc;
 			bool isCall = false;
 			bool useFrameAddr = false;
 			uint32 frameAddr;
 
-			if (mProfileMode == kATProfileMode_BasicLines) {
-				addr = lineNo;
-			} else if (mProfileMode == kATProfileMode_Insns) {
+			if (mProfileMode == kATProfileMode_Insns) {
 				if (hentp->mP & AT6502::kFlagI)
-					addr += 0x1000000;
+					addr += 0x2000000;
 			} else if (mProfileMode == kATProfileMode_Functions) {
 				bool adjustStack = mbAdjustStackNext || hentp->mbIRQ || hentp->mbNMI;
 				mbAdjustStackNext = false;
@@ -246,14 +336,14 @@ void ATCPUProfiler::Update() {
 				}
 
 				if (adjustStack) {
-					uint32 newFrameMode = mCurrentFrameAddress & 0x7000000;
+					uint32 newFrameMode = mCurrentFrameAddress & 0xE000000;
 					if (hentp->mbNMI) {
-						if (tsdecoder.IsInterruptPositionVBI(hentp->mCycle))
-							newFrameMode = 0x3000000;
+						if (tsDecoder.IsInterruptPositionVBI(hentp->mCycle))
+							newFrameMode = 0x6000000;
 						else
-							newFrameMode = 0x4000000;
+							newFrameMode = 0x8000000;
 					} else if (hentp->mbIRQ) {
-						newFrameMode = 0x2000000;
+						newFrameMode = 0x4000000;
 					} else if (!(hentp->mP & AT6502::kFlagI)) {
 						newFrameMode = 0;
 					}
@@ -300,20 +390,20 @@ void ATCPUProfiler::Update() {
 						break;
 				}
 
-				if ((mCurrentFrameAddress & 0xFFFFFF) == 0xFFFFFF) {
-					mCurrentFrameAddress &= extpc | 0xFF000000;
+				if ((mCurrentFrameAddress & 0x1FFFFFF) == 0x1FFFFFF) {
+					mCurrentFrameAddress &= extpc | 0xFE000000;
 					isCall = true;
 				}
 
 				if (adjustStack) {
-					uint32 newFrameMode = mCurrentFrameAddress & 0x7000000;
+					uint32 newFrameMode = mCurrentFrameAddress & 0xE000000;
 					if (hentp->mbNMI) {
-						if (tsdecoder.IsInterruptPositionVBI(hentp->mCycle))
-							newFrameMode = 0x3000000;
+						if (tsDecoder.IsInterruptPositionVBI(hentp->mCycle))
+							newFrameMode = 0x6000000;
 						else
-							newFrameMode = 0x4000000;
+							newFrameMode = 0x8000000;
 					} else if (hentp->mbIRQ) {
-						newFrameMode = 0x2000000;
+						newFrameMode = 0x4000000;
 					} else if (!(hentp->mP & AT6502::kFlagI)) {
 						newFrameMode = 0;
 					}
@@ -361,7 +451,7 @@ void ATCPUProfiler::Update() {
 					case 0xB0:
 					case 0xD0:
 					case 0xF0:
-						mCurrentFrameAddress |= 0xFFFFFF;
+						mCurrentFrameAddress |= 0x1FFFFFF;
 						break;
 				}
 			}
@@ -427,36 +517,70 @@ void ATCPUProfiler::Update() {
 
 			if (mbCountersEnabled)
 				UpdateCounters(hl->mRecord.mCounters, *hentp);
+		}
+	}
+}
+
+void ATCPUProfileBuilder::UpdateBasicLines(const ATCPUTimestampDecoder& tsDecoder, uint32 lineNo, const ATCPUHistoryEntry *const *hents, uint32 n) {
+	VDASSERT(mProfileMode == kATProfileMode_BasicLines);
+
+	while(n) {
+		uint32 leftInSegment = ScanForFrameBoundary(tsDecoder, hents, n);
+
+		mTotalSamples += leftInSegment;
+		n -= leftInSegment;
+
+		while(leftInSegment--) {
+			const ATCPUHistoryEntry *hentp = *hents++;
+			const ATCPUHistoryEntry *hentn = *hents;
+			const uint32 cycles = (uint16)(hentn->mCycle - hentp->mCycle);
+			const uint32 unhaltedCycles = (uint16)(hentn->mUnhaltedCycle - hentp->mUnhaltedCycle);
+
+			const uint32 hc = lineNo & 0xFF;
+			HashLink *hh = mpHashTable[hc];
+			HashLink *hl = hh;
+
+			for(; hl; hl = hl->mpNext) {
+				if (hl->mRecord.mAddress == lineNo)
+					break;
+			}
+
+			if (!hl) {
+				hl = mHashLinkAllocator.Allocate<HashLink>();
+				hl->mpNext = hh;
+				hl->mRecord.mAddress = lineNo;
+				hl->mRecord.mCycles = 0;
+				hl->mRecord.mUnhaltedCycles = 0;
+				hl->mRecord.mInsns = 0;
+				hl->mRecord.mModeBits = (hentp->mP >> 4) & 3;
+				hl->mRecord.mEmulationMode = hentp->mbEmulation;
+				hl->mRecord.mCalls = 0;
+				memset(hl->mRecord.mCounters, 0, sizeof hl->mRecord.mCounters);
+				mpHashTable[hc] = hl;
+			}
+
+			hl->mRecord.mCycles += cycles;
+			hl->mRecord.mUnhaltedCycles += unhaltedCycles;
+			++hl->mRecord.mInsns;
+
+			if (mbCountersEnabled)
+				UpdateCounters(hl->mRecord.mCounters, *hentp);
 
 			hentp = hentn;
 		}
 	}
 }
 
-void ATCPUProfiler::UpdateCallGraph() {
-	uint32 nextHistoryCounter = mpCPU->GetHistoryCounter();
-	uint32 count = (nextHistoryCounter - mLastHistoryCounter) & (mpCPU->GetHistoryLength() - 1);
-	mLastHistoryCounter = nextHistoryCounter;
-
-	if (!count)
-		return;
-
-	if (!mTotalSamples) {
-		if (!--count)
-			return;
-	}
-
-	const auto& tsdecoder = mpTSDProvider->GetTimestampDecoder();
-
-	const ATCPUHistoryEntry *hentp = &mpCPU->GetHistory(count);
-	uint32 pos = count;
-	while(pos) {
-		uint32 leftInSegment = ScanForFrameBoundary(pos);
+void ATCPUProfileBuilder::UpdateCallGraph(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n, bool enableGlobalAddrs) {
+	while(n) {
+		uint32 leftInSegment = ScanForFrameBoundary(tsDecoder, hents, n);
+		n -= leftInSegment;
 
 		mTotalSamples += leftInSegment;
 
 		while(leftInSegment--) {
-			const ATCPUHistoryEntry *hentn = &mpCPU->GetHistory(--pos);
+			const ATCPUHistoryEntry *hentp = *hents++;
+			const ATCPUHistoryEntry *hentn = *hents;
 			uint32 cycles = (uint16)(hentn->mCycle - hentp->mCycle);
 			uint32 unhaltedCycles = (uint16)(hentn->mUnhaltedCycle - hentp->mUnhaltedCycle);
 
@@ -496,14 +620,14 @@ void ATCPUProfiler::UpdateCallGraph() {
 					}
 
 					if (hentp->mbNMI) {
-						if (tsdecoder.IsInterruptPositionVBI(hentp->mCycle))
+						if (tsDecoder.IsInterruptPositionVBI(hentp->mCycle))
 							mCurrentContext = 2;
 						else
 							mCurrentContext = 3;
 					} else if (hentp->mbIRQ)
 						mCurrentContext = 1;
 
-					const uint32 newScope = hentp->mPC + (hentp->mK << 16);
+					const uint32 newScope = hentp->mPC + (hentp->mK << 16) + (enableGlobalAddrs && (hentp->mGlobalPCBase & kATAddressSpaceMask) == kATAddressSpace_PORTB ? 0x1000000 + (hentp->mGlobalPCBase & 0xFF0000) : 0);
 					const uint32 hc = newScope & 0xFF;
 					CallGraphHashLink *hh = mpCGHashTable[hc];
 					CallGraphHashLink *hl = hh;
@@ -539,7 +663,7 @@ void ATCPUProfiler::UpdateCallGraph() {
 			cgRecord.mUnhaltedCycles += unhaltedCycles;
 			++cgRecord.mInsns;
 
-			uint32 addr = hentp->mPC + (hentp->mK << 16);
+			uint32 addr = hentp->mPC + (hentp->mK << 16) + (enableGlobalAddrs && (hentp->mGlobalPCBase & kATAddressSpaceMask) == kATAddressSpace_PORTB ? 0x1000000 + (hentp->mGlobalPCBase & 0xFF0000) : 0);
 			uint32 hc = addr & 0xFF;
 			HashLink *hh = mpHashTable[hc];
 			HashLink *hl = hh;
@@ -566,89 +690,18 @@ void ATCPUProfiler::UpdateCallGraph() {
 			hl->mRecord.mCycles += cycles;
 			hl->mRecord.mUnhaltedCycles += unhaltedCycles;
 			++hl->mRecord.mInsns;
-
-			hentp = hentn;
 		}
 	}
 }
 
-void ATCPUProfiler::AdvanceFrame(bool enableCollection) {
-	AdvanceFrame(mpCallbacks->CPUGetCycle(), mpCallbacks->CPUGetUnhaltedCycle(), enableCollection);
-}
-
-void ATCPUProfiler::AdvanceFrame(uint32 cycle, uint32 unhaltedCycle, bool enableCollection) {
-	CloseFrame(cycle, unhaltedCycle, mbKeepNextFrame);
-	OpenFrame(cycle, unhaltedCycle);
-	mbKeepNextFrame = enableCollection;
-}
-
-void ATCPUProfiler::OpenFrame() {
-	OpenFrame(mpCallbacks->CPUGetCycle(), mpCallbacks->CPUGetUnhaltedCycle());
-}
-
-void ATCPUProfiler::OpenFrame(uint32 cycle, uint32 unhaltedCycle) {
-	mTotalSamples = 0;
-	mStartCycleTime = cycle;
-	mStartUnhaltedCycleTime = unhaltedCycle;
-
-	mSession.mpFrames.push_back(nullptr);
-	mpCurrentFrame = new ATProfileFrame;
-	mSession.mpFrames.back() = mpCurrentFrame;
-
-	if (mProfileMode == kATProfileMode_CallGraph) {
-		mpCurrentFrame->mCallGraphRecords.resize(4);
-
-		for(int i=0; i<4; ++i) {
-			ATProfileCallGraphRecord& rmain = mpCurrentFrame->mCallGraphRecords[i];
-			memset(&rmain, 0, sizeof rmain);
-		}
-	}
-
-	mpCurrentFrame->mCallGraphRecords.resize(mTotalContexts, ATProfileCallGraphRecord());
-}
-
-void ATCPUProfiler::CloseFrame() {
-	CloseFrame(mpCallbacks->CPUGetCycle(), mpCallbacks->CPUGetUnhaltedCycle(), true);
-}
-
-void ATCPUProfiler::CloseFrame(uint32 cycle, uint32 unhaltedCycle, bool keepFrame) {
-	ATProfileFrame& frame = *mpCurrentFrame;
-
-	frame.mTotalCycles = cycle - mStartCycleTime;
-	frame.mTotalUnhaltedCycles = unhaltedCycle - mStartUnhaltedCycleTime;
-	frame.mTotalInsns = mTotalSamples;
-
-	for(const HashLink *hl : mpHashTable) {
-		for(; hl; hl = hl->mpNext)
-			frame.mRecords.push_back(hl->mRecord);
-	}
-
-	for(const HashLink *hl : mpBlockHashTable) {
-		for(; hl; hl = hl->mpNext)
-			frame.mBlockRecords.push_back(hl->mRecord);
-	}
-
-	if (!keepFrame) {
-		mSession.mpFrames.pop_back();
-		delete mpCurrentFrame;
-	}
-
-	mpCurrentFrame = nullptr;
-
-	memset(mpHashTable, 0, sizeof mpHashTable);
-	memset(mpBlockHashTable, 0, sizeof mpBlockHashTable);
-
-	mHashLinkAllocator.Clear();
-}
-
-void ATCPUProfiler::ClearContexts() {
-	memset(mpCGHashTable, 0, sizeof mpCGHashTable);
+void ATCPUProfileBuilder::ClearContexts() {
+	std::fill(std::begin(mpCGHashTable), std::end(mpCGHashTable), nullptr);
 
 	mCGHashLinkAllocator.Clear();
 }
 
-void ATCPUProfiler::UpdateCounters(uint32 *p, const ATCPUHistoryEntry& he) {
-	static const struct BranchOpInfo {
+void ATCPUProfileBuilder::UpdateCounters(uint32 *p, const ATCPUHistoryEntry& he) {
+	static constexpr struct BranchOpInfo {
 		uint8 mFlagsAnd;
 		uint8 mFlagsXor;
 	} kBranchOps[8]={
@@ -793,7 +846,7 @@ void ATCPUProfiler::UpdateCounters(uint32 *p, const ATCPUHistoryEntry& he) {
 	}
 }
 
-uint32 ATCPUProfiler::ScanForFrameBoundary(uint32 n) {
+uint32 ATCPUProfileBuilder::ScanForFrameBoundary(const ATCPUTimestampDecoder& tsDecoder, const ATCPUHistoryEntry *const *hents, uint32 n) {
 	switch(mBoundaryRule) {
 		case kATProfileBoundaryRule_None:
 		default:
@@ -801,17 +854,14 @@ uint32 ATCPUProfiler::ScanForFrameBoundary(uint32 n) {
 
 		case kATProfileBoundaryRule_VBlank:
 			{
-				const auto& tsdecoder = mpTSDProvider->GetTimestampDecoder();
 				for(uint32 i=0; i<n; ++i) {
-					const ATCPUHistoryEntry *hent = &mpCPU->GetHistory(n - i);
+					const ATCPUHistoryEntry *hent = hents[i];
 
-					if (hent->mCycle - mNextFrameTime < (1U << 31)) {
+					if (hent->mCycle - mNextAutoFrameTime < (1U << 31)) {
 						if (i)
 							return i;
 
-						AdvanceFrame(hent->mCycle, hent->mUnhaltedCycle, true);
-
-						mNextFrameTime = tsdecoder.GetFrameStartTime(hent->mCycle - 248*114) + 248*114 + tsdecoder.mCyclesPerFrame;
+						AdvanceFrame(hent->mCycle, hent->mUnhaltedCycle, true, tsDecoder);
 					}
 				}
 			}
@@ -819,41 +869,182 @@ uint32 ATCPUProfiler::ScanForFrameBoundary(uint32 n) {
 
 		case kATProfileBoundaryRule_PCAddress:
 			for(uint32 i=0; i<n; ++i) {
-				const ATCPUHistoryEntry *hent = &mpCPU->GetHistory(n - i);
+				const ATCPUHistoryEntry *hent = hents[i];
 
 				if (hent->mPC == mBoundaryParam) {
 					if (i)
 						return i;
 
-					AdvanceFrame(hent->mCycle, hent->mUnhaltedCycle, true);
+					AdvanceFrame(hent->mCycle, hent->mUnhaltedCycle, true, tsDecoder);
 				} else if (hent->mPC == mBoundaryParam2) {
 					if (i)
 						return i;
 
-					AdvanceFrame(hent->mCycle, hent->mUnhaltedCycle, false);
+					AdvanceFrame(hent->mCycle, hent->mUnhaltedCycle, false, tsDecoder);
 				}
 			}
 			break;
 
 		case kATProfileBoundaryRule_PCAddressFunction:
 			for(uint32 i=0; i<n; ++i) {
-				const ATCPUHistoryEntry *hent = &mpCPU->GetHistory(n - i);
+				const ATCPUHistoryEntry *hent = hents[i];
 
 				if (hent->mPC == mBoundaryParam) {
 					if (i)
 						return i;
 
-					AdvanceFrame(hent->mCycle, hent->mUnhaltedCycle, true);
+					AdvanceFrame(hent->mCycle, hent->mUnhaltedCycle, true, tsDecoder);
 					mBoundaryParam2 = hent->mS;
 				} else if (((hent->mS - mBoundaryParam2 - 1) & 0xFF) < 0x0F) {
 					if (i)
 						return i;
 
-					AdvanceFrame(hent->mCycle, hent->mUnhaltedCycle, false);
+					AdvanceFrame(hent->mCycle, hent->mUnhaltedCycle, false, tsDecoder);
 				}
 			}
 			break;
 	}
 
 	return n;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+ATCPUProfiler::ATCPUProfiler()
+	: mpTSDProvider(nullptr)
+	, mpCPU(nullptr)
+	, mpMemory(nullptr)
+	, mpCallbacks(nullptr)
+	, mpFastScheduler(nullptr)
+	, mpSlowScheduler(nullptr)
+	, mpUpdateEvent(nullptr)
+{
+}
+
+ATCPUProfiler::~ATCPUProfiler() {
+}
+
+void ATCPUProfiler::SetBoundaryRule(ATProfileBoundaryRule rule, uint32 param, uint32 param2) {
+	mBuilder.SetBoundaryRule(rule, param, param2);
+}
+
+void ATCPUProfiler::Init(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, ATCPUEmulatorCallbacks *callbacks, ATScheduler *scheduler, ATScheduler *slowScheduler, IATCPUTimestampDecoderProvider *tsdprovider) {
+	mpTSDProvider = tsdprovider;
+	mpCPU = cpu;
+	mpMemory = mem;
+	mpCallbacks = callbacks;
+	mpFastScheduler = scheduler;
+	mpSlowScheduler = slowScheduler;
+}
+
+void ATCPUProfiler::Start(ATProfileMode mode, ATProfileCounterMode c1, ATProfileCounterMode c2) {
+	mBuilder.Init(mode, c1, c2);
+	mBuilder.SetS(mpCPU->GetS());
+
+	mProfileMode = mode;
+	mLastHistoryCounter = mpCPU->GetHistoryCounter();
+	mbDropFirstSample = true;
+
+	if (mode == kATProfileMode_BasicLines)
+		mpUpdateEvent = mpSlowScheduler->AddEvent(2, this, 2);
+	else
+		mpUpdateEvent = mpSlowScheduler->AddEvent(32, this, 1);
+
+	OpenFrame();
+}
+
+void ATCPUProfiler::BeginFrame() {
+	Update();
+	AdvanceFrame(true);
+}
+
+void ATCPUProfiler::EndFrame() {
+	Update();
+	AdvanceFrame(false);
+}
+
+void ATCPUProfiler::End() {
+	Update();
+
+	if (mpUpdateEvent) {
+		mpSlowScheduler->RemoveEvent(mpUpdateEvent);
+		mpUpdateEvent = NULL;
+	}
+
+	CloseFrame();
+
+	mBuilder.Finalize();
+}
+
+void ATCPUProfiler::GetSession(ATProfileSession& session) {
+	mBuilder.TakeSession(session);
+}
+
+void ATCPUProfiler::OnScheduledEvent(uint32 id) {
+	if (id == 1) {
+		mpUpdateEvent = mpSlowScheduler->AddEvent(32, this, 1);
+
+		Update();
+	} else if (id == 2) {
+		mpUpdateEvent = mpSlowScheduler->AddEvent(2, this, 1);
+
+		Update();
+	}
+}
+
+void ATCPUProfiler::Update() {
+	uint32 nextHistoryCounter = mpCPU->GetHistoryCounter();
+	uint32 count = (nextHistoryCounter - mLastHistoryCounter) & (mpCPU->GetHistoryLength() - 1);
+	mLastHistoryCounter = nextHistoryCounter;
+
+	if (!count)
+		return;
+
+	// If we have not taken any samples yet, toss the first sample. This is because we
+	// always need to have one additional sample due to differencing for timestamps, so
+	// we can only process one less than the total number of available samples.
+	if (mbDropFirstSample) {
+		mbDropFirstSample = false;
+
+		--count;
+	}
+
+	const ATCPUHistoryEntry *heptrs[256];
+	const ATCPUTimestampDecoder& tsDecoder = mpTSDProvider->GetTimestampDecoder();
+	uint32 lineNo = 0;
+
+	if (mProfileMode == kATProfileMode_BasicLines) {
+		uint32 lineAddr = (uint32)mpMemory->DebugReadByte(0x8A) + ((uint32)mpMemory->DebugReadByte(0x8B) << 8);
+		lineNo = (uint32)mpMemory->DebugReadByte(lineAddr) + ((uint32)mpMemory->DebugReadByte(lineAddr + 1) << 8);
+	}
+
+	const bool enableGlobalAddrs = (mpCPU->GetCPUMode() == kATCPUMode_6502);
+
+	while(count) {
+		// Note that we are constrained to always overlap by one entry, so we consume
+		// one less entry than we read.
+		const uint32 toRead = std::min<uint32>((uint32)vdcountof(heptrs) - 1, count);
+
+		for(uint32 i = 0; i <= toRead; ++i)
+			heptrs[i] = &mpCPU->GetHistory(count - i);
+
+		if (mProfileMode == kATProfileMode_BasicLines)
+			mBuilder.UpdateBasicLines(tsDecoder, lineNo, heptrs, toRead);
+		else
+			mBuilder.Update(tsDecoder, heptrs, toRead, enableGlobalAddrs);
+
+		count -= toRead;
+	}
+}
+
+void ATCPUProfiler::AdvanceFrame(bool enableCollection) {
+	mBuilder.AdvanceFrame(mpCallbacks->CPUGetCycle(), mpCallbacks->CPUGetUnhaltedCycle(), enableCollection, mpTSDProvider->GetTimestampDecoder());
+}
+
+void ATCPUProfiler::OpenFrame() {
+	mBuilder.OpenFrame(mpCallbacks->CPUGetCycle(), mpCallbacks->CPUGetUnhaltedCycle(), mpTSDProvider->GetTimestampDecoder());
+}
+
+void ATCPUProfiler::CloseFrame() {
+	mBuilder.CloseFrame(mpCallbacks->CPUGetCycle(), mpCallbacks->CPUGetUnhaltedCycle(), true);
 }

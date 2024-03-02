@@ -103,12 +103,12 @@ float ATCassetteEmulator::GetPosition() const {
 	return mPosition / kATCassetteDataSampleRate;
 }
 
-void ATCassetteEmulator::Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATScheduler *slowsched, IATAudioOutput *audioOut, ATDeferredEventManager *defmgr, IATDeviceSIOManager *sioMgr) {
+void ATCassetteEmulator::Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATScheduler *slowsched, IATAudioMixer *mixer, ATDeferredEventManager *defmgr, IATDeviceSIOManager *sioMgr) {
 	mpPokey = pokey;
 	mpSIOMgr = sioMgr;
 	mpScheduler = sched;
 	mpSlowScheduler = slowsched;
-	mpAudioOutput = audioOut;
+	mpAudioMixer = mixer;
 
 	PositionChanged.Init(defmgr);
 	PlayStateChanged.Init(defmgr);
@@ -116,7 +116,7 @@ void ATCassetteEmulator::Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATSche
 	TapeChanged.Init(defmgr);
 	TapePeaksUpdated.Init(defmgr);
 
-	audioOut->AddSyncAudioSource(this);
+	mixer->AddSyncAudioSource(this);
 
 	RewindToStart();
 	ColdReset();
@@ -150,9 +150,9 @@ void ATCassetteEmulator::Shutdown() {
 		mpScheduler = NULL;
 	}
 
-	if (mpAudioOutput) {
-		mpAudioOutput->RemoveSyncAudioSource(this);
-		mpAudioOutput = NULL;
+	if (mpAudioMixer) {
+		mpAudioMixer->RemoveSyncAudioSource(this);
+		mpAudioMixer = nullptr;
 	}
 
 	if (mpImage) {
@@ -249,6 +249,7 @@ void ATCassetteEmulator::UnloadInternal() {
 
 	mImagePath.clear();
 	mbImagePersistent = false;
+	mbImageDirty = false;
 	mPosition = 0;
 	mLength = 0;
 	mAudioPosition = 0;
@@ -259,6 +260,17 @@ void ATCassetteEmulator::UnloadInternal() {
 	mbMotorEnable = false;
 	mbPlayEnable = false;
 	UpdateMotorState();
+}
+
+void ATCassetteEmulator::SetImagePersistent(const wchar_t *fn) {
+	if (mpImage) {
+		mbImagePersistent = true;
+		mImagePath = fn;
+	}
+}
+
+void ATCassetteEmulator::SetImageClean() {
+	mbImageDirty = false;
 }
 
 void ATCassetteEmulator::SetLogDataEnable(bool enable) {
@@ -670,6 +682,9 @@ uint8 ATCassetteEmulator::WriteBlock(uint16 bufadr, uint16 len, ATCPUEmulatorMem
 		return kATCIOStat_Success;
 	}
 
+	// mark tape dirty, if not already
+	mbImageDirty = true;
+
 	// flush any blank time accumulated up to this point
 	FlushRecording(ATSCHEDULER_GETTIME(mpScheduler), true);
 
@@ -798,6 +813,8 @@ void ATCassetteEmulator::PokeyBeginCassetteData(uint8 skctl) {
 bool ATCassetteEmulator::PokeyWriteCassetteData(uint8 c, uint32 cyclesPerBit) {
 	if (mbRecordEnable && mbMotorRunning) {
 		if (mpImage) {
+			mbImageDirty = true;
+
 			mpImage->WriteStdData(c, VDRoundToInt32(7159090.0f / 4.0f / cyclesPerBit));
 
 			UpdateRecordingPosition();
@@ -812,8 +829,7 @@ bool ATCassetteEmulator::PokeyWriteCassetteData(uint8 c, uint32 cyclesPerBit) {
 
 void ATCassetteEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 	const uint32 startTime = mixInfo.mStartTime;
-	float *dstLeft = mixInfo.mpLeft;
-	float *dstRight = mixInfo.mpRight;
+	float *dst = mixInfo.mpLeft;
 	uint32 n = mixInfo.mCount;
 
 	VDASSERT(n > 0);
@@ -844,10 +860,7 @@ void ATCassetteEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 
 			n -= toSkip;
 			t += kATCyclesPerSyncSample * toSkip;
-			dstLeft += toSkip;
-
-			if (dstRight)
-				dstRight += toSkip;
+			dst += toSkip;
 		}
 
 		// stop time is earlier of range stop and end time
@@ -876,7 +889,7 @@ void ATCassetteEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 
 		// render samples
 		if (haveAudio)
-			mpImage->AccumulateAudio(dstLeft, dstRight, pos, posfrac, toRender);
+			mpImage->AccumulateAudio(dst, pos, posfrac, toRender);
 
 		n -= toRender;
 		t += kATCyclesPerSyncSample * toRender;
@@ -1166,6 +1179,7 @@ void ATCassetteEmulator::SeekAudio(uint32 pos) {
 void ATCassetteEmulator::FlushRecording(uint32 t, bool force) {
 	if (force || t - mRecordLastTime > kRecordMaxDelayForBlank) {
 		if (mpImage) {
+			mbImageDirty = true;
 			mpImage->WriteBlankData(VDRoundToInt((float)(t - mRecordLastTime) * kATCassetteDataSampleRate / (7159090.0f / 4.0f)));
 
 			UpdateRecordingPosition();

@@ -72,6 +72,7 @@ public:
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override { return nullptr; }
 	bool IsWritableFirmwareDirty(uint32 idx) const override { return false; }
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override {}
+	bool IsUsableFirmwareLoaded() const override;
 
 public:
 	void InitIRQSource(ATIRQController *fwirq) override;
@@ -133,6 +134,7 @@ protected:
 	uint8	mRAMPAGEMask;
 	bool	mbFirmware32K;
 	bool	mbSCSIBlockSize256;
+	bool	mbFirmwareUsable = false;
 
 	ATFirmwareManager *mpFwMan;
 	IATDeviceIndicatorManager *mpUIRenderer;

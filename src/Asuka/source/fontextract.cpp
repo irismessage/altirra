@@ -68,7 +68,7 @@ void tool_fontextract(const vdfastvector<const char *>& args, const vdfastvector
 		exit(10);
 	}
 
-	int fontsAdded = AddFontResourceEx(args[0], FR_NOT_ENUM | FR_PRIVATE, 0);
+	int fontsAdded = AddFontResourceExA(args[0], FR_NOT_ENUM | FR_PRIVATE, 0);
 
 	if (!fontsAdded) {
 		printf("Asuka: Unable to load font file: %s\n", args[0]);
@@ -81,7 +81,7 @@ void tool_fontextract(const vdfastvector<const char *>& args, const vdfastvector
 		exit(10);
 	}
 
-	HDC hdc = CreateDC("DISPLAY", 0, 0, 0);
+	HDC hdc = CreateDCW(L"DISPLAY", 0, 0, 0);
 	HGDIOBJ hfontOld = SelectObject(hdc, hfont);
 	MAT2 m = { {0,1},{0,0},{0,0},{0,1} };
 

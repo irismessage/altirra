@@ -30,7 +30,9 @@ void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent);
 void ATDisassembleCaptureRegisterContext(IATDebugTarget *target, ATCPUHistoryEntry& hent);
 void ATDisassembleCaptureRegisterContext(ATCPUHistoryEntry& hent, const ATCPUExecState& execState, ATDebugDisasmMode execMode);
 void ATDisassembleCaptureInsnContext(uint16 addr, uint8 bank, ATCPUHistoryEntry& hent);
+void ATDisassembleCaptureInsnContext(uint32 globalAddr, ATCPUHistoryEntry& hent);
 void ATDisassembleCaptureInsnContext(IATDebugTarget *target, uint16 addr, uint8 bank, ATCPUHistoryEntry& hent);
+void ATDisassembleCaptureInsnContext(IATDebugTarget *target, uint32 globalAddr, ATCPUHistoryEntry& hent);
 uint16 ATDisassembleInsn(uint16 addr, uint8 bank = 0);
 uint16 ATDisassembleInsn(char *buf, uint16 addr, bool decodeReferences);
 uint16 ATDisassembleInsn(VDStringA& buf, uint16 addr, bool decodeReferences);
@@ -47,9 +49,10 @@ uint16 ATDisassembleInsn(VDStringA& buf,
 	bool lowercaseOps = false,
 	bool wideOpcode = false,
 	bool showLabelNamespaces = true,
-	bool showSymbols = true);
+	bool showSymbols = true,
+	bool showGlobalPC = false);
 
-uint16 ATDisassembleGetFirstAnchor(IATDebugTarget *target, uint16 addr, uint16 targetAddr, uint8 bank);
+uint16 ATDisassembleGetFirstAnchor(IATDebugTarget *target, uint16 addr, uint16 targetAddr, uint32 addrBank);
 void ATDisassemblePredictContext(ATCPUHistoryEntry& hent, ATDebugDisasmMode execMode);
 
 int ATGetOpcodeLength(uint8 opcode);

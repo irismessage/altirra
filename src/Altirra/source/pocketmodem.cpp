@@ -178,7 +178,7 @@ bool ATDevicePocketModem::SetSettings(const ATPropertySet& props) {
 
 void ATDevicePocketModem::Init() {
 	mpDevice->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
-	mpDevice->Init(mpScheduler, mpSlowScheduler, mpUIRenderer);
+	mpDevice->Init(mpScheduler, mpSlowScheduler, mpUIRenderer, nullptr);
 }
 
 void ATDevicePocketModem::Shutdown() {

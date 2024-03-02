@@ -73,6 +73,7 @@ extern const ATDeviceDefinition g_ATDeviceDefDiskDriveTygrys1050;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050Duplicator;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050Turbo;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050TurboII;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveISPlate;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveIndusGT;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveXF551;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveATR8000;
@@ -80,6 +81,7 @@ extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercom;
 extern const ATDeviceDefinition g_ATDeviceDefBrowser;
 extern const ATDeviceDefinition g_ATDeviceDefVBXE;
 extern const ATDeviceDefinition g_ATDeviceDefXELCF;
+extern const ATDeviceDefinition g_ATDeviceDefXELCF3;
 extern const ATDeviceDefinition g_ATDeviceDefRapidus;
 
 void ATRegisterDevices(ATDeviceManager& dm) {
@@ -135,6 +137,7 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefDiskDrive1050Duplicator,
 		&g_ATDeviceDefDiskDrive1050Turbo,
 		&g_ATDeviceDefDiskDrive1050TurboII,
+		&g_ATDeviceDefDiskDriveISPlate,
 		&g_ATDeviceDefDiskDriveIndusGT,
 		&g_ATDeviceDefDiskDriveXF551,
 		&g_ATDeviceDefDiskDriveATR8000,
@@ -142,6 +145,7 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefBrowser,
 		&g_ATDeviceDefVBXE,
 		&g_ATDeviceDefXELCF,
+		&g_ATDeviceDefXELCF3,
 		&g_ATDeviceDefRapidus,
 	};
 

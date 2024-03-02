@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <windows.h>
+#include <vd2/system/file.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/w32assist.h>
@@ -53,6 +54,7 @@
 #include "uiprofiler.h"
 #include "resource.h"
 #include "options.h"
+#include "decode_png.h"
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -116,8 +118,6 @@ extern int g_dispFilterSharpness;
 
 extern ATDisplayStretchMode g_displayStretchMode;
 
-extern ATUIWindowCaptionUpdater g_winCaptionUpdater;
-
 ATLogChannel g_ATLCHostKeys(false, false, "HOSTKEYS", "Host keyboard activity");
 
 ATUIManager g_ATUIManager;
@@ -125,10 +125,12 @@ ATUIManager g_ATUIManager;
 void OnCommandEditPasteText();
 
 void ATUIFlushDisplay();
+void ATUIResizeDisplay();
 
 ///////////////////////////////////////////////////////////////////////////
 
 ATUIVideoDisplayWindow *g_pATVideoDisplayWindow;
+bool g_dispPadIndicators = false;
 
 void ATUIOpenOnScreenKeyboard() {
 	if (g_pATVideoDisplayWindow)
@@ -138,6 +140,18 @@ void ATUIOpenOnScreenKeyboard() {
 void ATUIToggleHoldKeys() {
 	if (g_pATVideoDisplayWindow)
 		g_pATVideoDisplayWindow->ToggleHoldKeys();
+}
+
+bool ATUIGetDisplayPadIndicators() {
+	return g_dispPadIndicators;
+}
+
+void ATUISetDisplayPadIndicators(bool enabled) {
+	if (g_dispPadIndicators != enabled) {
+		g_dispPadIndicators = enabled;
+
+		ATUIResizeDisplay();
+	}
 }
 
 #ifndef MOUSEEVENTF_MASK
@@ -163,7 +177,32 @@ namespace {
 
 ///////////////////////////////////////////////////////////////////////////
 
-struct ATUIStepDoModalWindow : public vdrefcount {
+class ATDisplayImageDecoder final : public IVDDisplayImageDecoder {
+public:
+	bool DecodeImage(VDPixmapBuffer& buf, VDBufferedStream& stream) override;
+} gATDisplayImageDecoder;
+
+bool ATDisplayImageDecoder::DecodeImage(VDPixmapBuffer& buf, VDBufferedStream& stream) {
+	vdautoptr<IVDImageDecoderPNG> dec { VDCreateImageDecoderPNG() };
+
+	sint64 len = stream.Length();
+	if (len > 64*1024*1024)
+		return false;
+
+	vdblock<uint8> rawbuf(len);
+	stream.Read(rawbuf.data(), len);
+	auto err = dec->Decode(rawbuf.data(), len);
+
+	if (err != kPNGDecodeOK)
+		return false;
+
+	buf.assign(dec->GetFrameBuffer());
+	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+struct ATUIStepDoModalWindow final : public vdrefcount {
 	ATUIStepDoModalWindow()
 		: mbModalWindowActive(true)
 	{
@@ -417,6 +456,7 @@ void ATUIInitManager() {
 	ATOptionsAddUpdateCallback(true, ATUIUpdateThemeScaleCallback);
 	g_ATUIManager.Init(&g_ATUINativeDisplay);
 
+	VDDisplaySetImageDecoder(&gATDisplayImageDecoder);
 	g_pATVideoDisplayWindow = new ATUIVideoDisplayWindow;
 	g_pATVideoDisplayWindow->AddRef();
 	g_pATVideoDisplayWindow->Init(*g_sim.GetEventManager(), *g_sim.GetDeviceManager());
@@ -548,6 +588,8 @@ protected:
 
 	vdautoptr<IATUIEnhancedTextEngine> mpEnhTextEngine;
 	vdrefptr<ATUIMenuList> mpMenuBar;
+
+	vdfunction<void()> mIndicatorSafeAreaChangedFn;
 
 	TOUCHINPUT mRawTouchInputs[32];
 	ATUITouchInput mTouchInputs[32];
@@ -835,7 +877,7 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (mMouseCursorLock)
 				break;
 
-			{
+			if (LOWORD(lParam) == HTCLIENT) {
 				const uint32 id = g_ATUIManager.GetCurrentCursorImageId();
 
 				if (id) {
@@ -917,6 +959,12 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 				sz.w = mDisplayRect.width();
 				sz.h = mDisplayRect.height();
+
+				if (g_dispPadIndicators) {
+					if (auto *p = g_sim.GetUIRenderer())
+						sz.h += p->GetIndicatorSafeHeight();
+				}
+
 				return TRUE;
 			}
 			break;
@@ -1095,10 +1143,15 @@ bool ATDisplayPane::OnCreate() {
 	g_pATVideoDisplayWindow->SetOnAllowContextMenu([this]() { OnAllowContextMenu(); });
 	g_pATVideoDisplayWindow->SetOnDisplayContextMenu([this](const vdpoint32& pt) { OnDisplayContextMenu(pt); });
 	g_pATVideoDisplayWindow->SetOnOSKChange([this]() { OnOSKChange(); });
+
+	mIndicatorSafeAreaChangedFn = [this] { ResizeDisplay(); };
+	g_sim.GetUIRenderer()->AddIndicatorSafeHeightChangedHandler(&mIndicatorSafeAreaChangedFn);
 	return true;
 }
 
 void ATDisplayPane::OnDestroy() {
+	g_sim.GetUIRenderer()->RemoveIndicatorSafeHeightChangedHandler(&mIndicatorSafeAreaChangedFn);
+
 	if (g_pATVideoDisplayWindow) {
 		g_pATVideoDisplayWindow->SetOnAllowContextMenu(nullptr);
 		g_pATVideoDisplayWindow->SetOnDisplayContextMenu(nullptr);
@@ -1464,69 +1517,77 @@ void ATDisplayPane::ResizeDisplay() {
 	sint32 w = rd.width();
 	sint32 h = rd.height();
 
+	if (g_dispPadIndicators) {
+		h -= g_sim.GetUIRenderer()->GetIndicatorSafeHeight();
+	}
+
 	if (g_pATVideoDisplayWindow) {
 		vdrect32 rsafe = g_pATVideoDisplayWindow->GetOSKSafeArea();
 
-		h = rsafe.height();
+		h = std::min<sint32>(h, rsafe.height());
 	}
 
 	int sw = 1;
 	int sh = 1;
 	g_sim.GetGTIA().GetFrameSize(sw, sh);
 
-	if (w && h) {
-		if (g_displayStretchMode == kATDisplayStretchMode_PreserveAspectRatio || g_displayStretchMode == kATDisplayStretchMode_IntegralPreserveAspectRatio) {
-			// NTSC-50 and PAL-60 are de-facto standards for when NTSC video needs to be played in
-			// a PAL environment or vice versa. PAL-60, for instance, involves munging NTSC video
-			// into a form good enough for a PAL decoder to accept. Therefore, we assume that the
-			// video uses NTSC pixel aspect ratio, but is displayed with PAL colors.
-			const bool pal = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
-			const float desiredAspect = (pal ? 1.03964f : 0.857141f);
-			const float fsw = (float)sw * desiredAspect;
-			const float fsh = (float)sh;
-			const float fw = (float)w;
-			const float fh = (float)h;
-			float zoom = std::min<float>(fw / fsw, fh / fsh);
+	if (w < 1)
+		w = 1;
 
-			if (g_displayStretchMode == kATDisplayStretchMode_IntegralPreserveAspectRatio && zoom > 1) {
-				// We may have some small rounding errors, so give a teeny bit of leeway.
-				zoom = floorf(zoom * 1.0001f);
-			}
+	if (h < 1)
+		h = 1;
 
-			sint32 w2 = (sint32)(0.5f + fsw * zoom);
-			sint32 h2 = (sint32)(0.5f + fsh * zoom);
+	if (g_displayStretchMode == kATDisplayStretchMode_PreserveAspectRatio || g_displayStretchMode == kATDisplayStretchMode_IntegralPreserveAspectRatio) {
+		// NTSC-50 and PAL-60 are de-facto standards for when NTSC video needs to be played in
+		// a PAL environment or vice versa. PAL-60, for instance, involves munging NTSC video
+		// into a form good enough for a PAL decoder to accept. Therefore, we assume that the
+		// video uses NTSC pixel aspect ratio, but is displayed with PAL colors.
+		const bool pal = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
+		const float desiredAspect = (pal ? 1.03964f : 0.857141f);
+		const float fsw = (float)sw * desiredAspect;
+		const float fsh = (float)sh;
+		const float fw = (float)w;
+		const float fh = (float)h;
+		float zoom = std::min<float>(fw / fsw, fh / fsh);
 
-			rd.left		= (w - w2) >> 1;
-			rd.right	= rd.left + w2;
-			rd.top		= (h - h2) >> 1;
-			rd.bottom	= rd.top + h2;
-		} else if (g_displayStretchMode == kATDisplayStretchMode_SquarePixels || g_displayStretchMode == kATDisplayStretchMode_Integral) {
-			int ratio = std::min<int>(w / sw, h / sh);
+		if (g_displayStretchMode == kATDisplayStretchMode_IntegralPreserveAspectRatio && zoom > 1) {
+			// We may have some small rounding errors, so give a teeny bit of leeway.
+			zoom = floorf(zoom * 1.0001f);
+		}
 
-			if (ratio < 1 || g_displayStretchMode == kATDisplayStretchMode_SquarePixels) {
-				if (w*sh < h*sw) {		// (w / sw) < (h / sh) -> w*sh < h*sw
-					// width is smaller ratio -- compute restricted height
-					int restrictedHeight = (sh * w + (sw >> 1)) / sw;
+		sint32 w2 = (sint32)(0.5f + fsw * zoom);
+		sint32 h2 = (sint32)(0.5f + fsh * zoom);
 
-					rd.top = (h - restrictedHeight) >> 1;
-					rd.bottom = rd.top + restrictedHeight;
-				} else {
-					// height is smaller ratio -- compute restricted width
-					int restrictedWidth = (sw * h + (sh >> 1)) / sh;
+		rd.left		= (w - w2) >> 1;
+		rd.right	= rd.left + w2;
+		rd.top		= (h - h2) >> 1;
+		rd.bottom	= rd.top + h2;
+	} else if (g_displayStretchMode == kATDisplayStretchMode_SquarePixels || g_displayStretchMode == kATDisplayStretchMode_Integral) {
+		int ratio = std::min<int>(w / sw, h / sh);
 
-					rd.left = (w - restrictedWidth) >> 1;
-					rd.right = rd.left+ restrictedWidth;
-				}
+		if (ratio < 1 || g_displayStretchMode == kATDisplayStretchMode_SquarePixels) {
+			if (w*sh < h*sw) {		// (w / sw) < (h / sh) -> w*sh < h*sw
+				// width is smaller ratio -- compute restricted height
+				int restrictedHeight = (sh * w + (sw >> 1)) / sw;
+
+				rd.top = (h - restrictedHeight) >> 1;
+				rd.bottom = rd.top + restrictedHeight;
 			} else {
-				int finalWidth = sw * ratio;
-				int finalHeight = sh * ratio;
+				// height is smaller ratio -- compute restricted width
+				int restrictedWidth = (sw * h + (sh >> 1)) / sh;
 
-				rd.left = (w - finalWidth) >> 1;
-				rd.right = rd.left + finalWidth;
-
-				rd.top = (h - finalHeight) >> 1;
-				rd.bottom = rd.top + finalHeight;
+				rd.left = (w - restrictedWidth) >> 1;
+				rd.right = rd.left+ restrictedWidth;
 			}
+		} else {
+			int finalWidth = sw * ratio;
+			int finalHeight = sh * ratio;
+
+			rd.left = (w - finalWidth) >> 1;
+			rd.right = rd.left + finalWidth;
+
+			rd.top = (h - finalHeight) >> 1;
+			rd.bottom = rd.top + finalHeight;
 		}
 	}
 

@@ -1,5 +1,5 @@
-//	Altirra - Atari 800/800XL emulator
-//	Copyright (C) 2008-2010 Avery Lee
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2008-2017 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -13,7 +13,7 @@
 //
 //	You should have received a copy of the GNU General Public License
 //	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include <stdafx.h>
 #include <numeric>
@@ -23,9 +23,11 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <tchar.h>
+#include <at/atcore/address.h>
+#include <at/atnativeui/dialog.h>
+#include <at/atnativeui/messagedispatcher.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uiproxies.h>
-#include <at/atnativeui/dialog.h>
 #include "console.h"
 #include "resource.h"
 #include "simulator.h"
@@ -33,12 +35,13 @@
 #include "debugger.h"
 #include "disasm.h"
 #include "oshelper.h"
+#include "profilerui.h"
 
 extern ATSimulator g_sim;
 
 /////////////////////////////////////////////////////////////////////////////
 
-class ATUIProfilerTimelineView final : public ATUINativeWindow {
+class ATUIProfilerTimelineView final : public ATUINativeWindow, public ATUINativeMouseMessages {
 public:
 	void SetSession(ATProfileSession *session);
 
@@ -54,11 +57,11 @@ protected:
 	void OnSize();
 	bool OnPreKeyDown(WPARAM wParam, LPARAM lParam);
 	bool OnPreKeyUp(WPARAM wParam, LPARAM lParam);
-	void OnMouseLeave();
-	void OnMouseWheel(WPARAM wParam, LPARAM lParam);
-	void OnMouseMove(WPARAM wParam, LPARAM lParam);
-	void OnLButtonDown(WPARAM wParam, LPARAM lParam);
-	void OnLButtonUp(WPARAM wParam, LPARAM lParam);
+	void OnMouseLeave() override;
+	void OnMouseWheel(sint32 x, sint32 y, float delta) override;
+	void OnMouseMove(sint32 x, sint32 y) override;
+	void OnMouseDownL(sint32 x, sint32 y) override;
+	void OnMouseUpL(sint32 x, sint32 y) override;
 	void OnHScroll(WPARAM wParam, LPARAM lParam);
 	void OnErase(HDC hdc);
 	void OnPaint();
@@ -92,7 +95,7 @@ protected:
 	RECT mSelectionRect = RECT { 0, 0, 0, 0 };
 	bool mbDragging = false;
 	bool mbTrackingMouse = false;
-	sint32 mWheelAccum = 0;
+	float mWheelAccum = 0;
 
 	vdfunction<void(uint32, uint32)> mpOnRangeSelected;
 
@@ -142,6 +145,10 @@ void ATUIProfilerTimelineView::SetSession(ATProfileSession *session) {
 }
 
 LRESULT ATUIProfilerTimelineView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+	ATUINativeMessageDispatchContext ctx { mhwnd, msg, wParam, lParam };
+
+	const auto result = ATUIDispatchWndProcMessage<ATUINativeMouseMessages>(mhwnd, msg, wParam, lParam, *this);
+
 	switch(msg) {
 		case WM_CREATE:
 			OnCreate();
@@ -157,26 +164,6 @@ LRESULT ATUIProfilerTimelineView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam
 
 		case WM_PAINT:
 			OnPaint();
-			return 0;
-
-		case WM_MOUSEWHEEL:
-			OnMouseWheel(wParam, lParam);
-			return 0;
-
-		case WM_MOUSELEAVE:
-			OnMouseLeave();
-			return 0;
-
-		case WM_MOUSEMOVE:
-			OnMouseMove(wParam, lParam);
-			return 0;
-
-		case WM_LBUTTONDOWN:
-			OnLButtonDown(wParam, lParam);
-			return 0;
-
-		case WM_LBUTTONUP:
-			OnLButtonUp(wParam, lParam);
 			return 0;
 
 		case WM_HSCROLL:
@@ -250,16 +237,13 @@ void ATUIProfilerTimelineView::OnMouseLeave() {
 	SetHoverPosition(-1);
 }
 
-void ATUIProfilerTimelineView::OnMouseMove(WPARAM wParam, LPARAM lParam) {
+void ATUIProfilerTimelineView::OnMouseMove(sint32 x, sint32 y) {
 	if (!mbTrackingMouse) {
 		mbTrackingMouse = true;
 
 		TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, mhwnd, 0 };
 		TrackMouseEvent(&tme);
 	}
-
-	const sint32 x = (short)LOWORD(lParam);
-	const sint32 y = (short)HIWORD(lParam);
 
 	if (mbDragging) {
 		sint32 pos = PointToFrame(x, y, true);
@@ -282,28 +266,19 @@ void ATUIProfilerTimelineView::OnMouseMove(WPARAM wParam, LPARAM lParam) {
 	}
 }
 
-void ATUIProfilerTimelineView::OnMouseWheel(WPARAM wParam, LPARAM lParam) {
-	const sint32 x = (short)LOWORD(lParam);
-	const sint32 y = (short)HIWORD(lParam);
+void ATUIProfilerTimelineView::OnMouseWheel(sint32 x, sint32 y, float delta) {
+	mWheelAccum += delta;
 
-	mWheelAccum += (short)HIWORD(wParam);
+	int steps = (int)mWheelAccum;
 
-	int deltas = mWheelAccum / WHEEL_DELTA;
+	if (steps) {
+		mWheelAccum -= (float)steps;
 
-	if (deltas) {
-		mWheelAccum -= deltas * WHEEL_DELTA;
-
-		POINT pt = { x, y };
-		ScreenToClient(mhwnd, &pt);
-
-		SetZoomIndex(mZoomIndex + deltas, pt.x);
+		SetZoomIndex(mZoomIndex + steps, x);
 	}
 }
 
-void ATUIProfilerTimelineView::OnLButtonDown(WPARAM wParam, LPARAM lParam) {
-	const sint32 x = (short)LOWORD(lParam);
-	const sint32 y = (short)HIWORD(lParam);
-
+void ATUIProfilerTimelineView::OnMouseDownL(sint32 x, sint32 y) {
 	::SetFocus(mhwnd);
 
 	sint32 pos = PointToFrame(x, y, false);
@@ -317,10 +292,7 @@ void ATUIProfilerTimelineView::OnLButtonDown(WPARAM wParam, LPARAM lParam) {
 	}
 }
 
-void ATUIProfilerTimelineView::OnLButtonUp(WPARAM wParam, LPARAM lParam) {
-	const sint32 x = (short)LOWORD(lParam);
-	const sint32 y = (short)HIWORD(lParam);
-
+void ATUIProfilerTimelineView::OnMouseUpL(sint32 x, sint32 y) {
 	if (mbDragging) {
 		::ReleaseCapture();
 
@@ -658,7 +630,6 @@ public:
 	~ATUIProfilerSourceTextView();
 
 	bool Create(HWND hwndParent);
-	void Destroy();
 
 	void SetTargetAddress(uint32 addr);
 	void SetColumnWidths(int widths[5]);
@@ -714,7 +685,7 @@ ATUIProfilerSourceTextView::ATUIProfilerSourceTextView(const ATProfileFrame& pro
 	for(Records::iterator it(mRecords.begin()), itEnd(mRecords.end()); it != itEnd; ++it) {
 		ATProfileRecord& r = *it;
 
-		r.mAddress &= 0xffffff;
+		r.mAddress &= 0x1ffffff;
 	}
 
 	// sort records
@@ -752,13 +723,8 @@ bool ATUIProfilerSourceTextView::Create(HWND hwndParent) {
 	return true;
 }
 
-void ATUIProfilerSourceTextView::Destroy() {
-	if (mhwnd)
-		DestroyWindow(mhwnd);
-}
-
 void ATUIProfilerSourceTextView::SetTargetAddress(uint32 addr) {
-	addr &= 0xffffff;
+	addr &= 0x1ffffff;
 
 	if (mTargetAddress == addr)
 		return;
@@ -767,7 +733,7 @@ void ATUIProfilerSourceTextView::SetTargetAddress(uint32 addr) {
 
 	SCROLLINFO si = {sizeof(SCROLLINFO)};
 	si.fMask = SIF_POS;
-	si.nPos = addr;
+	si.nPos = addr & 0xFFFF;
 	SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
 
 	RemakeView();
@@ -856,7 +822,7 @@ void ATUIProfilerSourceTextView::OnCreate() {
     si.nMin			= 0;
     si.nMax			= 0xFFFF;
     si.nPage		= 1;
-	si.nPos			= mTargetAddress;
+	si.nPos			= mTargetAddress & 0xFFFF;
     si.nTrackPos	= 0;
 	SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
 }
@@ -940,9 +906,9 @@ void ATUIProfilerSourceTextView::OnPaint() {
 			// render line
 			mBuffer = " ";
 
-			ATDisassembleCaptureInsnContext((uint16)addr, (uint8)(addr >> 16), hent);
+			ATDisassembleCaptureInsnContext(addr & 0x1000000 ? addr - 0x1000000 + kATAddressSpace_PORTB : addr, hent);
 
-			ATDisassembleInsn(mBuffer, target, disasmMode, hent, false, false, true, true, true);
+			ATDisassembleInsn(mBuffer, target, disasmMode, hent, false, false, true, true, true, false, false, true, true, true);
 
 			SetTextAlign(hdc, TA_LEFT | TA_TOP);
 			ExtTextOutA(hdc, mColumnWidths[4], y1, 0, NULL, mBuffer.data(), mBuffer.size(), NULL);
@@ -971,16 +937,16 @@ void ATUIProfilerSourceTextView::OnVScroll(int code) {
 			newPos = si.nMax - si.nPage;
 			break;
 		case SB_LINEUP:
-			newPos = mLines[(mLinesVisible >> 1) - 1 + kScrollMarginLines];
+			newPos = mLines[(mLinesVisible >> 1) - 1 + kScrollMarginLines] & 0xFFFF;
 			break;
 		case SB_LINEDOWN:
-			newPos = mLines[(mLinesVisible >> 1) + 1 + kScrollMarginLines];
+			newPos = mLines[(mLinesVisible >> 1) + 1 + kScrollMarginLines] & 0xFFFF;
 			break;
 		case SB_PAGEUP:
-			newPos = mLines[std::min<int>((int)mLines.size(), kScrollMarginLines + 1) - 1];
+			newPos = mLines[std::min<int>((int)mLines.size(), kScrollMarginLines + 1) - 1] & 0xFFFF;
 			break;
 		case SB_PAGEDOWN:
-			newPos = mLines[std::max<int>((int)mLines.size(), kScrollMarginLines + 1) - (kScrollMarginLines + 1)];
+			newPos = mLines[std::max<int>((int)mLines.size(), kScrollMarginLines + 1) - (kScrollMarginLines + 1)] & 0xFFFF;
 			break;
 		case SB_THUMBPOSITION:
 			newPos = si.nTrackPos;
@@ -1000,7 +966,7 @@ void ATUIProfilerSourceTextView::OnVScroll(int code) {
 		si.fMask = SIF_POS;
 		si.nPos = newPos;
 		SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
-		mTargetAddress = newPos;
+		mTargetAddress = (mTargetAddress & 0xFFFF0000) + newPos;
 		RemakeView();
 	}
 }
@@ -1016,7 +982,7 @@ void ATUIProfilerSourceTextView::ScrollLines(int delta) {
 	if (idx < 0)
 		idx = 0;
 
-	int newPos = mLines[idx];
+	int newPos = mLines[idx] & 0xFFFF;
 
 	if (newPos > (int)(si.nMax - si.nPage))
 		newPos = si.nMax - si.nPage;
@@ -1028,42 +994,42 @@ void ATUIProfilerSourceTextView::ScrollLines(int delta) {
 		si.fMask = SIF_POS;
 		si.nPos = newPos;
 		SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
-		mTargetAddress = newPos;
+		mTargetAddress = (mTargetAddress & 0xffff0000) + newPos;
 		RemakeView();
 	}
 }
 
 void ATUIProfilerSourceTextView::RemakeView() {
 	uint32 linesAbove = (mLinesVisible >> 1) + kScrollMarginLines;
-	uint32 bank = mTargetAddress & 0xff0000;
+	uint32 bankSpace = mTargetAddress & 0xffff0000;
 	uint32 nextAddr = (mTargetAddress - linesAbove*3) & 0xffff;
 	uint32 stepAddr = nextAddr;
 
 	mLines.clear();
 
 	// compute lines prior to target address
-	while(stepAddr + bank != mTargetAddress) {
+	while(stepAddr + bankSpace != mTargetAddress) {
 		if (nextAddr != stepAddr) {
-			Records::const_iterator it(std::lower_bound(mRecords.begin(), mRecords.end(), bank+stepAddr, RecordSort()));
+			Records::const_iterator it(std::lower_bound(mRecords.begin(), mRecords.end(), bankSpace+stepAddr, RecordSort()));
 
-			if (it == mRecords.end() || it->mAddress != bank + stepAddr) {
+			if (it == mRecords.end() || it->mAddress != bankSpace + stepAddr) {
 				++stepAddr;
 				stepAddr &= 0xffff;
 				continue;
 			}
 		}
 
-		const Records::const_iterator it2 = std::lower_bound(mRecords.begin(), mRecords.end(), bank+nextAddr, RecordSort());
-		const uint8 opcode = g_sim.DebugGlobalReadByte(bank + nextAddr);
+		const Records::const_iterator it2 = std::lower_bound(mRecords.begin(), mRecords.end(), bankSpace+nextAddr, RecordSort());
+		const uint8 opcode = g_sim.DebugGlobalReadByte(bankSpace + nextAddr);
 
-		if (it2 != mRecords.end() && it2->mAddress == bank + nextAddr)
+		if (it2 != mRecords.end() && it2->mAddress == bankSpace + nextAddr)
 			nextAddr += ATGetOpcodeLength(opcode, it2->mModeBits << 4, it2->mEmulationMode != 0);
 		else
 			nextAddr += ATGetOpcodeLength(opcode);
 
 		nextAddr &= 0xffff;
 
-		mLines.push_back(bank + stepAddr);
+		mLines.push_back(bankSpace + stepAddr);
 
 		++stepAddr;
 		stepAddr &= 0xffff;
@@ -1080,26 +1046,26 @@ void ATUIProfilerSourceTextView::RemakeView() {
 	// fill out remaining lines
 	while(n < mLinesVisible + kScrollMarginLines*2) {
 		if (nextAddr != stepAddr) {
-			Records::const_iterator it(std::lower_bound(mRecords.begin(), mRecords.end(), bank+stepAddr, RecordSort()));
+			Records::const_iterator it(std::lower_bound(mRecords.begin(), mRecords.end(), bankSpace+stepAddr, RecordSort()));
 
-			if (it == mRecords.end() || it->mAddress != bank + stepAddr) {
+			if (it == mRecords.end() || it->mAddress != bankSpace + stepAddr) {
 				++stepAddr;
 				stepAddr &= 0xffff;
 				continue;
 			}
 		}
 
-		const Records::const_iterator it2 = std::lower_bound(mRecords.begin(), mRecords.end(), bank+nextAddr, RecordSort());
-		const uint8 opcode = g_sim.DebugGlobalReadByte(bank + nextAddr);
+		const Records::const_iterator it2 = std::lower_bound(mRecords.begin(), mRecords.end(), bankSpace+nextAddr, RecordSort());
+		const uint8 opcode = g_sim.DebugGlobalReadByte(bankSpace + nextAddr);
 
-		if (it2 != mRecords.end() && it2->mAddress == bank + nextAddr)
+		if (it2 != mRecords.end() && it2->mAddress == bankSpace + nextAddr)
 			nextAddr += ATGetOpcodeLength(opcode, it2->mModeBits << 4, it2->mEmulationMode != 0);
 		else
 			nextAddr += ATGetOpcodeLength(opcode);
 
 		nextAddr &= 0xffff;
 
-		mLines.push_back(bank + stepAddr);
+		mLines.push_back(bankSpace + stepAddr);
 		++n;
 		++stepAddr;
 		stepAddr &= 0xffff;
@@ -1358,1294 +1324,75 @@ void ATUIDialogProfilerBoundaryRule::OnDataExchange(bool write) {
 
 /////////////////////////////////////////////////////////////////////////////
 
-class ATUIProfilerPane final : public ATUIPane {
+class ATUIProfileViewListSource final : public IVDUIListViewIndexedProvider, public IVDUIListViewIndexedComparer {
 public:
-	ATUIProfilerPane();
-	~ATUIProfilerPane();
+	void SetData(const ATProfileSession *session, const ATProfileFrame *frame, const ATProfileFrame::Records *records);
+	void Float(int idx);
 
-protected:
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
-	bool OnCreate();
-	void OnDestroy();
-	void OnSize();
-	void OnFontsUpdated();
-	bool OnCommand(uint32 id, uint32 extcode);
-	bool OnNotify(uint32 id, uint32 code, const void *hdr, LRESULT& result);
-	void OnColumnClicked(VDUIProxyListView *lv, int column);
-	void OnItemDoubleClicked(VDUIProxyListView *lv, int item);
-	void OnItemSelectionChanged(VDUIProxyListView *lv, int item);
-	void OnItemContextMenu(VDUIProxyListView *lv, VDUIProxyListView::ContextMenuEvent event);
-	void OnTreeItemDoubleClicked(VDUIProxyTreeViewControl *tv, bool *handled);
-	void OnRangeSelected(uint32 start, uint32 end);
-	void UpdateRunButtonEnables();
-	void RebuildToolbar();
-	void UpdateProfilingModeBitmap();
+public:
+	void GetText(uint32 id, uint32 subItem, VDStringW& s) const override;
 
-	void UnloadProfile();
-	void LoadProfile();
-	void RemakeView();
-	void MergeFrames(uint32 start, uint32 end);
+public:
+	int Compare(uint32 x, uint32 y) override;
 
-	void CopyAsCsv();
-
-	void StartProfiler();
-
-	void VLGetText(int item, int subItem, VDStringW& s) const;
-	void VTGetText(int item, VDStringW& s) const;
-
-	struct MergedProfileFrame : public vdrefcount, public ATProfileFrame {
-		vdfastvector<ATProfileCallGraphInclusiveRecord> mInclusiveRecords;
-	};
-
-	HWND mhwndToolbar;
-	HWND mhwndList;
-	HWND mhwndTree;
-	HWND mhwndStatus;
-	HWND mhwndMessage;
-	HFONT mhPropFont;
-	HMENU mhmenuMode;
-	HIMAGELIST mToolbarImageList;
-	ATProfileMode mProfileMode = kATProfileMode_Insns;
 	ATProfileMode mCapturedProfileMode = kATProfileMode_Insns;
-	ATProfileCounterMode mProfileCounterModes[2];
-	ATProfileCounterMode mProfileSessionCounterModes[2];
-	ATProfileBoundaryRule mBoundaryRule = kATProfileBoundaryRule_None;
-	VDStringA mBoundaryAddrExpr;
-	VDStringA mBoundaryAddrExpr2;
-
-	ATProfileSession mSession;
-	vdrefptr<MergedProfileFrame> mpMergedFrame;
+	ATProfileCounterMode mProfileSessionCounterModes[2] {};
 	const ATProfileFrame *mpCurrentFrame = nullptr;
 	const ATProfileFrame::Records *mpRecords = nullptr;
 
-	VDUIProxyListView	mListView;
-	VDUIProxyTreeViewControl	mTreeView;
-	VDUIProxyMessageDispatcherW32	mDispatcher;
-
-	friend class VLItem;
-	class VLItem : public IVDUIListViewVirtualItem {
-	public:
-		int AddRef() { return 2; }
-		int Release() { return 1; }
-
-		void Init(int index, ATUIProfilerPane *parent) {
-			mIndex = index;
-			mpParent = parent;
-		}
-
-		void GetText(int subItem, VDStringW& s) const;
-
-		int mIndex;
-		ATUIProfilerPane *mpParent;
-	};
-
-	friend class VLComparer;
-	class VLComparer : public IVDUIListViewVirtualComparer {
-	public:
-		VLComparer() {
-			mSort[0] = 3;
-			mSort[1] = 1;
-			mSort[2] = 0;
-			mSort[3] = 2;
-			mSort[4] = 4;
-			mSort[5] = 5;
-			mSort[6] = 6;
-			mSort[7] = 7;
-			mSort[8] = 8;
-			mSort[9] = 9;
-			mSort[10] = 10;
-			mDescending[0] = 0;
-			mDescending[1] = 0;
-			mDescending[2] = -1;
-			mDescending[3] = -1;
-			mDescending[4] = -1;
-			mDescending[5] = -1;
-			mDescending[6] = -1;
-			mDescending[7] = -1;
-			mDescending[8] = -1;
-			mDescending[9] = -1;
-			mDescending[10] = -1;
-		}
-
-		int Compare(IVDUIListViewVirtualItem *x, IVDUIListViewVirtualItem *y) {
-			VLItem& a = *static_cast<VLItem *>(x);
-			VLItem& b = *static_cast<VLItem *>(y);
-
-			const ATProfileRecord& r = (*a.mpParent->mpRecords)[a.mIndex];
-			const ATProfileRecord& s = (*a.mpParent->mpRecords)[b.mIndex];
-
-			for(int i=0; i<(int)vdcountof(mSort); ++i) {
-				int j = mSort[i];
-				int inv = mDescending[j];
-				int diff;
-
-				switch(j) {
-					case 0:
-						diff = (((int)(r.mAddress & 0x7000000) - (int)(s.mAddress & 0x7000000)) ^ inv) - inv;
-						break;
-
-					case 1:
-						diff = (((int)(r.mAddress & 0xFFFFFF) - (int)(s.mAddress & 0xFFFFFF)) ^ inv) - inv;
-						break;
-
-					case 2:
-						diff = (((int)r.mCalls - (int)s.mCalls) ^ inv) - inv;
-						break;
-
-					case 3:
-						diff = (((int)r.mCycles - (int)s.mCycles) ^ inv) - inv;
-						break;
-
-					case 4:
-						diff = (((int)r.mInsns - (int)s.mInsns) ^ inv) - inv;
-						break;
-
-					case 5:
-						diff = (((int)r.mUnhaltedCycles - (int)s.mUnhaltedCycles) ^ inv) - inv;
-						break;
-
-					case 6:
-						// diff = r.u / r.c - s.u / s.c
-						//      = [r.u*s.c - s.u*r.c] / (r.c * s.c);
-						{
-							float discriminant = (float)r.mUnhaltedCycles * (float)s.mCycles - (float)s.mUnhaltedCycles * (float)r.mCycles;
-
-							diff = (discriminant < 0.0f) ? -1 : (discriminant > 0.0f) ? +1 : 0;
-
-							diff = (diff ^ inv) - inv;
-						}
-						break;
-
-					case 7:
-						diff = (((int)r.mCounters[0] - (int)s.mCounters[0]) ^ inv) - inv;
-						break;
-
-					case 8:
-						{
-							uint64 a = (uint64)r.mCounters[0] * s.mInsns;
-							uint64 b = (uint64)s.mCounters[0] * r.mInsns;
-
-							diff = (a < b) ? -1 : (a > b) ? +1 : 0;
-							diff = (diff ^ inv) - inv;
-						}
-						break;
-
-					case 9:
-						diff = (((int)r.mCounters[1] - (int)s.mCounters[1]) ^ inv) - inv;
-						break;
-
-					case 10:
-						{
-							uint64 a = (uint64)r.mCounters[1] * s.mInsns;
-							uint64 b = (uint64)s.mCounters[1] * r.mInsns;
-
-							diff = (a < b) ? -1 : (a > b) ? +1 : 0;
-							diff = (diff ^ inv) - inv;
-						}
-						break;
-				}
-
-				if (diff)
-					return diff;
-			}
-
-			return 0;
-		}
-
-		void Float(int idx) {
-			if (mSort[0] == idx) {
-				mDescending[idx] ^= -1;
-				return;
-			}
-
-			for(int i=1; i<(int)vdcountof(mSort); ++i) {
-				if (mSort[i] == idx) {
-					memmove(mSort + 1, mSort, i);
-					mSort[0] = idx;
-					break;
-				}
-			}
-		}
-
-		uint8 mSort[11];
-		sint8 mDescending[11];
-	};
-
-	friend class VTItem;
-	class VTItem : public IVDUITreeViewVirtualItem {
-	public:
-		int AddRef() { return 2; }
-		int Release() { return 1; }
-
-		void *AsInterface(uint32) { return NULL; }
-
-		void Init(int index, ATUIProfilerPane *parent) {
-			mIndex = index;
-			mpParent = parent;
-		}
-
-		void GetText(VDStringW& s) const;
-
-		int mIndex;
-		ATUIProfilerPane *mpParent;
-	};
-
-	VLComparer mComparer;
-	vdvector<VLItem> mVLItems;
-	vdvector<VTItem> mVTItems;
-	vdvector<VDStringW> mListColumnNames;
-
-	VDDelegate mDelegateColumnClicked;
-	VDDelegate mDelegateItemDoubleClicked;
-	VDDelegate mDelegateItemSelectionChanged;
-	VDDelegate mDelegateItemContextMenu;
-	VDDelegate mDelegateTreeItemDoubleClicked;
-
-	ATUIProfilerTimelineView mTimelineView;
-
-	static const UINT kCounterModeMenuIds[];
-	static const wchar_t *const kCounterModeColumnNames[];
+private:
+	uint8 mSort[11] = { 3, 1, 0, 2, 4, 5, 6, 7, 8, 9, 10 };
+	sint8 mDescending[11] = { 0, 0, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
 };
 
-const UINT ATUIProfilerPane::kCounterModeMenuIds[] = {
-	ID_COUNTER_BRANCHTAKEN,
-	ID_COUNTER_BRANCHNOTTAKEN,
-	ID_COUNTER_PAGECROSSING,
-	ID_COUNTER_REDUNDANTOPERATION,
-};
+void ATUIProfileViewListSource::SetData(const ATProfileSession *session, const ATProfileFrame *frame, const ATProfileFrame::Records *records) {
+	if (session) {
+		mCapturedProfileMode = session->mProfileMode;
+		mProfileSessionCounterModes[0] = session->mCounterModes.size() > 0 ? session->mCounterModes[0] : ATProfileCounterMode();
+		mProfileSessionCounterModes[1] = session->mCounterModes.size() > 1 ? session->mCounterModes[1] : ATProfileCounterMode();
+	}
 
-const wchar_t *const ATUIProfilerPane::kCounterModeColumnNames[] = {
-	L"Taken",
-	L"NotTaken",
-	L"PageCross",
-	L"Redundant",
-};
-
-ATUIProfilerPane::ATUIProfilerPane()
-	: ATUIPane(kATUIPaneId_Profiler, L"Profile View")
-	, mhwndToolbar(NULL)
-	, mhwndList(NULL)
-	, mhwndTree(NULL)
-	, mhwndStatus(NULL)
-	, mhmenuMode(NULL)
-	, mhPropFont(nullptr)
-	, mToolbarImageList(NULL)
-{
-	for(auto& v : mProfileCounterModes)
-		v = kATProfileCounterMode_None;
-
-	for(auto& v : mProfileSessionCounterModes)
-		v = kATProfileCounterMode_None;
-
-	mListView.OnColumnClicked() += mDelegateColumnClicked.Bind(this, &ATUIProfilerPane::OnColumnClicked);
-	mListView.OnItemDoubleClicked() += mDelegateItemDoubleClicked.Bind(this, &ATUIProfilerPane::OnItemDoubleClicked);
-	mListView.OnItemSelectionChanged() += mDelegateItemSelectionChanged.Bind(this, &ATUIProfilerPane::OnItemSelectionChanged);
-	mListView.OnItemContextMenu() += mDelegateItemContextMenu.Bind(this, &ATUIProfilerPane::OnItemContextMenu);
-	mTreeView.OnItemDoubleClicked() += mDelegateTreeItemDoubleClicked.Bind(this, &ATUIProfilerPane::OnTreeItemDoubleClicked);
-
-	// pin embedded timeline view object
-	mTimelineView.AddRef();
-	mTimelineView.SetOnRangeSelected([this](uint32 start, uint32 end) { OnRangeSelected(start, end); });
+	mpCurrentFrame = frame;
+	mpRecords = records;
 }
 
-ATUIProfilerPane::~ATUIProfilerPane() {
-}
-
-LRESULT ATUIProfilerPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
-	if (msg == WM_COMMAND) {
-		if (OnCommand(LOWORD(wParam), HIWORD(wParam)))
-			return 0;
-
-		return mDispatcher.Dispatch_WM_COMMAND(wParam, lParam);
-	} else if (msg == WM_ERASEBKGND) {
-		RECT r;
-
-		if (GetClientRect(mhwnd, &r)) {
-			FillRect((HDC)wParam, &r, (HBRUSH)(COLOR_3DFACE + 1));
-			return TRUE;
-		}
-	} else if (msg == WM_NOTIFY) {
-		const NMHDR& hdr = *(const NMHDR *)lParam;
-		LRESULT res = 0;
-
-		if (OnNotify((uint32)hdr.idFrom, hdr.code, &hdr, res))
-			return res;
-
-		return mDispatcher.Dispatch_WM_NOTIFY(wParam, lParam);
-	} else if (msg == WM_CONTEXTMENU) {
-		if (mListView.IsVisible()) {
-			POINT pt { 0, 0 };
-			ClientToScreen(mListView.GetHandle(), &pt);
-			OnItemContextMenu(&mListView, {0, pt.x, pt.y});
-		}
-	} else if (msg == WM_USER + 100) {
-		const VTItem *vti = static_cast<VTItem *>(mTreeView.GetSelectedVirtualItem());
-
-		if (vti) {
-			int idx = vti->mIndex;
-
-			vdrefptr<ATUIProfilerSourcePane> srcPane(new ATUIProfilerSourcePane(*mpCurrentFrame, mSession.mContexts[idx].mAddress, mpMergedFrame));
-			srcPane->Create(mhwnd);
-		}
-
-		return 0;
-	}
-
-	return ATUIPane::WndProc(msg, wParam, lParam);
-}
-
-bool ATUIProfilerPane::OnCreate() {
-	mhmenuMode = LoadMenu(NULL, MAKEINTRESOURCE(IDR_PROFILE_MODE_MENU));
-	mhPropFont = ATUICreateDefaultFontForDpiW32(ATUIGetWindowDpiW32(mhwnd));
-
-	mToolbarImageList = ImageList_LoadBitmap(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDB_TOOLBAR_PROFILER), 16, 0, RGB(255, 0, 255));
-
-	mhwndToolbar = CreateWindow(TOOLBARCLASSNAME, _T(""), WS_CHILD | WS_VISIBLE | TBSTYLE_LIST, 0, 0, 0, 0, mhwnd, (HMENU)100, VDGetLocalModuleHandleW32(), NULL);
-	if (!mhwndToolbar)
-		return false;
-
-	mhwndList = CreateWindowEx(WS_EX_CLIENTEDGE | WS_EX_NOPARENTNOTIFY, WC_LISTVIEW, _T(""), WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | LVS_REPORT | LVS_SHOWSELALWAYS, 0, 0, 0, 0, mhwnd, (HMENU)101, VDGetLocalModuleHandleW32(), NULL);
-	SendMessage(mhwndList, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
-
-	mhwndTree = CreateWindowEx(WS_EX_CLIENTEDGE | WS_EX_NOPARENTNOTIFY, WC_TREEVIEW, _T(""), WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TVS_FULLROWSELECT | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS, 0, 0, 0, 0, mhwnd, (HMENU)103, VDGetLocalModuleHandleW32(), NULL);
-	SendMessage(mhwndTree, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
-
-	mhwndStatus = CreateWindowEx(0, STATUSCLASSNAME, _T(""), WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, mhwnd, (HMENU)102, VDGetLocalModuleHandleW32(), NULL);
-	SendMessage(mhwndStatus, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
-	SendMessage(mhwndStatus, SB_SIMPLE, 0, 0);
-	SetWindowPos(mhwndStatus, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-	
-	SendMessage(mhwndToolbar, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
-	SendMessage(mhwndToolbar, TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_DRAWDDARROWS);
-	SendMessage(mhwndToolbar, TB_SETIMAGELIST, 0, (LPARAM)mToolbarImageList);
-	SendMessage(mhwndToolbar, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
-	
-	mhwndMessage = CreateWindowEx(0, WC_STATIC, _T(""), WS_CHILD | WS_CLIPSIBLINGS, 0, 0, 0, 0, mhwnd, (HMENU)104, VDGetLocalModuleHandleW32(), NULL);
-	SendMessage(mhwndMessage, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
-
-	mTimelineView.CreateChild(mhwnd, 105, 0, 0, 0, 0, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS);
-
-	RebuildToolbar();
-
-	mListView.Attach(mhwndList);
-	mDispatcher.AddControl(&mListView);
-
-	mListView.SetFullRowSelectEnabled(true);
-	mListView.InsertColumn(0, L"Thread", 0);
-	mListView.AutoSizeColumns();
-
-	mTreeView.Attach(mhwndTree);
-	mDispatcher.AddControl(&mTreeView);
-
-	UpdateRunButtonEnables();
-	RemakeView();
-
-	return ATUIPane::OnCreate();
-}
-
-void ATUIProfilerPane::OnDestroy() {
-	mDispatcher.RemoveAllControls(true);
-
-	if (mhmenuMode) {
-		::DestroyMenu(mhmenuMode);
-		mhmenuMode = NULL;
-	}
-
-	if (mhwndTree) {
-		::DestroyWindow(mhwndTree);
-		mhwndTree = NULL;
-	}
-
-	if (mhwndList) {
-		::DestroyWindow(mhwndList);
-		mhwndList = NULL;
-	}
-
-	if (mhwndToolbar) {
-		::DestroyWindow(mhwndToolbar);
-		mhwndToolbar = NULL;
-	}
-
-	if (mhwndStatus) {
-		::DestroyWindow(mhwndStatus);
-		mhwndStatus = NULL;
-	}
-
-	if (mhwndMessage) {
-		::DestroyWindow(mhwndMessage);
-		mhwndMessage = nullptr;
-	}
-
-	if (mToolbarImageList) {
-		ImageList_Destroy(mToolbarImageList);
-		mToolbarImageList = NULL;
-	}
-
-	if (mhPropFont) {
-		DeleteObject(mhPropFont);
-		mhPropFont = nullptr;
-	}
-
-	ATUIPane::OnDestroy();
-}
-
-void ATUIProfilerPane::OnSize() {
-	RECT r;
-	GetClientRect(mhwnd, &r);
-
-	int y = 0;
-
-	if (mhwndToolbar) {
-		RECT r2;
-		GetWindowRect(mhwndToolbar, &r2);
-
-		int th = r2.bottom - r2.top;
-		SetWindowPos(mhwndToolbar, NULL, 0, 0, r.right, th, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-
-		y = th;
-	}
-
-	int statusY = 0;
-	if (mhwndStatus) {
-		SendMessage(mhwndStatus, WM_SIZE, 0, 0);
-
-		RECT rs;
-		if (GetWindowRect(mhwndStatus, &rs)) {
-			int statusH = rs.bottom - rs.top;
-			statusY = std::max<int>(0, r.bottom - statusH);
-		}
-	}
-
-	int lh = statusY - y;
-
-	if (lh < 0)
-		lh = 0;
-
-	int toph = 0;
-
-	if (HWND hwndTimelineView = mTimelineView.GetHandleW32()) {
-		if (mSession.mpFrames.size() > 1) {
-			toph = lh / 3;
-			SetWindowPos(hwndTimelineView, NULL, 0, y, r.right, toph, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-		} else {
-			ShowWindow(hwndTimelineView, SW_HIDE);
-		}
-	}
-
-	int both = lh - toph;
-
-	if (mhwndList)
-		SetWindowPos(mhwndList, NULL, 0, y + toph, r.right, both, SWP_NOZORDER | SWP_NOACTIVATE);
-
-	if (mhwndTree)
-		SetWindowPos(mhwndTree, NULL, 0, y + toph, r.right, both, SWP_NOZORDER | SWP_NOACTIVATE);
-
-	if (mhwndMessage) {
-		int edge = GetSystemMetrics(SM_CXEDGE) * 2;
-
-		SetWindowPos(mhwndMessage, NULL, edge, y+edge, std::max<int>(0, r.right - 2*edge), std::max<int>(0, lh - 2*edge), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
-	}
-}
-
-void ATUIProfilerPane::OnFontsUpdated() {
-	HFONT hNewFont = ATUICreateDefaultFontForDpiW32(ATUIGetWindowDpiW32(mhwnd));
-
-	if (mhwndList)
-		SendMessage(mhwndList, WM_SETFONT, (WPARAM)hNewFont, TRUE);
-
-	if (mhwndTree)
-		SendMessage(mhwndTree, WM_SETFONT, (WPARAM)hNewFont, TRUE);
-
-	if (mhwndStatus)
-		SendMessage(mhwndStatus, WM_SETFONT, (WPARAM)hNewFont, TRUE);
-
-	if (mhwndToolbar) {
-		SendMessage(mhwndToolbar, WM_SETFONT, (WPARAM)hNewFont, TRUE);
-		
-		RebuildToolbar();
-	}
-
-	if (mhwndMessage)
-		SendMessage(mhwndMessage, WM_SETFONT, (WPARAM)hNewFont, TRUE);
-
-	if (mhPropFont)
-		::DeleteObject(mhPropFont);
-
-	mhPropFont = hNewFont;
-}
-
-bool ATUIProfilerPane::OnCommand(uint32 id, uint32 extcode) {
-	try {
-		switch(id) {
-			case 1000:
-				ATGetDebugger()->Break();
-			
-				if (ATCPUProfiler *prof = g_sim.GetProfiler()) {
-					prof->End();
-					LoadProfile();
-					g_sim.SetProfilingEnabled(false);
-				}
-				UpdateRunButtonEnables();
-				return true;
-
-			case 1004:
-				StartProfiler();
-				UnloadProfile();
-				ATGetDebugger()->Break();
-				UpdateRunButtonEnables();
-				return true;
-
-			case 1001:
-				StartProfiler();
-				UnloadProfile();
-				ATGetDebugger()->Run(kATDebugSrcMode_Same);
-				UpdateRunButtonEnables();
-				return true;
-
-			case 1002:
-				{
-					RECT r;
-					SendMessage(mhwndToolbar, TB_GETRECT, 1002, (LPARAM)&r);
-					MapWindowPoints(mhwndToolbar, NULL, (LPPOINT)&r, 2);
-
-					TPMPARAMS tpm;
-					tpm.cbSize = sizeof(TPMPARAMS);
-					tpm.rcExclude = r;
-					TrackPopupMenuEx(GetSubMenu(mhmenuMode, 0), TPM_LEFTALIGN | TPM_LEFTBUTTON | TPM_VERTICAL, r.left, r.bottom, mhwnd, &tpm);
-				}
-				return true;
-
-			case 1003:
-				{
-					RECT r;
-					SendMessage(mhwndToolbar, TB_GETRECT, 1003, (LPARAM)&r);
-					MapWindowPoints(mhwndToolbar, NULL, (LPPOINT)&r, 2);
-					HMENU hmenu = LoadMenu(NULL, MAKEINTRESOURCE(IDR_PROFILE_OPTIONS_MENU));
-
-					if (!hmenu)
-						return true;
-
-					uint32 activeMask = 0;
-
-					for(const auto cm : mProfileCounterModes) {
-						if (cm) {
-							activeMask |= (1 << (cm - 1));
-							VDCheckMenuItemByCommandW32(hmenu, kCounterModeMenuIds[cm - 1], true);
-						}
-					}
-
-					if (mProfileCounterModes[vdcountof(mProfileCounterModes) - 1]) {
-						for(uint32 i=0; i<vdcountof(kCounterModeMenuIds); ++i) {
-							if (!(activeMask & (1 << i)))
-								VDEnableMenuItemByCommandW32(hmenu, kCounterModeMenuIds[i], false);
-						}
-					}
-
-					switch(mBoundaryRule) {
-						case kATProfileBoundaryRule_None:
-							VDCheckRadioMenuItemByCommandW32(hmenu, ID_FRAMETRIGGER_NONE, true);
-							break;
-
-						case kATProfileBoundaryRule_VBlank:
-							VDCheckRadioMenuItemByCommandW32(hmenu, ID_FRAMETRIGGER_VBLANK, true);
-							break;
-
-						case kATProfileBoundaryRule_PCAddress:
-							VDCheckRadioMenuItemByCommandW32(hmenu, ID_FRAMETRIGGER_PCADDRESS, true);
-							break;
-					}
-
-					TPMPARAMS tpm;
-					tpm.cbSize = sizeof(TPMPARAMS);
-					tpm.rcExclude = r;
-					UINT selectedId = (UINT)TrackPopupMenuEx(GetSubMenu(hmenu, 0), TPM_LEFTALIGN | TPM_LEFTBUTTON | TPM_VERTICAL | TPM_NONOTIFY | TPM_RETURNCMD, r.left, r.bottom, mhwnd, &tpm);
-
-					for(uint32 i=0; i<vdcountof(kCounterModeMenuIds); ++i) {
-						if (selectedId == kCounterModeMenuIds[i]) {
-							ATProfileCounterMode selectedMode = (ATProfileCounterMode)(i + 1);
-
-							for(auto& cm : mProfileCounterModes) {
-								if (cm == selectedMode) {
-									cm = kATProfileCounterMode_None;
-									selectedMode = kATProfileCounterMode_None;
-									break;
-								}
-							}
-
-							if (selectedMode)
-								mProfileCounterModes[vdcountof(mProfileCounterModes) - 1] = selectedMode;
-
-							std::sort(std::begin(mProfileCounterModes), std::end(mProfileCounterModes));
-
-							auto *dst = mProfileCounterModes;
-							for(auto cm : mProfileCounterModes) {
-								if (cm)
-									*dst++ = cm;
-							}
-
-							while(dst != std::end(mProfileCounterModes))
-								*dst++ = kATProfileCounterMode_None;
-
-							break;
-						}
-					}
-
-					if (selectedId == ID_FRAMETRIGGER_NONE) {
-						mBoundaryRule = kATProfileBoundaryRule_None;
-					} else if (selectedId == ID_FRAMETRIGGER_VBLANK) {
-						mBoundaryRule = kATProfileBoundaryRule_VBlank;
-					} else if (selectedId == ID_FRAMETRIGGER_PCADDRESS) {
-						ATUIDialogProfilerBoundaryRule dlg;
-
-						dlg.SetValues(mBoundaryAddrExpr.c_str(), mBoundaryAddrExpr2.c_str(), mBoundaryRule == kATProfileBoundaryRule_PCAddressFunction);
-						if (dlg.ShowDialog((VDGUIHandle)mhwnd)) {
-							mBoundaryAddrExpr = dlg.GetExpression();
-
-							if (dlg.IsEndFunctionEnabled()) {
-								mBoundaryAddrExpr2.clear();
-								mBoundaryRule = kATProfileBoundaryRule_PCAddressFunction;
-							} else {
-								mBoundaryAddrExpr2 = dlg.GetExpression2();
-								mBoundaryRule = kATProfileBoundaryRule_PCAddress;
-							}
-						}
-					}
-
-					DestroyMenu(hmenu);
-				}
-				return true;
-
-			case ID_PROFMODE_SAMPLEINSNS:
-				SendMessage(mhwndToolbar, TB_CHANGEBITMAP, 1002, 2);
-				mProfileMode = kATProfileMode_Insns;
-				UpdateProfilingModeBitmap();
-				return true;
-
-			case ID_PROFMODE_SAMPLEFNS:
-				SendMessage(mhwndToolbar, TB_CHANGEBITMAP, 1002, 3);
-				mProfileMode = kATProfileMode_Functions;
-				UpdateProfilingModeBitmap();
-				return true;
-
-			case ID_PROFMODE_CALLGRAPH:
-				SendMessage(mhwndToolbar, TB_CHANGEBITMAP, 1002, 5);
-				mProfileMode = kATProfileMode_CallGraph;
-				UpdateProfilingModeBitmap();
-				return true;
-
-			case ID_PROFMODE_BASICBLOCK:
-				SendMessage(mhwndToolbar, TB_CHANGEBITMAP, 1002, 6);
-				mProfileMode = kATProfileMode_BasicBlock;
-				UpdateProfilingModeBitmap();
-				return true;
-
-			case ID_PROFMODE_SAMPLEBASIC:
-				SendMessage(mhwndToolbar, TB_CHANGEBITMAP, 1002, 4);
-				mProfileMode = kATProfileMode_BasicLines;
-				UpdateProfilingModeBitmap();
-				return true;
-		}
-	} catch(const MyError& e) {
-		e.post(mhwnd, "Altirra Error");
-	}
-
-	return false;
-}
-
-bool ATUIProfilerPane::OnNotify(uint32 id, uint32 code, const void *hdr, LRESULT& result) {
-	switch(id) {
-		case 100:
-			if (code == TBN_DROPDOWN) {
-				const NMTOOLBAR& tbhdr = *(const NMTOOLBAR *)hdr;
-
-				if (tbhdr.iItem == 1002 || tbhdr.iItem == 1003) {
-					OnCommand(tbhdr.iItem, 0);
-					result = TBDDRET_DEFAULT;
-					return true;
-				}
-			}
-			break;
-	}
-
-	return false;
-}
-
-void ATUIProfilerPane::OnColumnClicked(VDUIProxyListView *lv, int column) {
-	static const uint8 kSortColumnTable[]={
-		0, 1, 2, 3, 4, 3, 4, 5, 5, 6, 7, 8, 9, 10
-	};
-
-	if ((unsigned)column < vdcountof(kSortColumnTable)) {
-		mComparer.Float(kSortColumnTable[column]);
-		mListView.Sort(mComparer);
-	}
-}
-
-void ATUIProfilerPane::OnItemDoubleClicked(VDUIProxyListView *lv, int item) {
-	const VLItem *vli = static_cast<const VLItem *>(mListView.GetVirtualItem(item));
-
-	if (vli) {
-		int idx = vli->mIndex;
-		const auto& record = (*mpRecords)[idx];
-
-		if (record.mAddress == 0xFFFFFF) {
-			::MessageBoxW(mhwnd, L"The selected entry corresponds to the unknown function executing when profiling was started. It can't be expanded.", L"Altirra Error", MB_ICONEXCLAMATION | MB_OK);
-		} else {
-			vdrefptr<ATUIProfilerSourcePane> srcPane(new ATUIProfilerSourcePane(*mpCurrentFrame, (*mpRecords)[idx].mAddress, mpMergedFrame));
-			srcPane->Create(mhwnd);
-		}
-	}
-}
-
-void ATUIProfilerPane::OnItemSelectionChanged(VDUIProxyListView *lv, int item) {
-	vdfastvector<int> selectedIndices;
-
-	lv->GetSelectedIndices(selectedIndices);
-
-	if (selectedIndices.empty()) {
-		if (mhwndStatus)
-			SetWindowText(mhwndStatus, _T(""));
-
+void ATUIProfileViewListSource::Float(int idx) {
+	if (mSort[0] == idx) {
+		mDescending[idx] ^= -1;
 		return;
 	}
 
-	uint32 insns = 0;
-	uint32 cycles = 0;
-	uint32 count = (uint32)selectedIndices.size();
-	while(!selectedIndices.empty()) {
-		int lvIndex = selectedIndices.back();
-		selectedIndices.pop_back();
-
-		VLItem *vli = static_cast<VLItem *>(lv->GetVirtualItem(lvIndex));
-
-		if (!vli)
-			continue;
-
-		const ATProfileRecord& rec = (*mpRecords)[vli->mIndex];
-		insns += rec.mInsns;
-		cycles += rec.mCycles;
+	for(int i=1; i<(int)vdcountof(mSort); ++i) {
+		if (mSort[i] == idx) {
+			memmove(mSort + 1, mSort, i);
+			mSort[0] = idx;
+			break;
+		}
 	}
-
-	VDSetWindowTextFW32(mhwndStatus
-		, L"Selected %u item%ls: %u cycles (%.2f%%), %u insns (%.2f%%)"
-		, count
-		, count == 1 ? L"" : L"s"
-		, cycles
-		, mpCurrentFrame->mTotalCycles ? (float)cycles * 100.0f / (float)mpCurrentFrame->mTotalCycles : 0
-		, insns
-		, mpCurrentFrame->mTotalInsns ? (float)insns * 100.0f / (float)mpCurrentFrame->mTotalInsns : 0
-		);
 }
 
-void ATUIProfilerPane::OnItemContextMenu(VDUIProxyListView *lv, VDUIProxyListView::ContextMenuEvent event) {
-	HMENU hmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_PROFILE_LIST_CONTEXT_MENU));
-	if (!hmenu)
+void ATUIProfileViewListSource::GetText(uint32 id, uint32 subItem, VDStringW& s) const {
+	if (!id)
 		return;
 
-	UINT selectedId = (UINT)TrackPopupMenuEx(GetSubMenu(hmenu, 0), TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | TPM_NONOTIFY | TPM_RETURNCMD, event.mX, event.mY, mhwnd, NULL);
-
-	DestroyMenu(hmenu);
-
-	switch(selectedId) {
-		case ID_COPYASCSV:
-			CopyAsCsv();
-			break;
-	}
-}
-
-void ATUIProfilerPane::OnTreeItemDoubleClicked(VDUIProxyTreeViewControl *tv, bool *handled) {
-	*handled = true;
-
-	// We can't open the window here as the tree view steals focus afterward.
-	::PostMessage(mhwnd, WM_USER + 100, 0, 0);
-}
-
-void ATUIProfilerPane::OnRangeSelected(uint32 start, uint32 end) {
-	MergeFrames(start, end);
-}
-
-void ATUIProfilerPane::UpdateRunButtonEnables() {
-	ATCPUProfiler *profiler = g_sim.GetProfiler();
-	const bool enabled = profiler && profiler->IsRunning();
-	const bool running = g_sim.IsRunning();
-
-	SendMessage(mhwndToolbar, TB_ENABLEBUTTON, 1000, enabled);
-	SendMessage(mhwndToolbar, TB_ENABLEBUTTON, 1004, !enabled || running);
-	SendMessage(mhwndToolbar, TB_ENABLEBUTTON, 1001, !enabled || !running);
-}
-
-void ATUIProfilerPane::RebuildToolbar() {
-	while(SendMessage(mhwndToolbar, TB_DELETEBUTTON, 0, 0))
-		;
-
-	TBBUTTON tbb[5] = {0};
-	tbb[0].iBitmap = 0;
-	tbb[0].idCommand = 1000;
-	tbb[0].fsState = TBSTATE_ENABLED;
-	tbb[0].fsStyle = TBSTYLE_BUTTON | BTNS_AUTOSIZE;
-	tbb[0].dwData = 0;
-	tbb[0].iString = 0;
-
-	tbb[1].iBitmap = 7;
-	tbb[1].idCommand = 1004;
-	tbb[1].fsState = TBSTATE_ENABLED;
-	tbb[1].fsStyle = TBSTYLE_BUTTON | BTNS_AUTOSIZE;
-	tbb[1].dwData = 0;
-	tbb[1].iString = 0;
-
-	tbb[2].iBitmap = 1;
-	tbb[2].idCommand = 1001;
-	tbb[2].fsState = TBSTATE_ENABLED;
-	tbb[2].fsStyle = TBSTYLE_BUTTON | BTNS_AUTOSIZE;
-	tbb[2].dwData = 0;
-	tbb[2].iString = 0;
-
-	tbb[3].iBitmap = 2;
-	tbb[3].idCommand = 1002;
-	tbb[3].fsState = TBSTATE_ENABLED;
-	tbb[3].fsStyle = BTNS_WHOLEDROPDOWN | BTNS_AUTOSIZE;
-	tbb[3].dwData = 0;
-	tbb[3].iString = 0;
-
-	tbb[4].iBitmap = -2;
-	tbb[4].idCommand = 1003;
-	tbb[4].fsState = TBSTATE_ENABLED;
-	tbb[4].fsStyle = BTNS_WHOLEDROPDOWN | BTNS_AUTOSIZE;
-	tbb[4].dwData = 0;
-	tbb[4].iString = (INT_PTR)L"Options";
-
-	SendMessage(mhwndToolbar, TB_ADDBUTTONS, 5, (LPARAM)tbb);
-	SendMessage(mhwndToolbar, TB_AUTOSIZE, 0, 0);
-
-	UpdateRunButtonEnables();
-	UpdateProfilingModeBitmap();
-}
-
-void ATUIProfilerPane::UpdateProfilingModeBitmap() {
-	if (!mhwndToolbar)
-		return;
-
-	switch(mProfileMode) {
-		case kATProfileMode_Insns:
-		default:
-			SendMessage(mhwndToolbar, TB_CHANGEBITMAP, 1002, 2);
-			break;
-
-		case kATProfileMode_Functions:
-			SendMessage(mhwndToolbar, TB_CHANGEBITMAP, 1002, 3);
-			break;
-
-		case kATProfileMode_CallGraph:
-			SendMessage(mhwndToolbar, TB_CHANGEBITMAP, 1002, 5);
-			break;
-
-		case kATProfileMode_BasicBlock:
-			SendMessage(mhwndToolbar, TB_CHANGEBITMAP, 1002, 6);
-			break;
-
-		case kATProfileMode_BasicLines:
-			SendMessage(mhwndToolbar, TB_CHANGEBITMAP, 1002, 4);
-			break;
-	}
-}
-
-void ATUIProfilerPane::UnloadProfile() {
-	mSession = decltype(mSession)();
-	mpCurrentFrame = nullptr;
-
-	mTimelineView.SetSession(nullptr);
-
-	OnSize();
-	RemakeView();
-}
-
-void ATUIProfilerPane::LoadProfile() {
-	g_sim.GetProfiler()->GetSession(mSession);
-
-	MergeFrames(0, 1);
-
-	memcpy(mProfileSessionCounterModes, mProfileCounterModes, sizeof mProfileSessionCounterModes);
-	
-	mTimelineView.SetSession(&mSession);
-	mTimelineView.SetSelectedRange(0, 1);
-
-	// compute truncated mean to set half point vertically
-	size_t n = mSession.mpFrames.size();
-	vdfastvector<uint32> frameDurations(n);
-
-	std::transform(mSession.mpFrames.begin(), mSession.mpFrames.end(), frameDurations.begin(),
-		[](const ATProfileFrame *frame) { return frame->mTotalCycles; });
-
-	std::sort(frameDurations.begin(), frameDurations.end());
-
-	size_t n4 = n / 4;
-	size_t n2 = n - n4*2;
-
-	uint32_t vrange = (uint32_t)((std::accumulate(frameDurations.begin() + n4, frameDurations.end() - n4, (uint64_t)0) * 2 + (n2 / 2)) / n2);
-
-	mTimelineView.SetVerticalRange(vrange);
-
-	OnSize();
-	RemakeView();
-}
-
-namespace {
-	struct CallGraphRecordSorter {
-		CallGraphRecordSorter(const ATProfileCallGraphInclusiveRecord *records)
-			: mpRecords(records) {}
-
-		bool operator()(uint32 idx1, uint32 idx2) const {
-			return mpRecords[idx1].mInclusiveCycles > mpRecords[idx2].mInclusiveCycles;
-		}
-
-		const ATProfileCallGraphInclusiveRecord *const mpRecords;
-	};
-}
-
-void ATUIProfilerPane::RemakeView() {
-	mListView.SetRedraw(false);
-	mTreeView.SetRedraw(false);
-	mListView.Clear();
-	mTreeView.Clear();
-	mVLItems.clear();
-	mVTItems.clear();
-	mListView.ClearExtraColumns();
-
-	mpRecords = nullptr;
-
-	if (mpCurrentFrame) {
-		switch(mCapturedProfileMode) {
-			case kATProfileMode_Insns:
-			case kATProfileMode_BasicLines:
-			case kATProfileMode_CallGraph:
-				mpRecords = &mpCurrentFrame->mRecords;
-				break;
-
-			default:
-				mpRecords = &mpCurrentFrame->mBlockRecords;
-				break;
-		}
-	}
-
-	mListColumnNames.clear();
-
-	if (!mpRecords || mpRecords->empty()) {
-		::SetWindowText(mhwndMessage, _T("No profiling data is available. Begin execution with the Play button in this profiler pane to begin data collection and Stop to end the session."));
-
-		::ShowWindow(mhwndMessage, SW_SHOWNOACTIVATE);
-		::ShowWindow(mhwndList, SW_HIDE);
-		::ShowWindow(mhwndTree, SW_HIDE);
-		::ShowWindow(mTimelineView.GetHandleW32(), SW_HIDE);
-	} else {
-		::ShowWindow(mhwndMessage, SW_HIDE);
-		::ShowWindow(mTimelineView.GetHandleW32(), SW_SHOW);
-
-		if (mCapturedProfileMode == kATProfileMode_CallGraph) {
-			::ShowWindow(mhwndList, SW_HIDE);
-			::ShowWindow(mhwndTree, SW_SHOWNOACTIVATE);
-
-			const uint32 n = (uint32)mpCurrentFrame->mCallGraphRecords.size();
-
-			VDStringW s;
-			vdfastvector<VDUIProxyTreeViewControl::NodeRef> nodes(n, VDUIProxyTreeViewControl::kNodeRoot);
-			vdfastvector<uint32> nextSibling(n, 0);
-			vdfastvector<uint32> firstChild(n, 0);
-			for(uint32 i = 4; i < n; ++i) {
-				if (!mpMergedFrame->mInclusiveRecords[i].mInclusiveInsns)
-					continue;
-
-				uint32 parent = mSession.mContexts[i].mParent;
-
-				nextSibling[i] = firstChild[parent];
-				firstChild[parent] = i;
-			}
-
-			vdfastvector<uint32> stack(4);
-			stack[0] = 0;
-			stack[1] = 1;
-			stack[2] = 2;
-			stack[3] = 3;
-			std::sort(stack.begin(), stack.end(), CallGraphRecordSorter(mpMergedFrame->mInclusiveRecords.data()));
-
-			mVTItems.resize(n);
-
-			while(!stack.empty()) {
-				uint32 i = stack.back();
-				stack.pop_back();
-
-				const ATProfileCallGraphRecord& cgr = mpCurrentFrame->mCallGraphRecords[i];
-
-				VTItem *pvi = &mVTItems[i];
-				pvi->Init(i, this);
-				nodes[i] = mTreeView.AddVirtualItem(i < 4 ? VDUIProxyTreeViewControl::kNodeRoot : nodes[mSession.mContexts[i].mParent], VDUIProxyTreeViewControl::kNodeFirst, pvi);
-
-				uint32 childBase = (uint32)stack.size();
-
-				for(uint32 j = firstChild[i]; j; j = nextSibling[j])
-					stack.push_back(j);
-
-				std::sort(stack.begin() + childBase, stack.end(), CallGraphRecordSorter(mpMergedFrame->mInclusiveRecords.data()));
-			}
-		} else {
-			::ShowWindow(mhwndList, SW_SHOWNOACTIVATE);
-			::ShowWindow(mhwndTree, SW_HIDE);
-
-			switch(mCapturedProfileMode) {
-				case kATProfileMode_Insns:
-				case kATProfileMode_Functions:
-				case kATProfileMode_BasicBlock:
-					mListColumnNames.emplace_back(L"Address");
-					break;
-				case kATProfileMode_BasicLines:
-					mListColumnNames.emplace_back(L"Line");
-					break;
-			}
-
-			mListColumnNames.emplace_back(L"Calls");
-			mListColumnNames.emplace_back(L"Clocks");
-			mListColumnNames.emplace_back(L"Insns");
-			mListColumnNames.emplace_back(L"Clocks%");
-			mListColumnNames.emplace_back(L"Insns%");
-			mListColumnNames.emplace_back(L"CPUClocks");
-			mListColumnNames.emplace_back(L"CPUClocks%");
-			mListColumnNames.emplace_back(L"DMA%");
-
-			for (auto cm : mProfileSessionCounterModes) {
-				if (cm) {
-					mListColumnNames.emplace_back(kCounterModeColumnNames[cm - 1]);
-					mListColumnNames.emplace_back(VDStringW(kCounterModeColumnNames[cm - 1]) + L"%");
-				}
-			}
-
-			int nc = 1;
-
-			for (const auto& name : mListColumnNames)
-				mListView.InsertColumn(nc++, name.c_str(), 0, nc > 1);
-
-			mListView.InsertColumn(nc, L"", 0, false);		// crude hack to fix full justified column
-
-			size_t n = mpRecords->size();
-			mVLItems.resize(n);
-
-			for(uint32 i=0; i<n; ++i) {
-				mVLItems[i].Init((int)i, this);
-				mListView.InsertVirtualItem(i, &mVLItems[i]);
-			}
-
-			mListView.AutoSizeColumns();
-			mListView.Sort(mComparer);
-		}
-	}
-
-	mTreeView.SetRedraw(true);
-	mListView.SetRedraw(true);
-}
-
-namespace {
-	void MergeRecords(ATProfileFrame& dst, const ATProfileSession& srcSession, uint32 start, uint32 end, ATProfileFrame::Records ATProfileFrame::*field) {
-		auto& dstRecords = dst.*field;
-
-		vdhashmap<uint32, uint32> addressLookup;
-
-		for(uint32 i = start; i < end; ++i) {
-			const auto& srcFrame = *srcSession.mpFrames[i];
-			const auto& srcRecords = srcFrame.*field;
-
-			for(const auto& srcRecord : srcRecords) {
-				auto r = addressLookup.insert(srcRecord.mAddress);
-
-				if (r.second) {
-					uint32 newIndex = (uint32)dstRecords.size();
-					r.first->second = newIndex;
-
-					dstRecords.push_back(srcRecord);
-				} else {
-					auto& dstRecord = dstRecords[r.first->second];
-
-					dstRecord.mCalls += srcRecord.mCalls;
-					dstRecord.mInsns += srcRecord.mInsns;
-					dstRecord.mCycles += srcRecord.mCycles;
-					dstRecord.mUnhaltedCycles += srcRecord.mUnhaltedCycles;
-
-					for(uint32 j = 0; j < vdcountof(srcRecord.mCounters); ++j)
-						dstRecord.mCounters[j] += srcRecord.mCounters[j];
-				}
-			}
-		}
-	}
-
-	void MergeCallGraphContextRecords(ATProfileFrame& dst, const ATProfileSession& srcSession, uint32 start, uint32 end) {
-		auto& dstRecords = dst.mCallGraphRecords;
-
-		for(uint32 i = start; i < end; ++i) {
-			const auto& srcFrame = *srcSession.mpFrames[i];
-			const auto& srcRecords = srcFrame.mCallGraphRecords;
-
-			const uint32 srcCount = (uint32)srcRecords.size();
-			const uint32 dstCount = (uint32)dstRecords.size();
-			const uint32 minCount = std::min(srcCount, dstCount);
-			
-			dstRecords.resize(std::max(srcCount, dstCount));
-
-			for(uint32 j=0; j<minCount; ++j) {
-				auto& dstRecord = dstRecords[j];
-				const auto& srcRecord = srcRecords[j];
-
-				dstRecord.mInsns += srcRecord.mInsns;
-				dstRecord.mCycles += srcRecord.mCycles;
-				dstRecord.mUnhaltedCycles += srcRecord.mUnhaltedCycles;
-				dstRecord.mCalls += srcRecord.mCalls;
-			}
-
-			if (srcCount > dstCount)
-				std::copy(srcRecords.begin() + dstCount, srcRecords.end(), dstRecords.begin() + dstCount);
-		}
-	}
-}
-
-void ATUIProfilerPane::MergeFrames(uint32 start, uint32 end) {
-	if (mSession.mpFrames.empty())
-		return;
-
-	mpMergedFrame.clear();
-	mpCurrentFrame = nullptr;
-
-	uint32 n = (uint32)mSession.mpFrames.size();
-	if (start > n - 1)
-		start = n - 1;
-
-	if (end < start)
-		end = start + 1;
-
-		// if we have a call graph session, we must clone anyway to compute inclusive times
-	if (start + 1 == end && mSession.mContexts.empty()) {
-		mpCurrentFrame = mSession.mpFrames[start];
-	} else {
-		mpMergedFrame = new MergedProfileFrame;
-		mpCurrentFrame = mpMergedFrame;
-
-		MergeRecords(*mpMergedFrame, mSession, start, end, &ATProfileFrame::mRecords);
-		MergeRecords(*mpMergedFrame, mSession, start, end, &ATProfileFrame::mBlockRecords);
-		MergeCallGraphContextRecords(*mpMergedFrame, mSession, start, end);
-
-		mpMergedFrame->mTotalCycles = 0;
-		mpMergedFrame->mTotalUnhaltedCycles = 0;
-		mpMergedFrame->mTotalInsns = 0;
-
-		for(uint32 i = start; i < end; ++i) {
-			const auto& frame = *mSession.mpFrames[i];
-
-			mpMergedFrame->mTotalCycles += frame.mTotalCycles;
-			mpMergedFrame->mTotalUnhaltedCycles += frame.mTotalUnhaltedCycles;
-			mpMergedFrame->mTotalInsns += frame.mTotalInsns;
-		}
-
-		const size_t numRecs = mpCurrentFrame->mCallGraphRecords.size();
-		mpMergedFrame->mInclusiveRecords.resize(numRecs, {});
-
-		ATProfileComputeInclusiveStats(mpMergedFrame->mInclusiveRecords.data(), mpMergedFrame->mCallGraphRecords.data(), mSession.mContexts.data(), numRecs);
-	}
-
-	RemakeView();
-}
-
-void ATUIProfilerPane::CopyAsCsv() {
-	if (!(mListView.IsVisible()) || mListColumnNames.empty())
-		return;
-
-	VDStringW text;
-
-	const auto appendQuoted = [&](const wchar_t *s) {
-		if (wcschr(s, ' ') || wcschr(s, ',') || wcschr(s, '"')) {
-			text.push_back('"');
-
-			while(const wchar_t c = *s++) {
-				if (c == '"')
-					text.push_back('"');
-
-				text.push_back(c);
-			}
-
-			text.push_back('"');
-		} else {
-			text.append(s, s + wcslen(s));
-		}
-		text.push_back(',');
-	};
-
-	const auto endLine = [&] {
-		text.pop_back();
-		text.push_back('\r');
-		text.push_back('\n');
-	};
-
-	for(const VDStringW& columnName : mListColumnNames) {
-		appendQuoted(columnName.c_str());
-	}
-
-	endLine();
-
-	const uint32 numColumns = (uint32)mListColumnNames.size();
-	VDStringW cellText;
-	for(const auto& item : mVLItems) {
-		for(uint32 i = 0; i < numColumns; ++i) {
-			cellText.clear();
-			item.GetText(i, cellText);
-
-			appendQuoted(cellText.c_str());
-		}
-		endLine();
-	}
-
-	ATCopyTextToClipboard(mhwnd, text.c_str());
-}
-
-void ATUIProfilerPane::StartProfiler() {
-	if (g_sim.IsProfilingEnabled())
-		return;
-
-	uint32 param = 0;
-	uint32 param2 = 0;
-
-	if (mBoundaryRule == kATProfileBoundaryRule_PCAddressFunction) {
-		param = ATGetDebugger()->EvaluateThrow(mBoundaryAddrExpr.c_str());
-	} else if (mBoundaryRule == kATProfileBoundaryRule_PCAddress) {
-		param = ATGetDebugger()->EvaluateThrow(mBoundaryAddrExpr.c_str());
-
-		param2 = (uint32)0 - 1;
-		if (!mBoundaryAddrExpr2.empty()) {
-			param2 = ATGetDebugger()->EvaluateThrow(mBoundaryAddrExpr2.c_str());
-		}
-	}
-
-	mCapturedProfileMode = mProfileMode;
-
-	g_sim.SetProfilingEnabled(true);
-
-	auto *profiler = g_sim.GetProfiler();
-	profiler->SetBoundaryRule(mBoundaryRule, param, param2);
-	profiler->Start(mProfileMode, mProfileCounterModes[0], mProfileCounterModes[1]);
-}
-
-void ATUIProfilerPane::VLGetText(int item, int subItem, VDStringW& s) const {
-	const ATProfileRecord& record = (*mpRecords)[item];
+	const ATProfileRecord& record = (*mpRecords)[id - 1];
 
 	switch(subItem) {
 		case 0:
-			switch(record.mAddress & 0x7000000) {
-				case 0x3000000:
+			switch(record.mAddress & 0xE000000) {
+				case 0x6000000:
 					s = L"VBI";
 					break;
 
-				case 0x4000000:
+				case 0x8000000:
 					s = L"DLI";
 					break;
 
-				case 0x2000000:
+				case 0x4000000:
 					s = L"IRQ";
 					break;
 
-				case 0x1000000:
+				case 0x2000000:
 					s = L"Interrupt";
 					break;
 
@@ -2657,15 +1404,16 @@ void ATUIProfilerPane::VLGetText(int item, int subItem, VDStringW& s) const {
 
 		case 1:
 			{
-				uint32 addr = record.mAddress & 0xFFFFFF;
+				uint32 addr = record.mAddress & 0x1FFFFFF;
 
 				if (mCapturedProfileMode == kATProfileMode_BasicLines) {
 					s.sprintf(L"%u", addr);
+				} else if (addr == 0x1FFFFFF) {
+					s = L"Unk.";
+				} else if (addr >= 0x1000000) {
+					s.sprintf(L"%02X'%04X", (addr >> 16) & 0xff, addr & 0xffff);
 				} else if (addr >= 0x10000) {
-					if (addr == 0xFFFFFF)
-						s = L"Unk.";
-					else
-						s.sprintf(L"%02X:%04X", addr >> 16, addr & 0xffff);
+					s.sprintf(L"%02X:%04X", addr >> 16, addr & 0xffff);
 				} else {
 					ATSymbol sym;
 					if (ATGetDebuggerSymbolLookup()->LookupSymbol(addr, kATSymbol_Execute, sym)) {
@@ -2727,31 +1475,144 @@ void ATUIProfilerPane::VLGetText(int item, int subItem, VDStringW& s) const {
 	}
 }
 
-void ATUIProfilerPane::VTGetText(int item, VDStringW& s) const {
-	const ATProfileCallGraphRecord& cgr = mpCurrentFrame->mCallGraphRecords[item];
+int ATUIProfileViewListSource::Compare(uint32 x, uint32 y) {
+	// sort all invalid items to the end
+	if (!x)
+		return y ? 0 : 1;
 
-	switch(item) {
-		case 0:
+	if (!y)
+		return -1;
+
+	const ATProfileRecord& r = (*mpRecords)[x - 1];
+	const ATProfileRecord& s = (*mpRecords)[y - 1];
+
+	for(int i=0; i<(int)vdcountof(mSort); ++i) {
+		int j = mSort[i];
+		int inv = mDescending[j];
+		int diff;
+
+		switch(j) {
+			case 0:
+				diff = (((int)(r.mAddress & 0x7000000) - (int)(s.mAddress & 0x7000000)) ^ inv) - inv;
+				break;
+
+			case 1:
+				diff = (((int)(r.mAddress & 0xFFFFFF) - (int)(s.mAddress & 0xFFFFFF)) ^ inv) - inv;
+				break;
+
+			case 2:
+				diff = (((int)r.mCalls - (int)s.mCalls) ^ inv) - inv;
+				break;
+
+			case 3:
+				diff = (((int)r.mCycles - (int)s.mCycles) ^ inv) - inv;
+				break;
+
+			case 4:
+				diff = (((int)r.mInsns - (int)s.mInsns) ^ inv) - inv;
+				break;
+
+			case 5:
+				diff = (((int)r.mUnhaltedCycles - (int)s.mUnhaltedCycles) ^ inv) - inv;
+				break;
+
+			case 6:
+				// diff = r.u / r.c - s.u / s.c
+				//      = [r.u*s.c - s.u*r.c] / (r.c * s.c);
+				{
+					float discriminant = (float)r.mUnhaltedCycles * (float)s.mCycles - (float)s.mUnhaltedCycles * (float)r.mCycles;
+
+					diff = (discriminant < 0.0f) ? -1 : (discriminant > 0.0f) ? +1 : 0;
+
+					diff = (diff ^ inv) - inv;
+				}
+				break;
+
+			case 7:
+				diff = (((int)r.mCounters[0] - (int)s.mCounters[0]) ^ inv) - inv;
+				break;
+
+			case 8:
+				{
+					uint64 a = (uint64)r.mCounters[0] * s.mInsns;
+					uint64 b = (uint64)s.mCounters[0] * r.mInsns;
+
+					diff = (a < b) ? -1 : (a > b) ? +1 : 0;
+					diff = (diff ^ inv) - inv;
+				}
+				break;
+
+			case 9:
+				diff = (((int)r.mCounters[1] - (int)s.mCounters[1]) ^ inv) - inv;
+				break;
+
+			case 10:
+				{
+					uint64 a = (uint64)r.mCounters[1] * s.mInsns;
+					uint64 b = (uint64)s.mCounters[1] * r.mInsns;
+
+					diff = (a < b) ? -1 : (a > b) ? +1 : 0;
+					diff = (diff ^ inv) - inv;
+				}
+				break;
+		}
+
+		if (diff)
+			return diff;
+	}
+
+	return 0;
+}
+
+/////////////////////////////////////////////////////////////////////////////
+
+class ATUIProfileViewTreeSource final : public IVDUITreeViewIndexedProvider {
+public:
+	void SetData(const ATProfileSession *session, const ATProfileMergedFrame *frame);
+
+public:
+	void GetText(uint32 id, VDStringW& s) const override;
+
+private:
+	const ATProfileMergedFrame *mpCurrentFrame = nullptr;
+	const ATProfileSession *mpSession = nullptr; 
+};
+
+void ATUIProfileViewTreeSource::SetData(const ATProfileSession *session, const ATProfileMergedFrame *frame) {
+	mpSession = session;
+	mpCurrentFrame = frame;
+}
+
+void ATUIProfileViewTreeSource::GetText(uint32 id, VDStringW& s) const {
+	if (!id)
+		return;
+
+	const ATProfileCallGraphRecord& cgr = mpCurrentFrame->mCallGraphRecords[id - 1];
+
+	switch(id) {
+		case 1:
 			s = L"Main";
 			break;
 
-		case 1:
+		case 2:
 			s = L"IRQ";
 			break;
 
-		case 2:
+		case 3:
 			s = L"NMI (VBI)";
 			break;
 
-		case 3:
+		case 4:
 			s = L"NMI (DLI)";
 			break;
 
 		default:
 			{
-				sint32 addr = mSession.mContexts[item].mAddress & 0xffffff;
+				sint32 addr = mpSession->mContexts[id - 1].mAddress;
 
-				if (addr >= 0x10000) {
+				if (addr >= 0x1000000) {
+					s.sprintf(L"%02X'%04X", (addr >> 16) & 0xff, addr & 0xffff);
+				} else if (addr >= 0x10000) {
 					s.sprintf(L"%02X:%04X", addr >> 16, addr & 0xffff);
 				} else {
 					s.sprintf(L"%04X", addr);
@@ -2770,7 +1631,7 @@ void ATUIProfilerPane::VTGetText(int item, VDStringW& s) const {
 	const float unhaltedCyclesToPercent = mpCurrentFrame->mTotalUnhaltedCycles ? 100.0f / (float)mpCurrentFrame->mTotalUnhaltedCycles : 0;
 	const float insnsToPercent = mpCurrentFrame->mTotalInsns ? 100.0f / (float)mpCurrentFrame->mTotalInsns : 0;
 
-	const ATProfileCallGraphInclusiveRecord& cgir = mpMergedFrame->mInclusiveRecords[item];
+	const ATProfileCallGraphInclusiveRecord& cgir = mpCurrentFrame->mInclusiveRecords[id - 1];
 	s.append_sprintf(L": %u cycles (%.2f%%), %u CPU cycles (%.2f%%), %u insns (%.2f%%)"
 		, cgir.mInclusiveCycles
 		, (float)cgir.mInclusiveCycles * cyclesToPercent
@@ -2781,16 +1642,1119 @@ void ATUIProfilerPane::VTGetText(int item, VDStringW& s) const {
 		);
 }
 
-///////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
 
-void ATUIProfilerPane::VLItem::GetText(int subItem, VDStringW& s) const {
-	mpParent->VLGetText(mIndex, subItem, s);
+class ATUIProfileView final : public ATUINativeWindow, public IATUIProfileView {
+public:
+	ATUIProfileView();
+
+	int AddRef() { return ATUINativeWindow::AddRef(); }
+	int Release() { return ATUINativeWindow::Release(); }
+
+	ATUINativeWindow *AsUINativeWindow() override { return this; }
+
+	bool Create(ATUINativeWindowProxy *parent, uint32 id) override;
+	void SetData(const ATProfileSession *session, const ATProfileFrame *frame, ATProfileMergedFrame *mergedFrame) override;
+
+private:
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
+
+	void OnCreate();
+	void OnDestroy();
+	void OnSize();
+	void OnFontsUpdated();
+
+	void OnColumnClicked(VDUIProxyListView *lv, int column);
+	void OnItemDoubleClicked(VDUIProxyListView *lv, int item);
+	void OnItemSelectionChanged(VDUIProxyListView *lv, int item);
+	void OnItemContextMenu(VDUIProxyListView *lv, VDUIProxyListView::ContextMenuEvent event);
+	void OnTreeItemDoubleClicked(VDUIProxyTreeViewControl *tv, bool *handled);
+
+	void RemakeView();
+	void CopyAsCsv();
+
+	VDUIProxyListView	mListView;
+	VDUIProxyTreeViewControl	mTreeView;
+	
+	vdvector<VDStringW> mListColumnNames;
+
+	ATProfileMode mCapturedProfileMode = kATProfileMode_Insns;
+	const ATProfileSession *mpSession = nullptr;
+	const ATProfileFrame *mpCurrentFrame = nullptr;
+	vdrefptr<ATProfileMergedFrame> mpMergedFrame {};
+	const ATProfileFrame::Records *mpRecords = nullptr;
+
+	HFONT mhPropFont = nullptr;
+	HWND mhwndList = nullptr;
+	HWND mhwndTree = nullptr;
+	HWND mhwndStatus = nullptr;
+	
+	ATUIProfileViewListSource mListSource;
+	ATUIProfileViewTreeSource mTreeSource;
+
+	VDUIProxyMessageDispatcherW32	mDispatcher;
+
+	VDDelegate mDelegateColumnClicked;
+	VDDelegate mDelegateItemDoubleClicked;
+	VDDelegate mDelegateItemSelectionChanged;
+	VDDelegate mDelegateItemContextMenu;
+	VDDelegate mDelegateTreeItemDoubleClicked;
+
+	static const wchar_t *const kCounterModeColumnNames[];
+};
+
+const wchar_t *const ATUIProfileView::kCounterModeColumnNames[] = {
+	L"Taken",
+	L"NotTaken",
+	L"PageCross",
+	L"Redundant",
+};
+
+void ATUICreateProfileView(IATUIProfileView **view) {
+	ATUIProfileView *p = new ATUIProfileView;
+
+	p->AddRef();
+	*view = p;
 }
 
-///////////////////////////////////////////////////////////////////////////
+ATUIProfileView::ATUIProfileView() {
+	mListView.OnColumnClicked() += mDelegateColumnClicked.Bind(this, &ATUIProfileView::OnColumnClicked);
+	mListView.OnItemDoubleClicked() += mDelegateItemDoubleClicked.Bind(this, &ATUIProfileView::OnItemDoubleClicked);
+	mListView.OnItemSelectionChanged() += mDelegateItemSelectionChanged.Bind(this, &ATUIProfileView::OnItemSelectionChanged);
+	mListView.OnItemContextMenu() += mDelegateItemContextMenu.Bind(this, &ATUIProfileView::OnItemContextMenu);
+	mTreeView.OnItemDoubleClicked() += mDelegateTreeItemDoubleClicked.Bind(this, &ATUIProfileView::OnTreeItemDoubleClicked);
+}
 
-void ATUIProfilerPane::VTItem::GetText(VDStringW& s) const {
-	mpParent->VTGetText(mIndex, s);
+bool ATUIProfileView::Create(ATUINativeWindowProxy *parent, uint32 id) {
+	return CreateChild(parent->GetWindowHandle(), id, 0, 0, 0, 0, WS_VISIBLE | WS_CHILD);
+}
+
+void ATUIProfileView::SetData(const ATProfileSession *session, const ATProfileFrame *frame, ATProfileMergedFrame *mergedFrame) {
+	mpSession = session;
+	mpCurrentFrame = frame;
+	mpMergedFrame = mergedFrame;
+	
+	if (session)
+		mCapturedProfileMode = session->mProfileMode;
+
+	RemakeView();
+}
+
+LRESULT ATUIProfileView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+	switch(msg) {
+		case WM_CREATE:
+			OnCreate();
+			break;
+
+		case WM_DESTROY:
+			OnDestroy();
+			break;
+
+		case WM_SIZE:
+			OnSize();
+			break;
+
+		case WM_COMMAND:
+			return mDispatcher.Dispatch_WM_COMMAND(wParam, lParam);
+
+		case WM_ERASEBKGND:
+			{
+				RECT r;
+
+				if (GetClientRect(mhwnd, &r)) {
+					FillRect((HDC)wParam, &r, (HBRUSH)(COLOR_3DFACE + 1));
+					return TRUE;
+				}
+			}
+
+			break;
+
+		case WM_NOTIFY:
+			return mDispatcher.Dispatch_WM_NOTIFY(wParam, lParam);
+
+		case WM_CONTEXTMENU:
+			if (mListView.IsVisible()) {
+				POINT pt { 0, 0 };
+				ClientToScreen(mListView.GetHandle(), &pt);
+				OnItemContextMenu(&mListView, {0, pt.x, pt.y});
+			}
+			break;
+
+		case WM_USER + 100:
+			if (uint32 id = mTreeView.GetSelectedItemId()) {
+				int idx = id - 1;
+
+				vdrefptr<ATUIProfilerSourcePane> srcPane(new ATUIProfilerSourcePane(*mpCurrentFrame, mpSession->mContexts[idx].mAddress, mpMergedFrame));
+				srcPane->Create(mhwnd);
+			}
+			break;
+	}
+
+	return ATUINativeWindow::WndProc(msg, wParam, lParam);
+}
+
+void ATUIProfileView::OnCreate() {
+	mhPropFont = ATUICreateDefaultFontForDpiW32(ATUIGetWindowDpiW32(mhwnd));
+
+	mhwndList = CreateWindowEx(WS_EX_CLIENTEDGE | WS_EX_NOPARENTNOTIFY, WC_LISTVIEW, _T(""), WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | LVS_REPORT | LVS_SHOWSELALWAYS, 0, 0, 0, 0, mhwnd, (HMENU)101, VDGetLocalModuleHandleW32(), NULL);
+	SendMessage(mhwndList, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
+
+	mhwndTree = CreateWindowEx(WS_EX_CLIENTEDGE | WS_EX_NOPARENTNOTIFY, WC_TREEVIEW, _T(""), WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TVS_FULLROWSELECT | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS, 0, 0, 0, 0, mhwnd, (HMENU)103, VDGetLocalModuleHandleW32(), NULL);
+	SendMessage(mhwndTree, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
+
+	mhwndStatus = CreateWindowEx(0, STATUSCLASSNAME, _T(""), WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, mhwnd, (HMENU)102, VDGetLocalModuleHandleW32(), NULL);
+	SendMessage(mhwndStatus, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
+	SendMessage(mhwndStatus, SB_SIMPLE, 0, 0);
+	SetWindowPos(mhwndStatus, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+	mListView.Attach(mhwndList);
+	mDispatcher.AddControl(&mListView);
+
+	mListView.SetFullRowSelectEnabled(true);
+	mListView.InsertColumn(0, L"Thread", 0);
+	mListView.AutoSizeColumns();
+	mListView.SetIndexedProvider(&mListSource);
+
+	mTreeView.Attach(mhwndTree);
+	mTreeView.SetIndexedProvider(&mTreeSource);
+
+	mDispatcher.AddControl(&mTreeView);
+
+	OnSize();
+}
+
+void ATUIProfileView::OnDestroy() {
+	mDispatcher.RemoveAllControls(true);
+
+	if (mhwndTree) {
+		::DestroyWindow(mhwndTree);
+		mhwndTree = NULL;
+	}
+
+	if (mhwndList) {
+		::DestroyWindow(mhwndList);
+		mhwndList = NULL;
+	}
+
+	if (mhwndStatus) {
+		::DestroyWindow(mhwndStatus);
+		mhwndStatus = NULL;
+	}
+
+	if (mhPropFont) {
+		DeleteObject(mhPropFont);
+		mhPropFont = nullptr;
+	}
+}
+
+void ATUIProfileView::OnSize() {
+	RECT r;
+	GetClientRect(mhwnd, &r);
+
+	int y = 0;
+
+	int statusY = 0;
+	if (mhwndStatus) {
+		SendMessage(mhwndStatus, WM_SIZE, 0, 0);
+
+		RECT rs;
+		if (GetWindowRect(mhwndStatus, &rs)) {
+			int statusH = rs.bottom - rs.top;
+			statusY = std::max<int>(0, r.bottom - statusH);
+		}
+	}
+
+	int lh = statusY - y;
+
+	if (lh < 0)
+		lh = 0;
+
+	int toph = 0;
+
+	int both = lh - toph;
+
+	if (mhwndList)
+		SetWindowPos(mhwndList, NULL, 0, y + toph, r.right, both, SWP_NOZORDER | SWP_NOACTIVATE);
+
+	if (mhwndTree)
+		SetWindowPos(mhwndTree, NULL, 0, y + toph, r.right, both, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void ATUIProfileView::OnFontsUpdated() {
+	HFONT hNewFont = ATUICreateDefaultFontForDpiW32(ATUIGetWindowDpiW32(mhwnd));
+
+	if (mhwndList)
+		SendMessage(mhwndList, WM_SETFONT, (WPARAM)hNewFont, TRUE);
+
+	if (mhwndTree)
+		SendMessage(mhwndTree, WM_SETFONT, (WPARAM)hNewFont, TRUE);
+
+	if (mhwndStatus)
+		SendMessage(mhwndStatus, WM_SETFONT, (WPARAM)hNewFont, TRUE);
+
+	if (mhPropFont)
+		::DeleteObject(mhPropFont);
+
+	mhPropFont = hNewFont;
+}
+
+void ATUIProfileView::OnColumnClicked(VDUIProxyListView *lv, int column) {
+	static const uint8 kSortColumnTable[]={
+		0, 1, 2, 3, 4, 3, 4, 5, 5, 6, 7, 8, 9, 10
+	};
+
+	if ((unsigned)column < vdcountof(kSortColumnTable)) {
+		mListSource.Float(kSortColumnTable[column]);
+		mListView.Sort(mListSource);
+	}
+}
+
+void ATUIProfileView::OnItemDoubleClicked(VDUIProxyListView *lv, int item) {
+	const uint32 id = mListView.GetItemId(item);
+
+	if (id) {
+		const int idx = id - 1;
+		const auto& record = (*mpRecords)[idx];
+
+		if (record.mAddress == 0xFFFFFF) {
+			::MessageBoxW(mhwnd, L"The selected entry corresponds to the unknown function executing when profiling was started. It can't be expanded.", L"Altirra Error", MB_ICONEXCLAMATION | MB_OK);
+		} else {
+			vdrefptr<ATUIProfilerSourcePane> srcPane(new ATUIProfilerSourcePane(*mpCurrentFrame, (*mpRecords)[idx].mAddress, mpMergedFrame));
+			srcPane->Create(mhwnd);
+		}
+	}
+}
+
+void ATUIProfileView::OnItemSelectionChanged(VDUIProxyListView *lv, int item) {
+	vdfastvector<int> selectedIndices;
+
+	lv->GetSelectedIndices(selectedIndices);
+
+	if (selectedIndices.empty()) {
+		if (mhwndStatus)
+			SetWindowText(mhwndStatus, _T(""));
+
+		return;
+	}
+
+	uint32 insns = 0;
+	uint32 cycles = 0;
+	uint32 count = (uint32)selectedIndices.size();
+	while(!selectedIndices.empty()) {
+		int lvIndex = selectedIndices.back();
+		selectedIndices.pop_back();
+
+		const uint32 id = lv->GetItemId(lvIndex);
+
+		if (!id)
+			continue;
+
+		const ATProfileRecord& rec = (*mpRecords)[id - 1];
+		insns += rec.mInsns;
+		cycles += rec.mCycles;
+	}
+
+	VDSetWindowTextFW32(mhwndStatus
+		, L"Selected %u item%ls: %u cycles (%.2f%%), %u insns (%.2f%%)"
+		, count
+		, count == 1 ? L"" : L"s"
+		, cycles
+		, mpCurrentFrame->mTotalCycles ? (float)cycles * 100.0f / (float)mpCurrentFrame->mTotalCycles : 0
+		, insns
+		, mpCurrentFrame->mTotalInsns ? (float)insns * 100.0f / (float)mpCurrentFrame->mTotalInsns : 0
+		);
+}
+
+void ATUIProfileView::OnItemContextMenu(VDUIProxyListView *lv, VDUIProxyListView::ContextMenuEvent event) {
+	HMENU hmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_PROFILE_LIST_CONTEXT_MENU));
+	if (!hmenu)
+		return;
+
+	UINT selectedId = (UINT)TrackPopupMenuEx(GetSubMenu(hmenu, 0), TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | TPM_NONOTIFY | TPM_RETURNCMD, event.mX, event.mY, mhwnd, NULL);
+
+	DestroyMenu(hmenu);
+
+	switch(selectedId) {
+		case ID_COPYASCSV:
+			CopyAsCsv();
+			break;
+	}
+}
+
+void ATUIProfileView::OnTreeItemDoubleClicked(VDUIProxyTreeViewControl *tv, bool *handled) {
+	*handled = true;
+
+	// We can't open the window here as the tree view steals focus afterward.
+	::PostMessage(mhwnd, WM_USER + 100, 0, 0);
+}
+
+void ATUIProfileView::RemakeView() {
+	mListView.SetRedraw(false);
+	mTreeView.SetRedraw(false);
+	mListView.Clear();
+	mTreeView.Clear();
+	mListView.ClearExtraColumns();
+
+	mpRecords = nullptr;
+
+	if (mpCurrentFrame) {
+		switch(mCapturedProfileMode) {
+			case kATProfileMode_Insns:
+			case kATProfileMode_BasicLines:
+			case kATProfileMode_CallGraph:
+				mpRecords = &mpCurrentFrame->mRecords;
+				break;
+
+			default:
+				mpRecords = &mpCurrentFrame->mBlockRecords;
+				break;
+		}
+	}
+
+	if (mpSession) {
+		mListSource.SetData(mpSession, mpCurrentFrame, mpRecords);
+		mTreeSource.SetData(mpSession, mpMergedFrame);
+		mListView.SetIndexedProvider(&mListSource);
+		mTreeView.SetIndexedProvider(&mTreeSource);
+	} else {
+		mListView.SetIndexedProvider(nullptr);
+		mTreeView.SetIndexedProvider(nullptr);
+	}
+
+	mListColumnNames.clear();
+
+	if (!mpSession) {
+		::ShowWindow(mhwndList, SW_HIDE);
+		::ShowWindow(mhwndTree, SW_HIDE);
+	} else if (mCapturedProfileMode == kATProfileMode_CallGraph) {
+		::ShowWindow(mhwndList, SW_HIDE);
+		::ShowWindow(mhwndTree, SW_SHOWNOACTIVATE);
+
+		const uint32 n = (uint32)mpCurrentFrame->mCallGraphRecords.size();
+
+		VDStringW s;
+		vdfastvector<VDUIProxyTreeViewControl::NodeRef> nodes(n, VDUIProxyTreeViewControl::kNodeRoot);
+		vdfastvector<uint32> nextSibling(n, 0);
+		vdfastvector<uint32> firstChild(n, 0);
+		for(uint32 i = 4; i < n; ++i) {
+			if (!mpMergedFrame->mInclusiveRecords[i].mInclusiveInsns)
+				continue;
+
+			uint32 parent = mpSession->mContexts[i].mParent;
+
+			nextSibling[i] = firstChild[parent];
+			firstChild[parent] = i;
+		}
+
+		const auto cgRecordSorter = [records = mpMergedFrame->mInclusiveRecords.data()](uint32 idx1, uint32 idx2) {
+			return records[idx1].mInclusiveCycles > records[idx2].mInclusiveCycles;
+		};
+
+		vdfastvector<uint32> stack(4);
+		stack[0] = 0;
+		stack[1] = 1;
+		stack[2] = 2;
+		stack[3] = 3;
+		std::sort(stack.begin(), stack.end(), cgRecordSorter);
+
+		while(!stack.empty()) {
+			uint32 i = stack.back();
+			stack.pop_back();
+
+			const ATProfileCallGraphRecord& cgr = mpCurrentFrame->mCallGraphRecords[i];
+
+			nodes[i] = mTreeView.AddIndexedItem(i < 4 ? VDUIProxyTreeViewControl::kNodeRoot : nodes[mpSession->mContexts[i].mParent], VDUIProxyTreeViewControl::kNodeFirst, i + 1);
+
+			uint32 childBase = (uint32)stack.size();
+
+			for(uint32 j = firstChild[i]; j; j = nextSibling[j])
+				stack.push_back(j);
+
+			std::sort(stack.begin() + childBase, stack.end(), cgRecordSorter);
+		}
+	} else {
+		::ShowWindow(mhwndList, SW_SHOWNOACTIVATE);
+		::ShowWindow(mhwndTree, SW_HIDE);
+
+		switch(mCapturedProfileMode) {
+			case kATProfileMode_Insns:
+			case kATProfileMode_Functions:
+			case kATProfileMode_BasicBlock:
+				mListColumnNames.emplace_back(L"Address");
+				break;
+			case kATProfileMode_BasicLines:
+				mListColumnNames.emplace_back(L"Line");
+				break;
+		}
+
+		mListColumnNames.emplace_back(L"Calls");
+		mListColumnNames.emplace_back(L"Clocks");
+		mListColumnNames.emplace_back(L"Insns");
+		mListColumnNames.emplace_back(L"Clocks%");
+		mListColumnNames.emplace_back(L"Insns%");
+		mListColumnNames.emplace_back(L"CPUClocks");
+		mListColumnNames.emplace_back(L"CPUClocks%");
+		mListColumnNames.emplace_back(L"DMA%");
+
+		for (auto cm : mpSession->mCounterModes) {
+			mListColumnNames.emplace_back(kCounterModeColumnNames[cm - 1]);
+			mListColumnNames.emplace_back(VDStringW(kCounterModeColumnNames[cm - 1]) + L"%");
+		}
+
+		int nc = 1;
+
+		for (const auto& name : mListColumnNames)
+			mListView.InsertColumn(nc++, name.c_str(), 0, nc > 1);
+
+		mListView.InsertColumn(nc, L"", 0, false);		// crude hack to fix full justified column
+
+		if (mpRecords) {
+			size_t n = mpRecords->size();
+
+			for(uint32 i=0; i<n; ++i) {
+				mListView.InsertIndexedItem(i, i + 1);
+			}
+		}
+
+		mListView.AutoSizeColumns();
+		mListView.Sort(mListSource);
+	}
+
+	mTreeView.SetRedraw(true);
+	mListView.SetRedraw(true);
+}
+
+void ATUIProfileView::CopyAsCsv() {
+	if (!(mListView.IsVisible()) || mListColumnNames.empty())
+		return;
+
+	VDStringW text;
+
+	const auto appendQuoted = [&](const wchar_t *s) {
+		if (wcschr(s, ' ') || wcschr(s, ',') || wcschr(s, '"')) {
+			text.push_back('"');
+
+			while(const wchar_t c = *s++) {
+				if (c == '"')
+					text.push_back('"');
+
+				text.push_back(c);
+			}
+
+			text.push_back('"');
+		} else {
+			text.append(s, s + wcslen(s));
+		}
+		text.push_back(',');
+	};
+
+	const auto endLine = [&] {
+		text.pop_back();
+		text.push_back('\r');
+		text.push_back('\n');
+	};
+
+	for(const VDStringW& columnName : mListColumnNames) {
+		appendQuoted(columnName.c_str());
+	}
+
+	endLine();
+
+	const uint32 numColumns = (uint32)mListColumnNames.size();
+	VDStringW cellText;
+
+	int n = mListView.GetItemCount();
+	for(int i = 0; i < n; ++i) {
+		uint32 id = mListView.GetItemId(i);
+
+		if (id) {
+			for(uint32 j = 0; j < numColumns; ++j) {
+				cellText.clear();
+				mListSource.GetText(i, j, cellText);
+
+				appendQuoted(cellText.c_str());
+			}
+			endLine();
+		}
+	}
+
+	ATCopyTextToClipboard(mhwnd, text.c_str());
+}
+
+/////////////////////////////////////////////////////////////////////////////
+
+const uint32 kATUIProfilerCounterModeMenuIds[] = {
+	ID_COUNTER_BRANCHTAKEN,
+	ID_COUNTER_BRANCHNOTTAKEN,
+	ID_COUNTER_PAGECROSSING,
+	ID_COUNTER_REDUNDANTOPERATION,
+};
+
+vdvector_view<const uint32> ATUIGetProfilerCounterModeMenuIds() {
+	return kATUIProfilerCounterModeMenuIds;
+}
+
+class ATUIProfilerPane final : public ATUIPane {
+public:
+	ATUIProfilerPane();
+	~ATUIProfilerPane();
+
+protected:
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
+	bool OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
+	void OnFontsUpdated() override;
+	void OnRangeSelected(uint32 start, uint32 end);
+	void UpdateRunButtonEnables();
+	void RebuildToolbar();
+	void UpdateProfilingModeBitmap();
+	void OnToolbarClicked(uint32 id);
+
+	void UnloadProfile();
+	void LoadProfile();
+	void RemakeView();
+	void MergeFrames(uint32 start, uint32 end);
+
+	void StartProfiler();
+
+	HWND mhwndToolbar;
+	HWND mhwndMessage;
+	HFONT mhPropFont;
+	HMENU mhmenuMode;
+	HIMAGELIST mToolbarImageList;
+	ATProfileMode mProfileMode = kATProfileMode_Insns;
+	ATProfileMode mCapturedProfileMode = kATProfileMode_Insns;
+	ATProfileCounterMode mProfileCounterModes[2];
+	ATProfileCounterMode mProfileSessionCounterModes[2];
+	ATProfileBoundaryRule mBoundaryRule = kATProfileBoundaryRule_None;
+	VDStringA mBoundaryAddrExpr;
+	VDStringA mBoundaryAddrExpr2;
+
+	ATUIProfileView mProfileView;
+
+	ATProfileSession mSession;
+	vdrefptr<ATProfileMergedFrame> mpMergedFrame;
+	const ATProfileFrame *mpCurrentFrame = nullptr;
+	const ATProfileFrame::Records *mpRecords = nullptr;
+
+	ATUIProfilerTimelineView mTimelineView;
+
+	VDUIProxyMessageDispatcherW32 mDispatcher;
+	VDUIProxyToolbarControl mToolbar;
+};
+
+ATUIProfilerPane::ATUIProfilerPane()
+	: ATUIPane(kATUIPaneId_Profiler, L"Profile View")
+	, mhwndToolbar(NULL)
+	, mhmenuMode(NULL)
+	, mhPropFont(nullptr)
+	, mToolbarImageList(NULL)
+{
+	for(auto& v : mProfileCounterModes)
+		v = kATProfileCounterMode_None;
+
+	for(auto& v : mProfileSessionCounterModes)
+		v = kATProfileCounterMode_None;
+
+	// pin embedded timeline view object
+	mTimelineView.AddRef();
+	mTimelineView.SetOnRangeSelected([this](uint32 start, uint32 end) { OnRangeSelected(start, end); });
+
+	mProfileView.AddRef();
+
+	mToolbar.SetOnClicked([this](uint32 id) { OnToolbarClicked(id); });
+}
+
+ATUIProfilerPane::~ATUIProfilerPane() {
+}
+
+LRESULT ATUIProfilerPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+	if (msg == WM_COMMAND) {
+		VDZLRESULT result;
+		if (mDispatcher.TryDispatch_WM_COMMAND(wParam, lParam, result))
+			return result;
+	} else if (msg == WM_ERASEBKGND) {
+		RECT r;
+
+		if (GetClientRect(mhwnd, &r)) {
+			FillRect((HDC)wParam, &r, (HBRUSH)(COLOR_3DFACE + 1));
+			return TRUE;
+		}
+	} else if (msg == WM_NOTIFY) {
+		VDZLRESULT result;
+		if (mDispatcher.TryDispatch_WM_NOTIFY(wParam, lParam, result))
+			return result;
+	}
+
+	return ATUIPane::WndProc(msg, wParam, lParam);
+}
+
+bool ATUIProfilerPane::OnCreate() {
+	mhmenuMode = LoadMenu(NULL, MAKEINTRESOURCE(IDR_PROFILE_MODE_MENU));
+	mhPropFont = ATUICreateDefaultFontForDpiW32(ATUIGetWindowDpiW32(mhwnd));
+
+	mToolbarImageList = ImageList_LoadBitmap(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDB_TOOLBAR_PROFILER), 16, 0, RGB(255, 0, 255));
+
+	mhwndToolbar = CreateWindow(TOOLBARCLASSNAME, _T(""), WS_CHILD | WS_VISIBLE | TBSTYLE_LIST, 0, 0, 0, 0, mhwnd, (HMENU)100, VDGetLocalModuleHandleW32(), NULL);
+	if (!mhwndToolbar)
+		return false;
+
+	mToolbar.Attach(mhwndToolbar);
+	mDispatcher.AddControl(&mToolbar);
+	
+	SendMessage(mhwndToolbar, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
+	SendMessage(mhwndToolbar, TB_SETIMAGELIST, 0, (LPARAM)mToolbarImageList);
+	
+	mhwndMessage = CreateWindowEx(0, WC_STATIC, _T(""), WS_CHILD | WS_CLIPSIBLINGS, 0, 0, 0, 0, mhwnd, (HMENU)104, VDGetLocalModuleHandleW32(), NULL);
+	SendMessage(mhwndMessage, WM_SETFONT, (WPARAM)mhPropFont, TRUE);
+
+	mTimelineView.CreateChild(mhwnd, 105, 0, 0, 0, 0, WS_CHILD | WS_VISIBLE);
+	mProfileView.CreateChild(mhwnd, 106, 0, 0, 0, 0, WS_CHILD | WS_VISIBLE);
+
+	RebuildToolbar();
+
+	UpdateRunButtonEnables();
+	RemakeView();
+
+	return ATUIPane::OnCreate();
+}
+
+void ATUIProfilerPane::OnDestroy() {
+	if (mhmenuMode) {
+		::DestroyMenu(mhmenuMode);
+		mhmenuMode = NULL;
+	}
+
+	if (mhwndToolbar) {
+		mToolbar.Detach();
+		mDispatcher.RemoveControl(mhwndToolbar);
+		::DestroyWindow(mhwndToolbar);
+		mhwndToolbar = NULL;
+	}
+
+	if (mhwndMessage) {
+		::DestroyWindow(mhwndMessage);
+		mhwndMessage = nullptr;
+	}
+
+	if (mToolbarImageList) {
+		ImageList_Destroy(mToolbarImageList);
+		mToolbarImageList = NULL;
+	}
+
+	if (mhPropFont) {
+		DeleteObject(mhPropFont);
+		mhPropFont = nullptr;
+	}
+
+	ATUIPane::OnDestroy();
+}
+
+void ATUIProfilerPane::OnSize() {
+	RECT r;
+	GetClientRect(mhwnd, &r);
+
+	int y = 0;
+
+	if (mhwndToolbar) {
+		const int th = mToolbar.GetArea().height();
+		mToolbar.SetArea(vdrect32(0, 0, r.right, th));
+
+		y = th;
+	}
+
+	int lh = r.bottom - y;
+
+	if (lh < 0)
+		lh = 0;
+
+	int toph = 0;
+
+	if (HWND hwndTimelineView = mTimelineView.GetHandleW32()) {
+		if (mSession.mpFrames.size() > 1) {
+			toph = lh / 3;
+			mTimelineView.SetArea(vdrect32(0, y, r.right, y + toph));
+		} else {
+			mTimelineView.Hide();
+		}
+	}
+
+	int both = lh - toph;
+
+	mProfileView.SetArea(vdrect32(0, y + toph, r.right, r.bottom));
+
+	if (mhwndMessage) {
+		int edge = GetSystemMetrics(SM_CXEDGE) * 2;
+
+		SetWindowPos(mhwndMessage, NULL, edge, y+edge, std::max<int>(0, r.right - 2*edge), std::max<int>(0, lh - 2*edge), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+	}
+}
+
+void ATUIProfilerPane::OnFontsUpdated() {
+	HFONT hNewFont = ATUICreateDefaultFontForDpiW32(ATUIGetWindowDpiW32(mhwnd));
+
+	if (mhwndToolbar) {
+		SendMessage(mhwndToolbar, WM_SETFONT, (WPARAM)hNewFont, TRUE);
+		
+		RebuildToolbar();
+	}
+
+	if (mhwndMessage)
+		SendMessage(mhwndMessage, WM_SETFONT, (WPARAM)hNewFont, TRUE);
+
+	if (mhPropFont)
+		::DeleteObject(mhPropFont);
+
+	mhPropFont = hNewFont;
+}
+
+void ATUIProfilerPane::OnRangeSelected(uint32 start, uint32 end) {
+	MergeFrames(start, end);
+}
+
+void ATUIProfilerPane::UpdateRunButtonEnables() {
+	ATCPUProfiler *profiler = g_sim.GetProfiler();
+	const bool enabled = profiler && profiler->IsRunning();
+	const bool running = g_sim.IsRunning();
+
+	mToolbar.SetItemEnabled(1000, enabled);
+	mToolbar.SetItemEnabled(1004, !enabled || running);
+	mToolbar.SetItemEnabled(1001, !enabled || !running);
+}
+
+void ATUIProfilerPane::RebuildToolbar() {
+	mToolbar.Clear();
+	mToolbar.AddButton(1000, 0, nullptr);
+	mToolbar.AddButton(1004, 7, nullptr);
+	mToolbar.AddButton(1001, 1, nullptr);
+	mToolbar.AddDropdownButton(1002, 2, nullptr);
+	mToolbar.AddDropdownButton(1003, -1, L"Options");
+	mToolbar.AutoSize();
+
+	UpdateRunButtonEnables();
+	UpdateProfilingModeBitmap();
+}
+
+void ATUIProfilerPane::UpdateProfilingModeBitmap() {
+	if (!mhwndToolbar)
+		return;
+
+	switch(mProfileMode) {
+		case kATProfileMode_Insns:
+		default:
+			mToolbar.SetItemImage(1002, 2);
+			break;
+
+		case kATProfileMode_Functions:
+			mToolbar.SetItemImage(1002, 3);
+			break;
+
+		case kATProfileMode_CallGraph:
+			mToolbar.SetItemImage(1002, 5);
+			break;
+
+		case kATProfileMode_BasicBlock:
+			mToolbar.SetItemImage(1002, 6);
+			break;
+
+		case kATProfileMode_BasicLines:
+			mToolbar.SetItemImage(1002, 4);
+			break;
+	}
+}
+
+void ATUIProfilerPane::OnToolbarClicked(uint32 id) {
+	try {
+		switch(id) {
+			case 1000:
+				ATGetDebugger()->Break();
+			
+				if (ATCPUProfiler *prof = g_sim.GetProfiler()) {
+					prof->End();
+					LoadProfile();
+					g_sim.SetProfilingEnabled(false);
+				}
+				UpdateRunButtonEnables();
+				break;
+
+			case 1004:
+				StartProfiler();
+				UnloadProfile();
+				ATGetDebugger()->Break();
+				UpdateRunButtonEnables();
+				break;
+
+			case 1001:
+				StartProfiler();
+				UnloadProfile();
+				ATGetDebugger()->Run(kATDebugSrcMode_Same);
+				UpdateRunButtonEnables();
+				break;
+
+			case 1002:
+				{
+					RECT r;
+					SendMessage(mhwndToolbar, TB_GETRECT, 1002, (LPARAM)&r);
+					MapWindowPoints(mhwndToolbar, NULL, (LPPOINT)&r, 2);
+
+					TPMPARAMS tpm;
+					tpm.cbSize = sizeof(TPMPARAMS);
+					tpm.rcExclude = r;
+					switch(TrackPopupMenuEx(GetSubMenu(mhmenuMode, 0), TPM_LEFTALIGN | TPM_LEFTBUTTON | TPM_VERTICAL | TPM_RETURNCMD, r.left, r.bottom, mhwnd, &tpm)) {
+						case ID_PROFMODE_SAMPLEINSNS:
+							mProfileMode = kATProfileMode_Insns;
+							break;
+
+						case ID_PROFMODE_SAMPLEFNS:
+							mProfileMode = kATProfileMode_Functions;
+							break;
+
+						case ID_PROFMODE_CALLGRAPH:
+							mProfileMode = kATProfileMode_CallGraph;
+							break;
+
+						case ID_PROFMODE_BASICBLOCK:
+							mProfileMode = kATProfileMode_BasicBlock;
+							break;
+
+						case ID_PROFMODE_SAMPLEBASIC:
+							mToolbar.SetItemImage(1002, 4);
+							break;
+					}
+
+					UpdateProfilingModeBitmap();
+				}
+				break;
+
+			case 1003:
+				{
+					RECT r;
+					SendMessage(mhwndToolbar, TB_GETRECT, 1003, (LPARAM)&r);
+					MapWindowPoints(mhwndToolbar, NULL, (LPPOINT)&r, 2);
+					HMENU hmenu = LoadMenu(NULL, MAKEINTRESOURCE(IDR_PROFILE_OPTIONS_MENU));
+
+					if (!hmenu)
+						break;
+
+					uint32 activeMask = 0;
+
+					for(const auto cm : mProfileCounterModes) {
+						if (cm) {
+							activeMask |= (1 << (cm - 1));
+							VDCheckMenuItemByCommandW32(hmenu, kATUIProfilerCounterModeMenuIds[cm - 1], true);
+						}
+					}
+
+					if (mProfileCounterModes[vdcountof(mProfileCounterModes) - 1]) {
+						for(uint32 i=0; i<vdcountof(kATUIProfilerCounterModeMenuIds); ++i) {
+							if (!(activeMask & (1 << i)))
+								VDEnableMenuItemByCommandW32(hmenu, kATUIProfilerCounterModeMenuIds[i], false);
+						}
+					}
+
+					switch(mBoundaryRule) {
+						case kATProfileBoundaryRule_None:
+							VDCheckRadioMenuItemByCommandW32(hmenu, ID_FRAMETRIGGER_NONE, true);
+							break;
+
+						case kATProfileBoundaryRule_VBlank:
+							VDCheckRadioMenuItemByCommandW32(hmenu, ID_FRAMETRIGGER_VBLANK, true);
+							break;
+
+						case kATProfileBoundaryRule_PCAddress:
+							VDCheckRadioMenuItemByCommandW32(hmenu, ID_FRAMETRIGGER_PCADDRESS, true);
+							break;
+					}
+
+					TPMPARAMS tpm;
+					tpm.cbSize = sizeof(TPMPARAMS);
+					tpm.rcExclude = r;
+					UINT selectedId = (UINT)TrackPopupMenuEx(GetSubMenu(hmenu, 0), TPM_LEFTALIGN | TPM_LEFTBUTTON | TPM_VERTICAL | TPM_NONOTIFY | TPM_RETURNCMD, r.left, r.bottom, mhwnd, &tpm);
+
+					for(uint32 i=0; i<vdcountof(kATUIProfilerCounterModeMenuIds); ++i) {
+						if (selectedId == kATUIProfilerCounterModeMenuIds[i]) {
+							ATProfileCounterMode selectedMode = (ATProfileCounterMode)(i + 1);
+
+							for(auto& cm : mProfileCounterModes) {
+								if (cm == selectedMode) {
+									cm = kATProfileCounterMode_None;
+									selectedMode = kATProfileCounterMode_None;
+									break;
+								}
+							}
+
+							if (selectedMode)
+								mProfileCounterModes[vdcountof(mProfileCounterModes) - 1] = selectedMode;
+
+							std::sort(std::begin(mProfileCounterModes), std::end(mProfileCounterModes));
+
+							auto *dst = mProfileCounterModes;
+							for(auto cm : mProfileCounterModes) {
+								if (cm)
+									*dst++ = cm;
+							}
+
+							while(dst != std::end(mProfileCounterModes))
+								*dst++ = kATProfileCounterMode_None;
+
+							break;
+						}
+					}
+
+					if (selectedId == ID_FRAMETRIGGER_NONE) {
+						mBoundaryRule = kATProfileBoundaryRule_None;
+					} else if (selectedId == ID_FRAMETRIGGER_VBLANK) {
+						mBoundaryRule = kATProfileBoundaryRule_VBlank;
+					} else if (selectedId == ID_FRAMETRIGGER_PCADDRESS) {
+						ATUIDialogProfilerBoundaryRule dlg;
+
+						dlg.SetValues(mBoundaryAddrExpr.c_str(), mBoundaryAddrExpr2.c_str(), mBoundaryRule == kATProfileBoundaryRule_PCAddressFunction);
+						if (dlg.ShowDialog((VDGUIHandle)mhwnd)) {
+							mBoundaryAddrExpr = dlg.GetExpression();
+
+							if (dlg.IsEndFunctionEnabled()) {
+								mBoundaryAddrExpr2.clear();
+								mBoundaryRule = kATProfileBoundaryRule_PCAddressFunction;
+							} else {
+								mBoundaryAddrExpr2 = dlg.GetExpression2();
+								mBoundaryRule = kATProfileBoundaryRule_PCAddress;
+							}
+						}
+					}
+
+					DestroyMenu(hmenu);
+				}
+				break;
+		}
+	} catch(const MyError& e) {
+		e.post(mhwnd, "Altirra Error");		
+	}
+}
+
+void ATUIProfilerPane::UnloadProfile() {
+	mTimelineView.SetSession(nullptr);
+	mProfileView.SetData(nullptr, nullptr, nullptr);
+
+	mSession = {};
+	mpCurrentFrame = nullptr;
+
+	OnSize();
+	RemakeView();
+}
+
+void ATUIProfilerPane::LoadProfile() {
+	g_sim.GetProfiler()->GetSession(mSession);
+
+	MergeFrames(0, 1);
+
+	memcpy(mProfileSessionCounterModes, mProfileCounterModes, sizeof mProfileSessionCounterModes);
+	
+	mTimelineView.SetSession(&mSession);
+	mTimelineView.SetSelectedRange(0, 1);
+
+	// compute truncated mean to set half point vertically
+	size_t n = mSession.mpFrames.size();
+	vdfastvector<uint32> frameDurations(n);
+
+	std::transform(mSession.mpFrames.begin(), mSession.mpFrames.end(), frameDurations.begin(),
+		[](const ATProfileFrame *frame) { return frame->mTotalCycles; });
+
+	std::sort(frameDurations.begin(), frameDurations.end());
+
+	size_t n4 = n / 4;
+	size_t n2 = n - n4*2;
+
+	uint32_t vrange = (uint32_t)((std::accumulate(frameDurations.begin() + n4, frameDurations.end() - n4, (uint64_t)0) * 2 + (n2 / 2)) / n2);
+
+	mTimelineView.SetVerticalRange(vrange);
+
+	OnSize();
+	RemakeView();
+}
+
+void ATUIProfilerPane::RemakeView() {
+	mpRecords = nullptr;
+
+	if (mpCurrentFrame) {
+		switch(mCapturedProfileMode) {
+			case kATProfileMode_Insns:
+			case kATProfileMode_BasicLines:
+			case kATProfileMode_CallGraph:
+				mpRecords = &mpCurrentFrame->mRecords;
+				break;
+
+			default:
+				mpRecords = &mpCurrentFrame->mBlockRecords;
+				break;
+		}
+	}
+
+	if (!mpRecords || mpRecords->empty()) {
+		::SetWindowText(mhwndMessage, _T("No profiling data is available. Begin execution with the Play button in this profiler pane to begin data collection and Stop to end the session."));
+
+		::ShowWindow(mhwndMessage, SW_SHOWNOACTIVATE);
+		::ShowWindow(mProfileView.GetHandleW32(), SW_HIDE);
+		::ShowWindow(mTimelineView.GetHandleW32(), SW_HIDE);
+	} else {
+		::ShowWindow(mhwndMessage, SW_HIDE);
+		::ShowWindow(mProfileView.GetHandleW32(), SW_SHOW);
+		::ShowWindow(mTimelineView.GetHandleW32(), SW_SHOW);
+
+		mProfileView.SetData(&mSession, mpCurrentFrame, mpMergedFrame);
+	}
+}
+
+void ATUIProfilerPane::MergeFrames(uint32 start, uint32 end) {
+	if (mSession.mpFrames.empty())
+		return;
+
+	mpMergedFrame.clear();
+	mpCurrentFrame = nullptr;
+
+	uint32 n = (uint32)mSession.mpFrames.size();
+	if (start > n - 1)
+		start = n - 1;
+
+	if (end < start)
+		end = start + 1;
+
+		// if we have a call graph session, we must clone anyway to compute inclusive times
+	if (start + 1 == end && mSession.mContexts.empty()) {
+		mpCurrentFrame = mSession.mpFrames[start];
+	} else {
+		ATProfileMergeFrames(mSession, start, end, ~mpMergedFrame);
+		mpCurrentFrame = mpMergedFrame;
+	}
+
+	RemakeView();
+}
+
+void ATUIProfilerPane::StartProfiler() {
+	if (g_sim.IsProfilingEnabled())
+		return;
+
+	uint32 param = 0;
+	uint32 param2 = 0;
+
+	if (mBoundaryRule == kATProfileBoundaryRule_PCAddressFunction) {
+		param = ATGetDebugger()->EvaluateThrow(mBoundaryAddrExpr.c_str());
+	} else if (mBoundaryRule == kATProfileBoundaryRule_PCAddress) {
+		param = ATGetDebugger()->EvaluateThrow(mBoundaryAddrExpr.c_str());
+
+		param2 = (uint32)0 - 1;
+		if (!mBoundaryAddrExpr2.empty()) {
+			param2 = ATGetDebugger()->EvaluateThrow(mBoundaryAddrExpr2.c_str());
+		}
+	}
+
+	mCapturedProfileMode = mProfileMode;
+
+	g_sim.SetProfilingEnabled(true);
+
+	auto *profiler = g_sim.GetProfiler();
+	profiler->SetBoundaryRule(mBoundaryRule, param, param2);
+	profiler->Start(mProfileMode, mProfileCounterModes[0], mProfileCounterModes[1]);
 }
 
 ///////////////////////////////////////////////////////////////////////////

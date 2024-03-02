@@ -85,6 +85,7 @@ public:		// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
 	bool IsWritableFirmwareDirty(uint32 idx) const override;
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
+	bool IsUsableFirmwareLoaded() const override;
 
 public:		// IATDeviceBus
 	IATDeviceBus *GetDeviceBus(uint32 index) override;
@@ -141,6 +142,7 @@ protected:
 	bool	mbIDERemoved = true;
 	bool	mbIDEEnabled = false;
 	bool	mbIDEReset = false;
+	bool	mbFirmwareUsable = false;
 	const bool mbVersion2;
 	uint8	mSDXBankRegister = 0;
 	uint8	mTopBankRegister = 0;

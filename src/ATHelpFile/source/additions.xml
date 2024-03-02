@@ -85,5 +85,17 @@
       Will attempt to run AUTORUN.BAS unless a filename is specified on the command
       line.
     </dd>
+
+    <dt>COLORMAP.COM</dt>
+    <dd>
+      Displays color charts for color calibration purposes.
+    </dd>
+    
+    <dt>LOADEXE.COM</dt>
+    <dd>
+      Triggers loading of a program loaded directly in the emulator when the program load
+      mode is set to Type 3 Poll or Deferred. This can be renamed to AUTORUN.SYS to
+      automatically trigger the program load once DOS has booted.
+    </dd>
   </dl>
 </topic>

@@ -73,6 +73,8 @@ public:
 	uint32 GetCPUBankBase() const { return mCPUBase; }
 	uint32 GetAnticBankBase() const { return mAnticBase; }
 
+	uint32 ExtBankToMemoryOffset(uint8 portbVal) const;
+
 	void ClearModeOverrides();
 	void SetModeOverrides(int memoryMode, bool forceBASIC);
 
@@ -107,6 +109,7 @@ protected:
 	ATMemoryLayer *mpLayerAxlonControl2;
 	bool		mbBASICForced;
 	uint8		mCurrentBank;
+	uint8		mCPUBankMask;		// PORTB bits pertinent to CPU xbanking
 	uint8		mAxlonBank;
 	uint8		mAxlonBankMask;
 	bool		mbAxlonAliasing;

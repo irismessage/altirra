@@ -28,10 +28,12 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
 #include <vd2/system/win32/miniwindows.h>
+#include <at/atnativeui/nativewindowproxy.h>
 #include <at/atnativeui/uiproxies.h>
 #include <list>
 
 class MyError;
+enum ATUICursorImage : uint32;
 
 class IVDUIDropFileList {
 public:
@@ -136,39 +138,26 @@ private:
 	Controls mControls;
 };
 
-class VDDialogFrameW32 {
+class VDDialogFrameW32 : public ATUINativeWindowProxy {
 public:
 	virtual ~VDDialogFrameW32() = default;
 
 	bool IsCreated() const { return mhdlg != NULL; }
-	VDZHWND GetWindowHandle() const { return mhdlg; }
 
 	bool	Create(VDGUIHandle hwndParent);
 	bool	Create(VDDialogFrameW32 *parent);
-	void	Destroy();
-	void	Close();
-
-	void	Show();
-	void	Hide();
 
 	void Sync(bool writeToDataStore);
 
-	void BringToFront();
+	using ATUINativeWindowProxy::SetArea;
+	using ATUINativeWindowProxy::SetCaption;
+	using ATUINativeWindowProxy::SetSize;
 
-	vdsize32 GetSize() const;
-	void SetSize(const vdsize32& sz, bool repositionSafe = false);
-
-	vdrect32 GetArea() const;
+	void SetSize(const vdsize32& sz, bool repositionSafe);
 	void SetArea(const vdrect32& r, bool repositionSafe);
-	void SetPosition(const vdpoint32& pt);
-
-	vdrect32 GetClientArea() const;
 
 	VDZHFONT GetFont() const;
 	void SetFont(VDZHFONT hfont);
-
-	VDStringW GetCaption() const;
-	void SetCaption(const wchar_t *caption);
 
 	void AdjustPosition();
 	void CenterOnParent();
@@ -180,18 +169,27 @@ public:
 	static void ShowInfo(VDGUIHandle hParent, const wchar_t *message, const wchar_t *caption);
 	static void SetDefaultCaption(const wchar_t *caption);
 
+	void ShowInfo(const wchar_t *message, const wchar_t *caption = nullptr);
+	void ShowWarning(const wchar_t *message, const wchar_t *caption = nullptr);
+	void ShowError(const wchar_t *message, const wchar_t *caption = nullptr);
+	void ShowError(const MyError&);
+	bool Confirm(const wchar_t *message, const wchar_t *caption = nullptr);
+	bool Confirm2(const char *ignoreTag, const wchar_t *message, const wchar_t *title = nullptr);
+
 protected:
 	VDDialogFrameW32(uint32 dlgid);
 
 	void End(sintptr result);
 
 	void AddProxy(VDUIProxyControl *proxy, uint32 id);
+	void AddProxy(VDUIProxyControl *proxy, VDZHWND hwnd);
 
 	void SetCurrentSizeAsMinSize();
 	void SetCurrentSizeAsMaxSize(bool width, bool height);
 
 	VDZHWND GetControl(uint32 id);
 
+	VDZHWND GetFocusedWindow() const;
 	void SetFocusToControl(uint32 id);
 	void EnableControl(uint32 id, bool enabled);
 	void ShowControl(uint32 id, bool visible);
@@ -232,13 +230,6 @@ protected:
 
 	void SetPeriodicTimer(uint32 id, uint32 msperiod);
 
-	void ShowInfo(const wchar_t *message, const wchar_t *caption = nullptr);
-	void ShowWarning(const wchar_t *message, const wchar_t *caption = nullptr);
-	void ShowError(const wchar_t *message, const wchar_t *caption = nullptr);
-	void ShowError(const MyError&);
-	bool Confirm(const wchar_t *message, const wchar_t *caption = nullptr);
-	bool Confirm2(const char *ignoreTag, const wchar_t *message, const wchar_t *title = nullptr);
-
 	int ActivateMenuButton(uint32 id, const wchar_t *const *items);
 	int ActivatePopupMenu(int x, int y, const wchar_t *const *items);
 
@@ -277,6 +268,7 @@ protected:
 	virtual void OnSize();
 	virtual bool OnClose();
 	virtual void OnDestroy();
+	virtual void OnEnable(bool enable);
 	virtual bool OnTimer(uint32 id);
 	virtual bool OnErase(VDZHDC hdc);
 	virtual bool OnPaint();
@@ -290,8 +282,10 @@ protected:
 	virtual void OnMouseUpL(int x, int y);
 	virtual void OnMouseWheel(int x, int y, sint32 delta);
 	virtual void OnMouseLeave();
+	virtual bool OnSetCursor(ATUICursorImage& image);
 	virtual void OnCaptureLost();
 	virtual void OnHelp();
+	virtual void OnInitMenu(VDZHMENU hmenu);
 	virtual void OnContextMenu(uint32 id, int x, int y);
 	virtual void OnSetFont(VDZHFONT hfont);
 	virtual void OnDpiChanging(uint16 newDpiX, uint16 newDpiY, const vdrect32 *suggestedRect);
@@ -308,7 +302,6 @@ protected:
 
 	bool	mbValidationFailed;
 	bool	mbIsModal;
-	VDZHWND	mhdlg;
 	VDZHFONT	mhfont;
 	int		mMinWidth;
 	int		mMinHeight;

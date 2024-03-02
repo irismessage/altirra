@@ -23,6 +23,8 @@
 #include <vd2/system/zip.h>
 #include <at/atcore/vfs.h>
 
+vdfunction<void(ATVFSFileView *, const wchar_t *, ATVFSFileView **)> g_ATVFSAtfsHandler;
+
 ATInvalidVFSPathException::ATInvalidVFSPathException(const wchar_t *badPath)
 	: MyError("Invalid VFS path: %ls.", badPath)
 {
@@ -230,6 +232,20 @@ ATVFSProtocol ATParseVFSPath(const wchar_t *s, VDStringW& basePath, VDStringW& s
 			return kATVFSProtocol_None;
 
 		return kATVFSProtocol_GZip;
+	} else if (protocol == L"atfs") {
+		const wchar_t *fsPathStart = colon + 3;
+		const wchar_t *fsPathEnd = wcsrchr(fsPathStart, L'!');
+
+		if (!fsPathEnd)
+			return kATVFSProtocol_None;
+
+		if (!ATDecodeVFSPath(basePath, VDStringSpanW(fsPathStart, fsPathEnd)))
+			return kATVFSProtocol_None;
+
+		if (!ATDecodeVFSPath(subPath, VDStringSpanW(fsPathEnd + 1)))
+			return kATVFSProtocol_None;
+
+		return kATVFSProtocol_Atfs;
 	}
 
 	return kATVFSProtocol_None;
@@ -396,9 +412,29 @@ void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, ATVFSFileView **viewO
 			view = new ATVFSFileViewGZip(view);
 			break;
 
+		case kATVFSProtocol_Atfs:
+			if (!g_ATVFSAtfsHandler)
+				throw MyError("Inner filesystems are not supported.");
+
+			if (write)
+				throw MyError("Cannot open inner filesystem for write access: %ls", basePath.c_str());
+
+			ATVFSOpenFileView(basePath.c_str(), false, ~view);
+			{
+				vdrefptr<ATVFSFileView> view2;
+				g_ATVFSAtfsHandler(view, subPath.c_str(), ~view2);
+
+				view = std::move(view2);
+			}
+			break;
+
 		default:
 			throw ATUnsupportedVFSPathException(vfsPath);
 	}
 
 	*viewOut = view.release();
+}
+
+void ATVFSSetAtfsProtocolHandler(vdfunction<void(ATVFSFileView *, const wchar_t *, ATVFSFileView **)> handler) {
+	g_ATVFSAtfsHandler = std::move(handler);
 }

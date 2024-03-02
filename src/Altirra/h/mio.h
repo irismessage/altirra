@@ -69,6 +69,7 @@ public:
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override { return nullptr; }
 	bool IsWritableFirmwareDirty(uint32 idx) const override { return false; }
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override {}
+	bool IsUsableFirmwareLoaded() const override;
 
 public:
 	virtual void InitIRQSource(ATIRQController *fwirq) override;
@@ -127,6 +128,7 @@ protected:
 	bool	mbSCSIBlockSize256;
 	bool	mbPrinterIRQEnabled;
 	bool	mbACIAIRQActive;
+	bool	mbFirmwareUsable;
 
 	ATFirmwareManager *mpFwMan;
 	IATDeviceIndicatorManager *mpUIRenderer;

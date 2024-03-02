@@ -108,9 +108,6 @@
     <ClCompile Include="source\progress.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\protscope.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\refcount.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -261,9 +258,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\VD2\system\progress.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\h\vd2\system\protscope.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\vd2\system\refcount.h">

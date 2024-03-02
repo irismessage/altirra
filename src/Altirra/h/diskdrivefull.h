@@ -34,6 +34,7 @@
 #include <at/atcore/scheduler.h>
 #include <at/atemulation/riot.h>
 #include "fdc.h"
+#include "diskdrivefullbase.h"
 #include "diskinterface.h"
 
 class ATIRQController;
@@ -43,7 +44,6 @@ class ATDeviceDiskDriveFull final : public ATDevice
 	, public IATDeviceFirmware
 	, public IATDeviceDiskDrive
 	, public ATDeviceSIO
-	, public IATDeviceAudioOutput
 	, public IATDeviceButtons
 	, public IATDeviceDebugTarget
 	, public IATDebugTarget
@@ -69,6 +69,7 @@ public:
 		kDeviceType_1050Duplicator,
 		kDeviceType_1050Turbo,
 		kDeviceType_1050TurboII,
+		kDeviceType_ISPlate,
 		kDeviceTypeCount,
 	};
 
@@ -97,15 +98,13 @@ public:		// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
 	bool IsWritableFirmwareDirty(uint32 idx) const override;
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
+	bool IsUsableFirmwareLoaded() const override;
 
 public:		// IATDeviceDiskDrive
 	void InitDiskDrive(IATDiskDriveManager *ddm) override;
 
 public:		// ATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
-
-public:		// IATDeviceAudioOutput
-	void InitAudioOutput(IATAudioOutput *output, ATAudioSyncMixer *syncmixer) override;
 
 public:		// IATDeviceButtons
 	uint32 GetSupportedButtons() const;
@@ -215,7 +214,6 @@ protected:
 	ATDiskInterface *mpDiskInterface = nullptr;
 
 	ATFirmwareManager *mpFwMgr = nullptr;
-	ATAudioSyncMixer *mpAudioSyncMixer = nullptr;
 
 	static constexpr uint32 kDiskChangeStepMS = 50;
 
@@ -244,13 +242,16 @@ protected:
 	uint8 mDriveId = 0;
 	uint32 mClockDivisor = 0;
 
+	bool mbFirmwareUsable = false;
 	bool mbSoundsEnabled = false;
 	bool mbSlowSwitch = false;
 	bool mbFastSlowToggle = false;
 	bool mbWPToggle = false;
 	bool mbWPEnable = false;
 	bool mbWPDisable = false;
-	uint32 mRotationSoundId = 0;
+
+	ATDiskDriveAudioPlayer mAudioPlayer;
+
 	uint32 mLastStepSoundTime = 0;
 	uint32 mLastStepPhase = 0;
 	uint8 mDiskChangeState = 0;
@@ -293,7 +294,7 @@ protected:
 	static constexpr uint32 kTransmitQueueMask = kTransmitQueueSize - 1;
 	TransmitEvent mTransmitQueue[kTransmitQueueSize] = {};
 
-	VDALIGN(4) uint8 mRAM[0x2100] = {};
+	VDALIGN(4) uint8 mRAM[0x4100] = {};
 	VDALIGN(4) uint8 mROM[0x4000] = {};
 	VDALIGN(4) uint8 mDummyWrite[0x100] = {};
 	VDALIGN(4) uint8 mDummyRead[0x100] = {};

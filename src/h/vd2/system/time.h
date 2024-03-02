@@ -32,7 +32,7 @@
 #include <vd2/system/thread.h>
 #include <vd2/system/win32/miniwindows.h>
 
-class VDFunctionThunk;
+class VDFunctionThunkInfo;
 
 // VDGetCurrentTick: Retrieve current process timer, in milliseconds.  Should only
 // be used for sparsing updates/checks, and not for precision timing.  Approximate
@@ -118,7 +118,7 @@ protected:
 
 	uint32				mTimerId;
 	bool				mbPeriodic;
-	VDFunctionThunk		*mpThunk;
+	VDFunctionThunkInfo	*mpThunk;
 	vdfunction<void()>	mpFn;
 };
 

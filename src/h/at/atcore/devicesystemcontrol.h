@@ -51,6 +51,14 @@ public:
 	// on device removal. 'highSpeed' is <0 for force off, >0 for force on,
 	// and 0 for default.
 	virtual void OverrideKernelMapping(IATDeviceSystemControl *source, const void *kernelROM, sint8 highSpeed, bool priority) = 0;
+
+	// Returns true if U1MB is active and in pre-lock state.
+	virtual bool IsU1MBConfigPreLocked() = 0;
+
+	// Notify system controller when U1MB has entered system lock state.
+	// This is required to handle temporary disabling of some functions
+	// when U1MB is in its funky pre-lock state.
+	virtual void OnU1MBConfigPreLocked(bool inPreLockState) = 0;
 };
 
 class IATDeviceSystemControl {
@@ -65,6 +73,8 @@ public:
 		ATMemoryLayer *layerSelfTestROM,
 		ATMemoryLayer *layerGameROM,
 		const void *kernelROM) = 0;
+
+	virtual void OnU1MBConfigPreLocked(bool inPreLockState) = 0;
 };
 
 #endif

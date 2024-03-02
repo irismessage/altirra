@@ -29,6 +29,7 @@ enum ATVideoStandard : uint32;
 enum ATDisplayFilterMode : uint32;
 enum ATDisplayStretchMode : uint32;
 enum ATFrameRateMode : uint32;
+class ATUICommandManager;
 
 bool ATUIGetXEPViewEnabled();
 void ATUISetXEPViewEnabled(bool enabled);
@@ -49,6 +50,9 @@ void ATUISetDriveSoundsEnabled(bool enabled);
 void ATUIOpenOnScreenKeyboard();
 void ATUIToggleHoldKeys();
 
+uint32 ATUIGetBootUnloadStorageMask();
+void ATUISetBootUnloadStorageMask(uint32 mask);
+
 int ATUIGetViewFilterSharpness();
 void ATUISetViewFilterSharpness(int sharpness);
 int ATUIGetViewFilterSharpness();
@@ -60,6 +64,9 @@ void ATUISetShowFPS(bool enabled);
 bool ATUIGetFullscreen();
 bool ATUIGetDisplayFullscreen();
 void ATSetFullscreen(bool);
+
+bool ATUIGetDisplayPadIndicators();
+void ATUISetDisplayPadIndicators(bool enabled);
 
 bool ATUICanManipulateWindows();
 
@@ -107,11 +114,17 @@ ATUIEnhancedTextMode ATUIGetEnhancedTextMode();
 void ATUISetEnhancedTextMode(ATUIEnhancedTextMode mode);
 
 VDGUIHandle ATUIGetMainWindow();
+VDGUIHandle ATUIGetNewPopupOwner();
 bool ATUIGetAppActive();
 void ATUISetAppActive(bool active);
+
+void ATUISetWindowCaptionTemplate(const char *s);
+const char *ATUIGetWindowCaptionTemplate();
 
 bool ATUIGetDeviceButtonSupported(uint32 idx);
 bool ATUIGetDeviceButtonDepressed(uint32 idx);
 void ATUIActivateDeviceButton(uint32 idx, bool state);
+
+ATUICommandManager& ATUIGetCommandManager();
 
 #endif	// f_AT_UIACCESSORS_H

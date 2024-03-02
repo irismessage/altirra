@@ -27,11 +27,13 @@
 //	file://c:/foo.bin
 //	zip://c:/foo/bar.zip!foobar
 //	gz://c:/foo/bar.gz
+//	atfs://c:/foo/file.atr!foo.dcm
 
 #ifndef f_AT_ATCORE_VFS_H
 #define f_AT_ATCORE_VFS_H
 
 #include <vd2/system/error.h>
+#include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/VDString.h>
 
@@ -51,7 +53,8 @@ enum ATVFSProtocol : uint8 {
 	kATVFSProtocol_None,
 	kATVFSProtocol_File,
 	kATVFSProtocol_Zip,
-	kATVFSProtocol_GZip
+	kATVFSProtocol_GZip,
+	kATVFSProtocol_Atfs
 };
 
 bool ATDecodeVFSPath(VDStringW& dst, const VDStringSpanW& src);
@@ -83,5 +86,7 @@ protected:
 };
 
 void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, ATVFSFileView **viewOut);
+
+void ATVFSSetAtfsProtocolHandler(vdfunction<void(ATVFSFileView *, const wchar_t *, ATVFSFileView **)> handler);
 
 #endif

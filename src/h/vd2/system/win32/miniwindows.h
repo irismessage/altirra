@@ -48,6 +48,7 @@ typedef struct tagMSG	MSG;
 typedef struct HWND__	*VDZHWND;
 typedef struct HDC__	*VDZHDC;
 typedef struct HKEY__	*VDZHKEY;
+typedef struct HMENU__	*VDZHMENU;
 typedef unsigned		VDZUINT;
 typedef unsigned short	VDZWORD;
 typedef unsigned long	VDZDWORD;
@@ -57,6 +58,7 @@ typedef VDZLONG_PTR		VDZLRESULT;
 typedef struct HDROP__	*VDZHDROP;
 typedef struct HFONT__	*VDZHFONT;
 typedef struct HACCEL__	*VDZHACCEL;
+typedef struct _IMAGELIST	*VDZHIMAGELIST;
 
 typedef VDZWORD			VDZATOM;
 

@@ -25,9 +25,9 @@
 #include <at/atcpu/states.h>
 
 #define ATCP_MEMORY_CONTEXT	\
-	uint16 tmpaddr;		\
-	uintptr tmpbase;	\
-	uint8 tmpval;
+	[[maybe_unused]] uint16 tmpaddr;		\
+	[[maybe_unused]] uintptr tmpbase;	\
+	[[maybe_unused]] uint8 tmpval;
 
 #define ATCP_DUMMY_READ_BYTE(addr) ((void)(0))
 #define ATCP_DEBUG_READ_BYTE(addr) (tmpaddr = (addr), tmpbase = mReadMap[(uint8)(tmpaddr >> 8)], (tmpbase & 1 ? DebugReadByteSlow(tmpbase, tmpaddr) : *(uint8 *)(tmpbase + tmpaddr)))

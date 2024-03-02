@@ -23,6 +23,20 @@
 
 namespace nsVDPNG {
 	extern const uint8 kPNGSignature[8];
+
+	inline int PNGPaethPredictor(int a, int b, int c) {
+		int p  = a + b - c;
+		int pa = abs(p - a);
+		int pb = abs(p - b);
+		int pc = abs(p - c);
+
+		if (pa <= pb && pa <= pc)
+			return a;
+		else if (pb <= pc)
+			return b;
+		else
+			return c;
+	}
 };
 
 /// Computes the Adler-32 checksum of a block of memory.

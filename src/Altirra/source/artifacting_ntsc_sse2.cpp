@@ -77,7 +77,7 @@ slow_path:
 
 		paddw	xmm0, [eax+40h]
 		paddw	xmm1, [eax+50h]
-		psraw	xmm0, 5
+		psraw	xmm0, 4
 		paddw	xmm2, [eax+60h]
 		packuswb	xmm0, xmm0
 
@@ -90,12 +90,12 @@ slow_path:
 		jnz		xloop1
 
 xit:
-		psraw	xmm0, 5
+		psraw	xmm0, 4
 		packuswb	xmm0, xmm0
-		psraw	xmm1, 5
+		psraw	xmm1, 4
 		movq	qword ptr [edx], xmm0
 		packuswb	xmm1, xmm1
-		psraw	xmm2, 5
+		psraw	xmm2, 4
 		movq	qword ptr [edx+8], xmm1
 		packuswb	xmm2, xmm2
 		pop		ebx
@@ -133,7 +133,7 @@ fast_accum:
 		add		ebx, 4
 		paddw	xmm0, xmm4
 		paddw	xmm1, xmm5
-		psraw	xmm0, 5
+		psraw	xmm0, 4
 		packuswb	xmm0,xmm0
 
 		movq	qword ptr [edx], xmm0
@@ -198,7 +198,7 @@ slow_path:
 		movdqa	xmm2, [eax+20h]
 
 		paddw	xmm0, [ecx+40h]
-		psraw	xmm0, 5
+		psraw	xmm0, 4
 		paddw	xmm1, [ecx+50h]
 		packuswb	xmm0,xmm0
 		paddw	xmm2, [ecx+60h]
@@ -211,9 +211,9 @@ slow_path:
 		jnz		xloop
 
 xit:
-		psraw	xmm0, 5
+		psraw	xmm0, 4
 		packuswb	xmm0,xmm0
-		psraw	xmm1, 5
+		psraw	xmm1, 4
 
 		movq	qword ptr [edx], xmm0
 		packuswb	xmm1,xmm1
@@ -252,7 +252,7 @@ xloop2:
 fast_accum:
 		paddw	xmm0, xmm4
 		paddw	xmm1, xmm5
-		psraw	xmm0, 5
+		psraw	xmm0, 4
 		packuswb	xmm0, xmm0
 		movq	qword ptr [edx], xmm0
 		movdqa	xmm0, xmm1

@@ -85,7 +85,7 @@ bool VDIsForegroundTaskW32() {
 
 LPVOID VDConvertThreadToFiberW32(LPVOID parm) {
 	typedef LPVOID (WINAPI *tpConvertThreadToFiber)(LPVOID p);
-	static tpConvertThreadToFiber ctof = (tpConvertThreadToFiber)GetProcAddress(GetModuleHandle("kernel32"), "ConvertThreadToFiber");
+	static tpConvertThreadToFiber ctof = (tpConvertThreadToFiber)GetProcAddress(GetModuleHandleW(L"kernel32"), "ConvertThreadToFiber");
 
 	if (!ctof)
 		return NULL;
@@ -95,7 +95,7 @@ LPVOID VDConvertThreadToFiberW32(LPVOID parm) {
 
 void VDSwitchToFiberW32(LPVOID fiber) {
 	typedef void (WINAPI *tpSwitchToFiber)(LPVOID p);
-	static tpSwitchToFiber stof = (tpSwitchToFiber)GetProcAddress(GetModuleHandle("kernel32"), "SwitchToFiber");
+	static tpSwitchToFiber stof = (tpSwitchToFiber)GetProcAddress(GetModuleHandleW(L"kernel32"), "SwitchToFiber");
 
 	if (stof)
 		stof(fiber);
@@ -204,8 +204,7 @@ void VDAppendMenuSeparatorW32(HMENU hmenu) {
 		return;
 
 	MENUITEMINFOW mmiW;
-
-	mmiW.cbSize		= MENUITEMINFO_SIZE_VERSION_400W;
+	mmiW.cbSize		= sizeof(MENUITEMINFOW);
 	mmiW.fMask		= MIIM_TYPE;
 	mmiW.fType		= MFT_SEPARATOR;
 
@@ -221,30 +220,30 @@ void VDCheckMenuItemByCommandW32(HMENU hmenu, UINT cmd, bool checked) {
 }
 
 void VDCheckRadioMenuItemByPositionW32(HMENU hmenu, uint32 pos, bool checked) {
-	MENUITEMINFOA mii;
+	MENUITEMINFOW mii;
 
-	mii.cbSize = sizeof(MENUITEMINFOA);
+	mii.cbSize = sizeof(MENUITEMINFOW);
 	mii.fMask = MIIM_FTYPE | MIIM_STATE;
-	if (GetMenuItemInfo(hmenu, pos, TRUE, &mii)) {
+	if (GetMenuItemInfoW(hmenu, pos, TRUE, &mii)) {
 		mii.fType |= MFT_RADIOCHECK;
 		mii.fState &= ~MFS_CHECKED;
 		if (checked)
 			mii.fState |= MFS_CHECKED;
-		SetMenuItemInfo(hmenu, pos, TRUE, &mii);
+		SetMenuItemInfoW(hmenu, pos, TRUE, &mii);
 	}
 }
 
 void VDCheckRadioMenuItemByCommandW32(HMENU hmenu, UINT cmd, bool checked) {
-	MENUITEMINFOA mii;
+	MENUITEMINFOW mii;
 
-	mii.cbSize = sizeof(MENUITEMINFOA);
+	mii.cbSize = sizeof(MENUITEMINFOW);
 	mii.fMask = MIIM_FTYPE | MIIM_STATE;
-	if (GetMenuItemInfo(hmenu, cmd, FALSE, &mii)) {
+	if (GetMenuItemInfoW(hmenu, cmd, FALSE, &mii)) {
 		mii.fType |= MFT_RADIOCHECK;
 		mii.fState &= ~MFS_CHECKED;
 		if (checked)
 			mii.fState |= MFS_CHECKED;
-		SetMenuItemInfo(hmenu, cmd, FALSE, &mii);
+		SetMenuItemInfoW(hmenu, cmd, FALSE, &mii);
 	}
 }
 
@@ -258,7 +257,7 @@ VDStringW VDGetMenuItemTextByCommandW32(HMENU hmenu, UINT cmd) {
 	MENUITEMINFOW mmiW;
 	vdfastfixedvector<wchar_t, 256> bufW;
 
-	mmiW.cbSize		= MENUITEMINFO_SIZE_VERSION_400W;
+	mmiW.cbSize		= sizeof(MENUITEMINFOW);
 	mmiW.fMask		= MIIM_TYPE;
 	mmiW.fType		= MFT_STRING;
 	mmiW.dwTypeData	= NULL;
@@ -279,7 +278,7 @@ VDStringW VDGetMenuItemTextByCommandW32(HMENU hmenu, UINT cmd) {
 void VDSetMenuItemTextByCommandW32(HMENU hmenu, UINT cmd, const wchar_t *text) {
 	MENUITEMINFOW mmiW;
 
-	mmiW.cbSize		= MENUITEMINFO_SIZE_VERSION_400W;
+	mmiW.cbSize		= sizeof(MENUITEMINFOW);
 	mmiW.fMask		= MIIM_TYPE;
 	mmiW.fType		= MFT_STRING;
 	mmiW.dwTypeData	= (LPWSTR)text;
@@ -300,7 +299,7 @@ EXECUTION_STATE VDSetThreadExecutionStateW32(EXECUTION_STATE esFlags) {
 
 	// SetThreadExecutionState(): requires Windows 98+/2000+.
 	typedef EXECUTION_STATE (WINAPI *tSetThreadExecutionState)(EXECUTION_STATE);
-	static tSetThreadExecutionState pFunc = (tSetThreadExecutionState)GetProcAddress(GetModuleHandle("kernel32"), "SetThreadExecutionState");
+	static tSetThreadExecutionState pFunc = (tSetThreadExecutionState)GetProcAddress(GetModuleHandleW(L"kernel32"), "SetThreadExecutionState");
 
 	if (pFunc)
 		es = pFunc(esFlags);

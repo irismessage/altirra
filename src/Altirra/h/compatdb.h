@@ -80,7 +80,7 @@ struct ATDBString {
 	const char *c_str() const { return (const char *)&mOffset + (ptrdiff_t)mOffset; }
 
 	void retarget(const void *target) {
-		mOffset = (const char *)target - (const char *)&mOffset;
+		mOffset = (sint32)((const char *)target - (const char *)&mOffset);
 	}
 
 	bool validate(const void *base, size_t len) const {

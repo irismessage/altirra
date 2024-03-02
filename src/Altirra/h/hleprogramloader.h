@@ -18,6 +18,10 @@
 #ifndef f_AT_HLEPROGRAMLOADER_H
 #define f_AT_HLEPROGRAMLOADER_H
 
+#include <at/atcore/devicesio.h>
+#include <at/atcore/devicesioimpl.h>
+#include "constants.h"
+
 class ATCPUEmulator;
 class ATCPUHookManager;
 class ATSimulator;
@@ -25,14 +29,14 @@ class ATSimulatorEventManager;
 struct ATCPUHookNode;
 class IATBlobImage;
 
-class ATHLEProgramLoader {
+class ATHLEProgramLoader : public ATDeviceSIO {
 	ATHLEProgramLoader(const ATHLEProgramLoader&) = delete;
 	ATHLEProgramLoader& operator=(const ATHLEProgramLoader&) = delete;
 public:
 	ATHLEProgramLoader();
 	~ATHLEProgramLoader();
 
-	void Init(ATCPUEmulator *cpu, ATSimulatorEventManager *simEventMan, ATSimulator *sim);
+	void Init(ATCPUEmulator *cpu, ATSimulatorEventManager *simEventMan, ATSimulator *sim, IATDeviceSIOManager *siomgr);
 	void Shutdown();
 
 	void SetRandomizeMemoryOnLoad(bool enable) { mbRandomizeMemoryOnLoad = enable; }
@@ -40,10 +44,16 @@ public:
 	IATBlobImage *GetCurrentImage() const { return mpImage; }
 	bool IsLaunchPending() const { return mbLaunchPending; }
 
-	void LoadProgram(const wchar_t *symbolHintPath, IATBlobImage *image);
+	void LoadProgram(const wchar_t *symbolHintPath, IATBlobImage *image, ATHLEProgramLoadMode launchMode);
+
+public:
+	void InitSIO(IATDeviceSIOManager *mgr) override;
+	CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
 
 protected:
 	uint8 OnDSKINV(uint16);
+	uint8 OnDeferredLaunch(uint16);
+	uint8 StartLoad();
 	uint8 OnLoadContinue(uint16);
 
 	void UnloadProgramSymbols();
@@ -51,6 +61,7 @@ protected:
 	ATCPUEmulator *mpCPU = nullptr;
 	ATCPUHookManager *mpCPUHookMgr = nullptr;
 	ATSimulatorEventManager *mpSimEventMgr = nullptr;
+	IATDeviceSIOManager *mpSIOMgr = nullptr;
 	ATSimulator *mpSim = nullptr;
 	ATCPUHookNode *mpLaunchHook = nullptr;
 	ATCPUHookNode *mpLoadContinueHook = nullptr;
@@ -59,10 +70,16 @@ protected:
 	uint32		mProgramLoadIndex = 0;
 
 	bool		mbLastKernelEnabledState = false;
+	bool		mbType3PollActive = false;
+	bool		mbType3PollEnabled = false;
+	bool		mbDiskBootEnabled = true;
 
 	bool		mbRandomizeMemoryOnLoad = false;
 	bool		mbLaunchPending = false;
 	uint32		mProgramModuleIds[4] = {};
+
+	static const uint8 kHandlerData[];
+	static const uint8 kBootSector[];
 };
 
 #endif	// f_AT_HLEPROGRAMLOADER_H

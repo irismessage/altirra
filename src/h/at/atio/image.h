@@ -48,10 +48,6 @@ struct ATImageLoadContext {
 	ATCartLoadContext *mpCartLoadContext = nullptr;
 	ATStateLoadContext *mpStateLoadContext = nullptr;
 	int mLoadIndex = -1;
-	bool mbIsComputer = false;
-	bool mbReturnOnModeIncompatibility = false;
-	bool mbModeComputerRequired = false;
-	bool mbMode5200Required = false;
 };
 
 class IATImage : public IVDRefUnknown {

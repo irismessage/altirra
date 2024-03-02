@@ -1833,11 +1833,11 @@ bool ATUIDialogInput::OnCommand(uint32 id, uint32 extcode) {
 		uint32 n = mInputMan.GetPresetInputMapCount();
 
 		vdfastvector<const wchar_t *> items(n+1, NULL);
+		vdvector<vdrefptr<ATInputMap>> imaps(n);
 
 		for(uint32 i = 0; i < n; ++i) {
-			vdrefptr<ATInputMap> imap;
-			if (mInputMan.GetPresetInputMapByIndex(i, ~imap))
-				items[i] = imap->GetName();
+			if (mInputMan.GetPresetInputMapByIndex(i, ~imaps[i]))
+				items[i] = imaps[i]->GetName();
 			else
 				items[i] = L"?";
 		}

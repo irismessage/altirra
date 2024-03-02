@@ -27,6 +27,8 @@
 #define _WIN32_WINNT 0x0501
 #endif
 
+struct IUnknown;
+
 #include <sdkddkver.h>
 
 // Needed to work around d3d11.h issue that breaks under Clang/C2:

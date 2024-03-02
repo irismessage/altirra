@@ -141,3 +141,19 @@ void OnCommandVideoToggleXEP80View() {
 void OnCommandViewEffectReload() {
 	g_ATUIManager.SetCustomEffectPath(VDStringW(g_ATUIManager.GetCustomEffectPath()).c_str(), true);
 }
+
+void OnCommandViewToggleIndicatorMargin() {
+	ATUISetDisplayPadIndicators(!ATUIGetDisplayPadIndicators());
+}
+
+namespace ATCommands {
+	static constexpr ATUICommand kATCommandsView[] = {
+		{ "View.ToggleIndicatorMargin", OnCommandViewToggleIndicatorMargin, nullptr, [] { return ATUIGetDisplayPadIndicators() ? kATUICmdState_Checked : kATUICmdState_None; } },
+	};
+}
+
+void ATUIInitCommandMappingsView(ATUICommandManager& cmdMgr) {
+	using namespace ATCommands;
+
+	cmdMgr.RegisterCommands(kATCommandsView, vdcountof(kATCommandsView));
+}

@@ -29,7 +29,7 @@ ATSlightSIDEmulator::ATSlightSIDEmulator()
 	: mpMemLayerControl(NULL)
 	, mpScheduler(NULL)
 	, mpMemMan(NULL)
-	, mpAudioOut(NULL)
+	, mpAudioMixer(NULL)
 {
 }
 
@@ -37,12 +37,12 @@ ATSlightSIDEmulator::~ATSlightSIDEmulator() {
 	Shutdown();
 }
 
-void ATSlightSIDEmulator::Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioOutput *audioOut) {
+void ATSlightSIDEmulator::Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioMixer *mixer) {
 	mpMemMan = memMan;
 	mpScheduler = sch;
-	mpAudioOut = audioOut;
+	mpAudioMixer = mixer;
 
-	audioOut->AddSyncAudioSource(this);
+	mixer->AddSyncAudioSource(this);
 
 	ColdReset();
 }
@@ -57,9 +57,9 @@ void ATSlightSIDEmulator::Shutdown() {
 		mpMemMan = NULL;
 	}
 
-	if (mpAudioOut) {
-		mpAudioOut->RemoveSyncAudioSource(this);
-		mpAudioOut = NULL;
+	if (mpAudioMixer) {
+		mpAudioMixer->RemoveSyncAudioSource(this);
+		mpAudioMixer = nullptr;
 	}
 }
 
@@ -622,7 +622,7 @@ public:	// IATDeviceScheduling
 	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:	// IATDeviceAudioOutput
-	virtual void InitAudioOutput(IATAudioOutput *out, ATAudioSyncMixer *syncmixer) override;
+	virtual void InitAudioOutput(IATAudioMixer *mixer) override;
 
 public:	// IATDeviceDiagnostics
 	virtual void DumpStatus(ATConsoleOutput& output) override;
@@ -633,7 +633,7 @@ private:
 
 	ATMemoryManager *mpMemMan;
 	ATScheduler *mpScheduler;
-	IATAudioOutput *mpAudioOutput;
+	IATAudioMixer *mpAudioMixer;
 
 	ATSlightSIDEmulator mSlightSID;
 };
@@ -649,7 +649,7 @@ extern const ATDeviceDefinition g_ATDeviceDefSlightSID = { "slightsid", nullptr,
 ATDeviceSlightSID::ATDeviceSlightSID()
 	: mpMemMan(nullptr)
 	, mpScheduler(nullptr)
-	, mpAudioOutput(nullptr)
+	, mpAudioMixer(nullptr)
 {
 }
 
@@ -688,13 +688,13 @@ void ATDeviceSlightSID::ColdReset() {
 }
 
 void ATDeviceSlightSID::Init() {
-	mSlightSID.Init(mpMemMan, mpScheduler, mpAudioOutput);
+	mSlightSID.Init(mpMemMan, mpScheduler, mpAudioMixer);
 }
 
 void ATDeviceSlightSID::Shutdown() {
 	mSlightSID.Shutdown();
 
-	mpAudioOutput = nullptr;
+	mpAudioMixer = nullptr;
 	mpScheduler = nullptr;
 	mpMemMan = nullptr;
 }
@@ -717,8 +717,8 @@ void ATDeviceSlightSID::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpScheduler = sch;
 }
 
-void ATDeviceSlightSID::InitAudioOutput(IATAudioOutput *out, ATAudioSyncMixer *syncmixer) {
-	mpAudioOutput = out;
+void ATDeviceSlightSID::InitAudioOutput(IATAudioMixer *mixer) {
+	mpAudioMixer = mixer;
 }
 
 void ATDeviceSlightSID::DumpStatus(ATConsoleOutput& output) {

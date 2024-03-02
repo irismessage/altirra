@@ -65,6 +65,7 @@ public:		// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override;
 	bool IsWritableFirmwareDirty(uint32 idx) const override;
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
+	bool IsUsableFirmwareLoaded() const override;
 
 public:		// IATDeviceIndicators
 	void InitIndicators(IATDeviceIndicatorManager *r) override;
@@ -87,6 +88,7 @@ public:		// IATDeviceSystemControl
 		ATMemoryLayer *layerSelfTestROM,
 		ATMemoryLayer *layerGameROM,
 		const void *kernelROM) override;
+	void OnU1MBConfigPreLocked(bool inPreLockState) override;
 
 public:		// IATDeviceDiagnostics
 	void DumpStatus(ATConsoleOutput& output) override;
@@ -141,6 +143,7 @@ private:
 	IATSystemController *mpSystemController = nullptr;
 
 	bool mbPBIDeviceActive = false;
+	bool mbFirmwareUsable = false;
 
 	uint8 mFPGABankReg = 0;
 	uint8 mFPGAConfigReg = 0;
@@ -180,11 +183,6 @@ private:
 	ATMemoryLayer *mpLayerHardwareMirror = nullptr;			// $FF:D000-FF:D7FF read/write
 
 	// borrowed memory layers
-	ATMemoryLayer *mpLayerLowerKernel = nullptr;
-	ATMemoryLayer *mpLayerUpperKernel = nullptr;
-	ATMemoryLayer *mpLayerSelfTest = nullptr;
-	const void *mpKernelROM = nullptr;
-
 	ATFlashEmulator mFlashEmu;
 
 	uint8 mEEPROM[256] {};

@@ -1,6 +1,6 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Device emulation library - EXE loader module
-//	Copyright (C) 2009-2015 Avery Lee
+//	Device emulation library - Corvus Disk System emulation
+//	Copyright (C) 2009-2018 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -12,9 +12,8 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #ifndef f_AT_ATDEVICES_CORVUS_H
 #define f_AT_ATDEVICES_CORVUS_H

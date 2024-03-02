@@ -21,6 +21,7 @@
 #include <vd2/system/refcount.h>
 #include <vd2/system/unknown.h>
 #include <vd2/system/VDString.h>
+#include <at/atcore/enumparse.h>
 
 class ATFirmwareManager;
 class ATCPUEmulator;
@@ -44,6 +45,14 @@ enum ATRS232DeviceMode {
 	kATRS232DeviceModeCount
 };
 
+enum class ATModemNetworkMode : uint8 {
+	None,		// no sound or delays
+	Minimal,	// simulate dialing but not handshake
+	Full		// simulate dialing and handshake
+};
+
+AT_DECLARE_ENUM_TABLE(ATModemNetworkMode);
+
 struct ATRS232Config {
 	ATRS232DeviceMode mDeviceMode;
 	bool	mbTelnetEmulation;
@@ -58,6 +67,7 @@ struct ATRS232Config {
 	AT850SIOEmulationLevel	m850SIOLevel;
 	VDStringA	mDialAddress;
 	VDStringA	mDialService;
+	ATModemNetworkMode	mNetworkMode;
 	VDStringA	mTelnetTermType;
 
 	ATRS232Config()
@@ -72,6 +82,7 @@ struct ATRS232Config {
 		, mListenPort(0)
 		, mConnectionSpeed(9600)
 		, m850SIOLevel(kAT850SIOEmulationLevel_None)
+		, mNetworkMode(ATModemNetworkMode::Full)
 	{
 	}
 };
@@ -85,7 +96,7 @@ public:
 	virtual void SetToneDialingMode(bool enable) = 0;
 	virtual bool IsToneDialingMode() const = 0;
 	virtual void HangUp() = 0;
-	virtual void Dial(const char *address, const char *service) = 0;
+	virtual void Dial(const char *address, const char *service, const char *desc = nullptr) = 0;
 	virtual void Answer() = 0;
 };
 

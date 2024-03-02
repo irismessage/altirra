@@ -24,57 +24,61 @@
 #include "tracecpu.h"
 
 namespace {
-	struct ATBitfield256 {
-		uint8_t v[32];
+	struct ATBytemap256 {
+		uint8_t v[256];
 
-		constexpr void set(size_t index) {
-			v[index >> 3] |= 1 << (index & 7);
-		}
-		
-		constexpr void set(std::initializer_list<uint8> indices) {
+		constexpr void set(uint8_t v0, std::initializer_list<uint8> indices) {
 			for(uint8 index : indices)
-				set(index);
+				v[index] = v0;
 		}
 
-		constexpr bool operator[](size_t index) const {
-			return (v[index >> 3] & (1 << (index & 7))) != 0;
+		constexpr uint8 operator[](size_t index) const {
+			return v[index];
 		}
 	};
 
-	constexpr ATBitfield256 MakeIdleInsnBitfield() {
-		ATBitfield256 bitfield = {};
+	constexpr ATBytemap256 MakeIdleInsnMap() {
+		ATBytemap256 bytemap = {};
 
 		// branch instructions
-		bitfield.set( { 0x10, 0x30, 0x50, 0x70, 0x90, 0xB0, 0xD0, 0xF0 } );
+		bytemap.set(1, { 0x10, 0x30, 0x50, 0x70, 0x90, 0xB0, 0xD0, 0xF0 });
 		
 		// JMP abs
-		bitfield.set(0x4C);
+		bytemap.set(1, { 0x4C });
 
 		// LDA zp, abs
-		bitfield.set( { 0xA5, 0xAD } );
+		bytemap.set(1, { 0xA5, 0xAD } );
 
 		// LDX zp, abs
-		bitfield.set( { 0xA6, 0xAE } );
+		bytemap.set(1, { 0xA6, 0xAE } );
 
 		// LDY zp, abs
-		bitfield.set( { 0xA4, 0xAC } );
+		bytemap.set(1, { 0xA4, 0xAC } );
 
 		// BIT zp, abs
-		bitfield.set( { 0x24, 0x2C } );
+		bytemap.set(1, { 0x24, 0x2C } );
 
 		// CMP imm/zp/abs
-		bitfield.set( { 0xC9, 0xC5, 0xCD } );
+		bytemap.set(1, { 0xC9, 0xC5, 0xCD } );
 
 		// CPX imm/zp/abs
-		bitfield.set( { 0xE0, 0xE4, 0xEC } );
+		bytemap.set(1, { 0xE0, 0xE4, 0xEC } );
 
 		// CPY imm/zp/abs
-		bitfield.set( { 0xC0, 0xC4, 0xCC } );
+		bytemap.set(1, { 0xC0, 0xC4, 0xCC } );
 
-		return bitfield;
+		// LDA/LDX/LDY imm
+		bytemap.set(1, { 0xA9, 0xA2, 0xA0 } );
+
+		// STA/STX/STY abs, conditional on addr=WSYNC
+		bytemap.v[0x8D] = 2;
+		bytemap.v[0x8E] = 2;
+		bytemap.v[0x8C] = 2;
+
+		return bytemap;
 	}
 
-	constexpr ATBitfield256 kATIdleInsnTable = MakeIdleInsnBitfield();
+	constexpr ATBytemap256 kATIdleInsnTable = MakeIdleInsnMap();
 
 	static constexpr const wchar_t *kThreadChannelNames[] = {
 		L"Idle",
@@ -329,18 +333,28 @@ void ATCPUTracer::Update() {
 				mIdleCounter = 0;
 		}
 
+		const uint8 idleCode = kATIdleInsnTable[opcode];
+		bool isIdleInsn = idleCode != 0;
+
+		if (idleCode == 2) {
+			// check for write to WSYNC
+			if (hentp->mOpcode[1] != 0x0A || hentp->mOpcode[2] != 0xD4) {
+				isIdleInsn = false;
+			}
+		}
+
 		switch(newContext) {
 			case kThreadContext_Idle:
 			case kThreadContext_SIOIdle:
 			case kThreadContext_CIOIdle:
-				if (!kATIdleInsnTable[opcode])
+				if (!isIdleInsn)
 					++newContext;
 				break;
 
 			case kThreadContext_Main:
 			case kThreadContext_SIO:
 			case kThreadContext_CIO:
-				if (kATIdleInsnTable[opcode]) {
+				if (isIdleInsn) {
 					if (!mIdleCounter++) {
 						mIdleStartTime = extendTime64(hentp->mCycle);
 					}

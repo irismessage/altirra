@@ -58,19 +58,19 @@ void ATUIMenu::InsertItem(int pos, const ATUIMenuItem& item) {
 	const size_t n = mItems.size();
 		
 	if (pos < 0 || pos > (int)n)
-		pos = n;
+		pos = (int)n;
 
 	mItems.insert(mItems.begin() + pos, item);
 }
 
 void ATUIMenu::RemoveItems(uint32 start, uint32 n) {
-	uint32 existingCount = mItems.size();
+	size_t existingCount = mItems.size();
 
 	if (start >= existingCount)
 		return;
 
 	if (n > existingCount - start)
-		n = existingCount - start;
+		n = (uint32)(existingCount - start);
 
 	mItems.erase(mItems.begin() + start, mItems.begin() + (start + n));
 }

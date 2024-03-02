@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcore/address.h>
 #include <at/atcpu/execstate.h>
 #include "cpu.h"
 #include "debugtarget.h"

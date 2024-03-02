@@ -318,7 +318,7 @@ public:
 	/// Atomic pointer exchange.
 	T *xchg(T* p) {
 		#if defined(VD_COMPILER_MSVC)
-			#ifdef _M_AMD64
+			#if VD_PTR_SIZE > 4
 				return ptr == p ? p : (T *)_InterlockedExchangePointer((void *volatile *)&ptr, p);
 			#else
 				return ptr == p ? p : (T *)_InterlockedExchange((volatile long *)&ptr, (long)p);
@@ -330,7 +330,7 @@ public:
 
 	T *compareExchange(T *newValue, T *oldValue) {
 		#if defined(VD_COMPILER_MSVC)
-			#ifdef _M_AMD64
+			#if VD_PTR_SIZE > 4
 				return (T *)_InterlockedCompareExchangePointer((void *volatile *)&ptr, (void *)newValue, (void *)oldValue);
 			#else
 				return (T *)_InterlockedCompareExchange((volatile long *)&ptr, (long)(size_t)newValue, (long)(size_t)oldValue);

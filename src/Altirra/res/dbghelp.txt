@@ -55,6 +55,7 @@
       @frame   ANTIC frame counter
       @clk     Clock cycle counter
       @cclk    CPU clock cycle counter
+      @xpc     Extended PC (banked memory)
      
      Grouping
       (exp)    Subexpression
@@ -377,7 +378,7 @@
 
     Set a breakpoint at a PC address.
     
-      bp [-n] [-k] [-q] [-g group] <address> ["command"]
+      bp [-n] [-k] [-q] [-g group] <xaddress> ["command"]
       bp [-n] [-k] [-q] [-g group] `file:line` ["command"]
       
     Sets a PC breakpoint in the CPU core, which cause the emulator to stop
@@ -426,7 +427,12 @@
       
     The breakpoint is set immediately if symbols are available. Otherwise,
     a deferred breakpoint is created and the breakpoint is bound to the
-    code address when the symbols are loaded.    
+    code address when the symbols are loaded.
+
+    If an extended memory address is used, a bank-sensitive breakpoint is
+    created that only triggers if the PORTB banking configuration matches.
+    For instance, setting a breakpoint on $EF'41AC will trigger when
+    PC=$41AC and PORTB=$EF.
 
     See also: ba, bs
 
@@ -1282,7 +1288,7 @@
     Reinitializes the BASIC variable name table (VNT) based on the variable
     value table (VVT).
 
-      .basic_rebuildvnt
+      .basic_rebuildvnt [-t]
 
     Deletes all existing variable names and replaces them with new variable
     names, based on the variable type information in the VVT. This can repair
@@ -1295,6 +1301,8 @@
 
     Using this command on a running BASIC program is likely to produce
     fireworks and is not recommended.
+
+    -t enables support for TurboBasic XL labels.
 
     See also: .basic_rebuildvvt
 
@@ -2121,6 +2129,7 @@
 . Some commands support extended memory syntax:
 .   $0000      CPU view of primary memory
 .   $01:0000   CPU view, 65C816 high memory
+.   $EF'4000   CPU view, extended memory ($4000 with PORTB=$EF)
 .   n:$0000    ANTIC view of primary memory
 .   v:$00000   VBXE memory
 .   r:$0000    Main memory

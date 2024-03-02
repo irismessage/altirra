@@ -83,6 +83,133 @@ namespace {
 			p[i] = dtab[src[alotab[i & 0xff] + ahitab[i >> 8]]];
 		}
 	}
+
+	// Reference: Atari800 4.0.0 cart.txt
+	void DeinterleaveAtrax128K(uint8 *p) {
+		// At -> Epr
+		// D0 -> D5
+		// D1 -> D6
+		// D2 -> D2
+		// D3 -> D4
+		// D4 -> D0
+		// D5 -> D1
+		// D6 -> D7
+		// D7 -> D3
+		//
+		// A0 -> A5
+		// A1 -> A6
+		// A2 -> A7
+		// A3 -> A12
+		// A4 -> A0
+		// A5 -> A1
+		// A6 -> A2
+		// A7 -> A3
+		// A8 -> A4
+		// A9 -> A8
+		// A10 -> A10
+		// A11 -> A11
+		// A12 -> A9
+		// A13 -> A13
+		// A14 -> A14
+		// A15 -> A15
+		// A16 -> A16
+
+		uint8 dtab[256];
+		uint16 alotab[256];
+		uint16 ahitab[32];
+
+		for(int i=0; i<256; ++i) {
+			uint8 d = 0;
+			uint16 alo = 0;
+
+			if (i & 0x01) { d += 0x10; alo += 0x0020; }
+			if (i & 0x02) { d += 0x20; alo += 0x0040; }
+			if (i & 0x04) { d += 0x04; alo += 0x0080; }
+			if (i & 0x08) { d += 0x80; alo += 0x1000; }
+			if (i & 0x10) { d += 0x08; alo += 0x0001; }
+			if (i & 0x20) { d += 0x01; alo += 0x0002; }
+			if (i & 0x40) { d += 0x02; alo += 0x0004; }
+			if (i & 0x80) { d += 0x40; alo += 0x0008; }
+
+			dtab[i] = d;
+			alotab[i] = alo;
+		}
+
+		for(int i=0; i<32; ++i) {
+			uint16 ahi = 0;
+
+			if (i & 0x01) ahi += 0x0010;
+			if (i & 0x02) ahi += 0x0100;
+			if (i & 0x04) ahi += 0x0400;
+			if (i & 0x08) ahi += 0x0800;
+			if (i & 0x10) ahi += 0x0200;
+
+			ahitab[i] = ahi;
+		}
+
+		vdblock<uint8> src(131072);
+
+		memcpy(src.data(), p, 131072);
+
+		for(int i=0; i<131072; ++i) {
+			const uint32 rawAddr = alotab[i & 0xff] + ahitab[(i >> 8) & 0x1f] + (i & 0x1e000);
+			const uint8 rawData = src[rawAddr];
+
+			p[i] = dtab[rawData];
+		}
+	}
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	uint32 ComputeByteSum32(const uint8 *src, size_t len) {
+		uint32 sum = 0;
+
+		if (len >= 1024) {
+			uint32 align = ~(uint32)(uintptr)src & 15;
+			len -= align;
+
+			while(align--)
+				sum += *src++;
+
+			uint32 blocks = len >> 6;
+			len &= 0x3f;
+
+			__m128i zero = _mm_setzero_si128();
+			__m128i acc0 = zero;
+			__m128i acc1 = zero;
+			while(blocks--) {
+				__m128i x0 = _mm_load_si128((const __m128i *)(src +  0));
+				__m128i x1 = _mm_load_si128((const __m128i *)(src + 16));
+				__m128i x2 = _mm_load_si128((const __m128i *)(src + 32));
+				__m128i x3 = _mm_load_si128((const __m128i *)(src + 48));
+				src += 64;
+
+				acc0 = _mm_add_epi32(acc0, _mm_sad_epu8(x0, zero));
+				acc1 = _mm_add_epi32(acc1, _mm_sad_epu8(x1, zero));
+				acc0 = _mm_add_epi32(acc0, _mm_sad_epu8(x2, zero));
+				acc1 = _mm_add_epi32(acc1, _mm_sad_epu8(x3, zero));
+			}
+
+			__m128i acc = _mm_add_epi32(acc0, acc1);
+			__m128i acchi = _mm_castps_si128(_mm_movehl_ps(_mm_undefined_ps(), _mm_castsi128_ps(acc)));
+
+			sum += (uint32)_mm_cvtsi128_si32(_mm_add_epi32(acc, acchi));
+		}
+
+		while(len--)
+			sum += *src++;
+
+		return sum;
+	}
+#else
+	uint32 ComputeByteSum32(const uint8 *src, size_t len) {
+		uint32 sum = 0;
+
+		while(len--)
+			sum += *src++;
+
+		return sum;
+	}
+#endif
 }
 
 class ATCartridgeImage final : public vdrefcounted<IATCartridgeImage> {
@@ -155,8 +282,7 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 		uint32 csum = 0;
 
 		if (useChecksum) {
-			for(uint32 i=0; i<size32; ++i)
-				csum += mCARTROM[i];
+			csum = ComputeByteSum32(mCARTROM.data(), size32);
 		}
 
 		if (csum == checksum || !useChecksum) {
@@ -222,13 +348,6 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 	if (loadCtx) {
 		if (!validHeader)
 			loadCtx->mCartMapper = mCartMode;
-
-		if (loadCtx->mb5200ModeCheck >= 0) {
-			if (ATIsCartridge5200Mode(mCartMode) != (loadCtx->mb5200ModeCheck > 0)) {
-				loadCtx->mLoadStatus = kATCartLoadStatus_HardwareMismatch;
-				return false;
-			}
-		}
 	}
 
 	if (mCartMode) {
@@ -270,6 +389,10 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 
 		DeinterleaveAtraxSDX64K(p);
 		DeinterleaveAtraxSDX64K(p+65536);
+	} else if (mCartMode == kATCartridgeMode_Atrax_128K_Raw) {
+		uint8 *p = mCARTROM.data();
+
+		DeinterleaveAtrax128K(p);
 	} else if (mCartMode == kATCartridgeMode_OSS_034M) {
 		mCARTROM.resize(0x7000);
 

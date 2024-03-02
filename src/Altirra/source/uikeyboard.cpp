@@ -990,7 +990,7 @@ namespace {
 		{ "File.BootImage", 0, { 'B', ALT } },
 		{ "File.OpenImage", 0, { 'O', ALT } },
 		{ "Debug.OpenSourceFile", 0, { 'O', ALT+SHIFT } },
-		{ "Disk.DrivesDialog", 0, { 'D', ALT+SHIFT } },
+		{ "Disk.DrivesDialog", 0, { 'D', ALT } },
 		{ "Pane.Display", 0, { '1', ALT } },
 		{ "Pane.Console", 0, { '2', ALT } },
 		{ "Pane.Registers", 0, { '3', ALT } },
@@ -1000,6 +1000,7 @@ namespace {
 		{ "Pane.Memory1", 0, { '7', ALT } },
 		{ "Pane.PrinterOutput", 0, { '8', ALT } },
 		{ "Pane.ProfileView", 0, { '0', ALT+SHIFT } },
+		{ "System.Configure", 0, { 'S', ALT } },
 
 		{ "Debug.RunStop", 0, { VK_F8, 0 } },
 		{ "Debug.StepInto", 0, { VK_F11, 0 } },

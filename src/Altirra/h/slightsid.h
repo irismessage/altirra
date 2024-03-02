@@ -24,7 +24,7 @@
 class ATScheduler;
 class ATMemoryManager;
 class ATMemoryLayer;
-class IATAudioOutput;
+class IATAudioMixer;
 class ATConsoleOutput;
 
 // SlightSID expansion emulator.
@@ -50,7 +50,7 @@ public:
 	ATSlightSIDEmulator();
 	~ATSlightSIDEmulator();
 
-	void Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioOutput *audioOut);
+	void Init(ATMemoryManager *memMan, ATScheduler *sch, IATAudioMixer *mixer);
 	void Shutdown();
 
 	void ColdReset();
@@ -101,7 +101,7 @@ protected:
 	ATMemoryLayer *mpMemLayerControl;
 	ATScheduler *mpScheduler;
 	ATMemoryManager *mpMemMan;
-	IATAudioOutput *mpAudioOut;
+	IATAudioMixer *mpAudioMixer;
 
 	float	mVolumeScale;
 	float	mFilterDelayX1;

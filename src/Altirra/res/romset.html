@@ -1,6 +1,6 @@
 <html>
   <head>
-    <title>Altirra ROM set</title>
+    <title>Altirra ROM image set</title>
     <style>
       body {
         background: #fff;
@@ -42,22 +42,16 @@
     </style>
   </head>
   <body>
-    <h1>Altirra ROM set</h1>
-    <p class="copy">Copyright &copy; 2017 Avery Lee, All Rights Reserved.</p>
-    <p class="copy">
-Copying and distribution of this file, with or without modification,
-are permitted in any medium without royalty provided the copyright
-notice and this notice are preserved.  This file is offered as-is,
-without any warranty.
-    </p>
+    <h1>Altirra ROM image set</h1>
     <p>
-      This ROM set consists of the following four files:
+      This ROM image set consists of the following five files:
     </p>
     <ul>
       <li><span class="mono">atbasic.rom</span> (Altirra 8K BASIC)</li>
       <li><span class="mono">altirraos-800.rom</span> (AltirraOS for 400/800 Computers)</li>
       <li><span class="mono">altirraos-xl.rom</span> (AltirraOS for XL/XE/XEGS Computers)</li>
       <li><span class="mono">altirraos-5200.rom</span> (AltirraOS for 5200 SuperSystem)</li>
+      <li><span class="mono">altirraos-816.rom</span> (AltirraOS for 65C816 Accelerators)</li>
     </ul>
     <p>
       These are replacements for the standard Atari ROMs that would normally be present in these
@@ -69,9 +63,14 @@ without any warranty.
     <ul>
       <li><span class="mono">atbasic.rom -&gt; ATARIBAS.ROM</span></li>
       <li><span class="mono">altirraos-800.rom -&gt; ATARIOSB.ROM</span></li>
-      <li><span class="mono">altirraos-xl.rom -&gt; ATARIXL.ROM / ATARIXEGS.ROM</span></li>
+      <li><span class="mono">altirraos-xl.rom, altirraos-816.rom -&gt; ATARIXL.ROM / ATARIXEGS.ROM</span></li>
       <li><span class="mono">altirraos-5200.rom -&gt; ATARI5200.ROM</span></li>
     </ul>
+    <p>
+      On real hardware, you will need a way to burn or flash replacement ROMs, such as an EPROM
+      burner, 32-in-1 OS switcher, or Ultimate1MB. For Altirra 8K BASIC, there is a soft-loadable
+      version of the interpreter on the Additions disk that comes with Altirra.
+    </p>
     <p>
       <b>Please note:</b> The replacement ROMs have been written to support software that conforms
       to Atari's original specifications for usage of public variables and entry points into the
@@ -80,11 +79,38 @@ without any warranty.
       reasonably high compatibility, but some programs have hardcoded assumptions that cannot work
       with such a replacement ROM and will only run on the original firmware.
     </p>
+    <h2>Updates</h2>
     <p>
-      The license for all files is the all-permissive license as shown at the top of this page.
+      This ROM image set package is produced by the Tools &gt; Export ROM Set command of the Altirra emulator.
+      Newer versions of the emulator include updated versions of the ROM set.
     </p>
+    <h2>License</h2>
+    <p>
+      The license for all files in the ROM set is the following all-permissive license:
+    </p>
+    <div style="margin-left: 1.5em;">
+      <p class="copy">
+        Altirra 8K BASIC<br/>
+        AltirraOS for 400/800 Computers<br/>
+        AltirraOS for XL/XE/XEGS Computers<br/>
+        AltirraOS for 5200 SuperSystem<br/>
+        AltirraOS for 65C816 Accelerators<br/>
+      </p>
+      <p class="copy">Copyright &copy; 2017-2018 Avery Lee, All Rights Reserved.</p>
+      <p class="copy">
+        Copying and distribution of this file, with or without modification,
+        are permitted in any medium without royalty provided the copyright
+        notice and this notice are preserved.  This file is offered as-is,
+        without any warranty.
+      </p>
+    </div>
+    <h2>Source code</h2>
     <p>
       The source code for these files is included in the source of the <a href="http://virtualdub.org/altirra.html">Altirra emulator</a>.
+    </p>
+    <h2>Other stuff</h2>
+    <p>
+      Looking for other software, like a replacement R: device handler? You might find it on the Additions disk that comes with Altirra.
     </p>
   </body>
 </html>

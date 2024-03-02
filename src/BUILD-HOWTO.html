@@ -50,13 +50,13 @@ h3 {
 		</p>
 		<h3>Compiler</h3>
 		<ul>
-			<li>Recommended: Visual Studio 2017 version 15.4.2 (Professional or Community)</li>
+			<li>Recommended: Visual Studio 2017 version 15.7.5 (Professional or Community)</li>
 			<ul>
-				<li>Windows 8.1 SDK and XP targeting features required</li>
+				<li>Required feature: Windows XP support for C++</li>
+				<li>Required features for ARM64: Windows 10 SDK (10.0.17134.0), Visual C++ compilers and libraries for ARM64</li>
 			</ul>
-			<li>Not supported: VS2015 pre-Update 2</li>
-			<li>Not supported: VS2013 or earlier</li>
-			<li>Not supported: MinGW/GCC/Clang</li>
+			<li>Not supported: VS2015 or earlier</li>
+			<li>Not supported: MinGW, GCC, Clang, Clang/C2</li>
 		</ul>
 		<p>
 			Visual C++ Express for Desktop can probably be used with a couple of caveats. The Windows SDK
@@ -224,7 +224,7 @@ h3 {
 		</p>
 		<p>
 			The release script checks the version of <tt>cl.exe</tt> available in the PATH and
-			will fail if it is not VS2015 Update 3. Use <tt>/anyvc</tt> to bypass this check and
+			will fail if it is not the expected version. Use <tt>/anyvc</tt> to bypass this check and
 			force the current compiler to be used.
 		</p>
 		<p>

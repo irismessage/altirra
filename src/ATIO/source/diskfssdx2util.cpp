@@ -22,7 +22,7 @@ extern const uint8 kATSDFSBootSector0[128]={
 	0x00,
 	0x03,		// +1	number of boot sectors
 	0x00,		// +2	load address low ($3000)
-	0x07,		// +3	load address high
+	0x30,		// +3	load address high
 	0x40,		// +4	init address low ($0740)
 	0x07,		// +5	init address high
 	0x4C,		// +6	launch address (JMP) -- must be JMP $3080 or $0440 to be recognized by IDE+2 EXE loader

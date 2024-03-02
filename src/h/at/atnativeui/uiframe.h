@@ -74,6 +74,12 @@
 // procedures.
 #define ATWM_CHARUP			(WM_APP + 212)
 
+// Sent by frame windows when DPI changes. This is similar but not
+// the same as WM_DPICHANGED, which also requests a resize. wParam
+// holds dpi X/Y as in WM_DPICHANGED. The sender does not iterate
+// over the child hierarchy; the receiver must propagate if desired.
+#define ATWM_INHERIT_DPICHANGED		(WM_APP + 213)
+
 void ATInitUIFrameSystem();
 void ATShutdownUIFrameSystem();
 
@@ -87,6 +93,13 @@ enum {
 	kATContainerDockRight,
 	kATContainerDockTop,
 	kATContainerDockBottom
+};
+
+enum class ATUIContainerEdgeFlags : uint8 {
+	Left = 1,
+	Top = 2,
+	Right = 4,
+	Bottom = 8
 };
 
 class ATContainerResizer {
@@ -111,6 +124,8 @@ public:
 	bool Init(HWND hwndParent, ATContainerDockingPane *pane, bool vertical);
 	void Shutdown();
 
+	void BeginDrag(int screenX, int screenY);
+
 protected:
 	static LRESULT StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
@@ -121,7 +136,7 @@ protected:
 	void OnMouseMove(WPARAM wParam, int x, int y);
 	void OnCaptureChanged(HWND hwndNewCapture);
 
-	virtual bool IsTouchHitTestCapable() const;
+	void InternalBeginDrag(int x, int y);
 
 	ATContainerDockingPane *mpControlledPane;
 	bool	mbVertical;
@@ -171,6 +186,9 @@ public:
 	// are pinned.
 	void	SetPinned(bool pinned) { mbPinned = pinned; }
 
+	// Set which edges are next to a splitter.
+	void	SetSplitterEdges(uint8 edgeMask);
+
 	int		GetDockCode() const;
 	float	GetDockFraction() const;
 	void	SetDockFraction(float dist);
@@ -189,6 +207,7 @@ public:
 	bool	Undock(ATFrameWindow *pane);
 
 	void	NotifyFontsUpdated();
+	void	NotifyDpiChanged(uint32 dpi);
 
 	void	RecalcFrame();
 
@@ -204,6 +223,7 @@ public:
 	void	DestroySplitter();
 
 	bool	HitTestDragHandles(int screenX, int screenY, int& code, ATContainerDockingPane **ppPane);
+	void	ActivateNearbySplitter(int screenX, int screenY, uint8 edgeFlags);
 
 	void	UpdateFullScreenState();
 	bool	IsFullScreen() const;
@@ -216,6 +236,7 @@ protected:
 	void	RecalcFrameInternal();
 	void	RepositionContent(ATContainerResizer& resizer);
 	void	RemoveEmptyNode();
+	void	UpdateChildEdgeFlags();
 
 	ATContainerWindow *const mpParent;
 	vdrefptr<ATDragHandleWindow> mpDragHandle;
@@ -239,6 +260,7 @@ protected:
 	bool		mbLayoutInvalid;
 	bool		mbDescendantLayoutInvalid;
 	sint32		mVisibleFrameIndex;
+	uint8		mSplitterEdges = 0;
 
 	HWND		mhwndTabControl;
 };
@@ -372,7 +394,8 @@ public:
 	ATFrameWindow(ATContainerWindow *container);
 	~ATFrameWindow();
 
-	static ATFrameWindow *GetFrameWindow(HWND hwnd);
+	static ATFrameWindow *GetFrameWindow(VDZHWND hwnd);
+	static ATFrameWindow *GetFrameWindowFromContent(VDZHWND hwnd);
 
 	void *AsInterface(uint32 iid);
 
@@ -392,10 +415,13 @@ public:
 	bool IsVisible() const;
 	void SetVisible(bool vis);
 	void SetFrameMode(FrameMode fm);
+	void SetSplitterEdges(uint8 flags);
 
+	void ActivateFrame();
 	void EnableEndTrackNotification();
 
 	void NotifyFontsUpdated();
+	void NotifyDpiChanged(uint32 dpi);
 	void NotifyEndTracking();
 
 	bool GetIdealSize(vdsize32& sz);
@@ -429,7 +455,9 @@ protected:
 	bool	mbCloseTracking = false;
 	bool	mbActivelyMovingSizing = false;
 	bool	mbEnableEndTrackNotification = false;
+	uint8	mSplitterEdgeFlags = 0;
 	FrameMode	mFrameMode = kFrameModeUndocked;
+	vdrect32	mInsideBorderRect = {};
 	vdrect32	mCaptionRect = {};
 	vdrect32	mClientRect = {};
 	vdrect32	mCloseRect = {};

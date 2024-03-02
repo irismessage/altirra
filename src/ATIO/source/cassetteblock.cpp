@@ -53,11 +53,8 @@ uint32 ATCassetteImageBlock::GetBitSum(uint32 pos, uint32 n, bool bypassFSK) con
 	return n;
 }
 
-uint32 ATCassetteImageBlock::AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const {
-	dstLeft += n;
-
-	if (dstRight)
-		dstRight += n;
+uint32 ATCassetteImageBlock::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const {
+	dst += n;
 
 	posCycle += n * kATCyclesPerSyncSample;
 	posSample += posCycle / kATCassetteCyclesPerAudioSample;
@@ -202,7 +199,7 @@ void ATCassetteImageBlockRawData::SetBits(bool fsk, uint32 startPos, uint32 n, b
 
 ///////////////////////////////////////////////////////////////////////////////
 
-uint32 ATCassetteImageBlockRawAudio::AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const {
+uint32 ATCassetteImageBlockRawAudio::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const {
 	for(uint32 i = 0; i < n; ++i) {
 		if (posSample >= mAudioLength)
 			return i;
@@ -217,10 +214,7 @@ uint32 ATCassetteImageBlockRawAudio::AccumulateAudio(float *&dstLeft, float *&ds
 			++posSample;
 		}
 
-		*dstLeft++ += v;
-
-		if (dstRight)
-			*dstRight++ += v;
+		*dst++ += v;
 	}
 
 	return n;
@@ -308,7 +302,7 @@ uint32 ATCassetteImageDataBlockStd::GetBitSum(uint32 pos, uint32 n, bool bypassF
 	return sum;
 }
 
-uint32 ATCassetteImageDataBlockStd::AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const {
+uint32 ATCassetteImageDataBlockStd::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const {
 	// The good news is that we have integral number of audio samples per data bit
 	// and an integral number of sync mixer samples per audio sample. The bad news
 	// is that the phase has to be continuous between bits, so the starting phase
@@ -367,10 +361,7 @@ uint32 ATCassetteImageDataBlockStd::AccumulateAudio(float *&dstLeft, float *&dst
 		// Write out a sample.
 		const float sample = (float)((int)phaseTable[phaseAccum >> 22] - 0x80) * (1.0f / 8.0f) * (float)kATCyclesPerSyncSample;
 
-		*dstLeft++ += sample;
-
-		if (dstRight)
-			*dstRight++ += sample;
+		*dst++ += sample;
 		++actual;
 
 		if (!--n)
@@ -418,7 +409,7 @@ uint32 ATCassetteImageDataBlockStd::AccumulateAudio(float *&dstLeft, float *&dst
 
 ///////////////////////////////////////////////////////////////////////////////
 
-uint32 ATCassetteImageBlockBlank::AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const {
+uint32 ATCassetteImageBlockBlank::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n) const {
 	// The good news is that we have integral number of audio samples per data bit
 	// and an integral number of sync mixer samples per audio sample. The bad news
 	// is that the phase has to be continuous between bits, so the starting phase
@@ -441,10 +432,7 @@ uint32 ATCassetteImageBlockBlank::AccumulateAudio(float *&dstLeft, float *&dstRi
 		// Write out a sample.
 		const float sample = (float)((int)phaseTable[phaseAccum >> 22] - 0x80) * (1.0f / 8.0f) * (float)kATCyclesPerSyncSample;
 
-		*dstLeft++ += sample;
-
-		if (dstRight)
-			*dstRight++ += sample;
+		*dst++ += sample;
 
 		// Advance.
 		phaseAccum += kPhasePerSyncSample;

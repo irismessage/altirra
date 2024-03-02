@@ -533,6 +533,8 @@ void ATPokeyEmulator::SetShiftKeyState(bool newState, bool immediate) {
 
 	// Shift key state can only change if keyboard scan is enabled. Debounce doesn't matter.
 	if (immediate && (mSKCTL & 0x02)) {
+		mbShiftKeyLatchedState = newState;
+
 		if (newState)
 			mSKSTAT &= ~0x08;
 		else
@@ -1104,7 +1106,7 @@ void ATPokeyEmulator::AdvanceScanLine() {
 		mpSlave->AdvanceScanLine();
 }
 
-void ATPokeyEmulator::AdvanceFrame(bool pushAudio) {
+void ATPokeyEmulator::AdvanceFrame(bool pushAudio, uint64 timestamp) {
 	UpdatePots(0);
 
 	if (mKeyCodeTimer) {
@@ -1125,7 +1127,7 @@ void ATPokeyEmulator::AdvanceFrame(bool pushAudio) {
 
 	mbSpeakerActive = false;
 
-	FlushAudio(pushAudio);
+	FlushAudio(pushAudio, timestamp);
 
 	// Scan all of the deferred timers and push any that are too far behind. We need to do this to
 	// prevent any of the timers from getting too far behind the clock (>30 bits). This calculation
@@ -2852,7 +2854,7 @@ void ATPokeyEmulator::DumpStatus(bool isSlave) {
 	ATConsolePrintf("\nCommand line: %s\n", mbCommandLineState ? "asserted" : "negated");
 }
 
-void ATPokeyEmulator::FlushAudio(bool pushAudio) {
+void ATPokeyEmulator::FlushAudio(bool pushAudio, uint64 timestamp) {
 	const uint32 outputSampleCount = mpRenderer->EndBlock();
 
 	if (mpSlave) {
@@ -2862,14 +2864,14 @@ void ATPokeyEmulator::FlushAudio(bool pushAudio) {
 	}
 
 	if (mpAudioOut) {
-		uint32 timestamp = mpConn->PokeyGetTimestamp() - 28 * outputSampleCount;
+		uint64 startingTimestamp = timestamp - 28 * outputSampleCount;
 
 		mpAudioOut->WriteAudio(
 			mpRenderer->GetOutputBuffer(),
 			mpSlave ? mpSlave->mpRenderer->GetOutputBuffer() : NULL,
 			outputSampleCount,
 			pushAudio,
-			timestamp);
+			startingTimestamp);
 	}
 }
 
@@ -2925,17 +2927,17 @@ void ATPokeyEmulator::UpdateMixTable() {
 		mpTables->mHPTable[0] = 0.0f;
 		mpTables->mHPIntegralTable[0] = 0.0f;
 
-		for(int i=1; i<=28; ++i) {
-			mpTables->mHPTable[i] = 1.0f - expf((float)i * neg_inv_rc);
-			mpTables->mHPIntegralTable[i] = rc - rc*expf((float)i * neg_inv_rc);
+		for(int i=1; i<=56; ++i) {
+			mpTables->mHPTable[i] = 1.0f - expf((float)i * neg_inv_rc * 0.5f);
+			mpTables->mHPIntegralTable[i] = rc - rc*expf((float)i * neg_inv_rc * 0.5f);
 		}
 	} else {
 		for(int i=0; i<61; ++i)
 			mpTables->mMixTable[i] = (float)i;
 
-		for(int i=0; i<=28; ++i) {
+		for(int i=0; i<=56; ++i) {
 			mpTables->mHPTable[i] = 0.0f;
-			mpTables->mHPIntegralTable[i] = (float)i;
+			mpTables->mHPIntegralTable[i] = (float)i * 0.5f;
 		}
 	}
 }

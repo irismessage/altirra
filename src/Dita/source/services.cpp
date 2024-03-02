@@ -803,7 +803,7 @@ const VDStringW VDGetDirectory(long nKey, VDGUIHandle ctxParent, const wchar_t *
 
 			if (SUCCEEDED(SHGetMalloc(&pMalloc))) {
 
-				HMODULE hmod = GetModuleHandle("shell32.dll");		// We know shell32 is loaded because we hard link to SHBrowseForFolderA.
+				HMODULE hmod = GetModuleHandleW(L"shell32.dll");		// We know shell32 is loaded because we hard link to SHBrowseForFolderA.
 				typedef LPITEMIDLIST (APIENTRY *tpSHBrowseForFolderW)(LPBROWSEINFOW);
 				typedef BOOL (APIENTRY *tpSHGetPathFromIDListW)(LPCITEMIDLIST pidl, LPWSTR pszPath);
 				tpSHBrowseForFolderW pSHBrowseForFolderW = (tpSHBrowseForFolderW)GetProcAddress(hmod, "SHBrowseForFolderW");

@@ -257,7 +257,7 @@ void VDLazyTimer::SetOneShotFn(const vdfunction<void()>& fn, uint32 delay) {
 
 	mbPeriodic = false;
 	mpFn = fn;
-	mTimerId = SetTimer(NULL, 0, delay, (TIMERPROC)mpThunk);
+	mTimerId = SetTimer(NULL, 0, delay, VDGetThunkFunction<TIMERPROC>(mpThunk));
 }
 
 void VDLazyTimer::SetPeriodic(IVDTimerCallback *pCB, uint32 delay) {
@@ -269,7 +269,7 @@ void VDLazyTimer::SetPeriodicFn(const vdfunction<void()>& fn, uint32 delay) {
 
 	mbPeriodic = true;
 	mpFn = fn;
-	mTimerId = SetTimer(NULL, 0, delay, (TIMERPROC)mpThunk);
+	mTimerId = SetTimer(NULL, 0, delay, VDGetThunkFunction<TIMERPROC>(mpThunk));
 }
 
 void VDLazyTimer::Stop() {

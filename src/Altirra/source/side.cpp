@@ -288,7 +288,7 @@ bool ATSIDEEmulator::ReloadFirmware() {
 	memset(flash, 0xFF, flashSize);
 
 	const uint64 id = mpFirmwareManager->GetCompatibleFirmware(mbVersion2 ? kATFirmwareType_SIDE2 : kATFirmwareType_SIDE);
-	mpFirmwareManager->LoadFirmware(id, flash, 0, flashSize);
+	mpFirmwareManager->LoadFirmware(id, flash, 0, flashSize, nullptr, nullptr, nullptr, nullptr, &mbFirmwareUsable);
 
 	return oldHash != VDHash128(flash, flashSize);
 }
@@ -308,6 +308,10 @@ void ATSIDEEmulator::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 	stream.Write(mFlash, sizeof mFlash);
 
 	mFlashCtrl.SetDirty(false);
+}
+
+bool ATSIDEEmulator::IsUsableFirmwareLoaded() const {
+	return mbFirmwareUsable;
 }
 
 IATDeviceBus *ATSIDEEmulator::GetDeviceBus(uint32 index) {
@@ -567,8 +571,10 @@ sint32 ATSIDEEmulator::OnCartDebugRead(void *thisptr0, uint32 addr) {
 	uint8 value;
 	if (thisptr->mFlashCtrl.DebugReadByte(thisptr->mBankOffset + (addr - 0xA000), value)) {
 		if (thisptr->mpUIRenderer) {
-			if (thisptr->mFlashCtrl.CheckForWriteActivity())
+			if (thisptr->mFlashCtrl.CheckForWriteActivity()) {
 				thisptr->mpUIRenderer->SetFlashWriteActivity();
+				thisptr->mbFirmwareUsable = true;
+			}
 		}
 
 		thisptr->UpdateMemoryLayersCart();
@@ -583,8 +589,10 @@ sint32 ATSIDEEmulator::OnCartDebugRead2(void *thisptr0, uint32 addr) {
 	uint8 value;
 	if (thisptr->mFlashCtrl.DebugReadByte(thisptr->mBankOffset2 + (addr - 0x8000), value)) {
 		if (thisptr->mpUIRenderer) {
-			if (thisptr->mFlashCtrl.CheckForWriteActivity())
+			if (thisptr->mFlashCtrl.CheckForWriteActivity()) {
 				thisptr->mpUIRenderer->SetFlashWriteActivity();
+				thisptr->mbFirmwareUsable = true;
+			}
 		}
 
 		thisptr->UpdateMemoryLayersCart();
@@ -599,8 +607,10 @@ sint32 ATSIDEEmulator::OnCartRead(void *thisptr0, uint32 addr) {
 	uint8 value;
 	if (thisptr->mFlashCtrl.ReadByte(thisptr->mBankOffset + (addr - 0xA000), value)) {
 		if (thisptr->mpUIRenderer) {
-			if (thisptr->mFlashCtrl.CheckForWriteActivity())
+			if (thisptr->mFlashCtrl.CheckForWriteActivity()) {
 				thisptr->mpUIRenderer->SetFlashWriteActivity();
+				thisptr->mbFirmwareUsable = true;
+			}
 		}
 
 		thisptr->UpdateMemoryLayersCart();
@@ -615,8 +625,10 @@ sint32 ATSIDEEmulator::OnCartRead2(void *thisptr0, uint32 addr) {
 	uint8 value;
 	if (thisptr->mFlashCtrl.ReadByte(thisptr->mBankOffset2 + (addr - 0x8000), value)) {
 		if (thisptr->mpUIRenderer) {
-			if (thisptr->mFlashCtrl.CheckForWriteActivity())
+			if (thisptr->mFlashCtrl.CheckForWriteActivity()) {
 				thisptr->mpUIRenderer->SetFlashWriteActivity();
+				thisptr->mbFirmwareUsable = true;
+			}
 		}
 
 		thisptr->UpdateMemoryLayersCart();
@@ -630,8 +642,10 @@ bool ATSIDEEmulator::OnCartWrite(void *thisptr0, uint32 addr, uint8 value) {
 
 	if (thisptr->mFlashCtrl.WriteByte(thisptr->mBankOffset + (addr - 0xA000), value)) {
 		if (thisptr->mpUIRenderer) {
-			if (thisptr->mFlashCtrl.CheckForWriteActivity())
+			if (thisptr->mFlashCtrl.CheckForWriteActivity()) {
 				thisptr->mpUIRenderer->SetFlashWriteActivity();
+				thisptr->mbFirmwareUsable = true;
+			}
 		}
 
 		thisptr->UpdateMemoryLayersCart();
@@ -645,8 +659,10 @@ bool ATSIDEEmulator::OnCartWrite2(void *thisptr0, uint32 addr, uint8 value) {
 
 	if (thisptr->mFlashCtrl.WriteByte(thisptr->mBankOffset2 + (addr - 0x8000), value)) {
 		if (thisptr->mpUIRenderer) {
-			if (thisptr->mFlashCtrl.CheckForWriteActivity())
+			if (thisptr->mFlashCtrl.CheckForWriteActivity()) {
 				thisptr->mpUIRenderer->SetFlashWriteActivity();
+				thisptr->mbFirmwareUsable = true;
+			}
 		}
 
 		thisptr->UpdateMemoryLayersCart();
