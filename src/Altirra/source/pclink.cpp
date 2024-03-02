@@ -1196,9 +1196,15 @@ void ATPCLinkDevice::AdvanceCommand() {
 				case 4:	BeginTransmitACK();
 				case 5: break;
 				case 6: state_6:
+						if (mParBuf.mFunction == 0x01)
+							OnRead();
+
 						BeginTransmitComplete();
 				case 7:	break;
-				case 8:	OnRead();
+				case 8:	if (mParBuf.mFunction == 0x01)
+							FinishCommand();
+						else
+							OnRead();
 				case 9:	break;
 				case 10:FinishCommand();
 						break;

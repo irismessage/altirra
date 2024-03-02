@@ -39,6 +39,7 @@
 #include "console.h"
 #include "ui.h"
 #include "uiframe.h"
+#include "uikeyboard.h"
 #include <at/atui/uiproxies.h>
 #include "texteditor.h"
 #include "simulator.h"
@@ -57,7 +58,13 @@ extern HWND g_hwnd;
 extern ATSimulator g_sim;
 extern ATContainerWindow *g_pMainWindow;
 
+#define ATWM_APP_DEBUG_TOGGLEBREAKPOINT (WM_APP + 0x200)
+
 void ATConsoleQueueCommand(const char *s);
+
+#ifndef EM_SETCUEBANNER
+#define EM_SETCUEBANNER 0x1501
+#endif
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -87,12 +94,78 @@ namespace {
 	HFONT	g_monoFont;
 	int		g_monoFontLineHeight;
 	int		g_monoFontCharWidth;
+
+	HFONT	g_propFont;
+	int		g_propFontLineHeight;
+
 	HMENU	g_hmenuSrcContext;
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDisassemblyWindow : public ATUIPane,
+class ATUIDebuggerPane : public ATUIPane, public IATUIDebuggerPane {
+public:
+	void *AsInterface(uint32 iid);
+
+	ATUIDebuggerPane(uint32 paneId, const wchar_t *name);
+
+protected:
+	virtual bool OnPaneCommand(ATUIPaneCommandId id);
+
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+};
+
+ATUIDebuggerPane::ATUIDebuggerPane(uint32 paneId, const wchar_t *name)
+	: ATUIPane(paneId, name)
+{
+}
+
+void *ATUIDebuggerPane::AsInterface(uint32 iid) {
+	if (iid == IATUIDebuggerPane::kTypeID)
+		return static_cast<IATUIDebuggerPane *>(this);
+
+	return ATUIPane::AsInterface(iid);
+}
+
+bool ATUIDebuggerPane::OnPaneCommand(ATUIPaneCommandId id) {
+	return false;
+}
+
+LRESULT ATUIDebuggerPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+	switch(msg) {
+		case ATWM_PREKEYDOWN:
+		case ATWM_PRESYSKEYDOWN:
+			{
+				const bool ctrl = GetKeyState(VK_CONTROL) < 0;
+				const bool shift = GetKeyState(VK_SHIFT) < 0;
+				const bool alt = GetKeyState(VK_MENU) < 0;
+				const bool ext = (lParam & (1 << 24)) != 0;
+
+				if (ATUIActivateVirtKeyMapping(wParam, alt, ctrl, shift, ext, false, kATUIAccelContext_Debugger))
+					return TRUE;
+			}
+			break;
+
+		case ATWM_PREKEYUP:
+		case ATWM_PRESYSKEYUP:
+			{
+				const bool ctrl = GetKeyState(VK_CONTROL) < 0;
+				const bool shift = GetKeyState(VK_SHIFT) < 0;
+				const bool alt = GetKeyState(VK_MENU) < 0;
+				const bool ext = (lParam & (1 << 24)) != 0;
+
+				if (ATUIActivateVirtKeyMapping(wParam, alt, ctrl, shift, ext, true, kATUIAccelContext_Debugger))
+					return TRUE;
+			}
+			break;
+	}
+
+	return ATUIPane::WndProc(msg, wParam, lParam);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATDisassemblyWindow : public ATUIDebuggerPane,
 							public IATDebuggerClient,
 							public IVDTextEditorCallback,
 							public IVDTextEditorColorizer,
@@ -110,6 +183,9 @@ public:
 	void RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *colorization);
 
 	void SetPosition(uint32 addr);
+
+protected:
+	virtual bool OnPaneCommand(ATUIPaneCommandId id);
 
 protected:
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
@@ -148,7 +224,7 @@ protected:
 };
 
 ATDisassemblyWindow::ATDisassemblyWindow()
-	: ATUIPane(kATUIPaneId_Disassembly, L"Disassembly")
+	: ATUIDebuggerPane(kATUIPaneId_Disassembly, L"Disassembly")
 	, mhwndTextEditor(NULL)
 	, mhwndAddress(NULL)
 	, mhmenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_DISASM_CONTEXT_MENU)))
@@ -174,6 +250,23 @@ ATDisassemblyWindow::ATDisassemblyWindow()
 ATDisassemblyWindow::~ATDisassemblyWindow() {
 	if (mhmenu)
 		::DestroyMenu(mhmenu);
+}
+
+bool ATDisassemblyWindow::OnPaneCommand(ATUIPaneCommandId id) {
+	switch(id) {
+		case kATUIPaneCommandId_DebugToggleBreakpoint:
+			{
+				size_t line = (size_t)mpTextEditor->GetCursorLine();
+
+				if (line < mAddressesByLine.size())
+					ATGetDebugger()->ToggleBreakpoint(mAddressesByLine[line]);
+
+				return true;
+			}
+			break;
+	}
+
+	return false;
 }
 
 LRESULT ATDisassemblyWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -209,7 +302,7 @@ LRESULT ATDisassemblyWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 	}
 
-	return ATUIPane::WndProc(msg, wParam, lParam);
+	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
 }
 
 bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result) {
@@ -219,42 +312,12 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 			if (wParam == VK_ESCAPE) {
 				if (ATGetUIPane(kATUIPaneId_Console))
 					ATActivateUIPane(kATUIPaneId_Console, true);
-			} else if (wParam == VK_PAUSE || wParam == VK_CANCEL) {
-				if (GetKeyState(VK_CONTROL) < 0) {
-					ATGetDebugger()->Break();
-				}
-			} else if (wParam == VK_F8) {
-				if (ATGetDebugger()->IsRunning())
-					ATGetDebugger()->Break();
-				else
-					ATGetDebugger()->Run(kATDebugSrcMode_Disasm);
-			} else if (wParam == VK_F9) {
-				size_t line = (size_t)mpTextEditor->GetCursorLine();
-
-				if (line < mAddressesByLine.size())
-					ATGetDebugger()->ToggleBreakpoint(mAddressesByLine[line]);
-				return true;
-			} else if (wParam == VK_F10) {
-				ATGetDebugger()->StepOver(kATDebugSrcMode_Disasm);
-				return true;
-			} else if (wParam == VK_F11) {
-				if (GetKeyState(VK_SHIFT) < 0)
-					ATGetDebugger()->StepOut(kATDebugSrcMode_Disasm);
-				else
-					ATGetDebugger()->StepInto(kATDebugSrcMode_Disasm);
-				return true;
 			}
 			break;
 
 		case WM_SYSKEYUP:
 			switch(wParam) {
 				case VK_ESCAPE:
-				case VK_PAUSE:
-				case VK_CANCEL:
-				case VK_F8:
-				case VK_F9:
-				case VK_F10:
-				case VK_F11:
 					return true;
 			}
 			break;
@@ -305,7 +368,7 @@ bool ATDisassemblyWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lPa
 }
 
 bool ATDisassemblyWindow::OnCreate() {
-	if (!ATUIPane::OnCreate())
+	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
 	if (!VDCreateTextEditor(~mpTextEditor))
@@ -329,7 +392,7 @@ bool ATDisassemblyWindow::OnCreate() {
 
 void ATDisassemblyWindow::OnDestroy() {
 	ATGetDebugger()->RemoveClient(this);
-	ATUIPane::OnDestroy();
+	ATUIDebuggerPane::OnDestroy();
 }
 
 void ATDisassemblyWindow::OnSize() {
@@ -463,9 +526,9 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 	mpTextEditor->SetUpdateEnabled(false);
 
 	while((uint32)(pc - mViewStart) < viewLength) {
-		if (pc == mPCAddr)
+		if (pc == (uint16)mPCAddr)
 			mPCLine = line;
-		else if (pc == mFramePCAddr)
+		else if (pc == (uint16)mFramePCAddr)
 			mFramePCLine = line;
 
 		if (pc <= focusAddr)
@@ -473,7 +536,7 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 
 		++line;
 
-		if (autoModeSwitching && pc == mPCAddr)
+		if (autoModeSwitching && pc == (uint16)mPCAddr)
 			hent = hent0;
 
 		mAddressesByLine.push_back(pc);
@@ -516,7 +579,7 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 							e ^= xorv;
 							hent.mP ^= xorv;
 
-							hent.mbEmulation = e != 0;
+							hent.mbEmulation = (e & 1) != 0;
 
 							if (hent.mbEmulation)
 								hent.mP |= 0x30;
@@ -558,7 +621,7 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 
 	bool changed = false;
 
-	if (mLastState.mPC != state.mPC || mLastState.mFramePC != state.mFramePC)
+	if (mLastState.mPC != state.mPC || mLastState.mFramePC != state.mFramePC || mLastState.mK != state.mK)
 		changed = true;
 
 	mLastState = state;
@@ -573,17 +636,17 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 		mFramePCAddr = (uint32)-1;
 	}
 
-	if (changed && ((state.mFramePC - mViewStart) >= mViewLength || g_sim.GetCPU().GetCPUSubMode() != mLastSubMode)) {
-		SetPosition(state.mFramePC);
+	if (changed && ((state.mFramePC - mViewStart) >= mViewLength || state.mK != mViewBank || g_sim.GetCPU().GetCPUSubMode() != mLastSubMode)) {
+		SetPosition(mFramePCAddr);
 	} else {
 		const int n = mAddressesByLine.size();
 
 		for(int line = 0; line < n; ++line) {
 			uint16 addr = mAddressesByLine[line];
 
-			if (addr == mPCAddr)
+			if (addr == (uint16)mPCAddr)
 				mPCLine = line;
-			else if (addr == mFramePCAddr)
+			else if (addr == (uint16)mFramePCAddr)
 				mFramePCLine = line;
 		}
 
@@ -595,7 +658,7 @@ void ATDisassemblyWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemStat
 				mpTextEditor->SetCursorPos(mPCLine, 0);
 				mpTextEditor->MakeLineVisible(mPCLine);
 			} else {
-				SetPosition(state.mFramePC);
+				SetPosition(mFramePCAddr);
 				return;
 			}
 		}
@@ -640,9 +703,9 @@ void ATDisassemblyWindow::RecolorLine(int line, const char *text, int length, IV
 
 	if ((size_t)line < mAddressesByLine.size()) {
 		ATCPUEmulator& cpu = g_sim.GetCPU();
-		uint16 addr = mAddressesByLine[line];
+		uint32 addr = mAddressesByLine[line];
 
-		if (cpu.IsBreakpointSet(addr)) {
+		if (cpu.IsBreakpointSet((uint16)addr)) {
 			cl->AddTextColorPoint(next, 0x000000, 0xFF8080);
 			next += 4;
 		}
@@ -658,20 +721,21 @@ void ATDisassemblyWindow::SetPosition(uint32 addr) {
 	VDStringA text(ATGetDebugger()->GetAddressText(addr, true));
 	VDSetWindowTextFW32(mhwndAddress, L"%hs", text.c_str());
 
+	uint32 addr16 = addr & 0xffff;
 	uint32 offset = mpTextEditor->GetVisibleLineCount() * 12;
 
 	if (offset < 0x80)
 		offset = 0x80;
 
-	mViewStart = ATDisassembleGetFirstAnchor(addr >= offset ? addr - offset : 0, addr);
 	mViewBank = (uint8)(addr >> 16);
+	mViewStart = ATDisassembleGetFirstAnchor(addr16 >= offset ? addr16 - offset : 0, addr16, mViewBank);
 
 	RemakeView(addr);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATRegistersWindow : public ATUIPane, public IATDebuggerClient {
+class ATRegistersWindow : public ATUIDebuggerPane, public IATDebuggerClient {
 public:
 	ATRegistersWindow();
 	~ATRegistersWindow();
@@ -693,7 +757,7 @@ protected:
 };
 
 ATRegistersWindow::ATRegistersWindow()
-	: ATUIPane(kATUIPaneId_Registers, L"Registers")
+	: ATUIDebuggerPane(kATUIPaneId_Registers, L"Registers")
 	, mhwndEdit(NULL)
 {
 	mPreferredDockCode = kATContainerDockRight;
@@ -709,11 +773,11 @@ LRESULT ATRegistersWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 	}
 
-	return ATUIPane::WndProc(msg, wParam, lParam);
+	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
 }
 
 bool ATRegistersWindow::OnCreate() {
-	if (!ATUIPane::OnCreate())
+	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
 	mhwndEdit = CreateWindowEx(0, _T("EDIT"), _T(""), WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|ES_AUTOVSCROLL|ES_MULTILINE, 0, 0, 0, 0, mhwnd, (HMENU)100, VDGetLocalModuleHandleW32(), NULL);
@@ -729,7 +793,7 @@ bool ATRegistersWindow::OnCreate() {
 
 void ATRegistersWindow::OnDestroy() {
 	ATGetDebugger()->RemoveClient(this);
-	ATUIPane::OnDestroy();
+	ATUIDebuggerPane::OnDestroy();
 }
 
 void ATRegistersWindow::OnSize() {
@@ -834,7 +898,7 @@ void ATRegistersWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState&
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATCallStackWindow : public ATUIPane, public IATDebuggerClient {
+class ATCallStackWindow : public ATUIDebuggerPane, public IATDebuggerClient {
 public:
 	ATCallStackWindow();
 	~ATCallStackWindow();
@@ -858,7 +922,7 @@ protected:
 };
 
 ATCallStackWindow::ATCallStackWindow()
-	: ATUIPane(kATUIPaneId_CallStack, L"Call Stack")
+	: ATUIDebuggerPane(kATUIPaneId_CallStack, L"Call Stack")
 	, mhwndList(NULL)
 {
 	mPreferredDockCode = kATContainerDockRight;
@@ -893,11 +957,11 @@ LRESULT ATCallStackWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 	}
 
-	return ATUIPane::WndProc(msg, wParam, lParam);
+	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
 }
 
 bool ATCallStackWindow::OnCreate() {
-	if (!ATUIPane::OnCreate())
+	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
 	mhwndList = CreateWindowEx(0, _T("LISTBOX"), _T(""), WS_CHILD|WS_VISIBLE|LBS_HASSTRINGS|LBS_NOTIFY|LBS_WANTKEYBOARDINPUT, 0, 0, 0, 0, mhwnd, (HMENU)100, VDGetLocalModuleHandleW32(), NULL);
@@ -914,7 +978,7 @@ bool ATCallStackWindow::OnCreate() {
 
 void ATCallStackWindow::OnDestroy() {
 	ATGetDebugger()->RemoveClient(this);
-	ATUIPane::OnDestroy();
+	ATUIDebuggerPane::OnDestroy();
 }
 
 void ATCallStackWindow::OnSize() {
@@ -963,7 +1027,7 @@ void ATCallStackWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState&
 typedef vdfastvector<IATSourceWindow *> SourceWindows;
 SourceWindows g_sourceWindows;
 
-class ATSourceWindow : public VDShaderEditorBaseWindow
+class ATSourceWindow : public ATUIDebuggerPane
 					 , public IATSimulatorCallback
 					 , public IATDebuggerClient
 					 , public IVDTextEditorCallback
@@ -972,10 +1036,10 @@ class ATSourceWindow : public VDShaderEditorBaseWindow
 					 , public IATSourceWindow
 {
 public:
-	ATSourceWindow();
+	ATSourceWindow(uint32 id, const wchar_t *name);
 	~ATSourceWindow();
 
-	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
+	static bool CreatePane(uint32 id, ATUIPane **pp);
 
 	void LoadFile(const wchar_t *s, const wchar_t *alias);
 
@@ -986,6 +1050,9 @@ public:
 	const wchar_t *GetPathAlias() const {
 		return mPathAlias.empty() ? NULL : mPathAlias.c_str();
 	}
+
+protected:
+	virtual bool OnPaneCommand(ATUIPaneCommandId id);
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
@@ -1006,6 +1073,8 @@ protected:
 	int GetLineForAddress(uint32 addr);
 	bool OnFileUpdated(const wchar_t *path);
 
+	void	ToggleBreakpoint();
+
 	void	ActivateLine(int line);
 	void	FocusOnLine(int line);
 	void	SetPCLine(int line);
@@ -1025,7 +1094,6 @@ protected:
 
 	vdrefptr<IVDTextEditor>	mpTextEditor;
 	HWND	mhwndTextEditor;
-	HACCEL	mhAccel;
 	VDStringW	mPath;
 	VDStringW	mPathAlias;
 
@@ -1042,20 +1110,33 @@ protected:
 	VDFileWatcher	mFileWatcher;
 };
 
-ATSourceWindow::ATSourceWindow()
-	: mLastPC(-1)
+ATSourceWindow::ATSourceWindow(uint32 id, const wchar_t *name)
+	: ATUIDebuggerPane(id, name)
+	, mLastPC(-1)
 	, mLastFramePC(-1)
 	, mPCLine(-1)
 	, mFramePCLine(-1)
-	, mhAccel(LoadAccelerators(g_hInst, MAKEINTRESOURCE(IDR_DEBUGGER_ACCEL)))
 {
+
 }
 
 ATSourceWindow::~ATSourceWindow() {
 }
 
-VDGUIHandle ATSourceWindow::Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id) {
-	return (VDGUIHandle)CreateWindowEx(exStyle, (LPCTSTR)sWndClass, _T(""), style, x, y, cx, cy, (HWND)parent, (HMENU)id, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
+bool ATSourceWindow::CreatePane(uint32 id, ATUIPane **pp) {
+	uint32 index = id - kATUIPaneId_Source;
+
+	if (index >= g_sourceWindows.size())
+		return false;
+
+	ATSourceWindow *w = static_cast<ATSourceWindow *>(g_sourceWindows[index]);
+
+	if (!w)
+		return false;
+
+	w->AddRef();
+	*pp = w;
+	return true;
 }
 
 void ATSourceWindow::LoadFile(const wchar_t *s, const wchar_t *alias) {
@@ -1153,28 +1234,69 @@ void ATSourceWindow::LoadFile(const wchar_t *s, const wchar_t *alias) {
 	ATGetDebugger()->RequestClientUpdate(this);
 }
 
+bool ATSourceWindow::OnPaneCommand(ATUIPaneCommandId id) {
+	switch(id) {
+		case kATUIPaneCommandId_DebugToggleBreakpoint:
+			ToggleBreakpoint();
+			return true;
+
+		case kATUIPaneCommandId_DebugRun:
+			ATGetDebugger()->Run(kATDebugSrcMode_Source);
+			return true;
+
+		case kATUIPaneCommandId_DebugStepOver:
+		case kATUIPaneCommandId_DebugStepInto:
+			{
+				IATDebugger *dbg = ATGetDebugger();
+				IATDebuggerSymbolLookup *dsl = ATGetDebuggerSymbolLookup();
+				const uint32 pc = dbg->GetPC();
+
+				void (IATDebugger::*stepMethod)(ATDebugSrcMode, const ATDebuggerStepRange *, uint32)
+					= (id == kATUIPaneCommandId_DebugStepOver) ? &IATDebugger::StepOver : &IATDebugger::StepInto;
+
+				LooseAddressLookup::const_iterator it(mAddressToLineLooseLookup.upper_bound(pc));
+				if (it != mAddressToLineLooseLookup.end() && it != mAddressToLineLooseLookup.begin()) {
+					LooseAddressLookup::const_iterator itNext(it);
+					--it;
+
+					uint32 addr1 = it->first;
+					uint32 addr2 = itNext->first;
+
+					if (addr2 - addr1 < 100 && addr1 != addr2 && pc + 1 < addr2) {
+						ATDebuggerStepRange range = { pc + 1, (addr2 - pc) - 1 };
+						(dbg->*stepMethod)(kATDebugSrcMode_Source, &range, 1);
+						return true;
+					}
+				}
+
+				uint32 moduleId;
+				ATSourceLineInfo sli1;
+				ATSourceLineInfo sli2;
+				if (dsl->LookupLine(pc, false, moduleId, sli1)
+					&& dsl->LookupLine(pc, true, moduleId, sli2)
+					&& sli2.mOffset > pc + 1
+					&& sli2.mOffset - sli1.mOffset < 100)
+				{
+						ATDebuggerStepRange range = { pc + 1, sli2.mOffset - (pc + 1) };
+					(dbg->*stepMethod)(kATDebugSrcMode_Source, &range, 1);
+					return true;
+				}
+
+				(dbg->*stepMethod)(kATDebugSrcMode_Source, 0, 0);
+			}
+
+			return true;
+
+		case kATUIPaneCommandId_DebugStepOut:
+			ATGetDebugger()->StepOut(kATDebugSrcMode_Source);
+			return true;
+	}
+
+	return false;
+}
+
 LRESULT ATSourceWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch(msg) {
-		case WM_CREATE:
-			return OnCreate() ? 0 : -1;
-
-		case WM_DESTROY:
-			OnDestroy();
-			break;
-
-		case WM_SIZE:
-			OnSize();
-			return 0;
-
-		case WM_APP+100:
-			{
-				MSG& msg = *(MSG *)lParam;
-
-				if (TranslateAccelerator(mhwnd, mhAccel, &msg))
-					return TRUE;
-			}
-			return FALSE;
-
 		case WM_APP+101:
 			if (!mPath.empty()) {
 				try {
@@ -1220,7 +1342,7 @@ LRESULT ATSourceWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 	}
 
-	return VDShaderEditorBaseWindow::WndProc(msg, wParam, lParam);
+	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
 }
 
 bool ATSourceWindow::OnCreate() {
@@ -1235,23 +1357,27 @@ bool ATSourceWindow::OnCreate() {
 	mpTextEditor->SetCallback(this);
 	mpTextEditor->SetColorizer(this);
 
-	OnSize();
 	ATGetDebugger()->AddClient(this);
 	g_sim.AddCallback(this);
 
-	g_sourceWindows.push_back(this);
-	return true;
+	return ATUIDebuggerPane::OnCreate();
 }
 
 void ATSourceWindow::OnDestroy() {
-	SourceWindows::iterator it(std::find(g_sourceWindows.begin(), g_sourceWindows.end(), this));
-	if (it != g_sourceWindows.end())
-		g_sourceWindows.erase(it);
+	uint32 index = mPaneId - kATUIPaneId_Source;
+
+	if (index < g_sourceWindows.size() && g_sourceWindows[index] == this) {
+		g_sourceWindows[index] = NULL;
+	} else {
+		VDASSERT(!"Source window not found in global map.");
+	}
 
 	mFileWatcher.Shutdown();
 
 	g_sim.RemoveCallback(this);
 	ATGetDebugger()->RemoveClient(this);
+
+	ATUIDebuggerPane::OnDestroy();
 }
 
 void ATSourceWindow::OnSize() {
@@ -1270,71 +1396,8 @@ void ATSourceWindow::OnFontsUpdated() {
 
 bool ATSourceWindow::OnCommand(UINT cmd) {
 	switch(cmd) {
-		case ID_DEBUG_BREAK:
-			ATGetDebugger()->Break();
-			return true;
-		case ID_DEBUG_RUN:
-			ATGetDebugger()->Run(kATDebugSrcMode_Source);
-			return true;
-		case ID_DEBUG_TOGGLEBREAKPOINT:
 		case ID_CONTEXT_TOGGLEBREAKPOINT:
-			{
-				IATDebugger *dbg = ATGetDebugger();
-				const int line = mpTextEditor->GetCursorLine();
-
-				if (!mModulePath.empty()) {
-					dbg->ToggleSourceBreakpoint(mModulePath.c_str(), line + 1);
-				} else {
-					AddressLookup::const_iterator it(mLineToAddressLookup.find(line));
-					if (it != mLineToAddressLookup.end())
-						ATGetDebugger()->ToggleBreakpoint((uint16)it->second);
-					else
-						MessageBeep(MB_ICONEXCLAMATION);
-				}
-			}
-			return true;
-		case ID_DEBUG_STEPOVER:
-		case ID_DEBUG_STEPINTO:
-			{
-				IATDebugger *dbg = ATGetDebugger();
-				IATDebuggerSymbolLookup *dsl = ATGetDebuggerSymbolLookup();
-				const uint32 pc = dbg->GetPC();
-
-				void (IATDebugger::*stepMethod)(ATDebugSrcMode, uint32, uint32)
-					= (cmd == ID_DEBUG_STEPOVER) ? &IATDebugger::StepOver : &IATDebugger::StepInto;
-
-				LooseAddressLookup::const_iterator it(mAddressToLineLooseLookup.upper_bound(pc));
-				if (it != mAddressToLineLooseLookup.end() && it != mAddressToLineLooseLookup.begin()) {
-					LooseAddressLookup::const_iterator itNext(it);
-					--it;
-
-					uint32 addr1 = it->first;
-					uint32 addr2 = itNext->first;
-
-					if (addr2 - addr1 < 100 && addr1 != addr2 && pc + 1 < addr2) {
-						(dbg->*stepMethod)(kATDebugSrcMode_Source, pc + 1, (addr2 - pc) - 1);
-						return true;
-					}
-				}
-
-				uint32 moduleId;
-				ATSourceLineInfo sli1;
-				ATSourceLineInfo sli2;
-				if (dsl->LookupLine(pc, false, moduleId, sli1)
-					&& dsl->LookupLine(pc, true, moduleId, sli2)
-					&& sli2.mOffset > pc + 1
-					&& sli2.mOffset - sli1.mOffset < 100)
-				{
-					(dbg->*stepMethod)(kATDebugSrcMode_Source, pc + 1, sli2.mOffset - (pc + 1));
-					return true;
-				}
-
-				(dbg->*stepMethod)(kATDebugSrcMode_Source, 0, 0);
-			}
-
-			return true;
-		case ID_DEBUG_STEPOUT:
-			ATGetDebugger()->StepOut(kATDebugSrcMode_Source);
+			ToggleBreakpoint();
 			return true;
 
 		case ID_CONTEXT_SHOWNEXTSTATEMENT:
@@ -1522,7 +1585,7 @@ int ATSourceWindow::GetLineForAddress(uint32 addr) {
 	if (it != mAddressToLineLooseLookup.begin()) {
 		--it;
 
-		if (addr - (uint32)it->first < 16)
+		if (addr - (uint32)it->first < 64)
 			return it->second;
 	}
 
@@ -1536,19 +1599,32 @@ bool ATSourceWindow::OnFileUpdated(const wchar_t *path) {
 	return true;
 }
 
+void ATSourceWindow::ToggleBreakpoint() {
+	IATDebugger *dbg = ATGetDebugger();
+	const int line = mpTextEditor->GetCursorLine();
+
+	if (!mModulePath.empty()) {
+		dbg->ToggleSourceBreakpoint(mModulePath.c_str(), line + 1);
+	} else {
+		AddressLookup::const_iterator it(mLineToAddressLookup.find(line));
+		if (it != mLineToAddressLookup.end())
+			ATGetDebugger()->ToggleBreakpoint((uint16)it->second);
+		else
+			MessageBeep(MB_ICONEXCLAMATION);
+	}
+}
+
 void ATSourceWindow::ActivateLine(int line) {
 	mpTextEditor->SetCursorPos(line, 0);
 
-	::SetActiveWindow(mhwnd);
-	::SetFocus(mhwndTextEditor);
+	ATActivateUIPane(mPaneId, true);
 }
 
 void ATSourceWindow::FocusOnLine(int line) {
 	mpTextEditor->CenterViewOnLine(line);
 	mpTextEditor->SetCursorPos(line, 0);
 
-	::SetActiveWindow(mhwnd);
-	::SetFocus(mhwndTextEditor);
+	ATActivateUIPane(mPaneId, true);
 }
 
 void ATSourceWindow::SetPCLine(int line) {
@@ -1612,6 +1688,9 @@ IATSourceWindow *ATGetSourceWindow(const wchar_t *s) {
 	for(; it != itEnd; ++it) {
 		IATSourceWindow *w = *it;
 
+		if (!w)
+			continue;
+
 		const wchar_t *t = w->GetPath();
 
 		if (VDFileIsPathEqual(s, t))
@@ -1628,6 +1707,9 @@ IATSourceWindow *ATGetSourceWindow(const wchar_t *s) {
 
 	for(it = g_sourceWindows.begin(); it != itEnd; ++it) {
 		IATSourceWindow *w = *it;
+
+		if (!w)
+			continue;
 
 		const wchar_t *t = VDFileSplitPath(w->GetPath());
 
@@ -1660,24 +1742,55 @@ IATSourceWindow *ATOpenSourceWindow(const wchar_t *s) {
 	if (!VDDoesPathExist(s)) {
 		VDStringW title(L"Find source file ");
 		title += s;
-		fn = VDGetLoadFileName('src ', (VDGUIHandle)hwndParent, title.c_str(), L"All files (*.*)\0*.*\0", NULL);
+
+		static const wchar_t kCatchAllFilter[] = L"\0All files (*.*)\0*.*";
+		VDStringW filter(s);
+		filter += L'\0';
+		filter += s;
+		filter.append(kCatchAllFilter, kCatchAllFilter + (sizeof kCatchAllFilter));		// !! intentionally capturing end null
+
+		fn = VDGetLoadFileName('src ', (VDGUIHandle)hwndParent, title.c_str(), filter.c_str(), NULL);
 
 		if (fn.empty())
 			return NULL;
 	}
 
-	vdrefptr<ATSourceWindow> srcwin(new ATSourceWindow);
+	// find a free pane ID
+	SourceWindows::iterator it = std::find(g_sourceWindows.begin(), g_sourceWindows.end(), (IATSourceWindow *)NULL);
+	const uint32 paneIndex = (uint32)(it - g_sourceWindows.begin());
 
-	HWND hwndSrcWin = (HWND)srcwin->Create(WS_EX_NOPARENTNOTIFY, WS_OVERLAPPEDWINDOW|WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, (VDGUIHandle)hwndParent, 0);
+	if (it == g_sourceWindows.end())
+		g_sourceWindows.push_back(NULL);
 
-	if (hwndSrcWin) {
+	const uint32 paneId = kATUIPaneId_Source + paneIndex;
+	vdrefptr<ATSourceWindow> srcwin(new ATSourceWindow(paneId, VDFileSplitPath(s)));
+	g_sourceWindows[paneIndex] = srcwin;
+
+	// If the active window is a source or disassembly window, dock in the same place.
+	// Otherwise, if we have a source window, dock over that, otherwise dock over the
+	// disassembly window.
+	uint32 activePaneId = ATUIGetActivePaneId();
+
+	if (activePaneId >= kATUIPaneId_Source || activePaneId == kATUIPaneId_Disassembly)
+		ATActivateUIPane(paneId, true, true, activePaneId, kATContainerDockCenter);
+	else if (paneIndex > 0) {
+		// We always add the new pane at the first non-null position or at the end,
+		// whichever comes first. Therefore, unless this is pane 0, the previous pane
+		// is always present.
+		ATActivateUIPane(paneId, true, true, paneId - 1, kATContainerDockCenter);
+	} else if (ATGetUIPane(kATUIPaneId_Disassembly))
+		ATActivateUIPane(paneId, true, true, kATUIPaneId_Disassembly, kATContainerDockCenter);
+	else
+		ATActivateUIPane(paneId, true);
+
+	if (srcwin->GetHandleW32()) {
 		try {
 			if (fn.empty())
 				srcwin->LoadFile(s, NULL);
 			else
 				srcwin->LoadFile(fn.c_str(), s);
 		} catch(const MyError& e) {
-			DestroyWindow(hwndSrcWin);
+			ATCloseUIPane(paneId);
 			e.post(g_hwnd, "Altirra error");
 			return NULL;
 		}
@@ -1685,12 +1798,14 @@ IATSourceWindow *ATOpenSourceWindow(const wchar_t *s) {
 		return srcwin;
 	}
 
+	g_sourceWindows[paneIndex] = NULL;
+
 	return NULL;
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATHistoryWindow : public ATUIPane, public IATDebuggerClient {
+class ATHistoryWindow : public ATUIDebuggerPane, public IATDebuggerClient {
 public:
 	ATHistoryWindow();
 	~ATHistoryWindow();
@@ -1708,6 +1823,7 @@ protected:
 		uint32	mHeight;		// Height, in items
 		bool	mbExpanded;
 		bool	mbHeightDirty;
+		bool	mbVisible;
 		TreeNode *mpParent;
 		TreeNode *mpPrevSibling;
 		TreeNode *mpNextSibling;
@@ -1719,9 +1835,10 @@ protected:
 		uint32	mRepeatCount;
 		uint32	mRepeatSize;
 		NodeType	mNodeType;
-		VDStringA	mText;
+		const char *mpText;
 	};
 
+	LRESULT EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
 	bool OnCreate();
 	void OnDestroy();
@@ -1735,9 +1852,10 @@ protected:
 	void OnVScroll(int code);
 	void OnPaint();
 	void PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, uint32 itemEnd, TreeNode *node, uint32 pos, uint32 level);
-	const VDStringA *GetNodeText(TreeNode *node);
+	const char *GetNodeText(TreeNode *node);
 	void HScrollToPixel(int y);
 	void ScrollToPixel(int y);
+	void InvalidateNode(TreeNode *node);
 	void InvalidateStartingAtNode(TreeNode *node);
 	void SelectNode(TreeNode *node);
 	void ExpandNode(TreeNode *node);
@@ -1767,16 +1885,31 @@ protected:
 	void CopyVisibleNodes();
 	void CopyNodes(TreeNode *begin, TreeNode *end);
 
+	void Search(const char *substr);
+	bool SearchNodes(TreeNode *node, const char *substr);
+
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
 	void OnDebuggerEvent(ATDebugEvent eventId);
 
-	HWND mhwndHeader;
+	enum {
+		kMaxNestingDepth = 64,
+		kControlIdPanel = 100,
+		kControlIdClearButton,
+		kControlIdSearchEdit
+	};
+
+	HWND mhwndPanel;
+	HWND mhwndClear;
+	HWND mhwndEdit;
+	VDFunctionThunk	*mpEditThunk;
+	WNDPROC	mEditProc;
 	HMENU mMenu;
 	RECT mContentRect;
 	TreeNode mRootNode;
 	TreeNode *mpSelectedNode;
 	uint32 mWidth;
 	uint32 mHeight;
+	uint32 mClearButtonWidth;
 	uint32 mHeaderHeight;
 	uint32 mCharWidth;
 	uint32 mItemHeight;
@@ -1797,17 +1930,20 @@ protected:
 		kTsMode_UnhaltedCycles,
 	} mTimestampMode;
 
+	bool	mbFocus;
 	bool	mbHistoryError;
 	bool	mbUpdatesBlocked;
 	bool	mbInvalidatesBlocked;
 	bool	mbDirtyScrollBar;
 	bool	mbDirtyHScrollBar;
+	bool	mbSearchActive;
 	bool	mbShowPCAddress;
 	bool	mbShowRegisters;
 	bool	mbShowSpecialRegisters;
 	bool	mbShowFlags;
 	bool	mbShowCodeBytes;
 	bool	mbShowLabels;
+	bool	mbShowLabelNamespaces;
 	bool	mbCollapseLoops;
 	bool	mbCollapseCalls;
 	bool	mbCollapseInterrupts;
@@ -1840,16 +1976,55 @@ protected:
 	int mRepeatInsnCount;
 	int mRepeatLooseNodeCount;
 
-	TreeNode *mStackLevels[256];
+	struct StackLevel {
+		TreeNode *mpTreeNode;
+		int mDepth;
+	};
+
+	StackLevel mStackLevels[256];
+
+	class Panel : public ATUINativeWindow {
+	public:
+		Panel(ATHistoryWindow *p) : mpParent(p) {}
+
+		virtual LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+			if (msg == WM_COMMAND) {
+				if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kControlIdClearButton) {
+					if (mpParent) {
+						if (mpParent->mbSearchActive) {
+							mpParent->Search(NULL);
+							SetWindowTextW(mpParent->mhwndEdit, L"");
+						} else {
+							mpParent->Search(VDGetWindowTextAW32(mpParent->mhwndEdit).c_str());
+						}
+					}
+					return 0;
+				}
+			}
+
+			return ATUINativeWindow::WndProc(msg, wParam, lParam);
+		}
+
+		ATHistoryWindow *mpParent;
+	};
+
+	vdrefptr<Panel> mpPanel;
+	VDStringW mTextSearch;
+	VDStringW mTextClear;
 };
 
 ATHistoryWindow::ATHistoryWindow()
-	: ATUIPane(kATUIPaneId_History, L"History")
-	, mhwndHeader(NULL)
+	: ATUIDebuggerPane(kATUIPaneId_History, L"History")
+	, mhwndPanel(NULL)
+	, mhwndEdit(NULL)
+	, mpEditThunk(NULL)
+	, mEditProc(NULL)
 	, mMenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_HISTORY_CONTEXT_MENU)))
 	, mpSelectedNode(NULL)
 	, mWidth(0)
 	, mHeight(0)
+	, mClearButtonWidth(0)
+	, mCharWidth(0)
 	, mHeaderHeight(0)
 	, mItemHeight(0)
 	, mItemTextVOffset(0)
@@ -1859,20 +2034,23 @@ ATHistoryWindow::ATHistoryWindow()
 	, mScrollMax(0)
 	, mScrollWheelAccum(0)
 	, mTimestampMode(kTsMode_Beam)
+	, mbFocus(false)
 	, mbHistoryError(false)
 	, mbUpdatesBlocked(false)
 	, mbInvalidatesBlocked(false)
 	, mbDirtyScrollBar(false)
 	, mbDirtyHScrollBar(false)
+	, mbSearchActive(false)
 	, mbCollapseLoops(true)
 	, mbCollapseCalls(true)
 	, mbCollapseInterrupts(true)
 	, mbShowPCAddress(true)
 	, mbShowRegisters(true)
-	, mbShowSpecialRegisters(true)
-	, mbShowFlags(false)
+	, mbShowSpecialRegisters(false)
+	, mbShowFlags(true)
 	, mbShowCodeBytes(true)
 	, mbShowLabels(true)
+	, mbShowLabelNamespaces(true)
 	, mTimeBaseCycles(0)
 	, mTimeBaseUnhaltedCycles(0)
 	, mHiBaseCycles(0)
@@ -1882,18 +2060,40 @@ ATHistoryWindow::ATHistoryWindow()
 	, mNodeCount(0)
 	, mpNodeFreeList(NULL)
 	, mpNodeBlocks(NULL)
+	, mpPanel(new Panel(this))
 {
+	SetTouchMode(kATUITouchMode_2DPanSmooth);
 	mPreferredDockCode = kATContainerDockRight;
 
 	memset(&mContentRect, 0, sizeof mContentRect);
 
 	memset(&mRootNode, 0, sizeof mRootNode);
+	mRootNode.mbVisible = true;
 	ClearAllNodes();
+
+	mTextSearch = L"Search";
+	mTextClear = L"Clear";
 }
 
 ATHistoryWindow::~ATHistoryWindow() {
 	if (mMenu)
 		DestroyMenu(mMenu);
+}
+
+LRESULT ATHistoryWindow::EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+	if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+		if (wParam == VK_ESCAPE) {
+			SetFocus(mhwnd);
+			return 0;
+		}
+	} else if (msg == WM_CHAR || msg == WM_SYSCHAR) {
+		if (wParam == '\r') {
+			Search(VDGetWindowTextAW32(hwnd).c_str());
+			return 0;
+		}
+	}
+
+	return CallWindowProc(mEditProc, hwnd, msg, wParam, lParam);
 }
 
 LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1946,6 +2146,7 @@ LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWFLAGS, mbShowFlags);
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWCODEBYTES, mbShowCodeBytes);
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWLABELS, mbShowLabels);
+				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWLABELNAMESPACES, mbShowLabelNamespaces);
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_COLLAPSELOOPS, mbCollapseLoops);
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_COLLAPSECALLS, mbCollapseCalls);
 				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_COLLAPSEINTERRUPTS, mbCollapseInterrupts);
@@ -1989,6 +2190,10 @@ LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					return true;
 				case ID_HISTORYCONTEXTMENU_SHOWLABELS:
 					mbShowLabels = !mbShowLabels;
+					InvalidateRect(mhwnd, NULL, TRUE);
+					return true;
+				case ID_HISTORYCONTEXTMENU_SHOWLABELNAMESPACES:
+					mbShowLabelNamespaces = !mbShowLabelNamespaces;
 					InvalidateRect(mhwnd, NULL, TRUE);
 					return true;
 
@@ -2051,20 +2256,52 @@ LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			}
 
 			break;
+
+		case WM_SETFOCUS:
+			if (!mbFocus) {
+				mbFocus = true;
+				if (mpSelectedNode)
+					InvalidateNode(mpSelectedNode);
+			}
+			break;
+
+		case WM_KILLFOCUS:
+			if (mbFocus) {
+				mbFocus = false;
+				if (mpSelectedNode)
+					InvalidateNode(mpSelectedNode);
+			}
+			break;
 	}
 
-	return ATUIPane::WndProc(msg, wParam, lParam);
+	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
 }
 
 bool ATHistoryWindow::OnCreate() {
-	if (!ATUIPane::OnCreate())
+	if (!ATUIDebuggerPane::OnCreate())
 		return false;
+
+	mhwndPanel = CreateWindowEx(0, MAKEINTATOM(ATUINativeWindow::Register()), _T(""), WS_VISIBLE|WS_CHILD|WS_CLIPCHILDREN, 0, 0, 0, 0, mhwnd, (HMENU)kControlIdPanel, g_hInst, mpPanel);
+	if (!mhwndPanel)
+		return false;
+
+	mhwndClear = CreateWindowEx(0, WC_BUTTON, _T(""), WS_VISIBLE|WS_CHILD|BS_CENTER, 0, 0, 0, 0, mhwndPanel, (HMENU)kControlIdClearButton, g_hInst, NULL);
+	if (!mhwndClear)
+		return false;
+
+	mhwndEdit = CreateWindowEx(WS_EX_CLIENTEDGE, WC_EDIT, _T(""), WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwndPanel, (HMENU)kControlIdSearchEdit, g_hInst, NULL);
+	if (!mhwndEdit)
+		return false;
+
+	SendMessageW(mhwndEdit, EM_SETCUEBANNER, FALSE, (LPARAM)L"substring");
 
 	OnFontsUpdated();
 
-	mhwndHeader = CreateWindowEx(WS_EX_CLIENTEDGE, WC_HEADER, _T(""), WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
-	if (!mhwndHeader)
-		return false;
+	VDSetWindowTextW32(mhwndClear, mTextSearch.c_str());
+
+	mpEditThunk = VDCreateFunctionThunkFromMethod(this, &ATHistoryWindow::EditWndProc, true);
+	mEditProc = (WNDPROC)GetWindowLongPtr(mhwndEdit, GWLP_WNDPROC);
+	SetWindowLongPtr(mhwndEdit, GWLP_WNDPROC, (LONG_PTR)mpEditThunk);
 
 	if (!g_sim.GetCPU().IsHistoryEnabled()) {
 		mbHistoryError = true;
@@ -2080,6 +2317,11 @@ bool ATHistoryWindow::OnCreate() {
 }
 
 void ATHistoryWindow::OnDestroy() {
+	if (mpPanel) {
+		mpPanel->mpParent = NULL;
+		mpPanel = NULL;
+	}
+
 	mRootNode.mpFirstChild = NULL;
 	mRootNode.mpLastChild = NULL;
 
@@ -2094,8 +2336,20 @@ void ATHistoryWindow::OnDestroy() {
 
 	mpNodeFreeList = NULL;
 
+	mhwndPanel = NULL;
+
+	if (mhwndEdit) {
+		DestroyWindow(mhwndEdit);
+		mhwndEdit = NULL;
+	}
+
+	if (mpEditThunk) {
+		VDDestroyFunctionThunk(mpEditThunk);
+		mpEditThunk = NULL;
+	}
+
 	ATGetDebugger()->RemoveClient(this);
-	ATUIPane::OnDestroy();
+	ATUIDebuggerPane::OnDestroy();
 }
 
 void ATHistoryWindow::OnSize() {
@@ -2106,16 +2360,18 @@ void ATHistoryWindow::OnSize() {
 
 	mWidth = r.right;
 	mHeight = r.bottom;
+	mHeaderHeight = 0;
 
-	if (mhwndHeader) {
-		HDLAYOUT hdl;
-		WINDOWPOS wp;
-		hdl.prc = &r;
-		hdl.pwpos = &wp;
-		if (Header_Layout(mhwndHeader, &hdl)) {
-			mHeaderHeight = wp.cy;
-			VDVERIFY(SetWindowPos(mhwndHeader, NULL, wp.x, wp.y, wp.cx, wp.cy, SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS));
-		}
+	if (mhwndPanel) {
+		mHeaderHeight = std::max(g_monoFontLineHeight, g_propFontLineHeight) + 2*GetSystemMetrics(SM_CYEDGE);
+
+		VDVERIFY(SetWindowPos(mhwndPanel, NULL, 0, 0, mWidth, mHeaderHeight, SWP_NOZORDER|SWP_NOACTIVATE));
+
+		if (mhwndClear)
+			VDVERIFY(SetWindowPos(mhwndClear, NULL, 0, 0, mClearButtonWidth, mHeaderHeight, SWP_NOZORDER|SWP_NOACTIVATE));
+
+		if (mhwndEdit)
+			VDVERIFY(SetWindowPos(mhwndEdit, NULL, mClearButtonWidth, 0, mWidth < mClearButtonWidth ? 0 : mWidth - mClearButtonWidth, mHeaderHeight, SWP_NOZORDER|SWP_NOACTIVATE));
 	}
 
 	mContentRect = r;
@@ -2145,6 +2401,9 @@ void ATHistoryWindow::OnSize() {
 }
 
 void ATHistoryWindow::OnFontsUpdated() {
+	SendMessage(mhwndClear, WM_SETFONT, (WPARAM)g_propFont, TRUE);
+	SendMessage(mhwndEdit, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+
 	mCharWidth = 12;
 	mItemHeight = 16;
 	mItemTextVOffset = 0;
@@ -2155,9 +2414,24 @@ void ATHistoryWindow::OnFontsUpdated() {
 		TEXTMETRIC tm = {0};
 		if (GetTextMetrics(hdc, &tm)) {
 			mCharWidth = tm.tmAveCharWidth;
-			mItemHeight = tm.tmHeight + 2*GetSystemMetrics(SM_CYEDGE);
-			mItemTextVOffset = GetSystemMetrics(SM_CYEDGE);
+			mItemHeight = tm.tmHeight;
+			mItemTextVOffset = 0;
 		}
+
+		SelectObject(hdc, g_propFont);
+
+		mClearButtonWidth = 0;
+
+		SIZE sz;
+		if (GetTextExtentPoint32W(hdc, mTextSearch.data(), mTextSearch.size(), &sz))
+			mClearButtonWidth = sz.cx;
+
+		if (GetTextExtentPoint32W(hdc, mTextClear.data(), mTextClear.size(), &sz)) {
+			if (sz.cx > 0 && mClearButtonWidth < (uint32)sz.cx)
+				mClearButtonWidth = (uint32)sz.cx;
+		}
+
+		mClearButtonWidth += 8 * GetSystemMetrics(SM_CXEDGE);
 
 		ReleaseDC(mhwnd, hdc);
 	}
@@ -2207,7 +2481,7 @@ void ATHistoryWindow::OnLButtonDblClk(int x, int y, int mods) {
 		mpSelectedNode = node;
 		InvalidateRect(mhwnd, NULL, FALSE);
 
-		if (node->mText.empty())
+		if (!*node->mpText)
 			ATGetDebugger()->SetFramePC(node->mHEnt.mPC);
 	} else if (x >= (level - 1)*(int)mItemHeight && node->mpFirstChild) {
 		if (node->mbExpanded)
@@ -2533,7 +2807,9 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 			return;
 
 		// Check if the node is visible at all. If not, we can skip rendering and traversal.
-		if (pos + node->mHeight <= itemStart) {
+		if (!node->mbVisible) {
+			// skip invisible node
+		} else if (pos + node->mHeight <= itemStart) {
 			pos += node->mHeight;
 		} else {
 			if (pos >= itemStart) {
@@ -2541,8 +2817,12 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 
 				if (mpSelectedNode == node) {
 					selected = true;
-					SetBkColor(hdc, GetSysColor(COLOR_HIGHLIGHT));
-					SetTextColor(hdc, GetSysColor(COLOR_HIGHLIGHTTEXT));
+					
+					uint32 bgc = GetSysColor(mbFocus ? COLOR_HIGHLIGHT : COLOR_3DFACE);
+					uint32 fgc = GetSysColor(mbFocus ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT);
+
+					SetBkColor(hdc, bgc);
+					SetTextColor(hdc, fgc);
 				} else {
 					SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
 					SetTextColor(hdc, GetSysColor(COLOR_WINDOWTEXT));
@@ -2557,9 +2837,9 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 				rOpaque.right = mWidth;
 				rOpaque.bottom = y + mItemHeight;
 
-				const VDStringA *s = GetNodeText(node);
+				const char *s = GetNodeText(node);
 
-				ExtTextOutA(hdc, x + mItemHeight, rOpaque.top + mItemTextVOffset, ETO_OPAQUE | ETO_CLIPPED, &rOpaque, s->data(), s->size(), NULL);
+				ExtTextOutA(hdc, x + mItemHeight, rOpaque.top + mItemTextVOffset, ETO_OPAQUE | ETO_CLIPPED, &rOpaque, s, strlen(s), NULL);
 
 				RECT rPad;
 				rPad.left = rPaint->left;
@@ -2572,9 +2852,9 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 				if (node->mpFirstChild) {
 					SelectObject(hdc, selected ? GetStockObject(WHITE_PEN) : GetStockObject(BLACK_PEN));
 
-					int boxsize = (mItemHeight - 5) & ~1;
-					int x1 = x + 2;
-					int y1 = y + 2;
+					int boxsize = (mItemHeight - 3) & ~1;
+					int x1 = x + 1;
+					int y1 = y + 1;
 					int x2 = x1 + boxsize;
 					int y2 = y1 + boxsize;
 
@@ -2622,13 +2902,13 @@ void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 	}
 }
 
-const VDStringA *ATHistoryWindow::GetNodeText(TreeNode *node) {
-	const VDStringA *s = &node->mText;
+const char *ATHistoryWindow::GetNodeText(TreeNode *node) {
+	const char *s = node->mpText;
 
 	switch(node->mNodeType) {
 		case kNodeTypeRepeat:
 			mTempLine.sprintf("Last %d insns repeated %d times", node->mRepeatSize, node->mRepeatCount);
-			s = &mTempLine;
+			s = mTempLine.c_str();
 			break;
 
 		case kNodeTypeInterrupt:
@@ -2638,7 +2918,7 @@ const VDStringA *ATHistoryWindow::GetNodeText(TreeNode *node) {
 				int beamy = (hent.mTimestamp >> 8) & 0xfff;
 
 				mTempLine = hent.mbNMI ? beamy >= 248 ? "NMI interrupt (VBI)" : "NMI interrupt (DLI)" : "IRQ interrupt";
-				s = &mTempLine;
+				s = mTempLine.c_str();
 			}
 			break;
 
@@ -2691,39 +2971,57 @@ const VDStringA *ATHistoryWindow::GetNodeText(TreeNode *node) {
 				}
 
 				if (mbShowRegisters) {
-					if (is65C816 && !hent.mbEmulation) {
-						if (hent.mP & AT6502::kFlagM) {
-							mTempLine.append_sprintf("C=%02X%02X"
-								, hent.mAH
-								, hent.mA
-								);
-						} else {
-							mTempLine.append_sprintf("A=%02X%02X"
-								, hent.mAH
-								, hent.mA
-								);
-						}
+					if (is65C816) {
+						if (!hent.mbEmulation) {
+							if (hent.mP & AT6502::kFlagM) {
+								mTempLine.append_sprintf("C=%02X%02X"
+									, hent.mAH
+									, hent.mA
+									);
+							} else {
+								mTempLine.append_sprintf("A=%02X%02X"
+									, hent.mAH
+									, hent.mA
+									);
+							}
 
-						if (hent.mP & AT6502::kFlagX) {
-							mTempLine.append_sprintf(" X=--%02X Y=--%02X"
+							if (hent.mP & AT6502::kFlagX) {
+								mTempLine.append_sprintf(" X=--%02X Y=--%02X"
+									, hent.mX
+									, hent.mY
+									);
+							} else {
+								mTempLine.append_sprintf(" X=%02X%02X Y=%02X%02X"
+									, hent.mXH
+									, hent.mX
+									, hent.mYH
+									, hent.mY
+									);
+							}
+
+							if (mbShowSpecialRegisters) {
+								mTempLine.append_sprintf(" S=%02X%02X B=%02X D=%04X P=%02X"
+									, hent.mSH
+									, hent.mS
+									, hent.mP
+									, hent.mB
+									, hent.mD
+									);
+							}
+						} else {
+							mTempLine.append_sprintf("A=%02X:%02X X=%02X Y=%02X"
+								, hent.mAH
+								, hent.mA
 								, hent.mX
 								, hent.mY
 								);
-						} else {
-							mTempLine.append_sprintf(" X=%02X%02X Y=%02X%02X"
-								, hent.mXH
-								, hent.mX
-								, hent.mYH
-								, hent.mY
-								);
-						}
 
-						if (mbShowSpecialRegisters) {
-							mTempLine.append_sprintf(" S=%02X%02X P=%02X"
-								, hent.mSH
-								, hent.mS
-								, hent.mP
-								);
+							if (mbShowSpecialRegisters) {
+								mTempLine.append_sprintf(" S=%02X P=%02X"
+									, hent.mS
+									, hent.mP
+									);
+							}
 						}
 					} else {
 						mTempLine.append_sprintf("A=%02X X=%02X Y=%02X"
@@ -2768,9 +3066,9 @@ const VDStringA *ATHistoryWindow::GetNodeText(TreeNode *node) {
 				if (mbShowRegisters || mbShowFlags)
 					mTempLine += " | ";
 
-				ATDisassembleInsn(mTempLine, hent, false, true, mbShowPCAddress, mbShowCodeBytes, mbShowLabels);
+				ATDisassembleInsn(mTempLine, hent, false, true, mbShowPCAddress, mbShowCodeBytes, mbShowLabels, false, false, mbShowLabelNamespaces);
 
-				s = &mTempLine;
+				s = mTempLine.c_str();
 			}
 			break;
 	}
@@ -2807,10 +3105,24 @@ void ATHistoryWindow::ScrollToPixel(int pos) {
 	}
 }
 
-void ATHistoryWindow::InvalidateStartingAtNode(TreeNode *node) {
-	int y = GetNodeYPos(node);
+void ATHistoryWindow::InvalidateNode(TreeNode *node) {
+	uint32 y = GetNodeYPos(node) * mItemHeight;
 
-	if ((uint32)y < mScrollY + mHeight)
+	if (y < mScrollY + (mContentRect.bottom - mContentRect.top) && y + mItemHeight > mScrollY) {
+		RECT r;
+		r.left = 0;
+		r.top = (int)y - (int)mScrollY + mHeaderHeight;
+		r.right = mWidth;
+		r.bottom = r.top + mItemHeight;
+
+		InvalidateRect(mhwnd, &r, TRUE);
+	}
+}
+
+void ATHistoryWindow::InvalidateStartingAtNode(TreeNode *node) {
+	int y = GetNodeYPos(node) * mItemHeight;
+
+	if ((uint32)y < mScrollY + (mContentRect.bottom - mContentRect.top))
 		InvalidateRect(mhwnd, NULL, TRUE);
 }
 
@@ -2974,7 +3286,7 @@ ATHistoryWindow::TreeNode *ATHistoryWindow::GetNodeFromClientPoint(int x, int y)
 			break;
 
 		uint32 offset = idx - p->mRelYPos;
-		if (offset < p->mHeight) {
+		if (p->mbVisible && offset < p->mHeight) {
 			if (!offset || !p->mbExpanded)
 				return p;
 
@@ -3164,6 +3476,12 @@ void ATHistoryWindow::UpdateOpcodes() {
 		mLastCounter = c - l;
 	}
 
+	if (mbSearchActive) {
+		Search(NULL);
+		if (mhwndEdit)
+			SetWindowTextW(mhwndEdit, L"");
+	}
+
 	bool quickMode = false;
 	if (dist > 1000) {
 		quickMode = true;
@@ -3193,40 +3511,64 @@ void ATHistoryWindow::UpdateOpcodes() {
 
 		if (mLastS != hent.mS) {
 			if ((uint8)(mLastS - hent.mS) >= 8) {		// hent.mS > mLastS, with some wraparound slop
-				while(hent.mS != mLastS)				// note that mLastS is a uint8 and will wrap
-					mStackLevels[mLastS++] = NULL;
+				while(hent.mS != mLastS) {				// note that mLastS is a uint8 and will wrap
+					mStackLevels[mLastS].mpTreeNode = NULL;
+					mStackLevels[mLastS].mDepth = 0;
+					++mLastS;
+				}
 			} else {
-				while(hent.mS != mLastS)				// note that mLastS is a uint8 and will wrap
-					mStackLevels[--mLastS] = NULL;
+				while(hent.mS != mLastS) {				// note that mLastS is a uint8 and will wrap
+					--mLastS;
+					mStackLevels[mLastS].mpTreeNode = NULL;
+					mStackLevels[mLastS].mDepth = 0;
+				}
 			}
 		}
 
 		// Check if we have a parent to use.
-		TreeNode *parent = mStackLevels[hent.mS];
+		TreeNode *parent = mStackLevels[hent.mS].mpTreeNode;
+		int parentDepth = mStackLevels[hent.mS].mDepth;
 
 		if (!parent) {
 			uint8 s = hent.mS + 1;
 			for(int i=0; i<8; ++i, ++s) {
-				parent = mStackLevels[s];
+				parent = mStackLevels[s].mpTreeNode;
 
-				if (parent)
+				if (parent) {
+					parentDepth = mStackLevels[s].mDepth;
 					break;
+				}
 			}
 
 			if (!parent)
 				parent = &mRootNode;
 
 			if (hent.mbNMI || hent.mbIRQ) {
-				if (mbCollapseInterrupts)
-					parent = InsertNode(parent, parent ? parent->mpLastChild : NULL, "", &hent, kNodeTypeInterrupt);
+				if (mbCollapseInterrupts) {
+					if (parentDepth >= kMaxNestingDepth) {
+						parent = &mRootNode;
+						parentDepth = 0;
+					}
+
+					parent = InsertNode(parent, parent->mpLastChild, "", &hent, kNodeTypeInterrupt);
+					++parentDepth;
+				}
 			} else if (mbCollapseCalls) {
+				if (parentDepth >= kMaxNestingDepth) {
+					parent = &mRootNode;
+					parentDepth = 0;
+				}
+
 				if (parent->mpLastChild)
 					parent = parent->mpLastChild;
 				else
-					parent = InsertNode(parent, parent ? parent->mpLastChild : NULL, "Subroutine call", NULL, kNodeTypeLabel);
+					parent = InsertNode(parent, parent->mpLastChild, "Subroutine call", NULL, kNodeTypeLabel);
+
+				++parentDepth;
 			}
 
-			mStackLevels[hent.mS] = parent;
+			mStackLevels[hent.mS].mpTreeNode = parent;
+			mStackLevels[hent.mS].mDepth = parentDepth;
 		}
 
 		// Note that there is a serious problem here in that we are only tracking an 8-bit
@@ -3235,11 +3577,16 @@ void ATHistoryWindow::UpdateOpcodes() {
 
 		switch(hent.mOpcode[0]) {
 			case 0x48:	// PHA
-				if (is65C816 && !(hent.mP & 0x20))
-					mStackLevels[(uint8)--mLastS] = parent;
+				if (is65C816 && !(hent.mP & 0x20)) {
+					--mLastS;
+					mStackLevels[(uint8)mLastS].mpTreeNode = parent;
+					mStackLevels[(uint8)mLastS].mDepth = parentDepth;
+				}
 				// fall through
 			case 0x08:	// PHP
-				mStackLevels[(uint8)--mLastS] = parent;
+				--mLastS;
+				mStackLevels[(uint8)mLastS].mpTreeNode = parent;
+				mStackLevels[(uint8)mLastS].mDepth = parentDepth;
 				break;
 
 			case 0x5A:	// PHY
@@ -3248,14 +3595,19 @@ void ATHistoryWindow::UpdateOpcodes() {
 					if (is65C816 && !(hent.mP & 0x10))
 						--mLastS;
 
-					mStackLevels[(uint8)--mLastS] = parent;
+					--mLastS;
+					mStackLevels[(uint8)mLastS].mpTreeNode = parent;
+					mStackLevels[(uint8)mLastS].mDepth = parentDepth;
 				}
 				break;
 
 			case 0x8B:	// PHB
 			case 0x4B:	// PHK
-				if (is65C816)
-					mStackLevels[(uint8)--mLastS] = parent;
+				if (is65C816) {
+					--mLastS;
+					mStackLevels[(uint8)mLastS].mpTreeNode = parent;
+					mStackLevels[(uint8)mLastS].mDepth = parentDepth;
+				}
 				break;
 
 			case 0x0B:	// PHD
@@ -3264,7 +3616,8 @@ void ATHistoryWindow::UpdateOpcodes() {
 			case 0xD4:	// PEI
 				if (is65C816) {
 					mLastS -= 2;
-					mStackLevels[(uint8)mLastS] = parent;
+					mStackLevels[(uint8)mLastS].mpTreeNode = parent;
+					mStackLevels[(uint8)mLastS].mDepth = parentDepth;
 				}
 				break;
 		}
@@ -3399,9 +3752,10 @@ void ATHistoryWindow::ClearAllNodes() {
 
 ATHistoryWindow::TreeNode *ATHistoryWindow::InsertNode(TreeNode *parent, TreeNode *insertAfter, const char *text, const ATCPUHistoryEntry *hent, NodeType nodeType) {
 	TreeNode *node = AllocNode();
-	node->mText = text;
+	node->mpText = text;
 	node->mRelYPos = 0;
 	node->mbExpanded = false;
+	node->mbVisible = true;
 	node->mpFirstChild = NULL;
 	node->mpLastChild = NULL;
 	node->mHeight = 1;
@@ -3648,7 +4002,7 @@ void ATHistoryWindow::CopyNodes(TreeNode *begin, TreeNode *end) {
 
 		s += p->mpFirstChild ? p->mbExpanded ? '-' : '+' : ' ';
 		s += ' ';
-		s += *GetNodeText(p);
+		s += GetNodeText(p);
 		s += '\r';
 		s += '\n';
 	}
@@ -3674,6 +4028,79 @@ void ATHistoryWindow::CopyNodes(TreeNode *begin, TreeNode *end) {
 	}
 }
 
+void ATHistoryWindow::Search(const char *substr) {
+	if (substr && !*substr)
+		substr = NULL;
+
+	if (!substr && !mbSearchActive)
+		return;
+
+	if (mRootNode.mpFirstChild) {
+		SearchNodes(&mRootNode, substr);
+	}
+
+	const bool searchActive = (substr != NULL);
+
+	if (mbSearchActive != searchActive) {
+		mbSearchActive = searchActive;
+
+		VDSetWindowTextW32(mhwndClear, searchActive ? mTextClear.c_str() : mTextSearch.c_str());
+	}
+
+	UpdateScrollMax();
+	InvalidateRect(mhwnd, NULL, TRUE);
+	UpdateScrollBar();
+	EnsureNodeVisible(mpSelectedNode);
+}
+
+bool ATHistoryWindow::SearchNodes(TreeNode *node, const char *substr) {
+	uint32 ht = 0;
+	bool anyVisible = false;
+
+	const size_t substrlen = substr ? strlen(substr) : 0;
+	const char ch0 = substr ? substr[0] : 0;
+	const char mask0 = (unsigned)(((unsigned char)ch0 & 0xdf) - 'A') < 26 ? (char)0xdf : (char)0xff;
+
+	for(TreeNode *child = node->mpFirstChild; child; child = child->mpNextSibling) {
+		bool visible = !substr;
+
+		child->mbExpanded = (substr != NULL);
+
+		if (child->mpFirstChild)
+			visible = SearchNodes(child, substr);
+		else
+			node->mHeight = 1;
+
+		if (!visible) {
+			const char *s = GetNodeText(child);
+
+			const size_t len = strlen(s);
+
+			if (len >= substrlen) {
+				size_t maxoffset = len - substrlen;
+				for(size_t i = 0; i <= maxoffset; ++i) {
+					if (!((s[i] ^ ch0) & mask0) && !vdstricmp(substr, s + i, substrlen)) {
+						visible = true;
+						break;
+					}
+				}
+			}
+		}
+
+		child->mRelYPos = ht;
+		child->mbVisible = visible;
+
+		if (visible) {
+			anyVisible = true;
+			ht += child->mHeight;
+		}
+	}
+
+	node->mHeight = (node->mbExpanded ? ht : 0) + 1;
+
+	return anyVisible;
+}
+
 void ATHistoryWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
 	UpdateOpcodes();
 }
@@ -3684,7 +4111,7 @@ void ATHistoryWindow::OnDebuggerEvent(ATDebugEvent eventId) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATConsoleWindow : public ATUIPane {
+class ATConsoleWindow : public ATUIDebuggerPane {
 public:
 	ATConsoleWindow();
 	~ATConsoleWindow();
@@ -3749,7 +4176,7 @@ protected:
 ATConsoleWindow *g_pConsoleWindow;
 
 ATConsoleWindow::ATConsoleWindow()
-	: ATUIPane(kATUIPaneId_Console, L"Console")
+	: ATUIDebuggerPane(kATUIPaneId_Console, L"Console")
 	, mMenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_DEBUGGER_MENU)))
 	, mhwndLog(NULL)
 	, mhwndPrompt(NULL)
@@ -3828,11 +4255,11 @@ LRESULT ATConsoleWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		break;
 	}
 
-	return ATUIPane::WndProc(msg, wParam, lParam);
+	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
 }
 
 bool ATConsoleWindow::OnCreate() {
-	if (!ATUIPane::OnCreate())
+	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
 	mhwndLog = CreateWindowEx(WS_EX_CLIENTEDGE, _T("RICHEDIT"), _T(""), ES_READONLY|ES_MULTILINE|ES_AUTOVSCROLL|WS_VSCROLL|WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
@@ -3906,7 +4333,7 @@ void ATConsoleWindow::OnDestroy() {
 
 	mhwndPrompt = NULL;
 
-	ATUIPane::OnDestroy();
+	ATUIDebuggerPane::OnDestroy();
 }
 
 void ATConsoleWindow::OnSize() {
@@ -4038,25 +4465,7 @@ LRESULT ATConsoleWindow::LogWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
 LRESULT ATConsoleWindow::CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
-		if (wParam == VK_CANCEL) {
-			ATGetDebugger()->Break();
-			return 0;
-		} else if (wParam == VK_F11) {
-			if (GetKeyState(VK_SHIFT) < 0)
-				ATGetDebugger()->StepOut(kATDebugSrcMode_Disasm);
-			else
-				ATGetDebugger()->StepInto(kATDebugSrcMode_Disasm);
-			return 0;
-		} else if (wParam == VK_F10) {
-			ATGetDebugger()->StepOver(kATDebugSrcMode_Disasm);
-			return 0;
-		} else if (wParam == VK_F8) {
-			if (ATGetDebugger()->IsRunning())
-				ATGetDebugger()->Break();
-			else
-				ATGetDebugger()->Run(kATDebugSrcMode_Disasm);
-			return 0;
-		} else if (wParam == VK_ESCAPE) {
+		if (wParam == VK_ESCAPE) {
 			ATActivateUIPane(kATUIPaneId_Display, true);
 			return 0;
 		} else if (wParam == VK_UP) {
@@ -4136,10 +4545,6 @@ LRESULT ATConsoleWindow::CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, 
 		}
 	} else if (msg == WM_KEYUP || msg == WM_SYSKEYUP) {
 		switch(wParam) {
-		case VK_CANCEL:
-		case VK_F11:
-		case VK_F10:
-		case VK_F8:
 		case VK_ESCAPE:
 		case VK_UP:
 		case VK_DOWN:
@@ -4249,7 +4654,7 @@ void ATConsoleWindow::FlushAppendBuffer() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATMemoryWindow : public ATUIPane,
+class ATMemoryWindow : public ATUIDebuggerPane,
 							public IATDebuggerClient,
 							public IVDUIMessageFilterW32
 {
@@ -4293,7 +4698,7 @@ protected:
 };
 
 ATMemoryWindow::ATMemoryWindow(uint32 id)
-	: ATUIPane(id, L"Memory")
+	: ATUIDebuggerPane(id, L"Memory")
 	, mhwndAddress(NULL)
 	, mMenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_MEMORY_CONTEXT_MENU)))
 	, mTextArea()
@@ -4380,51 +4785,15 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 	}
 
-	return ATUIPane::WndProc(msg, wParam, lParam);
+	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
 }
 
 bool ATMemoryWindow::OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result) {
-	switch(msg) {
-		case WM_SYSKEYDOWN:
-		case WM_KEYDOWN:
-			if (wParam == VK_PAUSE || wParam == VK_CANCEL) {
-				if (GetKeyState(VK_CONTROL) < 0) {
-					ATGetDebugger()->Break();
-				}
-			} else if (wParam == VK_F8) {
-				if (ATGetDebugger()->IsRunning())
-					ATGetDebugger()->Break();
-				else
-					ATGetDebugger()->Run(kATDebugSrcMode_Same);
-			} else if (wParam == VK_F10) {
-				ATGetDebugger()->StepOver(kATDebugSrcMode_Same);
-				return true;
-			} else if (wParam == VK_F11) {
-				if (GetKeyState(VK_SHIFT) < 0)
-					ATGetDebugger()->StepOut(kATDebugSrcMode_Same);
-				else
-					ATGetDebugger()->StepInto(kATDebugSrcMode_Same);
-				return true;
-			}
-			break;
-
-		case WM_SYSKEYUP:
-			switch(wParam) {
-				case VK_PAUSE:
-				case VK_CANCEL:
-				case VK_F8:
-				case VK_F10:
-				case VK_F11:
-					return true;
-			}
-			break;
-	}
-
 	return false;
 }
 
 bool ATMemoryWindow::OnCreate() {
-	if (!ATUIPane::OnCreate())
+	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
 	mhwndAddress = CreateWindowEx(0, WC_COMBOBOXEX, _T(""), WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_HASSTRINGS|CBS_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)101, g_hInst, NULL);
@@ -4442,7 +4811,7 @@ bool ATMemoryWindow::OnCreate() {
 
 void ATMemoryWindow::OnDestroy() {
 	ATGetDebugger()->RemoveClient(this);
-	ATUIPane::OnDestroy();
+	ATUIDebuggerPane::OnDestroy();
 }
 
 void ATMemoryWindow::OnSize() {
@@ -4588,10 +4957,12 @@ void ATMemoryWindow::RemakeView(uint32 focusAddr) {
 	ATCPUEmulatorMemory& mem = g_sim.GetCPUMemory();
 
 	bool changed = false;
+	uint32 changeMask = 0xFFFFFFFFU;
 
 	if (mViewStart != focusAddr) {
 		mViewStart = focusAddr;
 		changed = true;
+		changeMask = 0;
 	}
 
 	int rows = mChangedBits.size();
@@ -4608,14 +4979,17 @@ void ATMemoryWindow::RemakeView(uint32 focusAddr) {
 
 		for(int j=0; j<16; ++j) {
 			int offset = (i<<4) + j;
-			uint16 addr = mViewStart + offset;
-			uint8 c = g_sim.DebugReadByte(addr);
+			uint32 addr = mViewStart + offset;
+			uint8 c = g_sim.DebugExtReadByte(addr);
 
 			if (offset < limit && mViewData[offset] != c)
 				mask |= (1 << j);
 
 			mViewData[offset] = c;
 		}
+
+		// clear the change mask if we are changing address
+		mask &= changeMask;
 
 		if (mChangedBits[i] | mask)
 			changed = true;
@@ -4689,7 +5063,7 @@ void ATMemoryWindow::SetPosition(uint32 addr) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATWatchWindow : public ATUIPane, public IATDebuggerClient
+class ATWatchWindow : public ATUIDebuggerPane, public IATDebuggerClient
 {
 public:
 	ATWatchWindow(uint32 id = kATUIPaneId_WatchN);
@@ -4779,7 +5153,7 @@ protected:
 };
 
 ATWatchWindow::ATWatchWindow(uint32 id)
-	: ATUIPane(id, L"")
+	: ATUIDebuggerPane(id, L"")
 	, mhwndList(NULL)
 	, mpListViewThunk(NULL)
 {
@@ -4824,11 +5198,11 @@ LRESULT ATWatchWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			return TRUE;
 	}
 
-	return ATUIPane::WndProc(msg, wParam, lParam);
+	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
 }
 
 bool ATWatchWindow::OnCreate() {
-	if (!ATUIPane::OnCreate())
+	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
 	mhwndList = CreateWindowExW(0, WC_LISTVIEWW, L"", WS_VISIBLE | WS_CHILD | LVS_SHOWSELALWAYS | LVS_REPORT | LVS_ALIGNLEFT | LVS_EDITLABELS | LVS_NOSORTHEADER | LVS_SINGLESEL, 0, 0, 0, 0, mhwnd, (HMENU)101, g_hInst, NULL);
@@ -4862,7 +5236,7 @@ bool ATWatchWindow::OnCreate() {
 void ATWatchWindow::OnDestroy() {
 	mListView.Clear();
 	ATGetDebugger()->RemoveClient(this);
-	ATUIPane::OnDestroy();
+	ATUIDebuggerPane::OnDestroy();
 }
 
 void ATWatchWindow::OnSize() {
@@ -4962,7 +5336,7 @@ void ATWatchWindow::OnDebuggerEvent(ATDebugEvent eventId) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDebugDisplayWindow : public ATUIPane, public IATDebuggerClient
+class ATDebugDisplayWindow : public ATUIDebuggerPane, public IATDebuggerClient
 {
 public:
 	ATDebugDisplayWindow(uint32 id = kATUIPaneId_DebugDisplay);
@@ -4998,7 +5372,7 @@ protected:
 };
 
 ATDebugDisplayWindow::ATDebugDisplayWindow(uint32 id)
-	: ATUIPane(id, L"Debug Display")
+	: ATUIDebuggerPane(id, L"Debug Display")
 	, mhwndDisplay(NULL)
 	, mhwndDLAddrCombo(NULL)
 	, mhwndPFAddrCombo(NULL)
@@ -5126,11 +5500,11 @@ LRESULT ATDebugDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 	}
 
-	return ATUIPane::WndProc(msg, wParam, lParam);
+	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
 }
 
 bool ATDebugDisplayWindow::OnCreate() {
-	if (!ATUIPane::OnCreate())
+	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
 	HFONT hfont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
@@ -5189,7 +5563,7 @@ void ATDebugDisplayWindow::OnDestroy() {
 	mhwndPFAddrCombo = NULL;
 
 	ATGetDebugger()->RemoveClient(this);
-	ATUIPane::OnDestroy();
+	ATUIDebuggerPane::OnDestroy();
 }
 
 void ATDebugDisplayWindow::OnSize() {
@@ -5357,6 +5731,39 @@ LRESULT ATPrinterOutputWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		case WM_SIZE:
 			OnSize();
 			break;
+
+		case WM_CONTEXTMENU:
+			{
+				int x = GET_X_LPARAM(lParam);
+				int y = GET_Y_LPARAM(lParam);
+
+				HMENU menu0 = LoadMenu(NULL, MAKEINTRESOURCE(IDR_PRINTER_CONTEXT_MENU));
+				if (menu0) {
+					HMENU menu = GetSubMenu(menu0, 0);
+					BOOL cmd = 0;
+
+					if (x >= 0 && y >= 0) {
+						POINT pt = {x, y};
+
+						if (ScreenToClient(mhwndTextEditor, &pt)) {
+							mpTextEditor->SetCursorPixelPos(pt.x, pt.y);
+							cmd = TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, 0, mhwnd, NULL);
+						}
+					} else {
+						cmd = TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, 0, mhwnd, NULL);
+					}
+
+					DestroyMenu(menu0);
+
+					switch(cmd) {
+					case ID_CONTEXT_CLEAR:
+						if (mhwndTextEditor)
+							SetWindowText(mhwndTextEditor, L"");
+						break;
+					}
+				}
+			}
+			break;
 	}
 
 	return ATUIPane::WndProc(msg, wParam, lParam);
@@ -5484,27 +5891,42 @@ void ATConsoleSetFont(const LOGFONTW& font0, int pointSizeTenths) {
 	if (g_monoFontDpi && g_monoFontPtSizeTenths)
 		font.lfHeight = -MulDiv(pointSizeTenths, g_monoFontDpi, 720);
 
-	HFONT newFont = CreateFontIndirectW(&font);
+	HFONT newMonoFont = CreateFontIndirectW(&font);
 
-	if (!newFont) {
-		if (g_monoFont)
-			return;
+	if (!newMonoFont) {
+		vdwcslcpy(font.lfFaceName, L"Courier New", vdcountof(font.lfFaceName));
 
-		newFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+		newMonoFont = CreateFontIndirectW(&font);
+
+		if (!newMonoFont)
+			newMonoFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 	}
+
+	HFONT newPropFont = CreateFontW(g_monoFontDpi ? -MulDiv(8, g_monoFontDpi, 72) : -10, 0, 0, 0, 0, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"MS Shell Dlg 2");
+	if (!newPropFont)
+		newPropFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
 	g_monoFontLineHeight = 10;
 	g_monoFontCharWidth = 10;
+	g_propFontLineHeight = 10;
 
 	HDC hdc = GetDC(NULL);
 	if (hdc) {
-		HGDIOBJ hgoFont = SelectObject(hdc, newFont);
+		HGDIOBJ hgoFont = SelectObject(hdc, newMonoFont);
 		if (hgoFont) {
 			TEXTMETRIC tm={0};
 
 			if (GetTextMetrics(hdc, &tm)) {
 				g_monoFontLineHeight = tm.tmHeight + tm.tmExternalLeading;
 				g_monoFontCharWidth = tm.tmAveCharWidth;
+			}
+		}
+
+		if (SelectObject(hdc, newPropFont)) {
+			TEXTMETRIC tm={0};
+
+			if (GetTextMetrics(hdc, &tm)) {
+				g_propFontLineHeight = tm.tmHeight + tm.tmExternalLeading;
 			}
 		}
 
@@ -5515,13 +5937,19 @@ void ATConsoleSetFont(const LOGFONTW& font0, int pointSizeTenths) {
 	g_monoFontDesc = font;
 	g_monoFontPtSizeTenths = pointSizeTenths;
 
-	HFONT prevFont = g_monoFont;
-	g_monoFont = newFont;
+	HFONT prevMonoFont = g_monoFont;
+	HFONT prevPropFont = g_propFont;
+	g_monoFont = newMonoFont;
+	g_propFont = newPropFont;
 
 	if (g_pMainWindow)
 		g_pMainWindow->NotifyFontsUpdated();
 
-	DeleteObject(prevFont);
+	if (prevMonoFont)
+		DeleteObject(prevMonoFont);
+
+	if (prevPropFont)
+		DeleteObject(prevPropFont);
 
 	VDRegistryAppKey key("Settings");
 	key.setString("Console: Font family", font.lfFaceName);
@@ -5555,6 +5983,7 @@ void ATInitUIPanes() {
 	ATRegisterUIPaneType(kATUIPaneId_DebugDisplay, VDRefCountObjectFactory<ATDebugDisplayWindow, ATUIPane>);
 	ATRegisterUIPaneClass(kATUIPaneId_MemoryN, ATUIPaneClassFactory<ATMemoryWindow, ATUIPane>);
 	ATRegisterUIPaneClass(kATUIPaneId_WatchN, ATUIPaneClassFactory<ATWatchWindow, ATUIPane>);
+	ATRegisterUIPaneClass(kATUIPaneId_Source, ATSourceWindow::CreatePane);
 
 	if (!g_monoFont) {
 		LOGFONTW consoleFont(g_monoFontDesc);
@@ -5620,7 +6049,7 @@ namespace {
 			ATFrameWindow *w = pane->GetContent(i);
 			uint32 id = GetIdFromFrame(w);
 
-			if (id) {
+			if (id && id < kATUIPaneId_Source) {
 				s.append_sprintf(",%x" + (s.back() == '{'), id);
 
 				if (w == visFrame)
@@ -5803,7 +6232,8 @@ bool ATRestorePaneLayout(const char *name) {
 	g_pMainWindow->SuspendLayout();
 
 	// undock and hide all docked panes
-	vdhashmap<uint32, ATFrameWindow *> frames;
+	typedef vdhashmap<uint32, ATFrameWindow *> Frames;
+	Frames frames;
 
 	vdfastvector<ATUIPane *> activePanes;
 	ATGetUIPanes(activePanes);
@@ -5931,8 +6361,11 @@ bool ATRestorePaneLayout(const char *name) {
 	}
 
 	// delete any unwanted panes
-	for(int i=0; i<kATUIPaneId_Count; ++i) {
-		ATFrameWindow *w = frames[i];
+	for(Frames::const_iterator it = frames.begin(), itEnd = frames.end();
+		it != itEnd;
+		++it)
+	{
+		ATFrameWindow *w = it->second;
 
 		if (w) {
 			HWND hwndFrame = w->GetHandleW32();

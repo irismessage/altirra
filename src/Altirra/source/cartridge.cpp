@@ -151,6 +151,13 @@ int ATGetCartridgeModeForMapper(int mapper) {
 		case 57: return kATCartridgeMode_2K;
 		case 58: return kATCartridgeMode_4K;
 		case 59: return kATCartridgeMode_RightSlot_4K;
+			// TODO: Get info for 60-62
+		case 61: return kATCartridgeMode_MegaMax_2M;
+		case 62: return kATCartridgeMode_TheCart_128M;
+		case 63: return kATCartridgeMode_MegaCart_4M_3;
+		case 64: return kATCartridgeMode_MegaCart_2M_3;
+		case 65: return kATCartridgeMode_TheCart_32M;
+		case 66: return kATCartridgeMode_TheCart_64M;
 		default:
 			return kATCartridgeMode_None;
 	}
@@ -227,6 +234,13 @@ int ATGetCartridgeMapperForMode(int mode, uint32 size) {
 
 		case kATCartridgeMode_RightSlot_4K:
 			return 59;
+
+		case kATCartridgeMode_MegaMax_2M:		return 61;
+		case kATCartridgeMode_TheCart_128M:		return 62;
+		case kATCartridgeMode_MegaCart_4M_3:	return 63;
+		case kATCartridgeMode_MegaCart_2M_3:	return 64;
+		case kATCartridgeMode_TheCart_32M:		return 65;
+		case kATCartridgeMode_TheCart_64M:		return 66;
 
 		default:
 			return 0;
@@ -343,7 +357,6 @@ void ATCartridgeEmulator::LoadNewCartridge(ATCartridgeMode mode) {
 	mCartMode = mode;
 	mImagePath.clear();
 	mbDirty = false;
-	mFlashReadMode = kFlashReadMode_Normal;
 	mInitialCartBank = -1;
 	mInitialCartBank2 = -1;
 
@@ -368,6 +381,36 @@ void ATCartridgeEmulator::LoadNewCartridge(ATCartridgeMode mode) {
 			mInitialCartBank = 0;
 			mCartSize = 0x80000;
 			break;
+
+		case kATCartridgeMode_MegaCart_512K_3:
+			mCartSize = 0x80000;
+			mInitialCartBank = 0;
+			break;
+
+		case kATCartridgeMode_MegaCart_2M_3:
+			mCartSize = 0x200000;
+			mInitialCartBank = 0;
+			break;
+
+		case kATCartridgeMode_MegaCart_4M_3:
+			mCartSize = 0x400000;
+			mInitialCartBank = 0xFE;
+			break;
+
+		case kATCartridgeMode_TheCart_32M:
+			mCartSize = 0x2000000;
+			mInitialCartBank = 0;
+			break;
+
+		case kATCartridgeMode_TheCart_64M:
+			mCartSize = 0x4000000;
+			mInitialCartBank = 0;
+			break;
+
+		case kATCartridgeMode_TheCart_128M:
+			mCartSize = 0x8000000;
+			mInitialCartBank = 0;
+			break;
 	}
 
 	mCartBank = mInitialCartBank;
@@ -376,6 +419,7 @@ void ATCartridgeEmulator::LoadNewCartridge(ATCartridgeMode mode) {
 	mCARTROM.resize(mCartSize, 0xFF);
 
 	InitMemoryLayers();
+	ColdReset();
 }
 
 bool ATCartridgeEmulator::Load(const wchar_t *s, ATCartLoadContext *loadCtx) {
@@ -387,7 +431,7 @@ bool ATCartridgeEmulator::Load(const wchar_t *s, ATCartLoadContext *loadCtx) {
 bool ATCartridgeEmulator::Load(const wchar_t *origPath, IVDRandomAccessStream& f, ATCartLoadContext *loadCtx) {
 	sint64 size = f.Length();
 
-	if (size < 1024 || size > 1048576 + 16 + 8192)
+	if (size < 1024 || size > 128*1024*1024 + 16)
 		throw MyError("Unsupported cartridge size.");
 
 	// check for header
@@ -703,9 +747,24 @@ bool ATCartridgeEmulator::Load(const wchar_t *origPath, IVDRandomAccessStream& f
 			allocSize = 131072;
 			break;
 
-		case kATCartridgeMode_Megacart_1M_2:
+		case kATCartridgeMode_MegaCart_1M_2:
 			mInitialCartBank = 0;
 			allocSize = 0x100000;
+			break;
+
+		case kATCartridgeMode_MegaCart_512K_3:
+			mInitialCartBank = 0;
+			allocSize = 0x80000;
+			break;
+
+		case kATCartridgeMode_MegaCart_2M_3:
+			mInitialCartBank = 0;
+			allocSize = 0x200000;
+			break;
+
+		case kATCartridgeMode_MegaCart_4M_3:
+			mInitialCartBank = 0xFE;
+			allocSize = 0x400000;
 			break;
 
 		case kATCartridgeMode_5200_64K_32KBanks:
@@ -716,6 +775,29 @@ bool ATCartridgeEmulator::Load(const wchar_t *origPath, IVDRandomAccessStream& f
 		case kATCartridgeMode_MicroCalc:
 			mInitialCartBank = 0;
 			allocSize = 0x8000;
+			break;
+
+		case kATCartridgeMode_TheCart_32M:
+			mInitialCartBank = 0;
+			mInitialCartBank2 = -1;
+			allocSize = 32*1024*1024;
+			break;
+
+		case kATCartridgeMode_TheCart_64M:
+			mInitialCartBank = 0;
+			mInitialCartBank2 = -1;
+			allocSize = 64*1024*1024;
+			break;
+
+		case kATCartridgeMode_TheCart_128M:
+			mInitialCartBank = 0;
+			mInitialCartBank2 = -1;
+			allocSize = 128*1024*1024;
+			break;
+
+		case kATCartridgeMode_MegaMax_2M:
+			allocSize = 0x200000;
+			mInitialCartBank = 0;
 			break;
 	}
 
@@ -783,32 +865,47 @@ bool ATCartridgeEmulator::Load(const wchar_t *origPath, IVDRandomAccessStream& f
 			p[i + 0x6000] = p[i + 0x2000] & p[i + 0x1000];
 	}
 
-	if (mCartMode == kATCartridgeMode_Corina_512K_SRAM_EEPROM) {
-		mCARTRAM.resize(524288, 0);
-	} else if (mCartMode == kATCartridgeMode_TelelinkII) {
-		mCARTRAM.clear();
-		mCARTRAM.resize(256, 0xFF);
-	} else if (mCartMode == kATCartridgeMode_2K) {
+	// shift/realign images
+	switch(mCartMode) {
+	case kATCartridgeMode_2K:
 		// Shift the ROM image so that the bottom 6K is open ($FF) and the image
 		// resides in the top 2K.
 		mCARTROM.resize(8192);
 		memcpy(&mCARTROM[6144], &mCARTROM[0], 2048);
 		memset(&mCARTROM[0], 0xFF, 6144);
-	} else if (mCartMode == kATCartridgeMode_4K || mCartMode == kATCartridgeMode_RightSlot_4K) {
+		break;
+	case kATCartridgeMode_4K:
+	case kATCartridgeMode_RightSlot_4K:
 		// Shift the ROM image so that the bottom 4K is open ($FF) and the image
 		// resides in the top 4K.
 		mCARTROM.resize(8192);
 		memcpy(&mCARTROM[4096], &mCARTROM[0], 4096);
 		memset(&mCARTROM[0], 0xFF, 4096);
+		break;
+	}
+
+	// initialize RAM
+	switch(mCartMode) {
+		case kATCartridgeMode_Corina_512K_SRAM_EEPROM:
+			mCARTRAM.resize(524288, 0);
+			break;
+		case kATCartridgeMode_TelelinkII:
+			mCARTRAM.clear();
+			mCARTRAM.resize(256, 0xFF);
+			break;
+
+		case kATCartridgeMode_TheCart_32M:
+		case kATCartridgeMode_TheCart_64M:
+		case kATCartridgeMode_TheCart_128M:
+			mCARTRAM.clear();
+			mCARTRAM.resize(524288, 0);
+			break;
 	}
 
 	if (origPath)
 		mImagePath = origPath;
 	else
 		mImagePath.clear();
-
-	mCommandPhase = 0;
-	mFlashReadMode = kFlashReadMode_Normal;
 
 	if (loadCtx) {
 		loadCtx->mCartMapper = mCartMode;
@@ -817,6 +914,7 @@ bool ATCartridgeEmulator::Load(const wchar_t *origPath, IVDRandomAccessStream& f
 
 	mbDirty = false;
 	InitMemoryLayers();
+	ColdReset();
 
 	return true;
 }
@@ -884,8 +982,6 @@ void ATCartridgeEmulator::Save(const wchar_t *fn, bool includeHeader) {
 }
 
 void ATCartridgeEmulator::ColdReset() {
-	memset(mSC3D, 0xFF, sizeof mSC3D);
-
 	mCartBank = mInitialCartBank;
 	mCartBank2 = mInitialCartBank2;
 	UpdateCartBank();
@@ -893,8 +989,39 @@ void ATCartridgeEmulator::ColdReset() {
 	if (mpMemLayerVarBank2)
 		UpdateCartBank2();
 
-	mCommandPhase = 0;
-	mFlashReadMode = kFlashReadMode_Normal;
+	switch(mCartMode) {
+		case kATCartridgeMode_SuperCharger3D:
+			memset(mSC3D, 0xFF, sizeof mSC3D);
+			break;
+
+		case kATCartridgeMode_TheCart_32M:
+		case kATCartridgeMode_TheCart_64M:
+		case kATCartridgeMode_TheCart_128M:
+			static const uint8 kTheCartInitData[]={
+				0x00,
+				0x00,
+				0x01,
+				0x00,
+				0x00,
+				0x00,
+				0x01,
+				0x00,
+				0x82,	// /CS high, SI high, SCK low
+			};
+
+			memcpy(mTheCartRegs, kTheCartInitData, sizeof mTheCartRegs);
+			mbTheCartConfigLock = false;
+			mTheCartSICEnables = 0x40;		// Axxx only
+			mTheCartOSSBank = 0;
+
+			UpdateTheCartBanking();
+			UpdateTheCart();
+			break;
+	}
+
+	mFlashEmu.ColdReset();
+	mFlashEmu2.ColdReset();
+	mEEPROM.ColdReset();
 }
 
 sint32 ATCartridgeEmulator::ReadByte_BB5200_1(void *thisptr0, uint32 address) {
@@ -1013,8 +1140,12 @@ bool ATCartridgeEmulator::WriteByte_SIC(void *thisptr0, uint32 address, uint8 va
 	const uint32 fullAddr = (thisptr->mCartBank & 0x1f) * 0x4000 + (address & 0x3fff);
 
 	if (thisptr->mFlashEmu.WriteByte(fullAddr, value)) {
-		if (thisptr->mFlashEmu.CheckForWriteActivity())
+		if (thisptr->mFlashEmu.CheckForWriteActivity()) {
 			thisptr->mpUIRenderer->SetFlashWriteActivity();
+
+			if (!thisptr->mbDirty && thisptr->mFlashEmu.IsDirty())
+				thisptr->mbDirty = true;
+		}
 
 		const bool flashRead = thisptr->mFlashEmu.IsControlReadEnabled();
 		const bool flashReadBank1 = flashRead && (thisptr->mCartBank & 0x40);
@@ -1029,179 +1160,129 @@ bool ATCartridgeEmulator::WriteByte_SIC(void *thisptr0, uint32 address, uint8 va
 	return true;
 }
 
+sint32 ATCartridgeEmulator::ReadByte_TheCart(void *thisptr0, uint32 address) {
+	ATCartridgeEmulator *thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	uint32 fullAddr = thisptr->mCartBank * 0x2000 + (address & 0x1fff);
+	fullAddr &= thisptr->mCartSizeMask;
+
+	uint8 value;
+	if (thisptr->mFlashEmu.ReadByte(fullAddr, value)) {
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, false);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_CPURead, false);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec2, kATMemoryAccessMode_AnticRead, false);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec2, kATMemoryAccessMode_CPURead, false);
+	}
+
+	return value;
+}
+
+bool ATCartridgeEmulator::WriteByte_TheCart(void *thisptr0, uint32 address, uint8 value) {
+	ATCartridgeEmulator *thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	uint32 fullAddr = (address & 0x2000 ? thisptr->mCartBank : thisptr->mCartBank2) * 0x2000 + (address & 0x1fff);
+	fullAddr &= thisptr->mCartSizeMask;
+
+	if (thisptr->mFlashEmu.WriteByte(fullAddr, value)) {
+		if (thisptr->mFlashEmu.CheckForWriteActivity()) {
+			thisptr->mpUIRenderer->SetFlashWriteActivity();
+
+			if (!thisptr->mbDirty && thisptr->mFlashEmu.IsDirty())
+				thisptr->mbDirty = true;
+		}
+
+		const bool flashRead = thisptr->mFlashEmu.IsControlReadEnabled();
+
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, flashRead);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_CPURead, flashRead);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec2, kATMemoryAccessMode_AnticRead, flashRead);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec2, kATMemoryAccessMode_CPURead, flashRead);
+	}
+
+	return true;
+}
+
+sint32 ATCartridgeEmulator::ReadByte_MegaCart3(void *thisptr0, uint32 address) {
+	ATCartridgeEmulator *thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	if (thisptr->mCartBank < 0)
+		return -1;
+
+	const uint32 fullAddr = (thisptr->mCartBank*0x4000 + (address & 0x3fff)) & ((uint32)thisptr->mCARTROM.size() - 1);
+
+	uint8 value;
+	if (thisptr->mFlashEmu.ReadByte(fullAddr, value)) {
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, false);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_CPURead, false);
+	}
+
+	return value;
+}
+
+bool ATCartridgeEmulator::WriteByte_MegaCart3(void *thisptr0, uint32 address, uint8 value) {
+	ATCartridgeEmulator *thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	if (thisptr->mCartBank < 0)
+		return false;
+
+	const uint32 fullAddr = (thisptr->mCartBank*0x4000 + (address & 0x3fff)) & ((uint32)thisptr->mCARTROM.size() - 1);
+
+	if (thisptr->mFlashEmu.WriteByte(fullAddr, value)) {
+		if (thisptr->mFlashEmu.CheckForWriteActivity()) {
+			thisptr->mpUIRenderer->SetFlashWriteActivity();
+
+			if (!thisptr->mbDirty && thisptr->mFlashEmu.IsDirty())
+				thisptr->mbDirty = true;
+		}
+
+		const bool flashRead = thisptr->mFlashEmu.IsControlReadEnabled();
+
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, flashRead);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_CPURead, flashRead);
+	}
+
+	return true;
+}
+
 sint32 ATCartridgeEmulator::ReadByte_MaxFlash(void *thisptr0, uint32 address) {
 	ATCartridgeEmulator *thisptr = (ATCartridgeEmulator *)thisptr0;
 
-	switch(thisptr->mFlashReadMode) {
-		case kFlashReadMode_Normal:
-			VDASSERT(false);
-			break;
+	if (thisptr->mCartBank < 0)
+		return -1;
 
-		case kFlashReadMode_Autoselect:
-			switch(address & 0xFF) {
-				case 0x00:
-					return 0x01;	// XX00 Manufacturer ID: AMD
+	const uint32 fullAddr = (thisptr->mCartBank*0x2000 + (address & 0x1fff)) & ((uint32)thisptr->mCARTROM.size() - 1);
+	ATFlashEmulator& flashEmu = (fullAddr >= 0x80000 ? thisptr->mFlashEmu2 : thisptr->mFlashEmu);
 
-				case 0x01:
-					if (thisptr->mCartMode == kATCartridgeMode_MaxFlash_128K)
-						return 0x21;	// XX01 Device ID: Am29F010 128K x 8-bit flash
-					else
-						return 0xA4;	// XX01 Device ID: Am29F040B 512K x 8-bit flash or ??? 1M x 8-bit
-
-				default:
-					return 0x00;	// XX02 Sector Protect Verify: 00 not protected
-			}
-			break;
-
-		case kFlashReadMode_WriteStatus:
-			return 0xFF;	// operation complete
+	uint8 value;
+	if (flashEmu.ReadByte(fullAddr & 0x7FFFF, value)) {
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, false);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_CPURead, false);
 	}
 
-	return 0xFF;
+	return value;
 }
 
 bool ATCartridgeEmulator::WriteByte_MaxFlash(void *thisptr0, uint32 address, uint8 value) {
 	ATCartridgeEmulator *thisptr = (ATCartridgeEmulator *)thisptr0;
-	uint32 fullAddr;
-	
-	switch(thisptr->mCartMode) {
-		case kATCartridgeMode_SIC:
-			fullAddr = (thisptr->mCartBank & 0x1f) * 0x4000 + (address & 0x3fff);
-			break;
 
-		case kATCartridgeMode_MaxFlash_128K:
-		case kATCartridgeMode_MaxFlash_128K_MyIDE:
-			fullAddr = (thisptr->mCartBank & 0x0f) * 0x2000 + (address & 0x1fff);
-			break;
+	if (thisptr->mCartBank < 0)
+		return false;
 
-		case kATCartridgeMode_MaxFlash_1024K:
-		case kATCartridgeMode_MaxFlash_1024K_Bank0:
-			fullAddr = (thisptr->mCartBank & 0x7f) * 0x2000 + (address & 0x1fff);
-			break;
-	}
+	const uint32 fullAddr = (thisptr->mCartBank*0x2000 + (address & 0x1fff)) & ((uint32)thisptr->mCARTROM.size() - 1);
+	ATFlashEmulator& flashEmu = (fullAddr >= 0x80000 ? thisptr->mFlashEmu2 : thisptr->mFlashEmu);
 
-	uint32 fullAddr15 = fullAddr & 0x7fff;
+	if (flashEmu.WriteByte(fullAddr & 0x7FFFF, value)) {
+		if (flashEmu.CheckForWriteActivity()) {
+			thisptr->mpUIRenderer->SetFlashWriteActivity();
 
-	switch(thisptr->mCommandPhase) {
-		case 0:
-			// $F0 written at phase 0 deactivates autoselect mode
-			if (value == 0xF0) {
-				if (!thisptr->mFlashReadMode)
-					break;
+			if (!thisptr->mbDirty && flashEmu.IsDirty())
+				thisptr->mbDirty = true;
+		}
 
-				thisptr->mFlashReadMode = kFlashReadMode_Normal;
-				thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, false);
-				break;
-			}
+		const bool flashRead = flashEmu.IsControlReadEnabled();
 
-			if (fullAddr15 == 0x5555 && value == 0xAA)
-				thisptr->mCommandPhase = 1;
-			break;
-
-		case 1:
-			if (fullAddr15 == 0x2AAA && value == 0x55)
-				thisptr->mCommandPhase = 2;
-			else {
-				thisptr->mCommandPhase = 0;
-			}
-			break;
-
-		case 2:
-			if (fullAddr15 != 0x5555) {
-				thisptr->mCommandPhase = 0;
-				break;
-			}
-
-			switch(value) {
-				case 0x80:	// $80: sector or chip erase
-					thisptr->mCommandPhase = 3;
-					break;
-
-				case 0x90:	// $90: autoselect mode
-					thisptr->mFlashReadMode = kFlashReadMode_Autoselect;
-					thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, true);
-					thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_CPURead, true);
-					thisptr->mCommandPhase = 0;
-					break;
-
-				case 0xA0:	// $A0: program mode
-					thisptr->mCommandPhase = 6;
-					break;
-
-				case 0xF0:	// $F0: reset
-					thisptr->mCommandPhase = 0;
-					thisptr->mFlashReadMode = kFlashReadMode_Normal;
-					thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, false);
-					thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_CPURead, false);
-					break;
-
-				default:
-					thisptr->mCommandPhase = 0;
-					break;
-			}
-
-			break;
-
-		case 3:		// 5555[AA] 2AAA[55] 5555[80]
-			if (fullAddr15 != 0x5555 || value != 0xAA) {
-				thisptr->mCommandPhase = 0;
-				break;
-			}
-
-			thisptr->mCommandPhase = 4;
-			break;
-
-		case 4:		// 5555[AA] 2AAA[55] 5555[80] 5555[AA]
-			if (fullAddr15 != 0x2AAA || value != 0x55) {
-				thisptr->mCommandPhase = 0;
-				break;
-			}
-
-			thisptr->mCommandPhase = 5;
-			break;
-
-		case 5:		// 5555[AA] 2AAA[55] 5555[80] 5555[AA] 2AAA[55]
-			if (fullAddr15 == 0x5555 && value == 0x10) {
-				// full chip erase
-				memset(thisptr->mCARTROM.data(), 0xFF, thisptr->mCARTROM.size());
-			} else if (value == 0x30) {
-				// sector erase
-				if (thisptr->mCartMode == kATCartridgeMode_SIC) {
-					fullAddr &= 0x70000;
-					memset(thisptr->mCARTROM.data() + fullAddr, 0xFF, 0x10000);
-				} else if (thisptr->mCartMode == kATCartridgeMode_MaxFlash_1024K ||
-					thisptr->mCartMode == kATCartridgeMode_MaxFlash_1024K_Bank0) {
-					fullAddr &= 0xF0000;
-					memset(thisptr->mCARTROM.data() + fullAddr, 0xFF, 0x10000);
-				} else {
-					fullAddr &= 0x1C000;
-					memset(thisptr->mCARTROM.data() + fullAddr, 0xFF, 0x4000);
-				}
-			}
-
-			thisptr->mbDirty = true;
-			if (thisptr->mpUIRenderer)
-				thisptr->mpUIRenderer->SetFlashWriteActivity();
-
-			thisptr->mCommandPhase = 0;
-			//mFlashReadMode = kFlashReadMode_WriteStatus;
-			thisptr->mFlashReadMode = kFlashReadMode_Normal;
-			thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, false);
-			thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_CPURead, false);
-			break;
-
-		case 6:		// 5555[AA] 2AAA[55] 5555[A0]
-			thisptr->mCARTROM[fullAddr] &= value;
-			thisptr->mbDirty = true;
-			if (thisptr->mpUIRenderer)
-				thisptr->mpUIRenderer->SetFlashWriteActivity();
-
-			thisptr->mCommandPhase = 0;
-			//mFlashReadMode = kFlashReadMode_WriteStatus;
-			thisptr->mFlashReadMode = kFlashReadMode_Normal;
-			thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, false);
-			thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_CPURead, false);
-			break;
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, flashRead);
+		thisptr->mpMemMan->EnableLayer(thisptr->mpMemLayerSpec1, kATMemoryAccessMode_CPURead, flashRead);
 	}
 
 	return true;
@@ -1255,6 +1336,18 @@ bool ATCartridgeEmulator::WriteByte_CCTL_Phoenix(void *thisptr0, uint32 address,
 template<uint8 T_Mask>
 bool ATCartridgeEmulator::WriteByte_CCTL_AddressToBank(void *thisptr0, uint32 address, uint8 value) {
 	((ATCartridgeEmulator *)thisptr0)->SetCartBank(address & T_Mask);
+	return true;
+}
+
+template<uint8 T_Mask>
+sint32 ATCartridgeEmulator::ReadByte_CCTL_AddressToBank_Switchable(void *thisptr0, uint32 address) {
+	((ATCartridgeEmulator *)thisptr0)->SetCartBank(address & 0x80 ? -1 : address & T_Mask);
+	return 0xFF;
+}
+
+template<uint8 T_Mask>
+bool ATCartridgeEmulator::WriteByte_CCTL_AddressToBank_Switchable(void *thisptr0, uint32 address, uint8 value) {
+	((ATCartridgeEmulator *)thisptr0)->SetCartBank(address & 0x80 ? -1 : address & T_Mask);
 	return true;
 }
 
@@ -1407,6 +1500,164 @@ bool ATCartridgeEmulator::WriteByte_CCTL_SIC(void *thisptr0, uint32 address, uin
 		thisptr->SetCartBank(value);
 
 	return true;
+}
+
+// The!Cart registers:
+//
+// $D5A0: primary bank register low byte (0-255, default: 0)
+// $D5A1: primary bank register high byte (0-63, default: 0)
+// $D5A2: primary bank enable (1=enable, 0=disable, default: 1)
+// $D5A3: secondary bank register low byte (0-255, default: 0)
+// $D5A4: secondary bank register high byte (0-63, default: 0)
+// $D5A5: secondary bank enable (1=enable, 0=disable, default: 0)
+// $D5A6: cart mode select (see section on cartridge modes, default: 1 / 8k)
+// $D5A7: flash/ram selection and write enable control (0-15, default: 0)
+//   bit 0: primary bank write enable (0 = write protect, 1 = write enable)
+//   bit 1: primary bank source (0 = flash, 1 = RAM)
+//   bit 2: secondary bank write enable (0 = write protect, 1 = write enable)
+//   bit 3: secondary bank source (0 = flash, 1 = RAM)
+// 
+// $D5A8: SPI interface to EEPROM
+//   bit 0: SPI CLK
+//   bit 1: SPI CS
+//   bit 7: SPI data in (on reads), SPI data out (on writes)
+
+sint32 ATCartridgeEmulator::ReadByte_CCTL_TheCart(void *thisptr0, uint32 address) {
+	ATCartridgeEmulator *const thisptr = (ATCartridgeEmulator *)thisptr0;
+	address &= 0xff;
+
+	if (address >= 0xA0 && address <= 0xAF && !thisptr->mbTheCartConfigLock) {
+		if (address <= 0xA7)
+			return thisptr->mTheCartRegs[address - 0xA0];
+		else if (address == 0xA8)
+			return (thisptr->mTheCartRegs[8] & 0x03) + (thisptr->mEEPROM.ReadState() ? 0x80 : 0x00);
+		else
+			return 0xFF;
+	} else if (thisptr->mTheCartBankMode == kTheCartBankMode_SIC && address < 0x20) {
+		return ((thisptr->mTheCartRegs[0] >> 1) & 0x1F) + (thisptr->mTheCartRegs[2] ? 0 : 0x40) + (thisptr->mTheCartRegs[5] ? 0x20 : 0);
+	} else if (thisptr->mbTheCartBankByAddress) {
+		WriteByte_CCTL_TheCart(thisptr0, address, 0);
+		return 0xFF;
+	}
+
+	return -1;
+}
+
+bool ATCartridgeEmulator::WriteByte_CCTL_TheCart(void *thisptr0, uint32 address, uint8 value) {
+	ATCartridgeEmulator *const thisptr = (ATCartridgeEmulator *)thisptr0;
+	address &= 0xff;
+
+	if (address >= 0xA0 && address <= 0xAF && !thisptr->mbTheCartConfigLock) {
+		if (address <= 0xA7) {
+			static const uint8 kRegWriteMasks[]={
+				0xFF,
+				0x3F,
+				0x01,
+				0xFF,
+				0x3F,
+				0x01,
+				0x3F,
+				0x0F,
+			};
+
+			const int index = address - 0xA0;
+			uint8& reg = thisptr->mTheCartRegs[index];
+
+			value &= kRegWriteMasks[index];
+
+			bool forceUpdate = false;
+
+			switch(index) {
+				case 0:
+				case 1:
+					// accessing the primary bank registers also enables the primary window
+					if (!thisptr->mTheCartRegs[2]) {
+						thisptr->mTheCartRegs[2] = 1;
+						forceUpdate = true;
+					}
+					break;
+
+				case 3:
+				case 4:
+					// accessing the secondary bank registers also enables the secondary window
+					if (!thisptr->mTheCartRegs[5]) {
+						thisptr->mTheCartRegs[5] = 1;
+						forceUpdate = true;
+					}
+					break;
+			}
+
+			if (forceUpdate || reg != value) {
+				reg = value;
+
+				// check if we updated the banking mode register -- this is particularly expensive
+				if (index == 6)
+					thisptr->UpdateTheCartBanking();
+
+				// must come after banking update
+				thisptr->UpdateTheCart();
+			}
+		} else if (address == 0xA8) {
+			value &= 0x83;
+			
+			if (thisptr->mTheCartRegs[8] != value) {
+				thisptr->mTheCartRegs[8] = value;
+
+				thisptr->mEEPROM.WriteState((value & 2) == 0, (value & 1) != 0, (value & 0x80) != 0);
+			}
+		} else if (address == 0xAF) {
+			thisptr->mbTheCartConfigLock = true;
+		}
+
+		return true;
+	} else {
+		const sint16 bankInfo = thisptr->mTheCartBankInfo[thisptr->mbTheCartBankByAddress ? address : value];
+
+		if (bankInfo >= 0) {
+			// modify primary bank register
+			const uint16 oldBank = VDReadUnalignedLEU16(thisptr->mTheCartRegs);
+			const uint16 newBank = oldBank ^ ((oldBank ^ (uint16)bankInfo) & thisptr->mTheCartBankMask);
+			const uint8 newEnable = bankInfo & 0x4000 ? 1 : 0;
+
+			// argh... we could almost get away with a generic routine here, if it weren't
+			// for SIC! and OSS. :(
+
+			switch(thisptr->mTheCartBankMode) {
+				case kTheCartBankMode_SIC:
+					if (address < 0x20) {
+						const uint8 newEnables = (bankInfo & 0x6000) >> 8;
+						if (oldBank != newBank || thisptr->mTheCartSICEnables != newEnables) {
+							VDWriteUnalignedLEU16(thisptr->mTheCartRegs, newBank);
+							thisptr->mTheCartSICEnables = newEnables;
+
+							thisptr->UpdateTheCart();
+						}
+					}
+					break;
+
+				case kTheCartBankMode_OSS:
+					if (thisptr->mTheCartOSSBank != (uint8)bankInfo) {
+						thisptr->mTheCartOSSBank = (uint8)bankInfo;
+
+						thisptr->UpdateTheCart();
+					}
+					break;
+
+				default:
+					if (oldBank != newBank || thisptr->mTheCartRegs[2] != newEnable) {
+						VDWriteUnalignedLEU16(thisptr->mTheCartRegs, newBank);
+						thisptr->mTheCartRegs[2] = newEnable;
+
+						thisptr->UpdateTheCart();
+					}
+					break;
+			}
+
+			return true;
+		}
+	}
+
+	return false;
 }
 
 sint32 ATCartridgeEmulator::ReadByte_CCTL_SC3D(void *thisptr0, uint32 address) {
@@ -1691,6 +1942,22 @@ bool ATCartridgeEmulator::WriteByte_CCTL_MicroCalc(void *thisptr0, uint32 addres
 	return true;
 }
 
+sint32 ATCartridgeEmulator::ReadByte_CCTL_MegaCart3(void *thisptr0, uint32 address) {
+	ATCartridgeEmulator *const thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	return (uint8)thisptr->mCartBank;
+}
+
+bool ATCartridgeEmulator::WriteByte_CCTL_MegaCart3(void *thisptr0, uint32 address, uint8 value) {
+	ATCartridgeEmulator *const thisptr = (ATCartridgeEmulator *)thisptr0;
+
+	thisptr->SetCartBank(value == 0xFF ? -1 : value);
+
+	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 void ATCartridgeEmulator::BeginLoadState(ATSaveStateReader& reader) {
 	reader.RegisterHandlerMethod(kATSaveStateSection_Private, VDMAKEFOURCC('C', 'A', 'R', 'T'), this, &ATCartridgeEmulator::LoadStatePrivate);
 }
@@ -1786,7 +2053,7 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			fixedMask	= 0x1F;
 			break;
 
-		case kATCartridgeMode_5200_16K_OneChip:
+		case kATCartridgeMode_5200_16K_TwoChip:
 			fixedBase	= 0x40;
 			fixedSize	= 0x40;
 			fixedMask	= 0x1F;
@@ -1796,7 +2063,7 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			fixed2Mask	= 0x1F;
 			break;
 
-		case kATCartridgeMode_5200_16K_TwoChip:
+		case kATCartridgeMode_5200_16K_OneChip:
 			fixedBase	= 0x40;
 			fixedSize	= 0x80;
 			fixedMask	= 0x3F;
@@ -2164,6 +2431,7 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			bank1Base	= 0xA0;
 			bank1Size	= 0x20;
 			usecctl = true;
+			usecctlread = true;
 			usecctlwrite = true;
 			cctlhd.mpReadHandler = ReadByte_CCTL_MaxFlash_128K;
 			cctlhd.mpWriteHandler = WriteByte_CCTL_MaxFlash_128K;
@@ -2172,12 +2440,16 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			spec1hd.mpReadHandler = ReadByte_MaxFlash;
 			spec1hd.mpWriteHandler = WriteByte_MaxFlash;
 			spec1WriteEnabled = true;
+
+			// 04072012 flasher expects mfr|device == 0x20 or 0x21
+			mFlashEmu.Init(mCARTROM.data(), kATFlashType_Am29F010, mpScheduler);
 			break;
 
 		case kATCartridgeMode_MaxFlash_128K_MyIDE:
 			bank1Base	= 0xA0;
 			bank1Size	= 0x20;
 			usecctl = true;
+			usecctlread = true;
 			usecctlwrite = true;
 			cctlhd.mpReadHandler = ReadByte_CCTL_MaxFlash_128K_MyIDE;
 			cctlhd.mpWriteHandler = WriteByte_CCTL_MaxFlash_128K_MyIDE;
@@ -2186,6 +2458,9 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			spec1hd.mpReadHandler = ReadByte_MaxFlash;
 			spec1hd.mpWriteHandler = WriteByte_MaxFlash;
 			spec1WriteEnabled = true;
+
+			// 04072012 flasher expects mfr|device == 0x20 or 0x21
+			mFlashEmu.Init(mCARTROM.data(), kATFlashType_M29F010B, mpScheduler);
 			break;
 
 		case kATCartridgeMode_MaxFlash_1024K:
@@ -2202,6 +2477,8 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			spec1hd.mpReadHandler = ReadByte_MaxFlash;
 			spec1hd.mpWriteHandler = WriteByte_MaxFlash;
 			spec1WriteEnabled = true;
+			mFlashEmu.Init(mCARTROM.data(), kATFlashType_Am29F040B, mpScheduler);
+			mFlashEmu2.Init(mCARTROM.data() + 512*1024, kATFlashType_Am29F040B, mpScheduler);
 			break;
 
 		case kATCartridgeMode_Phoenix_8K:
@@ -2356,12 +2633,67 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			cctlhd.mpWriteHandler = WriteByte_CCTL_Turbosoft_128K;
 			break;
 
-		case kATCartridgeMode_Megacart_1M_2:
+		case kATCartridgeMode_MegaCart_1M_2:
 			bank1Base	= 0xA0;
 			bank1Size	= 0x20;
 			usecctl = true;
+			usecctlread = true;
 			usecctlwrite = true;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x7F>;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_DataToBank_Switchable<0x3F>;
+			break;
+
+		case kATCartridgeMode_MegaCart_512K_3:
+			bank1Base	= 0x80;
+			bank1Size	= 0x40;
+			spec1Base	= 0x80;
+			spec1Size	= 0x40;
+			spec1hd.mpDebugReadHandler = ReadByte_MegaCart3;
+			spec1hd.mpReadHandler = ReadByte_MegaCart3;
+			spec1hd.mpWriteHandler = WriteByte_MegaCart3;
+			spec1WriteEnabled = true;
+			usecctl = true;
+			usecctlread = true;
+			usecctlwrite = true;
+			cctlhd.mpDebugReadHandler = ReadByte_CCTL_MegaCart3;
+			cctlhd.mpReadHandler = ReadByte_CCTL_MegaCart3;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_MegaCart3;
+			mFlashEmu.Init(mCARTROM.data(), kATFlashType_Am29F040B, mpScheduler);
+			break;
+
+		case kATCartridgeMode_MegaCart_2M_3:
+			bank1Base	= 0x80;
+			bank1Size	= 0x40;
+			spec1Base	= 0x80;
+			spec1Size	= 0x40;
+			spec1hd.mpDebugReadHandler = ReadByte_MegaCart3;
+			spec1hd.mpReadHandler = ReadByte_MegaCart3;
+			spec1hd.mpWriteHandler = WriteByte_MegaCart3;
+			spec1WriteEnabled = true;
+			usecctl = true;
+			usecctlread = true;
+			usecctlwrite = true;
+			cctlhd.mpDebugReadHandler = ReadByte_CCTL_MegaCart3;
+			cctlhd.mpReadHandler = ReadByte_CCTL_MegaCart3;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_MegaCart3;
+			mFlashEmu.Init(mCARTROM.data(), kATFlashType_Am29F016D, mpScheduler);
+			break;
+
+		case kATCartridgeMode_MegaCart_4M_3:
+			bank1Base	= 0x80;
+			bank1Size	= 0x40;
+			spec1Base	= 0x80;
+			spec1Size	= 0x40;
+			spec1hd.mpDebugReadHandler = ReadByte_MegaCart3;
+			spec1hd.mpReadHandler = ReadByte_MegaCart3;
+			spec1hd.mpWriteHandler = WriteByte_MegaCart3;
+			spec1WriteEnabled = true;
+			usecctl = true;
+			usecctlread = true;
+			usecctlwrite = true;
+			cctlhd.mpDebugReadHandler = ReadByte_CCTL_MegaCart3;
+			cctlhd.mpReadHandler = ReadByte_CCTL_MegaCart3;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_MegaCart3;
+			mFlashEmu.Init(mCARTROM.data(), kATFlashType_Am29F032B, mpScheduler);
 			break;
 
 		case kATCartridgeMode_5200_64K_32KBanks:
@@ -2383,6 +2715,53 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			usecctlwrite = true;
 			cctlhd.mpReadHandler = ReadByte_CCTL_MicroCalc;
 			cctlhd.mpWriteHandler = WriteByte_CCTL_MicroCalc;
+			break;
+
+		case kATCartridgeMode_TheCart_32M:
+		case kATCartridgeMode_TheCart_64M:
+		case kATCartridgeMode_TheCart_128M:
+			bank1Base	= 0xA0;
+			bank1Size	= 0x20;
+			bank2Base	= 0x80;
+			bank2Size	= 0x20;
+			usecctl = true;
+			usecctlread = true;
+			usecctlwrite = true;
+			cctlhd.mpDebugReadHandler = ReadByte_CCTL_TheCart;
+			cctlhd.mpReadHandler = ReadByte_CCTL_TheCart;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_TheCart;
+			spec1Base	= 0xA0;
+			spec1Size	= 0x20;
+			spec1hd.mpReadHandler = ReadByte_TheCart;
+			spec1hd.mpWriteHandler = WriteByte_TheCart;
+			spec1WriteEnabled = true;
+			spec2Base	= 0x80;
+			spec2Size	= 0x20;
+			spec2hd.mpReadHandler = ReadByte_TheCart;
+			spec2hd.mpWriteHandler = WriteByte_TheCart;
+
+			switch(mCartMode) {
+				case kATCartridgeMode_TheCart_32M:
+					mFlashEmu.Init(mCARTROM.data(), kATFlashType_S29GL256P, mpScheduler);
+					break;
+				case kATCartridgeMode_TheCart_64M:
+					mFlashEmu.Init(mCARTROM.data(), kATFlashType_S29GL512P, mpScheduler);
+					break;
+				case kATCartridgeMode_TheCart_128M:
+					mFlashEmu.Init(mCARTROM.data(), kATFlashType_S29GL01P, mpScheduler);
+					break;
+			}
+
+			mEEPROM.Init();
+			break;
+
+		case kATCartridgeMode_MegaMax_2M:
+			bank1Base	= 0x80;
+			bank1Size	= 0x40;
+			usecctl = true;
+			usecctlwrite = true;
+			cctlhd.mpReadHandler = ReadByte_CCTL_AddressToBank_Switchable<0x7F>;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_AddressToBank_Switchable<0x7F>;
 			break;
 	}
 
@@ -2417,7 +2796,7 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 
 	if (bank2Size) {
 		mpMemLayerVarBank2 = mpMemMan->CreateLayer(mBasePriority+2, mCARTROM.data(), bank2Base, bank2Size, true);
-		mpMemMan->SetLayerName(mpMemLayerVarBank2, "Cartridge variable window 1");
+		mpMemMan->SetLayerName(mpMemLayerVarBank2, "Cartridge variable window 2");
 	}
 
 	if (spec1Size) {
@@ -2435,7 +2814,7 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 
 	if (spec2Size) {
 		mpMemLayerSpec2 = mpMemMan->CreateLayer(mBasePriority+4, spec2hd, spec2Base, spec2Size);
-		mpMemMan->SetLayerName(mpMemLayerSpec2, "Cartridge special window 1");
+		mpMemMan->SetLayerName(mpMemLayerSpec2, "Cartridge special window 2");
 
 		if (spec2Enabled)
 			mpMemMan->EnableLayer(mpMemLayerSpec2, true);
@@ -2450,7 +2829,19 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 		mpMemMan->EnableLayer(mpMemLayerControl, kATMemoryAccessMode_CPUWrite, usecctlwrite);
 	}
 
+	// This doesn't make sense for non-pow2 carts, of course, but currently we only use it for pow2.
+	mCartSizeMask = (uint32)mCARTROM.size() - 1;
+
 	UpdateLayerBuses();
+
+	switch(mCartMode) {
+		case kATCartridgeMode_TheCart_32M:
+		case kATCartridgeMode_TheCart_64M:
+		case kATCartridgeMode_TheCart_128M:
+			UpdateTheCartBanking();
+			UpdateTheCart();
+			break;
+	}
 
 	UpdateCartBank();
 
@@ -2522,6 +2913,49 @@ void ATCartridgeEmulator::UpdateCartBank() {
 		return;
 	}
 
+	if (mCartMode == kATCartridgeMode_TheCart_32M ||
+		mCartMode == kATCartridgeMode_TheCart_64M ||
+		mCartMode == kATCartridgeMode_TheCart_128M)
+	{
+		if (mpCB)
+			mpCB->CartSetAxxxMapped(mCartBank >= 0);
+
+		if (mCartBank < 0) {
+			// primary bank disabled
+			mpMemMan->EnableLayer(mpMemLayerVarBank1, false);
+			mpMemMan->EnableLayer(mpMemLayerSpec1, false);
+		} else {
+			uint8 base = 0xA0;
+			uint8 size = 0x20;
+
+			if (mCartBank & 0x20000) {
+				base = 0xB0;
+				size = 0x10;
+			}
+
+			if (!(mCartBank & 0x10000)) {
+				// primary bank set to flash
+				mpMemMan->SetLayerMemory(mpMemLayerVarBank1, mCARTROM.data() + ((mCartBank << 13) & mCartSizeMask), base, size, (uint32)0-1, true);
+				mpMemMan->EnableLayer(mpMemLayerVarBank1, true);
+
+				const bool flashRead = mFlashEmu.IsControlReadEnabled();
+				mpMemMan->SetLayerAddressRange(mpMemLayerSpec1, base, size);
+				mpMemMan->EnableLayer(mpMemLayerSpec1, kATMemoryAccessMode_AnticRead, flashRead);
+				mpMemMan->EnableLayer(mpMemLayerSpec1, kATMemoryAccessMode_CPURead, flashRead);
+				mpMemMan->EnableLayer(mpMemLayerSpec1, kATMemoryAccessMode_CPUWrite, (mTheCartRegs[7] & 0x01) != 0);
+			} else {
+				// primary bank set to RAM
+				mpMemMan->SetLayerMemory(mpMemLayerVarBank1, mCARTRAM.data() + ((mCartBank << 13) & 0x7ffff), base, size, (uint32)0-1, !(mTheCartRegs[7] & 0x01));
+				mpMemMan->EnableLayer(mpMemLayerVarBank1, true);
+
+				// disable flash layer
+				mpMemMan->EnableLayer(mpMemLayerSpec1, false);
+			}
+		}
+
+		return;
+	}
+
 	if (mCartBank < 0) {
 		if (mpCB)
 			mpCB->CartSetAxxxMapped(mCartMode == kATCartridgeMode_BountyBob800);
@@ -2563,6 +2997,11 @@ void ATCartridgeEmulator::UpdateCartBank() {
 		case kATCartridgeMode_MaxFlash_128K_MyIDE:
 		case kATCartridgeMode_MaxFlash_1024K:
 		case kATCartridgeMode_MaxFlash_1024K_Bank0:
+			// 8K banks
+			mpMemMan->SetLayerMemory(mpMemLayerVarBank1, cartbase + (mCartBank << 13));
+			mpMemMan->EnableLayer(mpMemLayerSpec1, kATMemoryAccessMode_CPUWrite, true);
+			break;
+
 		case kATCartridgeMode_XEGS_32K:
 		case kATCartridgeMode_XEGS_64K:
 		case kATCartridgeMode_XEGS_128K:
@@ -2581,10 +3020,20 @@ void ATCartridgeEmulator::UpdateCartBank() {
 		case kATCartridgeMode_AST_32K:
 		case kATCartridgeMode_Turbosoft_64K:
 		case kATCartridgeMode_Turbosoft_128K:
-		case kATCartridgeMode_Megacart_1M_2:
+		case kATCartridgeMode_MegaCart_1M_2:
 		case kATCartridgeMode_MicroCalc:
 			// 8K banks
 			mpMemMan->SetLayerMemory(mpMemLayerVarBank1, cartbase + (mCartBank << 13));
+			break;
+
+		case kATCartridgeMode_MegaCart_512K_3:
+			// 8K banks, masked to 512K
+			mpMemMan->SetLayerMemory(mpMemLayerVarBank1, cartbase + ((mCartBank & 0x1f) << 14));
+			break;
+
+		case kATCartridgeMode_MegaCart_2M_3:
+			// 8K banks, masked to 2M
+			mpMemMan->SetLayerMemory(mpMemLayerVarBank1, cartbase + ((mCartBank & 0x7f) << 14));
 			break;
 
 		case kATCartridgeMode_Switchable_XEGS_32K:
@@ -2605,6 +3054,8 @@ void ATCartridgeEmulator::UpdateCartBank() {
 		case kATCartridgeMode_MegaCart_256K:
 		case kATCartridgeMode_MegaCart_512K:
 		case kATCartridgeMode_MegaCart_1M:
+		case kATCartridgeMode_MegaCart_4M_3:
+		case kATCartridgeMode_MegaMax_2M:
 			// 16K banks
 			mpMemMan->SetLayerMemory(mpMemLayerVarBank1, cartbase + (mCartBank << 14));
 			break;
@@ -2638,7 +3089,7 @@ void ATCartridgeEmulator::UpdateCartBank() {
 		case kATCartridgeMode_Corina_512K_SRAM_EEPROM:
 			if (mCartBank == 64) {
 				// EEPROM - 8K mirrored twice
-				mpMemMan->SetLayerMemory(mpMemLayerVarBank1, cartbase + (64 << 14), 0x80, 0x40, 0x1F);
+				mpMemMan->SetLayerMemory(mpMemLayerVarBank1, cartbase + (32 << 14), 0x80, 0x40, 0x1F);
 				mpMemMan->EnableLayer(mpMemLayerSpec1, kATMemoryAccessMode_CPUWrite, true);
 			} else if (mCartBank >= 32) {
 				mpMemMan->SetLayerMemory(mpMemLayerVarBank1, mCARTRAM.data() + ((mCartBank - 32) << 14), 0x80, 0x40, 0xFFFFFFFFU, false);
@@ -2652,8 +3103,57 @@ void ATCartridgeEmulator::UpdateCartBank() {
 }
 
 void ATCartridgeEmulator::UpdateCartBank2() {
-	if (mCartMode == kATCartridgeMode_SIC)
-		return;
+	switch(mCartMode) {
+		case kATCartridgeMode_SIC:
+			return;
+
+		case kATCartridgeMode_TheCart_32M:
+		case kATCartridgeMode_TheCart_64M:
+		case kATCartridgeMode_TheCart_128M:
+			if (mCartBank2 < 0) {
+				// secondary bank disabled
+				mpMemMan->EnableLayer(mpMemLayerVarBank2, false);
+				mpMemMan->EnableLayer(mpMemLayerSpec2, false);
+			} else {
+				uint8 base = 0x80;
+				uint8 size = 0x20;
+				uint32 extraOffset = 0;
+				uint32 bank2 = mCartBank2;
+
+				if (bank2 & 0x20000) {
+					bank2 -= 0x20000;
+
+					base = 0xA0;
+					size = 0x10;
+
+					if (bank2 & 1)
+						extraOffset = 0x1000;
+
+					bank2 += bank2 & 0x10000;
+					bank2 >>= 1;
+				}
+
+				if (!(bank2 & 0x10000)) {
+					// secondary bank set to flash
+					mpMemMan->SetLayerMemory(mpMemLayerVarBank2, mCARTROM.data() + (((bank2 << 13) + extraOffset) & mCartSizeMask), base, size, (uint32)0-1, true);
+					mpMemMan->EnableLayer(mpMemLayerVarBank2, true);
+
+					const bool flashRead = mFlashEmu.IsControlReadEnabled();
+					mpMemMan->SetLayerAddressRange(mpMemLayerSpec2, base, size);
+					mpMemMan->EnableLayer(mpMemLayerSpec2, kATMemoryAccessMode_AnticRead, flashRead);
+					mpMemMan->EnableLayer(mpMemLayerSpec2, kATMemoryAccessMode_CPURead, flashRead);
+					mpMemMan->EnableLayer(mpMemLayerSpec2, kATMemoryAccessMode_CPUWrite, (mTheCartRegs[7] & 0x04) != 0);
+				} else {
+					// secondary bank set to RAM
+					mpMemMan->SetLayerMemory(mpMemLayerVarBank2, mCARTRAM.data() + (((bank2 << 13) + extraOffset) & 0x7ffff), base, size, (uint32)0-1, !(mTheCartRegs[7] & 0x04));
+					mpMemMan->EnableLayer(mpMemLayerVarBank2, true);
+
+					// disable flash layer
+					mpMemMan->EnableLayer(mpMemLayerSpec2, false);
+				}
+			}
+			return;
+	}
 
 	if (mCartBank2 < 0) {
 		mpMemMan->EnableLayer(mpMemLayerVarBank2, false);
@@ -2695,4 +3195,322 @@ void ATCartridgeEmulator::UpdateLayerBuses() {
 	if (mpMemLayerSpec1		) mpMemMan->SetLayerFastBus(mpMemLayerSpec1, mbFastBus);
 	if (mpMemLayerSpec2		) mpMemMan->SetLayerFastBus(mpMemLayerSpec2, mbFastBus);
 	if (mpMemLayerControl	) mpMemMan->SetLayerFastBus(mpMemLayerControl, mbFastBus);
+}
+
+void ATCartridgeEmulator::UpdateTheCartBanking() {
+	mTheCartBankInfo.clear();
+	mTheCartBankInfo.resize(256, -1);
+
+	// Supported modes:
+	//
+	// $00: off, cartridge disabled
+	// $01: 8k banks at $A000
+	// $02: AtariMax 1MBit / 128k
+	// $03: Atarimax 8MBit / 1MB
+	// $04: OSS M091
+	// $08: SDX 64k cart, $D5Ex banking
+	// $09: Diamond GOS 64k cart, $D5Dx banking
+	// $0A: Express 64k cart, $D57x banking
+	// $0C: Atrax 128k cart
+	// $0D: Williams 64k cart
+	// $20: flexi mode (separate 8k banks at $A000 and $8000)
+	// $21: standard 16k cart at $8000-$BFFF
+	// $22: MegaMax 16k mode (up to 2MB), AtariMax 8Mbit banking
+	// $23: Blizzard 16k
+	// $24: Sic!Cart 512k
+	// $28: 16k Mega cart
+	// $29: 32k Mega cart
+	// $2A: 64k Mega cart
+	// $2B: 128k Mega cart
+	// $2C: 256k Mega cart
+	// $2D: 512k Mega cart
+	// $2E: 1024k Mega cart
+	// $2F: 2048k Mega cart
+	// $30: 32k XEGS cart
+	// $31: 64k XEGS cart
+	// $32: 128k XEGS cart
+	// $33: 256k XEGS cart
+	// $34: 512k XEGS cart
+	// $35: 1024k XEGS cart
+	// $38: 32k SWXEGS cart
+	// $39: 64k SWXEGS cart
+	// $3A: 128k SWXEGS cart
+	// $3B: 256k SWXEGS cart
+	// $3C: 512k SWXEGS cart
+	// $3D: 1024k SWXEGS cart
+
+	const uint8 mode = mTheCartRegs[6] & 0x3f;
+
+	mTheCartBankMask = 0;
+	mbTheCartBankByAddress = false;
+
+	// validate mode and determine if we need the bank info
+	switch(mode) {
+		case 0x00:	// $00: off, cartridge disabled
+			mTheCartBankMode = kTheCartBankMode_Disabled;
+			break;
+
+		case 0x01:	// $01: 8k banks at $A000
+			mTheCartBankMode = kTheCartBankMode_8K;
+			break;
+
+		case 0x20:	// $20: flexi mode (separate 8k banks at $A000 and $8000)
+			mTheCartBankMode = kTheCartBankMode_Flexi;
+			break;
+
+		case 0x21:	// $21: standard 16k cart at $8000-$BFFF
+			mTheCartBankMode = kTheCartBankMode_16K;
+			break;
+
+		case 0x02:	// $02: AtariMax 1MBit / 128k
+			mTheCartBankMode = kTheCartBankMode_8K;
+			mbTheCartBankByAddress = true;
+			mTheCartBankMask = 0x0F;
+
+			for(int i=0; i<0x10; ++i)
+				mTheCartBankInfo[i] = 0x4000 + i;
+
+			for(int i=0x10; i<0x20; ++i)
+				mTheCartBankInfo[i] = i;
+			break;
+
+		case 0x03:	// $03: Atarimax 8MBit / 1MB
+			mTheCartBankMode = kTheCartBankMode_8K;
+			mbTheCartBankByAddress = true;
+			mTheCartBankMask = 0x7F;
+
+			for(int i=0; i<0x80; ++i)
+				mTheCartBankInfo[i] = 0x4000 + i;
+
+			// The!Cart docs say that only $D58x disables in AtariMax 8Mbit emulation mode,
+			// even though $D580-FF do so in the real cart.
+			for(int i=0x80; i<0x90; ++i)
+				mTheCartBankInfo[i] = i;
+			break;
+
+		case 0x04:	// $04: OSS M091
+			{
+				static const sint8 kBankLookup[16] = {1, 3, 1, 3, 1, 3, 1, 3, -1, 2};
+
+				mTheCartBankMode = kTheCartBankMode_OSS;
+				mbTheCartBankByAddress = true;
+				mTheCartBankMask = 0x01;
+
+				for(int i=0; i<256; ++i) {
+					sint8 v = kBankLookup[i & 9];
+					mTheCartBankInfo[i] = v;
+				}
+			}
+			break;
+
+		case 0x08:	// $08: SDX 64k cart, $D5Ex banking
+			mTheCartBankMode = kTheCartBankMode_8K;
+			mbTheCartBankByAddress = true;
+			mTheCartBankMask = 0x07;
+
+			for(int i=0; i<8; ++i)
+				mTheCartBankInfo[0xE0+i] = 0x4007 - i;
+
+			for(int i=0; i<8; ++i)
+				mTheCartBankInfo[0xE8+i] = 7 - i;			
+			break;
+
+		case 0x09:	// $09: Diamond GOS 64k cart, $D5Dx banking
+			mTheCartBankMode = kTheCartBankMode_8K;
+			mbTheCartBankByAddress = true;
+			mTheCartBankMask = 0x07;
+
+			for(int i=0; i<8; ++i)
+				mTheCartBankInfo[0xD0+i] = 0x4007 - i;
+
+			for(int i=0; i<8; ++i)
+				mTheCartBankInfo[0xD8+i] = 7 - i;			
+			break;
+
+		case 0x0A:	// $0A: Express 64k cart, $D57x banking
+			mTheCartBankMode = kTheCartBankMode_8K;
+			mbTheCartBankByAddress = true;
+			mTheCartBankMask = 0x07;
+
+			for(int i=0; i<8; ++i)
+				mTheCartBankInfo[0x70+i] = 0x4007 - i;
+
+			for(int i=0; i<8; ++i)
+				mTheCartBankInfo[0x78+i] = 7 - i;			
+			break;
+
+		case 0x0C:	// $0C: Atrax 128k cart
+			mTheCartBankMode = kTheCartBankMode_8K;
+			mTheCartBankMask = 0x0F;
+			for(int i=0; i<128; ++i)
+				mTheCartBankInfo[i] = 0x4000 + i;
+
+			for(int i=0; i<128; ++i)
+				mTheCartBankInfo[0x80+i] = i;			
+			break;
+
+		case 0x0D:	// $0D: Williams 64k cart
+			mTheCartBankMode = kTheCartBankMode_8K;
+			mbTheCartBankByAddress = true;
+			mTheCartBankMask = 0x07;
+
+			for(int i=0; i<0x100; ++i)
+				mTheCartBankInfo[i] = i & 8 ? i : 0x4000 + i;
+			break;
+
+		case 0x22:	// $22: MegaMax 16k mode (up to 2MB), AtariMax 8Mbit banking
+			mTheCartBankMode = kTheCartBankMode_16K;
+			mbTheCartBankByAddress = true;
+			mTheCartBankMask = 0xFE;
+
+			for(int i=0; i<128; ++i)
+				mTheCartBankInfo[i] = 0x4000 + i*2;
+
+			for(int i=0; i<128; ++i)
+				mTheCartBankInfo[i+128] = i*2;
+			break;
+
+		case 0x23:	// $23: Blizzard 16k
+			mTheCartBankMode = kTheCartBankMode_16K;
+			mTheCartBankMask = 0;
+			for(int i=0; i<0x100; ++i)
+				mTheCartBankInfo[i] = 0;			
+			break;
+
+		case 0x24:	// $24: Sic!Cart 512k
+			mTheCartBankMode = kTheCartBankMode_SIC;
+			mTheCartBankMask = 0x3E;
+
+			for(int i=0; i<0x100; ++i) {
+				// Bit 7 controls flash -- which we ignore here.
+				// Bit 6 disables $A000-BFFF.
+				// Bit 5 enables $8000-9FFF.
+				// SIC! uses 16K banks, so we have to go evens.
+				mTheCartBankInfo[i] = ((i & 0x40) ? 0 : 0x4000) + ((i & 0x20) ? 0x2000 : 0) + (i & 0x1f)*2;
+			}
+			break;
+
+		case 0x28:	// $28: 16k Mega cart
+		case 0x29:	// $29: 32k Mega cart
+		case 0x2A:	// $2A: 64k Mega cart
+		case 0x2B:	// $2B: 128k Mega cart
+		case 0x2C:	// $2C: 256k Mega cart
+		case 0x2D:	// $2D: 512k Mega cart
+		case 0x2E:	// $2E: 1024k Mega cart
+		case 0x2F:	// $2F: 2048k Mega cart
+			// 16K banks - data written to $D5xx selects bank, D7=1 disables
+			mTheCartBankMode = kTheCartBankMode_16K;
+			mTheCartBankMask = (2 << (mode - 0x28)) - 2;
+			mbTheCartBankByAddress = false;
+
+			for(int i=0; i<128; ++i)
+				mTheCartBankInfo[i] = 0x4000 + i * 2;
+
+			for(int i=0; i<128; ++i)
+				mTheCartBankInfo[i + 128] = i * 2;
+			break;
+
+		case 0x30:	// $30: 32k XEGS cart
+		case 0x31:	// $31: 64k XEGS cart
+		case 0x32:	// $32: 128k XEGS cart
+		case 0x33:	// $33: 256k XEGS cart
+		case 0x34:	// $34: 512k XEGS cart
+		case 0x35:	// $35: 1024k XEGS cart
+			// fixed upper 8K bank, data written to $D5xx selects lower 8K bank
+			mTheCartBankMode = kTheCartBankMode_8KFixed_8K;
+			mTheCartBankMask = (4 << (mode - 0x30)) - 1;
+			mbTheCartBankByAddress = false;
+
+			for(int i=0; i<256; ++i)
+				mTheCartBankInfo[i] = 0x4000 + i;
+			break;
+
+		case 0x38:	// $38: 32k SWXEGS cart
+		case 0x39:	// $39: 64k SWXEGS cart
+		case 0x3A:	// $3A: 128k SWXEGS cart
+		case 0x3B:	// $3B: 256k SWXEGS cart
+		case 0x3C:	// $3C: 512k SWXEGS cart
+		case 0x3D:	// $3D: 1024k SWXEGS cart
+			// fixed upper 8K bank, data written to $D5xx selects lower 8K bank, D7=1 disables
+			mTheCartBankMode = kTheCartBankMode_8KFixed_8K;
+			mTheCartBankMask = (4 << (mode - 0x38)) - 1;
+			mbTheCartBankByAddress = false;
+
+			for(int i=0; i<256; ++i)
+				mTheCartBankInfo[i] = ((i & 0x80) ? 0 : 0x4000) + i;
+			break;
+	}
+}
+
+void ATCartridgeEmulator::UpdateTheCart() {
+	// compute primary bank
+	sint32 bank1 = -1;
+
+	if (mTheCartRegs[2] & 0x01) {		// check if enabled
+		bank1 = VDReadUnalignedLEU16(mTheCartRegs + 0) & 0x3FFF;
+
+		if (mTheCartRegs[7] & 0x02)		// check if RAM
+			bank1 += 0x10000;
+	}
+
+	// compute secondary bank
+	sint32 bank2 = -1;
+
+	if (mTheCartRegs[5] & 0x01) {		// check if enabled
+		bank2 = VDReadUnalignedLEU16(mTheCartRegs + 3) & 0x3FFF;
+
+		if (mTheCartRegs[7] & 0x08)		// check if RAM
+			bank2 += 0x10000;
+	}
+
+	switch(mTheCartBankMode) {
+		case kTheCartBankMode_Disabled:
+		default:
+			SetCartBank(bank1);
+			SetCartBank2(bank2);
+			break;
+
+		case kTheCartBankMode_8K:
+			SetCartBank(bank1);
+			SetCartBank2(-1);
+			break;
+
+		case kTheCartBankMode_16K:
+			bank1 &= ~1;
+			SetCartBank(bank1 + 1);
+			SetCartBank2(bank1);
+			break;
+
+		case kTheCartBankMode_SIC:
+			if (mTheCartRegs[2]) {
+				// recompute primary bank since there are independent enables (arg)
+				bank1 = VDReadUnalignedLEU16(mTheCartRegs + 0) & 0x3FFF;
+
+				if (mTheCartRegs[7] & 0x02)		// check if RAM
+					bank1 += 0x10000;
+
+				bank1 &= ~1;
+				SetCartBank(mTheCartSICEnables & 0x40 ? bank1+1 : -1);
+				SetCartBank2(mTheCartSICEnables & 0x20 ? bank1 : -1);
+			} else {
+				SetCartBank(-1);
+				SetCartBank2(-1);
+			}
+			break;
+
+		case kTheCartBankMode_Flexi:
+			SetCartBank(bank1);
+			SetCartBank2(bank2);
+			break;
+
+		case kTheCartBankMode_8KFixed_8K:
+			SetCartBank(bank1 | mTheCartBankMask);
+			SetCartBank2(bank1);
+			break;
+
+		case kTheCartBankMode_OSS:
+			SetCartBank(bank1 | 0x20000);
+			SetCartBank2(((bank1 & ~1) * 2) | 0x20000 | mTheCartOSSBank);
+			break;
+	}
 }

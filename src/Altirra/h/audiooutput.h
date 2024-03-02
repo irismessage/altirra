@@ -67,10 +67,15 @@ public:
 	virtual int GetExtraBuffer() = 0;
 	virtual void SetExtraBuffer(int ms) = 0;
 
+	virtual void SetFiltersEnabled(bool enable) = 0;
+
 	virtual void Pause() = 0;
 	virtual void Resume() = 0;
 
-	virtual void WriteAudio(const float *left, const float *right, uint32 count, bool pushAudio, uint32 timestamp) = 0;
+	virtual void WriteAudio(
+		const float *left,
+		const float *right,
+		uint32 count, bool pushAudio, uint32 timestamp) = 0;
 };
 
 IATAudioOutput *ATCreateAudioOutput();

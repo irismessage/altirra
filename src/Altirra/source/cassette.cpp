@@ -598,11 +598,11 @@ ATCassetteEmulator::BitResult ATCassetteEmulator::ProcessBit() {
 			// Check for stop bit.
 			if (mbOutputBit) {
 				// We got a mark -- send the byte on.
-				VDDEBUG("[%.1f] Stop bit detected; receiving byte %02x\n", (float)mPosition / 6.77944f, mDataByte);
+				//VDDEBUG("[%.1f] Stop bit detected; receiving byte %02x\n", (float)mPosition / 6.77944f, mDataByte);
 				return kBR_ByteReceived;
 			} else {
 				// Framing error -- drop the byte.
-				VDDEBUG("[%.1f] Framing error detected (baud rate = %.2f)\n", (float)mPosition / 6.77944f, 7159090.0f / 8.0f / (float)mDataBitHalfPeriod);
+				//VDDEBUG("[%.1f] Framing error detected (baud rate = %.2f)\n", (float)mPosition / 6.77944f, 7159090.0f / 8.0f / (float)mDataBitHalfPeriod);
 				return kBR_FramingError;
 			}
 		} else {

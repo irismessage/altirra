@@ -240,9 +240,12 @@ scan_done:
 ;	  it's handled by S:.
 ;
 .proc	EditorPutByte
-	;open the screen if it is not open already
+	;open the text screen if it is not open already
+	ldy		dindex
+	beq		screenok
 	ldy		botscr
-	bne		screenok
+	cpy		#4
+	beq		screenok
 
 	pha
 	jsr		ScreenOpenGr0

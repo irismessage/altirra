@@ -27,6 +27,7 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/w32assist.h>
+#include <vd2/system/win32/touch.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmaputils.h>
 
@@ -34,6 +35,10 @@
 #include <vd2/VDDisplay/compositor.h>
 #include <vd2/VDDisplay/display.h>
 #include <vd2/VDDisplay/displaydrv.h>
+
+#ifndef WM_TOUCH
+#define WM_TOUCH		0x0240
+#endif
 
 #define VDDEBUG_DISP (void)sizeof printf
 //#define VDDEBUG_DISP VDDEBUG
@@ -99,6 +104,7 @@ protected:
 	void SetSourceSubrect(const vdrect32 *r);
 	void SetSourceSolidColor(uint32 color);
 	void SetReturnFocus(bool fs);
+	void SetTouchEnabled(bool enable);
 	void SetFullScreen(bool fs, uint32 width, uint32 height, uint32 refresh);
 	void SetDestRect(const vdrect32 *r, uint32 backgroundColor);
 	void SetPixelSharpness(float xsharpness, float ysharpness);
@@ -201,6 +207,7 @@ protected:
 	bool		mbIgnoreMouse;
 	bool		mbUseSubrect;
 	bool		mbReturnFocus;
+	bool		mbTouchEnabled;
 	bool		mbFullScreen;
 	uint32		mFullScreenWidth;
 	uint32		mFullScreenHeight;
@@ -368,6 +375,7 @@ VDVideoDisplayWindow::VDVideoDisplayWindow(HWND hwnd, const CREATESTRUCT& create
 	, mbIgnoreMouse(false)
 	, mbUseSubrect(false)
 	, mbReturnFocus(false)
+	, mbTouchEnabled(false)
 	, mbFullScreen(false)
 	, mFullScreenWidth(0)
 	, mFullScreenHeight(0)
@@ -412,6 +420,7 @@ VDVideoDisplayWindow::~VDVideoDisplayWindow() {
 #define MYWM_SETSOLIDCOLOR	(WM_USER + 0x108)
 #define MYWM_INVALIDATE		(WM_USER + 0x109)
 #define MYWM_QUEUEPRESENT	(WM_USER + 0x10A)
+#define MYWM_SETTOUCHENABLED (WM_USER + 0x10B)
 
 void VDVideoDisplayWindow::SetSourceMessage(const wchar_t *msg) {
 	SendMessage(mhwnd, MYWM_SETSOURCEMSG, 0, (LPARAM)msg);
@@ -485,6 +494,10 @@ void VDVideoDisplayWindow::SetSourceSolidColor(uint32 color) {
 
 void VDVideoDisplayWindow::SetReturnFocus(bool enable) {
 	mbReturnFocus = enable;
+}
+
+void VDVideoDisplayWindow::SetTouchEnabled(bool enable) {
+	SendMessage(mhwnd, MYWM_SETTOUCHENABLED, enable, 0);
 }
 
 void VDVideoDisplayWindow::SetFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh) {
@@ -806,6 +819,10 @@ LRESULT VDVideoDisplayWindow::ChildWndProc(UINT msg, WPARAM wParam, LPARAM lPara
 		if (mpMiniDriver)
 			VerifyDriverResult(mpMiniDriver->Tick((int)wParam));
 		break;
+
+	case WM_TOUCH:
+		if (HWND hwndParent = ::GetAncestor(mhwnd, GA_PARENT))
+			return SendMessage(hwndParent, WM_TOUCH, wParam, lParam);
 	}
 
 	return DefWindowProc(mhwndChild, msg, wParam, lParam);
@@ -971,6 +988,23 @@ LRESULT VDVideoDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		SendMessage(mhwnd, MYWM_PROCESSNEXTFRAME, 0, 0);
 		return 0;
 
+	case MYWM_SETTOUCHENABLED:
+		if (mbTouchEnabled != (wParam != 0)) {
+			mbTouchEnabled = (wParam != 0);
+			if (wParam) {
+				VDRegisterTouchWindowW32(mhwnd, 0);
+
+				if (mhwndChild)
+					VDRegisterTouchWindowW32(mhwndChild, 0);
+			} else {
+				VDUnregisterTouchWindowW32(mhwnd);
+
+				if (mhwndChild)
+					VDUnregisterTouchWindowW32(mhwndChild);
+			}
+		}
+		return 0;
+
 	case WM_SIZE:
 		if (mhwndChild)
 			SetWindowPos(mhwndChild, NULL, 0, 0, LOWORD(lParam), HIWORD(lParam), SWP_NOMOVE|SWP_NOCOPYBITS|SWP_NOZORDER|SWP_NOACTIVATE);
@@ -996,6 +1030,10 @@ LRESULT VDVideoDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (hwndParent)
 				SetFocus(GetParent(mhwnd));
 		}
+		break;
+	case WM_TOUCH:
+		if (HWND hwndParent = ::GetAncestor(mhwnd, GA_PARENT))
+			return SendMessage(hwndParent, WM_TOUCH, wParam, lParam);
 		break;
 	}
 
@@ -1357,6 +1395,9 @@ bool VDVideoDisplayWindow::InitMiniDriver() {
 	mhwndChild = CreateWindowEx(WS_EX_NOPARENTNOTIFY, (LPCTSTR)sChildWindowClass, "", WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS, 0, 0, r.right, r.bottom, mhwnd, NULL, VDGetLocalModuleHandleW32(), this);
 	if (!mhwndChild)
 		return false;
+
+	if (mbTouchEnabled)
+		VDRegisterTouchWindowW32(mhwndChild, 0);
 
 	CheckForMonitorChange();
 

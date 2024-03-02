@@ -31,6 +31,9 @@ public:
 	void ReleaseMouse();
 	void CaptureMouse();
 
+	void OpenOSK();
+	void CloseOSK();
+
 	bool IsTextSelected() const { return !mDragPreviewSpans.empty(); }
 
 	void SetDisplayRect(const vdrect32& r);
@@ -48,6 +51,7 @@ public:
 	virtual void OnSimulatorEvent(ATSimulatorEvent ev);
 
 protected:
+	virtual ATUITouchMode GetTouchModeAtPoint(const vdpoint32& pt) const;
 	virtual void OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk);
 	virtual void OnMouseUp(sint32 x, sint32 y, uint32 vk);
 	virtual void OnMouseRelativeMove(sint32 dx, sint32 dy);
@@ -67,6 +71,7 @@ protected:
 	virtual void OnDestroy();
 	virtual void OnSize();
 
+	virtual void OnSetFocus();
 	virtual void OnKillFocus();
 	virtual void OnCaptureLost();
 

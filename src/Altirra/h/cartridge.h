@@ -21,6 +21,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
 #include "flash.h"
+#include "eeprom.h"
 
 class ATSaveStateReader;
 class ATSaveStateWriter;
@@ -90,12 +91,19 @@ enum ATCartridgeMode {
 	kATCartridgeMode_Turbosoft_64K,
 	kATCartridgeMode_Turbosoft_128K,
 	kATCartridgeMode_MaxFlash_1024K_Bank0,
-	kATCartridgeMode_Megacart_1M_2,			// Hardware by Bernd for ABBUC JHV 2009
+	kATCartridgeMode_MegaCart_1M_2,			// Hardware by Bernd for ABBUC JHV 2009
 	kATCartridgeMode_5200_64K_32KBanks,		// Used by M.U.L.E. 64K conversion
 	kATCartridgeMode_MicroCalc,
 	kATCartridgeMode_2K,
 	kATCartridgeMode_4K,
 	kATCartridgeMode_RightSlot_4K,
+	kATCartridgeMode_MegaCart_512K_3,
+	kATCartridgeMode_MegaCart_2M_3,
+	kATCartridgeMode_MegaCart_4M_3,
+	kATCartridgeMode_TheCart_32M,
+	kATCartridgeMode_TheCart_64M,
+	kATCartridgeMode_TheCart_128M,
+	kATCartridgeMode_MegaMax_2M,
 	kATCartridgeModeCount
 };
 
@@ -175,6 +183,10 @@ protected:
 	static bool WriteByte_BB800_2(void *thisptr0, uint32 address, uint8 value);
 	static sint32 ReadByte_SIC(void *thisptr0, uint32 address);
 	static bool WriteByte_SIC(void *thisptr0, uint32 address, uint8 value);
+	static sint32 ReadByte_TheCart(void *thisptr0, uint32 address);
+	static bool WriteByte_TheCart(void *thisptr0, uint32 address, uint8 value);
+	static sint32 ReadByte_MegaCart3(void *thisptr0, uint32 address);
+	static bool WriteByte_MegaCart3(void *thisptr0, uint32 address, uint8 value);
 	static sint32 ReadByte_MaxFlash(void *thisptr0, uint32 address);
 	static bool WriteByte_MaxFlash(void *thisptr0, uint32 address, uint8 value);
 	static bool WriteByte_Corina1M(void *thisptr0, uint32 address, uint8 value);
@@ -185,6 +197,12 @@ protected:
 
 	template<uint8 T_Mask>
 	static bool WriteByte_CCTL_AddressToBank(void *thisptr0, uint32 address, uint8 value);
+
+	template<uint8 T_Mask>
+	static sint32 ReadByte_CCTL_AddressToBank_Switchable(void *thisptr0, uint32 address);
+
+	template<uint8 T_Mask>
+	static bool WriteByte_CCTL_AddressToBank_Switchable(void *thisptr0, uint32 address, uint8 value);
 
 	template<uint8 T_Mask>
 	static bool WriteByte_CCTL_DataToBank(void *thisptr0, uint32 address, uint8 value);
@@ -215,6 +233,9 @@ protected:
 
 	static sint32 ReadByte_CCTL_SIC(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_SIC(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_TheCart(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_TheCart(void *thisptr0, uint32 address, uint8 value);
 
 	static sint32 ReadByte_CCTL_SC3D(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_SC3D(void *thisptr0, uint32 address, uint8 value);
@@ -249,6 +270,9 @@ protected:
 	static sint32 ReadByte_CCTL_MicroCalc(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_MicroCalc(void *thisptr0, uint32 address, uint8 value);
 
+	static sint32 ReadByte_CCTL_MegaCart3(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_MegaCart3(void *thisptr0, uint32 address, uint8 value);
+
 	void InitMemoryLayers();
 	void ShutdownMemoryLayers();
 	void SetCartBank(int bank);
@@ -256,14 +280,16 @@ protected:
 	void UpdateCartBank();
 	void UpdateCartBank2();
 	void UpdateLayerBuses();
+	void UpdateTheCartBanking();
+	void UpdateTheCart();
 
 	ATCartridgeMode mCartMode;
 	int	mCartBank;
 	int	mCartBank2;
+	uint32 mCartSizeMask;
 	int	mInitialCartBank;
 	int	mInitialCartBank2;
 	int mBasePriority;
-	int mCommandPhase;
 	bool mbDirty;
 	bool mbFastBus;
 	IATUIRenderer *mpUIRenderer;
@@ -278,23 +304,39 @@ protected:
 	ATMemoryLayer *mpMemLayerSpec2;
 	ATMemoryLayer *mpMemLayerControl;
 
-	enum FlashReadMode {
-		kFlashReadMode_Normal,
-		kFlashReadMode_Autoselect,
-		kFlashReadMode_WriteStatus
-	};
-
-	FlashReadMode mFlashReadMode;
-
 	ATFlashEmulator mFlashEmu;
+	ATFlashEmulator mFlashEmu2;
+	ATEEPROMEmulator mEEPROM;
 
-	uint8	mSC3D[4];
+	union {
+		uint8	mSC3D[4];
+		uint8	mTheCartRegs[9];
+	};
 
 	vdfastvector<uint8> mCARTROM;
 	uint32	mCartSize;
 
 	vdfastvector<uint8> mCARTRAM;
 	VDStringW mImagePath;
+
+	vdblock<sint16> mTheCartBankInfo;
+	bool mbTheCartBankByAddress;
+	uint8 mTheCartOSSBank;
+	uint8 mTheCartSICEnables;
+	uint16 mTheCartBankMask;
+	bool mbTheCartConfigLock;
+
+	enum TheCartBankMode {
+		kTheCartBankMode_Disabled,
+		kTheCartBankMode_8K,
+		kTheCartBankMode_16K,
+		kTheCartBankMode_Flexi,
+		kTheCartBankMode_8KFixed_8K,
+		kTheCartBankMode_OSS,		// 4K fixed + 4K variable
+		kTheCartBankMode_SIC		// 16K, independently switchable halves
+	};
+
+	TheCartBankMode mTheCartBankMode;
 };
 
 int ATGetCartridgeModeForMapper(int mapper);

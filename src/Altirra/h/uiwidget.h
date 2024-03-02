@@ -3,6 +3,7 @@
 
 #include <vd2/system/vectors.h>
 #include <vd2/VDDisplay/rendercache.h>
+#include "ui.h"
 
 class IVDDisplayRenderer;
 class VDDisplayTextRenderer;
@@ -201,6 +202,9 @@ public:
 	bool IsHitTransparent() const { return mbHitTransparent; }
 	void SetHitTransparent(bool trans) { mbHitTransparent = trans; }
 
+	ATUITouchMode GetTouchMode() const { return mTouchMode; }
+	void SetTouchMode(ATUITouchMode mode) { mTouchMode = mode; }
+
 	ATUIManager *GetManager() const { return mpManager; }
 	ATUIContainer *GetParent() const { return mpParent; }
 
@@ -216,6 +220,7 @@ public:
 	void BindAction(uint32 vk, uint32 action, uint32 mod = 0, uint32 instanceid = 0);
 	const ATUITriggerBinding *FindAction(uint32 vk, uint32 extvk, uint32 mods) const;
 
+	virtual ATUITouchMode GetTouchModeAtPoint(const vdpoint32& pt) const;
 	virtual void OnMouseRelativeMove(sint32 x, sint32 y);
 	virtual void OnMouseMove(sint32 x, sint32 y);
 	virtual void OnMouseDownL(sint32 x, sint32 y);
@@ -250,6 +255,9 @@ public:
 
 public:
 	void SetParent(ATUIManager *mgr, ATUIContainer *parent);
+	void OnPointerEnter(uint8 bit);
+	void OnPointerLeave(uint8 bit);
+	void OnPointerClear();
 
 protected:
 	void Invalidate();
@@ -265,6 +273,7 @@ protected:
 	uint32 mCursorImage;
 	ATUIDockMode mDockMode;
 	ATUIFrameMode mFrameMode;
+	ATUITouchMode mTouchMode;
 	IATUIAnchor *mpAnchor;
 	uint32 mInstanceId;
 	uint32 mOwnerId;
@@ -272,6 +281,7 @@ protected:
 	bool mbVisible;
 	bool mbFastClip;
 	bool mbHitTransparent;
+	uint8 mPointersOwned;
 
 	typedef vdfastvector<ATUITriggerBinding> ActionMap;
 	ActionMap mActionMap;

@@ -42,12 +42,28 @@
 .if _KERNEL_XLXE
 	org		$c000
 	
+;==============================================================================
+; lower ROM identification block (XL/XE)
+;==============================================================================
+
+	dta		a(0)
+	dta		$01,$01,$13
+	dta		$02
+	dta		'CX',$00,$00,$00
+	dta		$00
+
+	_KERNEL_REPORT_MODULE_MARK
 	icl		'vbi.s'
+	_KERNEL_REPORT_MODULE_SIZE	'VBI routines', 0
 	icl		'interrupt.s'
+	_KERNEL_REPORT_MODULE_SIZE	'Base interrupt routines', 0
 	icl		'irq.s'
+	_KERNEL_REPORT_MODULE_SIZE	'IRQ routines', 0
 	
 	icl		'pbi.s'
+	_KERNEL_REPORT_MODULE_SIZE	'PBI routines', 0
 	icl		'phandler.s'
+	_KERNEL_REPORT_MODULE_SIZE	'Peripheral Handler routines', 0
 	
 	org		$cc00
 	icl		'atariifont.inc'
@@ -176,10 +192,12 @@ gpdvv	PBI_VECTOR_TABLE			;$E48F	XL/XE: Generic device vector
 	.def ?@_kernel_lastpt = *
 .endm
 
+.macro _KERNEL_REPORT_MODULE_PAD_ADJUST
+	.def ?@_kernel_lastpt = ?@_kernel_lastpt + :1
+.endm
+
 .macro _KERNEL_REPORT_MODULE_SIZE
-	.if !_KERNEL_XLXE
-		.echo	'    ', *, ' -> ', *-?@_kernel_lastpt, '(', :2, ')', '    ', :1
-	.endif
+	.echo	'    ', *, ' -> ', *-?@_kernel_lastpt, '(', :2, ')', '    ', :1
 	
 	.def ?@_kernel_lastpt = *
 .endm
@@ -218,9 +236,11 @@ gpdvv	PBI_VECTOR_TABLE			;$E48F	XL/XE: Generic device vector
 	icl		'screen.s'
 	icl		'editor.s'
 	icl		'screenext.s'
+	_KERNEL_REPORT_MODULE_SIZE 'Display routines', 0
 	
 	icl		'keyboard.s'
 	icl		'keytable.s'
+	_KERNEL_REPORT_MODULE_SIZE 'Keyboard routines', 0
 
 ;==============================================================================
 ; version block (XL/XE)
@@ -229,7 +249,7 @@ gpdvv	PBI_VECTOR_TABLE			;$E48F	XL/XE: Generic device vector
 	.if _KERNEL_XLXE
 	org		$ffee
 	dta		$01,$01,$13
-	dta		$01					;option byte - !!CHECKED BY ARCHON
+	dta		$02					;option byte - !!CHECKED BY ARCHON
 	dta		'CX',$00,$00,$00
 	dta		$00
 	dta		a(0)

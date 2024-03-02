@@ -247,6 +247,17 @@ fastbootignore:
 	kdb.CRITIC = 0;
 	kdb.STATUS = status;
 	kdb.DSTATS = status;
+	
+	// Set carry depending on last status. Micropainter depends on the state of the carry flag
+	// after issuing a call to DSKINV, which in turn leaves the carry flag set from the call to
+	// SIOV. The carry is set by two compares within SIO on the status, first to $01 (success)
+	// and then to $8A (timeout).
+	uint8 carry = AT6502::kFlagC;
+
+	if (status != 0x01 && status < 0x8A)
+		carry = 0;
+
+	mpCPU->SetP((mpCPU->GetP() & ~AT6502::kFlagC) + carry);
 
 	mpCPU->Ldy(status);
 
@@ -286,7 +297,12 @@ uint8 ATSIOManager::OnHookDSKINV(uint16 pc) {
 	// We need to set the carry flag to satisfy Arcade Machine, which stupidly
 	// relies on it being set after a CMP #'!' command check in the OS. Since
 	// we only handle commands above that, the carry flag is always set.
-	mpCPU->SetFlagC();
+	//
+	// Update: This needs to be done only on success. Micropainter depends on
+	//         DSKINV not changing the carry flag coming out of SIOV on failure.
+	if (mpCPU->GetY() < 0x80)
+		mpCPU->SetFlagC();
+
 	return opcode;
 }
 

@@ -1,6 +1,6 @@
 ;	Altirra - Atari 800/800XL/5200 emulator
 ;	Modular Kernel ROM - Character Input/Output Facility
-;	Copyright (C) 2008-2012 Avery Lee
+;	Copyright (C) 2008-2014 Avery Lee
 ;
 ;	This program is free software; you can redistribute it and/or modify
 ;	it under the terms of the GNU General Public License as published by
@@ -18,13 +18,14 @@
 
 .proc CIOInit	
 	sec
-	ldy		#$70
+	ldx		#$70
 iocb_loop:
 	lda		#$ff
-	sta		ichid,y
-	tya
+	sta		ichid,x
+	jsr		CIOSetPutByteClosed
+	txa
 	sbc		#$10
-	tay
+	tax
 	bpl		iocb_loop
 	rts
 .endp
@@ -83,6 +84,11 @@ process:
 	ldy		#CIOStatInvalidIOCB
 	rts
 	
+cmdInvalid:
+	;invalid command <$03
+	ldy		#CIOStatInvalidCmd
+	rts
+
 validIOCB:
 	jsr		CIOLoadZIOCB
 	
@@ -90,14 +96,8 @@ validIOCB:
 	lda		iccomz
 	cmp		#CIOCmdOpen
 	beq		cmdOpen
-	bcs		dispatch
+	bcc		cmdInvalid
 	
-	;invalid command <$03
-cmdInvalid:
-	ldy		#CIOStatInvalidCmd
-	rts
-	
-dispatch:
 	;check if the IOCB is open
 	ldy		ichidz
 	
@@ -140,6 +140,7 @@ not_open:
 	beq		ignoreOpen
 	cmp		#CIOCmdGetStatus
 	bcs		preOpen				;closed IOCB is OK for get status and special
+not_open_handler:
 	ldy		#CIOStatNotOpen
 ignoreOpen:
 	rts
@@ -160,6 +161,13 @@ isOpen:
 	ldx		iccomz
 	cpx		#CIOCmdSpecial
 	scc:ldx	#$0e
+	
+	;do permissions check
+	lda		perm_check_table-4,x
+	bmi		skip_perm_check
+	bit		icax1z
+	beq		perm_check_fail
+skip_perm_check:
 
 	;load command table vector
 	lda		command_table_hi-4,x
@@ -178,8 +186,21 @@ load_vector:
 	lda		(icax3z),y
 	sta		icax3z
 	stx		icax3z+1
-	rts
 	
+	;many commands want to check length=0 on entry
+	lda		icbllz
+	ora		icblhz
+	rts
+
+perm_check_fail:
+	;at this point we have A=$04 if we failed a get perm check, and A=$08
+	;if we failed a put perm check -- these need to be translated to Y=$83
+	;and Y=$87.
+	clc
+	adc		#$7f
+	tay
+	rts
+
 ;--------------------------------------------------------------------------
 cmdGetStatusSoftOpen:
 	ldy		#9
@@ -189,7 +210,7 @@ cmdGetStatusSoftOpen:
 cmdSpecialSoftOpen:
 	ldy		#11
 invoke_and_soft_close_xit:
-	jsr		invoke
+	jsr		CIOInvoke
 	jmp		soft_close
 		
 ;--------------------------------------------------------------------------
@@ -216,7 +237,7 @@ notAlreadyOpen:
 open_entry:
 	;request open
 	ldy		#1
-	jsr		invoke
+	jsr		CIOInvoke
 
 	;move handler ID and device number to IOCB
 	ldx		icidno
@@ -244,41 +265,26 @@ provisional_open:
 	ldy		#1
 	rts
 
-;This routine must NOT touch CIOCHR. The DOS 2.5 Ramdisk depends on seeing
-;the last character from PUT RECORD before the EOL is pushed by CIO, so we
-;can't force a write of that EOL into CIOCHR to dispatch it here.
-invoke:
-	jsr		load_vector		
-invoke_vector:
-	tay
-	lda		icax3z+1
-	pha
-	lda		icax3z
-	pha
-	tya
-	ldy		#CIOStatNotSupported
-	ldx		icidno
-	rts
-
 cmdGetStatus:
 cmdSpecial:
-	jmp		invoke_vector
+	jmp		CIOInvoke.invoke_vector
 	
 ;--------------------------------------------------------------------------
 soft_close:
 	tya
 	pha
-	ldx		icidno
 	ldy		#3
-	jsr		invoke
+	jsr		CIOInvoke
 	pla
 	tay
 	rts
 	
 ;--------------------------------------------------------------------------
+cmdGetRecordBufferFull2:
+	plp
 cmdGetRecordBufferFull:
 	;read byte to discard
-	jsr		invoke_vector
+	jsr		CIOInvoke.invoke_vector
 	cpy		#0
 	bmi		cmdGetRecordXitTrunc
 
@@ -290,27 +296,26 @@ cmdGetRecordXitTrunc:
 	jmp		cmdGetRecordXit
 
 cmdGetRecord:
-cmdGetRecordLoop:
-	;check if buffer is full
-	lda		icbllz
-	bne		cmdGetRecordGetByte
-	lda		icblhz
+	;check if buffer is full on entry
 	beq		cmdGetRecordBufferFull
+cmdGetRecordLoop:
 cmdGetRecordGetByte:
 	;fetch byte
-	jsr		invoke_vector
+	jsr		CIOInvoke.invoke_vector
 	cpy		#0
 	bmi		cmdGetRecordXit
 	
 	;store byte (even if EOL)
-	ldy		#0
-	sta		(icbalz),y
-	pha
+	ldx		#0
+	sta		(icbalz,x)
+	cmp		#$9b
+	php
 	jsr		advance_pointers
-	pla
+	;check if buffer is full
+	beq		cmdGetRecordBufferFull2
+	plp
 	
 	;loop back for more bytes if not EOL
-	cmp		#$9b
 	bne		cmdGetRecordLoop
 
 	;update byte count in IOCB
@@ -325,32 +330,26 @@ cmdGetPutDone:
 	sbc		icblhz
 	sta		icblh,x
 	
-	;Several of the routines will exit with return code 0 on success;
-	;we need to change that to 1. (required by Pacem in Terris)
-	tya
-	sne:iny
+	;Pacem in Terris requires Y=1 exit.
+	;DOS 3.0 with 128K/XE mode requires Y=3 for EOF imminent.
 	rts
 	
 ;--------------------------------------------------------------------------
 cmdGetChars:
-	lda		icbllz
-	ora		icblhz
 	beq		cmdGetCharsSingle
 cmdGetCharsLoop:
-	jsr		invoke_vector
+	jsr		CIOInvoke.invoke_vector
 	cpy		#0
 	bmi		cmdGetCharsError
-	ldy		#0
-	sta		(icbalz),y
+	ldx		#0
+	sta		(icbalz,x)
 	jsr		advance_pointers
-	bne		cmdGetCharsLoop
-	lda		icblhz
 	bne		cmdGetCharsLoop
 cmdGetCharsError:
 	jmp		cmdGetPutDone
 	
 cmdGetCharsSingle:
-	jsr		invoke_vector
+	jsr		CIOInvoke.invoke_vector
 	sta		ciochr
 	rts
 	
@@ -366,15 +365,15 @@ cmdGetCharsSingle:
 ; buffer and not the EOL. (Required by Atari DOS 2.5 RAMDISK banner)
 ;
 cmdPutRecord:
-	lda		icbllz
-	ora		icblhz
 	beq		cmdPutRecordEOL
+cmdPutRecordLoop:
 	ldy		#0
-	mva		(icbalz),y	ciochr
-	jsr		invoke_vector
+	lda		(icbalz),y
+	jsr		CIOInvoke.invoke_vector
 	tya
 	bmi		cmdPutRecordError
 	jsr		advance_pointers
+	beq		cmdPutRecordDone
 	lda		#$9b
 	cmp		ciochr
 	beq		cmdPutRecordDone
@@ -382,44 +381,55 @@ cmdPutRecord:
 	
 cmdPutRecordEOL:
 	lda		#$9b
-	sta		ciochr
-	jsr		invoke_vector
+	jsr		CIOInvoke.invoke_vector
 cmdPutRecordError:
 cmdPutRecordDone:
 	jmp		cmdGetPutDone
 	
 ;--------------------------------------------------------------------------
 cmdPutChars:
-	lda		icbllz
-	ora		icblhz
 	beq		cmdPutCharsSingle
 cmdPutCharsLoop:
 	ldy		#0
-	mva		(icbalz),y	ciochr
-	jsr		invoke_vector
+	lda		(icbalz),y
+	jsr		CIOInvoke.invoke_vector
+	tya
+	bmi		cmdPutRecordError
 	jsr		advance_pointers
-	bne		cmdPutCharsLoop
-	lda		icblhz
 	bne		cmdPutCharsLoop
 	jmp		cmdGetPutDone
 cmdPutCharsSingle:
-	lda		ciochr
-	jmp		invoke_vector
+	jmp		CIOInvoke.invoke_vector_ciochr
 	
 ;--------------------------------------------------------------------------
 
 advance_pointers:
 	inw		icbalz
 	dew		icbllz
+	sne:lda	icblhz
 	rts
 
 ;--------------------------------------------------------------------------
 cmdClose:
-	jsr		invoke_vector
+	jsr		CIOInvoke.invoke_vector
 cmdCloseProvisional:	
 	ldx		icidno
+	jsr		CIOSetPutByteClosed
 	mva		#$ff	ichid,x
 	rts
+
+perm_check_table:
+	dta		$04					;$04 (get record)
+	dta		$04					;$05 (get record)
+	dta		$04					;$06 (get chars)
+	dta		$04					;$07 (get chars)
+	dta		$08					;$08 (put record)
+	dta		$08					;$09 (put record)
+	dta		$08					;$0A (put chars)
+	dta		$08					;$0B (put chars)
+	dta		$ff					;$0C (close)
+	dta		$ff					;$0D (get status)
+	dta		$ff					;$0E (special)
 
 vector_preload_table:
 	dta		$05					;$04 (get record)
@@ -462,6 +472,36 @@ command_table_hi:
 .endp
 
 ;==========================================================================
+; Invoke device vector.
+;
+; Entry (standard):
+;	A, X = ignored
+;	Y = offset to high vector byte in device table
+;
+; Entry (invoke_vector):
+;	A = byte to pass to PUT CHAR vector
+;	X, Y = ignored
+;
+; Exit:
+;	A = byte returned from GET CHAR vector
+;	Y = status
+;
+.proc CIOInvoke
+	jsr		CIO.load_vector		
+invoke_vector:
+	sta		ciochr
+invoke_vector_ciochr:
+	lda		icax3z+1
+	pha
+	lda		icax3z
+	pha
+	ldy		#CIOStatNotSupported
+	ldx		icidno
+	lda		ciochr
+	rts
+.endp
+
+;==========================================================================
 ; Copy IOCB to ZIOCB.
 ;
 ; Entry:
@@ -489,14 +529,13 @@ copyToZIOCB:
 
 ;==========================================================================
 .proc CIOParsePath
-	;pull first character of filename and stash it
-	ldy		#0
-	lda		(icbalz),y
-	sta		icax4z
-	
 	;default to device #1
 	ldx		#1
-	
+
+	;pull first character of filename and stash it
+	lda		(icbalz-1,x)
+	sta		icax4z
+		
 	;Check for a device number.
 	;
 	; - D1:-D9: is supported. D0: also gives unit 1, and any digits beyond
@@ -505,7 +544,7 @@ copyToZIOCB:
 	; We don't validate the colon anymore -- Atari OS allows opening just "C" to get
 	; to the cassette.
 	;
-	iny
+	ldy		#1
 	lda		(icbalz),y
 	sec
 	sbc		#'0'
@@ -570,6 +609,15 @@ found:
 .endp
 
 ;==========================================================================
+.proc CIOSetPutByteClosed
+	lda		#<[CIO.not_open_handler-1]
+	sta		icptl,x
+	lda		#>[CIO.not_open_handler-1]
+	sta		icpth,x
+	rts
+.endp
+
+;==========================================================================
 ; Attempt to find a handler entry in HATABS.
 ;
 .proc CIOFindHandler
@@ -598,23 +646,23 @@ foundHandler:
 .proc CIOPollForDevice
 	sta		daux1
 	sty		daux2
-	ldy		#$4f
-	lda		#$40
-	jmp		CIODoHandlerIO
-.endp
-.endif
-
-;==========================================================================
-.if _KERNEL_XLXE
-.proc CIODoHandlerIO
-	sty		ddevic
-	sta		dcomnd
-	mvx		#$01 dunit
-	mvx		#$40 dtimlo
-	mwx		#dvstat dbuflo
-	mwx		#4 dbytlo
-	mvx		#$40 dstats
+	
+	ldx		#9
+	mva:rpl	cmd_tab,x ddevic,x-
+	
 	jmp		siov
+	
+cmd_tab:
+	dta		$4f		;device
+	dta		$01		;unit
+	dta		$40		;command
+	dta		$40		;status (transfer flags)
+	dta		<dvstat	;dbuflo
+	dta		>dvstat	;dbufhi
+	dta		$40		;dtimlo
+	dta		$00		;unused
+	dta		$04		;dbytlo
+	dta		$00		;dbythi
 .endp
 .endif
 
@@ -673,9 +721,8 @@ ok:
 	bmi		load_error
 	
 	;all good... let's invoke the standard handler
-	lda		ciochr
 	ldy		#7
-	jsr		CIO.invoke
+	jsr		CIOInvoke
 	jmp		xit
 	
 load_error:

@@ -270,7 +270,7 @@ protected:
 	template<class T> void ExchangeStatePrivate(T& io);
 	void SyncTo(int xend);
 	void Render(int x1, int targetX);
-	void ApplyArtifacting();
+	void ApplyArtifacting(bool immediate);
 	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);
 	void UpdateRegisters(const RegisterChange *rc, int count);
 	void UpdateSECAMTriggerLatch(int index);
@@ -334,7 +334,8 @@ protected:
 	uint8	mPFColor[4];		// $D016-D019 playfield colors
 	uint8	mPFBAK;				// $D01A background color
 
-	uint8	mPRIOR;				// $D01B priority
+	uint8	mActivePRIOR;		// $D01B priority - currently live value
+	uint8	mPRIOR;				// $D01B priority - architectural value
 	uint8	mVDELAY;			// $D01C vertical delay
 	uint8	mGRACTL;			// $D01D
 								// bit 2: latch trigger inputs

@@ -284,6 +284,33 @@ void ATMemoryManager::SetLayerMemory(ATMemoryLayer *layer0, const uint8 *base, u
 	}
 }
 
+void ATMemoryManager::SetLayerAddressRange(ATMemoryLayer *layer0, uint32 pageOffset, uint32 pageCount) {
+	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
+
+	if (layer->mPageOffset != pageOffset || layer->mPageCount != pageCount) {
+		uint32 oldBegin = layer->mPageOffset;
+		uint32 oldEnd = layer->mPageOffset + layer->mPageCount;
+
+		layer->mPageOffset = pageOffset;
+		layer->mPageCount = pageCount;
+
+		uint32 newBegin = layer->mPageOffset;
+		uint32 newEnd = layer->mPageOffset + layer->mPageCount;
+
+		uint32 rewriteOffset = std::min<uint32>(oldBegin, newBegin);
+		uint32 rewriteCount = std::max<uint32>(oldEnd, newEnd) - rewriteOffset;
+
+		if (layer->mbEnabled[kATMemoryAccessMode_AnticRead])
+			RebuildNodes(&mAnticReadPageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_AnticRead);
+
+		if (layer->mbEnabled[kATMemoryAccessMode_CPURead])
+			RebuildNodes(&mCPUReadPageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_CPURead);
+
+		if (layer->mbEnabled[kATMemoryAccessMode_CPUWrite])
+			RebuildNodes(&mCPUWritePageMap[rewriteOffset], rewriteOffset, rewriteCount, kATMemoryAccessMode_CPUWrite);
+	}
+}
+
 void ATMemoryManager::SetLayerName(ATMemoryLayer *layer0, const char *name) {
 	MemoryLayer *const layer = static_cast<MemoryLayer *>(layer0);
 

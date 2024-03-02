@@ -33,7 +33,8 @@ void ATUIShowDialogDiskExplorer(VDGUIHandle h, IATDiskImage *image, const wchar_
 
 enum ATDiskFormatFileSystem {
 	kATDiskFFS_None,
-	kATDiskFFS_DOS2
+	kATDiskFFS_DOS2,
+	kATDiskFFS_SDFS
 };
 
 class ATNewDiskDialog : public VDDialogFrameW32 {
@@ -87,6 +88,7 @@ bool ATNewDiskDialog::OnLoaded() {
 
 	CBAddString(IDC_FILESYSTEM, L"None (unformatted)");
 	CBAddString(IDC_FILESYSTEM, L"DOS 2");
+	CBAddString(IDC_FILESYSTEM, L"SpartaDOS File System (SDFS)");
 
 	return VDDialogFrameW32::OnLoaded();
 }
@@ -116,6 +118,16 @@ void ATNewDiskDialog::OnDataExchange(bool write) {
 				}
 
 				mDiskFFS = kATDiskFFS_DOS2;
+				break;
+
+			case 2:
+				if (mSectorCount < 16) {
+					ShowError(L"The specified disk geometry is not supported for the selected filesystem.", L"Altirra Error");
+					FailValidation(IDC_FILESYSTEM);
+					return;
+				}
+
+				mDiskFFS = kATDiskFFS_SDFS;
 				break;
 		}
 
@@ -548,17 +560,22 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 								disk.CreateDisk(dlg.GetSectorCount(), dlg.GetBootSectorCount(), dlg.GetSectorSize());
 								disk.SetWriteFlushMode(true, false);
 
-								switch(dlg.GetFormatFFS()) {
-									case kATDiskFFS_DOS2:
-										try {
-											vdautoptr<IATDiskFS> fs(ATDiskFormatImageDOS2(disk.GetDiskImage()));
+								vdautoptr<IATDiskFS> fs;
 
-											fs->Flush();
-										} catch(const MyError& e) {
-											e.post(mhdlg, "Format error");
-										}
-										break;
+								try {
+									switch(dlg.GetFormatFFS()) {
+										case kATDiskFFS_DOS2:
+											fs = ATDiskFormatImageDOS2(disk.GetDiskImage());
+											break;
+										case kATDiskFFS_SDFS:
+											fs = ATDiskFormatImageSDX2(disk.GetDiskImage());
+											break;
+									}
 
+									if (fs)
+										fs->Flush();
+								} catch(const MyError& e) {
+									e.post(mhdlg, "Format error");
 								}
 
 								SetControlText(kDiskPathID[index], disk.GetPath());

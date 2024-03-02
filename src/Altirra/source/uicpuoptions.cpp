@@ -49,7 +49,13 @@ void ATUICPUOptionsDialog::OnDataExchange(bool write) {
 		ATCPUMode cpuMode = kATCPUMode_6502;
 		uint32 subCycles = 1;
 
-		if (IsButtonChecked(IDC_CPUMODEL_65C816_14MHZ)) {
+		if (IsButtonChecked(IDC_CPUMODEL_65C816_21MHZ)) {
+			cpuMode = kATCPUMode_65C816;
+			subCycles = 12;
+		} else if (IsButtonChecked(IDC_CPUMODEL_65C816_17MHZ)) {
+			cpuMode = kATCPUMode_65C816;
+			subCycles = 10;
+		} else if (IsButtonChecked(IDC_CPUMODEL_65C816_14MHZ)) {
 			cpuMode = kATCPUMode_65C816;
 			subCycles = 8;
 		} else if (IsButtonChecked(IDC_CPUMODEL_65C816_10MHZ)) {
@@ -110,7 +116,11 @@ void ATUICPUOptionsDialog::OnDataExchange(bool write) {
 				{
 					uint32 subCycles = cpuem.GetSubCycles();
 
-					if (subCycles >= 8)
+					if (subCycles >= 12)
+						CheckButton(IDC_CPUMODEL_65C816_21MHZ, true);
+					else if (subCycles >= 10)
+						CheckButton(IDC_CPUMODEL_65C816_17MHZ, true);
+					else if (subCycles >= 8)
 						CheckButton(IDC_CPUMODEL_65C816_14MHZ, true);
 					else if (subCycles >= 6)
 						CheckButton(IDC_CPUMODEL_65C816_10MHZ, true);

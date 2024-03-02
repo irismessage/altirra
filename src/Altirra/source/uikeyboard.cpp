@@ -181,7 +181,7 @@ ATUIDefaultCookedKeyMap::ATUIDefaultCookedKeyMap() {
 	mScanCode[(uint8)'~'] = 0x67;
 }
 
-ATUIDefaultCookedKeyMap g_ATCookedKeyMap;
+const ATUIDefaultCookedKeyMap g_ATCookedKeyMap;
 
 bool ATUIGetScanCodeForCharacter(char c, uint8& ch) {
 	uint8 scanCode = g_ATCookedKeyMap.mScanCode[(uint8)c];
@@ -293,6 +293,65 @@ static const uint32 g_ATDefaultVKeyMap[]={
 	VKEYMAP_C_SALL('9', 0x30),
 };
 
+static const uint32 g_ATRawVKeyMap[]={
+	VKEYMAP_CSALL('L', 0x00),
+	VKEYMAP_CSALL('J', 0x01),
+	VKEYMAP_CSALL(VK_OEM_1, 0x02),	// ;:
+	VKEYMAP_CSALL('K', 0x05),
+	VKEYMAP_CSALL(VK_OEM_7, 0x06),	// '"
+	VKEYMAP_CSALL(VK_OEM_5, 0x07),	// \|
+	VKEYMAP_CSALL('O', 0x08),
+	VKEYMAP_CSALL('P', 0x0A),
+	VKEYMAP_CSALL('U', 0x0B),
+	VKEYMAP_CSALL(VK_RETURN, 0x0C),	// Enter
+	VKEYMAP_CSALL('I', 0x0D),
+	VKEYMAP_CSALL(VK_OEM_4, 0x0E),	// [{
+	VKEYMAP_CSALL(VK_OEM_6, 0x0F),	// ]}
+
+	VKEYMAP_CSALL('V', 0x10),
+	VKEYMAP_CSALL(VK_F6, 0x11),	// Help
+	VKEYMAP_CSALL('C', 0x12),
+	VKEYMAP_CSALL('B', 0x15),
+	VKEYMAP_CSALL('X', 0x16),
+	VKEYMAP_CSALL('Z', 0x17),
+	VKEYMAP_CSALL('4', 0x18),
+	VKEYMAP_CSALL('3', 0x1A),
+	VKEYMAP_CSALL('6', 0x1B),
+	VKEYMAP_CSALL(VK_ESCAPE, 0x1C),	// Esc
+	VKEYMAP_CSALL('5', 0x1D),
+	VKEYMAP_CSALL('2', 0x1E),
+	VKEYMAP_CSALL('1', 0x1F),
+
+	VKEYMAP_CSALL(VK_OEM_COMMA, 0x20),	// ,<
+	VKEYMAP_CSALL(VK_OEM_PERIOD, 0x22),	// .>
+	VKEYMAP_CSALL('N', 0x23),
+	VKEYMAP_CSALL('M', 0x25),
+	VKEYMAP_CSALL(VK_OEM_2, 0x26),	// /?
+	VKEYMAP_CSALL(VK_END, 0x27),	// Fuji
+	VKEYMAP_CSALL('R', 0x28),
+	VKEYMAP_CSALL('E', 0x2A),
+	VKEYMAP_CSALL('Y', 0x2B),
+	VKEYMAP_CSALL(VK_TAB, 0x2C),	// Tab
+	VKEYMAP_CSALL('T', 0x2D),
+	VKEYMAP_CSALL('W', 0x2E),
+	VKEYMAP_CSALL('Q', 0x2F),
+
+	VKEYMAP_CSALL('9', 0x30),
+	VKEYMAP_CSALL('0', 0x32),
+	VKEYMAP_CSALL('7', 0x33),
+	VKEYMAP_CSALL(VK_BACK, 0x34),	// Backspace
+	VKEYMAP_CSALL('8', 0x35),
+	VKEYMAP_CSALL(VK_OEM_MINUS, 0x36),	// -_
+	VKEYMAP_CSALL(VK_OEM_PLUS, 0x37),	// +=
+	VKEYMAP_CSALL('F', 0x38),
+	VKEYMAP_CSALL('H', 0x39),
+	VKEYMAP_CSALL('D', 0x3A),
+	// 3C caps
+	VKEYMAP_CSALL('G', 0x3D),
+	VKEYMAP_CSALL('S', 0x3E),
+	VKEYMAP_CSALL('A', 0x3F),
+};
+
 static const uint32 g_ATDefaultVKeyMapFKey[]={
 	VKEYMAP_CSALL(VK_F1, 0x03),
 	VKEYMAP_CSALL(VK_F2, 0x04),
@@ -316,7 +375,16 @@ void ATUIRegisterVirtualKeyMappings(const uint32 (&mappings)[N]) {
 void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions& options) {
 	memset(g_ATVKeyMap, kInvalidKeyCode, sizeof g_ATVKeyMap);
 
-	ATUIRegisterVirtualKeyMappings(g_ATDefaultVKeyMap);
+	switch(options.mLayoutMode) {
+		case ATUIKeyboardOptions::kLM_Natural:
+		default:
+			ATUIRegisterVirtualKeyMappings(g_ATDefaultVKeyMap);
+			break;
+
+		case ATUIKeyboardOptions::kLM_Raw:
+			ATUIRegisterVirtualKeyMappings(g_ATRawVKeyMap);
+			break;
+	}
 
 	if (options.mbEnableFunctionKeys)
 		ATUIRegisterVirtualKeyMappings(g_ATDefaultVKeyMapFKey);
@@ -388,10 +456,8 @@ const VDAccelTableEntry kATDefaultAccelTableDisplay[]={
 	{ "Video.ToggleStandardNTSCPAL", 0, { VK_F7, CTRL } },
 	{ "View.NextANTICVisMode", 0, { VK_F8, SHIFT } },
 	{ "View.NextGTIAVisMode", 0, { VK_F8, CTRL } },
-	{ "Debug.RunStop", 0, { VK_F8, 0 } },
 	{ "System.TogglePause", 0, { VK_F9, 0 } },
 	{ "Input.CaptureMouse", 0, { VK_F12, 0 } },
-	{ "Debug.Break", 0, { VK_CANCEL, CTRL + EXT } },
 	{ "View.ToggleFullScreen", 0, { VK_RETURN, ALT } },
 	{ "System.ToggleSlowMotion", 0, { VK_BACK, ALT } },
 	{ "Audio.ToggleChannel1", 0, { '1', CTRL+ALT } },
@@ -419,6 +485,17 @@ const VDAccelTableEntry kATDefaultAccelTableGlobal[]={
 	{ "Pane.Memory1", 0, { '7', ALT } },
 	{ "Pane.PrinterOutput", 0, { '8', ALT } },
 	{ "Pane.ProfileView", 0, { '0', ALT+SHIFT } },
+
+	{ "Debug.RunStop", 0, { VK_F8, 0 } },
+	{ "Debug.StepInto", 0, { VK_F11, 0 } },
+	{ "Debug.StepOver", 0, { VK_F10, 0 } },
+	{ "Debug.StepOut", 0, { VK_F11, SHIFT } },
+	{ "Debug.Break", 0, { VK_CANCEL, CTRL + EXT } },
+};
+
+const VDAccelTableEntry kATDefaultAccelTableDebugger[]={
+	{ "Debug.Run", 0, { VK_F5, 0 } },
+	{ "Debug.ToggleBreakpoint", 0, { VK_F9, 0 } },
 };
 
 #undef UP
@@ -430,6 +507,7 @@ const VDAccelTableEntry kATDefaultAccelTableGlobal[]={
 void ATUIInitDefaultAccelTables() {
 	g_ATUIDefaultAccelTables[kATUIAccelContext_Global].AddRange(kATDefaultAccelTableGlobal, vdcountof(kATDefaultAccelTableGlobal));
 	g_ATUIDefaultAccelTables[kATUIAccelContext_Display].AddRange(kATDefaultAccelTableDisplay, vdcountof(kATDefaultAccelTableDisplay));
+	g_ATUIDefaultAccelTables[kATUIAccelContext_Debugger].AddRange(kATDefaultAccelTableDebugger, vdcountof(kATDefaultAccelTableDebugger));
 
 	for(int i=0; i<kATUIAccelContextCount; ++i)
 		g_ATUIAccelTables[i] = g_ATUIDefaultAccelTables[i];
@@ -443,7 +521,7 @@ void ATUILoadAccelTables() {
 	VDStringA keyName;
 
 	for(int i=0; i<kATUIAccelContextCount; ++i) {
-		keyName.sprintf("AccelTables\\%d", i);
+		keyName.sprintf("AccelTables2\\%d", i);
 
 		VDRegistryKey key(keyName.c_str(), false, false);
 
@@ -461,7 +539,7 @@ void ATUISaveAccelTables() {
 	VDStringA keyName;
 
 	for(int i=0; i<kATUIAccelContextCount; ++i) {
-		keyName.sprintf("AccelTables\\%d", i);
+		keyName.sprintf("AccelTables2\\%d", i);
 
 		VDRegistryKey key(keyName.c_str());
 		g_ATUIAccelTables[i].Save(key);

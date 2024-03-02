@@ -60,10 +60,18 @@ public:
 	virtual int GetExtraBuffer();
 	virtual void SetExtraBuffer(int ms);
 
+	virtual void SetFiltersEnabled(bool enable) {
+		mFilters[0].SetActiveMode(enable);
+		mFilters[1].SetActiveMode(enable);
+	}
+
 	virtual void Pause();
 	virtual void Resume();
 
-	virtual void WriteAudio(const float *left, const float *right, uint32 count, bool pushAudio, uint32 timestamp);
+	virtual void WriteAudio(
+		const float *left,
+		const float *right,
+		uint32 count, bool pushAudio, uint32 timestamp);
 
 protected:
 	void InternalWriteAudio(const float *left, const float *right, uint32 count, bool pushAudio, uint32 timestamp);
@@ -288,7 +296,13 @@ void ATAudioOutput::Resume() {
 		mpAudioOut->Start();
 }
 
-void ATAudioOutput::WriteAudio(const float *left, const float *right, uint32 count, bool pushAudio, uint32 timestamp) {
+void ATAudioOutput::WriteAudio(
+	const float *left,
+	const float *right,
+	uint32 count,
+	bool pushAudio,
+	uint32 timestamp)
+{
 	if (!count)
 		return;
 
@@ -312,7 +326,13 @@ void ATAudioOutput::WriteAudio(const float *left, const float *right, uint32 cou
 	}
 }
 
-void ATAudioOutput::InternalWriteAudio(const float *left, const float *right, uint32 count, bool pushAudio, uint32 timestamp) {
+void ATAudioOutput::InternalWriteAudio(
+	const float *left,
+	const float *right,
+	uint32 count,
+	bool pushAudio,
+	uint32 timestamp)
+{
 	VDASSERT(count > 0);
 	VDASSERT(mBufferLevel + count <= kBufferSize);
 

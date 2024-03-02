@@ -8,19 +8,37 @@
     <t name="Configuring input" href="input.html"/>
     <t name="On-screen indicators" href="indicators.html"/>
     <t name="Portable mode" href="portable-mode.html"/>
+    <t name="Touch support" href="touch.html"/>
+  </t>
+  <t name="Emulated devices">
+    <t name="Cartridge-based devices">
+      <t name="Introduction" href="devices-cartintro.html" />
+      <t name="MyIDE" href="myide.html"/>
+    </t>
+    <t name="Internal devices">
+      <t name="Ultimate1MB" href="ultimate1mb.html"/>
+      <t name="VideoBoard XE (VBXE)" href="vbxe.html"/>
+    </t>
+    <t name="SIO-based devices">
+      <t name="Introduction" href="devices-serintro.html" />
+      <t name="Disk drives" href="disk.html"/>
+      <t name="850 Interface Module" href="serial.html"/>
+      <t name="PCLink" href="pclink.html"/>
+    </t>
+    <t name="Other devices">
+      <t name="XEP-80 Interface Module" href="xep80.html" />
+    </t>
   </t>
   <t name="Debugger">
     <t name="Starting the debugger" href="debug-intro.html"/>
     <t name="Source-level debugging" href="debug-source.html"/>
     <t name="Addresses and expressions" href="debug-expressions.html"/>
     <t name="Diagnostics" href="debug-diagnostics.html"/>
+    <t name="Logging" href="debug-logging.html"/>
+    <t name="Debugging BASIC programs" href="debug-basic.html"/>
   </t>
   <t name="Reference">
     <t name="Options" href="options.html"/>
-    <t name="MyIDE emulation" href="myide.html"/>
-    <t name="Ultimate1MB emulation" href="ultimate1mb.html"/>
-    <t name="Serial port emulation" href="serial.html"/>
-    <t name="PCLink support" href="pclink.html"/>
     <t name="Host device" href="host-device.html"/>
   </t>
   <t name="Troubleshooting">

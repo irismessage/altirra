@@ -29,10 +29,17 @@ struct ATUIKeyboardOptions {
 		kAKMCount
 	};
 
+	enum LayoutMode {
+		kLM_Natural,
+		kLM_Raw,
+		kLMCount
+	};
+
 	bool mbRawKeys;
 	bool mbEnableFunctionKeys;
 	bool mbAllowShiftOnColdReset;
 	ArrowKeyMode mArrowKeyMode;
+	LayoutMode mLayoutMode;
 };
 
 bool ATUIGetScanCodeForCharacter(char c, uint8& ch);
@@ -42,6 +49,7 @@ bool ATUIGetScanCodeForVirtualKey(uint32 virtKey, bool alt, bool ctrl, bool shif
 enum ATUIAccelContext {
 	kATUIAccelContext_Global,
 	kATUIAccelContext_Display,
+	kATUIAccelContext_Debugger,
 	kATUIAccelContextCount
 };
 

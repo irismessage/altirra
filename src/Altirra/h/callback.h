@@ -125,21 +125,21 @@ ATCallbackBinder2<T, T_Return, T_Arg1, T_Arg2> ATMakeCallbackHandler(T *thisptr,
 ///////////////////////////////////////////////////////////////////////////
 
 template<typename T_Return>
-ATCallbackHandler0<T_Return> ATMakeCallbackHandlerFn(T_Return (*fn)(), void *data) {
-	ATCallbackHandler0<T_Return> h = { fn, thisptr };
+ATCallbackHandler0<T_Return> ATMakeCallbackHandlerFn(T_Return (*fn)(), void *data = 0) {
+	ATCallbackHandler0<T_Return> h = { fn, data };
 
 	return h;
 }
 
 template<typename T_Return, typename T_Arg1>
-ATCallbackHandler1<T_Return, T_Arg1> ATMakeCallbackHandlerFn(T_Return (*fn)(T_Arg1), void *data) {
+ATCallbackHandler1<T_Return, T_Arg1> ATMakeCallbackHandlerFn(T_Return (*fn)(T_Arg1), void *data = 0) {
 	ATCallbackHandler1<T_Return, T_Arg1> h = { fn, data };
 
 	return h;
 }
 
 template<typename T_Return, typename T_Arg1, typename T_Arg2>
-ATCallbackHandler2<T_Return, T_Arg1, T_Arg2> ATMakeCallbackHandlerFn(T_Return (*fn)(T_Arg1, T_Arg2), void *data) {
+ATCallbackHandler2<T_Return, T_Arg1, T_Arg2> ATMakeCallbackHandlerFn(T_Return (*fn)(T_Arg1, T_Arg2), void *data = 0) {
 	ATCallbackHandler2<T_Return, T_Arg1, T_Arg2> h = { fn, data };
 
 	return h;

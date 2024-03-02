@@ -93,7 +93,10 @@ VDZipStream::VDZipStream()
 {
 }
 
-VDZipStream::VDZipStream(IVDStream *pSrc, uint64 limit, bool bStored) {
+VDZipStream::VDZipStream(IVDStream *pSrc, uint64 limit, bool bStored)
+	: mPos(0)
+	, mbCRCEnabled(false)
+{
 	Init(pSrc, limit, bStored);
 }
 

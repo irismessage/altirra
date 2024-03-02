@@ -46,7 +46,7 @@ public:
 	void AddSymbol(uint32 offset, const char *name, uint32 size = 1, uint32 flags = kATSymbol_Read | kATSymbol_Write | kATSymbol_Execute, uint16 fileid = 0, uint16 lineno = 0);
 	void AddReadWriteRegisterSymbol(uint32 offset, const char *writename, const char *readname = NULL);
 	uint16 AddFileName(const wchar_t *filename);
-	void AddSourceLine(uint16 fileId, uint16 line, uint32 moduleOffset);
+	void AddSourceLine(uint16 fileId, uint16 line, uint32 moduleOffset, uint32 len = 0);
 
 public:
 	uint32	GetDefaultBase() const { return mModuleBase; }
@@ -66,6 +66,7 @@ public:
 protected:
 	void LoadSymbols(VDTextStream& ifile);
 	void LoadCC65Labels(VDTextStream& ifile);
+	void LoadCC65DbgFile(VDTextStream& ifile);
 	void LoadLabels(VDTextStream& ifile);
 	void LoadMADSListing(VDTextStream& ifile);
 	void LoadKernelListing(VDTextStream& ifile);
@@ -128,7 +129,7 @@ protected:
 	typedef vdfastvector<Directive> Directives;
 	Directives	mDirectives;
 
-	typedef std::map<uint32, uint32> OffsetToLine;
+	typedef std::map<uint32, std::pair<uint32, uint32> > OffsetToLine;
 	typedef std::map<uint32, uint32> LineToOffset;
 
 	OffsetToLine	mOffsetToLine;
@@ -165,6 +166,11 @@ void ATSymbolStore::Load(const wchar_t *filename) {
 
 			if (!strncmp(line, "ca65 ", 5))
 				throw MyError("CA65 listings are not supported.");
+
+			if (!strncmp(line, "version\tmajor=2,minor=", 22)) {
+				LoadCC65DbgFile(ts);
+				return;
+			}
 		}
 	}
 
@@ -245,10 +251,10 @@ uint16 ATSymbolStore::AddFileName(const wchar_t *filename) {
 	return (uint16)mFileNameOffsets.size();
 }
 
-void ATSymbolStore::AddSourceLine(uint16 fileId, uint16 line, uint32 moduleOffset) {
+void ATSymbolStore::AddSourceLine(uint16 fileId, uint16 line, uint32 moduleOffset, uint32 len) {
 	uint32 key = (fileId << 16) + line;
 	mLineToOffset.insert(LineToOffset::value_type(key, moduleOffset));
-	mOffsetToLine.insert(OffsetToLine::value_type(moduleOffset, key));
+	mOffsetToLine.insert(OffsetToLine::value_type(moduleOffset, std::make_pair(key, len)));
 }
 
 bool ATSymbolStore::LookupSymbol(uint32 moduleOffset, uint32 flags, ATSymbol& symout) {
@@ -357,7 +363,7 @@ void ATSymbolStore::GetLines(uint16 matchFileId, vdfastvector<ATSourceLineInfo>&
 	OffsetToLine::const_iterator it(mOffsetToLine.begin()), itEnd(mOffsetToLine.end());
 	for(; it!=itEnd; ++it) {
 		uint32 offset = it->first;
-		uint32 key = it->second;
+		uint32 key = it->second.first;
 		uint16 fileId = key >> 16;
 
 		if (fileId == matchFileId) {
@@ -382,7 +388,10 @@ bool ATSymbolStore::GetLineForOffset(uint32 moduleOffset, bool searchUp, ATSourc
 		--it;
 	}
 
-	uint32 key = it->second;
+	if (it->second.second && moduleOffset - it->first >= it->second.second)
+		return false;
+
+	uint32 key = it->second.first;
 	lineInfo.mOffset = it->first;
 	lineInfo.mFileId = key >> 16;
 	lineInfo.mLine = key & 0xffff;
@@ -392,7 +401,7 @@ bool ATSymbolStore::GetLineForOffset(uint32 moduleOffset, bool searchUp, ATSourc
 bool ATSymbolStore::GetOffsetForLine(const ATSourceLineInfo& lineInfo, uint32& moduleOffset) {
 	uint32 key = ((uint32)lineInfo.mFileId << 16) + lineInfo.mLine;
 
-	OffsetToLine::const_iterator it(mLineToOffset.find(key));
+	LineToOffset::const_iterator it(mLineToOffset.find(key));
 
 	if (it == mLineToOffset.end())
 		return false;
@@ -548,6 +557,9 @@ void ATSymbolStore::LoadCC65Labels(VDTextStream& ifile) {
 		if (2 != sscanf(line, "al %6lx %n%c", &addr, &nameoffset, &namecheck))
 			continue;
 
+		if (namecheck == '.')
+			++nameoffset;
+
 		const char *labelStart = line + nameoffset;
 		const char *labelEnd = labelStart;
 
@@ -566,6 +578,284 @@ void ATSymbolStore::LoadCC65Labels(VDTextStream& ifile) {
 
 	mModuleBase = 0;
 	mModuleSize = 0x10000;
+}
+
+namespace {
+	struct CC65Span {
+		uint32 mSeg;
+		uint32 mStart;
+		uint32 mSize;
+	};
+
+	struct CC65Line {
+		uint32 mFile;
+		uint32 mLine;
+		uint32 mSpan;
+	};
+}
+
+void ATSymbolStore::LoadCC65DbgFile(VDTextStream& ifile) {
+	enum {
+		kAttrib_Id,
+		kAttrib_Name,
+		kAttrib_Size,
+		kAttrib_Mtime,
+		kAttrib_Mod,
+		kAttrib_Start,
+		kAttrib_Addrsize,
+		kAttrib_Type,
+		kAttrib_Oname,
+		kAttrib_Ooffs,
+		kAttrib_Seg,
+		kAttrib_Scope,
+		kAttrib_Def,
+		kAttrib_Ref,
+		kAttrib_Val,
+		kAttrib_File,
+		kAttrib_Line,
+		kAttrib_Span,
+
+		kAttribCount
+	};
+
+	static const char *const kAttribNames[]={
+		"id",
+		"name",
+		"size",
+		"mtime",
+		"mod",
+		"start",
+		"addrsize",
+		"type",
+		"oname",
+		"ooffs",
+		"seg",
+		"scope",
+		"def",
+		"ref",
+		"val",
+		"file",
+		"line",
+		"span",
+	};
+
+	VDASSERTCT(vdcountof(kAttribNames) == kAttribCount);
+
+	typedef vdhashmap<uint32, uint32> Segs;
+	Segs segs;
+
+	typedef vdhashmap<uint32, uint16> Files;
+	Files files;
+
+	typedef vdhashmap<uint32, CC65Span> CC65Spans;
+	CC65Spans cc65spans;
+
+	typedef vdfastvector<CC65Line> CC65Lines;
+	CC65Lines cc65lines;
+
+	VDStringSpanA attribs[kAttribCount];
+
+	mModuleBase = 0;
+	mModuleSize = 0x10000;
+
+	while(const char *line = ifile.GetNextLine()) {
+		VDStringRefA r(line);
+		VDStringRefA token;
+
+		if (!r.split('\t', token))
+			continue;
+
+		// parse out attributes
+		uint32 attribMask = 0;
+
+		while(!r.empty()) {
+			VDStringRefA attrToken;
+			if (!r.split('=', attrToken))
+				break;
+
+			int attr = -1;
+
+			for(int i=0; i<(int)sizeof(kAttribNames)/sizeof(kAttribNames[0]); ++i) {
+				if (attrToken == kAttribNames[i]) {
+					attr = i;
+					break;
+				}
+			}
+
+			if (!r.empty() && r.front() == '"') {
+				r.split('"', attrToken);
+				r.split('"', attrToken);
+				if (!r.empty() && r.front() == ',') {
+					VDStringRefA dummyToken;
+					r.split(',', dummyToken);
+				}
+			} else {
+				if (!r.split(',', attrToken))
+					attrToken = r;
+			}
+
+			if (attr >= 0) {
+				attribs[attr] = attrToken;
+				attribMask |= (1 << attr);
+			}
+		}
+
+		if (token == "file") {
+			// file id=0,name="hello.s",size=1682,mtime=0x532BC30D,mod=0
+			if (~attribMask & ((1 << kAttrib_Id) | (1 << kAttrib_Name)))
+				continue;
+
+			unsigned id;
+			char dummy;
+			if (1 != sscanf(VDStringA(attribs[kAttrib_Id]).c_str(), "%u%c", &id, &dummy))
+				continue;
+
+			Files::insert_return_type result = files.insert(id);
+
+			if (result.second)
+				result.first->second = AddFileName(VDTextAToW(attribs[kAttrib_Name]).c_str());
+		} else if (token == "line") {
+			// line id=26,file=0,line=59,span=15
+			if (~attribMask & ((1 << kAttrib_Id) | (1 << kAttrib_File) | (1 << kAttrib_Line) | (1 << kAttrib_Span) | (1 << kAttrib_Type)))
+				continue;
+
+			unsigned id;
+			char dummy;
+			if (1 != sscanf(VDStringA(attribs[kAttrib_Id]).c_str(), "%u%c", &id, &dummy))
+				continue;
+
+			unsigned file;
+			if (1 != sscanf(VDStringA(attribs[kAttrib_File]).c_str(), "%u%c", &file, &dummy))
+				continue;
+
+			unsigned lineno;
+			if (1 != sscanf(VDStringA(attribs[kAttrib_Line]).c_str(), "%u%c", &lineno, &dummy))
+				continue;
+
+			unsigned type;
+			if (1 != sscanf(VDStringA(attribs[kAttrib_Type]).c_str(), "%u%c", &type, &dummy))
+				continue;
+
+			if (type != 1)
+				continue;
+
+			// span can have a + delimited list, which we must parse out; we produce one entry per span
+			VDStringRefA spanList(attribs[kAttrib_Span]);
+
+			while(!spanList.empty()) {
+				VDStringRefA spanToken;
+
+				if (!spanList.split('+', spanToken)) {
+					spanToken = spanList;
+					spanList.clear();
+				}
+
+				unsigned span;
+				if (1 == sscanf(VDStringA(spanToken).c_str(), "%u%c", &span, &dummy)) {
+					CC65Line cc65line;
+					cc65line.mFile = file;
+					cc65line.mLine = lineno;
+					cc65line.mSpan = span;
+
+					cc65lines.push_back(cc65line);
+				}
+			}
+		} else if (token == "seg") {
+			// seg id=0,name="CODE",start=0x002092,size=0x0863,addrsize=absolute,type=ro,oname="hello.xex",ooffs=407
+			if (~attribMask & ((1 << kAttrib_Id) | (1 << kAttrib_Start) | (1 << kAttrib_Addrsize)))
+				continue;
+
+			if (attribs[kAttrib_Addrsize] != "absolute")
+				continue;
+
+			unsigned id;
+			char dummy;
+			if (1 != sscanf(VDStringA(attribs[kAttrib_Id]).c_str(), "%u%c", &id, &dummy))
+				continue;
+
+			unsigned start;
+			if (1 != sscanf(VDStringA(attribs[kAttrib_Start]).c_str(), "%i%c", &start, &dummy))
+				continue;
+
+			segs[id] = start;
+		} else if (token == "span") {
+			// span id=0,seg=3,start=0,size=2,type=1
+			if (~attribMask & ((1 << kAttrib_Id) | (1 << kAttrib_Seg) | (1 << kAttrib_Start) | (1 << kAttrib_Size)))
+				continue;
+
+			unsigned id;
+			char dummy;
+			if (1 != sscanf(VDStringA(attribs[kAttrib_Id]).c_str(), "%u%c", &id, &dummy))
+				continue;
+
+			unsigned seg;
+			if (1 != sscanf(VDStringA(attribs[kAttrib_Seg]).c_str(), "%u%c", &seg, &dummy))
+				continue;
+
+			unsigned start;
+			if (1 != sscanf(VDStringA(attribs[kAttrib_Start]).c_str(), "%u%c", &start, &dummy))
+				continue;
+
+			unsigned size;
+			if (1 != sscanf(VDStringA(attribs[kAttrib_Size]).c_str(), "%u%c", &size, &dummy))
+				continue;
+
+			CC65Span span;
+			span.mSeg = seg;
+			span.mStart = start;
+			span.mSize = size;
+
+			cc65spans[id] = span;
+		} else if (token == "sym") {
+			// sym id=0,name="L0002",addrsize=absolute,size=1,scope=1,def=52+50,ref=16,val=0x20DD,seg=0,type=lab
+			if (~attribMask & ((1 << kAttrib_Id) | (1 << kAttrib_Name) | (1 << kAttrib_Addrsize) | (1 << kAttrib_Val)))
+				continue;
+
+			if (attribs[kAttrib_Addrsize] != "absolute")
+				continue;
+
+			unsigned val;
+			char dummy;
+			if (1 != sscanf(VDStringA(attribs[kAttrib_Val]).c_str(), "%i%c", &val, &dummy))
+				continue;
+
+			unsigned size = 1;
+			if (attribMask & (1 << kAttrib_Size)) {
+				if (1 != sscanf(VDStringA(attribs[kAttrib_Size]).c_str(), "%u%c", &size, &dummy))
+					continue;
+			}
+
+			AddSymbol(val, VDStringA(attribs[kAttrib_Name]).c_str(), size);
+		}
+	}
+
+	// process line number information
+	for(CC65Lines::const_iterator it(cc65lines.begin()), itEnd(cc65lines.end());
+		it != itEnd;
+		++it)
+	{
+		const CC65Line& cline = *it;
+
+		// Okay, we need to do the following lookups:
+		//	line -> file
+		//	     -> span -> seg
+		Files::const_iterator itFile = files.find(cline.mFile);
+		if (itFile == files.end())
+			continue;
+
+		CC65Spans::const_iterator itSpan = cc65spans.find(cline.mSpan);
+		if (itSpan == cc65spans.end())
+			continue;
+
+		Segs::const_iterator itSeg = segs.find(itSpan->second.mSeg);
+		if (itSeg == segs.end())
+			continue;
+
+		const uint32 addr = itSeg->second + itSpan->second.mStart;
+		const uint16 fileId = itFile->second;
+
+		AddSourceLine(fileId, cline.mLine, addr, itSpan->second.mSize);
+	}
 }
 
 void ATSymbolStore::LoadLabels(VDTextStream& ifile) {

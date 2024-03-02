@@ -1,3 +1,20 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2008-2014 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License
+//	along with this program; if not, write to the Free Software
+//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
 #include "stdafx.h"
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
@@ -7,6 +24,7 @@
 #include <vd2/system/strutil.h>
 #include <vd2/system/vdstl.h>
 #include "diskimage.h"
+#include "diskfs.h"
 
 namespace {
 	// The bit cell rate is 1MHz.
@@ -41,6 +59,7 @@ public:
 	void SetPathATR(const wchar_t *path);
 	void SaveATR(const wchar_t *path);
 
+	ATDiskGeometryInfo GetGeometry() const { return mGeometry; }
 	uint32 GetSectorSize() const { return mSectorSize; }
 	uint32 GetSectorSize(uint32 virtIndex) const { return virtIndex < mBootSectorCount ? 128 : mSectorSize; }
 	uint32 GetBootSectorCount() const { return mBootSectorCount; }
@@ -63,7 +82,8 @@ protected:
 	void LoadP2(IVDRandomAccessStream& stream, uint32 len, const uint8 *header);
 	void LoadP3(IVDRandomAccessStream& stream, uint32 len, const uint8 *header);
 	void LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar_t *origPath, const uint8 *header);
-	void ComputeSectorsPerTrack();
+	void LoadARC(IVDRandomAccessStream& stream, const wchar_t *origPath);
+	void ComputeGeometry();
 
 	typedef ATDiskVirtualSectorInfo VirtSectorInfo;
 	typedef ATDiskPhysicalSectorInfo PhysSectorInfo;
@@ -79,11 +99,12 @@ protected:
 	uint32	mBootSectorCount;
 	uint32	mSectorSize;
 	uint32	mSectorsPerTrack;
-	uint32	mReWriteOffset;
+	sint32	mReWriteOffset;
 	bool	mbDirty;
 	bool	mbDiskFormatDirty;
 	bool	mbHasDiskSource;
 	ATDiskTimingMode	mTimingMode;
+	ATDiskGeometryInfo	mGeometry;
 
 	VDStringW	mPath;
 
@@ -102,7 +123,7 @@ void ATDiskImage::Init(uint32 sectorCount, uint32 bootSectorCount, uint32 sector
 	mPhysSectors.resize(sectorCount);
 	mVirtSectors.resize(sectorCount);
 
-	ComputeSectorsPerTrack();
+	ComputeGeometry();
 
 	for(uint32 i=0; i<sectorCount; ++i) {
 		PhysSectorInfo& psi = mPhysSectors[i];
@@ -137,7 +158,9 @@ void ATDiskImage::Load(const wchar_t *s) {
 void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream) {
 	sint64 fileSize = stream.Length();
 
-	if (fileSize <= 65535 * 128 && imagePath && !vdwcsicmp(VDFileSplitExt(imagePath), L".xfd")) {
+	if (!vdwcsicmp(VDFileSplitExt(imagePath), L".arc")) {
+		LoadARC(stream, origPath);
+	} else if (fileSize <= 65535 * 128 && imagePath && !vdwcsicmp(VDFileSplitExt(imagePath), L".xfd")) {
 		sint32 len = (sint32)fileSize;
 
 		mImage.resize(len);
@@ -166,12 +189,12 @@ void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRan
 			psi.mbDirty		= false;
 		}
 	} else {
-		sint32 len = VDClampToSint32(stream.Length()) - 16;
 		
 		uint8 header[16];
-
-		mImage.resize(len);
 		stream.Read(header, 16);
+
+		sint32 len = VDClampToSint32(stream.Length()) - 16;
+		mImage.resize(len);
 		stream.Read(mImage.data(), len);
 
 		mTimingMode = kATDiskTimingMode_Any;
@@ -199,7 +222,7 @@ void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRan
 	else
 		mPath.clear();
 
-	ComputeSectorsPerTrack();
+	ComputeGeometry();
 	mbDirty = false;
 	mbDiskFormatDirty = false;
 	mbHasDiskSource = true;
@@ -767,7 +790,7 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 	} else
 		mBootSectorCount = 0;
 
-	if (mSectorSize > 512) {
+	if (mSectorSize > 8192) {
 		if (origPath)
 			throw MyError("Disk image \"%ls\" uses an unsupported sector size of %u bytes.", VDFileSplitPath(origPath), mSectorSize);
 		else
@@ -784,10 +807,10 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 
 	uint32 sectorCount = (len - 128*imageBootSectorCount) / mSectorSize + imageBootSectorCount;
 
-	ComputeSectorsPerTrack();	// needed earlier for interleave
-
 	mPhysSectors.resize(sectorCount);
 	mVirtSectors.resize(sectorCount);
+
+	ComputeGeometry();	// needed earlier for interleave
 
 	for(uint32 i=0; i<sectorCount; ++i) {
 		PhysSectorInfo& psi = mPhysSectors[i];
@@ -809,6 +832,89 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 		psi.mWeakDataOffset = -1;
 		psi.mbDirty		= false;
 	}
+}
+
+void ATDiskImage::LoadARC(IVDRandomAccessStream& stream, const wchar_t *origPath) {
+	// mount the ARC file system
+	vdautoptr<IATDiskFS> arcfs(ATDiskMountImageARC(stream, origPath));
+
+	// iterate over all files and get an estimate of how much disk space we need:
+	//
+	// - data sectors
+	// - map sectors (1 map sector per 60 data sectors in SD)
+	// - bitmap sectors (1 sector per 1024 total sectors)
+	// - 3 superblock/bootblock sectors
+	// - directory sectors (23 bytes for root entry and for each file)
+
+	uint32 dataSectors = 0;
+	uint32 mapSectors = 0;
+	uint32 fileCount = 0;
+
+	ATDiskFSEntryInfo entryInfo;
+	uintptr fh = arcfs->FindFirst(0, entryInfo);
+	try {
+		do {
+			uint32 size = entryInfo.mBytes;
+			uint32 secs = ((size + 127) >> 7);
+
+			dataSectors += secs;
+			mapSectors += (secs + 59) / 60;
+			++fileCount;
+		} while(arcfs->FindNext(fh, entryInfo));
+
+		arcfs->FindEnd(fh);
+	} catch(...) {
+		arcfs->FindEnd(fh);
+		throw;
+	}
+
+	const uint32 bootSectors = 3;
+	const uint32 dirSectors = ((fileCount + 1) * 23 + 127) >> 7;
+	const uint32 dirMapSectors = (dirSectors + 59) / 60;
+	const uint32 nonBitmapSectors = bootSectors + dirSectors + dirMapSectors + dataSectors + mapSectors;
+
+	// computing the number of needed bitmap sectors is tricky as they are part
+	// of the bitmap -- we do a loop here to handle the tricky case where the
+	// addition of the bitmap itself requires adding bitmap sectors
+	uint32 bitmapSectors = 0;
+	for(;;) {
+		uint32 t = ((nonBitmapSectors + bitmapSectors) >> 10) + 1;	// (!!) sector 0 bit is unused
+
+		if (t <= bitmapSectors)
+			break;
+
+		bitmapSectors = t;
+	}
+
+	const uint32 totalSectors = bitmapSectors + nonBitmapSectors;
+
+	// initialize a new disk image (on us!)
+	Init(totalSectors, bootSectors, 128);
+	
+	// mount SDFS on us
+	vdautoptr<IATDiskFS> sdfs(ATDiskFormatImageSDX2(this, origPath ? VDTextWToA(VDFileSplitPath(origPath)).c_str() : NULL));
+
+	// copy over files
+	uintptr fh2 = arcfs->FindFirst(0, entryInfo);
+	try {
+		vdfastvector<uint8> buf;
+		do {
+			arcfs->ReadFile(entryInfo.mKey, buf);
+			uintptr fileKey = sdfs->WriteFile(0, entryInfo.mFileName.c_str(), buf.data(), (uint32)buf.size());
+			sdfs->SetFileTimestamp(fileKey, entryInfo.mDate);
+		} while(arcfs->FindNext(fh2, entryInfo));
+
+		arcfs->FindEnd(fh2);
+	} catch(...) {
+		arcfs->FindEnd(fh2);
+		throw;
+	}
+
+	sdfs->Flush();
+
+	mPath = origPath;
+	mbHasDiskSource = true;
+	mReWriteOffset = -1;
 }
 
 ATDiskTimingMode ATDiskImage::GetTimingMode() const {
@@ -1014,9 +1120,66 @@ bool ATDiskImage::WriteVirtualSector(uint32 index, const void *data, uint32 len)
 	return true;
 }
 
-void ATDiskImage::ComputeSectorsPerTrack() {
+void ATDiskImage::ComputeGeometry() {
 	uint32 sectorCount = (uint32)mVirtSectors.size();
 	mSectorsPerTrack = mSectorSize >= 256 ? 18 : sectorCount > 720 && !(sectorCount % 26) ? 26 : 18;
+
+	mGeometry.mTrackCount = 1;
+	mGeometry.mSideCount = 1;
+	mGeometry.mbMFM = false;
+	mGeometry.mSectorsPerTrack = sectorCount;
+	mGeometry.mBootSectorCount = mBootSectorCount;
+	mGeometry.mSectorSize = mSectorSize;
+	mGeometry.mTotalSectorCount = sectorCount;
+
+	if (mGeometry.mBootSectorCount > 0) {
+		if (mGeometry.mSectorSize == 128) {
+			switch(mGeometry.mTotalSectorCount) {
+				default:
+					if (mGeometry.mTotalSectorCount > 720)
+						break;
+
+					// fall through
+				case 720:
+					mGeometry.mSectorsPerTrack = 18;
+					mGeometry.mSideCount = 1;
+					break;
+
+				case 1440:
+				case 2880:
+					mGeometry.mSectorsPerTrack = 18;
+					mGeometry.mSideCount = 2;
+					break;
+
+				case 1040:
+					mGeometry.mSectorsPerTrack = 26;
+					mGeometry.mSideCount = 1;
+					mGeometry.mbMFM = true;
+					break;
+			}
+		} else if (mGeometry.mSectorSize == 256) {
+			switch(mGeometry.mTotalSectorCount) {
+				case 720:
+					mGeometry.mSectorsPerTrack = 18;
+					mGeometry.mSideCount = 1;
+					mGeometry.mbMFM = true;
+					break;
+
+				case 1440:
+				case 2880:
+					mGeometry.mSectorsPerTrack = 18;
+					mGeometry.mSideCount = 2;
+					mGeometry.mbMFM = true;
+					break;
+			}
+		}
+	}
+
+	if (mGeometry.mSectorsPerTrack > 0)
+		mGeometry.mTrackCount = (mGeometry.mTotalSectorCount + mGeometry.mSectorsPerTrack - 1) / mGeometry.mSectorsPerTrack;
+
+	if (mGeometry.mSideCount > 1)
+		mGeometry.mTrackCount = (mGeometry.mTrackCount + 1) >> 1;
 }
 
 ///////////////////////////////////////////////////////////////////////////

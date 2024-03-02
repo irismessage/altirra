@@ -59,6 +59,8 @@ class ATHLEFastBootHook;
 class IATHLECIOHook;
 class ATAudioSyncMixer;
 class ATXEP80Emulator;
+class ATDragonCartEmulator;
+struct ATDragonCartSettings;
 
 enum ATMemoryMode {
 	kATMemoryMode_48K,
@@ -104,6 +106,7 @@ enum ATROMImage {
 	kATROMImage_1200XL,
 	kATROMImage_MyIDEII,
 	kATROMImage_Ultimate1MB,
+	kATROMImage_SIDE2_SDX,
 	kATROMImageCount
 };
 
@@ -367,6 +370,10 @@ public:
 	bool IsRS232Enabled() const;
 	void SetRS232Enabled(bool enable);
 
+	bool IsDragonCartEnabled() const;
+	ATDragonCartEmulator *GetDragonCart() const { return mpDragonCart; }
+	void SetDragonCartEnabled(const ATDragonCartSettings *settings);
+
 	bool IsPrinterEnabled() const;
 	void SetPrinterEnabled(bool enable);
 
@@ -413,7 +420,7 @@ public:
 	void GetROMImagePath(ATROMImage image, VDStringW& s) const;
 	void SetROMImagePath(ATROMImage image, const wchar_t *s);
 
-	void GetDirtyStorage(vdfastvector<ATStorageId>& ids) const;
+	void GetDirtyStorage(vdfastvector<ATStorageId>& ids, ATStorageId mediaId = kATStorageId_None) const;
 	bool IsStorageDirty(ATStorageId mediaId) const;
 	bool IsStoragePresent(ATStorageId mediaId) const;
 
@@ -481,6 +488,7 @@ private:
 	void UpdateKernel();
 	void ReloadIDEFirmware();
 	void ReloadU1MBFirmware();
+	void ReloadRS232Firmware();
 	void InitMemoryMap();
 	void ShutdownMemoryMap();
 
@@ -607,6 +615,7 @@ private:
 	ATCovoxEmulator *mpCovox;
 	ATRTime8Emulator *mpRTime8;
 	IATRS232Emulator *mpRS232;
+	ATDragonCartEmulator *mpDragonCart;
 	ATCheatEngine *mpCheatEngine;
 	IATUIRenderer *mpUIRenderer;
 	IATPCLinkDevice *mpPCLink;

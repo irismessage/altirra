@@ -25,12 +25,32 @@
     </html>
   </xsl:template>
 
+  <!-- ================================ -->
+
   <xsl:key name="stockmsgs" match="stockmsg" use="@id"/>
 
   <xsl:template match="stockmsg"></xsl:template>
   <xsl:template match="stockref">
     <xsl:apply-templates select="key('stockmsgs', @id)/*"/>
   </xsl:template>
+
+  <!-- ================================ -->
+
+  <xsl:template match="note">
+    <div class="note">
+      <p class="note-title">
+        <xsl:if test="@title">
+          <xsl:value-of select="@title" />
+        </xsl:if>
+        <xsl:if test="not(@title)">
+          Note
+        </xsl:if>
+      </p>
+      <xsl:apply-templates />
+    </div>
+  </xsl:template>
+  
+  <!-- ================================ -->
 
   <xsl:template match="toc">
     <table class="toc">

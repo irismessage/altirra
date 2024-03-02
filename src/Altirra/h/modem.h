@@ -159,11 +159,11 @@ protected:
 	bool	mbSuppressNoCarrier;
 	bool	mbListenEnabled;				///< True if listening for incoming calls is enabled (not necessarily right now).
 	bool	mbListening;					///< True if we are currently listening for a call (not dialing or connected).
+	bool	mbLoggingState;
 	VDAtomicInt	mbRinging;
 
 	enum CommandState {
 		kCommandState_Idle,
-		kCommandState_a,
 		kCommandState_A,
 		kCommandState_AT
 	} mCommandState;

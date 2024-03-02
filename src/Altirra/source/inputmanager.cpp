@@ -239,6 +239,7 @@ ATInputManager::ATInputManager()
 	mpPorts[1] = NULL;
 
 	std::fill(mMouseAvgQueue, mMouseAvgQueue + sizeof(mMouseAvgQueue)/sizeof(mMouseAvgQueue[0]), 0x20002000);
+	std::fill(mpUnitNameSources, mpUnitNameSources + vdcountof(mpUnitNameSources), (IATInputUnitNameSource *)NULL);
 }
 
 ATInputManager::~ATInputManager() {
@@ -409,7 +410,7 @@ int ATInputManager::GetInputUnitIndexById(const ATInputUnitIdentifier& id) const
 	return -1;
 }
 
-int ATInputManager::RegisterInputUnit(const ATInputUnitIdentifier& id, const wchar_t *name) {
+int ATInputManager::RegisterInputUnit(const ATInputUnitIdentifier& id, const wchar_t *name, IATInputUnitNameSource *nameSource) {
 	if (mAllocatedUnits == 0xFFFFFFFF)
 		return -1;
 
@@ -418,6 +419,7 @@ int ATInputManager::RegisterInputUnit(const ATInputUnitIdentifier& id, const wch
 	mAllocatedUnits |= (1 << unit);
 	mUnitIds[unit] = id;
 	mUnitNames[unit] = name;
+	mpUnitNameSources[unit] = nameSource;
 
 	return unit;
 }
@@ -432,6 +434,7 @@ void ATInputManager::UnregisterInputUnit(int unit) {
 	VDASSERT(mAllocatedUnits & bit);
 
 	mAllocatedUnits &= ~bit;
+	mpUnitNameSources[unit] = NULL;
 }
 
 bool ATInputManager::IsInputMapped(int unit, uint32 inputCode) const {
@@ -506,6 +509,13 @@ void ATInputManager::SetMousePadPos(int padX, int padY) {
 
 void ATInputManager::GetNameForInputCode(uint32 code, VDStringW& name) const {
 	code &= 0xffff;
+
+	for(size_t i=0; i<vdcountof(mpUnitNameSources); ++i) {
+		IATInputUnitNameSource *nameSrc = mpUnitNameSources[i];
+
+		if (nameSrc && nameSrc->GetInputCodeName(code, name))
+			return;
+	}
 
 	switch(code) {
 		case kATInputCode_None:

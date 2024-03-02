@@ -33,6 +33,7 @@ protected:
 
 	ATUIKeyboardOptions& mOpts;
 	VDUIProxyComboBoxControl mArrowKeyMode;
+	VDUIProxyComboBoxControl mLayoutMode;
 };
 
 ATUIDialogKeyboardOptions::ATUIDialogKeyboardOptions(ATUIKeyboardOptions& opts)
@@ -43,10 +44,14 @@ ATUIDialogKeyboardOptions::ATUIDialogKeyboardOptions(ATUIKeyboardOptions& opts)
 
 bool ATUIDialogKeyboardOptions::OnLoaded() {
 	AddProxy(&mArrowKeyMode, IDC_ARROWKEYMODE);
+	AddProxy(&mLayoutMode, IDC_LAYOUT);
 
 	mArrowKeyMode.AddItem(L"Arrows by default; Ctrl inverted");
 	mArrowKeyMode.AddItem(L"Arrows by default; Ctrl/Shift states mapped directly");
 	mArrowKeyMode.AddItem(L"Map host keys directly to -/=/+/*");
+
+	mLayoutMode.AddItem(L"Natural: Map host keys by typed character");
+	mLayoutMode.AddItem(L"Direct: Map host keys by location");
 
 	return VDDialogFrameW32::OnLoaded();
 }
@@ -58,9 +63,11 @@ void ATUIDialogKeyboardOptions::OnDataExchange(bool write) {
 	if (write) {
 		mOpts.mbRawKeys = IsButtonChecked(IDC_KPMODE_RAW);
 		mOpts.mArrowKeyMode = (ATUIKeyboardOptions::ArrowKeyMode)mArrowKeyMode.GetSelection();
+		mOpts.mLayoutMode = (ATUIKeyboardOptions::LayoutMode)mLayoutMode.GetSelection();
 	} else {
 		CheckButton(mOpts.mbRawKeys ? IDC_KPMODE_RAW : IDC_KPMODE_COOKED, true);
 		mArrowKeyMode.SetSelection((int)mOpts.mArrowKeyMode);
+		mLayoutMode.SetSelection((int)mOpts.mLayoutMode);
 	}
 }
 

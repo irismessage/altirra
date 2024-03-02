@@ -192,6 +192,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\makereloc.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\stdafx.cpp"
 				>
 				<FileConfiguration

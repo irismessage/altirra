@@ -4,6 +4,27 @@
 	---
 	&Open Image...			{File.OpenImage}
 	Dis&k Drives...			{Disk.DrivesDialog}
+	Attach Disk
+		Drive 1%			{Disk.Attach1}
+		Drive 2%			{Disk.Attach2}
+		Drive 3%			{Disk.Attach3}
+		Drive 4%			{Disk.Attach4}
+		Drive 5%			{Disk.Attach5}
+		Drive 6%			{Disk.Attach6}
+		Drive 7%			{Disk.Attach7}
+		Drive 8%			{Disk.Attach8}
+	Detach Disk
+		All					{Disk.DetachAll}
+		---
+		Drive 1%			{Disk.Detach1}
+		Drive 2%			{Disk.Detach2}
+		Drive 3%			{Disk.Detach3}
+		Drive 4%			{Disk.Detach4}
+		Drive 5%			{Disk.Detach5}
+		Drive 6%			{Disk.Detach6}
+		Drive 7%			{Disk.Detach7}
+		Drive 8%			{Disk.Detach8}
+	---
 	Cassette
 		&Load...			{Cassette.Load}
 		&Unload				{Cassette.Unload}
@@ -16,11 +37,16 @@
 	---
 	Attach Special Cartridge
 		&SuperCharger3D												{Cart.AttachSC3D}
-		&Empty 128K (1Mbit) flash cartridge							{Cart.AttachMaxFlash1MB}
-		&Empty 128K (1Mbit) flash cartridge (MyIDE banking)			{Cart.AttachMaxFlash1MBMyIDE}
-		Empty 1M (8Mbit) flash cartridge (older - bank 127)			{Cart.AttachMaxFlash8MB}
-		Empty 1M (8Mbit) flash cartridge (newer - bank 0)			{Cart.AttachMaxFlash8MBBank0}
+		&Empty 128K (1Mbit) MaxFlash cartridge							{Cart.AttachMaxFlash1MB}
+		&Empty 128K (1Mbit) MaxFlash cartridge (MyIDE banking)			{Cart.AttachMaxFlash1MBMyIDE}
+		Empty 1M (8Mbit) MaxFlash cartridge (older - bank 127)			{Cart.AttachMaxFlash8MB}
+		Empty 1M (8Mbit) MaxFlash cartridge (newer - bank 0)			{Cart.AttachMaxFlash8MBBank0}
 		Empty SIC! flash cartridge									{Cart.AttachSIC}
+		Empty 512K MegaCart flash cartridge							{Cart.AttachMegaCart512K}
+		Empty 4MB MegaCart flash cartridge							{Cart.AttachMegaCart4MB}
+		Empty The!Cart 32MB flash cartridge							{Cart.AttachTheCart32MB}
+		Empty The!Cart 64MB flash cartridge							{Cart.AttachTheCart64MB}
+		Empty The!Cart 128MB flash cartridge						{Cart.AttachTheCart128MB}
 		BASIC														{Cart.AttachBASIC}
 	Secondary Cartridge
 		&Attach...			{Cart.AttachSecond}
@@ -237,6 +263,7 @@
 		Enabled							{Audio.ToggleCovox}
 	XEP80
 		Enabled							{Video.ToggleXEP80}
+	Dragon Cart...						{System.DragonCartDialog}
 
 Input
 	Capture Mouse						{Input.CaptureMouse}

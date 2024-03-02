@@ -20,7 +20,8 @@
 #include "options.h"
 
 ATOptions::ATOptions()
-	: mbDisplayDDraw(true)
+	: mbDirty(false)
+	, mbDisplayDDraw(true)
 	, mbDisplayD3D9(true)
 	, mbDisplay3D(false)
 	, mbDisplayOpenGL(false)
@@ -72,6 +73,7 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Display: Full screen mode height", opts.mFullScreenHeight);
 	ATOptionsExchange(key, write, "Display: Full screen mode refresh rate", opts.mFullScreenRefreshRate);
 	ATOptionsExchange(key, write, "Flash: SIC! cartridge flash mode", opts.mSICFlashChip);
+	ATOptionsExchange(key, write, "Flash: Ultimate1MB flash mode", opts.mU1MBFlashChip);
 }
 
 void ATOptionsLoad() {

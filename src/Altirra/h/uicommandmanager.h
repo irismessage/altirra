@@ -23,6 +23,7 @@
 #include <vd2/system/linearalloc.h>
 
 struct VDAccelToCommandEntry;
+class VDStringW;
 
 enum ATUICmdState {
 	kATUICmdState_None,
@@ -33,12 +34,14 @@ enum ATUICmdState {
 typedef void (*ATUICmdExecuteFn)();
 typedef bool (*ATUICmdTestFn)();
 typedef ATUICmdState (*ATUICmdStateFn)();
+typedef void (*ATUICmdFormatFn)(VDStringW&);
 
 struct ATUICommand {
 	const char *mpName;
 	ATUICmdExecuteFn mpExecuteFn;
 	ATUICmdTestFn mpTestFn;
 	ATUICmdStateFn mpStateFn;
+	ATUICmdFormatFn mpFormatFn;
 };
 
 class ATUICommandManager {

@@ -37,10 +37,16 @@ protected:
 	ATRS232Config	mConfig;
 	bool mbEnabled;
 	bool mbAccept;
+	bool mbOutbound;
 	bool mbTelnet;
 	VDUIProxyComboBoxControl mComboConnectSpeed;
+	VDUIProxyComboBoxControl mComboTermType;
+	VDUIProxyComboBoxControl mComboSioModes;
 
 	static const uint32 kConnectionSpeeds[];
+
+	static const char *const kTerminalTypes[];
+	static const wchar_t *const kSioEmuModes[];
 };
 
 const uint32 ATUISerialPortsDialog::kConnectionSpeeds[]={
@@ -60,6 +66,31 @@ const uint32 ATUISerialPortsDialog::kConnectionSpeeds[]={
 	230400
 };
 
+const char *const ATUISerialPortsDialog::kTerminalTypes[]={
+	// RFC 1010, and now IANA, maintains a list of terminal types to be used
+	// with Telnet terminal type negotation (RFC 1091). This is intended to
+	// provide a list of common names... which of course, modern systems
+	// gladly ignore. CentOS 5.2 doesn't even allow DEC-VT100, requiring
+	// VT100 instead.
+	//
+	// Note that the terminal names must be sent in uppercase. This conversion
+	// is done in the Telnet module.
+
+	"ansi",
+	"dec-vt52",
+	"dec-vt100",
+	"vt52",
+	"vt100",
+	"vt102",
+	"vt320",
+};
+
+const wchar_t *const ATUISerialPortsDialog::kSioEmuModes[]={
+	L"None - Emulated R: handler only",
+	L"Minimal - Emulated R: handler + stub loader only",
+	L"Full - SIO protocol and 6502 R: handler",
+};
+
 ATUISerialPortsDialog::ATUISerialPortsDialog()
 	: VDDialogFrameW32(IDD_SERIAL_PORTS)
 {
@@ -67,6 +98,8 @@ ATUISerialPortsDialog::ATUISerialPortsDialog()
 
 bool ATUISerialPortsDialog::OnLoaded() {
 	AddProxy(&mComboConnectSpeed, IDC_CONNECTION_SPEED);
+	AddProxy(&mComboTermType, IDC_TERMINAL_TYPE);
+	AddProxy(&mComboSioModes, IDC_SIOLEVEL);
 
 	VDStringW s;
 
@@ -74,6 +107,14 @@ bool ATUISerialPortsDialog::OnLoaded() {
 		s.sprintf(L"%u baud", kConnectionSpeeds[i]);
 		mComboConnectSpeed.AddItem(s.c_str());
 	}
+
+	mComboTermType.AddItem(L"(None)");
+
+	for(size_t i=0; i<vdcountof(kTerminalTypes); ++i)
+		mComboTermType.AddItem(VDTextAToW(kTerminalTypes[i]).c_str());
+
+	for(size_t i=0; i<vdcountof(kSioEmuModes); ++i)
+		mComboSioModes.AddItem(kSioEmuModes[i]);
 
 	return VDDialogFrameW32::OnLoaded();
 }
@@ -95,7 +136,18 @@ void ATUISerialPortsDialog::OnDataExchange(bool write) {
 			mConfig.mListenPort = 0;
 		}
 
-		mConfig.mbAllowOutbound = IsButtonChecked(IDC_ALLOW_OUTBOUND);
+		mConfig.mbAllowOutbound = mbOutbound;
+
+		int termIdx = mComboTermType.GetSelection();
+
+		if (termIdx != 0) {
+			VDStringW s;
+
+			GetControlText(IDC_TERMINAL_TYPE, s);
+			mConfig.mTelnetTermType = VDTextWToA(s);
+		} else
+			mConfig.mTelnetTermType.clear();
+
 		mConfig.mbTelnetEmulation = IsButtonChecked(IDC_TELNET);
 		mConfig.mbTelnetLFConversion = IsButtonChecked(IDC_TELNET_LFCONVERSION);
 		mConfig.mbListenForIPv6 = IsButtonChecked(IDC_ACCEPT_IPV6);
@@ -107,10 +159,14 @@ void ATUISerialPortsDialog::OnDataExchange(bool write) {
 		else
 			mConfig.mDeviceMode = kATRS232DeviceMode_850;
 
-		if (IsButtonChecked(IDC_SIOLEVEL_NONE))
-			mConfig.m850SIOLevel = kAT850SIOEmulationLevel_None;
-		else if (IsButtonChecked(IDC_SIOLEVEL_STUBLOADER))
-			mConfig.m850SIOLevel = kAT850SIOEmulationLevel_StubLoader;
+		int sioLevel = mComboSioModes.GetSelection();
+		switch(sioLevel) {
+			case kAT850SIOEmulationLevel_None:
+			case kAT850SIOEmulationLevel_StubLoader:
+			case kAT850SIOEmulationLevel_Full:
+				mConfig.m850SIOLevel = (AT850SIOEmulationLevel)sioLevel;
+				break;
+		}
 
 		int selIdx = mComboConnectSpeed.GetSelection();
 		mConfig.mConnectionSpeed = selIdx >= 0 ? kConnectionSpeeds[selIdx] : 9600;
@@ -139,6 +195,27 @@ void ATUISerialPortsDialog::OnDataExchange(bool write) {
 
 		mbAccept = mConfig.mListenPort > 0;
 		mbTelnet = mConfig.mbTelnetEmulation;
+		mbOutbound = mConfig.mbAllowOutbound;
+
+		if (!mConfig.mTelnetTermType.empty()) {
+			int termIdx = 0;
+
+			for(size_t i=0; i<vdcountof(kTerminalTypes); ++i) {
+				if (mConfig.mTelnetTermType == kTerminalTypes[i])
+					termIdx = i + 1;
+			}
+
+			if (termIdx)
+				mComboTermType.SetSelection(termIdx);
+			else {
+				mComboTermType.SetSelection(-1);
+				SetControlText(IDC_TERMINAL_TYPE, VDTextAToW(mConfig.mTelnetTermType).c_str());
+			}
+		} else
+			mComboTermType.SetSelection(0);
+
+		mComboSioModes.SetSelection(mConfig.m850SIOLevel);
+
 		CheckButton(IDC_TELNET, mbTelnet);
 		CheckButton(IDC_TELNET_LFCONVERSION, mConfig.mbTelnetLFConversion);
 		CheckButton(IDC_ALLOW_OUTBOUND, mConfig.mbAllowOutbound);
@@ -200,6 +277,14 @@ bool ATUISerialPortsDialog::OnCommand(uint32 id, uint32 extcode) {
 
 			UpdateEnables();
 		}
+	} else if (id == IDC_ALLOW_OUTBOUND) {
+		bool outbound = IsButtonChecked(IDC_ALLOW_OUTBOUND);
+
+		if (mbOutbound != outbound) {
+			mbOutbound = outbound;
+
+			UpdateEnables();
+		}
 	}
 
 	return false;
@@ -215,6 +300,8 @@ void ATUISerialPortsDialog::UpdateEnables() {
 	EnableControl(IDC_TELNET, enabled);
 	EnableControl(IDC_TELNET_LFCONVERSION, enabled && telnet);
 	EnableControl(IDC_ALLOW_OUTBOUND, enabled);
+	EnableControl(IDC_STATIC_TERMINAL_TYPE, enabled && mbOutbound);
+	EnableControl(IDC_TERMINAL_TYPE, enabled && mbOutbound);
 	EnableControl(IDC_ACCEPT_CONNECTIONS, enabled);
 	EnableControl(IDC_LISTEN_PORT, enabled && accept);
 	EnableControl(IDC_ACCEPT_IPV6, enabled && accept);
@@ -222,8 +309,7 @@ void ATUISerialPortsDialog::UpdateEnables() {
 	EnableControl(IDC_CONNECTION_SPEED, enabled && accept);
 	EnableControl(IDC_EXTENDED_BAUD_RATES, enabled);
 	EnableControl(IDC_REQUIRE_MATCHED_DTE_RATE, enabled);
-	EnableControl(IDC_SIOLEVEL_NONE, enabled);
-	EnableControl(IDC_SIOLEVEL_STUBLOADER, enabled);
+	EnableControl(IDC_SIOLEVEL, enabled);
 	EnableControl(IDC_DIAL_ADDRESS, enabled);
 	EnableControl(IDC_DIAL_SERVICE, enabled);
 

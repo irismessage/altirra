@@ -83,18 +83,26 @@
      Logical operators 2
       or       Logical OR
       
+     Ternary operators
+      ?:       Conditional operator
+      
     Spaces are not significant except to delimit tokens. 
     
     Symbol names may also be used in expressions, but care should be taken
     to distinguish between "symbol", which evaluates to the symbol's address,
     and "db symbol" or "dw symbol", which reads a byte or word at the address.
     Symbols that conflict with other tokens can be forced by prefixing with
-    #, i.e. #address.
+    #, i.e. #address. A symbol from a specific module may be referenced with
+    the syntax modname!symname.
     
     All expressions are evaluated with 32-bit signed two's-complement integer
     arithmetic. Logical operators operate according to the rules of the C
     programming language, where 0 signifies false, a non-zero value is
     interpreted as true, and true is encoded as 1.
+    
+    Due to a conflict with the bank operator, the ternary operator may
+    sometimes require a space between a constant and the ':' in order to be
+    parsed as intended.
     
     Examples:
     
@@ -449,6 +457,14 @@
     
     If no address or length is given, memory dumping continues from the
     end of the last continuable operation.
+    
+> dy   Display binary
+
+    Shows the contents of memory as binary.
+    
+      dy [-c <chars>] [<xaddress> [L<length>]]
+      
+      -c: set '1' bit character, or both 0/1 bit chars
 
 + e    Enter (alter) data in memory
 
@@ -623,7 +639,7 @@
     
     See also: hma (show heat map accesses), hmc (heat map clear),
               hmd (dump heat map memory status),
-              hmr (heat map register status), hmm (heat map memory).
+              hmr (heat map register status).
 
 + hmr  Show heat map register status
 
@@ -736,6 +752,7 @@
       k/pbr  Program bank register
       p.m    Accumulator size flag
       p.x    Index size flag
+      e      Emulation flag
 
 + s    Search memory
 
@@ -752,6 +769,25 @@
     
       s 0 L10000 00 04 A5
       s E800 L2800 <vimirq >vimirq
+
++ st   Static trace
+
+    Statically traces program execution and marks labels.
+    
+      st <baseaddr> [<restrictbase> L<restrictlength>]
+      
+    The st command examines program code and finds all static program traces
+    by following absolute JMP/JSR and relative branch instructions. The custom
+    symbol table is then populated with labels for each jump or branch target.
+    
+    Static tracing is only capable of following traces by references that are
+    statically embedded within the code. Dynamic references through jump tables
+    or vectors cannot be seen by the static tracer.
+    
+    If restrictbase and restrictlength are specified, only traces within the
+    given restricted range are followed. This is useful for contraining tracing
+    to within a specific module and avoiding bogus tracing into other regions,
+    such as RAM where dynamic code is kept.
 
 + t    Trace (step one instruction) (F11)
 
@@ -810,6 +846,27 @@
     
     See also: ? (evaluate expression)
 
++ x    Examine symbols
+
+    List symbols whose names match a given pattern.
+    
+      x <pattern>      (Examine symbols with name pattern)
+      x <pat>!<pat>    (Examine symbols with module and name patterns)
+      
+    The x command lists symbols according to a wildcard pattern, with ? and
+    * characters representing one and zero+ unknown characters. If a simple
+    pattern is supplied, all symbols matching that pattern are reported; if
+    a module pattern is supplied, only symbols matching both the module and
+    name patterns are reported.
+    
+    Examples:
+    
+      x *              Lists all symbols
+      x hardware!*     Lists all hardware symbols
+      x kernel*!a*     Lists all symbols starting with "a" in kernel modules
+      
+    See also: .loadsym, .unloadsym, lm (list modules)
+
 ^ ya, yc, yd, yr, yw   Manage manual symbol table
 > ya   Add manual symbol
 > yc   Clear manual symbols
@@ -865,15 +922,34 @@
     Displays the addresses and sizes of BASIC tables.
     
       .basic
+      
+    See also: .basic_dumpline, .basic_vars, .basic_dumpstack
 
 + .basic_dumpline  Dump BASIC program line
 
     Lists the statements contained within a BASIC line.
     
-      .basic_dumpline [<address>]
+      .basic_dumpline [<address>] [-o <offset>]
       
-    If no address is specified, the continuation address from the last
-    command is used.
+    The optional address specifies the beginning of the line, including
+    the line number. If no address is specified, the continuation address
+    from the last command is used.
+    
+    -o specifies an optional byte offset from the beginning of the line.
+    Any token that begins that that byte offset is marked in the output
+    with >>.
+    
+    Tokens from Atari BASIC, BASIC XL, and BASIC XE are supported.
+    
+    See also: .basic, .basic_vars
+
++ .basic_dumpstack  Dump BASIC runtime stack
+
+    Lists pending GOSUB and FOR..NEXT loops on the BASIC stack.
+    
+      .basic_dumpstack
+      
+    See also: .basic
 
 + .basic_vars  Dump BASIC variables
 
@@ -1054,7 +1130,11 @@
 
     Create a bootable snapshot image from the current simulator state.
     
-      .dumpsnap <path.atr>
+      .dumpsnap [-u] <path.atr>
+      
+    Options:
+    
+      -u    Disable compression and use uncompressed blocks
       
     Records hardware and memory state to a disk image with a loader that
     restores the state on boot. The snapshot image contains the base 64K
@@ -1163,9 +1243,29 @@
     See also: .tracecio, .ciodevs
 
 + .loadksym    Load kernel symbols
+
+    Loads kernel symbols for the original 10K OS.
+    
+      .loadksym <file>
+      
+    Loads a symbol file for a module at $D800-FFFF.
+
++ .loadobj     Load executable object
+
+    Loads an executable object from a file.
+    
+      .loadobj <file>
+      
+    <file> must be an executable object in Atari DOS executable format.
+    INITAD and RUNAD segments are skipped and no changes to execution state
+    are made other than to load program segments into memory. This is
+    intended to allow helper modules to be loaded into RAM.
+    
+    See also: .readmem, .writemem
+
 + .loadsym     Load module symbols
 
-    Load module symbols from a symbol file.
+    Loads module symbols from a symbol file.
     
       .loadsym <file>
       
@@ -1182,6 +1282,36 @@
       
     This displays the memory layers that are being tracked internally in
     the emulator.
+
++ .netstat     Display network connection status
+
+    Shows UDP/IP and TCP/IP connections on the emulated network.
+    
+      .netstat
+      
+    Displays a list of connections maintained by the gateway on the emulated
+    network. This only applies if DragonCart emulation is active.
+    
+    Five columns are shown:
+    
+      Proto:
+          Protocol for connection (TCP/UDP).
+          
+      Local address:
+          Emulation-side address as seen by the gateway. This is typically
+          the address provided by the program driving the DragonCart and
+          will be on the emulation subnet.
+          
+      Foreign address:
+          The other address of connection, either the gateway itself or an
+          external host.
+          
+      State:
+          TCP connection state
+      
+      NAT address:
+          Host address used by NAT gateway for external connections. This
+          is the address that the external server sees the connection from.
 
 ^ .onexeclear, .onexelist, .onexeload, .onexerun   Executable command triggers
 > .onexeclear  Clear queued on-executable commands
@@ -1258,15 +1388,18 @@
     Width is a positive number specifying the minimum characters to
     display for the field. If the formatted field is shorter than
     the width, the field is padded according to flags, with right
-    justification with spaces being the default. Variable width
-    parameters (*) are not supported.
+    justification with spaces being the default.
     
     Precision is a non-negative number specifying minimum number of
     digits to display for numeric types. Zeroes are prepended to
     the number if it has fewer digits than the specified precision.
-    Variable precision parameters (*) are not supported.
     
-    Length specifies the size of the field:
+    Both width and precision may be specified as variable (*) in
+    order to set them via separate expressions. If variable, the
+    width and precision arguments come before the value argument,
+    in that order. The values are clamped to avoid disasters.
+    
+    Length specifies the size of an integer field:
     
       hh       Byte (8-bit)
       h        Word (16-bit)
@@ -1281,6 +1414,7 @@
       %f       Decimal float by address, floating-point notation
       %g       Decimal float by address, general notation
       %i       Signed decimal (equivalent to %d)
+      %s       ATASCII string buffer by address
       %u       Unsigned decimal
       %x       Hexadecimal (lowercase)
       %X       Hexadecimal (uppercase)
@@ -1304,6 +1438,8 @@
       
     The address may use extended memory syntax, i.e. v:4000 for VBXE
     memory.
+    
+    See also: .loadobj
 
 + .reload      Reload symbol files
 
@@ -1326,9 +1462,15 @@
       .sdx_loadsyms [address]
       
     By default, this follows the symbol chain starting with the pointer
-    at address $D4E. An alternate override address for the pointer can
-    be specified. The loaded symbols are placed in a module called SDX.
-    If this module exists, it is cleared before being reloaded.
+    at address DOSVEC+$127. An alternate override address for the pointer
+    can be specified. The loaded symbols are placed in a module called
+    SDX. If this module exists, it is cleared before being reloaded.
+    
+    NOTE: This command can only see the full set of symbols if the SDX
+    library is banked in. Otherwise, only resident symbols outside of
+    the library bank will be seen. This isn't a problem during normal
+    operation because the library bank has to be enabled for either
+    symbol resolution or to call library functions.
 
 + .sio         Dump SIO device control block (DCB)
 
@@ -1357,10 +1499,13 @@
 
     Computes the sum of bytes in a memory range.
     
-      .sum address L<length>
+      .sum [-w] address L<length>
       
     All bytes within the memory range are added and both the binary sum
     and the one's complement (carry wraparound) sum are reported.
+    
+    If -w is specified, a sum of words is computed instead. The inverted
+    and byte-swapped checksum is also reported for TCP/IP purposes.
 
 + .tape        Display cassette tape deck status
 

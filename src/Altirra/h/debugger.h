@@ -103,6 +103,11 @@ struct ATDebuggerOpenEvent {
 	bool mbAllowOpen;
 };
 
+struct ATDebuggerStepRange {
+	uint32 mAddr;
+	uint32 mSize;
+};
+
 class IATDebugger {
 public:
 	virtual bool IsRunning() const = 0;
@@ -124,8 +129,8 @@ public:
 	virtual void ToggleSourceBreakpoint(const char *fn, uint32 line) = 0;
 	virtual uint32 SetSourceBreakpoint(const char *fn, uint32 line, ATDebugExpNode *condexp, const char *command, bool continueExecution = false) = 0;
 
-	virtual void StepInto(ATDebugSrcMode sourceMode, uint32 regionStart = 0, uint32 regionSize = 0) = 0;
-	virtual void StepOver(ATDebugSrcMode sourceMode, uint32 rgnStart = 0, uint32 rgnSize = 0) = 0;
+	virtual void StepInto(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *stepRanges = NULL, uint32 stepRangeCount = 0) = 0;
+	virtual void StepOver(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *stepRanges = NULL, uint32 stepRangeCount = 0) = 0;
 	virtual void StepOut(ATDebugSrcMode sourceMode) = 0;
 	virtual uint16 GetPC() const = 0;
 	virtual void SetPC(uint16 pc) = 0;
@@ -170,6 +175,7 @@ public:
 	virtual void QueueCommandFront(const char *s, bool echo) = 0;
 
 	virtual void WriteMemoryCPU(uint16 address, const void *data, uint32 len) = 0;
+	virtual void WriteGlobalMemory(uint32 address, const void *data, uint32 len) = 0;
 
 	virtual const char *GetPrompt() const = 0;
 	virtual VDEvent<IATDebugger, const char *>& OnPromptChanged() = 0;

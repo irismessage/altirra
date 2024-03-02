@@ -142,6 +142,9 @@ void ATCPUEmulator::WarmReset() {
 bool ATCPUEmulator::IsInstructionInProgress() const {
 	uint8 state = *mpNextState;
 
+	if (state == kStateUpdateHeatMap)
+		state = mpNextState[1];
+
 	return state != kStateReadOpcode && state != kStateReadOpcodeNoBreak;
 }
 
@@ -239,6 +242,18 @@ bool ATCPUEmulator::IsNextCycleWrite() const {
 	}
 }
 
+void ATCPUEmulator::SetEmulationFlag(bool emu) {
+	if (mCPUMode != kATCPUMode_65C816)
+		return;
+
+	if (mbEmulationFlag == emu)
+		return;
+
+	mbEmulationFlag = emu;
+
+	Update65816DecodeTable();
+}
+
 void ATCPUEmulator::SetPC(uint16 pc) {
 	mPC = pc;
 	mInsnPC = pc;
@@ -251,7 +266,14 @@ void ATCPUEmulator::SetP(uint8 p) {
 	if (mCPUMode != kATCPUMode_65C816 || mCPUSubMode == kATCPUSubMode_65C816_Emulation)
 		p |= 0x30;
 
-	mP = p;
+	if (mP != p) {
+		mP = p;
+
+		if (!(p & AT6502::kFlagX)) {
+			mXH = 0;
+			mYH = 0;
+		}
+	}
 }
 
 void ATCPUEmulator::SetAH(uint8 a) {
@@ -296,6 +318,24 @@ void ATCPUEmulator::SetHook(uint16 pc, bool enable) {
 		mInsnFlags[pc] &= ~kInsnFlagHook;
 }
 
+void ATCPUEmulator::SetStepRange(uint32 regionStart, uint32 regionSize, ATCPUStepCallback stepcb, void *stepcbdata, bool stepOver) {
+	mbStep = true;
+
+	mStepRegionStart = regionStart;
+	mStepRegionSize = regionSize;
+	mpStepCallback = stepcb;
+	mpStepCallbackData = stepcbdata;
+	mStepStackLevel = -1;
+
+	mDebugFlags |= kDebugFlag_Step;
+
+	if (mbStepOver != stepOver) {
+		mbStepOver = stepOver;
+
+		RebuildDecodeTables();
+	}
+}
+
 sint32 ATCPUEmulator::GetNextBreakpoint(sint32 last) const {
 	if ((uint32)last >= 0x10000)
 		last = -1;
@@ -319,8 +359,8 @@ void ATCPUEmulator::SetCPUMode(ATCPUMode mode, uint32 subCycles) {
 	if (subCycles < 1 || mode != kATCPUMode_65C816)
 		subCycles = 1;
 
-	if (subCycles > 8)
-		subCycles = 8;
+	if (subCycles > 16)
+		subCycles = 16;
 
 	if (mCPUMode == mode && mSubCycles == subCycles)
 		return;
@@ -481,7 +521,7 @@ bool ATCPUEmulator::IsInPath(uint16 addr) const {
 void ATCPUEmulator::DumpStatus(bool extended) {
 	if (mCPUMode == kATCPUMode_65C816) {
 		if (mbEmulationFlag) {
-			ATConsoleTaggedPrintf("A=%02X:%02X X=%02X Y=%02X S=%02X P=%02X (%c%c%c%c%c%c)  "
+			ATConsoleTaggedPrintf("C=%02X%02X X=%02X Y=%02X S=%02X P=%02X (%c%c%c%c%c%c)  "
 				, mAH
 				, mA
 				, mX
@@ -498,7 +538,7 @@ void ATCPUEmulator::DumpStatus(bool extended) {
 		} else {
 			if (!(mP & kFlagX)) {
 				ATConsoleTaggedPrintf("%c=%02X%02X X=%02X%02X Y=%02X%02X S=%02X%02X P=%02X (%c%c%c %c%c%c%c)  "
-					, (mP & kFlagM) ? 'A' : 'C'
+					, (mP & kFlagM) ? 'C' : 'A'
 					, mAH
 					, mA
 					, mXH
@@ -518,7 +558,7 @@ void ATCPUEmulator::DumpStatus(bool extended) {
 					);
 			} else {
 				ATConsoleTaggedPrintf("%c=%02X%02X X=--%02X Y=--%02X S=%02X%02X P=%02X (%c%c%cX%c%c%c%c)  "
-					, (mP & kFlagM) ? 'A' : 'C'
+					, (mP & kFlagM) ? 'C' : 'A'
 					, mAH
 					, mA
 					, mX
@@ -782,10 +822,18 @@ uint8 ATCPUEmulator::ProcessDebugging() {
 		} else {
 			mStepStackLevel = -1;
 
-			if (mpStepCallback && mpStepCallback(this, mPC, mpStepCallbackData)) {
+			ATCPUStepResult stepResult = kATCPUStepResult_Stop;
+
+			if (mpStepCallback)
+				stepResult = mpStepCallback(this, mPC, false, mpStepCallbackData);
+
+			if (stepResult == kATCPUStepResult_SkipCall) {
 				mStepStackLevel = mS;
-			} else {
+			} else if (stepResult == kATCPUStepResult_Stop) {
 				mbStep = false;
+				mbStepOver = false;
+				mDebugFlags &= ~kDebugFlag_Step;
+
 				mbUnusedCycle = true;
 				RedecodeInsnWithoutBreak();
 				return kATSimEvent_CPUSingleStep;
@@ -804,6 +852,44 @@ uint8 ATCPUEmulator::ProcessDebugging() {
 		DumpStatus();
 
 	return 0;
+}
+
+void ATCPUEmulator::ProcessStepOver() {
+	if (mStepStackLevel >= 0) {
+		// We apply a two-byte adjustment here to do this test approximately
+		// at the level of the parent (we can't do it exactly).
+		if ((sint8)(mS - mStepStackLevel) <= -2)
+			return;
+
+		mStepStackLevel = -1;
+	}
+
+	ATCPUStepResult stepResult = kATCPUStepResult_Stop;
+
+	if (mpStepCallback) {
+		// This needs to use PC instead of insnPC, because we are
+		// in the middle of a JSR or interrupt dispatch.
+		stepResult = mpStepCallback(this, mPC, true, mpStepCallbackData);
+	}
+
+	switch(stepResult) {
+		case kATCPUStepResult_SkipCall:
+			mStepStackLevel = mS;
+			break;
+		case kATCPUStepResult_Stop:
+			mbStepOver = false;
+			mpStepCallback = NULL;
+			mStepRegionStart = 0;
+			mStepRegionSize = 0;
+			mStepStackLevel = -1;
+
+			RebuildDecodeTables();
+			break;
+
+		case kATCPUStepResult_Continue:
+		default:
+			break;
+	}
 }
 
 template<bool T_Accel>
@@ -838,7 +924,7 @@ bool ATCPUEmulator::ProcessInterrupts() {
 
 			// If an IRQ is pending, check if it was just acknowledged this cycle. If so,
 			// bypass it as it's too late to interrupt this instruction.
-			if ((mIntFlags & kIntFlag_IRQPending) && (!T_Accel || mpCallbacks->CPUGetUnhaltedCycle() - mIRQAcknowledgeTime > 0)) {
+			if ((mIntFlags & kIntFlag_IRQPending) && mpCallbacks->CPUGetUnhaltedCycle() - mIRQAcknowledgeTime > 0) {
 				if (mbTrace)
 					ATConsoleWrite("CPU: Jumping to IRQ vector\n");
 
@@ -863,6 +949,19 @@ uint8 ATCPUEmulator::ProcessHook() {
 	}
 
 	return op;
+}
+
+uint8 ATCPUEmulator::ProcessHook816() {
+	// We block hooks if any of the following are true:
+	// - the CPU is in native mode
+	// - PBK != 0
+	// - DBK != 0
+	// - D != 0
+
+	if (!mbEmulationFlag || mDP || mK || mB)
+		return 0;
+
+	return ProcessHook();
 }
 
 template<bool is816, bool hispeed>
@@ -1052,6 +1151,10 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 	mpDecodePtrNMI = mpDstState;
 	*mpDstState++ = kStateReadDummyOpcode;
 	*mpDstState++ = kStateReadDummyOpcode;
+
+	if (mbStepOver)
+		*mpDstState++ = kStateStepOver;
+
 	*mpDstState++ = kStatePushPCH;
 	*mpDstState++ = kStatePushPCL;
 	*mpDstState++ = kStatePtoD_B0;
@@ -1075,6 +1178,10 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 	mpDecodePtrIRQ = mpDstState;
 	*mpDstState++ = kStateReadDummyOpcode;
 	*mpDstState++ = kStateReadDummyOpcode;
+
+	if (mbStepOver)
+		*mpDstState++ = kStateStepOver;
+
 	*mpDstState++ = kStatePushPCH;
 	*mpDstState++ = kStatePushPCL;
 	*mpDstState++ = kStatePtoD_B0;
@@ -1151,6 +1258,9 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 		*mpDstState++ = kStateReadDummyOpcode;
 		*mpDstState++ = kStateReadDummyOpcode;
 
+		if (mbStepOver)
+			*mpDstState++ = kStateStepOver;
+
 		if (emulationMode) {
 			*mpDstState++ = kStatePushPCH;
 			*mpDstState++ = kStatePushPCL;
@@ -1187,6 +1297,9 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 		mDecodePtrs816[i][257] = mpDstState - mDecodeHeap;
 		*mpDstState++ = kStateReadDummyOpcode;
 		*mpDstState++ = kStateReadDummyOpcode;
+
+		if (mbStepOver)
+			*mpDstState++ = kStateStepOver;
 
 		if (emulationMode) {
 			*mpDstState++ = kStatePushPCH;

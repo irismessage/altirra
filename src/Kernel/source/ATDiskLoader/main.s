@@ -1,6 +1,6 @@
 ;	Altirra - Atari 800/800XL/5200 emulator
 ;	Disk-based snapshot loader
-;	Copyright (C) 2008-2011 Avery Lee
+;	Copyright (C) 2008-2014 Avery Lee
 ;
 ;	This program is free software; you can redistribute it and/or modify
 ;	it under the terms of the GNU General Public License as published by
@@ -19,14 +19,18 @@
 rtclok	equ	$12
 a0		equ	$80
 a1		equ	$82
+a2		equ	$84
+a3		equ	$86
 d0		equ	$88
 d1		equ	$89
-loadpr	equ	$8a
-		;	$8b
+d2		equ	$8a
+loadpr	equ	$8c
+		;	$8d
 sdlstl	equ	$0230			;shadow for DLISTL ($D402)
 sdlsth	equ	$0231			;shadow for DLISTH ($D403)
 gprior	equ	$026f			;shadow for PRIOR ($D01B)
-pcolr0	equ	$02c0			;shadow for COLPM0 ($D012)
+pcolr0	equ	$02c0			;shadow for COLPM0 ($D012
+color1	equ	$02c5
 dunit	equ $0301			;device number
 dcomnd	equ $0302			;command byte
 dbuflo	equ $0304			;buffer address lo
@@ -38,7 +42,10 @@ daux2	equ $030b			;sector number hi
 hposm0	equ	$d004
 sizem	equ	$d00c
 grafm	equ	$d011
+colpf1	equ	$d017
+colbk	equ	$d01a
 gractl	equ	$d01d
+skctl	equ	$d20f
 portb	equ	$d301
 pbctl	equ	$d303
 dmactl	equ	$d400
@@ -50,7 +57,7 @@ siov	equ	$e459
 
 ;==========================================================================
 ; Memory map timeline:
-;	0800-09FF				Loader
+;	0700-09FF				Loader
 ;	4000-77FF				Stage 1 load (14K, 112 sectors)
 ;	4000-4FFF -> C000-CFFF	Stage 1a copy
 ;	5000-77FF -> D800-FFFF	Stage 1b copy
@@ -60,11 +67,11 @@ siov	equ	$e459
 ;	4000-49FF -> 0000-09FF	Stage 3 copy
 ;	
 		opt		o+h-f+
-		org		$0800
+		org		$0700
 		dta		$00				;flags
-		dta		$04				;number of sectors
-		dta		a($0800)		;load address
-		dta		a($0806)		;init address
+		dta		$06				;number of sectors
+		dta		a($0700)		;load address
+		dta		a($0706)		;init address
 
 __main:
 		;replace display list
@@ -81,9 +88,8 @@ __main:
 		lda		rtclok+2
 		cmp:req	rtclok+2
 
-		;4000-77FF				Stage 1 load (14K, 112 sectors)
-		lda		#$40
-		ldx		#112
+		;4000-77FF				Stage 1-A load (14K, 112 sectors)
+		ldx		#0
 		jsr		LoadBlock
 
 		;kill interrupts and page out kernel ROM
@@ -116,11 +122,7 @@ __main:
 		cli
 
 		;0A00-BFFF				Stage 2 load (45.5K, 364 sectors)
-		lda		#$0a
-		ldx		#0
-		jsr		LoadBlock
-		lda		#$8a
-		ldx		#108
+		ldx		#6
 		jsr		LoadBlock
 
 		;enable extended RAM at bank 0
@@ -128,8 +130,7 @@ __main:
 		sta		portb
 		
 		;4000-49FF(E)			Stage 3 load (2.5K, 20 sectors)
-		lda		#$40
-		ldx		#20
+		ldx		#12
 		jsr		LoadBlock
 
 		;copy stage 3 loader
@@ -158,36 +159,68 @@ playfield:
 
 ;==========================================================================
 ; Inputs:
-;  A		High byte of address
-;  X		Sector count
-;  DAUX2:DAUX1	Starting sector
+;	X = offset in load table
+;	DAUX2:DAUX1	Starting sector
 ;
 .proc LoadBlock
-		sta		dbufhi
-		stx		d0
-		lda		#0
+		stx		d1
+
+		;set read address
+		mva		load_table+2,x dbufhi
+		lda		#$80
+		sta		dbytlo
+		asl
 		sta		dbuflo
 		sta		dbythi
-		mva		#$80 dbytlo
+		
+		;set read page count
+		mva		load_table+3,x d0
+
+		;do reads
 		mva		#$52 dcomnd
 		mva		#1 dunit
 sectorloop:
+		jsr		read_page
+		dec		d0
+		bne		sectorloop
+		
+		;check whether we need to do LZ decompression
+		ldx		d1
+		ldy		load_table+5,x
+		sne:rts
+		
+		;do LZ decompression
+		lda		load_table+4,x
+		pha
+		lda		load_table+1,x
+		clc
+		adc		load_table,x
+		sta		a3+1
+		lda		load_table,x
+		tax
+		pla
+		jmp		LZUnpack
+
+read_page:
+		jsr		read_sector
+read_sector:
 		inw		daux1
 		jsr		dskinv
 		lda		loadpr
 		clc
-		adc		#((20*256) / 497)
+		adc		#0
+loadpr_speed_lo = *-1
 		sta		loadpr
-		ldx		loadpr+1
-		scc:inx
-		stx		loadpr+1
+		lda		loadpr+1
+		adc		#0
+loadpr_speed_hi = *-1
+		sta		loadpr+1
+		tax
 		lda		#$80
 		sta		playfield+20,x
 		eor		dbuflo
 		sta		dbuflo
 		sne:inc	dbufhi
-		dec		d0
-		bne		sectorloop
 		rts
 .endp
 
@@ -216,19 +249,173 @@ copyloop:
 .endp
 
 ;===========================================================================
+; Entry:
+;	Y:A = source starting address
+;	X = destination starting page
+;	A3+1 = stop page
+;
+.proc LZUnpack
+		sta		a0
+		sty		a0+1
+		stx		a2+1
+		lda		#0
+		sta		a2
+control_loop:
+		;get control byte
+		jsr		LZGetByte
+		sta		colpf1
+		sta		d0
+		
+		;shift down literal count
+		lsr
+		lsr
+		lsr
+		lsr
+		beq		no_literals
+		ldy		#$0f
+		jsr		LZGetLengthExtension
+		ldy		a0
+		lda		a0+1
+		jsr		LZCopy
+		mwa		a1 a0
+no_literals:
+
+		;check if we are at the end
+		lda		a2+1
+		cmp		a3+1
+		beq		done
+
+		;get match count
+		lda		d0
+		and		#$0f
+		clc
+		adc		#$04
+		ldy		#$13
+		jsr		LZGetLengthExtension
+		
+		;get and apply offset
+		ldx		#0
+		clc
+		lda		a2
+		sbc		(a0,x)
+		tay
+		jsr		LZIncPos
+		lda		a2+1
+		sbc		(a0,x)
+		jsr		LZIncPos
+		jsr		LZCopy
+		jmp		control_loop
+		
+done:
+		lda		color1
+		sta		colpf1
+		rts
+.endp
+
+;===========================================================================
+.proc LZGetByte
+		ldx		#0
+		lda		(a0,x)
+.def :LZIncPos = *
+		inw		a0
+		rts
+.endp
+
+;===========================================================================
+; Entry:
+;	A:Y = source pointer
+;	[D2-1]:D1 = bytes to copy (must be >0)
+;
+.proc LZCopy
+		sty		a1
+		sta		a1+1
+		
+		;copy literal bytes
+range_loop:
+		ldy		#0
+byte_loop:
+		lda		(a1),y
+		sta		(a2),y
+		iny
+		cpy		d1
+		bne		byte_loop
+		tya
+		bne		partial_page
+		inc		a1+1
+		inc		a2+1
+		bcs		next
+		
+partial_page:
+		clc
+		adc		a1
+		sta		a1
+		scc:inc	a1+1
+		tya
+		clc
+		adc		a2
+		sta		a2
+		scc:inc	a2+1
+		lda		#0
+		sta		d1
+next:
+		dec		d2
+		bne		range_loop
+		rts
+.endp
+
+;===========================================================================
+.proc LZGetLengthExtension
+		;check if we have extension bytes
+		ldx		#$01
+		stx		d2
+		sta		d1
+		cpy		d1
+		bne		done
+byte_loop:
+		jsr		LZGetByte
+		tay
+		clc
+		adc		d1
+		sta		d1
+		scc:inc	d2
+		cpy		#$ff
+		beq		byte_loop
+done:
+		;adjust page count if low byte is 0
+		lda		d1
+		sne:dec	d2
+		rts		
+.endp
+
+;==========================================================================
+; extra data
+;==========================================================================
+
+load_table:
+		;decompress address, decompress pages, load address, load pages, LZ start
+		:18 dta $0
+
+;===========================================================================
 ; STAGE 3 LOADER
+		.if * >= $900
 		org		*+$7600,*
+		.else
+		org		$7f00,$900
+		.endif
 .proc stage3
 		;disable interrupts and DMA
 		sei
-		mva		#0 nmien
-		mva		#0 dmactl
+		ldx		#0
+		stx		nmien
+		stx		dmactl
+		
+		;copy $4A00-4AFF -> $BF00-BFFF
+		mva:rne	$4A00,x $BF00,x+
 
 		;*** NO ZERO PAGE PAST THIS POINT ***
 
 		;copy $4000-49FF down to $0000-09FF
 		ldy		#$0a
-		ldx		#0
 copyloop:
 		lda		$4000,x
 		dta $9d, $00, $00		;sta $0000,x
@@ -254,6 +441,8 @@ pkload:
 		sta		$d200,x
 		dex
 		bpl		pkload
+		
+		mva		pokeydat+9 skctl
 
 		;reload ANTIC
 		; $D401 CHACTL
@@ -307,20 +496,20 @@ _insert_nmien = * - 1
 _insert_portb2 = * - 1
 		jmp		$0100		;[10, 11, 12] jump to stack thunk
 _insert_ipc = * - 2
-.endp
 
 ;==========================================================================
-; extra data
+; extra data (stage 3)
 ;==========================================================================
 
 gtiadat:
 		:30 dta 0			;$D000 to $D01D
 
 pokeydat:
-		:9 dta 0			;$D200 to $D208
+		:10 dta 0			;$D200 to $D208, $D20F
 
 anticdat:
 		:9 dta 0			;$D401 to $D409
+.endp
 		
 		.print	"End of loader: ",$8000-*
 
@@ -330,17 +519,23 @@ anticdat:
 ; metadata
 ;==========================================================================
 
-		dta		a(_insert_a - $0800)
-		dta		a(stage3._insert_x - $7e00)
-		dta		a(stage3._insert_y - $7e00)
-		dta		a(stage3._insert_s - $7e00)
-		dta		a(stage3._insert_ipc - $7e00)
-		dta		a(stage3._insert_pbctl - $7e00)
-		dta		a(stage3._insert_portb1 - $7e00)
-		dta		a(stage3._insert_portb2 - $7e00)
-		dta		a(stage3._insert_dmactl - $7e00)
-		dta		a(stage3._insert_nmien - $7e00)
-		dta		<gtiadat
+		;$0300
+		dta		a(_insert_a - $0700)
+		dta		a(.adr stage3._insert_x - $0700)
+		dta		a(.adr stage3._insert_y - $0700)
+		dta		a(.adr stage3._insert_s - $0700)
+		dta		a(.adr stage3._insert_ipc - $0700)
+		dta		a(.adr stage3._insert_pbctl - $0700)
+		dta		a(.adr stage3._insert_portb1 - $0700)
+		dta		a(.adr stage3._insert_portb2 - $0700)
+
+		;$0310
+		dta		a(.adr stage3._insert_dmactl - $0700)
+		dta		a(.adr stage3._insert_nmien - $0700)
+		dta		a(.adr stage3.gtiadat - $0700)
+		dta		a(.adr load_table - $0700)
+		dta		a(LoadBlock.loadpr_speed_lo - $0700)
+		dta		a(LoadBlock.loadpr_speed_hi - $0700)
 		dta		stack_thunk_end - stack_thunk_begin
 
 stack_thunk_begin:

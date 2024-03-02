@@ -7,11 +7,14 @@
 ATUIButton::ATUIButton()
 	: mStockImageIdx(-1)
 	, mbDepressed(false)
+	, mbHeld(false)
+	, mbToggleMode(false)
 	, mTextX(0)
 	, mTextY(0)
 	, mActivatedEvent()
 	, mPressedEvent()
 {
+	SetTouchMode(kATUITouchMode_Immediate);
 	SetFillColor(0xD4D0C8);
 	BindAction(kATUIVK_Space, kActionActivate);
 	BindAction(kATUIVK_Return, kActionActivate);
@@ -53,17 +56,21 @@ void ATUIButton::SetDepressed(bool depressed) {
 	}
 }
 
+void ATUIButton::SetToggleMode(bool enabled) {
+	mbToggleMode = enabled;
+}
+
 void ATUIButton::OnMouseDownL(sint32 x, sint32 y) {
-	SetDepressed(true);
+	SetHeld(true);
 	CaptureCursor();
 	Focus();
 }
 
 void ATUIButton::OnMouseUpL(sint32 x, sint32 y) {
-	if (mbDepressed) {
+	SetHeld(false);
+
+	if (IsCursorCaptured())
 		ReleaseCursor();
-		SetDepressed(false);
-	}
 }
 
 void ATUIButton::OnActionStart(uint32 id) {
@@ -106,6 +113,28 @@ void ATUIButton::OnSetFocus() {
 void ATUIButton::OnKillFocus() {
 	SetFillColor(0xD4D0C8);
 	Invalidate();
+}
+
+void ATUIButton::SetHeld(bool held) {
+	if (mbHeld == held)
+		return;
+
+	mbHeld = held;
+
+	// We set this even if toggle mode isn't currently set so that toggle
+	// mode can be toggled on the fly.
+	if (held)
+		mbToggleNextState = !mbDepressed;
+
+	if (!mbToggleMode)
+		SetDepressed(held);
+	else if (held) {
+		if (mbToggleNextState)
+			SetDepressed(true);
+	} else {
+		if (!mbToggleNextState)
+			SetDepressed(false);
+	}
 }
 
 void ATUIButton::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {

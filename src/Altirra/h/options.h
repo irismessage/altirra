@@ -42,6 +42,7 @@ struct ATOptions {
 	uint32	mFullScreenRefreshRate;
 
 	VDStringA	mSICFlashChip;
+	VDStringA	mU1MBFlashChip;
 
 	ATOptions();
 };

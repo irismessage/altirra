@@ -35,6 +35,7 @@ public:
 	virtual void SetPathATR(const wchar_t *path);
 	virtual void SaveATR(const wchar_t *path);
 
+	ATDiskGeometryInfo GetGeometry() const;
 	virtual uint32 GetSectorSize() const;
 	virtual uint32 GetSectorSize(uint32 virtIndex) const;
 	virtual uint32 GetBootSectorCount() const;
@@ -164,6 +165,18 @@ void ATDiskImageVirtualFolder::SetPathATR(const wchar_t *path) {
 }
 
 void ATDiskImageVirtualFolder::SaveATR(const wchar_t *path) {
+}
+
+ATDiskGeometryInfo ATDiskImageVirtualFolder::GetGeometry() const {
+	ATDiskGeometryInfo info;
+	info.mSectorSize = 128;
+	info.mBootSectorCount = 3;
+	info.mTotalSectorCount = 720;
+	info.mTrackCount = 40;
+	info.mSectorsPerTrack = 18;
+	info.mSideCount = 1;
+	info.mbMFM = false;
+	return info;
 }
 
 uint32 ATDiskImageVirtualFolder::GetSectorSize() const {
@@ -339,6 +352,7 @@ void ATDiskImageVirtualFolder::ReadPhysicalSector(uint32 index, void *data, uint
 }
 
 void ATDiskImageVirtualFolder::WritePhysicalSector(uint32 index, const void *data, uint32 len) {
+	throw MyError("Writes are not supported to a virtual disk.");
 }
 
 uint32 ATDiskImageVirtualFolder::GetVirtualSectorCount() const {

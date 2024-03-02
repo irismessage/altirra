@@ -25,6 +25,7 @@ ATUIWindowCaptionUpdater::ATUIWindowCaptionUpdater()
 	, mbLastCaptured(false)
 	, mbShowFps(false)
 	, mbCaptured(false)
+	, mbCaptureMMBRelease(false)
 	, mLastHardwareMode(kATHardwareModeCount)
 	, mLastKernelMode(kATKernelModeCount)
 	, mLastMemoryMode(kATMemoryModeCount)
@@ -72,8 +73,12 @@ void ATUIWindowCaptionUpdater::Update(HWND hwnd, bool running, int ticks, float 
 		if (mbShowFps)
 			mBuffer.append_sprintf(L" - %d (%.3f fps) (%.1f%% CPU)", ticks, fps, cpu);
 
-		if (mbCaptured)
-			mBuffer += L" (mouse captured - right Alt to release)";
+		if (mbCaptured) {
+			if (mbCaptureMMBRelease)
+				mBuffer += L" (mouse captured - right Alt or MMB to release)";
+			else
+				mBuffer += L" (mouse captured - right Alt to release)";
+		}
 
 		SetWindowTextW(hwnd, mBuffer.c_str());
 	}

@@ -33,7 +33,7 @@ public:
 protected:
 	struct OperandInfo {
 		sint32	mOpValue;
-		uint8	mOpMode[3];
+		uint8	mOpMode[4];
 		int		mPostIncX;
 		int		mPostIncY;
 	};
@@ -44,6 +44,7 @@ protected:
 			mOpMode[0] = kModeImp;
 			mOpMode[1] = kModeNone;
 			mOpMode[2] = kModeNone;
+			mOpMode[3] = kModeNone;
 			mPostIncX = 0;
 			mPostIncY = 0;
 		}
@@ -55,6 +56,7 @@ protected:
 			mOpMode[0] = kModeImm;
 			mOpMode[1] = kModeNone;
 			mOpMode[2] = kModeNone;
+			mOpMode[3] = kModeNone;
 			mPostIncX = 0;
 			mPostIncY = 0;
 		}
@@ -66,6 +68,7 @@ protected:
 			mOpMode[0] = kModeRel;
 			mOpMode[1] = kModeNone;
 			mOpMode[2] = kModeNone;
+			mOpMode[3] = kModeNone;
 			mPostIncX = 0;
 			mPostIncY = 0;
 		}
@@ -153,7 +156,17 @@ protected:
 		kModeIndX	= 0x0C,		// (zp,X)
 		kModeIndY	= 0x0D,		// (zp),Y
 		kModeRel	= 0x0E,		// branch target
-		kModeMask	= 0x1F,
+		kModeAbsLong	= 0x0F,	// al
+		kModeAbsLongX	= 0x10,	// al,X
+		kModeIndLong	= 0x11,	// [dp]
+		kModeIndLongY	= 0x12,	// [dp],Y
+		kModeStack		= 0x13,	// dp,S
+		kModeStackIndY	= 0x14,	// (dp,S),Y
+		kModeRelLong	= 0x15,	// branch target (16-bit)
+		kModeAbsLongI	= 0x16,	// [abs]
+		kModeAbsLongIX	= 0x17,	// [abs,X]
+		kModeMove		= 0x18,	// src,dest
+		kModeMask		= 0x1F,
 
 		kFlagNone	= 0x00,
 		kFlagEnd	= 0x80,
@@ -214,7 +227,9 @@ protected:
 		kPsuedoOp_CPL,
 		kPsuedoOp_CPD,
 
-		kPsuedoOp_ORG
+		kPsuedoOp_ORG,
+		kPsuedoOp_LONGA,
+		kPsuedoOp_LONGI
 	};
 
 	struct CommandEntry {
@@ -225,6 +240,8 @@ protected:
 
 	IATDebugger *mpDebugger;
 	uint32	mAddress;
+	bool	mbLongM;
+	bool	mbLongX;
 	VDStringA	mPrompt;
 
 	vdfastvector<uint8> mEmittedBytes;
@@ -245,7 +262,9 @@ protected:
 	X_OPCODE_DECL(BMI)
 	X_OPCODE_DECL(BNE)
 	X_OPCODE_DECL(BPL)
+	X_OPCODE_DECL(BRA)
 	X_OPCODE_DECL(BRK)
+	X_OPCODE_DECL(BRL)
 	X_OPCODE_DECL(BVC)
 	X_OPCODE_DECL(BVS)
 	X_OPCODE_DECL(CLC)
@@ -253,44 +272,85 @@ protected:
 	X_OPCODE_DECL(CLI)
 	X_OPCODE_DECL(CLV)
 	X_OPCODE_DECL(CMP)
+	X_OPCODE_DECL(COP)
 	X_OPCODE_DECL(CPX)
 	X_OPCODE_DECL(CPY)
+	X_OPCODE_DECL(DEA)
 	X_OPCODE_DECL(DEC)
 	X_OPCODE_DECL(DEX)
 	X_OPCODE_DECL(DEY)
 	X_OPCODE_DECL(EOR)
+	X_OPCODE_DECL(INA)
 	X_OPCODE_DECL(INC)
 	X_OPCODE_DECL(INX)
 	X_OPCODE_DECL(INY)
+	X_OPCODE_DECL(JML)
 	X_OPCODE_DECL(JMP)
+	X_OPCODE_DECL(JSL)
 	X_OPCODE_DECL(JSR)
 	X_OPCODE_DECL(LDA)
 	X_OPCODE_DECL(LDX)
 	X_OPCODE_DECL(LDY)
 	X_OPCODE_DECL(LSR)
+	X_OPCODE_DECL(MVN)
+	X_OPCODE_DECL(MVP)
 	X_OPCODE_DECL(NOP)
 	X_OPCODE_DECL(ORA)
+	X_OPCODE_DECL(PEA)
+	X_OPCODE_DECL(PEI)
+	X_OPCODE_DECL(PER)
 	X_OPCODE_DECL(PHA)
+	X_OPCODE_DECL(PHB)
+	X_OPCODE_DECL(PHD)
+	X_OPCODE_DECL(PHK)
 	X_OPCODE_DECL(PHP)
+	X_OPCODE_DECL(PHX)
+	X_OPCODE_DECL(PHY)
 	X_OPCODE_DECL(PLA)
+	X_OPCODE_DECL(PLB)
+	X_OPCODE_DECL(PLD)
 	X_OPCODE_DECL(PLP)
+	X_OPCODE_DECL(PLX)
+	X_OPCODE_DECL(PLY)
+	X_OPCODE_DECL(REP)
 	X_OPCODE_DECL(ROL)
 	X_OPCODE_DECL(ROR)
 	X_OPCODE_DECL(RTI)
+	X_OPCODE_DECL(RTL)
 	X_OPCODE_DECL(RTS)
 	X_OPCODE_DECL(SBC)
 	X_OPCODE_DECL(SEC)
 	X_OPCODE_DECL(SED)
 	X_OPCODE_DECL(SEI)
+	X_OPCODE_DECL(SEP)
 	X_OPCODE_DECL(STA)
+	X_OPCODE_DECL(STP)
 	X_OPCODE_DECL(STX)
 	X_OPCODE_DECL(STY)
+	X_OPCODE_DECL(STZ)
+	X_OPCODE_DECL(SWA)
+	X_OPCODE_DECL(TAD)
+	X_OPCODE_DECL(TAS)
 	X_OPCODE_DECL(TAX)
 	X_OPCODE_DECL(TAY)
+	X_OPCODE_DECL(TCD)
+	X_OPCODE_DECL(TCS)
+	X_OPCODE_DECL(TDA)
+	X_OPCODE_DECL(TDC)
+	X_OPCODE_DECL(TRB)
+	X_OPCODE_DECL(TSB)
+	X_OPCODE_DECL(TSA)
+	X_OPCODE_DECL(TSC)
 	X_OPCODE_DECL(TSX)
 	X_OPCODE_DECL(TXA)
 	X_OPCODE_DECL(TXS)
+	X_OPCODE_DECL(TXY)
 	X_OPCODE_DECL(TYA)
+	X_OPCODE_DECL(TYX)
+	X_OPCODE_DECL(WAI)
+	X_OPCODE_DECL(WDM)
+	X_OPCODE_DECL(XBA)
+	X_OPCODE_DECL(XCE)
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -307,6 +367,13 @@ X_OPCODE_BEGIN(AND)
 	{ 0x39, kModeAbsY },
 	{ 0x21, kModeIndX },
 	{ 0x31, kModeIndY },
+	{ 0x32, kModeZpI },
+	{ 0x23, kModeStack },
+	{ 0x33, kModeStackIndY },
+	{ 0x27, kModeIndLongY },
+	{ 0x37, kModeIndLongY },
+	{ 0x2F, kModeAbsLong },
+	{ 0x3F, kModeAbsLongX },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(ADC)
@@ -318,6 +385,13 @@ X_OPCODE_BEGIN(ADC)
 	{ 0x79, kModeAbsY },
 	{ 0x61, kModeIndX },
 	{ 0x71, kModeIndY },
+	{ 0x72, kModeZpI },
+	{ 0x63, kModeStack },
+	{ 0x73, kModeStackIndY },
+	{ 0x67, kModeIndLongY },
+	{ 0x77, kModeIndLongY },
+	{ 0x6F, kModeAbsLong },
+	{ 0x7F, kModeAbsLongX },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(ASL)
@@ -343,6 +417,9 @@ X_OPCODE_END()
 X_OPCODE_BEGIN(BIT)
 	{ 0x24, kModeZp },
 	{ 0x2C, kModeAbs },
+	{ 0x34, kModeZpX },
+	{ 0x3C, kModeAbsX },
+	{ 0x89, kModeImm },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(BMI)
@@ -357,8 +434,17 @@ X_OPCODE_BEGIN(BPL)
 	{ 0x10, kModeRel },
 X_OPCODE_END()
 
+X_OPCODE_BEGIN(BRA)
+	{ 0x80, kModeRel },
+	{ 0x82, kModeRelLong },
+X_OPCODE_END()
+
 X_OPCODE_BEGIN(BRK)
 	{ 0x00, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(BRL)
+	{ 0x82, kModeRelLong },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(BVC)
@@ -394,6 +480,17 @@ X_OPCODE_BEGIN(CMP)
 	{ 0xD9, kModeAbsY },
 	{ 0xC1, kModeIndX },
 	{ 0xD1, kModeIndY },
+	{ 0xD2, kModeZpI },
+	{ 0xC3, kModeStack },
+	{ 0xD3, kModeStackIndY },
+	{ 0xC7, kModeIndLongY },
+	{ 0xD7, kModeIndLongY },
+	{ 0xCF, kModeAbsLong },
+	{ 0xDF, kModeAbsLongX },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(COP)
+	{ 0x02, kModeImm },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(CPX)
@@ -408,11 +505,16 @@ X_OPCODE_BEGIN(CPY)
 	{ 0xCC, kModeAbs },
 X_OPCODE_END()
 
+X_OPCODE_BEGIN(DEA)
+	{ 0x3A, kModeImp },
+X_OPCODE_END()
+
 X_OPCODE_BEGIN(DEC)
 	{ 0xC6, kModeZp },
 	{ 0xD6, kModeZpX },
 	{ 0xCE, kModeAbs },
 	{ 0xDE, kModeAbsX },
+	{ 0x3A, kModeImp },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(DEX)
@@ -432,14 +534,25 @@ X_OPCODE_BEGIN(EOR)
 	{ 0x59, kModeAbsY },
 	{ 0x41, kModeIndX },
 	{ 0x51, kModeIndY },
+	{ 0x52, kModeZpI },
+	{ 0x43, kModeStack },
+	{ 0x53, kModeStackIndY },
+	{ 0x47, kModeIndLongY },
+	{ 0x57, kModeIndLongY },
+	{ 0x4F, kModeAbsLong },
+	{ 0x5F, kModeAbsLongX },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(INA)
+	{ 0x1A, kModeImp },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(INC)
-	{ 0xEA, kModeImm },
 	{ 0xE6, kModeZp },
 	{ 0xF6, kModeZpX },
 	{ 0xEE, kModeAbs },
 	{ 0xFE, kModeAbsX },
+	{ 0x1A, kModeImp },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(INX)
@@ -450,13 +563,27 @@ X_OPCODE_BEGIN(INY)
 	{ 0xC8, kModeImp },
 X_OPCODE_END()
 
+X_OPCODE_BEGIN(JML)
+	{ 0x5C, kModeAbsLong },
+	{ 0xDC, kModeAbsLongI },
+X_OPCODE_END()
+
 X_OPCODE_BEGIN(JMP)
 	{ 0x4C, kModeAbs },
 	{ 0x6C, kModeAbsI },
+	{ 0x7C, kModeAbsIX },
+	{ 0x5C, kModeAbsLong },
+	{ 0xDC, kModeAbsLongI },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(JSL)
+	{ 0x22, kModeAbsLong },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(JSR)
 	{ 0x20, kModeAbs },
+	{ 0x22, kModeAbsLong },
+	{ 0xFC, kModeAbsLongIX },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(LDA)
@@ -468,6 +595,13 @@ X_OPCODE_BEGIN(LDA)
 	{ 0xB9, kModeAbsY },
 	{ 0xA1, kModeIndX },
 	{ 0xB1, kModeIndY },
+	{ 0xB2, kModeZpI },
+	{ 0xA3, kModeStack },
+	{ 0xB3, kModeStackIndY },
+	{ 0xA7, kModeIndLongY },
+	{ 0xB7, kModeIndLongY },
+	{ 0xAF, kModeAbsLong },
+	{ 0xBF, kModeAbsLongX },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(LDX)
@@ -494,6 +628,14 @@ X_OPCODE_BEGIN(LSR)
 	{ 0x5E, kModeAbsX },
 X_OPCODE_END()
 
+X_OPCODE_BEGIN(MVN)
+	{ 0x54, kModeMove },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(MVP)
+	{ 0x44, kModeMove },
+X_OPCODE_END()
+
 X_OPCODE_BEGIN(NOP)
 	{ 0xEA, kModeImp },
 X_OPCODE_END()
@@ -507,22 +649,81 @@ X_OPCODE_BEGIN(ORA)
 	{ 0x19, kModeAbsY },
 	{ 0x01, kModeIndX },
 	{ 0x11, kModeIndY },
+	{ 0x12, kModeZpI },
+	{ 0x03, kModeStack },
+	{ 0x13, kModeStackIndY },
+	{ 0x07, kModeIndLongY },
+	{ 0x17, kModeIndLongY },
+	{ 0x0F, kModeAbsLong },
+	{ 0x1F, kModeAbsLongX },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(PEA)
+	{ 0xF4, kModeAbs },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(PEI)
+	{ 0xD4, kModeZpI },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(PER)
+	{ 0x62, kModeRelLong },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(PHA)
 	{ 0x48, kModeImp },
 X_OPCODE_END()
 
+X_OPCODE_BEGIN(PHB)
+	{ 0x8B, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(PHD)
+	{ 0x0B, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(PHK)
+	{ 0x4B, kModeImp },
+X_OPCODE_END()
+
 X_OPCODE_BEGIN(PHP)
 	{ 0x08, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(PHX)
+	{ 0xDA, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(PHY)
+	{ 0x5A, kModeImp },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(PLA)
 	{ 0x68, kModeImp },
 X_OPCODE_END()
 
+X_OPCODE_BEGIN(PLB)
+	{ 0xAB, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(PLD)
+	{ 0x2B, kModeImp },
+X_OPCODE_END()
+
 X_OPCODE_BEGIN(PLP)
 	{ 0x28, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(PLX)
+	{ 0xFA, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(PLY)
+	{ 0x7A, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(REP)
+	{ 0xC2, kModeImm },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(ROL)
@@ -545,6 +746,10 @@ X_OPCODE_BEGIN(RTI)
 	{ 0x40, kModeImp },
 X_OPCODE_END()
 
+X_OPCODE_BEGIN(RTL)
+	{ 0x6B, kModeImp },
+X_OPCODE_END()
+
 X_OPCODE_BEGIN(RTS)
 	{ 0x60, kModeImp },
 X_OPCODE_END()
@@ -558,6 +763,13 @@ X_OPCODE_BEGIN(SBC)
 	{ 0xF9, kModeAbsY },
 	{ 0xE1, kModeIndX },
 	{ 0xF1, kModeIndY },
+	{ 0xF2, kModeZpI },
+	{ 0xE3, kModeStack },
+	{ 0xF3, kModeStackIndY },
+	{ 0xE7, kModeIndLongY },
+	{ 0xF7, kModeIndLongY },
+	{ 0xEF, kModeAbsLong },
+	{ 0xFF, kModeAbsLongX },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(SEC)
@@ -572,8 +784,11 @@ X_OPCODE_BEGIN(SEI)
 	{ 0x78, kModeImp },
 X_OPCODE_END()
 
+X_OPCODE_BEGIN(SEP)
+	{ 0xE2, kModeImm },
+X_OPCODE_END()
+
 X_OPCODE_BEGIN(STA)
-	{ 0x89, kModeImm },
 	{ 0x85, kModeZp },
 	{ 0x95, kModeZpX },
 	{ 0x8D, kModeAbs },
@@ -581,10 +796,20 @@ X_OPCODE_BEGIN(STA)
 	{ 0x99, kModeAbsY },
 	{ 0x81, kModeIndX },
 	{ 0x91, kModeIndY },
+	{ 0x92, kModeZpI },
+	{ 0x83, kModeStack },
+	{ 0x93, kModeStackIndY },
+	{ 0x87, kModeIndLongY },
+	{ 0x97, kModeIndLongY },
+	{ 0x8F, kModeAbsLong },
+	{ 0x9F, kModeAbsLongX },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(STP)
+	{ 0xDB, kModeImp },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(STX)
-	{ 0x8A, kModeImm },
 	{ 0x86, kModeZp },
 	{ 0x96, kModeZpY },
 	{ 0x8E, kModeAbs },
@@ -596,12 +821,65 @@ X_OPCODE_BEGIN(STY)
 	{ 0x8C, kModeAbs },
 X_OPCODE_END()
 
+X_OPCODE_BEGIN(STZ)
+	{ 0x64, kModeZp },
+	{ 0x74, kModeZpX },
+	{ 0x9C, kModeAbs },
+	{ 0x9E, kModeAbsX },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(SWA)
+	{ 0xEB, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(TAD)
+	{ 0x5B, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(TAS)
+	{ 0x1B, kModeImp },
+X_OPCODE_END()
+
 X_OPCODE_BEGIN(TAX)
 	{ 0xAA, kModeImp },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(TAY)
 	{ 0xA8, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(TCD)
+	{ 0x5B, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(TCS)
+	{ 0x1B, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(TDA)
+	{ 0x7B, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(TDC)
+	{ 0x7B, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(TRB)
+	{ 0x14, kModeZp },
+	{ 0x1C, kModeAbs },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(TSA)
+	{ 0x3B, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(TSB)
+	{ 0x04, kModeZp },
+	{ 0x0C, kModeAbs },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(TSC)
+	{ 0x3B, kModeImp },
 X_OPCODE_END()
 
 X_OPCODE_BEGIN(TSX)
@@ -616,8 +894,32 @@ X_OPCODE_BEGIN(TXS)
 	{ 0x9A, kModeImp },
 X_OPCODE_END()
 
+X_OPCODE_BEGIN(TXY)
+	{ 0x9B, kModeImp },
+X_OPCODE_END()
+
 X_OPCODE_BEGIN(TYA)
 	{ 0x98, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(TYX)
+	{ 0xBB, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(WAI)
+	{ 0xCB, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(WDM)
+	{ 0x42, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(XBA)
+	{ 0xEB, kModeImp },
+X_OPCODE_END()
+
+X_OPCODE_BEGIN(XCE)
+	{ 0xFB, kModeImp },
 X_OPCODE_END()
 
 //////////////////////////////////////////////////////////////////////////
@@ -677,6 +979,8 @@ const ATDebuggerCmdAssemble::CommandEntry ATDebuggerCmdAssemble::kCommands[] = {
 
 	// directives
 	{ "ORG", NULL, kPsuedoOp_ORG },
+	{ "LONGA", NULL, kPsuedoOp_LONGA },
+	{ "LONGI", NULL, kPsuedoOp_LONGI },
 
 	// 6502
 	{ "ADC", kOpcodes_ADC },
@@ -689,6 +993,8 @@ const ATDebuggerCmdAssemble::CommandEntry ATDebuggerCmdAssemble::kCommands[] = {
 	{ "BMI", kOpcodes_BMI },
 	{ "BNE", kOpcodes_BNE },
 	{ "BPL", kOpcodes_BPL },
+	{ "BRA", kOpcodes_BRA },
+	{ "BRL", kOpcodes_BRL },
 	{ "BRK", kOpcodes_BRK },
 	{ "BVC", kOpcodes_BVC },
 	{ "BVS", kOpcodes_BVS },
@@ -697,16 +1003,21 @@ const ATDebuggerCmdAssemble::CommandEntry ATDebuggerCmdAssemble::kCommands[] = {
 	{ "CLI", kOpcodes_CLI },
 	{ "CLV", kOpcodes_CLV },
 	{ "CMP", kOpcodes_CMP },
+	{ "COP", kOpcodes_COP },
 	{ "CPX", kOpcodes_CPX },
 	{ "CPY", kOpcodes_CPY },
+	{ "DEA", kOpcodes_DEA },
 	{ "DEC", kOpcodes_DEC },
 	{ "DEX", kOpcodes_DEX },
 	{ "DEY", kOpcodes_DEY },
 	{ "EOR", kOpcodes_EOR },
+	{ "INA", kOpcodes_INA },
 	{ "INC", kOpcodes_INC },
 	{ "INX", kOpcodes_INX },
 	{ "INY", kOpcodes_INY },
+	{ "JML", kOpcodes_JML },
 	{ "JMP", kOpcodes_JMP },
+	{ "JSL", kOpcodes_JSL },
 	{ "JSR", kOpcodes_JSR },
 	{ "LDA", kOpcodes_LDA },
 	{ "LDX", kOpcodes_LDX },
@@ -714,10 +1025,21 @@ const ATDebuggerCmdAssemble::CommandEntry ATDebuggerCmdAssemble::kCommands[] = {
 	{ "LSR", kOpcodes_LSR },
 	{ "NOP", kOpcodes_NOP },
 	{ "ORA", kOpcodes_ORA },
+	{ "PEA", kOpcodes_PEA },
+	{ "PEI", kOpcodes_PEI },
+	{ "PER", kOpcodes_PER },
 	{ "PHA", kOpcodes_PHA },
+	{ "PHB", kOpcodes_PHB },
+	{ "PHD", kOpcodes_PHD },
 	{ "PHP", kOpcodes_PHP },
+	{ "PHK", kOpcodes_PHK },
 	{ "PLA", kOpcodes_PLA },
+	{ "PLB", kOpcodes_PLB },
+	{ "PLD", kOpcodes_PLD },
 	{ "PLP", kOpcodes_PLP },
+	{ "PLX", kOpcodes_PLX },
+	{ "PLY", kOpcodes_PLY },
+	{ "REP", kOpcodes_REP },
 	{ "ROL", kOpcodes_ROL },
 	{ "ROR", kOpcodes_ROR },
 	{ "RTI", kOpcodes_RTI },
@@ -726,21 +1048,39 @@ const ATDebuggerCmdAssemble::CommandEntry ATDebuggerCmdAssemble::kCommands[] = {
 	{ "SEC", kOpcodes_SEC },
 	{ "SED", kOpcodes_SED },
 	{ "SEI", kOpcodes_SEI },
+	{ "SEP", kOpcodes_SEP },
 	{ "STA", kOpcodes_STA },
+	{ "STP", kOpcodes_STP },
 	{ "STX", kOpcodes_STX },
 	{ "STY", kOpcodes_STY },
+	{ "STZ", kOpcodes_STZ },
+	{ "TAD", kOpcodes_TAD },
 	{ "TAX", kOpcodes_TAX },
 	{ "TAY", kOpcodes_TAY },
+	{ "TCD", kOpcodes_TCD },
+	{ "TDA", kOpcodes_TDA },
+	{ "TDC", kOpcodes_TDC },
+	{ "TRB", kOpcodes_TRB },
+	{ "TSA", kOpcodes_TSA },
+	{ "TSB", kOpcodes_TSB },
+	{ "TSC", kOpcodes_TSC },
 	{ "TSX", kOpcodes_TSX },
-	{ "TXA", kOpcodes_TXA },
-	{ "TXS", kOpcodes_TSX },
+	{ "TXS", kOpcodes_TXS },
+	{ "TXY", kOpcodes_TXY },
 	{ "TYA", kOpcodes_TYA },
+	{ "TYX", kOpcodes_TYX },
+	{ "WAI", kOpcodes_WAI },
+	{ "WDM", kOpcodes_WDM },
+	{ "XBA", kOpcodes_XBA },
+	{ "XCE", kOpcodes_XCE },
 };
 
 //////////////////////////////////////////////////////////////////////////
 
 ATDebuggerCmdAssemble::ATDebuggerCmdAssemble(uint32 address)
 	: mAddress(address)
+	, mbLongM(false)
+	, mbLongX(false)
 {
 	for(size_t i=0; i<sizeof(kCommands)/sizeof(kCommands[0]); ++i) {
 		const CommandEntry& e = kCommands[i];
@@ -750,7 +1090,10 @@ ATDebuggerCmdAssemble::ATDebuggerCmdAssemble(uint32 address)
 }
 
 const char *ATDebuggerCmdAssemble::GetPrompt() {
-	mPrompt.sprintf("%04X", mAddress);
+	if (mAddress >= 0x10000)
+		mPrompt.sprintf("%02X:%04X", mAddress >> 16, mAddress & 0xffff);
+	else
+		mPrompt.sprintf("%04X", mAddress);
 
 	return mPrompt.c_str();
 }
@@ -760,7 +1103,10 @@ void ATDebuggerCmdAssemble::BeginCommand(IATDebugger *debugger) {
 }
 
 void ATDebuggerCmdAssemble::EndCommand() {
-	ATConsolePrintf("%04X: end\n", mAddress);
+	if (mAddress >= 0x10000)
+		ATConsolePrintf("%02X:%04X: end\n", mAddress >> 16, mAddress & 0xffff);
+	else
+		ATConsolePrintf("%04X: end\n", mAddress);
 }
 
 bool ATDebuggerCmdAssemble::ProcessSubCommand(const char *s) {
@@ -948,6 +1294,29 @@ bool ATDebuggerCmdAssemble::ProcessSubCommand(const char *s) {
 					}
 					break;
 
+				case kPsuedoOp_LONGA:
+				case kPsuedoOp_LONGI:
+					while(*s == ' ')
+						++s;
+
+					if ((s[0] & 0xdf) == 'O' && (s[1] & 0xdf) == 'N') {
+						if (cmd.mPsuedoOp == kPsuedoOp_LONGA)
+							mbLongM = true;
+						else
+							mbLongX = true;
+
+						s += 2;
+					} else if ((s[0] & 0xdf) == 'O' && (s[1] & 0xdf) == 'F' && (s[2] & 0xdf) == 'F') {
+						if (cmd.mPsuedoOp == kPsuedoOp_LONGA)
+							mbLongM = false;
+						else
+							mbLongX = false;
+
+						s += 3;
+					} else
+						throw ParseException(s, "Expected 'on' or 'off'");
+					break;
+
 				default:
 					VDASSERT(false);
 			}
@@ -1108,7 +1477,10 @@ bool ATDebuggerCmdAssemble::ProcessSubCommand(const char *s) {
 
 		VDStringA output;
 
-		output.sprintf("%04X:", mAddress);
+		if (mAddress >= 0x10000)
+			output.sprintf("%02X:%04X:", mAddress >> 16, mAddress & 0xffff);
+		else
+			output.sprintf("%04X:", mAddress);
 
 		uint32 n = mEmittedBytes.size();
 		for(uint32 i=0; i<n; ++i) {
@@ -1129,10 +1501,10 @@ bool ATDebuggerCmdAssemble::ProcessSubCommand(const char *s) {
 		ATConsoleWrite(output.c_str());
 
 		if (!mEmittedBytes.empty())
-			mpDebugger->WriteMemoryCPU(mAddress, mEmittedBytes.data(), mEmittedBytes.size());
+			mpDebugger->WriteGlobalMemory(mAddress, mEmittedBytes.data(), mEmittedBytes.size());
 
 		mAddress += n;
-		mAddress &= 0xFFFF;
+		mAddress &= 0xFFFFFF;
 	} catch(const ParseException& e) {
 		if (e.mpMsg) {
 			ATConsolePrintf("ERROR: %s\n       %s\n", e.mpMsg, s0);
@@ -1167,7 +1539,7 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 		s = ParseExpression(s, opinfo.mOpValue);
 
 		opinfo.mOpMode[0] = kModeImm;
-	} else if (*s == '(') {	// (zp); (abs); (zp,X); (zp),Y; (d8,S); (d8,S),Y
+	} else if (*s == '(') {	// (zp); (abs); (zp,X); (zp),Y; (d,S),Y
 		s = ParseExpression(s+1, opinfo.mOpValue);
 
 		bool zpAllowed = (uint32)opinfo.mOpValue < 0x100;
@@ -1175,35 +1547,46 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 		while(*s == ' ')
 			++s;
 
-		if (*s == ',') {	// (abs/zp,X)
+		if (*s == ',') {	// (abs/zp,X) or (d,S),Y
 			++s;
 
-			if (*s != 'x' && *s != 'X')
-				throw ParseException(s, "X index register expected");
+			if (*s == 's' || *s == 'S') {
+				if (!zpAllowed)
+					throw ParseException(s, "Operand exceeds range for stack-relative addressing");
 
-			++s;
+				if (s[1] != ')' || s[2] != ',' || (s[3] != 'Y' && s[3] != 'y'))
+					throw ParseException(s, "Expected (d,S),Y syntax");
 
-			if (*s == '+') {
+				s += 3;
+
+				opinfo.mOpMode[0] = kModeStackIndY;
+			} else if (*s == 'x' || *s == 'X') {
 				++s;
-				++opinfo.mPostIncX;
+
 				if (*s == '+') {
 					++s;
 					++opinfo.mPostIncX;
+					if (*s == '+') {
+						++s;
+						++opinfo.mPostIncX;
+					}
 				}
-			}
 
-			while(*s == ' ')
+				while(*s == ' ')
+					++s;
+
+				if (*s != ')')
+					throw ParseException(s, "')' expected");
+
 				++s;
 
-			if (*s != ')')
-				throw ParseException(s, "')' expected");
+				if (!zpAllowed)
+					throw ParseException(s, "Operand exceeds range for zero page addressing");
 
-			++s;
-
-			if (!zpAllowed)
-				throw ParseException(s, "Operand exceeds range for zero page addressing");
-
-			opinfo.mOpMode[0] = kModeIndX;
+				opinfo.mOpMode[0] = kModeIndX;
+			} else {
+				throw ParseException(s, "S or X index register expected");
+			}
 		} else if (*s == ')') {
 			++s;
 
@@ -1242,18 +1625,42 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 			} else
 				throw ParseException(s);
 		}
-	} else if (*s == '[') {	// [zp]; [zp],X; [zp],Y
+	} else if (*s == '[') {	// [dp]; [dp],Y; [abs]; [abs,X]
 		s = ParseExpression(s+1, opinfo.mOpValue);
+
+		const bool zpAllowed = (uint32)opinfo.mOpValue < 0x100;
 
 		while(*s == ' ')
 			++s;
 
-		if (*s != ']')
-			throw ParseException(s, "']' expected");
+		if (s[0] == ',' && s[1] == 'X') {
+			opinfo.mOpMode[0] = kModeAbsLongIX;
+		} else {
+			if (*s != ']')
+				throw ParseException(s, "']' expected");
+
+			++s;
+
+			// check for [dp],Y
+			if (s[0] == ',' && (s[1] == 'Y' || s[1] == 'y')) {
+				s += 2;
+
+				if (!zpAllowed)
+					throw ParseException(s, "Operand exceeds range for direct page long indexed addressing");
+
+				opinfo.mOpMode[0] = kModeIndLongY;
+			} else {
+				opinfo.mOpMode[0] = kModeAbsLongI;
+
+				if (zpAllowed)
+					opinfo.mOpMode[1] = kModeIndLong;
+			}
+		}
 	} else {
 		s = ParseExpression(s, opinfo.mOpValue);
 
 		bool zpAllowed = ((uint32)opinfo.mOpValue) < 0x100;
+		bool absAllowed = ((uint32)opinfo.mOpValue) < 0x10000;
 
 		while(*s == ' ')
 			++s;
@@ -1275,10 +1682,14 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 					}
 				}
 
-				opinfo.mOpMode[0] = kModeAbsX;
+				opinfo.mOpMode[0] = kModeAbsLongX;
 
-				if (zpAllowed)
-					opinfo.mOpMode[1] = kModeZpX;
+				if (absAllowed) {
+					opinfo.mOpMode[1] = kModeAbsX;
+
+					if (zpAllowed)
+						opinfo.mOpMode[2] = kModeZpX;
+				}
 			} else if (*s == 'y' || *s == 'Y') {
 				++s;
 
@@ -1295,15 +1706,35 @@ const char *ATDebuggerCmdAssemble::ParseOperand(const char *s, OperandInfo& opin
 
 				if (zpAllowed)
 					opinfo.mOpMode[1] = kModeZpY;
-			} else
-				throw ParseException(s, "Index register expected");
+			} else if (*s == 's' || *s == 'S') {
+				if (!zpAllowed)
+					throw ParseException(s, "Operand exceeds range for stack-relative addressing");
+
+				opinfo.mOpMode[0] = kModeStack;
+			} else {
+				if (!zpAllowed)
+					throw ParseException(s, "Source bank out of range");
+
+				sint32 dstBank;
+				s = ParseExpression(s, dstBank);
+
+				if ((uint32)dstBank >= 0x100)
+					throw ParseException(s, "Destination bank out of range");
+
+				opinfo.mOpMode[0] = kModeMove;
+				opinfo.mOpValue += dstBank << 8;
+			}
 		} else {
-			opinfo.mOpMode[0] = kModeAbs;
+			opinfo.mOpMode[0] = kModeAbsLong;
 
-			if (zpAllowed)
-				opinfo.mOpMode[1] = kModeZp;
+			if (absAllowed) {
+				opinfo.mOpMode[1] = kModeAbs;
 
-			opinfo.mOpMode[2] = kModeRel;
+				if (zpAllowed)
+					opinfo.mOpMode[2] = kModeZp;
+			}
+
+			opinfo.mOpMode[3] = kModeRel;
 		}
 	}
 
@@ -1687,7 +2118,7 @@ void ATDebuggerCmdAssemble::EmitOpcode(const char *loc, const OpcodeEntry *opcod
 	for(const OpcodeEntry *op = opcodes; !(op->mFlags & kFlagEnd); ++op) {
 		uint8 mode = op->mFlags & kModeMask;
 
-		if (mode == opinfo.mOpMode[0] || mode == opinfo.mOpMode[1] || mode == opinfo.mOpMode[2]) {
+		if (mode == opinfo.mOpMode[0] || mode == opinfo.mOpMode[1] || mode == opinfo.mOpMode[2] || mode == opinfo.mOpMode[3]) {
 			opBest = op;
 			opBestMode = mode;
 			break;
@@ -1711,17 +2142,55 @@ void ATDebuggerCmdAssemble::EmitOpcode(const char *loc, const OpcodeEntry *opcod
 			break;
 
 		case kModeImm:
-			if ((uint32)opinfo.mOpValue >= 0x100)
-				throw ParseException(loc, "Immediate value out of range");
+			{
+				bool imm16 = false;
 
-			mEmittedBytes.push_back((uint8)opinfo.mOpValue);
+				// Here we do a cheat and look up the opcode to see whether it is M or X sensitive.
+				switch(opBest->mEncoding) {
+					case 0x09:	// ORA #imm
+					case 0x29:	// AND #imm
+					case 0x49:	// EOR #imm
+					case 0x69:	// ADC #imm
+					case 0x89:	// BIT #imm
+					case 0xA9:	// LDA #imm
+					case 0xC9:	// CMP #imm
+					case 0xE9:	// SBC #imm
+						imm16 = mbLongM;
+						break;
+
+					case 0xA0:	// LDY #imm
+					case 0xA2:	// LDX #imm
+					case 0xC0:	// CPY #imm
+					case 0xE0:	// CPX #imm
+						imm16 = mbLongX;
+						break;
+				}
+
+				if (imm16) {
+					if ((uint32)opinfo.mOpValue >= 0x10000)
+						throw ParseException(loc, "Immediate value out of range (16-bit mode)");
+
+					mEmittedBytes.push_back((uint8)opinfo.mOpValue);
+					mEmittedBytes.push_back((uint8)((uint32)opinfo.mOpValue >> 8));
+				} else {
+					if ((uint32)opinfo.mOpValue >= 0x100)
+						throw ParseException(loc, "Immediate value out of range (8-bit mode)");
+
+					mEmittedBytes.push_back((uint8)opinfo.mOpValue);
+				}
+			}
 			break;
 
 		case kModeZp:
 		case kModeZpX:
 		case kModeZpY:
+		case kModeZpI:
 		case kModeIndX:
 		case kModeIndY:
+		case kModeIndLong:
+		case kModeIndLongY:
+		case kModeStack:
+		case kModeStackIndY:
 			mEmittedBytes.push_back((uint8)opinfo.mOpValue);
 			break;
 
@@ -1730,8 +2199,18 @@ void ATDebuggerCmdAssemble::EmitOpcode(const char *loc, const OpcodeEntry *opcod
 		case kModeAbsY:
 		case kModeAbsI:
 		case kModeAbsIX:
+		case kModeAbsLongI:
+		case kModeAbsLongIX:
+		case kModeMove:
 			mEmittedBytes.push_back((uint8)opinfo.mOpValue);
 			mEmittedBytes.push_back((uint8)((uint32)opinfo.mOpValue >> 8));
+			break;
+
+		case kModeAbsLong:
+		case kModeAbsLongX:
+			mEmittedBytes.push_back((uint8)opinfo.mOpValue);
+			mEmittedBytes.push_back((uint8)((uint32)opinfo.mOpValue >> 8));
+			mEmittedBytes.push_back((uint8)((uint32)opinfo.mOpValue >> 16));
 			break;
 
 		case kModeRel:
@@ -1742,6 +2221,18 @@ void ATDebuggerCmdAssemble::EmitOpcode(const char *loc, const OpcodeEntry *opcod
 					throw ParseException(loc, "Branch target out of range");
 
 				mEmittedBytes.push_back((uint8)offset);
+			}
+			break;
+
+		case kModeRelLong:
+			if ((opinfo.mOpValue ^ mAddress) & 0xff0000)
+				throw ParseException(loc, "Long branch crosses bank boundary");
+
+			{
+				uint32 offset = opinfo.mOpValue - (mAddress + mEmittedBytes.size() + 2);
+
+				mEmittedBytes.push_back((uint8)offset);
+				mEmittedBytes.push_back((uint8)(offset >> 8));
 			}
 			break;
 	}

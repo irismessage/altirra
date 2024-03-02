@@ -29,7 +29,7 @@ public:
 	void Init(ATSimulator *sim);
 
 	void SetShowFps(bool showFps) { mbShowFps = showFps; }
-	void SetMouseCaptured(bool captured) { mbCaptured = captured; }
+	void SetMouseCaptured(bool captured, bool mmbRelease) { mbCaptured = captured; mbCaptureMMBRelease = mmbRelease; }
 
 	void Update(HWND hwnd, bool running, int ticks, float fps, float cpu);
 	void CheckForStateChange(bool force);
@@ -41,6 +41,7 @@ protected:
 
 	bool mbShowFps;
 	bool mbCaptured;
+	bool mbCaptureMMBRelease;
 
 	VDStringW	mBasePrefix;
 	VDStringW	mPrefix;

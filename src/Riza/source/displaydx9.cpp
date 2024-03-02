@@ -3641,6 +3641,9 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source, int fieldMask) {
 				ctx.mChromaOffsetU = 0.0f;
 				ctx.mChromaOffsetV = 0.0f;
 				ctx.mbHighPrecision = mbHighPrecision;
+				ctx.mFieldOffset = 0.0f;
+				ctx.mPixelSharpnessX = 0.0f;
+				ctx.mPixelSharpnessY = 0.0f;
 
 				switch(source.format) {
 					case nsVDPixmap::kPixFormat_YUV422_V210:

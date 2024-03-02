@@ -120,11 +120,16 @@ for(;;) {
 #endif
 			}
 
+			// prevent hooks from running in bank >0 or in native mode
 			{
 				uint8 iflags = mInsnFlags[mPC];
 
 				if (iflags & kInsnFlagHook) {
+#ifdef AT_CPU_MACHINE_65C816
+					uint8 op = ProcessHook816();
+#else
 					uint8 op = ProcessHook();
+#endif
 
 					// if a jump is requested, loop around again
 					if (op == 0x4C)
@@ -1239,6 +1244,10 @@ for(;;) {
 				--mHLEDelay;
 				END_SUB_CYCLE();
 			}
+			break;
+
+		case kStateStepOver:
+			ProcessStepOver();
 			break;
 
 		case kStateResetBit:
@@ -2412,19 +2421,23 @@ for(;;) {
 #endif
 
 		case kStateUpdateHeatMap:
-			mpHeatMap->ProcessInsn(*this, mOpcode, mAddr, mInsnPC);
+			if (mpHeatMap)
+				mpHeatMap->ProcessInsn(*this, mOpcode, mAddr, mInsnPC);
 			break;
 
 		case kStateVerifyInsn:
-			mpVerifier->VerifyInsn(*this, mOpcode, mAddr);
+			if (mpVerifier)
+				mpVerifier->VerifyInsn(*this, mOpcode, mAddr);
 			break;
 
 		case kStateVerifyIRQEntry:
-			mpVerifier->OnIRQEntry();
+			if (mpVerifier)
+				mpVerifier->OnIRQEntry();
 			break;
 
 		case kStateVerifyNMIEntry:
-			mpVerifier->OnNMIEntry();
+			if (mpVerifier)
+				mpVerifier->OnNMIEntry();
 			break;
 
 #ifdef _DEBUG

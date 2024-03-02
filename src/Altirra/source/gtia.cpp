@@ -282,6 +282,7 @@ ATGTIAEmulator::ATGTIAEmulator()
 	mSwitchInput = 15;
 	mForcedSwitchInput = 15;
 	mPRIOR = 0;
+	mActivePRIOR = 0;
 
 	for(int i=0; i<4; ++i) {
 		mTRIG[i] = 0x01;
@@ -331,6 +332,7 @@ void ATGTIAEmulator::ColdReset() {
 	memset(mPFColor, 0, sizeof mPFColor);
 	mPFBAK = 0;
 	mPRIOR = 0;
+	mActivePRIOR = 0;
 	mVDELAY = 0;
 	mGRACTL = 0;
 	mSwitchOutput = 0;
@@ -779,6 +781,7 @@ void ATGTIAEmulator::ExchangeStatePrivate(T& io) {
 		io != mMissileCollFlags[i];
 
 	io != mbHiresMode;
+	io != mActivePRIOR;
 }
 
 void ATGTIAEmulator::BeginLoadState(ATSaveStateReader& reader) {
@@ -946,6 +949,48 @@ void ATGTIAEmulator::SaveStatePrivate(ATSaveStateWriter& writer) {
 
 void ATGTIAEmulator::GetRegisterState(ATGTIARegisterState& state) const {
 	state = mState;
+
+	// $D000-D007 HPOSP0-3, HPOSM0-3
+	for(int i=0; i<8; ++i)
+		state.mReg[i] = mSpritePos[i];
+
+	// $D008-D00B SIZEP0-3
+	for(int i=0; i<4; ++i)
+		state.mReg[i+8] = mSprites[i].mState.mSizeMode;
+
+	// $D00C SIZEM
+	state.mReg[0x0C] = 
+		(mSprites[4].mState.mSizeMode << 0) +
+		(mSprites[5].mState.mSizeMode << 2) +
+		(mSprites[6].mState.mSizeMode << 4) +
+		(mSprites[7].mState.mSizeMode << 6);
+
+	// GRAFP0-GRAFP3
+	state.mReg[0x0D] = mSprites[0].mState.mDataLatch;
+	state.mReg[0x0E] = mSprites[1].mState.mDataLatch;
+	state.mReg[0x0F] = mSprites[2].mState.mDataLatch;
+	state.mReg[0x10] = mSprites[3].mState.mDataLatch;
+
+	// GRAFM
+	state.mReg[0x11] = 
+		(mSprites[4].mState.mDataLatch >> 6) +
+		(mSprites[5].mState.mDataLatch >> 4) +
+		(mSprites[6].mState.mDataLatch >> 2) +
+		(mSprites[7].mState.mDataLatch >> 0);
+
+	state.mReg[0x12] = mPMColor[0];
+	state.mReg[0x13] = mPMColor[1];
+	state.mReg[0x14] = mPMColor[2];
+	state.mReg[0x15] = mPMColor[3];
+	state.mReg[0x16] = mPFColor[0];
+	state.mReg[0x17] = mPFColor[1];
+	state.mReg[0x18] = mPFColor[2];
+	state.mReg[0x19] = mPFColor[3];
+	state.mReg[0x1A] = mPFBAK;
+	state.mReg[0x1B] = mPRIOR;
+	state.mReg[0x1C] = mVDELAY;
+	state.mReg[0x1D] = mGRACTL;
+	state.mReg[0x1F] = mSwitchOutput;
 }
 
 void ATGTIAEmulator::SetFieldPolarity(bool polarity) {
@@ -1115,6 +1160,11 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 	}
 
 	mFrameTimestamp = mpConn->GTIAGetTimestamp();
+
+	// Reset Y to avoid weirdness in immediate updates from being between BeginFrame() and
+	// the first BeginScanline().
+	mY = 0;
+
 	return true;
 }
 
@@ -1127,7 +1177,7 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 
 	mbMixedRendering = false;
 	mbANTICHiresMode = hires;
-	mbHiresMode = hires && !(mPRIOR & 0xc0);
+	mbHiresMode = hires && !(mActivePRIOR & 0xc0);
 	mbGTIADisableTransition = false;
 
 	if ((unsigned)(y - 8) < 240)
@@ -1446,7 +1496,7 @@ void ATGTIAEmulator::Render(int x1, int x2) {
 		return;
 
 	// convert modes if necessary
-	bool needHires = mbHiresMode || (mPRIOR & 0xC0);
+	bool needHires = mbHiresMode || (mActivePRIOR & 0xC0);
 	if (needHires != mbANTICHiresMode) {
 		mbMixedRendering = true;
 
@@ -1469,7 +1519,7 @@ void ATGTIAEmulator::Render(int x1, int x2) {
 	};
 
 	if (xc1 < xc2) {
-		switch(mPRIOR & 0xC0) {
+		switch(mActivePRIOR & 0xC0) {
 			case 0x00:
 				break;
 			case 0x80:
@@ -1654,7 +1704,7 @@ void ATGTIAEmulator::Render(int x1, int x2) {
 			if (minx2 > xc2)
 				minx2 = xc2;
 
-			image->mState.Generate(minx2 - image->mX1, (mPRIOR & 0x10) ? PF3 : (P0 << i), mMergeBuffer + image->mX1); 
+			image->mState.Generate(minx2 - image->mX1, (mActivePRIOR & 0x10) ? PF3 : (P0 << i), mMergeBuffer + image->mX1); 
 			mbPMRendered = true;
 		}
 	}
@@ -1672,7 +1722,7 @@ void ATGTIAEmulator::RenderActivityMap(const uint8 *src) {
 	if (mbOverscanPALExtendedThisFrame)
 		dst += 16 * fb->mBuffer.pitch;
 
-	int h = this->mbPALThisFrame ? 312 : 262;
+	int h = this->mbOverscanPALExtendedThisFrame ? 312 : 262;
 
 	for(int y=0; y<h; ++y) {
 		uint8 *dst2 = dst;
@@ -1758,13 +1808,13 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 			VDPixmapBlt(fb->mBuffer, 0, y+1, static_cast<ATFrameBuffer *>(&*mpLastFrame)->mBuffer, 0, y+1, pxdst.w, pxdst.h - (y + 1));
 		}
 
-		ApplyArtifacting();
+		ApplyArtifacting(true);
 
 		mpDisplay->SetSourcePersistent(true, mpFrame->mPixmap);
 	} else {
 		const VDPixmap& pxdst = mbPostProcessThisFrame ? mPreArtifactFrameVisible : fb->mPixmap;
 
-		ApplyArtifacting();
+		ApplyArtifacting(false);
 
 		// copy over previous field
 		if (mbInterlaceEnabledThisFrame) {
@@ -1985,6 +2035,10 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 				mpRenderer->AddRegisterChange(mpConn->GTIAGetXClock() + 1, reg, value);
 			break;
 
+		case 0x1B:
+			mPRIOR = value;
+			break;
+
 		case 0x1C:
 			mVDELAY = value;
 			return;
@@ -2078,7 +2132,7 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 	}
 }
 
-void ATGTIAEmulator::ApplyArtifacting() {
+void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 	if (mpVBXE) {
 		if (mArtifactMode == kArtifactPAL || mbBlendMode) {
 			ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
@@ -2098,7 +2152,7 @@ void ATGTIAEmulator::ApplyArtifacting() {
 			for(uint32 row=0; row<h; ++row) {
 				uint32 *dst = (uint32 *)dstrow;
 
-				mpArtifactingEngine->Artifact32(row, dst, 912);
+				mpArtifactingEngine->Artifact32(row, dst, 912, immediate);
 
 				if (mbScanlinesEnabledThisFrame) {
 					if (row)
@@ -2164,7 +2218,7 @@ void ATGTIAEmulator::ApplyArtifacting() {
 
 		uint32 relativeRow = row - vstart;
 
-		mpArtifactingEngine->Artifact8(row, dst, src, relativeRow < 240 && mbScanlinesWithHiRes[relativeRow]);
+		mpArtifactingEngine->Artifact8(row, dst, src, relativeRow < 240 && mbScanlinesWithHiRes[relativeRow], immediate);
 
 		if (mbScanlinesEnabledThisFrame) {
 			if (row > y1)
@@ -2274,10 +2328,10 @@ void ATGTIAEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 				break;
 
 			case 0x1B:
-				if (!(value & 0xc0) && (mPRIOR & 0xc0))
+				if (!(value & 0xc0) && (mActivePRIOR & 0xc0))
 					mbGTIADisableTransition = true;
 
-				mPRIOR = value;
+				mActivePRIOR = value;
 
 				if (value & 0xC0)
 					mbHiresMode = false;

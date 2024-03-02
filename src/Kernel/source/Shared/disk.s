@@ -35,7 +35,7 @@
 ;
 .proc DiskHandler
 	mva		#$31	ddevic
-	mva		#64		dtimlo
+	mvx		#64		dtimlo		;(!) this must be preserved through do_read!
 	
 	;check for status command
 	lda		dcomnd
@@ -43,8 +43,15 @@
 	cmp		#$53
 	bne		notStatus
 
-	mwa		#dvstat	dbuflo
-	mwa		#4		dbytlo
+	lda		#<dvstat
+	sta		dbuflo
+	lda		#>dvstat
+	sta		dbufhi
+	asl							;hack to save a byte to get $04 since >dvstat is $02
+	sta		dbytlo
+	lda		#0
+	sta		dbythi
+	
 	jsr		do_read
 	bmi		xit
 	
@@ -79,15 +86,16 @@ notStatus:
 	mva		dsktim dtimlo
 
 do_read:
-	lda		#$40
+	txa							;(!) X=$40 comes from entry code to set DTIMLO
 do_io:
 	sta		dstats
 	jsr		siov
 	
 	;load disk command back into A (required by Pooyan)
 	;emulate compare against format command (required by Arcade Machine)
+	;sort-of emulate compare against status (required by Micropainter)
 	lda		dcomnd
-	ldy		dstats
+	cpy		#0					;!! Atari800WinPlus's SIO patch doesn't set STATUS
 	sec
 	rts
 

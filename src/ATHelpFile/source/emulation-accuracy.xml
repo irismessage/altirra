@@ -53,8 +53,8 @@
       4 of a scan line where an NMI is supposed to take place. This must be enabled in CPU options in the emulator.
     </li>
     <li>
-      Reads from unmapped memory produce a constant value instead of the value on the floating data bus. Either behavior can occur on the real hardware
-      depending on whether the model in question has pull-ups on the data bus.
+      Reads from unmapped memory are only partially emulated. Floating data bus is emulated in 800 and XE modes, but is only
+      accurate for single cycle reads; it is not accurate during a WSYNC wait (only visible by ANTIC).
     </li>
   </ul>
   <h2>Known issues: ANTIC</h2>
@@ -75,6 +75,13 @@
   <ul>
     <li>Not all PIA control line modes are implemented. (The only ones that are program visible are ones that affect the SIO motor or control lines, or cause interrupts.)</li>
   </ul>
+  <h2>Known issues: Disk</h2>
+  <ul>
+    <li>
+      The emulation core is more tolerant than real hardware about commands being prematurely aborted. It may allow subsequent
+      commands to go through that should be ignored because the device is still processing the previous command.
+    </li>
+  </ul>
   <h2>Known issues: Video Board XE (VBXE)</h2>
   <ul>
     <li>XDL, overlay and attribute DMA run on a per-scanline basis.</li>
@@ -86,7 +93,6 @@
     </li>
     <li>MEMAC accesses by the CPU do not slow down the blitter.</li>
     <li>Attribute map collision is not supported.</li>
-    <li>Attribute map hires switching is not supported.</li>
     <li>
       Palette 0 is initialized with the palette currently specified in System &gt; Video &gt; Adjust Colors
       instead of the laoo palette used by the VBXE hardware. This can result in color mismatches when

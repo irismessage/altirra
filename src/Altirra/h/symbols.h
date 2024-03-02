@@ -89,7 +89,7 @@ public:
 	virtual void AddSymbol(uint32 offset, const char *name, uint32 size = 1, uint32 flags = kATSymbol_Read | kATSymbol_Write | kATSymbol_Execute, uint16 file = 0, uint16 line = 0) = 0;
 	virtual void AddReadWriteRegisterSymbol(uint32 offset, const char *writename, const char *readname = NULL) = 0;
 	virtual uint16 AddFileName(const wchar_t *fileName) = 0;
-	virtual void AddSourceLine(uint16 fileId, uint16 line, uint32 moduleOffset) = 0;
+	virtual void AddSourceLine(uint16 fileId, uint16 line, uint32 moduleOffset, uint32 len = 0) = 0;
 };
 
 bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore);

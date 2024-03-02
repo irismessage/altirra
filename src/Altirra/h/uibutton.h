@@ -15,9 +15,12 @@ public:
 	ATUIButton();
 	~ATUIButton();
 
+	bool IsHeld() const { return mbHeld; }
+
 	void SetStockImage(sint32 id);
 	void SetText(const wchar_t *s);
 	void SetDepressed(bool depressed);
+	void SetToggleMode(bool enabled);
 
 	ATCallbackHandler1<void, ATUIButton *>& OnPressedEvent() { return mPressedEvent; }
 	ATCallbackHandler1<void, ATUIButton *>& OnActivatedEvent() { return mActivatedEvent; }
@@ -36,11 +39,15 @@ public:
 	virtual void OnKillFocus();
 
 protected:
+	void SetHeld(bool held);
 	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 	void Relayout();
 
 	sint32 mStockImageIdx;
 	bool mbDepressed;
+	bool mbHeld;
+	bool mbToggleMode;
+	bool mbToggleNextState;
 	sint32 mTextX;
 	sint32 mTextY;
 	VDStringW mText;

@@ -19,6 +19,7 @@ namespace {
 	}
 
 	enum {
+		kNodePrecTernary,
 		kNodePrecOr,
 		kNodePrecAnd,
 		kNodePrecBitOr,
@@ -1549,11 +1550,177 @@ private:
 	const uint32 mSpace;
 };
 
+class ATDebugExpNodeTernary : public ATDebugExpNode {
+public:
+	ATDebugExpNodeTernary(ATDebugExpNode *x, ATDebugExpNode *y, ATDebugExpNode *z)
+		: ATDebugExpNode(kATDebugExpNodeType_Ternary)
+		, mpArgCond(x)
+		, mpArgTrue(y)
+		, mpArgFalse(z)
+	{
+	}
+
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context) const {
+		sint32 cond;
+
+		if (!mpArgCond->Evaluate(cond, context))
+			return false;
+
+		return (cond ? mpArgTrue : mpArgFalse)->Evaluate(result, context);
+	}
+
+	bool Optimize(ATDebugExpNode **result);
+	bool Optimize2(ATDebugExpNode **result);
+
+	bool OptimizeInvert(ATDebugExpNode **result) {
+		ATDebugExpNode *newArg;
+
+		if (CanOptimizeInvert())
+			return false;
+
+		VDVERIFY(mpArgTrue->OptimizeInvert(&newArg));
+		mpArgTrue = newArg;
+
+		VDVERIFY(mpArgFalse->OptimizeInvert(&newArg));
+		mpArgFalse = newArg;
+
+		return true;
+	}
+
+	// We can always swap around arguments for free.
+	bool CanOptimizeInvert() const {
+		return mpArgFalse->CanOptimizeInvert() && mpArgTrue->CanOptimizeInvert();
+	}
+
+	void ToString(VDStringA& s, int prec) {
+		if (prec > kNodePrecTernary)
+			s += '(';
+
+		// Ternary operators are right associative on their ? side. This means that
+		// if we have another ternary operator on the left side ((a ? b : c) ?), we
+		// need parens.
+		mpArgCond->ToString(s, kNodePrecTernary + 1);
+
+		s += " ? ";
+
+		// The middle argument doesn't matter, as there is no parsing ambiguity for [? x ? y : z :].
+		mpArgTrue->ToString(s, kNodePrecTernary);
+
+		s += " : ";
+
+		// Ternary operators are left associative on their : side. This means that
+		// if we have another ternary operator on the right side, we don't need parens.
+		mpArgFalse->ToString(s, kNodePrecTernary);
+
+		if (prec > kNodePrecTernary)
+			s += ')';
+	}
+
+private:
+	vdautoptr<ATDebugExpNode> mpArgCond;
+	vdautoptr<ATDebugExpNode> mpArgTrue;
+	vdautoptr<ATDebugExpNode> mpArgFalse;
+};
+
+bool ATDebugExpNodeTernary::Optimize(ATDebugExpNode **result) {
+	// Optimize our arguments first.
+	ATDebugExpNode *newArg;
+	if (mpArgCond->Optimize(&newArg))
+		mpArgCond = newArg;
+
+	if (mpArgTrue->Optimize(&newArg))
+		mpArgTrue = newArg;
+
+	if (mpArgFalse->Optimize(&newArg))
+		mpArgFalse = newArg;
+
+	// Check if the condition is a constant. If so, we can optimize ourselves out.
+	if (mpArgCond->mType == kATDebugExpNodeType_Const) {
+		sint32 v;
+
+		if (mpArgCond->Evaluate(v, ATDebugExpEvalContext())) {
+			if (v)
+				*result = mpArgTrue.release();
+			else
+				*result = mpArgFalse.release();
+
+			return true;
+		}
+	}
+
+	// At this point, there are a couple of transformations we can do:
+	//
+	// - If the condition has an inversion, we can remove it and swap the two
+	//   arguments.
+	//
+	// - If both arguments have a common chain of unary operators, we can
+	//   unify them.
+	//
+	// The first one is the more attractive to do here; the second really
+	// should be done via common subexpression elimination, and is not a common
+	// case anyway. Besides, it would be complicated to try to do both.
+
+	if (mpArgCond->mType == kATDebugExpNodeType_Invert
+		&& mpArgCond->OptimizeInvert(&newArg))
+	{
+		mpArgCond = newArg;
+
+		vdautoptr<ATDebugExpNode> newNode(new ATDebugExpNodeTernary(mpArgCond, mpArgFalse, mpArgTrue));
+		mpArgCond.release();
+		mpArgFalse.release();
+		mpArgTrue.release();
+
+		// continue with stage 2 optimization
+		if (static_cast<ATDebugExpNodeTernary *>(&*newNode)->Optimize2(&newArg))
+			newNode = newArg;
+
+		*result = newNode.release();
+		return true;
+	}
+
+	return Optimize2(result);
+}
+
+bool ATDebugExpNodeTernary::Optimize2(ATDebugExpNode **result) {
+	ATDebugExpNode *newArg;
+
+	// Check if we have an inversion on both paths. If so, unify it.
+	if (mpArgFalse->mType == kATDebugExpNodeType_Invert
+		&& mpArgTrue->mType == kATDebugExpNodeType_Invert)
+	{
+		// strip the invert node from both paths
+		VDVERIFY(mpArgFalse->OptimizeInvert(&newArg));
+		mpArgFalse = newArg;
+
+		VDVERIFY(mpArgTrue->OptimizeInvert(&newArg));
+		mpArgTrue = newArg;
+
+		// create a new ternary node
+		newArg = new ATDebugExpNodeTernary(mpArgCond, mpArgTrue, mpArgFalse);
+		mpArgCond.release();
+		mpArgTrue.release();
+		mpArgFalse.release();
+		mpArgCond = newArg;
+
+		// wrap it in an inversion node
+		*result = new ATDebugExpNodeInvert(mpArgCond);
+		mpArgCond.release();
+
+		return true;
+	}
+
+	return false;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const ATDebuggerExprParseOpts& opts) {
 	enum {
 		kOpNone,
 		kOpOpenParen,
 		kOpCloseParen,
+		kOpTernary1,
+		kOpTernary2,
 		kOpOr,
 		kOpAnd,
 		kOpBitwiseOr,
@@ -1582,44 +1749,62 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const
 		kOpAddrSpace
 	};
 
+	// The LSBs of these precedence values control associativity. Odd values
+	// cause left associativity, and even values cause right associativity.
+	// Unary operators are handled specially and always force a shift, so they
+	// are right associative regardless of the LSB here (although we set it
+	// for consistency anyway).
 	static const uint8 kOpPrecedence[]={
 		0,
 
 		// open paren
-		1,
+		2,
 
 		// close paren
 		0,
 
+		// ternary ?, :
+		//
+		// This is really nasty. We need ? to be right associative so that
+		// a ? b causes a shift, and : to be left associative so that a ? b : c :
+		// causes the first : to be reduced before we shift the second.
+
+		// That just leaves ? vs. :. Well, when ? is on the stack, we need :
+		// to force a shift to pull in the third value for the reduction. However,
+		// when : is on the stack, ? needs to force a shift as well so the ternary
+		// operator is right associative. With what we have here, ?: works out
+		// but :? doesn't, so we need to special-case the latter.
+		4, 5,
+
 		// or
-		2,
+		7,
 
 		// and
-		3,
+		9,
 
 		// bitwise or
-		4,
+		11,
 
 		// bitwise xor
-		5,
+		13,
 
 		// bitwise and
-		6,
+		15,
 
 		// comparisons
-		7,7,7,7,7,7,
+		17,17,17,17,17,17,
 
 		// additive
-		8,8,
+		19,19,
 
 		// multiplicative
-		9,9,9,
+		21,21,21,
 
 		// unary
-		10,10,10,10,10,10,10,10,10,
+		23,23,23,23,23,23,23,23,23,
 
 		// addr space
-		11
+		25
 	};
 
 	enum {
@@ -1682,7 +1867,7 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const
 			if (c == ' ')
 				continue;
 
-			if (!strchr("+-*/%()&|^", c)) {
+			if (!strchr("+-*/%()&|^?:", c)) {
 				if (!c) {
 					tok = kTokEOL;
 				} else if (c == '<') {
@@ -1786,12 +1971,28 @@ ATDebugExpNode *ATDebuggerParseExpression(const char *s, IATDebugger *dbg, const
 					if (c == '#')
 						++idstart;
 
-					while(*s && (isalnum((unsigned char)*s) || *s == '_' || *s == '.'))
+					// we allow a single exclamation mark for module name
+					bool seenModuleSplit = false;
+					for(;;) {
+						char d = *s;
+
+						if (!d)
+							break;
+
+						if (d == '!') {
+							if (seenModuleSplit)
+								break;
+
+							seenModuleSplit = true;
+						} else if (!isalnum((unsigned char)*s) && *s != '_' && *s != '.')
+							break;
+
 						++s;
+					}
 
 					VDStringSpanA ident(idstart, s);
 
-					if (c == '#')
+					if (c == '#' || seenModuleSplit)
 						goto force_ident;
 
 					if (*s == ':') {
@@ -2108,12 +2309,20 @@ force_ident:
 						op = kOpMod;
 						break;
 
+					case '?':
+						op = kOpTernary1;
+						break;
+
+					case ':':
+						op = kOpTernary2;
+						break;
+
 					default:
 						throw ATDebuggerExprParseException("Expected operator");
 				}
 
 				// begin reduction
-				uint8 prec = kOpPrecedence[op];
+				uint8 prec = kOpPrecedence[op] | 1;
 				for(;;) {
 					if (opstack.empty()) {
 						if (op == kOpCloseParen)
@@ -2121,9 +2330,19 @@ force_ident:
 						break;
 					}
 
+					// Stop and do shift if top op on stack has lower precedence.
+					// Continue with reduce if top op on stack has higher precedence.
+					// 
+					// The |1 on prec allows us to control associativity with equal
+					// precedence. Even values force shift (right associative) and
+					// odd values force reduce (left associative).
 					uint8 redop = opstack.back();
 
 					if (kOpPrecedence[redop] < prec)
+						break;
+
+					// special case for ternary operator -- force shift in ?: case
+					if (op == kOpTernary1 && redop == kOpTernary2)
 						break;
 
 					opstack.pop_back();
@@ -2255,6 +2474,20 @@ force_ident:
 							delete sp[-1];
 							sp[-1] = NULL;
 							node = new ATDebugExpNodeAddrSpace(intVal, sp[0]);
+							break;
+
+						case kOpTernary1:
+							// We should never get here. If we did, we lost the : at some point.
+							throw ATDebuggerExprParseException("'?' without ':' on ternary operator");
+
+						case kOpTernary2:
+							// We should be reducing both ?: at the same time... if not, oops.
+							if (opstack.empty() || opstack.back() != kOpTernary1)
+								throw ATDebuggerExprParseException("':' without '?' on ternary operator");
+							opstack.pop_back();
+
+							node = new ATDebugExpNodeTernary(sp[-2], sp[-1], sp[0]);
+							argcount = 3;
 							break;
 					}
 

@@ -18,11 +18,14 @@ public:
 	float GetScale() const;
 	void SetScale(float scale);
 
+	void SetActiveMode(bool active);
+
 	void PreFilter(float * VDRESTRICT dst, uint32 count);
 	void Filter(float *dst, const float *src, uint32 count);
 
 protected:
 	float	mHiPassAccum;
+	float	mHiCoeff;
 	float	mScale;
 	float	mRawScale;
 

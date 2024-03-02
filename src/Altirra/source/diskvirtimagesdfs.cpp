@@ -9,6 +9,7 @@
 #include <vd2/system/strutil.h>
 #include <vd2/system/time.h>
 #include "diskimage.h"
+#include "diskfssdx2util.h"
 #include "directorywatcher.h"
 #include "debuggerlog.h"
 #include "hostdeviceutils.h"
@@ -148,6 +149,7 @@ public:
 	virtual void SetPathATR(const wchar_t *path);
 	virtual void SaveATR(const wchar_t *path);
 
+	virtual ATDiskGeometryInfo GetGeometry() const;
 	virtual uint32 GetSectorSize() const;
 	virtual uint32 GetSectorSize(uint32 virtIndex) const;
 	virtual uint32 GetBootSectorCount() const;
@@ -390,6 +392,19 @@ void ATDiskImageVirtualFolderSDFS::SetPathATR(const wchar_t *path) {
 void ATDiskImageVirtualFolderSDFS::SaveATR(const wchar_t *path) {
 }
 
+ATDiskGeometryInfo ATDiskImageVirtualFolderSDFS::GetGeometry() const {
+	ATDiskGeometryInfo info;
+	info.mSectorSize = 128;
+	info.mBootSectorCount = 3;
+	info.mTotalSectorCount = 65535;
+	info.mTrackCount = 1;
+	info.mSectorsPerTrack = 65535;
+	info.mSideCount = 1;
+	info.mbMFM = false;
+
+	return info;
+}
+
 uint32 ATDiskImageVirtualFolderSDFS::GetSectorSize() const {
 	return 128;
 }
@@ -427,83 +442,6 @@ void ATDiskImageVirtualFolderSDFS::ReadPhysicalSector(uint32 index, void *data, 
 	if (sectorKey < 0x00010000) {
 		// This is a special sector. Check for a boot sector.
 		if (index < 3) {
-			static const uint8 kBootSector0[128]={
-				0x00,
-				0x03,		// +1	number of boot sectors
-				0x00,		// +2	load address low ($0700)
-				0x07,		// +3	load address high
-				0x40,		// +4	init address low ($0740)
-				0x07,		// +5	init address high
-				0x4C,		// +6	launch address (JMP)
-				0x80,		// +7	signature byte
-				0x07,		// +8
-				0x44,		// +9	root directory sector map low (vsec 68)
-				0x00,		// +10	root directory sector map high
-				0xfe,		// +11	total sector count low (65535)
-				0xff,		// +12	total sector count high
-				0x00,		// +13	free sector count low
-				0x00,		// +14	free sector count high
-				0x40,		// +15	bitmap sector count (64)
-				0x04,		// +16	bitmap start sector low (4)
-				0x00,		// +17	bitmap start sector high
-				0x45,		// +18	next free data sector low (68)
-				0x00,		// +19	next free data sector high
-				0x45,		// +20	next free directory sector low (68)
-				0x00,		// +21	next free directory sector high
-				0x41,		// +22	volume name
-				0x20,
-				0x20,
-				0x20,
-				0x20,
-				0x20,
-				0x20,
-				0x20,
-				0x01,		// +30	track count (1)
-				0x80,		// +31	sector size (128)
-				0x21,		// +32	filesystem version (2.1)
-				0x80,		// +33	sector size low (128)
-				0x00,		// +34	sector size high
-				0x3e,		// +35	sector references per sector map low (62)
-				0x00,		// +36	sector references per sector map high
-				0x01,		// +37	physical sectors per logical sector (1)
-				0x00,		// +38	volume sequence number
-				0xA5,		// +39	volume random ID
-				0x00,		// +40	boot file starting sector low
-				0x00,		// +41	boot file starting sector high
-				0x00,
-				0x00,
-				0x00,
-				0x00,
-				0x00,
-				0x00,
-				0x00,
-				0x00,
-				0x00,		// +50
-				0x00,
-				0x00,
-				0x00,
-				0x00,
-				0x00,
-				0x00,
-				0x00,
-				0x00,
-				0x00,
-				0x00,		// +60
-				0x00,
-				0x00,
-				0x00,
-
-				0x60,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,	// $4x (RTS)
-				0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,	// $5x
-				0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,	// $6x
-				0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,	// $7x
-			};
-
-			static const uint8 kBootSector1[]={
-				0x38,	// SEC
-				0x60	// RTS
-			};
-
 			if (!index) {
 				// Check for a pending change.
 				if (mDirWatcher.CheckForChanges(mDirChanges)) {
@@ -512,7 +450,7 @@ void ATDiskImageVirtualFolderSDFS::ReadPhysicalSector(uint32 index, void *data, 
 				} else if (!mDirChanges.empty())
 					InvalidatePartial();
 
-				memcpy(data, kBootSector0, sizeof kBootSector0);
+				memcpy(data, kATSDFSBootSector0, sizeof kATSDFSBootSector0);
 
 				// increment the volume sequence now if a change is pending -- this ensures that
 				// we do not wrap the sequence counter before DOS sees it
@@ -526,7 +464,7 @@ void ATDiskImageVirtualFolderSDFS::ReadPhysicalSector(uint32 index, void *data, 
 				((uint8 *)data)[38] = mVolSeqNumber;
 				((uint8 *)data)[39] = mVolRandNumber;
 			} else if (index == 1)
-				memcpy(data, kBootSector1, sizeof kBootSector1);
+				memcpy(data, kATSDFSBootSector1, sizeof kATSDFSBootSector1);
 
 			return;
 		}
@@ -679,6 +617,7 @@ void ATDiskImageVirtualFolderSDFS::ReadPhysicalSector(uint32 index, void *data, 
 }
 
 void ATDiskImageVirtualFolderSDFS::WritePhysicalSector(uint32 index, const void *data, uint32 len) {
+	throw MyError("Writes are not supported to a virtual disk.");
 }
 
 uint32 ATDiskImageVirtualFolderSDFS::GetVirtualSectorCount() const {
@@ -742,9 +681,9 @@ void ATDiskImageVirtualFolderSDFS::InvalidatePartial() {
 			const VDStringW& relPath = mFiles[i].mRelPath;
 			const wchar_t *relPathPtr = relPath.c_str();
 
-			if (relPath.size() >= changeLen &&
+			if (!changeLen || (relPath.size() >= changeLen &&
 				vdwcsnicmp(relPathPtr, changeBase, changeLen) == 0 &&
-				(relPathPtr[changeLen] == 0 || VDIsPathSeparator(relPathPtr[changeLen])))
+				(relPathPtr[changeLen] == 0 || VDIsPathSeparator(relPathPtr[changeLen]))))
 			{
 				UnlinkFile(i, true);
 
@@ -1023,11 +962,17 @@ void ATDiskImageVirtualFolderSDFS::PromoteFile(uint32 fidx) {
 void ATDiskImageVirtualFolderSDFS::UnlinkFile(uint32 index, bool scanSectors) {
 	if (scanSectors) {
 		const uint32 fileId = index << kSectorKeyFileShift;
+		uint32 invSectorCount = 0;
 
 		for(uint32 i=kSectorPoolBase; i<kSectorPoolLimit; ++i) {
-			if ((mSectorPool[i].mSectorKey & kSectorKeyFileMask) == fileId)
+			if ((mSectorPool[i].mSectorKey & kSectorKeyFileMask) == fileId) {
 				UnlinkSector(i);
+				++invSectorCount;
+			}
 		}
+
+		if (invSectorCount)
+			g_ATLCVDisk("Invalidating %u sectors for file: %ls\n", invSectorCount, mFiles[index].mRelPath.c_str());
 	}
 
 	// unlink from the hash table

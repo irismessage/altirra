@@ -292,7 +292,7 @@ sint32 ATSIDEEmulator::OnReadByte(void *thisptr0, uint32 addr) {
 		return -1;
 
 	switch(addr) {
-		case 0xD5E0:	// SDX bank register
+		case 0xD5E1:	// SDX bank register
 			if (thisptr->mbVersion2)
 				return thisptr->mSDXBankRegister;
 
@@ -349,7 +349,15 @@ bool ATSIDEEmulator::OnWriteByte(void *thisptr0, uint32 addr, uint8 value) {
 
 	switch(addr) {
 		case 0xD5E0:
-			if (thisptr->mSDXBankRegister != value) {
+			if (!thisptr->mbVersion2 && thisptr->mSDXBankRegister != value) {
+				thisptr->mSDXBankRegister = value;
+
+				thisptr->SetSDXBank(value & 0x80 ? -1 : (value & 0x3f), !(value & 0x40));
+			}
+			break;
+
+		case 0xD5E1:
+			if (thisptr->mbVersion2 && thisptr->mSDXBankRegister != value) {
 				thisptr->mSDXBankRegister = value;
 
 				thisptr->SetSDXBank(value & 0x80 ? -1 : (value & 0x3f), !(value & 0x40));

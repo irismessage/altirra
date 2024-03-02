@@ -75,6 +75,7 @@ ATUIVideoDisplayWindow::ATUIVideoDisplayWindow()
 {
 	mbFastClip = true;
 	SetAlphaFillColor(0);
+	SetTouchMode(kATUITouchMode_Dynamic);
 }
 
 ATUIVideoDisplayWindow::~ATUIVideoDisplayWindow() {
@@ -123,7 +124,24 @@ void ATUIVideoDisplayWindow::CaptureMouse() {
 
 		}
 
-		g_winCaptionUpdater.SetMouseCaptured(true);
+		g_winCaptionUpdater.SetMouseCaptured(true, !im->IsInputMapped(0, kATInputCode_MouseMMB));
+	}
+}
+
+void ATUIVideoDisplayWindow::OpenOSK() {
+	if (!mpOSK) {
+		mpOSK = new ATUIOnScreenKeyboard;
+		mpOSK->AddRef();
+		AddChild(mpOSK);
+		mpOSK->Focus();
+		OnSize();
+	}
+}
+
+void ATUIVideoDisplayWindow::CloseOSK() {
+	if (mpOSK) {
+		mpOSK->Destroy();
+		vdsaferelease <<= mpOSK;
 	}
 }
 
@@ -267,10 +285,29 @@ void ATUIVideoDisplayWindow::OnSimulatorEvent(ATSimulatorEvent ev) {
 	}
 }
 
+ATUITouchMode ATUIVideoDisplayWindow::GetTouchModeAtPoint(const vdpoint32& pt) const {
+	// allow swiping in the bottom quarter to bring up the OSK
+	if (pt.y >= mArea.height() * 3 / 4)
+		return kATUITouchMode_Default;
+
+	// check for input mapping
+	ATInputManager *im = g_sim.GetInputManager();
+	
+	if (im->IsInputMapped(0, kATInputCode_MouseLMB) && !im->IsInputMapped(0, kATInputCode_MouseRMB))
+		return kATUITouchMode_Immediate;
+
+	return kATUITouchMode_Default;
+}
+
 void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dblclk) {
 	ATInputManager *im = g_sim.GetInputManager();
 
 	Focus();
+
+	if (mpOSK) {
+		CloseOSK();
+		return;
+	}
 
 	// If the mouse is mapped, it gets first crack at inputs.
 	if (im->IsMouseMapped() && g_sim.IsRunning()) {
@@ -298,7 +335,10 @@ void ATUIVideoDisplayWindow::OnMouseDown(sint32 x, sint32 y, uint32 vk, bool dbl
 						break;
 
 					case kATUIVK_MButton:
-						im->OnButtonDown(0, kATInputCode_MouseMMB);
+						if (im->IsInputMapped(0, kATInputCode_MouseMMB))
+							im->OnButtonDown(0, kATInputCode_MouseMMB);
+						else if (g_mouseCaptured)
+							ReleaseMouse();
 						break;
 
 					case kATUIVK_RButton:
@@ -737,21 +777,11 @@ bool ATUIVideoDisplayWindow::OnChar(const ATUICharEvent& event) {
 void ATUIVideoDisplayWindow::OnActionStart(uint32 id) {
 	switch(id) {
 		case kActionOpenOSK:
-			if (!mpOSK) {
-				mpOSK = new ATUIOnScreenKeyboard;
-				mpOSK->AddRef();
-				AddChild(mpOSK);
-				mpOSK->AutoSize();
-				mpOSK->Focus();
-				OnSize();
-			}
+			OpenOSK();
 			break;
 
 		case kActionCloseOSK:
-			if (mpOSK) {
-				mpOSK->Destroy();
-				vdsaferelease <<= mpOSK;
-			}
+			CloseOSK();
 			break;
 
 		default:
@@ -794,11 +824,16 @@ void ATUIVideoDisplayWindow::OnSize() {
 	const vdsize32& csz = mClientArea.size();
 
 	if (mpOSK) {
+		mpOSK->AutoSize();
+
 		const vdsize32& osksz = mpOSK->GetArea().size();
 		mpOSK->SetPosition(vdpoint32((csz.w - osksz.w) >> 1, csz.h - osksz.h));
 	}
 
 	ATUIContainer::OnSize();
+}
+
+void ATUIVideoDisplayWindow::OnSetFocus() {
 }
 
 void ATUIVideoDisplayWindow::OnKillFocus() {
@@ -816,7 +851,7 @@ void ATUIVideoDisplayWindow::OnCaptureLost() {
 	mbDragActive = false;
 	g_mouseCaptured = false;
 	g_mouseClipped = false;
-	g_winCaptionUpdater.SetMouseCaptured(g_mouseClipped || g_mouseCaptured);
+	g_winCaptionUpdater.SetMouseCaptured(false, false);
 }
 
 void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
@@ -886,8 +921,6 @@ void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) 
 	} else
 		mpUILabelBadSignal->SetVisible(false);
 
-	ATUIContainer::Paint(rdr, w, h);
-
 	if (rdr.GetCaps().mbSupportsAlphaBlending) {
 		for(XorRects::const_iterator it(mXorRects.begin()), itEnd(mXorRects.end());
 			it != itEnd; ++it)
@@ -910,6 +943,8 @@ void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) 
 			rdr.FillRect(xr.mX2 - 1, xr.mY1 + 1, 1, xr.mY2 - xr.mY1 - 2);
 		}
 	}
+
+	ATUIContainer::Paint(rdr, w, h);
 }
 
 bool ATUIVideoDisplayWindow::ProcessKeyDown(const ATUIKeyEvent& event, bool enableKeyInput) {
@@ -963,21 +998,21 @@ bool ATUIVideoDisplayWindow::ProcessKeyDown(const ATUIKeyEvent& event, bool enab
 				break;
 
 			case kATUIVK_F2:
-				if (!acs) {
+				if (!(alt || ctrl)) {
 					g_sim.GetGTIA().SetConsoleSwitch(0x01, true);
 					return true;
 				}
 				break;
 
 			case kATUIVK_F3:
-				if (!acs) {
+				if (!(alt || ctrl)) {
 					g_sim.GetGTIA().SetConsoleSwitch(0x02, true);
 					return true;
 				}
 				break;
 
 			case kATUIVK_F4:
-				if (!acs) {
+				if (!(alt || ctrl)) {
 					g_sim.GetGTIA().SetConsoleSwitch(0x04, true);
 					return true;
 				}
@@ -1046,24 +1081,29 @@ bool ATUIVideoDisplayWindow::ProcessKeyUp(const ATUIKeyEvent& event, bool enable
 				break;
 
 			case kATUIVK_F2:
-				if (!acs) {
-					g_sim.GetGTIA().SetConsoleSwitch(0x01, false);
+				// We clear the console switch even if AC is down in case it wasn't when
+				// the key down occurred.
+				g_sim.GetGTIA().SetConsoleSwitch(0x01, false);
+
+				if (!(alt || ctrl))
 					return true;
-				}
+
 				break;
 
 			case kATUIVK_F3:
-				if (!acs) {
-					g_sim.GetGTIA().SetConsoleSwitch(0x02, false);
+				g_sim.GetGTIA().SetConsoleSwitch(0x02, false);
+
+				if (!(alt || ctrl))
 					return true;
-				}
+
 				break;
 
 			case kATUIVK_F4:
-				if (!acs) {
-					g_sim.GetGTIA().SetConsoleSwitch(0x04, false);
+				g_sim.GetGTIA().SetConsoleSwitch(0x04, false);
+
+				if (!(alt || ctrl))
 					return true;
-				}
+
 				break;
 		}
 	}

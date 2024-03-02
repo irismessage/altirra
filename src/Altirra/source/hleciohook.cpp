@@ -51,6 +51,7 @@ protected:
 	uint8 OnHookRS232(uint16 pc);
 	uint8 OnHookVirtualScreen(uint16 pc);
 	uint8 OnHookCIOV(uint16 pc);
+	uint8 OnHookCIOVInit(uint16 pc);
 	uint8 OnHookCIOINV(uint16 pc);
 	uint8 OnHookCassetteOpen(uint16 pc);
 	uint8 OnHookEditorGetChar(uint16 pc);
@@ -67,6 +68,7 @@ protected:
 
 	ATCPUHookNode *mpDeviceRoutineHooks[19];
 	ATCPUHookNode *mpCIOVHook;
+	ATCPUHookNode *mpCIOVInitHook;
 	ATCPUHookNode *mpCIOINVHook;
 	ATCPUHookNode *mpCSOPIVHook;
 	ATCPUHookNode *mpCassetteOpenHook;
@@ -83,6 +85,7 @@ ATHLECIOHook::ATHLECIOHook()
 	, mHookPage(0)
 	, mbCIOHandlersEstablished(false)
 	, mpCIOVHook(NULL)
+	, mpCIOVInitHook(NULL)
 	, mpCIOINVHook(NULL)
 	, mpCSOPIVHook(NULL)
 	, mpCassetteOpenHook(NULL)
@@ -179,8 +182,10 @@ void ATHLECIOHook::ReinitHooks() {
 	if (prenabled || vs)
 		hookmgr.SetHookMethod(mpCIOVHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::CIOV, 0, this, &ATHLECIOHook::OnHookCIOV);
 
-	if (hdenabled || prenabled || rsenabled)
+	if (hdenabled || prenabled || rsenabled) {
+		hookmgr.SetHookMethod(mpCIOVInitHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::CIOV, 1, this, &ATHLECIOHook::OnHookCIOVInit);
 		hookmgr.SetHookMethod(mpCIOINVHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::CIOINV, 0, this, &ATHLECIOHook::OnHookCIOINV);
+	}
 
 	// Cassette hooks
 	if (mpSim->IsCassetteSIOPatchEnabled()) {
@@ -210,6 +215,7 @@ void ATHLECIOHook::UninitHooks() {
 	hookmgr.UnsetHook(mpEditorGetCharHook);
 	hookmgr.UnsetHook(mpCassetteOpenHook);
 	hookmgr.UnsetHook(mpCSOPIVHook);
+	hookmgr.UnsetHook(mpCIOVInitHook);
 	hookmgr.UnsetHook(mpCIOVHook);
 
 	for(int i=0; i<19; ++i)
@@ -256,8 +262,15 @@ uint8 ATHLECIOHook::OnHookVirtualScreen(uint16 pc) {
 	return 0x60;
 }
 
+uint8 ATHLECIOHook::OnHookCIOVInit(uint16 pc) {
+	return OnHookCIOINV(pc);
+}
+
 uint8 ATHLECIOHook::OnHookCIOINV(uint16 pc) {
 	ATCPUEmulatorMemory *mem = mpCPU->GetMemory();
+
+	ATCPUHookManager& hookmgr = *mpCPU->GetHookManager();
+	hookmgr.UnsetHook(mpCIOVInitHook);
 
 	IATHostDeviceEmulator *hd = mpSim->GetHostDevice();
 	if (hd && hd->IsEnabled()) {
@@ -280,17 +293,19 @@ uint8 ATHLECIOHook::OnHookCIOINV(uint16 pc) {
 	if (rs232) {
 		const uint8 devName = rs232->GetCIODeviceName();
 
-		for(int i=0; i<12; ++i) {
-			uint16 hent = ATKernelSymbols::HATABS + 3*i;
-			uint8 c = mem->ReadByte(hent);
-			if (c == devName)
-				break;
+		if (devName) {
+			for(int i=0; i<12; ++i) {
+				uint16 hent = ATKernelSymbols::HATABS + 3*i;
+				uint8 c = mem->ReadByte(hent);
+				if (c == devName)
+					break;
 
-			if (!c) {
-				mem->WriteByte(hent, devName);
-				mem->WriteByte(hent+1, 0x60);
-				mem->WriteByte(hent+2, (uint8)(mHookPage >> 8));
-				break;
+				if (!c) {
+					mem->WriteByte(hent, devName);
+					mem->WriteByte(hent+1, 0x60);
+					mem->WriteByte(hent+2, (uint8)(mHookPage >> 8));
+					break;
+				}
 			}
 		}
 	}

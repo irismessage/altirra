@@ -34,6 +34,7 @@ public:
 	ATSIDEEmulator();
 	~ATSIDEEmulator();
 
+	bool IsVersion2() const { return mbVersion2; }
 	bool IsCartEnabled() const { return (mbSDXEnable && mSDXBank >= 0) || ((mbTopEnable || !mbSDXEnable) && mTopBank >= 0); }
 	bool IsSDXFlashDirty() const { return mFlashCtrl.IsDirty(); }
 

@@ -87,6 +87,15 @@ bool ATDecFloat::SetDouble(double v) {
 		--ix;
 	}
 
+	// convert mantissa to integer (100000000 - 10000000000)
+	sint64 imant64 = (sint64)(mantissa + 0.5);
+
+	// renormalize if necessary after rounding
+	if (imant64 == 10000000000) {
+		imant64 = 100000000;
+		++ix;
+	}
+
 	// check for underflow
 	if (ix < -49) {
 		SetZero();
@@ -96,9 +105,6 @@ bool ATDecFloat::SetDouble(double v) {
 	// check for overflow
 	if (ix > 49)
 		return false;
-
-	// convert mantissa to integer (100000000 - 10000000000)
-	sint64 imant64 = (sint64)(mantissa + 0.5);
 
 	// split mantissa into bytes
 	uint8 rb[5];
@@ -852,12 +858,6 @@ bool ATDecFloatMul(ATDecFloat& dst, const ATDecFloat& x, const ATDecFloat& y) {
 	uint8 sign = (x.mSignExp^y.mSignExp) & 0x80;
 	sint32 exp = (uint32)(x.mSignExp & 0x7f) + (uint32)(y.mSignExp & 0x7f) - 0x80;
 
-	// check for underflow
-	if (exp < -49) {
-		dst.SetZero();
-		return true;
-	}
-
 	// convert both mantissae to binary
 	int xb[5];
 	int yb[5];
@@ -925,6 +925,12 @@ bool ATDecFloatMul(ATDecFloat& dst, const ATDecFloat& x, const ATDecFloat& y) {
 				}
 			}
 		}
+	}
+
+	// check for underflow
+	if (exp < -49) {
+		dst.SetZero();
+		return true;
 	}
 
 	// check for overflow
@@ -1072,7 +1078,7 @@ void ATAccelFADD(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 		cpu.SetFlagC();
 
 		if (g_ATLCFPAccel.IsEnabled())
-			g_ATLCFPAccel("FADD(%s, %s) -> error\n");
+			g_ATLCFPAccel("FADD(%s, %s) -> error\n", fp0.ToString().c_str(), fp1.ToString().c_str());
 	}
 }
 
@@ -1091,7 +1097,7 @@ void ATAccelFSUB(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 		cpu.SetFlagC();
 
 		if (g_ATLCFPAccel.IsEnabled())
-			g_ATLCFPAccel("FADD(%s, %s) -> error\n");
+			g_ATLCFPAccel("FSUB(%s, %s) -> error\n", fp0.ToString().c_str(), fp1.ToString().c_str());
 	}
 }
 
@@ -1110,7 +1116,7 @@ void ATAccelFMUL(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 		cpu.SetFlagC();
 
 		if (g_ATLCFPAccel.IsEnabled())
-			g_ATLCFPAccel("FADD(%s, %s) -> error\n");
+			g_ATLCFPAccel("FMUL(%s, %s) -> error\n", fp0.ToString().c_str(), fp1.ToString().c_str());
 	}
 }
 
@@ -1129,12 +1135,13 @@ void ATAccelFDIV(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 		cpu.SetFlagC();
 
 		if (g_ATLCFPAccel.IsEnabled())
-			g_ATLCFPAccel("FADD(%s, %s) -> error\n");
+			g_ATLCFPAccel("FDIV(%s, %s) -> error\n", fp0.ToString().c_str(), fp1.ToString().c_str());
 	}
 }
 
 void ATAccelLOG(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
-	double x = ATReadFR0(mem).ToDouble();
+	const ATDecFloat x0 = ATReadFR0(mem);
+	double x = x0.ToDouble();
 	if (x < 0.0) {
 		cpu.SetFlagC();
 		return;
@@ -1143,16 +1150,23 @@ void ATAccelLOG(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	double r = log(x);
 	ATDecFloat fpr;
 	if (!fpr.SetDouble(r)) {
+		if (g_ATLCFPAccel.IsEnabled())
+			g_ATLCFPAccel("LOG(%s) -> error\n", x0.ToString().c_str());
+
 		cpu.SetFlagC();
 		return;
 	}
+
+	if (g_ATLCFPAccel.IsEnabled())
+		g_ATLCFPAccel("LOG(%s) -> %s\n", x0.ToString().c_str(), fpr.ToString().c_str());
 
 	ATWriteFR0(mem, fpr);
 	cpu.ClearFlagC();
 }
 
 void ATAccelLOG10(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
-	double x = ATReadFR0(mem).ToDouble();
+	const ATDecFloat x0 = ATReadFR0(mem);
+	double x = x0.ToDouble();
 	if (x < 0.0) {
 		cpu.SetFlagC();
 		return;
@@ -1161,9 +1175,15 @@ void ATAccelLOG10(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	double r = log10(x);
 	ATDecFloat fpr;
 	if (!fpr.SetDouble(r)) {
+		if (g_ATLCFPAccel.IsEnabled())
+			g_ATLCFPAccel("LOG10(%s) -> error\n", x0.ToString().c_str());
+
 		cpu.SetFlagC();
 		return;
 	}
+
+	if (g_ATLCFPAccel.IsEnabled())
+		g_ATLCFPAccel("LOG10(%s) -> %s\n", x0.ToString().c_str(), fpr.ToString().c_str());
 
 	ATWriteFR0(mem, fpr);
 	cpu.ClearFlagC();
@@ -1171,12 +1191,13 @@ void ATAccelLOG10(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 
 void ATAccelEXP(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	double x = ATReadFR0(mem).ToDouble();
-	if (x < 0.0) {
+
+	double r = exp(x);
+	if (r == HUGE_VAL) {
 		cpu.SetFlagC();
 		return;
 	}
 
-	double r = exp(x);
 	ATDecFloat fpr;
 	if (!fpr.SetDouble(r)) {
 		cpu.SetFlagC();
@@ -1208,14 +1229,21 @@ void ATAccelEXP10(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 void ATAccelSKPSPC(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	uint16 buffer = mem.ReadByte(ATKernelSymbols::INBUFF) + ((uint16)mem.ReadByte(ATKernelSymbols::INBUFF+1) << 8);
 	uint8 index = mem.ReadByte(ATKernelSymbols::CIX);
+	uint8 ch;
 
-	while(mem.ReadByte(buffer + index) == ' ') {
+	for(;;) {
+		ch = mem.ReadByte(buffer + index);
+		
+		if (ch != ' ')
+			break;
+
 		++index;
 		if (!index)
 			break;
 	}
 
 	mem.WriteByte(ATKernelSymbols::CIX, index);
+	cpu.SetY(index);
 }
 
 void ATAccelISDIGT(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
@@ -1259,8 +1287,10 @@ void ATAccelNORMALIZE(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 }
 
 void ATAccelPLYEVL(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
-	uint16 addr = ((uint16)cpu.GetY() << 8) + cpu.GetX();
-	uint8 coeffs = cpu.GetA();
+	const uint16 addr0 = ((uint16)cpu.GetY() << 8) + cpu.GetX();
+	const uint8 coeffs0 = cpu.GetA();
+	uint16 addr = addr0;
+	uint8 coeffs = coeffs0;
 
 	ATDecFloat z(ATReadFR0(mem));
 	ATDecFloat accum;
@@ -1281,12 +1311,17 @@ void ATAccelPLYEVL(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 
 		if (!ATDecFloatMul(accum, t, z)) {
 			cpu.SetFlagC();
+			if (g_ATLCFPAccel.IsEnabled())
+				g_ATLCFPAccel("PLYEVL(%s,$%04X,%u) -> error\n", z.ToString().c_str(), addr0, coeffs0);
 			return;
 		}
 	}
 
 	ATWriteFR0(mem, t);
 	cpu.ClearFlagC();
+
+	if (g_ATLCFPAccel.IsEnabled())
+		g_ATLCFPAccel("PLYEVL(%s,$%04X,%u) -> %s\n", z.ToString().c_str(), addr0, coeffs0, t.ToString().c_str());
 }
 
 void ATAccelZFR0(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {

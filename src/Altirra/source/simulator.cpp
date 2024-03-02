@@ -74,6 +74,7 @@
 #include "hleutils.h"
 #include "versioninfo.h"
 #include "xep80.h"
+#include "dragoncart.h"
 
 namespace {
 	const char kSaveStateVersion[] = "Altirra save state V1";
@@ -252,6 +253,7 @@ ATSimulator::ATSimulator()
 	, mpCovox(NULL)
 	, mpRTime8(NULL)
 	, mpRS232(NULL)
+	, mpDragonCart(NULL)
 	, mpCheatEngine(NULL)
 	, mpUIRenderer(NULL)
 	, mpPCLink(NULL)
@@ -548,6 +550,12 @@ void ATSimulator::Shutdown() {
 		mpPBIManager->RemoveDevice(mpKMKJZIDE);
 		delete mpKMKJZIDE;
 		mpKMKJZIDE = NULL;
+	}
+
+	if (mpDragonCart) {
+		mpDragonCart->Shutdown();
+		delete mpDragonCart;
+		mpDragonCart = NULL;
 	}
 
 	delete mpAudioMonitor; mpAudioMonitor = NULL;
@@ -1123,6 +1131,33 @@ void ATSimulator::SetRS232Enabled(bool enable) {
 
 		mpRS232 = ATCreateRS232Emulator();
 		mpRS232->Init(mpMemMan, &mScheduler, &mSlowScheduler, mpUIRenderer, &mPokey, &mPIA);
+
+		ReloadRS232Firmware();
+	}
+}
+
+bool ATSimulator::IsDragonCartEnabled() const {
+	return mpDragonCart != NULL;
+}
+
+void ATSimulator::SetDragonCartEnabled(const ATDragonCartSettings *settings) {
+	if (settings) {
+		if (mpDragonCart && mpDragonCart->GetSettings() != *settings) {
+			mpDragonCart->Shutdown();
+			delete mpDragonCart;
+				mpDragonCart = NULL;
+		}	
+
+		if (!mpDragonCart) {
+			mpDragonCart = new ATDragonCartEmulator;
+			mpDragonCart->Init(mpMemMan, &mSlowScheduler, *settings);
+		}
+	} else {
+		if (mpDragonCart) {
+			mpDragonCart->Shutdown();
+			delete mpDragonCart;
+			mpDragonCart = NULL;
+		}
 	}
 }
 
@@ -1328,6 +1363,8 @@ void ATSimulator::ColdReset() {
 	if (mbROMAutoReloadEnabled) {
 		LoadROMs();
 		UpdateKernel();
+
+		ReloadRS232Firmware();
 	}
 
 	mIRQController.ColdReset();
@@ -1464,6 +1501,9 @@ void ATSimulator::ColdReset() {
 
 	if (mpMyIDE)
 		mpMyIDE->ColdReset();
+
+	if (mpDragonCart)
+		mpDragonCart->ColdReset();
 
 	InitMemoryMap();
 
@@ -1637,11 +1677,13 @@ void ATSimulator::SetROMImagePath(ATROMImage image, const wchar_t *s) {
 	mROMImagePaths[image] = s;
 }
 
-void ATSimulator::GetDirtyStorage(vdfastvector<ATStorageId>& ids) const {
-	for(int i=0; i<sizeof(mDiskDrives)/sizeof(mDiskDrives[0]); ++i) {
-		ATStorageId id = (ATStorageId)(kATStorageId_Disk + i);
-		if (IsStorageDirty(id))
-			ids.push_back(id);
+void ATSimulator::GetDirtyStorage(vdfastvector<ATStorageId>& ids, ATStorageId mediaId) const {
+	if (!mediaId || mediaId == kATStorageId_Disk) {
+		for(int i=0; i<sizeof(mDiskDrives)/sizeof(mDiskDrives[0]); ++i) {
+			ATStorageId id = (ATStorageId)(kATStorageId_Disk + i);
+			if (IsStorageDirty(id))
+				ids.push_back(id);
+		}
 	}
 
 	static const ATStorageId kIds[]={
@@ -1652,6 +1694,9 @@ void ATSimulator::GetDirtyStorage(vdfastvector<ATStorageId>& ids) const {
 	};
 
 	for(size_t i=0; i<sizeof(kIds)/sizeof(kIds[0]); ++i) {
+		if (mediaId && (kIds[i] & kATStorageId_TypeMask) != mediaId)
+			continue;
+
 		if (IsStorageDirty(kIds[i]))
 			ids.push_back(kIds[i]);
 	}
@@ -1784,7 +1829,7 @@ bool ATSimulator::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRan
 		goto load_as_zip;
 	else if (!vdwcsicmp(ext, L".gz") || !vdwcsicmp(ext, L".atz"))
 		goto load_as_gzip;
-	else if (!vdwcsicmp(ext, L".xfd"))
+	else if (!vdwcsicmp(ext, L".xfd") || !vdwcsicmp(ext, L".arc"))
 		loadType = kATLoadType_Disk;
 	else if (!vdwcsicmp(ext, L".bin") || !vdwcsicmp(ext, L".rom") || !vdwcsicmp(ext, L".a52"))
 		loadType = kATLoadType_Cartridge;
@@ -2112,7 +2157,9 @@ bool ATSimulator::LoadCartridge(uint32 unit, const wchar_t *origPath, const wcha
 
 	if (d && origPath) {
 		static const wchar_t *const kSymExts[]={
-			L".lst", L".lab", L".lbl"
+			// Need to load .lab before .lst in case there are symbol-relative
+			// ASSERTs in the listing file.
+			L".lab", L".lst", L".lbl"
 		};
 
 		VDASSERTCT(sizeof(kSymExts)/sizeof(kSymExts[0]) == sizeof(mCartModuleIds)/sizeof(mCartModuleIds[0]));
@@ -2196,9 +2243,8 @@ void ATSimulator::LoadIDE(ATIDEHardwareMode mode, bool write, bool fast, uint32 
 			ATSIDEEmulator *side = new ATSIDEEmulator;
 			mpSIDE = side;
 
-			ReloadIDEFirmware();
-
 			side->Init(mpIDE, &mScheduler, mpUIRenderer, mpMemMan, this, mode == kATIDEHardwareMode_SIDE2);
+			ReloadIDEFirmware();
 
 			UpdateCartEnable();
 			UpdateCartridgeSwitch();
@@ -3306,7 +3352,7 @@ void ATSimulator::ReloadIDEFirmware() {
 	if (mpSIDE) {
 		mpSIDE->LoadFirmware(NULL, 0);
 
-		const wchar_t *path = mROMImagePaths[kATROMImage_SIDE_SDX].c_str();
+		const wchar_t *path = mROMImagePaths[mpSIDE->IsVersion2() ? kATROMImage_SIDE2_SDX : kATROMImage_SIDE_SDX].c_str();
 		if (VDDoesPathExist(path)) {
 			try {
 				mpSIDE->LoadFirmware(path);
@@ -3349,6 +3395,52 @@ void ATSimulator::ReloadU1MBFirmware() {
 			if (ATLoadKernelResourceLZPacked(IDR_U1MBBIOS, buf))
 				mpUltimate1MB->LoadFirmware(buf.data(), buf.size());
 		}
+	}
+}
+
+void ATSimulator::ReloadRS232Firmware() {
+	if (mpRS232) {
+		vdfastvector<uint8> rbuf;
+		if (mbROMAutoReloadEnabled) {
+			try {
+				VDFile f;
+				if (f.openNT(VDMakePath(VDGetProgramPath().c_str(), L"850relocator.bin").c_str())) {
+					sint64 len = f.size();
+
+					if (len < 4096) {
+						sint32 len32 = (sint32)len;
+
+						rbuf.resize(len32);
+						f.readData(rbuf.data(), len32);
+					}
+				}
+			} catch(const MyError&) {
+			}
+		} else {
+			ATLoadMiscResource(IDR_850RELOCATOR, rbuf);
+		}
+
+		vdfastvector<uint8> hbuf;
+		if (mbROMAutoReloadEnabled) {
+			try {
+				VDFile f;
+				if (f.openNT(VDMakePath(VDGetProgramPath().c_str(), L"850handler.bin").c_str())) {
+					sint64 len = f.size();
+
+					if (len < 4096) {
+						sint32 len32 = (sint32)len;
+
+						hbuf.resize(len32);
+						f.readData(hbuf.data(), len32);
+					}
+				}
+			} catch(const MyError&) {
+			}
+		} else {
+			ATLoadMiscResource(IDR_850HANDLER, hbuf);
+		}
+
+		mpRS232->LoadFirmware(rbuf.data(), rbuf.size(), hbuf.data(), hbuf.size());
 	}
 }
 

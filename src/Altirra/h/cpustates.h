@@ -136,6 +136,7 @@ namespace AT6502States {
 		kStateJccFalseRead,
 		kStateInvokeHLE,
 		kStateHLEDelay,
+		kStateStepOver,
 
 		// 65C02 states
 		kStateResetBit,

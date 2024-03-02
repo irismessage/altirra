@@ -38,7 +38,7 @@ extern ATUIMenu *g_pMenuMRU;
 extern ATUICommandManager g_ATUICommandMgr;
 
 VDLinearAllocator g_ATUIMenuBoundCommandsAlloc;
-vdfastvector<const char *> g_ATUIMenuBoundCommands;
+vdfastvector<std::pair<const char *, const wchar_t *> > g_ATUIMenuBoundCommands;
 vdrefptr<ATUIMenu> g_pATUIMenu;
 
 ATUIMenu *ATUIGetMenu() {
@@ -218,7 +218,10 @@ void ATUILoadMenu() {
 						if (!g_ATUICommandMgr.GetCommand(cmdstr))
 							throw MyError("Error parsing menu on line %u: unknown command '%s'", lineno, cmdstr);
 
-						g_ATUIMenuBoundCommands.push_back(cmdstr);
+						wchar_t *textstr = (wchar_t *)g_ATUIMenuBoundCommandsAlloc.Allocate((menuItemText.size() + 1) * sizeof(wchar_t));
+						memcpy(textstr, menuItemText.c_str(), (menuItemText.size() + 1) * sizeof(wchar_t));
+
+						g_ATUIMenuBoundCommands.push_back(std::make_pair(cmdstr, textstr));
 
 						// see if we can match this command to a keyboard shortcut entry
 						const VDAccelTableEntry *pAccel = ATUIGetAccelByCommand(kATUIAccelContext_Display, cmdstr);
@@ -307,12 +310,12 @@ void ATUISetMenuEnabled(bool enabled) {
 }
 
 void ATUIUpdateMenu() {
-	vdfastvector<const char *>::const_iterator it = g_ATUIMenuBoundCommands.begin();
-	vdfastvector<const char *>::const_iterator itEnd = g_ATUIMenuBoundCommands.end();
+	vdfastvector<std::pair<const char *, const wchar_t *> >::const_iterator it = g_ATUIMenuBoundCommands.begin();
+	vdfastvector<std::pair<const char *, const wchar_t *> >::const_iterator itEnd = g_ATUIMenuBoundCommands.end();
 
 	uint32 id = 40000;
 	for(; it != itEnd; ++it, ++id) {
-		const char *cmdname = *it;
+		const char *cmdname = it->first;
 
 		const ATUICommand *cmd = g_ATUICommandMgr.GetCommand(cmdname);
 
@@ -350,6 +353,19 @@ void ATUIUpdateMenu() {
 					break;
 			}
 		}
+		
+		if (cmd->mpFormatFn) {
+			const wchar_t *s = it->second;
+			const wchar_t *formatpt = wcschr(s, '%');
+
+			if (formatpt) {
+				item->mText.assign(s, formatpt);
+				cmd->mpFormatFn(item->mText);
+				item->mText.append(formatpt + 1);
+
+				VDSetMenuItemTextByCommandW32(g_hMenu, id, item->mText.c_str());
+			}
+		}
 	}
 }
 
@@ -358,7 +374,7 @@ bool ATUIHandleMenuCommand(uint32 id) {
 
 	if (offset < (uint32)g_ATUIMenuBoundCommands.size()) {
 		try {
-			g_ATUICommandMgr.ExecuteCommand(g_ATUIMenuBoundCommands[offset]);
+			g_ATUICommandMgr.ExecuteCommand(g_ATUIMenuBoundCommands[offset].first);
 		} catch(const MyError& e) {
 			e.post(g_hwnd, "Altirra Error");
 		}

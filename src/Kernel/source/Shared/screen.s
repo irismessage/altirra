@@ -245,6 +245,10 @@ ScreenPixelWidthsLo = ScreenWidths + 1
 	.error	'ROM overflow into Screen Handler region: ',*,' > $F3EE.'
 .endif
 
+.ifdef _KERNEL_REPORT_MODULE_PAD_ADJUST
+	_KERNEL_REPORT_MODULE_PAD_ADJUST [$f3f6-8]-*
+.endif
+
 	org		$f3f6-8
 
 ;==========================================================================
@@ -272,6 +276,9 @@ ScreenPixelWidthsLo = ScreenWidths + 1
 ;
 ; Modified:
 ;	- FRMADR: used for bitflags
+;		bit 7 = skip clear
+;		bit 6 = split screen
+;		bit 0 = fine scrolling (XL/XE only)
 ;	- ADRESS: temporary addressing
 ;
 ScreenOpen = ScreenOpenGr0.use_iocb
@@ -396,8 +403,8 @@ no_dlist_page_crossing:
 	svc:sbc	#6					;subtract 6 bytes for a split
 	
 .if _KERNEL_XLXE
-	bit		fine
-	spl:clc
+	ldy		#1
+	cpy		fine				;clear carry to alloc +1 byte if fine scrolling is enabled
 .endif
 
 	adc		rowac				;allocate dl bytes (note that carry is set!)
@@ -423,15 +430,17 @@ alloc_ok:
 	stx		txtmsc+1
 	mva		#$60 txtmsc
 
-	;Set row count: 24 for gr.0, 0 for full screen non-gr.0. We will
-	;fix up the split case to 4 later while we are writing the display list.
+	;Set row count: 24 for full-screen. We will fix up the split case to 4 later
+	;while we are writing the display list. Mapping the Atari incorrectly states
+	;that this value is set to 0 when no text window is present; this is wrong
+	;and in fact BAYPILOT.BAS relies on this being set to 24 for a GR.7+16
+	;screen since it later aliases it to GR.0.
 	ldy		#24
-	ldx		dindex
-	seq:ldy	#0
 	sty		botscr
 
 	;--- construct display list
 	ldy		#0
+	sty		crsinh
 	
 	;add 24 blank lines
 	lda		#$70
@@ -470,17 +479,27 @@ alloc_ok:
 	jsr		try_clear
 
 nosplit:
+	mva		#2		chact
+
+	;init tab map to every 8 columns
+	ldx		#15
+	lsr								;!! A=1
+	sta:rne	tabmap-1,x-
+
+	;reset line status
+	stx		bufcnt
+	
 	;init character set
-	mva		#$02	chact
-	mva		#$e0	chbas			;!! - also used for NMIEN
+	mvx		#$e0	chbas			;!! - also used for NMIEN
 
 	;enable VBI; note that we have not yet enabled display DMA
 .if _KERNEL_XLXE
-	lsr		frmadr
-	scs
+	bit		frmadr
+	sne:ldx	#$40
+.else
+	ldx		#$40
 .endif
-	lda		#$40
-	sta		nmien
+	stx		nmien
 	
 	;terminate display list with jvb
 	ldy		countr
@@ -500,19 +519,14 @@ nosplit:
 	;wait for screen to establish (necessary for Timewise splash screen to render)
 	lda		rtclok+2
 	cmp:req	rtclok+2
-	
-	;init tab map to every 8 columns
-	ldx		#15
-	lda		#1
-	sta:rne	tabmap-1,x-
-
-	;reset line status
-	stx		bufcnt
 
 	;if there is a text window, show the cursor
-	lda		botscr
-	beq		no_cursor
+	lda		dindex
+	beq		show_cursor
+	bit		frmadr
+	bvc		no_cursor
 
+show_cursor:
 	;show cursor
 	jsr		ScreenPutByte.recompute_show_cursor_exit
 no_cursor:
@@ -620,9 +634,6 @@ write_vdslst:
 	rts
 .endif
 
-	;write mode lines and return
-	jmp		write_repeat
-
 ;--------------------------------------------------------
 write_with_zp_address:
 	sta		(rowac),y+
@@ -698,14 +709,14 @@ standard_colors:
 	;shift down
 	jsr		ScreenAlignPixel
 
+	;convert from Internal to ATASCII - must be done before we mask
+	jsr		ScreenConvertSetup
+	eor		int_to_atascii_tab,x
+
 	;mask using right-justified pixel mask for mode
 	ldx		dindex
 	ldy		ScreenEncodingTab,x
 	and		ScreenPixelMasks,y
-	
-	;convert from Internal to ATASCII
-	jsr		ScreenConvertSetup
-	eor		int_to_atascii_tab,x
 	
 	;advance to next position
 	ldx		dindex
@@ -787,11 +798,7 @@ not_clear_2:
 	;check for display suspend (ctrl+1) and wait until it is cleared
 	ldx:rne	ssflag
 	
-	;convert byte from ATASCII to Internal -- this is required for gr.1
-	;and gr.2 to work correctly, and harmless for other modes
-	jsr		ScreenConvertATASCIIToInternal
-
-	;fold the pixel and compute masks
+	;fold the pixel, compute masks, and convert ATASCII to Internal
 	jsr		ScreenFoldColor
 	pha
 
@@ -871,8 +878,7 @@ not_eol:
 	;      lines if the top logical line is more than one line long, but we
 	;      only want to add one physical line onto our current logical line.
 	jsr		EditorGetCurLogicalLineInfo
-	eor		#$ff
-	and		logmap,y
+	eor		logmap,y
 	sta		logmap,y
 
 	jmp		post_scroll
@@ -903,10 +909,12 @@ check_extend:
 	txa
 	jsr		EditorPhysToLogicalRow
 	clc
-	adc		#3
+	adc		#2
 	cmp		rowcrs
-	beq		post_scroll
-	rts
+	scc:rts
+	pla
+	pla
+	bcc		post_scroll
 .endp
 
 ;==========================================================================
@@ -953,6 +961,12 @@ ScreenGetStatus = CIOExitSuccess
 ;	
 .proc ScreenDrawLineFill
 	;;##TRACE "Drawing line (%d,%d)-(%d,%d) in mode %d" dw(oldcol) db(oldrow) dw(colcrs) db(rowcrs) db(dindex)
+	
+	;hide cursor if gr.0 (required by Space Way.bas)
+	ldx		dindex
+	bne		not_gr0
+	jsr		ScreenHideCursor
+not_gr0:
 	
 	;initialize bit mask and repeat pertinent pixel bits throughout byte
 	lda		fildat
@@ -1236,22 +1250,19 @@ shift_lo_tab:
 	dta		<right_shift_4	
 	dta		<right_shift_2	
 	dta		<right_shift_1
-	
-;----------------------------------------------
-;
-addzp16:
-	
 .endp
 
 ;==========================================================================
 ; Given a color byte, mask it off to the pertinent bits and reflect it
-; throughout a byte.
+; throughout a byte. The byte is converted from ATASCII to Internal
+; if the mode uses byte encoding.
 ;
 ; Entry:
 ;	A = color value
 ;
 ; Exit:
 ;	A = folded color byte
+;	Y = encoding mode
 ;	DMASK = right-justified bit mask
 ;	DELTAC = left-justified bit mask
 ;
@@ -1261,30 +1272,19 @@ addzp16:
 .proc ScreenFoldColor
 	ldx		dindex
 	ldy		ScreenEncodingTab,x			;0 = 8-bit, 1 = 4-bit, 2 = 2-bit, 3 = 1-bit
-	mvx		ScreenPixelMasks,y dmask
 	mvx		ScreenPixelMasks+4,y deltac
-	dey
-	bmi		fold_done
+	mvx		ScreenPixelMasks,y dmask
+	bmi		fold_byte
 	and		dmask
-	sta		hold1
-	asl
-	asl
-	asl
-	asl
-	ora		hold1
-	dey
-	bmi		fold_done
-	sta		hold1
-	asl
-	asl
-	ora		hold1
-	dey
-	bmi		fold_done
-	sta		hold1
-	asl
-	ora		hold1
-fold_done:
+	ora		ScreenEncodingOffsetTable-1,y
+	tax
+	lda		ScreenEncodingTable,x
 	rts
+	
+fold_byte:
+	;convert byte from ATASCII to Internal -- this is required for gr.1
+	;and gr.2 to work correctly, and harmless for other modes
+	jmp		ScreenConvertATASCIIToInternal
 .endp
 
 ;==========================================================================

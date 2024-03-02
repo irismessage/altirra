@@ -87,6 +87,7 @@ public:
 	void EnableLayer(ATMemoryLayer *layer, ATMemoryAccessMode mode, bool enable);
 	void SetLayerMemory(ATMemoryLayer *layer, const uint8 *base);
 	void SetLayerMemory(ATMemoryLayer *layer, const uint8 *base, uint32 pageOffset, uint32 pages, uint32 addrMask = 0xFFFFFFFFU, int readOnly = -1);
+	void SetLayerAddressRange(ATMemoryLayer *layer0, uint32 pageOffset, uint32 pageCount);
 	void SetLayerName(ATMemoryLayer *layer, const char *name);
 
 	// Controls whether a memory layer exists on the chip RAM or fast RAM bus

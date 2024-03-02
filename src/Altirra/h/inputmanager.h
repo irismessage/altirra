@@ -39,6 +39,11 @@ public:
 	virtual void SetConsoleTrigger(uint32 id, bool state) = 0;
 };
 
+class IATInputUnitNameSource {
+public:
+	virtual bool GetInputCodeName(uint32 id, VDStringW& name) const = 0;
+};
+
 enum ATInputCode {
 	kATInputCode_None			= 0x00,
 
@@ -414,7 +419,7 @@ public:
 	int GetInputUnitCount() const;
 	const wchar_t *GetInputUnitName(int index) const;
 	int GetInputUnitIndexById(const ATInputUnitIdentifier& id) const;
-	int RegisterInputUnit(const ATInputUnitIdentifier& id, const wchar_t *name);
+	int RegisterInputUnit(const ATInputUnitIdentifier& id, const wchar_t *name, IATInputUnitNameSource *nameSource);
 	void UnregisterInputUnit(int unit);
 
 	bool IsInputMapped(int unit, uint32 inputCode) const;
@@ -519,6 +524,7 @@ protected:
 	uint32	mAllocatedUnits;
 	ATInputUnitIdentifier mUnitIds[32];
 	VDStringW	mUnitNames[32];
+	IATInputUnitNameSource *mpUnitNameSources[32];
 
 	typedef vdfastvector<ATInputMap *> PresetMaps;
 	PresetMaps mPresetMaps;

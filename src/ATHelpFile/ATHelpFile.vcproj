@@ -79,6 +79,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\debug-basic.xml"
+				>
+			</File>
+			<File
 				RelativePath=".\source\debug-diagnostics.xml"
 				>
 			</File>
@@ -91,7 +95,23 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\debug-logging.xml"
+				>
+			</File>
+			<File
 				RelativePath=".\source\debug-source.xml"
+				>
+			</File>
+			<File
+				RelativePath=".\source\devices-cartintro.xml"
+				>
+			</File>
+			<File
+				RelativePath=".\source\devices-serintro.xml"
+				>
+			</File>
+			<File
+				RelativePath=".\source\disk.xml"
 				>
 			</File>
 			<File
@@ -155,11 +175,23 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\touch.xml"
+				>
+			</File>
+			<File
 				RelativePath=".\source\troubleshooting.xml"
 				>
 			</File>
 			<File
 				RelativePath=".\source\ultimate1mb.xml"
+				>
+			</File>
+			<File
+				RelativePath=".\source\vbxe.xml"
+				>
+			</File>
+			<File
+				RelativePath=".\source\xep80.xml"
 				>
 			</File>
 		</Filter>

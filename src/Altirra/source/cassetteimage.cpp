@@ -472,6 +472,7 @@ public:
 	uint32 GetDataLength() const { return mDataLength; }
 	uint32 GetAudioLength() const { return mAudioLength; }
 	bool GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshold, bool prevBit) const;
+	void ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) const;
 	void AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const;
 
 	void Load(IVDRandomAccessStream& file, bool loadImageAsData);
@@ -501,7 +502,15 @@ protected:
 
 	typedef vdfastvector<ATCassetteImageBlock *> ImageBlocks;
 	ImageBlocks mImageBlocks;
+
+	vdfastvector<uint8> mPeakMaps[2];
+
+	static const float kPeakSamplesPerSecond;
+	static const float kSecondsPerPeakSample;
 };
+
+const float ATCassetteImage::kPeakSamplesPerSecond = 10.0f;
+const float ATCassetteImage::kSecondsPerPeakSample = 0.1f;
 
 ATCassetteImage::ATCassetteImage()
 	: mDataLength(0)
@@ -552,6 +561,52 @@ bool ATCassetteImage::GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshol
 		return true;
 	else
 		return prevBit;
+}
+
+void ATCassetteImage::ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) const {
+	if (mPeakMaps[0].empty()) {
+		memset(data, 0, sizeof(float)*n*2);
+		memset(audio, 0, sizeof(float)*n*2);
+		return;
+	}
+
+	const size_t m = mPeakMaps[0].size() >> 1;
+
+	float x0 = t0 * kPeakSamplesPerSecond;
+	float dx = dt * kPeakSamplesPerSecond;
+
+	if (mPeakMaps[1].empty()) {
+		while(n--) {
+			sint32 ix = VDFloorToInt(x0);
+			x0 += dx;
+
+			if ((uint32)ix >= m)
+				ix = (ix < 0) ? 0 : m-1;
+
+			ix *= 2;
+
+			float output0 = ((float)mPeakMaps[0][ix] - 128.0f) / 127.0f;
+			float output1 = ((float)mPeakMaps[0][ix+1] - 128.0f) / 127.0f;
+			*data++ = output0;
+			*data++ = output1;
+			*audio++ = output0;
+			*audio++ = output1;
+		}
+	} else {
+		while(n--) {
+			sint32 ix = VDFloorToInt(x0);
+			x0 += dx;
+
+			if ((uint32)ix >= m)
+				ix = (ix < 0) ? 0 : m-1;
+
+			ix *= 2;
+			*data++ = ((float)mPeakMaps[0][ix] - 128.0f) / 127.0f;;
+			*data++ = ((float)mPeakMaps[0][ix+1] - 128.0f) / 127.0f;
+			*audio++ = ((float)mPeakMaps[1][ix] - 128.0f) / 127.0f;
+			*audio++ = ((float)mPeakMaps[1][ix+1] - 128.0f) / 127.0f;
+		}
+	}
 }
 
 void ATCassetteImage::AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const {
@@ -739,6 +794,13 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file) {
 
 	uint32 outAccum = 0;
 	uint32 outAccumBits = 0;
+	sint32 peakValAccumL0 = 0;
+	sint32 peakValAccumL1 = 0;
+	sint32 peakValAccumR0 = 0;
+	sint32 peakValAccumR1 = 0;
+	float peakMapAccum = 0;
+	float peakMapAccumInc = (float)kPeakSamplesPerSecond / (float)wf.mSamplesPerSec;
+
 	for(;;) {
 		if (outputBufferIdx >= outputBufferLevel) {
 			uint32 toRead = 512 - inputBufferLevel;
@@ -759,6 +821,66 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file) {
 			}
 	
 			progress.Update((uint32)((uint64)(file.Pos() - datapos) >> 10));
+
+			// accumulate peak map samples
+			if (wf.mChannels == 1) {
+				for(uint32 i=0; i<toRead; ++i) {
+					sint32 vL = inputBuffer[i][0];
+					if (vL < 0)
+						peakValAccumL0 = std::min(peakValAccumL0, vL);
+					else
+						peakValAccumL1 = std::max(peakValAccumL1, vL);
+
+					peakMapAccum += peakMapAccumInc;
+
+					if (peakMapAccum >= 1.0f) {
+						const float scale = 1.0f / 32767.0f * 127.0f / 255.0f;
+						const uint8 v0 = VDClampedRoundFixedToUint8Fast(peakValAccumL0 * scale + 128.0f / 255.0f);
+						const uint8 v1 = VDClampedRoundFixedToUint8Fast(peakValAccumL1 * scale + 128.0f / 255.0f);
+						mPeakMaps[0].push_back(v0);
+						mPeakMaps[0].push_back(v1);
+						peakValAccumL0 = 0;
+						peakValAccumL1 = 0;
+
+						peakMapAccum -= 1.0f;
+					}
+				}
+			} else {
+				for(uint32 i=0; i<toRead; ++i) {
+					sint32 vL = inputBuffer[i][0];
+					sint32 vR = inputBuffer[i][1];
+
+					if (vL < 0)
+						peakValAccumL0 = std::min(peakValAccumL0, vL);
+					else
+						peakValAccumL1 = std::max(peakValAccumL1, vL);
+
+					if (vR < 0)
+						peakValAccumR0 = std::min(peakValAccumR0, vR);
+					else
+						peakValAccumR1 = std::max(peakValAccumR1, vR);
+
+					peakMapAccum += peakMapAccumInc;
+
+					if (peakMapAccum >= 1.0f) {
+						const float scale = 1.0f / 32767.0f * 127.0f / 255.0f;
+						const uint8 vL0 = VDClampedRoundFixedToUint8Fast(peakValAccumL0 * scale + 128.0f / 255.0f);
+						const uint8 vL1 = VDClampedRoundFixedToUint8Fast(peakValAccumL1 * scale + 128.0f / 255.0f);
+						const uint8 vR0 = VDClampedRoundFixedToUint8Fast(peakValAccumR0 * scale + 128.0f / 255.0f);
+						const uint8 vR1 = VDClampedRoundFixedToUint8Fast(peakValAccumR1 * scale + 128.0f / 255.0f);
+						mPeakMaps[0].push_back(vR0);
+						mPeakMaps[0].push_back(vR1);
+						mPeakMaps[1].push_back(vL0);
+						mPeakMaps[1].push_back(vL1);
+						peakValAccumL0 = 0;
+						peakValAccumL1 = 0;
+						peakValAccumR0 = 0;
+						peakValAccumR1 = 0;
+
+						peakMapAccum -= 1.0f;
+					}
+				}
+			}
 
 			inputBufferLevel += toRead;
 
@@ -811,11 +933,11 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file) {
 		++outputBufferIdx;
 	}
 
-	if (outAccumBits)
-		pDataBlock->mData.push_back(outAccum << (32 - outAccumBits));
-
 	mDataLength = pDataBlock->mDataLength = ((uint32)pDataBlock->mData.size() << 5) + outAccumBits;
 	mAudioLength = pAudioBlock->mAudioLength = pAudioBlock->mAudio.size();
+
+	if (outAccumBits)
+		pDataBlock->mData.push_back(outAccum << (32 - outAccumBits));
 
 	mDataBlocks.resize(2);
 	mDataBlocks[0].mStart = 0;
@@ -836,8 +958,9 @@ namespace {
 	class ATCassetteEncoder {
 	public:
 		typedef vdfastvector<uint32> Bitstream;
+		typedef vdfastvector<uint8> PeakStream;
 
-		ATCassetteEncoder(Bitstream& bs);
+		ATCassetteEncoder(Bitstream& bs, PeakStream& ps, float peakSamplesPerSec);
 
 		void SetBaudRate(uint32 baud);
 		void EncodeTone(bool isMark, float seconds);
@@ -847,19 +970,32 @@ namespace {
 		uint32 Flush();
 
 	protected:
+		void EncodePeak(bool isMark, float seconds);
+
 		Bitstream& mBitstream;
 		uint32	mSamplesPerBitF12;
 		uint32	mSampleAccumF12;
 		uint8	mAccumCounter;
 		uint32	mAccum;
+
+		PeakStream& mPeakStream;
+		float	mPeakSamplesPerSec;
+		float	mPeakSamplesPerBit;
+		float	mPeakValAccum;
+		float	mPeakTimeAccum;
 	};
 
-	ATCassetteEncoder::ATCassetteEncoder(Bitstream& bs)
+	ATCassetteEncoder::ATCassetteEncoder(Bitstream& bs, PeakStream& ps, float peakSamplesPerSec)
 		: mBitstream(bs)
 		, mSamplesPerBitF12(0)
 		, mSampleAccumF12(0)
 		, mAccumCounter(0)
 		, mAccum(0)
+		, mPeakStream(ps)
+		, mPeakSamplesPerSec(peakSamplesPerSec)
+		, mPeakSamplesPerBit()
+		, mPeakValAccum(0)
+		, mPeakTimeAccum(0)
 	{
 		SetBaudRate(600);
 	}
@@ -867,6 +1003,7 @@ namespace {
 	void ATCassetteEncoder::SetBaudRate(uint32 baud) {
 		// [samples/bit] = [samples/second] / [bits/second]
 		mSamplesPerBitF12 = VDRoundToInt(kDataFrequency * 4096.0f / (float)baud);
+		mPeakSamplesPerBit = mPeakSamplesPerSec / (float)baud;
 	}
 
 	void ATCassetteEncoder::EncodeTone(bool isMark, float seconds) {
@@ -883,6 +1020,8 @@ namespace {
 
 			--delaySamples;
 		}
+
+		EncodePeak(isMark, seconds * mPeakSamplesPerSec);
 	}
 
 	void ATCassetteEncoder::EncodeByte(uint8 c) {
@@ -913,6 +1052,8 @@ namespace {
 					if (!mAccumCounter)
 						mBitstream.push_back(mAccum);
 				}
+
+				EncodePeak(addend != 0, mPeakSamplesPerBit);
 			}
 		}
 	}
@@ -926,7 +1067,43 @@ namespace {
 			mBitstream.push_back(mAccum);
 		}
 
+		if (mPeakTimeAccum) {
+			uint8 v = VDClampedRoundFixedToUint8Fast(mPeakValAccum);
+
+			mPeakStream.push_back(0x80 - v);
+			mPeakStream.push_back(0x80 + v);
+
+			mPeakTimeAccum = 0;
+			mPeakValAccum = 0;
+		}
+
 		return outputCount;
+	}
+
+	void ATCassetteEncoder::EncodePeak(bool isMark, float peakSamples) {
+		float peakValue = isMark ? 0.0f : 127.0f / 255.0f;		// this is inverted so mark = silence
+
+		for(;;) {
+			float peakFracTimeLeft = 1.0f - mPeakTimeAccum;
+
+			if (peakFracTimeLeft > peakSamples) {
+				mPeakTimeAccum += peakSamples;
+				mPeakValAccum += peakSamples * peakValue;
+				break;
+			}
+
+			peakSamples -= peakFracTimeLeft;
+			mPeakTimeAccum += peakFracTimeLeft;
+			mPeakValAccum += peakFracTimeLeft * peakValue;
+
+			uint8 v = VDClampedRoundFixedToUint8Fast(mPeakValAccum);
+
+			mPeakStream.push_back(0x80 - v);
+			mPeakStream.push_back(0x80 + v);
+
+			mPeakTimeAccum = 0;
+			mPeakValAccum = 0;
+		}
 	}
 }
 
@@ -935,7 +1112,7 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 	ATCassetteImageDataBlockFSK *pDataBlock = new ATCassetteImageDataBlockFSK;
 	mImageBlocks[0] = pDataBlock;
 
-	ATCassetteEncoder enc(pDataBlock->mData);
+	ATCassetteEncoder enc(pDataBlock->mData, mPeakMaps[0], kPeakSamplesPerSecond);
 	uint32 baudRate = 600;
 	uint32 currentCycle = 0;
 	uint8 buf[128];
@@ -1004,6 +1181,47 @@ void ATCassetteImage::ParseCAS(IVDRandomAccessStream& file) {
 				}
 				break;
 			}
+
+			case VDMAKEFOURCC('f', 's', 'k', ' '):{
+				// length must be even or chunk is malformed
+				if (len & 1)
+					throw MyError("Broken FSK chunk found at offset %lld.", file.Pos() - 8);
+
+				const sint32 gapms = hdr.aux1 + ((uint32)hdr.aux2 << 8);
+
+				if (g_ATLCCasImage.IsEnabled()) {
+					float pos = (float)pDataBlock->mData.size() * 32.0f / (float)kDataFrequency;
+					int mins = (int)(pos / 60.0f);
+					float secs = pos - (float)mins * 60.0f;
+
+					g_ATLCCasImage("FSK block @ %3d:%06.3f: %ums gap, %u data bytes @ %u baud\n", mins, secs, gapms, len, baudRate);
+				}
+
+				enc.EncodeTone(true, (float)gapms / 1000.0f);
+
+				// encode FSK bits
+				bool polarity = false;
+
+				while(len > 0) {
+					uint16 rawPulseWidth;
+					file.Read(&rawPulseWidth, 2);
+
+					float pulseWidthSecs = (float)VDFromLE16(rawPulseWidth) / 10000.0f;
+					enc.EncodeTone(polarity, pulseWidthSecs);
+					polarity = !polarity;
+					len -= 2;
+				}
+
+				break;
+			}
+
+			case VDMAKEFOURCC('p', 'w', 'm', 'c'):{
+				break;
+			}
+
+			case VDMAKEFOURCC('p', 'w', 'm', 'd'):
+			case VDMAKEFOURCC('p', 'w', 'm', 'l'):
+				throw MyError("Cannot load tape: turbo encoded (PWM) data exists in image.");
 		}
 
 		file.Seek(file.Pos() + len);

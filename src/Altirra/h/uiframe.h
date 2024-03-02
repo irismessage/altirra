@@ -26,7 +26,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
 #include <vd2/system/VDString.h>
-#include "ui.h"
+#include "uinativewindow.h"
 
 #ifndef ATWM_FONTSUPDATED
 #define ATWM_FONTSUPDATED (WM_APP+200)
@@ -74,7 +74,7 @@ protected:
 	vdfastvector<HWND> mWindowsToShow;
 };
 
-class ATContainerSplitterBar : public VDShaderEditorBaseWindow {
+class ATContainerSplitterBar : public ATUINativeWindow {
 public:
 	ATContainerSplitterBar();
 	~ATContainerSplitterBar();
@@ -92,13 +92,15 @@ protected:
 	void OnMouseMove(WPARAM wParam, int x, int y);
 	void OnCaptureChanged(HWND hwndNewCapture);
 
+	virtual bool IsTouchHitTestCapable() const;
+
 	ATContainerDockingPane *mpControlledPane;
 	bool	mbVertical;
 	int		mDistanceOffset;
 
 };
 
-class ATDragHandleWindow : public VDShaderEditorBaseWindow {
+class ATDragHandleWindow : public ATUINativeWindow {
 public:
 	ATDragHandleWindow();
 	~ATDragHandleWindow();
@@ -212,7 +214,7 @@ protected:
 	HWND		mhwndTabControl;
 };
 
-class ATContainerWindow : public VDShaderEditorBaseWindow {
+class ATContainerWindow : public ATUINativeWindow {
 public:
 	enum { kTypeID = 'uicw' };
 
@@ -238,6 +240,7 @@ public:
 	int GetCaptionHeight() const { return mCaptionHeight; }
 	HFONT GetCaptionFont() const { return mhfontCaption; }
 	HFONT GetCaptionSymbolFont() const { return mhfontCaptionSymbol; }
+	HFONT GetLabelFont() const { return mhfontLabel; }
 
 	uint32	GetUndockedPaneCount() const;
 	ATFrameWindow *GetUndockedPane(uint32 index) const;
@@ -299,6 +302,7 @@ protected:
 	int mCaptionHeight;
 	HFONT mhfontCaption;
 	HFONT mhfontCaptionSymbol;
+	HFONT mhfontLabel;
 
 	int mMonitorDpi;
 
@@ -308,7 +312,7 @@ protected:
 	UndockedFrames mUndockedFrames;
 };
 
-class ATFrameWindow : public VDShaderEditorBaseWindow {
+class ATFrameWindow : public ATUINativeWindow {
 public:
 	enum { kTypeID = 'uifr' };
 
@@ -382,10 +386,14 @@ protected:
 	VDStringW	mTitle;
 };
 
-class ATUIPane : public VDShaderEditorBaseWindow {
+class ATUIPane : public ATUINativeWindow {
 public:
+	enum { kTypeID = 'uipn' };
+
 	ATUIPane(uint32 paneId, const wchar_t *name);
 	~ATUIPane();
+
+	void *AsInterface(uint32 iid);
 
 	uint32 GetUIPaneId() const { return mPaneId; }
 	const wchar_t *GetUIPaneName() const { return mpName; }

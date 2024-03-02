@@ -49,9 +49,11 @@ void ATCPUProfiler::Start(ATProfileMode mode) {
 
 	mProfileMode = mode;
 	mStartCycleTime = mpCallbacks->CPUGetCycle();
+	mStartUnhaltedCycleTime = mpCallbacks->CPUGetUnhaltedCycle();
 	mLastHistoryCounter = mpCPU->GetHistoryCounter();
 	mTotalSamples = 0;
 	mTotalCycles = 0;
+	mTotalUnhaltedCycles = 0;
 	mbAdjustStackNext = false;
 	mLastS = mpCPU->GetS();
 	mCurrentFrameAddress = mpCPU->GetInsnPC();
@@ -88,6 +90,7 @@ void ATCPUProfiler::End() {
 	}
 
 	mTotalCycles = mpCallbacks->CPUGetCycle() - mStartCycleTime;
+	mTotalUnhaltedCycles = mpCallbacks->CPUGetUnhaltedCycle() - mStartUnhaltedCycleTime;
 
 	if (mProfileMode == kATProfileMode_CallGraph) {
 		for(uint32 i = mSession.mCallGraphRecords.size(); i; --i) {
@@ -112,6 +115,7 @@ void ATCPUProfiler::GetSession(ATProfileSession& session) {
 	session.mCallGraphRecords.clear();
 
 	session.mTotalCycles = mTotalCycles;
+	session.mTotalUnhaltedCycles = mTotalUnhaltedCycles;
 	session.mTotalInsns = mTotalSamples;
 
 	if (mProfileMode == kATProfileMode_CallGraph) {

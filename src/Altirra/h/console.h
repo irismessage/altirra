@@ -57,6 +57,25 @@ void ATGetUIPanes(vdfastvector<ATUIPane *>& panes);
 ATUIPane *ATGetUIPane(uint32 id);
 ATUIPane *ATGetUIPaneByFrame(ATFrameWindow *frame);
 void ATActivateUIPane(uint32 id, bool giveFocus, bool visible = true, uint32 relid = 0, int reldock = 0);
+void ATCloseUIPane(uint32 id);
+
+ATUIPane *ATUIGetActivePane();
+uint32 ATUIGetActivePaneId();
+
+enum ATUIPaneCommandId {
+	kATUIPaneCommandId_DebugRun,
+	kATUIPaneCommandId_DebugToggleBreakpoint,
+	kATUIPaneCommandId_DebugStepOver,
+	kATUIPaneCommandId_DebugStepInto,
+	kATUIPaneCommandId_DebugStepOut
+};
+
+class IATUIDebuggerPane {
+public:
+	enum { kTypeID = 'uidp' };
+
+	virtual bool OnPaneCommand(ATUIPaneCommandId id) = 0;
+};
 
 bool ATRestorePaneLayout(const char *name);
 void ATSavePaneLayout(const char *name);
@@ -78,6 +97,8 @@ enum {
 	kATUIPaneId_IndexMask = 0xFF,
 	kATUIPaneId_MemoryN = 0x100,
 	kATUIPaneId_WatchN = 0x200,
+
+	kATUIPaneId_Source = 0x10000,
 
 	kATUIPaneId_Count
 };

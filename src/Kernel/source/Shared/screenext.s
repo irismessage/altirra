@@ -17,6 +17,17 @@
 ;	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 ;==========================================================================
+ScreenEncodingOffsetTable:
+	dta		$00			;4-bit
+	dta		$10			;2-bit
+	dta		$14			;1-bit
+
+ScreenEncodingTable:
+	dta		$00,$11,$22,$33,$44,$55,$66,$77,$88,$99,$aa,$bb,$cc,$dd,$ee,$ff
+	dta		$00,$55,$aa,$ff
+	dta		$00,$ff
+
+;==========================================================================
 ; ScreenFineScrollDLI
 ;
 ; This DLI routine is used to set the PF1 color to PF2 to kill junk that

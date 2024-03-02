@@ -105,9 +105,9 @@ protected:
 
 	template<class T> void ExchangeState(T& io);
 	void UpdateRegisters(const RegisterChange *changes, int count);
+	void RenderBlank(int x1);
 	void RenderLores(int x1, int x2);
 	void RenderLoresFast(int x1, int x2);
-	void RenderLoresBlank(int x1, int x2);
 	void RenderMode8(int x1, int x2);
 	void RenderMode8Fast(int x1, int x2);
 	void RenderMode8Transition(int x1);

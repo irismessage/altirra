@@ -22,12 +22,20 @@
 
 enum ATFlashType {
 	kATFlashType_Am29F010,	// AMD 128K x 8-bit
+	kATFlashType_Am29F010B,	// AMD 128K x 8-bit
 	kATFlashType_Am29F040,	// AMD 512K x 8-bit
 	kATFlashType_Am29F040B,	// AMD 512K x 8-bit
+	kATFlashType_Am29F016D,	// AMD 2M x 8-bit
+	kATFlashType_Am29F032B,	// AMD 4M x 8-bit
 	kATFlashType_AT29C010A,	// Atmel 128K x 8-bit
 	kATFlashType_AT29C040,	// Atmel 512K x 8-bit
 	kATFlashType_SST39SF040,// SST 512K x 8-bit
 	kATFlashType_A29040,	// Amic 512K x 8-bit
+	kATFlashType_S29GL01P,	// Spansion 128M x 8-bit, 90nm (byte mode)
+	kATFlashType_S29GL512P,	// Spansion 64M x 8-bit, 90nm (byte mode)
+	kATFlashType_S29GL256P,	// Spansion 32M x 8-bit, 90nm (byte mode)
+	kATFlashType_BM29F040,	// BRIGHT 512K x 8-bit
+	kATFlashType_M29F010B 	// STMicroelectronics 128K x 8-bit (then Numonyx, now Micron)
 };
 
 class ATFlashEmulator : public IATSchedulerCallback {
@@ -74,9 +82,15 @@ protected:
 	bool mbDirty;
 	bool mbWriteActivity;
 	bool mbAtmelSDP;
+	bool mbA11Unlock;
+	bool mbA12iUnlock;
 	uint32	mSectorEraseTimeoutCycles;
 	uint32	mWriteSector;
 	ATEvent *mpWriteEvent;
+
+	uint8 mWriteBufferData[32];
+	uint8 mPendingWriteCount;
+	uint32 mPendingWriteAddress;
 };
 
 #endif	// f_AT_FLASH_H

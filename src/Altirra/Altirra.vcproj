@@ -61,7 +61,7 @@
 				Name="VCCLCompilerTool"
 				Optimization="0"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500"
+				PreprocessorDefinitions="WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500;_SECURE_SCL=0"
 				MinimalRebuild="true"
 				BasicRuntimeChecks="1"
 				RuntimeLibrary="1"
@@ -86,7 +86,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				LinkLibraryDependencies="false"
-				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib atnetwork.lib atnetworksockets.lib"
 				LinkIncremental="2"
 				AdditionalLibraryDirectories="..\..\lib\$(ConfigurationName)"
 				GenerateDebugInformation="true"
@@ -152,7 +152,7 @@
 				Name="VCCLCompilerTool"
 				Optimization="0"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500"
+				PreprocessorDefinitions="WIN32;_DEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500;_SECURE_SCL=0"
 				MinimalRebuild="true"
 				BasicRuntimeChecks="1"
 				RuntimeLibrary="1"
@@ -177,7 +177,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				LinkLibraryDependencies="false"
-				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib atnetwork.lib atnetworksockets.lib"
 				OutputFile="$(OutDir)\Altirra64.exe"
 				LinkIncremental="2"
 				AdditionalLibraryDirectories="..\..\lib\$(ConfigurationName)AMD64"
@@ -247,7 +247,7 @@
 				Optimization="3"
 				InlineFunctionExpansion="2"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500"
+				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500;_SECURE_SCL=0"
 				RuntimeLibrary="0"
 				BufferSecurityCheck="false"
 				FloatingPointModel="2"
@@ -271,7 +271,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				LinkLibraryDependencies="false"
-				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib atnetwork.lib atnetworksockets.lib"
 				LinkIncremental="1"
 				AdditionalLibraryDirectories="..\..\lib\$(ConfigurationName)"
 				GenerateDebugInformation="true"
@@ -341,7 +341,7 @@
 				Optimization="3"
 				InlineFunctionExpansion="2"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\$(ConfigurationName)\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500"
+				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500;_SECURE_SCL=0"
 				RuntimeLibrary="0"
 				BufferSecurityCheck="false"
 				FloatingPointModel="2"
@@ -365,7 +365,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				LinkLibraryDependencies="false"
-				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib atnetwork.lib atnetworksockets.lib"
 				OutputFile="$(OutDir)\Altirra64.exe"
 				LinkIncremental="1"
 				AdditionalLibraryDirectories="..\..\lib\$(ConfigurationName)AMD64"
@@ -439,7 +439,7 @@
 				Optimization="3"
 				InlineFunctionExpansion="2"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\Release\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500"
+				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500;_SECURE_SCL=0"
 				RuntimeLibrary="0"
 				BufferSecurityCheck="false"
 				FloatingPointModel="2"
@@ -463,13 +463,13 @@
 			<Tool
 				Name="VCLinkerTool"
 				LinkLibraryDependencies="false"
-				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib atnetwork.lib atnetworksockets.lib"
 				LinkIncremental="1"
 				AdditionalLibraryDirectories="..\..\lib\Profile;..\..\lib\Release"
 				GenerateDebugInformation="true"
 				SubSystem="2"
 				OptimizeReferences="2"
-				EnableCOMDATFolding="2"
+				EnableCOMDATFolding="1"
 				TargetMachine="1"
 			/>
 			<Tool
@@ -533,7 +533,7 @@
 				Optimization="3"
 				InlineFunctionExpansion="2"
 				AdditionalIncludeDirectories="h;res;..\h;..\..\obj\Release\HLEKernel;autobuild;autobuild_default"
-				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500"
+				PreprocessorDefinitions="WIN32;NDEBUG;_CONSOLE;NOMINMAX;WIN32_LEAN_AND_MEAN;VC_EXTRALEAN;_CRT_SECURE_NO_WARNINGS;WINVER=0x0500;_WIN32_WINNT=0x0500;_WIN32_IE=0x0500;_SECURE_SCL=0"
 				RuntimeLibrary="0"
 				BufferSecurityCheck="false"
 				FloatingPointModel="2"
@@ -557,7 +557,7 @@
 			<Tool
 				Name="VCLinkerTool"
 				LinkLibraryDependencies="false"
-				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib"
+				AdditionalDependencies="system.lib riza.lib dita.lib kasumi.lib tessa.lib vddisplay.lib atui.lib atnetwork.lib atnetworksockets.lib"
 				OutputFile="$(OutDir)\Altirra64.exe"
 				LinkIncremental="1"
 				AdditionalLibraryDirectories="..\..\lib\ReleaseAMD64"
@@ -565,7 +565,7 @@
 				GenerateDebugInformation="true"
 				SubSystem="2"
 				OptimizeReferences="2"
-				EnableCOMDATFolding="2"
+				EnableCOMDATFolding="1"
 				TargetMachine="17"
 			/>
 			<Tool
@@ -641,6 +641,10 @@
 			</File>
 			<File
 				RelativePath=".\source\artifacting_pal_sse2_intrin.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\artifacting_sse2_intrin.cpp"
 				>
 			</File>
 			<File
@@ -740,6 +744,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\cs8900a.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\debugdisplay.cpp"
 				>
 			</File>
@@ -788,6 +796,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\diskfssdx2util.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\diskimage.cpp"
 				>
 			</File>
@@ -797,6 +809,14 @@
 			</File>
 			<File
 				RelativePath=".\source\diskvirtimagesdfs.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\dragoncart.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\eeprom.cpp"
 				>
 			</File>
 			<File
@@ -1104,6 +1124,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\source\uidragoncart.cpp"
+				>
+			</File>
+			<File
 				RelativePath=".\source\uidrawingutils.cpp"
 				>
 			</File>
@@ -1189,6 +1213,10 @@
 			</File>
 			<File
 				RelativePath=".\source\uimrulist.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\source\uinativewindow.cpp"
 				>
 			</File>
 			<File
@@ -1414,6 +1442,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\cs8900a.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\debugdisplay.h"
 				>
 			</File>
@@ -1450,7 +1482,19 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\diskfssdx2util.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\diskimage.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\dragoncart.h"
+				>
+			</File>
+			<File
+				RelativePath=".\h\eeprom.h"
 				>
 			</File>
 			<File
@@ -1622,11 +1666,11 @@
 				>
 			</File>
 			<File
-				RelativePath=".\res\resource.h"
+				RelativePath="..\ATUI\res\resource.h"
 				>
 			</File>
 			<File
-				RelativePath="..\ATUI\res\resource.h"
+				RelativePath=".\res\resource.h"
 				>
 			</File>
 			<File
@@ -1778,6 +1822,10 @@
 				>
 			</File>
 			<File
+				RelativePath=".\h\uinativewindow.h"
+				>
+			</File>
+			<File
 				RelativePath=".\h\uionscreenkeyboard.h"
 				>
 			</File>
@@ -1856,6 +1904,22 @@
 			UniqueIdentifier="{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}"
 			>
 			<File
+				RelativePath="..\..\out\debug\850handler.bin"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\release\850handler.bin"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\debug\850relocator.bin"
+				>
+			</File>
+			<File
+				RelativePath="..\..\out\release\850relocator.bin"
+				>
+			</File>
+			<File
 				RelativePath=".\res\about.txt"
 				>
 			</File>
@@ -1916,7 +1980,7 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\atdiskloader128.bin"
+				RelativePath="..\..\out\release\atbasic.bin"
 				>
 			</File>
 			<File
@@ -1924,15 +1988,19 @@
 				>
 			</File>
 			<File
+				RelativePath="..\..\out\debug\atdiskloader128.bin"
+				>
+			</File>
+			<File
 				RelativePath="..\ATUI\res\atui.rc"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\basic.rom"
+				RelativePath="..\..\out\release\basic.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\basic.rom"
+				RelativePath="..\..\out\debug\basic.rom"
 				>
 			</File>
 			<File
@@ -1968,11 +2036,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\kernel.rom"
+				RelativePath="..\..\out\release\kernel.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\kernel.rom"
+				RelativePath="..\..\out\debug\kernel.rom"
 				>
 			</File>
 			<File
@@ -1988,11 +2056,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Release\nocartridge.rom"
+				RelativePath="..\..\out\Debug\nocartridge.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\Debug\nocartridge.rom"
+				RelativePath="..\..\out\Release\nocartridge.rom"
 				>
 			</File>
 			<File
@@ -2004,11 +2072,11 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\debug\nohdbios.rom"
+				RelativePath="..\..\out\release\nohdbios.rom"
 				>
 			</File>
 			<File
-				RelativePath="..\..\out\release\nohdbios.rom"
+				RelativePath="..\..\out\debug\nohdbios.rom"
 				>
 			</File>
 			<File

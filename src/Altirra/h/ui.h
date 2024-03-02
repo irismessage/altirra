@@ -18,57 +18,17 @@
 #ifndef UI_H
 #define UI_H
 
-#include <windows.h>
-#include <vd2/system/unknown.h>
-
-class VDShaderEditorBaseWindow : public IVDUnknown {
-public:
-	VDShaderEditorBaseWindow();
-	virtual ~VDShaderEditorBaseWindow();
-
-	static ATOM Register();
-	static ATOM RegisterCustom(const WNDCLASS& wc);
-	static void Unregister();
-
-	int AddRef();
-	int Release();
-	void *AsInterface(uint32 iid);
-
-	HWND GetHandleW32() const { return mhwnd; }
-
-	static LRESULT CALLBACK StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-	virtual LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) = 0;
-
-protected:
-	int mRefCount;
-	HWND mhwnd;
-
-	static ATOM sWndClass;
-	static ATOM sWndClassMain;
-};
-
-class VDShaderEditorSplitterBar : public VDShaderEditorBaseWindow {
-public:
-	VDShaderEditorSplitterBar();
-	~VDShaderEditorSplitterBar();
-
-protected:
-	static LRESULT StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
-	void OnPaint();
-	void OnSize();
-	void OnLButtonDown(WPARAM wParam, int x, int y);
-	void OnLButtonUp(WPARAM wParam, int x, int y);
-	void OnMouseMove(WPARAM wParam, int x, int y);
-	void OnCaptureChanged(HWND hwndNewCapture);
-
-	void DrawMovingSplitter();
-	void ConvertLocationToFraction();
-	void ConvertFractionToLocation();
-
-	float	mFraction;
-	RECT	mSplitter;
-	int		mDragOffset;
+enum ATUITouchMode {
+	kATUITouchMode_Default,
+	kATUITouchMode_Immediate,
+	kATUITouchMode_Direct,
+	kATUITouchMode_VerticalPan,
+	kATUITouchMode_2DPan,
+	kATUITouchMode_2DPanSmooth,
+	kATUITouchMode_MultiTouch,
+	kATUITouchMode_MultiTouchImmediate,
+	kATUITouchMode_Dynamic,
+	kATUITouchMode_MultiTouchDynamic
 };
 
 #endif

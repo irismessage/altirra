@@ -412,6 +412,7 @@ ATAudioFilter::ATAudioFilter()
 	: mHiPassAccum(0)
 {
 	SetScale(1.0f);
+	SetActiveMode(true);
 
 	// Set up a FIR low pass filter, Blackman window, 15KHz cutoff (63920Hz sampling rate)
 	const float fc = 15000.0f / 63920.0f;
@@ -448,24 +449,34 @@ void ATAudioFilter::SetScale(float scale) {
 	mScale = scale * (1.0f / (60.0f * 28.0f));
 }
 
-void ATAudioFilter::PreFilter(float * VDRESTRICT dst, uint32 count) {
-//	const float kHiPass = 0.0055f;
-	const float kHiPass = 0.0001f;
+void ATAudioFilter::SetActiveMode(bool active) {
+	if (active)
+		mHiCoeff = 0.003f;
+	else
+		mHiCoeff = 0.0001f;
+}
 
+void ATAudioFilter::PreFilter(float * VDRESTRICT dst, uint32 count) {
 	const float scale = mScale;
+	const float hiCoeff = mHiCoeff;
 	float hiAccum = mHiPassAccum;
 
 	do {
 		float v0 = *dst;
 		float v1 = v0 - hiAccum;
-		hiAccum += v1 * kHiPass;
+		hiAccum += v1 * hiCoeff;
 
 		*dst++ = v1 * scale;
 	} while(--count);
+
+	// prevent denormals
+	if (fabsf(hiAccum) < 1e-20f)
+		hiAccum = 0;
 
 	mHiPassAccum = hiAccum;
 }
 
 void ATAudioFilter::Filter(float *dst, const float *src, uint32 count) {
+	memcpy(dst, src, count*sizeof(float));
 	ATFilterComputeSymmetricFIR_8_32F(dst, src, count, mLoPassCoeffs);
 }

@@ -55,6 +55,7 @@ struct ATProfileSession {
 	CallGraphRecords mCallGraphRecords;
 
 	uint32	mTotalCycles;
+	uint32	mTotalUnhaltedCycles;
 	uint32	mTotalInsns;
 };
 
@@ -96,9 +97,11 @@ protected:
 
 	ATProfileMode mProfileMode;
 	uint32 mStartCycleTime;
+	uint32 mStartUnhaltedCycleTime;
 	uint32 mLastHistoryCounter;
 	uint32 mTotalSamples;
 	uint32 mTotalCycles;
+	uint32 mTotalUnhaltedCycles;
 	bool mbAdjustStackNext;
 	uint8 mLastS;
 	sint32	mCurrentFrameAddress;

@@ -441,6 +441,21 @@ public:
 		return append(str.mpBegin + pos, str.mpBegin + pos + n);
 	}
 
+	this_type& append(size_type n, value_type c) {
+		if (n) {
+			size_type current_size = (size_type)(mpEnd - mpBegin);
+			size_type current_capacity = (size_type)(mpEOS - mpBegin);
+
+			if (current_capacity - current_size < n)
+				reserve_amortized_slow(n, current_size, current_capacity);
+
+			memset(mpBegin + current_size, c, n*sizeof(value_type));
+			mpEnd += n;
+			*mpEnd = 0;
+		}
+		return *this;
+	}
+
 	this_type& append(const value_type *s, size_type n) {
 		return append(s, s+n);
 	}

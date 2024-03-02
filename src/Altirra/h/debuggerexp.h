@@ -54,7 +54,8 @@ enum ATDebugExpNodeType {
 	kATDebugExpNodeType_XBankReg,
 	kATDebugExpNodeType_XBankCPU,
 	kATDebugExpNodeType_XBankANTIC,
-	kATDebugExpNodeType_AddrSpace
+	kATDebugExpNodeType_AddrSpace,
+	kATDebugExpNodeType_Ternary
 };
 
 struct ATDebugExpEvalContext {
@@ -92,11 +93,33 @@ public:
 	/// i.e. a request to capture GT will match both (type > const) and (const < type).
 	virtual bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) { return false; }
 
+	/// Returns a new expression node representing an equivalent subexpression that is
+	/// better than the existing node.
+	///
+	/// Optimize() is expected to be auto-propagating -- a node should optimize its
+	/// arguments first.
+	///
+	/// If false is returned, no optimization was possible and no new node is returned.
+	/// If true is returned, a new optimized node is returned, and the 'this' node should
+	/// now be destroyed.
 	virtual bool Optimize(ATDebugExpNode **result) { return false; }
+
+	/// Returns a new expression node representing the logical inversion of the existing
+	/// node that is at least as good as the existing node. It is OK for this to return
+	/// a subexpression of equal complexity. Invert operators return their argument;
+	/// relational operators return their inverse.
+	///
+	/// If false is returned, no optimization was possible and no new node is returned.
+	/// If true is returned, a new optimized node is returned, and the 'this' node should
+	/// now be destroyed.
 	virtual bool OptimizeInvert(ATDebugExpNode **result) { return false; }
 
 	virtual bool IsAddress() const { return false; }
 
+	/// Returns true if OptimizeInvert() can produce a result that is at least no
+	/// worse, but may be the same. This is needed in binary or trinary ops which need
+	/// to know that both subexpressions can be advantageously inverted before doing
+	/// either of them.
 	virtual bool CanOptimizeInvert() const { return false; }
 
 	virtual void ToString(VDStringA& s) {

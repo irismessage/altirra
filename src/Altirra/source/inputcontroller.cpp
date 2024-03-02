@@ -698,7 +698,7 @@ void ATTabletController::ApplyImpulse(uint32 trigger, int ds) {
 }
 
 void ATTabletController::AddDelta(int axis, int delta) {
-	int pos = mRawPos[axis];
+	int pos = mRawPos[axis] + delta;
 
 	SetPos(axis, pos);
 }

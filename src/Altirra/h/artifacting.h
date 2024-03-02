@@ -36,8 +36,8 @@ public:
 	};
 
 	void BeginFrame(bool pal, bool chromaArtifact, bool chromaArtifactHi, bool blend);
-	void Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
-	void Artifact32(uint32 y, uint32 *dst, uint32 width);
+	void Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool temporaryUpdate);
+	void Artifact32(uint32 y, uint32 *dst, uint32 width, bool temporaryUpdate);
 	void InterpolateScanlines(uint32 *dst, const uint32 *src1, const uint32 *src2, uint32 n);
 
 protected:
@@ -48,7 +48,8 @@ protected:
 	void ArtifactNTSCHi(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
 	void ArtifactPALHi(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool oddline);
 	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N]);
-	void BlendExchange(uint32 *dst, uint32 *blendDst, uint32 n);
+	void Blend(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n);
+	void BlendExchange(uint32 *VDRESTRICT dst, uint32 *VDRESTRICT blendDst, uint32 n);
 
 	void RecomputeNTSCTables(const ATColorParams& params);
 	void RecomputePALTables(const ATColorParams& params);

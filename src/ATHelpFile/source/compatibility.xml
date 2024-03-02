@@ -18,10 +18,12 @@
 
   <!-- *************************************************** -->
 
+  <!--
   <h2>Compatibility issues</h2>
   <p>
     Many types of compatibility issues are common enough to occur in multiple programs:
   </p>
+  -->
   <compat-tags>
     <compat-tag id="disktiming" name="Requires disk SIO patch off (timing)">
       <inline-text>
@@ -79,6 +81,15 @@
       </desc>
     </compat-tag>
 
+    <compat-tag id="requires-ataribasic" name="Requires Atari BASIC">
+      <desc>
+        <p>
+          Program requires the original Atari BASIC to run, as it directly uses code or data from
+          that version.
+        </p>
+      </desc>
+    </compat-tag>
+    
     <compat-tag id="minor-bug" name="Minor program bug">
       <desc>
         <p>
@@ -198,6 +209,22 @@
     <!-- *************************************************** -->
 
     <compat-category name="Games">
+      <compat-title name="63-on-1 cartridge">
+        <compat-issue id="requires-xlos">
+          <p>
+            Requires XL/XE OS as it directly hardcodes vector entry points.
+          </p>
+        </compat-issue>
+      </compat-title>
+      
+      <compat-title name="Adebar">
+        <compat-issue id="requires-xlos">
+          <p>
+            Jumps directly into the display code at $F1A4 and needs the XL/XE OS.
+          </p>
+        </compat-issue>
+      </compat-title>
+      
       <compat-title name="Alien Garden">
         <compat-issue id="ctia">
           <p>
@@ -223,9 +250,11 @@
       </compat-title>
 
       <compat-title name="Bounty Bob Strikes Back!">
-        <p>
-          Some versions require <b>exactly</b> 64K of RAM to work.
-        </p>
+        <compat-issue desc="Hardware compatibility issue">
+          <p>
+            Some versions require <b>exactly</b> 64K of RAM to work.
+          </p>
+        </compat-issue>
         <compat-issue id="exphw">
           <p>
             Joystick control will not work if Ultimate1MB hardware is present. This is because BBSB! reads
@@ -235,12 +264,14 @@
       </compat-title>
 
       <compat-title name="Bubble Bobble (demo)">
-        <p>
-          Some versions of this homebrew game copy the kernel into RAM, write over part of the SIO
-          routine, and then invoke the corrupted SIO routine. This will only work in some emulators
-          when SIO patch is enabled, bypassing the broken code; it does not work in Altirra because
-          SIO hooks are not allowed to activate from code in RAM.
-        </p>
+        <compat-issue id="major-bug">
+          <p>
+            Some versions of this homebrew game copy the kernel into RAM, write over part of the SIO
+            routine, and then invoke the corrupted SIO routine. This will only work in some emulators
+            when SIO patch is enabled, bypassing the broken code; it does not work in Altirra because
+            SIO hooks are not allowed to activate from code in RAM.
+          </p>
+        </compat-issue>
       </compat-title>
 
       <compat-title name="Castle Wolfenstein">
@@ -278,9 +309,11 @@
       </compat-title>
 
       <compat-title name="DARG">
-        <p>
-          The clock runs too quickly if accelerated floating-point is enabled.
-        </p>
+        <compat-issue desc="Acceleration issue">
+          <p>
+            The clock runs too quickly if accelerated floating-point is enabled.
+          </p>
+        </compat-issue>
       </compat-title>
 
       <compat-title name="E.T. Phone Home! (cartridge)">
@@ -296,7 +329,34 @@
       <compat-title name="Fort Apocalypse">
         <compat-issue id="disktiming" />
       </compat-title>
+
+      <compat-title name="Formula 1 Racing">
+        <compat-issue id="requires-ataribasic">
+          <p>
+            Has a USR() routine that jumps directly into the Atari BASIC ROM, and therefore won't work
+            with an alternate BASIC.
+          </p>
+        </compat-issue>
+      </compat-title>
       
+      <compat-title name="Ghost Hunter">
+        <compat-issue id="major-bug">
+          <p>
+            Relies on the location of <tt>RUNAD+1</tt> to be <tt>$00</tt> during playfield generation.
+            Some versions of this game are packaged as an executable such that the run address is
+            set during load, and since it is not cleared afterward the playfield breaks.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="G.I.L.P.">
+        <compat-issue id="illinsn">
+          <p>
+            Requires 6502 CPU with illegal instructions enabled; will crash on a 65C816.
+          </p>
+        </compat-issue>
+      </compat-title>
+
       <compat-title name="Gruds in Space">
         <compat-issue id="disktiming"/>
       </compat-title>
@@ -372,6 +432,14 @@
         </compat-issue>
       </compat-title>
 
+      <compat-title name="Protector II">
+        <compat-issue id="requires-osb">
+          <p>
+            Requires OS-B, as it directly pulls the vector table from the OS ROM.
+          </p>
+        </compat-issue>
+      </compat-title>
+      
       <compat-title name="The Tail of Beta Lyrae">
         <compat-issue id="diskrw">
           <p>
@@ -382,7 +450,19 @@
           </p>
         </compat-issue>
       </compat-title>
-      
+
+      <compat-title name="TL Cars (128)">
+        <compat-issue desc="Requires XL Hardware">
+          <p>
+            Original version has an unusual problem where its loader will fail with hardware that
+            has a floating data bus, where varying data is returned from the $D1xx region. In
+            Altirra, this is emulated when XE hardware is selected. XL hardware has pull-ups on
+            the data bus that cause $FF to be consistently returned from those addresses and will
+            work with this version.
+          </p>
+        </compat-issue>
+      </compat-title>
+
       <compat-title name="Transylvania">
         <compat-issue id="disktiming"/>
       </compat-title>
@@ -409,19 +489,23 @@
 
     <compat-category name="Applications">
       <compat-title name="FoReM XL/XE/XE Pro">
-        <p>
-          FoReM relies on particular short response values for CONNECT messages from the modem.
-          These were not standardized for higher baud rates. Altirra's emulated modem returns the Conexant
-          code for 9600 baud (12), while FoReM by default expects the value returned by U.S. Robotics
-          modems (13). Either lower the connection speed limit to 2400 baud or follow the directions in the FXL/FXE
-          documentation to change the expected code.
-        </p>
-        <p>
-          The clock in FoReM XL/XE also tends to lose a couple of seconds per day because it is
-          written to expect exactly 60 or 50 frames per second, whereas the actual Atari runs slightly
-          slower than that (59.92 fps / 49.87 fps). A workaround is to adjust the emulator speed to
-          50/60Hz in Speed Options.
-        </p>
+        <compat-issue desc="Hardware compatibility issue">
+          <p>
+            FoReM relies on particular short response values for CONNECT messages from the modem.
+            These were not standardized for higher baud rates. Altirra's emulated modem returns the Conexant
+            code for 9600 baud (12), while FoReM by default expects the value returned by U.S. Robotics
+            modems (13). Either lower the connection speed limit to 2400 baud or follow the directions in the FXL/FXE
+            documentation to change the expected code.
+          </p>
+        </compat-issue>
+        <compat-issue id="minor-bug">
+          <p>
+            The clock in FoReM XL/XE also tends to lose a couple of seconds per day because it is
+            written to expect exactly 60 or 50 frames per second, whereas the actual Atari runs slightly
+            slower than that (59.92 fps / 49.87 fps). A workaround is to adjust the emulator speed to
+            50/60Hz in Speed Options.
+          </p>
+        </compat-issue>
       </compat-title>
 
       <compat-title name="Ice-T XE 2.72">
@@ -443,6 +527,14 @@
           <p>
             Jumps directly into SIO at $E959 instead of using the SIOV vector, and so will fail unless
             the OS-B or XL/XE OS is used.
+          </p>
+        </compat-issue>
+      </compat-title>
+
+      <compat-title name="Text Wizard V1.3">
+        <compat-issue id="requires-osb">
+          <p>
+            Requires OS-B as it has illegal calls into the screen editor code.
           </p>
         </compat-issue>
       </compat-title>
@@ -481,34 +573,38 @@
       </compat-title>
 
       <compat-title name="SpartaDOS 3.2">
-        <p>
-          While the emulator's H: device can be accessed by SpartaDOS 3, there is a bug in its COPY
-          command that causes it to malfunction when copying from H: to a destination path:
-        </p>
-        <blockquote>
-          <tt>D1:>COPY H:FILE.BIN D2:</tt>
-        </blockquote>
-        <p>
-          This fails with <tt>163 Illegal wildcard in name</tt> because COPY attempts to create a file
-          called <tt>*.*</tt> on the destination drive. It works for copies from the regular <tt>D:</tt>
-          device because there it issues a directory search to get the source name. The workaround is
-          to specify a full destination filename:
-        </p>
-        <blockquote>
-          <tt>D1:>COPY H:FILE.BIN D2:FILE.BIN</tt>
-        </blockquote>
+        <compat-issue desc="Emulation feature issue">
+          <p>
+            While the emulator's H: device can be accessed by SpartaDOS 3, there is a bug in its COPY
+            command that causes it to malfunction when copying from H: to a destination path:
+          </p>
+          <blockquote>
+            <tt>D1:>COPY H:FILE.BIN D2:</tt>
+          </blockquote>
+          <p>
+            This fails with <tt>163 Illegal wildcard in name</tt> because COPY attempts to create a file
+            called <tt>*.*</tt> on the destination drive. It works for copies from the regular <tt>D:</tt>
+            device because there it issues a directory search to get the source name. The workaround is
+            to specify a full destination filename:
+          </p>
+          <blockquote>
+            <tt>D1:>COPY H:FILE.BIN D2:FILE.BIN</tt>
+          </blockquote>
+        </compat-issue>
       </compat-title>
 
       <compat-title name="SpartaDOS X">
-        <p>
-          SpartaDOS X uses a polling loop for SIO transfers, so regular burst I/O mode does not work
-          with it. Use the burst (polled) mode instead.
-        </p>
-        <p>
-          The H: device is not supported at all by the SDX kernel, so specific drivers or tools must
-          be used to copy to and from the emulator devices. <a href="pclink.html">PCLink</a> is the
-          recommended alternative for SDX 4.44 and above.
-        </p>
+        <compat-issue desc="Emulation feature issue">
+          <p>
+            SpartaDOS X uses a polling loop for SIO transfers, so regular burst I/O mode does not work
+            with it. Use the burst (polled) mode instead.
+          </p>
+          <p>
+            The H: device is not supported at all by the SDX kernel, so specific drivers or tools must
+            be used to copy to and from the emulator devices. <a href="pclink.html">PCLink</a> is the
+            recommended alternative for SDX 4.44 and above.
+          </p>
+        </compat-issue>
       </compat-title>
     </compat-category>
   </compat-list>

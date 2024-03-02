@@ -631,6 +631,11 @@ bool VDDeletePathAutodetect(const wchar_t *path) {
 	return VDRemoveFile(path);
 }
 
+void VDRemoveFileEx(const wchar_t *path) {
+	if (!VDRemoveFile(path))
+		throw MyWin32Error("Cannot delete \"%ls\": %%s", GetLastError(), path);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void VDMoveFile(const wchar_t *srcPath, const wchar_t *dstPath) {

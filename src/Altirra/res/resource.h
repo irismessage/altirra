@@ -4,7 +4,6 @@
 //
 #define IDC_NEXT                        3
 #define IDR_DEBUGGER_MENU               102
-#define IDR_DEBUGGER_ACCEL              103
 #define IDD_CPU_OPTIONS                 104
 #define IDD_DISK_DRIVES                 105
 #define IDD_CREATE_DISK                 106
@@ -81,6 +80,10 @@
 #define IDR_DISK_CONTEXT_MENU           177
 #define IDD_OPTIONS_FLASH               178
 #define IDD_DEBUG_CHOOSE_FONT           179
+#define IDD_DRAGONCART                  181
+#define IDR_PRINTER_CONTEXT_MENU        182
+#define IDR_850RELOCATOR                183
+#define IDR_850HANDLER                  184
 #define IDI_DISK                        500
 #define IDI_TAPE                        501
 #define IDI_XEX                         502
@@ -152,9 +155,12 @@
 #define IDC_CPUMODEL_65C816_14MHZ       1024
 #define IDC_SAVEAS3                     1025
 #define IDC_CLONE                       1025
+#define IDC_CPUMODEL_65C816_17MHZ       1025
 #define IDC_SAVEAS4                     1026
 #define IDC_SOURCE                      1026
 #define IDC_PRESETS                     1026
+#define IDC_CPUMODEL_65C816_14MHZ3      1026
+#define IDC_CPUMODEL_65C816_21MHZ       1026
 #define IDC_WRITEMODE4                  1027
 #define IDC_CONTROLLER                  1027
 #define IDC_MODE                        1027
@@ -394,7 +400,10 @@
 #define IDC_COMBO1                      1198
 #define IDC_FILESYSTEM                  1198
 #define IDC_SIC_FLASH                   1198
+#define IDC_TERMINAL_TYPE               1198
+#define IDC_LAYOUT                      1198
 #define IDC_TYPE_FIXED                  1199
+#define IDC_U1MB_FLASH                  1199
 #define IDC_TYPE_DYNAMIC                1200
 #define IDC_SIZE_SECTORS                1201
 #define IDC_SIZE_MB                     1202
@@ -411,15 +420,23 @@
 #define IDC_FONT_LIST                   1215
 #define IDC_CHECK1                      1217
 #define IDC_ENCODE_ALL_FRAMES           1217
+#define IDC_ACCESS_NONE                 1218
+#define IDC_ACCESS_HOSTONLY             1219
+#define IDC_ACCESS_NAT                  1220
+#define IDC_NETADDR                     1221
+#define IDC_NETMASK                     1222
+#define IDC_STATIC_NETADDR              1223
+#define IDC_STATIC_NETMASK              1224
+#define IDC_STATIC_BRIDGING             1225
+#define IDC_STATIC_TERMINAL_TYPE        1227
+#define IDC_COMBO2                      1228
+#define IDC_SIOLEVEL                    1228
+#define IDC_PEAK_IMAGE                  1229
+#define IDC_EDIT1                       1230
 #define ID_FILTERMODE_POINT             40023
 #define ID_FILTERMODE_BILINEAR          40024
 #define ID_FILTERMODE_BICUBIC           40025
-#define ID_DEBUG_TOGGLEBREAKPOINT       40051
-#define ID_DEBUG_STEPINTO               40052
-#define ID_DEBUG_STEPOUT                40053
-#define ID_DEBUG_STEPOVER               40054
 #define ID_DEBUG_RUN                    40055
-#define ID_DEBUG_BREAK                  40056
 #define ID_CONTEXT_GOTODISASSEMBLY      40103
 #define ID_CONTEXT_SETNEXTSTATEMENT     40104
 #define ID_CONTEXT_SHOWNEXTSTATEMENT    40138
@@ -481,6 +498,9 @@
 #define ID_CONTEXT_SAVEDISK             40492
 #define ID_CONTEXT_EXTRACTBOOTSECTORSFORVIRTUALDOS2DISK 40493
 #define ID_CONTEXT_EXTRACTBOOTSECTORS   40494
+#define ID_MENU_CLEAR                   40495
+#define ID_CONTEXT_CLEAR                40496
+#define ID_HISTORYCONTEXTMENU_SHOWLABELNAMESPACES 40497
 #define ID_INPUT_PORT1_NONE             45000
 #define ID_INPUT_PORT2_NONE             45100
 #define ID_INPUT_PORT3_NONE             45200
@@ -493,9 +513,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
-#define _APS_NEXT_RESOURCE_VALUE        181
-#define _APS_NEXT_COMMAND_VALUE         40495
-#define _APS_NEXT_CONTROL_VALUE         1218
+#define _APS_NEXT_RESOURCE_VALUE        185
+#define _APS_NEXT_COMMAND_VALUE         40498
+#define _APS_NEXT_CONTROL_VALUE         1231
 #define _APS_NEXT_SYMED_VALUE           107
 #endif
 #endif

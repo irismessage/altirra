@@ -53,7 +53,7 @@
 	ldx		#0
 	lda		ddevic
 	cmp		#$5f
-	sne:ldx	#$ff
+	sne:dex
 	stx		casflg
 
 	;init POKEY hardware
@@ -87,8 +87,11 @@ retry_command_2:
 
 	;send command frame
 	mva		#0			nocksm
-	mwa		#cdevic		bufrlo
-	mwa		#caux2+1	bfenlo
+	lda		#>cdevic
+	sta		bufrhi
+	sta		bfenhi
+	mva		#<cdevic	bufrlo
+	mva		#<caux2+1	bfenlo
 	jsr		SIOSend
 	bmi		xit
 		
@@ -121,14 +124,15 @@ ackOK:
 no_send_frame:
 	
 	;setup 90 frame delay for complete
-	mva		#$ff		timflg
+	;setup for receiving complete
+	ldx		#$ff
+	stx		timflg
+	stx		nocksm
+	inx					;X=0 (>90)
 	lda		#1
-	ldx		#>90
-	ldy		#<90
+	ldy		#90
 	jsr		setvbv
 
-	;setup for receiving complete
-	mva		#$ff		nocksm
 	mwa		#temp		bufrlo
 	jsr		SIOReceive
 	bmi		transfer_error
@@ -203,16 +207,22 @@ no_receive_frame:
 ;==============================================================================
 .proc SIOWaitForACK
 	;setup 2 frame delay for ack
-	mva		#$ff		timflg
+	ldx		#$ff
+	stx		timflg
+	stx		nocksm
+	inx					;X=0
 	lda		#1
-	ldx		#>2
-	ldy		#<2
+	ldy		#2
+	sty		bufrhi		;>temp = 2
+	sty		bfenhi		;>temp+1 = 2
 	jsr		setvbv
 
 	;setup for receiving ACK
-	mwa		#temp		bufrlo
-	mwa		#temp+1		bfenlo
-	mva		#$ff		nocksm
+	ldx		#<temp
+	stx		bufrlo
+	inx
+	stx		bfenlo		;#<[temp+1]
+
 	jsr		SIOReceive
 	
 	;check if we had a receive error

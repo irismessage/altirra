@@ -20,6 +20,7 @@
 
 extern int cmd_lzpack(int argc, const char *const *argv);
 extern int cmd_lzunpack(int argc, const char *const *argv);
+extern int cmd_makereloc(int argc, const char *const *argv);
 
 void print_usage();
 
@@ -37,6 +38,8 @@ int main(int argc, const char *const *argv) {
 		return cmd_lzpack(argc, argv);
 	else if (!strcmp(cmdname, "lzunpack"))
 		return cmd_lzunpack(argc, argv);
+	else if (!strcmp(cmdname, "makereloc"))
+		return cmd_makereloc(argc, argv);
 
 	print_usage();
 	return 10;
@@ -48,4 +51,5 @@ void print_usage() {
 	puts("Commands:");
 	puts("  lzpack - compress using LZ77");
 	puts("  lzunpack - decompress using LZ77");
+	puts("  makereloc - create relocatable module");
 }

@@ -240,7 +240,7 @@ void ATUIManager::CaptureCursor(ATUIWidget *w, bool motionMode, bool constrainPo
 				mpCursorWindow->OnCaptureLost();
 
 			if (w)
-				mpCursorWindow->OnMouseLeave();
+				mpCursorWindow->OnPointerLeave(1);
 		}
 
 		if (w)
@@ -317,6 +317,98 @@ vdpoint32 ATUIManager::GetCursorPosition() {
 		return vdpoint32(0, 0);
 
 	return mpNativeDisplay->GetCursorPosition();
+}
+
+ATUITouchMode ATUIManager::GetTouchModeAtPoint(const vdpoint32& pt) const {
+	ATUIWidget *w = mpMainWindow->HitTest(pt);
+
+	if (!w)
+		return kATUITouchMode_Default;
+
+	if (mpModalWindow && !mpModalWindow->IsSameOrAncestorOf(w))
+		return kATUITouchMode_Default;
+	
+	ATUITouchMode mode = w->GetTouchMode();
+
+	if (mode == kATUITouchMode_Dynamic || mode == kATUITouchMode_MultiTouchDynamic) {
+		vdpoint32 cpt;
+		w->TranslateScreenPtToClientPt(pt, cpt);
+		mode = w->GetTouchModeAtPoint(cpt);
+	}
+
+	return mode;
+}
+
+void ATUIManager::OnTouchInput(const ATUITouchInput *inputs, uint32 n) {
+	for(uint32 i=0; i<n; ++i) {
+		const ATUITouchInput& input = inputs[i];
+
+		if (input.mbPrimary) {
+			if (input.mbDown)
+				OnMouseDown(input.mX, input.mY, kATUIVK_LButton, false);
+			else if (input.mbUp)
+				OnMouseUp(input.mX, input.mY, kATUIVK_LButton);
+			else
+				OnMouseMove(input.mX, input.mY);
+		} else {
+			int freeIdx = -1;
+			int matchIdx = -1;
+
+			for(int i=0; i<(int)vdcountof(mPointers); ++i) {
+				if (freeIdx < 0 && !mPointers[i].mpTargetWindow)
+					freeIdx = i;
+
+				if (mPointers[i].mId == input.mId && mPointers[i].mpTargetWindow)
+					matchIdx = i;
+			}
+
+			if (matchIdx < 0) {
+				if (!input.mbDown)
+					continue;
+
+				if (freeIdx < 0)
+					continue;
+				
+				matchIdx = freeIdx;
+				mPointers[matchIdx].mId = input.mId;
+			}
+
+			PointerInfo& ptr = mPointers[matchIdx];
+
+			LockDestroy();
+			ATUIWidget *w = mpMainWindow->HitTest(vdpoint32(input.mX, input.mY));
+
+			const uint8 ptrBit = 2 << matchIdx;
+			if (input.mbDown && ptr.mpTargetWindow != w) {
+				if (ptr.mpTargetWindow)
+					ptr.mpTargetWindow->OnPointerLeave(ptrBit);
+
+				ptr.mpTargetWindow = w;
+
+				if (w)
+					w->OnPointerEnter(ptrBit);
+			} else
+				w = ptr.mpTargetWindow;
+
+			if (w) {
+				vdpoint32 cpt;
+
+				w->TranslateScreenPtToClientPt(vdpoint32(input.mX, input.mY), cpt);
+
+				if (input.mbDown)
+					w->OnMouseDown(cpt.x, cpt.y, kATUIVK_LButton, false);
+				else if (input.mbUp) {
+					w->OnMouseUp(cpt.x, cpt.y, kATUIVK_LButton);
+
+					ptr.mpTargetWindow = NULL;
+
+					w->OnPointerLeave(ptrBit);
+				} else
+					w->OnMouseMove(cpt.x, cpt.y);
+			}
+			UnlockDestroy();
+		}
+	}
 }
 
 bool ATUIManager::OnMouseRelativeMove(sint32 dx, sint32 dy) {
@@ -424,10 +516,10 @@ void ATUIManager::OnMouseLeave() {
 
 	LockDestroy();
 
-	if (mpCursorWindow)
+	if (mpCursorWindow) {
 		CaptureCursor(NULL);
-
-	mpCursorWindow->OnMouseLeave();
+		mpCursorWindow->OnPointerLeave(1);
+	}
 
 	UnlockDestroy();
 }
@@ -566,15 +658,24 @@ void ATUIManager::Detach(ATUIWidget *w) {
 		mDestroyList.push_back(w);
 	}
 
-	if (mpCursorWindow == w) {
-		mpCursorWindow = w->GetParent();
-		mbCursorCaptured = false;
-		UpdateCursorImage();
-	}
-
 	if (mpActiveWindow == w) {
 		mpActiveWindow = w->GetParentOrOwner();
 		VDASSERT(!mpActiveWindow || mpActiveWindow->GetManager());
+	}
+
+	if (w->HasCursor()) {
+		if (mpCursorWindow == w) {
+			mpCursorWindow = w->GetParent();
+			mbCursorCaptured = false;
+			UpdateCursorImage();
+		}
+
+		for(uint32 i=0; i<vdcountof(mPointers); ++i) {
+			if (mPointers[i].mpTargetWindow == w)
+				mPointers[i].mpTargetWindow = NULL;
+		}
+
+		w->OnPointerClear();
 	}
 
 	for(ModalStack::iterator it = mModalStack.begin(), itEnd = mModalStack.end();
@@ -640,15 +741,22 @@ bool ATUIManager::UpdateCursorWindow(sint32 x, sint32 y) {
 	ATUIWidget *w = mpMainWindow->HitTest(vdpoint32(x, y));
 
 	if (w != mpCursorWindow) {
+		if (w && w->HasCursor())
+			w = NULL;
+
 		if (mpModalWindow && !mpModalWindow->IsSameOrAncestorOf(w))
 			return false;
 
 		LockDestroy();
 
 		if (mpCursorWindow)
-			mpCursorWindow->OnMouseLeave();
+			mpCursorWindow->OnPointerLeave(1);
 
 		mpCursorWindow = w;
+
+		if (w)
+			w->OnPointerEnter(1);
+
 		UnlockDestroy();
 
 		UpdateCursorImage();

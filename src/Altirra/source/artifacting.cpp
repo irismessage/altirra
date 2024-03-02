@@ -25,6 +25,8 @@
 void ATArtifactPALLuma(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 void ATArtifactPALChroma(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 void ATArtifactPALFinal(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, const uint32 *vbuf, uint32 *ulbuf, uint32 *vlbuf, uint32 n);
+void ATArtifactBlend_SSE2(uint32 *dst, const uint32 *src, uint32 n);
+void ATArtifactBlendExchange_SSE2(uint32 *dst, uint32 *blendDst, uint32 n);
 
 #ifdef VD_CPU_X86
 	void __cdecl ATArtifactNTSCAccum_MMX(void *rout, const void *table, const void *src, uint32 count);
@@ -221,7 +223,7 @@ void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chroma
 	}
 }
 
-void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes) {
+void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool temporaryUpdate) {
 	if (!mbChromaArtifacts)
 		BlitNoArtifacts(dst, src);
 	else if (mbPAL) {
@@ -240,24 +242,34 @@ void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N],
 		uint32 *blendDst = mbChromaArtifactsHi ? mPrevFrame14MHz[y] : mPrevFrame7MHz[y];
 		uint32 n = mbChromaArtifactsHi ? N*2 : N;
 
-		if (mbBlendCopy)
-			memcpy(blendDst, dst, sizeof(uint32)*n);
-		else
-			BlendExchange(dst, blendDst, n);
+		if (mbBlendCopy) {
+			if (!temporaryUpdate)
+				memcpy(blendDst, dst, sizeof(uint32)*n);
+		} else {
+			if (temporaryUpdate)
+				Blend(dst, blendDst, n);
+			else
+				BlendExchange(dst, blendDst, n);
+		}
 	}
 }
 
-void ATArtifactingEngine::Artifact32(uint32 y, uint32 *dst, uint32 width) {
+void ATArtifactingEngine::Artifact32(uint32 y, uint32 *dst, uint32 width, bool temporaryUpdate) {
 	if (mbPAL)
 		ArtifactPAL32(dst, width);
 
 	if (mbBlendActive && y < M && width <= N*2) {
 		uint32 *blendDst = width > N ? mPrevFrame14MHz[y] : mPrevFrame7MHz[y];
 
-		if (mbBlendCopy)
-			memcpy(blendDst, dst, sizeof(uint32)*width);
-		else
-			BlendExchange(dst, blendDst, width);
+		if (mbBlendCopy) {
+			if (!temporaryUpdate)
+				memcpy(blendDst, dst, sizeof(uint32)*width);
+		} else {
+			if (temporaryUpdate)
+				Blend(dst, blendDst, width);
+			else
+				BlendExchange(dst, blendDst, width);
+		}
 	}
 }
 
@@ -646,11 +658,30 @@ void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], boo
 }
 
 void ATArtifactingEngine::BlitNoArtifacts(uint32 dst[N], const uint8 src[N]) {
-	for(int x=0; x<N; ++x)
+	for(size_t x=0; x<N; ++x)
 		dst[x] = mPalette[src[x]];
 }
 
-void ATArtifactingEngine::BlendExchange(uint32 *dst, uint32 *blendDst, uint32 n) {
+void ATArtifactingEngine::Blend(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n) {
+	if (SSE2_enabled && !(((uintptr)dst | (uintptr)src) & 15) && !(n & 3)) {
+		ATArtifactBlend_SSE2(dst, src, n);
+		return;
+	}
+
+	for(uint32 x=0; x<n; ++x) {
+		const uint32 a = dst[x];
+		const uint32 b = src[x];
+
+		dst[x] = (a|b) - (((a^b) >> 1) & 0x7f7f7f7f);
+	}
+}
+
+void ATArtifactingEngine::BlendExchange(uint32 *VDRESTRICT dst, uint32 *VDRESTRICT blendDst, uint32 n) {
+	if (SSE2_enabled && !(((uintptr)dst | (uintptr)blendDst) & 15) && !(n & 3)) {
+		ATArtifactBlendExchange_SSE2(dst, blendDst, n);
+		return;
+	}
+
 	for(uint32 x=0; x<n; ++x) {
 		const uint32 a = dst[x];
 		const uint32 b = blendDst[x];

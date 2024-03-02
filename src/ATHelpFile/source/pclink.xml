@@ -20,6 +20,14 @@
 
   <toc/>
 
+  <h2>Overview</h2>
+  <p>
+    A PCLink device is a device on the serial I/O (SIO) bus that responds to file and directory I/O commands, typically
+    a modern computer connected over an SIO2PC style adapter and running a PCLink server program. Unlike traditional
+    disk emulation solutions, PCLink works directly at the file I/O layer level, avoiding the limitations of disk
+    emulation and allowing full write access. In Altirra's case, the server program is integrated into the emulator
+    itself, making it even easier to set up.
+  </p>
   <h2>Configuring PCLink</h2>
   <p>
     The menu item System &gt; PCLink is used to configure PCLink support. The base path controls the root directory

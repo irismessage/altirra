@@ -2287,8 +2287,18 @@ bool VDTCreateContextD3D11(IVDTContext **ppctx) {
 
 	D3D_FEATURE_LEVEL actualLevel;
 	hr = holder->GetCreateDeviceFn()(adapter, driverType, NULL, flags, NULL, 0, D3D11_SDK_VERSION, ~dev, &actualLevel, ~devctx);
-	if (FAILED(hr))
+	if (FAILED(hr)) {
+#ifdef _DEBUG
+		// if we're in debug mode, try again without it
+		flags &= ~D3D11_CREATE_DEVICE_DEBUG;
+		hr = holder->GetCreateDeviceFn()(adapter, driverType, NULL, flags, NULL, 0, D3D11_SDK_VERSION, ~dev, &actualLevel, ~devctx);
+
+		if (FAILED(hr))
+			return false;
+#else
 		return false;
+#endif
+	}
 
 	vdrefptr<VDTContextD3D11> ctx(new VDTContextD3D11);
 	if (!ctx->Init(dev, devctx, adapter, factory, holder))

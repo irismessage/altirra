@@ -68,63 +68,184 @@ UINT VDSafeMessageBoxW32(HWND hwndParent, const char *pszText, const char *pszCa
 	return mbox.GetResult();
 }
 
+class VDIgnoredAssertCache {
+public:
+	VDIgnoredAssertCache()
+		: mpArray(NULL)
+		, mCount(0)
+		, mCapacity(0)
+	{
+		InitializeCriticalSection(&mCritSec);
+	}
+
+	~VDIgnoredAssertCache() {
+		DeleteCriticalSection(&mCritSec);
+
+		if (mpArray)
+			free(mpArray);
+	}
+
+	bool IsIgnored(void *p) const {
+		bool found = false;
+
+		EnterCriticalSection(&mCritSec);
+		uint32 lo = 0;
+		uint32 hi = mCount;
+		while(lo != hi) {
+			uint32 mid = (lo + hi) >> 1;
+
+			if (mpArray[mid] == p) {
+				found = true;
+				break;
+			}
+
+			if (mpArray[mid] < p)
+				lo = mid + 1;
+			else
+				hi = mid;
+		}
+		LeaveCriticalSection(&mCritSec);
+
+		return found;
+	}
+
+	void Add(void *p) {
+		EnterCriticalSection(&mCritSec);
+		uint32 lo = 0;
+		uint32 hi = mCount;
+		while(lo != hi) {
+			uint32 mid = (lo + hi) >> 1;
+
+			if (mpArray[mid] < p)
+				lo = mid + 1;
+			else
+				hi = mid;
+		}
+
+		bool canInsert = true;
+
+		if (mCount == mCapacity) {
+			uint32 newCapacity = mCapacity < 64 ? 64 : mCapacity + (mCapacity >> 1);
+
+			void **newArray = (void **)realloc(mpArray, newCapacity * sizeof(void *));
+			if (newArray) {
+				memcpy(newArray, mpArray, lo * sizeof(void *));
+				newArray[lo] = p;
+				memcpy(newArray + lo + 1, mpArray + lo, (mCount - lo) * sizeof(void *));
+
+				mpArray = newArray;
+				mCapacity = newCapacity;
+			}
+		} else {
+			memmove(mpArray + lo + 1, mpArray + lo, (mCount - lo) * sizeof(void *));
+			mpArray[lo] = p;
+		}
+
+		++mCount;
+
+		LeaveCriticalSection(&mCritSec);
+	}
+
+private:
+	mutable CRITICAL_SECTION mCritSec;
+	void **mpArray;
+	uint32 mCount;
+	uint32 mCapacity;
+};
+
+VDIgnoredAssertCache& VDAssertGetIgnoredCache() {
+	static VDIgnoredAssertCache sCache;
+
+	return sCache;
+}
+
 VDAssertResult VDAssert(const char *exp, const char *file, int line) {
 	DWORD dwOldError = GetLastError();
-	char szText[1024];
 
-	VDDEBUG("%s(%d): Assert failed: %s\n", file, line, exp);
+	VDIgnoredAssertCache& sIgnoredAssertCache = VDAssertGetIgnoredCache();
+	VDAssertResult assertResult = kVDAssertIgnore;
 
-	wsprintf(szText,
-		"Assert failed in module %s, line %d:\n"
-		"\n"
-		"\t%s\n"
-		"\n"
-		"Break into debugger?", file, line, exp);
+	if (!sIgnoredAssertCache.IsIgnored(_ReturnAddress())) {
+		char szText[1024];
 
-	UINT result = VDSafeMessageBoxW32(NULL, szText, "Assert failure", MB_ABORTRETRYIGNORE|MB_ICONWARNING|MB_TASKMODAL);
+		VDDEBUG("%s(%d): Assert failed: %s\n", file, line, exp);
+
+		wsprintf(szText,
+			"Assert failed in module %s, line %d:\n"
+			"\n"
+			"\t%s\n"
+			"\n"
+			"Break into debugger?", file, line, exp);
+
+		UINT result = VDSafeMessageBoxW32(NULL, szText, "Assert failure", MB_ABORTRETRYIGNORE|MB_ICONWARNING|MB_TASKMODAL);
+
+		switch(result) {
+			case IDABORT:
+				::Sleep(250);				// Pause for a moment so the VC6 debugger doesn't freeze.
+				assertResult = kVDAssertBreak;
+				break;
+
+			case IDRETRY:
+				assertResult = kVDAssertContinue;
+				break;
+
+			case IDIGNORE:
+				sIgnoredAssertCache.Add(_ReturnAddress());
+				assertResult = kVDAssertIgnore;
+				break;
+
+			default:
+				VDNEVERHERE;
+		}
+	}
 
 	SetLastError(dwOldError);
 
-	switch(result) {
-	case IDABORT:
-		::Sleep(250);				// Pause for a moment so the VC6 debugger doesn't freeze.
-		return kVDAssertBreak;
-	case IDRETRY:
-		return kVDAssertContinue;
-	default:
-		VDNEVERHERE;
-	case IDIGNORE:
-		return kVDAssertIgnore;
-	}
+	return assertResult;
 }
 
 VDAssertResult VDAssertPtr(const char *exp, const char *file, int line) {
 	DWORD dwOldError = GetLastError();
-	char szText[1024];
 
-	VDDEBUG("%s(%d): Assert failed: %s is not a valid pointer\n", file, line, exp);
+	VDIgnoredAssertCache& sIgnoredAssertCache = VDAssertGetIgnoredCache();
+	VDAssertResult assertResult = kVDAssertIgnore;
 
-	wsprintf(szText,
-		"Assert failed in module %s, line %d:\n"
-		"\n"
-		"\t(%s) not a valid pointer\n"
-		"\n"
-		"Break into debugger?", file, line, exp);
+	if (!sIgnoredAssertCache.IsIgnored(_ReturnAddress())) {
+		char szText[1024];
 
-	UINT result = VDSafeMessageBoxW32(NULL, szText, "Assert failure", MB_ABORTRETRYIGNORE|MB_ICONWARNING|MB_TASKMODAL);
+		VDDEBUG("%s(%d): Assert failed: %s is not a valid pointer\n", file, line, exp);
+
+		wsprintf(szText,
+			"Assert failed in module %s, line %d:\n"
+			"\n"
+			"\t(%s) not a valid pointer\n"
+			"\n"
+			"Break into debugger?", file, line, exp);
+
+		UINT result = VDSafeMessageBoxW32(NULL, szText, "Assert failure", MB_ABORTRETRYIGNORE|MB_ICONWARNING|MB_TASKMODAL);
+
+		switch(result) {
+			case IDABORT:
+				assertResult = kVDAssertBreak;
+				break;
+
+			case IDRETRY:
+				assertResult = kVDAssertContinue;
+				break;
+
+			case IDIGNORE:
+				sIgnoredAssertCache.Add(_ReturnAddress());
+				assertResult = kVDAssertIgnore;
+				break;
+
+			default:
+				VDNEVERHERE;
+		}
+	}
 
 	SetLastError(dwOldError);
 
-	switch(result) {
-	case IDABORT:
-		return kVDAssertBreak;
-	case IDRETRY:
-		return kVDAssertContinue;
-	default:
-		VDNEVERHERE;
-	case IDIGNORE:
-		return kVDAssertIgnore;
-	}
+	return assertResult;
 }
 
 #endif

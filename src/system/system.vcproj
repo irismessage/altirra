@@ -1525,6 +1525,14 @@
 					/>
 				</FileConfiguration>
 			</File>
+			<Filter
+				Name="win32"
+				>
+				<File
+					RelativePath=".\source\win32\touch_win32.cpp"
+					>
+				</File>
+			</Filter>
 		</Filter>
 		<Filter
 			Name="Header Files"
@@ -1771,6 +1779,10 @@
 				</File>
 				<File
 					RelativePath="..\h\vd2\system\win32\miniwindows.h"
+					>
+				</File>
+				<File
+					RelativePath="..\h\vd2\system\win32\touch.h"
 					>
 				</File>
 			</Filter>

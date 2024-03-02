@@ -26,7 +26,10 @@ ATPokeyRenderer::ATPokeyRenderer()
 	: mpScheduler(NULL)
 	, mpTables(NULL)
 	, mAccum(0)
+	, mHighPassAccum(0)
+	, mSpeakerAccum(0)
 	, mOutputLevel(0)
+	, mSpeakerLevel(0)
 	, mLastOutputTime(0)
 	, mLastOutputSampleTime(0)
 	, mAudioInput2(0)
@@ -77,6 +80,7 @@ void ATPokeyRenderer::ColdReset() {
 	mHighPassFF[1] = 1;
 
 	mOutputLevel = 0;
+	mSpeakerLevel = 0;
 
 	const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 	mLastPoly17Time = t;
@@ -117,6 +121,11 @@ void ATPokeyRenderer::SetChannelEnabled(int channel, bool enabled) {
 		UpdateVolume(channel);
 		UpdateOutput();
 	}
+}
+
+void ATPokeyRenderer::SetFiltersEnabled(bool enable) {
+	if (!enable)
+		mHighPassAccum = 0;
 }
 
 void ATPokeyRenderer::SetInitMode(bool init) {
@@ -263,6 +272,10 @@ uint32 ATPokeyRenderer::EndBlock() {
 	lastFlush = t;
 
 	VDASSERT(t - mLastOutputSampleTime <= 28);
+
+	// prevent denormals
+	if (fabsf(mHighPassAccum) < 1e-20)
+		mHighPassAccum = 0;
 
 	return sampleCount;
 }
@@ -738,7 +751,12 @@ void ATPokeyRenderer::UpdateOutput(uint32 t) {
 	GenerateSamples(t);
 
 	int oc = t - mLastOutputTime;
-	mAccum += mOutputLevel * oc;
+
+	float delta = mOutputLevel - mHighPassAccum;
+	mAccum += delta * mpTables->mHPIntegralTable[oc];
+	mHighPassAccum += delta * mpTables->mHPTable[oc];
+
+	mSpeakerAccum += mSpeakerLevel * oc;
 	mLastOutputTime = t;
 
 	VDASSERT(t - mLastOutputSampleTime <= 28);
@@ -757,9 +775,12 @@ void ATPokeyRenderer::UpdateOutput(uint32 t) {
 				+ ((mAUDC[2] & 0x10) ? v2 : out2 * v2)
 				+ ((mAUDC[3] & 0x10) ? v3 : out3 * v3);
 
-	mOutputLevel	= mpTables->mMixTable[vpok] 
-					+ mExternalInput
-					+ (mbSpeakerState ? +24 : 0);		// The XL speaker is approximately 80% as loud as a full volume channel.
+	mOutputLevel	= mpTables->mMixTable[vpok];
+
+	// The XL/XE speaker is about as loud peak-to-peak as a channel at volume 6.
+	// However, it is added in later in the output circuitry and has different
+	// audio characteristics, so we must treat it separately.
+	mSpeakerLevel	= (mbSpeakerState ? -mpTables->mMixTable[6] : 0.0f) + mExternalInput;
 }
 
 void ATPokeyRenderer::GenerateSamples(uint32 t) {
@@ -773,13 +794,19 @@ void ATPokeyRenderer::GenerateSamples(uint32 t) {
 
 		int oc = mLastOutputSampleTime - mLastOutputTime;
 		VDASSERT((unsigned)oc <= 28);
-		mAccum += mOutputLevel * oc;
+
+		float delta = mOutputLevel - mHighPassAccum;
+		mAccum += delta * mpTables->mHPIntegralTable[oc];
+		mHighPassAccum += delta * mpTables->mHPTable[oc];
+
+		mSpeakerAccum += mSpeakerLevel * oc;
 		mLastOutputTime = mLastOutputSampleTime;
 
-		float v = mAccum;
+		float v = mAccum + mSpeakerAccum;
 
 		mAccum = 0;
-		mRawOutputBuffer[mOutputSampleCount] = (float)v;
+		mSpeakerAccum = 0;
+		mRawOutputBuffer[mOutputSampleCount] = v;
 
 		if (++mOutputSampleCount >= kBufferSize) {
 			mOutputSampleCount = kBufferSize - 1;
@@ -795,13 +822,19 @@ void ATPokeyRenderer::GenerateSamples(uint32 t) {
 	if ((t - mLastOutputSampleTime) < 28)
 		return;
 
-	const float v = mOutputLevel * 28;
+//	const float v1 = mOutputLevel * 28;
+	const float coeff1 = mpTables->mHPIntegralTable[28];
+	const float coeff2 = mpTables->mHPTable[28];
+	const float v2 = mSpeakerLevel * 28;
 	mAccum = 0;
+	mSpeakerAccum = 0;
 
 	while((t - mLastOutputSampleTime) >= 28) {
 		mLastOutputSampleTime += 28;
 
-		mRawOutputBuffer[mOutputSampleCount] = v;
+		float delta = mOutputLevel - mHighPassAccum;
+		mRawOutputBuffer[mOutputSampleCount] = delta * coeff1 + v2;
+		mHighPassAccum += delta * coeff2;
 
 		if (++mOutputSampleCount >= kBufferSize) {
 			mOutputSampleCount = kBufferSize - 1;

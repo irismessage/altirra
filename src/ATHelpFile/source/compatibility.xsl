@@ -108,10 +108,7 @@
                 <xsl:variable name="id" select="@id"/>
                 <xsl:choose>
                   <xsl:when test="@id">
-                    <xsl:element name="a">
-                      <xsl:attribute name="href">#<xsl:value-of select="generate-id(//compat-tag[@id=$id])"/></xsl:attribute>
-                      <xsl:value-of select="//compat-tag[@id=$id]/@name" />
-                    </xsl:element>
+                    <xsl:value-of select="//compat-tag[@id=$id]/@name" />
                   </xsl:when>
                   <xsl:otherwise>
                     <xsl:value-of select="@desc" />
@@ -127,6 +124,7 @@
   </xsl:template>
   
   <xsl:template match="compat-tags">
+    <!--
     <xsl:for-each select="compat-tag">
       <xsl:sort select="@name"/>
       <h3>
@@ -139,6 +137,7 @@
       </h3>
       <xsl:apply-templates select="desc" />
     </xsl:for-each>
+    -->
   </xsl:template>
   
   <xsl:template match="compat-list">

@@ -631,6 +631,7 @@ void ATHostDeviceEmulator::DoOpen(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem) 
 
 		case 0x09:
 			flags = nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kOpenAlways;
+			create = true;
 			append = true;
 			write = true;
 			break;
@@ -915,6 +916,10 @@ void ATHostDeviceEmulator::DoOpen(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem) 
 				} else
 					ch.mOffset = 0;
 			}
+		} catch(const MyWin32Error& e) {
+			ch.mFile.closeNT();
+			cpu->Ldy(ATTranslateWin32ErrorToSIOError(e.GetWin32Error()));
+			return;
 		} catch(const MyError&) {
 			ch.mFile.closeNT();
 			cpu->Ldy(CIOStatFileNotFound);
@@ -1118,6 +1123,11 @@ void ATHostDeviceEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *me
 			cpu->Ldy(ch.Seek(pos));
 
 		} else if (command == 0x23) {	// lock
+			// DOS 2.0S lock behavior:
+			// - A file can be locked while open for write.
+			// - A file can't be locked on creation until it has been closed (file not found).
+			// - If no file is found, file not found is returned, even with wildcards.
+
 			if (mbReadOnly) {
 				cpu->Ldy(CIOStatReadOnly);
 				return;
@@ -1127,12 +1137,23 @@ void ATHostDeviceEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *me
 				return;
 
 			VDDirectoryIterator it(mNativeSearchPath.c_str());
+			bool found = false;
 
-			while(GetNextMatch(it))
+			while(GetNextMatch(it)) {
 				ATFileSetReadOnlyAttribute(it.GetFullPath().c_str(), true);
+				found = true;
+			}
 
-			cpu->Ldy(CIOStatSuccess);
+			if (!found)
+				cpu->Ldy(CIOStatFileNotFound);
+			else
+				cpu->Ldy(CIOStatSuccess);
 		} else if (command == 0x24) {	// unlock
+			// DOS 2.0S unlock behavior:
+			// - A file can be unlocked while open for write.
+			// - A file can't be unlocked on creation until it has been closed (file not found).
+			// - If no file is found, file not found is returned, even with wildcards.
+
 			if (mbReadOnly) {
 				cpu->Ldy(CIOStatReadOnly);
 				return;
@@ -1142,11 +1163,17 @@ void ATHostDeviceEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *me
 				return;
 
 			VDDirectoryIterator it(mNativeSearchPath.c_str());
+			bool found = false;
 
-			while(GetNextMatch(it))
+			while(GetNextMatch(it)) {
 				ATFileSetReadOnlyAttribute(it.GetFullPath().c_str(), false);
+				found = true;
+			}
 
-			cpu->Ldy(CIOStatSuccess);
+			if (!found)
+				cpu->Ldy(CIOStatFileNotFound);
+			else
+				cpu->Ldy(CIOStatSuccess);
 		} else if (command == 0x21) {	// delete
 			if (mbReadOnly) {
 				cpu->Ldy(CIOStatReadOnly);
@@ -1157,11 +1184,17 @@ void ATHostDeviceEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *me
 				return;
 
 			VDDirectoryIterator it(mNativeSearchPath.c_str());
+			bool found = false;
 
-			while(GetNextMatch(it))
-				VDRemoveFile(it.GetFullPath().c_str());
+			while(GetNextMatch(it)) {
+				VDRemoveFileEx(it.GetFullPath().c_str());
+				found = true;
+			}
 
-			cpu->Ldy(CIOStatSuccess);
+			if (!found)
+				cpu->Ldy(CIOStatFileNotFound);
+			else
+				cpu->Ldy(CIOStatSuccess);
 		} else if (command == 0x20) {	// rename
 			if (!ReadFilename(cpu, mem, false, true))
 				return;
@@ -1226,7 +1259,14 @@ void ATHostDeviceEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *me
 				const bool wildDest = ATHostDeviceIsPathWild(destName);
 
 				VDStringW destFileBuf;
+				bool matched = false;
+
 				while(GetNextMatch(it, true)) {
+					if (VDFileGetAttributes(it.GetFullPath().c_str()) & kVDFileAttr_ReadOnly) {
+						cpu->Ldy(CIOStatFileLocked);
+						return;
+					}
+
 					if (wildDest) {
 						const wchar_t *srcName = it.GetName();
 						if (*srcName == L'$')
@@ -1244,7 +1284,11 @@ void ATHostDeviceEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *me
 						const VDStringW& destFile = VDMakePath(mNativeDirPath.c_str(), destName);
 						VDMoveFile(it.GetFullPath().c_str(), destFile.c_str());
 					}
+
+					matched = true;
 				}
+
+				cpu->Ldy(matched ? CIOStatSuccess : CIOStatFileNotFound);
 			} catch(const MyWin32Error& e) {
 				cpu->Ldy(ATTranslateWin32ErrorToSIOError(e.GetWin32Error()));
 			} catch(const MyError&) {
@@ -1372,6 +1416,8 @@ void ATHostDeviceEmulator::DoSpecial(ATCPUEmulator *cpu, ATCPUEmulatorMemory *me
 
 			cpu->Ldy(status);
 		}
+	} catch(const MyWin32Error& e) {
+		cpu->Ldy(ATTranslateWin32ErrorToSIOError(e.GetWin32Error()));
 	} catch(const MyError&) {
 		cpu->Ldy(CIOStatFatalDiskIO);
 	}

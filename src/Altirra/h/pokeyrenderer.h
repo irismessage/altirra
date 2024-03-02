@@ -41,6 +41,7 @@ public:
 	bool IsChannelEnabled(int channel) const { return mbChannelEnabled[channel]; }
 	void SetChannelEnabled(int channel, bool enable);
 
+	void SetFiltersEnabled(bool enable);
 	void SetInitMode(bool init);
 	bool SetSpeaker(bool state);
 	void SetAudioLine2(int v);
@@ -95,7 +96,10 @@ protected:
 	bool mbInitMode;
 
 	float	mAccum;
+	float	mHighPassAccum;
+	float	mSpeakerAccum;
 	float	mOutputLevel;
+	float	mSpeakerLevel;
 	uint32	mLastOutputTime;
 	uint32	mLastOutputSampleTime;
 	int		mAudioInput2;

@@ -133,6 +133,7 @@ BEGIN
         MENUITEM "Show Flags",                  ID_HISTORYCONTEXTMENU_SHOWFLAGS
         MENUITEM "Show Code Bytes",             ID_HISTORYCONTEXTMENU_SHOWCODEBYTES
         MENUITEM "Show Labels",                 ID_HISTORYCONTEXTMENU_SHOWLABELS
+        MENUITEM "Show Label Namespaces",       ID_HISTORYCONTEXTMENU_SHOWLABELNAMESPACES
         MENUITEM SEPARATOR
         MENUITEM "Collapse Loops",              ID_HISTORYCONTEXTMENU_COLLAPSELOOPS
         MENUITEM "Collapse Calls",              ID_HISTORYCONTEXTMENU_COLLAPSECALLS
@@ -220,21 +221,12 @@ BEGIN
     END
 END
 
-
-/////////////////////////////////////////////////////////////////////////////
-//
-// Accelerator
-//
-
-IDR_DEBUGGER_ACCEL ACCELERATORS 
+IDR_PRINTER_CONTEXT_MENU MENU 
 BEGIN
-    VK_CANCEL,      ID_DEBUG_BREAK,         VIRTKEY, CONTROL, NOINVERT
-    VK_F5,          ID_DEBUG_RUN,           VIRTKEY, NOINVERT
-    VK_F11,         ID_DEBUG_STEPINTO,      VIRTKEY, NOINVERT
-    VK_F11,         ID_DEBUG_STEPOUT,       VIRTKEY, SHIFT, NOINVERT
-    VK_F10,         ID_DEBUG_STEPOVER,      VIRTKEY, NOINVERT
-    VK_F9,          ID_DEBUG_TOGGLEBREAKPOINT, VIRTKEY, NOINVERT
-    VK_F8,          ID_DEBUG_RUN,           VIRTKEY, NOINVERT
+    POPUP "Context"
+    BEGIN
+        MENUITEM "Clear",                       ID_CONTEXT_CLEAR
+    END
 END
 
 
@@ -243,12 +235,12 @@ END
 // Dialog
 //
 
-IDD_CPU_OPTIONS DIALOGEX 0, 0, 240, 124
+IDD_CPU_OPTIONS DIALOGEX 0, 0, 240, 138
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "CPU options"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    GROUPBOX        "CPU model",IDC_STATIC,7,7,91,91
+    GROUPBOX        "CPU model",IDC_STATIC,7,7,91,105
     CONTROL         "6502 / 6502C",IDC_CPUMODEL_6502C,"Button",BS_AUTORADIOBUTTON | WS_GROUP,13,19,59,10
     CONTROL         "65C02",IDC_CPUMODEL_65C02,"Button",BS_AUTORADIOBUTTON,13,29,37,10
     CONTROL         "65C816 (1.79MHz)",IDC_CPUMODEL_65C816,"Button",BS_AUTORADIOBUTTON,13,38,76,10
@@ -256,7 +248,9 @@ BEGIN
     CONTROL         "65C816 (7.14MHz)",IDC_CPUMODEL_65C816_7MHZ,"Button",BS_AUTORADIOBUTTON,13,58,76,10
     CONTROL         "65C816 (10.74MHz)",IDC_CPUMODEL_65C816_10MHZ,"Button",BS_AUTORADIOBUTTON,13,68,80,10
     CONTROL         "65C816 (14.28MHz)",IDC_CPUMODEL_65C816_14MHZ,"Button",BS_AUTORADIOBUTTON,13,78,80,10
-    GROUPBOX        "Options",IDC_STATIC,104,7,129,91
+    CONTROL         "65C816 (17.90MHz)",IDC_CPUMODEL_65C816_17MHZ,"Button",BS_AUTORADIOBUTTON,13,88,80,10
+    CONTROL         "65C816 (21.48MHz)",IDC_CPUMODEL_65C816_21MHZ,"Button",BS_AUTORADIOBUTTON,13,98,80,10
+    GROUPBOX        "Options",IDC_STATIC,104,7,129,105
     CONTROL         "Record instruction &history",IDC_ENABLE_HISTORY,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,111,17,98,10
     CONTROL         "Track code &paths",IDC_ENABLE_PATHS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,111,28,71,10
     CONTROL         "Enable illegal instructions",IDC_ENABLE_ILLEGALS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,111,39,95,10
@@ -264,8 +258,8 @@ BEGIN
     CONTROL         "Allow BRK/IRQ to block NMI",IDC_ALLOWNMIBLOCKING,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,111,61,104,10
     CONTROL         "Shadow ROMs in fast RAM",IDC_SHADOW_ROM,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,111,72,101,10
     CONTROL         "Shadow cartridges in fast RAM",IDC_SHADOW_CARTS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,111,83,114,10
-    DEFPUSHBUTTON   "OK",IDOK,131,103,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,183,103,50,14
+    DEFPUSHBUTTON   "OK",IDOK,131,117,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,183,117,50,14
 END
 
 IDD_DISK_DRIVES DIALOGEX 0, 0, 296, 157
@@ -474,13 +468,14 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,263,132,50,14
 END
 
-IDD_TAPE_CONTROL DIALOGEX 0, 0, 250, 30
+IDD_TAPE_CONTROL DIALOGEX 0, 0, 250, 74
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Cassette Tape Control"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    CONTROL         "",IDC_POSITION,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,7,7,169,15
-    LTEXT           "Static",IDC_STATIC_POSITION,180,7,63,15,SS_CENTERIMAGE,WS_EX_RIGHT
+    CONTROL         "",IDC_POSITION,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,7,52,169,15
+    LTEXT           "Static",IDC_STATIC_POSITION,180,52,63,15,SS_CENTERIMAGE,WS_EX_RIGHT
+    LTEXT           "",IDC_PEAK_IMAGE,7,7,236,40,0,WS_EX_CLIENTEDGE
 END
 
 IDD_ADJUST_COLORS DIALOGEX 0, 0, 388, 145
@@ -541,7 +536,7 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,171,106,50,14
 END
 
-IDD_KEYBOARD DIALOGEX 0, 0, 319, 142
+IDD_KEYBOARD DIALOGEX 0, 0, 319, 158
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Keyboard Options"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
@@ -551,13 +546,15 @@ BEGIN
                     "Button",BS_AUTORADIOBUTTON | BS_TOP | BS_MULTILINE,80,7,232,31
     CONTROL         "Send &raw key strokes:\nRaw keys are sent to the emulated hardware. This allow software to detect held keys, but can cause unintended repeats at warp speed and may not work well with localized keyboard layouts.",IDC_KPMODE_RAW,
                     "Button",BS_AUTORADIOBUTTON | BS_TOP | BS_MULTILINE,80,36,232,34
-    LTEXT           "&Arrow key mode",IDC_STATIC,7,79,64,12,SS_CENTERIMAGE
-    COMBOBOX        IDC_ARROWKEYMODE,80,79,232,30,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Layout",IDC_STATIC,7,75,23,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_LAYOUT,80,75,232,76,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "&Arrow key mode",IDC_STATIC,7,93,64,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_ARROWKEYMODE,80,93,232,30,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     CONTROL         "Allow SHIFT key to be detected on cold reset",IDC_RESETSHIFT,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,80,98,160,10
-    DEFPUSHBUTTON   "OK",IDOK,210,121,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,262,121,50,14
-    CONTROL         "Enable function keys",IDC_ENABLE_FKEYS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,80,108,82,10
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,80,112,160,10
+    DEFPUSHBUTTON   "OK",IDOK,210,137,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,262,137,50,14
+    CONTROL         "Enable function keys",IDC_ENABLE_FKEYS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,80,122,82,10
 END
 
 IDD_CARTRIDGE_MAPPER DIALOGEX 0, 0, 256, 138
@@ -600,12 +597,12 @@ BEGIN
     LTEXT           "Static",IDC_STATIC_TARGET,4,12,214,8
 END
 
-IDD_SERIAL_PORTS DIALOGEX 0, 0, 350, 234
+IDD_SERIAL_PORTS DIALOGEX 0, 0, 350, 261
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Serial Port Options"
 FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
-    GROUPBOX        "",IDC_STATIC,5,7,336,144
+    GROUPBOX        "",IDC_STATIC,5,7,336,162
     CONTROL         "&Enable serial port emulation",IDC_ENABLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,12,7,104,10
     LTEXT           "Device",IDC_STATIC_DEVICE,14,19,22,10,SS_CENTERIMAGE
     CONTROL         "850 Interface Module + Hayes compatible modem",IDC_DEVICE_850,
@@ -617,30 +614,30 @@ BEGIN
                     "Button",BS_AUTOCHECKBOX | BS_TOP | BS_MULTILINE | WS_TABSTOP,83,53,250,18
     LTEXT           "Permissions",IDC_STATIC_PERMISSIONS,14,73,38,8
     CONTROL         "Allow &outbound connections",IDC_ALLOW_OUTBOUND,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,73,72,105,10
+    LTEXT           "Negotiate terminal type:",IDC_STATIC_TERMINAL_TYPE,87,83,79,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_TERMINAL_TYPE,177,83,159,81,CBS_DROPDOWN | WS_VSCROLL | WS_TABSTOP
     CONTROL         "&Accept incoming connections on port (1024-65535):",IDC_ACCEPT_CONNECTIONS,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,73,82,181,10
-    EDITTEXT        IDC_LISTEN_PORT,257,81,79,12,ES_AUTOHSCROLL | ES_NUMBER
-    CONTROL         "Accept IPv&6 connections",IDC_ACCEPT_IPV6,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,84,92,95,10
-    LTEXT           "Baud rate",IDC_STATIC_BAUDRATE,14,103,32,10,SS_CENTERIMAGE
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,73,100,181,10
+    EDITTEXT        IDC_LISTEN_PORT,257,99,79,12,ES_AUTOHSCROLL | ES_NUMBER
+    CONTROL         "Accept IPv&6 connections",IDC_ACCEPT_IPV6,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,84,110,95,10
+    LTEXT           "Baud rate",IDC_STATIC_BAUDRATE,14,123,32,10,SS_CENTERIMAGE
     CONTROL         "Enable e&xtended baud rate support (57600, 115K, 230Kbaud)",IDC_EXTENDED_BAUD_RATES,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,73,103,215,10
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,73,123,215,10
     CONTROL         "Disable serial port rate t&hrottling",IDC_DISABLE_THROTTLING,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,73,113,119,10
-    LTEXT           "SIO emulation",IDC_STATIC_SIOLEVEL,14,126,46,8
-    CONTROL         "None",IDC_SIOLEVEL_NONE,"Button",BS_AUTORADIOBUTTON | WS_GROUP,73,125,33,10
-    CONTROL         "Emulate R: handler loader (stub only)",IDC_SIOLEVEL_STUBLOADER,
-                    "Button",BS_AUTORADIOBUTTON,73,135,135,10
-    GROUPBOX        "Modem emulation options",IDC_STATIC,7,153,336,55
-    LTEXT           "&Reported connection speed:",IDC_STATIC,14,164,97,12,SS_CENTERIMAGE
-    COMBOBOX        IDC_CONNECTION_SPEED,108,164,228,107,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,73,133,119,10
+    LTEXT           "SIO emulation",IDC_STATIC_SIOLEVEL,14,148,46,12,SS_CENTERIMAGE
+    GROUPBOX        "Modem emulation options",IDC_STATIC,7,180,336,55
+    LTEXT           "&Reported connection speed:",IDC_STATIC,14,191,97,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_CONNECTION_SPEED,108,191,228,107,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     CONTROL         "Re&quire DTE baud rate to match connection speed",IDC_REQUIRE_MATCHED_DTE_RATE,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,108,178,177,10
-    LTEXT           "Dial proxy address",IDC_STATIC_DIAL_ADDRESS,14,189,60,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_DIAL_ADDRESS,107,189,114,12,ES_AUTOHSCROLL
-    LTEXT           "Service",IDC_STATIC_DIAL_SERVICE,232,189,26,12,SS_CENTERIMAGE
-    EDITTEXT        IDC_DIAL_SERVICE,260,189,76,12,ES_AUTOHSCROLL
-    DEFPUSHBUTTON   "OK",IDOK,241,213,50,14
-    PUSHBUTTON      "Cancel",IDCANCEL,293,213,50,14
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,108,205,177,10
+    LTEXT           "Dial proxy address",IDC_STATIC_DIAL_ADDRESS,14,216,60,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_DIAL_ADDRESS,107,216,114,12,ES_AUTOHSCROLL
+    LTEXT           "Service",IDC_STATIC_DIAL_SERVICE,232,216,26,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_DIAL_SERVICE,260,216,76,12,ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "OK",IDOK,241,240,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,293,240,50,14
+    COMBOBOX        IDC_SIOLEVEL,73,148,263,30,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
 END
 
 IDD_LIGHTPEN DIALOGEX 0, 0, 252, 109
@@ -965,6 +962,8 @@ BEGIN
     GROUPBOX        "Flash chip behavior",IDC_STATIC,0,1,221,107
     LTEXT           "SIC! flash chip",IDC_STATIC,6,12,68,12,SS_CENTERIMAGE
     COMBOBOX        IDC_SIC_FLASH,78,12,136,55,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Ultimate1MB flash",IDC_STATIC,6,26,68,12,SS_CENTERIMAGE
+    COMBOBOX        IDC_U1MB_FLASH,78,26,136,55,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
 END
 
 IDD_DEBUG_CHOOSE_FONT DIALOGEX 0, 0, 300, 117
@@ -984,6 +983,27 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,243,96,50,14
 END
 
+IDD_DRAGONCART DIALOGEX 0, 0, 292, 114
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Dragon Cart Configuration"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    CONTROL         "&Enable Dragon Cart Ethernet cartridge emulation",IDC_ENABLE,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,7,172,10
+    LTEXT           "Local network &address",IDC_STATIC_NETADDR,7,21,72,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_NETADDR,92,21,94,12,ES_AUTOHSCROLL
+    LTEXT           "Local network &mask",IDC_STATIC_NETMASK,7,37,63,12,SS_CENTERIMAGE
+    EDITTEXT        IDC_NETMASK,92,37,94,12,ES_AUTOHSCROLL
+    LTEXT           "&Bridging mode",IDC_STATIC_BRIDGING,7,57,46,10,SS_CENTERIMAGE
+    CONTROL         "&No host or external access ÅEemulated network only",IDC_ACCESS_NONE,
+                    "Button",BS_AUTORADIOBUTTON,92,57,193,10
+    CONTROL         "&Host only",IDC_ACCESS_HOSTONLY,"Button",BS_AUTORADIOBUTTON,92,67,193,10
+    CONTROL         "Network Address &Translation (NAT)",IDC_ACCESS_NAT,
+                    "Button",BS_AUTORADIOBUTTON,92,77,193,10
+    DEFPUSHBUTTON   "OK",IDOK,183,93,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,235,93,50,14
+END
+
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -998,7 +1018,7 @@ BEGIN
         LEFTMARGIN, 7
         RIGHTMARGIN, 233
         TOPMARGIN, 7
-        BOTTOMMARGIN, 117
+        BOTTOMMARGIN, 131
     END
 
     IDD_DISK_DRIVES, DIALOG
@@ -1097,7 +1117,7 @@ BEGIN
         VERTGUIDE, 176
         VERTGUIDE, 180
         TOPMARGIN, 7
-        BOTTOMMARGIN, 23
+        BOTTOMMARGIN, 67
     END
 
     IDD_ADJUST_COLORS, DIALOG
@@ -1127,7 +1147,7 @@ BEGIN
         RIGHTMARGIN, 312
         VERTGUIDE, 80
         TOPMARGIN, 7
-        BOTTOMMARGIN, 135
+        BOTTOMMARGIN, 151
     END
 
     IDD_CARTRIDGE_MAPPER, DIALOG
@@ -1164,7 +1184,7 @@ BEGIN
         VERTGUIDE, 73
         VERTGUIDE, 336
         TOPMARGIN, 7
-        BOTTOMMARGIN, 227
+        BOTTOMMARGIN, 254
     END
 
     IDD_LIGHTPEN, DIALOG
@@ -1337,6 +1357,16 @@ BEGIN
         TOPMARGIN, 7
         BOTTOMMARGIN, 110
     END
+
+    IDD_DRAGONCART, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 285
+        VERTGUIDE, 92
+        VERTGUIDE, 186
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 107
+    END
 END
 #endif    // APSTUDIO_INVOKED
 
@@ -1347,8 +1377,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 2,4,0,0
- PRODUCTVERSION 2,4,0,0
+ FILEVERSION 2,5,0,0
+ PRODUCTVERSION 2,5,0,0
  FILEFLAGSMASK 0x17L
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -1365,12 +1395,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "virtualdub.org"
             VALUE "FileDescription", "Altirra 8-bit computer emulator"
-            VALUE "FileVersion", "2, 4, 0, 0"
+            VALUE "FileVersion", "2, 5, 0, 0"
             VALUE "InternalName", "Altirra"
-            VALUE "LegalCopyright", "Copyright (C) 2008-2013 Avery Lee, All Rights Reserved."
+            VALUE "LegalCopyright", "Copyright (C) 2008-2014 Avery Lee, All Rights Reserved."
             VALUE "OriginalFilename", "Altirra.exe"
             VALUE "ProductName", "Altirra"
-            VALUE "ProductVersion", "2.40"
+            VALUE "ProductVersion", "2.50"
         END
     END
     BLOCK "VarFileInfo"
@@ -1443,16 +1473,16 @@ IDR_NOKERNEL            KERNEL                  "..\\..\\..\\out\\debug\\nokerne
 #endif
 #if defined(APSTUDIO_INVOKED) || defined(NDEBUG)
 #if defined(APSTUDIO_INVOKED)
-IDR_BASIC$(NDEBUG)      KERNEL                  "..\\..\\..\\out\\release\\basic.rom"
+IDR_BASIC$(NDEBUG)      KERNEL                  "..\\..\\..\\out\\release\\atbasic.bin"
 #else
-IDR_BASIC               KERNEL                  "..\\..\\..\\out\\release\\basic.rom"
+IDR_BASIC               KERNEL                  "..\\..\\..\\out\\release\\atbasic.bin"
 #endif
 #endif
 #if defined(APSTUDIO_INVOKED) || defined(DEBUG)
 #if defined(APSTUDIO_INVOKED)
-IDR_BASIC$(DEBUG)       KERNEL                  "..\\..\\..\\out\\debug\\basic.rom"
+IDR_BASIC$(DEBUG)       KERNEL                  "..\\..\\..\\out\\release\\atbasic.bin"
 #else
-IDR_BASIC               KERNEL                  "..\\..\\..\\out\\debug\\basic.rom"
+IDR_BASIC               KERNEL                  "..\\..\\..\\out\\release\\atbasic.bin"
 #endif
 #endif
 #if defined(APSTUDIO_INVOKED) || defined(DEBUG)
@@ -1562,6 +1592,34 @@ IDR_BOOTSECTOR_DOS2     STUFF                   "..\\..\\..\\out\\debug\\bootsec
 IDR_BOOTSECTOR_DOS2$(NDEBUG) STUFF                   "..\\..\\..\\out\\release\\bootsecdos2.bin"
 #else
 IDR_BOOTSECTOR_DOS2     STUFF                   "..\\..\\..\\out\\release\\bootsecdos2.bin"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(DEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_850RELOCATOR$(DEBUG) STUFF                   "..\\..\\..\\out\\debug\\850relocator.bin"
+#else
+IDR_850RELOCATOR        STUFF                   "..\\..\\..\\out\\debug\\850relocator.bin"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(NDEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_850RELOCATOR$(NDEBUG) STUFF                   "..\\..\\..\\out\\release\\850relocator.bin"
+#else
+IDR_850RELOCATOR        STUFF                   "..\\..\\..\\out\\release\\850relocator.bin"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(DEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_850HANDLER$(DEBUG)  STUFF                   "..\\..\\..\\out\\debug\\850handler.bin"
+#else
+IDR_850HANDLER          STUFF                   "..\\..\\..\\out\\debug\\850handler.bin"
+#endif
+#endif
+#if defined(APSTUDIO_INVOKED) || defined(NDEBUG)
+#if defined(APSTUDIO_INVOKED)
+IDR_850HANDLER$(NDEBUG) STUFF                   "..\\..\\..\\out\\release\\850handler.bin"
+#else
+IDR_850HANDLER          STUFF                   "..\\..\\..\\out\\release\\850handler.bin"
 #endif
 #endif
 IDR_ABOUT               STUFF                   "about.txt"

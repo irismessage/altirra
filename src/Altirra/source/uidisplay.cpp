@@ -20,6 +20,7 @@
 #include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/w32assist.h>
+#include <vd2/system/win32/touch.h>
 #include <vd2/VDDisplay/display.h>
 #include "console.h"
 #include "inputmanager.h"
@@ -45,6 +46,56 @@
 #include "uimessagebox.h"
 #include "uiqueue.h"
 #include "resource.h"
+
+///////////////////////////////////////////////////////////////////////////
+
+#ifndef WM_GESTURE
+#define WM_GESTURE 0x0119
+
+#ifndef GID_BEGIN
+#define GID_BEGIN			1
+#endif
+
+#ifndef GID_END
+#define GID_END				2
+#endif
+
+#ifndef GID_ZOOM
+#define GID_ZOOM			3
+#endif
+
+#ifndef GID_PAN
+#define GID_PAN				4
+#endif
+
+DECLARE_HANDLE(HGESTUREINFO);
+
+typedef struct _GESTUREINFO {
+	UINT cbSize;
+	DWORD dwFlags;
+	DWORD dwID;
+	HWND hwndTarget;
+	POINTS ptsLocation;
+	DWORD dwInstanceID;
+	DWORD dwSequenceID;
+	ULONGLONG ullArguments;
+	UINT cbExtraArgs;
+} GESTUREINFO, *PGESTUREINFO;
+#endif
+
+BOOL WINAPI ATGetGestureInfoW32(HGESTUREINFO hGestureInfo, PGESTUREINFO pGestureInfo) {
+	static void *pfn = GetProcAddress(GetModuleHandle(_T("user32")), "GetGestureInfo");
+
+	return pfn && ((BOOL (WINAPI *)(HGESTUREINFO, PGESTUREINFO))pfn)(hGestureInfo, pGestureInfo);
+}
+
+BOOL WINAPI ATCloseGestureInfoHandleW32(HGESTUREINFO hGestureInfo) {
+	static void *pfn = GetProcAddress(GetModuleHandle(_T("user32")), "CloseGestureInfoHandle");
+
+	return pfn && ((BOOL (WINAPI *)(HGESTUREINFO))pfn)(hGestureInfo);
+}
+
+///////////////////////////////////////////////////////////////////////////
 
 extern ATSimulator g_sim;
 
@@ -137,7 +188,12 @@ public:
 			mbMouseCaptured = true;
 		}
 
-		mbMouseMotionMode = motionMode;
+		if (mbMouseMotionMode != motionMode) {
+			mbMouseMotionMode = motionMode;
+
+			if (motionMode)
+				WarpCapturedMouse();
+		}
 	}
 
 	virtual void ReleaseCursor() {
@@ -214,7 +270,7 @@ public:
 	}
 
 public:
-	bool IsMouseCaptured() const { return mModalCount > 0; }
+	bool IsMouseCaptured() const { return mbMouseCaptured; }
 	bool IsMouseConstrained() const { return mbMouseConstrained; }
 	bool IsMouseMotionModeEnabled() const { return mbMouseMotionMode; }
 
@@ -227,6 +283,20 @@ public:
 
 		if (mpFrame && mModalCount)
 			mpFrame->GetContainer()->SetModalFrame(mpFrame);
+	}
+
+	vdpoint32 WarpCapturedMouse() {
+		RECT r;
+		if (!mhwnd || !::GetClientRect(mhwnd, &r))
+			return vdpoint32(0, 0);
+
+		const vdpoint32 pt(r.right >> 1, r.bottom >> 1);
+
+		POINT pt2 = {pt.x, pt.y};
+		::ClientToScreen(mhwnd, &pt2);
+		::SetCursorPos(pt2.x, pt2.y);
+
+		return pt;
 	}
 
 	void OnCaptureLost() {
@@ -368,6 +438,7 @@ public:
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	virtual ATUITouchMode GetTouchModeAtPoint(const vdpoint32& pt) const;
 
 	bool OnCreate();
 	void OnDestroy();
@@ -395,6 +466,8 @@ protected:
 	int		mWidth;
 	int		mHeight;
 
+	vdpoint32	mGestureOrigin;
+
 	vdrect32	mDisplayRect;
 
 	bool	mbTextModeEnabled;
@@ -405,6 +478,9 @@ protected:
 
 	vdautoptr<IATUIEnhancedTextEngine> mpEnhTextEngine;
 	vdrefptr<ATUIMenuList> mpMenuBar;
+
+	TOUCHINPUT mRawTouchInputs[32];
+	ATUITouchInput mTouchInputs[32];
 };
 
 ATDisplayPane::ATDisplayPane()
@@ -424,6 +500,8 @@ ATDisplayPane::ATDisplayPane()
 	, mbTurnOffCaps(false)
 	, mbAllowContextMenu(false)
 {
+	SetTouchMode(kATUITouchMode_Dynamic);
+
 	mPreferredDockCode = kATContainerDockCenter;
 }
 
@@ -640,11 +718,7 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				break;
 
 			{
-				DWORD pos = ::GetMessagePos();
-				int x = (short)LOWORD(pos);
-				int y = (short)HIWORD(pos);
-
-				uint32 id = g_ATUIManager.GetCurrentCursorImageId();
+				const uint32 id = g_ATUIManager.GetCurrentCursorImageId();
 
 				if (id) {
 					g_ATUINativeDisplay.SetCursorImageDirect(id);
@@ -735,9 +809,69 @@ LRESULT ATDisplayPane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				return TRUE;
 			}
 			break;
+
+		case WM_TOUCH:
+			{
+				uint32 numInputs = LOWORD(wParam);
+				if (numInputs > vdcountof(mTouchInputs))
+					numInputs = vdcountof(mTouchInputs);
+
+				HTOUCHINPUT hti = (HTOUCHINPUT)lParam;
+				if (numInputs && VDGetTouchInputInfoW32(hti, numInputs, mRawTouchInputs, sizeof(TOUCHINPUT))) {
+					const TOUCHINPUT *src = mRawTouchInputs;
+					ATUITouchInput *dst = mTouchInputs;
+					uint32 numCookedInputs = 0;
+
+					for(uint32 i=0; i<numInputs; ++i, ++src) {
+						if (src->dwFlags & TOUCHEVENTF_PALM)
+							continue;
+
+						POINT pt = { (src->x + 50) / 100, (src->y + 50) / 100 };
+
+						if (!::ScreenToClient(mhwnd, &pt))
+							continue;
+
+						dst->mId = src->dwID;
+						dst->mX = pt.x;
+						dst->mY = pt.y;
+						dst->mbPrimary = (src->dwFlags & TOUCHEVENTF_PRIMARY) != 0;
+						dst->mbDown = (src->dwFlags & TOUCHEVENTF_DOWN) != 0;
+						dst->mbUp = (src->dwFlags & TOUCHEVENTF_UP) != 0;
+
+						if (dst->mbPrimary) {
+							if (dst->mbDown)
+								mGestureOrigin = vdpoint32(pt.x, pt.y);
+							else if (dst->mbUp) {
+								// A swipe up of at least 1/6th of the screen from the bottom quarter opens
+								// the OSK.
+								sint32 dy = pt.y - mGestureOrigin.y;
+
+								if (dy < -mHeight / 6 && mGestureOrigin.y >= mHeight * 3 / 4) {
+									if (g_pATVideoDisplayWindow)
+										g_pATVideoDisplayWindow->OpenOSK();
+								}
+							}
+						}
+
+						++dst;
+						++numCookedInputs;
+					}
+
+					VDCloseTouchInputHandleW32(hti);
+
+					g_ATUIManager.OnTouchInput(mTouchInputs, numCookedInputs);
+					return 0;
+				}
+			}
+
+			break;
 	}
 
 	return ATUIPane::WndProc(msg, wParam, lParam);
+}
+
+ATUITouchMode ATDisplayPane::GetTouchModeAtPoint(const vdpoint32& pt) const {
+	return g_ATUIManager.GetTouchModeAtPoint(pt);
 }
 
 bool ATDisplayPane::OnCreate() {
@@ -752,6 +886,7 @@ bool ATDisplayPane::OnCreate() {
 	g_pDisplay = mpDisplay;
 
 	mpDisplay->SetReturnFocus(true);
+	mpDisplay->SetTouchEnabled(true);
 	UpdateFilterMode();
 	mpDisplay->SetAccelerationMode(IVDVideoDisplay::kAccelResetInForeground);
 	mpDisplay->SetCompositor(&g_ATUIManager);
@@ -841,15 +976,28 @@ void ATDisplayPane::OnDestroy() {
 void ATDisplayPane::OnMouseMove(WPARAM wParam, LPARAM lParam) {
 	const int x = (short)LOWORD(lParam);
 	const int y = (short)HIWORD(lParam);
+	const bool hadMouse = mbHaveMouse;
 
 	SetHaveMouse();
+
+	// WM_SETCURSOR isn't set when mouse capture is enabled, in which case we must poll for a cursor
+	// update.
+	if (g_ATUINativeDisplay.IsMouseCaptured()) {
+		const uint32 id = g_ATUIManager.GetCurrentCursorImageId();
+
+		if (id)
+			g_ATUINativeDisplay.SetCursorImageDirect(id);
+	}
 
 	if (g_ATUINativeDisplay.IsMouseMotionModeEnabled()) {
 		int dx = x - mLastTrackMouseX;
 		int dy = y - mLastTrackMouseY;
 
 		if (dx | dy) {
-			g_ATUIManager.OnMouseRelativeMove(dx, dy);
+			// If this is the first move message we've gotten since getting the mouse,
+			// ignore the delta.
+			if (hadMouse)
+				g_ATUIManager.OnMouseRelativeMove(dx, dy);
 
 			WarpCapturedMouse();
 		}
@@ -1090,15 +1238,10 @@ void ATDisplayPane::SetHaveMouse() {
 }
 
 void ATDisplayPane::WarpCapturedMouse() {
-	RECT r;
+	const vdpoint32& pt = g_ATUINativeDisplay.WarpCapturedMouse();
 
-	if (::GetClientRect(mhwnd, &r)) {
-		mLastTrackMouseX = r.right >> 1;
-		mLastTrackMouseY = r.bottom >> 1;
-		POINT pt = {mLastTrackMouseX, mLastTrackMouseY};
-		::ClientToScreen(mhwnd, &pt);
-		::SetCursorPos(pt.x, pt.y);
-	}
+	mLastTrackMouseX = pt.x;
+	mLastTrackMouseY = pt.y;
 }
 
 void ATDisplayPane::UpdateTextDisplay(bool enabled) {

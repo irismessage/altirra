@@ -34,8 +34,9 @@ public:
 
 	void DeleteFile(uintptr key);
 	void ReadFile(uintptr key, vdfastvector<uint8>& dst);
-	void WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len);
+	uintptr WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len);
 	void RenameFile(uintptr key, const char *newFileName);
+	void SetFileTimestamp(uintptr key, const VDExpandedDate& date) {}
 
 protected:
 	struct DirEnt;
@@ -286,6 +287,9 @@ bool ATDiskFSDOS2::Validate(ATDiskFSValidationReport& report) {
 		if (!(de.mFlags & DirEnt::kFlagInUse))
 			continue;
 
+		if (!de.mFlags)
+			break;
+
 		uint32 sector = de.mFirstSector;
 		while(sector) {
 			if (sector > sectorCount) {
@@ -413,12 +417,7 @@ bool ATDiskFSDOS2::FindNext(uintptr searchKey, ATDiskFSEntryInfo& info) {
 		if (!(de.mFlags & DirEnt::kFlagInUse))
 			continue;
 
-		info.mFileName	= VDTextAToW(de.mName);
-		info.mSectors	= de.mSectorCount;
-		info.mBytes		= de.mBytes;
-		info.mKey		= h->mPos;
-		info.mbIsDirectory = false;
-		info.mbDateValid = false;	
+		GetFileInfo(h->mPos, info);
 		return true;
 	}
 
@@ -432,7 +431,15 @@ void ATDiskFSDOS2::FindEnd(uintptr searchKey) {
 void ATDiskFSDOS2::GetFileInfo(uintptr key, ATDiskFSEntryInfo& info) {
 	const DirEnt& de = mDirectory[key - 1];
 
-	info.mFileName	= VDTextAToW(de.mName);
+	int nameLen = 8;
+	int extLen = 3;
+	while(nameLen && de.mName[nameLen - 1] == ' ')
+		--nameLen;
+
+	while(extLen && de.mName[extLen + 7] == ' ')
+		--extLen;
+
+	info.mFileName	= de.mName;
 	info.mSectors	= de.mSectorCount;
 	info.mBytes		= de.mBytes;
 	info.mKey		= key;
@@ -560,7 +567,7 @@ void ATDiskFSDOS2::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
 	}
 }
 
-void ATDiskFSDOS2::WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len) {
+uintptr ATDiskFSDOS2::WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len) {
 	if (mbReadOnly)
 		throw ATDiskFSException(kATDiskFSError_ReadOnly);
 
@@ -633,6 +640,8 @@ void ATDiskFSDOS2::WriteFile(uintptr parentKey, const char *filename, const void
 	WriteFileName(de, filename);
 
 	mbDirty = true;
+
+	return dirIdx + 1;
 }
 
 void ATDiskFSDOS2::RenameFile(uintptr key, const char *filename) {

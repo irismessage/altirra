@@ -50,14 +50,16 @@ class IATModemDriver {
 public:
 	virtual ~IATModemDriver() {}
 
-	virtual bool Init(const char *address, const char *service, uint32 port, IATModemDriverCallback *callback) = 0;
+	virtual bool Init(const char *address, const char *service, uint32 port, bool loggingEnabled, IATModemDriverCallback *callback) = 0;
 	virtual void Shutdown() = 0;
 
 	virtual bool GetLastIncomingAddress(VDStringA& address, uint32& port) = 0;
 
 	virtual uint32 Write(const void *data, uint32 len) = 0;
 	virtual uint32 Read(void *buf, uint32 len) = 0;
+	virtual bool ReadLogMessages(VDStringA& messages) = 0;
 
+	virtual void SetLoggingEnabled(bool enabled) = 0;
 	virtual void SetConfig(const ATRS232Config& config) = 0;
 };
 

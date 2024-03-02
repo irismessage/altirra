@@ -75,13 +75,6 @@ void ATSoundBoardEmulator::ColdReset() {
 	mLoadAddress = 0;
 	mpCurChan = &mChannels[0];
 
-	mAccumLevel = 0;
-	mAccumPhase = 0;
-	mAccumOffset = 0;
-	mGeneratedCycles = 0;
-	mLastUpdate = ATSCHEDULER_GETTIME(mpScheduler);
-	mCycleAccum = 0;
-
 	mMultiplierMode = 0;
 	mMultiplierArg1[0] = 0xFF;
 	mMultiplierArg1[1] = 0xFF;
@@ -102,6 +95,13 @@ void ATSoundBoardEmulator::WarmReset() {
 
 	memset(mAccumBufferLeft, 0, sizeof mAccumBufferLeft);
 	memset(mAccumBufferRight, 0, sizeof mAccumBufferRight);
+
+	mAccumLevel = 0;
+	mAccumPhase = 0;
+	mAccumOffset = 0;
+	mGeneratedCycles = 0;
+	mLastUpdate = ATSCHEDULER_GETTIME(mpScheduler);
+	mCycleAccum = 0;
 }
 
 uint8 ATSoundBoardEmulator::DebugReadControl(uint8 addr) const {

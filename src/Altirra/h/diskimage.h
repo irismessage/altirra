@@ -23,6 +23,16 @@ struct ATDiskPhysicalSectorInfo {
 	sint16	mWeakDataOffset;
 };
 
+struct ATDiskGeometryInfo {
+	uint16	mSectorSize;
+	uint8	mBootSectorCount;
+	uint32	mTotalSectorCount;
+	uint8	mTrackCount;
+	uint32	mSectorsPerTrack;
+	uint8	mSideCount;
+	bool	mbMFM;
+};
+
 class VDINTERFACE IATDiskImage {
 public:
 	virtual ~IATDiskImage() {}
@@ -37,6 +47,7 @@ public:
 	virtual void SetPathATR(const wchar_t *path) = 0;
 	virtual void SaveATR(const wchar_t *path) = 0;
 
+	virtual ATDiskGeometryInfo GetGeometry() const = 0;
 	virtual uint32 GetSectorSize() const = 0;
 	virtual uint32 GetSectorSize(uint32 virtIndex) const = 0;
 	virtual uint32 GetBootSectorCount() const = 0;

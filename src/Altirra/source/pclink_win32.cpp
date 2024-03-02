@@ -40,6 +40,9 @@ uint8 ATTranslateWin32ErrorToSIOError(uint32 err) {
 		case ERROR_ACCESS_DENIED:
 			return ATCIOSymbols::CIOStatAccessDenied;
 
+		case ERROR_SHARING_VIOLATION:
+			return ATCIOSymbols::CIOStatFileLocked;
+
 		default:
 			return ATCIOSymbols::CIOStatSystemError;
 	}

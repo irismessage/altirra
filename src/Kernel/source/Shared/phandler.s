@@ -391,6 +391,9 @@ init_done:
 	ldx		#$4F
 	jsr		do_simple_poll
 	
+	;exit if poll reset fails (Atari++'s SIO patch issues a device error here)
+	bmi		exit
+	
 	;issue type 3 poll (address $4F, command $40, aux $0000, read 4 bytes)
 poll_loop:
 	lda		#$00
@@ -403,9 +406,9 @@ poll_loop:
 	jsr		siov
 	bpl		poll_ok
 	cpy		#SIOErrorTimeout
-	sne
+	bne		poll_fail
+exit:
 	rts
-
 poll_fail:
 	;we had a failure -- issue a null poll before trying another device
 	ldx		#$4e

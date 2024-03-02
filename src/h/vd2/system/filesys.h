@@ -179,6 +179,7 @@ void VDCreateDirectory(const wchar_t *path);
 void VDRemoveDirectory(const wchar_t *path);
 
 extern bool (*VDRemoveFile)(const wchar_t *path);
+void VDRemoveFileEx(const wchar_t *path);		// throws exception on failure
 
 void VDMoveFile(const wchar_t *srcPath, const wchar_t *dstPath);
 

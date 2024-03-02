@@ -33,7 +33,7 @@ extern ATSimulator g_sim;
 
 /////////////////////////////////////////////////////////////////////////////
 
-class ATUIProfilerSourceTextView : public VDShaderEditorBaseWindow {
+class ATUIProfilerSourceTextView : public ATUINativeWindow {
 public:
 	ATUIProfilerSourceTextView(const ATProfileSession& profsess);
 	~ATUIProfilerSourceTextView();
@@ -127,7 +127,7 @@ ATUIProfilerSourceTextView::~ATUIProfilerSourceTextView() {
 }
 
 bool ATUIProfilerSourceTextView::Create(HWND hwndParent) {
-	if (!CreateWindow(MAKEINTATOM(sWndClass), _T("Altirra Profiler - Source View"), WS_VISIBLE|WS_CHILD, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwndParent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this)))
+	if (!CreateWindow(MAKEINTATOM(sWndClass), _T("Altirra Profiler - Source View"), WS_VISIBLE|WS_CHILD, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwndParent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this)))
 		return false;
 
 	return true;
@@ -489,7 +489,7 @@ void ATUIProfilerSourceTextView::RemakeView() {
 
 /////////////////////////////////////////////////////////////////////////////
 
-class ATUIProfilerSourcePane : public VDShaderEditorBaseWindow {
+class ATUIProfilerSourcePane : public ATUINativeWindow {
 public:
 	ATUIProfilerSourcePane(const ATProfileSession& session, uint32 baseAddr);
 	~ATUIProfilerSourcePane();
@@ -521,7 +521,7 @@ ATUIProfilerSourcePane::~ATUIProfilerSourcePane() {
 }
 
 bool ATUIProfilerSourcePane::Create(HWND hwndParent) {
-	if (!CreateWindow(MAKEINTATOM(sWndClass), _T("Altirra Profiler - Source View"), WS_VISIBLE|WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwndParent, NULL, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this)))
+	if (!CreateWindow(MAKEINTATOM(sWndClass), _T("Altirra Profiler - Source View"), WS_VISIBLE|WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwndParent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this)))
 		return false;
 
 	return true;
@@ -562,7 +562,7 @@ LRESULT ATUIProfilerSourcePane::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) 
 			return TRUE;
 	}
 
-	return VDShaderEditorBaseWindow::WndProc(msg, wParam, lParam);
+	return ATUINativeWindow::WndProc(msg, wParam, lParam);
 }
 
 void ATUIProfilerSourcePane::OnCreate() {
@@ -721,11 +721,15 @@ protected:
 			mSort[2] = 0;
 			mSort[3] = 2;
 			mSort[4] = 4;
+			mSort[5] = 5;
+			mSort[6] = 6;
 			mDescending[0] = 0;
 			mDescending[1] = 0;
 			mDescending[2] = -1;
 			mDescending[3] = -1;
 			mDescending[4] = -1;
+			mDescending[5] = -1;
+			mDescending[6] = -1;
 		}
 
 		int Compare(IVDUIListViewVirtualItem *x, IVDUIListViewVirtualItem *y) {
@@ -735,7 +739,7 @@ protected:
 			const ATProfileRecord& r = a.mpParent->mSession.mRecords[a.mIndex];
 			const ATProfileRecord& s = a.mpParent->mSession.mRecords[b.mIndex];
 
-			for(int i=0; i<5; ++i) {
+			for(int i=0; i<6; ++i) {
 				int j = mSort[i];
 				int inv = mDescending[j];
 				int diff;
@@ -760,6 +764,22 @@ protected:
 					case 4:
 						diff = (((int)r.mInsns - (int)s.mInsns) ^ inv) - inv;
 						break;
+
+					case 5:
+						diff = (((int)r.mUnhaltedCycles - (int)s.mUnhaltedCycles) ^ inv) - inv;
+						break;
+
+					case 6:
+						// diff = r.u / r.c - s.u / s.c
+						//      = [r.u*s.c - s.u*r.c] / (r.c * s.c);
+						{
+							float discriminant = (float)r.mUnhaltedCycles * (float)s.mCycles - (float)s.mUnhaltedCycles * (float)r.mCycles;
+
+							diff = (discriminant < 0.0f) ? -1 : (discriminant > 0.0f) ? +1 : 0;
+
+							diff = (diff ^ inv) - inv;
+						}
+						break;
 				}
 
 				if (diff)
@@ -773,25 +793,19 @@ protected:
 			if (mSort[0] == idx) {
 				mDescending[idx] ^= -1;
 				return;
-			} else if (mSort[1] == idx) {
-				// nothing
-			} else if (mSort[2] == idx) {
-				mSort[2] = mSort[1];
-			} else if (mSort[3] == idx) {
-				mSort[3] = mSort[2];
-				mSort[2] = mSort[1];
-			} else {
-				mSort[4] = mSort[3];
-				mSort[3] = mSort[2];
-				mSort[2] = mSort[1];
 			}
 
-			mSort[1] = mSort[0];
-			mSort[0] = idx;
+			for(int i=1; i<vdcountof(mSort); ++i) {
+				if (mSort[i] == idx) {
+					memmove(mSort + 1, mSort, i);
+					mSort[0] = idx;
+					break;
+				}
+			}
 		}
 
-		uint8 mSort[5];
-		sint8 mDescending[5];
+		uint8 mSort[7];
+		sint8 mDescending[7];
 	};
 
 	friend class VTItem;
@@ -1081,11 +1095,14 @@ bool ATUIProfilerPane::OnNotify(uint32 id, uint32 code, const void *hdr, LRESULT
 }
 
 void ATUIProfilerPane::OnColumnClicked(VDUIProxyListView *lv, int column) {
-	if (column >= 5)
-		column -= 2;
+	static const uint8 kSortColumnTable[]={
+		0, 1, 2, 3, 4, 3, 4, 5, 5, 6
+	};
 
-	mComparer.Float(column);
-	mListView.Sort(mComparer);
+	if ((unsigned)column < vdcountof(kSortColumnTable)) {
+		mComparer.Float(kSortColumnTable[column]);
+		mListView.Sort(mComparer);
+	}
 }
 
 void ATUIProfilerPane::OnItemDoubleClicked(VDUIProxyListView *lv, int item) {
@@ -1245,8 +1262,9 @@ void ATUIProfilerPane::RemakeView() {
 		mListView.InsertColumn(5, L"Clocks%", 0, true);
 		mListView.InsertColumn(6, L"Insns%", 0, true);
 		mListView.InsertColumn(7, L"CPUClocks", 0, true);
-		mListView.InsertColumn(8, L"DMA%", 0, true);
-		mListView.InsertColumn(9, L"", 0, false);		// crude hack to fix full justified column
+		mListView.InsertColumn(8, L"CPUClocks%", 0, true);
+		mListView.InsertColumn(9, L"DMA%", 0, true);
+		mListView.InsertColumn(10, L"", 0, false);		// crude hack to fix full justified column
 
 		uint32 n = mSession.mRecords.size();
 		mVLItems.resize(n);
@@ -1335,6 +1353,10 @@ void ATUIProfilerPane::VLGetText(int item, int subItem, VDStringW& s) const {
 			break;
 
 		case 8:
+			s.sprintf(L"%.2f%%", (float)record.mUnhaltedCycles / (float)mSession.mTotalUnhaltedCycles * 100.0f);
+			break;
+
+		case 9:
 			if (record.mCycles)
 				s.sprintf(L"%.2f%%", 100.0f * (1.0f - (float)record.mUnhaltedCycles / (float)record.mCycles));
 			break;

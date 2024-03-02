@@ -133,15 +133,7 @@ public:
 	void	ClearKeyMatrix();
 
 	int	GetPotPos(unsigned idx) const { return mPOT[idx]; }
-	void	SetPotPos(unsigned idx, int pos) {
-		if (pos > 228)
-			pos = 228;
-
-		if (pos < 0)
-			pos = 0;
-
-		mPOT[idx] = (uint8)pos;
-	}
+	void	SetPotPos(unsigned idx, int pos);
 
 	void	AdvanceScanLine();
 	void	AdvanceFrame(bool pushAudio);
@@ -292,6 +284,7 @@ protected:
 	uint32	mLast64KHzTime;
 
 	uint8	mPOT[8];
+	uint8	mPOTLatched[8];
 	uint8	mALLPOT;
 	uint32	mPotScanStartTime;
 

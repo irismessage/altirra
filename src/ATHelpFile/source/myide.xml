@@ -42,9 +42,7 @@
   <h3>Flash-based driver</h3>
   <p>
     You will need to convert the cartridge flasher disk image to a cartridge image by mounting
-    an empty 1Mbit cartridge and then booting the flasher disk. Do not mount a 1Mbit+IDE cartridge
-    as this does not currently work with the flasher. Once the emulated cartridge has been flashed,
-    save the cartridge as a headerless image and remount it in flash+IDE mapping mode. Use $D500-D51F
+    an empty 1Mbit+IDE cartridge and then booting the flasher disk. Use $D500-D51F
     as the I/O window for the IDE interface.
   </p>
   <h3>Custom OS kernel ROM</h3>

@@ -18,9 +18,6 @@
 #include "stdafx.h"
 #include "scheduler.h"
 
-#undef VDASSERT
-#define VDASSERT(cond) if(!(cond)) __debugbreak(); else ((void)0)
-
 class ATEvent : public ATEventLink {
 public:
 	IATSchedulerCallback *mpCB;
@@ -46,7 +43,7 @@ void ATScheduler::ProcessNextEvent() {
 		ATEvent *ev = static_cast<ATEvent *>(mActiveEvents.mpNext);
 		sint32 timeToNextEvent = ev->mNextTime - (mTimeBase + mNextEventCounter);
 
-		VDASSERT(timeToNextEvent<10000000);
+		VDASSERT(timeToNextEvent<100000000);
 
 		if (timeToNextEvent) {
 			if (timeToNext > timeToNextEvent)

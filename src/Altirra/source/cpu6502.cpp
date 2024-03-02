@@ -162,6 +162,9 @@ bool ATCPUEmulator::Decode6502(uint8 opcode) {
 			*mpDstState++ = kStateAddrToPC;
 			*mpDstState++ = kStateWait;
 
+			if (mbStepOver)
+				*mpDstState++ = kStateStepOver;
+
 			if (mbPathfindingEnabled)
 				*mpDstState++ = kStateAddAsPathStart;
 			break;

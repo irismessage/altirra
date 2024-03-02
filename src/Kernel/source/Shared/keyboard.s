@@ -180,6 +180,10 @@ isctrl_1:
 ;==============================================================================
 .proc	KeyboardBreakIRQ
 	mva		#0		brkkey
+	
+	;interestingly, the default break handler forces the cursor back on.
+	sta		crsinh
+	
 	pla
 	rti
 .endp

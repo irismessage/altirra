@@ -37,6 +37,11 @@ namespace {
 		kSize256K	= 256,
 		kSize512K	= 512,
 		kSize1M		= 1024,
+		kSize2M		= 2048,
+		kSize4M		= 0x1000,
+		kSize32M	= 0x2000,
+		kSize64M	= 0x4000,
+		kSize128M	= 0x8000,
 	};
 
 	enum WritableStoreType {
@@ -150,10 +155,17 @@ static const struct ATCartDetectInfo {
 {	kATCartridgeMode_AST_32K,					kType800,	kSize32K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Turbosoft_64K,				kType800,	kSize64K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
 {	kATCartridgeMode_Turbosoft_128K,			kType800,	kSize128K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
-{	kATCartridgeMode_Megacart_1M_2,				kType800,	kSize256K |
+{	kATCartridgeMode_MegaCart_1M_2,				kType800,	kSize256K |
 															kSize512K |
 															kSize1M,	kWrsNone,	kBankDataSw,	kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_MegaCart_512K_3,			kType800,	kSize512K,	kWrsNone,	kBankDataSw,	kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_MegaCart_2M_3,				kType800,	kSize2M,	kWrsNone,	kBankDataSw,	kInit8K,	kHeaderLast16B,					},
+{	kATCartridgeMode_MegaCart_4M_3,				kType800,	kSize4M,	kWrsNone,	kBankDataSw,	kInit8K,	kHeaderLast16B,					},
 {	kATCartridgeMode_MicroCalc,					kType800,	kSize32K,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_MegaMax_2M,				kType800,	kSize2M,	kWrsNone,	kBankAny,		kInit16K,	kHeaderFirst16K_PreferAll16K,	},
+{	kATCartridgeMode_TheCart_32M,				kType800,	kSize32M,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_TheCart_64M,				kType800,	kSize64M,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_TheCart_128M,				kType800,	kSize128M,	kWrsNone,	kBankAny,		kInit8K,	kHeaderFirst8K,					},
 
 // 5200 carts
 //
@@ -182,7 +194,9 @@ uint32 ATCartridgeAutodetectMode(const void *data, uint32 size, vdfastvector<int
 	// map cartridge size
 	uint32 sizeType;
 
-	     if (size == 1048576) sizeType = kSize1M;
+		 if (size == 4194304) sizeType = kSize4M;
+	else if (size == 2097152) sizeType = kSize2M;
+	else if (size == 1048576) sizeType = kSize1M;
 	else if (size ==  524288) sizeType = kSize512K;
 	else if (size ==  262144) sizeType = kSize256K;
 	else if (size ==  131072) sizeType = kSize128K;

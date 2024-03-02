@@ -15,12 +15,14 @@ ATUIWidget::ATUIWidget()
 	, mCursorImage(0)
 	, mDockMode(kATUIDockMode_None)
 	, mFrameMode(kATUIFrameMode_None)
+	, mTouchMode(kATUITouchMode_Default)
 	, mpAnchor(NULL)
 	, mInstanceId(0)
 	, mOwnerId(0)
 	, mbVisible(true)
 	, mbFastClip(false)
 	, mbHitTransparent(false)
+	, mPointersOwned(0)
 {
 }
 
@@ -63,7 +65,7 @@ bool ATUIWidget::HasFocus() const {
 }
 
 bool ATUIWidget::HasCursor() const {
-	return mpManager && mpManager->GetCursorWindow() == this;
+	return mPointersOwned != 0;
 }
 
 bool ATUIWidget::IsCursorCaptured() const {
@@ -279,6 +281,10 @@ const ATUITriggerBinding *ATUIWidget::FindAction(uint32 vk, uint32 extvk, uint32
 	return NULL;
 }
 
+ATUITouchMode ATUIWidget::GetTouchModeAtPoint(const vdpoint32& pt) const {
+	return kATUITouchMode_Default;
+}
+
 void ATUIWidget::OnMouseRelativeMove(sint32 x, sint32 y) {
 }
 
@@ -478,6 +484,22 @@ void ATUIWidget::SetParent(ATUIManager *mgr, ATUIContainer *parent) {
 		if (mbVisible && !mArea.empty())
 			mgr->Invalidate(this);
 	}
+}
+
+void ATUIWidget::OnPointerEnter(uint8 bit) {
+	mPointersOwned |= bit;
+}
+
+void ATUIWidget::OnPointerLeave(uint8 bit) {
+	if (mPointersOwned & bit) {
+		mPointersOwned -= bit;
+
+		OnMouseLeave();
+	}
+}
+
+void ATUIWidget::OnPointerClear() {
+	mPointersOwned = 0;
 }
 
 void ATUIWidget::RecomputeClientArea() {

@@ -538,35 +538,61 @@ ATUIDialogOptionsPageFlash::ATUIDialogOptionsPageFlash(ATOptions& opts)
 
 bool ATUIDialogOptionsPageFlash::OnLoaded() {
 	AddHelpEntry(IDC_SIC_FLASH, L"SIC! cartridge flash", L"Sets the flash chip used for SIC! cartridges.");
+	AddHelpEntry(IDC_U1MB_FLASH, L"U1MB flash", L"Sets the flash chip used for Ultimate1MB.");
 
 	CBAddString(IDC_SIC_FLASH, L"Am29F040B (64K sectors)");
 	CBAddString(IDC_SIC_FLASH, L"SSF39SF040 (4K sectors)");
+
+	CBAddString(IDC_U1MB_FLASH, L"A29040 (64K sectors)");
+	CBAddString(IDC_U1MB_FLASH, L"SSF39SF040 (4K sectors)");
+	CBAddString(IDC_U1MB_FLASH, L"Am29F040B (64K sectors)");
+	CBAddString(IDC_U1MB_FLASH, L"BM29F040 (64K sectors)");
 
 	return ATUIDialogOptionsPage::OnLoaded();
 }
 
 void ATUIDialogOptionsPageFlash::OnDataExchange(bool write) {
-	static const char *const kFlashChips[]={
+	static const char *const kSICFlashChips[]={
 		"Am29F040B",
 		"SST39SF040"
+	};
+
+	static const char *const kU1MBFlashChips[]={
+		"A29040",
+		"SST39SF040",
+		"Am29F040B",
+		"BM29F040",
 	};
 
 	if (write) {
 		int idx = CBGetSelectedIndex(IDC_SIC_FLASH);
 
-		if ((unsigned)idx < vdcountof(kFlashChips))
-			mOptions.mSICFlashChip = kFlashChips[idx];
+		if ((unsigned)idx < vdcountof(kSICFlashChips))
+			mOptions.mSICFlashChip = kSICFlashChips[idx];
+
+		idx = CBGetSelectedIndex(IDC_U1MB_FLASH);
+		if ((unsigned)idx < vdcountof(kU1MBFlashChips))
+			mOptions.mU1MBFlashChip = kU1MBFlashChips[idx];
 	} else {
 		int idx = 0;
-
-		for(int i=0; i<(int)vdcountof(kFlashChips); ++i) {
-			if (mOptions.mSICFlashChip == kFlashChips[i]) {
+		for(int i=0; i<(int)vdcountof(kSICFlashChips); ++i) {
+			if (mOptions.mSICFlashChip == kSICFlashChips[i]) {
 				idx = i;
 				break;
 			}
 		}
 
 		CBSetSelectedIndex(IDC_SIC_FLASH, idx);
+
+		idx = 0;
+		for(int i=0; i<(int)vdcountof(kU1MBFlashChips); ++i) {
+			if (mOptions.mU1MBFlashChip == kU1MBFlashChips[i]) {
+				idx = i;
+				break;
+			}
+		}
+
+		CBSetSelectedIndex(IDC_U1MB_FLASH, idx);
 	}
 }
 

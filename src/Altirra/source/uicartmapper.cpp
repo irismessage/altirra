@@ -194,12 +194,19 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_TelelinkII:			return L"8K Telelink II";
 		case kATCartridgeMode_SIC:					return L"SIC!";
 		case kATCartridgeMode_MaxFlash_1024K_Bank0:	return L"MaxFlash 1M / 8Mbit - newer (bank 0)";
-		case kATCartridgeMode_Megacart_1M_2:		return L"Megacart 1M (2)";
+		case kATCartridgeMode_MegaCart_1M_2:		return L"Megacart 1M (2)";
 		case kATCartridgeMode_5200_64K_32KBanks:	return L"5200 64K cartridge (32K banks)";
 		case kATCartridgeMode_MicroCalc:			return L"52: MicroCalc 32K";
 		case kATCartridgeMode_2K:					return L"57: 2K";
 		case kATCartridgeMode_4K:					return L"58: 4K";
 		case kATCartridgeMode_RightSlot_4K:			return L"59: Right slot 4K";
+		case kATCartridgeMode_MegaCart_512K_3:		return L"MegaCart 512K (3)";
+		case kATCartridgeMode_MegaMax_2M:			return L"61: MegaMax 2M";
+		case kATCartridgeMode_TheCart_128M:			return L"62: The!Cart 128M";
+		case kATCartridgeMode_MegaCart_4M_3:		return L"63: MegaCart 4M (3)";
+		case kATCartridgeMode_MegaCart_2M_3:		return L"64: MegaCart 2M (3)";
+		case kATCartridgeMode_TheCart_32M:			return L"65: The!Cart 32M";
+		case kATCartridgeMode_TheCart_64M:			return L"66: The!Cart 64M";
 		default:
 			return L"";
 	}

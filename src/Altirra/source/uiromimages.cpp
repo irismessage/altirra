@@ -76,6 +76,7 @@ const wchar_t *const ATUIDialogROMImages::kPathNames[kATROMImageCount] = {
 	L"IDEPlus 2.0 (Main)",
 	L"IDEPlus 2.0 (SDX)",
 	L"SIDE (SDX)",
+	L"SIDE 2 (SDX)",
 	L"MyIDE II",
 	L"Ultimate1MB",
 };
@@ -94,6 +95,7 @@ const ATROMImage ATUIDialogROMImages::kPathIds[kATROMImageCount] = {
 	kATROMImage_KMKJZIDEV2,
 	kATROMImage_KMKJZIDEV2_SDX,
 	kATROMImage_SIDE_SDX,
+	kATROMImage_SIDE2_SDX,
 	kATROMImage_MyIDEII,
 	kATROMImage_Ultimate1MB,
 };

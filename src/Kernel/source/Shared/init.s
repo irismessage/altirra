@@ -40,13 +40,20 @@ InitColdStart = InitReset.cold_boot
 	
 	;wait for everything to stabilize (0.1s)
 	ldy		#140
-	ldx		#0
+	inx					;!! x=0
 stabilize_loop:
 	dex:rne
 	dey
 	bne		stabilize_loop
 	
 	.if _KERNEL_XLXE
+	;check if we successfully completed cold start
+	;
+	;!! This is required to work on Atari800WinPlus, which doesn't clear memory on
+	;   cold reset!
+	lda		coldst
+	bne		cold_boot
+	
 	;check for warmstart signature (XL/XE)
 	ldx		#2
 warm_check:
@@ -135,11 +142,7 @@ no_basic:
 	mva		#0 a1
 	sta		a1+1
 clearloop:
-	lda		#0
-clearloop2:
-	sta		(a1),y
-	iny
-	bne		clearloop2
+	sta:rne	(a1),y+
 	inc		a1+1
 	dex
 	bne		clearloop
@@ -152,7 +155,7 @@ clearloop2:
 .endif
 	
 	; 8. set coldstart flag
-	mva		#$ff coldst
+	dec		coldst		;!! coldst=0 from clear loop above, now $ff
 	
 .if _KERNEL_XLXE
 	; set BASIC flag
@@ -336,7 +339,8 @@ end:
 	.if _KERNEL_XLXE
 	ldx		#0
 	lda		pal
-	sne:ldx	#$ff
+	and		#$0e
+	sne:dex
 	stx		palnts
 	.endif
 	
@@ -382,10 +386,8 @@ end:
 	
 	; check for START key, and if so, set cassette boot flag
 	lda		consol
-	ror
-	bcc		nocasboot
-	mva		#1 ckey
-nocasboot:
+	and		#1
+	sta		ckey
 	
 .if _KERNEL_PBI_SUPPORT
 	jsr		PBIScan

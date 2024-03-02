@@ -139,6 +139,7 @@ ATVBXEEmulator::ATVBXEEmulator()
 	, mRCIndex(0)
 	, mRCCount(0)
 	, mbHiresMode(false)
+	, mbAnalysisMode(false)
 	, mPRIOR(0)
 	, mpPriTable(0)
 	, mpPriTableHi(0)
@@ -149,6 +150,7 @@ ATVBXEEmulator::ATVBXEEmulator()
 	, mpMemLayerGTIAOverlay(NULL)
 {
 	memset(mColorTable, 0, sizeof mColorTable);
+	memset(mColorTableExt, 0, sizeof mColorTableExt);
 
 	InitPriorityTables();
 
@@ -211,6 +213,7 @@ void ATVBXEEmulator::ColdReset() {
 	mbExtendedColor	= false;
 	mbAttrMapEnabled = false;
 
+	UpdateColorTable();
 	InitMemoryMaps();
 	WarmReset();
 }
@@ -274,7 +277,11 @@ void ATVBXEEmulator::SetRegisterBase(uint8 page) {
 }
 
 void ATVBXEEmulator::SetAnalysisMode(bool enable) {
-	mpColorTable = enable ? kATAnalysisColorTable : mColorTable;
+	if (mbAnalysisMode != enable) {
+		mbAnalysisMode = enable;
+
+		UpdateColorTable();
+	}
 }
 
 void ATVBXEEmulator::SetDefaultPalette(const uint32 pal[256]) {
@@ -616,6 +623,7 @@ bool ATVBXEEmulator::WriteControl(uint8 addrLo, uint8 value) {
 			mbExtendedColor = (value & 0x02) != 0;
 			mbOvTrans = (value & 0x04) == 0;
 			mbOvTrans15 = (value & 0x08) != 0;
+			UpdateColorTable();
 			break;
 
 		case 0x41:	// XDL_ADR0
@@ -1237,16 +1245,27 @@ void ATVBXEEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 
 		switch(rc->mReg) {
 		case 0x12:
+			mColorTableExt[kColorP0] = value;
+			mColorTableExt[kColorP0P1] = value | mColorTableExt[kColorP1];
+
 			value &= 0xfe;
 			mColorTable[kColorP0] = value;
 			mColorTable[kColorP0P1] = value | mColorTable[kColorP1];
 			break;
 		case 0x13:
+			mColorTableExt[kColorP1] = value;
+			mColorTableExt[kColorP0P1] = mColorTableExt[kColorP0] | value;
+
 			value &= 0xfe;
 			mColorTable[kColorP1] = value;
 			mColorTable[kColorP0P1] = mColorTable[kColorP0] | value;
 			break;
 		case 0x14:
+			mColorTableExt[kColorP2] = value;
+			mColorTableExt[kColorP2P3] = value | mColorTableExt[kColorP3];
+			mColorTableExt[kColorPF3P2] = mColorTableExt[kColorPF3] | value;
+			mColorTableExt[kColorPF3P2P3] = mColorTableExt[kColorPF3P3] | value;
+
 			value &= 0xfe;
 			mColorTable[kColorP2] = value;
 			mColorTable[kColorP2P3] = value | mColorTable[kColorP3];
@@ -1254,6 +1273,11 @@ void ATVBXEEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 			mColorTable[kColorPF3P2P3] = mColorTable[kColorPF3P3] | value;
 			break;
 		case 0x15:
+			mColorTableExt[kColorP3] = value;
+			mColorTableExt[kColorP2P3] = mColorTableExt[kColorP2] | value;
+			mColorTableExt[kColorPF3P3] = mColorTableExt[kColorPF3] | value;
+			mColorTableExt[kColorPF3P2P3] = mColorTableExt[kColorPF3P2] | value;
+
 			value &= 0xfe;
 			mColorTable[kColorP3] = value;
 			mColorTable[kColorP2P3] = mColorTable[kColorP2] | value;
@@ -1261,18 +1285,26 @@ void ATVBXEEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 			mColorTable[kColorPF3P2P3] = mColorTable[kColorPF3P2] | value;
 			break;
 		case 0x16:
+			mColorTableExt[kColorPF0] = value;
 			value &= 0xfe;
 			mColorTable[kColorPF0] = value;
 			break;
 		case 0x17:
+			mColorTableExt[kColorPF1] = value;
 			value &= 0xfe;
 			mColorTable[kColorPF1] = value;
 			break;
 		case 0x18:
+			mColorTableExt[kColorPF2] = value;
 			value &= 0xfe;
 			mColorTable[kColorPF2] = value;
 			break;
 		case 0x19:
+			mColorTableExt[kColorPF3] = value;
+			mColorTableExt[kColorPF3P2] = value | mColorTableExt[kColorP2];
+			mColorTableExt[kColorPF3P3] = value | mColorTableExt[kColorP3];
+			mColorTableExt[kColorPF3P2P3] = value | mColorTableExt[kColorP2P3];
+
 			value &= 0xfe;
 			mColorTable[kColorPF3] = value;
 			mColorTable[kColorPF3P2] = value | mColorTable[kColorP2];
@@ -1280,6 +1312,8 @@ void ATVBXEEmulator::UpdateRegisters(const RegisterChange *rc, int count) {
 			mColorTable[kColorPF3P2P3] = value | mColorTable[kColorP2P3];
 			break;
 		case 0x1A:
+			mColorTableExt[kColorBAK] = value;
+
 			value &= 0xfe;
 			mColorTable[kColorBAK] = value;
 			break;
@@ -1381,9 +1415,9 @@ int ATVBXEEmulator::RenderAttrPixels(int x1h, int x2h) {
 void ATVBXEEmulator::RenderAttrDefaultPixels(int x1h, int x2h) {
 	const AttrPixel px = {
 		0,
-		mColorTable[kColorPF0],
-		mColorTable[kColorPF1],
-		mColorTable[kColorPF2],
+		mpColorTable[kColorPF0],
+		mpColorTable[kColorPF1],
+		mpColorTable[kColorPF2],
 		(mPfPaletteIndex << 6) + (mOvPaletteIndex << 4),
 		0,
 		mOvMainPriority
@@ -2315,7 +2349,7 @@ void ATVBXEEmulator::RunBlitter() {
 						for(uint8 i=0; i<mBlitZoomX; ++i) {
 							uint8 d = VBXE_FETCH(dstRowAddr);
 
-							if ((1 << (d >> 5)) & mBlitCollisionMask)
+							if (d && ((1 << (d >> 5)) & mBlitCollisionMask))
 								mBlitCollisionCode = d;
 
 							VBXE_WRITE(dstRowAddr, c);
@@ -2345,7 +2379,7 @@ void ATVBXEEmulator::RunBlitter() {
 						for(uint8 i=0; i<mBlitZoomX; ++i) {
 							uint8 d = VBXE_FETCH(dstRowAddr);
 
-							if ((1 << (d >> 5)) & mBlitCollisionMask)
+							if (d && ((1 << (d >> 5)) & mBlitCollisionMask))
 								mBlitCollisionCode = d;
 
 							VBXE_WRITE(dstRowAddr, c + d);
@@ -2376,7 +2410,7 @@ void ATVBXEEmulator::RunBlitter() {
 						for(uint8 i=0; i<mBlitZoomX; ++i) {
 							uint8 d = VBXE_FETCH(dstRowAddr);
 
-							if ((1 << (d >> 5)) & mBlitCollisionMask)
+							if (d && ((1 << (d >> 5)) & mBlitCollisionMask))
 								mBlitCollisionCode = d;
 
 							VBXE_WRITE(dstRowAddr, c | d);
@@ -2406,14 +2440,19 @@ void ATVBXEEmulator::RunBlitter() {
 						for(uint8 i=0; i<mBlitZoomX; ++i) {
 							uint8 d = VBXE_FETCH(dstRowAddr);
 
-							if ((1 << (d >> 5)) & mBlitCollisionMask)
+							if (d && ((1 << (d >> 5)) & mBlitCollisionMask))
 								mBlitCollisionCode = d;
 
 							VBXE_WRITE(dstRowAddr, c & d);
 							dstRowAddr += mBlitDstStepX;
 						}
 					} else {
-						dstRowAddr += dstStepXZoomed;
+						for(uint8 i=0; i<mBlitZoomX; ++i) {
+							uint8 d = VBXE_FETCH(dstRowAddr);
+
+							VBXE_WRITE(dstRowAddr, 0);
+							dstRowAddr += mBlitDstStepX;
+						}
 					}
 
 					srcRowAddr += mBlitSrcStepX;
@@ -2436,7 +2475,7 @@ void ATVBXEEmulator::RunBlitter() {
 						for(uint8 i=0; i<mBlitZoomX; ++i) {
 							uint8 d = VBXE_FETCH(dstRowAddr);
 
-							if ((1 << (d >> 5)) & mBlitCollisionMask)
+							if (d && ((1 << (d >> 5)) & mBlitCollisionMask))
 								mBlitCollisionCode = d;
 
 							VBXE_WRITE(dstRowAddr, c ^ d);
@@ -2466,14 +2505,16 @@ void ATVBXEEmulator::RunBlitter() {
 						for(uint8 i=0; i<mBlitZoomX; ++i) {
 							uint8 d = VBXE_FETCH(dstRowAddr);
 
-							if (c & 0x0f) {
-								if ((1 << ((d >> 1) & 7)) & mBlitCollisionMask)
-									mBlitCollisionCode = d;
-							}
+							if (d) {
+								if (c & 0x0f) {
+									if ((1 << ((d >> 1) & 7)) & mBlitCollisionMask)
+										mBlitCollisionCode = d;
+								}
 
-							if (c & 0xf0) {
-								if ((1 << ((d >> 5) & 7)) & mBlitCollisionMask)
-									mBlitCollisionCode = d;
+								if (c & 0xf0) {
+									if ((1 << ((d >> 5) & 7)) & mBlitCollisionMask)
+										mBlitCollisionCode = d;
+								}
 							}
 
 							VBXE_WRITE(dstRowAddr, c);
@@ -2771,4 +2812,8 @@ void ATVBXEEmulator::InitPriorityTables() {
 			dst2 += 2;
 		}
 	}
+}
+
+void ATVBXEEmulator::UpdateColorTable() {
+	mpColorTable = mbAnalysisMode ? kATAnalysisColorTable : mbExtendedColor ? mColorTableExt : mColorTable;
 }

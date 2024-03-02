@@ -8,10 +8,93 @@
 extern ATSimulator g_sim;
 
 struct ATUIOnScreenKeyboard::KeyEntry {
+	uint8 mPad;
+	uint8 mWidth;
 	uint8 mScanCode;
 	const wchar_t *mpNormalText;
 	const wchar_t *mpShiftText;
 	const wchar_t *mpControlText;
+	bool mbToggle;
+};
+
+const ATUIOnScreenKeyboard::KeyEntry ATUIOnScreenKeyboard::kEntries[]={
+	{ 0, 4, 0x11, L"Help", NULL, NULL },
+	{ 1, 6, 0x48, L"Start", NULL, NULL },
+	{ 0, 6, 0x49, L"Select", NULL, NULL },
+	{ 0, 6, 0x4A, L"Option", NULL, NULL },
+	{ 2, 4, 0x4B, L"Reset", NULL, NULL },
+	{ 2, 8, 0x40, L"Break", NULL, NULL },
+
+	{ 0, 4, 0x1C, L"Esc", NULL, NULL },
+	{ 0, 4, 0x1F, L"1", L"!", NULL },
+	{ 0, 4, 0x1E, L"2", L"\"", NULL },
+	{ 0, 4, 0x1A, L"3", L"#", NULL },
+	{ 0, 4, 0x18, L"4", L"$", NULL },
+	{ 0, 4, 0x1D, L"5", L"%", NULL },
+	{ 0, 4, 0x1B, L"6", L"&", NULL },
+	{ 0, 4, 0x33, L"7", L"'", NULL },
+	{ 0, 4, 0x35, L"8", L"@", NULL },
+	{ 0, 4, 0x30, L"9", L"(", NULL },
+	{ 0, 4, 0x32, L"0", L")", NULL },
+	{ 0, 4, 0x36, L"<", L"Clr", NULL },
+	{ 0, 4, 0x37, L">", L"Ins", NULL },
+	{ 0, 4, 0x34, L"BkSp", L"Del", NULL },
+
+	{ 0, 5, 0x2C, L"Tab", L"Set", L"Clr" },
+	{ 0, 4, 0x2F, L"Q", NULL, NULL },
+	{ 0, 4, 0x2E, L"W", NULL, NULL },
+	{ 0, 4, 0x2A, L"E", NULL, NULL },
+	{ 0, 4, 0x28, L"R", NULL, NULL },
+	{ 0, 4, 0x2D, L"T", NULL, NULL },
+	{ 0, 4, 0x2B, L"Y", NULL, NULL },
+	{ 0, 4, 0x0B, L"U", NULL, NULL },
+	{ 0, 4, 0x0D, L"I", NULL, NULL },
+	{ 0, 4, 0x08, L"O", NULL, NULL },
+	{ 0, 4, 0x0A, L"P", NULL, NULL },
+	{ 0, 4, 0x0E, L"-", L"_", L"Up" },
+	{ 0, 4, 0x0F, L"=", L"|", L"Down" },
+	{ 0, 4, 0x3C, L"Caps", NULL, NULL },
+
+	{ 0, 6, 0x41, L"Ctrl", NULL, NULL, true },
+	{ 0, 4, 0x3F, L"A", NULL, NULL },
+	{ 0, 4, 0x3E, L"S", NULL, NULL },
+	{ 0, 4, 0x3A, L"D", NULL, NULL },
+	{ 0, 4, 0x38, L"F", NULL, NULL },
+	{ 0, 4, 0x3d, L"G", NULL, NULL },
+	{ 0, 4, 0x39, L"H", NULL, NULL },
+	{ 0, 4, 0x01, L"J", NULL, NULL },
+	{ 0, 4, 0x05, L"K", NULL, NULL },
+	{ 0, 4, 0x00, L"L", NULL, NULL },
+	{ 0, 4, 0x02, L";", L":", NULL },
+	{ 0, 4, 0x06, L"+", L"\\", L"Left" },
+	{ 0, 4, 0x07, L"*", L"^", L"Right" },
+	{ 0, 4, 0x0C, L"Return", NULL, NULL },
+
+	{ 0, 8, 0x42, L"Shift", NULL, NULL, true },
+	{ 0, 4, 0x17, L"Z", NULL, NULL },
+	{ 0, 4, 0x16, L"X", NULL, NULL },
+	{ 0, 4, 0x12, L"C", NULL, NULL },
+	{ 0, 4, 0x10, L"V", NULL, NULL },
+	{ 0, 4, 0x15, L"B", NULL, NULL },
+	{ 0, 4, 0x23, L"N", NULL, NULL },
+	{ 0, 4, 0x25, L"M", NULL, NULL },
+	{ 0, 4, 0x20, L",", L"[", NULL },
+	{ 0, 4, 0x22, L".", L"]", NULL },
+	{ 0, 4, 0x26, L"/", L"?", NULL },
+	{ 0, 8, 0x42, L"Shift", NULL, NULL, true },
+	{ 0, 4, 0x27, L"Inv", NULL, NULL },
+
+	{ 0, 4, 0x21, L"Space", NULL, NULL },
+};
+
+const int ATUIOnScreenKeyboard::kRowBreaks[]={
+	0,
+	6,
+	20,
+	34,
+	48,
+	61,
+	62
 };
 
 ATUIOnScreenKeyboard::ATUIOnScreenKeyboard()
@@ -26,93 +109,28 @@ ATUIOnScreenKeyboard::~ATUIOnScreenKeyboard() {
 }
 
 void ATUIOnScreenKeyboard::AutoSize() {
-	SetSize(vdsize32(mButtonWidth * kCols, mButtonHeight * kRows));
+	ATUIContainer *c = GetParent();
+	if (c) {
+		const vdsize32& size = c->GetArea().size();
+
+		int buttonSize = std::min<int>( 
+			std::max<int>(16, (size.h * 2) / kSubRows),
+			std::max<int>(16, size.w / kCols));
+
+		mButtonHeight = buttonSize;
+		mButtonWidth = buttonSize;
+	}
+
+	SetSize(vdsize32(mButtonWidth * kCols, (mButtonHeight * kSubRows) / 4));
 }
 
 void ATUIOnScreenKeyboard::OnCreate() {
-	static const KeyEntry kEntries[]={
-		{ 0x11, L"Help", NULL, NULL },
-		{ 0x48, L"Sta", NULL, NULL },
-		{ 0x49, L"Sel", NULL, NULL },
-		{ 0x4A, L"Opt", NULL, NULL },
-		{ 0x4B, L"Reset", NULL, NULL },
-
-		{ 0x1C, L"Esc", NULL, NULL },
-		{ 0x1F, L"1", L"!", NULL },
-		{ 0x1E, L"2", L"\"", NULL },
-		{ 0x1A, L"3", L"#", NULL },
-		{ 0x18, L"4", L"$", NULL },
-		{ 0x1D, L"5", L"%", NULL },
-		{ 0x1B, L"6", L"&", NULL },
-		{ 0x33, L"7", L"'", NULL },
-		{ 0x35, L"8", L"@", NULL },
-		{ 0x30, L"9", L"(", NULL },
-		{ 0x32, L"0", L")", NULL },
-		{ 0x36, L"<", L"Clr", NULL },
-		{ 0x37, L">", L"Ins", NULL },
-		{ 0x34, L"BkSp", L"Del", NULL },
-		{ 0x40, L"Break", NULL, NULL },
-
-		{ 0x2C, L"Tab", L"Set", L"Clr" },
-		{ 0x2F, L"Q", NULL, NULL },
-		{ 0x2E, L"W", NULL, NULL },
-		{ 0x2A, L"E", NULL, NULL },
-		{ 0x28, L"R", NULL, NULL },
-		{ 0x2D, L"T", NULL, NULL },
-		{ 0x2B, L"Y", NULL, NULL },
-		{ 0x0B, L"U", NULL, NULL },
-		{ 0x0D, L"I", NULL, NULL },
-		{ 0x08, L"O", NULL, NULL },
-		{ 0x0A, L"P", NULL, NULL },
-		{ 0x0E, L"-", L"_", NULL },
-		{ 0x0F, L"=", L"|", NULL },
-		{ 0x0C, L"Return", NULL, NULL },
-
-		{ 0x41, L"Ctrl", NULL, NULL },
-		{ 0x3F, L"A", NULL, NULL },
-		{ 0x3E, L"S", NULL, NULL },
-		{ 0x3A, L"D", NULL, NULL },
-		{ 0x38, L"F", NULL, NULL },
-		{ 0x3d, L"G", NULL, NULL },
-		{ 0x39, L"H", NULL, NULL },
-		{ 0x01, L"J", NULL, NULL },
-		{ 0x05, L"K", NULL, NULL },
-		{ 0x00, L"L", NULL, NULL },
-		{ 0x02, L";", L":", NULL },
-		{ 0x06, L"+", L"\\", NULL },
-		{ 0x07, L"*", L"^", NULL },
-		{ 0x3C, L"Caps", NULL, NULL },
-
-		{ 0x42, L"Shift", NULL, NULL },
-		{ 0x17, L"Z", NULL, NULL },
-		{ 0x16, L"X", NULL, NULL },
-		{ 0x12, L"C", NULL, NULL },
-		{ 0x10, L"V", NULL, NULL },
-		{ 0x15, L"B", NULL, NULL },
-		{ 0x23, L"N", NULL, NULL },
-		{ 0x25, L"M", NULL, NULL },
-		{ 0x20, L",", L"[", NULL },
-		{ 0x22, L".", L"]", NULL },
-		{ 0x26, L"/", L"?", NULL },
-		{ 0x42, L"Shift", NULL, NULL },
-		{ 0x27, L"Inv", NULL, NULL },
-
-		{ 0x21, L"Space", NULL, NULL },
-	};
-
 	VDASSERTCT(vdcountof(kEntries) == vdcountof(mButtons));
 
-	const int kRowBreaks[]={
-		0,
-		5,
-		20,
-		34,
-		48,
-		61,
-		62
-	};
-
 	VDASSERTCT(vdcountof(kRowBreaks) == kRows + 1);
+
+//	SetFillColor(0xD4D0C8);
+	SetFillColor(0xD4D0C8 / 4 * 3);
 
 	const int bw = mButtonWidth;
 	const int bh = mButtonHeight;
@@ -127,6 +145,8 @@ void ATUIOnScreenKeyboard::OnCreate() {
 			++y;
 		}
 
+		x += kEntries[i].mPad;
+
 		ATUIButton *button = new ATUIButton;
 		AddChild(button);
 
@@ -137,17 +157,7 @@ void ATUIOnScreenKeyboard::OnCreate() {
 		entry.mpKeyEntry = &kEntries[i];
 
 		button->SetText(entry.mpKeyEntry->mpNormalText);
-
-		int xoffset = (bw * y) >> 2;
-		vdrect32 r(xoffset + x * bw, y * bh, xoffset + (x+1) * bw, (y+1)*bh);
-
-		if (x == 0)
-			r.left = 0;
-
-		if (i == kRowBreaks[y+1]-1)
-			r.right = kCols*mButtonWidth;
-
-		button->SetArea(r);
+		button->SetToggleMode(entry.mpKeyEntry->mbToggle);
 
 		button->BindAction(kATUIVK_UIAccept, ATUIButton::kActionActivate);
 
@@ -180,7 +190,7 @@ void ATUIOnScreenKeyboard::OnCreate() {
 				break;
 		}
 
-		++x;
+		x += entry.mpKeyEntry->mWidth;
 	}
 
 	for(size_t row=0; row<vdcountof(kRowBreaks)-1; ++row) {
@@ -217,6 +227,42 @@ void ATUIOnScreenKeyboard::OnDestroy() {
 		mButtons[i].mpButton = NULL;
 
 	ATUIContainer::OnDestroy();
+}
+
+void ATUIOnScreenKeyboard::OnSize() {
+	const int kRowVPos[]={
+		0*4,
+		1*4+1,
+		2*4+1,
+		3*4+1,
+		4*4+1,
+		5*4+1,
+	};
+
+	VDASSERTCT(vdcountof(kRowVPos) == kRows);
+
+	const int bw = mButtonWidth;
+	const int bh = mButtonHeight;
+
+	for(int i=0; i<(int)vdcountof(mButtons); ++i) {
+		const ButtonEntry& entry = mButtons[i];
+		ATUIButton *const button = entry.mpButton;
+
+		if (button) {
+			const int x = entry.mX;
+			const int y = kRowVPos[entry.mY];
+
+			vdrect32 r(((x * bw) >> 2), (y * bh) >> 2, ((x + entry.mpKeyEntry->mWidth) * bw) >> 2, ((y + 4)*bh) >> 2);
+
+			if (x == 0)
+				r.left = 0;
+
+			if (i == kRowBreaks[entry.mY+1]-1)
+				r.right = kCols*mButtonWidth;
+
+			button->SetArea(r);
+		}
+	}
 }
 
 void ATUIOnScreenKeyboard::OnActionStart(uint32 id) {
@@ -260,6 +306,9 @@ void ATUIOnScreenKeyboard::OnButtonPressed(ATUIButton *src) {
 			ATPokeyEmulator& pokey = g_sim.GetPokey();
 			ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
+			if (ke.mbToggle)
+				mButtons[i].mpButton->SetToggleMode(true);
+
 			switch(ke.mScanCode) {
 				default:
 					pokey.PushRawKey(ke.mScanCode + (pokey.GetControlKeyState() ? 0x80 : 0x00) + (pokey.GetShiftKeyState() ? 0x40 : 0x00));
@@ -301,9 +350,13 @@ void ATUIOnScreenKeyboard::OnButtonPressed(ATUIButton *src) {
 }
 
 void ATUIOnScreenKeyboard::OnButtonReleased(ATUIButton *src) {
+	bool toggled = false;
+
 	for(size_t i=0; i<vdcountof(mButtons); ++i) {
 		if (mButtons[i].mpButton == src) {
 			const KeyEntry& ke = *mButtons[i].mpKeyEntry;
+
+			toggled = ke.mbToggle;
 
 			ATPokeyEmulator& pokey = g_sim.GetPokey();
 			ATGTIAEmulator& gtia = g_sim.GetGTIA();
@@ -337,6 +390,20 @@ void ATUIOnScreenKeyboard::OnButtonReleased(ATUIButton *src) {
 			}
 
 			break;
+		}
+	}
+
+	// release any buttons that are toggles -- do this AFTER we've pushed keys
+	if (!toggled) {
+		for(size_t i=0; i<vdcountof(mButtons); ++i) {
+			const ButtonEntry& be = mButtons[i];
+
+			if (be.mpKeyEntry->mbToggle) {
+				if (!be.mpButton->IsHeld())
+					be.mpButton->SetDepressed(false);
+
+				be.mpButton->SetToggleMode(false);
+			}
 		}
 	}
 }

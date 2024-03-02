@@ -106,6 +106,7 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	for(int i=0; i<8; ++i) {
 		mpPotScanEvent[i] = NULL;
 		mPOT[i] = 228;
+		mPOTLatched[i] = 228;
 	}
 
 	memset(mpTimerBorrowEvents, 0, sizeof(mpTimerBorrowEvents));
@@ -378,6 +379,12 @@ void ATPokeyEmulator::SetNonlinearMixingEnabled(bool enable) {
 		mbNonlinearMixingEnabled = enable;
 
 		UpdateMixTable();
+
+		if (mpRenderer)
+			mpRenderer->SetFiltersEnabled(enable);
+
+		if (mpAudioOut)
+			mpAudioOut->SetFiltersEnabled(enable);
 	}
 }
 
@@ -630,6 +637,16 @@ uint32 ATPokeyEmulator::GetSerialCyclesPerBit() const {
 	const uint32 divisor = mTimerPeriod[3];
 
 	return divisor + divisor;
+}
+
+void ATPokeyEmulator::SetPotPos(unsigned idx, int pos) {
+	if (pos > 228)
+		pos = 228;
+
+	if (pos < 0)
+		pos = 0;
+
+	mPOT[idx] = (uint8)pos;
 }
 
 void ATPokeyEmulator::AdvanceScanLine() {
@@ -1530,7 +1547,7 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 		case 0x07:	// $D207 POT7
 			{
 				int index = reg & 7;
-				uint8 val = mPOT[index];
+				uint8 val = mPOTLatched[index];
 
 				if (mALLPOT & (1 << index)) {
 					uint32 delay = (uint32)ATSCHEDULER_GETTIME(mpScheduler) - mPotScanStartTime;
@@ -1818,6 +1835,8 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 					mpScheduler->RemoveEvent(mpPotScanEvent[i]);
 
 				int delta = mPOT[i];
+
+				mPOTLatched[i] = delta;
 
 				if (!(mSKCTL & 0x04))
 					delta *= 114;
@@ -2241,24 +2260,75 @@ void ATPokeyEmulator::FlushAudio(bool pushAudio) {
 	if (mpAudioOut) {
 		uint32 timestamp = mpConn->PokeyGetTimestamp() - 28 * outputSampleCount;
 
-		if (mpSoundBoard)
-			mpSoundBoard->WriteAudio(mpRenderer->GetOutputBuffer(), mpSlave ? mpSlave->mpRenderer->GetOutputBuffer() : NULL, outputSampleCount, pushAudio, timestamp);
-		else
-			mpAudioOut->WriteAudio(mpRenderer->GetOutputBuffer(), mpSlave ? mpSlave->mpRenderer->GetOutputBuffer() : NULL, outputSampleCount, pushAudio, timestamp);
+		if (mpSoundBoard) {
+			mpSoundBoard->WriteAudio(
+				mpRenderer->GetOutputBuffer(),
+				mpSlave ? mpSlave->mpRenderer->GetOutputBuffer() : NULL,
+				outputSampleCount,
+				pushAudio,
+				timestamp);
+		} else {
+			mpAudioOut->WriteAudio(
+				mpRenderer->GetOutputBuffer(),
+				mpSlave ? mpSlave->mpRenderer->GetOutputBuffer() : NULL,
+				outputSampleCount,
+				pushAudio,
+				timestamp);
+		}
 	}
 }
 
 void ATPokeyEmulator::UpdateMixTable() {
 	if (mbNonlinearMixingEnabled) {
-		for(int i=0; i<61; ++i) {
-			float x = (float)i / 60.0f;
-			float y = ((1.30f*x - 3.3f)*x + 3.0f)*x;
+		// This table is an average of all volumes measured on a real 800XL
+		// at a frequency of 314Hz. It's not entirely accurate because the
+		// output of each channel has uneven volume steps and the effect
+		// varies by frequency, but it's reasonable enough.
 
-			mpTables->mMixTable[i] = y * 60.0f;
+		static const float kMixTable[61]={
+			0.0f,					2.2531377552f,			4.2472153279f,			6.500391935f,
+			8.9508990534f,			11.4574264806f,			13.9021746199f,			16.4639482412f,
+			19.0064170324f,			21.4960784166f,			23.9395872707f,			26.3295307579f,
+			28.6392299848f,			30.9133574054f,			33.1163210469f,			35.2267639589f,
+			37.2167441749f,			39.0864696084f,			40.8392802498f,			42.4828246319f,
+			44.0230000906f,			45.4666953783f,			46.8220599132f,			48.097146906f,
+			49.2958623121f,			50.4211078033f,			51.4695404841f,			52.438465135f,
+			53.325178072f,			54.1314833312f,			54.8585846028f,			55.5051873239f,
+			56.0743392951f,			56.5677964414f,			56.9906057796f,			57.3499814438f,
+			57.6534805767f,			57.9095660775f,			58.1255653166f,			58.3064356456f,
+			58.4579355164f,			58.5826773523f,			58.6861268801f,			58.7720420762f,
+			58.8434313481f,			58.9031757296f,			58.9563884057f,			59.0092500513f,
+			59.0631705296f,			59.1201462142f,			59.1800746579f,			59.2422604549f,
+			59.3062129126f,			59.3766274524f,			59.4493321676f,			59.5218792178f,
+			59.5968984698f,			59.6788381494f,			59.77366993f,			59.8727379928f,
+			60.0f
+		};
+
+		VDASSERTCT(sizeof(mpTables->mMixTable) == sizeof(kMixTable));
+
+		memcpy(mpTables->mMixTable, kMixTable, sizeof mpTables->mMixTable);
+
+		const float alpha = 0.01f;
+		float timeConstant = (1.0f - alpha) / (alpha * 63920.0f);
+		float rc = timeConstant * 1789772.5f;
+		float neg_inv_rc = -1.0f / rc;
+
+		// integral(e^-t/RC) = -RC*e^-t/RC + C
+		mpTables->mHPTable[0] = 0.0f;
+		mpTables->mHPIntegralTable[0] = 0.0f;
+
+		for(int i=1; i<=28; ++i) {
+			mpTables->mHPTable[i] = 1.0f - expf((float)i * neg_inv_rc);
+			mpTables->mHPIntegralTable[i] = rc - rc*expf((float)i * neg_inv_rc);
 		}
 	} else {
 		for(int i=0; i<61; ++i)
 			mpTables->mMixTable[i] = (float)i;
+
+		for(int i=0; i<=28; ++i) {
+			mpTables->mHPTable[i] = 0.0f;
+			mpTables->mHPIntegralTable[i] = (float)i;
+		}
 	}
 }
 

@@ -646,6 +646,8 @@ const uint32 ATUIDialogEditInputMapping::kTargetCodesConsole[] = {
 	kATInputTrigger_UIOption,
 	kATInputTrigger_UISwitchLeft,
 	kATInputTrigger_UISwitchRight,
+	kATInputTrigger_UILeftShift,
+	kATInputTrigger_UIRightShift,
 };
 
 const uint32 ATUIDialogEditInputMapping::kTargetCodesInputState[] = {
@@ -1242,7 +1244,13 @@ bool ATUIDialogEditInputMap::OnLoaded() {
 	VDStringW s;
 	CBAddString(IDC_GAMEPAD, L"Any");
 	for(int i=0; i<7; ++i) {
+		const wchar_t *name = mInputMan.GetInputUnitName(i);
+
 		s.sprintf(L"Game controller %d", i+1);
+
+		if (name)
+			s.append_sprintf(L" [%ls]", name);
+
 		CBAddString(IDC_GAMEPAD, s.c_str());
 	}
 

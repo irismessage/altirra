@@ -41,7 +41,13 @@ public:
 	virtual uint32 CPUGetUnhaltedCycle() = 0;
 };
 
-typedef bool (*ATCPUStepCallback)(ATCPUEmulator *cpu, uint32 pc, void *data);
+enum ATCPUStepResult {
+	kATCPUStepResult_Continue,
+	kATCPUStepResult_SkipCall,
+	kATCPUStepResult_Stop
+};
+
+typedef ATCPUStepResult (*ATCPUStepCallback)(ATCPUEmulator *cpu, uint32 pc, bool call, void *data);
 
 enum ATCPUMode {
 	kATCPUMode_6502,
@@ -152,6 +158,7 @@ public:
 	uint8	GetX() const { return mX; }
 	uint8	GetY() const { return mY; }
 
+	void	SetEmulationFlag(bool emu);
 	void	SetPC(uint16 pc);
 	void	SetP(uint8 p);
 	void	SetA(uint8 a) { mA = a; }
@@ -180,8 +187,10 @@ public:
 	void	SetHook(uint16 pc, bool enable);
 
 	bool	GetStep() const { return mbStep; }
+
 	void	SetStep(bool step) {
 		mbStep = step;
+		mbStepOver = false;
 		mStepRegionStart = 0;
 		mStepRegionSize = 0;
 		mpStepCallback = NULL;
@@ -193,16 +202,7 @@ public:
 			mDebugFlags &= ~kDebugFlag_Step;
 	}
 
-	void	SetStepRange(uint32 regionStart, uint32 regionSize, ATCPUStepCallback stepcb, void *stepcbdata) {
-		mbStep = true;
-		mStepRegionStart = regionStart;
-		mStepRegionSize = regionSize;
-		mpStepCallback = stepcb;
-		mpStepCallbackData = stepcbdata;
-		mStepStackLevel = -1;
-
-		mDebugFlags |= kDebugFlag_Step;
-	}
+	void	SetStepRange(uint32 regionStart, uint32 regionSize, ATCPUStepCallback stepcb, void *stepcbdata, bool stepOver);
 
 	void	SetTrace(bool trace) {
 		mbTrace = trace;
@@ -293,7 +293,9 @@ public:
 
 protected:
 	__declspec(noinline) uint8 ProcessDebugging();
+	__declspec(noinline) void ProcessStepOver();
 	__declspec(noinline) uint8 ProcessHook();
+	__declspec(noinline) uint8 ProcessHook816();
 
 	template<bool T_Accel>
 	bool	ProcessInterrupts();
@@ -379,6 +381,7 @@ protected:
 
 	bool	mbTrace;			// must also affect mDebugFlags
 	bool	mbStep;				// must also affect mDebugFlags
+	bool	mbStepOver;			// set if we want to avoid subroutines
 
 	enum {
 		kDebugFlag_Step = 0x01,		// mbStep is set

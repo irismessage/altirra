@@ -270,6 +270,8 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			*mpDstState++ = kStateReadAddrL;		// 7: read vector low
 			*mpDstState++ = kStateReadAddrH;		// 8: read vector high
 			*mpDstState++ = kStateAddrToPC;			//
+			if (mbStepOver)
+				*mpDstState++ = kStateStepOver;
 			break;
 
 		case 0x04:	// TSB zp
@@ -510,6 +512,9 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			*mpDstState++ = kStateAddrToPC;
 			*mpDstState++ = kStateWait;
 
+			if (mbStepOver)
+				*mpDstState++ = kStateStepOver;
+
 			if (mbPathfindingEnabled)
 				*mpDstState++ = kStateAddAsPathStart;
 			break;
@@ -523,6 +528,9 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			*mpDstState++ = kStatePushPCHM1Native;		// 7: push PCH
 			*mpDstState++ = kStatePushPCLM1Native;		// 8: push PCL
 			*mpDstState++ = kState816_LongAddrToPC;
+
+			if (mbStepOver)
+				*mpDstState++ = kStateStepOver;
 
 			if (mbPathfindingEnabled)
 				*mpDstState++ = kStateAddAsPathStart;
@@ -747,7 +755,12 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStateWait;
 			*mpDstState++ = kStatePopNative;
-			*mpDstState++ = kStateDtoPNative;
+
+			if (emu)
+				*mpDstState++ = kStateDtoP;
+			else
+				*mpDstState++ = kStateDtoPNative;
+
 			*mpDstState++ = kStatePopPCLNative;
 			*mpDstState++ = kStatePopPCHNative;
 
@@ -1961,6 +1974,9 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			*mpDstState++ = kState816ReadByte;		// 7: read new PCL
 			*mpDstState++ = kState816ReadAddrAbsInd;// 8: read new PCH
 			*mpDstState++ = kStateAddrToPC;
+
+			if (mbStepOver)
+				*mpDstState++ = kStateStepOver;
 
 			if (mbPathfindingEnabled)
 				*mpDstState++ = kStateAddAsPathStart;

@@ -23,6 +23,7 @@
 #include "debuggerlog.h"
 
 ATDebuggerLogChannel g_ATLCModem(false, false, "MODEM", "Modem activity");
+ATDebuggerLogChannel g_ATLCModemTCP(false, false, "MODEMTCP", "Modem TCP/IP activity");
 
 namespace {
 	enum {
@@ -76,6 +77,7 @@ ATModemEmulator::ATModemEmulator()
 	, mbInited(false)
 	, mbCommandMode(false)
 	, mbListenEnabled(false)
+	, mbLoggingState(false)
 	, mbRinging(false)
 	, mCommandState(kCommandState_Idle)
 	, mLostCarrierDelayCycles(0)
@@ -185,6 +187,7 @@ void ATModemEmulator::ColdReset() {
 	UpdateControlState();
 
 	RestoreListeningState();
+	EnterCommandMode(false, true);
 }
 
 void ATModemEmulator::SetTerminalState(const ATRS232TerminalState& state) {
@@ -236,6 +239,14 @@ void ATModemEmulator::SetConfig(const ATRS232Config& config) {
 bool ATModemEmulator::Read(uint32 baudRate, uint8& c, bool& framingError) {
 	framingError = false;
 
+	bool loggingState = g_ATLCModemTCP.IsEnabled();
+	if (mbLoggingState != loggingState) {
+		mbLoggingState = loggingState;
+
+		if (mpDriver)
+			mpDriver->SetLoggingEnabled(loggingState);
+	}
+
 	if (mTransmitIndex < mTransmitLength) {
 		c = mTransmitBuffer[mTransmitIndex++];
 
@@ -255,6 +266,22 @@ bool ATModemEmulator::Read(uint32 baudRate, uint8& c, bool& framingError) {
 
 	if (!mpDriver->Read(&c, 1))
 		return false;
+
+	VDStringA msgs;
+	if (mpDriver->ReadLogMessages(msgs)) {
+		VDStringA::size_type pos = 0;
+
+		for(;;) {
+			VDStringA::size_type term = msgs.find('\n', pos);
+
+			if (term == VDStringA::npos)
+				break;
+
+			g_ATLCModemTCP("%.*s\n", term - pos, msgs.c_str() + pos);
+
+			pos = term + 1;
+		}
+	}
 
 	if (mConfig.mbRequireMatchedDTERate && abs((int)baudRate - (int)mConnectRate) > 1) {
 		// baud rate mismatch -- return some bogus character and flag a framing error
@@ -281,27 +308,12 @@ void ATModemEmulator::Write(uint32 baudRate, uint8 c) {
 				if (mConfig.mDeviceMode == kATRS232DeviceMode_1030)
 					break;
 
-				if (c == 'a')
-					mCommandState = kCommandState_a;
-				else if (c == 'A')
+				if ((c & 0xdf) == 'A')
 					mCommandState = kCommandState_A;
 				break;
 
-			case kCommandState_a:
-				if (c == 't')
-					mCommandState = kCommandState_AT;
-				else if (c == '/') {
-					mCommandState = kCommandState_AT;
-					mCommandLength = mLastCommand.size();
-					mLastCommand.copy((char *)mCommandBuffer, mCommandLength);
-
-					mpScheduler->SetEvent(kCommandTermDelay, this, 4, mpEventCommandTermDelay);
-				} else
-					mCommandState = kCommandState_Idle;
-				break;
-
 			case kCommandState_A:
-				if (c == 'T')
+				if ((c & 0xdf) == 'T')
 					mCommandState = kCommandState_AT;
 				else if (c == '/') {
 					mCommandState = kCommandState_AT;
@@ -410,7 +422,7 @@ void ATModemEmulator::Dial(const char *address, const char *service) {
 
 	mpDriver = ATCreateModemDriverTCP();
 	mpDriver->SetConfig(mConfig);
-	if (!mpDriver->Init(mAddress.c_str(), mService.c_str(), 0, this)) {
+	if (!mpDriver->Init(mAddress.c_str(), mService.c_str(), 0, g_ATLCModemTCP.IsEnabled(), this)) {
 		SendResponse(kResponseError);
 		RestoreListeningState();
 		return;
@@ -766,7 +778,7 @@ void ATModemEmulator::ParseCommand() {
 				}
 
 				// check for 'I' to indicate IP-based dialing (for compatibility with Atari800)
-				if (*s == 'I') {
+				if (*s == 'I' || *s == 'i') {
 					// parse out hostname and port
 					++s;
 
@@ -783,16 +795,17 @@ void ATModemEmulator::ParseCommand() {
 					while(s != t && *s == ' ')
 						++s;
 
-					if (s == t) {
-						SendResponse(kResponseError);
-						return;
+					const char *servicename = "23";
+					const char *servicenameend = servicename + 2;
+
+					if (s != t) {
+						servicename = s;
+
+						while(s != t && *s != ' ')
+							++s;
+
+						servicenameend = s;
 					}
-
-					const char *servicename = s;
-					while(s != t && *s != ' ')
-						++s;
-
-					const char *servicenameend = s;
 
 					Dial(VDStringA(hostname, hostnameend).c_str(), VDStringA(servicename, servicenameend).c_str());
 				} else if (!mConfig.mDialAddress.empty() && !mConfig.mDialService.empty()) {
@@ -1060,7 +1073,7 @@ void ATModemEmulator::SendResponse(int response) {
 	if (mRegisters.mbShortResponses) {
 		g_ATLCModem("Sending short response: %d (%s)\n", response, kResponses[response]);
 
-		size_t len = response >= 10 ? 4 : 3;
+		size_t len = response >= 10 ? 3 : 2;
 
 		if (mTransmitLength > sizeof mTransmitBuffer - len)
 			return;
@@ -1196,7 +1209,7 @@ void ATModemEmulator::RestoreListeningState() {
 
 	mpDriver = ATCreateModemDriverTCP();
 	mpDriver->SetConfig(mConfig);
-	if (!mpDriver->Init(NULL, NULL, mConfig.mListenPort, this)) {
+	if (!mpDriver->Init(NULL, NULL, mConfig.mListenPort, g_ATLCModemTCP.IsEnabled(), this)) {
 		TerminateCall();
 		return;
 	}

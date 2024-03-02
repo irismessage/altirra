@@ -237,8 +237,8 @@ protected:
 	uint32	mCyclesForHeadSettle;
 	bool	mbSeekHalfTracks;
 
-	uint8	mSendPacket[528];
-	uint8	mReceivePacket[528];
+	uint8	mSendPacket[8192 + 16];
+	uint8	mReceivePacket[8192 + 16];
 
 	vdautoptr<IATDiskImage> mpDiskImage;
 

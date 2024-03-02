@@ -82,7 +82,6 @@ if errorlevel 1 (
 zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	src ^
 	src\Kasumi\data\Tuffy.* ^
-	src\Kernel\Makefile ^
 	Copying ^
 	-i ^
 	*.vcproj ^
@@ -117,6 +116,7 @@ zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	src\Kernel\source\shared\atariifont.bin ^
 	src\Kernel\Makefile ^
 	src\HLEKernel\Makefile ^
+	src\ATBasic\makefile ^
 	src\ATHelpFile\source\*.xml ^
 	src\ATHelpFile\source\*.xsl ^
 	src\ATHelpFile\source\*.css ^

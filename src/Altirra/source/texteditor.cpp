@@ -24,20 +24,20 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
 #include <windows.h>
-#include "ui.h"
+#include "uinativewindow.h"
 #include "textdom.h"
 
 using namespace nsVDTextDOM;
 
 ///////////////////////////////////////////////////////////////////////////
 
-class TextEditor : public VDShaderEditorBaseWindow, public IVDTextEditor, public IDocumentCallback {
+class TextEditor : public ATUINativeWindow, public IVDTextEditor, public IDocumentCallback {
 public:
 	TextEditor();
 	~TextEditor();
 
-	int AddRef() { return VDShaderEditorBaseWindow::AddRef(); }
-	int Release() { return VDShaderEditorBaseWindow::Release(); }
+	int AddRef() { return ATUINativeWindow::AddRef(); }
+	int Release() { return ATUINativeWindow::Release(); }
 
 	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
 
@@ -225,7 +225,7 @@ TextEditor::~TextEditor() {
 }
 
 VDGUIHandle TextEditor::Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id) {
-	return (VDGUIHandle)CreateWindowEx(exStyle, (LPCTSTR)sWndClass, _T(""), style, x, y, cx, cy, (HWND)parent, (HMENU)id, VDGetLocalModuleHandleW32(), static_cast<VDShaderEditorBaseWindow *>(this));
+	return (VDGUIHandle)CreateWindowEx(exStyle, (LPCTSTR)sWndClass, _T(""), style, x, y, cx, cy, (HWND)parent, (HMENU)id, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 }
 
 void TextEditor::SetCallback(IVDTextEditorCallback *pCB) {
@@ -897,7 +897,7 @@ LRESULT TextEditor::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 	}
 
-	return VDShaderEditorBaseWindow::WndProc(msg, wParam, lParam);
+	return ATUINativeWindow::WndProc(msg, wParam, lParam);
 }
 
 void TextEditor::OnCreate() {
@@ -1364,8 +1364,9 @@ void TextEditor::OnVScroll(int cmd) {
 			si.fMask = SIF_POS;
 			si.nPos = newPos;
 			SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
-			ScrollTo(si.nPos, cmd != SB_THUMBTRACK);
 		}
+		
+		ScrollTo(si.nPos, cmd != SB_THUMBTRACK);
 	}
 }
 

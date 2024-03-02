@@ -75,6 +75,13 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IVDRandomAcc
 	stream.Read(mProgramToLoad.data(), len);
 	mProgramLoadIndex = 0;
 
+	// check if this is a SpartaDOS executable by looking for a reloc block
+	if (len >= 4 && (mProgramToLoad[0] == 0xfe || mProgramToLoad[0] == 0xfa) && mProgramToLoad[1] == 0xff)
+	{
+		mProgramToLoad.clear();
+		throw MyError("Program load failed: this program must be loaded under SpartaDOS X.");
+	}
+
 	mpCPUHookMgr->SetHookMethod(mpLaunchHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::DSKINV, 10, this, &ATHLEProgramLoader::OnDSKINV);
 
 	// try to load symbols
@@ -84,7 +91,7 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IVDRandomAcc
 
 	if (d && symbolHintPath) {
 		static const wchar_t *const kSymExts[]={
-			L".lst", L".lab", L".lbl"
+			L".lst", L".lab", L".lbl", L".dbg"
 		};
 
 		VDASSERTCT(sizeof(kSymExts)/sizeof(kSymExts[0]) == sizeof(mProgramModuleIds)/sizeof(mProgramModuleIds[0]));

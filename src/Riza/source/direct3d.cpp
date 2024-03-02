@@ -437,7 +437,7 @@ bool VDD3D9Manager::Init() {
 		WNDCLASS wc;
 
 		wc.cbClsExtra		= 0;
-		wc.cbWndExtra		= 0;
+		wc.cbWndExtra		= sizeof(VDD3D9Manager *);
 		wc.hbrBackground	= NULL;
 		wc.hCursor			= NULL;
 		wc.hIcon			= NULL;
@@ -457,7 +457,7 @@ bool VDD3D9Manager::Init() {
 
 	mThreadID = VDGetCurrentThreadID();
 
-	mhwndDevice = CreateWindow(MAKEINTATOM(mDevWndClass), "", WS_POPUP, 0, 0, 0, 0, NULL, NULL, hInst, NULL);
+	mhwndDevice = CreateWindow(MAKEINTATOM(mDevWndClass), "", WS_POPUP, 0, 0, 0, 0, NULL, NULL, hInst, this);
 	if (!mhwndDevice) {
 		Shutdown();
 		return false;
@@ -1617,7 +1617,10 @@ bool VDD3D9Manager::CreateSwapChain(HWND hwnd, int width, int height, bool clipT
 	pparms.BackBufferHeight	= height;
 	pparms.BackBufferFormat	= mPresentParms.BackBufferFormat;
 	pparms.hDeviceWindow = hwnd;
-	pparms.Flags = clipToMonitor && !mpD3DDeviceEx ? D3DPRESENTFLAG_DEVICECLIP : 0;
+
+	// Disabling DEVICECLIP with only one monitor due to clipping issues on the
+	// Dell Venue 8 Pro with display rotation.
+	pparms.Flags = clipToMonitor && !mpD3DDeviceEx && GetSystemMetrics(SM_CMONITORS) > 1 ? D3DPRESENTFLAG_DEVICECLIP : 0;
 
 	if (mpD3DDeviceEx)
 		pparms.Flags |= D3DPRESENTFLAG_UNPRUNEDMODE;
@@ -1887,6 +1890,10 @@ HRESULT VDD3D9Manager::PresentSwapChain(IVDD3D9SwapChain *pSwapChain, const RECT
 
 LRESULT CALLBACK VDD3D9Manager::StaticDeviceWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch(msg) {
+		case WM_NCCREATE:
+			SetWindowLongPtr(hwnd, 0, (LONG_PTR)((CREATESTRUCT *)lParam)->lpCreateParams);
+			break;
+
 		case WM_SETFOCUS:
 			{
 				HWND hwndOldFocus = (HWND)wParam;
@@ -1903,6 +1910,15 @@ LRESULT CALLBACK VDD3D9Manager::StaticDeviceWndProc(HWND hwnd, UINT msg, WPARAM 
 						return 0;
 					}
 				}
+			}
+			break;
+
+		case WM_DISPLAYCHANGE:
+			{
+				VDD3D9Manager *pMgr = (VDD3D9Manager *)GetWindowLongPtr(hwnd, 0);
+
+				if (pMgr)
+					pMgr->UpdateCachedDisplayMode();
 			}
 			break;
 	}

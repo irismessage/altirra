@@ -29,6 +29,7 @@
 #include "simulator.h"
 #include "debuggerlog.h"
 #include "audiosyncmixer.h"
+#include "cio.h"
 
 #include "oshelper.h"
 #include "resource.h"
@@ -691,12 +692,18 @@ uint8 ATDiskEmulator::WriteSector(uint16 bufadr, uint16 len, uint16 sector, ATCP
 	}
 
 	// commit memory to disk
-	uint8 buf[512];
+	uint8 buf[8192];
 
 	for(uint32 i=0; i<len; ++i)
 		buf[i] = mpMem->ReadByte(bufadr+i);
 
-	mpDiskImage->WritePhysicalSector(vsi.mStartPhysSector, buf, len);
+	uint8 status = ATCIOSymbols::CIOStatSuccess;
+
+	try {
+		mpDiskImage->WritePhysicalSector(vsi.mStartPhysSector, buf, len);
+	} catch(const MyError&) {
+		status = ATCIOSymbols::CIOStatDeviceDone;
+	}
 
 	mLastSector = sector;
 
@@ -709,7 +716,7 @@ uint8 ATDiskEmulator::WriteSector(uint16 bufadr, uint16 len, uint16 sector, ATCP
 		QueueAutoSave();
 
 	// return success
-	return 0x01;
+	return status;
 }
 
 void ATDiskEmulator::ReadStatus(uint8 dst[5]) {
@@ -1322,7 +1329,14 @@ void ATDiskEmulator::ProcessCommandPacket() {
 
 				mbLastOpError = (mFDCStatus != 0xFF);
 
-				mpDiskImage->ReadPhysicalSector(physSector, mSendPacket + 2, psi.mSize);
+				try {
+					mpDiskImage->ReadPhysicalSector(physSector, mSendPacket + 2, psi.mSize);
+				} catch(const MyError&) {
+					// wipe sector and report CRC error
+					memset(mSendPacket + 2, 0, psi.mSize);
+					mFDCStatus = 0xF7;
+					mbLastOpError = true;
+				}
 
 				// check for CRC error
 				// must return data on CRC error -- Koronis Rift requires this
@@ -1352,7 +1366,12 @@ void ATDiskEmulator::ProcessCommandPacket() {
 						, mSendPacket[mTransferLength - 1]
 						, (float)mRotations + (float)mRotationalCounter / (float)mCyclesPerDiskRotation
 						, psi.mRotPos
-						, mFDCStatus & 0x08 ? "" : " (w/CRC error)");
+						, !(mFDCStatus & 0x04) ? " (w/long sector)"
+							: !(mFDCStatus & 0x08) ? " (w/CRC error)"
+							: !(mFDCStatus & 0x10) ? " (w/missing sector)"
+							: !(mFDCStatus & 0x20) ? " (w/deleted sector)"
+							: ""
+						);
 
 				if (mbAccurateSectorTiming || mbAccurateSectorPrediction)
 					mbTransferAdjustRotation = true;
@@ -1413,7 +1432,7 @@ void ATDiskEmulator::ProcessCommandPacket() {
 
 				int formatSectorSize = VDReadUnalignedBEU16(&mPERCOM[6]);
 				int formatSectorCount = mPERCOM[0] * (sint32)VDReadUnalignedBEU16(&mPERCOM[2]) * (mPERCOM[4] + 1);
-				int formatBootSectorCount = formatSectorSize == 512 ? 0 : 3;
+				int formatBootSectorCount = formatSectorSize >= 512 ? 0 : 3;
 
 				g_ATLCDisk("FORMAT COMMAND RECEIVED. Reformatting disk as %u sectors of %u bytes each.\n", formatSectorCount, formatSectorSize);
 				FormatDisk(formatSectorCount, formatBootSectorCount, formatSectorSize);
@@ -1643,13 +1662,18 @@ void ATDiskEmulator::ProcessCommandTransmitCompleted() {
 			BeginTransferError();
 		} else {
 			// commit data to physical sector
-			mpDiskImage->WritePhysicalSector(mActiveCommandPhysSector, mReceivePacket, psi.mSize);
-
 			g_ATLCDisk("Writing psec=%3d.\n", mActiveCommandPhysSector);
 
-			// set FDC status
-			mFDCStatus = 0xFF;
-			mbLastOpError = false;
+			try {
+				mpDiskImage->WritePhysicalSector(mActiveCommandPhysSector, mReceivePacket, psi.mSize);
+
+				// set FDC status
+				mFDCStatus = 0xFF;
+				mbLastOpError = false;
+			} catch(const MyError&) {
+				mFDCStatus = 0xF7;	// crc error
+				mbLastOpError = true;
+			}
 
 			mActiveCommand = 0;
 
@@ -1846,59 +1870,13 @@ void ATDiskEmulator::PokeySerInReady() {
 }
 
 void ATDiskEmulator::ComputeGeometry() {
-	mTrackCount = 1;
-	mSideCount = 1;
-	mbMFM = false;
+	const ATDiskGeometryInfo& info = mpDiskImage->GetGeometry();
 
-	mSectorsPerTrack = mTotalSectorCount;
-
-	if (mBootSectorCount > 0) {
-		if (mSectorSize == 128) {
-			switch(mTotalSectorCount) {
-				default:
-					if (mTotalSectorCount > 720)
-						break;
-
-					// fall through
-				case 720:
-					mSectorsPerTrack = 18;
-					mSideCount = 1;
-					break;
-
-				case 1440:
-				case 2880:
-					mSectorsPerTrack = 18;
-					mSideCount = 2;
-					break;
-
-				case 1040:
-					mSectorsPerTrack = 26;
-					mSideCount = 1;
-					mbMFM = true;
-					break;
-			}
-		} else if (mSectorSize == 256) {
-			switch(mTotalSectorCount) {
-				case 720:
-					mSectorsPerTrack = 18;
-					mSideCount = 1;
-					mbMFM = true;
-					break;
-
-				case 1440:
-				case 2880:
-					mSectorsPerTrack = 18;
-					mSideCount = 2;
-					mbMFM = true;
-					break;
-			}
-		}
-	}
-
-	mTrackCount = (mTotalSectorCount + mSectorsPerTrack - 1) / mSectorsPerTrack;
-
-	if (mSideCount > 1)
-		mTrackCount = (mTrackCount + 1) >> 1;
+	mTrackCount = info.mTrackCount;
+	mSideCount = info.mSideCount;
+	mbMFM = info.mbMFM;
+	mSectorsPerTrack = info.mSectorsPerTrack;
+	mTrackCount = info.mTrackCount;
 }
 
 void ATDiskEmulator::ComputePERCOMBlock() {
@@ -2150,7 +2128,7 @@ bool ATDiskEmulator::SetPERCOMData(const uint8 *data) {
 			mPERCOM[5] = 4;		// FM/MFM encoding
 			mPERCOM[6] = 0;		// bps high
 			mPERCOM[7] = 128;		// bps low
-		} else if (data[5] == 0) {
+		} else if (data[4] == 0) {
 			// single density
 			mPERCOM[2] = 0;		// spt high
 			mPERCOM[3] = 18;		// spt low
@@ -2208,7 +2186,7 @@ bool ATDiskEmulator::SetPERCOMData(const uint8 *data) {
 			return false;
 		}
 		
-		if (sectorSize != 128 && sectorSize != 256 && sectorSize != 512) {
+		if (sectorSize != 128 && sectorSize != 256 && sectorSize != 512 && sectorSize != 8192) {
 			g_ATLCDisk("Invalid PERCOM data: unsupported sector size (%u)\n", sectorSize);
 			return false;
 		}
@@ -2216,7 +2194,7 @@ bool ATDiskEmulator::SetPERCOMData(const uint8 *data) {
 		memcpy(mPERCOM, data, 12);
 	}
 
-	g_ATLCDisk("Setting PERCOM data: %u sectors of %u bytes each, %u boot sectors\n", sectorCount, sectorSize, sectorSize > 256 ? 0 : 3);
+	g_ATLCDisk("Setting PERCOM data: %u sectors of %u bytes each, %u sides, %u boot sectors\n", sectorCount, sectorSize, mPERCOM[4]+1, sectorSize > 256 ? 0 : 3);
 	return true;
 }
 

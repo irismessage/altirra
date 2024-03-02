@@ -46,7 +46,7 @@ public:
 	VDExpandedDate mDate;
 
 	void InitFrom(const ATDiskFSEntryInfo& einfo) {
-		mFileName = einfo.mFileName;
+		mFileName = VDTextAToW(einfo.mFileName);
 		mSectors = einfo.mSectors;
 		mBytes = einfo.mBytes;
 		mFileKey = einfo.mKey;
@@ -71,6 +71,7 @@ namespace {
 namespace {
 	class IATDropTargetNotify {
 	public:
+		virtual uint32 GetDropTargetParentKey() const = 0;
 		virtual void OnFSModified() = 0;
 	};
 
@@ -323,7 +324,7 @@ namespace {
 								const wchar_t *fn = VDFileSplitPath(buf.data());
 								const VDStringA fn8(VDTextWToA(fn));
 
-								mpFS->WriteFile(0, fn8.c_str(), databuf.data(), len32);
+								mpFS->WriteFile(mpNotify->GetDropTargetParentKey(), fn8.c_str(), databuf.data(), len32);
 							}
 						} catch(const MyError& e) {
 							e.post(mhwnd, "Altirra Error");
@@ -388,6 +389,7 @@ protected:
 	void OnItemLabelChanged(VDUIProxyListView *sender, VDUIProxyListView::LabelChangedEvent *event);
 	void OnItemDoubleClick(VDUIProxyListView *sender, int item);
 
+	virtual uint32 GetDropTargetParentKey() const { return mCurrentDirKey; }
 	void OnFSModified();
 
 	void RefreshList();

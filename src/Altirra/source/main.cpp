@@ -73,6 +73,7 @@
 #include "ultimate1mb.h"
 #include "rs232.h"
 #include "options.h"
+#include "dragoncart.h"
 #include "uienhancedtext.h"
 #include "uikeyboard.h"
 #include "uicaptionupdater.h"
@@ -108,6 +109,7 @@ void ATUIShowAudioOptionsDialog(VDGUIHandle hParent);
 void ATUIShowTapeControlDialog(VDGUIHandle hParent, ATCassetteEmulator& cassette);
 void ATUIShowCPUOptionsDialog(VDGUIHandle h);
 void ATUIShowSerialPortsDialog(VDGUIHandle h);
+void ATUIShowDialogDragonCart(VDGUIHandle h);
 int ATUIShowDialogCartridgeMapper(VDGUIHandle h, uint32 cartSize, const void *data);
 void ATUIShowDialogLightPen(VDGUIHandle h, ATLightPenPort *lpp);
 void ATUIShowDialogDebugFont(VDGUIHandle hParent);
@@ -165,6 +167,7 @@ void LoadBaselineSettings();
 ///////////////////////////////////////////////////////////////////////////////
 
 #define ATWM_APP_PRETRANSLATE (WM_APP + 100)
+#define ATWM_APP_DEBUG_TOGGLEBREAKPOINT (WM_APP + 0x200)
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -370,14 +373,14 @@ bool ATUIConfirmDiscardCartridge(VDGUIHandle h) {
 	return IDYES == MessageBoxW((HWND)h, L"Modified cartridge image has not been saved. Discard it anyway?", L"Altirra Warning", MB_ICONEXCLAMATION | MB_YESNO);
 }
 
-VDStringW ATUIConfirmDiscardAllStorageGetMessage(const wchar_t *prompt, bool includeUnmountables) {
+VDStringW ATUIConfirmDiscardAllStorageGetMessage(const wchar_t *prompt, bool includeUnmountables, ATStorageId storageType = kATStorageId_None) {
 	typedef vdfastvector<ATStorageId> DirtyIds;
 	DirtyIds dirtyIds;
 
 	typedef vdfastvector<ATDebuggerStorageId> DbgDirtyIds;
 	DbgDirtyIds dbgDirtyIds;
 
-	g_sim.GetDirtyStorage(dirtyIds);
+	g_sim.GetDirtyStorage(dirtyIds, storageType);
 
 	if (includeUnmountables) {
 		IATDebugger *dbg = ATGetDebugger();
@@ -458,8 +461,8 @@ bool ATUIConfirmDiscardAllStorage(VDGUIHandle h, const wchar_t *prompt, bool inc
 	return IDYES == MessageBoxW((HWND)h, msg.c_str(), L"Altirra Warning", MB_YESNO | MB_ICONEXCLAMATION);
 }
 
-vdrefptr<ATUIFutureWithResult<bool > > ATUIConfirmDiscardAllStorage(const wchar_t *prompt, bool includeUnmountables) {
-	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, includeUnmountables);
+vdrefptr<ATUIFutureWithResult<bool > > ATUIConfirmDiscardAllStorage(const wchar_t *prompt, bool includeUnmountables, ATStorageId storageType = kATStorageId_None) {
+	const VDStringW& msg = ATUIConfirmDiscardAllStorageGetMessage(prompt, includeUnmountables, storageType);
 
 	if (msg.empty())
 		return vdrefptr<ATUIFutureWithResult<bool> >(new ATUIFutureWithResult<bool>(true));
@@ -811,10 +814,10 @@ public:
 
 				mpConfirmResult.clear();
 				mpFileDialogResult = ATUIShowOpenFileDialog('load', L"Load disk, cassette, cartridge, or program image",
-					L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.zip;*.atz;*.gz;*.bas\0"
+					L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.zip;*.atz;*.gz;*.bas;*.arc\0"
 					L"Atari program (*.xex,*.obx,*.com)\0*.xex;*.obx;*.com\0"
 					L"BASIC program (*.bas)\0*.bas\0"
-					L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm\0"
+					L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm;*.arc\0"
 					L"Protected disk image (*.pro)\0*.pro\0"
 					L"VAPI disk image (*.atx)\0*.atx\0"
 					L"Cartridge (*.rom,*.bin,*.a52,*.car)\0*.rom;*.bin;*.a52;*.car\0"
@@ -1228,44 +1231,10 @@ void OnCommandDetachCartridge2() {
 	}
 }
 
-void OnCommandAttachCartridgeSC3D() {
+template<ATCartridgeMode T_Mode>
+void OnCommandAttachNewCartridge() {
 	if (ATUIConfirmDiscardCartridge((VDGUIHandle)g_hwnd)) {
-		g_sim.LoadNewCartridge(kATCartridgeMode_SuperCharger3D);
-		g_sim.ColdReset();
-	}
-}
-
-void OnCommandAttachCartridgeMaxFlash1MB() {
-	if (ATUIConfirmDiscardCartridge((VDGUIHandle)g_hwnd)) {
-		g_sim.LoadNewCartridge(kATCartridgeMode_MaxFlash_128K);
-		g_sim.ColdReset();
-	}
-}
-
-void OnCommandAttachCartridgeMaxFlash1MBMyIDE() {
-	if (ATUIConfirmDiscardCartridge((VDGUIHandle)g_hwnd)) {
-		g_sim.LoadNewCartridge(kATCartridgeMode_MaxFlash_128K_MyIDE);
-		g_sim.ColdReset();
-	}
-}
-
-void OnCommandAttachCartridgeMaxFlash8MB() {
-	if (ATUIConfirmDiscardCartridge((VDGUIHandle)g_hwnd)) {
-		g_sim.LoadNewCartridge(kATCartridgeMode_MaxFlash_1024K);
-		g_sim.ColdReset();
-	}
-}
-
-void OnCommandAttachCartridgeMaxFlash8MBBank0() {
-	if (ATUIConfirmDiscardCartridge((VDGUIHandle)g_hwnd)) {
-		g_sim.LoadNewCartridge(kATCartridgeMode_MaxFlash_1024K_Bank0);
-		g_sim.ColdReset();
-	}
-}
-
-void OnCommandAttachCartridgeSIC() {
-	if (ATUIConfirmDiscardCartridge((VDGUIHandle)g_hwnd)) {
-		g_sim.LoadNewCartridge(kATCartridgeMode_SIC);
+		g_sim.LoadNewCartridge(T_Mode);
 		g_sim.ColdReset();
 	}
 }
@@ -1776,6 +1745,10 @@ void OnCommandSystemSerialPortsDialog() {
 	ATUIShowSerialPortsDialog((VDGUIHandle)g_hwnd);
 }
 
+void OnCommandSystemDragonCartDialog() {
+	ATUIShowDialogDragonCart((VDGUIHandle)g_hwnd);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void OnCommandDiskDrivesDialog() {
@@ -1820,6 +1793,139 @@ void OnCommandDiskToggleSectorCounter() {
 	g_sim.SetDiskSectorCounterEnabled(!g_sim.IsDiskSectorCounterEnabled());
 }
 
+class ATUIFutureAttachDisk : public ATUIFuture {
+public:
+	ATUIFutureAttachDisk(int index)
+		: mIndex(index)
+	{
+	}
+
+	virtual void RunInner() {
+		switch(mStage) {
+			case 0:
+				if (g_sim.IsStorageDirty(ATStorageId(kATStorageId_Disk + mIndex))) {
+					VDStringW msg;
+
+					msg.sprintf(L"Modified disk image in D%u: has not been saved. Discard it to mount a new image?", mIndex + 1);
+
+					mpConfirmResult = ATUIShowAlert(msg.c_str(), L"Altirra Warning");
+					Wait(mpConfirmResult);
+				}
+				++mStage;
+				break;
+
+			case 1:
+				if (mpConfirmResult && !mpConfirmResult->GetResult()) {
+					MarkCompleted();
+					break;
+				}
+
+				mpConfirmResult.clear();
+				mpFileDialogResult = ATUIShowOpenFileDialog('disk', L"Attach disk image",
+					L"All supported types\0*.atr;*.pro;*.atx;*.xfd;*.dcm;*.zip\0"
+					L"Atari disk image (*.atr, *.xfd)\0*.atr;*.xfd;*.dcm\0"
+					L"Protected disk image (*.pro)\0*.pro\0"
+					L"VAPI disk image (*.atx)\0*.atx\0"
+					L"Zip archive (*.zip)\0*.zip\0"
+					L"Gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
+					L"All files\0*.*\0");
+
+				Wait(mpFileDialogResult);
+				++mStage;
+				break;
+
+			case 2:
+				if (mpFileDialogResult->mbAccepted) {
+					DoLoad((VDGUIHandle)g_hwnd, mpFileDialogResult->mPath.c_str(), false, false, 0, kATLoadType_Disk, NULL, mIndex);
+
+					ATAddMRUListItem(mpFileDialogResult->mPath.c_str());
+					ATUpdateMRUListMenu(g_hMenuMRU, g_pMenuMRU, ID_FILE_MRU_BASE, ID_FILE_MRU_BASE + 99);
+				}
+				mpFileDialogResult.clear();
+
+				MarkCompleted();
+				break;
+		}
+	}
+
+	const int mIndex;
+	vdrefptr<ATUIFileDialogResult> mpFileDialogResult;
+	vdrefptr<ATUIFutureWithResult<bool> > mpConfirmResult;
+};
+
+template<int index>
+void OnCommandDiskAttach() {
+	vdrefptr<ATUIFutureAttachDisk> stage(new ATUIFutureAttachDisk(index));
+
+	ATUIPushStep(stage->GetStep());
+}
+
+class ATUIFutureDetachDisk : public ATUIFuture {
+public:
+	ATUIFutureDetachDisk(int index)
+		: mIndex(index)
+	{
+	}
+
+	virtual void RunInner() {
+		switch(mStage) {
+			case 0:
+				if (mIndex < 0) {
+					bool dirtyDisks = false;
+
+					for(int i=0; i<15; ++i) {
+						if (g_sim.IsStorageDirty(ATStorageId(kATStorageId_Disk + i)))
+							dirtyDisks = true;
+							break;
+					}
+
+					if (dirtyDisks) {
+						mpConfirmResult = ATUIConfirmDiscardAllStorage(L"OK to discard?", false);
+						Wait(mpConfirmResult);
+					}
+				} else {
+					if (g_sim.IsStorageDirty(ATStorageId(kATStorageId_Disk + mIndex))) {
+						VDStringW msg;
+
+						msg.sprintf(L"Modified disk image in D%u: has not been saved. Discard it to mount a new image?", mIndex + 1);
+
+						mpConfirmResult = ATUIShowAlert(msg.c_str(), L"Altirra Warning");
+						Wait(mpConfirmResult);
+					}
+				}
+				++mStage;
+				break;
+
+			case 1:
+				if (mIndex < 0) {
+					for(int i=0; i<15; ++i)
+						g_sim.GetDiskDrive(i).UnloadDisk();
+				} else
+					g_sim.GetDiskDrive(mIndex).UnloadDisk();
+
+				MarkCompleted();
+				break;
+		}
+	}
+
+	const int mIndex;
+	vdrefptr<ATUIFileDialogResult> mpFileDialogResult;
+	vdrefptr<ATUIFutureWithResult<bool> > mpConfirmResult;
+};
+
+template<int index>
+void OnCommandDiskDetach() {
+	vdrefptr<ATUIFutureDetachDisk> stage(new ATUIFutureDetachDisk(index));
+
+	ATUIPushStep(stage->GetStep());
+}
+
+void OnCommandDiskDetachAll() {
+	vdrefptr<ATUIFutureDetachDisk> stage(new ATUIFutureDetachDisk(-1));
+
+	ATUIPushStep(stage->GetStep());
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void OnCommandVideoToggleFrameBlending() {
@@ -1842,11 +1948,12 @@ void OnCommandVideoToggleScanlines() {
 
 void OnCommandVideoToggleXEP80() {
 	g_sim.SetXEP80Enabled(!g_sim.GetXEP80());
-	g_sim.ColdReset();
 
 	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
 	if (pane)
 		pane->OnHardwareChanged();
+
+	g_sim.ColdReset();
 
 }
 
@@ -2160,16 +2267,46 @@ void OnCommandDebugRunStop() {
 		OnCommandDebugRun();
 }
 
+ATDebugSrcMode ATUIGetDebugSrcMode() {
+	ATDebugSrcMode mode = kATDebugSrcMode_Same;
+
+	const uint32 activePaneId = ATUIGetActivePaneId();
+
+	if (activePaneId == kATUIPaneId_Disassembly)
+		mode = kATDebugSrcMode_Disasm;
+
+	if (activePaneId >= kATUIPaneId_Source)
+		mode = kATDebugSrcMode_Source;
+
+	return mode;
+}
+
 void OnCommandDebugStepInto() {
-	ATGetDebugger()->StepInto(kATDebugSrcMode_Same);
+	IATUIDebuggerPane *dbgp = vdpoly_cast<IATUIDebuggerPane *>(ATUIGetActivePane());
+
+	if (!dbgp || !dbgp->OnPaneCommand(kATUIPaneCommandId_DebugStepInto))
+		ATGetDebugger()->StepInto(ATUIGetDebugSrcMode());
 }
 
 void OnCommandDebugStepOut() {
-	ATGetDebugger()->StepOut(kATDebugSrcMode_Same);
+	IATUIDebuggerPane *dbgp = vdpoly_cast<IATUIDebuggerPane *>(ATUIGetActivePane());
+
+	if (!dbgp || !dbgp->OnPaneCommand(kATUIPaneCommandId_DebugStepOut))
+		ATGetDebugger()->StepOut(ATUIGetDebugSrcMode());
 }
 
 void OnCommandDebugStepOver() {
-	ATGetDebugger()->StepOver(kATDebugSrcMode_Same);
+	IATUIDebuggerPane *dbgp = vdpoly_cast<IATUIDebuggerPane *>(ATUIGetActivePane());
+
+	if (!dbgp || !dbgp->OnPaneCommand(kATUIPaneCommandId_DebugStepOver))
+		ATGetDebugger()->StepOver(ATUIGetDebugSrcMode());
+}
+
+void OnCommandDebugToggleBreakpoint() {
+	IATUIDebuggerPane *dbgp = vdpoly_cast<IATUIDebuggerPane *>(ATUIGetActivePane());
+
+	if (dbgp)
+		dbgp->OnPaneCommand(kATUIPaneCommandId_DebugToggleBreakpoint);
 }
 
 void OnCommandDebugVerifierDialog() {
@@ -2208,7 +2345,8 @@ void OnCommandToolsKeyboardShortcutsDialog() {
 
 	static const wchar_t *const kContextNames[]={
 		L"Global",
-		L"Display"
+		L"Display",
+		L"Debugger",
 	};
 
 	VDASSERTCT(vdcountof(kContextNames) == kATUIAccelContextCount);
@@ -2456,6 +2594,24 @@ namespace {
 		return g_sim.GetDiskDrive(0).IsAccurateSectorTimingEnabled();
 	}
 
+	template<int index>
+	bool IsDiskAttached() {
+		return g_sim.GetDiskDrive(index).IsDiskLoaded();
+	}
+
+	template<int index>
+	void UIFormatMenuItemDiskName(VDStringW& s) {
+		const ATDiskEmulator& disk = g_sim.GetDiskDrive(index);
+
+		if (disk.IsEnabled()) {
+			if (disk.IsDiskLoaded()) {
+				s.append_sprintf(L" [%ls]", disk.GetPath());
+			} else {
+				s += L" [-]";
+			}
+		}
+	}
+
 	bool AreDriveSoundsEnabled() {
 		return g_sim.GetDiskDrive(0).AreDriveSoundsEnabled();
 	}
@@ -2585,12 +2741,17 @@ namespace {
 		{ "Cart.AttachSecond", OnCommandAttachCartridge2, NULL },
 		{ "Cart.DetachSecond", OnCommandDetachCartridge2, CartAttached<1> },
 
-		{ "Cart.AttachSC3D", OnCommandAttachCartridgeSC3D, NULL },
-		{ "Cart.AttachMaxFlash1MB", OnCommandAttachCartridgeMaxFlash1MB, NULL },
-		{ "Cart.AttachMaxFlash1MBMyIDE", OnCommandAttachCartridgeMaxFlash1MBMyIDE, NULL },
-		{ "Cart.AttachMaxFlash8MB", OnCommandAttachCartridgeMaxFlash8MB, NULL },
-		{ "Cart.AttachMaxFlash8MBBank0", OnCommandAttachCartridgeMaxFlash8MBBank0, NULL },
-		{ "Cart.AttachSIC", OnCommandAttachCartridgeSIC, NULL },
+		{ "Cart.AttachSC3D", OnCommandAttachNewCartridge<kATCartridgeMode_SuperCharger3D>, NULL },
+		{ "Cart.AttachMaxFlash1MB", OnCommandAttachNewCartridge<kATCartridgeMode_MaxFlash_128K>, NULL },
+		{ "Cart.AttachMaxFlash1MBMyIDE", OnCommandAttachNewCartridge<kATCartridgeMode_MaxFlash_128K_MyIDE>, NULL },
+		{ "Cart.AttachMaxFlash8MB", OnCommandAttachNewCartridge<kATCartridgeMode_MaxFlash_1024K>, NULL },
+		{ "Cart.AttachMaxFlash8MBBank0", OnCommandAttachNewCartridge<kATCartridgeMode_MaxFlash_1024K_Bank0>, NULL },
+		{ "Cart.AttachSIC", OnCommandAttachNewCartridge<kATCartridgeMode_SIC>, NULL },
+		{ "Cart.AttachMegaCart512K", OnCommandAttachNewCartridge<kATCartridgeMode_MegaCart_512K_3>, NULL },
+		{ "Cart.AttachMegaCart4MB", OnCommandAttachNewCartridge<kATCartridgeMode_MegaCart_4M_3>, NULL },
+		{ "Cart.AttachTheCart32MB", OnCommandAttachNewCartridge<kATCartridgeMode_TheCart_32M>, NULL },
+		{ "Cart.AttachTheCart64MB", OnCommandAttachNewCartridge<kATCartridgeMode_TheCart_64M>, NULL },
+		{ "Cart.AttachTheCart128MB", OnCommandAttachNewCartridge<kATCartridgeMode_TheCart_128M>, NULL },
 		{ "Cart.AttachBASIC", OnCommandAttachCartridgeBASIC, NULL },
 
 		{ "Cart.ActivateMenuButton", OnCommandCartActivateMenuButton, IsSIDEEnabled },
@@ -2621,6 +2782,7 @@ namespace {
 		{ "Debug.StepInto", OnCommandDebugStepInto, IsNotRunning },
 		{ "Debug.StepOut", OnCommandDebugStepOut, IsNotRunning },
 		{ "Debug.StepOver", OnCommandDebugStepOver, IsNotRunning },
+		{ "Debug.ToggleBreakpoint", OnCommandDebugToggleBreakpoint, IsDebuggerEnabled },
 		{ "Debug.VerifierDialog", OnCommandDebugVerifierDialog, NULL, CheckedIf<SimTest<&ATSimulator::IsVerifierEnabled> > },
 
 		{ "View.NextFilterMode", OnCommandViewNextFilterMode, NULL },
@@ -2764,6 +2926,8 @@ namespace {
 		{ "System.ToggleRTime8", OnCommandSystemToggleRTime8, NULL, CheckedIf<SimTest<&ATSimulator::IsRTime8Enabled> > },
 		{ "System.SerialPortsDialog", OnCommandSystemSerialPortsDialog, NULL, CheckedIf<SimTest<&ATSimulator::IsRS232Enabled> > },
 
+		{ "System.DragonCartDialog", OnCommandSystemDragonCartDialog, NULL, CheckedIf<SimTest<&ATSimulator::IsDragonCartEnabled> > },
+
 		{ "Disk.DrivesDialog", OnCommandDiskDrivesDialog },
 		{ "Disk.ToggleAllEnabled", OnCommandDiskToggleAllEnabled, NULL, CheckedIf<IsDiskEnabled> },
 		{ "Disk.ToggleSIOPatch", OnCommandDiskToggleSIOPatch, NULL, CheckedIf<SimTest<&ATSimulator::IsDiskSIOPatchEnabled> > },
@@ -2775,6 +2939,25 @@ namespace {
 		{ "Disk.ToggleDriveSounds", OnCommandDiskToggleDriveSounds, NULL, CheckedIf<AreDriveSoundsEnabled> },
 		{ "Disk.ToggleSectorCounter", OnCommandDiskToggleSectorCounter, NULL, CheckedIf<SimTest<&ATSimulator::IsDiskSectorCounterEnabled> > },
 
+		{ "Disk.Attach1", OnCommandDiskAttach<0>, NULL, NULL, UIFormatMenuItemDiskName<0> },
+		{ "Disk.Attach2", OnCommandDiskAttach<1>, NULL, NULL, UIFormatMenuItemDiskName<1> },
+		{ "Disk.Attach3", OnCommandDiskAttach<2>, NULL, NULL, UIFormatMenuItemDiskName<2> },
+		{ "Disk.Attach4", OnCommandDiskAttach<3>, NULL, NULL, UIFormatMenuItemDiskName<3> },
+		{ "Disk.Attach5", OnCommandDiskAttach<4>, NULL, NULL, UIFormatMenuItemDiskName<4> },
+		{ "Disk.Attach6", OnCommandDiskAttach<5>, NULL, NULL, UIFormatMenuItemDiskName<5> },
+		{ "Disk.Attach7", OnCommandDiskAttach<6>, NULL, NULL, UIFormatMenuItemDiskName<6> },
+		{ "Disk.Attach8", OnCommandDiskAttach<7>, NULL, NULL, UIFormatMenuItemDiskName<7> },
+
+		{ "Disk.DetachAll", OnCommandDiskDetachAll, IsDiskAttached<0> },
+		{ "Disk.Detach1", OnCommandDiskDetach<0>, IsDiskAttached<0>, NULL, UIFormatMenuItemDiskName<0> },
+		{ "Disk.Detach2", OnCommandDiskDetach<1>, IsDiskAttached<1>, NULL, UIFormatMenuItemDiskName<1> },
+		{ "Disk.Detach3", OnCommandDiskDetach<2>, IsDiskAttached<2>, NULL, UIFormatMenuItemDiskName<2> },
+		{ "Disk.Detach4", OnCommandDiskDetach<3>, IsDiskAttached<3>, NULL, UIFormatMenuItemDiskName<3> },
+		{ "Disk.Detach5", OnCommandDiskDetach<4>, IsDiskAttached<4>, NULL, UIFormatMenuItemDiskName<4> },
+		{ "Disk.Detach6", OnCommandDiskDetach<5>, IsDiskAttached<5>, NULL, UIFormatMenuItemDiskName<5> },
+		{ "Disk.Detach7", OnCommandDiskDetach<6>, IsDiskAttached<6>, NULL, UIFormatMenuItemDiskName<6> },
+		{ "Disk.Detach8", OnCommandDiskDetach<7>, IsDiskAttached<7>, NULL, UIFormatMenuItemDiskName<7> },
+
 		{ "Video.StandardNTSC", OnCommandVideoStandard<kATVideoStandard_NTSC>, NULL, RadioCheckedIf<VideoStandardIs<kATVideoStandard_NTSC> > },
 		{ "Video.StandardPAL", OnCommandVideoStandard<kATVideoStandard_PAL>, IsNot5200, RadioCheckedIf<VideoStandardIs<kATVideoStandard_PAL> > },
 		{ "Video.StandardSECAM", OnCommandVideoStandard<kATVideoStandard_SECAM>, IsNot5200, RadioCheckedIf<VideoStandardIs<kATVideoStandard_SECAM> > },
@@ -2785,7 +2968,7 @@ namespace {
 		{ "Video.ToggleScanlines", OnCommandVideoToggleScanlines, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::AreScanlinesEnabled> > },
 		{ "Video.ToggleXEP80", OnCommandVideoToggleXEP80, NULL, CheckedIf<IsXEP80Enabled> },
 		{ "Video.ToggleVBXE", OnCommandVideoToggleVBXE, NULL, CheckedIf<IsVBXEEnabled> },
-		{ "Video.ToggleVBXESharedMemory", OnCommandVideoToggleVBXESharedMemory, NULL, CheckedIf<SimTest<&ATSimulator::IsVBXESharedMemoryEnabled> > },
+		{ "Video.ToggleVBXESharedMemory", OnCommandVideoToggleVBXESharedMemory, IsVBXEEnabled, CheckedIf<SimTest<&ATSimulator::IsVBXESharedMemoryEnabled> > },
 		{ "Video.ToggleVBXEAltPage", OnCommandVideoToggleVBXEAltPage, And<IsVBXEEnabled, Not<SimTest<&ATSimulator::IsUltimate1MBEnabled> > >, CheckedIf<SimTest<&ATSimulator::IsVBXEAltPageEnabled> > },
 		{ "Video.AdjustColorsDialog", OnCommandVideoAdjustColorsDialog },
 
@@ -4136,6 +4319,7 @@ void LoadSettings(bool useHardwareBaseline) {
 			config.mbTelnetEmulation = key.getBool("Serial Ports: Telnet emulation", config.mbTelnetEmulation);
 			config.mbTelnetLFConversion = key.getBool("Serial Ports: Telnet LF conversion", config.mbTelnetLFConversion);
 			config.mbAllowOutbound = key.getBool("Serial Ports: Allow outbound connections", config.mbAllowOutbound);
+			key.getString("Serial Ports: Telnet terminal type", config.mTelnetTermType);
 			config.mListenPort = key.getInt("Serial Ports: Listen Port", config.mListenPort);
 			if (config.mListenPort < 1 || config.mListenPort > 65535)
 				config.mListenPort = 0;
@@ -4162,9 +4346,23 @@ void LoadSettings(bool useHardwareBaseline) {
 		g_sim.SetKeyboardPresent(key.getBool("Console: Keyboard present", g_sim.IsKeyboardPresent()));
 		g_sim.SetForcedSelfTest(key.getBool("Console: Force self test", g_sim.IsForcedSelfTest()));
 		g_sim.SetCartridgeSwitch(key.getBool("Console: Cartridge switch", g_sim.GetCartridgeSwitch()));
+
+		if (key.getBool("DragonCart: Enabled", false)) {
+			ATDragonCartSettings settings;
+			settings.SetDefault();
+
+			settings.mNetAddr = key.getInt("DragonCart: Network address", settings.mNetAddr);
+			settings.mNetMask = key.getInt("DragonCart: Network mask", settings.mNetMask);
+			settings.mAccessMode = (ATDragonCartSettings::AccessMode)key.getEnumInt("DragonCart: Access mode", ATDragonCartSettings::kAccessModeCount, settings.mAccessMode);
+
+			g_sim.SetDragonCartEnabled(&settings);
+		} else {
+			g_sim.SetDragonCartEnabled(NULL);
+		}
 	}
 
 	g_kbdOpts.mArrowKeyMode = (ATUIKeyboardOptions::ArrowKeyMode)key.getEnumInt("Keyboard: Arrow key mode", ATUIKeyboardOptions::kAKMCount, g_kbdOpts.mArrowKeyMode);
+	g_kbdOpts.mLayoutMode = (ATUIKeyboardOptions::LayoutMode)key.getEnumInt("Keyboard: Layout mode", ATUIKeyboardOptions::kLMCount, g_kbdOpts.mLayoutMode);
 	g_kbdOpts.mbAllowShiftOnColdReset = key.getBool("Keyboard: Allow shift on cold reset", g_kbdOpts.mbAllowShiftOnColdReset);
 	g_kbdOpts.mbEnableFunctionKeys = key.getBool("Keyboard: Enable function keys", g_kbdOpts.mbEnableFunctionKeys);
 	ATUIInitVirtualKeyMap(g_kbdOpts);
@@ -4439,6 +4637,7 @@ void SaveSettings() {
 		key.setBool("Serial Ports: Telnet emulation", config.mbTelnetEmulation);
 		key.setBool("Serial Ports: Telnet LF conversion", config.mbTelnetLFConversion);
 		key.setBool("Serial Ports: Allow outbound connections", config.mbAllowOutbound);
+		key.setString("Serial Ports: Telnet terminal type", config.mTelnetTermType.c_str());
 		key.setInt("Serial Ports: Listen port", config.mListenPort);
 		key.setInt("Serial Ports: Modem connection rate", config.mConnectionSpeed);
 		key.setBool("Serial Ports: Listen for IPv6 connections", config.mbListenForIPv6);
@@ -4454,8 +4653,20 @@ void SaveSettings() {
 	key.setBool("Console: Force self test", g_sim.IsForcedSelfTest());
 	key.setBool("Console: Cartridge switch", g_sim.GetCartridgeSwitch());
 
+	const bool dragonCartEnabled = g_sim.IsDragonCartEnabled();
+	key.setBool("DragonCart: Enabled", dragonCartEnabled);
+
+	if (dragonCartEnabled) {
+		const ATDragonCartSettings& settings = g_sim.GetDragonCart()->GetSettings();
+
+		key.setInt("DragonCart: Network address", settings.mNetAddr);
+		key.setInt("DragonCart: Network mask", settings.mNetMask);
+		key.setInt("DragonCart: Access mode", settings.mAccessMode);
+	}
+
 	key.setBool("Keyboard: Raw mode", g_kbdOpts.mbRawKeys);
 	key.setInt("Keyboard: Arrow key mode", g_kbdOpts.mArrowKeyMode);
+	key.setInt("Keyboard: Layout mode", g_kbdOpts.mLayoutMode);
 	key.setBool("Keyboard: Allow shift on cold reset", g_kbdOpts.mbAllowShiftOnColdReset);
 	key.setBool("Keyboard: Enable function keys", g_kbdOpts.mbEnableFunctionKeys);
 
@@ -4497,6 +4708,8 @@ uint64 ATGetCumulativeCPUTime() {
 bool ATUIProcessMessages(bool waitForMessage, int& returnCode) {
 	ATUIProfileBeginRegion(kATUIProfileRegion_NativeEvents);
 
+	HWND hwndChain[16];
+
 	for(int i=0; i<2; ++i) {
 		DWORD flags = i ? PM_REMOVE : PM_QS_INPUT | PM_REMOVE;
 
@@ -4516,16 +4729,48 @@ bool ATUIProcessMessages(bool waitForMessage, int& returnCode) {
 					case WM_KEYUP:
 					case WM_SYSKEYUP:
 					case WM_CHAR:
-						hwndOwner = GetAncestor(msg.hwnd, GA_ROOT);
-						if (hwndOwner) {
-							if (SendMessage(hwndOwner, ATWM_APP_PRETRANSLATE, 0, (LPARAM)&msg))
-								continue;
+						{
+							hwndOwner = GetAncestor(msg.hwnd, GA_ROOT);
+							if (hwndOwner) {
+								if (SendMessage(hwndOwner, ATWM_APP_PRETRANSLATE, 0, (LPARAM)&msg))
+									continue;
+							}
+
+							UINT preMsg = 0;
+
+							switch(msg.message) {
+								case WM_KEYDOWN:	preMsg = ATWM_PREKEYDOWN;		break;
+								case WM_SYSKEYDOWN:	preMsg = ATWM_PRESYSKEYDOWN;	break;
+								case WM_KEYUP:		preMsg = ATWM_PREKEYUP;			break;
+								case WM_SYSKEYUP:	preMsg = ATWM_PRESYSKEYUP;		break;
+							}
+
+							if (preMsg) {
+								size_t n = 0;
+
+								for(HWND hwndTarget = msg.hwnd; hwndTarget && hwndTarget != hwndOwner; hwndTarget = GetAncestor(hwndTarget, GA_PARENT)) {
+									hwndChain[n++] = hwndTarget;
+
+									if (n >= vdcountof(hwndChain))
+										break;
+								}
+
+								bool eat = false;
+								while(n > 0) {
+									if (SendMessage(hwndChain[--n], preMsg, msg.wParam, msg.lParam)) {
+										eat = true;
+										break;
+									}
+								}
+
+								if (eat)
+									continue;
+							}
 						}
 						break;
 
 					case WM_SYSCHAR:
-						if (g_hwnd && msg.hwnd != g_hwnd && GetAncestor(msg.hwnd, GA_ROOT) == g_hwnd)
-						{
+						if (g_hwnd && msg.hwnd != g_hwnd && GetAncestor(msg.hwnd, GA_ROOT) == g_hwnd) {
 							msg.hwnd = g_hwnd;
 						}
 						break;
@@ -4538,25 +4783,6 @@ bool ATUIProcessMessages(bool waitForMessage, int& returnCode) {
 							if (hwndUnder && GetWindowThreadProcessId(hwndUnder, NULL) == GetCurrentThreadId())
 								msg.hwnd = hwndUnder;
 						}
-						break;
-				}
-		
-				switch(msg.message) {
-					case WM_KEYDOWN:
-						if (SendMessage(msg.hwnd, ATWM_PREKEYDOWN, msg.wParam, msg.lParam))
-							continue;
-						break;
-					case WM_SYSKEYDOWN:
-						if (SendMessage(msg.hwnd, ATWM_PRESYSKEYDOWN, msg.wParam, msg.lParam))
-							continue;
-						break;
-					case WM_KEYUP:
-						if (SendMessage(msg.hwnd, ATWM_PREKEYUP, msg.wParam, msg.lParam))
-							continue;
-						break;
-					case WM_SYSKEYUP:
-						if (SendMessage(msg.hwnd, ATWM_PRESYSKEYUP, msg.wParam, msg.lParam))
-							continue;
 						break;
 				}
 			}
@@ -4938,7 +5164,7 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 int RunInstance(int nCmdShow) {
 	VDRegisterVideoDisplayControl();
 	VDUIRegisterHotKeyExControl();
-	VDShaderEditorBaseWindow::Register();
+	ATUINativeWindow::Register();
 
 	ATInitUIFrameSystem();
 	ATUIInitCommandMappings();

@@ -27,9 +27,9 @@
 			>
 			<Tool
 				Name="VCNMakeTool"
-				BuildCommandLine="nmake /nologo &quot;OUT=$(OutDir)&quot;"
-				ReBuildCommandLine="nmake /a /nologo &quot;OUT=$(OutDir)&quot;"
-				CleanCommandLine="nmake /nologo &quot;OUT=$(OutDir)&quot; clean"
+				BuildCommandLine="if not exist &quot;$(IntDir)&quot; md &quot;$(IntDir)&quot;&#x0D;&#x0A;nmake /nologo &quot;OUT=$(OutDir)&quot; &quot;INT=$(IntDir)&quot;"
+				ReBuildCommandLine="if not exist &quot;$(IntDir)&quot; md &quot;$(IntDir)&quot;&#x0D;&#x0A;nmake /a /nologo &quot;OUT=$(OutDir)&quot; &quot;INT=$(IntDir)&quot;"
+				CleanCommandLine="nmake /nologo &quot;OUT=$(OutDir)&quot; &quot;INT=$(IntDir)&quot; clean"
 				Output="$(OutDir)kernel.rom"
 				PreprocessorDefinitions="WIN32;_DEBUG"
 				IncludeSearchPath=""
@@ -47,9 +47,9 @@
 			>
 			<Tool
 				Name="VCNMakeTool"
-				BuildCommandLine="nmake /nologo &quot;OUT=$(OutDir)&quot;"
-				ReBuildCommandLine="nmake /a /nologo &quot;OUT=$(OutDir)&quot;"
-				CleanCommandLine="nmake /nologo &quot;OUT=$(OutDir)&quot; clean"
+				BuildCommandLine="if not exist &quot;$(IntDir)&quot; md &quot;$(IntDir)&quot;&#x0D;&#x0A;nmake /nologo &quot;OUT=$(OutDir)&quot; &quot;INT=$(IntDir)&quot;"
+				ReBuildCommandLine="if not exist &quot;$(IntDir)&quot; md &quot;$(IntDir)&quot;&#x0D;&#x0A;nmake /a /nologo &quot;OUT=$(OutDir)&quot; &quot;INT=$(IntDir)&quot;"
+				CleanCommandLine="nmake /nologo &quot;OUT=$(OutDir)&quot; &quot;INT=$(IntDir)&quot; clean"
 				Output="$(OutDir)kernel.rom"
 				PreprocessorDefinitions="WIN32;NDEBUG"
 				IncludeSearchPath=""
@@ -285,6 +285,18 @@
 				>
 				<File
 					RelativePath=".\source\BootSector\bootsecdos2.s"
+					>
+				</File>
+			</Filter>
+			<Filter
+				Name="850"
+				>
+				<File
+					RelativePath=".\source\850\handler.s"
+					>
+				</File>
+				<File
+					RelativePath=".\source\850\relocator.s"
 					>
 				</File>
 			</Filter>

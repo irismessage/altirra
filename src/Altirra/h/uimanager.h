@@ -5,6 +5,7 @@
 #include <vd2/VDDisplay/renderer.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/system/event.h>
+#include "ui.h"
 
 class ATUIWidget;
 class ATUIContainer;
@@ -43,6 +44,15 @@ struct ATUIStockImage {
 	int mOffsetY;
 	int mWidth;
 	int mHeight;
+};
+
+struct ATUITouchInput {
+	uint32 mId;
+	sint32 mX;
+	sint32 mY;
+	bool mbDown;
+	bool mbUp;
+	bool mbPrimary;
 };
 
 class IATUIClipboard {
@@ -104,6 +114,10 @@ public:
 
 	bool IsKeyDown(uint32 vk);
 	vdpoint32 GetCursorPosition();
+
+	ATUITouchMode GetTouchModeAtPoint(const vdpoint32& pt) const;
+
+	void OnTouchInput(const ATUITouchInput *inputs, uint32 n);
 
 	bool OnMouseRelativeMove(sint32 dx, sint32 dy);
 	bool OnMouseMove(sint32 x, sint32 y);
@@ -176,6 +190,13 @@ protected:
 
 	typedef vdhashmap<uint32, ActiveAction *> ActiveActionMap;
 	ActiveActionMap mActiveActionMap;
+
+	struct PointerInfo {
+		ATUIWidget *mpTargetWindow;
+		uint32 mId;
+	};
+
+	PointerInfo mPointers[7];
 
 	IVDDisplayFont *mpThemeFonts[kATUIThemeFontCount];
 

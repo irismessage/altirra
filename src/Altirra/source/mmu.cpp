@@ -369,15 +369,16 @@ void ATMMUEmulator::SetBankRegister(uint8 bank) {
 		extcpu = true;
 	}
 
-	mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_CPURead, extcpu);
-	mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_CPUWrite, extcpu);
-
 	if (bankInfo & kMapInfo_ExtendedANTIC) {
 		mAnticBase = bankOffset;
 		extantic = true;
 	}
 
-	mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_AnticRead, extantic);
+	if (mpLayerExtRAM) {
+		mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_CPURead, extcpu);
+		mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_CPUWrite, extcpu);
+		mpMemMan->EnableLayer(mpLayerExtRAM, kATMemoryAccessMode_AnticRead, extantic);
+	}
 
 	const bool selfTestEnabled = (bankInfo & kMapInfo_SelfTest) != 0;
 

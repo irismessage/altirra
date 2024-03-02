@@ -221,8 +221,12 @@ void ATPrinterEmulator::Write(const uint8 *s, uint32 count) {
 
 		if (c == 0x9B)
 			c = '\n';
-		else if (c < 0x20 || c > 0x7F)
-			c = '?';
+		else {
+			c &= 0x7f;
+			
+			if (c < 0x20 || c > 0x7F)
+				c = '?';
+		}
 
 		mLineBuf[mLineBufIdx++] = c;
 

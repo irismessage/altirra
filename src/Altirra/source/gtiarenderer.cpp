@@ -116,7 +116,7 @@ void ATGTIARenderer::RenderScanline(int xend, bool pfgraphics, bool pmgraphics, 
 
 		if (mbGTIAEnableTransition) {
 			switch(mTransitionPhase) {
-				case 0:
+				case 0:		// turning on GTIA mode
 					if ((mPRIOR & 0xc0) == 0x40) {
 						RenderMode9Transition1(x1);
 						mTransitionPhase = 1;
@@ -129,7 +129,7 @@ void ATGTIARenderer::RenderScanline(int xend, bool pfgraphics, bool pmgraphics, 
 					}
 					break;
 
-				case 1:
+				case 1:	// mode 8 -> mode 9 (1/2) or 10 (1/3)
 					if ((mPRIOR & 0xc0) == 0x80)
 						RenderMode10Transition2(x1);
 					else
@@ -137,7 +137,7 @@ void ATGTIARenderer::RenderScanline(int xend, bool pfgraphics, bool pmgraphics, 
 					mTransitionPhase = 2;
 					break;
 
-				case 2:
+				case 2:	// mode 8 -> mode 9 (2/2) or 10 (2/3)
 					if ((mPRIOR & 0xc0) == 0x80) {
 						RenderMode10Transition2(x1);
 						mTransitionPhase = 3;
@@ -147,9 +147,23 @@ void ATGTIARenderer::RenderScanline(int xend, bool pfgraphics, bool pmgraphics, 
 					}
 					break;
 
-				case 3:
+				case 3:	// mode 8 -> mode 10, cclk 2/3
 					RenderMode10Transition3(x1);
 					mbGTIAEnableTransition = false;
+					break;
+
+				case 5:
+					mbGTIAEnableTransition = false;
+				case 4:	// mode 10 -> mode 15alt
+					RenderBlank(x1);
+					++mTransitionPhase;
+					break;
+
+				case 7:
+					mbGTIAEnableTransition = false;
+				case 6:
+					RenderMode10(x1, x1+1);
+					++mTransitionPhase;
 					break;
 			}
 
@@ -382,6 +396,19 @@ void ATGTIARenderer::UpdateRegisters(const RegisterChange *rc, int count) {
 			if ((value & 0xc0) && !(mPRIOR & 0xc0)) {
 				mbGTIAEnableTransition = true;
 				mTransitionPhase = 0;
+			} else if (!(value & 0xc0) && (mPRIOR & 0xc0)) {
+				switch(mPRIOR & 0xc0) {
+				case 0x40:		// mode 9 -> mode 8 -- 2 color clocks blanked
+				case 0xc0:		// mode 11 -> mode 8 -- 2 color clocks blanked
+					mbGTIAEnableTransition = true;
+					mTransitionPhase = 4;
+					break;
+
+				case 0x80:		// mode 9 -> mode 8 -- mode 9 extends 2cclks
+					mbGTIAEnableTransition = true;
+					mTransitionPhase = 6;
+					break;
+				}
 			}
 
 			mPRIOR = value;
@@ -394,6 +421,16 @@ void ATGTIARenderer::UpdateRegisters(const RegisterChange *rc, int count) {
 
 		++rc;
 	}
+}
+
+void ATGTIARenderer::RenderBlank(int x1) {
+	const uint8 *__restrict colorTable = mpColorTable;
+	const uint8 *__restrict priTable = mpPriTable;
+
+	uint8 *dst = mpDst + x1*2;
+	const uint8 *src = mpMergeBuffer + x1;
+
+	dst[0] = dst[1] = colorTable[priTable[src[0] & 0xf0]];
 }
 
 void ATGTIARenderer::RenderLores(int x1, int x2) {

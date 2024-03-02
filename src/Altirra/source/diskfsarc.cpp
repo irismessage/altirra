@@ -1,3 +1,20 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2008-2014 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License
+//	along with this program; if not, write to the Free Software
+//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+
 #include "stdafx.h"
 #include <vd2/system/binary.h>
 #include <vd2/system/file.h>
@@ -48,6 +65,7 @@ public:
 
 public:
 	void Init(const wchar_t *path);
+	void Init(IVDRandomAccessStream& stream, const wchar_t *path);
 	void GetInfo(ATDiskFSInfo& info);
 
 	bool IsReadOnly() { return true; }
@@ -67,8 +85,9 @@ public:
 
 	void DeleteFile(uintptr key);
 	void ReadFile(uintptr key, vdfastvector<uint8>& dst);
-	void WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len);
+	uintptr WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len);
 	void RenameFile(uintptr key, const char *newFileName);
+	void SetFileTimestamp(uintptr key, const VDExpandedDate& date);
 
 protected:
 	struct DirEnt;
@@ -84,7 +103,8 @@ protected:
 	static bool DecompressMode4(uint8 *dst, uint32 dstlen, const uint8 *src, uint32 srclen);
 	static bool DecompressMode8(uint8 *dst, uint32 dstlen, const uint8 *src, uint32 srclen);
 
-	VDFile	mFile;
+	VDFileStream	mFileStream;
+	IVDRandomAccessStream *mpStream;
 
 	struct RawDirEnt {
 		uint8	mId;					// must be 0x1A
@@ -125,13 +145,19 @@ ATDiskFSARC::~ATDiskFSARC() {
 }
 
 void ATDiskFSARC::Init(const wchar_t *path) {
-	mFile.open(path);
+	mFileStream.open(path);
 
-	sint64 fileSize = mFile.size();
+	Init(mFileStream, path);
+}
+
+void ATDiskFSARC::Init(IVDRandomAccessStream& stream, const wchar_t *path) {
+	mpStream = &stream;
+
+	sint64 fileSize = mpStream->Length();
 	for(;;) {
 		RawDirEnt rde;
 
-		if (sizeof rde != mFile.readData(&rde, sizeof rde))
+		if (sizeof rde != mpStream->ReadData(&rde, sizeof rde))
 			break;
 
 		if (rde.mId != 0x1A)
@@ -142,7 +168,7 @@ void ATDiskFSARC::Init(const wchar_t *path) {
 			break;
 
 		DirEnt de;
-		de.mPos = mFile.tell();
+		de.mPos = mpStream->Pos();
 		de.mCompressedSize = VDReadUnalignedLEU32(rde.mCompressedSize);
 		de.mOriginalSize = VDReadUnalignedLEU32(rde.mOriginalSize);
 		de.mDate = VDReadUnalignedLEU16(rde.mDate);
@@ -157,7 +183,7 @@ void ATDiskFSARC::Init(const wchar_t *path) {
 
 		mDirectory.push_back(de);
 
-		mFile.skip(de.mCompressedSize);
+		mpStream->Seek(mpStream->Pos() + de.mCompressedSize);
 	}
 }
 
@@ -209,7 +235,11 @@ void ATDiskFSARC::FindEnd(uintptr searchKey) {
 void ATDiskFSARC::GetFileInfo(uintptr key, ATDiskFSEntryInfo& info) {
 	const DirEnt& de = mDirectory[key - 1];
 
-	info.mFileName	= VDTextAToW(de.mName);
+	int nameLen = 0;
+	while(nameLen < 12 && de.mName[nameLen])
+		++nameLen;
+
+	info.mFileName.assign(de.mName, de.mName + nameLen);
 	info.mSectors	= de.mCompressedSize;
 	info.mBytes		= de.mOriginalSize;
 	info.mKey		= key;
@@ -262,18 +292,18 @@ void ATDiskFSARC::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
 
 	dst.resize(de.mOriginalSize);
 
-	mFile.seek(de.mPos);
+	mpStream->Seek(de.mPos);
 
 	// modes 1 and 2 are uncompressed
 	if (de.mCompressionMethod == 1 || de.mCompressionMethod == 2) {
 		if (de.mCompressedSize != de.mOriginalSize)
 			throw ATDiskFSException(kATDiskFSError_CorruptedFileSystem);
 
-		mFile.read(dst.data(), de.mCompressedSize);
+		mpStream->Read(dst.data(), de.mCompressedSize);
 	} else {
 		vdfastvector<uint8> tmp;
 		tmp.resize(de.mCompressedSize);
-		mFile.read(tmp.data(), de.mCompressedSize);
+		mpStream->Read(tmp.data(), de.mCompressedSize);
 
 		if (de.mCompressionMethod == 3) {
 			// mode 3 is packed (RLE)
@@ -298,11 +328,15 @@ void ATDiskFSARC::ReadFile(uintptr key, vdfastvector<uint8>& dst) {
 		throw ATDiskFSException(kATDiskFSError_CRCError);
 }
 
-void ATDiskFSARC::WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len) {
+uintptr ATDiskFSARC::WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len) {
 	throw ATDiskFSException(kATDiskFSError_ReadOnly);
 }
 
 void ATDiskFSARC::RenameFile(uintptr key, const char *filename) {
+	throw ATDiskFSException(kATDiskFSError_ReadOnly);
+}
+
+void ATDiskFSARC::SetFileTimestamp(uintptr key, const VDExpandedDate& date) {
 	throw ATDiskFSException(kATDiskFSError_ReadOnly);
 }
 
@@ -659,10 +693,18 @@ bool ATDiskFSARC::DecompressMode8(uint8 *dst, uint32 dstlen, const uint8 *src0, 
 
 ///////////////////////////////////////////////////////////////////////////
 
+IATDiskFS *ATDiskMountImageARC(IVDRandomAccessStream& stream, const wchar_t *origPath) {
+	vdautoptr<ATDiskFSARC> fs(new ATDiskFSARC);
+
+	fs->Init(stream, origPath);
+
+	return fs.release();
+}
+
 IATDiskFS *ATDiskMountImageARC(const wchar_t *path) {
-	ATDiskFSARC *fs = new ATDiskFSARC;
+	vdautoptr<ATDiskFSARC> fs(new ATDiskFSARC);
 
 	fs->Init(path);
 
-	return fs;
+	return fs.release();
 }

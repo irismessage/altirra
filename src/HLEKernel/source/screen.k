@@ -82,8 +82,6 @@ ScreenTextSplitOffset:
 	dta		a(40*10)
 	dta		a(20*160)
 	dta		a(40*160)
-	
-ScreenTextRows			dta		
 
 .proc	ScreenOpen
 	#{

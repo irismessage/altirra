@@ -106,6 +106,7 @@ protected:
 	void LoadBlitter();
 
 	void InitPriorityTables();
+	void UpdateColorTable();
 
 	uint8 *mpMemory;
 	IATVBXEEmulatorConnections *mpConn;
@@ -218,6 +219,7 @@ protected:
 	int mRCCount;
 
 	bool mbHiresMode;
+	bool mbAnalysisMode;
 	uint8 mPRIOR;
 
 	const uint8 (*mpPriTable)[2];
@@ -233,6 +235,7 @@ protected:
 	RegisterChanges mRegisterChanges;
 
 	uint8	mColorTable[24];
+	uint8	mColorTableExt[24];
 	uint8	mPriorityTables[32][256][2];
 	uint8	mPriorityTablesHi[32][256][2];
 

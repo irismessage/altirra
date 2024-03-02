@@ -8,6 +8,12 @@ SHARED_SRCFILESMIN = \
 source\Shared\atarifont.bin \
 source\Shared\atarifont.inc
 
+SHARED_SRCFILESINC = \
+source\Shared\cio.inc \
+source\Shared\sio.inc \
+source\Shared\hardware.inc \
+source\Shared\kerneldb.inc
+
 SHARED_SRCFILES = \
 source\Shared\atarifont.bin \
 source\Shared\atariifont.bin \
@@ -55,7 +61,7 @@ SOFTKICK_SRCFILES = source\softkick.s
 
 VERSION_SRCFILES = autobuild\version*.inc autobuild_default\version.inc
 
-all: kernel kernelxl kernelxlsoftkick nokernel basic superkernel nocartridge atdiskloader64 atdiskloader128 nohdbios nogame ultimate bootsecdos2
+all: kernel kernelxl kernelxlsoftkick nokernel basic superkernel nocartridge atdiskloader64 atdiskloader128 nohdbios nogame ultimate bootsecdos2 r850
 
 clean:
 	if exist "$(OUT)\kernel.rom" del "$(OUT)\kernel.rom"
@@ -71,6 +77,10 @@ clean:
 	if exist "$(OUT)\ultimate.rom" del "$(OUT)\ultimate.rom"
 	if exist "$(OUT)\ultimate.lzrom" del "$(OUT)\ultimate.lzrom"
 	if exist "$(OUT)\bootsecdos2.bin" del "$(OUT)\bootsecdos2.bin"
+	if exist "$(OUT)\850relocator.bin" del "$(OUT)\850relocator.bin"
+	if exist "$(OUT)\850handler.bin" del "$(OUT)\850handler.bin"
+	if exist "$(INT)\850handler-lo.obx" del "$(INT)\850handler-lo.obx"
+	if exist "$(INT)\850handler-hi.obx" del "$(INT)\850handler-hi.obx"
 
 kernel: $(OUT)\kernel.rom
 
@@ -98,6 +108,8 @@ ultimate: $(OUT)\ultimate.lzrom
 
 bootsecdos2: $(OUT)\bootsecdos2.bin
 
+r850: $(OUT)\850relocator.bin $(OUT)\850handler.bin
+
 $(OUT)\kernel.rom: $(SRCFILES) $(SHARED_SRCFILES)
 	@for %%x in (source\main.xasm) do $(MADS) -i:autobuild -i:autobuild_default -d:_KERNEL_XLXE=0 -s -p -i:source\Shared -b:$$d800 -l:$(OUT)\kernel.lst -t:$(OUT)\kernel.lab -o:$(OUT)\kernel.rom %~fx
 
@@ -123,10 +135,10 @@ $(OUT)\nocartridge.rom: $(NOCARTRIDGE_SRCFILES)
 	@$(MADS) -s -p -b:$$b000 -l:$(OUT)\nocartridge.lst -o:$(OUT)\nocartridge.rom source\nocartridge\main.xasm
 
 $(OUT)\atdiskloader128.bin: $(ATDISKLOADER_SRCFILES)
-	@$(MADS) -d:MEMORY=128 -s -p -b:$$0800 -l:$(OUT)\atdiskloader128.lst -o:$(OUT)\atdiskloader128.bin source\ATDiskLoader\main.s
+	@$(MADS) -d:MEMORY=128 -s -p -b:$$0700 -l:$(OUT)\atdiskloader128.lst -t:$(OUT)\atdiskloader128.lab -o:$(OUT)\atdiskloader128.bin source\ATDiskLoader\main.s
 
 $(OUT)\atdiskloader64.bin: $(ATDISKLOADER_SRCFILES)
-	@$(MADS) -d:MEMORY=64 -s -p -b:$$0800 -l:$(OUT)\atdiskloader64.lst -o:$(OUT)\atdiskloader64.bin source\ATDiskLoader\main.s
+	@$(MADS) -d:MEMORY=64 -s -p -b:$$0700 -l:$(OUT)\atdiskloader64.lst -l:$(OUT)\atdiskloader64.lab -o:$(OUT)\atdiskloader64.bin source\ATDiskLoader\main.s
 
 $(OUT)\nohdbios.rom: $(NOHDBIOS_SRCFILES)
 	@$(MADS) -s -p -b:$$d800 -l:$(OUT)\nohdbios.lst -o:$(OUT)\nohdbios.rom source\NoHDBIOS\main.s
@@ -137,8 +149,26 @@ $(OUT)\nogame.rom: $(NOGAME_SRCFILES)
 $(OUT)\ultimate.rom: $(ULTIMATE_SRCFILES) $(SHARED_SRCFILES)
 	@$(MADS) -s -p -i:source\Shared -l:$(OUT)\ultimate.lst -o:$(OUT)\ultimate.rom source\ultimate\main.s
 
-$(OUT)\ultimate.lzrom: $(OUT)\ultimate.rom
+$(OUT)\ultimate.lzrom: $(OUT)\ultimate.rom $(ATCOMPILER)
 	@$(ATCOMPILER) lzpack "$(OUT)\ultimate.rom" "$(OUT)\ultimate.lzrom"
 
-$(OUT)\bootsecdos2.bin: $(BOOTSECDOS2_SRCFILES) $(SHARED_SRCFILES)
+$(OUT)\bootsecdos2.bin: $(BOOTSECDOS2_SRCFILES) $(SHARED_INCFILES)
 	@$(MADS) -s -p -i:source\Shared -l:$(OUT)\bootsecdos2.lst -o:$(OUT)\bootsecdos2.bin source\bootsector\bootsecdos2.s
+
+$(INT)\850handler-2800.obx: $(SHARED_INCFILES) source\850\handler.s
+	@$(MADS) -D:BASEADDR=10240 -D:HIBUILD=0 -s -p -i:source\Shared -o:$(INT)\850handler-2800.obx -l:$(OUT)\850handler.lst source\850\handler.s
+	
+$(INT)\850handler-2801.obx: $(SHARED_INCFILES) source\850\handler.s
+	@$(MADS) -D:BASEADDR=10241 -D:HIBUILD=0 -s -p -i:source\Shared -o:$(INT)\850handler-2801.obx source\850\handler.s
+
+$(INT)\850handler-a800.obx: $(SHARED_INCFILES) source\850\handler.s
+	@$(MADS) -D:BASEADDR=43008 -D:HIBUILD=0 -s -p -i:source\Shared -o:$(INT)\850handler-a800.obx source\850\handler.s
+
+$(INT)\850handler-2800hi.obx: $(SHARED_INCFILES) source\850\handler.s
+	@$(MADS) -D:BASEADDR=10240 -D:HIBUILD=1 -s -p -i:source\Shared -o:$(INT)\850handler-2800hi.obx source\850\handler.s
+
+$(INT)\850handler-relocs.inc $(OUT)\850handler.bin: $(INT)\850handler-2800.obx $(INT)\850handler-2801.obx $(INT)\850handler-a800.obx $(INT)\850handler-2800hi.obx $(ATCOMPILER)
+	@$(ATCOMPILER) makereloc $(INT)\850handler-2800.obx $(INT)\850handler-2801.obx $(INT)\850handler-a800.obx $(INT)\850handler-2800hi.obx $(OUT)\850handler.bin $(INT)\850handler-relocs.inc
+
+$(OUT)\850relocator.bin: $(SHARED_INCFILES) source\850\relocator.s $(INT)\850handler-2800.obx $(INT)\850handler-2801.obx $(INT)\850handler-a800.obx $(INT)\850handler-relocs.inc
+	@$(MADS) -s -p -i:source\Shared -i:$(INT) -l:$(OUT)\850relocator.lst -o:$(OUT)\850relocator.bin source\850\relocator.s

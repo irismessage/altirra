@@ -25,7 +25,12 @@
 
 #include "stdafx.h"
 #include <windows.h>
+
+#pragma warning(push)
+#pragma warning(disable: 4819)	// warning C4819: The file contains a character that cannot be represented in the current code page (932). Save the file in Unicode format to prevent data loss
 #include <vfw.h>
+#pragma warning(pop)
+
 #include <vd2/system/Error.h>
 
 /////////////////////////////////////////////////////////////////////////////

@@ -1,4 +1,99 @@
 Altirra Change Log
+Version 2.50:
+   [features added]
+   * BASIC: Altirra BASIC is now the default when no BASIC ROM is included.
+   * Cartridge: Added support for another 512K/4MB/8MB flash cartridge.
+   * Cartridge: Added support for The!Cart and MegaMax 2M cartridge types.
+   * Cassette: Tape control UI now has a waveform graph.
+   * Cassette: Added support for FSK blocks in .cas files.
+   * CPU: Extended 65C816 speed options to include 17MHz (10x) and 21MHz (12x).
+   * Debugger: Register (r) command can now set the emulation (E) flag.
+   * Debugger: Improved display of 65C816 register state.
+   * Debugger: Disassembly window now steps properly above bank $00.
+   * Debugger: Added search capability to History pane.
+   * Debugger: Added some 65C02 and 65C816 instructions to assembler.
+   * Debugger: Added .loadobj command.
+   * Debugger: Keyboard shortcuts are now configurable.
+   * Debugger: .basic_dumpline now decodes BASIC XL/XE tokens.
+   * Debugger: Added x (examine symbols) command.
+   * Debugger: Added module!symbol syntax for resolving symbols specific to a module.
+   * Debugger: .sdx_loadsyms command now works on more versions of SpartaDOS X.
+   * Debugger: .printf now supports string output and variable width/precision.
+   * Debugger: Failed assertions now report file/line info if available.
+   * Debugger: Added .basic_dumpstack command to dump BASIC runtime stack.
+   * Debugger: Added option to hide namespaces for nested symbols in history window.
+   * Debugger: .dumpsnap command now applies compression.
+   * Debugger: Added partial CC65 dbgfile support.
+   * Disk: .ARC files can now be mounted as SpartaDOS X disk images.
+   * Disk: Added option to format new disks with the SpartaDOS File System (SDFS).
+   * Disk: Added support for 8KB sectors.
+   * Disk Explorer: DOS2 filesystem validator no longer checks directory entries after end of directory.
+   * Display: Fixed update problems when stepping with frame blending active.
+   * Input: Middle mouse button (MMB) can now be used to release mouse capture if it is not already bound.
+   * Input: Added XInput support.
+   * Network: DragonCart emulation support.
+   * POKEY: Audio output path now emulates analog decay effects.
+   * Printer: Added Clear option to printer output pane.
+   * Profiler: Added columns for unhalted cycles.
+   * Serial: Service field in ATDI command is now optional and defaults to telnet (port 23).
+   * Serial: Added Telnet terminal type negotiation support.
+   * Serial: Added Telnet binary transfer support.
+   * Serial: Added full 850 Interface Module SIO protocol and handler support.
+   * UI: Added some touch device support.
+   * UI: Added Attach Disk and Detach Disk menu options.
+   * UI: Added direct keyboard layout mode.
+   * Ultimate1MB: Added SST39SF040, Am29F040B, and BM29F040 as alternate flash chip options.
+
+   [bugs fixed]
+   * 65C816: RTI can no longer clear the X flag in emulation mode.
+   * Cartridge: Fixed swapped 5200 two-chip and one-chip modes.
+   * Cartridge: Cold reset now resets flash emulation.
+   * Cartridge: Fixed some cases where flash writes would stop working with emulated MaxFlash cartridge.
+   * Cartridge: Fixed incorrect flash device ID for MaxFlash 1MB+MyIDE cartridge.
+   * CPU: Fixed crashes when disabling heat map tracking.
+   * CPU: Reverted unintentional change to IRQ timing (affected PM 2.0).
+   * CPU: Fix hang when saving state with heat map activated.
+   * Debugger: lm (list modules) and .unloadsym now work by IDs instead of indices to avoid index renumbering problems.
+   * Debugger: Improved M/X tracking in disassembly window.
+   * Debugger: Fixed disassembly of absolute long addressing mode.
+   * Debugger: Memory window now updates properly above bank 0.
+   * Debugger: Fixed memory access value reporting above bank 0 in step disassembly.
+   * Debugger: Fixed infinite loop bug in static trace (st) command.
+   * Debugger: CC65 label parser now strips the first leading period from label names.
+   * Debugger: Fixed truncated call stack when encountering reused function epilog code paths.
+   * Disk: Fixed crash when host file is modified on virtual SDFS mounted path and accessed before emulator can notice the change.
+   * Disk: Fixed a bug that caused some root files on virtual SDFS disks to not hot-update reliably.
+   * Disk: Writes to virtual disks are now blocked.
+   * Disk: Fixed density detection issue with Set PERCOM Block command in XF551 mode.
+   * Disk Explorer: SDFS directory entries are now reused properly.
+   * Disk Explorer: SDFS sparse files are now supported.
+   * Disk Explorer: Dragged files are no longer placed in the root when viewing a subdirectory.
+   * GTIA: Fixed 2cclk transitions from modes 9/10/11 to mode 8.
+   * HDevice: Files can now be created in append mode.
+   * HDevice: Improved error handling in delete, rename, lock, and unlock operations.
+   * HLE: Acceleration hooks no longer fire in 65C816 native mode or with a non-standard emulation mode environment.
+   * HLE: Program loader now detects and rejects SpartaDOS X executables.
+   * HLE: Fixed state of carry flag when exiting DSKINV after failure (fixes Micropainter with SIO patch enabled).
+   * HLE: Fixed EXP(-1) returning an error with FP acceleration enabled.
+   * HLE: Added alternate hooking mechanism so that CIO device hooks can activate on OSes that don't use the standard CIOINV vector.
+   * Input: Relative binding to the axis 0/1 inputs of a tablet controller now works.
+   * Input: Fixed mouse capture malfunctioning when activated by keyboard shortcut when the mouse is outside of the window.
+   * LLE: Writes to S: in mode 0 now extend logical lines properly.
+   * LLE: CIO now checks permissions on get/put operations.
+   * LLE: Improved accuracy of power series for ATN(x).
+   * PCLink: Fixed race condition in completion of fwrite() command.
+   * POKEY: Fixed POTn registers changing without POTGO being strobed.
+   * Printer: High bit is now stripped on printed characters so that inverse characters can be read instead of becoming ?.
+   * Serial: Fixed escaping of $FF bytes over Telnet protocol.
+   * Serial: Cold reset now forces modem back to command state.
+   * Serial: Modem command handling is now case-insensitive.
+   * Serial: Fixed control line status from status commands issued between OPEN and XIO 40 (was causing ForemXEP drops).
+   * SIDE2: Fixed SDX banking register address.
+   * Simulation: Fixed some issues with GTIA and POKEY state desyncing across save states.
+   * UI: Shift modifier is allowed again for Start/Select/Option.
+   * VBXE: Extended color bit now enables LSB of GTIA color registers.
+   * VBXE: Fixed blit mode 4 (bitwise AND) not working properly with src=0.
+   * VBXE: Fixed blitter collision behavior with dest=0.
 
 Version 2.40 [November 1, 2013]:
    [features added]

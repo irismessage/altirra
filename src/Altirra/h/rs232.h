@@ -30,6 +30,7 @@ class ATPIAEmulator;
 enum AT850SIOEmulationLevel {
 	kAT850SIOEmulationLevel_None,
 	kAT850SIOEmulationLevel_StubLoader,
+	kAT850SIOEmulationLevel_Full,
 	kAT850SIOEmulationLevelCount
 };
 
@@ -53,6 +54,7 @@ struct ATRS232Config {
 	AT850SIOEmulationLevel	m850SIOLevel;
 	VDStringA	mDialAddress;
 	VDStringA	mDialService;
+	VDStringA	mTelnetTermType;
 
 	ATRS232Config()
 		: mDeviceMode(kATRS232DeviceMode_850)
@@ -77,6 +79,7 @@ public:
 	virtual void Init(ATCPUEmulatorMemory *mem, ATScheduler *sched, ATScheduler *slowsched, IATUIRenderer *uir, ATPokeyEmulator *pokey, ATPIAEmulator *pia) = 0;
 	virtual void Shutdown() = 0;
 
+	virtual void LoadFirmware(const void *relocator, uint32 rellen, const void *handler, uint32 hlen) = 0;
 	virtual void ColdReset() = 0;
 
 	virtual void GetConfig(ATRS232Config& config) = 0;

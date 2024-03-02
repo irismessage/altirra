@@ -72,249 +72,152 @@ namespace {
 		kBPM_M8_X8,		// 65C816 native M=1 X=1
 	};
 
+#define PROCESS_OPCODES			\
+		PROCESS_OPCODE(bad, None),	\
+		PROCESS_OPCODE(ADC, M),	\
+		PROCESS_OPCODE(ANC, M),	\
+		PROCESS_OPCODE(AND, M),	\
+		PROCESS_OPCODE(ASL, M),	\
+		PROCESS_OPCODE(ASR, M),	\
+		PROCESS_OPCODE(ATX, M),	\
+		PROCESS_OPCODE(BCC, None),	\
+		PROCESS_OPCODE(BCS, None),	\
+		PROCESS_OPCODE(BEQ, None),	\
+		PROCESS_OPCODE(BIT, M),	\
+		PROCESS_OPCODE(BMI, None),	\
+		PROCESS_OPCODE(BNE, None),	\
+		PROCESS_OPCODE(BPL, None),	\
+		PROCESS_OPCODE(BRK, None),	\
+		PROCESS_OPCODE(BVC, None),	\
+		PROCESS_OPCODE(BVS, None),	\
+		PROCESS_OPCODE(CLC, None),	\
+		PROCESS_OPCODE(CLD, None),	\
+		PROCESS_OPCODE(CLI, None),	\
+		PROCESS_OPCODE(CLV, None),	\
+		PROCESS_OPCODE(CMP, M),	\
+		PROCESS_OPCODE(CPX, X),	\
+		PROCESS_OPCODE(CPY, X),	\
+		PROCESS_OPCODE(DCP, M),	\
+		PROCESS_OPCODE(DEC, M),	\
+		PROCESS_OPCODE(DEX, X),	\
+		PROCESS_OPCODE(DEY, X),	\
+		PROCESS_OPCODE(DOP, M),	\
+		PROCESS_OPCODE(EOR, M),	\
+		PROCESS_OPCODE(HLE, None),	\
+		PROCESS_OPCODE(INC, M),	\
+		PROCESS_OPCODE(INX, X),	\
+		PROCESS_OPCODE(INY, X),	\
+		PROCESS_OPCODE(ISB, M),	\
+		PROCESS_OPCODE(JMP, None),	\
+		PROCESS_OPCODE(JSR, None),	\
+		PROCESS_OPCODE(LAS, M),	\
+		PROCESS_OPCODE(LAX, M),	\
+		PROCESS_OPCODE(LDA, M),	\
+		PROCESS_OPCODE(LDX, X),	\
+		PROCESS_OPCODE(LDY, X),	\
+		PROCESS_OPCODE(LSR, M),	\
+		PROCESS_OPCODE(NOP, M),	\
+		PROCESS_OPCODE(ORA, M),	\
+		PROCESS_OPCODE(PHA, M),	\
+		PROCESS_OPCODE(PHP, 8),	\
+		PROCESS_OPCODE(PLA, M),	\
+		PROCESS_OPCODE(PLP, 8),	\
+		PROCESS_OPCODE(RLA, M),	\
+		PROCESS_OPCODE(ROL, M),	\
+		PROCESS_OPCODE(ROR, M),	\
+		PROCESS_OPCODE(RRA, M),	\
+		PROCESS_OPCODE(RTI, None),	\
+		PROCESS_OPCODE(RTS, None),	\
+		PROCESS_OPCODE(SAX, M),	\
+		PROCESS_OPCODE(SBC, M),	\
+		PROCESS_OPCODE(SBX, M),	\
+		PROCESS_OPCODE(SEC, None),	\
+		PROCESS_OPCODE(SED, None),	\
+		PROCESS_OPCODE(SEI, None),	\
+		PROCESS_OPCODE(SHA, M),	\
+		PROCESS_OPCODE(SHX, X),	\
+		PROCESS_OPCODE(SHY, X),	\
+		PROCESS_OPCODE(SLO, M),	\
+		PROCESS_OPCODE(SRE, M),	\
+		PROCESS_OPCODE(STA, M),	\
+		PROCESS_OPCODE(STX, X),	\
+		PROCESS_OPCODE(STY, X),	\
+		PROCESS_OPCODE(TAX, None),	\
+		PROCESS_OPCODE(TAY, None),	\
+		PROCESS_OPCODE(TSX, None),	\
+		PROCESS_OPCODE(TXA, None),	\
+		PROCESS_OPCODE(TXS, None),	\
+		PROCESS_OPCODE(TYA, None),	\
+		PROCESS_OPCODE(XAA, M),	\
+		PROCESS_OPCODE(XAS, M),	\
+								\
+		/* 65C02 */				\
+		PROCESS_OPCODE(BRA, None),	\
+		PROCESS_OPCODE(TSB, M),	\
+		PROCESS_OPCODE(RMB, M),	\
+		PROCESS_OPCODE(BBR, None),	\
+		PROCESS_OPCODE(TRB, M),	\
+		PROCESS_OPCODE(STZ, M),	\
+		PROCESS_OPCODE(SMB, M),	\
+		PROCESS_OPCODE(BBS, None),	\
+		PROCESS_OPCODE(WAI, None),	\
+		PROCESS_OPCODE(STP, None),	\
+		PROCESS_OPCODE(PLX, None),	\
+		PROCESS_OPCODE(PLY, None),	\
+		PROCESS_OPCODE(PHX, None),	\
+		PROCESS_OPCODE(PHY, None),	\
+								\
+		/* 65C816 */			\
+		PROCESS_OPCODE(BRL, None),	\
+		PROCESS_OPCODE(COP, None),	\
+		PROCESS_OPCODE(JML, None),	\
+		PROCESS_OPCODE(JSL, None),	\
+		PROCESS_OPCODE(MVN, None),	\
+		PROCESS_OPCODE(MVP, None),	\
+		PROCESS_OPCODE(PEA, None),	\
+		PROCESS_OPCODE(PEI, 16),	\
+		PROCESS_OPCODE(PER, None),	\
+		PROCESS_OPCODE(PHB, 8),	\
+		PROCESS_OPCODE(PHD, 16),	\
+		PROCESS_OPCODE(PHK, 8),	\
+		PROCESS_OPCODE(PLB, 8),	\
+		PROCESS_OPCODE(PLD, 16),	\
+		PROCESS_OPCODE(REP, None),	\
+		PROCESS_OPCODE(RTL, None),	\
+		PROCESS_OPCODE(SEP, None),	\
+		PROCESS_OPCODE(TCD, None),	\
+		PROCESS_OPCODE(TCS, None),	\
+		PROCESS_OPCODE(TDC, None),	\
+		PROCESS_OPCODE(TSC, None),	\
+		PROCESS_OPCODE(TXY, None),	\
+		PROCESS_OPCODE(TYX, None),	\
+		PROCESS_OPCODE(XBA, None),	\
+		PROCESS_OPCODE(XCE, None)
+
 	enum {
-		kOpcodebad,
-		kOpcodeADC,
-		kOpcodeANC,
-		kOpcodeAND,
-		kOpcodeASL,
-		kOpcodeASR,
-		kOpcodeATX,
-		kOpcodeBCC,
-		kOpcodeBCS,
-		kOpcodeBEQ,
-		kOpcodeBIT,
-		kOpcodeBMI,
-		kOpcodeBNE,
-		kOpcodeBPL,
-		kOpcodeBRK,
-		kOpcodeBVC,
-		kOpcodeBVS,
-		kOpcodeCLC,
-		kOpcodeCLD,
-		kOpcodeCLI,
-		kOpcodeCLV,
-		kOpcodeCMP,
-		kOpcodeCPX,
-		kOpcodeCPY,
-		kOpcodeDCP,
-		kOpcodeDEC,
-		kOpcodeDEX,
-		kOpcodeDEY,
-		kOpcodeDOP,
-		kOpcodeEOR,
-		kOpcodeHLE,
-		kOpcodeINC,
-		kOpcodeINX,
-		kOpcodeINY,
-		kOpcodeISB,
-		kOpcodeJMP,
-		kOpcodeJSR,
-		kOpcodeLAS,
-		kOpcodeLAX,
-		kOpcodeLDA,
-		kOpcodeLDX,
-		kOpcodeLDY,
-		kOpcodeLSR,
-		kOpcodeNOP,
-		kOpcodeORA,
-		kOpcodePHA,
-		kOpcodePHP,
-		kOpcodePLA,
-		kOpcodePLP,
-		kOpcodeRLA,
-		kOpcodeROL,
-		kOpcodeROR,
-		kOpcodeRRA,
-		kOpcodeRTI,
-		kOpcodeRTS,
-		kOpcodeSAX,
-		kOpcodeSBC,
-		kOpcodeSBX,
-		kOpcodeSEC,
-		kOpcodeSED,
-		kOpcodeSEI,
-		kOpcodeSHA,
-		kOpcodeSHX,
-		kOpcodeSHY,
-		kOpcodeSLO,
-		kOpcodeSRE,
-		kOpcodeSTA,
-		kOpcodeSTX,
-		kOpcodeSTY,
-		kOpcodeTAX,
-		kOpcodeTAY,
-		kOpcodeTSX,
-		kOpcodeTXA,
-		kOpcodeTXS,
-		kOpcodeTYA,
-		kOpcodeXAA,
-		kOpcodeXAS,
-
-		// 65C02
-		kOpcodeBRA,
-		kOpcodeTSB,
-		kOpcodeRMB,
-		kOpcodeBBR,
-		kOpcodeTRB,
-		kOpcodeSTZ,
-		kOpcodeSMB,
-		kOpcodeBBS,
-		kOpcodeWAI,
-		kOpcodeSTP,
-		kOpcodePLX,
-		kOpcodePLY,
-		kOpcodePHX,
-		kOpcodePHY,
-
-		// 65C816
-		kOpcodeBRL,
-		kOpcodeCOP,
-		kOpcodeJML,
-		kOpcodeJSL,
-		kOpcodeMVN,
-		kOpcodeMVP,
-		kOpcodePEA,
-		kOpcodePEI,
-		kOpcodePER,
-		kOpcodePHB,
-		kOpcodePHD,
-		kOpcodePHK,
-		kOpcodePLB,
-		kOpcodePLD,
-		kOpcodeREP,
-		kOpcodeRTL,
-		kOpcodeSEP,
-		kOpcodeTCD,
-		kOpcodeTCS,
-		kOpcodeTDC,
-		kOpcodeTSC,
-		kOpcodeTXY,
-		kOpcodeTYX,
-		kOpcodeXBA,
-		kOpcodeXCE,
+#define PROCESS_OPCODE(name, mode) kOpcode##name
+		PROCESS_OPCODES
+#undef PROCESS_OPCODE
 	};
 
 	static const char *kOpcodes[]={
-		"bad",
-		"ADC",
-		"ANC",
-		"AND",
-		"ASL",
-		"ASR",
-		"ATX",
-		"BCC",
-		"BCS",
-		"BEQ",
-		"BIT",
-		"BMI",
-		"BNE",
-		"BPL",
-		"BRK",
-		"BVC",
-		"BVS",
-		"CLC",
-		"CLD",
-		"CLI",
-		"CLV",
-		"CMP",
-		"CPX",
-		"CPY",
-		"DCP",
-		"DEC",
-		"DEX",
-		"DEY",
-		"DOP",
-		"EOR",
-		"HLE",
-		"INC",
-		"INX",
-		"INY",
-		"ISB",
-		"JMP",
-		"JSR",
-		"LAS",
-		"LAX",
-		"LDA",
-		"LDX",
-		"LDY",
-		"LSR",
-		"NOP",
-		"ORA",
-		"PHA",
-		"PHP",
-		"PLA",
-		"PLP",
-		"RLA",
-		"ROL",
-		"ROR",
-		"RRA",
-		"RTI",
-		"RTS",
-		"SAX",
-		"SBC",
-		"SBX",
-		"SEC",
-		"SED",
-		"SEI",
-		"SHA",
-		"SHX",
-		"SHY",
-		"SLO",
-		"SRE",
-		"STA",
-		"STX",
-		"STY",
-		"TAX",
-		"TAY",
-		"TSX",
-		"TXA",
-		"TXS",
-		"TYA",
-		"XAA",
-		"XAS",
+#define PROCESS_OPCODE(name, mode) #name
+		PROCESS_OPCODES
+#undef PROCESS_OPCODE
+	};
 
-		"BRA",
-		"TSB",
-		"RMB",
-		"BBR",
-		"TRB",
-		"STZ",
-		"SMB",
-		"BBS",
-		"WAI",
-		"STP",
-		"PLX",
-		"PLY",
-		"PHX",
-		"PHY",
+	enum MemoryAccessMode {
+		kMemoryAccessMode_None,
+		kMemoryAccessMode_8,
+		kMemoryAccessMode_16,
+		kMemoryAccessMode_M,
+		kMemoryAccessMode_X
+	};
 
-		// 65C816
-		"BRL",
-		"COP",
-		"JML",
-		"JSL",
-		"MVN",
-		"MVP",
-		"PEA",
-		"PEI",
-		"PER",
-		"PHB",
-		"PHD",
-		"PHK",
-		"PLB",
-		"PLD",
-		"REP",
-		"RTL",
-		"SEP",
-		"TCD",
-		"TCS",
-		"TDC",
-		"TSC",
-		"TXY",
-		"TYX",
-		"XBA",
-		"XCE",
+	static const uint8 kOpcodeMemoryAccessModes[]={
+#define PROCESS_OPCODE(name, mode) kMemoryAccessMode_##mode
+		PROCESS_OPCODES
+#undef PROCESS_OPCODE
 	};
 
 	#define xx(op) { kModeInvalid, 0 }
@@ -492,7 +395,27 @@ uint16 ATDisassembleInsn(VDStringA& line, uint16 addr, bool decodeReferences) {
 	return ATDisassembleInsn(line, hent, decodeReferences, false, true, true, true);
 }
 
-uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool decodeReferences, bool decodeRefsHistory, bool showPCAddress, bool showCodeBytes, bool showLabels, bool lowercaseOps, bool wideOpcode) {
+namespace {
+	const char kHexDigits[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
+
+	void WriteHex8(VDStringA& line, size_t offsetFromEnd, uint8 v) {
+		char *p = &*(line.end() - offsetFromEnd);
+
+		p[0] = kHexDigits[v >> 4];
+		p[1] = kHexDigits[v & 15];
+	}
+
+	void WriteHex16(VDStringA& line, size_t offsetFromEnd, uint16 v) {
+		char *p = &*(line.end() - offsetFromEnd);
+
+		p[0] = kHexDigits[v >> 12];
+		p[1] = kHexDigits[(v >> 8) & 15];
+		p[2] = kHexDigits[(v >> 4) & 15];
+		p[3] = kHexDigits[v & 15];
+	}
+}
+
+uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool decodeReferences, bool decodeRefsHistory, bool showPCAddress, bool showCodeBytes, bool showLabels, bool lowercaseOps, bool wideOpcode, bool showLabelNamespaces) {
 	const uint8 opcode = hent.mOpcode[0];
 	const uint8 byte1 = hent.mOpcode[1];
 	const uint8 byte2 = hent.mOpcode[2];
@@ -558,27 +481,37 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 	uint8 opid = tbl[opcode][1];
 
 	if (showPCAddress) {
-		if (cpuMode == kATCPUMode_65C816)
-			line.append_sprintf("%02X:%04X: ", hent.mK, hent.mPC);
-		else
-			line.append_sprintf("%04X: ", hent.mPC);
+		const char kPCTemplate[]="  :    : ";
+
+		if (cpuMode == kATCPUMode_65C816) {
+			line += kPCTemplate;
+			WriteHex8(line, 9, hent.mK);
+		} else {
+			line += kPCTemplate + 3;
+		}
+
+		WriteHex16(line, 6, hent.mPC);
 	}
 
 	int opsize = kBytesPerModeTables[subMode][mode];
 
 	if (showCodeBytes) {
+		line.append(10, ' ');
+
 		switch(opsize) {
-			case 1:
-				line.append_sprintf("%02X        ", opcode);
-				break;
-			case 2:
-				line.append_sprintf("%02X %02X     ", opcode, byte1);
-				break;
 			case 3:
-				line.append_sprintf("%02X %02X %02X  ", opcode, byte1, byte2);
+				WriteHex8(line, 4, byte2);
+			case 2:
+				WriteHex8(line, 7, byte1);
+			case 1:
+				WriteHex8(line, 10, opcode);
 				break;
+
 			case 4:
-				line.append_sprintf("%02X%02X%02X%02X  ", opcode, byte1, byte2, byte3);
+				WriteHex8(line, 10, opcode);
+				WriteHex8(line, 8, byte1);
+				WriteHex8(line, 6, byte2);
+				WriteHex8(line, 4, byte3);
 				break;
 		}
 	}
@@ -601,7 +534,21 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 			}
 		}
 
-		line.append_sprintf("%-7s ", label ? label : "");
+		size_t len = 0;
+		
+		if (label) {
+			if (!showLabelNamespaces) {
+				const char *dot = strchr(label, '.');
+
+				if (dot && dot[1])
+					label = dot;
+			}
+
+			len = strlen(label);
+			line.append(label);
+		}
+
+		line.append(len < 7 ? 8 - len : 1, ' ');
 	}
 
 	const char *opname = kOpcodes[opid];
@@ -909,6 +856,7 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 		switch(mode) {
 			case kModeZpX:
 			case kModeAbsX:
+			case kModeLongX:
 				line.append(",X");
 				break;
 
@@ -1004,11 +952,63 @@ uint16 ATDisassembleInsn(VDStringA& line, const ATCPUHistoryEntry& hent, bool de
 					line.resize(padLen, ' ');
 
 				if (cpuMode == kATCPUMode_65C816)
-					line.append_sprintf(" [$%02X:%04X] = $%02X", (ea >> 16) & 0xff, ea & 0xffff, g_sim.DebugExtReadByte(ea));
+					line.append_sprintf(" [$%02X:%04X]", (ea >> 16) & 0xff, ea & 0xffff);
 				else if (ea16)
-					line.append_sprintf(" [$%04X] = $%02X", ea, g_sim.DebugReadByte(ea));
+					line.append_sprintf(" [$%04X]", ea);
 				else
-					line.append_sprintf(" [$%02X] = $%02X", ea, g_sim.DebugReadByte(ea));
+					line.append_sprintf(" [$%02X]", ea);
+
+				if (!write) {
+					bool access16 = false;
+
+					switch(kOpcodeMemoryAccessModes[opid]) {
+						case kMemoryAccessMode_None:
+						case kMemoryAccessMode_8:
+						default:
+							break;
+
+						case kMemoryAccessMode_16:
+							access16 = true;
+							break;
+
+						case kMemoryAccessMode_M:
+							switch(subMode) {
+								case kATCPUSubMode_65C816_NativeM16X16:
+								case kATCPUSubMode_65C816_NativeM16X8:
+									access16 = true;
+									break;
+							}
+							break;
+
+						case kMemoryAccessMode_X:
+							switch(subMode) {
+								case kATCPUSubMode_65C816_NativeM16X16:
+								case kATCPUSubMode_65C816_NativeM8X16:
+									access16 = true;
+									break;
+							}
+							break;
+					}
+
+					if (access16) {
+						switch(mode) {
+							case kModeZp:
+							case kModeZpX:
+							case kModeZpY:
+							case kModeIndA:
+							case kModeStack:
+								line.append_sprintf(" = $%02X%02X",
+									g_sim.DebugExtReadByte((ea+1) & 0xffff),
+									g_sim.DebugExtReadByte(ea));
+								break;
+
+							default:
+								line.append_sprintf(" = $%04X", g_sim.DebugGlobalReadWord(ea & 0xffffff));
+								break;
+						}
+					} else
+						line.append_sprintf(" = $%02X", g_sim.DebugExtReadByte(ea));
+				}
 			}
 		}
 	}
@@ -1037,7 +1037,7 @@ void ATDisassembleRange(FILE *f, uint16 addr1, uint16 addr2) {
 	}
 }
 
-uint16 ATDisassembleGetFirstAnchor(uint16 addr, uint16 target) {
+uint16 ATDisassembleGetFirstAnchor(uint16 addr, uint16 target, uint8 bank) {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 	ATCPUSubMode subMode = cpu.GetCPUSubMode();
 	const uint8 (*const tbl)[2] = kModeTbl[subMode];
@@ -1056,7 +1056,7 @@ uint16 ATDisassembleGetFirstAnchor(uint16 addr, uint16 target) {
 			if (offset < results.size() && results[offset])
 				break;
 
-			uint8 opcode = g_sim.DebugReadByte(ip);
+			uint8 opcode = g_sim.DebugExtReadByte(ip + ((uint32)bank << 16));
 			uint8 mode = tbl[opcode][0];
 
 			uint8 oplen = modetbl[mode];

@@ -27,6 +27,7 @@
 #include "uirender.h"
 #include "simulator.h"
 #include "cpuhookmanager.h"
+#include "options.h"
 
 ATUltimate1MBEmulator::ATUltimate1MBEmulator()
 	: mCartBankOffset(0)
@@ -90,7 +91,14 @@ void ATUltimate1MBEmulator::Init(
 	mClockEmu.Init();
 	LoadNVRAM();
 
-	mFlashEmu.Init(mFirmware, kATFlashType_A29040, sched);
+	if (g_ATOptions.mU1MBFlashChip == "BM29F040")
+		mFlashEmu.Init(mFirmware, kATFlashType_BM29F040, sched);
+	else if (g_ATOptions.mU1MBFlashChip == "Am29F040B")
+		mFlashEmu.Init(mFirmware, kATFlashType_Am29F040B, sched);
+	else if (g_ATOptions.mU1MBFlashChip == "SST39SF040")
+		mFlashEmu.Init(mFirmware, kATFlashType_SST39SF040, sched);
+	else
+		mFlashEmu.Init(mFirmware, kATFlashType_A29040, sched);
 
 	mCurrentPBIID = 0;
 

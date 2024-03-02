@@ -56,7 +56,7 @@ protected:
 	ptrdiff_t	mProgramLoadIndex;
 
 	bool		mbLaunchPending;
-	uint32		mProgramModuleIds[3];
+	uint32		mProgramModuleIds[4];
 };
 
 #endif	// f_AT_HLEPROGRAMLOADER_H

@@ -135,7 +135,10 @@ namespace {
 
 		static const char header[]=
 					"{\\rtf"
-					"{\\fonttbl{\\f0\\fswiss;}{\\f1\\fnil\\fcharset2 Symbol;}}"
+					"{\\fonttbl"
+						"{\\f0\\fswiss MS Shell Dlg;}"
+						"{\\f1\\fnil\\fcharset2 Symbol;}"
+					"}"
 					"{\\colortbl;\\red0\\green64\\blue128;}"
 					"\\fs20 "
 					;

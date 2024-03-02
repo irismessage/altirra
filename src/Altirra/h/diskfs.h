@@ -7,6 +7,7 @@
 #include <vd2/system/VDString.h>
 
 class IATDiskImage;
+class IVDRandomAccessStream;
 
 struct ATDiskFSInfo {
 	VDStringA mFSType;
@@ -15,7 +16,7 @@ struct ATDiskFSInfo {
 };
 
 struct ATDiskFSEntryInfo {
-	VDStringW mFileName;
+	VDStringA mFileName;
 	uint32	mSectors;
 	uint32	mBytes;
 	uintptr	mKey;
@@ -79,14 +80,17 @@ public:
 
 	virtual void DeleteFile(uintptr key) = 0;
 	virtual void ReadFile(uintptr key, vdfastvector<uint8>& dst) = 0;
-	virtual void WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len) = 0;
+	virtual uintptr WriteFile(uintptr parentKey, const char *filename, const void *src, uint32 len) = 0;
 	virtual void RenameFile(uintptr key, const char *newFileName) = 0;
+	virtual void SetFileTimestamp(uintptr key, const VDExpandedDate& date) = 0;
 };
 
 IATDiskFS *ATDiskFormatImageDOS2(IATDiskImage *image);
+IATDiskFS *ATDiskFormatImageSDX2(IATDiskImage *image, const char *volNameHint = 0);
 
 IATDiskFS *ATDiskMountImage(IATDiskImage *image, bool readOnly);
 IATDiskFS *ATDiskMountImageARC(const wchar_t *path);
+IATDiskFS *ATDiskMountImageARC(IVDRandomAccessStream& stream, const wchar_t *path);
 IATDiskFS *ATDiskMountImageSDX2(IATDiskImage *image, bool readOnly);
 
 #endif	// f_AT_DISKFS_H

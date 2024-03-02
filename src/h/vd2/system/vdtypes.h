@@ -295,34 +295,19 @@ extern void VDDebugPrint(const char *format, ...);
 		template<int line>
 		struct VDAssertHelper {
 			VDAssertHelper(const char *exp, const char *file) {
-				if (!sbAssertDisabled)
-					switch(VDAssert(exp, file, line)) {
-					case kVDAssertBreak:
-						VDBREAK;
-						break;
-					case kVDAssertIgnore:
-						sbAssertDisabled = true;
-						break;
-					}
+				switch(VDAssert(exp, file, line)) {
+				case kVDAssertBreak:
+					VDBREAK;
+					break;
+				}
 			}
-
-			static bool sbAssertDisabled;
 		};
-
-		template<int lineno>
-		bool VDAssertHelper<lineno>::sbAssertDisabled;
-
-		template<int lineno>
-		struct VDAssertHelper2 { static bool sDisabled; };
-
-		template<int lineno>
-		bool VDAssertHelper2<lineno>::sDisabled;
 	}
 
-	#define VDASSERT(exp)		if (!VDAssertHelper2<__LINE__>::sDisabled) if (exp); else switch(VDAssert   (#exp, __FILE__, __LINE__)) { case kVDAssertBreak: VDBREAK; break; case kVDAssertIgnore: VDAssertHelper2<__LINE__>::sDisabled = true; } else ((void)0)
-	#define VDASSERTPTR(exp) 	if (!VDAssertHelper2<__LINE__>::sDisabled) if (exp); else switch(VDAssertPtr(#exp, __FILE__, __LINE__)) { case kVDAssertBreak: VDBREAK; break; case kVDAssertIgnore: VDAssertHelper2<__LINE__>::sDisabled = true; } else ((void)0)
-	#define VDVERIFY(exp)		if (exp); else if (!VDAssertHelper2<__LINE__>::sDisabled) switch(VDAssert   (#exp, __FILE__, __LINE__)) { case kVDAssertBreak: VDBREAK; break; case kVDAssertIgnore: VDAssertHelper2<__LINE__>::sDisabled = true; } else ((void)0)
-	#define VDVERIFYPTR(exp) 	if (exp); else if (!VDAssertHelper2<__LINE__>::sDisabled) switch(VDAssertPtr(#exp, __FILE__, __LINE__)) { case kVDAssertBreak: VDBREAK; break; case kVDAssertIgnore: VDAssertHelper2<__LINE__>::sDisabled = true; } else ((void)0)
+	#define VDASSERT(exp)		if (!(exp) && VDAssert   (#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
+	#define VDASSERTPTR(exp) 	if (!(exp) && VDAssertPtr(#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
+	#define VDVERIFY(exp)		if (!(exp) && VDAssert   (#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
+	#define VDVERIFYPTR(exp) 	if (!(exp) && VDAssertPtr(#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
 	#define VDASSERTCT(exp)		(void)sizeof(int[(exp)?1:-1])
 
 	#define VDINLINEASSERT(exp)			((exp)||(VDAssertHelper<__LINE__>(#exp, __FILE__),false))

@@ -44,6 +44,7 @@ public:
 	virtual uint32 GetAudioLength() const = 0;
 
 	virtual bool GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshold, bool prevBit) const = 0;
+	virtual void ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) const = 0;
 
 	virtual void AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const = 0;
 };

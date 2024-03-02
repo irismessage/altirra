@@ -23,6 +23,7 @@ public:
 public:
 	virtual void OnCreate();
 	virtual void OnDestroy();
+	virtual void OnSize();
 
 	virtual void OnActionStart(uint32 id);
 	virtual void OnActionRepeat(uint32 id);
@@ -56,13 +57,17 @@ protected:
 
 	enum {
 		kCols = 15,
-		kRows = 6
+		kRows = 6,
+		kSubRows = 6*4 + 1
 	};
 
 	sint32	mButtonWidth;
 	sint32	mButtonHeight;
 
 	ButtonEntry mButtons[62];
+
+	static const KeyEntry kEntries[];
+	static const int kRowBreaks[];
 };
 
 #endif
