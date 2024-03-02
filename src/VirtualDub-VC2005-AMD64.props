@@ -10,6 +10,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <DisableSpecificWarnings>4244;4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <CallingConvention>VectorCall</CallingConvention>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>

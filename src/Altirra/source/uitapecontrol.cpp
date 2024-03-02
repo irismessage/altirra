@@ -375,8 +375,11 @@ protected:
 	void OnDestroy() override;
 	void OnHScroll(uint32 id, int code) override;
 	bool PreNCDestroy() override;
+	void OnDpiChanged() override;
 
 	void UpdateLabelText();
+	void UpdateFonts();
+	void RepositionPeakControl();
 	void AppendTime(VDStringW& s, float t);
 
 	void OnTapePositionChanged();
@@ -500,6 +503,13 @@ bool ATTapeControlDialog::OnLoaded() {
 	if (!spDialog)
 		spDialog = this;
 
+	mResizer.Add(IDC_STOP, mResizer.kTL | mResizer.kSuppressFontChange);
+	mResizer.Add(IDC_PAUSE, mResizer.kTL | mResizer.kSuppressFontChange);
+	mResizer.Add(IDC_PLAY, mResizer.kTL | mResizer.kSuppressFontChange);
+	mResizer.Add(IDC_RECORD, mResizer.kTL | mResizer.kSuppressFontChange);
+	mResizer.Add(IDC_SEEK_START, mResizer.kTL | mResizer.kSuppressFontChange);
+	mResizer.Add(IDC_SEEK_END, mResizer.kTL | mResizer.kSuppressFontChange);
+
 	AddProxy(&mButtonStop, IDC_STOP);
 	AddProxy(&mButtonPause, IDC_PAUSE);
 	AddProxy(&mButtonPlay, IDC_PLAY);
@@ -507,30 +517,16 @@ bool ATTapeControlDialog::OnLoaded() {
 	AddProxy(&mButtonSeekStart, IDC_SEEK_START);
 	AddProxy(&mButtonSeekEnd, IDC_SEEK_END);
 
-	int ptSize = 12;
-	int ht = (ptSize * ATUIGetGlobalDpiW32() + 36) / 72;
+	UpdateFonts();
 
-	mhfontWebdings = CreateFont(-ht, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH,
-		_T("Webdings"));
+	mpPeakControl = new ATUITapePeakControl;
 
-	if (mhfontWebdings) {
-		for(UINT id : kIconButtonIds)
-			SendDlgItemMessage(mhdlg, id, WM_SETFONT, (WPARAM)mhfontWebdings, TRUE);
-	}
+	::CreateWindowEx(WS_EX_CLIENTEDGE, MAKEINTATOM(ATUINativeWindow::Register()), _T(""), WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 0, 0, mhdlg, (HMENU)IDC_PEAK_CONTROL, VDGetLocalModuleHandleW32(),
+		static_cast<ATUINativeWindow *>(&*mpPeakControl));
 
-	HWND hwndPeakRect = GetControl(IDC_PEAK_IMAGE);
-	if (hwndPeakRect) {
-		const vdrect32 r = GetControlPos(IDC_PEAK_IMAGE);
+	mpPeakControl->OnPositionChanged() += mDelPositionChanged.Bind(this, &ATTapeControlDialog::OnPositionChanged);
 
-		if (!r.empty()) {
-			mpPeakControl = new ATUITapePeakControl;
-
-			::CreateWindowEx(WS_EX_CLIENTEDGE, MAKEINTATOM(ATUINativeWindow::Register()), _T(""), WS_CHILD | WS_VISIBLE | WS_TABSTOP, r.left, r.top, r.width(), r.height(), mhdlg, (HMENU)IDC_PEAK_CONTROL, VDGetLocalModuleHandleW32(),
-				static_cast<ATUINativeWindow *>(&*mpPeakControl));
-
-			mpPeakControl->OnPositionChanged() += mDelPositionChanged.Bind(this, &ATTapeControlDialog::OnPositionChanged);
-		}
-	}
+	RepositionPeakControl();
 
 	OnTapeChanged();
 
@@ -585,6 +581,13 @@ bool ATTapeControlDialog::PreNCDestroy() {
 	return true;
 }
 
+void ATTapeControlDialog::OnDpiChanged() {
+	VDDialogFrameW32::OnDpiChanged();
+
+	UpdateFonts();
+	RepositionPeakControl();
+}
+
 void ATTapeControlDialog::UpdateLabelText() {
 	mLabel.clear();
 	AppendTime(mLabel, mTape.GetPosition());
@@ -592,6 +595,32 @@ void ATTapeControlDialog::UpdateLabelText() {
 	AppendTime(mLabel, mTape.GetLength());
 
 	SetControlText(IDC_STATIC_POSITION, mLabel.c_str());
+}
+
+void ATTapeControlDialog::UpdateFonts() {
+	int ptSize = 12;
+	int ht = (ptSize * mCurrentDpi + 36) / 72;
+
+	HFONT hNewFont = CreateFont(-ht, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH,
+		_T("Webdings"));
+
+	if (hNewFont) {
+		for(UINT id : kIconButtonIds)
+			SendDlgItemMessage(mhdlg, id, WM_SETFONT, (WPARAM)hNewFont, TRUE);
+
+		if (mhfontWebdings)
+			DeleteObject(mhfontWebdings);
+
+		mhfontWebdings = hNewFont;
+	}
+}
+
+void ATTapeControlDialog::RepositionPeakControl() {
+	const vdrect32 r = GetControlPos(IDC_PEAK_IMAGE);
+
+	if (!r.empty()) {
+		SetControlPos(IDC_PEAK_CONTROL, r);
+	}
 }
 
 void ATTapeControlDialog::AppendTime(VDStringW& s, float t) {

@@ -50,6 +50,7 @@ uint16 ATDisassembleInsn(VDStringA& buf,
 	bool showSymbols = true);
 
 uint16 ATDisassembleGetFirstAnchor(IATDebugTarget *target, uint16 addr, uint16 targetAddr, uint8 bank);
+void ATDisassemblePredictContext(ATCPUHistoryEntry& hent, ATDebugDisasmMode execMode);
 
 int ATGetOpcodeLength(uint8 opcode);
 int ATGetOpcodeLength(uint8 opcode, uint8 p, bool emuMode);

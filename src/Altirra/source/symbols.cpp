@@ -76,9 +76,10 @@ protected:
 
 	struct Symbol {
 		uint32	mNameOffset;
-		uint16	mOffset;
+		uint32	mOffset;
 		uint8	mFlags;
-		uint8	mSize;
+		uint8	m_pad0;
+		uint16	mSize;
 		uint16	mFileId;
 		uint16	mLine;
 	};
@@ -216,9 +217,9 @@ void ATSymbolStore::AddSymbol(uint32 offset, const char *name, uint32 size, uint
 	Symbol sym;
 
 	sym.mNameOffset = (uint32)mNameBytes.size();
-	sym.mOffset		= (uint16)(offset - mModuleBase);
+	sym.mOffset		= offset - mModuleBase;
 	sym.mFlags		= (uint8)flags;
-	sym.mSize		= size > 255 ? 0 : size;
+	sym.mSize		= size > 0xFFFF ? 0 : size;
 	sym.mFileId		= fileid;
 	sym.mLine		= lineno;
 
@@ -1151,13 +1152,14 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 			// xasm:
 			//         2000 MAIN
 
-			if (isdigit((unsigned char)line[0])) {
+			if (isxdigit((unsigned char)line[0])) {
 				int pos1;
 				int pos2;
-				if (3 == sscanf(line, "%2x %4x %n%c%*s%n", &op, &address, &pos1, &dummy, &pos2)) {
+				unsigned bank;
+				if (3 == sscanf(line, "%2x %4x %n%c%*s%n", &bank, &address, &pos1, &dummy, &pos2)) {
 					label.assign(line + pos1, line + pos2);
 
-					AddSymbol(address, label.c_str());
+					AddSymbol(((uint32)bank << 16) + address, label.c_str());
 				}
 			} else {
 				int pos1;
@@ -1172,7 +1174,7 @@ void ATSymbolStore::LoadMADSListing(VDTextStream& ifile) {
 	}
 
 	mModuleBase = 0;
-	mModuleSize = 0x10000;
+	mModuleSize = 0x1000000;
 
 	// remove useless directives
 	while(!mDirectives.empty() && mDirectives.back().mOffset == 0)

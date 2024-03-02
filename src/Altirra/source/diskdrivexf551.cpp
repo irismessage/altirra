@@ -41,7 +41,8 @@ void ATCreateDeviceDiskDriveXF551(const ATPropertySet& pset, IATDevice **dev) {
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveXF551 = { "diskdrivexf551", "diskdrivexf551", L"XF551 disk drive (full emulation)", ATCreateDeviceDiskDriveXF551 };
 
 ATDeviceDiskDriveXF551::ATDeviceDiskDriveXF551() {
-	std::fill(std::begin(mStepBreakpointMap), std::end(mStepBreakpointMap), true);
+	mBreakpointsImpl.BindBPHandler(mCoProc);
+	mBreakpointsImpl.SetStepHandler(this);
 
 	mCoProc.SetProgramBanks(mROM[0], mROM[1]);
 }
@@ -57,7 +58,7 @@ void *ATDeviceDiskDriveXF551::AsInterface(uint32 iid) {
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
 		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(this);
 		case IATDeviceDebugTarget::kTypeID: return static_cast<IATDeviceDebugTarget *>(this);
-		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(this);
+		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(&mBreakpointsImpl);
 		case IATDebugTargetHistory::kTypeID: return static_cast<IATDebugTargetHistory *>(this);
 		case IATDebugTargetExecutionControl::kTypeID: return static_cast<IATDebugTargetExecutionControl *>(this);
 		case ATFDCEmulator::kTypeID: return &mFDC;
@@ -428,37 +429,6 @@ uint32 ATDeviceDiskDriveXF551::ConvertRawTimestamp(uint32 rawTimestamp) const {
 	return mLastSync - (((mCoProc.GetTimeBase() - rawTimestamp) * mClockDivisor + mSubCycleAccum + 511) >> 9);
 }
 
-void ATDeviceDiskDriveXF551::SetBreakpointHandler(IATCPUBreakpointHandler *handler) {
-	mpBreakpointHandler = handler;
-
-	if (mBreakpointCount)
-		mCoProc.SetBreakpointMap(mBreakpointMap, handler);
-}
-
-void ATDeviceDiskDriveXF551::ClearBreakpoint(uint16 pc) {
-	if (pc >= 0x1000)
-		return;
-
-	if (mBreakpointMap[pc]) {
-		mBreakpointMap[pc] = false;
-
-		if (!--mBreakpointCount && !mpStepHandler)
-			mCoProc.SetBreakpointMap(nullptr, nullptr);
-	}
-}
-
-void ATDeviceDiskDriveXF551::SetBreakpoint(uint16 pc) {
-	if (pc >= 0x1000)
-		return;
-
-	if (!mBreakpointMap[pc]) {
-		mBreakpointMap[pc] = true;
-
-		if (!mBreakpointCount++ && !mpStepHandler)
-			mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
-	}
-}
-
 void ATDeviceDiskDriveXF551::Break() {
 	CancelStep();
 }
@@ -469,7 +439,7 @@ bool ATDeviceDiskDriveXF551::StepInto(const vdfunction<void(bool)>& fn) {
 	mpStepHandler = fn;
 	mbStepOut = false;
 	mStepStartSubCycle = mCoProc.GetTime();
-	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	mBreakpointsImpl.SetStepActive(true);
 	Sync();
 	return true;
 }
@@ -481,7 +451,7 @@ bool ATDeviceDiskDriveXF551::StepOver(const vdfunction<void(bool)>& fn) {
 	mbStepOut = true;
 	mStepStartSubCycle = mCoProc.GetTime();
 	mStepOutSP = mCoProc.GetSP();
-	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	mBreakpointsImpl.SetStepActive(true);
 	Sync();
 	return true;
 }
@@ -493,7 +463,7 @@ bool ATDeviceDiskDriveXF551::StepOut(const vdfunction<void(bool)>& fn) {
 	mbStepOut = true;
 	mStepStartSubCycle = mCoProc.GetTime();
 	mStepOutSP = mCoProc.GetSP() + 1;
-	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	mBreakpointsImpl.SetStepActive(true);
 	Sync();
 	return true;
 }
@@ -508,25 +478,20 @@ void ATDeviceDiskDriveXF551::RunUntilSynced() {
 }
 
 bool ATDeviceDiskDriveXF551::CheckBreakpoint(uint32 pc) {
-	bool bpHit = false;
+	if (mCoProc.GetTime() == mStepStartSubCycle)
+		return false;
 
-	if (mBreakpointCount && mBreakpointMap[(uint16)pc] && mpBreakpointHandler->CheckBreakpoint(pc))
-		bpHit = true;
+	const bool bpHit = mBreakpointsImpl.CheckBP(pc);
 
-	if (mBreakpointCount)
-		mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
-	else {
-		if (mCoProc.GetTime() == mStepStartSubCycle)
-			return false;
-
+	if (!bpHit) {
 		if (mbStepOut) {
 			// Keep stepping if wrapped(s < s0).
 			if ((mCoProc.GetSP() - mStepOutSP) & 0x8000)
 				return false;
 		}
-
-		mCoProc.SetBreakpointMap(nullptr, nullptr);
 	}
+
+	mBreakpointsImpl.SetStepActive(false);
 
 	mbStepNotifyPending = true;
 	mbStepNotifyPendingBP = bpHit;
@@ -626,10 +591,7 @@ void ATDeviceDiskDriveXF551::OnAudioModeChanged() {
 
 void ATDeviceDiskDriveXF551::CancelStep() {
 	if (mpStepHandler) {
-		if (mBreakpointCount)
-			mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
-		else
-			mCoProc.SetBreakpointMap(nullptr, nullptr);
+		mBreakpointsImpl.SetStepActive(false);
 
 		auto p = std::move(mpStepHandler);
 		mpStepHandler = nullptr;

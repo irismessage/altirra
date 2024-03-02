@@ -918,7 +918,6 @@ protected:
 	void AppendRTF(VDStringA& rtf, const wchar_t *text);
 
 	int mSelectedPage;
-	vdpoint32 mPagePos;
 	uint32 mLastHelpId;
 	HWND mhwndHelp;
 
@@ -944,7 +943,6 @@ bool ATUIDialogOptions::OnLoaded() {
 	SetPeriodicTimer(kTimerID_Help, 1000);
 
 	ShowControl(IDC_PAGE_AREA, false);
-	mPagePos = GetControlPos(IDC_PAGE_AREA).top_left();
 
 	mpPages[0] = new ATUIDialogOptionsPageStartup(mOptions);
 	mpPages[1] = new ATUIDialogOptionsPageDisplay(mOptions);
@@ -1051,6 +1049,8 @@ void ATUIDialogOptions::SelectPage(int index) {
 	if (mSelectedPage >= 0) {
 		ATUIDialogOptionsPage *page = mpPages[mSelectedPage];
 		page->Sync(true);
+
+		mResizer.Remove(page->GetWindowHandle());
 		page->Destroy();
 		mLastHelpId = 0;
 		if (mhwndHelp)
@@ -1063,7 +1063,10 @@ void ATUIDialogOptions::SelectPage(int index) {
 		ATUIDialogOptionsPage *page = mpPages[mSelectedPage];
 
 		if (page->Create((VDGUIHandle)mhdlg)) {
-			page->SetPosition(mPagePos);
+			const auto& r = GetControlPos(IDC_PAGE_AREA);
+
+			page->SetArea(r, false);
+			mResizer.Add(page->GetWindowHandle(), r.left, r.top, r.width(), r.height(), mResizer.kTL);
 			page->Show();
 		}
 	}

@@ -1061,7 +1061,7 @@ namespace AT6809Dsm {
 	};
 }
 
-const char *ATGetSymbolName(uint16 addr, bool write) {
+const char *ATGetSymbolName(uint32 addr, bool write) {
 	IATDebuggerSymbolLookup *symlookup = ATGetDebuggerSymbolLookup();
 
 	ATSymbol sym;
@@ -1074,7 +1074,7 @@ const char *ATGetSymbolName(uint16 addr, bool write) {
 	return sym.mpName;
 }
 
-const char *ATGetSymbolNameOffset(uint16 addr, bool write, sint32& offset) {
+const char *ATGetSymbolNameOffset(uint32 addr, bool write, sint32& offset) {
 	IATDebuggerSymbolLookup *symlookup = ATGetDebuggerSymbolLookup();
 
 	ATSymbol sym;
@@ -1755,7 +1755,7 @@ uint16 ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 				}
 
 				case AT6809Dsm::m: {
-					static constexpr char *const kRegisters[8] = {
+					static constexpr const char *const kRegisters[8] = {
 						"CCR", "A", "B", "DPR", "X", "Y", "U", "PC"
 					};
 
@@ -1784,7 +1784,7 @@ uint16 ATDisassembleInsn6809(VDStringA& line, const ATCPUHistoryEntry& hent, boo
 				}
 
 				case AT6809Dsm::t: {
-					static constexpr char *const kTransferRegisters[16]={
+					static constexpr const char *const kTransferRegisters[16]={
 						"D", "X", "Y", "U", "S", "PC", "6", "7",
 						"A", "B", "CCR", "DPR", "12", "13", "14", "15"
 					};
@@ -1865,7 +1865,7 @@ uint16 ATDisassembleInsn(VDStringA& line,
 	const uint8 byte2 = hent.mOpcode[2];
 	const uint8 byte3 = hent.mOpcode[3];
 
-	const uint8 pbk = hent.mK;
+	const uint8 pbk = (disasmMode == kATDebugDisasmMode_65C816) ? hent.mK : 0;
 	const uint32 d = hent.mD;
 	const uint32 dpmask = !hent.mbEmulation || (uint8)d ? 0xffff : 0xff;
 	const uint32 x = hent.mX + ((uint32)hent.mXH << 8);
@@ -1922,13 +1922,11 @@ uint16 ATDisassembleInsn(VDStringA& line,
 
 		const char *label = NULL;
 		
-		if (!pbk) {
-			label = ATGetSymbolName(addr, false);
+		label = ATGetSymbolName(addr + ((uint32)pbk << 16), false);
 
-			if (!label && cpu.IsPathfindingEnabled() && cpu.IsPathStart(addr)) {
-				tempLabel.sprintf("L%04X", addr);
-				label = tempLabel.c_str();
-			}
+		if (!label && cpu.IsPathfindingEnabled() && cpu.IsPathStart(addr)) {
+			tempLabel.sprintf("L%04X", addr);
+			label = tempLabel.c_str();
 		}
 
 		size_t len = 0;
@@ -1972,7 +1970,8 @@ uint16 ATDisassembleInsn(VDStringA& line,
 		line += ' ';
 
 	if (mode == kModeImm) {
-		line.append_sprintf(" #$%02X", byte1);
+		line.append(" #$FF");
+		WriteHex8(line, 2, byte1);
 	} else if (mode == kModeImmMode16 || mode == kModeImmIndex16) {
 		if (opsize == 3)
 			line.append_sprintf(" #$%02X%02X", byte2, byte1);
@@ -2003,13 +2002,52 @@ uint16 ATDisassembleInsn(VDStringA& line,
 				break;
 		}
 
-		uint32 base;
-		uint32 ea;
-		uint32 ea2;
-		bool addr16 = false;
-		bool addr24 = false;
-		bool ea16 = false;
-		bool ea24 = false;
+		// Determine bank to use for the base address (operand).
+		//
+		//	JMP abs			-> PBK
+		//	JMP (abs)		-> 0
+		//	JMP (abs,X)		-> PBK
+		//	JML [dp]		-> 0
+		//	JSR abs			-> PBK
+		//	JSR (abs,X)		-> PBK
+		//	All branch		-> PBK
+		uint8 eaBank = 0;
+		
+		if (disasmMode == kATDebugDisasmMode_65C816) {
+			eaBank = hent.mB;
+
+			switch(opid) {
+			case kOpcodeBCC:
+			case kOpcodeBCS:
+			case kOpcodeBEQ:
+			case kOpcodeBMI:
+			case kOpcodeBNE:
+			case kOpcodeBPL:
+			case kOpcodeBRA:
+			case kOpcodeBVC:
+			case kOpcodeBVS:
+			case kOpcodeJSR:
+			case kOpcodeJSL:
+				eaBank = hent.mK;
+				break;
+
+			case kOpcodeJMP:
+			case kOpcodeJML:
+				if (mode == kModeIndA || mode == kModeIndAL)
+					eaBank = 0;
+				else
+					eaBank = hent.mK;
+				break;
+
+			}
+		}
+
+		uint32 base;			// base address argument in instruction, i.e. addr,X -> addr
+		uint32 ea;				// effective address, i.e. addr,X -> DBK:addr+X
+		uint32 ea2;				// second effective address (bit branch insns only)
+		bool addr16 = false;	// show operand as 16-bit (word)
+		bool addr24 = false;	// show operand as 24-bit (long)
+		bool ea16 = false;		// show effective address in comment as 16-bit instead of 8-bit
 		bool dolabel = showSymbols;
 
 		switch(mode) {
@@ -2051,7 +2089,7 @@ uint16 ATDisassembleInsn(VDStringA& line,
 				base = ea = byte1 + (byte2 << 8);
 
 				if (disasmMode == kATDebugDisasmMode_65C816)
-					ea += ((uint32)hent.mB << 16);
+					ea += ((uint32)eaBank << 16);
 
 				addr16 = true;
 				ea16 = true;
@@ -2087,7 +2125,7 @@ uint16 ATDisassembleInsn(VDStringA& line,
 				if (decodeRefsHistory)
 					ea = hent.mEA;
 				else
-					ea = target->DebugReadByte(base) + 256*target->DebugReadByte(base+1);
+					ea = target->DebugReadByte(base) + 256*target->DebugReadByte(base+1) + ((uint32)eaBank << 16);
 
 				addr16 = true;
 				ea16 = true;
@@ -2105,7 +2143,6 @@ uint16 ATDisassembleInsn(VDStringA& line,
 
 				addr16 = true;
 				ea16 = true;
-				ea24 = true;
 				break;
 
 			case kModeIndX:
@@ -2163,7 +2200,6 @@ uint16 ATDisassembleInsn(VDStringA& line,
 				addr16 = true;
 				addr24 = true;
 				ea16 = true;
-				ea24 = true;
 				break;
 
 			case kModeLongX:
@@ -2172,7 +2208,6 @@ uint16 ATDisassembleInsn(VDStringA& line,
 				addr16 = true;
 				addr24 = true;
 				ea16 = true;
-				ea24 = true;
 				break;
 
 			case kModeStack:
@@ -2227,10 +2262,21 @@ uint16 ATDisassembleInsn(VDStringA& line,
 
 		bool write = false;
 		switch(opid) {
+		case kOpcodeASL:
+		case kOpcodeDCP:
+		case kOpcodeDEC:
+		case kOpcodeINC:
+		case kOpcodeISB:
+		case kOpcodeLSR:
+		case kOpcodeROL:
+		case kOpcodeROR:
+		case kOpcodeSAX:
 		case kOpcodeSTA:
 		case kOpcodeSTX:
 		case kOpcodeSTY:
 		case kOpcodeSTZ:
+		case kOpcodeTRB:
+		case kOpcodeTSB:
 			write = true;
 			break;
 		}
@@ -2238,8 +2284,14 @@ uint16 ATDisassembleInsn(VDStringA& line,
 		const char *name = NULL;
 		sint32 offset;
 		
-		if (dolabel)
-			name = ATGetSymbolNameOffset(base, write, offset);
+		if (dolabel) {
+			uint32 symAddr = base;
+
+			if (!addr24)
+				symAddr += (uint32)eaBank << 16;
+
+			name = ATGetSymbolNameOffset(symAddr, write, offset);
+		}
 
 		if (name) {
 			uint32 absOffset = abs(offset);
@@ -2251,10 +2303,13 @@ uint16 ATDisassembleInsn(VDStringA& line,
 				line.append_sprintf("%s%c$%02X", name, offset < 0 ? '-' : '+', absOffset);
 		} else if (addr24)
 			line.append_sprintf("$%06X", base & 0xffffff);
-		else if (addr16)
-			line.append_sprintf("$%04X", base & 0xffff);
-		else
-			line.append_sprintf("$%02X", base & 0xff);
+		else if (addr16) {
+			line.append(5, '$');
+			WriteHex16(line, 4, (uint16)base);
+		} else {
+			line.append(3, '$');
+			WriteHex8(line, 2, (uint8)base);
+		}
 
 		switch(mode) {
 			case kModeZpX:
@@ -2513,6 +2568,51 @@ uint16 ATDisassembleGetFirstAnchor(IATDebugTarget *target, uint16 addr, uint16 t
 	}
 
 	return testbase;
+}
+
+void ATDisassemblePredictContext(ATCPUHistoryEntry& hent, ATDebugDisasmMode execMode) {
+	if (execMode == kATDebugDisasmMode_65C816) {
+		switch(hent.mOpcode[0]) {
+			case 0x18:	// CLC
+				hent.mP &= ~AT6502::kFlagC;
+				break;
+
+			case 0x38:	// SEC
+				hent.mP |= AT6502::kFlagC;
+				break;
+
+			case 0xC2:	// REP
+				if (hent.mbEmulation)
+					hent.mP &= ~hent.mOpcode[1] | 0x30;
+				else
+					hent.mP &= ~hent.mOpcode[1];
+				break;
+
+			case 0xE2:	// SEP
+				if (hent.mbEmulation)
+					hent.mP |= hent.mOpcode[1] & 0xcf;
+				else
+					hent.mP |= hent.mOpcode[1];
+				break;
+
+			case 0xFB:	// XCE
+				{
+					uint8 e = hent.mbEmulation ? 1 : 0;
+					uint8 xorv = (hent.mP ^ e) & 1;
+
+					if (xorv) {
+						e ^= xorv;
+						hent.mP ^= xorv;
+
+						hent.mbEmulation = (e & 1) != 0;
+
+						if (hent.mbEmulation)
+							hent.mP |= 0x30;
+					}
+				}
+				break;
+		}
+	}
 }
 
 int ATGetOpcodeLength(uint8 opcode) {

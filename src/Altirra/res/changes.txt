@@ -1,5 +1,78 @@
 Altirra Change Log
-Version 2.90:
+
+Version 3.00: [December 28, 2017]
+   [changes]
+   * Devices: Internal device tree storage has changed. Device trees may need to be remade.
+   * Input: Added detection and button naming for DualShock 4 controllers.
+   * VBXE: VideoBoard XE configuration has been moved from the menu to a device entry.
+
+   [features added]
+   * Cassette: Added initial support for turbo tape decoding.
+   * Cassette: Mounted tape is now persisted along with other mounted images.
+   * Cassette: %%-age position is now shown on HUD.
+   * Cassette: Improved FSK decoder.
+   * Cassette: Added analysis tool to compare raw signal against FSK and turbo decoder outputs.
+   * Cassette: Added option to export decoded tape back out as audio.
+   * Debugger: History pane now has a more powerful loop detector that can handle larger loops and call/loop nesting.
+   * Debugger: History pane can now label each instruction with tape position.
+   * Debugger: .tapedata command now accepts position by sample (-s).
+   * Debugger: Added bsc command to change condition on a breakpoint.
+   * Debugger: Undocumented store and read/modify/write instructions are now shown with write symbols rather than read symbols.
+   * Debugger: Extended .pia command output.
+   * Debugger: .basic_dumpline now supports reading program text from extended memory.
+   * Debugger: ~ (target info) command displays coprocessor types and speeds.
+   * Debugger: Added support for per-instruction breakpoints.
+   * Debugger: u (unassemble) command now has switches to track 65C816 M/X/E state.
+   * Debugger: Memory access breakpoints are now supported in banks $01-FF.
+   * Debugger: added bta (set tracepoint on memory access) command.
+   * Debugger: db/dw/dsb/dsw/dsd expression operators now accept 24-bit addresses.
+   * Debugger: Symbols can now be present above bank 0.
+   * Devices: Added browser device (B:).
+   * Devices: Added feature to IDEPlus 2.0 to guard against NVRAM corruption on reset during clock reads.
+   * Devices: Added XEL-CF adapter emulation.
+   * Devices: Added Rapidus Accelerator emulation.
+   * Devices: An automatic reboot is now requested before adding or removing devices that practically require one.
+   * Disk: ATX images are now saved with a unique creator code.
+   * Disk: Added support for ATX images with MFM tracks.
+   * PCLink: Added option to use creation timestamps passed in commands.
+   * SCSI: Fast/slow block storage speed is now implemented on SCSI buses.
+   * UI: Added support for per-monitor V2 DPI awareness in Windows 10 Creator's Update.
+   * VBXE: Added option to emulate FX1.24 or FX1.26 behavior.
+   * VBXE: Overlay collision detection is now implemented.
+   * VBXE: Improved blitter timing precision to sub-scanline.
+
+   [bugs fixed]
+   * AltirraOS: Fixed polarity of CKEY flag.
+   * ATBasic: Added compatibility workaround for programs that use locations 183 and 184 to read the current DATA line.
+   * Cartridge: Fixed error when loading untagged cartridge from drag-and-drop stream source.
+   * Cheats: Fixed sorting issues in active list.
+   * CPU: Fixed 65C816 being reverted to emulation mode when changing CPU speed dynamically.
+   * CPU: Interrupts in 65C816 emulation mode now force K=0.
+   * CPU: Fix incorrect extra cycle for opcode $04 (NOP zp).
+   * Debugger: Disassembly window now scrolls properly above bank 0.
+   * Debugger: Improved breakpoint and stepping behavior with coprocessors.
+   * Debugger: Fixed incorrect execution history timings for Percom disk drives.
+   * Debugger: Fixed crash when toggling breakpoints through UI on top of hidden break/tracepoints from loaded symbols.
+   * Debugger: Fixed crash with certain command alias patterns using wildcards.
+   * Devices: Fixed IDEPlus 2.0 to have internal SDX at higher priority than external cart.
+   * Devices: Fixed MIDI SysEx message parsing issues with MidiMate emulation.
+   * Disk: Tightened validation when mounting MyDOS filesystems.
+   * Disk: Fixed crash when expanding archives in filesystems with empty directories.
+   * Display: Improved display recovery when secondary monitors are turned on or off.
+   * Display: Added workaround for breaking change in Windows 10 build 1709 that caused D3D9 exclusive fullscreen mode to not render.
+   * Display: Fixed some reporting and stability issues in custom D3D9 shader effect system.
+   * IDE: Serial number field in identify command data is now padded with spaces.
+   * PCLink: Directory search operations now return creation time instead of last write time.
+   * POKEY: Serial output data is now truncated when the output clock is stopped.
+   * POKEY: Fixed keys not being immediately recognized in raw mode when exiting init mode.
+   * UI: Fixed /type not working on cold boot.
+   * UI: Fix garbage when pasting text copied from WordPad.
+   * VBXE: Attribute map is now constrained to 43 cells rather than a lower limit of 8 pixels horizontally.
+   * VBXE: Added emulation of color 0 bug in GR.11 in FX1.24 core.
+   * VBXE: Blit pattern width field is now 6 bits instead of 7.
+   * VBXE: Overlay priority is reset to $FF at top of XDL.
+
+Version 2.90: [July 15, 2017]
    [changes]
    * Display: Direct3D 9 bicubic filtered display support has been removed for pixel shader 1.x video cards.
    * Display: Default color presets have been updated.

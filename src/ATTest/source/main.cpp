@@ -49,7 +49,7 @@ void help() {
 	wprintf(L"\tAll\n");
 }
 
-int wmain(int argc, wchar_t **argv) {
+int VDCDECL wmain(int argc, wchar_t **argv) {
 	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_CHECK_ALWAYS_DF | _CRTDBG_LEAK_CHECK_DF);
 
 	wprintf(L"Altirra test harness utility for " BUILD L"\n");

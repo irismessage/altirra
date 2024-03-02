@@ -118,8 +118,6 @@ void ATIDEEmulator::OpenImage(IATBlockDevice *dev) {
 	mpDisk = dev;
 	dev->AddRef();
 
-	mPath.clear();
-
 	mbWriteEnabled = !mpDisk->IsReadOnly();
 	mSectorCount = mpDisk->GetSectorCount();
 
@@ -183,13 +181,7 @@ void ATIDEEmulator::CloseImage() {
 
 	ResetCHSTranslation();
 
-	mPath.clear();
-
 	ColdReset();
-}
-
-const wchar_t *ATIDEEmulator::GetImagePath() const {
-	return mPath.c_str();
 }
 
 void ATIDEEmulator::ColdReset() {
@@ -200,7 +192,6 @@ void ATIDEEmulator::ColdReset() {
 
 void ATIDEEmulator::DumpStatus() const {
 	ATConsoleWrite("IDE status:\n");
-	ATConsolePrintf("Path:            %ls\n", mPath.c_str());
 	ATConsolePrintf("Raw size:        %u sectors (%.1f MB)\n", mSectorCount, (float)mSectorCount / 2048.0f);
 
 	if (mpDisk) {
@@ -862,11 +853,11 @@ void ATIDEEmulator::UpdateStatus() {
 						// words 7-9: vendor unique (ATA-1), retired (ATA-4)
 
 						// words 10-19: serial number
-						char buf[40+1];
-						sprintf(buf, "%010u", (unsigned)VDHashString32I(mPath.c_str()));
+						char buf[40+1] = {};
+						sprintf(buf, "%010u", mpDisk ? mpDisk->GetSerialNumber() : 0);
 
-						for(int i=0; i<10; ++i)
-							dst[10*2 + (i ^ 1)] = (uint8)buf[i];
+						for(int i=0; i<20; ++i)
+							dst[10*2 + (i ^ 1)] = buf[i] ? (uint8)buf[i] : 0x20;
 
 						// word 20: buffer type (ATA-1), retired (ATA-4)
 						dst[20*2+1] = 0x00;

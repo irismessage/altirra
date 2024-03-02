@@ -21,16 +21,7 @@
 #include "mmu.h"
 #include "pbi.h"
 
-ATCPUHookManager::ATCPUHookManager()
-	: mpCPU(NULL)
-	, mpMMU(NULL)
-	, mpPBI(NULL)
-	, mbOSHooksEnabled(false)
-	, mpFreeList(nullptr)
-	, mpInitChain(nullptr)
-	, mpInitFreeList(nullptr)
-{
-	std::fill(mpHashTable, mpHashTable + 256, (HashNode *)NULL);
+ATCPUHookManager::ATCPUHookManager() {
 }
 
 ATCPUHookManager::~ATCPUHookManager() {
@@ -107,6 +98,62 @@ uint8 ATCPUHookManager::OnHookHit(uint16 pc) const {
 	return 0;
 }
 
+void ATCPUHookManager::CallResetHooks() {
+	for(ResetNode *node = mpResetChain; node; ) {
+		ResetNode *next = node->mpNext;
+
+		node->mpHookFn();
+
+		node = next;
+	}
+}
+
+ATCPUHookResetNode *ATCPUHookManager::AddResetHook(ATCPUHookResetFn fn) {
+	if (!mpInitFreeList) {
+		ResetNode *node = mAllocator.Allocate<ResetNode>();
+
+		node->mpNext = NULL;
+		node->mpHookFn = nullptr;
+		mpResetFreeList = node;
+	}
+
+	ResetNode *node = mpResetFreeList;
+	mpResetFreeList = node->mpNext;
+	VDASSERT(!node->mpHookFn);
+
+	node->mpNext = mpResetChain;
+	mpResetChain = node;
+
+	node->mpHookFn = std::move(fn);
+
+	return node;
+}
+
+void ATCPUHookManager::RemoveResetHook(ATCPUHookResetNode *hook) {
+	if (!hook)
+		return;
+
+	ResetNode **prev = &mpResetChain;
+	ResetNode *node = *prev;
+
+	while(node) {
+		if (node == hook) {
+			*prev = node->mpNext;
+
+			node->mpNext = mpResetFreeList;
+			mpResetFreeList = node;
+
+			node->mpHookFn = nullptr;
+			return;
+		}
+
+		prev = &node->mpNext;
+		node = *prev;
+	}
+
+	VDFAIL("Attempt to remove invalid reset hook!");
+}
+
 void ATCPUHookManager::CallInitHooks(const uint8 *lowerKernelROM, const uint8 *upperKernelROM) {
 	InitNode *node = mpInitChain;
 
@@ -162,7 +209,7 @@ void ATCPUHookManager::RemoveInitHook(ATCPUHookInitNode *hook) {
 		node = *prev;
 	}
 
-	VDASSERT(!"Attempt to remove invalid init hook!");
+	VDFAIL("Attempt to remove invalid init hook!");
 }
 
 ATCPUHookNode *ATCPUHookManager::AddHook(ATCPUHookMode mode, uint16 pc, sint8 priority, const ATCPUHookFn& fn) {

@@ -19,7 +19,7 @@
 #include <stdafx.h>
 #include "uberblit_ycbcr_x86.h"
 
-extern "C" void vdasm_pixblt_XRGB8888_to_YUV444Planar_scan_SSE2(void *dstY, void *dstCb, void *dstCr, const void *srcRGB, uint32 count, const void *coeffs);
+extern "C" void VDCDECL vdasm_pixblt_XRGB8888_to_YUV444Planar_scan_SSE2(void *dstY, void *dstCb, void *dstCr, const void *srcRGB, uint32 count, const void *coeffs);
 
 void VDPixmapGenRGB32ToYCbCr601_SSE2::Compute(void *dst0, sint32 y) {
 	uint8 *dstCb = (uint8 *)dst0;

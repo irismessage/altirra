@@ -58,17 +58,26 @@ void OnCommandCartToggleSwitch();
 void OnCommandSaveFirmwareIDEMain();
 void OnCommandSaveFirmwareIDESDX();
 void OnCommandSaveFirmwareU1MB();
+void OnCommandSaveFirmwareRapidusFlash();
 void OnCommandExit();
 void OnCommandCassetteLoadNew();
 void OnCommandCassetteLoad();
 void OnCommandCassetteUnload();
 void OnCommandCassetteSave();
+void OnCommandCassetteExportAudioTape();
 void OnCommandCassetteTapeControlDialog();
 void OnCommandCassetteToggleSIOPatch();
 void OnCommandCassetteToggleAutoBoot();
 void OnCommandCassetteToggleAutoRewind();
 void OnCommandCassetteToggleLoadDataAsAudio();
 void OnCommandCassetteToggleRandomizeStartPosition();
+void OnCommandCassetteTurboModeNone();
+void OnCommandCassetteTurboModeCommandControl();
+void OnCommandCassetteTurboModeProceedSense();
+void OnCommandCassetteTurboModeInterruptSense();
+void OnCommandCassetteTurboModeAlways();
+void OnCommandCassettePolarityModeNormal();
+void OnCommandCassettePolarityModeInverted();
 void OnCommandDebuggerOpenSourceFile();
 void OnCommandDebuggerToggleBreakAtExeRun();
 void OnCommandDebugToggleAutoReloadRoms();
@@ -83,6 +92,7 @@ void OnCommandDebugStepOut();
 void OnCommandDebugStepOver();
 void OnCommandDebugToggleBreakpoint();
 void OnCommandDebugVerifierDialog();
+void OnCommandDebugShowTraceViewer();
 void OnCommandViewNextFilterMode();
 void OnCommandViewFilterModePoint();
 void OnCommandViewFilterModeBilinear();
@@ -183,9 +193,6 @@ void OnCommandVideoToggleFrameBlending();
 void OnCommandVideoToggleInterlace();
 void OnCommandVideoToggleScanlines();
 void OnCommandVideoToggleXEP80();
-void OnCommandVideoToggleVBXE();
-void OnCommandVideoToggleVBXESharedMemory();
-void OnCommandVideoToggleVBXEAltPage();
 void OnCommandVideoAdjustColorsDialog();
 void OnCommandVideoArtifacting(ATGTIAEmulator::ArtifactMode mode);
 void OnCommandVideoEnhancedModeNone();
@@ -223,6 +230,7 @@ void OnCommandToolsKeyboardShortcutsDialog();
 void OnCommandToolsCompatDBDialog();
 void OnCommandToolsSetupWizard();
 void OnCommandToolsExportROMSet();
+void OnCommandToolsAnalyzeTapeDecoding();
 void OnCommandWindowClose();
 void OnCommandWindowUndock();
 void OnCommandHelpContents();
@@ -245,6 +253,16 @@ namespace ATCommands {
 
 	bool IsCassetteRandomizeStartPositionEnabled() {
 		return g_sim.IsCassetteRandomizedStartEnabled();
+	}
+
+	template<ATCassetteTurboMode T_TurboMode>
+	bool IsCassetteTurboMode() {
+		return g_sim.GetCassette().GetTurboMode() == T_TurboMode;
+	}
+
+	template<ATCassettePolarityMode T_PolarityMode>
+	bool IsCassettePolarityMode() {
+		return g_sim.GetCassette().GetPolarityMode() == T_PolarityMode;
 	}
 
 	bool IsSlightSidEnabled() {
@@ -572,18 +590,27 @@ namespace ATCommands {
 		{ "System.SaveFirmwareIDEMain", OnCommandSaveFirmwareIDEMain, IsStoragePresent<kATStorageId_Firmware> },
 		{ "System.SaveFirmwareIDESDX", OnCommandSaveFirmwareIDESDX, IsStoragePresent<(ATStorageId)(kATStorageId_Firmware + 1)> },
 		{ "System.SaveFirmwareU1MB", OnCommandSaveFirmwareU1MB, IsStoragePresent<(ATStorageId)(kATStorageId_Firmware + 2)> },
+		{ "System.SaveFirmwareRapidusFlash", OnCommandSaveFirmwareRapidusFlash, IsStoragePresent<(ATStorageId)(kATStorageId_Firmware + 3)> },
 		{ "File.Exit", OnCommandExit, NULL },
 
 		{ "Cassette.LoadNew", OnCommandCassetteLoadNew, NULL },
 		{ "Cassette.Load", OnCommandCassetteLoad, NULL },
 		{ "Cassette.Unload", OnCommandCassetteUnload, IsCassetteLoaded },
 		{ "Cassette.Save", OnCommandCassetteSave, IsCassetteLoaded },
+		{ "Cassette.ExportAudioTape", OnCommandCassetteExportAudioTape, IsCassetteLoaded },
 		{ "Cassette.TapeControlDialog", OnCommandCassetteTapeControlDialog, NULL },
 		{ "Cassette.ToggleSIOPatch", OnCommandCassetteToggleSIOPatch, NULL, CheckedIf<SimTest<&ATSimulator::IsCassetteSIOPatchEnabled> > },
 		{ "Cassette.ToggleAutoBoot", OnCommandCassetteToggleAutoBoot, NULL, CheckedIf<SimTest<&ATSimulator::IsCassetteAutoBootEnabled> > },
 		{ "Cassette.ToggleAutoRewind", OnCommandCassetteToggleAutoRewind, NULL, CheckedIf<SimTest<&ATSimulator::IsCassetteAutoRewindEnabled> > },
 		{ "Cassette.ToggleLoadDataAsAudio", OnCommandCassetteToggleLoadDataAsAudio, NULL, CheckedIf<IsCassetteLoadDataAsAudioEnabled> },
 		{ "Cassette.ToggleRandomizeStartPosition", OnCommandCassetteToggleRandomizeStartPosition, NULL, CheckedIf<IsCassetteRandomizeStartPositionEnabled> },
+		{ "Cassette.TurboModeNone", OnCommandCassetteTurboModeNone, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_None>> },
+		{ "Cassette.TurboModeAlways", OnCommandCassetteTurboModeAlways, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_Always>> },
+		{ "Cassette.TurboModeCommandControl", OnCommandCassetteTurboModeCommandControl, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_CommandControl>> },
+		{ "Cassette.TurboModeProceedSense", OnCommandCassetteTurboModeProceedSense, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_ProceedSense>> },
+		{ "Cassette.TurboModeInterruptSense", OnCommandCassetteTurboModeInterruptSense, NULL, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_InterruptSense>> },
+		{ "Cassette.PolarityNormal", OnCommandCassettePolarityModeNormal, NULL, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Normal>> },
+		{ "Cassette.PolarityInverted", OnCommandCassettePolarityModeInverted, NULL, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Inverted>> },
 
 		{ "Debug.OpenSourceFile", OnCommandDebuggerOpenSourceFile, NULL },
 		{ "Debug.ToggleBreakAtExeRun", OnCommandDebuggerToggleBreakAtExeRun, NULL, CheckedIf<IsBreakAtExeRunAddrEnabled> },
@@ -600,6 +627,7 @@ namespace ATCommands {
 		{ "Debug.StepOver", OnCommandDebugStepOver, IsNotRunning },
 		{ "Debug.ToggleBreakpoint", OnCommandDebugToggleBreakpoint, IsDebuggerEnabled },
 		{ "Debug.VerifierDialog", OnCommandDebugVerifierDialog, NULL, CheckedIf<SimTest<&ATSimulator::IsVerifierEnabled> > },
+		{ "Debug.ShowTraceViewer", OnCommandDebugShowTraceViewer },
 
 		{ "View.NextFilterMode", OnCommandViewNextFilterMode, NULL },
 		{ "View.FilterModePoint", OnCommandViewFilterModePoint, NULL, RadioCheckedIf<VideoFilterModeIs<kATDisplayFilterMode_Point> > },
@@ -801,6 +829,7 @@ namespace ATCommands {
 		{ "System.HighMemory192K",		[]() { OnCommandSystemHighMemBanks(3); }, Is65C816, RadioCheckedIf<HighMemBanksIs<3> > },
 		{ "System.HighMemory960K",		[]() { OnCommandSystemHighMemBanks(15); }, Is65C816, RadioCheckedIf<HighMemBanksIs<15> > },
 		{ "System.HighMemory4032K",		[]() { OnCommandSystemHighMemBanks(63); }, Is65C816, RadioCheckedIf<HighMemBanksIs<63> > },
+		{ "System.HighMemory16320K",	[]() { OnCommandSystemHighMemBanks(255); }, Is65C816, RadioCheckedIf<HighMemBanksIs<255> > },
 
 		{ "System.ToggleMapRAM", OnCommandSystemToggleMapRAM, NULL, CheckedIf<SimTest<&ATSimulator::IsMapRAMEnabled> > },
 		{ "System.ToggleUltimate1MB", OnCommandSystemToggleUltimate1MB, NULL, CheckedIf<SimTest<&ATSimulator::IsUltimate1MBEnabled> > },
@@ -941,9 +970,6 @@ namespace ATCommands {
 		{ "Video.ToggleInterlace", OnCommandVideoToggleInterlace, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsInterlaceEnabled> > },
 		{ "Video.ToggleScanlines", OnCommandVideoToggleScanlines, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::AreScanlinesEnabled> > },
 		{ "Video.ToggleXEP80", OnCommandVideoToggleXEP80, NULL, CheckedIf<IsXEP80Enabled> },
-		{ "Video.ToggleVBXE", OnCommandVideoToggleVBXE, NULL, CheckedIf<IsVBXEEnabled> },
-		{ "Video.ToggleVBXESharedMemory", OnCommandVideoToggleVBXESharedMemory, IsVBXEEnabled, CheckedIf<SimTest<&ATSimulator::IsVBXESharedMemoryEnabled> > },
-		{ "Video.ToggleVBXEAltPage", OnCommandVideoToggleVBXEAltPage, And<IsVBXEEnabled, Not<SimTest<&ATSimulator::IsUltimate1MBEnabled> > >, CheckedIf<SimTest<&ATSimulator::IsVBXEAltPageEnabled> > },
 		{ "Video.AdjustColorsDialog", OnCommandVideoAdjustColorsDialog },
 
 		{ "Video.ArtifactingNone",		[]() { OnCommandVideoArtifacting(ATGTIAEmulator::kArtifactNone); }, NULL, RadioCheckedIf<VideoArtifactingModeIs<ATGTIAEmulator::kArtifactNone> > },
@@ -996,6 +1022,7 @@ namespace ATCommands {
 		{ "Tools.CompatDBDialog", OnCommandToolsCompatDBDialog },
 		{ "Tools.SetupWizard", OnCommandToolsSetupWizard },
 		{ "Tools.ExportROMSet", OnCommandToolsExportROMSet },
+		{ "Tools.AnalyzeTapeDecoding", OnCommandToolsAnalyzeTapeDecoding },
 
 		{ "Window.Close", OnCommandWindowClose, ATUICanManipulateWindows },
 		{ "Window.Undock", OnCommandWindowUndock, ATUICanManipulateWindows },

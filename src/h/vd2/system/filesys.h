@@ -187,6 +187,7 @@ VDStringW VDFileResolvePath(const wchar_t *basePath, const wchar_t *pathToResolv
 sint64 VDGetDiskFreeSpace(const wchar_t *path);
 void VDCreateDirectory(const wchar_t *path);
 void VDRemoveDirectory(const wchar_t *path);
+void VDSetDirectoryCreationTime(const wchar_t *path, const VDDate& date);
 
 bool VDRemoveFile(const wchar_t *path);
 void VDRemoveFileEx(const wchar_t *path);		// throws exception on failure
@@ -231,8 +232,8 @@ void VDFileSetAttributes(const wchar_t *path, uint32 attrsToChange, uint32 newAt
 /////////////////////////////////////////////////////////////////////////////
 
 class VDDirectoryIterator {
-	VDDirectoryIterator(const VDDirectoryIterator&);
-	VDDirectoryIterator& operator=(VDDirectoryIterator&);
+	VDDirectoryIterator(const VDDirectoryIterator&) = delete;
+	VDDirectoryIterator& operator=(VDDirectoryIterator&) = delete;
 public:
 	VDDirectoryIterator(const wchar_t *path);
 	~VDDirectoryIterator();
@@ -258,6 +259,10 @@ public:
 		return mFileSize;
 	}
 
+	VDDate GetCreationDate() const {
+		return mCreationDate;
+	}
+
 	VDDate GetLastWriteDate() const {
 		return mLastWriteDate;
 	}
@@ -278,6 +283,7 @@ protected:
 	bool		mbDirectory;
 	uint32		mAttributes;
 
+	VDDate		mCreationDate;
 	VDDate		mLastWriteDate;
 };
 

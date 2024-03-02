@@ -21,13 +21,13 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/refcount.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/deviceparentimpl.h>
 #include <at/atcore/devicesio.h>
 
 class IATBlockDevice;
 class IATDeviceSIOManager;
 
 class ATSDriveEmulator final : public ATDevice
-	, public IATDeviceParent
 	, public IATDeviceIndicators
 	, public IATDeviceSIO
 {
@@ -44,12 +44,6 @@ public:
 	virtual void Shutdown() override;
 	virtual void WarmReset() override;
 	virtual void ColdReset() override;
-
-public:
-	virtual const char *GetSupportedType(uint32 index) override;
-	virtual void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
-	virtual void AddChildDevice(IATDevice *dev) override;
-	virtual void RemoveChildDevice(IATDevice *dev) override;
 
 public:
 	virtual void InitIndicators(IATDeviceIndicatorManager *r) override;
@@ -73,6 +67,8 @@ protected:
 	uint8 mHighSpeedIndex;
 	bool mbHighSpeedEnabled;
 	bool mbHighSpeedPhase;
+
+	ATDeviceParentSingleChild mDeviceParent;
 
 	uint8 mSectorBuffer[512];
 };

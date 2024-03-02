@@ -27,6 +27,7 @@
 #include "uirender.h"
 #include "hleutils.h"
 #include "cassette.h"
+#include "trace.h"
 #include <at/atcore/sioutils.h>
 
 ATDebuggerLogChannel g_ATLCHookSIOReqs(false, false, "HOOKSIOREQS", "OS SIO hook requests");
@@ -188,6 +189,23 @@ void ATSIOManager::UninitHooks() {
 		ATCPUHookManager& hookmgr = *mpCPU->GetHookManager();
 
 		hookmgr.UnsetHook(mpSIOVHook);
+	}
+}
+
+void ATSIOManager::SetTraceContext(ATTraceContext *context) {
+	mpTraceContext = context;
+
+	if (context) {
+		ATTraceCollection *coll = context->mpCollection;
+		ATTraceGroup *group = coll->AddGroup(L"SIO Bus");
+		const double invCycleRate = mpScheduler->GetRate().AsInverseDouble();
+
+		mpTraceChannelBusSend = group->AddFormattedChannel(context->mBaseTime, invCycleRate, L"Send");
+		mpTraceChannelBusReceive = group->AddFormattedChannel(context->mBaseTime, invCycleRate, L"Receive");
+		mTraceCommandStartTime = mpScheduler->GetTick64();
+	} else {
+		mpTraceChannelBusSend = nullptr;
+		mpTraceChannelBusReceive = nullptr;
 	}
 }
 
@@ -392,8 +410,22 @@ handled:
 void ATSIOManager::PokeyAttachDevice(ATPokeyEmulator *pokey) {
 }
 
-bool ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) {
+bool ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uint64 startTime, bool framingError) {
+	if (mpTraceContext) {
+		const uint64 t = mpScheduler->GetTick64();
+
+		mpTraceChannelBusSend->TruncateLastEvent(startTime);
+		mpTraceChannelBusSend->AddTickEvent(startTime, t,
+			[ch = (uint8)c](VDStringW& s) {
+				s.sprintf(L"%02X", ch);
+			},
+			kATTraceColor_IO_Write
+		);
+	}
+
 	if (mTransferIndex < mTransferEnd && !mbTransferSend) {
+		// We place the byte into the buffer even if a framing error occurs because
+		// typically drives do not check the start bit (810, 1050, XF551, Indus GT).
 		mTransferBuffer[mTransferIndex++] = c;
 
 		if (mbCommandState)
@@ -847,6 +879,8 @@ void ATSIOManager::RemoveRawDevice(IATDeviceRawSIO *dev) {
 
 void ATSIOManager::SendRawByte(uint8 byte, uint32 cyclesPerBit, bool synchronous, bool forceFramingError, bool simulateInput) {
 	mpPokey->ReceiveSIOByte(byte, cyclesPerBit, simulateInput, false, synchronous, forceFramingError);
+
+	TraceReceive(byte, cyclesPerBit);
 }
 
 void ATSIOManager::SetRawInput(bool input) {
@@ -968,6 +1002,7 @@ void ATSIOManager::OnScheduledEvent(uint32 id) {
 				uint8 c = mTransferBuffer[mTransferIndex++];
 
 				mpPokey->ReceiveSIOByte(c, mTransferCyclesPerBit, true, mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled, false, false);
+				TraceReceive(c, mTransferCyclesPerBit);
 
 				mpScheduler->SetEvent(mTransferCyclesPerByte + mTransferBurstOffset, this, kEventId_Send, mpTransferEvent);
 				mTransferBurstOffset = 0;
@@ -1210,5 +1245,15 @@ void ATSIOManager::OnMotorStateChanged(bool asserted) {
 			if (rawdev)
 				rawdev->OnMotorStateChanged(mbMotorState);
 		}
+	}
+}
+
+void ATSIOManager::TraceReceive(uint8 c, uint32 cyclesPerBit) {
+	if (mpTraceContext) {
+		const uint64 t = mpScheduler->GetTick64();
+		mpTraceChannelBusReceive->AddTickEvent(t, t + cyclesPerBit * 10,
+			[c](VDStringW& s) { s.sprintf(L"%02X", c); },
+			kATTraceColor_IO_Read
+		);
 	}
 }

@@ -442,8 +442,10 @@ uint32 ATDiskImageVirtualFolderSDFS::GetPhysicalSectorCount() const {
 
 void ATDiskImageVirtualFolderSDFS::GetPhysicalSectorInfo(uint32 index, ATDiskPhysicalSectorInfo& info) const {
 	info.mOffset = 0;
+	info.mDiskOffset = -1;
 	info.mSize = 128;
 	info.mbDirty = false;
+	info.mbMFM = false;
 	info.mRotPos = (float)kTrackInterleave18[index % 18] / 18.0f;
 	info.mFDCStatus = 0xFF;
 	info.mWeakDataOffset = -1;

@@ -71,6 +71,7 @@
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <CallingConvention />
     </ClCompile>
     <Link>
       <AdditionalDependencies>
@@ -90,6 +91,7 @@
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <CallingConvention />
     </ClCompile>
     <Link>
       <AdditionalDependencies>

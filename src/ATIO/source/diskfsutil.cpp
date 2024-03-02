@@ -37,20 +37,23 @@ uint32 ATDiskRecursivelyExpandARCs(IATDiskFS& fs, uintptr parentKey, int nesting
 	{
 		ATDiskFSEntryInfo info;
 		uintptr searchKey = fs.FindFirst(parentKey, info);
-		try {
-			do {
-				size_t len = info.mFileName.size();
 
-				if (info.mbIsDirectory)
-					dirKeys.push_back(info.mKey);
-				else if (len > 4 && !vdstricmp(info.mFileName.c_str() + len - 4, ".arc")) {
-					arcEnts.push_back(info);
-				}
-			} while(fs.FindNext(searchKey, info));
-			fs.FindEnd(searchKey);
-		} catch(...) {
-			fs.FindEnd(searchKey);
-			throw;
+		if (searchKey) {
+			try {
+				do {
+					size_t len = info.mFileName.size();
+
+					if (info.mbIsDirectory)
+						dirKeys.push_back(info.mKey);
+					else if (len > 4 && !vdstricmp(info.mFileName.c_str() + len - 4, ".arc")) {
+						arcEnts.push_back(info);
+					}
+				} while(fs.FindNext(searchKey, info));
+				fs.FindEnd(searchKey);
+			} catch(...) {
+				fs.FindEnd(searchKey);
+				throw;
+			}
 		}
 	}
 

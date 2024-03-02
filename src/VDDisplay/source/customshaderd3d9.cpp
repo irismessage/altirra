@@ -351,7 +351,7 @@ void VDDisplayCustomShaderD3D9::Init(const char *shaderPath8, const VDDisplayCus
 				// nope... try original
 				fxPath = VDMakePath(VDStringSpanW(basePath), shaderPath);
 				if (!VDDoesPathExist(fxPath.c_str()))
-					throw MyError("Pass %u %s shader: cannot find '%s' or a precompiled/HLSL specific version", pass + 1, shaderType, shaderPath.c_str());
+					throw MyError("Pass %u %s shader: cannot find '%ls' or a precompiled/HLSL specific version", pass + 1, shaderType, shaderPath.c_str());
 			}
 
 			if (!hmod) {
@@ -1048,8 +1048,8 @@ bool VDDisplayCustomShaderD3D9::ProcessShader(const uint32 *shader, uint32 shade
 						unsigned index;
 						char dummy;
 
-						if (1 != sscanf(VDStringA(name.subspan(5)).c_str(), "%u_texture%c", &index, &dummy) || index == 0 || mPassIndex < 2 || index > mPassIndex - 2)
-							throw MyError("Invalid sampler reference from pass %u to %s", mPassIndex, param.GetName());
+						if (1 != sscanf(VDStringA(name.subspan(5)).c_str(), "%u_texture%c", &index, &dummy) || index == 0 || mPassIndex < 1 || index > mPassIndex - 1)
+							throw MyError("Invalid sampler reference from pass %u to %s", mPassIndex + 1, param.GetName());
 
 						mTextureBindings.push_back({ param.GetRegisterIndex(), (TexRef)(kTexRef_PassInput + index)});
 					} else if (name == "$PREV_texture") {
@@ -1059,7 +1059,7 @@ bool VDDisplayCustomShaderD3D9::ProcessShader(const uint32 *shader, uint32 shade
 						char dummy;
 
 						if (1 != sscanf(VDStringA(name.subspan(5)).c_str(), "%u_texture%c", &index, &dummy) || index == 0 || index > 6)
-							throw MyError("Invalid sampler reference from pass %u to %s", mPassIndex, param.GetName());
+							throw MyError("Invalid sampler reference from pass %u to %s", mPassIndex + 1, param.GetName());
 
 						mTextureBindings.push_back({ param.GetRegisterIndex(), (TexRef)(kTexRef_PrevInput + index)});
 					} else {
@@ -1143,18 +1143,18 @@ bool VDDisplayCustomShaderD3D9::ProcessShader(const uint32 *shader, uint32 shade
 				if (name.size() > 5) {
 					char dummy;
 					if (1 != sscanf(VDStringA(name.subspan(5)).c_str(), "%u%c", &prevIndex, &dummy) || prevIndex < 1 || prevIndex > 6)
-						throw MyError("Invalid reference from pass %u to parameter '%s'", mPassIndex, VDStringA(name).c_str());
+						throw MyError("Invalid reference from pass %u to parameter '%s'", mPassIndex + 1, VDStringA(name).c_str());
 				}
 
 				vbinding.mVarIndex = -((sint32)prevIndex + 1);
 
 				if (maxPrevFrames <= prevIndex)
-					maxPrevFrames = prevIndex;
+					maxPrevFrames = prevIndex+1;
 			} else {
 				unsigned passRefIndex;
 				char dummy;
 				if (1 != sscanf(VDStringA(name.subspan(5)).c_str(), "%u%c", &passRefIndex, &dummy) || passRefIndex == 0 || mPassIndex < 2 || passRefIndex > mPassIndex - 2)
-					throw MyError("Invalid reference from pass %u to parameter '%s'", mPassIndex, VDStringA(name).c_str());
+					throw MyError("Invalid reference from pass %u to parameter '%s'", mPassIndex + 1, VDStringA(name).c_str());
 
 				vbinding.mVarIndex = passRefIndex;
 			}
@@ -1445,7 +1445,7 @@ const VDDisplayCustomShaderPassInfo *VDDisplayCustomShaderPipelineD3D9::GetPassT
 
 	for(uint32 i=0; i<n - 1; ++i) {
 		auto& info = mPassInfos[i];
-		const auto& texInfo = mInputTexSpecs[i + 1];
+		const auto& texInfo = i + 1 >= mInputTexSpecs.size() ? mInputTexSpecs.back() : mInputTexSpecs[i + 1];
 
 		info.mOutputWidth = texInfo.mImageWidth;
 		info.mOutputHeight = texInfo.mImageHeight;

@@ -604,6 +604,20 @@ void VDRemoveDirectory(const wchar_t *path) {
 		throw MyWin32Error("Cannot remove directory: %%s", GetLastError());
 }
 
+void VDSetDirectoryCreationTime(const wchar_t *path, const VDDate& date) {
+	HANDLE h = CreateFileW(path, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+
+	if (h != INVALID_HANDLE_VALUE) {
+		FILETIME ft;
+		ft.dwLowDateTime = (DWORD)date.mTicks;
+		ft.dwHighDateTime = (DWORD)(date.mTicks >> 32);
+
+		SetFileTime(h, &ft, nullptr, nullptr);
+
+		CloseHandle(h);
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 bool VDRemoveFile(const wchar_t *path) {
@@ -998,7 +1012,6 @@ bool VDDirectoryIterator::Next() {
 		return false;
 
 	union {
-		WIN32_FIND_DATAA a;
 		WIN32_FIND_DATAW w;
 	} wfd;
 
@@ -1017,6 +1030,7 @@ bool VDDirectoryIterator::Next() {
 	mFilename = wfd.w.cFileName;
 	mFileSize = wfd.w.nFileSizeLow + ((sint64)wfd.w.nFileSizeHigh << 32);
 	mLastWriteDate.mTicks = wfd.w.ftLastWriteTime.dwLowDateTime + ((uint64)wfd.w.ftLastWriteTime.dwHighDateTime << 32);
+	mCreationDate.mTicks = wfd.w.ftCreationTime.dwLowDateTime + ((uint64)wfd.w.ftCreationTime.dwHighDateTime << 32);
 
 	attribs = wfd.w.dwFileAttributes;
 

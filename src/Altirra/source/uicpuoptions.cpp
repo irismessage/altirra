@@ -31,6 +31,7 @@ public:
 
 protected:
 	bool OnOK() override;
+	bool OnLoaded() override;
 	void OnDataExchange(bool write) override;
 
 	typedef std::pair<ATCPUMode, uint32> CPUConfig;
@@ -44,15 +45,35 @@ ATUICPUOptionsDialog::ATUICPUOptionsDialog()
 }
 
 bool ATUICPUOptionsDialog::OnOK() {
-	ATCPUEmulator& cpuem = g_sim.GetCPU();
-	
-	if (cpuem.GetCPUMode() != GetCPUConfig().first) {
+	if (!g_sim.IsCPUModeOverridden() && g_sim.GetCPUMode() != GetCPUConfig().first) {
 		if (!ATUIConfirmDiscardMemory((VDGUIHandle)GetControl(IDOK), L"Changing CPU type"))
 			return true;
 	}
 
 	return VDDialogFrameW32::OnOK();
 }
+
+bool ATUICPUOptionsDialog::OnLoaded() {
+	if (g_sim.IsCPUModeOverridden()) {
+		static constexpr uint32 kControlIDs[] = {
+			IDC_CPUMODEL_6502C,
+			IDC_CPUMODEL_65C02,
+			IDC_CPUMODEL_65C816_21MHZ,
+			IDC_CPUMODEL_65C816_17MHZ,
+			IDC_CPUMODEL_65C816_14MHZ,
+			IDC_CPUMODEL_65C816_10MHZ,
+			IDC_CPUMODEL_65C816_7MHZ,
+			IDC_CPUMODEL_65C816_3MHZ,
+			IDC_CPUMODEL_65C816,
+		};
+
+		for(uint32 id : kControlIDs)
+			EnableControl(id, false);
+	}
+
+	return VDDialogFrameW32::OnLoaded();
+}
+
 
 void ATUICPUOptionsDialog::OnDataExchange(bool write) {
 	if (write) {
@@ -64,16 +85,18 @@ void ATUICPUOptionsDialog::OnDataExchange(bool write) {
 		cpuem.SetStopOnBRK(IsButtonChecked(IDC_STOP_ON_BRK));
 		cpuem.SetNMIBlockingEnabled(IsButtonChecked(IDC_ALLOWNMIBLOCKING));
 
-		const auto cpuConfig = GetCPUConfig();
-
 		bool reset = false;
-		bool cpuModeChange = cpuem.GetCPUMode() != cpuConfig.first;
+		if (!g_sim.IsCPUModeOverridden()) {
+			const auto cpuConfig = GetCPUConfig();
 
-		if (cpuModeChange || cpuem.GetSubCycles() != cpuConfig.second) {
-			cpuem.SetCPUMode(cpuConfig.first, cpuConfig.second);
+			bool cpuModeChange = g_sim.GetCPUMode() != cpuConfig.first;
 
-			if (cpuModeChange)
-				reset = true;
+			if (cpuModeChange || g_sim.GetCPUSubCycles() != cpuConfig.second) {
+				g_sim.SetCPUMode(cpuConfig.first, cpuConfig.second);
+
+				if (cpuModeChange)
+					reset = true;
+			}
 		}
 
 		bool shadowROM = IsButtonChecked(IDC_SHADOW_ROM);
@@ -95,7 +118,7 @@ void ATUICPUOptionsDialog::OnDataExchange(bool write) {
 		CheckButton(IDC_SHADOW_ROM, g_sim.GetShadowROMEnabled());
 		CheckButton(IDC_SHADOW_CARTS, g_sim.GetShadowCartridgeEnabled());
 
-		SetCPUConfig({ cpuem.GetCPUMode(), cpuem.GetSubCycles() });
+		SetCPUConfig({ g_sim.GetCPUMode(), g_sim.GetCPUSubCycles() });
 	}
 }
 

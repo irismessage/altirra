@@ -40,80 +40,36 @@
 
 ///////////////////////////////////////////////////////////////////////////
 
-struct vdfalse_type { };
-struct vdtrue_type  { };
-
-struct vdfalse_result { typedef vdfalse_type result; };
-struct vdtrue_result { typedef vdtrue_type result; };
-
-template<class T> void vdmove(T& dst, T& src);
-template<class T> struct vdmove_capable : public vdfalse_result {};
-
-template<class T>
-T *vdmove_forward_impl(T *src1, T *src2, T *dst, vdfalse_type) {
-	T *p = src1;
-	while(p != src2) {
-		*dst = *p;
-		++dst;
-		++p;
-	}
-
-	return dst;
-}
-
-template<class T>
-T *vdmove_backward_impl(T *src1, T *src2, T *dst, vdfalse_type) {
-	T *p = src2;
-	while(p != src1) {
-		--dst;
-		--p;
-		*dst = *p;
-	}
-
-	return dst;
-}
-
-template<class T>
-T *vdmove_forward_impl(T *src1, T *src2, T *dst, vdtrue_type) {
-	T *p = src1;
-	while(p != src2) {
-		vdmove(*dst, *p);
-		++dst;
-		++p;
-	}
-
-	return dst;
-}
-
-template<class T>
-T *vdmove_backward_impl(T *src1, T *src2, T *dst, vdtrue_type) {
-	T *p = src2;
-	while(p != src1) {
-		--dst;
-		--p;
-		vdmove(*dst, *p);
-	}
-
-	return dst;
+template<class T> void vdmove(T& dst, T& src) {
+	dst = std::move(src);
 }
 
 template<class T>
 T *vdmove_forward(T *src1, T *src2, T *dst) {
-	return vdmove_forward_impl(src1, src2, dst, typename vdmove_capable<T>::result());
+	T *p = src1;
+	while(p != src2) {
+		*dst = std::move(*p);
+		++dst;
+		++p;
+	}
+
+	return dst;
 }
 
 template<class T>
 T *vdmove_backward(T *src1, T *src2, T *dst) {
-	return vdmove_backward_impl(src1, src2, dst, typename vdmove_capable<T>::result());
+	T *p = src2;
+	while(p != src1) {
+		--dst;
+		--p;
+		*dst = std::move(*p);
+	}
+
+	return dst;
 }
 
-#define VDMOVE_CAPABLE(type) \
-	template<> struct vdmove_capable<type> : public vdtrue_result {}; \
-	template<> void vdmove<type>(type& dst, type& src)
-
-#define VDMOVE_CAPABLE_INLINE(type) \
-	template<> struct vdmove_capable<type> : public vdtrue_result {}; \
-	template<> inline void vdmove<type>(type& dst, type& src)
+#define VDMOVE_CAPABLE(type)
+#define VDMOVE_CAPABLE_INLINE(type)
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -1364,112 +1320,178 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////////
 
-template<class T>
+template<class T, int T_BlockSizeBits>
 struct vdfastdeque_block {
 	enum {
-		kBlockSize = 32,
-		kBlockSizeBits = 5
+		kBlockSize = 1 << T_BlockSizeBits,
+		kBlockSizeBits = T_BlockSizeBits
 	};
 
 	T data[kBlockSize];
 };
 
-template<class T, class T_Base>
+template<class T, class T_Base, int kBlockSizeBits>
 class vdfastdeque_iterator {
 public:
 	typedef T value_type;
 	typedef T* pointer;
 	typedef T& reference;
 	typedef ptrdiff_t difference_type;
-	typedef std::bidirectional_iterator_tag iterator_category;
+	typedef std::random_access_iterator_tag iterator_category;
 
-	vdfastdeque_iterator(const vdfastdeque_iterator<T_Base, T_Base>&);
-	vdfastdeque_iterator(vdfastdeque_block<T_Base> **pMapEntry, uint32 index);
+	vdfastdeque_iterator() = default;
+	vdfastdeque_iterator(const vdfastdeque_iterator<T_Base, T_Base, kBlockSizeBits>&);
+	vdfastdeque_iterator(vdfastdeque_block<T_Base, kBlockSizeBits> **pMapEntry, uint32 index);
 
 	T& operator *() const;
-	T& operator ->() const;
+	T* operator ->() const;
+	T& operator [](difference_type n) const;
 	vdfastdeque_iterator& operator++();
 	vdfastdeque_iterator operator++(int);
 	vdfastdeque_iterator& operator--();
 	vdfastdeque_iterator operator--(int);
+	vdfastdeque_iterator operator+(difference_type n) const;
+	vdfastdeque_iterator operator-(difference_type n) const;
+	difference_type operator-(const vdfastdeque_iterator& other) const;
+	vdfastdeque_iterator& operator+=(difference_type n);
+	vdfastdeque_iterator& operator-=(difference_type n);
 
 public:
-	vdfastdeque_block<T_Base> **mpMap;
-	vdfastdeque_block<T_Base> *mpBlock;
+	vdfastdeque_block<T_Base, kBlockSizeBits> **mpMap;
+	vdfastdeque_block<T_Base, kBlockSizeBits> *mpBlock;
 	uint32 mIndex;
 };
 
-template<class T, class T_Base>
-vdfastdeque_iterator<T, T_Base>::vdfastdeque_iterator(const vdfastdeque_iterator<T_Base, T_Base>& x)
+template<class T, class T_Base, int kBlockSizeBits>
+vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::vdfastdeque_iterator(const vdfastdeque_iterator<T_Base, T_Base, kBlockSizeBits>& x)
 	: mpMap(x.mpMap)
 	, mpBlock(x.mpBlock)
 	, mIndex(x.mIndex)
 {
 }
 
-template<class T, class T_Base>
-vdfastdeque_iterator<T, T_Base>::vdfastdeque_iterator(vdfastdeque_block<T_Base> **pMapEntry, uint32 index)
+template<class T, class T_Base, int kBlockSizeBits>
+vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::vdfastdeque_iterator(vdfastdeque_block<T_Base, kBlockSizeBits> **pMapEntry, uint32 index)
 	: mpMap(pMapEntry)
 	, mpBlock(mpMap ? *mpMap : NULL)
 	, mIndex(index)
 {
 }
 
-template<class T, class T_Base>
-T& vdfastdeque_iterator<T, T_Base>::operator *() const {
+template<class T, class T_Base, int kBlockSizeBits>
+T& vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator *() const {
 	return mpBlock->data[mIndex];
 }
 
-template<class T, class T_Base>
-T& vdfastdeque_iterator<T, T_Base>::operator ->() const {
-	return mpBlock->data[mIndex];
+template<class T, class T_Base, int kBlockSizeBits>
+T* vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator ->() const {
+	return &mpBlock->data[mIndex];
 }
 
-template<class T, class T_Base>
-vdfastdeque_iterator<T, T_Base>& vdfastdeque_iterator<T, T_Base>::operator++() {
-	if (++mIndex >= vdfastdeque_block<T>::kBlockSize) {
+template<class T, class T_Base, int kBlockSizeBits>
+T& vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator [](difference_type n) const {
+	return *operator+(n);
+}
+
+template<class T, class T_Base, int kBlockSizeBits>
+vdfastdeque_iterator<T, T_Base, kBlockSizeBits>& vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator++() {
+	if (++mIndex >= vdfastdeque_block<T, kBlockSizeBits>::kBlockSize) {
 		mIndex = 0;
 		mpBlock = *++mpMap;
 	}
 	return *this;
 }
 
-template<class T, class T_Base>
-vdfastdeque_iterator<T, T_Base> vdfastdeque_iterator<T, T_Base>::operator++(int) {
+template<class T, class T_Base, int kBlockSizeBits>
+vdfastdeque_iterator<T, T_Base, kBlockSizeBits> vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator++(int) {
 	vdfastdeque_iterator r(*this);
 	operator++();
 	return r;
 }
 
-template<class T, class T_Base>
-vdfastdeque_iterator<T, T_Base>& vdfastdeque_iterator<T, T_Base>::operator--() {
+template<class T, class T_Base, int kBlockSizeBits>
+vdfastdeque_iterator<T, T_Base, kBlockSizeBits>& vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator--() {
 	if (mIndex-- == 0) {
-		mIndex = vdfastdeque_block<T>::kBlockSize - 1;
+		mIndex = vdfastdeque_block<T, kBlockSizeBits>::kBlockSize - 1;
 		mpBlock = *--mpMap;
 	}
 	return *this;
 }
 
-template<class T, class T_Base>
-vdfastdeque_iterator<T, T_Base> vdfastdeque_iterator<T, T_Base>::operator--(int) {
+template<class T, class T_Base, int kBlockSizeBits>
+vdfastdeque_iterator<T, T_Base, kBlockSizeBits> vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator--(int) {
 	vdfastdeque_iterator r(*this);
 	operator--();
 	return r;
 }
 
-template<class T, class U, class T_Base>
-bool operator==(const vdfastdeque_iterator<T, T_Base>& x,const vdfastdeque_iterator<U, T_Base>& y) {
+template<class T, class T_Base, int kBlockSizeBits>
+vdfastdeque_iterator<T, T_Base, kBlockSizeBits> vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator+(difference_type n) const {
+	vdfastdeque_iterator r(*this);
+
+	r += n;
+	return r;
+}
+
+template<class T, class T_Base, int kBlockSizeBits>
+vdfastdeque_iterator<T, T_Base, kBlockSizeBits> vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator-(difference_type n) const {
+	return operator+(-n);
+}
+
+template<class T, class T_Base, int kBlockSizeBits>
+typename vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::difference_type vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator-(const vdfastdeque_iterator& other) const {
+	return ((sint32)mIndex - (sint32)other.mIndex) + ((mpMap - other.mpMap) << kBlockSizeBits);
+}
+
+template<class T, class T_Base, int kBlockSizeBits>
+vdfastdeque_iterator<T, T_Base, kBlockSizeBits>& vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator+=(difference_type n) {
+	sint32 i = (sint32)mIndex + n;
+
+	mIndex = (uint32)i & (vdfastdeque_block<T, kBlockSizeBits>::kBlockSize - 1);
+	mpMap += i >> kBlockSizeBits;
+	mpBlock = *mpMap;
+
+	return *this;
+}
+
+template<class T, class T_Base, int kBlockSizeBits>
+vdfastdeque_iterator<T, T_Base, kBlockSizeBits>& vdfastdeque_iterator<T, T_Base, kBlockSizeBits>::operator-=(difference_type n) {
+	return operator+(-n);
+}
+
+template<class T, class U, class T_Base, int kBlockSizeBits>
+bool operator==(const vdfastdeque_iterator<T, T_Base, kBlockSizeBits>& x,const vdfastdeque_iterator<U, T_Base, kBlockSizeBits>& y) {
 	return x.mpBlock == y.mpBlock && x.mIndex == y.mIndex;
 }
 
-template<class T, class U, class T_Base>
-bool operator!=(const vdfastdeque_iterator<T, T_Base>& x,const vdfastdeque_iterator<U, T_Base>& y) {
+template<class T, class U, class T_Base, int kBlockSizeBits>
+bool operator!=(const vdfastdeque_iterator<T, T_Base, kBlockSizeBits>& x,const vdfastdeque_iterator<U, T_Base, kBlockSizeBits>& y) {
 	return x.mpBlock != y.mpBlock || x.mIndex != y.mIndex;
+}
+
+template<class T, class U, class T_Base, int kBlockSizeBits>
+bool operator<(const vdfastdeque_iterator<T, T_Base, kBlockSizeBits>& x,const vdfastdeque_iterator<U, T_Base, kBlockSizeBits>& y) {
+	return x.mpMap < y.mpMap || (x.mpMap == y.mpMap && x.mIndex < y.mIndex);
+}
+
+template<class T, class U, class T_Base, int kBlockSizeBits>
+bool operator<=(const vdfastdeque_iterator<T, T_Base, kBlockSizeBits>& x,const vdfastdeque_iterator<U, T_Base, kBlockSizeBits>& y) {
+	return x.mpMap < y.mpMap || (x.mpMap == y.mpMap && x.mIndex <= y.mIndex);
+}
+
+template<class T, class U, class T_Base, int kBlockSizeBits>
+bool operator>(const vdfastdeque_iterator<T, T_Base, kBlockSizeBits>& x,const vdfastdeque_iterator<U, T_Base, kBlockSizeBits>& y) {
+	return x.mpMap > y.mpMap || (x.mpMap == y.mpMap && x.mIndex > y.mIndex);
+}
+
+template<class T, class U, class T_Base, int kBlockSizeBits>
+bool operator>=(const vdfastdeque_iterator<T, T_Base, kBlockSizeBits>& x,const vdfastdeque_iterator<U, T_Base, kBlockSizeBits>& y) {
+	return x.mpMap > y.mpMap || (x.mpMap == y.mpMap && x.mIndex >= y.mIndex);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-template<class T, class A = vdallocator<T> >
+template<class T, class A = vdallocator<T>, int kBlockSizeBits = 5>
 class vdfastdeque {
 public:
 	typedef	typename A::reference		reference;
@@ -1480,8 +1502,8 @@ public:
 	typedef A					allocator_type;
 	typedef	size_t				size_type;
 	typedef	ptrdiff_t			difference_type;
-	typedef	vdfastdeque_iterator<T, T>			iterator;
-	typedef vdfastdeque_iterator<const T, T>	const_iterator;
+	typedef	vdfastdeque_iterator<T, T, kBlockSizeBits>			iterator;
+	typedef vdfastdeque_iterator<const T, T, kBlockSizeBits>	const_iterator;
 	typedef std::reverse_iterator<iterator>			reverse_iterator;
 	typedef std::reverse_iterator<const_iterator>	const_reverse_iterator;
 
@@ -1498,8 +1520,10 @@ public:
 
 	iterator			begin();
 	const_iterator		begin() const;
+	const_iterator		cbegin() const;
 	iterator			end();
 	const_iterator		end() const;
+	const_iterator		cend() const;
 
 	reference			operator[](size_type n);
 	const_reference		operator[](size_type n) const;
@@ -1521,11 +1545,10 @@ protected:
 	void				push_back_extend();
 	void				validate();
 
-	typedef vdfastdeque_block<T> Block;
+	typedef vdfastdeque_block<T, kBlockSizeBits> Block;
 
 	enum {
 		kBlockSize = Block::kBlockSize,
-		kBlockSizeBits = Block::kBlockSizeBits
 	};
 
 	struct M1 : public A::template rebind<Block *>::other {
@@ -1547,8 +1570,8 @@ protected:
 	};
 };
 
-template<class T, class A>
-vdfastdeque<T, A>::vdfastdeque() {
+template<class T, class A, int kBlockSizeBits>
+vdfastdeque<T, A, kBlockSizeBits>::vdfastdeque() {
 	m.mapStartAlloc		= NULL;
 	m.mapStartCommit	= NULL;
 	m.mapStart			= NULL;
@@ -1559,8 +1582,8 @@ vdfastdeque<T, A>::vdfastdeque() {
 	mTails.endIndex		= kBlockSize - 1;
 }
 
-template<class T, class A>
-vdfastdeque<T,A>::~vdfastdeque() {
+template<class T, class A, int kBlockSizeBits>
+vdfastdeque<T,A,kBlockSizeBits>::~vdfastdeque() {
 	while(m.mapStartCommit != m.mapEndCommit) {
 		mTails.deallocate(*m.mapStartCommit++, 1);
 	}
@@ -1569,90 +1592,103 @@ vdfastdeque<T,A>::~vdfastdeque() {
 		m.deallocate(m.mapStartAlloc, m.mapEndAlloc - m.mapStartAlloc);
 }
 
-template<class T, class A>
-bool vdfastdeque<T,A>::empty() const {
+template<class T, class A, int kBlockSizeBits>
+bool vdfastdeque<T,A,kBlockSizeBits>::empty() const {
 	return size() == 0;
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::size_type vdfastdeque<T,A>::size() const {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::size_type vdfastdeque<T,A,kBlockSizeBits>::size() const {
 	if (m.mapEnd == m.mapStart)
 		return 0;
 
 	return kBlockSize * ((m.mapEnd - m.mapStart) - 1) + (mTails.endIndex + 1) - mTails.startIndex;
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::reference vdfastdeque<T,A>::front() {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::reference vdfastdeque<T,A,kBlockSizeBits>::front() {
 	VDASSERT(m.mapStart != m.mapEnd);
 	return (*m.mapStart)->data[mTails.startIndex];
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::const_reference vdfastdeque<T,A>::front() const {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::const_reference vdfastdeque<T,A,kBlockSizeBits>::front() const {
 	VDASSERT(m.mapStart != m.mapEnd);
 	return (*m.mapStart)->data[mTails.startIndex];
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::reference vdfastdeque<T,A>::back() {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::reference vdfastdeque<T,A,kBlockSizeBits>::back() {
 	VDASSERT(m.mapStart != m.mapEnd);
 	return m.mapEnd[-1]->data[mTails.endIndex];
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::const_reference vdfastdeque<T,A>::back() const {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::const_reference vdfastdeque<T,A,kBlockSizeBits>::back() const {
 	VDASSERT(m.mapStart != m.mapEnd);
 	return m.mapEnd[-1]->data[mTails.endIndex];
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::iterator vdfastdeque<T,A>::begin() {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::iterator vdfastdeque<T,A,kBlockSizeBits>::begin() {
 	return iterator(m.mapStart, mTails.startIndex);
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::const_iterator vdfastdeque<T,A>::begin() const {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::const_iterator vdfastdeque<T,A,kBlockSizeBits>::begin() const {
 	return const_iterator(m.mapStart, mTails.startIndex);
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::iterator vdfastdeque<T,A>::end() {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::const_iterator vdfastdeque<T,A,kBlockSizeBits>::cbegin() const {
+	return const_iterator(m.mapStart, mTails.startIndex);
+}
+
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::iterator vdfastdeque<T,A,kBlockSizeBits>::end() {
 	if (mTails.endIndex == kBlockSize - 1)
 		return iterator(m.mapEnd, 0);
 	else
 		return iterator(m.mapEnd - 1, mTails.endIndex + 1);
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::const_iterator vdfastdeque<T,A>::end() const {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::const_iterator vdfastdeque<T,A,kBlockSizeBits>::end() const {
 	if (mTails.endIndex == kBlockSize - 1)
 		return const_iterator(m.mapEnd, 0);
 	else
 		return const_iterator(m.mapEnd - 1, mTails.endIndex + 1);
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::reference vdfastdeque<T,A>::operator[](size_type n) {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::const_iterator vdfastdeque<T,A,kBlockSizeBits>::cend() const {
+	if (mTails.endIndex == kBlockSize - 1)
+		return const_iterator(m.mapEnd, 0);
+	else
+		return const_iterator(m.mapEnd - 1, mTails.endIndex + 1);
+}
+
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::reference vdfastdeque<T,A,kBlockSizeBits>::operator[](size_type n) {
 	n += mTails.startIndex;
 	return m.mapStart[n >> kBlockSizeBits]->data[n & (kBlockSize - 1)];
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::const_reference vdfastdeque<T,A>::operator[](size_type n) const {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::const_reference vdfastdeque<T,A,kBlockSizeBits>::operator[](size_type n) const {
 	n += mTails.startIndex;
 	return m.mapStart[n >> kBlockSizeBits]->data[n & (kBlockSize - 1)];
 }
 
-template<class T, class A>
-void vdfastdeque<T,A>::clear() {
+template<class T, class A, int kBlockSizeBits>
+void vdfastdeque<T,A,kBlockSizeBits>::clear() {
 	m.mapEnd			= m.mapStart;
 	mTails.startIndex	= 0;
 	mTails.endIndex		= kBlockSize - 1;
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::reference vdfastdeque<T,A>::push_front() {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::reference vdfastdeque<T,A,kBlockSizeBits>::push_front() {
 	if (mTails.startIndex <= 0) {
 		push_front_extend();
 	}
@@ -1663,14 +1699,14 @@ typename vdfastdeque<T,A>::reference vdfastdeque<T,A>::push_front() {
 	return m.mapStart[0]->data[mTails.startIndex];
 }
 
-template<class T, class A>
-void vdfastdeque<T,A>::push_front(const_reference x) {
+template<class T, class A, int kBlockSizeBits>
+void vdfastdeque<T,A,kBlockSizeBits>::push_front(const_reference x) {
 	const T x2(x);
 	push_front() = x2;
 }
 
-template<class T, class A>
-typename vdfastdeque<T,A>::reference vdfastdeque<T,A>::push_back() {
+template<class T, class A, int kBlockSizeBits>
+typename vdfastdeque<T,A,kBlockSizeBits>::reference vdfastdeque<T,A,kBlockSizeBits>::push_back() {
 	if (mTails.endIndex >= kBlockSize - 1) {
 		push_back_extend();
 	}
@@ -1682,14 +1718,14 @@ typename vdfastdeque<T,A>::reference vdfastdeque<T,A>::push_back() {
 	return r;
 }
 
-template<class T, class A>
-void vdfastdeque<T,A>::push_back(const_reference x) {
+template<class T, class A, int kBlockSizeBits>
+void vdfastdeque<T,A,kBlockSizeBits>::push_back(const_reference x) {
 	const T x2(x);
 	push_back() = x2;
 }
 
-template<class T, class A>
-void vdfastdeque<T,A>::pop_front() {
+template<class T, class A, int kBlockSizeBits>
+void vdfastdeque<T,A,kBlockSizeBits>::pop_front() {
 	if (++mTails.startIndex >= kBlockSize) {
 		VDASSERT(m.mapEnd != m.mapStart);
 		mTails.startIndex = 0;
@@ -1697,8 +1733,8 @@ void vdfastdeque<T,A>::pop_front() {
 	}
 }
 
-template<class T, class A>
-void vdfastdeque<T,A>::pop_back() {
+template<class T, class A, int kBlockSizeBits>
+void vdfastdeque<T,A,kBlockSizeBits>::pop_back() {
 	if (--mTails.endIndex < 0) {
 		VDASSERT(m.mapEnd != m.mapStart);
 		mTails.endIndex = kBlockSize - 1;
@@ -1706,8 +1742,8 @@ void vdfastdeque<T,A>::pop_back() {
 	}
 }
 
-template<class T, class A>
-void vdfastdeque<T,A>::swap(vdfastdeque& x) {
+template<class T, class A, int kBlockSizeBits>
+void vdfastdeque<T,A,kBlockSizeBits>::swap(vdfastdeque& x) {
 	std::swap(m.mapStartAlloc, x.m.mapStartAlloc);
 	std::swap(m.mapStartCommit, x.m.mapStartCommit);
 	std::swap(m.mapStart, x.m.mapStart);
@@ -1720,8 +1756,8 @@ void vdfastdeque<T,A>::swap(vdfastdeque& x) {
 
 /////////////////////////////////
 
-template<class T, class A>
-void vdfastdeque<T,A>::push_front_extend() {
+template<class T, class A, int kBlockSizeBits>
+void vdfastdeque<T,A,kBlockSizeBits>::push_front_extend() {
 	validate();
 
 	// check if we need to extend the map itself
@@ -1789,8 +1825,8 @@ void vdfastdeque<T,A>::push_front_extend() {
 	mTails.startIndex = kBlockSize;
 }
 
-template<class T, class A>
-void vdfastdeque<T,A>::push_back_extend() {
+template<class T, class A, int kBlockSizeBits>
+void vdfastdeque<T,A,kBlockSizeBits>::push_back_extend() {
 	validate();
 
 	// check if we need to extend the map itself
@@ -1859,8 +1895,8 @@ void vdfastdeque<T,A>::push_back_extend() {
 	mTails.endIndex = -1;
 }
 
-template<class T, class A>
-void vdfastdeque<T,A>::validate() {
+template<class T, class A, int kBlockSizeBits>
+void vdfastdeque<T,A,kBlockSizeBits>::validate() {
 	VDASSERT(m.mapStartAlloc <= m.mapStartCommit);
 	VDASSERT(m.mapStartCommit <= m.mapStart);
 	VDASSERT(m.mapStart <= m.mapEnd);

@@ -1,12 +1,95 @@
 #include <stdafx.h>
 #include <windows.h>
 #include <commctrl.h>
+#include <richedit.h>
 #include <shellapi.h>
+#include <vd2/system/binary.h>
 #include <vd2/system/error.h>
+#include <vd2/system/strutil.h>
+#include <vd2/system/vdalloc.h>
 #include <vd2/system/w32assist.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/genericdialog.h>
 #include <at/atnativeui/progress.h>
 #include <at/atnativeui/uiframe.h>
+
+///////////////////////////////////////////////////////////////////////////////
+
+#ifndef WM_DPICHANGED_BEFOREPARENT
+#define WM_DPICHANGED_BEFOREPARENT 0x02E2
+#endif
+
+#ifndef WM_GETDPISCALEDSIZE
+#define WM_GETDPISCALEDSIZE 0x02E4
+
+typedef enum _DIALOG_DPI_CHANGE_BEHAVIORS { 
+	DDC_DEFAULT = 0,
+	DDC_DISABLE_ALL = 1,
+	DDC_DISABLE_RESIZE = 2,
+	DDC_DISABLE_CONTROL_RELAYOUT = 3
+} DIALOG_DPI_CHANGE_BEHAVIORS;
+
+typedef enum _DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS {
+	DCDC_DEFAULT = 0,
+	DCDC_DISABLE_FONT_UPDATE = 1,
+	DCDC_DISABLE_RELAYOUT = 2
+} DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS;
+
+#endif
+
+typedef BOOL (WINAPI *tpSetDialogDpiChangeBehavior)(HWND hDlg, DIALOG_DPI_CHANGE_BEHAVIORS mask, DIALOG_DPI_CHANGE_BEHAVIORS values);
+BOOL WINAPI ATSetDialogDpiChangeBehaviorDetectW32(HWND hDlg, DIALOG_DPI_CHANGE_BEHAVIORS mask, DIALOG_DPI_CHANGE_BEHAVIORS values);
+
+tpSetDialogDpiChangeBehavior g_pATSetDialogDpiChangeBehaviorW32 = ATSetDialogDpiChangeBehaviorDetectW32;
+
+BOOL WINAPI ATSetDialogDpiChangeBehaviorDetectW32(HWND hDlg, DIALOG_DPI_CHANGE_BEHAVIORS mask, DIALOG_DPI_CHANGE_BEHAVIORS values) {
+	auto p = GetProcAddress(GetModuleHandleW(L"user32"), "SetDialogDpiChangeBehavior");
+
+	if (p)
+		g_pATSetDialogDpiChangeBehaviorW32 = (tpSetDialogDpiChangeBehavior)p;
+	else
+		g_pATSetDialogDpiChangeBehaviorW32 = [](HWND hDlg, DIALOG_DPI_CHANGE_BEHAVIORS mask, DIALOG_DPI_CHANGE_BEHAVIORS values) { return TRUE; };
+
+	return g_pATSetDialogDpiChangeBehaviorW32(hDlg, mask, values);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+typedef BOOL (WINAPI *tpSetDialogControlDpiChangeBehavior)(HWND hDlg, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS mask, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS values);
+BOOL WINAPI ATSetDialogControlDpiChangeBehaviorDetectW32(HWND hDlg, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS mask, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS values);
+
+tpSetDialogControlDpiChangeBehavior g_pATSetDialogControlDpiChangeBehaviorW32 = ATSetDialogControlDpiChangeBehaviorDetectW32;
+
+BOOL WINAPI ATSetDialogControlDpiChangeBehaviorDetectW32(HWND hwnd, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS mask, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS values) {
+	auto p = GetProcAddress(GetModuleHandleW(L"user32"), "SetDialogControlDpiChangeBehavior");
+
+	if (p)
+		g_pATSetDialogControlDpiChangeBehaviorW32 = (tpSetDialogControlDpiChangeBehavior)p;
+	else
+		g_pATSetDialogControlDpiChangeBehaviorW32 = [](HWND hwnd, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS mask, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS values) { return TRUE; };
+
+	return g_pATSetDialogControlDpiChangeBehaviorW32(hwnd, mask, values);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+typedef BOOL (WINAPI *tpATAdjustWindowRectExForDpiW32)(LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD dwExStyle, UINT dpi);
+BOOL WINAPI ATAdjustWindowRectExForDpiDetectW32(LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD dwExStyle, UINT dpi);
+
+tpATAdjustWindowRectExForDpiW32 g_pATAdjustWindowRectExForDpiW32 = ATAdjustWindowRectExForDpiDetectW32;
+
+BOOL WINAPI ATAdjustWindowRectExForDpiDetectW32(LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD dwExStyle, UINT dpi) {
+	auto p = GetProcAddress(GetModuleHandleW(L"user32"), "AdjustWindowRectExForDpi");
+
+	if (p)
+		g_pATAdjustWindowRectExForDpiW32 = (tpATAdjustWindowRectExForDpiW32)p;
+	else
+		g_pATAdjustWindowRectExForDpiW32 = [](LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD dwExStyle, UINT dpi) {
+			return AdjustWindowRectEx(lpRect, dwStyle, bMenu, dwExStyle);
+		};
+
+	return g_pATAdjustWindowRectExForDpiW32(lpRect, dwStyle, bMenu, dwExStyle, dpi);
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -47,21 +130,29 @@ const wchar_t *VDDialogFrameW32::spDefaultCaption = L"";
 VDDialogFrameW32::VDDialogFrameW32(uint32 dlgid)
 	: mbIsModal(false)
 	, mhdlg(NULL)
+	, mhfont(nullptr)
 	, mMinWidth(0)
 	, mMinHeight(0)
 	, mMaxWidth(INT_MAX)
 	, mMaxHeight(INT_MAX)
-	, mpDialogResourceName(MAKEINTRESOURCEA(dlgid))
 	, mAccel(nullptr)
+	, mTemplateWidthDLUs(0)
+	, mTemplateHeightDLUs(0)
+	, mTemplateControlCount(0)
+	, mpTemplateControls(nullptr)
+	, mbResizableWidth(false)
+	, mbResizableHeight(false)
+	, mpDialogResourceName(MAKEINTRESOURCEW(dlgid))
 {
 }
 
 bool VDDialogFrameW32::Create(VDGUIHandle parent) {
-	if (!mhdlg) {
-		mbIsModal = false;
+	if (mhdlg)
+		return true;
 
-		VDVERIFY(CreateDialogParamW(VDGetLocalModuleHandleW32(), IS_INTRESOURCE(mpDialogResourceName) ? (LPCWSTR)mpDialogResourceName : VDTextAToW(mpDialogResourceName).c_str(), (HWND)parent, StaticDlgProc, (LPARAM)this));
-	}
+	mbIsModal = false;
+
+	DoCreate((VDZHWND)parent, false);
 
 	return mhdlg != NULL;
 }
@@ -81,8 +172,7 @@ void VDDialogFrameW32::Close() {
 }
 
 sintptr VDDialogFrameW32::ShowDialog(VDGUIHandle parent) {
-	mbIsModal = true;
-	return DialogBoxParamW(VDGetLocalModuleHandleW32(), IS_INTRESOURCE(mpDialogResourceName) ? (LPCWSTR)mpDialogResourceName : VDTextAToW(mpDialogResourceName).c_str(), (HWND)parent, StaticDlgProc, (LPARAM)this);
+	return DoCreate((VDZHWND)parent, true);
 }
 
 sintptr VDDialogFrameW32::ShowDialog(VDDialogFrameW32 *parent) {
@@ -153,7 +243,7 @@ vdrect32 VDDialogFrameW32::GetArea() const {
 
 void VDDialogFrameW32::SetArea(const vdrect32& r, bool repositionSafe) {
 	if (mhdlg) {
-		SetWindowPos(mhdlg, NULL, r.left, r.top, r.width(), r.height(), SWP_NOZORDER | SWP_NOACTIVATE);
+		SetWindowPos(mhdlg, NULL, r.left, r.top, std::max<sint32>(0, r.width()), std::max<sint32>(0, r.height()), SWP_NOZORDER | SWP_NOACTIVATE);
 
 		if (repositionSafe)
 			SendMessage(mhdlg, DM_REPOSITION, 0, 0);
@@ -174,6 +264,32 @@ vdrect32 VDDialogFrameW32::GetClientArea() const {
 	RECT r = {0};
 	GetClientRect(mhdlg, &r);
 	return vdrect32(r.left, r.top, r.right, r.bottom);
+}
+
+VDZHFONT VDDialogFrameW32::GetFont() const {
+	return mhfont;
+}
+
+void VDDialogFrameW32::SetFont(VDZHFONT hfont) {
+	if (!hfont) {
+		VDASSERT(!"Null font passed to SetFont().");
+		return;
+	}
+
+	if (hfont == mhfont)
+		return;
+
+	HFONT hOldFont = mhfont;
+	mhfont = hfont;
+
+	RecomputeDialogUnits();
+
+	mResizer.Broadcast(WM_SETFONT, (VDZWPARAM)hfont, TRUE);
+	mMsgDispatcher.DispatchFontChanged();
+
+	OnSetFont(mhfont);
+
+	DeleteObject(hOldFont);
 }
 
 VDStringW VDDialogFrameW32::GetCaption() const {
@@ -210,6 +326,15 @@ void VDDialogFrameW32::CenterOnParent() {
 	}
 }
 
+void VDDialogFrameW32::UpdateChildDpi() {
+	if (mhdlg) {
+		uint32 dpi = ATUIGetWindowDpiW32(mhdlg);
+
+		if (mCurrentDpi != dpi)
+			OnDpiChanging(dpi, dpi, nullptr);
+	}
+}
+
 void VDDialogFrameW32::End(sintptr result) {
 	if (!mhdlg)
 		return;
@@ -238,6 +363,9 @@ void VDDialogFrameW32::SetCurrentSizeAsMinSize() {
 		if (r.bottom > r.top)
 			mMinHeight = r.bottom - r.top;
 	}
+
+	mbResizableWidth = true;
+	mbResizableHeight = true;
 }
 
 void VDDialogFrameW32::SetCurrentSizeAsMaxSize(bool width, bool height) {
@@ -249,6 +377,12 @@ void VDDialogFrameW32::SetCurrentSizeAsMaxSize(bool width, bool height) {
 		if (r.bottom > r.top && height)
 			mMaxHeight = r.bottom - r.top;
 	}
+
+	if (width)
+		mbResizableWidth = false;
+
+	if (height)
+		mbResizableHeight = false;
 }
 
 VDZHWND VDDialogFrameW32::GetControl(uint32 id) {
@@ -620,6 +754,10 @@ bool VDDialogFrameW32::Confirm(const wchar_t *message, const wchar_t *caption) {
 	return result == IDOK;
 }
 
+bool VDDialogFrameW32::Confirm2(const char *ignoreTag, const wchar_t *message, const wchar_t *title) {
+	return ATUIConfirm((VDGUIHandle)mhdlg, ignoreTag, message, title);
+}
+
 void VDDialogFrameW32::SetDefaultCaption(const wchar_t *caption) {
 	spDefaultCaption = caption;
 }
@@ -784,6 +922,159 @@ void VDDialogFrameW32::OnDataExchange(bool write) {
 }
 
 void VDDialogFrameW32::OnPreLoaded() {
+	struct ItemHeader {
+		DWORD helpID;
+		DWORD exStyle;
+		DWORD style;
+		short x;
+		short y;
+		short cx;
+		short cy;
+		DWORD id;
+	};
+
+	static const WCHAR *const kBuiltinClasses[] = {
+		WC_BUTTONW,
+		WC_EDITW,
+		WC_STATICW,
+		WC_LISTBOXW,
+		WC_SCROLLBARW,
+		WC_COMBOBOXW
+	};
+
+	VDASSERTCT(sizeof(ItemHeader) == 24);
+
+	// Disable dialog auto-resize on DPI change, as we'll be handling it
+	g_pATSetDialogDpiChangeBehaviorW32(mhdlg, (DIALOG_DPI_CHANGE_BEHAVIORS)0x03, DDC_DISABLE_ALL);
+
+	// Get current DPI
+	mCurrentDpi = ATUIGetWindowDpiW32(mhdlg);
+
+	// Create font
+	mhfont = CreateNewFont();
+
+	if (!mhfont)
+		return;
+
+	RecomputeDialogUnits();
+
+	// Resize the window
+	RECT r = { 0, 0, MulDiv(mTemplateWidthDLUs, mDialogUnits.mWidth4, 4), MulDiv(mTemplateHeightDLUs, mDialogUnits.mHeight8, 8) };
+
+	g_pATAdjustWindowRectExForDpiW32(&r, GetWindowLong(mhdlg, GWL_STYLE), GetMenu(mhdlg) != nullptr, GetWindowLong(mhdlg, GWL_EXSTYLE), mCurrentDpi);
+
+	SetWindowPos(mhdlg, nullptr, 0, 0, r.right - r.left, r.bottom - r.top, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+
+	mResizer.Init(mhdlg);
+	mResizer.SetRefUnits(mDialogUnits.mWidth4, mDialogUnits.mHeight8);
+
+	// Instantiate controls
+	const char *src = mpTemplateControls;
+	uint32 defId = 0;
+
+	for(uint32 i=0; i<mTemplateControlCount; ++i) {
+		ItemHeader hdr;
+
+		// read base items
+		memcpy(&hdr, src, sizeof(hdr));
+		src += sizeof(hdr);
+
+		// read window class
+		const WCHAR *className = nullptr;
+
+		if (VDReadUnalignedU16(src) == UINT16_C(0xFFFF)) {
+			src += 2;
+
+			const uint16 token = VDReadUnalignedU16(src);
+			src += 2;
+
+			if (token < 0x80 || token > 0x85) {
+				VDASSERT(!"Invalid control type token in dialog item template.");
+				return;
+			}
+
+			className = kBuiltinClasses[token - 0x80];
+		} else {
+			className = (const WCHAR *)src;
+
+			while(VDReadUnalignedU16(src))
+				src += 2;
+
+			src += 2;
+		}
+
+		// read title
+		const WCHAR *title = nullptr;
+		if (VDReadUnalignedU16(src) == UINT16_C(0xFFFF)) {
+			src += 2;
+
+			title = MAKEINTRESOURCEW(VDReadUnalignedU16(src));
+			src += 2;
+		} else {
+			title = (const WCHAR *)src;
+
+			while(VDReadUnalignedU16(src))
+				src += 2;
+
+			src += 2;
+		}
+
+		// read extra count
+		const void *extraData = nullptr;
+		const uint16 extraSize = VDReadUnalignedU16(src);
+		src += 2;
+
+		if (extraSize) {
+			extraData = src;
+			src += extraSize;
+		}
+
+		// alignment
+		src = (const char *)(((uintptr)src + 3) & ~(uintptr)3);
+
+		// map child window size to DLUs
+		// note: we need to map size instead of rects, or controls will vary in size (yuck)
+		const int x = MulDiv(hdr.x, mDialogUnits.mWidth4, 4);
+		const int y = MulDiv(hdr.y, mDialogUnits.mHeight8, 8);
+		const int cx = MulDiv(hdr.cx, mDialogUnits.mWidth4, 4);
+		const int cy = MulDiv(hdr.cy, mDialogUnits.mHeight8, 8);
+
+		// create the window
+		HWND hwnd = CreateWindowExW(hdr.exStyle, className, title, hdr.style | WS_CHILD, x, y, cx, cy, mhdlg, (HMENU)(uintptr)hdr.id, VDGetLocalModuleHandleW32(), (LPVOID)extraData);
+		if (!hwnd)
+			return;
+
+		if (hdr.helpID)
+			SetWindowContextHelpId(hwnd, hdr.helpID);
+
+		// check if this is a default button
+		if (SendMessageW(hwnd, WM_GETDLGCODE, 0, 0) & DLGC_DEFPUSHBUTTON)
+			defId = hdr.id;
+
+		// Check if we have an up-down control with the auto-buddy flag set. If
+		// so, we need to handle this specially in the resizer. Note that we
+		// check the style first as an optimization.
+		uint32 alignment = mResizer.kTL;
+
+		if ((hdr.style & UDS_AUTOBUDDY) && !vdwcsicmp(className, UPDOWN_CLASSW))
+			alignment |= mResizer.kUpDownAutoBuddy;
+
+		if (!vdwcsicmp(className, MSFTEDIT_CLASS))
+			alignment |= mResizer.kSuppressFontChange;
+
+		SendMessageW(hwnd, WM_SETFONT, (WPARAM)mhfont, TRUE);
+
+		g_pATSetDialogControlDpiChangeBehaviorW32(hwnd,
+			(DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS)(DCDC_DISABLE_FONT_UPDATE | DCDC_DISABLE_RELAYOUT),
+			(DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS)(DCDC_DISABLE_FONT_UPDATE | DCDC_DISABLE_RELAYOUT));
+
+		// Add the control to tracker. Note that this needs to be the original size, not the current size,
+		// for combo boxes to work.
+		mResizer.Add(hwnd, x, y, cx, cy, alignment);
+	}
+
+	if (defId)
+		SendMessageW(mhdlg, DM_SETDEFID, defId, 0);
 }
 
 bool VDDialogFrameW32::OnLoaded() {
@@ -802,6 +1093,9 @@ bool VDDialogFrameW32::OnCancel() {
 }
 
 void VDDialogFrameW32::OnSize() {
+	int refX = mDialogUnits.mWidth4;
+	int refY = mDialogUnits.mHeight8;
+	mResizer.Relayout(&refX, &refY);
 }
 
 bool VDDialogFrameW32::OnClose() {
@@ -818,6 +1112,10 @@ void VDDialogFrameW32::OnDestroy() {
 }
 
 bool VDDialogFrameW32::OnErase(VDZHDC hdc) {
+	return false;
+}
+
+bool VDDialogFrameW32::OnPaint() {
 	return false;
 }
 
@@ -844,6 +1142,12 @@ void VDDialogFrameW32::OnMouseDownL(int x, int y) {
 void VDDialogFrameW32::OnMouseUpL(int x, int y) {
 }
 
+void VDDialogFrameW32::OnMouseWheel(int x, int y, sint32 delta) {
+}
+
+void VDDialogFrameW32::OnMouseLeave() {
+}
+
 void VDDialogFrameW32::OnCaptureLost() {
 }
 
@@ -863,12 +1167,58 @@ void VDDialogFrameW32::OnHelp() {
 void VDDialogFrameW32::OnContextMenu(uint32 id, int x, int y) {
 }
 
+void VDDialogFrameW32::OnSetFont(VDZHFONT hfont) {
+}
+
+void VDDialogFrameW32::OnDpiChanging(uint16 newDpiX, uint16 newDpiY, const vdrect32 *suggestedRect) {
+	if (mCurrentDpi != newDpiY) {
+		mCurrentDpi = newDpiY;
+
+		VDZHFONT hfont = CreateNewFont();
+		if (hfont)
+			SetFont(hfont);
+
+		const vdsize32 templatePixelSize = ComputeTemplatePixelSize(mDialogUnits, mCurrentDpi);
+
+		if (mMinWidth) {
+			mMinWidth = templatePixelSize.w;
+			mMinHeight = templatePixelSize.h;
+
+			if (mMaxWidth != INT_MAX)
+				mMaxWidth = mMinWidth;
+
+			if (mMaxHeight != INT_MAX)
+				mMaxHeight = mMinHeight;
+		}
+
+		if (suggestedRect) {
+			int newWidth = suggestedRect->width();
+			int newHeight = suggestedRect->height();
+
+			AdjustSize(newWidth, newHeight, templatePixelSize, mDialogUnits);
+
+			const int x = suggestedRect->left;
+			const int y = suggestedRect->top;
+			SetWindowPos(mhdlg, nullptr, x, y, newWidth, newHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+		}
+
+		OnDpiChanged();
+	}
+}
+
+void VDDialogFrameW32::OnDpiChanged() {
+}
+
 bool VDDialogFrameW32::PreNCDestroy() {
 	return false;
 }
 
 bool VDDialogFrameW32::ShouldSetDialogIcon() const {
 	return true;
+}
+
+sint32 VDDialogFrameW32::GetBackgroundColor() const {
+	return -1;
 }
 
 void VDDialogFrameW32::SetCapture() {
@@ -880,8 +1230,25 @@ void VDDialogFrameW32::ReleaseCapture() {
 	::ReleaseCapture();
 }
 
+void VDDialogFrameW32::RegisterForMouseLeave() {
+	TRACKMOUSEEVENT tme = {sizeof(TRACKMOUSEEVENT)};
+	tme.dwFlags = TME_LEAVE;
+	tme.hwndTrack = mhdlg;
+	::TrackMouseEvent(&tme);
+}
+
 void VDDialogFrameW32::LoadAcceleratorTable(uint32 id) {
 	mAccel = LoadAccelerators(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(id));
+}
+
+sint32 VDDialogFrameW32::GetDpiScaledMetric(int index) {
+	static const auto spGetSystemMetricsForDpi = (int (WINAPI *)(int, UINT))GetProcAddress(GetModuleHandleW(L"user32"), "GetSystemMetricsForDpi");
+
+	if (spGetSystemMetricsForDpi)
+		return spGetSystemMetricsForDpi(index, mCurrentDpi);
+
+	sint32 globalDpi = (sint32)ATUIGetGlobalDpiW32();
+	return (GetSystemMetrics(index) * (sint32)mCurrentDpi + (globalDpi >> 1)) / globalDpi;
 }
 
 void VDDialogFrameW32::ExecutePostedCalls() {
@@ -915,6 +1282,150 @@ void VDDialogFrameW32::SetDialogIcon() {
 	EnumResourceNames(hInst, RT_GROUP_ICON, SetDialogIconCallback, (LONG_PTR)mhdlg);
 }
 
+VDZHFONT VDDialogFrameW32::CreateNewFont(int dpiOverride) const {
+	return CreateFontW(-MulDiv(mTemplateFontPointSize, dpiOverride ? dpiOverride : mCurrentDpi, 72), 0, 0, 0, 0, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, mpTemplateFont);
+}
+
+VDDialogFrameW32::DialogUnits VDDialogFrameW32::ComputeDialogUnits(VDZHFONT hFont) const {
+	// Measure dialog units (thanks to the WINE folks for determining the actual algorithm).
+	DialogUnits units { 8, 16 };
+
+	if (HDC hdc = GetDC(mhdlg)) {
+		if (HGDIOBJ hfontOld = SelectObject(hdc, hFont)) {
+			SIZE sz;
+			if (GetTextExtentPoint32W(hdc, L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", 52, &sz)) {
+				units.mWidth4 = (sz.cx / 26 + 1) / 2;
+				units.mHeight8 = sz.cy;
+			}
+
+			SelectObject(hdc, hfontOld);
+		}
+
+		ReleaseDC(mhdlg, hdc);
+	}
+
+	return units;
+}
+
+void VDDialogFrameW32::RecomputeDialogUnits() {
+	mDialogUnits = ComputeDialogUnits(mhfont);
+}
+
+vdsize32 VDDialogFrameW32::ComputeTemplatePixelSize(const DialogUnits& dialogUnits, uint32 dpi) const {
+	RECT r = { 0, 0, MulDiv(mTemplateWidthDLUs, dialogUnits.mWidth4, 4), MulDiv(mTemplateHeightDLUs, dialogUnits.mHeight8, 8) };
+	g_pATAdjustWindowRectExForDpiW32(&r, GetWindowLong(mhdlg, GWL_STYLE), GetMenu(mhdlg) != nullptr, GetWindowLong(mhdlg, GWL_EXSTYLE), dpi);
+
+	return vdsize32(r.right - r.left, r.bottom - r.top);
+}
+
+void VDDialogFrameW32::AdjustSize(int& width, int& height, const vdsize32& templatePixelSize, const DialogUnits& dialogUnits) const {
+	if (mbResizableWidth)
+		width = std::max<int>(width, templatePixelSize.w);
+	else
+		width = templatePixelSize.w;
+
+	if (mbResizableHeight)
+		height = std::max<int>(height, templatePixelSize.h);
+	else
+		height = templatePixelSize.h;
+}
+
+sintptr VDDialogFrameW32::DoCreate(VDZHWND parent, bool modal) {
+	HMODULE hmod = VDGetLocalModuleHandleW32();
+	HRSRC hrsrc = FindResource(hmod, mpDialogResourceName, RT_DIALOG);
+	if (!hrsrc)
+		return false;
+
+	HGLOBAL hres = LoadResource(hmod, hrsrc);
+	if (!hres)
+		return false;
+
+	const char *p = (const char *)LockResource(hres);
+	if (!p)
+		return false;
+
+	// get size of dialog resource
+	const char *src = p;
+
+	if (VDReadUnalignedU16(src + 2) != UINT16_C(0xFFFF)) {
+		VDASSERT(!"Dialog template does not use extended format.");
+		return false;
+	}
+
+	mTemplateWidthDLUs = VDReadUnalignedU16(src + 22);
+	mTemplateHeightDLUs = VDReadUnalignedU16(src + 24);
+
+	src += 26;
+
+	// skip past menu
+	if (VDReadUnalignedU16(src) == UINT16_C(0xFFFF)) {
+		src += 4;
+	} else {
+		while(VDReadUnalignedU16(src))
+			src += 2;
+	
+		src += 2;
+	}
+
+	// skip past window class
+	if (VDReadUnalignedU16(src) == UINT16_C(0xFFFF)) {
+		src += 4;
+	} else {
+		while(VDReadUnalignedU16(src))
+			src += 2;
+
+		src += 2;
+	}
+
+	// skip past title
+	while(VDReadUnalignedU16(src))
+		src += 2;
+
+	src += 2;
+
+	// skip past font fields
+	const uint32 style = VDReadUnalignedU32(p + 12);
+
+	if (!(style & (DS_SETFONT | DS_SHELLFONT))) {
+		VDASSERT(!"Dialog template does not have SETFONT or SHELLFONT styles.");
+		return false;
+	}
+
+	mTemplateFontPointSize = VDReadUnalignedU16(src);
+	src += 2;
+
+	src += 4;
+
+	mpTemplateFont = (const wchar_t *)src;
+	while(VDReadUnalignedU16(src))
+		src += 2;
+
+	src += 2;
+
+	// make a copy of the dialog template
+	const size_t templateSize = (size_t)(src - p);
+	char *newTemplate = (char *)malloc(templateSize);
+	const vdautoblockptr newTemplateHolder(newTemplate);
+
+	memcpy(newTemplate, p, templateSize);
+
+	// stash and patch the item count (cDlgItems) to 0
+	mTemplateControlCount = *(uint16 *)(newTemplate + 16);
+	*(uint16 *)(newTemplate + 16) = 0;
+
+	// stash template control pointer (aligned to 4)
+	mpTemplateControls = (const char *)(((uintptr)src + 3) & ~(uintptr)3);
+
+	mbIsModal = modal;
+
+	if (modal) {
+		return DialogBoxIndirectParamW(VDGetLocalModuleHandleW32(), (LPCDLGTEMPLATEW)newTemplate, (HWND)parent, StaticDlgProc, (LPARAM)this);
+	} else {
+		VDVERIFY(CreateDialogIndirectParamW(VDGetLocalModuleHandleW32(), (LPCDLGTEMPLATEW)newTemplate, (HWND)parent, StaticDlgProc, (LPARAM)this));
+		return 0;
+	}
+}
+
 VDZINT_PTR VDZCALLBACK VDDialogFrameW32::StaticDlgProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
 	VDDialogFrameW32 *pThis = (VDDialogFrameW32 *)GetWindowLongPtr(hwnd, DWLP_USER);
 
@@ -927,7 +1438,13 @@ VDZINT_PTR VDZCALLBACK VDDialogFrameW32::StaticDlgProc(VDZHWND hwnd, VDZUINT msg
 		pThis->mMutex.Unlock();
 	} else if (msg == WM_NCDESTROY) {
 		if (pThis) {
+			pThis->mResizer.Shutdown();
 			bool deleteMe = pThis->PreNCDestroy();
+
+			if (pThis->mhfont) {
+				DeleteObject(pThis->mhfont);
+				pThis->mhfont = nullptr;
+			}
 
 			pThis->mMutex.Lock();
 			pThis->mhdlg = NULL;
@@ -960,16 +1477,27 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			return !OnLoaded();
 
 		case WM_MOUSEMOVE:
-			OnMouseMove((int)LOWORD(lParam), (int)HIWORD(lParam));
+			OnMouseMove((int)(SHORT)LOWORD(lParam), (int)(SHORT)HIWORD(lParam));
 			break;
 
 		case WM_LBUTTONDOWN:
-			OnMouseDownL((int)LOWORD(lParam), (int)HIWORD(lParam));
+			OnMouseDownL((int)(SHORT)LOWORD(lParam), (int)(SHORT)HIWORD(lParam));
 			break;
 
 		case WM_LBUTTONUP:
-			OnMouseUpL((int)LOWORD(lParam), (int)HIWORD(lParam));
+			OnMouseUpL((int)(SHORT)LOWORD(lParam), (int)(SHORT)HIWORD(lParam));
 			break;
+
+		case WM_MOUSELEAVE:
+			OnMouseLeave();
+			break;
+
+		case WM_MOUSEWHEEL: {
+			POINT pt { (int)(SHORT)LOWORD(lParam), (int)(SHORT)HIWORD(lParam) };
+			ScreenToClient(mhdlg, &pt);
+			OnMouseWheel(pt.x, pt.y, (sint32)(SHORT)HIWORD(wParam));
+			break;
+		}
 
 		case WM_CAPTURECHANGED:
 			OnCaptureLost();
@@ -1042,10 +1570,20 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			return 0;
 
 		case WM_ERASEBKGND:
-			if (OnErase((HDC)wParam)) {
-				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, TRUE);
-				return TRUE;
+			{
+				HDC hdc = (HDC)wParam;
+
+				if (!OnErase(hdc))
+					mResizer.Erase(&hdc, GetBackgroundColor());
 			}
+
+			SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, TRUE);
+			return TRUE;
+
+		case WM_PAINT:
+			if (OnPaint())
+				return TRUE;
+
 			break;
 
 		case WM_GETMINMAXINFO:
@@ -1064,7 +1602,7 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 				if (mmi.ptMaxTrackSize.y > mMaxHeight)
 					mmi.ptMaxTrackSize.y = mMaxHeight;
 			}
-			return 0;
+			return TRUE;
 
 		case WM_HELP:
 			OnHelp();
@@ -1084,6 +1622,64 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			}
 			return TRUE;
 
+		case WM_GETFONT:
+			SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, (LONG_PTR)mhfont);
+			return TRUE;
+
+		case WM_SETFONT:
+			{
+				uint32 dpi = ATUIGetWindowDpiW32(mhdlg);
+
+				if (mCurrentDpi != dpi) {
+					mCurrentDpi = dpi;
+
+					HFONT hfont = CreateNewFont();
+					SetFont(hfont);
+
+					const int refX = mDialogUnits.mWidth4;
+					const int refY = mDialogUnits.mHeight8;
+					mResizer.Relayout(&refX, &refY);
+				}
+			}
+			return TRUE;
+
+		case WM_DPICHANGED:
+			{
+				const RECT *r = (const RECT *)lParam;
+
+				vdrect32 r2(r->left, r->top, r->right, r->bottom);
+				OnDpiChanging((uint16)LOWORD(wParam), (uint16)HIWORD(wParam), &r2);
+			}
+			return TRUE;
+
+		case WM_GETDPISCALEDSIZE: 
+			{
+				const int newDpi = (int)wParam;
+
+				if (HFONT hNewFont = CreateNewFont(newDpi)) {
+					const DialogUnits units = ComputeDialogUnits(hNewFont);
+					DeleteObject(hNewFont);
+
+					const vdsize32 templatePixelSize = ComputeTemplatePixelSize(units, newDpi);
+
+					SIZE& sz = *(SIZE *)lParam;
+
+					int width = (sz.cx * newDpi + (mCurrentDpi >> 1)) / mCurrentDpi;
+					int height = (sz.cy * newDpi + (mCurrentDpi >> 1)) / mCurrentDpi;
+
+					AdjustSize(width, height, templatePixelSize, units);
+
+					VDDEBUG("DPI change %d -> %d: %dx%d -> %dx%d (DLU %dx%d, template size %dx%d)\n", mCurrentDpi, newDpi, sz.cx, sz.cy, width, height, units.mWidth4, units.mHeight8, templatePixelSize.w, templatePixelSize.h);
+
+					sz.cx = width;
+					sz.cy = height;
+
+					SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, TRUE);
+					return TRUE;
+				}
+			}
+			break;
+
 		case VDWM_APP_POSTEDCALL:
 			ExecutePostedCalls();
 			return TRUE;
@@ -1099,16 +1695,22 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 
 ///////////////////////////////////////////////////////////////////////////////
 
-VDDialogResizerW32::VDDialogResizerW32() {
+VDDialogResizerW32::VDDialogResizerW32()
+	: mhwndBase(nullptr)
+{
 }
 
 VDDialogResizerW32::~VDDialogResizerW32() {
 }
 
-void VDDialogResizerW32::Init(HWND hwnd) {
+void VDDialogResizerW32::Init(VDZHWND hwnd) {
+	VDASSERT(!mhwndBase);
+
 	mhwndBase = hwnd;
 	mWidth = 1;
 	mHeight = 1;
+	mRefX = 16;
+	mRefY = 16;
 
 	RECT r;
 	if (GetClientRect(hwnd, &r)) {
@@ -1119,47 +1721,56 @@ void VDDialogResizerW32::Init(HWND hwnd) {
 	mControls.clear();
 }
 
-void VDDialogResizerW32::Relayout() {
+void VDDialogResizerW32::Shutdown() {
+	mhwndBase = nullptr;
+	mControls.clear();
+}
+
+void VDDialogResizerW32::SetRefUnits(int refX, int refY) {
+	mRefX = refX;
+	mRefY = refY;
+}
+
+void VDDialogResizerW32::Relayout(const int *newRefX, const int *newRefY) {
+	if (!mhwndBase)
+		return;
+
 	RECT r;
 
 	if (GetClientRect(mhwndBase, &r))
-		Relayout(r.right, r.bottom);
+		Relayout(r.right, r.bottom, newRefX, newRefY);
 }
 
-void VDDialogResizerW32::Relayout(int width, int height) {
+void VDDialogResizerW32::Relayout(int width, int height, const int *newRefX, const int *newRefY) {
+	if (!mhwndBase)
+		return;
+
 	HDWP hdwp = BeginDeferWindowPos((int)mControls.size());
 
 	mWidth = width;
 	mHeight = height;
 
-	const int xAnchors[4]={ 0, width >> 1, width, width };
-	const int yAnchors[4]={ 0, height >> 1, height, height };
+	bool refChanged = false;
 
-	Controls::const_iterator it(mControls.begin()), itEnd(mControls.end());
-	for(; it!=itEnd; ++it) {
-		const ControlEntry& ent = *it;
-		uint32 flags = SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS;
-		const uint8 alignment = ent.mAlignment;
+	if (newRefX && (mRefX != *newRefX || mRefY != *newRefY)) {
+		mRefX = *newRefX;
+		mRefY = *newRefY;
+		refChanged = true;
+	}
 
-		if (!(alignment & kX1Y1Mask))
-			flags |= SWP_NOMOVE;
+	const Anchors anchors = ComputeAnchors();
 
-		if ((alignment & kX1Y1Mask) == (alignment & kX2Y2Mask))
-			flags |= SWP_NOSIZE;
+	for(const ControlEntry& ent : mControls) {
+		if (ent.mAlignment & kUpDownAutoBuddy)
+			continue;
 
-		int x1 = ent.mX1 + xAnchors[(alignment >> 0) & 3];
-		int x2 = ent.mX2 + xAnchors[(alignment >> 2) & 3];
-		int y1 = ent.mY1 + yAnchors[(alignment >> 4) & 3];
-		int y2 = ent.mY2 + yAnchors[(alignment >> 6) & 3];
+		uint32 flags;
+		int x1;
+		int y1;
+		int w;
+		int h;
 
-		int w = x2 - x1;
-		int h = y2 - y1;
-
-		if (w < 0)
-			w = 0;
-
-		if (h < 0)
-			h = 0;
+		ComputeLayout(ent, anchors, x1, y1, w, h, flags, refChanged);
 
 		if (hdwp) {
 			HDWP hdwp2 = DeferWindowPos(hdwp, ent.mhwnd, NULL, x1, y1, w, h, flags);
@@ -1175,12 +1786,39 @@ void VDDialogResizerW32::Relayout(int width, int height) {
 
 	if (hdwp)
 		EndDeferWindowPos(hdwp);
+
+	for(const ControlEntry& ent : mControls) {
+		if (ent.mAlignment & kUpDownAutoBuddy) {
+			HWND hwndBuddy = (HWND)SendMessage(ent.mhwnd, UDM_GETBUDDY, 0, 0);
+			
+			SendMessage(ent.mhwnd, UDM_SETBUDDY, (WPARAM)hwndBuddy, 0);
+		}
+	}
 }
 
-void VDDialogResizerW32::Add(uint32 id, int alignment) {
+void VDDialogResizerW32::Add(uint32 id, uint32 alignment) {
 	HWND hwndControl = GetDlgItem(mhwndBase, id);
 	if (!hwndControl)
 		return;
+
+	Add(hwndControl, alignment);
+}
+
+void VDDialogResizerW32::Add(VDZHWND hwndControl, uint32 alignment) {
+	// Find if we already have this control (linear search!)
+	ControlEntry *ce = nullptr;
+
+	for(auto& e : mControls) {
+		if (e.mhwnd == hwndControl) {
+			ce = &e;
+			break;
+		}
+	}
+
+	if (!ce) {
+		ce = &mControls.push_back();
+		ce->mhwnd		= hwndControl;
+	}
 
 	RECT r;
 	if (!GetWindowRect(hwndControl, &r))
@@ -1190,17 +1828,89 @@ void VDDialogResizerW32::Add(uint32 id, int alignment) {
 	if (!MapWindowPoints(NULL, mhwndBase, (LPPOINT)&r, 2) && GetLastError())
 		return;
 
-	ControlEntry& ce = mControls.push_back();
-
-	ce.mhwnd		= hwndControl;
-	ce.mAlignment	= alignment;
-	ce.mX1			= r.left   - ((mWidth  * ((alignment >> 0) & 3)) >> 1);
-	ce.mY1			= r.top    - ((mHeight * ((alignment >> 4) & 3)) >> 1);
-	ce.mX2			= r.right  - ((mWidth  * ((alignment >> 2) & 3)) >> 1);
-	ce.mY2			= r.bottom - ((mHeight * ((alignment >> 6) & 3)) >> 1);
+	ce->mX1			= r.left   - ((mWidth  * ((alignment >> 0) & 3)) >> 1);
+	ce->mY1			= r.top    - ((mHeight * ((alignment >> 4) & 3)) >> 1);
+	ce->mX2			= r.right  - ((mWidth  * ((alignment >> 2) & 3)) >> 1);
+	ce->mY2			= r.bottom - ((mHeight * ((alignment >> 6) & 3)) >> 1);
+	ce->mRefX		= mRefX;
+	ce->mRefY		= mRefY;
+	ce->mAlignment	= alignment;
 }
 
-void VDDialogResizerW32::Erase(const VDZHDC *phdc) {
+void VDDialogResizerW32::Add(VDZHWND hwndControl, sint32 x, sint32 y, sint32 w, sint32 h, uint32 alignment) {
+	ControlEntry *ce = &mControls.push_back();
+	ce->mX1			= x     - ((mWidth  * ((alignment >> 0) & 3)) >> 1);
+	ce->mY1			= y     - ((mHeight * ((alignment >> 4) & 3)) >> 1);
+	ce->mX2			= (x+w) - ((mWidth  * ((alignment >> 2) & 3)) >> 1);
+	ce->mY2			= (y+h) - ((mHeight * ((alignment >> 6) & 3)) >> 1);
+	ce->mRefX		= mRefX;
+	ce->mRefY		= mRefY;
+	ce->mhwnd		= hwndControl;
+	ce->mAlignment	= alignment;
+}
+
+void VDDialogResizerW32::AddAlias(VDZHWND hwndTarget, VDZHWND hwndSource, uint32 mergeFlags) {
+	if (!hwndTarget || !hwndSource)
+		return;
+
+	ControlEntry *ce = nullptr;
+	for(auto& e : mControls) {
+		if (e.mhwnd == hwndTarget) {
+			ce = &e;
+			break;
+		}
+	}
+
+	for(const auto& e : mControls) {
+		if (e.mhwnd == hwndSource) {
+			if (!ce) {
+				ce = &mControls.push_back();
+				ce->mhwnd = hwndTarget;
+			}
+
+			ce->mAlignment = e.mAlignment | mergeFlags;
+			ce->mX1 = e.mX1;
+			ce->mY1 = e.mY1;
+			ce->mX2 = e.mX2;
+			ce->mY2 = e.mY2;
+			ce->mRefX = e.mRefX;
+			ce->mRefY = e.mRefY;
+
+			int x1;
+			int y1;
+			int w;
+			int h;
+			uint32 flags;
+			ComputeLayout(*ce, ComputeAnchors(), x1, y1, w, h, flags, true);
+
+			SetWindowPos(hwndTarget, NULL, x1, y1, w, h, flags);
+			break;
+		}
+	}
+
+}
+
+void VDDialogResizerW32::Remove(VDZHWND hwndControl) {
+	auto it = std::find_if(mControls.begin(), mControls.end(),
+		[=](const ControlEntry& ce) { return ce.mhwnd == hwndControl; });
+
+	if (it != mControls.end())
+		mControls.erase(it);
+}
+
+void VDDialogResizerW32::Broadcast(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
+	int excludeMask = 0;
+
+	if (msg == WM_SETFONT)
+		excludeMask = kSuppressFontChange;
+
+	for(const auto& ce : mControls) {
+		if (!(ce.mAlignment & excludeMask))
+			SendMessageW(ce.mhwnd, msg, wParam, lParam);
+	}
+}
+
+void VDDialogResizerW32::Erase(const VDZHDC *phdc, sint32 backgroundColorOverride) {
 	HDC hdc = phdc ? *phdc : GetDC(mhwndBase);
 	if (hdc) {
 		Controls::const_iterator it(mControls.begin()), itEnd(mControls.end());
@@ -1218,12 +1928,65 @@ void VDDialogResizerW32::Erase(const VDZHDC *phdc) {
 		}
 
 		RECT rClient;
-		if (GetClientRect(mhwndBase, &rClient))
-			FillRect(hdc, &rClient, (HBRUSH)(COLOR_3DFACE + 1));
+		if (GetClientRect(mhwndBase, &rClient)) {
+			if (backgroundColorOverride >= 0) {
+				SetDCBrushColor(hdc, VDSwizzleU32(backgroundColorOverride) >> 8);
+				FillRect(hdc, &rClient, (HBRUSH)GetStockObject(DC_BRUSH));
+			} else {
+				FillRect(hdc, &rClient, (HBRUSH)(COLOR_3DFACE + 1));
+			}
+		}
 
 		if (!phdc)
 			ReleaseDC(mhwndBase, hdc);
 	}
+}
+
+VDDialogResizerW32::Anchors VDDialogResizerW32::ComputeAnchors() const {
+	return Anchors {
+		{ 0, mWidth >> 1, mWidth, mWidth },
+		{ 0, mHeight >> 1, mHeight, mHeight }
+	};
+}
+
+void VDDialogResizerW32::ComputeLayout(const ControlEntry& ce, const Anchors& anchors, int& x1, int& y1, int& w, int& h, uint32& flags, bool forceMove) const {
+	flags = SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS;
+	const uint8 alignment = ce.mAlignment;
+
+	if (!forceMove) {
+		if (!(alignment & kX1Y1Mask))
+			flags |= SWP_NOMOVE;
+
+		if ((alignment & kX1Y1Mask) == (alignment & kX2Y2Mask))
+			flags |= SWP_NOSIZE;
+	}
+
+	x1 = ce.mX1;
+	y1 = ce.mY1;
+	int x2 = ce.mX2;
+	int y2 = ce.mY2;
+
+	// check if we need to handle a DPI rescale
+	if (ce.mRefX != mRefX || ce.mRefY != mRefY) {
+		x1 = MulDiv(x1, mRefX, ce.mRefX);
+		y1 = MulDiv(y1, mRefY, ce.mRefY);
+		x2 = MulDiv(x2, mRefX, ce.mRefX);
+		y2 = MulDiv(y2, mRefY, ce.mRefY);
+	}
+
+	x1 += anchors.mXAnchors[(alignment >> 0) & 3];
+	x2 += anchors.mXAnchors[(alignment >> 2) & 3];
+	y1 += anchors.mYAnchors[(alignment >> 4) & 3];
+	y2 += anchors.mYAnchors[(alignment >> 6) & 3];
+
+	w = x2 - x1;
+	h = y2 - y1;
+
+	if (w < 0)
+		w = 0;
+
+	if (h < 0)
+		h = 0;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1234,15 +1997,7 @@ VDResizableDialogFrameW32::VDResizableDialogFrameW32(uint32 id)
 }
 
 void VDResizableDialogFrameW32::OnPreLoaded() {
+	VDDialogFrameW32::OnPreLoaded();
+
 	SetCurrentSizeAsMinSize();
-	mResizer.Init(mhdlg);
-}
-
-bool VDResizableDialogFrameW32::OnErase(VDZHDC hdc) {
-	mResizer.Erase(&hdc);
-	return true;
-}
-
-void VDResizableDialogFrameW32::OnSize() {
-	mResizer.Relayout();
 }

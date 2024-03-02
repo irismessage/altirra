@@ -78,6 +78,21 @@ void VDConvertExpandedDateToNativeW32(SYSTEMTIME& dst, const VDExpandedDate& src
 	dst.wMilliseconds = src.mMilliseconds;
 }
 
+VDDate VDDateFromLocalDate(const VDExpandedDate& date) {
+	SYSTEMTIME st;
+	VDConvertExpandedDateToNativeW32(st, date);
+
+	SYSTEMTIME ust;
+	if (!TzSpecificLocalTimeToSystemTime(NULL, &st, &ust))
+		return {};
+
+	FILETIME ft;
+	if (!SystemTimeToFileTime(&ust, &ft))
+		return {};
+
+	return VDDate { ft.dwLowDateTime + ((uint64)ft.dwHighDateTime << 32) };
+}
+
 void VDAppendLocalDateString(VDStringW& dst, const VDExpandedDate& ed) {
 	SYSTEMTIME st;
 

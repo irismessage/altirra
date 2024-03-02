@@ -49,6 +49,7 @@
 #include <displaydrvd3d9.h>
 #include <vd2/VDDisplay/compositor.h>
 #include <vd2/VDDisplay/displaydrv.h>
+#include <vd2/VDDisplay/logging.h>
 #include <vd2/VDDisplay/renderer.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include <vd2/VDDisplay/internal/customshaderd3d9.h>
@@ -61,8 +62,7 @@ namespace nsVDDisplay {
 #pragma warning(disable: 4351)		// warning C4351: new behavior: elements of array 'VDVideoUploadContextD3D9::mpD3DImageTextures' will be default initialized
 #endif
 
-#define VDDEBUG_DX9DISP VDDEBUG
-//#define VDDEBUG_DX9DISP (void)sizeof
+#define VDDEBUG_DX9DISP(...) VDDispLogF(__VA_ARGS__)
 
 #define D3D_DO(x) VDVERIFY(SUCCEEDED(mpD3DDevice->x))
 
@@ -161,7 +161,7 @@ public:
 
 		VDD3D9LockInfo lockInfo;
 		if (!tex->Lock(0, lockInfo)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load horizontal even/odd texture.\n");
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load horizontal even/odd texture.");
 			return false;
 		}
 
@@ -192,7 +192,7 @@ public:
 
 		VDD3D9LockInfo lockInfo;
 		if (!tex->Lock(0, lockInfo)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load horizontal even/odd texture.\n");
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load horizontal even/odd texture.");
 			return false;
 		}
 
@@ -215,7 +215,7 @@ public:
 
 		VDD3D9LockInfo lr;
 		if (!tex->Lock(0, lr)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load cubic filter texture.\n");
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load cubic filter texture.");
 			return false;
 		}
 
@@ -493,7 +493,7 @@ bool VDFontRendererD3D9::Init(VDD3D9Manager *d3dmgr) {
 
 	HRESULT hr = dev->CreateTexture(256, 256, 1, 0, D3DFMT_A8R8G8B8, useDefault ? D3DPOOL_DEFAULT : D3DPOOL_MANAGED, ~mpD3DFontTexture, NULL);
 	if (FAILED(hr)) {
-		VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to create font cache texture.\n");
+		VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to create font cache texture.");
 		Shutdown();
 		return false;
 	}
@@ -502,7 +502,7 @@ bool VDFontRendererD3D9::Init(VDD3D9Manager *d3dmgr) {
 	if (useDefault) {
 		hr = dev->CreateTexture(256, 256, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, ~uploadtex, NULL);
 		if (FAILED(hr)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to create font cache texture.\n");
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to create font cache texture.");
 			Shutdown();
 			return false;
 		}
@@ -515,7 +515,7 @@ bool VDFontRendererD3D9::Init(VDD3D9Manager *d3dmgr) {
 	hr = uploadtex->LockRect(0, &lr, NULL, 0);
 	VDASSERT(SUCCEEDED(hr));
 	if (FAILED(hr)) {
-		VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load font cache texture.\n");
+		VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load font cache texture.");
 		Shutdown();
 		return false;
 	}
@@ -994,9 +994,9 @@ bool VDVideoDisplayDX9Manager::InitEffect() {
 
 			HRESULT hr = pD3DDevice->CreateVertexShader((const DWORD *)pVertexShaderData, &mVertexShaders[i]);
 			if (FAILED(hr)) {
-				VDDEBUG_DX9DISP("VideoDisplay/DX9: Unable to create vertex shader #%d.\n", i+1);
-				VDDEBUG_DX9DISP("VideoDisplay/DX9: Vertex shader version is: %x.\n", pVertexShaderData[0]);
-				VDDEBUG_DX9DISP("VideoDisplay/DX9: Supported vertex shader version is: %x.\n", caps.VertexShaderVersion);
+				VDDEBUG_DX9DISP("VideoDisplay/DX9: Unable to create vertex shader #%d.", i+1);
+				VDDEBUG_DX9DISP("VideoDisplay/DX9: Vertex shader version is: %x.", pVertexShaderData[0]);
+				VDDEBUG_DX9DISP("VideoDisplay/DX9: Supported vertex shader version is: %x.", caps.VertexShaderVersion);
 				return false;
 			}
 		}
@@ -1015,9 +1015,9 @@ bool VDVideoDisplayDX9Manager::InitEffect() {
 
 			HRESULT hr = pD3DDevice->CreatePixelShader((const DWORD *)pPixelShaderData, &mPixelShaders[i]);
 			if (FAILED(hr)) {
-				VDDEBUG_DX9DISP("VideoDisplay/DX9: Unable to create pixel shader #%d.\n", i+1);
-				VDDEBUG_DX9DISP("VideoDisplay/DX9: Pixel shader version is: %x.\n", pPixelShaderData[0]);
-				VDDEBUG_DX9DISP("VideoDisplay/DX9: Supported pixel shader version is: %x.\n", caps.PixelShaderVersion);
+				VDDEBUG_DX9DISP("VideoDisplay/DX9: Unable to create pixel shader #%d.", i+1);
+				VDDEBUG_DX9DISP("VideoDisplay/DX9: Pixel shader version is: %x.", pPixelShaderData[0]);
+				VDDEBUG_DX9DISP("VideoDisplay/DX9: Supported pixel shader version is: %x.", caps.PixelShaderVersion);
 				return false;
 			}
 		}
@@ -1208,13 +1208,13 @@ bool VDVideoDisplayDX9Manager::BlitFixedFunction2(const EffectContext& ctx, IDir
 	// bind vertex and pixel shaders
 	HRESULT hr = dev->SetVertexShader(nullptr);
 	if (FAILED(hr)) {
-		VDDEBUG_DX9DISP("VideoDisplay/DX9: Couldn't clear vertex shader! hr=%08x\n", hr);
+		VDDEBUG_DX9DISP("VideoDisplay/DX9: Couldn't clear vertex shader! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 		return false;
 	}
 
 	hr = dev->SetPixelShader(nullptr);
 	if (FAILED(hr)) {
-		VDDEBUG_DX9DISP("VideoDisplay/DX9: Couldn't clear pixel shader! hr=%08x\n", hr);
+		VDDEBUG_DX9DISP("VideoDisplay/DX9: Couldn't clear pixel shader! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 		return false;
 	}
 
@@ -1239,7 +1239,7 @@ bool VDVideoDisplayDX9Manager::BlitFixedFunction2(const EffectContext& ctx, IDir
 		hr = dev->SetTextureStageState(tss.mStage, tss.mState, tss.mValue);
 
 		if (FAILED(hr)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set texture stage state! hr=%08x\n", hr);
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set texture stage state! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 			return false;
 		}
 	}
@@ -1265,14 +1265,14 @@ bool VDVideoDisplayDX9Manager::BlitFixedFunction2(const EffectContext& ctx, IDir
 		hr = dev->SetSamplerState(0, ss.mState, ss.mValue);
 
 		if (FAILED(hr)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set sampler state! hr=%08x\n", hr);
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set sampler state! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 			return false;
 		}
 	}
 
 	hr = dev->SetTexture(0, ctx.mpSourceTexture1);
 	if (FAILED(hr)) {
-		VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set texture! hr=%08x\n", hr);
+		VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set texture! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 		return false;
 	}
 
@@ -1287,7 +1287,7 @@ bool VDVideoDisplayDX9Manager::BlitFixedFunction2(const EffectContext& ctx, IDir
 
 	hr = dev->SetViewport(&vp);
 	if (FAILED(hr)) {
-		VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set viewport! hr=%08x\n", hr);
+		VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set viewport! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 		return false;
 	}
 
@@ -1325,7 +1325,7 @@ bool VDVideoDisplayDX9Manager::BlitFixedFunction2(const EffectContext& ctx, IDir
 	}
 
 	if (!validDraw) {
-		VDDEBUG_DX9DISP("VideoDisplay/DX9: Invalid vertex buffer lock detected -- bailing.\n");
+		VDDEBUG_DX9DISP("VideoDisplay/DX9: Invalid vertex buffer lock detected -- bailing.");
 		return false;
 	}
 
@@ -1335,7 +1335,7 @@ bool VDVideoDisplayDX9Manager::BlitFixedFunction2(const EffectContext& ctx, IDir
 	hr = mpManager->DrawArrays(D3DPT_TRIANGLESTRIP, 0, 2);
 
 	if (FAILED(hr)) {
-		VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to draw primitive! hr=%08x\n", hr);
+		VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to draw primitive! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 		return false;
 	}
 
@@ -1477,13 +1477,13 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 		// bind vertex and pixel shaders
 		HRESULT hr = dev->SetVertexShader(pi.mVertexShaderIndex >= 0 ? mVertexShaders[pi.mVertexShaderIndex] : NULL);
 		if (FAILED(hr)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Couldn't set vertex shader! hr=%08x\n", hr);
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Couldn't set vertex shader! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 			return false;
 		}
 
 		hr = dev->SetPixelShader(pi.mPixelShaderIndex >= 0 ? mPixelShaders[pi.mPixelShaderIndex] : NULL);
 		if (FAILED(hr)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Couldn't set pixel shader! hr=%08x\n", hr);
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Couldn't set pixel shader! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 			return false;
 		}
 
@@ -1502,7 +1502,7 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 				hr = dev->SetTextureStageState(1, (D3DTEXTURESTAGESTATETYPE)(D3DTSS_BUMPENVMAT00 + i), scaleData2[i]);
 
 				if (FAILED(hr)) {
-					VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set state! hr=%08x\n", hr);
+					VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set state! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 					return false;
 				}
 			}
@@ -1511,13 +1511,13 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 		// upload shader constants
 		hr = dev->SetVertexShaderConstantF(0, (const float *)&data, sizeof data / sizeof(float[4]));
 		if (FAILED(hr)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to upload vertex shader constants! hr=%08x\n", hr);
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to upload vertex shader constants! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 			return false;
 		}
 
 		hr = dev->SetPixelShaderConstantF(0, (const float *)&data, sizeof data / sizeof(float[4]));
 		if (FAILED(hr)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to upload pixel shader constants! hr=%08x\n", hr);
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to upload pixel shader constants! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 			return false;
 		}
 
@@ -1543,7 +1543,7 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 				hr = dev->SetSamplerState(texb.mStage, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
 
 			if (FAILED(hr)) {
-				VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set texture/sampler state! hr=%08x\n", hr);
+				VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set texture/sampler state! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 				return false;
 			}
 		}
@@ -1584,7 +1584,7 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 			}
 
 			if (FAILED(hr)) {
-				VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set render target! hr=%08x\n", hr);
+				VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set render target! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 				return false;
 			}
 		}
@@ -1616,7 +1616,7 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 			}
 
 			if (FAILED(hr)) {
-				VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set viewport! hr=%08x\n", hr);
+				VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to set viewport! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 				return false;
 			}
 		} else {
@@ -1629,7 +1629,7 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 
 			HRESULT hr = dev->SetViewport(&vp);
 			if (FAILED(hr)) {
-				VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to retrieve viewport! hr=%08x\n", hr);
+				VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to retrieve viewport! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 				return false;
 			}
 		}
@@ -1669,7 +1669,7 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 		}
 
 		if (!validDraw) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Invalid vertex buffer lock detected -- bailing.\n");
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Invalid vertex buffer lock detected -- bailing.");
 			return false;
 		}
 
@@ -1679,7 +1679,7 @@ bool VDVideoDisplayDX9Manager::RunEffect2(const EffectContext& ctx, const nsVDDi
 		hr = mpManager->DrawArrays(D3DPT_TRIANGLESTRIP, 0, 2);
 
 		if (FAILED(hr)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to draw primitive! hr=%08x\n", hr);
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to draw primitive! hr=%08x %s", hr, VDDispDecodeD3D9Error(hr));
 			return false;
 		}
 	}
@@ -1792,7 +1792,7 @@ bool VDVideoUploadContextD3D9::Init(void *hmonitor, bool use9ex, const VDPixmap&
 	const D3DCAPS9& caps = mpManager->GetCaps();
 
 	if (caps.MaxTextureWidth < (uint32)source.w || caps.MaxTextureHeight < (uint32)source.h) {
-		VDDEBUG_DX9DISP("VideoDisplay/DX9: source image is larger than maximum texture size\n");
+		VDDEBUG_DX9DISP("VideoDisplay/DX9: source image is larger than maximum texture size");
 		Shutdown();
 		return false;
 	}
@@ -2042,7 +2042,7 @@ bool VDVideoUploadContextD3D9::Init(void *hmonitor, bool use9ex, const VDPixmap&
 		ClearImageTexture(i);
 	}
 
-	VDDEBUG_DX9DISP("VideoDisplay/DX9: Init successful for %dx%d source image (%s -> %s); monitor=%p\n", source.w, source.h, VDPixmapGetInfo(source.format).name, VDPixmapGetInfo(mTexFmt.format).name, hmonitor);
+	VDDEBUG_DX9DISP("VideoDisplay/DX9: Init successful for %dx%d source image (%s -> %s); monitor=%p", source.w, source.h, VDPixmapGetInfo(source.format).name, VDPixmapGetInfo(mTexFmt.format).name, hmonitor);
 	return true;
 }
 
@@ -2734,7 +2734,7 @@ bool VDVideoDisplayMinidriverDX9::Init(HWND hwnd, HMONITOR hmonitor, const VDVid
 
 	if (mbFullScreen && !mbFullScreenSet) {
 		mbFullScreenSet = true;
-		mpManager->AdjustFullScreen(true, mFullScreenWidth, mFullScreenHeight, mFullScreenRefreshRate, mbFullScreen16Bit);
+		mpManager->AdjustFullScreen(true, mFullScreenWidth, mFullScreenHeight, mFullScreenRefreshRate, mbFullScreen16Bit, mhwnd);
 	}
 
 	mpD3DDevice = mpManager->GetDevice();
@@ -2823,7 +2823,7 @@ void VDVideoDisplayMinidriverDX9::InitBicubic() {
 		return;
 	}
 
-	VDDEBUG_DX9DISP("VideoDisplay/DX9: Bicubic initialization complete.\n");
+	VDDEBUG_DX9DISP("VideoDisplay/DX9: Bicubic initialization complete.");
 	mbCubicInitialized = true;
 }
 
@@ -2881,7 +2881,7 @@ namespace {
 		hr = uploadtex->LockRect(0, &lr, NULL, 0);
 		VDASSERT(SUCCEEDED(hr));
 		if (FAILED(hr)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load bicubic texture.\n");
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load bicubic texture.");
 			return -1;
 		}
 
@@ -2996,7 +2996,7 @@ namespace {
 		hr = uploadtex->LockRect(0, &lr, NULL, 0);
 		VDASSERT(SUCCEEDED(hr));
 		if (FAILED(hr)) {
-			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load boxlinear texture.\n");
+			VDDEBUG_DX9DISP("VideoDisplay/DX9: Failed to load boxlinear texture.");
 			return std::pair<int, int>(-1, -1);
 		}
 
@@ -3153,7 +3153,7 @@ void VDVideoDisplayMinidriverDX9::Shutdown() {
 	if (mpManager) {
 		if (mbFullScreenSet) {
 			mbFullScreenSet = false;
-			mpManager->AdjustFullScreen(false, 0, 0, 0, false);
+			mpManager->AdjustFullScreen(false, 0, 0, 0, false, nullptr);
 		}
 
 		VDDeinitDirect3D9(mpManager, this);
@@ -3217,7 +3217,9 @@ void VDVideoDisplayMinidriverDX9::SetFullScreen(bool fs, uint32 w, uint32 h, uin
 		if (mpManager) {
 			if (mbFullScreenSet != fs) {
 				mbFullScreenSet = fs;
-				mpManager->AdjustFullScreen(fs, w, h, refresh, use16bit);
+				mpManager->AdjustFullScreen(fs, w, h, refresh, use16bit, mhwnd);
+
+				mbSwapChainPresentPending = false;
 			}
 		}
 	}
@@ -3277,7 +3279,7 @@ void VDVideoDisplayMinidriverDX9::Refresh(UpdateMode mode) {
 		RECT rClient = { mClientRect.left, mClientRect.top, mClientRect.right, mClientRect.bottom };
 
 		if (!Paint(NULL, rClient, mode)) {
-			VDDEBUG_DX9DISP("Refresh() failed in Paint()\n");
+			VDDEBUG_DX9DISP("Refresh() failed in Paint()");
 		}
 	}
 }
@@ -3760,7 +3762,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 	mpManager->SetSwapChainActive(NULL);
 
 	if (!bSuccess) {
-		VDDEBUG_DX9DISP("VideoDisplay/DX9: Render failed -- applying boot to the head.\n");
+		VDDEBUG_DX9DISP("VideoDisplay/DX9: Render failed -- applying boot to the head.");
 
 		if (!mpManager->Reset())
 			return false;
@@ -3848,7 +3850,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateScreen(const RECT& rClient, UpdateMode u
 	VDASSERT(!mPresentHistory.mbPresentPending);
 
 	if (FAILED(hr)) {
-		VDDEBUG_DX9DISP("VideoDisplay/DX9: Render failed in UpdateScreen() -- applying boot to the head.\n");
+		VDDEBUG_DX9DISP("VideoDisplay/DX9: Render failed in UpdateScreen() with hr=%08X (%s) -- applying boot to the head.", hr, VDDispDecodeD3D9Error(hr));
 
 		// TODO: Need to free all DEFAULT textures before proceeding
 
@@ -3928,3 +3930,6 @@ void VDVideoDisplayMinidriverDX9::DrawDebugInfo(FilterMode mode, const RECT& rCl
 
 	mpFontRenderer->End();
 }
+
+#undef VDDEBUG_DX9DISP
+#undef D3D_DO

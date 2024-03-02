@@ -36,6 +36,17 @@
 		</Expand>
 	</Type>
 
+	<Type Name="vdfastdeque&lt;*,*&gt;">
+		<DisplayString>size={(m.mapEnd - m.mapStart)*kBlockSize - kBlockSize + 1 + mTails.endIndex - mTails.startIndex}</DisplayString>
+		<Expand>
+			<Item Name="[size]">(m.mapEnd - m.mapStart)*kBlockSize - kBlockSize + 1 + mTails.endIndex - mTails.startIndex</Item>
+			<IndexListItems>
+				<Size>(m.mapEnd - m.mapStart)*kBlockSize - kBlockSize + 1 + mTails.endIndex - mTails.startIndex</Size>
+				<ValueNode>m.mapStart[$i / kBlockSize]->data[$i % kBlockSize]</ValueNode>
+			</IndexListItems>
+		</Expand>
+	</Type>
+	
 	<Type Name="VDStringSpanA">
 		<DisplayString Condition="mpEnd&gt;=mpBegin">len={mpEnd-mpBegin,i} "{mpBegin,[mpEnd-mpBegin]sb}"</DisplayString>
 		<DisplayString Condition="mpEnd&lt;mpBegin">invalid!</DisplayString>
@@ -172,4 +183,93 @@
 			</ArrayItems>			
 		</Expand>
 	</Type>
+	
+	<Type Name="ATHTNode">
+		<DisplayString Condition="mNodeType==kATHTNodeType_Insn &amp;&amp; mpFirstChild">Y={mRelYPos}:{mHeight} Type=Insns ({mInsn.mOffset}:{mInsn.mCount}) + children</DisplayString>
+		<DisplayString Condition="mNodeType==kATHTNodeType_Insn">Y={mRelYPos}:{mHeight} Type=Insns ({mInsn.mOffset}:{mInsn.mCount})</DisplayString>
+		<DisplayString Condition="mNodeType==kATHTNodeType_Repeat">Y={mRelYPos}:{mHeight} Type=Repeat ({mRepeat.mSize} insns x {mRepeat.mCount} times)</DisplayString>
+		<DisplayString Condition="mNodeType==kATHTNodeType_Label">Y={mRelYPos}:{mHeight} Type=Label "{mpLabel,sb}"</DisplayString>
+		<DisplayString Condition="mNodeType==kATHTNodeType_Interrupt">Y={mRelYPos}:{mHeight} Type=Interrupt</DisplayString>
+		<DisplayString>Y={mRelYPos} H={mHeight} Type={mNodeType}</DisplayString>
+		<Expand>
+			<CustomListItems>
+				<Variable Name="p" InitialValue="mpFirstChild" />
+				<Variable Name="count" InitialValue="0" />
+				<Loop Condition="p">
+					<Exec>p = p-&gt;mpNextSibling</Exec>
+					<Exec>count = count+1</Exec>
+				</Loop>
+				<Item Name="[Count]">count</Item>
+			</CustomListItems>
+			<Synthetic Name="[Predecessors]">
+				<Expand>
+					<LinkedListItems>
+						<HeadPointer>mpPrevSibling</HeadPointer>
+						<NextPointer>mpPrevSibling</NextPointer>
+						<ValueNode>this</ValueNode>
+					</LinkedListItems>
+				</Expand>
+			</Synthetic>
+			<Synthetic Name="[Successors]">
+				<Expand>
+					<LinkedListItems>
+						<HeadPointer>mpNextSibling</HeadPointer>
+						<NextPointer>mpNextSibling</NextPointer>
+						<ValueNode>this</ValueNode>
+					</LinkedListItems>
+				</Expand>
+			</Synthetic>
+			<LinkedListItems>
+				<HeadPointer>mpFirstChild</HeadPointer>
+				<NextPointer>mpNextSibling</NextPointer>
+				<ValueNode>this</ValueNode>
+			</LinkedListItems>
+		</Expand>
+	</Type>
+	
+	<Type Name="ATCPUHistoryEntry">
+		<DisplayString>A={(short)mA,Xb} X={(short)mX,Xb} Y={(short)mY,Xb} S={(short)mS,Xb} | {mPC,Xb}: {(unsigned short)(mOpcode[0]*256+mOpcode[1]),Xb}{(unsigned short)(mOpcode[2]*256+mOpcode[3]),Xb}</DisplayString>
+		<Expand>
+			<Synthetic Name="Opcode">
+				<DisplayString>{(unsigned short)(mOpcode[0]*256+mOpcode[1]),Xb}{(unsigned short)(mOpcode[2]*256+mOpcode[3]),Xb}</DisplayString>
+				<Expand>
+					<ArrayItems>
+						<Size>4</Size>
+						<ValuePointer>mOpcode</ValuePointer>
+					</ArrayItems>
+				</Expand>
+			</Synthetic>
+			<Item Name="A">mA,Xb</Item>
+			<Item Name="X">mX,Xb</Item>
+			<Item Name="Y">mY,Xb</Item>
+			<Item Name="S">mS,Xb</Item>
+			<Item Name="P">mP,Xb</Item>
+		</Expand>
+	</Type>
+  
+  <Type Name="ATMemoryManager::MemoryLayer" IncludeView="accessa">
+    <DisplayString Condition="mFlags&amp;4">A</DisplayString>
+    <DisplayString>-</DisplayString>
+  </Type>
+  
+  <Type Name="ATMemoryManager::MemoryLayer" IncludeView="accessr">
+    <DisplayString Condition="mFlags&amp;2">R</DisplayString>
+    <DisplayString>-</DisplayString>
+  </Type>
+
+  <Type Name="ATMemoryManager::MemoryLayer" IncludeView="accessw">
+    <DisplayString Condition="!(mFlags&amp;1)">-</DisplayString>
+    <DisplayString Condition="mbReadOnly">O</DisplayString>
+    <DisplayString>W</DisplayString>
+  </Type>
+  
+  <Type Name="ATMemoryManager::MemoryLayer">
+    <Intrinsic Name="addr_start" Expression="mPageOffset*256" />
+    <Intrinsic Name="addr_end" Expression="addr_start() + mPageCount*256" />
+    <DisplayString>Pri {(int)mPriority,i} | {*this,view(accessa)}{*this,view(accessr)}{*this,view(accessw)} | ${addr_start(),Xb}-{addr_end()-1,Xb} [{mpName,sb}]</DisplayString>
+  </Type>
+  
+  <Type Name="ATMemoryLayer">
+    <MostDerivedType IgnoreVTable="true">(ATMemoryManager::MemoryLayer*)this</MostDerivedType>
+  </Type>
 </AutoVisualizer>

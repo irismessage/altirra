@@ -8,7 +8,8 @@
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <EnableEnhancedInstructionSet>NoExtensions</EnableEnhancedInstructionSet>
+      <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
+      <CallingConvention>VectorCall</CallingConvention>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>

@@ -105,6 +105,9 @@
     <ClCompile Include="source\fontbitmap.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\logging.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\bicubic.h">
@@ -178,6 +181,9 @@
     </ClInclude>
     <ClInclude Include="h\vd2\VDDisplay\internal\fontbitmap.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\vd2\VDDisplay\logging.h">
+      <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

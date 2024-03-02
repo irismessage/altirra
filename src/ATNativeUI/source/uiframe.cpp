@@ -66,17 +66,6 @@
 	} DEVICE_SCALE_FACTOR;
 #endif
 
-// Requires Windows 8.1
-#ifndef WM_DPICHANGED
-#define WM_DPICHANGED 0x02E0
-
-	typedef enum MONITOR_DPI_TYPE {
-		MDT_EFFECTIVE_DPI = 0,
-		MDT_ANGULAR_DPI = 1,
-		MDT_RAW_DPI = 2
-	} MONITOR_DPI_TYPE;
-#endif
-
 #pragma comment(lib, "msimg32")
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -114,24 +103,7 @@ uint32 ATUIGetWindowDpiW32(HWND hwnd) {
 		HMONITOR hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
 
 		if (hmon) {
-			UINT dpiX = 0;
-			UINT dpiY = 0;
-
-			HMODULE hmodShCore = VDLoadSystemLibraryW32("shcore");
-			if (hmodShCore) {
-				typedef HRESULT (WINAPI *tpGetDpiForMonitor)(HMONITOR, MONITOR_DPI_TYPE, UINT *, UINT *);
-				tpGetDpiForMonitor pGetDpiForMonitor = (tpGetDpiForMonitor)GetProcAddress(hmodShCore, "GetDpiForMonitor");
-
-				if (pGetDpiForMonitor) {
-					HRESULT hr = pGetDpiForMonitor(hmon, MDT_EFFECTIVE_DPI, &dpiX, &dpiY);
-					if (SUCCEEDED(hr) && dpiY) {
-						dpi = dpiY;
-					}
-				}
-
-				FreeLibrary(hmodShCore);
-			}
-
+			dpi = ATUIGetMonitorDpiW32(hmon);
 		}
 	} else {
 		HDC hdc = GetDC(hwnd);
@@ -141,6 +113,34 @@ uint32 ATUIGetWindowDpiW32(HWND hwnd) {
 			ReleaseDC(hwnd, hdc);
 		}
 	}
+
+	return dpi;
+}
+
+uint32 ATUIGetMonitorDpiW32(HMONITOR hMonitor) {
+	uint32 dpi = 0;
+	UINT dpiX = 0;
+	UINT dpiY = 0;
+
+	if (VDIsAtLeast81W32()) {
+		HMODULE hmodShCore = VDLoadSystemLibraryW32("shcore");
+		if (hmodShCore) {
+			typedef HRESULT (WINAPI *tpGetDpiForMonitor)(HMONITOR, MONITOR_DPI_TYPE, UINT *, UINT *);
+			tpGetDpiForMonitor pGetDpiForMonitor = (tpGetDpiForMonitor)GetProcAddress(hmodShCore, "GetDpiForMonitor");
+
+			if (pGetDpiForMonitor) {
+				HRESULT hr = pGetDpiForMonitor(hMonitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY);
+				if (SUCCEEDED(hr) && dpiY) {
+					dpi = dpiY;
+				}
+			}
+
+			FreeLibrary(hmodShCore);
+		}
+	}
+
+	if (!dpi)
+		dpi = ATUIGetGlobalDpiW32();
 
 	return dpi;
 }
@@ -2725,6 +2725,17 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			if (mFrameMode == kFrameModeUndocked && mbActivelyMovingSizing) {
 				mbActivelyMovingSizing = false;
 				NotifyEndTracking();
+			}
+			break;
+
+		case WM_DPICHANGED:
+			if (mFrameMode == kFrameModeUndocked) {
+				const RECT& r = *(const RECT *)lParam;
+
+				SetWindowPos(mhwnd, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+				RedrawWindow(mhwnd, NULL, NULL, RDW_INVALIDATE);
+
+				return 0;
 			}
 			break;
 	}

@@ -21,6 +21,7 @@
 #include <at/atcore/blockdevice.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicecart.h>
+#include <at/atcore/deviceparentimpl.h>
 #include <at/atemulation/flash.h>
 #include "ide.h"
 
@@ -38,6 +39,7 @@ class ATMyIDEEmulator final
 	, public IATDeviceIndicators
 	, public IATDeviceFirmware
 	, public IATDeviceParent
+	, public ATDeviceBus
 {
 	ATMyIDEEmulator(const ATMyIDEEmulator&) = delete;
 	ATMyIDEEmulator& operator=(const ATMyIDEEmulator&) = delete;
@@ -80,6 +82,10 @@ public:		// IATDeviceFirmware
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
 
 public:		// IATDeviceParent
+	IATDeviceBus *GetDeviceBus(uint32 index) override;
+
+public:		// IATDeviceBus
+	const wchar_t *GetBusName() const override;
 	const char *GetSupportedType(uint32 index) override;
 	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
 	void AddChildDevice(IATDevice *dev) override;

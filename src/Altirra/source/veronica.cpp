@@ -46,7 +46,8 @@ ATVeronicaEmulator::ATVeronicaEmulator()
 	, mbCorruptNextCycle(false)
 	, mpCoProcWinBase(nullptr)
 {
-	std::fill(std::begin(mStepBreakpointMap), std::end(mStepBreakpointMap), true);
+	mBreakpointsImpl.BindBPHandler(mCoProc);
+	mBreakpointsImpl.SetStepHandler(this);
 }
 
 ATVeronicaEmulator::~ATVeronicaEmulator() {
@@ -58,7 +59,7 @@ void *ATVeronicaEmulator::AsInterface(uint32 iid) {
 		case IATDeviceScheduling::kTypeID: return static_cast<IATDeviceScheduling *>(this);
 		case IATDeviceDebugTarget::kTypeID: return static_cast<IATDeviceDebugTarget *>(this);
 		case IATDeviceCartridge::kTypeID: return static_cast<IATDeviceCartridge *>(this);
-		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(this);
+		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(&mBreakpointsImpl);
 		case IATDebugTargetHistory::kTypeID: return static_cast<IATDebugTargetHistory *>(this);
 		case IATDebugTargetExecutionControl::kTypeID: return static_cast<IATDebugTargetExecutionControl *>(this);
 	}
@@ -412,31 +413,6 @@ double ATVeronicaEmulator::GetTimestampFrequency() const {
 	return mpScheduler->GetRate().asDouble() * 8.0;
 }
 
-void ATVeronicaEmulator::SetBreakpointHandler(IATCPUBreakpointHandler *handler) {
-	mpBreakpointHandler = handler;
-
-	if (mBreakpointCount)
-		mCoProc.SetBreakpointMap(mBreakpointMap, handler);
-}
-
-void ATVeronicaEmulator::ClearBreakpoint(uint16 pc) {
-	if (mBreakpointMap[pc]) {
-		mBreakpointMap[pc] = false;
-
-		if (!--mBreakpointCount && !mpStepHandler)
-			mCoProc.SetBreakpointMap(nullptr, nullptr);
-	}
-}
-
-void ATVeronicaEmulator::SetBreakpoint(uint16 pc) {
-	if (!mBreakpointMap[pc]) {
-		mBreakpointMap[pc] = true;
-
-		if (!mBreakpointCount++ && !mpStepHandler)
-			mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
-	}
-}
-
 void ATVeronicaEmulator::Break() {
 	CancelStep();
 }
@@ -450,7 +426,7 @@ bool ATVeronicaEmulator::StepInto(const vdfunction<void(bool)>& fn) {
 	mpStepHandler = fn;
 	mbStepOut = false;
 	mStepStartSubCycle = mCoProc.GetTime();
-	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	mBreakpointsImpl.SetStepActive(true);
 	Sync();
 	return true;
 }
@@ -465,7 +441,7 @@ bool ATVeronicaEmulator::StepOver(const vdfunction<void(bool)>& fn) {
 	mbStepOut = true;
 	mStepStartSubCycle = mCoProc.GetTime();
 	mStepOutS = mCoProc.GetS();
-	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	mBreakpointsImpl.SetStepActive(true);
 	Sync();
 	return true;
 }
@@ -480,7 +456,7 @@ bool ATVeronicaEmulator::StepOut(const vdfunction<void(bool)>& fn) {
 	mbStepOut = true;
 	mStepStartSubCycle = mCoProc.GetTime();
 	mStepOutS = mCoProc.GetS() + 1;
-	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	mBreakpointsImpl.SetStepActive(true);
 	Sync();
 	return true;
 }
@@ -495,14 +471,9 @@ void ATVeronicaEmulator::RunUntilSynced() {
 }
 
 bool ATVeronicaEmulator::CheckBreakpoint(uint32 pc) {
-	bool bpHit = false;
+	const bool bpHit = mBreakpointsImpl.CheckBP(pc);
 
-	if (mBreakpointCount && mBreakpointMap[(uint16)pc] && mpBreakpointHandler->CheckBreakpoint(pc))
-		bpHit = true;
-
-	if (mBreakpointCount)
-		mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
-	else {
+	if (!bpHit) {
 		if (mCoProc.GetTime() == mStepStartSubCycle)
 			return false;
 
@@ -511,9 +482,9 @@ bool ATVeronicaEmulator::CheckBreakpoint(uint32 pc) {
 			if ((mCoProc.GetS() - mStepOutS) & 0x80)
 				return false;
 		}
-
-		mCoProc.SetBreakpointMap(nullptr, nullptr);
 	}
+
+	mBreakpointsImpl.SetStepActive(false);
 
 	mbStepNotifyPending = true;
 	mbStepNotifyPendingBP = bpHit;
@@ -528,10 +499,7 @@ void ATVeronicaEmulator::OnScheduledEvent(uint32 id) {
 
 void ATVeronicaEmulator::CancelStep() {
 	if (mpStepHandler) {
-		if (mBreakpointCount)
-			mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
-		else
-			mCoProc.SetBreakpointMap(nullptr, nullptr);
+		mBreakpointsImpl.SetStepActive(false);
 
 		auto p = std::move(mpStepHandler);
 		mpStepHandler = nullptr;

@@ -268,6 +268,15 @@
         </compat-issue>
       </compat-title>
 
+      <compat-title name="Astro Chase">
+        <compat-issue desc="CIO device compatibility issue">
+          <p>
+            Hangs during intro if any custom CIO devices are registered, particularly disk (<tt>D:</tt>) or
+            host device (<tt>H:</tt>).
+          </p>
+        </compat-issue>
+      </compat-title>
+
       <compat-title name="Berzerk">
         <compat-issue id="minor-bug">
           <p>
@@ -321,7 +330,7 @@
             window ($4000-7FFF), which means on a machine with 128K or more of memory it accidentally
             bank switches itself out of CPU address space and crashes. It works if it is running on a machine
             without extended memory banks (48K/64K) or on an OS that configures PIA port B for input
-            (OS-B or LLE[OS-B]).
+            (OS-B or AltirraOS/800).
           </p>
         </compat-issue>
       </compat-title>
@@ -395,6 +404,16 @@
             malfunction if run on a 65C816 without memory at bank $01, by preventing it from expiring
             enemy explosions. It runs fine with either 16-bit
             addressing (bank $00 = bank $01) or with memory in that bank.
+          </p>
+        </compat-issue>
+      </compat-title>
+      
+      <compat-title name="Henry's House">
+        <compat-issue id="major-bug">
+          <p>
+            The game can crash randomly on NTSC machines when Henry dies in Room 05. This is due to the game
+            spending too long in a deferred VBI handler and subsequently scrambling the order of
+            its display list interrupts.
           </p>
         </compat-issue>
       </compat-title>
@@ -542,6 +561,16 @@
     <!-- *************************************************** -->
 
     <compat-category name="Applications">
+      <compat-title name="Basic XE 4.2">
+        <compat-issue desc="Extension disk compatibility issue">
+          <p>
+            Basic XE 4.2 will appear to hang on the title screen if used with the Extension disk normally used
+            with 4.1. This is due to a change in the initialization code in 4.2 that prevents the Screen Editor
+            display from being restored after the Extension loads. This can be worked around by blindly typing
+            a <tt>GR.0</tt> command to restore the screen.
+          </p>
+        </compat-issue>
+      </compat-title>
       <compat-title name="FoReM XL/XE/XE Pro">
         <compat-issue desc="Hardware compatibility issue">
           <p>
@@ -669,8 +698,8 @@
       <compat-title name="SpartaDOS X">
         <compat-issue desc="Emulation feature issue">
           <p>
-            SpartaDOS X uses a polling loop for SIO transfers, so regular burst I/O mode does not work
-            with it. Use the burst (polled) mode instead.
+            SpartaDOS X uses a custom SIO routine and thus will not work with standard SIOV patch based
+            <tt>D:</tt> acceleration. Burst I/O and PBI-based acceleration will work.
           </p>
           <p>
             The H: device is not supported at all by the SDX kernel, so specific drivers or tools must

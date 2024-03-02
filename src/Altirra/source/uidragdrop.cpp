@@ -20,7 +20,12 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <shlwapi.h>
+
+#pragma warning(push)
+#pragma warning(disable: 4768)		// ShlObj.h(1065): warning C4768: __declspec attributes before linkage specification are ignored
 #include <shlobj.h>
+#pragma warning(pop)
+
 #include <vd2/system/atomic.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>

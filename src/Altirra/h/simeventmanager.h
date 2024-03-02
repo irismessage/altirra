@@ -46,6 +46,7 @@ enum ATSimulatorEvent {
 	kATSimEvent_AbnormalDMA,
 	kATSimEvent_VBI,
 	kATSimEvent_VBLANK,
+	kATSimEvent_TracingLimitReached,
 	kATSimEventCount
 };
 

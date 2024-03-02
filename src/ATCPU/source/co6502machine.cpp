@@ -84,6 +84,7 @@ while(cyclesLeft > 0) {
 			case kStateReadOpcode:
 				if (mpBreakpointMap[mPC]) {
 					mCyclesLeft = cyclesLeft;
+					mInsnPC = mPC;
 
 					if (CheckBreakpoint()) {
 						goto force_exit;

@@ -64,14 +64,14 @@ public:
 };
 
 void ATUIDialogSetupWizardWelcome::SetupMessage() {
-	mRichEdit.SetText(L"\
-Welcome to Altirra!\n\
-\n\
-This wizard will help you configure the emulator for the first time. To begin, click Next.\n\
-\n\
+	mRichEdit.SetTextRTF("{\\rtf{\\fonttbl{\\f0\\fcharset0 MS Shell Dlg;}}\\pard\\f0\\fs16\\sa240\\slmult1\\sl0 \
+Welcome to Altirra!\
+\\par \
+This wizard will help you configure the emulator for the first time. To begin, click Next.\
+\\par \
 If you would like to skip the setup process, click Close to exit this wizard and start \
 the emulator. All of the settings here can also be set up manually. You can also repeat \
-the first time setup process via the Tools menu at any time.");
+the first time setup process via the Tools menu at any time. \\par}");
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -181,11 +181,12 @@ public:
 };
 
 void ATUIDialogSetupWizardPostFirmware::SetupMessage() {
-	mRichEdit.SetText(L"\
-ROM image setup is complete.\n\
-\n\
+	mRichEdit.SetTextRTF("{\\rtf{\\fonttbl{\\f0\\fnil\\fcharset0 MS Shell Dlg;}}\\pard\\sa120\\slmult1\\sl0\\fs16\\f0 \
+ROM image setup is complete. \
+\\par \
 If you want to set up more firmware ROM images in the future, this can \
-be done through the menu option System | Firmware Images."
+be done through the menu option System | Firmware Images. \
+\\par}"
 	);
 }
 
@@ -325,15 +326,15 @@ public:
 };
 
 void ATUIDialogSetupWizardFinish800::SetupMessage() {
-	mRichEdit.SetText(L"\
-Setup is now complete.\n\
-\n\
+	mRichEdit.SetTextRTF("{\\rtf{\\fonttbl{\\f0\\fnil\\fcharset0 MS Shell Dlg;}}\\pard\\sa120\\slmult1\\sl0\\fs16\\f0\
+Setup is now complete.\
+\\par \
 Click Finish to exit and power up the emulated computer. You can then use the \
 File | Boot Image... menu option to boot a disk, cartridge, or cassette tape image, or start \
 a program.\n\
-\n\
+\\par \
 If you want to repeat this process in the future, the setup wizard can be restarted via the \
-Tools menu.");
+Tools menu.\\par}");
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -344,17 +345,18 @@ public:
 };
 
 void ATUIDialogSetupWizardFinish5200::SetupMessage() {
-	mRichEdit.SetText(L"\
-Setup is now complete.\n\
-\n\
+	mRichEdit.SetTextRTF("{\\rtf{\\fonttbl{\\f0\\fnil\\fcharset0 MS Shell Dlg;}}\\pard\\sa120\\slmult1\\sl0\\fs16\\f0\
+Setup is now complete.\
+\\par \
 Click Finish to exit and power up the emulated console. The 5200 needs a cartridge \
 to work, so select File | Boot Image... to attach and start a cartridge image.\n\
-\n\
+\\par \
 You will probably want to check your controller settings. The default setup \
 binds F2-F4, the digit key row, arrow keys, and Ctrl/Shift to joystick 1. Alternate \
 bindings can be selected from the Input menu or new ones can be defined in Input | Input Mappings.\n\
-\n\
-If you want to repeat this process in the future, choose Tools | First Time Setup... from the menu.");
+\\par \
+If you want to repeat this process in the future, choose Tools | First Time Setup... from the menu.\
+\\par}");
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -373,7 +375,6 @@ protected:
 	int GetPrevPage() const;
 	int GetNextPage() const;
 
-	vdpoint32 mPagePos;
 	int mSelectedPage;
 	bool mbWentPastFirstPage = false;
 	vdautoptr<VDDialogFrameW32> mpChildPage;
@@ -392,8 +393,6 @@ bool ATUIDialogSetupWizard::OnLoaded() {
 	mStepsList.SetReadOnlyBackground();
 
 	ShowControl(IDC_STEP_AREA, false);
-	mPagePos = GetControlPos(IDC_STEP_AREA).top_left();
-
 	mSelectedPage = -1;
 
 	SelectPage(0);
@@ -403,6 +402,7 @@ bool ATUIDialogSetupWizard::OnLoaded() {
 
 void ATUIDialogSetupWizard::OnDestroy() {
 	if (mpChildPage) {
+		mResizer.Remove(mpChildPage->GetWindowHandle());
 		mpChildPage->Destroy();
 		mpChildPage = nullptr;
 	}
@@ -457,6 +457,7 @@ void ATUIDialogSetupWizard::SelectPage(int index) {
 	if (mSelectedPage >= 0) {
 		if (mpChildPage) {
 			mpChildPage->Sync(true);
+			mResizer.Remove(mpChildPage->GetWindowHandle());
 			mpChildPage->Destroy();
 			mpChildPage = nullptr;
 		}
@@ -477,7 +478,7 @@ void ATUIDialogSetupWizard::SelectPage(int index) {
 		}
 
 		if (mpChildPage->Create((VDGUIHandle)mhdlg)) {
-			mpChildPage->SetPosition(mPagePos);
+			mResizer.AddAlias(mpChildPage->GetWindowHandle(), GetControl(IDC_STEP_AREA), 0);
 			mpChildPage->Show();
 		}
 	}
@@ -492,7 +493,7 @@ void ATUIDialogSetupWizard::SelectPage(int index) {
 
 	int selLine = -1;
 	VDStringA buf;
-	VDStringA s("{\\rtf \\sa90 ");
+	VDStringA s("{\\rtf \\fs16\\sa90 ");
 
 	int curLine = 0;
 	for(const auto& pageLabel : kPageLabels) {

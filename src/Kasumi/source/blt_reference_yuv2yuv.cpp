@@ -26,8 +26,8 @@
 #include "bitutils.h"
 #include "blt_spanutils.h"
 
-#define DECLARE_YUV(x, y) void VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
-#define DECLARE_YUV_PLANAR(x, y) void VDPixmapBlt_##x##_to_##y##_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h)
+#define DECLARE_YUV(x, y) void VDCDECL VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
+#define DECLARE_YUV_PLANAR(x, y) void VDCDECL VDPixmapBlt_##x##_to_##y##_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h)
 
 using namespace nsVDPixmapBitUtils;
 using namespace nsVDPixmapSpanUtils;

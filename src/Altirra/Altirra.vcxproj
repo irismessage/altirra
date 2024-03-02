@@ -141,7 +141,6 @@
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <EnableEnhancedInstructionSet>NoExtensions</EnableEnhancedInstructionSet>
     </ClCompile>
     <ProjectReference>
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
@@ -207,7 +206,6 @@
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <MinimalRebuild>false</MinimalRebuild>
-      <EnableEnhancedInstructionSet>NoExtensions</EnableEnhancedInstructionSet>
     </ClCompile>
     <ProjectReference>
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
@@ -278,7 +276,6 @@
       <PrecompiledHeaderFile>stdafx.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <EnableEnhancedInstructionSet>NoExtensions</EnableEnhancedInstructionSet>
     </ClCompile>
     <ProjectReference>
       <LinkLibraryDependencies>false</LinkLibraryDependencies>
@@ -333,11 +330,14 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="h\audiorawsource.h" />
+    <ClInclude Include="h\browser.h" />
     <ClInclude Include="h\cartridgeport.h" />
     <ClInclude Include="h\cmdhelpers.h" />
     <ClInclude Include="h\compatdb.h" />
     <ClInclude Include="h\compatedb.h" />
     <ClInclude Include="h\compatengine.h" />
+    <ClInclude Include="h\cputracer.h" />
+    <ClInclude Include="h\decode_png.h" />
     <ClInclude Include="h\diskdriveatr8000.h" />
     <ClInclude Include="h\diskdrivefull.h" />
     <ClInclude Include="h\diskdriveindusgt.h" />
@@ -346,6 +346,7 @@
     <ClInclude Include="h\diskinterface.h" />
     <ClInclude Include="h\fdc.h" />
     <ClInclude Include="h\pbidisk.h" />
+    <ClInclude Include="h\rapidus.h" />
     <ClInclude Include="h\sapconverter.h" />
     <ClInclude Include="h\sapwriter.h" />
     <ClInclude Include="h\settings.h" />
@@ -374,6 +375,7 @@
     <ClCompile Include="source\aviwriter.cpp" />
     <ClCompile Include="source\bkptmanager.cpp" />
     <ClCompile Include="source\blackbox.cpp" />
+    <ClCompile Include="source\browser.cpp" />
     <ClCompile Include="source\cartdetect.cpp" />
     <ClCompile Include="source\cartridge.cpp" />
     <ClCompile Include="source\cartridgeport.cpp" />
@@ -400,6 +402,7 @@
     <ClCompile Include="source\cpu65c816.cpp" />
     <ClCompile Include="cpuheatmap.cpp" />
     <ClCompile Include="source\cpuhookmanager.cpp" />
+    <ClCompile Include="source\cputracer.cpp" />
     <ClCompile Include="source\cs8900a.cpp" />
     <ClCompile Include="source\debugdisplay.cpp" />
     <ClCompile Include="source\debugger.cpp" />
@@ -407,6 +410,7 @@
     <ClCompile Include="source\debuggerlog.cpp" />
     <ClCompile Include="source\debugtarget.cpp" />
     <ClCompile Include="source\decmath.cpp" />
+    <ClCompile Include="source\decode_png.cpp" />
     <ClCompile Include="source\devices.cpp" />
     <ClCompile Include="source\directorywatcher.cpp" />
     <ClCompile Include="source\disasm.cpp" />
@@ -468,6 +472,7 @@
     <ClCompile Include="source\printer.cpp" />
     <ClCompile Include="source\profiler.cpp" />
     <ClCompile Include="source\profilerui.cpp" />
+    <ClCompile Include="source\rapidus.cpp" />
     <ClCompile Include="source\rs232.cpp" />
     <ClCompile Include="source\rtime8.cpp" />
     <ClCompile Include="source\rverter.cpp" />
@@ -488,6 +493,10 @@
     <ClCompile Include="source\symbols.cpp" />
     <ClCompile Include="source\textdom.cpp" />
     <ClCompile Include="source\texteditor.cpp" />
+    <ClCompile Include="source\trace.cpp" />
+    <ClCompile Include="source\tracecpu.cpp" />
+    <ClCompile Include="source\tracetape.cpp" />
+    <ClCompile Include="source\tracevideo.cpp" />
     <ClCompile Include="source\ui.cpp" />
     <ClCompile Include="source\uiabout.cpp" />
     <ClCompile Include="source\uiaudiooptions.cpp" />
@@ -511,6 +520,7 @@
     <ClCompile Include="source\uiconfdevpercom.cpp" />
     <ClCompile Include="source\uiconfdevpocketmodem.cpp" />
     <ClCompile Include="source\uiconfdevsx212.cpp" />
+    <ClCompile Include="source\uiconfdevvbxe.cpp" />
     <ClCompile Include="source\uiconfdiskdrivefull.cpp" />
     <ClCompile Include="source\uiconfharddisk.cpp" />
     <ClCompile Include="source\uiconfmodem.cpp" />
@@ -528,6 +538,8 @@
     <ClCompile Include="source\uidragoncart.cpp" />
     <ClCompile Include="source\uiemuerror.cpp" />
     <ClCompile Include="source\uienhancedtext.cpp" />
+    <ClCompile Include="source\uihistoryview.cpp" />
+    <ClCompile Include="source\uitraceviewer.cpp" />
     <ClCompile Include="source\uiexportroms.cpp" />
     <ClCompile Include="source\uifileassoc.cpp" />
     <ClCompile Include="source\uifilebrowser.cpp" />
@@ -582,6 +594,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="source\xelcf.cpp" />
     <ClCompile Include="source\xep80.cpp" />
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -672,13 +685,19 @@
     <ClInclude Include="h\profiler.h" />
     <ClInclude Include="h\scsidisk.h" />
     <ClInclude Include="h\sdrive.h" />
+    <ClInclude Include="h\trace.h" />
+    <ClInclude Include="h\tracecpu.h" />
+    <ClInclude Include="h\tracetape.h" />
+    <ClInclude Include="h\tracevideo.h" />
     <ClInclude Include="h\uiaccessors.h" />
     <ClInclude Include="h\uiclipboard.h" />
     <ClInclude Include="h\uicompat.h" />
     <ClInclude Include="h\uiconfirm.h" />
     <ClInclude Include="h\uifilefilters.h" />
+    <ClInclude Include="h\uihistoryview.h" />
     <ClInclude Include="h\uisettingswindow.h" />
     <ClInclude Include="h\veronica.h" />
+    <ClInclude Include="h\xelcf.h" />
     <ClInclude Include="res\resource.h" />
     <ClInclude Include="..\ATNativeUI\res\resource.h" />
     <ClInclude Include="h\rs232.h" />
@@ -775,10 +794,12 @@
       <SymbolName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ATPBIDiskFirmware</SymbolName>
       <SymbolName Condition="'$(Configuration)|$(Platform)'=='Profile|x64'">g_ATPBIDiskFirmware</SymbolName>
     </PackResource>
+    <None Include="..\..\obj\Release\Kernel\rapidflash.lzrom" />
     <None Include="..\..\out\release\1030firmware.bin" />
     <None Include="..\..\out\release\1030handler.bin" />
     <None Include="..\..\out\release\noblackbox.lzrom" />
     <None Include="..\..\out\release\nomio.lzrom" />
+    <None Include="..\..\out\Release\rapidpbi16.bin" />
     <None Include="autogen\playsap-b.inl" />
     <None Include="autogen\playsap-c.inl" />
     <None Include="autogen\playsap-d-ntsc.inl" />
@@ -1058,6 +1079,10 @@
     <ProjectReference Include="..\vdjson\vdjson.vcxproj">
       <Project>{e6fa3718-4ad2-4b58-903a-45f35ccd2fde}</Project>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="res\traceViewerToolbar.png" />
+    <Image Include="traceViewerToolbar.png" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

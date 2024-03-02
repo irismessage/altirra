@@ -35,7 +35,7 @@ public:
 
 	/// Retrieve sum of bits starting at the given block-local offset. The
 	/// count must be >0 and the range must fit within the block.
-	virtual uint32 GetBitSum(uint32 pos, uint32 n) const;
+	virtual uint32 GetBitSum(uint32 pos, uint32 n, bool bypassFSK) const;
 
 	/// Retrieve audio sync samples.
 	///
@@ -78,7 +78,7 @@ public:
 	uint32 GetDataSampleCount() const;
 	uint64 GetDataSampleCount64() const;
 
-	uint32 GetBitSum(uint32 pos, uint32 n) const override;
+	uint32 GetBitSum(uint32 pos, uint32 n, bool bypassFSK) const override;
 	uint32 AccumulateAudio(float *&dstLeft, float *&dstRight, uint32& posSample, uint32& posCycle, uint32 n) const override;
 
 private:
@@ -102,8 +102,8 @@ private:
 	vdfastvector<uint8> mPhaseSums;
 };
 
-/// Cassette image block for raw FSK data.
-class ATCassetteImageBlockDataFSK final : public ATCassetteImageBlock {
+/// Cassette image block for raw data.
+class ATCassetteImageBlockRawData final : public ATCassetteImageBlock {
 public:
 	ATCassetteImageBlockType GetBlockType() const override {
 		return kATCassetteImageBlockType_FSK;
@@ -111,18 +111,22 @@ public:
 
 	uint32 GetDataSampleCount() const { return mDataLength; }
 
-	void AddPulse(bool polarity, uint32 duration10us);
-	void AddPulseSamples(bool polarity, uint32 samples);
+	void AddFSKPulse(bool polarity, uint32 duration10us);
+	void AddFSKPulseSamples(bool polarity, uint32 samples);
 
 	// Extract pairs of 0/1 pulse lengths.
-	void ExtractPulses(vdfastvector<uint32>& pulses) const;
+	void ExtractPulses(vdfastvector<uint32>& pulses, bool bypassFSK) const;
 
-	virtual uint32 GetBitSum(uint32 pos, uint32 n) const override;
+	uint32 GetBitSum(uint32 pos, uint32 n, bool bypassFSK) const override;
+
+	void SetBits(bool fsk, uint32 startPos, uint32 n, bool polarity);
 
 	uint32 mDataLength = 0;
-	vdfastvector<uint32> mData = 0;		// Storage is MSB first.
+	vdfastvector<uint32> mDataRaw {};		// Storage is MSB first.
+	vdfastvector<uint32> mDataFSK {};		// Storage is MSB first.
 
 	uint64 mFractionalDataLength = 0;
+	uint64 mFSKPhaseAccum = 0;
 };
 
 /// Cassette image block type for raw audio data only.

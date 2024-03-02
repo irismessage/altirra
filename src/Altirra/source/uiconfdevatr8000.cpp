@@ -36,11 +36,11 @@ protected:
 
 	static const uint32 kDriveTypeIds[];
 
-	static constexpr wchar_t *const kSignal1Names[] = {
+	static constexpr const wchar_t *const kSignal1Names[] = {
 		L"rts", L"dtr"
 	};
 
-	static constexpr wchar_t *const kSignal2Names[] = {
+	static constexpr const wchar_t *const kSignal2Names[] = {
 		L"cts", L"dsr", L"cd", L"srts"
 	};
 };

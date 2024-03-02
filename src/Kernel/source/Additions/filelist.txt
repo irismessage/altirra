@@ -9,3 +9,4 @@ sx212.xex -> sx212.com
 thnd1030.xex -> thnd1030.com
 xep80.sys -> altxep80.sys
 xep80f.sys -> altxep8f.sys
+additions-license.txt -> license.txt

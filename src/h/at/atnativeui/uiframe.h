@@ -486,6 +486,7 @@ void ATActivateUIPane(uint32 id, bool giveFocus, bool visible = true, uint32 rel
 
 uint32 ATUIGetGlobalDpiW32();
 uint32 ATUIGetWindowDpiW32(HWND hwnd);
+uint32 ATUIGetMonitorDpiW32(HMONITOR hMonitor);
 HFONT ATUICreateDefaultFontForDpiW32(uint32 dpi);
 
 #endif

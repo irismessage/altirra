@@ -146,7 +146,7 @@ int ATInitShell(int nCmdShow) {
 	OleInitialize(NULL);
 
 	InitCommonControls();
-	VDLoadSystemLibraryW32("riched20");
+	VDLoadSystemLibraryW32("msftedit");
 	
 	VDRegistryAppKey::setDefaultKey("Software\\virtualdub.org\\AltirraShell\\");
 

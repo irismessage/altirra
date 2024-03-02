@@ -84,6 +84,7 @@ public:
 	virtual bool IsReadOnly() const override { return mbReadOnly; }
 	uint32 GetSectorCount() const override;
 	ATBlockDeviceGeometry GetGeometry() const override;
+	uint32 GetSerialNumber() const override;
 
 	void Init(const wchar_t *path, bool write, bool solidState);
 	void InitNew(const wchar_t *path, uint8 heads, uint8 spt, uint32 totalSectorCount, bool dynamic);

@@ -78,6 +78,7 @@ class IATDevicePBIManager {
 public:
 	virtual void AddDevice(IATPBIDevice *dev) = 0;
 	virtual void RemoveDevice(IATPBIDevice *dev) = 0;
+	virtual void DeselectSelf(IATPBIDevice *dev) = 0;
 };
 
 class IATDevicePBIConnection {

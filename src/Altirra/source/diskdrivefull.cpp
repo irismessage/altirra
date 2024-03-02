@@ -141,8 +141,9 @@ ATDeviceDiskDriveFull::ATDeviceDiskDriveFull(bool is1050, DeviceType deviceType)
 	, mDeviceType(deviceType)
 	, mCoProc(deviceType == kDeviceType_Speedy1050)
 {
-	std::fill(std::begin(mStepBreakpointMap), std::end(mStepBreakpointMap), true);
-	
+	mBreakpointsImpl.BindBPHandler(mCoProc);
+	mBreakpointsImpl.SetStepHandler(this);
+
 	mDriveScheduler.SetRate(is1050 ? VDFraction(1000000, 1) : VDFraction(500000, 1));
 }
 
@@ -158,7 +159,7 @@ void *ATDeviceDiskDriveFull::AsInterface(uint32 iid) {
 		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(this);
 		case IATDeviceButtons::kTypeID: return static_cast<IATDeviceButtons *>(this);
 		case IATDeviceDebugTarget::kTypeID: return static_cast<IATDeviceDebugTarget *>(this);
-		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(this);
+		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(&mBreakpointsImpl);
 		case IATDebugTargetHistory::kTypeID: return static_cast<IATDebugTargetHistory *>(this);
 		case IATDebugTargetExecutionControl::kTypeID: return static_cast<IATDebugTargetExecutionControl *>(this);
 		case ATRIOT6532Emulator::kTypeID: return &mRIOT;
@@ -1466,31 +1467,6 @@ uint32 ATDeviceDiskDriveFull::ConvertRawTimestamp(uint32 rawTimestamp) const {
 	return mLastSync - (((mCoProc.GetTimeBase() - rawTimestamp) * mClockDivisor + mSubCycleAccum + 127) >> 7);
 }
 
-void ATDeviceDiskDriveFull::SetBreakpointHandler(IATCPUBreakpointHandler *handler) {
-	mpBreakpointHandler = handler;
-
-	if (mBreakpointCount)
-		mCoProc.SetBreakpointMap(mBreakpointMap, handler);
-}
-
-void ATDeviceDiskDriveFull::ClearBreakpoint(uint16 pc) {
-	if (mBreakpointMap[pc]) {
-		mBreakpointMap[pc] = false;
-
-		if (!--mBreakpointCount && !mpStepHandler)
-			mCoProc.SetBreakpointMap(nullptr, nullptr);
-	}
-}
-
-void ATDeviceDiskDriveFull::SetBreakpoint(uint16 pc) {
-	if (!mBreakpointMap[pc]) {
-		mBreakpointMap[pc] = true;
-
-		if (!mBreakpointCount++ && !mpStepHandler)
-			mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
-	}
-}
-
 void ATDeviceDiskDriveFull::Break() {
 	CancelStep();
 }
@@ -1501,7 +1477,7 @@ bool ATDeviceDiskDriveFull::StepInto(const vdfunction<void(bool)>& fn) {
 	mpStepHandler = fn;
 	mbStepOut = false;
 	mStepStartSubCycle = mCoProc.GetTime();
-	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	mBreakpointsImpl.SetStepActive(true);
 	Sync();
 	return true;
 }
@@ -1513,7 +1489,7 @@ bool ATDeviceDiskDriveFull::StepOver(const vdfunction<void(bool)>& fn) {
 	mbStepOut = true;
 	mStepStartSubCycle = mCoProc.GetTime();
 	mStepOutS = mCoProc.GetS();
-	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	mBreakpointsImpl.SetStepActive(true);
 	Sync();
 	return true;
 }
@@ -1525,7 +1501,7 @@ bool ATDeviceDiskDriveFull::StepOut(const vdfunction<void(bool)>& fn) {
 	mbStepOut = true;
 	mStepStartSubCycle = mCoProc.GetTime();
 	mStepOutS = mCoProc.GetS() + 1;
-	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	mBreakpointsImpl.SetStepActive(true);
 	Sync();
 	return true;
 }
@@ -1540,25 +1516,20 @@ void ATDeviceDiskDriveFull::RunUntilSynced() {
 }
 
 bool ATDeviceDiskDriveFull::CheckBreakpoint(uint32 pc) {
-	bool bpHit = false;
+	if (mCoProc.GetTime() == mStepStartSubCycle)
+		return false;
 
-	if (mBreakpointCount && mBreakpointMap[(uint16)pc] && mpBreakpointHandler->CheckBreakpoint(pc))
-		bpHit = true;
+	const bool bpHit = mBreakpointsImpl.CheckBP(pc);
 
-	if (mBreakpointCount)
-		mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
-	else {
-		if (mCoProc.GetTime() == mStepStartSubCycle)
-			return false;
-
+	if (!bpHit) {
 		if (mbStepOut) {
 			// Keep stepping if wrapped(s < s0).
 			if ((mCoProc.GetS() - mStepOutS) & 0x80)
 				return false;
 		}
-
-		mCoProc.SetBreakpointMap(nullptr, nullptr);
 	}
+
+	mBreakpointsImpl.SetStepActive(false);
 
 	mbStepNotifyPending = true;
 	mbStepNotifyPendingBP = bpHit;
@@ -1663,10 +1634,7 @@ void ATDeviceDiskDriveFull::OnAudioModeChanged() {
 
 void ATDeviceDiskDriveFull::CancelStep() {
 	if (mpStepHandler) {
-		if (mBreakpointCount)
-			mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
-		else
-			mCoProc.SetBreakpointMap(nullptr, nullptr);
+		mBreakpointsImpl.SetStepActive(false);
 
 		auto p = std::move(mpStepHandler);
 		mpStepHandler = nullptr;

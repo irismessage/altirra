@@ -533,7 +533,7 @@ namespace {
 		sint32		xmidsize;
 	};
 
-	void VDPixmapStretchBiH_XRGB1555_to_XRGB1555(const VDPixmapReferenceStretchBltBilinearParameters& params) {
+	void VDCDECL VDPixmapStretchBiH_XRGB1555_to_XRGB1555(const VDPixmapReferenceStretchBltBilinearParameters& params) {
 		uint16 *dst = (uint16 *)params.dst;
 		const uint16 *src = (const uint16 *)params.src;
 
@@ -559,7 +559,7 @@ namespace {
 			VDMemset16(dst, *(const uint16 *)((const char *)params.src + params.xpostpos), params.xpostcopy);
 	}
 
-	void VDPixmapStretchBiH_XRGB8888_to_XRGB8888(const VDPixmapReferenceStretchBltBilinearParameters& params) {
+	void VDCDECL VDPixmapStretchBiH_XRGB8888_to_XRGB8888(const VDPixmapReferenceStretchBltBilinearParameters& params) {
 		uint32 *dst = (uint32 *)params.dst;
 		const uint32 *src = (const uint32 *)params.src;
 
@@ -585,7 +585,7 @@ namespace {
 			VDMemset32(dst, *(const uint32 *)((const char *)params.src + params.xpostpos), params.xpostcopy);
 	}
 
-	void VDPixmapStretchBiV_XRGB1555_to_XRGB1555(void *dstv, const void *src1v, const void *src2v, sint32 w, uint32 f) {
+	void VDCDECL VDPixmapStretchBiV_XRGB1555_to_XRGB1555(void *dstv, const void *src1v, const void *src2v, sint32 w, uint32 f) {
 		uint16 *dst = (uint16 *)dstv;
 		const uint16 *src1 = (const uint16 *)src1v;
 		const uint16 *src2 = (const uint16 *)src2v;
@@ -597,7 +597,7 @@ namespace {
 		} while(--w);
 	}
 
-	void VDPixmapStretchBiV_XRGB8888_to_XRGB8888(void *dstv, const void *src1v, const void *src2v, sint32 w, uint32 f) {
+	void VDCDECL VDPixmapStretchBiV_XRGB8888_to_XRGB8888(void *dstv, const void *src1v, const void *src2v, sint32 w, uint32 f) {
 		uint32 *dst = (uint32 *)dstv;
 		const uint32 *src1 = (const uint32 *)src1v;
 		const uint32 *src2 = (const uint32 *)src2v;
@@ -611,10 +611,10 @@ namespace {
 }
 
 #ifdef _M_IX86
-extern "C" void vdasm_stretchbltH_XRGB8888_to_XRGB8888_MMX(const VDPixmapReferenceStretchBltBilinearParameters&);
+extern "C" void VDCDECL vdasm_stretchbltH_XRGB8888_to_XRGB8888_MMX(const VDPixmapReferenceStretchBltBilinearParameters&);
 
-extern "C" void vdasm_stretchbltV_XRGB1555_to_XRGB1555_MMX(void *dstv, const void *src1v, const void *src2v, sint32 w, uint32 f);
-extern "C" void vdasm_stretchbltV_XRGB8888_to_XRGB8888_MMX(void *dstv, const void *src1v, const void *src2v, sint32 w, uint32 f);
+extern "C" void VDCDECL vdasm_stretchbltV_XRGB1555_to_XRGB1555_MMX(void *dstv, const void *src1v, const void *src2v, sint32 w, uint32 f);
+extern "C" void VDCDECL vdasm_stretchbltV_XRGB8888_to_XRGB8888_MMX(void *dstv, const void *src1v, const void *src2v, sint32 w, uint32 f);
 #endif
 
 bool VDPixmapStretchBltBilinear_reference(const VDPixmap& dst, sint32 x1, sint32 y1, sint32 x2, sint32 y2, const VDPixmap& src, sint32 u1, sint32 v1, sint32 u2, sint32 v2) {
@@ -634,8 +634,8 @@ bool VDPixmapStretchBltBilinear_reference(const VDPixmap& dst, sint32 x1, sint32
 		return false;
 
 	// format determination
-	void (*pHorizontalFilter)(const VDPixmapReferenceStretchBltBilinearParameters& params);
-	void (*pVerticalFilter)(void *dstv, const void *src1v, const void *src2v, sint32 w, uint32 f);
+	void (VDCDECL *pHorizontalFilter)(const VDPixmapReferenceStretchBltBilinearParameters& params);
+	void (VDCDECL *pVerticalFilter)(void *dstv, const void *src1v, const void *src2v, sint32 w, uint32 f);
 	int bpp;
 
 	switch(src.format) {

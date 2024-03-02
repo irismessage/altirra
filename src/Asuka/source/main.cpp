@@ -47,7 +47,7 @@ void tool_maketables(const vdfastvector<const char *>& args, const vdfastvector<
 void tool_checkimports(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_hash(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 
-int main(int argc, char **argv) {
+int VDCDECL main(int argc, char **argv) {
 	--argc;
 	++argv;
 

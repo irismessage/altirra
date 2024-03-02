@@ -21,6 +21,7 @@
 #include <at/atcore/blockdevice.h>
 #include <at/atcore/devicecart.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/deviceparentimpl.h>
 #include <at/atemulation/flash.h>
 #include <at/atemulation/rtcds1305.h>
 #include "ide.h"
@@ -40,6 +41,7 @@ class ATSIDEEmulator
 	, public IATDeviceIndicators
 	, public IATDeviceFirmware
 	, public IATDeviceParent
+	, public ATDeviceBus
 	, public IATDeviceDiagnostics
 	, public IATDeviceButtons
 {
@@ -84,7 +86,11 @@ public:		// IATDeviceFirmware
 	bool IsWritableFirmwareDirty(uint32 idx) const override;
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override;
 
+public:		// IATDeviceBus
+	IATDeviceBus *GetDeviceBus(uint32 index) override;
+
 public:		// IATDeviceParent
+	const wchar_t *GetBusName() const override;
 	const char *GetSupportedType(uint32 index) override;
 	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
 	void AddChildDevice(IATDevice *dev) override;

@@ -21,6 +21,7 @@
 #include "console.h"
 #include "debugger.h"
 #include "simulator.h"
+#include "trace.h"
 #include "uiaccessors.h"
 
 extern ATSimulator g_sim;
@@ -142,4 +143,11 @@ void OnCommandDebugToggleBreakpoint() {
 
 void OnCommandDebugVerifierDialog() {
 	ATUIShowDialogVerifier(ATUIGetMainWindow(), g_sim);
+}
+
+class ATTraceCollection;
+extern void ATUIOpenTraceViewer(VDGUIHandle h, ATTraceCollection *collection);
+
+void OnCommandDebugShowTraceViewer() {
+	ATUIOpenTraceViewer(nullptr, g_sim.GetTraceCollection());
 }

@@ -24,6 +24,7 @@
 #include <at/atappbase/exceptionfilter.h>
 #include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/uiframe.h>
+#include <at/atcore/logging.h>
 #include <at/atcore/media.h>
 #include "autotest.h"
 #include "console.h"
@@ -42,6 +43,7 @@
 
 extern vdfunction<bool(bool)> g_pATIdle;
 extern ATSimulator g_sim;
+extern ATLogChannel g_ATLCHostDisp;
 
 void ATUIRegisterDragDropHandler(VDGUIHandle h);
 void ATUIRevokeDragDropHandler(VDGUIHandle h);
@@ -362,8 +364,10 @@ void ATMainWindow::OnActivateApp(WPARAM wParam) {
 		if (pane)
 			pane->ReleaseMouse();
 
-		if (ATUIGetDisplayFullscreen())
+		if (ATUIGetDisplayFullscreen()) {
+			g_ATLCHostDisp("Disabling full-screen mode because program was deactivated.\n");
 			ATSetFullscreen(false);
+		}
 	}
 }
 

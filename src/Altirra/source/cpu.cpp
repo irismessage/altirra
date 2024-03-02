@@ -54,8 +54,8 @@ ATCPUEmulator::ATCPUEmulator()
 
 	memset(mInsnFlags, 0, sizeof mInsnFlags);
 
-	mbHistoryOrProfilingEnabled = false;
-	mbHistoryEnabled = false;
+	mbHistoryActive = false;
+	mHistoryEnableFlags = kHistoryEnableFlag_None;
 	mbPathfindingEnabled = false;
 	mbPathBreakEnabled = false;
 	mbIllegalInsnsEnabled = true;
@@ -374,21 +374,26 @@ void ATCPUEmulator::SetCPUMode(ATCPUMode mode, uint32 subCycles) {
 	if (mCPUMode == mode && mSubCycles == subCycles)
 		return;
 
-	mCPUMode = mode;
+	const bool resetRequired = (mCPUMode != mode);
+
 	mSubCycles = subCycles;
 	mSubCyclesLeft = 1;
-	mbForceNextCycleSlow = false;
+	mbForceNextCycleSlow = true;
 
-	// ensure sane 65C816 state
-	mbEmulationFlag = true;
-	mP |= 0x30;
-	mSH = 1;
-	mXH = 0;
-	mYH = 0;
-	mAH = 0;
-	mDP = 0;
-	mK = 0;
-	mB = 0;
+	// ensure sane 65C816 state if we are changing CPU mode
+	if (mCPUMode != mode) {
+		mCPUMode = mode;
+
+		mbEmulationFlag = true;
+		mP |= 0x30;
+		mSH = 1;
+		mXH = 0;
+		mYH = 0;
+		mAH = 0;
+		mDP = 0;
+		mK = 0;
+		mB = 0;
+	}
 
 	switch(mode) {
 		case kATCPUMode_65C816:
@@ -406,13 +411,39 @@ void ATCPUEmulator::SetCPUMode(ATCPUMode mode, uint32 subCycles) {
 	}
 
 	RebuildDecodeTables();
+
+	// if we changed the CPU mode, force a warmstart
+	if (resetRequired)
+		WarmReset();
 }
 
 void ATCPUEmulator::SetHistoryEnabled(bool enable) {
 	if (mbHistoryEnabled != enable) {
 		mbHistoryEnabled = enable;
 
-		mbHistoryOrProfilingEnabled = mbHistoryEnabled || mpProfiler;
+		if (enable)
+			mHistoryEnableFlags = (HistoryEnableFlags)(mHistoryEnableFlags | kHistoryEnableFlag_Direct);
+		else
+			mHistoryEnableFlags = (HistoryEnableFlags)(mHistoryEnableFlags & ~kHistoryEnableFlag_Direct);
+
+		mbHistoryActive = (mHistoryEnableFlags != kHistoryEnableFlag_None);
+
+		RebuildDecodeTables();
+		mbMarkHistoryIRQ = false;
+		mbMarkHistoryNMI = false;
+	}
+}
+
+void ATCPUEmulator::SetTracingEnabled(bool enable) {
+	if (enable)
+		mHistoryEnableFlags = (HistoryEnableFlags)(mHistoryEnableFlags | kHistoryEnableFlag_Tracer);
+	else
+		mHistoryEnableFlags = (HistoryEnableFlags)(mHistoryEnableFlags & ~kHistoryEnableFlag_Tracer);
+
+	bool active = (mHistoryEnableFlags != kHistoryEnableFlag_None);
+
+	if (mbHistoryActive != active) {
+		mbHistoryActive = active;
 
 		RebuildDecodeTables();
 		mbMarkHistoryIRQ = false;
@@ -431,7 +462,12 @@ void ATCPUEmulator::SetProfiler(ATCPUProfiler *profiler) {
 	if (mpProfiler != profiler) {
 		mpProfiler = profiler;
 
-		mbHistoryOrProfilingEnabled = mbHistoryEnabled || mpProfiler;
+		if (profiler)
+			mHistoryEnableFlags = (HistoryEnableFlags)(mHistoryEnableFlags | kHistoryEnableFlag_Profiler);
+		else
+			mHistoryEnableFlags = (HistoryEnableFlags)(mHistoryEnableFlags & ~kHistoryEnableFlag_Profiler);
+
+		mbHistoryActive = (mHistoryEnableFlags != kHistoryEnableFlag_None);
 		RebuildDecodeTables();
 	}
 }
@@ -496,6 +532,26 @@ void ATCPUEmulator::ClearBreakpoint(uint16 addr) {
 
 		if (!--mBreakpointCount)
 			mDebugFlags &= ~kDebugFlag_BP;
+	}
+}
+
+void ATCPUEmulator::SetAllBreakpoints() {
+	if (mBreakpointCount < 0x10000) {
+		mBreakpointCount = 0;
+		mDebugFlags |= kDebugFlag_BP;
+
+		for(auto& insnFlags : mInsnFlags)
+			insnFlags |= kInsnFlagBreakPt;
+	}
+}
+
+void ATCPUEmulator::ClearAllBreakpoints() {
+	if (mBreakpointCount) {
+		mBreakpointCount = 0;
+		mDebugFlags &= ~kDebugFlag_BP;
+
+		for(auto& insnFlags : mInsnFlags)
+			insnFlags &= kInsnFlagBreakPt;
 	}
 }
 
@@ -758,6 +814,11 @@ void ATCPUEmulator::AssertNMI() {
 	}
 }
 
+void ATCPUEmulator::AssertABORT() {
+	if (mpDecodePtrABORT)
+		mpNextState = mpDecodePtrABORT;
+}
+
 void ATCPUEmulator::PeriodicCleanup() {
 	// check if we need to bump the interrupt assert times forward to avoid wrapping
 	const uint32 t = mpCallbacks->CPUGetUnhaltedCycle();
@@ -1011,17 +1072,27 @@ void ATCPUEmulator::AddHistoryEntry(bool slowFlag) {
 	he->mPC = mPC - 1;
 	he->mP = mP;
 
-	// Argh, the compiler should merge these... but it doesn't.
-	static_assert(
-		!(offsetof(HistoryEntry, mA) & 3)
-		&& offsetof(HistoryEntry, mX) == offsetof(HistoryEntry, mA)+1
-		&& offsetof(HistoryEntry, mY) == offsetof(HistoryEntry, mA)+2
-		&& offsetof(HistoryEntry, mS) == offsetof(HistoryEntry, mA)+3
-		&& !(offsetof(ATCPUEmulator, mA) & 3)
-		&& offsetof(ATCPUEmulator, mX) == offsetof(ATCPUEmulator, mA)+1
-		&& offsetof(ATCPUEmulator, mY) == offsetof(ATCPUEmulator, mA)+2
-		&& offsetof(ATCPUEmulator, mS) == offsetof(ATCPUEmulator, mA)+3
-		, "copy optimization invalidated");
+	// WORKAROUND FOR 15.3 CODEGEN BUG
+	//
+	// The 15.3.x compiler allocates stack space for offsetof() even within a
+	// static_assert (!).
+
+	struct Check {
+		// Argh, the compiler should merge these... but it doesn't.
+
+		void test() {
+			static_assert(
+				!(offsetof(HistoryEntry, mA) & 3)
+				&& offsetof(HistoryEntry, mX) == offsetof(HistoryEntry, mA)+1
+				&& offsetof(HistoryEntry, mY) == offsetof(HistoryEntry, mA)+2
+				&& offsetof(HistoryEntry, mS) == offsetof(HistoryEntry, mA)+3
+				&& !(offsetof(ATCPUEmulator, mA) & 3)
+				&& offsetof(ATCPUEmulator, mX) == offsetof(ATCPUEmulator, mA)+1
+				&& offsetof(ATCPUEmulator, mY) == offsetof(ATCPUEmulator, mA)+2
+				&& offsetof(ATCPUEmulator, mS) == offsetof(ATCPUEmulator, mA)+3
+				, "copy optimization invalidated");
+		}
+	};
 
 	// he->mA = mA;
 	// he->mX = mX;
@@ -1132,6 +1203,7 @@ void ATCPUEmulator::Update65816DecodeTable() {
 
 		mpDecodePtrNMI = mDecodeHeap + mDecodePtrs816[decMode][256];
 		mpDecodePtrIRQ = mDecodeHeap + mDecodePtrs816[decMode][257];
+		mpDecodePtrABORT = mDecodeHeap + mDecodePtrs816[decMode][258];
 	}
 }
 
@@ -1266,6 +1338,8 @@ void ATCPUEmulator::RebuildDecodeTables6502(bool cmos) {
 		*mpDstState++ = kStateAddAsPathStart;
 
 	*mpDstState++ = kStateReadOpcode;
+
+	mpDecodePtrABORT = nullptr;
 }
 
 void ATCPUEmulator::RebuildDecodeTables65816() {
@@ -1383,6 +1457,41 @@ void ATCPUEmulator::RebuildDecodeTables65816() {
 			*mpDstState++ = kStateIRQVecToPC;
 		else
 			*mpDstState++ = kState816_NatIRQVecToPC;
+
+		*mpDstState++ = kStateReadAddrL;
+		*mpDstState++ = kStateReadAddrH;
+		*mpDstState++ = kStateAddrToPC;
+
+		if (mbPathfindingEnabled)
+			*mpDstState++ = kStateAddAsPathStart;
+
+		*mpDstState++ = kStateReadOpcode;
+
+		// predecode ABORT sequence
+		mDecodePtrs816[i][258] = (uint16)(mpDstState - mDecodeHeap);
+		*mpDstState++ = kStateReadDummyOpcode;
+		*mpDstState++ = kStateReadDummyOpcode;
+
+		if (mbStepOver)
+			*mpDstState++ = kStateStepOver;
+
+		// unlike the other interrupt types, for ABORT we must use the faulting PC.
+		*mpDstState++ = kState816_ABORT;
+
+		if (emulationMode) {
+			*mpDstState++ = kStatePushH16;
+			*mpDstState++ = kStatePushL16;
+			*mpDstState++ = kStatePtoD_B0;
+			*mpDstState++ = kStatePush;
+		} else {
+			*mpDstState++ = kStatePushPBKNative;
+			*mpDstState++ = kStatePushH16;
+			*mpDstState++ = kStatePushL16;
+			*mpDstState++ = kStatePtoD;
+			*mpDstState++ = kStatePushNative;
+		}
+		
+		*mpDstState++ = kState816_SetI_ClearD;
 
 		*mpDstState++ = kStateReadAddrL;
 		*mpDstState++ = kStateReadAddrH;

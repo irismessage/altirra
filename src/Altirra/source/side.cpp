@@ -34,8 +34,8 @@ void ATCreateDeviceSIDE(const ATPropertySet& pset, IATDevice **dev) {
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefSIDE = { "side", nullptr, L"SIDE", ATCreateDeviceSIDE<false> };
-extern const ATDeviceDefinition g_ATDeviceDefSIDE2 = { "side2", nullptr, L"SIDE 2", ATCreateDeviceSIDE<true> };
+extern const ATDeviceDefinition g_ATDeviceDefSIDE = { "side", nullptr, L"SIDE", ATCreateDeviceSIDE<false>, kATDeviceDefFlag_RebootOnPlug };
+extern const ATDeviceDefinition g_ATDeviceDefSIDE2 = { "side2", nullptr, L"SIDE 2", ATCreateDeviceSIDE<true>, kATDeviceDefFlag_RebootOnPlug };
 
 ATSIDEEmulator::ATSIDEEmulator(bool v2)
 	: mbVersion2(v2)
@@ -148,7 +148,7 @@ void ATSIDEEmulator::Shutdown() {
 	}
 
 	if (mpBlockDevice) {
-		vdpoly_cast<IATDevice *>(mpBlockDevice)->SetParent(nullptr);
+		vdpoly_cast<IATDevice *>(mpBlockDevice)->SetParent(nullptr, 0);
 		mpBlockDevice = nullptr;
 	}
 
@@ -310,6 +310,14 @@ void ATSIDEEmulator::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 	mFlashCtrl.SetDirty(false);
 }
 
+IATDeviceBus *ATSIDEEmulator::GetDeviceBus(uint32 index) {
+	return index ? 0 : this;
+}
+
+const wchar_t *ATSIDEEmulator::GetBusName() const {
+	return L"CompactFlash Bus";
+}
+
 const char *ATSIDEEmulator::GetSupportedType(uint32 index) {
 	if (index == 0)
 		return "harddisk";
@@ -332,7 +340,7 @@ void ATSIDEEmulator::AddChildDevice(IATDevice *dev) {
 
 	if (blockDevice) {
 		mpBlockDevice = blockDevice;
-		dev->SetParent(this);
+		dev->SetParent(this, 0);
 
 		mIDE.OpenImage(blockDevice);
 		UpdateIDEReset();
@@ -344,7 +352,7 @@ void ATSIDEEmulator::RemoveChildDevice(IATDevice *dev) {
 
 	if (mpBlockDevice == blockDevice) {
 		mIDE.CloseImage();
-		dev->SetParent(nullptr);
+		dev->SetParent(nullptr, 0);
 		mpBlockDevice = nullptr;
 
 		mbIDERemoved = true;

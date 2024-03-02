@@ -2,8 +2,8 @@
 setlocal enableextensions enabledelayedexpansion
 
 rem ---echo banner
-echo Altirra Build Release Utility Version 2.90
-echo Copyright (C) Avery Lee 2014-2016. Licensed under GNU General Public License
+echo Altirra Build Release Utility Version 3.00
+echo Copyright (C) Avery Lee 2014-2017. Licensed under GNU General Public License
 echo.
 
 rem ---parse command line arguments
@@ -11,8 +11,9 @@ set _incremental=false
 set _packonly=false
 set _verid=
 set _anyvc=false
-set _clversionexp=19.00.24215.1
-set _clversionexpdesc=Visual Studio 2015 Update 3 w/Hotfix
+set _checkvc=false
+set _clversionexp=19.11.25547
+set _clversionexpdesc=Visual Studio 2017 Version 15.4.1
 
 :arglist
 if "%1"=="" goto endargs
@@ -23,6 +24,8 @@ if "%1"=="/packonly" (
 	set _incremental=true
 ) else if "%1"=="/anyvc" (
 	set _anyvc=true
+) else if "%1"=="/checkvc" (
+	set _checkvc=true
 ) else if "%1"=="/?" (
 	goto :usage
 ) else if "%1"=="/h" (
@@ -37,12 +40,14 @@ shift /1
 goto :arglist
 
 :usage
-echo Usage: release [/inc] [/packonly] [/anyvc] ^<version-id^>
+echo Usage: release [/inc] [/packonly] [/anyvc] [/checkvc] ^<version-id^>
 echo.
 exit /b 5
 
 :endargs
-if "!_verid!"=="" goto :usage
+if "!_checkvc!"=="false" (
+	if "!_verid!"=="" goto :usage
+)
 
 @where /q devenv.exe >nul
 if errorlevel 1 (
@@ -62,6 +67,12 @@ if "!_anyvc!"=="false" (
 		echo.
 		echo If this is expected, use the /anyvc switch to override the version check.
 		exit /b 5
+	)
+	
+	if "!_checkvc!"=="true" (
+		echo   Expected: !_clversionexp! ^(!_clversionexpdesc!^)
+		echo   Detected: !_clversion!
+		exit /b 0
 	)
 )
 
@@ -153,6 +164,7 @@ if not !_packonly!==true (
 )
 
 zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
+	assets ^
 	src ^
 	src\Kasumi\data\Tuffy.* ^
 	src\Kernel\Makefile ^
@@ -178,6 +190,7 @@ zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	*.k ^
 	*.txt ^
 	*.bmp ^
+	*.png ^
 	*.ico ^
 	*.cur ^
 	*.manifest ^
@@ -191,6 +204,7 @@ zip -9 -X -r publish\Altirra-!_verid!-src.zip ^
 	*.vsh ^
 	*.psh ^
 	*.cmd ^
+	*.svg ^
 	*.atcpengine
 
 if errorlevel 1 (
@@ -201,6 +215,7 @@ if errorlevel 1 (
 zip -9 -X publish\Altirra-!_verid!-src.zip ^
 	Copying ^
 	release.cmd ^
+	src\.editorconfig ^
 	src\BUILD-HOWTO.html ^
 	src\Kasumi\data\Tuffy.* ^
 	src\Kernel\source\shared\atarifont.bin ^

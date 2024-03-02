@@ -1281,7 +1281,7 @@ void ATUIDialogInputMapListItem::Set(uint32 inputCode, uint32 targetCode) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogEditInputMap final : public VDDialogFrameW32 {
+class ATUIDialogEditInputMap final : public VDResizableDialogFrameW32 {
 public:
 	ATUIDialogEditInputMap(ATInputManager& iman, IATJoystickManager *ijoy, ATInputMap& imap);
 	~ATUIDialogEditInputMap();
@@ -1311,12 +1311,10 @@ protected:
 
 	typedef vdfastvector<ATUIDialogInputMapControllerItem *> Controllers;
 	Controllers mControllers;
-
-	VDDialogResizerW32 mResizer;
 };
 
 ATUIDialogEditInputMap::ATUIDialogEditInputMap(ATInputManager& iman, IATJoystickManager *ijoy, ATInputMap& imap)
-	: VDDialogFrameW32(IDD_INPUTMAP_EDIT)
+	: VDResizableDialogFrameW32(IDD_INPUTMAP_EDIT)
 	, mInputMan(iman)
 	, mpJoyMan(ijoy)
 	, mInputMap(imap)
@@ -1331,9 +1329,6 @@ ATUIDialogEditInputMap::~ATUIDialogEditInputMap() {
 }
 
 bool ATUIDialogEditInputMap::OnLoaded() {
-	SetCurrentSizeAsMinSize();
-
-	mResizer.Init(mhdlg);
 	mResizer.Add(IDC_TREE, VDDialogResizerW32::kMC | VDDialogResizerW32::kAvoidFlicker);
 	mResizer.Add(IDC_ADDCONTROLLER, VDDialogResizerW32::kBL);
 	mResizer.Add(IDC_ADDMAPPING, VDDialogResizerW32::kBL);

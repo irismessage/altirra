@@ -30,6 +30,9 @@ struct ATCPUHookNode;
 class ATPokeyEmulator;
 class ATPIAEmulator;
 
+struct ATTraceContext;
+class ATTraceChannelFormatted;
+
 struct ATSIORequest {
 	uint8	mDevice;
 	uint8	mCommand;
@@ -72,13 +75,15 @@ public:
 	void ReinitHooks();
 	void UninitHooks();
 
+	void SetTraceContext(ATTraceContext *context);
+
 	void TryAccelPBIRequest();
 
 	bool TryAccelRequest(const ATSIORequest& req);
 
 public:
 	virtual void PokeyAttachDevice(ATPokeyEmulator *pokey) override;
-	virtual bool PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) override;
+	virtual bool PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uint64 startTime, bool framingError) override;
 	virtual void PokeyBeginCommand() override;
 	virtual void PokeyEndCommand() override;
 	virtual void PokeySerInReady() override;
@@ -138,6 +143,7 @@ private:
 	void ShiftTransmitBuffer();
 	void ResetTransfer();
 	void OnMotorStateChanged(bool asserted);
+	void TraceReceive(uint8 c, uint32 cyclesPerBit);
 
 	ATCPUEmulator *mpCPU = nullptr;
 	ATCPUEmulatorMemory *mpMemory = nullptr;
@@ -234,6 +240,11 @@ private:
 	Step mCurrentStep = {};
 
 	vdfastdeque<Step> mStepQueue;
+
+	ATTraceContext *mpTraceContext = nullptr;
+	ATTraceChannelFormatted *mpTraceChannelBusSend = nullptr;
+	ATTraceChannelFormatted *mpTraceChannelBusReceive = nullptr;
+	uint64 mTraceCommandStartTime = 0;
 
 	uint8 mTransferBuffer[65536] = {};
 };

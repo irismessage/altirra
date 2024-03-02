@@ -62,8 +62,19 @@ extern const wchar_t g_ATUIFileFilter_LoadTape[]=
 			L"Waveform audio (*.wav)\0*.wav\0"
 			L"All files\0*.*\0";
 
+extern const wchar_t g_ATUIFileFilter_LoadTapeAudio[]=
+			L"All supported types\0*.wav\0"
+			L"Waveform audio (*.wav)\0*.wav\0"
+			L"All files\0*.*\0";
+
 extern const wchar_t g_ATUIFileFilter_SaveTape[]=
 			L"Atari cassette image (*.cas)\0*.cas\0";
+
+extern const wchar_t g_ATUIFileFilter_SaveTapeAudio[]=
+			L"Waveform audio (*.wav)\0*.wav\0";
+
+extern const wchar_t g_ATUIFileFilter_SaveTapeAnalysis[]=
+			L"Cassette image analysis (*.wav)\0*.wav\0";
 
 extern const wchar_t g_ATUIFileFilter_LoadSAP[]=
 			L"SAP file (*.sap)\0*.sap\0";

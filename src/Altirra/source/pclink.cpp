@@ -139,6 +139,8 @@ struct ATPCLinkDirEnt {
 	void SetFlagsFromAttributes(uint32 attr);
 	bool TestAttrFilter(uint8 attrFilter) const;
 	void SetDate(const VDDate& date);
+
+	static VDDate DecodeDate(const uint8 tsdata[6]);
 };
 
 void ATPCLinkDirEnt::SetFlagsFromAttributes(uint32 attr) {
@@ -212,6 +214,20 @@ void ATPCLinkDirEnt::SetDate(const VDDate& date) {
 	mHour = date2.mHour;
 	mMin = date2.mMinute;
 	mSec = date2.mSecond;
+}
+
+VDDate ATPCLinkDirEnt::DecodeDate(const uint8 tsdata[6]) {
+	VDExpandedDate xdate {};
+
+	xdate.mDay = tsdata[0];
+	xdate.mMonth = tsdata[1];
+	xdate.mYear = tsdata[2] < 50 ? 2000 + tsdata[2] : 1900 + tsdata[2];
+	xdate.mHour = tsdata[3];
+	xdate.mMinute = tsdata[4];
+	xdate.mSecond = tsdata[5];
+	xdate.mMilliseconds = 0;
+
+	return VDDateFromLocalDate(xdate);
 }
 
 struct ATPCLinkDirEntSort {
@@ -437,6 +453,7 @@ public:
 	bool IsDir() const;
 	bool IsReadable() const;
 	bool IsWritable() const;
+	bool WasCreated() const { return mbWasCreated; }
 
 	uint32 GetLength() const;
 	uint32 GetPosition() const;
@@ -450,6 +467,8 @@ public:
 	uint8 Seek(uint32 pos);
 	uint8 Read(void *dst, uint32 len, uint32& actual);
 	uint8 Write(const void *dst, uint32 len);
+
+	void SetTimestamp(const uint8 tsdata[6]);
  
 	bool GetNextDirEnt(ATPCLinkDirEnt& dirEnt);
 
@@ -458,6 +477,7 @@ protected:
 	bool	mbAllowRead = false;
 	bool	mbAllowWrite = false;
 	bool	mbIsDirectory = false;
+	bool	mbWasCreated = false;
 	uint32	mPos = 0;
 	uint32	mLength = 0;
 
@@ -511,7 +531,28 @@ void ATPCLinkFileHandle::AddDirEnt(const ATPCLinkDirEnt& dirEnt) {
 
 uint8 ATPCLinkFileHandle::OpenFile(const wchar_t *nativePath, uint32 openFlags, bool allowRead, bool allowWrite, bool append) {
 	try {
-		mFile.open(nativePath, openFlags);
+		const uint32 creationMode = openFlags & nsVDFile::kCreationMask;
+
+		mbWasCreated = false;
+
+		switch(creationMode) {
+			case nsVDFile::kOpenExisting:
+			case nsVDFile::kOpenAlways:
+			case nsVDFile::kTruncateExisting:
+				break;
+
+			case nsVDFile::kCreateAlways:
+			case nsVDFile::kCreateNew:
+				mbWasCreated = true;
+				break;
+		}
+
+		if (creationMode == nsVDFile::kOpenAlways) {
+			if (!mFile.openAlways(nativePath, openFlags))
+				mbWasCreated = true;
+		} else {
+			mFile.open(nativePath, openFlags);
+		}
 	} catch(const MyWin32Error& e) {
 		return ATTranslateWin32ErrorToSIOError(e.GetWin32Error());
 	} catch(const MyError&) {
@@ -676,6 +717,13 @@ uint8 ATPCLinkFileHandle::Write(const void *dst, uint32 len) {
 	return actual != len ? ATCIOSymbols::CIOStatDiskFull : ATCIOSymbols::CIOStatSuccess;
 }
 
+void ATPCLinkFileHandle::SetTimestamp(const uint8 tsdata[6]) {
+	VDDate date = ATPCLinkDirEnt::DecodeDate(tsdata);
+
+	if (date != VDDate {})
+		mFile.setCreationTime(date);
+}
+
 bool ATPCLinkFileHandle::GetNextDirEnt(ATPCLinkDirEnt& dirEnt) {
 	uint32 actual;
 
@@ -758,36 +806,32 @@ protected:
 	void OnReadActivity();
 	void OnWriteActivity();
 
-	IATDeviceSIOManager *mpSIOMgr;
-	IATDeviceIndicatorManager *mpUIRenderer;
+	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	IATDeviceIndicatorManager *mpUIRenderer = nullptr;
 
 	VDStringW	mBasePathNative;
-	bool	mbReadOnly;
+	bool	mbReadOnly = false;
+	bool	mbSetTimestamps = false;
 
 	vdfunction<void(const void *, uint32)> mpReceiveFn;
 	vdfunction<void()> mpFenceFn;
 
-	uint8	mStatusFlags;
-	uint8	mStatusError;
-	uint8	mStatusLengthLo;
-	uint8	mStatusLengthHi;
+	uint8	mStatusFlags = 0;
+	uint8	mStatusError = 0;
+	uint8	mStatusLengthLo = 0;
+	uint8	mStatusLengthHi = 0;
 
-	Command	mCommand;
-	uint32	mCommandPhase;
-	uint8	mCommandAux1;
-	uint8	mCommandAux2;
+	Command	mCommand = kCommandNone;
+	uint32	mCommandPhase = 0;
+	uint8	mCommandAux1 = 0;
+	uint8	mCommandAux2 = 0;
 
 	VDStringA	mCurDir;
 
 	struct ParameterBuffer {
 		uint8	mFunction;	// function number
 		uint8	mHandle;	// file handle
-		uint8	mF1;
-		uint8	mF2;
-		uint8	mF3;
-		uint8	mF4;
-		uint8	mF5;
-		uint8	mF6;
+		uint8	mF[6];
 		uint8	mMode;		// file open mode
 		uint8	mAttr1;
 		uint8	mAttr2;
@@ -811,17 +855,7 @@ void ATCreateDevicePCLink(const ATPropertySet& pset, IATDevice **dev) {
 
 extern const ATDeviceDefinition g_ATDeviceDefPCLink = { "pclink", "pclink", L"PCLink", ATCreateDevicePCLink };
 
-ATPCLinkDevice::ATPCLinkDevice()
-	: mpSIOMgr(NULL)
-	, mpUIRenderer(NULL)
-	, mbReadOnly(false)
-	, mStatusFlags(0)
-	, mStatusError(0)
-	, mStatusLengthLo(0)
-	, mStatusLengthHi(0)
-	, mCommand(kCommandNone)
-	, mCommandPhase(0)
-{
+ATPCLinkDevice::ATPCLinkDevice() {
 }
 
 ATPCLinkDevice::~ATPCLinkDevice() {
@@ -866,10 +900,16 @@ void ATPCLinkDevice::GetSettings(ATPropertySet& settings) {
 	else
 		settings.SetBool("write", true);
 
+	if (mbSetTimestamps)
+		settings.SetBool("set_timestamps", true);
+	else
+		settings.Unset("set_timestamps");
+
 	settings.SetString("path", mBasePathNative.c_str());
 }
 
 bool ATPCLinkDevice::SetSettings(const ATPropertySet& settings) {
+	mbSetTimestamps = settings.GetBool("set_timestamps");
 	SetReadOnly(!settings.GetBool("write"));
 	SetBasePath(settings.GetString("path", L""));
 	return true;
@@ -1066,7 +1106,7 @@ void ATPCLinkDevice::AdvanceCommand() {
 				mpReceiveFn = [this](const void *src, uint32 len) {
 					memcpy(mTransferBuffer, src, len);
 				};
-				mpSIOMgr->ReceiveData(0, mParBuf.mF1 + ((uint32)mParBuf.mF2 << 8), true);
+				mpSIOMgr->ReceiveData(0, mParBuf.mF[0] + ((uint32)mParBuf.mF[1] << 8), true);
 				mpSIOMgr->InsertFence(0);
 				mpFenceFn = [this]() {
 					OnRead();
@@ -1094,7 +1134,7 @@ bool ATPCLinkDevice::OnPut() {
 	switch(mParBuf.mFunction) {
 		case 0:		// fread
 			{
-				uint32 bufLen = mParBuf.mF1 + 256*mParBuf.mF2;
+				uint32 bufLen = mParBuf.mF[0] + 256*mParBuf.mF[1];
 				g_ATLCPCLink("Received fread($%02x,%d) command.\n", mParBuf.mHandle, bufLen);
 
 				if (CheckValidFileHandle(true)) {
@@ -1133,7 +1173,7 @@ bool ATPCLinkDevice::OnPut() {
 			}
 
 			{
-				uint32 bufLen = mParBuf.mF1 + 256*mParBuf.mF2;
+				uint32 bufLen = mParBuf.mF[0] + 256*mParBuf.mF[1];
 				g_ATLCPCLink("Received fwrite($%02x,%d) command.\n", mParBuf.mHandle, bufLen);
 
 				if (CheckValidFileHandle(true)) {
@@ -1165,7 +1205,7 @@ bool ATPCLinkDevice::OnPut() {
 
 		case 2:		// fseek
 			{
-				const uint32 pos = mParBuf.mF1 + ((uint32)mParBuf.mF2 << 8) + ((uint32)mParBuf.mF3 << 16);
+				const uint32 pos = mParBuf.mF[0] + ((uint32)mParBuf.mF[1] << 8) + ((uint32)mParBuf.mF[2] << 16);
 				g_ATLCPCLink("Received fseek($%02x,%d) command.\n", mParBuf.mHandle, pos);
 
 				if (CheckValidFileHandle(true)) {
@@ -1315,7 +1355,7 @@ bool ATPCLinkDevice::OnPut() {
 					dirEnt.mLengthMid = (uint8)((uint32)len >> 8);
 					dirEnt.mLengthHi = (uint8)((uint32)len >> 16);
 					memcpy(dirEnt.mName, fn.mName, sizeof dirEnt.mName);
-					dirEnt.SetDate(it.GetLastWriteDate());
+					dirEnt.SetDate(it.GetCreationDate());
 
 					if (!openDir) {
 						matched = true;
@@ -1375,6 +1415,8 @@ bool ATPCLinkDevice::OnPut() {
 					if ((mParBuf.mMode & 8) && mbReadOnly) {
 						mStatusError = ATCIOSymbols::CIOStatReadOnly;
 					} else {
+						bool setTimestamp = false;
+
 						switch(mParBuf.mMode & 15) {
 							case 4:		// read
 								if (!matched)
@@ -1390,12 +1432,16 @@ bool ATPCLinkDevice::OnPut() {
 								mStatusError = fh.OpenFile(nativeFilePath.c_str(),
 									nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways,
 									false, true, false);
+								setTimestamp = true;
 								break;
 
 							case 9:		// append
 								mStatusError = fh.OpenFile(nativeFilePath.c_str(),
 									nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kOpenAlways,
 									false, true, true);
+
+								if (fh.WasCreated())
+									setTimestamp = true;
 								break;
 
 							case 12:	// update
@@ -1411,6 +1457,10 @@ bool ATPCLinkDevice::OnPut() {
 							default:
 								mStatusError = ATCIOSymbols::CIOStatInvalidCmd;
 								break;
+						}
+
+						if (mbSetTimestamps && setTimestamp && fh.IsOpen()) {
+							fh.SetTimestamp(mParBuf.mF);
 						}
 					}
 
@@ -1703,6 +1753,14 @@ bool ATPCLinkDevice::OnPut() {
 
 				try {
 					VDCreateDirectory(resultPath.c_str());
+
+					if (mbSetTimestamps) {
+						VDDate date = ATPCLinkDirEnt::DecodeDate(mParBuf.mF);
+
+						if (date != VDDate {})
+							VDSetDirectoryCreationTime(resultPath.c_str(), date);
+					}
+
 				} catch(const MyWin32Error& e) {
 					mStatusError = ATTranslateWin32ErrorToSIOError(e.GetWin32Error());
 					return true;

@@ -33,8 +33,7 @@ class ATDeviceMidiMate final
 	ATDeviceMidiMate(const ATDeviceMidiMate&) = delete;
 	ATDeviceMidiMate& operator=(const ATDeviceMidiMate&) = delete;
 public:
-	ATDeviceMidiMate();
-	~ATDeviceMidiMate();
+	ATDeviceMidiMate() = default;
 
 	void *AsInterface(uint32 id);
 
@@ -56,15 +55,23 @@ public:	// IATDeviceRawSIO
 	void OnSendReady() override;
 
 protected:
-	IATDeviceSIOManager *mpSIOMgr;
-	bool mbActive;
-	bool mbInSysEx;
-	uint32 mState;
-	uint8 mMsgStatus;
-	uint8 mMsgData1;
-	uint8 mMsgData2;
+	void ProcessMessageByte(uint8 c);
+	void ProcessVoiceMessageStatus(uint8 c);
+	void ProcessSystemCommonMessageStatus(uint8 c);
+	void ProcessDataByte(uint8 c);
 
-	HMIDIOUT mhmo;
+	IATDeviceSIOManager *mpSIOMgr;
+	bool mbActive {};
+	bool mbInSysEx {};
+	uint32 mState {};
+	uint8 mMsgStatus {};
+	uint8 mMsgData1 {};
+	uint8 mMsgData2 {};
+	uint8 mSysExLength {};
+
+	HMIDIOUT mhmo {};
+
+	uint8 mSysExBuffer[256] {};
 };
 
 void ATCreateDeviceMidiMate(const ATPropertySet& pset, IATDevice **dev) {
@@ -73,17 +80,7 @@ void ATCreateDeviceMidiMate(const ATPropertySet& pset, IATDevice **dev) {
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefMidiMate = { "midimate", nullptr, L"MIDIMATE", ATCreateDeviceMidiMate };
-
-ATDeviceMidiMate::ATDeviceMidiMate()
-	: mpSIOMgr(nullptr)
-	, mbActive(false)
-	, mhmo(nullptr)
-{
-}
-
-ATDeviceMidiMate::~ATDeviceMidiMate() {
-}
+extern const ATDeviceDefinition g_ATDeviceDefMidiMate = { "midimate", nullptr, L"MidiMate", ATCreateDeviceMidiMate };
 
 void *ATDeviceMidiMate::AsInterface(uint32 id) {
 	switch(id) {
@@ -124,6 +121,7 @@ void ATDeviceMidiMate::Shutdown() {
 void ATDeviceMidiMate::ColdReset() {
 	mState = 0;
 	mbInSysEx = false;
+	mSysExLength = 0;
 }
 
 void ATDeviceMidiMate::InitSIO(IATDeviceSIOManager *mgr) {
@@ -157,66 +155,140 @@ void ATDeviceMidiMate::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit)
 		return;
 	}
 
-	switch(mState) {
-		case 0:		// initial
-			if (c < 0x80)
+	// real-time category message -- may be interleaved with SysEx
+	if (c >= 0xF8) {
+		switch(c) {
+			case 0xF8:		// timing clock (24 times/quarter note)
+			case 0xFA:		// start
+			case 0xFB:		// continue
+			case 0xFC:		// stop
+			case 0xFE:		// active sensing
+			case 0xFF:		// reset
+				g_ATLCMIDI("Message out: %02X\n", mMsgStatus);
+				if (mhmo)
+					midiOutShortMsg(mhmo, mMsgStatus);
 				break;
+		}
 
-			if (c < 0xF0 && mbInSysEx)
-				break;
+		return;
+	}
 
-			mMsgStatus = c;
+	ProcessMessageByte(c);
+}
 
-			switch(c >> 4) {
-				case 0x80:		// note off
-				case 0x90:		// note on
-				case 0xA0:		// aftertouch
-				case 0xB0:		// control change
-				case 0xE0:		// pitch bend change
-					mState = 1;
-					break;
-				case 0xC0:		// program change
-				case 0xD0:		// channel pressure
-					mState = 3;
-					break;
+void ATDeviceMidiMate::OnSendReady() {
+}
 
-				case 0xF0:
-					switch(c) {
-						case 0xF0:		// sysex
-							mbInSysEx = true;
-							break;
+void ATDeviceMidiMate::ProcessMessageByte(uint8 c) {
+	if (mState) {
+		if (c >= 0x80) {
+			// Uhh... we got a control byte when we were expecting a data byte.
+			// Abort the command and process it as a status byte. This is needed by the
+			// CZ-101 demo, which sends a bogus $00 byte before a $C0 status.
+			mState = 0;
+		} else {
+			ProcessDataByte(c);
+			return;
+		}
+	}
 
-						case 0xF1:		// time code quarter frame
-							mState = 1;
-							break;
-
-						case 0xF2:		// song position pointer
-							mState = 1;
-							break;
-
-						case 0xF3:		// song select
-							mState = 3;
-							break;
-
-						case 0xF7:		// end sysex
-							mbInSysEx = false;
-							break;
-
-						case 0xF6:		// tune request
-						case 0xF8:		// timing clock (24 times/quarter note)
-						case 0xFA:		// start
-						case 0xFB:		// continue
-						case 0xFC:		// stop
-						case 0xFE:		// active sensing
-						case 0xFF:		// reset
-							g_ATLCMIDI("Message out: %02X\n", mMsgStatus);
-							if (mhmo)
-								midiOutShortMsg(mhmo, mMsgStatus);
-							break;
-					}
-					break;
+	if (mbInSysEx) {
+		if (c >= 0x80) {
+			if (c == 0xF7) {
+				// end SysEx
+				g_ATLCMIDI("SysEx message (ignored)\n", mMsgStatus);
+			} else {
+				// only real-time messages are allowed within SysEx (already handled earlier)
+				return;
 			}
+		}
 
+		mSysExBuffer[mSysExLength++] = c;
+
+		if (!mSysExLength) {
+			// SysEx message too long -- terminate it
+			mbInSysEx = false;
+		}
+		return;
+	}
+
+	// check for running status
+	if (c < 0x80) {
+		// running status
+		if (mMsgStatus < 0x80 || mMsgStatus >= 0xF0) {
+			// only voice messages can use running status
+			return;
+		}
+
+		ProcessVoiceMessageStatus(mMsgStatus);
+		ProcessDataByte(c);
+		return;
+	}
+
+	// voice messages are not allowed within system exclusive messages
+	if (c < 0xF0 && mbInSysEx)
+		return;
+
+	mMsgStatus = c;
+
+	if (c < 0xF0)
+		ProcessVoiceMessageStatus(c);
+	else
+		ProcessSystemCommonMessageStatus(c);
+}
+
+void ATDeviceMidiMate::ProcessVoiceMessageStatus(uint8 c) {
+	VDASSERT(c >= 0x80 && c < 0xF0);
+
+	switch (c & 0xF0) {
+		case 0x80:		// note off
+		case 0x90:		// note on
+		case 0xA0:		// aftertouch
+		case 0xB0:		// control change
+		case 0xE0:		// pitch bend change
+			mState = 1;
+			break;
+		case 0xC0:		// program change
+		case 0xD0:		// channel pressure
+			mState = 3;
+			break;
+	}
+}
+
+void ATDeviceMidiMate::ProcessSystemCommonMessageStatus(uint8 c) {
+	VDASSERT(c >= 0xF0 && c < 0xF8);
+
+	switch (c) {
+		case 0xF0:		// sysex
+			mbInSysEx = true;
+			break;
+
+		case 0xF1:		// time code quarter frame
+			mState = 1;
+			break;
+
+		case 0xF2:		// song position pointer
+			mState = 1;
+			break;
+
+		case 0xF3:		// song select
+			mState = 3;
+			break;
+
+		case 0xF7:		// end sysex
+			mbInSysEx = false;
+			break;
+
+		case 0xF6:		// tune request
+			g_ATLCMIDI("Message out: %02X\n", mMsgStatus);
+			if (mhmo)
+				midiOutShortMsg(mhmo, mMsgStatus);
+			break;
+	}
+}
+
+void ATDeviceMidiMate::ProcessDataByte(uint8 c) {
+	switch(mState) {
 		case 1:		// two data bytes, first byte
 			mMsgData1 = c;
 			++mState;
@@ -238,7 +310,4 @@ void ATDeviceMidiMate::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit)
 			mState = 0;
 			break;
 	}
-}
-
-void ATDeviceMidiMate::OnSendReady() {
 }

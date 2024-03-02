@@ -20,6 +20,7 @@
 
 #include <at/atcore/devicecart.h>
 #include <at/atcore/devicepbi.h>
+#include <at/atcore/devicesystemcontrol.h>
 #include <at/atemulation/flash.h>
 #include "pbi.h"
 #include <at/atemulation/rtcds1305.h>
@@ -35,14 +36,18 @@ class ATCPUHookManager;
 class ATFirmwareManager;
 
 class ATUltimate1MBEmulator final
-	: public IATPBIDevice
+	: public IVDUnknown
+	, public IATPBIDevice
 	, public IATDeviceCartridge
+	, public IATDeviceSystemControl
 {
 	ATUltimate1MBEmulator(const ATUltimate1MBEmulator&) = delete;
 	ATUltimate1MBEmulator& operator=(const ATUltimate1MBEmulator&) = delete;
 public:
 	ATUltimate1MBEmulator();
 	~ATUltimate1MBEmulator();
+
+	void *AsInterface(uint32 iid);
 
 	void Init(void *memory,
 		ATMMUEmulator *mmu,
@@ -53,13 +58,6 @@ public:
 		ATCPUHookManager *hookmgr
 		);
 	void Shutdown();
-
-	void SetMemoryLayers(
-		ATMemoryLayer *layerLowerKernelROM,
-		ATMemoryLayer *layerUpperKernelROM,
-		ATMemoryLayer *layerBASICROM,
-		ATMemoryLayer *layerSelfTestROM,
-		ATMemoryLayer *layerGameROM);
 
 	bool IsSoundBoardEnabled() const { return mbSoundBoardEnabled; }
 	bool IsFirmwareDirty() const { return mFlashEmu.IsDirty(); }
@@ -92,11 +90,21 @@ public:
 	void DumpStatus(ATConsoleOutput&);
 	void DumpRTCStatus(ATConsoleOutput&);
 
-public:
+public:		// IATDeviceCartridge
 	void InitCartridge(IATDeviceCartridgePort *cartPort) override;
 	bool IsLeftCartActive() const override;
 	void SetCartEnables(bool leftEnable, bool rightEnable, bool cctlEnable) override;
 	void UpdateCartSense(bool leftActive) override;
+
+public:		// IATDeviceSystemControl
+	void InitSystemControl(IATSystemController *sysctrl) override;
+	void SetROMLayers(
+		ATMemoryLayer *layerLowerKernelROM,
+		ATMemoryLayer *layerUpperKernelROM,
+		ATMemoryLayer *layerBASICROM,
+		ATMemoryLayer *layerSelfTestROM,
+		ATMemoryLayer *layerGameROM,
+		const void *kernelROM) override;
 
 protected:
 	void SetKernelBank(uint8 bank);
@@ -149,23 +157,24 @@ protected:
 	bool mbSoundBoardEnabled;
 	uint8 mVBXEPage;
 
-	uint8 *mpMemory;
-	ATMMUEmulator *mpMMU;
-	ATPBIManager *mpPBIManager;
-	IATUIRenderer *mpUIRenderer;
-	ATCPUHookManager *mpHookMgr;
+	uint8 *mpMemory = nullptr;
+	ATMMUEmulator *mpMMU = nullptr;
+	ATPBIManager *mpPBIManager = nullptr;
+	IATUIRenderer *mpUIRenderer = nullptr;
+	ATCPUHookManager *mpHookMgr = nullptr;
+	IATSystemController *mpSystemController = nullptr;
 
 	IATDeviceCartridgePort *mpCartridgePort = nullptr;
 	uint32 mCartId = 0;
 
-	ATMemoryManager *mpMemMan;
-	ATMemoryLayer *mpLayerCart;			// $A000-BFFF
-	ATMemoryLayer *mpLayerFlashControl;	// $A000-BFFF
-	ATMemoryLayer *mpLayerPBIControl;	// $D100-D1FF
-	ATMemoryLayer *mpLayerPIAOverlay;	// $D300-D3FF
-	ATMemoryLayer *mpLayerCartControl;	// $D500-D5FF
-	ATMemoryLayer *mpLayerPBIData;		// $D600-D7FF
-	ATMemoryLayer *mpLayerPBIFirmware;	// $D800-DFFF
+	ATMemoryManager *mpMemMan = nullptr;
+	ATMemoryLayer *mpLayerCart = nullptr;			// $A000-BFFF
+	ATMemoryLayer *mpLayerFlashControl = nullptr;	// $A000-BFFF
+	ATMemoryLayer *mpLayerPBIControl = nullptr;		// $D100-D1FF
+	ATMemoryLayer *mpLayerPIAOverlay = nullptr;		// $D300-D3FF
+	ATMemoryLayer *mpLayerCartControl = nullptr;	// $D500-D5FF
+	ATMemoryLayer *mpLayerPBIData = nullptr;		// $D600-D7FF
+	ATMemoryLayer *mpLayerPBIFirmware = nullptr;	// $D800-DFFF
 
 	// externally provided layers
 	ATMemoryLayer *mpMemLayerLowerKernelROM;	// $C000-CFFF

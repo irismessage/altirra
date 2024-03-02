@@ -53,12 +53,16 @@ bool ATUIDialogPCLink::OnLoaded() {
 void ATUIDialogPCLink::OnDataExchange(bool write) {
 	if (!write) {
 		CheckButton(IDC_ALLOW_WRITES, mProps.GetBool("write"));
+		CheckButton(IDC_SET_TIMESTAMPS, mProps.GetBool("set_timestamps"));
 		SetControlText(IDC_PATH, mProps.GetString("path", L""));
 	} else {
 		mProps.Clear();
 
 		if (IsButtonChecked(IDC_ALLOW_WRITES))
 			mProps.SetBool("write", true);
+
+		if (IsButtonChecked(IDC_SET_TIMESTAMPS))
+			mProps.SetBool("set_timestamps", true);
 
 		VDStringW path;
 		GetControlText(IDC_PATH, path);

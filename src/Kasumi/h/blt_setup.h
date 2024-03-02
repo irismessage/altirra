@@ -4,13 +4,13 @@
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmaputils.h>
 
-typedef void (*VDPixmapPalettedBlitterFn)(void *dst, ptrdiff_t dstpitch, const void *src, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h, const void *pal);
-typedef void (*VDPixmapChunkyBlitterFn)(void *dst, ptrdiff_t dstpitch, const void *src, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
+typedef void (VDCDECL *VDPixmapPalettedBlitterFn)(void *dst, ptrdiff_t dstpitch, const void *src, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h, const void *pal);
+typedef void (VDCDECL *VDPixmapChunkyBlitterFn)(void *dst, ptrdiff_t dstpitch, const void *src, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
 
-void VDPixmapBltDirectPalettedConversion(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h, VDPixmapPalettedBlitterFn pBlitter);
+void VDCDECL VDPixmapBltDirectPalettedConversion(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h, VDPixmapPalettedBlitterFn pBlitter);
 
 template<VDPixmapPalettedBlitterFn palettedBlitter>
-void VDPixmapBlitterPalettedAdapter(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h)
+void VDCDECL VDPixmapBlitterPalettedAdapter(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h)
 {
 	if (dst.format == nsVDPixmap::kPixFormat_XRGB8888)
 		palettedBlitter(dst.data, dst.pitch, src.data, src.pitch, w, h, src.palette);
@@ -19,7 +19,7 @@ void VDPixmapBlitterPalettedAdapter(const VDPixmap& dst, const VDPixmap& src, vd
 }
 
 template<VDPixmapChunkyBlitterFn chunkyBlitter>
-void VDPixmapBlitterChunkyAdapter(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h)
+void VDCDECL VDPixmapBlitterChunkyAdapter(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h)
 {
 	chunkyBlitter(dst.data, dst.pitch, src.data, src.pitch, w, h);
 }

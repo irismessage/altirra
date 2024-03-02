@@ -41,6 +41,9 @@
     <ClInclude Include="..\h\at\atcore\devicecio.h" />
     <ClInclude Include="..\h\at\atcore\deviceimpl.h" />
     <ClInclude Include="..\h\at\atcore\devicemanager.h" />
+    <ClInclude Include="..\h\at\atcore\devicesystemcontrol.h" />
+    <ClInclude Include="..\h\at\atcore\deviceparent.h" />
+    <ClInclude Include="..\h\at\atcore\deviceparentimpl.h" />
     <ClInclude Include="..\h\at\atcore\devicepbi.h" />
     <ClInclude Include="..\h\at\atcore\deviceport.h" />
     <ClInclude Include="..\h\at\atcore\deviceprinter.h" />
@@ -49,6 +52,8 @@
     <ClInclude Include="..\h\at\atcore\devicesioimpl.h" />
     <ClInclude Include="..\h\at\atcore\deviceu1mb.h" />
     <ClInclude Include="..\h\at\atcore\devicevideo.h" />
+    <ClInclude Include="..\h\at\atcore\enumparse.h" />
+    <ClInclude Include="..\h\at\atcore\enumparseimpl.h" />
     <ClInclude Include="..\h\at\atcore\intrin_sse2.h" />
     <ClInclude Include="..\h\at\atcore\logging.h" />
     <ClInclude Include="..\h\at\atcore\media.h" />
@@ -69,6 +74,8 @@
     <ClCompile Include="source\deferredevent.cpp" />
     <ClCompile Include="source\deviceimpl.cpp" />
     <ClCompile Include="source\devicemanager.cpp" />
+    <ClCompile Include="source\deviceparentimpl.cpp" />
+    <ClCompile Include="source\enumparse.cpp" />
     <ClCompile Include="source\logging.cpp" />
     <ClCompile Include="source\memoryutils.cpp" />
     <ClCompile Include="source\profile.cpp" />

@@ -52,6 +52,7 @@ public:
 
 	virtual VDZLRESULT On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 	virtual VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
+	virtual void OnFontChanged();
 
 protected:
 	VDZHWND	mhwnd;
@@ -66,6 +67,7 @@ public:
 
 	VDZLRESULT Dispatch_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam);
 	VDZLRESULT Dispatch_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
+	void DispatchFontChanged();
 
 protected:
 	size_t Hash(VDZHWND hwnd) const;
@@ -105,6 +107,7 @@ public:
 	void GetSelectedIndices(vdfastvector<int>& indices) const;
 	void SetFullRowSelectEnabled(bool enabled);
 	void SetGridLinesEnabled(bool enabled);
+	bool AreItemCheckboxesEnabled() const;
 	void SetItemCheckboxesEnabled(bool enabled);
 	void EnsureItemVisible(int index);
 	int GetVisibleTopIndex();
@@ -189,7 +192,8 @@ protected:
 	void Detach();
 
 	static int VDZCALLBACK SortAdapter(VDZLPARAM x, VDZLPARAM y, VDZLPARAM cookie);
-	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
+	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) override;
+	void OnFontChanged() override;
 
 	int			mChangeNotificationLocks;
 	int			mNextTextIndex;
@@ -444,9 +448,13 @@ public:
 	void SetDropTargetHighlight(NodeRef item);
 
 protected:
-	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam);
+	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) override;
+	void OnFontChanged() override;
+
 	VDZLRESULT FixLabelEditWndProcA(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
 	VDZLRESULT FixLabelEditWndProcW(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
+
+	void DeleteFonts();
 
 	int			mNextTextIndex;
 	VDStringW mTextW[3];

@@ -21,21 +21,17 @@
 #include <windows.h>
 #include "oshelper.h"
 
-class ATUIDialogAbout : public VDDialogFrameW32 {
+class ATUIDialogAbout : public VDResizableDialogFrameW32 {
 public:
 	ATUIDialogAbout();
 	~ATUIDialogAbout();
 
 protected:
 	bool OnLoaded();
-	void OnSize();
-	bool OnErase(VDZHDC hdc);
-
-	VDDialogResizerW32 mResizer;
 };
 
 ATUIDialogAbout::ATUIDialogAbout()
-	: VDDialogFrameW32(IDD_ABOUT)
+	: VDResizableDialogFrameW32(IDD_ABOUT)
 {
 }
 
@@ -51,20 +47,10 @@ bool ATUIDialogAbout::OnLoaded() {
 
 	SetControlText(IDC_EDIT, (const wchar_t *)text.data());
 
-	mResizer.Init(mhdlg);
 	mResizer.Add(IDC_EDIT, VDDialogResizerW32::kMC | VDDialogResizerW32::kAvoidFlicker);
 	mResizer.Add(IDOK, VDDialogResizerW32::kAnchorX1_C | VDDialogResizerW32::kAnchorX2_C | VDDialogResizerW32::kB);
 
 	return VDDialogFrameW32::OnLoaded();
-}
-
-void ATUIDialogAbout::OnSize() {
-	mResizer.Relayout();
-}
-
-bool ATUIDialogAbout::OnErase(VDZHDC hdc) {
-	mResizer.Erase(&hdc);
-	return true;
 }
 
 void ATUIShowDialogAbout(VDGUIHandle h) {

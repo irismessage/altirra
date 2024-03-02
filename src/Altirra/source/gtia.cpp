@@ -36,7 +36,7 @@
 using namespace ATGTIA;
 
 #ifdef VD_CPU_X86
-extern "C" void atasm_update_playfield_160_sse2(
+extern "C" void VDCDECL atasm_update_playfield_160_sse2(
 	void *dst,
 	const uint8 *src,
 	uint32 n
@@ -240,7 +240,6 @@ void ATGTIAEmulator::Sprite::Sync(int pos) {
 
 ATGTIAEmulator::ATGTIAEmulator()
 	: mpConn(NULL)
-	, mpVideoTap(NULL)
 	, mpFrameTracker(new ATFrameTracker)
 	, mbCTIAMode(false)
 	, mbPALMode(false)
@@ -764,8 +763,24 @@ void ATGTIAEmulator::SetForcedConsoleSwitches(uint8 c) {
 	mForcedSwitchInput = c;
 }
 
-void ATGTIAEmulator::SetVideoTap(IATGTIAVideoTap *vtap) {
-	mpVideoTap = vtap;
+void ATGTIAEmulator::AddVideoTap(IATGTIAVideoTap *vtap) {
+	if (!mpVideoTaps)
+		mpVideoTaps = new vdfastvector<IATGTIAVideoTap *>;
+
+	mpVideoTaps->push_back(vtap);
+}
+
+void ATGTIAEmulator::RemoveVideoTap(IATGTIAVideoTap *vtap) {
+	if (mpVideoTaps) {
+		auto it = std::find(mpVideoTaps->begin(), mpVideoTaps->end(), vtap);
+
+		if (it != mpVideoTaps->end()) {
+			mpVideoTaps->erase(it);
+
+			if (mpVideoTaps->empty())
+				mpVideoTaps = nullptr;
+		}
+	}
 }
 
 const VDPixmap *ATGTIAEmulator::GetLastFrameBuffer() const {
@@ -1107,6 +1122,9 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 	if (!mpDisplay)
 		return true;
 
+	if (mpVideoTaps)
+		drop = false;
+
 	if (!drop && !mpDisplay->RevokeBuffer(false, ~mpFrame)) {
 		if (mpFrameTracker->mActiveFrames < 3) {
 			ATFrameBuffer *fb = new ATFrameBuffer(mpFrameTracker);
@@ -1116,7 +1134,7 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 			fb->mbAllowConversion = true;
 			fb->mbInterlaced = false;
 			fb->mFlags = IVDVideoDisplay::kAllFields;
-		} else if ((mpVideoTap || !mbTurbo) && !force) {
+		} else if ((mpVideoTaps || !mbTurbo) && !force) {
 			if (!mpDisplay->RevokeBuffer(true, ~mpFrame))
 				return false;
 		}
@@ -1292,7 +1310,7 @@ bool ATGTIAEmulator::BeginFrame(bool force, bool drop) {
 		}
 	}
 
-	mFrameTimestamp = mpConn->GTIAGetTimestamp();
+	mFrameTimestamp = mpConn->GTIAGetTimestamp64();
 
 	// Reset Y to avoid weirdness in immediate updates from being between BeginFrame() and
 	// the first BeginScanline().
@@ -1316,8 +1334,12 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 	if ((unsigned)(y - 8) < 240)
 		mbScanlinesWithHiRes[y - 8] = mbHiresMode;
 
-	if (y == 8 && mpVBXE)
-		mpVBXE->BeginFrame();
+	if (mpVBXE) {
+		if (y == 8)
+			mpVBXE->BeginFrame();
+		else if (y == 248)
+			mpVBXE->EndFrame();
+	}
 
 	mpDst = NULL;
 	
@@ -1976,8 +1998,10 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 			mbLastFieldPolarity = mbFieldPolarity;
 		}
 
-		if (mpVideoTap)
-			mpVideoTap->WriteFrame(mpFrame->mPixmap, mFrameTimestamp);
+		if (mpVideoTaps) {
+			for(auto *p : *mpVideoTaps)
+				p->WriteFrame(mpFrame->mPixmap, mFrameTimestamp, mpConn->GTIAGetTimestamp64());
+		}
 
 		if (mbTurbo)
 			mpFrame->mFlags |= IVDVideoDisplay::kDoNotWait;

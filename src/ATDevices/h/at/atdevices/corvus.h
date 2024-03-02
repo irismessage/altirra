@@ -23,6 +23,7 @@
 #include <vd2/system/vdstl.h>
 #include <at/atcore/blockdevice.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/deviceparentimpl.h>
 
 class ATPropertySet;
 
@@ -111,7 +112,6 @@ class ATDeviceCorvus final
 	, public IATDeviceScheduling
 	, public IATDevicePortInput
 	, public IATDeviceIndicators
-	, public IATDeviceParent
 {
 	ATDeviceCorvus(const ATDeviceCorvus&) = delete;
 	ATDeviceCorvus& operator=(const ATDeviceCorvus&) = delete;
@@ -139,12 +139,6 @@ public:	// IATDevicePortInput
 public:	// IATDeviceIndicators
 	void InitIndicators(IATDeviceIndicatorManager *indmgr) override;
 
-public:	// IATDeviceParent
-	const char *GetSupportedType(uint32 index) override;
-	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
-	void AddChildDevice(IATDevice *dev) override;
-	void RemoveChildDevice(IATDevice *dev) override;
-
 private:
 	void OnPortOutputChanged(uint32 outputState);
 	void ReinitPortOutput();
@@ -160,6 +154,7 @@ private:
 	uint8 mDataLatch = 0;
 
 	ATCorvusEmulator mCorvusEmu;
+	ATDeviceParentSingleChild mDeviceParent;
 };
 
 #endif

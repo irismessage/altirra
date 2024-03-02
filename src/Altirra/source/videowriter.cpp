@@ -1992,7 +1992,7 @@ void ATVideoEncoderZMBV::CompressInter8(bool encodeAll) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-class ATVideoWriter : public IATVideoWriter {
+class ATVideoWriter final : public IATVideoWriter {
 public:
 	ATVideoWriter();
 	~ATVideoWriter();
@@ -2002,7 +2002,7 @@ public:
 	void Init(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, bool encodeAllFrames, IATUIRenderer *r);
 	void Shutdown();
 
-	void WriteFrame(const VDPixmap& px, uint32 timestamp);
+	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd) override;
 	void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp);
 
 protected:
@@ -2017,7 +2017,7 @@ protected:
 
 	bool	mbVideoTimestampSet;
 	bool	mbAudioPreskipSet;
-	uint32	mFirstVideoTimestamp;
+	uint64	mFirstVideoTimestamp;
 	sint32	mAudioPreskip;
 	uint32	mVideoPreskip;
 	double	mFrameRate;
@@ -2247,7 +2247,7 @@ void ATVideoWriter::Shutdown() {
 	mpVideoEncoder = NULL;
 }
 
-void ATVideoWriter::WriteFrame(const VDPixmap& px, uint32 timestamp) {
+void ATVideoWriter::WriteFrame(const VDPixmap& px, uint64 timestamp, uint64 timestampEnd) {
 	if (mbErrorState)
 		return;
 
@@ -2263,7 +2263,7 @@ void ATVideoWriter::WriteFrame(const VDPixmap& px, uint32 timestamp) {
 	}
 
 	if (mpUIRenderer)
-		mpUIRenderer->SetRecordingPosition((float)((timestamp - mFirstVideoTimestamp) / mTimestampRate), mFile->GetCurrentSize());
+		mpUIRenderer->SetRecordingPosition((float)((double)(timestamp - mFirstVideoTimestamp) / mTimestampRate), mFile->GetCurrentSize());
 
 	try {
 		bool intra = false;

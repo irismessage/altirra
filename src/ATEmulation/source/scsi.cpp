@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/bitmath.h>
+#include <vd2/system/math.h>
 #include <vd2/system/vdstl.h>
 #include <at/atcore/logging.h>
 #include <at/atemulation/scsi.h>
@@ -24,26 +25,15 @@
 ATLogChannel g_ATLCSCSICmd(true, false, "SCSICMD", "SCSI commands");
 ATLogChannel g_ATLCSCSIBus(false, false, "SCSIBUS", "SCSI bus state");
 
-ATSCSIBusEmulator::ATSCSIBusEmulator()
-	: mpBusMonitor(nullptr)
-	, mBusPhase(kBusPhase_BusFree)
-	, mBusState(0)
-	, mpTargetDevice(nullptr)
-	, mbTransferInActive(false)
-	, mbTransferOutActive(false)
-	, mpTransferBuffer(nullptr)
-	, mTransferIndex(0)
-	, mTransferLength(0)
-{
-	for(uint32 i=0; i<vdcountof(mEndpointState); ++i)
-		mEndpointState[i] = 0;
-
-	for(size_t i=0; i<vdcountof(mpDevices); ++i)
-		mpDevices[i] = nullptr;
+ATSCSIBusEmulator::ATSCSIBusEmulator() {
 }
 
 ATSCSIBusEmulator::~ATSCSIBusEmulator() {
 	Shutdown();
+}
+
+void ATSCSIBusEmulator::Init(ATScheduler *sch) {
+	mpScheduler = sch;
 }
 
 void ATSCSIBusEmulator::Shutdown() {
@@ -123,6 +113,17 @@ void ATSCSIBusEmulator::CommandEnd() {
 	mbTransferInActive = false;
 	mbTransferOutActive = false;
 	mbCommandActive = false;
+
+	mpScheduler->UnsetEvent(mpEventCommandDelay);
+}
+
+void ATSCSIBusEmulator::CommandDelay(float us) {
+	if (us <= 0)
+		return;
+
+	const int32_t delay = VDRoundToInt32(mpScheduler->GetRate().asDouble() * us / 1000000.0);
+	if (delay > 0)
+		mpScheduler->SetEvent(delay, this, 1, mpEventCommandDelay);
 }
 
 void ATSCSIBusEmulator::CommandSendData(SendMode mode, const void *data, uint32 length) {
@@ -165,6 +166,12 @@ void ATSCSIBusEmulator::CommandReceiveData(ReceiveMode mode, void *buf, uint32 l
 			SetBusPhase(kBusPhase_MessageOut);
 			break;
 	}
+}
+
+void ATSCSIBusEmulator::OnScheduledEvent(uint32 id) {
+	mpEventCommandDelay = nullptr;
+
+	AdvanceCommand();
 }
 
 void ATSCSIBusEmulator::UpdateBusState() {
@@ -380,11 +387,7 @@ void ATSCSIBusEmulator::UpdateBusState() {
 		}
 	}
 
-	if (mbCommandActive) {
-		while(mpTargetDevice && !mbTransferInActive && !mbTransferOutActive) {
-			mpTargetDevice->AdvanceCommand();
-		}
-	}
+	AdvanceCommand();
 }
 
 void ATSCSIBusEmulator::SetBusPhase(BusPhase phase) {
@@ -439,5 +442,17 @@ void ATSCSIBusEmulator::SetBusPhase(BusPhase phase) {
 			g_ATLCSCSIBus <<= "Entering state: MESSAGEOUT\n";
 			SetControl(1, kATSCSICtrlState_BSY | kATSCSICtrlState_CD | kATSCSICtrlState_MSG | kATSCSICtrlState_REQ);
 			break;
+	}
+}
+
+void ATSCSIBusEmulator::AdvanceCommand() {
+	while(mbCommandActive && mpTargetDevice) {
+		if (mbTransferInActive || mbTransferOutActive)
+			return;
+
+		if (mpEventCommandDelay)
+			return;
+
+		mpTargetDevice->AdvanceCommand();
 	}
 }

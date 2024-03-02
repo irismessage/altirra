@@ -200,5 +200,11 @@
     <Xml Include="source\devices-xf551.xml">
       <Filter>Source Files</Filter>
     </Xml>
+    <Xml Include="source\devices-ideplus2.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
+    <Xml Include="source\devices-rapidus.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
   </ItemGroup>
 </Project>

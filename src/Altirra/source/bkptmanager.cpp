@@ -86,8 +86,10 @@ void ATBreakpointManager::Shutdown() {
 }
 
 void ATBreakpointManager::AttachTarget(uint32 targetIndex, IATDebugTarget *target) {
-	if (mTargets.size() <= targetIndex)
+	if (mTargets.size() <= targetIndex) {
 		mTargets.resize(targetIndex + 1, {});
+		mInsnBreakpoints.resize(targetIndex + 1);
+	}
 
 	auto *bps = vdpoly_cast<IATDebugTargetBreakpoints *>(target);
 	mTargets[targetIndex] = { target, bps, new TargetBPHandler(this, targetIndex << 24) };
@@ -168,6 +170,7 @@ bool ATBreakpointManager::GetInfo(uint32 idx, ATBreakpointInfo& info) const {
 	info.mAddress = be.mAddress & 0xFFFFFF;
 	info.mLength = 1;
 	info.mbBreakOnPC = (be.mType & kBPT_PC) != 0;
+	info.mbBreakOnInsn = (be.mType & kBPT_Insn) != 0;
 	info.mbBreakOnRead = (be.mType & kBPT_Read) != 0;
 	info.mbBreakOnWrite = (be.mType & kBPT_Write) != 0;
 
@@ -187,15 +190,34 @@ bool ATBreakpointManager::GetInfo(uint32 idx, ATBreakpointInfo& info) const {
 	return true;
 }
 
+uint32 ATBreakpointManager::SetInsnBP(uint32 targetIndex) {
+	const uint32 id = AllocBreakpoint();
+
+	BreakpointEntry& be = mBreakpoints[id - 1];
+	be.mAddress = targetIndex << 24;
+	be.mType = kBPT_Insn;
+
+	auto& insnBPs = mInsnBreakpoints[targetIndex];
+
+	if (insnBPs.empty()) {
+		if (targetIndex)
+			mTargets[targetIndex].mpBreakpoints->SetAllBreakpoints();
+		else
+			mpCPU->SetAllBreakpoints();
+	}
+
+	auto it = std::lower_bound(insnBPs.begin(), insnBPs.end(), id);
+
+	insnBPs.insert(it, id);
+	return id;
+}
+
 uint32 ATBreakpointManager::SetAtPC(uint32 targetIndex, uint32 pc) {
 	pc = (pc & 0xFFFFFF) + (targetIndex << 24);
 
-	uint32 idx = (uint32)(std::find_if(mBreakpoints.begin(), mBreakpoints.end(), BreakpointFreePred()) - mBreakpoints.begin());
+	const uint32 idx = AllocBreakpoint();
 
-	if (idx >= mBreakpoints.size())
-		mBreakpoints.push_back();
-
-	BreakpointEntry& be = mBreakpoints[idx++];
+	BreakpointEntry& be = mBreakpoints[idx - 1];
 	be.mAddress = pc;
 	be.mType = kBPT_PC;
 
@@ -213,22 +235,21 @@ uint32 ATBreakpointManager::SetAtPC(uint32 targetIndex, uint32 pc) {
 	return idx;
 }
 
-uint32 ATBreakpointManager::SetAccessBP(uint16 address, bool read, bool write) {
+uint32 ATBreakpointManager::SetAccessBP(uint32 address, bool read, bool write) {
 	VDASSERT(read || write);
 
-	uint32 idx = (uint32)(std::find_if(mBreakpoints.begin(), mBreakpoints.end(), BreakpointFreePred()) - mBreakpoints.begin());
+	address &= 0xFFFFFF;
 
-	if (idx >= mBreakpoints.size())
-		mBreakpoints.push_back();
+	const uint32 idx = AllocBreakpoint();
 
-	BreakpointEntry& be = mBreakpoints[idx++];
+	BreakpointEntry& be = mBreakpoints[idx - 1];
 	be.mAddress = address;
 	be.mType = (read ? kBPT_Read : 0) + (write ? kBPT_Write : 0);
 
 	BreakpointsByAddress::insert_return_type r(mAccessBreakpoints.insert(address));
 	r.first->second.push_back(idx);
 
-	RegisterAccessPage(address & 0xff00, read, write);
+	RegisterAccessPage(address & 0xffff00, read, write);
 
 	// set attribute flags on address
 	uint8 attrFlags = 0;
@@ -238,24 +259,23 @@ uint32 ATBreakpointManager::SetAccessBP(uint16 address, bool read, bool write) {
 	if (write)
 		attrFlags |= kAttribWriteBkpt;
 
-	mAttrib[address] |= attrFlags;
+	mAttrib[address & 0xFFFF] |= attrFlags;
 
 	return idx;	
 }
 
-uint32 ATBreakpointManager::SetAccessRangeBP(uint16 address, uint32 len, bool read, bool write) {
+uint32 ATBreakpointManager::SetAccessRangeBP(uint32 address, uint32 len, bool read, bool write) {
 	VDASSERT(read || write);
 
-	if (address + len > 0x10000)
-		len = 0x10000 - address;
+	address &= 0xFFFFFF;
+
+	if (address + len > 0x1000000)
+		len = 0x1000000 - address;
 
 	// create breakpoint entry
-	uint32 idx = (uint32)(std::find_if(mBreakpoints.begin(), mBreakpoints.end(), BreakpointFreePred()) - mBreakpoints.begin());
+	const uint32 idx = AllocBreakpoint();
 
-	if (idx >= mBreakpoints.size())
-		mBreakpoints.push_back();
-
-	BreakpointEntry& be = mBreakpoints[idx++];
+	BreakpointEntry& be = mBreakpoints[idx - 1];
 	be.mAddress = address;
 	be.mType = (read ? kBPT_Read : 0) + (write ? kBPT_Write : 0) + kBPT_Range;
 
@@ -271,15 +291,15 @@ uint32 ATBreakpointManager::SetAccessRangeBP(uint16 address, uint32 len, bool re
 	RecomputeRangePriorLimits();
 
 	// register all access pages
-	uint32 page1 = address & 0xff00;
-	uint32 page2 = (address + len - 1) & 0xff00;
+	uint32 page1 = address & 0xffff00;
+	uint32 page2 = (address + len - 1) & 0xffff00;
 
 	for(uint32 page = page1; page <= page2; page += 0x100)
 		RegisterAccessPage(page, read, write);
 
 	// set attribute flags on all bytes in range
 	for(uint32 i = 0; i < len; ++i)
-		mAttrib[address + i] |= bre.mAttrFlags;
+		mAttrib[(address + i) & 0xFFFF] |= bre.mAttrFlags;
 
 	return idx;
 }
@@ -311,8 +331,8 @@ bool ATBreakpointManager::Clear(uint32 id) {
 					const uint32 len = bre.mLength;
 
 					// Decrement refcount over page range.
-					uint32 page1 = address & 0xff00;
-					uint32 page2 = (address + len - 1) & 0xff00;
+					uint32 page1 = address & 0xffff00;
+					uint32 page2 = (address + len - 1) & 0xffff00;
 
 					for(uint32 page = page1; page <= page2; page += 0x100)
 						UnregisterAccessPage(page, read, write);
@@ -325,10 +345,10 @@ bool ATBreakpointManager::Clear(uint32 id) {
 					// Clear attribute flags in range.
 					const uint32 limit = address + len;
 
-					VDASSERT(limit <= 0x10000);
+					VDASSERT(limit <= 0x1000000);
 
 					for(uint32 i = 0; i < len; ++i)
-						mAttrib[i] &= ~(kAttribRangeReadBkpt | kAttribRangeWriteBkpt);
+						mAttrib[(address + i) & 0xFFFF] &= ~(kAttribRangeReadBkpt | kAttribRangeWriteBkpt);
 
 					// Reapply attribute flags for any other existing range breakpoints.
 					AccessRangeBreakpoints::const_iterator itRemRange(std::upper_bound(mAccessRangeBreakpoints.begin(), mAccessRangeBreakpoints.end(), limit, BreakpointRangeAddressPred()));
@@ -352,7 +372,7 @@ bool ATBreakpointManager::Clear(uint32 id) {
 						const uint8 remaf = remRange.mAttrFlags;
 
 						for(uint32 remad = remad1; remad < remad2; ++remad)
-							mAttrib[remad] |= remaf;
+							mAttrib[remad & 0xFFFF] |= remaf;
 
 						// early out if we don't need to go any farther
 						if (remRange.mPriorLimit <= address)
@@ -368,7 +388,7 @@ bool ATBreakpointManager::Clear(uint32 id) {
 				VDASSERT(!"Range breakpoint is missing range entry.");
 			}
 		} else {
-			UnregisterAccessPage(address & 0xff00, (be.mType & kBPT_Read) != 0, (be.mType & kBPT_Write) != 0);
+			UnregisterAccessPage(address & 0xffff00, (be.mType & kBPT_Read) != 0, (be.mType & kBPT_Write) != 0);
 
 			BreakpointsByAddress::iterator itAddr(mAccessBreakpoints.find(address));
 			VDASSERT(itAddr != mAccessBreakpoints.end());
@@ -391,7 +411,7 @@ bool ATBreakpointManager::Clear(uint32 id) {
 					attr |= kAttribWriteBkpt;
 			}
 
-			mAttrib[address] = (mAttrib[address] & ~(kBPT_Read | kBPT_Write)) + attr;
+			mAttrib[address & 0xFFFF] = (mAttrib[address & 0xFFFF] & ~(kBPT_Read | kBPT_Write)) + attr;
 		}
 	}
 
@@ -408,10 +428,48 @@ bool ATBreakpointManager::Clear(uint32 id) {
 		if (indices.empty()) {
 			mCPUBreakpoints.erase(it);
 
-			if (address >= 0x01000000)
-				mTargets[address >> 24].mpBreakpoints->ClearBreakpoint((uint16)address);
-			else
-				mpCPU->ClearBreakpoint((uint16)address);
+			const uint32 targetIndex = address >> 24;
+
+			if (mInsnBreakpoints[targetIndex].empty()) {
+				if (targetIndex)
+					mTargets[targetIndex].mpBreakpoints->ClearBreakpoint((uint16)address);
+				else
+					mpCPU->ClearBreakpoint((uint16)address);
+			}
+		}
+	}
+
+	if (be.mType & kBPT_Insn) {
+		const uint32 targetIndex = address >> 24;
+		auto& insnBps = mInsnBreakpoints[targetIndex];
+		auto it = std::lower_bound(insnBps.begin(), insnBps.end(), id);
+
+		if (it != insnBps.end()) {
+			insnBps.erase(it);
+
+			if (insnBps.empty()) {
+				// reinstate all regular breakpoints
+
+				if (targetIndex)
+					mTargets[targetIndex].mpBreakpoints->ClearAllBreakpoints();
+				else
+					mpCPU->ClearAllBreakpoints();
+
+				for(const BreakpointEntry& be2 : mBreakpoints) {
+					if (!(be2.mType & kBPT_PC))
+						continue;
+
+					if ((be2.mAddress ^ address) < 0x01000000)
+						continue;
+
+					if (targetIndex)
+						mTargets[targetIndex].mpBreakpoints->SetBreakpoint((uint16)address);
+					else
+						mpCPU->SetBreakpoint((uint16)address);
+				}
+			}
+		} else {
+			VDFAIL("Insn breakpoint not found.");
 		}
 	}
 
@@ -427,6 +485,15 @@ void ATBreakpointManager::ClearAll() {
 		if (mBreakpoints[i].mType)
 			Clear(i+1);
 	}
+}
+
+uint32 ATBreakpointManager::AllocBreakpoint() {
+	uint32 idx = (uint32)(std::find_if(mBreakpoints.begin(), mBreakpoints.end(), BreakpointFreePred()) - mBreakpoints.begin());
+
+	if (idx >= mBreakpoints.size())
+		mBreakpoints.push_back();
+
+	return idx + 1;
 }
 
 void ATBreakpointManager::RecomputeRangePriorLimits() {
@@ -447,7 +514,7 @@ void ATBreakpointManager::RecomputeRangePriorLimits() {
 }
 
 void ATBreakpointManager::RegisterAccessPage(uint32 address, bool read, bool write) {
-	AccessBPLayers::insert_return_type r2(mAccessBPLayers.insert(address & 0xff00));
+	AccessBPLayers::insert_return_type r2(mAccessBPLayers.insert(address & 0xffff00));
 	AccessBPLayer& layer = r2.first->second;
 	if (r2.second) {
 		ATMemoryHandlerTable handlers = {};
@@ -475,7 +542,7 @@ void ATBreakpointManager::RegisterAccessPage(uint32 address, bool read, bool wri
 }
 
 void ATBreakpointManager::UnregisterAccessPage(uint32 address, bool read, bool write) {
-	AccessBPLayers::iterator it(mAccessBPLayers.find(address & 0xff00));
+	AccessBPLayers::iterator it(mAccessBPLayers.find(address & 0xffff00));
 	VDASSERT(it != mAccessBPLayers.end());
 
 	AccessBPLayer& layer = it->second;
@@ -502,21 +569,42 @@ void ATBreakpointManager::OnTargetPCBreakpoint(int code) {
 	mpSim->PostInterruptingEvent((ATSimulatorEvent)code);
 }
 
-int ATBreakpointManager::CheckPCBreakpoints(uint32 bpc, const BreakpointIndices& bpidxs) {
+int ATBreakpointManager::CheckPCBreakpoints(uint32 bpc, const BreakpointIndices *bpidxs) {
 	bool shouldBreak = false;
 	bool noisyBreak = false;
 
 	const uint32 pc = bpc & 0xFFFFFF;
-	for(BreakpointIndices::const_iterator it(bpidxs.begin()), itEnd(bpidxs.end()); it != itEnd; ++it) {
-		const uint32 idx = *it;
+	const uint32 targetIndex = bpc >> 24;
+	if (bpidxs) {
+		for(const uint32 idx : *bpidxs) {
+			const BreakpointEntry& bpe = mBreakpoints[idx - 1];
+			if (bpe.mAddress != bpc)
+				continue;
 
-		const BreakpointEntry& bpe = mBreakpoints[idx - 1];
-		if (bpe.mAddress != bpc)
-			continue;
+			ATBreakpointEvent ev;
+			ev.mIndex = idx;
+			ev.mTargetIndex = targetIndex;
+			ev.mAddress = pc;
+			ev.mValue = 0;
+			ev.mbBreak = false;
+			ev.mbSilentBreak = false;
 
+			mEventBreakpointHit.Raise(this, &ev);
+
+			if (ev.mbBreak) {
+				shouldBreak = true;
+				if (!ev.mbSilentBreak)
+					noisyBreak = true;
+			}
+		}
+	}
+
+	const auto& insnBPs = mInsnBreakpoints[targetIndex];
+
+	for(const uint32 id : insnBPs) {
 		ATBreakpointEvent ev;
-		ev.mIndex = idx;
-		ev.mTargetIndex = bpc >> 24;
+		ev.mIndex = id;
+		ev.mTargetIndex = targetIndex;
 		ev.mAddress = pc;
 		ev.mValue = 0;
 		ev.mbBreak = false;
@@ -536,7 +624,7 @@ int ATBreakpointManager::CheckPCBreakpoints(uint32 bpc, const BreakpointIndices&
 
 sint32 ATBreakpointManager::OnAccessTrapRead(void *thisptr0, uint32 addr) {
 	ATBreakpointManager *thisptr = (ATBreakpointManager *)thisptr0;
-	const uint8 attr = thisptr->mAttrib[addr];
+	const uint8 attr = thisptr->mAttrib[addr & 0xFFFF];
 
 	if (!(attr & (kAttribReadBkpt | kAttribRangeReadBkpt)))
 		return -1;
@@ -613,7 +701,7 @@ sint32 ATBreakpointManager::OnAccessTrapRead(void *thisptr0, uint32 addr) {
 
 bool ATBreakpointManager::OnAccessTrapWrite(void *thisptr0, uint32 addr, uint8 value) {
 	ATBreakpointManager *thisptr = (ATBreakpointManager *)thisptr0;
-	const uint8 attr = thisptr->mAttrib[addr];
+	const uint8 attr = thisptr->mAttrib[addr & 0xFFFF];
 
 	if (!(attr & (kAttribWriteBkpt | kAttribRangeWriteBkpt)))
 		return false;

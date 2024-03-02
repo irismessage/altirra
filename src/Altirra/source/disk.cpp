@@ -34,6 +34,7 @@
 #include "debuggerlog.h"
 #include "audiosyncmixer.h"
 #include "cio.h"
+#include "trace.h"
 #include "uirender.h"
 
 extern ATLogChannel g_ATLCDisk;
@@ -364,6 +365,22 @@ int ATDiskEmulator::GetForcedPhantomSector(uint16 sector, uint8 index) {
 	return mExtPhysSectors[vsi.mStartPhysSector + index].mForcedOrder;
 }
 
+void ATDiskEmulator::SetTraceContext(ATTraceContext *context) {
+	mpTraceContext = context;
+
+	if (context) {
+		ATTraceCollection *coll = context->mpCollection;
+
+		VDStringW name;
+		name.sprintf(L"Disk %u", mUnit + 1);
+		mpTraceChannel = coll->AddGroup(name.c_str())->AddFormattedChannel(context->mBaseTime, context->mBaseTickScale, L"Commands");
+
+		mTraceCommandStartTime = mpScheduler->GetTick64();
+	} else {
+		mpTraceChannel = nullptr;
+	}
+}
+
 void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 	if (id == kATDiskEventMotorOff) {
 		mpMotorOffEvent = nullptr;
@@ -403,6 +420,7 @@ IATDeviceSIO::CmdResponse ATDiskEmulator::OnSerialBeginCommand(const ATDeviceSIO
 	UpdateRotationalCounter();
 
 	// interpret the command
+	mTraceCommandStartTime = mpScheduler->GetTick64();
 	mbCommandFrameHighSpeed = !cmd.mbStandardRate;
 
 	g_ATLCDiskCmd("Processing command: Unit %02X, Command %02X, Aux data %02X %02X%s\n"
@@ -561,6 +579,24 @@ void ATDiskEmulator::OnSerialFence(uint32 id) {
 	if (id == (uint32)0 - 1) {
 		UpdateAccelTimeSkew();
 		mpDiskInterface->SetShowActivity(false, mLastSector);
+
+		if (mpTraceChannel) {
+			if (mOriginalCommand == 0x52) {
+				mpTraceChannel->AddTickEvent(mTraceCommandStartTime, mpScheduler->GetTick64(),
+					[sec = (uint16)mActiveCommandSector](VDStringW& s) {
+						s.sprintf(L"Read %u", sec);
+					},
+					kATTraceColor_IO_Read
+				);
+			} else {
+				mpTraceChannel->AddTickEvent(mTraceCommandStartTime, mpScheduler->GetTick64(),
+					[c = (uint8)mOriginalCommand, sec = (uint16)mActiveCommandSector](VDStringW& s) {
+						s.sprintf(L"%02X:%u", c, sec);
+					},
+					kATTraceColor_IO_Default
+				);
+			}
+		}
 	} else {
 		mActiveCommandState = id;
 		mbActiveCommandWait = false;

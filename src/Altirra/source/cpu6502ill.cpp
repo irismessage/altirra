@@ -31,7 +31,6 @@ bool ATCPUEmulator::Decode6502Ill(uint8 opcode) {
 
 		case 0x04:	// NOP zp
 			DecodeReadZp();
-			*mpDstState++ = kStateWait;
 			break;
 
 		case 0x07:	// SLO zp

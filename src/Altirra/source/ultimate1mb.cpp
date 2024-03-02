@@ -53,18 +53,6 @@ ATUltimate1MBEmulator::ATUltimate1MBEmulator()
 	, mbExternalCartActive(false)
 	, mbSoundBoardEnabled(false)
 	, mVBXEPage(0)
-	, mpMemory(NULL)
-	, mpMMU(NULL)
-	, mpUIRenderer(NULL)
-	, mpPBIManager(NULL)
-	, mpMemMan(NULL)
-	, mpLayerCart(NULL)
-	, mpLayerFlashControl(NULL)
-	, mpLayerPBIControl(NULL)
-	, mpLayerPIAOverlay(NULL)
-	, mpLayerCartControl(NULL)
-	, mpLayerPBIData(NULL)
-	, mpLayerPBIFirmware(NULL)
 	, mVBXEPageHandler()
 	, mSBPageHandler()
 {
@@ -72,6 +60,15 @@ ATUltimate1MBEmulator::ATUltimate1MBEmulator()
 }
 
 ATUltimate1MBEmulator::~ATUltimate1MBEmulator() {
+}
+
+void *ATUltimate1MBEmulator::AsInterface(uint32 iid) {
+	switch(iid) {
+		case IATDeviceCartridge::kTypeID: return static_cast<IATDeviceCartridge *>(this);
+		case IATDeviceSystemControl::kTypeID: return static_cast<IATDeviceSystemControl *>(this);
+	}
+	
+	return nullptr;
 }
 
 void ATUltimate1MBEmulator::Init(
@@ -235,22 +232,6 @@ void ATUltimate1MBEmulator::Shutdown() {
 	mpHookMgr = nullptr;
 
 	mFlashEmu.Shutdown();
-}
-
-void ATUltimate1MBEmulator::SetMemoryLayers(
-	ATMemoryLayer *layerLowerKernelROM,
-	ATMemoryLayer *layerUpperKernelROM,
-	ATMemoryLayer *layerBASICROM,
-	ATMemoryLayer *layerSelfTestROM,
-	ATMemoryLayer *layerGameROM)
-{
-	mpMemLayerLowerKernelROM = layerLowerKernelROM;
-	mpMemLayerUpperKernelROM = layerUpperKernelROM;
-	mpMemLayerBASICROM = layerBASICROM;
-	mpMemLayerSelfTestROM = layerSelfTestROM;
-	mpMemLayerGameROM = layerGameROM;
-
-	UpdateKernelBank();
 }
 
 bool ATUltimate1MBEmulator::LoadFirmware(ATFirmwareManager& fwmgr, uint64 id) {
@@ -431,6 +412,28 @@ void ATUltimate1MBEmulator::UpdateCartSense(bool leftActive) {
 	mbExternalCartActive = leftActive;
 }
 
+void ATUltimate1MBEmulator::InitSystemControl(IATSystemController *sysctrl) {
+	mpSystemController = sysctrl;
+}
+
+void ATUltimate1MBEmulator::SetROMLayers(
+	ATMemoryLayer *layerLowerKernelROM,
+	ATMemoryLayer *layerUpperKernelROM,
+	ATMemoryLayer *layerBASICROM,
+	ATMemoryLayer *layerSelfTestROM,
+	ATMemoryLayer *layerGameROM,
+	const void *kernelROM)
+{
+	mpMemLayerLowerKernelROM = layerLowerKernelROM;
+	mpMemLayerUpperKernelROM = layerUpperKernelROM;
+	mpMemLayerBASICROM = layerBASICROM;
+	mpMemLayerSelfTestROM = layerSelfTestROM;
+	mpMemLayerGameROM = layerGameROM;
+
+	if (mpMemMan)
+		UpdateKernelBank();
+}
+
 void ATUltimate1MBEmulator::SetKernelBank(uint8 bank) {
 	if (mKernelBank != bank) {
 		mKernelBank = bank;
@@ -446,14 +449,7 @@ void ATUltimate1MBEmulator::UpdateKernelBank() {
 
 	const uint8 *kernelbase = GetKernelBase();
 
-	if (mpMemLayerLowerKernelROM)
-		mpMemMan->SetLayerMemory(mpMemLayerLowerKernelROM, kernelbase);
-
-	if (mpMemLayerSelfTestROM)
-		mpMemMan->SetLayerMemory(mpMemLayerSelfTestROM, kernelbase + 0x1000);
-
-	if (mpMemLayerUpperKernelROM)
-		mpMemMan->SetLayerMemory(mpMemLayerUpperKernelROM, kernelbase + 0x1800);
+	mpSystemController->OverrideKernelMapping(this, kernelbase, 0, false);
 
 	if (mpMemLayerBASICROM)
 		mpMemMan->SetLayerMemory(mpMemLayerBASICROM, mFirmware + (mbControlLocked ? 0x60000 + ((uint32)mBasicBank << 13) : mCartBankOffset));
@@ -756,9 +752,6 @@ bool ATUltimate1MBEmulator::WriteByteD3xx(void *thisptr0, uint32 addr, uint8 val
 					
 					if (validOS) {
 						thisptr->mpHookMgr->EnableOSHooks(true);
-
-						const uint8 *kernelBase = thisptr->GetKernelBase();
-						thisptr->mpHookMgr->CallInitHooks(kernelBase, kernelBase + 0x1800);
 					}
 				}
 			} else if (addr == 0xD381) {

@@ -79,6 +79,10 @@ VDZLRESULT VDUIProxyControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
 	return 0;
 }
 
+void VDUIProxyControl::OnFontChanged() {
+}
+
+
 ///////////////////////////////////////////////////////////////////////////////
 
 void VDUIProxyMessageDispatcherW32::AddControl(VDUIProxyControl *control) {
@@ -138,6 +142,14 @@ VDZLRESULT VDUIProxyMessageDispatcherW32::Dispatch_WM_NOTIFY(VDZWPARAM wParam, V
 		return control->On_WM_NOTIFY(wParam, lParam);
 
 	return 0;
+}
+
+void VDUIProxyMessageDispatcherW32::DispatchFontChanged() {
+	for(HashChain& hc : mHashTable) {
+		for(VDUIProxyControl *control : hc) {
+			control->OnFontChanged();
+		}
+	}
 }
 
 size_t VDUIProxyMessageDispatcherW32::Hash(VDZHWND hwnd) const {
@@ -280,6 +292,10 @@ void VDUIProxyListView::SetFullRowSelectEnabled(bool enabled) {
 
 void VDUIProxyListView::SetGridLinesEnabled(bool enabled) {
 	ListView_SetExtendedListViewStyleEx(mhwnd, LVS_EX_GRIDLINES, enabled ? LVS_EX_GRIDLINES : 0);
+}
+
+bool VDUIProxyListView::AreItemCheckboxesEnabled() const {
+	return (ListView_GetExtendedListViewStyle(mhwnd) & LVS_EX_CHECKBOXES) != 0;
 }
 
 void VDUIProxyListView::SetItemCheckboxesEnabled(bool enabled) {
@@ -643,6 +659,16 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 	}
 
 	return 0;
+}
+
+void VDUIProxyListView::OnFontChanged() {
+	// Windows 10 ver 1703 has a problem with leaving list view items at ridiculous height when
+	// moving a window from higher to lower DPI in per monitor V2 mode. To work around this
+	// issue, we flash the view to list mode and back to force it to recompute the item heights.
+	if (AreItemCheckboxesEnabled()) {
+		ListView_SetView(mhwnd, LV_VIEW_LIST);
+		ListView_SetView(mhwnd, LV_VIEW_DETAILS);
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1466,11 +1492,7 @@ void VDUIProxyTreeViewControl::Attach(VDZHWND hwnd) {
 }
 
 void VDUIProxyTreeViewControl::Detach() {
-	if (mhfontBold) {
-		::DeleteObject(mhfontBold);
-		mhfontBold = NULL;
-		mbCreatedBoldFont = false;
-	}
+	DeleteFonts();
 
 	EnumChildrenRecursive(kNodeRoot, [](IVDUITreeViewVirtualItem *vi) { vi->Release(); });
 }
@@ -1720,6 +1742,10 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 	return 0;
 }
 
+void VDUIProxyTreeViewControl::OnFontChanged() {
+	DeleteFonts();
+}
+
 VDZLRESULT VDUIProxyTreeViewControl::FixLabelEditWndProcA(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
 	switch(msg) {
 		case WM_GETDLGCODE:
@@ -1736,6 +1762,14 @@ VDZLRESULT VDUIProxyTreeViewControl::FixLabelEditWndProcW(VDZHWND hwnd, VDZUINT 
 	}
 
 	return ::CallWindowProcW((WNDPROC)mPrevEditWndProc, hwnd, msg, wParam, lParam);
+}
+
+void VDUIProxyTreeViewControl::DeleteFonts() {
+	if (mhfontBold) {
+		::DeleteObject(mhfontBold);
+		mhfontBold = NULL;
+		mbCreatedBoldFont = false;
+	}
 }
 
 /////////////////////////////////////////////////////////////////////////////

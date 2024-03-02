@@ -21,7 +21,8 @@
 #include <vd2/system/unknown.h>
 
 enum ATU1MBControl {
-	kATU1MBControl_SoundBoardBase
+	kATU1MBControl_SoundBoardBase,
+	kATU1MBControl_VBXEBase,
 };
 
 // This is pretty hacky, but it's the interface by which the Ultimate1MB

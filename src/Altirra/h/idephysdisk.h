@@ -46,6 +46,7 @@ public:
 	bool IsReadOnly() const override { return true; }
 	uint32 GetSectorCount() const override { return mSectorCount; }
 	ATBlockDeviceGeometry GetGeometry() const override;
+	uint32 GetSerialNumber() const override;
 
 	void Init(const wchar_t *path);
 

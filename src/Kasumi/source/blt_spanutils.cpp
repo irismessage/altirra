@@ -23,7 +23,7 @@
 using namespace nsVDPixmapBitUtils;
 
 namespace nsVDPixmapSpanUtils {
-	void horiz_expand2x_centered(uint8 *dst, const uint8 *src, sint32 w) {
+	void VDCDECL horiz_expand2x_centered(uint8 *dst, const uint8 *src, sint32 w) {
 		w = -w;
 
 		*dst++ = *src;
@@ -44,7 +44,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void horiz_expand2x_coaligned(uint8 *dst, const uint8 *src, sint32 w) {
+	void VDCDECL horiz_expand2x_coaligned(uint8 *dst, const uint8 *src, sint32 w) {
 		w = -w;
 
 		if ((w+=2) < 0) {
@@ -63,7 +63,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void horiz_expand4x_coaligned(uint8 *dst, const uint8 *src, sint32 w) {
+	void VDCDECL horiz_expand4x_coaligned(uint8 *dst, const uint8 *src, sint32 w) {
 		w = -w;
 
 		if ((w+=4) < 0) {
@@ -84,7 +84,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void horiz_compress2x_coaligned(uint8 *dst, const uint8 *src, sint32 w) {
+	void VDCDECL horiz_compress2x_coaligned(uint8 *dst, const uint8 *src, sint32 w) {
 		if (w == 1) {
 			*dst = *src;
 			return;
@@ -104,7 +104,7 @@ namespace nsVDPixmapSpanUtils {
 			*dst++ = (uint8)((src[0] + 3*src[1] + 2) >> 2);
 	}
 
-	void horiz_compress2x_centered(uint8 *dst, const uint8 *src, sint32 w) {
+	void VDCDECL horiz_compress2x_centered(uint8 *dst, const uint8 *src, sint32 w) {
 		if (w == 1) {
 			*dst = *src;
 			return;
@@ -135,7 +135,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void horiz_compress4x_coaligned(uint8 *dst, const uint8 *src, sint32 w) {
+	void VDCDECL horiz_compress4x_coaligned(uint8 *dst, const uint8 *src, sint32 w) {
 		if (w == 1) {
 			*dst = *src;
 			return;
@@ -166,7 +166,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void horiz_compress4x_centered(uint8 *dst, const uint8 *src, sint32 w) {
+	void VDCDECL horiz_compress4x_centered(uint8 *dst, const uint8 *src, sint32 w) {
 
 		switch(w) {
 		case 1:
@@ -216,7 +216,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void horiz_realign_to_centered(uint8 *dst, const uint8 *src, sint32 w) {
+	void VDCDECL horiz_realign_to_centered(uint8 *dst, const uint8 *src, sint32 w) {
 		// luma samples:	Y		Y		Y		Y		Y
 		// coaligned:		C				C				C
 		// centered:			C				C
@@ -234,7 +234,7 @@ namespace nsVDPixmapSpanUtils {
 		*dst++ = *src++;
 	}
 
-	void horiz_realign_to_coaligned(uint8 *dst, const uint8 *src, sint32 w) {
+	void VDCDECL horiz_realign_to_coaligned(uint8 *dst, const uint8 *src, sint32 w) {
 		// luma samples:	Y		Y		Y		Y		Y
 		// coaligned:		C				C				C
 		// centered:			C				C
@@ -252,7 +252,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void vert_expand2x_centered(uint8 *dst, const uint8 *const *srcs, sint32 w, uint8 phase) {
+	void VDCDECL vert_expand2x_centered(uint8 *dst, const uint8 *const *srcs, sint32 w, uint8 phase) {
 		const uint8 *src3 = srcs[0];
 		const uint8 *src1 = srcs[1];
 
@@ -287,7 +287,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void vert_expand4x_centered(uint8 *dst, const uint8 *const *srcs, sint32 w, uint8 phase) {
+	void VDCDECL vert_expand4x_centered(uint8 *dst, const uint8 *const *srcs, sint32 w, uint8 phase) {
 		const uint8 *src3 = srcs[0];
 		const uint8 *src1 = srcs[1];
 
@@ -317,7 +317,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void vert_compress2x_centered_fast(uint8 *dst, const uint8 *const *srcarray, sint32 w, uint8 phase) {
+	void VDCDECL vert_compress2x_centered_fast(uint8 *dst, const uint8 *const *srcarray, sint32 w, uint8 phase) {
 		const uint8 *src1 = srcarray[0];
 		const uint8 *src2 = srcarray[1];
 
@@ -343,7 +343,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void vert_compress2x_centered(uint8 *dst, const uint8 *const *srcarray, sint32 w, uint8 phase) {
+	void VDCDECL vert_compress2x_centered(uint8 *dst, const uint8 *const *srcarray, sint32 w, uint8 phase) {
 		const uint8 *src1 = srcarray[0];
 		const uint8 *src2 = srcarray[1];
 		const uint8 *src3 = srcarray[2];
@@ -357,7 +357,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void vert_compress4x_centered(uint8 *dst, const uint8 *const *srcarray, sint32 w, uint8 phase) {
+	void VDCDECL vert_compress4x_centered(uint8 *dst, const uint8 *const *srcarray, sint32 w, uint8 phase) {
 		const uint8 *src1 = srcarray[0];
 		const uint8 *src2 = srcarray[1];
 		const uint8 *src3 = srcarray[2];

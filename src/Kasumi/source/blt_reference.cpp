@@ -22,11 +22,11 @@
 #include <vd2/Kasumi/pixmaputils.h>
 #include "blt_setup.h"
 
-#define DECLARE_PALETTED(x, y) extern void VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h, const void *pal0)
-#define DECLARE_RGB(x, y) extern void VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
-#define DECLARE_YUV(x, y) extern void VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
-#define DECLARE_YUV_REV(x, y) void VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
-#define DECLARE_YUV_PLANAR(x, y) extern void VDPixmapBlt_##x##_to_##y##_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h)
+#define DECLARE_PALETTED(x, y) extern void VDCDECL VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h, const void *pal0)
+#define DECLARE_RGB(x, y) extern void VDCDECL VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
+#define DECLARE_YUV(x, y) extern void VDCDECL VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
+#define DECLARE_YUV_REV(x, y) void VDCDECL VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
+#define DECLARE_YUV_PLANAR(x, y) extern void VDCDECL VDPixmapBlt_##x##_to_##y##_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h)
 
 DECLARE_RGB(RGB565,	  XRGB1555);
 DECLARE_RGB(RGB888,   XRGB1555);
@@ -100,10 +100,10 @@ DECLARE_YUV_PLANAR(YUV411, RGB565);
 DECLARE_YUV_PLANAR(YUV411, RGB888);
 DECLARE_YUV_PLANAR(YUV411, XRGB8888);
 
-extern void VDPixmapBlt_YUVPlanar_decode_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
-extern void VDPixmapBlt_YUVPlanar_encode_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
-extern void VDPixmapBlt_YUVPlanar_convert_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
-extern void VDPixmapBlt_UberblitAdapter(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
+extern void VDCDECL VDPixmapBlt_YUVPlanar_decode_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
+extern void VDCDECL VDPixmapBlt_YUVPlanar_encode_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
+extern void VDCDECL VDPixmapBlt_YUVPlanar_convert_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
+extern void VDCDECL VDPixmapBlt_UberblitAdapter(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
 
 using namespace nsVDPixmap;
 

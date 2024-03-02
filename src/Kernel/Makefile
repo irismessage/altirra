@@ -68,7 +68,9 @@ all: kernel kernelxl kernelxlsoftkick \
 	r850 fw1030 additions \
 	exeloader \
 	sapplayers \
-	pbidisk
+	pbidisk \
+	rapidflash \
+	rapidpbi16
 
 clean:
 	if exist "$(OUT)\kernel.rom" del "$(OUT)\kernel.rom"
@@ -89,7 +91,11 @@ clean:
 	if exist "$(INT)\*.obx" del "$(INT)\*.obx"
 	if exist "$(INT)\*.xex" del "$(INT)\*.xex"
 	if exist "$(INT)\*.bin" del "$(INT)\*.bin"
+	if exist "$(INT)\*.lzrom" del "$(INT)\*.lzrom"
 	if exist "$(OUT)\1030firmware.bin" del "$(OUT)\1030firmware.bin"
+	if exist "$(OUT)\rapidflash.bin" del "$(OUT)\rapidflash.bin"
+	if exist "$(INT)\rapidos.bin" del "$(INT)\rapidos.bin"
+	if exist "$(OUT)\rapidpbi16.bin" del "$(OUT)\rapidpbi16.bin"
 
 kernel: $(OUT)\kernel.rom
 
@@ -133,7 +139,14 @@ sapplayers: $(INT)\playsap-b.xex $(INT)\playsap-c.xex $(INT)\playsap-d-ntsc.xex 
 
 pbidisk: $(INT)\pbidisk.bin
 
-$(OUT)\Additions.atr: $(INT)\dos.sys source\Additions\filelist.txt $(INT)\boot850.xex $(INT)\rhnd850.xex $(INT)\xep80.sys $(INT)\xep80f.sys $(INT)\boot1030.xex $(INT)\thnd1030.xex $(INT)\autorun.sys $(INT)\atbasicx.xex $(INT)\sx212.xex $(INT)\colormap.xex
+rapidflash: $(INT)\rapidflash.lzrom
+
+rapidpbi16: $(OUT)\rapidpbi16.bin
+
+$(INT)\additions-license.txt: source\Additions\license.txt
+	copy "source\Additions\license.txt" "$(INT)\additions-license.txt"
+
+$(OUT)\Additions.atr: $(INT)\dos.sys source\Additions\filelist.txt $(INT)\boot850.xex $(INT)\rhnd850.xex $(INT)\xep80.sys $(INT)\xep80f.sys $(INT)\boot1030.xex $(INT)\thnd1030.xex $(INT)\autorun.sys $(INT)\atbasicx.xex $(INT)\sx212.xex $(INT)\colormap.xex $(INT)\additions-license.txt
 	@$(ATCOMPILER) mkfsdos2 source\Additions\filelist.txt $(INT)\ $(OUT)\Additions.atr
 
 $(OUT)\kernel.rom: $(SRCFILES) $(SHARED_SRCFILES)
@@ -338,3 +351,21 @@ $(INT)\playsap-r.xex: $(SHARED_SRCFILESINC) source\SAPPlayers\playsap-r.s
 
 $(INT)\pbidisk.bin: $(SHARED_SRCFILESINC) source\PBIDisk\pbidisk.s
 	$(MADS) -s -p -i:source\Shared -l:$(INT)\pbidisk.lst -t:$(INT)\pbidisk.lab -o:$(INT)\pbidisk.bin source\PBIDisk\pbidisk.s
+
+$(INT)\rapidpbi8.bin: $(SHARED_SRCFILESINC) source\Rapidus\rapidpbi8.s
+	$(MADS) -s -p -i:source\Shared -l:$(INT)\rapidpbi8.lst -t:$(INT)\rapidpbi8.lab -o:$(INT)\rapidpbi8.bin source\Rapidus\rapidpbi8.s
+
+$(INT)\rapidfirmware.bin: $(SHARED_SRCFILESINC) source\Rapidus\rapidfirmware.s
+	$(MADS) -s -p -i:source\Shared -l:$(INT)\rapidfirmware.lst -t:$(INT)\rapidfirmware.lab -o:$(INT)\rapidfirmware.bin source\Rapidus\rapidfirmware.s
+
+$(OUT)\rapidpbi16.bin: $(SHARED_SRCFILESINC) source\Rapidus\rapidpbi16.s
+	$(MADS) -s -p -i:source\Shared -l:$(OUT)\rapidpbi16.lst -t:$(OUT)\rapidpbi16.lab -o:$(OUT)\rapidpbi16.bin source\Rapidus\rapidpbi16.s
+
+$(INT)\rapidos.bin: $(SHARED_SRCFILESINC) source\Rapidus\rapidos.s
+	$(MADS) -s -p -i:source\Shared -i:$(INT) -o:$(INT)\rapidos.bin source\Rapidus\rapidos.s
+
+$(OUT)\rapidflash.bin: $(INT)\rapidpbi8.bin $(INT)\rapidfirmware.bin source\Rapidus\rapidflash.s $(INT)\rapidos.bin
+	$(MADS) -s -p -i:source\Shared -i:$(INT) -o:$(OUT)\rapidflash.bin source\Rapidus\rapidflash.s
+
+$(INT)\rapidflash.lzrom: $(OUT)\rapidflash.bin
+	@$(ATCOMPILER) lzpack "$(OUT)\rapidflash.bin" "$(INT)\rapidflash.lzrom"

@@ -21,6 +21,7 @@
 #include "pokeyrenderer.h"
 #include "pokeytables.h"
 #include <float.h>
+#include <vd2/system/bitmath.h>
 #include <vd2/system/math.h>
 #include <vd2/system/binary.h>
 
@@ -30,6 +31,7 @@
 #include "cpu.h"
 #include "savestate.h"
 #include "audiooutput.h"
+#include "trace.h"
 
 ATLogChannel g_ATLCSIOData(false, false, "SIODATA", "Serial I/O bus data");
 
@@ -80,6 +82,7 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mPoly17Counter(0)
 	, mPoly9Counter(0)
 	, mPolyShutOffTime(0)
+	, mSerialOutputStartTime(0)
 	, mSerialInputShiftRegister(0)
 	, mSerialOutputShiftRegister(0)
 	, mSerialInputCounter(0)
@@ -116,8 +119,10 @@ ATPokeyEmulator::ATPokeyEmulator(bool isSlave)
 	, mpEventSerialOutput(NULL)
 	, mpScheduler(NULL)
 	, mpConn(NULL)
+	, mpTraceContext(nullptr)
 	, mpSlave(NULL)
 	, mbIsSlave(isSlave)
+	, mbIrqAsserted(false)
 {
 	memset(mpTimerBorrowEvents, 0, sizeof(mpTimerBorrowEvents));
 }
@@ -198,6 +203,7 @@ void ATPokeyEmulator::ColdReset() {
 	mLastPolyTime = ATSCHEDULER_GETTIME(mpScheduler);
 	mPoly17Counter = 0;
 	mPoly9Counter = 0;
+	mSerialOutputStartTime = 0;
 	mSerialInputShiftRegister = 0;
 	mSerialOutputShiftRegister = 0;
 	mSerialOutputCounter = 0;
@@ -232,6 +238,8 @@ void ATPokeyEmulator::ColdReset() {
 
 	if (mpSlave)
 		mpSlave->ColdReset();
+
+	NegateIrq(false);
 }
 
 void ATPokeyEmulator::SetSlave(ATPokeyEmulator *slave) {
@@ -553,20 +561,21 @@ void ATPokeyEmulator::PushKey(uint8 c, bool repeat, bool allowQueue, bool flushQ
 	if ((c & 0xE8) == 0xC0)
 		return;
 
-	// If debounce or scan is disabled, drop the key.
-	if ((mSKCTL & 3) != 3)
-		return;
-
 	mbUseKeyCooldownTimer = useCooldown;
 
 	if (allowQueue) {
-		if (!mKeyQueue.empty() || mbKeyboardIRQPending || mKeyCodeTimer || mKeyCooldownTimer || !(mIRQST & 0x40) || !mpConn->PokeyIsKeyPushOK(c)) {
+		// Queue a key if we already have keys queued, or the OS can't accept one yet.
+		if (!mKeyQueue.empty() || !CanPushKey(c)) {
 			mKeyQueue.push_back(c);
 			return;
 		}
 	} else if (flushQueue) {
 		mKeyQueue.clear();
 	}
+
+	// If debounce or scan is disabled, drop the key.
+	if ((mSKCTL & 3) != 3)
+		return;
 
 	mKBCODE = c;
 	mSKSTAT &= ~0x04;
@@ -717,7 +726,7 @@ void ATPokeyEmulator::FireTimer() {
 	if (activeChannel == 0) {
 		if (mIRQEN & 0x01) {
 			mIRQST &= ~0x01;
-			mpConn->PokeyAssertIRQ(false);
+			AssertIrq(false);
 		}
 
 		// two tone
@@ -733,7 +742,7 @@ void ATPokeyEmulator::FireTimer() {
 	if (activeChannel == 1) {
 		if (mIRQEN & 0x02) {
 			mIRQST &= ~0x02;
-			mpConn->PokeyAssertIRQ(false);
+			AssertIrq(false);
 		}
 
 		// two tone
@@ -754,7 +763,7 @@ void ATPokeyEmulator::FireTimer() {
 	if (activeChannel == 3) {
 		if (mIRQEN & 0x04) {
 			mIRQST &= ~0x04;
-			mpConn->PokeyAssertIRQ(false);
+			AssertIrq(false);
 		}
 
 		if (mSKCTL & 0x30)
@@ -849,66 +858,11 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 	mbSerialOutputState = mSerialOutputCounter ? (mSerialOutputShiftRegister & (1 << (9 - (mSerialOutputCounter >> 1)))) != 0 : true;
 
 	if (!mSerialOutputCounter) {
-		if (mbSerShiftValid) {
-			mbSerShiftValid = false;
-
-			uint32 cyclesPerBit;
-		
-			switch(mSKCTL & 0x60) {
-				case 0x00:		// external clock
-					cyclesPerBit = mSerialExtPeriod;
-					break;
-
-				case 0x20:		// timer 4 as transmit clock
-				case 0x40:
-					cyclesPerBit = mTimerPeriod[3];
-					break;
-
-				case 0x60:		// timer 2 as transmit clock
-					cyclesPerBit = mTimerPeriod[1];
-					break;
-
-				default:
-					VDNEVERHERE;
-			}
-
-			cyclesPerBit += cyclesPerBit;
-
-			if (mbTraceSIO) {
-				ATConsoleTaggedPrintf("POKEY: Transmitted serial byte %02x to SIO bus at %u cycles/bit (%.1f baud)\n"
-					, mSerialOutputShiftRegister
-					, cyclesPerBit
-					, (7159090.0f / 4.0f) / (float)cyclesPerBit
-					);
-			}
-
-			if (g_ATLCSIOData) {
-				if (mTraceByteIndex >= 1000 || !mTraceDirectionSend) {
-					mTraceByteIndex = 0;
-					mTraceDirectionSend = true;
-				}
-
-				g_ATLCSIOData("[%3u] Send     $%02X >         (@ %u cycles/bit / %.1f baud)\n", mTraceByteIndex++, mSerialOutputShiftRegister, cyclesPerBit, 7159090.0f / 4.0f / (float)cyclesPerBit);
-			}
-
-			bool burstOK = false;
-
-			for(IATPokeySIODevice *dev : mDevices) {
-				if (dev->PokeyWriteSIO(mSerialOutputShiftRegister, mbCommandLineState, cyclesPerBit))
-					burstOK = true;
-			}
-
-			if (mpCassette)
-				mpCassette->PokeyWriteCassetteData(mSerialOutputShiftRegister, cyclesPerBit);
-
-			if (burstOK)
-				mSerOutBurstDeadline = (ATSCHEDULER_GETTIME(mpScheduler) + cyclesPerBit*10) | 1;
-			else
-				mSerOutBurstDeadline = 0;
-		}
+		FlushSerialOutput();
 
 		if (mbSerOutValid) {
 			mSerialOutputCounter = 20;
+			mSerialOutputStartTime = mpScheduler->GetTick64();
 
 			if (mSerOutBurstDeadline && ATSCHEDULER_GETTIME(mpScheduler) - mSerOutBurstDeadline >= uint32(0x80000000))
 				mSerialOutputCounter = 1;
@@ -930,9 +884,9 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 			mIRQST &= ~0x08;
 
 		if (mIRQEN & ~mIRQST)
-			mpConn->PokeyAssertIRQ(false);
+			AssertIrq(false);
 		else
-			mpConn->PokeyNegateIRQ(false);
+			NegateIrq(false);
 	}
 
 	// check if we must reset the tick for external clock
@@ -942,6 +896,140 @@ void ATPokeyEmulator::OnSerialOutputTick() {
 		else
 			mpScheduler->UnsetEvent(mpEventSerialOutput);
 	}
+}
+
+bool ATPokeyEmulator::IsSerialOutputClockRunning() const {
+	switch(mSKCTL & 0x60) {
+		default:
+			VDNEVERHERE;
+		case 0x00:		// external clock
+			return mSerialExtPeriod != 0;
+
+		case 0x20:		// timer 4 as transmit clock
+		case 0x40:
+			if (mSKCTL & 0x10) {
+				// Asynchronous receive mode enabled, so clock only runs if receiving. For now, pretend
+				// it's always halted for output purposes.
+				return false;
+			}
+
+			// check if initialization mode is active
+			if (mSKCTL & 3) {
+				// nope, clocks are running
+				return true;
+			}
+
+			// init mode is active -- check if 3+4 are linked
+			if (mAUDCTL & 0x08) {
+				// linked -- running if timer 3 is 1.79MHz
+				return (mAUDCTL & 0x20) != 0;
+			} else {
+				// not linked -- timer 4 is halted
+				return false;
+			}
+			break;
+
+		case 0x60:		// timer 2 as transmit clock
+			// check if initialization mode is active
+			if (mSKCTL & 3) {
+				// nope, clocks are running
+				return true;
+			}
+
+			// init mode is active -- check if 1+2 are linked
+			if (mAUDCTL & 0x10) {
+				// linked -- running if timer 1 is 1.79MHz
+				return (mAUDCTL & 0x40) != 0;
+			} else {
+				// not linked -- timer 2 is halted
+				return false;
+			}
+			break;
+	}
+}
+
+void ATPokeyEmulator::FlushSerialOutput() {
+	if (!mbSerShiftValid)
+		return;
+
+	const uint8 originalCounter = mSerialOutputCounter;
+
+	mbSerShiftValid = false;
+	mSerialOutputCounter = 0;
+
+	// check if we got out the start bit; if not, no byte would be noticed by
+	// receivers
+	if (mSerialOutputCounter >= 18)
+		return;
+
+	uint32 cyclesPerBit;
+		
+	switch(mSKCTL & 0x60) {
+		default:
+			VDNEVERHERE;
+		case 0x00:		// external clock
+			cyclesPerBit = mSerialExtPeriod;
+			break;
+
+		case 0x20:		// timer 4 as transmit clock
+		case 0x40:
+			cyclesPerBit = mTimerPeriod[3];
+			break;
+
+		case 0x60:		// timer 2 as transmit clock
+			cyclesPerBit = mTimerPeriod[1];
+			break;
+	}
+
+	cyclesPerBit += cyclesPerBit;
+
+	if (mbTraceSIO) {
+		ATConsoleTaggedPrintf("POKEY: Transmitted serial byte %02x to SIO bus at %u cycles/bit (%.1f baud)\n"
+			, mSerialOutputShiftRegister
+			, cyclesPerBit
+			, (7159090.0f / 4.0f) / (float)cyclesPerBit
+			);
+	}
+
+	if (g_ATLCSIOData) {
+		if (mTraceByteIndex >= 1000 || !mTraceDirectionSend) {
+			mTraceByteIndex = 0;
+			mTraceDirectionSend = true;
+		}
+
+		g_ATLCSIOData("[%3u] Send     $%02X >         (@ %u cycles/bit / %.1f baud)\n", mTraceByteIndex++, mSerialOutputShiftRegister, cyclesPerBit, 7159090.0f / 4.0f / (float)cyclesPerBit);
+	}
+
+	bool burstOK = false;
+	bool framingError = false;
+	uint8 c = mSerialOutputShiftRegister;
+
+	if (mSerialOutputCounter) {
+		// Byte may have been truncated -- adjust it and the stop bit. Transmission
+		// is LSB first, so stomp from MSBs down.
+		uint8 truncationMask = 0xFF << ((18 - originalCounter) >> 1);
+
+		c &= truncationMask;
+
+		if (mbSerialNoiseEnabled)
+			c |= truncationMask;
+
+		// signal framing error if output is still low by stop bit time
+		framingError = !mbSerialOutputState;
+	}
+
+	for(IATPokeySIODevice *dev : mDevices) {
+		if (dev->PokeyWriteSIO(c, mbCommandLineState, cyclesPerBit, mSerialOutputStartTime, framingError))
+			burstOK = true;
+	}
+
+	if (mpCassette)
+		mpCassette->PokeyWriteCassetteData(mSerialOutputShiftRegister, cyclesPerBit);
+
+	if (burstOK)
+		mSerOutBurstDeadline = (ATSCHEDULER_GETTIME(mpScheduler) + cyclesPerBit*10) | 1;
+	else
+		mSerOutBurstDeadline = 0;
 }
 
 uint32 ATPokeyEmulator::GetSerialCyclesPerBitRecv() const {
@@ -1031,7 +1119,7 @@ void ATPokeyEmulator::AdvanceFrame(bool pushAudio) {
 		if (mKeyCooldownTimer)
 			--mKeyCooldownTimer;
 
-		if (!mKeyQueue.empty() && !mbKeyboardIRQPending && (mIRQST & mIRQEN & 0x40) && ((mbUseKeyCooldownTimer && !mKeyCooldownTimer) || mpConn->PokeyIsKeyPushOK(mKeyQueue.front())))
+		if (!mKeyQueue.empty() && CanPushKey(mKeyQueue.front()))
 			TryPushNextKey();
 	}
 
@@ -1195,7 +1283,7 @@ void ATPokeyEmulator::OnScheduledEvent(uint32 id) {
 											mSKSTAT &= ~0x40;
 										else {
 											mIRQST &= ~0x40;
-											mpConn->PokeyAssertIRQ(false);
+											AssertIrq(false);
 										}
 									}						
 								} else {
@@ -2254,9 +2342,9 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 				}
 
 				if (!(mIRQEN & ~mIRQST))
-					mpConn->PokeyNegateIRQ(true);
+					NegateIrq(true);
 				else
-					mpConn->PokeyAssertIRQ(true);
+					AssertIrq(true);
 
 				// Check if any of the IRQ bits are being turned on and we are currently running that timer
 				// in deferred mode. If so, we need to yank it out of deferred mode. We don't do the
@@ -2403,9 +2491,9 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 					mIRQST &= ~0x08;
 
 					if (!(mIRQEN & ~mIRQST))
-						mpConn->PokeyNegateIRQ(true);
+						NegateIrq(true);
 					else
-						mpConn->PokeyAssertIRQ(true);
+						AssertIrq(true);
 
 					if (mpCassette)
 						mpCassette->PokeyResetSerialInput();
@@ -2434,17 +2522,17 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 							else
 								mSKSTAT |= 0x08;
 
-							if ((mKeyMatrix[0]
-								| mKeyMatrix[1]
-								| mKeyMatrix[2]
-								| mKeyMatrix[3]
-								| mKeyMatrix[4]
-								| mKeyMatrix[5]
-								| mKeyMatrix[6]
-								| mKeyMatrix[7]) & 0xff)
-							{
-								mSKSTAT &= ~0x04;
-								QueueKeyboardIRQ();
+							for(int i=0; i<8; ++i) {
+								if (mKeyMatrix[i] & 0xff) {
+									mSKSTAT &= ~0x04;
+									mKBCODE = (uint8)(
+										  i*8
+										+ VDFindLowestSetBitFast(mKeyMatrix[i] & 0xFF)
+										+ (mbShiftKeyState ? 0x40 : 0x00)
+										+ (mbControlKeyState ? 0x80 : 0x00)
+										);
+									QueueKeyboardIRQ();
+								}
 							}
 						}
 					}
@@ -2454,6 +2542,10 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 
 				RecomputeAllowedDeferredTimers();
 				SetupTimers(0x0f);
+
+				// check if serial timer is stopped and terminate output byte if needed
+				if (!IsSerialOutputClockRunning())
+					FlushSerialOutput();
 			}
 			break;
 
@@ -2561,6 +2653,13 @@ void ATPokeyEmulator::EndLoadState(ATSaveStateReader& reader) {
 	}
 
 	mLastPolyTime = t;
+	mbIrqAsserted = mIRQEN & ~mIRQST;
+
+	if (mbIrqAsserted)
+		AssertIrq(false);
+	else
+		NegateIrq(false);
+
 
 	uint32 keyboardTickOffset = 114 - (t - UpdateLast15KHzTime());
 
@@ -2774,6 +2873,19 @@ void ATPokeyEmulator::FlushAudio(bool pushAudio) {
 	}
 }
 
+void ATPokeyEmulator::SetTraceContext(ATTraceContext *context) {
+	mpTraceContext = context;
+
+	if (context) {
+		ATTraceCollection *coll = context->mpCollection;
+
+		mpTraceChannelIrq = coll->AddGroup(L"POKEY")->AddSimpleChannel(context->mBaseTime, context->mBaseTickScale, L"IRQ");
+		mbTraceIrqPending = false;
+	} else {
+		mpTraceChannelIrq = nullptr;
+	}
+}
+
 void ATPokeyEmulator::UpdateMixTable() {
 	if (mbNonlinearMixingEnabled) {
 		// This table is an average of all volumes measured on a real 800XL
@@ -2929,6 +3041,29 @@ void ATPokeyEmulator::UpdateEffectiveKeyMatrix() {
 		mEffectiveKeyMatrix[i] |= mEffectiveKeyMatrix[srcRows[i]];
 }
 
+bool ATPokeyEmulator::CanPushKey(uint8 scanCode) const {
+	// wait if keyboard IRQ is still pending (not necessarily active in IRQST yet!)
+	if (mbKeyboardIRQPending)
+		return false;
+
+	// wait if keyboard IRQ is still active or disabled
+	if (!(mIRQST & mIRQEN & 0x40))
+		return false;
+
+	// wait if keyboard scan is disabled
+	if ((mSKCTL & 3) != 3)
+		return false;
+
+	// wait if cooldown timer is still active to dodge the speaker / keyclick, unless we have
+	// credible evidence that the OS can accept another key sooner
+	const bool cooldownExpired = (mbUseKeyCooldownTimer && !mKeyCooldownTimer);
+	if (!mpConn->PokeyIsKeyPushOK(scanCode, cooldownExpired))
+		return false;
+
+	// looks fine to push a new key...
+	return true;
+}
+
 void ATPokeyEmulator::TryPushNextKey() {
 	uint8 c = mKeyQueue.front();
 	mKeyQueue.pop_front();
@@ -2966,14 +3101,44 @@ void ATPokeyEmulator::AssertKeyboardIRQ() {
 			mSKSTAT &= ~0x40;
 
 		mIRQST &= ~0x40;
-		mpConn->PokeyAssertIRQ(false);
+		AssertIrq(false);
 	}
 }
 
 void ATPokeyEmulator::AssertBreakIRQ() {
 	if (mIRQEN & 0x80) {
 		mIRQST &= ~0x80;
-		mpConn->PokeyAssertIRQ(false);
+		AssertIrq(false);
+	}
+}
+
+void ATPokeyEmulator::AssertIrq(bool cpuBased) {
+	if (!mbIrqAsserted) {
+		mbIrqAsserted = true;
+
+		mpConn->PokeyAssertIRQ(cpuBased);
+
+		if (mpTraceContext) {
+			const uint64 t = mpScheduler->GetTick64() + (cpuBased ? 0 : -1);
+			mTraceIrqStart = t;
+			mbTraceIrqPending = true;
+		}
+	}
+}
+
+void ATPokeyEmulator::NegateIrq(bool cpuBased) {
+	if (mbIrqAsserted) {
+		mbIrqAsserted = false;
+
+		mpConn->PokeyNegateIRQ(cpuBased);
+
+		if (mpTraceContext && mbTraceIrqPending) {
+			mbTraceIrqPending = false;
+
+			const uint64 t = mpScheduler->GetTick64() + (cpuBased ? 0 : -1);
+
+			mpTraceChannelIrq->AddTickEvent(mTraceIrqStart, t, L"IRQ", kATTraceColor_Default);
+		}
 	}
 }
 
@@ -2994,7 +3159,7 @@ void ATPokeyEmulator::ProcessReceivedSerialByte() {
 		}
 
 		mIRQST &= ~0x20;
-		mpConn->PokeyAssertIRQ(false);
+		AssertIrq(false);
 	}
 
 	mSERIN = mSerialInputShiftRegister;

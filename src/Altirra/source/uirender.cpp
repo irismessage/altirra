@@ -530,10 +530,12 @@ public:
 	void SetFlashWriteActivity();
 
 	void SetCassetteIndicatorVisible(bool vis) { mbShowCassetteIndicator = vis; }
-	void SetCassettePosition(float pos, bool recordMode);
+	void SetCassettePosition(float pos, float len, bool recordMode, bool fskMode);
 
 	void SetRecordingPosition();
 	void SetRecordingPosition(float time, sint64 size);
+
+	void SetTracingSize(sint64 size);
 
 	void SetModemConnection(const char *str);
 
@@ -586,6 +588,7 @@ protected:
 	float	mCassettePos = 0;
 	int		mRecordingPos = -1;
 	sint64	mRecordingSize = -1;
+	sint64	mTracingSize = -1;
 	bool	mbShowCassetteIndicator = false;
 	int		mShowCassetteIndicatorCounter = 0;
 
@@ -642,6 +645,7 @@ protected:
 	vdrefptr<ATUILabel> mpWatchLabels[8];
 	vdrefptr<ATUILabel> mpHardDiskDeviceLabel;
 	vdrefptr<ATUILabel> mpRecordingLabel;
+	vdrefptr<ATUILabel> mpTracingLabel;
 	vdrefptr<ATUILabel> mpFlashWriteLabel;
 	vdrefptr<ATUILabel> mpHostDeviceLabel;
 	vdrefptr<ATUILabel> mpPCLinkLabel;
@@ -740,6 +744,11 @@ ATUIRenderer::ATUIRenderer() {
 	mpRecordingLabel->SetVisible(false);
 	mpRecordingLabel->SetFillColor(0x932f00);
 	mpRecordingLabel->SetTextColor(0xffffff);
+
+	mpTracingLabel = new ATUILabel;
+	mpTracingLabel->SetVisible(false);
+	mpTracingLabel->SetFillColor(0x932f00);
+	mpTracingLabel->SetTextColor(0xffffff);
 
 	mpFlashWriteLabel = new ATUILabel;
 	mpFlashWriteLabel->SetVisible(false);
@@ -993,6 +1002,21 @@ void ATUIRenderer::SetRecordingPosition(float time, sint64 size) {
 	mpRecordingLabel->SetVisible(true);
 }
 
+void ATUIRenderer::SetTracingSize(sint64 size) {
+	if (mTracingSize != size) {
+		mpTracingLabel->SetVisible(size >= 0);
+
+		if (size >= 0) {
+			if ((mTracingSize ^ size) >> 18) {
+				mpTracingLabel->SetTextF(L"Tracing %.1fM", (double)size / 1048576.0);
+				mpTracingLabel->AutoSize();
+			}
+		}
+
+		mTracingSize = size;
+	}
+}
+
 void ATUIRenderer::SetLedStatus(uint8 ledMask) {
 	if (mLedStatus == ledMask)
 		return;
@@ -1032,7 +1056,7 @@ void ATUIRenderer::SetPendingHeldButtons(uint8 consolMask) {
 	}
 }
 
-void ATUIRenderer::SetCassettePosition(float pos, bool recordMode) {
+void ATUIRenderer::SetCassettePosition(float pos, float len, bool recordMode, bool fskMode) {
 	mpCassetteTimeLabel->SetTextColor(recordMode ? 0xff8040 : 0x93e1ff);
 
 	if (mCassettePos == pos)
@@ -1047,7 +1071,9 @@ void ATUIRenderer::SetCassettePosition(float pos, bool recordMode) {
 	int hours = mins / 60;
 	mins %= 60;
 
-	mpCassetteTimeLabel->SetTextF(L"%02u:%02u:%02u %ls", hours, mins, secs, recordMode ? L"REC" : L"Play");
+	const float frac = len > 0.01f ? pos / len : 0.0f;
+
+	mpCassetteTimeLabel->SetTextF(L"%02u:%02u:%02u [%d%%] %ls%ls", hours, mins, secs, (int)(frac * 100.0f), fskMode ? L"" : L"T-", recordMode ? L"REC" : L"Play");
 	mpCassetteTimeLabel->AutoSize();
 }
 
@@ -1148,6 +1174,7 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 		c->AddChild(mpHostDeviceLabel);
 		c->AddChild(mpPCLinkLabel);
 		c->AddChild(mpRecordingLabel);
+		c->AddChild(mpTracingLabel);
 		c->AddChild(mpHardDiskDeviceLabel);
 		c->AddChild(mpFlashWriteLabel);
 		c->AddChild(mpStatusMessageLabel);
@@ -1209,6 +1236,7 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 
 		mpHardDiskDeviceLabel->SetFont(mpSysFont);
 		mpRecordingLabel->SetFont(mpSysFont);
+		mpTracingLabel->SetFont(mpSysFont);
 		mpFlashWriteLabel->SetFont(mpSysFont);
 		mpFlashWriteLabel->AutoSize();
 
@@ -1427,6 +1455,7 @@ void ATUIRenderer::Relayout(int w, int h) {
 
 	mpHardDiskDeviceLabel->SetPosition(vdpoint32(mSysFontDigitWidth * 36, ystats));
 	mpRecordingLabel->SetPosition(vdpoint32(mSysFontDigitWidth * 27, ystats));
+	mpTracingLabel->SetPosition(vdpoint32(mSysFontDigitWidth * 37, ystats));
 	mpFlashWriteLabel->SetPosition(vdpoint32(mSysFontDigitWidth * 47, ystats));
 	mpPCLinkLabel->SetPosition(vdpoint32(mSysFontDigitWidth * 19, ystats));
 	mpHostDeviceLabel->SetPosition(vdpoint32(mSysFontDigitWidth * 19, ystats));

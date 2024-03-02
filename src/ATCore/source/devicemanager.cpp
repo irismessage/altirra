@@ -26,6 +26,7 @@
 #include <at/atcore/devicesio.h>
 #include <at/atcore/devicecio.h>
 #include <at/atcore/devicemanager.h>
+#include <at/atcore/deviceparent.h>
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/propertyset.h>
 
@@ -39,17 +40,16 @@ void ATDeviceManager::Init() {
 }
 
 IATDevice *ATDeviceManager::AddDevice(const char *tag, const ATPropertySet& pset, bool child, bool hidden) {
-	vdrefptr<IATDevice> dev;
+	const ATDeviceDefinition *def = GetDeviceDefinition(tag);
+	if (!def)
+		return nullptr;
 
-	for(auto it = mDeviceFactories.begin(), itEnd = mDeviceFactories.end();
-		it != itEnd;
-		++it)
-	{
-		if (!strcmp(it->mpTag, tag)) {
-			it->mpCreate(pset, ~dev);
-			break;
-		}
-	}
+	return AddDevice(def, pset, child, hidden);
+}
+
+IATDevice *ATDeviceManager::AddDevice(const ATDeviceDefinition *def, const ATPropertySet& pset, bool child, bool hidden) {
+	vdrefptr<IATDevice> dev;
+	def->mpFactoryFn(pset, ~dev);
 
 	if (dev) {
 		dev->SetSettings(pset);
@@ -117,16 +117,10 @@ void ATDeviceManager::RemoveDevice(IATDevice *dev) {
 	{
 		if (it->mpDevice == dev) {
 			if (it->mbChild) {
-				// scan all possible parents
-				for(auto it2 = mDevices.begin(), it2End = mDevices.end();
-					it2 != it2End;
-					++it2)
-				{
-					IATDeviceParent *parent = vdpoly_cast<IATDeviceParent *>(it2->mpDevice);
+				IATDeviceParent *parent = dev->GetParent();
 
-					if (parent)
-						parent->RemoveChildDevice(dev);
-				}
+				if (parent)
+					parent->GetDeviceBus(dev->GetParentBusIndex())->RemoveChildDevice(dev);
 			}
 
 			mDevices.erase(it);
@@ -209,6 +203,16 @@ void *ATDeviceManager::GetInterface(uint32 id) const {
 	return nullptr;
 }
 
+
+const ATDeviceDefinition *ATDeviceManager::GetDeviceDefinition(const char *tag) const {
+	for(const ATDeviceDefinition *def : mDeviceDefinitions) {
+		if (!strcmp(tag, def->mpTag))
+			return def;
+	}
+
+	return nullptr;
+}
+
 ATDeviceConfigureFn ATDeviceManager::GetDeviceConfigureFn(const char *tag) const {
 	for(auto it = mDeviceConfigurers.begin(), itEnd = mDeviceConfigurers.end();
 		it != itEnd;
@@ -221,11 +225,8 @@ ATDeviceConfigureFn ATDeviceManager::GetDeviceConfigureFn(const char *tag) const
 	return nullptr;
 }
 
-void ATDeviceManager::AddDeviceFactory(const char *tag, ATDeviceFactoryFn factory) {
-	auto& fac = mDeviceFactories.push_back();
-
-	fac.mpTag = tag;
-	fac.mpCreate = factory;
+void ATDeviceManager::AddDeviceDefinition(const ATDeviceDefinition *def) {
+	mDeviceDefinitions.push_back(def);
 }
 
 void ATDeviceManager::AddDeviceConfigurer(const char *tag, ATDeviceConfigureFn configurer) {
@@ -328,9 +329,16 @@ void ATDeviceManager::Mark(IATDevice *dev, IATDevice *const *pExcludedDevs, size
 	}
 
 	auto *parent = vdpoly_cast<IATDeviceParent *>(dev);
-	if (parent) {
+	if (!parent)
+		return;
+
+	for(uint32 busIndex = 0; ; ++busIndex) {
+		IATDeviceBus *bus = parent->GetDeviceBus(busIndex);
+		if (!bus)
+			break;
+
 		vdfastvector<IATDevice *> children;
-		parent->GetChildDevices(children);
+		bus->GetChildDevices(children);
 
 		while(!children.empty()) {
 			IATDevice *child = children.back();
@@ -388,22 +396,51 @@ void ATDeviceManager::SerializeDevice(IATDevice *dev, VDJSONWriter& out) const {
 
 		IATDeviceParent *dp = vdpoly_cast<IATDeviceParent *>(dev);
 		if (dp) {
+			bool busesOpen = false;
+			uint32 busIndex = 0;
 			vdfastvector<IATDevice *> children;
-			dp->GetChildDevices(children);
 
-			if (!children.empty()) {
-				out.WriteMemberName(L"children");
-				out.OpenArray();
+			for(;;) {
+				IATDeviceBus *bus = dp->GetDeviceBus(busIndex);
 
-				for(auto it = children.begin(), itEnd = children.end();
-					it != itEnd;
-					++it)
-				{
-					SerializeDevice(*it, out);
+				if (!bus)
+					break;
+
+				children.clear();
+				bus->GetChildDevices(children);
+
+				if (!children.empty()) {
+					if (!busesOpen) {
+						busesOpen = true;
+
+						out.WriteMemberName(L"buses");
+						out.OpenObject();
+					}
+
+					VDStringW busName;
+					busName.sprintf(L"%u", busIndex);
+					out.WriteMemberName(busName.c_str());
+					out.OpenObject();
+
+					out.WriteMemberName(L"children");
+					out.OpenArray();
+
+					for(auto it = children.begin(), itEnd = children.end();
+						it != itEnd;
+						++it)
+					{
+						SerializeDevice(*it, out);
+					}
+
+					out.Close();
+					out.Close();
 				}
 
-				out.Close();
+				++busIndex;
 			}
+
+			if (busesOpen)
+				out.Close();
 		}
 
 		out.Close();
@@ -468,7 +505,7 @@ void ATDeviceManager::SerializeProps(const ATPropertySet& pset, VDJSONWriter& ou
 	out.Close();
 }
 
-void ATDeviceManager::DeserializeDevices(IATDeviceParent *parent, const wchar_t *str) {
+void ATDeviceManager::DeserializeDevices(IATDeviceParent *parent, IATDeviceBus *bus, const wchar_t *str) {
 	VDJSONDocument doc;
 	VDJSONReader reader;
 	if (!reader.Parse(str, wcslen(str)*sizeof(wchar_t), doc))
@@ -476,16 +513,16 @@ void ATDeviceManager::DeserializeDevices(IATDeviceParent *parent, const wchar_t 
 
 	const auto& rootVal = doc.Root();
 	if (doc.mValue.mType == VDJSONValue::kTypeObject) {
-		DeserializeDevice(parent, rootVal);
+		DeserializeDevice(parent, nullptr, rootVal);
 	} else if (doc.mValue.mType == VDJSONValue::kTypeArray) {
 		size_t n = rootVal.GetArrayLength();
 
 		for(size_t i=0; i<n; ++i)
-			DeserializeDevice(parent, rootVal[i]);
+			DeserializeDevice(parent, nullptr, rootVal[i]);
 	}
 }
 
-void ATDeviceManager::DeserializeDevice(IATDeviceParent *parent, const VDJSONValueRef& node) {
+void ATDeviceManager::DeserializeDevice(IATDeviceParent *parent, IATDeviceBus *bus, const VDJSONValueRef& node) {
 	const wchar_t *tag = node["tag"].AsString();
 	if (!*tag)
 		return;
@@ -496,20 +533,74 @@ void ATDeviceManager::DeserializeDevice(IATDeviceParent *parent, const VDJSONVal
 
 	IATDevice *dev;
 	try {
-		dev = AddDevice(VDTextWToA(tag).c_str(), pset, parent != nullptr, false);
+		dev = AddDevice(VDTextWToA(tag).c_str(), pset, bus != nullptr || parent != nullptr, false);
 	} catch(const MyError&) {
 		return;
 	}
 
-	if (dev && parent)
-		parent->AddChildDevice(dev);
+	if (!dev)
+		return;
+	
+	if (bus) {
+		bus->AddChildDevice(dev);
+
+		if (!dev->GetParent())
+			return;
+	} else if (parent) {
+		for(uint32 busIndex = 0; ; ++busIndex) {
+			IATDeviceBus *tryBus = parent->GetDeviceBus(busIndex);
+
+			if (!tryBus)
+				break;
+
+			tryBus->AddChildDevice(dev);
+			if (dev->GetParent())
+				break;
+		}
+
+		if (!dev->GetParent())
+			return;
+	}
 
 	IATDeviceParent *devParent = vdpoly_cast<IATDeviceParent *>(dev);
 	if (devParent) {
-		auto children = node["children"];
-		size_t numChildren = children.GetArrayLength();
-		for(size_t i=0; i<numChildren; ++i) {
-			DeserializeDevice(devParent, children[i]);
+		auto buses = node["buses"];
+		if (buses.IsObject()) {
+			auto busEnum = buses.AsObject();
+
+			while(busEnum.IsValid()) {
+				const wchar_t *busIndexStr = busEnum.GetName();
+				unsigned busIndex;
+				wchar_t dummy;
+
+				if (1 == swscanf(busIndexStr, L"%u%lc", &busIndex, &dummy)) {
+					IATDeviceBus *deviceBus = devParent->GetDeviceBus(busIndex);
+
+					if (deviceBus) {
+						auto busNode = busEnum.GetValue();
+
+						if (busNode.IsObject()) {
+							auto children = busNode["children"];
+							if (children.IsArray()) {
+								size_t numChildren = children.GetArrayLength();
+								for(size_t i=0; i<numChildren; ++i) {
+									DeserializeDevice(devParent, deviceBus, children[i]);
+								}
+							}
+						}
+					}
+				}
+
+				++busEnum;
+			}
+		} else {
+			auto children = node["children"];
+			if (children.IsArray()) {
+				size_t numChildren = children.GetArrayLength();
+				for(size_t i=0; i<numChildren; ++i) {
+					DeserializeDevice(devParent, nullptr, children[i]);
+				}
+			}
 		}
 	}
 }

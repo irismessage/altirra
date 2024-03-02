@@ -196,7 +196,7 @@ bool ATUIDialogEmuError::OnOK() {
 
 	ATCPUEmulator& cpu = mpSim->GetCPU();
 	if (IsButtonChecked(IDC_CHANGE_CPU))
-		cpu.SetCPUMode(kATCPUMode_6502, 1);
+		mpSim->SetCPUMode(kATCPUMode_6502, 1);
 
 	if (IsButtonChecked(IDC_CHANGE_DEBUGGING)) {
 		cpu.SetIllegalInsnsEnabled(true);

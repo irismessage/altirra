@@ -51,6 +51,21 @@ struct ATMemoryHandlerTable {
 	ATMemoryReadHandler mpDebugReadHandler;
 	ATMemoryReadHandler mpReadHandler;
 	ATMemoryWriteHandler mpWriteHandler;
+
+	template<class T, sint32 (T::*T_Handler)(uint32 addr) const>
+	void BindDebugReadHandler() {
+		mpDebugReadHandler = [](void *thisptr0, uint32 address) { return (((T *)thisptr0)->*T_Handler)(address); };
+	}
+
+	template<class T, sint32 (T::*T_Handler)(uint32 addr)>
+	void BindReadHandler() {
+		mpReadHandler = [](void *thisptr0, uint32 address) { return (((T *)thisptr0)->*T_Handler)(address); };
+	}
+
+	template<class T, bool (T::*T_Handler)(uint32 addr, uint8 data)>
+	void BindWriteHandler() {
+		mpWriteHandler = [](void *thisptr0, uint32 address, uint8 data) { return (((T *)thisptr0)->*T_Handler)(address, data); };
+	}
 };
 
 class ATMemoryLayer {};
@@ -97,12 +112,13 @@ public:
 	~ATMemoryManager();
 
 	const uintptr *GetAnticMemoryMap() const { return mAnticReadPageMap; }
-	uint8 *GetHighMemory() { return mHighMemory.data(); }
-	uint32 GetHighMemorySize() const { return (uint32)mHighMemory.size(); }
 
 	void Init();
 
-	void SetHighMemoryBanks(sint32 banks);
+	void SetHighMemoryEnabled(bool enabled);
+
+	// Enable mirroring of page 0 into $01:00xx.
+	void SetWrapBankZeroEnabled(bool enabled);
 
 	void SetFloatingDataBus(bool floating) { mbFloatingDataBus = floating; }
 
@@ -116,6 +132,7 @@ public:
 	ATMemoryLayer *CreateLayer(int priority, const uint8 *base, uint32 pageAddr, uint32 pages, bool readOnly);
 	ATMemoryLayer *CreateLayer(int priority, const ATMemoryHandlerTable& handlers, uint32 pageOffset, uint32 pages);
 	void DeleteLayer(ATMemoryLayer *layer);
+	void DeleteLayerPtr(ATMemoryLayer **layer);
 	void EnableLayer(ATMemoryLayer *layer, bool enable);
 	void EnableLayer(ATMemoryLayer *layer, ATMemoryAccessMode mode, bool enable);
 	void SetLayerModes(ATMemoryLayer *layer, ATMemoryAccessMode modes);
@@ -123,6 +140,7 @@ public:
 	void SetLayerMemory(ATMemoryLayer *layer, const uint8 *base, uint32 pageOffset, uint32 pages, uint32 addrMask = 0xFFFFFFFFU, int readOnly = -1);
 	void SetLayerAddressRange(ATMemoryLayer *layer0, uint32 pageOffset, uint32 pageCount);
 	void SetLayerName(ATMemoryLayer *layer, const char *name);
+	void SetLayerTag(ATMemoryLayer *layer, const void *tag);
 
 	// Controls whether a memory layer exists on the chip RAM or fast RAM bus
 	// (accelerated 65C816 mode only). The default is chip.
@@ -150,6 +168,10 @@ public:
 	void CPUExtWriteByte(uint16 address, uint8 bank, uint8 value) override;
 	sint32 CPUExtWriteByteAccel(uint16 address, uint8 bank, uint8 value, bool chipOK) override;
 
+	uint8 RedirectDebugReadByte(uint32 addr, const void *excludeTag);
+	uint8 RedirectReadByte(uint32 addr, const void *excludeTag);
+	void RedirectWriteByte(uint32 addr, uint8 value, const void *excludeTag);
+
 protected:
 	struct MemoryLayer : public ATMemoryLayer {
 		sint8 mPriority;
@@ -167,6 +189,7 @@ protected:
 		uint32 mMaskRangeEnd;
 		uint32 mEffectiveStart;
 		uint32 mEffectiveEnd;
+		const void *mpTag;
 		ATMemoryManager *mpParent;
 
 		void UpdateEffectiveRange();
@@ -190,9 +213,25 @@ protected:
 		uintptr mNext;
 	};
 
-	void RebuildNodes(uintptr *array, uint32 base, uint32 n, ATMemoryAccessMode mode);
-	MemoryNode *AllocNode();
-	void GarbageCollect();
+	struct AllocatorSet {
+		uint32	mAllocationCount = 0;
+		VDLinearAllocator mAllocator;
+		VDLinearAllocator mAllocatorNext;
+		VDLinearAllocator mAllocatorPrev;
+	};
+	
+	typedef vdfastvector<MemoryLayer *> Layers;
+
+	void RebuildAllNodes(uint32 base, uint32 n, uint8 modes);
+	void RebuildNodes(PageTable **bankTable, uint32 base, uint32 n, ATMemoryAccessMode mode);
+	void RebuildNodesSlow(Layers& VDRESTRICT layers, PageTable **bankTable, uint32 base, uint32 n, ATMemoryAccessMode mode);
+	void RebuildNodesFast(MemoryLayer *layer, PageTable **bankTable, uint32 base, uint32 n, ATMemoryAccessMode mode);
+
+	void SetBanksInactive(PageTable **bankTable, uint32 startBank, uint32 endBank, ATMemoryAccessMode accessMode);
+	void SetBanksActive(PageTable **bankTable, uint32 startBank, uint32 endBank, ATMemoryAccessMode accessMode);
+
+	MemoryNode *AllocNode(AllocatorSet& allocSet);
+	void GarbageCollect(uint32 startBank, uint32 endBank, AllocatorSet& allocSet);
 
 	static sint32 DummyReadHandler(void *thisptr, uint32 addr);
 	static bool DummyWriteHandler(void *thisptr, uint32 addr, uint8 value);
@@ -208,39 +247,37 @@ protected:
 	static bool IoHandlerWriteWrapperHandler(void *thisptr, uint32 addr, uint8 value);
 	static bool IoNullWriteWrapperHandler(void *thisptr, uint32 addr, uint8 value);
 
-	typedef vdfastvector<MemoryLayer *> Layers;
 	Layers mLayers;
 	Layers mLayerTempList;
 
-	bool	mbFloatingDataBus;
+	bool	mbFloatingDataBus = false;
 	bool	mbFloatingIoBus = false;
-	bool	mbFastBusEnabled;
+	bool	mbFastBusEnabled = false;
+	bool	mbHighMemoryEnabled = false;
+	bool	mbWrapBankZero = false;
 	uint8	mIoBusValue = 0;
 
-	uint32	mAllocationCount;
-	VDLinearAllocator mAllocator;
-	VDLinearAllocator mAllocatorNext;
-	VDLinearAllocator mAllocatorPrev;
+	AllocatorSet	mLoAllocators;
+	AllocatorSet	mHiAllocators;
 
-	vdblock<uint8> mHighMemory;
+	VDALIGN(32) PageTable mCPUReadPageMap;
+	PageTable		mCPUWritePageMap;
+	PageTable		mAnticReadPageMap;
 
-	VDALIGN(32) uintptr mCPUReadPageMap[256];
-	uintptr mCPUWritePageMap[256];
-	uintptr mAnticReadPageMap[256];
+	PageTable		*mReadBankTable[256];
+	PageTable		*mWriteBankTable[256];
 
-	const uintptr	*mReadBankTable[256];
-	uintptr			*mWriteBankTable[256];
-
-	uintptr			mProtectedNodeTable[768];
-
-	uintptr			mDummyReadPageTable[256];
-	uintptr			mDummyWritePageTable[256];
+	// All pages point to the dummy read/write node. This is used for uncommitted
+	// banks.
+	PageTable		mDummyReadPageTable;
+	PageTable		mDummyWritePageTable;
 
 	MemoryNode		mDummyReadNode;
 	MemoryNode		mDummyWriteNode;
 	MemoryLayer		mDummyLayer;
 
-	uintptr			mHighMemoryPageTables[256][256];	// 256K!
+	PageTable		mHighMemoryReadPageTables[255];	// 256K!
+	PageTable		mHighMemoryWritePageTables[255];	// 256K!
 };
 
 #endif	// f_AT_MEMORYMANAGER_H

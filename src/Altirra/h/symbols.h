@@ -30,7 +30,7 @@ enum {
 
 struct ATSymbol {
 	const char *mpName;
-	uint16	mOffset;
+	uint32	mOffset;
 	uint16	mFlags;
 	uint16	mLine;
 	uint16	mFileId;
@@ -39,7 +39,7 @@ struct ATSymbol {
 struct ATSymbolInfo {
 	const char *mpName;
 	uint16	mFlags;
-	uint16	mOffset;
+	uint32	mOffset;
 	uint16	mLength;
 };
 

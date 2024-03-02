@@ -36,13 +36,13 @@
 #include <vd2/VDDisplay/compositor.h>
 #include <vd2/VDDisplay/display.h>
 #include <vd2/VDDisplay/displaydrv.h>
+#include <vd2/VDDisplay/logging.h>
 
 #ifndef WM_TOUCH
 #define WM_TOUCH		0x0240
 #endif
 
-#define VDDEBUG_DISP (void)sizeof printf
-//#define VDDEBUG_DISP VDDEBUG
+#define VDDEBUG_DISP(...) VDDispLogF(__VA_ARGS__)
 
 extern const char g_szVideoDisplayControlName[] = "phaeronVideoDisplay";
 
@@ -543,6 +543,11 @@ void VDVideoDisplayWindow::SetFullScreen(bool fs, uint32 w, uint32 h, uint32 ref
 			mMonitorRect.bottom - mMonitorRect.top,
 			SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE);
 	}
+
+	if (!mpActiveFrame)
+		DispatchNextFrame();
+	else
+		DispatchActiveFrame();
 }
 
 void VDVideoDisplayWindow::SetDestRect(const vdrect32 *r, uint32 backgroundColor) {
@@ -902,10 +907,12 @@ void VDVideoDisplayWindow::OnChildPaint() {
 		PAINTSTRUCT ps;
 		HDC hdc = BeginPaint(mhwndChild, &ps);
 
-		if (hdc && ps.fErase) {
-			RECT r;
-			if (GetClientRect(mhwndChild, &r))
-				FillRect(hdc, &r, (HBRUSH)(COLOR_WINDOW + 1));
+		if (hdc) {
+			if (ps.fErase) {
+				RECT r;
+				if (GetClientRect(mhwndChild, &r))
+					FillRect(hdc, &r, (HBRUSH)(COLOR_WINDOW + 1));
+			}
 			EndPaint(mhwndChild, &ps);
 		}
 
@@ -1077,6 +1084,8 @@ LRESULT VDVideoDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	case WM_TIMER:
 		if (wParam == mReinitDisplayTimer) {
 			SyncInit(true, false);
+			if (mpMiniDriver)
+				DispatchActiveFrame();
 			return 0;
 		}
 		break;
@@ -1169,7 +1178,7 @@ bool VDVideoDisplayWindow::SyncSetSource(bool bAutoUpdate, const VDVideoDisplayS
 			}
 		}
 
-		VDDEBUG_DISP("VideoDisplay: Monitor switch detected -- reinitializing display.\n");
+		VDDEBUG_DISP("VideoDisplay: Monitor switch detected -- reinitializing display.");
 	}
 
 	SyncReset();
@@ -1259,7 +1268,7 @@ bool VDVideoDisplayWindow::SyncInit(bool bAutoRefresh, bool bAllowNonpersistentS
 				}
 
 			} else {
-				VDDEBUG_DISP("VideoDisplay: Application in background -- disabling accelerated preview.\n");
+				VDDEBUG_DISP("VideoDisplay: Application in background -- disabling accelerated preview.");
 			}
 		}
 
@@ -1267,7 +1276,7 @@ bool VDVideoDisplayWindow::SyncInit(bool bAutoRefresh, bool bAllowNonpersistentS
 		if (InitMiniDriver())
 			break;
 
-		VDDEBUG_DISP("VideoDisplay: No driver was able to handle the requested format! (%d)\n", mSource.pixmap.format);
+		VDDEBUG_DISP("VideoDisplay: No driver was able to handle the requested format! (%d)", mSource.pixmap.format);
 		SyncReset();
 	} while(false);
 
@@ -1341,7 +1350,7 @@ void VDVideoDisplayWindow::SyncUpdate(int mode) {
 					RequestNextFrame();
 			}
 		} else {
-			VDDEBUG_DISP("SyncUpdate() failed at Update() call\n");
+			VDDEBUG_DISP("SyncUpdate() failed at Update() call");
 
 			vdsynchronized(mMutex) {
 				mIdleFrames.splice(mIdleFrames.back(), mPendingFrames);
@@ -1426,10 +1435,15 @@ void VDVideoDisplayWindow::OnDisplayChange() {
 	
 	// Need to check the init lock in case we get an unexpected WM_DISPLAYCHANGE during the
 	// minidriver init -- this can happen with the VirtualBox 4.2.18 driver on XP.
-	if (!mReinitDisplayTimer && !mbFullScreen && !mMinidriverInitLock) {
-		SyncReset();
-		if (!SyncInit(true, false))
-			mReinitDisplayTimer = SetTimer(mhwnd, kReinitDisplayTimerId, 500, NULL);
+	if (!mbFullScreen && !mMinidriverInitLock) {
+		mLastMonitorCheckRect = {};
+		CheckForMonitorChange();
+
+		if (!mReinitDisplayTimer) {
+			SyncReset();
+			if (!SyncInit(true, false))
+				mReinitDisplayTimer = SetTimer(mhwnd, kReinitDisplayTimerId, 500, NULL);
+		}
 	}
 }
 
@@ -1541,7 +1555,7 @@ void VDVideoDisplayWindow::RequestUpdate() {
 
 void VDVideoDisplayWindow::VerifyDriverResult(bool result) {
 	if (!result) {
-		VDDEBUG_DISP("VerifyDriverResult() failed.\n");
+		VDDEBUG_DISP("VerifyDriverResult() failed.");
 
 		if (mpMiniDriver) {
 			ShutdownMiniDriver();
@@ -1596,7 +1610,7 @@ bool VDVideoDisplayWindow::CheckForMonitorChange() {
 	if (hmon == mhLastMonitor)
 		return false;
 
-	VDDEBUG_DISP("VideoDisplay: Current monitor update: %p -> %p.\n", mhLastMonitor, hmon);
+	VDDEBUG_DISP("VideoDisplay: Current monitor update: %p -> %p.", mhLastMonitor, hmon);
 
 	mhLastMonitor = hmon;
 	return true;

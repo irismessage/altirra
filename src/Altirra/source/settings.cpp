@@ -578,16 +578,13 @@ void ATSettingsExchangeHardware(bool write, VDRegistryKey& key) {
 
 		key.setBool("CPU: Allow NMI blocking", cpu.IsNMIBlockingEnabled());
 		key.setBool("CPU: Allow illegal instructions", cpu.AreIllegalInsnsEnabled());
-		key.setInt("CPU: Chip type", cpu.GetCPUMode());
-		key.setInt("CPU: Clock multiplier", cpu.GetSubCycles());
+		key.setInt("CPU: Chip type", g_sim.GetCPUMode());
+		key.setInt("CPU: Clock multiplier", g_sim.GetCPUSubCycles());
 
 		key.setBool("CPU: Shadow ROMs", g_sim.GetShadowROMEnabled());
 		key.setBool("CPU: Shadow cartridges", g_sim.GetShadowCartridgeEnabled());
 
 		key.setBool("GTIA: CTIA mode", gtia.IsCTIAMode());
-		key.setBool("GTIA: VBXE support", g_sim.GetVBXE() != NULL);
-		key.setBool("GTIA: VBXE shared memory", g_sim.IsVBXESharedMemoryEnabled());
-		key.setBool("GTIA: VBXE alternate page", g_sim.IsVBXEAltPageEnabled());
 
 		key.setBool("Audio: Dual POKEYs enabled", g_sim.IsDualPokeysEnabled());
 	} else {
@@ -641,13 +638,9 @@ void ATSettingsExchangeHardware(bool write, VDRegistryKey& key) {
 
 		ATCPUMode cpuMode = (ATCPUMode)key.getEnumInt("CPU: Chip type", kATCPUModeCount, kATCPUMode_6502);
 		uint32 cpuMultiplier = key.getInt("CPU: Clock multiplier", 1);
-		cpu.SetCPUMode(cpuMode, cpuMultiplier);
+		g_sim.SetCPUMode(cpuMode, cpuMultiplier);
 
 		gtia.SetCTIAMode(key.getBool("GTIA: CTIA mode", false));
-
-		g_sim.SetVBXEEnabled(key.getBool("GTIA: VBXE support", false));
-		g_sim.SetVBXESharedMemoryEnabled(key.getBool("GTIA: VBXE shared memory", false));
-		g_sim.SetVBXEAltPageEnabled(key.getBool("GTIA: VBXE alternate page", false));
 
 		g_sim.SetDualPokeysEnabled(key.getBool("Audio: Dual POKEYs enabled", false));
 	}
@@ -704,6 +697,8 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		key.setBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled());
 		key.setBool("Cassette: Auto-rewind enabled", g_sim.IsCassetteAutoRewindEnabled());
 		key.setBool("Cassette: Randomize start position", g_sim.IsCassetteRandomizedStartEnabled());
+		key.setString("Cassette: Turbo mode", ATEnumToString(g_sim.GetCassette().GetTurboMode()));
+		key.setString("Cassette: Polarity mode", ATEnumToString(g_sim.GetCassette().GetPolarityMode()));
 
 		key.setBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled());
 		key.setBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled());
@@ -733,6 +728,16 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		g_sim.SetCassetteAutoBootEnabled(key.getBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled()));
 		g_sim.SetCassetteAutoRewindEnabled(key.getBool("Cassette: Auto-rewind enabled", g_sim.IsCassetteAutoRewindEnabled()));
 		g_sim.SetCassetteRandomizedStartEnabled(key.getBool("Cassette: Randomize start position", g_sim.IsCassetteRandomizedStartEnabled()));
+
+		auto& cassette = g_sim.GetCassette();
+
+		VDStringA turboMode;
+		key.getString("Cassette: Turbo mode", turboMode);
+		cassette.SetTurboMode(ATParseEnum<ATCassetteTurboMode>(turboMode).mValue);
+
+		VDStringA polarityMode;
+		key.getString("Cassette: Polarity mode", polarityMode);
+		cassette.SetPolarityMode(ATParseEnum<ATCassettePolarityMode>(polarityMode).mValue);
 
 		g_sim.SetFPPatchEnabled(key.getBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled()));
 		g_sim.SetFastBootEnabled(key.getBool("Kernel: Fast boot enabled", g_sim.IsFastBootEnabled()));
@@ -949,7 +954,7 @@ void ATSettingsExchangeDevices(bool write, VDRegistryKey& key) {
 		VDStringW devStr;
 		key.getString("Devices", devStr);
 		dm->RemoveAllDevices(false);
-		dm->DeserializeDevices(nullptr, devStr.c_str());
+		dm->DeserializeDevices(nullptr, nullptr, devStr.c_str());
 
 		bool accurateSectorTiming = key.getBool("Disk: Accurate sector timing", g_sim.GetDiskInterface(0).IsAccurateSectorTimingEnabled());
 		for(int i=0; i<15; ++i) {
@@ -1039,6 +1044,13 @@ void SaveMountedImages(VDRegistryKey& rootKey) {
 			key.removeValue(keyName.c_str());
 			key.removeValue(keyNameMode.c_str());
 		}
+	}
+
+	auto& cas = g_sim.GetCassette();
+	if (cas.IsImagePersistent() && *cas.GetPath()) {
+		key.setString("Cassette", cas.GetPath());
+	} else {
+		key.removeValue("Cassette");
 	}
 
 	key.removeValue("IDE: Hardware mode");
@@ -1132,6 +1144,18 @@ void LoadMountedImages(VDRegistryKey& rootKey) {
 				g_sim.UnloadCartridge(cartUnit);
 		}
 	}
+
+	try {
+		auto& cas = g_sim.GetCassette();
+		VDStringW casPath;
+		key.getString("Cassette", casPath);
+
+		if (!casPath.empty())
+			cas.Load(casPath.c_str());
+		else
+			cas.Unload();
+	} catch(const MyError&) {
+	}
 }
 
 void ATSettingsExchangeMountedImages(bool write, VDRegistryKey& key) {
@@ -1199,7 +1223,6 @@ void LoadBaselineSettings() {
 	g_sim.SetCassetteAutoBootEnabled(true);
 	g_sim.SetFPPatchEnabled(false);
 	g_sim.SetFastBootEnabled(true);
-	g_sim.SetVBXEEnabled(false);
 	g_sim.SetDiskSIOPatchEnabled(true);
 	g_sim.SetDiskSIOOverrideDetectEnabled(false);
 	g_sim.SetSIOPatchEnabled(true);

@@ -181,7 +181,7 @@ public:
 	int			GetMainRTWidth() const { return mPresentParms.BackBufferWidth; }
 	int			GetMainRTHeight() const { return mPresentParms.BackBufferHeight; }
 
-	void		AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh, bool use16bit);
+	void		AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh, bool use16bit, HWND hwnd);
 	bool		IsFullScreen() const { return mFullScreenCount != 0; }
 
 	bool		Reset();
@@ -317,5 +317,7 @@ protected:
 
 VDD3D9Manager *VDInitDirect3D9(VDD3D9Client *pClient, HMONITOR hmonitor, bool use9ex);
 void VDDeinitDirect3D9(VDD3D9Manager *p, VDD3D9Client *pClient);
+
+const char *VDDispDecodeD3D9Error(uint32 hr);
 
 #endif

@@ -21,6 +21,7 @@
 #include <at/atcore/cio.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicecio.h>
+#include <at/atcore/deviceparentimpl.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/devicesio.h>
 #include <at/atcore/propertyset.h>
@@ -727,7 +728,6 @@ void ATRS232Channel850::EnqueueReceivedByte(uint8 c) {
 
 class ATRS232Emulator final
 	: public ATDevice
-	, public IATDeviceParent
 	, public IATDeviceScheduling
 	, public IATDeviceIndicators
 	, public IATDeviceFirmware
@@ -759,12 +759,6 @@ public:	// IATDeviceFirmware
 	const wchar_t *GetWritableFirmwareDesc(uint32 idx) const override { return nullptr; }
 	bool IsWritableFirmwareDirty(uint32 idx) const override { return false; }
 	void SaveWritableFirmware(uint32 idx, IVDStream& stream) override {}
-
-public:	// IATDeviceParent
-	const char *GetSupportedType(uint32 index) override;
-	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
-	void AddChildDevice(IATDevice *dev) override;
-	void RemoveChildDevice(IATDevice *dev) override;
 
 public:	// IATDeviceScheduling
 	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
@@ -822,6 +816,8 @@ protected:
 
 	vdfastvector<uint8> mRelocator;
 	vdfastvector<uint8> mHandler;
+	
+	ATDeviceParentSingleChild mDeviceParent;
 };
 
 void ATCreateDevice850Modem(const ATPropertySet& pset, IATDevice **dev) {
@@ -852,7 +848,7 @@ ATRS232Emulator::~ATRS232Emulator() {
 void *ATRS232Emulator::AsInterface(uint32 id) {
 	switch(id) {
 		case IATDeviceFirmware::kTypeID:	return static_cast<IATDeviceFirmware *>(this);
-		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(this);
+		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(&mDeviceParent);
 		case IATDeviceScheduling::kTypeID:	return static_cast<IATDeviceScheduling *>(this);
 		case IATDeviceIndicators::kTypeID:	return static_cast<IATDeviceIndicators *>(this);
 		case IATDeviceCIO::kTypeID:			return static_cast<IATDeviceCIO *>(this);
@@ -869,9 +865,36 @@ void ATRS232Emulator::GetDeviceInfo(ATDeviceInfo& info) {
 
 void ATRS232Emulator::Init() {
 	InitChannels();
+
+	mDeviceParent.Init(IATDeviceSerial::kTypeID, "serial", L"Serial Port");
+	mDeviceParent.SetOnAttach(
+		[this] {
+			for(auto *p : mpChannels) {
+				if (p && !p->GetSerialDevice()) {
+					p->SetSerialDevice(mDeviceParent.GetChild<IATDeviceSerial>());
+					break;
+				}
+			}
+		}
+	);
+
+	mDeviceParent.SetOnDetach(
+		[this] {
+			IATDeviceSerial *serdev = mDeviceParent.GetChild<IATDeviceSerial>();
+
+			for(auto *p : mpChannels) {
+				if (p && p->GetSerialDevice() == serdev) {
+					p->SetSerialDevice(nullptr);
+					break;
+				}
+			}
+		}
+	);
 }
 
 void ATRS232Emulator::Shutdown() {
+	mDeviceParent.Shutdown();
+
 	if (mpCIOMgr) {
 		mpCIOMgr->RemoveCIODevice(this);
 		mpCIOMgr = nullptr;
@@ -973,52 +996,6 @@ bool ATRS232Emulator::ReloadFirmware() {
 		mHandler.resize(2048);
 
 	return changed;
-}
-
-const char *ATRS232Emulator::GetSupportedType(uint32 index) {
-	return index ? nullptr : "serial";
-}
-
-void ATRS232Emulator::GetChildDevices(vdfastvector<IATDevice *>& devs) {
-	for(auto *p : mpChannels) {
-		if (p) {
-			IATDeviceSerial *devser = p->GetSerialDevice();
-
-			if (devser)
-				devs.push_back(vdpoly_cast<IATDevice *>(devser));
-		}
-	}
-}
-
-void ATRS232Emulator::AddChildDevice(IATDevice *dev) {
-	IATDeviceSerial *devser = vdpoly_cast<IATDeviceSerial *>(dev);
-	if (!devser)
-		return;
-
-	for(auto *p : mpChannels) {
-		if (p && !p->GetSerialDevice()) {
-			p->SetSerialDevice(devser);
-			return;
-		}
-	}
-
-}
-
-void ATRS232Emulator::RemoveChildDevice(IATDevice *dev) {
-	for(auto *p : mpChannels) {
-		if (p) {
-			IATDeviceSerial *devser = p->GetSerialDevice();
-
-			if (devser) {
-				IATDevice *devser0 = vdpoly_cast<IATDevice *>(devser);
-
-				if (devser0 == dev) {
-					p->SetSerialDevice(nullptr);
-					return;
-				}
-			}
-		}
-	}
 }
 
 void ATRS232Emulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {

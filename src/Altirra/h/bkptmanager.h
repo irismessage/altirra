@@ -34,6 +34,7 @@ struct ATBreakpointInfo {
 	sint32	mAddress;
 	uint32	mLength;
 	bool	mbBreakOnPC;
+	bool	mbBreakOnInsn;
 	bool	mbBreakOnRead;
 	bool	mbBreakOnWrite;
 };
@@ -70,9 +71,10 @@ public:
 	void GetAtAccessAddress(uint32 addr, ATBreakpointIndices& indices) const;
 	bool GetInfo(uint32 idx, ATBreakpointInfo& info) const;
 
+	uint32 SetInsnBP(uint32 targetIndex);
 	uint32 SetAtPC(uint32 targetIndex, uint32 pc);
-	uint32 SetAccessBP(uint16 address, bool read, bool write);
-	uint32 SetAccessRangeBP(uint16 address, uint32 len, bool read, bool write);
+	uint32 SetAccessBP(uint32 address, bool read, bool write);
+	uint32 SetAccessRangeBP(uint32 address, uint32 len, bool read, bool write);
 	bool Clear(uint32 id);
 	void ClearAll();
 
@@ -93,9 +95,10 @@ protected:
 
 	enum BreakpointType {
 		kBPT_PC			= 0x01,
-		kBPT_Read		= 0x02,
-		kBPT_Write		= 0x04,
-		kBPT_Range		= 0x08
+		kBPT_Insn		= 0x02,
+		kBPT_Read		= 0x04,
+		kBPT_Write		= 0x08,
+		kBPT_Range		= 0x10
 	};
 
 	struct BreakpointEntry {
@@ -131,12 +134,14 @@ protected:
 		}
 	};
 
+	uint32 AllocBreakpoint();
+
 	void RecomputeRangePriorLimits();
 	void RegisterAccessPage(uint32 address, bool read, bool write);
 	void UnregisterAccessPage(uint32 address, bool read, bool write);
 
 	void OnTargetPCBreakpoint(int code);
-	int CheckPCBreakpoints(uint32 pc, const BreakpointIndices& bps);	
+	int CheckPCBreakpoints(uint32 pc, const BreakpointIndices *bps);	
 	static sint32 OnAccessTrapRead(void *thisptr, uint32 addr);
 	static bool OnAccessTrapWrite(void *thisptr, uint32 addr, uint8 value);
 
@@ -148,6 +153,8 @@ protected:
 
 	typedef vdfastvector<BreakpointEntry> Breakpoints;
 	Breakpoints mBreakpoints;
+
+	vdvector<vdfastvector<uint32>> mInsnBreakpoints;
 
 	typedef vdhashmap<uint32, BreakpointIndices> BreakpointsByAddress;
 	BreakpointsByAddress mCPUBreakpoints;
@@ -179,10 +186,14 @@ protected:
 
 inline int ATBreakpointManager::TestPCBreakpoint(uint32 bpc) {
 	BreakpointsByAddress::const_iterator it(mCPUBreakpoints.find(bpc & 0xFF00FFFF));
-	if (it == mCPUBreakpoints.end())
-		return 0;
+	if (it == mCPUBreakpoints.end()) {
+		if (mInsnBreakpoints[bpc >> 24].empty())
+			return 0;
 
-	return CheckPCBreakpoints(bpc, it->second);
+		return CheckPCBreakpoints(bpc, nullptr);
+	}
+
+	return CheckPCBreakpoints(bpc, &it->second);
 }
 
 #endif	// f_AT_BKPTMANAGER_H

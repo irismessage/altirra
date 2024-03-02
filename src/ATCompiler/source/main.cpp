@@ -18,6 +18,10 @@
 
 #include <stdafx.h>
 
+#ifndef VDCDECL
+	#define VDCDECL __cdecl
+#endif
+
 extern int cmd_lzpack(int argc, const char *const *argv);
 extern int cmd_lzunpack(int argc, const char *const *argv);
 extern int cmd_makereloc(int argc, const char *const *argv);
@@ -28,7 +32,7 @@ extern int cmd_makeexports(int argc, const char *const *argv);
 
 void print_usage();
 
-int main(int argc, const char *const *argv) {
+int VDCDECL main(int argc, const char *const *argv) {
 	if (argc < 2) {
 		print_usage();
 		exit(0);

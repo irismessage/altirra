@@ -52,6 +52,10 @@ bool ATUIClipGetText(VDStringA& s8, VDStringW& s16, bool& use16) {
 
 					GlobalUnlock(hData);
 
+					auto nullPos = s16.find(L'\0');
+					if (nullPos != s16.npos)
+						s16.erase(nullPos);
+
 					success = true;
 					use16 = true;
 					unicodeSuccessful = true;
@@ -72,6 +76,10 @@ bool ATUIClipGetText(VDStringA& s8, VDStringW& s16, bool& use16) {
 					s8.assign(s, s + len);
 
 					GlobalUnlock(hData);
+
+					auto nullPos = s8.find('\0');
+					if (nullPos != s8.npos)
+						s8.erase(nullPos);
 
 					success = true;
 					use16 = false;

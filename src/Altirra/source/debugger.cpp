@@ -260,7 +260,7 @@ public:
 	void ClearAllBreakpoints();
 	bool IsBreakpointAtPC(uint32 pc) const;
 	void ToggleBreakpoint(uint32 addr);
-	void ToggleAccessBreakpoint(uint16 addr, bool write);
+	void ToggleAccessBreakpoint(uint32 addr, bool write);
 	void ToggleSourceBreakpoint(const char *fn, uint32 line);
 	sint32 LookupUserBreakpoint(uint32 useridx) const;
 	sint32 LookupUserBreakpointByNum(uint32 number, const char *groupName) const;
@@ -276,6 +276,7 @@ public:
 	bool GetBreakpointInfo(uint32 useridx, ATDebuggerBreakpointInfo& info) const;
 	void GetBreakpointList(vdfastvector<uint32>& bps, const char *group = nullptr) const;
 	ATDebugExpNode *GetBreakpointCondition(uint32 useridx) const;
+	void SetBreakpointCondition(uint32 useridx, vdautoptr<ATDebugExpNode>& expr);
 	const char *GetBreakpointCommand(uint32 useridx) const;
 	bool GetBreakpointSourceLocation(uint32 useridx, VDStringA& file, uint32& line) const;
 
@@ -1075,11 +1076,7 @@ void ATDebugger::ToggleBreakpoint(uint32 addr) {
 
 	// try to find an index we know about
 	sint32 useridx = -1;
-	uint32 sysidx;
-	while(!indices.empty()) {
-		sysidx = indices.back();
-		indices.pop_back();
-
+	for(const uint32 sysidx : indices) {
 		SysBPToUserBPMap::const_iterator it(mSysBPToUserBPMap.find(sysidx));
 		if (it != mSysBPToUserBPMap.end()) {
 			if (!mUserBPs[it->second].mpTagName) {
@@ -1087,14 +1084,12 @@ void ATDebugger::ToggleBreakpoint(uint32 addr) {
 				break;
 			}
 		}
-
-		indices.pop_back();
 	}
 
 	if (useridx >= 0) {
 		ClearUserBreakpoint(useridx);
 	} else {
-		sysidx = mpBkptManager->SetAtPC(mCurrentTargetIndex, addr);
+		const uint32 sysidx = mpBkptManager->SetAtPC(mCurrentTargetIndex, addr);
 		useridx = RegisterSystemBreakpoint(sysidx);
 		RegisterUserBreakpoint(useridx, nullptr);
 	}
@@ -1102,7 +1097,7 @@ void ATDebugger::ToggleBreakpoint(uint32 addr) {
 	g_sim.NotifyEvent(kATSimEvent_CPUPCBreakpointsUpdated);
 }
 
-void ATDebugger::ToggleAccessBreakpoint(uint16 addr, bool write) {
+void ATDebugger::ToggleAccessBreakpoint(uint32 addr, bool write) {
 	ATBreakpointIndices indices;
 
 	mpBkptManager->GetAtAccessAddress(addr, indices);
@@ -1272,6 +1267,7 @@ uint32 ATDebugger::SetConditionalBreakpoint(ATDebugExpNode *exp0, const char *co
 	vdautoptr<ATDebugExpNode> rangehi;
 	bool isrange = false;
 	bool israngewrite;
+	bool isinsn = false;
 	sint32 rangeloaddr;
 	sint32 rangehiaddr;
 	sint32 addr;
@@ -1302,55 +1298,52 @@ uint32 ATDebugger::SetConditionalBreakpoint(ATDebugExpNode *exp0, const char *co
 			isrange = true;
 			israngewrite = true;
 		}
-		else
-		{
-			throw MyError(
-				"Cannot find appropriate anchor for breakpoint expression.\n"
-				"A breakpoint expression must contain a top-level clause of the form\n"
-				"  pc=<constexpr>, read=<constexpr>, or write=<constexpr>.\n"
-				);
-		}
 
-		// One of the ranges should be LT/LE and the other one GT/GE; validate this and swap around
-		// the terms if needed.
-		bool validRange = true;
+		if (isrange) {
+			// One of the ranges should be LT/LE and the other one GT/GE; validate this and swap around
+			// the terms if needed.
+			bool validRange = true;
 
-		if (oplo == kATDebugExpNodeType_LT || oplo == kATDebugExpNodeType_LE) {
-			rangelo.swap(rangehi);
-			std::swap(oplo, ophi);
-		}
+			if (oplo == kATDebugExpNodeType_LT || oplo == kATDebugExpNodeType_LE) {
+				rangelo.swap(rangehi);
+				std::swap(oplo, ophi);
+			}
 
-		VDVERIFY(rangelo->Evaluate(rangeloaddr, ATDebugExpEvalContext()));
-		VDVERIFY(rangehi->Evaluate(rangehiaddr, ATDebugExpEvalContext()));
+			VDVERIFY(rangelo->Evaluate(rangeloaddr, ATDebugExpEvalContext()));
+			VDVERIFY(rangehi->Evaluate(rangehiaddr, ATDebugExpEvalContext()));
 
-		if (oplo == kATDebugExpNodeType_GT)
-			++rangeloaddr;
-		else if (oplo != kATDebugExpNodeType_GE)
-			validRange = false;
+			if (oplo == kATDebugExpNodeType_GT)
+				++rangeloaddr;
+			else if (oplo != kATDebugExpNodeType_GE)
+				validRange = false;
 
-		if (ophi == kATDebugExpNodeType_LT)
-			--rangehiaddr;
-		else if (ophi != kATDebugExpNodeType_LE)
-			validRange = false;
+			if (ophi == kATDebugExpNodeType_LT)
+				--rangehiaddr;
+			else if (ophi != kATDebugExpNodeType_LE)
+				validRange = false;
 
-		if (!validRange) {
-			throw MyError("Unable to parse access range: relative checks for read or write accesses were found, but a range could not be determined. "
-				"An access range must be specified with the READ or WRITE operators using a </<= and >/>= pair.");
-		}
+			if (!validRange) {
+				throw MyError("Unable to parse access range: relative checks for read or write accesses were found, but a range could not be determined. "
+					"An access range must be specified with the READ or WRITE operators using a </<= and >/>= pair.");
+			}
 
-		if (rangeloaddr < 0 || rangehiaddr > 0xFFFF || rangeloaddr > rangehiaddr)
-			throw MyError("Invalid access range: $%04X-%04X.\n", rangeloaddr, rangehiaddr);
+			if (rangeloaddr < 0 || rangehiaddr > 0xFFFF || rangeloaddr > rangehiaddr)
+				throw MyError("Invalid access range: $%04X-%04X.\n", rangeloaddr, rangehiaddr);
 
-		// Check if we're only doing exactly one byte and demote to a single address breakpoint
-		// if so.
-		if (rangeloaddr == rangehiaddr) {
-			if (israngewrite)
-				rangelo.swap(extwrite);
-			else
-				rangelo.swap(extread);
+			// Check if we're only doing exactly one byte and demote to a single address breakpoint
+			// if so.
+			if (rangeloaddr == rangehiaddr) {
+				if (israngewrite)
+					rangelo.swap(extwrite);
+				else
+					rangelo.swap(extread);
 
-			addr = rangeloaddr;
-			isrange = false;
+				addr = rangeloaddr;
+				isrange = false;
+			}
+		} else {
+			isinsn = true;
+			rem = std::move(exp);
 		}
 	} else {
 		VDVERIFY((extpc ? extpc : extread ? extread : extwrite)->Evaluate(addr, ATDebugExpEvalContext()));
@@ -1385,9 +1378,10 @@ uint32 ATDebugger::SetConditionalBreakpoint(ATDebugExpNode *exp0, const char *co
 	ATBreakpointManager *bpm = GetBreakpointManager();
 	const uint32 sysidx = isrange ? bpm->SetAccessRangeBP(rangeloaddr, rangehiaddr - rangeloaddr + 1, !israngewrite, israngewrite)
 						: extpc ? bpm->SetAtPC(g_debugger.GetTargetIndex(), (uint32)addr)
-						: extread ? bpm->SetAccessBP((uint16)addr, true, false)
-						: extwrite ? bpm->SetAccessBP((uint16)addr, false, true)
-						: bpm->SetAccessBP((uint16)addr, false, true);
+						: extread ? bpm->SetAccessBP(addr, true, false)
+						: extwrite ? bpm->SetAccessBP(addr, false, true)
+						: isinsn ? bpm->SetInsnBP(g_debugger.GetTargetIndex())
+						: bpm->SetAccessBP(addr, false, true);
 
 	uint32 useridx = RegisterSystemBreakpoint(sysidx, rem, command, continueExecution);
 	rem.release();
@@ -1501,6 +1495,7 @@ bool ATDebugger::GetBreakpointInfo(uint32 useridx, ATDebuggerBreakpointInfo& inf
 	info.mAddress = bpinfo.mAddress;
 	info.mLength = bpinfo.mLength;
 	info.mbBreakOnPC = bpinfo.mbBreakOnPC;
+	info.mbBreakOnInsn = bpinfo.mbBreakOnInsn;
 	info.mbBreakOnRead = bpinfo.mbBreakOnRead;
 	info.mbBreakOnWrite = bpinfo.mbBreakOnWrite;
 	info.mbDeferred = false;
@@ -1534,6 +1529,19 @@ ATDebugExpNode *ATDebugger::GetBreakpointCondition(uint32 useridx) const {
 		return NULL;
 
 	return mUserBPs[useridx].mpCondition;
+}
+
+void ATDebugger::SetBreakpointCondition(uint32 useridx, vdautoptr<ATDebugExpNode>& expr) {
+	if (useridx >= mUserBPs.size())
+		return;
+
+	auto& ubp = mUserBPs[useridx];
+
+	if (ubp.mSysBP == (uint32)-1)
+		return;
+
+	delete ubp.mpCondition;
+	ubp.mpCondition = expr.release();
 }
 
 const char *ATDebugger::GetBreakpointCommand(uint32 useridx) const {
@@ -3048,7 +3056,7 @@ sint32 ATDebugger::ResolveSymbol(const char *s, bool allowGlobal, bool allowShor
 				sint32 offset = mod.mpSymbols->LookupSymbol(symname);
 
 				if (offset >= 0)
-					return 0xffff & (mod.mBase + offset);
+					return 0xffffff & (mod.mBase + offset);
 			}
 		}
 	}
@@ -3172,12 +3180,12 @@ void ATDebugger::AddCustomSymbol(uint32 address, uint32 len, const char *name, u
 		mod.mId = kModuleId_Manual;
 		mod.mTargetId = mCurrentTargetIndex;
 		mod.mBase = 0;
-		mod.mSize = 0x10000;
+		mod.mSize = 0x1000000;
 
 		vdrefptr<IATCustomSymbolStore> p;
 		ATCreateCustomSymbolStore(~p);
 
-		p->Init(0, 0x10000);
+		p->Init(0, 0x1000000);
 
 		mod.mpSymbols = p;
 		mod.mbDirty = false;
@@ -3431,8 +3439,10 @@ bool ATDebugger::MatchCommandAlias(const char *alias, const char *const *argv, i
 			}
 
 			// check for insufficient arguments
-			if (patidx >= argc)
+			if (patidx >= argc) {
+				valid = false;
 				break;
+			}
 
 			// match pattern
 			VDStringRefA::const_iterator itPatToken(pattoken.begin()), itPatTokenEnd(pattoken.end());
@@ -3497,9 +3507,11 @@ bool ATDebugger::MatchCommandAlias(const char *alias, const char *const *argv, i
 			}
 
 			if (tmpltoken == "%*") {
-				while(const char *arg = *wildargs++) {
-					argoffsets.push_back((int)tempstr.size());
-					tempstr.insert(tempstr.end(), arg, arg + strlen(arg) + 1);
+				if (wildargs) {
+					while(const char *arg = *wildargs++) {
+						argoffsets.push_back((int)tempstr.size());
+						tempstr.insert(tempstr.end(), arg, arg + strlen(arg) + 1);
+					}
 				}
 
 				continue;
@@ -3855,6 +3867,7 @@ void ATDebugger::GetLinesForFile(uint32 moduleId, uint16 fileId, vdfastvector<AT
 void ATDebugger::OnSimulatorEvent(ATSimulatorEvent ev) {
 	switch(ev) {
 		case kATSimEvent_VBLANK:
+		case kATSimEvent_TracingLimitReached:
 			return;
 	}
 
@@ -4481,6 +4494,8 @@ void ATDebugger::OnBreakpointHit(ATBreakpointManager *sender, ATBreakpointEvent 
 		mbClientUpdatePending = true;
 		SetTarget(bp.mTargetIndex);
 		InterruptRun();
+
+		mFramePC = GetPC();
 	}
 
 	if (bp.mbOneShot)
@@ -5714,12 +5729,15 @@ namespace {
 		return true;
 	}
 
-	void MakeTracepointCommand(VDStringA& cmd, ATDebuggerCmdParser& parser) {
+	void MakeTracepointCommand(VDStringA& cmd, ATDebuggerCmdParser& parser, bool allowDeferred = true) {
 		vdfastvector<const char *> args;
 		int deferredCount = -1;
 
 		while(const char *s = parser.GetNextArgument()) {
 			if (!strcmp(s, "--")) {
+				if (!allowDeferred)
+					throw MyError("Deferred arguments cannot be used in this context.");
+
 				if (deferredCount >= 0)
 					throw MyError("'--' can only be used once in the argument list.");
 
@@ -5888,6 +5906,70 @@ void ATConsoleCmdBreakptTrace(ATDebuggerCmdParser& parser) {
 		g_debugger.SetBreakpointOneShot(useridx, true);
 
 	g_sim.NotifyEvent(kATSimEvent_CPUPCBreakpointsUpdated);
+}
+
+void ATConsoleCmdBreakptTraceAccess(ATDebuggerCmdParser& parser) {
+	ATDebuggerCmdSwitchStrArg groupNameArg("g");
+	ATDebuggerCmdSwitch clearOnResetArg("k", false);
+	ATDebuggerCmdSwitch oneShotArg("o", false);
+	ATDebuggerCmdSwitch quietArg("q", false);
+	ATDebuggerCmdName cmdAccessMode(true);
+	ATDebuggerCmdExprAddr cmdAddress(false, true, false);
+	ATDebuggerCmdLength cmdLength(1, false, &cmdAddress);
+
+	parser >> groupNameArg >> clearOnResetArg >> oneShotArg >> quietArg >> cmdAccessMode >> cmdAddress >> cmdLength;
+
+	if (!g_debugger.AreAccessBreakpointsSupported())
+		throw MyError("Memory access breakpoints are not supported on the current target.");
+
+	VDStringA tracecmd;
+	MakeTracepointCommand(tracecmd, parser);
+
+	bool readMode = true;
+	if (*cmdAccessMode == "w")
+		readMode = false;
+	else if (*cmdAccessMode != "r") {
+		ATConsoleWrite("Access mode must be 'r' or 'w'.\n");
+		return;
+	}
+
+	ATBreakpointManager *bpm = g_debugger.GetBreakpointManager();
+	const uint32 address = cmdAddress.GetValue();
+	const uint32 length = cmdLength;
+
+	if (length == 0) {
+		ATConsoleWrite("Invalid breakpoint range length.\n");
+		return;
+	}
+
+	uint32 sysidx;
+	uint32 useridx;
+
+	const char *modestr = readMode ? "read" : "write";
+
+	if (length > 1) {
+		sysidx = bpm->SetAccessRangeBP(address, length, readMode, !readMode);
+
+		useridx = g_debugger.RegisterSystemBreakpoint(sysidx, NULL, tracecmd.c_str(), true);
+		g_debugger.RegisterUserBreakpoint(useridx, groupNameArg.GetValue());
+
+		if (!quietArg)
+			ATConsolePrintf("Tracepoint %s set on %s at %04X-%04X.\n", g_debugger.GetBreakpointName(useridx).c_str(), modestr, address, address + length - 1);
+	} else {
+		sysidx = bpm->SetAccessBP(address, readMode, !readMode);
+
+		useridx = g_debugger.RegisterSystemBreakpoint(sysidx, NULL, tracecmd.c_str(), true);
+		g_debugger.RegisterUserBreakpoint(useridx, groupNameArg.GetValue());
+
+		if (!quietArg)
+			ATConsolePrintf("Tracepoint %s set on %s at %04X.\n", g_debugger.GetBreakpointName(useridx).c_str(), modestr, address);
+	}
+
+	if (clearOnResetArg)
+		g_debugger.SetBreakpointClearOnReset(useridx, true);
+
+	if (oneShotArg)
+		g_debugger.SetBreakpointOneShot(useridx, true);
 }
 
 void ATConsoleCmdBreakptClear(ATDebuggerCmdParser& parser) {
@@ -6071,7 +6153,11 @@ void ATConsoleCmdBreakptList(ATDebuggerCmdParser& parser) {
 			line += info.mbOneShot ? 'O' : ' ';
 			line += ' ';
 
-			if (!info.mbDeferred) {
+			if (info.mbDeferred)
+				line += "deferred     ";
+			else if (info.mbBreakOnInsn)
+				line += "per-insn     ";
+			else {
 				if (info.mbBreakOnPC)
 					line += "PC  ";
 				else if (info.mbBreakOnRead) {
@@ -6089,8 +6175,7 @@ void ATConsoleCmdBreakptList(ATDebuggerCmdParser& parser) {
 						);
 				else
 					line.append_sprintf("%s     ", g_debugger.GetAddressText(info.mAddress, false, true).c_str());
-			} else
-				line += "deferred     ";
+			}
 
 			if (g_debugger.GetBreakpointSourceLocation(useridx, file, lineno))
 				line.append_sprintf("  `%s:%u`", file.c_str(), lineno);
@@ -6171,6 +6256,44 @@ void ATConsoleCmdBreakptSector(ATDebuggerCmdParser& parser) {
 	}
 }
 
+void ATConsoleCmdBreakptSetCondition(ATDebuggerCmdParser& parser) {
+	ATDebuggerCmdName nameArg(true);
+	ATDebuggerCmdString exprArg(true);
+
+	parser >> nameArg >> exprArg >> 0;
+
+	auto dotPos = nameArg->find_last_of('.');
+
+	const auto *arg = nameArg->c_str();
+	VDStringA groupName;
+	if (dotPos != nameArg->npos) {
+		groupName.assign(*nameArg, 0, dotPos);
+		arg += dotPos + 1;
+	}
+
+	char dummy;
+	unsigned number;
+	if (1 != sscanf(arg, "%u %c", &number, &dummy))
+		throw MyError("Invalid breakpoint number: %s", arg);
+
+	sint32 useridx = g_debugger.LookupUserBreakpointByNum(number, groupName.c_str());
+
+	if (useridx < 0)
+		throw MyError("Invalid breakpoint number: %s", arg);
+
+	VDStringA s(exprArg->c_str());
+
+	vdautoptr<ATDebugExpNode> node;
+	
+	try {
+		node = ATDebuggerParseExpression(s.c_str(), &g_debugger, ATGetDebugger()->GetExprOpts());
+	} catch(ATDebuggerExprParseException& ex) {
+		throw MyError("Unable to parse expression: %s", ex.c_str());
+	}
+	
+	g_debugger.SetBreakpointCondition(useridx, node);
+}
+
 void ATConsoleCmdBreakptExpr(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdSwitchStrArg groupArg("g");
 	ATDebuggerCmdSwitch clearOnResetArg("k", false);
@@ -6214,17 +6337,17 @@ void ATConsoleCmdBreakptExpr(ATDebuggerCmdParser& parser) {
 	VDVERIFY(g_debugger.GetBreakpointInfo(useridx, info));
 
 	VDStringA msg;
-	msg.sprintf("Breakpoint %u set ", usernum);
+	msg.sprintf("Breakpoint %u set", usernum);
 
 	if (info.mbBreakOnRead || info.mbBreakOnWrite) {
 		if (info.mLength > 1)
-			msg.append_sprintf("on %s to range $%04X-$%04X", info.mbBreakOnWrite ? "write" : "read", info.mAddress, info.mAddress + info.mLength - 1);
+			msg.append_sprintf(" on %s to range $%04X-$%04X", info.mbBreakOnWrite ? "write" : "read", info.mAddress, info.mAddress + info.mLength - 1);
 		else if (info.mbBreakOnRead)
-			msg.append_sprintf("on read from $%04X", info.mAddress);
+			msg.append_sprintf(" on read from $%04X", info.mAddress);
 		else if (info.mbBreakOnWrite)
-			msg.append_sprintf("on write to $%04X", info.mAddress);
-	} else {
-		msg.append_sprintf("at PC=$%04X", info.mAddress);
+			msg.append_sprintf(" on write to $%04X", info.mAddress);
+	} else if (info.mbBreakOnPC) {
+		msg.append_sprintf(" at PC=$%04X", info.mAddress);
 	}
 
 	if (cond) {
@@ -6236,13 +6359,25 @@ void ATConsoleCmdBreakptExpr(ATDebuggerCmdParser& parser) {
 		msg += ".\n";
 
 	ATConsoleWrite(msg.c_str());
+
+	if (info.mbBreakOnInsn)
+		ATConsoleWrite("Warning: Per-instruction breakpoint set. Execution will be slow.\n");
 }
 
 void ATConsoleCmdUnassemble(ATDebuggerCmdParser& parser) {
+	ATDebuggerCmdSwitch noPredictArg("p", false);
+	ATDebuggerCmdSwitch m8Arg("m8", false);
+	ATDebuggerCmdSwitch m16Arg("m16", false);
+	ATDebuggerCmdSwitch x8Arg("x8", false);
+	ATDebuggerCmdSwitch x16Arg("x16", false);
+	ATDebuggerCmdSwitch emulationModeArg("e", false);
+	ATDebuggerCmdSwitch noLabelsArg("n", false);
 	ATDebuggerCmdExprAddr address(false, false);
 	ATDebuggerCmdLength length(20, false, &address);
 
-	parser >> address >> length >> 0;
+	parser >> noPredictArg >> m8Arg >> m16Arg >> x8Arg >> x16Arg >> emulationModeArg >> noLabelsArg >> address >> length >> 0;
+
+	const bool predict = !noPredictArg;
 
 	uint32 addr;
 	
@@ -6254,38 +6389,46 @@ void ATConsoleCmdUnassemble(ATDebuggerCmdParser& parser) {
 	uint8 bank = (uint8)(addr >> 16);
 	uint32 n = length;
 
-	if (g_debugger.GetTargetIndex()) {
-		IATDebugTarget *target = g_debugger.GetTarget();
-		const auto disasmMode = target->GetDisasmMode();
+	IATDebugTarget *target = g_debugger.GetTarget();
+	const auto disasmMode = target->GetDisasmMode();
 
-		ATCPUExecState state;
-		target->GetExecState(state);
+	ATCPUExecState state;
+	target->GetExecState(state);
 
-		VDStringA s;
-		for(uint32 i=0; i<n; ++i) {
-			ATCPUHistoryEntry hent = {};
-			hent.mPC = addr;
+	ATCPUHistoryEntry hent {};
+	ATDisassembleCaptureRegisterContext(target, hent);
+
+	if (disasmMode == kATDebugDisasmMode_65C816) {
+		if (emulationModeArg) {
 			hent.mbEmulation = true;
-			hent.mP = 0xFF;
+			hent.mP |= 0x30;
+		} else {
+			hent.mbEmulation = false;
 
-			for(int j=0; j<4; ++j)
-				hent.mOpcode[j] = target->DebugReadByte(addr+j);
-
-			s.clear();
-			addr = (addr & 0xff0000) + (uint16)ATDisassembleInsn(s, target, disasmMode, hent, false, false, true, true, false, false, false, false, false);
-			s += '\n';
-			ATConsoleWrite(s.c_str());
-
-			if ((i & 15) == 15 && ATConsoleCheckBreak())
-				break;
+			if (m8Arg) hent.mP |= 0x20;
+			if (m16Arg) hent.mP &= ~0x20;
+			if (x8Arg) hent.mP |= 0x10;
+			if (x16Arg) hent.mP &= ~0x10;
 		}
-	} else {
-		for(uint32 i=0; i<n; ++i) {
-			addr = ATDisassembleInsn(addr, bank);
+	}
 
-			if ((i & 15) == 15 && ATConsoleCheckBreak())
-				break;
-		}
+	const bool showLabels = !noLabelsArg;
+
+	VDStringA s;
+	for(uint32 i=0; i<n; ++i) {
+		ATDisassembleCaptureInsnContext(target, (uint16)addr, (uint8)(addr >> 16), hent);
+
+		s.clear();
+		addr = (addr & 0xff0000) + (uint16)ATDisassembleInsn(s, target, disasmMode, hent, false, false, true, true, showLabels, false, false, true, showLabels);
+
+		if (predict)
+			ATDisassemblePredictContext(hent, disasmMode);
+
+		s += '\n';
+		ATConsoleWrite(s.c_str());
+
+		if ((i & 15) == 15 && ATConsoleCheckBreak())
+			break;
 	}
 
 	g_debugger.SetContinuationAddress(((uint32)bank << 16) + (addr & 0xffff));
@@ -8395,6 +8538,21 @@ void ATConsoleCmdDumpDsm(ATDebuggerCmdParser& parser) {
 	ATConsolePrintf("Disassembled %04X-%04X to %s\n", addr, addrEnd-1, filename->c_str());
 }
 
+void ATConsoleCmdRapidus(ATDebuggerCmdParser& parser) {
+	parser >> 0;
+
+	IATDevice *sid = g_sim.GetDeviceManager()->GetDeviceByTag("rapidus");
+
+	if (!sid) {
+		ATConsoleWrite("Rapidus is not active.\n");
+		return;
+	}
+
+	ATDebuggerConsoleOutput conout;
+	if (auto *p = vdpoly_cast<IATDeviceDiagnostics *>(sid))
+		p->DumpStatus(conout);
+}
+
 void ATConsoleCmdReadMem(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdExprAddr addressArg(true, true);
 	ATDebuggerCmdLength lengthArg(1, false, &addressArg);
@@ -9291,7 +9449,7 @@ void ATConsoleCmdBasic(ATDebuggerCmdParser& parser) {
 }
 
 void ATConsoleCmdBasicDumpLine(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdExprAddr addrArg(false, false, true);
+	ATDebuggerCmdExprAddr addrArg(true, false, true);
 	ATDebuggerCmdSwitchExprNumArg offsetArg("o", 0, 255);
 	ATDebuggerCmdSwitch continuousArg("c", false);
 	ATDebuggerCmdSwitch tbxlArg("t", false);
@@ -9305,7 +9463,7 @@ void ATConsoleCmdBasicDumpLine(ATDebuggerCmdParser& parser) {
 	target->DebugReadMemory(0x80, basicdat, 18);
 
 	VDStringA line;
-	uint16 addr = addrArg.IsStar() ? VDFromLE16(basicdat[5]) : addrArg.IsValid() ? addrArg.GetValue() : g_debugger.GetContinuationAddress();
+	uint32 addr = addrArg.IsStar() ? VDFromLE16(basicdat[5]) : addrArg.IsValid() ? addrArg.GetValue() : g_debugger.GetContinuationAddress();
 
 	// use STMTAB if address is 0
 	if (!addr)
@@ -9326,7 +9484,7 @@ void ATConsoleCmdBasicDumpLine(ATDebuggerCmdParser& parser) {
 		const uint16 lineNumber = VDReadUnalignedLEU16(&lineInfo[0]);
 		int lineLen = lineInfo[2];
 
-		line.sprintf("$%04X: %u ", addr, lineNumber);
+		line.sprintf("%s: %u ", g_debugger.GetAddressText(addr, true).c_str(), lineNumber);
 
 		if (lineNumber > 32768 || lineNumber <= lastLineNo) {
 			line += "[invalid line number]";
@@ -11615,8 +11773,10 @@ void ATConsoleCmdTapeData(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdSwitchNumArg swB("b", 1, 6000, 600);
 	ATDebuggerCmdSwitchNumArg swR("r", -10000000, +10000000);
 	ATDebuggerCmdSwitchNumArg swP("p", 0, +10000000);
+	ATDebuggerCmdSwitchNumArg swS("s", 0, +10000000);
+	ATDebuggerCmdSwitch swY("y", false);
 	ATDebuggerCmdLength lengthArg(0, false, nullptr);
-	parser >> swD >> swT >> swB >> swP >> lengthArg;
+	parser >> swD >> swT >> swB >> swP >> swS >> swY >> lengthArg;
 	if (!swP.IsValid())
 		parser >> swR;
 	parser >> 0;
@@ -11641,7 +11801,11 @@ void ATConsoleCmdTapeData(ATDebuggerCmdParser& parser) {
 			pos += deltapos;
 	} else if (swP.IsValid()) {
 		pos = VDRoundToInt32((float)swP.GetValue() * (kATCassetteDataSampleRate / 1000.0f));
+	} else if (swS.IsValid()) {
+		pos = swS.GetValue();
 	}
+
+	const bool bypassFSK = swY;
 
 	if (swT || swB.IsValid()) {
 		uint32 poslimit = pos + (int)(kATCassetteDataSampleRate * 30);
@@ -11668,7 +11832,7 @@ void ATConsoleCmdTapeData(ATDebuggerCmdParser& parser) {
 
 			VDStringA s;
 			while(pos2 < poslimit) {
-				bool nextBit = pImage->GetBit(pos2, 2, 1, prevBit);
+				bool nextBit = pImage->GetBit(pos2, 2, 1, prevBit, bypassFSK);
 
 				stepAccum += bitsPerSampleFP8;
 
@@ -11741,20 +11905,24 @@ void ATConsoleCmdTapeData(ATDebuggerCmdParser& parser) {
 				++pos2;
 			}
 		} else {
+			uint32 lastTransition = pos2;
+
 			while(pos2 < poslimit) {
-				bool nextBit = pImage->GetBit(pos2, 2, 1, prevBit);
+				bool nextBit = pImage->GetBit(pos2, 2, 1, prevBit, bypassFSK);
 
 				if (first || nextBit != prevBit) {
 
-					ATConsolePrintf("%u (%.6fs) | +%u (+%.6fs): %c\n"
+					ATConsolePrintf("%u (%.6fs) | %+4u (+%.6fs) [%+4u]: %c\n"
 						, pos2
 						, (float)pos2 / kATCassetteDataSampleRate
 						, pos2 - pos
 						, (float)(pos2 - pos) / kATCassetteDataSampleRate
+						, pos2 - lastTransition
 						, nextBit ? '1' : '0');
 
 					first = false;
 					prevBit = nextBit;
+					lastTransition = pos2;
 
 					if (!--replimit)
 						break;
@@ -11781,7 +11949,7 @@ void ATConsoleCmdTapeData(ATDebuggerCmdParser& parser) {
 				if (pos2 >= len) {
 					buf[i] = '.';
 				} else {
-					bit = pImage->GetBit(pos2, 2, 1, bit);
+					bit = pImage->GetBit(pos2, 2, 1, bit, bypassFSK);
 
 					buf[i] = bit ? '1' : '0';
 				}
@@ -12219,14 +12387,33 @@ void ATConsoleCmdTarget(const char *cmd, int argc, const char **argv) {
 
 		g_debugger.GetTargetList(targets);
 
-		ATConsoleWrite("ID  TimeSkew  Name\n");
+		ATConsoleWrite("ID  TimeSkew  Type                Name\n");
 
 		uint32 n = (uint32)targets.size();
 		for(uint32 i=0; i<n; ++i) {
 			IATDebugTarget *target = targets[i];
 
-			if (target)
-				ATConsolePrintf("%2u  %7d   %s\n", i, target->GetTimeSkew(), target->GetName());
+			if (target) {
+				const auto disasmMode = target->GetDisasmMode();
+				const char *disasmModeStr = "?";
+				float clockMultiplier = 1.0f;
+
+				switch(disasmMode) {
+					case kATDebugDisasmMode_6502:	disasmModeStr = "6502"; break;
+					case kATDebugDisasmMode_65C02:	disasmModeStr = "65C02"; break;
+					case kATDebugDisasmMode_65C816:	disasmModeStr = "65C816"; break;
+					case kATDebugDisasmMode_Z80:	disasmModeStr = "Z80"; break;
+					case kATDebugDisasmMode_8048:	disasmModeStr = "8048"; clockMultiplier = 15.0f; break;
+					case kATDebugDisasmMode_6809:	disasmModeStr = "6809"; break;
+				}
+
+				VDStringA typeStr(disasmModeStr);
+
+				if (auto *history = vdpoly_cast<IATDebugTargetHistory *>(target))
+					typeStr.append_sprintf(" @ %.3gMHz", history->GetTimestampFrequency() * clockMultiplier / 1000000.0);
+
+				ATConsolePrintf("%2u  %7d   %-19s %s\n", i, target->GetTimeSkew(), typeStr.c_str(), target->GetName());
+			}
 		}
 
 		return;
@@ -12579,7 +12766,9 @@ void ATDebuggerInitCommands() {
 		{ "bl",					ATConsoleCmdBreakptList },
 		{ "bp",					ATConsoleCmdBreakpt },
 		{ "bs",					ATConsoleCmdBreakptSector },
+		{ "bsc",				ATConsoleCmdBreakptSetCondition },
 		{ "bt",					ATConsoleCmdBreakptTrace },
+		{ "bta",				ATConsoleCmdBreakptTraceAccess },
 		{ "bx",					ATConsoleCmdBreakptExpr },
 		{ "da",					ATConsoleCmdDumpATASCII },
 		{ "db",					ATConsoleCmdDumpBytes },
@@ -12707,6 +12896,7 @@ void ATDebuggerInitCommands() {
 		{ ".printf",			ATConsoleCmdPrintf },
 		{ ".profile_beginframe",	ATConsoleCmdProfileBeginFrame},
 		{ ".profile_endframe",		ATConsoleCmdProfileEndFrame},
+		{ ".rapidus",			ATConsoleCmdRapidus },
 		{ ".readmem",			ATConsoleCmdReadMem },
 		{ ".reload",			ATConsoleCmdReload },
 		{ ".restart",			ATConsoleCmdColdReset },

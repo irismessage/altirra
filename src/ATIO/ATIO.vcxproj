@@ -30,6 +30,7 @@
     <ClCompile Include="source\cartridgeimage.cpp" />
     <ClCompile Include="source\cartridgetypes.cpp" />
     <ClCompile Include="source\cassetteblock.cpp" />
+    <ClCompile Include="source\cassettedecoder.cpp" />
     <ClCompile Include="source\cassetteimage.cpp" />
     <ClCompile Include="source\diskfs.cpp" />
     <ClCompile Include="source\diskfsarc.cpp" />

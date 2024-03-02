@@ -400,6 +400,7 @@ end:
 	; check for START key, and if so, set cassette boot flag
 	lda		consol
 	and		#1
+	eor		#1
 	sta		ckey
 	
 .if _KERNEL_PBI_SUPPORT
@@ -485,7 +486,7 @@ waitvbl:
 	bne		reinitcas
 	
 	lda		ckey
-	bne		postcasboot
+	beq		postcasboot
 	jsr		BootCassette
 	jmp		postcasboot
 

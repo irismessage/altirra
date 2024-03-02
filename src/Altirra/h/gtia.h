@@ -32,6 +32,7 @@ class IATGTIAEmulatorConnections {
 public:
 	virtual uint32 GTIAGetXClock() = 0;
 	virtual uint32 GTIAGetTimestamp() const = 0;
+	virtual uint64 GTIAGetTimestamp64() const = 0;
 	virtual void GTIASetSpeaker(bool state) = 0;
 	virtual void GTIASelectController(uint8 index, bool potsEnabled) = 0;
 	virtual void GTIARequestAnticSync(int offset) = 0;
@@ -40,7 +41,7 @@ public:
 
 class IATGTIAVideoTap {
 public:
-	virtual void WriteFrame(const VDPixmap& px, uint32 timestamp) = 0;
+	virtual void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd) = 0;
 };
 
 class ATFrameTracker;
@@ -220,7 +221,8 @@ public:
 		}
 	}
 
-	void SetVideoTap(IATGTIAVideoTap *vtap);
+	void AddVideoTap(IATGTIAVideoTap *vtap);
+	void RemoveVideoTap(IATGTIAVideoTap *vtap);
 
 	const VDPixmap *GetLastFrameBuffer() const;
 
@@ -349,7 +351,7 @@ protected:
 
 	// non-critical variables
 	IVDVideoDisplay *mpDisplay;
-	IATGTIAVideoTap *mpVideoTap;
+	vdautoptr<vdfastvector<IATGTIAVideoTap *>> mpVideoTaps;
 	uint32	mY;
 
 	AnalysisMode	mAnalysisMode;
@@ -400,7 +402,7 @@ protected:
 
 	uint8	*mpDst;
 	vdrefptr<VDVideoDisplayFrame>	mpFrame;
-	uint32	mFrameTimestamp;
+	uint64	mFrameTimestamp;
 	ATFrameTracker *mpFrameTracker;
 	bool	mbMixedRendering;	// GTIA mode with non-hires or pseudo mode E
 	bool	mbGTIADisableTransition;

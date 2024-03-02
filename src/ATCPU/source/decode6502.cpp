@@ -1036,7 +1036,6 @@ bool ATCPUDecoderGenerator6502::DecodeInsn6502Ill(uint8 opcode) {
 
 		case 0x04:	// NOP zp
 			DecodeReadZp();
-			*mpDstState++ = kStateWait;
 			break;
 
 		case 0x07:	// SLO zp

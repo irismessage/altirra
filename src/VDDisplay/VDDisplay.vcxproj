@@ -165,6 +165,7 @@
     <ClCompile Include="source\displaynode3d.cpp" />
     <ClCompile Include="source\fontbitmap.cpp" />
     <ClCompile Include="source\fontgdi.cpp" />
+    <ClCompile Include="source\logging.cpp" />
     <ClCompile Include="source\minid3dx.cpp" />
     <ClCompile Include="source\opengl.cpp" />
     <ClCompile Include="source\rendercache.cpp" />
@@ -179,6 +180,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\vd2\VDDisplay\direct3d.h" />
+    <ClInclude Include="..\h\vd2\VDDisplay\logging.h" />
     <ClInclude Include="..\h\vd2\VDDisplay\minid3dx.h" />
     <ClInclude Include="..\h\vd2\VDDisplay\opengl.h" />
     <ClInclude Include="h\bicubic.h" />

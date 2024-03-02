@@ -71,6 +71,10 @@ table.std td {
 	background-color: #eee;
 }
 
+tt {
+	font-family: Lucida Console, monospace;
+}
+
 dt {
 	font-weight: bold;
 }

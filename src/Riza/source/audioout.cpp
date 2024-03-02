@@ -960,6 +960,8 @@ bool VDAudioOutputDirectSoundW32::WriteAudio(uint32 offset, const void *data, ui
 }
 
 bool VDAudioOutputDirectSoundW32::InitDirectSound() {
+	CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
 	mDSBufferSize = mBufferSize * 2;
 	mDSBufferSizeHalf = mBufferSize;
 
@@ -1017,6 +1019,8 @@ void VDAudioOutputDirectSoundW32::ShutdownDirectSound() {
 		FreeLibrary(mhmodDS);
 		mhmodDS = NULL;
 	}
+
+	CoUninitialize();
 }
 
 bool VDAudioOutputDirectSoundW32::InitPlayback() {

@@ -137,6 +137,13 @@
 #define IDD_DEVICE_DISKDRIVEFULL        227
 #define IDR_MENU1                       228
 #define IDR_PROFILE_LIST_CONTEXT_MENU   228
+#define IDD_DEVICE_VBXE                 229
+#define IDR_RAPIDUSFLASH                229
+#define IDD_TRACEVIEWER                 230
+#define IDR_RAPIDUSPBI16                230
+#define IDB_PNG1                        231
+#define IDB_TOOLBAR_TRACEVIEWER         231
+#define IDD_TRACE_SETTINGS              232
 #define IDI_DISK                        500
 #define IDI_TAPE                        501
 #define IDI_XEX                         502
@@ -444,6 +451,8 @@
 #define IDC_FLAG_WRAP64K                1151
 #define IDC_ALLOW_WRITES2               1152
 #define IDC_FLAG_ABNORMALDMA            1152
+#define IDC_USE_TIMESTAMPS              1152
+#define IDC_SET_TIMESTAMPS              1152
 #define IDC_ARROWKEYMODE                1153
 #define IDC_RATE_HARDWARE               1154
 #define IDC_SPEED_ADJUST                1155
@@ -507,6 +516,8 @@
 #define IDC_REVISION                    1198
 #define IDC_DRIVESELECT                 1198
 #define IDC_SERIALPORT_SIGNAL1          1198
+#define IDC_COREVERSION                 1198
+#define IDC_VIDEO_RATE                  1198
 #define IDC_TYPE_FIXED                  1199
 #define IDC_U1MB_FLASH                  1199
 #define IDC_DEVICE_ID                   1199
@@ -535,12 +546,21 @@
 #define IDC_ENABLE_SDX                  1217
 #define IDC_IGNORETHISTITLE             1217
 #define IDC_16BIT                       1217
+#define IDC_VBXE_SHAREDMEM              1217
+#define IDC_TRACE_HISTORY               1217
 #define IDC_ACCESS_NONE                 1218
 #define IDC_WRITE_PROTECT               1218
 #define IDC_CHECK2                      1218
 #define IDC_IGNOREALL                   1218
+#define IDC_TRACE_VIDEO                 1218
 #define IDC_ACCESS_HOSTONLY             1219
+#define IDC_TRACE_VIDEO2                1219
+#define IDC_TRACE_BASIC                 1219
+#define IDC_WRITE_PROTECT2              1219
+#define IDC_NVRAM_PROTECT               1219
 #define IDC_ACCESS_NAT                  1220
+#define IDC_TRACE_BASIC2                1220
+#define IDC_LIMIT_MEMORY                1220
 #define IDC_NETADDR                     1221
 #define IDC_NETMASK                     1222
 #define IDC_STATIC_NETADDR              1223
@@ -679,6 +699,11 @@
 #define IDD_DEVICE_ATR8000              1294
 #define IDC_CHANNELS                    1295
 #define IDD_DEVICE_PERCOM               1295
+#define IDD_TRACEVIEWER_CHANNELS        1296
+#define IDD_TRACEVIEWER_TIMESCALE       1297
+#define IDD_TRACEVIEWER_EVENTS          1298
+#define IDD_TRACEVIEWER_TIMESCALE1      1299
+#define IDD_TRACEVIEWER_CPUHISTORY      1299
 #define IDC_TITLE_LIST                  1302
 #define IDC_ALIAS_LIST                  1304
 #define IDC_TAG_LIST                    1305
@@ -690,7 +715,12 @@
 #define IDC_DRIVETYPE1                  1315
 #define IDC_COMPAT_EXTERNAL             1316
 #define IDC_DRIVETYPE2                  1316
+#define IDC_VBXEBASE_D600               1316
 #define IDC_DRIVETYPE3                  1317
+#define IDC_RADIO2                      1317
+#define IDC_VBXEBASE_D700               1317
+#define IDC_SCROLLBAR1                  1317
+#define IDC_HSCROLLBAR                  1317
 #define IDC_DRIVETYPE4                  1318
 #define ID_FILTERMODE_POINT             40023
 #define ID_FILTERMODE_BILINEAR          40024
@@ -802,6 +832,12 @@
 #define ID_COLORS_NTSCXL_1702           40543
 #define ID_LISTCONTEXTMENU_COPYAS       40544
 #define ID_COPYASCSV                    40545
+#define ID_TIMESTAMPFORMAT_SHOWTAPEPOSITION 40546
+#define ID_HISTORYCONTEXTMENU_SHOWTAPEPOSITION 40547
+#define ID_HISTORYCONTEXTMENU_SHOWTAPEPOSITIONSAMPLES 40548
+#define ID_TIMESTAMPFORMAT_SHOWTAPEPOSITION40549 40549
+#define ID_HISTORYCONTEXTMENU_SHOWTAPEPOSITIONSECONDS 40550
+#define ID_CONTEXT_COPY                 40551
 #define ID_INPUT_PORT1_NONE             45000
 #define ID_INPUT_PORT2_NONE             45100
 #define ID_INPUT_PORT3_NONE             45200
@@ -815,9 +851,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
-#define _APS_NEXT_RESOURCE_VALUE        229
-#define _APS_NEXT_COMMAND_VALUE         40546
-#define _APS_NEXT_CONTROL_VALUE         1316
+#define _APS_NEXT_RESOURCE_VALUE        233
+#define _APS_NEXT_COMMAND_VALUE         40552
+#define _APS_NEXT_CONTROL_VALUE         1318
 #define _APS_NEXT_SYMED_VALUE           113
 #endif
 #endif

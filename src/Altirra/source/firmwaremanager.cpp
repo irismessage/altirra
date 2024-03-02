@@ -70,6 +70,8 @@ const char *ATGetFirmwareTypeName(ATFirmwareType type) {
 		"xf551",
 		"atr8000",
 		"percom",
+		"rapidus_flash",
+		"rapidus_corepbi",
 	};
 
 	VDASSERTCT(vdcountof(kTypeNames) == kATFirmwareTypeCount);
@@ -117,6 +119,8 @@ ATFirmwareType ATGetFirmwareTypeFromName(const char *type) {
 	else if (!strcmp(type, "xf551")) return kATFirmwareType_XF551;
 	else if (!strcmp(type, "atr8000")) return kATFirmwareType_ATR8000;
 	else if (!strcmp(type, "percom")) return kATFirmwareType_Percom;
+	else if (!strcmp(type, "rapidus_flash")) return kATFirmwareType_RapidusFlash;
+	else if (!strcmp(type, "rapidus_corepbi")) return kATFirmwareType_RapidusCorePBI;
 	else return kATFirmwareType_Unknown;
 }
 
@@ -191,6 +195,8 @@ bool ATLoadInternalFirmware(uint64 id, void *dst, uint32 offset, uint32 len, boo
 		IDR_NOMIO,
 		IDR_NOBLACKBOX,
 		IDR_NOGAME,
+		IDR_RAPIDUSFLASH,
+		IDR_RAPIDUSPBI16
 	};
 
 	VDASSERTCT(vdcountof(kResourceIds) == kATFirmwareId_PredefCount);
@@ -200,12 +206,22 @@ bool ATLoadInternalFirmware(uint64 id, void *dst, uint32 offset, uint32 len, boo
 
 	uint32 resId = kResourceIds[id - 1];
 
-	if (resId != IDR_U1MBBIOS && resId != IDR_NOMIO && resId != IDR_NOBLACKBOX) {
-		if (dstbuf)
-			return ATLoadKernelResource(resId, *dstbuf);
-		else
-			return ATLoadKernelResource(resId, dst, offset, len, true);
+	switch(resId) {
+		default:
+			// uncompressed
+			if (dstbuf)
+				return ATLoadKernelResource(resId, *dstbuf);
+			else
+				return ATLoadKernelResource(resId, dst, offset, len, true);
+
+		case IDR_U1MBBIOS:
+		case IDR_NOMIO:
+		case IDR_NOBLACKBOX:
+		case IDR_RAPIDUSFLASH:
+			// compressed
+			break;
 	}
+
 
 	vdfastvector<uint8> buffer;
 	ATLoadKernelResourceLZPacked(resId, buffer);
@@ -277,6 +293,8 @@ bool ATFirmwareManager::GetFirmwareInfo(uint64 id, ATFirmwareInfo& fwinfo) const
 			{ true, false, kATFirmwareType_MIO, L"Altirra NoFirmware for MIO" },
 			{ true, false, kATFirmwareType_BlackBox, L"Altirra NoFirmware for BlackBox" },
 			{ true, false, kATFirmwareType_Game, L"Altirra placeholder NoGame" },
+			{ true, true, kATFirmwareType_RapidusFlash, L"Altirra Rapidus Bootstrap Flash" },
+			{ true, true, kATFirmwareType_RapidusCorePBI, L"Altirra Rapidus Bootstrap 65816 PBI Firmware" },
 		};
 
 		VDASSERTCT(vdcountof(kPredefFirmwares) == kATFirmwareId_PredefCount);
@@ -478,7 +496,7 @@ void ATFirmwareManager::SetSpecificFirmware(ATSpecificFirmwareType ft, uint64 id
 	mSpecificFirmwares[ft] = id;
 }
 
-bool ATFirmwareManager::LoadFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed, uint32 *actualLen, vdfastvector<uint8> *dstbuf) {
+bool ATFirmwareManager::LoadFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed, uint32 *actualLen, vdfastvector<uint8> *dstbuf, const uint8 *fill) {
 	if (id < kATFirmwareId_Custom)
 		return ATLoadInternalFirmware(id, dst, offset, len, changed, actualLen, dstbuf);
 
@@ -505,6 +523,27 @@ bool ATFirmwareManager::LoadFirmware(uint64 id, void *dst, uint32 offset, uint32
 			}
 		} else {
 			actual = f.readData(dst, len);
+		}
+
+		if (fill) {
+			uint32 uactual = actual < 0 ? 0 : (uint32)actual;
+			const uint8 fillc = *fill;
+
+			if (uactual < len) {
+				uint32 extralen = len - uactual;
+				uint8 *extra = (uint8 *)dst + uactual;
+
+				if (changed && !*changed) {
+					for(uint32 i=0; i<extralen; ++i) {
+						if (extra[i] != fillc) {
+							*changed = true;
+							break;
+						}
+					}
+				}
+
+				memset(extra, fillc, extralen);
+			}
 		}
 	} catch(const MyError&) {
 		return false;

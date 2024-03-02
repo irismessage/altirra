@@ -93,6 +93,7 @@ struct ATDebuggerBreakpointInfo {
 	bool	mbBreakOnPC;
 	bool	mbBreakOnRead;
 	bool	mbBreakOnWrite;
+	bool	mbBreakOnInsn;
 	bool	mbDeferred;
 	bool	mbClearOnReset;
 	bool	mbOneShot;
@@ -136,7 +137,7 @@ public:
 	virtual void ClearAllBreakpoints() = 0;
 	virtual bool IsBreakpointAtPC(uint32 addr) const = 0;
 	virtual void ToggleBreakpoint(uint32 addr) = 0;
-	virtual void ToggleAccessBreakpoint(uint16 addr, bool write) = 0;
+	virtual void ToggleAccessBreakpoint(uint32 addr, bool write) = 0;
 	virtual void ToggleSourceBreakpoint(const char *fn, uint32 line) = 0;
 	virtual uint32 SetSourceBreakpoint(const char *fn, uint32 line, ATDebugExpNode *condexp, const char *command, bool continueExecution = false) = 0;
 

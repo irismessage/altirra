@@ -89,6 +89,8 @@ void ATUIDialogDeviceKMKJZIDE2::OnDataExchange(bool write) {
 		if (IsButtonChecked(IDC_WRITE_PROTECT))
 			mPropSet.SetBool("writeprotect", true);
 
+		mPropSet.SetBool("nvramguard", IsButtonChecked(IDC_NVRAM_PROTECT));
+
 		int id = mComboId.GetSelection();
 
 		if (id >= 0 && id <= 7)
@@ -108,6 +110,7 @@ void ATUIDialogDeviceKMKJZIDE2::OnDataExchange(bool write) {
 			mComboVersion.SetSelection(1);
 
 		CheckButton(IDC_WRITE_PROTECT, mPropSet.GetBool("writeprotect", false));
+		CheckButton(IDC_NVRAM_PROTECT, mPropSet.GetBool("nvramguard", true));
 
 		uint32 id = mPropSet.GetUint32("id", 0);
 		mComboId.SetSelection(id < 8 ? id : 0);

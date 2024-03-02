@@ -25,13 +25,13 @@ struct ATSEventRegHandle;
 
 class ATSEventImpl;
 
-ATSEventImpl *ATSInitEvent(void (*deleter)());
+ATSEventImpl *ATSInitEvent(void (VDCDECL *deleter)());
 void ATSDestroyEvent(ATSEventImpl *);
 
 template<class T>
 class ATSEvent {
 public:
-	static void Shutdown() {
+	static void VDCDECL Shutdown() {
 		ATSDestroyEvent(spEvent);
 		spEvent = nullptr;
 	}

@@ -64,8 +64,11 @@ void *VDLinearAllocator::AllocateSlow(size_t bytes) {
 
 	if ((bytes + bytes) >= mBlockSize) {
 		block = (Block *)malloc(sizeof(Block) + bytes);
+
 		if (!block)
 			throw MyMemoryError();
+
+		block->mSize = bytes;
 
         mAllocLeft = 0;
 
@@ -74,6 +77,8 @@ void *VDLinearAllocator::AllocateSlow(size_t bytes) {
 
 		if (!block)
 			throw MyMemoryError();
+
+		block->mSize = mBlockSize;
 
 		mAllocLeft = mBlockSize - bytes;
 
@@ -86,6 +91,26 @@ void *VDLinearAllocator::AllocateSlow(size_t bytes) {
 	mpBlocks = block;
 
 	return p;
+}
+
+void *VDLinearAllocator::AllocateSlow(size_t bytes, size_t align) {
+	if (align <= alignof(double))
+		return Allocate(bytes);
+
+	void *p = Allocate(bytes + align - 1);
+
+	p = (char *)p + (((uintptr)0 - (uintptr)p) & (align - 1));
+
+	return p;
+}
+
+bool VDLinearAllocator::Contains(const void *addr) const {
+	for(const Block *block = mpBlocks; block; block = block->mpNext) {
+		if ((uintptr)addr - (uintptr)(block + 1) < block->mSize)
+			return true;
+	}
+
+	return false;
 }
 
 void VDFixedLinearAllocator::ThrowException() {

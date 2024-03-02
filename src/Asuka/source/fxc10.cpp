@@ -66,7 +66,7 @@ namespace {
 	tpD3DCompile g_pD3DCompile;
 	tpD3DDisassemble g_pD3DDisassemble;
 
-	void ShutdownD3DCompiler() {
+	void __cdecl ShutdownD3DCompiler() {
 		if (g_hmodD3DCompiler) {
 			FreeLibrary(g_hmodD3DCompiler);
 			g_hmodD3DCompiler = nullptr;

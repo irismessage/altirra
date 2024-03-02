@@ -270,19 +270,23 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 	if (mbLastVBXEState)
 		mPrefix += L"+VBXE";
 
-	switch(cpuMode) {
-		case kATCPUMode_65C02:
-			mPrefix += L"+C02";
-			break;
+	if (mpSim->IsRapidusEnabled()) {
+		mPrefix += L"+Rapidus";
+	} else {
+		switch(cpuMode) {
+			case kATCPUMode_65C02:
+				mPrefix += L"+C02";
+				break;
 
-		case kATCPUMode_65C816:
-			mPrefix += L"+816";
-			if (cpuSubCycles > 1)
-				mPrefix.append_sprintf(L" @ %.3gMHz", (double)cpuSubCycles * 1.79);
-			break;
+			case kATCPUMode_65C816:
+				mPrefix += L"+816";
+				if (cpuSubCycles > 1)
+					mPrefix.append_sprintf(L" @ %.3gMHz", (double)cpuSubCycles * 1.79);
+				break;
 
-		default:
-			break;
+			default:
+				break;
+		}
 	}
 	
 	if (!is5200)

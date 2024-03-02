@@ -29,6 +29,7 @@
 #include <at/atcpu/breakpoints.h>
 #include <at/atcpu/history.h>
 #include <at/atcpu/memorymap.h>
+#include <at/atdebugger/breakpointsimpl.h>
 #include <at/atdebugger/target.h>
 #include <at/atcore/scheduler.h>
 #include <at/atemulation/riot.h>
@@ -47,7 +48,6 @@ class ATDeviceDiskDriveFull final : public ATDevice
 	, public IATDeviceDebugTarget
 	, public IATDebugTarget
 	, public IATDebugTargetHistory
-	, public IATDebugTargetBreakpoints
 	, public IATDebugTargetExecutionControl
 	, public IATCPUBreakpointHandler
 	, public IATSchedulerCallback
@@ -141,12 +141,6 @@ public:	// IATDebugTargetHistory
 	uint32 ExtractHistory(const ATCPUHistoryEntry **hparray, uint32 start, uint32 n) const override;
 	uint32 ConvertRawTimestamp(uint32 rawTimestamp) const override;
 	double GetTimestampFrequency() const override { return mb1050 ? 1000000.0 : 500000.0; }
-
-public:	// IATDebugTargetBreakpoints
-	virtual void SetBreakpointHandler(IATCPUBreakpointHandler *handler) override;
-
-	virtual void ClearBreakpoint(uint16 pc) override;
-	virtual void SetBreakpoint(uint16 pc) override;
 
 public:	// IATDebugTargetExecutionControl
 	void Break() override;
@@ -310,10 +304,8 @@ protected:
 	bool mbStepNotifyPendingBP = false;
 	uint32 mStepStartSubCycle = 0;
 	uint16 mStepOutS = 0;
-	uint32 mBreakpointCount = 0;
-	IATCPUBreakpointHandler *mpBreakpointHandler = nullptr;
-	bool mBreakpointMap[0x10000] = {};
-	bool mStepBreakpointMap[0x10000];
+
+	ATDebugTargetBreakpointsImpl mBreakpointsImpl;
 };
 
 #endif

@@ -327,7 +327,7 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 		*ppImage = cartImage.release();
 	} else if (loadType == kATImageType_Tape) {
 		vdrefptr<IATCassetteImage> tapeImage;
-		ATLoadCassetteImage(stream, ~tapeImage);
+		ATLoadCassetteImage(stream, nullptr, ~tapeImage);
 
 		*ppImage = tapeImage.release();
 	} else if (loadType == kATImageType_Disk) {

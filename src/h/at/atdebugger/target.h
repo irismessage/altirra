@@ -70,6 +70,12 @@ public:
 
 	virtual void ClearBreakpoint(uint16 pc) = 0;
 	virtual void SetBreakpoint(uint16 pc) = 0;
+
+	virtual void ClearAllBreakpoints() = 0;
+
+	// Set a breakpoint on all addresses. This is used to force a breakpoint test
+	// at every instruction.
+	virtual void SetAllBreakpoints() = 0;
 };
 
 class IATDebugTargetHistory {

@@ -122,7 +122,7 @@ namespace {
 		return (r << 16) + (g << 8) + b;
 	}
 
-	void VDYCbCrToXRGB1555Span(void *dst0, const uint8 *y, const uint8 *cb, const uint8 *cr, uint32 w) {
+	void VDCDECL VDYCbCrToXRGB1555Span(void *dst0, const uint8 *y, const uint8 *cb, const uint8 *cr, uint32 w) {
 		uint16 *dst = (uint16 *)dst0;
 
 		do {
@@ -130,7 +130,7 @@ namespace {
 		} while(--w);
 	}
 
-	void VDYCbCrToRGB565Span(void *dst0, const uint8 *y, const uint8 *cb, const uint8 *cr, uint32 w) {
+	void VDCDECL VDYCbCrToRGB565Span(void *dst0, const uint8 *y, const uint8 *cb, const uint8 *cr, uint32 w) {
 		uint16 *dst = (uint16 *)dst0;
 
 		do {
@@ -138,7 +138,7 @@ namespace {
 		} while(--w);
 	}
 
-	void VDYCbCrToRGB888Span(void *dst0, const uint8 *y, const uint8 *cb, const uint8 *cr, uint32 w) {
+	void VDCDECL VDYCbCrToRGB888Span(void *dst0, const uint8 *y, const uint8 *cb, const uint8 *cr, uint32 w) {
 		uint8 *dst = (uint8 *)dst0;
 
 		do {
@@ -147,7 +147,7 @@ namespace {
 		} while(--w);
 	}
 
-	void VDYCbCrToXRGB8888Span(void *dst0, const uint8 *y, const uint8 *cb, const uint8 *cr, uint32 w) {
+	void VDCDECL VDYCbCrToXRGB8888Span(void *dst0, const uint8 *y, const uint8 *cb, const uint8 *cr, uint32 w) {
 		uint32 *dst = (uint32 *)dst0;
 
 		do {
@@ -155,7 +155,7 @@ namespace {
 		} while(--w);
 	}
 
-	void VDYCbCrToUYVYSpan(void *dst0, const uint8 *y, const uint8 *cb, const uint8 *cr, uint32 w) {
+	void VDCDECL VDYCbCrToUYVYSpan(void *dst0, const uint8 *y, const uint8 *cb, const uint8 *cr, uint32 w) {
 		uint32 *dst = (uint32 *)dst0;
 
 		if (--w) {
@@ -169,7 +169,7 @@ namespace {
 			*dst++ = (uint32)*cb + ((uint32)y[0] << 8) + ((uint32)*cr << 16) + ((uint32)y[0] << 24);
 	}
 
-	void VDYCbCrToYUYVSpan(void *dst0, const uint8 *y, const uint8 *cb, const uint8 *cr, uint32 w) {
+	void VDCDECL VDYCbCrToYUYVSpan(void *dst0, const uint8 *y, const uint8 *cb, const uint8 *cr, uint32 w) {
 		uint32 *dst = (uint32 *)dst0;
 
 		if (--w) {
@@ -380,7 +380,7 @@ namespace {
 	}
 }
 
-#define DECLARE_YUV(x, y) void VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
+#define DECLARE_YUV(x, y) void VDCDECL VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
 
 DECLARE_YUV(UYVY, XRGB1555) {
 	do {
@@ -943,13 +943,13 @@ DECLARE_YUV(Y8, XRGB8888) {
 	} while(--h);
 }
 
-#define DECLARE_YUV_PLANAR(x, y) void VDPixmapBlt_##x##_to_##y##_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h)
+#define DECLARE_YUV_PLANAR(x, y) void VDCDECL VDPixmapBlt_##x##_to_##y##_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h)
 
 
 namespace {
-	typedef void (*tpYUVPlanarFinalDecoder)(void *, const uint8 *, const uint8 *, const uint8 *, uint32);
-	typedef void (*tpYUVPlanarHorizDecoder)(uint8 *dst, const uint8 *src, sint32 w);
-	typedef void (*tpYUVPlanarVertDecoder)(uint8 *dst, const uint8 *const *srcs, sint32 w, uint8 phase);
+	typedef void (VDCDECL *tpYUVPlanarFinalDecoder)(void *, const uint8 *, const uint8 *, const uint8 *, uint32);
+	typedef void (VDCDECL *tpYUVPlanarHorizDecoder)(uint8 *dst, const uint8 *src, sint32 w);
+	typedef void (VDCDECL *tpYUVPlanarVertDecoder)(uint8 *dst, const uint8 *const *srcs, sint32 w, uint8 phase);
 }
 
 #ifdef _M_IX86
@@ -959,7 +959,7 @@ namespace {
 #endif
 
 
-void VDPixmapBlt_YUVPlanar_decode_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h) {
+void VDCDECL VDPixmapBlt_YUVPlanar_decode_reference(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h) {
 	const VDPixmapFormatInfo& srcinfo = VDPixmapGetInfo(src.format);
 	int hbits = srcinfo.auxwbits;
 	int vbits = srcinfo.auxhbits;
@@ -1181,8 +1181,8 @@ void VDPixmapBlt_YUVPlanar_decode_reference(const VDPixmap& dst, const VDPixmap&
 }
 
 namespace {
-	typedef void (*tpUVBltHorizDecoder)(uint8 *dst, const uint8 *src, sint32 w);
-	typedef void (*tpUVBltVertDecoder)(uint8 *dst, const uint8 *const *srcs, sint32 w, uint8 phase);
+	typedef void (VDCDECL *tpUVBltHorizDecoder)(uint8 *dst, const uint8 *src, sint32 w);
+	typedef void (VDCDECL *tpUVBltVertDecoder)(uint8 *dst, const uint8 *const *srcs, sint32 w, uint8 phase);
 
 	void uvplaneblt(uint8 *dst, ptrdiff_t dstpitch, int dstformat, const uint8 *src, ptrdiff_t srcpitch, int srcformat, vdpixsize w, vdpixsize h) {
 		const VDPixmapFormatInfo& srcinfo = VDPixmapGetInfo(srcformat);
@@ -1315,7 +1315,7 @@ namespace {
 	}
 }
 
-void VDPixmapBlt_YUVPlanar_convert_reference(const VDPixmap& dstpm, const VDPixmap& srcpm, vdpixsize w, vdpixsize h) {
+void VDCDECL VDPixmapBlt_YUVPlanar_convert_reference(const VDPixmap& dstpm, const VDPixmap& srcpm, vdpixsize w, vdpixsize h) {
 	VDMemcpyRect(dstpm.data, dstpm.pitch, srcpm.data, srcpm.pitch, dstpm.w, dstpm.h);
 
 	if (srcpm.format != nsVDPixmap::kPixFormat_Y8) {
@@ -1333,12 +1333,12 @@ void VDPixmapBlt_YUVPlanar_convert_reference(const VDPixmap& dstpm, const VDPixm
 	}
 }
 
-extern "C" void vdasm_pixblt_YUV411Planar_to_XRGB1555_scan_MMX(void *dst, const void *y, const void *cb, const void *cr, unsigned count);
-extern "C" void vdasm_pixblt_YUV411Planar_to_RGB565_scan_MMX(void *dst, const void *y, const void *cb, const void *cr, unsigned count);
-extern "C" void vdasm_pixblt_YUV411Planar_to_XRGB8888_scan_MMX(void *dst, const void *y, const void *cb, const void *cr, unsigned count);
-extern "C" void vdasm_pixblt_YUV411Planar_to_XRGB1555_scan_ISSE(void *dst, const void *y, const void *cb, const void *cr, unsigned count);
-extern "C" void vdasm_pixblt_YUV411Planar_to_RGB565_scan_ISSE(void *dst, const void *y, const void *cb, const void *cr, unsigned count);
-extern "C" void vdasm_pixblt_YUV411Planar_to_XRGB8888_scan_ISSE(void *dst, const void *y, const void *cb, const void *cr, unsigned count);
+extern "C" void VDCDECL vdasm_pixblt_YUV411Planar_to_XRGB1555_scan_MMX(void *dst, const void *y, const void *cb, const void *cr, unsigned count);
+extern "C" void VDCDECL vdasm_pixblt_YUV411Planar_to_RGB565_scan_MMX(void *dst, const void *y, const void *cb, const void *cr, unsigned count);
+extern "C" void VDCDECL vdasm_pixblt_YUV411Planar_to_XRGB8888_scan_MMX(void *dst, const void *y, const void *cb, const void *cr, unsigned count);
+extern "C" void VDCDECL vdasm_pixblt_YUV411Planar_to_XRGB1555_scan_ISSE(void *dst, const void *y, const void *cb, const void *cr, unsigned count);
+extern "C" void VDCDECL vdasm_pixblt_YUV411Planar_to_RGB565_scan_ISSE(void *dst, const void *y, const void *cb, const void *cr, unsigned count);
+extern "C" void VDCDECL vdasm_pixblt_YUV411Planar_to_XRGB8888_scan_ISSE(void *dst, const void *y, const void *cb, const void *cr, unsigned count);
 
 DECLARE_YUV_PLANAR(YUV411, XRGB1555) {
 	uint16			*out	= (uint16 *)dst.data;

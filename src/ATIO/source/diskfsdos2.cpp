@@ -308,8 +308,14 @@ void ATDiskFSDOS2::Init(IATDiskImage *image, bool readOnly) {
 	// read VTOC
 	mpImage->ReadVirtualSector(359, mSectorBuffer, sectorSize);
 
-	if (mSectorBuffer[0] == 0)
+	// Check if the VTOC sector count is valid -- the VTOC starts on sector 360, so it cannot be
+	// larger than 357 sectors. In double density, this is always fine, but in single density,
+	// a high page count can exceed the available space. The VTOC limit in SD is 357 sectors, or
+	// 177 pages. However, 33 pages are the maximum ever needed, since that is enough to
+	// accommodate the maximum addressable size disk of 65535 sectors.
+	if (mSectorBuffer[0] == 0 || mSectorBuffer[0] > 2 + 33)
 		throw MyError("Invalid DOS 1.x/2.x/MyDOS disk (unrecognized VTOC signature).");
+
 
 	mbDOS1 = (mSectorBuffer[0] == 1);
 

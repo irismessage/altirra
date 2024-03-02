@@ -94,9 +94,9 @@ uint32 ATUIDialogEditCheat::GetValue(uint32 id) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogCheater : public VDDialogFrameW32 {
-	ATUIDialogCheater(const ATUIDialogCheater&);
-	ATUIDialogCheater& operator=(const ATUIDialogCheater&);
+class ATUIDialogCheater final : public VDDialogFrameW32 {
+	ATUIDialogCheater(const ATUIDialogCheater&) = delete;
+	ATUIDialogCheater& operator=(const ATUIDialogCheater&) = delete;
 
 public:
 	ATUIDialogCheater(ATCheatEngine *engine);
@@ -195,9 +195,9 @@ protected:
 			const ATCheatEngine::Cheat& d = b->mpEngine->GetCheatByIndex(b->mIndex);
 
 			if (c.mAddress != d.mAddress)
-				return c.mAddress < d.mAddress;
+				return c.mAddress < d.mAddress ? -1 : 1;
 
-			return a->mIndex < b->mIndex;
+			return a->mIndex < b->mIndex ? -1 : 1;
 		}
 	};
 };
@@ -386,10 +386,14 @@ bool ATUIDialogCheater::OnCommand(uint32 id, uint32 extcode) {
 		case IDC_DELETE:
 			{
 				int selIdx = mActiveView.GetSelectedIndex();
+				AItem *selItem = static_cast<AItem *>(mActiveView.GetSelectedItem());
 
-				if (selIdx >= 0) {
-					mpEngine->RemoveCheatByIndex(selIdx);
-					mActiveView.DeleteItem(selIdx);
+				if (selIdx >= 0 && selItem) {
+					uint32 cheatIndex = selItem->mIndex;
+
+					mActiveView.Clear();
+					mpEngine->RemoveCheatByIndex(cheatIndex);
+					UpdateActiveView();
 					mActiveView.SetSelectedIndex(selIdx);
 				}
 			}

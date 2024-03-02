@@ -43,9 +43,9 @@ struct vduint128;
 	#pragma intrinsic(__shiftright128)
 
 	extern "C" {
-		void vdasm_uint128_add(uint64 dst[2], const uint64 x[2], const uint64 y[2]);
-		void vdasm_uint128_sub(uint64 dst[2], const uint64 x[2], const uint64 y[2]);
-		void vdasm_uint128_mul(uint64 dst[2], const uint64 x[2], const uint64 y[2]);
+		void VDCDECL vdasm_uint128_add(uint64 dst[2], const uint64 x[2], const uint64 y[2]);
+		void VDCDECL vdasm_uint128_sub(uint64 dst[2], const uint64 x[2], const uint64 y[2]);
+		void VDCDECL vdasm_uint128_mul(uint64 dst[2], const uint64 x[2], const uint64 y[2]);
 	}
 #else
 	extern "C" {
@@ -374,7 +374,7 @@ inline vduint128::vduint128(const vdint128& x) {
 	}
 	uint64 VDUDiv128x64To64(const vduint128& dividend, uint64 divisor, uint64& remainder);
 #else
-	vduint128 VDUMul64x64To128(uint64 x, uint64 y);
+	vduint128 VDCDECL VDUMul64x64To128(uint64 x, uint64 y);
 	uint64 VDUDiv128x64To64(const vduint128& dividend, uint64 divisor, uint64& remainder);
 #endif
 

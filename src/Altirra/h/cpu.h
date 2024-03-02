@@ -212,6 +212,8 @@ public:
 	bool	IsHistoryEnabled() const { return mbHistoryEnabled; }
 	void	SetHistoryEnabled(bool enable);
 
+	void	SetTracingEnabled(bool enable);
+
 	bool	IsPathfindingEnabled() const { return mbPathfindingEnabled; }
 	void	SetPathfindingEnabled(bool enable);
 
@@ -236,6 +238,8 @@ public:
 	sint32	GetNextBreakpoint(sint32 last) const;
 	void	SetBreakpoint(uint16 addr);
 	void	ClearBreakpoint(uint16 addr);
+	void	SetAllBreakpoints();
+	void	ClearAllBreakpoints();
 
 	void	ResetAllPaths();
 	sint32	GetNextPathInstruction(sint32 addr) const;
@@ -273,7 +277,7 @@ public:
 	void	AssertIRQ(int cycleOffset);
 	void	NegateIRQ();
 	void	AssertNMI();
-	void	NegateNMI();
+	void	AssertABORT();
 
 	// Low-priority call needed to clean up timers to avoid time base wrapping. This needs
 	// to be called no more than every 2^30 cycles, so not critical.
@@ -342,7 +346,7 @@ protected:
 	uint8	mY;
 	uint8	mS;
 
-	bool	mbHistoryOrProfilingEnabled;
+	bool	mbHistoryActive;
 	uint8	mP;
 	uint16	mInsnPC;
 	uint16	mPC;
@@ -422,6 +426,14 @@ protected:
 	uint8 *mpDstState;
 	uint8	mStates[16];
 
+	enum HistoryEnableFlags : uint8 {
+		kHistoryEnableFlag_None = 0x00,
+		kHistoryEnableFlag_Direct = 0x01,
+		kHistoryEnableFlag_Profiler = 0x02,
+		kHistoryEnableFlag_Tracer = 0x04
+	};
+
+	HistoryEnableFlags	mHistoryEnableFlags;
 	bool	mbHistoryEnabled;
 	bool	mbPathfindingEnabled;
 	bool	mbPathBreakEnabled;
@@ -442,8 +454,9 @@ protected:
 
 	const uint8 *mpDecodePtrIRQ;
 	const uint8 *mpDecodePtrNMI;
+	const uint8 *mpDecodePtrABORT;
 	uint16	mDecodePtrs[256];
-	uint16	mDecodePtrs816[10][258];
+	uint16	mDecodePtrs816[10][259];
 	uint8	mDecodeHeap[0x5000];
 	uint8	mInsnFlags[65536];
 

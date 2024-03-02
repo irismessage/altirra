@@ -43,6 +43,15 @@
     <ClCompile Include="source\checksum.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\enumparse.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\deviceparentimpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\devicesioimpl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atcore\device.h">
@@ -150,6 +159,21 @@
     <ClInclude Include="..\h\at\atcore\devicesioimpl.h">
       <Filter>Interface Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\h\at\atcore\enumparse.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\enumparseimpl.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\deviceparent.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\deviceparentimpl.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\devicesystemcontrol.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Interface Files">
@@ -161,10 +185,5 @@
     <Filter Include="Header Files">
       <UniqueIdentifier>{ee650614-e257-455e-adeb-e53d043cdadc}</UniqueIdentifier>
     </Filter>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="source\devicesioimpl.cpp">
-      <Filter>Source Files</Filter>
-    </None>
   </ItemGroup>
 </Project>

@@ -65,6 +65,7 @@ public:
 
 	void SetROMMappingHook(const vdfunction<void()>& fn);
 
+	void SetHighMemory(uint32 numBanks, void *mem);
 	void SetAxlonMemory(uint8 bankbits, bool enableAliasing, void *mem);
 
 	void GetMemoryMapState(ATMemoryMapState& state) const;
@@ -101,6 +102,7 @@ protected:
 	ATMemoryLayer *mpLayerBASIC;
 	ATMemoryLayer *mpLayerGame;
 	ATMemoryLayer *mpLayerHiddenRAM;
+	ATMemoryLayer *mpLayerHighRAM;
 	ATMemoryLayer *mpLayerAxlonControl1;
 	ATMemoryLayer *mpLayerAxlonControl2;
 	bool		mbBASICForced;

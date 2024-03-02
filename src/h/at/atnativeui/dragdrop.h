@@ -23,9 +23,9 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vdstl_vectorview.h>
 
-// ShlObj.h(1151): warning C4091: 'typedef ': ignored on left of 'tagGPFIDL_FLAGS' when no variable is declared
 #pragma warning(push)
-#pragma warning(disable: 4091)
+#pragma warning(disable: 4091)		// ShlObj.h(1151): warning C4091: 'typedef ': ignored on left of 'tagGPFIDL_FLAGS' when no variable is declared
+#pragma warning(disable: 4768)		// ShlObj.h(1065): warning C4768: __declspec attributes before linkage specification are ignored
 #include <windows.h>
 #include <ShlObj.h>
 #pragma warning(pop)

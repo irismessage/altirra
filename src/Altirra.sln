@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 14
-VisualStudioVersion = 14.0.25420.1
+# Visual Studio 15
+VisualStudioVersion = 15.0.27004.2005
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Altirra", "Altirra\Altirra.vcxproj", "{3D2571FC-091D-4845-B581-E8417164BFAE}"
 	ProjectSection(ProjectDependencies) = postProject
@@ -84,6 +84,7 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ATDevices", "ATDevices\ATDe
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "_top", "_top", "{E3E97BED-5036-46D6-9E13-F03E74B7E02E}"
 	ProjectSection(SolutionItems) = preProject
+		.editorconfig = .editorconfig
 		Shared\altirra.natvis = Shared\altirra.natvis
 		BUILD-HOWTO.html = BUILD-HOWTO.html
 	EndProjectSection
@@ -515,5 +516,8 @@ Global
 		{53B0A660-AACE-4EEE-8B88-C040CAA3C407} = {A4C9836C-018B-4DF7-9B8B-858E19F91CBF}
 		{A8F7990A-8A96-4112-AE3F-35E5B9EC87B5} = {A4C9836C-018B-4DF7-9B8B-858E19F91CBF}
 		{C5CE2EA8-264A-443B-96E7-9B29118215D3} = {A4C9836C-018B-4DF7-9B8B-858E19F91CBF}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {D524E4F6-0F80-4F40-B72F-FFECFB1382A8}
 	EndGlobalSection
 EndGlobal

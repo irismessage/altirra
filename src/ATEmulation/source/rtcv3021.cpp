@@ -33,16 +33,22 @@ ATRTCV3021Emulator::ATRTCV3021Emulator() {
 
 void ATRTCV3021Emulator::Init() {
 	memset(mRAM, 0xFF, sizeof mRAM);
+	memset(mShadow, 0xFF, sizeof mShadow);
 	mPhase = 0;
 	mAddress = 0;
 }
 
-void ATRTCV3021Emulator::Load(const NVState& state) {
-	memcpy(mRAM, state.mData, 10);
+void ATRTCV3021Emulator::Restore() {
+	memcpy(mRAM, mShadow, 10);
 }
 
-void ATRTCV3021Emulator::Save(NVState& state) const {
-	memcpy(state.mData, mRAM, 10);
+void ATRTCV3021Emulator::Load(const NVState& state) {
+	memcpy(mRAM, state.mData, 10);
+	memcpy(mShadow, state.mData, 10);
+}
+
+void ATRTCV3021Emulator::Save(NVState& state, bool useShadow) const {
+	memcpy(state.mData, useShadow ? mShadow : mRAM, 10);
 }
 
 bool ATRTCV3021Emulator::DebugReadBit() const {
@@ -113,8 +119,10 @@ void ATRTCV3021Emulator::WriteBit(bool bit) {
 				, mRAM[9]
 				);
 
-			if (mAddress < 10)
+			if (mAddress < 10) {
 				mRAM[mAddress] = mValue;
+				mShadow[mAddress] = mValue;
+			}
 
 			mAddress = 0;
 			mPhase = 0;

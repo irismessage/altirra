@@ -803,7 +803,7 @@ void ATFDCEmulator::RunStateMachine() {
 
 			mActiveSectorStatus = 0x10;
 
-			if (mpDiskImage && mbMotorRunning && mbMFM == mDiskGeometry.mbMFM && !(mPhysHalfTrack & 1)) {
+			if (mpDiskImage && mbMotorRunning && !(mPhysHalfTrack & 1)) {
 				// find next sector in rotational order on the entire track
 				const float posf = (float)mRotPos / (float)mCyclesPerRotation;
 				float bestDistance = 2.0f;
@@ -828,6 +828,10 @@ void ATFDCEmulator::RunStateMachine() {
 							ATDiskPhysicalSectorInfo psi {};
 
 							mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector + i, psi);
+
+							// toss sector if it doesn't match current density
+							if (mbMFM != psi.mbMFM)
+								continue;
 
 							if ((psi.mFDCStatus & 0x18) == 0x10)
 								continue;
@@ -865,7 +869,7 @@ void ATFDCEmulator::RunStateMachine() {
 					mTransferBuffer[3] = (bestSectorSize >= 1024 ? 3 : bestSectorSize >= 512 ? 2 : bestSectorSize >= 256 ? 1 : 0);
 
 					// check for boot sector
-					if (bestSectorSize == 128 && bestVSec <= mDiskGeometry.mBootSectorCount && mDiskGeometry.mbMFM && mDiskGeometry.mSectorSize > 128)
+					if (bestSectorSize == 128 && bestVSec <= mDiskGeometry.mBootSectorCount && mbMFM && mDiskGeometry.mSectorSize > 128)
 						mTransferBuffer[3] = 1;
 
 					// start CRC calculation with sync bytes (MFM only) and IDAM included
@@ -956,7 +960,7 @@ void ATFDCEmulator::RunStateMachine() {
 
 			mActiveSectorStatus = 0x10;
 
-			if (mpDiskImage && mRegSector > 0 && mRegSector <= mDiskGeometry.mSectorsPerTrack && mbMotorRunning && mbMFM == mDiskGeometry.mbMFM && !(mPhysHalfTrack & 1)) {
+			if (mpDiskImage && mRegSector > 0 && mRegSector <= mDiskGeometry.mSectorsPerTrack && mbMotorRunning && !(mPhysHalfTrack & 1)) {
 				uint32 vsec = GetSelectedVSec(mRegSector);
 
 				ATDiskVirtualSectorInfo vsi {};
@@ -976,6 +980,10 @@ void ATFDCEmulator::RunStateMachine() {
 						ATDiskPhysicalSectorInfo psi {};
 
 						mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector + i, psi);
+
+						// toss sector if density doesn't match
+						if (psi.mbMFM != mbMFM)
+							continue;
 
 						float distance = psi.mRotPos - posf;
 						distance -= floorf(distance);
@@ -1001,7 +1009,7 @@ void ATFDCEmulator::RunStateMachine() {
 					mpDiskImage->ReadPhysicalSector(bestPhysSec, mTransferBuffer, mTransferLength);
 
 					// check for a boot sector on a double density disk
-					if (mTransferLength == 128 && vsec <= mDiskGeometry.mBootSectorCount && mDiskGeometry.mbMFM && mDiskGeometry.mSectorSize > 128)
+					if (mTransferLength == 128 && vsec <= mDiskGeometry.mBootSectorCount && mbMFM && mDiskGeometry.mSectorSize > 128)
 						mTransferLength = 256;
 
 					// apply weak bits
@@ -1145,7 +1153,7 @@ void ATFDCEmulator::RunStateMachine() {
 
 			mActiveSectorStatus = 0x10;
 
-			if (mpDiskImage && mRegSector > 0 && mRegSector <= mDiskGeometry.mSectorsPerTrack && mbMotorRunning && mbMFM == mDiskGeometry.mbMFM && !(mPhysHalfTrack & 1)) {
+			if (mpDiskImage && mRegSector > 0 && mRegSector <= mDiskGeometry.mSectorsPerTrack && mbMotorRunning && !(mPhysHalfTrack & 1)) {
 				uint32 vsec = GetSelectedVSec(mRegSector);
 
 				ATDiskVirtualSectorInfo vsi {};
@@ -1165,6 +1173,10 @@ void ATFDCEmulator::RunStateMachine() {
 						ATDiskPhysicalSectorInfo psi {};
 
 						mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector + i, psi);
+
+						// toss sector if it doesn't match current density
+						if (psi.mbMFM != mbMFM)
+							continue;
 
 						float distance = psi.mRotPos - posf;
 						distance -= floorf(distance);
@@ -1638,6 +1650,7 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 				psi.mRotPos -= floorf(psi.mRotPos);
 				psi.mSize = parsedSector.mLen;
 				psi.mWeakDataOffset = -1;
+				psi.mbMFM = mbMFM;
 
 				newPhysSectors.push_back(psi);
 			}

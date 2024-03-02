@@ -4,14 +4,14 @@
 #include <vd2/system/cpuaccel.h>
 #include "uberblit_base.h"
 
-extern "C" void vdasm_pixblt_XRGB1555_to_XRGB8888_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
-extern "C" void vdasm_pixblt_RGB565_to_XRGB8888_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
-extern "C" void vdasm_pixblt_RGB565_to_XRGB1555_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
-extern "C" void vdasm_pixblt_XRGB1555_to_RGB565_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
-extern "C" void vdasm_pixblt_XRGB8888_to_XRGB1555_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
-extern "C" void vdasm_pixblt_XRGB8888_to_RGB565_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
-extern "C" void vdasm_pixblt_XRGB8888_to_RGB888_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
-extern "C" void vdasm_pixblt_RGB888_to_XRGB8888_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
+extern "C" void VDCDECL vdasm_pixblt_XRGB1555_to_XRGB8888_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
+extern "C" void VDCDECL vdasm_pixblt_RGB565_to_XRGB8888_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
+extern "C" void VDCDECL vdasm_pixblt_RGB565_to_XRGB1555_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
+extern "C" void VDCDECL vdasm_pixblt_XRGB1555_to_RGB565_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
+extern "C" void VDCDECL vdasm_pixblt_XRGB8888_to_XRGB1555_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
+extern "C" void VDCDECL vdasm_pixblt_XRGB8888_to_RGB565_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
+extern "C" void VDCDECL vdasm_pixblt_XRGB8888_to_RGB888_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
+extern "C" void VDCDECL vdasm_pixblt_RGB888_to_XRGB8888_MMX(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //

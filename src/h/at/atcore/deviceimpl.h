@@ -31,7 +31,8 @@ public:
 	virtual void *AsInterface(uint32 iid) override;
 
 	virtual IATDeviceParent *GetParent() override;
-	virtual void SetParent(IATDeviceParent *parent) override;
+	virtual uint32 GetParentBusIndex() override;
+	virtual void SetParent(IATDeviceParent *parent, uint32 busIndex) override;
 	virtual void GetSettingsBlurb(VDStringW& buf) override;
 	virtual void GetSettings(ATPropertySet& settings) override;
 	virtual bool SetSettings(const ATPropertySet& settings) override;
@@ -43,8 +44,11 @@ public:
 	virtual void ComputerColdReset() override;
 	virtual void PeripheralColdReset() override;
 
+	virtual void SetTraceContext(ATTraceContext *context) override;
+
 protected:
 	IATDeviceParent *mpDeviceParent;
+	uint32 mDeviceParentBusIndex;
 };
 
 #endif

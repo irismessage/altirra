@@ -20,6 +20,7 @@
 #define f_AT_ATNATIVEUI_GENERICDIALOG_H
 
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/vectors.h>
 
 enum ATUIGenericIconType {
 	kATUIGenericIconType_None,
@@ -31,13 +32,18 @@ enum ATUIGenericIconType {
 enum ATUIGenericResult {
 	kATUIGenericResult_Cancel,
 	kATUIGenericResult_OK,
+	kATUIGenericResult_Allow,
+	kATUIGenericResult_Deny,
 };
 
 enum ATUIGenericResultMask : uint32 {
 	kATUIGenericResultMask_Cancel = UINT32_C(1) << kATUIGenericResult_Cancel,
 	kATUIGenericResultMask_OK = UINT32_C(1) << kATUIGenericResult_OK,
+	kATUIGenericResultMask_Allow = UINT32_C(1) << kATUIGenericResult_Allow,
+	kATUIGenericResultMask_Deny = UINT32_C(1) << kATUIGenericResult_Deny,
 
-	kATUIGenericResultMask_OKCancel = kATUIGenericResultMask_OK | kATUIGenericResultMask_Cancel
+	kATUIGenericResultMask_OKCancel = kATUIGenericResultMask_OK | kATUIGenericResultMask_Cancel,
+	kATUIGenericResultMask_AllowDeny = kATUIGenericResultMask_Allow | kATUIGenericResultMask_Deny
 };
 
 class ATUIGenericDialogOptions {

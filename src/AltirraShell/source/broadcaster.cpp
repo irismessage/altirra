@@ -105,7 +105,7 @@ void ATSEventImpl::Raise(const void *args) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATSEventImpl *ATSInitEvent(void (*deleter)()) {
+ATSEventImpl *ATSInitEvent(void (VDCDECL *deleter)()) {
 	atexit(deleter);
 
 	return new ATSEventImpl;

@@ -35,7 +35,7 @@ public:
 ATScheduler::ATScheduler()
 	: mNextEventCounter(0U-1000)
 	, mTimeBase(0xFFF00000 + 1000)
-	, mTick64Floor(mTimeBase)
+	, mTick64Floor(mTimeBase + mNextEventCounter)
 	, mpFreeEvents(NULL)
 {
 	mActiveEvents.mpNext = mActiveEvents.mpPrev = &mActiveEvents;

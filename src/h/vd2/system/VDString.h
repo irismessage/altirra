@@ -783,8 +783,6 @@ public:
 	this_type& append_sprintf_unchecked(const value_type *format, ...);
 	this_type& append_vsprintf(const value_type *format, va_list val);
 
-	void move_from(VDStringA& src);
-
 protected:
 	void push_back_extend();
 	void resize_slow(size_type n, size_type current_size);
@@ -1444,8 +1442,6 @@ public:
 	this_type& append_sprintf_unchecked(const value_type *format, ...);
 	this_type& append_vsprintf(const value_type *format, va_list val);
 
-	void move_from(VDStringW& src);
-
 protected:
 	void push_back_extend();
 	void resize_slow(size_type n, size_type current_size);
@@ -1512,13 +1508,5 @@ inline VDStringW operator+(VDStringW&& str, wchar_t c) {
 ///////////////////////////////////////////////////////////////////////////
 
 typedef VDStringA				VDString;
-
-template<> VDStringA *vdmove_forward(VDStringA *src1, VDStringA *src2, VDStringA *dst);
-template<> VDStringW *vdmove_forward(VDStringW *src1, VDStringW *src2, VDStringW *dst);
-template<> VDStringA *vdmove_backward(VDStringA *src1, VDStringA *src2, VDStringA *dst);
-template<> VDStringW *vdmove_backward(VDStringW *src1, VDStringW *src2, VDStringW *dst);
-
-VDMOVE_CAPABLE(VDStringA);
-VDMOVE_CAPABLE(VDStringW);
 
 #endif

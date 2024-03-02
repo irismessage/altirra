@@ -40,6 +40,9 @@ class IVDRandomAccessStream;
 class IATDeviceIndicatorManager;
 class IATUIRenderer;
 
+struct ATTraceContext;
+class ATTraceChannelFormatted;
+
 enum ATMediaWriteMode : uint8;
 
 enum ATDiskEmulationMode {
@@ -83,6 +86,8 @@ public:
 
 	void SetForcedPhantomSector(uint16 sector, uint8 index, int order);
 	int GetForcedPhantomSector(uint16 sector, uint8 index);
+
+	void SetTraceContext(ATTraceContext *context);
 
 public:
 	void OnScheduledEvent(uint32 id) override;
@@ -237,6 +242,9 @@ protected:
 	bool	mbReverseOnForwardSeeks = false;
 
 	ATDiskInterface *mpDiskInterface = nullptr;
+	ATTraceContext *mpTraceContext = nullptr;
+	ATTraceChannelFormatted *mpTraceChannel = nullptr;
+	uint64	mTraceCommandStartTime = 0;
 
 	struct ExtPhysSector {
 		sint8	mForcedOrder;

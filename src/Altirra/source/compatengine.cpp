@@ -543,7 +543,7 @@ void ATCompatAdjust(VDGUIHandle h, const ATCompatKnownTag *tags, size_t numTags)
 			case kATCompatKnownTag_Undocumented6502:
 				{
 					auto& cpu = g_sim.GetCPU();
-					cpu.SetCPUMode(kATCPUMode_6502, 1);
+					g_sim.SetCPUMode(kATCPUMode_6502, 1);
 					cpu.SetIllegalInsnsEnabled(true);
 				}
 				break;

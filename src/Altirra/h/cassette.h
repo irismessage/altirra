@@ -23,8 +23,10 @@
 #endif
 
 #include <at/atcore/audiosource.h>
+#include <at/atcore/enumparse.h>
 #include <at/atcore/deferredevent.h>
 #include <at/atcore/scheduler.h>
+#include <at/atcore/devicesio.h>
 #include "pokey.h"
 
 class VDFile;
@@ -33,20 +35,46 @@ class ATCPUEmulatorMemory;
 class IVDRandomAccessStream;
 class IATAudioOutput;
 class IATCassetteImage;
+struct ATTraceContext;
+class ATTraceChannelTape;
 
-class ATCassetteEmulator final : public IATSchedulerCallback, public IATPokeyCassetteDevice, public IATSyncAudioSource {
+enum ATCassetteTurboMode {
+	kATCassetteTurboMode_None,
+	kATCassetteTurboMode_CommandControl,
+	kATCassetteTurboMode_ProceedSense,
+	kATCassetteTurboMode_InterruptSense,
+	kATCassetteTurboMode_Always
+};
+
+AT_DECLARE_ENUM_TABLE(ATCassetteTurboMode);
+
+enum ATCassettePolarityMode {
+	kATCassettePolarityMode_Normal,
+	kATCassettePolarityMode_Inverted
+};
+
+AT_DECLARE_ENUM_TABLE(ATCassettePolarityMode);
+
+class ATCassetteEmulator final
+	: public IATSchedulerCallback
+	, public IATPokeyCassetteDevice
+	, public IATSyncAudioSource
+	, public IATDeviceRawSIO
+{
 public:
 	ATCassetteEmulator();
 	~ATCassetteEmulator();
 
 	IATCassetteImage *GetImage() const { return mpImage; }
+	const wchar_t *GetPath() const { return mImagePath.c_str(); }
+	bool IsImagePersistent() const { return mbImagePersistent; }
 
 	float GetLength() const;
 	float GetPosition() const;
 	uint32 GetSampleLen() const { return mLength; }
 	uint32 GetSamplePos() const { return mPosition; }
 
-	void Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATScheduler *slowsched, IATAudioOutput *audioOut, ATDeferredEventManager *defmgr);
+	void Init(ATPokeyEmulator *pokey, ATScheduler *sched, ATScheduler *slowsched, IATAudioOutput *audioOut, ATDeferredEventManager *defmgr, IATDeviceSIOManager *sioMgr);
 	void Shutdown();
 	void ColdReset();
 
@@ -63,15 +91,23 @@ public:
 
 	void LoadNew();
 	void Load(const wchar_t *fn);
-	void Load(IVDRandomAccessStream& stream);
-	void Load(IATCassetteImage *image);
+	void Load(IATCassetteImage *image, const wchar_t *path, bool persistent);
 	void Unload();
 
 	void SetLogDataEnable(bool enable);
 	void SetLoadDataAsAudioEnable(bool enable);
-	void SetMotorEnable(bool enable);
 	void SetRandomizedStartEnabled(bool enable);
 	void SetAutoRewindEnabled(bool enable) { mbAutoRewind = enable; }
+
+	bool IsFSKDecodingEnabled() const { return mbFSKDecoderEnabled; }
+
+	ATCassetteTurboMode GetTurboMode() const { return mTurboMode; }
+	void SetTurboMode(ATCassetteTurboMode turboMode);
+
+	ATCassettePolarityMode GetPolarityMode() const;
+	void SetPolarityMode(ATCassettePolarityMode mode);
+
+	void SetTraceContext(ATTraceContext *context);
 
 	void Stop();
 	void Play();
@@ -95,19 +131,27 @@ public:
 	ATDeferredEvent TapeChanged;
 	ATDeferredEvent TapePeaksUpdated;
 
-protected:
+public:
 	void PokeyChangeSerialRate(uint32 divisor) override;
 	void PokeyResetSerialInput() override;
 	void PokeyBeginCassetteData(uint8 skctl) override;
 	bool PokeyWriteCassetteData(uint8 c, uint32 cyclesPerBit) override;
 
-protected:
+public:
 	bool RequiresStereoMixingNow() const override { return false; }
 	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
-protected:
+public:
+	void OnCommandStateChanged(bool asserted) override;
+	void OnMotorStateChanged(bool asserted) override;
+	void OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) override;
+	void OnSendReady() override;
+
+private:
 	void UnloadInternal();
+	void UpdateRawSIODevice();
 	void UpdateMotorState();
+	void UpdateInvertData();
 
 	enum BitResult {
 		kBR_NoOutput,
@@ -123,6 +167,8 @@ protected:
 	
 	void FlushRecording(uint32 t, bool force);
 	void UpdateRecordingPosition();
+
+	void UpdateTraceState();
 
 	uint32	mAudioPosition = 0;
 	uint32	mAudioLength = 0;
@@ -142,6 +188,11 @@ protected:
 	bool	mbPaused = false;
 	bool	mbDataLineState = false;
 	bool	mbOutputBit = false;
+	bool	mbInvertData = false;
+	bool	mbInvertTurboData = false;
+	bool	mbFSKDecoderEnabled = true;
+	bool	mbFSKDecoderRequested = true;
+	bool	mbFSKControlEnabled = false;
 	int		mSIOPhase = 0;
 	uint8	mDataByte = 0;
 	uint8	mThresholdZeroBit = 0;
@@ -164,6 +215,15 @@ protected:
 	IATAudioOutput *mpAudioOutput = nullptr;
 
 	IATCassetteImage *mpImage = nullptr;
+	VDStringW mImagePath;
+	bool	mbImagePersistent = false;
+
+	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	bool	mbRegisteredRawSIO = false;
+
+	ATCassetteTurboMode mTurboMode = kATCassetteTurboMode_None;
+	bool	mbTurboProceedAsserted = false;
+	bool	mbTurboInterruptAsserted = false;
 
 	struct AudioEvent {
 		uint32	mStartTime;
@@ -174,6 +234,12 @@ protected:
 	typedef vdfastvector<AudioEvent> AudioEvents;
 	AudioEvents mAudioEvents;
 	bool mbAudioEventOpen = false;
+
+	ATTraceContext *mpTraceContext = nullptr;
+	ATTraceChannelTape *mpTraceChannelFSK = nullptr;
+	ATTraceChannelTape *mpTraceChannelTurbo = nullptr;
+	bool mbTraceMotorRunning = false;
+	bool mbTraceRecord = false;
 };
 
 #endif

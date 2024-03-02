@@ -13,14 +13,10 @@ static const struct VD_MSVC_C4786Workaround { VD_MSVC_C4786Workaround() {} } g_V
 #endif
 
 #include <vd2/system/vdtypes.h>
-#include <vd2/Dita/interface.h>
 
 #include <windows.h>
 
 #include <vd2/system/VDString.h>
-#include <vd2/Dita/basetypes.h>
-#include <vd2/Dita/controls.h>
 #include <vd2/Dita/services.h>
-#include <vd2/Dita/w32control.h>
 
 #endif

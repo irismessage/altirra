@@ -36,6 +36,8 @@
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
 
+struct VDDate;
+
 #ifdef WIN32
 	typedef void *VDFileHandle;				// this needs to match wtypes.h definition for HANDLE
 #else
@@ -99,6 +101,9 @@ public:
 	bool	openNT(const wchar_t *pwszFileName, uint32 flags = nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
 	bool	tryOpen(const wchar_t *pwszFileName, uint32 flags = nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
 
+	// Open a possibly existing file. Returns true if the file previously existed, false if it did not.
+	bool	openAlways(const wchar_t *pwszFileName, uint32 flags = nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenAlways);
+
 	bool	closeNT();
 	void	close();
 	bool	truncateNT();
@@ -142,6 +147,8 @@ public:
 	uint32	getAttributes();
 
 	const wchar_t *getFilenameForError() const { return mpFilename; }
+
+	void	setCreationTime(const VDDate& date);
 
 	// unbuffered I/O requires aligned buffers ("unbuffers")
 	static void *AllocUnbuffer(size_t nBytes);

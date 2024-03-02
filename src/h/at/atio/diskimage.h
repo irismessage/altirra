@@ -40,6 +40,7 @@ struct ATDiskPhysicalSectorInfo {
 	sint32	mDiskOffset;		// offset within disk image (for rewriting)
 	uint16	mSize;
 	bool	mbDirty;
+	bool	mbMFM;
 	float	mRotPos;
 	uint8	mFDCStatus;			// FDC status as seen by 810 firmware (inverted)
 	sint16	mWeakDataOffset;
@@ -52,6 +53,12 @@ struct ATDiskGeometryInfo {
 	uint8	mTrackCount;
 	uint32	mSectorsPerTrack;
 	uint8	mSideCount;
+
+	// Returns the primary density for the disk; essentially, the density that
+	// an MFM-capable drive would detect from the disk. This would usually be
+	// the density used by track 0, sector 1 since otherwise the disk would not
+	// boot... though there is no requirement that the disk have that sector,
+	// nor that the drive uses it (some use sector 4).
 	bool	mbMFM;
 };
 
@@ -65,6 +72,34 @@ enum ATDiskImageFormat {
 	kATDiskImageFormat_DCM
 };
 
+// Disk image interface
+//
+// IATDiskImage is an abstraction of a disk image interfaced to SIO via the standard
+// disk drive protocol. It most often represents a floppy disk but may also represent
+// a hard disk via SIO2PC or a PBI device driver. The most general form of image
+// represented is therefore a simple linear block device.
+//
+// To support authentic floppy disk behavior, disk images use notions of virtual and
+// physical sectors. Virtual sectors are those presented to SIO; physical sectors are
+// the ones on the storage medium. Most images have 1:1 virtual to physical sectors;
+// floppy disks may have 0-N physical sectors per virtual sector when there are missing
+// or phantom sectors. Note that both virtual and physical sectors are indexed from 0
+// here even though the SIO interface numbers sectors starting at 1.
+//
+// It is unspecified whether boot sectors have a size of 128 bytes or larger, so calling
+// code must force 128 byte transfers as appropriate. Boot sectors may explicitly be
+// larger than 128 bytes when representing the physical medium, since most double density
+// formats actually store sectors 1-3 on track 0 as 256 bytes and in some cases that
+// additional data must be preserved (bootable CP/M disks).
+//
+// The disk image interface also supports managing the persistent backing store for
+// a device, including checking if there is a backing store to update, whether the
+// disk image is dirty, and requesting a flush.
+//
+// Dynamic disk images are a special case; these are images that can change dynamically
+// even without write commands to the image. This is usually because the image is
+// virtual and being created on the fly.
+//
 class VDINTERFACE IATDiskImage : public IATImage {
 public:
 	enum : uint32 { kTypeID = 'dsim' };
@@ -87,12 +122,13 @@ public:
 	// load.
 	virtual bool IsDynamic() const = 0;
 
+	// Returns the persistent image format for the image. This may be None if the image
+	// does not have an image file based backing store.
 	virtual ATDiskImageFormat GetImageFormat() const = 0;
 
 	// Flush any changes back to the persistent store. Returns true on success or no-op;
 	// false if the image is not updatable. I/O exceptions may be thrown. A dirty image
 	// becomes clean after a successful flush.
-
 	virtual bool Flush() = 0;
 
 	virtual uint64 GetImageChecksum() const = 0;

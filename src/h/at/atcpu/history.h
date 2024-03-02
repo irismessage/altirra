@@ -78,6 +78,8 @@ struct ATCPUHistoryEntry {
 	};
 };
 
+static_assert(sizeof(ATCPUHistoryEntry) == 32, "struct layout problem");
+
 struct ATCPUBeamPosition {
 	uint32	mFrame;
 	uint32	mX;

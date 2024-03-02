@@ -50,8 +50,10 @@ protected:
 		kState_RequestSense_0,
 		kState_TestUnitReady_0,
 		kState_Read_0,
+		kState_Read_1,
 		kState_Write_0,
 		kState_Write_1,
+		kState_Write_2,
 		kState_Inquiry_0,
 		kState_ReadCapacity_0,
 		kState_UnknownCommand,
@@ -74,11 +76,17 @@ protected:
 	uint8 mError;
 	uint32 mErrorLBA;
 	bool mbBlockSize256;
+	
+	ATBlockDeviceGeometry mDiskGeometry;
 
 	uint8 mCommandBuffer[16];
 	uint8 mTransferBuffer[512];
 	uint8 mSectorBuffer[512];
+
+	static const float kIODelaySlow;
 };
+
+const float ATSCSIDiskDevice::kIODelaySlow = 5500.0f;		// 5.5ms
 
 ATSCSIDiskDevice::ATSCSIDiskDevice()
 	: mpBus(nullptr)
@@ -102,6 +110,7 @@ void *ATSCSIDiskDevice::AsInterface(uint32 iid) {
 
 void ATSCSIDiskDevice::Init(IATBlockDevice *disk) {
 	mpDisk = disk;
+	mDiskGeometry = disk->GetGeometry();
 }
 
 void ATSCSIDiskDevice::SetUIRenderer(IATDeviceIndicatorManager *r) {
@@ -193,31 +202,38 @@ void ATSCSIDiskDevice::AdvanceCommand() {
 				mError = 0x21;		// Class 2 Illegal block address
 				mState = kState_Status;
 			} else {
-				try {
-					if (mpUIRenderer)
-						mpUIRenderer->SetIDEActivity(false, mLBA);
+				if (!mDiskGeometry.mbSolidState)
+					mpBus->CommandDelay(kIODelaySlow);
 
-					if (mbBlockSize256) {
-						mpDisk->ReadSectors(mSectorBuffer, mLBA >> 1, 1);
+				mState = kState_Read_1;
+			}
+			break;
 
-						memcpy(mTransferBuffer, mSectorBuffer + (mLBA & 1 ? 256 : 0), 256);
+		case kState_Read_1:
+			try {
+				if (mpUIRenderer)
+					mpUIRenderer->SetIDEActivity(false, mLBA);
 
-						mpBus->CommandSendData(ATSCSIBusEmulator::kSendMode_DataIn, mTransferBuffer, 256);
-					} else {
-						mpDisk->ReadSectors(mTransferBuffer, mLBA, 1);
-						mpBus->CommandSendData(ATSCSIBusEmulator::kSendMode_DataIn, mTransferBuffer, 512);
-					}
+				if (mbBlockSize256) {
+					mpDisk->ReadSectors(mSectorBuffer, mLBA >> 1, 1);
 
-					++mLBA;
+					memcpy(mTransferBuffer, mSectorBuffer + (mLBA & 1 ? 256 : 0), 256);
 
-					if (!--mBlockCount) {
-						mError = 0;
-						mState = kState_Status;
-					}
-				} catch(const MyError&) {
-					mError = 0x21;		// Class 2 Illegal block address
+					mpBus->CommandSendData(ATSCSIBusEmulator::kSendMode_DataIn, mTransferBuffer, 256);
+				} else {
+					mpDisk->ReadSectors(mTransferBuffer, mLBA, 1);
+					mpBus->CommandSendData(ATSCSIBusEmulator::kSendMode_DataIn, mTransferBuffer, 512);
+				}
+
+				++mLBA;
+
+				if (!--mBlockCount) {
+					mError = 0;
 					mState = kState_Status;
 				}
+			} catch(const MyError&) {
+				mError = 0x21;		// Class 2 Illegal block address
+				mState = kState_Status;
 			}
 			break;
 
@@ -235,6 +251,13 @@ void ATSCSIDiskDevice::AdvanceCommand() {
 			break;
 
 		case kState_Write_1:
+			if (!mDiskGeometry.mbSolidState)
+				mpBus->CommandDelay(kIODelaySlow);
+
+			mState = kState_Write_2;
+			break;
+
+		case kState_Write_2:
 			try {
 				if (mpUIRenderer)
 					mpUIRenderer->SetIDEActivity(true, mLBA);

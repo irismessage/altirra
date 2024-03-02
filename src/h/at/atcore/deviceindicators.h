@@ -44,7 +44,7 @@ public:
 	virtual void SetFlashWriteActivity() = 0;
 
 	virtual void SetCassetteIndicatorVisible(bool vis) = 0;
-	virtual void SetCassettePosition(float pos, bool recordMode) = 0;
+	virtual void SetCassettePosition(float pos, float len, bool recordMode, bool fskMode) = 0;
 
 	virtual void SetRecordingPosition() = 0;
 	virtual void SetRecordingPosition(float time, sint64 size) = 0;

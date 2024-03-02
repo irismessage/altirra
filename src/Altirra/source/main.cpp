@@ -1,4 +1,4 @@
-﻿//	Altirra - Atari 800/800XL/5200 emulator
+//	Altirra - Atari 800/800XL/5200 emulator
 //	Copyright (C) 2009-2015 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
@@ -43,6 +43,7 @@
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/VDDisplay/display.h>
 #include <vd2/VDDisplay/direct3d.h>
+#include <vd2/VDDisplay/logging.h>
 #include <vd2/Dita/accel.h>
 #include <vd2/Dita/services.h>
 #include <at/atappbase/crthooks.h>
@@ -112,6 +113,7 @@
 #include "compatdb.h"
 #include "compatengine.h"
 #include "uicompat.h"
+#include "trace.h"
 
 #include "firmwaremanager.h"
 #include <at/atcore/devicemanager.h>
@@ -178,6 +180,8 @@ void ATUICreateMainWindow(ATContainerWindow **);
 
 extern const wchar_t g_wszWarning[]=L"Altirra Warning";
 
+ATLogChannel g_ATLCHostDisp(false, false, "HOSTDISP", "Host display debug output");
+
 HINSTANCE g_hInst;
 HWND g_hwnd;
 ATContainerWindow *g_pMainWindow;
@@ -199,6 +203,7 @@ bool g_ATAutoFrameFlipping = false;
 bool g_fullscreen = false;
 bool g_fullscreenDisplay = false;
 WINDOWPLACEMENT g_ATWindowPreFSPlacement;
+uint32 g_ATWindowPreFSDpi;
 bool g_mouseCaptured = false;
 bool g_mouseClipped = false;
 bool g_mouseAutoCapture = true;
@@ -528,15 +533,23 @@ VDStringW ATUIConfirmDiscardAllStorageGetMessage(const wchar_t *prompt, bool inc
 			case kATStorageId_Firmware:
 				switch(unit) {
 					case 0:
-						msg += L"IDE main firmware";
+						msg += L"\tIDE main firmware";
 						break;
 
 					case 1:
-						msg += L"IDE SDX firmware";
+						msg += L"\tIDE SDX firmware";
 						break;
 
 					case 2:
-						msg += L"Ultimate1MB firmware";
+						msg += L"\tUltimate1MB firmware";
+						break;
+
+					case 3:
+						msg += L"\tRapidus flash firmware";
+						break;
+
+					case 4:
+						msg += L"\tRapidus PBI firmware";
 						break;
 				}
 				break;
@@ -1125,7 +1138,8 @@ void ATUISaveMainWindowPlacement() {
 				g_ATWindowPreFSPlacement.rcNormalPosition.right,
 				g_ATWindowPreFSPlacement.rcNormalPosition.bottom
 			},
-			g_ATWindowPreFSPlacement.showCmd == SW_MAXIMIZE);
+			g_ATWindowPreFSPlacement.showCmd == SW_MAXIMIZE,
+			g_ATWindowPreFSDpi);
 	} else {
 		ATUISaveWindowPlacement(g_hwnd, "Main window");
 	}
@@ -1179,8 +1193,14 @@ void ATSetFullscreen(bool fs) {
 		}
 		g_ATWindowPreFSPlacement.flags = 0;
 
+		g_ATWindowPreFSDpi = ATUIGetWindowDpiW32(g_hwnd);
+
 		SetMenu(g_hwnd, NULL);
-		SetWindowLong(g_hwnd, GWL_STYLE, (style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
+
+		// We must clear WS_CLIPCHILDREN for D3D9 exclusive fullscreen to work on Windows 10 build 1709 since
+		// the top-level window has to be used as the device window and we need the child windows to not be
+		// excluded from the window region.
+		SetWindowLong(g_hwnd, GWL_STYLE, (style & ~(WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN)) | WS_POPUP);
 		
 		ShowWindow(g_hwnd, SW_RESTORE);
 
@@ -1211,7 +1231,7 @@ void ATSetFullscreen(bool fs) {
 		if (g_pDisplay)
 			g_pDisplay->SetFullScreen(false);
 
-		SetWindowLong(g_hwnd, GWL_STYLE, (style | WS_OVERLAPPEDWINDOW) & ~WS_POPUP);
+		SetWindowLong(g_hwnd, GWL_STYLE, (style | WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN) & ~WS_POPUP);
 		SetWindowPos(g_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOACTIVATE);
 
 		// We _should_ be able to just use SetWindowPlacement() here. However, there's a weird
@@ -1438,9 +1458,9 @@ void StopAudioRecording() {
 
 void StopVideoRecording() {
 	if (g_pVideoWriter) {
+		g_sim.GetGTIA().RemoveVideoTap(g_pVideoWriter);
 		g_pVideoWriter->Shutdown();
 		g_sim.GetAudioOutput()->SetAudioTap(NULL);
-		g_sim.GetGTIA().SetVideoTap(NULL);
 		g_pVideoWriter = NULL;
 	}
 }
@@ -1569,6 +1589,10 @@ void OnCommandSaveFirmwareU1MB() {
 	OnCommandSaveFirmware(2);
 }
 
+void OnCommandSaveFirmwareRapidusFlash() {
+	OnCommandSaveFirmware(3);
+}
+
 void OnCommandExit() {
 	if (g_hwnd)
 		::SendMessage(g_hwnd, WM_CLOSE, 0, 0);
@@ -1607,6 +1631,21 @@ void OnCommandCassetteSave() {
 	ATSaveCassetteImageCAS(f, cas.GetImage());
 }
 
+void OnCommandCassetteExportAudioTape() {
+	ATCassetteEmulator& cas = g_sim.GetCassette();
+	if (!cas.IsLoaded())
+		return;
+
+	VDStringW fn(VDGetSaveFileName('casa', (VDGUIHandle)g_hwnd, L"Export cassette tape audio", g_ATUIFileFilter_SaveTapeAudio, L"wav"));
+
+	if (fn.empty())
+		return;
+
+	VDFileStream f(fn.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kSequential | nsVDFile::kCreateAlways);
+
+	ATSaveCassetteImageWAV(f, cas.GetImage());
+}
+
 void OnCommandCassetteTapeControlDialog() {
 	ATUIShowTapeControlDialog((VDGUIHandle)g_hwnd, g_sim.GetCassette());
 }
@@ -1631,6 +1670,34 @@ void OnCommandCassetteToggleLoadDataAsAudio() {
 
 void OnCommandCassetteToggleRandomizeStartPosition() {
 	g_sim.SetCassetteRandomizedStartEnabled(!g_sim.IsCassetteRandomizedStartEnabled());
+}
+
+void OnCommandCassetteTurboModeNone() {
+	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_None);
+}
+
+void OnCommandCassetteTurboModeCommandControl() {
+	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_CommandControl);
+}
+
+void OnCommandCassetteTurboModeProceedSense() {
+	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_ProceedSense);
+}
+
+void OnCommandCassetteTurboModeInterruptSense() {
+	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_InterruptSense);
+}
+
+void OnCommandCassetteTurboModeAlways() {
+	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_Always);
+}
+
+void OnCommandCassettePolarityModeNormal() {
+	g_sim.GetCassette().SetPolarityMode(kATCassettePolarityMode_Normal);
+}
+
+void OnCommandCassettePolarityModeInverted() {
+	g_sim.GetCassette().SetPolarityMode(kATCassettePolarityMode_Inverted);
 }
 
 ATDisplayFilterMode ATUIGetDisplayFilterMode() {
@@ -2214,7 +2281,7 @@ void OnCommandRecordVideo() {
 					g_pVideoWriter->Init(s.c_str(), encoding, w, h, frameRate, rgb32 ? NULL : palette, samplingRate, g_sim.IsDualPokeysEnabled(), hz50 ? 1773447.0f : 1789772.5f, halfRate, encodeAll, g_sim.GetUIRenderer());
 
 					g_sim.GetAudioOutput()->SetAudioTap(g_pVideoWriter);
-					gtia.SetVideoTap(g_pVideoWriter);
+					gtia.AddVideoTap(g_pVideoWriter);
 				} catch(const MyError& e) {
 					StopRecording();
 					e.post(g_hwnd, "Altirra Error");
@@ -2523,30 +2590,6 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			coldReset = true;
 		} else if (cmdLine.FindAndRemoveSwitch(L"nobasic")) {
 			g_sim.SetBASICEnabled(false);
-			coldReset = true;
-		}
-
-		if (cmdLine.FindAndRemoveSwitch(L"vbxe")) {
-			g_sim.SetVBXEEnabled(true);
-			coldReset = true;
-		} else if (cmdLine.FindAndRemoveSwitch(L"novbxe")) {
-			g_sim.SetVBXEEnabled(false);
-			coldReset = true;
-		}
-
-		if (cmdLine.FindAndRemoveSwitch(L"vbxeshared")) {
-			g_sim.SetVBXEEnabled(true);
-			coldReset = true;
-		} else if (cmdLine.FindAndRemoveSwitch(L"novbxeshared")) {
-			g_sim.SetVBXEEnabled(false);
-			coldReset = true;
-		}
-
-		if (cmdLine.FindAndRemoveSwitch(L"vbxealtpage")) {
-			g_sim.SetVBXEAltPageEnabled(true);
-			coldReset = true;
-		} else if (cmdLine.FindAndRemoveSwitch(L"novbxealtpage")) {
-			g_sim.SetVBXEAltPageEnabled(false);
 			coldReset = true;
 		}
 
@@ -2875,15 +2918,12 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				_T("/pal - select PAL timing and behavior\n")
 				_T("/secam - select SECAM timing and behavior\n")
 				_T("/artifact:none|ntsc|ntschi|pal|palhi - set video artifacting\n")
-				_T("/[no]burstio|burstiopolled - control SIO burst I/O mode\n")
+				_T("/[no]burstio - control SIO burst I/O mode\n")
 				_T("/[no]siopatch[safe] - control SIO kernel patch\n")
 				_T("/[no]fastboot - control fast kernel boot initialization\n")
 				_T("/[no]casautoboot - control cassette auto-boot\n")
 				_T("/[no]accuratedisk - control accurate sector timing\n")
 				_T("/[no]basic - enable/disable BASIC ROM\n")
-				_T("/[no]vbxe - enable/disable VBXE support\n")
-				_T("/[no]vbxeshared - enable/disable VBXE shared memory\n")
-				_T("/[no]vbxealtpage - enable/disable VBXE $D7xx register window\n")
 				_T("/[no]soundboard:d2c0|d500|d600 - enable/disable SoundBoard\n")
 				_T("/kernel:default|osa|osb|xl|lle|hle|other|5200|5200lle - select kernel ROM\n")
 				_T("/hardware:800|800xl|5200 - select hardware type\n")
@@ -2904,7 +2944,6 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				_T("/cartmapper <mapper> - set cartridge mapper for untagged image\n")
 				_T("/portable - create Altirra.ini file and switch to portable mode\n")
 				_T("/portablealt:<file> - temporarily enable portable mode with alternate INI file\n")
-				_T("/ide:d1xx|d5xx|kmkjzv1|kmkjzv2|side,ro|rw,c,h,s,path - set IDE emulation\n")
 				_T("/[no]pclink:ro|rw,path - set PCLink emulation\n")
 				_T("/hostcpu:none|mmx|sse|sse2|sse2|sse3|ssse3|sse41 - override host CPU detection\n")
 				_T("/cart <image> - load cartridge image\n")
@@ -3330,10 +3369,6 @@ int RunMainLoop2(HWND hwnd) {
 				}
 			}
 
-			// do not allow frame drops if we are recording
-			if (g_pVideoWriter)
-				dropFrame = false;
-
 			if (g_sim.GetAntic().GetBeamY() == 0)
 				ATProfileMarkEvent(kATProfileEvent_BeginFrame);
 
@@ -3691,6 +3726,8 @@ int RunInstance(int nCmdShow) {
 	VDVideoDisplaySetSecondaryDXEnabled(true);
 	VDVideoDisplaySetD3D9ExEnabled(false);
 	VDVideoDisplaySetTermServ3DEnabled(true);
+
+	VDDispSetLogHook([](const char *s) { g_ATLCHostDisp("%s\n", s); });
 
 	VDInitFilespecSystem();
 	VDLoadFilespecSystemData();

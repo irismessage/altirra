@@ -15,7 +15,7 @@ extern const wchar_t g_wszWarning[];
 
 ///////////////////////////////////////////////////////////////////////////
 
-class VDDialogEditAccelerators : public VDDialogFrameW32 {
+class VDDialogEditAccelerators : public VDResizableDialogFrameW32 {
 public:
 	VDDialogEditAccelerators(const VDAccelToCommandEntry *commands,
 		uint32 commandCount,
@@ -26,8 +26,6 @@ public:
 	~VDDialogEditAccelerators();
 
 protected:
-	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
-
 	void OnDataExchange(bool write);
 	bool OnLoaded();
 	bool OnCommand(uint32 id, uint32 extcode);
@@ -80,9 +78,6 @@ protected:
 	VDDelegate	mDelegateHotKeyChanged;
 
 	bool	mbBlockCommandUpdate;
-
-	RECT mrInitial;
-	VDDialogResizerW32		mResizer;
 };
 
 namespace {
@@ -149,7 +144,7 @@ VDDialogEditAccelerators::VDDialogEditAccelerators(
 	const VDAccelTableDefinition *defaultTables,
 	uint32 tableCount,
 	const wchar_t *const *contextNames)
-	: VDDialogFrameW32(IDD_CONFIGURE_ACCEL)
+	: VDResizableDialogFrameW32(IDD_CONFIGURE_ACCEL)
 	, mTableCount(tableCount)
 	, mpContextNames(contextNames)
 	, mAllCommands(commandCount)
@@ -157,8 +152,6 @@ VDDialogEditAccelerators::VDDialogEditAccelerators(
 	, mpBoundCommandsDefaults(defaultTables)
 	, mbBlockCommandUpdate(false)
 {
-	memset(&mrInitial, 0, sizeof mrInitial);
-
 	mBoundCommandSort.mSortAxes[0] = 0;
 	mBoundCommandSort.mSortAxes[1] = 4;
 	mBoundCommandSort.mSortAxes[2] = 2;
@@ -174,23 +167,6 @@ VDDialogEditAccelerators::VDDialogEditAccelerators(
 
 VDDialogEditAccelerators::~VDDialogEditAccelerators() {
 	DestroyBoundCommands();
-}
-
-VDZINT_PTR VDDialogEditAccelerators::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
-	switch(msg) {
-		case WM_GETMINMAXINFO:
-			if (mrInitial.right > mrInitial.left) {
-				LPMINMAXINFO lpmmi = (LPMINMAXINFO)lParam;
-
-				lpmmi->ptMinTrackSize.x = mrInitial.right - mrInitial.left;
-				lpmmi->ptMinTrackSize.y = mrInitial.bottom - mrInitial.top;
-				return TRUE;
-			}
-
-			break;
-	}
-
-	return VDDialogFrameW32::DlgProc(msg, wParam, lParam);
 }
 
 void VDDialogEditAccelerators::OnDataExchange(bool write) {
@@ -217,13 +193,10 @@ void VDDialogEditAccelerators::OnDataExchange(bool write) {
 bool VDDialogEditAccelerators::OnLoaded() {
 	//VDSetDialogDefaultIcons(mhdlg);
 
-	GetWindowRect(mhdlg, &mrInitial);
-
 	mpHotKeyControl = VDGetUIHotKeyExControl((VDGUIHandle)GetControl(IDC_HOTKEY));
 	if (mpHotKeyControl)
 		mpHotKeyControl->OnChange() += mDelegateHotKeyChanged(this, &VDDialogEditAccelerators::OnHotKeyChanged);
 
-	mResizer.Init(mhdlg);
 	mResizer.Add(IDOK, VDDialogResizerW32::kBR);
 	mResizer.Add(IDCANCEL, VDDialogResizerW32::kBR);
 	mResizer.Add(IDC_ADD, VDDialogResizerW32::kBR);

@@ -33,32 +33,37 @@ public:
 		return p;
 	}
 
-	template<class T>
-	T *Allocate() {
-		return new(Allocate(sizeof(T))) T;
+	void *Allocate(size_t bytes, size_t align) {
+		void *p = mpAllocPtr;
+
+		const size_t alignUpSize = ((uintptr)0 - (uintptr)mpAllocPtr) & (align - 1);
+		bytes = (bytes + sizeof(void *) - 1) & ((size_t)0 - (size_t)sizeof(void *));
+
+		if (mAllocLeft < bytes + alignUpSize)
+			p = AllocateSlow(bytes, align);
+		else {
+			p = (char *)p + alignUpSize;
+			mAllocLeft -= bytes;
+			mpAllocPtr += bytes;
+		}
+
+		return p;
 	}
 
-	template<class T, class A1>
-	T *Allocate(const A1& a1) {
-		return new(Allocate(sizeof(T))) T(a1);
+	template<class T, typename... Args>
+	T *Allocate(Args&&... args) {
+		return new(Allocate(sizeof(T))) T(std::forward<Args>(args)...);
 	}
 
-	template<class T, class A1, class A2>
-	T *Allocate(const A1& a1, const A2& a2) {
-		return new(Allocate(sizeof(T))) T(a1, a2);
-	}
-
-	template<class T, class A1, class A2, class A3>
-	T *Allocate(const A1& a1, const A2& a2, const A3& a3) {
-		return new(Allocate(sizeof(T))) T(a1, a2, a3);
-	}
+	bool Contains(const void *addr) const;
 
 protected:
 	void *AllocateSlow(size_t bytes);
+	void *AllocateSlow(size_t bytes, size_t align);
 
-	union Block {
+	struct alignas(double) Block {
 		Block *mpNext;
-		double mAlign;
+		size_t mSize;
 	};
 
 	Block *mpBlocks;

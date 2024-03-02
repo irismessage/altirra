@@ -124,7 +124,7 @@ protected:
 		const wchar_t *mpName;
 	};
 
-	const TypeEntry *mpSortedTypes[35];
+	const TypeEntry *mpSortedTypes[37];
 	
 	static const TypeEntry kTypeNames[];
 };
@@ -165,6 +165,8 @@ const ATUIDialogEditFirmwareSettings::TypeEntry ATUIDialogEditFirmwareSettings::
 	{ kATFirmwareType_XF551, L"XF551 Disk Drive Firmware" },
 	{ kATFirmwareType_ATR8000, L"ATR8000 Disk Drive Firmware" },
 	{ kATFirmwareType_Percom, L"PERCOM Disk Drive Firmware" },
+	{ kATFirmwareType_RapidusFlash, L"Rapidus Flash Firmware" },
+	{ kATFirmwareType_RapidusCorePBI, L"Rapidus Core PBI Firmware" },
 };
 
 ATUIDialogEditFirmwareSettings::ATUIDialogEditFirmwareSettings(FirmwareItem& item)
@@ -278,7 +280,7 @@ void ATUIDialogEditFirmwareSettings::RedoOptions(ATFirmwareType type) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogFirmware final : public VDDialogFrameW32 {
+class ATUIDialogFirmware final : public VDResizableDialogFrameW32 {
 public:
 	ATUIDialogFirmware(ATFirmwareManager& sim);
 
@@ -289,8 +291,6 @@ protected:
 	void OnDestroy() override;
 	void OnDataExchange(bool write) override;
 	bool OnCommand(uint32 id, uint32 extcode) override;
-	void OnSize() override;
-	bool OnErase(VDZHDC hdc) override;
 	void OnDropFiles(IVDUIDropFileList *dropFileList) override;
 
 	void Add();
@@ -321,12 +321,10 @@ protected:
 	VDDelegate mDelItemGetDispAttr;
 	VDDelegate mDelBeginEdit;
 	VDDelegate mDelEndEdit;
-
-	VDDialogResizerW32 mResizer;
 };
 
 ATUIDialogFirmware::ATUIDialogFirmware(ATFirmwareManager& fw)
-	: VDDialogFrameW32(IDD_FIRMWARE)
+	: VDResizableDialogFrameW32(IDD_FIRMWARE)
 	, mFwManager(fw)
 	, mbAnyChanges(false)
 {
@@ -336,7 +334,7 @@ bool ATUIDialogFirmware::OnLoaded() {
 	AddProxy(&mTreeView, IDC_TREE);
 
 	typedef VDDialogResizerW32 RS;
-	mResizer.Init(mhdlg);
+
 	mResizer.Add(IDC_TREE, RS::kMC);
 	mResizer.Add(IDC_ADD, RS::kBL);
 	mResizer.Add(IDC_REMOVE, RS::kBL);
@@ -346,7 +344,6 @@ bool ATUIDialogFirmware::OnLoaded() {
 	mResizer.Add(IDC_SETASSPECIFIC, RS::kBL);
 	mResizer.Add(IDC_CLEAR, RS::kBL);
 	mResizer.Add(IDOK, RS::kBR);
-	SetCurrentSizeAsMinSize();
 
 	ATUIRestoreWindowPlacement(mhdlg, "Firmware dialog", SW_SHOW);
 
@@ -415,6 +412,8 @@ void ATUIDialogFirmware::OnDataExchange(bool write) {
 			{ kATFirmwareType_XF551, L"XF551 Disk Drive Firmware" },
 			{ kATFirmwareType_ATR8000, L"ATR8000 Disk Drive Firmware" },
 			{ kATFirmwareType_Percom, L"PERCOM Disk Drive Firmware" },
+			{ kATFirmwareType_RapidusFlash, L"Rapidus Flash Firmware" },
+			{ kATFirmwareType_RapidusCorePBI, L"Rapidus Core PBI Firmware" },
 		};
 
 		std::fill(mDefaultIds, mDefaultIds + vdcountof(mDefaultIds), 0);
@@ -503,15 +502,6 @@ bool ATUIDialogFirmware::OnCommand(uint32 id, uint32 extcode) {
 	}
 
 	return false;
-}
-
-void ATUIDialogFirmware::OnSize() {
-	mResizer.Relayout();
-}
-
-bool ATUIDialogFirmware::OnErase(VDZHDC hdc) {
-	mResizer.Erase(&hdc);
-	return true;
 }
 
 void ATUIDialogFirmware::OnDropFiles(IVDUIDropFileList *dropFileList) {

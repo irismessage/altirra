@@ -87,6 +87,10 @@ ATBlockDeviceGeometry ATIDEPhysicalDisk::GetGeometry() const {
 	return ATBlockDeviceGeometry();
 }
 
+uint32 ATIDEPhysicalDisk::GetSerialNumber() const {
+	return VDHashString32I(mPath.c_str());
+}
+
 void ATIDEPhysicalDisk::Init(const wchar_t *path) {
 	Shutdown();
 

@@ -2,6 +2,7 @@
 #define f_AT_SCSI_H
 
 #include <vd2/system/unknown.h>
+#include <at/atcore/scheduler.h>
 
 class ATSCSIBusEmulator;
 
@@ -35,13 +36,14 @@ public:
 	virtual void SetBlockSize(uint32 blockSize) = 0;
 };
 
-class ATSCSIBusEmulator {
-	ATSCSIBusEmulator(const ATSCSIBusEmulator&);
-	ATSCSIBusEmulator& operator=(const ATSCSIBusEmulator&);
+class ATSCSIBusEmulator final : public IATSchedulerCallback {
+	ATSCSIBusEmulator(const ATSCSIBusEmulator&) = delete;
+	ATSCSIBusEmulator& operator=(const ATSCSIBusEmulator&) = delete;
 public:
 	ATSCSIBusEmulator();
 	~ATSCSIBusEmulator();
 
+	void Init(ATScheduler *scheduler);
 	void Shutdown();
 
 	void SetBusMonitor(IATSCSIBusMonitor *monitor) {
@@ -59,7 +61,7 @@ public:
 
 	/// Release BSY to end the information transfer phases.
 	void CommandEnd();
-	void CommandDelay(uint32 cycles);
+	void CommandDelay(float microseconds);
 
 	enum SendMode {
 		kSendMode_DataIn,
@@ -76,6 +78,9 @@ public:
 
 	void CommandReceiveData(ReceiveMode mode, void *buf, uint32 length);
 
+public:
+	void OnScheduledEvent(uint32 id) override;
+
 protected:
 	enum BusPhase {
 		kBusPhase_BusFree,
@@ -90,25 +95,28 @@ protected:
 
 	void UpdateBusState();
 	void SetBusPhase(BusPhase phase);
+	void AdvanceCommand();
 
-	IATSCSIBusMonitor *mpBusMonitor;
+	IATSCSIBusMonitor *mpBusMonitor = nullptr;
+	ATScheduler *mpScheduler = nullptr;
 
-	uint32 mEndpointState[2];
-	uint32 mBusState;
-	BusPhase mBusPhase;
+	uint32 mEndpointState[2] = {};
+	uint32 mBusState = 0;
+	BusPhase mBusPhase = kBusPhase_BusFree;
 
-	bool mbCommandActive;
-	IATSCSIDevice *mpTargetDevice;
+	ATEvent *mpEventCommandDelay = nullptr;
+	bool mbCommandActive = false;
+	IATSCSIDevice *mpTargetDevice = nullptr;
 
-	const uint8 *mpTransferBuffer;
-	bool mbTransferInActive;
-	bool mbTransferOutActive;
-	uint32 mTransferIndex;
-	uint32 mTransferLength;
+	const uint8 *mpTransferBuffer = nullptr;
+	bool mbTransferInActive = false;
+	bool mbTransferOutActive = false;
+	uint32 mTransferIndex = 0;
+	uint32 mTransferLength = 0;
 
-	uint8 mCommandBuffer[16];
+	uint8 mCommandBuffer[16] = {};
 
-	IATSCSIDevice *mpDevices[8];
+	IATSCSIDevice *mpDevices[8] = {};
 };
 
 #endif

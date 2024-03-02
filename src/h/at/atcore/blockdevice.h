@@ -35,6 +35,7 @@ public:
 	virtual bool IsReadOnly() const = 0;
 	virtual uint32 GetSectorCount() const = 0;
 	virtual ATBlockDeviceGeometry GetGeometry() const = 0;
+	virtual uint32 GetSerialNumber() const = 0;
 
 	virtual void Flush() = 0;
 

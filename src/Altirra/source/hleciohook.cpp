@@ -42,8 +42,7 @@ public:
 	void Init(ATCPUEmulator *cpu, ATSimulator *sim, ATMemoryManager *memman);
 	void Shutdown();
 
-	void WarmReset() override;
-	void ColdReset() override;
+	void WarmReset();
 
 	bool HasCIODevice(char c) const override;
 	bool GetBurstTransfersEnabled() const override;
@@ -102,6 +101,8 @@ protected:
 	uint16	mPrinterHookAddresses[6] = {};
 
 	ATCPUHookInitNode *mpInitHook;
+	ATCPUHookResetNode *mpResetHook;
+
 	ATCPUHookNode *mpDeviceRoutineHooks[24];
 	ATCPUHookNode *mpCIOVHook;
 	ATCPUHookNode *mpCIOVInitHook;
@@ -203,23 +204,28 @@ void ATHLECIOHook::Init(ATCPUEmulator *cpu, ATSimulator *sim, ATMemoryManager *m
 	mpMemMan = memman;
 
 	mpInitHook = cpu->GetHookManager()->AddInitHook([this](const uint8 *lower, const uint8 *upper) { InitHooks(lower, upper); });
+	mpResetHook = cpu->GetHookManager()->AddResetHook([this] { WarmReset(); });
 
 	ReinitHooks(0);
 }
 
 void ATHLECIOHook::Shutdown() {
-	AbortPendingCommand(nullptr);
+	if (mpCPU) {
+		WarmReset();
 
-	CloseAllIOCBs();
+		if (mpInitHook) {
+			mpCPU->GetHookManager()->RemoveInitHook(mpInitHook);
+			mpInitHook = nullptr;
+		}
 
-	if (mpInitHook) {
-		mpCPU->GetHookManager()->RemoveInitHook(mpInitHook);
-		mpInitHook = nullptr;
+		if (mpResetHook) {
+			mpCPU->GetHookManager()->RemoveResetHook(mpResetHook);
+			mpResetHook = nullptr;
+		}
+
+		mpMemMan = nullptr;
+		mpCPU = nullptr;
 	}
-
-	UninitHooks();
-	mpMemMan = nullptr;
-	mpCPU = nullptr;
 }
 
 void ATHLECIOHook::WarmReset() {
@@ -234,10 +240,6 @@ void ATHLECIOHook::WarmReset() {
 	mbCIOHandlersEstablished = false;
 
 	UninitHooks();
-}
-
-void ATHLECIOHook::ColdReset() {
-	WarmReset();
 }
 
 bool ATHLECIOHook::GetBurstTransfersEnabled() const {

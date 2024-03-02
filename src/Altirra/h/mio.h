@@ -21,6 +21,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/refcount.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/deviceparentimpl.h>
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/scheduler.h>
@@ -38,6 +39,7 @@ class ATMIOEmulator final : public ATDevice
 	, public IATDeviceIRQSource
 	, public IATDeviceScheduling
 	, public IATDeviceParent
+	, public ATDeviceBus
 	, public IATDeviceIndicators
 	, public IATDevicePrinter
 	, public IATSCSIBusMonitor
@@ -75,10 +77,15 @@ public:
 	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:
-	virtual const char *GetSupportedType(uint32 index) override;
-	virtual void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
-	virtual void AddChildDevice(IATDevice *dev) override;
-	virtual void RemoveChildDevice(IATDevice *dev) override;
+	IATDeviceBus *GetDeviceBus(uint32 index) override;
+
+public:
+	const wchar_t *GetBusName() const override;
+	const char *GetSupportedType(uint32 index) override;
+	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
+	void GetChildDevicePrefix(uint32 index, VDStringW& s) override;
+	void AddChildDevice(IATDevice *dev) override;
+	void RemoveChildDevice(IATDevice *dev) override;
 
 public:
 	virtual void InitIndicators(IATDeviceIndicatorManager *r) override;
@@ -152,6 +159,8 @@ protected:
 
 	ATACIA6551Emulator mACIA;
 	ATSCSIBusEmulator mSCSIBus;
+
+	ATDeviceBusSingleChild mSerialBus;
 
 	uint8 mFirmware[0x2000];
 	uint8 mRAM[0x100000];

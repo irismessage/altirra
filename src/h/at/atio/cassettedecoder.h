@@ -19,118 +19,41 @@
 #ifndef f_AT_ATIO_CASSETTEDECODER_H
 #define f_AT_ATIO_CASSETTEDECODER_H
 
+class VDBufferedWriteStream;
+
 class ATCassetteDecoderFSK {
 public:
-	inline ATCassetteDecoderFSK();
+	ATCassetteDecoderFSK();
 
-	inline void Reset();
-	inline bool Advance(float x);
+	void Reset();
+
+	template<bool T_DoAnalysis>
+	void Process(const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest);
 
 protected:
-	float mAcc0R;
-	float mAcc0I;
-	float mAcc1R;
-	float mAcc1I;
+	sint32 mAcc0R;
+	sint32 mAcc0I;
+	sint32 mAcc1R;
+	sint32 mAcc1I;
 	uint32 mIndex;
-	float mHistory[64];
+	sint16 mHistory[24];
 };
-
-ATCassetteDecoderFSK::ATCassetteDecoderFSK() {
-	Reset();
-}
-
-void ATCassetteDecoderFSK::Reset() {
-	mAcc0R = 0;
-	mAcc0I = 0;
-	mAcc1R = 0;
-	mAcc1I = 0;
-	mIndex = 0;
-	memset(mHistory, 0, sizeof mHistory);
-}
-
-bool ATCassetteDecoderFSK::Advance(float x) {
-	uint32 hpos1 = mIndex & 31;
-
-	++mIndex;
-
-	// update history window
-	mHistory[hpos1] = mHistory[hpos1 + 32] = x;
-
-	// We sample at 31960Hz and use a 24-point DFT.
-	// 3995Hz (zero) filter extracts from bin 3.
-	// 5327Hz (one) filter extracts from bin 4.
-	//
-	// We compute these via a sliding DFT. The per-sample phase shift angles
-	// for the two filters are 2*pi/24*3 = pi/4 and 2*pi/24*4 = pi/3. On top
-	// of that, We also need a tiny 'r' constant anyway to prevent
-	// accumulation error from blowing up the filter.
-	//
-	// This filter introduces a delay of 12 samples; currently we just ignore
-	// that.
-
-	constexpr float kR = 0.999997f;
-	constexpr float kPhaseShift0 = 0.70710678118654752440084436210485f * kR;
-	constexpr float kPhaseShift1R = 0.5f * kR;
-	constexpr float kPhaseShift1I = 0.86602540378443864676372317075294f * kR;
-
-	const float y = x - mHistory[hpos1 + 32 - 24];
-
-	const float acc0r = (mAcc0R - mAcc0I) * kPhaseShift0 + y;
-	const float acc0i = (mAcc0R + mAcc0I) * kPhaseShift0;
-	mAcc0R = acc0r;
-	mAcc0I = acc0i;
-
-	const float acc1r = mAcc1R * kPhaseShift1R - mAcc1I * kPhaseShift1I + y;
-	const float acc1i = mAcc1R * kPhaseShift1I + mAcc1I * kPhaseShift1R;
-	mAcc1R = acc1r;
-	mAcc1I = acc1i;
-		
-	const float zero = acc0r * acc0r + acc0i * acc0i;
-	const float one = acc1r * acc1r + acc1i * acc1i;
-
-	return one >= zero;
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 
 class ATCassetteDecoderDirect {
 public:
-	inline ATCassetteDecoderDirect();
+	ATCassetteDecoderDirect();
 
-	inline void Reset();
-	inline bool Advance(float x);
+	void Reset();
+
+	template<bool T_DoAnalysis>
+	void Process(const sint16 *samples, uint32 n, uint32 *bitfield, uint32 bitoffset, float *adest);
 
 protected:
-	float mZeroLevel;
-	float mOneLevel;
 	bool mbCurrentState;
+	float mPrevLevel;
+	float mAGC;
 };
-
-ATCassetteDecoderDirect::ATCassetteDecoderDirect() {
-	Reset();
-}
-
-void ATCassetteDecoderDirect::Reset() {
-	mZeroLevel = 0.0f;
-	mOneLevel = 1.0f;
-}
-
-bool ATCassetteDecoderDirect::Advance(float x) {
-	float range = mOneLevel - mZeroLevel;
-	float oneThird = mZeroLevel + range * (1.0f / 3.0f);
-	float twoThirds = mZeroLevel + range * (2.0f / 3.0f);
-
-	if (x < oneThird) {
-		mbCurrentState = false;
-
-		mZeroLevel += (x - mZeroLevel) * 0.95f;
-	} else if (x > twoThirds) {
-		mbCurrentState = true;
-
-		mOneLevel += (x - mOneLevel) * 0.95f;
-	}
-
-	return mbCurrentState;
-}
 
 #endif

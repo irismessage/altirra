@@ -66,6 +66,7 @@ void ATCoProc6809::Run() {
 
 			case k6809StateReadOpcode:
 				if (mpBreakpointMap[mPC]) {
+					mInsnPC = mPC;
 					bool shouldExit = CheckBreakpoint();
 
 					if (shouldExit) {

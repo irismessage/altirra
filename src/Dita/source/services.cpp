@@ -23,7 +23,16 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <objbase.h>
+
+// warning C4091: 'typedef ': ignored on left of 'tagGPFIDL_FLAGS' when no variable is declared (compiling source file source\services.cpp)
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4091)
+#endif
 #include <shlobj.h>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #include <vd2/system/filesys.h>
 #include <vd2/system/strutil.h>

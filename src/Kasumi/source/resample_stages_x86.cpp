@@ -28,11 +28,11 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 
-extern "C" void vdasm_resize_table_row_8_k8_4x_SSE41(void *dst, const void *src, uint32 width, const void *kernel);
-extern "C" void vdasm_resize_table_row_8_k16_4x_SSE41(void *dst, const void *src, uint32 width, const void *kernel);
-extern "C" void vdasm_resize_table_row_8_SSE41(void *dst, const void *src, uint32 width, const void *kernel, uint32 kwidth);
-extern "C" void vdasm_resize_table_col_8_k2_SSE41(void *dst, const void *const *srcs, uint32 width, const void *kernel);
-extern "C" void vdasm_resize_table_col_8_k4_SSE41(void *dst, const void *const *srcs, uint32 width, const void *kernel);
+extern "C" void VDCDECL vdasm_resize_table_row_8_k8_4x_SSE41(void *dst, const void *src, uint32 width, const void *kernel);
+extern "C" void VDCDECL vdasm_resize_table_row_8_k16_4x_SSE41(void *dst, const void *src, uint32 width, const void *kernel);
+extern "C" void VDCDECL vdasm_resize_table_row_8_SSE41(void *dst, const void *src, uint32 width, const void *kernel, uint32 kwidth);
+extern "C" void VDCDECL vdasm_resize_table_col_8_k2_SSE41(void *dst, const void *const *srcs, uint32 width, const void *kernel);
+extern "C" void VDCDECL vdasm_resize_table_col_8_k4_SSE41(void *dst, const void *const *srcs, uint32 width, const void *kernel);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -46,7 +46,7 @@ namespace {
 		uint32	count;
 	};
 
-	extern "C" void vdasm_resize_point32(const ScaleInfo *);
+	extern "C" void VDCDECL vdasm_resize_point32(const ScaleInfo *);
 }
 
 int VDResamplerSeparablePointRowStageX86::GetWindowSize() const {return 1;}
@@ -74,13 +74,13 @@ void VDResamplerRowStageSeparableLinear8_phaseZeroStepHalf_ISSE::Process(void *d
 
 ///////////////////////////////////////////////////////////////////////////////
 
-extern "C" void vdasm_resize_point32_MMX(const ScaleInfo *);
-extern "C" void vdasm_resize_interp_row_run_MMX(void *dst, const void *src, uint32 width, sint64 xaccum, sint64 x_inc);
-extern "C" void vdasm_resize_interp_col_run_MMX(void *dst, const void *src1, const void *src2, uint32 width, uint32 yaccum);
-extern "C" void vdasm_resize_ccint_row_MMX(void *dst, const void *src, uint32 count, uint32 xaccum, sint32 xinc, const void *tbl);
-extern "C" void vdasm_resize_ccint_col_MMX(void *dst, const void *src1, const void *src2, const void *src3, const void *src4, uint32 count, const void *tbl);
-extern "C" long vdasm_resize_table_col_MMX(uint32 *out, const uint32 *const*in_table, const int *filter, int filter_width, uint32 w, long frac);
-extern "C" long vdasm_resize_table_row_MMX(uint32 *out, const uint32 *in, const int *filter, int filter_width, uint32 w, long accum, long frac);
+extern "C" void VDCDECL vdasm_resize_point32_MMX(const ScaleInfo *);
+extern "C" void VDCDECL vdasm_resize_interp_row_run_MMX(void *dst, const void *src, uint32 width, sint64 xaccum, sint64 x_inc);
+extern "C" void VDCDECL vdasm_resize_interp_col_run_MMX(void *dst, const void *src1, const void *src2, uint32 width, uint32 yaccum);
+extern "C" void VDCDECL vdasm_resize_ccint_row_MMX(void *dst, const void *src, uint32 count, uint32 xaccum, sint32 xinc, const void *tbl);
+extern "C" void VDCDECL vdasm_resize_ccint_col_MMX(void *dst, const void *src1, const void *src2, const void *src3, const void *src4, uint32 count, const void *tbl);
+extern "C" long VDCDECL vdasm_resize_table_col_MMX(uint32 *out, const uint32 *const*in_table, const int *filter, int filter_width, uint32 w, long frac);
+extern "C" long VDCDECL vdasm_resize_table_row_MMX(uint32 *out, const uint32 *in, const int *filter, int filter_width, uint32 w, long accum, long frac);
 
 int VDResamplerSeparablePointRowStageMMX::GetWindowSize() const {return 1;}
 void VDResamplerSeparablePointRowStageMMX::Process(void *dst, const void *src, uint32 w, uint32 u, uint32 dudx) {
@@ -1006,9 +1006,9 @@ void VDResamplerSeparableTableColStageMMX::Process(void *dst, const void *const 
 //
 ///////////////////////////////////////////////////////////////////////////
 
-extern "C" long vdasm_resize_table_col_SSE2(uint32 *out, const uint32 *const*in_table, const int *filter, int filter_width, uint32 w, long frac);
-extern "C" long vdasm_resize_table_row_SSE2(uint32 *out, const uint32 *in, const int *filter, int filter_width, uint32 w, long accum, long frac);
-extern "C" void vdasm_resize_ccint_col_SSE2(void *dst, const void *src1, const void *src2, const void *src3, const void *src4, uint32 count, const void *tbl);
+extern "C" long VDCDECL vdasm_resize_table_col_SSE2(uint32 *out, const uint32 *const*in_table, const int *filter, int filter_width, uint32 w, long frac);
+extern "C" long VDCDECL vdasm_resize_table_row_SSE2(uint32 *out, const uint32 *in, const int *filter, int filter_width, uint32 w, long accum, long frac);
+extern "C" void VDCDECL vdasm_resize_ccint_col_SSE2(void *dst, const void *src1, const void *src2, const void *src3, const void *src4, uint32 count, const void *tbl);
 
 VDResamplerSeparableCubicColStageSSE2::VDResamplerSeparableCubicColStageSSE2(double A)
 	: VDResamplerSeparableCubicColStageMMX(A)

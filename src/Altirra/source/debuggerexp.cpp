@@ -1226,7 +1226,7 @@ public:
 		if (!context.mpTarget)
 			return false;
 
-		result = context.mpTarget->DebugReadByte(x & 0xffff);
+		result = context.mpTarget->DebugReadByte(x & 0xffffff);
 		return true;
 	}
 
@@ -1255,7 +1255,7 @@ public:
 		if (!context.mpTarget)
 			return false;
 
-		result = (sint8)context.mpTarget->DebugReadByte(x & 0xffff);
+		result = (sint8)context.mpTarget->DebugReadByte(x & 0xffffff);
 		return true;
 	}
 
@@ -1284,8 +1284,8 @@ public:
 		if (!context.mpTarget)
 			return false;
 
-		uint8 c0 = context.mpTarget->DebugReadByte(x & 0xffff);
-		uint8 c1 = context.mpTarget->DebugReadByte((x+1) & 0xffff);
+		uint8 c0 = context.mpTarget->DebugReadByte(x & 0xffffff);
+		uint8 c1 = context.mpTarget->DebugReadByte((x+1) & 0xffffff);
 		result = (sint16)(c0 + (c1 << 8));
 		return true;
 	}
@@ -1315,10 +1315,10 @@ public:
 		if (!context.mpTarget)
 			return false;
 
-		uint8 c0 = context.mpTarget->DebugReadByte(x & 0xffff);
-		uint8 c1 = context.mpTarget->DebugReadByte((x+1) & 0xffff);
-		uint8 c2 = context.mpTarget->DebugReadByte((x+2) & 0xffff);
-		uint8 c3 = context.mpTarget->DebugReadByte((x+3) & 0xffff);
+		uint8 c0 = context.mpTarget->DebugReadByte(x & 0xffffff);
+		uint8 c1 = context.mpTarget->DebugReadByte((x+1) & 0xffffff);
+		uint8 c2 = context.mpTarget->DebugReadByte((x+2) & 0xffffff);
+		uint8 c3 = context.mpTarget->DebugReadByte((x+3) & 0xffffff);
 		result = (sint32)(c0 + (c1 << 8) + (c2 << 16) + (c3 << 24));
 		return true;
 	}
@@ -1348,8 +1348,8 @@ public:
 		if (!context.mpTarget)
 			return false;
 
-		result = context.mpTarget->DebugReadByte(x & 0xffff)
-			+ ((sint32)context.mpTarget->DebugReadByte((x + 1) & 0xffff) << 8);
+		result = context.mpTarget->DebugReadByte(x & 0xffffff)
+			+ ((sint32)context.mpTarget->DebugReadByte((x + 1) & 0xffffff) << 8);
 		return true;
 	}
 

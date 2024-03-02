@@ -23,6 +23,7 @@
 #include "console.h"
 #include "savestate.h"
 #include "simeventmanager.h"
+#include "trace.h"
 
 namespace {
 	const uint8 kModeToFetchRate[16]={
@@ -43,18 +44,7 @@ enum {
 	kATAnticEvent_WSYNC = 2
 };
 
-ATAnticEmulator::ATAnticEmulator()
-	: mHaltedCycles(0)
-	, mX(0)
-	, mY(0)
-	, mFrame(0)
-	, mFrameStart(0)
-	, mAnalysisMode(kAnalyzeOff)
-	, mpRegisterUpdateEvent(NULL)
-	, mRegisterUpdateHeadIdx(0)
-	, mpEventWSYNC(NULL)
-	, mpSimEventMgr(NULL)
-{
+ATAnticEmulator::ATAnticEmulator() {
 	SetPALMode(false);
 }
 
@@ -103,7 +93,6 @@ void ATAnticEmulator::ColdReset() {
 	mPFWidthShift = 0;
 	mPFDMAPatternCacheKey = 0xFFFFFFFF;
 	mbHScrollEnabled = false;
-	mGTIAHSyncOffset = 110;
 	mbInBuggedVBlank = false;
 	mbPhantomPMDMA = false;
 	mbPhantomPlayerDMA = false;
@@ -649,9 +638,6 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 				mbInBuggedVBlank = false;
 			}
 
-			if (mY == 248)
-				mGTIAHSyncOffset = 110;
-
 			mPFDecodeCounter = 1;
 			mPFDisplayCounter = 0;
 			mPFDMALastCheckX = 0;
@@ -708,19 +694,7 @@ void ATAnticEmulator::AdvanceScanline() {
 		*mpConn->mpAnticBusData = mWSYNCHoldValue;
 
 	if (++mY >= mScanlineLimit) {
-		mY = 0;
-		mbDLActive = false;		// necessary when DL DMA disabled for Joyride ptB
-
-		mpConn->AnticEndFrame();
-
-		// tell GTIA if the next field is an odd field
-		mpGTIA->SetFieldPolarity(!mbInBuggedVBlank || mVSyncShiftTime < 20);
-
-		if (mAnalysisMode)
-			memset(mActivityMap, 0, sizeof mActivityMap);
-
-		++mFrame;
-		mFrameStart = ATSCHEDULER_GETTIME(mpScheduler);
+		AdvanceFrame();
 	} else if (mY >= 248) {
 		mbDLActive = false;		// needed because The Empire Strikes Back has a 259-line display list (!)
 
@@ -804,6 +778,76 @@ void ATAnticEmulator::AdvanceScanline() {
 	if (mAbnormalDMAPattern) {
 		if (mpSimEventMgr)
 			mpSimEventMgr->NotifyEvent(kATSimEvent_AbnormalDMA);
+	}
+}
+
+void ATAnticEmulator::AdvanceFrame() {
+	mY = 0;
+	mbDLActive = false;		// necessary when DL DMA disabled for Joyride ptB
+
+	mpConn->AnticEndFrame();
+
+	// tell GTIA if the next field is an odd field
+	mpGTIA->SetFieldPolarity(!mbInBuggedVBlank || mVSyncShiftTime < 20);
+
+	if (mAnalysisMode)
+		memset(mActivityMap, 0, sizeof mActivityMap);
+
+	++mFrame;
+	mFrameStart = ATSCHEDULER_GETTIME(mpScheduler);
+
+	if (mpTraceChannelFrames) {
+		const uint64 t64 = mpScheduler->GetTick64();
+
+		mpTraceChannelFrames->AddTickEvent(t64, t64 + mScanlineLimit * 114, L"Frame", 0xFFFFFF);
+	}
+
+	if (mpTraceChannelDisplayList) {
+		const uint64 frameStart64 = mpScheduler->GetTick64() - mScanlineLimit * 114;
+		int y = 8;
+
+		while(y < 248) {
+			if (!mDLHistory[y].mbValid) {
+				++y;
+				continue;
+			}
+
+			const DLHistoryEntry& dle = mDLHistory[y++];
+			const uint8 mode = dle.mControl & 15;
+
+			if (mode < 2)
+				continue;
+
+			sint32 startY = y - 1;
+
+			while(y < 248) {
+				const DLHistoryEntry& dle2 = mDLHistory[y];
+
+				if (dle2.mbValid && ((dle2.mControl ^ mode) & 15))
+					break;
+
+				++y;
+			}
+
+			static constexpr const wchar_t *kModeNames[14]={
+				L"2",
+				L"3",
+				L"4",
+				L"5",
+				L"6",
+				L"7",
+				L"8",
+				L"9",
+				L"A",
+				L"B",
+				L"C",
+				L"D",
+				L"E",
+				L"F",
+			};
+
+			mpTraceChannelDisplayList->AddTickEvent(frameStart64 + startY * 114, frameStart64 + y * 114, kModeNames[mode - 2], kATTraceColor_Default);
+		}
 	}
 }
 
@@ -2104,6 +2148,23 @@ void ATAnticEmulator::GetRegisterState(ATAnticRegisterState& state) const {
 	state.mNMIEN	= mNMIEN;
 }
 
+void ATAnticEmulator::SetTraceContext(ATTraceContext *context) {
+	mpTraceContext = context;
+
+	if (context) {
+		ATTraceCollection *coll = mpTraceContext->mpCollection;
+
+		const uint64 baseTime = mpTraceContext->mBaseTime;
+		double invCycleRate = mpScheduler->GetRate().AsInverseDouble();
+
+		mpTraceChannelFrames = coll->AddGroup(L"Frames", kATTraceGroupType_Frames)->AddSimpleChannel(baseTime, invCycleRate, L"Frames");
+		mpTraceChannelDisplayList = coll->AddGroup(L"ANTIC")->AddSimpleChannel(baseTime, invCycleRate, L"DL");
+	} else {
+		mpTraceChannelDisplayList = nullptr;
+		mpTraceChannelFrames = nullptr;
+	}
+}
+
 void ATAnticEmulator::UpdateDMAPattern() {
 	int dmaStart = mPFDMAStart;
 	int dmaVEnd = mPFDMAVEnd;
@@ -2500,9 +2561,6 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 			mPFDisplayEnd = 112;
 			break;
 	}
-
-	if (pfActive && mX < mPFDisplayStart || mX >= mPFDisplayEnd)
-		mGTIAHSyncOffset = mX;
 
 	mPFDMAStart = 114;
 	mPFDMAEnd = 114;

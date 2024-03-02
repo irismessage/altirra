@@ -48,7 +48,7 @@ namespace {
 		return (_xgetbv(0) & 0x06) == 0x06;
 	}
 #else
-	extern "C" bool VDIsAVXSupportedByOS();
+	extern "C" bool VDCDECL VDIsAVXSupportedByOS();
 #endif
 }
 

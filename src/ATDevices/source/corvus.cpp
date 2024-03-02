@@ -367,7 +367,7 @@ void *ATDeviceCorvus::AsInterface(uint32 iid) {
 		case IATDevicePortInput::kTypeID: return static_cast<IATDevicePortInput *>(this);
 		case IATDeviceScheduling::kTypeID: return static_cast<IATDeviceScheduling *>(this);
 		case IATDeviceIndicators::kTypeID: return static_cast<IATDeviceIndicators *>(this);
-		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(this);
+		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(&mDeviceParent);
 	}
 
 	return ATDevice::AsInterface(iid);
@@ -401,14 +401,13 @@ bool ATDeviceCorvus::SetSettings(const ATPropertySet& pset) {
 }
 
 void ATDeviceCorvus::Init() {
+	mDeviceParent.Init(IATBlockDevice::kTypeID, "harddisk", L"Hard disk bus");
+	mDeviceParent.SetOnAttach([this] { mCorvusEmu.SetAttachedDevice(mDeviceParent.GetChild<IATBlockDevice>()); });
+	mDeviceParent.SetOnDetach([this] { mCorvusEmu.SetAttachedDevice(nullptr); });
 }
 
 void ATDeviceCorvus::Shutdown() {
-	auto *blk = mCorvusEmu.GetAttachedDevice();
-	if (blk) {
-		mCorvusEmu.SetAttachedDevice(nullptr);
-		vdpoly_cast<IATDevice *>(blk)->SetParent(nullptr);
-	}
+	mDeviceParent.Shutdown();
 
 	if (mpPortManager) {
 		mpPortManager->FreeInput(mPortInput);
@@ -443,39 +442,6 @@ void ATDeviceCorvus::InitIndicators(IATDeviceIndicatorManager *indmgr) {
 	mpIndMgr = indmgr;
 
 	mCorvusEmu.Init(mpIndMgr);
-}
-
-const char *ATDeviceCorvus::GetSupportedType(uint32 index) {
-	if (index == 0)
-		return "harddisk";
-
-	return nullptr;
-}
-
-void ATDeviceCorvus::GetChildDevices(vdfastvector<IATDevice *>& devs) {
-	auto *p = vdpoly_cast<IATDevice *>(mCorvusEmu.GetAttachedDevice());
-
-	if (p)
-		devs.push_back(p);
-}
-
-void ATDeviceCorvus::AddChildDevice(IATDevice *dev) {
-	if (mCorvusEmu.GetAttachedDevice())
-		return;
-
-	IATBlockDevice *blk = vdpoly_cast<IATBlockDevice *>(dev);
-	if (blk) {
-		mCorvusEmu.SetAttachedDevice(blk);
-		dev->SetParent(this);
-	}
-}
-
-void ATDeviceCorvus::RemoveChildDevice(IATDevice *dev) {
-	IATBlockDevice *blk = vdpoly_cast<IATBlockDevice *>(dev);
-	if (blk && blk == mCorvusEmu.GetAttachedDevice()) {
-		mCorvusEmu.SetAttachedDevice(nullptr);
-		dev->SetParent(nullptr);
-	}
 }
 
 void ATDeviceCorvus::OnPortOutputChanged(uint32 outputState) {

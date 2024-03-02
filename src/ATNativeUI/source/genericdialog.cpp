@@ -369,6 +369,7 @@ namespace {
 			kDockLocation_Fill
 		};
 
+		void Init();
 		void AddChild(LayoutObject *child, DockLocation location);
 
 		LayoutSpecs MeasureInternal(const vdsize32& r) override;
@@ -384,6 +385,10 @@ namespace {
 		vdfastvector<Child> mChildren;
 		LayoutSpecs mSpecs;
 	};
+
+	void LayoutDock::Init() {
+		mChildren.clear();
+	}
 
 	void LayoutDock::AddChild(LayoutObject *child, DockLocation location) {
 		mChildren.push_back({ child, location });
@@ -496,8 +501,13 @@ private:
 	bool OnErase(VDZHDC hdc) override;
 	bool OnOK() override;
 	bool OnCancel() override;
+	void OnSetFont(VDZHFONT hfont) override;
+	void OnSize() override;
 
 	bool ShouldSetDialogIcon() const override { return false; }
+
+	void ReinitLayout();
+	vdsize32 MapDialogUnitSize(const vdsize32&);
 
 	static VDStringW sDefaultCaption;
 
@@ -511,6 +521,20 @@ private:
 
 	HWND mhwndTitle = nullptr;
 	HWND mhwndDisableButton = nullptr;
+
+	vdsize32 mLastLayoutSize { 0, 0 };
+
+	LayoutWindow	mLayoutIcon;
+	LayoutWindow	mLayoutTitle;
+	LayoutCustom	mLayoutTitleCustom;
+	LayoutWindow	mLayoutText;
+	LayoutCustom	mLayoutTextCustom;
+	LayoutWindow	mLayoutDisable;
+	LayoutWindow	mLayoutOK;
+	LayoutWindow	mLayoutCancel;
+	LayoutStack		mLayoutMainStack;
+	LayoutDock		mLayoutMessageDock;
+	LayoutStack		mLayoutOptionsStack;
 };
 
 VDStringW ATGenericDialogW32::sDefaultCaption;
@@ -546,6 +570,174 @@ bool ATGenericDialogW32::OnLoaded() {
 	SetCaption(mOptions.mpCaption ? mOptions.mpCaption : sDefaultCaption.c_str());
 	SetControlText(IDC_GENERIC_TEXT, mOptions.mpMessage);
 
+	if (mOptions.mResultMask & kATUIGenericResultMask_Allow)
+		SetControlText(IDOK, L"Allow");
+	else if (!(mOptions.mResultMask & (kATUIGenericResultMask_Allow | kATUIGenericResultMask_OK))) {
+		EnableControl(IDOK, false);
+		ShowControl(IDOK, false);
+	}
+
+	if (mOptions.mResultMask & kATUIGenericResultMask_Deny)
+		SetControlText(IDCANCEL, L"Deny");
+	else if (!(mOptions.mResultMask & (kATUIGenericResultMask_Deny | kATUIGenericResultMask_Cancel))) {
+		EnableControl(IDCANCEL, false);
+		ShowControl(IDCANCEL, false);
+
+		SetFocusToControl(IDOK);
+	} else {
+		SetFocusToControl(IDCANCEL);
+	}
+
+	ReinitLayout();
+
+	const DWORD dwStyle = GetWindowLong(mhdlg, GWL_STYLE);
+	const DWORD dwExStyle = GetWindowLong(mhdlg, GWL_EXSTYLE);
+
+	RECT rMargins {};
+	AdjustWindowRectEx(&rMargins, dwStyle, FALSE, dwExStyle);
+
+	const int marginsX = rMargins.right - rMargins.left;
+	const int marginsY = rMargins.bottom - rMargins.top;
+
+	RECT rWorkArea {};
+	SystemParametersInfo(SPI_GETWORKAREA, 0, &rWorkArea, FALSE);
+
+	LayoutWindow layoutMainWindow;
+	layoutMainWindow.Init(mhdlg, vdrect32f(0, 0, 1, 1));
+
+	const sint32 workAreaWidth = rWorkArea.right - rWorkArea.left;
+
+	vdsize32 pad = MapDialogUnitSize(vdsize32 { 278, 1 });
+
+	const sint32 widths[]={
+		workAreaWidth,
+		(workAreaWidth * 7) / 8,
+		(workAreaWidth * 3) / 4,
+		(workAreaWidth * 5) / 8,
+		pad.w
+	};
+
+	sint32 bestHeight = INT32_MAX;
+	sint32 bestWidth = workAreaWidth;
+
+	for(sint32 width : widths) {
+		const LayoutSpecs& layoutSpecs = mLayoutMainStack.MeasureInternal({ width, rWorkArea.bottom - rWorkArea.top});
+
+		if (bestHeight > layoutSpecs.mPreferredSize.h || (bestHeight == layoutSpecs.mPreferredSize.h && bestWidth > layoutSpecs.mPreferredSize.w)) {
+			bestWidth = layoutSpecs.mPreferredSize.w;
+			bestHeight = layoutSpecs.mPreferredSize.h;
+		}
+	}
+
+	if (bestWidth < std::end(widths)[-1])
+		bestWidth = std::end(widths)[-1];
+
+	const LayoutSpecs& layoutSpecs = mLayoutMainStack.MeasureInternal({ bestWidth, bestHeight });
+	mLayoutMainStack.ArrangeInternal(vdrect32(0, 0, bestWidth, bestHeight));
+	mSplitY = mLayoutOptionsStack.GetArea().top;
+
+	RECT r = { 0, 0, bestWidth, bestHeight };
+	AdjustWindowRectEx(&r, dwStyle, FALSE, dwExStyle);
+
+	vdrect32 rWin(r.left, r.top, r.right, r.bottom);
+
+	vdrect32 rCenterTarget { rWorkArea.left, rWorkArea.top, rWorkArea.right, rWorkArea.bottom };
+
+	if (!mOptions.mCenterTarget.empty())
+		rCenterTarget = mOptions.mCenterTarget;
+
+	mLastLayoutSize = { bestWidth, bestHeight };
+
+	rWin.translate(rCenterTarget.left + ((rCenterTarget.right - rCenterTarget.left) - rWin.width()) / 2, rCenterTarget.top + ((rCenterTarget.bottom - rCenterTarget.top) - rWin.height()) / 2);
+	layoutMainWindow.ArrangeInternal(rWin);
+
+	SendMessage(mhdlg, DM_REPOSITION, 0, 0);
+
+	return true;
+}
+
+void ATGenericDialogW32::OnDestroy() {
+	if (mOptions.mpIgnoreTag)
+		mbIgnoreEnabled = IsButtonChecked(IDC_DISABLE);
+}
+
+bool ATGenericDialogW32::PreNCDestroy() {
+	if (mhFontTitle) {
+		DeleteObject(mhFontTitle);
+		mhFontTitle = nullptr;
+	}
+
+	return VDDialogFrameW32::PreNCDestroy();
+}
+
+bool ATGenericDialogW32::OnErase(VDZHDC hdc) {
+	RECT r;
+	if (GetClientRect(mhdlg, &r)) {
+		SetBkMode(hdc, OPAQUE);
+		SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
+
+		const RECT r1 { 0, 0, r.right, mSplitY };
+		ExtTextOutW(hdc, 0, 0, ETO_OPAQUE, &r1, L"", 0, nullptr);
+
+		const RECT r2 { 0, mSplitY, r.right, r.bottom };
+		SetBkColor(hdc, GetSysColor(COLOR_3DFACE));
+		ExtTextOutW(hdc, 0, 0, ETO_OPAQUE, &r2, L"", 0, nullptr);
+	}
+	return true;
+}
+
+bool ATGenericDialogW32::OnOK() {
+	if (mOptions.mResultMask & kATUIGenericResultMask_Allow)
+		mResult = kATUIGenericResult_Allow;
+	else
+		mResult = kATUIGenericResult_OK;
+
+	return false;
+}
+
+bool ATGenericDialogW32::OnCancel() {
+	// We might get a cancel request with no negative response enabled if the dialog
+	// is simply an informative one. In that case, map the negative request to the
+	// available positive response.
+	mResult = kATUIGenericResult_Cancel;
+
+	if (mOptions.mResultMask & kATUIGenericResultMask_Deny)
+		mResult = kATUIGenericResult_Deny;
+	else if (!(mOptions.mResultMask & kATUIGenericResultMask_Cancel)) {
+		if (mOptions.mResultMask & kATUIGenericResultMask_Allow)
+			mResult = kATUIGenericResult_Allow;
+		else if (mOptions.mResultMask & kATUIGenericResultMask_OK)
+			mResult = kATUIGenericResult_OK;
+	}
+
+	return false;
+}
+
+void ATGenericDialogW32::OnSetFont(VDZHFONT hfont) {
+	mLastLayoutSize = {0, 0};
+	OnSize();
+}
+
+void ATGenericDialogW32::OnSize() {
+	VDDialogFrameW32::OnSize();
+
+	const vdsize32& sz = GetClientArea().size();
+
+	if (mLastLayoutSize != sz) {
+		mLastLayoutSize = sz;
+
+		ReinitLayout();
+
+		mLayoutMainStack.Measure(sz);
+
+		mLayoutMainStack.ArrangeInternal(vdrect32 { 0, 0, sz.w, sz.h });
+		mSplitY = mLayoutOptionsStack.GetArea().top;
+
+		InvalidateRect(mhdlg, NULL, TRUE);
+	}
+}
+
+void ATGenericDialogW32::ReinitLayout() {
 	const HWND hwndMessage = GetControl(IDC_GENERIC_TEXT);
 	mhwndTitle = GetControl(IDC_GENERIC_TITLE);
 	mhwndDisableButton = GetControl(IDC_DISABLE);
@@ -561,11 +753,15 @@ bool ATGenericDialogW32::OnLoaded() {
 			logFont.lfHeight = (logFont.lfHeight * 4) / 3;
 			logFont.lfWidth = (logFont.lfWidth * 4) / 3;
 
-			mhFontTitle = CreateFontIndirect(&logFont);
-			if (mhFontTitle) {
-				SendMessage(mhwndTitle, WM_SETFONT, (WPARAM)mhFontTitle, TRUE);
+			HFONT hNewFontTitle = CreateFontIndirect(&logFont);
+			if (hNewFontTitle) {
+				SendMessage(mhwndTitle, WM_SETFONT, (WPARAM)hNewFontTitle, TRUE);
 
-				hFontTitle = mhFontTitle;
+				if (mhFontTitle)
+					DeleteObject(mhFontTitle);
+
+				mhFontTitle = hNewFontTitle;
+				hFontTitle = hNewFontTitle;
 			}
 		}
 	} else {
@@ -650,34 +846,21 @@ bool ATGenericDialogW32::OnLoaded() {
 		}
 	}
 
-	RECT rInsets { 0, 0, 7, 7 };
-	MapDialogRect(mhdlg, &rInsets);
+	vdsize32 pad = MapDialogUnitSize(vdsize32 { 7, 7 });
 
-	const int padX = rInsets.right - rInsets.left;
-	const int padY = rInsets.bottom - rInsets.top;
+	const int padX = pad.w;
+	const int padY = pad.h;
 
-	LayoutWindow layoutIcon;
-	LayoutWindow layoutTitle;
-	LayoutCustom layoutTitleCustom;
-	LayoutWindow layoutText;
-	LayoutCustom layoutTextCustom;
-	LayoutWindow layoutDisable;
-	LayoutWindow layoutOK;
-	LayoutWindow layoutCancel;
-	LayoutStack layoutMainStack;
-	LayoutDock layoutMessageDock;
-	LayoutStack layoutOptionsStack;
-
-	layoutText.Init(hwndMessage, vdrect32f(0, 0, 1, 1));
-	layoutTitle.Init(mhwndTitle, vdrect32f(0, 0, 1, 1));
+	mLayoutText.Init(hwndMessage, vdrect32f(0, 0, 1, 1));
+	mLayoutTitle.Init(mhwndTitle, vdrect32f(0, 0, 1, 1));
 
 	if (mOptions.mpIgnoreTag)
-		layoutDisable.Init(mhwndDisableButton, vdrect32f(0, 0.5f, 0, 0.5f));
+		mLayoutDisable.Init(mhwndDisableButton, vdrect32f(0, 0.5f, 0, 0.5f));
 	else
 		ShowControl(IDC_DISABLE, false);
 
-	layoutOK.Init(GetControl(IDOK), vdrect32f(0.5f, 0.5f, 0.5f, 0.5f));
-	layoutCancel.Init(GetControl(IDCANCEL), vdrect32f(0.5f, 0.5f, 0.5f, 0.5f));
+	mLayoutOK.Init(GetControl(IDOK), vdrect32f(0.5f, 0.5f, 0.5f, 0.5f));
+	mLayoutCancel.Init(GetControl(IDCANCEL), vdrect32f(0.5f, 0.5f, 0.5f, 0.5f));
 
 	const auto measureText = [](HWND hwnd, HFONT hFont, const wchar_t *s) {
 		return [hwnd,hFont,str=VDStringW(s)](const vdsize32& sz) -> LayoutSpecs {
@@ -710,145 +893,51 @@ bool ATGenericDialogW32::OnLoaded() {
 		};
 	};
 
-	layoutMessageDock.SetMargins(vdrect32(padX, padY, padX, padY));
+	mLayoutMessageDock.Init();
+	mLayoutMessageDock.SetMargins(vdrect32(padX, padY, padX, padY));
 
 	if (iconVisible) {
-		layoutIcon.Init(GetControl(IDC_GENERIC_ICON), vdrect32f(0.5f, 0.0f, 0.5f, 0.0f));
-		layoutIcon.SetMargins(vdrect32(0, 0, padX, 0));
-		layoutMessageDock.AddChild(&layoutIcon, LayoutDock::kDockLocation_Left);
+		mLayoutIcon.Init(GetControl(IDC_GENERIC_ICON), vdrect32f(0.5f, 0.0f, 0.5f, 0.0f));
+		mLayoutIcon.SetMargins(vdrect32(0, 0, padX, 0));
+		mLayoutMessageDock.AddChild(&mLayoutIcon, LayoutDock::kDockLocation_Left);
 	}
 
 	if (mOptions.mpTitle) {
-		layoutTitleCustom.SetMargins(vdrect32(0, titleOffsetY, 0, padY));
-		layoutTitleCustom.Init(measureText(mhwndTitle, hFontTitle, mOptions.mpTitle), arrangeText(layoutTitle));
-		layoutMessageDock.AddChild(&layoutTitleCustom, LayoutDock::kDockLocation_Top);
+		mLayoutTitleCustom.SetMargins(vdrect32(0, titleOffsetY, 0, padY));
+		mLayoutTitleCustom.Init(measureText(mhwndTitle, hFontTitle, mOptions.mpTitle), arrangeText(mLayoutTitle));
+		mLayoutMessageDock.AddChild(&mLayoutTitleCustom, LayoutDock::kDockLocation_Top);
 	}
 
 	if (mOptions.mpMessage) {
-		layoutTextCustom.SetMargins(vdrect32(0, mOptions.mpTitle ? 0 : titleOffsetY, 0, titleOffsetY));
-		layoutTextCustom.Init(measureText(hwndMessage, hFontMessage, mOptions.mpMessage), arrangeText(layoutText));
-		layoutMessageDock.AddChild(&layoutTextCustom, LayoutDock::kDockLocation_Fill);
+		mLayoutTextCustom.SetMargins(vdrect32(0, mOptions.mpTitle ? 0 : titleOffsetY, 0, titleOffsetY));
+		mLayoutTextCustom.Init(measureText(hwndMessage, hFontMessage, mOptions.mpMessage), arrangeText(mLayoutText));
+		mLayoutMessageDock.AddChild(&mLayoutTextCustom, LayoutDock::kDockLocation_Fill);
 	}
 
-	layoutOptionsStack.Init(false, padX);
-	layoutOptionsStack.SetMargins(vdrect32(padX, padY, padX, padY));
+	mLayoutOptionsStack.Init(false, padX);
+	mLayoutOptionsStack.SetMargins(vdrect32(padX, padY, padX, padY));
 
 	if (mOptions.mpIgnoreTag)
-		layoutOptionsStack.AddChild(&layoutDisable, 1);
+		mLayoutOptionsStack.AddChild(&mLayoutDisable, 1);
 	else
-		layoutOptionsStack.AddChild(nullptr, 1);
+		mLayoutOptionsStack.AddChild(nullptr, 1);
 
-	layoutOptionsStack.AddChild(&layoutOK, 0);
-	layoutOptionsStack.AddChild(&layoutCancel, 0);
+	if (mOptions.mResultMask & (kATUIGenericResultMask_Allow | kATUIGenericResultMask_OK))
+		mLayoutOptionsStack.AddChild(&mLayoutOK, 0);
 
-	layoutMainStack.Init(true, 0);
-	layoutMainStack.AddChild(&layoutMessageDock, 1);
-	layoutMainStack.AddChild(&layoutOptionsStack, 0);
+	if (mOptions.mResultMask & (kATUIGenericResultMask_Deny | kATUIGenericResultMask_Cancel))
+		mLayoutOptionsStack.AddChild(&mLayoutCancel, 0);
 
-	const DWORD dwStyle = GetWindowLong(mhdlg, GWL_STYLE);
-	const DWORD dwExStyle = GetWindowLong(mhdlg, GWL_EXSTYLE);
+	mLayoutMainStack.Init(true, 0);
+	mLayoutMainStack.AddChild(&mLayoutMessageDock, 1);
+	mLayoutMainStack.AddChild(&mLayoutOptionsStack, 0);
+}
 
-	RECT rMargins {};
-	AdjustWindowRectEx(&rMargins, dwStyle, FALSE, dwExStyle);
-
-	const int marginsX = rMargins.right - rMargins.left;
-	const int marginsY = rMargins.bottom - rMargins.top;
-
-	RECT rWorkArea {};
-	SystemParametersInfo(SPI_GETWORKAREA, 0, &rWorkArea, FALSE);
-
-	LayoutWindow layoutMainWindow;
-	layoutMainWindow.Init(mhdlg, vdrect32f(0, 0, 1, 1));
-
-	const sint32 workAreaWidth = rWorkArea.right - rWorkArea.left;
-
-	RECT rVWidth = { 0, 0, 278, 1 };
-	MapDialogRect(mhdlg, &rVWidth);
-
-	const sint32 widths[]={
-		workAreaWidth,
-		(workAreaWidth * 7) / 8,
-		(workAreaWidth * 3) / 4,
-		(workAreaWidth * 5) / 8,
-		rVWidth.right - rVWidth.left
+vdsize32 ATGenericDialogW32::MapDialogUnitSize(const vdsize32& sz) {
+	return vdsize32 {
+		(sz.w * (int)mDialogUnits.mWidth4 + 2) >> 2,
+		(sz.h * (int)mDialogUnits.mHeight8 + 4) >> 3
 	};
-
-	sint32 bestHeight = INT32_MAX;
-	sint32 bestWidth = workAreaWidth;
-
-	for(sint32 width : widths) {
-		const LayoutSpecs& layoutSpecs = layoutMainStack.MeasureInternal({ width, rWorkArea.bottom - rWorkArea.top});
-
-		if (bestHeight > layoutSpecs.mPreferredSize.h || (bestHeight == layoutSpecs.mPreferredSize.h && bestWidth > layoutSpecs.mPreferredSize.w)) {
-			bestWidth = layoutSpecs.mPreferredSize.w;
-			bestHeight = layoutSpecs.mPreferredSize.h;
-		}
-	}
-
-	if (bestWidth < std::end(widths)[-1])
-		bestWidth = std::end(widths)[-1];
-
-	const LayoutSpecs& layoutSpecs = layoutMainStack.MeasureInternal({ bestWidth, bestHeight });
-	layoutMainStack.ArrangeInternal(vdrect32(0, 0, bestWidth, bestHeight));
-
-	RECT r = { 0, 0, bestWidth, bestHeight };
-	AdjustWindowRectEx(&r, dwStyle, FALSE, dwExStyle);
-
-	vdrect32 rWin(r.left, r.top, r.right, r.bottom);
-
-	vdrect32 rCenterTarget { rWorkArea.left, rWorkArea.top, rWorkArea.right, rWorkArea.bottom };
-
-	if (!mOptions.mCenterTarget.empty())
-		rCenterTarget = mOptions.mCenterTarget;
-
-	rWin.translate(rCenterTarget.left + ((rCenterTarget.right - rCenterTarget.left) - rWin.width()) / 2, rCenterTarget.top + ((rCenterTarget.bottom - rCenterTarget.top) - rWin.height()) / 2);
-	layoutMainWindow.ArrangeInternal(rWin);
-
-	SendMessage(mhdlg, DM_REPOSITION, 0, 0);
-
-	mSplitY = layoutOptionsStack.GetArea().top;
-
-	return true;
-}
-
-void ATGenericDialogW32::OnDestroy() {
-	if (mOptions.mpIgnoreTag)
-		mbIgnoreEnabled = IsButtonChecked(IDC_DISABLE);
-}
-
-bool ATGenericDialogW32::PreNCDestroy() {
-	if (mhFontTitle) {
-		DeleteObject(mhFontTitle);
-		mhFontTitle = nullptr;
-	}
-
-	return VDDialogFrameW32::PreNCDestroy();
-}
-
-bool ATGenericDialogW32::OnErase(VDZHDC hdc) {
-	RECT r;
-	if (GetClientRect(mhdlg, &r)) {
-		SetBkMode(hdc, OPAQUE);
-		SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
-
-		const RECT r1 { 0, 0, r.right, mSplitY };
-		ExtTextOutW(hdc, 0, 0, ETO_OPAQUE, &r1, L"", 0, nullptr);
-
-		const RECT r2 { 0, mSplitY, r.right, r.bottom };
-		SetBkColor(hdc, GetSysColor(COLOR_3DFACE));
-		ExtTextOutW(hdc, 0, 0, ETO_OPAQUE, &r2, L"", 0, nullptr);
-	}
-	return true;
-}
-
-bool ATGenericDialogW32::OnOK() {
-	mResult = kATUIGenericResult_OK;
-	return false;
-}
-
-bool ATGenericDialogW32::OnCancel() {
-	mResult = kATUIGenericResult_Cancel;
-	return false;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -869,6 +958,8 @@ ATUIGenericResult ATUIShowGenericDialog(const ATUIGenericDialogOptions& opts) {
 	} kResultMappings[]={
 		{ kATUIGenericResult_Cancel, "cancel" },
 		{ kATUIGenericResult_OK, "ok" },
+		{ kATUIGenericResult_Allow, "allow" },
+		{ kATUIGenericResult_Deny, "deny" },
 	};
 
 	if (opts.mpIgnoreTag) {

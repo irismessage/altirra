@@ -55,8 +55,8 @@ void ATCreateDeviceKMKJZIDE(const ATPropertySet& pset, IATDevice **dev) {
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefKMKJZIDE = { "kmkjzide", "kmkjzide", L"KMK/JZ IDE v1", ATCreateDeviceKMKJZIDE<false> };
-extern const ATDeviceDefinition g_ATDeviceDefKMKJZIDE2 = { "kmkjzide2", "kmkjzide2", L"KMK/JZ IDE v2", ATCreateDeviceKMKJZIDE<true> };
+extern const ATDeviceDefinition g_ATDeviceDefKMKJZIDE = { "kmkjzide", "kmkjzide", L"KMK/JZ IDE v1", ATCreateDeviceKMKJZIDE<false>, kATDeviceDefFlag_RebootOnPlug };
+extern const ATDeviceDefinition g_ATDeviceDefKMKJZIDE2 = { "kmkjzide2", "kmkjzide2", L"KMK/JZ IDE v2", ATCreateDeviceKMKJZIDE<true>, kATDeviceDefFlag_RebootOnPlug };
 
 ATKMKJZIDE::ATKMKJZIDE(bool version2)
 	: mbVersion2(version2)
@@ -115,6 +115,7 @@ void ATKMKJZIDE::GetSettings(ATPropertySet& settings) {
 
 		settings.SetString("revision", revstr);
 		settings.SetBool("writeprotect", mbWriteProtect);
+		settings.SetBool("nvramguard", mbNVRAMGuard);
 	}
 
 	settings.SetUint32("id", (uint32)VDFindLowestSetBit(mDeviceId));
@@ -146,6 +147,7 @@ bool ATKMKJZIDE::SetSettings(const ATPropertySet& settings) {
 		}
 
 		mbWriteProtect = settings.GetBool("writeprotect", false);
+		mbNVRAMGuard = settings.GetBool("nvramguard", true);
 	}
 
 	uint32 id = settings.GetUint32("id", 0);
@@ -229,7 +231,7 @@ void ATKMKJZIDE::Shutdown() {
 
 	for(auto& blockDev : mpBlockDevices) {
 		if (blockDev) {
-			vdpoly_cast<IATDevice *>(blockDev)->SetParent(nullptr);
+			vdpoly_cast<IATDevice *>(blockDev)->SetParent(nullptr, 0);
 			blockDev = nullptr;
 		}
 	}
@@ -250,6 +252,9 @@ void ATKMKJZIDE::GetDeviceInfo(ATDeviceInfo& info) {
 void ATKMKJZIDE::ColdReset() {
 	memset(mRAM, 0xFF, sizeof mRAM);
 
+	if (mbNVRAMGuard)
+		mRTC.Restore();
+
 	mFlashCtrl.ColdReset();
 	mSDXCtrl.ColdReset();
 
@@ -264,7 +269,7 @@ void ATKMKJZIDE::ColdReset() {
 
 	if (mpCartPort) {
 		mpCartPort->OnLeftWindowChanged(mCartId, mbSDXEnabled);
-		mpCartPort->EnablePassThrough(mCartId, mbExternalEnabled, mbExternalEnabled, mbExternalEnabled);
+		UpdateCartPassThrough();
 	}
 
 	UpdateMemoryLayersSDX();
@@ -306,7 +311,7 @@ void ATKMKJZIDE::SaveNVRAM() {
 	VDRegistryAppKey key("Nonvolatile RAM");
 
 	ATRTCV3021Emulator::NVState state {};
-	mRTC.Save(state);
+	mRTC.Save(state, mbNVRAMGuard);
 
 	key.setBinary("IDEPlus clock", (const char *)state.mData, (int)sizeof state.mData);
 }
@@ -506,11 +511,19 @@ uint8 ATKMKJZIDE::ReadPBIStatus(uint8 busData, bool debugOnly) {
 	return busData;
 }
 
+const wchar_t *ATKMKJZIDE::GetBusName() const {
+	return L"IDE Bus";
+}
+
 const char *ATKMKJZIDE::GetSupportedType(uint32 index) {
 	if (index == 0)
 		return "harddisk";
 
 	return nullptr;
+}
+
+IATDeviceBus *ATKMKJZIDE::GetDeviceBus(uint32 index) {
+	return index ? nullptr : this;
 }
 
 void ATKMKJZIDE::GetChildDevices(vdfastvector<IATDevice *>& devs) {
@@ -531,7 +544,7 @@ void ATKMKJZIDE::AddChildDevice(IATDevice *dev) {
 
 		if (blockDevice) {
 			mpBlockDevices[i] = blockDevice;
-			dev->SetParent(this);
+			dev->SetParent(this, 0);
 
 			mIDE[i].OpenImage(blockDevice);
 			mIDE[i^1].SetIsSingle(false);
@@ -550,7 +563,7 @@ void ATKMKJZIDE::RemoveChildDevice(IATDevice *dev) {
 		if (mpBlockDevices[i] == blockDevice) {
 			mIDE[i].CloseImage();
 			mIDE[i^1].SetIsSingle(true);
-			dev->SetParent(nullptr);
+			dev->SetParent(nullptr, 0);
 			mpBlockDevices[i] = nullptr;
 			break;
 		}
@@ -581,11 +594,13 @@ void ATKMKJZIDE::UpdateCartSense(bool leftActive) {
 
 void ATKMKJZIDE::DumpStatus(ATConsoleOutput& output) {
 	ATRTCV3021Emulator::NVState nvstate;
-	mRTC.Save(nvstate);
+	ATRTCV3021Emulator::NVState nvstate2;
+	mRTC.Save(nvstate, false);
+	mRTC.Save(nvstate2, true);
 
 	output("KMK/JZ IDE v%c status:", mbVersion2 ? '2' : '1');
 
-	output("  NVRAM: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X"
+	output("  NVRAM (current):         %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X"
 		, nvstate.mData[0]
 		, nvstate.mData[1]
 		, nvstate.mData[2]
@@ -596,6 +611,18 @@ void ATKMKJZIDE::DumpStatus(ATConsoleOutput& output) {
 		, nvstate.mData[7]
 		, nvstate.mData[8]
 		, nvstate.mData[9]);
+
+	output("  NVRAM (last user data):  %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X"
+		, nvstate2.mData[0]
+		, nvstate2.mData[1]
+		, nvstate2.mData[2]
+		, nvstate2.mData[3]
+		, nvstate2.mData[4]
+		, nvstate2.mData[5]
+		, nvstate2.mData[6]
+		, nvstate2.mData[7]
+		, nvstate2.mData[8]
+		, nvstate2.mData[9]);
 
 	output("  SDX enabled:           %s%s", mbSDXEnabled ? "yes" : "no", mbSDXUpstreamEnabled ? "" : " (disabled by upstream cart)");
 	output("  External cart enabled: %s", mbExternalEnabled ? "yes" : "no");
@@ -929,8 +956,7 @@ bool ATKMKJZIDE::OnControlWrite(void *thisptr0, uint32 addr, uint8 value) {
 				if (thisptr->mbExternalEnabled != extEnabled) {
 					thisptr->mbExternalEnabled = extEnabled;
 
-					if (thisptr->mpCartPort)
-						thisptr->mpCartPort->EnablePassThrough(thisptr->mCartId, extEnabled, extEnabled, extEnabled);
+					thisptr->UpdateCartPassThrough();
 				}
 
 				thisptr->UpdateMemoryLayersSDX();
@@ -1028,4 +1054,13 @@ void ATKMKJZIDE::UpdateMemoryLayersSDX() {
 	mpMemMan->EnableLayer(mpMemLayerSDXControl, kATMemoryAccessMode_CPURead, controlRead);
 	mpMemMan->EnableLayer(mpMemLayerSDXControl, kATMemoryAccessMode_CPUWrite, sdxEnabled);
 	mpMemMan->EnableLayer(mpMemLayerSDX, sdxEnabled);
+
+	UpdateCartPassThrough();
+}
+
+void ATKMKJZIDE::UpdateCartPassThrough() {
+	if (mpCartPort) {
+		const bool cartEnabled = mbExternalEnabled && !mbSDXEnabled;
+		mpCartPort->EnablePassThrough(mCartId, cartEnabled, cartEnabled, cartEnabled);
+	}
 }

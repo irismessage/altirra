@@ -77,6 +77,10 @@ extern const ATDeviceDefinition g_ATDeviceDefDiskDriveIndusGT;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveXF551;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveATR8000;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrivePercom;
+extern const ATDeviceDefinition g_ATDeviceDefBrowser;
+extern const ATDeviceDefinition g_ATDeviceDefVBXE;
+extern const ATDeviceDefinition g_ATDeviceDefXELCF;
+extern const ATDeviceDefinition g_ATDeviceDefRapidus;
 
 void ATRegisterDevices(ATDeviceManager& dm) {
 	static const ATDeviceDefinition *const kDeviceDefs[]={
@@ -135,10 +139,14 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefDiskDriveXF551,
 		&g_ATDeviceDefDiskDriveATR8000,
 		&g_ATDeviceDefDiskDrivePercom,
+		&g_ATDeviceDefBrowser,
+		&g_ATDeviceDefVBXE,
+		&g_ATDeviceDefXELCF,
+		&g_ATDeviceDefRapidus,
 	};
 
 	for(const ATDeviceDefinition *def : kDeviceDefs)
-		dm.AddDeviceFactory(def->mpTag, def->mpFactoryFn);
+		dm.AddDeviceDefinition(def);
 
 	ATRegisterDeviceLibrary(dm);
 

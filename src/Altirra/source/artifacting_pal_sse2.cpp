@@ -578,7 +578,7 @@ xloop:
 		pop		esi
 		pop		edi
 		pop		ebp
-		ret		16
+		ret		28
 	}
 }
 

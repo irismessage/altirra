@@ -35,12 +35,13 @@ class IVDRandomAccessStream;
 // run about 1% slower in PAL. We currently cheat and just run the tape
 // 1% slower too....
 
-const int kATCassetteAudioSamplesPerDataSample = 2;
+const int kATCassetteAudioSamplesPerDataSample = 1;
 const int kATCassetteCyclesPerAudioSample = 56;
 const int kATCassetteCyclesPerDataSample = kATCassetteCyclesPerAudioSample * kATCassetteAudioSamplesPerDataSample;
 
 /// Sampling rate for data samples stored in memory.
 constexpr float kATCassetteDataSampleRate = (7159090.0f / 4.0f) / (float)kATCassetteCyclesPerDataSample;
+constexpr double kATCassetteDataSampleRateD = (7159090.0 / 4.0) / (double)kATCassetteCyclesPerDataSample;
 
 /// Sampling rate for audio samples stored in memory. Note that this is internal to
 /// block storage; the blocks themselves resample up to sync mixer rate.
@@ -82,7 +83,10 @@ public:
 	///
 	/// Returns the decoded bit.
 	///
-	virtual bool GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshold, bool prevBit) const = 0;
+	virtual bool GetBit(uint32 pos, uint32 averagingPeriod, uint32 threshold, bool prevBit, bool bypassFSK) const = 0;
+
+	/// Decodes a bit from the tape without averaging and bypassing FSK decoding.
+	virtual bool GetTurboBit(uint32 pos) const = 0;
 
 	/// Read signal peaks.
 	///
@@ -115,7 +119,8 @@ public:
 };
 
 void ATCreateNewCassetteImage(IATCassetteImage **ppImage);
-void ATLoadCassetteImage(IVDRandomAccessStream& file, IATCassetteImage **ppImage);
+void ATLoadCassetteImage(IVDRandomAccessStream& file, IVDRandomAccessStream *analysisOutput, IATCassetteImage **ppImage);
 void ATSaveCassetteImageCAS(IVDRandomAccessStream& file, IATCassetteImage *image);
+void ATSaveCassetteImageWAV(IVDRandomAccessStream& file, IATCassetteImage *image);
 
 #endif

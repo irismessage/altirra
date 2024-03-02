@@ -64,7 +64,7 @@ void VDAlignedVirtualFree(void *p) {
 	VirtualFree(p, 0, MEM_RELEASE);
 }
 
-void VDSwapMemoryScalar(void *p0, void *p1, size_t bytes) {
+void __cdecl VDSwapMemoryScalar(void *p0, void *p1, size_t bytes) {
 	uint32 *dst0 = (uint32 *)p0;
 	uint32 *dst1 = (uint32 *)p1;
 
@@ -91,7 +91,7 @@ void VDSwapMemoryScalar(void *p0, void *p1, size_t bytes) {
 }
 
 #if defined(VD_CPU_AMD64) || defined(VD_CPU_X86)
-	void VDSwapMemorySSE(void *p0, void *p1, size_t bytes) {
+	void __cdecl VDSwapMemorySSE(void *p0, void *p1, size_t bytes) {
 		if (((uint32)(size_t)p0 | (uint32)(size_t)p1) & 15)
 			return VDSwapMemoryScalar(p0, p1, bytes);
 
@@ -385,14 +385,14 @@ void VDMemset32Rect(void *dst, ptrdiff_t pitch, uint32 value, size_t w, size_t h
 	extern "C" void __cdecl VDFastMemcpyPartialMMX(void *dst, const void *src, size_t bytes);
 	extern "C" void __cdecl VDFastMemcpyPartialMMX2(void *dst, const void *src, size_t bytes);
 
-	void VDFastMemcpyPartialScalar(void *dst, const void *src, size_t bytes) {
+	void __cdecl VDFastMemcpyPartialScalar(void *dst, const void *src, size_t bytes) {
 		if (!(((int)dst | (int)src | bytes) & 7))
 			VDFastMemcpyPartialScalarAligned8(dst, src, bytes);
 		else
 			memcpy(dst, src, bytes);
 	}
 
-	void VDFastMemcpyFinishScalar() {
+	void __cdecl VDFastMemcpyFinishScalar() {
 	}
 
 	void __cdecl VDFastMemcpyFinishMMX() {

@@ -145,7 +145,7 @@ for(;;) {
 #endif
 
 					if (op) {
-						if (mbHistoryOrProfilingEnabled) {
+						if (mbHistoryActive) {
 #ifdef AT_CPU_MACHINE_65C816
 #ifdef AT_CPU_MACHINE_65C816_HISPEED
 							AddHistoryEntry<true, true>(false);
@@ -171,7 +171,7 @@ for(;;) {
 				INSN_FETCH_TO_2(mOpcode, slowFlag);
 				mpNextState = mDecodeHeap + mDecodePtrs[mOpcode];
 
-				if (mbHistoryOrProfilingEnabled) {
+				if (mbHistoryActive) {
 #ifdef AT_CPU_MACHINE_65C816
 #ifdef AT_CPU_MACHINE_65C816_HISPEED
 					AddHistoryEntry<true, true>(slowFlag);
@@ -472,12 +472,22 @@ for(;;) {
 
 		case kStateNMIVecToPC:
 			mPC = 0xFFFA;
+
+#ifdef AT_CPU_MACHINE_65C816
+			mK = 0;
+#endif
+
 			mP |= kFlagI;
 			mIntFlags &= ~kIntFlag_IRQSetPending;
 			break;
 
 		case kStateIRQVecToPC:
 			mPC = 0xFFFE;
+
+#ifdef AT_CPU_MACHINE_65C816
+			mK = 0;
+#endif
+
 			mP |= kFlagI;
 			mIntFlags &= ~kIntFlag_IRQSetPending;
 			break;
@@ -2384,6 +2394,17 @@ for(;;) {
 
 		case kState816_NatBRKVecToPC:
 			mPC = 0xFFE6;
+			mK = 0;
+			break;
+
+		case kState816_ABORT:
+			// prepare to push PC of faulting instruction (NOT current PC)
+			mData16 = mInsnPC;
+
+			// load instruction vector
+			mPC = mbEmulationFlag ? 0xFFF8 : 0xFFE8;
+
+			// force PBK=0
 			mK = 0;
 			break;
 

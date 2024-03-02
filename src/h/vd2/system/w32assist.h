@@ -53,6 +53,17 @@ enum {
 #endif
 };
 
+// Requires Windows 8.1
+#ifndef WM_DPICHANGED
+#define WM_DPICHANGED 0x02E0
+
+	typedef enum MONITOR_DPI_TYPE {
+		MDT_EFFECTIVE_DPI = 0,
+		MDT_ANGULAR_DPI = 1,
+		MDT_RAW_DPI = 2
+	} MONITOR_DPI_TYPE;
+#endif
+
 // helper functions
 
 bool		VDIsForegroundTaskW32();

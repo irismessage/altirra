@@ -175,6 +175,10 @@ ATBlockDeviceGeometry ATIDEVHDImage::GetGeometry() const {
 	return geo;
 }
 
+uint32 ATIDEVHDImage::GetSerialNumber() const {
+	return VDHashString32I(mPath.c_str());
+}
+
 void ATIDEVHDImage::Init(const wchar_t *path, bool write, bool solidState) {
 	Shutdown();
 

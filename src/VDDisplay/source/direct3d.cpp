@@ -37,11 +37,12 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/VDDisplay/direct3d.h>
+#include <vd2/VDDisplay/logging.h>
 
 ///////////////////////////////////////////////////////////////////////////
 
-#define VDDEBUG_D3D VDDEBUG
-#define VDDEBUG_D3D_MODESWITCH (void)sizeof
+#define VDDEBUG_D3D(...) VDDispLogF(__VA_ARGS__)
+#define VDDEBUG_D3D_MODESWITCH(...) VDDispLogF(__VA_ARGS__)
 
 using namespace nsVDD3D9;
 
@@ -769,7 +770,7 @@ bool VDD3D9Manager::Init() {
 	
 	hr = mpD3D->GetAdapterIdentifier(adapter, 0, &mAdapterIdentifier);
 	if (FAILED(hr)) {
-		VDDEBUG_D3D("VideoDisplay/DX9: Failed to retrieve adapter identifier.\n");
+		VDDEBUG_D3D("VideoDisplay/DX9: Failed to retrieve adapter identifier (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 		Shutdown();
 		return false;
 	}
@@ -777,7 +778,7 @@ bool VDD3D9Manager::Init() {
 	D3DDISPLAYMODE mode;
 	hr = mpD3D->GetAdapterDisplayMode(adapter, &mode);
 	if (FAILED(hr)) {
-		VDDEBUG_D3D("VideoDisplay/DX9: Failed to get current adapter mode.\n");
+		VDDEBUG_D3D("VideoDisplay/DX9: Failed to get current adapter mode (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 		Shutdown();
 		return false;
 	}
@@ -796,7 +797,7 @@ bool VDD3D9Manager::Init() {
 	// Make sure we have at least X8R8G8B8 for a texture format
 	hr = mpD3D->CheckDeviceFormat(adapter, type, D3DFMT_X8R8G8B8, 0, D3DRTYPE_TEXTURE, D3DFMT_X8R8G8B8);
 	if (FAILED(hr)) {
-		VDDEBUG_D3D("VideoDisplay/DX9: Device does not support X8R8G8B8 textures.\n");
+		VDDEBUG_D3D("VideoDisplay/DX9: Device does not support X8R8G8B8 textures (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 		Shutdown();
 		return false;
 	}
@@ -809,7 +810,7 @@ bool VDD3D9Manager::Init() {
 		hr = mpD3D->CheckDeviceFormat(adapter, type, D3DFMT_X8R8G8B8, D3DUSAGE_RENDERTARGET, D3DRTYPE_SURFACE, D3DFMT_X8R8G8B8);
 
 		if (FAILED(hr)) {
-			VDDEBUG_D3D("VideoDisplay/DX9: Device does not support X8R8G8B8 or A8R8G8B8 render targets.\n");
+			VDDEBUG_D3D("VideoDisplay/DX9: Device does not support X8R8G8B8 or A8R8G8B8 render targets.");
 			Shutdown();
 			return false;
 		}
@@ -818,7 +819,7 @@ bool VDD3D9Manager::Init() {
 	// Check if at least vertex shader 1.1 is supported; if not, force SWVP.
 	hr = mpD3D->GetDeviceCaps(adapter, type, &mDevCaps);
 	if (FAILED(hr)) {
-		VDDEBUG_D3D("VideoDisplay/DX9: Couldn't retrieve device caps.\n");
+		VDDEBUG_D3D("VideoDisplay/DX9: Couldn't retrieve device caps.");
 		Shutdown();
 		return false;
 	}
@@ -835,7 +836,7 @@ bool VDD3D9Manager::Init() {
 		hr = mpD3D->CreateDevice(adapter, type, mhwndDevice, dwFlags, &mPresentParms, &mpD3DDevice);
 
 	if (FAILED(hr)) {
-		VDDEBUG_D3D("VideoDisplay/DX9: Failed to create device (hr=%08X)\n", hr);
+		VDDEBUG_D3D("VideoDisplay/DX9: Failed to create device (hr=%08X %s)", hr, VDDispDecodeD3D9Error(hr));
 		Shutdown();
 		return false;
 	}
@@ -849,7 +850,7 @@ bool VDD3D9Manager::Init() {
 	memset(&mDevCaps, 0, sizeof mDevCaps);
 	hr = mpD3DDevice->GetDeviceCaps(&mDevCaps);
 	if (FAILED(hr)) {
-		VDDEBUG_D3D("VideoDisplay/DX9: Failed to retrieve device caps.\n");
+		VDDEBUG_D3D("VideoDisplay/DX9: Failed to retrieve device caps (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 		Shutdown();
 		return false;
 	}
@@ -898,6 +899,7 @@ bool VDD3D9Manager::Init() {
 		return false;
 	}
 
+	VDDEBUG_D3D("VideoDisplay/DX9: Init successful on adapter %u (%s / %s), monitor %p.", adapter, mAdapterIdentifier.DeviceName, mAdapterIdentifier.Driver, mhMonitor);
 	return true;
 }
 
@@ -917,7 +919,7 @@ bool VDD3D9Manager::InitVRAMResources() {
 	if (!mpD3DVB) {
 		hr = mpD3DDevice->CreateVertexBuffer(kVertexBufferSize * sizeof(Vertex), D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX2, D3DPOOL_DEFAULT, &mpD3DVB, NULL);
 		if (FAILED(hr)) {
-			VDDEBUG_D3D("VideoDisplay/DX9: Failed to create vertex buffer.\n");
+			VDDEBUG_D3D("VideoDisplay/DX9: Failed to create vertex buffer (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 			ShutdownVRAMResources();
 			return false;
 		}
@@ -928,7 +930,7 @@ bool VDD3D9Manager::InitVRAMResources() {
 	if (!mpD3DIB) {
 		hr = mpD3DDevice->CreateIndexBuffer(kIndexBufferSize * sizeof(uint16), D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_DEFAULT, &mpD3DIB, NULL);
 		if (FAILED(hr)) {
-			VDDEBUG_D3D("VideoDisplay/DX9: Failed to create index buffer.\n");
+			VDDEBUG_D3D("VideoDisplay/DX9: Failed to create index buffer (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 			ShutdownVRAMResources();
 			return false;
 		}
@@ -950,14 +952,14 @@ bool VDD3D9Manager::InitVRAMResources() {
 		vdrefptr<IDirect3DSwapChain9> pD3DSwapChain;
 		hr = mpD3DDevice->GetSwapChain(0, ~pD3DSwapChain);
 		if (FAILED(hr)) {
-			VDDEBUG_D3D("VideoDisplay/DX9: Failed to obtain implicit swap chain.\n");
+			VDDEBUG_D3D("VideoDisplay/DX9: Failed to obtain implicit swap chain (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 			ShutdownVRAMResources();
 			return false;
 		}
 
 		mpImplicitSwapChain = new_nothrow VDD3D9SwapChain(this, pD3DSwapChain);
 		if (!mpImplicitSwapChain) {
-			VDDEBUG_D3D("VideoDisplay/DX9: Failed to obtain implicit swap chain.\n");
+			VDDEBUG_D3D("VideoDisplay/DX9: Failed to obtain implicit swap chain (hr=%08X %s).", hr, VDDispDecodeD3D9Error(hr));
 			ShutdownVRAMResources();
 			return false;
 		}
@@ -1097,7 +1099,7 @@ bool VDD3D9Manager::UpdateCachedDisplayMode() {
 	// retrieve display mode
 	HRESULT hr = mpD3D->GetAdapterDisplayMode(mAdapter, &mDisplayMode);
 	if (FAILED(hr)) {
-		VDDEBUG_D3D("VideoDisplay/DX9: Failed to get current adapter mode.\n");
+		VDDEBUG_D3D("VideoDisplay/DX9: Failed to get current adapter mode (hr=%08X %s)", hr, VDDispDecodeD3D9Error(hr));
 		return false;
 	}
 
@@ -1125,7 +1127,7 @@ bool VDD3D9Manager::UpdateCachedDisplayMode() {
 	return true;
 }
 
-void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh, bool use16bit) {
+void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh, bool use16bit, HWND hwnd) {
 	if (fs) {
 		++mFullScreenCount;
 	} else {
@@ -1143,9 +1145,16 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 	mPresentParms.BackBufferCount = newState ? 3 : 1;
 	mPresentParms.PresentationInterval = newState ? D3DPRESENT_INTERVAL_ONE : D3DPRESENT_INTERVAL_IMMEDIATE;
 
+	// Windows 10 build 1709 introduces an undocumented breaking change via its "fullscreen optimizations"
+	// where the device window is used to retrieve the display region in exclusive fullscreen mode. This
+	// means that we cannot use the hidden focus window. Since the device window cannot be a child window,
+	// we must retrieve the top-level window instead. Note that the top-level window must be unobscured for
+	// this to work; we clear WS_CLIPCHILDREN so this is the case.
+	mPresentParms.hDeviceWindow = newState ? GetAncestor(hwnd, GA_ROOT) : nullptr;
+
 	D3DDISPLAYMODE dm = {0};
 	HRESULT hrx = mpD3DDevice->GetDisplayMode(0, &dm);
-	VDDEBUG_D3D_MODESWITCH("Current display mode: %ux%u (hr=%08x)\n", dm.Width, dm.Height, hrx);
+	VDDEBUG_D3D_MODESWITCH("Current display mode: %ux%u (hr=%08x %s)", dm.Width, dm.Height, hrx, VDDispDecodeD3D9Error(hrx));
 	if (newState) {
 		const int targetwidth = w && h ? w : dm.Width;
 		const int targetheight = w && h ? h : dm.Height;
@@ -1172,7 +1181,7 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 			return;
 
 		UINT count = mpD3D->GetAdapterModeCount(mAdapter, format);
-		VDDEBUG_D3D_MODESWITCH("Unable to switch to requested mode. Trying to match against %u display modes.\n", count);
+		VDDEBUG_D3D_MODESWITCH("Unable to switch to requested mode. Trying to match against %u display modes.", count);
 
 		D3DDISPLAYMODE dm2;
 		D3DDISPLAYMODE dmbest={0};
@@ -1225,20 +1234,20 @@ void VDD3D9Manager::AdjustFullScreen(bool fs, uint32 w, uint32 h, uint32 refresh
 		mPresentParms.FullScreen_RefreshRateInHz = 0;
 	}
 	
-	VDDEBUG_D3D_MODESWITCH("Attempting to switch to %ux%u @ %uHz.\n"
+	VDDEBUG_D3D_MODESWITCH("Attempting to switch to %ux%u @ %uHz."
 		, mPresentParms.BackBufferWidth
 		, mPresentParms.BackBufferHeight
 		, mPresentParms.FullScreen_RefreshRateInHz
 		);
 
 	if (Reset()) {
-		VDDEBUG_D3D_MODESWITCH("Switch to %ux%u @ %uHz was successful.\n"
+		VDDEBUG_D3D_MODESWITCH("Switch to %ux%u @ %uHz was successful."
 			, mPresentParms.BackBufferWidth
 			, mPresentParms.BackBufferHeight
 			, mPresentParms.FullScreen_RefreshRateInHz
 			);
 	} else {
-		VDDEBUG_D3D_MODESWITCH("Switch to %ux%u @ %uHz FAILED.\n"
+		VDDEBUG_D3D_MODESWITCH("Switch to %ux%u @ %uHz FAILED."
 			, mPresentParms.BackBufferWidth
 			, mPresentParms.BackBufferHeight
 			, mPresentParms.FullScreen_RefreshRateInHz
@@ -1250,6 +1259,7 @@ bool VDD3D9Manager::Reset() {
 	if (!mPresentParms.Windowed) {
 		HRESULT hr = mpD3DDevice->TestCooperativeLevel();
 		if (FAILED(hr) && hr != D3DERR_DEVICENOTRESET) {
+			VDDEBUG_D3D("Device reset blocked due to TestCooperativeLevel() failure: hr=%08X %s", hr, VDDispDecodeD3D9Error(hr));
 			return false;
 		}
 
@@ -1290,7 +1300,7 @@ bool VDD3D9Manager::Reset() {
 
 	if (FAILED(hr)) {
 		mbDeviceValid = false;
-		VDDEBUG_D3D_MODESWITCH("Device reset FAILED: hr=%08x. Requested mode: %ux%u @ %uHz\n", hr, mPresentParms.BackBufferWidth, mPresentParms.BackBufferHeight, mPresentParms.FullScreen_RefreshRateInHz);
+		VDDEBUG_D3D_MODESWITCH("Device reset FAILED: hr=%08x %s. Requested mode: %ux%u @ %uHz", hr, VDDispDecodeD3D9Error(hr), mPresentParms.BackBufferWidth, mPresentParms.BackBufferHeight, mPresentParms.FullScreen_RefreshRateInHz);
 		return false;
 	}
 
@@ -1495,7 +1505,7 @@ bool VDD3D9Manager::BeginScene() {
 		HRESULT hr = mpD3DDevice->BeginScene();
 
 		if (FAILED(hr)) {
-			VDDEBUG_D3D("VideoDisplay/DX9: BeginScene() failed! hr = %08x\n", hr);
+			VDDEBUG_D3D("VideoDisplay/DX9: BeginScene() failed! hr = %08x %s", hr, VDDispDecodeD3D9Error(hr));
 			return false;
 		}
 
@@ -1511,7 +1521,7 @@ bool VDD3D9Manager::EndScene() {
 		HRESULT hr = mpD3DDevice->EndScene();
 
 		if (FAILED(hr)) {
-			VDDEBUG_D3D("VideoDisplay/DX9: EndScene() failed! hr = %08x\n", hr);
+			VDDEBUG_D3D("VideoDisplay/DX9: EndScene() failed! hr = %08x %s", hr, VDDispDecodeD3D9Error(hr));
 			return false;
 		}
 	}
@@ -1795,7 +1805,7 @@ HRESULT VDD3D9Manager::PresentFullScreen(bool wait) {
 	return hr;
 }
 
-#define REQUIRE(x, reason) if (!(x)) { VDDEBUG_D3D("VideoDisplay/DX9: 3D device is lame -- reason: " reason "\n"); return true; } else ((void)0)
+#define REQUIRE(x, reason) if (!(x)) { VDDEBUG_D3D("VideoDisplay/DX9: 3D device is unsupported -- reason: " reason); return true; } else ((void)0)
 #define REQUIRECAPS(capsflag, bits, reason) REQUIRE(!(~mDevCaps.capsflag & (bits)), reason)
 
 bool VDD3D9Manager::Is3DCardLame() {
@@ -1812,6 +1822,9 @@ bool VDD3D9Manager::Is3DCardLame() {
 	REQUIRE(mDevCaps.MaxTextureBlendStages>0 && mDevCaps.MaxSimultaneousTextures>0, "not enough texture stages");
 	return false;
 }
+
+#undef REQUIRECAPS
+#undef REQUIRE
 
 bool VDD3D9Manager::CreateInitTexture(UINT width, UINT height, UINT levels, D3DFORMAT format, IVDD3D9InitTexture **ppInitTexture) {
 	VDD3D9InitTexture *p = new_nothrow VDD3D9InitTexture;
@@ -2203,3 +2216,59 @@ LRESULT CALLBACK VDD3D9Manager::StaticDeviceWndProc(HWND hwnd, UINT msg, WPARAM 
 
 	return DefWindowProc(hwnd, msg, wParam, lParam);
 }
+
+///////////////////////////////////////////////////////////////////////////
+
+const char *VDDispDecodeD3D9Error(uint32 hr) {
+	switch(hr) {
+#define X(val) case val: return #val;
+		X(D3D_OK)
+		X(E_UNEXPECTED)
+		X(E_NOTIMPL)
+		X(E_INVALIDARG)
+		X(E_POINTER)
+		X(E_FAIL)
+		X(D3DERR_WRONGTEXTUREFORMAT)
+		X(D3DERR_UNSUPPORTEDCOLOROPERATION)
+		X(D3DERR_UNSUPPORTEDCOLORARG)
+		X(D3DERR_UNSUPPORTEDALPHAOPERATION)
+		X(D3DERR_UNSUPPORTEDALPHAARG)
+		X(D3DERR_TOOMANYOPERATIONS)
+		X(D3DERR_CONFLICTINGTEXTUREFILTER)
+		X(D3DERR_UNSUPPORTEDFACTORVALUE)
+		X(D3DERR_CONFLICTINGRENDERSTATE)
+		X(D3DERR_UNSUPPORTEDTEXTUREFILTER)
+		X(D3DERR_CONFLICTINGTEXTUREPALETTE)
+		X(D3DERR_DRIVERINTERNALERROR)
+		X(D3DERR_NOTFOUND)
+		X(D3DERR_MOREDATA)
+		X(D3DERR_DEVICELOST)
+		X(D3DERR_DEVICENOTRESET)
+		X(D3DERR_NOTAVAILABLE)
+		X(D3DERR_OUTOFVIDEOMEMORY)
+		X(D3DERR_INVALIDDEVICE)
+		X(D3DERR_INVALIDCALL)
+		X(D3DERR_DRIVERINVALIDCALL)
+		X(D3DERR_WASSTILLDRAWING)
+		X(D3DOK_NOAUTOGEN)
+		X(D3DERR_DEVICEREMOVED)
+		X(S_NOT_RESIDENT)
+		X(S_RESIDENT_IN_SHARED_MEMORY)
+		X(S_PRESENT_MODE_CHANGED)
+		X(S_PRESENT_OCCLUDED)
+		X(D3DERR_DEVICEHUNG)
+		X(D3DERR_UNSUPPORTEDOVERLAY)
+		X(D3DERR_UNSUPPORTEDOVERLAYFORMAT)
+		X(D3DERR_CANNOTPROTECTCONTENT)
+		X(D3DERR_UNSUPPORTEDCRYPTO)
+		X(D3DERR_PRESENT_STATISTICS_DISJOINT)
+#undef X
+
+	default:
+		return "?";
+	}
+}
+
+
+#undef VDDEBUG_D3D
+#undef VDDEBUG_D3D_MODESWITCH

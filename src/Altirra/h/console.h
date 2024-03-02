@@ -18,7 +18,9 @@
 #ifndef AT_CONSOLE_H
 #define AT_CONSOLE_H
 
+#include <vd2/system/function.h>
 #include <vd2/system/VDString.h>
+#include <vd2/system/win32/miniwindows.h>
 
 ///////////////////////////////////////////////////////////////////////////
 void ATConsoleOpenLogFile(const wchar_t *path);
@@ -120,7 +122,13 @@ enum {
 	kATUIPaneId_Count
 };
 
-void *ATGetConsoleFontW32();
+VDZHFONT ATGetConsoleFontW32();
 int ATGetConsoleFontLineHeightW32();
+
+VDZHFONT ATConsoleGetPropFontW32();
+int ATConsoleGetPropFontLineHeightW32();
+
+void ATConsoleAddFontNotification(const vdfunction<void()> *callback);
+void ATConsoleRemoveFontNotification(const vdfunction<void()> *callback);
 
 #endif

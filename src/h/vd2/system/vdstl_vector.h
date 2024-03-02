@@ -285,7 +285,7 @@ void vdvector<T,A>::resize(size_type sz, T c) {
 					// destroy old range
 					while(prev1 != prev0) {
 						--prev1;
-						prev0->~T();
+						prev1->~T();
 					}
 
 					m.mpBegin = p0;
@@ -444,8 +444,10 @@ typename vdvector<T,A>::reference vdvector<T,A>::emplace_back(Args&&... args) {
 		const pointer p0 = m.allocate(newCapacity);
 		pointer pe = p0;
 		try {
-			const pointer p1 = std::uninitialized_copy(m.mpBegin, m.mpEnd, p0);
-			pe = p1;
+			for(pointer ps = m.mpBegin, ps2 = m.mpEnd; ps != ps2; ++ps, ++pe)
+				new(pe) T(static_cast<T&&>(*ps));
+
+			pointer p1 = pe;
 
 			new(pe) T(std::forward<Args>(args)...);
 			++pe;

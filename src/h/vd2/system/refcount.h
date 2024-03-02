@@ -194,6 +194,14 @@ public:
 		src.ptr = nullptr;
 	}
 
+	template<class U, typename = std::enable_if<true, decltype(static_cast<T&&>(std::declval<U>()))>::value>
+	explicit vdrefptr(vdrefptr<U>&& src)
+		: ptr(static_cast<U *>(src.ptr))
+	{
+		if (ptr)
+			ptr->AddRef();
+	}
+
 	/// Destroys the smart pointer, releasing any held reference.
 	~vdrefptr() {
 		if (ptr)
@@ -233,9 +241,10 @@ public:
 		return *this;
 	}
 
- 	operator T*() const { return ptr; }
-	T& operator*() const { return *ptr; }
-	T *operator->() const { return ptr; }
+ 	operator T*() const vdnoexcept { return ptr; }
+	T& operator*() const vdnoexcept { return *ptr; }
+	T *operator->() const vdnoexcept { return ptr; }
+	T *get() const vdnoexcept { return ptr; }
 
 	/// Removes any old reference and returns a double-pointer to the nulled
 	/// internal pointer. This is useful for passing to IUnknown-derived

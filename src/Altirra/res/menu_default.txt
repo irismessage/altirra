@@ -35,6 +35,7 @@
 		&Load...			{Cassette.Load}
 		&Unload				{Cassette.Unload}
 		Save...				{Cassette.Save}
+		Export Audio Tape...	{Cassette.ExportAudioTape}
 	---
 	Load State...			{File.LoadState}
 	Save State...			{File.SaveState}
@@ -64,6 +65,7 @@
 		Save KMK/JZ IDE / SIDE / MyIDE II Main Flash...		{System.SaveFirmwareIDEMain}
 		Save KMK/JZ IDE SDX Flash...						{System.SaveFirmwareIDESDX}
 		Save Ultimate1MB Flash...							{System.SaveFirmwareU1MB}
+		Save Rapidus Flash...								{System.SaveFirmwareRapidusFlash}
 	---
 	E&xit					{File.Exit}
 	
@@ -231,6 +233,7 @@
 			192K (banks $01-$03)	{System.HighMemory192K}
 			1MB (banks $01-$0F)		{System.HighMemory960K}
 			4MB (banks $01-$3F)		{System.HighMemory4032K}
+			16MB (banks $01-$FF)	{System.HighMemory16320K}
 		---
 		MapRAM						{System.ToggleMapRAM}
 		Ultimate1MB					{System.ToggleUltimate1MB}
@@ -246,10 +249,6 @@
 		&Frame Blending				{Video.ToggleFrameBlending}
 		&Interlace					{Video.ToggleInterlace}
 		&Scanlines					{Video.ToggleScanlines}
-		---
-		VB&XE (FX1.24 core)			{Video.ToggleVBXE}
-		Use VBXE memory for expansion	{Video.ToggleVBXESharedMemory}
-		Use $D7xx for VBXE registers	{Video.ToggleVBXEAltPage}
 		---
 		No Artifacting					{Video.ArtifactingNone}
 		NTSC &Artifacting (Standard)	{Video.ArtifactingNTSC}
@@ -273,6 +272,15 @@
 		Auto-Re&wind on Startup			{Cassette.ToggleAutoRewind}
 		Load &Data as Audio				{Cassette.ToggleLoadDataAsAudio}
 		&Randomize Starting Position	{Cassette.ToggleRandomizeStartPosition}
+		---
+		&Normal							{Cassette.TurboModeNone}
+		&Turbo Enabled (Always On)		{Cassette.TurboModeAlways}
+		&Turbo Enabled (Command Control)	{Cassette.TurboModeCommandControl}
+		&Turbo Enabled (Proceed Sense)	{Cassette.TurboModeProceedSense}
+		&Turbo Enabled (Interrupt Sense)	{Cassette.TurboModeInterruptSense}
+		---
+		&Normal Polarity				{Cassette.PolarityNormal}
+		&Inverted Polarity				{Cassette.PolarityInverted}
 	Audio
 		&Stereo							{Audio.ToggleStereo}
 		&Non-linear Mixing				{Audio.ToggleNonlinearMixing}
@@ -371,6 +379,7 @@
 	&Profile
 		&Profile View					{Pane.ProfileView}
 	&Verifier...						{Debug.VerifierDialog}
+	&Performance Analyzer...			{Debug.ShowTraceViewer}
 
 &Record
 	Record &Raw Audio...				{Record.RawAudio}
@@ -383,6 +392,7 @@
 	&Disk Explorer...					{Tools.DiskExplorer}
 	Convert SAP to EXE...				{Tools.ConvertSAPToEXE}
 	Export ROM set...					{Tools.ExportROMSet}
+	Analyze tape decoding...			{Tools.AnalyzeTapeDecoding}
 	---
 	First Time Setup...					{Tools.SetupWizard}
 	---

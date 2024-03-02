@@ -24,6 +24,8 @@
 
 class IATDevice;
 class IATDeviceParent;
+class IATDeviceBus;
+struct ATDeviceDefinition;
 class ATPropertySet;
 struct VDJSONValueRef;
 class VDJSONWriter;
@@ -148,6 +150,7 @@ public:
 	T *GetInterface() { return static_cast<T *>(GetInterface(T::kTypeID)); }
 
 	IATDevice *AddDevice(const char *tag, const ATPropertySet& pset, bool child, bool hidden);
+	IATDevice *AddDevice(const ATDeviceDefinition *def, const ATPropertySet& pset, bool child, bool hidden);
 	void AddDevice(IATDevice *dev, bool child, bool hidden);
 	void RemoveDevice(const char *tag);
 	void RemoveDevice(IATDevice *dev);
@@ -160,9 +163,10 @@ public:
 
 	void *GetInterface(uint32 id) const;
 
+	const ATDeviceDefinition *GetDeviceDefinition(const char *tag) const;
 	ATDeviceConfigureFn GetDeviceConfigureFn(const char *tag) const;
 
-	void AddDeviceFactory(const char *tag, ATDeviceFactoryFn factory);
+	void AddDeviceDefinition(const ATDeviceDefinition *def);
 	void AddDeviceConfigurer(const char *tag, ATDeviceConfigureFn configurer);
 
 	void AddDeviceChangeCallback(uint32 iid, IATDeviceChangeCallback *cb);
@@ -172,7 +176,7 @@ public:
 	void MarkAndSweep(IATDevice *const *pExcludedDevs, size_t numExcludedDevs, vdfastvector<IATDevice *>& garbage);
 
 	void SerializeDevice(IATDevice *dev, VDStringW& str) const;
-	void DeserializeDevices(IATDeviceParent *parent, const wchar_t *str);
+	void DeserializeDevices(IATDeviceParent *parent, IATDeviceBus *bus, const wchar_t *str);
 
 	void SerializeProps(const ATPropertySet& props, VDStringW& str) const;
 	void DeserializeProps(ATPropertySet& props, const wchar_t *str);
@@ -183,7 +187,7 @@ protected:
 	const InterfaceList *GetInterfaceList(uint32 iid, bool rootOnly, bool visibleOnly) const;
 	void Mark(IATDevice *dev, IATDevice *const *pExcludedDevs, size_t numExcludedDevs, vdhashset<IATDevice *>& devSet);
 	void SerializeDevice(IATDevice *dev, VDJSONWriter& writer) const;
-	void DeserializeDevice(IATDeviceParent *parent, const VDJSONValueRef& val);
+	void DeserializeDevice(IATDeviceParent *parent, IATDeviceBus *bus, const VDJSONValueRef& val);
 	void SerializeProps(const ATPropertySet& props, VDJSONWriter& writer) const;
 	void DeserializeProps(ATPropertySet& props, const VDJSONValueRef& val);
 
@@ -200,12 +204,7 @@ protected:
 
 	mutable vdhashmap<uint64, InterfaceList> mInterfaceListCache;
 
-	struct DeviceFactory {
-		const char *mpTag;
-		ATDeviceFactoryFn mpCreate;
-	};
-
-	vdfastvector<DeviceFactory> mDeviceFactories;
+	vdfastvector<const ATDeviceDefinition *> mDeviceDefinitions;
 
 	struct DeviceConfigurer {
 		const char *mpTag;

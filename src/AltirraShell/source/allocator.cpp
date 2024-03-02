@@ -17,36 +17,34 @@
 
 #include <stdafx.h>
 #include <crtdbg.h>
-
-extern "C" void *_ReturnAddress();
-#pragma intrinsic(_ReturnAddress)
+#include <intrin.h>
 
 #ifdef VD_CPU_AMD64
 	extern "C" char __ImageBase;
-	#define ENCODED_RETURN_ADDRESS ((int)_ReturnAddress() - (int)&__ImageBase)
+	#define ENCODED_RETURN_ADDRESS ((int)((uintptr_t)_ReturnAddress() - (uintptr_t)&__ImageBase))
 #else
 	#define ENCODED_RETURN_ADDRESS ((int)_ReturnAddress())
 #endif
 
-void *operator new(size_t bytes) {
+void *VDCDECL operator new(size_t bytes) {
 	static const char fname[]="return address";
 
 	return _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);
 }
 
-void *operator new(size_t bytes, const std::nothrow_t&) {
+void *VDCDECL operator new(size_t bytes, const std::nothrow_t&) throw() {
 	static const char fname[]="return address";
 
 	return _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);
 }
 
-void *operator new[](size_t bytes) {
+void *VDCDECL operator new[](size_t bytes) {
 	static const char fname[]="return address";
 
 	return _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);
 }
 
-void *operator new[](size_t bytes, const std::nothrow_t&) {
+void *VDCDECL operator new[](size_t bytes, const std::nothrow_t&) throw() {
 	static const char fname[]="return address";
 
 	return _malloc_dbg(bytes, _NORMAL_BLOCK, fname, ENCODED_RETURN_ADDRESS);

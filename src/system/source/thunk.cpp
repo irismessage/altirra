@@ -204,13 +204,13 @@ void VDFlushThunkMemory(void *p, size_t len) {
 ///////////////////////////////////////////////////////////////////////////
 
 #ifdef _M_AMD64
-	extern "C" void VDMethodToFunctionThunk64();
+	extern "C" void VDCDECL VDMethodToFunctionThunk64();
 #else
-	extern "C" void VDMethodToFunctionThunk32();
-	extern "C" void VDMethodToFunctionThunk32_4();
-	extern "C" void VDMethodToFunctionThunk32_8();
-	extern "C" void VDMethodToFunctionThunk32_12();
-	extern "C" void VDMethodToFunctionThunk32_16();
+	extern "C" void VDCDECL VDMethodToFunctionThunk32();
+	extern "C" void VDCDECL VDMethodToFunctionThunk32_4();
+	extern "C" void VDCDECL VDMethodToFunctionThunk32_8();
+	extern "C" void VDCDECL VDMethodToFunctionThunk32_12();
+	extern "C" void VDCDECL VDMethodToFunctionThunk32_16();
 #endif
 
 VDFunctionThunk *VDCreateFunctionThunkFromMethod(void *method, void *pThis, size_t argbytes, bool stdcall_thunk) {
@@ -241,7 +241,7 @@ VDFunctionThunk *VDCreateFunctionThunkFromMethod(void *method, void *pThis, size
 			0x00, 0x00, 0x00, 0x00,						// dd this
 		};
 
-		void (*adapter)();
+		void (VDCDECL *adapter)();
 
 		switch(argbytes) {
 		case 4:		adapter = VDMethodToFunctionThunk32_4;	break;

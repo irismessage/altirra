@@ -37,8 +37,9 @@ public:
 	uint8 GetSelectRegister() const { return mSelRegister; }
 	bool IsROMOverlayActive() const;
 
-	void AddDevice(IATPBIDevice *dev);
-	void RemoveDevice(IATPBIDevice *dev);
+	void AddDevice(IATPBIDevice *dev) override;
+	void RemoveDevice(IATPBIDevice *dev) override;
+	void DeselectSelf(IATPBIDevice *dev) override;
 
 	void ColdReset();
 	void WarmReset();

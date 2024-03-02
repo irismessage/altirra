@@ -141,7 +141,6 @@ protected:
 	vdfastvector<uint8> mTransferBuffer;
 
 	IATBlockDevice *mpDisk;
-	VDStringW mPath;
 
 	VDLazyTimer mFlushTimer;
 };

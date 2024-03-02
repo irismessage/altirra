@@ -20,10 +20,13 @@
 
 #include <at/atcore/deviceport.h>
 
+class ATScheduler;
 class ATIRQController;
 class ATSaveStateReader;
 class ATSaveStateWriter;
 class ATScheduler;
+struct ATTraceContext;
+class ATTraceChannelFormatted;
 
 struct ATPIAState {
 	uint8 mORA;
@@ -63,7 +66,9 @@ public:
 	void ModifyOutputMask(int index, uint32 changeMask);
 	void FreeOutput(int index) override;
 
-	void Init(ATIRQController *irqcon);
+	void SetTraceContext(ATTraceContext *context);
+
+	void Init(ATIRQController *irqcon, ATScheduler *scheduler);
 	void ColdReset();
 	void WarmReset();
 
@@ -104,6 +109,16 @@ protected:
 	void UpdateOutput();
 	bool SetPortBDirection(uint8 value);
 
+	void NegateIRQs(uint32 mask);
+	void AssertIRQs(uint32 mask);
+
+	void SetCRA(uint8 v);
+	void SetCRB(uint8 v);
+
+	void UpdateTraceCRA();
+	void UpdateTraceCRB();
+
+	ATScheduler *mpScheduler;
 	ATIRQController *mpIRQController;
 	ATPIAFloatingInputs *mpFloatingInputs;
 
@@ -139,6 +154,11 @@ protected:
 	};
 
 	OutputEntry mOutputs[12];
+
+	uint32 mTraceIRQState = 0;
+	ATTraceContext *mpTraceContext = nullptr;
+	ATTraceChannelFormatted *mpTraceCRA = nullptr;
+	ATTraceChannelFormatted *mpTraceCRB = nullptr;
 };
 
 #endif

@@ -27,6 +27,7 @@
 #include <windows.h>
 
 #include <vd2/system/error.h>
+#include <vd2/system/date.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/file.h>
@@ -101,6 +102,18 @@ bool VDFile::tryOpen(const wchar_t *pwszFilename, uint32 flags) {
 
 	if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND)
 		return false;
+
+	if (err)
+		throw MyWin32Error("Cannot open file \"%ls\":\n%%s", err, pwszFilename);
+
+	return true;
+}
+
+bool VDFile::openAlways(const wchar_t *pwszFilename, uint32 flags) {
+	uint32 err = open_internal(NULL, pwszFilename, flags);
+
+	if (err == ERROR_ALREADY_EXISTS)
+		return true;
 
 	if (err)
 		throw MyWin32Error("Cannot open file \"%ls\":\n%%s", err, pwszFilename);
@@ -420,6 +433,16 @@ uint32 VDFile::getAttributes() {
 		return 0;
 
 	return VDFileGetAttributesFromNativeW32(info.dwFileAttributes);
+}
+
+void VDFile::setCreationTime(const VDDate& date) {
+	if (mhFile) {
+		FILETIME ft;
+		ft.dwLowDateTime = (DWORD)date.mTicks;
+		ft.dwHighDateTime = (DWORD)(date.mTicks >> 32);
+
+		SetFileTime(mhFile, &ft, nullptr, nullptr);
+	}
 }
 
 void *VDFile::AllocUnbuffer(size_t nBytes) {

@@ -17,7 +17,17 @@
 
 #include <stdafx.h>
 #include <windows.h>
+
+// dbghelp.h(1540): warning C4091: 'typedef ': ignored on left of '' when no variable is declared (compiling source file source\exceptionfilter.cpp)
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4091)
+#endif
 #include <dbghelp.h>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
 #include <vd2/system/w32assist.h>
 
 extern HWND g_hwnd;

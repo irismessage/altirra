@@ -22,9 +22,6 @@
 
 class IATHLECIOHook : public IVDUnknown {
 public:
-	virtual void WarmReset() = 0;
-	virtual void ColdReset() = 0;
-
 	virtual bool GetBurstTransfersEnabled() const = 0;
 	virtual void SetBurstTransfersEnabled(bool enabled) = 0;
 

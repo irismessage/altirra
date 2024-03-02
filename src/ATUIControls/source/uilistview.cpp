@@ -6,11 +6,6 @@
 #include <at/atuicontrols/uilistview.h>
 #include <at/atuicontrols/uislider.h>
 
-template<> void vdmove<ATUIListViewItem>(ATUIListViewItem& dst, ATUIListViewItem& src) {
-	dst.mText.move_from(src.mText);
-	dst.mpVirtualItem.from(src.mpVirtualItem);
-}
-
 ATUIListView::ATUIListView()
 	: mScrollY(0)
 	, mSelectedIndex(-1)

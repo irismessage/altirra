@@ -193,6 +193,14 @@ VDPixmapLayout VDPixmapLayoutOffset(const VDPixmapLayout& src, vdpixpos x, vdpix
 	return temp;
 }
 
+VDPixmap VDPixmapClip(const VDPixmap& src, vdpixpos x, vdpixpos y, vdpixpos w, vdpixpos h) {
+	VDPixmap temp = VDPixmapOffset(src, x, y);
+
+	temp.w = std::min<vdpixsize>(temp.w, w);
+	temp.h = std::min<vdpixsize>(temp.h, h);
+	return temp;
+}
+
 uint32 VDPixmapCreateLinearLayout(VDPixmapLayout& layout, int format, vdpixsize w, vdpixsize h, int alignment) {
 	const ptrdiff_t alignmask = alignment - 1;
 
@@ -605,6 +613,20 @@ void VDPixmapBuffer::assign(const VDPixmap& src) {
 		case 0:
 			VDMemcpyRect(data, pitch, src.data, src.pitch, qw * srcinfo.qsize, qh);
 		}
+	}
+}
+
+void VDPixmapBuffer::move_from(VDPixmapBuffer& src) {
+	if (&src != this) {
+		clear();
+
+		mpBuffer = src.mpBuffer;
+		mLinearSize = src.mLinearSize;
+		static_cast<VDPixmap&>(*this) = static_cast<const VDPixmap&>(src);
+
+		src.mpBuffer = nullptr;
+		src.mLinearSize = 0;
+		static_cast<VDPixmap&>(src) = {};
 	}
 }
 

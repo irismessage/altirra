@@ -37,7 +37,7 @@ void ATCreateDeviceMIOEmulator(const ATPropertySet& pset, IATDevice **dev) {
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefMIO = { "mio", "mio", L"MIO", ATCreateDeviceMIOEmulator };
+extern const ATDeviceDefinition g_ATDeviceDefMIO = { "mio", "mio", L"MIO", ATCreateDeviceMIOEmulator, kATDeviceDefFlag_RebootOnPlug };
 
 ATMIOEmulator::ATMIOEmulator()
 	: mPBIBANK(0)
@@ -103,13 +103,41 @@ bool ATMIOEmulator::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATMIOEmulator::Init() {
+	mSerialBus.Init(this, 0, IATDeviceSerial::kTypeID, "serial", L"Serial Port");
+
+	mSerialBus.SetOnAttach(
+		[this] {
+			if (mpSerialDevice)
+				return;
+
+			IATDeviceSerial *serdev = mSerialBus.GetChild<IATDeviceSerial>();
+			if (serdev) {
+				vdsaferelease <<= mpSerialDevice;
+				if (serdev)
+					serdev->AddRef();
+				mpSerialDevice = serdev;
+				mpSerialDevice->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
+
+				UpdateSerialControlLines();
+			}
+		}
+	);
+
+	mSerialBus.SetOnDetach(
+		[this] {
+			if (mpSerialDevice) {
+				mpSerialDevice->SetOnStatusChange(nullptr);
+				vdpoly_cast<IATDevice *>(mpSerialDevice)->SetParent(nullptr, 0);
+				vdsaferelease <<= mpSerialDevice;
+			}
+
+			mSerialCtlInputs = 0;
+		}
+	);
 }
 
 void ATMIOEmulator::Shutdown() {
-	if (mpSerialDevice) {
-		vdpoly_cast<IATDevice *>(mpSerialDevice)->SetParent(nullptr);
-		vdsaferelease <<= mpSerialDevice;
-	}
+	mSerialBus.Shutdown();
 
 	mSCSIBus.Shutdown();
 
@@ -119,7 +147,7 @@ void ATMIOEmulator::Shutdown() {
 		ent.mpSCSIDevice->Release();
 		ent.mpDisk->Release();
 		if (ent.mpDevice) {
-			ent.mpDevice->SetParent(nullptr);
+			ent.mpDevice->SetParent(nullptr, 0);
 			ent.mpDevice->Release();
 		}
 
@@ -263,6 +291,7 @@ void ATMIOEmulator::InitIRQSource(ATIRQController *irqc) {
 void ATMIOEmulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpScheduler = sch;
 
+	mSCSIBus.Init(sch);
 	mACIA.Init(sch, slowsch);
 }
 
@@ -274,10 +303,26 @@ void ATMIOEmulator::SetPrinterOutput(IATPrinterOutput *out) {
 	mpPrinterOutput = out;
 }
 
+IATDeviceBus *ATMIOEmulator::GetDeviceBus(uint32 index) {
+	switch(index) {
+		case 0:
+			return &mSerialBus;
+
+		case 1:
+			return this;
+
+		default:
+			return nullptr;
+	}
+}
+
+const wchar_t *ATMIOEmulator::GetBusName() const {
+	return L"SCSI Bus";
+}
+
 const char *ATMIOEmulator::GetSupportedType(uint32 index) {
 	switch(index) {
 		case 0: return "harddisk";
-		case 1: return "serial";
 		default:
 			return nullptr;
 	}
@@ -292,9 +337,11 @@ void ATMIOEmulator::GetChildDevices(vdfastvector<IATDevice *>& devs) {
 
 		devs.push_back(vdpoly_cast<IATDevice *>(ent.mpDisk));
 	}
+}
 
-	if (mpSerialDevice)
-		devs.push_back(vdpoly_cast<IATDevice *>(mpSerialDevice));
+void ATMIOEmulator::GetChildDevicePrefix(uint32 index, VDStringW& s) {
+	if (index < mSCSIDisks.size())
+		s.sprintf(L"SCSI ID %u: ", index);
 }
 
 void ATMIOEmulator::AddChildDevice(IATDevice *dev) {
@@ -313,7 +360,7 @@ void ATMIOEmulator::AddChildDevice(IATDevice *dev) {
 		SCSIDiskEntry entry = { dev, scsidev, disk };
 		mSCSIDisks.push_back(entry);
 		dev->AddRef();
-		dev->SetParent(this);
+		dev->SetParent(this, 1);
 		scsidev->AddRef();
 		disk->AddRef();
 
@@ -322,37 +369,9 @@ void ATMIOEmulator::AddChildDevice(IATDevice *dev) {
 
 		mSCSIBus.AttachDevice(id, scsidev);
 	}
-
-	if (!mpSerialDevice) {
-		IATDeviceSerial *serdev = vdpoly_cast<IATDeviceSerial *>(dev);
-		if (serdev && serdev != mpSerialDevice) {
-			vdsaferelease <<= mpSerialDevice;
-			if (serdev)
-				serdev->AddRef();
-			mpSerialDevice = serdev;
-			mpSerialDevice->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
-			dev->SetParent(this);
-
-			UpdateSerialControlLines();
-		}
-	}
 }
 
 void ATMIOEmulator::RemoveChildDevice(IATDevice *dev) {
-	IATDeviceSerial *serdev = vdpoly_cast<IATDeviceSerial *>(dev);
-	if (serdev) {
-		if (serdev == mpSerialDevice) {
-			mpSerialDevice->SetOnStatusChange(nullptr);
-			dev->SetParent(nullptr);
-			vdsaferelease <<= mpSerialDevice;
-
-			mSerialCtlInputs = 0;
-			return;
-		}
-
-		return;
-	}
-
 	IATBlockDevice *disk = vdpoly_cast<IATBlockDevice *>(dev);
 
 	if (!disk)
@@ -365,7 +384,7 @@ void ATMIOEmulator::RemoveChildDevice(IATDevice *dev) {
 		const SCSIDiskEntry& ent = *it;
 
 		if (ent.mpDisk == disk) {
-			dev->SetParent(nullptr);
+			dev->SetParent(nullptr, 0);
 			mSCSIBus.DetachDevice(ent.mpSCSIDevice);
 			ent.mpDisk->Release();
 			ent.mpSCSIDevice->Release();

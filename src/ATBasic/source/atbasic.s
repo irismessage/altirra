@@ -13,7 +13,7 @@
 
 ;===========================================================================
 .macro _MSG_BANNER
-		dta		c'Altirra 8K BASIC 1.54'
+		dta		c'Altirra 8K BASIC 1.55'
 .endm
 
 ;===========================================================================
@@ -73,9 +73,13 @@ ioTermFlag	dta		0
 		.error "Graphics color is at ",grColor," but must be at $C8 for PEEK(200) to work (see Space Station Multiplication.bas)"
 		.endif
 
-		.if *>$ba
+		.if *>$b7
 		.error "Zero page overflow: ",*
 		.endif
+
+			org		$b7
+dataln		dta		a(0)	;(compat - Mapping the Atari / ANALOG verifier) current DATA statement line
+
 
 stopln	= $ba				;(compat - Atari BASIC manual): line number of error
 		; $bb
@@ -106,11 +110,11 @@ errno	= $c2
 errsave	= $c3				;(compat - Atari BASIC manual): error number
 
 			org		$c4
-dataln		dta		a(0)	;current DATA statement line
 dataptr		dta		a(0)	;current DATA statement pointer
+dataoff		dta		0		;current DATA statement offset
+			dta		0		;(unused)
 grColor		dta		0		;graphics color (must be at $C8 for Space Station Multiplication)
 ptabw		dta		0		;(compat - Atari BASIC manual): tab width
-dataoff		dta		0		;current DATA statement offset
 
 .if ptabw != $C9
 			.error	"PTABW is wrong"

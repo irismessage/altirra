@@ -18,10 +18,11 @@
 #ifndef f_AT_KMKJZIDE_H
 #define f_AT_KMKJZIDE_H
 
-#include <at/atcore/deviceimpl.h>
-#include <at/atcore/devicepbi.h>
-#include <at/atcore/deviceindicators.h>
 #include <at/atcore/devicecart.h>
+#include <at/atcore/deviceimpl.h>
+#include <at/atcore/deviceindicators.h>
+#include <at/atcore/deviceparentimpl.h>
+#include <at/atcore/devicepbi.h>
 #include "pbi.h"
 #include "ide.h"
 #include <at/atemulation/flash.h>
@@ -42,6 +43,7 @@ class ATKMKJZIDE final : public ATDevice
 	, public IATDevicePBIConnection
 	, public IATPBIDevice
 	, public IATDeviceParent
+	, public ATDeviceBus
 	, public IATDeviceCartridge
 	, public IATDeviceDiagnostics
 	, public IATDeviceIRQSource
@@ -105,6 +107,10 @@ public:		// IATPBIDevice
 	uint8 ReadPBIStatus(uint8 busData, bool debugOnly) override;
 
 public:		// IATDeviceParent
+	IATDeviceBus *ATKMKJZIDE::GetDeviceBus(uint32 index) override;
+
+public:		// IATDeviceBus
+	const wchar_t *GetBusName() const override;
 	const char *GetSupportedType(uint32 index) override;
 	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
 	void AddChildDevice(IATDevice *dev) override;
@@ -145,6 +151,7 @@ protected:
 
 	void UpdateMemoryLayersFlash();
 	void UpdateMemoryLayersSDX();
+	void UpdateCartPassThrough();
 
 	vdrefptr<IATBlockDevice> mpBlockDevices[2];
 	IATDevicePBIManager *mpPBIManager = nullptr;
@@ -176,6 +183,7 @@ protected:
 	bool	mbSDXEnabled = false;
 	bool	mbSDXUpstreamEnabled = false;
 	bool	mbWriteProtect = false;
+	bool	mbNVRAMGuard = true;
 	bool	mbExternalEnabled = false;
 	bool	mbSelected = false;
 	bool	mbIDESlaveSelected = false;

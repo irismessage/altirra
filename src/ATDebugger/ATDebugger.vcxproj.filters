@@ -7,6 +7,15 @@
     <ClInclude Include="..\h\at\atdebugger\target.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\h\at\atdebugger\historytree.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atdebugger\historytreebuilder.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atdebugger\breakpointsimpl.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Header Files">
@@ -27,6 +36,15 @@
   <ItemGroup>
     <ClCompile Include="source\stdafx.cpp">
       <Filter>Precompiled Header Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\historytree.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\historytreebuilder.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\breakpointsimpl.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

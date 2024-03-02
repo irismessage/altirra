@@ -59,6 +59,11 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeRe
     <None Include="source\main.xasm" />
     <None Include="source\PBIDisk\pbidisk.s" />
     <None Include="source\Placeholders\nomio.s" />
+    <None Include="source\Rapidus\rapidfirmware.s" />
+    <None Include="source\Rapidus\rapidflash.s" />
+    <None Include="source\Rapidus\rapidos.s" />
+    <None Include="source\Rapidus\rapidpbi16.s" />
+    <None Include="source\Rapidus\rapidpbi8.s" />
     <None Include="source\SAPPlayers\playsap-b.s" />
     <None Include="source\SAPPlayers\playsap-c.s" />
     <None Include="source\SAPPlayers\playsap-d.s" />
@@ -124,6 +129,9 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeRe
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\Placeholders\noblackbox.s" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="source\Additions\license.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

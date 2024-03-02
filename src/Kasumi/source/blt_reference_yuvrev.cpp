@@ -142,7 +142,7 @@ namespace {
 	}
 }
 
-#define DECLARE_YUV_REV(x, y) void VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
+#define DECLARE_YUV_REV(x, y) void VDCDECL VDPixmapBlt_##x##_to_##y##_reference(void *dst0, ptrdiff_t dstpitch, const void *src0, ptrdiff_t srcpitch, vdpixsize w, vdpixsize h)
 
 DECLARE_YUV_REV(XRGB1555, XVYU) {
 	do {
@@ -221,7 +221,7 @@ DECLARE_YUV_REV(XRGB8888, Y8) {
 
 
 namespace {
-	void ConvertRGB32ToYUVPlanar(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src0, sint32 count) {
+	void VDCDECL ConvertRGB32ToYUVPlanar(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src0, sint32 count) {
 		const uint8 *src = (const uint8 *)src0;
 
 		do {
@@ -236,7 +236,7 @@ namespace {
 		} while(--count);
 	}
 
-	void ConvertRGB24ToYUVPlanar(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src0, sint32 count) {
+	void VDCDECL ConvertRGB24ToYUVPlanar(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src0, sint32 count) {
 		const uint8 *src = (const uint8 *)src0;
 
 		do {
@@ -251,7 +251,7 @@ namespace {
 		} while(--count);
 	}
 
-	void ConvertRGB16ToYUVPlanar(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src0, sint32 count) {
+	void VDCDECL ConvertRGB16ToYUVPlanar(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src0, sint32 count) {
 		const uint16 *src = (const uint16 *)src0;
 
 		do {
@@ -266,7 +266,7 @@ namespace {
 		} while(--count);
 	}
 
-	void ConvertRGB15ToYUVPlanar(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src0, sint32 count) {
+	void VDCDECL ConvertRGB15ToYUVPlanar(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src0, sint32 count) {
 		const uint16 *src = (const uint16 *)src0;
 
 		do {
@@ -281,7 +281,7 @@ namespace {
 		} while(--count);
 	}
 
-	void ConvertUYVYToYUVPlanar(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src0, sint32 count) {
+	void VDCDECL ConvertUYVYToYUVPlanar(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src0, sint32 count) {
 		const uint8 *src = (const uint8 *)src0;
 
 		do {
@@ -295,7 +295,7 @@ namespace {
 		} while(--count);
 	}
 
-	void ConvertYUYVToYUVPlanar(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src0, sint32 count) {
+	void VDCDECL ConvertYUYVToYUVPlanar(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src0, sint32 count) {
 		const uint8 *src = (const uint8 *)src0;
 
 		do {
@@ -310,10 +310,10 @@ namespace {
 	}
 }
 
-void VDPixmapBlt_YUVPlanar_encode_reference(const VDPixmap& dstbm, const VDPixmap& srcbm, vdpixsize w, vdpixsize h) {
-	void (*cfunc)(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src, sint32 w) = NULL;
-	void (*hfunc)(uint8 *dst, const uint8 *src, sint32 w) = NULL;
-	void (*vfunc)(uint8 *dst, const uint8 *const *sources, sint32 w, uint8 phase) = NULL;
+void VDCDECL VDPixmapBlt_YUVPlanar_encode_reference(const VDPixmap& dstbm, const VDPixmap& srcbm, vdpixsize w, vdpixsize h) {
+	void (VDCDECL *cfunc)(uint8 *ydst, uint8 *cbdst, uint8 *crdst, const void *src, sint32 w) = NULL;
+	void (VDCDECL *hfunc)(uint8 *dst, const uint8 *src, sint32 w) = NULL;
+	void (VDCDECL *vfunc)(uint8 *dst, const uint8 *const *sources, sint32 w, uint8 phase) = NULL;
 
 	bool halfchroma = false;
 

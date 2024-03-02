@@ -20,6 +20,7 @@
 
 ATDevice::ATDevice()
 	: mpDeviceParent(nullptr)
+	, mDeviceParentBusIndex(0)
 {
 }
 
@@ -38,8 +39,13 @@ IATDeviceParent *ATDevice::GetParent() {
 	return mpDeviceParent;
 }
 
-void ATDevice::SetParent(IATDeviceParent *parent) {
+uint32 ATDevice::GetParentBusIndex() {
+	return mDeviceParentBusIndex;
+}
+
+void ATDevice::SetParent(IATDeviceParent *parent, uint32 busIndex) {
 	mpDeviceParent = parent;
+	mDeviceParentBusIndex = busIndex;
 }
 
 void ATDevice::GetSettingsBlurb(VDStringW& buf) {
@@ -72,4 +78,7 @@ void ATDevice::ComputerColdReset() {
 }
 
 void ATDevice::PeripheralColdReset() {
+}
+
+void ATDevice::SetTraceContext(ATTraceContext *context) {
 }

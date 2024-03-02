@@ -33,6 +33,8 @@ class ATSaveStateWriter;
 class ATAudioFilter;
 struct ATPokeyTables;
 class ATPokeyRenderer;
+struct ATTraceContext;
+class ATTraceChannelSimple;
 
 class IATPokeyEmulatorConnections {
 public:
@@ -40,7 +42,7 @@ public:
 	virtual void PokeyNegateIRQ(bool cpuBased) = 0;
 	virtual void PokeyBreak() = 0;
 	virtual bool PokeyIsInInterrupt() const = 0;
-	virtual bool PokeyIsKeyPushOK(uint8 c) const = 0;
+	virtual bool PokeyIsKeyPushOK(uint8 scanCode, bool cooldownExpired) const = 0;
 	virtual uint32 PokeyGetTimestamp() const = 0;
 };
 
@@ -49,7 +51,7 @@ public:
 	virtual void PokeyAttachDevice(ATPokeyEmulator *pokey) = 0;
 
 	// Returns true if burst I/O is allowed.
-	virtual bool PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) = 0;
+	virtual bool PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uint64 startTime, bool framingError) = 0;
 
 	virtual void PokeyBeginCommand() = 0;
 	virtual void PokeyEndCommand() = 0;
@@ -159,6 +161,8 @@ public:
 
 	void	FlushAudio(bool pushAudio);
 
+	void	SetTraceContext(ATTraceContext *context);
+
 protected:
 	void	OnScheduledEvent(uint32 id) override;
 
@@ -174,6 +178,8 @@ protected:
 
 	void	OnSerialInputTick();
 	void	OnSerialOutputTick();
+	bool	IsSerialOutputClockRunning() const;
+	void	FlushSerialOutput();
 
 	void	RecomputeAllowedDeferredTimers();
 
@@ -194,6 +200,7 @@ protected:
 
 	void	UpdateKeyMatrix(int index, uint16 mask, uint16 state);
 	void	UpdateEffectiveKeyMatrix();
+	bool	CanPushKey(uint8 scanCode) const;
 	void	TryPushNextKey();
 
 	void	SetKeyboardModes(bool cooked, bool scanEnabled);
@@ -201,6 +208,8 @@ protected:
 	void	QueueKeyboardIRQ();
 	void	AssertKeyboardIRQ();
 	void	AssertBreakIRQ();
+	void	AssertIrq(bool cpuBased);
+	void	NegateIrq(bool cpuBased);
 
 	void	ProcessReceivedSerialByte();
 	void	SyncRenderers(ATPokeyRenderer *r);
@@ -270,6 +279,7 @@ protected:
 	mutable uint32	mPoly9Counter;
 	uint64	mPolyShutOffTime;
 
+	uint64	mSerialOutputStartTime;
 	uint8	mSerialInputShiftRegister;
 	uint8	mSerialOutputShiftRegister;
 	uint8	mSerialInputCounter;
@@ -331,8 +341,10 @@ protected:
 	ATScheduler *mpScheduler;
 
 	IATPokeyEmulatorConnections *mpConn;
+	ATTraceContext *mpTraceContext;
 	ATPokeyEmulator	*mpSlave;
 	const bool	mbIsSlave;
+	bool	mbIrqAsserted;
 
 	IATAudioOutput *mpAudioOut = nullptr;
 
@@ -358,6 +370,10 @@ protected:
 
 	bool	mTraceDirectionSend = false;
 	uint32	mTraceByteIndex = 0;
+
+	ATTraceChannelSimple *mpTraceChannelIrq = nullptr;
+	bool	mbTraceIrqPending = false;
+	uint64	mTraceIrqStart = 0;
 };
 
 #endif

@@ -16,7 +16,12 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+
+#pragma warning(push)
+#pragma warning(disable: 4768)		// ShlObj.h(1065): warning C4768: __declspec attributes before linkage specification are ignored
 #include <shlobj.h>
+#pragma warning(pop)
+
 #include <shellapi.h>
 #include <ole2.h>
 #include <windows.h>
@@ -41,7 +46,7 @@
 #include <at/atnativeui/uiproxies.h>
 #include "uifilefilters.h"
 
-class ATUIFileViewer : public VDDialogFrameW32 {
+class ATUIFileViewer : public VDResizableDialogFrameW32 {
 public:
 	ATUIFileViewer();
 
@@ -49,7 +54,6 @@ public:
 
 protected:
 	bool OnLoaded() override;
-	void OnSize() override;
 	void OnDestroy() override;
 	void OnWrapModeChanged(VDUIProxyComboBoxControl *sender, int sel);
 	void ReloadFile();
@@ -68,12 +72,11 @@ protected:
 	};
 
 	VDUIProxyComboBoxControl mViewModeCombo;
-	VDDialogResizerW32 mResizer;
 	VDDelegate mDelSelChanged;
 };
 
 ATUIFileViewer::ATUIFileViewer()
-	: VDDialogFrameW32(IDD_FILEVIEW)
+	: VDResizableDialogFrameW32(IDD_FILEVIEW)
 	, mpSrc(nullptr)
 	, mSrcLen(0)
 {
@@ -86,8 +89,6 @@ void ATUIFileViewer::SetBuffer(const void *buf, size_t len) {
 }
 
 bool ATUIFileViewer::OnLoaded() {
-	SetCurrentSizeAsMinSize();
-
 	AddProxy(&mViewModeCombo, IDC_VIEWMODE);
 	mViewModeCombo.AddItem(L"Text: no line wrapping");
 	mViewModeCombo.AddItem(L"Text: wrap to window");
@@ -100,8 +101,7 @@ bool ATUIFileViewer::OnLoaded() {
 
 	mViewModeCombo.SetSelection(mViewMode);
 
-	mResizer.Init(mhdlg);
-	mResizer.Add(IDC_RICHEDIT, mResizer.kMC);
+	mResizer.Add(IDC_RICHEDIT, mResizer.kMC | mResizer.kAvoidFlicker | mResizer.kSuppressFontChange);
 	
 	ATUIRestoreWindowPlacement(mhdlg, "File viewer", SW_SHOW);
 
@@ -119,10 +119,6 @@ bool ATUIFileViewer::OnLoaded() {
 	}
 
 	return true;
-}
-
-void ATUIFileViewer::OnSize() {
-	mResizer.Relayout();
 }
 
 void ATUIFileViewer::OnDestroy() {
@@ -652,7 +648,7 @@ namespace {
 	}
 }
 
-class ATUIDialogDiskExplorer : public VDDialogFrameW32, public IATDropTargetNotify {
+class ATUIDialogDiskExplorer : public VDResizableDialogFrameW32, public IATDropTargetNotify {
 public:
 	ATUIDialogDiskExplorer(IATDiskImage *image = NULL, const wchar_t *imageName = NULL, bool writeEnabled = true, bool autoFlush = true);
 	~ATUIDialogDiskExplorer();
@@ -660,7 +656,6 @@ public:
 protected:
 	bool OnLoaded();
 	void OnDestroy();
-	void OnSize();
 	bool OnErase(VDZHDC hdc);
 	bool OnCommand(uint32 id, uint32 extcode);
 
@@ -716,8 +711,6 @@ protected:
 	VDDelegate mDelContextMenu;
 	VDDelegate mDelLabelChanged;
 	VDDelegate mDelDoubleClick;
-
-	VDDialogResizerW32 mResizer;
 };
 
 void ATUIDialogDiskExplorer::FileListEntry::GetText(int subItem, VDStringW& s) const {
@@ -753,7 +746,7 @@ void ATUIDialogDiskExplorer::FileListEntry::GetText(int subItem, VDStringW& s) c
 }
 
 ATUIDialogDiskExplorer::ATUIDialogDiskExplorer(IATDiskImage *image, const wchar_t *imageName, bool writeEnabled, bool autoFlush)
-	: VDDialogFrameW32(IDD_DISK_EXPLORER)
+	: VDResizableDialogFrameW32(IDD_DISK_EXPLORER)
 	, mhMenuItemContext(NULL)
 	, mbWriteEnabled(writeEnabled)
 	, mbAutoFlush(autoFlush)
@@ -773,8 +766,6 @@ ATUIDialogDiskExplorer::~ATUIDialogDiskExplorer() {
 }
 
 bool ATUIDialogDiskExplorer::OnLoaded() {
-	SetCurrentSizeAsMinSize();
-
 	HINSTANCE hInst = VDGetLocalModuleHandleW32();
 	HICON hIcon = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED);
 	if (hIcon)
@@ -784,7 +775,6 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 	if (hSmallIcon)
 		SendMessage(mhdlg, WM_SETICON, ICON_SMALL, (LPARAM)hSmallIcon);
 
-	mResizer.Init(mhdlg);
 	mResizer.Add(IDC_FILENAME, VDDialogResizerW32::kTC);
 	mResizer.Add(IDC_BROWSE, VDDialogResizerW32::kTR);
 	mResizer.Add(IDC_DISK_CONTENTS, VDDialogResizerW32::kMC | VDDialogResizerW32::kAvoidFlicker);
@@ -899,10 +889,6 @@ void ATUIDialogDiskExplorer::OnDestroy() {
 	}
 
 	VDDialogFrameW32::OnDestroy();
-}
-
-void ATUIDialogDiskExplorer::OnSize() {
-	mResizer.Relayout();
 }
 
 bool ATUIDialogDiskExplorer::OnErase(VDZHDC hdc) {

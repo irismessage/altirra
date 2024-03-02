@@ -93,7 +93,7 @@ void ATCreateDeviceBlackBoxEmulator(const ATPropertySet& pset, IATDevice **dev) 
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefBlackBox = { "blackbox", "blackbox", L"BlackBox", ATCreateDeviceBlackBoxEmulator };
+extern const ATDeviceDefinition g_ATDeviceDefBlackBox = { "blackbox", "blackbox", L"BlackBox", ATCreateDeviceBlackBoxEmulator, kATDeviceDefFlag_RebootOnPlug };
 
 ATBlackBoxEmulator::~ATBlackBoxEmulator() {
 }
@@ -158,13 +158,41 @@ bool ATBlackBoxEmulator::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATBlackBoxEmulator::Init() {
+	mSerialBus.Init(this, 0, IATDeviceSerial::kTypeID, "serial", L"Serial Port");
+
+	mSerialBus.SetOnAttach(
+		[this] {
+			if (mpSerialDevice)
+				return;
+
+			IATDeviceSerial *serdev = mSerialBus.GetChild<IATDeviceSerial>();
+			if (serdev) {
+				vdsaferelease <<= mpSerialDevice;
+				if (serdev)
+					serdev->AddRef();
+				mpSerialDevice = serdev;
+				mpSerialDevice->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
+
+				UpdateSerialControlLines();
+			}
+		}
+	);
+
+	mSerialBus.SetOnDetach(
+		[this] {
+			if (mpSerialDevice) {
+				mpSerialDevice->SetOnStatusChange(nullptr);
+				vdpoly_cast<IATDevice *>(mpSerialDevice)->SetParent(nullptr, 0);
+				vdsaferelease <<= mpSerialDevice;
+			}
+
+			mSerialCtlInputs = 0;
+		}
+	);
 }
 
 void ATBlackBoxEmulator::Shutdown() {
-	if (mpSerialDevice) {
-		vdpoly_cast<IATDevice *>(mpSerialDevice)->SetParent(nullptr);
-		vdsaferelease <<= mpSerialDevice;
-	}
+	mSerialBus.Shutdown();
 
 	mSCSIBus.Shutdown();
 
@@ -174,7 +202,7 @@ void ATBlackBoxEmulator::Shutdown() {
 		ent.mpSCSIDevice->Release();
 		ent.mpDisk->Release();
 		if (ent.mpDevice) {
-			ent.mpDevice->SetParent(nullptr);
+			ent.mpDevice->SetParent(nullptr, 0);
 			ent.mpDevice->Release();
 		}
 
@@ -365,6 +393,7 @@ void ATBlackBoxEmulator::InitIRQSource(ATIRQController *irqc) {
 void ATBlackBoxEmulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 	mpScheduler = sch;
 
+	mSCSIBus.Init(sch);
 	mVIA.Init(sch);
 	mACIA.Init(sch, slowsch);
 }
@@ -401,13 +430,25 @@ void ATBlackBoxEmulator::ActivateButton(ATDeviceButton idx, bool state) {
 	}
 }
 
-const char *ATBlackBoxEmulator::GetSupportedType(uint32 index) {
+IATDeviceBus *ATBlackBoxEmulator::GetDeviceBus(uint32 index) {
 	switch(index) {
-		case 0: return "harddisk";
-		case 1: return "serial";
+		case 0:
+			return &mSerialBus;
+
+		case 1:
+			return this;
+
 		default:
 			return nullptr;
 	}
+}
+
+const wchar_t *ATBlackBoxEmulator::GetBusName() const {
+	return L"SCSI Bus";
+}
+
+const char *ATBlackBoxEmulator::GetSupportedType(uint32 index) {
+	return index ? nullptr : "harddisk";
 }
 
 void ATBlackBoxEmulator::GetChildDevices(vdfastvector<IATDevice *>& devs) {
@@ -419,9 +460,11 @@ void ATBlackBoxEmulator::GetChildDevices(vdfastvector<IATDevice *>& devs) {
 
 		devs.push_back(vdpoly_cast<IATDevice *>(ent.mpDisk));
 	}
+}
 
-	if (mpSerialDevice)
-		devs.push_back(vdpoly_cast<IATDevice *>(mpSerialDevice));
+void ATBlackBoxEmulator::GetChildDevicePrefix(uint32 index, VDStringW& s) {
+	if (index < mSCSIDisks.size())
+		s.sprintf(L"SCSI ID %u: ", index);
 }
 
 void ATBlackBoxEmulator::AddChildDevice(IATDevice *dev) {
@@ -440,7 +483,7 @@ void ATBlackBoxEmulator::AddChildDevice(IATDevice *dev) {
 		SCSIDiskEntry entry = { dev, scsidev, disk };
 		mSCSIDisks.push_back(entry);
 		dev->AddRef();
-		dev->SetParent(this);
+		dev->SetParent(this, 1);
 		scsidev->AddRef();
 		disk->AddRef();
 
@@ -449,37 +492,9 @@ void ATBlackBoxEmulator::AddChildDevice(IATDevice *dev) {
 
 		mSCSIBus.AttachDevice(id, scsidev);
 	}
-
-	if (!mpSerialDevice) {
-		IATDeviceSerial *serdev = vdpoly_cast<IATDeviceSerial *>(dev);
-		if (serdev && serdev != mpSerialDevice) {
-			vdsaferelease <<= mpSerialDevice;
-			if (serdev)
-				serdev->AddRef();
-			mpSerialDevice = serdev;
-			mpSerialDevice->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
-			dev->SetParent(this);
-
-			UpdateSerialControlLines();
-		}
-	}
 }
 
 void ATBlackBoxEmulator::RemoveChildDevice(IATDevice *dev) {
-	IATDeviceSerial *serdev = vdpoly_cast<IATDeviceSerial *>(dev);
-	if (serdev) {
-		if (serdev == mpSerialDevice) {
-			mpSerialDevice->SetOnStatusChange(nullptr);
-			dev->SetParent(nullptr);
-			vdsaferelease <<= mpSerialDevice;
-
-			mSerialCtlInputs = 0;
-			return;
-		}
-
-		return;
-	}
-
 	IATBlockDevice *disk = vdpoly_cast<IATBlockDevice *>(dev);
 
 	if (!disk)
@@ -492,7 +507,7 @@ void ATBlackBoxEmulator::RemoveChildDevice(IATDevice *dev) {
 		const SCSIDiskEntry& ent = *it;
 
 		if (ent.mpDisk == disk) {
-			dev->SetParent(nullptr);
+			dev->SetParent(nullptr, 0);
 			mSCSIBus.DetachDevice(ent.mpSCSIDevice);
 			ent.mpDisk->Release();
 			ent.mpSCSIDevice->Release();

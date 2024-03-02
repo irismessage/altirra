@@ -64,6 +64,9 @@
     <Filter Include="Source Files\PBIDisk">
       <UniqueIdentifier>{93e8b816-9a5d-4358-b38c-984644856998}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\Rapidus">
+      <UniqueIdentifier>{56013b1b-af0f-4e6e-b37f-a6293be32a6f}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="source\loader.xasm">
@@ -280,10 +283,30 @@
     <None Include="source\PBIDisk\pbidisk.s">
       <Filter>Source Files\PBIDisk</Filter>
     </None>
+    <None Include="source\Rapidus\rapidpbi16.s">
+      <Filter>Source Files\Rapidus</Filter>
+    </None>
+    <None Include="source\Rapidus\rapidpbi8.s">
+      <Filter>Source Files\Rapidus</Filter>
+    </None>
+    <None Include="source\Rapidus\rapidflash.s">
+      <Filter>Source Files\Rapidus</Filter>
+    </None>
+    <None Include="source\Rapidus\rapidfirmware.s">
+      <Filter>Source Files\Rapidus</Filter>
+    </None>
+    <None Include="source\Rapidus\rapidos.s">
+      <Filter>Source Files\Rapidus</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\Placeholders\noblackbox.s">
       <Filter>Source Files\Placeholders</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="source\Additions\license.txt">
+      <Filter>Source Files\Additions</Filter>
+    </Text>
   </ItemGroup>
 </Project>

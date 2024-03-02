@@ -28,6 +28,7 @@
       <t name="R-Time 8" href="devices-rtime8.html"/>
     </t>
     <t name="Internal devices">
+      <t name="Rapidus" href="devices-rapidus.html"/>
       <t name="Ultimate1MB" href="ultimate1mb.html"/>
       <t name="VideoBoard XE (VBXE)" href="vbxe.html"/>
     </t>
@@ -43,6 +44,7 @@
     </t>
     <t name="PBI-based devices">
       <t name="Black Box" href="devices-blackbox.html"/>
+      <t name="KMK/JZ IDE (IDEPlus 2.0)" href="devices-ideplus2.html"/>
       <t name="Multi-I/O" href="devices-mio.html"/>
     </t>
     <t name="Full disk drive devices">

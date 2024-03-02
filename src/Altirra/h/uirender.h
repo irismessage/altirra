@@ -55,6 +55,8 @@ public:
 	virtual void ClearWatchedValue(int index) = 0;
 	virtual void SetWatchedValue(int index, uint32 value, int len) = 0;
 
+	virtual void SetTracingSize(sint64 size) = 0;
+
 	virtual void SetAudioStatus(ATUIAudioStatus *status) = 0;
 
 	virtual void SetAudioMonitor(bool secondary, ATAudioMonitor *monitor) = 0;

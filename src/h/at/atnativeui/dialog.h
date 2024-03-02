@@ -48,6 +48,94 @@ public:
 #define IDCANCEL            2
 #endif
 
+class VDDialogResizerW32 {
+public:
+	VDDialogResizerW32();
+	~VDDialogResizerW32();
+
+	enum : uint32 {
+		kAnchorX1_C	= 0x01,
+		kAnchorX1_R	= 0x02,
+		kAnchorX2_C	= 0x04,
+		kAnchorX2_R	= 0x08,
+		kAnchorY1_M	= 0x10,
+		kAnchorY1_B	= 0x20,
+		kAnchorY2_M	= 0x40,
+		kAnchorY2_B	= 0x80,
+
+		kL		= 0,
+		kC		= kAnchorX2_R,
+		kR		= kAnchorX2_R | kAnchorX1_R,
+		kHMask	= 0x0F,
+
+		kT		= 0,
+		kM		= kAnchorY2_B,
+		kB		= kAnchorY2_B | kAnchorY1_B,
+		kVMask	= 0xF0,
+
+		kX1Y1Mask = 0x33,
+		kX2Y2Mask = 0xCC,
+
+		kTL		= kT | kL,
+		kTR		= kT | kR,
+		kTC		= kT | kC,
+		kML		= kM | kL,
+		kMR		= kM | kR,
+		kMC		= kM | kC,
+		kBL		= kB | kL,
+		kBR		= kB | kR,
+		kBC		= kB | kC,
+
+		kAvoidFlicker = 0x100,
+		kSuppressFontChange = 0x200,
+		kUpDownAutoBuddy = 0x400
+	};
+
+	void Init(VDZHWND hwnd);
+	void Shutdown();
+	void SetRefUnits(int refX, int refY);
+	void Relayout(const int *newRefX = nullptr, const int *newRefY = nullptr);
+	void Relayout(int width, int height, const int *newRefX = nullptr, const int *newRefY = nullptr);
+	void Add(uint32 id, uint32 alignment);
+	void Add(VDZHWND hwndControl, uint32 alignment);
+	void Add(VDZHWND hwnd, sint32 x, sint32 y, sint32 w, sint32 h, uint32 alignment);
+	void AddAlias(VDZHWND hwndTarget, VDZHWND hwndSource, uint32 mergeFlags);
+	void Remove(VDZHWND hwnd);
+
+	void Broadcast(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
+
+	void Erase(const VDZHDC *phdc, sint32 bgColorOverride = -1);
+
+private:
+	struct Anchors {
+		int mXAnchors[4];
+		int mYAnchors[4];
+	};
+
+	struct ControlEntry {
+		VDZHWND	mhwnd;
+		uint32	mAlignment;
+		sint32	mX1;
+		sint32	mY1;
+		sint32	mX2;
+		sint32	mY2;
+		sint32	mRefX;
+		sint32	mRefY;
+	};
+
+	Anchors ComputeAnchors() const;
+	void ComputeLayout(const ControlEntry& ce, const Anchors& anchors, int& x1, int& y1, int& w, int& h, uint32& flags, bool forceMove) const;
+
+	VDZHWND	mhwndBase;
+	int		mWidth;
+	int		mHeight;
+	int		mRefX;
+	int		mRefY;
+
+	typedef vdfastvector<ControlEntry> Controls;
+	Controls mControls;
+};
+
 class VDDialogFrameW32 {
 public:
 	virtual ~VDDialogFrameW32() = default;
@@ -76,11 +164,15 @@ public:
 
 	vdrect32 GetClientArea() const;
 
+	VDZHFONT GetFont() const;
+	void SetFont(VDZHFONT hfont);
+
 	VDStringW GetCaption() const;
 	void SetCaption(const wchar_t *caption);
 
 	void AdjustPosition();
 	void CenterOnParent();
+	void UpdateChildDpi();
 
 	sintptr ShowDialog(VDGUIHandle hwndParent);
 	sintptr ShowDialog(VDDialogFrameW32 *parent);
@@ -145,6 +237,7 @@ protected:
 	void ShowError(const wchar_t *message, const wchar_t *caption = nullptr);
 	void ShowError(const MyError&);
 	bool Confirm(const wchar_t *message, const wchar_t *caption = nullptr);
+	bool Confirm2(const char *ignoreTag, const wchar_t *message, const wchar_t *title = nullptr);
 
 	int ActivateMenuButton(uint32 id, const wchar_t *const *items);
 	int ActivatePopupMenu(int x, int y, const wchar_t *const *items);
@@ -186,6 +279,7 @@ protected:
 	virtual void OnDestroy();
 	virtual bool OnTimer(uint32 id);
 	virtual bool OnErase(VDZHDC hdc);
+	virtual bool OnPaint();
 	virtual bool OnCommand(uint32 id, uint32 extcode);
 	virtual void OnDropFiles(VDZHDROP hDrop);
 	virtual void OnDropFiles(IVDUIDropFileList *dropFileList);
@@ -194,21 +288,37 @@ protected:
 	virtual void OnMouseMove(int x, int y);
 	virtual void OnMouseDownL(int x, int y);
 	virtual void OnMouseUpL(int x, int y);
+	virtual void OnMouseWheel(int x, int y, sint32 delta);
+	virtual void OnMouseLeave();
 	virtual void OnCaptureLost();
 	virtual void OnHelp();
 	virtual void OnContextMenu(uint32 id, int x, int y);
+	virtual void OnSetFont(VDZHFONT hfont);
+	virtual void OnDpiChanging(uint16 newDpiX, uint16 newDpiY, const vdrect32 *suggestedRect);
+	virtual void OnDpiChanged();
 	virtual bool PreNCDestroy();
 	virtual bool ShouldSetDialogIcon() const;
+	virtual sint32 GetBackgroundColor() const;
 
 	void SetCapture();
 	void ReleaseCapture();
+	void RegisterForMouseLeave();
 	void LoadAcceleratorTable(uint32 id);
+	sint32 GetDpiScaledMetric(int index);
 
 	bool	mbValidationFailed;
 	bool	mbIsModal;
 	VDZHWND	mhdlg;
+	VDZHFONT	mhfont;
 	int		mMinWidth;
 	int		mMinHeight;
+	uint32	mCurrentDpi;
+
+	struct DialogUnits {
+		uint32 mWidth4;
+		uint32 mHeight8;
+	} mDialogUnits;
+
 	int		mMaxWidth;
 	int		mMaxHeight;
 	VDZHACCEL	mAccel = nullptr;
@@ -216,15 +326,31 @@ protected:
 private:
 	void ExecutePostedCalls();
 	void SetDialogIcon();
+	VDZHFONT CreateNewFont(int dpiOverride = 0) const;
+	DialogUnits ComputeDialogUnits(VDZHFONT hFont) const;
+	void RecomputeDialogUnits();
+	vdsize32 ComputeTemplatePixelSize(const DialogUnits& dialogUnits, uint32 dpi) const;
+	void AdjustSize(int& width, int& height, const vdsize32& templatePixelSize, const DialogUnits& dialogUnits) const;
+	sintptr DoCreate(VDZHWND parent, bool modal);
 
 	static VDZINT_PTR VDZCALLBACK StaticDlgProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
 
-	const char *mpDialogResourceName;
+	const wchar_t *mpDialogResourceName;
 	uint32	mFailedId;
 	VDStringW mFailedMsg;
 
 	VDGUIHandle mhPrevProgressParent = nullptr;
 	bool mbProgressParentHooked = false;
+
+	uint32	mTemplateWidthDLUs;
+	uint32	mTemplateHeightDLUs;
+	uint32	mTemplateControlCount;
+	const char *mpTemplateControls;
+	const wchar_t *mpTemplateFont;
+	uint32	mTemplateFontPointSize;
+
+	bool mbResizableWidth;
+	bool mbResizableHeight;
 
 	VDCriticalSection mMutex;
 	std::list<vdfunction<void()>> mPostedCalls;
@@ -233,72 +359,7 @@ private:
 
 protected:
 	VDUIProxyMessageDispatcherW32 mMsgDispatcher;
-};
-
-class VDDialogResizerW32 {
-public:
-	VDDialogResizerW32();
-	~VDDialogResizerW32();
-
-	enum {
-		kAnchorX1_C	= 0x01,
-		kAnchorX1_R	= 0x02,
-		kAnchorX2_C	= 0x04,
-		kAnchorX2_R	= 0x08,
-		kAnchorY1_M	= 0x10,
-		kAnchorY1_B	= 0x20,
-		kAnchorY2_M	= 0x40,
-		kAnchorY2_B	= 0x80,
-
-		kL		= 0,
-		kC		= kAnchorX2_R,
-		kR		= kAnchorX2_R | kAnchorX1_R,
-		kHMask	= 0x0F,
-
-		kT		= 0,
-		kM		= kAnchorY2_B,
-		kB		= kAnchorY2_B | kAnchorY1_B,
-		kVMask	= 0xF0,
-
-		kX1Y1Mask = 0x33,
-		kX2Y2Mask = 0xCC,
-
-		kTL		= kT | kL,
-		kTR		= kT | kR,
-		kTC		= kT | kC,
-		kML		= kM | kL,
-		kMR		= kM | kR,
-		kMC		= kM | kC,
-		kBL		= kB | kL,
-		kBR		= kB | kR,
-		kBC		= kB | kC,
-
-		kAvoidFlicker = 0x100
-	};
-
-	void Init(VDZHWND hwnd);
-	void Relayout();
-	void Relayout(int width, int height);
-	void Add(uint32 id, int alignment);
-
-	void Erase(const VDZHDC *phdc);
-
-protected:
-	struct ControlEntry {
-		VDZHWND	mhwnd;
-		int		mAlignment;
-		sint32	mX1;
-		sint32	mY1;
-		sint32	mX2;
-		sint32	mY2;
-	};
-
-	VDZHWND	mhwndBase;
-	int		mWidth;
-	int		mHeight;
-
-	typedef vdfastvector<ControlEntry> Controls;
-	Controls mControls;
+	VDDialogResizerW32 mResizer;
 };
 
 class VDResizableDialogFrameW32 : public VDDialogFrameW32 {
@@ -306,10 +367,6 @@ protected:
 	VDResizableDialogFrameW32(uint32 dlgid);
 
 	void OnPreLoaded() override;
-	bool OnErase(VDZHDC hdc) override;
-	void OnSize() override;
-
-	VDDialogResizerW32 mResizer;
 };
 
 #endif

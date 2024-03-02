@@ -12,6 +12,8 @@
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Riza/bitmap.h>
+#include <at/atnativeui/uiframe.h>
+#include "decode_png.h"
 #include "encode_png.h"
 
 const void *ATLockResource(uint32 id, size_t& size) {
@@ -157,6 +159,29 @@ bool ATLoadMiscResource(int id, vdfastvector<uint8>& data) {
 	return true;
 }
 
+bool ATLoadImageResource(uint32 id, VDPixmapBuffer& buf) {
+	HMODULE hmod = VDGetLocalModuleHandleW32();
+
+	HRSRC hrsrc = FindResourceW(hmod, MAKEINTRESOURCEW(id), L"PNG");
+	if (!hrsrc)
+		return false;
+
+	DWORD rsize = SizeofResource(hmod, hrsrc);
+	HGLOBAL hg = LoadResource(hmod, hrsrc);
+	const void *p = LockResource(hg);
+
+	if (!p)
+		return false;
+
+	vdautoptr<IVDImageDecoderPNG> decoder(VDCreateImageDecoderPNG());
+
+	if (decoder->Decode(p, rsize))
+		return false;
+
+	buf.assign(decoder->GetFrameBuffer());
+	return true;
+}
+
 void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly) {
 	VDStringA s;
 	DWORD attrs;
@@ -281,6 +306,7 @@ namespace {
 		sint32 mBottom;
 		uint8 mbMaximized;
 		uint8 mPad[3];
+		uint32 mDpi;			// added - v3
 	};
 }
 
@@ -295,11 +321,12 @@ void ATUISaveWindowPlacement(void *hwnd, const char *name) {
 				wp.rcNormalPosition.right,
 				wp.rcNormalPosition.bottom,
 			},
-			wp.showCmd == SW_MAXIMIZE);
+			wp.showCmd == SW_MAXIMIZE,
+			ATUIGetWindowDpiW32((HWND)hwnd));
 	}
 }
 
-void ATUISaveWindowPlacement(const char *name, const vdrect32& r, bool isMaximized) {
+void ATUISaveWindowPlacement(const char *name, const vdrect32& r, bool isMaximized, uint32 dpi) {
 	VDRegistryAppKey key("Window Placement");
 
 	ATUISavedWindowPlacement sp {};
@@ -308,6 +335,7 @@ void ATUISaveWindowPlacement(const char *name, const vdrect32& r, bool isMaximiz
 	sp.mRight	= r.right;
 	sp.mBottom	= r.bottom;
 	sp.mbMaximized = isMaximized;
+	sp.mDpi		= dpi;
 	key.setBinary(name, (const char *)&sp, sizeof sp);
 }
 
@@ -333,14 +361,41 @@ void ATUIRestoreWindowPlacement(void *hwnd, const char *name, int nCmdShow, bool
 				wp.flags			= 0;
 				wp.showCmd			= nCmdShow;
 
+				sint32 width = sp.mRight - sp.mLeft;
+				sint32 height = sp.mBottom - sp.mTop;
+
+				// If we have a DPI value, try to compensate for DPI differences.
+				if (sp.mDpi) {
+					// Obtain the primary work area.
+					RECT rWorkArea = {};
+					if (SystemParametersInfo(SPI_GETWORKAREA, 0, &rWorkArea, FALSE)) {
+						// Translate rcNormalPosition to screen coordinates.
+						RECT rScreen {
+							wp.rcNormalPosition.left + rWorkArea.left,
+							wp.rcNormalPosition.top + rWorkArea.top,
+							wp.rcNormalPosition.right + rWorkArea.left,
+							wp.rcNormalPosition.bottom + rWorkArea.top,
+						};
+
+						HMONITOR hMon = MonitorFromRect(&rScreen, MONITOR_DEFAULTTONEAREST);
+						uint32 currentDpi = ATUIGetMonitorDpiW32(hMon);
+
+						if (currentDpi) {
+							const double dpiConversionFactor = (double)currentDpi / (double)sp.mDpi;
+							width = VDRoundToInt32((double)width * dpiConversionFactor);
+							height = VDRoundToInt32((double)height * dpiConversionFactor);
+						}
+					}
+				}
+
 				if (sizeOnly) {
-					wp.rcNormalPosition.right = wp.rcNormalPosition.left + (sp.mRight - sp.mLeft);
-					wp.rcNormalPosition.bottom = wp.rcNormalPosition.top + (sp.mBottom - sp.mTop);
+					wp.rcNormalPosition.right = wp.rcNormalPosition.left + width;
+					wp.rcNormalPosition.bottom = wp.rcNormalPosition.top + height;
 				} else {
 					wp.rcNormalPosition.left = sp.mLeft;
 					wp.rcNormalPosition.top = sp.mTop;
-					wp.rcNormalPosition.right = sp.mRight;
-					wp.rcNormalPosition.bottom = sp.mBottom;
+					wp.rcNormalPosition.right = sp.mLeft + width;
+					wp.rcNormalPosition.bottom = sp.mTop + height;
 				}
 
 				if ((wp.showCmd == SW_SHOW || wp.showCmd == SW_SHOWNORMAL || wp.showCmd == SW_SHOWDEFAULT) && sp.mbMaximized)

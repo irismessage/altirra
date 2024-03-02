@@ -108,6 +108,7 @@ protected:
 	void OnMouseWheel(int wheelClicks, WPARAM modifiers, int x, int y);
 	void OnVScroll(int cmd);
 	int OnGetText(uint32 length, char *s);
+	int OnGetText(uint32 length, wchar_t *s);
 	int OnGetTextLength();
 	bool OnSetText(const char *s);
 
@@ -246,7 +247,7 @@ void TextEditor::SetGutters(int x, int y) {
 }
 
 bool TextEditor::IsSelectionPresent() {
-	return mSelectionAnchor;
+	return mSelectionAnchor && mSelectionAnchor != mCaretPos;
 }
 
 bool TextEditor::IsCutPossible() {
@@ -879,7 +880,10 @@ LRESULT TextEditor::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		return OnSetText((const char *)lParam);
 
 	case WM_GETTEXT:
-		return OnGetText((uint32)wParam, (char *)lParam);
+		if (IsWindowUnicode(mhwnd))
+			return OnGetText((uint32)wParam, (wchar_t *)lParam);
+		else
+			return OnGetText((uint32)wParam, (char *)lParam);
 
 	case WM_GETTEXTLENGTH:
 		return OnGetTextLength();
@@ -1368,8 +1372,10 @@ void TextEditor::OnVScroll(int cmd) {
 }
 
 int TextEditor::OnGetText(uint32 buflen, char *s) {
-	if (!s)
+	if (!s || !buflen)
 		return 0;
+
+	--buflen;
 
 	uint32 paraCount = mDocument.GetParagraphCount();
 	uint32 actual = 0;
@@ -1387,6 +1393,37 @@ int TextEditor::OnGetText(uint32 buflen, char *s) {
 		if (actual >= buflen)
 			break;
 	}
+
+	*s = 0;
+
+	return actual;
+}
+
+int TextEditor::OnGetText(uint32 buflen, wchar_t *s) {
+	if (!s || !buflen)
+		return 0;
+
+	--buflen;
+
+	uint32 paraCount = mDocument.GetParagraphCount();
+	uint32 actual = 0;
+	for(uint32 i=0; i<paraCount; ++i) {
+		const Paragraph& para = *mDocument.GetParagraph(i);
+		uint32 maxlen = buflen - actual;
+		uint32 paralen = (uint32)para.mText.size();
+
+		if (maxlen > paralen)
+			maxlen = paralen;
+
+		for(uint32 i=0; i<maxlen; ++i)
+			*s++ = (wchar_t)para.mText[i];
+
+		actual += maxlen;
+		if (actual >= buflen)
+			break;
+	}
+
+	*s = 0;
 
 	return actual;
 }
@@ -1514,6 +1551,10 @@ void TextEditor::UpdateScrollRange() {
 	si.nPage	= mVisibleHeight;
 	si.nPos		= mScrollY;
 	SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
+
+	// Scrollbars have a habit of getting stuck with capture mode on if you change range or page
+	// size while mouse-driven repeat scrolling is occurring, so cancel the scroll.
+	SendMessage(mhwnd, WM_CANCELMODE, 0, 0);
 }
 
 void TextEditor::AnchorSelection() {

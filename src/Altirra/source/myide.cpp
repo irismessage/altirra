@@ -35,7 +35,7 @@ void ATCreateDeviceMyIDE(const ATPropertySet& pset, IATDevice **dev) {
 
 extern const ATDeviceDefinition g_ATDeviceDefMyIDED1xx = { "myide-d1xx", nullptr, L"MyIDE (internal)", ATCreateDeviceMyIDE<false, false> };
 extern const ATDeviceDefinition g_ATDeviceDefMyIDED5xx = { "myide-d5xx", nullptr, L"MyIDE (cartridge)", ATCreateDeviceMyIDE<false, true> };
-extern const ATDeviceDefinition g_ATDeviceDefMyIDE2 = { "myide2", "myide2", L"MyIDE-II", ATCreateDeviceMyIDE<true, true> };
+extern const ATDeviceDefinition g_ATDeviceDefMyIDE2 = { "myide2", "myide2", L"MyIDE-II", ATCreateDeviceMyIDE<true, true>, kATDeviceDefFlag_RebootOnPlug };
 
 ATMyIDEEmulator::ATMyIDEEmulator(bool ver2, bool useD5xx)
 	: mbVersion2(ver2)
@@ -163,7 +163,7 @@ void ATMyIDEEmulator::Shutdown() {
 
 	for(auto& blockDev : mpBlockDevices) {
 		if (blockDev) {
-			vdpoly_cast<IATDevice *>(blockDev)->SetParent(nullptr);
+			vdpoly_cast<IATDevice *>(blockDev)->SetParent(nullptr, 0);
 			blockDev = nullptr;
 		}
 	}
@@ -333,6 +333,14 @@ void ATMyIDEEmulator::SaveWritableFirmware(uint32 idx, IVDStream& stream) {
 	}
 }
 
+IATDeviceBus *ATMyIDEEmulator::GetDeviceBus(uint32 index) {
+	return index ? nullptr : this;
+}
+
+const wchar_t *ATMyIDEEmulator::GetBusName() const {
+	return L"IDE/CompactFlash Bus";
+}
+
 const char *ATMyIDEEmulator::GetSupportedType(uint32 index) {
 	if (index == 0)
 		return "harddisk";
@@ -357,7 +365,7 @@ void ATMyIDEEmulator::AddChildDevice(IATDevice *dev) {
 	for(size_t i=0; i<2; ++i) {
 		if (!mpBlockDevices[i]) {
 			mpBlockDevices[i] = blockDevice;
-			dev->SetParent(this);
+			dev->SetParent(this, 0);
 
 			mIDE[i].OpenImage(blockDevice);
 			mIDE[i^1].SetIsSingle(false);
@@ -380,7 +388,7 @@ void ATMyIDEEmulator::RemoveChildDevice(IATDevice *dev) {
 			mIDE[i].CloseImage();
 			mIDE[i^1].SetIsSingle(true);
 
-			dev->SetParent(nullptr);
+			dev->SetParent(nullptr, 0);
 			mpBlockDevices[i] = nullptr;
 
 			// Pulling the CF device resets the state back to unpowered, reset, and

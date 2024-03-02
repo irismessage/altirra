@@ -248,9 +248,7 @@ ATUIDialogChangeLog::ATUIDialogChangeLog()
 }
 
 bool ATUIDialogChangeLog::OnLoaded() {
-	SetCurrentSizeAsMinSize();
-
-	mResizer.Add(IDC_TEXT, mResizer.kMC | mResizer.kAvoidFlicker);
+	mResizer.Add(IDC_TEXT, mResizer.kMC | mResizer.kAvoidFlicker | mResizer.kSuppressFontChange);
 	mResizer.Add(IDOK, mResizer.kBR);
 
 	return VDResizableDialogFrameW32::OnLoaded();

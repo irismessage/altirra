@@ -19,7 +19,12 @@
 #include <windows.h>
 #include <ole2.h>
 #include <shellapi.h>
+
+#pragma warning(push)
+#pragma warning(disable: 4768)		// ShlObj.h(1065): warning C4768: __declspec attributes before linkage specification are ignored
 #include <shlobj.h>
+#pragma warning(pop)
+
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
@@ -560,7 +565,9 @@ public:
 	void OnDrop(int index, const wchar_t *path, const wchar_t *imageName, IVDRandomAccessStream& stream) override;
 
 protected:
-	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
+	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) override;
+	void OnDpiChanged() override;
+	void UpdateFonts();
 	void UpdateActionButtons();
 	void RefreshDriveColor(int driveIndex);
 	bool ConfirmEject(int driveIndex);
@@ -689,7 +696,7 @@ namespace {
 
 bool ATDiskDriveDialog::OnLoaded() {
 	for(uint32 id : kMoreIds)
-		mResizer.Add(id, mResizer.kTR);
+		mResizer.Add(id, mResizer.kTR | mResizer.kSuppressFontChange);
 
 	for(uint32 id : kEjectID)
 		mResizer.Add(id, mResizer.kTR);
@@ -705,7 +712,6 @@ bool ATDiskDriveDialog::OnLoaded() {
 
 	mResizer.Add(IDOK, mResizer.kTR);
 
-	SetCurrentSizeAsMinSize();
 	SetCurrentSizeAsMaxSize(false, true);
 
 	ATUIRestoreWindowPlacement(mhdlg, "Disk drives", -1, true);
@@ -723,26 +729,7 @@ bool ATDiskDriveDialog::OnLoaded() {
 		}
 	}
 
-	if (!mhFontMarlett) {
-		HFONT hfontDlg = (HFONT)SendMessage(mhdlg, WM_GETFONT, 0, 0);
-
-		if (hfontDlg) {
-			LOGFONT lf = {0};
-			if (GetObject(hfontDlg, sizeof lf, &lf)) {
-				mhFontMarlett = CreateFont(lf.lfHeight, 0, 0, 0, FW_DONTCARE, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, _T("Marlett"));
-			}
-		}
-	}
-
-	if (mhFontMarlett) {
-		for(size_t i=0; i<vdcountof(kMoreIds); ++i) {
-			HWND hwndControl = GetControl(kMoreIds[i]);
-
-			if (hwndControl) {
-				SendMessage(hwndControl, WM_SETFONT, (WPARAM)mhFontMarlett, MAKELONG(TRUE, 0));
-			}
-		}
-	}
+	UpdateFonts();
 
 	if (!mDirtyDiskBrush) {
 		DWORD c = GetSysColor(COLOR_3DFACE);
@@ -1429,6 +1416,40 @@ VDZINT_PTR ATDiskDriveDialog::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM l
 	}
 
 	return VDDialogFrameW32::DlgProc(msg, wParam, lParam);
+}
+
+void ATDiskDriveDialog::OnDpiChanged() {
+	VDResizableDialogFrameW32::OnDpiChanged();
+
+	UpdateFonts();
+}
+
+void ATDiskDriveDialog::UpdateFonts() {
+	HFONT hNewFont = nullptr;
+
+	HFONT hfontDlg = (HFONT)SendMessage(mhdlg, WM_GETFONT, 0, 0);
+
+	if (hfontDlg) {
+		LOGFONT lf = {0};
+		if (GetObject(hfontDlg, sizeof lf, &lf)) {
+			hNewFont = CreateFont(lf.lfHeight, 0, 0, 0, FW_DONTCARE, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, _T("Marlett"));
+		}
+	}
+
+	if (hNewFont) {
+		for(size_t i=0; i<vdcountof(kMoreIds); ++i) {
+			HWND hwndControl = GetControl(kMoreIds[i]);
+
+			if (hwndControl) {
+				SendMessage(hwndControl, WM_SETFONT, (WPARAM)hNewFont, MAKELONG(TRUE, 0));
+			}
+		}
+
+		if (mhFontMarlett)
+			DeleteObject(mhFontMarlett);
+
+		mhFontMarlett = hNewFont;
+	}
 }
 
 void ATDiskDriveDialog::UpdateActionButtons() {

@@ -34,6 +34,7 @@ ATMMUEmulator::ATMMUEmulator()
 	, mpLayerBASIC(NULL)
 	, mpLayerGame(NULL)
 	, mpLayerHiddenRAM(NULL)
+	, mpLayerHighRAM(NULL)
 	, mpLayerAxlonControl1(NULL)
 	, mpLayerAxlonControl2(NULL)
 	, mCurrentBank(0xFF)
@@ -49,7 +50,6 @@ ATMMUEmulator::ATMMUEmulator()
 
 ATMMUEmulator::~ATMMUEmulator() {
 	Shutdown();
-	SetAxlonMemory(0, false, nullptr);
 }
 
 void ATMMUEmulator::Init(ATMemoryManager *memman) {
@@ -59,6 +59,7 @@ void ATMMUEmulator::Init(ATMemoryManager *memman) {
 void ATMMUEmulator::Shutdown() {
 	ShutdownMapping();
 	SetAxlonMemory(0, false, nullptr);
+	SetHighMemory(0, nullptr);
 
 	mpMemMan = nullptr;
 }
@@ -291,6 +292,20 @@ void ATMMUEmulator::SetROMMappingHook(const vdfunction<void()>& fn) {
 	mpROMMappingChangeFn = fn;
 
 	UpdateROMMappingHook();
+}
+
+void ATMMUEmulator::SetHighMemory(uint32 numBanks, void *mem) {
+	if (mpLayerHighRAM) {
+		mpMemMan->DeleteLayer(mpLayerHighRAM);
+		mpLayerHighRAM = nullptr;
+	}
+
+	if (numBanks) {
+		mpLayerHighRAM = mpMemMan->CreateLayer(kATMemoryPri_BaseRAM, (const uint8 *)mem, 0x100, numBanks << 8, false);
+		mpMemMan->SetLayerFastBus(mpLayerHighRAM, true);
+		mpMemMan->SetLayerName(mpLayerHighRAM, "65C816 linear RAM");
+		mpMemMan->SetLayerModes(mpLayerHighRAM, kATMemoryAccessMode_RW);
+	}
 }
 
 void ATMMUEmulator::SetAxlonMemory(uint8 bankbits, bool enableAliasing, void *mem) {

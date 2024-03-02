@@ -253,6 +253,7 @@ namespace AT6502States {
 		kState816_NatNMIVecToPC,
 		kState816_NatIRQVecToPC,
 		kState816_NatBRKVecToPC,
+		kState816_ABORT,
 		kState816_SetI_ClearD,
 		kState816_LongAddrToPC,
 		kState816_MoveRead,

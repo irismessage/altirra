@@ -110,6 +110,7 @@ for(;;) {
 				mB	= rB;
 				mK	= rK;
 				mPC	= rPC;
+				mInsnPC = rPC;
 				mCyclesLeft = cyclesLeft;
 
 				bool shouldExit = CheckBreakpoint();

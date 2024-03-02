@@ -50,7 +50,7 @@ ATSDriveEmulator::~ATSDriveEmulator() {
 
 void *ATSDriveEmulator::AsInterface(uint32 iid) {
 	switch(iid) {
-		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(this);
+		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(&mDeviceParent);
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
 		case IATDeviceIndicators::kTypeID: return static_cast<IATDeviceIndicators *>(this);
 	}
@@ -70,13 +70,13 @@ bool ATSDriveEmulator::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATSDriveEmulator::Init() {
+	mDeviceParent.Init(IATBlockDevice::kTypeID, "harddisk", L"SD Card Bus");
+	mDeviceParent.SetOnAttach([this] { mpDisk = mDeviceParent.GetChild<IATBlockDevice>(); });
+	mDeviceParent.SetOnDetach([this] { mpDisk = nullptr; });
 }
 
 void ATSDriveEmulator::Shutdown() {
-	if (mpDisk) {
-		vdpoly_cast<IATDevice *>(mpDisk)->SetParent(nullptr);
-		mpDisk = nullptr;
-	}
+	mDeviceParent.Shutdown();
 
 	if (mpUIRenderer) {
 		mpUIRenderer = nullptr;
@@ -100,40 +100,6 @@ void ATSDriveEmulator::ColdReset() {
 	mbHighSpeedPhase = false;
 
 	WarmReset();
-}
-
-const char *ATSDriveEmulator::GetSupportedType(uint32 index) {
-	switch(index) {
-		case 0: return "harddisk";
-		default:
-			return nullptr;
-	}
-}
-
-void ATSDriveEmulator::GetChildDevices(vdfastvector<IATDevice *>& devs) {
-	if (mpDisk)
-		devs.push_back(vdpoly_cast<IATDevice *>(mpDisk));
-}
-
-void ATSDriveEmulator::AddChildDevice(IATDevice *dev) {
-	IATBlockDevice *disk = vdpoly_cast<IATBlockDevice *>(dev);
-	if (disk) {
-		VDASSERT(vdpoly_cast<IATDevice *>(disk));
-
-		if (!mpDisk) {
-			mpDisk = disk;
-			dev->SetParent(this);
-		}
-	}
-}
-
-void ATSDriveEmulator::RemoveChildDevice(IATDevice *dev) {
-	IATBlockDevice *disk = vdpoly_cast<IATBlockDevice *>(dev);
-
-	if (disk && mpDisk == disk) {
-		dev->SetParent(nullptr);
-		mpDisk = nullptr;
-	}
 }
 
 void ATSDriveEmulator::InitIndicators(IATDeviceIndicatorManager *r) {

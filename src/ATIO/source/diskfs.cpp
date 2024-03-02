@@ -144,9 +144,11 @@ IATDiskFS *ATDiskMountImage(IATDiskImage *image, bool readOnly) {
 		}
 	}
 	
-	// check the VTOC - $00 in the first byte is not valid for DOS 2.x/MyDOS; $01 indicates DOS 1.
+	// Check the VTOC - $00 in the first byte is not valid for DOS 2.x/MyDOS; $01 indicates DOS 1.
+	// Values above $23 are invalid for MyDOS because they would correspond to disks larger than
+	// 64K-1 sectors.
 	if (image->ReadVirtualSector(359, secbuf, 128) == 128) {
-		if (secbuf[0] == 0)
+		if (secbuf[0] == 0 || secbuf[0] > 35)
 			return NULL;
 	}
 

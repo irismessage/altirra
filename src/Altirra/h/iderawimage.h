@@ -44,6 +44,7 @@ public:
 	bool IsReadOnly() const override;
 	uint32 GetSectorCount() const override;
 	ATBlockDeviceGeometry GetGeometry() const override;
+	uint32 GetSerialNumber() const override;
 
 	void Init(const wchar_t *path, bool write, bool solidState, uint32 sectorLimit, uint32 cyl, uint32 heads, uint32 spt);
 	void Shutdown() override;

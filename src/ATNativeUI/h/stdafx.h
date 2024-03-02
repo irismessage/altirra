@@ -16,10 +16,10 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#define _CRT_SECURE_NO_DEPRECATE
-#define _SCL_SECURE_NO_DEPRECATE
 #define _SCL_SECURE 0
 #define WINVER 0x0501
 #define STRICT_TYPED_ITEMIDS
+
+struct IUnknown;
 
 #include <vd2/system/vdtypes.h>

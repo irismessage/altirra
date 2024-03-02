@@ -41,7 +41,7 @@ void ATSLoadSettings() {
 
 	VDStringW devices;
 	if (settingsKey.getString("devices", devices)) {
-		ATSSendEngineRequest([&]() { ATSGetDeviceManager()->DeserializeDevices(nullptr, devices.c_str()); });
+		ATSSendEngineRequest([&]() { ATSGetDeviceManager()->DeserializeDevices(nullptr, nullptr, devices.c_str()); });
 	}
 
 	ATSRaiseEvent(ATSEventDevicesChanged());

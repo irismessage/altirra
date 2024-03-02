@@ -86,6 +86,8 @@ uint32 VDPixmapCreateLinearLayout(VDPixmapLayout& layout, int format, vdpixsize 
 VDPixmap VDPixmapOffset(const VDPixmap& src, vdpixpos x, vdpixpos y);
 VDPixmapLayout VDPixmapLayoutOffset(const VDPixmapLayout& src, vdpixpos x, vdpixpos y);
 
+VDPixmap VDPixmapClip(const VDPixmap& src, vdpixpos x, vdpixpos y, vdpixpos w, vdpixpos h);
+
 void VDPixmapFlipV(VDPixmap& layout);
 void VDPixmapLayoutFlipV(VDPixmapLayout& layout);
 
@@ -112,7 +114,7 @@ VDPixmap VDPixmapExtractField(const VDPixmap& src, bool field2);
 #endif
 
 
-typedef void (*VDPixmapBlitterFn)(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
+typedef void (VDCDECL *VDPixmapBlitterFn)(const VDPixmap& dst, const VDPixmap& src, vdpixsize w, vdpixsize h);
 typedef VDPixmapBlitterFn (*tpVDPixBltTable)[nsVDPixmap::kPixFormat_Max_Standard];
 
 tpVDPixBltTable VDGetPixBltTableReference();
@@ -125,6 +127,11 @@ class VDPixmapBuffer : public VDPixmap {
 public:
 	VDPixmapBuffer() : mpBuffer(NULL), mLinearSize(0) { data = NULL; format = 0; }
 	explicit VDPixmapBuffer(const VDPixmap& src);
+
+	VDPixmapBuffer(VDPixmapBuffer&& src) : mpBuffer(nullptr), mLinearSize(0) {
+		move_from(src);
+	}
+
 	VDPixmapBuffer(const VDPixmapBuffer& src);
 	VDPixmapBuffer(sint32 w, sint32 h, int format) : mpBuffer(NULL), mLinearSize(0) {
 		init(w, h, format);
@@ -160,6 +167,18 @@ public:
 
 	void assign(const VDPixmap& src);
 
+	VDPixmapBuffer& operator=(const VDPixmapBuffer& src) {
+		assign(src);
+		return *this;
+	}
+
+	VDPixmapBuffer& operator=(VDPixmapBuffer&& src) {
+		move_from(src);
+		return *this;
+	}
+
+
+	void move_from(VDPixmapBuffer&);
 	void swap(VDPixmapBuffer&);
 
 protected:

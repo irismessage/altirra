@@ -430,7 +430,27 @@
 
     See also: ba, bs
 
-+ bt   Set breakpoint with trace (tracepoint)
++ bsc  Set breakpoint condition
+
+    Set the condition expression on a breakpoint.
+
+      bsc <id> <condition>
+
+    Sets or changes the conditional expression that determines whether a
+    breakpoint is hit. For instance, if breakpoint 0 at $4000 is firing
+    too often when called with a return address of $3980, that case can
+    be filtered out as follows:
+
+      bsc 0 "@ra != $3980"
+
+    The conditional expression on a breakpoint may differ from the one
+    supplied to the 'bx' command due to extraction of the PC or access
+    subexpression. Use the bl (list breakpoints) command to check the
+    actual condition.
+
+    See also: bc (clear breakpoints), bl (list breakpoints)
+
++ bt   Set PC breakpoint with trace (tracepoint)
 
     Set a tracepoint at a PC address.
     
@@ -469,6 +489,36 @@
     
     See also: bp, .printf, .sprintf
     
++ bta  Set access breakpoint with trace (tracepoint)
+
+    Set a tracepoint on access to a memory location or range.
+    
+      bt [-k] [-q] [-g group] <address> [L<length>]
+             format [arguments...]
+      
+    Sets a non-stopping breakpoint at a memory location or range with a
+    command to print a trace line on the console when the breakpoint is
+    hit (tracepoint). The breakpoint location is the same as for the ba
+    (break on memory access) command and the formatting arguments are the
+    same as for the .printf command.
+
+    The -k, -q, and -g options work the same as for the bp command.
+    
+    This command is equivalent to using the ba -n command with a breakpoint
+    command of the form:
+    
+      `.printf <format> <arguments...>
+
+    The @ts variable can be used to substitute the output of the last
+    .sprintf command as the format string.
+
+    Examples:
+
+        bta prior "PRIOR=$%02X" value
+        bta D100 L100 "[$%04X]=$%02X" value
+    
+    See also: bt, .printf, .sprintf
+    
 + bx   Break on expression (conditional breakpoint)
 
     Set a breakpoint conditional on an expression.
@@ -483,10 +533,18 @@
       write=<address>   Write access to address
       read >[=] <lo> and read <[=] <hi>      Read access to address range
       write >[=] <lo> and write <[=] <hi>    Write access to address range
-      
-    The expression must have an identifiable PC, read access, or write
-    access check, and only one read or write access or access range may
-    be included.
+
+    The debugger recognizes and optimizes for three specific patterns:
+
+      1) A single PC address.
+      2) A single read or write address.
+      3) A read or write address range.
+
+    When these patterns are recognized, the appropriate breakpoint type is
+    created and any remainder of the expression is set as the conditional
+    (filter) expression on the breakpoint. Breakpoints not matching any
+    of the above patterns are created as per-instruction breakpoints,
+    executed before each instruction; these are powerful but slow.
     
     The debugger can optimize some conditional expressions for faster
     evaluation, such as removing redundant logical negation (!) operators
@@ -503,6 +561,7 @@
       bx "write=rtclok+2 and pc>$c000"
       bx "write = consol and value != $08"
       bx "read<$fffa and db(pc)!=$20 and db(pc)!=$60 and read>=$d800"
+      bx db(pc)=$48
       
     If a command is specified, it is executed when the breakpoint trips;
     see the bp (breakpoint) command for details.
@@ -1036,10 +1095,25 @@
 
     Disassemble CPU code at a given address.
     
-      u [<address> [L<length>]]
+      u [-e|[-m8|-m16][-x8|-x16]] [-p] [-n] [<address> [L<length>]]
       
     If no address is given, disassembly continues from the end of the last
     continuable command.
+
+    In 65C816 mode, instruction encoding depends upon the current CPU mode.
+    The disassembler attempts to track the current M/X/E flags, but can easily
+    be misled. The following switches can be supplied to guide the decoder:
+
+        -m8     Assume E=0/M=0 (native mode, 8-bit memory/accumulator)
+        -m16    Assume E=0/M=1 (native mode, 16-bit memory/accumulator)
+        -x8     Assume E=0/X=0 (native mode, 8-bit index registers)
+        -x16    Assume E=0/X=1 (native mode, 16-bit index registers)
+        -e      Assume E=1 (emulation mode)
+
+    By default, the disassembler detects common REP/SEP patterns to predict
+    the M/X mode. This automatic prediction can be disabled with -p.
+
+    -n disables label decoding for the PC address and operands.
 
 ^ vta, vtc, vtl, vtr    Verifier target control
 > vta  Verifier target add
@@ -1843,6 +1917,12 @@
     are used. If profiling is not active, these commands are
     silently ignored.
 
++ .rapidus     Display Rapidus status
+
+    Displays status of the Rapidus Accelerator device, if present.
+
+      .rapidus
+
 + .readmem     Read memory from disk
 
     Read a block of data from a file on disk into memory.
@@ -1950,13 +2030,15 @@
 
     Displays data from the currently loaded cassette tape.
     
-      .tapedata [-t] [-b <baud> [-d]] [-r <pos>] [-p <pos>]
+      .tapedata [-t] [-b <baud> [-d]] [-r <pos>] [-p <pos>] [-s <pos>] [-y]
       
       -t           Display bit transitions
       -b <baud>    Decode data at given baud rate
       -d           Display only decoded bytes
       -r <pos>     Decode at offset in milliseconds from current position
       -p <pos>     Decode at absolute position in milliseconds
+      -s <pos>     Decode at absolute position in samples
+      -y           Bypass FSK decoder (turbo mode)
       
     The .tapedata command displays the data near the current tape
     position. By default, the raw internally stored data bits are

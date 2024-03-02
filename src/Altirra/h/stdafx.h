@@ -36,3 +36,5 @@
 #include <vd2/system/VDString.h>
 #include <deque>
 #include <iterator>
+
+struct IUnknown;

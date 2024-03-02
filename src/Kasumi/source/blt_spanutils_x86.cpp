@@ -31,7 +31,7 @@ extern "C" void __cdecl vdasm_vert_average_35_ISSE(void *dst, const void *src1, 
 
 namespace nsVDPixmapSpanUtils {
 
-	void horiz_expand2x_coaligned_ISSE(uint8 *dst, const uint8 *src, sint32 w) {
+	void VDCDECL horiz_expand2x_coaligned_ISSE(uint8 *dst, const uint8 *src, sint32 w) {
 		if (w >= 17) {
 			uint32 fastcount = (w - 1) & ~15;
 
@@ -58,7 +58,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void horiz_expand4x_coaligned_MMX(uint8 *dst, const uint8 *src, sint32 w) {
+	void VDCDECL horiz_expand4x_coaligned_MMX(uint8 *dst, const uint8 *src, sint32 w) {
 		if (w >= 17) {
 			uint32 fastcount = (w - 1) >> 4;
 
@@ -87,7 +87,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void vert_expand2x_centered_ISSE(uint8 *dst, const uint8 *const *srcs, sint32 w, uint8 phase) {
+	void VDCDECL vert_expand2x_centered_ISSE(uint8 *dst, const uint8 *const *srcs, sint32 w, uint8 phase) {
 		const uint8 *src3 = srcs[0];
 		const uint8 *src1 = srcs[1];
 
@@ -111,7 +111,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void vert_average_1_7_ISSE(uint8 *dst, const uint8 *src7, const uint8 *src1, sint32 w) {
+	void VDCDECL vert_average_1_7_ISSE(uint8 *dst, const uint8 *src7, const uint8 *src1, sint32 w) {
 		uint32 fastcount = w & ~7;
 
 		if (fastcount) {
@@ -129,7 +129,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void vert_average_3_5_ISSE(uint8 *dst, const uint8 *src7, const uint8 *src1, sint32 w) {
+	void VDCDECL vert_average_3_5_ISSE(uint8 *dst, const uint8 *src7, const uint8 *src1, sint32 w) {
 		uint32 fastcount = w & ~7;
 
 		if (fastcount) {
@@ -147,7 +147,7 @@ namespace nsVDPixmapSpanUtils {
 		}
 	}
 
-	void vert_expand4x_centered_ISSE(uint8 *dst, const uint8 *const *srcs, sint32 w, uint8 phase) {
+	void VDCDECL vert_expand4x_centered_ISSE(uint8 *dst, const uint8 *const *srcs, sint32 w, uint8 phase) {
 		const uint8 *src1 = srcs[0];
 		const uint8 *src2 = srcs[1];
 

@@ -88,6 +88,10 @@ ATBlockDeviceGeometry ATIDERawImage::GetGeometry() const {
 	return mGeometry;
 }
 
+uint32 ATIDERawImage::GetSerialNumber() const {
+	return VDHashString32I(mPath.c_str());
+}
+
 void ATIDERawImage::Init(const wchar_t *path, bool write, bool solidState, uint32 sectorLimit, uint32 cyl, uint32 heads, uint32 spt) {
 	Shutdown();
 

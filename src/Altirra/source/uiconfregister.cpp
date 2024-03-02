@@ -39,6 +39,7 @@ bool ATUIConfDevCovox(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevDiskDriveFull(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevATR8000(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevPercom(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevVBXE(VDGUIHandle hParent, ATPropertySet& props);
 
 void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("harddisk", ATUIConfDevHardDisk);
@@ -61,6 +62,7 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("covox", ATUIConfDevCovox);
 	dev.AddDeviceConfigurer("diskdriveatr8000", ATUIConfDevATR8000);
 	dev.AddDeviceConfigurer("diskdrivepercom", ATUIConfDevPercom);
+	dev.AddDeviceConfigurer("vbxe", ATUIConfDevVBXE);
 
 	static const char *const kDiskDriveFullTypes[]={
 		"diskdrive810",

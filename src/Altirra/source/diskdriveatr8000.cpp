@@ -24,6 +24,7 @@
 #include <at/atcore/audiosource.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/deviceparentimpl.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/wraptime.h>
 #include "audiosyncmixer.h"
@@ -63,7 +64,7 @@ void ATDeviceDiskDriveATR8000::Drive::OnAudioModeChanged() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATDeviceDiskDriveATR8000::SerialPort : public IATDeviceParent, public IATSchedulerCallback {
+class ATDeviceDiskDriveATR8000::SerialPort : public ATDeviceBus, public IATSchedulerCallback {
 public:
 	enum Signal1Mode {
 		kSignal1_RTS,
@@ -79,7 +80,7 @@ public:
 
 	~SerialPort();
 
-	void Init(ATScheduler *sch);
+	void Init(IATDeviceParent *parent, ATScheduler *sch);
 	void Shutdown();
 
 	void GetSettings(ATPropertySet& settings) const;
@@ -101,6 +102,7 @@ public:
 	void SetControlState(bool state);
 
 public:
+	const wchar_t *GetBusName() const override;
 	const char *GetSupportedType(uint32 index) override;
 	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
 	void AddChildDevice(IATDevice *dev) override;
@@ -116,6 +118,7 @@ private:
 	static constexpr uint32 kEventId_SerialTransmit = 1;
 	static constexpr uint32 kEventId_SerialReceive = 2;
 
+	IATDeviceParent *mpParent = nullptr;
 	ATScheduler *mpScheduler = nullptr;
 	ATEvent *mpTransmitEvent = nullptr;
 	ATEvent *mpReceiveEvent = nullptr;
@@ -151,12 +154,13 @@ private:
 
 ATDeviceDiskDriveATR8000::SerialPort::~SerialPort() {
 	if (mpSerialDevice) {
-		vdpoly_cast<IATDevice *>(mpSerialDevice)->SetParent(nullptr);
+		vdpoly_cast<IATDevice *>(mpSerialDevice)->SetParent(nullptr, 0);
 		mpSerialDevice = nullptr;
 	}
 }
 
-void ATDeviceDiskDriveATR8000::SerialPort::Init(ATScheduler *sch) {
+void ATDeviceDiskDriveATR8000::SerialPort::Init(IATDeviceParent *parent, ATScheduler *sch) {
+	mpParent = parent;
 	mpScheduler = sch;
 }
 
@@ -313,6 +317,10 @@ void ATDeviceDiskDriveATR8000::SerialPort::SetControlState(bool state) {
 	}
 }
 
+const wchar_t *ATDeviceDiskDriveATR8000::SerialPort::GetBusName() const {
+	return L"Serial Port";
+}
+
 const char *ATDeviceDiskDriveATR8000::SerialPort::GetSupportedType(uint32 index) {
 	return index ? nullptr : "serial";
 }
@@ -327,7 +335,7 @@ void ATDeviceDiskDriveATR8000::SerialPort::AddChildDevice(IATDevice *dev) {
 
 	if (sdev && !mpSerialDevice) {
 		mpSerialDevice = sdev;
-		dev->SetParent(this);
+		dev->SetParent(mpParent, 0);
 	}
 }
 
@@ -335,7 +343,7 @@ void ATDeviceDiskDriveATR8000::SerialPort::RemoveChildDevice(IATDevice *dev) {
 	IATDeviceSerial *sdev = vdpoly_cast<IATDeviceSerial *>(dev);
 
 	if (sdev && sdev == mpSerialDevice) {
-		dev->SetParent(nullptr);
+		dev->SetParent(nullptr, 0);
 		mpSerialDevice = nullptr;
 	}
 }
@@ -417,7 +425,8 @@ void ATDeviceDiskDriveATR8000::SerialPort::UpdateControlState() {
 ///////////////////////////////////////////////////////////////////////////
 
 ATDeviceDiskDriveATR8000::ATDeviceDiskDriveATR8000() {
-	std::fill(std::begin(mStepBreakpointMap), std::end(mStepBreakpointMap), true);
+	mBreakpointsImpl.BindBPHandler(mCoProc);
+	mBreakpointsImpl.SetStepHandler(this);
 
 	mDriveScheduler.SetRate(VDFraction(4000000, 1));
 
@@ -438,10 +447,10 @@ void *ATDeviceDiskDriveATR8000::AsInterface(uint32 iid) {
 		case IATDeviceButtons::kTypeID: return static_cast<IATDeviceButtons *>(this);
 		case IATDevicePrinter::kTypeID: return static_cast<IATDevicePrinter *>(this);
 		case IATDeviceDebugTarget::kTypeID: return static_cast<IATDeviceDebugTarget *>(this);
-		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(this);
+		case IATDebugTargetBreakpoints::kTypeID: return static_cast<IATDebugTargetBreakpoints *>(&mBreakpointsImpl);
 		case IATDebugTargetHistory::kTypeID: return static_cast<IATDebugTargetHistory *>(this);
 		case IATDebugTargetExecutionControl::kTypeID: return static_cast<IATDebugTargetExecutionControl *>(this);
-		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(mpSerialPort);
+		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(this);
 		case ATFDCEmulator::kTypeID: return &mFDC;
 		case ATCTCEmulator::kTypeID: return &mCTC;
 	}
@@ -557,7 +566,7 @@ void ATDeviceDiskDriveATR8000::Init() {
 
 	UpdateRotationStatus();
 
-	mpSerialPort->Init(mpScheduler);
+	mpSerialPort->Init(this, mpScheduler);
 }
 
 void ATDeviceDiskDriveATR8000::Shutdown() {
@@ -776,6 +785,10 @@ void ATDeviceDiskDriveATR8000::ActivateButton(ATDeviceButton idx, bool state) {
 
 void ATDeviceDiskDriveATR8000::SetPrinterOutput(IATPrinterOutput *out) {
 	mpPrinterOutput = out;
+}
+
+IATDeviceBus *ATDeviceDiskDriveATR8000::GetDeviceBus(uint32 index) {
+	return index ? 0 : mpSerialPort;
 }
 
 IATDebugTarget *ATDeviceDiskDriveATR8000::GetDebugTarget(uint32 index) {
@@ -1000,31 +1013,6 @@ uint32 ATDeviceDiskDriveATR8000::ConvertRawTimestamp(uint32 rawTimestamp) const 
 	return mLastSync - (((mCoProc.GetTimeBase() - rawTimestamp) * mClockDivisor + mSubCycleAccum + 511) >> 9);
 }
 
-void ATDeviceDiskDriveATR8000::SetBreakpointHandler(IATCPUBreakpointHandler *handler) {
-	mpBreakpointHandler = handler;
-
-	if (mBreakpointCount)
-		mCoProc.SetBreakpointMap(mBreakpointMap, handler);
-}
-
-void ATDeviceDiskDriveATR8000::ClearBreakpoint(uint16 pc) {
-	if (mBreakpointMap[pc]) {
-		mBreakpointMap[pc] = false;
-
-		if (!--mBreakpointCount && !mpStepHandler)
-			mCoProc.SetBreakpointMap(nullptr, nullptr);
-	}
-}
-
-void ATDeviceDiskDriveATR8000::SetBreakpoint(uint16 pc) {
-	if (!mBreakpointMap[pc]) {
-		mBreakpointMap[pc] = true;
-
-		if (!mBreakpointCount++ && !mpStepHandler)
-			mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
-	}
-}
-
 void ATDeviceDiskDriveATR8000::Break() {
 	CancelStep();
 }
@@ -1035,7 +1023,7 @@ bool ATDeviceDiskDriveATR8000::StepInto(const vdfunction<void(bool)>& fn) {
 	mpStepHandler = fn;
 	mbStepOut = false;
 	mStepStartSubCycle = mCoProc.GetTime();
-	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	mBreakpointsImpl.SetStepActive(true);
 	Sync();
 	return true;
 }
@@ -1047,7 +1035,7 @@ bool ATDeviceDiskDriveATR8000::StepOver(const vdfunction<void(bool)>& fn) {
 	mbStepOut = true;
 	mStepStartSubCycle = mCoProc.GetTime();
 	mStepOutSP = mCoProc.GetSP();
-	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	mBreakpointsImpl.SetStepActive(true);
 	Sync();
 	return true;
 }
@@ -1059,7 +1047,7 @@ bool ATDeviceDiskDriveATR8000::StepOut(const vdfunction<void(bool)>& fn) {
 	mbStepOut = true;
 	mStepStartSubCycle = mCoProc.GetTime();
 	mStepOutSP = mCoProc.GetSP() + 1;
-	mCoProc.SetBreakpointMap(mStepBreakpointMap, this);
+	mBreakpointsImpl.SetStepActive(true);
 	Sync();
 	return true;
 }
@@ -1074,25 +1062,20 @@ void ATDeviceDiskDriveATR8000::RunUntilSynced() {
 }
 
 bool ATDeviceDiskDriveATR8000::CheckBreakpoint(uint32 pc) {
-	bool bpHit = false;
+	if (mCoProc.GetTime() == mStepStartSubCycle)
+		return false;
 
-	if (mBreakpointCount && mBreakpointMap[(uint16)pc] && mpBreakpointHandler->CheckBreakpoint(pc))
-		bpHit = true;
+	const bool bpHit = mBreakpointsImpl.CheckBP(pc);
 
-	if (mBreakpointCount)
-		mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
-	else {
-		if (mCoProc.GetTime() == mStepStartSubCycle)
-			return false;
-
+	if (!bpHit) {
 		if (mbStepOut) {
 			// Keep stepping if wrapped(s < s0).
 			if ((mCoProc.GetSP() - mStepOutSP) & 0x8000)
 				return false;
 		}
-
-		mCoProc.SetBreakpointMap(nullptr, nullptr);
 	}
+	
+	mBreakpointsImpl.SetStepActive(false);
 
 	mbStepNotifyPending = true;
 	mbStepNotifyPendingBP = bpHit;
@@ -1225,10 +1208,7 @@ void ATDeviceDiskDriveATR8000::OnAudioModeChanged(uint32 index) {
 
 void ATDeviceDiskDriveATR8000::CancelStep() {
 	if (mpStepHandler) {
-		if (mBreakpointCount)
-			mCoProc.SetBreakpointMap(mBreakpointMap, mpBreakpointHandler);
-		else
-			mCoProc.SetBreakpointMap(nullptr, nullptr);
+		mBreakpointsImpl.SetStepActive(false);
 
 		auto p = std::move(mpStepHandler);
 		mpStepHandler = nullptr;
@@ -1826,7 +1806,7 @@ void ATDeviceDiskDriveATR8000::UpdateFDCSpeed() {
 		int firstDrive = VDFindLowestSetBitFast(mSelectedDrives);
 		Drive& drive = mDrives[firstDrive];
 
-		const float rpm = drive.mType == kDriveType_8 ? 360 : 300;
+		const float rpm = drive.mType == kDriveType_8 ? 360.0f : 300.0f;
 		mFDC.SetSpeeds(rpm, rpm, mbFastClock);
 	}
 }

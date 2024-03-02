@@ -29,6 +29,7 @@ class ATIRQController;
 class ATScheduler;
 class ATPropertySet;
 class IATDevice;
+class IATDeviceParent;
 class IATUIRenderer;
 class IATAudioOutput;
 class ATAudioSyncMixer;
@@ -37,16 +38,28 @@ class ATPIAEmulator;
 class IATDeviceCartridge;
 class IATDevicePortManager;
 class IATDeviceIndicatorManager;
+struct ATTraceContext;
 
 typedef void (*ATDeviceFactoryFn)(const ATPropertySet& pset, IATDevice **);
 
-struct ATDeviceDefinition {
-	const char *mpTag;
-	const char *mpConfigTag;
-	const wchar_t *mpName;
-	ATDeviceFactoryFn mpFactoryFn;
+enum ATDeviceDefFlag : uint32 {
+	// Suggest a reboot on device plug/unplug. Note that a reboot is _not_ required; device
+	// implementations must support continued execution without rebooting, though the device
+	// may be in a useless state.
+	kATDeviceDefFlag_RebootOnPlug = 0x00000001,
 };
 
+/// Describes static information about the device type. This is constant for all
+/// instances of a device.
+struct ATDeviceDefinition {
+	const char *mpTag;					// Internal/serializable name for device.
+	const char *mpConfigTag;			// Optional configuration type for device (null = no config).
+	const wchar_t *mpName;				// Readable name of device.
+	ATDeviceFactoryFn mpFactoryFn;		// Factory for creating device.
+	uint32 mFlags;						// ATDeviceDefFlag*
+};
+
+/// Dynamic information about a device instance (not a device type).
 struct ATDeviceInfo {
 	const ATDeviceDefinition *mpDef;
 };
@@ -134,16 +147,6 @@ public:
 	virtual void ActivateButton(ATDeviceButton idx, bool state) = 0;
 };
 
-class IATDeviceParent {
-public:
-	enum { kTypeID = 'adpt' };
-
-	virtual const char *GetSupportedType(uint32 index) = 0;
-	virtual void GetChildDevices(vdfastvector<IATDevice *>& devs) = 0;
-	virtual void AddChildDevice(IATDevice *dev) = 0;
-	virtual void RemoveChildDevice(IATDevice *dev) = 0;
-};
-
 class IATDeviceIndicators {
 public:
 	enum { kTypeID = 'adin' };
@@ -177,7 +180,8 @@ public:
 	enum { kTypeID = 'adev' };
 
 	virtual IATDeviceParent *GetParent() = 0;
-	virtual void SetParent(IATDeviceParent *parent) = 0;
+	virtual uint32 GetParentBusIndex() = 0;
+	virtual void SetParent(IATDeviceParent *parent, uint32 busIndex) = 0;
 	virtual void GetDeviceInfo(ATDeviceInfo& info) = 0;
 	virtual void GetSettingsBlurb(VDStringW& buf) = 0;
 	virtual void GetSettings(ATPropertySet& settings) = 0;
@@ -194,6 +198,8 @@ public:
 	virtual void ColdReset() = 0;
 	virtual void ComputerColdReset() = 0;
 	virtual void PeripheralColdReset() = 0;
+
+	virtual void SetTraceContext(ATTraceContext *context) = 0;
 };
 
 #endif

@@ -160,7 +160,7 @@ bool ATSUILogPane::OnCreate() {
 	if (!ATUIPane::OnCreate())
 		return false;
 
-	mhwndLog = CreateWindowEx(WS_EX_CLIENTEDGE, RICHEDIT_CLASS, _T(""), ES_READONLY|ES_MULTILINE|ES_AUTOVSCROLL|WS_VSCROLL|WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwnd, (HMENU)100, VDGetLocalModuleHandleW32(), NULL);
+	mhwndLog = CreateWindowEx(WS_EX_CLIENTEDGE, MSFTEDIT_CLASS, _T(""), ES_READONLY|ES_MULTILINE|ES_AUTOVSCROLL|WS_VSCROLL|WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwnd, (HMENU)100, VDGetLocalModuleHandleW32(), NULL);
 	if (!mhwndLog)
 		return false;
 

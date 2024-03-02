@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL emulator
-//	Copyright (C) 2008 Avery Lee
+//	Copyright (C) 2008-2017 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -41,9 +41,13 @@
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uiproxies.h>
 #include <at/atcore/deviceprinter.h>
+#include <at/atdebugger/historytree.h>
+#include <at/atdebugger/historytreebuilder.h>
 #include <at/atdebugger/target.h>
+#include <at/atio/cassetteimage.h>
 #include "console.h"
 #include "uikeyboard.h"
+#include "uihistoryview.h"
 #include "texteditor.h"
 #include "simulator.h"
 #include "debugger.h"
@@ -52,6 +56,10 @@
 #include "disasm.h"
 #include "symbols.h"
 #include "debugdisplay.h"
+#include "cassette.h"
+#include "oshelper.h"
+
+//#define VERIFY_HISTORY_TREE
 
 extern HINSTANCE g_hInst;
 extern HWND g_hwnd;
@@ -551,46 +559,7 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 
 			// auto-switch mode if necessary
 			if (autoModeSwitching) {
-				switch(hent.mOpcode[0]) {
-					case 0x18:	// CLC
-						hent.mP &= ~AT6502::kFlagC;
-						break;
-
-					case 0x38:	// SEC
-						hent.mP |= AT6502::kFlagC;
-						break;
-
-					case 0xC2:	// REP
-						if (hent.mbEmulation)
-							hent.mP &= ~hent.mOpcode[1] | 0x30;
-						else
-							hent.mP &= ~hent.mOpcode[1];
-						break;
-
-					case 0xE2:	// SEP
-						if (hent.mbEmulation)
-							hent.mP |= hent.mOpcode[1] & 0xcf;
-						else
-							hent.mP |= hent.mOpcode[1];
-						break;
-
-					case 0xFB:	// XCE
-						{
-							uint8 e = hent.mbEmulation ? 1 : 0;
-							uint8 xorv = (hent.mP ^ e) & 1;
-
-							if (xorv) {
-								e ^= xorv;
-								hent.mP ^= xorv;
-
-								hent.mbEmulation = (e & 1) != 0;
-
-								if (hent.mbEmulation)
-									hent.mP |= 0x30;
-							}
-						}
-						break;
-				}
+				ATDisassemblePredictContext(hent, disasmMode);
 			}
 
 			// don't allow disassembly to skip the desired PC
@@ -705,7 +674,7 @@ void ATDisassemblyWindow::OnTextEditorScrolled(int firstVisiblePara, int lastVis
 			else if ((uint32)cenIdx >= mAddressesByLine.size())
 				cenIdx = (int)mAddressesByLine.size() - 1;
 
-			SetPosition(mAddressesByLine[cenIdx]);
+			SetPosition(mAddressesByLine[cenIdx] + ((uint32)mViewBank << 16));
 		}
 	}
 }
@@ -1875,447 +1844,220 @@ IATSourceWindow *ATOpenSourceWindow(const wchar_t *s) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATHistoryWindow : public ATUIDebuggerPane, public IATDebuggerClient {
+class ATHistoryWindow final : public ATUIDebuggerPane, private IATDebuggerClient, private IATUIHistoryModel {
 public:
 	ATHistoryWindow();
 	~ATHistoryWindow();
 
-protected:
-	enum NodeType : uint8 {
-		kNodeTypeInsn,
-		kNodeTypeInsnPreview,
-		kNodeTypeRepeat,
-		kNodeTypeInterrupt,
-		kNodeTypeLabel
-	};
+private:
+	double DecodeTapeSample(uint32 cycle) override;
+	double DecodeTapeSeconds(uint32 cycle) override;
+	uint32 ConvertRawTimestamp(uint32 rawCycle) override;
+	float ConvertRawTimestampDeltaF(sint32 rawCycleDelta) override;
+	ATCPUBeamPosition DecodeBeamPosition(uint32 cycle) override;
+	bool IsInterruptPositionVBI(uint32 cycle) override;
+	bool UpdatePreviewNode(ATCPUHistoryEntry& he) override;
+	uint32 ReadInsns(const ATCPUHistoryEntry **ppInsns, uint32 startIndex, uint32 n) override;
+	void OnEsc() override;
+	void OnInsnSelected(uint32 index) override {}
+	void JumpToInsn(uint32 pc) override;
+	void JumpToSource(uint32 pc) override;
 
-	struct TreeNode {
-		uint32	mRelYPos;		// Y position in items, relative to parent
-		uint32	mHeight;		// Height, in items
-		bool	mbExpanded;
-		bool	mbVisible;
-		NodeType	mNodeType;
-		TreeNode *mpParent;
-		TreeNode *mpPrevSibling;
-		TreeNode *mpNextSibling;
-		TreeNode *mpFirstChild;
-		TreeNode *mpLastChild;
-		union {
-			ATCPUHistoryEntry mHEnt;
-			struct {
-				uint32	mCount;
-				uint32	mSize;
-			} mRepeat;
-		};
-		const char *mpText;
-	};
+private:
+	typedef ATHTNode TreeNode;
+	typedef ATHTLineIterator LineIterator;
 
-	LRESULT EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
-	bool OnCreate();
-	void OnDestroy();
-	void OnSize();
-	void OnFontsUpdated();
-	void OnLButtonDown(int x, int y, int mods);
-	void OnLButtonDblClk(int x, int y, int mods);
-	bool OnKeyDown(int code);
-	void OnMouseWheel(int lineDelta);
-	void OnHScroll(int code);
-	void OnVScroll(int code);
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
+	bool OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
+	void OnFontsUpdated() override;
 	void OnPaint();
-	void PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, uint32 itemEnd, TreeNode *node, uint32 pos, uint32 level);
-	const char *GetNodeText(TreeNode *node);
-	void HScrollToPixel(int y);
-	void ScrollToPixel(int y);
-	void InvalidateNode(TreeNode *node);
-	void InvalidateStartingAtNode(TreeNode *node);
-	void SelectNode(TreeNode *node);
-	void ExpandNode(TreeNode *node);
-	void CollapseNode(TreeNode *node);
-	void EnsureNodeVisible(TreeNode *node);
-	void ValidateNode(TreeNode *node);
-	void RefreshNode(TreeNode *node);
-	uint32 GetNodeYPos(TreeNode *node) const;
-	TreeNode *GetNodeFromClientPoint(int x, int y) const;
-	TreeNode *GetPrevVisibleNode(TreeNode *node) const;
-	TreeNode *GetNextVisibleNode(TreeNode *node) const;
-	TreeNode *GetNearestVisibleNode(TreeNode *node) const;
-	void UpdateScrollMax();
-	void UpdateScrollBar();
-	void UpdateHScrollBar();
 
-	void Reset();
+	void SetHistoryError(bool error);
+	void RemakeHistoryView();
 	void UpdateOpcodes();
-	void ClearAllNodes();
-	TreeNode *InsertNode(TreeNode *parent, TreeNode *after, const char *text, const ATCPUHistoryEntry *hent, NodeType nodeType);
-	void InsertNode(TreeNode *parent, TreeNode *after, TreeNode *node);
-	void RemoveNode(TreeNode *node);
-	TreeNode *AllocNode();
-	void FreeNode(TreeNode *);
-	void FreeNodes(TreeNode *);
-
-	void CopyVisibleNodes();
-	void CopyNodes(TreeNode *begin, TreeNode *end);
-
-	void Search(const char *substr);
-	bool SearchNodes(TreeNode *node, const char *substr);
+	void CheckDisasmMode();
 
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
 	void OnDebuggerEvent(ATDebugEvent eventId);
 
-	enum {
-		kMaxNestingDepth = 64,
-		kControlIdPanel = 100,
-		kControlIdClearButton,
-		kControlIdSearchEdit
-	};
+	vdrefptr<IATUIHistoryView> mpHistoryView;
+	bool mbHistoryError = false;
 
-	HWND mhwndPanel = nullptr;
-	HWND mhwndClear = nullptr;
-	HWND mhwndEdit = nullptr;
-	VDFunctionThunk	*mpEditThunk = nullptr;
-	WNDPROC	mEditProc = nullptr;
-	HMENU mMenu = nullptr;
-	RECT mContentRect = {};
-	TreeNode mRootNode = {};
-	TreeNode *mpSelectedNode = nullptr;
-	uint32 mWidth = 0;
-	uint32 mHeight = 0;
-	uint32 mClearButtonWidth = 0;
-	uint32 mHeaderHeight = 0;
-	uint32 mCharWidth = 0;
-	uint32 mItemHeight = 0;
-	uint32 mItemTextVOffset = 0;
-	uint32 mPageItems = 0;
-	uint32 mScrollX = 0;
-	uint32 mScrollY = 0;
-	uint32 mScrollMax = 0;
-	sint32 mScrollWheelAccum = 0;
+	ATDebugDisasmMode mDisasmMode {};
+	uint32 mSubCycles = (uint32)-1;
+	bool mbDecodeAnticNMI = false;
+	
+	uint32 mLastHistoryCounter = 0;
 
-	uint32 mLastCounter = 0;
-	uint8 mLastS = 0;
+	vdfastvector<uint32> mFilteredInsnLookup;
 
-	enum TimestampMode {
-		kTsMode_Beam,
-		kTsMode_Microseconds,
-		kTsMode_Cycles,
-		kTsMode_UnhaltedCycles,
-	} mTimestampMode = {};
-
-	bool	mbFocus = false;
-	bool	mbHistoryError = false;
-	bool	mbUpdatesBlocked = false;
-	bool	mbInvalidatesBlocked = false;
-	bool	mbDirtyScrollBar = false;
-	bool	mbDirtyHScrollBar = false;
-	bool	mbSearchActive = false;
-	bool	mbShowPCAddress = false;
-	bool	mbShowRegisters = false;
-	bool	mbShowSpecialRegisters = false;
-	bool	mbShowFlags = false;
-	bool	mbShowCodeBytes = false;
-	bool	mbShowLabels = false;
-	bool	mbShowLabelNamespaces = false;
-	bool	mbCollapseLoops = false;
-	bool	mbCollapseCalls = false;
-	bool	mbCollapseInterrupts = false;
-
-	uint32	mTimeBaseCycles = 0;
-	uint32	mTimeBaseUnhaltedCycles = 0;
-
-	VDStringA mTempLine;
-
-	struct NodeBlock {
-		TreeNode mNodes[256];
-		NodeBlock *mpNext;
-	};
-
-	uint32	mNodeCount = 0;
-	TreeNode *mpNodeFreeList = nullptr;
-	NodeBlock *mpNodeBlocks = nullptr;
-
-	TreeNode *mpPreviewNode = nullptr;
-
-	enum { kRepeatWindowSize = 32 };
-	uint32 mRepeatIPs[kRepeatWindowSize] = {};
-	uint8 mRepeatKs[kRepeatWindowSize] = {};
-	uint8 mRepeatOpcodes[kRepeatWindowSize] = {};
-	TreeNode *mpRepeatNode = nullptr;
-	int mRepeatLoopSize = 0;
-	int mRepeatLoopCount = 0;
-	int mRepeatInsnCount = 0;
-	int mRepeatLooseNodeCount = 0;
-
-	struct StackLevel {
-		TreeNode *mpTreeNode;
-		int mDepth;
-	};
-
-	StackLevel mStackLevels[256] = {};
-
-	class Panel : public ATUINativeWindow {
-	public:
-		Panel(ATHistoryWindow *p) : mpParent(p) {}
-
-		virtual LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
-			if (msg == WM_COMMAND) {
-				if (HIWORD(wParam) == BN_CLICKED && LOWORD(wParam) == kControlIdClearButton) {
-					if (mpParent) {
-						if (mpParent->mbSearchActive) {
-							mpParent->Search(NULL);
-							SetWindowTextW(mpParent->mhwndEdit, L"");
-						} else {
-							mpParent->Search(VDGetWindowTextAW32(mpParent->mhwndEdit).c_str());
-						}
-					}
-					return 0;
-				}
-			}
-
-			return ATUINativeWindow::WndProc(msg, wParam, lParam);
-		}
-
-		ATHistoryWindow *mpParent;
-	};
-
-	vdrefptr<Panel> mpPanel;
-	VDStringW mTextSearch;
-	VDStringW mTextClear;
+	ATHistoryTree mHistoryTree;
 };
 
 ATHistoryWindow::ATHistoryWindow()
 	: ATUIDebuggerPane(kATUIPaneId_History, L"History")
-	, mMenu(LoadMenu(g_hInst, MAKEINTRESOURCE(IDR_HISTORY_CONTEXT_MENU)))
-	, mPageItems(1)
-	, mTimestampMode(kTsMode_Beam)
-	, mbCollapseLoops(true)
-	, mbCollapseCalls(true)
-	, mbCollapseInterrupts(true)
-	, mbShowPCAddress(true)
-	, mbShowRegisters(true)
-	, mbShowFlags(true)
-	, mbShowCodeBytes(true)
-	, mbShowLabels(true)
-	, mbShowLabelNamespaces(true)
-	, mpPanel(new Panel(this))
 {
-	SetTouchMode(kATUITouchMode_2DPanSmooth);
 	mPreferredDockCode = kATContainerDockRight;
-
-	memset(&mContentRect, 0, sizeof mContentRect);
-
-	memset(&mRootNode, 0, sizeof mRootNode);
-	mRootNode.mbVisible = true;
-	ClearAllNodes();
-
-	mTextSearch = L"Search";
-	mTextClear = L"Clear";
 }
 
 ATHistoryWindow::~ATHistoryWindow() {
-	if (mMenu)
-		DestroyMenu(mMenu);
 }
 
-LRESULT ATHistoryWindow::EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-	if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
-		if (wParam == VK_ESCAPE) {
-			SetFocus(mhwnd);
-			return 0;
-		}
-	} else if (msg == WM_CHAR || msg == WM_SYSCHAR) {
-		if (wParam == '\r') {
-			Search(VDGetWindowTextAW32(hwnd).c_str());
-			return 0;
-		}
+double ATHistoryWindow::DecodeTapeSample(uint32 cycle) {
+	auto& cassette = g_sim.GetCassette();
+
+	if (!cassette.IsMotorRunning())
+		return -1;
+
+	auto& sch = *g_sim.GetScheduler();
+	const sint32 tsDelta = (sint32)(cycle - sch.GetTick());
+
+	return (double)cassette.GetSamplePos() + (double)tsDelta / (double)kATCassetteCyclesPerDataSample;
+}
+
+double ATHistoryWindow::DecodeTapeSeconds(uint32 cycle) {
+	auto& cassette = g_sim.GetCassette();
+
+	if (!cassette.IsMotorRunning())
+		return -1;
+
+	auto& sch = *g_sim.GetScheduler();
+	const sint32 tsDelta = (sint32)(cycle - sch.GetTick());
+
+	return (double)cassette.GetSamplePos() / (double)kATCassetteDataSampleRate + (double)tsDelta * sch.GetRate().AsInverseDouble();
+}
+
+uint32 ATHistoryWindow::ConvertRawTimestamp(uint32 rawCycle) {
+	return vdpoly_cast<IATDebugTargetHistory *>(ATGetDebugger()->GetTarget())->ConvertRawTimestamp(rawCycle);
+}
+
+float ATHistoryWindow::ConvertRawTimestampDeltaF(sint32 rawCycleDelta) {
+	return (float)((double)rawCycleDelta / vdpoly_cast<IATDebugTargetHistory *>(ATGetDebugger()->GetTarget())->GetTimestampFrequency());
+}
+
+ATCPUBeamPosition ATHistoryWindow::DecodeBeamPosition(uint32 cycle) {
+	return g_sim.GetTimestampDecoder().GetBeamPosition(cycle);
+}
+
+bool ATHistoryWindow::IsInterruptPositionVBI(uint32 cycle) {
+	return g_sim.GetTimestampDecoder().IsInterruptPositionVBI(cycle);
+}
+
+bool ATHistoryWindow::UpdatePreviewNode(ATCPUHistoryEntry& he) {
+	IATDebugTarget *target = ATGetDebugger()->GetTarget();
+
+	const auto dmode = target->GetDisasmMode();
+
+	ATCPUExecState state;
+	target->GetExecState(state);
+
+	const bool is65C02 = dmode == kATDebugDisasmMode_65C02;
+	const bool is65C816 = dmode == kATDebugDisasmMode_65C816;
+	const bool isZ80 = dmode == kATDebugDisasmMode_Z80;
+	const bool is6809 = dmode == kATDebugDisasmMode_6809;
+	const bool is65xx = !isZ80 && !is6809;
+
+	if (!(is65xx ? state.m6502.mbAtInsnStep : state.mZ80.mbAtInsnStep))
+		return false;
+
+	ATCPUHistoryEntry hentLast {};
+		
+	if (is65xx) {
+		const ATCPUExecState6502& state6502 = state.m6502;
+
+		hentLast.mA = state6502.mA;
+		hentLast.mX = state6502.mX;
+		hentLast.mY = state6502.mY;
+		hentLast.mS = state6502.mS;
+		hentLast.mPC = state6502.mPC;
+		hentLast.mP = state6502.mP;
+		hentLast.mbEmulation = state6502.mbEmulationFlag;
+		hentLast.mSH = state6502.mSH;
+		hentLast.mAH = state6502.mAH;
+		hentLast.mXH = state6502.mXH;
+		hentLast.mYH = state6502.mYH;
+		hentLast.mB = state6502.mB;
+		hentLast.mK = state6502.mK;
+		hentLast.mD = state6502.mDP;
+		uint32 addr24 = (uint32)state6502.mPC + ((uint32)state6502.mK << 16);
+		uint8 opcode = target->DebugReadByte(addr24);
+		uint8 byte1 = target->DebugReadByte((addr24+1) & 0xffffff);
+		uint8 byte2 = target->DebugReadByte((addr24+2) & 0xffffff);
+		uint8 byte3 = target->DebugReadByte((addr24+3) & 0xffffff);
+
+		hentLast.mOpcode[0] = opcode;
+		hentLast.mOpcode[1] = byte1;
+		hentLast.mOpcode[2] = byte2;
+		hentLast.mOpcode[3] = byte3;
+	} else {
+		const ATCPUExecStateZ80& stateZ80 = state.mZ80;
+
+		hentLast.mZ80_A = stateZ80.mA;
+		hentLast.mZ80_F = stateZ80.mF;
+		hentLast.mZ80_B = stateZ80.mB;
+		hentLast.mZ80_C = stateZ80.mC;
+		hentLast.mZ80_D = stateZ80.mD;
+		hentLast.mZ80_E = stateZ80.mE;
+		hentLast.mZ80_H = stateZ80.mH;
+		hentLast.mZ80_L = stateZ80.mL;
+		hentLast.mZ80_SP = stateZ80.mSP;
+		hentLast.mPC = stateZ80.mPC;
+		hentLast.mbEmulation = true;
+		hentLast.mB = 0;
+		hentLast.mK = 0;
+		hentLast.mD = 0;
+
+		uint32 addr16 = stateZ80.mPC;
+		uint8 opcode = target->DebugReadByte(addr16);
+		uint8 byte1 = target->DebugReadByte((addr16+1) & 0xffff);
+		uint8 byte2 = target->DebugReadByte((addr16+2) & 0xffff);
+		uint8 byte3 = target->DebugReadByte((addr16+3) & 0xffff);
+
+		hentLast.mOpcode[0] = opcode;
+		hentLast.mOpcode[1] = byte1;
+		hentLast.mOpcode[2] = byte2;
+		hentLast.mOpcode[3] = byte3;
 	}
 
-	return CallWindowProc(mEditProc, hwnd, msg, wParam, lParam);
+	he = hentLast;
+	return true;
+}
+
+uint32 ATHistoryWindow::ReadInsns(const ATCPUHistoryEntry **ppInsns, uint32 startIndex, uint32 n) {
+	if (!n)
+		return 0;
+
+	IATDebugTargetHistory *history = vdpoly_cast<IATDebugTargetHistory *>(ATGetDebugger()->GetTarget());
+
+	history->ExtractHistory(ppInsns, startIndex, n);
+	return n;
+}
+
+void ATHistoryWindow::OnEsc() {
+	if (ATGetUIPane(kATUIPaneId_Console))
+		ATActivateUIPane(kATUIPaneId_Console, true);
+}
+
+void ATHistoryWindow::JumpToInsn(uint32 pc) {
+	ATGetDebugger()->SetFramePC(pc);
+}
+
+void ATHistoryWindow::JumpToSource(uint32 pc) {
+	ATConsoleShowSource(pc);
 }
 
 LRESULT ATHistoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch(msg) {
+		case WM_SETFOCUS:
+			if (!mbHistoryError)
+				SetFocus(mpHistoryView->AsNativeWindow()->GetHandleW32());
+			break;
+
 		case WM_PAINT:
 			OnPaint();
 			return 0;
-
-		case WM_ERASEBKGND:
-			return 0;
-
-		case WM_HSCROLL:
-			OnHScroll(LOWORD(wParam));
-			return 0;
-
-		case WM_VSCROLL:
-			OnVScroll(LOWORD(wParam));
-			return 0;
-
-		case WM_KEYDOWN:
-			if (OnKeyDown((int)wParam))
-				return 0;
-			break;
-
-		case WM_LBUTTONDOWN:
-			::SetFocus(mhwnd);
-			OnLButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), (int)wParam);
-			return 0;
-
-		case WM_LBUTTONDBLCLK:
-			::SetFocus(mhwnd);
-			OnLButtonDblClk(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), (int)wParam);
-			return 0;
-
-		case WM_MOUSEWHEEL:
-			OnMouseWheel((short)HIWORD(wParam));
-			break;
-
-		case WM_CONTEXTMENU:
-			{
-				int x = GET_X_LPARAM(lParam);
-				int y = GET_Y_LPARAM(lParam);
-
-				HMENU menu = GetSubMenu(mMenu, 0);
-
-				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWPCADDRESS, mbShowPCAddress);
-				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWREGISTERS, mbShowRegisters);
-				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWSPECIALREGISTERS, mbShowSpecialRegisters);
-				VDEnableMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWSPECIALREGISTERS, mbShowRegisters);
-				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWFLAGS, mbShowFlags);
-				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWCODEBYTES, mbShowCodeBytes);
-				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWLABELS, mbShowLabels);
-				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWLABELNAMESPACES, mbShowLabelNamespaces);
-				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_COLLAPSELOOPS, mbCollapseLoops);
-				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_COLLAPSECALLS, mbCollapseCalls);
-				VDCheckMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_COLLAPSEINTERRUPTS, mbCollapseInterrupts);
-				VDCheckRadioMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWBEAMPOSITION, mTimestampMode == kTsMode_Beam);
-				VDCheckRadioMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWMICROSECONDS, mTimestampMode == kTsMode_Microseconds);
-				VDCheckRadioMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWCYCLES, mTimestampMode == kTsMode_Cycles);
-				VDCheckRadioMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWUNHALTEDCYCLES, mTimestampMode == kTsMode_UnhaltedCycles);
-
-				POINT pt = {x, y};
-				ScreenToClient(mhwnd, &pt);
-				TreeNode *pNode = GetNodeFromClientPoint(pt.x, pt.y);
-				SelectNode(pNode);
-
-				VDEnableMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_GOTOSOURCE, pNode != nullptr);
-				VDEnableMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SETTIMESTAMPORIGIN, pNode && pNode->mNodeType == kNodeTypeInsn);
-
-				TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
-			}
-			return 0;
-
-		case WM_COMMAND:
-			switch(LOWORD(wParam)) {
-				case ID_HISTORYCONTEXTMENU_GOTOSOURCE:
-					if (mpSelectedNode && (mpSelectedNode->mNodeType == kNodeTypeInsn || mpSelectedNode->mNodeType == kNodeTypeInsnPreview))
-						ATConsoleShowSource(mpSelectedNode->mHEnt.mPC);
-					
-					return true;
-
-				case ID_HISTORYCONTEXTMENU_SHOWPCADDRESS:
-					mbShowPCAddress = !mbShowPCAddress;
-					InvalidateRect(mhwnd, NULL, TRUE);
-					return true;
-				case ID_HISTORYCONTEXTMENU_SHOWREGISTERS:
-					mbShowRegisters = !mbShowRegisters;
-					InvalidateRect(mhwnd, NULL, TRUE);
-					return true;
-				case ID_HISTORYCONTEXTMENU_SHOWSPECIALREGISTERS:
-					mbShowSpecialRegisters = !mbShowSpecialRegisters;
-					InvalidateRect(mhwnd, NULL, TRUE);
-					return true;
-				case ID_HISTORYCONTEXTMENU_SHOWFLAGS:
-					mbShowFlags = !mbShowFlags;
-					InvalidateRect(mhwnd, NULL, TRUE);
-					return true;
-				case ID_HISTORYCONTEXTMENU_SHOWCODEBYTES:
-					mbShowCodeBytes = !mbShowCodeBytes;
-					InvalidateRect(mhwnd, NULL, TRUE);
-					return true;
-				case ID_HISTORYCONTEXTMENU_SHOWLABELS:
-					mbShowLabels = !mbShowLabels;
-					InvalidateRect(mhwnd, NULL, TRUE);
-					return true;
-				case ID_HISTORYCONTEXTMENU_SHOWLABELNAMESPACES:
-					mbShowLabelNamespaces = !mbShowLabelNamespaces;
-					InvalidateRect(mhwnd, NULL, TRUE);
-					return true;
-
-				case ID_HISTORYCONTEXTMENU_COLLAPSELOOPS:
-					mbCollapseLoops = !mbCollapseLoops;
-					Reset();
-					UpdateOpcodes();
-					return true;
-
-				case ID_HISTORYCONTEXTMENU_COLLAPSECALLS:
-					mbCollapseCalls = !mbCollapseCalls;
-					Reset();
-					UpdateOpcodes();
-					return true;
-
-				case ID_HISTORYCONTEXTMENU_COLLAPSEINTERRUPTS:
-					mbCollapseInterrupts = !mbCollapseInterrupts;
-					Reset();
-					UpdateOpcodes();
-					return true;
-
-				case ID_HISTORYCONTEXTMENU_SHOWBEAMPOSITION:
-					mTimestampMode = kTsMode_Beam;
-					InvalidateRect(mhwnd, NULL, TRUE);
-					return true;
-
-				case ID_HISTORYCONTEXTMENU_SHOWMICROSECONDS:
-					mTimestampMode = kTsMode_Microseconds;
-					InvalidateRect(mhwnd, NULL, TRUE);
-					return true;
-
-				case ID_HISTORYCONTEXTMENU_SHOWCYCLES:
-					mTimestampMode = kTsMode_Cycles;
-					InvalidateRect(mhwnd, NULL, TRUE);
-					return true;
-
-				case ID_HISTORYCONTEXTMENU_SHOWUNHALTEDCYCLES:
-					mTimestampMode = kTsMode_UnhaltedCycles;
-					InvalidateRect(mhwnd, NULL, TRUE);
-					return true;
-
-				case ID_HISTORYCONTEXTMENU_RESETTIMESTAMPORIGIN:
-					mTimeBaseCycles = 0;
-					mTimeBaseUnhaltedCycles = 0;
-					InvalidateRect(mhwnd, NULL, TRUE);
-					return true;
-
-				case ID_HISTORYCONTEXTMENU_SETTIMESTAMPORIGIN:
-					if (mpSelectedNode && mpSelectedNode->mNodeType == kNodeTypeInsn) {
-						mTimeBaseCycles = mpSelectedNode->mHEnt.mCycle;
-						mTimeBaseUnhaltedCycles = mpSelectedNode->mHEnt.mUnhaltedCycle;
-						InvalidateRect(mhwnd, NULL, TRUE);
-					}
-
-					return true;
-
-				case ID_HISTORYCONTEXTMENU_COPYVISIBLETOCLIPBOARD:
-					CopyVisibleNodes();
-					return true;
-			}
-
-			break;
-
-		case WM_SETFOCUS:
-			if (!mbFocus) {
-				mbFocus = true;
-				if (mpSelectedNode)
-					InvalidateNode(mpSelectedNode);
-			}
-			break;
-
-		case WM_KILLFOCUS:
-			if (mbFocus) {
-				mbFocus = false;
-				if (mpSelectedNode)
-					InvalidateNode(mpSelectedNode);
-			}
-			break;
 	}
 
 	return ATUIDebuggerPane::WndProc(msg, wParam, lParam);
@@ -2325,71 +2067,28 @@ bool ATHistoryWindow::OnCreate() {
 	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
-	mhwndPanel = CreateWindowEx(0, MAKEINTATOM(ATUINativeWindow::Register()), _T(""), WS_VISIBLE|WS_CHILD|WS_CLIPCHILDREN, 0, 0, 0, 0, mhwnd, (HMENU)kControlIdPanel, g_hInst, mpPanel);
-	if (!mhwndPanel)
+	if (!ATUICreateHistoryView((VDGUIHandle)mhwnd, ~mpHistoryView))
 		return false;
 
-	mhwndClear = CreateWindowEx(0, WC_BUTTON, _T(""), WS_VISIBLE|WS_CHILD|BS_CENTER, 0, 0, 0, 0, mhwndPanel, (HMENU)kControlIdClearButton, g_hInst, NULL);
-	if (!mhwndClear)
-		return false;
-
-	mhwndEdit = CreateWindowEx(WS_EX_CLIENTEDGE, WC_EDIT, _T(""), WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwndPanel, (HMENU)kControlIdSearchEdit, g_hInst, NULL);
-	if (!mhwndEdit)
-		return false;
-
-	SendMessageW(mhwndEdit, EM_SETCUEBANNER, FALSE, (LPARAM)L"substring");
+	mpHistoryView->SetHistoryModel(this);
 
 	OnFontsUpdated();
+	CheckDisasmMode();
 
-	VDSetWindowTextW32(mhwndClear, mTextSearch.c_str());
+	const bool historyEnabled = g_sim.GetCPU().IsHistoryEnabled();
 
-	mpEditThunk = VDCreateFunctionThunkFromMethod(this, &ATHistoryWindow::EditWndProc, true);
-	mEditProc = (WNDPROC)GetWindowLongPtr(mhwndEdit, GWLP_WNDPROC);
-	SetWindowLongPtr(mhwndEdit, GWLP_WNDPROC, (LONG_PTR)mpEditThunk);
-
-	if (!g_sim.GetCPU().IsHistoryEnabled()) {
-		mbHistoryError = true;
-		UpdateHScrollBar();
-		UpdateScrollBar();
-	}
+	SetHistoryError(!historyEnabled);
 
 	OnSize();
-	Reset();
-	UpdateOpcodes();
+	RemakeHistoryView();
 	ATGetDebugger()->AddClient(this, true);
 	return true;
 }
 
 void ATHistoryWindow::OnDestroy() {
-	if (mpPanel) {
-		mpPanel->mpParent = NULL;
-		mpPanel = NULL;
-	}
-
-	mRootNode.mpFirstChild = NULL;
-	mRootNode.mpLastChild = NULL;
-
-	for(;;) {
-		NodeBlock *b = mpNodeBlocks;
-		if (!b)
-			break;
-
-		mpNodeBlocks = b->mpNext;
-		delete b;
-	}
-
-	mpNodeFreeList = NULL;
-
-	mhwndPanel = NULL;
-
-	if (mhwndEdit) {
-		DestroyWindow(mhwndEdit);
-		mhwndEdit = NULL;
-	}
-
-	if (mpEditThunk) {
-		VDDestroyFunctionThunk(mpEditThunk);
-		mpEditThunk = NULL;
+	if (mpHistoryView) {
+		mpHistoryView->AsNativeWindow()->Destroy();
+		mpHistoryView = nullptr;
 	}
 
 	ATGetDebugger()->RemoveClient(this);
@@ -2402,393 +2101,14 @@ void ATHistoryWindow::OnSize() {
 	if (!GetClientRect(mhwnd, &r))
 		return;
 
-	mWidth = r.right;
-	mHeight = r.bottom;
-	mHeaderHeight = 0;
-
-	if (mhwndPanel) {
-		mHeaderHeight = std::max(g_monoFontLineHeight, g_propFontLineHeight) + 2*GetSystemMetrics(SM_CYEDGE);
-
-		VDVERIFY(SetWindowPos(mhwndPanel, NULL, 0, 0, mWidth, mHeaderHeight, SWP_NOZORDER|SWP_NOACTIVATE));
-
-		if (mhwndClear)
-			VDVERIFY(SetWindowPos(mhwndClear, NULL, 0, 0, mClearButtonWidth, mHeaderHeight, SWP_NOZORDER|SWP_NOACTIVATE));
-
-		if (mhwndEdit)
-			VDVERIFY(SetWindowPos(mhwndEdit, NULL, mClearButtonWidth, 0, mWidth < mClearButtonWidth ? 0 : mWidth - mClearButtonWidth, mHeaderHeight, SWP_NOZORDER|SWP_NOACTIVATE));
-	}
-
-	mContentRect = r;
-	mContentRect.top = mHeaderHeight;
-	if (mContentRect.top > mContentRect.bottom)
-		mContentRect.top = mContentRect.bottom;
-
-	if (mbHistoryError) {
-		InvalidateRect(mhwnd, NULL, TRUE);
-		return;
-	}
-
-	mPageItems = 0;
-
-	if (mHeight > mHeaderHeight && mItemHeight)
-		mPageItems = (mHeight - mHeaderHeight) / mItemHeight;
-
-	if (!mPageItems)
-		mPageItems = 1;
-
-	UpdateScrollMax();
-	UpdateScrollBar();
-	UpdateHScrollBar();
-
-	ScrollToPixel(mScrollY);
-	HScrollToPixel(mScrollX);
+	if (mpHistoryView)
+		SetWindowPos(mpHistoryView->AsNativeWindow()->GetHandleW32(), nullptr, 0, 0, r.right, r.bottom, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void ATHistoryWindow::OnFontsUpdated() {
-	SendMessage(mhwndClear, WM_SETFONT, (WPARAM)g_propFont, TRUE);
-	SendMessage(mhwndEdit, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+	mpHistoryView->SetFonts(g_propFont, g_propFontLineHeight, g_monoFont, g_monoFontLineHeight);
 
-	mCharWidth = 12;
-	mItemHeight = 16;
-	mItemTextVOffset = 0;
-
-	if (HDC hdc = GetDC(mhwnd)) {
-		SelectObject(hdc, g_monoFont);
-
-		TEXTMETRIC tm = {0};
-		if (GetTextMetrics(hdc, &tm)) {
-			mCharWidth = tm.tmAveCharWidth;
-			mItemHeight = tm.tmHeight;
-			mItemTextVOffset = 0;
-		}
-
-		SelectObject(hdc, g_propFont);
-
-		mClearButtonWidth = 0;
-
-		SIZE sz;
-		if (GetTextExtentPoint32W(hdc, mTextSearch.data(), mTextSearch.size(), &sz))
-			mClearButtonWidth = sz.cx;
-
-		if (GetTextExtentPoint32W(hdc, mTextClear.data(), mTextClear.size(), &sz)) {
-			if (sz.cx > 0 && mClearButtonWidth < (uint32)sz.cx)
-				mClearButtonWidth = (uint32)sz.cx;
-		}
-
-		mClearButtonWidth += 8 * GetSystemMetrics(SM_CXEDGE);
-
-		ReleaseDC(mhwnd, hdc);
-	}
-
-	OnSize();
-	InvalidateRect(mhwnd, NULL, TRUE);
-}
-
-void ATHistoryWindow::OnLButtonDown(int x, int y, int mods) {
-	TreeNode *node = GetNodeFromClientPoint(x, y);
-
-	if (!node) {
-		if (mpSelectedNode) {
-			mpSelectedNode = NULL;
-			InvalidateRect(mhwnd, NULL, FALSE);
-		}
-
-		return;
-	}
-
-	int level = 0;
-	for(TreeNode *p = node->mpParent; p; p = p->mpParent)
-		++level;
-
-	if (x >= level * (int)mItemHeight) {
-		if (mpSelectedNode != node) {
-			mpSelectedNode = node;
-			InvalidateRect(mhwnd, NULL, FALSE);
-		}
-	} else if (x >= (level - 1)*(int)mItemHeight && node->mpFirstChild) {
-		if (node->mbExpanded)
-			CollapseNode(node);
-		else
-			ExpandNode(node);
-	}
-}
-
-void ATHistoryWindow::OnLButtonDblClk(int x, int y, int mods) {
-	TreeNode *node = GetNodeFromClientPoint(x, y);
-
-	if (!node) {
-		if (mpSelectedNode) {
-			mpSelectedNode = NULL;
-			InvalidateRect(mhwnd, NULL, FALSE);
-		}
-		return;
-	}
-
-	int level = 0;
-	for(TreeNode *p = node->mpParent; p; p = p->mpParent)
-		++level;
-
-	if (x >= level * (int)mItemHeight) {
-		if (mpSelectedNode != node) {
-			mpSelectedNode = node;
-			InvalidateRect(mhwnd, NULL, FALSE);
-		}
-
-		if (!node->mpText)
-			ATGetDebugger()->SetFramePC(node->mHEnt.mPC);
-	} else if (x >= (level - 1)*(int)mItemHeight && node->mpFirstChild) {
-		if (node->mbExpanded)
-			CollapseNode(node);
-		else
-			ExpandNode(node);
-	}
-}
-
-bool ATHistoryWindow::OnKeyDown(int code) {
-	switch(code) {
-		case VK_ESCAPE:
-			if (ATGetUIPane(kATUIPaneId_Console))
-				ATActivateUIPane(kATUIPaneId_Console, true);
-			break;
-
-		case VK_PRIOR:
-			if (mpSelectedNode) {
-				for(uint32 i=0; i<mPageItems; ++i) {
-					TreeNode *p = GetPrevVisibleNode(mpSelectedNode);
-					if (!p)
-						break;
-
-					SelectNode(p);
-				}
-			}
-			break;
-		case VK_NEXT:
-			if (mpSelectedNode) {
-				for(uint32 i=0; i<mPageItems; ++i) {
-					TreeNode *p = GetNextVisibleNode(mpSelectedNode);
-					if (!p)
-						break;
-
-					SelectNode(p);
-				}
-			}
-			break;
-		case VK_UP:
-			if (mpSelectedNode) {
-				TreeNode *p = GetPrevVisibleNode(mpSelectedNode);
-
-				if (p) {
-					SelectNode(p);
-				}
-			}
-			break;
-		case VK_DOWN:
-			if (mpSelectedNode) {
-				TreeNode *p = GetNextVisibleNode(mpSelectedNode);
-
-				if (p) {
-					SelectNode(p);
-				}
-			}
-			break;
-		case VK_LEFT:
-			if (mpSelectedNode) {
-				if (mpSelectedNode->mbExpanded) {
-					CollapseNode(mpSelectedNode);
-					EnsureNodeVisible(mpSelectedNode);
-				} else {
-					TreeNode *p = mpSelectedNode->mpParent;
-					if (p != &mRootNode) {
-						SelectNode(p);
-					}
-				}
-			}
-			break;
-		case VK_RIGHT:
-			if (mpSelectedNode) {
-				TreeNode *child = mpSelectedNode->mpFirstChild;
-				
-				if (child) {
-					if (!mpSelectedNode->mbExpanded) {
-						ExpandNode(mpSelectedNode);
-						EnsureNodeVisible(mpSelectedNode);
-					} else {
-						SelectNode(child);
-					}
-				}
-			}
-			break;
-		case VK_HOME:
-			if (mRootNode.mpFirstChild)
-				SelectNode(mRootNode.mpFirstChild);
-			break;
-		case VK_END:
-			{
-				TreeNode *p = mRootNode.mpLastChild;
-
-				if (!p)
-					break;
-
-				for(;;) {
-					TreeNode *q = p->mpLastChild;
-
-					if (!q || !p->mbExpanded) {
-						SelectNode(p);
-						break;
-					}
-
-					p = q;
-				}
-			}
-			break;
-		default:
-			return false;
-	}
-
-	return true;
-}
-
-void ATHistoryWindow::OnMouseWheel(int dz) {
-	mScrollWheelAccum += dz;
-
-	int actions = mScrollWheelAccum / WHEEL_DELTA;
-	if (!actions)
-		return;
-
-	mScrollWheelAccum -= actions * WHEEL_DELTA;
-
-	UINT linesPerAction;
-	if (SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &linesPerAction, FALSE)) {
-		ScrollToPixel(mScrollY - (int)linesPerAction * actions * (int)mItemHeight);
-	}
-}
-
-void ATHistoryWindow::OnHScroll(int code) {
-	SCROLLINFO si = {0};
-	si.cbSize = sizeof(SCROLLINFO);
-	si.fMask = SIF_TRACKPOS | SIF_POS | SIF_PAGE | SIF_RANGE;
-
-	GetScrollInfo(mhwnd, SB_HORZ, &si);
-
-	int pos = si.nPos;
-
-	switch(code) {
-		case SB_TOP:
-			pos = si.nMin;
-			break;
-
-		case SB_BOTTOM:
-			pos = si.nMax;
-			break;
-
-		case SB_ENDSCROLL:
-			break;
-
-		case SB_LINEDOWN:
-			if (si.nMax - pos >= 16 * (int)mItemHeight)
-				pos += 16 * mItemHeight;
-			else
-				pos = si.nMax;
-			break;
-
-		case SB_LINEUP:
-			if (pos - si.nMin >= 16 * (int)mItemHeight)
-				pos -= 16 * mItemHeight;
-			else
-				pos = si.nMin;
-			break;
-
-		case SB_PAGEDOWN:
-			if (si.nMax - pos >= (int)si.nPage)
-				pos += si.nPage;
-			else
-				pos = si.nMax;
-			break;
-
-		case SB_PAGEUP:
-			if (pos - si.nMin >= (int)si.nPage)
-				pos -= si.nPage;
-			else
-				pos = si.nMin;
-			break;
-
-		case SB_THUMBPOSITION:
-		case SB_THUMBTRACK:
-			pos = si.nTrackPos;
-			break;
-	}
-
-	if (pos != si.nPos) {
-		si.nPos = pos;
-		si.fMask = SIF_POS;
-		SetScrollInfo(mhwnd, SB_HORZ, &si, TRUE);
-	}
-
-	HScrollToPixel(pos);
-}
-
-void ATHistoryWindow::OnVScroll(int code) {
-	SCROLLINFO si = {0};
-	si.cbSize = sizeof(SCROLLINFO);
-	si.fMask = SIF_TRACKPOS | SIF_POS | SIF_PAGE | SIF_RANGE;
-
-	GetScrollInfo(mhwnd, SB_VERT, &si);
-
-	int pos = si.nPos;
-
-	switch(code) {
-		case SB_TOP:
-			pos = si.nMin;
-			break;
-
-		case SB_BOTTOM:
-			pos = si.nMax;
-			break;
-
-		case SB_ENDSCROLL:
-			break;
-
-		case SB_LINEDOWN:
-			if (si.nMax - pos >= (int)mItemHeight)
-				pos += mItemHeight;
-			else
-				pos = si.nMax;
-			break;
-
-		case SB_LINEUP:
-			if (pos - si.nMin >= (int)mItemHeight)
-				pos -= mItemHeight;
-			else
-				pos = si.nMin;
-			break;
-
-		case SB_PAGEDOWN:
-			if (si.nMax - pos >= (int)si.nPage)
-				pos += si.nPage;
-			else
-				pos = si.nMax;
-			break;
-
-		case SB_PAGEUP:
-			if (pos - si.nMin >= (int)si.nPage)
-				pos -= si.nPage;
-			else
-				pos = si.nMin;
-			break;
-
-		case SB_THUMBPOSITION:
-		case SB_THUMBTRACK:
-			pos = si.nTrackPos;
-			break;
-	}
-
-	if (pos != si.nPos) {
-		si.nPos = pos;
-		si.fMask = SIF_POS;
-		SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
-	}
-
-	ScrollToPixel(pos);
+	InvalidateRect(mhwnd, nullptr, TRUE);
 }
 
 void ATHistoryWindow::OnPaint() {
@@ -2803,42 +2123,14 @@ void ATHistoryWindow::OnPaint() {
 			SelectObject(hdc, g_propFont);
 			SetBkMode(hdc, TRANSPARENT);
 
-			FillRect(hdc, &mContentRect, (HBRUSH)(COLOR_WINDOW + 1));
+			RECT rText {};
+			GetClientRect(mhwnd, &rText);
+			FillRect(hdc, &rText, (HBRUSH)(COLOR_WINDOW + 1));
 
-			RECT rText = mContentRect;
 			InflateRect(&rText, -GetSystemMetrics(SM_CXEDGE)*2, -GetSystemMetrics(SM_CYEDGE)*2);
 
 			static const WCHAR kText[] = L"History cannot be displayed because CPU history tracking is not enabled. History tracking can be enabled in CPU Options.";
 			DrawTextW(hdc, kText, (sizeof kText / sizeof(kText[0])) - 1, &rText, DT_TOP | DT_LEFT | DT_NOPREFIX | DT_WORDBREAK);
-		} else {
-			SelectObject(hdc, g_monoFont);
-
-			int y1 = ps.rcPaint.top + mScrollY - mHeaderHeight;
-			int y2 = ps.rcPaint.bottom + mScrollY - mHeaderHeight;
-
-			if (y1 < 0)
-				y1 = 0;
-
-			if (y2 < y1)
-				y2 = y1;
-
-			uint32 itemStart = (uint32)y1 / mItemHeight;
-			uint32 itemEnd = (uint32)(y2 + mItemHeight - 1) / mItemHeight;
-
-			SetBkMode(hdc, OPAQUE);
-			SetTextAlign(hdc, TA_LEFT | TA_TOP);
-
-			if (mRootNode.mpFirstChild) {
-				PaintItems(hdc, &ps.rcPaint, itemStart, itemEnd, mRootNode.mpFirstChild, 0, 0);
-			}
-
-			if (itemEnd > mRootNode.mHeight - 1) {
-				SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
-
-				RECT r = ps.rcPaint;
-				r.top = (mRootNode.mHeight - 1) * mItemHeight - mScrollY + mHeaderHeight;
-				ExtTextOut(hdc, r.left, r.top, ETO_OPAQUE, &r, _T(""), 0, NULL);
-			}
 		}
 
 		RestoreDC(hdc, sdc);
@@ -2847,1606 +2139,69 @@ void ATHistoryWindow::OnPaint() {
 	EndPaint(mhwnd, &ps);
 }
 
-void ATHistoryWindow::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, uint32 itemEnd, TreeNode *baseNode, uint32 pos, uint32 level) {
-	if (!baseNode)
+
+void ATHistoryWindow::SetHistoryError(bool error) {
+	if (mbHistoryError == error)
 		return;
 
-	TreeNode *baseParent = baseNode->mpParent;
-	TreeNode *node = baseNode;
-
-	for(;;) {
-		if (pos >= itemEnd)
-			return;
-
-		// Check if the node is visible at all. If not, we can skip rendering and traversal.
-		if (!node->mbVisible) {
-			// skip invisible node
-		} else if (pos + node->mHeight <= itemStart) {
-			pos += node->mHeight;
-		} else {
-			if (pos >= itemStart) {
-				bool selected = false;
-
-				uint32 bgc;
-				uint32 fgc;
-				if (mpSelectedNode == node) {
-					selected = true;
-					
-					bgc = GetSysColor(mbFocus ? COLOR_HIGHLIGHT : COLOR_3DFACE);
-					fgc = GetSysColor(mbFocus ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT);
-				} else {
-					bgc = GetSysColor(COLOR_WINDOW);
-					fgc = GetSysColor(COLOR_WINDOWTEXT);
-				}
-
-				SetBkColor(hdc, bgc);
-				SetTextColor(hdc, fgc);
-
-				int x = mItemHeight * level - mScrollX;
-				int y = pos * mItemHeight + mHeaderHeight - mScrollY;
-
-				RECT rOpaque;
-				rOpaque.left = x;
-				rOpaque.top = y;
-				rOpaque.right = mWidth;
-				rOpaque.bottom = y + mItemHeight;
-
-				const char *s = GetNodeText(node);
-
-				ExtTextOutA(hdc, x + mItemHeight, rOpaque.top + mItemTextVOffset, ETO_OPAQUE | ETO_CLIPPED, &rOpaque, s, (UINT)strlen(s), NULL);
-
-				RECT rPad;
-				rPad.left = rPaint->left;
-				rPad.top = y;
-				rPad.right = x;
-				rPad.bottom = y + mItemHeight;
-
-				FillRect(hdc, &rPad, (HBRUSH)(COLOR_WINDOW + 1));
-
-				if (node->mpFirstChild) {
-					SelectObject(hdc, selected ? GetStockObject(WHITE_PEN) : GetStockObject(BLACK_PEN));
-
-					int boxsize = (mItemHeight - 3) & ~1;
-					int x1 = x + 1;
-					int y1 = y + 1;
-					int x2 = x1 + boxsize;
-					int y2 = y1 + boxsize;
-
-					MoveToEx(hdc, x1, y1, NULL);
-					LineTo(hdc, x2, y1);
-					LineTo(hdc, x2, y2);
-					LineTo(hdc, x1, y2);
-					LineTo(hdc, x1, y1);
-
-					int xh = (x1 + x2) >> 1;
-					int yh = (y1 + y2) >> 1;
-					MoveToEx(hdc, x1 + 2, yh, NULL);
-					LineTo(hdc, x2 - 1, yh);
-
-					if (!node->mbExpanded) {
-						MoveToEx(hdc, xh, y1 + 2, NULL);
-						LineTo(hdc, xh, y2 - 1);
-					}
-				}
-			}
-
-			// Check if we should recurse.
-			if (node->mbExpanded && node->mpFirstChild) {
-				++pos;
-				++level;
-
-				node = node->mpFirstChild;
-				continue;
-			} else
-				pos += node->mHeight;
-		}
-
-		for(;;) {
-			if (node == baseParent)
-				return;
-
-			if (node->mpNextSibling) {
-				node = node->mpNextSibling;
-				break;
-			} else {
-				node = node->mpParent;
-				--level;
-			}
-		}
-	}
-}
-
-const char *ATHistoryWindow::GetNodeText(TreeNode *node) {
-	const char *s = node->mpText;
-
-	switch(node->mNodeType) {
-		case kNodeTypeRepeat:
-			mTempLine.sprintf("Last %d insns repeated %d times", node->mRepeat.mSize, node->mRepeat.mCount);
-			s = mTempLine.c_str();
-			break;
-
-		case kNodeTypeInterrupt:
-			{
-				IATDebugTarget *target = ATGetDebugger()->GetTarget();
-				const ATCPUHistoryEntry& hent = node->mHEnt;
-
-				const auto& tsdecoder = g_sim.GetTimestampDecoder();
-				uint32 rawts = vdpoly_cast<IATDebugTargetHistory *>(target)->ConvertRawTimestamp(hent.mCycle);
-
-				if (ATGetDebugger()->GetTargetIndex()) {
-					if (hent.mbNMI)
-						mTempLine = hent.mbIRQ ? "FIRQ interrupt" : "NMI interrupt";
-					else
-						mTempLine = "IRQ interrupt";
-				} else {
-					mTempLine = hent.mbNMI ? tsdecoder.IsInterruptPositionVBI(rawts) ? "NMI interrupt (VBI)" : "NMI interrupt (DLI)" : "IRQ interrupt";
-				}
-				s = mTempLine.c_str();
-			}
-			break;
-
-		case kNodeTypeInsn:
-		case kNodeTypeInsnPreview:
-			{
-				IATDebugTarget *target = ATGetDebugger()->GetTarget();
-				const ATDebugDisasmMode disasmMode = target->GetDisasmMode();
-				const bool is65C816 = disasmMode == kATDebugDisasmMode_65C816;
-				const ATCPUHistoryEntry& hent = node->mHEnt;
-
-				if (node->mNodeType == kNodeTypeInsn) {
-					switch(mTimestampMode) {
-						case kTsMode_Beam:{
-							const auto& tsdecoder = g_sim.GetTimestampDecoder();
-							uint32 rawts = vdpoly_cast<IATDebugTargetHistory *>(target)->ConvertRawTimestamp(hent.mCycle);
-							const auto& beamPos = tsdecoder.GetBeamPosition(rawts);
-
-							const uint32 subCycles = g_sim.GetCPU().GetSubCycles();
-							if (subCycles >= 10) {
-								mTempLine.sprintf("%3d:%3d:%3d.%2u | "
-										, beamPos.mFrame
-										, beamPos.mY
-										, beamPos.mX
-										, hent.mSubCycle
-									);
-							} else if (subCycles > 1) {
-								mTempLine.sprintf("%3d:%3d:%3d.%u | "
-										, beamPos.mFrame
-										, beamPos.mY
-										, beamPos.mX
-										, hent.mSubCycle
-									);
-							} else {
-								mTempLine.sprintf("%3d:%3d:%3d | "
-										, beamPos.mFrame
-										, beamPos.mY
-										, beamPos.mX
-									);
-							}
-							break;
-						}
-
-						case kTsMode_Microseconds: {
-							mTempLine.sprintf("T%+.6f | ", (float)(sint32)(hent.mCycle - mTimeBaseCycles) / (float)vdpoly_cast<IATDebugTargetHistory *>(target)->GetTimestampFrequency());
-							break;
-						}
-
-						case kTsMode_Cycles: {
-							mTempLine.sprintf("T%+-4d | ", (sint32)(hent.mCycle - mTimeBaseCycles));
-							break;
-						}
-
-						case kTsMode_UnhaltedCycles: {
-							mTempLine.sprintf("T%+-4d | ", (sint32)(hent.mUnhaltedCycle - mTimeBaseUnhaltedCycles));
-							break;
-						}
-					}
-				} else {
-					switch(mTimestampMode) {
-						case kTsMode_Beam: {
-							const uint32 subCycles = g_sim.GetCPU().GetSubCycles();
-							if (subCycles >= 10)
-								mTempLine = "NEXT           | ";
-							else if (subCycles > 1)
-								mTempLine = "NEXT          | ";
-							else
-								mTempLine = "NEXT         | ";
-							break;
-						}
-
-						case kTsMode_Microseconds:
-							mTempLine = "NEXT    | ";
-							break;
-
-						case kTsMode_Cycles:
-						case kTsMode_UnhaltedCycles:
-							mTempLine = "NEXT  | ";
-							break;
-					}
-				}
-
-				if (mbShowRegisters) {
-					if (disasmMode == kATDebugDisasmMode_8048) {
-						mTempLine.append_sprintf("A=%02X PSW=%02X R0=%02X R1=%02X"
-							, hent.mA
-							, hent.mP
-							, hent.mX
-							, hent.mY
-							);
-
-						if (mbShowSpecialRegisters) {
-							mTempLine.append_sprintf(" P1=%02X P2=%02X"
-								, hent.m8048_P1
-								, hent.m8048_P2
-								);
-						}
-					} else if (disasmMode == kATDebugDisasmMode_Z80) {
-						mTempLine.append_sprintf("A=%02X BC=%02X%02X DE=%02X%02X HL=%02X%02X"
-							, hent.mZ80_A
-							, hent.mZ80_B
-							, hent.mZ80_C
-							, hent.mZ80_D
-							, hent.mZ80_E
-							, hent.mZ80_H
-							, hent.mZ80_L
-							);
-
-						if (mbShowSpecialRegisters) {
-							mTempLine.append_sprintf(" SP=%04X F=%02X"
-								, hent.mZ80_SP
-								, hent.mZ80_F
-								);
-						}
-					} else if (disasmMode == kATDebugDisasmMode_6809) {
-						mTempLine.append_sprintf("A=%02X B=%02X X=%02X%02X Y=%02X%02X"
-							, hent.mA
-							, hent.mAH
-							, hent.mXH
-							, hent.mX
-							, hent.mYH
-							, hent.mY
-							);
-
-						if (mbShowSpecialRegisters) {
-							mTempLine.append_sprintf(" U=%04X S=%02X%02X DP=%02X CC=%02X"
-								, hent.mD
-								, hent.mSH
-								, hent.mS
-								, hent.mK
-								, hent.mP
-								);
-						}
-					} else if (is65C816) {
-						if (!hent.mbEmulation) {
-							if (hent.mP & AT6502::kFlagM) {
-								mTempLine.append_sprintf("C=%02X%02X"
-									, hent.mAH
-									, hent.mA
-									);
-							} else {
-								mTempLine.append_sprintf("A=%02X%02X"
-									, hent.mAH
-									, hent.mA
-									);
-							}
-
-							if (hent.mP & AT6502::kFlagX) {
-								mTempLine.append_sprintf(" X=--%02X Y=--%02X"
-									, hent.mX
-									, hent.mY
-									);
-							} else {
-								mTempLine.append_sprintf(" X=%02X%02X Y=%02X%02X"
-									, hent.mXH
-									, hent.mX
-									, hent.mYH
-									, hent.mY
-									);
-							}
-
-							if (mbShowSpecialRegisters) {
-								mTempLine.append_sprintf(" S=%02X%02X B=%02X D=%04X P=%02X"
-									, hent.mSH
-									, hent.mS
-									, hent.mB
-									, hent.mD
-									, hent.mP
-									);
-							}
-						} else {
-							mTempLine.append_sprintf("A=%02X:%02X X=%02X Y=%02X"
-								, hent.mAH
-								, hent.mA
-								, hent.mX
-								, hent.mY
-								);
-
-							if (mbShowSpecialRegisters) {
-								mTempLine.append_sprintf(" S=%02X B=%02X D=%04D P=%02X"
-									, hent.mS
-									, hent.mB
-									, hent.mD
-									, hent.mP
-									);
-							}
-						}
-					} else {
-						mTempLine.append_sprintf("A=%02X X=%02X Y=%02X"
-							, hent.mA
-							, hent.mX
-							, hent.mY
-							);
-
-						if (mbShowSpecialRegisters) {
-							mTempLine.append_sprintf(" S=%02X P=%02X"
-								, hent.mS
-								, hent.mP
-								);
-						}
-					}
-				}
-
-				if (mbShowFlags) {
-					if (disasmMode == kATDebugDisasmMode_8048) {
-						mTempLine.append_sprintf(" (%c%c%c/RB%c)"
-							, (hent.mP & 0x80) ? 'C' : ' '
-							, (hent.mP & 0x40) ? 'A' : ' '
-							, (hent.mP & 0x20) ? 'F' : ' '
-							, (hent.mP & 0x10) ? '1' : '0'
-							);
-					} else if (disasmMode == kATDebugDisasmMode_Z80) {
-						mTempLine.append_sprintf(" (%c%c-%c-%c%c%c)"
-							, (hent.mZ80_F & 0x80) ? 'S' : ' '
-							, (hent.mZ80_F & 0x40) ? 'Z' : ' '
-							, (hent.mZ80_F & 0x10) ? 'H' : ' '
-							, (hent.mZ80_F & 0x04) ? 'P' : ' '
-							, (hent.mZ80_F & 0x02) ? 'N' : ' '
-							, (hent.mZ80_F & 0x01) ? 'C' : ' '
-							);
-					} else if (disasmMode == kATDebugDisasmMode_6809) {
-						mTempLine.append_sprintf(" (%c%c%c%c%c%c%c%c)"
-							, (hent.mP & 0x80) ? 'E' : ' '
-							, (hent.mP & 0x40) ? 'F' : ' '
-							, (hent.mP & 0x20) ? 'H' : ' '
-							, (hent.mP & 0x10) ? 'I' : ' '
-							, (hent.mP & 0x08) ? 'N' : ' '
-							, (hent.mP & 0x04) ? 'Z' : ' '
-							, (hent.mP & 0x02) ? 'V' : ' '
-							, (hent.mP & 0x01) ? 'C' : ' '
-							);
-					} else if (is65C816 && !hent.mbEmulation) {
-						mTempLine.append_sprintf(" (%c%c%c%c%c%c%c%c)"
-							, (hent.mP & AT6502::kFlagN) ? 'N' : ' '
-							, (hent.mP & AT6502::kFlagV) ? 'V' : ' '
-							, (hent.mP & AT6502::kFlagM) ? 'M' : ' '
-							, (hent.mP & AT6502::kFlagX) ? 'X' : ' '
-							, (hent.mP & AT6502::kFlagD) ? 'D' : ' '
-							, (hent.mP & AT6502::kFlagI) ? 'I' : ' '
-							, (hent.mP & AT6502::kFlagZ) ? 'Z' : ' '
-							, (hent.mP & AT6502::kFlagC) ? 'C' : ' '
-							);
-					} else {
-						mTempLine.append_sprintf(" (%c%c%c%c%c%c)"
-							, (hent.mP & AT6502::kFlagN) ? 'N' : ' '
-							, (hent.mP & AT6502::kFlagV) ? 'V' : ' '
-							, (hent.mP & AT6502::kFlagD) ? 'D' : ' '
-							, (hent.mP & AT6502::kFlagI) ? 'I' : ' '
-							, (hent.mP & AT6502::kFlagZ) ? 'Z' : ' '
-							, (hent.mP & AT6502::kFlagC) ? 'C' : ' '
-							);
-					}
-				}
-
-				if (mbShowRegisters || mbShowFlags)
-					mTempLine += " | ";
-
-				if (hent.mbIRQ && hent.mbNMI && disasmMode != kATDebugDisasmMode_6809)
-					mTempLine.append_sprintf("%04X: -- High level emulation --", hent.mPC);
-				else
-					ATDisassembleInsn(mTempLine, target, disasmMode, hent, false, true, mbShowPCAddress, mbShowCodeBytes, mbShowLabels, false, false, mbShowLabelNamespaces);
-
-				s = mTempLine.c_str();
-			}
-			break;
-	}
-
-	return s;
-}
-
-void ATHistoryWindow::HScrollToPixel(int pos) {
-	if (pos < 0)
-		pos = 0;
-
-	if (mScrollX != pos) {
-		sint32 delta = (sint32)mScrollX - (sint32)pos;
-		mScrollX = pos;
-
-		ScrollWindowEx(mhwnd, delta, 0, &mContentRect, &mContentRect, NULL, NULL, SW_INVALIDATE);
-		UpdateHScrollBar();
-	}
-}
-
-void ATHistoryWindow::ScrollToPixel(int pos) {
-	if (pos < 0)
-		pos = 0;
-
-	if ((uint32)pos > mScrollMax)
-		pos = mScrollMax;
-
-	if (mScrollY != pos) {
-		sint32 delta = (sint32)mScrollY - (sint32)pos;
-		mScrollY = pos;
-
-		ScrollWindowEx(mhwnd, 0, delta, &mContentRect, &mContentRect, NULL, NULL, SW_INVALIDATE);
-		UpdateScrollBar();
-	}
-}
-
-void ATHistoryWindow::InvalidateNode(TreeNode *node) {
-	uint32 y = GetNodeYPos(node) * mItemHeight;
-
-	if (y < mScrollY + (mContentRect.bottom - mContentRect.top) && y + mItemHeight > mScrollY) {
-		RECT r;
-		r.left = 0;
-		r.top = (int)y - (int)mScrollY + mHeaderHeight;
-		r.right = mWidth;
-		r.bottom = r.top + mItemHeight;
-
-		InvalidateRect(mhwnd, &r, TRUE);
-	}
-}
-
-void ATHistoryWindow::InvalidateStartingAtNode(TreeNode *node) {
-	VDASSERT(node->mpParent);
-	int y = GetNodeYPos(node) * mItemHeight;
-
-	if ((uint32)y < mScrollY + (mContentRect.bottom - mContentRect.top))
-		InvalidateRect(mhwnd, NULL, TRUE);
-}
-
-void ATHistoryWindow::SelectNode(TreeNode *node) {
-	if (node == mpSelectedNode)
-		return;
-
-	mpSelectedNode = node;
-	EnsureNodeVisible(node);
-	InvalidateRect(mhwnd, NULL, TRUE);
-}
-
-void ATHistoryWindow::ExpandNode(TreeNode *node) {
-	if (node->mbExpanded || !node->mpFirstChild)
-		return;
-
-	VDASSERT(node->mHeight == 1);
-
-	node->mbExpanded = true;
-
-	uint32 newHeight = 1;
-
-	TreeNode *lastChild = node->mpLastChild;
-	if (lastChild)
-		newHeight = lastChild->mRelYPos + lastChild->mHeight + 1;
-
-	node->mHeight = newHeight;
-
-	VDASSERT(newHeight >= 1);
-	uint32 delta = newHeight - 1;
-
-	if (delta) {
-		TreeNode *c = node;
-
-		for(;;) {
-			// adjust relative positions of siblings
-			for(TreeNode *s = c->mpNextSibling; s; s = s->mpNextSibling)
-				s->mRelYPos += delta;
-
-			// go up to parent
-			c = c->mpParent;
-			if (!c)
-				break;
-
-			if (!c->mbExpanded)
-				return;
-
-			// adjust parent height
-			c->mHeight += delta;
-		}
-	}
-
-	UpdateScrollMax();
- 
-	InvalidateStartingAtNode(node);
-	UpdateScrollBar();
-	ScrollToPixel(mScrollY);
-}
-
-void ATHistoryWindow::CollapseNode(TreeNode *node) {
-	if (!node->mbExpanded)
-		return;
-
-	node->mbExpanded = false;
-
-	uint32 delta = node->mHeight - 1;
-	node->mHeight = 1;
-
-	if (delta) {
-		TreeNode *c = node;
-
-		for(;;) {
-			// adjust relative positions of siblings
-			for(TreeNode *s = c->mpNextSibling; s; s = s->mpNextSibling) {
-				VDASSERT(s->mRelYPos >= delta);
-				s->mRelYPos -= delta;
-			}
-
-			// go up to parent
-			c = c->mpParent;
-			if (!c)
-				break;
-
-			if (!c->mbExpanded)
-				return;
-
-			// adjust parent height
-			VDASSERT(c->mHeight >= delta);
-			c->mHeight -= delta;
-		}
-	}
-
-	UpdateScrollMax();
-
-	InvalidateStartingAtNode(node);
-	UpdateScrollBar();
-	ScrollToPixel(mScrollY);
-}
-
-void ATHistoryWindow::EnsureNodeVisible(TreeNode *node) {
-	if (!node)
-		return;
-
-	for(TreeNode *p = node->mpParent; p; p = p->mpParent) {
-		if (!p->mbExpanded)
-			ExpandNode(p);
-	}
-
-	uint32 ypos = GetNodeYPos(node);
-	uint32 y = ypos * mItemHeight;
-
-	if (y < mScrollY)
-		ScrollToPixel(y);
-	else if (y + mItemHeight > mScrollY + (mContentRect.bottom - mContentRect.top))
-		ScrollToPixel(y + mItemHeight - (mContentRect.bottom - mContentRect.top));
-}
-
-void ATHistoryWindow::ValidateNode(TreeNode *node) {
-	uint32 h = 0;
-
-	if (node->mbExpanded) {
-		for(TreeNode *c = node->mpFirstChild; c; c = c->mpNextSibling) {
-			VDASSERT(c->mRelYPos == h);
-			h += c->mHeight;
-		}
-	}
-
-	++h;
-	VDASSERT(h == node->mHeight);
-}
-
-void ATHistoryWindow::RefreshNode(TreeNode *node) {
-	uint32 ypos1 = GetNodeYPos(node);
-	uint32 ypos2 = ypos1 + mItemHeight;
-
-	if (ypos2 >= mScrollY && ypos1 < mScrollY + mHeight) {
-		RECT r = { 0, (LONG)(ypos1 - mScrollY), (LONG)mWidth, (LONG)(ypos2 - mScrollY) };
-
-		InvalidateRect(mhwnd, &r, TRUE);
-	}
-}
-
-uint32 ATHistoryWindow::GetNodeYPos(TreeNode *node) const {
-	sint32 y = node->mRelYPos;
-
-	for(TreeNode *p = node->mpParent; p != &mRootNode; p = p->mpParent)
-		y += p->mRelYPos + 1;
-
-	return y;
-}
-
-ATHistoryWindow::TreeNode *ATHistoryWindow::GetNodeFromClientPoint(int x, int y) const {
-	if (y < (int)mHeaderHeight || !mItemHeight)
-		return NULL;
-
-	uint32 idx = ((uint32)y - mHeaderHeight + mScrollY) / mItemHeight;
-
-	TreeNode *p = mRootNode.mpFirstChild;
-	while(p) {
-		if (idx < p->mRelYPos)
-			break;
-
-		uint32 offset = idx - p->mRelYPos;
-		if (p->mbVisible && offset < p->mHeight) {
-			if (!offset || !p->mbExpanded)
-				return p;
-
-			idx = offset - 1;
-			p = p->mpFirstChild;
-		} else
-			p = p->mpNextSibling;
-	}
-
-	return NULL;
-}
-
-ATHistoryWindow::TreeNode *ATHistoryWindow::GetPrevVisibleNode(TreeNode *node) const {
-	do {
-		if (node->mpPrevSibling) {
-			node = node->mpPrevSibling;
-
-			while(node->mbExpanded && node->mpLastChild && node->mbVisible)
-				node = node->mpLastChild;
-		} else {
-			do {
-				node = node->mpParent;
-				if (node == &mRootNode)
-					return nullptr;
-			} while(!node->mpPrevSibling);
-		}
-	} while(!node->mbVisible);
-
-	return node;
-}
-
-ATHistoryWindow::TreeNode *ATHistoryWindow::GetNextVisibleNode(TreeNode *node) const {
-	do {
-		if (node->mbExpanded && node->mpFirstChild)
-			node = node->mpFirstChild;
-		else {
-			while(!node->mpNextSibling) {
-				node = node->mpParent;
-				if (node == &mRootNode)
-					return nullptr;
-			}
-
-			node = node->mpNextSibling;
-		}
-	} while(!node->mbVisible);
-
-	return node;
-}
-
-ATHistoryWindow::TreeNode *ATHistoryWindow::GetNearestVisibleNode(TreeNode *node) const {
-	TreeNode *firstCollapsedParent = NULL;
-
-	if (!node)
-		return node;
-
-	for(TreeNode *p = node->mpParent; p; p = p->mpParent) {
-		if (!p->mbExpanded)
-			firstCollapsedParent = p;
-	}
-
-	if (firstCollapsedParent)
-		return GetNextVisibleNode(firstCollapsedParent);
-
-	return node;
-}
-
-void ATHistoryWindow::UpdateHScrollBar() {
-	if (mbUpdatesBlocked) {
-		mbDirtyHScrollBar = true;
-		return;
-	}
-
-	if (mbHistoryError) {
-		ShowScrollBar(mhwnd, SB_HORZ, FALSE);
+	mbHistoryError = error;
+
+	if (error) {
+		ShowWindow(mpHistoryView->AsNativeWindow()->GetHandleW32(), SW_HIDE);
+		InvalidateRect(mhwnd, nullptr, TRUE);
 	} else {
-		SCROLLINFO si;
-		si.cbSize = sizeof si;
-		si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
-		si.nPage = mWidth;
-		si.nMin = 0;
-		si.nMax = mItemHeight * 64 + mCharWidth * 64;
-		si.nPos = mScrollX;
-		si.nTrackPos = 0;
-		SetScrollInfo(mhwnd, SB_HORZ, &si, TRUE);
-
-		ShowScrollBar(mhwnd, SB_HORZ, TRUE);
+		ShowWindow(mpHistoryView->AsNativeWindow()->GetHandleW32(), SW_SHOWNOACTIVATE);
 	}
-
-	mbDirtyHScrollBar = false;
 }
 
-void ATHistoryWindow::UpdateScrollMax() {
-	mScrollMax = (mRootNode.mHeight - 1) <= mPageItems ? 0 : ((mRootNode.mHeight - 1) - mPageItems) * mItemHeight;
-}
+void ATHistoryWindow::RemakeHistoryView() {
+	IATDebugTargetHistory *history = vdpoly_cast<IATDebugTargetHistory *>(ATGetDebugger()->GetTarget());
+	const auto historyRange = history->GetHistoryRange();
 
-void ATHistoryWindow::UpdateScrollBar() {
-	if (mbUpdatesBlocked) {
-		mbDirtyScrollBar = true;
-		return;
-	}
-
-	if (mbHistoryError) {
-		ShowScrollBar(mhwnd, SB_VERT, FALSE);
-	} else {
-		SCROLLINFO si;
-		si.cbSize = sizeof si;
-		si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
-		si.nPage = mPageItems * mItemHeight;
-		si.nMin = 0;
-		si.nMax = mScrollMax + si.nPage - 1;
-		si.nPos = mScrollY;
-		si.nTrackPos = 0;
-		SetScrollInfo(mhwnd, SB_VERT, &si, TRUE);
-
-		ShowScrollBar(mhwnd, SB_VERT, si.nMax > 0);
-	}
-
-	mbDirtyScrollBar = false;
-}
-
-void ATHistoryWindow::Reset() {
-	memset(mStackLevels, 0, sizeof mStackLevels);
-
-	ATCPUEmulator& cpu = g_sim.GetCPU();
-	uint32 c = cpu.GetHistoryCounter();
-	uint32 l = cpu.GetHistoryLength();
-	mLastCounter = c > l ? c - l : 0;
-	mLastS = 0xFF;
-
-	for(int i=0; i<kRepeatWindowSize; ++i) {
-		mRepeatIPs[i] = 0xFFFFFFFFUL;
-		mRepeatKs[i] = 0;
-		mRepeatOpcodes[i] = 0;
-	}
-
-	mpRepeatNode = NULL;
-	mRepeatLoopSize = 0;
-	mRepeatLoopCount = 0;
-	mRepeatInsnCount = 0;
+	mpHistoryView->ClearInsns();
+	UpdateOpcodes();
 }
 
 void ATHistoryWindow::UpdateOpcodes() {
-	IATDebugTarget *target = ATGetDebugger()->GetTarget();
-	IATDebugTargetHistory *history = vdpoly_cast<IATDebugTargetHistory *>(target);
-
-	if (mbHistoryError)  {
-		if (!history || !history->GetHistoryEnabled())
-			return;
-
-		Reset();
-		mbHistoryError = false;
-		OnSize();
-		InvalidateRect(mhwnd, NULL, TRUE);
-	} else {
-		if (!history || !history->GetHistoryEnabled()) {
-			ClearAllNodes();
-			Reset();
-			mbHistoryError = true;
-			UpdateHScrollBar();
-			UpdateScrollBar();
-			InvalidateRect(mhwnd, NULL, TRUE);
-			return;
-		}
-	}
-
-	const auto dmode = target->GetDisasmMode();
-	const bool is65C02 = dmode == kATDebugDisasmMode_65C02;
-	const bool is65C816 = dmode == kATDebugDisasmMode_65C816;
-	const bool isZ80 = dmode == kATDebugDisasmMode_Z80;
-	const bool is6809 = dmode == kATDebugDisasmMode_6809;
-	const bool is65xx = !isZ80 && !is6809;
+	IATDebugTargetHistory *history = vdpoly_cast<IATDebugTargetHistory *>(ATGetDebugger()->GetTarget());
 	const auto historyRange = history->GetHistoryRange();
-	uint32 c = historyRange.second;
-	uint32 dist = c - mLastCounter;
-	uint32 l = historyRange.second - historyRange.first;
-	
-	TreeNode *last = NULL;
-	bool quickMode = false;
 
-	if (dist > 0) {
-		// remove the temp node
-		if (mpPreviewNode) {
-			RemoveNode(mpPreviewNode);
-			mpPreviewNode = nullptr;
-		}
-
-		if (dist > l || mNodeCount > 500000) {
-			ClearAllNodes();
-			Reset();
-			dist = l;
-			mLastCounter = c - l;
-		}
-
-		if (mbSearchActive) {
-			Search(NULL);
-			if (mhwndEdit)
-				SetWindowTextW(mhwndEdit, L"");
-		}
-
-		if (dist > 1000) {
-			quickMode = true;
-			mbInvalidatesBlocked = true;
-		}
-
-		mbUpdatesBlocked = true;
-
-		const ATCPUHistoryEntry *htab[64];
-		uint32 htabidx = 0;
-		uint32 htabmax = 0;
-		uint32 hposnext = mLastCounter;
-
-		mLastCounter += dist;
-		while(dist--) {
-			if (htabidx >= htabmax) {
-				htabmax = history->ExtractHistory(htab, hposnext, std::min<uint32>(dist+1, vdcountof(htab)));
-				if (!htabmax)
-					break;
-
-				hposnext += htabmax;
-				htabidx = 0;
-			}
-
-			const ATCPUHistoryEntry& hent = *htab[htabidx++];
-
-			// If we've had a change in stack height or an interrupt, terminate
-			// any loop tracking.
-			const uint8 s = !isZ80 ? hent.mS : (uint8)hent.mZ80_SP;
-
-			if (hent.mbIRQ || hent.mbNMI || s != mLastS) {
-				mpRepeatNode = NULL;
-				mRepeatLoopSize = 0;
-				mRepeatLoopCount = 0;
-				mRepeatInsnCount = 0;
-				mRepeatLooseNodeCount = 0;
-			}
-
-			// If we're higher on the stack than before (pop/return), pop entries off the tree parent stack.
-			// Note that we try to gracefully handle wrapping here. The idea is that generally the stack
-			// won't go down by more than 8 entries or so (JSL+interrupt), whereas it may go up way more
-			// than that when TXS is used.
-
-			if (mLastS != s) {
-				if ((uint8)(mLastS - s) >= 8) {		// s > mLastS, with some wraparound slop
-					while(s != mLastS) {				// note that mLastS is a uint8 and will wrap
-						mStackLevels[mLastS].mpTreeNode = NULL;
-						mStackLevels[mLastS].mDepth = 0;
-						++mLastS;
-					}
-				} else {
-					while(s != mLastS) {				// note that mLastS is a uint8 and will wrap
-						--mLastS;
-						mStackLevels[mLastS].mpTreeNode = NULL;
-						mStackLevels[mLastS].mDepth = 0;
-					}
-				}
-			}
-
-			// Check if we have a parent to use.
-			TreeNode *parent = mStackLevels[s].mpTreeNode;
-			int parentDepth = mStackLevels[s].mDepth;
-
-			if (!parent) {
-				uint8 s2 = s + 1;
-				for(int i=0; i<8; ++i, ++s2) {
-					parent = mStackLevels[s2].mpTreeNode;
-
-					if (parent) {
-						parentDepth = mStackLevels[s2].mDepth;
-						break;
-					}
-				}
-
-				if (!parent)
-					parent = &mRootNode;
-
-				if ((hent.mbNMI || hent.mbIRQ) && !(hent.mbNMI && hent.mbIRQ)) {
-					if (mbCollapseInterrupts) {
-						if (parentDepth >= kMaxNestingDepth) {
-							parent = &mRootNode;
-							parentDepth = 0;
-						}
-
-						parent = InsertNode(parent, parent->mpLastChild, "", &hent, kNodeTypeInterrupt);
-						++parentDepth;
-					}
-				} else if (mbCollapseCalls) {
-					if (parentDepth >= kMaxNestingDepth) {
-						parent = &mRootNode;
-						parentDepth = 0;
-					}
-
-					if (parent->mpLastChild)
-						parent = parent->mpLastChild;
-					else
-						parent = InsertNode(parent, parent->mpLastChild, "Subroutine call", NULL, kNodeTypeLabel);
-
-					++parentDepth;
-				}
-
-				mStackLevels[s].mpTreeNode = parent;
-				mStackLevels[s].mDepth = parentDepth;
-			}
-
-			// Note that there is a serious problem here in that we are only tracking an 8-bit
-			// stack, when the stack is 16-bit in 65C816 native mode.
-			mLastS = s;
-
-			if (is65xx) {
-				switch(hent.mOpcode[0]) {
-					case 0x48:	// PHA
-						if (is65C816 && !(hent.mP & 0x20)) {
-							--mLastS;
-							mStackLevels[(uint8)mLastS].mpTreeNode = parent;
-							mStackLevels[(uint8)mLastS].mDepth = parentDepth;
-						}
-						// fall through
-					case 0x08:	// PHP
-						--mLastS;
-						mStackLevels[(uint8)mLastS].mpTreeNode = parent;
-						mStackLevels[(uint8)mLastS].mDepth = parentDepth;
-						break;
-
-					case 0x5A:	// PHY
-					case 0xDA:	// PHX
-						if (is65C02 || is65C816) {
-							if (is65C816 && !(hent.mP & 0x10))
-								--mLastS;
-
-							--mLastS;
-							mStackLevels[(uint8)mLastS].mpTreeNode = parent;
-							mStackLevels[(uint8)mLastS].mDepth = parentDepth;
-						}
-						break;
-
-					case 0x8B:	// PHB
-					case 0x4B:	// PHK
-						if (is65C816) {
-							--mLastS;
-							mStackLevels[(uint8)mLastS].mpTreeNode = parent;
-							mStackLevels[(uint8)mLastS].mDepth = parentDepth;
-						}
-						break;
-
-					case 0x0B:	// PHD
-					case 0xF4:	// PEA
-					case 0x62:	// PER
-					case 0xD4:	// PEI
-						if (is65C816) {
-							mLastS -= 2;
-							mStackLevels[(uint8)mLastS].mpTreeNode = parent;
-							mStackLevels[(uint8)mLastS].mDepth = parentDepth;
-						}
-						break;
-				}
-			} else if (isZ80) {
-				switch(hent.mOpcode[0]) {
-					case 0xC5:		// PUSH BC
-					case 0xD5:		// PUSH DE
-					case 0xE5:		// PUSH HL
-					case 0xF5:		// PUSH AF
-						for(int i=0; i<2; ++i) {
-							--mLastS;
-							mStackLevels[(uint8)mLastS].mpTreeNode = parent;
-							mStackLevels[(uint8)mLastS].mDepth = parentDepth;
-						}
-						break;
-
-					case 0xDD:
-					case 0xFD:
-						switch(hent.mOpcode[1]) {
-							case 0xE5:		// PUSH IX/IY
-								for(int i=0; i<2; ++i) {
-									--mLastS;
-									mStackLevels[(uint8)mLastS].mpTreeNode = parent;
-									mStackLevels[(uint8)mLastS].mDepth = parentDepth;
-								}
-								break;
-						}
-						break;
-				}
-			} else if (is6809) {
-				int count = 0;
-
-				if (hent.mbIRQ || hent.mbNMI) {
-					if (hent.mP & 0x80) {
-						// E=1: push all registers (12 bytes)
-						count = 12;
-					} else {
-						// E=0: push CC and PC only (3 bytes)
-						count = 3;
-					}
-				} else {
-					switch(hent.mOpcode[0]) {
-						case 0x34: {		// PSHS
-							const uint8 mask = hent.mOpcode[1];
-
-							// PC
-							if (mask & 0x80)
-								mLastS -= 2;
-
-							// X/Y/U
-							if (mask & 0x40) count += 2;
-							if (mask & 0x20) count += 2;
-							if (mask & 0x10) count += 2;
-
-							// DP/B/A/CC
-							if (mask & 0x08) ++count;
-							if (mask & 0x04) ++count;
-							if (mask & 0x02) ++count;
-							if (mask & 0x01) ++count;
-
-							break;
-						}
-
-						case 0x3C:		// CWAI
-							count = 12;
-							break;
-					}
-				}
-
-				while(count--) {
-					--mLastS;
-					mStackLevels[(uint8)mLastS].mpTreeNode = parent;
-					mStackLevels[(uint8)mLastS].mDepth = parentDepth;
-				}
-			}
-
-			// add new node
-			last = InsertNode(parent, parent->mpLastChild, "", &hent, kNodeTypeInsn);
-
-			// check if we have a match on the repeat window
-			int repeatOffset = -1;
-
-			const uint8 pcBank = is65C816 ? hent.mK : 0;
-			if (mRepeatLoopSize) {
-				if (mRepeatIPs[mRepeatLoopSize - 1] == hent.mPC &&
-					mRepeatKs[mRepeatLoopSize - 1] == pcBank &&
-					mRepeatOpcodes[mRepeatLoopSize - 1] == hent.mOpcode[0])
-				{
-					repeatOffset = mRepeatLoopSize - 1;
-				}
-			}
-
-			if (repeatOffset < 0 && mbCollapseLoops) {
-				for(int i=0; i<kRepeatWindowSize; ++i) {
-					if (mRepeatIPs[i] == hent.mPC && mRepeatKs[i] == pcBank && mRepeatOpcodes[i] == hent.mOpcode[0]) {
-						repeatOffset = i;
-						break;
-					}
-				}
-			}
-
-			if (repeatOffset >= 0) {
-				if (mRepeatLoopSize != repeatOffset + 1) {
-					mpRepeatNode = NULL;
-					mRepeatLoopSize = repeatOffset + 1;
-					mRepeatLoopCount = 0;
-					mRepeatInsnCount = 0;
-					mRepeatLooseNodeCount = 0;
-				}
-
-				++mRepeatLooseNodeCount;
-
-				if (++mRepeatInsnCount >= mRepeatLoopSize) {
-					mRepeatInsnCount = 0;
-					++mRepeatLoopCount;
-
-					if (!mpRepeatNode && mRepeatLoopCount == 3) {
-						TreeNode *pred = parent->mpLastChild;
-
-						for(int i=0; i<mRepeatLooseNodeCount; ++i)
-							pred = pred->mpPrevSibling;
-
-						mpRepeatNode = InsertNode(parent, pred, "", NULL, kNodeTypeRepeat);
-					}
-
-					if (mpRepeatNode) {
-						mpRepeatNode->mRepeat.mCount = mRepeatLoopCount;
-						mpRepeatNode->mRepeat.mSize = mRepeatLoopSize;
-						RefreshNode(mpRepeatNode);
-
-						TreeNode *looseNode = mpRepeatNode->mpParent->mpLastChild;
-
-						for(int i=1; i<mRepeatLooseNodeCount; ++i)
-							looseNode = looseNode->mpPrevSibling;
-
-						while(looseNode) {
-							TreeNode *nextLooseNode = looseNode->mpNextSibling;
-
-							RemoveNode(looseNode);
-							InsertNode(mpRepeatNode, mpRepeatNode->mpLastChild, looseNode);
-
-							looseNode = nextLooseNode;
-						}
-
-						last = mpRepeatNode;
-
-						mRepeatLooseNodeCount = 0;
-					}
-				}
-			} else if (mRepeatLoopSize) {
-				mpRepeatNode = NULL;
-				mRepeatLoopSize = 0;
-				mRepeatLoopCount = 0;
-				mRepeatInsnCount = 0;
-				mRepeatLooseNodeCount = 0;
-			}
-
-			// shift in new instruction into repeat window
-			for(int i=kRepeatWindowSize - 1; i; --i) {
-				mRepeatIPs[i] = mRepeatIPs[i-1];
-				mRepeatKs[i] = mRepeatKs[i-1];
-				mRepeatOpcodes[i] = mRepeatOpcodes[i - 1];
-			}
-
-			mRepeatIPs[0] = hent.mPC;
-			mRepeatKs[0] = pcBank;
-			mRepeatOpcodes[0] = hent.mOpcode[0];
-		}
-	}
-
-	// readd the temp node
-	ATCPUExecState state;
-
-	target->GetExecState(state);
-
-	if (is65xx ? state.m6502.mbAtInsnStep : state.mZ80.mbAtInsnStep) {
-		ATCPUHistoryEntry hentLast {};
-		
-		if (is65xx) {
-			const ATCPUExecState6502& state6502 = state.m6502;
-
-			hentLast.mA = state6502.mA;
-			hentLast.mX = state6502.mX;
-			hentLast.mY = state6502.mY;
-			hentLast.mS = state6502.mS;
-			hentLast.mPC = state6502.mPC;
-			hentLast.mP = state6502.mP;
-			hentLast.mbEmulation = state6502.mbEmulationFlag;
-			hentLast.mSH = state6502.mSH;
-			hentLast.mAH = state6502.mAH;
-			hentLast.mXH = state6502.mXH;
-			hentLast.mYH = state6502.mYH;
-			hentLast.mB = state6502.mB;
-			hentLast.mK = state6502.mK;
-			hentLast.mD = state6502.mDP;
-			uint32 addr24 = (uint32)state6502.mPC + ((uint32)state6502.mK << 16);
-			uint8 opcode = target->DebugReadByte(addr24);
-			uint8 byte1 = target->DebugReadByte((addr24+1) & 0xffffff);
-			uint8 byte2 = target->DebugReadByte((addr24+2) & 0xffffff);
-			uint8 byte3 = target->DebugReadByte((addr24+3) & 0xffffff);
-
-			hentLast.mOpcode[0] = opcode;
-			hentLast.mOpcode[1] = byte1;
-			hentLast.mOpcode[2] = byte2;
-			hentLast.mOpcode[3] = byte3;
-		} else {
-			const ATCPUExecStateZ80& stateZ80 = state.mZ80;
-
-			hentLast.mZ80_A = stateZ80.mA;
-			hentLast.mZ80_F = stateZ80.mF;
-			hentLast.mZ80_B = stateZ80.mB;
-			hentLast.mZ80_C = stateZ80.mC;
-			hentLast.mZ80_D = stateZ80.mD;
-			hentLast.mZ80_E = stateZ80.mE;
-			hentLast.mZ80_H = stateZ80.mH;
-			hentLast.mZ80_L = stateZ80.mL;
-			hentLast.mZ80_SP = stateZ80.mSP;
-			hentLast.mPC = stateZ80.mPC;
-			hentLast.mbEmulation = true;
-			hentLast.mB = 0;
-			hentLast.mK = 0;
-			hentLast.mD = 0;
-
-			uint32 addr16 = stateZ80.mPC;
-			uint8 opcode = target->DebugReadByte(addr16);
-			uint8 byte1 = target->DebugReadByte((addr16+1) & 0xffff);
-			uint8 byte2 = target->DebugReadByte((addr16+2) & 0xffff);
-			uint8 byte3 = target->DebugReadByte((addr16+3) & 0xffff);
-
-			hentLast.mOpcode[0] = opcode;
-			hentLast.mOpcode[1] = byte1;
-			hentLast.mOpcode[2] = byte2;
-			hentLast.mOpcode[3] = byte3;
-		}
-
-		if (!last) {
-			last = &mRootNode;
-
-			while(auto *child = last->mpLastChild)
-				last = child;
-		}
-
-		if (mpPreviewNode) {
-			mpPreviewNode->mHEnt = hentLast;
-
-			RefreshNode(mpPreviewNode);
-		} else {
-			last = mpPreviewNode = InsertNode(last->mpParent, last, nullptr, &hentLast, kNodeTypeInsnPreview);
-		}
-	}
-
-	if (last)
-		SelectNode(last);
-
-	if (quickMode) {
-		InvalidateRect(mhwnd, NULL, TRUE);
-		mbInvalidatesBlocked = false;
-	}
-
-	mbUpdatesBlocked = false;
-
-	if (mbDirtyScrollBar)
-		UpdateScrollBar();
-
-	if (mbDirtyHScrollBar)
-		UpdateHScrollBar();
+	CheckDisasmMode();
+	mpHistoryView->UpdateInsns(historyRange.first, historyRange.second);
 }
 
-void ATHistoryWindow::ClearAllNodes() {
-	mpSelectedNode = NULL;
+void ATHistoryWindow::CheckDisasmMode() {
+	if (!mpHistoryView)
+		return;
 
-	FreeNodes(&mRootNode);
-	memset(&mRootNode, 0, sizeof mRootNode);
-	mRootNode.mbExpanded = true;
-	mRootNode.mHeight = 1;
+	const bool historyEnabled = g_sim.GetCPU().IsHistoryEnabled();
 
-	UpdateScrollMax();
-
-	if (mhwnd)
-		InvalidateRect(mhwnd, NULL, TRUE);
-}
-
-ATHistoryWindow::TreeNode *ATHistoryWindow::InsertNode(TreeNode *parent, TreeNode *insertAfter, const char *text, const ATCPUHistoryEntry *hent, NodeType nodeType) {
-	TreeNode *node = AllocNode();
-	node->mpText = text;
-	node->mRelYPos = 0;
-	node->mbExpanded = false;
-	node->mbVisible = true;
-	node->mpFirstChild = NULL;
-	node->mpLastChild = NULL;
-	node->mHeight = 1;
-	node->mNodeType = nodeType;
-
-	if (hent)
-		node->mHEnt = *hent;
-
-	InsertNode(parent, insertAfter, node);
-
-	return node;
-}
-
-void ATHistoryWindow::InsertNode(TreeNode *parent, TreeNode *insertAfter, TreeNode *node) {
-	if (!parent)
-		parent = &mRootNode;
-
-	node->mpParent = parent;
-
-	if (insertAfter) {
-		TreeNode *next = insertAfter->mpNextSibling;
-		node->mpNextSibling = next;
-
-		if (next)
-			next->mpPrevSibling = node;
-		else
-			parent->mpLastChild = node;
-
-		insertAfter->mpNextSibling = node;
-		node->mpPrevSibling = insertAfter;
-
-		node->mRelYPos = insertAfter->mRelYPos + insertAfter->mHeight;
+	if (historyEnabled) {
+		SetHistoryError(false);
 	} else {
-		TreeNode *next = parent->mpFirstChild;
-		node->mpNextSibling = next;
-
-		node->mpPrevSibling = NULL;
-		parent->mpFirstChild = node;
-
-		if (next)
-			next->mpPrevSibling = node;
-		else
-			parent->mpLastChild = node;
-
-		node->mRelYPos = 0;
-	}
-
-	// adjust positions of siblings
-	for(TreeNode *s = node->mpNextSibling; s; s = s->mpNextSibling)
-		++s->mRelYPos;
-
-	// adjust heights of parents and parent siblings
-	for(TreeNode *p = parent; p; p = p->mpParent) {
-		if (!p->mbExpanded)
-			break;
-
-		++p->mHeight;
-
-		for(TreeNode *ps = p->mpNextSibling; ps; ps = ps->mpNextSibling)
-			++ps->mRelYPos;
-	}
-
-	UpdateScrollMax();
-
-	if (!mbInvalidatesBlocked)
-		InvalidateStartingAtNode(node);
-}
-
-void ATHistoryWindow::RemoveNode(TreeNode *node) {
-	VDASSERT(node);
-
-	TreeNode *successorNode = nullptr;
-	
-	if (!mbInvalidatesBlocked) {
-		successorNode = node;
-
-		while(successorNode) {
-			if (successorNode->mpNextSibling)
-				break;
-
-			successorNode = successorNode->mpParent;
-		}
-
-		// the root node is not a valid successor
-		if (successorNode == &mRootNode)
-			successorNode = nullptr;
-	}
-
-	// adjust heights of parents and siblings
-	TreeNode *parentNode = node->mpParent;
-	uint32 nodeHeight = node->mHeight;
-	for(TreeNode *p = parentNode; p && p->mbExpanded; p = p->mpParent) {
-		p->mHeight -= nodeHeight;
-
-		for(TreeNode *q = p->mpNextSibling; q; q = q->mpNextSibling)
-			q->mRelYPos -= nodeHeight;
-	}
-
-	// unlink nodes
-	TreeNode *nextNode = node->mpNextSibling;
-	TreeNode *prevNode = node->mpPrevSibling;
-
-	if (prevNode)
-		prevNode->mpNextSibling = nextNode;
-	else
-		parentNode->mpFirstChild = nextNode;
-
-	if (nextNode)
-		nextNode->mpPrevSibling = prevNode;
-	else
-		parentNode->mpLastChild = prevNode;
-
-	if (successorNode && !mbInvalidatesBlocked)
-		InvalidateStartingAtNode(successorNode);
-}
-
-ATHistoryWindow::TreeNode *ATHistoryWindow::AllocNode() {
-	if (!mpNodeFreeList) {
-		NodeBlock *b = new NodeBlock;
-		b->mpNext = mpNodeBlocks;
-		mpNodeBlocks = b;
-
-		TreeNode *next = mpNodeFreeList;
-		
-		for(int i=0; i<255; ++i) {
-			TreeNode *n = &b->mNodes[i];
-
-			n->mpPrevSibling = n;
-			n->mpNextSibling = next;
-			next = n;
-		}
-
-		mpNodeFreeList = next;
-
-		return &b->mNodes[255];
-	}
-
-	TreeNode *p = mpNodeFreeList;
-
-	VDASSERT(p->mpPrevSibling == p);
-
-	mpNodeFreeList = p->mpNextSibling;
-
-	p->mpPrevSibling = NULL;
-
-	++mNodeCount;
-	return p;
-}
-
-void ATHistoryWindow::FreeNode(TreeNode *node) {
-	node->mpFirstChild = NULL;
-	node->mpLastChild = NULL;
-	node->mpNextSibling = NULL;
-	node->mpPrevSibling = NULL;
-
-	if (node != &mRootNode) {
-		VDASSERT(node->mpPrevSibling != node);
-
-		node->mpPrevSibling = node;
-		node->mpNextSibling = mpNodeFreeList;
-		mpNodeFreeList = node;
-
-		--mNodeCount;
-	}
-}
-
-void ATHistoryWindow::FreeNodes(TreeNode *node) {
-	if (!node)
+		SetHistoryError(true);
 		return;
-
-	TreeNode *p = node;
-
-	for(;;) {
-		// find first descendent that doesn't have its own children
-		while(p->mpFirstChild) {
-			VDASSERT(p->mpFirstChild->mpParent == p);
-
-			p = p->mpFirstChild;
-		}
-
-		// free current node
-		TreeNode *next = p->mpNextSibling;
-		TreeNode *parent = p->mpParent;
-
-		FreeNode(p);
-
-		// exit if this is the original node
-		if (p == node)
-			break;
-
-		// advance to next sibling if we have one
-		if (next)
-			p = next;
-		else {
-			p = parent;
-
-			// this node no longer has any children as we just freed them all
-			p->mpFirstChild = NULL;
-		}
-	}
-}
-
-void ATHistoryWindow::CopyVisibleNodes() {
-	TreeNode *node1 = GetNodeFromClientPoint(0, mHeaderHeight);
-	TreeNode *node2 = GetNodeFromClientPoint(0, mHeight);
-
-	CopyNodes(node1, node2);
-}
-
-void ATHistoryWindow::CopyNodes(TreeNode *begin, TreeNode *end) {
-	begin = GetNearestVisibleNode(begin);
-	end = GetNearestVisibleNode(end);
-
-	if (!begin || (end && GetNodeYPos(end) <= GetNodeYPos(begin)))
-		return;
-
-	int minLevel = INT_MAX;
-	for(TreeNode *p = begin; p && p != end; p = GetNextVisibleNode(p)) {
-		int level = 0;
-
-		for(TreeNode *q = p; q; q = q->mpParent)
-			++level;
-
-		if (minLevel > level)
-			minLevel = level;
 	}
 
-	if (minLevel == INT_MAX)
-		return;
+	IATDebugger *debugger = ATGetDebugger();
+	ATDebugDisasmMode disasmMode = debugger->GetTarget()->GetDisasmMode();
+	uint32 subCycles = 1;
+	bool decodeAnticNMI = false;
 
-	VDStringA s;
-
-	for(TreeNode *p = begin; p && p != end; p = GetNextVisibleNode(p)) {
-		int level = -minLevel;
-
-		for(TreeNode *q = p; q; q = q->mpParent)
-			++level;
-
-		if (level > 0) {
-			for(int i=0; i<level; ++i) {
-				s += ' ';
-				s += ' ';
-			}
-		}
-
-		s += p->mpFirstChild ? p->mbExpanded ? '-' : '+' : ' ';
-		s += ' ';
-		s += GetNodeText(p);
-		s += '\r';
-		s += '\n';
-	}
-	
-	if (::OpenClipboard((HWND)mhwnd)) {
-		if (::EmptyClipboard()) {
-			HANDLE hMem;
-			void *lpvMem;
-
-			if (hMem = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, s.size() + 1)) {
-				if (lpvMem = ::GlobalLock(hMem)) {
-					memcpy(lpvMem, s.c_str(), s.size() + 1);
-
-					::GlobalUnlock(lpvMem);
-					::SetClipboardData(CF_TEXT, hMem);
-					::CloseClipboard();
-					return;
-				}
-				::GlobalFree(hMem);
-			}
-		}
-		::CloseClipboard();
-	}
-}
-
-void ATHistoryWindow::Search(const char *substr) {
-	if (substr && !*substr)
-		substr = NULL;
-
-	if (!substr && !mbSearchActive)
-		return;
-
-	if (mRootNode.mpFirstChild) {
-		SearchNodes(&mRootNode, substr);
+	if (!debugger->GetTargetIndex()) {
+		subCycles = g_sim.GetCPU().GetSubCycles();
+		decodeAnticNMI = true;
 	}
 
-	const bool searchActive = (substr != NULL);
+	if (mDisasmMode != disasmMode || mSubCycles != subCycles || mbDecodeAnticNMI != decodeAnticNMI) {
+		mDisasmMode = disasmMode;
+		mSubCycles = subCycles;
+		mbDecodeAnticNMI = decodeAnticNMI;
 
-	if (mbSearchActive != searchActive) {
-		mbSearchActive = searchActive;
+		mpHistoryView->SetDisasmMode(disasmMode, subCycles, decodeAnticNMI);
 
-		VDSetWindowTextW32(mhwndClear, searchActive ? mTextClear.c_str() : mTextSearch.c_str());
+		mLastHistoryCounter = vdpoly_cast<IATDebugTargetHistory *>(debugger->GetTarget())->GetHistoryRange().first;
 	}
-
-	UpdateScrollMax();
-	InvalidateRect(mhwnd, NULL, TRUE);
-	UpdateScrollBar();
-	EnsureNodeVisible(mpSelectedNode);
-}
-
-bool ATHistoryWindow::SearchNodes(TreeNode *node, const char *substr) {
-	uint32 ht = 0;
-	bool anyVisible = false;
-
-	const size_t substrlen = substr ? strlen(substr) : 0;
-	const char ch0 = substr ? substr[0] : 0;
-	const char mask0 = (unsigned)(((unsigned char)ch0 & 0xdf) - 'A') < 26 ? (char)0xdf : (char)0xff;
-
-	for(TreeNode *child = node->mpFirstChild; child; child = child->mpNextSibling) {
-		bool visible = !substr;
-
-		child->mbExpanded = (substr != NULL);
-
-		if (child->mpFirstChild)
-			visible = SearchNodes(child, substr);
-		else
-			node->mHeight = 1;
-
-		if (!visible) {
-			const char *s = GetNodeText(child);
-
-			const size_t len = strlen(s);
-
-			if (len >= substrlen) {
-				size_t maxoffset = len - substrlen;
-				for(size_t i = 0; i <= maxoffset; ++i) {
-					if (!((s[i] ^ ch0) & mask0) && !vdstricmp(substr, s + i, substrlen)) {
-						visible = true;
-						break;
-					}
-				}
-			}
-		}
-
-		child->mRelYPos = ht;
-		child->mbVisible = visible;
-
-		if (visible) {
-			anyVisible = true;
-			ht += child->mHeight;
-		}
-	}
-
-	node->mHeight = (node->mbExpanded ? ht : 0) + 1;
-
-	return anyVisible;
 }
 
 void ATHistoryWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
@@ -4454,7 +2209,10 @@ void ATHistoryWindow::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& s
 }
 
 void ATHistoryWindow::OnDebuggerEvent(ATDebugEvent eventId) {
-	InvalidateRect(mhwnd, NULL, TRUE);
+	CheckDisasmMode();
+
+	if (mpHistoryView)
+		mpHistoryView->RefreshAll();
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -4556,6 +2314,10 @@ LRESULT ATConsoleWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		return 0;
 	case WM_COMMAND:
 		switch(LOWORD(wParam)) {
+			case ID_CONTEXT_COPY:
+				SendMessage(mhwndLog, WM_COPY, 0, 0);
+				return 0;
+
 			case ID_CONTEXT_CLEARALL:
 				SetWindowText(mhwndLog, _T(""));
 				mAppendBuffer.clear();
@@ -4623,7 +2385,7 @@ bool ATConsoleWindow::OnCreate() {
 	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
-	mhwndLog = CreateWindowEx(WS_EX_CLIENTEDGE, RICHEDIT_CLASS, _T(""), ES_READONLY|ES_MULTILINE|ES_AUTOVSCROLL|WS_VSCROLL|WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
+	mhwndLog = CreateWindowEx(WS_EX_CLIENTEDGE, MSFTEDIT_CLASS, _T(""), ES_READONLY|ES_MULTILINE|ES_AUTOVSCROLL|WS_VSCROLL|WS_VISIBLE|WS_CHILD, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
 	if (!mhwndLog)
 		return false;
 
@@ -4631,7 +2393,7 @@ bool ATConsoleWindow::OnCreate() {
 	if (!mhwndPrompt)
 		return false;
 
-	mhwndEdit = CreateWindowEx(WS_EX_CLIENTEDGE, RICHEDIT_CLASS, _T(""), WS_VISIBLE|WS_CHILD|ES_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
+	mhwndEdit = CreateWindowEx(WS_EX_CLIENTEDGE, MSFTEDIT_CLASS, _T(""), WS_VISIBLE|WS_CHILD|ES_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)100, g_hInst, NULL);
 	if (!mhwndEdit)
 		return false;
 
@@ -4729,11 +2491,25 @@ void ATConsoleWindow::OnSize() {
 }
 
 void ATConsoleWindow::OnFontsUpdated() {
-	if (mhwndLog)
-		SendMessage(mhwndLog, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+	// RichEdit50W tries to be cute and retransforms the font given in WM_SETFONT to the
+	// current DPI. Unfortunately, this just makes a mess of the font size, so we have to
+	// bypass it and send EM_SETCHARFORMAT instead to get the size we actually specified
+	// to stick.
 
-	if (mhwndEdit)
+	CHARFORMAT2 cf = {};
+	cf.cbSize = sizeof cf;
+	cf.dwMask = CFM_SIZE;
+	cf.yHeight = g_monoFontPtSizeTenths * 2;
+
+	if (mhwndLog) {
+		SendMessage(mhwndLog, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+		SendMessage(mhwndLog, EM_SETCHARFORMAT, SCF_ALL | SCF_DEFAULT, (LPARAM)&cf);
+	}
+
+	if (mhwndEdit) {
 		SendMessage(mhwndEdit, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
+		SendMessage(mhwndEdit, EM_SETCHARFORMAT, SCF_ALL | SCF_DEFAULT, (LPARAM)&cf);
+	}
 
 	if (mhwndPrompt)
 		SendMessage(mhwndPrompt, WM_SETFONT, (WPARAM)g_monoFont, TRUE);
@@ -5729,6 +3505,7 @@ protected:
 	bool OnCreate();
 	void OnDestroy();
 	void OnSize();
+	void OnFontsUpdated();
 
 	LRESULT DLAddrEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT PFAddrEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -5884,10 +3661,9 @@ bool ATDebugDisplayWindow::OnCreate() {
 	if (!ATUIDebuggerPane::OnCreate())
 		return false;
 
-	HFONT hfont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 	mhwndDLAddrCombo = CreateWindowExW(0, WC_COMBOBOXW, L"", WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_HASSTRINGS|CBS_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)102, g_hInst, NULL);
 	if (mhwndDLAddrCombo) {
-		SendMessageW(mhwndDLAddrCombo, WM_SETFONT, (WPARAM)hfont, TRUE);
+		SendMessageW(mhwndDLAddrCombo, WM_SETFONT, (WPARAM)g_propFont, TRUE);
 		SendMessageW(mhwndDLAddrCombo, CB_ADDSTRING, 0, (LPARAM)L"Auto DL (History)");
 		SendMessageW(mhwndDLAddrCombo, CB_ADDSTRING, 0, (LPARAM)L"Auto DL (History start)");
 		SendMessageW(mhwndDLAddrCombo, CB_SETCURSEL, 0, 0);
@@ -5902,7 +3678,7 @@ bool ATDebugDisplayWindow::OnCreate() {
 
 	mhwndPFAddrCombo = CreateWindowExW(0, WC_COMBOBOXW, L"", WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_HASSTRINGS|CBS_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)103, g_hInst, NULL);
 	if (mhwndPFAddrCombo) {
-		SendMessageW(mhwndPFAddrCombo, WM_SETFONT, (WPARAM)hfont, TRUE);
+		SendMessageW(mhwndPFAddrCombo, WM_SETFONT, (WPARAM)g_propFont, TRUE);
 		SendMessageW(mhwndPFAddrCombo, CB_ADDSTRING, 0, (LPARAM)L"Auto PF Address");
 		SendMessageW(mhwndPFAddrCombo, CB_SETCURSEL, 0, 0);
 		SendMessageW(mhwndPFAddrCombo, CB_SETEDITSEL, 0, MAKELONG(-1, 0));
@@ -5971,9 +3747,9 @@ void ATDebugDisplayWindow::OnSize() {
 	}
 
 	if (mpDisplay) {
-		vdrect32 rd(r.left, r.top, r.right, r.bottom);
+		vdrect32 rd(0, 0, r.right, r.bottom - comboHeight);
 		sint32 w = rd.width();
-		sint32 h = std::max(rd.height() - comboHeight, 0);
+		sint32 h = std::max(rd.height(), 0);
 		int sw = 376;
 		int sh = 240;
 
@@ -5997,6 +3773,16 @@ void ATDebugDisplayWindow::OnSize() {
 
 		mpDisplay->SetDestRect(&rd, 0);
 	}
+}
+
+void ATDebugDisplayWindow::OnFontsUpdated() {
+	if (mhwndDLAddrCombo)
+		SendMessage(mhwndDLAddrCombo, WM_SETFONT, (WPARAM)g_propFont, TRUE);
+
+	if (mhwndPFAddrCombo)
+		SendMessage(mhwndPFAddrCombo, WM_SETFONT, (WPARAM)g_propFont, TRUE);
+
+	OnSize();
 }
 
 LRESULT ATDebugDisplayWindow::DLAddrEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -6303,12 +4089,34 @@ bool ATIsDebugConsoleActive() {
 	return g_uiDebuggerMode;
 }
 
-void *ATGetConsoleFontW32() {
+VDZHFONT ATGetConsoleFontW32() {
 	return g_monoFont;
 }
 
 int ATGetConsoleFontLineHeightW32() {
 	return g_monoFontLineHeight;
+}
+
+VDZHFONT ATConsoleGetPropFontW32() {
+	return g_propFont;
+}
+
+int ATConsoleGetPropFontLineHeightW32() {
+	return g_propFontLineHeight;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+namespace {
+	ATNotifyList<const vdfunction<void()> *> g_consoleFontCallbacks;
+}
+
+void ATConsoleAddFontNotification(const vdfunction<void()> *callback) {
+	g_consoleFontCallbacks.Add(callback);
+}
+
+void ATConsoleRemoveFontNotification(const vdfunction<void()> *callback) {
+	g_consoleFontCallbacks.Remove(callback);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -6396,6 +4204,8 @@ void ATConsoleSetFont(const LOGFONTW& font0, int pointSizeTenths) {
 	key.setString("Console: Font family", font.lfFaceName);
 	key.setInt("Console: Font size", font.lfHeight);
 	key.setInt("Console: Font point size tenths", pointSizeTenths);
+
+	g_consoleFontCallbacks.Notify([](const auto& cb) -> bool { (*cb)(); return false; });
 }
 
 namespace {
@@ -6412,7 +4222,7 @@ namespace {
 }
 
 void ATInitUIPanes() {
-	VDLoadSystemLibraryW32("riched20");
+	VDLoadSystemLibraryW32("msftedit");
 
 	ATRegisterUIPaneType(kATUIPaneId_Registers, VDRefCountObjectFactory<ATRegistersWindow, ATUIPane>);
 	ATRegisterUIPaneType(kATUIPaneId_Console, VDRefCountObjectFactory<ATConsoleWindow, ATUIPane>);

@@ -99,6 +99,11 @@ void ATPBIManager::RemoveDevice(IATPBIDevice *dev) {
 	RebuildSelList();
 }
 
+void ATPBIManager::DeselectSelf(IATPBIDevice *dev) {
+	if (mpSelDevice == dev)
+		Select(0);
+}
+
 void ATPBIManager::ColdReset() {
 	Select(0);
 }

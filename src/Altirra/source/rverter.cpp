@@ -21,6 +21,7 @@
 #include <at/atcore/cio.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicecio.h>
+#include <at/atcore/deviceparentimpl.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/devicesioimpl.h>
 #include <at/atcore/propertyset.h>
@@ -34,7 +35,6 @@ extern ATDebuggerLogChannel g_ATLCModemData;
 
 class ATDeviceRVerter final
 	: public ATDevice
-	, public IATDeviceParent
 	, public IATDeviceScheduling
 	, public IATDeviceIndicators
 	, public ATDeviceSIO
@@ -57,12 +57,6 @@ public:
 
 	void GetSettings(ATPropertySet& props);
 	bool SetSettings(const ATPropertySet& props);
-
-public:	// IATDeviceParent
-	const char *GetSupportedType(uint32 index) override;
-	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
-	void AddChildDevice(IATDevice *dev) override;
-	void RemoveChildDevice(IATDevice *dev) override;
 
 public:	// IATDeviceScheduling
 	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
@@ -99,6 +93,8 @@ protected:
 	uint32	mBaudRate;
 	vdrefptr<IATDeviceSerial> mpDeviceSerial;
 	ATDeviceSerialTerminalState	mTerminalState;
+
+	ATDeviceParentSingleChild mDeviceParent;
 };
 
 void ATCreateDeviceRVerter(const ATPropertySet& pset, IATDevice **dev) {
@@ -129,7 +125,7 @@ ATDeviceRVerter::~ATDeviceRVerter() {
 
 void *ATDeviceRVerter::AsInterface(uint32 id) {
 	switch(id) {
-		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(this);
+		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(&mDeviceParent);
 		case IATDeviceScheduling::kTypeID:	return static_cast<IATDeviceScheduling *>(this);
 		case IATDeviceIndicators::kTypeID:	return static_cast<IATDeviceIndicators *>(this);
 		case IATDeviceSIO::kTypeID:			return static_cast<IATDeviceSIO *>(this);
@@ -152,9 +148,15 @@ void ATDeviceRVerter::Init() {
 
 	if (mpDeviceSerial)
 		mpDeviceSerial->SetTerminalState(mTerminalState);
+
+	mDeviceParent.Init(IATDeviceSerial::kTypeID, "serial", L"Serial Port");
+	mDeviceParent.SetOnAttach([this] { SetSerialDevice(mDeviceParent.GetChild<IATDeviceSerial>()); });
+	mDeviceParent.SetOnDetach([this] { SetSerialDevice(nullptr); });
 }
 
 void ATDeviceRVerter::Shutdown() {
+	mDeviceParent.Shutdown();
+
 	if (mpSIOMgr) {
 		mpSIOMgr->RemoveRawDevice(this);
 		mpSIOMgr = nullptr;
@@ -184,33 +186,6 @@ void ATDeviceRVerter::GetSettings(ATPropertySet& props) {
 
 bool ATDeviceRVerter::SetSettings(const ATPropertySet& props) {
 	return true;
-}
-
-const char *ATDeviceRVerter::GetSupportedType(uint32 index) {
-	return index ? nullptr : "serial";
-}
-
-void ATDeviceRVerter::GetChildDevices(vdfastvector<IATDevice *>& devs) {
-	if (mpDeviceSerial)
-		devs.push_back(vdpoly_cast<IATDevice *>(mpDeviceSerial));
-}
-
-void ATDeviceRVerter::AddChildDevice(IATDevice *dev) {
-	IATDeviceSerial *devser = vdpoly_cast<IATDeviceSerial *>(dev);
-	if (!devser)
-		return;
-
-	if (!mpDeviceSerial)
-		SetSerialDevice(devser);
-}
-
-void ATDeviceRVerter::RemoveChildDevice(IATDevice *dev) {
-	if (mpDeviceSerial) {
-		IATDevice *devser0 = vdpoly_cast<IATDevice *>(mpDeviceSerial);
-
-		if (devser0 == dev)
-			SetSerialDevice(nullptr);
-	}
 }
 
 void ATDeviceRVerter::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {

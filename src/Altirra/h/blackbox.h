@@ -21,6 +21,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/refcount.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/deviceparentimpl.h>
 #include <at/atcore/scheduler.h>
 #include "pia.h"
 #include <at/atemulation/via.h>
@@ -41,6 +42,7 @@ class ATBlackBoxEmulator final : public ATDevice
 	, public IATDeviceScheduling
 	, public IATDeviceButtons
 	, public IATDeviceParent
+	, public ATDeviceBus
 	, public IATDeviceIndicators
 	, public IATDevicePrinter
 	, public IATSCSIBusMonitor
@@ -83,8 +85,13 @@ public:
 	void ActivateButton(ATDeviceButton idx, bool state) override;
 
 public:
+	IATDeviceBus *GetDeviceBus(uint32 index) override;
+
+public:
+	const wchar_t *GetBusName() const override;
 	const char *GetSupportedType(uint32 index) override;
 	void GetChildDevices(vdfastvector<IATDevice *>& devs) override;
+	void GetChildDevicePrefix(uint32 index, VDStringW& s) override;
 	void AddChildDevice(IATDevice *dev) override;
 	void RemoveChildDevice(IATDevice *dev) override;
 
@@ -160,6 +167,8 @@ protected:
 	ATVIA6522Emulator mVIA;
 	ATACIA6551Emulator mACIA;
 	ATSCSIBusEmulator mSCSIBus;
+
+	ATDeviceBusSingleChild mSerialBus;
 
 	uint8 mRAM[0x10000];
 	uint8 mFirmware[0x10000];

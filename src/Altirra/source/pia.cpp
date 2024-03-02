@@ -23,9 +23,11 @@
 #include "irqcontroller.h"
 #include "console.h"
 #include "savestate.h"
+#include "trace.h"
 
 ATPIAEmulator::ATPIAEmulator()
-	: mpIRQController(NULL)
+	: mpScheduler(nullptr)
+	, mpIRQController(nullptr)
 	, mpFloatingInputs(nullptr)
 	, mInput(0xFFFFFFFF)
 	, mOutput(0xFFFFFFFF)
@@ -137,8 +139,35 @@ void ATPIAEmulator::FreeOutput(int index) {
 	}
 }
 
-void ATPIAEmulator::Init(ATIRQController *irqcon) {
+void ATPIAEmulator::SetTraceContext(ATTraceContext *context) {
+	if (mpTraceContext == context)
+		return;
+
+	mpTraceContext = context;
+
+	if (context) {
+		ATTraceGroup *group = context->mpCollection->AddGroup(L"PIA");
+
+		mpTraceCRA = group->AddFormattedChannel(context->mBaseTime, context->mBaseTickScale, L"CRA");
+		mpTraceCRB = group->AddFormattedChannel(context->mBaseTime, context->mBaseTickScale, L"CRB");
+	} else {
+		const uint64 t = mpScheduler->GetTick64();
+
+		if (mpTraceCRA) {
+			mpTraceCRA->TruncateLastEvent(t);
+			mpTraceCRA = nullptr;
+		}
+
+		if (mpTraceCRB) {
+			mpTraceCRB->TruncateLastEvent(t);
+			mpTraceCRB = nullptr;
+		}
+	}
+}
+
+void ATPIAEmulator::Init(ATIRQController *irqcon, ATScheduler *scheduler) {
 	mpIRQController = irqcon;
+	mpScheduler = scheduler;
 }
 
 void ATPIAEmulator::ColdReset() {
@@ -154,14 +183,13 @@ void ATPIAEmulator::WarmReset() {
 
 	mPortOutput = kATPIAOutput_CA2 | kATPIAOutput_CB2;
 	mPortDirection = kATPIAOutput_CA2 | kATPIAOutput_CB2;
-	mPORTACTL	= 0x00;
-	mPORTBCTL	= 0x00;
+	SetCRA(0);
+	SetCRB(0);
 	mbPIAEdgeA = false;
 	mbPIAEdgeB = false;
 	mPIACB2 = kPIACS_Floating;
 
-	if (mpIRQController)
-		mpIRQController->Negate(kATIRQSource_PIAA1 | kATIRQSource_PIAA2 | kATIRQSource_PIAB1 | kATIRQSource_PIAB2, true);
+	NegateIRQs(kATIRQSource_PIAA1 | kATIRQSource_PIAA2 | kATIRQSource_PIAB1 | kATIRQSource_PIAB2);
 
 	UpdateOutput();
 }
@@ -186,11 +214,11 @@ void ATPIAEmulator::SetCA1(bool level) {
 	}
 
 	// set interrupt flag
-	mPORTACTL |= 0x80;
+	SetCRA(mPORTACTL | 0x80);
 
 	// assert IRQ if enabled
 	if ((mPORTACTL & 0x01) && mpIRQController)
-		mpIRQController->Assert(kATIRQSource_PIAA1, true);
+		AssertIRQs(kATIRQSource_PIAA1);
 }
 
 void ATPIAEmulator::SetCB1(bool level) {
@@ -213,11 +241,11 @@ void ATPIAEmulator::SetCB1(bool level) {
 	}
 
 	// set interrupt flag
-	mPORTBCTL |= 0x80;
+	SetCRB(mPORTBCTL | 0x80);
 
 	// assert IRQ if enabled
 	if ((mPORTBCTL & 0x01) && mpIRQController)
-		mpIRQController->Assert(kATIRQSource_PIAB1, true);
+		AssertIRQs(kATIRQSource_PIAB1);
 }
 
 uint8 ATPIAEmulator::DebugReadByte(uint8 addr) const {
@@ -272,20 +300,18 @@ uint8 ATPIAEmulator::ReadByte(uint8 addr) {
 	case 0x00:
 		if (mPORTACTL & 0x04) {
 			// Reading the PIA port A data register negates port A interrupts.
-			mPORTACTL &= 0x3F;
+			SetCRA(mPORTACTL & 0x3F);
 
-			if (mpIRQController)
-				mpIRQController->Negate(kATIRQSource_PIAA1 | kATIRQSource_PIAA2, true);
+			NegateIRQs(kATIRQSource_PIAA1 | kATIRQSource_PIAA2);
 		}
 		break;
 
 	case 0x01:
 		if (mPORTBCTL & 0x04) {
 			// Reading the PIA port A data register negates port B interrupts.
-			mPORTBCTL &= 0x3F;
+			SetCRB(mPORTBCTL & 0x3F);
 
-			if (mpIRQController)
-				mpIRQController->Negate(kATIRQSource_PIAB1 | kATIRQSource_PIAB2, true);
+			NegateIRQs(kATIRQSource_PIAB1 | kATIRQSource_PIAB2);
 		}
 
 		break;
@@ -351,7 +377,7 @@ void ATPIAEmulator::WriteByte(uint8 addr, uint8 value) {
 			case 0x18:
 				if (mbPIAEdgeA) {
 					mbPIAEdgeA = false;
-					mPORTACTL |= 0x40;
+					SetCRA(mPORTACTL | 0x40);
 				}
 				break;
 
@@ -364,21 +390,25 @@ void ATPIAEmulator::WriteByte(uint8 addr, uint8 value) {
 				break;
 		}
 
-		if (value & 0x20)
-			mPORTACTL &= ~0x40;
+		{
+			uint8 cra = mPORTACTL;
 
-		mPORTACTL = (mPORTACTL & 0xc0) + (value & 0x3f);
+			if (value & 0x20)
+				cra &= ~0x40;
+
+			SetCRA((cra & 0xc0) + (value & 0x3f));
+		}
 
 		if (mpIRQController) {
 			if ((mPORTACTL & 0x68) == 0x48)
-				mpIRQController->Assert(kATIRQSource_PIAA2, true);
+				AssertIRQs(kATIRQSource_PIAA2);
 			else
-				mpIRQController->Negate(kATIRQSource_PIAA2, true);
+				NegateIRQs(kATIRQSource_PIAA2);
 
 			if ((mPORTACTL & 0x81) == 0x81)
-				mpIRQController->Assert(kATIRQSource_PIAA1, true);
+				AssertIRQs(kATIRQSource_PIAA1);
 			else
-				mpIRQController->Negate(kATIRQSource_PIAA1, true);
+				NegateIRQs(kATIRQSource_PIAA1);
 		}
 
 		UpdateCA2();
@@ -391,7 +421,7 @@ void ATPIAEmulator::WriteByte(uint8 addr, uint8 value) {
 			case 0x18:
 				if (mbPIAEdgeB) {
 					mbPIAEdgeB = false;
-					mPORTBCTL |= 0x40;
+					SetCRB(mPORTBCTL | 0x40);
 				}
 
 				mPIACB2 = kPIACS_Floating;
@@ -419,21 +449,25 @@ void ATPIAEmulator::WriteByte(uint8 addr, uint8 value) {
 				break;
 		}
 
-		if (value & 0x20)
-			mPORTBCTL &= ~0x40;
+		{
+			uint8 crb = mPORTBCTL;
 
-		mPORTBCTL = (mPORTBCTL & 0xc0) + (value & 0x3f);
+			if (value & 0x20)
+				crb &= ~0x40;
+
+			SetCRB((crb & 0xc0) + (value & 0x3f));
+		}
 
 		if (mpIRQController) {
 			if ((mPORTBCTL & 0x68) == 0x48)
-				mpIRQController->Assert(kATIRQSource_PIAB2, true);
+				AssertIRQs(kATIRQSource_PIAB2);
 			else
-				mpIRQController->Negate(kATIRQSource_PIAB2, true);
+				NegateIRQs(kATIRQSource_PIAB2);
 
 			if ((mPORTBCTL & 0x81) == 0x81)
-				mpIRQController->Assert(kATIRQSource_PIAB1, true);
+				AssertIRQs(kATIRQSource_PIAB1);
 			else
-				mpIRQController->Negate(kATIRQSource_PIAB1, true);
+				NegateIRQs(kATIRQSource_PIAB1);
 		}
 
 		UpdateCB2();
@@ -461,19 +495,34 @@ void ATPIAEmulator::DumpState() {
 	ATPIAState state;
 	GetState(state);
 
-	ATConsolePrintf("Port A control:   %02x (%s, motor line %s)\n"
+	static const char *const kCAB2Modes[] = {
+		"-edge sense",
+		"-edge sense w/IRQ",
+		"+edge sense",
+		"+edge sense w/IRQ",
+		"read handshake w/CA1",
+		"read pulse",
+		"low / on",
+		"high / off",
+	};
+
+	ATConsolePrintf("Port A control:   %02x (%s, motor line: %s, proceed line: %cedge%s)\n"
 		, state.mCRA
 		, state.mCRA & 0x04 ? "IOR" : "DDR"
-		, (state.mCRA & 0x38) == 0x30 ? "low / on" : "high / off"
+		, kCAB2Modes[(state.mCRA >> 3) & 7]
+		, state.mCRA & 0x02 ? '+' : '-'
+		, state.mCRA & 0x01 ? " w/IRQ" : ""
 		);
 	ATConsolePrintf("Port A direction: %02x\n", state.mDDRA);
 	ATConsolePrintf("Port A output:    %02x\n", state.mORA);
 	ATConsolePrintf("Port A edge:      %s\n", mbPIAEdgeA ? "pending" : "none");
 
-	ATConsolePrintf("Port B control:   %02x (%s, command line %s)\n"
+	ATConsolePrintf("Port B control:   %02x (%s, command line: %s, interrupt line: %cedge%s)\n"
 		, state.mCRB
 		, state.mCRB & 0x04 ? "IOR" : "DDR"
-		, (state.mCRB & 0x38) == 0x30 ? "low / on" : "high / off"
+		, kCAB2Modes[(state.mCRB >> 3) & 7]
+		, state.mCRB & 0x02 ? '+' : '-'
+		, state.mCRB & 0x01 ? " w/IRQ" : ""
 		);
 	ATConsolePrintf("Port B direction: %02x\n", state.mDDRB);
 	ATConsolePrintf("Port B output:    %02x\n", state.mORB);
@@ -624,4 +673,54 @@ bool ATPIAEmulator::SetPortBDirection(uint8 value) {
 	}
 
 	return true;
+}
+
+void ATPIAEmulator::NegateIRQs(uint32 mask) {
+	if (!mpIRQController)
+		return;
+
+	mpIRQController->Negate(mask, true);
+}
+
+void ATPIAEmulator::AssertIRQs(uint32 mask) {
+	if (!mpIRQController)
+		return;
+
+	mpIRQController->Assert(mask, true);
+}
+
+void ATPIAEmulator::SetCRA(uint8 v) {
+	if (mPORTACTL == v)
+		return;
+
+	mPORTACTL = v;
+
+	UpdateTraceCRA();
+}
+
+void ATPIAEmulator::SetCRB(uint8 v) {
+	if (mPORTBCTL == v)
+		return;
+
+	mPORTBCTL = v;
+
+	UpdateTraceCRB();
+}
+
+void ATPIAEmulator::UpdateTraceCRA() {
+	if (!mpTraceCRA)
+		return;
+
+	const uint64 t = mpScheduler->GetTick64();
+	mpTraceCRA->TruncateLastEvent(t);
+	mpTraceCRA->AddOpenTickEventF(t, kATTraceColor_Default, L"%02X", mPORTACTL);
+}
+
+void ATPIAEmulator::UpdateTraceCRB() {
+	if (!mpTraceCRB)
+		return;
+
+	const uint64 t = mpScheduler->GetTick64();
+	mpTraceCRB->TruncateLastEvent(t);
+	mpTraceCRB->AddOpenTickEventF(t, kATTraceColor_Default, L"%02X", mPORTBCTL);
 }

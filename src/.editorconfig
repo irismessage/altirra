@@ -1,0 +1,5 @@
+root = true
+
+[dbghelp.txt]
+indent_style = space
+indent_size = 4

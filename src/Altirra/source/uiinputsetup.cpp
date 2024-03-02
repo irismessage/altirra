@@ -152,6 +152,18 @@ LRESULT ATUIJoyInputView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			}
 			break;
 
+		case WM_SIZE:
+			if (mbCachedImageValid) {
+				const int w = LOWORD(lParam);
+				const int h = HIWORD(lParam);
+
+				if (mCachedWidth != w || mCachedHeight != h) {
+					mbCachedImageValid = false;
+					InvalidateRect(mhwnd, nullptr, FALSE);
+				}
+			}
+			break;
+
 		case WM_ERASEBKGND:
 			return 0;
 
@@ -184,6 +196,8 @@ LRESULT ATUIJoyInputView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 							if (mhbm)
 								mhbmOld = SelectObject(mhdc, mhbm);
+
+							mbCachedImageValid = false;
 						}
 
 						if (mhbmOld && !mbCachedImageValid) {
@@ -358,6 +372,7 @@ protected:
 	void OnDataExchange(bool write) override;
 	bool OnTimer(uint32 id) override;
 	void OnHScroll(uint32 id, int code) override;
+	void OnDpiChanged() override;
 
 	sint32 GetDeadZone(uint32 id);
 	void SetDeadZone(uint32 id, sint32 dz);
@@ -376,7 +391,15 @@ protected:
 
 	vdrefptr<ATUIJoyInputView> mpInputViews[4];
 
+	static const uint32 kInputAreaIds[4][2];
 	static const float kAnalogPowerExponentScale;
+};
+
+const uint32 ATUIDialogInputSetup::kInputAreaIds[4][2]={
+	{ IDC_STATIC_LSTICKAREA, IDC_LSTICKVIEW },
+	{ IDC_STATIC_RSTICKAREA, IDC_RSTICKVIEW },
+	{ IDC_STATIC_LTRIGAREA, IDC_LTRIGVIEW },
+	{ IDC_STATIC_RTRIGAREA, IDC_RTRIGVIEW },
 };
 
 const float ATUIDialogInputSetup::kAnalogPowerExponentScale = 0.13862943611198906188344642429164f; // ln(4)/10
@@ -406,13 +429,6 @@ bool ATUIDialogInputSetup::OnLoaded() {
 	TBSetPageStep(IDC_ANALOG_POWER, 5);
 	TBSetRange(IDC_TRIGGER_ANALOG_POWER, -10, 10);
 	TBSetPageStep(IDC_TRIGGER_ANALOG_POWER, 5);
-
-	static const uint32 kInputAreaIds[4][2]={
-		{ IDC_STATIC_LSTICKAREA, IDC_LSTICKVIEW },
-		{ IDC_STATIC_RSTICKAREA, IDC_RSTICKVIEW },
-		{ IDC_STATIC_LTRIGAREA, IDC_LTRIGVIEW },
-		{ IDC_STATIC_RTRIGAREA, IDC_RTRIGVIEW },
-	};
 
 	for(int i=0; i<4; ++i) {
 		const vdrect32 r = GetControlPos(kInputAreaIds[i][0]);
@@ -617,6 +633,14 @@ void ATUIDialogInputSetup::OnHScroll(uint32 id, int code) {
 			UpdateAnalogPowerLabel(IDC_STATIC_TRIGGERANALOGPOWER, IDC_TRIGGER_ANALOG_POWER);
 			OnDataExchange(true);
 			break;
+	}
+}
+
+void ATUIDialogInputSetup::OnDpiChanged() {
+	for(size_t i=0; i<4; ++i) {
+		const vdrect32 r = GetControlPos(kInputAreaIds[i][0]);
+
+		SetWindowPos(mpInputViews[i]->GetHandleW32(), nullptr, r.left, r.top, r.width(), r.height(), SWP_NOZORDER | SWP_NOACTIVATE);
 	}
 }
 

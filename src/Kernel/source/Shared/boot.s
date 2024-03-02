@@ -127,6 +127,10 @@ block_loop:
 	;run cassette init routine
 	jsr		InitCassetteBoot
 
+	;clear cassette boot key flag
+	lda		#0
+	sta		ckey
+
 	;set cassette boot flag
 	mva		#2 boot?
 	
@@ -134,6 +138,8 @@ block_loop:
 	jmp		(dosvec)
 
 load_failure:
+	lda		#0
+	sta		ckey
 	jsr		CassetteClose
 	jmp		BootShowError
 .endp

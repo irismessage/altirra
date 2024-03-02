@@ -219,22 +219,6 @@ void OnCommandVideoToggleXEP80() {
 	g_sim.GetDeviceManager()->ToggleDevice("xep80");
 }
 
-void OnCommandVideoToggleVBXE() {
-	g_sim.SetVBXEEnabled(!g_sim.GetVBXE());
-	g_sim.ColdReset();
-	ATUIResizeDisplay();
-}
-
-void OnCommandVideoToggleVBXESharedMemory() {
-	g_sim.SetVBXESharedMemoryEnabled(!g_sim.IsVBXESharedMemoryEnabled());
-	g_sim.ColdReset();
-}
-
-void OnCommandVideoToggleVBXEAltPage() {
-	g_sim.SetVBXEAltPageEnabled(!g_sim.IsVBXEAltPageEnabled());
-	g_sim.ColdReset();
-}
-
 void OnCommandVideoAdjustColorsDialog() {
 	ATUIOpenAdjustColorsDialog(ATUIGetMainWindow());
 }

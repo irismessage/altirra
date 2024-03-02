@@ -184,6 +184,8 @@ typedef	struct __VDGUIHandle *VDGUIHandle;
 	#define VDNOINLINE			__declspec(noinline)
 	#define VDFORCEINLINE		__forceinline
 	#define VDALIGN(alignment)	__declspec(align(alignment))
+
+	#define VDCDECL				__cdecl
 #elif defined(VD_COMPILER_GCC)
 	#define VDINTERFACE
 	#define VDNORETURN			__attribute__((noreturn))
@@ -192,6 +194,7 @@ typedef	struct __VDGUIHandle *VDGUIHandle;
 	#define VDNOINLINE			__attribute__((noinline))
 	#define VDFORCEINLINE		inline __attribute__((always_inline))
 	#define VDALIGN(alignment)	__attribute__((aligned(alignment)))
+	#define VDCDECL
 #else
 	#define VDINTERFACE
 	#define VDNORETURN
@@ -199,6 +202,7 @@ typedef	struct __VDGUIHandle *VDGUIHandle;
 	#define VDRESTRICT
 	#define VDFORCEINLINE
 	#define VDALIGN(alignment)
+	#define VDCDECL
 #endif
 
 ///////////////////////////////////////////////////////////////////////////

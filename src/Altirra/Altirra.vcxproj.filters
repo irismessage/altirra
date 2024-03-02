@@ -718,6 +718,42 @@
     <ClCompile Include="source\uiconfdevpercom.cpp">
       <Filter>Source Files - Device Configuration UI</Filter>
     </ClCompile>
+    <ClCompile Include="source\browser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevvbxe.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uitraceviewer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\trace.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cputracer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\tracevideo.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\decode_png.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\tracecpu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uihistoryview.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\xelcf.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\tracetape.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\rapidus.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\address.h">
@@ -1152,6 +1188,36 @@
     <ClInclude Include="h\uiconfirm.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="h\browser.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\trace.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\cputracer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\tracevideo.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\decode_png.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\tracecpu.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uihistoryview.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\xelcf.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\tracetape.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\rapidus.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="h\cpumachine.inl">
@@ -1346,6 +1412,10 @@
     <None Include="res\compatdb.atcpengine">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="..\..\obj\Release\Kernel\rapidflash.lzrom" />
+    <None Include="..\..\out\Release\rapidpbi16.bin">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="res\Altirra.rc">
@@ -1403,5 +1473,13 @@
     <PackResource Include="..\..\obj\Release\Kernel\playsap-d-pal.xex">
       <Filter>Resource Files</Filter>
     </PackResource>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="traceViewerToolbar.png">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="res\traceViewerToolbar.png">
+      <Filter>Resource Files</Filter>
+    </Image>
   </ItemGroup>
 </Project>

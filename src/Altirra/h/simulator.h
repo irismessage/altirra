@@ -37,10 +37,8 @@
 #include "antic.h"
 #include "gtia.h"
 #include "pokey.h"
-#include "vbxe.h"
 #include "pia.h"
 #include "simeventmanager.h"
-#include "irqcontroller.h"
 #include "address.h"
 
 struct ATCartLoadContext;
@@ -67,6 +65,8 @@ class ATDiskInterface;
 class ATDiskEmulator;
 class IVDRandomAccessStream;
 class IATImage;
+class ATTraceCollection;
+struct ATTraceSettings;
 
 enum ATMediaWriteMode : uint8;
 
@@ -177,12 +177,14 @@ struct ATStateLoadContext;
 struct ATImageLoadContext;
 class IATBlobImage;
 class IATCartridgeImage;
+struct ATTraceContext;
+
+enum ATCPUMode : uint8;
 
 class ATSimulator final : ATCPUEmulatorCallbacks,
 					ATAnticEmulatorConnections,
 					IATPokeyEmulatorConnections,
-					IATGTIAEmulatorConnections,
-					IATVBXEEmulatorConnections
+					IATGTIAEmulatorConnections
 {
 public:
 	ATSimulator();
@@ -239,7 +241,7 @@ public:
 	ATLightPenPort *GetLightPenPort() { return mpLightPen; }
 	ATUltimate1MBEmulator *GetUltimate1MB() { return mpUltimate1MB; }
 	IATVirtualScreenHandler *GetVirtualScreenHandler() { return mpVirtualScreenHandler; }
-	ATIRQController *GetIRQController() { return &mIRQController; }
+	ATIRQController *GetIRQController();
 	ATFirmwareManager *GetFirmwareManager() { return mpFirmwareManager; }
 	ATDeviceManager *GetDeviceManager() { return mpDeviceManager; }
 	ATScheduler *GetScheduler() { return &mScheduler; }
@@ -276,8 +278,6 @@ public:
 	bool IsROMAutoReloadEnabled() const { return mbROMAutoReloadEnabled; }
 	bool IsAutoLoadKernelSymbolsEnabled() const { return mbAutoLoadKernelSymbols; }
 	bool IsDualPokeysEnabled() const { return mbDualPokeys; }
-	bool IsVBXESharedMemoryEnabled() const { return mbVBXESharedMemory; }
-	bool IsVBXEAltPageEnabled() const { return mbVBXEUseD7xx; }
 
 	bool GetDiskBurstTransfersEnabled() const;
 	void SetDiskBurstTransfersEnabled(bool enabled);
@@ -336,6 +336,13 @@ public:
 	void SetBasic(uint64 id);
 	void SetHardwareMode(ATHardwareMode mode);
 
+	bool IsCPUModeOverridden() const;
+	bool IsRapidusEnabled() const;
+
+	void SetCPUMode(ATCPUMode mode, uint32 subCycles);
+	ATCPUMode GetCPUMode() const;
+	uint32 GetCPUSubCycles() const;
+
 	uint8 GetAxlonMemoryMode() { return mAxlonMemoryBits; }
 	void SetAxlonMemoryMode(uint8 bits);
 
@@ -358,9 +365,6 @@ public:
 	void SetROMAutoReloadEnabled(bool enable);
 	void SetAutoLoadKernelSymbolsEnabled(bool enable);
 	void SetDualPokeysEnabled(bool enable);
-	void SetVBXEEnabled(bool enable);
-	void SetVBXESharedMemoryEnabled(bool enable);
-	void SetVBXEAltPageEnabled(bool enable);
 
 	bool IsFastBootEnabled() const { return mbFastBoot; }
 	void SetFastBootEnabled(bool enable);
@@ -390,7 +394,7 @@ public:
 	void SetVirtualScreenEnabled(bool enable);
 
 	bool GetShadowROMEnabled() const { return mbShadowROM; }
-	void SetShadowROMEnabled(bool enabled) { mbShadowROM = enabled; }
+	void SetShadowROMEnabled(bool enabled);
 	bool GetShadowCartridgeEnabled() const { return mbShadowCartridge; }
 	void SetShadowCartridgeEnabled(bool enabled);
 
@@ -403,6 +407,10 @@ public:
 
 	int GetPowerOnDelay() const;
 	void SetPowerOnDelay(int tenthsOfSeconds);
+
+	ATTraceCollection *GetTraceCollection() const;
+	bool GetTracingEnabled() const;
+	void SetTracingEnabled(const ATTraceSettings *settings);
 
 	void ColdReset();
 	void WarmReset();
@@ -491,6 +499,9 @@ private:
 	bool ReloadU1MBFirmware();
 	void InitMemoryMap();
 	void ShutdownMemoryMap();
+	void UpdateKernelROMSegments();
+	void UpdateKernelROMPtrs();
+	void UpdateKernelROMSpeeds();
 
 	uint32 CPUGetCycle() override;
 	uint32 CPUGetUnhaltedCycle() override;
@@ -509,6 +520,7 @@ private:
 
 	uint32 GTIAGetXClock() override;
 	uint32 GTIAGetTimestamp() const override;
+	uint64 GTIAGetTimestamp64() const override;
 	void GTIASetSpeaker(bool newState) override;
 	void GTIASelectController(uint8 index, bool potsEnabled) override;
 	void GTIARequestAnticSync(int offset) override;
@@ -517,17 +529,14 @@ private:
 	void PokeyNegateIRQ(bool cpuBased) override;
 	void PokeyBreak() override;
 	bool PokeyIsInInterrupt() const override;
-	bool PokeyIsKeyPushOK(uint8 c) const override;
+	bool PokeyIsKeyPushOK(uint8 c, bool cooldownExpired) const override;
 	uint32 PokeyGetTimestamp() const override;
-
-	void VBXEAssertIRQ() override;
-	void VBXENegateIRQ() override;
 
 	void ReinitHookPage();
 	void SetupPendingHeldButtons();
 	void SetupAutoHeldButtons();
 
-	void InitDevice(IATDevice& dev);
+	void InitDevice(IVDUnknown& dev);
 
 	void ResetMemoryBuffer(void *dst, size_t len, uint32 seed);
 
@@ -553,8 +562,6 @@ private:
 	bool mbROMAutoReloadEnabled;
 	bool mbAutoLoadKernelSymbols;
 	bool mbDualPokeys;
-	bool mbVBXESharedMemory;
-	bool mbVBXEUseD7xx;
 	bool mbFastBoot;
 	bool mbKeyboardPresent;
 	bool mbForcedSelfTest;
@@ -615,7 +622,6 @@ private:
 	ATLightPenPort *mpLightPen;
 	IATPrinterOutput *mpPrinterOutput;
 	ATVBXEEmulator *mpVBXE;
-	void *mpVBXEMemory;
 	ATCheatEngine *mpCheatEngine;
 	IATUIRenderer *mpUIRenderer;
 	ATUltimate1MBEmulator *mpUltimate1MB;
@@ -628,7 +634,6 @@ private:
 	IATHLECIOHook *mpHLECIOHook;
 
 	ATPIAEmulator mPIA;
-	ATIRQController	mIRQController;
 
 	uint8	mHookPage;
 
@@ -666,9 +671,6 @@ private:
 
 	ATFirmwareManager	*mpFirmwareManager;
 	ATDeviceManager		*mpDeviceManager;
-
-	class DeviceChangeCallback;
-	DeviceChangeCallback *mpDeviceChangeCallback;
 
 	vdblock<uint8> mAxlonMemory;
 

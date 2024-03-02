@@ -21,7 +21,17 @@
 
 #include <crtdbg.h>
 #include <windows.h>
+
+// dbghelp.h(1540): warning C4091: 'typedef ': ignored on left of '' when no variable is declared (compiling source file source\exceptionfilter.cpp)
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4091)
+#endif
 #include <dbghelp.h>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
 #include <vd2/system/w32assist.h>
 #include <vd2/system/filesys.h>
 
@@ -211,7 +221,7 @@ namespace {
 	}
 }
 
-void ATDumpMemoryLeaksVC() {
+void VDCDECL ATDumpMemoryLeaksVC() {
     _CrtMemState msNow;
 
 	// disable CRT tracking of memory blocks

@@ -183,6 +183,7 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 				loadCtx->mpCaptureBuffer->resize(size32);
 				stream.Seek(0);
 				stream.Read(loadCtx->mpCaptureBuffer->data(), size32);
+				stream.Seek(0);
 
 				loadCtx->mRawImageChecksum = ComputeChecksum(loadCtx->mpCaptureBuffer->data(), size32);
 			}

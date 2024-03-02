@@ -26,61 +26,10 @@
     <ClCompile Include="source\accel.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\basetypes.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\ctl_grid.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\ctl_set.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\interface.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\resources.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\services.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\w32accel.cpp">
-      <Filter>Win32 Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\w32base.cpp">
-      <Filter>Win32 Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\w32button.cpp">
-      <Filter>Win32 Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\w32control.cpp">
-      <Filter>Win32 Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\w32group.cpp">
-      <Filter>Win32 Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\w32hotkey.cpp">
-      <Filter>Win32 Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\w32label.cpp">
-      <Filter>Win32 Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\w32listbox.cpp">
-      <Filter>Win32 Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\w32listview.cpp">
-      <Filter>Win32 Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\w32peer.cpp">
-      <Filter>Win32 Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\w32splitter.cpp">
-      <Filter>Win32 Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\w32textedit.cpp">
-      <Filter>Win32 Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\w32trackbar.cpp">
       <Filter>Win32 Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\stdafx.cpp">
@@ -88,34 +37,10 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\h\VD2\Dita\resources.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="..\h\vd2\Dita\w32accel.h">
       <Filter>Win32 Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\h\vd2\Dita\w32base.h">
-      <Filter>Win32 Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\h\vd2\Dita\w32control.h">
-      <Filter>Win32 Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\h\vd2\Dita\w32peer.h">
-      <Filter>Win32 Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="..\h\vd2\Dita\accel.h">
-      <Filter>Interface files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\h\vd2\Dita\basetypes.h">
-      <Filter>Interface files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\h\vd2\Dita\bytecode.h">
-      <Filter>Interface files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\h\vd2\Dita\controls.h">
-      <Filter>Interface files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\h\VD2\Dita\interface.h">
       <Filter>Interface files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\VD2\Dita\services.h">

@@ -133,11 +133,13 @@
     <Xml Include="source\devices-cassette.xml" />
     <Xml Include="source\devices-corvus.xml" />
     <Xml Include="source\devices-fulldisk.xml" />
+    <Xml Include="source\devices-ideplus2.xml" />
     <Xml Include="source\devices-indusgt.xml">
       <SubType>Designer</SubType>
     </Xml>
     <Xml Include="source\devices-mio.xml" />
     <Xml Include="source\devices-pocketmodem.xml" />
+    <Xml Include="source\devices-rapidus.xml" />
     <Xml Include="source\devices-rtime8.xml" />
     <Xml Include="source\devices-xf551.xml" />
     <Xml Include="source\dragoncart.xml" />

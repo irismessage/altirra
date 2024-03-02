@@ -233,12 +233,12 @@ public:
 	ATControllerXInput(ATXInputBinding& xinput, uint32 xid, ATInputManager *inputMan, const ATInputUnitIdentifier& id);
 	~ATControllerXInput();
 
-	virtual bool Poll(bool& bigActivity);
-	virtual bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2);
-	virtual void PollForCapture(ATJoystickState& dst);
+	bool Poll(bool& bigActivity) override;
+	bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2) override;
+	void PollForCapture(ATJoystickState& dst) override;
 
 public:
-	virtual bool GetInputCodeName(uint32 id, VDStringW& name) const;
+	bool GetInputCodeName(uint32 id, VDStringW& name) const override;
 
 protected:
 	struct DecodedState {
@@ -580,7 +580,7 @@ void ATControllerXInput::ConvertStick(sint32 dst[2], sint32 x, sint32 y) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATControllerDirectInput final : public ATController {
+class ATControllerDirectInput final : public ATController, public IATInputUnitNameSource {
 public:
 	ATControllerDirectInput(IDirectInput8 *di);
 	~ATControllerDirectInput();
@@ -591,6 +591,9 @@ public:
 	bool Poll(bool& bigActivity);
 	bool PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2);
 	void PollForCapture(ATJoystickState& dst);
+
+public:
+	bool GetInputCodeName(uint32 id, VDStringW& name) const;
 
 protected:
 	struct DecodedState {
@@ -675,7 +678,12 @@ bool ATControllerDirectInput::Init(LPCDIDEVICEINSTANCE devInst, HWND hwnd, ATInp
 	mpInputManager = inputMan;
 
 	memcpy(&mId, &devInst->guidInstance, sizeof mId);
-	mUnit = inputMan->RegisterInputUnit(mId, devInst->tszInstanceName, NULL);
+
+	// VID 054C - Sony
+	// PID 05C4 - DualShock 4 controller
+	// PID 09CC - DualShock 4 Slim controller
+	const bool mbIsDualShock4 = (devInst->guidProduct.Data1 == 0x05C4054C || devInst->guidProduct.Data1 == 0x09CC054C);
+	mUnit = inputMan->RegisterInputUnit(mId, devInst->tszInstanceName, mbIsDualShock4 ? this : NULL);
 
 	return true;
 }
@@ -770,6 +778,74 @@ void ATControllerDirectInput::PollForCapture(ATJoystickState& dst) {
 	dst.mAxisButtons = state.mAxisButtonStates;
 	memcpy(dst.mAxisVals, state.mAxisVals, sizeof dst.mAxisVals);
 	memcpy(dst.mDeadifiedAxisVals, state.mAxisDeadVals, sizeof dst.mDeadifiedAxisVals);
+}
+
+bool ATControllerDirectInput::GetInputCodeName(uint32 id, VDStringW& name) const {
+	static const wchar_t *const kButtonNames[]={
+		L"Square button",
+		L"Cross button",
+		L"Circle button",
+		L"Triangle button",
+		L"L1 button",
+		L"R1 button",
+		L"L2 button",
+		L"R2 button",
+		L"Share button",
+		L"Options button",
+		L"L3 button",
+		L"R3 button",
+		L"PS button",
+		L"Trackpad button"
+	};
+
+	uint32 buttonIdx = (uint32)(id - kATInputCode_JoyButton0);
+
+	if (buttonIdx < vdcountof(kButtonNames)) {
+		name = kButtonNames[buttonIdx];
+		return true;
+	}
+
+	static const wchar_t *const kAxisButtonNames[]={
+		L"Left stick left",
+		L"Left stick right",
+		L"Left stick up",
+		L"Left stick down",
+		L"Right stick left",
+		L"Right stick right",
+		NULL,
+		L"Left trigger pressed",
+		NULL,
+		L"Right trigger pressed",
+		L"Right stick up",
+		L"Right stick down",
+		L"D-pad left",
+		L"D-pad right",
+		L"D-pad up",
+		L"D-pad down",
+	};
+
+	const uint32 axisButtonIdx = (uint32)(id - kATInputCode_JoyStick1Left);
+	if (axisButtonIdx < vdcountof(kAxisButtonNames) && kAxisButtonNames[axisButtonIdx]) {
+		name = kAxisButtonNames[axisButtonIdx];
+		return true;
+	}
+
+	static const wchar_t *const kAxisNames[]={
+		L"Left stick horiz.",
+		L"Left stick vert.",
+		L"Right stick horiz.",
+		L"Left trigger",
+		L"Right trigger",
+		L"Right stick vert.",
+	};
+
+	const uint32 axisIdx = (uint32)(id - kATInputCode_JoyHoriz1);
+	if (axisIdx < vdcountof(kAxisNames)) {
+		name = kAxisNames[axisIdx];
+		return true;
+	}
+
+	return false;
 }
 
 void ATControllerDirectInput::UpdateButtons(int baseId, uint32 states, uint32 mask) {
