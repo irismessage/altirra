@@ -64,7 +64,7 @@
    * VFS: Added support for reading from .zip files that use Enhanced Deflate compression.
    * VFS: Add special:// protocol to access specific images.
 
-   [bugs fixed]
+   ### bugs fixed
    * AltirraOS: Fixed incorrect MEMLO adjustment when loading peripheral handlers through CIO via type 4 poll.
    * AltirraOS: Force C=1 on exit from CIO for compatibility (undocumented behavior).
    * AltirraOS: Shift+Help and Ctrl+Help are now reported properly in HELPFG.
@@ -145,7 +145,7 @@
    * VBXE: Fixed pixel shadows when using HR blit mode (mode 6).
    * VBXE: Fix false P/M priorities on right half of screen in core 1.26 in lines that have no P/M graphics.
 
-## Version 4.10 [January 1, 2023]
+## Version 4.10 [January 1, 2023]:
    ### changes
    * Display: Direct3D 11 and borderless mode are now enabled by default for new installs.
    * Input: Light pens and light guns have been split for 4.10+. Input presets may need to be updated and offsets readjusted.
@@ -269,7 +269,7 @@
    * Serial: Pad out 850 relocator to match length of original firmware relocator (fixes compatibility with loaders that hardcode the relocator length).
    * VFS: Fixed wrong file being accessed when using atfs:// paths to access files inside a DOS 2 disk image.
 
-## Version 4.00 [November 13, 2021]
+## Version 4.00 [November 13, 2021]:
    ### changes
    * Display: Dropped support for DirectDraw and OpenGL.
    * Input: Relative mouse binding and 5200 trak-ball speeds have been adjusted for better uniformity. Existing input maps may need to have their speeds adjusted.
@@ -424,7 +424,7 @@
    * XEP80: Delete line can now slice a multi-line logical line like the real XEP80 does.
    * XEP80: Fill EOL ($1C6) command was using the wrong fill byte.
 
-## Version 3.91: [November 11, 2021]
+## Version 3.91 [November 11, 2021]:
    ### bugs fixed
    * AltirraOS: Adjusted internal variable usage of P: handler for better compatibility with programs that jump into it without opening P: (Monkey Wrench II).
    * AltirraOS: Fixed E: Put Byte routine sometimes returning Y=2 instead of Y=1.
@@ -440,7 +440,7 @@
    * Serial: Fixed initial socket data sometimes not being read from modem until first byte is sent.
    * UI: Fixed a crash in dockable pane code with mixed DPI monitors.
 
-## Version 3.90: [June 14, 2020]
+## Version 3.90 [June 14, 2020]:
    ### features added
    * AltirraOS: The boot screen in the XL/XE version now continues boot on disk insertion rather than forcing a reboot.
    * AltirraOS: Extended memory scan limit for 800 version to $D000 to support 52K expanded configurations.
@@ -543,7 +543,7 @@
    * VBXE: Fixed double correction of display with gamma or color correction options enabled.
    * VFS: Fixed zip/gz paths with non-ASCII characters not being encoded properly and getting dropped on restart.
 
-## Version 3.20: [June 23, 2019]
+## Version 3.20 [June 23, 2019]:
    ### changes
    * Debugging symbols and debugger scripts are no longer automatically loaded by default unless the debugger is active. This can be changed in the Debugger section of Configure System.
    * AltirraOS is now versioned independently of the main emulator. See changelog in export ROM set output for details.
@@ -631,7 +631,7 @@
    * UI: Fixed incorrect partial switch matching on command line, e.g. "/disk1" being interpreted as "/disk 1".
    * VBXE: Overlay width setting %11 now correctly selects narrow width instead of wide width.
 
-## Version 3.10: [August 12, 2018]
+## Version 3.10 [August 12, 2018]:
    ### changes
    * Default keyboard shortcuts have changed. Reset in Tools > Keyboard Shortcuts to use the new bindings.
    * Modems now default to handshaking disabled rather than RTS/CTS due to differences in default RTS state for R: devices. Use AT&K0 to disable handshaking and AT&K3 to use RTS/CTS.
@@ -722,7 +722,7 @@
    * UI: Save states and SAP files now load correctly when dragged from .zip files.
    * VBXE: ANTIC hires pixels now always have PF2/PF3 priority except with XCOLOR=1 on FX1.26 core where enabled pixels have PF1 priority.
 
-## Version 3.00: [December 28, 2017]
+## Version 3.00 [December 28, 2017]:
    ### changes
    * Devices: Internal device tree storage has changed. Device trees may need to be remade.
    * Input: Added detection and button naming for DualShock 4 controllers.
@@ -796,7 +796,7 @@
    * VBXE: Blit pattern width field is now 6 bits instead of 7.
    * VBXE: Overlay priority is reset to $FF at top of XDL.
 
-## Version 2.90: [July 15, 2017]
+## Version 2.90 [July 15, 2017]:
    ### changes
    * Display: Direct3D 9 bicubic filtered display support has been removed for pixel shader 1.x video cards.
    * Display: Default color presets have been updated.
@@ -893,7 +893,7 @@
    * XEP80: Tab stops are now set properly on soft reset.
 
 ## Version 2.81 [October 16, 2016]:
-   [bug fixes]
+   ### bug fixes
    * Cartridge: Fixed saving SIDE 1 cartridge images.
    * Cartridge: Fixed crash with XEGS cartridge types.
    * HLE: Fixed crash when viewing PBI region in debugger with PBI acceleration disk ROM enabled.
@@ -1649,7 +1649,7 @@
    * Cassette: Loading a new tape didn't press 'play' on the emulated player until the next cold reset.
 
 ## Version 2.00 [December 24, 2011]:
-   [breaking changes]
+   ### breaking changes
    * Debugger: The step over command has been changed from s to o.
 
    ### features added
