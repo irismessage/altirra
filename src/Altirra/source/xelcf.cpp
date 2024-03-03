@@ -58,7 +58,7 @@ void *ATXELCFEmulator::AsInterface(uint32 id) {
 
 		case ATIDEEmulator::kTypeID:		return static_cast<ATIDEEmulator *>(&mIDE[0]);
 		default:
-			return nullptr;
+			return ATDevice::AsInterface(id);
 	}
 }
 

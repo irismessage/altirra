@@ -1891,6 +1891,13 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddIndexedItem(NodeR
 	return (NodeRef)hti;
 }
 
+VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetRootNode() const {
+	if (mhwnd)
+		return (NodeRef)TreeView_GetRoot(mhwnd);
+	else
+		return kNodeNull;
+}
+
 VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetChildNode(NodeRef ref) const {
 	if (mhwnd)
 		return (NodeRef)TreeView_GetChild(mhwnd, (HTREEITEM)ref);
@@ -1915,6 +1922,13 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetPrevNode(NodeRef 
 VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetNextNode(NodeRef ref) const {
 	if (mhwnd)
 		return (NodeRef)TreeView_GetNextSibling(mhwnd, (HTREEITEM)ref);
+	else
+		return kNodeNull;
+}
+
+VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetSelectedNode() const {
+	if (mhwnd)
+		return (NodeRef)TreeView_GetSelection(mhwnd);
 	else
 		return kNodeNull;
 }
@@ -2587,16 +2601,12 @@ void VDUIProxyTreeViewControl::DeleteFonts() {
 }
 
 bool VDUIProxyTreeViewControl::IsValidNodeRef(NodeRef node) const {
-	switch(node) {
-		case kNodeNull:
-		case kNodeFirst:
-		case kNodeLast:
-		case kNodeRoot:
-			return false;
+	if (node == kNodeNull)  return false;
+	if (node == kNodeFirst) return false;
+	if (node == kNodeLast)  return false;
+	if (node == kNodeRoot)  return false;
 
-		default:
-			return true;
-	}
+	return true;
 }
 
 /////////////////////////////////////////////////////////////////////////////

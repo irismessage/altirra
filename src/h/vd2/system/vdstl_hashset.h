@@ -54,9 +54,11 @@ public:
 
 	vdhashset();
 	vdhashset(const vdhashset&);
+	vdnothrow vdhashset(vdhashset&&) noexcept;
 	~vdhashset();
 
 	vdhashset& operator=(const vdhashset&);
+	vdhashset& operator=(vdhashset&&);
 
 	allocator_type get_allocator() const;
 
@@ -136,24 +138,31 @@ vdhashset<K, Hash, Pred, A>::vdhashset(const vdhashset& src)
 	rehash_to_size(src.mElementCount);
 
 	try {
-		for(vdhashtable_base_node **bucket = this->mpBucketStart; bucket != this->mpBucketEnd; ++bucket) {
-			vdhashtable_base_node *p = *bucket;
+		for(const vdhashtable_base_node *const *bucket = src.mpBucketStart; bucket != src.mpBucketEnd; ++bucket) {
+			const vdhashtable_base_node *p = *bucket;
 
 			while(p) {
-				vdhashtable_base_node *next = p->mpHashNext;
-				node_type *node = static_cast<node_type *>(p);
+				const vdhashtable_base_node *next = p->mpHashNext;
+				const node_type *node = static_cast<const node_type *>(p);
 
 				insert(node->mData);
 
 				p = next;
 			}
-
-			*bucket = NULL;
 		}
 	} catch(...) {
 		reset();
 		throw;
 	}
+}
+
+template<class K, class Hash, class Pred, class A>
+vdnothrow vdhashset<K, Hash, Pred, A>::vdhashset(vdhashset&& src) noexcept
+	: mHasher(std::move(src.mHasher))
+	, mPred(std::move(src.mPred))
+{
+	static_cast<vdhashtable_base&>(*this) = static_cast<vdhashtable_base&>(src);
+	static_cast<vdhashtable_base&>(src) = vdhashtable_base();
 }
 
 template<class K, class Hash, class Pred, class A>
@@ -169,22 +178,33 @@ vdhashset<K, Hash, Pred, A>& vdhashset<K, Hash, Pred, A>::operator=(const vdhash
 		mHasher = src.mHasher;
 		mPred = src.mPred;
 
-		for(vdhashtable_base_node **bucket = src.mpBucketStart; bucket != src.mpBucketEnd; ++bucket) {
-			vdhashtable_base_node *p = *bucket;
+		for(const vdhashtable_base_node *const *bucket = src.mpBucketStart; bucket != src.mpBucketEnd; ++bucket) {
+			const vdhashtable_base_node *p = *bucket;
 
 			while(p) {
-				vdhashtable_base_node *next = p->mpHashNext;
-				node_type *node = static_cast<node_type *>(p);
+				const vdhashtable_base_node *next = p->mpHashNext;
+				const node_type *node = static_cast<const node_type *>(p);
 
 				insert(node->mData);
 
 				p = next;
 			}
-
-			*bucket = NULL;
 		}
 	}
 	
+	return *this;
+}
+
+template<class K, class Hash, class Pred, class A>
+vdhashset<K, Hash, Pred, A>& vdhashset<K, Hash, Pred, A>::operator=(vdhashset&& src) {
+	clear();
+
+	mHasher = std::move(src.mHasher);
+	mPred = std::move(src.mPred);
+
+	static_cast<vdhashtable_base&>(*this) = static_cast<vdhashtable_base&>(src);
+	static_cast<vdhashtable_base&>(src) = vdhashtable_base();
+
 	return *this;
 }
 
@@ -206,11 +226,12 @@ typename vdhashset<K, Hash, Pred, A>::insert_return_type vdhashset<K, Hash, Pred
 			return std::pair<iterator, bool>(iterator(p, &this->mpBucketStart[bucket], this->mpBucketEnd), false);
 	}
 
-	node_type *node = mAllocator.allocate(1);
+	node_type *nodemem = mAllocator.allocate(1);
+	node_type *node;
 	try {
-		new(node) node_type(static_cast<node_type *>(this->mpBucketStart[bucket]), key);
+		node = new(nodemem) node_type(static_cast<node_type *>(this->mpBucketStart[bucket]), key);
 	} catch(...) {
-		mAllocator.deallocate(node, 1);
+		mAllocator.deallocate(nodemem, 1);
 		throw;
 	}
 
@@ -250,8 +271,8 @@ typename vdhashset<K, Hash, Pred, A>::iterator vdhashset<K, Hash, Pred, A>::eras
 template<class K, class Hash, class Pred, class A>
 typename vdhashset<K, Hash, Pred, A>::const_iterator vdhashset<K, Hash, Pred, A>::erase(const_iterator position) {
 	size_type bucket = mHasher(*position) % this->mBucketCount;
-	const vdhashtable_base_node *prev = NULL;
-	const vdhashtable_base_node *p = this->mpBucketStart[bucket];
+	vdhashtable_base_node *prev = NULL;
+	vdhashtable_base_node *p = this->mpBucketStart[bucket];
 
 	while(&static_cast<const node_type *>(p)->mData != &*position) {
 		prev = p;
@@ -260,7 +281,7 @@ typename vdhashset<K, Hash, Pred, A>::const_iterator vdhashset<K, Hash, Pred, A>
 
 	++position;
 
-	const vdhashtable_base_node *next = p->mpHashNext;
+	vdhashtable_base_node *next = p->mpHashNext;
 	if (prev)
 		prev->mpHashNext = next;
 	else

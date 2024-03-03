@@ -544,6 +544,34 @@ bool ATUIManager::OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages) {
 	return true;
 }
 
+bool ATUIManager::OnMouseHWheel(sint32 x, sint32 y, float delta, bool doPages) {
+	if (!mpMainWindow)
+		return false;
+
+	if (!mbCursorCaptured) {
+		if (!UpdateCursorWindow(x, y))
+			return true;
+	}
+
+	if (!mpCursorWindow)
+		return false;
+
+	LockDestroy();
+	for(ATUIWidget *w = mpCursorWindow; w; w = w->GetParent()) {
+		vdpoint32 cpt;
+		if (w->TranslateScreenPtToClientPt(vdpoint32(x, y), cpt) || mbCursorCaptured) {
+			if (w->OnMouseHWheel(cpt.x, cpt.y, delta, doPages))
+				break;
+		}
+
+		if (mbCursorCaptured)
+			break;
+	}
+	UnlockDestroy();
+
+	return true;
+}
+
 void ATUIManager::OnMouseLeave() {
 	if (!mpCursorWindow)
 		return;

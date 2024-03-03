@@ -1571,7 +1571,7 @@ for(;;) {
 
 		case kStateAddEAToHistory:
 			{
-				HistoryEntry& he = mHistory[(mHistoryIndex - 1) & (vdcountof(mHistory) - 1)];
+				ATCPUHistoryEntry& he = mpHistoryNext[-1];
 
 				he.mEA = mAddr;
 #ifdef AT_CPU_MACHINE_65C816
@@ -2277,6 +2277,9 @@ for(;;) {
 				mP &= ~kFlagC;
 				if (mbEmulationFlag)
 					mP |= kFlagC | kFlagM | kFlagX;
+
+				if (newEmuFlag)
+					mP |= kFlagM | kFlagX;
 
 				mbEmulationFlag = newEmuFlag;
 				Update65816DecodeTable();

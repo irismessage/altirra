@@ -33,6 +33,7 @@
 
 #include <stdafx.h>
 #include <time.h>
+#include <at/atcore/snapshotimpl.h>
 #include "rtime8.h"
 #include "memorymanager.h"
 
@@ -135,8 +136,54 @@ void ATRTime8Emulator::WriteControl(uint8 addr, uint8 value) {
 			break;
 	}
 
-	static const uint8 kWriteAdvanceLookup[3] = {1, 2, 0};
+	static constexpr uint8 kWriteAdvanceLookup[3] = {1, 2, 0};
 	mPhase = kWriteAdvanceLookup[mPhase];
+}
+
+class ATSaveStateRTime8 final : public ATSnapExchangeObject<ATSaveStateRTime8, "ATSaveStateRTime8"> {
+public:
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	uint8 mAddress = 0;
+	uint8 mPhase = 0;
+};
+
+template<ATExchanger T>
+void ATSaveStateRTime8::Exchange(T& ex) {
+	ex.Transfer("address", &mAddress);
+	ex.Transfer("phase", &mPhase);
+
+	if constexpr (ex.IsReader) {
+		mAddress &= 0x0f;
+
+		if (mPhase >= 3)
+			mPhase = 0;
+	}
+}
+
+void ATRTime8Emulator::Reset() {
+	mAddress = 0;
+	mPhase = 0;
+}
+
+void ATRTime8Emulator::LoadState(const IATObjectState *state, ATSnapshotContext& ctx) {
+	Reset();
+
+	if (state) {
+		const auto& rtState = atser_cast<const ATSaveStateRTime8&>(*state);
+		mAddress = rtState.mAddress;
+		mPhase = rtState.mPhase;
+	}
+}
+
+vdrefptr<IATObjectState> ATRTime8Emulator::SaveState(ATSnapshotContext& ctx) const {
+	vdrefptr state { new ATSaveStateRTime8 };
+
+	state->mAddress = mAddress;
+	state->mPhase = mPhase;
+
+	return state;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -160,6 +207,9 @@ void *ATDeviceRTime8::AsInterface(uint32 id) {
 		case IATDeviceMemMap::kTypeID:
 			return static_cast<IATDeviceMemMap *>(this);
 
+		case IATDeviceSnapshot::kTypeID:
+			return static_cast<IATDeviceSnapshot *>(&mRTime8);
+
 		default:
 			return ATDevice::AsInterface(id);
 	}
@@ -176,6 +226,10 @@ void ATDeviceRTime8::Shutdown() {
 	}
 
 	mpMemMan = nullptr;
+}
+
+void ATDeviceRTime8::ColdReset() {
+	mRTime8.Reset();
 }
 
 void ATDeviceRTime8::InitMemMap(ATMemoryManager *memmap) {

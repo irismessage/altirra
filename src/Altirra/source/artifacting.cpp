@@ -59,6 +59,7 @@
 #include <vd2/system/math.h>
 #include <vd2/system/vecmath.h>
 #include <vd2/system/vectors.h>
+#include <vd2/system/zip.h>
 #include <at/atcore/consoleoutput.h>
 #include "artifacting.h"
 #include "artifacting_filters.h"
@@ -925,7 +926,7 @@ namespace {
 		yr = -x0*sn + y0*cs;
 	}
 
-	void accum(uint32 *VDRESTRICT dst, const uint32 (*VDRESTRICT table)[2][12], const uint8 *VDRESTRICT src, uint32 count) {
+	[[maybe_unused]] void accum(uint32 *VDRESTRICT dst, const uint32 (*VDRESTRICT table)[2][12], const uint8 *VDRESTRICT src, uint32 count) {
 		count >>= 1;
 
 		do {
@@ -951,7 +952,7 @@ namespace {
 		} while(--count);
 	}
 
-	void accum_twin(uint32 *VDRESTRICT dst, const uint32 (*VDRESTRICT table)[12], const uint8 *VDRESTRICT src, uint32 count) {
+	[[maybe_unused]] void accum_twin(uint32 *VDRESTRICT dst, const uint32 (*VDRESTRICT table)[12], const uint8 *VDRESTRICT src, uint32 count) {
 		count >>= 1;
 
 		do {
@@ -1186,7 +1187,7 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 	}
 }
 
-void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes, bool oddLine) {
+void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src0[N], bool scanlineHasHiRes, bool oddLine) {
 	// encode to YUV
 	VDALIGN(16) uint32 ybuf[32 + N];
 	VDALIGN(16) uint32 ubuf[32 + N];
@@ -1195,45 +1196,57 @@ void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src[N], boo
 	uint32 *const ulbuf = mPALDelayLineUV[0];
 	uint32 *const vlbuf = mPALDelayLineUV[1];
 
+	// Shift the source data by 2 hires pixels to center the kernels; this is
+	// needed since we can only grossly align the YUV arrays by 128-bit amounts
+	// (8 hires pixels). There is a matching 90d phase shift in the kernel
+	// computation code.
+	uint8 src[N+16];
+	memset(src, 0, 2);
+	memcpy(src + 2, src0, N);
+	memset(src + 2 + N, 0, 14);
+
 #if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
 	if (SSE2_enabled) {
+		// luma routine writes N+8 elements (requires N multiple of 8)
+		// chroma routine writes N+8 elements (requires N multiple of 16)
+
 		if (scanlineHasHiRes) {
-			ATArtifactPALLuma_SSE2(ybuf, src, N, &mPal8x.mPalToY[oddLine][0][0][0]);
+			ATArtifactPALLuma_SSE2(ybuf, src, N+16, &mPal8x.mPalToY[oddLine][0][0][0]);
 
 			if (!mbTintColorEnabled) {
-				ATArtifactPALChroma_SSE2(ubuf, src, N, &mPal8x.mPalToU[oddLine][0][0][0]);
-				ATArtifactPALChroma_SSE2(vbuf, src, N, &mPal8x.mPalToV[oddLine][0][0][0]);
+				ATArtifactPALChroma_SSE2(ubuf, src, N+16, &mPal8x.mPalToU[oddLine][0][0][0]);
+				ATArtifactPALChroma_SSE2(vbuf, src, N+16, &mPal8x.mPalToV[oddLine][0][0][0]);
 			}
 		} else {
-			ATArtifactPALLumaTwin_SSE2(ybuf, src, N, &mPal8x.mPalToYTwin[oddLine][0][0][0]);
+			ATArtifactPALLumaTwin_SSE2(ybuf, src, N+16, &mPal8x.mPalToYTwin[oddLine][0][0][0]);
 
 			if (!mbTintColorEnabled) {
-				ATArtifactPALChromaTwin_SSE2(ubuf, src, N, &mPal8x.mPalToUTwin[oddLine][0][0][0]);
-				ATArtifactPALChromaTwin_SSE2(vbuf, src, N, &mPal8x.mPalToVTwin[oddLine][0][0][0]);
+				ATArtifactPALChromaTwin_SSE2(ubuf, src, N+16, &mPal8x.mPalToUTwin[oddLine][0][0][0]);
+				ATArtifactPALChromaTwin_SSE2(vbuf, src, N+16, &mPal8x.mPalToVTwin[oddLine][0][0][0]);
 			}
 		}
 
 		if (mbTintColorEnabled)
-			ATArtifactPALFinalMono_SSE2(dst, ybuf, N, mTintColor);
+			ATArtifactPALFinalMono_SSE2(dst, ybuf + 4, N, mTintColor);
 		else
-			ATArtifactPALFinal_SSE2(dst, ybuf, ubuf, vbuf, ulbuf, vlbuf, N);
+			ATArtifactPALFinal_SSE2(dst, ybuf + 4, ubuf + 4, vbuf + 4, ulbuf, vlbuf, N);
 	} else 
 #endif
 	{
 		VDMemset32(ubuf, 0x20002000, sizeof(ubuf)/sizeof(ubuf[0]));
 		VDMemset32(vbuf, 0x20002000, sizeof(vbuf)/sizeof(vbuf[0]));
 
-		ATArtifactPALLuma(ybuf, src, N, &mPal2x.mPalToY[oddLine][0][0][0]);
+		ATArtifactPALLuma(ybuf, src, N+16, &mPal2x.mPalToY[oddLine][0][0][0]);
 
 		if (!mbTintColorEnabled) {
-			ATArtifactPALChroma(ubuf, src, N, &mPal2x.mPalToU[oddLine][0][0][0]);
-			ATArtifactPALChroma(vbuf, src, N, &mPal2x.mPalToV[oddLine][0][0][0]);
+			ATArtifactPALChroma(ubuf, src, N+16, &mPal2x.mPalToU[oddLine][0][0][0]);
+			ATArtifactPALChroma(vbuf, src, N+16, &mPal2x.mPalToV[oddLine][0][0][0]);
 		}
 
 		if (mbTintColorEnabled)
-			ATArtifactPALFinalMono(dst, ybuf, N, mMonoTable);
+			ATArtifactPALFinalMono(dst, ybuf + 4, N+16, mMonoTable);
 		else
-			ATArtifactPALFinal(dst, ybuf, ubuf, vbuf, ulbuf, vlbuf, N);
+			ATArtifactPALFinal(dst, ybuf + 4, ubuf + 4, vbuf + 4, ulbuf, vlbuf, N);
 	}
 
 	if (!mbBypassOutputCorrection) {
@@ -2058,13 +2071,13 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 	ATFilterKernel kernvmod;
 
 	// Box filter representing pixel time.
-	kernbase.Init(0) = 1, 1, 1, 1, 1;
+	kernbase.Init(0, { 1, 1, 1, 1, 1 });
 
 	kernbase *= params.mIntensityScale;
 
 	// Chroma low-pass filter. We apply this before encoding to avoid excessive bleeding
 	// into luma.
-	kerncfilt.Init(-5) = 
+	kerncfilt.Init(-5, {
 		  1.0f / 1024.0f,
 		 10.0f / 1024.0f,
 		 45.0f / 1024.0f,
@@ -2075,14 +2088,15 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 		120.0f / 1024.0f,
 		 45.0f / 1024.0f,
 		 10.0f / 1024.0f,
-		  1.0f / 1024.0f;
+		  1.0f / 1024.0f
+	});
 
 	// Modulation filters -- sine and cosine of color subcarrier. We also apply chroma
 	// amplitude adjustment here.
-	const float ivrt2 = 0.70710678118654752440084436210485f;
-	kernumod.Init(0) = 1, ivrt2, 0, -ivrt2, -1, -ivrt2, 0, ivrt2;
+	constexpr float ivrt2 = 0.70710678118654752440084436210485f;
+	kernumod.Init(0, { 1, ivrt2, 0, -ivrt2, -1, -ivrt2, 0, ivrt2 });
 	kernumod *= sat1;
-	kernvmod.Init(0) = 0, ivrt2, 1, ivrt2, 0, -ivrt2, -1, -ivrt2;
+	kernvmod.Init(0, { 0, ivrt2, 1, ivrt2, 0, -ivrt2, -1, -ivrt2 });
 	kernvmod *= sat1;
 
 	ATFilterKernel kernysep;
@@ -2090,7 +2104,7 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 	ATFilterKernel kerncdemod;
 
 	// Luma separation filter -- just a box filter.
-	kernysep.Init(-4) =
+	kernysep.Init(-4, {
 		0.5f / 8.0f,
 		1.0f / 8.0f,
 		1.0f / 8.0f,
@@ -2099,14 +2113,15 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 		1.0f / 8.0f,
 		1.0f / 8.0f,
 		1.0f / 8.0f,
-		0.5f / 8.0f;
+		0.5f / 8.0f
+	});
 
 	// Chroma separation filter -- dot with peaks of sine/cosine waves and apply box filter.
-	kerncsep.Init(-16) = 1,0,0,0,-2,0,0,0,2,0,0,0,-2,0,0,0,2,0,0,0,-2,0,0,0,2,0,0,0,-2,0,0,0,1;
+	kerncsep.Init(-16, { 1,0,0,0,-2,0,0,0,2,0,0,0,-2,0,0,0,2,0,0,0,-2,0,0,0,2,0,0,0,-2,0,0,0,1 });
 	kerncsep *= 1.0f / 16.0f;
 
 	// Demodulation filter. Here we invert every other sample of extracted U and V.
-	kerncdemod.Init(0) =
+	kerncdemod.Init(0, {
 		 -1,
 		 -1,
 		 1,
@@ -2114,13 +2129,17 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 		 1,
 		 1,
 		 -1,
-		 -1;
+		 -1
+	});
 
 	kerncdemod *= sat2 * 0.5f;	// 0.5 is for chroma line averaging
 
 	memset(&mPal8x, 0, sizeof mPal8x);
 
-	const float ycphase = mColorParams.mArtifactHue * nsVDMath::kfPi / 180.0f;
+	// The 90d phase shift is here to compensate for a +2 hires pixel shift we
+	// apply on the source 7MHz data at the start of processing to deal with
+	// alignment issues.
+	const float ycphase = (mColorParams.mArtifactHue + 90.0f) * nsVDMath::kfPi / 180.0f;
 	const float ycphasec = cosf(ycphase);
 	const float ycphases = sinf(ycphase);
 
@@ -2252,8 +2271,8 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 #if VD_CPU_X86 || VD_CPU_X64
 				if (SSE2_enabled) {
 					const int phase4 = phase & 4;
-					int ypos = 3 - phase4*2;
-					int cpos = 12 - phase4*2;
+					int ypos = 4 - phase4*2;
+					int cpos = 13 - phase4*2;
 
 					ATFilterKernelAccumulateWindow(kerny2y[phase], p2yw, ypos, 16, y);
 					ATFilterKernelAccumulateWindow(kernu2y[phase], p2yw, ypos, 16, u);
@@ -2266,6 +2285,32 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 					ATFilterKernelAccumulateWindow(kerny2v[phase], p2vw, cpos, 32, y * co_vr * v_invert);
 					ATFilterKernelAccumulateWindow(kernu2v[phase], p2vw, cpos, 32, u * co_vr * v_invert);
 					ATFilterKernelAccumulateWindow(kernv2v[phase], p2vw, cpos, 32, v * co_vr * v_invert);
+
+					if (debugOut) {
+						using namespace nsVDMath;
+						VDStringA s;
+
+						if (j < 16) {
+							s.sprintf("y_%d_%d_%X  ", k, phase, j);
+
+							for(int offset = 0; offset < 16; ++offset)
+								s.append_sprintf(", %6.3f", p2yw[offset]);
+
+							*debugOut <<= s.c_str();
+						}
+
+						if ((j & 15) == 15) {
+							for(int channel = 0; channel < 2; ++channel) {
+								s.sprintf("%c_%d_%d_%X  ", "uv"[channel], k, phase, j >> 4);
+
+								const float *filt = channel ? p2vw : p2uw;
+								for(int offset = 0; offset < 32; ++offset)
+									s.append_sprintf(", %6.3f", filt[offset]);
+
+								*debugOut <<= s.c_str();
+							}
+						}
+					}
 
 					uint32 *kerny16 = mPal8x.mPalToY[k][j][phase];
 					uint32 *kernu16 = mPal8x.mPalToU[k][j][phase];
@@ -2322,8 +2367,8 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 				} else
 #endif
 				{
-					int ypos = 3 - phase*2;
-					int cpos = 12 - phase*2;
+					int ypos = 4 - phase*2;
+					int cpos = 13 - phase*2;
 
 					ATFilterKernelAccumulateWindow(kerny2y[phase], p2yw, ypos, 8, y);
 					ATFilterKernelAccumulateWindow(kernu2y[phase], p2yw, ypos, 8, u);

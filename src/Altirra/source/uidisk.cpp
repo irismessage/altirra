@@ -644,7 +644,7 @@ protected:
 	void RefreshDriveColor(int driveIndex, bool forceViewUpdate = false);
 	void Eject(int driveIndex);
 	bool ConfirmEject(int driveIndex);
-	void Reinterleave(ATDiskInterface& diskIf, ATDiskInterleave interleave);
+	void Reinterleave(int driveIndex, ATDiskInterface& diskIf, ATDiskInterleave interleave);
 	void Convert(ATDiskInterface& diskIf, ATDiskFormatFileSystem ffs, uint32 sectorSize);
 
 	int GetVisibleDriveOffset(int driveIndex) const;
@@ -1362,17 +1362,18 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 						}
 						break;
 
-					case ID_CHANGEINTERLEAVE_DEFAULT:		Reinterleave(diskIf, kATDiskInterleave_Default); break;
-					case ID_CHANGEINTERLEAVE_1_1:			Reinterleave(diskIf, kATDiskInterleave_1_1); break;
-					case ID_CHANGEINTERLEAVE_SD_12_1:		Reinterleave(diskIf, kATDiskInterleave_SD_12_1); break;
-					case ID_CHANGEINTERLEAVE_SD_9_1:		Reinterleave(diskIf, kATDiskInterleave_SD_9_1); break;
-					case ID_CHANGEINTERLEAVE_SD_9_1_REV:	Reinterleave(diskIf, kATDiskInterleave_SD_9_1_REV); break;
-					case ID_CHANGEINTERLEAVE_SD_5_1:		Reinterleave(diskIf, kATDiskInterleave_SD_5_1); break;
-					case ID_CHANGEINTERLEAVE_ED_13_1:		Reinterleave(diskIf, kATDiskInterleave_ED_13_1); break;
-					case ID_CHANGEINTERLEAVE_ED_12_1:		Reinterleave(diskIf, kATDiskInterleave_ED_12_1); break;
-					case ID_CHANGEINTERLEAVE_DD_15_1:		Reinterleave(diskIf, kATDiskInterleave_DD_15_1); break;
-					case ID_CHANGEINTERLEAVE_DD_9_1:		Reinterleave(diskIf, kATDiskInterleave_DD_9_1); break;
-					case ID_CHANGEINTERLEAVE_DD_7_1:		Reinterleave(diskIf, kATDiskInterleave_DD_7_1); break;
+					case ID_CHANGEINTERLEAVE_DEFAULT:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_Default); break;
+					case ID_CHANGEINTERLEAVE_1_1:			Reinterleave(driveIndex, diskIf, kATDiskInterleave_1_1); break;
+					case ID_CHANGEINTERLEAVE_SD_12_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_SD_12_1); break;
+					case ID_CHANGEINTERLEAVE_SD_9_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_SD_9_1); break;
+					case ID_CHANGEINTERLEAVE_SD_9_1_REV:	Reinterleave(driveIndex, diskIf, kATDiskInterleave_SD_9_1_REV); break;
+					case ID_CHANGEINTERLEAVE_SD_5_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_SD_5_1); break;
+					case ID_CHANGEINTERLEAVE_SD_2_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_SD_2_1); break;
+					case ID_CHANGEINTERLEAVE_ED_13_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_ED_13_1); break;
+					case ID_CHANGEINTERLEAVE_ED_12_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_ED_12_1); break;
+					case ID_CHANGEINTERLEAVE_DD_15_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_DD_15_1); break;
+					case ID_CHANGEINTERLEAVE_DD_9_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_DD_9_1); break;
+					case ID_CHANGEINTERLEAVE_DD_7_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_DD_7_1); break;
 
 					case ID_CONVERTTO_DOS1_SD:
 						Convert(diskIf, kATDiskFFS_DOS1, 128);
@@ -1767,7 +1768,7 @@ bool ATDiskDriveDialog::ConfirmEject(int driveIndex) {
 	return Confirm(message.c_str());
 }
 
-void ATDiskDriveDialog::Reinterleave(ATDiskInterface& diskIf, ATDiskInterleave interleave) {
+void ATDiskDriveDialog::Reinterleave(int driveIndex, ATDiskInterface& diskIf, ATDiskInterleave interleave) {
 	IATDiskImage *img = diskIf.GetDiskImage();
 	if (!img)
 		return;
@@ -1778,6 +1779,9 @@ void ATDiskDriveDialog::Reinterleave(ATDiskInterface& diskIf, ATDiskInterleave i
 	}
 
 	img->Reinterleave(interleave);
+	diskIf.OnDiskModified();
+
+	RefreshDriveColor(driveIndex);
 }
 
 void ATDiskDriveDialog::Convert(ATDiskInterface& diskIf, ATDiskFormatFileSystem ffs, uint32 sectorSize) {
@@ -1787,6 +1791,9 @@ void ATDiskDriveDialog::Convert(ATDiskInterface& diskIf, ATDiskFormatFileSystem 
 
 	try {
 		vdautoptr<IATDiskFS> fs(ATDiskMountImage(img, true));
+		if (!fs)
+			throw MyError("The disk image does not use a supported filesystem.");
+
 		vdrefptr<IATDiskImage> newImage;
 		vdautoptr<IATDiskFS> newfs;
 		uint32 diskSize;
@@ -1836,7 +1843,7 @@ void ATDiskDriveDialog::Convert(ATDiskInterface& diskIf, ATDiskFormatFileSystem 
 		VDStringW origName { VDFileSplitPath(diskIf.GetPath()) };
 		diskIf.LoadDisk(nullptr, origName.c_str(), newImage);
 	} catch(const MyError& e) {
-		ShowError(e);
+		ShowError2(e, L"Unable to convert filesystem");
 	}
 }
 

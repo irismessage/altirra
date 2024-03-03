@@ -90,14 +90,18 @@ public:
 	// external functions
 
 	bool ThreadStart();							// start thread
-	void ThreadDetach();						// detach thread (wait() won't be called)
 	void ThreadWait();							// wait for thread to finish
 
+	// return true if thread is still running
 	bool isThreadActive();
 
-	bool isThreadAttached() const {				// NOTE: Will return true if thread started, even if thread has since exited
+	// return true if thread is still attached (though it may have exited)
+	bool isThreadAttached() const {
 		return mhThread != 0;
 	}
+
+	// return true if running on this thread
+	bool IsCurrentThread() const;
 
 	VDThreadHandle getThreadHandle() const {	// get handle to thread (Win32: HANDLE)
 		return mhThread;
@@ -107,15 +111,13 @@ public:
 		return mThreadID;
 	}
 
-	void *ThreadLocation() const;				// retrieve current EIP of thread (use only for debug purposes -- may not return reliable information on syscall, etc.)
-
 	// thread-local functions
 
 	virtual void ThreadRun() = 0;				// thread, come to life
-	void ThreadFinish();						// exit thread
 
 private:
 	static unsigned __stdcall StaticThreadStart(void *pThis);
+	void ThreadDetach();
 
 	const char *mpszDebugName;
 	VDThreadHandle	mhThread;
@@ -207,10 +209,13 @@ public:
 ///////////////////////////////////////////////////////////////////////////
 
 class VDSignalBase {
+	VDSignalBase(const VDSignalBase&) = delete;
+	VDSignalBase& operator=(const VDSignalBase&) = delete;
 protected:
 	void *hEvent;
 
 public:
+	VDSignalBase() = default;
 	~VDSignalBase();
 
 	void signal();
@@ -218,7 +223,7 @@ public:
 	void wait();
 	int wait(VDSignalBase *second);
 	int wait(VDSignalBase *second, VDSignalBase *third);
-	static int waitMultiple(const VDSignalBase **signals, int count);
+	static int waitMultiple(const VDSignalBase *const *signals, int count);
 
 	bool tryWait(uint32 timeoutMillisec);
 
@@ -228,15 +233,11 @@ public:
 };
 
 class VDSignal : public VDSignalBase {
-	VDSignal(const VDSignal&);
-	VDSignal& operator=(const VDSignal&);
 public:
 	VDSignal();
 };
 
 class VDSignalPersistent : public VDSignalBase {
-	VDSignalPersistent(const VDSignalPersistent&);
-	VDSignalPersistent& operator=(const VDSignalPersistent&);
 public:
 	VDSignalPersistent();
 

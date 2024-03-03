@@ -94,10 +94,12 @@ public:
 
 public:
 	virtual void PokeyAttachDevice(ATPokeyEmulator *pokey) override;
-	virtual bool PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uint64 startTime, bool framingError) override;
+	virtual void PokeyBeginWriteSIO(uint8 c, bool command, uint32 cyclesPerBit) override;
+	virtual bool PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uint64 startTime, bool framingError, bool truncated) override;
 	virtual void PokeyBeginCommand() override;
 	virtual void PokeyEndCommand() override;
 	virtual void PokeySerInReady() override;
+	virtual void PokeySetBreak(bool enabled) override;
 
 public:		// IATDeviceSIOManager
 	virtual void AddDevice(IATDeviceSIO *dev) override;
@@ -135,6 +137,7 @@ public:		// IATDeviceSIOManager
 	bool IsSIOCommandAsserted() const override;
 	bool IsSIOMotorAsserted() const override;
 	bool IsSIOReadyAsserted() const override;
+	bool IsSIOForceBreakAsserted() const override;
 
 	virtual void SetSIOInterrupt(IATDeviceRawSIO *dev, bool state) override;
 	virtual void SetSIOProceed(IATDeviceRawSIO *dev, bool state) override;
@@ -202,6 +205,7 @@ private:
 	uint32	mTransferIndex = 0;		// Next byte to send/receive for current transfer.
 	uint32	mTransferEnd = 0;		// Stopping offset for current transfer.
 	uint32	mTransferBurstOffset = 0;
+	uint32	mTransferLastBurstOffset = 0;
 	uint32	mTransferCyclesPerBit = 0;
 	uint32	mTransferCyclesPerBitRecvMin = 0;
 	uint32	mTransferCyclesPerBitRecvMax = 0;

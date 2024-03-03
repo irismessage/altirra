@@ -276,7 +276,7 @@ public:
 };
 
 void ATCreateNewCassetteImage(IATCassetteImage **ppImage);
-void ATLoadCassetteImage(IVDRandomAccessStream& file, IVDRandomAccessStream *analysisOutput, const ATCassetteLoadContext& ctx, IATCassetteImage **ppImage);
+void ATLoadCassetteImage(IVDRandomAccessStream& file, const wchar_t *origNameOverride, IVDRandomAccessStream *analysisOutput, const ATCassetteLoadContext& ctx, IATCassetteImage **ppImage);
 void ATSaveCassetteImageCAS(IVDRandomAccessStream& file, IATCassetteImage *image);
 void ATSaveCassetteImageWAV(IVDRandomAccessStream& file, IATCassetteImage *image);
 

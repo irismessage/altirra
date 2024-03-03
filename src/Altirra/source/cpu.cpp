@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <at/atcore/enumparseimpl.h>
 #include <at/atcore/serialization.h>
 #include <at/atcore/snapshotimpl.h>
 #include <at/atdebugger/target.h>
@@ -33,6 +34,12 @@
 #include "cpuheatmap.h"
 
 using namespace AT6502;
+
+AT_DEFINE_ENUM_TABLE_BEGIN(ATCPUMode)
+	{ kATCPUMode_6502, "6502" },
+	{ kATCPUMode_65C02, "65c02" },
+	{ kATCPUMode_65C816, "65c816" },
+AT_DEFINE_ENUM_TABLE_END(ATCPUMode, kATCPUMode_6502)
 
 // #define PROFILE_OPCODES
 
@@ -102,7 +109,9 @@ ATCPUEmulator::ATCPUEmulator()
 	, mpHeatMap(NULL)
 	, mpBkptManager(NULL)
 {
-	static_assert((vdcountof(mHistory) & (vdcountof(mHistory) - 1)) == 0, "History size must be power of two");
+	static_assert((kHistoryLength & (kHistoryLength - 1)) == 0, "History size must be power of two");
+
+	mHistory.resize(kHistoryLength);
 
 	mSBrk = 0x100;
 	mbTrace = false;
@@ -151,8 +160,9 @@ bool ATCPUEmulator::Init(ATCPUEmulatorMemory *mem, ATCPUHookManager *hookmgr, AT
 
 	ColdReset();
 
-	memset(mHistory, 0, sizeof mHistory);
-	mHistoryIndex = 0;
+	std::fill(mHistory.begin(), mHistory.end(), ATCPUHistoryEntry{});
+	mHistoryBase = 0;
+	mpHistoryNext = mHistory.begin();
 
 	return true;
 }
@@ -772,7 +782,7 @@ void ATCPUEmulator::LoadStateResetPrivate(ATSaveStateReader& reader) {
 void ATCPUEmulator::EndLoadState(ATSaveStateReader& reader) {
 }
 
-class ATSaveStateCPU816 final : public ATSnapExchangeObject<ATSaveStateCPU816> {
+class ATSaveStateCPU816 final : public ATSnapExchangeObject<ATSaveStateCPU816, "ATSaveStateCPU816"> {
 public:
 	template<typename T>
 	void Exchange(T& rw) {
@@ -781,21 +791,22 @@ public:
 		rw.Transfer("yh", &mYH);
 		rw.Transfer("sh", &mSH);
 		rw.Transfer("b", &mB);
+		rw.Transfer("d", &mDP);
 		rw.Transfer("k", &mK);
 		rw.Transfer("e", &mbEmulationFlag);
 	}
 
-	uint8 mAH;
-	uint8 mXH;
-	uint8 mYH;
-	uint8 mSH;
-	uint16 mDP;
-	uint8 mB;
-	uint8 mK;
-	bool mbEmulationFlag;
+	uint8 mAH = 0;
+	uint8 mXH = 0;
+	uint8 mYH = 0;
+	uint8 mSH = 0;
+	uint16 mDP = 0;
+	uint8 mB = 0;
+	uint8 mK = 0;
+	bool mbEmulationFlag = false;
 };
 
-class ATSaveStateCPU final : public ATSnapExchangeObject<ATSaveStateCPU> {
+class ATSaveStateCPU final : public ATSnapExchangeObject<ATSaveStateCPU, "ATSaveStateCPU"> {
 public:
 	template<typename T>
 	void Exchange(T& rw) {
@@ -855,9 +866,6 @@ public:
 	uint16 mData16 = 0;
 	uint8 mAddrBank = 0;
 };
-
-ATSERIALIZATION_DEFINE(ATSaveStateCPU);
-ATSERIALIZATION_DEFINE(ATSaveStateCPU816);
 
 namespace {
 	bool IsCycleEndingState(ATCPUState state) {
@@ -1226,8 +1234,14 @@ void ATCPUEmulator::SaveState(IATObjectState **result) {
 	*result = obj.release();
 }
 
-bool ATCPUEmulator::LoadState(const IATObjectState& state) {
-	const ATSaveStateCPU& cpustate = atser_cast<const ATSaveStateCPU&>(state);
+void ATCPUEmulator::LoadState(const IATObjectState *state) {
+	if (state)
+		return LoadState(atser_cast<const ATSaveStateCPU&>(*state));
+	else
+		return LoadState(ATSaveStateCPU{});
+}
+
+void ATCPUEmulator::LoadState(const ATSaveStateCPU& cpustate) {
 	const uint32 t = mpCallbacks->CPUGetUnhaltedAndRDYCycle();
 
 	SetPC(cpustate.mPC);			// also resets next state
@@ -1253,10 +1267,7 @@ bool ATCPUEmulator::LoadState(const IATObjectState& state) {
 	mAddrBank = cpustate.mAddrBank;
 
 
-	if (mCPUMode == kATCPUMode_65C816) {
-		if (!cpustate.mp816)
-			throw ATInvalidSaveStateException();
-
+	if (mCPUMode == kATCPUMode_65C816 && cpustate.mp816) {
 		const ATSaveStateCPU816& cpustate816 = *cpustate.mp816;
 		mAH = cpustate816.mAH;
 		mXH = cpustate816.mXH;
@@ -1305,8 +1316,6 @@ bool ATCPUEmulator::LoadState(const IATObjectState& state) {
 
 		mpNextState = insnStates;
 	}
-
-	return true;
 }
 
 void ATCPUEmulator::InjectOpcode(uint8 op) {
@@ -1374,6 +1383,37 @@ void ATCPUEmulator::AssertNMI() {
 void ATCPUEmulator::AssertABORT() {
 	if (mDecodePtrs[(uint32)ExtOpcode::Abort])
 		mpNextState = mDecodeHeap + mDecodePtrs[(uint32)ExtOpcode::Abort];
+}
+
+void ATCPUEmulator::AssertRDY() {
+	// If the next opcode is opdecode, check if we should take the interrupt next
+	// cycle, and if so, lock in the cycle. We need to do this because this check
+	// actually happens in the end of the last instruction, and that can happen
+	// before execution is suspended after an INC WSYNC.
+	switch(*mpNextState) {
+		case AT6502States::kStateReadOpcode:
+		case AT6502States::kStateReadOpcodeNoBreak:
+			if (mSubCycles > 1)
+				ProcessInterrupts<true>();
+			else
+				ProcessInterrupts<false>();
+			break;
+	}
+}
+
+void ATCPUEmulator::NegateRDY() {
+	// If an NMI is pending, we must not allow the NMI to be taken on the next
+	// instruction. This is because the 6502 only checks for NMIs at the end of
+	// an instruction and the CPU has already started the next instruction when
+	// it is halted by RDY being pulled low by ANTIC. Therefore, that instruction
+	// will always execute before the NMI is taken.
+	//
+	// It's possible that this may be off by a cycle or so, but this doesn't matter
+	// in the Atari where RDY is released relatively far from when the NMI can
+	// occur.
+
+	if (mIntFlags & kIntFlag_NMIPending)
+		mNMIAssertTime = mpCallbacks->CPUGetUnhaltedAndRDYCycle() - 1;
 }
 
 void ATCPUEmulator::PeriodicCleanup() {
@@ -1601,7 +1641,12 @@ uint8 ATCPUEmulator::ProcessHook816() {
 
 template<bool is816, bool hispeed>
 void ATCPUEmulator::AddHistoryEntry(bool slowFlag) {
-	HistoryEntry * VDRESTRICT he = &mHistory[mHistoryIndex++ & (vdcountof(mHistory) - 1)];
+	if (mpHistoryNext == mHistory.end()) {
+		mpHistoryNext = mHistory.begin();
+		mHistoryBase += kHistoryLength;
+	}
+
+	ATCPUHistoryEntry * VDRESTRICT he = mpHistoryNext++;
 
 	ATCPU_PROFILE_OPCODE(mPC-1, mOpcode);
 
@@ -1620,10 +1665,10 @@ void ATCPUEmulator::AddHistoryEntry(bool slowFlag) {
 
 		void test() {
 			static_assert(
-				!(offsetof(HistoryEntry, mA) & 3)
-				&& offsetof(HistoryEntry, mX) == offsetof(HistoryEntry, mA)+1
-				&& offsetof(HistoryEntry, mY) == offsetof(HistoryEntry, mA)+2
-				&& offsetof(HistoryEntry, mS) == offsetof(HistoryEntry, mA)+3
+				!(offsetof(ATCPUHistoryEntry, mA) & 3)
+				&& offsetof(ATCPUHistoryEntry, mX) == offsetof(ATCPUHistoryEntry, mA)+1
+				&& offsetof(ATCPUHistoryEntry, mY) == offsetof(ATCPUHistoryEntry, mA)+2
+				&& offsetof(ATCPUHistoryEntry, mS) == offsetof(ATCPUHistoryEntry, mA)+3
 				&& !(offsetof(ATCPUEmulator, mA) & 3)
 				&& offsetof(ATCPUEmulator, mX) == offsetof(ATCPUEmulator, mA)+1
 				&& offsetof(ATCPUEmulator, mY) == offsetof(ATCPUEmulator, mA)+2

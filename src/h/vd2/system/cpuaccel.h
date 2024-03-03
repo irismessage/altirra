@@ -27,26 +27,25 @@
 #define f_VD2_SYSTEM_CPUACCEL_H
 
 #if VD_CPU_X86 || VD_CPU_X64
-static constexpr auto CPUF_SUPPORTS_CPUID		= (0x00000001L);
-static constexpr auto CPUF_SUPPORTS_FPU			= (0x00000002L);
 static constexpr auto CPUF_SUPPORTS_MMX			= (0x00000004L);
 static constexpr auto CPUF_SUPPORTS_INTEGER_SSE	= (0x00000008L);
 static constexpr auto CPUF_SUPPORTS_SSE			= (0x00000010L);
 static constexpr auto CPUF_SUPPORTS_SSE2		= (0x00000020L);
-// unused, formerly 3DNow!						= (0x00000040L);
-// unused, formerly Extended 3DNow!				= (0x00000080L);
-static constexpr auto CPUF_SUPPORTS_SSE3		= (0x00000100L);
-static constexpr auto CPUF_SUPPORTS_SSSE3		= (0x00000200L);
-static constexpr auto CPUF_SUPPORTS_SSE41		= (0x00000400L);
-static constexpr auto CPUF_SUPPORTS_AVX			= (0x00000800L);
-static constexpr auto CPUF_SUPPORTS_AVX2		= (0x00001000L);
-static constexpr auto CPUF_SUPPORTS_SHA			= (0x00002000L);
-static constexpr auto CPUF_SUPPORTS_CLMUL		= (0x00004000L);	// CLMUL - carryless multiply; also implies SSE4.1/2
-static constexpr auto CPUF_SUPPORTS_LZCNT		= (0x00008000L);	// LZCNT - lzcnt instruction; Intel Haswell+, AMD K10+
+static constexpr auto CPUF_SUPPORTS_SSE3		= (0x00000040L);
+static constexpr auto CPUF_SUPPORTS_SSSE3		= (0x00000080L);
+static constexpr auto CPUF_SUPPORTS_SSE41		= (0x00000100L);
+static constexpr auto CPUF_SUPPORTS_SSE42		= (0x00000200L);
+static constexpr auto CPUF_SUPPORTS_AVX			= (0x00000400L);
+static constexpr auto CPUF_SUPPORTS_AVX2		= (0x00000800L);
+static constexpr auto CPUF_SUPPORTS_SHA			= (0x00001000L);
+static constexpr auto CPUF_SUPPORTS_CLMUL		= (0x00002000L);	// CLMUL - carryless multiply; also implies SSE4.1/2
+static constexpr auto CPUF_SUPPORTS_LZCNT		= (0x00004000L);	// LZCNT - lzcnt instruction; Intel Haswell+, AMD K10+
+static constexpr auto VDCPUF_SUPPORTS_POPCNT	= (0x00008000L);	// POPCNT - popcnt instruction; Intel Nehelem+, 
 static constexpr auto CPUF_SUPPORTS_MASK		= (0x0000FFFFL);
 #else
 static constexpr auto VDCPUF_SUPPORTS_CRYPTO	= (0x00000001L);
-static constexpr auto VDCPUF_SUPPORTS_MASK		= (0x00000001L);
+static constexpr auto VDCPUF_SUPPORTS_CRC32		= (0x00000002L);
+static constexpr auto VDCPUF_SUPPORTS_MASK		= (0x00000003L);
 #endif
 
 long CPUCheckForExtensions();
@@ -57,10 +56,15 @@ inline long CPUGetEnabledExtensions() {
 	return g_lCPUExtensionsEnabled;
 }
 
+inline bool VDCheckAllExtensionsEnabled(uint32 mask) {
+	extern long g_lCPUExtensionsEnabled;
+	return (g_lCPUExtensionsEnabled & mask) == mask;
+}
+
 void VDCPUCleanupExtensions();
 
 #if VD_CPU_X86 || VD_CPU_X64
-extern "C" bool FPU_enabled, MMX_enabled, SSE_enabled, ISSE_enabled, SSE2_enabled;
+extern "C" bool MMX_enabled, ISSE_enabled, SSE2_enabled;
 #endif
 
 #endif

@@ -37,7 +37,9 @@ public:
 	~ATCoProc6502();
 
 	uintptr *GetReadMap() { return mReadMap; }
+	const uintptr *GetReadMap() const { return mReadMap; }
 	uintptr *GetWriteMap() { return mWriteMap; }
+	const uintptr *GetWriteMap() const { return mWriteMap; }
 	uint32 *GetTraceMap() { return mTraceMap; }
 
 	void SetHistoryBuffer(ATCPUHistoryEntry buffer[131072]);

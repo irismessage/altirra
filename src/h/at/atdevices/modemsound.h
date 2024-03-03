@@ -26,6 +26,7 @@ enum class ATSoundId : uint32;
 class ATSoundSourceSingleTone;
 class ATSoundSourceDualTone;
 class ATSoundSourceModemData;
+class ATSoundSourceOnOffHook;
 class IATAudioSoundGroup;
 
 class ATModemSoundEngine final
@@ -42,9 +43,14 @@ public:
 	void Reset();
 	void Shutdown();
 
+	// Set whether audio is enabled according to the current sequencing phase.
 	void SetAudioEnabledByPhase(bool enable);
+
+	// Set whether audio is enabled by the speaker enable.
 	void SetSpeakerEnabled(bool enable);
 
+	void PlayOnOffHookSound();
+	void Play1030RelaySound();
 	void PlayDialTone();
 	void PlayDTMFTone(uint32 index);
 	void PlayRingingTone();
@@ -56,7 +62,11 @@ public:
 	void PlayTrainingToneV32();
 	void PlayAnswerTone(bool bell212a);
 	void PlayEchoSuppressionTone();
+
+	// Stop all sounds.
 	void Stop();
+
+	// Stop primary sound.
 	void Stop1();
 
 public:		// IATSyncAudioSource
@@ -72,13 +82,13 @@ private:
 	IATAudioMixer *mpAudioMixer = nullptr;
 	ATSoundId mSoundId {};
 	ATSoundId mSoundId2 {};
-	bool mbDialToneActive = false;
 	bool mbSpeakerEnabled = true;
 	bool mbAudioEnabled = false;
 	bool mbAudioEnabledByPhase = false;
 
-	ATSoundSourceSingleTone *mpSingleToneSource = nullptr;
-	ATSoundSourceDualTone *mpDualToneSource = nullptr;
+	vdrefptr<ATSoundSourceSingleTone> mpSingleToneSource;
+	vdrefptr<ATSoundSourceDualTone> mpDualToneSource;
+	vdrefptr<ATSoundSourceOnOffHook> mpOnOffHookSource;
 
 	vdrefptr<IATAudioSoundGroup> mpSoundGroup;
 };

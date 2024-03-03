@@ -592,12 +592,14 @@ private:
 	bool OnLoaded() override;
 	void OnDestroy() override;
 	bool PreNCDestroy() override;
+	bool OnPreTranslate(VDZMSG& msg);
 	bool OnErase(VDZHDC hdc) override;
 	bool OnCommand(uint32 id, uint32 extcode) override;
 	bool OnOK() override;
 	bool OnCancel() override;
 	void OnSetFont(VDZHFONT hfont) override;
 	void OnSize() override;
+	void OnCopy();
 
 	bool ShouldSetDialogIcon() const override { return false; }
 
@@ -680,6 +682,10 @@ VDZINT_PTR ATGenericDialogW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM 
 			}
 
 			break;
+
+		case WM_COPY:
+			OnCopy();
+			return 0;
 	}
 
 	return VDDialogFrameW32::DlgProc(msg, wParam, lParam);
@@ -850,6 +856,21 @@ bool ATGenericDialogW32::PreNCDestroy() {
 	return VDDialogFrameW32::PreNCDestroy();
 }
 
+bool ATGenericDialogW32::OnPreTranslate(VDZMSG& msg) {
+	if (msg.message == WM_KEYDOWN) {
+		if (msg.wParam == 'C' && GetKeyState(VK_CONTROL) < 0) {
+			SendMessage(mhdlg, WM_COPY, 0, 0);
+			return true;
+		}
+	} else if (msg.message == WM_KEYUP) {
+		if (msg.wParam == 'C' && GetKeyState(VK_CONTROL) < 0) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 bool ATGenericDialogW32::OnErase(VDZHDC hdc) {
 	RECT r;
 	if (GetClientRect(mhdlg, &r)) {
@@ -939,6 +960,81 @@ void ATGenericDialogW32::OnSize() {
 
 		InvalidateRect(mhdlg, NULL, TRUE);
 	}
+}
+
+void ATGenericDialogW32::OnCopy() {
+	// The classic Win32 message box copies text in the following form:
+	//
+	//	--------
+	//	caption
+	//	--------
+	//	message
+	//	--------
+	//	buttons
+	//	--------
+	//
+	// The Vista task dialog is somewhat different:
+	//
+	//	[Window Title]
+	//	...
+	//
+	//	[Main Instruction]
+	//	...
+	//
+	//	[button1] [button2]...
+	//
+	// We follow the task dialog style here.
+
+	VDStringW text;
+
+	text = L"[Window Title]\r\n";
+	text += mOptions.mpCaption ? mOptions.mpCaption : sDefaultCaption.c_str();
+
+	text += L"\r\n\r\n[Main Instruction]\r\n";
+	text += mOptions.mpMessage;
+
+	text += L"\r\n\r\n";
+
+	if (mOptions.mResultMask & kATUIGenericResultMask_Yes)
+		text += L"[Yes] ";
+
+	if (mOptions.mResultMask & kATUIGenericResultMask_No)
+		text += L"[No] ";
+
+	if (mOptions.mResultMask & kATUIGenericResultMask_Allow)
+		text += L"[Allow] ";
+
+	if (mOptions.mResultMask & kATUIGenericResultMask_OK)
+		text += L"[OK] ";
+
+	if (mOptions.mResultMask & kATUIGenericResultMask_Allow)
+		text += L"[Deny] ";
+
+	if (mOptions.mResultMask & kATUIGenericResultMask_OK)
+		text += L"[Cancel] ";
+
+	if (text.back() == L' ')
+		text.pop_back();
+
+	if (!::OpenClipboard(mhdlg))
+		return;
+
+	if (::EmptyClipboard()) {
+		const size_t len = text.size();
+		if (HANDLE hMem = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, (len + 1) * sizeof(WCHAR))) {
+			if (void *lpvMem = ::GlobalLock(hMem)) {
+				memcpy(lpvMem, text.c_str(), (len + 1) * sizeof(WCHAR));
+
+				::GlobalUnlock(lpvMem);
+				::SetClipboardData(CF_UNICODETEXT, hMem);
+				::CloseClipboard();
+				return;
+			}
+			::GlobalFree(hMem);
+		}
+	}
+	::CloseClipboard();
+
 }
 
 void ATGenericDialogW32::ReinitLayout() {
@@ -1226,7 +1322,7 @@ ATUIGenericResult ATUIShowGenericDialog(const ATUIGenericDialogOptions& opts) {
 			// At this point, we've retrieved a previously saved setting. However,
 			// we need to validate it against the valid options in case it was saved
 			// from a version that had different options.
-			if (opts.mValidIgnoreMask & (UINT32_C(1) << (int)value))
+			if (valid && (opts.mValidIgnoreMask & (UINT32_C(1) << (int)value)))
 				return value;
 		}
 	}

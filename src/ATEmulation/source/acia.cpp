@@ -26,8 +26,9 @@
 //
 
 #include <stdafx.h>
-#include <at/atcore/scheduler.h>
 #include <at/atcore/logging.h>
+#include <at/atcore/scheduler.h>
+#include <at/atcore/snapshotimpl.h>
 #include <at/atemulation/acia.h>
 
 ATLogChannel g_ATLCACIAIO(false, false, "ACIAIO", "6551 ACIA input/output traffic");
@@ -62,6 +63,10 @@ ATACIA6551Emulator::ATACIA6551Emulator()
 	, mpEventReceivePoll(nullptr)
 	, mPollRate(0)
 {
+	mpInterruptFn = [](bool) {};
+	mpReceiveReadyFn = [] {};
+	mpTransmitFn = [](uint8, uint32) {};
+	mpControlFn = [](bool, bool) {};
 }
 
 ATACIA6551Emulator::~ATACIA6551Emulator() {
@@ -100,6 +105,38 @@ void ATACIA6551Emulator::SetControlFn(const vdfunction<void(bool, bool)>& fn) {
 	mpControlFn = fn;
 }
 
+void ATACIA6551Emulator::SetDCD(bool asserted, bool triggerIRQ) {
+	const uint8 newBit = asserted ? 0x00 : 0x20;
+
+	if ((mStatus ^ newBit) & 0x20) {
+		mStatus ^= 0x20;
+
+		// trigger IRQ on change if receive IRQs are enabled
+		if (!(mCommand & 0x02) && triggerIRQ) {
+			mStatus |= 0x80;
+
+			if (mpInterruptFn)
+				mpInterruptFn(true);
+		}
+	}
+}
+
+void ATACIA6551Emulator::SetDSR(bool asserted, bool triggerIRQ) {
+	const uint8 newBit = asserted ? 0x00 : 0x40;
+
+	if ((mStatus ^ newBit) & 0x40) {
+		mStatus ^= 0x40;
+
+		// trigger IRQ on change if receive IRQs are enabled
+		if (!(mCommand & 0x02) && triggerIRQ) {
+			mStatus |= 0x80;
+
+			if (mpInterruptFn)
+				mpInterruptFn(true);
+		}
+	}
+}
+
 bool ATACIA6551Emulator::IsReceiveReady() const {
 	return mCyclesPerByte && !mpEventReceive;
 }
@@ -129,7 +166,9 @@ void ATACIA6551Emulator::Reset() {
 	if (mpInterruptFn)
 		mpInterruptFn(false);
 
-	mStatus = 0x10;
+	// DCD and DSR (bits 5 and 6) are from external signals, so we shouldn't reset
+	// them.
+	mStatus = (mStatus & 0x60) + 0x10;
 	mControl = 0;
 	mCommand = 0;
 	mbControlLineChanged = false;
@@ -166,9 +205,17 @@ uint8 ATACIA6551Emulator::ReadByte(uint8 address) {
 		case 0:		// receive data
 			// clear receive data register full status bit
 			mStatus &= ~0x08;
-			return mReceiveData;
+			return mReceiveData; 
 
 		case 1:		// status
+			// D7=1: /IRQ asserted
+			// D6=0: /DSR asserted
+			// D5=0: /DCD asserted
+			// D4=1: transmitter data register empty
+			// D3=1: receive data register full
+			// D2=0: overrun
+			// D1=1: framing error
+			// D0=1: parity error
 			{
 				uint8 v = mStatus;
 
@@ -232,6 +279,85 @@ void ATACIA6551Emulator::WriteByte(uint8 address, uint8 value) {
 		default:
 			VDNEVERHERE;
 	}
+}
+
+struct ATSaveStateACIA6551 final : public ATSnapExchangeObject<ATSaveStateACIA6551, "ATSaveStateACIA6551"> {
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	uint8 mArchTransmitData = 0;
+	uint8 mArchReceiveData = 0;
+	uint8 mArchStatus = 0;
+	uint8 mArchCommand = 0;
+	uint8 mArchControl = 0;
+
+	bool mbIntTransmitShiftBusy = false;
+	uint8 mIntTransmitShift = 0;
+	uint32 mIntTransmitCyclesLeft = 0;
+
+	bool mbIntReceiveShiftBusy = false;
+	bool mbIntReceiveShiftFramingError = false;
+	uint8 mIntReceiveShift = 0;
+	uint32 mIntReceiveCyclesLeft = 0;
+};
+
+template<ATExchanger T>
+void ATSaveStateACIA6551::Exchange(T& ex) {
+	ex.Transfer("arch_xmit_data", &mArchTransmitData);
+	ex.Transfer("arch_recv_data", &mArchReceiveData);
+	ex.Transfer("arch_status", &mArchStatus);
+	ex.Transfer("arch_command", &mArchCommand);
+	ex.Transfer("arch_control", &mArchControl);
+
+	ex.Transfer("int_xmit_shift_busy", &mbIntTransmitShiftBusy);
+	ex.Transfer("int_xmit_shift_data", &mIntTransmitShift);
+	ex.Transfer("int_xmit_cycles_left", &mIntTransmitCyclesLeft);
+
+	ex.Transfer("int_recv_shift_busy", &mbIntReceiveShiftBusy);
+	ex.Transfer("int_recv_shift_framingerr", &mbIntReceiveShiftFramingError);
+	ex.Transfer("int_recv_shift_data", &mIntReceiveShift);
+	ex.Transfer("int_recv_cycles_left", &mIntReceiveCyclesLeft);
+}
+
+void ATACIA6551Emulator::LoadState(const IATObjectState *state) {
+	if (!state) {
+		const ATSaveStateACIA6551 kDefaultState {};
+
+		return LoadState(&kDefaultState);
+	}
+
+	const auto& aciastate = atser_cast<const ATSaveStateACIA6551&>(*state);
+
+	mTransmitData = aciastate.mArchTransmitData;
+	mReceiveData = aciastate.mArchReceiveData;
+
+	// Preserve bits 5 and 6, as they reflect external signals and don't
+	// represent ACIA state.
+	mStatus = (mStatus & 0x60) + (aciastate.mArchStatus & 0x9F);
+
+	WriteByte(2, aciastate.mArchCommand);
+
+	mControl = aciastate.mArchControl;
+
+	mTransmitShift = aciastate.mIntTransmitShift;
+	mReceiveShift = aciastate.mIntReceiveShift;
+
+	UpdateBaudRate();
+
+	if (mpInterruptFn)
+		mpInterruptFn((mStatus & 0x80) != 0);
+}
+
+vdrefptr<IATObjectState> ATACIA6551Emulator::SaveState() const {
+	vdrefptr aciastate { new ATSaveStateACIA6551 };
+
+	aciastate->mArchTransmitData = mTransmitData;
+	aciastate->mArchReceiveData = mReceiveData;
+	aciastate->mArchStatus = mStatus;
+	aciastate->mArchCommand = mCommand;
+	aciastate->mArchControl = mControl;
+
+	return aciastate;
 }
 
 void ATACIA6551Emulator::OnScheduledEvent(uint32 id) {

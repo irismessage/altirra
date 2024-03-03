@@ -441,7 +441,7 @@ void ATDebugDisplay::Update() {
 							dst32[2] = dst32[3] = pal[(c >> 4) & 3];
 							dst32[4] = dst32[5] = pal[(c >> 2) & 3];
 							dst32[6] = dst32[7] = pal[(c >> 0) & 3];
-							dst32 += 4;
+							dst32 += 8;
 						}
 					}
 					break;

@@ -3,10 +3,10 @@
 
 #include <vd2/system/refcount.h>
 
-class IATSocketListener;
-class IATUdpSocketListener;
-class IATNetUdpStack;
-class IATNetTcpStack;
+class IATEmuNetSocketListener;
+class IATEmuNetUdpSocketListener;
+class IATEmuNetUdpStack;
+class IATEmuNetTcpStack;
 
 struct ATNetConnectionInfo {
 	uint8 mRemoteAddr[4];
@@ -19,15 +19,15 @@ struct ATNetConnectionInfo {
 
 class IATEthernetGatewayServer : public IVDRefCount {
 public:
-	virtual void Init(IATEthernetSegment *seg, uint32 clockIndex, uint32 netaddr, uint32 netmask) = 0;
+	virtual void Init(IATEthernetSegment *seg, uint32 clockIndex, uint32 netaddr, uint32 netmask, bool natEnabled) = 0;
 	virtual void Shutdown() = 0;
 
 	virtual void ColdReset() = 0;
 
-	virtual IATNetUdpStack *GetUdpStack() = 0;
-	virtual IATNetTcpStack *GetTcpStack() = 0;
+	virtual IATEmuNetUdpStack *GetUdpStack() = 0;
+	virtual IATEmuNetTcpStack *GetTcpStack() = 0;
 
-	virtual void SetBridgeListener(IATSocketListener *p, IATUdpSocketListener *udp) = 0;
+	virtual void SetBridgeListener(IATEmuNetSocketListener *p, IATEmuNetUdpSocketListener *udp) = 0;
 
 	virtual void GetConnectionInfo(vdfastvector<ATNetConnectionInfo>& connInfo) const = 0;
 };

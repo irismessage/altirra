@@ -64,9 +64,7 @@ extern const VDPixmapFormatInfo g_vdPixmapFormats[] = {
 };
 
 namespace {
-	void check() {
-		VDASSERTCT(sizeof(g_vdPixmapFormats)/sizeof(g_vdPixmapFormats[0]) == nsVDPixmap::kPixFormat_Max_Standard);
-	}
+	static_assert(vdcountof(g_vdPixmapFormats) == nsVDPixmap::kPixFormat_Max_Standard);
 }
 
 #ifdef _DEBUG

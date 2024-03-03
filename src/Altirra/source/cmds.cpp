@@ -143,6 +143,8 @@ void OnCommandGTIAVisualizationNext();
 void OnCommandVideoToggleXEP80Output();
 void OnCommandVideoToggleOutputAutoswitching();
 void OnCommandPane(uint32 paneId);
+void OnCommandEditSelectAll();
+void OnCommandEditDeselect();
 void OnCommandEditCopyFrame();
 void OnCommandEditCopyFrameTrueAspect();
 void OnCommandEditSaveFrame();
@@ -282,12 +284,15 @@ void OnCommandToolsAnalyzeTapeDecoding();
 void OnCommandToolsAdvancedConfiguration();
 void OnCommandWindowClose();
 void OnCommandWindowUndock();
+void OnCommandWindowPrevPane();
+void OnCommandWindowNextPane();
 void OnCommandHelpContents();
 void OnCommandHelpAbout();
 void OnCommandHelpChangeLog();
 void OnCommandHelpCmdLine();
 void OnCommandHelpOnline();
 void OnCommandHelpCheckForUpdates();
+void ATUIExportDebugHelp();
 
 namespace ATCommands {
 	template<int Index>
@@ -328,12 +333,12 @@ namespace ATCommands {
 		return ATUIGetDeviceButtonSupported(kATDeviceButton_CartridgeResetBank);
 	}
 
-	bool IsCartSDXSwitchPresent() {
-		return ATUIGetDeviceButtonSupported(kATDeviceButton_CartridgeSDXEnable);
+	bool IsCartSwitchPresent() {
+		return ATUIGetDeviceButtonSupported(kATDeviceButton_CartridgeSwitch);
 	}
 
 	bool IsSIDESDXEnabled() {
-		return ATUIGetDeviceButtonDepressed(kATDeviceButton_CartridgeSDXEnable);
+		return ATUIGetDeviceButtonDepressed(kATDeviceButton_CartridgeSwitch);
 	}
 
 	template<ATHardwareMode T_Mode>
@@ -455,30 +460,17 @@ namespace ATCommands {
 	}
 
 	bool IsXLHardware() {
-		switch(g_sim.GetHardwareMode()) {
-			case kATHardwareMode_800XL:
-			case kATHardwareMode_1200XL:
-			case kATHardwareMode_XEGS:
-			case kATHardwareMode_130XE:
-				return true;
-
-			default:
-				return false;
-		}
+		return kATHardwareModeTraits[g_sim.GetHardwareMode()].mbRunsXLOS;
 	}
 
 	bool SupportsBASIC() {
-		switch(g_sim.GetHardwareMode()) {
-			case kATHardwareMode_800XL:
-			case kATHardwareMode_130XE:
-			case kATHardwareMode_XEGS:
-				return true;
-
+		const ATHardwareMode hwmode = g_sim.GetHardwareMode();
+		switch(hwmode) {
 			case kATHardwareMode_1200XL:
 				return g_sim.IsUltimate1MBEnabled();
 
 			default:
-				return false;
+				return kATHardwareModeTraits[hwmode].mbInternalBASIC;
 		}
 	}
 
@@ -562,6 +554,11 @@ namespace ATCommands {
 	template<ATUIRecordingStatus T_Status>
 	bool RecordingStatusIs() {
 		return ATUIGetRecordingStatus() == T_Status;
+	}
+
+	bool IsSelectTextAvailable() {
+		IATDisplayPane *pane = ATGetUIPaneAs<IATDisplayPane>(kATUIPaneId_Display);
+		return pane != nullptr;
 	}
 
 	bool IsCopyTextAvailable() {
@@ -649,7 +646,9 @@ namespace ATCommands {
 		{ "Cart.AttachMaxFlash1MBMyIDE",	[]() { OnCommandAttachNewCartridge(kATCartridgeMode_MaxFlash_128K_MyIDE); }, NULL },
 		{ "Cart.AttachMaxFlash8MB",			[]() { OnCommandAttachNewCartridge(kATCartridgeMode_MaxFlash_1024K); }, NULL },
 		{ "Cart.AttachMaxFlash8MBBank0",	[]() { OnCommandAttachNewCartridge(kATCartridgeMode_MaxFlash_1024K_Bank0); }, NULL },
-		{ "Cart.AttachSIC",					[]() { OnCommandAttachNewCartridge(kATCartridgeMode_SIC); }, NULL },
+		{ "Cart.AttachSIC",					[]() { OnCommandAttachNewCartridge(kATCartridgeMode_SIC_512K); }, NULL },
+		{ "Cart.AttachSIC256K",					[]() { OnCommandAttachNewCartridge(kATCartridgeMode_SIC_256K); }, NULL },
+		{ "Cart.AttachSIC128K",					[]() { OnCommandAttachNewCartridge(kATCartridgeMode_SIC_128K); }, NULL },
 		{ "Cart.AttachSICPlus",				[]() { OnCommandAttachNewCartridge(kATCartridgeMode_SICPlus); }, NULL },
 		{ "Cart.AttachMegaCart512K",		[]() { OnCommandAttachNewCartridge(kATCartridgeMode_MegaCart_512K_3); }, NULL },
 		{ "Cart.AttachMegaCart4MB",			[]() { OnCommandAttachNewCartridge(kATCartridgeMode_MegaCart_4M_3); }, NULL },
@@ -659,7 +658,7 @@ namespace ATCommands {
 		{ "Cart.AttachBASIC",				OnCommandAttachCartridgeBASIC, NULL },
 
 		{ "Cart.ActivateMenuButton", OnCommandCartActivateMenuButton, IsCartResetButtonPresent },
-		{ "Cart.ToggleSwitch", OnCommandCartToggleSwitch, IsCartSDXSwitchPresent, CheckedIf<SimTest<&ATSimulator::GetCartridgeSwitch> > },
+		{ "Cart.ToggleSwitch", OnCommandCartToggleSwitch, IsCartSwitchPresent, CheckedIf<SimTest<&ATSimulator::GetCartridgeSwitch> > },
 
 		{ "System.Configure", OnCommandConfigureSystem },
 
@@ -744,6 +743,8 @@ namespace ATCommands {
 		{ "Edit.CopyHex", OnCommandEditCopyHex, IsCopyTextAvailable },
 		{ "Edit.CopyUnicode", OnCommandEditCopyUnicode, IsCopyTextAvailable },
 		{ "Edit.PasteText", OnCommandEditPasteText, ATUIClipIsTextAvailable },
+		{ "Edit.Deselect", OnCommandEditDeselect, IsSelectTextAvailable },
+		{ "Edit.SelectAll", OnCommandEditSelectAll, IsSelectTextAvailable },
 
 		{ "System.TogglePauseWhenInactive", OnCommandSystemTogglePauseWhenInactive, NULL, CheckedIf<ATUIGetPauseWhenInactive> },
 		{ "System.ToggleSlowMotion", OnCommandSystemToggleSlowMotion, NULL, CheckedIf<IsSlowMotion> },
@@ -849,6 +850,7 @@ namespace ATCommands {
 		{ "System.HardwareMode1200XL",	[]() { OnCommandSystemHardwareMode(kATHardwareMode_1200XL); }, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_1200XL> > },
 		{ "System.HardwareModeXEGS",	[]() { OnCommandSystemHardwareMode(kATHardwareMode_XEGS); }, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_XEGS> > },
 		{ "System.HardwareMode130XE",	[]() { OnCommandSystemHardwareMode(kATHardwareMode_130XE); }, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_130XE> > },
+		{ "System.HardwareMode1400XL",	[]() { OnCommandSystemHardwareMode(kATHardwareMode_1400XL); }, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_1400XL> > },
 		{ "System.HardwareMode5200",	[]() { OnCommandSystemHardwareMode(kATHardwareMode_5200); }, NULL, RadioCheckedIf<HardwareModeIs<kATHardwareMode_5200> > },
 
 		{ "System.KernelModeDefault",	[]() { OnCommandSystemKernel(kATFirmwareId_Invalid); }, NULL, RadioCheckedIf<KernelIs<kATFirmwareId_Invalid> > },
@@ -1141,6 +1143,8 @@ namespace ATCommands {
 
 		{ "Window.Close", OnCommandWindowClose, ATUICanManipulateWindows },
 		{ "Window.Undock", OnCommandWindowUndock, ATUICanManipulateWindows },
+		{ "Window.PrevPane", OnCommandWindowPrevPane, ATUICanManipulateWindows },
+		{ "Window.NextPane", OnCommandWindowNextPane, ATUICanManipulateWindows },
 
 		{ "Help.Contents", OnCommandHelpContents },
 		{ "Help.About", OnCommandHelpAbout },
@@ -1148,6 +1152,7 @@ namespace ATCommands {
 		{ "Help.CommandLine", OnCommandHelpCmdLine },
 		{ "Help.Online", OnCommandHelpOnline },
 		{ "Help.CheckForUpdates", OnCommandHelpCheckForUpdates },
+		{ "Help.ExportDebuggerHelp", ATUIExportDebugHelp },
 	};
 }
 

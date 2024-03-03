@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
+#include <at/atcore/asyncdispatcher.h>
 #include <at/atcore/cio.h>
 #include <at/atcore/devicecio.h>
 #include <at/atcore/deviceimpl.h>
@@ -49,7 +50,7 @@ class ATRS232ChannelSX212 final : public IATSchedulerCallback {
 public:
 	ATRS232ChannelSX212();
 
-	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer);
+	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer, IATAsyncDispatcher *asyncDispatcher);
 	void Shutdown();
 
 	void ColdReset();
@@ -173,14 +174,14 @@ ATRS232ChannelSX212::ATRS232ChannelSX212()
 	mpDevice->SetSX212Mode();
 }
 
-void ATRS232ChannelSX212::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer) {
+void ATRS232ChannelSX212::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer, IATAsyncDispatcher *asyncDispatcher) {
 	mpScheduler = sched;
 	mpCIOMgr = ciomgr;
 	mpSIOMgr = siomgr;
 	mpSIODev = siodev;
 
 	mpDevice->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
-	mpDevice->Init(sched, slowsched, uir, mixer);
+	mpDevice->Init(sched, slowsched, uir, mixer, asyncDispatcher);
 
 	// compute initial control state
 	ATDeviceSerialStatus cstate(mpDevice->GetStatus());
@@ -639,7 +640,7 @@ bool ATDeviceSX212::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATDeviceSX212::Init() {
-	mpChannel->Init(mpScheduler, mpSlowScheduler, mpUIRenderer, mpCIOMgr, mpSIOMgr, this, mpAudioMixer);
+	mpChannel->Init(mpScheduler, mpSlowScheduler, mpUIRenderer, mpCIOMgr, mpSIOMgr, this, mpAudioMixer, GetService<IATAsyncDispatcher>());
 }
 
 void ATDeviceSX212::Shutdown() {

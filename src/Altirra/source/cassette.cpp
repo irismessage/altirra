@@ -264,7 +264,7 @@ void ATCassetteEmulator::Load(const wchar_t *fn) {
 	ctx.mTurboDecodeAlgorithm = mTurboDecodeAlgorithm;
 
 	vdrefptr<IATCassetteImage> image;
-	ATLoadCassetteImage(view->GetStream(), nullptr, ctx, ~image);
+	ATLoadCassetteImage(view->GetStream(), nullptr, nullptr, ctx, ~image);
 
 	Load(image, fn, true);
 }
@@ -511,8 +511,10 @@ void ATCassetteEmulator::SetTraceContext(ATTraceContext *context) {
 				mpTraceChannelTurbo->TruncateLastEvent(t);
 		}
 
-
 		vdsaferelease <<= mpTraceChannelFSK, mpTraceChannelTurbo;
+
+		mbTraceMotorRunning = false;
+		mbTraceRecord = false;
 	}
 }
 
@@ -705,6 +707,7 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 			g_ATLCCas("Timeout receiving block while waiting for sync mark (pos = %.3fs)\n", (float)mPosition / (float)kATCassetteDataSampleRate);
 			PositionChanged.NotifyDeferred();
 			ResyncAudio();
+			mpPokey->SetDataLine(true);
 			return 0x8A;	// timeout
 		}
 
@@ -791,6 +794,7 @@ uint8 ATCassetteEmulator::ReadBlock(uint16 bufadr0, uint16 len, ATCPUEmulatorMem
 			PositionChanged.NotifyDeferred();
 			UpdateDirectSense(-1);
 			ResyncAudio();
+			mpPokey->SetDataLine(true);
 			return 0x8A;	// timeout
 		}
 
@@ -1018,7 +1022,7 @@ std::optional<bool> ATCassetteEmulator::AutodetectBasicNeeded() {
 			// Binary program: xx yy zz ww, where ww >= $04.
 			// This checks that the boot address is valid.
 
-			if (buf[3] == 0 && buf[4] == 0 && (buf[5] & 0xF0) == 0 && buf[6] == 0x01) {
+			if (buf[3] == 0 && buf[4] == 0 && (buf[5] & 0x0F) == 0 && buf[6] == 0x01) {
 				mNeedBasic = std::optional<bool>(true);
 			} else if (buf[6] >= 0x04) {
 				mNeedBasic = std::optional<bool>(false);
@@ -1076,6 +1080,8 @@ void ATCassetteEmulator::OnScheduledEvent(uint32 id) {
 			}
 
 			mpScheduler->SetEvent(newDelay, this, kATCassetteEventId_ProcessBit, mpPlayEvent);
+		} else {
+			mpPokey->SetDataLine(true);
 		}
 
 		if (result == kBR_ByteReceived) {
@@ -1277,8 +1283,11 @@ void ATCassetteEmulator::OnCommandStateChanged(bool asserted) {
 }
 
 void ATCassetteEmulator::OnMotorStateChanged(bool asserted) {
-	mbMotorEnable = asserted;
-	UpdateMotorState();
+	if (mbMotorEnable != asserted) {
+		mbMotorEnable = asserted;
+
+		UpdateMotorState();
+	}
 }
 
 void ATCassetteEmulator::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) {
@@ -1336,7 +1345,13 @@ void ATCassetteEmulator::UpdateMotorState() {
 		}
 
 		StartAudio();
+
+		// Reassert data line state.
+		mpPokey->SetDataLine(mbDataLineState);
 	} else {
+		// Release SIO data in if the motor is not running.
+		mpPokey->SetDataLine(true);
+
 		if (prevRunning) {
 			mLastStopCycle = mpScheduler->GetTick64();
 			mLastStopPosition = mPosition;

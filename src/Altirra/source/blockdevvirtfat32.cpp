@@ -58,26 +58,11 @@ extern const ATDeviceDefinition g_ATDeviceDefBlockDevVFAT32 = {
 ATBlockDeviceVFAT32::ATBlockDeviceVFAT32(bool useFAT16)
 	: mbUseFAT16(useFAT16)
 {
+	SetSaveStateAgnostic();
 }
 
 ATBlockDeviceVFAT32::~ATBlockDeviceVFAT32() {
 	Shutdown();
-}
-
-int ATBlockDeviceVFAT32::AddRef() {
-	return ATDevice::AddRef();
-}
-
-int ATBlockDeviceVFAT32::Release() {
-	return ATDevice::Release();
-}
-
-void *ATBlockDeviceVFAT32::AsInterface(uint32 iid) {
-	switch(iid) {
-		case IATBlockDevice::kTypeID: return static_cast<IATBlockDevice *>(this);
-		default:
-			return ATDevice::AsInterface(iid);
-	}
 }
 
 void ATBlockDeviceVFAT32::GetDeviceInfo(ATDeviceInfo& info) {
@@ -322,6 +307,28 @@ void ATBlockDeviceVFAT32::ReadSectors(void *data, uint32 lba, uint32 n) {
 
 void ATBlockDeviceVFAT32::WriteSectors(const void *data, uint32 lba, uint32 n) {
 	throw MyError("Device is read-only.");
+}
+
+void ATBlockDeviceVFAT32::RescanDynamicDisk() {
+	vdrefptr tempDisk(new ATBlockDeviceVFAT32(mbUseFAT16));
+
+	tempDisk->mPath = mPath;
+	tempDisk->Init();
+
+	// close the current file
+	mFile.closeNT();
+	mActiveFileIndex = -1;
+	mActiveFilePos = -1;
+
+	mSectorCount = tempDisk->mSectorCount;
+	mSectorsPerFAT = tempDisk->mSectorsPerFAT;
+	mGeometry = tempDisk->mGeometry;
+
+	mFiles = std::move(tempDisk->mFiles);
+	mRootDirectory = std::move(tempDisk->mRootDirectory);
+	mDataClusterBoundaries = std::move(tempDisk->mDataClusterBoundaries);
+
+	VDBitAssign(mBootSectors, tempDisk->mBootSectors);
 }
 
 void ATBlockDeviceVFAT32::FormatVolume() {
@@ -615,7 +622,7 @@ void ATBlockDeviceVFAT32::BuildDirectory() {
 			// if this is a FAT16 volume and we are out of space, end population; we
 			// stop a bit short of the theoretical max limit per general recommendations
 			// to avoid variance in FAT16 implementations
-			if (65500 - nextCluster < numClusters)
+			if (mbUseFAT16 && 65500 - nextCluster < numClusters)
 				break;
 
 			mFiles.emplace_back();

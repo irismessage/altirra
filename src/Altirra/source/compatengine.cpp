@@ -210,15 +210,7 @@ void ATCompatUnmuteAllTitles() {
 }
 
 bool ATHasInternalBASIC(ATHardwareMode hwmode) {
-	switch(hwmode) {
-		case kATHardwareMode_800XL:
-		case kATHardwareMode_130XE:
-		case kATHardwareMode_XEGS:
-			return true;
-
-		default:
-			return false;
-	}
+	return kATHardwareModeTraits[hwmode].mbInternalBASIC;
 }
 
 bool ATCompatIsTagApplicable(ATCompatKnownTag knownTag) {
@@ -525,7 +517,7 @@ bool ATCompatTrySwitchToSpecificKernel(VDGUIHandle h, ATSpecificFirmwareType spe
 
 		case kATSpecificFirmwareType_XLOSr2:
 		default:
-			if (hardwareMode != kATHardwareMode_800XL && hardwareMode != kATHardwareMode_130XE)
+			if (hardwareMode != kATHardwareMode_800XL && hardwareMode != kATHardwareMode_130XE && hardwareMode != kATHardwareMode_1400XL)
 				hardwareMode = kATHardwareMode_800XL;
 			break;
 

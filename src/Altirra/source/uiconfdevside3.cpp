@@ -26,9 +26,11 @@ public:
 	ATUIDialogDeviceSIDE3(ATPropertySet& props);
 
 protected:
+	bool OnLoaded() override;
 	void OnDataExchange(bool write) override;
 
 	ATPropertySet& mPropSet;
+	VDUIProxyComboBoxControl mHwVersionView;
 };
 
 ATUIDialogDeviceSIDE3::ATUIDialogDeviceSIDE3(ATPropertySet& props)
@@ -37,15 +39,26 @@ ATUIDialogDeviceSIDE3::ATUIDialogDeviceSIDE3(ATPropertySet& props)
 {
 }
 
+bool ATUIDialogDeviceSIDE3::OnLoaded() {
+	AddProxy(&mHwVersionView, IDC_VERSION);
+
+	mHwVersionView.AddItem(L"SIDE 3 (JED 1.1: 2MB RAM)");
+	mHwVersionView.AddItem(L"SIDE 3.1 (JED 1.4: 8MB RAM, enhanced DMA)");
+
+	return VDDialogFrameW32::OnLoaded();
+}
+
 void ATUIDialogDeviceSIDE3::OnDataExchange(bool write) {
 	if (write) {
 		mPropSet.Clear();
 
 		mPropSet.SetBool("led_enable", IsButtonChecked(IDC_ACTIVITYLED));
 		mPropSet.SetBool("recovery", IsButtonChecked(IDC_RECOVERY));
+		mPropSet.SetUint32("version", mHwVersionView.GetSelection() > 0 ? 14 : 10);
 	} else {
 		CheckButton(IDC_ACTIVITYLED, mPropSet.GetBool("led_enable", true));
 		CheckButton(IDC_RECOVERY, mPropSet.GetBool("recovery", false));
+		mHwVersionView.SetSelection(mPropSet.GetUint32("version", 10) > 10 ? 1 : 0);
 	}
 }
 

@@ -42,6 +42,7 @@ public:
 
 class IATDiskInterfaceClient {
 public:
+	virtual void OnDiskChanging() {}
 	virtual void OnDiskChanged(bool mediaRemoved) = 0;
 	virtual void OnWriteModeChanged() = 0;
 	virtual void OnTimingModeChanged() = 0;

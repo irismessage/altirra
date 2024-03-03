@@ -23,13 +23,16 @@
 enum ATFlashType : uint8 {
 	kATFlashType_Am29F010,	// AMD 128K x 8-bit
 	kATFlashType_Am29F010B,	// AMD 128K x 8-bit
+	kATFlashType_Am29F002BT,// AMD 256K x 8-bit, top boot block
 	kATFlashType_Am29F040,	// AMD 512K x 8-bit
 	kATFlashType_Am29F040B,	// AMD 512K x 8-bit
 	kATFlashType_Am29F016D,	// AMD 2M x 8-bit
 	kATFlashType_Am29F032B,	// AMD 4M x 8-bit
 	kATFlashType_AT29C010A,	// Atmel 128K x 8-bit
 	kATFlashType_AT29C040,	// Atmel 512K x 8-bit
-	kATFlashType_SST39SF040,// SST 512K x 8-bit
+	kATFlashType_SST39SF010,// SST/Microchip 128K x 8-bit (4K sectors)
+	kATFlashType_SST39SF020,// SST/Microchip 256K x 8-bit (4K sectors)
+	kATFlashType_SST39SF040,// SST/Microchip 512K x 8-bit (4K sectors)
 	kATFlashType_A29040,	// Amic 512K x 8-bit
 	kATFlashType_S29GL01P,	// Spansion 128M x 8-bit, 90nm (byte mode)
 	kATFlashType_S29GL512P,	// Spansion 64M x 8-bit, 90nm (byte mode)
@@ -39,6 +42,9 @@ enum ATFlashType : uint8 {
 	kATFlashType_HY29F040A,	// Hynix HY29F040A 512K x 8-bit
 	kATFlashType_M29W800DT,	// Numonyx 1M x 8-bit, top device
 	kATFlashType_MX29LV640DT,// Macronyx 1M x 8-bit, top device
+	kATFlashType_MX29F001T,	// Macronyx 128K x 8-bit, top boot sector
+	kATFlashType_MX29F002T,	// Macronyx 256K x 8-bit, top boot sector
+	kATFlashType_MX29F002B,	// Macronyx 256K x 8-bit, bottom boot sector
 	kATFlashType_MX29F040,	// Macronyx 512K x 8-bit
 };
 

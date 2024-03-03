@@ -17,10 +17,13 @@
 
 #include <stdafx.h>
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/devicesnapshot.h>
 #include <at/atcore/deviceu1mb.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/savestate.h>
 #include <at/atcore/wraptime.h>
 #include "vbxe.h"
+#include "vbxestate.h"
 #include "gtiarenderer.h"
 #include "gtiatables.h"
 #include "console.h"
@@ -138,10 +141,6 @@ ATVBXEEmulator::ATVBXEEmulator()
 	, mbIRQEnabled(false)
 	, mbIRQRequest(false)
 	, mConfigLatch(0)
-	, mbBlitLogging(false)
-	, mbBlitterEnabled(false)
-	, mbBlitterActive(false)
-	, mbBlitterListActive(false)
 	, mbBlitterContinue(false)
 	, mBlitterMode(0)
 	, mBlitCyclesLeft(0)
@@ -292,13 +291,10 @@ void ATVBXEEmulator::WarmReset() {
 
 	// BLITTER_START: set to 0
 	// BLITTER_BUSY: set to 0
-	mbBlitterEnabled = false;
-	mbBlitterActive = false;
-	mbBlitterListActive = false;
+	mBlitState = BlitState::Stopped;
 	mBlitCollisionCode = 0;
 	mBlitCyclesLeft = 0;
 
-	mbBlitterStopping = false;
 	mpScheduler->UnsetEvent(mpEventBlitterIrq);
 
 	// IRQ_CONTROL: set to 0
@@ -396,8 +392,47 @@ void ATVBXEEmulator::SetTraceContext(ATTraceContext *context) {
 	}
 }
 
-void ATVBXEEmulator::SetBlitLoggingEnabled(bool enable) {
+sint32 ATVBXEEmulator::TryMapCPUAddressToLocal(uint16 addr) const {
+	static constexpr uint8 kBankAMask[4]={
+		0x7F,
+		0x7E,
+		0x7C,
+		0x78,
+	};
+
+	// check MEMAC A (has priority over MEMAC B)
+	const bool memacAEnabled = (mMemAcBankA & 0x80) && (mMemAcControl & 0x08);
+
+	if (mb5200Mode) {
+		if (memacAEnabled && addr >= 0xD800 && addr < 0xE800) {
+			return (uint32)((mMemAcBankA & 0xF8) << 12) + (addr - 0xD800);
+		}
+
+		// no MEMAC B on 5200
+		return -1;
+	}
+
+	if (memacAEnabled) {
+		const uint32 winABase = (mMemAcControl & 0xF0) << 8;
+		const uint32 winALimit = std::min<uint32>(0x10000, winABase + (0x1000 << (mMemAcControl & 3)));
+
+		if (addr >= winABase && addr < winALimit)
+			return ((uint32)(mMemAcBankA & kBankAMask[mMemAcControl & 3]) << 12) + (addr - winABase);
+	}
+
+	// check MEMAC B
+	if (mMemAcBankB & 0x80) {
+		if (addr >= 0x4000 && addr < 0x8000)
+			return (((uint32)mMemAcBankB & 0x1F) << 14) + (addr - 0x4000);
+	}
+
+	// not in either window
+	return -1;
+}
+
+void ATVBXEEmulator::SetBlitLoggingEnabled(bool enable, bool compact) {
 	mbBlitLogging = enable;
+	mbBlitLoggingCompact = compact;
 }
 
 void ATVBXEEmulator::DumpStatus() {
@@ -461,13 +496,13 @@ void ATVBXEEmulator::DumpStatus() {
 		, mbIRQRequest ? "asserted" : "negated");
 
 	if (IsBlitterActive()) {
-		if (mbBlitterStopping)
+		if (mBlitState == BlitState::Stopping)
 			ATConsolePrintf("Blitter status:    active (%u rows left) (stopping in %d cycles)\n", mBlitHeightLeft, (sint32)(mBlitterStopTime - ATSCHEDULER_GETTIME(mpScheduler)));
 		else
 			ATConsolePrintf("Blitter status:    active (%u rows left) (%d cycle delta)\n", mBlitHeightLeft, mBlitCyclesLeft);
 	} else
 		ATConsolePrintf("Blitter status:    %s\n"
-			, mbBlitterEnabled ? mbBlitterListActive ? "reloading" : "idle" : "disabled");
+			, mBlitState == BlitState::Reload ? "reloading" : "disabled");
 	ATConsolePrintf("Blitter list addr: $%05X\n", mBlitListAddr);
 	ATConsolePrintf("Blitter list cur.: $%05X\n", mBlitListFetchAddr);
 }
@@ -629,8 +664,8 @@ void ATVBXEEmulator::DumpXDL() {
 	}
 }
 
-void ATVBXEEmulator::DumpBlitList() {
-	uint32 addr = mBlitListAddr;
+void ATVBXEEmulator::DumpBlitList(sint32 addrOpt, bool compact) {
+	uint32 addr = addrOpt >= 0 ? (uint32)addrOpt : mBlitListAddr;
 	uint32 count = 0;
 
 	for(;;) {
@@ -639,9 +674,10 @@ void ATVBXEEmulator::DumpBlitList() {
 			break;
 		}
 		
-		ATConsolePrintf("$%05X:\n", addr);
+		if (!compact)
+			ATConsolePrintf("$%05X:\n", addr);
 
-		bool more = DumpBlitListEntry(addr);
+		bool more = DumpBlitListEntry(addr, compact, false);
 
 		if (!more)
 			break;
@@ -650,35 +686,28 @@ void ATVBXEEmulator::DumpBlitList() {
 	}
 }
 
-bool ATVBXEEmulator::DumpBlitListEntry(uint32 addr) {
-	ATConsolePrintf("  Source: $%05X Xinc=%+d Yinc=%+d\n"
-		, (uint32)VBXE_FETCH(addr) + ((uint32)VBXE_FETCH(addr + 1) << 8) + ((uint32)(VBXE_FETCH(addr + 2) & 0x7) << 16)
-		, (sint8)VBXE_FETCH(addr + 5)
-		, ((((uint32)VBXE_FETCH(addr + 3) + ((uint32)VBXE_FETCH(addr + 4) << 8)) & 0x1FFF) + 0xFFFFF000) ^ 0xFFFFF000);
-	ATConsolePrintf("  Dest:   $%05X Xinc=%+d Yinc=%+d\n"
-		, (uint32)VBXE_FETCH(addr + 6) + ((uint32)VBXE_FETCH(addr + 7) << 8) + ((uint32)(VBXE_FETCH(addr + 8) & 0x7) << 16)
-		, (sint8)VBXE_FETCH(addr + 11)
-		, ((((uint32)VBXE_FETCH(addr + 9) + ((uint32)VBXE_FETCH(addr + 10) << 8)) & 0x1FFF) + 0xFFFFF000) ^ 0xFFFFF000);
-	ATConsolePrintf("  Size:   %u x %u\n"
-		, (uint32)VBXE_FETCH(addr + 12) + ((uint32)(VBXE_FETCH(addr + 13) & 0x01) << 8) + 1
-		, (uint32)VBXE_FETCH(addr + 14) + 1);
-	ATConsolePrintf("  Masks:  AND=$%02X, XOR=$%02X, COLL=$%02X\n"
-		, VBXE_FETCH(addr + 15)
-		, VBXE_FETCH(addr + 16)
-		, VBXE_FETCH(addr + 17)
-		);
+bool ATVBXEEmulator::DumpBlitListEntry(uint32 addr, bool compact, bool autologging) {
+	const uint32 srcAddr = (uint32)VBXE_FETCH(addr) + ((uint32)VBXE_FETCH(addr + 1) << 8) + ((uint32)(VBXE_FETCH(addr + 2) & 0x7) << 16);
+	const sint32 srcXInc = (sint8)VBXE_FETCH(addr + 5);
+	const sint32 srcYInc = ((((uint32)VBXE_FETCH(addr + 3) + ((uint32)VBXE_FETCH(addr + 4) << 8)) & 0x1FFF) + 0xFFFFF000) ^ 0xFFFFF000;
 
+	const uint32 dstAddr = (uint32)VBXE_FETCH(addr + 6) + ((uint32)VBXE_FETCH(addr + 7) << 8) + ((uint32)(VBXE_FETCH(addr + 8) & 0x7) << 16);
+	const sint32 dstXInc = (sint8)VBXE_FETCH(addr + 11);
+	const sint32 dstYInc = ((((uint32)VBXE_FETCH(addr + 9) + ((uint32)VBXE_FETCH(addr + 10) << 8)) & 0x1FFF) + 0xFFFFF000) ^ 0xFFFFF000;
+
+	const uint32 sizeX = (uint32)VBXE_FETCH(addr + 12) + ((uint32)(VBXE_FETCH(addr + 13) & 0x01) << 8) + 1;
+	const uint32 sizeY = (uint32)VBXE_FETCH(addr + 14) + 1;
+
+	const uint8 andMask = VBXE_FETCH(addr + 15);
+	const uint8 xorMask = VBXE_FETCH(addr + 16);
+	const uint8 collMask = VBXE_FETCH(addr + 17);
 	const uint8 zoomByte = VBXE_FETCH(addr + 18);
-	ATConsolePrintf("  Zoom:   %d x %d\n", (zoomByte & 7) + 1, ((zoomByte >> 4) & 7) + 1);
-
 	const uint8 patternByte = VBXE_FETCH(addr + 19);
-	if (patternByte & 0x80)
-		ATConsolePrintf("  Patt:   repeat every %d\n", (patternByte & 0x3F) + 1);
-	else
-		ATConsolePrintf("  Patt:   disabled\n");
-
 	const uint8 controlByte = VBXE_FETCH(addr + 20);
-	static const char *const kModeNames[]={
+
+	const bool next = (controlByte & 0x08) != 0;
+
+	static constexpr const char *kModeNames[]={
 		"Copy",
 		"Overlay",
 		"Add",
@@ -689,9 +718,393 @@ bool ATVBXEEmulator::DumpBlitListEntry(uint32 addr) {
 		"Reserved"
 	};
 
-	ATConsolePrintf("  Mode:   %d (%s)\n", controlByte & 7, kModeNames[controlByte & 7]);
+	if (compact) {
+		VDStringA s;
 
-	return (controlByte & 0x08) != 0;
+		if (autologging)
+			s = "VBXE: Starting new blit at ";
+
+		s.append_sprintf("$%05X: %10s  %3dx%-3d ", addr, kModeNames[controlByte & 7], sizeX, sizeY);
+		
+		// check if we have a 1D operation
+		const bool hasZoom = (zoomByte & 0x77) != 0;
+		const bool hasPattern = (patternByte & 0x80) != 0;
+		const bool hasConst = (andMask == 0);
+		const bool linear = !hasZoom && !hasPattern && (hasConst || (srcYInc == srcXInc * sizeX && dstXInc == srcXInc)) && dstYInc == dstXInc * sizeX && (dstXInc == 1 || dstXInc == -1);
+
+		// check if the source is used
+		if (andMask) {
+			if (sizeX == 1 && sizeY == 1)
+				s.append_sprintf(" [$%05X]           ", srcAddr);
+			else if (linear)
+				s.append_sprintf(" [$%05X-$%05X]    ", srcAddr, srcAddr + srcYInc * sizeY - 1);
+			else
+				s.append_sprintf(" [$%05X,%+4d,%+5d]", srcAddr, srcXInc, srcYInc);
+
+			if (andMask != 0xFF)
+				s.append_sprintf(" &$%02X", andMask);
+			else
+				s += "     ";
+
+			if (xorMask)
+				s.append_sprintf("^$%02X", xorMask);
+			else
+				s += "    ";
+
+			if (hasPattern)
+				s.append_sprintf(" pattern:%2d", patternByte & 0x7F);
+		} else {
+			s.append_sprintf("                 $%02X         ", xorMask);
+		}
+
+		if (hasZoom)
+			s.append_sprintf(" zoom:%dx%d", (zoomByte & 7) + 1, ((zoomByte >> 4) & 7) + 1);
+
+		s += " -> ";
+
+		if (sizeX == 1 && sizeY == 1 && !hasZoom)
+			s.append_sprintf(" [$%05X]", dstAddr);
+		else if (linear)
+			s.append_sprintf(" [$%05X-$%05X]", dstAddr, dstAddr + dstYInc * sizeY - 1);
+		else
+			s.append_sprintf(" [$%05X,%+4d,%+5d]", dstAddr, dstXInc, dstYInc);
+
+		// check for collision detection
+		if (collMask)
+			s.append_sprintf(" [coll $%02X]", collMask);
+
+		s += '\n';
+
+		if (autologging)
+			ATConsoleTaggedPrintf("%s", s.c_str());
+		else
+			ATConsoleWrite(s.c_str());
+	} else {
+		if (autologging)
+			ATConsoleTaggedPrintf("VBXE: Starting new blit at $%05X:\n", addr);
+
+		ATConsolePrintf("  Source: $%05X Xinc=%+d Yinc=%+d\n", srcAddr, srcXInc, srcYInc);
+		ATConsolePrintf("  Dest:   $%05X Xinc=%+d Yinc=%+d\n", dstAddr, dstXInc, dstYInc);
+		ATConsolePrintf("  Size:   %u x %u\n", sizeX, sizeY);
+		ATConsolePrintf("  Masks:  AND=$%02X, XOR=$%02X, COLL=$%02X\n"
+			, andMask
+			, xorMask
+			, collMask
+			);
+
+		ATConsolePrintf("  Zoom:   %d x %d\n", (zoomByte & 7) + 1, ((zoomByte >> 4) & 7) + 1);
+
+		if (patternByte & 0x80)
+			ATConsolePrintf("  Patt:   repeat every %d\n", (patternByte & 0x3F) + 1);
+		else
+			ATConsolePrintf("  Patt:   disabled\n");
+
+		ATConsolePrintf("  Mode:   %d (%s)\n", controlByte & 7, kModeNames[controlByte & 7]);
+	}
+
+	return next;
+}
+
+void ATVBXEEmulator::LoadState(const IATObjectState *state) {
+	if (!state) {
+		const ATSaveStateVbxe defaultState;
+		return LoadState(&defaultState);
+	}
+
+	const ATSaveStateVbxe& vstate = atser_cast<const ATSaveStateVbxe&>(*state);
+
+	if (mpMemory && !mbSharedMemory) {
+		memset(mpMemory, 0, 524288);
+
+		if (vstate.mpMemory) {
+			const auto& readBuffer = vstate.mpMemory->GetReadBuffer();
+			memcpy(mpMemory, readBuffer.data(), std::min<size_t>(524288, readBuffer.size()));
+		}
+	}
+
+	WriteControl(0x40, vstate.mVideoControl);
+	mXdlBaseAddr = vstate.mXdlAddr & kLocalAddrMask;
+	mXdlAddr = vstate.mXdlAddrActive & kLocalAddrMask;
+	WriteControl(0x44, vstate.mCsel);
+	WriteControl(0x45, vstate.mPsel);
+	WriteControl(0x49, vstate.mColMask);
+
+	// need to restore IRQ_CONTROL directly as we don't want to whack the IRQ request state
+	mbIRQEnabled = (vstate.mIrqControl & 0x01) != 0;
+
+	WriteControl(0x55, vstate.mPri[0]);
+	WriteControl(0x56, vstate.mPri[1]);
+	WriteControl(0x57, vstate.mPri[2]);
+	WriteControl(0x58, vstate.mPri[3]);
+	WriteControl(0x5D, vstate.mMemacBControl);
+	WriteControl(0x5E, vstate.mMemacControl);
+	WriteControl(0x5F, vstate.mMemacBankSel);
+
+	mBlitListAddr = vstate.mBlitListAddr & kLocalAddrMask;
+
+	mOvCollState = (vstate.mArchColDetect << 4) + (vstate.mArchColDetect >> 4);
+	mBlitCollisionCode = vstate.mArchBltCollisionCode;
+	mbIRQRequest = (vstate.mArchIrqStatus & 0x01) != 0;
+
+	// restore VBXE palette
+	for(uint32 i=0; i<4; ++i) {
+		for(uint32 j=0; j<256; ++j) {
+			uint32 c = vstate.mPalette[i*256 + j];
+			mArchPalette[i][j] = (c & 0xFEFEFE) + ((c & 0x808080) >> 7);
+		}
+	}
+
+	mbRenderPaletteChanged = true;
+	RecorrectPalettes();
+
+	// restore XDL state
+	mXdlRepeatCounter = (uint32)vstate.mXdlRepeat + 1;
+
+	mPfPaletteIndex = vstate.mIntPfPalette & 3;
+	mpPfPalette = mPalette[mPfPaletteIndex];
+
+	mOvPaletteIndex = vstate.mIntOvPalette & 3;
+	mpOvPalette = mPalette[mOvPaletteIndex];
+
+	// reconstruct overlay mode
+	if (vstate.mIntOvMode & 0x01)
+		mOvMode = kOvMode_80Text;
+	else if (!(vstate.mIntOvMode & 0x02))
+		mOvMode = kOvMode_Disabled;
+	else if (vstate.mIntOvMode & 0x10)
+		mOvMode = kOvMode_HR;
+	else if (vstate.mIntOvMode & 0x20)
+		mOvMode = kOvMode_LR;
+	else
+		mOvMode = kOvMode_SR;
+
+	if (vstate.mIntOvWidth == 2)
+		mOvWidth = kOvWidth_Wide;
+	else if (vstate.mIntOvWidth == 1)
+		mOvWidth = kOvWidth_Normal;
+	else
+		mOvWidth = kOvWidth_Narrow;
+
+	mOvAddr = vstate.mIntOvAddr & kLocalAddrMask;
+	mOvStep = vstate.mIntOvStep & 0xFFF;
+	mOvHscroll = vstate.mIntOvHscroll & 7;
+	mOvVscroll = vstate.mIntOvVscroll & 7;
+	mOvTextRow = vstate.mIntOvTextRow & 7;
+	mChAddr = (uint32)vstate.mIntOvChbase << 11;
+	mOvMainPriority = ConvertPriorityToNative(vstate.mIntOvPriority);
+	mbAttrMapEnabled = vstate.mbIntMapEnabled;
+	mAttrAddr = vstate.mIntMapAddr & kLocalAddrMask;
+	mAttrStep = vstate.mIntMapStep & 0xFFF;
+	mAttrHscroll = vstate.mIntMapHscroll & 0x1F;
+	mAttrVscroll = vstate.mIntMapVscroll & 0x1F;
+	mAttrWidth = (vstate.mIntMapWidth & 0x1F) + 1;
+	mAttrHeight = (vstate.mIntMapHeight & 0x1F) + 1;
+	mAttrRow = vstate.mIntMapRow & 0x1F;
+
+	// restore blitter internal state
+	mBlitState = BlitState::Stopped;
+	mpScheduler->UnsetEvent(mpEventBlitterIrq);
+
+	if (vstate.mArchBlitterBusy != 0) {
+		mBlitListFetchAddr = vstate.mIntBlitListAddr & kLocalAddrMask;
+		mBlitCyclesLeft = vstate.mIntBlitCyclesPending;
+
+		LoadBCB(vstate.mIntBlitState);
+
+		mBlitActiveCollisionMask = vstate.mbIntBlitCollisionLatched ? 0 : mBlitCollisionMask;
+
+		mBlitHeightLeft = std::min<uint32>(vstate.mIntBlitHeightLeft, mBlitHeight);
+		mBlitZoomCounterY = vstate.mIntBlitYZoomCounter & 7;
+
+		// blit running
+		if (vstate.mIntBlitStopDelay > 0) {
+			mBlitState = BlitState::Stopping;
+			mpScheduler->SetEvent(vstate.mIntBlitStopDelay, this, 1, mpEventBlitterIrq);
+		} else if (mBlitHeightLeft > 0)
+			mBlitState = BlitState::ProcessBlit;
+		else
+			mBlitState = BlitState::Reload;
+	}
+
+	// restore GTIA tracking state
+	RegisterChange rcinit[10];
+
+	for(int i=0; i<9; ++i)
+		rcinit[i] = RegisterChange { .mReg = (uint8)(0x12 + i), .mValue = vstate.mGtiaPal[i] };
+
+	rcinit[9] = RegisterChange { .mReg = 0x1B, .mValue = vstate.mGtiaPrior };
+
+	UpdateRegisters(rcinit, 10);
+
+	// restore GTIA register change queue
+	mRCIndex = 0;
+	mRCCount = vstate.mGtiaRegisterChanges.size() / 3;
+	mRegisterChanges.resize(mRCCount);
+
+	for(int i=0; i<mRCCount; ++i) {
+		const uint8 *src = &vstate.mGtiaRegisterChanges[i*3];
+		auto& dst = mRegisterChanges[i];
+
+		// note that the serializer has already validated ascending position
+		dst.mPos = src[0];
+		dst.mReg = src[1];
+		dst.mValue = src[2];
+	}
+
+	// update IRQ state
+	if (mbIRQEnabled && mbIRQRequest)
+		mpIRQController->Assert(kATIRQSource_VBXE, true);
+	else
+		mpIRQController->Negate(kATIRQSource_VBXE, true);
+}
+
+vdrefptr<IATObjectState> ATVBXEEmulator::SaveState() const {
+	const vdrefptr state { new ATSaveStateVbxe };
+
+	if (mpMemory && !mbSharedMemory) {
+		state->mpMemory = new ATSaveStateMemoryBuffer;
+		state->mpMemory->mpDirectName = L"vbxe-mem.bin";
+		state->mpMemory->GetWriteBuffer().assign(mpMemory, mpMemory + 524288);
+	}
+
+	state->mVideoControl
+		= (mbXdlEnabled ? 0x01 : 0x00)
+		+ (mbExtendedColor ? 0x02 : 0x00)
+		+ (mbOvTrans ? 0x00 : 0x04)
+		+ (mbOvTrans15 ? 0x08 : 0x00);
+
+	state->mXdlAddr = mXdlBaseAddr;
+	state->mXdlAddrActive = mXdlAddr;
+
+	state->mCsel = mCsel;
+	state->mPsel = mPsel;
+
+	state->mColMask = mOvCollMask;
+	state->mBlitListAddr = mBlitListAddr;
+	
+	for(uint32 i=0; i<4; ++i)
+		state->mPri[i] = ConvertPriorityFromNative(mOvPriority[i]);
+
+	state->mIrqControl = mbIRQEnabled ? 0x01 : 0x00;
+
+	switch(mBlitState) {
+		case BlitState::Stopped:
+		default:
+			state->mArchBlitterBusy = 0x00;
+			break;
+
+		case BlitState::Reload:
+			state->mArchBlitterBusy = 0x01;
+			break;
+
+		case BlitState::ProcessBlit:
+		case BlitState::Stopping:
+			state->mArchBlitterBusy = 0x02;
+			break;
+	}
+
+	state->mMemacBControl = mMemAcBankB;
+	state->mMemacControl = mMemAcControl;
+	state->mMemacBankSel = mMemAcBankA;
+
+	for(uint32 i=0; i<4; ++i) {
+		for(uint32 j=0; j<256; ++j) {
+			state->mPalette[i * 256 + j] = mArchPalette[i][j] & 0xFEFEFE;
+		}
+	}
+
+	// read registers
+	state->mArchColDetect = (mOvCollState << 4) + (mOvCollState >> 4);
+	state->mArchBltCollisionCode = mBlitCollisionCode;
+	state->mArchIrqStatus = mbIRQRequest ? 0x01 : 0x00;
+	
+	// internal state
+	state->mXdlRepeat = (uint8)(mXdlRepeatCounter - 1);
+	state->mIntPfPalette = mPfPaletteIndex;
+	state->mIntOvPalette = mOvPaletteIndex;
+
+	// convert overlay mode back to XDLC_* mode bits
+	switch(mOvMode) {
+		case kOvMode_Disabled:
+		default:
+			state->mIntOvMode = 0x00;
+			break;
+
+		case kOvMode_LR:
+			state->mIntOvMode = 0x22;
+			break;
+		case kOvMode_SR:
+			state->mIntOvMode = 0x02;
+			break;
+		case kOvMode_HR:
+			state->mIntOvMode = 0x12;
+			break;
+		case kOvMode_80Text:
+			state->mIntOvMode = 0x01;
+			break;
+	}
+
+	state->mIntOvWidth = (uint8)mOvWidth;
+	state->mIntOvAddr = mOvAddr;
+	state->mIntOvStep = mOvStep;
+	state->mIntOvHscroll = mOvHscroll;
+	state->mIntOvVscroll = mOvVscroll;
+	state->mIntOvChbase = (uint8)(mChAddr >> 11);
+	state->mIntOvPriority = ConvertPriorityFromNative(mOvMainPriority);
+	state->mIntOvTextRow = mOvTextRow;
+	state->mbIntMapEnabled = mbAttrMapEnabled;
+	state->mIntMapAddr = mAttrAddr;
+	state->mIntMapStep = mAttrStep;
+	state->mIntMapHscroll = mAttrHscroll;
+	state->mIntMapVscroll = mAttrVscroll;
+	state->mIntMapWidth = mAttrWidth - 1;
+	state->mIntMapHeight = mAttrHeight - 1;
+	state->mIntMapRow = mAttrRow;
+
+	// save blitter internal state
+	if (mBlitState != BlitState::Stopped) {
+		state->mIntBlitListAddr = mBlitListFetchAddr;
+		state->mIntBlitCyclesPending = mBlitCyclesLeft;
+		state->mIntBlitYZoomCounter = mBlitZoomCounterY;
+		SaveBCB(state->mIntBlitState);
+
+		state->mbIntBlitCollisionLatched = (mBlitActiveCollisionMask != mBlitCollisionMask);
+
+		state->mIntBlitHeightLeft = 0;
+
+		if (mpEventBlitterIrq)
+			state->mIntBlitStopDelay = mpScheduler->GetTicksToEvent(mpEventBlitterIrq);
+		else if (mBlitState == BlitState::ProcessBlit)
+			state->mIntBlitHeightLeft = mBlitHeightLeft;
+	}
+
+	// save GTIA tracking state
+	state->mGtiaPal[0] = mColorTableExt[kColorP0];
+	state->mGtiaPal[1] = mColorTableExt[kColorP1];
+	state->mGtiaPal[2] = mColorTableExt[kColorP2];
+	state->mGtiaPal[3] = mColorTableExt[kColorP3];
+	state->mGtiaPal[4] = mColorTableExt[kColorPF0];
+	state->mGtiaPal[5] = mColorTableExt[kColorPF1];
+	state->mGtiaPal[6] = mColorTableExt[kColorPF2];
+	state->mGtiaPal[7] = mColorTableExt[kColorPF3];
+	state->mGtiaPal[8] = mColorTableExt[kColorBAK];
+	state->mGtiaPrior = mPRIOR;
+
+	// save register change queue
+	const int numRC = mRCCount - mRCIndex;
+	state->mGtiaRegisterChanges.resize(numRC * 3);
+	uint8 *rcdst = state->mGtiaRegisterChanges.data();
+
+	for(int i=0; i<numRC; ++i) {
+		const RegisterChange& rc = mRegisterChanges[i];
+
+		rcdst[0] = rc.mPos;
+		rcdst[1] = rc.mReg;
+		rcdst[2] = rc.mValue;
+		rcdst += 3;
+	}
+
+	return state;
 }
 
 sint32 ATVBXEEmulator::ReadControl(uint8 addrLo) {
@@ -714,7 +1127,7 @@ sint32 ATVBXEEmulator::ReadControl(uint8 addrLo) {
 			// D7-D2: RAZ
 			// D1: BUSY (1 = busy)
 			// D0: BCB_LOAD (1 = loading from blit list)
-			return (IsBlitterActive() ? 0x02 : 0x00) | (mbBlitterListActive ? 0x01 : 0x00);
+			return (IsBlitterActive() ? 0x02 : 0x00) | (mBlitState == BlitState::Reload ? 0x01 : 0x00);
 
 		case 0x54:	// IRQ_STATUS
 			return mbIRQRequest ? 0x01 : 0x00;
@@ -818,11 +1231,8 @@ bool ATVBXEEmulator::WriteControl(uint8 addrLo, uint8 value) {
 				// does nothing.
 
 				if (!IsBlitterActive()) {
-					mbBlitterEnabled = true;
-					mbBlitterListActive = true;
-					mbBlitterActive = false;
+					mBlitState = BlitState::Reload;
 					mbBlitterContinue = true;
-					mbBlitterStopping = false;
 					mBlitListFetchAddr = mBlitListAddr;
 
 					// Correct the amount of time that the blitter has left, since we're
@@ -842,10 +1252,7 @@ bool ATVBXEEmulator::WriteControl(uint8 addrLo, uint8 value) {
 				}
 			} else {
 				// Stop the blitter.
-				mbBlitterListActive = false;
-				mbBlitterActive = false;
-				mbBlitterEnabled = false;
-				mbBlitterStopping = false;
+				mBlitState = BlitState::Stopped;
 
 				mpScheduler->UnsetEvent(mpEventBlitterIrq);
 			}
@@ -1498,11 +1905,19 @@ void ATVBXEEmulator::OnScheduledEvent(uint32 id) {
 }
 
 bool ATVBXEEmulator::IsBlitterActive() const {
-	return mbBlitterActive || (mbBlitterStopping && ATWrapTime{ATSCHEDULER_GETTIME(mpScheduler)} < mBlitterStopTime);
+	if (mBlitState == BlitState::Stopped)
+		return false;
+
+	if (mBlitState == BlitState::Stopping)
+		return ATWrapTime{ATSCHEDULER_GETTIME(mpScheduler)} < mBlitterStopTime;
+
+	// blitter is only 'active' if it is actually running a bit, not while
+	// reading in a new BCB
+	return mBlitState == BlitState::ProcessBlit;
 }
 
 void ATVBXEEmulator::AssertBlitterIrq() {
-	mbBlitterStopping = false;
+	mBlitState = BlitState::Stopped;
 
 	if (!mbIRQRequest) {
 		mbIRQRequest = true;
@@ -1885,7 +2300,7 @@ void ATVBXEEmulator::RenderLoresBlank(int x1h, int x2h, bool attrMapEnabled) {
 	}
 
 	if (!T_Version126)
-		memset(priDst, 0, x2h - x1h);
+		memset(priDst, 0, (x2h - x1h) * 2);
 }
 
 template<bool T_Version126>
@@ -2870,37 +3285,30 @@ void ATVBXEEmulator::RenderOverlay80Text(uint8 *dst, int rx1, int x1, int w) {
 }
 
 void ATVBXEEmulator::RunBlitter() {
-	if (!mbBlitterEnabled)
+	if (mBlitState == BlitState::Stopped || mBlitState == BlitState::Stopping)
 		return;
 
-	mbBlitterStopping = false;
-
 	while(mBlitCyclesLeft > 0) {
-		if (!mbBlitterActive) {
+		if (mBlitState == BlitState::Reload) {
 			if (!mbBlitterContinue) {
-				mbBlitterListActive = false;
-				mbBlitterEnabled = false;
-
 				if (mbBlitLogging)
 					ATConsoleTaggedPrintf("VBXE: Blit list completed\n");
 
-				mbBlitterStopping = true;
-				if (mbBlitterStopping) {
-					const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+				mBlitState = BlitState::Stopping;
 
-					// Determine when the blitter should stop. For now we just assume all DMA cycles are
-					// at the beginning of the scanline; this is particularly incorrect for the overlay
-					// but we just ignore that for now.
+				// Determine when the blitter should stop. For now we just assume all DMA cycles are
+				// at the beginning of the scanline; this is particularly incorrect for the overlay
+				// but we just ignore that for now.
 
-					mBlitterStopTime = mBlitterEndScanTime - (mBlitCyclesLeft >> 3);
+				mBlitterStopTime = mBlitterEndScanTime - (mBlitCyclesLeft >> 3);
 
-					mpScheduler->UnsetEvent(mpEventBlitterIrq);
+				mpScheduler->UnsetEvent(mpEventBlitterIrq);
 
-					if (ATWrapTime{t} >= mBlitterStopTime)
-						AssertBlitterIrq();
-					else
-						mpEventBlitterIrq = mpScheduler->AddEvent(mBlitterStopTime - t, this, 1);
-				}
+				const uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+				if (ATWrapTime{t} >= mBlitterStopTime)
+					AssertBlitterIrq();
+				else
+					mpEventBlitterIrq = mpScheduler->AddEvent(mBlitterStopTime - t, this, 1);
 				break;
 			}
 
@@ -2910,298 +3318,7 @@ void ATVBXEEmulator::RunBlitter() {
 				break;
 		}
 
-		// Process one row.
-		//
-		// We may have to adjust the cycle timing depending on the content of the blit.
-		// Timings are as follows (r = source read cycle, x = dest read / execute cycle, w = write cycle):
-		//
-		//	Mode 0 (fill/copy):			rw
-		//	Mode 1 (stencil):			r ($00)
-		//								rw (non-$00, collision off)
-		//								rxw (non-$00, collision on)
-		//	Mode 2/3/5/6(add/or/xor/hr)	r for $00
-		//								rxw for non-$00
-		//	Mode 4 (and)				rw for $00
-		//								rxw for non-$00
-		//
-		// If the AND mask is $00 or X-zoom is active, the blitter can skip subsequent
-		// source read cycles and reuse the previously fetched result. In cases where
-		// the x-w cycles are also skipped, the blitter runs source read cycles. The
-		// fastest possible blit rate is one cycle per destination byte.
-		//
-		// There is no optimization for Y-zoom.
-		//
-		uint32 srcRowAddr = mBlitSrcAddr;
-		uint32 dstRowAddr = mBlitDstAddr;
-		uint32 patWidth = mBlitPatternMode & 0x80 ? (mBlitPatternMode & 0x3F) + 1 : 0xfffff;
-		uint32 patCounter = patWidth;
-		uint32 dstStepXZoomed = mBlitDstStepX * mBlitZoomX;
-		uint32 zeroSourceBytes = 0;
-
-		switch(mBlitterMode) {
-			case 0:
-			default:
-				if (mBlitZoomX == 1 && !(mBlitPatternMode & 0x80)) {
-					if (mBlitAndMask == 0) {
-						for(uint32 x=0; x<mBlitWidth; ++x) {
-							VBXE_WRITE(dstRowAddr, mBlitXorMask);
-							dstRowAddr += mBlitDstStepX;
-						}
-
-						srcRowAddr += mBlitSrcStepX * mBlitWidth;
-
-					} else {
-						for(uint32 x=0; x<mBlitWidth; ++x) {
-							uint8 c = VBXE_FETCH(srcRowAddr);
-
-							if (!c)
-								++zeroSourceBytes;
-
-							c &= mBlitAndMask;
-							c ^= mBlitXorMask;
-
-							VBXE_WRITE(dstRowAddr, c);
-							dstRowAddr += mBlitDstStepX;
-
-							srcRowAddr += mBlitSrcStepX;
-						}
-					}
-				} else {
-					for(uint32 x=0; x<mBlitWidth; ++x) {
-						uint8 c = VBXE_FETCH(srcRowAddr);
-
-						if (!c)
-							++zeroSourceBytes;
-
-						c &= mBlitAndMask;
-						c ^= mBlitXorMask;
-
-						for(uint8 i=0; i<mBlitZoomX; ++i) {
-							VBXE_WRITE(dstRowAddr, c);
-							dstRowAddr += mBlitDstStepX;
-						}
-
-						srcRowAddr += mBlitSrcStepX;
-
-						if (!--patCounter) {
-							patCounter = patWidth;
-							srcRowAddr = mBlitSrcAddr;
-						}
-					}
-				}
-				break;
-
-			case 1:
-				for(uint32 x=0; x<mBlitWidth; ++x) {
-					uint8 c = VBXE_FETCH(srcRowAddr);
-
-					if (!c)
-						++zeroSourceBytes;
-
-					c &= mBlitAndMask;
-					c ^= mBlitXorMask;
-
-					if (c) {
-						for(uint8 i=0; i<mBlitZoomX; ++i) {
-							uint8 d = VBXE_FETCH(dstRowAddr);
-
-							if (d && ((1 << (d >> 5)) & mBlitCollisionMask))
-								mBlitCollisionCode = d;
-
-							VBXE_WRITE(dstRowAddr, c);
-							dstRowAddr += mBlitDstStepX;
-						}
-					} else {
-						dstRowAddr += dstStepXZoomed;
-					}
-
-					srcRowAddr += mBlitSrcStepX;
-
-					if (!--patCounter) {
-						patCounter = patWidth;
-						srcRowAddr = mBlitSrcAddr;
-					}
-				}
-				break;
-
-			case 2:
-				for(uint32 x=0; x<mBlitWidth; ++x) {
-					uint8 c = VBXE_FETCH(srcRowAddr);
-
-					if (!c)
-						++zeroSourceBytes;
-
-					c &= mBlitAndMask;
-					c ^= mBlitXorMask;
-
-					if (c) {
-						for(uint8 i=0; i<mBlitZoomX; ++i) {
-							uint8 d = VBXE_FETCH(dstRowAddr);
-
-							if (d && ((1 << (d >> 5)) & mBlitCollisionMask))
-								mBlitCollisionCode = d;
-
-							VBXE_WRITE(dstRowAddr, c + d);
-							dstRowAddr += mBlitDstStepX;
-						}
-					} else {
-						dstRowAddr += dstStepXZoomed;
-					}
-
-					srcRowAddr += mBlitSrcStepX;
-
-					if (!--patCounter) {
-						patCounter = patWidth;
-						srcRowAddr = mBlitSrcAddr;
-					}
-
-				}
-				break;
-
-			case 3:
-				for(uint32 x=0; x<mBlitWidth; ++x) {
-					uint8 c = VBXE_FETCH(srcRowAddr);
-
-					if (!c)
-						++zeroSourceBytes;
-
-					c &= mBlitAndMask;
-					c ^= mBlitXorMask;
-
-					if (c) {
-						for(uint8 i=0; i<mBlitZoomX; ++i) {
-							uint8 d = VBXE_FETCH(dstRowAddr);
-
-							if (d && ((1 << (d >> 5)) & mBlitCollisionMask))
-								mBlitCollisionCode = d;
-
-							VBXE_WRITE(dstRowAddr, c | d);
-							dstRowAddr += mBlitDstStepX;
-						}
-					} else {
-						dstRowAddr += dstStepXZoomed;
-					}
-
-					srcRowAddr += mBlitSrcStepX;
-
-					if (!--patCounter) {
-						patCounter = patWidth;
-						srcRowAddr = mBlitSrcAddr;
-					}
-				}
-				break;
-
-			case 4:
-				for(uint32 x=0; x<mBlitWidth; ++x) {
-					uint8 c = VBXE_FETCH(srcRowAddr);
-
-					if (!c)
-						++zeroSourceBytes;
-
-					c &= mBlitAndMask;
-					c ^= mBlitXorMask;
-
-					if (c) {
-						for(uint8 i=0; i<mBlitZoomX; ++i) {
-							uint8 d = VBXE_FETCH(dstRowAddr);
-
-							if (d && ((1 << (d >> 5)) & mBlitCollisionMask))
-								mBlitCollisionCode = d;
-
-							VBXE_WRITE(dstRowAddr, c & d);
-							dstRowAddr += mBlitDstStepX;
-						}
-					} else {
-						for(uint8 i=0; i<mBlitZoomX; ++i) {
-							VBXE_WRITE(dstRowAddr, 0);
-							dstRowAddr += mBlitDstStepX;
-						}
-					}
-
-					srcRowAddr += mBlitSrcStepX;
-
-					if (!--patCounter) {
-						patCounter = patWidth;
-						srcRowAddr = mBlitSrcAddr;
-					}
-				}
-				break;
-
-			case 5:
-				for(uint32 x=0; x<mBlitWidth; ++x) {
-					uint8 c = VBXE_FETCH(srcRowAddr);
-
-					if (!c)
-						++zeroSourceBytes;
-
-					c &= mBlitAndMask;
-					c ^= mBlitXorMask;
-
-					if (c) {
-						for(uint8 i=0; i<mBlitZoomX; ++i) {
-							uint8 d = VBXE_FETCH(dstRowAddr);
-
-							if (d && ((1 << (d >> 5)) & mBlitCollisionMask))
-								mBlitCollisionCode = d;
-
-							VBXE_WRITE(dstRowAddr, c ^ d);
-							dstRowAddr += mBlitDstStepX;
-						}
-					} else {
-						dstRowAddr += dstStepXZoomed;
-					}
-
-					srcRowAddr += mBlitSrcStepX;
-
-					if (!--patCounter) {
-						patCounter = patWidth;
-						srcRowAddr = mBlitSrcAddr;
-					}
-				}
-				break;
-
-			case 6:
-				for(uint32 x=0; x<mBlitWidth; ++x) {
-					uint8 c = VBXE_FETCH(srcRowAddr);
-
-					if (!c)
-						++zeroSourceBytes;
-
-					c &= mBlitAndMask;
-					c ^= mBlitXorMask;
-
-					if (c) {
-						for(uint8 i=0; i<mBlitZoomX; ++i) {
-							uint8 d = VBXE_FETCH(dstRowAddr);
-
-							if (d) {
-								if (c & 0x0f) {
-									if ((1 << ((d >> 1) & 7)) & mBlitCollisionMask)
-										mBlitCollisionCode = d;
-								}
-
-								if (c & 0xf0) {
-									if ((1 << ((d >> 5) & 7)) & mBlitCollisionMask)
-										mBlitCollisionCode = d;
-								}
-							}
-
-							VBXE_WRITE(dstRowAddr, c);
-							dstRowAddr += mBlitDstStepX;
-						}
-					} else {
-						dstRowAddr += dstStepXZoomed;
-					}
-
-					srcRowAddr += mBlitSrcStepX;
-
-					if (!--patCounter) {
-						patCounter = patWidth;
-						srcRowAddr = mBlitSrcAddr;
-					}
-				}
-				break;
-		}
+		uint32 zeroSourceBytes = RunBlitterRow();
 
 		// Check how many cycles we should credit based on $00 source bytes.
 		//
@@ -3224,8 +3341,7 @@ void ATVBXEEmulator::RunBlitter() {
 			mBlitSrcAddr += mBlitSrcStepY;
 
 			if (!--mBlitHeightLeft) {
-				mbBlitterActive = false;
-				mbBlitterListActive = true;
+				mBlitState = BlitState::Reload;
 
 				if (mpTraceChannelBlit) {
 					mpTraceChannelBlit->AddTickEventF(mTraceBlitStartTime, GetBlitTime(), kATTraceColor_Default, L"%ux%u", mBlitWidth, mBlitHeight);
@@ -3233,6 +3349,195 @@ void ATVBXEEmulator::RunBlitter() {
 			}
 		}
 	}
+}
+
+uint32 ATVBXEEmulator::RunBlitterRow() {
+	switch(mBlitterMode) {
+		default:
+		case 0:	return RunBlitterRow<0>(); break;
+		case 1:	return RunBlitterRow<1>(); break;
+		case 2:	return RunBlitterRow<2>(); break;
+		case 3:	return RunBlitterRow<3>(); break;
+		case 4:	return RunBlitterRow<4>(); break;
+		case 5:	return RunBlitterRow<5>(); break;
+		case 6:	return RunBlitterRow<6>(); break;
+	}
+}
+
+template<uint8 T_Mode>
+uint32 ATVBXEEmulator::RunBlitterRow() {
+	// Process one row.
+	//
+	// We may have to adjust the cycle timing depending on the content of the blit.
+	// Timings are as follows (r = source read cycle, x = dest read / execute cycle, w = write cycle):
+	//
+	//	Mode 0 (fill/copy):			rw
+	//	Mode 1 (stencil):			r ($00)
+	//								rw (non-$00, collision off)
+	//								rxw (non-$00, collision on)
+	//	Mode 2/3/5/6(add/or/xor/hr)	r for $00
+	//								rxw for non-$00
+	//	Mode 4 (and)				rw for $00
+	//								rxw for non-$00
+	//
+	// If the AND mask is $00 or X-zoom is active, the blitter can skip subsequent
+	// source read cycles and reuse the previously fetched result. In cases where
+	// the x-w cycles are also skipped, the blitter runs source read cycles. The
+	// fastest possible blit rate is one cycle per destination byte.
+	//
+	// There is no optimization for Y-zoom.
+	//
+	uint32 srcRowAddr = mBlitSrcAddr;
+	uint32 dstRowAddr = mBlitDstAddr;
+	uint32 patWidth = mBlitPatternMode & 0x80 ? (mBlitPatternMode & 0x3F) + 1 : 0xfffff;
+	uint32 patCounter = patWidth;
+	uint32 dstStepXZoomed = mBlitDstStepX * mBlitZoomX;
+	uint32 zeroSourceBytes = 0;
+
+	const uint8 andMask = mBlitAndMask;
+	const uint8 xorMask = mBlitXorMask;
+	const uint8 zoomX = mBlitZoomX;
+	const uint32 width = mBlitWidth;
+	const sint32 srcStepX = mBlitSrcStepX;
+	const sint32 dstStepX = mBlitDstStepX;
+
+	if (zoomX == 0) {
+		VDNEVERHERE;
+	}
+
+	if (width == 0) {
+		VDNEVERHERE;
+	}
+
+	if constexpr (T_Mode == 0) {
+		if (zoomX == 1 && !(mBlitPatternMode & 0x80)) {
+			if (andMask == 0) {
+				for(uint32 x=0; x<width; ++x) {
+					VBXE_WRITE(dstRowAddr, xorMask);
+					dstRowAddr += dstStepX;
+				}
+
+				srcRowAddr += srcStepX * width;
+
+			} else {
+				for(uint32 x=0; x<width; ++x) {
+					uint8 c = VBXE_FETCH(srcRowAddr);
+
+					c &= andMask;
+					c ^= xorMask;
+
+					VBXE_WRITE(dstRowAddr, c);
+					dstRowAddr += dstStepX;
+						
+					srcRowAddr += srcStepX;
+				}
+			}
+		} else {
+			for(uint32 x=0; x<width; ++x) {
+				uint8 c = VBXE_FETCH(srcRowAddr);
+
+				c &= andMask;
+				c ^= xorMask;
+
+				for(uint8 i=0; i<zoomX; ++i) {
+					VBXE_WRITE(dstRowAddr, c);
+					dstRowAddr += dstStepX;
+				}
+
+				srcRowAddr += srcStepX;
+
+				if (!--patCounter) {
+					patCounter = patWidth;
+					srcRowAddr = mBlitSrcAddr;
+				}
+			}
+		}
+
+		return 0;
+	}
+
+	for(uint32 x=0; x<width; ++x) {
+		uint8 c = VBXE_FETCH(srcRowAddr);
+
+		c &= andMask;
+		c ^= xorMask;
+
+		if (c) {
+			for(uint8 i=0; i<zoomX; ++i) {
+				uint8 d = VBXE_FETCH(dstRowAddr);
+
+				if constexpr (T_Mode == 6) {
+					const uint8 cl = c & 0x0f;
+					const uint8 ch = c & 0xf0;
+					uint8 dl = d & 0x0f;
+					uint8 dh = d & 0xf0;
+
+					if (cl) {
+						if (dl) {
+							if ((1 << ((d >> 1) & 7)) & mBlitActiveCollisionMask) {
+								mBlitCollisionCode = (mBlitCollisionCode & 0xf0) + dl;
+								mBlitActiveCollisionMask = 0;
+							}
+						}
+
+						dl = cl;
+					}
+
+					if (ch) {
+						if (dh) {
+							if ((1 << ((d >> 5) & 7)) & mBlitActiveCollisionMask) {
+								mBlitCollisionCode = (mBlitCollisionCode & 0x0f) + dh;
+								mBlitActiveCollisionMask = 0;
+							}
+						}
+
+						dh = ch;
+					}
+
+					VBXE_WRITE(dstRowAddr, dl + dh);
+				} else {
+					if (d && ((1 << (d >> 5)) & mBlitActiveCollisionMask)) {
+						mBlitCollisionCode = d;
+						mBlitActiveCollisionMask = 0;
+					}
+
+					if constexpr (T_Mode == 1)
+						VBXE_WRITE(dstRowAddr, c);
+					else if constexpr (T_Mode == 2)
+						VBXE_WRITE(dstRowAddr, c + d);
+					else if constexpr (T_Mode == 3)
+						VBXE_WRITE(dstRowAddr, c | d);
+					else if constexpr (T_Mode == 4)
+						VBXE_WRITE(dstRowAddr, c & d);
+					else if constexpr (T_Mode == 5)
+						VBXE_WRITE(dstRowAddr, c ^ d);
+				}
+
+				dstRowAddr += dstStepX;
+			}
+		} else {
+			++zeroSourceBytes;
+
+			if constexpr (T_Mode == 4) {
+				for(uint8 i=0; i<zoomX; ++i) {
+					VBXE_WRITE(dstRowAddr, 0);
+					dstRowAddr += dstStepX;
+				}
+			} else {
+				dstRowAddr += dstStepXZoomed;
+			}
+		}
+
+		srcRowAddr += srcStepX;
+
+		if (!--patCounter) {
+			patCounter = patWidth;
+			srcRowAddr = mBlitSrcAddr;
+		}
+
+	}
+
+	return zeroSourceBytes;
 }
 
 uint64 ATVBXEEmulator::GetBlitTime() const {
@@ -3256,37 +3561,59 @@ uint64 ATVBXEEmulator::GetBlitTime() const {
 
 void ATVBXEEmulator::LoadBlitter() {
 	if (mbBlitLogging) {
-		ATConsoleTaggedPrintf("VBXE: Starting new blit at $%05X:\n", mBlitListFetchAddr);
-
-		DumpBlitListEntry(mBlitListFetchAddr);
+		DumpBlitListEntry(mBlitListFetchAddr, mbBlitLoggingCompact, true);
 	}
 
 	mTraceBlitStartTime = GetBlitTime();
 
-	uint8 rawSrcAddr0 = VBXE_FETCH(mBlitListFetchAddr + 0);
-	uint8 rawSrcAddr1 = VBXE_FETCH(mBlitListFetchAddr + 1);
-	uint8 rawSrcAddr2 = VBXE_FETCH(mBlitListFetchAddr + 2);
-	uint8 rawSrcStepY0 = VBXE_FETCH(mBlitListFetchAddr + 3);
-	uint8 rawSrcStepY1 = VBXE_FETCH(mBlitListFetchAddr + 4);
-	uint8 rawSrcStepX = VBXE_FETCH(mBlitListFetchAddr + 5);
-	uint8 rawDstAddr0 = VBXE_FETCH(mBlitListFetchAddr + 6);
-	uint8 rawDstAddr1 = VBXE_FETCH(mBlitListFetchAddr + 7);
-	uint8 rawDstAddr2 = VBXE_FETCH(mBlitListFetchAddr + 8);
-	uint8 rawDstStepY0 = VBXE_FETCH(mBlitListFetchAddr + 9);
-	uint8 rawDstStepY1 = VBXE_FETCH(mBlitListFetchAddr + 10);
-	uint8 rawDstStepX = VBXE_FETCH(mBlitListFetchAddr + 11);
-	uint8 rawBltWidth0 = VBXE_FETCH(mBlitListFetchAddr + 12);
-	uint8 rawBltWidth1 = VBXE_FETCH(mBlitListFetchAddr + 13);
-	uint8 rawBltHeight = VBXE_FETCH(mBlitListFetchAddr + 14);
-	uint8 rawBltAndMask = VBXE_FETCH(mBlitListFetchAddr + 15);
-	uint8 rawBltXorMask = VBXE_FETCH(mBlitListFetchAddr + 16);
-	uint8 rawBltCollisionMask = VBXE_FETCH(mBlitListFetchAddr + 17);
-	uint8 rawBltZoom = VBXE_FETCH(mBlitListFetchAddr + 18);
-	uint8 rawPatternMode = VBXE_FETCH(mBlitListFetchAddr + 19);
-	uint8 rawBltControl = VBXE_FETCH(mBlitListFetchAddr + 20);
+	// read in next BCB from local memory
+	uint8 bcb[21];
+	for(int i=0; i<21; ++i)
+		bcb[i] = VBXE_FETCH(mBlitListFetchAddr + i);
+
 	mBlitListFetchAddr += 21;
 
-	mbBlitterActive = true;
+	// decode BCB to internal state
+	LoadBCB(bcb);
+
+	// reset parameters for new blit
+	mBlitState = BlitState::ProcessBlit;
+	mBlitHeightLeft = mBlitHeight;
+	mBlitZoomCounterY = 0;
+	mBlitCollisionCode = 0;
+
+	// deduct cycles for blit list
+	mBlitCyclesLeft -= 21;
+
+	// deduct a single cycle for constant read, since the source read cycle cannot initially
+	// be skipped
+	if (mBlitAndMask == 0)
+		--mBlitCyclesLeft;
+}
+
+// Load blitter state from a blit control block as it appears in VBXE local memory.
+void ATVBXEEmulator::LoadBCB(const uint8 (&bcb)[21]) {
+	const uint8 rawSrcAddr0		= bcb[ 0];
+	const uint8 rawSrcAddr1		= bcb[ 1];
+	const uint8 rawSrcAddr2		= bcb[ 2];
+	const uint8 rawSrcStepY0	= bcb[ 3];
+	const uint8 rawSrcStepY1	= bcb[ 4];
+	const uint8 rawSrcStepX		= bcb[ 5];
+	const uint8 rawDstAddr0		= bcb[ 6];
+	const uint8 rawDstAddr1		= bcb[ 7];
+	const uint8 rawDstAddr2		= bcb[ 8];
+	const uint8 rawDstStepY0	= bcb[ 9];
+	const uint8 rawDstStepY1	= bcb[10];
+	const uint8 rawDstStepX		= bcb[11];
+	const uint8 rawBltWidth0	= bcb[12];
+	const uint8 rawBltWidth1	= bcb[13];
+	const uint8 rawBltHeight	= bcb[14];
+	const uint8 rawBltAndMask	= bcb[15];
+	const uint8 rawBltXorMask	= bcb[16];
+	const uint8 rawBltCollisionMask = bcb[17];
+	const uint8 rawBltZoom		= bcb[18];
+	const uint8 rawPatternMode	= bcb[19];
+	const uint8 rawBltControl	= bcb[20];
 
 	mBlitSrcAddr = (uint32)rawSrcAddr0 + ((uint32)rawSrcAddr1 << 8) + ((uint32)rawSrcAddr2 << 16);
 	mBlitSrcStepX = (sint8)rawSrcStepX;
@@ -3296,10 +3623,10 @@ void ATVBXEEmulator::LoadBlitter() {
 	mBlitDstStepY = ((((uint32)rawDstStepY0 + ((uint32)rawDstStepY1 << 8)) & 0x1FFF) + 0xFFFFF000) ^ 0xFFFFF000;
 	mBlitWidth = (uint32)rawBltWidth0 + (uint32)((rawBltWidth1 & 0x01) << 8) + 1;
 	mBlitHeight = (uint32)rawBltHeight + 1;
-	mBlitHeightLeft = mBlitHeight;
 	mBlitAndMask = rawBltAndMask;
 	mBlitXorMask = rawBltXorMask;
 	mBlitCollisionMask = rawBltCollisionMask;
+	mBlitActiveCollisionMask = rawBltCollisionMask;
 	mBlitPatternMode = rawPatternMode;
 
 	mbBlitterContinue = (rawBltControl & 0x08) != 0;
@@ -3308,21 +3635,11 @@ void ATVBXEEmulator::LoadBlitter() {
 
 	mBlitZoomX = (rawBltZoom & 7) + 1;
 	mBlitZoomY = ((rawBltZoom >> 4) & 7) + 1;
-	mBlitZoomCounterY = 0;
 
-	mBlitCollisionCode = 0;
-
-	// Deduct cycles for blit list.
-	mBlitCyclesLeft -= 21;
-
+	// recompute derived parameters that are constant for the entire blit
 	// Compute memory cycles per row blitted.
 	const uint32 srcBytesPerRow = mBlitWidth;
 	const uint32 dstBytesPerRow = mBlitWidth * mBlitZoomX;
-
-	// Deduct a single cycle for constant read, since the source read cycle cannot initially
-	// be skipped.
-	if (mBlitAndMask == 0)
-		--mBlitCyclesLeft;
 
 	mBlitCyclesPerRow = dstBytesPerRow;
 	mBlitCyclesSavedPerZero = 0;
@@ -3364,6 +3681,33 @@ void ATVBXEEmulator::LoadBlitter() {
 				break;
 		}
 	}
+}
+
+// Save blitter state to a blit control block as it appears in VBXE local memory.
+// This isn't an operation that VBXE ever does, but we use it in save state processing
+// so that the save state matches the same form as the blit list.
+void ATVBXEEmulator::SaveBCB(uint8 (&bcb)[21]) const {
+	bcb[ 0] = (uint8)(mBlitSrcAddr >>  0);
+	bcb[ 1] = (uint8)(mBlitSrcAddr >>  8);
+	bcb[ 2] = (uint8)(mBlitSrcAddr >> 16);
+	bcb[ 3] = (uint8)(mBlitSrcStepY >> 0);
+	bcb[ 4] = (uint8)(mBlitSrcStepY >> 8);
+	bcb[ 5] = (uint8)(mBlitSrcStepX     );
+	bcb[ 6] = (uint8)(mBlitDstAddr >>  0);
+	bcb[ 7] = (uint8)(mBlitDstAddr >>  8);
+	bcb[ 8] = (uint8)(mBlitDstAddr >> 16);
+	bcb[ 9] = (uint8)(mBlitDstStepY >> 0);
+	bcb[10] = (uint8)(mBlitDstStepY >> 8);
+	bcb[11] = (uint8)(mBlitDstStepX     );
+	bcb[12] = (uint8)((mBlitWidth - 1) >> 0);
+	bcb[13] = (uint8)((mBlitWidth - 1) >> 8);
+	bcb[14] = (uint8)(mBlitHeight - 1);
+	bcb[15] = mBlitAndMask;
+	bcb[16] = mBlitXorMask;
+	bcb[17] = mBlitCollisionMask;
+	bcb[18] = (mBlitZoomX - 1) + ((mBlitZoomY - 1) << 4);
+	bcb[19] = mBlitPatternMode;
+	bcb[20] = (mbBlitterContinue ? 0x08 : 0x00) + mBlitterMode;
 }
 
 void ATVBXEEmulator::InitPriorityTables() {
@@ -3567,6 +3911,7 @@ class ATVBXEDevice final
 	, public IATDeviceMemMap
 	, public IATDeviceIRQSource
 	, public IATDeviceU1MBControllable
+	, public IATDeviceSnapshot
 {
 public:
 	ATVBXEDevice();
@@ -3605,6 +3950,10 @@ public:	// IATDeviceIRQSource
 public:	// IATDeviceU1MBControllable
 	void SetU1MBControl(ATU1MBControl control, sint32 value) override;
 
+public:	// IATDeviceSnapshot
+	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx) override;
+	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const override;
+
 private:
 	void UpdateMemoryMapping();
 	void AllocVBXEMemory();
@@ -3634,6 +3983,7 @@ void *ATVBXEDevice::AsInterface(uint32 iid) {
 		case IATDeviceMemMap::kTypeID: return static_cast<IATDeviceMemMap *>(this);
 		case IATDeviceIRQSource::kTypeID: return static_cast<IATDeviceIRQSource *>(this);
 		case IATDeviceU1MBControllable::kTypeID: return static_cast<IATDeviceU1MBControllable *>(this);
+		case IATDeviceSnapshot::kTypeID: return static_cast<IATDeviceSnapshot *>(this);
 		case ATVBXEEmulator::kTypeID:	return &mEmulator;
 		default:	return ATDevice::AsInterface(iid);
 	}
@@ -3755,6 +4105,14 @@ void ATVBXEDevice::SetU1MBControl(ATU1MBControl control, sint32 value) {
 	}
 }
 
+void ATVBXEDevice::LoadState(const IATObjectState *state, ATSnapshotContext& ctx) {
+	mEmulator.LoadState(state);
+}
+
+vdrefptr<IATObjectState> ATVBXEDevice::SaveState(ATSnapshotContext& ctx) const {
+	return mEmulator.SaveState();
+}
+
 void ATVBXEDevice::UpdateMemoryMapping() {
 	if (!mbSharedMemoryEnabled)
 		AllocVBXEMemory();
@@ -3763,8 +4121,10 @@ void ATVBXEDevice::UpdateMemoryMapping() {
 }
 
 void ATVBXEDevice::AllocVBXEMemory() {
-	if (!mpVBXEMemory)
+	if (!mpVBXEMemory) {
 		mpVBXEMemory = VDAlignedMalloc(524288, 16);
+		memset(mpVBXEMemory, 0, 524288);
+	}
 }
 
 void ATVBXEDevice::FreeVBXEMemory() {

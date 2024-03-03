@@ -91,7 +91,7 @@ void ATHLEBasicLoader::LoadTape(bool pushKeyToLoadTape) {
 
 	mbPushKeyToLoadTape = pushKeyToLoadTape;
 
-	mState = State::LoadTape;
+	mState = State::RunTape;
 }
 
 uint8 ATHLEBasicLoader::OnCIOV(uint16) {
@@ -177,9 +177,24 @@ uint8 ATHLEBasicLoader::OnCIOV(uint16) {
 		return 0;
 
 	// write command line
-	static const uint8 kRunProgramCmdLine[]={ 'R', 'U', 'N', ' ', '"', '*', '"', 0x9B };
-	static const uint8 kLoadTapeCmdLine[]={ 'C', 'L', 'O', 'A', 'D', 0x9B };
-	static const uint8 kRunTapeCmdLine[]={ 'R', 'U', 'N', 0x9B };
+	static constexpr uint8 kRunProgramCmdLine[]={ 'R', 'U', 'N', ' ', '"', '*', '"', 0x9B };
+	static constexpr uint8 kRunTapeCmdLine[]={ 'R', 'U', 'N', ' ', '"', 'C', '"', 0x9B };
+
+	uint8 fastTapeShim[] {
+		0x0B, 0x04,			// 0400: 0B 04     DTA A($040C-1)
+		0x00, 0x00,			// 0402: 00 00     DTA A(CLOSE-1)
+		0x00, 0x00,			// 0404: 00 00     DTA A(GET-1)
+		0x00, 0x00,			// 0406: 00 00     DTA A(PUT-1)
+		0x00, 0x00,			// 0408: 00 00     DTA A(STATUS-1)
+		0x00, 0x00,			// 040A: 00 00     DTA A(SPECIAL-1)
+		0xA9, 0x80,			// 040C: A9 80     LDA #$80
+		0x85, 0x2B,			// 040E: 85 2B     STA ICAX2Z
+		0xA9, 0x00,			// 0410: A9 00     LDA #$00
+		0x8D, 0x00, 0x03,	// 0412: 85 00 00  STA HATABS+1+n
+		0xA9, 0x00,			// 0415: A9 00     LDA #$00
+		0x8D, 0x00, 0x03,	// 0417: 85 00 00  STA HATABS+2+n
+		0x4C, 0x00, 0x00,	// 041A: 4C 00 00  JMP $0000
+	};
 
 	uint16 lineAddr = kdb.ICBAL_ICBAH;
 	uint32 lineLen = kdb.ICBLL_ICBLH;
@@ -196,18 +211,60 @@ uint8 ATHLEBasicLoader::OnCIOV(uint16) {
 			// leave hook attached for program load
 			break;
 
-		case State::LoadTape:
-			cmdline = kLoadTapeCmdLine;
-			mState = State::RunTape;
+		case State::RunTape:
+			cmdline = kRunTapeCmdLine;
+			mState = State::None;
+			mpCPUHookMgr->UnsetHook(mpLaunchHook);
 
 			if (mbPushKeyToLoadTape)
 				kdb.CH = 0x21;
-			break;
 
-		case State::RunTape:
-			mState = State::None;
-			cmdline = kRunTapeCmdLine;
-			mpCPUHookMgr->UnsetHook(mpLaunchHook);
+			// Temporarily patch C: device.
+			//
+			// We need to do this because while many tapes are fine with CLOAD,
+			// some require RUN "C" to work. This is because they have a
+			// protected loader with a zero-length immediate line that will hang
+			// BASIC on a load. However, we can't use RUN "C" for all tapes
+			// because that sets long IRG mode. To get around this, we install
+			// a temporary shim for C: that forces on short IRG mode and then
+			// chains to the standard C: handler.
+			for(int i=11; i>=0; --i) {
+				const uint16 centry = ATKernelSymbols::HATABS + 3*i;
+				if (mem->DebugReadByte(centry) == 'C') {
+					// read address of C: table
+					const uint16 ctab =
+						mem->DebugReadByte(centry + 1) +
+						mem->DebugReadByte(centry + 2) * 256;
+
+					// copy the C: table into the patch (since it's in ROM)
+					// skip the OPEN handler, which we're shimming
+					for(int j=2; j<12; ++j)
+						fastTapeShim[j] = mem->ReadByte((ctab + j) & 0xFFFF);
+
+					// patch HATABS to point to the modified table
+					mem->WriteByte(centry + 1, 0x00);
+					mem->WriteByte(centry + 2, 0x04);
+
+					// patch the original C: table pointer into the shim so it
+					// can restore it
+					fastTapeShim[0x11] = (uint8)ctab;
+					fastTapeShim[0x16] = (uint8)(ctab >> 8);
+
+					fastTapeShim[0x13] = (uint8)(centry + 1);
+					fastTapeShim[0x18] = (uint8)(centry + 2);
+
+					// patch the JMP exit from the shim
+					const uint16 copen = mem->DebugReadByte(ctab) + 256*mem->DebugReadByte(ctab+1) + 1;
+					fastTapeShim[0x1B] = (uint8)copen;
+					fastTapeShim[0x1C] = (uint8)(copen >> 8);
+
+					// write the shim into the cassette buffer
+					for(int j=0; j<(int)sizeof(fastTapeShim); ++j)
+						mem->WriteByte(0x0400 + j, fastTapeShim[j]);
+
+					break;
+				}
+			}
 			break;
 	}
 

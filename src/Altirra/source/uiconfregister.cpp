@@ -25,6 +25,10 @@ bool ATUIConfDevDragonCart(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevPCLink(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevHostFS(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDev1030(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDev1030Full(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDev835(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDev835Full(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDev1400XL(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDev850(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevSX212(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevVeronica(VDGUIHandle hParent, ATPropertySet& props);
@@ -52,6 +56,7 @@ bool ATUIConfDevSIDE3(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevParFileWriter(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevComputerEyes(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevVideoStillImage(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevNetSerial(VDGUIHandle hParent, ATPropertySet& props);
 
 void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("harddisk", ATUIConfDevHardDisk);
@@ -61,6 +66,10 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("pclink", ATUIConfDevPCLink);
 	dev.AddDeviceConfigurer("hostfs", ATUIConfDevHostFS);
 	dev.AddDeviceConfigurer("1030", ATUIConfDev1030);
+	dev.AddDeviceConfigurer("1030full", ATUIConfDev1030Full);
+	dev.AddDeviceConfigurer("835", ATUIConfDev835);
+	dev.AddDeviceConfigurer("835full", ATUIConfDev835Full);
+	dev.AddDeviceConfigurer("1400xl", ATUIConfDev1400XL);
 	dev.AddDeviceConfigurer("850", ATUIConfDev850);
 	dev.AddDeviceConfigurer("sx212", ATUIConfDevSX212);
 	dev.AddDeviceConfigurer("veronica", ATUIConfDevVeronica);
@@ -89,6 +98,7 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("parfilewriter", ATUIConfDevParFileWriter);
 	dev.AddDeviceConfigurer("computereyes", ATUIConfDevComputerEyes);
 	dev.AddDeviceConfigurer("videostillimage", ATUIConfDevVideoStillImage);
+	dev.AddDeviceConfigurer("netserial", ATUIConfDevNetSerial);
 
 	static const char *const kDiskDriveFullTypes[]={
 		"diskdrive810",

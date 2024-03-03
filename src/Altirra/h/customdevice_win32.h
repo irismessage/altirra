@@ -21,6 +21,8 @@
 #include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
 
+class IATTimerService;
+
 class IATDeviceCustomNetworkEngine : public IVDRefCount {
 public:
 	virtual void Shutdown() = 0;
@@ -44,13 +46,9 @@ public:
 	// Returns true if successful, false if connection lost.
 	virtual bool Recv(void *data, uint32 len) = 0;
 
-	virtual void SetRecvHandler(vdfunction<void()> fn) = 0;
-	virtual bool SetRecvNotifyEnabled(bool queueCall) = 0;
-
-	// Return the minimal number of bytes that can be read from buffers without blocking.
-	virtual uint32 Peek() = 0;
+	virtual bool SetRecvNotifyEnabled() = 0;
 };
 
-vdrefptr<IATDeviceCustomNetworkEngine> ATCreateDeviceCustomNetworkEngine(uint16 localhostPort);
+vdrefptr<IATDeviceCustomNetworkEngine> ATCreateDeviceCustomNetworkEngine(uint16 localhostPort, IATTimerService& timerService, vdfunction<void()> recvNotifyFn);
 
 #endif

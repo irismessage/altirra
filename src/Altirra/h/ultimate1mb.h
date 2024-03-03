@@ -23,6 +23,7 @@
 #include <at/atcore/devicepbi.h>
 #include <at/atcore/devicestorageimpl.h>
 #include <at/atcore/devicesystemcontrol.h>
+#include <at/atcore/devicesnapshot.h>
 #include <at/atemulation/flash.h>
 #include <at/atemulation/rtcds1305.h>
 #include "callback.h"
@@ -42,6 +43,7 @@ class ATUltimate1MBEmulator final
 	, public IATPBIDevice
 	, public IATDeviceCartridge
 	, public IATDeviceSystemControl
+	, public IATDeviceSnapshot
 {
 	ATUltimate1MBEmulator(const ATUltimate1MBEmulator&) = delete;
 	ATUltimate1MBEmulator& operator=(const ATUltimate1MBEmulator&) = delete;
@@ -93,6 +95,9 @@ public:
 	void DumpStatus(ATConsoleOutput&);
 	void DumpRTCStatus(ATConsoleOutput&);
 
+	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx);
+	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const;
+
 public:		// IATDeviceCartridge
 	void InitCartridge(IATDeviceCartridgePort *cartPort) override;
 	bool IsLeftCartActive() const override;
@@ -117,11 +122,16 @@ protected:
 	void UpdateExternalCart();
 	void UpdateCartLayers();
 	void UpdatePBIDevice();
+	void UpdateMemoryMode();
+	void UpdateHooks();
 	void SetPBIBank(uint8 bank);
 	void SetSDXBank(uint8 bank);
 	void SetSDXEnabled(bool enabled);
 	void SetSDXModuleEnabled(bool enabled);
 	void SetIORAMEnabled(bool enabled);
+	void SetUAUX(uint8 value);
+	void SetUPBI(uint8 value);
+	void SetSDXCTL(uint8 value);
 	void UpdateFlashShadows();
 
 	static sint32 DebugReadByteFlash(void *thisptr, uint32 addr);
@@ -139,27 +149,28 @@ protected:
 	static sint32 ReadByteD5xx(void *thisptr, uint32 addr);
 	static bool WriteByteD5xx(void *thisptr, uint32 addr, uint8 value);
 
-	uint32 mCartBankOffset;
-	uint8 mKernelBank;
-	uint8 mBasicBank;
-	uint8 mGameBank;
-	sint8 mCurrentPBIID;
-	uint8 mSelectedPBIID;
-	uint8 mColdFlag;
-	bool mbControlLocked;
-	bool mbSDXEnabled;
-	bool mbSDXModuleEnabled;
-	bool mbFlashWriteEnabled;
-	bool mbIORAMEnabled;
-	bool mbPBISelected;
-	bool mbPBIEnabled;
-	bool mbPBIButton;
-	bool mbExternalCartEnabled;
-	bool mbExternalCartEnabledRD4;
-	bool mbExternalCartEnabledRD5;
-	bool mbExternalCartActive;
-	bool mbSoundBoardEnabled;
-	uint8 mVBXEPage;
+	uint32 mCartBankOffset = 0;
+	uint8 mMemoryMode = 0;
+	uint8 mKernelBank = 0;
+	uint8 mBasicBank = 0;
+	uint8 mGameBank = 0;
+	sint8 mCurrentPBIID = 0;
+	uint8 mSelectedPBIID = 0;
+	uint8 mColdFlag = 0;
+	bool mbControlLocked = false;
+	bool mbSDXEnabled = false;
+	bool mbSDXModuleEnabled = false;
+	bool mbFlashWriteEnabled = false;
+	bool mbIORAMEnabled = false;
+	bool mbPBISelected = false;
+	bool mbPBIEnabled = false;
+	bool mbPBIButton = false;
+	bool mbExternalCartEnabled = false;
+	bool mbExternalCartEnabledRD4 = false;
+	bool mbExternalCartEnabledRD5 = false;
+	bool mbExternalCartActive = false;
+	bool mbSoundBoardEnabled = false;
+	uint8 mVBXEPage = 0;
 
 	uint8 *mpMemory = nullptr;
 	ATMMUEmulator *mpMMU = nullptr;
@@ -197,8 +208,8 @@ protected:
 	ATFlashEmulator mFlashEmu;
 	ATRTCDS1305Emulator mClockEmu;
 
-	ATCallbackHandler0<void> mVBXEPageHandler;
-	ATCallbackHandler0<void> mSBPageHandler;
+	ATCallbackHandler0<void> mVBXEPageHandler {};
+	ATCallbackHandler0<void> mSBPageHandler {};
 	
 	ATBusSignalOutput	mStereoEnableOutput;
 	ATBusSignalOutput	mCovoxEnableOutput;

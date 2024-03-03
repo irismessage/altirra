@@ -98,7 +98,7 @@ public:
 	virtual void SetDisplayDebugInfo(bool enable) = 0;
 	virtual void SetColorOverride(uint32 color) = 0;
 	virtual void SetHighPrecision(bool enable) = 0;
-	virtual void SetDestRect(const vdrect32 *r, uint32 color) = 0;
+	virtual void SetDestRectF(const vdrect32f *r, uint32 color) = 0;
 	virtual void SetPixelSharpness(float xfactor, float yfactor) = 0;
 	virtual void SetSDRBrightness(float nits) = 0;
 	virtual bool SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) = 0;
@@ -141,7 +141,7 @@ public:
 	virtual void SetDisplayDebugInfo(bool enable) override;
 	virtual void SetColorOverride(uint32 color) override;
 	virtual void SetHighPrecision(bool enable) override;
-	virtual void SetDestRect(const vdrect32 *r, uint32 color) override;
+	virtual void SetDestRectF(const vdrect32f *r, uint32 color) override;
 	virtual void SetPixelSharpness(float xfactor, float yfactor) override;
 	virtual void SetSDRBrightness(float nits) override;
 	virtual bool SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) override;
@@ -176,6 +176,7 @@ protected:
 	vdrect32	mClientRect {};		// (0,0)-(w,h)
 	vdrect32	mDrawRect {};			// DestRect clipped against ClientRect
 	vdrect32	mDestRect {};
+	vdrect32f	mDestRectF {};
 	uint32	mBackgroundColor {};
 	uint32	mColorOverride {};
 	float	mPixelSharpnessX {};

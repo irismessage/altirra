@@ -88,11 +88,11 @@ void ATPokeyEmulatorOldStateLoader::LoadStatePrivate(ATSaveStateReader& reader) 
 	for(int i=0; i<4; ++i)
 		reader.ReadUint8();
 
-	mEmu.LoadState(*mpState);
+	mEmu.LoadState(mpState);
 }
 
 void ATPokeyEmulatorOldStateLoader::LoadStateResetPrivate(ATSaveStateReader& reader) {
-	mEmu.LoadState(*mpState);
+	mEmu.LoadState(mpState);
 }
 
 void ATPokeyEmulatorOldStateLoader::EndLoadState(ATSaveStateReader& reader) {

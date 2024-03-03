@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
+#include <at/atcore/asyncdispatcher.h>
 #include <at/atcore/cio.h>
 #include <at/atcore/devicecio.h>
 #include <at/atcore/deviceimpl.h>
@@ -40,7 +41,7 @@ ATLogChannel g_ATLCPocketModem(true, false, "POCKETMODEM", "Pocket Modem activit
 class ATDevicePocketModem final
 	: public ATDevice
 	, public IATDeviceScheduling
-	, public IATDeviceIndicators					
+	, public IATDeviceIndicators
 	, public ATDeviceSIO
 	, public IATDeviceRawSIO
 	, public IATSchedulerCallback
@@ -177,7 +178,7 @@ bool ATDevicePocketModem::SetSettings(const ATPropertySet& props) {
 
 void ATDevicePocketModem::Init() {
 	mpDevice->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
-	mpDevice->Init(mpScheduler, mpSlowScheduler, mpUIRenderer, nullptr);
+	mpDevice->Init(mpScheduler, mpSlowScheduler, mpUIRenderer, nullptr, GetService<IATAsyncDispatcher>());
 }
 
 void ATDevicePocketModem::Shutdown() {

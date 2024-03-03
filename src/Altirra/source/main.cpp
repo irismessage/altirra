@@ -25,7 +25,6 @@
 #include <commctrl.h>
 #include <ole2.h>
 #include <uxtheme.h>
-#include <winsock2.h>
 #include <dwmapi.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/cpuaccel.h>
@@ -65,6 +64,7 @@
 #include <at/atio/atfs.h>
 #include <at/atio/cassetteimage.h>
 #include <at/atio/image.h>
+#include <at/atui/accessibility.h>
 #include <at/atui/constants.h>
 #include <at/atnativeui/acceleditdialog.h>
 #include <at/atnativeui/dialog.h>
@@ -75,6 +75,7 @@
 #include <at/atnativeui/theme.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uipane.h>
+#include <at/atnetworksockets/nativesockets.h>
 #include <at/atcore/device.h>
 #include <at/atcore/propertyset.h>
 #include <at/atdebugger/target.h>
@@ -116,8 +117,9 @@
 #include "uiqueue.h"
 #include "uicommondialogs.h"
 #include "uiaccessors.h"
-#include "uifilefilters.h"
 #include "uiclipboard.h"
+#include "uifilefilters.h"
+#include "uifrontend.h"
 #include "sapconverter.h"
 #include "cmdhelpers.h"
 #include "settings.h"
@@ -191,6 +193,8 @@ void ATUIShowDialogOptions(VDGUIHandle h);
 void ATUIShowDialogAbout(VDGUIHandle h);
 bool ATUIShowDialogKeyboardOptions(VDGUIHandle hParent, ATUIKeyboardOptions& opts);
 void ATUIShowDialogSetFileAssociations(VDGUIHandle parent, bool allowElevation, bool userOnly);
+void ATRegisterFileAssociations(bool allowElevation, bool userOnly);
+void ATRemoveAllFileAssociations(bool allowElevation);
 void ATUIShowDialogRemoveFileAssociations(VDGUIHandle parent, bool allowElevation, bool userOnly);
 bool ATUIShowDialogVideoEncoding(VDGUIHandle parent, bool hz50, ATVideoEncoding& encoding,
 	uint32& videoBitRate,
@@ -213,8 +217,6 @@ void ATRegisterDeviceXCmds(ATDeviceManager& dm);
 void ATInitEmuErrorHandler(VDGUIHandle h, ATSimulator *sim);
 void ATShutdownEmuErrorHandler();
 
-bool ATIDEIsPhysicalDiskPath(const wchar_t *path);
-
 void ATUIInitManager();
 void ATUIShutdownManager();
 void ATUIFlushDisplay();
@@ -223,7 +225,6 @@ void ATUIInitFirmwareMenuCallbacks(ATFirmwareManager *fwmgr);
 void ATUIInitProfileMenuCallbacks();
 void ATUIInitVideoOutputMenuCallback(IATDeviceVideoManager& devMgr);
 
-void ATSaveRegisterTypes();
 void ATInitSaveStateDeserializer();
 
 void ATLoadConfigVars();
@@ -293,6 +294,41 @@ ATConfigVarBool g_ATCVDisplayDXWaitableObject("display.dx.use_waitable_object", 
 ATConfigVarBool g_ATCVDisplayDXDoNotWait("display.dx.use_do_not_wait", true,
 	[] {
 		VDVideoDisplaySetDXDoNotWaitEnabled(g_ATCVDisplayDXDoNotWait);
+		ATUIResetDisplay();
+	}
+);
+
+ATConfigVarBool g_ATCVDisplayD3D9LimitPS1_1("display.d3d9.limit_ps1_1", false,
+	[] {
+		VDVideoDisplaySetD3D9LimitPS1_1(g_ATCVDisplayD3D9LimitPS1_1);
+		ATUIResetDisplay();
+	}
+);
+
+ATConfigVarBool g_ATCVDisplayD3D9LimitPS2_0("display.d3d9.limit_ps2_0", false,
+	[] {
+		VDVideoDisplaySetD3D9LimitPS2_0(g_ATCVDisplayD3D9LimitPS2_0);
+		ATUIResetDisplay();
+	}
+);
+
+ATConfigVarBool g_ATCVDisplayD3D11Force9_1("display.d3d11.force_9_1", false,
+	[] {
+		VDVideoDisplaySetD3D11Force9_1(g_ATCVDisplayD3D11Force9_1);
+		ATUIResetDisplay();
+	}
+);
+
+ATConfigVarBool g_ATCVDisplayD3D11Force9_3("display.d3d11.force_9_3", false,
+	[] {
+		VDVideoDisplaySetD3D11Force9_3(g_ATCVDisplayD3D11Force9_3);
+		ATUIResetDisplay();
+	}
+);
+
+ATConfigVarBool g_ATCVDisplayD3D11Force10_0("display.d3d11.force_10_0", false,
+	[] {
+		VDVideoDisplaySetD3D11Force10_0(g_ATCVDisplayD3D11Force10_0);
 		ATUIResetDisplay();
 	}
 );
@@ -367,6 +403,8 @@ vdautoptr<IATVideoWriter> g_pVideoWriter;
 vdautoptr<IATSAPWriter> g_pSapWriter;
 
 ATDisplayStretchMode g_displayStretchMode = kATDisplayStretchMode_PreserveAspectRatio;
+float g_displayZoom = 1.0f;
+vdfloat2 g_displayPan {};
 
 IATUIWindowCaptionUpdater *g_winCaptionUpdater;
 VDStringA g_winCaptionTemplate;
@@ -655,7 +693,7 @@ ATUIRecordingStatus ATUIGetRecordingStatus() {
 void ATSyncCPUHistoryState() {
 	const bool historyEnabled = g_sim.GetCPU().IsHistoryEnabled();
 
-	for(IATDeviceDebugTarget *devtarget : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceDebugTarget>(false, false)) {
+	for(IATDeviceDebugTarget *devtarget : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceDebugTarget>(false, false, false)) {
 		uint32 index = 0;
 
 		while(IATDebugTarget *target = devtarget->GetDebugTarget(index++)) {
@@ -941,7 +979,7 @@ bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode, bool switchProfi
 			break;
 
 		case kATKernelMode_XL:
-			if (mode != kATHardwareMode_800XL && mode != kATHardwareMode_1200XL && mode != kATHardwareMode_130XE && mode != kATHardwareMode_XEGS)
+			if (!kATHardwareModeTraits[mode].mbRunsXLOS)
 				g_sim.SetKernel(0);
 			break;
 
@@ -995,38 +1033,25 @@ bool ATUISwitchKernel(VDGUIHandle h, uint64 kernelId) {
 			return false;
 
 		const auto hwmode = g_sim.GetHardwareMode();
+		const bool canUseXLOS = kATHardwareModeTraits[hwmode].mbRunsXLOS;
+
 		switch(fwinfo.mType) {
 			case kATFirmwareType_Kernel1200XL:
-				if (hwmode != kATHardwareMode_800XL
-					&& hwmode != kATHardwareMode_130XE
-					&& hwmode != kATHardwareMode_1200XL
-					&& hwmode != kATHardwareMode_XEGS
-					)
-				{
+				if (!canUseXLOS) {
 					if (!ATUISwitchHardwareMode(h, kATHardwareMode_1200XL, true))
 						return false;
 				}
 				break;
 
 			case kATFirmwareType_KernelXL:
-				if (hwmode != kATHardwareMode_800XL
-					&& hwmode != kATHardwareMode_130XE
-					&& hwmode != kATHardwareMode_1200XL
-					&& hwmode != kATHardwareMode_XEGS
-					)
-				{
+				if (!canUseXLOS) {
 					if (!ATUISwitchHardwareMode(h, kATHardwareMode_800XL, true))
 						return false;
 				}
 				break;
 
 			case kATFirmwareType_KernelXEGS:
-				if (hwmode != kATHardwareMode_800XL
-					&& hwmode != kATHardwareMode_130XE
-					&& hwmode != kATHardwareMode_1200XL
-					&& hwmode != kATHardwareMode_XEGS
-					)
-				{
+				if (!canUseXLOS) {
 					if (!ATUISwitchHardwareMode(h, kATHardwareMode_XEGS, true))
 						return false;
 				}
@@ -1034,13 +1059,7 @@ bool ATUISwitchKernel(VDGUIHandle h, uint64 kernelId) {
 
 			case kATFirmwareType_Kernel800_OSA:
 			case kATFirmwareType_Kernel800_OSB:
-				if (hwmode != kATHardwareMode_800
-					&& hwmode != kATHardwareMode_800XL
-					&& hwmode != kATHardwareMode_130XE
-					&& hwmode != kATHardwareMode_1200XL
-					&& hwmode != kATHardwareMode_XEGS
-					)
-				{
+				if (hwmode == kATHardwareMode_5200) {
 					if (!ATUISwitchHardwareMode(h, kATHardwareMode_800, true))
 						return false;
 				}
@@ -1100,12 +1119,6 @@ void ATUISwitchMemoryMode(VDGUIHandle h, ATMemoryMode mode) {
 				return;
 			break;
 
-		case kATHardwareMode_1200XL:
-		case kATHardwareMode_XEGS:
-			// don't allow 16K with the 1200XL or XEGS
-			if (mode == kATMemoryMode_16K)
-				return;
-			// fall through
 		case kATHardwareMode_800XL:
 			if (mode == kATMemoryMode_48K ||
 				mode == kATMemoryMode_52K ||
@@ -1116,7 +1129,10 @@ void ATUISwitchMemoryMode(VDGUIHandle h, ATMemoryMode mode) {
 				return;
 			break;
 
+		case kATHardwareMode_1200XL:
+		case kATHardwareMode_XEGS:
 		case kATHardwareMode_130XE:
+		case kATHardwareMode_1400XL:
 			if (mode == kATMemoryMode_48K ||
 				mode == kATMemoryMode_52K ||
 				mode == kATMemoryMode_8K ||
@@ -2028,9 +2044,27 @@ void OnCommandQuickLoadState() {
 	}
 }
 
+bool ATUIConfirmPartiallyAccurateSnapshot() {
+	const ATSnapshotStatus status = g_sim.GetSnapshotStatus();
+
+	if (!status.mbPartialAccuracy)
+		return true;
+
+	return ATUIConfirm(
+		ATUIGetNewPopupOwner(),
+		"snapshotPartialAccuracy",
+		L"A disk I/O operation is in progress that may not save correctly. Capture save state anyway?",
+		L"Unstable save state"
+	);
+}
+
 void OnCommandQuickSaveState() {
+	if (!ATUIConfirmPartiallyAccurateSnapshot())
+		return;
+
 	try {
-		g_sim.CreateSnapshot(~g_pATQuickState);
+		vdrefptr<IATSerializable> quickStateInfo;
+		g_sim.CreateSnapshot(~g_pATQuickState, ~quickStateInfo);
 	} catch(const MyError& e) {
 		e.post(g_hwnd, "Altirra Error");
 	}
@@ -2048,6 +2082,9 @@ void OnCommandLoadState() {
 }
 
 void OnCommandSaveState() {
+	if (!ATUIConfirmPartiallyAccurateSnapshot())
+		return;
+
 	const VDStringW fn(VDGetSaveFileName('save', (VDGUIHandle)g_hwnd, L"Save save state",
 		g_ATUIFileFilter_SaveState,
 		L"atstate2"
@@ -2129,6 +2166,36 @@ void ATUISetDisplayStretchMode(ATDisplayStretchMode mode) {
 	if (g_displayStretchMode != mode) {
 		g_displayStretchMode = mode;
 
+		ATUIResizeDisplay();
+	}
+}
+
+float ATUIGetDisplayZoom() {
+	return g_displayZoom;
+}
+
+void ATUISetDisplayZoom(float zoom) {
+	zoom = std::clamp(zoom, 0.01f, 100.0f);
+
+	if (g_displayZoom != zoom) {
+		g_displayZoom = zoom;
+
+		ATUIResizeDisplay();
+	}
+}
+
+vdfloat2 ATUIGetDisplayPanOffset() {
+	return g_displayPan;
+}
+
+void ATUISetDisplayPanOffset(const vdfloat2& pan) {
+	vdfloat2 pan2;
+	pan2.x = std::clamp(pan.x, -10.0f, 10.0f);
+	pan2.y = std::clamp(pan.y, -10.0f, 10.0f);
+
+	if (g_displayPan != pan2) {
+		g_displayPan = pan2;
+	
 		ATUIResizeDisplay();
 	}
 }
@@ -2216,6 +2283,18 @@ void OnCommandEditSaveFrameTrueAspect() {
 		pane->SaveFrame(true);
 }
 
+void OnCommandEditDeselect() {
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->Deselect();
+}
+
+void OnCommandEditSelectAll() {
+	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	if (pane)
+		pane->SelectAll();
+}
+
 void OnCommandEditCopyText() {
 	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
 	if (pane)
@@ -2262,85 +2341,85 @@ void OnCommandConsoleHoldKeys() {
 }
 
 void OnCommandConsoleBlackBoxDumpScreen() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false))
 		p->ActivateButton(kATDeviceButton_BlackBoxDumpScreen, true);
 }
 
 void OnCommandConsoleBlackBoxMenu() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false))
 		p->ActivateButton(kATDeviceButton_BlackBoxMenu, true);
 }
 
 void OnCommandConsoleIDEPlus2SwitchDisks() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false))
 		p->ActivateButton(kATDeviceButton_IDEPlus2SwitchDisks, true);
 }
 
 void OnCommandConsoleIDEPlus2WriteProtect() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false))
 		p->ActivateButton(kATDeviceButton_IDEPlus2WriteProtect, true);
 }
 
 void OnCommandConsoleIDEPlus2SDX() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false))
 		p->ActivateButton(kATDeviceButton_IDEPlus2SDX, true);
 }
 
 void OnCommandConsoleIndusGTId() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false)) {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false)) {
 		p->ActivateButton(kATDeviceButton_IndusGTId, true);
 		p->ActivateButton(kATDeviceButton_IndusGTId, false);
 	}
 }
 
 void OnCommandConsoleIndusGTError() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false)) {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false)) {
 		p->ActivateButton(kATDeviceButton_IndusGTError, true);
 		p->ActivateButton(kATDeviceButton_IndusGTError, false);
 	}
 }
 
 void OnCommandConsoleIndusGTTrack() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false)) {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false)) {
 		p->ActivateButton(kATDeviceButton_IndusGTTrack, true);
 		p->ActivateButton(kATDeviceButton_IndusGTTrack, false);
 	}
 }
 
 void OnCommandConsoleIndusGTBootCPM() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false))
 		p->ActivateButton(kATDeviceButton_IndusGTBootCPM, true);
 }
 
 void OnCommandConsoleIndusGTChangeDensity() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false))
 		p->ActivateButton(kATDeviceButton_IndusGTChangeDensity, true);
 }
 
 void OnCommandConsoleHappyToggleFastSlow() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false))
 		p->ActivateButton(kATDeviceButton_HappySlow, !p->IsButtonDepressed(kATDeviceButton_HappySlow));
 }
 
 void OnCommandConsoleHappyToggleWriteProtect() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false))
 		p->ActivateButton(kATDeviceButton_HappyWPEnable, !p->IsButtonDepressed(kATDeviceButton_HappyWPEnable));
 }
 
 void OnCommandConsoleHappyToggleWriteEnable() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false))
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false))
 		p->ActivateButton(kATDeviceButton_HappyWPDisable, !p->IsButtonDepressed(kATDeviceButton_HappyWPDisable));
 }
 
 void OnCommandConsoleATR8000Reset() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false)) {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false)) {
 		p->ActivateButton(kATDeviceButton_ATR8000Reset, true);
 		p->ActivateButton(kATDeviceButton_ATR8000Reset, false);
 	}
 }
 
 void OnCommandConsoleXELCFSwap() {
-	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false)) {
+	for(IATDeviceButtons *p : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceButtons>(false, false, false)) {
 		p->ActivateButton(kATDeviceButton_XELCFSwap, true);
 		p->ActivateButton(kATDeviceButton_XELCFSwap, false);
 	}
@@ -2754,17 +2833,17 @@ void OnCommandRecordVideo() {
 				break;
 		}
 
-		int px = 2;
-		int py = 2;
-		gtia.GetPixelAspectMultiple(px, py);
-
 		double par = 1.0f;
 		
 		if (aspectRatioMode != ATVideoRecordingAspectRatioMode::None) {
-			par = (double)py / (double)px;
-			
 			if (aspectRatioMode == ATVideoRecordingAspectRatioMode::FullCorrection)
-				par *= (hz50 ? 1.03964f : 0.857141f);
+				par = gtia.GetPixelAspectRatio();
+			else {
+				int px = 2;
+				int py = 2;
+				gtia.GetPixelAspectMultiple(px, py);
+				par = (double)py / (double)px;
+			}
 		}
 
 		g_pVideoWriter->Init(s.c_str(), encoding, videoBitRate, audioBitRate, w, h, frameRate, par, resamplingMode, scalingMode, rgb32 ? NULL : palette, samplingRate, g_sim.IsDualPokeysEnabled(), hz50 ? 1773447.0f : 1789772.5f, halfRate, encodeAll, g_sim.GetUIRenderer());
@@ -2935,7 +3014,7 @@ bool ATUIGetDeviceButtonSupported(uint32 idx) {
 
 		uint32 mask = 0;
 
-		for(IATDeviceButtons *devbtns : dm.GetInterfaces<IATDeviceButtons>(false, false))
+		for(IATDeviceButtons *devbtns : dm.GetInterfaces<IATDeviceButtons>(false, false, false))
 			mask |= devbtns->GetSupportedButtons();
 
 		g_ATDeviceButtonMask = mask;
@@ -2951,7 +3030,7 @@ bool ATUIGetDeviceButtonDepressed(uint32 idx) {
 	ATDeviceManager& dm = *g_sim.GetDeviceManager();
 	bool depressed = false;
 
-	for(IATDeviceButtons *devbtns : dm.GetInterfaces<IATDeviceButtons>(false, false)) {
+	for(IATDeviceButtons *devbtns : dm.GetInterfaces<IATDeviceButtons>(false, false, false)) {
 		if (devbtns->IsButtonDepressed((ATDeviceButton)idx))
 			depressed = true;
 	}
@@ -2964,7 +3043,7 @@ void ATUIActivateDeviceButton(uint32 idx, bool state) {
 		return;
 
 	ATDeviceManager& dm = *g_sim.GetDeviceManager();
-	for(IATDeviceButtons *devbtns : dm.GetInterfaces<IATDeviceButtons>(false, false))
+	for(IATDeviceButtons *devbtns : dm.GetInterfaces<IATDeviceButtons>(false, false, false))
 		devbtns->ActivateButton((ATDeviceButton)idx, state);
 }
 
@@ -3031,7 +3110,6 @@ float ATParseTimeArgument(const wchar_t *s) {
 
 void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 	bool coldReset = false;
-	bool debugMode = false;
 	bool debugModeSuspend = false;
 	const ATMediaWriteMode *bootWriteMode = nullptr;
 	bool unloaded = false;
@@ -3124,6 +3202,12 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			g_sim.SetCassetteAutoBootEnabled(false);
 		}
 
+		if (cmdLine.FindAndRemoveSwitch(L"casautobasicboot")) {
+			g_sim.SetCassetteAutoBasicBootEnabled(true);
+		} else if (cmdLine.FindAndRemoveSwitch(L"nocasautobasicboot")) {
+			g_sim.SetCassetteAutoBasicBootEnabled(false);
+		}
+
 		if (cmdLine.FindAndRemoveSwitch(L"accuratedisk")) {
 			g_sim.SetDiskAccurateTimingEnabled(true);
 		} else if (cmdLine.FindAndRemoveSwitch(L"noaccuratedisk")) {
@@ -3159,7 +3243,9 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			else if (!vdwcsicmp(arg, L"d600"))
 				base = 0xD600;
 			else
-				throw MyError("Command line error: Invalid SoundBoard memory base: '%ls'", arg);
+				throw MyError("Invalid SoundBoard memory base: '%ls'", arg);
+
+			pset.SetUint32("base", base);
 
 			auto *dm = g_sim.GetDeviceManager();
 			auto *dev = dm->GetDeviceByTag("soundboard");
@@ -3167,7 +3253,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			if (dev)
 				dev->SetSettings(pset);
 			else
-				dm->AddDevice("soundboard", pset, false, false);
+				dm->AddDevice("soundboard", pset);
 
 			coldReset = true;
 		} else if (cmdLine.FindAndRemoveSwitch(L"nosoundboard")) {
@@ -3178,7 +3264,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		if (cmdLine.FindAndRemoveSwitch(L"slightsid", arg)) {
 			auto& dm = *g_sim.GetDeviceManager();
 			if (!dm.GetDeviceByTag("slightsid"))
-				dm.AddDevice("slightsid", ATPropertySet(), false, false);
+				dm.AddDevice("slightsid", ATPropertySet());
 		} else if (cmdLine.FindAndRemoveSwitch(L"noslightsid")) {
 			g_sim.GetDeviceManager()->RemoveDevice("slightsid");
 		}
@@ -3186,7 +3272,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		if (cmdLine.FindAndRemoveSwitch(L"covox", arg)) {
 			auto& dm = *g_sim.GetDeviceManager();
 			if (!dm.GetDeviceByTag("covox"))
-				dm.AddDevice("covox", ATPropertySet(), false, false);
+				dm.AddDevice("covox", ATPropertySet());
 		} else if (cmdLine.FindAndRemoveSwitch(L"nocovox")) {
 			g_sim.GetDeviceManager()->RemoveDevice("covox");
 		}
@@ -3202,10 +3288,12 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.SetHardwareMode(kATHardwareMode_130XE);
 			else if (!vdwcsicmp(arg, L"xegs"))
 				g_sim.SetHardwareMode(kATHardwareMode_XEGS);
+			else if (!vdwcsicmp(arg, L"1400xl"))
+				g_sim.SetHardwareMode(kATHardwareMode_1400XL);
 			else if (!vdwcsicmp(arg, L"5200"))
 				g_sim.SetHardwareMode(kATHardwareMode_5200);
 			else
-				throw MyError("Command line error: Invalid hardware mode '%ls'", arg);
+				throw MyError("Invalid hardware mode '%ls'", arg);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"kernel", arg)) {
@@ -3232,7 +3320,23 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			else if (!vdwcsicmp(arg, L"5200lle"))
 				g_sim.SetKernel(kATFirmwareId_5200_LLE);
 			else
-				throw MyError("Command line error: Invalid kernel mode '%ls'", arg);
+				throw MyError("Invalid kernel mode '%ls'", arg);
+		}
+		
+		if (cmdLine.FindAndRemoveSwitch(L"kernelref", arg)) {
+			const auto id = g_sim.GetFirmwareManager()->GetFirmwareByRefString(arg, ATIsKernelFirmwareType);
+			if (!id)
+				throw MyError("Unable to find a match for kernel reference: %ls", arg);
+
+			g_sim.SetKernel(id);
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"basicref", arg)) {
+			const auto id = g_sim.GetFirmwareManager()->GetFirmwareByRefString(arg, [](ATFirmwareType type) { return type == kATFirmwareType_Basic; });
+			if (!id)
+				throw MyError("Unable to find a match for kernel reference: %ls", arg);
+
+			g_sim.SetBasic(id);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"memsize", arg)) {
@@ -3267,7 +3371,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			else if (!vdwcsicmp(arg, L"1088K"))
 				g_sim.SetMemoryMode(kATMemoryMode_1088K);
 			else
-				throw MyError("Command line error: Invalid memory mode '%ls'", arg);
+				throw MyError("Invalid memory mode '%ls'", arg);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"axlonmemsize", arg)) {
@@ -3316,7 +3420,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			else if (!vdwcsicmp(arg, L"palhi"))
 				g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::PALHi);
 			else
-				throw MyError("Command line error: Invalid hardware mode '%ls'", arg);
+				throw MyError("Invalid hardware mode '%ls'", arg);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"vsync"))
@@ -3327,7 +3431,6 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		if (cmdLine.FindAndRemoveSwitch(L"debug")) {
 			// Open the console now so we see load messages.
 			ATShowConsole();
-			debugMode = true;
 		}
 
 		IATDebugger *dbg = ATGetDebugger();
@@ -3337,7 +3440,6 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			dbg->SetBreakOnEXERunAddrEnabled(false);
 
 		while(cmdLine.FindAndRemoveSwitch(L"debugcmd", arg)) {
-			debugMode = true;
 			debugModeSuspend = true;
 
 			dbg->QueueCommand(VDTextWToA(arg).c_str(), false);
@@ -3395,7 +3497,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			if (dev)
 				dev->SetSettings(pset);
 			else
-				dm->AddDevice("pclink", pset, false, false);
+				dm->AddDevice("pclink", pset);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"nohdpath", arg)) {
@@ -3413,7 +3515,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			IATDevice *dev = dm->GetDeviceByTag("hostfs");
 
 			if (!dev)
-				dev = dm->AddDevice("hostfs", ATPropertySet(), false, false);
+				dev = dm->AddDevice("hostfs", ATPropertySet());
 
 			IATHostDeviceEmulator *hd = vdpoly_cast<IATHostDeviceEmulator *>(dev);
 			if (hd) {
@@ -3429,7 +3531,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			IATDevice *dev = dm->GetDeviceByTag("hostfs");
 
 			if (!dev)
-				dev = dm->AddDevice("hostfs", ATPropertySet(), false, false);
+				dev = dm->AddDevice("hostfs", ATPropertySet());
 
 			IATHostDeviceEmulator *hd = vdpoly_cast<IATHostDeviceEmulator *>(dev);
 			if (hd) {
@@ -3459,6 +3561,16 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		} else if (cmdLine.FindAndRemoveSwitch(L"cheats", arg)) {
 			g_sim.SetCheatEngineEnabled(true);
 			g_sim.GetCheatEngine()->Load(arg);
+		}
+
+		if (cmdLine.FindAndRemoveSwitch(L"diskemu", arg)) {
+			auto result = ATParseEnum<ATDiskEmulationMode>(VDTextWToU8(VDStringSpanW(arg)));
+
+			if (!result.mValid)
+				throw MyError("Unsupported disk emulation mode: %ls", arg);
+
+			for(int i=0; i<15; ++i)
+				g_sim.GetDiskDrive(i).SetEmulationMode(result.mValue);
 		}
 
 		while(cmdLine.FindAndRemoveSwitch(L"cart", arg)) {
@@ -4202,36 +4314,36 @@ void ATInitCPUOptions() {
 	if (g_ATCmdLine.FindAndRemoveSwitch(L"hostcpu", token)) {
 #if VD_CPU_X86 || VD_CPU_X64
 		if (!vdwcsicmp(token, L"none"))
-			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU;
+			cpuext = 0;
 		else if (!vdwcsicmp(token, L"mmx"))
-			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX;
+			cpuext &= CPUF_SUPPORTS_MMX;
 		else if (!vdwcsicmp(token, L"isse"))
-			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE;
+			cpuext &= CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE;
 		else if (!vdwcsicmp(token, L"sse"))
-			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+			cpuext &= CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
 					| CPUF_SUPPORTS_SSE2;
 		else if (!vdwcsicmp(token, L"sse2"))
-			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+			cpuext &= CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
 					| CPUF_SUPPORTS_SSE2;
 		else if (!vdwcsicmp(token, L"sse3"))
-			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+			cpuext &= CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
 					| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3;
 		else if (!vdwcsicmp(token, L"ssse3"))
-			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+			cpuext &= CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
 					| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3 | CPUF_SUPPORTS_SSSE3;
 		else if (!vdwcsicmp(token, L"sse41"))
-			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+			cpuext &= CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
 					| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3 | CPUF_SUPPORTS_SSSE3 | CPUF_SUPPORTS_SSE41;
 		else if (!vdwcsicmp(token, L"sse42"))
-			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+			cpuext &= CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
 					| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3 | CPUF_SUPPORTS_SSSE3 | CPUF_SUPPORTS_SSE41
 					| CPUF_SUPPORTS_CLMUL;
 		else if (!vdwcsicmp(token, L"avx"))
-			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+			cpuext &= CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
 					| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3 | CPUF_SUPPORTS_SSSE3 | CPUF_SUPPORTS_SSE41
 					| CPUF_SUPPORTS_CLMUL | CPUF_SUPPORTS_AVX;
 		else if (!vdwcsicmp(token, L"avx2"))
-			cpuext &= CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
+			cpuext &= CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE
 					| CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSE3 | CPUF_SUPPORTS_SSSE3 | CPUF_SUPPORTS_SSE41
 					| CPUF_SUPPORTS_CLMUL | CPUF_SUPPORTS_LZCNT | CPUF_SUPPORTS_AVX | CPUF_SUPPORTS_AVX2;
 #endif
@@ -4300,7 +4412,6 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 		return ATTestMain();
 #endif
 
-	ATSaveRegisterTypes();
 	ATInitSaveStateDeserializer();
 
 	ATInitCRTHooks();
@@ -4341,8 +4452,9 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 
 	int rval = 0;
 
-	bool mountRO = g_ATCmdLine.FindAndRemoveSwitch(L"mountvhdro", token);
-	bool mountRW = !mountRO && g_ATCmdLine.FindAndRemoveSwitch(L"mountvhdrw", token);
+	const bool mountRO = g_ATCmdLine.FindAndRemoveSwitch(L"mountvhdro", token);
+	const bool mountRW = !mountRO && g_ATCmdLine.FindAndRemoveSwitch(L"mountvhdrw", token);
+	const bool allowElevation = !g_ATCmdLine.FindAndRemoveSwitch(L"noelevation");
 
 	if (mountRO || mountRW) {
 		const wchar_t *parentWinToken = nullptr;
@@ -4361,6 +4473,12 @@ int CALLBACK WinMain(HINSTANCE, HINSTANCE, LPSTR, int nCmdShow) {
 
 		if (1 == swscanf(token, L"%llx%c", &hwndParent, &dummy))
 			ATUIShowDialogSetFileAssociations((VDGUIHandle)(UINT_PTR)hwndParent, false, false);
+	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"registersysfileassocs")) {
+		ATRegisterFileAssociations(allowElevation, false);
+	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"registeruserfileassocs")) {
+		ATRegisterFileAssociations(allowElevation, true);
+	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"unregisterfileassocs")) {
+		ATRemoveAllFileAssociations(allowElevation);
 	} else if (g_ATCmdLine.FindAndRemoveSwitch(L"removefileassocs", token)) {
 		unsigned long long hwndParent;
 		wchar_t dummy;
@@ -4531,6 +4649,12 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 		}
 	);
 
+	ATOptionsAddUpdateCallback(true,
+		[](ATOptions& opts, const ATOptions *prevOpts, void *) {
+			ATUIAccSetEnabled(opts.mbAccEnabled);
+		}
+	);
+
 	VDVideoDisplaySetMonitorSwitchingDXEnabled(true);
 	VDVideoDisplaySetSecondaryDXEnabled(true);
 	VDVideoDisplaySetD3D9ExEnabled(false);
@@ -4584,17 +4708,14 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 
 	// Init Winsock. We want to delay this as much as possible, but it must be done before we
 	// attempt to bring up a modem (which LoadSettings or a command prompt can do).
-	bool wsaInited = false;
 
 	ATStartupLog("Initializing WinSock");
-
-	WSADATA wsa;
-	if (!WSAStartup(MAKEWORD(2, 0), &wsa))
-		wsaInited = true;
+	ATSocketInit();
 
 	// bring up simulator
 	ATStartupLog("Initializing simulator");
 	g_sim.Init();
+	g_sim.SetFrontEnd(ATUIGetFrontEnd());
 	g_sim.SetRandomSeed(rand() ^ (rand() << 15));
 
 	ATUISetDispatcher(g_sim.GetDeviceManager()->GetService<IATAsyncDispatcher>());
@@ -4731,6 +4852,9 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 	ATStartupLog("Running main loop");
 	int returnCode = RunMainLoop(hwnd);
 
+	ATStartupLog("Destroying remaining UI");
+	ATUIDestroyModelessDialogs(nullptr);
+
 	ATStartupLog("Saving settings");
 	ATSaveSettings(ATSettingsCategory(kATSettingsCategory_All & ~kATSettingsCategory_FullScreen));
 
@@ -4739,6 +4863,9 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 
 	ATStartupLog("Stopping recording");
 	StopRecording();
+
+	ATStartupLog("Stopping sockets");
+	ATSocketPreShutdown();
 
 	ATStartupLog("Shutting down filespec system");
 	VDSaveFilespecSystemData();
@@ -4782,10 +4909,11 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 	ATShutdownUIFrameSystem();
 	ATUIShutdownThemes();
 
-	if (wsaInited) {
-		ATStartupLog("Shutting down WinSock");
-		WSACleanup();
-	}
+	ATStartupLog("Shutting down UI accessibility");
+	ATUIAccShutdown();
+
+	ATStartupLog("Shutting down WinSock");
+	ATSocketShutdown();
 
 	return returnCode;
 }

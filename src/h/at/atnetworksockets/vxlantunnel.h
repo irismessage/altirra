@@ -19,10 +19,13 @@
 #ifndef f_AT_ATNETWORKSOCKETS_VXLANTUNNEL_H
 #define f_AT_ATNETWORKSOCKETS_VXLANTUNNEL_H
 
+class IATAsyncDispatcher;
+class IATEthernetSegment;
+
 class IATNetSockVxlanTunnel : public IVDRefCount {
 public:
 };
 
-void ATCreateNetSockVxlanTunnel(uint32 tunnelAddr, uint16 tunnelSrcPort, uint16 tunnelDstPort, IATEthernetSegment *ethSeg, uint32 ethClockIndex, IATNetSockVxlanTunnel **pp);
+void ATCreateNetSockVxlanTunnel(uint32 tunnelAddr, uint16 tunnelSrcPort, uint16 tunnelDstPort, IATEthernetSegment *ethSeg, uint32 ethClockIndex, IATAsyncDispatcher *dispatcher, IATNetSockVxlanTunnel **pp);
 
 #endif

@@ -153,14 +153,20 @@ uint32 ATIPv4EncodeHeader(uint8 *data, uint32 len, const ATIPv4HeaderInfo& srcIn
 	return 22;
 }
 
-bool ATIPv6DecodeHeader(const uint8 *data, uint32 len) {
+bool ATIPv6DecodeHeader(ATIPv6HeaderInfo& dstInfo, const uint8 *data, uint32 len) {
 	// minimum IP header length is 20 bytes (5 dwords)
 	if (len < 20)
 		return false;
 
-	// check that it's IPv6
-	if ((data[0] & 0xf0) != 0x60)
+	// check that it's IPv6 (min 40 bytes)
+	if ((data[0] & 0xf0) != 0x60 || len < 40)
 		return false;
+
+	memcpy(dstInfo.mSrcAddr, data + 8, 16);
+	memcpy(dstInfo.mDstAddr, data + 24, 16);
+	dstInfo.mProtocol = data[6];
+	dstInfo.mHopLimit = data[7];
+	dstInfo.mPayloadLength = VDReadUnalignedBEU16(&data[4]);
 
 	return true;
 }

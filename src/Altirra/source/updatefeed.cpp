@@ -37,11 +37,13 @@ struct ATBase64DecodingTable {
 		for(int i=0; i<10; ++i)
 			mLookup['0' + i] = i + 52;
 
-		mLookup['+'] = 62;
-		mLookup['/'] = 63;
-		mLookup['='] = 64;
+		mLookup[+'+'] = 62;
+		mLookup[+'/'] = 63;
+		mLookup[+'='] = 64;
 	}
-} kATBase64DecodingTable {};
+};
+
+constexpr ATBase64DecodingTable kATBase64DecodingTable {};
 
 bool ATDecodeBase64(uint8 *dst, size_t dstLen, const char *src, size_t srcLen) {
 	if (srcLen & 3)

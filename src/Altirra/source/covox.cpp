@@ -21,9 +21,12 @@
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicepia.h>
+#include <at/atcore/devicesnapshot.h>
 #include <at/atcore/devicesystemcontrol.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/savestate.h>
 #include <at/atcore/scheduler.h>
+#include <at/atcore/snapshotimpl.h>
 #include "covox.h"
 #include "memorymanager.h"
 #include "console.h"
@@ -165,6 +168,52 @@ void ATCovoxEmulator::WriteMono(uint8 value) {
 	mbUnbalanced = false;
 }
 
+class ATSaveStateCovox final : public ATSnapExchangeObject<ATSaveStateCovox, "ATSaveStateCovox"> {
+public:
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	vdfastvector<uint8> mVolumes;
+};
+
+template<ATExchanger T>
+void ATSaveStateCovox::Exchange(T& ex) {
+	ex.Transfer("volumes", &mVolumes);
+}
+
+void ATCovoxEmulator::LoadState(const IATObjectState *state) {
+	if (state) {
+		const ATSaveStateCovox& covoxState = atser_cast<const ATSaveStateCovox&>(*state);
+
+		if (!covoxState.mVolumes.empty()) {
+			if (mbFourCh) {
+				if (covoxState.mVolumes.size() != 4)
+					throw ATInvalidSaveStateException();
+
+				for(int i=0; i<4; ++i)
+					WriteControl((uint8)i, covoxState.mVolumes[i]);
+			} else {
+				if (covoxState.mVolumes.size() != 1)
+					throw ATInvalidSaveStateException();
+
+				WriteMono(covoxState.mVolumes[0]);
+			}
+
+			return;
+		}
+	}
+
+	WriteMono(0x80);
+}
+
+vdrefptr<IATObjectState> ATCovoxEmulator::SaveState() const {
+	vdrefptr state { new ATSaveStateCovox };
+
+	state->mVolumes.assign(mVolume, mVolume + (mbFourCh ? 4 : 1));
+
+	return state;
+}
+
 void ATCovoxEmulator::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
 	auto& edgePlayer = mpAudioMixer->GetEdgePlayer();
 
@@ -245,6 +294,7 @@ class ATDeviceCovox final : public VDAlignedObject<16>
 					, public IATDeviceAudioOutput
 					, public IATDeviceDiagnostics
 					, public IATDeviceCovoxControl
+					, public IATDeviceSnapshot
 {
 public:
 	virtual void *AsInterface(uint32 id) override;
@@ -272,6 +322,10 @@ public:	// IATDeviceDiagnostics
 
 public:	// IATDeviceCovoxControl
 	virtual void InitCovoxControl(IATCovoxController& controller) override;
+
+public:	// IATDeviceSnapshot
+	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const override;
+	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx) override;
 
 private:
 	void OnCovoxEnabled(bool enabled);
@@ -313,6 +367,9 @@ void *ATDeviceCovox::AsInterface(uint32 id) {
 
 		case IATDeviceCovoxControl::kTypeID:
 			return static_cast<IATDeviceCovoxControl *>(this);
+
+		case IATDeviceSnapshot::kTypeID:
+			return static_cast<IATDeviceSnapshot *>(this);
 
 		default:
 			return ATDevice::AsInterface(id);
@@ -412,6 +469,14 @@ void ATDeviceCovox::InitCovoxControl(IATCovoxController& controller) {
 
 	OnCovoxEnabled(mpCovoxController->IsCovoxEnabled());
 	mCovoxCallback = [this](bool enable) { OnCovoxEnabled(enable); };
+}
+
+vdrefptr<IATObjectState> ATDeviceCovox::SaveState(ATSnapshotContext& ctx) const {
+	return mCovox.SaveState();
+}
+
+void ATDeviceCovox::LoadState(const IATObjectState *state, ATSnapshotContext& ctx) {
+	mCovox.LoadState(state);
 }
 
 void ATDeviceCovox::OnCovoxEnabled(bool enabled) {

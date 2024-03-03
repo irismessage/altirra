@@ -75,6 +75,8 @@ private:
 	void OnMouseUpL(sint32 x, sint32 y) override;
 	void OnMouseLeave() override;
 
+	void SelectPrev();
+	void SelectNext();
 	void SetSelectedIndex(sint32 idx);
 	void UpdateSelectionLabel();
 	void SetHoveredIndex(sint32 idx);
@@ -402,6 +404,8 @@ void ATUIOverlayCustomization::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h
 }
 
 void ATUIOverlayCustomization::OnSetFocus() {
+	if (mSelectedIndex < 0)
+		SelectNext();
 }
 
 bool ATUIOverlayCustomization::OnKeyDown(const ATUIKeyEvent& event) {
@@ -412,33 +416,10 @@ bool ATUIOverlayCustomization::OnKeyDown(const ATUIKeyEvent& event) {
 		SetVisible(false);
 		return true;
 	} else if (event.mVirtKey == kATUIVK_Tab) {
-		sint32 n = (sint32)mCustomizableWidgets.size();
-		sint32 i = mSelectedIndex;
-
-		if (GetManager()->IsKeyDown(kATUIVK_Shift)) {
-			for(sint32 j = 0; j < n; ++j) {
-				if (--i < 0)
-					i = n - 1;
-
-				if (mCustomizableWidgets[i].mpWidget) {
-					SetSelectedIndex(i);
-					break;
-				}
-			}
-		} else {
-			if (i < 0)
-				i = -1;
-
-			for(sint32 j = 0; j < n; ++j) {
-				if (++i >= n)
-					i = 0;
-
-				if (mCustomizableWidgets[i].mpWidget) {
-					SetSelectedIndex(i);
-					break;
-				}
-			}
-		}
+		if (GetManager()->IsKeyDown(kATUIVK_Shift))
+			SelectPrev();
+		else
+			SelectNext();
 		return true;
 	} else if (event.mVirtKey == kATUIVK_A + ('R' - 'A')) {
 		if ((size_t)mSelectedIndex < mCustomizableWidgets.size()) {
@@ -656,6 +637,39 @@ void ATUIOverlayCustomization::OnMouseUpL(sint32 x, sint32 y) {
 
 void ATUIOverlayCustomization::OnMouseLeave() {
 	SetHoveredIndex(-1);
+}
+
+void ATUIOverlayCustomization::SelectPrev() {
+	const sint32 n = (sint32)mCustomizableWidgets.size();
+	sint32 i = mSelectedIndex;
+
+	for(sint32 j = 0; j < n; ++j) {
+		if (--i < 0)
+			i = n - 1;
+
+		if (mCustomizableWidgets[i].mpWidget) {
+			SetSelectedIndex(i);
+			break;
+		}
+	}
+}
+
+void ATUIOverlayCustomization::SelectNext() {
+	const sint32 n = (sint32)mCustomizableWidgets.size();
+	sint32 i = mSelectedIndex;
+
+	if (i < 0)
+		i = -1;
+
+	for(sint32 j = 0; j < n; ++j) {
+		if (++i >= n)
+			i = 0;
+
+		if (mCustomizableWidgets[i].mpWidget) {
+			SetSelectedIndex(i);
+			break;
+		}
+	}
 }
 
 void ATUIOverlayCustomization::SetSelectedIndex(sint32 idx) {
@@ -1735,6 +1749,9 @@ public:
 	void SetAudioScopeEnabled(bool enable) override;
 	void SetSlightSID(ATSlightSIDEmulator *emu);
 
+	vdrect32 GetPadArea() const override;
+	void SetPadInputEnabled(bool enable) override;
+
 	void SetFpsIndicator(float fps);
 
 	void SetMessage(StatusPriority priority, const wchar_t *msg);
@@ -1857,6 +1874,7 @@ protected:
 	vdrefptr<ATUIAudioStatusDisplay> mpAudioStatusDisplay;
 	vdrefptr<ATUIAudioDisplay> mpAudioDisplays[2];
 	vdrefptr<ATUIAudioScope> mpAudioScope;
+	vdrefptr<ATUIWidget> mpPadInput;
 	vdrefptr<ATUIOverlayCustomization> mpOverlayCustomization;
 	vdrefptr<ATUIWidget> mpCartridgeActivityIcon1;
 	vdrefptr<ATUIWidget> mpCartridgeActivityIcon2;
@@ -1880,6 +1898,7 @@ protected:
 	static constexpr char kTagAudioDisplay[] = "audio_display";
 	static constexpr char kTagAudioDisplay2[] = "audio_display_2";
 	static constexpr char kTagAudioScope[] = "audio_scope";
+	static constexpr char kTagPadInput[] = "pad_input";
 };
 
 constexpr uint32 ATUIRenderer::kDiskColors[8][2]={
@@ -2458,6 +2477,38 @@ void ATUIRenderer::SetSlightSID(ATSlightSIDEmulator *emu) {
 	InvalidateLayout();
 }
 
+vdrect32 ATUIRenderer::GetPadArea() const {
+	if (mpPadInput)
+		return mpPadInput->GetArea();
+	else
+		return vdrect32();
+}
+
+void ATUIRenderer::SetPadInputEnabled(bool enable) {
+	if (enable) {
+		if (mpPadInput)
+			return;
+
+		class PadInputWidget final : public ATUIWidget {
+		public:
+			void Paint(IVDDisplayRenderer& r, sint32 w, sint32 h) {}
+		};
+
+		mpPadInput = new PadInputWidget;
+		mpContainer->AddChild(mpPadInput);
+		mpPadInput->SetHitTransparent(true);
+		mpPadInput->SetAlphaFillColor(0);
+		mpOverlayCustomization->BindCustomizableWidget(kTagPadInput, mpPadInput);
+	} else {
+		if (!mpPadInput)
+			return;
+
+		mpOverlayCustomization->BindCustomizableWidget(kTagPadInput, nullptr);
+		mpPadInput->Destroy();
+		mpPadInput = nullptr;
+	}
+}
+
 void ATUIRenderer::SetFpsIndicator(float fps) {
 	if (mFps != fps) {
 		mFps = fps;
@@ -2551,6 +2602,7 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 		mpOverlayCustomization->AddCustomizableWidget(kTagAudioDisplay, mpAudioDisplays[0], L"Audio display (left/mono channel)");
 		mpOverlayCustomization->AddCustomizableWidget(kTagAudioDisplay2, mpAudioDisplays[1], L"Audio display (right channel)");
 		mpOverlayCustomization->AddCustomizableWidget(kTagAudioScope, mpAudioScope, L"Audio scope");
+		mpOverlayCustomization->AddCustomizableWidget(kTagPadInput, mpPadInput, L"Pad input");
 		mpOverlayCustomization->SetPlacement(vdrect32f(0, 0, 1, 1), vdpoint32(0, 0), vdfloat2{0, 0});
 
 		// update fonts
@@ -2615,6 +2667,8 @@ void ATUIRenderer::SetUIManager(ATUIManager *m) {
 			vdrect32f(1, 1, 1, 1), vdpoint32(-8, -audioDisplayMargin), vdfloat2{1, 1}, vdsize32(), true);
 		mpOverlayCustomization->SetDefaultPlacement(kTagAudioScope,
 			vdrect32f(0, 0, 0, 0), vdpoint32(32, 32), vdfloat2{0, 0}, vdsize32(), true);
+		mpOverlayCustomization->SetDefaultPlacement(kTagPadInput,
+			vdrect32f(0, 0, 1, 1), vdpoint32(0, 0), vdfloat2{0.5f, 0.5f}, vdsize32(), false);
 
 		mpHardDiskDeviceLabel->SetFont(mpSysFont);
 		mpRecordingLabel->SetFont(mpSysFont);

@@ -344,9 +344,9 @@ void ATUIDialogVideoRecording::UpdateEnables() {
 	EnableControl(IDC_VIDEOBITRATE, hasVideoBitrate);
 	EnableControl(IDC_VIDEOBITRATE_VALUE, hasVideoBitrate);
 
-	EnableControl(IDC_STATIC_AUDIOBITRATE, hasVideoBitrate);
-	EnableControl(IDC_AUDIOBITRATE, hasVideoBitrate);
-	EnableControl(IDC_AUDIOBITRATE_VALUE, hasVideoBitrate);
+	EnableControl(IDC_STATIC_AUDIOBITRATE, hasAudioBitrate);
+	EnableControl(IDC_AUDIOBITRATE, hasAudioBitrate);
+	EnableControl(IDC_AUDIOBITRATE_VALUE, hasAudioBitrate);
 }
 
 void ATUIDialogVideoRecording::UpdateVideoBitrateLabel() {

@@ -18,13 +18,14 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/VDString.h>
+#include <at/atnetwork/socket.h>
 #include <at/atnetwork/ethernet.h>
 #include <at/atnetwork/ethernetframe.h>
 #include <at/atnetwork/tcp.h>
 #include "cs8900a.h"
 #include "debuggerlog.h"
 
-ATDebuggerLogChannel g_ATLCCS8900AW(true, false, "CS8900AW", "CS8900A writes");
+ATDebuggerLogChannel g_ATLCCS8900AW(false, false, "CS8900AW", "CS8900A writes");
 ATDebuggerLogChannel g_ATLCCS8900AR(false, false, "CS8900AR", "CS8900A reads");
 ATDebuggerLogChannel g_ATLCCS8900AN(true, false, "CS8900AN", "CS8900A network transmit/receive");
 ATDebuggerLogChannel g_ATLCCS8900AD(false, false, "CS8900AD", "CS8900A network data (requires CS8900AN channel)");
@@ -499,7 +500,6 @@ namespace {
 						ATTcpHeaderInfo tcpHdr;
 
 						if (ATTcpDecodeHeader(tcpHdr, iphdr, protodata, iphdr.mDataLength)) {
-
 							s += ' ';
 
 							if (tcpHdr.mbPSH || tcpHdr.mbSYN || tcpHdr.mbFIN || tcpHdr.mbRST) {
@@ -516,6 +516,62 @@ namespace {
 							if (tcpHdr.mbACK) s.append_sprintf(" ack %u", tcpHdr.mAckNo);
 
 							s.append_sprintf(" win %u", tcpHdr.mWindow);
+
+							// check for options
+							if (tcpHdr.mDataOffset > 20) {
+								s += ", options[";
+
+								// this is similar to ATNetTcpConnection::ProcessSynOptions()
+								const uint8 *src = protodata + 20;
+								const uint8 *end = protodata + tcpHdr.mDataOffset;
+
+								while(src != end) {
+									const uint8 kind = src[0];
+
+									if (!kind)
+										break;
+
+									// check for NOP, which has no length
+									if (kind == 1) {
+										++src;
+										continue;
+									}
+
+									// parse length (which includes kind and length)
+									const uint8 len = src[1];
+
+									if (len < 2 || len > (size_t)(end - src))
+										break;
+
+									if (s.back() != '[')
+										s += ", ";
+
+									// process option
+									bool valid = false;
+
+									switch(kind) {
+										case 2:		// MSS
+											if (len >= 4) {
+												const uint32 mss = VDReadUnalignedBEU16(src + 2);
+												s.append_sprintf("mss %u", mss);
+
+												valid = true;
+											}
+											break;
+
+										default:
+											break;
+									}
+
+									if (!valid) {
+										s.append_sprintf("opt%u?", kind);
+									}
+
+									src += len;
+								}
+
+								s += "]";
+							}
 						} else {
 							s += "?!";
 						}
@@ -527,7 +583,27 @@ namespace {
 					break;
 			}
 		} else if (decType == kATEthernetFrameDecodedType_IPv6) {
-			s.append(" | ipv6");
+			const ATIPv6HeaderInfo& ip6hdr = *(const ATIPv6HeaderInfo *)decInfo;
+
+			s.append(" | ipv6 ");
+
+			bool includePorts = false;
+
+			ATSocketAddress srcAddr {};
+			srcAddr.mType = ATSocketAddressType::IPv6;
+			srcAddr.mPort = 0;
+			memcpy(srcAddr.mIPv6.mAddress, ip6hdr.mSrcAddr, 16);
+			srcAddr.mIPv6.mScopeId = 0;
+
+			ATSocketAddress dstAddr {};
+			dstAddr.mType = ATSocketAddressType::IPv6;
+			dstAddr.mPort = 0;
+			memcpy(dstAddr.mIPv6.mAddress, ip6hdr.mDstAddr, 16);
+			dstAddr.mIPv6.mScopeId = 0;
+
+			s.append(srcAddr.ToString(includePorts));
+			s.append(" > ");
+			s.append(dstAddr.ToString(includePorts));
 		}
 	}
 
@@ -577,7 +653,7 @@ void ATCS8900AEmulator::ReceiveFrame(const ATEthernetPacket& packet, ATEthernetF
 	if (g_ATLCCS8900AN.IsEnabled()) {
 		VDStringA s;
 
-		s.sprintf("Receiving %u byte frame: %02X:%02X:%02X:%02X:%02X:%02X > %02X:%02X:%02X:%02X:%02X:%02X"
+		s.sprintf("Receiving %4u byte frame: %02X:%02X:%02X:%02X:%02X:%02X > %02X:%02X:%02X:%02X:%02X:%02X"
 			, packet.mLength
 			, packet.mSrcAddr.mAddr[0]
 			, packet.mSrcAddr.mAddr[1]
@@ -828,7 +904,7 @@ void ATCS8900AEmulator::TransmitFrame() {
 	if (g_ATLCCS8900AN.IsEnabled()) {
 		VDStringA s;
 
-		s.sprintf("Sending %u byte frame: %02X:%02X:%02X:%02X:%02X:%02X > %02X:%02X:%02X:%02X:%02X:%02X"
+		s.sprintf("Sending   %4u byte frame: %02X:%02X:%02X:%02X:%02X:%02X > %02X:%02X:%02X:%02X:%02X:%02X"
 			, mTransmitWriteLen
 			, mPacketPage[0xA06]
 			, mPacketPage[0xA07]
@@ -847,6 +923,7 @@ void ATCS8900AEmulator::TransmitFrame() {
 		union {
 			ATEthernetArpFrameInfo arpInfo;
 			ATIPv4HeaderInfo ipv4Info;
+			ATIPv6HeaderInfo ipv6Info;
 		} dec;
 
 		ATEthernetFrameDecodedType decType = kATEthernetFrameDecodedType_None;
@@ -855,7 +932,8 @@ void ATCS8900AEmulator::TransmitFrame() {
 		if (mTransmitWriteLen >= 14) {
 			const uint8 *data = &mPacketPage[0xA0C];
 
-			switch(VDReadUnalignedBEU16(data)) {
+			const uint16 etherType = VDReadUnalignedBEU16(data);
+			switch(etherType) {
 				case kATEthernetFrameType_ARP:
 					if (ATEthernetDecodeArpPacket(dec.arpInfo, data + 2, mTransmitWriteLen - 14)) {
 						decInfo = &dec.arpInfo;
@@ -867,9 +945,18 @@ void ATCS8900AEmulator::TransmitFrame() {
 					if (ATIPv4DecodeHeader(dec.ipv4Info, data + 2, mTransmitWriteLen - 14)) {
 						decInfo = &dec.ipv4Info;
 						decType = kATEthernetFrameDecodedType_IPv4;
-					} else if (ATIPv6DecodeHeader(data + 2, mTransmitWriteLen - 14)) {
+					}
+					break;
+					
+				case kATEthernetFrameType_IPv6:
+					if (ATIPv6DecodeHeader(dec.ipv6Info, data + 2, mTransmitWriteLen - 14)) {
+						decInfo = &dec.ipv6Info;
 						decType = kATEthernetFrameDecodedType_IPv6;
 					}
+					break;
+
+				default:
+					s.append_sprintf(" | ethertype %04X", etherType);
 					break;
 			}
 		}

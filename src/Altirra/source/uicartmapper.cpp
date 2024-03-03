@@ -332,7 +332,9 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_Corina_1M_EEPROM:		return L"Corina 1M + 8K EEPROM";
 		case kATCartridgeMode_Corina_512K_SRAM_EEPROM:	return L"Corina 512K + 512K SRAM + 8K EEPROM";
 		case kATCartridgeMode_TelelinkII:			return L"8K Telelink II";
-		case kATCartridgeMode_SIC:					return L"SIC!";
+		case kATCartridgeMode_SIC_128K:				return L"SIC! 128K";
+		case kATCartridgeMode_SIC_256K:				return L"SIC! 256K";
+		case kATCartridgeMode_SIC_512K:				return L"SIC! 512K";
 		case kATCartridgeMode_MaxFlash_1024K_Bank0:	return L"MaxFlash 1M / 8Mbit - newer (bank 0)";
 		case kATCartridgeMode_MegaCart_1M_2:		return L"Megacart 1M (2)";
 		case kATCartridgeMode_5200_64K_32KBanks:	return L"5200 64K Super Cart (32K banks)";
@@ -355,7 +357,8 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_Atrax_128K_Raw:		return L"Atrax 128K (raw order)";
 		case kATCartridgeMode_aDawliah_32K:			return L"aDawliah 32K";
 		case kATCartridgeMode_aDawliah_64K:			return L"aDawliah 64K";
-		case kATCartridgeMode_JRC_64K_RAM:			return L"JRC 64K + RAM";
+		case kATCartridgeMode_JRC6_64K:				return L"JRC 64K";
+		case kATCartridgeMode_JRC_RAMBOX:			return L"JRC RAMBOX";
 		case kATCartridgeMode_XEMulticart_8K:		return L"XE Multicart (8K)";
 		case kATCartridgeMode_XEMulticart_16K:		return L"XE Multicart (16K)";
 		case kATCartridgeMode_XEMulticart_32K:		return L"XE Multicart (32K)";
@@ -365,6 +368,10 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_XEMulticart_512K:		return L"XE Multicart (512K)";
 		case kATCartridgeMode_XEMulticart_1M:		return L"XE Multicart (1MB)";
 		case kATCartridgeMode_SICPlus:				return L"SIC+";
+		case kATCartridgeMode_Williams_16K:			return L"Williams 16K";
+		case kATCartridgeMode_MDDOS:				return L"MDDOS";
+		case kATCartridgeMode_COS32K:				return L"COS 32K";
+		case kATCartridgeMode_Pronto:				return L"Pronto";
 
 		// These modes should not be hit
 		case kATCartridgeMode_SuperCharger3D:
@@ -385,7 +392,11 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeDesc(int mode) {
 		case kATCartridgeMode_BountyBob800:
 		case kATCartridgeMode_BountyBob5200:
 		case kATCartridgeMode_BountyBob5200Alt:		return L"4K+4K banked by $4/5FF6-9 + 8K fixed";
-		case kATCartridgeMode_Williams_64K:			return L"8K banked by CCTL address (switchable)";
+
+		case kATCartridgeMode_Williams_64K:			[[fallthrough]];
+		case kATCartridgeMode_Williams_32K:			[[fallthrough]];
+		case kATCartridgeMode_Williams_16K:			return L"8K banked by CCTL address (switchable)";
+
 		case kATCartridgeMode_Express_64K:			return L"8K banked by CCTL $D57x (switchable)";
 		case kATCartridgeMode_Diamond_64K:			return L"8K banked by CCTL $D5Dx (switchable)";
 		case kATCartridgeMode_Atrax_SDX_64K:
@@ -406,7 +417,6 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeDesc(int mode) {
 		case kATCartridgeMode_5200_8K:				return L"8K fixed";
 		case kATCartridgeMode_5200_4K:				return L"4K fixed";
 		case kATCartridgeMode_RightSlot_8K:			return L"8K right slot fixed";
-		case kATCartridgeMode_Williams_32K:			return L"8K banked by CCTL address (switchable)";
 
 		case kATCartridgeMode_MegaCart_16K:
 		case kATCartridgeMode_MegaCart_32K:
@@ -448,7 +458,9 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeDesc(int mode) {
 		case kATCartridgeMode_Corina_512K_SRAM_EEPROM:	return L"8K+8K banked (complex)";
 
 		case kATCartridgeMode_TelelinkII:			return L"8K fixed + EEPROM";
-		case kATCartridgeMode_SIC:					return L"16K banked by CCTL $D500-D51F access (8K+8K switchable)";
+		case kATCartridgeMode_SIC_128K:
+		case kATCartridgeMode_SIC_256K:
+		case kATCartridgeMode_SIC_512K:				return L"16K banked by CCTL $D500-D51F access (8K+8K switchable)";
 		case kATCartridgeMode_MegaCart_1M_2:		return L"8K banked by CCTL data (switchable)";
 		case kATCartridgeMode_5200_64K_32KBanks:	return L"32K banked by $BFD0-BFFF access";
 		case kATCartridgeMode_5200_128K_32KBanks:	return L"32K banked by $BFD0-BFFF access";
@@ -469,7 +481,8 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeDesc(int mode) {
 		case kATCartridgeMode_aDawliah_32K:			return L"8K banked by CCTL access (autoincrement)";
 		case kATCartridgeMode_aDawliah_64K:			return L"8K banked by CCTL access (autoincrement)";
 
-		case kATCartridgeMode_JRC_64K_RAM:			return L"8K banked by CCTL $D500-D57F data + RAM";
+		case kATCartridgeMode_JRC6_64K:				return L"8K banked by CCTL $D500-D57F data (switchable)";
+		case kATCartridgeMode_JRC_RAMBOX:			return L"8K banked by CCTL $D500-D57F data (switchable) + RAM";
 
 		case kATCartridgeMode_XEMulticart_8K:
 		case kATCartridgeMode_XEMulticart_16K:
@@ -481,6 +494,10 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeDesc(int mode) {
 		case kATCartridgeMode_XEMulticart_1M:		return L"8K or 16K banked by CCTL write";
 
 		case kATCartridgeMode_SICPlus:				return L"16K banked by CCTL $D500-D51F access (8K+8K switchable)";
+
+		case kATCartridgeMode_MDDOS:				return L"4K banked by CCTL access (4K+4K switchable)";
+		case kATCartridgeMode_COS32K:				return L"16K banked by CCTL access";
+		case kATCartridgeMode_Pronto:				return L"16K fixed + EEPROM";
 
 			// These modes should not be hit
 		case kATCartridgeMode_SuperCharger3D:

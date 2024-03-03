@@ -1,4 +1,23 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2023 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
+#include <vd2/system/file.h>
+#include <vd2/system/filesys.h>
+#include <vd2/system/time.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/zip.h>
 #include <test.h>
@@ -77,7 +96,7 @@ DEFINE_TEST_NONAUTO(System_Zip) {
 
 		ms.Reset();
 
-		vdautoptr is(new VDInflateStream);
+		vdautoptr is(new VDInflateStream<false>);
 		is->Init(&ms, ms.mBuf.size(), false);
 
 		is->Read(buf2.data(), buf2.size());
@@ -88,5 +107,92 @@ DEFINE_TEST_NONAUTO(System_Zip) {
 			printf("%u iterations completed\n", iterations);
 	}
 
+	return 0;
+}
+
+DEFINE_TEST_NONAUTO(System_ZipBench) {
+	const wchar_t *args = ATTestGetArguments();
+
+	if (!*args)
+		throw ATTestAssertionException("No filename specified on command line.");
+
+	VDStringW fnbuf(args);
+	bool summary = false;
+
+	if (fnbuf.size() >= 3 && fnbuf.subspan(fnbuf.size()-2, 2) == L"/s") {
+		fnbuf.pop_back();
+		fnbuf.pop_back();
+		summary = true;
+	}
+
+	VDDirectoryIterator dirIt(fnbuf.c_str());
+
+	while(dirIt.Next()) {
+		const VDStringW path(dirIt.GetFullPath());
+		VDFileStream fs(path.c_str());
+		VDZipArchive za;
+		za.Init(&fs);
+
+		vdblock<char> buf(65536);
+
+		const sint32 n = za.GetFileCount();
+		double totalTime = 0;
+		sint64 totalInBytes = 0;
+		sint64 totalOutBytes = 0;
+
+		for(sint32 i=0; i<n; ++i) {
+			vdautoptr<IVDInflateStream> is(za.OpenDecodedStream(i, true));
+			const auto& fi = za.GetFileInfo(i);
+			sint32 len = 0;
+			sint64 left = fi.mUncompressedSize;
+
+			is->EnableCRC();
+			is->SetExpectedCRC(fi.mCRC32);
+
+			const uint64 startTick = VDGetPreciseTick();
+			while(left > 0) {
+				sint32 tc = (sint32)std::min<sint64>(left, 65536);
+				left -= tc;
+
+				sint32 actual = is->ReadData(buf.data(), tc);
+
+				if (actual == 0)
+					break;
+
+				if (actual < 0)
+					throw ATTestAssertionException("Decompression error: %hs", za.GetFileInfo(i).mFileName.c_str());
+
+				len += actual;
+			}
+
+			is->VerifyCRC();
+
+			const uint64 endTick = VDGetPreciseTick();
+			const double seconds = (double)(endTick - startTick) * VDGetPreciseSecondsPerTick();
+
+			totalTime += seconds;
+			totalInBytes += fi.mCompressedSize;
+			totalOutBytes += len;
+
+			if (!summary) {
+				printf("%6.1fMB  %6.1fMB/sec -> %7.1fMB  %6.1fMB/sec | %s\n"
+					, (double)fi.mCompressedSize / (1024.0 * 1024.0)
+					, (double)fi.mCompressedSize / seconds / (1024.0 * 1024.0)
+					, (double)len / (1024.0 * 1024.0)
+					, (double)len / seconds / (1024.0 * 1024.0)
+					, fi.mFileName.c_str());
+			}
+		}
+
+		if (n > 1 || summary) {
+			printf("%6.1fMB  %6.1fMB/sec -> %7.1fMB  %6.1fMB/sec | <Total> %ls\n"
+				, (double)totalInBytes / (1024.0 * 1024.0)
+				, (double)totalInBytes / totalTime / (1024.0 * 1024.0)
+				, (double)totalOutBytes / (1024.0 * 1024.0)
+				, (double)totalOutBytes / totalTime / (1024.0 * 1024.0)
+				, path.c_str()
+			);
+		}
+	}
 	return 0;
 }

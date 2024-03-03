@@ -26,10 +26,11 @@
 #include <at/atcore/propertyset.h>
 #include <at/atcore/wraptime.h>
 #include "audiosampleplayer.h"
-#include "diskdrivefull.h"
-#include "memorymanager.h"
-#include "firmwaremanager.h"
 #include "debuggerlog.h"
+#include "diskdrivefull.h"
+#include "firmwaremanager.h"
+#include "memorymanager.h"
+#include "trace.h"
 
 ATLogChannel g_ATLCDiskEmu(true, false, "DISKEMU", "Disk drive emulation");
 
@@ -189,7 +190,11 @@ void *ATDeviceDiskDriveFull::AsInterface(uint32 iid) {
 		case ATFDCEmulator::kTypeID: return &mFDC;
 	}
 
-	return ATDiskDriveDebugTargetControl::AsInterface(iid);
+	void *p = ATDiskDriveDebugTargetControl::AsInterface(iid);
+	if (p)
+		return p;
+
+	return ATDevice::AsInterface(iid);
 }
 
 void ATDeviceDiskDriveFull::GetDeviceInfo(ATDeviceInfo& info) {
@@ -459,27 +464,67 @@ void ATDeviceDiskDriveFull::Init() {
 		} else if (mDeviceType == kDeviceType_Happy1050) {
 			// The Happy 1050 uses a 6502 instead of a 6507, so no 8K mirroring.
 
+			// mirror lower 4K to $1000-1FFF, as 6502 A15 is routed to 6507 A12
 			// mirror lower 8K to $2000-3FFF
-			mmapView.MirrorFwd(0x20, 0x20, 0x00);
+			mmapView.MirrorFwd(0x10, 0x30, 0x00);
+
+			// add ROM conflict shim for $2000-3FFF since the ROM and hardware both activate
+			mReadNodeROMConflict.BindLambdas(
+				this,
+				[](uint32 addr, ATDeviceDiskDriveFull *thisptr) -> uint8 {
+					uintptr r = thisptr->mCoProc.GetReadMap()[((addr >> 8) - 0x20) & 0xFF];
+
+					sint32 v;
+					if (r & 1) {
+						const auto& readNode = *(const ATCoProcReadMemNode *)(r - 1);
+
+						v = readNode.mpRead(addr - 0x2000, readNode.mpThis);
+					} else {
+						v = *(const uint8 *)(r + (addr - 0x2000));
+					}
+
+					return v & thisptr->mROM[(addr & 0xFFF) + (thisptr->mbROMBankAlt ? 0x1000 : 0x0000)];
+				},
+				[](uint32 addr, const ATDeviceDiskDriveFull *thisptr) -> uint8 {
+					uintptr r = thisptr->mCoProc.GetReadMap()[((addr >> 8) - 0x20) & 0xFF];
+
+					sint32 v;
+					if (r & 1) {
+						const auto& readNode = *(const ATCoProcReadMemNode *)(r - 1);
+
+						v = readNode.mpDebugRead(addr - 0x2000, readNode.mpThis);
+					} else {
+						v = *(const uint8 *)(r + (addr - 0x2000));
+					}
+
+					return v & thisptr->mROM[(addr & 0xFFF) + (thisptr->mbROMBankAlt ? 0x1000 : 0x0000)];
+				}
+			);
+
+			mmapView.SetReadHandler(0x20, 0x20, mReadNodeROMConflict);
 
 			// mirror lower 16K to $4000-7FFF through write protect toggle shim
 			mReadNodeWriteProtectToggle.mpThis = this;
-			mReadNodeWriteProtectToggle.mpDebugRead = [](uint32 addr, void *thisptr0) {
+			mReadNodeWriteProtectToggle.mpDebugRead = [](uint32 addr, void *thisptr0) -> uint8 {
 				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-				uintptr r = thisptr->mCoProc.GetReadMap()[((addr >> 8) - 0x40) & 0xFF];
+
+				addr -= 0x4000;
+				const uintptr r = thisptr->mCoProc.GetReadMap()[((addr >> 8) - 0x40) & 0xFF];
 
 				if (r & 1) {
 					const auto& readNode = *(const ATCoProcReadMemNode *)(r - 1);
 
-					return readNode.mpDebugRead(addr, readNode.mpThis);
+					return readNode.mpDebugRead(addr - 0x4000, readNode.mpThis);
 				} else {
-					return *(const uint8 *)(r + addr);
+					return *(const uint8 *)(r + (addr - 0x4000));
 				}
 			};
 
-			mReadNodeWriteProtectToggle.mpRead = [](uint32 addr, void *thisptr0) {
+			mReadNodeWriteProtectToggle.mpRead = [](uint32 addr, void *thisptr0) -> uint8 {
 				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-				uintptr r = thisptr->mCoProc.GetReadMap()[((addr >> 8) - 0x40) & 0xFF];
+
+				addr -= 0x4000;
+				const uintptr r = thisptr->mCoProc.GetReadMap()[(addr >> 8) & 0xFF];
 
 				thisptr->OnToggleWriteProtect();
 
@@ -496,9 +541,10 @@ void ATDeviceDiskDriveFull::Init() {
 			mWriteNodeWriteProtectToggle.mpWrite = [](uint32 addr, uint8 val, void *thisptr0) {
 				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
 
+				addr -= 0x4000;
 				thisptr->OnToggleWriteProtect();
 
-				uintptr w = thisptr->mCoProc.GetWriteMap()[((addr >> 8) - 0x40) & 0xFF];
+				uintptr w = thisptr->mCoProc.GetWriteMap()[(addr >> 8) & 0xFF];
 
 				if (w & 1) {
 					const auto& writeNode = *(const ATCoProcWriteMemNode *)(w - 1);
@@ -543,62 +589,93 @@ void ATDeviceDiskDriveFull::Init() {
 			mmapView.SetHandlers(0x98, 0x08, mReadNodeFastSlowToggle, mWriteNodeFastSlowToggle);
 			mmapView.SetHandlers(0xB8, 0x08, mReadNodeFastSlowToggle, mWriteNodeFastSlowToggle);
 
-			// map ROM to $3xxx, $7xxx, $Bxxx, $Fxxx
-			mmapView.SetReadMem(0x30, 0x10, mROM);
-			mmapView.SetReadMem(0x70, 0x10, mROM);
-			mmapView.SetReadMem(0xB0, 0x10, mROM);
+			// map ROM to $2/3xxx, $6/7xxx, $E/Fxxx
+			// - $3xxx is not mapped here as it will be handled by the bus conflict mapping
+			// - $7xxx is not mapped here as it will be handled by the write protect remapping
+			// - $Bxxx should conflict with RAM but RAM seems to win there
+			mmapView.SetReadMem(0xE0, 0x10, mROM);
 			mmapView.SetReadMem(0xF0, 0x10, mROM);
 
 			// set up ROM banking registers
-			mReadNodeROMBankSwitch.mpThis = this;
-			mWriteNodeROMBankSwitch.mpThis = this;
+			mReadNodeROMBankSwitch23.mpThis = this;
+			mReadNodeROMBankSwitchAB.mpThis = this;
+			mReadNodeROMBankSwitchEF.mpThis = this;
+			mWriteNodeROMBankSwitch23.mpThis = this;
+			mWriteNodeROMBankSwitchAB.mpThis = this;
+			mWriteNodeROMBankSwitchEF.mpThis = this;
 
-			mReadNodeROMBankSwitch.mpRead = [](uint32 addr, void *thisptr0) -> uint8 {
-				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-				const uint8 v = thisptr->mbROMBankAlt ? thisptr->mROM[0x1000 + (addr & 0xFFF)] : thisptr->mROM[addr & 0xFFF];
+			mReadNodeROMBankSwitch23.BindLambdas(
+				this,
+				[](uint32 addr, ATDeviceDiskDriveFull *thisptr) -> uint8 {
+					thisptr->UpdateROMBankHappy1050(addr);
 
-				if ((addr & 0x0FFE) == 0x0FF8) {
-					bool altBank = (addr & 1) != 0;
-
-					if (thisptr->mbROMBankAlt != altBank) {
-						thisptr->mbROMBankAlt = altBank;
-
-						thisptr->UpdateROMBankHappy1050();
-					}
+					return thisptr->mRAM[addr & 0x1FFF];
+				},
+				[](uint32 addr, const ATDeviceDiskDriveFull *thisptr) -> uint8 {
+					return thisptr->mRAM[addr & 0x1FFF];
 				}
+			);
 
-				return v;
-			};
-
-			mReadNodeROMBankSwitch.mpDebugRead = [](uint32 addr, void *thisptr0) -> uint8 {
-				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-
-				return thisptr->mbROMBankAlt ? thisptr->mROM[0x1000 + (addr & 0xFFF)] : thisptr->mROM[addr & 0xFFF];
-			};
-
-
-			mWriteNodeROMBankSwitch.mpWrite = [](uint32 addr, uint8 val, void *thisptr0) {
-				auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
-
-				if ((addr & 0x0FFE) == 0x0FF8) {
-					bool altBank = (addr & 1) != 0;
-
-					if (thisptr->mbROMBankAlt != altBank) {
-						thisptr->mbROMBankAlt = altBank;
-
-						thisptr->UpdateROMBankHappy1050();
-					}
+			mWriteNodeROMBankSwitch23.BindLambda(
+				this,
+				[](uint32 addr, uint8 val, ATDeviceDiskDriveFull *thisptr) {
+					thisptr->mRAM[addr & 0x1FFF] = val;
+					thisptr->UpdateROMBankHappy1050(addr);
 				}
-			};
+			);
 
-			mmapView.SetHandlers(0x2F, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
-			mmapView.SetHandlers(0x3F, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
-			mmapView.SetHandlers(0x6F, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
-			mmapView.SetHandlers(0x7F, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
-			mmapView.SetHandlers(0xAF, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
-			mmapView.SetHandlers(0xBF, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
-			mmapView.SetHandlers(0xEF, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
-			mmapView.SetHandlers(0xFF, 0x01, mReadNodeROMBankSwitch, mWriteNodeROMBankSwitch);
+			// $AFxx/BFxx - read/write RAM and toggle ROM bank
+			mReadNodeROMBankSwitchAB.BindLambdas(
+				this, 
+				[](uint32 addr, ATDeviceDiskDriveFull *thisptr) -> uint8 {
+					thisptr->UpdateROMBankHappy1050(addr);
+
+					return thisptr->mRAM[addr & 0x1FFF];
+				},
+				[](uint32 addr, const ATDeviceDiskDriveFull *thisptr) -> uint8 {
+					return thisptr->mRAM[addr & 0x1FFF];
+				}
+			);
+
+			mWriteNodeROMBankSwitchAB.BindLambda(
+				this,
+				[](uint32 addr, uint8 val, void *thisptr0) {
+					auto *thisptr = (ATDeviceDiskDriveFull *)thisptr0;
+
+					thisptr->mRAM[addr & 0x1FFF] = val;
+					thisptr->UpdateROMBankHappy1050(addr);
+				}
+			);
+
+			// $EFxx/FFxx - read/write ROM and toggle ROM bank
+			mReadNodeROMBankSwitchEF.BindLambdas(
+				this,
+				[](uint32 addr, ATDeviceDiskDriveFull *thisptr) -> uint8 {
+					const uint8 v = thisptr->mbROMBankAlt ? thisptr->mROM[0x1000 + (addr & 0xFFF)] : thisptr->mROM[addr & 0xFFF];
+
+					thisptr->UpdateROMBankHappy1050(addr);
+
+					return v;
+				},
+				[](uint32 addr, const ATDeviceDiskDriveFull *thisptr) -> uint8 {
+					return thisptr->mbROMBankAlt ? thisptr->mROM[0x1000 + (addr & 0xFFF)] : thisptr->mROM[addr & 0xFFF];
+				}
+			);
+
+			mWriteNodeROMBankSwitchEF.BindLambda(this,
+				[](uint32 addr, uint8 val, ATDeviceDiskDriveFull *thisptr) {
+					thisptr->UpdateROMBankHappy1050(addr);
+				}
+			);
+
+			// $6Fxx and $7Fxx don't need to be mapped as the write protect switch will
+			// forward to $2Fxx and $3Fxx.
+			mmapView.SetHandlers(0x2F, 0x01, mReadNodeROMBankSwitch23, mWriteNodeROMBankSwitch23);	// bus conflict
+			mmapView.SetHandlers(0x3F, 0x01, mReadNodeROMBankSwitch23, mWriteNodeROMBankSwitch23);	// bus conflict
+			mmapView.SetHandlers(0xAF, 0x01, mReadNodeROMBankSwitchAB, mWriteNodeROMBankSwitchAB);	// RAM
+			mmapView.SetHandlers(0xBF, 0x01, mReadNodeROMBankSwitchAB, mWriteNodeROMBankSwitchAB);	// RAM
+			mmapView.SetHandlers(0xEF, 0x01, mReadNodeROMBankSwitchEF, mWriteNodeROMBankSwitchEF);	// ROM
+			mmapView.SetHandlers(0xFF, 0x01, mReadNodeROMBankSwitchEF, mWriteNodeROMBankSwitchEF);	// ROM
 		} else if (mDeviceType == kDeviceType_ISPlate) {
 			// The I.S. Plate uses a 6502 instead of a 6507, so no 8K mirroring:
 			//	$0000-7FFF	I/O (6507 $0000-0FFF mirrored 8x)
@@ -949,9 +1026,9 @@ void ATDeviceDiskDriveFull::PeripheralColdReset() {
 
 	mFDC.SetMotorRunning(!mb1050);
 	mFDC.SetDensity(mb1050);
-	mFDC.SetWriteProtectOverride(false);
 
 	ClearWriteProtect();
+	UpdateWriteProtectStatus();
 	mbFastSlowToggle = false;
 
 	mbROMBankAlt = true;
@@ -973,6 +1050,13 @@ void ATDeviceDiskDriveFull::PeripheralColdReset() {
 		mFDC.SetDiskChangeStartupHackEnabled(g_ATCVFullDisk1050TurboForceDensityDetect);
 
 	WarmReset();
+}
+
+void ATDeviceDiskDriveFull::SetTraceContext(ATTraceContext *context) {
+	if (context)
+		mFDC.SetTraceContext(context, MasterTimeToDriveTime64(context->mBaseTime + kATDiskDriveTransmitLatency), mDriveScheduler.GetRate().AsInverseDouble());
+	else
+		mFDC.SetTraceContext(nullptr, 0, 0);
 }
 
 void ATDeviceDiskDriveFull::InitFirmware(ATFirmwareManager *fwman) {
@@ -1206,6 +1290,10 @@ void ATDeviceDiskDriveFull::OnMotorStateChanged(bool asserted) {
 }
 
 void ATDeviceDiskDriveFull::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) {
+	// ignore bytes with invalid clocking
+	if (!cyclesPerBit)
+		return;
+
 	Sync();
 
 	mReceiveShiftRegister = c + c + 0x200;
@@ -1511,19 +1599,33 @@ void ATDeviceDiskDriveFull::UpdateROMBankHappy810()  {
 		std::fill(readmap + 0x14 + i, readmap + 0x1F + i, (uintptr)romBank - 0x1000 - (i << 8));
 }
 
-void ATDeviceDiskDriveFull::UpdateROMBankHappy1050()  {
+void ATDeviceDiskDriveFull::UpdateROMBankHappy1050(uint32 addr) {
+	if ((addr & 0x0FFE) == 0x0FF8) {
+		const bool altBank = (addr & 1) != 0;
+
+		if (mbROMBankAlt != altBank) {
+			mbROMBankAlt = altBank;
+
+			UpdateROMBankHappy1050();
+		}
+	}
+}
+
+void ATDeviceDiskDriveFull::UpdateROMBankHappy1050() {
 	if (mDeviceType != kDeviceType_Happy1050)
 		return;
 
-	uintptr *readmap = mCoProc.GetReadMap();
-	const uint8 *romBank = mbROMBankAlt ? mROM + 0x1000 : mROM;
+	uint8 *romBank = mbROMBankAlt ? mROM + 0x1000 : mROM;
 
 	// Ignore the last page in each mirror as we need to keep the bank switching
 	// node in place there. It automatically handles the bank switching itself.
-	std::fill(readmap + 0x30, readmap + 0x3F, (uintptr)romBank - 0x3000);
-	std::fill(readmap + 0x70, readmap + 0x7F, (uintptr)romBank - 0x7000);
-	std::fill(readmap + 0xB0, readmap + 0xBF, (uintptr)romBank - 0xB000);
-	std::fill(readmap + 0xF0, readmap + 0xFF, (uintptr)romBank - 0xF000);
+	ATCoProcMemoryMapView mmapView(mCoProc.GetReadMap(), mCoProc.GetWriteMap(), mCoProc.GetTraceMap());
+
+	// $2000-3FFF is ignored as the read conflict mapping needs to stay there.
+	// $6000-7FFF is ignored as the write switch mapping needs to stay there (and will forward to $2000-3FFF).
+	// $A000-BFFF is ignored as RAM dominates there.
+	mmapView.SetMemory(0xE0, 0x0F, romBank);
+	mmapView.SetMemory(0xF0, 0x0F, romBank);
 }
 
 void ATDeviceDiskDriveFull::UpdateROMBank1050Turbo() {
@@ -1552,11 +1654,11 @@ void ATDeviceDiskDriveFull::UpdateDiskStatus() {
 }
 
 void ATDeviceDiskDriveFull::UpdateWriteProtectStatus() {
-	const bool wpoverride = (mDiskChangeState & 1) != 0;
 	const bool wpsense = mpDiskInterface->GetDiskImage() && !mpDiskInterface->IsDiskWritable();
+	const bool wpoverride = mDiskChangeState ? (mDiskChangeState & 1) != 0 : wpsense;
 
 	if (!mb1050)
-		mRIOT.SetInputA(wpoverride || wpsense ? 0x10 : 0x00, 0x10);
+		mRIOT.SetInputA(wpoverride ? 0x10 : 0x00, 0x10);
 
 	mFDC.SetWriteProtectOverride(wpoverride);
 }

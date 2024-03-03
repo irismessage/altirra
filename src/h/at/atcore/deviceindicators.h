@@ -30,6 +30,8 @@
 
 class IATDeviceIndicatorManager {
 public:
+	static inline constexpr uint32 kTypeID = "IATDeviceIndicatorManager"_vdtypeid;
+
 	virtual void SetStatusFlags(uint32 flags) = 0;
 	virtual void ResetStatusFlags(uint32 flags) = 0;
 	virtual void PulseStatusFlags(uint32 flags) = 0;

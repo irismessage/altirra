@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcpu/history.h>
 #include "trace.h"
 
 ATTraceGroup::ATTraceGroup() {
@@ -144,6 +145,9 @@ void ATTraceChannelTickBased::TruncateLastEvent(uint64 tick) {
 }
 
 void *ATTraceChannelTickBased::AsInterface(uint32 iid) {
+	if (iid == ATTraceChannelTickBased::kTypeID)
+		return this;
+
 	return nullptr;
 }
 
@@ -244,10 +248,33 @@ bool ATTraceChannelTickBased::GetNextEvent(ATTraceEvent& ev) {
 	return true;
 }
 
+uint32 ATTraceChannelTickBased::GetEventCount() const {
+	return (uint32)mEvents.size();
+}
+
+uint64 ATTraceChannelTickBased::GetTraceSize() const {
+	return mEvents.size() * sizeof(mEvents[0]);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 void ATTraceChannelSimple::DecodeName(ATTraceEvent& ev, const void *data) const {
 	ev.mpName = (const wchar_t *)data;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+void ATTraceChannelStringTable::AddString(const wchar_t *s) {
+	mStringTable.emplace_back(s);
+}
+
+void ATTraceChannelStringTable::DecodeName(ATTraceEvent& ev, const void *data) const {
+	uint32 id = (uint32)(uintptr)data;
+
+	if (id < mStringTable.size())
+		ev.mpName = mStringTable[id].c_str();
+	else
+		ev.mpName = L"";
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -257,6 +284,12 @@ void ATTraceChannelFormatted::DecodeName(ATTraceEvent& ev, const void *data) con
 
 	fi->mpFormatter(ev.mNameBuffer, fi->mpData);
 	ev.mpName = ev.mNameBuffer.c_str();
+}
+
+uint64 ATTraceChannelFormatted::GetTraceSize() const {
+	return ATTraceChannelTickBased::GetTraceSize()
+		+ mLinearAlloc.GetTotalAllocatedSize()
+		+ mDeleters.size() * sizeof(mDeleters[0]);
 }
 
 void *ATTraceChannelFormatted::AddRawFormattedTickEvent(uint64 tickStart, uint64 tickEnd, uint32 color, size_t size, size_t align, FormatterInfo *fi) {
@@ -274,4 +307,3 @@ void *ATTraceChannelFormatted::AddOpenRawFormattedTickEvent(uint64 tickStart, ui
 
 	return mLinearAlloc.Allocate(size, align);
 }
-

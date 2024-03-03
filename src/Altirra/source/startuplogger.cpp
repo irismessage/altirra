@@ -94,6 +94,8 @@ void ATStartupLogger::Init(const wchar_t *channels) {
 		Log(s.c_str());
 	}
 
+	Log((VDStringA("Command line: ") + VDTextWToA(GetCommandLineW())).c_str());
+
 	if (channels && *channels) {
 		VDStringRefW s(channels);
 		VDStringA channelName;

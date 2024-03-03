@@ -31,7 +31,7 @@ public:
 	virtual void SetFilterMode(FilterMode mode) override;
 	virtual void SetFullScreen(bool fullscreen, uint32 w, uint32 h, uint32 refresh, bool use16bit) override;
 	virtual void SetDesiredCustomRefreshRate(float hz, float hzmin, float hzmax) override;
-	virtual void SetDestRect(const vdrect32 *r, uint32 color) override;
+	virtual void SetDestRectF(const vdrect32f *r, uint32 color) override;
 	virtual void SetPixelSharpness(float xfactor, float yfactor) override;
 	virtual bool SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) override;
 
@@ -63,6 +63,7 @@ private:
 	bool CreateImageNode();
 	void DestroyImageNode();
 	bool BufferNode(VDDisplayNode3D *srcNode, uint32 w, uint32 h, bool hdr, VDDisplaySourceNode3D **ppNode);
+	bool BufferNode(VDDisplayNode3D *srcNode, float outx, float outy, float outw, float outh, uint32 w, uint32 h, bool hdr, VDDisplaySourceNode3D **ppNode);
 	bool RebuildTree();
 	void AdvanceTimingLog();
 	void ApplyCustomRefreshRate();
@@ -76,7 +77,7 @@ private:
 	VDDisplayNode3D *mpRootNode;
 
 	FilterMode mFilterMode;
-	bool mbCompositionTreeDirty;
+	bool mbCompositionTreeDirty = false;
 	bool mbFramePending = false;
 	bool mbFrameVSync = false;
 	bool mbFrameVSyncAdaptive = false;
@@ -100,6 +101,7 @@ private:
 	VDDisplayNodeContext3D mDisplayNodeContext;
 	VDDisplayRenderer3D mRenderer;
 	IVDDisplayFont *mpDebugFont = nullptr;
+	bool mbTraceRendering = false;
 
 	VDDVSyncStatus mVSyncStatus;
 

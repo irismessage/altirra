@@ -214,7 +214,11 @@ void *ATDeviceDiskDrive815::AsInterface(uint32 iid) {
 		case ATRIOT6532Emulator::kTypeID: return &mRIOT1;
 	}
 
-	return ATDiskDriveDebugTargetControl::AsInterface(iid);
+	void *p = ATDiskDriveDebugTargetControl::AsInterface(iid);
+	if (p)
+		return p;
+
+	return ATDevice::AsInterface(iid);
 }
 
 void ATDeviceDiskDrive815::GetDeviceInfo(ATDeviceInfo& info) {
@@ -1663,13 +1667,15 @@ void ATDeviceDiskDrive815::StepDrive(int drive, uint8 newPhases) {
 		}
 	}
 
-	mpDiskInterfaces[drive]->SetShowActivity(mbMotorEnabled[drive], mCurrentTrack[drive]);
+	if (changed) {
+		mpDiskInterfaces[drive]->SetShowActivity(mbMotorEnabled[drive], mCurrentTrack[drive]);
 
-	g_ATLCDiskEmu("Stepper phases now: %X (track: %d)\n", newPhases & 0x3C, mCurrentTrack[drive]);
+		g_ATLCDiskEmu("Stepper phases now: %X (track: %d)\n", newPhases & 0x3C, mCurrentTrack[drive]);
 
-	// The 815 doesn't even turn off the read head when stepping, so we must
-	// materialize each track for each step.
-	MaterializeTrack(drive, mCurrentTrack[drive]);
+		// The 815 doesn't even turn off the read head when stepping, so we must
+		// materialize each track for each step.
+		MaterializeTrack(drive, mCurrentTrack[drive]);
+	}
 }
 
 void ATDeviceDiskDrive815::PlayStepSound() {

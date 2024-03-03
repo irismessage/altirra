@@ -122,6 +122,7 @@ private:
 	uint8	mViewBank = 0;
 	uint32	mViewAddrBank = 0;
 	uint32	mViewChecksum = 0;
+	bool	mbViewDNonZero = false;
 	bool	mbViewCanScrollUp = false;
 	uint16	mFocusAddr = 0;
 	int		mPCLine = -1;
@@ -136,7 +137,8 @@ private:
 	ATDebuggerSettingView<bool> mbShowProcedureBreaks;
 	ATDebuggerSettingView<bool> mbShowCallPreviews;
 	ATDebuggerSettingView<bool> mbShowSourceInDisasm;
-	ATDebuggerSettingView<ATDebugger816PredictionMode> m816PredictionMode;
+	ATDebuggerSettingView<ATDebugger816MXPredictionMode> m816MXPredictionMode;
+	ATDebuggerSettingView<bool> mb816PredictD;
 	
 	ATDebuggerSystemState mLastState = {};
 

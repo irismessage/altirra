@@ -118,6 +118,8 @@ public:
 	// unmounted, whichever occurs first.
 	void OnDiskModified();
 
+	void OnDiskChanging();
+
 	// Signals that the disk itself has been changed in-place -- still the same image, but
 	// possibly changed in geometry. Implies a bigger change than OnDiskModified().
 	// MediaRemoved=true indicates that the disk was physically removed and/or reinserted;

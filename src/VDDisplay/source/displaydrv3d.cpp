@@ -168,8 +168,8 @@ void VDDisplayDriver3D::SetDesiredCustomRefreshRate(float hz, float hzmin, float
 	ApplyCustomRefreshRate();
 }
 
-void VDDisplayDriver3D::SetDestRect(const vdrect32 *r, uint32 color) {
-	VDVideoDisplayMinidriver::SetDestRect(r, color);
+void VDDisplayDriver3D::SetDestRectF(const vdrect32f *r, uint32 color) {
+	VDVideoDisplayMinidriver::SetDestRectF(r, color);
 
 	mbCompositionTreeDirty = true;
 }
@@ -323,14 +323,17 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 	mDisplayNodeContext.mSDRBrightness = mSDRBrightness;
 
 	const VDDRenderView& renderView = mDisplayNodeContext.CaptureRenderView();
+
 	{
 		VDTAutoScope scope(*mpContext, "Node tree");
+
+		mDisplayNodeContext.BeginScene(mbTraceRendering);
 		mpRootNode->Draw(*mpContext, mDisplayNodeContext, renderView);
 	}
 
 	mDisplayNodeContext.ApplyRenderView(renderView);
 
-	if (mpCompositor || mbDisplayDebugInfo) {
+	if (mpCompositor || mbDisplayDebugInfo || mbTraceRendering) {
 
 		mRenderer.Begin(w, h, mDisplayNodeContext, mbHDR);
 
@@ -339,19 +342,80 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 			mpCompositor->Composite(mRenderer, compInfo);
 		}
 
+		if (mbTraceRendering || mbDisplayDebugInfo) {
+			if (!mpDebugFont)
+				VDCreateDisplaySystemFont(20, false, "Arial", &mpDebugFont);
+		}
+		
+		VDStringW s;
+
+		if (mbTraceRendering) {
+			const auto& rts = mDisplayNodeContext.GetTracedRTs();
+
+			int x = w - 260;
+			int y = 4;
+
+			for(const auto& rt : rts) {
+				if (rt && rt != surface) {
+					IVDTTexture2D *tex = vdpoly_cast<IVDTTexture2D *>(rt->GetTexture());
+
+					if (tex) {
+						VDTTextureDesc desc;
+						tex->GetDesc(desc);
+
+						vdrefptr<VDDisplayCachedImage3D> cimg(new VDDisplayCachedImage3D);
+						cimg->Init(*mpContext, &mRenderer, false, tex);
+
+						VDDisplayImageView imageView;
+						imageView.SetVirtualImage(desc.mWidth, desc.mHeight);
+						imageView.SetCachedImage(VDDisplayCachedImage3D::kTypeID, cimg);
+
+						mRenderer.SetColorRGB(0x800000);
+						
+						float size = (float)std::max<int>(desc.mWidth, desc.mHeight);
+						int w = VDRoundToInt((float)desc.mWidth  / size * 128.0f);
+						int h = VDRoundToInt((float)desc.mHeight / size * 128.0f);
+
+						vdpoint32 pts[5] {
+							{ x, y },
+							{ x + w + 1, y },
+							{ x + w + 1, y + h + 1 },
+							{ x, y + h + 1 },
+							{ x, y }
+						};
+
+						mRenderer.PolyLine(pts, 4);
+
+						mRenderer.SetColorRGB(0xFFFFFF);
+						mRenderer.StretchBlt(x + 1, y + 1, w, h, imageView, 0, 0, desc.mWidth, desc.mHeight, {});
+
+						auto& tr = *mRenderer.GetTextRenderer();
+						tr.Begin();
+						tr.SetFont(mpDebugFont);
+						tr.SetAlignment(tr.kAlignRight, tr.kVertAlignBaseline);
+						tr.SetColorRGB(0xFFFFFF);
+						
+						s.sprintf(L"%ux%d", desc.mWidth, desc.mHeight);
+						tr.DrawTextLine(x - 4, y + (h >> 1), s.c_str());
+
+						tr.End();
+
+						y += 132;
+					}
+				}
+			}
+		}
+
 		if (mbDisplayDebugInfo) {
+			VDTAutoScope scope(*mpContext, "Debug info");
+
 			VDDisplayTextRenderer *tr = mRenderer.GetTextRenderer();
 
 			tr->Begin();
-
-			if (!mpDebugFont)
-				VDCreateDisplaySystemFont(20, false, "Arial", &mpDebugFont);
-
 			tr->SetFont(mpDebugFont);
 			tr->SetAlignment(tr->kAlignLeft, tr->kVertAlignTop);
 			tr->SetColorRGB(0xFFFFFF);
 
-			VDStringW s;
 			s.sprintf(L"Direct3D 11 - %ls", mpContext->GetDeviceCaps().mDeviceDescription.c_str());
 			tr->DrawTextLine(10, 10, s.c_str());
 
@@ -449,6 +513,8 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 
 		mRenderer.End();
 	}
+
+	mDisplayNodeContext.ClearTrace();
 
 	if (CheckForCapturePending() && mSource.mpCB) {
 		bool readbackSucceeded = false;
@@ -606,9 +672,13 @@ void VDDisplayDriver3D::DestroyImageNode() {
 }
 
 bool VDDisplayDriver3D::BufferNode(VDDisplayNode3D *srcNode, uint32 w, uint32 h, bool hdr, VDDisplaySourceNode3D **ppNode) {
+	return BufferNode(srcNode, 0.0f, 0.0f, (float)w, (float)h, w, h, hdr, ppNode);
+}
+
+bool VDDisplayDriver3D::BufferNode(VDDisplayNode3D *srcNode, float outx, float outy, float outw, float outh, uint32 w, uint32 h, bool hdr, VDDisplaySourceNode3D **ppNode) {
 	vdrefptr<VDDisplayBufferSourceNode3D> bufferNode { new VDDisplayBufferSourceNode3D };
 
-	if (!bufferNode->Init(*mpContext, mDisplayNodeContext, w, h, hdr, srcNode))
+	if (!bufferNode->Init(*mpContext, mDisplayNodeContext, outx, outy, outw, outh, w, h, hdr, srcNode))
 		return false;
 
 	*ppNode = bufferNode.release();
@@ -621,34 +691,58 @@ bool VDDisplayDriver3D::RebuildTree() {
 	if (!mpImageNode && !mpImageSourceNode && !CreateImageNode())
 		return false;
 
-	sint32 dstx = 0;
-	sint32 dsty = 0;
-	uint32 dstw = mClientRect.right;
-	uint32 dsth = mClientRect.bottom;
+	const uint32 viewportWidth = mClientRect.right;
+	const uint32 viewportHeight = mClientRect.bottom;
 
-	bool useClear = false;
-	if (mbDestRectEnabled && (mDestRect.left != 0 || mDestRect.top != 0 || mDestRect.right != dstw || mDestRect.bottom != dsth)) {
-		dstx = mDestRect.left;
-		dsty = mDestRect.top;
-		dstw = mDestRect.width();
-		dsth = mDestRect.height();
+	// unclipped float destination rect
+	float dstxf = 0;
+	float dstyf = 0;
+	float dstwf = (float)viewportWidth;
+	float dsthf = (float)viewportHeight;
 
-		useClear = true;
+	if (mbDestRectEnabled) {
+		dstxf = mDestRectF.left;
+		dstyf = mDestRectF.top;
+		dstwf = mDestRectF.width();
+		dsthf = mDestRectF.height();
 	}
 
-	if (dstw && dsth) {
-		sint32 dstx2 = dstx;
-		sint32 dsty2 = dsty;
+	// clipped integer destination rect with pixel coverage
+	const sint32 clipdstx = std::max<sint32>(0, VDCeilToInt(dstxf - 0.5f));
+	const sint32 clipdsty = std::max<sint32>(0, VDCeilToInt(dstyf - 0.5f));
+	const uint32 clipdstw = (uint32)std::max<sint32>(0, std::min<sint32>(VDCeilToInt(mDestRectF.right  - 0.5f), viewportWidth ) - clipdstx);
+	const uint32 clipdsth = (uint32)std::max<sint32>(0, std::min<sint32>(VDCeilToInt(mDestRectF.bottom - 0.5f), viewportHeight) - clipdsty);
 
-		bool useBloom = mbUseScreenFX && mScreenFXInfo.mBloomIndirectIntensity > 0;
-		if (useBloom) {
-			dstx2 = 0;
-			dsty2 = 0;
-		}
+	// check if we are overwriting the entire screen; if not, clear the framebuffer first
+	bool useClear = false;
+	if (clipdstx > 0 || clipdsty > 0 || clipdstx + (sint32)clipdstw < mClientRect.right || clipdsty + (sint32)clipdsth < mClientRect.bottom)
+		useClear = true;
+
+	// check if we are covering any pixels; if not, omit the entire composition tree
+	if (clipdstw && clipdsth) {
+		// Compute composition dest rects.
+		//
+		// In the fast path, we render directly to the framebuffer. However, more complex
+		// effects may need to buffer to an intermediate texture. This is complicated by
+		// the destination rect possibly being outside of the viewport or even far larger
+		// than we would need or want to buffer, so we need to be smart about it.
+		//
+		// All cases where we would buffer use 1:1 mapping between input and output,
+		// except for distortion (which requires full source buffering, and disables bicubic
+		// stretching). To simplify this, all nodes always assume they are rendering to
+		// the destination rect, and their viewport is counter-corrected by the buffering
+		// node to align the clip rect to the buffer texture. This needs to be done
+		// carefully to avoid accumulating multiple subpixel offsets.
 
 		vdrefptr<VDDisplayNode3D> imgNode(mpImageNode);
 		vdrefptr<VDDisplaySourceNode3D> imgSrcNode(mpImageSourceNode);
 
+		// reset the dest area for the image node, in case previously it was set up for fast path
+		// direct blitting, which we might not be able to do here
+		if (mpImageNode)
+			mpImageNode->SetDestArea(0, 0, mSource.pixmap.w, mSource.pixmap.h);
+
+		// check if either PAL artifacting or HDR is enabled, in which case we must buffer
 		if (mbUseScreenFX) {
 			if (mScreenFXInfo.mPALBlendingOffset != 0) {
 				if (!imgSrcNode) {
@@ -673,24 +767,34 @@ bool VDDisplayDriver3D::RebuildTree() {
 				}
 			}
 		}
+		
+		const bool useDistortion = mbUseScreenFX && mScreenFXInfo.mDistortionX != 0;
+		bool useFastPath = false;
 
 		switch(mFilterMode) {
 			case kFilterBicubic:
-				if (!mbHDR) {
+				if (!mbHDR && !useDistortion) {
 					if (!imgSrcNode) {
 						if (!BufferNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, false, ~imgSrcNode))
 							return false;
 					}
 
-					VDDisplayStretchBicubicNode3D *p = new VDDisplayStretchBicubicNode3D;
-					p->AddRef();
-					if (p->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, dstx2, dsty2, dstw, dsth, imgSrcNode)) {
-						mpRootNode = p;
+					vdrefptr p { new VDDisplayStretchBicubicNode3D };
+					if (p->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, clipdstw, clipdsth, dstxf, dstyf, dstwf, dsthf, imgSrcNode)) {
+						if (mbUseScreenFX) {
+							imgNode = std::move(p);
+
+							if (!BufferNode(imgNode, dstxf, dstyf, dstwf, dsthf, clipdstw, clipdsth, false, ~imgSrcNode))
+								return false;
+
+						} else {
+							mpRootNode = p.release();
+							useFastPath = true;
+						}
 						break;
 					}
-					p->Release();
 				}
-				// fall through
+				[[fallthrough]];
 
 			case kFilterBilinear:
 			case kFilterPoint:
@@ -699,80 +803,94 @@ bool VDDisplayDriver3D::RebuildTree() {
 					// check if we can take the fast path of having the image node paint directly to the screen
 					if (imgNode && imgNode == mpImageNode && mpImageNode->CanStretch() && !mbUseScreenFX) {
 						mpImageNode->SetBilinear(mFilterMode != kFilterPoint);
-						mpImageNode->SetDestArea(dstx2, dsty2, dstw, dsth);
+						mpImageNode->SetDestArea(dstxf, dstyf, dstwf, dsthf);
 						mpRootNode = mpImageNode;
 						mpRootNode->AddRef();
+						useFastPath = true;
 						break;
-					}
-				
-					// if we don't already have a buffered source node, explicitly buffer the incoming
-					// image
-					if (!imgSrcNode) {
-						if (!BufferNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, false, ~imgSrcNode))
-							return false;
-					}
-
-					if (mbUseScreenFX) {
-						vdrefptr<VDDisplayScreenFXNode3D> p(new VDDisplayScreenFXNode3D);
-
-						VDDisplayScreenFXNode3D::Params params {};
-
-						params.mDstX = dstx2;
-						params.mDstY = dsty2;
-						params.mDstW = dstw;
-						params.mDstH = dsth;
-						params.mSharpnessX = mPixelSharpnessX;
-						params.mSharpnessY = mPixelSharpnessY;
-						params.mbLinear = mFilterMode != kFilterPoint;
-						params.mbRenderLinear = mbHDR;
-						params.mbSignedInput = mScreenFXInfo.mbSignedRGBEncoding;
-						params.mHDRScale = mbHDR ? mScreenFXInfo.mHDRIntensity : 1.0f;
-						params.mGamma = mScreenFXInfo.mGamma;
-						params.mScanlineIntensity = mScreenFXInfo.mScanlineIntensity;
-						params.mDistortionX = mScreenFXInfo.mDistortionX;
-						params.mDistortionYRatio = mScreenFXInfo.mDistortionYRatio;
-						memcpy(params.mColorCorrectionMatrix, mScreenFXInfo.mColorCorrectionMatrix, sizeof params.mColorCorrectionMatrix);
-
-						if (!p->Init(*mpContext, mDisplayNodeContext, params, imgSrcNode))
-							return false;
-
-						mpRootNode = p.release();
-					} else {
-						VDDisplayBlitNode3D *p = new VDDisplayBlitNode3D;
-						p->AddRef();
-						p->SetDestArea(dstx2, dsty2, dstw, dsth);
-
-						if (!p->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, mFilterMode != kFilterPoint, mPixelSharpnessX, mPixelSharpnessY, imgSrcNode)) {
-							p->Release();
-							return false;
-						}
-
-						mpRootNode = p;
-					}
+					}				
 				}
 				break;
 		}
 
+		if (!useFastPath) {
+			// if we don't already have a buffered source node, explicitly buffer the incoming
+			// image
+			if (!imgSrcNode) {
+				if (!BufferNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, false, ~imgSrcNode))
+					return false;
+			}
+
+			if (mbUseScreenFX) {
+				vdrefptr<VDDisplayScreenFXNode3D> p(new VDDisplayScreenFXNode3D);
+
+				VDDisplayScreenFXNode3D::Params params {};
+
+				params.mSrcH = mSource.pixmap.h;
+				params.mDstX = dstxf;
+				params.mDstY = dstyf;
+				params.mDstW = dstwf;
+				params.mDstH = dsthf;
+				params.mClipDstX = clipdstx;
+				params.mClipDstY = clipdsty;
+				params.mClipDstW = clipdstw;
+				params.mClipDstH = clipdsth;
+
+				params.mSharpnessX = mPixelSharpnessX;
+				params.mSharpnessY = mPixelSharpnessY;
+				params.mbLinear = mFilterMode != kFilterPoint;
+				params.mbRenderLinear = mbHDR;
+				params.mbSignedInput = mScreenFXInfo.mbSignedRGBEncoding;
+				params.mHDRScale = mbHDR ? mScreenFXInfo.mHDRIntensity : 1.0f;
+				params.mGamma = mScreenFXInfo.mGamma;
+				params.mScanlineIntensity = mScreenFXInfo.mScanlineIntensity;
+				params.mDistortionX = mScreenFXInfo.mDistortionX;
+				params.mDistortionYRatio = mScreenFXInfo.mDistortionYRatio;
+				memcpy(params.mColorCorrectionMatrix, mScreenFXInfo.mColorCorrectionMatrix, sizeof params.mColorCorrectionMatrix);
+
+				if (!p->Init(*mpContext, mDisplayNodeContext, params, imgSrcNode))
+					return false;
+
+				mpRootNode = p.release();
+			} else {
+				VDDisplayBlitNode3D *p = new VDDisplayBlitNode3D;
+				p->AddRef();
+				p->SetDestArea(dstxf, dstyf, dstwf, dsthf);
+
+				if (!p->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, mFilterMode != kFilterPoint, mPixelSharpnessX, mPixelSharpnessY, imgSrcNode)) {
+					p->Release();
+					return false;
+				}
+
+				mpRootNode = p;
+			}
+		}
+
+		const bool useBloom = mbUseScreenFX && mScreenFXInfo.mBloomIndirectIntensity > 0;
 		if (useBloom) {
 			vdrefptr<VDDisplaySourceNode3D> bufferedRootNode;
-			if (!BufferNode(mpRootNode, dstw, dsth, mbHDR, ~bufferedRootNode))
+			if (!BufferNode(mpRootNode, dstxf, dstyf, dstwf, dsthf, clipdstw, clipdsth, mbHDR, ~bufferedRootNode))
 				return false;
 
 			vdrefptr<VDDisplayBloomNode3D> bloomNode(new VDDisplayBloomNode3D);
 
 			VDDisplayBloomNode3D::Params params {};
 
-			params.mDstX = dstx;
-			params.mDstY = dsty;
-			params.mDstW = dstw;
-			params.mDstH = dsth;
+			params.mDstX = dstxf;
+			params.mDstY = dstyf;
+			params.mDstW = dstwf;
+			params.mDstH = dsthf;
+			params.mClipX = clipdstx;
+			params.mClipY = clipdsty;
+			params.mClipW = clipdstw;
+			params.mClipH = clipdsth;
 			params.mThreshold = mScreenFXInfo.mBloomThreshold;
 			params.mDirectIntensity = mScreenFXInfo.mBloomDirectIntensity;
 			params.mIndirectIntensity = mScreenFXInfo.mBloomIndirectIntensity;
 
 			// The blur radius is specified in source pixels in the FXInfo, which must be
 			// converted to destination pixels.
-			params.mBlurRadius = mScreenFXInfo.mBloomRadius * (float)dstw / (float)mSource.pixmap.w;
+			params.mBlurRadius = mScreenFXInfo.mBloomRadius * (float)dstwf / (float)mSource.pixmap.w;
 
 			params.mbRenderLinear = mbHDR;
 

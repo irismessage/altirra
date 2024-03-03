@@ -23,19 +23,19 @@ public:
 	VDVideoDisplayMinidriverGDI();
 	~VDVideoDisplayMinidriverGDI();
 
-	bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info);
-	void Shutdown();
+	bool Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplaySourceInfo& info) override;
+	void Shutdown() override;
 
-	bool ModifySource(const VDVideoDisplaySourceInfo& info);
+	bool ModifySource(const VDVideoDisplaySourceInfo& info) override;
 
-	bool IsValid() { return mbValid; }
-	void SetDestRect(const vdrect32 *r, uint32 color);
+	bool IsValid() override { return mbValid; }
+	void SetDestRectF(const vdrect32f *r, uint32 color) override;
 
-	bool Update(UpdateMode);
-	void Refresh(UpdateMode);
-	bool Paint(HDC hdc, const RECT& rClient, UpdateMode mode);
-	bool SetSubrect(const vdrect32 *r);
-	void SetLogicalPalette(const uint8 *pLogicalPalette) { mpLogicalPalette = pLogicalPalette; }
+	bool Update(UpdateMode) override;
+	void Refresh(UpdateMode) override;
+	bool Paint(HDC hdc, const RECT& rClient, UpdateMode mode) override;
+	bool SetSubrect(const vdrect32 *r) override;
+	void SetLogicalPalette(const uint8 *pLogicalPalette) override { mpLogicalPalette = pLogicalPalette; }
 
 	IVDDisplayCompositionEngine *GetDisplayCompositionEngine() override { return this; }
 
@@ -337,8 +337,8 @@ bool VDVideoDisplayMinidriverGDI::ModifySource(const VDVideoDisplaySourceInfo& i
 	return true;
 }
 
-void VDVideoDisplayMinidriverGDI::SetDestRect(const vdrect32 *r, uint32 color) {
-	VDVideoDisplayMinidriver::SetDestRect(r, color);
+void VDVideoDisplayMinidriverGDI::SetDestRectF(const vdrect32f *r, uint32 color) {
+	VDVideoDisplayMinidriver::SetDestRectF(r, color);
 	if (mhwnd)
 		InvalidateRect(mhwnd, NULL, FALSE);
 }
@@ -436,15 +436,6 @@ void VDVideoDisplayMinidriverGDI::InternalRefresh(HDC hdc, const RECT& rClient, 
 		return;
 
 	const VDPixmap& source = mSource.pixmap;
-	RECT rDst;
-	rDst.left = mDrawRect.left;
-	rDst.top = mDrawRect.top;
-	rDst.right = mDrawRect.right;
-	rDst.bottom = mDrawRect.bottom;
-
-	if (rDst.right <= rDst.left || rDst.bottom <= rDst.top)
-		return;
-
 	HDC hdcComp = hdc;
 
 	VDDisplayCompositeInfo compInfo = {};
@@ -483,12 +474,62 @@ void VDVideoDisplayMinidriverGDI::InternalRefresh(HDC hdc, const RECT& rClient, 
 	else
 		r.set(0, 0, source.w, source.h);
 
+	RECT rDst;
+	rDst.left = mDestRect.left;
+	rDst.top = mDestRect.top;
+	rDst.right = mDestRect.right;
+	rDst.bottom = mDestRect.bottom;
+
 	if (mColorOverride) {
 		SetBkColor(hdcComp, VDSwizzleU32(mColorOverride) >> 8);
 		SetBkMode(hdcComp, OPAQUE);
 		ExtTextOut(hdcComp, 0, 0, ETO_OPAQUE, &rDst, L"", 0, NULL);
 	} else {
-		StretchBlt(hdcComp, rDst.left, rDst.top, rDst.right - rDst.left, rDst.bottom - rDst.top, mhdc, r.left, r.top, r.width(), r.height(), SRCCOPY);
+		// In general, while GDI doesn't allow for fractional destination coordinates either by
+		// mapping or clipping, it does allow for post-clip source coordinates. Thus, it's to
+		// our advantage not to preclip the blit. The main issue is that we can't exceed a blit
+		// width of 32K, which causes the blit to fail.
+		//
+		// To get around this, we manually clip the rect to a 16K window, which we offset a bit
+		// to span [-4K, 12K]. The trick is how to avoid excessive loss of subpixel precision.
+		// By this point we have pretty extreme levels of magnification going on, so after
+		// rounding the source rect we need to reproject it to destination space where we have
+		// higher precision. Otherwise, we get a lot of jitter from the error in the very small
+		// source rect.
+
+		vdrect32 rDstClip;
+		rDstClip.left   = std::max<sint32>(mDestRect.left,   -4096);
+		rDstClip.top    = std::max<sint32>(mDestRect.top,    -4096);
+		rDstClip.right  = std::min<sint32>(mDestRect.right,  12288);
+		rDstClip.bottom = std::min<sint32>(mDestRect.bottom, 12288);
+
+		if (rDstClip != mDestRect) {
+			// remap source
+			float u0 = (float)r.left;
+			float v0 = (float)r.top;
+			float du = (float)r.right  - u0;
+			float dv = (float)r.bottom - v0;
+
+			vdrect32f rf;
+			rf.left   = u0 + du * (float)(rDstClip.left   - mDestRect.left  ) / (float)mDestRect.width ();
+			rf.top    = v0 + dv * (float)(rDstClip.top    - mDestRect.top   ) / (float)mDestRect.height();
+			rf.right  = u0 + du * (float)(rDstClip.right  - mDestRect.left  ) / (float)mDestRect.width ();
+			rf.bottom = v0 + dv * (float)(rDstClip.bottom - mDestRect.top   ) / (float)mDestRect.height();
+
+			r.left   = VDFloorToInt(rf.left  );
+			r.top    = VDFloorToInt(rf.top   );
+			r.right  = VDCeilToInt (rf.right );
+			r.bottom = VDCeilToInt (rf.bottom);
+
+			// reproject the source rect back to destination space where we have much higher relative precision
+			rDst.left   = VDRoundToInt(mDestRectF.left + (mDestRectF.width () / du) * ((float)r.left   - u0));
+			rDst.top    = VDRoundToInt(mDestRectF.top  + (mDestRectF.height() / dv) * ((float)r.top    - v0));
+			rDst.right  = VDRoundToInt(mDestRectF.left + (mDestRectF.width () / du) * ((float)r.right  - u0));
+			rDst.bottom = VDRoundToInt(mDestRectF.top  + (mDestRectF.height() / dv) * ((float)r.bottom - v0));
+		}
+
+		if (rDst.right > rDst.left && rDst.bottom > rDst.top)
+			StretchBlt(hdcComp, rDst.left, rDst.top, rDst.right - rDst.left, rDst.bottom - rDst.top, mhdc, r.left, r.top, r.width(), r.height(), SRCCOPY);
 	}
 
 	if (mpCompositor) {

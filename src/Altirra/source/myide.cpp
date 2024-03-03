@@ -20,6 +20,7 @@
 #include <vd2/system/hash.h>
 #include <vd2/system/int128.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/snapshotimpl.h>
 #include "myide.h"
 #include "memorymanager.h"
 #include "ide.h"
@@ -55,9 +56,10 @@ void *ATMyIDEEmulator::AsInterface(uint32 id) {
 		case IATDeviceIndicators::kTypeID:	return static_cast<IATDeviceIndicators *>(this);
 		case IATDeviceFirmware::kTypeID:	return static_cast<IATDeviceFirmware *>(this);
 		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(this);
+		case IATDeviceSnapshot::kTypeID:	return static_cast<IATDeviceSnapshot *>(this);
 		case ATIDEEmulator::kTypeID:		return static_cast<ATIDEEmulator *>(&mIDE[0]);
 		default:
-			return nullptr;
+			return ATDevice::AsInterface(id);
 	}
 }
 
@@ -409,6 +411,141 @@ void ATMyIDEEmulator::RemoveChildDevice(IATDevice *dev) {
 
 			UpdateIDEReset();
 		}
+	}
+}
+
+class ATSaveStateMyIDE final : public ATSnapExchangeObject<ATSaveStateMyIDE, "ATSaveStateMyIDE"> {
+public:
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	bool mbArchSelect2 = false;
+
+	vdrefptr<IATObjectState> mpIDE1State;
+	vdrefptr<IATObjectState> mpIDE2State;
+};
+
+template<ATExchanger T>
+void ATSaveStateMyIDE::Exchange(T& ex) {
+	ex.Transfer("arch_select2", &mbArchSelect2);
+	ex.Transfer("ide1_state", &mpIDE1State);
+	ex.Transfer("ide2_state", &mpIDE2State);
+}
+
+class ATSaveStateMyIDE2 final : public ATSnapExchangeObject<ATSaveStateMyIDE2, "ATSaveStateMyIDE2"> {
+public:
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	uint8 mArchLeftPage = 0;
+	uint8 mArchRightPage = 0;
+	uint16 mArchKeyholePage = 0;
+	bool mbArchCFPower = false;
+	bool mbArchCFReset = false;
+	bool mbArchCFAltReg = false;
+	uint8 mArchCFControl = 0;
+	uint8 mArchBankControl = 0;
+
+	vdrefptr<ATSaveStateMemoryBuffer> mpRAM;
+	vdrefptr<IATObjectState> mpIDEState;
+};
+
+template<ATExchanger T>
+void ATSaveStateMyIDE2::Exchange(T& ex) {
+	ex.Transfer("arch_left_page", &mArchLeftPage);
+	ex.Transfer("arch_right_page", &mArchRightPage);
+	ex.Transfer("arch_keyhole_page", &mArchKeyholePage);
+	ex.Transfer("arch_cf_power", &mbArchCFPower);
+	ex.Transfer("arch_cf_reset", &mbArchCFReset);
+	ex.Transfer("arch_cf_altreg", &mbArchCFAltReg);
+	ex.Transfer("arch_cf_control", &mArchCFControl);
+	ex.Transfer("arch_bank_control", &mArchBankControl);
+
+	ex.Transfer("ram", &mpRAM);
+
+	ex.Transfer("ide_state", &mpIDEState);
+}
+
+void ATMyIDEEmulator::GetSnapshotStatus(ATSnapshotStatus& status) const {
+	mIDE[0].GetSnapshotStatus(status);
+
+	if (!mbVersion2)
+		mIDE[1].GetSnapshotStatus(status);
+}
+
+void ATMyIDEEmulator::LoadState(const IATObjectState *state, ATSnapshotContext& ctx) {
+	if (!state) {
+		const ATSaveStateMyIDE kDefaultState {};
+
+		return LoadState(&kDefaultState, ctx);
+	}
+
+	if (mbVersion2) {
+		const auto& mistate = atser_cast<const ATSaveStateMyIDE2&>(*state);
+
+		OnWriteByte_CCTL_V2(this, 0xD508, mistate.mArchLeftPage);
+		OnWriteByte_CCTL_V2(this, 0xD50A, mistate.mArchRightPage);
+		OnWriteByte_CCTL_V2(this, 0xD50C, (uint8)(mistate.mArchKeyholePage >> 8));
+		OnWriteByte_CCTL_V2(this, 0xD50D, (uint8)mistate.mArchKeyholePage);
+		OnWriteByte_CCTL_V2(this, 0xD50F, mistate.mArchBankControl);
+
+		// CF power/reset latches are trickier as the write has many side effects
+		mbCFPowerLatch = (mistate.mArchCFControl & 0x02) != 0;
+		mbCFResetLatch = (mistate.mArchCFControl & 0x01) == 0;
+		mbCFPower = mistate.mbArchCFPower;
+		mbCFReset = mistate.mbArchCFReset;
+		mbCFAltReg = mistate.mbArchCFAltReg;
+
+		UpdateIDEReset();
+
+		mIDE[0].LoadState(mistate.mpIDEState);
+
+		memset(mRAM, 0, sizeof mRAM);
+		if (mistate.mpRAM) {
+			const auto& readBuffer = mistate.mpRAM->GetReadBuffer();
+			if (!readBuffer.empty())
+				memcpy(mRAM, readBuffer.data(), std::min<size_t>(sizeof mRAM, readBuffer.size()));
+		}
+	} else {
+		const auto& mistate = atser_cast<const ATSaveStateMyIDE&>(*state);
+
+		mbSelectSlave = mistate.mbArchSelect2;
+		mIDE[0].LoadState(mistate.mpIDE1State);
+		mIDE[1].LoadState(mistate.mpIDE2State);
+	}
+}
+
+vdrefptr<IATObjectState> ATMyIDEEmulator::SaveState(ATSnapshotContext& ctx) const {
+	if (mbVersion2) {
+		vdrefptr statev2 { new ATSaveStateMyIDE2 };
+
+		statev2->mArchLeftPage = mLeftPage;
+		statev2->mArchRightPage = mRightPage;
+		statev2->mArchKeyholePage = (uint16)(mKeyHolePage >> 7);
+		
+		statev2->mbArchCFPower = mbCFPower;
+		statev2->mbArchCFReset = mbCFReset;
+		statev2->mbArchCFAltReg = mbCFAltReg;
+
+		statev2->mArchCFControl = (mbCFPowerLatch ? 0x02 : 0x00) + (mbCFResetLatch ? 0x00 : 0x01);
+
+		statev2->mArchBankControl = mControl;
+
+		statev2->mpIDEState = mIDE[0].SaveState();
+
+		statev2->mpRAM = new ATSaveStateMemoryBuffer;
+		statev2->mpRAM->mpDirectName = L"myide2-ram.bin";
+		statev2->mpRAM->GetWriteBuffer().assign(std::begin(mRAM), std::end(mRAM));
+
+		return statev2;
+	} else {
+		vdrefptr statev1 { new ATSaveStateMyIDE };
+
+		statev1->mbArchSelect2 = mbSelectSlave;
+		statev1->mpIDE1State = mIDE[0].SaveState();
+		statev1->mpIDE2State = mIDE[1].SaveState();
+
+		return statev1;
 	}
 }
 

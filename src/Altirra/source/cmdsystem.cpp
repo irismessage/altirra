@@ -223,10 +223,7 @@ void OnCommandSystemROMImagesDialog() {
 void OnCommandSystemToggleRTime8() {
 	auto *dm = g_sim.GetDeviceManager();
 
-	if (dm->GetDeviceByTag("rtime8"))
-		dm->RemoveDevice("rtime8");
-	else
-		dm->AddDevice("rtime8", ATPropertySet(), false, false);
+	dm->ToggleDevice("rtime8");
 }
 
 void OnCommandSystemSpeedMatchHardware() {

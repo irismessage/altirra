@@ -58,6 +58,10 @@
       @xpc     Extended PC (banked memory)
       @tapepos Tape position in samples
      
+     Functions
+      @hwwritereg(addr)
+               Read back ANTIC, POKEY, or GTIA write-only registers
+
      Grouping
       (exp)    Subexpression
       @(...)   Immediately evaluated subexpression
@@ -505,7 +509,7 @@
     Set a tracepoint on access to a memory location or range.
     
       bta [-k] [-q] [-h] [-g group] <mode> <address> [L<length>]
-             format [arguments...]
+             [format [arguments...]]
       
     Sets a non-stopping breakpoint at a memory location or range with a
     command to print a trace line on the console when the breakpoint is
@@ -523,8 +527,11 @@
     The @ts variable can be used to substitute the output of the last
     .sprintf command as the format string.
 
+    If no format string is specified, a default trace message is provided.
+
     Examples:
 
+        bta w skctl
         bta r prior "PRIOR=$%02X" value
         bta w D100 L100 "[$%04X]=$%02X" value
     
@@ -594,6 +601,20 @@
       
     Stops emulation when the first disk drive (D1:) receives a request
     to read a particular virtual disk sector.
+
++ c    Compare memory
+
+    Compare two blocks of memory for differences.
+
+      c <xaddress> L<length> <xaddress2>
+
+    The two blocks of memory are compared byte-by-byte, and any differences
+    reported. Extended addresses can be used; for instance, this command will
+    compare a RAM copy of the OS against the ROM OS:
+
+      c E000 L2000 rom:$E000
+
+    See also: m (move memory), .sum (compute memory sum), .crc (compute CRC)
 
 ^ da, db, dbi, dd, df, di, dw   Display memory
 > da   Display ATASCII string
@@ -1121,6 +1142,25 @@
     to within a specific module and avoiding bogus tracing into other regions,
     such as RAM where dynamic code is kept.
 
++ stp  Static trace PBI
+
+    Statically traces the current parallel bus interface (PBI) firmware.
+
+      stp
+
+    The stp command is equivalent to running the static trace (st) command
+    as follows:
+
+    - Address range is restricted to D800-DFFF.
+    - The SIO and IRQ vectors at $D805 and $D809 are traced.
+    - The init vector at $D819 is traced.
+    - The CIO vectors at $D80D-D818 are traced (with +1 adjustment).
+
+    The PBI firmware must be selected and visible when the stp command is
+    executed.
+
+    See also: st (static trace)
+
 + t    Trace (step one instruction) (F11)
 
     Execute one instruction, stepping into a subroutine or interrupt.
@@ -1131,7 +1171,8 @@
 
     Disassemble CPU code at a given address.
     
-      u [-e|[-m8|-m16][-x8|-x16]] [-p] [-n] [<address> [L<length>]]
+      u [-e|[-m8|-m16][-x8|-x16]] [-p] [-n] [-m <mode>]
+            [<address> [L<length>]]
       
     If no address is given, disassembly continues from the end of the last
     continuable command.
@@ -1150,6 +1191,9 @@
     the M/X mode. This automatic prediction can be disabled with -p.
 
     -n disables label decoding for the PC address and operands.
+
+    -m changes the disassembly mode to a different CPU. Currently supported
+    modes are: 6502, 65c02, 65c816, z80, 8048, and 6809.
 
 ^ vta, vtc, vtl, vtr    Verifier target control
 > vta  Verifier target add
@@ -1178,7 +1222,6 @@
 > wc   Watch clear
 > wl   Watch list
 > ww   Watch word
-> wx   Watch expression
 
     Continuously display the value of a memory location or expression.
     
@@ -1249,8 +1292,6 @@
     The manual symbol table allows on-the-fly naming of addresses in memory.
     Any symbols added to the manual symbol table can be used for address
     specification and decoding as any other symbol.
-
-+ .afx_dumpfilt  Dump artifacting engine filters
 
 + .antic       Display ANTIC status
 + .bank        Show memory bank state
@@ -2208,7 +2249,7 @@
 
 + .tracecio    Toggle CIO call tracing
 
-    Logs calls to the operating system's Character Input/Output (CIO)
+    Logs calls to the operating system's Central Input/Output (CIO)
     facility.
 
       .tracecio [on|off]
@@ -2218,11 +2259,20 @@
 
     See also: .tracesio
 
-+ .traceser    Toggle serial I/O port tracing
++ .traceser    Toggle POKEY serial I/O tracing
+
+    Enables or disables POKEY serial I/O (SIO) tracing.
+
+      .traceser [on|off]
+
+    This command is deprecated; the SIODATA logging channel is recommended
+    instead.
+
+    See also: lfe (log filter enable)
 
 + .tracesio    Toggle SIO call tracing
 
-    Logs calls to the operating system's Serial Input/Output (CIO)
+    Logs calls to the operating system's Serial Input/Output (SIO)
     facility.
 
       .tracesio [on|off]
@@ -2241,8 +2291,25 @@
     See also: .ds1305
 
 + .unloadsym   Unload module symbols
+
+    Unloads symbols for a module from the debugger.
+
+       .unloadsym <module-name>|<module-id>
+
+    See also: lm (list modules)
+
 + .vbxe        Display VBXE status
 + .vbxe_bl     Display VBXE blit list (BL)
+
+    Displays the current or an alternate VBXE blit list.
+
+      .vbxe_bl [-c] [<address>]
+
+      -c    Use compact output format
+
+    The address must be a VBXE address (v:offset) or a CPU address currently
+    within a CPU-enabled MEMAC window. If the address is omitted, the
+    starting address in the VBXE_BL_ADR0-2 registers is used.
 
 + .vbxe_pal    Display VBXE palette
 
@@ -2260,7 +2327,19 @@
     specifies the number of colors to display.
 
 + .vbxe_traceblits    Toggle VBXE blit tracing
+
+    Logs each time VBXE starts a blit.
+
+      .vbxe_traceblits off|on|compact
+
 + .vbxe_xdl    Display VBXE extended display list (XDL)
+
+    Dumps the contents of the current VBXE extended display list.
+
+      .vbxe_xdl
+
+    The XDL address is obtained from the current VBXE_XDLn registers.
+
 + .vectors     Display kernel vectors
 
 + .warmreset   Warm reset simulation
@@ -2289,7 +2368,9 @@
 .   n:$0000    ANTIC view of primary memory
 .   v:$00000   VBXE memory
 .   r:$0000    Main memory
+.   rom:$0000  System ROM (OS, BASIC, self-test)
 .   x:$00000   Extended memory
+.   cart:$0000 Cartridge ROM, linear view
 .   t:$01'A000 Cartridge memory, banked view (bank $01, address $A000)
 . 
 . Some commands support length syntax:

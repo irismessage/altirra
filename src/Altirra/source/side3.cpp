@@ -25,6 +25,7 @@
 #include <at/atcore/crc.h>
 #include <at/atcore/devicestorage.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/snapshotimpl.h>
 #include <at/atcore/wraptime.h>
 #include "debuggerlog.h"
 #include "side3.h"
@@ -66,14 +67,16 @@ void *ATSIDE3Emulator::AsInterface(uint32 id) {
 		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(this);
 		case IATDeviceDiagnostics::kTypeID:	return static_cast<IATDeviceDiagnostics *>(this);
 		case IATDeviceButtons::kTypeID:		return static_cast<IATDeviceButtons *>(this);
+		case IATDeviceSnapshot::kTypeID:	return static_cast<IATDeviceSnapshot *>(this);
 		default:
-			return nullptr;
+			return ATDevice::AsInterface(id);
 	}
 }
 
 void ATSIDE3Emulator::GetSettings(ATPropertySet& settings) {
 	settings.SetBool("led_enable", mbActivityIndicatorEnable);
 	settings.SetBool("recovery", mbRecoveryMode);
+	settings.SetUint32("version", mHwVersion == HwVersion::V14 ? 14 : 10);
 }
 
 bool ATSIDE3Emulator::SetSettings(const ATPropertySet& settings) {
@@ -87,7 +90,32 @@ bool ATSIDE3Emulator::SetSettings(const ATPropertySet& settings) {
 
 	mbRecoveryMode = settings.GetBool("recovery", false);
 
+	HwVersion newVersion = settings.GetUint32("version", mHwVersion == HwVersion::V14 ? 14 : 10) > 10 ? HwVersion::V14 : HwVersion::V10;
+
+	if (mHwVersion != newVersion) {
+		mHwVersion = newVersion;
+
+		if (mpMemLayerCCTL)
+			ColdReset();
+	}
+
 	return true;
+}
+
+void ATSIDE3Emulator::GetSettingsBlurb(VDStringW& buf) {
+	switch(mHwVersion) {
+		case HwVersion::V10:
+		default:
+			buf = L"V3 (JED 1.1)";
+			break;
+
+		case HwVersion::V14:
+			buf = L"V3.1 (JED 1.4)";
+			break;
+	}
+
+	if (mbRecoveryMode)
+		buf += L"; recovery";
 }
 
 void ATSIDE3Emulator::Init() {
@@ -256,7 +284,11 @@ void ATSIDE3Emulator::ResetCartBank() {
 	if (mbRecoveryMode)
 		mBankControl &= 0xF0;
 
-	mBankRAMWriteProtect = 0x07;
+	if (mHwVersion >= HwVersion::V14)
+		mBankMisc = 0x0F;
+	else
+		mBankMisc = 0x07;
+
 	UpdateWindows();
 }
 
@@ -273,7 +305,7 @@ void ATSIDE3Emulator::ColdReset() {
 	mpScheduler->UnsetEvent(mpDMAEvent);
 	mpScheduler->UnsetEvent(mpLEDXferEvent);
 
-	mbDMAFromSD = false;
+	mDMAMode = DMAMode::SDRead;
 	mbDMAActive = false;
 	mDMASrcAddress = 0;
 	mDMADstAddress = 0;
@@ -282,6 +314,7 @@ void ATSIDE3Emulator::ColdReset() {
 	mDMADstStep = 1;
 	mDMAAndMask = 0xFF;
 	mDMAXorMask = 0;
+	mDMAStatus = 0;
 
 	mEmuCCTLBase = 0;
 	mEmuCCTLMask = 0;
@@ -524,27 +557,28 @@ void ATSIDE3Emulator::DumpStatus(ATConsoleOutput& output) {
 	const uint32 flashBankA = mBankFlashA + ((mBankControl & kBC_HighBankA) << 4);
 	const uint32 flashBankB = mBankFlashB + ((mBankControl & kBC_HighBankB) << 2);
 	output("  Win A ($8000-9FFF)   Flash A bank: $%03X ($%06X) - %s", flashBankA, flashBankA << 13, (mBankControl & kBC_EnableFlashA) ? "enabled" : "off");
-	output("                       RAM A bank:   $%02X  ($%06X) - %s"
+	output("                       RAM A bank:   $%03X ($%06X) - %s"
 		, mBankRAMA
 		, (uint32)mBankRAMA << 13
-		, (mBankControl & kBC_EnableMemA) ? (mBankControl & kBC_EnableFlashA) ? "hidden by flash" : (mBankRAMWriteProtect & 1) ? "enabled read-only" : "enabled read/write" : "off");
+		, (mBankControl & kBC_EnableMemA) ? (mBankControl & kBC_EnableFlashA) ? "hidden by flash" : (mBankMisc & 1) ? "enabled read-only" : "enabled read/write" : "off");
 	output("  Win B ($A000-BFFF)   Flash B bank: $%03X ($%06X) - %s", flashBankB, flashBankB << 13, (mBankControl & kBC_EnableFlashB) ? "enabled" : "off");
-	output("                       RAM B bank:   $%02X  ($%06X) - %s"
+	output("                       RAM B bank:   $%03X ($%06X) - %s"
 		, mBankRAMB
 		, (uint32)mBankRAMB << 13
-		, (mBankControl & kBC_EnableMemB) ? (mBankControl & kBC_EnableFlashB) ? "hidden by flash" : (mBankRAMWriteProtect & 2) ? "enabled read-only" : "enabled read/write" : "off");
+		, (mBankControl & kBC_EnableMemB) ? (mBankControl & kBC_EnableFlashB) ? "hidden by flash" : (mBankMisc & 2) ? "enabled read-only" : "enabled read/write" : "off");
 	output("  Window control       $%02X", mBankControl);
 
-	output("  RAM write protect    $%02X", mBankRAMWriteProtect);
+	output("  RAM write protect    $%02X", mBankMisc);
 	output("  Green LED brightness $%02X", mLEDBrightness);
 
 	output <<= "";
 	output <<= "DMA registers";
-	if (mbDMAFromSD) {
-		output("  DMA: $%06X [%c$%02X] <- SD Len=$%05X And=$%02X Xor=$%02X (%s)"
+	if (mDMAMode != DMAMode::Memory) {
+		output("  DMA: $%06X [%c$%02X] %s SD Len=$%05X And=$%02X Xor=$%02X (%s)"
 			, mDMADstAddress
 			, (sint32)mDMADstStep < 0 ? '-' : '+'
 			, abs((sint32)mDMADstStep)
+			, mDMAMode == DMAMode::SDWrite ? "->" : "<-"
 			, (uint32)mDMACounter + 1
 			, mDMAAndMask
 			, mDMAXorMask
@@ -617,11 +651,11 @@ void ATSIDE3Emulator::DumpStatus(ATConsoleOutput& output) {
 }
 
 uint32 ATSIDE3Emulator::GetSupportedButtons() const {
-	return (1 << kATDeviceButton_CartridgeResetBank) | (1 << kATDeviceButton_CartridgeSDXEnable);
+	return (1 << kATDeviceButton_CartridgeResetBank) | (1 << kATDeviceButton_CartridgeSwitch);
 }
 
 bool ATSIDE3Emulator::IsButtonDepressed(ATDeviceButton idx) const {
-	return idx == kATDeviceButton_CartridgeSDXEnable && mbSDXEnable;
+	return idx == kATDeviceButton_CartridgeSwitch && mbSDXEnable;
 }
 
 void ATSIDE3Emulator::ActivateButton(ATDeviceButton idx, bool state) {
@@ -635,9 +669,168 @@ void ATSIDE3Emulator::ActivateButton(ATDeviceButton idx, bool state) {
 			mRegisterMode = RegisterMode::Primary;
 			ResetCartBank();
 		}
-	} else if (idx == kATDeviceButton_CartridgeSDXEnable) {
+	} else if (idx == kATDeviceButton_CartridgeSwitch) {
 		SetSDXEnabled(state);
 	}
+}
+
+struct ATSaveStateSIDE3 final : public ATSnapExchangeObject<ATSaveStateSIDE3, "ATSaveStateSIDE3"> {
+public:
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	uint8 mArchPrimaryReg[12] {};
+	uint8 mArchDMAReg[12] {};
+	uint8 mArchEmuReg[12] {};
+	uint8 mArchCommonReg[4] {};
+
+	uint8 mArchFlashBankLatch = 0;
+
+	vdrefptr<ATSaveStateMemoryBuffer> mpRAM;
+
+	// internal DMA state
+	uint32 mIntDMACyclesPending = 0;
+	uint32 mIntDMASrcAddr = 0;
+	uint32 mIntDMADstAddr = 0;
+	uint32 mIntDMALengthLeft = 0;
+	uint32 mIntDMAState = 0;
+
+	// internal SD state
+	bool mbIntSDSPIMode = false;
+	bool mbIntSDCRCEnabled = false;
+	bool mbIntSDAppCommand = false;
+};
+
+template<ATExchanger T>
+void ATSaveStateSIDE3::Exchange(T& ex) {
+	ex.TransferArray("arch_primary", mArchPrimaryReg);
+	ex.TransferArray("arch_dma", mArchDMAReg);
+	ex.TransferArray("arch_emu", mArchEmuReg);
+	ex.TransferArray("arch_common", mArchCommonReg);
+	ex.Transfer("arch_flash_bank_latch", &mArchFlashBankLatch);
+	ex.Transfer("arch_ram", &mpRAM);
+
+	ex.Transfer("int_dma_cycles_pending", &mIntDMACyclesPending);
+	ex.Transfer("int_dma_src_addr", &mIntDMASrcAddr);
+	ex.Transfer("int_dma_dst_addr", &mIntDMADstAddr);
+	ex.Transfer("int_dma_length_left", &mIntDMALengthLeft);
+	ex.Transfer("int_dma_state", &mIntDMAState);
+
+	ex.Transfer("int_sd_spi_mode", &mbIntSDSPIMode);
+	ex.Transfer("int_sd_crc_enabled", &mbIntSDCRCEnabled);
+	ex.Transfer("int_sd_app_command", &mbIntSDAppCommand);
+}
+
+void ATSIDE3Emulator::LoadState(const IATObjectState *state, ATSnapshotContext& ctx) {
+	if (!state) {
+		const ATSaveStateSIDE3 kDefaultState;
+		return LoadState(&kDefaultState, ctx);
+	}
+
+	auto& s3state = atser_cast<const ATSaveStateSIDE3&>(*state);
+
+	// reset hardware before loading state
+	ResetSD();
+	mRTC.Reselect();
+
+	// restore registers -- sadly this is quite a bit more difficult than save due to
+	// side effects
+	OnWriteByte(0xD5FC, s3state.mArchCommonReg[0]);
+	OnWriteByte(0xD5FD, s3state.mArchCommonReg[1]);
+
+	// need to fix up D5FC[7] and [4], as normally they can only be cleared by writes
+	mbButtonPressed = (s3state.mArchCommonReg[0] & 0x80) != 0;
+	mbColdStartFlag = (s3state.mArchCommonReg[0] & 0x10) != 0;
+
+	for(const uint8 primaryIdx : { 0, 3, 6, 7, 8, 9, 10, 11 })
+		WritePrimaryReg(primaryIdx, s3state.mArchPrimaryReg[primaryIdx]);
+
+	mSDNextRead = s3state.mArchPrimaryReg[4];
+	mSDCRC7 = s3state.mArchPrimaryReg[5] & 0xFE;
+
+	// prevent DMA from starting when r0 is restored
+	WriteDMAReg(0, s3state.mArchDMAReg[0] & 0x7F);
+
+	for(uint8 dmaIdx = 1; dmaIdx < 12; ++dmaIdx)
+		WriteDMAReg(dmaIdx, s3state.mArchDMAReg[dmaIdx]);
+
+	// manually fudge reg 7 state to ensure that we don't get the banking state reset;
+	// note that bit 3 cannot normally be set and is enforced cleared, so this forces
+	// an update
+	mEmuControl = s3state.mArchEmuReg[7] | 0x08;
+	
+	for(uint8 emuIdx = 0; emuIdx < 12; ++emuIdx)
+		WriteEmuReg(emuIdx, s3state.mArchEmuReg[emuIdx]);
+
+	// restore flash high bank latches
+	mFlashOffsetA = (mFlashOffsetA & 0x1FE000) + ((s3state.mArchFlashBankLatch & 0x30) << 17);
+	mFlashOffsetB = (mFlashOffsetB & 0x1FE000) + ((s3state.mArchFlashBankLatch & 0xC0) << 15);
+
+	UpdateWindowA();
+	UpdateWindowB();
+
+	// restore RAM -- we may exceed 2MB for a SIDE 3 device here, but that's fine, the
+	// extra will be ignored
+	memset(mRAM, 0, sizeof mRAM);
+	if (s3state.mpRAM) {
+		const auto& readBuffer = s3state.mpRAM->GetReadBuffer();
+		memcpy(mRAM, readBuffer.data(), std::min<size_t>(sizeof mRAM, readBuffer.size()));
+	}
+
+	// restore internal DMA state
+	mDMALastCycle = mpScheduler->GetTick64() - std::min<uint32>(0x10000, s3state.mIntDMACyclesPending);
+
+	mDMAActiveSrcAddress = s3state.mIntDMASrcAddr & kDMAMask;
+	mDMAActiveDstAddress = s3state.mIntDMADstAddr & kDMAMask;
+	mDMAActiveBytesLeft = std::min<uint32>(0x10000, s3state.mIntDMALengthLeft);
+	mbDMAActive = mDMAActiveBytesLeft > 0;
+	mDMAState = s3state.mIntDMAState;
+
+	RescheduleDMA();
+
+	// restore internal SD card state
+	mbSDSPIMode = s3state.mbIntSDSPIMode;
+	mbSDCRCEnabled = s3state.mbIntSDCRCEnabled;
+	mbSDAppCommand = s3state.mbIntSDAppCommand;
+}
+
+vdrefptr<IATObjectState> ATSIDE3Emulator::SaveState(ATSnapshotContext& ctx) const {
+	vdrefptr state { new ATSaveStateSIDE3 };
+
+	state->mArchCommonReg[0] = (uint8)OnReadByte<true>(0xD5FC);
+	state->mArchCommonReg[1] = mbApertureEnable ? 0x40 : 0x00;
+
+	for(int i=0; i<12; ++i) {
+		state->mArchPrimaryReg[i] = (uint8)ReadPrimaryReg<true>(i);
+		state->mArchDMAReg[i] = (uint8)ReadDMAReg(i);
+		state->mArchEmuReg[i] = (uint8)ReadEmuReg(i);
+	}
+
+	// save flash high bank latches, as same format as the control register they're latched from
+	state->mArchFlashBankLatch = ((mFlashOffsetA >> 13) & 0x30) + ((mFlashOffsetB >> 9) & 0xC0);
+
+	// save RAM
+	state->mpRAM = new ATSaveStateMemoryBuffer;
+	state->mpRAM->mpDirectName = L"side3ram.bin";
+
+	// only save 2MB for SIDE 3, full 8MB for SIDE 3.1
+	state->mpRAM->GetWriteBuffer().assign(std::begin(mRAM), mHwVersion == HwVersion::V14 ? std::end(mRAM) : std::begin(mRAM) + 2*1024*1024);
+
+	// save internal DMA state
+	if (mbDMAActive && mDMAActiveBytesLeft > 0) {
+		state->mIntDMACyclesPending = mpScheduler->GetTick64() - mDMALastCycle;
+		state->mIntDMASrcAddr = mDMAActiveSrcAddress;
+		state->mIntDMADstAddr = mDMAActiveDstAddress;
+		state->mIntDMALengthLeft = mDMAActiveBytesLeft;
+		state->mIntDMAState = mDMAState;
+	}
+
+	// save internal SD card state
+	state->mbIntSDSPIMode = mbSDSPIMode;
+	state->mbIntSDCRCEnabled = mbSDCRCEnabled;
+	state->mbIntSDAppCommand = mbSDAppCommand;
+
+	return state;
 }
 
 void ATSIDE3Emulator::OnScheduledEvent(uint32 id) {
@@ -702,92 +895,120 @@ sint32 ATSIDE3Emulator::OnReadByte(uint32 addr) const {
 
 	switch(mRegisterMode) {
 		case RegisterMode::Primary:
-			switch(addr8 & 0x0F) {
-				case 0x0:	return mLEDBrightness;
-
-				// $D5F1 primary set - open bus
-				// $D5F2 primary set - open bus
-
-				// === $D5F3-D5F5: SD/RTC card control ===
-				case 0x3:
-					return mSDStatus + (mpScheduler->GetTick64() >= mSDNextTransferTime ? 0x00 : 0x02);
-
-				case 0x4:
-					if (uint64 t = mpScheduler->GetTick64(); t >= mSDNextTransferTime) {
-						uint8 v = mSDNextRead;
-
-						if constexpr (!T_DebugRead) {
-							if (mSDStatus & 0x08)
-								const_cast<ATSIDE3Emulator *>(this)->AdvanceSPIRead();
-						}
-
-						return v;
-					} else {
-						// We are reading the shifter while it is operating, so compute the number of
-						// bits to shift and blend the previous and next bytes. In fast mode, this is
-						// only possible for an offset of 0, so we can just use the same calc as for
-						// slow mode. The shift direction is left (MSB-first), but we are computing
-						// the opposite shift.
-
-						int bitsRemaining = ((uint32)(mSDNextTransferTime - t) + 3) >> 2;
-
-						return (((uint32)mSDPrevRead << 8) + mSDNextRead) >> bitsRemaining;
-					}
-					break;
-
-				case 0x5:	return mSDCRC7 | 1;
-
-				// === $D5F6-D5FB: Banking registers ===
-				case 0x6:	return mBankRAMA;
-				case 0x7:	return mBankRAMB;
-				case 0x8:	return mBankFlashA;
-				case 0x9:	return mBankFlashB;
-				case 0xA:	return mBankControl;
-				case 0xB:	return mBankRAMWriteProtect;
-			}
-			break;
+			return ReadPrimaryReg<T_DebugRead>(addr8);
 
 		case RegisterMode::DMA:
-			switch(addr8 & 0x0F) {
-				case 0x0: return ((mDMASrcAddress >> 16) & 0x1F) + (mbDMAFromSD ? 0x00 : 0x20) + (mbDMAActive ? 0x80 : 0x00);
-				case 0x1: return (mDMASrcAddress >> 8) & 0xFF;
-				case 0x2: return (mDMASrcAddress >> 0) & 0xFF;
-				case 0x3: return (mDMADstAddress >> 16) & 0x1F;
-				case 0x4: return (mDMADstAddress >> 8) & 0xFF;
-				case 0x5: return (mDMADstAddress >> 0) & 0xFF;
-				case 0x6: return (mDMACounter >> 8) & 0xFF;
-				case 0x7: return (mDMACounter >> 0) & 0xFF;
-				case 0x8: return mDMASrcStep & 0xFF;
-				case 0x9: return mDMADstStep & 0xFF;
-				case 0xA: return mDMAAndMask;
-				case 0xB: return mDMAXorMask;
-			}
-			break;
+			return ReadDMAReg(addr8);
 
 		case RegisterMode::CartridgeEmu:
-			switch(addr8 & 0xF) {
-				case 0x0: return mEmuCCTLBase;
-				case 0x1: return mEmuCCTLMask;
-				case 0x2: return mEmuAddressMask;
-				case 0x3: return mEmuDataMask;
-				case 0x4: return mEmuDisableMaskA;
-				case 0x5: return mEmuDisableMaskB;
-				case 0x6: return mEmuFeature;
-				case 0x7: return mEmuControl;
-				case 0x8: return mEmuBankA;
-				case 0x9: return mEmuBankB;
-				case 0xA: return mEmuControl2;
-				case 0xB: return mEmuData;
-
-				default:
-					break;
-			}
-			break;
+			return ReadEmuReg(addr8);
 
 		default:
 			// all registers in the reserved set return $00, even on floating
 			// bus systems
 			return 0x00;
+	}
+
+	return -1;
+}
+
+template<bool T_DebugRead>
+sint32 ATSIDE3Emulator::ReadPrimaryReg(uint8 addr8) const {
+	switch(addr8 & 0x0F) {
+		case 0x0:
+			return mLEDBrightness;
+
+		case 0x1:
+			// $D5F1 primary set - open bus (V1.0)
+			// $D5F1 primary set - SD slow clock enable (V1.4)
+			if (mHwVersion >= HwVersion::V14)
+				return mbSDSlowClock ? 0x80 : 0x00;
+			break;
+
+		case 0x2:
+			// $D5F2 primary set - open bus (V1.0)
+			// $D5F2 primary set - version (V1.4)
+			if (mHwVersion >= HwVersion::V14)
+				return 0x14;
+			break;
+
+		// === $D5F3-D5F5: SD/RTC card control ===
+		case 0x3:
+			return mSDStatus + (mpScheduler->GetTick64() >= mSDNextTransferTime ? 0x00 : 0x02);
+
+		case 0x4:
+			if (uint64 t = mpScheduler->GetTick64(); t >= mSDNextTransferTime) {
+				uint8 v = mSDNextRead;
+
+				if constexpr (!T_DebugRead) {
+					if (mSDStatus & 0x08)
+						const_cast<ATSIDE3Emulator *>(this)->AdvanceSPIRead();
+				}
+
+				return v;
+			} else {
+				// We are reading the shifter while it is operating, so compute the number of
+				// bits to shift and blend the previous and next bytes. In fast mode, this is
+				// only possible for an offset of 0, so we can just use the same calc as for
+				// slow mode. The shift direction is left (MSB-first), but we are computing
+				// the opposite shift.
+
+				int bitsRemaining = ((uint32)(mSDNextTransferTime - t) + 3) >> 2;
+
+				return (((uint32)mSDPrevRead << 8) + mSDNextRead) >> bitsRemaining;
+			}
+			break;
+
+		case 0x5:	return mSDCRC7 | 1;
+
+		// === $D5F6-D5FB: Banking registers ===
+		case 0x6:	return mBankRAMA;
+		case 0x7:	return mBankRAMB;
+		case 0x8:	return mBankFlashA;
+		case 0x9:	return mBankFlashB;
+		case 0xA:	return mBankControl;
+		case 0xB:	return mBankMisc;
+	}
+
+	return -1;
+}
+
+sint32 ATSIDE3Emulator::ReadDMAReg(uint8 addr8) const {
+	switch(addr8 & 0x0F) {
+		case 0x0: return ((mDMASrcAddress >> 16) & 0x1F) + ((uint8)mDMAMode << 5) + (mbDMAActive ? 0x80 : 0x00);
+		case 0x1: return (mDMASrcAddress >> 8) & 0xFF;
+		case 0x2: return (mDMASrcAddress >> 0) & 0xFF;
+		case 0x3: return ((mDMADstAddress >> 16) & 0x1F) + (mDMAStatus << 5);
+		case 0x4: return (mDMADstAddress >> 8) & 0xFF;
+		case 0x5: return (mDMADstAddress >> 0) & 0xFF;
+		case 0x6: return (mDMACounter >> 8) & 0xFF;
+		case 0x7: return (mDMACounter >> 0) & 0xFF;
+		case 0x8: return mDMASrcStep & 0xFF;
+		case 0x9: return mDMADstStep & 0xFF;
+		case 0xA: return mDMAAndMask;
+		case 0xB: return mDMAXorMask;
+	}
+
+	return -1;
+}
+
+sint32 ATSIDE3Emulator::ReadEmuReg(uint8 addr8) const {
+	switch(addr8 & 0xF) {
+		case 0x0: return mEmuCCTLBase;
+		case 0x1: return mEmuCCTLMask;
+		case 0x2: return mEmuAddressMask;
+		case 0x3: return mEmuDataMask;
+		case 0x4: return mEmuDisableMaskA;
+		case 0x5: return mEmuDisableMaskB;
+		case 0x6: return mEmuFeature;
+		case 0x7: return mEmuControl;
+		case 0x8: return mEmuBankA;
+		case 0x9: return mEmuBankB;
+		case 0xA: return mEmuControl2;
+		case 0xB: return mEmuData;
+
+		default:
+			break;
 	}
 
 	return -1;
@@ -799,7 +1020,7 @@ bool ATSIDE3Emulator::OnWriteByte(uint32 addr, uint8 value) {
 	// If both the CCTL RAM aperture and cartridge emulation are enabled, both
 	// must be able to handle the access.
 	if (addr8 < 0x80 && mbApertureEnable) {
-		if (!(mBankRAMWriteProtect & 0x04))
+		if (!(mBankMisc & 0x04))
 			mRAM[0x1FF500 + addr8] = value;
 	}
 
@@ -861,284 +1082,17 @@ bool ATSIDE3Emulator::OnWriteByte(uint32 addr, uint8 value) {
 
 	switch(mRegisterMode) {
 		case RegisterMode::Primary:
-			switch(addr8 & 0x0F) {
-
-				case 0x0:
-					if (mLEDBrightness != value) {
-						mLEDBrightness = value;
-						UpdateLEDIntensity();
-					}
-					break;
-
-				// $D5F3: SD card control
-				// Bits that can be changed:
-				//	- D7=1 SD card present (can't be changed if no SD card)
-				//	- D5=1 enable SD power
-				//	- D4=1 use fast SD transfer clock
-				//	- D3=1 SD SPI freerun
-				//	- D2=1 RTC select
-				//	- D0=1 SD select
-				case 0x3:
-					{
-						// If there is no SD card, bit 7 can't be set. Doesn't matter if
-						// SD is powered. Can't be reset by a write.
-						if (!mpBlockDevice)
-							value &= 0x7F;
-						else
-							value |= (mSDStatus & 0x80);
-
-						const uint8 delta = mSDStatus ^ value;
-
-						if (delta & 0x04)
-							mRTC.Reselect();
-
-						mSDStatus = (mSDStatus & 0x42) + (value & 0xBD);
-
-						// The SD checksum register is cleared on any write to this
-						// register, even if nothing has changed and SD power is off.
-						mSDCRC7 = 0;
-
-						if (delta & 0x20) {
-							UpdateLEDGreen();
-							ResetSD();
-						}
-					}
-					break;
-
-				case 0x4:
-					// The shift register is shared for both input and output, with
-					// the input byte being shifted in as the output byte is shifted out.
-					// Where this makes a difference is in free-running mode, where the
-					// output is ignored and forced to 1, but the CRC-7 logic does see
-					// the now input bytes being shifted through.
-					mSDNextRead = value;
-					WriteSPI(value);
-					break;
-
-				// === $D5F6-D5FB: Banking registers ===
-				case 0x6:
-					if (mBankRAMA != value) {
-						mBankRAMA = value;
-
-						if ((mBankControl & kBC_EnableAnyA) == kBC_EnableMemA)
-							UpdateWindowA();
-					}
-					break;
-
-				case 0x7:
-					if (mBankRAMB != value) {
-						mBankRAMB = value;
-
-						if ((mBankControl & kBC_EnableAnyB) == kBC_EnableMemB)
-							UpdateWindowB();
-					}
-					break;
-
-				case 0x8:
-					mBankFlashA = value;
-
-					if (const uint32 flashOffsetA = ((uint32)mBankFlashA << 13) + ((mBankControl & kBC_HighBankA) << 17);
-						mFlashOffsetA != flashOffsetA)
-					{
-						mFlashOffsetA = flashOffsetA;
-
-						if (mBankControl & kBC_EnableFlashA)
-							UpdateWindowA();
-					}
-					break;
-
-				case 0x9:
-					mBankFlashB = value;
-
-					if (const uint32 flashOffsetB = ((uint32)mBankFlashB << 13) + ((mBankControl & kBC_HighBankB) << 15);
-						mFlashOffsetB != flashOffsetB)
-					{
-						mFlashOffsetB = flashOffsetB;
-
-						if (mBankControl & kBC_EnableFlashB)
-							UpdateWindowB();
-					}
-					break;
-
-				case 0xA:
-					if (mBankControl != value) {
-						mBankControl = value;
-
-						UpdateWindows();
-					}
-					break;
-
-				case 0xB:
-					value &= 0x07;
-
-					if (const uint8 delta = mBankRAMWriteProtect ^ value) {
-						mBankRAMWriteProtect = value;
-
-						// only need window updates for A and B, as the CCTL window is part of the control
-						// layer that is always enabled
-						if (delta & 3) {
-							if (mBankControl & (kBC_EnableMemA | kBC_EnableMemB))
-								UpdateWindows();
-						}
-					}
-					break;
-			}
+			WritePrimaryReg(addr8, value);
 			break;
 
 		case RegisterMode::DMA:
 			AdvanceDMA();
-
-			switch(addr8 & 0x0F) {
-				case 0x0:
-					mDMASrcAddress = ((uint32)(value & 0x1F) << 16) + (mDMASrcAddress & 0x00FFFF);
-					mbDMAFromSD = !(value & 0x20);
-
-					if (value & 0x80) {
-						if (!mbDMAActive) {
-							mbDMAActive = true;
-							mDMALastCycle = mpScheduler->GetTick();
-							mDMAState = 0;
-
-							// These registers are double-buffered. The step and AND/XOR values are not.
-							mDMAActiveSrcAddress = mDMASrcAddress;
-							mDMAActiveDstAddress = mDMADstAddress;
-							mDMAActiveBytesLeft = (uint32)mDMACounter + 1;
-
-							if (g_ATLCSIDE3DMA.IsEnabled()) {
-								if (mbDMAFromSD) {
-									g_ATLCSIDE3DMA("$%06X [%c$%02X] <- SD Len=$%05X And=$%02X Xor=$%02X\n"
-										, mDMADstAddress
-										, (sint32)mDMADstStep < 0 ? '-' : '+'
-										, abs((sint32)mDMADstStep)
-										, (uint32)mDMACounter + 1
-										, mDMAAndMask
-										, mDMAXorMask
-									);
-								} else {
-									g_ATLCSIDE3DMA("$%06X [%c$%02X] <- $%06X [%c$%02X] Len=$%05X And=$%02X Xor=$%02X\n"
-										, mDMADstAddress
-										, (sint32)mDMADstStep < 0 ? '-' : '+'
-										, abs((sint32)mDMADstStep)
-										, mDMASrcAddress
-										, (sint32)mDMASrcStep < 0 ? '-' : '+'
-										, abs((sint32)mDMASrcStep)
-										, (uint32)mDMACounter + 1
-										, mDMAAndMask
-										, mDMAXorMask
-									);
-								}
-							}
-						}
-					} else {
-						mbDMAActive = false;
-					}
-
-					break;
-				case 0x1: mDMASrcAddress = ((uint32)(value       ) <<  8) + (mDMASrcAddress & 0x1F00FF); break;
-				case 0x2: mDMASrcAddress = ((uint32)(value       ) <<  0) + (mDMASrcAddress & 0x1FFF00); break;
-				case 0x3: mDMADstAddress = ((uint32)(value & 0x1F) << 16) + (mDMADstAddress & 0x00FFFF); break;
-				case 0x4: mDMADstAddress = ((uint32)(value       ) <<  8) + (mDMADstAddress & 0x1F00FF); break;
-				case 0x5: mDMADstAddress = ((uint32)(value       ) <<  0) + (mDMADstAddress & 0x1FFF00); break;
-				case 0x6:
-					mDMACounter = ((uint32)value <<  8) + (mDMACounter & 0x00FF);
-					break;
-				case 0x7:
-					mDMACounter = ((uint32)value <<  0) + (mDMACounter & 0xFF00);
-					break;
-				case 0x8: mDMASrcStep = (uint32)(sint8)value; break;
-				case 0x9: mDMADstStep = (uint32)(sint8)value; break;
-				case 0xA: mDMAAndMask = value; break;
-				case 0xB: mDMAXorMask = value; break;
-			}
-
+			WriteDMAReg(addr8, value);
 			RescheduleDMA();
 			break;
 
 		case RegisterMode::CartridgeEmu:
-			switch(addr8 & 0xF) {
-				case 0x0:
-					mEmuCCTLBase = value;
-					break;
-
-				case 0x1:
-					mEmuCCTLMask = value;
-					break;
-
-				case 0x2:
-					mEmuAddressMask = value;
-					break;
-
-				case 0x3:
-					mEmuDataMask = value;
-					break;
-
-				case 0x4:
-					mEmuDisableMaskA = value;
-					break;
-
-				case 0x5:
-					mEmuDisableMaskB = value;
-					break;
-
-				case 0x6:
-					if (mEmuFeature != value) {
-						mEmuFeature = value;
-						UpdateWindows();
-					}
-					break;
-
-				case 0x7:
-					// bit 3 doesn't exist and is always zero
-					value &= 0xF7;
-
-					// bit 4 cannot be set unless cart emu is enabled
-					if (!(value & kEC_Enable))
-						value &= ~kEC_Lock;
-
-					if (const uint8 delta = mEmuControl ^ value; delta) {
-						// if we are turning on cart emu, we need to reset banking state
-						if (delta & value & kEC_Enable) {
-							mEmuBank = mEmuBankA;
-							mbEmuDisabledA = (mEmuControl2 & kEC2_DisableWinA) != 0;
-							mbEmuDisabledB = (mEmuControl2 & kEC2_DisableWinB) != 0;
-						}
-
-						mbEmuLocked = (value & kEC_Lock) != 0;
-
-						mEmuControl = value;
-						UpdateWindows();
-					}
-					break;
-
-				case 0x8:
-					if (mEmuBankA != value) {
-						mEmuBankA = value;
-						UpdateWindows();
-					}
-					break;
-
-				case 0x9:
-					if (mEmuBankB != value) {
-						mEmuBankB = value;
-						UpdateWindows();
-					}
-					break;
-
-				case 0xA:
-					value &= 0x03;
-					if (mEmuControl2 != value) {
-						mEmuControl2 = value;
-						UpdateWindows();
-					}
-					break;
-
-				case 0xB:
-					mEmuData = value;
-					break;
-
-				default:
-					break;
-			}
+			WriteEmuReg(addr8, value);
 			break;
 
 		default:
@@ -1146,6 +1100,310 @@ bool ATSIDE3Emulator::OnWriteByte(uint32 addr, uint8 value) {
 	}
 
 	return true;
+}
+
+void ATSIDE3Emulator::WritePrimaryReg(uint8 addr8, uint8 value) {
+	switch(addr8 & 0x0F) {
+		case 0x0:
+			if (mLEDBrightness != value) {
+				mLEDBrightness = value;
+				UpdateLEDIntensity();
+			}
+			break;
+
+		case 0x1:
+			// V1.4 - slow SD clock enable
+			if (mHwVersion == HwVersion::V14)
+				mbSDSlowClock = (value & 0x80) != 0;
+			break;
+
+		// $D5F3: SD card control
+		// Bits that can be changed:
+		//	- D7=1 SD card present (can't be changed if no SD card)
+		//	- D5=1 enable SD power
+		//	- D4=1 use fast SD transfer clock
+		//	- D3=1 SD SPI freerun
+		//	- D2=1 RTC select
+		//	- D0=1 SD select
+		case 0x3:
+			{
+				// If there is no SD card, bit 7 can't be set. Doesn't matter if
+				// SD is powered. Can't be reset by a write.
+				if (!mpBlockDevice)
+					value &= 0x7F;
+				else
+					value |= (mSDStatus & 0x80);
+
+				const uint8 delta = mSDStatus ^ value;
+
+				if (delta & 0x04)
+					mRTC.Reselect();
+
+				mSDStatus = (mSDStatus & 0x42) + (value & 0xBD);
+
+				// The SD checksum register is cleared on any write to this
+				// register, even if nothing has changed and SD power is off.
+				mSDCRC7 = 0;
+
+				if (delta & 0x20) {
+					UpdateLEDGreen();
+					ResetSD();
+				}
+			}
+			break;
+
+		case 0x4:
+			// The shift register is shared for both input and output, with
+			// the input byte being shifted in as the output byte is shifted out.
+			// Where this makes a difference is in free-running mode, where the
+			// output is ignored and forced to 1, but the CRC-7 logic does see
+			// the now input bytes being shifted through.
+			mSDNextRead = value;
+			WriteSPI(value);
+			break;
+
+		// === $D5F6-D5FB: Banking registers ===
+		case 0x6:
+			if ((uint8)mBankRAMA != value) {
+				mBankRAMA = (mBankRAMA & 0x300) + value;
+
+				if ((mBankControl & kBC_EnableAnyA) == kBC_EnableMemA)
+					UpdateWindowA();
+			}
+			break;
+
+		case 0x7:
+			if ((uint8)mBankRAMB != value) {
+				mBankRAMB = (mBankRAMB & 0x300) + value;
+
+				if ((mBankControl & kBC_EnableAnyB) == kBC_EnableMemB)
+					UpdateWindowB();
+			}
+			break;
+
+		case 0x8:
+			mBankFlashA = value;
+
+			if (const uint32 flashOffsetA = ((uint32)mBankFlashA << 13) + ((mBankControl & kBC_HighBankA) << 17);
+				mFlashOffsetA != flashOffsetA)
+			{
+				mFlashOffsetA = flashOffsetA;
+
+				if (mBankControl & kBC_EnableFlashA)
+					UpdateWindowA();
+			}
+			break;
+
+		case 0x9:
+			mBankFlashB = value;
+
+			if (const uint32 flashOffsetB = ((uint32)mBankFlashB << 13) + ((mBankControl & kBC_HighBankB) << 15);
+				mFlashOffsetB != flashOffsetB)
+			{
+				mFlashOffsetB = flashOffsetB;
+
+				if (mBankControl & kBC_EnableFlashB)
+					UpdateWindowB();
+			}
+			break;
+
+		case 0xA:
+			if (mBankControl != value) {
+				mBankControl = value;
+
+				UpdateWindows();
+			}
+			break;
+
+		case 0xB:
+			if (const uint8 delta = (mBankMisc ^ value) & (mHwVersion >= HwVersion::V14 ? 0xF7 : 0x07)) {
+				mBankMisc ^= delta;
+
+				if (mHwVersion >= HwVersion::V14) {
+					if (delta & 0x30) {
+						uint16 newBankRAMA = (uint16)((mBankRAMA & 0xFF) + ((value & 0x30) << 4));
+
+						mBankRAMA = newBankRAMA;
+
+						if ((mBankControl & kBC_EnableAnyA) == kBC_EnableMemA)
+							UpdateWindowA();
+					}
+
+					if (delta & 0xC0) {
+						uint16 newBankRAMB = (uint16)((mBankRAMB & 0xFF) + ((value & 0xC0) << 2));
+
+						mBankRAMB = newBankRAMB;
+
+						if ((mBankControl & kBC_EnableAnyB) == kBC_EnableMemB)
+							UpdateWindowB();
+					}
+				}
+
+				// only need window updates for A and B, as the CCTL window is part of the control
+				// layer that is always enabled
+				if (delta & 3) {
+					if (mBankControl & (kBC_EnableMemA | kBC_EnableMemB))
+						UpdateWindows();
+				}
+			}
+			break;
+	}
+}
+
+void ATSIDE3Emulator::WriteDMAReg(uint8 addr8, uint8 value) {
+	switch(addr8 & 0x0F) {
+		case 0x0:
+			mDMASrcAddress = ((uint32)(value & 0x1F) << 16) + (mDMASrcAddress & 0x00FFFF);
+
+			mDMAMode = DMAMode((value >> 5) & 3);
+
+			if (mHwVersion == HwVersion::V10 && mDMAMode == DMAMode::SDWrite)
+				mDMAMode = DMAMode::Reserved;
+
+			if (value & 0x80) {
+				if (!mbDMAActive) {
+					mbDMAActive = true;
+					mDMALastCycle = mpScheduler->GetTick();
+					mDMAState = 0;
+
+					// These registers are double-buffered. The step and AND/XOR values are not.
+					mDMAActiveSrcAddress = mDMASrcAddress;
+					mDMAActiveDstAddress = mDMADstAddress;
+					mDMAActiveBytesLeft = (uint32)mDMACounter + 1;
+
+					if (g_ATLCSIDE3DMA.IsEnabled()) {
+						if (mDMAMode != DMAMode::Memory) {
+							g_ATLCSIDE3DMA("$%06X [%c$%02X] %s SD Len=$%05X | LBA %06X\n"
+								, mDMADstAddress
+								, (sint32)mDMADstStep < 0 ? '-' : '+'
+								, abs((sint32)mDMADstStep)
+								, mDMAMode == DMAMode::SDWrite ? " -W->" : "<-r- "
+								, (uint32)mDMACounter + 1
+								, mSDActiveCommandLBA - 1
+							);
+						} else {
+							g_ATLCSIDE3DMA("$%06X [%c$%02X] <- $%06X [%c$%02X] Len=$%05X And=$%02X Xor=$%02X\n"
+								, mDMADstAddress
+								, (sint32)mDMADstStep < 0 ? '-' : '+'
+								, abs((sint32)mDMADstStep)
+								, mDMASrcAddress
+								, (sint32)mDMASrcStep < 0 ? '-' : '+'
+								, abs((sint32)mDMASrcStep)
+								, (uint32)mDMACounter + 1
+								, mDMAAndMask
+								, mDMAXorMask
+							);
+						}
+					}
+				}
+			} else {
+				mbDMAActive = false;
+			}
+
+			break;
+		case 0x1: mDMASrcAddress = ((uint32)(value       ) <<  8) + (mDMASrcAddress & 0x1F00FF); break;
+		case 0x2: mDMASrcAddress = ((uint32)(value       ) <<  0) + (mDMASrcAddress & 0x1FFF00); break;
+		case 0x3: mDMADstAddress = ((uint32)(value & 0x1F) << 16) + (mDMADstAddress & 0x00FFFF); break;
+		case 0x4: mDMADstAddress = ((uint32)(value       ) <<  8) + (mDMADstAddress & 0x1F00FF); break;
+		case 0x5: mDMADstAddress = ((uint32)(value       ) <<  0) + (mDMADstAddress & 0x1FFF00); break;
+		case 0x6:
+			mDMACounter = ((uint32)value <<  8) + (mDMACounter & 0x00FF);
+			break;
+		case 0x7:
+			mDMACounter = ((uint32)value <<  0) + (mDMACounter & 0xFF00);
+			break;
+		case 0x8: mDMASrcStep = (uint32)(sint8)value; break;
+		case 0x9: mDMADstStep = (uint32)(sint8)value; break;
+		case 0xA: mDMAAndMask = value; break;
+		case 0xB: mDMAXorMask = value; break;
+	}
+}
+
+void ATSIDE3Emulator::WriteEmuReg(uint8 addr8, uint8 value) {
+	switch(addr8 & 0xF) {
+		case 0x0:
+			mEmuCCTLBase = value;
+			break;
+
+		case 0x1:
+			mEmuCCTLMask = value;
+			break;
+
+		case 0x2:
+			mEmuAddressMask = value;
+			break;
+
+		case 0x3:
+			mEmuDataMask = value;
+			break;
+
+		case 0x4:
+			mEmuDisableMaskA = value;
+			break;
+
+		case 0x5:
+			mEmuDisableMaskB = value;
+			break;
+
+		case 0x6:
+			if (mEmuFeature != value) {
+				mEmuFeature = value;
+				UpdateWindows();
+			}
+			break;
+
+		case 0x7:
+			// bit 3 doesn't exist and is always zero
+			value &= 0xF7;
+
+			// bit 4 cannot be set unless cart emu is enabled
+			if (!(value & kEC_Enable))
+				value &= ~kEC_Lock;
+
+			if (const uint8 delta = mEmuControl ^ value; delta) {
+				// if we are turning on cart emu, we need to reset banking state
+				if (delta & value & kEC_Enable) {
+					mEmuBank = mEmuBankA;
+					mbEmuDisabledA = (mEmuControl2 & kEC2_DisableWinA) != 0;
+					mbEmuDisabledB = (mEmuControl2 & kEC2_DisableWinB) != 0;
+				}
+
+				mbEmuLocked = (value & kEC_Lock) != 0;
+
+				mEmuControl = value;
+				UpdateWindows();
+			}
+			break;
+
+		case 0x8:
+			if (mEmuBankA != value) {
+				mEmuBankA = value;
+				UpdateWindows();
+			}
+			break;
+
+		case 0x9:
+			if (mEmuBankB != value) {
+				mEmuBankB = value;
+				UpdateWindows();
+			}
+			break;
+
+		case 0xA:
+			value &= 0x03;
+			if (mEmuControl2 != value) {
+				mEmuControl2 = value;
+				UpdateWindows();
+			}
+			break;
+
+		case 0xB:
+			mEmuData = value;
+			break;
+
+		default:
+			break;
+	}
 }
 
 template<bool T_DebugRead>
@@ -1178,7 +1436,7 @@ bool ATSIDE3Emulator::OnSpecialWriteByteA1(uint32 addr, uint8 value) {
 
 	if (mbWindowUsingFlashA)
 		OnFlashWriteA(const_cast<ATSIDE3Emulator *>(this), addr, value);
-	else if (!(mBankRAMWriteProtect & 1))
+	else if (!(mBankMisc & 1))
 		mRAM[(mWindowOffsetA1 & ((sizeof mRAM)-1)) + 0xF00 + addr8] = value;
 
 	if (addr8 >= 0xF6 && addr8 < 0xFA)
@@ -1215,7 +1473,7 @@ bool ATSIDE3Emulator::OnSpecialWriteByteA2(uint32 addr, uint8 value) {
 
 	if (mbWindowUsingFlashA)
 		OnFlashWriteA(const_cast<ATSIDE3Emulator *>(this), addr, value);
-	else if (!(mBankRAMWriteProtect & 1))
+	else if (!(mBankMisc & 1))
 		mRAM[(mWindowOffsetA2 & ((sizeof mRAM)-1)) + 0xF00 + addr8] = value;
 
 	if (addr8 >= 0xF6 && addr8 < 0xFA)
@@ -1491,7 +1749,7 @@ void ATSIDE3Emulator::UpdateWindowA() {
 			mpMemMan->SetLayerMemory(mpMemLayerWindowA2, mRAM + mWindowOffsetA2);
 	}
 
-	const bool readOnly = (mBankRAMWriteProtect & 1) != 0;
+	const bool readOnly = (mBankMisc & 1) != 0;
 
 	if (splitBanks) {
 		mpMemMan->EnableLayer(mpMemLayerWindowA2, true);
@@ -1551,7 +1809,7 @@ void ATSIDE3Emulator::UpdateWindowB() {
 				break;
 		}
 
-		mpMemMan->SetLayerReadOnly(mpMemLayerWindowB, (mBankRAMWriteProtect & 2) != 0);
+		mpMemMan->SetLayerReadOnly(mpMemLayerWindowB, (mBankMisc & 2) != 0);
 
 		const uint32 offset = (uint32)effectiveBank << 13;
 		mWindowOffsetB = offset;
@@ -1570,7 +1828,7 @@ void ATSIDE3Emulator::UpdateWindowB() {
 	} else {
 		mpMemMan->EnableLayer(mpMemLayerFlashControlB, false);
 		mpMemMan->SetLayerMemory(mpMemLayerWindowB, mRAM + mWindowOffsetB);
-		mpMemMan->SetLayerReadOnly(mpMemLayerWindowB, (mBankRAMWriteProtect & 2) != 0);
+		mpMemMan->SetLayerReadOnly(mpMemLayerWindowB, (mBankMisc & 2) != 0);
 	}
 
 	mpMemMan->EnableLayer(mpMemLayerWindowB, true);
@@ -1601,7 +1859,7 @@ void ATSIDE3Emulator::WriteSPINoTimingUpdate(uint8 v) {
 void ATSIDE3Emulator::WriteSPI(uint8 v) {
 	WriteSPINoTimingUpdate(v);
 
-	const uint32 transferDelay = mSDStatus & 0x10 ? 1 : 32;
+	const uint32 transferDelay = mSDStatus & 0x10 ? (mbSDSlowClock ? 2 : 1) : 32;
 	mSDNextTransferTime = mpScheduler->GetTick64() + transferDelay;
 
 	EnableXferLED();
@@ -1627,7 +1885,7 @@ uint8 ATSIDE3Emulator::TransferSD(uint8 v) {
 						mSDResponseIndex = 0;
 						mSDResponseLength = 1;
 					} else {
-						if (mbDMAActive && mbDMAFromSD)
+						if (mbDMAActive && mDMAMode != DMAMode::Memory)
 							g_ATLCSD("Read multiple LBA $%04X (DMA length remaining $%04X)\n", mSDActiveCommandLBA, mDMAActiveBytesLeft);
 						else
 							g_ATLCSD("Read multiple LBA $%04X\n", mSDActiveCommandLBA);
@@ -2132,46 +2390,120 @@ void ATSIDE3Emulator::AdvanceDMA() {
 	if (!mbDMAActive)
 		return;
 
-	uint32 ticks = mpScheduler->GetTick() - mDMALastCycle;
-	uint32 maxCount = (uint32)mDMAActiveBytesLeft;
+	if (!mDMAActiveBytesLeft) {
+		mbDMAActive = false;
+		return;
+	}
+
+	const uint32 ticks = mpScheduler->GetTick() - mDMALastCycle;
+	if (!ticks)
+		return;
+
+	uint32 maxCount = ticks;
 	uint32 count = 0;
 
-	if (mbDMAFromSD) {
-		maxCount = std::min<uint32>(maxCount, ticks >> 1);
-
-		if (count < maxCount)
-			EnableXferLED();
-
-		for(; count < maxCount; ++count) {
-			uint8 v = mSDNextRead;
-			WriteSPINoTimingUpdate(0xFF);
-
-			// Because DMA transfers are intended for SD, after 512 bytes the DMA engine will
-			// discard two bytes for the CRC and then wait for a new Start Block token ($FE).
-			// No Start Block is needed for the first sector.
-			if (mDMAState == 514) {
-				if (v == 0xFE)
-					mDMAState = 0;
-			} else if (mDMAState++ < 512) {
-				mRAM[mDMAActiveDstAddress] = v;
-				mDMAActiveDstAddress = (mDMAActiveDstAddress + mDMADstStep) & 0x1FFFFF;
-				--mDMAActiveBytesLeft;
-			}
-		}
-
-		mDMALastCycle += count*2;
-	} else {
-		maxCount = std::min<uint32>(maxCount, ticks);
+	if (mDMAMode == DMAMode::Memory) {
+		maxCount = std::min(maxCount >> 1, mDMAActiveBytesLeft);
 
 		for(; count < maxCount; ++count) {
 			mRAM[mDMAActiveDstAddress] = (mRAM[mDMAActiveSrcAddress] & mDMAAndMask) ^ mDMAXorMask;
-
-			mDMAActiveDstAddress = (mDMAActiveDstAddress + mDMADstStep) & 0x1FFFFF;
-			mDMAActiveSrcAddress = (mDMAActiveSrcAddress + mDMASrcStep) & 0x1FFFFF;
+			mDMAActiveDstAddress = (mDMAActiveDstAddress + mDMADstStep) & kDMAMask;
+			mDMAActiveSrcAddress = (mDMAActiveSrcAddress + mDMASrcStep) & kDMAMask;
 		}
 
-		mDMALastCycle += count;
+		mDMALastCycle += count*2;
 		mDMAActiveBytesLeft -= count;
+	} else if (mDMAMode != DMAMode::Reserved) {
+		if (mbSDSlowClock)
+			maxCount >>= 1;
+
+		// if we do any SPI transfers, the LED should light up -- doesn't matter if we are waiting
+		// in the SD protocol 
+		EnableXferLED();
+
+		if (mDMAMode == DMAMode::SDRead) {
+			while(count < maxCount) {
+				++count;
+
+				uint8 v = mSDNextRead;
+				WriteSPINoTimingUpdate(0xFF);
+
+				// Because DMA transfers are intended for SD, after 512 bytes the DMA engine will
+				// discard two bytes for the CRC and then wait for a new Start Block token ($FE).
+				// No Start Block is needed for the first sector.
+				if (mDMAState >= 514) {
+					if (v == 0xFE)
+						mDMAState = 0;
+				} else if (mDMAState++ < 512) {
+					mRAM[mDMAActiveDstAddress] = v;
+					mDMAActiveDstAddress = (mDMAActiveDstAddress + mDMADstStep) & kDMAMask;
+					if (!--mDMAActiveBytesLeft)
+						break;
+				}
+			}
+		} else {	// write
+			while(count < maxCount) {
+				++count;
+				uint8 v = 0xFF;
+
+				// Because DMA transfers are intended for SD, after 512 bytes the DMA engine will
+				// discard two bytes for the CRC and then wait for a new Start Block token ($FE).
+				// No Start Block is needed for the first sector.
+				if (mDMAState < 512) {
+					// data frame
+					v = mRAM[mDMAActiveSrcAddress];
+					mDMAActiveSrcAddress = (mDMAActiveSrcAddress + mDMASrcStep) & kDMAMask;
+					++mDMAState;
+
+					if (!--mDMAActiveBytesLeft) {
+						WriteSPINoTimingUpdate(v);
+						break;
+					}
+				} else if (mDMAState < 514) {
+					// dummy CRC ($FFFF)
+					v = 0xFF;
+					++mDMAState;
+				} else if (mDMAState < 515) {
+					// wait for status token
+					if (mSDNextRead != 0xFF) {
+						// Data response token has bit 0 set and bit 4 clear; bits 1-3 indicate
+						// status:
+						//
+						//	010		Data accepted
+						//	101		CRC error
+						//	110		Write error
+						//
+						// Latch the status for the 6502, and then halt the transfer if there was
+						// an error.
+
+						mDMAStatus = (mSDNextRead >> 1) & 7;
+
+						if ((mSDNextRead & 0x1F) != 0x05) {
+							mDMAActiveBytesLeft = 0;
+							break;
+						}
+
+						++mDMAState;
+					}
+				} else {
+					// wait for SD ready
+					if (mSDNextRead != 0) {
+						// write data start token
+						v = 0xFC;
+
+						// reset state for block transfer
+						mDMAState = 0;
+					}
+				}
+
+				WriteSPINoTimingUpdate(v);
+			}
+		}
+
+		if (mbSDSlowClock)
+			mDMALastCycle += count*2;
+		else
+			mDMALastCycle += count;
 	}
 
 	if (!mDMAActiveBytesLeft)
@@ -2180,10 +2512,9 @@ void ATSIDE3Emulator::AdvanceDMA() {
 
 void ATSIDE3Emulator::RescheduleDMA() {
 	if (mbDMAActive) {
+		uint32 ticks = mDMAActiveBytesLeft;
 
-		uint32 ticks = (uint32)mDMACounter + 1;
-
-		if (mbDMAFromSD)
+		if (mDMAMode == DMAMode::Memory || mbSDSlowClock)
 			ticks += ticks;
 
 		uint32 t = mpScheduler->GetTick();

@@ -23,6 +23,8 @@
 
 class ATDeviceVideoGenerator final : public ATDevice, public IATDeviceVideoSource {
 public:
+	ATDeviceVideoGenerator();
+
 	void *AsInterface(uint32 id) override;
 
 	void GetDeviceInfo(ATDeviceInfo& info) override;

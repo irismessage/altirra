@@ -18,6 +18,8 @@
 #define f_VD2_VDDISPLAY_INTERNAL_OPTIONS_H
 
 struct VDDInternalOptions {
+	static bool sbD3D9LimitPS1_1;
+	static bool sbD3D9LimitPS2_0;
 };
 
 #endif

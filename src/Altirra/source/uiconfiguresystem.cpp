@@ -532,6 +532,11 @@ void ATUIDialogSysConfigOverview::RemakeOverview() {
 			model = L"130XE";
 			defaultMemory = kATMemoryMode_128K;
 			break;
+
+		case kATHardwareMode_1400XL:
+			model = L"1400XL";
+			defaultMemory = kATMemoryMode_64K;
+			break;
 	}
 
 	mResultView.AppendEscapedRTF(mRtfBuffer, model);
@@ -569,7 +574,7 @@ void ATUIDialogSysConfigOverview::RemakeOverview() {
 	mRtfBuffer += "\\tab ";
 
 	vdvector<VDStringW> devices;
-	for(IATDevice *dev : g_sim.GetDeviceManager()->GetDevices(true, true)) {
+	for(IATDevice *dev : g_sim.GetDeviceManager()->GetDevices(true, true, true)) {
 		ATDeviceInfo info;
 		dev->GetDeviceInfo(info);
 		devices.emplace_back(info.mpDef->mpName);
@@ -687,7 +692,7 @@ void ATUIDialogSysConfigOverview::RemakeOverview() {
 
 	bool firmwareIssue = false;
 
-	for(IATDeviceFirmware *fw : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceFirmware>(false, true)) {
+	for(IATDeviceFirmware *fw : g_sim.GetDeviceManager()->GetInterfaces<IATDeviceFirmware>(false, true, false)) {
 		if (fw->GetFirmwareStatus() != ATDeviceFirmwareStatus::OK) {
 			firmwareIssue = true;
 			break;
@@ -1030,6 +1035,7 @@ protected:
 		{ "System.HardwareMode130XE",	L"65XE/130XE" },
 		{ "System.HardwareMode1200XL",	L"1200XL" },
 		{ "System.HardwareModeXEGS",	L"XE Game System (XEGS)" },
+		{ "System.HardwareMode1400XL",	L"1400XL/1450XLD" },
 		{ "System.HardwareMode5200",	L"5200 SuperSystem" },
 	};
 
@@ -1143,11 +1149,11 @@ protected:
 	};
 
 	static constexpr CmdMapEntry sMemoryClearOptions[] = {
-		{ "System.MemoryClearZero",		L"Cleared" },
-		{ "System.MemoryClearRandom",	L"SRAM (random)" },
-		{ "System.MemoryClearDRAM1",	L"DRAM 1" },
+		{ "System.MemoryClearDRAM1",	L"DRAM 1 (default)" },
 		{ "System.MemoryClearDRAM2",	L"DRAM 2" },
 		{ "System.MemoryClearDRAM3",	L"DRAM 3" },
+		{ "System.MemoryClearRandom",	L"SRAM (random)" },
+		{ "System.MemoryClearZero",		L"Cleared" },
 	};
 
 	static constexpr CmdMapEntry sAxlonSizeOptions[] = {
@@ -2074,8 +2080,10 @@ public:
 
 protected:
 	bool OnLoaded() override;
+	void OnDestroy() override;
 	void OnDataExchange(bool write) override;
 	void OnDpiChanged() override;
+	bool OnCommand(uint32 id, uint32 extcode) override;
 
 	VDUIProxyTreeViewControl mTreeView;
 	VDUIProxyButtonControl mAddView;
@@ -2087,17 +2095,16 @@ protected:
 
 	CmdTriggerBinding mFirmwareManagerBinding { "System.ROMImagesDialog" };
 
-	ATUIControllerDevices mCtrlDevs;
+	vdautoptr<ATUIControllerDevices> mpCtrlDevs;
 };
 
 ATUIDialogSysConfigDevices::ATUIDialogSysConfigDevices()
 	: ATUIDialogSysConfigPage(IDD_CONFIGURE_DEVICES)
-	, mCtrlDevs(*this, *g_sim.GetDeviceManager(), mTreeView, mSettingsView, mRemoveView, mMoreView)
 {
-	mAddView.SetOnClicked([this] { mCtrlDevs.Add(); });
-	mRemoveView.SetOnClicked([this] { mCtrlDevs.Remove(); });
-	mRemoveAllView.SetOnClicked([this] { mCtrlDevs.RemoveAll(); });
-	mSettingsView.SetOnClicked([this] { mCtrlDevs.Settings(); });
+	mAddView.SetOnClicked([this] { mpCtrlDevs->Add(); });
+	mRemoveView.SetOnClicked([this] { mpCtrlDevs->Remove(); });
+	mRemoveAllView.SetOnClicked([this] { mpCtrlDevs->RemoveAll(); });
+	mSettingsView.SetOnClicked([this] { mpCtrlDevs->Settings(); });
 
 	mFirmwareManagerView.SetOnClicked(
 		[this] {
@@ -2108,10 +2115,14 @@ ATUIDialogSysConfigDevices::ATUIDialogSysConfigDevices()
 		}
 	);
 
-	mMoreView.SetOnClicked([this] { mCtrlDevs.More(); });
+	mMoreView.SetOnClicked([this] { mpCtrlDevs->More(); });
 }
 
 bool ATUIDialogSysConfigDevices::OnLoaded() {
+	mpCtrlDevs = new ATUIControllerDevices(*this, *g_sim.GetDeviceManager(), mTreeView, mSettingsView, mRemoveView, mMoreView);
+
+	LoadAcceleratorTable(IDR_DEVICES_ACCEL);
+
 	AddProxy(&mTreeView, IDC_TREE);
 	AddProxy(&mAddView, IDC_ADD);
 	AddProxy(&mRemoveView, IDC_REMOVE);
@@ -2131,19 +2142,39 @@ bool ATUIDialogSysConfigDevices::OnLoaded() {
 	mResizer.Add(IDC_MORE, mResizer.kBL);
 	mResizer.Add(IDOK, mResizer.kBR);
 
-	mCtrlDevs.OnDpiChanged();
+	mpCtrlDevs->OnDpiChanged();
 
 	OnDataExchange(false);
 
 	return ATUIDialogSysConfigPage::OnLoaded();
 }
 
+void ATUIDialogSysConfigDevices::OnDestroy() {
+	mpCtrlDevs = nullptr;
+
+	ATUIDialogSysConfigPage::OnDestroy();
+}
+
 void ATUIDialogSysConfigDevices::OnDataExchange(bool write) {
-	mCtrlDevs.OnDataExchange(write);
+	mpCtrlDevs->OnDataExchange(write);
 }
 
 void ATUIDialogSysConfigDevices::OnDpiChanged() {
-	mCtrlDevs.OnDpiChanged();
+	mpCtrlDevs->OnDpiChanged();
+}
+
+bool ATUIDialogSysConfigDevices::OnCommand(uint32 id, uint32 extcode) {
+	switch(id) {
+		case ID_COPY:
+			mpCtrlDevs->Copy();
+			return true;
+
+		case ID_PASTE:
+			mpCtrlDevs->Paste();
+			return true;
+	}
+
+	return false;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2320,6 +2351,33 @@ involves swapping chips or the motherboard."
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUIDialogSysConfigAccessibility final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigAccessibility();
+
+protected:
+	bool OnLoaded() override;
+};
+
+ATUIDialogSysConfigAccessibility::ATUIDialogSysConfigAccessibility()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_ACCESSIBILITY)
+{
+}
+
+bool ATUIDialogSysConfigAccessibility::OnLoaded() {
+	BindCheckbox(IDC_ENABLE, "View.ToggleReaderEnabled");
+
+	AddHelpEntry(IDC_ENABLE, L"Enable screen reader support",
+		L"Enable additional support for screen readers to read text from the emulation screen."
+	);
+
+	OnDataExchange(false);
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATUIDialogSysConfigDebugger final : public ATUIDialogSysConfigPage {
 public:
 	ATUIDialogSysConfigDebugger();
@@ -2454,6 +2512,8 @@ bool ATUIDialogSysConfigDisplay::OnLoaded() {
 	BindCheckbox(IDC_HWACCEL_SCREENFX, "View.ToggleAccelScreenFX");
 	BindCheckbox(IDC_AUTOHIDEPOINTER, "View.ToggleAutoHidePointer");
 	BindCheckbox(IDC_HIDETARGETPOINTER, "View.ToggleTargetPointer");
+	BindCheckbox(IDC_SHOWPADBOUNDS, "View.TogglePadBounds");
+	BindCheckbox(IDC_SHOWPADPOINTERS, "View.TogglePadPointers");
 	BindCheckbox(IDC_CONSTRAINFULLSCREEN, "View.ToggleConstrainPointerFullScreen");
 
 	AddHelpEntry(IDC_SHOW_INDICATORS, L"Show indicators",
@@ -2477,6 +2537,9 @@ bool ATUIDialogSysConfigDisplay::OnLoaded() {
 		L"Auto-hide target pointer for absolute mouse input",
 		L"Hide the target reticle pointer that is normally displayed for mouse position based input maps, like ones for light pens and guns."
 	);
+
+	AddHelpEntry(IDC_SHOWPADBOUNDS, L"Show tablet/pad bounds", L"Show a rectangle for the on-screen input area for tablet/pad devices.");
+	AddHelpEntry(IDC_SHOWPADPOINTERS, L"Show tablet/pad pointers", L"Show the location and size of tablet/pad touch points.");
 	
 	AddHelpEntry(IDC_CONSTRAINFULLSCREEN,
 		L"Constrain mouse pointer in full-screen mode",
@@ -3095,6 +3158,7 @@ void ATUIDialogConfigureSystem::OnPopulatePages() {
 	AddPage(L"Cassette", vdmakeunique<ATUIDialogSysConfigCassette>());
 	PopCategory();
 	PushCategory(L"Emulator");
+	AddPage(L"Accessibility", vdmakeunique<ATUIDialogSysConfigAccessibility>());
 	AddPage(L"Debugger", vdmakeunique<ATUIDialogSysConfigDebugger>());
 	AddPage(L"Display", vdmakeunique<ATUIDialogSysConfigDisplay>());
 	AddPage(L"Ease of use", vdmakeunique<ATUIDialogSysConfigEaseOfUse>());

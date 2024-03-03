@@ -45,24 +45,6 @@
 #include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
 
-#ifndef OPENFILENAME_SIZE_VERSION_400
-#define OPENFILENAME_SIZE_VERSION_400 0x4c
-#endif
-
-#ifndef BIF_NEWDIALOGSTYLE
-#define BIF_NEWDIALOGSTYLE     0x0040
-#endif
-
-///////////////////////////////////////////////////////////////////////////
-
-#if 0
-IVDUIContext *VDGetUIContext() {
-	static vdautoptr<IVDUIContext> spctx(VDCreateUIContext());
-
-	return spctx;
-}
-#endif
-
 ///////////////////////////////////////////////////////////////////////////
 
 struct FilespecEntry {
@@ -233,22 +215,6 @@ namespace {
 	}
 }
 
-#if 0
-struct tester {
-	static BOOL CALLBACK dlgproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
-		return FALSE;
-	}
-	tester() {
-		DialogTemplateBuilder builder;
-
-		builder.AddLabel(1, 7, 7, 50, 14, L"hellow");
-		builder.AddLabel(1, 7, 21, 50, 14, L"byebye");
-
-		DialogBoxIndirect(GetModuleHandle(0), (LPCDLGTEMPLATE)&builder.data.front(), NULL, dlgproc);
-	}
-} g;
-#endif
-
 ///////////////////////////////////////////////////////////////////////////
 
 void VDInitFilespecSystem() {
@@ -274,7 +240,7 @@ void VDSaveFilespecSystemData() {
 				const FilespecEntry& fse = it->second;
 				char buf[16];
 
-				sprintf(buf, "%08x", id);
+				sprintf(buf, "%08x", (unsigned)id);
 				key.setString(buf, VDFileSplitPathLeft(VDStringW(fse.szFile)).c_str());
 			}
 		}

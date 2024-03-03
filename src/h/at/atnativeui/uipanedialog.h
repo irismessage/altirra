@@ -51,7 +51,7 @@ private:
 	bool mbDeferredUpdatePosted = false;
 };
 
-extern template ATUIPaneWindowT<ATUIPane, ATUIPaneDialogBase>;
+extern template class ATUIPaneWindowT<ATUIPane, ATUIPaneDialogBase>;
 
 using ATUIPaneDialog = ATUIPaneWindowT<ATUIPane, ATUIPaneDialogBase>;
 

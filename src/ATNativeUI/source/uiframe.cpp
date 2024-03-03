@@ -22,6 +22,8 @@
 #include <commctrl.h>
 #include <tchar.h>
 #include <uxtheme.h>
+#include <combaseapi.h>
+#include <UIAutomation.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/vdstl.h>
@@ -29,7 +31,10 @@
 #include <vd2/system/vectors.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/system/math.h>
+#include <at/atcore/comsupport_win32.h>
+#include <at/atui/accessibility.h>
 #include <at/atui/constants.h>
+#include <at/atnativeui/accessibility_win32.h>
 #include <at/atnativeui/theme.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uipane.h>
@@ -187,6 +192,31 @@ void ATContainerResizer::LayoutWindow(HWND hwnd, int x, int y, int width, int he
 	SetWindowPos(hwnd, NULL, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+void ATContainerResizer::LayoutAndReorderWindow(HWND hwnd, HWND hwndAfter, int x, int y, int width, int height, bool visible) {
+	VDASSERT(hwnd);
+	VDASSERT(IsWindow(hwnd));
+
+	if (visible && !(GetWindowLong(hwnd, GWL_STYLE) & WS_VISIBLE)) {
+		mWindowsToShow.push_back(hwnd);
+		SetWindowPos(hwnd, hwndAfter, x, y, width, height, SWP_NOACTIVATE);
+		return;
+	}
+
+	if (!mhdwp)
+		mhdwp = BeginDeferWindowPos(4);
+
+	if (mhdwp) {
+		HDWP hdwp = DeferWindowPos(mhdwp, hwndAfter, NULL, x, y, width, height, SWP_NOACTIVATE);
+
+		if (hdwp) {
+			mhdwp = hdwp;
+			return;
+		}
+	}
+
+	SetWindowPos(hwnd, hwndAfter, x, y, width, height, SWP_NOACTIVATE);
+}
+
 void ATContainerResizer::ResizeWindow(HWND hwnd, int width, int height) {
 	VDASSERT(hwnd);
 	VDASSERT(IsWindow(hwnd));
@@ -242,7 +272,7 @@ bool ATContainerSplitterBar::Init(HWND hwndParent, ATContainerDockingPane *pane,
 	mpControlledPane = pane;
 
 	if (!mhwnd) {
-		if (!CreateWindow(MAKEINTATOM(sWndClass), _T(""), WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS, 0, 0, 0, 0, hwndParent, (HMENU)(UINT)0, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this)))
+		if (!CreateWindow(MAKEINTATOM(sWndClass), _T("Splitter"), WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS, 0, 0, 0, 0, hwndParent, (HMENU)(UINT)0, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this)))
 			return false;
 	}
 
@@ -404,7 +434,7 @@ ATDragHandleWindow::~ATDragHandleWindow() {
 }
 
 VDGUIHandle ATDragHandleWindow::Create(int x, int y, int cx, int cy, VDGUIHandle parent, int id) {
-	HWND hwnd = CreateWindowEx(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE, (LPCTSTR)(uintptr_t)sWndClass, _T(""), WS_POPUP, x, y, cx, cy, (HWND)parent, (HMENU)(INT_PTR)id, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+	HWND hwnd = CreateWindowEx(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE, (LPCTSTR)(uintptr_t)sWndClass, _T("Drag Handle"), WS_POPUP, x, y, cx, cy, (HWND)parent, (HMENU)(INT_PTR)id, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 
 	if (hwnd)
 		ShowWindow(hwnd, SW_SHOWNOACTIVATE);
@@ -877,6 +907,13 @@ ATFrameWindow *ATContainerDockingPane::GetAnyContent(bool reqVisible, ATFrameWin
 	return NULL;
 }
 
+void ATContainerDockingPane::GetContentRecursive(vdfastvector<ATFrameWindow *>& dst) const {
+	dst.insert(dst.end(), mContent.begin(), mContent.end());
+
+	for(ATContainerDockingPane *child : mChildren)
+		child->GetContentRecursive(dst);
+}
+
 uint32 ATContainerDockingPane::GetChildCount() const {
 	return (uint32)mChildren.size();
 }
@@ -923,7 +960,11 @@ ATContainerDockingPane *ATContainerDockingPane::Dock(ATFrameWindow *frame, int c
 				// Note that we create this as 1x1 instead of 0x0. 0x0 triggers a bug in comctl32 v6 where
 				// if a tab is selected and the tab control is later resized, the tab control does an
 				// InvalidateRect() with a null HWND.
-				mhwndTabControl = CreateWindowExW(mpDockParent ? 0 : WS_EX_CLIENTEDGE, WC_TABCONTROLW, L"", WS_CHILD, 0, 0, 1, 1, mpParent->GetHandleW32(), (HMENU)0, VDGetLocalModuleHandleW32(), NULL);
+				mhwndTabControl = CreateWindowExW(mpDockParent ? 0 : WS_EX_CLIENTEDGE, WC_TABCONTROLW, L"Tab Control", WS_CHILD, 0, 0, 1, 1, mpParent->GetHandleW32(), (HMENU)0, VDGetLocalModuleHandleW32(), NULL);
+
+				// The tab control must be under the content controls. Ideally, we want it as close as possible so the Z-order
+				// makes sense for Narrator.
+
 				SetWindowPos(mhwndTabControl, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
 
 				if (mhwndTabControl) {
@@ -1178,6 +1219,10 @@ void ATContainerDockingPane::SetVisibleFrame(ATFrameWindow *frame) {
 	if (mVisibleFrameIndex != idx) {
 		if (!mpParent || !mpParent->IsLayoutSuspended()) {
 			mContent[mVisibleFrameIndex]->SetVisible(false);
+
+			if (mhwndTabControl)
+				SetWindowPos(mContent[idx]->GetWindowHandle(), mhwndTabControl, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
 			mContent[idx]->SetVisible(true);
 		}
 
@@ -1655,10 +1700,8 @@ void ATContainerDockingPane::OnTabChange(HWND hwndSender) {
 		ATFrameWindow *frame = mContent[idx];
 
 		mpParent->ActivateFrame(frame);
-		HWND hwnd = frame->GetHandleW32();
 
-		if (hwnd)
-			::SetFocus(hwnd);
+		frame->FocusContent();
 	}
 }
 
@@ -1793,6 +1836,38 @@ void ATContainerWindow::CloseCurrentFrame() {
 	CloseFrame(mpActiveFrame);
 }
 
+void ATContainerWindow::CycleActiveFrame(int delta) {
+	if (mpModalFrame || mpFullScreenFrame || !mpDockingPane)
+		return;
+
+	if (delta == 0)
+		return;
+
+	vdfastvector<ATFrameWindow *> content;
+	mpDockingPane->GetContentRecursive(content);
+
+	if (content.empty())
+		return;
+
+	if (!mpActiveFrame) {
+		content[0]->FocusContent();
+		return;
+	}
+
+	const int n = (int)content.size();
+
+	auto it = std::find(content.begin(), content.end(), mpActiveFrame);
+	int idx = (int)(it - content.begin());
+
+	idx = (idx + (delta % n)) % n;
+
+	if (idx < 0)
+		idx += n;
+
+	content[idx]->FocusContent();
+	NotifyFrameActivated(content[idx]);
+}
+
 ATContainerWindow *ATContainerWindow::GetContainerWindow(HWND hwnd) {
 	if (hwnd) {
 		ATOM a = (ATOM)GetClassLong(hwnd, GCW_ATOM);
@@ -1906,14 +1981,28 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 			if (IsLayoutSuspended())
 				frame->SetVisible(false);
 
-			if (!mpDragPaneTarget->GetParentPane() && mDragPaneTargetCode == kATContainerDockCenter)
-				frame->SetFrameMode(mpDragPaneTarget->GetContentCount() == 0 && !ATFrameWindow::kRootContentHasEdge ? ATFrameWindow::kFrameModeNone : ATFrameWindow::kFrameModeEdge);
-			else
-				frame->SetFrameMode(ATFrameWindow::kFrameModeFull);
-
 			UINT style = GetWindowLong(hwndFrame, GWL_STYLE);
-			style |= WS_CHILD | WS_SYSMENU;
-			style &= ~(WS_POPUP | WS_THICKFRAME);		// must remove WS_SYSMENU for top level menus to work
+			UINT exstyle = GetWindowLong(hwndFrame, GWL_EXSTYLE);
+
+			if (!mpDragPaneTarget->GetParentPane() && mDragPaneTargetCode == kATContainerDockCenter) {
+				frame->SetFrameMode(mpDragPaneTarget->GetContentCount() == 0 && !ATFrameWindow::kRootContentHasEdge ? ATFrameWindow::kFrameModeNone : ATFrameWindow::kFrameModeEdge);
+
+				// We need to remove the window caption and system menu flags, or
+				// Narrator gets confused and allows navigation to min/max/close buttons
+				// that are hidden.
+				style |= WS_CHILD | WS_TABSTOP | WS_GROUP;
+				style &= ~(WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);		// must remove WS_SYSMENU for top level menus to work
+				exstyle &= ~(WS_EX_WINDOWEDGE | WS_EX_TOOLWINDOW);
+			} else {
+				frame->SetFrameMode(ATFrameWindow::kFrameModeFull);
+				style |= WS_CHILD | WS_SYSMENU | WS_CAPTION;
+				style &= ~(WS_POPUP | WS_THICKFRAME);		// must remove WS_SYSMENU for top level menus to work
+				exstyle |= WS_EX_TOOLWINDOW;
+				exstyle &= ~WS_EX_WINDOWEDGE;
+			}
+
+			SetWindowLongPtr(hwndFrame, GWLP_HWNDPARENT, (LONG_PTR)0);
+
 			SetWindowLong(hwndFrame, GWL_STYLE, style);
 
 			// Prevent WM_CHILDACTIVATE from changing the active window.
@@ -1921,19 +2010,22 @@ ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame) {
 			SetParent(hwndFrame, mhwnd);
 			mbBlockActiveUpdates = false;
 
-			SetWindowPos(hwndFrame, NULL, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOACTIVATE);
+			SetWindowLongPtr(hwndFrame, GWLP_HWNDPARENT, (LONG_PTR)mhwnd);
 
-			UINT exstyle = GetWindowLong(hwndFrame, GWL_EXSTYLE);
-			exstyle |= WS_EX_TOOLWINDOW;
-			exstyle &= ~WS_EX_WINDOWEDGE;
 			SetWindowLong(hwndFrame, GWL_EXSTYLE, exstyle);
+			SetWindowPos(hwndFrame, NULL, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOACTIVATE);
 
 			SendMessage(mhwnd, WM_CHANGEUISTATE, MAKELONG(UIS_INITIALIZE, UISF_HIDEACCEL|UISF_HIDEFOCUS), 0);
 
 			if (hwndActive)
 				::SetFocus(hwndActive);
+
+			VDVERIFY(GetAncestor(hwndFrame, GA_PARENT) == mhwnd);
 		}
 	}
+
+	VDVERIFY(GetAncestor(frame->GetHandleW32(), GA_PARENT) == mhwnd);
+	VDVERIFY(GetWindowLongPtr(frame->GetHandleW32(), GWL_STYLE) & WS_CHILD);
 
 	if (frame)
 		frame->RecalcFrame();
@@ -1984,20 +2076,32 @@ void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible, bool des
 			RECT r;
 			GetWindowRect(hwndFrame, &r);
 
-			HWND hwndOwner = GetWindow(mhwnd, GW_OWNER);
-			SetParent(hwndFrame, hwndOwner);
+			// SetParent() will dispatch WM_CHILDACTIVATE, so we need to block that handler
+			// while calling it.
+			mbBlockActiveUpdates = true;
+			VDVERIFY(SetParent(hwndFrame, nullptr));
+			mbBlockActiveUpdates = false;
 
 			style &= ~(WS_CHILD | WS_VISIBLE);
-			style |= WS_OVERLAPPEDWINDOW;
-			SetWindowLong(hwndFrame, GWL_STYLE, style);
+			style |= WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME;
+
+			SetLastError(0);
+			VDVERIFY(SetWindowLongPtr(hwndFrame, GWL_STYLE, style) || GetLastError() == 0);
 
 			UINT exstyle = GetWindowLong(hwndFrame, GWL_EXSTYLE);
 			exstyle |= WS_EX_TOOLWINDOW;
-			SetWindowLong(hwndFrame, GWL_EXSTYLE, exstyle);
+
+			SetLastError(0);
+			VDVERIFY(SetWindowLongPtr(hwndFrame, GWL_EXSTYLE, exstyle) || GetLastError() == 0);
 
 			SetWindowPos(hwndFrame, NULL, r.left, r.top, 0, 0, SWP_NOSIZE|SWP_FRAMECHANGED|SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOCOPYBITS|SWP_NOOWNERZORDER|SWP_NOREDRAW);
 			RedrawWindow(hwndFrame, NULL, NULL, RDW_FRAME | RDW_INVALIDATE);
 			SendMessage(hwndFrame, WM_CHANGEUISTATE, MAKELONG(UIS_INITIALIZE, UISF_HIDEACCEL|UISF_HIDEFOCUS), 0);
+
+			SetWindowLongPtr(hwndFrame, GWLP_HWNDPARENT, (LONG_PTR)mhwnd);
+
+			[[maybe_unused]] HWND hwndCheckOwner = GetWindow(hwndFrame, GW_OWNER);
+			VDASSERT(hwndCheckOwner == mhwnd);
 
 			if (visible)
 				ShowWindow(hwndFrame, SW_SHOWNA);
@@ -2009,6 +2113,10 @@ void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible, bool des
 			if (visible)
 				::SetActiveWindow(hwndFrame);
 		}
+	}
+
+	if (!destroy) {
+		VDASSERT(!(GetWindowLongPtr(hwndFrame, GWL_STYLE) & WS_CHILD));
 	}
 }
 
@@ -2037,9 +2145,7 @@ void ATContainerWindow::SetFullScreenFrame(ATFrameWindow *frame) {
 
 		ActivateFrame(frame);
 
-		HWND hwndFocus = frame->GetHandleW32();
-		if (hwndFocus)
-			::SetFocus(hwndFocus);
+		frame->FocusContent();
 	}
 
 	ResumeLayout();
@@ -2079,7 +2185,14 @@ void ATContainerWindow::NotifyFrameActivated(ATFrameWindow *frame) {
 	if (frame)
 		hwndFrame = frame->GetHandleW32();
 
-	VDASSERT(!hwndFrame || !(GetWindowLong(hwndFrame, GWL_STYLE) & WS_CHILD) || GetAncestor(hwndFrame, GA_ROOT) == mhwnd);
+#if VDASSERT_ENABLED
+	if (hwndFrame && (GetWindowLong(hwndFrame, GWL_STYLE) & WS_CHILD)) {
+		HWND hwndRoot = GetAncestor(hwndFrame, GA_ROOT);
+
+		VDASSERT(hwndRoot == mhwnd);
+	}
+#endif
+
 	mpActiveFrame = frame;
 
 	if (mpDockingPane)
@@ -2252,9 +2365,7 @@ void ATContainerWindow::NotifyDockedFrameDestroyed(ATFrameWindow *frame) {
 		auto *frameToActivate = ChooseNewActiveFrame(frame);
 
 		if (frameToActivate) {
-			HWND hwndNewFocus = frameToActivate->GetHandleW32();
-
-			::SetFocus(hwndNewFocus);
+			frameToActivate->FocusContent();
 			NotifyFrameActivated(frameToActivate);
 		} else {
 			::SetFocus(mhwnd);
@@ -2273,8 +2384,7 @@ void ATContainerWindow::OnSetFocus(HWND hwndOldFocus) {
 
 		NotifyFrameActivated(mpActiveFrame);
 
-		HWND hwndActiveFrame = mpActiveFrame->GetHandleW32();
-		SetFocus(hwndActiveFrame);
+		mpActiveFrame->FocusContent();
 	}
 }
 
@@ -2299,11 +2409,8 @@ bool ATContainerWindow::OnActivate(UINT code, bool minimized, HWND hwnd) {
 
 			NotifyFrameActivated(mpActiveFrame);
 
-			if (hwnd == mhwnd) {
-				HWND hwndActiveFrame = mpActiveFrame->GetHandleW32();
-				if (hwndActiveFrame)
-					SetFocus(hwndActiveFrame);
-			}
+			if (hwnd == mhwnd)
+				mpActiveFrame->FocusContent();
 		}
 	}
 
@@ -2560,6 +2667,18 @@ void ATFrameWindow::SetSplitterEdges(uint8 flags) {
 	mSplitterEdgeFlags = flags;
 }
 
+void ATFrameWindow::FocusContent() {
+	if (!mhwnd)
+		return;
+
+	HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
+
+	if (hwndChild)
+		SetFocus(hwndChild);
+	else
+		SetFocus(mhwnd);
+}
+
 void ATFrameWindow::ActivateFrame() {
 	if (mpContainer)
 		mpContainer->ActivateFrame(this);
@@ -2685,11 +2804,84 @@ void ATFrameWindow::Relayout(int w, int h) {
 }
 
 VDGUIHandle ATFrameWindow::Create(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
-	return (VDGUIHandle)CreateWindowExW(WS_EX_TOOLWINDOW, (LPCWSTR)(uintptr_t)sWndClass, title, WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+	return (VDGUIHandle)CreateWindowExW(WS_EX_TOOLWINDOW, (LPCWSTR)(uintptr_t)sWndClass, title, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_CLIPCHILDREN, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 }
 
 VDGUIHandle ATFrameWindow::CreateChild(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
-	return (VDGUIHandle)CreateWindowExW(WS_EX_TOOLWINDOW, (LPCWSTR)(uintptr_t)sWndClass, title, WS_CHILD|WS_CAPTION|WS_CLIPCHILDREN|WS_CLIPSIBLINGS, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+	return (VDGUIHandle)CreateWindowExW(WS_EX_TOOLWINDOW, (LPCWSTR)(uintptr_t)sWndClass, title, WS_CHILD|WS_CAPTION|WS_CLIPCHILDREN, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+}
+
+class ATUINonFocusableAccessibilityProviderW32 final : public ATCOMQIW32<ATCOMBaseW32<IRawElementProviderSimple>, IRawElementProviderSimple, IUnknown> {
+public:
+	ATUINonFocusableAccessibilityProviderW32(HWND hwnd) : mhwnd(hwnd) {}
+
+	HRESULT STDMETHODCALLTYPE get_ProviderOptions(ProviderOptions *pRetVal) override;
+	HRESULT STDMETHODCALLTYPE GetPatternProvider(PATTERNID patternId, IUnknown **pRetVal) override;
+	HRESULT STDMETHODCALLTYPE GetPropertyValue(PROPERTYID propertyId, VARIANT *pRetVal) override;
+	HRESULT STDMETHODCALLTYPE get_HostRawElementProvider(IRawElementProviderSimple **pRetVal) override;
+
+private:
+	const HWND mhwnd;
+};
+
+HRESULT STDMETHODCALLTYPE ATUINonFocusableAccessibilityProviderW32::get_ProviderOptions(ProviderOptions *pRetVal) {
+	if (!pRetVal)
+		return E_POINTER;
+
+	if (!mhwnd)
+		return UIA_E_ELEMENTNOTAVAILABLE;
+
+	*pRetVal = ProviderOptions_ServerSideProvider;
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE ATUINonFocusableAccessibilityProviderW32::GetPatternProvider(PATTERNID patternId, IUnknown **pRetVal) {
+	if (!pRetVal)
+		return E_POINTER;
+
+	*pRetVal = nullptr;
+
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE ATUINonFocusableAccessibilityProviderW32::GetPropertyValue(PROPERTYID propertyId, VARIANT *pRetVal) {
+	if (!pRetVal)
+		return E_POINTER;
+
+	if (!mhwnd)
+		return UIA_E_ELEMENTNOTAVAILABLE;
+
+	VariantInit(pRetVal);
+
+	if (propertyId == UIA_IsDialogPropertyId) {
+		pRetVal->vt = VT_BOOL;
+		pRetVal->boolVal = VARIANT_TRUE;
+		return S_OK;
+	}
+
+	if (propertyId == UIA_IsControlElementPropertyId) {
+		pRetVal->vt = VT_BOOL;
+		pRetVal->boolVal = VARIANT_FALSE;
+		return S_OK;
+	}
+
+	if (propertyId == UIA_IsContentElementPropertyId) {
+		pRetVal->vt = VT_BOOL;
+		pRetVal->boolVal = VARIANT_FALSE;
+		return S_OK;
+	}
+
+	if (propertyId == UIA_IsKeyboardFocusablePropertyId) {
+		pRetVal->vt = VT_BOOL;
+		pRetVal->boolVal = VARIANT_FALSE;
+		return S_OK;
+	}
+
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE ATUINonFocusableAccessibilityProviderW32::get_HostRawElementProvider(IRawElementProviderSimple **pRetVal) {
+	return UiaHostProviderFromHwnd(mhwnd, pRetVal);
 }
 
 LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -2836,32 +3028,21 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				}
 			}
 
-			[[fallthrough]];
-		case WM_CHILDACTIVATE:
-			if (ATContainerWindow *cont = ATContainerWindow::GetContainerWindow(GetAncestor(mhwnd, GA_ROOTOWNER))) {
-				cont->NotifyFrameActivated(this);
+			if (mpContainer) {
+				mpContainer->NotifyFrameActivated(this);
 
-				if (msg == WM_MOUSEACTIVATE) {
-					HWND focus = ::GetFocus();
-					HWND hwndTest;
+				HWND focus = ::GetFocus();
 
-					for(hwndTest = focus; hwndTest && hwndTest != mhwnd; hwndTest = GetAncestor(hwndTest, GA_PARENT))
-						;
-
-					if (hwndTest != mhwnd)
-						::SetFocus(mhwnd);
-				}
+				if (focus == mhwnd || !IsChild(mhwnd, focus))
+					FocusContent();
 			}
 			break;
 
-		case WM_SETFOCUS:
-			{
-				HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
+		case WM_CHILDACTIVATE:
+			if (mpContainer)
+				mpContainer->NotifyFrameActivated(this);
 
-				if (hwndChild)
-					SetFocus(hwndChild);
-			}
-			return 0;
+			break;
 
 		case WM_ERASEBKGND:
 			return TRUE;
@@ -3094,6 +3275,15 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				ShowWindow(hwndChild, wParam ? SW_SHOWNOACTIVATE : SW_HIDE);
 			break;
 
+		case WM_GETOBJECT:
+			if (!mbDestroying && ATUIAccGetEnabled() && lParam == UiaRootObjectId) {
+				if (!mpAccProvider)
+					mpAccProvider = new ATUINonFocusableAccessibilityProviderW32(mhwnd);
+
+				return UiaReturnRawElementProvider(mhwnd, wParam, lParam, mpAccProvider);
+			}
+			break;
+
 		case ATWM_INHERIT_DPICHANGED:
 			if (mFrameMode == kFrameModeUndocked) {
 				HWND hwndChild = GetWindow(mhwnd, GW_CHILD);
@@ -3266,6 +3456,20 @@ bool ATFrameWindow::OnCreate() {
 }
 
 void ATFrameWindow::OnDestroy() {
+	mbDestroying = true;
+
+	if (mpAccProvider) {
+		auto p = std::move(mpAccProvider);
+		mpAccProvider = nullptr;
+
+		// Must be done while the provider is still valid, or it'll proc an error
+		// from the provider, since UiaDisconnectProvider() calls get_ProviderOptions()
+		// and get_HostRawElementProvider().
+		ATUiaDisconnectProviderW32(p);
+
+		VDVERIFY(SUCCEEDED(UiaReturnRawElementProvider(mhwnd, 0, 0, nullptr)));
+	}
+
 	if (mpContainer) {
 		if (mpDockingPane)
 			mpContainer->NotifyDockedFrameDestroyed(this);
@@ -3324,11 +3528,11 @@ bool ATFrameWindow::OnNCLButtonDown(int code, int x, int y) {
 	mDragOffsetX = r.left - x;
 	mDragOffsetY = r.top - y;
 
-	mpDragContainer = ATContainerWindow::GetContainerWindow(GetWindow(mhwnd, GW_OWNER));
+	mpDragContainer = mpContainer;
 
 	SetForegroundWindow(mhwnd);
 	SetActiveWindow(mhwnd);
-	SetFocus(mhwnd);
+	FocusContent();
 	SetCapture(mhwnd);
 	return true;
 }
@@ -3515,7 +3719,10 @@ void ATActivateUIPane(uint32 id, bool giveFocus, bool visible, uint32 relid, int
 				g_pMainWindow->AddUndockedFrame(frame);
 		}
 
-		pane->Create(frame);
+		if (pane->Create(frame)) {
+			// Set caption on the content window for Narrator.
+			pane->AsNativeWindow().SetCaption(pane->GetUIPaneName());
+		}
 
 		if (visible)
 			ShowWindow(frame->GetHandleW32(), SW_SHOWNOACTIVATE);

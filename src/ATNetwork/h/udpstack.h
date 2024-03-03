@@ -11,11 +11,11 @@ struct ATUdpHeaderInfo;
 class ATNetIpStack;
 
 struct ATNetUdpListeningSocket {
-	IATUdpSocketListener *mpHandler;
+	IATEmuNetUdpSocketListener *mpHandler;
 };
 
 
-class ATNetUdpStack final : public IATNetUdpStack {
+class ATNetUdpStack final : public IATEmuNetUdpStack {
 public:
 	ATNetUdpStack();
 
@@ -26,13 +26,13 @@ public:
 	void Init(ATNetIpStack *ipStack);
 	void Shutdown();
 
-	void SetBridgeListener(IATUdpSocketListener *p);
+	void SetBridgeListener(IATEmuNetUdpSocketListener *p);
 
 public:
-	virtual IATNetIpStack *GetIpStack() const { return mpIpStack; }
-	virtual bool Bind(uint16 port, IATUdpSocketListener *listener);
-	virtual uint16 Bind(IATUdpSocketListener *listener);
-	virtual void Unbind(uint16 port, IATUdpSocketListener *listener);
+	virtual IATEmuNetIpStack *GetIpStack() const { return mpIpStack; }
+	virtual bool Bind(uint16 port, IATEmuNetUdpSocketListener *listener);
+	virtual uint16 Bind(IATEmuNetUdpSocketListener *listener);
+	virtual void Unbind(uint16 port, IATEmuNetUdpSocketListener *listener);
 
 	virtual void SendDatagram(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, const void *data, uint32 dataLen);
 	virtual void SendDatagram(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, const ATEthernetAddr& dstHwAddr, const void *data, uint32 dataLen);
@@ -47,7 +47,7 @@ protected:
 	IATEthernetClock *mpClock;
 	uint16 mNextPort;
 
-	IATUdpSocketListener *mpBridgeListener;
+	IATEmuNetUdpSocketListener *mpBridgeListener;
 
 	typedef vdhashmap<uint32, ATNetUdpListeningSocket> ListeningSockets;
 	ListeningSockets mListeningSockets;

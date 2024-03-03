@@ -52,12 +52,14 @@ struct ATPropertyValue {
 class ATPropertySet {
 public:
 	ATPropertySet();
+	vdnothrow ATPropertySet(ATPropertySet&&) noexcept;
 	ATPropertySet(const ATPropertySet&);
 	~ATPropertySet();
 
 	ATPropertySet& operator=(const ATPropertySet&);
+	vdnothrow ATPropertySet& operator=(ATPropertySet&&) noexcept;
 
-	bool IsEmpty() const { return mProperties.empty(); }
+	[[nodiscard]] bool IsEmpty() const { return mProperties.empty(); }
 
 	void Clear();
 
@@ -75,12 +77,12 @@ public:
 	void SetDouble(const char *name, double val);
 	void SetString(const char *name, const wchar_t *val);
 
-	bool GetBool(const char *name, bool def = 0) const;
-	sint32 GetInt32(const char *name, sint32 def = 0) const;
-	uint32 GetUint32(const char *name, uint32 def = 0) const;
-	float GetFloat(const char *name, float def = 0) const;
-	double GetDouble(const char *name, double def = 0) const;
-	const wchar_t *GetString(const char *name, const wchar_t *def = 0) const;
+	[[nodiscard]] bool GetBool(const char *name, bool def = 0) const;
+	[[nodiscard]] sint32 GetInt32(const char *name, sint32 def = 0) const;
+	[[nodiscard]] uint32 GetUint32(const char *name, uint32 def = 0) const;
+	[[nodiscard]] float GetFloat(const char *name, float def = 0) const;
+	[[nodiscard]] double GetDouble(const char *name, double def = 0) const;
+	[[nodiscard]] const wchar_t *GetString(const char *name, const wchar_t *def = 0) const;
 
 	bool TryGetBool(const char *name, bool& val) const;
 	bool TryGetInt32(const char *name, sint32& val) const;

@@ -90,7 +90,7 @@ public:
 template<class T, class Source, class ArgType>
 struct VDDelegateAdapterS {
 	template<typename T_Fn>
-	static void Init(VDDelegateNode& dst, T_Fn fn) requires std::is_reference_v<ArgType> {
+	static void Init(VDDelegateNode& dst, T_Fn fn) requires(std::is_reference_v<ArgType>) {
 		dst.mpCallback = [](void *src, void *info, VDDelegateNode& del) {
 			return (((T *)del.mpObj)->*reinterpret_cast<T_Fn>(del.mpFnS))(static_cast<Source *>(src), std::forward<ArgType>(*static_cast<std::remove_reference_t<ArgType >*>(info)));
 		};
@@ -99,7 +99,7 @@ struct VDDelegateAdapterS {
 	}
 
 	template<typename T_Fn>
-	static void Init(VDDelegateNode& dst, T_Fn fn) requires !std::is_reference_v<ArgType> {
+	static void Init(VDDelegateNode& dst, T_Fn fn) requires(!std::is_reference_v<ArgType>) {
 		dst.mpCallback = [](void *src, void *info, VDDelegateNode& del) {
 			return (((T *)del.mpObj)->*reinterpret_cast<T_Fn>(del.mpFnS))(static_cast<Source *>(src), *static_cast<const ArgType *>(info));
 		};
@@ -121,7 +121,7 @@ public:
 template<class T, class Source, class ArgType>
 struct VDDelegateAdapterM {
 	template<typename T_Fn>
-	static void Init(VDDelegateNode& dst, T_Fn fn) requires std::is_reference_v<ArgType> {
+	static void Init(VDDelegateNode& dst, T_Fn fn) requires(std::is_reference_v<ArgType>) {
 		dst.mpCallback = [](void *src, void *info, VDDelegateNode& del) {
 			return (((T *)del.mpObj)->*reinterpret_cast<T_Fn>(del.mpFnM))(static_cast<Source *>(src), std::forward<ArgType>(*static_cast<std::remove_reference_t<ArgType >*>(info)));
 		};
@@ -130,7 +130,7 @@ struct VDDelegateAdapterM {
 	}
 
 	template<typename T_Fn>
-	static void Init(VDDelegateNode& dst, T_Fn fn) requires !std::is_reference_v<ArgType> {
+	static void Init(VDDelegateNode& dst, T_Fn fn) requires(!std::is_reference_v<ArgType>) {
 		dst.mpCallback = [](void *src, void *info, VDDelegateNode& del) {
 			return (((T *)del.mpObj)->*reinterpret_cast<T_Fn>(del.mpFnM))(static_cast<Source *>(src), *static_cast<const ArgType *>(info));
 		};
@@ -188,11 +188,11 @@ public:
 		Remove(del);
 	}
 
-	void Raise(Source *src, ArgType args) requires std::is_reference_v<ArgType> {
+	void Raise(Source *src, ArgType args) requires(std::is_reference_v<ArgType>) {
 		VDEventBase::Raise(src, (void *)&args);
 	}
 
-	void Raise(Source *src, const ArgType& args) requires !std::is_reference_v<ArgType> {
+	void Raise(Source *src, const ArgType& args) requires(!std::is_reference_v<ArgType>) {
 		VDEventBase::Raise(src, (void *)&args);
 	}
 };

@@ -34,11 +34,11 @@ void ATNetUdpStack::Shutdown() {
 	mpIpStack = NULL;
 }
 
-void ATNetUdpStack::SetBridgeListener(IATUdpSocketListener *p) {
+void ATNetUdpStack::SetBridgeListener(IATEmuNetUdpSocketListener *p) {
 	mpBridgeListener = p;
 }
 
-bool ATNetUdpStack::Bind(uint16 port, IATUdpSocketListener *listener) {
+bool ATNetUdpStack::Bind(uint16 port, IATEmuNetUdpSocketListener *listener) {
 	ListeningSockets::insert_return_type r = mListeningSockets.insert(port);
 
 	if (!r.second)
@@ -48,7 +48,7 @@ bool ATNetUdpStack::Bind(uint16 port, IATUdpSocketListener *listener) {
 	return true;
 }
 
-uint16 ATNetUdpStack::Bind(IATUdpSocketListener *listener) {
+uint16 ATNetUdpStack::Bind(IATEmuNetUdpSocketListener *listener) {
 	if (mListeningSockets.size() >= 65535)
 		return 0;
 
@@ -63,7 +63,7 @@ uint16 ATNetUdpStack::Bind(IATUdpSocketListener *listener) {
 	return mNextPort;
 }
 
-void ATNetUdpStack::Unbind(uint16 port, IATUdpSocketListener *listener) {
+void ATNetUdpStack::Unbind(uint16 port, IATEmuNetUdpSocketListener *listener) {
 	ListeningSockets::iterator it = mListeningSockets.find(port);
 
 	if (it != mListeningSockets.end() && it->second.mpHandler == listener)
@@ -77,7 +77,7 @@ void ATNetUdpStack::OnPacket(const ATEthernetPacket& packet, const ATIPv4HeaderI
 		return;
 
 	// check if this is a connection to the gateway or if we are bridging/NATing
-	IATUdpSocketListener *listener = mpBridgeListener;
+	IATEmuNetUdpSocketListener *listener = mpBridgeListener;
 	uint32 dstAddr = iphdr.mDstAddr;
 
 	const uint32 ipaddr = mpIpStack->GetIpAddress();

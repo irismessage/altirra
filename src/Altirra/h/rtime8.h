@@ -19,11 +19,12 @@
 #define AT_RTIME8_H
 
 #include <at/atcore/deviceimpl.h>
+#include <at/atcore/devicesnapshot.h>
 
 class ATMemoryManager;
 class ATMemoryLayer;
 
-class ATRTime8Emulator {
+class ATRTime8Emulator final : public IATDeviceSnapshot {
 	ATRTime8Emulator(const ATRTime8Emulator&) = delete;
 	ATRTime8Emulator& operator=(const ATRTime8Emulator&) = delete;
 public:
@@ -33,6 +34,11 @@ public:
 	uint8 ReadControl(uint8 addr);
 	uint8 DebugReadControl(uint8 addr) const;
 	void WriteControl(uint8 addr, uint8 value);
+
+	void Reset();
+
+	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx) override;
+	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const override;
 
 protected:
 	uint8 mAddress;
@@ -48,6 +54,7 @@ public:
 
 	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
 	virtual void Shutdown() override;
+	virtual void ColdReset() override;
 
 public: // IATDeviceMemMap
 	virtual void InitMemMap(ATMemoryManager *memmap) override;

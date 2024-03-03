@@ -18,7 +18,40 @@
 #include <stdafx.h>
 #include <vd2/system/vdalloc.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/snapshotimpl.h>
+#include <at/atcore/savestate.h>
 #include <at/atdevices/blockdevwritefilter.h>
+
+////////////////////////////////////////////////////////////////////////////
+
+class ATSaveStateTempWriteFilter final : public ATSnapExchangeObject<ATSaveStateTempWriteFilter, "ATSaveStateTempWriteFilter"> {
+public:
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	void PostDeserialize() override;
+
+	vdrefptr<ATSaveStateMemoryBuffer> mpModifiedBlockStore;
+	vdfastvector<uint32> mModifiedBlockLBAs;
+};
+
+template<ATExchanger T>
+void ATSaveStateTempWriteFilter::Exchange(T& ex) {
+	ex.Transfer("modified_block_store", &mpModifiedBlockStore);
+	ex.Transfer("modified_block_lbas", &mModifiedBlockLBAs);
+}
+
+void ATSaveStateTempWriteFilter::PostDeserialize() {
+	if (mpModifiedBlockStore) {
+		if (mModifiedBlockLBAs.size() * 512 != mpModifiedBlockStore->GetReadBuffer().size())
+			throw ATInvalidSaveStateException();
+	} else {
+		if (!mModifiedBlockLBAs.empty())
+			throw ATInvalidSaveStateException();
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////
 
 void ATCreateDeviceBlockDevTemporaryWriteFilter(const ATPropertySet& pset, IATDevice **dev) {
 	vdrefptr<ATBlockDeviceTemporaryWriteFilter> vdev(new ATBlockDeviceTemporaryWriteFilter);
@@ -63,6 +96,7 @@ void *ATBlockDeviceTemporaryWriteFilter::AsInterface(uint32 iid) {
 	switch(iid) {
 		case IATBlockDevice::kTypeID: return static_cast<IATBlockDevice *>(this);
 		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(&mDevParent);
+		case IATDeviceSnapshot::kTypeID: return static_cast<IATDeviceSnapshot *>(this);
 		default:
 			return ATDevice::AsInterface(iid);
 	}
@@ -99,11 +133,7 @@ void ATBlockDeviceTemporaryWriteFilter::Init() {
 void ATBlockDeviceTemporaryWriteFilter::Shutdown() {
 	mDevParent.Shutdown();
 
-	while(!mBlockGroups.empty()) {
-		delete mBlockGroups.back();
-
-		mBlockGroups.pop_back();
-	}
+	Clear();
 }
 
 void ATBlockDeviceTemporaryWriteFilter::Flush() {
@@ -116,8 +146,7 @@ void ATBlockDeviceTemporaryWriteFilter::ReadSectors(void *data, uint32 lba, uint
 		if (it != mBlockLookup.end()) {
 			uint32 slotIndex = it->second;
 
-			const void *cachedData = (*mBlockGroups[slotIndex >> kBlockGroupShift]).mSlots[slotIndex & kBlockSlotMask];
-			memcpy(data, cachedData, 512);
+			memcpy(data, GetSlot(slotIndex), 512);
 		} else if (mpBlockDevice) {
 			mpBlockDevice->ReadSectors(data, lba, 1);
 		} else {
@@ -145,10 +174,76 @@ void ATBlockDeviceTemporaryWriteFilter::WriteSectors(const void *data, uint32 lb
 		}
 
 		const uint32 slotIndex = r.first->second;
-		void *cachedData = (*mBlockGroups[slotIndex >> kBlockGroupShift]).mSlots[slotIndex & kBlockSlotMask];
-		memcpy(cachedData, data, 512);
+		memcpy(GetSlot(slotIndex), data, 512);
 
 		++lba;
 		data = (char *)data + 512;
 	}
+}
+
+void ATBlockDeviceTemporaryWriteFilter::LoadState(const IATObjectState *state, ATSnapshotContext& ctx) {
+	if (ctx.mbSkipStorage)
+		return;
+
+	if (!state) {
+		Clear();
+		return;
+	}
+
+	const ATSaveStateTempWriteFilter& wfstate = atser_cast<const ATSaveStateTempWriteFilter&>(*state);
+
+	if (!wfstate.mpModifiedBlockStore) {
+		// we are requested to load storage, but the snapshot was saved without it -- so leave
+		// the existing storage in place
+		return;
+	}
+
+	// write the modified sectors into the local store; the serialization routine
+	// has already validated that the buffer/LBA lengths match, so we're good there
+	const uint8 *src = wfstate.mpModifiedBlockStore->GetReadBuffer().data();
+
+	for(const auto lba : wfstate.mModifiedBlockLBAs) {
+		WriteSectors(src, lba, 1);
+		src += 512;
+	}
+}
+
+vdrefptr<IATObjectState> ATBlockDeviceTemporaryWriteFilter::SaveState(ATSnapshotContext& ctx) const {
+	vdrefptr state { new ATSaveStateTempWriteFilter };
+
+	if (!ctx.mbSkipStorage) {
+		state->mpModifiedBlockStore = new ATSaveStateMemoryBuffer;
+		state->mpModifiedBlockStore->mpDirectName = L"modifiedblocks.bin";
+
+		auto& lbas = state->mModifiedBlockLBAs;
+		auto& buffer = state->mpModifiedBlockStore->GetWriteBuffer();
+
+		lbas.reserve(mBlockLookup.size());
+		buffer.resize(mBlockLookup.size() * 512);
+
+		uint8 *dst = buffer.data();
+
+		for(auto&& [lba, slotIndex] : mBlockLookup) {
+			state->mModifiedBlockLBAs.emplace_back(lba);
+			
+			memcpy(dst, GetSlot(slotIndex), 512);
+			dst += 512;
+		}
+	}
+
+	return state;
+}
+
+void ATBlockDeviceTemporaryWriteFilter::Clear() {
+	mBlockLookup.clear();
+
+	while(!mBlockGroups.empty()) {
+		delete mBlockGroups.back();
+
+		mBlockGroups.pop_back();
+	}
+}
+
+uint8 (&ATBlockDeviceTemporaryWriteFilter::GetSlot(uint32 slotIndex) const)[512] {
+	return (*mBlockGroups[slotIndex >> kBlockGroupShift]).mSlots[slotIndex & kBlockSlotMask];
 }

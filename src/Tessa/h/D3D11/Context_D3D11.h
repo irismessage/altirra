@@ -1,7 +1,6 @@
 #ifndef f_D3D11_CONTEXT_D3D11_H
 #define f_D3D11_CONTEXT_D3D11_H
 
-#include <vd2/system/profile.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/Tessa/Context.h>
@@ -86,6 +85,7 @@ public:
 	void Load(uint32 dx, uint32 dy, const VDTInitData2D& srcData, uint32 bpr, uint32 h);
 	void Copy(uint32 dx, uint32 dy, IVDTSurface *src, uint32 sx, uint32 sy, uint32 w, uint32 h);
 	void GetDesc(VDTSurfaceDesc& desc);
+	IVDTTexture *GetTexture() const { return mpParentTexture; }
 	bool Lock(const vdrect32 *r, bool discard, VDTLockData2D& lockData);
 	void Unlock();
 
@@ -527,7 +527,6 @@ public:
 public:
 	void BeginScope(uint32 color, const char *message);
 	void EndScope();
-	VDRTProfileChannel *GetProfileChannel();
 
 public:
 	void UnsetVertexFormat(IVDTVertexFormat *format);
@@ -597,7 +596,6 @@ protected:
 	IVDTTexture *mpCurrentTextures[16];
 
 	ID3DUserDefinedAnnotation *mpD3DAnnotation {};
-	VDRTProfileChannel	mProfChan;
 	VDStringW mProfBuffer;
 
 	alignas(16) float mVSConsts[16][4] = {};

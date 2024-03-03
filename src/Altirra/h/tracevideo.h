@@ -33,8 +33,14 @@ public:
 	virtual IATTraceChannel *AsTraceChannel() = 0;
 
 	virtual sint32 GetNearestFrameIndex(double startTime, double endTime, double& frameTime) = 0;
-	virtual const VDPixmap *GetFrameByIndex(sint32 idx) = 0;
 	virtual uint64 GetTraceSize() const = 0;
+	virtual uint32 GetFrameBufferCount() const = 0;
+	virtual sint32 GetFrameBufferIndexForFrame(sint32 frameIdx) = 0;
+	virtual double GetTimeForFrame(uint32 frameIdx) = 0;
+	virtual const VDPixmap& GetFrameBufferByIndex(uint32 fbIdx) = 0;
+
+	virtual void AddRawFrameBuffer(const VDPixmap& px) = 0;
+	virtual void AddFrame(double timestamp, uint32 frameBufferIndex) = 0;
 };
 
 class IATVideoTracer : public IVDRefCount {

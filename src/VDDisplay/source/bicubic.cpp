@@ -32,12 +32,12 @@
 // a sampled kernel:
 //
 //
-//                     _______
-//                  __/      .\__
-//                 /         .   \
-//                /          .    \
-//               /.          .     \ 
-//       f1     / .          .      \     f3
+//                     _______                       .
+//                  __/      .\__                    .
+//                 /         .   \                   .
+//                /          .    \                  .
+//               /.          .     \                 .
+//       f1     / .          .      \     f3         .
 // -|----------|----------|----------|----------|
 //    \._     /     f0         f2     \ .   __/
 //       \___/                         \.__/
@@ -85,20 +85,25 @@
 // The range for the outer tap weighting (red term) is at most 0.25, so we
 // store it scaled. The green term is similarly small.
 
-void VDDisplayCreateBicubicTexture(uint32 *dst, int w, int srcw, bool swapRB) {
-	double dudx = (double)srcw / (double)w;
-	double u = dudx * 0.5;
-	double u0 = 0.5;
+void VDDisplayCreateBicubicTexture(uint32 *dst, int w, int srcw) {
+	VDDisplayCreateBicubicTexture(dst, w, srcw, 0, w);
+}
+
+void VDDisplayCreateBicubicTexture(uint32 *dst, int dstw, int srcw, float outx, float outw) {
+	double dudx = (double)srcw / (double)outw;
+	double u = dudx * (0.5 + outx);
 	double ud0 = 1.5;
 	double ud1 = (double)srcw - 1.5;
-	double u1 = (double)srcw - 0.5;
 
-	for(int x = 0; x < w; ++x) {
+	const double umin = 0.5;
+	const double umax = (double)srcw - 0.5;
+
+	for(int x = 0; x < dstw; ++x) {
 		double ut = u;
-		if (ut < u0)
-			ut = u0;
-		else if (ut > u1)
-			ut = u1;
+		if (ut < umin)
+			ut = umin;
+		else if (ut > umax)
+			ut = umax;
 		int ix = VDFloorToInt(ut - 0.5);
 		double d = ut - ((double)ix + 0.5);
 
@@ -116,17 +121,14 @@ void VDDisplayCreateBicubicTexture(uint32 *dst, int w, int srcw, bool swapRB) {
 			blue = 0;
 		}
 
-		green *= 4;
+		green *= 16;
 		red *= 4;
 
 		uint8 ib = VDClampedRoundFixedToUint8Fast((float)blue);
 		uint8 ig = VDClampedRoundFixedToUint8Fast((float)green);
 		uint8 ir = VDClampedRoundFixedToUint8Fast((float)red);
 
-		if (swapRB)
-			dst[x] = (uint32)ir + ((uint32)ig << 8) + ((uint32)ib << 16);
-		else
-			dst[x] = (uint32)ib + ((uint32)ig << 8) + ((uint32)ir << 16);
+		dst[x] = (uint32)ib + ((uint32)ig << 8) + ((uint32)ir << 16);
 
 		u += dudx;
 	}

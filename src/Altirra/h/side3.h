@@ -21,6 +21,7 @@
 #include <at/atcore/devicecart.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceparentimpl.h>
+#include <at/atcore/devicesnapshot.h>
 #include <at/atcore/devicestorageimpl.h>
 #include <at/atemulation/flash.h>
 #include <at/atemulation/rtcmcp7951x.h>
@@ -43,6 +44,7 @@ class ATSIDE3Emulator
 	, public ATDeviceBus
 	, public IATDeviceDiagnostics
 	, public IATDeviceButtons
+	, public IATDeviceSnapshot
 	, public IATSchedulerCallback
 {
 	ATSIDE3Emulator(const ATSIDE3Emulator&) = delete;
@@ -55,6 +57,7 @@ public:
 
 	void GetSettings(ATPropertySet& settings) override;
 	bool SetSettings(const ATPropertySet& settings) override;
+	void GetSettingsBlurb(VDStringW& buf) override;
 	void Init() override;
 	void Shutdown() override;
 	void GetDeviceInfo(ATDeviceInfo& info) override;
@@ -108,6 +111,10 @@ public:		// IATDeviceButtons
 	bool IsButtonDepressed(ATDeviceButton idx) const override;
 	void ActivateButton(ATDeviceButton idx, bool state) override;
 
+public:		// IATDeviceSnapshot
+	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx) override;
+	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const override;
+
 public:		// IATSchedulerCallback
 	void OnScheduledEvent(uint32 id) override;
 
@@ -117,7 +124,18 @@ protected:
 
 	template<bool T_DebugRead>
 	sint32 OnReadByte(uint32 addr) const;
+
+	template<bool T_DebugRead>
+	sint32 ReadPrimaryReg(uint8 addr8) const;
+
+	sint32 ReadDMAReg(uint8 addr8) const;
+	sint32 ReadEmuReg(uint8 addr8) const;
+
 	bool OnWriteByte(uint32 addr, uint8 value);
+
+	void WritePrimaryReg(uint8 addr8, uint8 value);
+	void WriteDMAReg(uint8 addr8, uint8 value);
+	void WriteEmuReg(uint8 addr8, uint8 value);
 
 	template<bool T_DebugRead>
 	sint32 OnSpecialReadByteA1(uint32 addr) const;
@@ -160,6 +178,11 @@ protected:
 	void EnableXferLED();
 	[[nodiscard]] bool UpdateEmuCartEnabled();
 
+	// The DMA engine uses 21-bit addressing. For the original 2MB devices,
+	// this is fine, but for the 8MB devices it can only address the lowest
+	// 2MB of RAM.
+	static constexpr uint32 kDMAMask = 0x1FFFFF;
+
 	enum EventID : uint8 {
 		kEventID_DMA = 1,
 		kEventID_LED = 2
@@ -193,10 +216,10 @@ protected:
 	bool	mbApertureEnable = false;			// Enable mapping SRAM $1FF500-1FF57F to $D500-D57F
 	uint8	mBankFlashA = 0;
 	uint8	mBankFlashB = 0;
-	uint8	mBankRAMA = 0;
-	uint8	mBankRAMB = 0;
+	uint16	mBankRAMA = 0;
+	uint16	mBankRAMB = 0;
 	uint8	mBankControl = 0;
-	uint8	mBankRAMWriteProtect = 0;		// bits 0-2 valid in hardware; bit 2 is unknown but is read/write
+	uint8	mBankMisc = 0;		// bits 0-2 valid in hardware; bit 2 is unknown but is read/write
 	uint32	mFlashOffsetA = 0;				// latched flash offset for native banking
 	uint32	mFlashOffsetB = 0;				// latched flash offset for native banking
 	uint32	mWindowOffsetA1 = 0;			// effective flash offset for $8000-8FFF
@@ -218,6 +241,11 @@ protected:
 	bool	mbButtonPBIMode = false;
 	bool	mbColdStartFlag = false;
 
+	enum class HwVersion : uint8 {
+		V10,
+		V14
+	} mHwVersion = HwVersion::V10;
+
 	enum class RegisterMode : uint8 {
 		Primary,
 		DMA,
@@ -230,6 +258,7 @@ protected:
 	uint64	mSDNextTransferTime = 0;
 	uint8	mSDPrevRead = 0;
 	uint8	mSDNextRead = 0;
+	bool	mbSDSlowClock = false;
 
 	uint8	mSDCommandFrame[6] {};
 	uint8	mSDCommandState = 0;
@@ -250,7 +279,14 @@ protected:
 	uint32	mSDActiveCommandLBA = 0;
 
 	bool	mbDMAActive = false;
-	bool	mbDMAFromSD = false;	// inverted mirror of control bit 5
+
+	enum class DMAMode : uint8 {	// must match DMA0[6:5] encoding
+		SDRead,		// %00
+		Memory,		// %01
+		SDWrite,	// %10
+		Reserved	// %11
+	} mDMAMode = DMAMode::Memory;
+
 	uint32	mDMASrcAddress = 0;
 	uint32	mDMADstAddress = 0;
 	uint16	mDMACounter = 0;
@@ -261,9 +297,9 @@ protected:
 	uint32	mDMADstStep = 0;
 	uint8	mDMAAndMask = 0;
 	uint8	mDMAXorMask = 0;
-	uint8	mDMALatch = 0;
 	uint64	mDMALastCycle = 0;
 	uint32	mDMAState = 0;
+	uint8	mDMAStatus = 0;
 
 	ATEvent *mpDMAEvent = nullptr;
 
@@ -330,7 +366,7 @@ protected:
 	uint8	mResponseBuffer[520];
 
 	VDALIGN(4) uint8	mFlash[0x800000];
-	VDALIGN(4) uint8	mRAM[0x200000];
+	VDALIGN(4) uint8	mRAM[0x800000];
 };
 
 

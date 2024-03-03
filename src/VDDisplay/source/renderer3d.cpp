@@ -85,6 +85,24 @@ bool VDDisplayCachedImage3D::Init(IVDTContext& ctx, void *owner, bool linear, co
 	return true;
 }
 
+bool VDDisplayCachedImage3D::Init(IVDTContext& ctx, void *owner, bool linear, IVDTTexture2D *texture) {
+	mpHiBltNode.clear();
+
+	VDTTextureDesc desc;
+	texture->GetDesc(desc);
+
+	mpTexture = texture;
+	mWidth = desc.mWidth;
+	mHeight = desc.mHeight;
+	mTexWidth = desc.mWidth;
+	mTexHeight = desc.mHeight;
+	mpOwner = owner;
+	mbLinear = linear;
+	mUniquenessCounter = 0;
+
+	return true;
+}
+
 void VDDisplayCachedImage3D::Shutdown() {
 	mpTexture.clear();
 	mpOwner = NULL;

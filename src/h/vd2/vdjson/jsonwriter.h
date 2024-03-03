@@ -38,6 +38,7 @@ public:
 	void End();
 
 	void OpenArray();
+	void SetArrayCompact();
 	void OpenObject();
 	void Close();
 	void WriteMemberName(const wchar_t *name);
@@ -60,12 +61,22 @@ protected:
 	void WriteLine();
 	void WriteIndent();
 
-	bool mbFirstItem;
-	bool mbArrayMode;
-	bool mbCompactMode;
+	bool mbFirstItem = false;
+	bool mbArrayMode = false;
+	bool mbArrayCompactMode = false;
+	bool mbCompactMode = false;
+	uint32 mArrayCounter = 0;
 
-	IVDJSONWriterOutput *mpOutput;
-	vdfastvector<uint8> mStack;
+	IVDJSONWriterOutput *mpOutput = nullptr;
+
+	struct StackEntry {
+		bool mbArrayMode;
+		bool mbArrayCompactMode;
+		bool mbFirstItem;
+		bool mbCompactMode;
+	};
+
+	vdfastvector<StackEntry> mStack;
 };
 
 void VDJSONWriteValue(VDJSONWriter& writer, const VDJSONValue& value, const VDJSONNameTable& nameTable);

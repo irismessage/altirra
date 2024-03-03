@@ -132,15 +132,15 @@ void ATArtifactPALFinal(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, con
 	const sint32 covg_covr = -8346;		// -co_vg / co_vr * 16384
 
 	for(uint32 i=0; i<n; ++i) {
-		const uint32 y = ybuf[i + 1];
-		uint32 u = ubuf[i + 5];
-		uint32 v = vbuf[i + 5];
+		const uint32 y = ybuf[i];
+		uint32 u = ubuf[i + 4];
+		uint32 v = vbuf[i + 4];
 
-		const uint32 up = ulbuf[i + 5];
-		const uint32 vp = vlbuf[i + 5];
+		const uint32 up = ulbuf[i + 4];
+		const uint32 vp = vlbuf[i + 4];
 
-		ulbuf[i + 5] = u;
-		vlbuf[i + 5] = v;
+		ulbuf[i + 4] = u;
+		vlbuf[i + 4] = v;
 
 		u += up;
 		v += vp;
@@ -176,7 +176,7 @@ void ATArtifactPALFinal(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, con
 
 void ATArtifactPALFinalMono(uint32 *dst, const uint32 *ybuf, uint32 n, const uint32 *monoTable) {
 	for(uint32 i=0; i<n; ++i) {
-		const uint32 y = ybuf[i + 1];
+		const uint32 y = ybuf[i];
 
 		sint32 y1 = (y & 0xffff) - 0x4000;
 		sint32 y2 = (y >> 16) - 0x4000;

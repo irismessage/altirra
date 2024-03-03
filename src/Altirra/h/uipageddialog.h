@@ -145,6 +145,7 @@ protected:
 	void OnDataExchange(bool write) override;
 	void OnDestroy() override;
 	void OnDpiChanged() override;
+	bool OnPreTranslate(VDZMSG& msg) override;
 
 	virtual void OnPopulatePages() = 0;
 

@@ -232,7 +232,13 @@ VDFORCEINLINE uint32 ATAudioReaderFLAC::BitReader::GetUnaryValue() {
 
 #if VD_CPU_X86 || VD_CPU_X64
 	if constexpr (T_HaveLzcnt) {
-		accumZeroes = _lzcnt_u32(bitAccum);
+		#ifdef VD_COMPILER_CLANG
+			accumZeroes = [](uint32 v) __attribute__((target("lzcnt"))) {
+				return _lzcnt_u32(v);
+			}(bitAccum);
+		#else
+			accumZeroes = _lzcnt_u32(bitAccum);
+		#endif
 	} else
 #endif
 	{

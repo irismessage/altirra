@@ -25,6 +25,7 @@
 #include <vd2/system/hash.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/time.h>
+#include <at/atcore/configvar.h>
 #include <at/atio/diskimage.h>
 #include <at/atio/diskfssdx2util.h>
 #include "directorywatcher.h"
@@ -33,6 +34,8 @@
 #include "hostdeviceutils.h"
 
 extern ATDebuggerLogChannel g_ATLCVDisk;
+
+ATConfigVarInt32 g_ATCVDiskVSDFSMaxFilesInDir("disk.vsdfs.max_files_in_dir", 256);
 
 // General SDFS virtual disk layout:
 //
@@ -788,7 +791,8 @@ void ATDiskImageVirtualFolderSDFS::ScanDirectory(File& dir) {
 	// scan the directory
 	VDDirectoryIterator dirIt(VDMakePath(VDMakePath(mPath.c_str(), dir.mRelPath.c_str()).c_str(), L"*").c_str());
 
-	while(dirIt.Next() && dir.mXDirEnts.size() < 256) {
+	const uint32 maxFiles = (uint32)std::clamp<sint32>(g_ATCVDiskVSDFSMaxFilesInDir, 1, 2048);
+	while(dirIt.Next() && dir.mXDirEnts.size() < maxFiles) {
 		// check if this is a super-secret file that Explorer likes to hide
 		const uint32 attr = dirIt.GetAttributes();
 

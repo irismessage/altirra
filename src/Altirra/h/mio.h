@@ -24,6 +24,7 @@
 #include <at/atcore/deviceparentimpl.h>
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/deviceserial.h>
+#include <at/atcore/devicesnapshot.h>
 #include <at/atcore/scheduler.h>
 #include "pia.h"
 #include <at/atemulation/acia.h>
@@ -42,6 +43,7 @@ class ATMIOEmulator final : public ATDevice
 	, public ATDeviceBus
 	, public IATDeviceIndicators
 	, public IATDevicePrinterPort
+	, public IATDeviceSnapshot
 	, public IATSCSIBusMonitor
 	, public IATSchedulerCallback
 {
@@ -96,15 +98,20 @@ public:
 	virtual void SetPrinterDefaultOutput(IATPrinterOutput *out) override;
 
 public:
+	void GetSnapshotStatus(ATSnapshotStatus& status) const override;
+	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx) override;
+	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const override;
+
+public:
 	virtual void OnSCSIControlStateChanged(uint32 state) override;
 
 public:
 	virtual void OnScheduledEvent(uint32 id) override;
 
-public:
+private:
+	void UpdateControlState();
 	void OnControlStateChanged(const ATDeviceSerialStatus& status);
 
-protected:
 	static sint32 OnDebugRead(void *thisptr, uint32 addr);
 	static sint32 OnRead(void *thisptr, uint32 addr);
 	static bool OnWrite(void *thisptr, uint32 addr, uint8 value);
@@ -117,34 +124,36 @@ protected:
 
 	void SetPBIBANK(sint8 bank);
 	void SetRAMPAGE(uint32 page);
+	void SetPrinterIRQEnabled(bool enabled);
 
-	sint8	mPBIBANK;
-	uint32	mRAMPAGE;
-	uint8	mActiveIRQs;
-	uint8	mDataIn;
-	uint8	mDataOut;
-	uint8	mStatus1;
-	uint8	mStatus2;
-	uint32	mPrevSCSIState;
-	bool	mbSCSIBlockSize256;
-	bool	mbPrinterIRQEnabled;
-	bool	mbACIAIRQActive;
-	bool	mbFirmwareUsable;
+	sint8	mPBIBANK = 0;
+	uint32	mRAMPAGE = 0;
+	uint8	mDataIn = 0;		// SCSI data bus input latch
+	uint8	mDataOut = 0;		// SCSI data bus output latch
+	uint8	mStatus1 = 0;
+	uint8	mStatus2 = 0;
+	uint32	mPrevSCSIState = 0;
+	bool	mbRAMEnabled = false;
+	bool	mbSCSISelAsserted = false;
+	bool	mbSCSIBlockSize256 = false;
+	bool	mbPrinterIRQEnabled = false;
+	bool	mbACIAIRQActive = false;
+	bool	mbFirmwareUsable = false;
 
-	ATFirmwareManager *mpFwMan;
-	IATDeviceIndicatorManager *mpUIRenderer;
+	ATFirmwareManager *mpFwMan = nullptr;
+	IATDeviceIndicatorManager *mpUIRenderer = nullptr;
 
-	ATIRQController *mpIRQController;
-	uint32	mIRQBit;
+	ATIRQController *mpIRQController = nullptr;
+	uint32	mIRQBit = 0;
 
-	ATScheduler *mpScheduler;
-	ATEvent *mpEventUpdateSCSIBus;
-	ATMemoryManager *mpMemMan;
-	ATMemoryLayer *mpMemLayerPBI;
-	ATMemoryLayer *mpMemLayerRAM;
-	ATMemoryLayer *mpMemLayerFirmware;
+	ATScheduler *mpScheduler = nullptr;
+	ATEvent *mpEventUpdateSCSIBus = nullptr;
+	ATMemoryManager *mpMemMan = nullptr;
+	ATMemoryLayer *mpMemLayerPBI = nullptr;
+	ATMemoryLayer *mpMemLayerRAM = nullptr;
+	ATMemoryLayer *mpMemLayerFirmware = nullptr;
 
-	IATPrinterOutput *mpPrinterOutput;
+	IATPrinterOutput *mpPrinterOutput = nullptr;
 
 	struct SCSIDiskEntry {
 		IATDevice *mpDevice;
@@ -154,11 +163,11 @@ protected:
 
 	vdfastvector<SCSIDiskEntry> mSCSIDisks;
 
-	IATDeviceSerial *mpSerialDevice;
-	bool mbRTS;
-	bool mbDTR;
-	uint8 mSerialCtlInputs;
-	bool mbLastPrinterStrobe;
+	IATDeviceSerial *mpSerialDevice = nullptr;
+	bool mbRTS = false;
+	bool mbDTR = false;
+	uint8 mSerialCtlInputs = 0;
+	bool mbLastPrinterStrobe = false;
 
 	ATACIA6551Emulator mACIA;
 	ATSCSIBusEmulator mSCSIBus;
@@ -166,8 +175,8 @@ protected:
 	ATDeviceBusSingleChild mSerialBus;
 	ATDeviceBusSingleChild mParallelBus;
 
-	uint8 mFirmware[0x2000];
-	uint8 mRAM[0x100000];
+	uint8 mFirmware[0x2000] {};
+	uint8 mRAM[0x100000] {};
 };
 
 #endif

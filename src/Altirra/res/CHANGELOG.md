@@ -1,6 +1,151 @@
 # Altirra Change Log
 
-## Version 4.10:
+## Version 4.20 [December 29, 2023]:
+   ### changes
+   * Command Line: Switches are no longer allowed at the end of arguments, e.g. disk.atr/f or /f/nosi. Switches must now be separate arguments.
+   * Input: Removed the extraneous hidden Button 1 input on light pen/gun controllers.
+
+   ### features added
+   * Additions: Added PHLOAD.COM to trigger peripheral handler loads via type 4 polling.
+   * Cartridge: Added Williams 16K cartridge type.
+   * Cartridge: Changed existing JRC cart type to JRC6 64K without RAM and added JRC RAMBOX cartridge type.
+   * Cartridge: Added MDDOS cartridge type.
+   * Cartridge: Added COS 32K cartridge type.
+   * Cartridge: Added Pronto cartridge type.
+   * Cartridge: CAR types 76, 78-93, and 160 are now supported without advanced configuration overrides.
+   * Cassette: Load Data as Audio option now supports raw FSK and PWM data blocks in .cas files.
+   * Cassette: BASIC auto-boot can now handle BASIC program tapes that require RUN "C" instead of CLOAD.
+   * Command Line: Added /[no]casautobasicboot, /kernelref, /basicref, and /diskemu switches.
+   * Debugger: Symbols escaped with '#' prefix can now include @ in their name.
+   * Debugger: .vbxe_traceblits command now has a compact mode.
+   * Debugger: .vbxe_bl command now has a compact mode and can dump a blit list at an arbitrary address.
+   * Debugger: Added explicit option in the disassembly window for whether the current D register state affects symbol lookup for direct page addressing modes.
+   * Debugger: bta (set tracepoint on access) can now supply a default trace message.
+   * Debugger: Math pack symbols can now be unloaded independently.
+   * Debugger: Added static trace PBI (stp) command to auto-trace parallel bus interface firmware.
+   * Debugger: Memory window now accepts arbitrary address expressions.
+   * Debugger: Ctrl+F in the history view moves focus to search box.
+   * Debugger: Added c (compare memory) command.
+   * Debugger: Added a menu command to export the debugger help from the .help command in HTML form.
+   * Debugger: @hwwritereg(addr) can be used to read back write-only system hardware registers.
+   * Debugger: The debugger now additionally tries to resolve source file references against the module binary path and the paths of any open source windows.
+   * Debugger: Source windows now have context menu options to reopen the file externally.
+   * Debugger: u (unassemble) now has -m option to change CPU mode used for disassembly.
+   * Devices: 1030 now does actual pulse/tone dialing.
+   * Devices: 1030 relay sound is now heard when phone is placed on-hook.
+   * Devices: Added SIDE 3.1 (JED 1.4) support.
+   * Devices: Added CPS SuperSALT Test Assembly support.
+   * Devices: MidiMate now exposes a serial port for custom MIDI interfacing.
+   * Devices: File writer device can now also be used with serial ports.
+   * Devices: Added networked serial port device.
+   * Devices: Added copy/paste support to devices UI.
+   * Devices: Added shortcut command to rescan a virtual FAT16/FAT32 disk.
+   * Devices: Added 835, full 835, and full 1030 hardware emulation.
+   * Devices: Added SIO serial adapter device to bridge serial devices directly to the emulated SIO bus without requiring motor control activation.
+   * Display: Added support for main display pan and zoom.
+   * Disk: Improved timing compensation when burst I/O mode is enabled.
+   * Input: Added support for Chalk Board PowerPad controller.
+   * Input: Added support for Stack Lightpen controller.
+   * Input: Mouse wheel can now be bound as an input.
+   * Input: Added an option to show pointer location when driving a tablet, pad, or light pen/gun with a non-mouse input.
+   * Input: Pad input area can now be moved and resized via Configure HUD.
+   * Network: Raised max MSS in emulation TCP stack from 512 to 1460.
+   * Network: Emulation gateway now supports ICMP echo requests (only to the gateway; not forwarded).
+   * Network: Emulation gateway now has a more distinctive Ethernet address to avoid conflicts when bridging through a VXLAN tunnel.
+   * PerfAnalyzer: Added support for saving and loading traces.
+   * PerfAnalyzer: Added trace channel for disk sectors passing under the drive head.
+   * PerfAnalyzer: Added approximated import for Atari800WinPLus 4.0 monitor execution traces (TRON/TROFF).
+   * Save States: Devices can now opt-in to save state support.
+   * Save States: R-Time 8, XEP80, Black Box, MIO, Ultimate1MB, SIDE/2/3, and MyIDE[-II] are now included in save states.
+   * Save States: CPU mode, 65C816 high memory, and Axlon memory are now included in save states.
+   * System: Added 1400XL and 1450XLD emulation support (currently only minimal V:/T: support).
+   * UI: Added /registeruserfileassocs, /registersysfileassocs, and /unregisterfileassocs for silent registration/unregistration of file type associations.
+   * UI: Added support for screen readers to read out text from the emulation screen (opt-in).
+   * VFS: Added support for reading from .zip files that use Enhanced Deflate compression.
+   * VFS: Add special:// protocol to access specific images.
+
+   [bugs fixed]
+   * AltirraOS: Fixed incorrect MEMLO adjustment when loading peripheral handlers through CIO via type 4 poll.
+   * AltirraOS: Force C=1 on exit from CIO for compatibility (undocumented behavior).
+   * AltirraOS: Shift+Help and Ctrl+Help are now reported properly in HELPFG.
+   * AltirraOS: KEYREP and KRPDEL are now supported properly on the 65C816 build.
+   * AltirraOS: Improved compatibility of NOCLIK handling.
+   * AltirraOS: Fixed K: not applying inverse video to vertical bar ($7C) character.
+   * AltirraOS: Fixed timing issue in SETVBV.
+   * AltirraOS: S: now properly overrides the no-clear flag for GR.0.
+   * AltirraOS: FASC no longer clears first byte of FR0.
+   * AltirraOS: SIOV now resets BRKKEY when returning Break key pressed condition.
+   * Audio: Fix downmix setting not saving.
+   * Cartridge: Phoenix and Blizzard cartridge types now also react to CCTL reads as well as writes.
+   * Cartridge: SIC! 128K and 256K images now retain their original type rather than being converted to 512K on load.
+   * Cassette: Fixed FLAC decoder crashing on some files on some CPUs.
+   * Cassette: BASIC auto-boot detection now handles BASIC programs saved with the rev. B BASIC bug.
+   * Cassette: SIO data in line is now released when motor stops.
+   * Command line: Address specified in /soundboard switch was always overridden to default.
+   * CPU: 65C816 PLB and PLD instructions were not setting NZ flags.
+   * CPU: 65C816 PHP instruction could write bits 4/5 as zero after re-entering emulation mode from native mode with MX bits cleared.
+   * CPU: Improved accuracy of NMI timing when NMIs occur across a write to WSYNC.
+   * Custom Devices: Programmatic memory layer changes no longer bypass auto-PBI.
+   * Debugger: Zero page symbols were not being loaded from CC65 symbols.
+   * Debugger: PEI (dp) instruction no longer shows indirect data in disassembly.
+   * Debugger: Symbol lookup is now suppressed for (dp), (dp,X), and (dp),Y addressing modes with D != 0 like with other direct page addressing modes.
+   * Debugger: Fixed Step Over command not working above bank 0.
+   * Debugger: Disassembler now does basic block detection in 8048 mode.
+   * Debugger: Fixed .diskdumpsec command not working on virtual disks.
+   * Debugger: Fixed a crash when clearing breakpoints from debugger symbol based assert/trace directives.
+   * Debugger: Fixed panes that displayed the context menu at the wrong place when activated from the keyboard.
+   * Debugger: Debug display wasn't decoding IR mode 8 properly.
+   * Debugger: Improved visibility of keywords in source views in dark theme.
+   * Devices: R-Time 8 is now reset on a cold reset.
+   * Devices: SIDE 2 now returns floating bus data instead of $FF when reading from deselected CF card.
+   * Devices: Fixed sporadic initial interrupt state issue with MIO.
+   * Devices: Fixed some stack wrapping bugs with Veronica's 65C816 CPU.
+   * Devices: Fixed "use long path names" setting not saving properly on the H: device.
+   * Devices: H: no longer returns Y=$03 for imminent EOF when reading directories.
+   * Devices: MIDI output device from MidiMate is now reset on cold reset.
+   * Devices: Added missing emulation of IDE+2 CF detect in $D1FA bit 6.
+   * Devices: Fixed virtual FAT32 device limiting included files to FAT16 cluster limit.
+   * Devices: Fixed 8048 ADDC,@Rn and MOVP3 A,@A instructions and TF emulation.
+   * Devices: Fixed broken ATI0/1 commands for SX212.
+   * Disk: Fixed XF551 full drive emulation sometimes not handling write protect state properly.
+   * Disk: Reinterleave command wasn't marking the disk as modified.
+   * Disk: Fixed crash when attempting to convert a disk using an unknown or unsupported filesystem.
+   * Disk: Improved Happy 1050 memory map to closer match hardware, including contended regions.
+   * Disk: Add workaround for ATX disk images that have extra zero padding words at the end.
+   * Disk: Fixed 810, 1050, and XF551 based full drive emulators not consistently acting on write protect status.
+   * Disk: Improved accuracy when reading and writing sectors with missing data fields.
+   * Disk: Fixed rotational position being updated while motor is off.
+   * Disk: Fixed 810 post-read delay being used for 1050 emulation in single density.
+   * Disk: Improved timing precision for full disk drive emulators.
+   * Disk: Sectors are now ignored on mixed-density disks when not using the current density.
+   * Display: Fixed inverted field polarity detection in interlace mode (since 3.90) and improved auto-flip behavior.
+   * Display: Removed horizontal offset in PAL high artifacting.
+   * HLE: Set Y and C=1 in program loader to emulate CIO results when invoking init/run address.
+   * Input: Fixed paddles not responding when driven in absolute mode from a digital input (regression since 4.10).
+   * Input: Fix light pen not working in port 4.
+   * MMU: Extended RAM priority is now adjusted when U1MB is enabled to emulate difference in VBXE MEMAC behavior.
+   * Network: Fixed emulation TCP stack not sending final FIN packet to emunet after graceful shutdown from remote host.
+   * Network: Emulation dhcpd no longer reports a gateway to DHCP clients if routing is disabled (NAT off).
+   * Network: Fixed VXLAN tunnel code sending two extraneous bytes with each Ethernet frame.
+   * PerfAnalyzer: Fixed keyboard shortcuts not working in the perf analyzer's history view.
+   * PerfAnalyzer: Snapshot frame timing at end of session so VBI/DLIs don't get confused when emulation is restarted after the trace ends.
+   * PerfAnalyzer: Fixed crash in tape code after stopping trace with a tape mounted.
+   * POKEY: Improved accuracy of truncated/restarted POTGO scans.
+   * POKEY: Fixed stop bits not playing properly out audio channels 1/2 in two-tone mode.
+   * Recorder: Fixed bug with AVI writer not marking all uncompressed frames as key frames.
+   * Recorder: Fixed incorrect colors when recording WMV or MP4 video without scaling (ARM64 only).
+   * Save States: Fixed POKEY having keys stuck down after loading a save state.
+   * Save States: Fixed last 64K of extended memory not being saved properly in 128K and 320K memory modes.
+   * UI: Fix crash when using Calibrate Screen command without any hardware graphics acceleration.
+   * UI: Ensure that undocked tool windows are on-screen when restoring window layout.
+   * UI: Added workaround for Windows 10/11 touch keyboard sending the wrong extended key state for movement keys.
+   * UI: Fixed Input Setup controller diagrams displaying blank in some configurations.
+   * VBXE: Fixed incorrect blitter cycle speed for $00 bytes transformed by AND/XOR mask.
+   * VBXE: Blitter collision detection now returns the first hit instead of the last hit.
+   * VBXE: Fixed pixel shadows when using HR blit mode (mode 6).
+   * VBXE: Fix false P/M priorities on right half of screen in core 1.26 in lines that have no P/M graphics.
+
+## Version 4.10 [January 1, 2023]
    ### changes
    * Display: Direct3D 11 and borderless mode are now enabled by default for new installs.
    * Input: Light pens and light guns have been split for 4.10+. Input presets may need to be updated and offsets readjusted.
@@ -484,7 +629,7 @@
    * UI: Disk drives dialog no longer appears hidden the first time it is ever used.
    * UI: Fixed argument parsing error when emulator is launched with argv[0] containing forward slashes.
    * UI: Fixed incorrect partial switch matching on command line, e.g. "/disk1" being interpreted as "/disk 1".
-   * VBXE: Overlay width setting %%11 now correctly selects narrow width instead of wide width.
+   * VBXE: Overlay width setting %11 now correctly selects narrow width instead of wide width.
 
 ## Version 3.10: [August 12, 2018]
    ### changes
@@ -586,7 +731,7 @@
    ### features added
    * Cassette: Added initial support for turbo tape decoding.
    * Cassette: Mounted tape is now persisted along with other mounted images.
-   * Cassette: %%-age position is now shown on HUD.
+   * Cassette: %-age position is now shown on HUD.
    * Cassette: Improved FSK decoder.
    * Cassette: Added analysis tool to compare raw signal against FSK and turbo decoder outputs.
    * Cassette: Added option to export decoded tape back out as audio.
@@ -898,7 +1043,7 @@
    * Debugger: Added Go until vertical blank interrupt (gv) command.
    * Debugger: Execution history now shows high level emulation events.
    * Debugger: Added sw (search words), sa (search ATASCII), and si (search INTERNAL).
-   * Debugger: Added %%S format to .printf for high byte terminated strings.
+   * Debugger: Added %S format to .printf for high byte terminated strings.
    * Debugger: Added @frame, @clk, and @cclk expression psuedovariables.
    * Devices: Add minimal SDrive raw disk access emulation.
    * Devices: Veronica cartridge emulation.
@@ -1001,7 +1146,7 @@
    ### features added
    * ATBasic: Improved execution speed.
    * ATBasic: Added partial support for CONT statement.
-   * ATBasic: Added support for DPOKE, BPUT, BGET, ERASE, PROTECT, UNPROTECT, DIR, RENAME, MOVE, HEX$(), DPEEK(), !, %%, &, and $.
+   * ATBasic: Added support for DPOKE, BPUT, BGET, ERASE, PROTECT, UNPROTECT, DIR, RENAME, MOVE, HEX$(), DPEEK(), !, %, &, and $.
    * AltirraOS: Optimized FPI routine.
    * AltirraOS: Improved rounding of FDIV results.
    * BlackBox: Initial emulation support.
@@ -1081,7 +1226,7 @@
    * CPU: Fixed spurious IRQs when interrupts are masked for more than 2^32 cycles.
    * CPU: Fixed video snow problem when running CPU faster than 1.79MHz.
    * Debugger: -$80000000/-1 no longer causes a crash.
-   * Debugger: .printf %%u formatter now works correctly for numbers >=10^10.
+   * Debugger: .printf %u formatter now works correctly for numbers >=10^10.
    * Debugger: Fixed EXP/EXP10 not being logged to FPACCEL channel.
    * Debugger: Fixed static trace (st) not stopping properly on BRK/RTS/RTI instructions.
    * Debugger: Debug display now reflects CHACTL bits.
@@ -1215,7 +1360,7 @@
    * Cartridge: Added support for .CAR types 53-59 (2K, 4K, right-as-left 8K, right slot 4K, 128-512K SIC!).
    * CPU: Preliminary support for accelerated 65C816 operation.
    * Debugger: Added .dmabuf command.
-   * Debugger: Added %%e, %%f, and %%g formats to .printf command.
+   * Debugger: Added %e, %f, and %g formats to .printf command.
    * Debugger: Verifier can now detect 64K address space index wrapping and abnormal DMA conditions.
    * Debugger: Added fbx (fill bytes with expression) command.
    * Debugger: r (register) command now allows access to 65C816 registers.
@@ -1323,7 +1468,7 @@
    * Display: Fixed a crash when Direct3D 11 is enabled and fails to initialize.
    * Display: Fixed alignment errors in OS Screen Only mode with extended PAL height enabled.
    * Display: Enabled frame skip and reduced latency in full screen vsync mode.
-   * GTIA: Player/missile size code %%10 can now trigger shifter lockup.
+   * GTIA: Player/missile size code %10 can now trigger shifter lockup.
    * GTIA: Improved accuracy of mid-shift size changes.
    * HLE: Fixed editor tab commands.
    * HLE: Fixed bug with init segment dispatching.
@@ -1438,7 +1583,7 @@
    * Debugger: .dumpdlist command now collapses runs of identical commands.
    * Debugger: Unassemble and dump commands now support continuation from the last address.
    * Debugger: Added deref signed byte (dsb) expression operator.
-   * Debugger: Added %%c and %%y formatting specifiers to .printf command.
+   * Debugger: Added %c and %y formatting specifiers to .printf command.
    * Debugger: Added .dmamap command to show ANTIC DMA pattern over the course of a frame.
    * Serial: 1030 Modem support.
    * Display: Added scanline display mode.
@@ -1637,7 +1782,7 @@
    * POKEY: Added partial emulation of SKSTAT bit 4 (direct input) during disk transfers.
    * Cassette: Fixed data blocks being silently dropped when reading some .cas files.
    * Cassette: Fixed inaccuracy in data rate produced from loading .cas files.
-   * GTIA: Fixed incorrect color for %%1000 pattern in mode 10 with lores ANTIC input.
+   * GTIA: Fixed incorrect color for %1000 pattern in mode 10 with lores ANTIC input.
    * VBXE: Warm reset no longer resets all registers like a cold reset.
 
 ## Version 1.9 [May 15, 2011]:

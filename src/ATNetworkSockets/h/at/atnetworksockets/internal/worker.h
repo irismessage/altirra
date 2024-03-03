@@ -1,7 +1,24 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2023 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #ifndef f_AT_ATNETWORKSOCKETS_INTERNAL_WORKER_H
 #define f_AT_ATNETWORKSOCKETS_INTERNAL_WORKER_H
 
 #include <vd2/system/vdstl.h>
+#include <at/atnetwork/emusocket.h>
 #include <at/atnetworksockets/worker.h>
 
 class ATNetSockWorker;
@@ -10,16 +27,18 @@ class VDFunctionThunkInfo;
 
 class ATNetSockBridgeHandler final : public vdrefcounted<IATSocketHandler> {
 public:
-	ATNetSockBridgeHandler(ATNetSockWorker *parent, SOCKET s, IATSocket *s2, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort);
+	ATNetSockBridgeHandler(ATNetSockWorker *parent, SOCKET s, IATStreamSocket *s2, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort);
 
 	uint32 GetSrcIpAddr() const { return mSrcIpAddr; }
 	uint16 GetSrcPort() const { return mSrcPort; }
 	uint32 GetDstIpAddr() const { return mDstIpAddr; }
 	uint16 GetDstPort() const { return mDstPort; }
+	ATSocketAddress GetHostAddr() const { return mHostAddr; }
 
 	void Shutdown();
 
-	void SetLocalSocket(IATSocket *s2);
+	void SetLocalSocket(IATStreamSocket *s2);
+	void SetSrcAddress(const ATSocketAddress& addr);
 
 	void OnNativeSocketConnect();
 	void OnNativeSocketReadReady();
@@ -38,13 +57,14 @@ protected:
 	void TryCopyToNative();
 	void TryCopyFromNative();
 
-	uint32 mSrcIpAddr;
-	uint16 mSrcPort;
-	uint32 mDstIpAddr;
-	uint16 mDstPort;
+	uint32 mSrcIpAddr = 0;
+	uint16 mSrcPort = 0;
+	uint32 mDstIpAddr = 0;
+	uint16 mDstPort = 0;
+	ATSocketAddress mHostAddr;
 	ATNetSockWorker *mpParent;
 	SOCKET mNativeSocket;
-	vdrefptr<IATSocket> mpLocalSocket;
+	vdrefptr<IATStreamSocket> mpLocalSocket;
 	bool mbLocalClosed;
 	bool mbNativeConnected;
 	bool mbNativeClosed;
@@ -60,24 +80,24 @@ protected:
 	char mSendBuf[1024];
 };
 
-class ATNetSockWorker final : public vdrefcounted<IATNetSockWorker>, public IATSocketListener, public IATUdpSocketListener {
+class ATNetSockWorker final : public vdrefcounted<IATNetSockWorker>, public IATEmuNetSocketListener, public IATEmuNetUdpSocketListener {
 	friend class ATNetSockBridgeHandler;
 public:
 	ATNetSockWorker();
 	~ATNetSockWorker();
 
-	virtual IATSocketListener *AsSocketListener() { return this; }
-	virtual IATUdpSocketListener *AsUdpListener() { return this; }
+	virtual IATEmuNetSocketListener *AsSocketListener() { return this; }
+	virtual IATEmuNetUdpSocketListener *AsUdpListener() { return this; }
 
-	bool Init(IATNetUdpStack *udp, IATNetTcpStack *tcp, bool externalAccess, uint32 forwardingAddr, uint16 forwardingPort);
+	bool Init(IATEmuNetUdpStack *udp, IATEmuNetTcpStack *tcp, bool externalAccess, uint32 forwardingAddr, uint16 forwardingPort);
 	void Shutdown();
 
 	void ResetAllConnections();
 
-	virtual bool GetHostAddressForLocalAddress(bool tcp, uint32 srcIp, uint16 srcPort, uint32 dstIp, uint16 dstPort, uint32& hostIp, uint16& hostPort);
+	bool GetHostAddressesForLocalAddress(bool tcp, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, ATSocketAddress& hostAddr, ATSocketAddress& remoteAddr) const override;
 
 public:
-	virtual bool OnSocketIncomingConnection(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, IATSocket *socket, IATSocketHandler **handler);
+	virtual bool OnSocketIncomingConnection(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, IATStreamSocket *socket, IATSocketHandler **handler);
 	virtual void OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, const void *data, uint32 dataLen);
 
 private:
@@ -97,8 +117,8 @@ private:
 	ATOM mWndClass = 0;
 	HWND mhwnd = nullptr;
 
-	IATNetTcpStack *mpTcpStack = nullptr;
-	IATNetUdpStack *mpUdpStack = nullptr;
+	IATEmuNetTcpStack *mpTcpStack = nullptr;
+	IATEmuNetUdpStack *mpUdpStack = nullptr;
 	bool mbAllowExternalAccess = false;
 
 	uint32 mForwardingAddr = 0;

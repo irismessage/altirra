@@ -21,6 +21,8 @@
 #include <vd2/system/hash.h>
 #include <vd2/system/math.h>
 #include <vd2/system/strutil.h>
+#include <at/atcore/devicesnapshot.h>
+#include <at/atcore/snapshotimpl.h>
 #include <at/atcore/scheduler.h>
 #include "ide.h"
 #include "idephysdisk.h"
@@ -420,7 +422,7 @@ void ATIDEEmulator::WriteByteAlt(uint8 address, uint8 value) {
 		// bit 2 = SRST (software reset)
 		// bit 1 = nIEN (inverted interrupt enable)
 
-		bool srst = (value & 0x02) != 0;
+		bool srst = (value & 0x04) != 0;
 
 		if (mbSoftwareReset != srst) {
 			mbSoftwareReset = srst;
@@ -458,6 +460,69 @@ void ATIDEEmulator::DebugWriteSector(uint32 lba, const void *dst, uint32 len) {
 		throw MyError("The disk image is write protected.");
 
 	mpDisk->WriteSectors(dst, lba, 1);
+}
+
+class ATSaveStateIDE final : public ATSnapExchangeObject<ATSaveStateIDE, "ATSaveStateIDE"> {
+public:
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	uint8 mArchReg[8] {};
+	bool mbArchSoftReset = false;
+	bool mbInt8BitXfers = false;
+	uint8 mIntSectorsPerBlock = 0;
+};
+
+template<ATExchanger T>
+void ATSaveStateIDE::Exchange(T& ex) {
+	ex.TransferArray("arch_reg", mArchReg);
+	ex.Transfer("arch_soft_reset", &mbArchSoftReset);
+
+	ex.Transfer("int_8bit_xfers", &mbInt8BitXfers);
+	ex.Transfer("int_sectors_per_block", &mIntSectorsPerBlock);
+}
+
+void ATIDEEmulator::GetSnapshotStatus(ATSnapshotStatus& status) const {
+	if (mActiveCommandState) {
+		status.mbInDiskTransfer = true;
+		status.mbPartialAccuracy = true;
+	}
+}
+
+void ATIDEEmulator::LoadState(const IATObjectState *state) {
+	ResetDevice();
+
+	if (!state)
+		return;
+
+	const auto& idestate = atser_cast<const ATSaveStateIDE&>(*state);
+
+	memcpy(mRegisters, idestate.mArchReg, sizeof(mRegisters));
+
+	mbTransfer16Bit = !idestate.mbInt8BitXfers;
+
+	// Sectors per block as set by SET MULTIPLE MODE must be pow2 2-128. We currently do not
+	// have a way to disable this so it will always be nonzero as well.
+	if (idestate.mIntSectorsPerBlock >= 2 && (idestate.mIntSectorsPerBlock & (idestate.mIntSectorsPerBlock - 1)) == 0)
+		mSectorsPerBlock = idestate.mIntSectorsPerBlock;
+	else
+		mSectorsPerBlock = 32;
+
+	mbSoftwareReset = idestate.mbArchSoftReset;
+
+}
+
+vdrefptr<IATObjectState> ATIDEEmulator::SaveState() const {
+	vdrefptr state { new ATSaveStateIDE };
+
+	static_assert(sizeof(mRegisters) == sizeof(state->mArchReg));
+	memcpy(state->mArchReg, mRegisters, sizeof(state->mArchReg));
+
+	state->mbInt8BitXfers = !mbTransfer16Bit;
+	state->mIntSectorsPerBlock = mSectorsPerBlock;
+	state->mbArchSoftReset = mbSoftwareReset;
+
+	return state;
 }
 
 void ATIDEEmulator::TimerCallback() {

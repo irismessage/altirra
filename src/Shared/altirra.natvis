@@ -281,6 +281,12 @@
 		<DisplayString>{mAddr[0],xb}</DisplayString>
 	</Type>
 	
+	<Type Name="ATSocketAddress">
+    <DisplayString Condition="mType==ATSocketAddressType::IPv4"><![CDATA[IPv4: {(mIPv4Address>>24)&255,i}.{(mIPv4Address>>16)&255,i}.{(mIPv4Address>>8)&255,i}.{mIPv4Address&255,i}:{mPort,i}]]></DisplayString>
+    <DisplayString Condition="mType==ATSocketAddressType::IPv6">IPv6</DisplayString>
+    <DisplayString>None</DisplayString>
+  </Type>
+
 	<Type Name="ATNetTcpConnectionKey">
 		<DisplayString>
 			<![CDATA[
@@ -289,6 +295,14 @@
 			]]>
 		</DisplayString>
 	</Type>
+
+  <Type Name="ATNetSockBridgeHandler">
+    <DisplayString>
+			<![CDATA[
+				{mSrcIpAddr&255,i}.{(mSrcIpAddr>>8)&255,i}.{(mSrcIpAddr>>16)&255,i}.{(mSrcIpAddr>>24)&255,i}:{mSrcPort,i} -> {mDstIpAddr&255,i}.{(mDstIpAddr>>8)&255,i}.{(mDstIpAddr>>16)&255,i}.{(mDstIpAddr>>24)&255,i}:{mDstPort,i}
+			]]>
+    </DisplayString>
+  </Type>
 
 	<Type Name="ATDBString">
 		<DisplayString>
@@ -485,5 +499,9 @@
 
     <Type Name="__m128i">
     <DisplayString>{m128i_u32[3],Xb} {m128i_u32[2],Xb} {m128i_u32[1],Xb} {m128i_u32[0],Xb}</DisplayString>
+  </Type>
+  
+  <Type Name="ATVBXEEmulator::AttrPixel">
+    <DisplayString>Colors:[{mPFK,nvoXb} {mPF0,nvoXb} {mPF1,nvoXb} {mPF2,nvoXb}] Ctrl:{mCtrl,nvoXb} Pri:{mPriority,nvoXb}</DisplayString>
   </Type>
 </AutoVisualizer>

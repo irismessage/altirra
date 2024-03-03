@@ -26,6 +26,7 @@ struct VDPixmap;
 class VDINTERFACE IVDImageEncoderPNG {
 public:
 	virtual ~IVDImageEncoderPNG() {}
+	virtual void SetPAR(double par) = 0;
 	virtual void Encode(const VDPixmap& px, const void *&p, uint32& len, bool quick_compress) = 0;
 };
 

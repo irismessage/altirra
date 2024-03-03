@@ -389,7 +389,7 @@ void VDDisplayRendererGDI::AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h,
 
 		::SetPixel(mhdc1x1, 0, 0, VDSwizzleU32(alphaColor) >> 8);
 
-		::AlphaBlend(mhdc, x, y, w, h, mhdc1x1, 0, 0, 1, 1, BLENDFUNCTION { AC_SRC_OVER, 0, alphaColor >> 24, 0 });
+		::AlphaBlend(mhdc, x, y, w, h, mhdc1x1, 0, 0, 1, 1, BLENDFUNCTION { AC_SRC_OVER, 0, (BYTE)(alphaColor >> 24), 0 });
 	}
 }
 

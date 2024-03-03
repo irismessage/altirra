@@ -26,6 +26,9 @@ class ATScheduler;
 class IATDeviceIndicatorManager;
 class ATIDEPhysicalDisk;
 class IATBlockDevice;
+template<typename T> class vdrefptr;
+class IATObjectState;
+struct ATSnapshotStatus;
 
 class ATIDEEmulator : protected IVDTimerCallback {
 	ATIDEEmulator(const ATIDEEmulator&);
@@ -77,6 +80,10 @@ public:
 
 	void DebugReadSector(uint32 lba, void *dst, uint32 len);
 	void DebugWriteSector(uint32 lba, const void *dst, uint32 len);
+
+	void GetSnapshotStatus(ATSnapshotStatus& status) const;
+	void LoadState(const IATObjectState *state);
+	vdrefptr<IATObjectState> SaveState() const;
 
 protected:
 	void TimerCallback();

@@ -36,6 +36,7 @@ VDStringW ATGetHelpPath();
 void ATShowHelp(void *hwnd, const wchar_t *filename);
 
 void ATLaunchURL(const wchar_t *url);
+void ATLaunchFileForEdit(const wchar_t *file);
 
 bool ATIsUserAdministrator();
 

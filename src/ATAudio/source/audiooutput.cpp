@@ -223,6 +223,12 @@ public:
 	ATAudioApi GetApi() override;
 	void SetApi(ATAudioApi api) override;
 
+	void AddInternalAudioTap(IATInternalAudioTap *tap) override;
+	void RemoveInternalAudioTap(IATInternalAudioTap *tap) override;
+
+	void BlockInternalAudio() override;
+	void UnblockInternalAudio() override;
+
 	void SetAudioTap(IATAudioTap *tap) override;
 
 	ATUIAudioStatus GetAudioStatus() const override {
@@ -313,6 +319,7 @@ protected:
 	int		mExtraBuffer = 100;
 	bool	mbMute = false;
 	bool	mbNativeAudioEnabled = false;
+	uint32	mBlockInternalAudioCount = 0;
 
 	bool	mbFilterStereo = false;
 	uint32	mFilterMonoSamples = 0;
@@ -334,6 +341,7 @@ protected:
 	uint64	mProfileBlockStartTime = 0;
 
 	vdautoptr<IVDAudioOutput>	mpAudioOut;
+	vdautoptr<vdfastvector<IATInternalAudioTap *>> mpInternalAudioTaps = nullptr;
 	IATAudioTap *mpAudioTap = nullptr;
 	IATSyncAudioSamplePlayer *mpSamplePlayer = nullptr;
 	IATSyncAudioSamplePlayer *mpEdgeSamplePlayer = nullptr;
@@ -427,6 +435,35 @@ void ATAudioOutput::SetApi(ATAudioApi api) {
 
 	mSelectedApi = api;
 	ReinitAudio();
+}
+
+void ATAudioOutput::AddInternalAudioTap(IATInternalAudioTap *tap) {
+	if (!mpInternalAudioTaps)
+		mpInternalAudioTaps = new vdfastvector<IATInternalAudioTap *>;
+
+	mpInternalAudioTaps->push_back(tap);
+}
+
+void ATAudioOutput::RemoveInternalAudioTap(IATInternalAudioTap *tap) {
+	if (mpInternalAudioTaps) {
+		auto it = std::find(mpInternalAudioTaps->begin(), mpInternalAudioTaps->end(), tap);
+		
+		if (it != mpInternalAudioTaps->end()) {
+			*it = mpInternalAudioTaps->back();
+			mpInternalAudioTaps->pop_back();
+
+			if (mpInternalAudioTaps->empty())
+				mpInternalAudioTaps = nullptr;
+		}
+	}
+}
+
+void ATAudioOutput::BlockInternalAudio() {
+	++mBlockInternalAudioCount;
+}
+
+void ATAudioOutput::UnblockInternalAudio() {
+	--mBlockInternalAudioCount;
 }
 
 void ATAudioOutput::SetAudioTap(IATAudioTap *tap) {
@@ -595,11 +632,22 @@ void ATAudioOutput::InternalWriteAudio(
 	}
 
 	if (count) {
-		// copy in samples
+		// notify internal audio taps if there are any
+		if (mpInternalAudioTaps) {
+			for(IATInternalAudioTap *taps : *mpInternalAudioTaps)
+				taps->WriteInternalAudio(left, count, timestamp);
+		}
+
+		// copy in samples if internal audio not blocked
 		float *const dstLeft = &mSourceBuffer[0][mBufferLevel];
 		float *const dstRight = mbFilterStereo ? &mSourceBuffer[1][mBufferLevel] : nullptr;
 
-		if (mbFilterStereo && pushStereoAsMono && right) {
+		if (mBlockInternalAudioCount) {
+			memset(dstLeft + kPreFilterOffset, 0, sizeof(float) * count);
+
+			if (mbFilterStereo)
+				memcpy(dstRight + kPreFilterOffset, 0, sizeof(float) * count);
+		} else if (mbFilterStereo && pushStereoAsMono && right) {
 			float *VDRESTRICT mixDstLeft = dstLeft + kPreFilterOffset;
 			float *VDRESTRICT mixDstRight = dstRight + kPreFilterOffset;
 			const float *VDRESTRICT mixSrcLeft = left;

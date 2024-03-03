@@ -51,6 +51,8 @@
 #ifndef f_AT_ATCORE_DEVICEPBI_H
 #define f_AT_ATCORE_DEVICEPBI_H
 
+#include <vd2/system/unknown.h>
+
 struct ATPBIDeviceInfo {
 	// Device ID bit in PDVS, i.e. $01, $02, etc.
 	uint8	mDeviceId;
@@ -65,7 +67,9 @@ public:
 	virtual void GetPBIDeviceInfo(ATPBIDeviceInfo& devInfo) const = 0;
 	virtual void SelectPBIDevice(bool enable) = 0;
 
-	/// Returns true if the device is currently overlaying the math pack.
+	// Returns true if the device is currently overlaying the math pack.
+	// This is only called for selected devices, so devices can just
+	// hardcode this to true.
 	virtual bool IsPBIOverlayActive() const = 0;
 
 	/// Returns status bits in $D1FF. busData is incoming bus data to be
@@ -79,9 +83,14 @@ public:
 
 class IATDevicePBIManager {
 public:
+	static constexpr uint32 kTypeID = "IATDevicePBIManager"_vdtypeid;
+
 	virtual void AddDevice(IATPBIDevice *dev) = 0;
 	virtual void RemoveDevice(IATPBIDevice *dev) = 0;
 	virtual void DeselectSelf(IATPBIDevice *dev) = 0;
+
+	virtual void AssertIRQ(uint8 id) = 0;
+	virtual void NegateIRQ(uint8 id) = 0;
 };
 
 class IATDevicePBIConnection {

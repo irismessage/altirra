@@ -327,7 +327,7 @@ void ATHLECIOHook::ReinitHooks(uint8 hookPage) {
 	}
 
 	// printer
-	if (mCIODeviceMap['P'] && (mCIOPatchMask & (1 << ('P' - 'A')))) {
+	if (mCIODeviceMap[+'P'] && (mCIOPatchMask & (1 << ('P' - 'A')))) {
 		for(int i=0; i<6; ++i) {
 			if (!mPrinterHookAddresses[i])
 				continue;

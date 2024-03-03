@@ -48,6 +48,9 @@
     <ClInclude Include="..\h\at\atui\uidragdrop.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\h\at\atui\accessibility.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\stdafx.cpp">
@@ -72,6 +75,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\uimenulist.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiaccessibility.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

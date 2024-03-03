@@ -66,6 +66,9 @@ public:
 
 	virtual void SetSlightSID(ATSlightSIDEmulator *emu) = 0;
 
+	virtual vdrect32 GetPadArea() const = 0;
+	virtual void SetPadInputEnabled(bool enable) = 0;
+
 	virtual void SetFpsIndicator(float fps) = 0;
 
 	enum class StatusPriority : int {

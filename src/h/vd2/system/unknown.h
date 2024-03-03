@@ -45,8 +45,18 @@ public:
 	}
 };
 
+template<typename T>
+concept VDUnknownCastable = requires(T x) {
+	x.AsInterface(uint32(0));
+};
+
+template<typename T>
+concept VDUnknownIdentifiable = requires {
+	T::kTypeID;
+};
+
 ///////////////////////////////////////////////////////////////////////////
-//	IVDUnknown
+//	IVDRefUnknown
 ///	Base interface for runtime type discovery with reference counting.
 class IVDRefUnknown : public IVDUnknown {
 public:

@@ -51,7 +51,10 @@
     </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="h\1030full.h" />
     <ClInclude Include="h\1090.h" />
+    <ClInclude Include="h\1400xl.h" />
+    <ClInclude Include="h\1450xld.h" />
     <ClInclude Include="h\audiorawsource.h" />
     <ClInclude Include="h\asyncdownloader.h" />
     <ClInclude Include="h\bit3.h" />
@@ -70,6 +73,7 @@
     <ClInclude Include="h\debuggersettings.h" />
     <ClInclude Include="h\decode_png.h" />
     <ClInclude Include="h\devicemanager.h" />
+    <ClInclude Include="h\devxcmdcopypaste.h" />
     <ClInclude Include="h\diskdrive815.h" />
     <ClInclude Include="h\diskdriveamdc.h" />
     <ClInclude Include="h\diskdriveatr8000.h" />
@@ -80,9 +84,11 @@
     <ClInclude Include="h\diskdrivexf551.h" />
     <ClInclude Include="h\diskinterface.h" />
     <ClInclude Include="h\diskprofile.h" />
+    <ClInclude Include="h\disktrace.h" />
     <ClInclude Include="h\diskvirtimagebase.h" />
     <ClInclude Include="h\errordecode.h" />
     <ClInclude Include="h\fdc.h" />
+    <ClInclude Include="h\inputtypes.h" />
     <ClInclude Include="h\mediamanager.h" />
     <ClInclude Include="h\palettegenerator.h" />
     <ClInclude Include="h\palettesolver.h" />
@@ -99,11 +105,15 @@
     <ClInclude Include="h\side3.h" />
     <ClInclude Include="h\sio2sd.h" />
     <ClCompile Include="source\1030.cpp" />
+    <ClCompile Include="source\1030full.cpp" />
     <ClCompile Include="source\1090.cpp" />
+    <ClCompile Include="source\1400xl.cpp" />
+    <ClCompile Include="source\1450xld.cpp" />
     <ClCompile Include="source\about.cpp" />
     <ClCompile Include="source\allocator.cpp" />
     <ClCompile Include="source\antic.cpp" />
     <ClCompile Include="source\artifacting.cpp" />
+    <ClCompile Include="source\artifacting_filters.cpp" />
     <ClCompile Include="source\artifacting_neon.cpp">
       <ExcludedFromBuild Condition="'$(Platform)'=='Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Platform)'=='x64'">true</ExcludedFromBuild>
@@ -187,9 +197,11 @@
     <ClCompile Include="source\decode_png.cpp" />
     <ClCompile Include="source\devicemanager.cpp" />
     <ClCompile Include="source\devices.cpp" />
+    <ClCompile Include="source\devxcmdcopypaste.cpp" />
     <ClCompile Include="source\devxcmdexploredisk.cpp" />
     <ClCompile Include="source\devxcmdmountvhd.cpp" />
     <ClCompile Include="source\devxcmdmountvhd_win32.cpp" />
+    <ClCompile Include="source\devxcmdrescandynamicdisk.cpp" />
     <ClCompile Include="source\directorywatcher.cpp" />
     <ClCompile Include="source\disasm.cpp" />
     <ClCompile Include="source\disk.cpp" />
@@ -203,6 +215,7 @@
     <ClCompile Include="source\diskdrivexf551.cpp" />
     <ClCompile Include="source\diskinterface.cpp" />
     <ClCompile Include="source\diskprofile.cpp" />
+    <ClCompile Include="source\disktrace.cpp" />
     <ClCompile Include="source\diskvirtimage.cpp" />
     <ClCompile Include="source\diskvirtimagebase.cpp" />
     <ClCompile Include="source\diskvirtimagesdfs.cpp" />
@@ -266,7 +279,6 @@
     <ClCompile Include="source\sapwriter.cpp" />
     <ClCompile Include="source\savestate.cpp" />
     <ClCompile Include="source\savestateio.cpp" />
-    <ClCompile Include="source\savestatetypes.cpp" />
     <ClCompile Include="source\scsidisk.cpp" />
     <ClCompile Include="source\sdrive.cpp" />
     <ClCompile Include="source\settings.cpp" />
@@ -284,6 +296,10 @@
     <ClCompile Include="source\texteditor.cpp" />
     <ClCompile Include="source\trace.cpp" />
     <ClCompile Include="source\tracecpu.cpp" />
+    <ClCompile Include="source\tracefileencoding.cpp" />
+    <ClCompile Include="source\tracefileformat.cpp" />
+    <ClCompile Include="source\traceimporta800.cpp" />
+    <ClCompile Include="source\traceio.cpp" />
     <ClCompile Include="source\tracetape.cpp" />
     <ClCompile Include="source\tracevideo.cpp" />
     <ClCompile Include="source\ui.cpp" />
@@ -302,6 +318,7 @@
     <ClCompile Include="source\uicompatdb.cpp" />
     <ClCompile Include="source\uiconf850.cpp" />
     <ClCompile Include="source\uiconfblackbox.cpp" />
+    <ClCompile Include="source\uiconfdev1400xl.cpp" />
     <ClCompile Include="source\uiconfdev815.cpp" />
     <ClCompile Include="source\uiconfdevamdc.cpp" />
     <ClCompile Include="source\uiconfdev1030.cpp" />
@@ -314,6 +331,7 @@
     <ClCompile Include="source\uiconfdevhappy810.cpp" />
     <ClCompile Include="source\uiconfdevkmkjzide.cpp" />
     <ClCompile Include="source\uiconfdevkmkjzide2.cpp" />
+    <ClCompile Include="source\uiconfdevnetserial.cpp" />
     <ClCompile Include="source\uiconfdevparfilewriter.cpp" />
     <ClCompile Include="source\uiconfdevpercom.cpp" />
     <ClCompile Include="source\uiconfdevpocketmodem.cpp" />
@@ -338,6 +356,7 @@
     <ClCompile Include="source\uidbgconsole.cpp" />
     <ClCompile Include="source\uidbgdisasm.cpp" />
     <ClCompile Include="source\uidbgdebugdisplay.cpp" />
+    <ClCompile Include="source\uidbghelp.cpp" />
     <ClCompile Include="source\uidbghistory.cpp" />
     <ClCompile Include="source\uidbgmemory.cpp" />
     <ClCompile Include="source\uidbgpane.cpp" />
@@ -352,11 +371,14 @@
     <ClCompile Include="source\uidiskexplorer.cpp" />
     <ClCompile Include="source\uidiskexplorer_win32.cpp" />
     <ClCompile Include="source\uidisplay.cpp" />
+    <ClCompile Include="source\uidisplayaccessibility.cpp" />
+    <ClCompile Include="source\uidisplayaccessibility_win32.cpp" />
     <ClCompile Include="source\uidisplaytool.cpp" />
     <ClCompile Include="source\uidragdrop.cpp" />
     <ClCompile Include="source\uidragoncart.cpp" />
     <ClCompile Include="source\uiemuerror.cpp" />
     <ClCompile Include="source\uienhancedtext.cpp" />
+    <ClCompile Include="source\uifrontend.cpp" />
     <ClCompile Include="source\uihistoryview.cpp" />
     <ClCompile Include="source\uipageddialog.cpp" />
     <ClCompile Include="source\uiscreeneffects.cpp" />
@@ -407,6 +429,7 @@
     <ClCompile Include="source\updatefeed.cpp" />
     <ClCompile Include="source\updatefeed_win32.cpp" />
     <ClCompile Include="source\vbxe.cpp" />
+    <ClCompile Include="source\vbxestate.cpp" />
     <ClCompile Include="source\verifier.cpp" />
     <ClCompile Include="source\veronica.cpp" />
     <ClCompile Include="source\videostillimage.cpp" />
@@ -494,6 +517,9 @@
     <ClInclude Include="h\startuplogger.h" />
     <ClInclude Include="h\trace.h" />
     <ClInclude Include="h\tracecpu.h" />
+    <ClInclude Include="h\tracefileencoding.h" />
+    <ClInclude Include="h\tracefileformat.h" />
+    <ClInclude Include="h\traceio.h" />
     <ClInclude Include="h\tracetape.h" />
     <ClInclude Include="h\tracevideo.h" />
     <ClInclude Include="h\uiaccessors.h" />
@@ -518,16 +544,20 @@
     <ClInclude Include="h\uidbgwatch.h" />
     <ClInclude Include="h\uidevices.h" />
     <ClInclude Include="h\uidiskexplorer_win32.h" />
+    <ClInclude Include="h\uidisplayaccessibility.h" />
+    <ClInclude Include="h\uidisplayaccessibility_win32.h" />
     <ClInclude Include="h\uidisplaytool.h" />
     <ClInclude Include="h\uidragdrop.h" />
     <ClInclude Include="h\uifilefilters.h" />
     <ClInclude Include="h\uifirmwaremenu.h" />
+    <ClInclude Include="h\uifrontend.h" />
     <ClInclude Include="h\uihistoryview.h" />
     <ClInclude Include="h\uipageddialog.h" />
     <ClInclude Include="h\uisettingswindow.h" />
     <ClInclude Include="h\uitapeeditor.h" />
     <ClInclude Include="h\updatecheck.h" />
     <ClInclude Include="h\updatefeed.h" />
+    <ClInclude Include="h\vbxestate.h" />
     <ClInclude Include="h\veronica.h" />
     <ClInclude Include="h\videomanager.h" />
     <ClInclude Include="h\videostillimage.h" />
@@ -616,47 +646,31 @@
     <None Include="h\antic_sse2.inl" />
     <None Include="h\cpumachine.inl" />
     <None Include="..\..\out\release\850handler.bin" />
-    <None Include="..\..\out\debug\850handler.bin" />
     <None Include="..\..\out\release\850relocator.bin" />
-    <None Include="..\..\out\debug\850relocator.bin" />
     <None Include="h\gtiarenderer_neon.inl" />
     <None Include="h\gtiarenderer_ssse3_intrin.inl" />
     <None Include="h\gtia_neon.inl" />
     <None Include="h\gtia_sse2_intrin.inl" />
+    <None Include="res\1030relay.pcm" />
     <None Include="res\about.txt" />
     <None Include="..\..\out\release\atbasic.bin" />
-    <None Include="..\..\out\debug\atdiskloader128.bin" />
     <None Include="..\..\out\release\atdiskloader128.bin" />
-    <None Include="..\..\out\debug\basic.rom" />
-    <None Include="..\..\out\release\basic.rom" />
-    <None Include="..\..\out\debug\bootsecdos2.bin" />
     <None Include="..\..\out\release\bootsecdos2.bin" />
     <None Include="res\changes.txt" />
     <None Include="res\compatdb.atcpengine" />
+    <None Include="res\dbghelp-template.html" />
     <None Include="res\dbghelp.txt" />
     <None Include="res\DiskSpin.pcm" />
     <None Include="res\eject.ico" />
-    <None Include="..\..\out\debug\hlekernel.rom" />
-    <None Include="..\..\out\release\hlekernel.rom" />
     <None Include="..\..\out\release\kernel.rom" />
-    <None Include="..\..\out\debug\kernel.rom" />
-    <None Include="..\..\out\debug\kernelxl.rom" />
     <None Include="..\..\out\release\kernelxl.rom" />
-    <None Include="res\kernel1.bin" />
-    <None Include="res\kernel2.bin" />
-    <None Include="res\kernel3.bin" />
     <None Include="res\menu_default.txt" />
-    <None Include="..\..\out\Debug\nocartridge.rom" />
     <None Include="..\..\out\Release\nocartridge.rom" />
-    <None Include="..\..\out\debug\nogame.rom" />
     <None Include="..\..\out\release\nogame.rom" />
-    <None Include="..\..\out\debug\nohdbios.rom" />
     <None Include="..\..\out\release\nohdbios.rom" />
     <None Include="..\..\out\release\nokernel.rom" />
-    <None Include="..\..\out\debug\nokernel.rom" />
     <None Include="res\profilerToolbar.bmp" />
     <None Include="res\program.ico" />
-    <None Include="..\..\out\Debug\superkernel.rom" />
     <None Include="..\..\out\Release\superkernel.rom" />
     <None Include="res\romset.html" />
     <None Include="res\speaker-click.pcm" />
@@ -664,7 +678,6 @@
     <None Include="res\targetoff.cur" />
     <None Include="res\TrackStep.pcm" />
     <None Include="res\TrackStep2.pcm" />
-    <None Include="..\..\out\debug\ultimate.lzrom" />
     <None Include="..\..\out\release\ultimate.lzrom" />
     <CompileRawFont Include="data\xep80_font_internal.bmp">
       <CellHeight>16</CellHeight>
@@ -712,9 +725,9 @@
     <None Include="manifest\comctl6_arm64.manifest">
       <ExcludedFromBuild Condition="'$(Platform)'!='ARM64'">true</ExcludedFromBuild>
     </None>
-    <Manifest Include="manifest\win7.manifest">
+    <None Include="manifest\win7.manifest">
       <SubType>Designer</SubType>
-    </Manifest>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="source\gtia_sse2.asm">
@@ -784,7 +797,6 @@
     <Image Include="res\profilerToolbar.png" />
     <Image Include="res\traceViewerToolbar.png" />
     <Image Include="res\warning.png" />
-    <Image Include="traceViewerToolbar.png" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="res\cmdhelp.txt" />

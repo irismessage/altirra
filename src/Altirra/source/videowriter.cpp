@@ -23,6 +23,8 @@
 
 #if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
 	#include <at/atcore/intrin_sse2.h>
+#elif defined(VD_CPU_ARM64)
+	#include <at/atcore/intrin_neon.h>
 #endif
 
 #include <at/atio/wav.h>
@@ -2067,7 +2069,11 @@ private:
 ATAVIEncoder::ATAVIEncoder(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, bool encodeAllFrames) {
 	mbEncodeAllFrames = encodeAllFrames;
 	mKeyCounter = 0;
-	mKeyInterval = 60;
+
+	if (venc == kATVideoEncoding_Raw)
+		mKeyInterval = 1;
+	else
+		mKeyInterval = 60;
 
 	mFile = VDCreateMediaOutputAVIFile();
 
@@ -2923,6 +2929,105 @@ namespace {
 	}
 #endif
 
+#if VD_CPU_ARM64
+	void BlitChroma444ToNV12_NEON(void *uvdst, ptrdiff_t uvpitch, const void *usrc, ptrdiff_t upitch, const void *vsrc, ptrdiff_t vpitch, uint32 w, uint32 h) {
+		uint8 *uvdst8 = (uint8 *)uvdst;
+		const uint8 *usrc8 = (uint8 *)usrc;
+		const uint8 *vsrc8 = (uint8 *)vsrc;
+
+		uint32 w8 = w >> 3;
+
+		uint8x16_t umask = vreinterpretq_u8_u16(vmovq_n_u16(0x00FF));
+		uint8x16_t rightAndMask = ATIntrinGetEndMask_NEON(2 * (w & 7));
+		uint8x16_t rightOrMask = vbicq_u8(vmovq_n_u8(0x80), rightAndMask);
+
+		while(h--) {
+			uint8 *VDRESTRICT uvdst2 = uvdst8;
+			uvdst8 += uvpitch;
+
+			const uint8 *VDRESTRICT usrca2 = usrc8;
+			usrc8 += upitch;
+			const uint8 *VDRESTRICT usrcb2 = usrc8;
+			usrc8 += upitch;
+			const uint8 *VDRESTRICT vsrca2 = vsrc8;
+			vsrc8 += vpitch;
+			const uint8 *VDRESTRICT vsrcb2 = vsrc8;
+			vsrc8 += vpitch;
+
+			// We take advantage of our known layout here, which is 16-byte aligned chroma scanlines with 16 bytes before
+			// and after. This means that the first and last segments might just need some extra masking.
+			uint8x16_t prevU = vrhaddq_u8(vld1q_u8(usrca2 - 1), vld1q_u8(usrcb2 - 1));
+			uint8x16_t prevV = vrhaddq_u8(vld1q_u8(vsrca2 - 2), vld1q_u8(vsrcb2 - 2));
+			prevU = vreinterpretq_u8_u16(vsetq_lane_u16(0x8080, vreinterpretq_u16_u8(prevU), 0));
+			prevV = vreinterpretq_u8_u16(vsetq_lane_u16(0x8080, vreinterpretq_u16_u8(prevV), 0));
+
+			uint8x16_t curU  = vrhaddq_u8(vld1q_u8(usrca2 + 0), vld1q_u8(usrcb2 + 0));
+			uint8x16_t curV  = vrhaddq_u8(vld1q_u8(vsrca2 - 1), vld1q_u8(vsrcb2 - 1));
+			uint8x16_t nextU = vrhaddq_u8(vld1q_u8(usrca2 + 1), vld1q_u8(usrcb2 + 1));
+			uint8x16_t nextV = vrhaddq_u8(vld1q_u8(vsrca2 + 0), vld1q_u8(vsrcb2 + 0));
+			usrca2 += 16;
+			usrcb2 += 16;
+			vsrca2 += 16;
+			vsrcb2 += 16;
+
+			uint8x16_t u = vrhaddq_u8(vrhaddq_u8(prevU, nextU), curU);
+			uint8x16_t v = vrhaddq_u8(vrhaddq_u8(prevV, nextV), curV);
+
+			uint8x16_t uv = vbslq_u8(umask, u, v);
+
+			vst1q_u8(uvdst2, uv);
+			uvdst2 += 16;
+
+			for(uint32 i = 1; i < w8; ++i) {
+				uint8x16_t prevU = vrhaddq_u8(vld1q_u8(usrca2 - 1), vld1q_u8(usrcb2 - 1));
+				uint8x16_t prevV = vrhaddq_u8(vld1q_u8(vsrca2 - 2), vld1q_u8(vsrcb2 - 2));
+				uint8x16_t curU  = vrhaddq_u8(vld1q_u8(usrca2 + 0), vld1q_u8(usrcb2 + 0));
+				uint8x16_t curV  = vrhaddq_u8(vld1q_u8(vsrca2 - 1), vld1q_u8(vsrcb2 - 1));
+				uint8x16_t nextU = vrhaddq_u8(vld1q_u8(usrca2 + 1), vld1q_u8(usrcb2 + 1));
+				uint8x16_t nextV = vrhaddq_u8(vld1q_u8(vsrca2 + 0), vld1q_u8(vsrcb2 + 0));
+				usrca2 += 16;
+				usrcb2 += 16;
+				vsrca2 += 16;
+				vsrcb2 += 16;
+
+				uint8x16_t u = vrhaddq_u8(vrhaddq_u8(prevU, nextU), curU);
+				uint8x16_t v = vrhaddq_u8(vrhaddq_u8(prevV, nextV), curV);
+
+				uint8x16_t uv = vbslq_u8(umask, u, v);
+
+				vst1q_u8(uvdst2, uv);
+				uvdst2 += 16;
+			}
+
+			// do leftover bytes
+			if (w & 7) {
+				uint8x16_t prevU = vrhaddq_u8(vld1q_u8(usrca2 - 1), vld1q_u8(usrcb2 - 1));
+				uint8x16_t prevV = vrhaddq_u8(vld1q_u8(vsrca2 - 2), vld1q_u8(vsrcb2 - 2));
+				uint8x16_t curU  = vrhaddq_u8(vld1q_u8(usrca2 + 0), vld1q_u8(usrcb2 + 0));
+				uint8x16_t curV  = vrhaddq_u8(vld1q_u8(vsrca2 - 1), vld1q_u8(vsrcb2 - 1));
+				uint8x16_t nextU = vrhaddq_u8(vld1q_u8(usrca2 + 1), vld1q_u8(usrcb2 + 1));
+				uint8x16_t nextV = vrhaddq_u8(vld1q_u8(vsrca2 + 0), vld1q_u8(vsrcb2 + 0));
+
+				nextU = vorrq_u8(vandq_u8(nextU, rightAndMask), rightOrMask);
+				nextV = vorrq_u8(vandq_u8(nextV, rightAndMask), rightOrMask);
+
+				usrca2 += 16;
+				usrcb2 += 16;
+				vsrca2 += 16;
+				vsrcb2 += 16;
+
+				uint8x16_t u = vrhaddq_u8(vrhaddq_u8(prevU, nextU), curU);
+				uint8x16_t v = vrhaddq_u8(vrhaddq_u8(prevV, nextV), curV);
+
+				uint8x16_t uv = vbslq_u8(umask, u, v);
+
+				vst1q_u8(uvdst2, uv);
+				uvdst2 += 16;
+			}
+		}
+	}
+#endif
+
 	void BlitChroma420ToNV12_Reference(void *uvdst, ptrdiff_t uvpitch, const void *usrc, ptrdiff_t upitch, const void *vsrc, ptrdiff_t vpitch, uint32 w, uint32 h) {
 		uint8 *uvdst8 = (uint8 *)uvdst;
 		const uint8 *usrc8 = (uint8 *)usrc;
@@ -2934,7 +3039,7 @@ namespace {
 
 			const uint8 *VDRESTRICT usrc2 = (const uint8 *)usrc8;
 			usrc8 += upitch;
-			const uint8 *VDRESTRICT vsrc2 = (const uint8 *)usrc8;
+			const uint8 *VDRESTRICT vsrc2 = (const uint8 *)vsrc8;
 			vsrc8 += vpitch;
 
 			for(uint32 i=w; i; --i) {
@@ -2974,10 +3079,52 @@ namespace {
 	}
 #endif
 
+#if VD_CPU_ARM64
+	void BlitChroma420ToNV12_NEON(void *uvdst, ptrdiff_t uvpitch, const void *usrc, ptrdiff_t upitch, const void *vsrc, ptrdiff_t vpitch, uint32 w, uint32 h) {
+		uint8 *uvdst8 = (uint8 *)uvdst;
+		const uint8 *usrc8 = (uint8 *)usrc;
+		const uint8 *vsrc8 = (uint8 *)vsrc;
+
+		uint32 w16 = (w + 15) >> 4;
+
+		while(h--) {
+			uint8 *VDRESTRICT uvdst2 = uvdst8;
+			uvdst8 += uvpitch;
+
+			const uint8 *VDRESTRICT usrc2 = usrc8;
+			usrc8 += upitch;
+			const uint8 *VDRESTRICT vsrc2 = vsrc8;
+			vsrc8 += vpitch;
+
+			for(uint32 i=w16; i; --i) {
+				uint8x16_t u = vld1q_u8(usrc2);
+				uint8x16_t v = vld1q_u8(vsrc2);
+
+				usrc2 += 16;
+				vsrc2 += 16;
+
+				// This may overwrite up to 30 bytes, but we've guaranteed that we have this
+				// padding at the end of the buffer.
+				vst1q_u8(uvdst2, vzip1q_u8(u, v));
+				uvdst2 += 16;
+				vst1q_u8(uvdst2, vzip2q_u8(u, v));
+				uvdst2 += 16;
+			}
+		}
+	}
+#endif
+
 	void BlitChroma444ToNV12(void *uvdst, ptrdiff_t uvpitch, const void *usrc, ptrdiff_t upitch, const void *vsrc, ptrdiff_t vpitch, uint32 w, uint32 h) {
 #if VD_CPU_X86 || VD_CPU_X64
 		if (w >= 32 && SSE2_enabled) {
 			BlitChroma444ToNV12_SSE2(uvdst, uvpitch, usrc, upitch, vsrc, vpitch, w, h);
+			return;
+		}
+#endif
+
+#if VD_CPU_ARM64
+		if (w >= 32) {
+			BlitChroma444ToNV12_NEON(uvdst, uvpitch, usrc, upitch, vsrc, vpitch, w, h);
 			return;
 		}
 #endif
@@ -2989,6 +3136,13 @@ namespace {
 #if VD_CPU_X86 || VD_CPU_X64
 		if (SSE2_enabled) {
 			BlitChroma420ToNV12_SSE2(uvdst, uvpitch, usrc, upitch, vsrc, vpitch, w, h);
+			return;
+		}
+#endif
+
+#if VD_CPU_ARM64
+		if (w >= 32) {
+			BlitChroma420ToNV12_NEON(uvdst, uvpitch, usrc, upitch, vsrc, vpitch, w, h);
 			return;
 		}
 #endif
@@ -3187,7 +3341,7 @@ public:
 		const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, bool encodeAllFrames, IATUIRenderer *r) override;
 	void Shutdown() override;
 
-	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd) override;
+	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd, float par) override;
 	void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp);
 
 protected:
@@ -3426,7 +3580,7 @@ void ATVideoWriter::Shutdown() {
 	}
 }
 
-void ATVideoWriter::WriteFrame(const VDPixmap& px, uint64 timestamp, uint64 timestampEnd) {
+void ATVideoWriter::WriteFrame(const VDPixmap& px, uint64 timestamp, uint64 timestampEnd, float par) {
 	if (mbErrorState)
 		return;
 

@@ -21,3 +21,6 @@ bool VDTInternalOptions::sbEnableDXFlipMode = true;
 bool VDTInternalOptions::sbEnableDXFlipDiscard = true;
 bool VDTInternalOptions::sbEnableDXWaitableObject = true;
 bool VDTInternalOptions::sbEnableDXDoNotWait = true;
+bool VDTInternalOptions::sbD3D11Force9_1 = false;
+bool VDTInternalOptions::sbD3D11Force9_3 = false;
+bool VDTInternalOptions::sbD3D11Force10_0 = false;

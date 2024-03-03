@@ -754,9 +754,6 @@
     <ClCompile Include="source\cmdcassette.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\savestatetypes.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\savestateio.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -944,6 +941,60 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\devxcmdexploredisk.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\vbxestate.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uifrontend.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\1400xl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\1450xld.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdev1400xl.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevnetserial.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\devxcmdcopypaste.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidbghelp.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\tracefileformat.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\traceio.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\tracefileencoding.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidisplayaccessibility_win32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uidisplayaccessibility.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\devxcmdrescandynamicdisk.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\artifacting_filters.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\disktrace.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\1030full.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\traceimporta800.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -1542,6 +1593,45 @@
     <ClInclude Include="h\uidiskexplorer_win32.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="h\vbxestate.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uifrontend.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\inputtypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\1400xl.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\1450xld.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\devxcmdcopypaste.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\tracefileformat.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\traceio.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\tracefileencoding.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidisplayaccessibility_win32.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uidisplayaccessibility.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\disktrace.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\1030full.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="h\cpumachine.inl">
@@ -1550,13 +1640,7 @@
     <None Include="..\..\out\release\850handler.bin">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="..\..\out\debug\850handler.bin">
-      <Filter>Resource Files</Filter>
-    </None>
     <None Include="..\..\out\release\850relocator.bin">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="..\..\out\debug\850relocator.bin">
       <Filter>Resource Files</Filter>
     </None>
     <None Include="res\about.txt">
@@ -1565,19 +1649,7 @@
     <None Include="..\..\out\release\atbasic.bin">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="..\..\out\debug\atdiskloader128.bin">
-      <Filter>Resource Files</Filter>
-    </None>
     <None Include="..\..\out\release\atdiskloader128.bin">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="..\..\out\debug\basic.rom">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="..\..\out\release\basic.rom">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="..\..\out\debug\bootsecdos2.bin">
       <Filter>Resource Files</Filter>
     </None>
     <None Include="..\..\out\release\bootsecdos2.bin">
@@ -1595,19 +1667,7 @@
     <None Include="res\eject.ico">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="..\..\out\debug\hlekernel.rom">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="..\..\out\release\hlekernel.rom">
-      <Filter>Resource Files</Filter>
-    </None>
     <None Include="..\..\out\release\kernel.rom">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="..\..\out\debug\kernel.rom">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="..\..\out\debug\kernelxl.rom">
       <Filter>Resource Files</Filter>
     </None>
     <None Include="..\..\out\release\kernelxl.rom">
@@ -1616,19 +1676,10 @@
     <None Include="res\menu_default.txt">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="..\..\out\Debug\nocartridge.rom">
-      <Filter>Resource Files</Filter>
-    </None>
     <None Include="..\..\out\Release\nocartridge.rom">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="..\..\out\debug\nogame.rom">
-      <Filter>Resource Files</Filter>
-    </None>
     <None Include="..\..\out\release\nogame.rom">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="..\..\out\debug\nohdbios.rom">
       <Filter>Resource Files</Filter>
     </None>
     <None Include="..\..\out\release\nohdbios.rom">
@@ -1637,16 +1688,10 @@
     <None Include="..\..\out\release\nokernel.rom">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="..\..\out\debug\nokernel.rom">
-      <Filter>Resource Files</Filter>
-    </None>
     <None Include="res\profilerToolbar.bmp">
       <Filter>Resource Files</Filter>
     </None>
     <None Include="res\program.ico">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="..\..\out\Debug\superkernel.rom">
       <Filter>Resource Files</Filter>
     </None>
     <None Include="..\..\out\Release\superkernel.rom">
@@ -1664,9 +1709,6 @@
     <None Include="res\TrackStep2.pcm">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="..\..\out\debug\ultimate.lzrom">
-      <Filter>Resource Files</Filter>
-    </None>
     <None Include="..\..\out\release\ultimate.lzrom">
       <Filter>Resource Files</Filter>
     </None>
@@ -1675,15 +1717,6 @@
     </None>
     <None Include="manifest\comctl6.manifest">
       <Filter>Manifest Files</Filter>
-    </None>
-    <None Include="res\kernel1.bin">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="res\kernel2.bin">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="res\kernel3.bin">
-      <Filter>Resource Files</Filter>
     </None>
     <None Include="..\..\out\release\1030handler.bin">
       <Filter>Resource Files</Filter>
@@ -1760,6 +1793,13 @@
     <None Include="..\..\obj\Release\Kernel\rapidflash.lzrom">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="manifest\win7.manifest">
+      <Filter>Manifest Files</Filter>
+    </None>
+    <None Include="res\dbghelp-template.html" />
+    <None Include="res\1030relay.pcm">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="res\Altirra.rc">
@@ -1776,11 +1816,6 @@
     <Resource Include="res\AltirraExtIcons.res">
       <Filter>Resource Files</Filter>
     </Resource>
-  </ItemGroup>
-  <ItemGroup>
-    <Manifest Include="manifest\win7.manifest">
-      <Filter>Manifest Files</Filter>
-    </Manifest>
   </ItemGroup>
   <ItemGroup>
     <CompileRawFont Include="data\xep80_font_internal.bmp">
@@ -1814,9 +1849,6 @@
     </PackResource>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="traceViewerToolbar.png">
-      <Filter>Resource Files</Filter>
-    </Image>
     <Image Include="res\traceViewerToolbar.png">
       <Filter>Resource Files</Filter>
     </Image>

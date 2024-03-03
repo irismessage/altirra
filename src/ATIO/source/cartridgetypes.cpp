@@ -21,38 +21,12 @@
 #include <at/atio/cartridgetypes.h>
 
 ATConfigVarInt32 g_ATCVCartType_MaxFlash128KMyIDE("cart.cartype.maxflash128k_myide", 0);
-ATConfigVarInt32 g_ATCVCartType_Corina1M("cart.cartype.corina1m", 0);
-ATConfigVarInt32 g_ATCVCartType_Corina512K("cart.cartype.corina512k", 0);
-ATConfigVarInt32 g_ATCVCartType_TelelinkII("cart.cartype.telelinkii", 0);
 ATConfigVarInt32 g_ATCVCartType_BountyBob5200Alt("cart.cartype.bb5200_alt", 0);
-ATConfigVarInt32 g_ATCVCartType_JRC_64K_RAM("cart.cartype.jrc_64k_ram", 0);
-ATConfigVarInt32 g_ATCVCartType_XEMulticart_8K("cart.cartype.xemulticart_8k", 0);
-ATConfigVarInt32 g_ATCVCartType_XEMulticart_16K("cart.cartype.xemulticart_16k", 0);
-ATConfigVarInt32 g_ATCVCartType_XEMulticart_32K("cart.cartype.xemulticart_32k", 0);
-ATConfigVarInt32 g_ATCVCartType_XEMulticart_64K("cart.cartype.xemulticart_64k", 0);
-ATConfigVarInt32 g_ATCVCartType_XEMulticart_128K("cart.cartype.xemulticart_128k", 0);
-ATConfigVarInt32 g_ATCVCartType_XEMulticart_256K("cart.cartype.xemulticart_256k", 0);
-ATConfigVarInt32 g_ATCVCartType_XEMulticart_512K("cart.cartype.xemulticart_512k", 0);
-ATConfigVarInt32 g_ATCVCartType_XEMulticart_1M("cart.cartype.xemulticart_1m", 0);
-ATConfigVarInt32 g_ATCVCartType_SICPlus("cart.cartype.sicplus", 0);
 
 ATCartridgeMode ATGetCartridgeModeForMapper(int mapper) {
 	if (mapper) {
-		if (mapper == g_ATCVCartType_SICPlus			) return kATCartridgeMode_SICPlus;
 		if (mapper == g_ATCVCartType_MaxFlash128KMyIDE	) return kATCartridgeMode_MaxFlash_128K_MyIDE;
-		if (mapper == g_ATCVCartType_Corina1M			) return kATCartridgeMode_Corina_1M_EEPROM;
-		if (mapper == g_ATCVCartType_Corina512K			) return kATCartridgeMode_Corina_512K_SRAM_EEPROM;
-		if (mapper == g_ATCVCartType_TelelinkII			) return kATCartridgeMode_TelelinkII;
 		if (mapper == g_ATCVCartType_BountyBob5200Alt	) return kATCartridgeMode_BountyBob5200Alt;
-		if (mapper == g_ATCVCartType_JRC_64K_RAM		) return kATCartridgeMode_JRC_64K_RAM;
-		if (mapper == g_ATCVCartType_XEMulticart_8K		) return kATCartridgeMode_XEMulticart_8K;
-		if (mapper == g_ATCVCartType_XEMulticart_16K	) return kATCartridgeMode_XEMulticart_16K;
-		if (mapper == g_ATCVCartType_XEMulticart_32K	) return kATCartridgeMode_XEMulticart_32K;
-		if (mapper == g_ATCVCartType_XEMulticart_64K	) return kATCartridgeMode_XEMulticart_64K;
-		if (mapper == g_ATCVCartType_XEMulticart_128K	) return kATCartridgeMode_XEMulticart_128K;
-		if (mapper == g_ATCVCartType_XEMulticart_256K	) return kATCartridgeMode_XEMulticart_256K;
-		if (mapper == g_ATCVCartType_XEMulticart_512K	) return kATCartridgeMode_XEMulticart_512K;
-		if (mapper == g_ATCVCartType_XEMulticart_1M		) return kATCartridgeMode_XEMulticart_1M;
 	}
 
 	switch(mapper) {
@@ -109,9 +83,9 @@ ATCartridgeMode ATGetCartridgeModeForMapper(int mapper) {
 		case 51: return kATCartridgeMode_Turbosoft_128K;
 		case 52: return kATCartridgeMode_MicroCalc;
 		case 53: return kATCartridgeMode_RightSlot_8K;
-		case 54: return kATCartridgeMode_SIC;
-		case 55: return kATCartridgeMode_SIC;
-		case 56: return kATCartridgeMode_SIC;
+		case 54: return kATCartridgeMode_SIC_128K;
+		case 55: return kATCartridgeMode_SIC_256K;
+		case 56: return kATCartridgeMode_SIC_512K;
 		case 57: return kATCartridgeMode_2K;
 		case 58: return kATCartridgeMode_4K;
 		case 59: return kATCartridgeMode_RightSlot_4K;
@@ -131,6 +105,24 @@ ATCartridgeMode ATGetCartridgeModeForMapper(int mapper) {
 		case 73: return kATCartridgeMode_5200_256K_32KBanks;
 		case 74: return kATCartridgeMode_5200_512K_32KBanks;
 		case 75: return kATCartridgeMode_MaxFlash_1024K_Bank0;
+		case 76: return kATCartridgeMode_Williams_16K;
+		case 78: return kATCartridgeMode_TelelinkII;
+		case 79: return kATCartridgeMode_Pronto;
+		case 80: return kATCartridgeMode_JRC_RAMBOX;
+		case 81: return kATCartridgeMode_MDDOS;
+		case 82: return kATCartridgeMode_COS32K;
+		case 83: return kATCartridgeMode_SICPlus;
+		case 84: return kATCartridgeMode_Corina_1M_EEPROM;
+		case 85: return kATCartridgeMode_Corina_512K_SRAM_EEPROM;
+		case 86: return kATCartridgeMode_XEMulticart_8K;
+		case 87: return kATCartridgeMode_XEMulticart_16K;
+		case 88: return kATCartridgeMode_XEMulticart_32K;
+		case 89: return kATCartridgeMode_XEMulticart_64K;
+		case 90: return kATCartridgeMode_XEMulticart_128K;
+		case 91: return kATCartridgeMode_XEMulticart_256K;
+		case 92: return kATCartridgeMode_XEMulticart_512K;
+		case 93: return kATCartridgeMode_XEMulticart_1M;
+		case 160: return kATCartridgeMode_JRC6_64K;
 		default:
 			return kATCartridgeMode_None;
 	}
@@ -191,13 +183,9 @@ int ATGetCartridgeMapperForMode(ATCartridgeMode mode, uint32 size) {
 		case kATCartridgeMode_Turbosoft_128K: return 51;
 		case kATCartridgeMode_MicroCalc: return 52;
 
-		case kATCartridgeMode_SIC:
-			if (size > 256*1024)
-				return 56;
-			else if (size > 128*1024)
-				return 55;
-
-			return 54;
+		case kATCartridgeMode_SIC_128K: return 54;
+		case kATCartridgeMode_SIC_256K: return 55;
+		case kATCartridgeMode_SIC_512K: return 56;
 
 		case kATCartridgeMode_2K:
 			return 57;
@@ -224,26 +212,32 @@ int ATGetCartridgeMapperForMode(ATCartridgeMode mode, uint32 size) {
 		case kATCartridgeMode_5200_256K_32KBanks:	return 73;
 		case kATCartridgeMode_5200_512K_32KBanks:	return 74;
 		case kATCartridgeMode_MaxFlash_1024K_Bank0:	return 75;
+		case kATCartridgeMode_Williams_16K:			return 76;
+
+		case kATCartridgeMode_TelelinkII:			return 78;
+		case kATCartridgeMode_Pronto:				return 79;
 
 		case kATCartridgeMode_MaxFlash_128K_MyIDE:		return g_ATCVCartType_MaxFlash128KMyIDE;
-		case kATCartridgeMode_Corina_1M_EEPROM:			return g_ATCVCartType_Corina1M;
-		case kATCartridgeMode_Corina_512K_SRAM_EEPROM:	return g_ATCVCartType_Corina512K;
-		case kATCartridgeMode_TelelinkII:				return g_ATCVCartType_TelelinkII;
 		//case kATCartridgeMode_MegaCart_1M_2:
 		//case kATCartridgeMode_MegaCart_512K_3:
 		case kATCartridgeMode_BountyBob5200Alt:			return g_ATCVCartType_BountyBob5200Alt;
 
-		case kATCartridgeMode_JRC_64K_RAM:				return g_ATCVCartType_JRC_64K_RAM;
-		case kATCartridgeMode_XEMulticart_8K:			return g_ATCVCartType_XEMulticart_8K;
-		case kATCartridgeMode_XEMulticart_16K:			return g_ATCVCartType_XEMulticart_16K;
-		case kATCartridgeMode_XEMulticart_32K:			return g_ATCVCartType_XEMulticart_32K;
-		case kATCartridgeMode_XEMulticart_64K:			return g_ATCVCartType_XEMulticart_64K;
-		case kATCartridgeMode_XEMulticart_128K:			return g_ATCVCartType_XEMulticart_128K;
-		case kATCartridgeMode_XEMulticart_256K:			return g_ATCVCartType_XEMulticart_256K;
-		case kATCartridgeMode_XEMulticart_512K:			return g_ATCVCartType_XEMulticart_512K;
-		case kATCartridgeMode_XEMulticart_1M:			return g_ATCVCartType_XEMulticart_1M;
+		case kATCartridgeMode_JRC_RAMBOX:				return 80;
+		case kATCartridgeMode_MDDOS:					return 81;
+		case kATCartridgeMode_COS32K:					return 82;
+		case kATCartridgeMode_SICPlus:					return 83;
+		case kATCartridgeMode_Corina_1M_EEPROM:			return 84;
+		case kATCartridgeMode_Corina_512K_SRAM_EEPROM:	return 85;
+		case kATCartridgeMode_XEMulticart_8K:			return 86;
+		case kATCartridgeMode_XEMulticart_16K:			return 87;
+		case kATCartridgeMode_XEMulticart_32K:			return 88;
+		case kATCartridgeMode_XEMulticart_64K:			return 89;
+		case kATCartridgeMode_XEMulticart_128K:			return 90;
+		case kATCartridgeMode_XEMulticart_256K:			return 91;
+		case kATCartridgeMode_XEMulticart_512K:			return 92;
+		case kATCartridgeMode_XEMulticart_1M:			return 93;
 
-		case kATCartridgeMode_SICPlus:					return g_ATCVCartType_SICPlus;
+		case kATCartridgeMode_JRC6_64K:					return 160;
 
 		default:
 			return 0;
@@ -323,7 +317,9 @@ uint32 ATGetImageSizeForCartridgeType(ATCartridgeMode mode) {
 		case kATCartridgeMode_Phoenix_8K:			return 0x2000;
 		case kATCartridgeMode_Blizzard_16K:			return 0x4000;
 		case kATCartridgeMode_Blizzard_32K:			return 0x8000;
-		case kATCartridgeMode_SIC:					return 0x80000;
+		case kATCartridgeMode_SIC_128K:				return 0x20000;
+		case kATCartridgeMode_SIC_256K:				return 0x40000;
+		case kATCartridgeMode_SIC_512K:				return 0x80000;
 		case kATCartridgeMode_Atrax_SDX_128K:		return 0x20000;
 		case kATCartridgeMode_OSS_043M:				return 0x4000;
 		case kATCartridgeMode_OSS_8K:				return 0x2000;
@@ -354,7 +350,8 @@ uint32 ATGetImageSizeForCartridgeType(ATCartridgeMode mode) {
 		case kATCartridgeMode_Atrax_128K_Raw:		return 0x20000;
 		case kATCartridgeMode_aDawliah_32K:			return 0x8000;
 		case kATCartridgeMode_aDawliah_64K:			return 0x10000;
-		case kATCartridgeMode_JRC_64K_RAM:			return 0x10000;
+		case kATCartridgeMode_JRC6_64K:		return 0x10000;
+		case kATCartridgeMode_JRC_RAMBOX:	return 0x10000;
 		case kATCartridgeMode_XEMulticart_8K:		return 0x2000;
 		case kATCartridgeMode_XEMulticart_16K:		return 0x4000;
 		case kATCartridgeMode_XEMulticart_32K:		return 0x8000;
@@ -364,6 +361,10 @@ uint32 ATGetImageSizeForCartridgeType(ATCartridgeMode mode) {
 		case kATCartridgeMode_XEMulticart_512K:		return 0x80000;
 		case kATCartridgeMode_XEMulticart_1M:		return 0x100000;
 		case kATCartridgeMode_SICPlus:				return 0x100000;
+		case kATCartridgeMode_Williams_16K:			return 0x4000;
+		case kATCartridgeMode_MDDOS:				return 0x10000;
+		case kATCartridgeMode_COS32K:				return 0x8000;
+		case kATCartridgeMode_Pronto:				return 0x4000;
 
 		default:
 			return 0;

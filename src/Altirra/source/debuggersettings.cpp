@@ -21,15 +21,15 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 
-AT_DEFINE_ENUM_TABLE_BEGIN(ATDebugger816PredictionMode)
-	{ ATDebugger816PredictionMode::Auto, "auto" },
-	{ ATDebugger816PredictionMode::CurrentContext, "current_context" },
-	{ ATDebugger816PredictionMode::M8X8, "m8x8" },
-	{ ATDebugger816PredictionMode::M8X16, "m8x16" },
-	{ ATDebugger816PredictionMode::M16X8, "m16x8" },
-	{ ATDebugger816PredictionMode::M16X16, "m16x16" },
-	{ ATDebugger816PredictionMode::Emulation, "emulation" },
-AT_DEFINE_ENUM_TABLE_END(ATDebugger816PredictionMode, ATDebugger816PredictionMode::Auto)
+AT_DEFINE_ENUM_TABLE_BEGIN(ATDebugger816MXPredictionMode)
+	{ ATDebugger816MXPredictionMode::Auto, "auto" },
+	{ ATDebugger816MXPredictionMode::CurrentContext, "current_context" },
+	{ ATDebugger816MXPredictionMode::M8X8, "m8x8" },
+	{ ATDebugger816MXPredictionMode::M8X16, "m8x16" },
+	{ ATDebugger816MXPredictionMode::M16X8, "m16x8" },
+	{ ATDebugger816MXPredictionMode::M16X16, "m16x16" },
+	{ ATDebugger816MXPredictionMode::Emulation, "emulation" },
+AT_DEFINE_ENUM_TABLE_END(ATDebugger816MXPredictionMode, ATDebugger816MXPredictionMode::Auto)
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -140,8 +140,8 @@ ATDebuggerSettingView<T>& ATDebuggerSettingView<T>::operator=(const T& value) {
 
 template class ATDebuggerSetting<bool>;
 template class ATDebuggerSettingView<bool>;
-template class ATDebuggerSetting<ATDebugger816PredictionMode>;
-template class ATDebuggerSettingView<ATDebugger816PredictionMode>;
+template class ATDebuggerSetting<ATDebugger816MXPredictionMode>;
+template class ATDebuggerSettingView<ATDebugger816MXPredictionMode>;
 
 ATDebuggerSetting<bool> g_ATDbgSettingHistoryShowPC					("Debugger: Show PC in History", true);
 ATDebuggerSetting<bool> g_ATDbgSettingHistoryShowGlobalPC			("Debugger: Show global PC in History", false);
@@ -157,4 +157,5 @@ ATDebuggerSetting<bool> g_ATDbgSettingShowSourceInDisasm			("Debugger: Show sour
 ATDebuggerSetting<bool> g_ATDbgSettingCollapseLoops					("Debugger: Collapse loops", true);
 ATDebuggerSetting<bool> g_ATDbgSettingCollapseCalls					("Debugger: Collapse calls", true);
 ATDebuggerSetting<bool> g_ATDbgSettingCollapseInterrupts			("Debugger: Collapse interrupts", true);
-ATDebuggerSetting<ATDebugger816PredictionMode> g_ATDbgSetting816PredictionMode	("Debugger: 816 prediction mode", ATDebugger816PredictionMode::Auto);
+ATDebuggerSetting<ATDebugger816MXPredictionMode> g_ATDbgSetting816MXPredictionMode	("Debugger: 816 prediction mode", ATDebugger816MXPredictionMode::Auto);
+ATDebuggerSetting<bool> g_ATDbgSetting816PredictD					("Debugger: 816 predict D", true);

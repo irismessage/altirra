@@ -37,8 +37,15 @@ public:
 
 	IATTraceChannel *AsTraceChannel() override { return this; } 
 	sint32 GetNearestFrameIndex(double startTime, double endTime, double& frameTime) override;
-	const VDPixmap *GetFrameByIndex(sint32 idx) override;
 	uint64 GetTraceSize() const override { return mTraceSize; }
+	uint32 GetEventCount() const override { return (uint32)mFrames.size(); }
+	uint32 GetFrameBufferCount() const override { return mFrameBuffers.size(); }
+	sint32 GetFrameBufferIndexForFrame(sint32 frameIdx) override;
+	double GetTimeForFrame(uint32 frameIdx) override;
+	const VDPixmap& GetFrameBufferByIndex(uint32 fbIdx) override;
+	
+	void AddRawFrameBuffer(const VDPixmap& px) override;
+	void AddFrame(double timestamp, uint32 frameBufferIndex) override;
 
 public:
 	void *AsInterface(uint32 iid) override;
@@ -132,11 +139,50 @@ sint32 ATTraceChannelVideo::GetNearestFrameIndex(double startTime, double endTim
 	return -1;
 }
 
-const VDPixmap *ATTraceChannelVideo::GetFrameByIndex(sint32 idx) {
-	if ((uint32)idx < mFrameBuffers.size())
-		return &mFrameBuffers[idx].mBuffer;
+sint32 ATTraceChannelVideo::GetFrameBufferIndexForFrame(sint32 frameIdx) {
+	if ((uint32)frameIdx < mFrames.size())
+		return mFrames[frameIdx].mFrameBufferIndex;
 	else
-		return nullptr;
+		return -1;
+}
+
+double ATTraceChannelVideo::GetTimeForFrame(uint32 frameIdx) {
+	return mFrames[frameIdx].mTime;
+}
+
+const VDPixmap& ATTraceChannelVideo::GetFrameBufferByIndex(uint32 fbIdx) {
+	return mFrameBuffers[fbIdx].mBuffer;
+}
+
+void ATTraceChannelVideo::AddRawFrameBuffer(const VDPixmap& px) {
+	auto& fb = mFrameBuffers.emplace_back();
+
+	fb.mBuffer.assign(px);
+
+	const size_t fbSize = fb.mBuffer.size();
+	mTraceSize += fbSize;
+
+	if (mpMemTracker)
+		mpMemTracker->AddSize(fbSize);
+}
+
+void ATTraceChannelVideo::AddFrame(double timestamp, uint32 frameBufferIndex) {
+	VDASSERT(frameBufferIndex < mFrameBuffers.size());
+
+	auto it = mFrames.end();
+	if (!mFrames.empty() && timestamp < mFrames.back().mTime) {
+		it = std::lower_bound(
+			mFrames.begin(),
+			mFrames.end(),
+			timestamp,
+			[](const Frame& x, double y) { return x.mTime < y; }
+		);
+	}
+
+	Frame frame;
+	frame.mTime = timestamp;
+	frame.mFrameBufferIndex = frameBufferIndex;
+	mFrames.insert(it, frame);
 }
 
 void *ATTraceChannelVideo::AsInterface(uint32 iid) {
@@ -214,7 +260,7 @@ public:
 	void Init(IATTraceChannelVideo *dst, uint64 timeOffset, double timeScale, uint32 divisor) override;
 	void Shutdown() override;
 
-	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd) override;
+	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd, float par) override;
 
 private:
 	vdrefptr<ATTraceChannelVideo> mpDst;
@@ -243,7 +289,7 @@ void ATVideoTracer::Shutdown() {
 	mpDst = nullptr;
 }
 
-void ATVideoTracer::WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd) {
+void ATVideoTracer::WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd, float par) {
 	if (timestampStart < mTimeOffset)
 		return;
 
@@ -253,10 +299,15 @@ void ATVideoTracer::WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64
 	mDivideCounter = 0;
 
 	sint32 dsth = 128;
-	sint32 dstw = (px.w * 128 + (px.h >> 1)) / px.h;
+	float dstwf = (float)px.w * 128.0f / (float)px.h * par;
+	sint32 dstw = ((sint32)ceilf(dstwf) + 1) & ~1;
+	float dstx1f = ((float)dstw - dstwf) * 0.5f;
+	float dstx2f = (float)dstw - dstx1f;
 
 	mTempBuffer1.init(px.w, px.h, nsVDPixmap::kPixFormat_XRGB8888);
 	mTempBuffer2.init(dstw, dsth, nsVDPixmap::kPixFormat_XRGB8888);
+	memset(mTempBuffer2.base(), 0, mTempBuffer2.size());
+
 	mTempBuffer3.init(dstw, dsth, nsVDPixmap::kPixFormat_YUV420_Planar_Centered);
 
 	VDPixmapBlt(mTempBuffer1, px);
@@ -267,7 +318,7 @@ void ATVideoTracer::WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64
 	if (!mpResampler || mResampleSrcSize != srcSize || mResampleDstSize != dstSize) {
 		mpResampler = VDCreatePixmapResampler();
 		mpResampler->SetFilters(IVDPixmapResampler::kFilterLinear, IVDPixmapResampler::kFilterLinear, false);
-		mpResampler->Init(dstSize.w, dstSize.h, nsVDPixmap::kPixFormat_XRGB8888, srcSize.w, srcSize.h, nsVDPixmap::kPixFormat_XRGB8888);
+		mpResampler->Init(vdrect32f(dstx1f, 0, dstx2f, dstSize.h), dstSize.w, dstSize.h, nsVDPixmap::kPixFormat_XRGB8888, vdrect32f(0, 0, srcSize.w, srcSize.h), srcSize.w, srcSize.h, nsVDPixmap::kPixFormat_XRGB8888);
 		mResampleSrcSize = srcSize;
 		mResampleDstSize = dstSize;
 	}

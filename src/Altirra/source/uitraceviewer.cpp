@@ -19,29 +19,36 @@
 #include <vd2/system/binary.h>
 #include <vd2/system/file.h>
 #include <vd2/system/registry.h>
+#include <vd2/system/vdalloc.h>
 #include <vd2/system/w32assist.h>
+#include <vd2/system/zip.h>
 #include <vd2/Dita/services.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Kasumi/resample.h>
 #include <vd2/Riza/bitmap.h>
 #include <at/atcore/configvar.h>
+#include <at/atcore/progress.h>
 #include <at/atdebugger/target.h>
 #include <at/atio/cassetteimage.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/theme.h>
 #include <at/atnativeui/theme_win32.h>
 #include <at/atnativeui/uiframe.h>
 #include <windows.h>
 #include <commctrl.h>
+#include <uxtheme.h>
 #include "cassette.h"
 #include "console.h"
 #include "debugger.h"
 #include "oshelper.h"
 #include "resource.h"
+#include "savestateio.h"
 #include "simulator.h"
 #include "trace.h"
 #include "tracecpu.h"
+#include "traceio.h"
 #include "tracetape.h"
 #include "tracevideo.h"
 #include "uicommondialogs.h"
@@ -54,6 +61,7 @@ extern ATSimulator g_sim;
 ///////////////////////////////////////////////////////////////////////////
 
 void ATUINotifyTraceViewerThemeChanged();
+vdrefptr<ATTraceCollection> ATLoadTraceFromAtari800(const wchar_t *file);
 
 namespace {
 	struct TraceViewerTheme {
@@ -476,7 +484,7 @@ public:
 	ATUITraceViewerCPUHistoryView(ATUITraceViewerContext& context);
 	~ATUITraceViewerCPUHistoryView();
 
-	void SetCPUTraceChannel(ATTraceChannelCPUHistory *channel);
+	void SetCPUTraceChannel(ATTraceChannelCPUHistory *channel, const ATCPUTimestampDecoder& timestampDecoder);
 	void SetCenterTime(double t);
 
 private:
@@ -496,6 +504,7 @@ private:
 private:
 	bool OnLoaded() override;
 
+	void OnSetFocus() override;
 	void OnFontsChanged();
 	void RebuildInsnView();
 	void PopulateFromNewChannel();
@@ -509,6 +518,8 @@ private:
 
 	vdrefptr<IATUIHistoryView> mpHistoryView;
 	vdfunction<void()> mpFontCallback;
+
+	ATCPUTimestampDecoder mTimestampDecoder;
 };
 
 ATUITraceViewerCPUHistoryView::ATUITraceViewerCPUHistoryView(ATUITraceViewerContext& context)
@@ -523,9 +534,10 @@ ATUITraceViewerCPUHistoryView::~ATUITraceViewerCPUHistoryView() {
 	ATConsoleRemoveFontNotification(&mpFontCallback);
 }
 
-void ATUITraceViewerCPUHistoryView::SetCPUTraceChannel(ATTraceChannelCPUHistory *channel) {
+void ATUITraceViewerCPUHistoryView::SetCPUTraceChannel(ATTraceChannelCPUHistory *channel, const ATCPUTimestampDecoder& timestampDecoder) {
 	if (mpChannel != channel) {
 		mpChannel = channel;
+		mTimestampDecoder = timestampDecoder;
 
 		PopulateFromNewChannel();
 	}
@@ -572,11 +584,11 @@ float ATUITraceViewerCPUHistoryView::ConvertRawTimestampDeltaF(sint32 rawCycleDe
 }
 
 ATCPUBeamPosition ATUITraceViewerCPUHistoryView::DecodeBeamPosition(uint32 cycle) {
-	return g_sim.GetTimestampDecoder().GetBeamPosition(cycle);
+	return mTimestampDecoder.GetBeamPosition(cycle);
 }
 
 bool ATUITraceViewerCPUHistoryView::IsInterruptPositionVBI(uint32 cycle) {
-	return g_sim.GetTimestampDecoder().IsInterruptPositionVBI(cycle);
+	return mTimestampDecoder.IsInterruptPositionVBI(cycle);
 }
 
 bool ATUITraceViewerCPUHistoryView::UpdatePreviewNode(ATCPUHistoryEntry& he) {
@@ -623,6 +635,11 @@ bool ATUITraceViewerCPUHistoryView::OnLoaded() {
 	PopulateFromNewChannel();
 
 	return true;
+}
+
+void ATUITraceViewerCPUHistoryView::OnSetFocus() {
+	if (mpHistoryView)
+		mpHistoryView->AsNativeWindow()->Focus();
 }
 
 void ATUITraceViewerCPUHistoryView::OnFontsChanged() {
@@ -677,7 +694,7 @@ public:
 	ATUITraceViewerCPUProfileView(ATUITraceViewerContext& context);
 	~ATUITraceViewerCPUProfileView();
 
-	void SetCPUTraceChannel(ATTraceChannelCPUHistory *channel);
+	void SetCPUTraceChannel(ATTraceChannelCPUHistory *channel, const ATCPUTimestampDecoder& timestampDecoder);
 
 	void ClearSelectedRange();
 	void SetSelectedRange(double startTime, double endTime);
@@ -716,6 +733,7 @@ private:
 	ATProfileSession mSession;
 	vdrefptr<ATProfileMergedFrame> mpMergedFrame;
 
+	ATCPUTimestampDecoder mTimestampDecoder {};
 	VDUIProxyToolbarControl mToolbar;
 };
 
@@ -730,15 +748,13 @@ ATUITraceViewerCPUProfileView::ATUITraceViewerCPUProfileView(ATUITraceViewerCont
 ATUITraceViewerCPUProfileView::~ATUITraceViewerCPUProfileView() {
 }
 
-void ATUITraceViewerCPUProfileView::SetCPUTraceChannel(ATTraceChannelCPUHistory *channel) {
+void ATUITraceViewerCPUProfileView::SetCPUTraceChannel(ATTraceChannelCPUHistory *channel, const ATCPUTimestampDecoder& timestampDecoder) {
 	if (mpChannel != channel) {
 		mpChannel = channel;
 
-		if (mpProfileView) {
-		}
-
 		mViewStartTime = 0;
 		mViewEndTime = -1;
+		mTimestampDecoder = timestampDecoder;
 
 		RemakeView();
 	}
@@ -813,8 +829,6 @@ void ATUITraceViewerCPUProfileView::RemakeView() {
 		builder.Init(mProfileMode, mProfileCounterModes[0], mProfileCounterModes[1]);
 		builder.SetGlobalAddressesEnabled(mbGlobalAddressesEnabled);
 
-		const auto tsDecoder = g_sim.GetTimestampDecoder();
-
 		uint32 startEventIdx = 0;
 		uint32 endEventIdx = mpChannel->GetEventCount();
 
@@ -848,7 +862,7 @@ void ATUITraceViewerCPUProfileView::RemakeView() {
 			unhaltedCycle = hents[0]->mUnhaltedCycle;
 		}
 
-		builder.OpenFrame(cycle, unhaltedCycle, tsDecoder);
+		builder.OpenFrame(cycle, unhaltedCycle, mTimestampDecoder);
 
 		const bool useGlobalAddrs = mpChannel->GetDisasmMode() == kATDebugDisasmMode_6502;
 
@@ -859,7 +873,7 @@ void ATUITraceViewerCPUProfileView::RemakeView() {
 			
 			pos += n - 1;
 
-			builder.Update(tsDecoder, hents, n - 1, useGlobalAddrs);
+			builder.Update(mTimestampDecoder, hents, n - 1, useGlobalAddrs);
 		}
 
 		if (pos && mpChannel->ReadHistoryEvents(hents, pos - 1, 1)) {
@@ -1160,7 +1174,7 @@ private:
 	void OnMouseWheel(int x, int y, sint32 delta) override;
 	bool OnSetCursor(ATUICursorImage& image);
 	void OnCaptureLost() override;
-	bool OnErase(VDZHDC hdc) override;
+	bool OnShouldErase() override;
 	bool OnPaint() override;
 	void OnDpiChanged() override;
 
@@ -1428,28 +1442,33 @@ void ATUITraceViewerEventView::OnCaptureLost() {
 	mbDragging = false;
 }
 
-bool ATUITraceViewerEventView::OnErase(VDZHDC hdc) {
-	const TraceViewerTheme& theme = GetTraceViewerTheme();
-
-	SetDCBrushColor(hdc, theme.mEventBackground);
-
-	RECT rClient;
-	if (GetClientRect(mhdlg, &rClient))
-		FillRect(hdc, &rClient, (HBRUSH)GetStockObject(DC_BRUSH));
-
-	return true;
+bool ATUITraceViewerEventView::OnShouldErase() {
+	return false;
 }
 
 bool ATUITraceViewerEventView::OnPaint() {
 	PAINTSTRUCT ps;
-	HDC hdc = BeginPaint(mhdlg, &ps);
+	HDC hdc0 = BeginPaint(mhdlg, &ps);
+
+	BP_PAINTPARAMS bufParams { sizeof(bufParams), 0, nullptr, nullptr };
+	HDC hdc {};
+
+	const HPAINTBUFFER hPaintBuffer = BeginBufferedPaint(hdc0, &ps.rcPaint, BPBF_COMPATIBLEBITMAP, &bufParams, &hdc);
+	if (!hPaintBuffer)
+		hdc = hdc0;
+
 	int savedDC = SaveDC(hdc);
 	const vdsize32& sz = GetClientArea().size();
 
 	SelectObject(hdc, GetStockObject(DC_PEN));
 	SelectObject(hdc, GetStockObject(DC_BRUSH));
 	SelectObject(hdc, mContext.mEventFont.get());
-	
+
+	const TraceViewerTheme& theme = GetTraceViewerTheme();
+
+	SetDCBrushColor(hdc, theme.mEventBackground);
+	FillRect(hdc, &ps.rcPaint, (HBRUSH)GetStockObject(DC_BRUSH));
+
 	const sint32 clipX1 = ps.rcPaint.left;
 	const sint32 clipX2 = ps.rcPaint.right;
 
@@ -1467,7 +1486,6 @@ bool ATUITraceViewerEventView::OnPaint() {
 	//
 	// We cheat a little here to draw the blanking regions since we know that we're dealing
 	// with only either NTSC or PAL/SECAM timings.
-	const TraceViewerTheme& theme = GetTraceViewerTheme();
 
 	if (mpFrameChannel) {
 		mpFrameChannel->StartIteration(eventStartClip, eventEndClip, mSecondsPerPixel * 4);
@@ -1536,10 +1554,10 @@ bool ATUITraceViewerEventView::OnPaint() {
 					for(sint32 i = 0; i < frameCount; ++i) {
 						double frameStartBracketTime = (frameStartIndex + (double)i) * secondsPerFrame;
 						double frameTime;
-						sint32 frameIndex = vch->GetNearestFrameIndex(frameStartBracketTime, frameStartBracketTime + secondsPerFrame, frameTime);
+						sint32 frameBufferIndex = vch->GetNearestFrameIndex(frameStartBracketTime, frameStartBracketTime + secondsPerFrame, frameTime);
 						
 						// skip if no frame lies within this bracket
-						if (frameIndex < 0)
+						if (frameBufferIndex < 0)
 							continue;
 
 						// compute the blit position for this frame
@@ -1556,15 +1574,12 @@ bool ATUITraceViewerEventView::OnPaint() {
 						lastFrameTime = frameTime;
 
 						// select cache buffer
-						const uint32 cacheIndex = (uint32)frameIndex % ch->kNumCachedImages;
+						const uint32 cacheIndex = (uint32)frameBufferIndex % ch->kNumCachedImages;
 						ATGDICachedImageW32& cachedBitmap = ch->mCachedBitmaps[cacheIndex];
 
 						// re-render cache image if not valid
-						if (!cachedBitmap.GetHDC() || ch->mCachedImageIndices[cacheIndex] != frameIndex || cachedBitmap.GetWidth() != imgw || cachedBitmap.GetHeight() != imgh) {
-							const VDPixmap *px = vch->GetFrameByIndex(frameIndex);
-
-							if (!px)
-								continue;
+						if (!cachedBitmap.GetHDC() || ch->mCachedImageIndices[cacheIndex] != frameBufferIndex || cachedBitmap.GetWidth() != imgw || cachedBitmap.GetHeight() != imgh) {
+							const VDPixmap *px = &vch->GetFrameBufferByIndex(frameBufferIndex);
 
 							mImageBufferSrc.init(px->w, px->h, nsVDPixmap::kPixFormat_XRGB8888);
 							VDPixmapBlt(mImageBufferSrc, *px);
@@ -1588,7 +1603,7 @@ bool ATUITraceViewerEventView::OnPaint() {
 							mpImageResampler->Process(mImageBufferDst, mImageBufferSrc);
 
 							cachedBitmap.Load(hdc, mImageBufferDst);
-							ch->mCachedImageIndices[cacheIndex] = frameIndex;
+							ch->mCachedImageIndices[cacheIndex] = frameBufferIndex;
 						}
 
 						HDC hdcCached = cachedBitmap.GetHDC();
@@ -1739,6 +1754,10 @@ bool ATUITraceViewerEventView::OnPaint() {
 	}
 
 	RestoreDC(hdc, savedDC);
+
+	if (hPaintBuffer)
+		EndBufferedPaint(hPaintBuffer, TRUE);
+
 	EndPaint(mhdlg, &ps);
 	return true;
 }
@@ -1917,13 +1936,17 @@ public:
 	double GetViewEndTime() const;
 	double GetViewCenterTime() const;
 
-	void StartTracing();
-	void StopTracing();
+	void StartStopTracing();
 	void ZoomIn();
 	void ZoomOut();
 
 	bool CanExport() const;
 	void ExportToChromeTrace(const wchar_t *path) const;
+	void ImportA800(const wchar_t *path);
+	void Load(const wchar_t *path);
+	void Save(const wchar_t *path) const;
+	
+	void ViewMemoryStatistics();
 
 	void SetCollection(ATTraceCollection *collection);
 
@@ -1958,8 +1981,7 @@ private:
 	void OpenProfile();
 
 	enum : uint32 {
-		kToolbarId_Stop = 1000,
-		kToolbarId_Start,
+		kToolbarId_StartStop = 1000,
 		kToolbarId_ZoomIn,
 		kToolbarId_ZoomOut,
 		kToolbarId_Settings,
@@ -1988,6 +2010,8 @@ private:
 	IATUITraceViewerHost& mHost;
 
 	vdrefptr<ATTraceCollection> mpCollection;
+	ATCPUTimestampDecoder mTimestampDecoder;
+	bool mbRecording = false;
 	ATTraceSettings mSettings {};
 
 	ATUITraceViewerContext mContext;
@@ -2034,19 +2058,26 @@ double ATUITraceViewer::GetViewCenterTime() const {
 	return mStartTime + mSecondsPerPixel * (double)mEventView.GetClientArea().width() * 0.5;
 }
 
-void ATUITraceViewer::StartTracing() {
-	SetCollection(nullptr);
+void ATUITraceViewer::StartStopTracing() {
+	if (!mbRecording) {
+		mbRecording = true;
 
-	g_sim.SetTracingEnabled(&mSettings);
-	g_sim.Resume();
-}
+		SetCollection(nullptr);
 
-void ATUITraceViewer::StopTracing() {
-	vdrefptr<ATTraceCollection> newCollection { g_sim.GetTraceCollection() };
-	g_sim.SetTracingEnabled(nullptr);
-	g_sim.Pause();
+		g_sim.SetTracingEnabled(&mSettings);
+		g_sim.Resume();
+	} else {
+		mbRecording = false;
 
-	SetCollection(newCollection);
+		vdrefptr<ATTraceCollection> newCollection { g_sim.GetTraceCollection() };
+		g_sim.SetTracingEnabled(nullptr);
+		g_sim.Pause();
+
+		SetCollection(newCollection);
+	}
+
+	mToolbar.SetItemText(kToolbarId_StartStop, mbRecording ? L"Stop" : L"Start");
+	mToolbar.SetItemImage(kToolbarId_StartStop, mbRecording ? 0 : 1);
 }
 
 void ATUITraceViewer::ZoomIn() {
@@ -2167,8 +2198,6 @@ void ATUITraceViewer::ExportToChromeTrace(const wchar_t *path) const {
 			++pid;
 	}
 
-	const auto tsDecoder = g_sim.GetTimestampDecoder();
-
 	uint32 startEventIdx = 0;
 	uint32 endEventIdx = cpuTrace.GetEventCount();
 
@@ -2218,7 +2247,7 @@ void ATUITraceViewer::ExportToChromeTrace(const wchar_t *path) const {
 				adjustStack = true;
 
 				if (he.mbNMI) {
-					if (tsDecoder.IsInterruptPositionVBI(he.mCycle))
+					if (mTimestampDecoder.IsInterruptPositionVBI(he.mCycle))
 						nextTid = kATProfileContext_VBI;
 					else
 						nextTid = kATProfileContext_DLI;
@@ -2352,6 +2381,143 @@ void ATUITraceViewer::ExportToChromeTrace(const wchar_t *path) const {
 	fileOutput.close();
 }
 
+void ATUITraceViewer::ImportA800(const wchar_t *path) {
+	auto traceCollection = ATLoadTraceFromAtari800(path);
+
+	SetCollection(traceCollection);
+}
+
+void ATUITraceViewer::Load(const wchar_t *path) {
+	struct ZipFile : public vdrefcounted<IVDRefCount> {
+		VDFileStream mFile;
+		VDZipArchive mArchive;
+
+		ZipFile(const wchar_t *path) : mFile(path) {
+			mArchive.Init(&mFile);
+		}
+	};
+	
+	vdrefptr zipFile(new ZipFile(path));
+
+	SetCollection(nullptr);
+
+	VDZipArchive& ziparch = zipFile->mArchive;
+	sint32 n = ziparch.GetFileCount();
+
+	for(sint32 i=0; i<n; ++i) {
+		const VDZipArchive::FileInfo& info = ziparch.GetFileInfo(i);
+		if (info.mFileName == "trace.json") {
+			vdautoptr ds(ATCreateSaveStateDeserializer(L"trace.json"));
+
+			ATProgress progress;
+			progress.Init(1000, nullptr, L"Loading trace");
+
+			ds->SetProgressFn(
+				[&](int i, int n) {
+					if (n)
+						progress.Update(i * 100 / n);
+				}
+			);
+
+			vdrefptr<IATSerializable> rootObj;
+			ds->Deserialize(ziparch, ~rootObj, zipFile);
+
+			vdrefptr traceCollection = ATLoadTrace(*rootObj,
+				[&](int i, int n) {
+					if (n)
+						progress.Update(100 + i * 900 / n);
+				}
+			);
+
+			SetCollection(traceCollection);
+			return;
+		}
+	}
+}
+
+void ATUITraceViewer::Save(const wchar_t *path) const {
+	if (!mpCollection)
+		return;
+
+	ATProgress progress;
+	progress.Init(1000, nullptr, L"Saving trace");
+
+	VDFileStream fs(path, nsVDFile::kWrite | nsVDFile::kCreateAlways | nsVDFile::kSequential);
+	VDBufferedWriteStream bs(&fs, 65536);
+	vdautoptr<IVDZipArchiveWriter> zip(VDCreateZipArchiveWriter(bs));
+
+	{
+		vdautoptr<IATSaveStateSerializer> ser(ATCreateSaveStateSerializer(L"trace.json"));
+		ser->SetCompressionLevel(VDDeflateCompressionLevel::Quick);
+
+		ser->SetProgressFn(
+			[&](int i, int n) {
+				if (n)
+					progress.Update(900 + i * 100 / n);
+			}
+		);
+
+		ser->BeginSerialize(*zip);
+
+		vdrefptr<IATSerializable> snapshot = ATSaveTrace(*mpCollection,
+			*ser,
+			[&](int i, int n) {
+				if (n)
+					progress.Update(i * 900 / n);
+			}
+		);
+
+		ser->EndSerialize(*snapshot);
+	}
+
+	zip->Finalize();
+	bs.Flush();
+	fs.close();
+}
+
+void ATUITraceViewer::ViewMemoryStatistics() {
+	if (!mpCollection)
+		return;
+
+	const size_t numGroups = mpCollection->GetGroupCount();
+
+	VDStringW log;
+
+	for(size_t i = 0; i < numGroups; ++i) {
+		ATTraceGroup *group = mpCollection->GetGroup(i);
+		const wchar_t *groupName = group->GetName();
+
+		const size_t channelCount = group->GetChannelCount();
+		for(size_t j = 0; j < channelCount; ++j) {
+			IATTraceChannel *channel = group->GetChannel(j);
+			const wchar_t *channelName = channel->GetName();
+
+			if (channel->IsEmpty())
+				continue;
+
+			const uint64 traceSize = channel->GetTraceSize();
+			log.append_sprintf(L"%ls:%ls: %.1fMB", groupName, channelName, (double)traceSize / 1048576.0);
+
+			auto *cpuChannel = vdpoly_cast<ATTraceChannelCPUHistory *>(channel);
+			if (cpuChannel) {
+				log.append_sprintf(L" (%u insns @ %.2f bytes/insn)", cpuChannel->GetEventCount(), (double)traceSize / (double)cpuChannel->GetEventCount());
+			}
+			
+			auto *videoChannel = vdpoly_cast<IATTraceChannelVideo *>(channel);
+			if (videoChannel) {
+				log.append_sprintf(L" (%u frame buffers / %u frames)", videoChannel->GetFrameBufferCount(), channel->GetEventCount());
+			}
+
+			log += '\n';
+		}
+	}
+
+	if (!log.empty())
+		log.pop_back();
+
+	ShowInfo2(log.c_str(), L"Memory Statistics");
+}
+
 void ATUITraceViewer::SetCollection(ATTraceCollection *collection) {
 	if (mpCollection != collection) {
 		mpCollection = collection;
@@ -2478,7 +2644,7 @@ bool ATUITraceViewer::OnLoaded() {
 	RebuildViews();
 
 	if (!mSimEventIdTraceLimited) {
-		mSimEventIdTraceLimited = g_sim.GetEventManager()->AddEventCallback(kATSimEvent_TracingLimitReached, [this] { StopTracing(); });
+		mSimEventIdTraceLimited = g_sim.GetEventManager()->AddEventCallback(kATSimEvent_TracingLimitReached, [this] { if (mbRecording) StartStopTracing(); });
 	}
 
 	ATUIRegisterThemeChangeNotification(&mThemeChangedFn);
@@ -2663,8 +2829,14 @@ void ATUITraceViewer::RebuildViews() {
 	mContext.mpCPUHistoryChannel = cpuHistoryChannel;
 
 	mEventView.SetFrameChannel(frameChannel);
-	mCPUHistoryView.SetCPUTraceChannel(cpuHistoryChannel);
-	mCPUProfileView.SetCPUTraceChannel(cpuHistoryChannel);
+
+	if (cpuHistoryChannel)
+		mTimestampDecoder = cpuHistoryChannel->GetTimestampDecoder();
+	else
+		mTimestampDecoder = g_sim.GetTimestampDecoder();
+
+	mCPUHistoryView.SetCPUTraceChannel(cpuHistoryChannel, mTimestampDecoder);
+	mCPUProfileView.SetCPUTraceChannel(cpuHistoryChannel, mTimestampDecoder);
 
 	UpdateChannels();
 
@@ -2687,8 +2859,7 @@ void ATUITraceViewer::RebuildToolbar() {
 		}
 	}
 
-	mToolbar.AddButton(kToolbarId_Stop, 0, L"Stop");
-	mToolbar.AddButton(kToolbarId_Start, 1, L"Start");
+	mToolbar.AddButton(kToolbarId_StartStop, 1, L"Start");
 	mToolbar.AddButton(kToolbarId_ZoomIn, 3, L"Zoom In");
 	mToolbar.AddButton(kToolbarId_ZoomOut, 2, L"Zoom Out");
 	mToolbar.AddButton(kToolbarId_Settings, 4, L"Settings");
@@ -2814,12 +2985,8 @@ void ATUITraceViewer::UpdateHScroll(bool updateRange) {
 
 void ATUITraceViewer::OnToolbarClicked(uint32 id) {
 	switch(id) {
-		case kToolbarId_Stop:
-			StopTracing();
-			break;
-
-		case kToolbarId_Start:
-			StartTracing();
+		case kToolbarId_StartStop:
+			StartStopTracing();
 			break;
 
 		case kToolbarId_ZoomIn:
@@ -2914,6 +3081,10 @@ private:
 	bool OnCommand(UINT cmd);
 
 private:
+	void DoLoad();
+	void DoSave();
+	void DoImportAtari800();
+
 	ATUITraceViewer *mpTraceViewer = nullptr;
 	HMENU mhmenu = nullptr;
 };
@@ -2938,6 +3109,8 @@ LRESULT ATUIPerformanceAnalyzerContainerWindow::WndProc(UINT msg, WPARAM wParam,
 }
 
 bool ATUIPerformanceAnalyzerContainerWindow::OnCreate() {
+	ATUIRegisterModelessDialog(mhwnd);
+
 	if (!mhmenu) {
 		mhmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_PERFANALYZER_MENU));
 
@@ -2954,6 +3127,10 @@ void ATUIPerformanceAnalyzerContainerWindow::OnDestroy() {
 		DestroyMenu(mhmenu);
 		mhmenu = nullptr;
 	}
+
+	ATUIUnregisterModelessDialog(mhwnd);
+
+	ATContainerWindow::OnDestroy();
 }
 
 void ATUIPerformanceAnalyzerContainerWindow::OnInitMenu(HMENU hmenu) {
@@ -2963,6 +3140,18 @@ void ATUIPerformanceAnalyzerContainerWindow::OnInitMenu(HMENU hmenu) {
 bool ATUIPerformanceAnalyzerContainerWindow::OnCommand(UINT cmd) {
 	try {
 		switch(cmd) {
+			case ID_FILE_LOAD:
+				DoLoad();
+				return true;
+
+			case ID_FILE_SAVE:
+				DoSave();
+				return true;
+
+			case ID_IMPORT_ATARI800:
+				DoImportAtari800();
+				return true;
+
 			case ID_EXPORT_CHROMETRACE:
 				if (mpTraceViewer) {
 					const VDStringW& path = VDGetSaveFileName(VDMAKEFOURCC('c', 't', 'r', 'c'), (VDGUIHandle)mhwnd, L"Export Chrome Trace Format", L"Chrome Trace (*.json)\0*.json\0", L"json");
@@ -2971,12 +3160,50 @@ bool ATUIPerformanceAnalyzerContainerWindow::OnCommand(UINT cmd) {
 						mpTraceViewer->ExportToChromeTrace(path.c_str());
 				}
 				return true;
+
+			case ID_TOOLS_VIEWMEMORYSTATISTICS:
+				if (mpTraceViewer)
+					mpTraceViewer->ViewMemoryStatistics();
+				return true;
 		}
 	} catch(const MyError& e) {
 		ATUIShowError((VDGUIHandle)mhdlg, e);
 	}
 
 	return false;
+}
+
+void ATUIPerformanceAnalyzerContainerWindow::DoLoad() {
+	if (!mpTraceViewer)
+		return;
+
+	const VDStringW& path = VDGetLoadFileName(VDMAKEFOURCC('t', 'r', 'c', 'e'), (VDGUIHandle)mhwnd, L"Load Trace", L"Altirra Trace (*.attrace)\0*.attrace\0", L"attrace");
+	if (path.empty())
+		return;
+
+	mpTraceViewer->Load(path.c_str());
+}
+
+void ATUIPerformanceAnalyzerContainerWindow::DoSave() {
+	if (!mpTraceViewer || !mpTraceViewer->CanExport())
+		return;
+
+	const VDStringW& path = VDGetSaveFileName(VDMAKEFOURCC('t', 'r', 'c', 'e'), (VDGUIHandle)mhwnd, L"Save Trace", L"Altirra Trace (*.attrace)\0*.attrace\0", L"attrace");
+	if (path.empty())
+		return;
+
+	mpTraceViewer->Save(path.c_str());
+}
+
+void ATUIPerformanceAnalyzerContainerWindow::DoImportAtari800() {
+	if (!mpTraceViewer)
+		return;
+
+	const VDStringW& path = VDGetLoadFileName(VDMAKEFOURCC('t', 'r', 'c', 'e'), (VDGUIHandle)mhwnd, L"Import Atari800WinPLus 4.0 Monitor Trace", L"A8WP Trace\0*.*\0", nullptr);
+	if (path.empty())
+		return;
+
+	mpTraceViewer->ImportA800(path.c_str());
 }
 
 ///////////////////////////////////////////////////////////////////////////

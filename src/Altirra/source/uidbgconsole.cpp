@@ -80,6 +80,16 @@ LRESULT ATConsoleWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			int x = GET_X_LPARAM(lParam);
 			int y = GET_Y_LPARAM(lParam);
 
+			if (x == -1 && y == -1) {
+				const auto& r = GetClientArea();
+
+				vdpoint32 cpt(r.left + (r.width() >> 1), r.top + (r.height() >> 1));
+				vdpoint32 spt = TransformClientToScreen(cpt);
+
+				x = spt.x;
+				y = spt.y;
+			}
+
 			TrackPopupMenu(GetSubMenu(mMenu, 0), TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
 		}
 		return 0;

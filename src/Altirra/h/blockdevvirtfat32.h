@@ -27,18 +27,10 @@
 // Converts a host directory of files to a virtual FAT32 partition, reading the
 // file data from the live files. Currently read-only.
 //
-class ATBlockDeviceVFAT32 final : public ATDevice, public IATBlockDevice {
-	ATBlockDeviceVFAT32(const ATBlockDeviceVFAT32&) = delete;
-	ATBlockDeviceVFAT32& operator=(const ATBlockDeviceVFAT32&) = delete;
-
+class ATBlockDeviceVFAT32 final : public ATDeviceT<IATBlockDevice, IATBlockDeviceDynamic> {
 public:
 	ATBlockDeviceVFAT32(bool useFat16);
 	~ATBlockDeviceVFAT32();
-
-public:
-	int AddRef() override;
-	int Release() override;
-	void *AsInterface(uint32 iid) override;
 
 public:
 	void GetDeviceInfo(ATDeviceInfo& info) override;
@@ -61,6 +53,9 @@ public:
 
 	void ReadSectors(void *data, uint32 lba, uint32 n) override;
 	void WriteSectors(const void *data, uint32 lba, uint32 n) override;
+
+public:
+	void RescanDynamicDisk() override;
 
 protected:
 	void FormatVolume();

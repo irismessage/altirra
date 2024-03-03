@@ -451,69 +451,6 @@ namespace {
 
 		return rb + g;
 	}
-
-	uint32 bilerp_RGB888(sint32 a, sint32 b, sint32 c, sint32 d, sint32 x, sint32 y) {
-		sint32 a_rb	= a & 0xff00ff;
-		sint32 a_g	= a & 0x00ff00;
-		sint32 b_rb	= b & 0xff00ff;
-		sint32 b_g	= b & 0x00ff00;
-		sint32 c_rb	= c & 0xff00ff;
-		sint32 c_g	= c & 0x00ff00;
-		sint32 d_rb	= d & 0xff00ff;
-		sint32 d_g	= d & 0x00ff00;
-
-		const uint32 top_rb = (a_rb + (((b_rb - a_rb)*x + 0x00800080) >> 8)) & 0xff00ff;
-		const uint32 top_g  = (a_g  + (((b_g  - a_g )*x + 0x00008000) >> 8)) & 0x00ff00;
-		const uint32 bot_rb = (c_rb + (((d_rb - c_rb)*x + 0x00800080) >> 8)) & 0xff00ff;
-		const uint32 bot_g  = (c_g  + (((d_g  - c_g )*x + 0x00008000) >> 8)) & 0x00ff00;
-
-		const uint32 final_rb = (top_rb + (((bot_rb - top_rb)*y) >> 8)) & 0xff00ff;
-		const uint32 final_g  = (top_g  + (((bot_g  - top_g )*y) >> 8)) & 0x00ff00;
-
-		return final_rb + final_g;
-	}
-
-	uint32 bilerp_XRGB1555(sint32 a, sint32 b, sint32 c, sint32 d, sint32 x, sint32 y) {
-		sint32 a_rb	= a & 0x7c1f;
-		sint32 a_g	= a & 0x03e0;
-		sint32 b_rb	= b & 0x7c1f;
-		sint32 b_g	= b & 0x03e0;
-		sint32 c_rb	= c & 0x7c1f;
-		sint32 c_g	= c & 0x03e0;
-		sint32 d_rb	= d & 0x7c1f;
-		sint32 d_g	= d & 0x03e0;
-
-		const sint32 top_rb = (a_rb + (((b_rb - a_rb)*x + 0x4010) >> 5)) & 0x7c1f;
-		const sint32 top_g  = (a_g  + (((b_g  - a_g )*x + 0x0200) >> 5)) & 0x03e0;
-		const sint32 bot_rb = (c_rb + (((d_rb - c_rb)*x + 0x4010) >> 5)) & 0x7c1f;
-		const sint32 bot_g  = (c_g  + (((d_g  - c_g )*x + 0x0200) >> 5)) & 0x03e0;
-
-		const sint32 final_rb = (top_rb + (((bot_rb - top_rb)*y + 0x4010) >> 5)) & 0x7c1f;
-		const sint32 final_g  = (top_g  + (((bot_g  - top_g )*y + 0x0200) >> 5)) & 0x03e0;
-
-		return final_rb + final_g;
-	}
-
-	uint32 bilerp_RGB565(sint32 a, sint32 b, sint32 c, sint32 d, sint32 x, sint32 y) {
-		sint32 a_rb	= a & 0xf81f;
-		sint32 a_g	= a & 0x07e0;
-		sint32 b_rb	= b & 0xf81f;
-		sint32 b_g	= b & 0x07e0;
-		sint32 c_rb	= c & 0xf81f;
-		sint32 c_g	= c & 0x07e0;
-		sint32 d_rb	= d & 0xf81f;
-		sint32 d_g	= d & 0x07e0;
-
-		const sint32 top_rb = (a_rb + (((b_rb - a_rb)*x + 0x8010) >> 6)) & 0xf81f;
-		const sint32 top_g  = (a_g  + (((b_g  - a_g )*x + 0x0400) >> 6)) & 0x07e0;
-		const sint32 bot_rb = (c_rb + (((d_rb - c_rb)*x + 0x8010) >> 6)) & 0xf81f;
-		const sint32 bot_g  = (c_g  + (((d_g  - c_g )*x + 0x0400) >> 6)) & 0x07e0;
-
-		const sint32 final_rb = (top_rb + (((bot_rb - top_rb)*y + 0x8010) >> 6)) & 0xf81f;
-		const sint32 final_g  = (top_g  + (((bot_g  - top_g )*y + 0x0400) >> 6)) & 0x07e0;
-
-		return final_rb + final_g;
-	}
 }
 
 ///////////////////////////////////////////////////////////////////////////

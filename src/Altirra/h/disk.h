@@ -26,11 +26,13 @@
 #include <vd2/system/VDString.h>
 #include <vd2/system/vdstl.h>
 #include <at/atcore/devicesio.h>
+#include <at/atcore/enumparse.h>
 #include <at/atcore/scheduler.h>
 #include <at/atio/diskimage.h>
 #include "diskinterface.h"
 
 class ATAudioSamplePlayer;
+class ATDiskRotationTracer;
 
 class ATCPUEmulatorMemory;
 class IVDRandomAccessStream;
@@ -62,6 +64,8 @@ enum ATDiskEmulationMode : uint8 {
 	kATDiskEmulationMode_Happy810,
 	kATDiskEmulationModeCount
 };
+
+AT_DECLARE_ENUM_TABLE(ATDiskEmulationMode);
 
 class ATDiskEmulator final
 	: public IATDeviceSIO
@@ -106,6 +110,7 @@ public:
 	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 public:		// IATDiskInterfaceClient
+	void OnDiskChanging() override;
 	void OnDiskChanged(bool mediaRemoved) override;
 	void OnWriteModeChanged() override;
 	void OnTimingModeChanged() override;
@@ -154,7 +159,8 @@ protected:
 
 	void ProcessUnhandledCommandState();
 
-	void ComputeGeometry();
+	void DetectDensity();
+	void UpdateDensityFromPERCOM();
 	void ComputePERCOMBlock();
 	void ComputeSupportedProfile();
 	bool SetPERCOMData(const uint8 *data);
@@ -164,6 +170,7 @@ protected:
 	void ExtendMotorTimeoutTo(uint32 delay);
 	void SetMotorEvent();
 	void PlaySeekSound(uint32 initialDelay, uint32 trackCount, bool bumpHead = false, uint32 bumpStartingTrack = 0);
+	uint32 GetCyclesToReadSector(const ATDiskPhysicalSectorInfo& psi, uint32 transferLength) const;
 
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
 	ATScheduler *mpScheduler = nullptr;
@@ -193,6 +200,7 @@ protected:
 	uint32	mActiveCommandSector = 0;
 	sint32	mActiveCommandPhysSector = 0;
 	float	mActiveCommandStartRotPos = 0;
+	float	mActiveCommandSearchStartRotPos = 0;
 	uint32	mActiveCommandStartTime = 0;
 	uint32	mLastReadSector = 0;
 	uint8	mCustomCodeState = 0;
@@ -245,6 +253,7 @@ protected:
 	ATDiskInterface *mpDiskInterface = nullptr;
 	ATTraceContext *mpTraceContext = nullptr;
 	ATTraceChannelFormatted *mpTraceChannel = nullptr;
+	vdautoptr<ATDiskRotationTracer> mpRotationTracer;
 
 	struct ExtPhysSector {
 		sint8	mForcedOrder;

@@ -101,8 +101,8 @@ public:
 	uint32 EstimateWriteStdData(ATCassetteWriteCursor& cursor, uint32 numBytes, uint32 baudRate) const;
 
 	struct Pulse {
-		bool mbPolarity : 1;
-		uint32 mSamples : 31;
+		bool mbPolarity;
+		uint32 mSamples;
 	};
 
 	bool WritePulses(ATCassetteWriteCursor& cursor, const Pulse *pulses, uint32 numPulses, uint32 numSamples, bool insert, bool fsk);

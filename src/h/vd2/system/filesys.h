@@ -262,7 +262,7 @@ public:
 		return mBasePath + mFilename;
 	}
 
-	const sint64 GetSize() const {
+	sint64 GetSize() const {
 		return mFileSize;
 	}
 

@@ -1,14 +1,14 @@
-# Altirra 4.10 Build Instructions
+# Altirra 4.20 Build Instructions
 
 ## Prerequisites
 ### Build machine
 * Required: Windows 10 x64 or newer
 
-As of 4.10, building on a 32-bit (x86) system is no longer supported.
+As of 4.20, building on a 32-bit (x86) system is no longer supported.
 
 ### Software components
 The following components are required to minimally build Altirra:
-* Visual Studio 2022 version 17.4.3 or newer (any edition), with the following components installed:
+* Visual Studio 2022 version 17.8.3 or newer (any edition), with the following components installed:
     * C++ core desktop features
     * MSVC v143 - VS 2022 C++ x64/x86 build tools (Latest)
     * Windows 11 SDK (10.0.22621.0 or newer)

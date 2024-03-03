@@ -21,6 +21,7 @@
 #include <vd2/system/int128.h>
 #include <vd2/system/registry.h>
 #include <at/atcore/devicestorageimpl.h>
+#include <at/atcore/snapshotimpl.h>
 #include "side.h"
 #include "memorymanager.h"
 #include "ide.h"
@@ -59,9 +60,10 @@ void *ATSIDEEmulator::AsInterface(uint32 id) {
 		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(this);
 		case IATDeviceDiagnostics::kTypeID:	return static_cast<IATDeviceDiagnostics *>(this);
 		case IATDeviceButtons::kTypeID:		return static_cast<IATDeviceButtons *>(this);
+		case IATDeviceSnapshot::kTypeID:	return static_cast<IATDeviceSnapshot *>(this);
 		case ATIDEEmulator::kTypeID:		return static_cast<ATIDEEmulator *>(&mIDE);
 		default:
-			return nullptr;
+			return ATDevice::AsInterface(id);
 	}
 }
 
@@ -373,19 +375,82 @@ void ATSIDEEmulator::DumpStatus(ATConsoleOutput& output) {
 }
 
 uint32 ATSIDEEmulator::GetSupportedButtons() const {
-	return (1 << kATDeviceButton_CartridgeResetBank) | (1 << kATDeviceButton_CartridgeSDXEnable);
+	return (1 << kATDeviceButton_CartridgeResetBank) | (1 << kATDeviceButton_CartridgeSwitch);
 }
 
 bool ATSIDEEmulator::IsButtonDepressed(ATDeviceButton idx) const {
-	return idx == kATDeviceButton_CartridgeSDXEnable && mbSDXEnable;
+	return idx == kATDeviceButton_CartridgeSwitch && mbSDXEnable;
 }
 
 void ATSIDEEmulator::ActivateButton(ATDeviceButton idx, bool state) {
 	if (idx == kATDeviceButton_CartridgeResetBank) {
 		ResetCartBank();
-	} else if (idx == kATDeviceButton_CartridgeSDXEnable) {
+	} else if (idx == kATDeviceButton_CartridgeSwitch) {
 		SetSDXEnabled(state);
 	}
+}
+
+class ATSaveStateSIDE final : public ATSnapExchangeObject<ATSaveStateSIDE, "ATSaveStateSIDE"> {
+public:
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	uint8 mArchSDXBank = 0;
+	uint8 mArchTopBank = 0;
+	uint8 mArchCFControl = 0;
+	bool mbArchCFRemoved = false;
+	bool mbArchCFPresent = false;
+
+	vdrefptr<IATObjectState> mpIDEState;
+};
+
+template<ATExchanger T>
+void ATSaveStateSIDE::Exchange(T& ex) {
+	ex.Transfer("arch_sdx_bank", &mArchSDXBank);
+	ex.Transfer("arch_top_bank", &mArchTopBank);
+	ex.Transfer("arch_cf_control", &mArchCFControl);
+	ex.Transfer("arch_cf_removed", &mbArchCFRemoved);
+	ex.Transfer("arch_cf_present", &mbArchCFPresent);
+	ex.Transfer("ide_state", &mpIDEState);
+}
+
+void ATSIDEEmulator::GetSnapshotStatus(ATSnapshotStatus& status) const {
+	mIDE.GetSnapshotStatus(status);
+}
+
+void ATSIDEEmulator::LoadState(const IATObjectState *state, ATSnapshotContext& ctx) {
+	if (!state) {
+		const ATSaveStateSIDE kDefaultState {};
+
+		return LoadState(&kDefaultState, ctx);
+	}
+
+	const auto& sideState = atser_cast<const ATSaveStateSIDE&>(*state);
+
+	ColdReset();
+
+	OnWriteByte(this, mbVersion2 ? 0xD5E1 : 0xD5E0, sideState.mArchSDXBank);
+	OnWriteByte(this, 0xD5E4, sideState.mArchTopBank);
+	OnWriteByte(this, 0xD5F8, sideState.mArchCFControl);
+
+	mbIDERemoved = sideState.mbArchCFRemoved || (sideState.mbArchCFPresent && !mpBlockDevice);
+
+	// load IDE state -- must be after we've restored CF control so CF reset is restored
+	mIDE.LoadState(sideState.mpIDEState);
+}
+
+vdrefptr<IATObjectState> ATSIDEEmulator::SaveState(ATSnapshotContext& ctx) const {
+	vdrefptr state { new ATSaveStateSIDE };
+
+	state->mArchSDXBank = mSDXBankRegister;
+	state->mArchTopBank = mTopBankRegister;
+	state->mArchCFControl = (mbIDEEnabled ? 0x00 : 0x80) + (mbIDEReset ? 0x00 : 0x01);
+	state->mbArchCFRemoved = mbIDERemoved;
+	state->mbArchCFPresent = mpBlockDevice != nullptr;
+
+	state->mpIDEState = mIDE.SaveState();
+
+	return state;
 }
 
 void ATSIDEEmulator::SetSDXBank(sint32 bank, bool topEnable) {
@@ -432,10 +497,13 @@ sint32 ATSIDEEmulator::OnDebugReadByte(void *thisptr0, uint32 addr) {
 		case 0xD5F5:
 		case 0xD5F6:
 		case 0xD5F7:
-			if (thisptr->mbIDEEnabled && thisptr->mpBlockDevice)
-				return (uint8)thisptr->mIDE.DebugReadByte((uint8)addr & 7);
-			else
-				return 0xFF;
+			if (thisptr->mbIDEEnabled) {
+				if (thisptr->mpBlockDevice)
+					return (uint8)thisptr->mIDE.DebugReadByte((uint8)addr & 7);
+				else
+					return 1;
+			} else
+				return -1;
 	}
 
 	return OnReadByte(thisptr0, addr);
@@ -471,7 +539,9 @@ sint32 ATSIDEEmulator::OnReadByte(void *thisptr0, uint32 addr) {
 		case 0xD5F5:
 		case 0xD5F6:
 		case 0xD5F7:
-			return thisptr->mbIDEEnabled && thisptr->mpBlockDevice ? (uint8)thisptr->mIDE.ReadByte((uint8)addr & 7) : 0xFF;
+			if (thisptr->mbIDEEnabled)
+				return thisptr->mpBlockDevice ? (uint8)thisptr->mIDE.ReadByte((uint8)addr & 7) : 0xFF;
+			break;
 
 		case 0xD5F8:
 			if (thisptr->mbVersion2)

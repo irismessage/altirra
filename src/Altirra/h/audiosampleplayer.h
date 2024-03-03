@@ -47,7 +47,7 @@ private:
 	vdfastvector<ATAudioSound *> mFreeSounds;
 	VDLinearAllocator mAllocator;
 
-	ATAudioSampleDesc mSamples[6];
+	ATAudioSampleDesc mSamples[7];
 };
 
 class ATAudioSamplePlayer final : public IATSyncAudioSource, public IATSyncAudioSamplePlayer {

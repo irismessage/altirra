@@ -145,10 +145,7 @@ void ATUIGetKernelFirmwareList(ATHardwareMode hwmode, vdvector<ATFirmwareInfo>& 
 			case kATFirmwareType_KernelXL:
 			case kATFirmwareType_KernelXEGS:
 			case kATFirmwareType_Kernel1200XL:
-				if (hwmode != kATHardwareMode_1200XL &&
-					hwmode != kATHardwareMode_130XE &&
-					hwmode != kATHardwareMode_800XL &&
-					hwmode != kATHardwareMode_XEGS)
+				if (!kATHardwareModeTraits[hwmode].mbRunsXLOS)
 					continue;
 				break;
 

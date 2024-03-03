@@ -23,12 +23,18 @@ extern const ATDeviceDefinition g_ATDeviceDefDiskDrive;
 extern const ATDeviceDefinition g_ATDeviceDefExeLoader;
 extern const ATDeviceDefinition g_ATDeviceDefCorvus;
 extern const ATDeviceDefinition g_ATDeviceDefLoopback;
-extern const ATDeviceDefinition g_ATDeviceDefParallelFileWriter;
+extern const ATDeviceDefinition g_ATDeviceDefFileWriter;
+extern const ATDeviceDefinition g_ATDeviceDefNetSerial;
+extern const ATDeviceDefinition g_ATDeviceDefSerialSplitter;
+extern const ATDeviceDefinition g_ATDeviceDefSuperSALT;
 
 const std::initializer_list<const ATDeviceDefinition *> kATDeviceLibraryDefs {
 	&g_ATDeviceDefDiskDrive,
 	&g_ATDeviceDefExeLoader,
 	&g_ATDeviceDefCorvus,
 	&g_ATDeviceDefLoopback,
-	&g_ATDeviceDefParallelFileWriter
+	&g_ATDeviceDefFileWriter,
+	&g_ATDeviceDefNetSerial,
+	&g_ATDeviceDefSerialSplitter,
+	&g_ATDeviceDefSuperSALT
 };

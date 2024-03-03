@@ -25,8 +25,9 @@ void ATUpdateSetBackgroundCheckEnabled(bool enable);
 
 using ATUpdateInfoCallback = vdfunction<void(const ATUpdateFeedInfo *)>;
 
-void ATUpdateInit(IATAsyncDispatcher& dispatcher, ATUpdateInfoCallback fn);
+bool ATUpdateIsTestChannelDefault();
+void ATUpdateInit(bool testChannel, IATAsyncDispatcher& dispatcher, ATUpdateInfoCallback fn);
 void ATUpdateShutdown();
-VDStringW ATUpdateGetFeedUrl();
+VDStringW ATUpdateGetFeedUrl(bool useTestChannel);
 
 #endif

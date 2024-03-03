@@ -33,7 +33,7 @@ namespace {
 		DWORD_PTR mOldAffinityMask;
 	};
 
-	ATChecksumSHA256 operator""_atsha256(const char *s, size_t len) {
+	consteval ATChecksumSHA256 operator""_atsha256(const char *s, size_t len) {
 		if (len != 64)
 			throw std::invalid_argument("invalid SHA256 checksum length");
 
@@ -244,15 +244,15 @@ DEFINE_TEST(Core_Checksum) {
 	long ex = CPUCheckForExtensions();
 
 #if VD_CPU_X86 || VD_CPU_X64
-	CPUEnableExtensions(ex & (CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE));
+	CPUEnableExtensions(ex & (CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE));
 	test("Scalar");
 
 	if (ex & CPUF_SUPPORTS_SSE2) {
-		CPUEnableExtensions(ex & (CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE2));
+		CPUEnableExtensions(ex & (CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE2));
 		test("SSE2");
 
 		if (ex & CPUF_SUPPORTS_SSSE3) {
-			CPUEnableExtensions(ex & (CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSSE3));
+			CPUEnableExtensions(ex & (CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSSE3));
 			test("SSSE3");
 
 			if (ex & CPUF_SUPPORTS_SHA) {
@@ -317,15 +317,15 @@ DEFINE_TEST_NONAUTO(Core_ChecksumSpeed) {
 	long ex = CPUCheckForExtensions();
 
 #if VD_CPU_X86 || VD_CPU_X64
-	CPUEnableExtensions(ex & (CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE));
+	CPUEnableExtensions(ex & (CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE));
 	test("Scalar", ATComputeChecksumSHA256);
 
 	if (ex & CPUF_SUPPORTS_SSE2) {
-		CPUEnableExtensions(ex & (CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE2));
+		CPUEnableExtensions(ex & (CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE2));
 		test("SSE2", ATComputeChecksumSHA256);
 
 		if (ex & CPUF_SUPPORTS_SSSE3) {
-			CPUEnableExtensions(ex & (CPUF_SUPPORTS_CPUID | CPUF_SUPPORTS_FPU | CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSSE3));
+			CPUEnableExtensions(ex & (CPUF_SUPPORTS_MMX | CPUF_SUPPORTS_INTEGER_SSE | CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSSE3));
 			test("SSSE3", ATComputeChecksumSHA256);
 
 			if (ex & CPUF_SUPPORTS_SHA) {

@@ -29,13 +29,13 @@ public:
 	int AddRef() override { return 2; }
 	int Release() override { return 1; }
 
-	bool IsSupported(IATDevice& dev) const override;
+	bool IsSupported(IATDevice *dev, int busIndex) const override;
 	ATDeviceXCmdInfo GetInfo() const override;
-	void Invoke(ATDeviceManager& devMgr, IATDevice& dev) override;
+	void Invoke(ATDeviceManager& devMgr, IATDevice *dev, int busIndex) override;
 } g_ATDeviceXCmdMountVHD;
 
-bool ATDeviceXCmdMountVHD::IsSupported(IATDevice& dev) const {
-	return vdpoly_cast<IATBlockDeviceDirectAccess *>(&dev) != nullptr;
+bool ATDeviceXCmdMountVHD::IsSupported(IATDevice *dev, int busIndex) const {
+	return vdpoly_cast<IATBlockDeviceDirectAccess *>(dev) != nullptr && busIndex < 0;
 }
 
 ATDeviceXCmdInfo ATDeviceXCmdMountVHD::GetInfo() const {
@@ -46,9 +46,9 @@ ATDeviceXCmdInfo ATDeviceXCmdMountVHD::GetInfo() const {
 	return info;
 }
 
-void ATDeviceXCmdMountVHD::Invoke(ATDeviceManager& devmgr, IATDevice& dev) {
-	IATBlockDevice *bd = vdpoly_cast<IATBlockDevice *>(&dev);
-	IATBlockDeviceDirectAccess *da = vdpoly_cast<IATBlockDeviceDirectAccess *>(&dev);
+void ATDeviceXCmdMountVHD::Invoke(ATDeviceManager& devmgr, IATDevice *dev, int busIndex) {
+	IATBlockDevice *bd = vdpoly_cast<IATBlockDevice *>(dev);
+	IATBlockDeviceDirectAccess *da = vdpoly_cast<IATBlockDeviceDirectAccess *>(dev);
 
 	if (!bd || !da)
 		throw MyError("This device cannot be mounted as a disk in Windows.");
@@ -59,12 +59,12 @@ void ATDeviceXCmdMountVHD::Invoke(ATDeviceManager& devmgr, IATDevice& dev) {
 
 	const bool readOnly = bd->IsReadOnly();
 
-	IATDeviceParent *const devParent = dev.GetParent();
-	const auto devParentIndex = dev.GetParentBusIndex();
+	IATDeviceParent *const devParent = dev->GetParent();
+	const auto devParentIndex = dev->GetParentBusIndex();
 
 	VDStringW devStr;
-	devmgr.SerializeDevice(&dev, devStr);
-	devmgr.RemoveDevice(&dev);
+	devmgr.SerializeDevice(dev, devStr, true, true);
+	devmgr.RemoveDevice(dev);
 
 	bd = nullptr;
 	da = nullptr;

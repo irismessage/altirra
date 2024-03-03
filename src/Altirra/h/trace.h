@@ -72,6 +72,8 @@ public:
 	virtual bool IsEmpty() const = 0;
 	virtual void StartIteration(double startTime, double endTime, double eventThreshold) = 0;
 	virtual bool GetNextEvent(ATTraceEvent& ev) = 0;
+	virtual uint32 GetEventCount() const = 0;
+	virtual uint64 GetTraceSize() const = 0;
 };
 
 class ATTraceGroup final : public vdrefcount {
@@ -152,17 +154,24 @@ struct ATTraceSettings {
 
 class ATTraceChannelTickBased : public vdrefcounted<IATTraceChannel> {
 public:
+	static constexpr auto kTypeID = "ATTraceChannelTickBased"_vdtypeid;
+
 	ATTraceChannelTickBased(uint64 tickOffset, double tickScale, const wchar_t *name);
 
 	void TruncateLastEvent(uint64 tick);
 
 	void *AsInterface(uint32 iid) override;
 
+	uint64 GetBaseTick() const { return mTickOffset; }
+	double GetSecondsPerTick() const { return mTickScale; }
+
 	const wchar_t *GetName() const override final;
 	double GetDuration() const override final;
 	bool IsEmpty() const override final;
 	void StartIteration(double startTime, double endTime, double eventThreshold) override final;
 	bool GetNextEvent(ATTraceEvent& ev) override final;
+	uint32 GetEventCount() const override final;
+	uint64 GetTraceSize() const override;
 
 protected:
 	virtual void DecodeName(ATTraceEvent& ev, const void *data) const = 0;
@@ -179,8 +188,8 @@ private:
 		uint32 mFgColor;
 	};
 
-	vdfastdeque<SimpleEvent> mEvents;
-	vdfastdeque<SimpleEvent>::const_iterator mIt;
+	vdfastdeque<SimpleEvent, vdallocator<SimpleEvent>, 9> mEvents;
+	vdfastdeque<SimpleEvent, vdallocator<SimpleEvent>, 9>::const_iterator mIt;
 	double mIterEndTime;
 	double mIterThreshold;
 	double mTickScale;
@@ -201,6 +210,26 @@ public:
 	}
 
 	void DecodeName(ATTraceEvent& ev, const void *data) const override;
+};
+
+class ATTraceChannelStringTable final : public ATTraceChannelTickBased {
+public:
+	using ATTraceChannelTickBased::ATTraceChannelTickBased;
+
+	void AddString(const wchar_t *s);
+
+	void AddTickEvent(uint64 tickStart, uint64 tickEnd, uint32 stringIndex, uint32 color) {
+		AddRawTickEvent(tickStart, tickEnd, (void *)(uintptr)stringIndex, color);
+	}
+
+	void AddOpenTickEvent(uint64 tickStart, uint32 stringIndex, uint32 color) {
+		AddOpenRawTickEvent(tickStart, (void *)(uintptr)stringIndex, color);
+	}
+
+	void DecodeName(ATTraceEvent& ev, const void *data) const override;
+
+private:
+	vdvector<VDStringW> mStringTable;
 };
 
 class ATTraceChannelFormatted final : public ATTraceChannelTickBased {
@@ -254,6 +283,15 @@ public:
 		);
 	}
 
+	void AddOpenTickEventM(uint64 tickStart, uint32 color, const wchar_t *msg) {
+		AddOpenTickEvent(tickStart,
+			[=](VDStringW& s) {
+				s = msg;
+			},
+			color
+		);
+	}
+
 	template<typename... Args>
 	void AddOpenTickEventF(uint64 tickStart, uint32 color, const wchar_t *format, Args&&... args) {
 		AddOpenTickEvent(tickStart,
@@ -265,6 +303,7 @@ public:
 	}
 
 	void DecodeName(ATTraceEvent& ev, const void *data) const override;
+	uint64 GetTraceSize() const override;
 
 private:
 	void *AddRawFormattedTickEvent(uint64 tickStart, uint64 tickEnd, uint32 color, size_t size, size_t align, FormatterInfo *fi);

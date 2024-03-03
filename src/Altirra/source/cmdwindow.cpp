@@ -48,3 +48,13 @@ void OnCommandWindowUndock() {
 
 	g_pMainWindow->UndockFrame(w);
 }
+
+void OnCommandWindowNextPane() {
+	if (g_pMainWindow)
+		g_pMainWindow->CycleActiveFrame(+1);
+}
+
+void OnCommandWindowPrevPane() {
+	if (g_pMainWindow)
+		g_pMainWindow->CycleActiveFrame(-1);
+}

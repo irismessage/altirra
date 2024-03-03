@@ -16,6 +16,7 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+#include <at/atcore/asyncdispatcher.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceserial.h>
 
@@ -40,6 +41,7 @@ public:
 
 public:
 	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void Init() override;
 	void Shutdown() override;
 	void ColdReset() override;
 
@@ -47,14 +49,18 @@ public:
 	void SetOnStatusChange(const vdfunction<void(const ATDeviceSerialStatus&)>& fn) override;
 	void SetTerminalState(const ATDeviceSerialTerminalState&) override;
 	ATDeviceSerialStatus GetStatus() override;
+	void SetOnReadReady(vdfunction<void()> fn) override;
 	bool Read(uint32& baudRate, uint8& c) override;
 	bool Read(uint32 baudRate, uint8& c, bool& framingError) override;
 	void Write(uint32 baudRate, uint8 c) override;
 	void FlushBuffers() override;
 
 private:
-	uint8 mBufferedByte;
-	uint32 mBufferedBaudRate;
+	uint8 mBufferedByte = 0;
+	uint32 mBufferedBaudRate = 0;
+	vdfunction<void()> mpOnReadReady;
+	IATAsyncDispatcher *mpAsyncDispatcher = nullptr;
+	uint64 mAsyncCallback = 0;
 };
 
 ATLoopbackDevice::ATLoopbackDevice() {
@@ -81,7 +87,15 @@ void ATLoopbackDevice::GetDeviceInfo(ATDeviceInfo& info) {
 	info.mpDef = &g_ATDeviceDefLoopback;
 }
 
+void ATLoopbackDevice::Init() {
+	mpAsyncDispatcher = GetService<IATAsyncDispatcher>();
+}
+
 void ATLoopbackDevice::Shutdown() {
+	if (mpAsyncDispatcher) {
+		mpAsyncDispatcher->Cancel(&mAsyncCallback);
+		mpAsyncDispatcher = nullptr;
+	}
 }
 
 void ATLoopbackDevice::ColdReset() {
@@ -96,6 +110,10 @@ void ATLoopbackDevice::SetTerminalState(const ATDeviceSerialTerminalState& state
 
 ATDeviceSerialStatus ATLoopbackDevice::GetStatus() {
 	return {};
+}
+
+void ATLoopbackDevice::SetOnReadReady(vdfunction<void()> fn) {
+	mpOnReadReady = std::move(fn);
 }
 
 bool ATLoopbackDevice::Read(uint32& baudRate, uint8& c) {
@@ -127,6 +145,15 @@ bool ATLoopbackDevice::Read(uint32 baudRate, uint8& c, bool& framingError) {
 }
 
 void ATLoopbackDevice::Write(uint32 baudRate, uint8 c) {
+	if (!mBufferedBaudRate) {
+		mpAsyncDispatcher->Queue(&mAsyncCallback,
+			[this] {
+				if (mpOnReadReady)
+					mpOnReadReady();
+			}
+		);
+	}
+
 	mBufferedByte = c;
 	mBufferedBaudRate = baudRate;
 }

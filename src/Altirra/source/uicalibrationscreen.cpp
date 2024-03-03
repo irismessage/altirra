@@ -25,7 +25,7 @@
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUICalibrationLevelsStrip final : public ATUIContainer {
+class ATUICalibrationLevelsStrip final : public ATUIWidget {
 public:
 	ATUICalibrationLevelsStrip(bool white)
 		: mBaseColor(white ? 0xEFEFEF : 0)
@@ -111,7 +111,7 @@ void ATUICalibrationPanelBlackWhiteLevels::OnCreate() {
 		L"Adjust the display's black level and contrast settings so that the squares are as dark or bright as possible "
 		L"while the blinking inner squares are still visible. The difference will be very faint for 1 and 255."
 	);
-	text->SetAlphaFillColor(0);
+	text->SetFillColor(0);
 	text->SetTextColor(0xFFFFFF);
 }
 
@@ -149,7 +149,7 @@ void ATUICalibrationPanelHDR::OnCreate() {
 		L"\n"
 		L"Depending on the display, switching the HDR mode settings or changing from HDMI to DisplayPort can "
 		L"bypass or reduce tone mapping and improve accuracy.");
-	text->SetAlphaFillColor(0);
+	text->SetFillColor(0);
 	text->SetTextColor(0xFFFFFF);
 
 	static constexpr uint32 kPixels[4] {
@@ -294,7 +294,7 @@ void ATUICalibrationPanelHDRToneMap::OnCreate() {
 		L"show a more gradual falloff, which accepts higher intensities than the display can support but distorts lower intensities. "
 		L"(This test is inspired by the VESA DisplayHDR tone mapping test.)"
 	);
-	text->SetAlphaFillColor(0);
+	text->SetFillColor(0);
 	text->SetTextColor(0xFFFFFF);
 }
 
@@ -397,7 +397,7 @@ void ATUICalibrationPanelGradient::OnCreate() {
 		L"the display may need to be adjusted or the graphics driver's desktop color settings reset. 6-bit panels or displays with HDR "
 		L"will show less uniform stepping."
 	);
-	text->SetAlphaFillColor(0);
+	text->SetFillColor(0);
 	text->SetTextColor(0xFFFFFF);
 
 }

@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2009-2011 Avery Lee
+//	Copyright (C) 2009-2023 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -11,17 +11,18 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+#include <at/atcore/asyncdispatcher.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/enumparseimpl.h>
 #include <at/atcore/scheduler.h>
 #include <at/atcore/wraptime.h>
 #include <at/atdevices/modemsound.h>
+#include <at/atemulation/phone.h>
 #include "modem.h"
 #include "uirender.h"
 #include "console.h"
@@ -29,6 +30,7 @@
 
 ATDebuggerLogChannel g_ATLCModem(false, false, "MODEM", "Modem activity");
 ATDebuggerLogChannel g_ATLCModemTCP(false, false, "MODEMTCP", "Modem TCP/IP activity");
+ATDebuggerLogChannel g_ATLCModemDial(false, false, "MODEMDIAL", "Modem pulse/dial detection");
 
 AT_DEFINE_ENUM_TABLE_BEGIN(ATModemNetworkMode)
 	{ ATModemNetworkMode::None, "none" },
@@ -142,9 +144,6 @@ void *ATModemEmulator::AsInterface(uint32 iid) {
 		case IATDeviceAudioOutput::kTypeID:
 			return static_cast<IATDeviceAudioOutput *>(mpModemSound);
 
-		case IATRS232Device::kTypeID:
-			return static_cast<IATRS232Device *>(this);
-
 		default:
 			return ATDevice::AsInterface(iid);
 	}
@@ -224,14 +223,77 @@ void ATModemEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
 }
 
-void ATModemEmulator::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATAudioMixer *mixer) {
+void ATModemEmulator::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATAudioMixer *mixer, IATAsyncDispatcher *asyncDispatcher) {
 	InitScheduling(sched, slowsched);
 	InitIndicators(uir);
+	mpAudioMixer = mixer;
 	mpModemSound->InitAudioOutput(mixer);
+	mpAsyncDispatcher = asyncDispatcher;
 	Init();
 }
 
 void ATModemEmulator::Init() {
+	if (!mpAsyncDispatcher)
+		mpAsyncDispatcher = GetService<IATAsyncDispatcher>();
+
+	if (mConfig.mDeviceMode == kATRS232DeviceMode_1030) {
+		mpPulseDialDetector = new ATPhonePulseDialDetector;
+		mpPulseDialDetector->Init(mpScheduler);
+
+		mpPulseDialDetector->SetOnEvent(
+			[this](ATPhonePulseDialDetector::EventType type, const char *number) {
+				switch(type) {
+					case ATPhonePulseDialDetector::EventType::Reset:
+						g_ATLCModemDial("Pulse dial reset\n");
+						break;
+					case ATPhonePulseDialDetector::EventType::ValidDigit:
+						g_ATLCModemDial("Valid pulse digit: %s\n", number);
+						mpModemSound->Stop1();
+						break;
+					case ATPhonePulseDialDetector::EventType::InvalidDigit:
+						g_ATLCModemDial("Invalid pulse digit\n");
+						mpModemSound->Stop1();
+						break;
+					case ATPhonePulseDialDetector::EventType::ValidDial:
+						g_ATLCModemDial("Pulse dialing: %s\n", number);
+						
+						if (!mConfig.mDialAddress.empty() && !mConfig.mDialService.empty())
+							Dial(mConfig.mDialAddress.c_str(), mConfig.mDialService.c_str(), nullptr, number);
+						else
+							Dial("", "", "no dial proxy set", number);
+						break;
+					case ATPhonePulseDialDetector::EventType::InvalidDial:
+						g_ATLCModemDial("Invalid pulse dial\n");
+						break;
+				}
+			}
+		);
+
+		mpToneDialDetector = new ATPhoneToneDialDetector;
+		mpToneDialDetector->Init(mpSlowScheduler, mpAudioMixer);
+		mpToneDialDetector->SetOnEvent(
+			[this](ATPhoneToneDialDetector::EventType type, const char *number) {
+				switch(type) {
+					case ATPhoneToneDialDetector::EventType::ValidDigit:
+						g_ATLCModemDial("DTMF digit: %s\n", number);
+						mpModemSound->Stop1();
+						break;
+					case ATPhoneToneDialDetector::EventType::ValidDial:
+						g_ATLCModemDial("Tone dialing: %s\n", number);
+						
+						if (!mConfig.mDialAddress.empty() && !mConfig.mDialService.empty())
+							Dial(mConfig.mDialAddress.c_str(), mConfig.mDialService.c_str(), nullptr, number);
+						else
+							Dial("", "", "no dial proxy set", number);
+						break;
+					case ATPhoneToneDialDetector::EventType::InvalidDial:
+						g_ATLCModemDial("Invalid tone dial\n");
+						break;
+				}
+			}
+		);
+	}
+
 	mLastWriteTime = ATSCHEDULER_GETTIME(mpScheduler);
 	mTransmitIndex = 0;
 	mTransmitLength = 0;
@@ -265,11 +327,20 @@ void ATModemEmulator::Shutdown() {
 
 	TerminateCall();
 
+	if (mpAsyncDispatcher) {
+		mpAsyncDispatcher->Cancel(&mAsyncCallback);
+		mpAsyncDispatcher = nullptr;
+	}
+
 	if (mpModemSound) {
 		mpModemSound->Shutdown();
 		delete mpModemSound;
 		mpModemSound = nullptr;
 	}
+
+	mpPulseDialDetector = nullptr;
+	mpToneDialDetector = nullptr;
+	mpAudioMixer = nullptr;
 
 	if (mpSlowScheduler) {
 		if (mpEventPoll) {
@@ -303,8 +374,15 @@ void ATModemEmulator::ColdReset() {
 
 	TerminateCall();
 	mpModemSound->Reset();
+	
+	if (mpPulseDialDetector)
+		mpPulseDialDetector->Reset();
+
+	if (mpToneDialDetector)
+		mpToneDialDetector->Reset();
 
 	mCommandRate = 9600;
+	mLastRegister = 0;
 
 	mControlState.mbHighSpeed = true;
 	mControlState.mbRinging = false;
@@ -324,6 +402,7 @@ void ATModemEmulator::SetOnStatusChange(const vdfunction<void(const ATDeviceSeri
 
 void ATModemEmulator::SetTerminalState(const ATDeviceSerialTerminalState& state) {
 	const bool dtrdrop = mTerminalState.mbDataTerminalReady && !state.mbDataTerminalReady;
+	const bool prevrts = mTerminalState.mbRequestToSend;
 
 	mTerminalState = state;
 
@@ -345,6 +424,15 @@ void ATModemEmulator::SetTerminalState(const ATDeviceSerialTerminalState& state)
 					EnterCommandMode(true, false);
 				}
 				break;
+		}
+	}
+
+	// if RTS/CTS handshaking is enabled and RTS just turned on, signal read
+	// ready again if needed
+	if (mRegisters.mFlowControlMode == ATModemFlowControl::RTS_CTS) {
+		if (!prevrts && mTerminalState.mbRequestToSend && mbReadReadySignaled) {
+			if (mpOnReadReady)
+				mpOnReadReady();
 		}
 	}
 }
@@ -380,8 +468,14 @@ void ATModemEmulator::UpdateConfig() {
 	UpdateUIStatus();
 }
 
+void ATModemEmulator::SetOnReadReady(vdfunction<void()> fn) {
+	mpOnReadReady = std::move(fn);
+
+	mbReadReadySignaled = false;
+}
+
 bool ATModemEmulator::Read(uint32& baudRate, uint8& c) {
-	bool loggingState = g_ATLCModemTCP.IsEnabled();
+	const bool loggingState = g_ATLCModemTCP.IsEnabled();
 	if (mbLoggingState != loggingState) {
 		mbLoggingState = loggingState;
 
@@ -394,6 +488,8 @@ bool ATModemEmulator::Read(uint32& baudRate, uint8& c) {
 		if (!mTerminalState.mbRequestToSend)
 			return false;
 	}
+
+	mbReadReadySignaled = false;
 
 	if (mTransmitIndex < mTransmitLength) {
 		c = mTransmitBuffer[mTransmitIndex++];
@@ -518,6 +614,8 @@ void ATModemEmulator::Write(uint32 baudRate, uint8 c) {
 							mTransmitBuffer[mTransmitLength++] = c;
 							mTransmitBuffer[mTransmitLength++] = ' ';
 						}
+
+						SignalReadReady();
 					}
 
 					mpScheduler->SetEvent(kCommandTimeout, this, 2, mpEventCommandModeTimeout);
@@ -537,9 +635,12 @@ void ATModemEmulator::Write(uint32 baudRate, uint8 c) {
 				return;
 		}
 
-		if (mRegisters.mbEchoMode) {
-			if (mTransmitLength < sizeof mTransmitBuffer)
+		if (mConfig.mDeviceMode != kATRS232DeviceMode_1030 && mRegisters.mbEchoMode) {
+			if (mTransmitLength < sizeof mTransmitBuffer) {
 				mTransmitBuffer[mTransmitLength++] = c;
+
+				SignalReadReady();
+			}
 		}
 	} else {
 		if ((c & 0x7f) == mRegisters.mEscapeChar && mConfig.mDeviceMode != kATRS232DeviceMode_1030) {
@@ -617,7 +718,7 @@ void ATModemEmulator::HangUp() {
 	RestoreListeningState();
 }
 
-void ATModemEmulator::Dial(const char *address, const char *service, const char *desc) {
+void ATModemEmulator::Dial(const char *address, const char *service, const char *desc, const char *number) {
 	TerminateCall();
 
 	mbConnectionFailed = false;
@@ -629,6 +730,13 @@ void ATModemEmulator::Dial(const char *address, const char *service, const char 
 		mRemoteName = desc;
 	} else {
 		SetRemoteNameFromAddress();
+	}
+
+	if (number) {
+		VDStringA s;
+
+		s.sprintf("%s (%s)", number, mRemoteName.c_str());
+		mRemoteName = std::move(s);
 	}
 
 	mCommandState = kCommandState_Dialing;
@@ -661,6 +769,82 @@ void ATModemEmulator::Answer() {
 
 	// No incoming connection, so report NO CARRIER.
 	SendResponse(kResponseNoCarrier);
+}
+
+void ATModemEmulator::OnHook() {
+	if (!mbOffHook)
+		return;
+
+	mbOffHook = false;
+
+	mpModemSound->SetAudioEnabledByPhase(false);
+	mpModemSound->Stop1();
+
+	if (mConfig.mDeviceMode == kATRS232DeviceMode_1030)
+		mpModemSound->Play1030RelaySound();
+	else
+		mpModemSound->PlayOnOffHookSound();
+
+	mRegisters.mAutoAnswerRings = 0;
+	HangUp();
+
+	if (mpPulseDialDetector)
+		mpPulseDialDetector->OnHook();
+
+	if (mpToneDialDetector) {
+		mpToneDialDetector->SetEnabled(false);
+		mpToneDialDetector->Reset();
+	}
+
+}
+
+void ATModemEmulator::OffHook() {
+	if (mbOffHook)
+		return;
+
+	mbOffHook = true;
+
+	mpModemSound->SetAudioEnabledByPhase(true);
+
+	mRegisters.mAutoAnswerRings = 1;
+	mRegisters.mDTRMode = 0;
+
+	const bool shouldAnswer = mbIncomingConnection;
+	if (shouldAnswer)
+		Answer();
+
+	if (mpPulseDialDetector) {
+		mpPulseDialDetector->OffHook();
+
+		if (!shouldAnswer && !mpPulseDialDetector->IsDialing())
+			mpModemSound->PlayDialTone();
+		else {
+			// don't play off-hook sound for the 1030 -- its relay is only audible
+			// for on-hook
+			if (mConfig.mDeviceMode != kATRS232DeviceMode_1030)
+				mpModemSound->PlayOnOffHookSound();
+		}
+	}
+
+	if (mpToneDialDetector)
+		mpToneDialDetector->SetEnabled(mbAudioToPhoneEnabled);
+}
+
+void ATModemEmulator::SetAudioToPhoneEnabled(bool enabled) {
+	if (mbAudioToPhoneEnabled != enabled) {
+		mbAudioToPhoneEnabled = enabled;
+
+		if (mpToneDialDetector)
+			mpToneDialDetector->SetEnabled(enabled && mbOffHook);
+	}
+}
+
+void ATModemEmulator::SetPhoneToAudioEnabled(bool enabled) {
+	if (mbPhoneToAudioEnabled != enabled) {
+		mbPhoneToAudioEnabled = enabled;
+
+		mpModemSound->SetSpeakerEnabled(enabled);
+	}
 }
 
 void ATModemEmulator::FlushBuffers() {
@@ -746,7 +930,7 @@ void ATModemEmulator::Poll() {
 			}
 
 			if (mbIncomingConnection) {
-				VDASSERT(mbCommandMode);
+				VDASSERT(mbCommandMode || mConfig.mDeviceMode == kATRS232DeviceMode_1030);
 
 				// If DTR is low in AT&D2 mode, we should not auto-answer (level triggered).
 				if (mRegisters.mAutoAnswerRings && (mRegisters.mDTRMode != 2 || mTerminalState.mbDataTerminalReady)) {
@@ -1156,13 +1340,13 @@ void ATModemEmulator::ParseCommand() {
 				break;
 
 			case 'I':	// version (SX212)
-				if (mTransmitIndex <= sizeof mTransmitBuffer - 7) {
+				if (mTransmitLength <= sizeof mTransmitBuffer - 7) {
 					if (!mRegisters.mbShortResponses) {
 						mTransmitBuffer[mTransmitLength++] = mRegisters.mLineTermChar;
 						mTransmitBuffer[mTransmitLength++] = mRegisters.mRespFormatChar;
 					}
 
-					if (number >= 2) {
+					if (number < 2) {
 						int v = number ? 103 : 134;
 
 						mTransmitBuffer[mTransmitLength++] = (uint8)('0' + (v / 100)); v %= 100;
@@ -1172,6 +1356,8 @@ void ATModemEmulator::ParseCommand() {
 
 					mTransmitBuffer[mTransmitLength++] = mRegisters.mLineTermChar;
 					mTransmitBuffer[mTransmitLength++] = mRegisters.mRespFormatChar;
+
+					SignalReadReady();
 				}
 				break;
 
@@ -1264,7 +1450,12 @@ void ATModemEmulator::ParseCommand() {
 					if (query) {
 						int v = GetRegisterValue(mLastRegister);
 
-						if (mTransmitIndex <= sizeof mTransmitBuffer - 7) {
+						if (v < 0) {
+							SendResponse(kResponseError);
+							return;
+						}
+
+						if (mTransmitLength <= sizeof mTransmitBuffer - 7) {
 							if (!mRegisters.mbShortResponses) {
 								mTransmitBuffer[mTransmitLength++] = mRegisters.mLineTermChar;
 								mTransmitBuffer[mTransmitLength++] = mRegisters.mRespFormatChar;
@@ -1277,6 +1468,8 @@ void ATModemEmulator::ParseCommand() {
 							mTransmitBuffer[mTransmitLength++] = (uint8)('0' + v);
 							mTransmitBuffer[mTransmitLength++] = mRegisters.mLineTermChar;
 							mTransmitBuffer[mTransmitLength++] = mRegisters.mRespFormatChar;
+
+							SignalReadReady();
 						}
 					} else if (set) {
 						if (s == t && (uint8)(*s - '0') >= 10) {
@@ -1347,6 +1540,15 @@ void ATModemEmulator::ParseCommand() {
 				SendResponse(kResponseError);
 				return;
 		}
+	}
+}
+
+void ATModemEmulator::SignalReadReady() {
+	if (!mbReadReadySignaled) {
+		mbReadReadySignaled = true;
+
+		if (mpOnReadReady)
+			mpOnReadReady();
 	}
 }
 
@@ -1477,6 +1679,8 @@ void ATModemEmulator::SendResponse(int response) {
 
 		mTransmitLength += (uint32)len + 4;
 	}
+
+	SignalReadReady();
 }
 
 void ATModemEmulator::SendResponse(const char *s) {
@@ -1493,6 +1697,8 @@ void ATModemEmulator::SendResponse(const char *s) {
 
 	if (mTransmitLength < sizeof mTransmitBuffer)
 		mTransmitBuffer[mTransmitLength++] = mRegisters.mRespFormatChar;
+
+	SignalReadReady();
 }
 
 void ATModemEmulator::SendResponseF(const char *format, ...) {
@@ -2231,7 +2437,11 @@ void ATModemEmulator::OnScheduledEvent(uint32 id) {
 }
 
 void ATModemEmulator::OnReadAvail(IATModemDriver *sender, uint32 len) {
-	// do nothing -- we poll this
+	mpAsyncDispatcher->Queue(&mAsyncCallback,
+		[this] {
+			SignalReadReady();
+		}
+	);
 }
 
 void ATModemEmulator::OnWriteAvail(IATModemDriver *sender) {

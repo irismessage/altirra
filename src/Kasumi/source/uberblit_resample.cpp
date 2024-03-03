@@ -41,10 +41,6 @@
 #include "uberblit_resample.h"
 
 namespace {
-	sint32 scale32x32_fp16(sint32 x, sint32 y) {
-		return (sint32)(((sint64)x * y + 0x8000) >> 16);
-	}
-
 	template<class T>
 	IVDResamplerSeparableRowStage *RowFactory(double cutoff, float filterFactor) {
 		return new T;

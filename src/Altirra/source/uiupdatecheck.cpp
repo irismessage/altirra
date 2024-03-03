@@ -32,47 +32,61 @@ private:
 	bool OnLoaded() override;
 	void OnDestroy() override;
 
+	void InitMessage(VDStringA& rtf);
+	void BeginLink(VDStringA& rtf, const wchar_t *url);
+	void EndLink(VDStringA& rtf);
+	void AddLink(VDStringA& rtf, const wchar_t *url, const wchar_t *text);
+
+	void SetInitialMessage();
+	void CheckForUpdates();
+	void OpenFeed();
 	void OnUpdateCheckCompleted(const ATUpdateFeedInfo *feedInfo);
 
 	VDUIProxyRichEditControl mInfoBox;
-	VDUIProxySysLinkControl mRSSFeedLink;
+	VDUIProxyComboBoxControl mChannelSelector;
+
+	static constexpr inline char kLinkPre1[] = "{\\field {\\*\\fldinst HYPERLINK \"";
+	static constexpr inline char kLinkPre2[] = "\"}{\\fldrslt\\ul\\cf2 ";
+	static constexpr inline char kLinkPost[] = "}}";
 };
 
 ATUIDialogCheckForUpdates::ATUIDialogCheckForUpdates()
 	: VDDialogFrameW32(IDD_CHECKFORUPDATES)
 {
 	mInfoBox.SetOnLinkSelected(
-		[](const wchar_t *s) {
-			ATLaunchURL(s);
+		[this](const wchar_t *s) {
+			VDStringSpanW str(s);
+
+			if (str == L"?check")
+				CheckForUpdates();
+			else if (str == L"?feed")
+				OpenFeed();
+			else
+				ATLaunchURL(s);
 			return true;
-		}
-	);
-
-	mRSSFeedLink.SetOnClicked(
-		[this] {
-			ATCopyTextToClipboard(mhdlg, ATUpdateGetFeedUrl().c_str());
-
-			ShowInfo2(L"The update check URL has been copied to the clipboard. Although this is only intended for the Check for Updates feature, you can paste it into any RSS 2.0 compatible feed reader.", L"Copied to clipboard");
 		}
 	);
 }
 
 bool ATUIDialogCheckForUpdates::OnLoaded() {
 	AddProxy(&mInfoBox, IDC_INFO);
-	AddProxy(&mRSSFeedLink, IDC_RSS_FEED);
+	AddProxy(&mChannelSelector, IDC_UPDATE_CHANNEL);
 
 	mResizer.Add(IDOK, mResizer.kBR);
 	mResizer.Add(IDC_INFO, mResizer.kMC);
-	mResizer.Add(IDC_RSS_FEED, mResizer.kBL);
+	mResizer.Add(IDC_UPDATE_CHANNEL, mResizer.kBL);
+	mResizer.Add(IDC_STATIC_UPDATE_CHANNEL, mResizer.kBL);
+
+	mChannelSelector.AddItem(L"Release");
+	mChannelSelector.AddItem(L"Test");
+	mChannelSelector.SetSelection(ATUpdateIsTestChannelDefault() ? 1 : 0);
 
 	if (!ATUIIsDarkThemeActive())
 		mInfoBox.SetReadOnlyBackground();
 
 	mInfoBox.DisableSelectOnFocus();
 
-	mInfoBox.SetCaption(L"Checking for updates...");
-
-	ATUpdateInit(*ATUIGetDispatcher(), [this](const ATUpdateFeedInfo *feedInfo) { OnUpdateCheckCompleted(feedInfo); });
+	SetInitialMessage();
 
 	return VDDialogFrameW32::OnLoaded();
 }
@@ -83,9 +97,7 @@ void ATUIDialogCheckForUpdates::OnDestroy() {
 	VDDialogFrameW32::OnDestroy();
 }
 
-void ATUIDialogCheckForUpdates::OnUpdateCheckCompleted(const ATUpdateFeedInfo *feedInfo) {
-	VDStringA rtf;
-
+void ATUIDialogCheckForUpdates::InitMessage(VDStringA& rtf) {
 	rtf = 
 		"{\\rtf1"
 		"{\\fonttbl"
@@ -107,6 +119,64 @@ void ATUIDialogCheckForUpdates::OnUpdateCheckCompleted(const ATUpdateFeedInfo *f
 	);
 
 	rtf += "\\fs18\\cf1 ";
+}
+
+void ATUIDialogCheckForUpdates::BeginLink(VDStringA& rtf, const wchar_t *url) {
+	rtf += kLinkPre1;
+	rtf += VDTextWToU8(VDStringSpanW(url));
+	rtf += kLinkPre2;
+}
+
+void ATUIDialogCheckForUpdates::EndLink(VDStringA& rtf) {
+	rtf += kLinkPost;
+}
+
+void ATUIDialogCheckForUpdates::AddLink(VDStringA& rtf, const wchar_t *url, const wchar_t *text) {
+	BeginLink(rtf, url);
+	mInfoBox.AppendEscapedRTF(rtf, text);
+	EndLink(rtf);
+}
+
+void ATUIDialogCheckForUpdates::SetInitialMessage() {
+	VDStringA rtf;
+
+	InitMessage(rtf);
+
+	rtf += "\\sb50\\sa50 ";
+	AddLink(rtf, L"?check", L"Click to check online for a newer version.");
+	rtf += "\\par ";
+	mInfoBox.AppendEscapedRTF(rtf, L"You can change the update channel to check via the drop-down at the bottom.");
+	rtf += "\\par\\par ";
+	mInfoBox.AppendEscapedRTF(rtf,
+		L"The update check will fetch a static update feed. "
+		L"No personal, identifying, or telemetry information "
+		L"is sent during this check. If desired, you can also manually check the ");
+	AddLink(rtf, L"?feed", L"RSS feed");
+	
+	mInfoBox.AppendEscapedRTF(rtf, L" in an RSS reader.");
+
+	rtf += "}";
+
+	mInfoBox.SetTextRTF(rtf.c_str());
+	mInfoBox.SetCaretPos(0, 0);
+}
+
+void ATUIDialogCheckForUpdates::CheckForUpdates() {
+	mInfoBox.SetCaption(L"Checking for updates...");
+
+	ATUpdateInit(mChannelSelector.GetSelection() > 0, *ATUIGetDispatcher(), [this](const ATUpdateFeedInfo *feedInfo) { OnUpdateCheckCompleted(feedInfo); });
+}
+
+void ATUIDialogCheckForUpdates::OpenFeed() {
+	ATCopyTextToClipboard(mhdlg, ATUpdateGetFeedUrl(mChannelSelector.GetSelection() > 0).c_str());
+
+	ShowInfo2(L"The update check URL has been copied to the clipboard. Although this is only intended for the Check for Updates feature, you can paste it into any RSS 2.0 compatible feed reader.", L"Copied to clipboard");
+}
+
+void ATUIDialogCheckForUpdates::OnUpdateCheckCompleted(const ATUpdateFeedInfo *feedInfo) {
+	VDStringA rtf;
+
+	InitMessage(rtf);
 
 	if (!feedInfo) {
 		mInfoBox.AppendEscapedRTF(rtf, L"Unable to retrieve update information.");
@@ -126,17 +196,10 @@ void ATUIDialogCheckForUpdates::OnUpdateCheckCompleted(const ATUpdateFeedInfo *f
 		mInfoBox.AppendEscapedRTF(rtf, feedInfo->mLatestReleaseItem.mTitle.c_str());
 		rtf += "}";
 
-		static constexpr char kLinkPre1[] = "{\\field {\\*\\fldinst HYPERLINK \"";
-		static constexpr char kLinkPre2[] = "\"}{\\fldrslt\\ul\\cf2 ";
-		static constexpr char kLinkPost[] = "}}";
-
 		if (!feedInfo->mLatestReleaseItem.mLink.empty()) {
 			mInfoBox.AppendEscapedRTF(rtf, L" - ");
-			rtf += kLinkPre1;
-			rtf += VDTextWToU8(feedInfo->mLatestReleaseItem.mLink);
-			rtf += kLinkPre2;
-			mInfoBox.AppendEscapedRTF(rtf, L"get release");
-			rtf += kLinkPost;
+
+			AddLink(rtf, feedInfo->mLatestReleaseItem.mLink.c_str(), L"get release");
 		}
 
 		rtf += "\\sb50\\sa50\\par ";

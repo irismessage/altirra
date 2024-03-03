@@ -68,7 +68,7 @@ ATUIPaneWindowBase::ATUIPaneWindowBase()
 bool ATUIPaneWindowBase::CreatePaneWindow(ATFrameWindow *frame) {
 	AsPane().SetFrameWindow(frame);
 
-	HWND hwnd = CreateWindow((LPCTSTR)(uintptr_t)sWndClass, _T(""), mDefaultWindowStyles & ~WS_VISIBLE, 0, 0, 0, 0, frame->GetHandleW32(), (HMENU)100, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+	HWND hwnd = CreateWindow((LPCTSTR)(uintptr_t)sWndClass, _T("UI Pane Window"), mDefaultWindowStyles & ~WS_VISIBLE, 0, 0, 0, 0, frame->GetHandleW32(), (HMENU)100, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 
 	if (!hwnd) {
 		AsPane().SetFrameWindow(nullptr);
@@ -199,4 +199,4 @@ void ATUIPaneWindowBase::PostDeferredUpdate() {
 	}
 }
 
-template ATUIPaneWindowT<ATUIPane, ATUIPaneWindowBase>;
+template class ATUIPaneWindowT<ATUIPane, ATUIPaneWindowBase>;

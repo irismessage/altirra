@@ -11,11 +11,12 @@
 #include <vd2/system/w32assist.h>
 #include <at/atnetwork/socket.h>
 #include <at/atnetworksockets/internal/worker.h>
+#include <at/atnetworksockets/socketutils_win32.h>
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
 
-ATNetSockBridgeHandler::ATNetSockBridgeHandler(ATNetSockWorker *parent, SOCKET s, IATSocket *s2, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort)
+ATNetSockBridgeHandler::ATNetSockBridgeHandler(ATNetSockWorker *parent, SOCKET s, IATStreamSocket *s2, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort)
 	: mSrcIpAddr(srcIpAddr)
 	, mSrcPort(srcPort)
 	, mDstIpAddr(dstIpAddr)
@@ -49,15 +50,22 @@ void ATNetSockBridgeHandler::Shutdown() {
 	mbNativeConnected = false;
 
 	if (mpLocalSocket) {
-		mpLocalSocket->Shutdown();
-		mpLocalSocket = NULL;
+		mpLocalSocket->CloseSocket(true);
+		mpLocalSocket = nullptr;
 	}
 
 	Release();
 }
 
-void ATNetSockBridgeHandler::SetLocalSocket(IATSocket *s2) {
+void ATNetSockBridgeHandler::SetLocalSocket(IATStreamSocket *s2) {
 	mpLocalSocket = s2;
+}
+
+void ATNetSockBridgeHandler::SetSrcAddress(const ATSocketAddress& addr) {
+	if (addr.GetType() == ATSocketAddressType::IPv4) {
+		mSrcIpAddr = addr.mIPv4Address;
+		mSrcPort = addr.mPort;
+	}
 }
 
 void ATNetSockBridgeHandler::OnNativeSocketConnect() {
@@ -75,19 +83,24 @@ void ATNetSockBridgeHandler::OnNativeSocketWriteReady() {
 }
 
 void ATNetSockBridgeHandler::OnNativeSocketClose() {
-	AddRef();
+	vdrefptr pinSelf(this);
 
 	mbNativeClosed = true;
 
 	TryCopyFromNative();
 
 	if (mRecvLimit == mRecvBase)
-		mpLocalSocket->Close();
+		mpLocalSocket->ShutdownSocket(true, false);
 
-	if (mbLocalClosed)
+	if (mbLocalClosed) {
+		// force a graceful close
+		if (mpLocalSocket) {
+			mpLocalSocket->CloseSocket(false);
+			mpLocalSocket = nullptr;
+		}
+
 		Shutdown();
-
-	Release();
+	}
 }
 
 void ATNetSockBridgeHandler::OnNativeSocketError() {
@@ -131,9 +144,9 @@ void ATNetSockBridgeHandler::TryCopyToNative() {
 			if (mbLocalClosed)
 				break;
 
-			uint32 actual = mpLocalSocket->Read(mSendBuf, sizeof mSendBuf);
+			sint32 actual = mpLocalSocket->Recv(mSendBuf, sizeof mSendBuf);
 
-			if (!actual)
+			if (actual <= 0)
 				break;
 
 			mSendBase = 0;
@@ -162,7 +175,7 @@ void ATNetSockBridgeHandler::TryCopyFromNative() {
 
 			if (actual == 0) {
 				if (mbNativeClosed)
-					mpLocalSocket->Close();
+					mpLocalSocket->ShutdownSocket(true, false);
 
 				break;
 			}
@@ -174,8 +187,8 @@ void ATNetSockBridgeHandler::TryCopyFromNative() {
 			mRecvLimit = actual;
 		}
 
-		uint32 actual2 = mpLocalSocket->Write(mRecvBuf + mRecvBase, mRecvLimit - mRecvBase);
-		if (!actual2)
+		sint32 actual2 = mpLocalSocket->Send(mRecvBuf + mRecvBase, mRecvLimit - mRecvBase);
+		if (actual2 <= 0)
 			break;
 
 		mRecvBase += actual2;
@@ -191,7 +204,7 @@ ATNetSockWorker::~ATNetSockWorker() {
 	Shutdown();
 }
 
-bool ATNetSockWorker::Init(IATNetUdpStack *udp, IATNetTcpStack *tcp, bool externalAccess, uint32 forwardingAddr, uint16 forwardingPort) {
+bool ATNetSockWorker::Init(IATEmuNetUdpStack *udp, IATEmuNetTcpStack *tcp, bool externalAccess, uint32 forwardingAddr, uint16 forwardingPort) {
 	mpUdpStack = udp;
 	mpTcpStack = tcp;
 	mbAllowExternalAccess = externalAccess;
@@ -306,7 +319,7 @@ void ATNetSockWorker::ResetAllConnections() {
 	}
 }
 
-bool ATNetSockWorker::GetHostAddressForLocalAddress(bool tcp, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, uint32& hostIp, uint16& hostPort) {
+bool ATNetSockWorker::GetHostAddressesForLocalAddress(bool tcp, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, ATSocketAddress& hostAddr, ATSocketAddress& remoteAddr) const {
 	SOCKET s = INVALID_SOCKET;
 
 	if (tcp) {
@@ -333,20 +346,29 @@ bool ATNetSockWorker::GetHostAddressForLocalAddress(bool tcp, uint32 srcIpAddr, 
 	}
 
 	if (s != INVALID_SOCKET) {
-		sockaddr_in sa = {};
-		int sa_len = sizeof sa;
+		union {
+			char buf[256];
+			sockaddr sa;
+		} sabuf {};
+		int sa_len = sizeof sabuf;
 
-		if (0 == getsockname(s, (sockaddr *)&sa, &sa_len)) {
-			hostIp = sa.sin_addr.S_un.S_addr;
-			hostPort = ntohs(sa.sin_port);
+		if (0 == getsockname(s, &sabuf.sa, &sa_len))
+			hostAddr = ATSocketFromNativeAddress(&sabuf.sa);
+
+		memset(&sabuf, 0, sizeof sabuf);
+		sa_len = sizeof sabuf;
+
+		if (0 == getpeername(s, &sabuf.sa, &sa_len))
+			remoteAddr = ATSocketFromNativeAddress(&sabuf.sa);
+
+		if (hostAddr.IsValid() || remoteAddr.IsValid())
 			return true;
-		}
 	}
 
 	return false;
 }
 
-bool ATNetSockWorker::OnSocketIncomingConnection(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, IATSocket *socket, IATSocketHandler **handler) {
+bool ATNetSockWorker::OnSocketIncomingConnection(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, IATStreamSocket *socket, IATSocketHandler **handler) {
 	// check if we are allowed to do this connection
 	uint32 redirectedDstIpAddr = dstIpAddr;
 	if (mpUdpStack->GetIpStack()->IsLocalOrBroadcastAddress(dstIpAddr)) {
@@ -570,13 +592,14 @@ LRESULT ATNetSockWorker::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 					return 0;
 				}
 
-				vdrefptr<IATSocket> emuSocket;
-				if (!mpTcpStack->Connect(mForwardingAddr, mForwardingPort, h, ~emuSocket)) {
+				vdrefptr<IATStreamSocket> emuSocket;
+				if (!mpTcpStack->Connect(mForwardingAddr, mForwardingPort, *h, ~emuSocket)) {
 					closesocket(newSocket);
 					return 0;
 				}
 
 				h->SetLocalSocket(emuSocket);
+				h->SetSrcAddress(emuSocket->GetLocalAddress());
 
 				mTcpConnections[newSocket] = h;
 				h->AddRef();
@@ -604,7 +627,7 @@ void ATNetSockWorker::ProcessUdpDatagram(SOCKET s, uint32 srcIpAddr, uint16 srcP
 
 ///////////////////////////////////////////////////////////////////////////
 
-void ATCreateNetSockWorker(IATNetUdpStack *udp, IATNetTcpStack *tcp, bool externalAccess, uint32 forwardingAddr, uint16 forwardingPort, IATNetSockWorker **pp) {
+void ATCreateNetSockWorker(IATEmuNetUdpStack *udp, IATEmuNetTcpStack *tcp, bool externalAccess, uint32 forwardingAddr, uint16 forwardingPort, IATNetSockWorker **pp) {
 	ATNetSockWorker *p = new ATNetSockWorker;
 
 	if (!p->Init(udp, tcp, externalAccess, forwardingAddr, forwardingPort)) {

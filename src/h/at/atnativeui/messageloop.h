@@ -38,7 +38,7 @@ void ATUIUnregisterTopLevelWindow(VDZHWND h);
 void ATUIRegisterModelessDialog(VDZHWND h);
 void ATUIUnregisterModelessDialog(VDZHWND h);
 void ATUIShowModelessDialogs(bool visible, VDZHWND parent);
-bool ATUIProcessModelessDialogs(MSG *msg);
+bool ATUIProcessModelessDialogs(VDZMSG *msg);
 void ATUISetGlobalEnableState(bool enable);
 void ATUIDestroyModelessDialogs(VDZHWND parent);
 

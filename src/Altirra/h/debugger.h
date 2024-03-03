@@ -167,6 +167,11 @@ struct ATDebuggerCmdDef {
 	void (*mpFunction)(ATDebuggerCmdParser&);
 };
 
+struct ATDebuggerSourceFileInfo {
+	VDStringW mSourcePath;
+	VDStringW mModulePath;
+};
+
 class IATDebugger {
 public:
 	virtual bool IsRunning() const = 0;
@@ -319,7 +324,7 @@ struct ATDebuggerSymbol {
 
 class IATDebuggerSymbolLookup {
 public:
-	virtual bool GetSourceFilePath(uint32 moduleId, uint16 fileId, VDStringW& path) = 0;
+	virtual bool GetSourceFilePath(uint32 moduleId, uint16 fileId, ATDebuggerSourceFileInfo& sourceFileInfo) = 0;
 	virtual bool LookupSymbol(uint32 addr, uint32 flags, ATSymbol& symbol) = 0;
 	virtual bool LookupSymbol(uint32 addr, uint32 flags, ATDebuggerSymbol& symbol) = 0;
 	virtual bool LookupLine(uint32 addr, bool searchUp, uint32& moduleId, ATSourceLineInfo& lineInfo) = 0;

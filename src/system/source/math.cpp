@@ -135,13 +135,19 @@ invalid:
 		}
 	}
 #elif defined(VD_CPU_AMD64)
-	sint64 VDFractionScale64(uint64 a, uint32 b, uint32 c, uint32& remainder) {
-		unsigned __int64 hi = 0;
-		unsigned __int64 lo = _umul128(a, b, &hi);
-		unsigned __int64 r = 0;
+	#if defined(VD_COMPILER_CLANG)
+		sint64 VDFractionScale64(uint64 a, uint32 b, uint32 c, uint32& remainder) {
+			return (sint64)(((__uint128_t)a * b) / c);
+		}
+	#else
+		sint64 VDFractionScale64(uint64 a, uint32 b, uint32 c, uint32& remainder) {
+			unsigned __int64 hi = 0;
+			unsigned __int64 lo = _umul128(a, b, &hi);
+			unsigned __int64 r = 0;
 
-		return _udiv128(hi, lo, c, &r);
-	}
+			return _udiv128(hi, lo, c, &r);
+		}
+	#endif
 #else
 	sint64 VDFractionScale64(uint64 a, uint32 b, uint32 c, uint32& remainder) {
 		uint32 a0 = (uint32)a;

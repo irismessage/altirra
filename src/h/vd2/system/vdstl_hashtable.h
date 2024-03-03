@@ -193,7 +193,10 @@ public:
 
 	vdhashtable_iterator();
 	vdhashtable_iterator(vdhashtable_base_node *node, vdhashtable_base_node **bucket, vdhashtable_base_node **bucketEnd);
-	vdhashtable_iterator(const vdhashtable_iterator<T_NonConst>& src);
+	vdhashtable_iterator(const vdhashtable_iterator&) = default;
+	vdhashtable_iterator(const vdhashtable_iterator<T_NonConst>& src) requires (!std::is_same_v<T, T_NonConst>);
+
+	vdhashtable_iterator& operator=(const vdhashtable_iterator&) = default;
 
 	vdhashtable_iterator& operator++();
 	vdhashtable_iterator operator++(int);
@@ -232,7 +235,7 @@ vdhashtable_iterator<T>::vdhashtable_iterator(vdhashtable_base_node *node, vdhas
 }
 
 template<class T>
-vdhashtable_iterator<T>::vdhashtable_iterator(const vdhashtable_iterator<T_NonConst>& src)
+vdhashtable_iterator<T>::vdhashtable_iterator(const vdhashtable_iterator<T_NonConst>& src) requires (!std::is_same_v<T, T_NonConst>)
 	: mpNode(src.mpNode)
 	, mpBucket(src.mpBucket)
 	, mpBucketEnd(src.mpBucketEnd)

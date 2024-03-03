@@ -79,6 +79,7 @@ extern "C" void VDCDECL atasm_update_playfield_160_sse2(
 
 ATConfigVarInt32 g_ATCVDisplayDropCountThreshold("display.drop_count_threshold", 20);
 ATConfigVarFloat g_ATCVDisplayDropLagThreshold("display.drop_lag_threshold", 0.007f);
+ATConfigVarBool g_ATCVDisplayForceHdrRendering("display.force_hdr_rendering", false);
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -364,17 +365,20 @@ public:
 		: mpTracker(tracker)
 		, mArtEngine(artengine)
 	{
-		++mpTracker->mActiveFrames;
+		if (mpTracker)
+			++mpTracker->mActiveFrames;
 
 		mpScreenFXEngine = this;
 	}
 
 	~ATFrameBuffer() {
-		--mpTracker->mActiveFrames;
+		if (mpTracker)
+			--mpTracker->mActiveFrames;
 	}
 
 	VDPixmap ApplyScreenFX(const VDPixmap& px) override;
 	VDPixmap ApplyScreenFX(VDPixmapBuffer& dst, const VDPixmap& px, bool enableSignedOutput);
+	void DuplicateField();
 
 	vdrefptr<ATFrameTracker> mpTracker;
 	ATArtifactingEngine& mArtEngine;
@@ -386,8 +390,10 @@ public:
 	uint32 mViewY1 = 0;
 	const uint32 *mpPalette = nullptr;
 
-	bool mbDualFieldFrame = false;
-	bool mbOddField = false;
+	bool mbDroppedFrame = false;		// this frame is being rendered but won't be presented
+	bool mbDualFieldFrame = false;		// frame is interlaced
+	bool mbLowerField = false;			// computer rendered to lower field of interlaced frame
+	bool mbDuplicateField = false;		// set if the computer should render to _both_ fields
 	bool mbIncludeHBlank = false;
 	bool mbScanlineHasHires[312] {};
 };
@@ -466,6 +472,16 @@ VDPixmap ATFrameBuffer::ApplyScreenFX(VDPixmapBuffer& dstBuffer, const VDPixmap&
 	VDASSERT(VDAssertValidPixmap(result));
 
 	return result;
+}
+
+void ATFrameBuffer::DuplicateField() {
+	if (!mbDuplicateField || !mbDualFieldFrame)
+		return;
+
+	const auto& srcField = VDPixmapExtractField(mPixmap, mbLowerField);
+	const auto& dstField = VDPixmapExtractField(mPixmap, !mbLowerField);
+
+	VDPixmapBlt(dstField, srcField);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -645,6 +661,7 @@ ATGTIAEmulator::ATGTIAEmulator()
 	: mpConn(NULL)
 	, mpFrameTracker(new ATFrameTracker)
 	, mbCTIAMode(false)
+	, mb50HzMode(false)
 	, mbPALMode(false)
 	, mbSECAMMode(false)
 	, mArtifactMode(ATArtifactMode::None)
@@ -657,8 +674,6 @@ ATGTIAEmulator::ATGTIAEmulator()
 	, mbOverscanPALExtended(false)
 	, mbInterlaceEnabled(false)
 	, mbScanlinesEnabled(false)
-	, mbFieldPolarity(false)
-	, mbLastFieldPolarity(false)
 	, mPreArtifactFrameBuffer()
 	, mpArtifactingEngine(new ATArtifactingEngine)
 	, mpRenderer(new ATGTIARenderer)
@@ -983,11 +998,11 @@ void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
 	w = scanArea.width() * 2;
 	h = scanArea.height();
 
-	if (mbInterlaceEnabled || mbScanlinesEnabled)
-		h *= 2;
+	int ix = 1, iy = 1;
+	GetPixelAspectMultiple(ix, iy);
 
-	if (mpVBXE != NULL || mArtifactMode == ATArtifactMode::NTSCHi || mArtifactMode == ATArtifactMode::PALHi || mArtifactMode == ATArtifactMode::AutoHi)
-		w *= 2;
+	w *= ix;
+	h *= iy;
 }
 
 void ATGTIAEmulator::GetFrameSize(int& w, int& h) const {
@@ -996,10 +1011,12 @@ void ATGTIAEmulator::GetFrameSize(int& w, int& h) const {
 	w = scanArea.width() * 2;
 	h = scanArea.height();
 
-	if (mpVBXE != NULL || mArtifactMode == ATArtifactMode::NTSCHi || mArtifactMode == ATArtifactMode::PALHi || mArtifactMode == ATArtifactMode::AutoHi || mbInterlaceEnabled || mbScanlinesEnabled) {
-		w *= 2;
-		h *= 2;
-	}
+	int ix = 1, iy = 1;
+	GetPixelAspectMultiple(ix, iy);
+	int ixy = std::max(ix, iy);
+
+	w *= ixy;
+	h *= ixy;
 }
 
 void ATGTIAEmulator::GetPixelAspectMultiple(int& x, int& y) const {
@@ -1014,6 +1031,19 @@ void ATGTIAEmulator::GetPixelAspectMultiple(int& x, int& y) const {
 
 	x = ix;
 	y = iy;
+}
+
+double ATGTIAEmulator::GetPixelAspectRatio() const {
+	// NTSC-50 and PAL-60 are de-facto standards for when NTSC video needs to be played in
+	// a PAL environment or vice versa. PAL-60, for instance, involves munging NTSC video
+	// into a form good enough for a PAL decoder to accept. Therefore, we assume that the
+	// video uses NTSC pixel aspect ratio, but is displayed with PAL colors.
+	const double parCorrection = mb50HzMode ? 1.03964 : 0.857141;
+
+	int ix = 1, iy = 1;
+	GetPixelAspectMultiple(ix, iy);
+
+	return (double)iy / (double)ix * parCorrection;
 }
 
 bool ATGTIAEmulator::ArePMCollisionsEnabled() const {
@@ -1102,6 +1132,10 @@ void ATGTIAEmulator::SetCTIAMode(bool enabled) {
 	}
 }
 
+void ATGTIAEmulator::Set50HzMode(bool enabled) {
+	mb50HzMode = enabled;
+}
+
 void ATGTIAEmulator::SetPALMode(bool enabled) {
 	mbPALMode = enabled;
 
@@ -1154,7 +1188,7 @@ bool ATGTIAEmulator::GetLastFrameBuffer(VDPixmapBuffer& pxbuf, VDPixmap& px) con
 		return false;
 
 	if (mpLastFrame->mpScreenFX) {
-		px = static_cast<ATFrameBuffer *>(mpLastFrame.get())->ApplyScreenFX(pxbuf, mpLastFrame->mPixmap, false);
+		px = mpLastFrame->ApplyScreenFX(pxbuf, mpLastFrame->mPixmap, false);
 	} else {
 		px = mpLastFrame->mPixmap;
 	}
@@ -1164,7 +1198,7 @@ bool ATGTIAEmulator::GetLastFrameBuffer(VDPixmapBuffer& pxbuf, VDPixmap& px) con
 
 void ATGTIAEmulator::DumpStatus() {
 	for(int i=0; i<4; ++i) {
-		ATConsolePrintf("Player  %d: color = %02x, pos = %02x, size=%d, data = %02x\n"
+		ATConsolePrintf("Player  %d: color = %02X, pos = %02X, size=%d, data = %02X\n"
 			, i
 			, mPMColor[i]
 			, mSpritePos[i]
@@ -1174,7 +1208,7 @@ void ATGTIAEmulator::DumpStatus() {
 	}
 
 	for(int i=0; i<4; ++i) {
-		ATConsolePrintf("Missile %d: color = %02x, pos = %02x, size=%d, data = %02x\n"
+		ATConsolePrintf("Missile %d: color = %02X, pos = %02X, size=%d, data = %02X\n"
 			, i
 			, mPRIOR & 0x10 ? mPFColor[3] : mPMColor[i]
 			, mSpritePos[i+4]
@@ -1183,14 +1217,14 @@ void ATGTIAEmulator::DumpStatus() {
 			);
 	}
 
-	ATConsolePrintf("Playfield colors: %02x | %02x %02x %02x %02x\n"
+	ATConsolePrintf("Playfield colors: %02X | %02X %02X %02X %02X\n"
 		, mPFBAK
 		, mPFColor[0]
 		, mPFColor[1]
 		, mPFColor[2]
 		, mPFColor[3]);
 
-	ATConsolePrintf("PRIOR:  %02x (pri=%2d%s%s %s)\n"
+	ATConsolePrintf("PRIOR:  %02X (pri=%2d%s%s %s)\n"
 		, mPRIOR
 		, mPRIOR & 15
 		, mPRIOR & 0x10 ? ", pl5" : ""
@@ -1200,9 +1234,9 @@ void ATGTIAEmulator::DumpStatus() {
 		: (mPRIOR & 0xc0) == 0x80 ? ", 9 colors"
 		: ", 16 colors / 1 luma");
 
-	ATConsolePrintf("VDELAY: %02x\n", mVDELAY);
+	ATConsolePrintf("VDELAY: %02X\n", mVDELAY);
 
-	ATConsolePrintf("GRACTL: %02x%s%s%s\n"
+	ATConsolePrintf("GRACTL: %02X%s%s%s\n"
 		, mGRACTL
 		, mGRACTL & 0x04 ? ", latched" : ""
 		, mGRACTL & 0x02 ? ", player DMA" : ""
@@ -1210,7 +1244,7 @@ void ATGTIAEmulator::DumpStatus() {
 		);
 
 	uint8 consol = ~(mSwitchInput & mForcedSwitchInput & ~mSwitchOutput);
-	ATConsolePrintf("CONSOL: %02x set <-> %02x input%s%s%s%s\n"
+	ATConsolePrintf("CONSOL: %02X set <-> %02X input%s%s%s%s\n"
 		, mSwitchOutput
 		, mSwitchInput
 		, mSwitchOutput & 0x08 ? ", speaker" : ""
@@ -1357,7 +1391,7 @@ void ATGTIAEmulator::EndLoadState(ATSaveStateReader& writer) {
 	PostLoadState();
 }
 
-class ATSaveStateGtiaInternal final : public ATSnapExchangeObject<ATSaveStateGtiaInternal> {
+class ATSaveStateGtiaInternal final : public ATSnapExchangeObject<ATSaveStateGtiaInternal, "ATSaveStateGtiaInternal"> {
 public:
 	template<typename T>
 	void Exchange(T& rw) {
@@ -1395,7 +1429,7 @@ public:
 	vdrefptr<IATSerializable> mpRendererState;
 };
 
-class ATSaveStateGtia final : public ATSnapExchangeObject<ATSaveStateGtia> {
+class ATSaveStateGtia final : public ATSnapExchangeObject<ATSaveStateGtia, "ATSaveStateGtia"> {
 public:
 	template<typename T>
 	void Exchange(T& rw) {
@@ -1439,9 +1473,6 @@ public:
 
 	vdrefptr<ATSaveStateGtiaInternal> mpInternalState;
 };
-
-ATSERIALIZATION_DEFINE(ATSaveStateGtia);
-ATSERIALIZATION_DEFINE(ATSaveStateGtiaInternal);
 
 void ATGTIAEmulator::SaveState(IATObjectState **pp) {
 	vdrefptr<ATSaveStateGtia> obj(new ATSaveStateGtia);
@@ -1527,9 +1558,14 @@ void ATGTIAEmulator::SaveState(IATObjectState **pp) {
 	*pp = obj.release();
 }
 
-void ATGTIAEmulator::LoadState(const IATObjectState& state) {
-	const ATSaveStateGtia& gstate = atser_cast<const ATSaveStateGtia&>(state);
+void ATGTIAEmulator::LoadState(const IATObjectState *state) {
+	if (state)
+		LoadState(atser_cast<const ATSaveStateGtia&>(*state));
+	else
+		LoadState(ATSaveStateGtia{});
+}
 
+void ATGTIAEmulator::LoadState(const ATSaveStateGtia& gstate) {
 	// P/M pos
 	for(int i=0; i<4; ++i)
 		mSpritePos[i] = gstate.mHPOSP[i];
@@ -1679,8 +1715,8 @@ void ATGTIAEmulator::DumpHighArtifactingFilters(ATConsoleOutput& output) {
 	mpArtifactingEngine->DumpHighArtifactingFilters(output);
 }
 
-void ATGTIAEmulator::SetFieldPolarity(bool polarity) {
-	mbFieldPolarity = polarity;
+void ATGTIAEmulator::SetNextFieldPolarity(ATVideoFieldPolarity nextFieldPolarity) {
+	mNextFieldPolarity = nextFieldPolarity;
 }
 
 void ATGTIAEmulator::SetVBLANK(VBlankMode vblMode) {
@@ -1717,7 +1753,11 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 	if (!drop || alwaysNeedFrame) {
 		const bool isFramePending = mpDisplay->GetQueuedFrames() > 1;
 
-		if (isFramePending || !mpDisplay->RevokeBuffer(false, ~mpFrame)) {
+		vdrefptr<VDVideoDisplayFrame> newFrame;
+		if (!isFramePending && mpDisplay->RevokeBuffer(false, ~newFrame)) {
+			mpFrame = static_cast<ATFrameBuffer *>(newFrame.get());
+			VDASSERT(!mpFrame->mbDroppedFrame);
+		} else {
 			if ((!isFramePending || mbTurbo) && mpFrameTracker->mActiveFrames < 3) {
 				// create a new frame
 				ATFrameBuffer *fb = new ATFrameBuffer(mpFrameTracker, *mpArtifactingEngine);
@@ -1728,7 +1768,10 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 				fb->mFlags = 0;
 			} else if (alwaysNeedFrame || (!mbTurbo && !isFramePending)) {
 				// try to recycle a frame
-				if (!mpDisplay->RevokeBuffer(true, ~mpFrame)) {
+				if (mpDisplay->RevokeBuffer(true, ~newFrame)) {
+					mpFrame = static_cast<ATFrameBuffer *>(newFrame.get());
+					VDASSERT(!mpFrame->mbDroppedFrame);
+				} else {
 					// we can't get a free framebuffer -- block if we are allowed to
 					if (!force) {
 						mbWaitingForFrame = true;
@@ -1745,8 +1788,43 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 
 	mRawFrame.data = nullptr;
 
+	// Process interlace detection/prediction. We do this here so that auto-flip
+	// priority is preserved even when skipping frames.
+	if (mFrameProperties.mbInterlaced) {
+		// If field polarity is alternating, then we can use the polarity from the video
+		// stream; otherwise, auto-flip from the last polarity. This emulates when a TV
+		// simulates an interlaced stream from a non-interlaced source.
+		//
+		// We may not be able to reliably detect field polarity for both fields, so we
+		// simply require one of the polarities to not be unknown -- which we will then
+		// invert for the other field.
+
+		if (mNextFieldPolarity != mLastFieldPolarity) {
+			if (mNextFieldPolarity == ATVideoFieldPolarity::Unknown)
+				mbUseLowerField = mLastFieldPolarity != ATVideoFieldPolarity::Lower;
+			else
+				mbUseLowerField = mNextFieldPolarity == ATVideoFieldPolarity::Lower;
+		} else {
+			mbUseLowerField = !mbUseLowerField;
+		}
+
+		mLastFieldPolarity = mNextFieldPolarity;
+
+		// Interlace looks pretty bad if we lose fields, so we need to render the
+		// frame to a side buffer. This frame needs not to be included in the frame
+		// tracker as it doesn't get presented.
+		if (!mpFrame) {
+			if (!mpDroppedFrame) {
+				mpDroppedFrame = new ATFrameBuffer(nullptr, *mpArtifactingEngine);
+				mpDroppedFrame->mbDroppedFrame = true;
+			}
+
+			mpFrame = mpDroppedFrame;
+		}
+	}
+
 	if (mpFrame) {
-		ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
+		ATFrameBuffer *fb = mpFrame;
 
 		fb->mFlags &= ~(IVDVideoDisplay::kVSync | IVDVideoDisplay::kVSyncAdaptive);
 
@@ -1790,7 +1868,10 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 		}
 
 		fb->mbDualFieldFrame = dualFieldFrame;
-		fb->mbOddField = mFrameProperties.mbInterlaced && mbFieldPolarity;
+
+		fb->mbLowerField = mFrameProperties.mbInterlaced && mbUseLowerField;
+		fb->mbDuplicateField = false;
+
 		fb->mPixmap = fb->mBuffer;
 		fb->mPixmap.palette = mFrameProperties.mbOutputExtendedRange ? mSignedPalette : mPalette;
 		fb->mpPalette = mPalette;
@@ -1804,7 +1885,7 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 			if (dualFieldFrame) {
 				mRawFrame.pitch *= 2;
 
-				if (fb->mbOddField)
+				if (fb->mbLowerField)
 					mRawFrame.data = (char *)mRawFrame.data + fb->mBuffer.pitch;
 			}
 		}
@@ -1905,23 +1986,19 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 
 		// copy over previous field
 		if (mFrameProperties.mbInterlaced) {
-			VDPixmap dstField(VDPixmapExtractField(mpFrame->mPixmap, !mbFieldPolarity));
+			VDPixmap dstField(VDPixmapExtractField(mpFrame->mPixmap, !fb->mbLowerField));
 
 			if (mpLastFrame &&
 				mpLastFrame->mPixmap.w == mpFrame->mPixmap.w &&
 				mpLastFrame->mPixmap.h == mpFrame->mPixmap.h &&
-				mpLastFrame->mPixmap.format == mpFrame->mPixmap.format &&
-				mbFieldPolarity != mbLastFieldPolarity) {
-				VDPixmap srcField(VDPixmapExtractField(mpLastFrame->mPixmap, !mbFieldPolarity));
+				mpLastFrame->mPixmap.format == mpFrame->mPixmap.format
+				) {
+				VDPixmap srcField(VDPixmapExtractField(mpLastFrame->mPixmap, !fb->mbLowerField));
 
 				VDPixmapBlt(dstField, srcField);
 			} else {
-				VDPixmap srcField(VDPixmapExtractField(mpFrame->mPixmap, mbFieldPolarity));
-				
-				VDPixmapBlt(dstField, srcField);
+				fb->mbDuplicateField = true;
 			}
-
-			mbLastFieldPolarity = mbFieldPolarity;
 		}
 	}
 
@@ -2064,6 +2141,17 @@ void ATGTIAEmulator::EndScanline(uint8 dlControl, bool pfrendered) {
 	// We have to restart at -2 instead of 0 because GTIA runs two color clocks head of ANTIC
 	// for timing purposes.
 	mLastSyncX = -2;
+
+	if (mY >= 8 && mY < 248) {
+		auto& lineColors = mColorTrace.mColors[mY - 8];
+
+		for(int i=0; i<4; ++i) {
+			lineColors[i] = mPMColor[i];
+			lineColors[i+4] = mPFColor[i];
+		}
+
+		lineColors[8] = mPFBAK;
+	}
 
 	if (!mpDst)
 		return;
@@ -2532,7 +2620,7 @@ void ATGTIAEmulator::RenderActivityMap(const uint8 *src) {
 	ptrdiff_t dstpitch = pxdst.pitch;
 
 	if (!mFrameProperties.mbSoftPostProcess8 && fb->mbDualFieldFrame) {
-		if (fb->mbOddField)
+		if (fb->mbLowerField)
 			dst += dstpitch;
 
 		dstpitch += dstpitch;
@@ -2609,14 +2697,13 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 			mpDisplay->SetSourcePersistent(true, mpLastFrame->mPixmap);
 		}
 
-		mbLastFieldPolarity = mbFieldPolarity;
 		return;
 	}
 
 	ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 
 	if (immediate) {
-		const VDPixmap& pxdst = mFrameProperties.mbSoftPostProcess8 ? mPreArtifactFrame : fb->mBuffer;
+		VDPixmap pxdst = mFrameProperties.mbSoftPostProcess8 ? mPreArtifactFrame : fb->mBuffer;
 		uint32 x = mpConn->GTIAGetXClock();
 
 		Sync();
@@ -2644,29 +2731,37 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 			ysplit += 16;
 		}
 
-		if (!mFrameProperties.mbSoftPostProcess8 && mFrameProperties.mbInterlaced) {
-			y += y;
-
-			if (mbFieldPolarity)
-				++y;
-		}
+		if (!mFrameProperties.mbSoftPostProcess8 && fb->mbDualFieldFrame)
+			pxdst = VDPixmapExtractField(pxdst, fb->mbLowerField);
 
 		if (y < (uint32)pxdst.h) {
 			uint8 *row = (uint8 *)pxdst.data + y*pxdst.pitch;
 
-			if (mpVBXE) {
-				VDMemset32(row, 0x00, 4*x);
-				VDMemset32(row + x*4*4, 0xFFFF00, 912 - 4*x);
-			} else {
-				VDMemset8(row, 0x00, 2*x);
-				VDMemset8(row + x*2, 0xFF, 464 - 2*x);
+			switch(pxdst.format) {
+				case nsVDPixmap::kPixFormat_XRGB8888:
+					VDMemset32(row, 0x00, 4*x);
+					VDMemset32(row + x*4*4, 0xFFFF00, 912 - 4*x);
+					break;
+
+				case nsVDPixmap::kPixFormat_Pal8:
+					VDMemset8(row, 0x00, 2*x);
+					VDMemset8(row + x*2, 0xFF, 464 - 2*x);
+					break;
 			}
 		}
 
 		// if we haven't copied over the frame and aren't going through the temp buffer
 		// for post processing, copy over previous frame starting at the next scanline
 		if (!mbFrameCopiedFromPrev && !mFrameProperties.mbSoftPostProcess8 && mpLastFrame) {
-			const VDPixmap& pxprev = static_cast<ATFrameBuffer *>(&*mpLastFrame)->mBuffer;
+			const ATFrameBuffer& prevFrame = *mpLastFrame;
+			VDPixmap pxprev = prevFrame.mBuffer;
+
+			if (prevFrame.mbDualFieldFrame) {
+				// We need to copy using the current frame's field polarity, not the
+				// previous frame's polarity -- because we need to fill in the rest of
+				// the field that we're in the progress of drawing.
+				pxprev = VDPixmapExtractField(pxprev, fb->mbLowerField);
+			}
 
 			mbFrameCopiedFromPrev = true;
 
@@ -2676,20 +2771,20 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 			if (y < ysplit - 1) {
 				// before split -- copy from after current line to split
 				VDPixmapBlt(
-					fb->mBuffer, 0, y+1,
+					pxdst, 0, y+1,
 					pxprev, 0, y+1,
 					pxdst.w, ysplit - (y+1)
 				);
 			} else if (y >= ysplit) {
 				// after split -- copy from current -> end and start -> split
 				VDPixmapBlt(
-					fb->mBuffer, 0, 0,
+					pxdst, 0, 0,
 					pxprev, 0, 0,
 					pxdst.w, ysplit
 				);
 
 				VDPixmapBlt(
-					fb->mBuffer, 0, y+1,
+					pxdst, 0, y+1,
 					pxprev, 0, y+1,
 					pxdst.w, pxdst.h - (y+1)
 				);
@@ -2697,6 +2792,7 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 		}
 
 		ApplyArtifacting(true);
+		fb->DuplicateField();
 
 		// frame is incomplete and has some past data, so just suppress all lores optimizations
 		std::fill(std::begin(fb->mbScanlineHasHires), std::end(fb->mbScanlineHasHires), true);
@@ -2705,10 +2801,11 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 		mpDisplay->SetSourcePersistent(true, mpFrame->mPixmap, true, mpFrame->mpScreenFX, mpFrame->mpScreenFXEngine);
 	} else {
 		ApplyArtifacting(false);
+		fb->DuplicateField();
 
 		mVideoTaps.NotifyAll(
 			[this](IATGTIAVideoTap *p) {
-				p->WriteFrame(mpFrame->mPixmap, mFrameTimestamp, mpConn->GTIAGetTimestamp64());
+				p->WriteFrame(mpFrame->mPixmap, mFrameTimestamp, mpConn->GTIAGetTimestamp64(), GetPixelAspectRatio());
 			}
 		);
 
@@ -2754,7 +2851,9 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 		const auto& ap = mpArtifactingEngine->GetArtifactingParams();
 		mpDisplay->SetHDREnabled(mFrameProperties.mbOutputHDR);
 		mpDisplay->SetSDRBrightness(ap.mbUseSystemSDR ? -1.0f : ap.mSDRIntensity);
-		mpDisplay->PostBuffer(fb);
+
+		if (!fb->mbDroppedFrame)
+			mpDisplay->PostBuffer(fb);
 
 		ATProfileEndRegion(kATProfileRegion_DisplayPresent);
 
@@ -2798,6 +2897,18 @@ void ATGTIAEmulator::RecomputePalette() {
 
 		mpVBXE->SetDefaultPalette(gen.mUncorrectedPalette, mpArtifactingEngine);
 	}
+}
+
+sint32 ATGTIAEmulator::ReadBackWriteRegister(uint8 reg) const {
+	reg &= 0x1F;
+
+	// filter registers that are actually write register -- only HITCLR
+	// ($D01E) is unusable as it is a strobe
+
+	if (reg != 0x1E)
+		return mState.mReg[reg];
+
+	return -1;
 }
 
 uint8 ATGTIAEmulator::ReadByte(uint8 reg) {
@@ -3019,7 +3130,7 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 			uint32 h = fb->mBuffer.h;
 
 			if (mFrameProperties.mbInterlaced) {
-				if (mbFieldPolarity)
+				if (fb->mbLowerField)
 					dstrow += dstpitch;
 
 				dstpitch *= 2;
@@ -3063,7 +3174,7 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 	ptrdiff_t dstpitch = fb->mBuffer.pitch;
 
 	if (mFrameProperties.mbInterlaced) {
-		if (mbFieldPolarity)
+		if (fb->mbLowerField)
 			dstrow += dstpitch;
 
 		dstpitch *= 2;
@@ -3408,7 +3519,7 @@ void ATGTIAEmulator::SetFrameProperties() {
 	// Establish baseline feature enables and availability.
 	const auto& ap = mpArtifactingEngine->GetArtifactingParams();
 	const bool canAccelFX = mpDisplay->IsScreenFXPreferred();
-	const bool canAccelXColor = mpDisplay->IsHDRCapable() == VDDHDRAvailability::Available && mbAccelScreenFX && ap.mbEnableHDR;
+	const bool canAccelXColor = (g_ATCVDisplayForceHdrRendering || mpDisplay->IsHDRCapable() == VDDHDRAvailability::Available) && mbAccelScreenFX && ap.mbEnableHDR;
 
 	// Check if output correction is enabled.
 	const ATColorParams& params = mActiveColorParams;

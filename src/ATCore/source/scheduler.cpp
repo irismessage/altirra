@@ -43,6 +43,7 @@ ATScheduler::ATScheduler()
 	, mbStopTimeValid(false)
 	, mStopTime(0)
 	, mTick64Floor(mTimeBase + mNextEventCounter)
+	, mRate(1, 1)
 {
 	mActiveEvents.mpNext = mActiveEvents.mpPrev = &mActiveEvents;
 }
@@ -116,6 +117,7 @@ void ATScheduler::UnsetEvent(ATEvent *&ptr) {
 ATEvent *ATScheduler::AddEvent(uint32 ticks, IATSchedulerCallback *cb, uint32 id) {
 	VDASSERT(ticks > 0 && ticks < 100000000);
 	VDASSERT(id);
+	VDASSERT(cb);
 
 	ATEvent *ev;
 	if (mpFreeEvents) {

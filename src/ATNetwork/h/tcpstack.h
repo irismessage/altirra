@@ -12,7 +12,7 @@ class ATNetIpStack;
 struct ATNetTcpConnection;
 
 struct ATNetTcpListeningSocket {
-	IATSocketListener *mpHandler;
+	IATEmuNetSocketListener *mpHandler;
 };
 
 class ATNetTcpRingBuffer {
@@ -120,21 +120,22 @@ struct ATNetTcpConnectionInfo {
 	ATNetTcpConnectionState mConnState;
 };
 
-class ATNetTcpStack final : public IATNetTcpStack {
+class ATNetTcpStack final : public IATEmuNetTcpStack, private IATEthernetClockEventSink {
 public:
 	ATNetTcpStack();
+	~ATNetTcpStack();
 
 	IATEthernetClock *GetClock() const { return mpClock; }
 
 	void Init(ATNetIpStack *ipStack);
 	void Shutdown();
 
-	void SetBridgeListener(IATSocketListener *p);
+	void SetBridgeListener(IATEmuNetSocketListener *p);
 
-	bool Bind(uint16 port, IATSocketListener *listener);
-	void Unbind(uint16 port, IATSocketListener *listener);
+	bool Bind(uint16 port, IATEmuNetSocketListener *listener);
+	void Unbind(uint16 port, IATEmuNetSocketListener *listener);
 
-	bool Connect(uint32 dstIpAddr, uint16 dstPort, IATSocketHandler *handler, IATSocket **newSocket);
+	bool Connect(uint32 dstIpAddr, uint16 dstPort, IATSocketHandler& handler, IATStreamSocket **newSocket);
 
 	void CloseAllConnections();
 
@@ -149,15 +150,22 @@ public:
 	void SendFrame(uint32 dstIpAddr, const void *data, uint32 len);
 	void SendFrame(const ATEthernetAddr& dstAddr, const void *data, uint32 len);
 
+	void NotifyAbandonedConnection();
 	void DeleteConnection(const ATNetTcpConnectionKey& connKey);
 
-protected:
-	ATNetIpStack *mpIpStack;
-	IATEthernetClock *mpClock;
-	uint16 mPortCounter;
-	uint32 mXmitInitialSequenceSalt;
+public:
+	void OnClockEvent(uint32 eventid, uint32 userid) override;
 
-	IATSocketListener *mpBridgeListener;
+private:
+	uint16 FindUnusedDynamicPort();
+
+	ATNetIpStack *mpIpStack = nullptr;
+	IATEthernetClock *mpClock = nullptr;
+	uint32 mAbandonedSocketEvent = 0;
+	uint16 mPortCounter = 49152;
+	uint32 mXmitInitialSequenceSalt = 0;
+
+	IATEmuNetSocketListener *mpBridgeListener = nullptr;
 
 	typedef vdhashmap<uint32, ATNetTcpListeningSocket> ListeningSockets;
 	ListeningSockets mListeningSockets;
@@ -166,10 +174,14 @@ protected:
 	Connections mConnections;
 };
 
-struct ATNetTcpConnection final : public vdrefcounted<IATSocket>, public IATEthernetClockEventSink {
+struct ATNetTcpConnection final : public vdrefcounted<IATStreamSocket>, public IATEthernetClockEventSink {
 public:
 	ATNetTcpConnection(ATNetTcpStack *stack, const ATNetTcpConnectionKey& connKey);
 	~ATNetTcpConnection();
+
+	int Release() override;
+
+	void CheckAbandoned();
 
 	void GetInfo(ATNetTcpConnectionInfo& info) const;
 
@@ -187,10 +199,15 @@ public:
 	void OnClockEvent(uint32 eventid, uint32 userid) override;
 
 public:
-	void Shutdown() override;
-	uint32 Read(void *buf, uint32 len) override;
-	uint32 Write(const void *buf, uint32 len) override;
-	void Close() override;
+	void SetOnEvent(IATAsyncDispatcher *dispatcher, vdfunction<void(const ATSocketStatus&)> fn, bool callIfReady) override;
+
+	ATSocketStatus GetSocketStatus() const override { return {}; }
+	void CloseSocket(bool force) override;
+	ATSocketAddress GetLocalAddress() const override;
+	ATSocketAddress GetRemoteAddress() const override;
+	sint32 Recv(void *buf, uint32 len) override;
+	sint32 Send(const void *buf, uint32 len) override;
+	void ShutdownSocket(bool send, bool receive) override;
 
 private:
 	enum TransmitStatus {
@@ -203,6 +220,8 @@ private:
 	TransmitStatus GetTransmitStatus() const;
 	void ClearEvents();
 	void ProcessSynOptions(const ATEthernetPacket& packet, const ATTcpHeaderInfo& tcpHdr, const uint8 *data);
+	void ChangeToTimeWait();
+	void ResetConnection();
 
 	enum {
 		kEventId_Close = 1,
@@ -215,7 +234,8 @@ private:
 	const ATNetTcpConnectionKey mConnKey;
 	ATNetTcpStack *mpTcpStack = nullptr;
 	vdrefptr<IATSocketHandler> mpSocketHandler;
-	bool mbLocalOpen = true;
+	bool mbLocalSendOpen = true;
+	bool mbLocalRecvOpen = true;
 	bool mbSynQueued = false;
 	bool mbFinQueued = false;
 	bool mbFinReceived = false;
@@ -255,12 +275,15 @@ private:
 
 	// MSS we can receive on our end. We set this. The max for Ethernet is 1460
 	// (1500 frame - 20 IP header - 20 TCP header).
-	uint32 mRecvMaxSegment = 1460;
+	static constexpr uint32 kMaxMSS = 1460;
+	uint32 mRecvMaxSegment = kMaxMSS;
 
 	// MSS we can transmit (other side can receive). We get adjust this if the MSS
 	// option arrives. If not, we can only assume 536, the minimum required by the
 	// spec.
 	uint32 mXmitMaxSegment = 512;
+
+	vdfunction<void(const ATSocketStatus&)> mpOnEvent;
 
 	char mRecvBuf[32768];
 	char mXmitBuf[32768];

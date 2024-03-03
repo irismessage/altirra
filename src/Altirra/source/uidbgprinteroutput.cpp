@@ -127,16 +127,18 @@ LRESULT ATPrinterOutputWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					HMENU menu = GetSubMenu(menu0, 0);
 					BOOL cmd = 0;
 
-					if (x >= 0 && y >= 0) {
+					if (x == -1 && y == -1) {
+						const vdpoint32& pt = mpTextEditor->GetScreenPosForContextMenu();
+						x = pt.x;
+						y = pt.y;
+					} else {
 						POINT pt = {x, y};
 
-						if (ScreenToClient(mhwndTextEditor, &pt)) {
+						if (ScreenToClient(mhwndTextEditor, &pt))
 							mpTextEditor->SetCursorPixelPos(pt.x, pt.y);
-							cmd = TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, 0, mhwnd, NULL);
-						}
-					} else {
-						cmd = TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, 0, mhwnd, NULL);
 					}
+
+					cmd = TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN|TPM_RETURNCMD, x, y, 0, mhwnd, NULL);
 
 					DestroyMenu(menu0);
 

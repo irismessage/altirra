@@ -28,6 +28,7 @@
 
 vdfunction<void(ATVFSFileView *, const wchar_t *, ATVFSFileView **)> g_ATVFSAtfsHandler;
 vdfunction<void(const wchar_t *, bool, bool, ATVFSFileView **)> g_ATVFSBlobHandler;
+vdfunction<void(const wchar_t *, bool, bool, ATVFSFileView **)> g_ATVFSSpecialHandler;
 
 ATInvalidVFSPathException::ATInvalidVFSPathException(const wchar_t *badPath)
 	: MyError("Invalid VFS path: %ls.", badPath)
@@ -38,6 +39,38 @@ ATUnsupportedVFSPathException::ATUnsupportedVFSPathException(const wchar_t *badP
 	: MyError("Unsupported VFS path: %ls.", badPath)
 {
 }
+
+ATVFSNotFoundException::ATVFSNotFoundException()
+	: ATVFSExceptionT(false, "VFS path not found.")
+{
+}
+
+ATVFSNotFoundException::ATVFSNotFoundException(const wchar_t *path)
+	: ATVFSExceptionT(true, "VFS path not found: %ls.", path)
+{
+}
+
+ATVFSReadOnlyException::ATVFSReadOnlyException()
+	: ATVFSExceptionT(false, "VFS path is read only.")
+{
+}
+
+ATVFSReadOnlyException::ATVFSReadOnlyException(const wchar_t *path)
+	: ATVFSExceptionT(true, "VFS path is read only: %ls.", path)
+{
+}
+
+ATVFSNotAvailableException::ATVFSNotAvailableException()
+	: ATVFSExceptionT(false, "VFS path is not available.")
+{
+}
+
+ATVFSNotAvailableException::ATVFSNotAvailableException(const wchar_t *path)
+	: ATVFSExceptionT(true, "VFS path is not available: %ls.", path)
+{
+}
+
+///////////////////////////////////////////////////////////////////////////////
 
 bool ATDecodeVFSPath(VDStringW& dst, const VDStringSpanW& src) {
 	auto it = src.begin();
@@ -261,6 +294,11 @@ ATVFSProtocol ATParseVFSPath(const wchar_t *s, VDStringW& basePath, VDStringW& s
 			basePath = colon + 3;
 			return kATVFSProtocol_Blob;
 		}
+	} else if (protocol == L"special") {
+		if (colon[3] && g_ATVFSSpecialHandler) {
+			basePath = colon + 3;
+			return kATVFSProtocol_Special;
+		}
 	}
 
 	return kATVFSProtocol_None;
@@ -439,18 +477,14 @@ public:
 			const VDStringA& name = info.mFileName;
 
 			if (name == subfile8) {
-				IVDStream& innerStream = *ziparch.OpenRawStream(i);
+				if (!info.mbSupported)
+					throw MyError("Unsupported compression method in zip archive for file: %ls.", subfile);
 
-				vdautoptr<VDZipStream> zs(new VDZipStream(&innerStream, info.mCompressedSize, !info.mbPacked));
-				zs->EnableCRC();
-
-				if (info.mUncompressedSize > 384 * 1024 * 1024)
-					throw MyError("Zip file item is too large (%llu bytes).", (unsigned long long)info.mUncompressedSize);
+				vdautoptr<IVDInflateStream> zs { ziparch.OpenDecodedStream(i) };
 
 				mBuffer.resize(info.mUncompressedSize);
 				zs->Read(mBuffer.data(), info.mUncompressedSize);
-				if (zs->CRC() != info.mCRC32)
-					throw MyError("Zip file item could not be decompressed (CRC error).");
+				zs->VerifyCRC();
 
 				mMemoryStream = VDMemoryStream(mBuffer.data(), info.mUncompressedSize);
 				found = true;
@@ -481,52 +515,66 @@ void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, bool update, ATVFSFil
 
 	vdrefptr<ATVFSFileView> view;
 
-	switch(protocol) {
-		case kATVFSProtocol_File:
-			view = new ATVFSFileViewDirect(basePath.c_str(), write, update);
-			break;
+	try {
+		switch(protocol) {
+			case kATVFSProtocol_File:
+				view = new ATVFSFileViewDirect(basePath.c_str(), write, update);
+				break;
 
-		case kATVFSProtocol_Zip:
-			if (write)
-				throw MyError("Cannot open .zip file for write access: %ls", basePath.c_str());
+			case kATVFSProtocol_Zip:
+				if (write)
+					throw MyError("Cannot open .zip file for write access: %ls", basePath.c_str());
 
-			ATVFSOpenFileView(basePath.c_str(), false, ~view);
-			view = new ATVFSFileViewZip(view, subPath.c_str());
-			break;
+				ATVFSOpenFileView(basePath.c_str(), false, ~view);
+				view = new ATVFSFileViewZip(view, subPath.c_str());
+				break;
 
-		case kATVFSProtocol_GZip:
-			if (write)
-				throw MyError("Cannot open .gz file for write access: %ls", basePath.c_str());
+			case kATVFSProtocol_GZip:
+				if (write)
+					throw MyError("Cannot open .gz file for write access: %ls", basePath.c_str());
 
-			ATVFSOpenFileView(basePath.c_str(), false, ~view);
-			view = new ATVFSFileViewGZip(view);
-			break;
+				ATVFSOpenFileView(basePath.c_str(), false, ~view);
+				view = new ATVFSFileViewGZip(view);
+				break;
 
-		case kATVFSProtocol_Atfs:
-			if (!g_ATVFSAtfsHandler)
-				throw MyError("Inner filesystems are not supported.");
+			case kATVFSProtocol_Atfs:
+				if (!g_ATVFSAtfsHandler)
+					throw MyError("Inner filesystems are not supported.");
 
-			if (write)
-				throw MyError("Cannot open inner filesystem for write access: %ls", basePath.c_str());
+				if (write)
+					throw MyError("Cannot open inner filesystem for write access: %ls", basePath.c_str());
 
-			ATVFSOpenFileView(basePath.c_str(), false, ~view);
-			{
-				vdrefptr<ATVFSFileView> view2;
-				g_ATVFSAtfsHandler(view, subPath.c_str(), ~view2);
+				ATVFSOpenFileView(basePath.c_str(), false, ~view);
+				{
+					vdrefptr<ATVFSFileView> view2;
+					g_ATVFSAtfsHandler(view, subPath.c_str(), ~view2);
 
-				view = std::move(view2);
-			}
-			break;
+					view = std::move(view2);
+				}
+				break;
 
-		case kATVFSProtocol_Blob:
-			if (!g_ATVFSBlobHandler)
-				throw MyError("Blob URLs are not supported.");
+			case kATVFSProtocol_Blob:
+				if (!g_ATVFSBlobHandler)
+					throw MyError("Blob URLs are not supported.");
 
-			g_ATVFSBlobHandler(basePath.c_str(), write, update, ~view);
-			break;
+				g_ATVFSBlobHandler(basePath.c_str(), write, update, ~view);
+				break;
 
-		default:
-			throw ATUnsupportedVFSPathException(vfsPath);
+			case kATVFSProtocol_Special:
+				if (!g_ATVFSSpecialHandler)
+					throw ATUnsupportedVFSPathException(vfsPath);
+
+				g_ATVFSSpecialHandler(basePath.c_str(), write, update, ~view);
+				break;
+
+			default:
+				throw ATUnsupportedVFSPathException(vfsPath);
+		}
+	} catch(const ATVFSException& ex) {
+		if (ex.HasPath())
+			throw;
+
+		ex.RethrowWithPath(vfsPath);
 	}
 
 	*viewOut = view.release();
@@ -538,4 +586,8 @@ void ATVFSSetAtfsProtocolHandler(vdfunction<void(ATVFSFileView *, const wchar_t 
 
 void ATVFSSetBlobProtocolHandler(vdfunction<void(const wchar_t *, bool, bool, ATVFSFileView **)> handler) {
 	g_ATVFSBlobHandler = std::move(handler);
+}
+
+void ATVFSSetSpecialProtocolHandler(vdfunction<void(const wchar_t *, bool, bool, ATVFSFileView **)> handler) {
+	g_ATVFSSpecialHandler = std::move(handler);
 }

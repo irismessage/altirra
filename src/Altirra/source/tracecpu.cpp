@@ -128,13 +128,14 @@ void ATTraceChannelCPUHistory::StaticProfiling::Stop() {
 #endif
 }
 
-ATTraceChannelCPUHistory::ATTraceChannelCPUHistory(uint64 tickOffset, double tickScale, const wchar_t *name, ATDebugDisasmMode disasmMode, uint32 subCycles, ATTraceMemoryTracker *memTracker) {
+ATTraceChannelCPUHistory::ATTraceChannelCPUHistory(uint64 tickOffset, double tickScale, const wchar_t *name, ATDebugDisasmMode disasmMode, uint32 subCycles, ATTraceMemoryTracker *memTracker, bool enableAsync) {
 	mTickOffset = tickOffset;
 	mTickScale = tickScale;
 	mName = name;
 	mDisasmMode = disasmMode;
 	mSubCycles = subCycles;
 	mpMemTracker = memTracker;
+	mbAsyncEnabled = enableAsync;
 
 	std::fill(std::begin(mUnpackedBlockIds), std::end(mUnpackedBlockIds), UINT32_MAX);
 
@@ -149,18 +150,46 @@ void ATTraceChannelCPUHistory::BeginEvents() {
 void ATTraceChannelCPUHistory::AddEvent(uint64 tick, const ATCPUHistoryEntry& he) {
 	if (mTailOffset >= kBlockSize) {
 		mTailOffset = 0;
+		++mTailBlockHeadNo;
+		mTailBlockHeadNo &= kTailBlockMask;
 
-		PackBlock();
+		if (!(mTailBlockHeadNo & kAsyncChunkBlockMask)) {
+			// This chunk should have been empty before we started filling it. Otherwise,
+			// we're in trouble, we've overwritten a chunk in progress.
+			const uint32 openingAsyncChunkIndex = (mTailBlockHeadNo & kTailBlockMask) / kAsyncChunkBlockCount;
+			const uint32 closingAsyncChunkIndex = (openingAsyncChunkIndex - 1) & kAsyncChunkMask;
+			VDASSERT(!mbAsyncPending[closingAsyncChunkIndex]);
+
+			mAsyncFutures[closingAsyncChunkIndex] = std::async(
+				mbAsyncEnabled ? std::launch::async | std::launch::deferred : std::launch::deferred,
+				[this, startNo = closingAsyncChunkIndex * kAsyncChunkBlockCount] {
+					for(int32 i = 0; i < kAsyncChunkBlockCount; ++i)
+						PackBlockAsync((startNo + i) & kTailBlockMask);
+				}
+			);
+
+			mbAsyncPending[closingAsyncChunkIndex] = true;
+
+			// Ensure that the new chunk we're about to open is clear.
+			if (mbAsyncPending[openingAsyncChunkIndex]) {
+				VDASSERT(mAsyncChunkTail == openingAsyncChunkIndex);
+				ProcessNextPendingChunk();
+				VDASSERT(!mbAsyncPending[openingAsyncChunkIndex]);
+			}
+		}
 	}
 
+	// check if we are opening a new block
 	if (mTailOffset == 0)
-		mTailBlockTime = (tick - mTickOffset) * mTickScale;
+		mEventBlocks.emplace_back((tick - mTickOffset) * mTickScale, nullptr);
 
-	mTailBlock[mTailOffset++] = he;
+	mTailBlock[mTailBlockHeadNo & kTailBlockMask][mTailOffset++] = he;
 	++mEventCount;
 }
 
 void ATTraceChannelCPUHistory::EndEvents() {
+	ProcessPendingChunks();
+
 	StaticProfiling::Stop();
 }
 
@@ -176,10 +205,13 @@ const wchar_t *ATTraceChannelCPUHistory::GetName() const {
 }
 
 double ATTraceChannelCPUHistory::GetDuration() const {
+	// The tail offset is only wrapped before adding a new event, so if the tail
+	// offset is 0, we never had any events.
 	if (!mTailOffset)
 		return 0;
-
-	return mTailBlockTime + (double)(sint32)(mTailBlock[mTailOffset - 1].mCycle - mTailBlock[0].mCycle) * mTickScale;
+	
+	// Since we had at least one event, there is always a tail block
+	return mEventBlocks.back().mTime + (double)(sint32)(mTailBlock[mTailBlockHeadNo][mTailOffset - 1].mCycle - mTailBlock[mTailBlockHeadNo][0].mCycle) * mTickScale;
 }
 
 bool ATTraceChannelCPUHistory::IsEmpty() const {
@@ -202,29 +234,26 @@ void ATTraceChannelCPUHistory::StartHistoryIteration(double startTime, sint32 ev
 		size_t numEvents;
 		uint32 blockId;
 
-		if (startTime >= mTailBlockTime) {
-			timeOffset = startTime - mTailBlockTime;
-			he = mTailBlock;
-			numEvents = mTailOffset;
-			blockId = (uint32)mPackedEventBlocks.size();
-		} else {
-			auto itBlockStart = mPackedEventBlocks.begin();
-			auto itBlock = std::lower_bound(itBlockStart, mPackedEventBlocks.end(), startTime,
-				[](const PackedEventBlock& block, double t) { return block.mTime < t; });
+		auto itBlockStart = mEventBlocks.begin();
+		auto itBlock = std::lower_bound(itBlockStart, mEventBlocks.end(), startTime,
+			[](const EventBlock& block, double t) { return block.mTime < t; });
 
-			blockId = (uint32)(itBlock - itBlockStart);
+		blockId = (uint32)(itBlock - itBlockStart);
 
-			if (!blockId) {
-				// time is before first block
-				mIterPos = 0;
-				return;
-			}
-
-			--blockId;
-			he = UnpackBlock(blockId);
-			timeOffset = mPackedEventBlocks[blockId].mTime;
-			numEvents = kBlockSize;
+		if (!blockId) {
+			// time is before first block
+			mIterPos = 0;
+			return;
 		}
+
+		--blockId;
+		he = UnpackBlock(blockId);
+		timeOffset = mEventBlocks[blockId].mTime;
+
+		if (blockId + 1 == mEventBlocks.size())
+			numEvents = mTailOffset;
+		else
+			numEvents = kBlockSize;
 
 		// search events within block
 		sint32 tickOffset = (sint32)((startTime - timeOffset) / mTickScale + 0.5);
@@ -282,28 +311,22 @@ uint32 ATTraceChannelCPUHistory::FindEvent(double t) {
 	uint32 blockId;
 
 	const uint32 startBlockId = mIterPos >> kBlockSizeBits;
-	if (t >= mTailBlockTime || startBlockId >= mPackedEventBlocks.size()) {
-		timeOffset = t - mTailBlockTime;
-		he = mTailBlock;
-		numEvents = mTailOffset;
-		blockId = (uint32)mPackedEventBlocks.size();
-	} else {
-		auto itBlockStart = mPackedEventBlocks.begin() + startBlockId;
-		auto itBlock = std::upper_bound(itBlockStart, mPackedEventBlocks.end(), t,
-			[](double t, const PackedEventBlock& block) { return t < block.mTime; });
 
-		blockId = (uint32)(itBlock - itBlockStart);
+	auto itBlockStart = mEventBlocks.begin() + startBlockId;
+	auto itBlock = std::upper_bound(itBlockStart, mEventBlocks.end(), t,
+		[](double t, const EventBlock& block) { return t < block.mTime; });
 
-		if (!blockId) {
-			// time is before first block, so return start of iteration range
-			return 0;
-		}
+	blockId = (uint32)(itBlock - itBlockStart);
 
-		blockId += startBlockId - 1;
-		he = UnpackBlock(blockId);
-		timeOffset = mPackedEventBlocks[blockId].mTime;
-		numEvents = kBlockSize;
+	if (!blockId) {
+		// time is before first block, so return start of iteration range
+		return 0;
 	}
+
+	blockId += startBlockId - 1;
+	he = UnpackBlock(blockId);
+	timeOffset = mEventBlocks[blockId].mTime;
+	numEvents = (blockId + 1 >= mEventBlocks.size()) ? mTailOffset : kBlockSize;
 
 	// search events within block
 	sint32 tickOffset = (sint32)((t - timeOffset) / mTickScale + 0.5);
@@ -328,41 +351,54 @@ double ATTraceChannelCPUHistory::GetEventTime(uint32 index) {
 	index += mIterPos;
 
 	const uint32 blockId = index >> kBlockSizeBits;
-	const double blockTime = blockId >= mPackedEventBlocks.size() ? mTailBlockTime : mPackedEventBlocks[blockId].mTime;
+	const double blockTime = mEventBlocks[blockId].mTime;
 	const ATCPUHistoryEntry *he = UnpackBlock(blockId);
 
 	return (double)(sint32)(he[index & (kBlockSize - 1)].mCycle - he[0].mCycle) * mTickScale + blockTime;
 }
 
-void ATTraceChannelCPUHistory::PackBlock() {
+const ATCPUTimestampDecoder& ATTraceChannelCPUHistory::GetTimestampDecoder() const {
+	return mTimestampDecoder;
+}
+
+void ATTraceChannelCPUHistory::SetTimestampDecoder(const ATCPUTimestampDecoder& dec) {
+	mTimestampDecoder = dec;
+}
+
+void ATTraceChannelCPUHistory::PackBlockAsync(uint32 blockIdx) {
 	void *p;
 
 	uint32 sizeDelta;
+
+	auto& srcBlock = mTailBlock[blockIdx];
 
 	if (kCompressionEnabled) {
 		uint32 lastCycle = 0;
 		uint32 lastUnhaltedCycle = 0;
 
-		for(uint32 i = 0; i < kBlockSize; ++i) {
-			ATCPUHistoryEntry *he = &mTailBlock[i];
+		{
+			ATCPUHistoryEntry *VDRESTRICT he = &srcBlock[0];
 
-			he->mCycle -= he->mUnhaltedCycle;
+			for(uint32 i = 0; i < kBlockSize; ++i, ++he) {
 
-			uint32 cycle = he->mCycle;
-			uint32 unhaltedCycle = he->mUnhaltedCycle;
+				he->mCycle -= he->mUnhaltedCycle;
 
-			he->mCycle -= lastCycle;
-			he->mUnhaltedCycle -= lastUnhaltedCycle;
+				uint32 cycle = he->mCycle;
+				uint32 unhaltedCycle = he->mUnhaltedCycle;
 
-			lastCycle = cycle;
-			lastUnhaltedCycle = unhaltedCycle;
+				he->mCycle -= lastCycle;
+				he->mUnhaltedCycle -= lastUnhaltedCycle;
+
+				lastCycle = cycle;
+				lastUnhaltedCycle = unhaltedCycle;
+			}
 		}
 
 		static_assert(sizeof(ATCPUHistoryEntry) == 32, "struct layout problem");
 
 		uint8 packBuffer[36 * kBlockSize];
-		uint8 *dst = packBuffer;
-		const uint8 *src = (const uint8 *)mTailBlock;
+		uint8 *VDRESTRICT dst = packBuffer;
+		const uint8 *VDRESTRICT src = (const uint8 *)mTailBlock[blockIdx];
 		uint8 checkBuffer[32] = {};
 		uint8 insnBuffer[16] = {};
 		uint8 eaPred[3] = {};
@@ -417,7 +453,11 @@ void ATTraceChannelCPUHistory::PackBlock() {
 		}
 
 		const uint32 packedSize = (uint32)(dst - packBuffer);
-		p = mBlockAllocator.Allocate(packedSize, 1);
+
+		vdsynchronized(mMutex) {
+			p = mBlockAllocator.Allocate(packedSize, 1);
+		}
+
 		memcpy(p, packBuffer, packedSize);
 		
 		sizeDelta = packedSize;
@@ -426,24 +466,73 @@ void ATTraceChannelCPUHistory::PackBlock() {
 		StaticProfiling::AddBlock();
 #endif
 	} else {
-		p = mBlockAllocator.Allocate(sizeof(mTailBlock));
-		memcpy(p, mTailBlock, sizeof mTailBlock);
+		vdsynchronized(mMutex) {
+			p = mBlockAllocator.Allocate(sizeof srcBlock);
+		}
 
-		sizeDelta = sizeof(mTailBlock);
+		memcpy(p, srcBlock, sizeof srcBlock);
+
+		sizeDelta = sizeof srcBlock;
 	}
 
-	mTraceSize += sizeDelta;
+	vdsynchronized(mMutex) {
+		mTailBlockPackedSizes[blockIdx] = sizeDelta;
+		mpTailBlockPackedPtrs[blockIdx] = p;
+	}
+}
+
+void ATTraceChannelCPUHistory::FinalizePackChunk() {
+	const uint32 blockIdx = mTailBlockTailNo & kTailBlockMask;
+	uint32 totalSize = 0;
+
+	vdsynchronized(mMutex) {
+		for(uint32 i = 0; i < kAsyncChunkBlockCount; ++i) {
+			totalSize += mTailBlockPackedSizes[blockIdx + i];
+
+			const void *p = mpTailBlockPackedPtrs[blockIdx + i];
+			VDASSERT(p);
+
+			mEventBlocks[mTailBlockTailNo + i].mpPackedData = p;
+		}
+	}
+
+	mTraceSize += totalSize;
 
 	if (mpMemTracker)
-		mpMemTracker->AddSize(sizeDelta);
+		mpMemTracker->AddSize(totalSize);
 
-	mPackedEventBlocks.push_back(PackedEventBlock { mTailBlockTime, p });
-	mUnpackMap.push_back(0);
+	for(uint32 i = 0; i < kAsyncChunkBlockCount; ++i)
+		mUnpackMap.push_back(0);
+
+	mTailBlockTailNo += kAsyncChunkBlockCount;
+}
+
+void ATTraceChannelCPUHistory::ProcessPendingChunks() {
+	// we must be careful to retire chunks in order
+	while(ProcessNextPendingChunk())
+		;
+}
+
+bool ATTraceChannelCPUHistory::ProcessNextPendingChunk() {
+	if (!mbAsyncPending[mAsyncChunkTail])
+		return false;
+
+	mbAsyncPending[mAsyncChunkTail] = false;
+
+	mAsyncFutures[mAsyncChunkTail].get();
+
+	FinalizePackChunk();
+
+	++mAsyncChunkTail;
+	mAsyncChunkTail &= kAsyncChunkMask;
+	return true;
 }
 
 const ATCPUHistoryEntry *ATTraceChannelCPUHistory::UnpackBlock(uint32 id) {
-	if (id >= mPackedEventBlocks.size())
-		return mTailBlock;
+	// if the block ID is beyond the unpacked block map, it must be in
+	// the tail blocks
+	if (id >= mUnpackMap.size())
+		return mTailBlock[id & kTailBlockMask];
 
 	// check if we already have it unpacked
 	uint8 slot = mUnpackMap[id];
@@ -480,7 +569,7 @@ const ATCPUHistoryEntry *ATTraceChannelCPUHistory::UnpackBlock(uint32 id) {
 	if (kCompressionEnabled) {
 		uint8 unpackBuffer[32] = {};
 		uint8 insnBuffer[16] = {};
-		const uint8 *src = (const uint8 *)mPackedEventBlocks[id].mpData;
+		const uint8 *src = (const uint8 *)mEventBlocks[id].mpPackedData;
 		uint32 cycle = 0;
 		uint32 unhaltedCycle = 0;
 
@@ -515,7 +604,7 @@ const ATCPUHistoryEntry *ATTraceChannelCPUHistory::UnpackBlock(uint32 id) {
 		}
 
 	} else {
-		memcpy(slotData, mPackedEventBlocks[id].mpData, sizeof(ATCPUHistoryEntry)*kBlockSize);
+		memcpy(slotData, mEventBlocks[id].mpPackedData, sizeof(ATCPUHistoryEntry)*kBlockSize);
 	}
 
 	return slotData;

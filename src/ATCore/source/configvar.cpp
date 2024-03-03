@@ -210,6 +210,8 @@ void ATConfigVarT<T_Type, T_Val>::operator=(const T_Val& val) {
 	}
 }
 
+template void ATConfigVarT<ATConfigVarType::Bool, bool>::operator=(const bool&);
+
 ////////////////////////////////////////////////////////////////////////////////
 
 bool ATConfigVarBool::FromPersistence(ATConfigVariableRegKey& k) {

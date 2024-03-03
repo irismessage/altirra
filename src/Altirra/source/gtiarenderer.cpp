@@ -330,7 +330,7 @@ void ATGTIARenderer::ResetState() {
 	mX = 0;
 }
 
-class ATSaveStateGtiaRenderer final : public ATSnapExchangeObject<ATSaveStateGtiaRenderer> {
+class ATSaveStateGtiaRenderer final : public ATSnapExchangeObject<ATSaveStateGtiaRenderer, "ATSaveStateGtiaRenderer"> {
 public:
 	template<typename T>
 	void Exchange(T& rw) {
@@ -345,8 +345,6 @@ public:
 	uint8 mX;
 	uint8 mPRIOR;
 };
-
-ATSERIALIZATION_DEFINE(ATSaveStateGtiaRenderer);
 
 void ATGTIARenderer::SaveState(IATSerializable **ser) const {
 	vdrefptr<ATSaveStateGtiaRenderer> data { new ATSaveStateGtiaRenderer };

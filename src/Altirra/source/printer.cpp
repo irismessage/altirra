@@ -17,7 +17,6 @@
 
 #include <stdafx.h>
 #include <vd2/system/error.h>
-#include <vd2/system/filesys.h>
 #include <vd2/system/strutil.h>
 #include <at/atcore/cio.h>
 #include <at/atcore/devicecio.h>
@@ -27,7 +26,6 @@
 #include <at/atcore/deviceprinter.h>
 #include <at/atcore/devicesio.h>
 #include "kerneldb.h"
-#include "oshelper.h"
 
 class ATDevicePrinter final : public ATDevice, public IATDevicePrinterPort, public IATDeviceCIO, public IATDeviceSIO, public IATDeviceParent {
 	ATDevicePrinter(const ATDevicePrinter&) = delete;
@@ -102,6 +100,7 @@ ATDevicePrinter::ATDevicePrinter()
 	, mpSIOMgr(nullptr)
 	, mpOutput(nullptr)
 {
+	SetSaveStateAgnostic();
 	ColdReset();
 }
 

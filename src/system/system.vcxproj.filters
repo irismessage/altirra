@@ -102,12 +102,6 @@
     <ClCompile Include="source\process.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\profile.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="source\progress.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\refcount.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -169,6 +163,9 @@
       <Filter>Precompiled Header Support</Filter>
     </ClCompile>
     <ClCompile Include="source\function.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\constexpr.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -246,12 +243,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\vd2\system\process.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\h\vd2\system\profile.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\h\VD2\system\progress.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\vd2\system\refcount.h">
@@ -369,6 +360,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\vd2\system\vecmath_ref.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\vd2\system\constexpr.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

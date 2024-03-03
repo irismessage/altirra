@@ -23,7 +23,9 @@
 #include <at/atcore/scheduler.h>
 
 class ATDiskInterface;
+class ATDiskRotationTracer;
 class ATConsoleOutput;
+class ATTraceChannelFormatted;
 
 enum ATFDCWPOverride {
 	kATFDCWPOverride_None,
@@ -121,9 +123,31 @@ public:
 	// such a command is received or the disk mechanism is not ready.
 	void SetDiskChangeStartupHackEnabled(bool enabled);
 
+	enum class DDBootSectorMode : uint32 {
+		// Boot sectors are stored in the first 128 bytes of the sector, and
+		// the second half is zeroed if not present.
+		Default,
+
+		// Boot sectors are stored in the last 128 bytes of the sector, and
+		// the first half is zeroed if not present;
+		Swapped
+	};
+
+	void SetDDBootSectorMode(DDBootSectorMode mode);
+
 	enum class SideMapping : uint32 {
+		// Side 2 sectors are mapped backwards in both track/sector. [XF551]
 		Side2Reversed,
+
+		// Side 2 sectors are mapped backwards in both track/sector, but there
+		// is an off-by-one bug that causes the logical sector to be one higher
+		// than it should. [PERCOM]
 		Side2ReversedOffByOne,
+
+		// Side 2 is mapped with reversed tracks but forward sectors [1450XLD]
+		Side2ReversedTracks,
+
+		// Side 2 is mapped forward in track/sector. [ATR8000]
 		Side2Forward,
 	};
 
@@ -134,6 +158,8 @@ public:
 	void WriteByte(uint8 address, uint8 value);
 
 	void OnIndexPulse(bool asserted);
+
+	void SetTraceContext(ATTraceContext *context, uint64 baseTick, double secondsPerTick);
 
 public:
 	void OnScheduledEvent(uint32 id) override;
@@ -226,6 +252,7 @@ protected:
 	uint8 mActiveSectorStatus = 0;
 	uint8 mActivePhysSectorStatus = 0;
 	uint32 mActivePhysSector = 0;
+	uint32 mActiveVirtSector = 0;
 	uint32 mActiveOpIndexMarks = 0;
 
 	uint32 mRotPos = 0;
@@ -254,6 +281,7 @@ protected:
 
 	ATDiskGeometryInfo mDiskGeometry {};
 
+	DDBootSectorMode mBootSectorMode = DDBootSectorMode::Default;
 	SideMapping mSideMapping = SideMapping::Side2Reversed;
 	uint32 mSideMappingTrackCount = 40;
 
@@ -268,9 +296,11 @@ protected:
 	float mPeriodAdjustFactor = 1;
 	float mBytesPerSecondFM = 1;
 	float mBytesPerSecondMFM = 1;
-	uint32 mCyclesPerByteFM = 1;
-	uint32 mCyclesPerByteMFM = 1;
+	uint32 mCyclesPerByteFM_FX16 = 1;
+	uint32 mCyclesPerByteMFM_FX16 = 1;
+	uint32 mCyclesPerByte_FX16 = 1;
 	uint32 mCyclesPerByte = 1;
+	uint32 mCyclesPerByteAccum_FX16 = 0;
 	uint32 mCyclesPerIndexPulse = 1;
 	uint32 mCycleStepTable[4] = {};
 	uint32 mCyclesHeadLoadDelay = 1;
@@ -282,6 +312,9 @@ protected:
 	vdfunction<void(bool)> mpFnMotorChange;
 	vdfunction<void()> mpFnWriteEnabled;
 	vdfunction<void(bool)> mpFnHeadLoadChange;
+
+	ATTraceChannelFormatted *mpTraceChannelCommands = nullptr;
+	vdautoptr<ATDiskRotationTracer> mpRotationTracer;
 
 	vdblock<uint8> mWriteTrackBuffer;
 	uint32 mWriteTrackIndex;

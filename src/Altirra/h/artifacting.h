@@ -71,13 +71,13 @@ private:
 
 	void ArtifactCompressRange_Scalar(uint32 *dst, uint32 width);
 
-#if defined(VD_COMPILER_MSVC) && (defined(VD_CPU_X86) || defined(VD_CPU_X64))
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 	void ArtifactCompressRange_SSE2(uint32 *dst, uint32 width);
 #endif
 
 	void ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool includeHBlank);
 
-#if defined(VD_COMPILER_MSVC) && (defined(VD_CPU_X86) || defined(VD_CPU_X64))
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 	bool ArtifactNTSC_SSE2(uint32 *dst, const uint8 *src, uint32 num7MHzPixels);
 #endif
 

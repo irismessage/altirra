@@ -504,7 +504,7 @@ uint8 ATPIAEmulator::DebugReadByte(uint8 addr) const {
 	default:
 		// Port A reads the actual state of the output lines.
 		return mPORTACTL & 0x04
-			? (uint8)(mInput & (mOutput | ~mPortDirection) & (mbHasDynamicAInputs ? ReadDynamicInputs(false) : 0xFF))
+			? (uint8)((mOutput | ~mPortDirection) & ComputePortAInput())
 			: (uint8)mPortDirection;
 
 	case 0x01:
@@ -514,10 +514,9 @@ uint8 ATPIAEmulator::DebugReadByte(uint8 addr) const {
 
 		// Port B reads output bits instead of input bits for those selected as output. No ANDing with input.
 		{
-			uint8 pb = (uint8)((((mInput ^ mOutput) & mPortDirection) ^ mInput) >> 8);
+			uint8 pb = ComputePortBInput();
 
-			if (mbHasDynamicBInputs)
-				pb &= ReadDynamicInputs(true);
+			pb = (uint8)(((pb ^ (mOutput >> 8)) & (mPortDirection >> 8)) ^ pb);
 
 			// If we have floating bits, roll them in.
 			if (mpFloatingInputs) {
@@ -759,26 +758,34 @@ void ATPIAEmulator::DumpState() {
 		"high / off",
 	};
 
-	ATConsolePrintf("Port A control:   %02x (%s, motor line: %s, proceed line: %cedge%s)\n"
+	ATConsolePrintf("Port A control:   %02X (%s, motor line: %s, proceed line: %cedge%s)\n"
 		, state.mCRA
 		, state.mCRA & 0x04 ? "IOR" : "DDR"
 		, kCAB2Modes[(state.mCRA >> 3) & 7]
 		, state.mCRA & 0x02 ? '+' : '-'
 		, state.mCRA & 0x01 ? " w/IRQ" : ""
 		);
-	ATConsolePrintf("Port A direction: %02x\n", state.mDDRA);
-	ATConsolePrintf("Port A output:    %02x\n", state.mORA);
+	ATConsolePrintf("Port A direction: %02X%s\n"
+		, state.mDDRA
+		, state.mDDRA == 0 ? " (all inputs)" : state.mDDRA == 0xFF ? " (all outputs)" : ""
+	);
+	ATConsolePrintf("Port A output:    %02X\n", state.mORA);
+	ATConsolePrintf("Port A input:     %02X\n", ComputePortAInput());
 	ATConsolePrintf("Port A edge:      %s\n", mbPIAEdgeA ? "pending" : "none");
 
-	ATConsolePrintf("Port B control:   %02x (%s, command line: %s, interrupt line: %cedge%s)\n"
+	ATConsolePrintf("Port B control:   %02X (%s, command line: %s, interrupt line: %cedge%s)\n"
 		, state.mCRB
 		, state.mCRB & 0x04 ? "IOR" : "DDR"
 		, kCAB2Modes[(state.mCRB >> 3) & 7]
 		, state.mCRB & 0x02 ? '+' : '-'
 		, state.mCRB & 0x01 ? " w/IRQ" : ""
 		);
-	ATConsolePrintf("Port B direction: %02x\n", state.mDDRB);
-	ATConsolePrintf("Port B output:    %02x\n", state.mORB);
+	ATConsolePrintf("Port B direction: %02X%s\n"
+		, state.mDDRB
+		, state.mDDRB == 0 ? " (all inputs)" : state.mDDRB == 0xFF ? " (all outputs)" : ""
+	);
+	ATConsolePrintf("Port B output:    %02X\n", state.mORB);
+	ATConsolePrintf("Port B input:     %02X\n", ComputePortBInput());
 	ATConsolePrintf("Port B edge:      %s\n", mbPIAEdgeB ? "pending" : "none");
 }
 
@@ -803,7 +810,7 @@ void ATPIAEmulator::EndLoadState(ATSaveStateReader& reader) {
 	PostLoadState();
 }
 
-class ATSaveStatePia final : public ATSnapExchangeObject<ATSaveStatePia> {
+class ATSaveStatePia final : public ATSnapExchangeObject<ATSaveStatePia, "ATSaveStatePia"> {
 public:
 	template<typename T>
 	void Exchange(T& rw) {
@@ -818,8 +825,6 @@ public:
 	ATPIAState mState;
 };
 
-ATSERIALIZATION_DEFINE(ATSaveStatePia);
-
 void ATPIAEmulator::SaveState(IATObjectState **pp) const {
 	vdrefptr<ATSaveStatePia> obj(new ATSaveStatePia);
 
@@ -828,9 +833,14 @@ void ATPIAEmulator::SaveState(IATObjectState **pp) const {
 	*pp = obj.release();
 }
 
-void ATPIAEmulator::LoadState(IATObjectState& state) {
-	ATSaveStatePia& piastate = atser_cast<ATSaveStatePia&>(state);
+void ATPIAEmulator::LoadState(const IATObjectState *state) {
+	if (state)
+		LoadState(atser_cast<const ATSaveStatePia&>(*state));
+	else
+		LoadState(ATSaveStatePia{});
+}
 
+void ATPIAEmulator::LoadState(const ATSaveStatePia& piastate) {
 	mPortOutput = ((uint32)piastate.mState.mORB << 8) + piastate.mState.mORA;
 	mPortDirection = ((uint32)piastate.mState.mDDRB << 8) + piastate.mState.mDDRA + kATPIAOutput_CA2 + kATPIAOutput_CB2;
 	mPORTACTL = piastate.mState.mCRA;
@@ -1030,6 +1040,23 @@ void ATPIAEmulator::UpdateTraceInputA() {
 	const uint64 t = mpScheduler->GetTick64();
 	mpTraceInputA->TruncateLastEvent(t);
 	mpTraceInputA->AddOpenTickEventF(t, kATTraceColor_Default, L"%02X", mInput & 0xFF);
+}
+
+uint8 ATPIAEmulator::ComputePortAInput() const {
+	uint8 pa = mInput;
+	if (mbHasDynamicAInputs)
+		pa &= ReadDynamicInputs(false);
+
+	return pa;
+}
+
+uint8 ATPIAEmulator::ComputePortBInput() const {
+	uint8 pb = mInput;
+
+	if (mbHasDynamicBInputs)
+		pb &= ReadDynamicInputs(true);
+
+	return pb;
 }
 
 uint8 ATPIAEmulator::ReadDynamicInputs(bool portb) const {

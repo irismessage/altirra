@@ -151,12 +151,13 @@ ATMemoryWindow::ATMemoryWindow(uint32 id)
 
 	mControlPanel.SetOnAddressSet(
 		[this](const wchar_t *s) {
-			sint32 addr = ATGetDebugger()->ResolveSymbol(VDTextWToU8(VDStringSpanW(s)).c_str(), true);
+			try {
+				sint32 addr = ATGetDebugger()->EvaluateThrow(VDTextWToU8(VDStringSpanW(s)).c_str());
 
-			if (addr < 0)
-				MessageBeep(MB_ICONERROR);
-			else
 				SetPosition(addr);
+			} catch(const MyError&) {
+				MessageBeep(MB_ICONERROR);
+			}
 		}
 	);
 
@@ -1054,7 +1055,13 @@ void ATMemoryWindow::OnPaint() {
 			::SetTextColor(hdc, normalTextColor);
 			::ExtTextOutA(hdc, mTextArea.left - mHScrollPos, rLine.top + textOffsetY, ETO_OPAQUE, &rLine, mTempLine.data(), mTempLine.size(), NULL);
 
-			if (changeMask) {
+			// render changed text, but only if we had changed bits
+			const uint32 changeMaskWords = mColumns >> 5;
+			const uint32 changeMaskExtraBits = mColumns & 31;
+
+			if (std::any_of(changeMask, changeMask + changeMaskWords, [](uint32 v) { return v != 0; })
+				|| (changeMask[changeMaskWords] & ~(~UINT32_C(0) << changeMaskExtraBits)))
+			{
 				::SetTextColor(hdc, changedTextColor);
 				::ExtTextOutA(hdc, mTextArea.left - mHScrollPos, rLine.top + textOffsetY, 0, NULL, mTempLine2.data(), mTempLine2.size(), NULL);
 			}

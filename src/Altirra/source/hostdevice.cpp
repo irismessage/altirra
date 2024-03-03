@@ -297,6 +297,7 @@ public:
 	uint32	mMaxLength = UINT32_C(0xFFFFFF);
 	bool	mbWriteBackData = false;
 	bool	mbUsingRawData = false;
+	bool	mbIsDirectory = false;
 	bool	mbTranslateEOL = false;
 	bool	mbOpen = false;
 	bool	mbReadEnabled = false;
@@ -394,8 +395,8 @@ uint8 ATHostDeviceChannel::Read(void *dst, uint32 len, uint32& actual) {
 
 		if (!actual)
 			status = kATCIOStat_EndOfFile;
-		else if (mOffset >= mLength)
-			status = kATCIOStat_SuccessEOF;
+		else if (mOffset >= mLength && !mbIsDirectory)
+			status = kATCIOStat_SuccessEOF;	// only for files, dirs don't return this
 
 	} catch(const MyError&) {
 		return kATCIOStat_FatalDiskIO;
@@ -586,7 +587,7 @@ void ATHostDeviceEmulator::GetSettings(ATPropertySet& settings) {
 		settings.SetBool("fakedisk", true);
 	
 	if (mbLongFileNames)
-		settings.GetBool("longfilenames", true);
+		settings.SetBool("longfilenames", true);
 
 	for(int i=0; i<4; ++i) {
 		const wchar_t *s = GetBasePath(i);
@@ -642,7 +643,7 @@ void ATHostDeviceEmulator::InitCIO(IATDeviceCIOManager *mgr) {
 }
 
 void ATHostDeviceEmulator::GetCIODevices(char *buf, size_t len) const {
-	vdstrlcpy(buf, "DH" + (mbFakeDisk ? 0 : 1), len);
+	vdstrlcpy(buf, &"DH"[mbFakeDisk ? 0 : 1], len);
 }
 
 sint32 ATHostDeviceEmulator::OnCIOOpen(int channel, uint8 deviceNo, uint8 mode, uint8 aux2, const uint8 *filename) {
@@ -884,6 +885,7 @@ sint32 ATHostDeviceEmulator::OnCIOOpen(int channel, uint8 deviceNo, uint8 mode, 
 		}
 
 		ch.mLength = (uint32)ch.mData.size();
+		ch.mbIsDirectory = true;
 	} else {
 		// attempt to open file
 		ch.mbUsingRawData = false;

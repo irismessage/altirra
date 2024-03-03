@@ -34,7 +34,7 @@ AltirraOS for XL/XE/XEGS Computers
 AltirraOS for 5200 SuperSystem  
 AltirraOS for 65C816 Accelerators  
 
-Copyright © 2017-2019 Avery Lee, All Rights Reserved.
+Copyright © 2017-2023 Avery Lee, All Rights Reserved.
 
 Copying and distribution of this file, with or without modification, are permitted in any medium without royalty provided the copyright notice and this notice are preserved. This file is offered as-is, without any warranty.
 
@@ -44,7 +44,8 @@ Visit the [Altirra home page](http://virtualdub.org/altirra.html) for the Altirr
 
 ## Source code
 
-The source code for these files is included in the source of the [Altirra emulator](http://virtualdub.org/altirra.html).
+The source code for these files is included in the source of the [Altirra emulator](http://virtualdub.org/altirra.html). AltirraOS is within the Visual C++ project called `Kernel`,
+while Altirra BASIC has its own project called `atbasic`. Both are Makefile projects that invoke NMAKE to do the actual build through MADS.
 
 ## Other stuff
 
@@ -55,6 +56,39 @@ Looking for other software, like a replacement R: device handler? You might find
 ### AltirraOS
 
 In current versions, the version string for AltirraOS 400/800, XL/XE/XEGS, and 65C816 can be read programmatically from the ROM image. For the 16K images, the version string is stored at the end of the self-test region, at offsets $17F8-17FF in the image ($57F8-57FF in memory), and for the 10K image, it is at $0CB0 in the image ($E4B0 in memory) as part of the memo pad banner.
+
+* Version 3.41
+
+    * SIO now resets BRKKEY after returning Break condition.
+
+* Version 3.40
+
+    * FASC no longer alters the first byte of FR0.
+
+* Version 3.39
+
+    * S: now properly ignores the no-clear flag when opening a GR.0 screen.
+
+* Version 3.38
+
+    * Fixed K: handler not allowing inverse video to be applied to vertical bar (|).
+    * XL/XE/XEGS: $85 EOF code is now supported in custom key definition tables.
+    * 65C816: Fixed incorrect Y return value from screen editor with cursor inhibited.
+    * Fixed a timing issue in SETVBV.
+
+* Version 3.37
+
+    * XL/XE/XEGS: HELPFG now has bits 6 and 7 set for Shift+Help and Ctrl+Help.
+    * XL/XE/XEGS: Improved compatibility with NOCLIK values in $01-7F range.
+    * 65C816: Fixed KEYREP and KRPDEL not being implemented only in the 816-specific version.
+
+* Version 3.36
+
+    * Improve compatibility with programs that rely on C=1 on exit from CIO on program launch (fixes GUNDISK.XEX).
+
+* Version 3.35
+
+    * XL/XE/XEGS: Fixed a bug in the peripheral handler loader where handlers loaded through a CIO type 4 poll were improperly raising MEMLO. This is only supposed to happen for startup (type 3) polls.
 
 * Version 3.34
 

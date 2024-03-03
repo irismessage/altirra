@@ -1,16 +1,13 @@
 #include <stdafx.h>
-#include <winsock2.h>
-#include <windows.h>
 #include <tchar.h>
-#include <iphlpapi.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/error.h>
 #include <vd2/system/refcount.h>
-#include <vd2/system/thunk.h>
 #include <vd2/system/vdstl.h>
-#include <vd2/system/w32assist.h>
 #include <at/atnetwork/ethernetframe.h>
+#include <at/atnetwork/socket.h>
 #include <at/atnetworksockets/internal/vxlantunnel.h>
+#include <at/atnetworksockets/nativesockets.h>
 
 ATNetSockVxlanTunnel::ATNetSockVxlanTunnel() {
 }
@@ -19,56 +16,24 @@ ATNetSockVxlanTunnel::~ATNetSockVxlanTunnel() {
 	Shutdown();
 }
 
-bool ATNetSockVxlanTunnel::Init(uint32 tunnelAddr, uint16 tunnelSrcPort, uint16 tunnelTgtPort, IATEthernetSegment *ethSeg, uint32 ethClockIndex) {
-	mTunnelAddr = tunnelAddr;
+bool ATNetSockVxlanTunnel::Init(uint32 tunnelAddr, uint16 tunnelSrcPort, uint16 tunnelTgtPort, IATEthernetSegment *ethSeg, uint32 ethClockIndex, IATAsyncDispatcher *dispatcher) {
 	mTunnelSrcPort = tunnelSrcPort;
-	mTunnelTgtPort = tunnelTgtPort;
-
-	mpWndThunk = VDCreateFunctionThunkFromMethod(this, &ATNetSockVxlanTunnel::WndProc, true);
-	if (!mpWndThunk) {
-		Shutdown();
-		return false;
-	}
-
-	TCHAR className[64];
-	_sntprintf(className, vdcountof(className), _T("ATNetSockVxlanTunnel_%p"), this);
-
-	WNDCLASS wc = {0};
-	wc.lpfnWndProc = VDGetThunkFunction<WNDPROC>(mpWndThunk);
-	wc.hInstance = VDGetLocalModuleHandleW32();
-	wc.lpszClassName = className;
-
-	mWndClass = RegisterClass(&wc);
-	if (!mWndClass) {
-		Shutdown();
-		return false;
-	}
-
-	mhwnd = CreateWindowEx(0, MAKEINTATOM(mWndClass), _T(""), WS_POPUP, 0, 0, 0, 0, NULL, NULL, wc.hInstance, NULL);
-	if (!mhwnd) {
-		Shutdown();
-		return false;
-	}
-
-	mTunnelSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-
-	if (mTunnelSocket != INVALID_SOCKET) {
-		WSAAsyncSelect(mTunnelSocket, mhwnd, MYWM_SOCKET, FD_READ);
-
-		sockaddr_in sin = {};
-		sin.sin_family = AF_INET;
-		sin.sin_port = htons(mTunnelSrcPort);
-		sin.sin_addr.S_un.S_addr = htonl(INADDR_ANY);
-		if (bind(mTunnelSocket, (const sockaddr *)&sin, sizeof sin) != 0) {
-			closesocket(mTunnelSocket);
-			mTunnelSocket = INVALID_SOCKET;
-		}
-	}
+	mTunnelAddress = ATSocketAddress::CreateIPv4(VDFromBE32(tunnelAddr), tunnelTgtPort);
 
 	mpEthSegment = ethSeg;
 	mEthSource = mpEthSegment->AddEndpoint(this);
 
 	mPacketBuffer.resize(4096);
+
+	mpTunnelSocket = ATNetBind(ATSocketAddress::CreateIPv4(mTunnelSrcPort), true);
+	mpTunnelSocket->SetOnEvent(dispatcher,
+		[this](const ATSocketStatus& status) {
+			if (status.mbCanRead) {
+				OnReadPacket();
+			}
+		},
+		true
+	);
 
 	return true;
 }
@@ -79,29 +44,14 @@ void ATNetSockVxlanTunnel::Shutdown() {
 		mEthSource = 0;
 	}
 
-	if (mTunnelSocket != INVALID_SOCKET) {
-		::closesocket(mTunnelSocket);
-		mTunnelSocket = INVALID_SOCKET;
-	}
-
-	if (mhwnd) {
-		DestroyWindow(mhwnd);
-		mhwnd = NULL;
-	}
-
-	if (mWndClass) {
-		UnregisterClass(MAKEINTATOM(mWndClass), VDGetLocalModuleHandleW32());
-		mWndClass = NULL;
-	}
-
-	if (mpWndThunk) {
-		VDDestroyFunctionThunk(mpWndThunk);
-		mpWndThunk = nullptr;
+	if (mpTunnelSocket) {
+		mpTunnelSocket->CloseSocket(true);
+		mpTunnelSocket = nullptr;
 	}
 }
 
 void ATNetSockVxlanTunnel::ReceiveFrame(const ATEthernetPacket& packet, ATEthernetFrameDecodedType decType, const void *decInfo) {
-	uint32 len = 8 + 14 + packet.mLength;
+	uint32 len = 20 + packet.mLength;
 
 	if (mPacketBuffer.size() < len)
 		mPacketBuffer.resize(len);
@@ -116,75 +66,54 @@ void ATNetSockVxlanTunnel::ReceiveFrame(const ATEthernetPacket& packet, ATEthern
 	memcpy(&mPacketBuffer[20], packet.mpData, packet.mLength);
 
 	// send VXLAN packet
-	sockaddr_in sin = {};
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons(mTunnelTgtPort);
-	sin.sin_addr.S_un.S_addr = mTunnelAddr;
-	sendto(mTunnelSocket, (const char *)mPacketBuffer.data(), len, 0, (const sockaddr *)&sin, sizeof sin);
+	mpTunnelSocket->SendTo(mTunnelAddress, mPacketBuffer.data(), len);
 }
 
-LRESULT ATNetSockVxlanTunnel::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-	if (msg == MYWM_SOCKET) {
-		[[maybe_unused]]
-		const SOCKET sock = (SOCKET)wParam;
+void ATNetSockVxlanTunnel::OnReadPacket() {
+	for(;;) {
+		ATSocketAddress addr;
+		sint32 len = mpTunnelSocket->RecvFrom(addr, mPacketBuffer.data(), mPacketBuffer.size());
 
-		const UINT event = LOWORD(lParam);
+		if (len < 0)
+			break;
 
-		VDASSERT(sock == mTunnelSocket);
+		// Okay, next check that we have a valid VXLAN header and ethernet packet after it.
+		if (len < 8 + 12 + 2)
+			continue;
 
-		if (event == FD_READ) {
-			sockaddr fromAddr = {};
-			int fromAddrLen = sizeof(fromAddr);
+		const uint8 *vxlanhdr = mPacketBuffer.data();
 
-			int actual = recvfrom(mTunnelSocket, (char *)mPacketBuffer.data(), (int)mPacketBuffer.size(), 0, &fromAddr, &fromAddrLen);
+		// must be VLAN 0
+		if ((vxlanhdr[0] & 0x08) && (VDReadUnalignedBEU32(&vxlanhdr[4]) & 0xFFFFFF00))
+			continue;
 
-			if (actual && actual != SOCKET_ERROR)
-				OnReadPacket((uint32)actual);
-		}
+		const uint8 *payload = vxlanhdr + 8;
+		const uint32 payloadLen = len - 8;
 
-		return 0;
+		if (payloadLen < 14)
+			continue;
+
+		if (payloadLen > 1502)
+			continue;
+
+		// forward packet to ethernet segment
+		ATEthernetPacket packet = {};
+		packet.mClockIndex = mEthClockIndex;
+		packet.mTimestamp = 100;
+		memcpy(&packet.mSrcAddr, payload + 6, 6);
+		memcpy(&packet.mDstAddr, payload, 6);
+		packet.mpData = payload + 12;
+		packet.mLength = payloadLen - 12;
+		mpEthSegment->TransmitFrame(mEthSource, packet);
 	}
-
-	return DefWindowProc(hwnd, msg, wParam, lParam);
-}
-
-void ATNetSockVxlanTunnel::OnReadPacket(uint32 len) {
-	// Okay, next check that we have a valid VXLAN header and ethernet packet after it.
-	if (len < 8 + 14)
-		return;
-
-	const uint8 *vxlanhdr = mPacketBuffer.data();
-
-	// must be VLAN 0
-	if ((vxlanhdr[0] & 0x08) && (VDReadUnalignedBEU32(&vxlanhdr[4]) & 0xFFFFFF00))
-		return;
-
-	const uint8 *payload = vxlanhdr + 8;
-	const uint32 payloadLen = len - 8;
-
-	if (payloadLen < 14)
-		return;
-
-	if (payloadLen > 1502)
-		return;
-
-	// forward packet to ethernet segment
-	ATEthernetPacket packet = {};
-	packet.mClockIndex = mEthClockIndex;
-	packet.mTimestamp = mpEthSegment->GetClock(mEthClockIndex)->GetTimestamp(100);
-	memcpy(&packet.mSrcAddr, payload + 6, 6);
-	memcpy(&packet.mDstAddr, payload, 6);
-	packet.mpData = payload + 12;
-	packet.mLength = payloadLen - 12;
-	mpEthSegment->TransmitFrame(mEthSource, packet);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
-void ATCreateNetSockVxlanTunnel(uint32 tunnelAddr, uint16 tunnelSrcPort, uint16 tunnelTgtPort, IATEthernetSegment *ethSeg, uint32 ethClockIndex, IATNetSockVxlanTunnel **pp) {
+void ATCreateNetSockVxlanTunnel(uint32 tunnelAddr, uint16 tunnelSrcPort, uint16 tunnelTgtPort, IATEthernetSegment *ethSeg, uint32 ethClockIndex, IATAsyncDispatcher *dispatcher, IATNetSockVxlanTunnel **pp) {
 	ATNetSockVxlanTunnel *p = new ATNetSockVxlanTunnel;
 
-	if (!p->Init(tunnelAddr, tunnelSrcPort, tunnelTgtPort, ethSeg, ethClockIndex)) {
+	if (!p->Init(tunnelAddr, tunnelSrcPort, tunnelTgtPort, ethSeg, ethClockIndex, dispatcher)) {
 		delete p;
 		throw MyMemoryError();
 	}

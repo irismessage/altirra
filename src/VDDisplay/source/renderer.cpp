@@ -40,6 +40,14 @@ void VDDisplayImageView::SetImage(const VDPixmap& px, bool dynamic) {
 	mbDynamic = dynamic;
 }
 
+void VDDisplayImageView::SetVirtualImage(int w, int h) {
+	mPixmap = {};
+	mPixmap.w = w;
+	mPixmap.h = h;
+	mbDynamic = false;
+	mUniquenessCounter = 0;
+}
+
 void VDDisplayImageView::SetCachedImage(uint32 id, IVDRefUnknown *p) {
 	mCaches[0].mpCache.swap(mCaches[1].mpCache);
 	mCaches[1].mId = id;

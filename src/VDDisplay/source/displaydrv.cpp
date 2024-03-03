@@ -380,15 +380,22 @@ void VDVideoDisplayMinidriver::SetHighPrecision(bool enable) {
 	mbHighPrecision = enable;
 }
 
-void VDVideoDisplayMinidriver::SetDestRect(const vdrect32 *r, uint32 color) {
+void VDVideoDisplayMinidriver::SetDestRectF(const vdrect32f *r, uint32 color) {
 	if (r) {
-		mDestRect = *r;
+		mDestRectF = *r;
 
-		if (mDestRect.right < mDestRect.left)
-			mDestRect.right = mDestRect.left;
+		if (mDestRectF.right < mDestRectF.left)
+			mDestRectF.right = mDestRectF.left;
 
-		if (mDestRect.bottom < mDestRect.top)
-			mDestRect.bottom = mDestRect.top;
+		if (mDestRectF.bottom < mDestRectF.top)
+			mDestRectF.bottom = mDestRectF.top;
+
+		mDestRect.set(
+			VDRoundToInt(r->left),
+			VDRoundToInt(r->top),
+			VDRoundToInt(r->right),
+			VDRoundToInt(r->bottom)
+		);
 
 		mbDestRectEnabled = true;
 	} else {

@@ -32,7 +32,8 @@ half4 FP_StretchBltCubic(float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float
 	half4 p3 = (half4)SAMPLE2D(cubicpttex, cubicptsamp, uv1);
 	half4 p4 = (half4)SAMPLE2D(cubicpttex, cubicptsamp, uv2);
 	
-	weights.rg *= 0.25h;
+	weights.r *= (1.0h/4.0h);
+	weights.g *= (1.0h/16.0h);
 	
 	half4 c1 = (half4)lerp(p4, p1, weights.b);
 	half4 c2 = (half4)lerp(p2, p3, weights.g);

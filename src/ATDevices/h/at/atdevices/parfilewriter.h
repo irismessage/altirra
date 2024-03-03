@@ -21,13 +21,10 @@
 #include <vd2/system/file.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceprinter.h>
+#include <at/atcore/deviceserial.h>
 
-class ATDeviceParallelFileWriter final : public ATDevice, IATPrinterOutput {
+class ATDeviceFileWriter final : public ATDeviceT<IATPrinterOutput, IATDeviceSerial> {
 public:
-	int AddRef() override;
-	int Release() override;
-	void *AsInterface(uint32 iid) override;
-
 	void GetDeviceInfo(ATDeviceInfo& info) override;
 	void GetSettingsBlurb(VDStringW& buf) override;
 	void GetSettings(ATPropertySet& pset) override;
@@ -37,9 +34,21 @@ public:
 	void ColdReset() override;
 	bool GetErrorStatus(uint32 idx, VDStringW& error) override;
 
-	// IATPrinterOutput
+public:	// IATPrinterOutput
 	void WriteASCII(const void *buf, size_t len) override;
 	void WriteATASCII(const void *buf, size_t len) override;
+
+public:	// IATDeviceSerial
+	void SetOnStatusChange(const vdfunction<void(const ATDeviceSerialStatus&)>& fn) override;
+
+	void SetTerminalState(const ATDeviceSerialTerminalState&) override;
+	ATDeviceSerialStatus GetStatus() override;
+	void SetOnReadReady(vdfunction<void()> fn) override;
+	bool Read(uint32 baudRate, uint8& c, bool& framingError) override;
+	bool Read(uint32& baudRate, uint8& c) override;
+	void Write(uint32 baudRate, uint8 c) override;
+
+	void FlushBuffers() override;
 
 private:
 	void WriteByte(uint8 c);

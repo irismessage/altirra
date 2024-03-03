@@ -474,6 +474,10 @@ void ATUIPagedDialog::OnDpiChanged() {
 	}
 }
 
+bool ATUIPagedDialog::OnPreTranslate(VDZMSG& msg) {
+	return mSelectedPage >= 0 && mPages[mSelectedPage]->DelegatePreTranslate(msg);
+}
+
 void ATUIPagedDialog::PushCategory(const wchar_t *name) {
 	if (!mPageTreeView.IsValid())
 		return;

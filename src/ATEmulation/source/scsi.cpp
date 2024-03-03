@@ -19,7 +19,9 @@
 #include <vd2/system/bitmath.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdstl.h>
+#include <at/atcore/devicesnapshot.h>
 #include <at/atcore/logging.h>
+#include <at/atcore/snapshotimpl.h>
 #include <at/atemulation/scsi.h>
 
 ATLogChannel g_ATLCSCSICmd(true, false, "SCSICMD", "SCSI commands");
@@ -166,6 +168,34 @@ void ATSCSIBusEmulator::CommandReceiveData(ReceiveMode mode, void *buf, uint32 l
 			SetBusPhase(kBusPhase_MessageOut);
 			break;
 	}
+}
+
+void ATSCSIBusEmulator::GetSnapshotStatus(ATSnapshotStatus& status) const {
+	if (mBusPhase != kBusPhase_BusFree) {
+		status.mbPartialAccuracy = true;
+		status.mbInDiskTransfer = true;
+	}
+}
+
+struct ATSaveStateSCSIBus final : public ATSnapExchangeObject<ATSaveStateSCSIBus, "ATSaveStateSCSIBus"> {
+	template<ATExchanger T>
+	void Exchange(T& ex);
+};
+
+template<ATExchanger T>
+void ATSaveStateSCSIBus::Exchange(T& ex) {
+}
+
+void ATSCSIBusEmulator::LoadState(const IATObjectState *state, ATSnapshotContext& ctx) {
+	if (!state) {
+		const ATSaveStateSCSIBus kDefaultState {};
+
+		return LoadState(&kDefaultState, ctx);
+	}
+}
+
+vdrefptr<IATObjectState> ATSCSIBusEmulator::SaveState(ATSnapshotContext& ctx) const {
+	return nullptr;
 }
 
 void ATSCSIBusEmulator::OnScheduledEvent(uint32 id) {

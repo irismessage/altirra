@@ -606,6 +606,8 @@ void *VDTTexture2DD3D11::AsInterface(uint32 id) {
 }
 
 bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 height, VDTFormat format, uint32 mipcount, VDTUsage usage, const VDTInitData2D *initData) {
+	VDASSERT(width > 0 && height > 0);
+
 	parent->AddResource(this);
 
 	if (!mipcount) {
@@ -661,8 +663,10 @@ bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 heigh
 
 	HRESULT hr = dev->CreateTexture2D(&desc, initData ? subResData.data() : NULL, &mpTexture);
 	
-	if (FAILED(hr))
+	if (FAILED(hr)) {
+		VDASSERT(hr != E_INVALIDARG);
 		return false;
+	}
 
 	if (!initData && usage != kVDTUsage_Render) {
 		desc.Usage = D3D11_USAGE_STAGING;
@@ -2598,7 +2602,6 @@ VDTContextD3D11::VDTContextD3D11()
 	, mpDefaultBS(NULL)
 	, mpDefaultRS(NULL)
 	, mpDefaultSS(NULL)
-	, mProfChan("Filter 3D accel")
 {
 	memset(mpCurrentSamplerStates, 0, sizeof mpCurrentSamplerStates);
 	memset(mpCurrentTextures, 0, sizeof mpCurrentTextures);
@@ -3343,8 +3346,6 @@ void VDTContextD3D11::Present() {
 }
 
 void VDTContextD3D11::BeginScope(uint32 color, const char *message) {
-	mProfChan.Begin(color, message);
-
 	if (mpD3DAnnotation) {
 		WCHAR buf[512];
 		int i = 0;
@@ -3359,14 +3360,8 @@ void VDTContextD3D11::BeginScope(uint32 color, const char *message) {
 }
 
 void VDTContextD3D11::EndScope() {
-	mProfChan.End();
-
 	if (mpD3DAnnotation)
 		mpD3DAnnotation->EndEvent();
-}
-
-VDRTProfileChannel *VDTContextD3D11::GetProfileChannel() {
-	return &mProfChan;
 }
 
 void VDTContextD3D11::UnsetVertexFormat(IVDTVertexFormat *format) {
@@ -3493,13 +3488,45 @@ bool VDTCreateContextD3D11(IVDTContext **ppctx) {
 	flags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif
 
+	D3D_FEATURE_LEVEL forcedFeatureLevel {};
+	const D3D_FEATURE_LEVEL *featureLevelPtr = nullptr;
+
+	if (VDTInternalOptions::sbD3D11Force9_1) {
+		forcedFeatureLevel = D3D_FEATURE_LEVEL_9_1;
+		featureLevelPtr = &forcedFeatureLevel;
+	} else if (VDTInternalOptions::sbD3D11Force9_3) {
+		forcedFeatureLevel = D3D_FEATURE_LEVEL_9_3;
+		featureLevelPtr = &forcedFeatureLevel;
+	} else if (VDTInternalOptions::sbD3D11Force10_0) {
+		forcedFeatureLevel = D3D_FEATURE_LEVEL_10_0;
+		featureLevelPtr = &forcedFeatureLevel;
+	}
+
 	D3D_FEATURE_LEVEL actualLevel;
-	hr = holder->GetCreateDeviceFn()(adapter, driverType, NULL, flags, NULL, 0, D3D11_SDK_VERSION, ~dev, &actualLevel, ~devctx);
+	hr = holder->GetCreateDeviceFn()(adapter, driverType, NULL, flags, featureLevelPtr, featureLevelPtr ? 1 : 0, D3D11_SDK_VERSION, ~dev, &actualLevel, ~devctx);
+
+	// Intel Xe 31.0.101.4091 driver screws with thread name in single threaded mode,
+	// reset it back
+#ifdef ATNRELEASE
+	if (VDIsAtLeast10W32()) {
+		HMODULE hmodKernelBase = VDLoadSystemLibraryW32("kernelbase");
+
+		if (hmodKernelBase) {
+			auto p = (void (WINAPI *)(HANDLE, PCWSTR))GetProcAddress(hmodKernelBase, "SetThreadDescription");
+
+			if (p)
+				p(GetCurrentThread(), L"");
+
+			FreeLibrary(hmodKernelBase);
+		}
+	}
+#endif
+
 	if (FAILED(hr)) {
 #ifdef _DEBUG
 		// if we're in debug mode, try again without it
 		flags &= ~D3D11_CREATE_DEVICE_DEBUG;
-		hr = holder->GetCreateDeviceFn()(adapter, driverType, NULL, flags, NULL, 0, D3D11_SDK_VERSION, ~dev, &actualLevel, ~devctx);
+		hr = holder->GetCreateDeviceFn()(adapter, driverType, NULL, flags, featureLevelPtr, featureLevelPtr ? 1 : 0, D3D11_SDK_VERSION, ~dev, &actualLevel, ~devctx);
 
 		if (FAILED(hr))
 			return false;

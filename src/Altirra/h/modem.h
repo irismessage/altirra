@@ -29,7 +29,10 @@
 #include "modemtcp.h"
 
 class IATUIRenderer;
+class IATAsyncDispatcher;
 class ATModemSoundEngine;
+class ATPhonePulseDialDetector;
+class ATPhoneToneDialDetector;
 
 enum class ATModemFlowControl : uint8 {
 	None = 0,
@@ -70,7 +73,6 @@ struct ATModemRegisters {
 
 
 class ATModemEmulator final : public ATDevice
-					, public IATRS232Device
 					, public IATModemDriverCallback
 					, public IATSchedulerCallback
 					, public IATDeviceScheduling
@@ -108,21 +110,26 @@ public:
 	virtual ATDeviceSerialStatus GetStatus() override;
 
 public:
-	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATAudioMixer *mixer);
+	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATAudioMixer *mixer, IATAsyncDispatcher *asyncDispatcher);
 
-	void SetConfig(const ATRS232Config& config) override;
+	void SetConfig(const ATRS232Config& config);
 
+	void SetOnReadReady(vdfunction<void()> fn) override;
 	bool Read(uint32& baudRate, uint8& c) override;
 	bool Read(uint32 baudRate, uint8& c, bool& framingError) override;
 	void Write(uint32 baudRate, uint8 c) override;
 
 	void Set1030Mode();
 	void SetSX212Mode();
-	void SetToneDialingMode(bool enable) override;
-	bool IsToneDialingMode() const override;
-	void HangUp() override;
-	void Dial(const char *address, const char *service, const char *desc = nullptr) override;
-	void Answer() override;
+	void SetToneDialingMode(bool enable);
+	bool IsToneDialingMode() const;
+	void HangUp();
+	void Dial(const char *address, const char *service, const char *desc = nullptr, const char *number = nullptr);
+	void Answer();
+	void OnHook();
+	void OffHook();
+	void SetAudioToPhoneEnabled(bool enabled);
+	void SetPhoneToAudioEnabled(bool enabled);
 
 	void FlushBuffers() override;
 
@@ -161,6 +168,7 @@ protected:
 		kResponseConnect230400	= 20
 	};
 
+	void SignalReadReady();
 	void SendConnectResponse();
 	void SendResponse(int response);
 	void SendResponse(const char *s);
@@ -199,8 +207,17 @@ protected:
 	ATEvent *mpEventPoll = nullptr;
 	ATEvent *mpEventConnectionStateMachine = nullptr;
 	uint8	mGuardCharCounter;
-	uint8	mLastRegister;
-	bool	mbCommandMode;
+	uint8	mLastRegister = 0;
+	bool	mbCommandMode = false;
+
+	IATAsyncDispatcher *mpAsyncDispatcher = nullptr;
+	uint64 mAsyncCallback = 0;
+	vdfunction<void()> mpOnReadReady;
+
+	// Set when read ready has been signaled to the serial parent without
+	// a Read() having occurred afterward; this is used to avoid sending
+	// redundant ready signals.
+	bool mbReadReadySignaled = false;
 
 	enum ConnectionState {
 		kConnectionState_NotConnected,
@@ -224,6 +241,9 @@ protected:
 	bool	mbListening;					///< True if we are currently listening for a call (not dialing or connected).
 	bool	mbLoggingState;
 	bool	mbHighSpeed;
+	bool	mbOffHook = false;
+	bool	mbAudioToPhoneEnabled = false;
+	bool	mbPhoneToAudioEnabled = true;
 	VDAtomicBool	mbRinging = false;
 
 	enum CommandState {
@@ -259,7 +279,10 @@ protected:
 	ATDeviceSerialStatus	mControlState {};
 	ATDeviceSerialTerminalState mTerminalState {};
 
-	ATModemSoundEngine *mpModemSound {};
+	ATModemSoundEngine *mpModemSound = nullptr;
+	IATAudioMixer *mpAudioMixer = nullptr;
+	vdautoptr<ATPhonePulseDialDetector> mpPulseDialDetector;
+	vdautoptr<ATPhoneToneDialDetector> mpToneDialDetector;
 
 	uint32	mTransmitIndex;
 	uint32	mTransmitLength;

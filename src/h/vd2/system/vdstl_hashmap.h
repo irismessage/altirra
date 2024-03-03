@@ -151,7 +151,7 @@ vdhashmap<K, V, Hash, Pred, A>::vdhashmap(const vdhashmap& src)
 	rehash_to_size(src.mElementCount);
 
 	try {
-		for(vdhashtable_base_node **bucket = mpBucketStart; bucket != mpBucketEnd; ++bucket) {
+		for(vdhashtable_base_node **bucket = src.mpBucketStart; bucket != src.mpBucketEnd; ++bucket) {
 			vdhashtable_base_node *p = *bucket;
 
 			while(p) {
@@ -162,8 +162,6 @@ vdhashmap<K, V, Hash, Pred, A>::vdhashmap(const vdhashmap& src)
 
 				p = next;
 			}
-
-			*bucket = NULL;
 		}
 	} catch(...) {
 		reset();
@@ -173,8 +171,8 @@ vdhashmap<K, V, Hash, Pred, A>::vdhashmap(const vdhashmap& src)
 
 template<class K, class V, class Hash, class Pred, class A>
 vdnothrow vdhashmap<K, V, Hash, Pred, A>::vdhashmap(vdhashmap&& src) vdnoexcept
-	: mHasher(src.mHasher)
-	, mPred(src.mPred)
+	: mHasher(std::move(src.mHasher))
+	, mPred(std::move(src.mPred))
 {
 	mBucketCount = src.mBucketCount;
 	mElementCount = src.mElementCount;
@@ -215,7 +213,7 @@ vdhashmap<K, V, Hash, Pred, A>& vdhashmap<K, V, Hash, Pred, A>::operator=(const 
 
 template<class K, class V, class Hash, class Pred, class A>
 vdnothrow vdhashmap<K, V, Hash, Pred, A>& vdhashmap<K, V, Hash, Pred, A>::operator=(vdhashmap&& src) vdnoexcept {
-	clear();
+	reset();
 
 	mHasher = src.mHasher;
 	mPred = src.mPred;
@@ -252,11 +250,12 @@ typename vdhashmap<K, V, Hash, Pred, A>::insert_return_type vdhashmap<K, V, Hash
 			return std::pair<iterator, bool>(iterator(p, &mpBucketStart[bucket], mpBucketEnd), false);
 	}
 
-	node_type *node = mAllocator.allocate(1);
+	node_type *nodemem = mAllocator.allocate(1);
+	node_type *node;
 	try {
-		new(node) node_type(static_cast<node_type *>(mpBucketStart[bucket]), value_type(key, V()));
+		node = new(nodemem) node_type(static_cast<node_type *>(mpBucketStart[bucket]), value_type(key, V()));
 	} catch(...) {
-		mAllocator.deallocate(node, 1);
+		mAllocator.deallocate(nodemem, 1);
 		throw;
 	}
 
@@ -278,11 +277,12 @@ typename vdhashmap<K, V, Hash, Pred, A>::insert_return_type vdhashmap<K, V, Hash
 			return std::pair<iterator, bool>(iterator(p, &mpBucketStart[bucket], mpBucketEnd), false);
 	}
 
-	node_type *node = mAllocator.allocate(1);
+	node_type *nodemem = mAllocator.allocate(1);
+	node_type *node;
 	try {
-		new(node) node_type(static_cast<node_type *>(mpBucketStart[bucket]), obj);
+		node = new(nodemem) node_type(static_cast<node_type *>(mpBucketStart[bucket]), obj);
 	} catch(...) {
-		mAllocator.deallocate(node, 1);
+		mAllocator.deallocate(nodemem, 1);
 		throw;
 	}
 
@@ -305,18 +305,19 @@ typename vdhashmap<K, V, Hash, Pred, A>::insert_return_type vdhashmap<K, V, Hash
 			return std::pair<iterator, bool>(iterator(p, &mpBucketStart[bucket], mpBucketEnd), false);
 	}
 
-	node_type *node = mAllocator.allocate(1);
+	node_type *nodemem = mAllocator.allocate(1);
+	node_type *node;
 	try {
-		new(node) node_type(static_cast<node_type *>(mpBucketStart[bucket]));
+		node = new(nodemem) node_type(static_cast<node_type *>(mpBucketStart[bucket]));
 
 		try {
 			node->mData.first = key;
 		} catch(...) {
 			node->~node_type();
+			throw;
 		}
-
 	} catch(...) {
-		mAllocator.deallocate(node, 1);
+		mAllocator.deallocate(nodemem, 1);
 		throw;
 	}
 

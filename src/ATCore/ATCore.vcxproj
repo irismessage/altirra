@@ -10,6 +10,7 @@
     <ClInclude Include="..\h\at\atcore\blockdevice.h" />
     <ClInclude Include="..\h\at\atcore\checksum.h" />
     <ClInclude Include="..\h\at\atcore\cio.h" />
+    <ClInclude Include="..\h\at\atcore\comsupport_win32.h" />
     <ClInclude Include="..\h\at\atcore\configvar.h" />
     <ClInclude Include="..\h\at\atcore\consoleoutput.h" />
     <ClInclude Include="..\h\at\atcore\constants.h" />
@@ -24,7 +25,7 @@
     <ClInclude Include="..\h\at\atcore\deviceimpl.h" />
     <ClInclude Include="..\h\at\atcore\bussignal.h" />
     <ClInclude Include="..\h\at\atcore\devicepia.h" />
-    <ClInclude Include="..\h\at\atcore\devicesavestate.h" />
+    <ClInclude Include="..\h\at\atcore\devicesnapshot.h" />
     <ClInclude Include="..\h\at\atcore\devicestorage.h" />
     <ClInclude Include="..\h\at\atcore\devicestorageimpl.h" />
     <ClInclude Include="..\h\at\atcore\devicesystemcontrol.h" />
@@ -36,6 +37,7 @@
     <ClInclude Include="..\h\at\atcore\deviceserial.h" />
     <ClInclude Include="..\h\at\atcore\devicesio.h" />
     <ClInclude Include="..\h\at\atcore\devicesioimpl.h" />
+    <ClInclude Include="..\h\at\atcore\timerservice.h" />
     <ClInclude Include="..\h\at\atcore\deviceu1mb.h" />
     <ClInclude Include="..\h\at\atcore\devicevideo.h" />
     <ClInclude Include="..\h\at\atcore\devicevideosource.h" />
@@ -59,12 +61,12 @@
     <ClInclude Include="..\h\at\atcore\serializable.h" />
     <ClInclude Include="..\h\at\atcore\serialization.h" />
     <ClInclude Include="..\h\at\atcore\sioutils.h" />
-    <ClInclude Include="..\h\at\atcore\snappable.h" />
     <ClInclude Include="..\h\at\atcore\snapshot.h" />
     <ClInclude Include="..\h\at\atcore\snapshotimpl.h" />
     <ClInclude Include="..\h\at\atcore\vfs.h" />
     <ClInclude Include="..\h\at\atcore\wraptime.h" />
     <ClInclude Include="h\at\atcore\internal\checksum.h" />
+    <ClInclude Include="h\at\atcore\internal\timerserviceimpl_win32.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>
   <ItemGroup>
@@ -119,6 +121,7 @@
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="source\timerserviceimpl_win32.cpp" />
     <ClCompile Include="source\vfs.cpp" />
   </ItemGroup>
   <ItemGroup>

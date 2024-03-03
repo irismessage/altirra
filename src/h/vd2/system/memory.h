@@ -26,6 +26,7 @@
 #ifndef f_VD2_SYSTEM_MEMORY_H
 #define f_VD2_SYSTEM_MEMORY_H
 
+#include <type_traits>
 #include <vd2/system/vdtypes.h>
 
 void *VDAlignedMallocThrow(size_t n, unsigned alignment);
@@ -83,5 +84,15 @@ void VDMemcpyRect(void *dst, ptrdiff_t dststride, const void *src, ptrdiff_t src
 /// Copy a region of memory with an access violation guard; used in cases where a sporadic
 /// AV is unavoidable (dynamic Direct3D VB under XP). The regions must not overlap.
 bool VDMemcpyGuarded(void *dst, const void *src, size_t bytes);
+
+template<typename T, typename U> requires (sizeof(T) == sizeof(U)) && std::is_trivially_copyable_v<T> && std::is_trivially_copyable_v<U>
+void VDBitAssign(T& dst, U& src) {
+	memcpy(&dst, &src, sizeof dst);
+}
+
+template<typename T> requires std::is_trivially_constructible_v<T> && std::is_trivially_copyable_v<T>
+void VDBitZero(T& dst) {
+	memset(&dst, 0, sizeof dst);
+}
 
 #endif

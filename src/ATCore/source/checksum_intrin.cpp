@@ -98,10 +98,21 @@ void ATChecksumUpdateSHA256_SSE2(ATChecksumStateSHA256& VDRESTRICT state, const 
 		__m128i v3 = _mm_loadu_si128((const __m128i *)(src2 + 48));
 
 		if constexpr(T_SSSE3) {
+#ifdef VD_COMPILER_CLANG
+			const auto pshufb = [](__m128i a, __m128i b) __attribute__((target("ssse3"))) {
+				return _mm_shuffle_epi8(a, b);
+			};
+
+			v0 = pshufb(v0, byteSwapMask);
+			v1 = pshufb(v1, byteSwapMask);
+			v2 = pshufb(v2, byteSwapMask);
+			v3 = pshufb(v3, byteSwapMask);
+#else
 			v0 = _mm_shuffle_epi8(v0, byteSwapMask);
 			v1 = _mm_shuffle_epi8(v1, byteSwapMask);
 			v2 = _mm_shuffle_epi8(v2, byteSwapMask);
 			v3 = _mm_shuffle_epi8(v3, byteSwapMask);
+#endif
 		} else {
 			v0 = _mm_shufflehi_epi16(_mm_shufflelo_epi16(_mm_or_si128(_mm_slli_epi16(v0, 8), _mm_srli_epi16(v0, 8)), 0xB1), 0xB1);
 			v1 = _mm_shufflehi_epi16(_mm_shufflelo_epi16(_mm_or_si128(_mm_slli_epi16(v1, 8), _mm_srli_epi16(v1, 8)), 0xB1), 0xB1);
@@ -120,8 +131,17 @@ void ATChecksumUpdateSHA256_SSE2(ATChecksumStateSHA256& VDRESTRICT state, const 
 			__m128i back7;
 
 			if constexpr(T_SSSE3) {
+#ifdef VD_COMPILER_CLANG
+				const auto alignr4 = [](__m128i a, __m128i b) __attribute__((target("ssse3"))) {
+					return _mm_alignr_epi8(a, b, 4);
+				};
+
+				back15 = alignr4(v1, v0);
+				back7 = alignr4(v3, v2);
+#else
 				back15 = _mm_alignr_epi8(v1, v0, 4);
 				back7 = _mm_alignr_epi8(v3, v2, 4);
+#endif
 			} else {
 				back15 = _mm_or_si128(_mm_srli_si128(v0, 4), _mm_slli_si128(v1, 12));
 				back7 = _mm_or_si128(_mm_srli_si128(v2, 4), _mm_slli_si128(v3, 12));
@@ -194,6 +214,7 @@ void ATChecksumUpdateSHA256_SSE2(ATChecksumStateSHA256& VDRESTRICT state, const 
 	}
 }
 
+VD_CPU_TARGET("sha,ssse3")
 void ATChecksumUpdateSHA256_SHA(ATChecksumStateSHA256& VDRESTRICT state, const void *src, size_t numBlocks) {
 	using namespace nsATChecksum;
 

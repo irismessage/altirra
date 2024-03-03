@@ -408,9 +408,20 @@ bool ATCartridgeImage::Load(const wchar_t *path, IVDRandomAccessStream& stream, 
 		} else if (size32 == 4096) {
 			memcpy(p + 4096, p, 4096);
 		}
-	} else if (mCartMode == kATCartridgeMode_SIC) {
+	} else if (mCartMode == kATCartridgeMode_Williams_32K) {
+		// If we only have a 16K cart image, double it up to 32K.
+		if (size32 == 0x4000)
+			memcpy(&mCARTROM[0x4000], &mCARTROM[0], 0x4000);
+	} else if (mCartMode == kATCartridgeMode_SIC_256K) {
 		uint8 *p = mCARTROM.data();
 
+		// replcate 128K to 256K
+		if (size32 == 0x20000)
+			memcpy(p + 0x20000, p, 0x20000);
+	} else if (mCartMode == kATCartridgeMode_SIC_512K) {
+		uint8 *p = mCARTROM.data();
+
+		// replicate 128K/256K to 512K
 		if (size32 == 0x20000)
 			memcpy(p + 0x20000, p, 0x20000);
 

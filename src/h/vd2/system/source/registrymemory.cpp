@@ -668,7 +668,7 @@ bool VDRegistryProviderMemory::RemoveValue(void *key0, const char *name) {
 		success = key->RemoveValue(name);
 	}
 
-	return true;
+	return success;
 }
 
 bool VDRegistryProviderMemory::RemoveKey(void *key0, const char *name) {
@@ -684,7 +684,7 @@ bool VDRegistryProviderMemory::RemoveKey(void *key0, const char *name) {
 		success = key->RemoveKey(name);
 	}
 
-	return true;
+	return success;
 }
 
 bool VDRegistryProviderMemory::RemoveKeyRecursive(void *key0, const char *name) {
@@ -700,7 +700,7 @@ bool VDRegistryProviderMemory::RemoveKeyRecursive(void *key0, const char *name) 
 		success = key->RemoveKeyRecursive(name);
 	}
 
-	return true;
+	return success;
 }
 
 struct VDRegistryProviderMemory::Enumerator {

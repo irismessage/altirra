@@ -23,13 +23,15 @@
 #include <vd2/system/VDString.h>
 #include <at/atcore/checksum.h>
 #include <at/atcore/devicecart.h>
+#include <at/atcore/deviceimpl.h>
+#include <at/atcore/scheduler.h>
 #include <at/atio/cartridgeimage.h>
 #include <at/atemulation/flash.h>
 #include <at/atemulation/eeprom.h>
 
 class ATSaveStateReader;
 class IVDRandomAccessStream;
-class IATUIRenderer;
+class IATDeviceIndicatorManager;
 class ATMemoryManager;
 class ATMemoryLayer;
 class ATScheduler;
@@ -37,21 +39,18 @@ class IATObjectState;
 struct ATCartridgeModeTable;
 
 class ATCartridgeEmulator final
-	: public IATDeviceCartridge
+	: public ATDeviceT<IATDeviceCartridge, IATDeviceButtons>
+	, public IATSchedulerCallback
 {
 	friend struct ATCartridgeModeTable;
 
-	ATCartridgeEmulator(const ATCartridgeEmulator&) = delete;
-	ATCartridgeEmulator& operator=(const ATCartridgeEmulator&) = delete;
-
 public:
-	ATCartridgeEmulator();
+	ATCartridgeEmulator(int basePriority, ATCartridgePriority cartPri, bool fastBus);
 	~ATCartridgeEmulator();
 
-	void Init(ATMemoryManager *memman, ATScheduler *sch, int basePriority, ATCartridgePriority cartPri, bool fastBus);
-	void Shutdown();
-
-	void SetUIRenderer(IATUIRenderer *r);
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void Init() override;
+	void Shutdown() override;
 
 	void SetFastBus(bool fastBus);
 
@@ -95,6 +94,14 @@ public:		// IATDeviceCartridge
 	void SetCartEnables(bool leftEnable, bool rightEnable, bool cctlEnable) override;
 	void UpdateCartSense(bool leftActive) override;
 
+public:		// IATDeviceButtons
+	uint32 GetSupportedButtons() const override;
+	bool IsButtonDepressed(ATDeviceButton idx) const override;
+	void ActivateButton(ATDeviceButton idx, bool state) override;
+	
+public:		// IATSchedulerCallback
+	void OnScheduledEvent(uint32 id) override;
+
 protected:
 	struct LayerEnables {
 		bool mbRead;
@@ -137,8 +144,14 @@ protected:
 	static bool WriteByte_MaxFlash(void *thisptr0, uint32 address, uint8 value);
 	static bool WriteByte_Corina1M(void *thisptr0, uint32 address, uint8 value);
 	static bool WriteByte_Corina512K(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_TelelinkII(void *thisptr0, uint32 address);
 	static bool WriteByte_TelelinkII(void *thisptr0, uint32 address, uint8 value);
 
+	static sint32 ReadByte_Pronto(void *thisptr0, uint32 address);
+	static bool WriteByte_Pronto(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_Phoenix(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_Phoenix(void *thisptr0, uint32 address, uint8 value);
 
 	static sint32 ReadByte_CCTL_Blizzard_32K(void *thisptr0, uint32 address);
@@ -208,6 +221,12 @@ protected:
 
 	static sint32 ReadByte_CCTL_OSS_8K(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_OSS_8K(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_MDDOS(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_MDDOS(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 ReadByte_CCTL_COS32K(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_COS32K(void *thisptr0, uint32 address, uint8 value);
 	
 	static bool WriteByte_CCTL_Corina(void *thisptr0, uint32 address, uint8 value);
 	
@@ -233,10 +252,15 @@ protected:
 	static bool WriteByte_CCTL_aDawliah_32K(void *thisptr0, uint32 address, uint8 value);
 	static bool WriteByte_CCTL_aDawliah_64K(void *thisptr0, uint32 address, uint8 value);
 
-	static sint32 ReadByte_CCTL_JRC_64K_RAM(void *thisptr0, uint32 address);
-	static bool WriteByte_CCTL_JRC_64K_RAM(void *thisptr0, uint32 address, uint8 value);
+	static sint32 ReadByte_CCTL_JRC_RAMBOX(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_JRC_RAMBOX(void *thisptr0, uint32 address, uint8 value);
+
+	static bool WriteByte_CCTL_JRC6_64K(void *thisptr0, uint32 address, uint8 value);
 
 	static sint32 ReadByte_CCTL_XEMulticart(void *thisptr0, uint32 address);
+
+	static sint32 ReadByte_CCTL_Pronto(void *thisptr0, uint32 address);
+	static bool WriteByte_CCTL_Pronto(void *thisptr0, uint32 address, uint8 value);
 
 	void InitFromImage();
 	void InitMemoryLayers();
@@ -253,21 +277,24 @@ protected:
 	void InitDebugBankMap();
 	void ResetDebugBankMap();
 
-	ATCartridgeMode mCartMode;
-	int	mCartBank;
-	int	mCartBank2;
-	uint32 mCartSizeMask;
-	int	mInitialCartBank;
-	int	mInitialCartBank2;
-	int mBasePriority;
-	bool mbDirty;
-	bool mbRD4Gate;
-	bool mbRD5Gate;
-	bool mbCCTLGate;
-	bool mbFastBus;
-	IATUIRenderer *mpUIRenderer;
-	ATMemoryManager *mpMemMan;
-	ATScheduler *mpScheduler;
+	ATCartridgeMode mCartMode = kATCartridgeMode_None;
+	int	mCartBank = -1;
+	int	mCartBank2 = -1;
+	uint32 mCartSizeMask = 0;
+	int	mInitialCartBank = -1;
+	int	mInitialCartBank2 = -1;
+	int mBasePriority = 0;
+	ATCartridgePriority mCartPriority {};
+	bool mbDirty = false;
+	bool mbRD4Gate = true;
+	bool mbRD5Gate = true;
+	bool mbCCTLGate = true;
+	bool mbFastBus = false;
+	bool mbCartEnabled = true;
+	IATDeviceIndicatorManager *mpUIRenderer = nullptr;
+	ATMemoryManager *mpMemMan = nullptr;
+	ATScheduler *mpScheduler = nullptr;
+	ATEvent *mpEventReset = nullptr;
 	IATDeviceCartridgePort *mpCartridgePort = nullptr;
 	uint32 mCartId = 0;
 
@@ -278,13 +305,13 @@ protected:
 	LayerEnables mLayerEnablesSpec1;
 	LayerEnables mLayerEnablesSpec2;
 
-	ATMemoryLayer *mpMemLayerFixedBank1;
-	ATMemoryLayer *mpMemLayerFixedBank2;
-	ATMemoryLayer *mpMemLayerVarBank1;
-	ATMemoryLayer *mpMemLayerVarBank2;
-	ATMemoryLayer *mpMemLayerSpec1;
-	ATMemoryLayer *mpMemLayerSpec2;
-	ATMemoryLayer *mpMemLayerControl;
+	ATMemoryLayer *mpMemLayerFixedBank1 = nullptr;
+	ATMemoryLayer *mpMemLayerFixedBank2 = nullptr;
+	ATMemoryLayer *mpMemLayerVarBank1 = nullptr;
+	ATMemoryLayer *mpMemLayerVarBank2 = nullptr;
+	ATMemoryLayer *mpMemLayerSpec1 = nullptr;
+	ATMemoryLayer *mpMemLayerSpec2 = nullptr;
+	ATMemoryLayer *mpMemLayerControl = nullptr;
 
 	ATFlashEmulator mFlashEmu;
 	ATFlashEmulator mFlashEmu2;
@@ -295,8 +322,8 @@ protected:
 		uint8	mTheCartRegs[9];
 	};
 
-	uint8 *mpROM;
-	uint32	mCartSize;
+	uint8 *mpROM = nullptr;
+	uint32	mCartSize = 0;
 
 	vdfastvector<uint8> mCARTRAM;
 

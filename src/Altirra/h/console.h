@@ -22,6 +22,8 @@
 #include <vd2/system/VDString.h>
 #include <vd2/system/win32/miniwindows.h>
 
+struct ATDebuggerSourceFileInfo;
+
 ///////////////////////////////////////////////////////////////////////////
 void ATConsoleOpenLogFile(const wchar_t *path);
 void ATConsoleCloseLogFileNT();
@@ -47,6 +49,7 @@ bool ATIsDebugConsoleActive();
 
 class IATSourceWindow {
 public:
+	virtual const wchar_t *GetFullPath() const = 0;
 	virtual const wchar_t *GetPath() const = 0;
 	virtual const wchar_t *GetPathAlias() const = 0;
 
@@ -59,7 +62,8 @@ public:
 };
 
 IATSourceWindow *ATGetSourceWindow(const wchar_t *s);
-IATSourceWindow *ATOpenSourceWindow(const wchar_t *s);
+IATSourceWindow *ATOpenSourceWindow(const wchar_t *path);
+IATSourceWindow *ATOpenSourceWindow(const ATDebuggerSourceFileInfo& sourceFileInfo, bool searchPaths = true);
 void ATUIShowSourceListDialog();
 
 ///////////////////////////////////////////////////////////////////////////

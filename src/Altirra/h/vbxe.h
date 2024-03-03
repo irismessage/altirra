@@ -28,6 +28,8 @@ struct ATTraceContext;
 class ATTraceChannelSimple;
 class ATTraceChannelFormatted;
 class ATPaletteCorrector;
+class IATObjectState;
+template<typename T> class vdrefptr;
 
 class ATVBXEEmulator final : public IATSchedulerCallback {
 	ATVBXEEmulator(const ATVBXEEmulator&) = delete;
@@ -65,12 +67,17 @@ public:
 
 	uint8 *GetMemoryBase() { return mpMemory; }
 
+	sint32 TryMapCPUAddressToLocal(uint16 addr) const;
+
 	bool IsBlitLoggingEnabled() const { return mbBlitLogging; }
-	void SetBlitLoggingEnabled(bool enable);
+	void SetBlitLoggingEnabled(bool enable, bool compact);
 	void DumpStatus();
-	void DumpBlitList();
-	bool DumpBlitListEntry(uint32 addr);
+	void DumpBlitList(sint32 addrOpt, bool compact);
+	bool DumpBlitListEntry(uint32 addr, bool compact, bool autologging);
 	void DumpXDL();
+
+	void LoadState(const IATObjectState *state);
+	vdrefptr<IATObjectState> SaveState() const;
 
 	// ANTIC/RAM interface
 	sint32 ReadControl(uint8 addrLo);
@@ -126,14 +133,23 @@ private:
 	void RenderOverlay80Text(uint8 *dst, int rx1, int x1, int w);
 
 	void RunBlitter();
+	uint32 RunBlitterRow();
+	
+	template<uint8 T_Mode>
+	uint32 RunBlitterRow();
+
 	uint64 GetBlitTime() const;
 	void LoadBlitter();
+	void LoadBCB(const uint8 (&bcb)[21]);
+	void SaveBCB(uint8 (&bcb)[21]) const;
 
 	void InitPriorityTables();
 	void UpdateColorTable();
 	void RecorrectPalettes();
 
-	uint8 *mpMemory;
+	static constexpr uint32 kLocalAddrMask = 0x7FFFF;
+
+	uint8 *mpMemory = nullptr;
 	ATIRQController *mpIRQController = nullptr;
 	ATMemoryManager *mpMemMan;
 	ATScheduler *mpScheduler = nullptr;
@@ -215,13 +231,24 @@ private:
 	uint32	mDMACyclesOverlay = 0;			// VBXE cycles in scanline for overlay DMA
 	uint32	mDMACyclesOverlayStart = 0;		// ANTIC X cycle at which overlay DMA starts.
 
-	// blitter
-	bool mbBlitLogging;
-	bool mbBlitterEnabled;
-	bool mbBlitterActive;
-	bool mbBlitterListActive;
-	bool mbBlitterContinue;
-	bool mbBlitterStopping = false;
+	//==== blitter ====
+	enum class BlitState : uint8 {
+		// blitter is not running
+		Stopped,
+
+		// blitter should read next control block, or stop if end of blit list
+		Reload,
+
+		// blitter is processing a blit
+		ProcessBlit,
+
+		// blitter has finished, running out delay until reporting completion to 6502
+		Stopping
+	} mBlitState = BlitState::Stopped;
+
+	bool mbBlitLogging = false;
+	bool mbBlitLoggingCompact = false;
+	bool mbBlitterContinue = false;		// true if start of blit list or last blit indicated another blit follows
 	uint32 mBlitterStopTime = 0;
 	uint32 mBlitterEndScanTime = 0;
 	uint8 mBlitterMode;
@@ -242,6 +269,7 @@ private:
 	uint8 mBlitAndMask;
 	uint8 mBlitXorMask;
 	uint8 mBlitCollisionMask;
+	uint8 mBlitActiveCollisionMask;
 	uint8 mBlitPatternMode;
 	uint8 mBlitCollisionCode;
 	uint8 mBlitZoomX;

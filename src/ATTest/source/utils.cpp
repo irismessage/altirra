@@ -15,12 +15,32 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+#include <vd2/system/atomic.h>
+#include <signal.h>
 #include <windows.h>
 
 bool g_ATTestTracingEnabled;
+VDAtomicBool g_ATTestExitTestLoop;
+const wchar_t *g_pATTestArgs;
 
 bool ATTestShouldBreak() {
 	return !!IsDebuggerPresent();
+}
+
+void ATTestBeginTestLoop() {
+	signal(SIGINT, [](int) { g_ATTestExitTestLoop = true; });
+}
+
+bool ATTestShouldContinueTestLoop() {
+	return !g_ATTestExitTestLoop;
+}
+
+void ATTestSetArguments(const wchar_t *args) {
+	g_pATTestArgs = args;
+}
+
+const wchar_t *ATTestGetArguments() {
+	return g_pATTestArgs ? g_pATTestArgs : L"";
 }
 
 void ATTestTrace(const char *msg) {

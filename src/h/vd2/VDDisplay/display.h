@@ -137,6 +137,7 @@ public:
 	virtual void SetFullScreen(bool fs, uint32 width = 0, uint32 height = 0, uint32 refresh = 0) = 0;
 	virtual void SetCustomDesiredRefreshRate(float hz, float hzmin, float hzmax) = 0;
 	virtual void SetDestRect(const vdrect32 *r, uint32 backgroundColor) = 0;
+	virtual void SetDestRectF(const vdrect32f *r, uint32 backgroundColor) = 0;
 	virtual void SetPixelSharpness(float xfactor, float yfactor) = 0;
 	virtual void SetCompositor(IVDDisplayCompositor *compositor) = 0;
 	virtual void SetSDRBrightness(float nits) = 0;
@@ -210,6 +211,11 @@ void VDVideoDisplaySetDXFlipModeEnabled(bool enable);
 void VDVideoDisplaySetDXFlipDiscardEnabled(bool enable);
 void VDVideoDisplaySetDXWaitableObjectEnabled(bool enable);
 void VDVideoDisplaySetDXDoNotWaitEnabled(bool enable);
+void VDVideoDisplaySetD3D9LimitPS1_1(bool enable);
+void VDVideoDisplaySetD3D9LimitPS2_0(bool enable);
+void VDVideoDisplaySetD3D11Force9_1(bool enable);
+void VDVideoDisplaySetD3D11Force9_3(bool enable);
+void VDVideoDisplaySetD3D11Force10_0(bool enable);
 
 IVDVideoDisplay *VDGetIVideoDisplay(VDGUIHandle hwnd);
 bool VDRegisterVideoDisplayControl();

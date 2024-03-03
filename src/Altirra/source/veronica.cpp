@@ -64,7 +64,7 @@ void *ATVeronicaEmulator::AsInterface(uint32 iid) {
 		case IATDebugTargetExecutionControl::kTypeID: return static_cast<IATDebugTargetExecutionControl *>(this);
 	}
 
-	return nullptr;
+	return ATDevice::AsInterface(iid);
 }
 
 void ATVeronicaEmulator::GetDeviceInfo(ATDeviceInfo& info) {

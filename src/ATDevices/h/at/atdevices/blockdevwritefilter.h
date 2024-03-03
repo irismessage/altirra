@@ -22,13 +22,14 @@
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/blockdevice.h>
 #include <at/atcore/deviceparentimpl.h>
+#include <at/atcore/devicesnapshot.h>
 
 // ATBlockDeviceTemporaryWriteFilter
 //
 // Filters writes to an underlying block device to provide a writable, in-memory
 // overlay on top of a read-only device.
 //
-class ATBlockDeviceTemporaryWriteFilter final : public ATDevice, public IATBlockDevice {
+class ATBlockDeviceTemporaryWriteFilter final : public ATDevice, public IATBlockDevice, public IATDeviceSnapshot {
 	ATBlockDeviceTemporaryWriteFilter(const ATBlockDeviceTemporaryWriteFilter&) = delete;
 	ATBlockDeviceTemporaryWriteFilter& operator=(const ATBlockDeviceTemporaryWriteFilter&) = delete;
 
@@ -42,22 +43,25 @@ public:
 	void *AsInterface(uint32 iid) override;
 
 public:
+	void Init() override;
+	void Shutdown() override;
 	void GetDeviceInfo(ATDeviceInfo& info) override;
 	void GetSettingsBlurb(VDStringW& buf) override;
 
-public:
+public:	// IATBlockDevice
 	bool IsReadOnly() const override;
 	uint32 GetSectorCount() const override;
 	ATBlockDeviceGeometry GetGeometry() const override;
 	uint32 GetSerialNumber() const override;
 
-	void Init() override;
-	void Shutdown() override;
-
 	void Flush() override;
 
 	void ReadSectors(void *data, uint32 lba, uint32 n) override;
 	void WriteSectors(const void *data, uint32 lba, uint32 n) override;
+
+public:	// IATDeviceSnapshot
+	virtual void LoadState(const IATObjectState *state, ATSnapshotContext& ctx) override;
+	virtual vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const override;
 
 protected:
 	static constexpr int kBlockGroupShift = 6;
@@ -67,6 +71,9 @@ protected:
 	struct BlockGroup {
 		uint8 mSlots[1 << kBlockGroupShift][512];
 	};
+
+	void Clear();
+	uint8 (&GetSlot(uint32 slotIndex) const)[512];
 
 	uint32 mNextSlot = 0;
 	vdfastvector<BlockGroup *> mBlockGroups;

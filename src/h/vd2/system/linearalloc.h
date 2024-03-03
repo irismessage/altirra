@@ -71,6 +71,8 @@ public:
 
 	bool Contains(const void *addr) const;
 
+	size_t GetTotalAllocatedSize() const;
+
 protected:
 	void *AllocateSlow(size_t bytes);
 	void *AllocateSlow(size_t bytes, size_t align);

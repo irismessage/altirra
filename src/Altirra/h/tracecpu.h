@@ -19,7 +19,9 @@
 #ifndef f_AT_TRACECPU_H
 #define f_AT_TRACECPU_H
 
+#include <future>
 #include <vd2/system/linearalloc.h>
+#include <vd2/system/thread.h>
 #include <at/atcpu/history.h>
 #include <at/atdebugger/target.h>
 #include "trace.h"
@@ -28,7 +30,7 @@ class ATTraceChannelCPUHistory final : public vdrefcounted<IATTraceChannel> {
 public:
 	static const uint32 kTypeID = 'tcch';
 
-	ATTraceChannelCPUHistory(uint64 tickOffset, double tickScale, const wchar_t *name, ATDebugDisasmMode disasmMode, uint32 subCycles, ATTraceMemoryTracker *memTracker);
+	ATTraceChannelCPUHistory(uint64 tickOffset, double tickScale, const wchar_t *name, ATDebugDisasmMode disasmMode, uint32 subCycles, ATTraceMemoryTracker *memTracker, bool enableAsync);
 
 	ATDebugDisasmMode GetDisasmMode() const { return mDisasmMode; }
 	uint32 GetSubCycles() const { return mSubCycles; }
@@ -56,8 +58,12 @@ public:
 	// Return the start time of the trace, in history cycle counter time. This is used
 	// to rebias the mCycle value of history entries to compute trace time offset. It is
 	// not necessarily the time of the first insn entry as that may start after the
-	// trace starts by a few cycles.
+	// trace starts by a few cycles. The history base cycle corresponds to trace time 0 (modulo
+	// 2^32 wrapping).
 	uint32 GetHistoryBaseCycle() const { return (uint32)mTickOffset; }
+
+	const ATCPUTimestampDecoder& GetTimestampDecoder() const;
+	void SetTimestampDecoder(const ATCPUTimestampDecoder& dec);
 
 private:
 	static constexpr uint32 kBlockSizeBits = 6;
@@ -66,24 +72,61 @@ private:
 
 	struct StaticProfiling;
 
-	struct Event {
+	struct EventBlock {
+		// starting time of block
 		double mTime;
-		ATCPUHistoryEntry mInsnInfo;
+
+		// pointer to packed data, or null if block is a tail block
+		const void *mpPackedData;
 	};
 
-	struct PackedEventBlock {
-		double mTime;
-		void *mpData;
-	};
+	void PackBlockAsync(uint32 blockIdx);
+	void FinalizePackChunk();
+	void ProcessPendingChunks();
+	bool ProcessNextPendingChunk();
 
-	void PackBlock();
 	const ATCPUHistoryEntry *UnpackBlock(uint32 id);
 
-	vdfastvector<PackedEventBlock> mPackedEventBlocks;
+	// List of all event blocks. This includes tail blocks, which are added to
+	// this list as soon as they are opened -- this means that all events are
+	// represented regardless of whether they are pending or being filled.
+	vdfastvector<EventBlock> mEventBlocks;
+
+	// List of all packed blocks and whether they have been unpacked to a slot.
+	// This list only has entries for packed blocks and does not include pending
+	// or partial tail blocks.
 	vdfastvector<uint8> mUnpackMap;
 
-	double mTailBlockTime = 0;
+	// Tail blocks are blocks that are either incomplete or pending asynchronous
+	// compression. They are available for event reads. Tail blocks are queued
+	// up to 3 deep, with the last block being the one that is being filled out.
+	//
+	// Tail/head block management is only updated from the main thread.
+	//
+	// Note that tail blocks are rather small (64 entries), so they need to be
+	// batched for async packing to be worthwhile. At ~400K instructions per
+	// second real time with 64 insns/block (2K), packing one block at a time
+	// would result in 6,250 tasks/sec with excessive overhead. We batch 256
+	// blocks together into 512K chunks to give the worker threads enough to
+	// work on at a time.
+	//
+	static constexpr uint32 kNumTailBlocks = 1024;
+	static constexpr uint32 kTailBlockMask = kNumTailBlocks - 1;
+	static constexpr uint32 kAsyncCount = 4;
+	static constexpr uint32 kAsyncChunkBlockCount = kNumTailBlocks / kAsyncCount;
+	static constexpr uint32 kAsyncChunkBlockMask = kAsyncChunkBlockCount - 1;
+	static constexpr uint32 kAsyncChunkMask = kAsyncCount - 1;
+
 	uint32 mTailOffset = 0;
+	uint32 mTailBlockTailNo = 0;
+	uint32 mTailBlockHeadNo = 0;
+	bool mbAsyncPending[kAsyncCount] {};
+	std::future<void> mAsyncFutures[kAsyncCount];
+
+	// next chunk index to retire - [0, kAsyncCount)
+	uint32 mAsyncChunkTail = 0;
+	bool mbAsyncEnabled = false;
+
 	uint8 mLRUClock = 0;
 	uint32 mEventCount = 0;
 	uint64 mTraceSize = 0;
@@ -95,13 +138,19 @@ private:
 	uint32 mSubCycles = 0;
 	VDStringW mName;
 
+	ATCPUTimestampDecoder mTimestampDecoder;
+
 	uint32 mPseudoLRU[kUnpackedSlots] = {};
 	uint32 mUnpackedBlockIds[kUnpackedSlots] = {};
 	ATCPUHistoryEntry mUnpackedBlocks[kUnpackedSlots][kBlockSize] = {};
-	ATCPUHistoryEntry mTailBlock[kBlockSize] = {};
+	ATCPUHistoryEntry mTailBlock[kNumTailBlocks][kBlockSize] = {};
 
 	ATTraceMemoryTracker *mpMemTracker = nullptr;
-	VDLinearAllocator mBlockAllocator { 64*1024 };
+
+	VDCriticalSection mMutex;
+	uint32 mTailBlockPackedSizes[kNumTailBlocks] {};
+	const void *mpTailBlockPackedPtrs[kNumTailBlocks] {};
+	VDLinearAllocator mBlockAllocator { 512*1024 - 128 };
 
 	static constexpr bool kCompressionEnabled = true;
 };

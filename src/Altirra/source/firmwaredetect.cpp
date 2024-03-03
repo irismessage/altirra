@@ -96,6 +96,20 @@ struct ATKnownFirmware {
 	{ 0x38B97AE3,  8192, kATFirmwareType_XF551, L"XF551 rev. 7.7" },
 	{ 0x37DDA8B1,  4096, kATFirmwareType_XF551, L"XF551 rev. 7.7 (w/broken density hack)" },
 	{ 0x0E117428,  8192, kATFirmwareType_XF551, L"XF551 rev. 7.7 (modified for 720K 3.5\")" },
+
+	{ 0x2BA701DF,  4096, kATFirmwareType_1400XLHandler, L"1400XL V:/T: handler firmware (unknown v1)" },
+	{ 0x5EC3EC7D,  4096, kATFirmwareType_1400XLHandler, L"1400XL V:/T: handler firmware (unknown v2)" },
+
+	{ 0x7773B7DD,  4096, kATFirmwareType_1450XLDiskController, L"1450XLD disk controller firmware" },
+	{ 0x03930886,  4096, kATFirmwareType_1450XLTONGDiskController, L"1450XLD \"TONG\" disk controller firmware" },
+	{ 0xE8F9C8A7,  4096, kATFirmwareType_1450XLDiskHandler, L"1450XLD disk handler firmware (rev. E)" },
+	{ 0x4BB7FA3A,  4096, kATFirmwareType_1450XLDiskHandler, L"1450XLD disk handler firmware (rev. F)" },
+	{ 0x29359910,  4096, kATFirmwareType_1450XLDiskHandler, L"1450XLD disk handler firmware (post rev. F)" },
+
+	{ 0xD6DD4F41,  1024, kATFirmwareType_835, L"Atari 835 internal 8048 firmware" },
+
+	{ 0x329B1D5B,  4096, kATFirmwareType_1030InternalROM, L"Atari 1030 internal 8050 firmware" },
+	{ 0x7ABDB8E7,  8192, kATFirmwareType_1030ExternalROM, L"Atari 1030 external ROM firmware" },
 };
 
 bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {
@@ -104,6 +118,7 @@ bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {
 		return false;
 
 	switch(fileSize32) {
+		case 1024:		// 835
 		case 2048:		// 5200, 810
 		case 4096:		// 1050
 		case 6144:		// Happy 810 functional dump

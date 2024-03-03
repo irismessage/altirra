@@ -42,6 +42,7 @@ public:
 	void *AsInterface(uint32 iid);
 
 	bool Init(IVDTContext& ctx, void *owner, bool linear, const VDDisplayImageView& imageView);
+	bool Init(IVDTContext& ctx, void *owner, bool linear, IVDTTexture2D *texture);
 	void Shutdown();
 
 	void Update(const VDDisplayImageView& imageView);

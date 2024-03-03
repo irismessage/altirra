@@ -44,7 +44,9 @@
 #ifndef VD_COMPILER_DETECTED
 	#define VD_COMPILER_DETECTED
 
-	#if defined(_MSC_VER)
+	#if defined(__clang__)
+		#define VD_COMPILER_CLANG
+	#elif defined(_MSC_VER)
 		#define VD_COMPILER_MSVC	_MSC_VER
 
 		#if _MSC_VER < 1911
@@ -52,11 +54,6 @@
 		#endif
 
 		#define VD_COMPILER_MSVC_VC8_OR_LATER 1
-	#elif defined(__GNUC__)
-		#define VD_COMPILER_GCC
-		#if defined(__MINGW32__) || defined(__MINGW64__)
-			#define VD_COMPILER_GCC_MINGW
-		#endif
 	#endif
 #endif
 
@@ -143,7 +140,9 @@ typedef	struct __VDGUIHandle *VDGUIHandle;
 	#define VDALIGN(alignment)	__declspec(align(alignment))
 
 	#define VDCDECL				__cdecl
-#elif defined(VD_COMPILER_GCC)
+	#define VD_CPU_TARGET(exts)
+	#define VD_CPU_TARGET_LAMBDA(exts)
+#elif defined(VD_COMPILER_CLANG)
 	#define VDINTERFACE
 	#define VDNORETURN			__attribute__((noreturn))
 	#define VDPUREFUNC			__attribute__((pure))
@@ -151,7 +150,9 @@ typedef	struct __VDGUIHandle *VDGUIHandle;
 	#define VDNOINLINE			__attribute__((noinline))
 	#define VDFORCEINLINE		inline __attribute__((always_inline))
 	#define VDALIGN(alignment)	__attribute__((aligned(alignment)))
-	#define VDCDECL
+	#define VDCDECL				__cdecl
+	#define VD_CPU_TARGET(exts)	[[gnu::target(exts)]]
+	#define VD_CPU_TARGET_LAMBDA(exts)	__attribute__((target(exts)))
 #else
 	#define VDINTERFACE
 	#define VDNORETURN
@@ -178,9 +179,9 @@ extern VDAssertResult VDAssert(const char *exp, const char *file, int line);
 extern VDAssertResult VDAssertPtr(const char *exp, const char *file, int line);
 extern void VDDebugPrint(const char *format, ...);
 
-#if defined(_MSC_VER)
+#if defined(VD_COMPILER_MSVC)
 	#define VDBREAK		__debugbreak()
-#elif defined(__GNUC__)
+#elif defined(VD_COMPILER_CLANG)
 	#define VDBREAK		__asm__ volatile ("int3" : : )
 #else
 	#define VDBREAK		*(volatile char *)0 = *(volatile char *)0
@@ -189,6 +190,7 @@ extern void VDDebugPrint(const char *format, ...);
 #define VDASSERTCT(exp)	static_assert((exp), #exp)
 
 #ifdef _DEBUG
+	#define VDASSERT_ENABLED 1
 
 	namespace {
 		template<int line>
@@ -217,6 +219,7 @@ extern void VDDebugPrint(const char *format, ...);
 	#define VDDEBUG(...)		VDDebugPrint(__VA_ARGS__)
 
 #else
+	#define VDASSERT_ENABLED 0
 
 	#if defined(_MSC_VER)
 		#define VDASSERT(exp)		((void)0)
@@ -235,6 +238,8 @@ extern void VDDebugPrint(const char *format, ...);
 
 	#if defined(VD_COMPILER_MSVC)
 		#define	VDNEVERHERE			__assume(false)
+	#elif defined(VD_COMPILER_CLANG)
+		#define	VDNEVERHERE			__builtin_unreachable()
 	#else
 		#define	VDNEVERHERE			VDASSERT(false)
 	#endif

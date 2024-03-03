@@ -986,21 +986,27 @@ uint32 VDPNGDeflateEncoder::Flush(int n, int ndists, bool term, bool test) {
 	return 0;
 }
 
-class VDImageEncoderPNG : public IVDImageEncoderPNG {
+class VDImageEncoderPNG final : public IVDImageEncoderPNG {
 public:
 	VDImageEncoderPNG();
 	~VDImageEncoderPNG();
 
-	void Encode(const VDPixmap& px, const void *&p, uint32& len, bool quick);
+	void SetPAR(double par) override;
+	void Encode(const VDPixmap& px, const void *&p, uint32& len, bool quick) override;
 
 protected:
 	vdfastvector<uint8>	mOutput;
+	double mPAR = 1;
 };
 
 VDImageEncoderPNG::VDImageEncoderPNG() {
 }
 
 VDImageEncoderPNG::~VDImageEncoderPNG() {
+}
+
+void VDImageEncoderPNG::SetPAR(double par) {
+	mPAR = par;
 }
 
 void VDImageEncoderPNG::Encode(const VDPixmap& px, const void *&p, uint32& len, bool quick) {
@@ -1035,6 +1041,27 @@ void VDImageEncoderPNG::Encode(const VDPixmap& px, const void *&p, uint32& len, 
 
 	mOutput.insert(mOutput.end(), (const uint8 *)&ihdr, (const uint8 *)&ihdr + 21);
 	mOutput.insert(mOutput.end(), (const uint8 *)&ihdr_crc, (const uint8 *)&ihdr_crc + 4);
+
+	// encode a pHYs chunk if non-square pixels
+	if (mPAR != 1) {
+		VDFraction par32(mPAR);
+
+		struct PHYS {
+			uint32	mChunkLength = VDToBE32(9);
+			uint32	mChunkType = VDMAKEFOURCC('p', 'H', 'Y', 's');
+			uint32	mPixelsPerUnitX = 0;
+			uint32	mPixelsPerUnitY = 0;
+			uint8	mPixelUnits = 0;	// unknown
+			uint8	mCRC[4];
+		} phys;
+
+		phys.mPixelsPerUnitX = VDToBE32(par32.getLo());
+		phys.mPixelsPerUnitY = VDToBE32(par32.getHi());
+
+		VDWriteUnalignedBEU32(phys.mCRC, crcTable.CRC(&phys, 17));
+
+		mOutput.insert(mOutput.end(), (const uint8 *)&phys, (const uint8 *)&phys + 21);
+	}
 
 	VDPixmapBuffer pxtmp(px.w, px.h, nsVDPixmap::kPixFormat_RGB888);
 	VDPixmapBlt(pxtmp, px);

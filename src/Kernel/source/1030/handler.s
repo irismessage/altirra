@@ -40,12 +40,13 @@ xlat_wnt_char	equ		$044E		;will-not-translate char for heavy mode
 xlat_addlf		equ		$044F		;bit 7 = enable add LF
 xlat_mode		equ		$0450		;bit 7 = translation disabled, bit 6 = heavy mode
 irq_status		equ		$0451		;!! - updated from IRQ!
+tonedial_flag	equ		$0452
 
 		org		BASEADDR		;nominally $1D00
 		opt		h-f+
 
-;The ERR_BUF_OVERRUN and STAT_CD flags are kept in irq_status so that
-;they can be updated by the IRQ routine without requiring the mainline
+;The ERR_BUF_OVERRUN, STAT_CD, and STAT_OFFHOOK flags are kept in irq_status
+;so that they can be updated by the IRQ routine without requiring the mainline
 ;code to disable interrupts to get to the rest of the flags. The status
 ;routine merges them.
 
@@ -56,11 +57,13 @@ ERR_BUF_OVERRUN	= $10		;checked by receive interrupt handler
 ERR_INVALID_CMD	= $01		;checked by command processor
 
 STAT_CD			= $80		;carrier detect (updated from interrupt)
+				; $40		;- reserved -
 STAT_LOOPBACK	= $20		;analog loopback test enabled
 STAT_ANSWER		= $10		;answer mode (vs. originate mode)
 STAT_AUTOANSWER	= $08		;auto-answer mode enabled
 STAT_TONEDIAL	= $04		;tone dial mode (vs. pulse dial mode)
-STAT_OFFHOOK	= $01		;phone off hook
+				; $02		;- reserved -
+STAT_OFFHOOK	= $01		;phone off hook (updated from interrupt)
 
 ;The 1030 handler loads at $1D00-282F.
 ;XM-301 handler loads at $1E00 and sets MEMLO to $2898.
@@ -526,9 +529,9 @@ mark_parity:
 ;
 .macro _COMMAND_TABLE
 		dta		:1[CmdA]			;A - Set translation
-		dta		:1[CmdInvalid]
+		dta		:1[CmdInvalid]		;B - <reserved: 1400XL set baud rate>
 		dta		:1[CmdC]			;C - Set parity
-		dta		:1[CmdInvalid]
+		dta		:1[CmdInvalid]		;D - <reserved: 1400XL establish I/O buffers>
 		dta		:1[CmdE]			;E - End commands
 		dta		:1[HandlerStatus]	;F - Status
 		dta		:1[CmdG]			;G - Enable auto-answer (XM301)
@@ -536,17 +539,17 @@ mark_parity:
 		dta		:1[CmdI]			;I - Set originate
 		dta		:1[CmdJ]			;J - Set answer
 		dta		:1[CmdK]			;K - Dial
-		dta		:1[CmdSend]			;L - Go off hook
-		dta		:1[CmdSend]			;M - Go on hook
+		dta		:1[CmdL]			;L - Go off hook
+		dta		:1[CmdM]			;M - Go on hook
 		dta		:1[CmdN]			;N - Set pulse dialing
 		dta		:1[CmdO]			;O - Set tone dialing
 		dta		:1[CmdP]			;P - Start 30sec timeout
-		dta		:1[CmdSend]			;Q - Reset modem
+		dta		:1[CmdQ]			;Q - Reset modem
 		dta		:1[CmdSend]			;R - Enable sound
 		dta		:1[CmdSend]			;S - Disable sound
 		dta		:1[CmdT]			;T - Disable auto-answer (XM301)
-		dta		:1[CmdInvalid]
-		dta		:1[CmdInvalid]
+		dta		:1[CmdInvalid]		;U - <reserved: 1400XL set DTMF function>
+		dta		:1[CmdInvalid]		;V - <reserved: 1400XL set voice mode>
 		dta		:1[CmdW]			;W - Set analog loop
 		dta		:1[CmdX]			;X - Clear analog loop
 		dta		:1[CmdY]			;Y - Resume
@@ -585,6 +588,10 @@ command_table_hi:
 		ora		#$30
 		sta		pbctl
 
+		;set waiting for command flag
+		sec
+		ror		proceed_pending
+
 		;send command byte
 		lda		last_command
 		jsr		RawPutByte
@@ -600,6 +607,9 @@ command_table_hi:
 		lda		pbctl
 		ora		#$08
 		sta		pbctl
+
+		;wait for ack
+		bit:rmi	proceed_pending
 
 		;disable serial routines if they were off coming in
 		jsr		DisableSerial
@@ -712,45 +722,7 @@ set_autoanswer:
 ;--------------------------------------------------------------------------
 ; H - Break
 ;
-.proc CmdH
-		rts
-.endp
-
-;--------------------------------------------------------------------------
-; I - Set originate mode
-;
-.proc CmdI
-		lda		#STAT_ANSWER
-
-		bit		handler_stat
-		bne		set_originate
-		rts
-
-set_originate:
-		eor		handler_stat
-		sta		handler_stat
-
-		lda		#'I'
-		jmp		CmdSend
-.endp
-
-;--------------------------------------------------------------------------
-; J - Set answer mode
-;
-.proc CmdJ
-		lda		#STAT_ANSWER
-
-		bit		handler_stat
-		beq		set_answer
-		rts
-
-set_answer:
-		eor		handler_stat
-		sta		handler_stat
-
-		lda		#'J'
-		jmp		CmdSend
-.endp
+CmdH = CmdSend
 
 ;--------------------------------------------------------------------------
 ; K - Dial digits
@@ -773,14 +745,22 @@ set_answer:
 		and		#$0f
 		cmp		#10
 		bcs		not_digit
+
+		bit		tonedial_flag
+		bpl		pulse_dial
 		jmp		PlayDTMFTone
+
+pulse_dial:
+		jmp		CmdSend
 
 not_digit:
 		cmp		#$0b
 		bne		not_end
 
-		;do 30 second wait
+		;send 30 second wait (P) if tone, otherwise $0B if pulse
 		lda		#'P'
+		bit		tonedial_flag
+		smi:lda	#$0B
 		jsr		CmdSend
 
 		;end this command
@@ -796,7 +776,7 @@ not_end:
 		adc		#150-1
 		tay
 		clc
-		adc		#180-1
+		adc		#30-1
 delay_loop:
 		;check if the current scanline is beyond what we could get on NTSC
 		lda		vcount
@@ -820,9 +800,67 @@ initial_command:
 		jsr		DrainOutputBuffer
 		sty		status
 
-		;set up modem for tone dialing
-		lda		#'O'
-		jmp		CmdSend
+		;set up modem for pulse or tone dialing
+		lda		#STAT_TONEDIAL
+		and		handler_stat
+		ora		#'K'
+		jsr		CmdSend
+
+		;mark phone as off hook
+		sei
+		lda		#STAT_OFFHOOK
+		ora		irq_status
+		sta		irq_status
+		cli
+		rts
+.endp
+
+;--------------------------------------------------------------------------
+; I - Set originate mode
+;
+.proc CmdI
+		lda		#STAT_ANSWER
+		bit		handler_stat
+		bne		XorAndSend
+		rts
+.endp
+
+;--------------------------------------------------------------------------
+; J - Set answer mode
+;
+.proc CmdJ
+		lda		#STAT_ANSWER
+		bit		handler_stat
+		beq		XorAndSend
+		rts
+.endp
+
+;--------------------------------------------------------------------------
+; L - Pick up
+;
+.proc CmdL
+		jsr		CmdSend
+
+		sei
+		lda		#STAT_OFFHOOK
+		ora		irq_status
+		sta		irq_status
+		cli
+		rts
+.endp
+
+;--------------------------------------------------------------------------
+; M - Hang up
+;
+.proc CmdM
+		jsr		CmdSend
+
+		sei
+		lda		#STAT_OFFHOOK^$FF
+		and		irq_status
+		sta		irq_status
+		cli
+		rts
 .endp
 
 ;--------------------------------------------------------------------------
@@ -832,9 +870,15 @@ initial_command:
 ; command; no command is sent to the modem.
 ;
 .proc CmdN
-		lda		#STAT_TONEDIAL^$FF
-		and		handler_stat
+		lda		#STAT_TONEDIAL
+		bit		handler_stat
+		sne:rts
+
+		lsr		tonedial_flag
+.def :XorAndExit
+		eor		handler_stat
 		sta		handler_stat
+xit:
 		rts
 .endp
 
@@ -846,14 +890,40 @@ initial_command:
 ;
 .proc CmdO
 		lda		#STAT_TONEDIAL
-		ora		handler_stat
-		sta		handler_stat
-		rts
+		bit		handler_stat
+		bne		CmdN.xit
+
+		sec
+		ror		tonedial_flag
+		bmi		XorAndExit
 .endp
 
 ;--------------------------------------------------------------------------
 ; P - Start 30 second wait
-.proc CmdP
+;
+; This command has a quirk in the standard T: handler -- it issues a P
+; command to the modem that inherently takes the phone off-hook, but
+; doesn't set the off-hook state in the modem. This is because it's only
+; intended to be used to end tone dialing, where the phone is already
+; off-hook.
+;
+CmdP = CmdSend
+
+;--------------------------------------------------------------------------
+; Q - Reset Modem
+;
+.proc CmdQ
+		;issue the Q command
+		jsr		CmdSend
+
+		;resume the modem if needed
+		lda		active_count
+		beq		was_suspended
+
+		lda		#'Y'
+		jsr		CmdSend
+
+was_suspended:
 		rts
 .endp
 
@@ -864,51 +934,35 @@ initial_command:
 		lda		#STAT_AUTOANSWER
 
 		bit		handler_stat
-		bne		clear_autoanswer
-		rts
+		sne:rts
 
-clear_autoanswer:
+.def :XorAndSend
 		eor		handler_stat
+.def :SetAndSend
 		sta		handler_stat
-
-		lda		#'T'
+		lda		last_command
 		jmp		CmdSend
 .endp
 
 ;--------------------------------------------------------------------------
-; W - Set analog loop
+; W - Set analog loopback
 ;
 .proc CmdW
 		lda		#STAT_LOOPBACK
-
 		bit		handler_stat
-		beq		set_loopback
+		beq		XorAndSend
 		rts
-
-set_loopback:
-		ora		handler_stat
-		sta		handler_stat
-
-		lda		#'W'
-		jmp		CmdSend
 .endp
 
 ;--------------------------------------------------------------------------
-; X - Clear analog loop
+; X - Clear analog loopback enabled
 ;
 .proc CmdX
 		lda		#STAT_LOOPBACK
-
 		bit		handler_stat
-		bne		clear_loopback
+		bne		XorAndSend
+xit:
 		rts
-
-clear_loopback:
-		eor		handler_stat
-		sta		handler_stat
-
-		lda		#'X'
-		jmp		CmdSend
 .endp
 
 ;--------------------------------------------------------------------------
@@ -998,7 +1052,7 @@ already_suspended:
 		sta		dvstat
 
 		txa
-		and		#STAT_CD
+		and		#STAT_CD+STAT_OFFHOOK
 		ora		handler_stat
 		sta		dvstat+1
 
@@ -1045,7 +1099,7 @@ already_suspended:
 ;
 ; 50ms of tone at 7.8KHz takes 392 samples. Packing two samples together
 ; gives 175 bytes, which we can cram into the input buffer. To make things
-; simpler we go ahead and generate 512 samples for a tone duration of 58ms.
+; simpler we go ahead and generate 512 samples for a tone duration of 65ms.
 ;
 .proc PlayDTMFTone
 		tax
@@ -1054,16 +1108,11 @@ already_suspended:
 		mva		dtmf_tone_2_table_lo,x inc2lo
 		mva		dtmf_tone_2_table_hi,x inc2hi
 
-		;wait three VBLANKs to ensure enough gap time
+		;wait four VBLANKs to ensure enough gap time (at least 50ms)
 		lda		rtclok+2
 		clc
-		adc		#3
+		adc		#4
 		cmp:rne	rtclok+2
-
-		;clear the DTMF buffer
-		lda		#0
-		tax
-		sta:rne	input_buffer,x+
 
 		;accumulate tones
 		tay
@@ -1417,11 +1466,21 @@ no_data:
 ; SIO proceed handler
 ;
 .proc IrqPiaProceed
-		;clear proceed pending flag
-		lsr		proceed_pending
-
 		;acknowledge interrupt
 		lda		porta
+
+		;test proceed flag
+		bit		proceed_pending
+		bmi		was_waiting
+
+		;we weren't waiting for a command, so it must be a hang up
+		lda		irq_status
+		and		#$fe
+		sta		irq_status
+
+was_waiting:
+		;clear proceed pending flag
+		lsr		proceed_pending
 
 		pla
 		rti
@@ -1438,6 +1497,14 @@ no_data:
 		lda		irq_status
 		eor		#$80
 		sta		irq_status
+
+		;if the carrier dropped, assume hang up as well
+		bmi		have_carrier
+		lda		irq_status
+		and		#$fe
+		sta		irq_status
+
+have_carrier:
 
 		;all done
 		pla

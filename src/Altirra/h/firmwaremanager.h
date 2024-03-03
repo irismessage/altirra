@@ -21,6 +21,8 @@
 #include <vd2/system/VDString.h>
 #include <vd2/system/vdstl.h>
 
+class ATVFSFileView;
+
 enum ATFirmwareId {
 	kATFirmwareId_Invalid,
 	kATFirmwareId_NoKernel,
@@ -103,8 +105,17 @@ enum ATFirmwareType : uint32 {
 	kATFirmwareType_1090Charset,
 	kATFirmwareType_Bit3Firmware,
 	kATFirmwareType_Bit3Charset,
+	kATFirmwareType_1400XLHandler,
+	kATFirmwareType_1450XLDiskHandler,
+	kATFirmwareType_1450XLDiskController,
+	kATFirmwareType_1450XLTONGDiskController,
+	kATFirmwareType_1030InternalROM,
+	kATFirmwareType_1030ExternalROM,
+	kATFirmwareType_835,
 	kATFirmwareTypeCount
 };
+
+bool ATIsKernelFirmwareType(ATFirmwareType type);
 
 enum ATSpecificFirmwareType : uint32 {
 	kATSpecificFirmwareType_None,
@@ -156,7 +167,7 @@ public:
 	uint64 GetFirmwareOfType(ATFirmwareType type, bool allowInternal) const;
 
 	VDStringW GetFirmwareRefString(uint64 id) const;
-	uint64 GetFirmwareByRefString(const wchar_t *refstr) const;
+	uint64 GetFirmwareByRefString(const wchar_t *refstr, vdfunction<bool(ATFirmwareType)> typeFilter = nullptr) const;
 
 	uint64 GetDefaultFirmware(ATFirmwareType type) const;
 	void SetDefaultFirmware(ATFirmwareType type, uint64 id);
@@ -164,12 +175,14 @@ public:
 	uint64 GetSpecificFirmware(ATSpecificFirmwareType types) const;
 	void SetSpecificFirmware(ATSpecificFirmwareType types, uint64 id);
 
-	bool LoadFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed = nullptr, uint32 *actualLen = nullptr, vdfastvector<uint8> *dstbuf = nullptr, const uint8 *fill = nullptr, bool *isUsable = nullptr);
+	bool LoadFirmware(uint64 id, void *dst, uint32 offset, uint32 len, bool *changed = nullptr, uint32 *actualLen = nullptr, vdfastvector<uint8> *dstbuf = nullptr, const uint8 *fill = nullptr, bool *isUsable = nullptr) const;
 
 	void AddFirmware(const ATFirmwareInfo& info);
 	void RemoveFirmware(uint64 id);
 
 private:
+	void GetVFSSpecialFirmware(const wchar_t *path, bool write, bool update, ATVFSFileView **);
+
 	mutable uint64 mSpecificFirmwares[kATSpecificFirmwareTypeCount];
 
 	mutable VDStringW mKernelVersion;

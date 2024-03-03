@@ -21,6 +21,9 @@
 #include <vd2/system/function.h>
 #include <at/atcore/scheduler.h>
 
+class IATObjectState;
+template<typename T> class vdrefptr;
+
 class ATACIA6551Emulator : public IATSchedulerCallback {
 public:
 	ATACIA6551Emulator();
@@ -32,7 +35,13 @@ public:
 	void SetInterruptFn(const vdfunction<void(bool)>& fn);
 	void SetReceiveReadyFn(const vdfunction<void()>& fn);
 	void SetTransmitFn(const vdfunction<void(uint8, uint32)>& fn);
-	void SetControlFn(const vdfunction<void(bool, bool)>& fn);
+	void SetControlFn(const vdfunction<void(bool /* RTS asserted */, bool /* DTR asserted */)>& fn);
+
+	// Set whether /DCD is pulled low (asserted).
+	void SetDCD(bool asserted, bool triggerIRQ);
+
+	// Set whether /DSR is pulled low (asserted).
+	void SetDSR(bool asserted, bool triggerIRQ);
 
 	bool IsReceiveReady() const;
 	void ReceiveByte(uint8 data, uint32 baudRate);
@@ -43,8 +52,11 @@ public:
 	uint8 ReadByte(uint8 address);
 	void WriteByte(uint8 address, uint8 value);
 
+	void LoadState(const IATObjectState *state);
+	vdrefptr<IATObjectState> SaveState() const;
+
 public:
-	virtual void OnScheduledEvent(uint32 id);
+	void OnScheduledEvent(uint32 id) override;
 
 protected:
 	void LoadTransmitShifter();

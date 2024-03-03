@@ -50,16 +50,24 @@ void VDDisplayMeshBuilder3D::SetVertexFormat(IVDTVertexFormat *vf) {
 	mpCmd->mpVF = vf;
 }
 
-void VDDisplayMeshBuilder3D::SetVertexProgram(VDTData vpdata) {
-	mpCmd->mpVP = mpDctx->InitVP(vpdata);
+void VDDisplayMeshBuilder3D::SetVertexProgram(IVDTVertexProgram *vp) {
+	mpCmd->mpVP = vp;
 	if (!mpCmd->mpVP)
 		mpPool->mbError = true;
 }
 
-void VDDisplayMeshBuilder3D::SetFragmentProgram(VDTData fpdata) {
-	mpCmd->mpFP = mpDctx->InitFP(fpdata);
+void VDDisplayMeshBuilder3D::SetVertexProgram(VDTData vpdata) {
+	SetVertexProgram(mpDctx->InitVP(vpdata));
+}
+
+void VDDisplayMeshBuilder3D::SetFragmentProgram(IVDTFragmentProgram *fp) {
+	mpCmd->mpFP = fp;
 	if (!mpCmd->mpFP)
 		mpPool->mbError = true;
+}
+
+void VDDisplayMeshBuilder3D::SetFragmentProgram(VDTData fpdata) {
+	SetFragmentProgram(mpDctx->InitFP(fpdata));
 }
 
 void VDDisplayMeshBuilder3D::SetVPConstData(const void *src, size_t len) {
@@ -98,7 +106,7 @@ void VDDisplayMeshBuilder3D::SetFPConstDataReuse() {
 	mpCmd->mFPConstOffset = 1;
 }
 
-void *VDDisplayMeshBuilder3D::InitVertices(size_t vertexSize, uint32 vertexCount) {
+void *VDDisplayMeshBuilder3D::InitVertices(size_t vertexSize, uint32 vertexCount, VDDVertexTransformer vertexTransformer) {
 	VDASSERT(!mpCmd->mVertexSourceOffset);
 	VDASSERT(!mpCmd->mVertexCount);
 	VDASSERT(vertexCount);
@@ -108,13 +116,14 @@ void *VDDisplayMeshBuilder3D::InitVertices(size_t vertexSize, uint32 vertexCount
 	mpCmd->mVertexSourceLen = vertexCount * vertexSize;
 	mpCmd->mVertexCount = vertexCount;
 	mpCmd->mVertexSize = vertexSize;
+	mpCmd->mVertexTransformer = vertexTransformer;
 
 	mpPool->mVertexData.resize(mpCmd->mVertexSourceOffset + mpCmd->mVertexSourceLen);
 	return &*(mpPool->mVertexData.end() - mpCmd->mVertexSourceLen);
 }
 
-void VDDisplayMeshBuilder3D::SetVertices(const void *data, size_t vertexSize, size_t vertexCount) {
-	memcpy(InitVertices(vertexSize, vertexCount), data, vertexSize * vertexCount);
+void VDDisplayMeshBuilder3D::SetVertices(const void *data, size_t vertexSize, size_t vertexCount, VDDVertexTransformer vertexTransformer) {
+	memcpy(InitVertices(vertexSize, vertexCount, vertexTransformer), data, vertexSize * vertexCount);
 }
 
 void VDDisplayMeshBuilder3D::SetTopology(const uint16 *indices, uint32 numTriangles) {
@@ -186,11 +195,19 @@ void VDDisplayMeshBuilder3D::SetSampler(uint32 samplerSlot, IVDTSamplerState *ss
 	mpPool->mpSamplers[mpCmd->mSamplerStart + samplerSlot] = ss;
 }
 
+void VDDisplayMeshBuilder3D::SetClear(uint32 clearColor) {
+	mpCmd->mbRenderClear = true;
+	mpCmd->mRenderClearColor = clearColor;
+}
+
 void VDDisplayMeshBuilder3D::SetRenderView(VDDPoolRenderViewId id) {
 	mpCmd->mRenderView = id;
 }
 
 VDDPoolRenderViewId VDDisplayMeshBuilder3D::SetRenderView(const VDDRenderView& renderView) {
+	VDASSERT(renderView.mViewport.mX >= 0);
+	VDASSERT(renderView.mViewport.mY >= 0);
+
 	mpCmd->mRenderView = mpPool->RegisterRenderView(renderView);
 	return mpCmd->mRenderView;
 }
@@ -206,7 +223,17 @@ VDDPoolRenderViewId VDDisplayMeshBuilder3D::SetRenderView(VDDPoolTextureIndex te
 		if (tex2d) {
 			VDTTextureDesc desc;
 			tex2d->GetDesc(desc);
-			rvi = SetRenderView(VDDRenderView { tex2d->GetLevelSurface(mipLevel), bypassConversion, VDTViewport { 0, 0, desc.mWidth, desc.mHeight, 0.0f, 1.0f } });
+			rvi = SetRenderView(
+				VDDRenderView {
+					tex2d->GetLevelSurface(mipLevel),
+					bypassConversion,
+					VDTViewport { 0, 0, desc.mWidth, desc.mHeight, 0.0f, 1.0f },
+					VDDisplaySoftViewport {
+						{ (float)desc.mWidth, (float)desc.mHeight },
+						{ 0, 0 } 
+					}
+				}
+			);
 		}
 	}
 
@@ -222,7 +249,7 @@ VDDPoolRenderViewId VDDisplayMeshBuilder3D::SetRenderView(VDDPoolTextureIndex te
 		IVDTTexture2D *tex2d = vdpoly_cast<IVDTTexture2D *>(tex);
 
 		if (tex2d)
-			rvi = SetRenderView(VDDRenderView { tex2d->GetLevelSurface(mipLevel), bypassConversion, viewport });
+			rvi = SetRenderView(VDDRenderView { tex2d->GetLevelSurface(mipLevel), bypassConversion, viewport, VDDisplaySoftViewport { { (float)viewport.mWidth, (float)viewport.mHeight }, { 0, 0 } } });
 	}
 
 	return rvi;
@@ -266,7 +293,6 @@ void VDDisplayMeshPool3D::SetTexture(VDDPoolTextureIndex index, IVDTTexture *tex
 }
 
 VDDPoolTextureIndex VDDisplayMeshPool3D::RegisterTexture(IVDTTexture *texture) {
-
 	mpTextures.push_back(texture);
 
 	return VDDPoolTextureIndex(mpTextures.size());
@@ -309,6 +335,14 @@ void VDDisplayMeshPool3D::SetRenderView(VDDPoolRenderViewId id, const VDDRenderV
 	mRenderViews[(uint32)id - 1] = renderView;
 }
 
+void VDDisplayMeshPool3D::SetRenderViewWithSubrect(VDDPoolRenderViewId id, const VDDRenderView& renderView, float x, float y, float w, float h) {
+	VDDRenderView newRenderView(renderView);
+	newRenderView.mSoftViewport.mOffset += vdfloat2 { x, y };
+	newRenderView.mSoftViewport.mSize = vdfloat2 { w, h };
+
+	SetRenderView(id, newRenderView);
+}
+
 void VDDisplayMeshPool3D::SetRenderViewFromCurrent(VDDPoolRenderViewId id, IVDTContext& ctx) {
 	SetRenderView(id, VDDRenderView { ctx.GetRenderTarget(0), ctx.GetRenderTargetBypass(0), ctx.GetViewport() });
 }
@@ -326,6 +360,9 @@ void VDDisplayMeshPool3D::DrawAllMeshes(IVDTContext& ctx, VDDisplayNodeContext3D
 void VDDisplayMeshPool3D::DrawMeshes(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, VDDPoolMeshIndex start, uint32 count) {
 	VDDisplayMeshCommand3D *VDRESTRICT meshes = &mMeshes[(uint32)start];
 
+	if (mVertexData.size() != mVertexTransformedData.size())
+		mVertexTransformedData.resize(mVertexData.size());
+
 	ctx.SetBlendState(NULL);
 	ctx.SetRasterizerState(NULL);
 	ctx.SetIndexStream(dctx.mpIndexCache);
@@ -335,9 +372,12 @@ void VDDisplayMeshPool3D::DrawMeshes(IVDTContext& ctx, VDDisplayNodeContext3D& d
 	while(count--) {
 		if (meshes->mRenderView != VDDPoolRenderViewId(0)) {
 			const auto& rv = mRenderViews[(uint32)meshes->mRenderView - 1];
-			ctx.SetRenderTarget(0, rv.mpTarget, rv.mbBypassSrgb);
-			ctx.SetViewport(rv.mViewport);
+
+			dctx.ApplyRenderView(rv);
 		}
+
+		if (meshes->mbRenderClear)
+			ctx.Clear(kVDTClear_All, meshes->mRenderClearColor, 0, 0);
 
 		ctx.SetVertexFormat(meshes->mpVF);
 		ctx.SetVertexProgram(meshes->mpVP);
@@ -373,7 +413,28 @@ void VDDisplayMeshPool3D::DrawMeshes(IVDTContext& ctx, VDDisplayNodeContext3D& d
 			ctx.ClearTexturesStartingAt(meshes->mTextureCount);
 		}
 
-		if (!dctx.CacheVB(&mVertexData[meshes->mVertexSourceOffset], meshes->mVertexSourceLen, meshes->mVertexCachedOffset, meshes->mVertexCachedGeneration))
+		const VDDisplaySoftViewport& vxt = dctx.GetCurrentSoftViewport();
+		if (meshes->mLastSoftViewport != vxt) {
+			meshes->mLastSoftViewport = vxt;
+
+			const VDTViewport& vp = ctx.GetViewport();
+
+			vdfloat2 invVp = vdfloat2{ 1, 1 } / vdfloat2{(float)vp.mWidth, (float)vp.mHeight};
+			vdfloat2 scale = vxt.mSize * invVp;
+			vdfloat2 offset = vdfloat2{-1, 1} - vdfloat2{-scale.x, scale.y} + invVp*vdfloat2{2,-2}*vxt.mOffset;
+
+			meshes->mVertexTransformer(
+				&mVertexTransformedData[meshes->mVertexSourceOffset],
+				&mVertexData[meshes->mVertexSourceOffset],
+				meshes->mVertexCount,
+				scale,
+				offset
+			);
+
+			meshes->mVertexCachedGeneration = 0;
+		}
+
+		if (!dctx.CacheVB(&mVertexTransformedData[meshes->mVertexSourceOffset], meshes->mVertexSourceLen, meshes->mVertexCachedOffset, meshes->mVertexCachedGeneration))
 			return;
 
 		ctx.SetVertexStream(0, dctx.mpVertexCache, meshes->mVertexCachedOffset, meshes->mVertexSize);
@@ -552,25 +613,36 @@ void VDDisplayNodeContext3D::Shutdown() {
 	mFPCache.clear();
 }
 
+void VDDisplayNodeContext3D::BeginScene(bool traceRTs) {
+	mbTraceRTs = traceRTs;
+	mTracedRTs.clear();
+}
+
+void VDDisplayNodeContext3D::ClearTrace() {
+	mTracedRTs.clear();
+}
+
 VDDRenderView VDDisplayNodeContext3D::CaptureRenderView() const {
 	return VDDRenderView { mpContext->GetRenderTarget(0), false, mpContext->GetViewport() };
 }
 
 void VDDisplayNodeContext3D::ApplyRenderView(const VDDRenderView& targetView) {
+	mTracedRTs.emplace_back(targetView.mpTarget);
+
 	mpContext->SetRenderTarget(0, targetView.mpTarget, targetView.mbBypassSrgb);
 	mpContext->SetViewport(targetView.mViewport);
+
+	mSoftViewport = targetView.mSoftViewport;
 }
 
-void VDDisplayNodeContext3D::ApplyRenderViewWithSubrect(const VDDRenderView& targetView, sint32 x, sint32 y, sint32 w, sint32 h) {
-	mpContext->SetRenderTarget(0, targetView.mpTarget, targetView.mbBypassSrgb);
+void VDDisplayNodeContext3D::ApplyRenderViewWithSubrect(const VDDRenderView& targetView, float x, float y, float w, float h) {
+	VDDRenderView newTargetView(targetView);
 
-	VDTViewport vp = targetView.mViewport;
-	vp.mX += x;
-	vp.mY += y;
-	vp.mWidth = w;
-	vp.mHeight = h;
-	
-	mpContext->SetViewport(vp);
+	vdfloat2 invVp = vdfloat2{1,1} / vdfloat2{ (float)targetView.mViewport.mWidth, (float)targetView.mViewport.mHeight };
+	newTargetView.mSoftViewport.mOffset += vdfloat2{ x, y };
+	newTargetView.mSoftViewport.mSize = vdfloat2{ w, h };
+
+	ApplyRenderView(newTargetView);
 }
 
 IVDTVertexProgram *VDDisplayNodeContext3D::InitVP(VDTData vpdata) {
@@ -793,7 +865,7 @@ VDDisplayBufferSourceNode3D::~VDDisplayBufferSourceNode3D() {
 	Shutdown();
 }
 
-bool VDDisplayBufferSourceNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, uint32 w, uint32 h, bool hdr, VDDisplayNode3D *child) {
+bool VDDisplayBufferSourceNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, float outx, float outy, float outw, float outh, uint32 w, uint32 h, bool hdr, VDDisplayNode3D *child) {
 	if (mpChildNode != child) {
 		if (mpChildNode)
 			mpChildNode->Release();
@@ -835,7 +907,20 @@ bool VDDisplayBufferSourceNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D&
 		}
 	}
 
-	mMapping.Init(w, h, texWidth, texHeight);
+	// If the output rect is at or left/above the origin, we don't need to translate; otherwise,
+	// shift left/up to optimize texture space. Always translate by integral pixels.
+	mDestX = std::min<float>(0.0f, -ceilf(outx - 0.5f));
+	mDestY = std::min<float>(0.0f, -ceilf(outy - 0.5f));
+
+	outx += mDestX;
+	outy += mDestY;
+
+	mMapping.mTexelOffset.set(outx, outy);
+	mMapping.mUVOffset.set(outx / (float)texWidth, outy / (float)texHeight);
+	mMapping.mTexelSize.set(outw, outh);
+	mMapping.mUVSize.set((float)outw / (float)texWidth, (float)outh / (float)texHeight);
+	mMapping.mTexWidth = texWidth;
+	mMapping.mTexHeight = texHeight;
 	return true;
 }
 
@@ -864,7 +949,13 @@ IVDTTexture2D *VDDisplayBufferSourceNode3D::Draw(IVDTContext& ctx, VDDisplayNode
 	vp.mMinZ = 0.0f;
 	vp.mMaxZ = 1.0f;
 
-	const VDDRenderView renderView { rttsurf, false, vp };
+	const VDDRenderView renderView {
+		rttsurf, false, vp,
+		{
+			mMapping.mTexelSize,
+			vdfloat2 { (float)mDestX, (float)mDestY },
+		}
+	};
 
 	mpChildNode->Draw(ctx, dctx, renderView);
 	return mpRTT;
@@ -927,9 +1018,6 @@ void VDDisplayClearNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 VDDisplayImageNode3D::VDDisplayImageNode3D()
 	: mpPaletteTex(NULL)
 	, mpVF(NULL)
-	, mpVP(NULL)
-	, mpFP(NULL)
-	, mpVB(NULL)
 	, mDstX(0)
 	, mDstY(0)
 	, mDstW(0)
@@ -972,6 +1060,9 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 	constexpr VDTFormat bgraFormat = kVDTF_B8G8R8A8;
 
 	float chromaOffsetU = 0.0f;
+	
+	mMeshPool.Clear();
+	auto mb = mMeshPool.AddMesh(dctx);
 
 	switch(format) {
 		case nsVDPixmap::kPixFormat_RGB565:
@@ -984,14 +1075,10 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 					return false;
 				}
 
-				if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_Blit), &mpFP)) {
-					Shutdown();
-					return false;
-				}
+				mb.SetVertexProgram(dctx.mpVPTexture);
+				mb.SetFragmentProgram(VDTDataView(g_VDDispFP_Blit));
 
 				mRenderMode = kRenderMode_BlitRGB16Direct;
-				mpVP = dctx.mpVPTexture;
-				mpVP->AddRef();
 				mpVF = dctx.mpVFTexture;
 				mpVF->AddRef();
 			} else {
@@ -1004,10 +1091,8 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 						return false;
 					}
 
-					if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, l8a8 ? VDTDataView(g_VDDispFP_BlitRGB16_L8A8) : VDTDataView(g_VDDispFP_BlitRGB16_R8G8), &mpFP)) {
-						Shutdown();
-						return false;
-					}
+					mb.SetVertexProgram(dctx.mpVPTexture);
+					mb.SetFragmentProgram(l8a8 ? VDTDataView(g_VDDispFP_BlitRGB16_L8A8) : VDTDataView(g_VDDispFP_BlitRGB16_R8G8));
 
 					uint8 palette[2][256][4];
 
@@ -1053,8 +1138,6 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 					}
 
 					mRenderMode = kRenderMode_BlitRGB16;
-					mpVP = dctx.mpVPTexture;
-					mpVP->AddRef();
 					mpVF = dctx.mpVFTexture;
 					mpVF->AddRef();
 				}
@@ -1071,14 +1154,10 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 					return false;
 				}
 
-				if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_BlitRGB24), &mpFP)) {
-					Shutdown();
-					return false;
-				}
+				mb.SetVertexProgram(dctx.mpVPTexture3T);
+				mb.SetFragmentProgram(VDTDataView(g_VDDispFP_BlitRGB24));
 
 				mRenderMode = kRenderMode_BlitRGB24;
-				mpVP = dctx.mpVPTexture3T;
-				mpVP->AddRef();
 				mpVF = dctx.mpVFTexture3T;
 				mpVF->AddRef();
 			}
@@ -1135,16 +1214,11 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 					break;
 			}
 
-			if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, program, &mpFP))
-			{
-				Shutdown();
-				return false;
-			}
+			mb.SetVertexProgram(dctx.mpVPTexture3T);
+			mb.SetFragmentProgram(program);
 
 			mRenderMode = kRenderMode_BlitUYVY;
 
-			mpVP = dctx.mpVPTexture3T;
-			mpVP->AddRef();
 			mpVF = dctx.mpVFTexture3T;
 			mpVF->AddRef();
 			break;
@@ -1157,19 +1231,15 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 					return false;
 				}
 
-				if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget,
-						format == nsVDPixmap::kPixFormat_Y8_FR
-							? VDTDataView(g_VDDispFP_BlitY_FR)
-							: VDTDataView(g_VDDispFP_BlitY_LR), &mpFP))
-				{
-					Shutdown();
-					return false;
-				}
+				mb.SetVertexProgram(dctx.mpVPTexture);
+				mb.SetFragmentProgram(
+					format == nsVDPixmap::kPixFormat_Y8_FR
+						? VDTDataView(g_VDDispFP_BlitY_FR)
+						: VDTDataView(g_VDDispFP_BlitY_LR)
+				);
 
 				mRenderMode = kRenderMode_BlitY;
 
-				mpVP = dctx.mpVPTexture;
-				mpVP->AddRef();
 				mpVF = dctx.mpVFTexture;
 				mpVF->AddRef();
 			}
@@ -1214,41 +1284,31 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 				float chromaScaleH = (float)(1 << formatInfo.auxwbits);
 				chromaOffsetU = (chromaScaleH - 1) / (chromaScaleH * 2.0f * (float)w2);
 
+				mb.SetVertexProgram(dctx.mpVPTexture2T);
+
 				switch(format) {
 					case nsVDPixmap::kPixFormat_YUV444_Planar:
 					case nsVDPixmap::kPixFormat_YUV422_Planar:
 					case nsVDPixmap::kPixFormat_YUV420_Planar:
-						if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_BlitYCbCr_601_LR), &mpFP)) {
-							Shutdown();
-							return false;
-						}
+						mb.SetFragmentProgram(VDTDataView(g_VDDispFP_BlitYCbCr_601_LR));
 						break;
 
 					case nsVDPixmap::kPixFormat_YUV444_Planar_709:
 					case nsVDPixmap::kPixFormat_YUV422_Planar_709:
 					case nsVDPixmap::kPixFormat_YUV420_Planar_709:
-						if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_BlitYCbCr_709_LR), &mpFP)) {
-							Shutdown();
-							return false;
-						}
+						mb.SetFragmentProgram(VDTDataView(g_VDDispFP_BlitYCbCr_709_LR));
 						break;
 
 					case nsVDPixmap::kPixFormat_YUV444_Planar_FR:
 					case nsVDPixmap::kPixFormat_YUV422_Planar_FR:
 					case nsVDPixmap::kPixFormat_YUV420_Planar_FR:
-						if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_BlitYCbCr_601_FR), &mpFP)) {
-							Shutdown();
-							return false;
-						}
+						mb.SetFragmentProgram(VDTDataView(g_VDDispFP_BlitYCbCr_601_FR));
 						break;
 
 					case nsVDPixmap::kPixFormat_YUV444_Planar_709_FR:
 					case nsVDPixmap::kPixFormat_YUV422_Planar_709_FR:
 					case nsVDPixmap::kPixFormat_YUV420_Planar_709_FR:
-						if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_BlitYCbCr_709_FR), &mpFP)) {
-							Shutdown();
-							return false;
-						}
+						mb.SetFragmentProgram(VDTDataView(g_VDDispFP_BlitYCbCr_709_FR));
 						break;
 				}
 
@@ -1256,8 +1316,6 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 				mTex2Height = h2;
 				mRenderMode = kRenderMode_BlitYCbCr;
 
-				mpVP = dctx.mpVPTexture2T;
-				mpVP->AddRef();
 				mpVF = dctx.mpVFTexture2T;
 				mpVF->AddRef();
 			}
@@ -1278,14 +1336,10 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 				const VDTInitData2D initData = { mLastPalette, 0 };
 				mpPaletteTex->Load(0, 0, 0, initData, 256, 1);
 
-				if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_BlitPal8), &mpFP)) {
-					Shutdown();
-					return false;
-				}
+				mb.SetVertexProgram(dctx.mpVPTexture);
+				mb.SetFragmentProgram(VDTDataView(g_VDDispFP_BlitPal8));
 
 				mRenderMode = kRenderMode_BlitPal8;
-				mpVP = dctx.mpVPTexture;
-				mpVP->AddRef();
 				mpVF = dctx.mpVFTexture;
 				mpVF->AddRef();
 			}
@@ -1295,20 +1349,16 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 			break;
 	}
 
-	if (!mpFP) {
+	if (!mpVF) {
 		if (!ctx.CreateTexture2D(w, h, bgraFormat, 1, kVDTUsage_Default, NULL, &mpImageTex[0])) {
 			Shutdown();
 			return false;
 		}
 
-		if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_Blit), &mpFP)) {
-			Shutdown();
-			return false;
-		}
+		mb.SetVertexProgram(dctx.mpVPTexture);
+		mb.SetFragmentProgram(VDTDataView(g_VDDispFP_Blit));
 
 		mRenderMode = kRenderMode_Blit;
-		mpVP = dctx.mpVPTexture;
-		mpVP->AddRef();
 		mpVF = dctx.mpVFTexture;
 		mpVF->AddRef();
 	}
@@ -1327,10 +1377,7 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 				{ +1.0f, -1.0f, 0.0f, 1.0f, 1.0f, u1, 1.0f, w1 },
 			};
 
-			if (!ctx.CreateVertexBuffer(sizeof vx, false, vx, &mpVB)) {
-				Shutdown();
-				return false;
-			}
+			mb.SetVertices(vx);
 			break;
 		}
 
@@ -1345,11 +1392,7 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 				{ +1.0f, -1.0f, 0.0f, 1.0f, 1.0f, u1, 1.0f },
 			};
 
-			if (!ctx.CreateVertexBuffer(sizeof vx, false, vx, &mpVB)) {
-				Shutdown();
-				return false;
-			}
-
+			mb.SetVertices(vx);
 			break;
 		}
 
@@ -1368,10 +1411,7 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 				{ +1.0f, -1.0f, 0.0f, u1, 1.0f, u3, 1.0f, u5, 1.0f },
 			};
 
-			if (!ctx.CreateVertexBuffer(sizeof vx, false, vx, &mpVB)) {
-				Shutdown();
-				return false;
-			}
+			mb.SetVertices(vx);
 			break;
 		}
 
@@ -1383,14 +1423,84 @@ bool VDDisplayImageNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 				{ +1.0f, -1.0f, 0.0f, 1.0f, 1.0f },
 			};
 
-			if (!ctx.CreateVertexBuffer(sizeof vx, false, vx, &mpVB)) {
-				Shutdown();
-				return false;
-			}
+			mb.SetVertices(vx);
 			break;
 		}
 	}
 
+	switch(mRenderMode) {
+	case kRenderMode_Blit:
+	case kRenderMode_BlitY:
+	case kRenderMode_BlitRGB16Direct:
+		{
+			mb.InitSamplers(1);
+			mb.SetSampler(0, mbBilinear ? dctx.mpSSBilinear : dctx.mpSSPoint);
+
+			mb.InitTextures(1);
+			mb.SetTexture(0, mMeshPool.RegisterTexture(mpImageTex[0]));
+		}
+		break;
+
+	case kRenderMode_BlitPal8:
+	case kRenderMode_BlitRGB16:
+		{
+			mb.InitSamplers(2);
+			mb.SetSampler(0, dctx.mpSSBilinear);
+			mb.SetSampler(1, dctx.mpSSPoint);
+
+			IVDTTexture *const tex[2] = {
+				mpImageTex[0],
+				mpPaletteTex
+			};
+
+			mb.InitTextures(2);
+			mb.SetTexture(0, mMeshPool.RegisterTexture(mpImageTex[0]));
+			mb.SetTexture(1, mMeshPool.RegisterTexture(mpPaletteTex));
+		}
+		break;
+
+	case kRenderMode_BlitYCbCr:
+		{
+			IVDTSamplerState *ss0 = mbBilinear ? dctx.mpSSBilinear : dctx.mpSSPoint;
+
+			mb.InitSamplers(3);
+			mb.SetSampler(0, ss0);
+			mb.SetSampler(1, ss0);
+			mb.SetSampler(2, ss0);
+
+			mb.InitTextures(3);
+			mb.SetTexture(0, mMeshPool.RegisterTexture(mpImageTex[0]));
+			mb.SetTexture(1, mMeshPool.RegisterTexture(mpImageTex[1]));
+			mb.SetTexture(2, mMeshPool.RegisterTexture(mpImageTex[2]));
+		}
+		break;
+
+	case kRenderMode_BlitUYVY:
+		{
+			mb.InitSamplers(2);
+			mb.SetSampler(0, dctx.mpSSPoint);
+			mb.SetSampler(1, dctx.mpSSBilinear);
+
+			auto tex = mMeshPool.RegisterTexture(mpImageTex[0]);
+			mb.InitTextures(2);
+			mb.SetTexture(0, tex);
+			mb.SetTexture(1, tex);
+		}
+		break;
+
+	case kRenderMode_BlitRGB24:
+		{
+			mb.InitSamplers(1);
+			mb.SetSampler(0, dctx.mpSSPoint);
+
+			mb.InitTextures(1);
+			mb.SetTexture(0, mMeshPool.RegisterTexture(mpImageTex[0]));
+		}
+		break;
+	}
+
+	mb.SetVertexFormat(mpVF);
+	mb.SetTopologyQuad();
 	return true;
 }
 
@@ -1398,7 +1508,7 @@ void VDDisplayImageNode3D::Shutdown() {
 	for(int i=0; i<3; ++i)
 		vdsaferelease <<= mpImageTex[i];
 
-	vdsaferelease <<= mpPaletteTex, mpVF, mpVP, mpFP, mpVB;
+	vdsaferelease <<= mpPaletteTex, mpVF;
 }
 
 void VDDisplayImageNode3D::Load(const VDPixmap& px) {
@@ -1453,113 +1563,15 @@ void VDDisplayImageNode3D::Load(const VDPixmap& px) {
 
 void VDDisplayImageNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const VDDRenderView& renderView) {
 	VDTAutoScope scope(ctx, "Image");
-
-	ctx.SetBlendState(NULL);
-	ctx.SetRasterizerState(NULL);
 	
 	dctx.ApplyRenderViewWithSubrect(renderView, mDstX, mDstY, mDstW, mDstH);
 
-	switch(mRenderMode) {
-	case kRenderMode_Blit:
-	case kRenderMode_BlitY:
-	case kRenderMode_BlitRGB16Direct:
-		{
-			ctx.SetSamplerStates(0, 1, mbBilinear ? &dctx.mpSSBilinear : &dctx.mpSSPoint);
-
-			IVDTTexture *tex = mpImageTex[0];
-
-			ctx.SetTextures(0, 1, &tex);
-			ctx.SetVertexStream(0, mpVB, 0, sizeof(VDDisplayVertex3D));
-		}
-		break;
-
-	case kRenderMode_BlitPal8:
-	case kRenderMode_BlitRGB16:
-		{
-			IVDTSamplerState *ss[2] = {dctx.mpSSBilinear, dctx.mpSSPoint};
-			ctx.SetSamplerStates(0, 2, ss);
-
-			IVDTTexture *const tex[2] = {
-				mpImageTex[0],
-				mpPaletteTex
-			};
-
-			ctx.SetTextures(0, 2, tex);
-			ctx.SetVertexStream(0, mpVB, 0, sizeof(VDDisplayVertex3D));
-		}
-		break;
-
-	case kRenderMode_BlitYCbCr:
-		{
-			IVDTSamplerState *ss0 = mbBilinear ? dctx.mpSSBilinear : dctx.mpSSPoint;
-
-			IVDTSamplerState *ss[3] = {
-				ss0,
-				ss0,
-				ss0
-			};
-
-			ctx.SetSamplerStates(0, 3, ss);
-
-			IVDTTexture *const tex[3] = {
-				mpImageTex[0],
-				mpImageTex[1],
-				mpImageTex[2],
-			};
-
-			ctx.SetTextures(0, 3, tex);
-			ctx.SetVertexStream(0, mpVB, 0, sizeof(VDDisplayVertex2T3D));
-		}
-		break;
-
-	case kRenderMode_BlitUYVY:
-		{
-			IVDTSamplerState *ss[2] = { dctx.mpSSPoint, dctx.mpSSBilinear };
-			ctx.SetSamplerStates(0, 2, ss);
-
-			IVDTTexture *tex[2] = { mpImageTex[0], mpImageTex[0] };
-
-			ctx.SetTextures(0, 2, tex);
-			ctx.SetVertexStream(0, mpVB, 0, sizeof(VDDisplayVertex3T3D));
-		}
-		break;
-
-	case kRenderMode_BlitRGB24:
-		{
-			ctx.SetSamplerStates(0, 1, &dctx.mpSSPoint);
-
-			IVDTTexture *tex = mpImageTex[0];
-
-			ctx.SetTextures(0, 1, &tex);
-			ctx.SetVertexStream(0, mpVB, 0, sizeof(VDDisplayVertex3T3D));
-		}
-		break;
-	}
-
-	ctx.SetVertexFormat(mpVF);
-	ctx.SetVertexProgram(mpVP);
-	ctx.SetVertexProgramConstCount(0);
-	ctx.SetFragmentProgram(mpFP);
-
-	ctx.SetIndexStream(NULL);
-
-	ctx.DrawPrimitive(kVDTPT_TriangleStrip, 0, 2);
+	mMeshPool.DrawAllMeshes(ctx, dctx);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
-VDDisplayBlitNode3D::VDDisplayBlitNode3D()
-	: mpVB(NULL)
-	, mpFP(NULL)
-	, mpSourceNode(NULL)
-	, mbLinear(false)
-	, mSharpnessX(0.0f)
-	, mSharpnessY(0.0f)
-	, mDstX(0)
-	, mDstY(0)
-	, mDstW(1)
-	, mDstH(1)
-{
+VDDisplayBlitNode3D::VDDisplayBlitNode3D() {
 }
 
 VDDisplayBlitNode3D::~VDDisplayBlitNode3D() {
@@ -1573,52 +1585,60 @@ bool VDDisplayBlitNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, u
 
 		mpSourceNode = source;
 		source->AddRef();
-
-		vdsaferelease <<= mpVB, mpFP;
 	}
 
 	mMapping = source->GetTextureMapping();
 
+	mMeshPool.Clear();
+	auto mb = mMeshPool.AddMesh(dctx);
+
 	const bool sharpBilinear = linear && (sharpnessX != 1.0f || sharpnessY != 1.0f);
 
-	if (!mpVB) {
-		const float u0 = 0.0f;
-		const float v0 = 0.0f;
-		const float u1 = sharpBilinear ? (float)w : mMapping.mUSize;
-		const float v1 = sharpBilinear ? (float)h : mMapping.mVSize;
+	const float u0 = sharpBilinear ? mMapping.mTexelOffset.x : mMapping.mUVOffset.x;
+	const float v0 = sharpBilinear ? mMapping.mTexelOffset.y : mMapping.mUVOffset.y;
+	const float u1 = u0 + (sharpBilinear ? (float)w : mMapping.mUVSize.x);
+	const float v1 = v0 + (sharpBilinear ? (float)h : mMapping.mUVSize.y);
 
-		const VDDisplayVertex3D vx[8]={
-			{ -1.0f, +1.0f, 0.0f, u0, v0 },
-			{ -1.0f, -1.0f, 0.0f, u0, v1 },
-			{ +1.0f, +1.0f, 0.0f, u1, v0 },
-			{ +1.0f, -1.0f, 0.0f, u1, v1 },
-		};
+	const VDDisplayVertex3D vx[4]={
+		{ -1.0f, +1.0f, 0.0f, u0, v0 },
+		{ -1.0f, -1.0f, 0.0f, u0, v1 },
+		{ +1.0f, +1.0f, 0.0f, u1, v0 },
+		{ +1.0f, -1.0f, 0.0f, u1, v1 },
+	};
 
-		if (!ctx.CreateVertexBuffer(sizeof vx, false, vx, &mpVB)) {
-			Shutdown();
-			return false;
-		}
-	}
+	mb.SetVertices(vx);
 
 	if (sharpBilinear) {
-		if (!mpFP) {
-			if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_BlitSharp), &mpFP)) {
-				Shutdown();
-				return false;
-			}
-		}
+		mb.SetFragmentProgram(VDTDataView(g_VDDispFP_BlitSharp));
+
+		float params[4]={
+			sharpnessX,
+			sharpnessY,
+			1.0f / (float)mMapping.mTexHeight,
+			1.0f / (float)mMapping.mTexWidth,
+		};
+
+		mb.SetFPConstData(params);
 	} else {
-		vdsaferelease <<= mpFP;
+		mb.SetFragmentProgram(dctx.mpFPBlit);
 	}
 
-	mbLinear = linear;
-	mSharpnessX = sharpnessX;
-	mSharpnessY = sharpnessY;
+	mSourceTextureIndex = mMeshPool.RegisterTexture(nullptr);
+	mb.InitTextures(1);
+	mb.SetTexture(0, mSourceTextureIndex);
+	mb.SetTopologyQuad();
+
+	mb.InitSamplers(1);
+	mb.SetSampler(0, linear ? dctx.mpSSBilinear : dctx.mpSSPoint);
+
+	mb.SetVertexProgram(dctx.mpVPTexture);
+	mb.SetVertexFormat(dctx.mpVFTexture);
+
 	return true;
 }
 
 void VDDisplayBlitNode3D::Shutdown() {
-	vdsaferelease <<= mpFP, mpVB, mpSourceNode;
+	vdsaferelease <<= mpSourceNode;
 }
 
 void VDDisplayBlitNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const VDDRenderView& renderView) {
@@ -1629,39 +1649,10 @@ void VDDisplayBlitNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, c
 
 	VDTAutoScope scope(ctx, "Blit");
 
-	ctx.SetBlendState(NULL);
-	ctx.SetRasterizerState(NULL);
-
-	ctx.SetSamplerStates(0, 1, mbLinear ? &dctx.mpSSBilinear : &dctx.mpSSPoint);
-
-	ctx.SetVertexProgram(dctx.mpVPTexture);
-
-	if (mpFP) {
-		float params[4]={
-			mSharpnessX,
-			mSharpnessY,
-			1.0f / (float)mMapping.mTexHeight,
-			1.0f / (float)mMapping.mTexWidth,
-		};
-
-		ctx.SetFragmentProgramConstCount(1);
-		ctx.SetFragmentProgramConstF(0, 1, params);
-		ctx.SetFragmentProgram(mpFP);
-	} else
-		ctx.SetFragmentProgram(dctx.mpFPBlit);
-
-	ctx.SetVertexFormat(dctx.mpVFTexture);
-	ctx.SetVertexStream(0, mpVB, 0, sizeof(VDDisplayVertex3D));
-	ctx.SetIndexStream(NULL);
-
 	dctx.ApplyRenderViewWithSubrect(renderView, mDstX, mDstY, mDstW, mDstH);
 
-	IVDTTexture *tex = src;
-	ctx.SetTextures(0, 1, &tex);
-
-	ctx.DrawPrimitive(kVDTPT_TriangleStrip, 0, 2);
-
-	ctx.ClearTexturesStartingAt(0);
+	mMeshPool.SetTexture(mSourceTextureIndex, src);
+	mMeshPool.DrawAllMeshes(ctx, dctx);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1674,32 +1665,14 @@ struct VDDisplayStretchBicubicNode3D::Vertex {
 	float uf, vf;
 };
 
-VDDisplayStretchBicubicNode3D::VDDisplayStretchBicubicNode3D()
-	: mpFP(NULL)
-	, mpVP(NULL)
-	, mpVF(NULL)
-	, mpVB(NULL)
-	, mpRTTHoriz(NULL)
-	, mpFilterTex(NULL)
-	, mpSourceNode(NULL)
-	, mSrcW(0)
-	, mSrcH(0)
-	, mDstX(0)
-	, mDstY(0)
-	, mDstW(0)
-	, mDstH(0)
-{
+VDDisplayStretchBicubicNode3D::VDDisplayStretchBicubicNode3D() {
 }
 
 VDDisplayStretchBicubicNode3D::~VDDisplayStretchBicubicNode3D() {
 	Shutdown();
 }
 
-const vdrect32 VDDisplayStretchBicubicNode3D::GetDestArea() const {
-	return vdrect32(mDstX, mDstY, mDstW, mDstH);
-}
-
-bool VDDisplayStretchBicubicNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, uint32 srcw, uint32 srch, sint32 dstx, sint32 dsty, uint32 dstw, uint32 dsth, VDDisplaySourceNode3D *src) {
+bool VDDisplayStretchBicubicNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, uint32 srcw, uint32 srch, uint32 dstw, uint32 dsth, float outx, float outy, float outw, float outh, VDDisplaySourceNode3D *src) {
 	uint32 srctexh = srch;
 	uint32 dsttexw = dstw;
 
@@ -1717,23 +1690,12 @@ bool VDDisplayStretchBicubicNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3
 	}
 
 	mpSourceNode = src;
-	src->AddRef();
 
-	if (!mpVP) {
-		if (!ctx.CreateVertexProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispVP_StretchBltCubic), &mpVP)) {
-			Shutdown();
-			return false;
-		}
-	}
-
-	if (!mpFP) {
-		if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispFP_StretchBltCubic), &mpFP)) {
-			Shutdown();
-			return false;
-		}
-	}
+	mMeshPool.Clear();
 
 	if (!mpVF) {
+		IVDTVertexProgram *vp = dctx.InitVP(VDTDataView(g_VDDispVP_StretchBltCubic));
+
 		static const VDTVertexElement kVertexFormat[]={
 			{ offsetof(Vertex, x), kVDTET_Float3, kVDTEU_Position, 0 },
 			{ offsetof(Vertex, u0), kVDTET_Float2, kVDTEU_TexCoord, 0 },
@@ -1742,60 +1704,75 @@ bool VDDisplayStretchBicubicNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3
 			{ offsetof(Vertex, uf), kVDTET_Float2, kVDTEU_TexCoord, 3 },
 		};
 
-		if (!ctx.CreateVertexFormat(kVertexFormat, 5, mpVP, &mpVF)) {
+		if (!ctx.CreateVertexFormat(kVertexFormat, 5, vp, &mpVF)) {
 			Shutdown();
 			return false;
 		}
 	}
 
-	if (mSrcW != srcw || mSrcH != srch || mDstW != dstw || mDstH != dsth) {
-		vdsaferelease <<= mpVB, mpRTTHoriz, mpFilterTex;
+	mSrcW = srcw;
+	mSrcH = srch;
+	mDstW = dstw;
+	mDstH = dsth;
 
-		mSrcW = srcw;
-		mSrcH = srch;
-		mDstW = dstw;
-		mDstH = dsth;
-	}
+	VDDPoolTextureIndex tempTex = mMeshPool.AddTempTexture(ctx, dsttexw, srctexh, dctx.mBGRAFormat, 1);
 
-	mDstX = dstx;
-	mDstY = dsty;
+	mOutX = outx;
+	mOutY = outy;
+	mOutW = outw;
+	mOutH = outh;
 
 	const VDDisplaySourceTexMapping mapping = src->GetTextureMapping();
 
-	const uint32 filterTexWidth = std::max<uint32>(dstw, dsth);
+	uint32 filterTexWidth = std::max<uint32>(dstw, dsth);
 
-	const float hdu = srcw / (float)mapping.mTexWidth;
-	const float hdv = srch / (float)mapping.mTexHeight;
+	if (!ctx.GetDeviceCaps().mbNonPow2) {
+		filterTexWidth = VDCeilToPow2(filterTexWidth);
+	}
 
-	const float u0 = -1.5f / (float)mapping.mTexWidth;
-	const float u1 = u0 + hdu;
-	const float u2 = 0.0f;
-	const float u3 = hdu;
-	const float u4 = +1.5f / (float)mapping.mTexWidth;
-	const float u5 = u4 + hdu;
+	const float offsetx = std::max<float>(0, -outx);
+	const float offsety = std::max<float>(0, -outy);
+
+	const float srcustep = 1.0f / (float)mapping.mTexWidth;
+	const float srcvstep = 1.0f / (float)mapping.mTexHeight;
+
+	const float hdu = srcw * srcustep;
+	const float hdv = srch * srcvstep;
+
+	const float u2 = hdu * offsetx / outw;
+	const float u0 = u2 - 1.5f * srcustep;
+	const float u4 = u2 + 1.5f * srcustep;
+
+	const float u1 = u0 + hdu * std::min<float>(1.0f, (float)dstw / outw);
+	const float u3 = u2 + hdu * std::min<float>(1.0f, (float)dstw / outw);
+	const float u5 = u4 + hdu * std::min<float>(1.0f, (float)dstw / outw);
 
 	const float vdu = (float)dstw / (float)dsttexw;
 	const float vdv = (float)srch / (float)srctexh;
 
-	const float v0 = -1.5f / (float)srch;
-	const float v1 = v0 + vdv;
-	const float v2 = 0.0f;
-	const float v3 = vdv;
-	const float v4 = +1.5f / (float)srch;
-	const float v5 = v4 + vdv;
+	const float v2 = vdv * offsety / outh;
+	const float v0 = v2 - 1.5f / (float)srctexh;
+	const float v4 = v2 + 1.5f / (float)srctexh;
 
+	const float v1 = v0 + vdv * std::min<float>(1.0f, dsth / outh);
+	const float v3 = v2 + vdv * std::min<float>(1.0f, dsth / outh);
+	const float v5 = v4 + vdv * std::min<float>(1.0f, dsth / outh);
+
+	const float filterTexStep = 1.0f / (float)filterTexWidth;
 	const float hf0 = 0;
-	const float hf1 = dstw / (float)filterTexWidth;
+	const float hf1 = dstw * filterTexStep;
 	const float vf0 = 0;
-	const float vf1 = dsth / (float)filterTexWidth;
+	const float vf1 = dsth * filterTexStep;
 
-	const Vertex vx[8]={
+	const Vertex vxhoriz[4] = {
 		// horizontal pass
 		{ -1.0f, +1.0f, 0.0f, u0, 0.0f, u2, 0.0f, u4, 0.0f, hf0, 0.0f },
 		{ -1.0f, -1.0f, 0.0f, u0, hdv,  u2, hdv,  u4, hdv,  hf0, 0.0f },
 		{ +1.0f, +1.0f, 0.0f, u1, 0.0f, u3, 0.0f, u5, 0.0f, hf1, 0.0f },
 		{ +1.0f, -1.0f, 0.0f, u1, hdv,  u3, hdv,  u5, hdv,  hf1, 0.0f },
-
+	};
+	
+	const Vertex vxvert[4] = {
 		// vertical pass
 		{ -1.0f, +1.0f, 0.0f, 0.0f, v0, 0.0f, v2, 0.0f, v4, vf0, 1.0f },
 		{ -1.0f, -1.0f, 0.0f, 0.0f, v1, 0.0f, v3, 0.0f, v5, vf1, 1.0f },
@@ -1803,20 +1780,10 @@ bool VDDisplayStretchBicubicNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3
 		{ +1.0f, -1.0f, 0.0f, vdu,  v1, vdu,  v3, vdu,  v5, vf1, 1.0f },
 	};
 
-	if (!ctx.CreateVertexBuffer(sizeof vx, false, vx, &mpVB)) {
-		Shutdown();
-		return false;
-	}
-
-	if (!ctx.CreateTexture2D(dsttexw, srctexh, dctx.mBGRAFormat, 1, kVDTUsage_Render, NULL, &mpRTTHoriz)) {
-		Shutdown();
-		return false;
-	}
-
 	vdfastvector<uint32> texData(filterTexWidth * 2, 0);
 
-	VDDisplayCreateBicubicTexture(texData.data(), dstw, srcw, false);
-	VDDisplayCreateBicubicTexture(texData.data() + filterTexWidth, dsth, srch, false);
+	VDDisplayCreateBicubicTexture(texData.data(), dstw, srcw, offsetx, outw);
+	VDDisplayCreateBicubicTexture(texData.data() + filterTexWidth, dsth, srch, offsety, outh);
 
 	VDTInitData2D texFiltInitData = { texData.data(), (ptrdiff_t)(filterTexWidth * sizeof(uint32)) };
 	if (!ctx.CreateTexture2D(filterTexWidth, 2, dctx.mBGRAFormat, 1, kVDTUsage_Default, &texFiltInitData, &mpFilterTex)) {
@@ -1824,11 +1791,46 @@ bool VDDisplayStretchBicubicNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3
 		return false;
 	}
 
+	VDDPoolTextureIndex filterTex = mMeshPool.RegisterTexture(mpFilterTex);
+	mSourceTex = mMeshPool.RegisterTexture(nullptr);
+
+	// do horizontal blit
+	auto mb = mMeshPool.AddMesh(dctx);
+	mb.InitSamplers({ dctx.mpSSBilinear, dctx.mpSSPoint, dctx.mpSSPoint });
+	mb.InitTextures({ mSourceTex, mSourceTex, filterTex });
+	mb.SetVertexProgram(VDTDataView(g_VDDispVP_StretchBltCubic));
+	mb.SetFragmentProgram(VDTDataView(g_VDDispFP_StretchBltCubic));
+	mb.SetVertexFormat(mpVF);
+	mb.SetVertices(vxhoriz);
+	mb.SetTopologyQuad();
+
+	VDTViewport vp;
+	vp.mX = 0;
+	vp.mY = 0;
+	vp.mWidth = mDstW;
+	vp.mHeight = mSrcH;
+	vp.mMinZ = 0.0f;
+	vp.mMaxZ = 1.0f;
+	mb.SetRenderView(tempTex, 0, false, vp);
+
+	// do vertical blit
+	auto mb2 = mMeshPool.AddMesh(dctx);
+	mb2.InitTextures({ tempTex, tempTex, filterTex });
+	mb2.InitSamplers({ dctx.mpSSBilinear, dctx.mpSSPoint, dctx.mpSSPoint });
+	mb2.SetVertexProgram(VDTDataView(g_VDDispVP_StretchBltCubic));
+	mb2.SetFragmentProgram(VDTDataView(g_VDDispFP_StretchBltCubic));
+	mb2.SetVertexFormat(mpVF);
+	mb2.SetVertices(vxvert);
+	mb2.SetTopologyQuad();
+
+	mOutputView = mMeshPool.RegisterRenderView({});
+	mb2.SetRenderView(mOutputView);
+
 	return true;
 }
 
 void VDDisplayStretchBicubicNode3D::Shutdown() {
-	vdsaferelease <<= mpRTTHoriz, mpFilterTex, mpVF, mpVP, mpFP, mpVB, mpSourceNode;
+	vdsaferelease <<= mpRTTHoriz, mpFilterTex, mpVF;
 }
 
 void VDDisplayStretchBicubicNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const VDDRenderView& renderView) {
@@ -1839,61 +1841,17 @@ void VDDisplayStretchBicubicNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3
 
 	if (!srctex)
 		return;
-
-	ctx.SetBlendState(NULL);
-	ctx.SetRasterizerState(NULL);
-
-	IVDTSamplerState *samplers[3] = { dctx.mpSSBilinear, dctx.mpSSPoint, dctx.mpSSPoint };
-	ctx.SetSamplerStates(0, 3, samplers);
-
-	ctx.SetVertexProgram(mpVP);
-	ctx.SetFragmentProgram(mpFP);
-
-	ctx.SetVertexFormat(mpVF);
-	ctx.SetVertexStream(0, mpVB, 0, sizeof(Vertex));
-	ctx.SetIndexStream(NULL);
-
-	// do horizontal blit
-	IVDTSurface *rttsurfh = mpRTTHoriz->GetLevelSurface(0);
-
-	VDTSurfaceDesc rttsurfdesc;
-	rttsurfh->GetDesc(rttsurfdesc);
-
-	VDTViewport vp;
-	vp.mX = 0;
-	vp.mY = 0;
-	vp.mWidth = mDstW;
-	vp.mHeight = mSrcH;
-	vp.mMinZ = 0.0f;
-	vp.mMaxZ = 1.0f;
-	ctx.SetRenderTarget(0, rttsurfh, renderView.mbBypassSrgb);
-	ctx.SetViewport(vp);
-
-	IVDTTexture *texh[3] = { srctex, srctex, mpFilterTex };
-	ctx.SetTextures(0, 3, texh);
-
-	ctx.DrawPrimitive(kVDTPT_TriangleStrip, 0, 2);
-
-	// do vertical blit
-	dctx.ApplyRenderViewWithSubrect(renderView, mDstX, mDstY, mDstW, mDstH);
-
-	IVDTTexture *texv[3] = { mpRTTHoriz, mpRTTHoriz, mpFilterTex };
-	ctx.SetTextures(0, 3, texv);
-
-	ctx.DrawPrimitive(kVDTPT_TriangleStrip, 4, 2);
-
-	ctx.ClearTexturesStartingAt(0);
+	
+	mMeshPool.SetRenderViewWithSubrect(mOutputView, renderView, std::max<float>(0.0f, mOutX), std::max<float>(0.0f, mOutY), mDstW, mDstH);
+	mMeshPool.SetTexture(mSourceTex, srctex);
+	mMeshPool.DrawAllMeshes(ctx, dctx);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
 constexpr uint32 VDDisplayScreenFXNode3D::kTessellation = 24;
 
-VDDisplayScreenFXNode3D::VDDisplayScreenFXNode3D()
-	: mpVB(NULL)
-	, mpFP(NULL)
-	, mpSourceNode(NULL)
-{
+VDDisplayScreenFXNode3D::VDDisplayScreenFXNode3D() {
 }
 
 VDDisplayScreenFXNode3D::~VDDisplayScreenFXNode3D() {
@@ -1903,109 +1861,43 @@ VDDisplayScreenFXNode3D::~VDDisplayScreenFXNode3D() {
 bool VDDisplayScreenFXNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const Params& initParams, VDDisplaySourceNode3D *source) {
 	mParams = initParams;
 
-	if (mpSourceNode != source) {
-		if (mpSourceNode)
-			mpSourceNode->Release();
-
-		mpSourceNode = source;
-		source->AddRef();
-
-		vdsaferelease <<= mpVB, mpFP;
-	}
+	mpSourceNode = source;
 
 	mMapping = source->GetTextureMapping();
-
-	const uint32 w = mMapping.mWidth;
-	const uint32 h = mMapping.mHeight;
 
 	const bool sharpBilinear = mParams.mbLinear && (mParams.mSharpnessX != 1.0f || mParams.mSharpnessY != 1.0f);
 	const bool scanlines = (mParams.mScanlineIntensity > 0);
 
-	if (!mpVB) {
-		float u0 = 0.0f;
-		float v0 = 0.0f;
-		float u1 = (float)w;
-		float v1 = (float)h;
-		float u2 = 0.0f;
-		float v2 = 0.0f;
-		float u3 = 1.0f;
-		float v3 = 1.0f;
+	mMeshPool.Clear();
+	auto mb = mMeshPool.AddMesh(dctx);
 
-		if (scanlines) {
-			// When scanlines are active, the image is shifted up by a quarter of a scanline so that
-			// the vertical space formerly occupied by a scanline is split into upper and lower halves,
-			// with the upper half containing the bright part of each scanline and the lower half having
-			// the dark region between scanlines. Besides maintaining consistency with the CPU,
-			// this avoids an unwanted case with exact 2:1 sizing where the standard mapping would result
-			// in both half scanlines mapping 25%/75% between scanlines, giving a blurry image. Applying
-			// a 1/4 scan offset gives crisp half-scanlines on and off of each scanline instead.
+	float u0 = mMapping.mTexelOffset.x;
+	float v0 = mMapping.mTexelOffset.y;
+	float u1 = u0 + mMapping.mTexelSize.x;
+	float v1 = v0 + mMapping.mTexelSize.y;
+	float u2 = 0.0f;
+	float v2 = 0.0f;
+	float u3 = 1.0f;
+	float v3 = 1.0f;
 
-			v0 += 0.25f;
-			v1 += 0.25f;
-		}
+	if (scanlines) {
+		// When scanlines are active, the image is shifted up by a quarter of a scanline so that
+		// the vertical space formerly occupied by a scanline is split into upper and lower halves,
+		// with the upper half containing the bright part of each scanline and the lower half having
+		// the dark region between scanlines. Besides maintaining consistency with the CPU,
+		// this avoids an unwanted case with exact 2:1 sizing where the standard mapping would result
+		// in both half scanlines mapping 25%/75% between scanlines, giving a blurry image. Applying
+		// a 1/4 scan offset gives crisp half-scanlines on and off of each scanline instead.
 
-		if (!sharpBilinear) {
-			u1 /= (float)mMapping.mTexWidth;
-			v0 /= (float)mMapping.mTexHeight;
-			v1 /= (float)mMapping.mTexHeight;
-		}
-
-		vdblock<VDDisplayVertex2T3D> vdat(4 + (kTessellation+1)*(kTessellation+1));
-
-		int i = 0;
-		vdat[i++] = { -1.0f, +1.0f, 0.0f, u0, v0, u2, v2 };
-		vdat[i++] = { -1.0f, -1.0f, 0.0f, u0, v1, u2, v3 };
-		vdat[i++] = { +1.0f, +1.0f, 0.0f, u1, v0, u3, v2 };
-		vdat[i++] = { +1.0f, -1.0f, 0.0f, u1, v1, u3, v3 };
-
-		for(int y=0; y<=kTessellation; ++y) {
-			const float yf1 = (float)y / (float)kTessellation;
-			const float yf0 = 1.0f - yf1;
-
-			for(int x=0; x<=kTessellation; ++x) {
-				const float xf1 = (float)x / (float)kTessellation;
-				const float xf0 = 1.0f - xf1;
-
-				vdat[i++] = {
-					-1.0f + 2.0f * xf1,
-					+1.0f - 2.0f * yf1,
-					0.0f,
-					u0 * xf0 + u1 * xf1,
-					v0 * yf0 + v1 * yf1,
-					u2 * xf0 + u3 * xf1,
-					v2 * yf0 + v3 * yf1
-				};
-			}
-		}
-
-		if (!ctx.CreateVertexBuffer((uint32)(vdat.size() * sizeof(vdat[0])), false, vdat.data(), &mpVB)) {
-			Shutdown();
-			return false;
-		}
+		v0 += 0.25f;
+		v1 += 0.25f;
 	}
 
-	if (!mpIB) {
-		vdblock<uint16> idat(kTessellation*kTessellation*6);
-
-		int i = 0;
-		for(int y=0; y<(int)kTessellation; ++y) {
-			int idx0 = y*(int)(kTessellation + 1);
-			int idx1 = idx0 + (int)(kTessellation + 1);
-
-			for(int x=0; x<(int)kTessellation; ++x, ++idx0, ++idx1) {
-				idat[i++] = idx0;
-				idat[i++] = idx1;
-				idat[i++] = idx0 + 1;
-				idat[i++] = idx0 + 1;
-				idat[i++] = idx1;
-				idat[i++] = idx1 + 1;
-			}
-		}
-
-		if (!ctx.CreateIndexBuffer(kTessellation*kTessellation*6, false, false, idat.data(), &mpIB)) {
-			Shutdown();
-			return false;
-		}
+	if (!sharpBilinear) {
+		u0 /= (float)mMapping.mTexWidth;
+		u1 /= (float)mMapping.mTexWidth;
+		v0 /= (float)mMapping.mTexHeight;
+		v1 /= (float)mMapping.mTexHeight;
 	}
 
 	static constexpr VDTDataView kFPSources[] = {
@@ -2032,41 +1924,22 @@ bool VDDisplayScreenFXNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 		+ (mParams.mScanlineIntensity > 0 ? 4 : 0)
 		+ (mParams.mbRenderLinear ? 2 : mParams.mColorCorrectionMatrix[0][0] != 0 ? 3 : mParams.mGamma != 1.0f ? 1 : 0);
 
-	if (!mpFP || mFPMode != fpMode) {
-		vdsaferelease <<= mpFP;
-		mFPMode = fpMode;
-
-		if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, kFPSources[fpMode], &mpFP)) {
-			Shutdown();
-			return false;
-		}
-	}
-
-	if (!mpVP) {
-		if (!ctx.CreateVertexProgram(kVDTPF_MultiTarget, VDTDataView(g_VDDispVP_ScreenFX), &mpVP)) {
-			Shutdown();
-			return false;
-		}
-	}
+	mb.SetVertexProgram(VDTDataView(g_VDDispVP_ScreenFX));
+	mb.SetFragmentProgram(kFPSources[fpMode]);
 
 	float gamma = mParams.mGamma;
 	bool gammaHasSrgb = mParams.mColorCorrectionMatrix[0][0] != 0;
-	if (mCachedGamma != gamma || mbCachedGammaHasSrgb != gammaHasSrgb || mbCachedGammaHasAdobeRGB != mParams.mbUseAdobeRGB || !mpGammaRampTex) {
-		mCachedGamma = gamma;
-		mbCachedGammaHasSrgb = gammaHasSrgb;
-		mbCachedGammaHasAdobeRGB = mParams.mbUseAdobeRGB;
 
-		vdsaferelease <<= mpGammaRampTex;
+	vdsaferelease <<= mpGammaRampTex;
 
-		uint32 gammaTex[256];
-		VDDisplayCreateGammaRamp(gammaTex, 256, gammaHasSrgb, mParams.mbUseAdobeRGB, mCachedGamma);
+	uint32 gammaTex[256];
+	VDDisplayCreateGammaRamp(gammaTex, 256, gammaHasSrgb, mParams.mbUseAdobeRGB, gamma);
 
-		VDTInitData2D initData { gammaTex, sizeof(gammaTex) };
+	VDTInitData2D initData { gammaTex, sizeof(gammaTex) };
 
-		if (!ctx.CreateTexture2D(256, 1, dctx.mBGRAFormat, 1, kVDTUsage_Default, &initData, &mpGammaRampTex)) {
-			Shutdown();
-			return false;
-		}
+	if (!ctx.CreateTexture2D(256, 1, dctx.mBGRAFormat, 1, kVDTUsage_Default, &initData, &mpGammaRampTex)) {
+		Shutdown();
+		return false;
 	}
 
 	// Compute the scanline mask texture.
@@ -2081,61 +1954,35 @@ bool VDDisplayScreenFXNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 	// done in linear space, but the math is transformed to push the gamma correction
 	// into the texture where we can precompute it.
 
-	if (!mpScanlineMaskTex) {
-		uint32 scanlineMaskH = std::max<uint32>(1, mParams.mDstH);
-		uint32 scanlineMaskTexH = scanlineMaskH;
+	uint32 scanlineMaskH = std::max<uint32>(1, mParams.mClipDstH);
+	uint32 scanlineMaskTexH = scanlineMaskH;
 
-		// If the device doesn't support pow2, round up the texture size. We'll only
-		// use the top part.
-		if (!ctx.GetDeviceCaps().mbNonPow2) {
-			scanlineMaskTexH = VDCeilToPow2(scanlineMaskTexH);
-		}
-
-		vdblock<uint32> imageMask(scanlineMaskTexH);
-		VDDisplayCreateScanlineMaskTexture(imageMask.data(), sizeof(imageMask[0]), h, scanlineMaskH, scanlineMaskTexH, mParams.mScanlineIntensity, mParams.mbRenderLinear);
-
-		mScanlineMaskNormH = (float)scanlineMaskH / (float)scanlineMaskTexH;
-
-		VDTInitData2D initData { imageMask.data(), sizeof(imageMask[0]) };
-		if (!ctx.CreateTexture2D(1, scanlineMaskTexH, dctx.mBGRAFormat, 1, kVDTUsage_Default, &initData, &mpScanlineMaskTex)) {
-			Shutdown();
-			return false;
-		}
-
+	// If the device doesn't support pow2, round up the texture size. We'll only
+	// use the top part.
+	if (!ctx.GetDeviceCaps().mbNonPow2) {
+		scanlineMaskTexH = VDCeilToPow2(scanlineMaskTexH);
 	}
 
-	return true;
-}
+	vdblock<uint32> imageMask(scanlineMaskTexH);
+	VDDisplayCreateScanlineMaskTexture(imageMask.data(), sizeof(imageMask[0]), mParams.mSrcH, scanlineMaskH, mParams.mDstY - mParams.mClipDstY, mParams.mDstH, scanlineMaskTexH, mParams.mScanlineIntensity, mParams.mbRenderLinear);
 
-void VDDisplayScreenFXNode3D::Shutdown() {
-	vdsaferelease <<= mpVP, mpFP, mpVB, mpIB, mpSourceNode, mpGammaRampTex, mpScanlineMaskTex;
-}
+	mScanlineMaskVScale = (float)mParams.mDstH / (float)scanlineMaskTexH;
+	mScanlineMaskVBase = (mParams.mDstY - mParams.mClipDstY) / (float)scanlineMaskTexH;
 
-void VDDisplayScreenFXNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const VDDRenderView& renderView) {
-	IVDTTexture2D *src = mpSourceNode->Draw(ctx, dctx);
-
-	if (!src)
-		return;
-
-	VDTAutoScope scope(ctx, "ScreenFX");
-
-	ctx.SetBlendState(NULL);
-	ctx.SetRasterizerState(NULL);
+	VDTInitData2D initDataScanlineMask { imageMask.data(), sizeof(imageMask[0]) };
+	if (!ctx.CreateTexture2D(1, scanlineMaskTexH, dctx.mBGRAFormat, 1, kVDTUsage_Default, &initDataScanlineMask, &mpScanlineMaskTex)) {
+		Shutdown();
+		return false;
+	}
 
 	const bool useDistortion = mParams.mDistortionX > 0;
 
-	IVDTSamplerState *samplers[3] = {
+	mb.InitSamplers({
 		// source
 		mParams.mbLinear ? dctx.mpSSBilinear : dctx.mpSSPoint,
 		mParams.mDistortionX > 0 ? dctx.mpSSBilinear : dctx.mpSSPoint,
 		dctx.mpSSBilinear
-	};
-
-	ctx.SetSamplerStates(0, 3, samplers);
-
-	ctx.SetVertexProgram(mpVP);
-
-	const bool sharpBilinear = mParams.mbLinear && (mParams.mSharpnessX != 1.0f || mParams.mSharpnessY != 1.0f);
+	});
 
 	const float ccOverride = mParams.mColorCorrectionMatrix[0][0] == 0 && mParams.mbRenderLinear ? 1.0f : 0.0f;
 
@@ -2157,13 +2004,13 @@ void VDDisplayScreenFXNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 		distortionMapping.mScaleX,
 		distortionMapping.mScaleY,
 		distortionMapping.mSqRadius,
-		0,
+		mScanlineMaskVBase,
 
 		// sharp bilinear texel addressing info 
-		sharpBilinear ? (float)mMapping.mWidth  : mMapping.mUSize,
-		sharpBilinear ? (float)mMapping.mHeight : mMapping.mVSize,
+		sharpBilinear ? mMapping.mTexelSize.x : mMapping.mUVSize.x,
+		sharpBilinear ? mMapping.mTexelSize.y : mMapping.mUVSize.y,
 		mParams.mScanlineIntensity > 0 ? sharpBilinear ? 0.25f : 0.25f / (float)mMapping.mTexHeight : 0.0f,
-		mScanlineMaskNormH,
+		mScanlineMaskVScale,
 
 		// color correction matrix
 		(mParams.mColorCorrectionMatrix[0][0] + ccOverride) * ccScale,
@@ -2182,13 +2029,11 @@ void VDDisplayScreenFXNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 		0,
 	};
 
-	ctx.SetFragmentProgramConstCount(6);
-	ctx.SetFragmentProgramConstF(0, 6, params);
-	ctx.SetFragmentProgram(mpFP);
+	mb.SetFPConstData(params);
 	
 	float vsParams[16] = {
-		mScanlineMaskNormH,
-		0,
+		mScanlineMaskVScale,
+		mScanlineMaskVBase,
 		0,
 		0,
 
@@ -2203,47 +2048,118 @@ void VDDisplayScreenFXNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 		distortionMapping.mSqRadius,
 		0,
 
-		// sharp bilinear texel addressing info 
-		sharpBilinear ? (float)mMapping.mWidth  : mMapping.mUSize,
-		sharpBilinear ? (float)mMapping.mHeight : mMapping.mVSize,
-		mParams.mScanlineIntensity > 0 ? sharpBilinear ? 0.25f : 0.25f / (float)mMapping.mTexHeight : 0.0f,
-		mScanlineMaskNormH,
-};
-
-	ctx.SetVertexProgramConstCount(3);
-	ctx.SetVertexProgramConstF(1, 4, vsParams);
-
-	ctx.SetVertexFormat(dctx.mpVFTexture2T);
-	ctx.SetVertexStream(0, mpVB, 0, sizeof(VDDisplayVertex2T3D));
-
-	IVDTTexture *textures[3] = {
-		src,
-		mpScanlineMaskTex,
-		mpGammaRampTex
+		// output transform
+		2.0f,
+		-2.0f,
+		1.0f,
+		-1.0f
 	};
 
-	dctx.ApplyRenderViewWithSubrect(renderView, mParams.mDstX, mParams.mDstY, mParams.mDstW, mParams.mDstH);
-	ctx.SetTextures(0, 3, textures);
+	mb.SetVPConstData(vsParams);
+	mb.SetVertexFormat(dctx.mpVFTexture2T);
+
+	mOutputViewId = mMeshPool.RegisterRenderView({});
+	mb.SetRenderView(mOutputViewId);
+
+	mSourceTextureIndex = mMeshPool.RegisterTexture(nullptr);
+	mb.InitTextures({ mSourceTextureIndex, mMeshPool.RegisterTexture(mpScanlineMaskTex), mMeshPool.RegisterTexture(mpGammaRampTex) });
 
 	if (useDistortion) {
-		ctx.Clear(kVDTClear_Color, 0, 0, 0);
-		ctx.SetIndexStream(mpIB);
-		ctx.DrawIndexedPrimitive(kVDTPT_Triangles, 4, 0, (kTessellation+1)*(kTessellation+1), 0, kTessellation * kTessellation * 2);
+		vdblock<VDDisplayVertex2T3D> vdat((kTessellation+1)*(kTessellation+1));
+
+		int vxidx = 0;
+		for(int y=0; y<=kTessellation; ++y) {
+			const float yf1 = (float)y / (float)kTessellation;
+			const float yf0 = 1.0f - yf1;
+
+			for(int x=0; x<=kTessellation; ++x) {
+				const float xf1 = (float)x / (float)kTessellation;
+				const float xf0 = 1.0f - xf1;
+				const vdfloat2 uv1 { 
+					u2 * xf0 + u3 * xf1,
+					v2 * yf0 + v3 * yf1
+				};
+
+				vdfloat2 v = uv1 - vdfloat2 { 0.5f, 0.5f };
+				vdfloat2 v2 = v * vdfloat2 { distortionMapping.mScaleX, distortionMapping.mScaleY };
+				vdfloat2 pos = v * sqrtf(distortionMapping.mSqRadius / (1.0f + nsVDMath::dot(v2, v2))) + vdfloat2 { 0.5f, 0.5f };
+
+				vdat[vxidx++] = {
+					pos.x * 2.0f - 1.0f,
+					pos.y * -2.0f + 1.0f,
+					0.0f,
+					u0 * xf0 + u1 * xf1,
+					v0 * yf0 + v1 * yf1,
+					uv1.x,
+					uv1.y
+				};
+			}
+		}
+
+		mb.SetVertices(vdat.data(), vdat.size());
+
+		vdblock<uint16> idat(kTessellation*kTessellation*6);
+
+		int i = 0;
+		for(int y=0; y<(int)kTessellation; ++y) {
+			int idx0 = y*(int)(kTessellation + 1);
+			int idx1 = idx0 + (int)(kTessellation + 1);
+
+			for(int x=0; x<(int)kTessellation; ++x, ++idx0, ++idx1) {
+				idat[i++] = idx0;
+				idat[i++] = idx1;
+				idat[i++] = idx0 + 1;
+				idat[i++] = idx0 + 1;
+				idat[i++] = idx1;
+				idat[i++] = idx1 + 1;
+			}
+		}
+
+		mb.SetClear(0);
+		mb.SetTopology(idat.data(), idat.size() / 3);
 	} else {
-		ctx.SetIndexStream(NULL);
-		ctx.DrawPrimitive(kVDTPT_TriangleStrip, 0, 2);
+		const VDDisplayVertex2T3D verts[] = {
+			{ -1.0f, +1.0f, 0.0f, u0, v0, u2, v2 },
+			{ -1.0f, -1.0f, 0.0f, u0, v1, u2, v3 },
+			{ +1.0f, +1.0f, 0.0f, u1, v0, u3, v2 },
+			{ +1.0f, -1.0f, 0.0f, u1, v1, u3, v3 },
+		};
+
+		mb.SetVertices(verts);
+		mb.SetTopologyQuad();
 	}
 
-	ctx.ClearTexturesStartingAt(0);
+	return true;
+}
+
+void VDDisplayScreenFXNode3D::Shutdown() {
+	vdsaferelease <<= mpSourceNode, mpGammaRampTex, mpScanlineMaskTex;
+}
+
+void VDDisplayScreenFXNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const VDDRenderView& renderView) {
+	IVDTTexture2D *src = mpSourceNode->Draw(ctx, dctx);
+
+	if (!src)
+		return;
+
+	VDTAutoScope scope(ctx, "ScreenFX");
+	
+	mMeshPool.SetTexture(mSourceTextureIndex, src);
+
+	VDDRenderView newRenderView(renderView);
+	newRenderView.mSoftViewport.mOffset += vdfloat2 { mParams.mDstX, mParams.mDstY };
+	newRenderView.mSoftViewport.mSize = vdfloat2 { mParams.mDstW, mParams.mDstH };
+	newRenderView.mViewport.mWidth = mParams.mClipDstX + mParams.mClipDstW;
+	newRenderView.mViewport.mHeight = mParams.mClipDstY + mParams.mClipDstH;
+
+	mMeshPool.SetRenderView(mOutputViewId, newRenderView);
+
+	mMeshPool.DrawAllMeshes(ctx, dctx);
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
-VDDisplayArtifactingNode3D::VDDisplayArtifactingNode3D()
-	: mpVB(NULL)
-	, mpFP(NULL)
-	, mpSourceNode(NULL)
-{
+VDDisplayArtifactingNode3D::VDDisplayArtifactingNode3D() {
 }
 
 VDDisplayArtifactingNode3D::~VDDisplayArtifactingNode3D() {
@@ -2251,55 +2167,45 @@ VDDisplayArtifactingNode3D::~VDDisplayArtifactingNode3D() {
 }
 
 bool VDDisplayArtifactingNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, float dy, bool extendedOutput, VDDisplaySourceNode3D *source) {
-	if (mpSourceNode != source) {
-		if (mpSourceNode)
-			mpSourceNode->Release();
+	mpSourceNode = source;
 
-		mpSourceNode = source;
-		source->AddRef();
-
-		vdsaferelease <<= mpVB, mpFP;
-	}
+	mMeshPool.Clear();
+	auto mb = mMeshPool.AddMesh(dctx);
 
 	mMapping = source->GetTextureMapping();
 
-	if (!mpVB) {
-		const float u0 = 0.0f;
-		const float v0 = 0.0f;
-		const float u1 = mMapping.mUSize;
-		const float v1 = mMapping.mVSize;
-		const float u2 = u0;
-		const float v2 = v0 + dy / mMapping.mTexHeight;
-		const float u3 = u1;
-		const float v3 = v1 + dy / mMapping.mTexHeight;
+	const float u0 = mMapping.mUVOffset.x;
+	const float v0 = mMapping.mUVOffset.y;
+	const float u1 = u0 + mMapping.mUVSize.x;
+	const float v1 = v0 + mMapping.mUVSize.y;
+	const float u2 = u0;
+	const float v2 = v0 + dy / mMapping.mTexHeight;
+	const float u3 = u1;
+	const float v3 = v1 + dy / mMapping.mTexHeight;
 
-		const VDDisplayVertex2T3D vx[4]={
-			{ -1.0f, +1.0f, 0.0f, u0, v0, u2, v2 },
-			{ -1.0f, -1.0f, 0.0f, u0, v1, u2, v3 },
-			{ +1.0f, +1.0f, 0.0f, u1, v0, u3, v2 },
-			{ +1.0f, -1.0f, 0.0f, u1, v1, u3, v3 },
-		};
+	const VDDisplayVertex2T3D vx[4]={
+		{ -1.0f, +1.0f, 0.0f, u0, v0, u2, v2 },
+		{ -1.0f, -1.0f, 0.0f, u0, v1, u2, v3 },
+		{ +1.0f, +1.0f, 0.0f, u1, v0, u3, v2 },
+		{ +1.0f, -1.0f, 0.0f, u1, v1, u3, v3 },
+	};
 
-		if (!ctx.CreateVertexBuffer(sizeof vx, false, vx, &mpVB)) {
-			Shutdown();
-			return false;
-		}
-	}
+	mb.SetVertices(vx);
+	mb.SetTopologyQuad();
 
-	if (!mpFP) {
-		vdsaferelease <<= mpFP;
+	mb.SetVertexFormat(dctx.mpVFTexture2T);
+	mb.SetVertexProgram(dctx.mpVPTexture2T);
+	mb.SetFragmentProgram(extendedOutput ? VDTDataView(g_VDDispFP_PALArtifacting_ExtendedOutput) : VDTDataView(g_VDDispFP_PALArtifacting_NormalOutput));
 
-		if (!ctx.CreateFragmentProgram(kVDTPF_MultiTarget, extendedOutput ? VDTDataView(g_VDDispFP_PALArtifacting_ExtendedOutput) : VDTDataView(g_VDDispFP_PALArtifacting_NormalOutput), &mpFP)) {
-			Shutdown();
-			return false;
-		}
-	}
+	mb.InitSamplers({dctx.mpSSPoint});
+
+	mSourceTextureIndex = mMeshPool.RegisterTexture(nullptr);
+	mb.InitTextures({mSourceTextureIndex});
 
 	return true;
 }
 
 void VDDisplayArtifactingNode3D::Shutdown() {
-	vdsaferelease <<= mpFP, mpVB, mpSourceNode;
 }
 
 void VDDisplayArtifactingNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const VDDRenderView& renderView) {
@@ -2308,27 +2214,14 @@ void VDDisplayArtifactingNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& 
 	if (!src)
 		return;
 
-	ctx.SetBlendState(NULL);
-	ctx.SetRasterizerState(NULL);
+	const auto& texMapping = mpSourceNode->GetTextureMapping();
+	
+	VDTAutoScope scope(ctx, "Artifacting");
 
-	ctx.SetSamplerStates(0, 1, &dctx.mpSSPoint);
-	ctx.SetVertexProgram(dctx.mpVPTexture2T);
-	ctx.SetFragmentProgram(mpFP);
-	ctx.SetVertexFormat(dctx.mpVFTexture2T);
-	ctx.SetVertexStream(0, mpVB, 0, sizeof(VDDisplayVertex2T3D));
-	ctx.SetIndexStream(NULL);
+	dctx.ApplyRenderViewWithSubrect(renderView, 0, 0, texMapping.mTexelSize.x, texMapping.mTexelSize.y);
 
-	VDTTextureDesc desc;
-	src->GetDesc(desc);
-
-	dctx.ApplyRenderViewWithSubrect(renderView, 0, 0, desc.mWidth, desc.mHeight);
-
-	IVDTTexture *srctex = src;
-	ctx.SetTextures(0, 1, &srctex);
-
-	ctx.DrawPrimitive(kVDTPT_TriangleStrip, 0, 2);
-
-	ctx.ClearTexturesStartingAt(0);
+	mMeshPool.SetTexture(mSourceTextureIndex, src);
+	mMeshPool.DrawAllMeshes(ctx, dctx);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2355,8 +2248,15 @@ bool VDDisplayBloomNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 
 	mMapping = source->GetTextureMapping();
 
-	const uint32 w = mMapping.mWidth;
-	const uint32 h = mMapping.mHeight;
+	// Compute source UV for clipped source rect.
+	const uint32 w = params.mClipW;
+	const uint32 h = params.mClipH;
+
+	// Clip source rect.
+	const float srcu  = (params.mClipX - params.mDstX) / params.mDstW * mMapping.mUVSize.x + mMapping.mUVOffset.x;
+	const float srcv  = (params.mClipY - params.mDstY) / params.mDstH * mMapping.mUVSize.y + mMapping.mUVOffset.y;
+	const float srcdu =  params.mClipW                 / params.mDstW * mMapping.mUVSize.x;
+	const float srcdv =  params.mClipH                 / params.mDstH * mMapping.mUVSize.y;
 
 	// Compute blur prescaler.
 	//
@@ -2414,6 +2314,24 @@ bool VDDisplayBloomNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 	uint32 texh2 = caps.mbNonPow2 ? blurH2 : VDCeilToPow2(blurH2);
 
 	struct Blit {
+		constexpr static Blit From2UVOffsetSize(const vdfloat2& uvoffset1, const vdfloat2& uvsize1, const vdfloat2& uvoffset2, const vdfloat2& uvsize2) {
+			const float u0 = uvoffset1.x;
+			const float v0 = uvoffset1.y;
+			const float u1 = u0 + uvsize1.x;
+			const float v1 = v0 + uvsize1.y;
+			const float u2 = uvoffset2.x;
+			const float v2 = uvoffset2.y;
+			const float u3 = u2 + uvsize2.x;
+			const float v3 = v2 + uvsize2.y;
+
+			return Blit {{
+				{ -1.0f, +1.0f, 0.0f, u0, v0, u2, v2 },
+				{ -1.0f, -1.0f, 0.0f, u0, v1, u2, v3 },
+				{ +1.0f, +1.0f, 0.0f, u1, v0, u3, v2 },
+				{ +1.0f, -1.0f, 0.0f, u1, v1, u3, v3 },
+			}};
+		}
+
 		constexpr static Blit From2UVRects(float du1, float dv1, float du2 = 0, float dv2 = 0) {
 			return Blit {{
 				{ -1.0f, +1.0f, 0.0f, 0,   0,   0,   0   },
@@ -2485,7 +2403,6 @@ bool VDDisplayBloomNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 	////////////////////////////////
 
 	mSourceTextureIndex = mMeshPool.RegisterTexture(nullptr);
-	mOutputViewId = mMeshPool.RegisterRenderView(VDDRenderView{});
 
 	const auto rttFormat = mParams.mbRenderLinear ? dctx.mHDRFormat : dctx.mBGRASRGBFormat;
 	VDDPoolTextureIndex rtt1 = mMeshPool.AddTempTexture(ctx, texw1, texh1, rttFormat, 1);
@@ -2510,7 +2427,15 @@ bool VDDisplayBloomNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 	mb.SetRenderView(curTexture, 0, false, VDTViewport { 0, 0, mBlurW2, mBlurH2, 0.0f, 1.0f });
 	mb.SetVertexFormat(dctx.mpVFTexture2T);
 	mb.SetVertices(
-		Blit::From2UVRects((float)(blurW2 * factor2) / (float)mMapping.mTexWidth, (float)(blurH2 * factor2) / (float)mMapping.mTexHeight).vx
+		Blit::From2UVOffsetSize(
+			vdfloat2 { srcu, srcv },
+			vdfloat2 {
+				(float)(blurW2 * factor2) / (float)mMapping.mTexWidth,
+				(float)(blurH2 * factor2) / (float)mMapping.mTexHeight,
+			},
+			vdfloat2 { 0, 0 },
+			vdfloat2 { 0, 0 }
+		).vx
 	);
 	mb.SetTopologyQuad();
 
@@ -2571,12 +2496,18 @@ bool VDDisplayBloomNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 
 	mb.SetVertexFormat(dctx.mpVFTexture2T);
 	mb.SetVertices(
-		Blit::From2UVRects(mMapping.mUSize,
-			mMapping.mVSize,
-			((float)w / (float)factor1) / (float)texw1,
-			((float)h / (float)factor1) / (float)texh1).vx
+		Blit::From2UVOffsetSize(
+			vdfloat2 { srcu, srcv },
+			vdfloat2 { srcdu, srcdv },
+			vdfloat2 { 0, 0 },
+			vdfloat2 {
+				((float)w / (float)factor1) / (float)texw1,
+				((float)h / (float)factor1) / (float)texh1
+			}
+		).vx
 	);
 
+	mOutputViewId = mMeshPool.RegisterRenderView(VDDRenderView{});
 	mb.SetRenderView(mOutputViewId);
 	mb.InitTextures({ rtt1, mSourceTextureIndex });
 	mb.SetTopologyQuad();
@@ -2590,13 +2521,7 @@ void VDDisplayBloomNode3D::Shutdown() {
 }
 
 void VDDisplayBloomNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const VDDRenderView& renderView) {
-	VDTViewport vp(renderView.mViewport);
-	vp.mX += mParams.mDstX;
-	vp.mY += mParams.mDstY;
-	vp.mWidth = mParams.mDstW;
-	vp.mHeight = mParams.mDstH;
-
-	mMeshPool.SetRenderView(mOutputViewId, VDDRenderView { renderView.mpTarget, renderView.mbBypassSrgb, vp });
+	mMeshPool.SetRenderViewWithSubrect(mOutputViewId, renderView, mParams.mClipX, mParams.mClipY, mParams.mClipW, mParams.mClipH);
 
 	IVDTTexture2D *src = mpSourceNode->Draw(ctx, dctx);
 

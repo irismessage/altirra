@@ -73,6 +73,8 @@
 #ifndef f_AT_ATCORE_DEVICECART_H
 #define f_AT_ATCORE_DEVICECART_H
 
+#include <vd2/system/unknown.h>
+
 class IATDeviceCartridge;
 
 enum ATCartridgePriority : uint8 {
@@ -85,6 +87,8 @@ enum ATCartridgePriority : uint8 {
 
 class IATDeviceCartridgePort {
 public:
+	static constexpr auto kTypeID = "IATDeviceCartridgePort"_vdtypeid;
+
 	/// Add a cartridge to the stack with the given priority.
 	///
 	/// The ID is passed back by reference because it the cartridge port can call back

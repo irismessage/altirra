@@ -98,7 +98,7 @@ namespace ATCommands {
 
 				pokey.SetStereoAsMonoEnabled(!pokey.IsStereoAsMonoEnabled());
 			}
-			, nullptr
+			, [] { return g_sim.IsDualPokeysEnabled(); }
 			, [] { return ToChecked(g_sim.GetPokey().IsStereoAsMonoEnabled()); }
 		},
 	};

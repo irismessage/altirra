@@ -93,19 +93,15 @@ namespace {
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATCPUTracer::ATCPUTracer() {
+ATCPUTraceProcessor::ATCPUTraceProcessor() {
 }
 
-ATCPUTracer::~ATCPUTracer() {
+ATCPUTraceProcessor::~ATCPUTraceProcessor() {
 }
 
-void ATCPUTracer::Init(ATCPUEmulator *cpu, ATScheduler *scheduler, ATScheduler *slowScheduler, IATCPUTimestampDecoderProvider *tsdprovider, ATTraceContext *traceContext, bool traceInsns, bool traceBasic) {
-	mpTSDProvider = tsdprovider;
-	mpCPU = cpu;
-	mpCPU->SetTracingEnabled(true);
-	mpScheduler = scheduler;
-	mpSlowScheduler = slowScheduler;
+void ATCPUTraceProcessor::Init(uint8 lastS, ATDebugDisasmMode disasmMode, uint8 subCycles, ATTraceContext *traceContext, bool traceInsns, bool traceBasic, ATCPUEmulatorMemory *cpuMemory, const ATCPUTimestampDecoder& dec, bool enableAsync) {
 	mbTraceBasic = traceBasic;
+	mpCPUMemory = cpuMemory;
 
 	ATTraceGroup *traceGroup = traceContext->mpCollection->AddGroup(L"CPU");
 
@@ -119,31 +115,23 @@ void ATCPUTracer::Init(ATCPUEmulator *cpu, ATScheduler *scheduler, ATScheduler *
 
 	if (traceInsns) {
 		ATTraceGroup *traceGroupHistory = traceContext->mpCollection->AddGroup(L"CPU History", kATTraceGroupType_CPUHistory);
-		mpTraceChannelHistory = new ATTraceChannelCPUHistory(traceContext->mBaseTime, traceContext->mBaseTickScale, L"History", cpu->GetDisasmMode(), cpu->GetSubCycles(), &traceContext->mMemTracker);
+		mpTraceChannelHistory = new ATTraceChannelCPUHistory(traceContext->mBaseTime, traceContext->mBaseTickScale, L"History", disasmMode, subCycles, &traceContext->mMemTracker, enableAsync);
 		traceGroupHistory->AddChannel(mpTraceChannelHistory);
+		mpTraceChannelHistory->SetTimestampDecoder(dec);
 	}
 
-	mLastHistoryCounter = mpCPU->GetHistoryCounter() + 1;
 	mbAdjustStackNext = false;
-	mLastS = mpCPU->GetS();
+	mLastS = lastS;
 	mThreadContext = kThreadContext_Main;
 	mThreadContextStartTime = traceContext->mBaseTime;
 	mIdleCounter = 0;
-
-	Reschedule();
 
 	std::fill(std::begin(mStackTable), std::end(mStackTable), StackEntry { -1, 0 } );
 
 	mpTraceChannelHistory->BeginEvents();
 }
 
-void ATCPUTracer::Shutdown() {
-	if (mpCPU) {
-		Update();
-		mpCPU->SetTracingEnabled(false);
-		mpCPU = nullptr;
-	}
-	
+void ATCPUTraceProcessor::Shutdown() {	
 	if (mpTraceChannelHistory) {
 		mpTraceChannelHistory->EndEvents();
 		mpTraceChannelHistory = nullptr;
@@ -151,45 +139,14 @@ void ATCPUTracer::Shutdown() {
 
 	for(ATTraceChannelSimple *&ch : mpTraceChannels)
 		ch = nullptr;
-
-	if (mpSlowScheduler) {
-		mpSlowScheduler->UnsetEvent(mpUpdateEvent);
-		mpSlowScheduler = NULL;
-	}
 }
 
-void ATCPUTracer::OnScheduledEvent(uint32 id) {
-	Reschedule();
-
-	Update();
-}
-
-void ATCPUTracer::Reschedule() {
-	mpUpdateEvent = mpSlowScheduler->AddEvent(mbTraceBasic ? 2 : 32, this, 1);
-}
-
-void ATCPUTracer::Update() {
-	uint32 nextHistoryCounter = mpCPU->GetHistoryCounter();
-	uint32 hcDelta = nextHistoryCounter - mLastHistoryCounter;
-
-	if (hcDelta >= UINT32_C(0x80000000))
-		return;
-
-	uint32 count = hcDelta & (mpCPU->GetHistoryLength() - 1);
-	mLastHistoryCounter = nextHistoryCounter;
-
-	if (!count)
-		return;
-
-	const auto& tsdecoder = mpTSDProvider->GetTimestampDecoder();
-
-	const ATCPUHistoryEntry *hentp = &mpCPU->GetHistory(count);
-	uint32 pos = count;
-
-	const uint64 currentTime = mpScheduler->GetTick64();
-	const auto extendTime64 = [threshold = (uint32)(currentTime + 0x10000), tb0 = currentTime - (uint32)currentTime](uint32 t32) {
+void ATCPUTraceProcessor::ProcessInsns(uint64 endTick64, const ATCPUHistoryEntry *const *heptrs, size_t n, const ATCPUTimestampDecoder& tsdecoder) {
+	const auto extendTime64 = [threshold = (uint32)(endTick64 + 0x10000), tb0 = endTick64 - (uint32)endTick64](uint32 t32) {
 		return (uint32)(t32 - threshold) < UINT32_C(0x80000000) ? tb0 + t32 - UINT64_C(0x100000000) : tb0 + t32;
 	};
+
+	const ATCPUHistoryEntry *hentp = *heptrs++;
 
 	if (mThreadContext < 0) {
 		mThreadContext = kThreadContext_Main;
@@ -199,11 +156,11 @@ void ATCPUTracer::Update() {
 	if (mIdleCounter > 0x800000)
 		mIdleCounter = 0x800000;
 
-	while(pos) {
-		const ATCPUHistoryEntry *hentn = &mpCPU->GetHistory(--pos);
+	while(n--) {
+		const ATCPUHistoryEntry *hentn = *heptrs++;
 
 		if (mpTraceChannelHistory) {
-			const uint64 eventTime = currentTime + (uint64)(sint64)(sint32)(hentp->mCycle - (uint32)currentTime);
+			const uint64 eventTime = endTick64 + (uint64)(sint64)(sint32)(hentp->mCycle - (uint32)endTick64);
 
 			mpTraceChannelHistory->AddEvent(eventTime, *hentp);
 		}
@@ -229,9 +186,8 @@ void ATCPUTracer::Update() {
 						if (mBasicLineAddr != addr) {
 							mBasicLineAddr = addr;
 
-							ATCPUEmulatorMemory *mem = mpCPU->GetMemory();
-							const uint8 lo = mem->DebugReadByte(addr);
-							const uint8 hi = mem->DebugReadByte(addr+1);
+							const uint8 lo = mpCPUMemory->DebugReadByte(addr);
+							const uint8 hi = mpCPUMemory->DebugReadByte(addr+1);
 
 							sint32 line = lo + ((sint32)hi << 8);
 
@@ -431,4 +387,86 @@ void ATCPUTracer::Update() {
 
 		hentp = hentn;
 	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+ATCPUTracer::ATCPUTracer() {
+}
+
+ATCPUTracer::~ATCPUTracer() {
+}
+
+void ATCPUTracer::Init(ATCPUEmulator *cpu, ATScheduler *scheduler, ATScheduler *slowScheduler, IATCPUTimestampDecoderProvider *tsdprovider, ATTraceContext *traceContext, bool traceInsns, bool traceBasic) {
+	mpCPU = cpu;
+	mpCPU->SetTracingEnabled(true);
+	mpScheduler = scheduler;
+	mpSlowScheduler = slowScheduler;
+	mpTSDProvider = tsdprovider;
+	mbTraceBasic = traceBasic;
+
+	mTraceProcessor.Init(cpu->GetS(), cpu->GetDisasmMode(), cpu->GetSubCycles(), traceContext, traceInsns, traceBasic, cpu->GetMemory(), tsdprovider->GetTimestampDecoder(), true);
+
+	mLastHistoryCounter = mpCPU->GetHistoryCounter() + 1;
+
+	Reschedule();
+}
+
+void ATCPUTracer::Shutdown() {
+	if (mpCPU) {
+		Update();
+		mpCPU->SetTracingEnabled(false);
+		mpCPU = nullptr;
+	}
+
+	if (mpSlowScheduler) {
+		mpSlowScheduler->UnsetEvent(mpUpdateEvent);
+		mpSlowScheduler = nullptr;
+	}
+	
+	mTraceProcessor.Shutdown();
+}
+
+void ATCPUTracer::OnScheduledEvent(uint32 id) {
+	Reschedule();
+
+	Update();
+}
+
+void ATCPUTracer::Reschedule() {
+	mpUpdateEvent = mpSlowScheduler->AddEvent(mbTraceBasic ? 2 : 32, this, 1);
+}
+
+void ATCPUTracer::Update() {
+	uint32 nextHistoryCounter = mpCPU->GetHistoryCounter();
+	uint32 hcDelta = nextHistoryCounter - mLastHistoryCounter;
+
+	if (hcDelta >= UINT32_C(0x80000000))
+		return;
+
+	uint32 count = hcDelta & (mpCPU->GetHistoryLength() - 1);
+	mLastHistoryCounter = nextHistoryCounter;
+
+	if (!count)
+		return;
+
+	const auto& tsdecoder = mpTSDProvider->GetTimestampDecoder();
+
+	const uint64 currentTime = mpScheduler->GetTick64();
+
+	const ATCPUHistoryEntry *heptrs[257];
+
+	heptrs[0] = &mpCPU->GetHistory(count);
+
+	uint32 pos = count;
+	while(pos) {
+		const uint32 tc = std::min<uint32>(256, pos);
+
+		for(uint32 i=0; i<tc; ++i)
+			heptrs[i + 1] = &mpCPU->GetHistory(--pos);
+
+		mTraceProcessor.ProcessInsns(currentTime, heptrs, tc, tsdecoder);
+		heptrs[0] = heptrs[tc];
+	}
+
 }

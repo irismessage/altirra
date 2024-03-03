@@ -63,6 +63,8 @@ struct ATOptions {
 
 	bool mbPollDirectories;
 
+	bool mbAccEnabled = false;
+
 	ATOptions();
 };
 

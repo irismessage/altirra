@@ -1,6 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Browser (B:) device
-//	Copyright (C) 2017 Avery Lee
+//	Copyright (C) 2017-2023 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -16,14 +15,15 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
-#ifndef f_AT_ATDEVICES_CORVUS_H
-#define f_AT_ATDEVICES_CORVUS_H
+#ifndef f_AT_BROWSER_H
+#define f_AT_BROWSER_H
 
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicecio.h>
 
+//	Browser (B:) device
 class ATDeviceBrowser final
 	: public ATDevice
 	, public IATDeviceCIO

@@ -51,6 +51,7 @@ struct ATDiskProfile {
 	uint32	mCyclesPerDiskRotation = 1;
 	uint32	mCyclesPerTrackStep = 1;
 	uint32	mCyclesForHeadSettle = 1;
+	uint32	mCyclesPostReadToCE = 0;					// Cycles from FDC operation complete to start of C/E byte
 	uint32	mCyclesCEToDataFrame = 0;
 	uint32	mCyclesCEToDataFramePBDiv256 = 0;
 	uint32	mCyclesCEToDataFrameHighSpeed = 0;
@@ -65,6 +66,10 @@ struct ATDiskProfile {
 	bool	mbRetryMode1050 = false;
 	bool	mbReverseOnForwardSeeks = false;
 	bool	mbWaitForLongSectors = false;
+
+	// True if the Write PERCOM Block command immediately changes the density
+	// (XF551); false if it doesn't take effect until format (USDoubler).
+	bool	mbWritePercomChangesDensity = false;
 
 	bool	mbBufferTrackReads = false;
 	bool	mbBufferTrackReadErrors = false;

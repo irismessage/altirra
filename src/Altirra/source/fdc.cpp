@@ -24,7 +24,9 @@
 #include <at/atcore/scheduler.h>
 #include <at/atcore/randomization.h>
 #include "diskinterface.h"
+#include "disktrace.h"
 #include "fdc.h"
+#include "trace.h"
 
 extern ATLogChannel g_ATLCDisk;
 ATLogChannel g_ATLCFDC(true, false, "FDC", "Floppy drive controller");
@@ -167,6 +169,9 @@ void ATFDCEmulator::Reset() {
 	mRotTimeBase = mpScheduler->GetTick64();
 	mRotations = 0;
 
+	if (mpRotationTracer)
+		mpRotationTracer->Warp(mRotPos);
+
 	mState = kState_Idle;
 	mRegCommand = 0xD8;		// force interrupt immediate
 	mRegTrack = 0;
@@ -186,6 +191,9 @@ void ATFDCEmulator::Reset() {
 
 	mbMotorEnabled = false;
 	mpFnMotorChange(false);
+
+	if (mpRotationTracer)
+		mpRotationTracer->SetMotorRunning(false);
 
 	mbHeadLoaded = false;
 	mpFnHeadLoadChange(false);
@@ -213,6 +221,9 @@ void ATFDCEmulator::SetMotorRunning(bool running) {
 	mbMotorRunning = running;
 
 	UpdateAutoIndexPulse();
+
+	if (mpRotationTracer)
+		mpRotationTracer->SetMotorRunning(running);
 }
 
 void ATFDCEmulator::SetMotorSpeed(float rpm) {
@@ -227,6 +238,9 @@ void ATFDCEmulator::SetCurrentTrack(uint32 halfTrack, bool track0) {
 	}
 
 	mbTrack0 = track0;
+
+	if (mpRotationTracer)
+		mpRotationTracer->SetTrack(halfTrack & 1 ? -1 : (int)(halfTrack >> 1));
 }
 
 void ATFDCEmulator::SetSide(bool side2) {
@@ -294,8 +308,8 @@ void ATFDCEmulator::SetDoubleClock(bool doubleClock) {
 	const double schRate = mpScheduler->GetRate().asDouble();
 	mBytesPerSecondFM = kRawBytesPerSecondFM / clockFactor;
 	mBytesPerSecondMFM = kRawBytesPerSecondMFM / clockFactor;
-	mCyclesPerByteFM = VDRoundToInt(schRate / mBytesPerSecondFM);
-	mCyclesPerByteMFM = VDRoundToInt(schRate / mBytesPerSecondMFM);
+	mCyclesPerByteFM_FX16 = VDRoundToInt(schRate / mBytesPerSecondFM * 0x1p16f);
+	mCyclesPerByteMFM_FX16 = VDRoundToInt(schRate / mBytesPerSecondMFM * 0x1p16f);
 
 	UpdateDensity();
 }
@@ -314,6 +328,9 @@ void ATFDCEmulator::SetDiskImage(IATDiskImage *image) {
 		mDiskGeometry = {};
 
 	UpdateAutoIndexPulse();
+
+	if (mpRotationTracer)
+		mpRotationTracer->SetDiskImage(image);
 }
 
 void ATFDCEmulator::SetDiskImageReady(std::optional<bool> diskReady) {
@@ -338,6 +355,10 @@ void ATFDCEmulator::SetDiskChangeStartupHackEnabled(bool enabled) {
 			mbDiskChangeStartupHackFDCCommandReceived = false;
 		}
 	}
+}
+
+void ATFDCEmulator::SetDDBootSectorMode(DDBootSectorMode mode) {
+	mBootSectorMode = mode;
 }
 
 void ATFDCEmulator::SetSideMapping(SideMapping mapping, uint32 numTracks) {
@@ -546,6 +567,32 @@ void ATFDCEmulator::OnIndexPulse(bool asserted) {
 	UpdateIndexPulse();
 }
 
+void ATFDCEmulator::SetTraceContext(ATTraceContext *context, uint64 baseTick, double secondsPerTick) {
+	if (context) {
+		ATTraceCollection *coll = context->mpCollection;
+		ATTraceGroup *group = coll->AddGroup(L"FDC");
+
+		mpTraceChannelCommands = group->AddFormattedChannel(baseTick, secondsPerTick, L"Commands");
+		
+		mpRotationTracer = new ATDiskRotationTracer;
+		mpRotationTracer->Init(*mpScheduler, baseTick, mCyclesPerRotation, *group);
+		mpRotationTracer->SetDiskImage(mpDiskImage);
+
+		UpdateRotationalPosition();
+		mpRotationTracer->SetMotorRunning(mbMotorRunning);
+		mpRotationTracer->Warp(mRotPos);
+	} else {
+		mpRotationTracer->Flush();
+		mpRotationTracer->Shutdown();
+		mpRotationTracer = nullptr;
+
+		if (mpTraceChannelCommands)
+			mpTraceChannelCommands->TruncateLastEvent(mpScheduler->GetTick64());
+
+		mpTraceChannelCommands = nullptr;
+	}
+}
+
 void ATFDCEmulator::UpdateIndexPulse() {
 	const bool indexPulse = mbManualIndexPulse || mbAutoIndexPulse;
 	if (mbIndexPulse == indexPulse)
@@ -622,6 +669,9 @@ void ATFDCEmulator::OnScheduledEvent(uint32 id) {
 }
 
 void ATFDCEmulator::AbortCommand() {
+	if (mpTraceChannelCommands)
+		mpTraceChannelCommands->TruncateLastEvent(mpScheduler->GetTick64());
+
 	// Firmware may just abort a write track command rather than waiting for the second
 	// index mark; we still have to handle the format command.
 	if (!mWriteTrackBuffer.empty()) {
@@ -796,9 +846,57 @@ void ATFDCEmulator::RunStateMachine() {
 				case 0xE0: SetTransition(kState_ReadTrack, 1); break;
 				case 0xF0: SetTransition(kState_WriteTrack, 1); break;
 			}
+
+			if (mpTraceChannelCommands) {
+				const uint64 t = mpScheduler->GetTick64();
+
+				switch((mRegCommand >> 4) & 15) {
+					case 0:
+						mpTraceChannelCommands->AddOpenTickEventM(t, kATTraceColor_IO_Default, L"Restore");
+						break;
+					case 1:
+						mpTraceChannelCommands->AddOpenTickEventM(t, kATTraceColor_IO_Default, L"Seek");
+						break;
+					case 2:
+					case 3:
+						mpTraceChannelCommands->AddOpenTickEventF(t, kATTraceColor_IO_Default, L"Step %u -> %u", mRegTrack, mRegData);
+						break;
+					case 4:
+					case 5:
+						mpTraceChannelCommands->AddOpenTickEventM(t, kATTraceColor_IO_Default, L"Step in");
+						break;
+					case 6:
+					case 7:
+						mpTraceChannelCommands->AddOpenTickEventM(t, kATTraceColor_IO_Default, L"Step out");
+						break;
+					case 8:
+					case 9:
+						mpTraceChannelCommands->AddOpenTickEventF(t, kATTraceColor_IO_Read, L"Read sector %u:%u", mRegTrack, mRegSector);
+						break;
+					case 10:
+					case 11:
+						mpTraceChannelCommands->AddOpenTickEventF(t, kATTraceColor_IO_Write, L"Write sector %u:%u", mRegTrack, mRegSector);
+						break;
+					case 12:
+						mpTraceChannelCommands->AddOpenTickEventF(t, kATTraceColor_IO_Read, L"Read address %u", mRegTrack);
+						break;
+					case 13:
+						mpTraceChannelCommands->AddOpenTickEventM(t, kATTraceColor_IO_Default, L"Force interrupt");
+						break;
+					case 14:
+						mpTraceChannelCommands->AddOpenTickEventF(t, kATTraceColor_IO_Read, L"Read track %u", mRegTrack);
+						break;
+					case 15:
+						mpTraceChannelCommands->AddOpenTickEventF(t, kATTraceColor_IO_Write, L"Write track %u", mRegTrack);
+						break;
+				}
+			}
 			break;
 
 		case kState_EndCommand:
+			if (mpTraceChannelCommands)
+				mpTraceChannelCommands->TruncateLastEvent(mpScheduler->GetTick64());
+
 			// We must NOT clear DRQ here for the XF551 to properly report the DRQ bit.
 
 			mRegStatus &= 0x7E;		// clear BUSY and NOT READY
@@ -971,7 +1069,9 @@ void ATFDCEmulator::RunStateMachine() {
 			if (mbDataWritePending) {
 				mRegStatus |= 0x04;
 				mRegData = 0;
-				SetTransition(kState_WriteTrack_TransferByte, mCyclesPerByte);
+				mCyclesPerByteAccum_FX16 += mCyclesPerByte_FX16;
+				SetTransition(kState_WriteTrack_TransferByte, mCyclesPerByteAccum_FX16 >> 16);
+				mCyclesPerByteAccum_FX16 &= 0xFFFF;
 			} else {
 				// Check the byte that got written for write timing:
 				//
@@ -985,10 +1085,15 @@ void ATFDCEmulator::RunStateMachine() {
 				// A CRC can be written out after that, however, so F7 F7 F7 writes a
 				// CRC, an F7, and another CRC.
 
-				if (mRegData == 0xF7 && mState != kState_WriteTrack_TransferByteAfterCRC)
-					SetTransition(kState_WriteTrack_TransferByteAfterCRC, mCyclesPerByte * 2);
-				else
-					SetTransition(kState_WriteTrack_TransferByte, mCyclesPerByte);
+				if (mRegData == 0xF7 && mState != kState_WriteTrack_TransferByteAfterCRC) {
+					mCyclesPerByteAccum_FX16 += mCyclesPerByte_FX16 * 2;
+					SetTransition(kState_WriteTrack_TransferByteAfterCRC, mCyclesPerByteAccum_FX16 >> 16);
+				} else {
+					mCyclesPerByteAccum_FX16 += mCyclesPerByte_FX16;
+					SetTransition(kState_WriteTrack_TransferByte, mCyclesPerByteAccum_FX16 >> 16);
+				}
+
+				mCyclesPerByteAccum_FX16 &= 0xFFFF;
 
 				mbDataWritePending = true;
 				mRegStatus |= 0x02;
@@ -1112,6 +1217,9 @@ void ATFDCEmulator::RunStateMachine() {
 						if (mRotPos >= mCyclesPerRotation)
 							mRotPos -= mCyclesPerRotation;
 
+						if (mpRotationTracer)
+							mpRotationTracer->Warp(mRotPos);
+
 						// Use short delay.
 						delay = 300;
 					}
@@ -1138,7 +1246,7 @@ void ATFDCEmulator::RunStateMachine() {
 								,  bestWeakDataOffset >= 0 ? " (w/weak bits)"
 									: (mActiveSectorStatus & 0x04) ? " (w/long sector)"		// must use lost data as DRQ differs between drives
 									: (mActiveSectorStatus & 0x08) ? " (w/CRC error)"
-									: (mActiveSectorStatus & 0x10) ? " (w/missing sector)"
+									: (mActiveSectorStatus & 0x10) ? " (w/missing data field)"
 									: (mActiveSectorStatus & 0x20) ? " (w/deleted sector)"
 									: ""
 								);
@@ -1186,6 +1294,7 @@ void ATFDCEmulator::RunStateMachine() {
 					float bestRotPos = 0;
 					uint32 bestPhysSec = 0;
 					int bestWeakDataOffset = -1;
+					bool foundValidAddress = false;
 
 					for(uint32 i=0; i<vsi.mNumPhysSectors; ++i) {
 						ATDiskPhysicalSectorInfo psi {};
@@ -1194,6 +1303,24 @@ void ATFDCEmulator::RunStateMachine() {
 
 						// toss sector if density doesn't match
 						if (psi.mbMFM != mbMFM)
+							continue;
+
+						// Sectors with no data field ($EF) and sectors with a bad address CRC ($E7) are mostly
+						// ignored by the FDC, with it continuing to timeout -- exception is whether a bad
+						// address CRC is signaled at timeout. This depends on the last address field read.
+						if (psi.mFDCStatus & 0x18) {
+							if (!foundValidAddress) {
+								foundValidAddress = true;
+								mActiveSectorStatus = 0x10;
+							}
+						} else {
+							if (!foundValidAddress) {
+								mActiveSectorStatus = 0x18;
+							}
+						}
+
+						// sectors with no data field or a bad address field are skipped by the FDc
+						if (!(psi.mFDCStatus & 0x10))
 							continue;
 
 						float distance = psi.mRotPos - posf;
@@ -1220,8 +1347,14 @@ void ATFDCEmulator::RunStateMachine() {
 					mpDiskImage->ReadPhysicalSector(bestPhysSec, mTransferBuffer, mTransferLength);
 
 					// check for a boot sector on a double density disk
-					if (mTransferLength == 128 && vsec <= mDiskGeometry.mBootSectorCount && mbMFM && mDiskGeometry.mSectorSize > 128)
-						mTransferLength = 256;
+					if (vsec <= mDiskGeometry.mBootSectorCount && mbMFM && mDiskGeometry.mSectorSize > 128) {
+						// extend it to 256 bytes if needed as usually written on physical disk
+						if (mTransferLength == 128)
+							mTransferLength = 256;
+
+						if (mBootSectorMode == DDBootSectorMode::Swapped)
+							std::rotate(mTransferBuffer, mTransferBuffer + 128, mTransferBuffer + 256);
+					}
 
 					// apply weak bits
 					if (bestWeakDataOffset >= 0) {
@@ -1248,6 +1381,9 @@ void ATFDCEmulator::RunStateMachine() {
 						if (mRotPos >= mCyclesPerRotation)
 							mRotPos -= mCyclesPerRotation;
 
+						if (mpRotationTracer)
+							mpRotationTracer->Warp(mRotPos);
+
 						// Use short delay.
 						delay = 1000;
 					}
@@ -1256,7 +1392,7 @@ void ATFDCEmulator::RunStateMachine() {
 						mpDiskInterface->SetShowActivity(true, vsec);
 
 					if (g_ATLCDisk.IsEnabled()) {
-						g_ATLCDisk("Reading vsec=%3d (%d/%d) (trk=%d), psec=%3d, rot=%5.2f >>[%4.2f]>> %.2f.%s%s%s%s%s\n"
+						g_ATLCDisk("Reading vsec=%3d (%d/%d) (trk=%d), psec=%3d, rot=%5.2f >>[%+4.2f]>> %.2f.%s%s%s%s%s\n"
 								, vsec
 								, (uint32)bestPhysSec - vsi.mStartPhysSector + 1
 								, vsi.mNumPhysSectors
@@ -1269,7 +1405,7 @@ void ATFDCEmulator::RunStateMachine() {
 								, (mActiveSectorStatus & 0x04) ? " (long)" : ""		// must use lost data as DRQ differs between drives
 								, ((mActiveSectorStatus & 0x18) == 0x18) ? " (address CRC error)" : ""
 								, (mActiveSectorStatus & 0x08) ? " (data CRC error)" : ""
-								, ((mActiveSectorStatus & 0x10) == 0x10) ? " (missing sector)" : ""
+								, ((mActiveSectorStatus & 0x10) == 0x10) ? " (missing data field)" : ""
 								, (mActiveSectorStatus & 0x20) ? " (deleted sector)" : ""
 								);
 					}
@@ -1318,8 +1454,11 @@ void ATFDCEmulator::RunStateMachine() {
 			mRegData = mTransferBuffer[mTransferIndex];
 			if (++mTransferIndex >= mTransferLength)
 				SetTransition(kState_ReadSector_TransferComplete, mCyclesPerByte * 2);
-			else
-				SetTransition(kState_ReadSector_TransferByte, mCyclesPerByte);
+			else {
+				mCyclesPerByteAccum_FX16 += mCyclesPerByte_FX16;
+				SetTransition(kState_ReadSector_TransferByte, mCyclesPerByteAccum_FX16 >> 16);
+				mCyclesPerByteAccum_FX16 &= 0xFFFF;
+			}
 			break;
 
 		case kState_ReadSector_TransferComplete:
@@ -1349,6 +1488,9 @@ void ATFDCEmulator::RunStateMachine() {
 		case kState_WriteSector: {
 			mTransferIndex = 0;
 			mTransferLength = 0;
+
+			// reset WP, RT, RNF, CRC, LD, and DRQ per start of type II flowchart
+			mRegStatus &= 0x81;
 
 			UpdateRotationalPosition();
 
@@ -1393,6 +1535,7 @@ void ATFDCEmulator::RunStateMachine() {
 					float bestRotPos = 0;
 					uint32 bestPhysSec = 0;
 					int bestWeakDataOffset = -1;
+					bool foundValidAddressField = false;
 
 					for(uint32 i=0; i<vsi.mNumPhysSectors; ++i) {
 						ATDiskPhysicalSectorInfo psi {};
@@ -1402,6 +1545,19 @@ void ATFDCEmulator::RunStateMachine() {
 						// toss sector if it doesn't match current density
 						if (psi.mbMFM != mbMFM)
 							continue;
+
+						// Sectors with no data field are fine, as the FDC writes a new DAM and
+						// data field anyway -- they will get fixed. But sectors with a bad address field
+						// aren't, those will cause the FDC to time out with bits 3 and 4 set (note that
+						// our status is inverted here).
+						if ((psi.mFDCStatus & 0x18) == 0) {
+							if (!foundValidAddressField)
+								mActiveSectorStatus = 0x18;
+
+							continue;
+						}
+
+						foundValidAddressField = true;
 
 						float distance = psi.mRotPos - posf;
 						distance -= floorf(distance);
@@ -1414,11 +1570,17 @@ void ATFDCEmulator::RunStateMachine() {
 							// We need uninverted status since we're in the FDC (inversion is
 							// handled in the 810 emulation code).
 							mActiveSectorStatus = ~psi.mFDCStatus;
+
+							// clear RNF bit if set, as a missing data field can't occur during a write, and
+							// we have a valid address field at this point.
+							mActiveSectorStatus &= 0xEF;
+
 							bestWeakDataOffset = psi.mWeakDataOffset;
 							mTransferLength = std::min<uint32>(psi.mPhysicalSize, vdcountof(mTransferBuffer));
 						}
 					}
 
+					mActiveVirtSector = vsec;
 					mActivePhysSector = bestPhysSec;
 
 					// check for a long sector not actually stored in the image
@@ -1452,6 +1614,9 @@ void ATFDCEmulator::RunStateMachine() {
 						if (mRotPos >= mCyclesPerRotation)
 							mRotPos -= mCyclesPerRotation;
 
+						if (mpRotationTracer)
+							mpRotationTracer->Warp(mRotPos);
+
 						// Use short delay.
 						delay = 1000;
 					}
@@ -1472,7 +1637,7 @@ void ATFDCEmulator::RunStateMachine() {
 								,  bestWeakDataOffset >= 0 ? " (w/weak bits)"
 									: (mActiveSectorStatus & 0x04) ? " (w/long sector)"		// must use DRQ as lost data differs between drives
 									: (mActiveSectorStatus & 0x08) ? " (w/CRC error)"
-									: (mActiveSectorStatus & 0x10) ? " (w/missing sector)"
+									: (mActiveSectorStatus & 0x10) ? " (w/missing data field)"
 									: (mActiveSectorStatus & 0x20) ? " (w/deleted sector)"
 									: ""
 								);
@@ -1540,6 +1705,15 @@ void ATFDCEmulator::RunStateMachine() {
 				// CRC 1 and 2, and $FF). Recheck the write state in case it was changed in
 				// between.
 				if (mpDiskImage && mActivePhysSector < mpDiskImage->GetPhysicalSectorCount() && mpDiskInterface->IsDiskWritable()) {
+					// check if this is a boot sector and we're in swapped mode -- if so,
+					// we need to swap the sector data around
+					const auto& geo = mpDiskImage->GetGeometry();
+
+					if (mTransferLength == 256 && mActiveVirtSector < geo.mBootSectorCount && geo.mSectorSize > 128) {
+						if (mBootSectorMode == DDBootSectorMode::Swapped)
+							std::rotate(mTransferBuffer, mTransferBuffer + 128, mTransferBuffer + 256);
+					}
+
 					try {
 						mpDiskImage->WritePhysicalSector(mActivePhysSector, mTransferBuffer, mTransferLength, mActivePhysSectorStatus);
 						mpDiskInterface->OnDiskModified();
@@ -1638,7 +1812,8 @@ void ATFDCEmulator::ClearMotorIdleTimer() {
 }
 
 void ATFDCEmulator::UpdateDensity() {
-	mCyclesPerByte = mbMFM ? mCyclesPerByteMFM : mCyclesPerByteFM;
+	mCyclesPerByte_FX16 = mbMFM ? mCyclesPerByteMFM_FX16 : mCyclesPerByteFM_FX16;
+	mCyclesPerByte = (mCyclesPerByte_FX16 + 0x8000) >> 16;
 }
 
 void ATFDCEmulator::FinalizeWriteTrack() {
@@ -1654,11 +1829,25 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 
 	const uint32 endPos = mWriteTrackIndex;
 
+	// $F7 bytes actually produce two raw bytes, so we can easily have more than the allowed
+	// number of bytes in the track. Work backwards from the end until we have the max number
+	// of bytes; everything before that would have been overwritten by track wrap.
+	uint32 startPos = endPos;
+	uint32 extraCrcLen = 0;
+	uint32 validLen = 0;
+
+	while(validLen + extraCrcLen < maxBytesPerTrack) {
+		if (startPos == 0)
+			startPos = kWriteTrackBufferSize;
+		--startPos;
+
+		++validLen;
+		if (mWriteTrackBuffer[startPos] == 0xF7)
+			++extraCrcLen;
+	}
+
 	if (g_ATLCFDCWTData.IsEnabled() && endPos > 0) {
 		g_ATLCFDCWTData("Estimating %u raw bytes per track (%s encoding, %.1f RPM%s)\n", maxBytesPerTrack, mbMFM ? "MFM" : "FM", 60.0f / mRotationPeriodSecs, mbDoubleClock ? ", double clock" : "");
-
-		// OK for this to underflow
-		uint32 trackOverwritePoint = endPos - maxBytesPerTrack;
 
 		uint32 crcs = 0;
 		sint32 lastIDAM = -1;
@@ -1667,9 +1856,7 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 		for(uint32 i=0; i<endPos; ++i) {
 			const uint8 c = mWriteTrackBuffer[i];
 
-			if (i >= trackOverwritePoint) {
-				trackOverwritePoint = ~(uint32)0;
-
+			if (i == startPos) {
 				g_ATLCFDCWTData("--- track wrap point ---\n");
 			}
 
@@ -1705,8 +1892,8 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 			uint32 maxCount = endPos - i;
 
 			// don't allow runs to cross the track overwrite point
-			if (i < trackOverwritePoint)
-				maxCount = std::min<uint32>(maxCount, trackOverwritePoint - i);
+			if (i < startPos)
+				maxCount = std::min<uint32>(maxCount, startPos - i);
 
 			while(count < maxCount && mWriteTrackBuffer[i + count] == c)
 				++count;
@@ -1757,23 +1944,6 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 		}
 
 		g_ATLCFDCWTData("Total %u bytes written (%u raw bytes)\n", endPos, endPos + crcs);
-	}
-
-	// $F7 bytes actually produce two raw bytes, so we can easily have more than the allowed
-	// number of bytes in the track. Work backwards from the end until we have the max number
-	// of bytes; everything before that would have been overwritten by track wrap.
-	uint32 startPos = endPos;
-	uint32 extraCrcLen = 0;
-	uint32 validLen = 0;
-
-	while(validLen + extraCrcLen < maxBytesPerTrack) {
-		if (startPos == 0)
-			startPos = kWriteTrackBufferSize;
-		--startPos;
-
-		++validLen;
-		if (mWriteTrackBuffer[startPos] == 0xF7)
-			++extraCrcLen;
 	}
 
 	// Rotate the buffer around so the valid area is contiguous.
@@ -2002,7 +2172,7 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 			// the order of virtual sectors on this track
 			uint32 psecId = i + 1;
 
-			if (mbSide2 && mSideMapping != SideMapping::Side2Forward)
+			if (mbSide2 && mSideMapping != SideMapping::Side2Forward && mSideMapping != SideMapping::Side2ReversedTracks)
 				psecId = sectorsPerTrack - i;
 
 			for(const auto& parsedSector : parsedSectors) {
@@ -2086,6 +2256,11 @@ uint32 ATFDCEmulator::GetSelectedVSec(uint32 sector) const {
 			}
 			break;
 
+		case SideMapping::Side2ReversedTracks:
+			if (mbSide2)
+				vtrack = (mSideMappingTrackCount * 2 - 1) - vtrack;
+			break;
+
 		case SideMapping::Side2Forward:
 			if (mbSide2)
 				vtrack += mSideMappingTrackCount;
@@ -2119,6 +2294,10 @@ ATFDCEmulator::PSecAddress ATFDCEmulator::VSecToPSec(uint32 vsec) const {
 					--track;
 				}
 
+				break;
+
+			case SideMapping::Side2ReversedTracks:
+				track = (mSideMappingTrackCount - 1) - track;
 				break;
 
 			case SideMapping::Side2Forward:

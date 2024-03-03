@@ -17,7 +17,13 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
   /ntsc50     Select NTSC display with PAL timing
   /pal60      Select PAL display with NTSC timing
   /kernel:default|osa|osb|xl|lle|llexl|5200|5200lle
-              Select kernel ROM
+              Select kernel ROM type
+  /kernelref:filename|displayname|[crc32]
+              Select exact kernel ROM by filename, display name, or CRC32 (must
+              have already been registered)
+  /basicref:filename|displayname|[crc32]
+              Select exact BASIC ROM by filename, display name, or CRC32 (must
+              have already been registered)
   /hardware:800|800xl|5200
               Select hardware type
   /memsize:8K|16K|24K|32K|48K|52K|64K|128K|320K|320KCOMPY|576K|576KCOMPY|1088K
@@ -31,6 +37,9 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
               Enable dual pokeys
   /[no]rawkeys
               Enable/disable raw keyboard presses
+  /diskemu:generic|generic56k|fastest|810|1050|xf551|usdoubler|speedy1050|
+        indusgt|happy810|happy1050|1050turbo
+              Set standard disk emulation mode
 
                          -- Boot/mount options --
 
@@ -38,6 +47,9 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
   /bootrw     Boot disk images in read/write mode
   /[no]casautoboot
               Control cassette auto-boot
+  /[no]casautobasicboot
+              Control automatic BASIC boot detection and activation when
+              cassette auto-boot is enabled
   /type "keys"
               Type keys on keyboard (~ for enter, ` for ")
   /cart <image>
@@ -127,8 +139,24 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
               Log early startup phases to the console, optionally enabling
               some log groups (or HOSTWINMSG)
   /crash      Force crash after initialization
-  /[no]macwin64hack
-              Enable or disable workaround for crash due to broken GS: selector
+
+                            -- Setup options --
+
+  /registeruserfileassocs
+              Register file associations and for Default Programs only for this
+              user
+
+  /registersysfileassocs
+              Register file associations and for Default Programs for the entire
+              system (requests elevation if necessary)
+
+  /unregisterfileassocs
+              Unregister from Default Programs and file associations, both
+              system-wide and per-user (requests elevation if necessary)
+
+  /noelevation
+              Skip attempting relaunch with UAC elevation if administator access
+              is needed for a setup command (to avoid infinite looping)
 
                    -- Virtual File System (VFS) paths --
 
@@ -146,6 +174,15 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
 
   atfs://image.ext!innerfil.ext
               Access file within Atari file system
+
+  special://<firmware-id>
+              Access built-in or registered images
+
+              atbasic.bin/car     Altirra BASIC (internal)
+              basic.bin/car       Current BASIC
+              ataribas-a.bin/car  Atari BASIC rev. A (if registered)
+              ataribas-b.bin/car  Atari BASIC rev. B (if registered)
+              ataribas-c.bin/car  Atari BASIC rev. C (if registered)
 
   All URL forms except plain file paths use URL encoding (%20). URL forms can
   be nested, e.g.: atfs://zip://dos.zip!dos.atr!autorun.sys

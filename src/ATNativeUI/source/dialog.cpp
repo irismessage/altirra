@@ -377,10 +377,10 @@ vdrect32 VDDialogFrameW32::GetControlPos(uint32 id) {
 		HWND hwnd = GetDlgItem(mhdlg, id);
 		if (hwnd) {
 			RECT r;
-			if (GetWindowRect(hwnd, &r) &&
-				MapWindowPoints(NULL, mhdlg, (LPPOINT)&r, 2))
-			{
-				return vdrect32(r.left, r.top, r.right, r.bottom);
+			if (GetWindowRect(hwnd, &r)) {
+				SetLastError(0);
+				if (MapWindowPoints(NULL, mhdlg, (LPPOINT)&r, 2) || !GetLastError())
+					return vdrect32(r.left, r.top, r.right, r.bottom);
 			}
 		}
 	}
@@ -426,6 +426,9 @@ void VDDialogFrameW32::SetCaption(uint32 id, const wchar_t *format) {
 void VDDialogFrameW32::SetControlText(uint32 id, const wchar_t *s) {
 	if (!mhdlg)
 		return;
+
+	if (!s)
+		s = L"";
 
 	HWND hwnd = GetDlgItem(mhdlg, id);
 	if (hwnd)
@@ -1332,6 +1335,10 @@ void VDDialogFrameW32::OnDestroy() {
 void VDDialogFrameW32::OnEnable(bool enabled) {
 }
 
+bool VDDialogFrameW32::OnShouldErase() {
+	return true;
+}
+
 bool VDDialogFrameW32::OnErase(VDZHDC hdc) {
 	return false;
 }
@@ -1384,6 +1391,9 @@ void VDDialogFrameW32::OnDropFiles(VDZHDROP hdrop) {
 }
 
 void VDDialogFrameW32::OnDropFiles(IVDUIDropFileList *dropFileList) {
+}
+
+void VDDialogFrameW32::OnSetFocus() {
 }
 
 void VDDialogFrameW32::OnHelp() {
@@ -1650,6 +1660,23 @@ bool VDDialogFrameW32::PreNCDestroy() {
 void VDDialogFrameW32::PostNCDestroy() {
 }
 
+bool VDDialogFrameW32::OnPreTranslate(VDZMSG& msg) {
+	return false;
+}
+
+bool VDDialogFrameW32::DelegatePreTranslate(VDZMSG& msg) {
+	if (!mAccel || !mhdlg || !msg.hwnd)
+		return false;
+
+	if (mhdlg != msg.hwnd && !IsChild(mhdlg, msg.hwnd))
+		return false;
+
+	if (!TranslateAccelerator(mhdlg, mAccel, &msg))
+		return false;
+
+	return true;
+}
+
 bool VDDialogFrameW32::ShouldSetDialogIcon() const {
 	return true;
 }
@@ -1864,7 +1891,55 @@ sintptr VDDialogFrameW32::DoCreate(VDZHWND parent, bool modal) {
 	mbIsModal = modal;
 
 	if (modal) {
-		return DialogBoxIndirectParamW(VDGetLocalModuleHandleW32(), (LPCDLGTEMPLATEW)newTemplate, (HWND)parent, StaticDlgProc, (LPARAM)this);
+		thread_local static HHOOK sDialogMsgHook = nullptr;
+		thread_local static VDDialogFrameW32 *spCurrentDialog = nullptr;
+		bool hookInstalled = false;
+
+		if (!sDialogMsgHook) {
+			sDialogMsgHook = SetWindowsHookEx(
+				WH_MSGFILTER,
+				static_cast<LRESULT (CALLBACK *)(int, WPARAM, LPARAM)>([](int code, WPARAM wParam, LPARAM lParam) -> LRESULT {
+					if (code == MSGF_DIALOGBOX) {
+						const MSG& msg = *(const MSG *)lParam;
+
+						switch(msg.message) {
+							case WM_KEYDOWN:
+							case WM_SYSKEYDOWN:
+							case WM_KEYUP:
+							case WM_SYSKEYUP:
+							case WM_CHAR:
+								if (HWND hwndOwner = GetAncestor(msg.hwnd, GA_ROOT)) {
+									if (hwndOwner == spCurrentDialog->GetHandleW32() && SendMessage(hwndOwner, ATWM_PRETRANSLATE, 0, (LPARAM)&msg))
+										return TRUE;
+								}
+								break;
+						}
+					}
+
+					return CallNextHookEx(sDialogMsgHook, code, wParam, lParam);
+				}),
+				nullptr,
+				GetCurrentThreadId()
+			);
+			
+			VDVERIFY(sDialogMsgHook);
+			if (sDialogMsgHook)
+				hookInstalled = true;
+		}
+
+		auto *prevDialog = std::exchange(spCurrentDialog, this);
+
+		const INT_PTR rval = DialogBoxIndirectParamW(VDGetLocalModuleHandleW32(), (LPCDLGTEMPLATEW)newTemplate, (HWND)parent, StaticDlgProc, (LPARAM)this);
+
+		VDASSERT(spCurrentDialog == this);
+		spCurrentDialog = prevDialog;
+
+		if (hookInstalled) {
+			VDVERIFY(UnhookWindowsHookEx(sDialogMsgHook));
+			sDialogMsgHook = nullptr;
+		}
+
+		return rval;
 	} else {
 		VDVERIFY(CreateDialogIndirectParamW(VDGetLocalModuleHandleW32(), (LPCDLGTEMPLATEW)newTemplate, (HWND)parent, StaticDlgProc, (LPARAM)this));
 		return 0;
@@ -2000,6 +2075,10 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			OnCaptureLost();
 			break;
 
+		case WM_SETFOCUS:
+			OnSetFocus();
+			break;
+
 		case WM_COMMAND:
 			{
 				uint32 id = LOWORD(wParam);
@@ -2096,14 +2175,18 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			return TRUE;
 
 		case WM_ERASEBKGND:
-			{
+			if (!OnShouldErase()) {
+				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, FALSE);
+				return TRUE;
+			} else {
 				HDC hdc = (HDC)wParam;
 
 				if (!OnErase(hdc))
 					mResizer.Erase(&hdc, GetBackgroundColor());
+
+				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, TRUE);
 			}
 
-			SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, TRUE);
 			return TRUE;
 
 		case WM_PAINT:
@@ -2224,6 +2307,11 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			return TRUE;
 
 		case ATWM_PRETRANSLATE:
+			if (OnPreTranslate(*(MSG *)lParam)) {
+				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, TRUE);
+				return TRUE;
+			}
+
 			if (mAccel && TranslateAccelerator(mhdlg, mAccel, (MSG *)lParam)) {
 				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, TRUE);
 				return TRUE;

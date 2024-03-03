@@ -108,7 +108,11 @@ void *ATDeviceDiskDrivePercom::AsInterface(uint32 iid) {
 		case ATPIAEmulator::kTypeID: return mHardwareType != HardwareType::RFD ? &mPIA : nullptr;
 	}
 
-	return ATDiskDriveDebugTargetControl::AsInterface(iid);
+	void *p = ATDiskDriveDebugTargetControl::AsInterface(iid);
+	if (p)
+		return p;
+
+	return ATDevice::AsInterface(iid);
 }
 
 void ATDeviceDiskDrivePercom::GetDeviceInfo(ATDeviceInfo& info) {
@@ -384,7 +388,7 @@ void ATDeviceDiskDrivePercom::Init() {
 	for(auto& drive : mDrives) {
 		drive.mDiskChangeHandler.Init(mpScheduler);
 		drive.mDiskChangeHandler.SetOutputStateFns(
-			[&drive, driveIndex, this](std::optional<bool> wpState) {
+			[driveIndex, this](std::optional<bool> wpState) {
 				if (mSelectedDrive == driveIndex) {
 					mFDC.SetWriteProtectOverride(wpState);
 
@@ -396,7 +400,7 @@ void ATDeviceDiskDrivePercom::Init() {
 					}
 				}
 			},
-			[&drive, driveIndex, this](std::optional<bool> readyState) {
+			[driveIndex, this](std::optional<bool> readyState) {
 				if (mSelectedDrive == driveIndex) {
 					mFDC.SetDiskImageReady(readyState);
 

@@ -31,9 +31,9 @@ struct ATSaveStatePokeyRenderer {
 	uint8 mOutputFlipFlops = 0x3F;
 };
 
-class ATSaveStatePokeyInternal : public ATSnapExchangeObject<ATSaveStatePokeyInternal> {
+class ATSaveStatePokeyInternal : public ATSnapExchangeObject<ATSaveStatePokeyInternal, "ATSaveStatePokeyInternal"> {
 public:
-	template<typename T>
+	template<ATExchanger T>
 	void Exchange(T& rw);
 
 	uint32 mClock15Offset = 0;
@@ -62,9 +62,9 @@ public:
 	ATSaveStatePokeyRenderer mRendererState;
 };
 
-class ATSaveStatePokey : public ATSnapExchangeObject<ATSaveStatePokey> {
+class ATSaveStatePokey : public ATSnapExchangeObject<ATSaveStatePokey, "ATSaveStatePokey"> {
 public:
-	template<typename T>
+	template<ATExchanger T>
 	void Exchange(T& rw);
 
 	uint8 mAUDF[4] {};

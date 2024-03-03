@@ -1338,7 +1338,13 @@ public:
 		return *this;
 	}
 
-	this_type& insert(int pos, value_type c) = delete;		// block implicit conversion from null pointer constant
+	this_type& insert(std::nullptr_t, value_type c) = delete;
+
+	this_type& insert(size_type index, value_type c) {
+		VDASSERT(index <= size());
+
+		return insert(mpBegin + index, c);
+	}
 
 	this_type& insert(iterator it, value_type c) {
 		if (mpEnd == mpEOS) {
@@ -1350,6 +1356,41 @@ public:
 		memmove(it + 1, it, (mpEnd - it + 1)*sizeof(value_type));
 		*it = c;
 		++mpEnd;
+		return *this;
+	}
+
+	this_type& insert(size_type index, const this_type& s) {
+		return insert(index, s.begin(), s.size());
+	}
+
+	this_type& insert(size_type index, const wchar_t *s) {
+		return insert(index, s, wcslen(s));
+	}
+
+	this_type& insert(size_type index, const wchar_t *s, size_type n) {
+		VDASSERT(index <= size());
+
+		if (n) {
+			const size_type current_size = (size_type)(mpEnd - mpBegin);
+
+			// aliasing from self is allowed, which we must detect
+			if ((uintptr)s - (uintptr)mpBegin < current_size) {
+				const VDStringW temp(s, s + n);
+				return insert(index, temp);
+			}
+
+			if ((size_type)(mpEOS - mpEnd) < n) {
+				size_type current_capacity = (size_type)(mpEOS - mpBegin);
+
+				reserve_amortized_slow(current_size + n, current_size, current_capacity);
+			}
+
+			mpEnd += n;
+
+			memmove(mpBegin + index + n, mpBegin + index, ((current_size - index) + 1) * sizeof(value_type));
+			memcpy(mpBegin + index, s, sizeof(value_type) * n);
+		}
+
 		return *this;
 	}
 

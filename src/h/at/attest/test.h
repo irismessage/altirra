@@ -53,6 +53,12 @@
 
 	bool ATTestShouldBreak();
 
+	void ATTestBeginTestLoop();
+	bool ATTestShouldContinueTestLoop();
+
+	void ATTestSetArguments(const wchar_t *args);
+	const wchar_t *ATTestGetArguments();
+
 	extern bool g_ATTestTracingEnabled;
 	void ATTestTrace(const char *msg);
 	void ATTestTraceF(const char *format, ...);
@@ -60,8 +66,8 @@
 	#define AT_TEST_ASSERT_STRINGIFY(x) AT_TEST_ASSERT_STRINGIFY1(x)
 	#define AT_TEST_ASSERT_STRINGIFY1(x) #x
 
-	#define AT_TEST_ASSERT(condition) if (!(condition)) { ATTestShouldBreak() ? __debugbreak() : throw ATTestAssertionException("%s", "Test assertion failed at line " AT_TEST_ASSERT_STRINGIFY(__LINE__) ": " #condition); volatile int _x = 0; _x = 1; } else ((void)0)
-	#define AT_TEST_ASSERTF(condition, msg, ...) if (!(condition)) { ATTestShouldBreak() ? __debugbreak() : throw ATTestAssertionException("Test assertion failed at line " AT_TEST_ASSERT_STRINGIFY(__LINE__) ": " msg, __VA_ARGS__); volatile int _x = 0; _x = 1; } else ((void)0)
+	#define AT_TEST_ASSERT(condition) if (!(condition)) { ATTestShouldBreak() ? __debugbreak() : throw ATTestAssertionException("%s", "Test assertion failed at line " AT_TEST_ASSERT_STRINGIFY(__LINE__) ": " #condition); volatile int _x = 0; (void)_x; } else ((void)0)
+	#define AT_TEST_ASSERTF(condition, msg, ...) if (!(condition)) { ATTestShouldBreak() ? __debugbreak() : throw ATTestAssertionException("Test assertion failed at line " AT_TEST_ASSERT_STRINGIFY(__LINE__) ": " msg, __VA_ARGS__); volatile int _x = 0; (void)_x; } else ((void)0)
 
 	#define AT_TEST_NONFATAL_ASSERT(condition) \
 		if (!(condition)) { \

@@ -72,6 +72,7 @@ protected:
 	void OnLButtonDblClk(int x, int y, int mods);
 	bool OnKeyDown(int code);
 	void OnMouseWheel(int lineDelta);
+	void OnMouseHWheel(int lineDelta);
 	void OnHScroll(int code);
 	void OnVScroll(int code);
 	void OnPaint();
@@ -138,6 +139,7 @@ protected:
 	uint32 mScrollY = 0;
 	uint32 mScrollMax = 0;
 	sint32 mScrollWheelAccum = 0;
+	sint32 mScrollHWheelAccum = 0;
 
 	uint32 mInsnPosStart = 0;
 	uint32 mInsnPosEnd = 0;
@@ -444,10 +446,32 @@ LRESULT ATUIHistoryView::EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 			SetFocus(mhwnd);
 			return 0;
 		}
-	} else if (msg == WM_CHAR || msg == WM_SYSCHAR) {
+	} else if (msg == WM_KEYUP || msg == WM_SYSKEYUP) {
+		if (wParam == VK_ESCAPE)
+			return 0;
+	} else if (msg == WM_CHAR) {
 		if (wParam == '\r') {
 			Search(VDGetWindowTextAW32(hwnd).c_str());
 			return 0;
+		} else if (wParam == 0x1B) {
+			return 0;
+		}
+	} else if (msg == WM_GETDLGCODE) {
+		if (lParam) {
+			const MSG& m = *(const MSG *)lParam;
+
+			switch(m.message) {
+				case WM_KEYUP:
+				case WM_KEYDOWN:
+					if (wParam == VK_ESCAPE || wParam == VK_RETURN)
+						return DLGC_WANTMESSAGE;
+					break;
+
+				case WM_CHAR:
+					if (wParam == '\r' || wParam == 0x1B)
+						return DLGC_WANTMESSAGE;
+					break;
+			}
 		}
 	}
 
@@ -502,6 +526,10 @@ LRESULT ATUIHistoryView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			OnMouseWheel((short)HIWORD(wParam));
 			break;
 
+		case WM_MOUSEHWHEEL:
+			OnMouseHWheel((short)HIWORD(wParam));
+			break;
+
 		case WM_CONTEXTMENU:
 			{
 				int x = GET_X_LPARAM(lParam);
@@ -529,13 +557,25 @@ LRESULT ATUIHistoryView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				VDCheckRadioMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWTAPEPOSITIONSAMPLES, mTimestampMode == kTsMode_TapePositionSamples);
 				VDCheckRadioMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SHOWTAPEPOSITIONSECONDS, mTimestampMode == kTsMode_TapePositionSeconds);
 
-				POINT pt = {x, y};
-				ScreenToClient(mhwnd, &pt);
-				ATHTLineIterator it = GetLineFromClientPoint(pt.x, pt.y);
-				SelectLine(it);
+				ATHTLineIterator activatedLine;
 
-				VDEnableMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_GOTOSOURCE, !!it);
-				VDEnableMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SETTIMESTAMPORIGIN, it && it.mpNode->mNodeType == kATHTNodeType_Insn);
+				if (x == -1 && y == -1) {
+					const vdrect32& r = GetClientArea();
+					const vdpoint32& pt = TransformClientToScreen(vdpoint32(r.right >> 1, r.bottom >> 1));
+
+					x = pt.x;
+					y = pt.y;
+
+					activatedLine = mSelectedLine;
+				} else {
+					POINT pt = {x, y};
+					ScreenToClient(mhwnd, &pt);
+					activatedLine = GetLineFromClientPoint(pt.x, pt.y);
+					SelectLine(activatedLine);
+				}
+
+				VDEnableMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_GOTOSOURCE, !!activatedLine);
+				VDEnableMenuItemByCommandW32(menu, ID_HISTORYCONTEXTMENU_SETTIMESTAMPORIGIN, activatedLine && activatedLine.mpNode->mNodeType == kATHTNodeType_Insn);
 
 				TrackPopupMenu(menu, TPM_LEFTALIGN|TPM_TOPALIGN, x, y, 0, mhwnd, NULL);
 			}
@@ -653,6 +693,19 @@ LRESULT ATUIHistoryView::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				InvalidateLine(mSelectedLine);
 			}
 			break;
+
+		case WM_GETDLGCODE:
+			if (lParam) {
+				const MSG& msg = *(const MSG *)lParam;
+
+				switch(msg.message) {
+					case WM_KEYDOWN:
+					case WM_KEYUP:
+					case WM_CHAR:
+						return DLGC_WANTMESSAGE;
+				}
+			}
+			return 0;
 	}
 
 	return ATUINativeWindow::WndProc(msg, wParam, lParam);
@@ -943,6 +996,15 @@ bool ATUIHistoryView::OnKeyDown(int code) {
 					SelectLine(it);
 			}
 			break;
+
+		case 'F':
+			if (GetKeyState(VK_CONTROL) >= 0)
+				return false;
+
+			if (mhwndEdit)
+				SetFocus(mhwndEdit);
+			break;
+
 		default:
 			return false;
 	}
@@ -966,6 +1028,27 @@ void ATUIHistoryView::OnMouseWheel(int dz) {
 	mScrollWheelAccum -= lines * WHEEL_DELTA;
 
 	ScrollToPixel(mScrollY - lines * (int)mItemHeight);
+}
+
+void ATUIHistoryView::OnMouseHWheel(int dx) {
+	// The 'width' of a horizontal scroll notch is not well defined. We define
+	// horizontal scrolls as being the same rate as vertical scrolls, including
+	// the lines-per-notch and page-at-a-time settings.
+	UINT linesPerAction = 3;
+	if (SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &linesPerAction, FALSE)) {
+		if (linesPerAction == WHEEL_PAGESCROLL)
+			linesPerAction = mPageItems;
+	}
+
+	mScrollHWheelAccum += dx * (int)linesPerAction;
+
+	int lines = mScrollHWheelAccum / WHEEL_DELTA;
+	if (!lines)
+		return;
+
+	mScrollHWheelAccum -= lines * WHEEL_DELTA;
+
+	HScrollToPixel(mScrollX - lines * (int)mItemHeight);
 }
 
 void ATUIHistoryView::OnHScroll(int code) {
@@ -1180,13 +1263,9 @@ void ATUIHistoryView::PaintItems(HDC hdc, const RECT *rPaint, uint32 itemStart, 
 
 			for(; lineIndex < lineCount; ++lineIndex, ++insnOffset) {
 				// draw the node
-				bool selected = false;
-
 				uint32 bgc;
 				uint32 fgc;
 				if (nodeSelected && mSelectedLine.mLineIndex == lineIndex) {
-					selected = true;
-					
 					bgc = mbFocus ? mColorBgHi : mColorBgHiInactive;
 					fgc = mbFocus ? mColorFgHi : mColorFgHiInactive;
 				} else {
@@ -1279,11 +1358,6 @@ namespace {
 	void FastFormat02X(char *s, uint8 v) {
 		s[0] = kHexDig[v >> 4];
 		s[1] = kHexDig[v & 15];
-	}
-
-	void FastFormat02U(char *s, uint32 v) {
-		s[0] = (char)('0' + v / 10);
-		s[1] = (char)('0' + v % 10);
 	}
 
 	void FastFormat3U(char *s, uint32 v) {
@@ -1928,7 +2002,12 @@ void ATUIHistoryView::UpdateHScrollBar() {
 		si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
 		si.nPage = mWidth;
 		si.nMin = 0;
-		si.nMax = mItemHeight * 64 + mCharWidth * 64;
+
+		// Widening the window can result in the view being h-scrolled past the normal right bound. Instead
+		// of counter-scrolling the window, we instead elastically raise the right bound until the window
+		// is scrolled back left.
+		si.nMax = std::max<sint32>(mScrollX + (sint32)mWidth, mItemHeight * 64 + mCharWidth * 64);
+
 		si.nPos = mScrollX;
 		si.nTrackPos = 0;
 		SetScrollInfo(mhwnd, SB_HORZ, &si, TRUE);

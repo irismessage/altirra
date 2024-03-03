@@ -27,7 +27,10 @@
 #include <at/atcore/devicecio.h>
 #include <at/atcore/deviceparent.h>
 #include <at/atcore/deviceprinter.h>
+#include <at/atcore/devicesnapshot.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/savestate.h>
+#include <at/atcore/snapshotimpl.h>
 #include "devicemanager.h"
 
 ATDeviceManager::ATDeviceManager() {
@@ -40,27 +43,29 @@ ATDeviceManager::~ATDeviceManager() {
 void ATDeviceManager::Init() {
 }
 
-IATDevice *ATDeviceManager::AddDevice(const char *tag, const ATPropertySet& pset, bool child, bool hidden) {
+IATDevice *ATDeviceManager::AddDevice(const char *tag, const ATPropertySet& pset, bool child) {
 	const ATDeviceDefinition *def = GetDeviceDefinition(tag);
 	if (!def)
 		return nullptr;
 
-	return AddDevice(def, pset, child, hidden);
+	return AddDevice(def, pset, child);
 }
 
-IATDevice *ATDeviceManager::AddDevice(const ATDeviceDefinition *def, const ATPropertySet& pset, bool child, bool hidden) {
+IATDevice *ATDeviceManager::AddDevice(const ATDeviceDefinition *def, const ATPropertySet& pset, bool child) {
 	vdrefptr<IATDevice> dev;
 	def->mpFactoryFn(pset, ~dev);
 
 	if (dev) {
+		VDASSERT(vdpoly_cast<IATDevice *>(dev) != nullptr);
+
 		dev->SetSettings(pset);
-		AddDevice(dev, child, hidden);
+		AddDevice(dev, child);
 	}
 
 	return dev;
 }
 
-void ATDeviceManager::AddDevice(IATDevice *dev, bool child, bool hidden) {
+void ATDeviceManager::AddDevice(IATDevice *dev, bool child) {
 	try {
 		mInterfaceListCache.clear();
 
@@ -72,7 +77,14 @@ void ATDeviceManager::AddDevice(IATDevice *dev, bool child, bool hidden) {
 		ATDeviceInfo info;
 		dev->GetDeviceInfo(info);
 
-		DeviceEntry ent = { dev, info.mpDef->mpTag, child, hidden };
+		DeviceEntry ent = {
+			.mpDevice = dev,
+			.mpTag = info.mpDef->mpTag,
+			.mbChild = child,
+			.mbHidden = (info.mpDef->mFlags & kATDeviceDefFlag_Hidden) != 0,
+			.mbInternal = (info.mpDef->mFlags & kATDeviceDefFlag_Internal) != 0
+		};
+
 		mDevices.push_back(ent);
 
 		try {
@@ -160,8 +172,8 @@ void ATDeviceManager::RemoveDevice(IATDevice *dev) {
 	}
 }
 
-void ATDeviceManager::RemoveAllDevices(bool includeHidden) {
-	auto devs = GetDevices(false, !includeHidden);
+void ATDeviceManager::RemoveAllDevices(bool includeInternal) {
+	auto devs = GetDevices(false, false, !includeInternal);
 	vdfastvector<IATDevice *> devices(devs.begin(), devs.end());
 
 	for(IATDevice *dev : devices)
@@ -174,7 +186,7 @@ void ATDeviceManager::ToggleDevice(const char *tag) {
 	if (dev)
 		RemoveDevice(dev);
 	else
-		AddDevice(tag, ATPropertySet(), false, false);
+		AddDevice(tag, ATPropertySet());
 }
 
 uint32 ATDeviceManager::GetDeviceCount() const {
@@ -347,7 +359,7 @@ void ATDeviceManager::AppendPathForDevice(VDStringA& s, IATDevice *dev, bool rec
 				++devIndex;
 		}
 	} else {
-		for(IATDevice *sibling : GetDevices(true, true)) {
+		for(IATDevice *sibling : GetDevices(true, false, true)) {
 			if (sibling == dev)
 				break;
 
@@ -434,6 +446,14 @@ void ATDeviceManager::AddInitCallback(vdfunction<void(IATDevice& dev)> cb) {
 	mInitHandlers.push_back(std::move(cb));
 }
 
+void ATDeviceManager::AddDeviceStatusCallback(const vdfunction<void(IATDevice&)> *cb) {
+	mStatusHandlers.Add(cb);
+}
+
+void ATDeviceManager::RemoveDeviceStatusCallback(const vdfunction<void(IATDevice&)> *cb) {
+	mStatusHandlers.Remove(cb);
+}
+
 void ATDeviceManager::MarkAndSweep(IATDevice *const *pExcludedDevs, size_t numExcludedDevs, vdfastvector<IATDevice *>& garbage) {
 	vdhashset<IATDevice *> devSet;
 
@@ -469,11 +489,11 @@ void ATDeviceManager::RegisterExtendedCommand(IATDeviceXCmd& extCmd) {
 	mExtCmds.emplace_back(&extCmd);
 }
 
-vdfastvector<IATDeviceXCmd *> ATDeviceManager::GetExtendedCommandsForDevice(IATDevice& dev) const {
+vdfastvector<IATDeviceXCmd *> ATDeviceManager::GetExtendedCommandsForDevice(IATDevice *dev, int busIndex) const {
 	vdfastvector<IATDeviceXCmd *> devExtCmds;
 
 	for(const auto& extCmd : mExtCmds) {
-		if (extCmd->IsSupported(dev))
+		if (extCmd->IsSupported(dev, busIndex))
 			devExtCmds.push_back(extCmd);
 	}
 
@@ -520,10 +540,199 @@ void ATDeviceManager::SaveSettings(VDRegistryKey& key) {
 	}
 }
 
+class ATSaveStateDeviceNode final : public ATSnapExchangeObject<ATSaveStateDeviceNode, "ATSaveStateDeviceNode"> {
+public:
+	bool InitFrom(const ATDeviceManager& devMgr, IATDevice *dev, ATSnapshotContext& ctx);
+
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	VDStringW mParentBusTag;
+	VDStringW mDeviceTag;
+	vdrefptr<IATObjectState> mDeviceState;
+	vdvector<vdrefptr<ATSaveStateDeviceNode>> mChildDevices;
+};
+
+bool ATSaveStateDeviceNode::InitFrom(const ATDeviceManager& devMgr, IATDevice *dev, ATSnapshotContext& ctx) {
+	if (dev) {
+		IATDeviceSnapshot *devSnap = vdpoly_cast<IATDeviceSnapshot *>(dev);
+		if (devSnap)
+			mDeviceState = devSnap->SaveState(ctx);
+
+		ATDeviceInfo devInfo;
+		dev->GetDeviceInfo(devInfo);
+
+		mDeviceTag = VDTextAToW(devInfo.mpDef->mpTag);
+
+		IATDeviceParent *devParent = vdpoly_cast<IATDeviceParent *>(dev);
+		if (devParent) {
+			uint32 busIndex = 0;
+			for(;;) {
+				IATDeviceBus *bus = devParent->GetDeviceBus(busIndex);
+				if (!bus)
+					break;
+
+				const VDStringW busTag(VDTextAToW(bus->GetBusTag()));
+
+				vdfastvector<IATDevice *> children;
+				bus->GetChildDevices(children);
+
+				for(IATDevice *child : children) {
+					vdrefptr devState { new ATSaveStateDeviceNode };
+
+					if (devState->InitFrom(devMgr, child, ctx)) {
+						devState->mParentBusTag = busTag;
+
+						mChildDevices.emplace_back(std::move(devState));
+					}
+				}
+
+				++busIndex;
+			}
+		}
+	} else {
+		for(IATDevice *rootDev : devMgr.GetDevices(true, false, false)) {
+			vdrefptr devState { new ATSaveStateDeviceNode };
+
+			if (devState->InitFrom(devMgr, rootDev, ctx))
+				mChildDevices.emplace_back(std::move(devState));
+		}
+	}
+
+	return mDeviceState || !mChildDevices.empty();
+}
+
+template<ATExchanger T>
+void ATSaveStateDeviceNode::Exchange(T& ex) {
+	ex.Transfer("tag", &mDeviceTag);
+	ex.Transfer("state", &mDeviceState);
+	ex.Transfer("bus_tag", &mParentBusTag);
+	ex.Transfer("child_devices", &mChildDevices);
+}
+
+class ATSaveStateDeviceManager final : public ATSnapExchangeObject<ATSaveStateDeviceManager, "ATSaveStateDeviceManager"> {
+public:
+	void InitFrom(const ATDeviceManager& dm, ATSnapshotContext& ctx);
+
+	template<ATExchanger T>
+	void Exchange(T& ex);
+
+	vdrefptr<ATSaveStateDeviceNode> mpRootNode;
+};
+
+void ATSaveStateDeviceManager::InitFrom(const ATDeviceManager& dm, ATSnapshotContext& ctx) {
+	mpRootNode = new ATSaveStateDeviceNode;
+	mpRootNode->InitFrom(dm, nullptr, ctx);
+}
+
+template<ATExchanger T>
+void ATSaveStateDeviceManager::Exchange(T& ex) {
+	ex.Transfer("root_node", &mpRootNode);
+}
+
+void ATDeviceManager::GetSnapshotStatus(ATSnapshotStatus& status) const {
+	for(IATDevice *dev : GetDevices(false, false, false)) {
+		IATDeviceSnapshot *devSnap = vdpoly_cast<IATDeviceSnapshot *>(dev);
+
+		if (devSnap)
+			devSnap->GetSnapshotStatus(status);
+	}
+}
+
+void ATDeviceManager::LoadState(const IATObjectState *state) {
+	ATSnapshotContext ctx;
+
+	if (!state) {
+		for(IATDevice *dev : GetDevices(false, false, false)) {
+			IATDeviceSnapshot *devSnap = vdpoly_cast<IATDeviceSnapshot *>(dev);
+
+			if (devSnap)
+				devSnap->LoadState(nullptr, ctx);
+		}
+
+		return;
+	}
+	
+	const auto LoadDevice = [this, &ctx](const auto& self, IATDevice& dev, const VDStringW& parentBusTag, auto& states) -> void {
+		ATDeviceInfo info;
+		dev.GetDeviceInfo(info);
+
+		VDStringW tag(VDTextAToW(info.mpDef->mpTag));
+
+		auto it = std::find_if(states.begin(), states.end(),
+			[&tag, &parentBusTag](const ATSaveStateDeviceNode *devState) {
+				return devState->mDeviceTag == tag && devState->mParentBusTag == parentBusTag;
+			}
+		);
+
+		vdrefptr<ATSaveStateDeviceNode> devState;
+
+		if (it != states.end()) {
+			devState = std::move(*it);
+			states.erase(it);
+		}
+
+		IATDeviceParent *devParent = vdpoly_cast<IATDeviceParent *>(&dev);
+		if (devParent) {
+			vdvector<vdrefptr<ATSaveStateDeviceNode>> childStates;
+
+			if (devState)
+				childStates = devState->mChildDevices;
+
+			uint32 busIndex = 0;
+			for(;;) {
+				IATDeviceBus *bus = devParent->GetDeviceBus(busIndex);
+				if (!bus)
+					break;
+
+				VDStringW parentBusTag = VDTextAToW(bus->GetBusTag());
+
+				vdfastvector<IATDevice *> children;
+				bus->GetChildDevices(children);
+
+				for(IATDevice *child : children)
+					self(self, *child, parentBusTag, childStates);
+
+				++busIndex;
+			}
+		}
+
+		IATDeviceSnapshot *devSnap = vdpoly_cast<IATDeviceSnapshot *>(&dev);
+		if (devSnap)
+			devSnap->LoadState(devState ? devState->mDeviceState : nullptr, ctx);
+	};
+
+	auto& dmState = atser_cast<const ATSaveStateDeviceManager&>(*state);
+	if (!dmState.mpRootNode)
+		throw ATInvalidSaveStateException();
+
+	auto devStates = dmState.mpRootNode->mChildDevices;
+	for(IATDevice *dev : GetDevices(true, false, false)) {
+		LoadDevice(LoadDevice, *dev, VDStringW(), devStates);
+	}
+}
+
+vdrefptr<IATObjectState> ATDeviceManager::SaveState() const {
+	vdrefptr<ATSaveStateDeviceManager> state { new ATSaveStateDeviceManager };
+
+	ATSnapshotContext ctx;
+	state->InitFrom(*this, ctx);
+
+	return state;
+}
+
 void *ATDeviceManager::GetService(uint32 iid) {
 	auto it = mServices.find(iid);
 
 	return it != mServices.end() ? it->second : nullptr;
+}
+
+void ATDeviceManager::NotifyDeviceStatusChanged(IATDevice& dev) {
+	mStatusHandlers.NotifyAll(
+		[&dev](const auto *fn) {
+			(*fn)(dev);
+		}
+	);
 }
 
 void ATDeviceManager::RegisterDeviceStorage(IATDeviceStorage& storage) {
@@ -586,30 +795,22 @@ void ATDeviceManager::SaveNVRAMInt(const char *name, sint32 val) {
 	nvram.mbIsInt = true;
 }
 
-auto ATDeviceManager::GetInterfaceList(uint32 iid, bool rootOnly, bool visibleOnly) const -> const InterfaceList * {
-	auto r = mInterfaceListCache.insert(iid + (rootOnly ? UINT64_C(1) << 32 : UINT64_C(0)) + (visibleOnly ? UINT64_C(1) << 33 : UINT64_C(0)));
+auto ATDeviceManager::GetInterfaceList(uint32 iid, bool rootOnly, bool visibleOnly, bool externalOnly) const -> const InterfaceList * {
+	auto r = mInterfaceListCache.insert(
+		iid
+		+ (rootOnly ? UINT64_C(1) << 32 : UINT64_C(0))
+		+ (visibleOnly ? UINT64_C(1) << 33 : UINT64_C(0))
+		+ (externalOnly ? UINT64_C(1) << 34 : UINT64_C(0))
+	);
 	InterfaceList& ilist = r.first->second;
 
 	if (r.second) {
-		if (iid) {
-			for(auto it = mDevices.begin(), itEnd = mDevices.end();
-				it != itEnd;
-				++it)
-			{
-				if ((!rootOnly || !it->mbChild) && (!visibleOnly || !it->mbHidden)) {
-					void *p = it->mpDevice->AsInterface(iid);
+		for(const DeviceEntry& de : mDevices) {
+			if ((!rootOnly || !de.mbChild) && (!visibleOnly || !de.mbHidden) && (!externalOnly || !de.mbInternal)) {
+				void *p = iid ? de.mpDevice->AsInterface(iid) : de.mpDevice;
 
-					if (p)
-						ilist.push_back(p);
-				}
-			}
-		} else {
-			for(auto it = mDevices.begin(), itEnd = mDevices.end();
-				it != itEnd;
-				++it)
-			{
-				if ((!rootOnly || !it->mbChild) && (!visibleOnly || !it->mbHidden))
-					ilist.push_back(it->mpDevice);
+				if (p)
+					ilist.push_back(p);
 			}
 		}
 	}
@@ -662,23 +863,30 @@ namespace {
 	};
 }
 
-void ATDeviceManager::SerializeDevice(IATDevice *dev, VDStringW& str) const {
+void ATDeviceManager::SerializeDevice(IATDevice *dev, VDStringW& str, bool compact, bool includeChildren) const {
 	StringWriter stringWriter(str);
 
 	VDJSONWriter writer;
-	writer.Begin(&stringWriter, true);
-	SerializeDevice(dev, writer);
+	writer.Begin(&stringWriter, compact);
+	SerializeDevice(dev, writer, includeChildren);
 	writer.End();
 }
 
-void ATDeviceManager::SerializeDevice(IATDevice *dev, VDJSONWriter& out) const {
+void ATDeviceManager::SerializeDevice(IATDevice *dev, VDJSONWriter& out, bool includeChildren) const {
 	if (dev) {
 		ATDeviceInfo devInfo;
 		dev->GetDeviceInfo(devInfo);
 
 		out.OpenObject();
 		out.WriteMemberName(L"tag");
-		out.WriteString(VDTextAToW(devInfo.mpDef->mpTag).c_str());
+		VDStringW tagStr = VDTextAToW(devInfo.mpDef->mpTag);
+
+		// If this is an internal device, prefix the tag with _ so no previous version attempts
+		// to create it.
+		if (devInfo.mpDef->mFlags & kATDeviceDefFlag_Internal)
+			tagStr.insert(tagStr.begin(), L'_');
+
+		out.WriteString(tagStr.c_str());
 
 		ATPropertySet pset;
 		dev->GetSettings(pset);
@@ -690,7 +898,7 @@ void ATDeviceManager::SerializeDevice(IATDevice *dev, VDJSONWriter& out) const {
 		}
 
 		IATDeviceParent *dp = vdpoly_cast<IATDeviceParent *>(dev);
-		if (dp) {
+		if (dp && includeChildren) {
 			bool busesOpen = false;
 			uint32 busIndex = 0;
 			vdfastvector<IATDevice *> children;
@@ -724,7 +932,7 @@ void ATDeviceManager::SerializeDevice(IATDevice *dev, VDJSONWriter& out) const {
 						it != itEnd;
 						++it)
 					{
-						SerializeDevice(*it, out);
+						SerializeDevice(*it, out, true);
 					}
 
 					out.Close();
@@ -742,8 +950,8 @@ void ATDeviceManager::SerializeDevice(IATDevice *dev, VDJSONWriter& out) const {
 	} else {
 		out.OpenArray();
 
-		for(IATDevice *child : GetDevices(true, true))
-			SerializeDevice(child, out);
+		for(IATDevice *child : GetDevices(true, true, false))
+			SerializeDevice(child, out, includeChildren);
 
 		out.Close();
 	}
@@ -826,11 +1034,45 @@ void ATDeviceManager::DeserializeDevice(IATDeviceParent *parent, IATDeviceBus *b
 
 	DeserializeProps(pset, node["params"]);
 
-	IATDevice *dev;
-	try {
-		dev = AddDevice(VDTextWToA(tag).c_str(), pset, bus != nullptr || parent != nullptr, false);
-	} catch(const MyError&) {
+	auto tag2 = VDTextWToA(tag);
+	if (tag2.empty())
 		return;
+
+	bool internal = false;
+	if (tag2[0] == '_') {
+		tag2.erase(tag2.begin());
+		internal = true;
+	}
+
+	const ATDeviceDefinition *def = GetDeviceDefinition(tag2.c_str());
+	IATDevice *dev = nullptr;
+
+	if (!def)
+		return;
+
+	if (def->mFlags & kATDeviceDefFlag_Internal) {
+		// This device is an internal device, so:
+		// - we cannot add it if it doesn't already exist
+		// - it cannot be a child device
+		// - the serialized tag should start with _ to indicate internal
+
+		if (bus || !internal)
+			return;
+
+		dev = GetDeviceByTag(tag2.c_str());
+
+		if (dev) {
+			VDVERIFY(dev->SetSettings(pset));
+		}
+	} else {
+		if (internal)
+			return;
+
+		try {
+			dev = AddDevice(def, pset, bus != nullptr || parent != nullptr);
+		} catch(const MyError&) {
+			return;
+		}
 	}
 
 	if (!dev)

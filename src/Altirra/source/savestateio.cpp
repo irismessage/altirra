@@ -15,6 +15,8 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include "stdafx.h"
+#include <future>
+#include <vd2/system/text.h>
 #include <vd2/system/zip.h>
 #include <vd2/vdjson/jsonoutput.h>
 #include <vd2/vdjson/jsonwriter.h>
@@ -28,13 +30,24 @@
 
 class ATSnapObjectSerializer final : public IATSaveStateSerializer {
 public:
+	ATSnapObjectSerializer(const wchar_t *rootFileName);
+
+	void SetCompressionLevel(VDDeflateCompressionLevel level) override { mCompressionLevel = level; }
+	void SetProgressFn(vdfunction<void(int, int)> fn);
+
 	void Serialize(IVDStream& stream, IATSerializable& object, const wchar_t *packageType) override;
 	void Serialize(IVDZipArchiveWriter& zip, IATSerializable& snapshot) override;
 
+	void BeginSerialize(IVDZipArchiveWriter& zip) override;
+	void PreSerializeDirect(IATSerializable& object) override;
+	void EndSerialize(IATSerializable& snapshot) override;
+
 public:
 	void CreateMember(const char *key) override;
-	void OpenArray() override;
+	void OpenArray(bool compact) override;
 	void CloseArray() override;
+	void OpenObject(const char *key) override;
+	void CloseObject() override;
 	void WriteStringA(VDStringSpanA s) override;
 	void WriteStringW(VDStringSpanW s) override;
 	void WriteBool(bool v) override;
@@ -46,14 +59,47 @@ public:
 
 private:
 	uint32 AddObject(IATSerializable *obj);
+	VDStringW MakeUniqueDirectName(const wchar_t *baseName, uint32 objectIndex);
+
+	struct ObjectEntry {
+		vdrefptr<IATSerializable> mpObject;
+		VDStringW mDirectPath;
+		bool mbDirectSerialized = false;
+	};
 
 	VDJSONWriter mWriter;
-	vdvector<vdrefptr<IATSerializable>> mObjects;
+	vdvector<ObjectEntry> mObjects;
 	vdhashmap<IATSerializable *, uint32> mObjectLookup;
+	int mNumDirectObjects = 0;
+	IVDZipArchiveWriter *mpZip = nullptr;
+
+	// adjusted path -> mObjectDirectPaths[] index
+	vdhashmap<VDStringW, uint32, vdstringhashi> mObjectDirectPathLookup;
+
+	// unadjusted path -> next counter
+	vdhashmap<VDStringW, uint32, vdstringhashi> mLastObjectDirectPathLookup;
+
+	VDStringW mRootFileName;
+	VDDeflateCompressionLevel mCompressionLevel = VDDeflateCompressionLevel::Best;
+	vdfunction<void(int, int)> mpProgressFn;
 };
 
+ATSnapObjectSerializer::ATSnapObjectSerializer(const wchar_t *rootFileName)
+	: mRootFileName(rootFileName)
+{
+}
+
+void ATSnapObjectSerializer::SetProgressFn(vdfunction<void(int, int)> fn) {
+	mpProgressFn = fn;
+}
+
 void ATSnapObjectSerializer::Serialize(IVDStream& stream, IATSerializable& object, const wchar_t *packageType) {
-	AddObject(&object);
+	if (mObjects.empty())
+		AddObject(&object);
+	else {
+		VDASSERT(!mObjects[0].mpObject);
+		mObjects[0].mpObject = &object;
+	}
 
 	VDJSONStreamOutput output(stream);
 	mWriter.Begin(&output);
@@ -67,7 +113,7 @@ void ATSnapObjectSerializer::Serialize(IVDStream& stream, IATSerializable& objec
 	ATSerializer objWriter(*this);
 
 	for(uint32 i = 0; i < mObjects.size(); ++i) {
-		IATSerializable *obj = mObjects[i];
+		IATSerializable *obj = mObjects[i].mpObject;
 		const wchar_t *directPath = obj->GetDirectPackagingPath();
 
 		mWriter.OpenObject();
@@ -75,8 +121,17 @@ void ATSnapObjectSerializer::Serialize(IVDStream& stream, IATSerializable& objec
 		mWriter.WriteStringASCII(obj->GetSerializationType().mpName);
 
 		if (directPath) {
+			VDASSERT(*directPath);
+
+			VDStringW& adjustedDirectPath = mObjects[i].mDirectPath;
+			
+			if (adjustedDirectPath.empty())
+				adjustedDirectPath = MakeUniqueDirectName(directPath, i);
+
 			mWriter.WriteMemberName(L"_path");
-			mWriter.WriteString(directPath);
+			mWriter.WriteString(adjustedDirectPath.c_str());
+
+			++mNumDirectObjects;
 		} else {
 			obj->Serialize(objWriter);
 		}
@@ -91,29 +146,89 @@ void ATSnapObjectSerializer::Serialize(IVDStream& stream, IATSerializable& objec
 }
 
 void ATSnapObjectSerializer::Serialize(IVDZipArchiveWriter& zip, IATSerializable& snapshot) {
-	Serialize(zip.BeginFile(L"savestate.json"), snapshot, L"ATSaveState");
-	zip.EndFile();
+	BeginSerialize(zip);
+	EndSerialize(snapshot);
+}
 
-	for(IATSerializable *obj : mObjects) {
-		const wchar_t *directPath = obj->GetDirectPackagingPath();
+void ATSnapObjectSerializer::BeginSerialize(IVDZipArchiveWriter& zip) {
+	mpZip = &zip;
+}
 
-		if (directPath) {
-			auto& dstream = zip.BeginFile(directPath);
+void ATSnapObjectSerializer::PreSerializeDirect(IATSerializable& object) {
+	const wchar_t *directPath = object.GetDirectPackagingPath();
+	if (!directPath) {
+		VDFAIL("Attempt to preserialize an object that doesn't support direct serialization.");
+		return;
+	}
+
+	if (mObjects.empty())
+		mObjects.emplace_back();
+
+	const auto prevCount = mObjectLookup.size();
+	const uint32 objectIndex = AddObject(&object);
+
+	if (mObjectLookup.size() == prevCount) {
+		VDFAIL("Attempt to preserialize an object twice");
+		return;
+	}
+
+	ObjectEntry& oe = mObjects[objectIndex - 1];
+	oe.mDirectPath = MakeUniqueDirectName(directPath, objectIndex);
+	oe.mbDirectSerialized = true;
+
+	auto& dstream = mpZip->BeginFile(oe.mDirectPath.c_str(), mCompressionLevel);
+	object.SerializeDirectAndRelease(dstream);
+	mpZip->EndFile();
+}
+
+void ATSnapObjectSerializer::EndSerialize(IATSerializable& snapshot) {
+	Serialize(mpZip->BeginFile(mRootFileName.c_str()), snapshot, VDTextAToW(snapshot.GetSerializationType().mpName).c_str());
+	mpZip->EndFile();
+
+	int directObjects = 0;
+
+	for(ObjectEntry& oe : mObjects) {
+		IATSerializable *obj = oe.mpObject;
+		const VDStringW& directPath = oe.mDirectPath;
+
+		if (!directPath.empty() && !oe.mbDirectSerialized) {
+			oe.mbDirectSerialized = true;
+
+			if (mpProgressFn)
+				mpProgressFn(++directObjects, mNumDirectObjects + 1);
+
+			auto& dstream = mpZip->BeginFile(directPath.c_str(), mCompressionLevel);
 			obj->SerializeDirect(dstream);
-			zip.EndFile();
+			mpZip->EndFile();
 		}
 	}
+
+	mpZip = nullptr;
 }
 
 void ATSnapObjectSerializer::CreateMember(const char *key) {
 	mWriter.WriteMemberName(VDTextU8ToW(VDStringSpanA(key)).c_str());
 }
 
-void ATSnapObjectSerializer::OpenArray() {
+void ATSnapObjectSerializer::OpenArray(bool compact) {
 	mWriter.OpenArray();
+
+	if (compact)
+		mWriter.SetArrayCompact();
 }
 
 void ATSnapObjectSerializer::CloseArray() {
+	mWriter.Close();
+}
+
+void ATSnapObjectSerializer::OpenObject(const char *key) {
+	if (key)
+		CreateMember(key);
+
+	mWriter.OpenObject();
+}
+
+void ATSnapObjectSerializer::CloseObject() {
 	mWriter.Close();
 }
 
@@ -154,7 +269,8 @@ uint32 ATSnapObjectSerializer::AddObject(IATSerializable *obj) {
 
 	auto r = mObjectLookup.insert(obj);
 	if (r.second) {
-		mObjects.emplace_back(obj);
+		ObjectEntry& oe = mObjects.emplace_back();
+		oe.mpObject = obj;
 
 		r.first->second = (uint32)mObjects.size();
 	}
@@ -162,12 +278,123 @@ uint32 ATSnapObjectSerializer::AddObject(IATSerializable *obj) {
 	return r.first->second;
 }
 
+VDStringW ATSnapObjectSerializer::MakeUniqueDirectName(const wchar_t *baseName, uint32 objectIndex) {
+	VDStringW adjustedDirectPath { baseName };
+
+	const auto counterEntry = mLastObjectDirectPathLookup.insert_as(adjustedDirectPath);
+	uint32 counter = 0;
+
+	if (!counterEntry.second)
+		counter = counterEntry.first->second;
+
+	// disambiguate
+	size_t extPos = 0;
+	for(;;) {
+		++counter;
+
+		if (counter < 2) {
+			// counter=1 is the base name
+		} else if (!extPos) {
+			extPos = std::min(adjustedDirectPath.size(), adjustedDirectPath.find(L'.'));
+
+			VDStringW counterStr;
+			counterStr.sprintf(L"-%u", counter);
+			adjustedDirectPath.insert(extPos, counterStr);
+			extPos += counterStr.size();
+		} else {
+			// increment
+			for(size_t j = extPos; j > 0; --j) {
+				wchar_t& c = adjustedDirectPath[j - 1];
+
+				if (c == L'9') {
+					c = L'0';
+				} else if (c >= L'0' && c <= L'8') {
+					++c;
+					break;
+				} else {
+					adjustedDirectPath.insert(j, L'1');
+					++extPos;
+					break;
+				}
+			}
+		}
+
+		auto insertResult = mObjectDirectPathLookup.insert_as(adjustedDirectPath);
+		if (insertResult.second) {
+			insertResult.first->second = objectIndex;
+			break;
+		}
+	}
+
+	counterEntry.first->second = counter;
+
+	return adjustedDirectPath;
+}
+
 ///////////////////////////////////////////////////////////////////////////
+
+struct ATSnapObjectDeferredContext final : public vdrefcount {
+	vdfunction<void(const char *, vdfastvector<uint8>&)> mpOpenStream;
+	vdfunction<sint32(const char *, vdfastvector<uint8>&)> mpReadRawStream;
+	vdfunction<void(sint32, vdfastvector<uint8>&)> mpDecompressStream;
+};
+
+struct ATSnapObjectDeferredObject final : public vdrefcounted<IATDeferredDirectDeserializer> {
+	void DeserializeDirect(IATSerializable& target) const override {
+		vdfastvector<uint8> buf;
+
+		if (mbPrefetched) {
+			mDecompressionFuture.wait();
+
+			buf.swap(mPrefetchBuffer);
+		} else {
+			mpContext->mpOpenStream(mFilename.c_str(), buf);
+		}
+
+		VDMemoryStream ms(buf.data(), buf.size());
+		target.DeserializeDirect(ms, (uint32)buf.size());
+	}
+
+	void Prefetch() override {
+		if (mbPrefetched)
+			return;
+
+		mPrefetchIndex = mpContext->mpReadRawStream(mFilename.c_str(), mPrefetchBuffer);
+
+		if (mPrefetchIndex < 0) {
+			std::promise<void> dummyPromise;
+
+			mDecompressionFuture = dummyPromise.get_future();
+			dummyPromise.set_value();
+		} else {
+			mDecompressionFuture = std::async(
+				std::launch::deferred | std::launch::async,
+				[this] {
+					mpContext->mpDecompressStream(mPrefetchIndex, mPrefetchBuffer);
+				}
+			);
+		}
+
+		mbPrefetched = true;
+	}
+
+	vdrefptr<ATSnapObjectDeferredContext> mpContext;
+	VDStringA mFilename;
+
+	mutable vdfastvector<uint8> mPrefetchBuffer;
+	sint32 mPrefetchIndex = 0;
+	bool mbPrefetched = false;
+	std::future<void> mDecompressionFuture;
+};
 
 class ATSnapObjectDeserializer final : public IATSaveStateDeserializer {
 public:
+	ATSnapObjectDeserializer(const wchar_t *rootFileName);
+
+	void SetProgressFn(vdfunction<void(int, int)> fn);
+
 	void Deserialize(IVDRandomAccessStream& stream, IATSerializable **snapshot) override;
-	void Deserialize(VDZipArchive& zip, IATSerializable **saveState) override;
+	void Deserialize(VDZipArchive& zip, IATSerializable **saveState, IVDRefCount *deferredZip = nullptr) override;
 
 public:
 	bool OpenObject(const char *key) override;
@@ -186,7 +413,7 @@ public:
 	bool ReadVariableBulkData(vdfastvector<uint8>& buf) override;
 
 private:
-	void Deserialize(const void *data, uint32 len, const vdfunction<bool(const char *, vdfastvector<uint8>&)>& openStream, IATSerializable **snapshot);
+	void Deserialize(const void *data, uint32 len, const vdfunction<bool(const char *, vdfastvector<uint8>&)>& openStream, ATSnapObjectDeferredContext *context, IATSerializable **snapshot);
 
 	VDJSONValueRef GetNextChild(const char *key);
 
@@ -195,7 +422,18 @@ private:
 	uint32 mArrayIndex = 0;
 	vdvector<std::pair<VDJSONValueRef, uint32>> mStack;
 	vdvector<vdrefptr<IATSerializable>> mObjects;
+	VDStringW mRootFileName;
+	vdfunction<void(int, int)> mpProgressFn;
 };
+
+ATSnapObjectDeserializer::ATSnapObjectDeserializer(const wchar_t *rootFileName)
+	: mRootFileName(rootFileName)
+{
+}
+
+void ATSnapObjectDeserializer::SetProgressFn(vdfunction<void(int, int)> fn) {
+	mpProgressFn = fn;
+}
 
 void ATSnapObjectDeserializer::Deserialize(IVDRandomAccessStream& stream, IATSerializable **snapshot) {
 	sint64 len = stream.Length();
@@ -211,14 +449,16 @@ void ATSnapObjectDeserializer::Deserialize(IVDRandomAccessStream& stream, IATSer
 		[](auto&&...) -> bool {
 			throw MyError("Data package contains an unsupported external reference.");
 		},
+		nullptr,
 		snapshot
 	);
 }
 
-void ATSnapObjectDeserializer::Deserialize(const void *data, uint32 len, const vdfunction<bool(const char *, vdfastvector<uint8>&)>& openStream, IATSerializable **snapshot) {
+void ATSnapObjectDeserializer::Deserialize(const void *data, uint32 len, const vdfunction<bool(const char *, vdfastvector<uint8>&)>& openStream, ATSnapObjectDeferredContext *context, IATSerializable **snapshot) {
 	VDJSONReader reader;
 	VDJSONDocument doc;
-	reader.Parse(data, len, doc);
+	if (!reader.Parse(data, len, doc))
+		throw ATInvalidSaveStateException();
 
 	const auto objectSet = doc.Root()["objects"].AsArray();
 
@@ -245,14 +485,25 @@ void ATSnapObjectDeserializer::Deserialize(const void *data, uint32 len, const v
 		const VDJSONValueRef& objectInfo = objectSet[i];
 		IATSerializable *obj = mObjects[i];
 
+		if (mpProgressFn)
+			mpProgressFn(i, numObjects);
+
 		if (obj) {
 			const wchar_t *path = objectInfo["_path"].AsString();
 			if (path && *path) {
-				if (!openStream(VDTextWToU8(VDStringSpanW(path)).c_str(), buf))
-					throw ATInvalidSaveStateException();
+				if (context && obj->SupportsDirectDeserialization()) {
+					vdrefptr defObj { new ATSnapObjectDeferredObject };
+					defObj->mFilename = VDTextWToU8(VDStringSpanW(path));
+					defObj->mpContext = context;
 
-				VDMemoryStream ms(buf.data(), buf.size());
-				obj->DeserializeDirect(ms, (uint32)buf.size());
+					obj->DeserializeDirectDeferred(*defObj);
+				} else {
+					if (!openStream(VDTextWToU8(VDStringSpanW(path)).c_str(), buf))
+						throw ATInvalidSaveStateException();
+
+					VDMemoryStream ms(buf.data(), buf.size());
+					obj->DeserializeDirect(ms, (uint32)buf.size());
+				}
 			} else {
 				mParentValue = objectInfo;
 
@@ -262,46 +513,72 @@ void ATSnapObjectDeserializer::Deserialize(const void *data, uint32 len, const v
 		}
 	}
 
+	for(size_t i = 0; i < numObjects; ++i) {
+		IATSerializable *obj = mObjects[i];
+
+		if (obj)
+			obj->PostDeserialize();
+	}
+
 	*snapshot = mObjects[0].release();
 }
 
-void ATSnapObjectDeserializer::Deserialize(VDZipArchive& zip, IATSerializable **saveState) {
+void ATSnapObjectDeserializer::Deserialize(VDZipArchive& zip, IATSerializable **saveState, IVDRefCount *deferredZip) {
 	sint32 n = zip.GetFileCount();
 
 	auto openStream = [&zip, n](const char *name, vdfastvector<uint8>& buf) -> bool {
-		for(sint32 i=0; i<n; ++i) {
-			const auto& fi = zip.GetFileInfo(i);
+		sint32 idx = zip.FindFile(name, true);
 
-			if (fi.mFileName == name) {
-				if (fi.mUncompressedSize > 384 * 1024 * 1024)
-					throw MyError("The zip item is too large (%llu bytes).", (unsigned long long)fi.mUncompressedSize);
+		if (idx < 0)
+			return false;
 
-				vdautoptr<VDZipStream> zs(new VDZipStream(zip.OpenRawStream(i), fi.mCompressedSize, !fi.mbPacked));
-				zs->EnableCRC();
+		const auto& fi = zip.GetFileInfo(idx);
 
-				buf.resize(fi.mUncompressedSize);
-				zs->Read(buf.data(), fi.mUncompressedSize);
+		if (fi.mbEnhancedDeflate)
+			throw MyError("Enhanced Deflate compression is not supported in save state files.");
 
-				if (zs->CRC() != fi.mCRC32)
-					throw MyError("The zip item could not be extracted (bad CRC).");
+		vdautoptr zs { zip.OpenDecodedStream(idx) };
+		zs->EnableCRC();
 
-				return true;
-			}
-		}
+		buf.resize(fi.mUncompressedSize);
+		zs->Read(buf.data(), fi.mUncompressedSize);
+		zs->VerifyCRC();
 
-		return false;
+		return true;
 	};
+
+	vdrefptr<ATSnapObjectDeferredContext> context;
+	if (deferredZip) {
+		context = new ATSnapObjectDeferredContext;
+		context->mpOpenStream = [cookie = vdrefptr(deferredZip), openStream](const char *name, vdfastvector<uint8>& buf) {
+			if (!openStream(name, buf))
+				throw ATInvalidSaveStateException();
+		};
+
+		context->mpReadRawStream = [cookie = vdrefptr(deferredZip), &zip](const char *name, vdfastvector<uint8>& buf) -> sint32 {
+			sint32 idx = zip.FindFile(name, true);
+
+			if (idx < 0)
+				throw ATInvalidSaveStateException();
+
+			return zip.ReadRawStream(idx, buf) ? -1 : idx;
+		};
+
+		context->mpDecompressStream = [cookie = vdrefptr(deferredZip), &zip](sint32 idx, vdfastvector<uint8>& buf) {
+			zip.DecompressStream(idx, buf);
+		};
+	}
 
 	vdfastvector<uint8> buf;
 
-	if (!openStream("savestate.json", buf))
+	if (!openStream(VDTextWToA(mRootFileName).c_str(), buf))
 		throw ATInvalidSaveStateException();
 
-	Deserialize(buf.data(), (uint32)buf.size(), openStream, saveState);
+	Deserialize(buf.data(), (uint32)buf.size(), openStream, context, saveState);
 }
 
 bool ATSnapObjectDeserializer::OpenObject(const char *key) {
-	VDJSONValueRef child = mParentValue[key];
+	VDJSONValueRef child = GetNextChild(key);
 
 	mStack.push_back({mParentValue, mArrayIndex});
 	mParentValue = child;
@@ -463,18 +740,18 @@ VDJSONValueRef ATSnapObjectDeserializer::GetNextChild(const char *key) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-IATSaveStateSerializer *ATCreateSaveStateSerializer() {
-	return new ATSnapObjectSerializer;
+IATSaveStateSerializer *ATCreateSaveStateSerializer(const wchar_t *rootFileName) {
+	return new ATSnapObjectSerializer(rootFileName);
 }
 
-IATSaveStateDeserializer *ATCreateSaveStateDeserializer() {
-	return new ATSnapObjectDeserializer;
+IATSaveStateDeserializer *ATCreateSaveStateDeserializer(const wchar_t *rootFileName) {
+	return new ATSnapObjectDeserializer(rootFileName);
 }
 
 void ATInitSaveStateDeserializer() {
 	ATSetSaveState2Reader(
-		[](VDZipArchive& zip, IATSerializable **rootObj) {
-			ATSnapObjectDeserializer ds;
+		[](VDZipArchive& zip, const wchar_t *rootFileName, IATSerializable **rootObj) {
+			ATSnapObjectDeserializer ds(rootFileName);
 
 			ds.Deserialize(zip, rootObj);
 		}

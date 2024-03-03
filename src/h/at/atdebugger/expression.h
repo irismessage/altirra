@@ -54,6 +54,7 @@ enum ATDebugExpNodeType {
 	kATDebugExpNodeType_DerefSignedDoubleWord,
 	kATDebugExpNodeType_Invert,
 	kATDebugExpNodeType_Negate,
+	kATDebugExpNodeType_HwReg,
 	kATDebugExpNodeType_Const,
 	kATDebugExpNodeType_Read,
 	kATDebugExpNodeType_Write,

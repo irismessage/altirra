@@ -23,6 +23,7 @@
 #endif
 
 #include <vd2/system/vdtypes.h>
+#include <at/atcore/enumparse.h>
 #include <at/atcpu/history.h>
 
 class ATCPUEmulator;
@@ -34,7 +35,6 @@ class ATSaveStateReader;
 class ATCPUEmulatorMemory;
 class ATBreakpointManager;
 struct ATCPUHistoryEntry;
-class IATSnappable;
 class ATSnapEncoder;
 class IATObjectState;
 
@@ -62,6 +62,8 @@ enum ATCPUMode : uint8 {
 	kATCPUMode_65C816,
 	kATCPUModeCount
 };
+
+AT_DECLARE_ENUM_TABLE(ATCPUMode);
 
 enum ATCPUSubMode : uint8 {
 	kATCPUSubMode_6502,
@@ -254,12 +256,20 @@ public:
 	bool	IsPathStart(uint16 addr) const;
 	bool	IsInPath(uint16 addr) const;
 
-	const ATCPUHistoryEntry& GetHistory(int i) const {
-		return mHistory[(mHistoryIndex - i - 1) & (vdcountof(mHistory) - 1)];
+	const ATCPUHistoryEntry& GetHistory(uint32 i) const {
+		const ATCPUHistoryEntry *base = mHistory.begin();
+		ptrdiff_t pos = (const char *)mpHistoryNext - (const char *)base;
+		ptrdiff_t offset = ((i + 1) & (kHistoryLength - 1)) * sizeof(ATCPUHistoryEntry);
+
+		pos -= offset;
+		if (pos < 0)
+			pos += kHistoryLength * sizeof(ATCPUHistoryEntry);
+
+		return *(const ATCPUHistoryEntry *)((const char *)base + pos);
 	}
 
-	int GetHistoryLength() const { return vdcountof(mHistory); }
-	uint32	GetHistoryCounter() const { return mHistoryIndex; }
+	int GetHistoryLength() const { return kHistoryLength; }
+	uint32	GetHistoryCounter() const { return mHistoryBase + (uint32)(mpHistoryNext - mHistory.begin()); }
 
 	void	DumpStatus(bool extended = false);
 
@@ -271,9 +281,8 @@ public:
 	void	EndLoadState(ATSaveStateReader& reader);
 
 	void	SaveState(IATObjectState **result);
-	bool	LoadState(const IATObjectState& state);
-
-	IATSnappable *AsSnappable();
+	void	LoadState(const IATObjectState *state);
+	void	LoadState(const class ATSaveStateCPU& state);
 
 	void	InjectOpcode(uint8 op);
 	void	Push(uint8 v);
@@ -286,6 +295,8 @@ public:
 	void	NegateIRQ();
 	void	AssertNMI();
 	void	AssertABORT();
+	void	AssertRDY();
+	void	NegateRDY();
 
 	// Low-priority call needed to clean up timers to avoid time base wrapping. This needs
 	// to be called no more than every 2^30 cycles, so not critical.
@@ -436,11 +447,15 @@ protected:
 	ATCPUVerifier	*mpVerifier;
 	ATCPUHeatMap	*mpHeatMap;
 
-	int mHistoryIndex;
-
 	uint8 *mpDstState;
 	uint8	mStates[16];
 	uint16	mStateRelocOffset = 0;
+
+	ATCPUHistoryEntry *mpHistoryNext = nullptr;
+	uint32	mHistoryBase = 0;
+
+	static constexpr uint32 kHistoryLength = 131072;
+	vdblock<ATCPUHistoryEntry> mHistory;
 
 	enum HistoryEnableFlags : uint8 {
 		kHistoryEnableFlag_None = 0x00,
@@ -481,9 +496,6 @@ protected:
 	uint16	mDecodePtrs816[10][kNumExtOpcodes];
 	uint8	mDecodeHeap[0x5000];
 	uint8	mInsnFlags[65536];
-
-	typedef ATCPUHistoryEntry HistoryEntry;
-	HistoryEntry mHistory[131072];
 
 	struct ExtOpcodeAnchor {
 		uint16 mOffset;

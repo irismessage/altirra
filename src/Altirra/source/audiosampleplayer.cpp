@@ -36,9 +36,9 @@ public:
 
 	uint32 mBaseOffset = 0;
 	uint32 mOverlapSamples = 0;
-	bool mbHasImpulses = false;
+	bool mbHasOutput = false;
 
-	ATFFT<4096> mFFT;
+	ATFFT<kConvSize> mFFT;
 
 	alignas(16) float mXformBuffer[kConvSize] {};
 	alignas(16) float mAccumBuffer[kConvSize] {};
@@ -55,99 +55,72 @@ void ATAudioConvolutionOutput::PreTransformSample(float *sample) {
 }
 
 void ATAudioConvolutionOutput::AccumulateImpulses(const float *impulseFrame, const float *sampleXform) {
+	// convert impulse train to frequency domain
 	mFFT.Forward(mXformBuffer, impulseFrame);
 
-	// multiply spectra of impulse train and sound sample
-	// first two values are real DC and fsc*0.5, rest are complex
-	const float *VDRESTRICT src1 = mXformBuffer;
-	const float *VDRESTRICT src2 = sampleXform;
-	float *VDRESTRICT dst = mAccumBuffer;
+	// multiply spectra of impulse train and sound sample (convolving the impulse
+	// train by the sound sample in the time domain)
+	mFFT.MultiplyAdd(mAccumBuffer, mXformBuffer, sampleXform);
 
-	dst[0] += src1[0] * src2[0];
-	dst[1] += src1[1] * src2[1];
-	dst += 2;
-	src1 += 2;
-	src2 += 2;
-
-	for(int i=0; i<kConvSize/2-1; ++i) {
-		const float r1 = *src1++;
-		const float i1 = *src1++;
-		const float r2 = *src2++;
-		const float i2 = *src2++;
-
-		*dst++ += r1*r2 - i1*i2;
-		*dst++ += r1*i2 + r2*i1;
-	}
-
-	mbHasImpulses = true;
+	// mark that we have output to accumulate in the overlap buffer
+	mbHasOutput = true;
 }
 
 void ATAudioConvolutionOutput::Commit(float *dstL, float *dstR, uint32 len) {
-	if (mbHasImpulses) {
-		mbHasImpulses = false;
+	const auto accumAndZero = [](float *VDRESTRICT dst, float *VDRESTRICT src, size_t n) {
+		for(size_t i=0; i<n; ++i) {
+			dst[i] += src[i];
+			src[i] = 0;
+		}
+	};
+
+	const auto accum2AndZero = [](float *VDRESTRICT dst1, float *VDRESTRICT dst2, float *VDRESTRICT src, size_t n) {
+		for(size_t i=0; i<n; ++i) {
+			float v = src[i];
+			src[i] = 0;
+			dst1[i] += v;
+			dst2[i] += v;
+		}
+	};
+
+	// If we had any impulses to product output this frame, do inverse FFT to convert the
+	// output back to time domain and accumulate into overlap buffer, then reset the
+	// accumulation buffer back to zeroed in frequency domain.
+	if (mbHasOutput) {
+		mbHasOutput = false;
 
 		mFFT.Inverse(mAccumBuffer);
 
-		for(uint32 i=0; i<kConvSize - mBaseOffset; ++i)
-			mOverlapBuffer[mBaseOffset + i] += mAccumBuffer[i];
+		accumAndZero(&mOverlapBuffer[mBaseOffset], mAccumBuffer, kConvSize - mBaseOffset);
+		accumAndZero(&mOverlapBuffer[0], &mAccumBuffer[kConvSize - mBaseOffset], mBaseOffset);
 
-		for(uint32 i=kConvSize - mBaseOffset; i < kConvSize; ++i)
-			mOverlapBuffer[mBaseOffset + i - kConvSize] += mAccumBuffer[i];
-
-		memset(mAccumBuffer, 0, sizeof mAccumBuffer);
+		// Reset number of output samples to accumulate to full.
 		mOverlapSamples = kConvSize;
 	}
 	
+	// If we ran out of output samples because we have no more impulses and used up all the
+	// generated output, we're done.
 	if (!mOverlapSamples)
 		return;
 
-	float *VDRESTRICT dstL2 = dstL;
-	float *VDRESTRICT dstR2 = dstR;
-	float *VDRESTRICT src = &mOverlapBuffer[mBaseOffset];
-	uint32 alen = len > mOverlapSamples ? mOverlapSamples : len;
-	uint32 tc = kConvSize - mBaseOffset;
+	// Compute how many output samples we have to mix -- up to this audio frame's
+	// worth or however many we have left, whichever is smaller.
+	const uint32 alen = std::min(len, mOverlapSamples);
 
-	if (dstR2) {
-		if (tc >= alen) {
-			for(uint32 i=0; i<alen; ++i) {
-				*dstL2++ += *src;
-				*dstR2++ += *src;
-				*src++ = 0;
-			}
-		} else {
-			for(uint32 i=0; i<tc; ++i) {
-				*dstL2++ += *src;
-				*dstR2++ += *src;
-				*src++ = 0;
-			}
+	// Compute split for wrapping around the overlap (source) buffer for the mix.
+	const uint32 alen1 = std::min(alen, kConvSize - mBaseOffset);
+	const uint32 alen2 = alen - alen1;
 
-			src = mOverlapBuffer;
-			for(uint32 i=tc; i<alen; ++i) {
-				*dstL2++ += *src;
-				*dstR2++ += *src;
-				*src++ = 0;
-			}
-		}
+	// Accumulate and zero the audio frame's worth of samples.
+	if (dstR) {
+		accum2AndZero(dstL, dstR, &mOverlapBuffer[mBaseOffset], alen1);
+		accum2AndZero(dstL + alen1, dstR + alen1, mOverlapBuffer, alen2);
 	} else {
-		if (tc >= alen) {
-			for(uint32 i=0; i<alen; ++i) {
-				*dstL2++ += *src;
-				*src++ = 0;
-			}
-		} else {
-			for(uint32 i=0; i<tc; ++i) {
-				*dstL2++ += *src;
-				*src++ = 0;
-			}
-
-			src = mOverlapBuffer;
-			for(uint32 i=tc; i<alen; ++i) {
-				*dstL2++ += *src;
-				*src++ = 0;
-			}
-		}
+		accumAndZero(dstL, &mOverlapBuffer[mBaseOffset], alen1);
+		accumAndZero(dstL + alen1, mOverlapBuffer, alen2);
 	}
 
+	// Rotate out the used (and now zeroed) samples.
 	mOverlapSamples -= alen;
 	mBaseOffset += alen;
 	mBaseOffset &= kConvSize - 1;
@@ -317,21 +290,23 @@ struct ATAudioSound final : public vdlist_node {
 ///////////////////////////////////////////////////////////////////////////
 
 void ATAudioSamplePool::Init() {
-	static const uint32 kResIds[]={
+	static constexpr uint32 kResIds[]={
 		IDR_DISK_SPIN,
 		IDR_TRACK_STEP,
 		IDR_TRACK_STEP_2,
 		IDR_TRACK_STEP_2,
 		IDR_TRACK_STEP_3,
-		IDR_SPEAKER_STEP
+		IDR_SPEAKER_STEP,
+		IDR_1030RELAY
 	};
 
-	static const float kBaseVolumes[]={
+	static constexpr float kBaseVolumes[]={
 		0.05f,
 		0.4f,
 		0.8f,
 		0.8f,
 		0.4f,
+		1.0f,
 		1.0f
 	};
 

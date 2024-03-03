@@ -31,7 +31,17 @@ void ATCreateDevicePBIDiskEmulator(const ATPropertySet& pset, IATDevice **dev) {
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefPBIDisk = { "pbidisk", "pbidisk", L"PBI Disk Patch", ATCreateDevicePBIDiskEmulator };
+extern const ATDeviceDefinition g_ATDeviceDefPBIDisk = {
+	"pbidisk",
+	"pbidisk",
+	L"PBI Disk Patch",
+	ATCreateDevicePBIDiskEmulator,
+	kATDeviceDefFlag_Internal | kATDeviceDefFlag_Hidden
+};
+
+ATPBIDiskEmulator::ATPBIDiskEmulator() {
+	SetSaveStateAgnostic();
+}
 
 void *ATPBIDiskEmulator::AsInterface(uint32 iid) {
 	switch(iid) {
@@ -40,7 +50,7 @@ void *ATPBIDiskEmulator::AsInterface(uint32 iid) {
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
 	}
 
-	return nullptr;
+	return ATDevice::AsInterface(iid);
 }
 
 void ATPBIDiskEmulator::GetDeviceInfo(ATDeviceInfo& info) {

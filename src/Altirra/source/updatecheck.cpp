@@ -27,8 +27,16 @@ ATConfigVarBool g_ATCVUpdateUseLocalTestUrl("update.use_local_test_url", false);
 
 ////////////////////////////////////////////////////////////////////////////////
 
-VDStringW ATUpdateGetFeedUrl() {
-	return VDStringW(g_ATCVUpdateUseLocalTestUrl ? AT_UPDATE_CHECK_URL_LOCAL : AT_UPDATE_CHECK_URL);
+VDStringW ATUpdateGetFeedUrl(bool useTestChannel) {
+	return VDStringW(
+		g_ATCVUpdateUseLocalTestUrl
+			? (useTestChannel ? AT_UPDATE_CHECK_URL_LOCAL_TEST : AT_UPDATE_CHECK_URL_LOCAL_REL)
+			: (useTestChannel ? AT_UPDATE_CHECK_URL_TEST : AT_UPDATE_CHECK_URL_REL)
+	);
+}
+
+bool ATUpdateIsTestChannelDefault() {
+	return AT_UPDATE_USE_TEST_CHANNEL;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -37,7 +45,7 @@ class ATUpdateChecker {
 public:
 	ATUpdateChecker(IATAsyncDispatcher& dispatcher);
 
-	void Init();
+	void Init(bool useTestChannel);
 	void Shutdown();
 
 	void AddCallback(ATUpdateInfoCallback fn);
@@ -58,8 +66,8 @@ ATUpdateChecker::ATUpdateChecker(IATAsyncDispatcher& dispatcher)
 {
 }
 
-void ATUpdateChecker::Init() {
-	ATAsyncDownloadUrl(ATUpdateGetFeedUrl().c_str(), AT_HTTP_USER_AGENT, 4 * 1024 * 1024,
+void ATUpdateChecker::Init(bool useTestChannel) {
+	ATAsyncDownloadUrl(ATUpdateGetFeedUrl(useTestChannel).c_str(), AT_HTTP_USER_AGENT, 4 * 1024 * 1024,
 		[this](const void *data, size_t len) {
 			if (data)
 				mData.assign((const char *)data, (const char *)data + len);
@@ -98,10 +106,10 @@ void ATUpdateChecker::Process() {
 
 ATUpdateChecker *g_ATUpdateChecker;
 
-void ATUpdateInit(IATAsyncDispatcher& dispatcher, ATUpdateInfoCallback fn) {
+void ATUpdateInit(bool useTestChannel, IATAsyncDispatcher& dispatcher, ATUpdateInfoCallback fn) {
 	if (!g_ATUpdateChecker) {
 		g_ATUpdateChecker = new ATUpdateChecker(dispatcher);
-		g_ATUpdateChecker->Init();
+		g_ATUpdateChecker->Init(useTestChannel);
 	}
 
 	g_ATUpdateChecker->AddCallback(std::move(fn));

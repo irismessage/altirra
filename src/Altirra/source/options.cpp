@@ -118,6 +118,8 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "CompatDB: External DB path", opts.mCompatExternalDBPath);
 
 	ATOptionsExchange(key, write, "System: Force directory change polling", opts.mbPollDirectories);
+
+	ATOptionsExchange(key, write, "Accessibility: Enable", opts.mbAccEnabled);
 }
 
 void ATOptionsLoad() {

@@ -40,7 +40,7 @@ AT_DEFINE_ENUM_TABLE_BEGIN(ATMemoryMode)
 	{ kATMemoryMode_40K, "40k" },
 	{ kATMemoryMode_320K_Compy, "320kcompy"},
 	{ kATMemoryMode_576K_Compy, "576kcompy" },
-	{ kATMemoryMode_256K, "256kcompy" },
+	{ kATMemoryMode_256K, "256k" },
 AT_DEFINE_ENUM_TABLE_END(ATMemoryMode, kATMemoryMode_320K)
 
 AT_DEFINE_ENUM_TABLE_BEGIN(ATHardwareMode)
@@ -50,6 +50,7 @@ AT_DEFINE_ENUM_TABLE_BEGIN(ATHardwareMode)
 	{ kATHardwareMode_XEGS, "XEGS" },
 	{ kATHardwareMode_1200XL, "1200xl" },
 	{ kATHardwareMode_130XE, "130xe" },
+	{ kATHardwareMode_1400XL, "1400xl" },
 AT_DEFINE_ENUM_TABLE_END(ATHardwareMode, kATHardwareMode_800XL)
 
 AT_DEFINE_ENUM_TABLE_BEGIN(ATVideoStandard)

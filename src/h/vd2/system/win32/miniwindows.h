@@ -50,7 +50,7 @@
 	typedef unsigned __int64	VDZDWORD_PTR;
 #endif
 
-typedef struct tagMSG	MSG;
+typedef struct tagMSG	VDZMSG;
 typedef struct HWND__	*VDZHWND;
 typedef struct HDC__	*VDZHDC;
 typedef struct HKEY__	*VDZHKEY;

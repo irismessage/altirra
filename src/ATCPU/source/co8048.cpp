@@ -29,6 +29,9 @@
 ATCoProc8048::ATCoProc8048() {
 	mpFnReadPort = [this](uint8, uint8 output) -> uint8 { return output; };
 	mpFnWritePort = [](uint8, uint8) {};
+	mpFnReadBus = [] { return 0xFF; };
+	mpFnReadXRAM = [](uint8 addr) -> uint8 { return 0xFF; };
+	mpFnWriteXRAM = [](uint8 addr, uint8 data) {};
 }
 
 void ATCoProc8048::SetProgramBanks(const void *p0, const void *p1) {
@@ -43,6 +46,8 @@ void ATCoProc8048::SetHistoryBuffer(ATCPUHistoryEntry buffer[131072]) {
 }
 
 void ATCoProc8048::GetExecState(ATCPUExecState& state) const {
+	memset(&state, 0, sizeof state);
+
 	ATCPUExecState8048& state8048 = state.m8048;
 	state8048.mPC = mPC + (mbPBK ? 0x800 : 0);
 	state8048.mA = mA;
@@ -88,6 +93,10 @@ void ATCoProc8048::SetPortReadHandler(const vdfunction<uint8(uint8, uint8)>& fn)
 
 void ATCoProc8048::SetPortWriteHandler(const vdfunction<void(uint8, uint8)>& fn) {
 	mpFnWritePort = fn;
+}
+
+void ATCoProc8048::SetBusReadHandler(const vdfunction<uint8()>& fn) {
+	mpFnReadBus = fn;
 }
 
 void ATCoProc8048::SetBreakpointMap(const bool bpMap[65536], IATCPUBreakpointHandler *bpHandler) {
@@ -200,7 +209,7 @@ void ATCoProc8048::Run() {
 
 		if (mbTIF && !mbTF && mbTimerActive) {
 			UpdateTimer();
-			if (mbTF && mbIrqEnabled)
+			if (mbTimerIrqPending && mbIrqEnabled)
 				DispatchIrq();
 		}
 
@@ -329,7 +338,7 @@ void ATCoProc8048::Run() {
 			case 0x70:		// ADDC A,@Rr
 			case 0x71:
 				{
-					const uint8 r = mRAM[mpRegBank[opcode - 0x60]];
+					const uint8 r = mRAM[mpRegBank[opcode - 0x70]];
 					uint32 result = (uint32)mA + r + (mPSW >> 7);
 
 					mPSW &= 0x3F;
@@ -493,6 +502,7 @@ void ATCoProc8048::Run() {
 
 			case 0x35:		// DIS TCNTI
 				mbTIF = false;
+				mbTimerIrqPending = false;
 				break;
 
 			case 0xE8:		// DJNZ Rr,address
@@ -515,10 +525,12 @@ void ATCoProc8048::Run() {
 			case 0x25:		// EN TCNTI
 				mbTIF = true;
 				mbIrqAttention |= mbTF;
+
+				DispatchIrq();
 				break;
 
 			case 0x08:		// IN A,BUS
-				mA = 0xFF;
+				mA = mpFnReadBus();
 				break;
 
 			case 0x09:		// IN A,P1
@@ -727,17 +739,20 @@ void ATCoProc8048::Run() {
 				break;
 
 			case 0xE3:		// MOVP3 A,@A
-				mA = mpProgramBank[0x300 + mA];
+				// MOVP3 is documented as always setting A8-11 to 0011
+				// regardless of the current state of DBF or PC[11], so we
+				// need to force bank 0.
+				mA = mpProgramBanks[0][0x300 + mA];
 				break;
 
 			case 0x80:		// MOVX A,@Rr
 			case 0x81:
-				mA = mpFnReadXRAM(mRAM[opcode - 0x90]);
+				mA = mpFnReadXRAM(mpRegBank[opcode - 0x80]);
 				break;
 
 			case 0x90:		// MOVX @Rr,A
 			case 0x91:
-				mpFnWriteXRAM(mRAM[opcode - 0x80], mA);
+				mpFnWriteXRAM(mpRegBank[opcode - 0x90], mA);
 				break;
 
 			case 0x00:		// NOP
@@ -981,8 +996,9 @@ void ATCoProc8048::DispatchIrq() {
 		mbPBK = false;
 		mpProgramBank = mpProgramBanks[false];
 		mPC = 3;
-	} else if (mbTIF && mbTF) {
+	} else if (mbTIF && mbTimerIrqPending) {
 		mbIrqEnabled = false;
+		mbTimerIrqPending = false;
 
 		uint8 *stackEntry = &mRAM[0x08 + (mPSW & 7) * 2];
 
@@ -1001,8 +1017,14 @@ void ATCoProc8048::UpdateTimer() {
 	const uint32 delta = (mCyclesBase - mCyclesLeft) - mTimerDeadline;
 	mT = (uint8)(delta >> 5);
 
-	if (!mbTF && !(delta & (UINT32_C(1) << 31)))
+	if (!mbTF && !(delta & (UINT32_C(1) << 31))) {
 		mbTF = true;
+
+		if (mbTIF)
+			mbTimerIrqPending = true;
+
+		mTimerDeadline += 32 * 256;
+	}
 }
 
 void ATCoProc8048::UpdateTimerDeadline() {

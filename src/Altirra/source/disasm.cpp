@@ -79,7 +79,6 @@ namespace {
 	};
 
 #define PROCESS_OPCODES			\
-		PROCESS_OPCODE(bad, None),	\
 		PROCESS_OPCODE(ADC, M),	\
 		PROCESS_OPCODE(ANC, M),	\
 		PROCESS_OPCODE(AND, M),	\
@@ -229,7 +228,7 @@ namespace {
 
 #undef PROCESS_OPCODES
 
-	#define xx(op) { kModeInvalid, 0 }
+	#define xx(op) { kModeInvalid, kOpcode##op }
 	#define Ip(op) { kModeImplied, kOpcode##op }
 	#define Re(op) { kModeRel, kOpcode##op }
 	#define Rl(op) { kModeRel16, kOpcode##op }
@@ -283,22 +282,22 @@ namespace {
 
 	const uint8 kModeTbl_65C02[256][2]={
 		//			   0,       1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-		/* 00 */	Ip(BRK), Ix(ORA), xx(bad), xx(bad), Zp(TSB), Zp(ORA), Zp(ASL), Bz(RMB), Ip(PHP), Im(ORA), Ip(ASL), xx(bad), Ab(TSB), Ab(ORA), Ab(ASL), Bb(BBR), 
-		/* 10 */	Re(BPL), Iy(ORA), Iz(ORA), xx(bad), Zp(TRB), Zx(ORA), Zx(ASL), Bz(RMB), Ip(CLC), Ay(ORA), Ip(INC), xx(bad), Ab(TRB), Ax(ORA), Ax(ASL), Bb(BBR), 
-		/* 20 */	Ab(JSR), Ix(AND), xx(bad), xx(bad), Zp(BIT), Zp(AND), Zp(ROL), Bz(RMB), Ip(PLP), Im(AND), Ip(ROL), xx(bad), Ab(BIT), Ab(AND), Ab(ROL), Bb(BBR), 
-		/* 30 */	Re(BMI), Iy(AND), Iz(AND), xx(bad), Zx(BIT), Zx(AND), Zx(ROL), Bz(RMB), Ip(SEC), Ay(AND), Ip(DEC), xx(bad), Ax(BIT), Ax(AND), Ax(ROL), Bb(BBR), 
-		/* 40 */	Ip(RTI), Ix(EOR), xx(bad), xx(bad), Zp(NOP), Zp(EOR), Zp(LSR), Bz(RMB), Ip(PHA), Im(EOR), Ip(LSR), xx(bad), Ab(JMP), Ab(EOR), Ab(LSR), Bb(BBR), 
-		/* 50 */	Re(BVC), Iy(EOR), Iz(EOR), xx(bad), Zx(NOP), Zx(EOR), Zx(LSR), Bz(RMB), Ip(CLI), Ay(EOR), Ip(PHY), xx(bad), Ax(NOP), Ax(EOR), Ax(LSR), Bb(BBR), 
-		/* 60 */	Ip(RTS), Ix(ADC), xx(bad), xx(bad), Zp(STZ), Zp(ADC), Zp(ROR), Bz(RMB), Ip(PLA), Im(ADC), Ip(ROR), xx(bad), Ia(JMP), Ab(ADC), Ab(ROR), Bb(BBR), 
-		/* 70 */	Re(BVS), Iy(ADC), Iz(ADC), xx(bad), Zx(STZ), Zx(ADC), Zx(ROR), Bz(RMB), Ip(SEI), Ay(ADC), Ip(PLY), xx(bad), It(JMP), Ax(ADC), Ax(ROR), Bb(BBR), 
-		/* 80 */	Re(BRA), Ix(STA), xx(bad), xx(bad), Zp(STY), Zp(STA), Zp(STX), Bz(SMB), Ip(DEY), Im(BIT), Ip(TXA), xx(bad), Ab(STY), Ab(STA), Ab(STX), Bb(BBS), 
-		/* 90 */	Re(BCC), Iy(STA), Iz(STA), xx(bad), Zx(STY), Zx(STA), Zy(STX), Bz(SMB), Ip(TYA), Ay(STA), Ip(TXS), xx(bad), Ab(STZ), Ax(STA), Ax(STZ), Bb(BBS), 
-		/* A0 */	Im(LDY), Ix(LDA), Im(LDX), xx(bad), Zp(LDY), Zp(LDA), Zp(LDX), Bz(SMB), Ip(TAY), Im(LDA), Ip(TAX), xx(bad), Ab(LDY), Ab(LDA), Ab(LDX), Bb(BBS), 
-		/* B0 */	Re(BCS), Iy(LDA), Iz(LDA), xx(bad), Zx(LDY), Zx(LDA), Zy(LDX), Bz(SMB), Ip(CLV), Ay(LDA), Ip(TSX), xx(bad), Ax(LDY), Ax(LDA), Ay(LDX), Bb(BBS), 
-		/* C0 */	Im(CPY), Ix(CMP), xx(bad), xx(bad), Zp(CPY), Zp(CMP), Zp(DEC), Bz(SMB), Ip(INY), Im(CMP), Ip(DEX), Ip(WAI), Ab(CPY), Ab(CMP), Ab(DEC), Bb(BBS), 
-		/* D0 */	Re(BNE), Iy(CMP), Iz(CMP), xx(bad), xx(bad), Zx(CMP), Zx(DEC), Bz(SMB), Ip(CLD), Ay(CMP), Ip(PHX), Ip(STP), Ax(NOP), Ax(CMP), Ax(DEC), Bb(BBS), 
-		/* E0 */	Im(CPX), Ix(SBC), xx(bad), xx(bad), Zp(CPX), Zp(SBC), Zp(INC), Bz(SMB), Ip(INX), Im(SBC), Ip(NOP), xx(bad), Ab(CPX), Ab(SBC), Ab(INC), Bb(BBS), 
-		/* F0 */	Re(BEQ), Iy(SBC), Iz(SBC), xx(bad), Zx(NOP), Zx(SBC), Zx(INC), Bz(SMB), Ip(SED), Ay(SBC), Ip(PLX), xx(bad), Ax(NOP), Ax(SBC), Ax(INC), Bb(BBS),
+		/* 00 */	Ip(BRK), Ix(ORA), xx(NOP), xx(NOP), Zp(TSB), Zp(ORA), Zp(ASL), Bz(RMB), Ip(PHP), Im(ORA), Ip(ASL), xx(NOP), Ab(TSB), Ab(ORA), Ab(ASL), Bb(BBR), 
+		/* 10 */	Re(BPL), Iy(ORA), Iz(ORA), xx(NOP), Zp(TRB), Zx(ORA), Zx(ASL), Bz(RMB), Ip(CLC), Ay(ORA), Ip(INC), xx(NOP), Ab(TRB), Ax(ORA), Ax(ASL), Bb(BBR), 
+		/* 20 */	Ab(JSR), Ix(AND), xx(NOP), xx(NOP), Zp(BIT), Zp(AND), Zp(ROL), Bz(RMB), Ip(PLP), Im(AND), Ip(ROL), xx(NOP), Ab(BIT), Ab(AND), Ab(ROL), Bb(BBR), 
+		/* 30 */	Re(BMI), Iy(AND), Iz(AND), xx(NOP), Zx(BIT), Zx(AND), Zx(ROL), Bz(RMB), Ip(SEC), Ay(AND), Ip(DEC), xx(NOP), Ax(BIT), Ax(AND), Ax(ROL), Bb(BBR), 
+		/* 40 */	Ip(RTI), Ix(EOR), xx(NOP), xx(NOP), Zp(NOP), Zp(EOR), Zp(LSR), Bz(RMB), Ip(PHA), Im(EOR), Ip(LSR), xx(NOP), Ab(JMP), Ab(EOR), Ab(LSR), Bb(BBR), 
+		/* 50 */	Re(BVC), Iy(EOR), Iz(EOR), xx(NOP), Zx(NOP), Zx(EOR), Zx(LSR), Bz(RMB), Ip(CLI), Ay(EOR), Ip(PHY), xx(NOP), Ax(NOP), Ax(EOR), Ax(LSR), Bb(BBR), 
+		/* 60 */	Ip(RTS), Ix(ADC), xx(NOP), xx(NOP), Zp(STZ), Zp(ADC), Zp(ROR), Bz(RMB), Ip(PLA), Im(ADC), Ip(ROR), xx(NOP), Ia(JMP), Ab(ADC), Ab(ROR), Bb(BBR), 
+		/* 70 */	Re(BVS), Iy(ADC), Iz(ADC), xx(NOP), Zx(STZ), Zx(ADC), Zx(ROR), Bz(RMB), Ip(SEI), Ay(ADC), Ip(PLY), xx(NOP), It(JMP), Ax(ADC), Ax(ROR), Bb(BBR), 
+		/* 80 */	Re(BRA), Ix(STA), xx(NOP), xx(NOP), Zp(STY), Zp(STA), Zp(STX), Bz(SMB), Ip(DEY), Im(BIT), Ip(TXA), xx(NOP), Ab(STY), Ab(STA), Ab(STX), Bb(BBS), 
+		/* 90 */	Re(BCC), Iy(STA), Iz(STA), xx(NOP), Zx(STY), Zx(STA), Zy(STX), Bz(SMB), Ip(TYA), Ay(STA), Ip(TXS), xx(NOP), Ab(STZ), Ax(STA), Ax(STZ), Bb(BBS), 
+		/* A0 */	Im(LDY), Ix(LDA), Im(LDX), xx(NOP), Zp(LDY), Zp(LDA), Zp(LDX), Bz(SMB), Ip(TAY), Im(LDA), Ip(TAX), xx(NOP), Ab(LDY), Ab(LDA), Ab(LDX), Bb(BBS), 
+		/* B0 */	Re(BCS), Iy(LDA), Iz(LDA), xx(NOP), Zx(LDY), Zx(LDA), Zy(LDX), Bz(SMB), Ip(CLV), Ay(LDA), Ip(TSX), xx(NOP), Ax(LDY), Ax(LDA), Ay(LDX), Bb(BBS), 
+		/* C0 */	Im(CPY), Ix(CMP), xx(NOP), xx(NOP), Zp(CPY), Zp(CMP), Zp(DEC), Bz(SMB), Ip(INY), Im(CMP), Ip(DEX), Ip(WAI), Ab(CPY), Ab(CMP), Ab(DEC), Bb(BBS), 
+		/* D0 */	Re(BNE), Iy(CMP), Iz(CMP), xx(NOP), xx(NOP), Zx(CMP), Zx(DEC), Bz(SMB), Ip(CLD), Ay(CMP), Ip(PHX), Ip(STP), Ax(NOP), Ax(CMP), Ax(DEC), Bb(BBS), 
+		/* E0 */	Im(CPX), Ix(SBC), xx(NOP), xx(NOP), Zp(CPX), Zp(SBC), Zp(INC), Bz(SMB), Ip(INX), Im(SBC), Ip(NOP), xx(NOP), Ab(CPX), Ab(SBC), Ab(INC), Bb(BBS), 
+		/* F0 */	Re(BEQ), Iy(SBC), Iz(SBC), xx(NOP), Zx(NOP), Zx(SBC), Zx(INC), Bz(SMB), Ip(SED), Ay(SBC), Ip(PLX), xx(NOP), Ax(NOP), Ax(SBC), Ax(INC), Bb(BBS),
 	};
 
 	const uint8 kModeTbl_65C816[256][2]={
@@ -650,7 +649,7 @@ namespace {
 		{
 		}
 
-		constexpr MCS48Insn(const char *s) : MCS48Insn(s, (uint8)FindNextInsnToken(s)) {}
+		constexpr MCS48Insn(const char *s) : MCS48Insn(s, (uint8)MCS48FindNextInsnToken(s)) {}
 
 		uint32 GetOpcodeLen() const {
 			return s ? kMCS48TokenModeBytes[token] + 1 : 0;
@@ -2132,6 +2131,7 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 			case kOpcodeBNE:
 			case kOpcodeBPL:
 			case kOpcodeBRA:
+			case kOpcodeBRL:
 			case kOpcodeBVC:
 			case kOpcodeBVS:
 			case kOpcodeJSR:
@@ -2254,6 +2254,9 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 				break;
 
 			case kModeIndX:		// (dp,X)
+				if (d)
+					dolabel = false;
+
 				base = byte1;
 
 				if (decodeRefsHistory)
@@ -2273,6 +2276,9 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 				break;
 
 			case kModeIndY:		// (dp),Y
+				if (d)
+					dolabel = false;
+
 				base = byte1;
 
 				if (decodeRefsHistory)
@@ -2284,6 +2290,9 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 				break;
 
 			case kModeInd:		// (dp)
+				if (d)
+					dolabel = false;
+
 				base = byte1;
 
 				if (decodeRefsHistory)
@@ -2390,6 +2399,11 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 		}
 
 		bool write = false;
+		bool suppressDereference = false;
+		bool suppressReferenceBank = false;
+		bool overrideDereferenceData = false;
+		uint32 derefData = 0;
+
 		switch(opid) {
 		case kOpcodeASL:
 		case kOpcodeDCP:
@@ -2407,6 +2421,17 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 		case kOpcodeTRB:
 		case kOpcodeTSB:
 			write = true;
+			suppressDereference = true;
+			break;
+
+		case kOpcodePEI:
+			suppressReferenceBank = true;
+			overrideDereferenceData = true;
+			derefData = ea & 0xFFFF;
+			ea = (byte1 + d) & 0xFFFF;
+			break;
+
+		default:
 			break;
 		}
 
@@ -2542,14 +2567,16 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 				if (line.size() < padLen)
 					line.resize((uint32)padLen, ' ');
 
-				if (disasmMode == kATDebugDisasmMode_65C816)
+				if (disasmMode == kATDebugDisasmMode_65C816 && !suppressReferenceBank)
 					line.append_sprintf(" [$%02X:%04X]", (ea >> 16) & 0xff, ea & 0xffff);
 				else if (ea16)
 					line.append_sprintf(" [$%04X]", ea);
 				else
 					line.append_sprintf(" [$%02X]", ea);
 
-				if (!write) {
+				if (overrideDereferenceData) {
+					line.append_sprintf(" = $%04X", derefData);
+				} else if (!suppressDereference) {
 					bool access16 = false;
 
 					switch(kOpcodeMemoryAccessModes[opid]) {
@@ -2790,14 +2817,6 @@ int ATGetOpcodeLength(uint8 opcode, uint8 p, bool emuMode, ATDebugDisasmMode dis
 	const uint8 (*const tbl)[2] = kModeTbl[subMode];
 
 	return kBytesPerModeTables[subMode][tbl[opcode][0]];
-}
-
-bool ATIsValidOpcode(uint8 opcode) {
-	ATCPUEmulator& cpu = g_sim.GetCPU();
-	ATCPUSubMode subMode = cpu.GetCPUSubMode();
-	const uint8 (*const tbl)[2] = kModeTbl[subMode];
-
-	return tbl[opcode][1] != kOpcodebad;
 }
 
 uint32 ATGetOpcodeLengthZ80(uint8 opcode) {

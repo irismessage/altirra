@@ -608,6 +608,9 @@ ULONG STDMETHODCALLTYPE ATUIDragDropHandler::Release() {
 }
 
 HRESULT STDMETHODCALLTYPE ATUIDragDropHandler::QueryInterface(const IID& riid, void **ppvObject) {
+	if (!ppvObject)
+		return E_POINTER;
+
 	if (riid == IID_IUnknown) {
 		*ppvObject = static_cast<IUnknown *>(this);
 		AddRef();

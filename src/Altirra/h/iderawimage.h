@@ -46,6 +46,7 @@ public:
 	ATBlockDeviceGeometry GetGeometry() const override;
 	uint32 GetSerialNumber() const override;
 
+	using ATDevice::Init;
 	void Init(const wchar_t *path, bool write, bool solidState, uint32 sectorLimit, uint32 cyl, uint32 heads, uint32 spt);
 	void Shutdown() override;
 

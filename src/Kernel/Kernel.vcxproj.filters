@@ -5,9 +5,6 @@
       <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
       <Extensions>xasm</Extensions>
     </Filter>
-    <Filter Include="Source Files\BASIC">
-      <UniqueIdentifier>{78b4447b-c53e-4708-9204-010d7f68d92f}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Source Files\NoKernel">
       <UniqueIdentifier>{6686f3cd-2108-4649-8183-830458e1ce58}</UniqueIdentifier>
     </Filter>
@@ -77,9 +74,6 @@
     </None>
     <None Include="source\softkick.s">
       <Filter>Source Files</Filter>
-    </None>
-    <None Include="source\BASIC\main.xasm">
-      <Filter>Source Files\BASIC</Filter>
     </None>
     <None Include="source\NoKernel\main.xasm">
       <Filter>Source Files\NoKernel</Filter>
@@ -338,6 +332,9 @@
       <Filter>Source Files\Additions</Filter>
     </None>
     <None Include="source\Additions\atdebugx.s">
+      <Filter>Source Files\Additions</Filter>
+    </None>
+    <None Include="source\Additions\phload.s">
       <Filter>Source Files\Additions</Filter>
     </None>
   </ItemGroup>

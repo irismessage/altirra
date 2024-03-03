@@ -627,3 +627,51 @@ void ATFFT_DIF_Radix4_SSE2(float *y0, const float *w4, int N, int logStep) {
 		case 12: ATFFT_DIF_Radix4_SSE2<12>(y0, w4, N); break;
 	}
 }
+
+/////////////////////////////////////////////////////////////////////////////
+
+void ATFFT_MultiplyAdd_SSE2(float *VDRESTRICT dst, const float *VDRESTRICT src1, const float *VDRESTRICT src2, int N) {
+	const int N2 = N >> 1;
+	const __m128 inv_even = _mm_castsi128_ps(_mm_set_epi32(0, 0x80000000, 0, 0x80000000));
+	for(int i=0; i<N2; ++i) {
+		const __m128 ri1 = _mm_load_ps(src1);
+		src1 += 4;
+
+		const __m128 ri2 = _mm_load_ps(src2);
+		src2 += 4;
+
+		//    r      i
+		//  r1*r2  i1*r2
+		// -i1*i2  r1*i2
+
+		const __m128 rr2 = _mm_shuffle_ps(ri2, ri2, 0b0'10'10'00'00);
+		const __m128 ii2 = _mm_shuffle_ps(ri2, ri2, 0b0'11'11'01'01);
+		const __m128 nir1 = _mm_xor_ps(_mm_shuffle_ps(ri1, ri1, 0b0'10'11'00'01), inv_even);
+
+		_mm_store_ps(dst,
+			_mm_add_ps(
+				_mm_load_ps(dst),
+				_mm_add_ps(_mm_mul_ps(ri1, rr2), _mm_mul_ps(nir1, ii2))
+			)
+		);
+
+		dst += 4;
+	}
+
+	// patch DC and Nyquist values
+	// first two values are real DC and fsc*0.5, rest are complex
+	dst -= 4*N2;
+	src1 -= 4*N2;
+	src2 -= 4*N2;
+
+	const __m128 zero = _mm_setzero_ps();
+	_mm_storel_pi((__m64 *)dst,
+		_mm_add_ps(
+			_mm_loadl_pi(zero, (const __m64 *)dst),
+			_mm_mul_ps(
+				_mm_loadl_pi(zero, (const __m64 *)src1),
+				_mm_loadl_pi(zero, (const __m64 *)src2)
+			)
+		)
+	);
+}

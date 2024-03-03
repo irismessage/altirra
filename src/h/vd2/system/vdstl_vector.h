@@ -300,7 +300,8 @@ void vdvector<T,A>::resize(size_type sz, T c) {
 					throw;
 				}
 
-				m.deallocate(prev0, prev2 - prev0);
+				if (prev0)
+					m.deallocate(prev0, prev2 - prev0);
 			} catch(...) {
 				m.deallocate(p0, sz);
 				throw;
@@ -380,7 +381,7 @@ template<class U>
 typename vdvector<T,A>::iterator vdvector<T,A>::insert_as(iterator position, const U& x) {
 	if (m.mpEnd == m.mpEOS) {
 		const size_type currSize = m.mpEnd - m.mpBegin;
-		const size_type newCapacity = currSize + 1;
+		const size_type newCapacity = raise_capacity(currSize, 1);
 
 		const pointer p0 = m.allocate(newCapacity);
 		pointer pe = p0;
@@ -440,7 +441,7 @@ template<class... Args>
 typename vdvector<T,A>::reference vdvector<T,A>::emplace_back(Args&&... args) {
 	if (m.mpEnd == m.mpEOS) {
 		const size_type currSize = m.mpEnd - m.mpBegin;
-		const size_type newCapacity = currSize + 1;
+		const size_type newCapacity = raise_capacity(currSize, 1);
 
 		const pointer p0 = m.allocate(newCapacity);
 		pointer pe = p0;
@@ -479,7 +480,7 @@ template <class T, class A>
 typename vdvector<T,A>::iterator vdvector<T,A>::insert(iterator position, const T& x) {
 	if (m.mpEnd == m.mpEOS) {
 		const size_type currSize = m.mpEnd - m.mpBegin;
-		const size_type newCapacity = currSize + 1;
+		const size_type newCapacity = raise_capacity(currSize, 1);
 
 		const pointer p0 = m.allocate(newCapacity);
 		pointer pe = p0;

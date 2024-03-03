@@ -42,7 +42,8 @@ extern const ATDeviceDefinition g_ATDeviceDefTestSIOHighSpeed;
 extern const ATDeviceDefinition g_ATDeviceDefPCLink;
 extern const ATDeviceDefinition g_ATDeviceDefHostDevice;
 extern const ATDeviceDefinition g_ATDeviceDefPrinter;
-extern const ATDeviceDefinition g_ATDeviceDef850Modem;
+extern const ATDeviceDefinition g_ATDeviceDef850;
+extern const ATDeviceDefinition g_ATDeviceDef835Modem;
 extern const ATDeviceDefinition g_ATDeviceDef1030Modem;
 extern const ATDeviceDefinition g_ATDeviceDefSX212;
 extern const ATDeviceDefinition g_ATDeviceDefMidiMate;
@@ -102,6 +103,13 @@ extern const ATDeviceDefinition g_ATDeviceDefComputerEyes;
 extern const ATDeviceDefinition g_ATDeviceDefVideoGenerator;
 extern const ATDeviceDefinition g_ATDeviceDefVideoStillImage;
 extern const ATDeviceDefinition g_ATDeviceDefSimCovox;
+extern const ATDeviceDefinition g_ATDeviceDef1400XL;
+extern const ATDeviceDefinition g_ATDeviceDef1450XLDiskController;
+extern const ATDeviceDefinition g_ATDeviceDef1450XLDiskControllerFull;
+extern const ATDeviceDefinition g_ATDeviceDef1450XLTONGDiskControllerFull;
+extern const ATDeviceDefinition g_ATDeviceDef1030Full;
+extern const ATDeviceDefinition g_ATDeviceDef835Full;
+extern const ATDeviceDefinition g_ATDeviceDefSIOSerialAdapter;
 
 void ATRegisterDevices(ATDeviceManager& dm) {
 	static constexpr const ATDeviceDefinition *kDeviceDefs[]={
@@ -124,7 +132,8 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefPCLink,
 		&g_ATDeviceDefHostDevice,
 		&g_ATDeviceDefPrinter,
-		&g_ATDeviceDef850Modem,
+		&g_ATDeviceDef850,
+		&g_ATDeviceDef835Modem,
 		&g_ATDeviceDef1030Modem,
 		&g_ATDeviceDefSX212,
 		&g_ATDeviceDefMidiMate,
@@ -183,7 +192,14 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefComputerEyes,
 		&g_ATDeviceDefVideoGenerator,
 		&g_ATDeviceDefVideoStillImage,
-		&g_ATDeviceDefSimCovox
+		&g_ATDeviceDefSimCovox,
+		&g_ATDeviceDef1400XL,
+		&g_ATDeviceDef1450XLDiskController,
+		&g_ATDeviceDef1450XLDiskControllerFull,
+		&g_ATDeviceDef1450XLTONGDiskControllerFull,
+		&g_ATDeviceDef1030Full,
+		&g_ATDeviceDef835Full,
+		&g_ATDeviceDefSIOSerialAdapter
 	};
 
 	for(const ATDeviceDefinition *def : kDeviceDefs)
@@ -198,7 +214,11 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 void ATRegisterDeviceXCmds(ATDeviceManager& dm) {
 	void ATDeviceInitXCmdMountVHD(ATDeviceManager& dm);
 	void ATDeviceInitXCmdExploreDisk(ATDeviceManager& dm);
+	void ATDeviceInitXCmdRescanDynamicDisk(ATDeviceManager& dm);
+	void ATDeviceInitXCmdCopyPaste(ATDeviceManager& dm);
 
 	ATDeviceInitXCmdMountVHD(dm);
 	ATDeviceInitXCmdExploreDisk(dm);
+	ATDeviceInitXCmdRescanDynamicDisk(dm);
+	ATDeviceInitXCmdCopyPaste(dm);
 }

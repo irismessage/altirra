@@ -32,6 +32,7 @@
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/theme.h>
 #include "devicemanager.h"
+#include "devxcmdcopypaste.h"
 #include "diskinterface.h"
 #include "oshelper.h"
 #include "resource.h"
@@ -173,6 +174,15 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		L"Internal devices",
 		"internal",
 		{
+			{ "1450xldisk", L"1450XLD Disk Controller",
+				L"Internal PBI-based disk controller in the 1450XLD."
+			},
+			{ "1450xldiskfull", L"1450XLD Disk Controller (full emulation)",
+				L"Internal PBI-based disk controller in the 1450XLD, with full 8040 controller emulation."
+			},
+			{ "1450xltongdiskfull", L"1450XLD \"TONG\" Disk Controller (full emulation)",
+				L"Internal PBI-based disk controller in the \"TONG\" integrated version of the 1450XLD, with full 8040 controller emulation."
+			},
 			{ "warpos", L"APE Warp+ OS 32-in-1",
 				L"Internal upgrade allowing for soft-switching between 32 different OS ROMs in an XL/XE system."
 			},
@@ -222,6 +232,9 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 			{ "simcovox", L"SimCovox",
 				L"A joystick based Covox device made by Jakub Husak, plugging into ports 1 and 2.\n\nhttps://github.com/jhusak/atari8_simcovox_arduino_mega328p"
 			},
+			{ "supersalt", L"SuperSALT Test Assembly",
+				L"Test device that is used with the SuperSALT cartridges to test joystick ports and the SIO port."
+			},
 			{ "xep80", L"XEP80",
 				L"External 80-column video output that attaches to the joystick port and drives a separate display. "
 					L"Additional handler software is required (provided on Additions disk)."
@@ -258,12 +271,21 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		L"Serial devices",
 		"serial",
 		{
+			{ "parfilewriter", L"File writer",
+				L"Writes all data output from a parallel or serial port to a file."
+			},
 			{ "loopback", L"Loopback",
 				L"Simple plug that connects the transmit and receive lines together, looping back all transmitted data "
 				L"to the receiver. Commonly used for testing."
 			},
 			{ "modem", L"Modem",
 				L"Hayes compatible modem with connection simulated over TCP/IP."
+			},
+			{ "netserial", L"Networked serial port",
+				L"Network to serial port bridge over TCP/IP."
+			},
+			{ "serialsplitter", L"Serial splitter",
+				L"Allows different connections for the input and output halves of a serial port."
 			}
 		}
 	},
@@ -271,8 +293,8 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		L"Parallel port devices",
 		"parallel",
 		{
-			{ "parfilewriter", L"Parallel port file writer",
-				L"Writes all data output through the parallel port to a file."
+			{ "parfilewriter", L"File writer",
+				L"Writes all data output from a parallel or serial port to a file."
 			},
 		}
 	},
@@ -409,6 +431,13 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		L"Serial I/O bus devices",
 		"sio",
 		{
+			{ "835", L"835 Modem",
+				L"A 300 baud modem that connects directly to the SIO port.\n"
+			},
+			{ "835full", L"835 Modem (full emulation)",
+				L"A 300 baud modem that connects directly to the SIO port.\n"
+					L"Full hardware emulation of 8048 microcontroller on the 835."
+			},
 			{ "850", L"850 Interface Module",
 				L"A combination device with four RS-232 serial devices and a printer port. The serial ports "
 					L"can be used to interface to a modem.\n"
@@ -423,6 +452,11 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 					L"A T: handler is needed to use the 1030. Depending on the emulation mode setting, the T: "
 					L"device can be simulated, or in Full mode the tools from the the Additions disk can be used to load "
 					L"a software T: handler."
+			},
+			{ "1030full", L"1030 Modem (full emulation)",
+				L"A 300 baud modem that connects directly to the SIO port.\n"
+					L"Full hardware emulation of 8050 microcontroller on the 1030, including auto-booting of the "
+					L"ModemLink firmware with no disk drive present."
 			},
 			{ "midimate", L"MidiMate",
 				L"An SIO-based adapter for communicating with MIDI devices. This emulation links the MidiMate to the host "
@@ -444,6 +478,10 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 			{ "sdrive", L"SDrive",
 				L"A hardware disk emulator based on images stored on SD cards.\n"
 				L"Currently, only raw sector access is implemented."
+			},
+			{ "sioserial", L"SIO serial adapter",
+				L"An adapter between the SIO bus and a traditional serial port, similar to an SIO2PC or 10502PC adapter. "
+				L"Allows connecting serial devices to the emulated SIO bus."
 			},
 			{ "sio2sd", L"SIO2SD",
 				L"A hardware disk emulator based on images stored on SD cards.\n"
@@ -674,9 +712,11 @@ struct ATUIControllerDevices::DeviceNode final : public vdrefcounted<IVDUITreeVi
 		mName = prefix;
 		mName.append(info.mpDef->mpName);
 		mbHasSettings = info.mpDef->mpConfigTag != nullptr;
+		mbCanRemove = !(info.mpDef->mFlags & kATDeviceDefFlag_Internal);
 	}
 
-	DeviceNode(IATDeviceParent *parent, uint32 busIndex) {
+	DeviceNode(DeviceNode *parentNode, IATDeviceParent *parent, uint32 busIndex) {
+		mpParent = parentNode;
 		mpDevParent = parent;
 		mBusIndex = busIndex;
 
@@ -684,6 +724,7 @@ struct ATUIControllerDevices::DeviceNode final : public vdrefcounted<IVDUITreeVi
 
 		mName = mpDevBus->GetBusName();
 		mbHasSettings = false;
+		mbCanRemove = false;
 	}
 
 	DeviceNode(DeviceNode *parent, const wchar_t *label) {
@@ -715,9 +756,12 @@ struct ATUIControllerDevices::DeviceNode final : public vdrefcounted<IVDUITreeVi
 	IATDeviceBus *mpDevBus = nullptr;
 	VDStringW mName;
 	bool mbHasSettings = false;
+	bool mbCanRemove = false;
 	VDUIProxyTreeViewControl::NodeRef mNode = {};
 	VDUIProxyTreeViewControl::NodeRef mChildNode = {};
 	DeviceNode *mpParent = nullptr;
+
+	vdfastvector<VDUIProxyTreeViewControl::NodeRef> mErrorNodes;
 };
 
 ATUIControllerDevices::ATUIControllerDevices(VDDialogFrameW32& parent, ATDeviceManager& devMgr, VDUIProxyTreeViewControl& treeView, VDUIProxyButtonControl& settingsView, VDUIProxyButtonControl& removeView,
@@ -733,17 +777,26 @@ ATUIControllerDevices::ATUIControllerDevices(VDDialogFrameW32& parent, ATDeviceM
 	mTreeView.OnItemDoubleClicked() += mDelDoubleClicked.Bind(this, &ATUIControllerDevices::OnItemDoubleClicked);
 	mTreeView.OnItemGetDisplayAttributes() += mDelGetDisplayAttributes.Bind(this, &ATUIControllerDevices::OnItemGetDisplayAttributes);
 	mTreeView.SetOnContextMenu([this](const auto& event) -> bool { return OnContextMenu(event); });
+
+	mDeviceStatusCallback = std::bind_front(&ATUIControllerDevices::OnDeviceStatusChanged, this);
+	mDevMgr.AddDeviceStatusCallback(&mDeviceStatusCallback);
+}
+
+ATUIControllerDevices::~ATUIControllerDevices() {
+	mDevMgr.RemoveDeviceStatusCallback(&mDeviceStatusCallback);
 }
 
 void ATUIControllerDevices::OnDataExchange(bool write) {
 	if (write) {
 	} else {
+		mDeviceNodeLookup.clear();
+
 		mTreeView.SetRedraw(false);
 		mTreeView.Clear();
 
 		auto p = mTreeView.AddItem(mTreeView.kNodeRoot, mTreeView.kNodeLast, L"Computer");
 
-		for(IATDevice *dev : mDevMgr.GetDevices(true, true))
+		for(IATDevice *dev : mDevMgr.GetDevices(true, true, false))
 			CreateDeviceNode(p, dev, L"");
 
 		mTreeView.ExpandNode(p, true);
@@ -759,7 +812,6 @@ void ATUIControllerDevices::OnDpiChanged() {
 void ATUIControllerDevices::Add() {
 	IATDeviceParent *devParent = nullptr;
 	IATDeviceBus *devBus = nullptr;
-	uint32 busIndex = 0;
 
 	auto *p = static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem());
 	if (p) {
@@ -768,7 +820,6 @@ void ATUIControllerDevices::Add() {
 
 		devParent = vdpoly_cast<IATDeviceParent *>(p->mpDev);
 		devBus = p->mpDevBus;
-		busIndex = p->mBusIndex;
 	}
 
 	static const char *const kBaseCategories[]={
@@ -856,7 +907,7 @@ void ATUIControllerDevices::Add() {
 
 			vdrefptr<IATDevice> dev;
 			try {
-				dev = mDevMgr.AddDevice(def, props, devParent != nullptr || devBus != nullptr, false);
+				dev = mDevMgr.AddDevice(def, props, devParent != nullptr || devBus != nullptr);
 
 				try {
 					if (devBus)
@@ -909,7 +960,7 @@ void ATUIControllerDevices::Add() {
 void ATUIControllerDevices::Remove() {
 	auto *p = static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem());
 
-	if (!p || !p->mpDev)
+	if (!p || !p->mpDev || !p->mbCanRemove)
 		return;
 
 	IATDevice *dev = p->mpDev;
@@ -1015,7 +1066,7 @@ void ATUIControllerDevices::Remove() {
 void ATUIControllerDevices::RemoveAll() {
 	bool needsReboot = false;
 
-	for(IATDevice *dev : mDevMgr.GetDevices(false, true)) {
+	for(IATDevice *dev : mDevMgr.GetDevices(false, true, true)) {
 		ATDeviceInfo info;
 		dev->GetDeviceInfo(info);
 
@@ -1097,7 +1148,7 @@ void ATUIControllerDevices::Settings() {
 					mDevMgr.RemoveDevice(child);
 				}
 
-				IATDevice *newChild = mDevMgr.AddDevice(configTag.c_str(), pset, parent != nullptr, false);
+				IATDevice *newChild = mDevMgr.AddDevice(configTag.c_str(), pset, parent != nullptr);
 
 				if (bus && newChild) {
 					bus->AddChildDevice(newChild);
@@ -1135,60 +1186,32 @@ void ATUIControllerDevices::More() {
 	}
 }
 
+void ATUIControllerDevices::Copy() {
+	IATDevice *dev = nullptr;
+	sint32 busIndex = -1;
+	if (GetXCmdContext(dev, busIndex)) {
+		ExecuteXCmd(dev, busIndex, ATGetDeviceXCmdCopyWithChildren());
+	}
+}
+
+void ATUIControllerDevices::Paste() {
+	IATDevice *dev = nullptr;
+	sint32 busIndex = -1;
+	if (GetXCmdContext(dev, busIndex)) {
+		ExecuteXCmd(dev, busIndex, ATGetDeviceXCmdPaste());
+	}
+}
+
 void ATUIControllerDevices::CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef parentNode, IATDevice *dev, const wchar_t *prefix) {
 	auto nodeObject = vdmakerefptr(new DeviceNode(dev, prefix));
+
+	mDeviceNodeLookup.insert_as(dev).first->second = nodeObject;
+
 	auto devnode = mTreeView.AddVirtualItem(parentNode, mTreeView.kNodeLast, nodeObject);
 
 	nodeObject->mNode = devnode;
 
-	if (IATDeviceFirmware *fw = vdpoly_cast<IATDeviceFirmware *>(dev)) {
-		ATDeviceFirmwareStatus status = fw->GetFirmwareStatus();
-
-		if (status != ATDeviceFirmwareStatus::OK) {
-			auto node = mTreeView.AddItem(devnode, mTreeView.kNodeLast, status == ATDeviceFirmwareStatus::Invalid ? L"Current device firmware failed validation checks and may not work" : L"Missing firmware for device");
-			mTreeView.SetNodeImage(node, 1);
-		}
-	}
-
-	if (IATDeviceDiskDrive *dd = vdpoly_cast<IATDeviceDiskDrive *>(dev)) {
-		uint32 index = 0;
-
-		for(;;) {
-			const auto& diBinding = dd->GetDiskInterfaceClient(index);
-
-			if (!diBinding.mpClient)
-				break;
-
-			ATDiskInterface& di = g_sim.GetDiskInterface(diBinding.mInterfaceIndex);
-
-			IATDiskImage *image = di.GetDiskImage();
-			if (image && !diBinding.mpClient->IsImageSupported(*image)) {
-				const ATDiskGeometryInfo& geometry = image->GetGeometry();
-
-				VDStringW msg;
-				msg.sprintf(L"Disk drive model cannot read disk format in D%u: (%u tracks of %u sectors%s%s%s)"
-					, (unsigned)diBinding.mInterfaceIndex + 1
-					, geometry.mTrackCount
-					, geometry.mSectorsPerTrack
-					, geometry.mSideCount > 1 ? L", double-sided" : L""
-					, geometry.mbMFM ? L", MFM" : L""
-					, geometry.mbHighDensity ? L", HD" : L""
-				);
-
-				auto node = mTreeView.AddItem(devnode, mTreeView.kNodeLast, msg.c_str());
-				mTreeView.SetNodeImage(node, 1);
-				break;
-			}
-
-			++index;
-		}
-	}
-
-	VDStringW err;
-	for(uint32 i=0; dev->GetErrorStatus(i, err); ++i) {
-		auto node = mTreeView.AddItem(devnode, mTreeView.kNodeLast, err.c_str());
-		mTreeView.SetNodeImage(node, 1);
-	}
+	RefreshNodeErrors(*nodeObject);
 
 	IATDeviceParent *devParent = vdpoly_cast<IATDeviceParent *>(dev);
 	if (devParent) {
@@ -1198,7 +1221,7 @@ void ATUIControllerDevices::CreateDeviceNode(VDUIProxyTreeViewControl::NodeRef p
 			if (!bus)
 				break;
 
-			auto busNode = vdmakerefptr(new DeviceNode(devParent, busIndex));
+			auto busNode = vdmakerefptr(new DeviceNode(nodeObject, devParent, busIndex));
 			auto busTreeNode = mTreeView.AddVirtualItem(devnode, mTreeView.kNodeLast, busNode);
 
 			busNode->mNode = busTreeNode;
@@ -1247,8 +1270,8 @@ void ATUIControllerDevices::OnItemSelectionChanged(VDUIProxyTreeViewControl *sen
 	bool enabled = node && node->mbHasSettings;
 
 	mSettingsView.SetEnabled(enabled);
-	mRemoveView.SetEnabled(node != nullptr && node->mpDev);
-	mMoreView.SetEnabled(node != nullptr && node->mpDev);
+	mRemoveView.SetEnabled(node && node->mbCanRemove);
+	mMoreView.SetEnabled(node && node->mpDev);
 }
 
 void ATUIControllerDevices::OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bool *handled) {
@@ -1268,15 +1291,108 @@ bool ATUIControllerDevices::OnContextMenu(const VDUIProxyTreeViewControl::Contex
 	return DisplayMore(event, false);
 }
 
+void ATUIControllerDevices::OnDeviceStatusChanged(IATDevice& dev) {
+	if (mDevicesToRefresh.insert(vdrefptr(&dev)).second) {
+		if (!mbDeviceRefreshQueued) {
+			mbDeviceRefreshQueued = true;
+
+			mParent.PostCall([this] { RefreshDeviceStatuses(); });
+		}
+	}
+}
+
+void ATUIControllerDevices::RefreshDeviceStatuses() {
+	if (mbDeviceRefreshQueued) {
+		mbDeviceRefreshQueued = false;
+
+		auto devices(std::move(mDevicesToRefresh));
+		mDevicesToRefresh.clear();
+
+		for(IATDevice *dev : devices) {
+			auto it = mDeviceNodeLookup.find(dev);
+			if (it != mDeviceNodeLookup.end()) {
+				RefreshNodeErrors(*it->second);
+			}
+		}
+	}
+}
+
+void ATUIControllerDevices::RefreshNodeErrors(DeviceNode& devnode) {
+	IATDevice *dev = devnode.mpDev;
+	auto devtreenode = devnode.mNode;
+
+	while(!devnode.mErrorNodes.empty()) {
+		mTreeView.DeleteItem(devnode.mErrorNodes.back());
+		devnode.mErrorNodes.pop_back();
+	}
+
+	if (IATDeviceFirmware *fw = vdpoly_cast<IATDeviceFirmware *>(dev)) {
+		ATDeviceFirmwareStatus status = fw->GetFirmwareStatus();
+
+		if (status != ATDeviceFirmwareStatus::OK) {
+			auto node = mTreeView.AddItem(devtreenode, mTreeView.kNodeLast, status == ATDeviceFirmwareStatus::Invalid ? L"Current device firmware failed validation checks and may not work" : L"Missing firmware for device");
+			mTreeView.SetNodeImage(node, 1);
+			devnode.mErrorNodes.push_back(node);
+		}
+	}
+
+	if (IATDeviceDiskDrive *dd = vdpoly_cast<IATDeviceDiskDrive *>(dev)) {
+		uint32 index = 0;
+
+		for(;;) {
+			const auto& diBinding = dd->GetDiskInterfaceClient(index);
+
+			if (!diBinding.mpClient)
+				break;
+
+			ATDiskInterface& di = g_sim.GetDiskInterface(diBinding.mInterfaceIndex);
+
+			IATDiskImage *image = di.GetDiskImage();
+			if (image && !diBinding.mpClient->IsImageSupported(*image)) {
+				const ATDiskGeometryInfo& geometry = image->GetGeometry();
+
+				VDStringW msg;
+				msg.sprintf(L"Disk drive model cannot read disk format in D%u: (%u tracks of %u sectors%s%s%s)"
+					, (unsigned)diBinding.mInterfaceIndex + 1
+					, geometry.mTrackCount
+					, geometry.mSectorsPerTrack
+					, geometry.mSideCount > 1 ? L", double-sided" : L""
+					, geometry.mbMFM ? L", MFM" : L""
+					, geometry.mbHighDensity ? L", HD" : L""
+				);
+
+				auto node = mTreeView.AddItem(devtreenode, mTreeView.kNodeLast, msg.c_str());
+				mTreeView.SetNodeImage(node, 1);
+				devnode.mErrorNodes.push_back(node);
+				break;
+			}
+
+			++index;
+		}
+	}
+
+	VDStringW err;
+	for(uint32 i=0; dev->GetErrorStatus(i, err); ++i) {
+		auto node = mTreeView.AddItem(devtreenode, mTreeView.kNodeLast, err.c_str());
+		mTreeView.SetNodeImage(node, 1);
+		devnode.mErrorNodes.push_back(node);
+	}
+
+	mTreeView.ExpandNode(devtreenode, true);
+}
+
 bool ATUIControllerDevices::DisplayMore(const VDUIProxyTreeViewControl::ContextMenuEvent& event, bool fromButton) {
 	vdvector<VDDialogFrameW32::PopupMenuItem> items;
 
 	DeviceNode *node = static_cast<DeviceNode *>(event.mpItem);
 	vdfastvector<IATDeviceXCmd *> xcmds;
 	vdfastvector<int> xcmdOrder;
+	IATDevice *dev = nullptr;
+	sint32 busIndex = -1;
+	bool validNode = GetXCmdContext(event.mNode, node, dev, busIndex);
 
-	if (node && node->mpDev) {
-		xcmds = mDevMgr.GetExtendedCommandsForDevice(*node->mpDev);
+	if (validNode) {
+		xcmds = mDevMgr.GetExtendedCommandsForDevice(dev, busIndex);
 
 		auto n = xcmds.size();
 
@@ -1322,19 +1438,55 @@ bool ATUIControllerDevices::DisplayMore(const VDUIProxyTreeViewControl::ContextM
 	else
 		index = mParent.ActivatePopupMenu(event.mScreenPos.x, event.mScreenPos.y, vdspan(items.begin(), items.end()));
 
-	if ((unsigned)index < xcmdOrder.size()) {
-		try {
-			xcmds[xcmdOrder[index]]->Invoke(mDevMgr, *node->mpDev);
-		} catch(const MyError& e) {
-			mParent.ShowError(e);
-		}
+	if ((unsigned)index < xcmdOrder.size() && !items[index].mbDisabled) {
+		ExecuteXCmd(dev, busIndex, *xcmds[xcmdOrder[index]]);
+		return true;
+	}
 
-		OnDataExchange(false);
+	return false;
+}
+
+bool ATUIControllerDevices::GetXCmdContext(IATDevice *&dev, sint32& busIndex) {
+	return GetXCmdContext(mTreeView.GetSelectedNode(), static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem()), dev, busIndex);
+}
+
+bool ATUIControllerDevices::GetXCmdContext(VDUIProxyTreeViewControl::NodeRef selectedTreeNode, DeviceNode *selectedDeviceNode, IATDevice *&dev, sint32& busIndex) {
+	dev = nullptr;
+	busIndex = -1;
+
+	if (selectedTreeNode && selectedTreeNode == mTreeView.GetRootNode()) {
+		// computer node
+		return true;
+	}
+	
+	if (!selectedDeviceNode)
+		return false;
+
+	if (selectedDeviceNode->mpDev) {
+		// device node
+		dev = selectedDeviceNode->mpDev;
+
+		return true;
+	} else if (selectedDeviceNode->mpDevParent) {
+		// bus node
+		dev = selectedDeviceNode->mpParent->mpDev;
+		busIndex = (sint32)selectedDeviceNode->mBusIndex;
 
 		return true;
 	}
 
 	return false;
+}
+
+void ATUIControllerDevices::ExecuteXCmd(IATDevice *dev, sint32 busIndex, IATDeviceXCmd& xcmd) {
+	try {
+		xcmd.Invoke(mDevMgr, dev, busIndex);
+	} catch(const MyError& e) {
+		mParent.ShowError(e);
+	}
+
+	if (xcmd.IsPostRefreshNeeded())
+		OnDataExchange(false);
 }
 
 void ATUIControllerDevices::UpdateIcons() {

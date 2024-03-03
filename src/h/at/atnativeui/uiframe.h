@@ -86,6 +86,10 @@ static constexpr UINT ATWM_INHERIT_DPICHANGED	= (WM_APP + 213);
 // sent for program-local changes (dark theme).
 static constexpr UINT ATWM_THEMEUPDATED			= (WM_APP + 214);
 
+// Sent by child windows to suppress the default Alt key up behavior
+// of activating the menu bar.
+static constexpr UINT ATWM_SUPPRESS_KEYMENU		= (WM_APP + 215);
+
 static constexpr UINT ATWM_SUBCLASS_PRIVATE		= (WM_APP + 250);
 
 void ATInitUIFrameSystem();
@@ -95,6 +99,7 @@ class ATContainerWindow;
 class ATContainerDockingPane;
 class ATFrameWindow;
 class ATUIPane;
+struct IRawElementProviderSimple;
 
 enum {
 	kATContainerDockCenter,
@@ -116,6 +121,7 @@ public:
 	ATContainerResizer();
 
 	void LayoutWindow(HWND hwnd, int x, int y, int width, int height, bool visible);
+	void LayoutAndReorderWindow(HWND hwnd, HWND hwndAfter, int x, int y, int width, int height, bool visible);
 	void ResizeWindow(HWND hwnd, int width, int height);
 
 	void Flush();
@@ -207,6 +213,7 @@ public:
 	uint32	GetContentCount() const;
 	ATFrameWindow *GetContent(uint32 idx) const;
 	ATFrameWindow *GetAnyContent(bool requireVisible, ATFrameWindow *exclude) const;
+	void	GetContentRecursive(vdfastvector<ATFrameWindow *>& dst) const;
 
 	uint32	GetChildCount() const;
 	ATContainerDockingPane *GetChildPane(uint32 index) const;
@@ -295,6 +302,8 @@ public:
 	bool CanModifyCurrentFrame() const { return mpActiveFrame && !mpFullScreenFrame && !mpModalFrame; }
 	void UndockCurrentFrame();
 	void CloseCurrentFrame();
+
+	void CycleActiveFrame(int delta);
 
 	static ATContainerWindow *GetContainerWindow(HWND hwnd);
 
@@ -434,6 +443,8 @@ public:
 	void SetFrameMode(FrameMode fm);
 	void SetSplitterEdges(uint8 flags);
 
+	void FocusContent();
+
 	void ActivateFrame();
 	void EnableEndTrackNotification();
 
@@ -473,6 +484,7 @@ protected:
 	bool	mbCloseTracking = false;
 	bool	mbActivelyMovingSizing = false;
 	bool	mbEnableEndTrackNotification = false;
+	bool	mbDestroying = false;
 	uint8	mSplitterEdgeFlags = 0;
 	FrameMode	mFrameMode = kFrameModeUndocked;
 	vdrect32	mInsideBorderRect = {};
@@ -482,6 +494,7 @@ protected:
 	ATContainerDockingPane *mpDockingPane = nullptr;
 	ATContainerWindow *const mpContainer;
 	vdrefptr<ATContainerWindow> mpDragContainer;
+	vdrefptr<IRawElementProviderSimple> mpAccProvider;
 
 	VDStringW	mTitle;
 };

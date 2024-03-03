@@ -5,6 +5,9 @@
 #include <at/atcore/scheduler.h>
 
 class ATSCSIBusEmulator;
+struct ATSnapshotStatus;
+class IATObjectState;
+struct ATSnapshotContext;
 
 enum ATSCSICtrlState {
 	kATSCSICtrlState_RST = 0x0100,
@@ -77,6 +80,10 @@ public:
 	};
 
 	void CommandReceiveData(ReceiveMode mode, void *buf, uint32 length);
+
+	void GetSnapshotStatus(ATSnapshotStatus& status) const;
+	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx);
+	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const;
 
 public:
 	void OnScheduledEvent(uint32 id) override;

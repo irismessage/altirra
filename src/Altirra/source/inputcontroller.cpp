@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/math.h>
+#include <at/atcore/logging.h>
 #include <at/atcore/deviceport.h>
 #include <at/atcore/enumparseimpl.h>
 #include <at/atcore/scheduler.h>
@@ -81,7 +82,7 @@ void ATLightPenPort::TriggerCorrection(bool phase, int x, int y) {
 }
 
 void ATLightPenPort::SetIgnorePort34(bool ignore) {
-	mTriggerStateMask = ignore ? 0x01 : 0x03;
+	mTriggerStateMask = ignore ? 0x03 : 0x0F;
 }
 
 void ATLightPenPort::SetPosition(bool pen, int x, int y) {
@@ -571,7 +572,7 @@ void ATPaddleController::SetDigitalTrigger(uint32 trigger, bool state) {
 	else if (trigger == kATInputTrigger_Axis0) {
 		const int pos = state ? (1 << 16) + 0x8000 : (228 << 16) + 0x8000;
 
-		setPot(pos, state);
+		setPot(pos, false);
 	} else if (trigger == kATInputTrigger_Left) {
 		if (mbLeft != state) {
 			mbLeft = state;
@@ -1272,21 +1273,18 @@ void ATLightPenController::Init(ATScheduler *fastScheduler, ATLightPenPort *lpp)
 }
 
 void ATLightPenController::SetDigitalTrigger(uint32 trigger, bool state) {
-	uint32 mask = 0;
-	bool recordCalibrationReference = false;
-
 	switch(trigger) {
 		case kATInputTrigger_Button0:
-			mask = 0x01;
+			if (mbTriggerPressed != state) {
+				mbTriggerPressed = state;
 
-			if (mType == Type::LightGun)
-				state = !state;
+				int x, y;
+				GetBeamPos(x, y, ATLightPenNoiseMode::None);
 
-			recordCalibrationReference = true;
-			break;
+				mpLightPen->TriggerCorrection(state, x, y);
+			}
 
-		case kATInputTrigger_Button0+1:
-			mask = 0x04;
+			UpdatePortState();
 			break;
 
 		case kATInputTrigger_Button0+2:
@@ -1300,20 +1298,6 @@ void ATLightPenController::SetDigitalTrigger(uint32 trigger, bool state) {
 
 		default:
 			return;
-	}
-
-	uint32 bit = state ? mask : 0;
-
-	if ((mPortBits ^ bit) & mask) {
-		mPortBits ^= mask;
-		SetPortOutput(mPortBits);
-
-		if (recordCalibrationReference) {
-			int x, y;
-			GetBeamPos(x, y, ATLightPenNoiseMode::None);
-
-			mpLightPen->TriggerCorrection(state, x, y);
-		}
 	}
 }
 
@@ -1365,6 +1349,42 @@ void ATLightPenController::ApplyAnalogInput(uint32 trigger, int ds) {
 	}
 }
 
+void ATLightPenController::UpdatePortState() {
+	uint32 newBits = 0;
+	uint32 mask = 0;
+
+	switch(mType) {
+		case Type::LightPen:
+			mask = 1;
+			newBits = mbTriggerPressed ? 1 : 0;
+			break;
+
+		case Type::LightPenStack:
+			mask = 4;
+			newBits = mbTriggerPressed ? 0 : 4;
+			break;
+
+		case Type::LightGun:
+			mask = 1;
+			newBits = mbTriggerPressed ? 0 : 1;
+			break;
+	}
+
+	if ((mPortBits ^ newBits) & mask) {
+		mPortBits ^= mask;
+		SetPortOutput(mPortBits);
+	}
+}
+
+void ATLightPenController::GetPointers(vdfastvector<ATInputPointerInfo>& pointers) const {
+	ATInputPointerInfo& pointer = pointers.emplace_back();
+	pointer.mPos = GetBeamPointerPos();
+	pointer.mRadius = -1.0f;
+	pointer.mbPressed = mbPenDown;
+	pointer.mCoordSpace = ATInputPointerCoordinateSpace::Beam;
+	pointer.mbPrimary = true;
+}
+
 void ATLightPenController::Tick() {
 	// X range is [17, 111].
 	// Y range is [4, 123].
@@ -1374,11 +1394,11 @@ void ATLightPenController::Tick() {
 
 		GetBeamPos(x, y, mpLightPen->GetNoiseMode());
 
-		const auto [adjX, adjY] = mpLightPen->GetAdjust(mType == Type::LightPen);
+		const auto [adjX, adjY] = mpLightPen->GetAdjust(mType != Type::LightGun);
 		x += adjX;
 		y += adjY;
 
-		mpLightPen->SetPosition(mType == Type::LightPen, x, y);
+		mpLightPen->SetPosition(mType != Type::LightGun, x, y);
 
 		if (mpLightPen->GetImmediateUpdateEnabled()) {
 			// AtariGraphics needs to see the trigger down when the PENH/V
@@ -1433,6 +1453,7 @@ void ATLightPenController::OnScheduledEvent(uint32 id) {
 }
 
 void ATLightPenController::OnAttach() {
+	UpdatePortState();
 }
 
 void ATLightPenController::OnDetach() {
@@ -1487,6 +1508,16 @@ void ATLightPenController::GetBeamPos(int& x, int& y, ATLightPenNoiseMode noiseM
 				x += (hiY & 0xFFFF) / 0x3333;
 			break;
 	}
+}
+
+vdfloat2 ATLightPenController::GetBeamPointerPos() const {
+	const sint32 hiX = mPosX*94;
+	const sint32 hiY = mPosY*188;
+
+	float x = (float)hiX * 0x1p-16 + 128;
+	float y = (float)hiY * 0x1p-16 + 128;
+
+	return vdfloat2 { x, y };
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1727,4 +1758,371 @@ void ATKeyboardController::UpdatePortOutput() {
 	SetPotHiPosition(false, (colState & 2) ? 255 << 16 : floorPos2, (colState & 2) != 0);
 	SetPotHiPosition(true, (colState & 1) ? 255 << 16 : floorPos1, (colState & 1) != 0);
 	SetPortOutput(colState & 4 ? 0x100 : 0);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void ATPowerPadController::SwitchLine::Clear() {
+	mSwitches[0] = 0;
+	mSwitches[1] = 0;
+	mSwitches[2] = 0;
+	mSwitches[3] = 0;
+}
+
+void ATPowerPadController::SwitchLine::Set(int index) {
+	VDASSERT((unsigned)index < 120);
+	mSwitches[index >> 5] |= UINT32_C(1) << (index & 31);
+}
+
+void ATPowerPadController::SwitchLine::SetRange(int start, int end) {
+	VDASSERT(start >= 0 && end <= 120 && start < end);
+
+	const uint32 firstMask = UINT32_C(0xFFFFFFFF) << (start & 31);
+	const uint32 lastMask = ~(UINT32_C(0xFFFFFFFE) << ((end - 1) & 31));
+	const int firstIndex = start >> 5;
+	const int lastIndex = (end - 1) >> 5;
+
+	if (firstIndex == lastIndex) {
+		mSwitches[firstIndex] |= (firstMask & lastMask);
+	} else {
+		mSwitches[firstIndex] |= firstMask;
+
+		for(int i = firstIndex + 1; i < lastIndex; ++i)
+			mSwitches[i] = ~UINT32_C(0);
+
+		mSwitches[lastIndex] |= lastMask;
+	}
+}
+
+bool ATPowerPadController::SwitchLine::Any() const {
+	return (mSwitches[0] | mSwitches[1] | mSwitches[2] | mSwitches[3]) != 0;
+}
+
+int ATPowerPadController::SwitchLine::FindNext(int start) const {
+	VDASSERT((unsigned)start < 120);
+
+	int wordIndex = start >> 5;
+	uint32 mask = UINT32_C(0xFFFFFFFF) << (start & 31);
+
+	while(wordIndex < 4) {
+		uint32 v = mSwitches[wordIndex] & mask;
+
+		if (v) {
+			return VDFindLowestSetBitFast(v) + (wordIndex << 5);
+		}
+
+		++wordIndex;
+		mask = UINT32_C(0xFFFFFFFF);
+	}
+
+	return -1;
+}
+
+ATPowerPadController::ATPowerPadController() = default;
+ATPowerPadController::~ATPowerPadController() = default;
+
+void ATPowerPadController::ColdReset() {
+	mbSense = false;
+	mScanX = 0;
+	mScanY = 0;
+
+	// we don't reset the matrix it is a property of the inputs and not device state
+}
+
+void ATPowerPadController::SetDigitalTrigger(uint32 trigger, bool state) {
+	switch(trigger) {
+		case kATInputTrigger_Button0:
+		case kATInputTrigger_Button0+1:
+		case kATInputTrigger_Button0+2:
+		case kATInputTrigger_Button0+3:
+			{
+				const int index = trigger - kATInputTrigger_Button0;
+				auto& touch = mTouches[index];
+
+				if (state)
+					mTouchActiveMask |= 1 << index;
+				else
+					mTouchActiveMask &= ~(1 << index);
+
+				if (mbSetShift) {
+					CopyTouch(index, 0);
+				} else {
+					if (touch.mbActive != state) {
+						touch.mbActive = state;
+
+						InvalidateMatrix();
+					}
+				}
+			}
+			break;
+
+		case kATInputTrigger_Button0+4:
+			if (mbSetShift != state) {
+				mbSetShift = state;
+
+				// If some of the touches are already on when the shift state is changed,
+				// we need to correct state: touches can only be activated in unshifted
+				// state, and touches should align to touch 0 in shifted state.
+				if (state) {
+					for(int i=1; i<4; ++i) {
+						if (mTouches[i].mbActive) {
+							mTouches[i].mbActive = false;
+							CopyTouch(i, 0);
+							InvalidateMatrix();
+						}
+					}
+				} else {
+					for(int i=1; i<4; ++i) {
+						if ((mTouchActiveMask & (1 << i)) && !mTouches[i].mbActive) {
+							mTouches[i].mbActive = true;
+							InvalidateMatrix();
+						}
+					}
+				}
+			}
+			break;
+
+		default:
+			break;
+	}
+}
+
+void ATPowerPadController::ApplyAnalogInput(uint32 trigger, int ds) {
+	switch(trigger) {
+		case kATInputTrigger_Axis0:
+			SetPos(0, ds);
+			break;
+
+		case kATInputTrigger_Axis0+1:
+			SetPos(1, ds);
+			break;
+
+		case kATInputTrigger_Axis0+2:
+			SetPos(2, ds);
+			break;
+
+		default:
+			break;
+	}
+}
+
+void ATPowerPadController::ApplyImpulse(uint32 trigger, int ds) {
+	switch(trigger) {
+		case kATInputTrigger_Axis0:
+		case kATInputTrigger_Right:
+			AddDelta(0, ds);
+			break;
+		case kATInputTrigger_Left:
+			AddDelta(0, -ds);
+			break;
+
+		case kATInputTrigger_Axis0+1:
+		case kATInputTrigger_Down:
+			AddDelta(1, ds);
+			break;
+		case kATInputTrigger_Up:
+			AddDelta(1, -ds);
+			break;
+
+		case kATInputTrigger_Axis0+2:
+		case kATInputTrigger_ScrollDown:
+			AddDelta(2, ds);
+			break;
+		case kATInputTrigger_ScrollUp:
+			AddDelta(2, -ds);
+			break;
+
+		default:
+			break;
+	}
+}
+
+void ATPowerPadController::GetPointers(vdfastvector<ATInputPointerInfo>& pointers) const {
+	bool primary = true;
+
+	for(auto& touch : mTouches) {
+		if (primary || touch.mbActive) {
+			auto& pointer = pointers.emplace_back();
+
+			constexpr float switchToNormalizedScale = 1.0f / 60.0f;
+			pointer.mPos = touch.mPos * vdfloat2 { -switchToNormalizedScale, switchToNormalizedScale } + vdfloat2{1.0f, -1.0f};
+			pointer.mRadius = touch.mRadius * switchToNormalizedScale;
+			pointer.mbPressed = touch.mbActive;
+			pointer.mCoordSpace = ATInputPointerCoordinateSpace::Normalized;
+			pointer.mbPrimary = primary;
+		}
+
+		primary = false;
+	}
+}
+
+void ATPowerPadController::OnAttach() {
+	// PA1 and PA2 are computer outputs.
+	SetOutputMonitorMask(0x06);
+
+	// Reset touch sizes.
+	//
+	// The switch grid is 120x120 over 12"x12", giving 10 switches per inch on each axis.
+	// A fingerpress is about half an inch wide, so we render a disc with a radius of
+	// 2.5 switches.
+	for(auto& touch : mTouches)
+		touch.mRadius = 2.5f;
+}
+
+void ATPowerPadController::OnPortOutputChanged(uint8 outputState) {
+	const uint8 triggered = ~outputState & mPrevPortState;
+	mPrevPortState = outputState;
+
+	// PA1 is the clear signal, which restarts the scan.
+	// PA2 is the clock, which advances the shift register.
+	//
+	// If both the clock and clear are triggered, we shift first under the assumption
+	// that the scan can't occur immediately, so the shift would take place first.
+	if (triggered & 4)
+		mShiftRegister >>= 1;
+
+	if (triggered & 2) {
+		if (!mbMatrixValid)
+			UpdateMatrix();
+
+		// Find next position. There will always be one as (0,0) is always set.
+		for(;;) {
+			mScanY = mColumnArray[mScanX].FindNext(mScanY);
+
+			if (mScanY >= 0)
+				break;
+
+			mScanY = 0;
+
+			if (++mScanX >= 120)
+				mScanX = 0;
+			else {
+				mScanX = mRowArray.FindNext(mScanX);
+				if (mScanX < 0)
+					mScanX = 0;
+			}
+		}
+
+		// Assert sense signal and update shift register with found point. The serial
+		// data is '01' followed by 7-bit Y and 7-bit X LSB-first, then infinite zeroes.
+		// The data line is inverted, but so is our direction input, so it works out.
+		mbSense = true;
+		mShiftRegister = 2 + ((uint32)mScanY << 2) + ((uint32)mScanX << 9);
+
+		// bump to next position
+		if (++mScanY >= 120) {
+			mScanY = 0;
+
+			if (++mScanX >= 120)
+				mScanX = 0;
+		}
+	}
+
+	UpdatePortOutput();
+}
+
+void ATPowerPadController::AddDelta(int axis, sint32 delta) {
+	SetPos(axis, mAxis[axis] + std::clamp(delta, -0x10000, 0x10000));
+}
+
+void ATPowerPadController::SetPos(int axis, sint32 pos) {
+	pos = std::clamp(pos, -0x10000, 0x10000);
+
+	if (mAxis[axis] == pos)
+		return;
+
+	mAxis[axis] = pos;
+
+	// Convert generic pad position to PowerPad position.
+	//
+	// The switch grid is 120x120 over 12"x12", giving 10 switches per inch on each axis.
+	// Note that (0,0) is the upper _right_ of the pad.
+
+	switch(axis) {
+		case 0:
+			mTouches[0].mPos.x = (0x1p16f - (float)mAxis[0]) * (119.0f * 0x1p-17f);
+			break;
+
+		case 1:
+			mTouches[0].mPos.y = ((float)mAxis[1] + 0x1p16f) * (119.0f * 0x1p-17f);
+			break;
+
+		case 2:
+			mTouches[0].mRadius = 2.5f * (mAxis[2] + 0x1p16f) * 0x1p-16f;
+			break;
+	}
+
+	if (mTouches[0].mbActive)
+		InvalidateMatrix();
+}
+
+void ATPowerPadController::CopyTouch(int dst, int src) {
+	if (src == dst)
+		return;
+
+	auto& dstTouch = mTouches[dst];
+	const auto& srcTouch = mTouches[src];
+
+	dstTouch.mPos = srcTouch.mPos;
+	dstTouch.mRadius = srcTouch.mRadius;
+
+	if (dstTouch.mbActive)
+		InvalidateMatrix();
+}
+
+void ATPowerPadController::InvalidateMatrix() {
+	mbMatrixValid = false;
+}
+
+void ATPowerPadController::UpdateMatrix() {
+	// clear the switch matrix
+	for(SwitchLine& sl : mColumnArray)
+		sl.Clear();
+
+	mRowArray.Clear();
+
+	// (0,0) is always returned as set
+	mColumnArray[0].Set(0);
+	mRowArray.Set(0);
+
+	// Render touches.
+	for(const auto& touch : mTouches) {
+		if (!touch.mbActive)
+			continue;
+
+		const float cx = touch.mPos.x;
+		const float cy = touch.mPos.y;
+		const float r = touch.mRadius;
+		const float r2 = r*r;
+
+		const int ix0 = std::max<int>(  0, VDCeilToInt(cx - r));
+		const int ix1 = std::min<int>(120, VDCeilToInt(cx + r));
+
+		for(int ix = ix0; ix < ix1; ++ix) {
+			float dx = (float)ix - cx;
+			const float desc = r2 - dx*dx;
+
+			if (desc > 0) {
+				float dy = sqrtf(desc);
+				const int iy0 = std::max(  0, VDCeilToInt(cy - dy));
+				const int iy1 = std::min(120, VDCeilToInt(cy + dy));
+
+				if (iy0 < iy1) {
+					mColumnArray[ix].SetRange(iy0, iy1);
+					mRowArray.Set(ix);
+				}
+			}
+		}
+	}
+
+	mbMatrixValid = true;
+}
+
+void ATPowerPadController::UpdatePortOutput() {
+	// PA0 is data (pre-inverted).
+	// PA3 is sense (active low).
+	//
+	// Note that the input to SetPortOutput() is _also_ inverted.
+
+	SetPortOutput((mShiftRegister & 1) + (mbSense ? 0x08 : 0x00));
 }

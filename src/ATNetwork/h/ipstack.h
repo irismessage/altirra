@@ -3,11 +3,11 @@
 
 #include <vd2/system/vdstl_hashmap.h>
 #include <at/atnetwork/ethernet.h>
-#include <at/atnetwork/socket.h>
+#include <at/atnetwork/emusocket.h>
 
 struct ATIPv4HeaderInfo;
 
-class ATNetIpStack final : public IATNetIpStack {
+class ATNetIpStack final : public IATEmuNetIpStack {
 	ATNetIpStack(const ATNetIpStack&) = delete;
 	ATNetIpStack& operator=(const ATNetIpStack&) = delete;
 public:

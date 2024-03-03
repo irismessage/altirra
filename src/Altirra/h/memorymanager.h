@@ -20,6 +20,7 @@
 
 #include <vd2/system/linearalloc.h>
 #include <vd2/system/memory.h>
+#include <vd2/system/unknown.h>
 #include <vd2/system/vdstl.h>
 #include "cpumemory.h"
 
@@ -107,8 +108,12 @@ enum ATMemoryAccessMode : uint8 {
 
 enum ATMemoryPriority {
 	kATMemoryPri_BaseRAM	= 0,
-	kATMemoryPri_ExtRAM		= 1,
-	kATMemoryPri_Extsel		= 2,
+	kATMemoryPri_ExtRAM		= 1,	// [+2]
+	kATMemoryPri_Extsel		= 4,	// [+1]
+
+	// Extended RAM implemented using EXTSEL. Affects VBXE MEMAC behavior.
+	kATMemoryPri_ExtRAMExtsel = 6,
+
 	kATMemoryPri_ROM		= 8,
 	kATMemoryPri_Cartridge2	= 16,
 	kATMemoryPri_Cartridge1	= 24,
@@ -125,6 +130,8 @@ class ATMemoryManager final : public VDAlignedObject<32>, public ATCPUEmulatorMe
 	ATMemoryManager(const ATMemoryManager&) = delete;
 	ATMemoryManager& operator=(const ATMemoryManager&) = delete;
 public:
+	static constexpr auto kTypeID = "ATMemoryManager"_vdtypeid;
+
 	// Returned by the accelerated read/write routines if a slow access is
 	// prohibited but required by the accessed memory layer.
 	enum { kChipReadNeedsDelay = -256 };

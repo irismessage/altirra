@@ -113,6 +113,15 @@ bool VDLinearAllocator::Contains(const void *addr) const {
 	return false;
 }
 
+size_t VDLinearAllocator::GetTotalAllocatedSize() const {
+	size_t n = 0;
+
+	for(const Block *block = mpBlocks; block; block = block->mpNext)
+		n += block->mSize;
+
+	return n;
+}
+
 void VDFixedLinearAllocator::ThrowException() {
 	throw MyMemoryError();
 }

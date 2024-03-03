@@ -245,7 +245,7 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 			if (info.mFileName == "savestate.json") {
 				vdrefptr<IATSaveStateImage2> saveState2;
 				
-				ATReadSaveState2(ziparch, ~saveState2);
+				ATReadSaveState2(ziparch, L"savestate.json", ~saveState2);
 
 				*ppImage = saveState2.release();
 				loadType = kATImageType_SaveState2;
@@ -272,20 +272,14 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 
 				auto detectedType = ATGetImageTypeForFileExtension(extBuf.c_str());
 				if (detectedType != kATImageType_None && (!loadType || loadType == detectedType)) {
-					IVDStream& innerStream = *ziparch.OpenRawStream(i);
+					vdautoptr<IVDInflateStream> zs { ziparch.OpenDecodedStream(i) };
+
 					vdfastvector<uint8> data;
-
-					if (info.mUncompressedSize > 384 * 1024 * 1024)
-						throw MyError("Zip file item is too large (%llu bytes).", (unsigned long long)info.mUncompressedSize);
-
-					vdautoptr<VDZipStream> zs(new VDZipStream(&innerStream, info.mCompressedSize, !info.mbPacked));
-					zs->EnableCRC();
-
 					data.resize(info.mUncompressedSize);
 					zs->Read(data.data(), info.mUncompressedSize);
 
-					if (zs->CRC() != info.mCRC32)
-						throw MyError("Zip file item could not be decompressed (CRC error).");
+					zs->VerifyCRC();
+					zs = nullptr;
 
 					VDMemoryStream ms(data.data(), (uint32)data.size());
 
@@ -331,7 +325,7 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 		*ppImage = cartImage.release();
 	} else if (loadType == kATImageType_Tape) {
 		vdrefptr<IATCassetteImage> tapeImage;
-		ATLoadCassetteImage(stream, nullptr, loadCtx && loadCtx->mpCassetteLoadContext ? *loadCtx->mpCassetteLoadContext : ATCassetteLoadContext(), ~tapeImage);
+		ATLoadCassetteImage(stream, origPath, nullptr, loadCtx && loadCtx->mpCassetteLoadContext ? *loadCtx->mpCassetteLoadContext : ATCassetteLoadContext(), ~tapeImage);
 
 		*ppImage = tapeImage.release();
 	} else if (loadType == kATImageType_Disk) {

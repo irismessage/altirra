@@ -19,6 +19,7 @@
 #include <stdafx.h>
 #include <at/atcore/devicepbi.h>
 #include <vd2/system/bitmath.h>
+#include "irqcontroller.h"
 #include "memorymanager.h"
 #include "pbi.h"
 
@@ -29,7 +30,7 @@ ATPBIManager::~ATPBIManager() {
 	Shutdown();
 }
 
-void ATPBIManager::Init(ATMemoryManager *memman) {
+void ATPBIManager::Init(ATMemoryManager *memman, ATIRQController *irqc) {
 	mpMemMan = memman;
 
 	ATMemoryHandlerTable handlers = {};
@@ -52,9 +53,17 @@ void ATPBIManager::Init(ATMemoryManager *memman) {
 	mpMemLayerPBIIRQ = mpMemMan->CreateLayer(kATMemoryPri_PBIIRQ, handlers2, 0xD1, 0x01);
 	mpMemMan->SetLayerName(mpMemLayerPBIIRQ, "PBI shared IRQ register");
 	mpMemMan->SetLayerModes(mpMemLayerPBIIRQ, kATMemoryAccessMode_0);
+
+	mpIRQController = irqc;
+	mPBIIRQ = mpIRQController->AllocateIRQ();
 }
 
 void ATPBIManager::Shutdown() {
+	if (mpIRQController) {
+		mpIRQController->FreeIRQ(mPBIIRQ);
+		mpIRQController = nullptr;
+	}
+
 	if (mpSelDevice) {
 		mpSelDevice->SelectPBIDevice(false);
 		mpSelDevice = nullptr;
@@ -102,6 +111,24 @@ void ATPBIManager::RemoveDevice(IATPBIDevice *dev) {
 void ATPBIManager::DeselectSelf(IATPBIDevice *dev) {
 	if (mpSelDevice == dev)
 		Select(0);
+}
+
+void ATPBIManager::AssertIRQ(uint8 id) {
+	if (~mActiveIRQs & id) {
+		if (!mActiveIRQs)
+			mpIRQController->Assert(mPBIIRQ, false);
+
+		mActiveIRQs |= id;
+	}
+}
+
+void ATPBIManager::NegateIRQ(uint8 id) {
+	if (mActiveIRQs & id) {
+		mActiveIRQs &= ~id;
+
+		if (!mActiveIRQs)
+			mpIRQController->Negate(mPBIIRQ, false);
+	}
 }
 
 void ATPBIManager::ColdReset() {

@@ -47,10 +47,30 @@ enum ATHardwareMode : uint32 {
 	kATHardwareMode_XEGS,
 	kATHardwareMode_1200XL,
 	kATHardwareMode_130XE,
+	kATHardwareMode_1400XL,
 	kATHardwareModeCount
 };
 
 AT_DECLARE_ENUM_TABLE(ATHardwareMode);
+
+struct ATHardwareModeTraits {
+	bool mbRunsXLOS : 1;
+	bool mbHasPort34 : 1;
+	bool mbFloatingDataBus : 1;
+	bool mbInternalBASIC : 1;
+};
+
+constexpr ATHardwareModeTraits kATHardwareModeTraits[] = {
+	/* 800    */	{ .mbRunsXLOS = false, .mbHasPort34 = true , .mbFloatingDataBus = true , .mbInternalBASIC = false },
+	/* 800XL  */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = true  },
+	/* 5200   */	{ .mbRunsXLOS = false, .mbHasPort34 = true , .mbFloatingDataBus = false, .mbInternalBASIC = false },
+	/* XEGS   */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = true , .mbInternalBASIC = false },
+	/* 1200XL */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = true  },
+	/* 130XE  */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = true , .mbInternalBASIC = true  },
+	/* 1400XL */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = true  },
+};
+
+static_assert(vdcountof(kATHardwareModeTraits) == kATHardwareModeCount);
 
 enum ATROMImage {
 	kATROMImage_OSA,

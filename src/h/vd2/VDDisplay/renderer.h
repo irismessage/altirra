@@ -129,6 +129,7 @@ public:
 	const VDPixmap& GetImage() const { return mPixmap; }
 	void SetImage();
 	void SetImage(const VDPixmap& px, bool dynamic);
+	void SetVirtualImage(int w, int h);
 
 	void SetCachedImage(uint32 id, IVDRefUnknown *p);
 	IVDRefUnknown *GetCachedImage(uint32 id) const {

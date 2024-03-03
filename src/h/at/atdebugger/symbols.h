@@ -92,11 +92,12 @@ public:
 	virtual void AddSourceLine(uint16 fileId, uint16 line, uint32 moduleOffset, uint32 len = 0) = 0;
 };
 
-bool ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore);
-bool ATCreateDefaultVariableSymbolStore5200(IATSymbolStore **ppStore);
-bool ATCreateDefaultKernelSymbolStore(IATSymbolStore **ppStore);
-bool ATCreateDefaultHardwareSymbolStore(IATSymbolStore **ppStore);
-bool ATCreateDefault5200HardwareSymbolStore(IATSymbolStore **ppStore);
+void ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore);
+void ATCreateDefaultVariableSymbolStore5200(IATSymbolStore **ppStore);
+void ATCreateDefaultMathPackSymbolStore(IATSymbolStore **ppStore);
+void ATCreateDefaultKernelSymbolStore(IATSymbolStore **ppStore);
+void ATCreateDefaultHardwareSymbolStore(IATSymbolStore **ppStore);
+void ATCreateDefault5200HardwareSymbolStore(IATSymbolStore **ppStore);
 void ATCreateCustomSymbolStore(IATCustomSymbolStore **ppStore);
 void ATLoadSymbols(const wchar_t *path, IATSymbolStore **ppStore);
 void ATLoadSymbols(const wchar_t *filename, IVDRandomAccessStream& stream, IATSymbolStore **ppStore);

@@ -19,8 +19,10 @@
 #define f_AT_INPUTCONTROLLER_H
 
 #include <vd2/system/vdstl.h>
+#include <vd2/system/vectors.h>
 #include <at/atcore/notifylist.h>
 #include <at/atcore/scheduler.h>
+#include "inputtypes.h"
 
 class IATDevicePortManager;
 class IATDeviceControllerPort;
@@ -29,6 +31,7 @@ class ATInputManager;
 class ATAnticEmulator;
 class ATPIAEmulator;
 class ATPortInputController;
+struct ATInputPointerInfo;
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -38,6 +41,8 @@ enum ATInputTrigger : uint32 {
 	kATInputTrigger_Down		= 0x0101,
 	kATInputTrigger_Left		= 0x0102,
 	kATInputTrigger_Right		= 0x0103,
+	kATInputTrigger_ScrollUp	= 0x0104,
+	kATInputTrigger_ScrollDown	= 0x0105,
 	kATInputTrigger_Start		= 0x0200,
 	kATInputTrigger_Select		= 0x0201,
 	kATInputTrigger_Option		= 0x0202,
@@ -186,6 +191,7 @@ public:
 
 	void Attach(IATDevicePortManager& portMgr, int portIndex, int multiIndex = -1);
 	void Detach();
+	virtual void ColdReset() {}
 
 	virtual void Tick() {}
 
@@ -202,6 +208,9 @@ public:
 	/// Set the position of an analog target. The position is in 16:16 fixed point,
 	/// where the range is [-1, 1].
 	virtual void ApplyAnalogInput(uint32 trigger, int ds) {}
+
+	virtual ATInputPointerCoordinateSpace GetPointerCoordinateSpace() const { return ATInputPointerCoordinateSpace::None; }
+	virtual void GetPointers(vdfastvector<ATInputPointerInfo>& pointers) const {}
 
 protected:
 	void SetPortOutput(uint32 portBits);
@@ -478,7 +487,8 @@ class ATLightPenController final : public ATPortInputController, public IATSched
 public:
 	enum class Type : uint8 {
 		LightGun,
-		LightPen
+		LightPen,
+		LightPenStack
 	};
 
 	ATLightPenController(Type type);
@@ -491,6 +501,8 @@ public:
 	void SetDigitalTrigger(uint32 trigger, bool state) override;
 	void ApplyImpulse(uint32 trigger, int ds) override;
 	void ApplyAnalogInput(uint32 trigger, int ds) override;
+	ATInputPointerCoordinateSpace GetPointerCoordinateSpace() const override { return ATInputPointerCoordinateSpace::Beam; }
+	void GetPointers(vdfastvector<ATInputPointerInfo>& pointers) const override;
 	void Tick() override;
 
 protected:
@@ -498,12 +510,16 @@ protected:
 	void OnAttach() override;
 	void OnDetach() override;
 
+	void UpdatePortState();
+
 	void GetBeamPos(int& x, int& y, ATLightPenNoiseMode noiseMode) const;
+	vdfloat2 GetBeamPointerPos() const;
 
 	Type	mType {};
 	uint32	mPortBits {};
 	sint32	mPosX {};
 	sint32	mPosY {};
+	bool	mbTriggerPressed {};
 	bool	mbPenDown {};
 
 	ATEvent *mpLPAssertEvent = nullptr;
@@ -552,5 +568,69 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////
+
+class ATPowerPadController final : public ATPortInputController {
+public:
+	ATPowerPadController();
+	~ATPowerPadController();
+
+	void ColdReset() override;
+
+	void SetDigitalTrigger(uint32 trigger, bool state) override;
+	void ApplyAnalogInput(uint32 trigger, int ds) override;
+	void ApplyImpulse(uint32 trigger, int ds) override;
+	ATInputPointerCoordinateSpace GetPointerCoordinateSpace() const override { return ATInputPointerCoordinateSpace::Normalized; }
+	void GetPointers(vdfastvector<ATInputPointerInfo>& pointers) const override;
+
+private:
+	void OnAttach() override;
+	void OnPortOutputChanged(uint8 outputState) override;
+
+	void AddDelta(int axis, sint32 delta);
+	void SetPos(int axis, sint32 pos);
+	void CopyTouch(int dst, int src);
+	void InvalidateMatrix();
+	void UpdateMatrix();
+	void UpdatePortOutput();
+
+	struct SwitchLine {
+	public:
+		void Clear();
+		void Set(int index);
+		void SetRange(int start, int end);
+		bool Any() const;
+		int FindNext(int start) const;
+
+	private:
+		uint32 mSwitches[4] {};
+	};
+
+	sint32 mAxis[3] {};
+	bool mbMatrixValid = false;
+	bool mbSense = false;
+	bool mbSetShift = false;
+	uint8 mTouchActiveMask = 0;
+
+	int mScanX = 0;
+	int mScanY = 0;
+	uint32 mShiftRegister = 0;
+	uint8 mPrevPortState = 0xFF;
+
+	struct Touch {
+		// Center position in switch coordinates (120x120 switches over 0,0-119,119).
+		vdfloat2 mPos { 0, 0 };
+
+		// Radius in switches.
+		float mRadius = 0;
+
+		// Whether this touch is active (pressed).
+		bool mbActive = false;
+	};
+
+	Touch mTouches[4];
+
+	SwitchLine mColumnArray[120];
+	SwitchLine mRowArray;
+};
 
 #endif	// f_AT_INPUTCONTROLLER_H

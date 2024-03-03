@@ -18,6 +18,7 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/strutil.h>
+#include <at/atcore/asyncdispatcher.h>
 #include <at/atcore/cio.h>
 #include <at/atcore/devicecio.h>
 #include <at/atcore/deviceimpl.h>
@@ -49,9 +50,9 @@ namespace {
 
 class ATRS232Channel1030 final : public IATSchedulerCallback {
 public:
-	ATRS232Channel1030();
+	ATRS232Channel1030(bool is835);
 
-	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer);
+	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer, IATAsyncDispatcher *asyncDispatcher);
 	void Shutdown();
 
 	void ColdReset();
@@ -70,35 +71,53 @@ public:
 
 	bool IsSuspended() const { return mbSuspended; }
 	void ReceiveByte(uint8 c);
-	void ExecuteDeviceCommand(uint8 c);
+	bool ExecuteDeviceCommand(uint8 c);
 
 public:
 	void OnScheduledEvent(uint32 id) override;
 
 protected:
 	void OnControlStateChanged(const ATDeviceSerialStatus& status);
-	void PollDevice();
+	void PollDeviceInput();
+	void PollDeviceOutput();
 	void EnqueueReceivedByte(uint8 c);
+	void WaitForCarrier();
+	void NotifyCommandCompletion();
 
-	ATScheduler	*mpScheduler;
-	ATEvent	*mpEvent;
-	ATModemEmulator *mpDevice;
-	IATDeviceCIOManager *mpCIOMgr;
-	IATDeviceSIOManager *mpSIOMgr;
-	IATDeviceRawSIO *mpSIODev;
+	ATScheduler	*mpScheduler = nullptr;
+	ATScheduler	*mpSlowScheduler = nullptr;
+	ATEvent	*mpSlowInputEvent = nullptr;
+	ATEvent	*mpSlowOutputEvent = nullptr;
+	ATEvent	*mpSlowCommandEvent = nullptr;
+	ATEvent	*mpSlowHandlerEvent = nullptr;
+	vdrefptr<ATModemEmulator> mpDevice;
+	IATDeviceCIOManager *mpCIOMgr = nullptr;
+	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	IATDeviceRawSIO *mpSIODev = nullptr;
 
-	bool	mbAddLFAfterEOL;
-	bool	mbTranslationEnabled;
-	bool	mbTranslationHeavy;
-	bool	mbLFPending;
-	bool	mbConcurrentMode;
-	bool	mbSuspended;
-	bool	mbHandlerMode;
-	uint8	mCommandState;
-	uint8	mWontTranslateChar;
+	const bool mbIs835;
+	bool	mbAddLFAfterEOL = false;
+	bool	mbTranslationEnabled = true;
+	bool	mbTranslationHeavy = false;
+	bool	mbLFPending = false;
+	bool	mbConcurrentMode = false;
+	bool	mbSuspended = true;
+	bool	mbHandlerMode = false;
 
-	uint8	mOpenPerms;		// Mirror of ICAX1 at open time.
-	uint8	mControlState;
+	enum class HandlerState : uint8 {
+		Base,
+		Escape,
+		SetTranslation1,
+		SetTranslation2,
+		SetParity,
+		Dial,
+		WaitForCarrier
+	} mHandlerState = HandlerState::Escape;
+
+	uint8	mWontTranslateChar = 0;
+
+	uint8	mOpenPerms = 0;		// Mirror of ICAX1 at open time.
+	uint8	mControlState = 0;
 
 	// These must match the error flags returned by STATUS.
 	enum : uint8 {
@@ -123,8 +142,15 @@ protected:
 		OUTCNT = 0x401
 	};
 
-	uint8	mErrorFlags;
-	uint8	mStatusFlags;
+	enum : uint32 {
+		kEventId_Input = 1,
+		kEventId_Output,
+		kEventId_Command,
+		kEventId_Handler,
+	};
+
+	uint8	mErrorFlags = 0;		// handler only
+	uint8	mStatusFlags = 0;		// handler only
 
 	// These must match bits 0-1 of AUX1 as passed to XIO 38.
 	enum ParityMode {
@@ -134,21 +160,32 @@ protected:
 		kParityMode_Mark	= 0x03
 	};
 
-	ParityMode	mInputParityMode;
-	ParityMode	mOutputParityMode;
+	ParityMode	mInputParityMode = kParityMode_None;
+	ParityMode	mOutputParityMode = kParityMode_None;
 
-	ATDeviceSerialTerminalState	mTerminalState;
+	ATDeviceSerialTerminalState	mTerminalState {};
 
-	int		mInputReadOffset;
-	int		mInputWriteOffset;
-	int		mInputLevel;
-	int		mOutputReadOffset;
-	int		mOutputWriteOffset;
-	int		mOutputLevel;
+	int		mInputReadOffset = 0;
+	int		mInputWriteOffset = 0;
+	int		mInputLevel = 0;
+	int		mOutputReadOffset = 0;
+	int		mOutputWriteOffset = 0;
+	int		mOutputLevel = 0;
 
-	bool	mbDisableThrottling;
-	bool	mbDialPending;
-	bool	mbDialPendingPulse;
+	bool	mbDisableThrottling = false;
+	bool	mbAnalogLoopback = false;
+	bool	mbPulseDialing = false;
+	bool	mbToneDialing = false;
+	uint8	mPulseCounter = 0;
+
+	VDStringA mDialNumber;
+
+	enum class ControllerPhase : uint8 {
+		None,
+		PulseDialing,
+		WaitForCarrier,
+	} mControllerPhase = ControllerPhase::None;
+
 	VDStringA mDialAddress;
 	VDStringA mDialService;
 
@@ -157,48 +194,23 @@ protected:
 	uint8	mOutputBuffer[32];
 };
 
-ATRS232Channel1030::ATRS232Channel1030()
-	: mpScheduler(NULL)
-	, mpEvent(NULL)
-	, mpDevice(nullptr)
-	, mpCIOMgr(nullptr)
-	, mpSIOMgr(NULL)
-	, mpSIODev(NULL)
-	, mbAddLFAfterEOL(false)
-	, mbTranslationEnabled(true)
-	, mbTranslationHeavy(false)
-	, mbSuspended(true)
-	, mbHandlerMode(false)
-	, mCommandState(0)
-	, mWontTranslateChar(0)
-	, mOpenPerms(0)
-	, mControlState(0)
-	, mErrorFlags(0)
-	, mStatusFlags(0)
-	, mInputParityMode(kParityMode_None)
-	, mOutputParityMode(kParityMode_None)
-	, mInputReadOffset(0)
-	, mInputWriteOffset(0)
-	, mInputLevel(0)
-	, mOutputReadOffset(0)
-	, mOutputWriteOffset(0)
-	, mOutputLevel(0)
-	, mbDisableThrottling(false)
-	, mbDialPending(false)
+ATRS232Channel1030::ATRS232Channel1030(bool is835)
+	: mbIs835(is835)
 {
 	mpDevice = new ATModemEmulator;
-	mpDevice->AddRef();
 	mpDevice->Set1030Mode();
 }
 
-void ATRS232Channel1030::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer) {
+void ATRS232Channel1030::Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer, IATAsyncDispatcher *asyncDispatcher) {
 	mpScheduler = sched;
+	mpSlowScheduler = slowsched;
 	mpCIOMgr = ciomgr;
 	mpSIOMgr = siomgr;
 	mpSIODev = siodev;
 
 	mpDevice->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
-	mpDevice->Init(sched, slowsched, uir, mixer);
+	mpDevice->Init(sched, slowsched, uir, mixer, asyncDispatcher);
+	mpDevice->SetPhoneToAudioEnabled(false);
 
 	// compute initial control state
 	ATDeviceSerialStatus cstate(mpDevice->GetStatus());
@@ -212,19 +224,17 @@ void ATRS232Channel1030::Init(ATScheduler *sched, ATScheduler *slowsched, IATDev
 }
 
 void ATRS232Channel1030::Shutdown() {
-	if (mpDevice) {
-		mpDevice->Release();
-		mpDevice = NULL;
+	mpDevice = nullptr;
+
+	if (mpSlowScheduler) {
+		mpSlowScheduler->UnsetEvent(mpSlowInputEvent);
+		mpSlowScheduler->UnsetEvent(mpSlowOutputEvent);
+		mpSlowScheduler->UnsetEvent(mpSlowCommandEvent);
+		mpSlowScheduler->UnsetEvent(mpSlowHandlerEvent);
+		mpSlowScheduler = nullptr;
 	}
 
-	if (mpScheduler) {
-		if (mpEvent) {
-			mpScheduler->RemoveEvent(mpEvent);
-			mpEvent = NULL;
-		}
-
-		mpScheduler = NULL;
-	}
+	mpScheduler = nullptr;
 
 	mpCIOMgr = nullptr;
 	mpSIOMgr = nullptr;
@@ -234,10 +244,17 @@ void ATRS232Channel1030::Shutdown() {
 void ATRS232Channel1030::ColdReset() {
 	Close();
 
-	if (mpDevice)
+	if (mpDevice) {
 		mpDevice->ColdReset();
+		mpDevice->OnHook();
+		mpDevice->SetAudioToPhoneEnabled(false);
+		mpDevice->SetPhoneToAudioEnabled(false);
+	}
 
-	mbDialPending = false;
+	mbPulseDialing = false;
+	mbToneDialing = false;
+	mbSuspended = true;
+	mControllerPhase = ControllerPhase::None;
 }
 
 uint8 ATRS232Channel1030::Open(uint8 aux1, uint8 aux2) {
@@ -301,7 +318,7 @@ void ATRS232Channel1030::GetStatus(uint8 status[4]) {
 
 bool ATRS232Channel1030::GetByte(uint8& c) {
 	if (mbDisableThrottling)
-		PollDevice();
+		PollDeviceInput();
 
 	if (!mInputLevel)
 		return false;
@@ -348,12 +365,12 @@ bool ATRS232Channel1030::GetByte(uint8& c) {
 }
 
 sint32 ATRS232Channel1030::PutByte(uint8 c) {
-	switch(mCommandState) {
-		case 0:		// waiting for ESC or byte
+	switch(mHandlerState) {
+		case HandlerState::Base:		// waiting for ESC or byte
 			// check CMCMD
 			if (mpCIOMgr->ReadByte(7)) {
 				if (c == 0x1B) {
-					mCommandState = 1;
+					mHandlerState = HandlerState::Escape;
 					return kATCIOStat_Success;
 				}
 
@@ -409,7 +426,7 @@ sint32 ATRS232Channel1030::PutByte(uint8 c) {
 				++mOutputLevel;
 
 				if (mbDisableThrottling)
-					PollDevice();
+					PollDeviceOutput();
 
 				// If we just pushed out a CR byte and add-LF is enabled, we need to
 				// loop around and push out another LF byte.
@@ -423,20 +440,20 @@ sint32 ATRS232Channel1030::PutByte(uint8 c) {
 			mbLFPending = false;
 			break;
 
-		case 1:		// waiting for command letter
-			mCommandState = 0;
+		case HandlerState::Escape:		// waiting for command letter
+			mHandlerState = HandlerState::Base;
 
 			switch(c) {
 				case 0x1B:	// ESC
-					mCommandState = 1;
+					mHandlerState = HandlerState::Escape;
 					break;
 
 				case 'A':	// Set Translation [p1 p2]
-					mCommandState = 2;
+					mHandlerState = HandlerState::SetTranslation1;
 					break;
 
 				case 'C':	// Set Parity [p1]
-					mCommandState = 4;
+					mHandlerState = HandlerState::SetParity;
 					break;
 
 				case 'E':	// End of commands
@@ -473,18 +490,26 @@ sint32 ATRS232Channel1030::PutByte(uint8 c) {
 					break;
 
 				case 'K':	// Dial
-					if (mStatusFlags & kStatusFlag_ToneDial) {
-						ExecuteDeviceCommand('O');
-						mCommandState = 5;
-					} else {
-						ExecuteDeviceCommand('K');
-						mCommandState = 6;
-					}
+					mDialNumber.clear();
+					mHandlerState = HandlerState::Dial;
+
+					mpDevice->OffHook();
+					mControlState |= kStatusFlag_OffHook;
 					break;
 
 				case 'L':	// Pick up phone
+					mpDevice->OffHook();
+					mControlState |= kStatusFlag_OffHook;
+					break;
+
 				case 'M':	// Put phone on hook (hang up)
+					mpDevice->OnHook();
+					mControlState &= ~kStatusFlag_OffHook;
+					break;
+
 				case 'P':	// Start 30 second timeout
+					break;
+
 				case 'Q':	// Reset Modem
 					break;
 
@@ -512,42 +537,40 @@ sint32 ATRS232Channel1030::PutByte(uint8 c) {
 			}
 			break;
 
-		case 2:		// Set Translation, first byte
+		case HandlerState::SetTranslation1:
 			mbAddLFAfterEOL = (c & 0x40) != 0;
 			mbTranslationEnabled = !(c & 0x20);
 			mbTranslationHeavy = (c & 0x10) != 0;
 
-			mCommandState = 3;
+			mHandlerState = HandlerState::SetTranslation2;
 			break;
 
-		case 3:		// Set Translation, second byte
-			mCommandState = 0;
+		case HandlerState::SetTranslation2:
+			mHandlerState = HandlerState::Base;
 			mWontTranslateChar = c;
 			break;
 
-		case 4:		// Set Parity, first byte
+		case HandlerState::SetParity:
 			mInputParityMode = (ParityMode)((c & 0x0c) >> 2);
 			mOutputParityMode = (ParityMode)(c & 0x03);
 
-			mCommandState = 0;
+			mHandlerState = HandlerState::Base;
 			break;
 
-		case 5:		// Tone dial
+		case HandlerState::Dial:
 			c &= 0x0f;
 
-			if (c == 0x0B) {
-				mCommandState = 0;
-				ExecuteDeviceCommand('P');
+			if (c < 0x0B) {
+				if (mDialNumber.size() < 32)
+					mDialNumber += c == 10 ? '0' : (char)('0' + c);
+			} if (c == 0x0B) {
+				mHandlerState = HandlerState::WaitForCarrier;
+
+				mControllerPhase = ControllerPhase::WaitForCarrier;
+				mpSlowScheduler->SetEvent(470992, this, kEventId_Handler, mpSlowHandlerEvent);
+
+				mpDevice->Dial(mDialAddress.c_str(), mDialService.c_str(), nullptr, mDialNumber.c_str());
 			}
-
-			break;
-
-		case 6:		// Pulse dial
-			c &= 0x0f;
-			ExecuteDeviceCommand(c);
-
-			if (c == 0x0B)
-				mCommandState = 0;
 
 			break;
 	}
@@ -556,28 +579,52 @@ sint32 ATRS232Channel1030::PutByte(uint8 c) {
 }
 
 void ATRS232Channel1030::ReceiveByte(uint8 c) {
-	if (!mbSuspended) {
+	// If the modem is suspended, data bytes are not sent.
+	// When tone or pulse dialing, the transmitter is squelched.
+	// If there is no active carrier, data bytes are lost.
+	if (!mbSuspended && !mbToneDialing && !mbPulseDialing && (mControlState & kStatusFlag_CarrierDetect)) {
 		g_ATLCModemData("Sending byte to modem: $%02X\n", c);
-		mpDevice->Write(300, c);
+		if (mbAnalogLoopback)
+			EnqueueReceivedByte(c);
+		else
+			mpDevice->Write(300, c);
 	}
 }
 
-void ATRS232Channel1030::ExecuteDeviceCommand(uint8 c) {
-	if (mbDialPending && mbDialPendingPulse) {
-		if (c < 0x10) {
-			if (c == 0x0B) {
-				mbDialPending = false;
+bool ATRS232Channel1030::ExecuteDeviceCommand(uint8 c) {
+	if (mbPulseDialing && c != 'Q') {
+		c &= 0x0F;
 
-				if (!mDialAddress.empty() && !mDialService.empty())
-					mpDevice->Dial(mDialAddress.c_str(), mDialService.c_str());
-			}
+		if (c >= 0x0C)
+			return false;
 
-			return;
+		if (c == 0x0B) {
+			mbPulseDialing = false;
+			c = 'L';
 		} else {
-			mbDialPending = false;
-			mbDialPendingPulse = false;
+			mPulseCounter = c * 2;
+			mControllerPhase = ControllerPhase::PulseDialing;
+			mpSlowScheduler->SetEvent(4710, this, kEventId_Command, mpSlowCommandEvent);
+
+			return false;
 		}
 	}
+
+	// Only Q and P are accepted in tone dialing mode; all other bytes are
+	// ignored without ack.
+	if (mbToneDialing) {
+		if (c != 'Q' && c != 'P')
+			return false;
+	}
+
+	// Only Q or Y are accepted while the modem is suspended
+	if (mbSuspended) {
+		if (c != 'Q' && c != 'Y')
+			return false;
+	}
+
+	mpSlowScheduler->UnsetEvent(mpSlowCommandEvent);
+	mControllerPhase = ControllerPhase::None;
 
 	switch(c) {
 		case 'H':	// Send Break Signal
@@ -593,81 +640,196 @@ void ATRS232Channel1030::ExecuteDeviceCommand(uint8 c) {
 			break;
 
 		case 'K':	// Pulse dial
-			mbDialPending = true;
-			mbDialPendingPulse = true;
+			mpDevice->SetAudioToPhoneEnabled(false);
+			mpDevice->OffHook();
+			mbPulseDialing = true;
+
+			if (mbIs835)
+				mpDevice->SetPhoneToAudioEnabled(true);
 			break;
 
 		case 'L':	// Pick up phone
-			mpDevice->Answer();
+			mpDevice->OffHook();
+			WaitForCarrier();
 			break;
 
 		case 'M':	// Put phone on hook (hang up)
-			mpDevice->HangUp();
-			mbDialPending = false;
+			mpDevice->OnHook();
+			mpDevice->SetAudioToPhoneEnabled(false);
+			mbToneDialing = false;
+			mbPulseDialing = false;
+
+			if (mbIs835)
+				mpDevice->SetPhoneToAudioEnabled(false);
 			break;
 
-		case 'O':	// Tone dial
-			mbDialPending = true;
-			mbDialPendingPulse = false;
+		case 'O':	// Tone dial (1030)
+			if (!mbIs835) {
+				mpDevice->OffHook();
+				mpDevice->SetAudioToPhoneEnabled(true);
+				mbToneDialing = true;
+			}
 			break;
 
-		case 'P':	// Start 30 second timeout
-			if (mbDialPending) {
-				mbDialPending = false;
-
-				if (!mDialAddress.empty() && !mDialService.empty())
-					mpDevice->Dial(mDialAddress.c_str(), mDialService.c_str());
+		case 'P':	// Start 30 second timeout (1030)
+			if (!mbIs835) {
+				mbToneDialing = false;
+				mpDevice->OffHook();
+				mpDevice->SetAudioToPhoneEnabled(false);
+				WaitForCarrier();
 			}
 			break;
 
 		case 'Q':	// Reset Modem
-			mbDialPending = false;
+			mpDevice->OnHook();
+			mpDevice->SetAudioToPhoneEnabled(false);
+			mbToneDialing = false;
+			mbPulseDialing = false;
+			mbSuspended = true;
+			mControllerPhase = ControllerPhase::None;
+			mpSlowScheduler->UnsetEvent(mpSlowInputEvent);
+			mpSlowScheduler->UnsetEvent(mpSlowOutputEvent);
+			mpSlowScheduler->UnsetEvent(mpSlowCommandEvent);
+
+			if (mbIs835)
+				mpDevice->SetPhoneToAudioEnabled(false);
+			break;
+
+		case 'R':	// Enable sound (835)
+			if (mbIs835)
+				mpDevice->SetPhoneToAudioEnabled(true);
+			break;
+
+		case 'S':	// Disable sound (835)
+			if (mbIs835)
+				mpDevice->SetPhoneToAudioEnabled(false);
 			break;
 
 		case 'W':	// Set Analog Loopback Test
+			if (!mbAnalogLoopback) {
+				mbAnalogLoopback = true;
+				OnControlStateChanged(mpDevice->GetStatus());
+			}
 			break;
 
 		case 'X':	// Clear Analog Loopback Test
+			if (mbAnalogLoopback) {
+				mbAnalogLoopback = false;
+				OnControlStateChanged(mpDevice->GetStatus());
+			}
 			break;
 
 		case 'Y':	// Resume Modem
 			mbSuspended = false;
-			if (!mpEvent)
-				mpEvent = mpScheduler->AddEvent(59659, this, 1);
+			if (!mpSlowInputEvent)
+				mpSlowInputEvent = mpSlowScheduler->AddEvent(523, this, kEventId_Input);
+			if (!mpSlowOutputEvent)
+				mpSlowOutputEvent = mpSlowScheduler->AddEvent(523, this, kEventId_Output);
 			break;
 
 		case 'Z':	// Suspend Modem
 			mbSuspended = true;
-			mpScheduler->UnsetEvent(mpEvent);
+			mpSlowScheduler->UnsetEvent(mpSlowInputEvent);
+			mpSlowScheduler->UnsetEvent(mpSlowOutputEvent);
 			break;
 	}
+
+	return true;
 }
 
 void ATRS232Channel1030::OnControlStateChanged(const ATDeviceSerialStatus& status) {
 	uint32 oldState = mControlState;
 
-	if (status.mbCarrierDetect)
+	if (status.mbCarrierDetect || mbAnalogLoopback)
 		mControlState |= kStatusFlag_CarrierDetect;
 	else
 		mControlState &= ~kStatusFlag_CarrierDetect;
 
 	if (mbHandlerMode) {
 		mStatusFlags = (mStatusFlags & ~kStatusFlag_CarrierDetect) | (mControlState & kStatusFlag_CarrierDetect);
+
+		if (mHandlerState == HandlerState::WaitForCarrier) {
+			if (status.mbCarrierDetect) {
+				mHandlerState = HandlerState::Base;
+				mpSlowScheduler->UnsetEvent(mpSlowHandlerEvent);
+			}
+		}
 	} else {
-		if (!mbSuspended && ((oldState ^ mControlState) & kStatusFlag_CarrierDetect)) {
-			mpSIOMgr->SetSIOInterrupt(mpSIODev, true);
-			mpSIOMgr->SetSIOInterrupt(mpSIODev, false);
+		if (!mbSuspended) {
+			if (mbIs835 && (mControlState & kStatusFlag_CarrierDetect))
+				mpDevice->SetPhoneToAudioEnabled(false);
+
+			if (mControllerPhase == ControllerPhase::WaitForCarrier && (mControlState & kStatusFlag_CarrierDetect)) {
+				mControllerPhase = ControllerPhase::None;
+
+				mpSlowScheduler->UnsetEvent(mpSlowCommandEvent);
+			}
+
+			if ((oldState ^ mControlState) & kStatusFlag_CarrierDetect) {
+				mpSIOMgr->SetSIOInterrupt(mpSIODev, true);
+				mpSIOMgr->SetSIOInterrupt(mpSIODev, false);
+			}
 		}
 	}
 }
 
 void ATRS232Channel1030::OnScheduledEvent(uint32 id) {
-	mpEvent = mpScheduler->AddEvent(59659, this, 1);
+	if (id == kEventId_Input) {
+		mpSlowInputEvent = mpSlowScheduler->AddEvent(523, this, kEventId_Input);
 
-	PollDevice();
+		PollDeviceInput();
+	} else if (id == kEventId_Output) {
+		mpSlowOutputEvent = mpSlowScheduler->AddEvent(523, this, kEventId_Output);
+
+		PollDeviceOutput();
+	} else if (id == kEventId_Command) {
+		mpSlowCommandEvent = nullptr;
+
+		switch(mControllerPhase) {
+			case ControllerPhase::PulseDialing:
+				if (mPulseCounter) {
+					--mPulseCounter;
+
+					if (mPulseCounter & 1)
+						mpDevice->OnHook();
+					else
+						mpDevice->OffHook();
+
+					// Make/break ratio is about 30/70.
+					uint32 delay = mPulseCounter & 1 ? 471 : 1099;
+
+					if (mPulseCounter == 0)
+						delay += 4710;
+
+					mpSlowScheduler->SetEvent(delay, this, kEventId_Command, mpSlowCommandEvent);
+				} else {
+					NotifyCommandCompletion();
+				}
+				break;
+
+			case ControllerPhase::WaitForCarrier:
+				NotifyCommandCompletion();
+				mControllerPhase = ControllerPhase::None;
+				mpDevice->OnHook();
+
+				if (mbIs835)
+					mpDevice->SetPhoneToAudioEnabled(false);
+				break;
+		}
+	} else if (id == kEventId_Handler) {
+		mpSlowHandlerEvent = nullptr;
+
+		switch(mHandlerState) {
+			case HandlerState::WaitForCarrier:
+				mHandlerState = HandlerState::Base;
+				mControlState &= ~kStatusFlag_OffHook;
+				mpDevice->OnHook();
+				break;
+		}
+	}
 }
 
-void ATRS232Channel1030::PollDevice() {
+void ATRS232Channel1030::PollDeviceOutput() {
 	if (mOutputLevel) {
 		--mOutputLevel;
 
@@ -680,7 +842,9 @@ void ATRS232Channel1030::PollDevice() {
 		if (++mOutputReadOffset >= sizeof mOutputBuffer)
 			mOutputReadOffset = 0;
 	}
+}
 
+void ATRS232Channel1030::PollDeviceInput() {
 	if (mpDevice) {
 		uint8 c;
 		bool framingError;
@@ -718,6 +882,22 @@ void ATRS232Channel1030::EnqueueReceivedByte(uint8 c) {
 		mpCIOMgr->WriteByte(INCNT, mInputLevel);
 }
 
+void ATRS232Channel1030::WaitForCarrier() {
+	mControllerPhase = ControllerPhase::WaitForCarrier;
+
+	if (mControlState & kStatusFlag_CarrierDetect) {
+		NotifyCommandCompletion();
+		mControllerPhase = ControllerPhase::None;
+		mpSlowScheduler->UnsetEvent(mpSlowCommandEvent);
+	} else
+		mpSlowScheduler->SetEvent(470992, this, kEventId_Command, mpSlowCommandEvent);
+}
+
+void ATRS232Channel1030::NotifyCommandCompletion() {
+	mpSIOMgr->SetSIOProceed(mpSIODev, true);
+	mpSIOMgr->SetSIOProceed(mpSIODev, false);
+}
+
 //////////////////////////////////////////////////////////////////////////
 
 class ATDevice1030Modem final
@@ -733,7 +913,7 @@ class ATDevice1030Modem final
 	ATDevice1030Modem(const ATDevice1030Modem&) = delete;
 	ATDevice1030Modem& operator=(const ATDevice1030Modem&) = delete;
 public:
-	ATDevice1030Modem();
+	ATDevice1030Modem(bool is835);
 	~ATDevice1030Modem();
 
 	void *AsInterface(uint32 id) override;
@@ -799,6 +979,7 @@ protected:
 
 	uint32 mDiskCounter = 0;
 	bool mbFirmwareUsable = false;
+	const bool mbIs835;
 
 	// AUTORUN.SYS and BOOT1030.COM style loaders hardcode a handler size of 0xB30, which
 	// we must use. This comes from within 0x1100-1C2F in the ModemLink firmware. We also
@@ -807,19 +988,27 @@ protected:
 };
 
 void ATCreateDevice1030Modem(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDevice1030Modem> p(new ATDevice1030Modem);
+	vdrefptr<ATDevice1030Modem> p(new ATDevice1030Modem(false));
+
+	*dev = p.release();
+}
+
+void ATCreateDevice835Modem(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDevice1030Modem> p(new ATDevice1030Modem(true));
 
 	*dev = p.release();
 }
 
 extern const ATDeviceDefinition g_ATDeviceDef1030Modem = { "1030", "1030", L"1030 Modem", ATCreateDevice1030Modem };
+extern const ATDeviceDefinition g_ATDeviceDef835Modem = { "835", "835", L"835 Modem", ATCreateDevice835Modem };
 
-ATDevice1030Modem::ATDevice1030Modem()
-	: mEmulationLevel(kAT850SIOEmulationLevel_None)
+ATDevice1030Modem::ATDevice1030Modem(bool is835)
+	: mEmulationLevel(is835 ? kAT850SIOEmulationLevel_Full : kAT850SIOEmulationLevel_None)
 	, mDiskCounter(0)
+	, mbIs835(is835)
 {
 	// We have to init this early so it can accept settings.
-	mpChannel = new ATRS232Channel1030;
+	mpChannel = new ATRS232Channel1030(is835);
 }
 
 ATDevice1030Modem::~ATDevice1030Modem() {
@@ -841,7 +1030,7 @@ void *ATDevice1030Modem::AsInterface(uint32 id) {
 }
 
 void ATDevice1030Modem::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mpDef = &g_ATDeviceDef1030Modem;
+	info.mpDef = mbIs835 ? &g_ATDeviceDef835Modem : &g_ATDeviceDef1030Modem;
 }
 
 void ATDevice1030Modem::GetSettings(ATPropertySet& settings) {
@@ -856,26 +1045,28 @@ bool ATDevice1030Modem::SetSettings(const ATPropertySet& settings) {
 	if (mpChannel)
 		mpChannel->SetSettings(settings);
 
-	uint32 emulevel = settings.GetUint32("emulevel", 0);
-	if (emulevel < kAT850SIOEmulationLevelCount) {
-		auto newLevel = (AT850SIOEmulationLevel)emulevel;
+	if (!mbIs835) {
+		uint32 emulevel = settings.GetUint32("emulevel", 0);
+		if (emulevel < kAT850SIOEmulationLevelCount) {
+			auto newLevel = (AT850SIOEmulationLevel)emulevel;
 		
-		if (mEmulationLevel != newLevel) {
-			if (mpCIOMgr) {
-				if (newLevel == kAT850SIOEmulationLevel_Full)
-					mpCIOMgr->RemoveCIODevice(this);
-				else if (mEmulationLevel == kAT850SIOEmulationLevel_Full)
-					mpCIOMgr->AddCIODevice(this);
-			}
+			if (mEmulationLevel != newLevel) {
+				if (mpCIOMgr) {
+					if (newLevel == kAT850SIOEmulationLevel_Full)
+						mpCIOMgr->RemoveCIODevice(this);
+					else if (mEmulationLevel == kAT850SIOEmulationLevel_Full)
+						mpCIOMgr->AddCIODevice(this);
+				}
 
-			if (mpSIOMgr) {
-				if (newLevel == kAT850SIOEmulationLevel_None)
-					mpSIOMgr->RemoveDevice(this);
-				else if (mEmulationLevel == kAT850SIOEmulationLevel_None)
-					mpSIOMgr->AddDevice(this);
-			}
+				if (mpSIOMgr) {
+					if (newLevel == kAT850SIOEmulationLevel_None)
+						mpSIOMgr->RemoveDevice(this);
+					else if (mEmulationLevel == kAT850SIOEmulationLevel_None)
+						mpSIOMgr->AddDevice(this);
+				}
 
-			mEmulationLevel = newLevel;
+				mEmulationLevel = newLevel;
+			}
 		}
 	}
 
@@ -883,7 +1074,7 @@ bool ATDevice1030Modem::SetSettings(const ATPropertySet& settings) {
 }
 
 void ATDevice1030Modem::Init() {
-	mpChannel->Init(mpScheduler, mpSlowScheduler, mpUIRenderer, mpCIOMgr, mpSIOMgr, this, mpAudioMixer);
+	mpChannel->Init(mpScheduler, mpSlowScheduler, mpUIRenderer, mpCIOMgr, mpSIOMgr, this, mpAudioMixer, GetService<IATAsyncDispatcher>());
 }
 
 void ATDevice1030Modem::Shutdown() {
@@ -1029,14 +1220,14 @@ void ATDevice1030Modem::OnCIOAbortAsync() {
 void ATDevice1030Modem::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
 
-	if (mEmulationLevel != kAT850SIOEmulationLevel_None)
+	if (!mbIs835 && mEmulationLevel != kAT850SIOEmulationLevel_None)
 		mpSIOMgr->AddDevice(this);
 
 	mpSIOMgr->AddRawDevice(this);
 }
 
 IATDeviceSIO::CmdResponse ATDevice1030Modem::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
-	if (!cmd.mbStandardRate)
+	if (!cmd.mbStandardRate || !mpChannel->IsSuspended())
 		return kCmdResponse_NotHandled;
 
 	if (cmd.mDevice == 0x31) {
@@ -1080,6 +1271,41 @@ IATDeviceSIO::CmdResponse ATDevice1030Modem::OnSerialBeginCommand(const ATDevice
 	if (cmd.mDevice != 0x58)
 		return kCmdResponse_NotHandled;
 
+	// The 8050 on the 1030 runs at a master clock of 4.032MHz, which
+	// results in a machine cycle rate of 4.032MHz / 15 = 268.8KHz. The
+	// bit rate is precisely 19200 baud; the byte rate depends on the
+	// routine sending from each block.
+
+	// internal memory bank 0 - 157 machine cycles/byte
+	static constexpr uint32 kCpbInternalMB0 = 1045;
+
+	// internal memory bank 1 - 159 machine cycles/byte
+	static constexpr uint32 kCpbInternalMB1 = 1059;
+
+	// external, not ending page - 155 machine cycles/byte
+	static constexpr uint32 kCpbExternal = 1032;
+
+	// external, ending page - 159 machine cycles/byte
+	static constexpr uint32 kCpbExternalEndingPage = 1059;
+
+	const auto SendTHandler = [&] {
+		// T: handler, internal page in bank 0
+		mpSIOMgr->SetTransferRate(93, kCpbInternalMB0);
+		mpSIOMgr->SendData(mFirmware + 0x80 + 0x1100, 0x100, false);
+
+		// T: handler, internal page in bank 1
+		mpSIOMgr->SetTransferRate(93, kCpbInternalMB1);
+		mpSIOMgr->SendData(mFirmware + 0x80 + 0x1200, 0x780, false);
+
+		// T: handler, external
+		mpSIOMgr->SetTransferRate(93, kCpbExternal);
+		mpSIOMgr->SendData(mFirmware + 0x80 + 0x1980, 0x200, false);
+
+		// T: handler, external ending page
+		mpSIOMgr->SetTransferRate(93, kCpbExternalEndingPage);
+		mpSIOMgr->SendData(mFirmware + 0x80 + 0x1B80, 0xB0, false);
+	};
+
 	if (cmd.mCommand == 0x3B) {
 		if (mEmulationLevel == kAT850SIOEmulationLevel_Full) {
 			// ModemLink software load -- return $2800 bytes to load at $C00
@@ -1093,26 +1319,19 @@ IATDeviceSIO::CmdResponse ATDevice1030Modem::OnSerialBeginCommand(const ATDevice
 			mpSIOMgr->SendComplete();
 
 			// ModemLink part 1
-			mpSIOMgr->SetTransferRate(93, 1032);
+			mpSIOMgr->SetTransferRate(93, kCpbExternal);
 			mpSIOMgr->SendData(mFirmware + 0x80, 0x1100, false);
 
 			// T: handler
-			mpSIOMgr->SetTransferRate(93, 1046);
-			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1100, 0x100, false);
-			mpSIOMgr->SetTransferRate(93, 1059);
-			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1200, 0x780, false);
-			mpSIOMgr->SetTransferRate(93, 1032);
-			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1980, 0x200, false);
-			mpSIOMgr->SetTransferRate(93, 1059);
-			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1B80, 0xB0, false);
+			SendTHandler();
 
-			// ModemLink part 2
-			mpSIOMgr->SetTransferRate(93, 1032);
-			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1C30, 0xB50, false);
+			// ModemLink part 2, external
+			mpSIOMgr->SetTransferRate(93, kCpbExternal);
+			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1C30, 0xB40, false);
 
-			// blank sector
-			mpSIOMgr->SetTransferRate(93, 1059);
-			mpSIOMgr->SendData(mFirmware + 0x80 + 0x2780, 0x80, false);
+			// ModemLink part 2, external ending page
+			mpSIOMgr->SetTransferRate(93, kCpbExternalEndingPage);
+			mpSIOMgr->SendData(mFirmware + 0x80 + 0x2770, 0x90, false);
 
 			const uint8 checksum = ATComputeSIOChecksum(mFirmware+0x80, 0x2800);
 			mpSIOMgr->SendData(&checksum, 1, false);
@@ -1130,14 +1349,7 @@ IATDeviceSIO::CmdResponse ATDevice1030Modem::OnSerialBeginCommand(const ATDevice
 			// Send the embedded handler within the ModemLink firmware. This is a
 			// subset of the data sent by the $3B command, with the same rates.
 
-			mpSIOMgr->SetTransferRate(93, 1046);
-			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1100, 0x100, false);
-			mpSIOMgr->SetTransferRate(93, 1059);
-			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1200, 0x780, false);
-			mpSIOMgr->SetTransferRate(93, 1032);
-			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1980, 0x200, false);
-			mpSIOMgr->SetTransferRate(93, 1059);
-			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1B80, 0xB0, false);
+			SendTHandler();
 
 			const uint8 checksum = ATComputeSIOChecksum(mFirmware + 0x1180, 0xB30);
 			mpSIOMgr->SendData(&checksum, 1, false);
@@ -1165,10 +1377,10 @@ void ATDevice1030Modem::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit
 	// check for proper 300 baud operation (divisor = 2982, 5% tolerance)
 	if (cyclesPerBit > 5666 && cyclesPerBit < 6266 && mpChannel) {
 		if (command) {
-			mpChannel->ExecuteDeviceCommand(c);
-
-			mpSIOMgr->SetSIOProceed(this, true);
-			mpSIOMgr->SetSIOProceed(this, false);
+			if (mpChannel->ExecuteDeviceCommand(c)) {
+				mpSIOMgr->SetSIOProceed(this, true);
+				mpSIOMgr->SetSIOProceed(this, false);
+			}
 		} else
 			mpChannel->ReceiveByte(c);
 	}

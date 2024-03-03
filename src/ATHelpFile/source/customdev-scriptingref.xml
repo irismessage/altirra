@@ -199,7 +199,11 @@
       However, the desired mode is still changed and will become active when the
       cartridge or PBI device is enabled.
     </dd>
-
+    <dd>
+      <b>Bug note</b>: Versions prior to 4.20-test29 ignore auto-PBI when <tt>set_modes()</tt>
+      is called.
+    </dd>
+    
     <dt>void set_read_only(int enabled);</dt>
     <dd>
       Sets or clears the read-only state for a memory layer. A memory layer
