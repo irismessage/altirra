@@ -95,12 +95,18 @@ bool ATCPUEmulator::Decode65C02(uint8 opcode) {
 			*mpDstState++ = kStateReadAddrL;		// 2
 			*mpDstState++ = kStateRead;				// 3
 			*mpDstState++ = kStateReadIndAddr;		// 4
+
+			if (mbHistoryEnabled)
+				*mpDstState++ = kStateAddEAToHistory;
+
+			*mpDstState++ = kStateAtoD;
 			*mpDstState++ = kStateWrite;			// 5
+
 			break;
 
 		case 0xB2:	// LDA (zp)
 			DecodeReadInd();
-			*mpDstState++ = kStateDtoA;
+			*mpDstState++ = kStateDSetSZToA;
 			break;
 
 		case 0xD2:	// CMP (zp)

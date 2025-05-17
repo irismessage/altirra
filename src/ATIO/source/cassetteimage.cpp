@@ -151,7 +151,7 @@ namespace {
 		__m128i round = _mm_set1_epi32(0x2000);
 
 		do {
-			const __m128i *VDRESTRICT s2 = (const __m128i *)(s + (uint32)(accum >> 32)*2);
+			const __m128i *VDRESTRICT s2 = (const __m128i *)(s + (size_t)(accum >> 32)*2);
 			const __m128i *VDRESTRICT f = (const __m128i *)kernel[(uint32)accum >> 27];
 
 			__m128i frac = _mm_shufflelo_epi16(_mm_cvtsi32_si128((accum >> 12) & 0x7FFF), 0);
@@ -1754,10 +1754,26 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 				memmove(outputBuffer[kFilterDelay - outputSamplesToPreserve], outputBuffer[outputBufferLevel + kFilterDelay - outputSamplesToPreserve], outputSamplesToPreserve * sizeof(outputBuffer[0]));
 
 			// compute how far we can run the resampler
-			//
-			// resampAccum + resampStep*(count - 1) < ((inputBufferLevel - 7) << 32)
-			// count <= (((inputBufferLevel - 7) << 32) - resampAccum) / resampStep
-			sint32 resampCount = (sint32)((sint64)(((uint64)(inputBufferLevel - 7) << 32) - resampAccum) / resampStep);
+			uint32 resampCount = 0;
+			
+			if (inputBufferLevel >= 8) {
+				const auto computeMax = [](uint32 acc, uint64 step, uint32 inputLen) {
+					const uint64 maxAccum = ((uint64)(inputLen - 7) << 32) - 1;
+
+					return (uint32)((maxAccum - acc) / step) + 1;
+				};
+
+				static_assert(computeMax(0x0'00000000, 0x1'00000000, 8) == 1);
+				static_assert(computeMax(0x0'00000000, 0x0'10000000, 8) == 16);
+				static_assert(computeMax(0x0'0FFFFFFF, 0x0'10000000, 8) == 16);
+				static_assert(computeMax(0x0'10000000, 0x0'10000000, 8) == 15);
+				static_assert(computeMax(0x0'00000000, 0x1'00000000, 9) == 2);
+				static_assert(computeMax(0x0'00000000, 0x0'10000000, 9) == 32);
+				static_assert(computeMax(0x0'0FFFFFFF, 0x0'10000000, 9) == 32);
+				static_assert(computeMax(0x0'10000000, 0x0'10000000, 9) == 31);
+
+				resampCount = computeMax(resampAccum, resampStep, inputBufferLevel);
+			}
 
 			if (!resampCount) {
 				if (outputTailAdded)

@@ -1,5 +1,16 @@
 Altirra Change Log
 
+Version 4.21 [March 16, 2024]:
+   [features added]
+   * UI: Added support for more direct file association setting on Windows 11.
+
+   [bugs fixed]
+   * Cassette: Fixed a crash that could occur when loading raw tape audio.
+   * CPU: Fixed incorrect LDA (zp) and STA (zp) execution in 65C02 mode only.
+   * Input: Fixed a crosstalk problem between ports 1/2 and 3/4.
+   * Simulation: 5200 uses floating bus again (fixes Star Raiders).
+   * UI: Fixed internal BASIC option not being selectable for the XEGS.
+
 Version 4.20 [December 29, 2023]:
    [changes]
    * Command Line: Switches are no longer allowed at the end of arguments, e.g. disk.atr/f or /f/nosi. Switches must now be separate arguments.

@@ -1043,7 +1043,8 @@ void ATPIAEmulator::UpdateTraceInputA() {
 }
 
 uint8 ATPIAEmulator::ComputePortAInput() const {
-	uint8 pa = mInput;
+	uint8 pa = (uint8)mInput;
+
 	if (mbHasDynamicAInputs)
 		pa &= ReadDynamicInputs(false);
 
@@ -1051,7 +1052,7 @@ uint8 ATPIAEmulator::ComputePortAInput() const {
 }
 
 uint8 ATPIAEmulator::ComputePortBInput() const {
-	uint8 pb = mInput;
+	uint8 pb = (uint8)(mInput >> 8);
 
 	if (mbHasDynamicBInputs)
 		pb &= ReadDynamicInputs(true);

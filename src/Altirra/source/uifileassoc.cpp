@@ -198,15 +198,18 @@ void ATCreateFileAssociationProgId(const ATFileAssociation& assoc, bool userOnly
 
 class ATUIDialogFileAssociations2 : public VDDialogFrameW32 {
 public:
-	ATUIDialogFileAssociations2();
+	ATUIDialogFileAssociations2(bool userOnly);
 
 protected:
 	bool OnLoaded() override;
 	bool OnCommand(uint32 id, uint32 extcode) override;
+
+	bool mbUserOnly = false;
 };
 
-ATUIDialogFileAssociations2::ATUIDialogFileAssociations2()
+ATUIDialogFileAssociations2::ATUIDialogFileAssociations2(bool userOnly)
 	: VDDialogFrameW32(IDD_FILE_ASSOC2)
+	, mbUserOnly(userOnly)
 {
 }
 
@@ -226,7 +229,11 @@ bool ATUIDialogFileAssociations2::OnLoaded() {
 
 bool ATUIDialogFileAssociations2::OnCommand(uint32 id, uint32 extcode) {
 	if (id == IDC_DEFAULTAPPS) {
-		ATLaunchURL(L"ms-settings:defaultapps");
+		// As of Windows 11 21H2/22H2 w/ 2023-04 Cumulative Update, it is now possible once
+		// again to specify the app in the URL.
+		VDStringW s;
+		s.sprintf(L"ms-settings:defaultapps?registeredApp%s=Altirra", mbUserOnly ? L"User" : L"Machine");
+		ATLaunchURL(s.c_str());
 		return true;
 	}
 
@@ -283,7 +290,7 @@ void ATUIShowDialogFileAssociationsVista(VDGUIHandle parent, bool userOnly) {
 
 	if (VDIsAtLeast10W32()) {
 		if (VDIsAtLeast10_1803W32()) {
-			ATUIDialogFileAssociations2 dlg;
+			ATUIDialogFileAssociations2 dlg(userOnly);
 			dlg.ShowDialog(parent);
 		} else {
 			VDLaunchProgram(VDMakePath(VDGetSystemPath().c_str(), L"control.exe").c_str(),
@@ -313,6 +320,7 @@ void ATUIShowDialogSetFileAssociations(VDGUIHandle parent, bool allowElevation, 
 		return;
 	}
 
+	ATRegisterFileAssociations(false, userOnly);
 	ATUIShowDialogFileAssociationsVista(parent, userOnly);
 }
 
