@@ -61,12 +61,6 @@ struct VDException::StringHeader {
 	//   so the static literal optimization is ditched.
 };
 
-VDException::VDException() noexcept
-	: mpMessage("")
-	, mpMessageW(L"")
-{
-}
-
 VDException::VDException(const VDException& err) noexcept {
 	operator=(err);
 }
@@ -127,8 +121,8 @@ void VDException::clear() noexcept {
 		mpBuffer = nullptr;
 	}
 
-	mpMessage = "";
-	mpMessageW = L"";
+	mpMessage = nullptr;
+	mpMessageW = nullptr;
 }
 
 void VDException::assign(const char *s) {

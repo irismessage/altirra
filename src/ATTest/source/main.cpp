@@ -126,7 +126,7 @@ int ATTestMain(int argc, wchar_t **argv) {
 	_set_abort_behavior(_CALL_REPORTFAULT, _CALL_REPORTFAULT);
 
 	wprintf(L"Altirra test harness utility for " BUILD L"\n");
-	wprintf(L"Copyright (C) 2016-2023 Avery Lee. Licensed under GNU General Public License, version 2 or later\n\n");
+	wprintf(L"Copyright (C) 2016-2025 Avery Lee. Licensed under GNU General Public License, version 2 or later\n\n");
 
 	ATTestInitBlobHandler();
 
@@ -405,9 +405,12 @@ next:
 			try {
 				ATTestSetArguments(selTest.mArgs.c_str());
 				if (selTest.testInfo->mpTestFn())
-					throw AssertionException();
-			} catch(const AssertionException& e) {
+					throw ATTestAssertionException("Test returned non-zero code");
+			} catch(const ATTestAssertionException& e) {
 				wprintf(L"    TEST FAILED: %ls\n", e.wc_str());
+				++failedTests;
+			} catch(const VDException& e) {
+				wprintf(L"    TEST FAILED: Uncaught exception: %ls\n", e.wc_str());
 				++failedTests;
 			}
 		}

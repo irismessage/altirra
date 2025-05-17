@@ -698,7 +698,7 @@ void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N],
 
 		if (mbBlendCopy) {
 			if (!temporaryUpdate)
-				BlendCopy(dst, blendDst, sizeof(uint32)*n);
+				BlendCopy(dst, blendDst, n);
 		} else {
 			if (temporaryUpdate)
 				Blend(dst, blendDst, n);

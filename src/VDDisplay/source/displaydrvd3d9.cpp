@@ -1927,6 +1927,7 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source) {
 			{	D3DRS_ALPHATESTENABLE,	FALSE				},
 			{	D3DRS_ALPHABLENDENABLE,	FALSE				},
 			{	D3DRS_STENCILENABLE,	FALSE				},
+			{	D3DRS_SRGBWRITEENABLE,	FALSE				},
 		};
 
 		for(int i=0; i<sizeof(kRenderStates)/sizeof(kRenderStates[0]); ++i) {
@@ -1936,6 +1937,14 @@ bool VDVideoUploadContextD3D9::Update(const VDPixmap& source) {
 			if (FAILED(hr))
 				return false;
 		}
+
+		hr = dev->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE);
+		if (FAILED(hr))
+			return false;
+
+		hr = dev->SetSamplerState(1, D3DSAMP_SRGBTEXTURE, FALSE);
+		if (FAILED(hr))
+			return false;
 
 		bool success = false;
 		if (mpManager->BeginScene()) {
@@ -4198,7 +4207,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					}
 
 					mpD3DDevice->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE);
-					mpD3DDevice->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE);
+					mpD3DDevice->SetSamplerState(1, D3DSAMP_SRGBTEXTURE, FALSE);
 					mpD3DDevice->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
 
 					VDASSERT(bSuccess);

@@ -44,6 +44,8 @@
 	class ATTestAssertionException : public VDException {
 	public:
 		using VDException::VDException;
+
+		ATTestAssertionException() = delete;
 	};
 
 	bool ATTestShouldBreak();

@@ -1480,8 +1480,9 @@ bool ATUIPrinterGraphicalOutputWindow::Render(const ViewTransform& viewTransform
 			sint32 subSpans[2][8];
 
 			for(int i=0; i<2; ++i) {
-				subSpansF[0][i] = vdfloat32x4::zero();
-				subSpansF[1][i] = vsubwf;
+				// we need a slight offset here to account for dithering
+				subSpansF[0][i] = vdfloat32x4::set1(-1.0f);
+				subSpansF[1][i] = vsubwf + vdfloat32x4::set1(1.0f);
 			}
 
 			// compute edges in counterclockwise order
@@ -1532,10 +1533,10 @@ bool ATUIPrinterGraphicalOutputWindow::Render(const ViewTransform& viewTransform
 			}
 
 			// convert subspan edges to integer subpixel coordinates
-			storeu(&subSpans[0][0], ceilint(subSpansF[0][0] + ditherx_a));
-			storeu(&subSpans[0][4], ceilint(subSpansF[0][1] + ditherx_b));
-			storeu(&subSpans[1][0], ceilint(subSpansF[1][0] + ditherx_a));
-			storeu(&subSpans[1][4], ceilint(subSpansF[1][1] + ditherx_b));
+			storeu(&subSpans[0][0], ceilint(min(max(subSpansF[0][0] + ditherx_a, vdfloat32x4::zero()), vsubwf)));
+			storeu(&subSpans[0][4], ceilint(min(max(subSpansF[0][1] + ditherx_b, vdfloat32x4::zero()), vsubwf)));
+			storeu(&subSpans[1][0], ceilint(min(max(subSpansF[1][0] + ditherx_a, vdfloat32x4::zero()), vsubwf)));
+			storeu(&subSpans[1][4], ceilint(min(max(subSpansF[1][1] + ditherx_b, vdfloat32x4::zero()), vsubwf)));
 
 			RenderTrapezoid(subSpans, v.mColorIndex, true);
 		}

@@ -1,5 +1,16 @@
 Altirra Change Log
 
+Version 4.31:
+   * Cassette: Fixed a crash if decoding errors occurred while loading a raw tape.
+   * Devices: Fixed a crash when adding a device with certain nodes selected. 
+   * Display: Fixed D3D9 gamma correction bugs in specific display configurations with bloom enabled.
+   * Display: Fixed crash when enabling frame blending at extended PAL height and artifacting enabled.
+   * Display: Fixed regression in NTSC high artifacting on ARM64 only.
+   * Input: Fixed console controller inputs being blocked in full-screen mode.
+   * Printer: Fixed rendering artifacts at edges when scrolling 1020 plotter output at high zoom.
+   * Printer: Fixed a crash when zooming in on 1020 plotter output on ARM64 only.
+   * UI: Fixed some cases of empty error dialogs when long operations are cancelled.
+
 Version 4.30 [December 22, 2024]:
    [changes]
    * Display: Due to change in bloom algorithm, bloom settings have been reset to avoid conflicting with earlier versions.

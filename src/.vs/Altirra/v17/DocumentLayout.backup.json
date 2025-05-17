@@ -1,0 +1,53 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "D:\\p4root2\\Altirra\\stable\\src\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{EEA05666-6E17-49FE-96AB-C0173FB41890}|ATIO\\ATIO.vcxproj|D:\\p4root2\\Altirra\\stable\\src\\ATIO\\source\\cartridgetypes.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{EEA05666-6E17-49FE-96AB-C0173FB41890}|ATIO\\ATIO.vcxproj|solutionrelative:ATIO\\source\\cartridgetypes.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 254,
+          "SelectedChildIndex": 4,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:1:0:{e8b06f52-6d01-11d2-aa7d-00c04f990343}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{cf577b8c-4134-11d2-83e5-00c04f9902c1}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:4:0:{34c7837f-3b3a-449c-bdf0-bdad86cbaf4a}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{c6f34f0d-7ae5-4f3a-be61-fe0c21ae9eb8}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "cartridgetypes.cpp",
+              "DocumentMoniker": "D:\\p4root2\\Altirra\\stable\\src\\ATIO\\source\\cartridgetypes.cpp",
+              "RelativeDocumentMoniker": "ATIO\\source\\cartridgetypes.cpp",
+              "ToolTip": "D:\\p4root2\\Altirra\\stable\\src\\ATIO\\source\\cartridgetypes.cpp [Read Only]",
+              "RelativeToolTip": "ATIO\\source\\cartridgetypes.cpp [Read Only]",
+              "ViewState": "AgIAACIBAAAAAAAAAAAYwEQBAAA5AAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2025-01-26T22:18:34.209Z",
+              "EditorCaption": " [Read Only]"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

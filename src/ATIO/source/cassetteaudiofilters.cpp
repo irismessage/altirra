@@ -893,6 +893,12 @@ uint32 ATCassetteAudioThreadedQueue::ReadAudio(sint16 (*dst)[2], uint32 n) {
 			// if the next block was empty, we're done
 			if (mCurrentBlockLength == 0) {
 				mbStreamEnded = true;
+
+				// if there was an exception throw it; it's critical that we do
+				// this after setting stream ended so we don't hang in the dtor
+				if (!mException.empty())
+					throw mException;
+
 				break;
 			}
 
@@ -911,8 +917,15 @@ void ATCassetteAudioThreadedQueue::ThreadRun() {
 
 		uint32 n = 0;
 
-		if (!mbExit)
-			n = mSource.ReadAudio(mBlocks[blockIndex], vdcountof(mBlocks[blockIndex]));
+		if (!mbExit) {
+			try {
+				n = mSource.ReadAudio(mBlocks[blockIndex], vdcountof(mBlocks[blockIndex]));
+			} catch(VDException& e) {
+				mException = std::move(e);
+
+				// n = 0 will signal end, upon which exception will be checked
+			}
+		}
 
 		mBlockLengths[blockIndex] = n;
 

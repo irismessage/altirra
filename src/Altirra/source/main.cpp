@@ -739,7 +739,7 @@ void ATInputConsoleCallback::SetConsoleTrigger(uint32 id, bool state) {
 	}
 
 	// block the below actions when a modal is up to prevent improper nesting
-	if (state && !ATUICanManipulateWindows())
+	if (state && ATUIIsModalActive())
 		return;
 
 	switch(id) {
@@ -1677,7 +1677,23 @@ void ATSetFullscreen(bool fs) {
 }
 
 bool ATUICanManipulateWindows() {
-	return g_pMainWindow && g_pMainWindow->GetActiveFrame() && !g_pMainWindow->GetModalFrame() && !g_pMainWindow->GetFullScreenFrame();
+	return g_pMainWindow && g_pMainWindow->IsEnabled() && g_pMainWindow->GetActiveFrame() && !g_pMainWindow->GetModalFrame() && !g_pMainWindow->GetFullScreenFrame();
+}
+
+bool ATUIIsModalActive() {
+	if (!g_pMainWindow)
+		return false;
+
+	if (!g_pMainWindow->IsEnabled() || g_pMainWindow->GetModalFrame())
+		return true;
+
+	GUITHREADINFO gti { sizeof(GUITHREADINFO) };
+	if (GetGUIThreadInfo(GetCurrentThreadId(), &gti)) {
+		if (gti.flags & (GUI_INMENUMODE | GUI_INMOVESIZE | GUI_POPUPMENUMODE | GUI_SYSTEMMENUMODE))
+			return true;
+	}
+
+	return false;
 }
 
 void OnCommandAnticVisualizationNext() {

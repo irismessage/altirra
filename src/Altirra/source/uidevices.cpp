@@ -927,7 +927,7 @@ void ATUIControllerDevices::Add() {
 
 		// ignore devices that have no actual buses, just to make shared device
 		// base implementation easier
-		if (!devParent->GetDeviceBus(0))
+		if (devParent && !devParent->GetDeviceBus(0))
 			devParent = nullptr;
 
 		devBus = p->mpDevBus;

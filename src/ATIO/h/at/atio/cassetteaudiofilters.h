@@ -18,6 +18,7 @@
 #define f_AT_ATIO_CASSETTEAUDIOFILTERS_H
 
 #include <at/atcore/fft.h>
+#include <vd2/system/Error.h>
 #include <vd2/system/thread.h>
 
 class IATAudioReader;
@@ -183,6 +184,7 @@ private:
 	VDAtomicInt mbExit { false };
 
 	uint32 mBlockLengths[kBlockCount] {};
+	VDException mException;
 
 	// 1MB
 	alignas(64) sint16 mBlocks[kBlockCount][65536][2] {};

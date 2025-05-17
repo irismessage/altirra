@@ -259,7 +259,7 @@ void ATArtifactNTSCFinal_NEON(void *dst0, const void *srcr0, const void *srcg0, 
 	do {
 		bgra.val[0] = vld1q_u8(srcb); srcb += 16;
 		bgra.val[1] = vld1q_u8(srcg); srcg += 16;
-		bgra.val[2] = vld1q_u8(srcr); srcb += 16;
+		bgra.val[2] = vld1q_u8(srcr); srcr += 16;
 		vst4q_u8(dst, bgra);
 		dst += 64;
 	} while(--n8);

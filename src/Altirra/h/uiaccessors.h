@@ -103,6 +103,7 @@ bool ATUIGetDisplayIndicators();
 void ATUISetDisplayIndicators(bool enabled);
 
 bool ATUICanManipulateWindows();
+bool ATUIIsModalActive();
 
 bool ATUIIsMouseCaptured();
 

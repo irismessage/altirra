@@ -27,8 +27,8 @@ import shutil
 import marshal
 import itertools
 
-EXPECTED_MSVC_VERSION = '19.42.34435'
-EXPECTED_MSVC_VERSION_DESC = 'Visual Studio 2022 v17.12.3'
+EXPECTED_MSVC_VERSION = '19.42.34436'
+EXPECTED_MSVC_VERSION_DESC = 'Visual Studio 2022 v17.12.4'
 
 DIAGNOSTIC_PATTERN = re.compile(r'(?:[0-9]+\>|)(?:[a-zA-Z0-9:\\/.]* *\([0-9,]+\).*(?:warning|error)|.*fatal error LNK[0-9]+:).*', re.I)
 

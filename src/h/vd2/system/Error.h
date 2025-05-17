@@ -54,7 +54,7 @@ protected:
 	const wchar_t *mpMessageW = nullptr;
 
 public:
-	VDException() noexcept;
+	VDException() = default;
 	VDException(const VDException& err) noexcept;
 	VDException(VDException&& err) noexcept;
 	VDException(const char *s);
