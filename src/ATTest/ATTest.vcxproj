@@ -9,6 +9,7 @@
     </ClCompile>
     <ClCompile Include="source\TestCoProc_6502.cpp" />
     <ClCompile Include="source\TestCore_Checksum.cpp" />
+    <ClCompile Include="source\TestCore_FFT.cpp" />
     <ClCompile Include="source\TestCore_MD5.cpp" />
     <ClCompile Include="source\TestCore_VFS.cpp" />
     <ClCompile Include="source\TestDebugger_HistoryTree.cpp" />
@@ -16,9 +17,12 @@
     <ClCompile Include="source\TestEmu_PCLink.cpp" />
     <ClCompile Include="source\TestEmu_PokeyPots.cpp" />
     <ClCompile Include="source\TestEmu_PokeyTimers.cpp" />
+    <ClCompile Include="source\TestIO_Vorbis.cpp" />
+    <ClCompile Include="source\TestMisc_TTF.cpp" />
     <ClCompile Include="source\TestNet_NativeDatagramLiveTest.cpp" />
     <ClCompile Include="source\TestNet_NativeSockets.cpp" />
     <ClCompile Include="source\TestSystem_CRC.cpp" />
+    <ClCompile Include="source\TestSystem_Exception.cpp" />
     <ClCompile Include="source\TestSystem_HashMap.cpp" />
     <ClCompile Include="source\TestSystem_HashSet.cpp" />
     <ClCompile Include="source\TestIO_DiskImage.cpp" />
@@ -33,6 +37,7 @@
     <ClCompile Include="source\TestSystem_Int128.cpp" />
     <ClCompile Include="source\TestSystem_Math.cpp" />
     <ClCompile Include="source\TestSystem_FastVector.cpp" />
+    <ClCompile Include="source\TestSystem_VecMath.cpp" />
     <ClCompile Include="source\TestSystem_Vector.cpp" />
     <ClCompile Include="source\TestSystem_Zip.cpp" />
     <ClCompile Include="source\TestTrace_CPU.cpp" />

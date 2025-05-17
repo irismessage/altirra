@@ -58,19 +58,10 @@ struct ATHardwareModeTraits {
 	bool mbHasPort34 : 1;
 	bool mbFloatingDataBus : 1;
 	bool mbInternalBASIC : 1;
+	bool mbSupportsPBI : 1;
 };
 
-constexpr ATHardwareModeTraits kATHardwareModeTraits[] = {
-	/* 800    */	{ .mbRunsXLOS = false, .mbHasPort34 = true , .mbFloatingDataBus = true , .mbInternalBASIC = false },
-	/* 800XL  */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = true  },
-	/* 5200   */	{ .mbRunsXLOS = false, .mbHasPort34 = true , .mbFloatingDataBus = true , .mbInternalBASIC = false },
-	/* XEGS   */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = true , .mbInternalBASIC = true },
-	/* 1200XL */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = true  },
-	/* 130XE  */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = true , .mbInternalBASIC = true  },
-	/* 1400XL */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = true  },
-};
-
-static_assert(vdcountof(kATHardwareModeTraits) == kATHardwareModeCount);
+extern const ATHardwareModeTraits kATHardwareModeTraits[];
 
 enum ATROMImage {
 	kATROMImage_OSA,

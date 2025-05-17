@@ -109,6 +109,12 @@
     <ClCompile Include="source\timerserviceimpl_win32.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\atascii.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\fft_avx2.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atcore\device.h">
@@ -307,6 +313,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atcore\comsupport_win32.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\atascii.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcore\enumutils.h">
       <Filter>Interface Files</Filter>
     </ClInclude>
   </ItemGroup>

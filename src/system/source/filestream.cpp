@@ -24,7 +24,17 @@
 //		distribution.
 
 #include <stdafx.h>
+#include <vd2/system/Error.h>
 #include <vd2/system/file.h>
+
+///////////////////////////////////////////////////////////////////////////////
+
+class VDIOReadPastEOFException final : public VDException {
+public:
+	VDIOReadPastEOFException() : VDException("Attempt to read beyond end of stream.") {}
+};
+
+///////////////////////////////////////////////////////////////////////////////
 
 VDFileStream::~VDFileStream() {
 }
@@ -76,7 +86,7 @@ sint64 VDMemoryStream::Pos() {
 
 void VDMemoryStream::Read(void *buffer, sint32 bytes) {
 	if (bytes != ReadData(buffer, bytes))
-		throw MyError("Attempt to read beyond stream.");
+		throw VDIOReadPastEOFException();
 }
 
 sint32 VDMemoryStream::ReadData(void *buffer, sint32 bytes) {
@@ -111,6 +121,71 @@ void VDMemoryStream::Seek(sint64 offset) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+VDMemoryBufferStream::VDMemoryBufferStream() {
+}
+
+VDMemoryBufferStream::~VDMemoryBufferStream() {
+}
+
+const wchar_t *VDMemoryBufferStream::GetNameForError() {
+	return L"memory buffer stream";
+}
+
+sint64 VDMemoryBufferStream::Pos() {
+	return mPos;
+}
+
+void VDMemoryBufferStream::Read(void *buffer, sint32 bytes) {
+	if (bytes > 0 && bytes != ReadData(buffer, bytes))
+		throw VDIOReadPastEOFException();
+}
+
+sint32 VDMemoryBufferStream::ReadData(void *buffer, sint32 bytes) {
+	if (bytes <= 0)
+		return 0;
+
+	const size_t readLen = (size_t)bytes;
+	const size_t avail = mBuffer.size() - mPos;
+	
+	const size_t toRead = std::min(readLen, avail);
+
+	if (toRead) {
+		memcpy(buffer, &mBuffer[mPos], toRead);
+		mPos += toRead;
+	}
+
+	return (sint32)toRead;
+}
+
+void VDMemoryBufferStream::Write(const void *buffer, sint32 bytes) {
+	if (bytes <= 0)
+		return;
+
+	size_t writeLen = (size_t)bytes;
+	if ((size_t)PTRDIFF_MAX - mPos < writeLen)
+		throw VDException("Memory buffer full");
+
+	size_t newLen = mPos + writeLen;
+	if (mBuffer.size() < newLen)
+		mBuffer.resize(newLen);
+
+	memcpy(&mBuffer[mPos], buffer, writeLen);
+	mPos += writeLen;
+}
+
+sint64 VDMemoryBufferStream::Length() {
+	return mBuffer.size();
+}
+
+void VDMemoryBufferStream::Seek(sint64 offset) {
+	if (offset < 0 || (uint64)offset > mBuffer.size())
+		throw MyError("Invalid seek position");
+
+	mPos = std::clamp<size_t>((size_t)offset, 0, mBuffer.size());
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 VDBufferedStream::VDBufferedStream(IVDRandomAccessStream *pSrc, uint32 bufferSize)
 	: mpSrc(pSrc)
 	, mBuffer(bufferSize)
@@ -133,7 +208,7 @@ sint64 VDBufferedStream::Pos() {
 
 void VDBufferedStream::Read(void *buffer, sint32 bytes) {
 	if (bytes != ReadData(buffer, bytes))
-		throw MyError("Cannot read %d bytes at location %08llx from %ls", bytes, mBasePosition + mBufferOffset, mpSrc->GetNameForError());
+		throw VDException(L"Cannot read %d bytes at location %08llx from %ls", bytes, mBasePosition + mBufferOffset, mpSrc->GetNameForError());
 }
 
 sint32 VDBufferedStream::ReadData(void *buffer, sint32 bytes) {
@@ -419,6 +494,10 @@ void VDTextOutputStream::Flush() {
 		mpDst->Write(mBuf, mLevel);
 		mLevel = 0;
 	}
+}
+
+sint64 VDTextOutputStream::Pos() const {
+	return mpDst->Pos() + mLevel;
 }
 
 void VDTextOutputStream::Write(const char *s) {

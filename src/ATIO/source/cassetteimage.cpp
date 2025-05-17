@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2008-2021 Avery Lee
+//	Copyright (C) 2008-2024 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -11,16 +11,17 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
+#include <vd2/system/constexpr.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
+#include <vd2/system/filesys.h>
 #include <vd2/system/math.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdstl_vectorview.h>
@@ -28,7 +29,10 @@
 #include <at/atcore/audiosource.h>
 #include <at/atcore/configvar.h>
 #include <at/atcore/progress.h>
+#include <at/atcore/vfs.h>
 #include <at/atio/audioreader.h>
+#include <at/atio/audioutils.h>
+#include <at/atio/cassetteaudiofilters.h>
 #include <at/atio/cassetteblock.h>
 #include <at/atio/cassettedecoder.h>
 #include <at/atio/cassetteimage.h>
@@ -39,6 +43,8 @@
 
 #if VD_CPU_X86 || VD_CPU_X64
 #include <emmintrin.h>
+#elif VD_CPU_ARM64
+#include <arm_neon.h>
 #endif
 
 ATConfigVarBool g_ATCVTapeFLACVerifyMD5("tape.flac.verify_md5", false);
@@ -155,8 +161,6 @@ namespace {
 			const __m128i *VDRESTRICT f = (const __m128i *)kernel[(uint32)accum >> 27];
 
 			__m128i frac = _mm_shufflelo_epi16(_mm_cvtsi32_si128((accum >> 12) & 0x7FFF), 0);
-			__m128i c0 = f[0];
-			__m128i c1 = f[1];
 			__m128i cdiff = _mm_mulhi_epi16(_mm_sub_epi16(f[1], f[0]), _mm_shuffle_epi32(frac, 0));
 			__m128i coeff16 = _mm_add_epi16(f[0], _mm_add_epi16(cdiff, cdiff));
 
@@ -227,83 +231,6 @@ namespace {
 #else
 			return resample16x2_scalar(d, s, count, accum, inc);
 #endif
-	}
-
-#if VD_CPU_X86 || VD_CPU_X64
-	void minMax16x2_SSE2(const sint16 * VDRESTRICT src, uint32 n, sint32& minvL, sint32& maxvL, sint32& minvR, sint32& maxvR) {
-		// We do unaligned loads from this array, so it's important that we
-		// avoid data cache unit (DCU) split penalties on older CPUs.
-		static const __declspec(align(64)) uint64 window_table[6] = {
-			0, 0, (uint64)0 - 1, (uint64)0 - 1, 0, 0
-		};
-
-		const __m128i * VDRESTRICT src128 = (const __m128i *)((uintptr)src & ~(uintptr)15);
-		const __m128i * VDRESTRICT srcend128 = (const __m128i *)((uintptr)(src + n*2) & ~(uintptr)15);
-		const ptrdiff_t leftOffset = (ptrdiff_t)((uintptr)src & 15);
-		const __m128i leftMask = _mm_loadu_si128((const __m128i *)((const char *)window_table + 16 - leftOffset));
-		const ptrdiff_t rightOffset = (ptrdiff_t)((uintptr)(src + n * 2) & 15);
-		const __m128i rightMask = _mm_loadu_si128((const __m128i *)((const char *)window_table + 32 - rightOffset));
-
-		__m128i minAcc = _mm_insert_epi16(_mm_cvtsi32_si128(minvL), minvR, 1);
-		__m128i maxAcc = _mm_insert_epi16(_mm_cvtsi32_si128(maxvL), maxvR, 1);
-
-		if (src128 != srcend128) {
-			__m128i vleft = _mm_and_si128(*src128++, leftMask);
-			minAcc = _mm_min_epi16(minAcc, vleft);
-			maxAcc = _mm_max_epi16(maxAcc, vleft);
-
-			while(src128 != srcend128) {
-				__m128i vmid = *src128++;
-
-				minAcc = _mm_min_epi16(minAcc, vmid);
-				maxAcc = _mm_max_epi16(maxAcc, vmid);
-			}
-
-			if (rightOffset) {
-				__m128i vright = _mm_and_si128(*src128, rightMask);
-				minAcc = _mm_min_epi16(minAcc, vright);
-				maxAcc = _mm_max_epi16(maxAcc, vright);
-			}
-		} else {
-			__m128i v = _mm_and_si128(src128[0], _mm_and_si128(leftMask, rightMask));
-
-			minAcc = _mm_min_epi16(minAcc, v);
-			maxAcc = _mm_max_epi16(maxAcc, v);
-		}
-
-		// four four accumulators
-		minAcc = _mm_min_epi16(minAcc, _mm_shuffle_epi32(minAcc, 0xEE));
-		maxAcc = _mm_max_epi16(maxAcc, _mm_shuffle_epi32(maxAcc, 0xEE));
-		minAcc = _mm_min_epi16(minAcc, _mm_shuffle_epi32(minAcc, 0x55));
-		maxAcc = _mm_max_epi16(maxAcc, _mm_shuffle_epi32(maxAcc, 0x55));
-
-		minvL = (sint16)_mm_extract_epi16(minAcc, 0);
-		minvR = (sint16)_mm_extract_epi16(minAcc, 1);
-		maxvL = (sint16)_mm_extract_epi16(maxAcc, 0);
-		maxvR = (sint16)_mm_extract_epi16(maxAcc, 1);
-	}
-#endif
-
-	void minMax16x2_scalar(const sint16 * VDRESTRICT src, uint32 n, sint32& minvL, sint32& maxvL, sint32& minvR, sint32& maxvR) {
-		for(uint32 i=0; i<n; ++i) {
-			sint32 vL = src[0];
-			sint32 vR = src[1];
-			src += 2;
-
-			minvL = std::min(minvL, vL);
-			maxvL = std::max(maxvL, vL);
-			minvR = std::min(minvR, vR);
-			maxvR = std::max(maxvR, vR);
-		}
-	}
-
-	void minMax16x2(const sint16 * VDRESTRICT src, uint32 n, sint32& minvL, sint32& maxvL, sint32& minvR, sint32& maxvR) {
-#if VD_CPU_X86 || VD_CPU_X64
-		if (SSE2_enabled)
-			minMax16x2_SSE2(src, n, minvL, maxvL, minvR, maxvR);
-		else
-#endif
-			minMax16x2_scalar(src, n, minvL, maxvL, minvR, maxvR);
 	}
 }
 
@@ -545,7 +472,7 @@ public:
 	vdrefptr<IATTapeImageClip> CopyRange(uint32 start, uint32 len) override;
 
 	uint32 GetWaveformLength() const override;
-	uint32 ReadWaveform(uint8 *dst, uint32 pos, uint32 len, bool direct) const override;
+	uint32 ReadWaveform(float *dst, uint32 pos, uint32 len, bool direct) const override;
 	MinMax ReadWaveformMinMax(uint32 pos, uint32 len, bool direct) const override;
 
 	bool HasCASIncompatibleStdBlocks() const override;
@@ -555,10 +482,24 @@ public:
 	void SaveCAS(IVDRandomAccessStream& file);
 	void SaveWAV(IVDRandomAccessStream& file);
 
+	void CombineAudioFrom(ATCassetteImage& audioTrack);
+
 protected:
 	typedef ATTapeImageSpan SortedBlock;
 
-	void ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, ATCassetteTurboDecodeAlgorithm directDecodeAlgorithm, bool isFLAC, bool storeWaveform);
+	enum class RawImageFormat : uint8 {
+		None,
+		Cas,
+		Wav,
+		Flac,
+		Vorbis
+	};
+
+	void ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, ATCassetteTurboDecodeAlgorithm directDecodeAlgorithm, RawImageFormat rawFormat,
+		bool storeWaveform,
+		bool audioOnly,
+		bool fskSpeedCompensation,
+		bool crosstalkCancellation);
 	void ParseCAS(IVDRandomAccessStream& file);
 	void UpdatePeakMaps();
 	void RefreshPeaksFromData(uint32 startSample, uint32 endSample);
@@ -1032,7 +973,7 @@ uint32 ATCassetteImage::GetWaveformLength() const {
 	return (uint32)mWaveforms[0].size();
 }
 
-uint32 ATCassetteImage::ReadWaveform(uint8 *dst, uint32 pos, uint32 len, bool direct) const {
+uint32 ATCassetteImage::ReadWaveform(float *dst0, uint32 pos, uint32 len, bool direct) const {
 	const auto& wf = mWaveforms[direct ? 1 : 0];
 	const uint32 wflen = (uint32)wf.size();
 
@@ -1040,7 +981,14 @@ uint32 ATCassetteImage::ReadWaveform(uint8 *dst, uint32 pos, uint32 len, bool di
 		return 0;
 
 	len = std::min<uint32>(len, wflen - pos);
-	memcpy(dst, &wf[pos], len);
+
+	const uint8 *VDRESTRICT src = &wf[pos];
+	float *VDRESTRICT dst = dst0;
+
+	for(size_t i = 0; i < len; ++i) {
+		dst[i] = kATDecodeModifiedALawTable.v[src[i]];
+	}
+
 	return len;
 }
 
@@ -1068,7 +1016,7 @@ ATCassetteImage::MinMax ATCassetteImage::ReadWaveformMinMax(uint32 pos, uint32 l
 			mx = v;
 	}
 
-	return MinMax{mn, mx};
+	return MinMax{kATDecodeModifiedALawTable.v[mn], kATDecodeModifiedALawTable.v[mx]};
 }
 
 bool ATCassetteImage::HasCASIncompatibleStdBlocks() const {
@@ -1101,19 +1049,53 @@ void ATCassetteImage::Load(IVDRandomAccessStream& file, const wchar_t *origNameO
 
 	InitNew();
 
-	uint32 baseid = VDFromLE32(basehdr);
+	const uint32 baseid = VDFromLE32(basehdr);
+	RawImageFormat detectedFormat = RawImageFormat::None;
+
 	if (baseid == VDMAKEFOURCC('R', 'I', 'F', 'F'))
-		return ParseWAVE(file, afile, ctx.mTurboDecodeAlgorithm, false, ctx.mbStoreWaveform);
+		detectedFormat = RawImageFormat::Wav;
 	else if (baseid == VDMAKEFOURCC('f', 'L', 'a', 'C'))
-		return ParseWAVE(file, afile, ctx.mTurboDecodeAlgorithm, true, ctx.mbStoreWaveform);
-
-	if (afile)
-		throw MyError("Cannot write analysis file for this cassette format.");
-
+		detectedFormat = RawImageFormat::Flac;
+	else if (baseid == VDMAKEFOURCC('O', 'g', 'g', 'S'))
+		detectedFormat = RawImageFormat::Vorbis;
 	else if (baseid == VDMAKEFOURCC('F', 'U', 'J', 'I'))
-		ParseCAS(file);
-	else
-		throw MyError("%ls is not in a recognizable Atari cassette format.", origNameOpt ? origNameOpt : file.GetNameForError());
+		detectedFormat = RawImageFormat::Cas;
+
+	if (detectedFormat == RawImageFormat::None)
+		throw VDException(L"%ls is not in a recognizable Atari cassette format.", origNameOpt ? origNameOpt : file.GetNameForError());
+
+	// check if we require a specific format
+	switch(ctx.mTrackLoadMode) {
+		case ATCassetteTrackLoadMode::RequireCASOnly:
+			if (detectedFormat != RawImageFormat::Cas)
+				throw VDException(L"%ls could not be loaded as a paired tape data track as it is not in CAS format.", origNameOpt ? origNameOpt : file.GetNameForError());
+			break;
+
+		case ATCassetteTrackLoadMode::RequireVorbisOnly:
+			if (detectedFormat != RawImageFormat::Vorbis)
+				throw VDException(L"%ls could not be loaded as a paired tape audio track as it is not in CAS format.", origNameOpt ? origNameOpt : file.GetNameForError());
+			break;
+
+		default:
+			break;
+	}
+
+	// load
+	switch(detectedFormat) {
+		case RawImageFormat::Wav:
+		case RawImageFormat::Flac:
+		case RawImageFormat::Vorbis:
+			return ParseWAVE(file, afile, ctx.mTurboDecodeAlgorithm, detectedFormat, ctx.mbStoreWaveform,
+				ctx.mTrackLoadMode == ATCassetteTrackLoadMode::RequireVorbisOnly,
+				ctx.mbFSKSpeedCompensation,
+				ctx.mbCrosstalkReduction);
+
+		case RawImageFormat::Cas:
+			if (afile)
+				throw MyError("Cannot write analysis file for this cassette format.");
+
+			return ParseCAS(file);
+	}
 }
 
 void ATCassetteImage::SaveCAS(IVDRandomAccessStream& file) {
@@ -1545,79 +1527,28 @@ void ATCassetteImage::SaveWAV(IVDRandomAccessStream& file) {
 	file.Write(header, sizeof header);
 }
 
+void ATCassetteImage::CombineAudioFrom(ATCassetteImage& audioTrack) {
+	if (!audioTrack.mbAudioCreated)
+		throw MyError("Cannot combined paired tracks: audio track is missing.");
+
+	UpdatePeakMaps();
+	audioTrack.UpdatePeakMaps();
+
+	mAudioTrack = std::move(audioTrack.mAudioTrack);
+	mbAudioCreated = true;
+	mbAudioPresent = true;
+
+	audioTrack.mbAudioCreated = false;
+	audioTrack.mbAudioPresent = false;
+	
+	mPeakMaps[0] = std::move(audioTrack.mPeakMaps[0]);
+
+	audioTrack.mPeakMaps[0].clear();
+
+	mbImageChecksumsValid = false;
+}
+
 namespace {
-	class PeakMapProcessor {
-	public:
-		PeakMapProcessor(bool stereo, double inputSamplesPerPeakSample, vdfastvector<uint8>& peakMapL, vdfastvector<uint8>& peakMapR);
-
-		void Process(const sint16 *samples, uint32 n);
-
-	private:
-		bool mbStereo = false;
-		sint32 mValAccumL0 = 0;
-		sint32 mValAccumL1 = 0;
-		sint32 mValAccumR0 = 0;
-		sint32 mValAccumR1 = 0;
-		uint64 mRateAccum = UINT32_C(0x80000000);
-		uint64 mRateAccumInc = 0;
-
-		uint32 mInputSamplesLeft = 0;
-
-		vdfastvector<uint8>& mPeakMapL;
-		vdfastvector<uint8>& mPeakMapR;
-	};
-
-	PeakMapProcessor::PeakMapProcessor(bool stereo, double inputSamplesPerPeakSample, vdfastvector<uint8>& peakMapL, vdfastvector<uint8>& peakMapR)
-		: mbStereo(stereo)
-		, mRateAccumInc((uint64)VDRoundToInt64(inputSamplesPerPeakSample * 4294967296.0))
-		, mPeakMapL(peakMapL)
-		, mPeakMapR(peakMapR)
-	{
-		mRateAccum += mRateAccumInc;
-		mInputSamplesLeft = (uint32)(mRateAccum >> 32);
-		mRateAccum = (uint32)mRateAccum;
-	}
-
-	void PeakMapProcessor::Process(const sint16 *samples, uint32 n) {
-		while(n) {
-			while(mInputSamplesLeft == 0) {
-				mRateAccum += mRateAccumInc;
-				mInputSamplesLeft = (uint32)(mRateAccum >> 32);
-				mRateAccum = (uint32)mRateAccum;
-
-				static constexpr float scale = 1.0f / 32767.0f * 127.0f / 255.0f;
-
-				const uint8 vR0 = VDClampedRoundFixedToUint8Fast(mValAccumR0 * scale + 128.0f / 255.0f);
-				const uint8 vR1 = VDClampedRoundFixedToUint8Fast(mValAccumR1 * scale + 128.0f / 255.0f);
-				mPeakMapR.push_back(vR0);
-				mPeakMapR.push_back(vR1);
-				mValAccumR0 = 0;
-				mValAccumR1 = 0;
-
-				if (mbStereo) {
-					const uint8 vL0 = VDClampedRoundFixedToUint8Fast(mValAccumL0 * scale + 128.0f / 255.0f);
-					const uint8 vL1 = VDClampedRoundFixedToUint8Fast(mValAccumL1 * scale + 128.0f / 255.0f);
-					mPeakMapL.push_back(vL0);
-					mPeakMapL.push_back(vL1);
-					mValAccumL0 = 0;
-					mValAccumL1 = 0;
-				}
-			}
-
-			// accumulate peak map samples
-			uint32 toScan = n;
-			if (toScan > mInputSamplesLeft)
-				toScan = mInputSamplesLeft;
-
-			minMax16x2(samples, toScan, mValAccumL0, mValAccumL1, mValAccumR0, mValAccumR1);
-
-			mInputSamplesLeft -= toScan;
-
-			n -= toScan;
-			samples += toScan*2;
-		}
-	}
-
 	uint32 *ExtendBitfield(vdfastvector<uint32>& dstv, uint32 offset, uint32 n) {
 		if (!n)
 			return nullptr;
@@ -1640,10 +1571,17 @@ namespace {
 	}
 }
 
-void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, ATCassetteTurboDecodeAlgorithm directDecodeAlgorithm, bool isFLAC, bool storeWaveform) {
+void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStream *afile, ATCassetteTurboDecodeAlgorithm directDecodeAlgorithm, RawImageFormat rawFormat, bool storeWaveform, bool audioOnly, bool fskSpeedCompensation,
+	bool crosstalkCancellation) {
 	ATProgress progress;
 
-	vdautoptr audioReader(isFLAC ? ATCreateAudioReaderFLAC(file, g_ATCVTapeFLACVerifyMD5) : ATCreateAudioReaderWAV(file));
+	vdautoptr audioReader(
+		rawFormat == RawImageFormat::Flac ? ATCreateAudioReaderFLAC(file, g_ATCVTapeFLACVerifyMD5)
+		: rawFormat == RawImageFormat::Vorbis ? ATCreateAudioReaderVorbis(file)
+		: ATCreateAudioReaderWAV(file)
+	);
+
+	const auto audioSize = audioReader->GetDataSize();
 
 	// These are hard-coded into the 410 hardware.
 	ATCassetteDecoderFSK	fskDecoder;
@@ -1652,17 +1590,44 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 
 	const ATAudioReadFormatInfo audioFormat = audioReader->GetFormatInfo();
 
-	uint64	resampAccum = 0;
-	uint64	resampStep = VDRoundToInt64((double)audioFormat.mSamplesPerSec / (double)kATCassetteImageAudioRate * 4294967296.0);
+	const uint64 resampStep = VDRoundToInt64((double)audioFormat.mSamplesPerSec / (double)kATCassetteImageAudioRate * 4294967296.0);
 
-	sint16	inputBuffer[512][2] = {0};
-	uint32	inputBufferLevel = 0;
+	static constexpr uint32 kResamplerOutputBufferSize = 4096;
 
-	sint16	outputBuffer[4096][2] = {0};
-	uint32	outputBufferIdx = 0;
-	uint32	outputBufferLevel = 0;
+	struct Buffers {
+		sint16 mResamplerOutputBuffer[kResamplerOutputBufferSize][2] = {0};
+	};
 
-	uint32	inputSamplesLeft = audioReader->GetFrameCount();
+	vdautoptr<Buffers> buffers(new Buffers);
+	vdautoptr source(new ATCassetteAudioSource(*audioReader));
+	vdautoptr peakMapFilter(new ATCassetteAudioPeakMapFilter(*source, audioFormat.mChannels > 1, (double)audioFormat.mSamplesPerSec / (double)kPeakSamplesPerSecond, mPeakMaps[1], mPeakMaps[0]));
+
+	vdautoptr queue1(new ATCassetteAudioThreadedQueue(*peakMapFilter));
+	IATCassetteAudioSource *output = queue1.get();
+
+	vdautoptr resampler(new ATCassetteAudioResampler(*output, resampStep));
+	vdautoptr resamplerQueue(new ATCassetteAudioThreadedQueue(*resampler));
+	output = resamplerQueue.get();
+
+	vdautoptr<ATCassetteAudioCrosstalkCanceller> canceller;
+	vdautoptr<ATCassetteAudioThreadedQueue> cancellerQueue;
+	if (crosstalkCancellation && audioFormat.mChannels > 1) {
+		canceller = new ATCassetteAudioCrosstalkCanceller(*output);
+		cancellerQueue = new ATCassetteAudioThreadedQueue(*canceller);
+		output = cancellerQueue.get();
+	}
+
+	vdautoptr<ATCassetteAudioFSKSpeedCompensator> compensator;
+	vdautoptr<ATCassetteAudioThreadedQueue> compensatorQueue;
+	if (fskSpeedCompensation) {
+		compensator = new ATCassetteAudioFSKSpeedCompensator(*output);
+		compensatorQueue = new ATCassetteAudioThreadedQueue(*compensator);
+		output = compensatorQueue.get();
+	}
+
+	sint16	(&resamplerOutputBuffer)[kResamplerOutputBufferSize][2] = buffers->mResamplerOutputBuffer;
+	uint32	resamplerOutputBufferIdx = 0;
+	uint32	resamplerOutputBufferLevel = 0;
 
 	static const uint8 kHeader[]={
 		(uint8)'R', (uint8)'I', (uint8)'F', (uint8)'F',
@@ -1712,7 +1677,7 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 
 	vdrefptr pAudioBlock { new ATCassetteImageBlockRawAudio };
 
-	progress.InitF((uint32)(audioReader->GetDataSize() >> 10), L"Processed %uK / %uK", L"Processing raw waveform");
+	progress.InitF((uint32)(audioSize >> 10), L"Processed %uK / %uK", L"Processing raw waveform");
 
 	uint32 bitfieldOffset = 0;
 
@@ -1722,93 +1687,47 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 	bool outputTailAdded = false;
 	uint32 filterDiscardLeft = kFilterDelay;
 
-	PeakMapProcessor peakMapProcessor(audioFormat.mChannels > 1, (double)audioFormat.mSamplesPerSec / (double)kPeakSamplesPerSecond, mPeakMaps[1], mPeakMaps[0]);
 	vdfastvector<uint32> fskData;
 
 	for(;;) {
 		// check if we need to run the resampler
-		if (outputBufferIdx >= outputBufferLevel) {
-			uint32 toRead = 512 - inputBufferLevel;
-
-			if (inputSamplesLeft) {
-				// refill input buffer
-				if (toRead > inputSamplesLeft)
-					toRead = inputSamplesLeft;
-
-				inputSamplesLeft -= toRead;
-
-				audioReader->ReadStereo16(inputBuffer[inputBufferLevel], toRead);
-	
-				// update progress UI
-				progress.Update((uint32)(audioReader->GetDataPos() >> 10));
-
-				// update peak samples
-				peakMapProcessor.Process(&inputBuffer[inputBufferLevel][0], toRead);
-
-				inputBufferLevel += toRead;
-			}
+		if (resamplerOutputBufferIdx >= resamplerOutputBufferLevel) {
+			// update progress UI
+			progress.Update(source->GetLastDataPosKB());
 
 			// move overlap tail to prefix portion of buffer
-			const uint32 outputSamplesToPreserve = std::min<uint32>(outputBufferIdx, kFilterDelay);
+			const uint32 outputSamplesToPreserve = std::min<uint32>(resamplerOutputBufferIdx, kFilterDelay);
 			if (outputSamplesToPreserve)
-				memmove(outputBuffer[kFilterDelay - outputSamplesToPreserve], outputBuffer[outputBufferLevel + kFilterDelay - outputSamplesToPreserve], outputSamplesToPreserve * sizeof(outputBuffer[0]));
+				memmove(resamplerOutputBuffer[kFilterDelay - outputSamplesToPreserve], resamplerOutputBuffer[resamplerOutputBufferLevel + kFilterDelay - outputSamplesToPreserve], outputSamplesToPreserve * sizeof(resamplerOutputBuffer[0]));
 
-			// compute how far we can run the resampler
-			uint32 resampCount = 0;
-			
-			if (inputBufferLevel >= 8) {
-				const auto computeMax = [](uint32 acc, uint64 step, uint32 inputLen) {
-					const uint64 maxAccum = ((uint64)(inputLen - 7) << 32) - 1;
+			// run the resampler
+			uint32 resampWanted = kResamplerOutputBufferSize - kFilterDelay;
+			uint32 resampCount = output->ReadAudio(&resamplerOutputBuffer[kFilterDelay], resampWanted);
 
-					return (uint32)((maxAccum - acc) / step) + 1;
-				};
+			if (resampCount > resampWanted)
+				VDRaiseInternalFailure();
 
-				static_assert(computeMax(0x0'00000000, 0x1'00000000, 8) == 1);
-				static_assert(computeMax(0x0'00000000, 0x0'10000000, 8) == 16);
-				static_assert(computeMax(0x0'0FFFFFFF, 0x0'10000000, 8) == 16);
-				static_assert(computeMax(0x0'10000000, 0x0'10000000, 8) == 15);
-				static_assert(computeMax(0x0'00000000, 0x1'00000000, 9) == 2);
-				static_assert(computeMax(0x0'00000000, 0x0'10000000, 9) == 32);
-				static_assert(computeMax(0x0'0FFFFFFF, 0x0'10000000, 9) == 32);
-				static_assert(computeMax(0x0'10000000, 0x0'10000000, 9) == 31);
-
-				resampCount = computeMax(resampAccum, resampStep, inputBufferLevel);
-			}
-
+			// if we didn't get any samples out of the resampler, add the output tail
 			if (!resampCount) {
 				if (outputTailAdded)
 					break;
 
 				outputTailAdded = true;
 
-				if (outputBufferIdx > 0) {
+				if (resamplerOutputBufferIdx > 0) {
 					// replicate last sample
 					for(uint32 i=0; i<kFilterDelay; ++i) {
-						outputBuffer[outputBufferIdx + i][0] = outputBuffer[outputBufferIdx - 1][0];
-						outputBuffer[outputBufferIdx + i][1] = outputBuffer[outputBufferIdx - 1][1];
+						resamplerOutputBuffer[resamplerOutputBufferIdx + i][0] = resamplerOutputBuffer[resamplerOutputBufferIdx - 1][0];
+						resamplerOutputBuffer[resamplerOutputBufferIdx + i][1] = resamplerOutputBuffer[resamplerOutputBufferIdx - 1][1];
 					}
-				}
-			} else {
-				// clamp resampler output count if it exceeds output buffer
-				resampCount = std::min<uint32>(resampCount, vdcountof(outputBuffer) - kFilterDelay);
-
-				// run the resampler
-				resampAccum = resample16x2(outputBuffer[kFilterDelay], inputBuffer[0], resampCount, resampAccum, resampStep);
-
-				// shift down input buffer to remove samples we don't need anymore
-				const uint32 shift = (uint32)(resampAccum >> 32);
-				if (shift) {
-					memmove(inputBuffer[0], inputBuffer[shift], (inputBufferLevel - shift)*sizeof(inputBuffer[0]));
-					inputBufferLevel -= shift;
-					resampAccum -= (uint64)shift << 32;
 				}
 			}
 
-			outputBufferIdx = 0;
-			outputBufferLevel = resampCount;
+			resamplerOutputBufferIdx = 0;
+			resamplerOutputBufferLevel = resampCount;
 		}
 
-		uint32 samplesToProcess = outputBufferLevel - outputBufferIdx;
+		uint32 samplesToProcess = resamplerOutputBufferLevel - resamplerOutputBufferIdx;
 
 		if (samplesToProcess) {
 			if (filterDiscardLeft) {
@@ -1819,18 +1738,20 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 
 				// run samples through the FSK filter only to start it out 12 samples ahead
 				uint32 dummy = 0;
-				fskDecoder.Process<false>(&outputBuffer[outputBufferIdx][1], samplesToProcess, &dummy, 0, nullptr);
+				fskDecoder.Process<false>(&resamplerOutputBuffer[resamplerOutputBufferIdx][1], samplesToProcess, &dummy, 0, nullptr);
 			} else {
-				// run the FSK decoder 12 samples ahead of the direct decoder
-				uint32 *dstFSK = ExtendBitfield(fskData, bitfieldOffset, samplesToProcess);
+				if (!audioOnly) {
+					// run the FSK decoder 12 samples ahead of the direct decoder
+					uint32 *dstFSK = ExtendBitfield(fskData, bitfieldOffset, samplesToProcess);
 
-				if (needAnalysis) {
-					fskDecoder.Process<true>(&outputBuffer[outputBufferIdx + kFilterDelay][1], samplesToProcess, dstFSK, bitfieldOffset, analysisBuffer.data());
-				} else
-					fskDecoder.Process<false>(&outputBuffer[outputBufferIdx + kFilterDelay][1], samplesToProcess, dstFSK, bitfieldOffset, nullptr);
+					if (needAnalysis) {
+						fskDecoder.Process<true>(&resamplerOutputBuffer[resamplerOutputBufferIdx + kFilterDelay][1], samplesToProcess, dstFSK, bitfieldOffset, analysisBuffer.data());
+					} else
+						fskDecoder.Process<false>(&resamplerOutputBuffer[resamplerOutputBufferIdx + kFilterDelay][1], samplesToProcess, dstFSK, bitfieldOffset, nullptr);
 
-				// run the direct decoder 12 samples behind the FSK decoder
-				directDecoder.Process(&outputBuffer[outputBufferIdx][1], samplesToProcess, analysisBuffer.data());
+					// run the direct decoder 12 samples behind the FSK decoder
+					directDecoder.Process(&resamplerOutputBuffer[resamplerOutputBufferIdx][1], samplesToProcess, analysisBuffer.data());
+				}
 
 				if (storeWaveform) {
 					// The channel allocations:
@@ -1849,16 +1770,11 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 						uint8 *VDRESTRICT dst = mWaveforms[i].data() + basePos;
 						const float *VDRESTRICT src = analysisBuffer.data() + (i ? 4 : 0);
 
-						for(uint32 j = 0; j < samplesToProcess; ++j) {
-							float v = src[j * 6] * 127.0f + 128.5f;
+						for(size_t j = 0; j < samplesToProcess; ++j) {
+							// A-law encode
+							float x = src[j * 6];
 
-							if (v < 0.0f)
-								v = 0.0f;
-
-							if (v > 255.0f)
-								v = 255.0f;
-
-							dst[j] = (uint8)v;
+							dst[j] = ATEncodeModifiedALaw(x);
 						}
 					}
 				}
@@ -1887,16 +1803,14 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 
 				bitfieldOffset = (bitfieldOffset + samplesToProcess) & 31;
 
-				pAudioBlock->mAudio.resize(pAudioBlock->mAudio.size() + samplesToProcess);
-
-				uint8 *VDRESTRICT audioDst = pAudioBlock->mAudio.end() - samplesToProcess;
-				for(uint32 i = 0; i < samplesToProcess; ++i) {
-					audioDst[i] = (outputBuffer[(size_t)outputBufferIdx + i][0] >> 8) + 0x80;
-				}
+				// Expand audio block (making sure there is an extra zero-encoded sample at the end).
+				uint8 *VDRESTRICT audioDst = pAudioBlock->Extend(samplesToProcess);
+				for(uint32 i = 0; i < samplesToProcess; ++i)
+					audioDst[i] = ATEncodeModifiedALaw((float)resamplerOutputBuffer[(size_t)resamplerOutputBufferIdx + i][0] * (1.0f / 32767.0f));
 			}
 		}
 
-		outputBufferIdx += samplesToProcess;
+		resamplerOutputBufferIdx += samplesToProcess;
 	}
 
 	// finalize data stream
@@ -1918,7 +1832,7 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 	mDataTrack.mSpans.back().mStart = mDataTrack.mLength;
 
 	// finalize audio stream
-	mAudioTrack.mLength = pAudioBlock->mAudioLength = (uint32)pAudioBlock->mAudio.size();
+	mAudioTrack.mLength = pAudioBlock->GetAudioLength();
 
 	mAudioTrack.mSpans.resize(2, {});
 	mAudioTrack.mSpans[0] = ATTapeImageSpan {
@@ -1937,10 +1851,15 @@ void ATCassetteImage::ParseWAVE(IVDRandomAccessStream& file, IVDRandomAccessStre
 
 	mAudioTrack.mSpanCount = 1;
 	mbAudioCreated = true;
-	mbAudioPresent = (audioFormat.mChannels > 1);
 
-	if (!mbAudioPresent)
-		mPeakMaps[1] = mPeakMaps[0];
+	if (audioOnly) {
+		mbAudioPresent = true;
+	} else {
+		mbAudioPresent = (audioFormat.mChannels > 1);
+
+		if (!mbAudioPresent)
+			mPeakMaps[1] = mPeakMaps[0];
+	}
 
 	ValidatePeakMaps();
 
@@ -2448,8 +2367,8 @@ void ATCassetteImage::RefreshPeaksFromAudio(uint32 startSample, uint32 endSample
 				uint8 spanMin, spanMax;
 				rawAudioBlock.GetMinMax(spanOffset, spanLen, spanMin, spanMax);
 
-				minAccum += ((uint32)spanMin - 0x80) * spanLen;
-				maxAccum += ((uint32)spanMax - 0x80) * spanLen;
+				minAccum += ((uint32)(kATDecodeModifiedALawTable.v[spanMin] * 127.0f + 127.5f) - 0x80) * spanLen;
+				maxAccum += ((uint32)(kATDecodeModifiedALawTable.v[spanMax] * 127.0f + 127.5f) - 0x80) * spanLen;
 			} else {
 				const sint32 spanValue = spanLen - span->mpImageBlock->GetBitSum(spanOffset, spanLen, false);
 
@@ -2513,14 +2432,61 @@ void ATCreateNewCassetteImage(IATCassetteImage **ppImage) {
 	*ppImage = pImage.release();
 }
 
-void ATLoadCassetteImage(IVDRandomAccessStream& stream, const wchar_t *origNameOverride, IVDRandomAccessStream *analysisOutput, const ATCassetteLoadContext& ctx, IATCassetteImage **ppImage) {
-	vdrefptr<ATCassetteImage> pImage(new ATCassetteImage);
+vdrefptr<IATCassetteImage> ATLoadCassetteImage(const wchar_t *path, IVDRandomAccessStream *analysisOutput, const ATCassetteLoadContext& ctx) {
+	vdrefptr<ATVFSFileView> view;
+	ATVFSOpenFileView(path, false, ~view);
 
-	VDBufferedStream bs(&stream, 65536);
+	vdrefptr<IATCassetteImage> image;
+	ATLoadCassetteImage(*view, nullptr, nullptr, analysisOutput, ctx, ~image);
 
-	pImage->Load(bs, origNameOverride, analysisOutput, ctx);
+	return image;
+}
 
-	*ppImage = pImage.release();
+void ATLoadCassetteImage(ATVFSFileView& view, IVDRandomAccessStream *audioStreamOpt, const wchar_t *origNameOverride, IVDRandomAccessStream *analysisOutput, const ATCassetteLoadContext& ctx, IATCassetteImage **ppImage) {
+	// check if this is the data stream of a paired data+audio stream
+	if (ATDetectPairedImageType(view.GetFileName()) == ATPairedImageType::TapeDataTrack) {
+		ATCassetteLoadContext dataCtx(ctx);
+		ATCassetteLoadContext audioCtx(ctx);
+		dataCtx.mTrackLoadMode = ATCassetteTrackLoadMode::RequireCASOnly;
+		audioCtx.mTrackLoadMode = ATCassetteTrackLoadMode::RequireVorbisOnly;
+
+		vdrefptr<ATCassetteImage> dataImage(new ATCassetteImage);
+		
+		{
+			VDBufferedStream dataBs(&view.GetStream(), 65536);
+			dataImage->Load(dataBs, origNameOverride, analysisOutput, dataCtx);
+		}
+
+		// we know that the view filename ends in .data.cas, so replace it with .audio.ogg
+		VDStringSpanW dataTrackName(view.GetFileName());
+		dataTrackName = VDFileSplitExtLeftSpan(dataTrackName);
+		dataTrackName = VDFileSplitExtLeftSpan(dataTrackName);
+
+		VDStringW audioTrackName(dataTrackName);
+		audioTrackName += L".audio.ogg";
+
+		vdrefptr<ATVFSFileView> audioView = view.TryOpenSibling(audioTrackName.c_str());
+		if (!audioView)
+			throw VDException(L"Unable to load paired audio track: %ls.", audioTrackName.c_str());
+
+		vdrefptr<ATCassetteImage> audioImage(new ATCassetteImage);
+
+		{
+			VDBufferedStream audioBs(&audioView->GetStream(), 65536);
+			audioImage->Load(audioBs, origNameOverride, analysisOutput, audioCtx);
+		}
+
+		dataImage->CombineAudioFrom(*audioImage);
+
+		*ppImage = dataImage.release();
+	} else {
+		vdrefptr<ATCassetteImage> pImage(new ATCassetteImage);
+
+		VDBufferedStream bs(&view.GetStream(), 65536);
+		pImage->Load(bs, origNameOverride, analysisOutput, ctx);
+
+		*ppImage = pImage.release();
+	}
 }
 
 void ATSaveCassetteImageCAS(IVDRandomAccessStream& file, IATCassetteImage *image) {

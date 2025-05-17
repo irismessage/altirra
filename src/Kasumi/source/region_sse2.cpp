@@ -15,6 +15,8 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 #include <intrin.h>
 
 void VDPixmapResolve4x_SSE2(void *dst, ptrdiff_t dstpitch, const void *src, ptrdiff_t srcpitch, uint32 w, uint32 h) {
@@ -66,3 +68,4 @@ void VDPixmapResolve4x_SSE2(void *dst, ptrdiff_t dstpitch, const void *src, ptrd
 		src = (const char *)src + srcpitch * 4;
 	} while(--h);
 }
+#endif

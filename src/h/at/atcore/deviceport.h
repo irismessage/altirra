@@ -85,6 +85,10 @@ public:
 	// should normally be high (1) unless driving the lines to a 0 is desired.
 	virtual void SetDirInput(uint8 mask) = 0;
 
+	// Change only the specified bits of the direction signals sent into the
+	// controller port.
+	virtual void SetDirInputBits(uint8 newSignals, uint8 changeMask) = 0;
+
 	// Set the change mask and handler for monitoring changes in direction
 	// lines. The handler is called whenever any of the bits in the mask
 	// are changed. If callNow is set, the handler is also called immediately

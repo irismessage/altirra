@@ -19,7 +19,7 @@
 #include <stdafx.h>
 
 #if defined(VD_CPU_ARM64)
-#include <arm64_neon.h>
+#include <arm_neon.h>
 
 void ATArtifactNTSCAccum_NEON(void *rout, const void *table, const void *src, uint32 count) {
 	int16x8_t acc0 = vmovq_n_s16(0);
@@ -30,7 +30,7 @@ void ATArtifactNTSCAccum_NEON(void *rout, const void *table, const void *src, ui
 	int16x8_t fast_impulse2;
 
 	const int16x8_t * VDRESTRICT table2 = (const int16x8_t *)table + 8;
-	char * VDRESTRICT dst = (char *)rout;
+	unsigned char * VDRESTRICT dst = (unsigned char *)rout;
 	const uint8 *VDRESTRICT src8 = (const uint8 *)src;
 
 	count >>= 2;
@@ -146,7 +146,7 @@ void ATArtifactNTSCAccumTwin_NEON(void *rout, const void *table, const void *src
 	int16x8_t fast_impulse1;
 	int16x8_t fast_impulse2;
 
-	char *VDRESTRICT dst = (char *)rout;
+	unsigned char *VDRESTRICT dst = (unsigned char *)rout;
 	const int16x8_t *VDRESTRICT impulse_table = (const int16x8_t *)table;
 	const uint8 *VDRESTRICT src8 = (const uint8 *)src;
 
@@ -247,21 +247,21 @@ fast_path:
 }
 
 void ATArtifactNTSCFinal_NEON(void *dst0, const void *srcr0, const void *srcg0, const void *srcb0, uint32 count) {
-	const uint8x16_t *VDRESTRICT srcr = (const uint8x16_t *)srcr0;
-	const uint8x16_t *VDRESTRICT srcg = (const uint8x16_t *)srcg0;
-	const uint8x16_t *VDRESTRICT srcb = (const uint8x16_t *)srcb0;
-	uint8x16_t *VDRESTRICT dst = (uint8x16_t *)dst0;
+	const uint8_t *VDRESTRICT srcr = (const uint8_t *)srcr0;
+	const uint8_t *VDRESTRICT srcg = (const uint8_t *)srcg0;
+	const uint8_t *VDRESTRICT srcb = (const uint8_t *)srcb0;
+	uint8_t *VDRESTRICT dst = (uint8_t *)dst0;
 	uint32 n8 = count >> 3;
 
 	uint8x16x4_t bgra;
 	bgra.val[3] = vmovq_n_u8(0xFF);
 
 	do {
-		bgra.val[0] = *srcb++;
-		bgra.val[1] = *srcg++;
-		bgra.val[2] = *srcr++;
+		bgra.val[0] = vld1q_u8(srcb); srcb += 16;
+		bgra.val[1] = vld1q_u8(srcg); srcg += 16;
+		bgra.val[2] = vld1q_u8(srcr); srcb += 16;
 		vst4q_u8(dst, bgra);
-		dst += 4;
+		dst += 64;
 	} while(--n8);
 }
 

@@ -75,6 +75,10 @@ struct ATSyncAudioMixInfo {
 	// frame's worth of samples (~1050-1300).
 	uint32 mCount;
 
+	// Number of cycles covered by the mixing window. This is provided for
+	// convenience; it's always equal to mCount * kATCyclesPerSyncSample.
+	uint32 mNumCycles;
+
 	// Mixing sample frequency in Hz. Note that this is related to actual
 	// playback frequency and is NOT equal to the system clock rate divided
 	// by kATCyclesPerSyncSample. Depending on the frame rate mode it may

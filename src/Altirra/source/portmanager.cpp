@@ -37,6 +37,7 @@ public:
 
 	void SetDirOutputMask(uint8 mask) override;
 	void SetDirInput(uint8 mask) override;
+	void SetDirInputBits(uint8 states, uint8 changeMask) override;
 	void SetOnDirOutputChanged(uint8 mask, vdfunction<void()> handler, bool callNow) override;
 	uint8 GetCurrentDirOutput() const override;
 
@@ -164,6 +165,10 @@ void ATPortManager::ControllerPort::SetDirInput(uint8 mask) {
 				UpdatePIAInput();
 		}
 	}
+}
+
+void ATPortManager::ControllerPort::SetDirInputBits(uint8 states, uint8 changeMask) {
+	SetDirInput(mDirInput ^ ((states ^ mDirInput) & changeMask));
 }
 
 void ATPortManager::ControllerPort::SetOnDirOutputChanged(uint8 mask, vdfunction<void()> handler, bool callNow) {

@@ -32,13 +32,13 @@ public:
 
 	virtual uint64 GetDataSize() const = 0;
 	virtual uint64 GetDataPos() const = 0;
-	virtual uint64 GetFrameCount() const = 0;
 
 	virtual ATAudioReadFormatInfo GetFormatInfo() const = 0;
 	virtual uint32 ReadStereo16(sint16 *dst, uint32 n) = 0;
 };
 
 IATAudioReader *ATCreateAudioReaderWAV(IVDRandomAccessStream& inputStream);
+IATAudioReader *ATCreateAudioReaderVorbis(IVDRandomAccessStream& inputStream);
 IATAudioReader *ATCreateAudioReaderFLAC(IVDRandomAccessStream& inputStream, bool verify);
 
 #endif

@@ -30,6 +30,7 @@
 #include <d3d11_1.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/strutil.h>
+#include <vd2/system/hash.h>
 #include <vd2/system/time.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/Tessa/Config.h>
@@ -51,6 +52,12 @@ namespace {
 
 			case kVDTF_R8G8B8A8:
 				return DXGI_FORMAT_R8G8B8A8_UNORM;
+
+			case kVDTF_R8G8B8A8_sRGB:
+				return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+
+			case kVDTF_R8G8B8A8_GammaToSRGB:
+				return DXGI_FORMAT_R8G8B8A8_TYPELESS;
 
 			case kVDTF_U8V8:
 				return DXGI_FORMAT_R8G8_SNORM;
@@ -80,6 +87,12 @@ namespace {
 			case DXGI_FORMAT_R8G8B8A8_UNORM:
 				return kVDTF_R8G8B8A8;
 
+			case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+				return kVDTF_R8G8B8A8_sRGB;
+
+			case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+				return kVDTF_R8G8B8A8_GammaToSRGB;
+
 			case DXGI_FORMAT_R8G8_SNORM:
 				return kVDTF_U8V8;
 
@@ -94,6 +107,56 @@ namespace {
 
 			default:
 				return kVDTF_Unknown;
+		}
+	}
+
+	DXGI_FORMAT GetRTVFormatD3D11(VDTFormat format) {
+		switch(format) {
+			case kVDTF_R8G8B8A8_GammaToSRGB:
+				return DXGI_FORMAT_R8G8B8A8_UNORM;
+
+			default:
+				return GetSurfaceFormatD3D11(format);
+		}
+	}
+
+	DXGI_FORMAT GetSRVFormatD3D11(VDTFormat format) {
+		switch(format) {
+			case kVDTF_R8G8B8A8_GammaToSRGB:
+				return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+
+			default:
+				return GetSurfaceFormatD3D11(format);
+		}
+	}
+
+	bool IsDXGIFormatSRGB(DXGI_FORMAT format) {
+		switch(format) {
+			case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+			case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+			case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+				return true;
+
+			default:
+				return false;
+		}
+	}
+
+	DXGI_FORMAT GetDXGISRGBFormat(DXGI_FORMAT format) {
+		switch(format) {
+			case DXGI_FORMAT_R8G8B8A8_UNORM:	return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+			case DXGI_FORMAT_B8G8R8A8_UNORM:	return DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+			case DXGI_FORMAT_B8G8R8X8_UNORM:	return DXGI_FORMAT_B8G8R8X8_UNORM_SRGB;
+			default: return format;
+		}
+	}
+
+	DXGI_FORMAT GetDXGINonSRGBFormat(DXGI_FORMAT format) {
+		switch(format) {
+			case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:	return DXGI_FORMAT_R8G8B8A8_UNORM;
+			case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:	return DXGI_FORMAT_B8G8R8A8_UNORM;
+			case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:	return DXGI_FORMAT_B8G8R8X8_UNORM;
+			default: return format;
 		}
 	}
 }
@@ -247,6 +310,25 @@ void VDTResourceManagerD3D11::ShutdownAllResources() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+VDTUnorderedAccessViewD3D11::VDTUnorderedAccessViewD3D11(IVDTResource& resource, IVDRefUnknown& owner)
+	: mResource(resource)
+	, mOwner(owner)
+{
+}
+
+VDTUnorderedAccessViewD3D11::~VDTUnorderedAccessViewD3D11() {
+}
+
+int VDTUnorderedAccessViewD3D11::AddRef() {
+	return mResource.AddRef();
+}
+
+int VDTUnorderedAccessViewD3D11::Release() {
+	return mResource.Release();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 VDTReadbackBufferD3D11::VDTReadbackBufferD3D11()
 	: mpSurface(NULL)
 {
@@ -319,9 +401,12 @@ bool VDTReadbackBufferD3D11::Restore() {
 ///////////////////////////////////////////////////////////////////////////////
 
 VDTSurfaceD3D11::VDTSurfaceD3D11()
-	: mpTexture(NULL)
-	, mpTextureSys(NULL)
-	, mpRTView(NULL)
+	: mUAView(*this, *this)
+{
+}
+
+VDTSurfaceD3D11::VDTSurfaceD3D11(IVDTTexture& owner)
+	: mUAView(owner, *this)
 {
 }
 
@@ -355,26 +440,22 @@ bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 height,
 	desc.CPUAccessFlags = 0;
 	desc.MiscFlags = 0;
 
-	switch(usage) {
-		case kVDTUsage_Default:
-			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-			break;
+	if ((usage & VDTUsage::Render) != VDTUsage::None)
+		desc.BindFlags |= D3D11_BIND_RENDER_TARGET;
 
-		case kVDTUsage_Render:
-			desc.BindFlags = D3D11_BIND_RENDER_TARGET;
-			break;
+	if ((usage & VDTUsage::Shader) != VDTUsage::None)
+		desc.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
 
-		default:
-			break;
-	}
+	if ((usage & VDTUsage::UnorderedAccess) != VDTUsage::None)
+		desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
 
 	hr = dev->CreateTexture2D(&desc, NULL, &mpTexture);
 	if (FAILED(hr))
 		return false;
 
-	if (usage == kVDTUsage_Render) {
+	if ((usage & VDTUsage::Render) != VDTUsage::None) {
 		D3D11_RENDER_TARGET_VIEW_DESC rtvdesc = {};
-		rtvdesc.Format = dxgiFormat;
+		rtvdesc.Format = GetRTVFormatD3D11(format);
 		rtvdesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 		rtvdesc.Texture2D.MipSlice = 0;
 
@@ -383,27 +464,18 @@ bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 height,
 			Shutdown();
 			return false;
 		}
+	}
 
-		DXGI_FORMAT dxgiNonSrgbFormat = dxgiFormat;
+	if ((usage & VDTUsage::UnorderedAccess) != VDTUsage::None) {
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavdesc {};
+		uavdesc.Format = dxgiFormat;
+		uavdesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		uavdesc.Texture2D.MipSlice = 0;
 
-		// if this is an inherently sRGB based format, create a second render target view
-		// for non-sRGB pass through writes
-		if (dxgiNonSrgbFormat == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
-			dxgiNonSrgbFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
-		else if (dxgiNonSrgbFormat == DXGI_FORMAT_B8G8R8X8_UNORM_SRGB)
-			dxgiNonSrgbFormat = DXGI_FORMAT_B8G8R8X8_UNORM;
-		else if (dxgiNonSrgbFormat == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
-			dxgiNonSrgbFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-
-		if (dxgiNonSrgbFormat != dxgiFormat)
-		{
-			rtvdesc.Format = dxgiNonSrgbFormat;
-
-			hr = dev->CreateRenderTargetView(mpTexture, &rtvdesc, &mpRTViewNoSrgb);
-			if (FAILED(hr)) {
-				Shutdown();
-				return false;
-			}
+		hr = dev->CreateUnorderedAccessView(mpTexture, &uavdesc, ~mUAView.mpUAV);
+		if (FAILED(hr)) {
+			Shutdown();
+			return false;
 		}
 	}
 
@@ -412,7 +484,7 @@ bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 height,
 	return SUCCEEDED(hr);
 }
 
-bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, IVDTTexture *parentTexture, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, bool rt, bool onlyMip, bool forceSRGB) {
+bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, IVDTTexture *parentTexture, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, VDTUsage usage, bool onlyMip, bool forceSRGB) {
 	D3D11_TEXTURE2D_DESC desc = {};
 
 	tex->GetDesc(&desc);
@@ -426,45 +498,67 @@ bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, IVDTTexture *parentTexture, 
 	mDesc.mHeight = desc.Height;
 	mDesc.mFormat = GetSurfaceFormatFromD3D11(desc.Format);
 
-	if (rt) {
+	HRESULT hr;
+	if ((usage & VDTUsage::Render) != VDTUsage::None) {
 		D3D11_RENDER_TARGET_VIEW_DESC rtvdesc = {};
-		rtvdesc.Format = desc.Format;
+		rtvdesc.Format = GetRTVFormatD3D11(mDesc.mFormat);
 
-		if (forceSRGB) {
-			switch(rtvdesc.Format) {
-				case DXGI_FORMAT_R8G8B8A8_UNORM:
-					rtvdesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-					break;
-
-				case DXGI_FORMAT_B8G8R8A8_UNORM:
-					rtvdesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
-					break;
-
-				case DXGI_FORMAT_B8G8R8X8_UNORM:
-					rtvdesc.Format = DXGI_FORMAT_B8G8R8X8_UNORM_SRGB;
-					break;
-			}
-		}
+		if (forceSRGB)
+			rtvdesc.Format = GetDXGISRGBFormat(rtvdesc.Format);
 
 		rtvdesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 		rtvdesc.Texture2D.MipSlice = mipLevel;
 
-		HRESULT hr = parent->GetDeviceD3D11()->CreateRenderTargetView(tex, &rtvdesc, &mpRTView);
-		if (FAILED(hr))
+		hr = parent->GetDeviceD3D11()->CreateRenderTargetView(tex, &rtvdesc, &mpRTView);
+		if (FAILED(hr)) {
+			VDFAIL("RTV creation failed");
 			return false;
-	} else if (texsys) {
+		}
+
+		if (forceSRGB) {
+			DXGI_FORMAT nonSRGBFormat = GetDXGINonSRGBFormat(rtvdesc.Format);
+
+			if (nonSRGBFormat != rtvdesc.Format) {
+				rtvdesc.Format = nonSRGBFormat;
+
+				hr = parent->GetDeviceD3D11()->CreateRenderTargetView(tex, &rtvdesc, &mpRTViewNoSrgb);
+				if (FAILED(hr)) {
+					VDFAIL("sRGB RTV creation failed");
+					return false;
+				}
+			}
+		}
+	}
+	
+	if (texsys) {
 		ID3D11DeviceContext *devctx = parent->GetDeviceContextD3D11();
 
 		D3D11_MAPPED_SUBRESOURCE info;
 		HRESULT hr = devctx->Map(texsys, mMipLevel, D3D11_MAP_WRITE, 0, &info);
-		if (FAILED(hr))
+		if (FAILED(hr)) {
+			VDFAIL("Init map creation failed");
 			return false;
+		}
 
 		const uint32 bpr = VDTGetBytesPerBlockRow(mDesc.mFormat, mDesc.mWidth);
 		const uint32 bh = VDTGetNumBlockRows(mDesc.mFormat, mDesc.mHeight);
 		VDMemset8Rect(info.pData, info.RowPitch, 0, bpr, bh);
 
 		devctx->Unmap(texsys, mMipLevel);
+	}
+
+	if ((usage & VDTUsage::UnorderedAccess) != VDTUsage::None) {
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavdesc {};
+		uavdesc.Format = desc.Format;
+		uavdesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		uavdesc.Texture2D.MipSlice = 0;
+
+		HRESULT hr = parent->GetDeviceD3D11()->CreateUnorderedAccessView(tex, &uavdesc, ~mUAView.mpUAV);
+		if (FAILED(hr)) {
+			VDFAIL("UAV creation failed");
+			Shutdown();
+			return false;
+		}
 	}
 
 	parent->AddResource(this);
@@ -481,6 +575,8 @@ bool VDTSurfaceD3D11::Init(VDTContextD3D11 *parent, IVDTTexture *parentTexture, 
 void VDTSurfaceD3D11::Shutdown() {
 	if (mpParent)
 		static_cast<VDTContextD3D11 *>(mpParent)->UnsetRenderTarget(this);
+
+	mUAView.mpUAV = nullptr;
 
 	vdsaferelease <<= mpRTView, mpRTViewNoSrgb, mpTextureSys, mpTexture;
 
@@ -642,7 +738,18 @@ bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 heigh
 	desc.SampleDesc.Count = 1;
 	desc.SampleDesc.Quality = 0;
 	desc.Usage = initData ? D3D11_USAGE_IMMUTABLE : D3D11_USAGE_DEFAULT;
-	desc.BindFlags = usage == kVDTUsage_Render ? D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE : D3D11_BIND_SHADER_RESOURCE;
+
+	desc.BindFlags = 0;
+	
+	if ((usage & VDTUsage::Render) != VDTUsage::None)
+		desc.BindFlags |= D3D11_BIND_RENDER_TARGET;
+	
+	if ((usage & VDTUsage::Shader) != VDTUsage::None)
+		desc.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+
+	if ((usage & VDTUsage::UnorderedAccess) != VDTUsage::None)
+		desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+
 	desc.CPUAccessFlags = 0;
     desc.MiscFlags = 0;
 
@@ -664,33 +771,49 @@ bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 heigh
 	HRESULT hr = dev->CreateTexture2D(&desc, initData ? subResData.data() : NULL, &mpTexture);
 	
 	if (FAILED(hr)) {
-		VDASSERT(hr != E_INVALIDARG);
+		VDFAIL("Texture creation failed");
+		Shutdown();
 		return false;
 	}
 
-	if (!initData && usage != kVDTUsage_Render) {
+	if (!initData && !(usage & VDTUsage::Render)) {
 		desc.Usage = D3D11_USAGE_STAGING;
 		desc.BindFlags = 0;
 		desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
 		hr = dev->CreateTexture2D(&desc, NULL, &mpTextureSys);
 
-		if (FAILED(hr))
+		if (FAILED(hr)) {
+			VDFAIL("Staging texture creation failed");
+			Shutdown();
 			return false;
+		}
 	}
 
-	hr = dev->CreateShaderResourceView(mpTexture, NULL, &mpShaderResView);
+	if ((usage & VDTUsage::Shader) != VDTUsage::None) {
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvdesc {};
+		srvdesc.Format = GetSRVFormatD3D11(format);
+		srvdesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvdesc.Texture2D.MostDetailedMip = 0;
+		srvdesc.Texture2D.MipLevels = -1;
 
-	if (FAILED(hr)) {
-		Shutdown();
-		return false;
+		hr = dev->CreateShaderResourceView(mpTexture, &srvdesc, &mpShaderResView);
+		if (FAILED(hr)) {
+			VDFAIL("CreateTexture failed");
+			Shutdown();
+			return false;
+		}
 	}
 
 	mMipmaps.reserve(mipcount);
 
 	for(uint32 i=0; i<mipcount; ++i) {
-		vdrefptr<VDTSurfaceD3D11> surf(new VDTSurfaceD3D11);
+		vdrefptr<VDTSurfaceD3D11> surf(new VDTSurfaceD3D11(*this));
 
-		surf->Init(parent, this, mpTexture, mpTextureSys, i, usage == kVDTUsage_Render, mipcount == 1, false);
+		if (!surf->Init(parent, this, mpTexture, mpTextureSys, i, usage, mipcount == 1, false)) {
+			VDFAIL("Surface initialization failed");
+			Shutdown();
+			return false;
+		}
 
 		mMipmaps.push_back(surf.release());
 	}
@@ -707,7 +830,18 @@ bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D
 	mWidth = desc.Width;
 	mHeight = desc.Height;
 	mMipCount = desc.MipLevels;
-	mUsage = (desc.BindFlags & D3D11_BIND_RENDER_TARGET) ? kVDTUsage_Render : kVDTUsage_Default;
+
+	mUsage = VDTUsage::None;
+
+	if (desc.BindFlags & D3D11_BIND_SHADER_RESOURCE)
+		mUsage |= VDTUsage::Shader;
+
+	if (desc.BindFlags & D3D11_BIND_RENDER_TARGET)
+		mUsage |= VDTUsage::Render;
+
+	if (desc.BindFlags & D3D11_BIND_UNORDERED_ACCESS)
+		mUsage |= VDTUsage::UnorderedAccess;
+
 	mFormat = GetSurfaceFormatFromD3D11(desc.Format);
 
 	mpTexture = tex;
@@ -722,7 +856,13 @@ bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D
 		return false;
 
 	if (desc.BindFlags & D3D11_BIND_SHADER_RESOURCE) {
-		HRESULT hr = dev->CreateShaderResourceView(mpTexture, NULL, &mpShaderResView);
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvdesc {};
+		srvdesc.Format = GetSRVFormatD3D11(mFormat);
+		srvdesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvdesc.Texture2D.MostDetailedMip = 0;
+		srvdesc.Texture2D.MipLevels = -1;
+
+		HRESULT hr = dev->CreateShaderResourceView(mpTexture, &srvdesc, &mpShaderResView);
 
 		if (FAILED(hr)) {
 			Shutdown();
@@ -733,9 +873,9 @@ bool VDTTexture2DD3D11::Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D
 	mMipmaps.reserve(mMipCount);
 
 	for(uint32 i=0; i<mMipCount; ++i) {
-		vdrefptr<VDTSurfaceD3D11> surf(new VDTSurfaceD3D11);
+		vdrefptr<VDTSurfaceD3D11> surf(new VDTSurfaceD3D11(*this));
 
-		if (!surf->Init(parent, this, mpTexture, mpTextureSys, i, mUsage == kVDTUsage_Render, mMipCount == 1, forceSRGB)) {
+		if (!surf->Init(parent, this, mpTexture, mpTextureSys, i, mUsage, mMipCount == 1, forceSRGB)) {
 			Shutdown();
 			return false;
 		}
@@ -1139,6 +1279,41 @@ bool VDTFragmentProgramD3D11::Restore() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+VDTComputeProgramD3D11::VDTComputeProgramD3D11() {
+}
+
+VDTComputeProgramD3D11::~VDTComputeProgramD3D11() {
+	Shutdown();
+}
+
+bool VDTComputeProgramD3D11::Init(VDTContextD3D11 *parent, VDTProgramFormat format, const void *data, uint32 size) {
+	HRESULT hr = parent->GetDeviceD3D11()->CreateComputeShader(data, size, NULL, &mpCS);
+
+	if (FAILED(hr))
+		return false;
+
+	parent->AddResource(this);
+	return true;
+}
+
+void VDTComputeProgramD3D11::Shutdown() {
+	if (mpCS) {
+		if (mpParent)
+			static_cast<VDTContextD3D11 *>(mpParent)->UnsetComputeProgram(this);
+
+		mpCS->Release();
+		mpCS = NULL;
+	}
+
+	VDTResourceD3D11::Shutdown();
+}
+
+bool VDTComputeProgramD3D11::Restore() {
+	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 VDTBlendStateD3D11::VDTBlendStateD3D11()
 	: mpBlendState(NULL)
 {
@@ -1444,7 +1619,16 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 		if (desc.mbSRGB)
 			useSrgb = true;
 
-		scdesc.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+		// We generally like to use B8G8R8A8 for most things, but R8G8B8A8 is
+		// needed for widest compatibility with compute. UAV typed load/store
+		// support for B8G8R8A8 is an optional feature drivers can expose
+		// starting with Windows 10 RS2.
+		//
+		// Note that while we want an sRGB format here, we don't want to create
+		// the backbuffer using the sRGB format. There is a special exception
+		// for using sRGB views on a non-sRGB backbuffer, and using the non-
+		// sRGB format is required for flip present.
+		scdesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	}
 
 	scdesc.BufferDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
@@ -1452,6 +1636,9 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 	scdesc.SampleDesc.Count = 1;
 	scdesc.SampleDesc.Quality = 0;
 	scdesc.BufferUsage = DXGI_USAGE_BACK_BUFFER | DXGI_USAGE_RENDER_TARGET_OUTPUT;
+
+	if (parent->GetDeviceCaps().mbComputeSM5)
+		scdesc.BufferUsage |= DXGI_USAGE_UNORDERED_ACCESS;
 
 	// This is counter-intuitive, but three buffers are required for DXGI_PRESENT_RESTART to work:
 	// one for the front buffer, one for the queued buffer, and one for the buffer being presented.
@@ -2569,6 +2756,7 @@ void VDTSwapChainD3D11::ThreadRun() {
 struct VDTContextD3D11::PrivateData {
 	bool mbMinPrecisionSupportedPS = false;
 	bool mbMinPrecisionSupportedOther = false;
+	D3D_FEATURE_LEVEL mFeatureLevel {};
 
 	VDTFenceManagerD3D11 mFenceManager;
 };
@@ -2581,30 +2769,7 @@ const uint8 VDTContextD3D11::kConstLookup[] = {
 	4, 4, 4, 4, 4, 4, 4, 4,	// 129-256
 };
 
-VDTContextD3D11::VDTContextD3D11()
-	: mRefCount(0)
-	, mpData(NULL)
-	, mpD3DHolder(NULL)
-	, mpDXGIFactory(NULL)
-	, mpD3DDevice(NULL)
-	, mpD3DDeviceContext(NULL)
-	, mpSwapChain(NULL)
-	, mpCurrentRT(NULL)
-	, mpCurrentVB(NULL)
-	, mCurrentVBOffset(NULL)
-	, mCurrentVBStride(NULL)
-	, mpCurrentIB(NULL)
-	, mpCurrentVP(NULL)
-	, mpCurrentFP(NULL)
-	, mpCurrentVF(NULL)
-	, mpCurrentBS(NULL)
-	, mpCurrentRS(NULL)
-	, mpDefaultBS(NULL)
-	, mpDefaultRS(NULL)
-	, mpDefaultSS(NULL)
-{
-	memset(mpCurrentSamplerStates, 0, sizeof mpCurrentSamplerStates);
-	memset(mpCurrentTextures, 0, sizeof mpCurrentTextures);
+VDTContextD3D11::VDTContextD3D11() {
 }
 
 VDTContextD3D11::~VDTContextD3D11() {
@@ -2654,12 +2819,15 @@ bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGI
 
 	mCaps.mDeviceDescription = adapterDesc.Description;
 
-	switch(dev->GetFeatureLevel()) {
+	mpData->mFeatureLevel = dev->GetFeatureLevel();
+	switch(mpData->mFeatureLevel) {
+		case D3D_FEATURE_LEVEL_11_1:
 		case D3D_FEATURE_LEVEL_11_0:
 			mCaps.mMaxTextureWidth = 16384;
 			mCaps.mMaxTextureHeight = 16384;
 			mCaps.mbNonPow2 = true;
 			mCaps.mbNonPow2Conditional = true;
+			mCaps.mbComputeSM5 = true;
 			break;
 
 		case D3D_FEATURE_LEVEL_10_1:
@@ -2736,7 +2904,7 @@ bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGI
 	mpCurrentRT = NULL;
 
 	for(int i=0; i<16; ++i)
-		mpCurrentSamplerStates[i] = mpDefaultSS;
+		mpCurrentPsSamplerStates[i] = mpDefaultSS;
 
 	D3D11_BUFFER_DESC bufdesc = {};
 	for(uint32 i=0; i<kConstMaxShift; ++i) {
@@ -2746,12 +2914,22 @@ bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGI
 		bufdesc.CPUAccessFlags = 0;
 		bufdesc.MiscFlags = 0;
 		bufdesc.StructureByteStride = 0;
-		mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpVSConstBuffers[i]);
-		mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpPSConstBuffers[i]);
+		HRESULT hr = mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpVSConstBuffers[i]);
+		if (FAILED(hr))
+			return false;
+
+		hr = mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpPSConstBuffers[i]);
+		if (FAILED(hr))
+			return false;
+
+		hr = mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpCSConstBuffers[i]);
+		if (FAILED(hr))
+			return false;
 	}
 
 	mpD3DDeviceContext->VSSetConstantBuffers(0, 1, &mpVSConstBuffers[0]);
 	mpD3DDeviceContext->PSSetConstantBuffers(0, 1, &mpPSConstBuffers[0]);
+	mpD3DDeviceContext->CSSetConstantBuffers(0, 1, &mpCSConstBuffers[0]);
 
 	SetBlendState(NULL);
 	SetRasterizerState(NULL);
@@ -2781,6 +2959,7 @@ void VDTContextD3D11::Shutdown() {
 	vdsaferelease <<= mpDefaultSS, mpDefaultRS, mpDefaultBS;
 	vdsaferelease <<= mpPSConstBuffers;
 	vdsaferelease <<= mpVSConstBuffers;
+	vdsaferelease <<= mpCSConstBuffers;
 
 	mpData->mFenceManager.Shutdown();
 
@@ -2804,8 +2983,27 @@ bool VDTContextD3D11::IsFormatSupportedTexture2D(VDTFormat format) {
 	DXGI_FORMAT dxgiFormat = GetSurfaceFormatD3D11(format);
 	UINT support = 0;
 
+	if (dxgiFormat == DXGI_FORMAT_UNKNOWN)
+		return false;
+
 	HRESULT hr = mpD3DDevice->CheckFormatSupport(dxgiFormat, &support);
 	return SUCCEEDED(hr) && (support & D3D11_FORMAT_SUPPORT_TEXTURE2D);
+}
+
+bool VDTContextD3D11::IsFormatSupportedRenderTarget2D(VDTFormat format) {
+	DXGI_FORMAT dxgiFormat = GetSurfaceFormatD3D11(format);
+	UINT support = 0;
+
+	if (dxgiFormat == DXGI_FORMAT_UNKNOWN)
+		return false;
+
+	HRESULT hr = mpD3DDevice->CheckFormatSupport(dxgiFormat, &support);
+	if (FAILED(hr))
+		return false;
+
+	constexpr UINT neededFlags = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET;
+
+	return (support & neededFlags) == neededFlags;
 }
 
 bool VDTContextD3D11::IsMonitorHDREnabled(void *monitor, bool& systemSupport) {
@@ -2874,19 +3072,30 @@ bool VDTContextD3D11::CreateVertexProgram(VDTProgramFormat format, VDTData data,
 	vdrefptr<VDTVertexProgramD3D11> vp(new VDTVertexProgramD3D11);
 
 	if (format == kVDTPF_MultiTarget) {
-		static const uint32 kVSTargets[]={
-			0x1b39ae13 ^ 1,	// vs_4_0_level_9_1 (min precision)
-			0x1b39ae11 ^ 1,	// vs_4_0_level_9_3 (min precision)
-			0x62d902b4 ^ 1,	// vs_4_0 (min precision)
+		uint32 vsTargets[7] {};
+		uint32 *p = vsTargets;
 
-			0x1b39ae13,		// vs_4_0_level_9_1
-			0x1b39ae11,		// vs_4_0_level_9_3
-			0x62d902b4,		// vs_4_0
-			0
-		};
+		if (mpData->mFeatureLevel >= D3D_FEATURE_LEVEL_10_0) {
+			if (mpData->mbMinPrecisionSupportedOther)
+				*p++ = VDHashString32IC("vs_4_0") ^ 1;
 
+			*p++ = VDHashString32IC("vs_4_0");
+		}
 
-		if (!VDTExtractMultiTargetProgram(data, mpData->mbMinPrecisionSupportedOther ? kVSTargets : kVSTargets + 3, data))
+		if (mpData->mFeatureLevel >= D3D_FEATURE_LEVEL_9_3) {
+			if (mpData->mbMinPrecisionSupportedOther)
+				*p++ = VDHashString32IC("vs_4_0_level_9_3") ^ 1;
+
+			*p++ = VDHashString32IC("vs_4_0_level_9_3");
+		}
+
+		if (mpData->mbMinPrecisionSupportedOther)
+			*p++ = VDHashString32IC("vs_4_0_level_9_1") ^ 1;
+
+		*p++ = VDHashString32IC("vs_4_0_level_9_1");
+		*p = 0;
+
+		if (!VDTExtractMultiTargetProgram(data, vsTargets, data))
 			return false;
 
 		format = kVDTPF_D3D11ByteCode;
@@ -2904,18 +3113,30 @@ bool VDTContextD3D11::CreateFragmentProgram(VDTProgramFormat format, VDTData dat
 	vdrefptr<VDTFragmentProgramD3D11> fp(new VDTFragmentProgramD3D11);
 
 	if (format == kVDTPF_MultiTarget) {
-		static const uint32 kPSTargets[]={
-			0x301bfb89 ^ 1,	// ps_4_0_level_9_1
-			0x301bfb8b ^ 1,	// ps_4_0_level_9_3
-			0x4657d92a ^ 1,	// ps_4_0
+		uint32 psTargets[7] {};
+		uint32 *p = psTargets;
 
-			0x301bfb89,		// ps_4_0_level_9_1
-			0x301bfb8b,		// ps_4_0_level_9_3
-			0x4657d92a,		// ps_4_0
-			0
-		};
+		if (mpData->mFeatureLevel >= D3D_FEATURE_LEVEL_10_0) {
+			if (mpData->mbMinPrecisionSupportedPS)
+				*p++ = VDHashString32IC("ps_4_0") ^ 1;
 
-		if (!VDTExtractMultiTargetProgram(data, mpData->mbMinPrecisionSupportedPS ? kPSTargets : kPSTargets + 3, data))
+			*p++ = VDHashString32IC("ps_4_0");
+		}
+
+		if (mpData->mFeatureLevel >= D3D_FEATURE_LEVEL_9_3) {
+			if (mpData->mbMinPrecisionSupportedPS)
+				*p++ = VDHashString32IC("ps_4_0_level_9_3") ^ 1;
+
+			*p++ = VDHashString32IC("ps_4_0_level_9_3");
+		}
+
+		if (mpData->mbMinPrecisionSupportedPS)
+			*p++ = VDHashString32IC("ps_4_0_level_9_1") ^ 1;
+
+		*p++ = VDHashString32IC("ps_4_0_level_9_1");
+		*p = 0;
+
+		if (!VDTExtractMultiTargetProgram(data, psTargets, data))
 			return false;
 	} else if (format != kVDTPF_D3D11ByteCode)
 		return false;
@@ -2924,6 +3145,28 @@ bool VDTContextD3D11::CreateFragmentProgram(VDTProgramFormat format, VDTData dat
 		return false;
 
 	*program = fp.release();
+	return true;
+}
+
+bool VDTContextD3D11::CreateComputeProgram(VDTProgramFormat format, VDTData data, IVDTComputeProgram **program) {
+	vdrefptr<VDTComputeProgramD3D11> cp(new VDTComputeProgramD3D11);
+
+	if (format == kVDTPF_MultiTarget) {
+		static const uint32 kCSTargets[]={
+			VDHashString32IC("cs_5_0") ^ 1,
+			VDHashString32IC("cs_5_0"),
+			0
+		};
+
+		if (!VDTExtractMultiTargetProgram(data, mpData->mbMinPrecisionSupportedPS ? kCSTargets : kCSTargets + 1, data))
+			return false;
+	} else if (format != kVDTPF_D3D11ByteCode)
+		return false;
+
+	if (!cp->Init(this, format, data.mpData, data.mLength))
+		return false;
+
+	*program = cp.release();
 	return true;
 }
 
@@ -3062,9 +3305,6 @@ void VDTContextD3D11::SetIndexStream(IVDTIndexBuffer *buffer) {
 void VDTContextD3D11::SetRenderTarget(uint32 index, IVDTSurface *surface, bool bypassConversion) {
 	VDASSERT(index == 0);
 
-	if (index == 0 && !surface && mpSwapChain)
-		surface = mpSwapChain->GetBackBuffer();
-
 	if (mpCurrentRT == surface && mbCurrentRTBypass == bypassConversion)
 		return;
 
@@ -3077,10 +3317,25 @@ void VDTContextD3D11::SetRenderTarget(uint32 index, IVDTSurface *surface, bool b
 		if (parentTex) {
 			IVDTTexture *nulltex = nullptr;
 
-			for(int i=0; i<(int)vdcountof(mpCurrentTextures); ++i) {
-				if (mpCurrentTextures[i] == parentTex)
+			for(int i=0; i<(int)vdcountof(mpCurrentPsTextures); ++i) {
+				if (mpCurrentPsTextures[i] == parentTex)
 					this->SetTextures(i, 1, &nulltex);
 			}
+
+			for(int i=0; i<(int)vdcountof(mpCurrentCsTextures); ++i) {
+				if (mpCurrentCsTextures[i] == parentTex)
+					this->CsSetTextures(i, 1, &nulltex);
+			}
+
+			for(int i=0; i<(int)vdcountof(mpCurrentCsUavs); ++i) {
+				VDTUnorderedAccessViewD3D11 *view = static_cast<VDTUnorderedAccessViewD3D11 *>(mpCurrentCsUavs[i]);
+
+				if (view && &view->mResource == parentTex) {
+					IVDTUnorderedAccessView *nulluav = nullptr;
+					this->CsSetUnorderedAccessViews(i, 1, &nulluav);
+				}
+			}
+
 		}
 	}
 
@@ -3118,8 +3373,8 @@ void VDTContextD3D11::SetSamplerStates(uint32 baseIndex, uint32 count, IVDTSampl
 		if (!state)
 			state = mpDefaultSS;
 
-		if (mpCurrentSamplerStates[stage] != state) {
-			mpCurrentSamplerStates[stage] = state;
+		if (mpCurrentPsSamplerStates[stage] != state) {
+			mpCurrentPsSamplerStates[stage] = state;
 			
 			ID3D11SamplerState *d3dss = state->mpSamplerState;
 			mpD3DDeviceContext->PSSetSamplers(stage, 1, &d3dss);
@@ -3134,8 +3389,8 @@ void VDTContextD3D11::SetTextures(uint32 baseIndex, uint32 count, IVDTTexture *c
 		uint32 stage = baseIndex + i;
 		IVDTTexture *tex = textures[i];
 
-		if (mpCurrentTextures[stage] != tex) {
-			mpCurrentTextures[stage] = tex;
+		if (mpCurrentPsTextures[stage] != tex) {
+			mpCurrentPsTextures[stage] = tex;
 
 			ID3D11ShaderResourceView *pSRV = tex ? (ID3D11ShaderResourceView *)tex->AsInterface(VDTTextureD3D11::kTypeD3DShaderResView) : NULL;
 			mpD3DDeviceContext->PSSetShaderResources(stage, 1, &pSRV);
@@ -3145,8 +3400,8 @@ void VDTContextD3D11::SetTextures(uint32 baseIndex, uint32 count, IVDTTexture *c
 
 void VDTContextD3D11::ClearTexturesStartingAt(uint32 baseIndex) {
 	for(uint32 i = baseIndex; i < 16; ++i) {
-		if (mpCurrentTextures[i]) {
-			mpCurrentTextures[i] = nullptr;
+		if (mpCurrentPsTextures[i]) {
+			mpCurrentPsTextures[i] = nullptr;
 
 			ID3D11ShaderResourceView *srv = nullptr;
 			mpD3DDeviceContext->PSSetShaderResources(i, 1, &srv);
@@ -3229,6 +3484,11 @@ void VDTContextD3D11::SetFragmentProgramConstF(uint32 baseIndex, uint32 count, c
 }
 
 void VDTContextD3D11::Clear(VDTClearFlags clearFlags, uint32 color, float depth, uint32 stencil) {
+	if (!mpCurrentRT || !mpCurrentRT->mpRTView) {
+		VDFAIL("Clear() called with no render target bound");
+		return;
+	}
+
 	if (clearFlags & kVDTClear_Color) {
 		float color32[4];
 
@@ -3309,6 +3569,109 @@ void VDTContextD3D11::DrawIndexedPrimitive(VDTPrimitiveType type, uint32 baseVer
 	mpD3DDeviceContext->DrawIndexed(indexCount, startIndex, baseVertexIndex);
 }
 
+void VDTContextD3D11::CsSetProgram(IVDTComputeProgram *program) {
+	if (program == mpCurrentCP)
+		return;
+
+	mpCurrentCP = static_cast<VDTComputeProgramD3D11 *>(program);
+
+	mpD3DDeviceContext->CSSetShader(mpCurrentCP ? mpCurrentCP->mpCS : NULL, NULL, 0);
+}
+
+void VDTContextD3D11::CsSetConstCount(uint32 count) {
+	uint32 shift = kConstLookup[(count + 15) >> 4];
+
+	if (mCSConstShift != shift) {
+		mCSConstShift = shift;
+
+		mpD3DDeviceContext->CSSetConstantBuffers(0, 1, &mpCSConstBuffers[shift]);
+		mbCSConstDirty = true;
+	}
+}
+
+void VDTContextD3D11::CsSetConstF(uint32 baseIndex, uint32 count, const float *data) {
+	memcpy(&mCSConsts[baseIndex][0], data, count * 16);
+	mbCSConstDirty = true;
+}
+
+void VDTContextD3D11::CsSetSamplers(uint32 baseIndex, uint32 count, IVDTSamplerState *const *states) {
+	VDASSERT(baseIndex <= 16 && 16 - baseIndex >= count);
+
+	for(uint32 i=0; i<count; ++i) {
+		uint32 stage = baseIndex + i;
+		VDTSamplerStateD3D11 *state = static_cast<VDTSamplerStateD3D11 *>(states[i]);
+		if (!state)
+			state = mpDefaultSS;
+
+		if (mpCurrentCsSamplerStates[stage] != state) {
+			mpCurrentCsSamplerStates[stage] = state;
+			
+			ID3D11SamplerState *d3dss = state->mpSamplerState;
+			mpD3DDeviceContext->CSSetSamplers(stage, 1, &d3dss);
+		}
+	}
+}
+
+void VDTContextD3D11::CsSetTextures(uint32 baseIndex, uint32 count, IVDTTexture *const *textures) {
+	VDASSERT(baseIndex <= 16 && 16 - baseIndex >= count);
+
+	for(uint32 i=0; i<count; ++i) {
+		uint32 stage = baseIndex + i;
+		IVDTTexture *tex = textures[i];
+
+		if (mpCurrentCsTextures[stage] != tex) {
+			mpCurrentCsTextures[stage] = tex;
+
+			ID3D11ShaderResourceView *pSRV = tex ? (ID3D11ShaderResourceView *)tex->AsInterface(VDTTextureD3D11::kTypeD3DShaderResView) : NULL;
+			mpD3DDeviceContext->CSSetShaderResources(stage, 1, &pSRV);
+		}
+	}
+}
+
+void VDTContextD3D11::CsClearTexturesStartingAt(uint32 baseIndex) {
+	for(uint32 i = baseIndex; i < 16; ++i) {
+		if (mpCurrentCsTextures[i]) {
+			mpCurrentCsTextures[i] = nullptr;
+
+			ID3D11ShaderResourceView *srv = nullptr;
+			mpD3DDeviceContext->CSSetShaderResources(i, 1, &srv);
+		}
+	}
+}
+
+void VDTContextD3D11::CsSetUnorderedAccessViews(uint32 baseIndex, uint32 count, IVDTUnorderedAccessView *const *views) {
+	for(uint32 i = 0; i < count; ++i) {
+		VDTUnorderedAccessViewD3D11 *view = static_cast<VDTUnorderedAccessViewD3D11 *>(views[i]);
+
+		if (mpCurrentCsUavs[baseIndex + i] != view) {
+			mpCurrentCsUavs[baseIndex + i] = view;
+
+			ID3D11UnorderedAccessView *uav = view ? view->mpUAV : nullptr;
+			UINT counter = -1;
+
+			mpD3DDeviceContext->CSSetUnorderedAccessViews(baseIndex + i, 1, &uav, &counter);
+		}
+	}
+}
+
+void VDTContextD3D11::CsClearUnorderedAccessViewsStartingAt(uint32 baseIndex) {
+	for(uint32 i = baseIndex; i < 8; ++i) {
+		if (mpCurrentCsUavs[i]) {
+			mpCurrentCsUavs[i] = nullptr;
+
+			ID3D11UnorderedAccessView *uav = nullptr;
+			UINT counter = -1;
+			mpD3DDeviceContext->CSSetUnorderedAccessViews(i, 1, &uav, &counter);
+		}
+	}
+}
+
+void VDTContextD3D11::CsDispatch(uint32 x, uint32 y, uint32 z) {
+	CsUpdateConstants();
+
+	mpD3DDeviceContext->Dispatch(x, y, z);
+}
+
 uint32 VDTContextD3D11::InsertFence() {
 	return mpData->mFenceManager.InsertFence();
 }
@@ -3379,6 +3742,11 @@ void VDTContextD3D11::UnsetFragmentProgram(IVDTFragmentProgram *program) {
 		SetFragmentProgram(NULL);
 }
 
+void VDTContextD3D11::UnsetComputeProgram(IVDTComputeProgram *program) {
+	if (mpCurrentCP == program)
+		CsSetProgram(nullptr);
+}
+
 void VDTContextD3D11::UnsetVertexBuffer(IVDTVertexBuffer *buffer) {
 	if (mpCurrentVB == buffer)
 		SetVertexStream(0, NULL, 0, 0);
@@ -3409,7 +3777,7 @@ void VDTContextD3D11::UnsetSamplerState(IVDTSamplerState *state) {
 		return;
 
 	for(int i=0; i<16; ++i) {
-		if (mpCurrentSamplerStates[i] == state) {
+		if (mpCurrentPsSamplerStates[i] == state) {
 			IVDTSamplerState *ssnull = NULL;
 			SetSamplerStates(i, 1, &ssnull);
 		}
@@ -3418,9 +3786,25 @@ void VDTContextD3D11::UnsetSamplerState(IVDTSamplerState *state) {
 
 void VDTContextD3D11::UnsetTexture(IVDTTexture *tex) {
 	for(int i=0; i<16; ++i) {
-		if (mpCurrentTextures[i] == tex) {
+		if (mpCurrentPsTextures[i] == tex) {
 			IVDTTexture *tex = NULL;
 			SetTextures(i, 1, &tex);
+		}
+	}
+
+	for(int i=0; i<16; ++i) {
+		if (mpCurrentCsTextures[i] == tex) {
+			IVDTTexture *tex = NULL;
+			CsSetTextures(i, 1, &tex);
+		}
+	}
+	
+	for(int i=0; i<8; ++i) {
+		VDTUnorderedAccessViewD3D11 *uav = mpCurrentCsUavs[i];
+
+		if (uav && &uav->mResource == tex) {
+			IVDTUnorderedAccessView *nullUav = nullptr;
+			CsSetUnorderedAccessViews(i, 1, &nullUav);
 		}
 	}
 }
@@ -3432,13 +3816,21 @@ void VDTContextD3D11::UpdateConstants() {
 	if (mbVSConstDirty) {
 		mbVSConstDirty = false;
 
-		mpD3DDeviceContext->UpdateSubresource(mpVSConstBuffers[mVSConstShift], 0, nullptr, mVSConsts, 0, 0    );
+		mpD3DDeviceContext->UpdateSubresource(mpVSConstBuffers[mVSConstShift], 0, nullptr, mVSConsts, 0, 0);
 	}
 
 	if (mbPSConstDirty) {
 		mbPSConstDirty = false;
 
 		mpD3DDeviceContext->UpdateSubresource(mpPSConstBuffers[mPSConstShift], 0, nullptr, mPSConsts, 0, 0);
+	}
+}
+
+void VDTContextD3D11::CsUpdateConstants() {
+	if (mbCSConstDirty) {
+		mbCSConstDirty = false;
+
+		mpD3DDeviceContext->UpdateSubresource(mpCSConstBuffers[mCSConstShift], 0, nullptr, mCSConsts, 0, 0);
 	}
 }
 

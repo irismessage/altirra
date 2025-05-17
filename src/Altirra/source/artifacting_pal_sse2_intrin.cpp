@@ -623,8 +623,10 @@ void ATArtifactPAL32_SSE2(void *dst, void *delayLine, uint32 n, bool compressExt
 		ATArtifactPAL32_SSE2<false>(dst, delayLine, n);
 }
 
-void ATArtifactPALFinalMono_SSE2(uint32 *dst, const uint32 *ybuf, uint32 n, const vdfloat3& monoColor) {
+void ATArtifactPALFinalMono_SSE2(uint32 *dst0, const uint32 *ybuf, uint32 n, const uint32 palette0[256]) {
 	const __m128i *VDRESTRICT ysrc = (const __m128i *)ybuf;
+	const uint32 *VDRESTRICT palette = palette0;
+	uint32 *VDRESTRICT dst = dst0;
 
 	n >>= 2;
 
@@ -634,41 +636,25 @@ void ATArtifactPALFinalMono_SSE2(uint32 *dst, const uint32 *ybuf, uint32 n, cons
 	// for a total right shift of 17 bits. This means that we need to convert our tint color to
 	// a normalized 5.11 fraction.
 
-	__m128i rcoeff = _mm_cvtps_epi32(_mm_set1_ps(monoColor.x * 2048.0f));
-	__m128i gcoeff = _mm_cvtps_epi32(_mm_set1_ps(monoColor.y * 2048.0f));
-	__m128i bcoeff = _mm_cvtps_epi32(_mm_set1_ps(monoColor.z * 2048.0f));
-
-	rcoeff = _mm_packs_epi32(rcoeff, rcoeff);
-	gcoeff = _mm_packs_epi32(gcoeff, gcoeff);
-	bcoeff = _mm_packs_epi32(bcoeff, bcoeff);
-
-	__m128i x1FEw = _mm_set1_epi16(0x1FE);
 	__m128i zero = _mm_setzero_si128();
+	__m128i round = _mm_set1_epi16(0x20);
+	__m128i maxval = _mm_set1_epi16(0xFF);
 
 	for(uint32 i=0; i<n; ++i) {
 		const __m128i y = *ysrc++;
 
-		__m128i r = _mm_avg_epu16(_mm_min_epi16(_mm_max_epi16(_mm_mulhi_epi16(y, rcoeff), zero), x1FEw), zero);
-		__m128i g = _mm_avg_epu16(_mm_min_epi16(_mm_max_epi16(_mm_mulhi_epi16(y, gcoeff), zero), x1FEw), zero);
-		__m128i b = _mm_avg_epu16(_mm_min_epi16(_mm_max_epi16(_mm_mulhi_epi16(y, bcoeff), zero), x1FEw), zero);
+		// convert signed 12.6 to u8
+		const __m128i indices = _mm_min_epi16(_mm_max_epi16(_mm_srai_epi16(_mm_add_epi16(y, round), 6), zero), maxval);
 
-		// interleave red and blue
-		__m128i rb1 = _mm_unpacklo_epi16(b, r);
-		__m128i rb2 = _mm_unpackhi_epi16(b, r);
-
-		// shift green to high byte
-		__m128i gs = _mm_slli_epi16(g, 8);
-
-		// double up green to alpha/green channels
-		__m128i g1 = _mm_unpacklo_epi16(gs, gs);
-		__m128i g2 = _mm_unpackhi_epi16(gs, gs);
-
-		// merge r/b and g
-		__m128i rgb1 = _mm_or_si128(rb1, g1);
-		__m128i rgb2 = _mm_or_si128(rb2, g2);
-
-		_mm_store_si128((__m128i *)dst + 0, rgb1);
-		_mm_store_si128((__m128i *)dst + 1, rgb2);
+		// convert 8 pixels
+		dst[0] = palette[_mm_extract_epi16(indices, 0)];
+		dst[1] = palette[_mm_extract_epi16(indices, 1)];
+		dst[2] = palette[_mm_extract_epi16(indices, 2)];
+		dst[3] = palette[_mm_extract_epi16(indices, 3)];
+		dst[4] = palette[_mm_extract_epi16(indices, 4)];
+		dst[5] = palette[_mm_extract_epi16(indices, 5)];
+		dst[6] = palette[_mm_extract_epi16(indices, 6)];
+		dst[7] = palette[_mm_extract_epi16(indices, 7)];
 		dst += 8;
 	}
 }

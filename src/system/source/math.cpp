@@ -267,6 +267,32 @@ static_assert(VDFloorToInt(+1.5) == 1);
 static_assert(VDFloorToInt(+2.0) == 2);
 static_assert(VDFloorToInt(+2147483647.0) == 0x7FFFFFFF);
 
+static_assert(VDFloorToInt32(-2147483648.0f) == -0x7FFFFFFF - 1);
+static_assert(VDFloorToInt32(-2.0f) == -2);
+static_assert(VDFloorToInt32(-1.5f) == -2);
+static_assert(VDFloorToInt32(-1.0f) == -1);
+static_assert(VDFloorToInt32(-0.5f) == -1);
+static_assert(VDFloorToInt32(0.0f) == 0);
+static_assert(VDFloorToInt32(+0.5f) == 0);
+static_assert(VDFloorToInt32(+1.0f) == 1);
+static_assert(VDFloorToInt32(+1.5f) == 1);
+static_assert(VDFloorToInt32(+2.0f) == 2);
+static_assert(VDFloorToInt32(-0x1000000.0p0f) == -0x1000000);
+static_assert(VDFloorToInt32( 0x0FFFFFF.0p0f) ==  0x0FFFFFF);
+static_assert(VDFloorToInt32(0x7FFFFF80.0p0f) == 0x7FFFFF80);
+
+static_assert(VDFloorToInt32(-2147483648.0) == -0x7FFFFFFF - 1);
+static_assert(VDFloorToInt32(-2.0) == -2);
+static_assert(VDFloorToInt32(-1.5) == -2);
+static_assert(VDFloorToInt32(-1.0) == -1);
+static_assert(VDFloorToInt32(-0.5) == -1);
+static_assert(VDFloorToInt32(0.0) == 0);
+static_assert(VDFloorToInt32(+0.5) == 0);
+static_assert(VDFloorToInt32(+1.0) == 1);
+static_assert(VDFloorToInt32(+1.5) == 1);
+static_assert(VDFloorToInt32(+2.0) == 2);
+static_assert(VDFloorToInt32(+2147483647.0) == 0x7FFFFFFF);
+
 static_assert(VDFloorToInt64(-4294967296.0) == -0x100000000LL);
 static_assert(VDFloorToInt64(-2147483648.0) == -0x80000000LL);
 static_assert(VDFloorToInt64(-2.0) == -2);

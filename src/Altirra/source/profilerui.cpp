@@ -1315,7 +1315,7 @@ void ATUIDialogProfilerBoundaryRule::OnDataExchange(bool write) {
 		try {
 			ATGetDebugger()->EvaluateThrow(s.c_str());
 		} catch(const MyError& e) {
-			FailValidation(IDC_ADDRESS, VDTextAToW(e.c_str()).c_str());
+			FailValidation(IDC_ADDRESS, e.wc_str());
 			return;
 		}
 
@@ -1327,7 +1327,7 @@ void ATUIDialogProfilerBoundaryRule::OnDataExchange(bool write) {
 			try {
 				ATGetDebugger()->EvaluateThrow(t.c_str());
 			} catch(const MyError& e) {
-				FailValidation(IDC_ADDRESS2, VDTextAToW(e.c_str()).c_str());
+				FailValidation(IDC_ADDRESS2, e.wc_str());
 				return;
 			}
 		}

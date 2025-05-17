@@ -28,6 +28,8 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/zip.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/bitmath.h>
+#include <vd2/system/constexpr.h>
 #include <vd2/system/date.h>
 #include <vd2/system/error.h>
 #include <vd2/system/function.h>
@@ -38,6 +40,12 @@
 #elif defined(VD_CPU_ARM64)
 #include <vd2/system/cpuaccel.h>
 #include <intrin.h>
+#include <arm_neon.h>
+
+#if !VD_COMPILER_MSVC
+#include <arm_acle.h>
+#endif
+
 #endif
 
 //#define VDDEBUG_DEFLATE VDDEBUG2
@@ -586,6 +594,7 @@ uint32 VDCRC32Update_CLMUL(uint32 crc, const void *src, size_t len) {
 #endif
 
 #if defined(VD_CPU_ARM64)
+VD_CPU_TARGET("crc")
 uint32 VDCRC32Update_ARM64_CRC32(uint32 crc, const void *src, size_t len) {
 	// The ARM64 version is stupidly simpler than the x64 version because ARM64
 	// has a native instruction to calculate the Ethernet CRC. It has all
@@ -594,7 +603,7 @@ uint32 VDCRC32Update_ARM64_CRC32(uint32 crc, const void *src, size_t len) {
 	// extension, which is common, but technically we still need to do a runtime
 	// check.
 
-	const auto partialUpdate = [](uint32 crc, const void *src, size_t len) -> uint32 {
+	const auto partialUpdate = [](uint32 crc, const void *src, size_t len) VD_CPU_TARGET_LAMBDA("crc") -> uint32 {
 		if (len & 4) {
 			crc = __crc32w(crc, VDReadUnalignedU32(src));
 			src = (const char *)src + 4;
@@ -684,6 +693,42 @@ void VDCRCChecker::Process(const void *src, sint32 count) {
 #endif
 
 	mValue = mpTable->Process(mValue, src, count);
+}
+
+void VDAdler32Checker::Process(const void *src, size_t len) {
+	const uint8 *VDRESTRICT src2 = (const uint8 *)src;
+
+	auto a = mA;
+	auto b = mB;
+
+	while(len) {
+		if (b >= 0x20000000) {
+			a %= 65521;
+			b %= 65521;
+		}
+
+		size_t tc = len > 2048 ? 2048 : len;
+		len -= tc;
+
+		for(size_t i=0; i<tc; ++i) {
+			a += *src2++;
+			b += a;
+		}
+	}
+
+	mA = a;
+	mB = b;
+}
+
+uint32 VDAdler32Checker::Adler32() const {
+	return (mA % 65521) + ((mB % 65521) << 16);
+}
+
+uint32 VDAdler32Checker::Adler32(const void *src, size_t len) {
+	VDAdler32Checker chk;
+
+	chk.Process(src, len);
+	return chk.Adler32();
 }
 
 struct VDHuffmanHistoSorterData {
@@ -1189,7 +1234,7 @@ void VDDeflateEncoder::Compress2(bool flush) {
 			hlimit = 0;
 
 		uint32 minmatch = mPendingLen > 3 ? mPendingLen : 3;
-		uint32 bestlen = minmatch - 1;
+		size_t bestlen = minmatch - 1;
 		uint32 bestoffset = 0;
 
 		if (hpos >= hlimit && limit >= minmatch) {
@@ -1197,22 +1242,22 @@ void VDDeflateEncoder::Compress2(bool flush) {
 			const unsigned char *s2 = hist + pos;
 			const uint16 matchWord1 = *(const uint16 *)s2;
 			const uint8 matchWord2 = *(const uint8 *)(s2 + 2);
-			uint32 hoffset = 0;
+			ptrdiff_t hoffsetneg = 0;
 
 			[[maybe_unused]] uint32 patience = 16;
 
 			do {
-				const unsigned char *s1 = hist + hpos - hoffset;
+				const unsigned char *s1 = hist + (uint32)hpos + hoffsetneg;
 
 				VDDEBUG_DEFLATE("testing %u %u (%02X%02X%02X %02X%02X%02X %02X %02X)\n", hpos, bestlen
 					, hist[hpos]
 					, hist[hpos+1]
 					, hist[hpos+2]
-					, s2[hoffset]
-					, s2[hoffset+1]
-					, s2[hoffset+2]
+					, s2[-hoffsetneg]
+					, s2[-hoffsetneg+1]
+					, s2[-hoffsetneg+2]
 					, HASH(hpos)
-					, HASH(pos + hoffset)
+					, HASH(pos - hoffsetneg)
 				);
 
 				if (s1[bestlen] == s2[bestlen] && *(const uint16 *)s1 == matchWord1 && s1[2] == matchWord2) {
@@ -1263,7 +1308,7 @@ void VDDeflateEncoder::Compress2(bool flush) {
 						if (mlen > 3) {
 							// hop hash chains!
 #if 1
-							const uint32 diff = (mlen - 3) - hoffset;
+							const uint32 diff = (mlen - 3) + hoffsetneg;
 
 							hlimit += diff;
 							hpos += diff;
@@ -1272,17 +1317,17 @@ void VDDeflateEncoder::Compress2(bool flush) {
 							else
 								hpos = mHashNext[hpos & 0x7fff];
 
-							hoffset = mlen - 3;
+							hoffsetneg = 3 - (ptrdiff_t)mlen;
 #else
-							const uint32 diff = (mlen - 2) - hoffset;
+							const uint32 diff = (mlen - 2) + hoffsetneg;
 
 							hlimit += diff;
-							hoffset = mlen - 2;
-							hpos = mHashTable[HASH(pos + hoffset)];
+							hoffsetneg = 2 - (ptrdiff_t)mlen;
+							hpos = mHashTable[HASH(pos - hoffsetneg)];
 #endif
 
 						} else {
-							hoffset = 1;
+							hoffsetneg = -1;
 							++hlimit;
 
 							hpos = mHashTable[HASH(pos + 1)];
@@ -1462,10 +1507,53 @@ uint32 VDDeflateEncoder::Flush(int n, int ndists, bool term, bool test) {
 
 	htcodes.BuildCode(15);
 
+	static constexpr auto kDistTab = []() {
+		VDCxArray<uint8, 256> table{};
+
+		table.v[0] = 0;
+		table.v[1] = 1;
+		table.v[2] = 2;
+		table.v[3] = 3;
+		table.v[4] = 4;
+		table.v[5] = 4;
+		table.v[6] = 5;
+		table.v[7] = 5;
+
+		for(int i=0; i<4; ++i) {
+			table.v[8+i] = 6;
+			table.v[12+i] = 7;
+			table.v[16+i] = 8; table.v[20+i] = 8;
+			table.v[24+i] = 9; table.v[28+i] = 9;
+		}
+		
+		for(int i=0; i<16; ++i) {
+			table.v[32+i] = 10;
+			table.v[48+i] = 11;
+			table.v[64+i] = 12; table.v[80+i] = 12;
+			table.v[96+i] = 13; table.v[112+i] = 13;
+		}
+
+		for(int i=0; i<64; ++i) {
+			table.v[128+i] = 14;
+			table.v[192+i] = 15;
+		}
+
+		return table;
+	}();
+
+
+
 	for(i=0; i<ndists; ++i) {
+#if 0
+		uint16 dist = dists[i];
+
 		int c=0;
-		while(dists[i] >= dist_tbl[c+1])
+		while(dist >= dist_tbl[c+1])
 			++c;
+#else
+		size_t distm1 = (size_t)dists[i] - 1;
+		const int c = distm1 >= 256 ? kDistTab.v[distm1 >> 7] + 14 : kDistTab.v[distm1];
+#endif
 
 		htdists.Tally(c);
 	}
@@ -1619,9 +1707,15 @@ uint32 VDDeflateEncoder::Flush(int n, int ndists, bool term, bool test) {
 					PutBits((len - len_tbl[code-257]) << (32 - extralenbits), extralenbits);
 
 				unsigned dist = *dists++;
+
+#if 0
 				int dcode=0;
 				while(dist >= dist_tbl[dcode+1])
 					++dcode;
+#else
+				size_t distm1 = dist - 1;
+				const int dcode = distm1 >= 256 ? kDistTab.v[distm1 >> 7] + 14 : kDistTab.v[distm1];
+#endif
 
 				PutBits((uint32)mDistEnc[dcode] << 16, mDistLen[dcode]);
 
@@ -2258,60 +2352,108 @@ namespace {
 		kZipMethodEnhancedDeflate	= 9
 	};
 
-	struct ZipFileHeader {
-		enum { kSignature = 0x04034b50 };
-		uint32		signature;
-		uint16		version_required;
-		uint16		flags;
-		uint16		method;
-		uint16		mod_time;
-		uint16		mod_date;
-		uint32		crc32;
-		uint32		compressed_size;
-		uint32		uncompressed_size;
-		uint16		filename_len;
-		uint16		extrafield_len;
+	struct VDPackedU16LE {
+		VDPackedU16LE() = default;
+		VDPackedU16LE(uint16 v) {
+			VDWriteUnalignedLEU16(data, v);
+		}
+
+		VDPackedU16LE(const VDPackedU16LE&) = default;
+
+		operator uint32() const { return VDReadUnalignedLEU16(data); }
+
+		VDPackedU16LE& operator=(const VDPackedU16LE& v) = default;
+		VDPackedU16LE& operator=(uint32 v) {
+			VDWriteUnalignedLEU16(data, v);
+
+			return *this;
+		}
+
+		uint8 data[2];
 	};
 
-	struct ZipDataDescriptor {
-		uint32		crc32;
-		uint32		compressed_size;
-		uint32		uncompressed_size;
+	struct VDPackedU32LE {
+		VDPackedU32LE() = default;
+		VDPackedU32LE(uint32 v) {
+			VDWriteUnalignedLEU32(data, v);
+		}
+
+		VDPackedU32LE(const VDPackedU32LE&) = default;
+
+		operator uint32() const { return VDReadUnalignedLEU32(data); }
+
+		VDPackedU32LE& operator=(const VDPackedU32LE&) = default;
+		VDPackedU32LE& operator=(uint32 v) {
+			VDWriteUnalignedLEU32(data, v);
+
+			return *this;
+		}
+
+		uint8 data[4];
 	};
+
+	struct ZipFileHeader {
+		enum { kSignature = 0x04034b50 };
+		VDPackedU32LE		signature;
+		VDPackedU16LE		version_required;
+		VDPackedU16LE		flags;
+		VDPackedU16LE		method;
+		VDPackedU16LE		mod_time;
+		VDPackedU16LE		mod_date;
+		VDPackedU32LE		crc32;
+		VDPackedU32LE		compressed_size;
+		VDPackedU32LE		uncompressed_size;
+		VDPackedU16LE		filename_len;
+		VDPackedU16LE		extrafield_len;
+	};
+
+	static_assert(sizeof(ZipFileHeader) == 30);
+
+	struct ZipDataDescriptor {
+		VDPackedU32LE		crc32;
+		VDPackedU32LE		compressed_size;
+		VDPackedU32LE		uncompressed_size;
+	};
+
+	static_assert(sizeof(ZipDataDescriptor) == 12);
 
 	struct ZipFileEntry {
 		enum { kSignature = 0x02014b50 };
-		uint32		signature;
-		uint16		version_create;
-		uint16		version_required;
-		uint16		flags;
-		uint16		method;
-		uint16		mod_time;
-		uint16		mod_date;
-		uint32		crc32;
-		uint32		compressed_size;
-		uint32		uncompressed_size;
-		uint16		filename_len;
-		uint16		extrafield_len;
-		uint16		comment_len;
-		uint16		diskno;
-		uint16		internal_attrib;
-		uint32		external_attrib;
-		uint32		reloff_localhdr;
+		VDPackedU32LE		signature;
+		VDPackedU16LE		version_create;
+		VDPackedU16LE		version_required;
+		VDPackedU16LE		flags;
+		VDPackedU16LE		method;
+		VDPackedU16LE		mod_time;
+		VDPackedU16LE		mod_date;
+		VDPackedU32LE		crc32;
+		VDPackedU32LE		compressed_size;
+		VDPackedU32LE		uncompressed_size;
+		VDPackedU16LE		filename_len;
+		VDPackedU16LE		extrafield_len;
+		VDPackedU16LE		comment_len;
+		VDPackedU16LE		diskno;
+		VDPackedU16LE		internal_attrib;
+		VDPackedU32LE		external_attrib;
+		VDPackedU32LE		reloff_localhdr;
 	};
+
+	static_assert(sizeof(ZipFileEntry) == 46);
 
 	struct ZipCentralDir {
 		enum { kSignature = 0x06054b50 };
 
-		uint32		signature;
-		uint16		diskno;
-		uint16		diskno_dir;
-		uint16		dirents;
-		uint16		dirents_total;
-		uint32		dirsize;
-		uint32		diroffset;
-		uint16		comment_len;
+		VDPackedU32LE		signature;
+		VDPackedU16LE		diskno;
+		VDPackedU16LE		diskno_dir;
+		VDPackedU16LE		dirents;
+		VDPackedU16LE		dirents_total;
+		VDPackedU32LE		dirsize;
+		VDPackedU32LE		diroffset;
+		VDPackedU16LE		comment_len;
 	};
+
+	static_assert(sizeof(ZipCentralDir) == 22);
 }
 
 #pragma pack(pop)
@@ -2385,7 +2527,8 @@ found_directory:
 
 	mpStream->Seek(cdirhdr.diroffset);
 
-	for(int i=0; i<cdirhdr.dirents_total; ++i) {
+	const int numEnts = cdirhdr.dirents_total;
+	for(int i=0; i<numEnts; ++i) {
 		FileInfoInternal& fii = mDirectory[i];
 		ZipFileEntry ent;
 
@@ -2420,9 +2563,71 @@ found_directory:
 		fii.mCompressedSize		= ent.compressed_size;
 		fii.mUncompressedSize	= ent.uncompressed_size;
 		fii.mCRC32				= ent.crc32;
-		fii.mFileName.resize(ent.filename_len);
+		fii.mRawFileName.resize(ent.filename_len);
 
-		mpStream->Read(&*fii.mFileName.begin(), ent.filename_len);
+		mpStream->Read(&*fii.mRawFileName.begin(), ent.filename_len);
+
+		// Attempt to decode the filename. If general bit 11 is set, then the
+		// filename is encoded as UTF-8.
+		if (ent.flags & (1 << 11)) {
+			// EFS bit set -- use UTF-8
+			fii.mDecodedFileName = VDTextU8ToW(fii.mRawFileName);
+		} else {
+			// EFS bit not set -- assume cp437 (IBM OEM DOS) per PKWARE's
+			// APPNOTE.TXT.
+			//
+			// This conversion table for high bytes (80-FF) should be consistent
+			// with most references for cp437. One notable exception is RFC 1345,
+			// which appears to have a number of errors in it.
+			//
+			// Symbols in the control code range (00-1F) aren't translated here.
+			// Wikipedia shows a translation of these per the IBM PC character
+			// set graphics, but this seems to be unconventional for code page
+			// handling.
+			static constexpr uint16 kCP437HighTable[] {
+				0x00C7,0x00FC,0x00E9,0x00E2,0x00E4,0x00E0,0x00E5,0x00E7,
+				0x00EA,0x00EB,0x00E8,0x00EF,0x00EE,0x00EC,0x00C4,0x00C5,
+
+				0x00C9,0x00E6,0x00C6,0x00F4,0x00F6,0x00F2,0x00FB,0x00F9,
+				0x00FF,0x00D6,0x00DC,0x00A2,0x00A3,0x00A5,0x20A7,0x0192,
+
+				0x00E1,0x00ED,0x00F3,0x00FA,0x00F1,0x00D1,0x00AA,0x00BA,
+				0x00BF,0x2310,0x00AC,0x00BD,0x00BC,0x00A1,0x00AB,0x00BB,
+
+				0x2591,0x2592,0x2593,0x2502,0x2524,0x2561,0x2562,0x2556,
+				0x2555,0x2563,0x2551,0x2557,0x255D,0x255C,0x255B,0x2510,
+
+				0x2514,0x2534,0x252C,0x251C,0x2500,0x253C,0x255E,0x255F,
+				0x255A,0x2554,0x2569,0x2566,0x2560,0x2550,0x256C,0x2567,
+
+				0x2568,0x2564,0x2565,0x2559,0x2558,0x2552,0x2553,0x256B,
+				0x256A,0x2518,0x250C,0x2588,0x2584,0x258C,0x2590,0x2580,
+
+				0x03B1,0x00DF,0x0393,0x03C0,0x03A3,0x03C3,0x00B5,0x03C4,
+				0x03A6,0x0398,0x03A9,0x03B4,0x221E,0x03C6,0x03B5,0x2229,
+
+				0x2261,0x00B1,0x2265,0x2264,0x2320,0x2321,0x00F7,0x2248,
+				0x00B0,0x2219,0x00B7,0x221A,0x207F,0x00B2,0x25A0,0x00A0,
+			};
+
+			static_assert(vdcountof(kCP437HighTable) == 128);
+
+			fii.mDecodedFileName.resize(fii.mRawFileName.size());
+
+			std::transform(
+				fii.mRawFileName.begin(),
+				fii.mRawFileName.end(),
+				fii.mDecodedFileName.begin(),
+				[](char c) {
+					wchar_t wc = (wchar_t)(unsigned char)c;
+
+					if (wc >= 0x80)
+						wc = kCP437HighTable[wc - 0x80];
+
+					return wc;
+				}
+			);
+		}
 		
 		mpStream->Seek(mpStream->Pos() + ent.extrafield_len + ent.comment_len);
 	}
@@ -2437,17 +2642,32 @@ const VDZipArchive::FileInfo& VDZipArchive::GetFileInfo(sint32 idx) const {
 	return mDirectory[idx];
 }
 
-sint32 VDZipArchive::FindFile(const char *name, bool caseSensitive) const {
+sint32 VDZipArchive::FindFile(const char *rawName) const {
+	sint32 n = (sint32)mDirectory.size();
+
+	for(sint32 i=0; i<n; ++i) {
+		const auto& fi = mDirectory[i];
+
+		if (fi.mRawFileName != rawName)
+			continue;
+
+		return i;
+	}
+
+	return -1;
+}
+
+sint32 VDZipArchive::FindFile(const wchar_t *decodedName, bool caseSensitive) const {
 	sint32 n = (sint32)mDirectory.size();
 
 	for(sint32 i=0; i<n; ++i) {
 		const auto& fi = mDirectory[i];
 
 		if (caseSensitive) {
-			if (fi.mFileName != name)
+			if (fi.mDecodedFileName != decodedName)
 				continue;
 		} else {
-			if (fi.mFileName.comparei(name) != 0)
+			if (fi.mDecodedFileName.comparei(decodedName) != 0)
 				continue;
 		}
 
@@ -2477,7 +2697,7 @@ IVDInflateStream *VDZipArchive::OpenDecodedStream(sint32 idx, bool allowLarge) {
 	const FileInfo& info = GetFileInfo(idx);
 
 	if (!info.mbSupported)
-		throw MyError("Unsupported compression method in zip archive for file: %s.", info.mFileName.c_str());
+		throw VDException(L"Unsupported compression method in zip archive for file: %ls.", info.mDecodedFileName.c_str());
 
 	if ((!allowLarge && info.mUncompressedSize > 384 * 1024 * 1024) || info.mCompressedSize > 0x7FFFFFFF || info.mUncompressedSize > 0x7FFFFFFF)
 		throw MyError("Zip file item is too large (%llu bytes).", (unsigned long long)info.mUncompressedSize);
@@ -2612,8 +2832,9 @@ void VDGUnzipStream::Init(IVDStream *pSrc, uint64 limit) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-VDDeflateStream::VDDeflateStream(IVDStream& dest)
+VDDeflateStream::VDDeflateStream(IVDStream& dest, VDDeflateChecksumMode checksumMode)
 	: mDestStream(dest)
+	, mChecksumMode(checksumMode)
 	, mCRCChecker(VDCRCTable::CRC32)
 {
 	Reset();
@@ -2639,8 +2860,26 @@ void VDDeflateStream::Reset() {
 	mpEncoder = nullptr;
 	mpEncoder = new VDDeflateEncoder;
 	mpEncoder->SetCompressionLevel(mCompressionLevel);
+
+	vdfunction<void(const void *, uint32)> preprocessFn;
+	switch(mChecksumMode) {
+		case VDDeflateChecksumMode::None:
+		default:
+			preprocessFn = [](const void *p, uint32 n) { };
+			break;
+
+		case VDDeflateChecksumMode::Adler32:
+			preprocessFn = [this](const void *p, uint32 n) { PreProcessInputAdler32(p, n); };
+			break;
+
+		case VDDeflateChecksumMode::CRC32:
+			preprocessFn = [this](const void *p, uint32 n) { PreProcessInputCRC32(p, n); };
+			break;
+
+	}
+
 	mpEncoder->Init(false,
-		[this](const void *p, uint32 n) { PreProcessInput(p, n); },
+		preprocessFn,
 		[this](const void *p, uint32 n) { WriteOutput(p, n); }
 	);
 }
@@ -2669,7 +2908,11 @@ void VDDeflateStream::Write(const void *buffer, sint32 bytes) {
 	mpEncoder->Write(buffer, (uint32)bytes);
 }
 
-void VDDeflateStream::PreProcessInput(const void *p, uint32 n) {
+void VDDeflateStream::PreProcessInputAdler32(const void *p, uint32 n) {
+	mAdler32Checker.Process(p, n);
+}
+
+void VDDeflateStream::PreProcessInputCRC32(const void *p, uint32 n) {
 	mCRCChecker.Process(p, n);
 }
 

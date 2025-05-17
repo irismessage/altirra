@@ -30,6 +30,7 @@
 #include <at/atio/image.h>
 #include <at/atui/uimanager.h>
 #include "audiosampleplayer.h"
+#include "autosavemanager.h"
 #include "cartridge.h"
 #include "cassette.h"
 #include "debugger.h"
@@ -382,6 +383,18 @@ void ATSettingsExchangeEnum(bool write, VDRegistryKey& key, const char *name, T 
 		setter((T)key.getEnumInt(name, (int)count, (int)getter()));
 }
 
+template<class T>
+void ATSettingsExchangeEnum(bool write, VDRegistryKey& key, const char *name, const vdfunction<T()>& getter, const vdfunction<void(T)>& setter) {
+	if (write)
+		key.setString(name, ATEnumToString<T>(getter()));
+	else {
+		VDStringW s;
+		key.getString(name, s);
+
+		setter(ATParseEnum<T>(s).mValue);
+	}
+}
+
 float ATSettingsGetFloat(VDRegistryKey& key, const char *name, float defaultValue) {
 	int defaultInt = VDGetFloatAsInt(defaultValue);
 	int currentInt = key.getInt(name, defaultInt);
@@ -449,6 +462,10 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 		[&]() { return gtia.GetArtifactingMode(); },
 		[&](ATArtifactMode mode) { gtia.SetArtifactingMode(mode); });
 
+	ATSettingsExchangeInt32(write, key, "GTIA: PAL phase",
+		[&]() -> sint32 { return gtia.GetPALPhase(); },
+		[&](sint32 v) { gtia.SetPALPhase(v); });
+
 	ATSettingsExchangeEnum<ATGTIAEmulator::OverscanMode>(write, key, "GTIA: Overscan mode", ATGTIAEmulator::kOverscanCount,
 		[&]() { return gtia.GetOverscanMode(); },
 		[&](ATGTIAEmulator::OverscanMode mode) { gtia.SetOverscanMode(mode); });
@@ -469,9 +486,17 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 		[&]() { return gtia.IsLinearBlendEnabled(); },
 		[&](bool en) { gtia.SetLinearBlendEnabled(en); });
 
+	ATSettingsExchangeBool(write, key, "GTIA: Mono persistence blending",
+		[&]() { return gtia.IsBlendMonoPersistenceEnabled(); },
+		[&](bool en) { gtia.SetBlendMonoPersistenceEnabled(en); });
+
 	ATSettingsExchangeBool(write, key, "GTIA: Interlace",
 		[&]() { return gtia.IsInterlaceEnabled(); },
 		[&](bool en) { gtia.SetInterlaceEnabled(en); });
+
+	ATSettingsExchangeEnum<ATVideoDeinterlaceMode>(write, key, "GTIA: Deinterlacing mode",
+		[&] { return gtia.GetDeinterlaceMode(); },
+		[&](ATVideoDeinterlaceMode mode) { gtia.SetDeinterlaceMode(mode); });
 
 	ATSettingsExchangeBool(write, key, "GTIA: Scanlines",
 		[&]() { return gtia.AreScanlinesEnabled(); },
@@ -488,10 +513,9 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 		key.setInt("Scanline intensity", (int)(0.5f + aparams.mScanlineIntensity * 100.0f));
 		key.setBool("ScreenFX: Bloom enable", aparams.mbEnableBloom);
 		key.setBool("ScreenFX: Bloom scanline compensation", aparams.mbBloomScanlineCompensation);
-		key.setInt("ScreenFX: Bloom threshold", (int)(0.5f + aparams.mBloomThreshold * 100.0f));
-		key.setInt("ScreenFX: Bloom radius", (int)(0.5f + aparams.mBloomRadius * 10.0f));
-		key.setInt("ScreenFX: Bloom direct intensity", (int)(0.5f + aparams.mBloomDirectIntensity * 100.0f));
-		key.setInt("ScreenFX: Bloom indirect intensity", (int)(0.5f + aparams.mBloomIndirectIntensity * 100.0f));
+		key.setInt("ScreenFX: Bloom V2 radius", (int)(0.5f + aparams.mBloomRadius * 10.0f));
+		key.setInt("ScreenFX: Bloom V2 direct intensity", (int)(0.5f + aparams.mBloomDirectIntensity * 100.0f));
+		key.setInt("ScreenFX: Bloom V2 indirect intensity", (int)(0.5f + aparams.mBloomIndirectIntensity * 100.0f));
 		key.setInt("ScreenFX: Distortion X View Angle", (int)(0.5f + aparams.mDistortionViewAngleX));
 		key.setInt("ScreenFX: Distortion Y Ratio", (int)(0.5f + aparams.mDistortionYRatio * 100.0f));
 		key.setBool("ScreenFX: Enable HDR", aparams.mbEnableHDR);
@@ -517,17 +541,13 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 		aparams.mbEnableBloom = key.getBool("ScreenFX: Bloom enable", aparams.mbEnableBloom);
 		aparams.mbBloomScanlineCompensation = key.getBool("ScreenFX: Bloom scanline compensation", aparams.mbBloomScanlineCompensation);
 
-		int bt = key.getInt("ScreenFX: Bloom threshold", -1);
-		if (bt >= 0 && bt <= 100)
-			aparams.mBloomThreshold = (float)bt / 100.0f;
-
-		int br = key.getInt("ScreenFX: Bloom radius", -1);
+		int br = key.getInt("ScreenFX: Bloom V2 radius", -1);
 		if (br >= 1 && br < 1000)
 			aparams.mBloomRadius = (float)br / 10.0f;
-		int bdi = key.getInt("ScreenFX: Bloom direct intensity", -1);
+		int bdi = key.getInt("ScreenFX: Bloom V2 direct intensity", -1);
 		if (bdi >= 0 && bdi <= 200)
 			aparams.mBloomDirectIntensity = (float)bdi / 100.0f;
-		int bii = key.getInt("ScreenFX: Bloom indirect intensity", -1);
+		int bii = key.getInt("ScreenFX: Bloom V2 indirect intensity", -1);
 		if (bii >= 0 && bii <= 200)
 			aparams.mBloomIndirectIntensity = (float)bii / 100.0f;
 
@@ -567,6 +587,11 @@ void ATSettingsExchangeSpeed(bool write, VDRegistryKey& key) {
 		ATUISetFrameRateVSyncAdaptive(key.getBool("Speed: VSync adaptive", false));
 		ATUISetTurbo(key.getBool("Turbo mode", ATUIGetTurbo()));
 	}
+
+	ATSettingsExchangeBool(write, key, "Speed: Enable rewind recording",
+		[] { return g_sim.GetAutoSaveManager().GetRewindEnabled(); },
+		[](bool en) { g_sim.GetAutoSaveManager().SetRewindEnabled(en); }
+	);
 }
 
 void ATSettingsExchangeInput(bool write, VDRegistryKey& key) {
@@ -671,6 +696,12 @@ void ATSettingsExchangeInput(bool write, VDRegistryKey& key) {
 		, [] { return g_sim.GetPokey().IsImmediatePotUpdateEnabled(); }
 		, [](bool enable) {
 			g_sim.GetPokey().SetImmediatePotUpdateEnabled(enable);
+		}
+	);
+
+	ATSettingsExchangeBool(write, key, "Input: Allow immediate light pen updates"
+		, [] { return g_sim.GetLightPenPort()->GetImmediateUpdateEnabled(); }
+		, [](bool enable) {
 			g_sim.GetLightPenPort()->SetImmediateUpdateEnabled(enable);
 		}
 	);
@@ -848,6 +879,8 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		key.setString("Cassette: Polarity mode", ATEnumToString(cassette.GetPolarityMode()));
 		key.setString("Cassette: Direct sense mode", ATEnumToString(cassette.GetDirectSenseMode()));
 		key.setString("Cassette: Turbo decode mode", ATEnumToString(cassette.GetTurboDecodeAlgorithm()));
+		key.setBool("Cassette: FSK speed compensation", cassette.GetFSKSpeedCompensationEnabled());
+		key.setBool("Cassette: Crosstalk reduction", cassette.GetCrosstalkReductionEnabled());
 		key.setBool("Cassette: VBI avoidance enabled", cassette.IsVBIAvoidanceEnabled());
 
 		key.setBool("Kernel: Floating-point patch enabled", g_sim.IsFPPatchEnabled());
@@ -858,6 +891,10 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		key.setBool("Disk: Burst transfers enabled", g_sim.GetDiskBurstTransfersEnabled());
 
 		key.setInt("Video: Enhanced text mode", ATUIGetEnhancedTextMode());
+
+		const vdsize32& vssize = g_sim.GetVirtualScreenSize();
+		key.setInt("Video: Virtual screen width", vssize.w);
+		key.setInt("Video: Virtual screen height", vssize.h);
 
 		key.setBool("Devices: CIO burst transfers enabled", g_sim.GetDeviceCIOBurstTransfersEnabled());
 		key.setBool("Devices: SIO burst transfers enabled", g_sim.GetDeviceSIOBurstTransfersEnabled());
@@ -872,7 +909,8 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		key.setBool("Devices: SIO patch enabled", g_sim.GetDeviceSIOPatchEnabled());
 
 		key.setBool("Devices: Accelerate with SIO patch", g_sim.IsSIOPatchEnabled());
-		key.setBool("Devices: Accelerate with PBI patch", g_sim.IsPBIPatchEnabled());
+		key.setBool("Devices: Accelerate with PBI patch", g_sim.IsSIOPBIPatchEnabled());
+		key.setBool("Devices: Use CIO PBI patch", g_sim.IsCIOPBIPatchEnabled());
 	} else {
 		g_sim.SetCassetteSIOPatchEnabled(key.getBool("Cassette: SIO patch enabled", g_sim.IsCassetteSIOPatchEnabled()));
 		g_sim.SetCassetteAutoBootEnabled(key.getBool("Cassette: Auto-boot enabled", g_sim.IsCassetteAutoBootEnabled()));
@@ -892,6 +930,9 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		key.getString("Cassette: Turbo decode mode", turboDecodeMode);
 		cassette.SetTurboDecodeAlgorithm(ATParseEnum<ATCassetteTurboDecodeAlgorithm>(turboDecodeMode).mValue);
 
+		cassette.SetFSKSpeedCompensationEnabled(key.getBool("Cassette: FSK speed compensation", false));
+		cassette.SetCrosstalkReductionEnabled(key.getBool("Cassette: Crosstalk reduction", false));
+
 		VDStringA directSenseMode;
 		key.getString("Cassette: Direct sense mode", directSenseMode);
 		cassette.SetDirectSenseMode(ATParseEnum<ATCassetteDirectSenseMode>(directSenseMode).mValue);
@@ -904,6 +945,13 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		g_sim.SetDiskSIOPatchEnabled(key.getBool("Disk: SIO patch enabled", g_sim.IsDiskSIOPatchEnabled()));
 		g_sim.SetDiskSIOOverrideDetectEnabled(key.getBool("Disk: SIO override detection enabled", g_sim.IsDiskSIOOverrideDetectEnabled()));
 		g_sim.SetDiskBurstTransfersEnabled(key.getBool("Disk: Burst transfers enabled", g_sim.GetDiskBurstTransfersEnabled()));
+
+		g_sim.SetVirtualScreenSize(
+			vdsize32(
+				key.getInt("Video: Virtual screen width", 40),
+				key.getInt("Video: Virtual screen height", 24)
+			)
+		);
 
 		ATUISetEnhancedTextMode((ATUIEnhancedTextMode)key.getEnumInt("Video: Enhanced text mode", kATUIEnhancedTextModeCount, ATUIGetEnhancedTextMode()));
 
@@ -918,9 +966,11 @@ void ATSettingsExchangeAcceleration(bool write, VDRegistryKey& key) {
 		}
 
 		g_sim.SetDeviceSIOPatchEnabled(key.getBool("Devices: SIO patch enabled", g_sim.GetDeviceSIOPatchEnabled()));
+		g_sim.SetDeviceSIOPatchEnabled(key.getBool("Devices: SIO patch enabled", g_sim.GetDeviceSIOPatchEnabled()));
 
 		g_sim.SetSIOPatchEnabled(key.getBool("Devices: Accelerate with SIO patch", true));
-		g_sim.SetPBIPatchEnabled(key.getBool("Devices: Accelerate with PBI patch", false));
+		g_sim.SetSIOPBIPatchEnabled(key.getBool("Devices: Accelerate with PBI patch", false));
+		g_sim.SetCIOPBIPatchEnabled(key.getBool("Devices: Use CIO PBI patch", false));
 	}
 }
 
@@ -1504,7 +1554,8 @@ void LoadBaselineSettings() {
 	g_sim.SetDiskSIOPatchEnabled(true);
 	g_sim.SetDiskSIOOverrideDetectEnabled(false);
 	g_sim.SetSIOPatchEnabled(true);
-	g_sim.SetPBIPatchEnabled(false);
+	g_sim.SetSIOPBIPatchEnabled(false);
+	g_sim.SetCIOPBIPatchEnabled(false);
 
 	for(int i=0; i<15; ++i) {
 		ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);

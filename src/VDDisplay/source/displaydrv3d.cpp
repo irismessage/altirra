@@ -78,11 +78,13 @@ bool VDDisplayDriver3D::Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplayS
 	);
 
 	if (!mDisplayNodeContext.Init(*mpContext, mbRenderLinear)) {
+		VDDispLog("Display node context initialization failed");
 		Shutdown();
 		return false;
 	}
 
 	if (!mRenderer.Init(*mpContext)) {
+		VDDispLog("2D renderer initialization failed");
 		Shutdown();
 		return false;
 	}
@@ -191,10 +193,11 @@ bool VDDisplayDriver3D::SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) 
 			if (mScreenFXInfo.mScanlineIntensity != screenFX->mScanlineIntensity
 				|| mScreenFXInfo.mGamma != screenFX->mGamma
 				|| mScreenFXInfo.mPALBlendingOffset != screenFX->mPALBlendingOffset
-				|| mScreenFXInfo.mbColorCorrectAdobeRGB != screenFX->mbColorCorrectAdobeRGB
+				|| mScreenFXInfo.mOutputGamma != screenFX->mOutputGamma
 				|| memcmp(mScreenFXInfo.mColorCorrectionMatrix, screenFX->mColorCorrectionMatrix, sizeof(mScreenFXInfo.mColorCorrectionMatrix))
 				|| mScreenFXInfo.mDistortionX != screenFX->mDistortionX
 				|| mScreenFXInfo.mDistortionYRatio != screenFX->mDistortionYRatio
+				|| mScreenFXInfo.mbBloomEnabled != screenFX->mbBloomEnabled
 				|| mScreenFXInfo.mBloomThreshold != screenFX->mBloomThreshold
 				|| mScreenFXInfo.mBloomRadius != screenFX->mBloomRadius
 				|| mScreenFXInfo.mBloomDirectIntensity != screenFX->mBloomDirectIntensity
@@ -309,7 +312,7 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 
 	IVDTSurface *surface = mpSwapChain->GetBackBuffer();
 
-	mpContext->SetRenderTarget(0, surface, false);
+	mpContext->SetRenderTarget(0, surface, true);
 
 	VDTViewport vp;
 	vp.mX = 0;
@@ -619,7 +622,11 @@ bool VDDisplayDriver3D::CreateSwapChain() {
 	swapDesc.mHeight = mbFullScreen ? mFullScreenHeight : mClientRect.bottom;
 	swapDesc.mhWindow = mhwnd;
 	swapDesc.mbWindowed = !mbFullScreen;
-	swapDesc.mbSRGB = mbRenderLinear;
+
+	// We now always request an sRGB framebuffer and choose between sRGB and
+	// non sRGB RTVs.
+	swapDesc.mbSRGB = true;
+
 	swapDesc.mbHDR = mbHDR;
 	swapDesc.mRefreshRateNumerator = mFullScreenRefreshRate;
 	swapDesc.mRefreshRateDenominator = mFullScreenRefreshRate ? 1 : 0;
@@ -710,8 +717,8 @@ bool VDDisplayDriver3D::RebuildTree() {
 	// clipped integer destination rect with pixel coverage
 	const sint32 clipdstx = std::max<sint32>(0, VDCeilToInt(dstxf - 0.5f));
 	const sint32 clipdsty = std::max<sint32>(0, VDCeilToInt(dstyf - 0.5f));
-	const uint32 clipdstw = (uint32)std::max<sint32>(0, std::min<sint32>(VDCeilToInt(mDestRectF.right  - 0.5f), viewportWidth ) - clipdstx);
-	const uint32 clipdsth = (uint32)std::max<sint32>(0, std::min<sint32>(VDCeilToInt(mDestRectF.bottom - 0.5f), viewportHeight) - clipdsty);
+	const uint32 clipdstw = (uint32)std::max<sint32>(0, std::min<sint32>(VDCeilToInt((dstxf + dstwf) - 0.5f), viewportWidth ) - clipdstx);
+	const uint32 clipdsth = (uint32)std::max<sint32>(0, std::min<sint32>(VDCeilToInt((dstyf + dsthf) - 0.5f), viewportHeight) - clipdsty);
 
 	// check if we are overwriting the entire screen; if not, clear the framebuffer first
 	bool useClear = false;
@@ -839,6 +846,7 @@ bool VDDisplayDriver3D::RebuildTree() {
 				params.mSharpnessX = mPixelSharpnessX;
 				params.mSharpnessY = mPixelSharpnessY;
 				params.mbLinear = mFilterMode != kFilterPoint;
+				params.mOutputGamma = mScreenFXInfo.mOutputGamma;
 				params.mbRenderLinear = mbHDR;
 				params.mbSignedInput = mScreenFXInfo.mbSignedRGBEncoding;
 				params.mHDRScale = mbHDR ? mScreenFXInfo.mHDRIntensity : 1.0f;
@@ -866,11 +874,25 @@ bool VDDisplayDriver3D::RebuildTree() {
 			}
 		}
 
-		const bool useBloom = mbUseScreenFX && mScreenFXInfo.mBloomIndirectIntensity > 0;
+		const bool useBloom = mbUseScreenFX && mScreenFXInfo.mbBloomEnabled;
 		if (useBloom) {
 			vdrefptr<VDDisplaySourceNode3D> bufferedRootNode;
-			if (!BufferNode(mpRootNode, dstxf, dstyf, dstwf, dsthf, clipdstw, clipdsth, mbHDR, ~bufferedRootNode))
-				return false;
+			bool inputLinear = false;
+
+			if (mDisplayNodeContext.mRGBAGammaToSRGBFormat != kVDTF_Unknown && !mbHDR) {
+				vdrefptr<VDDisplayBufferSourceNode3D> bufferNode { new VDDisplayBufferSourceNode3D };
+
+				if (!bufferNode->InitWithFormat(*mpContext, mDisplayNodeContext, dstxf, dstyf, dstwf, dsthf, clipdstw, clipdsth, mDisplayNodeContext.mRGBAGammaToSRGBFormat, mpRootNode))
+					return false;
+
+				bufferedRootNode = std::move(bufferNode);
+				inputLinear = true;
+			} else {
+				if (!BufferNode(mpRootNode, dstxf, dstyf, dstwf, dsthf, clipdstw, clipdsth, mbHDR, ~bufferedRootNode))
+					return false;
+
+				inputLinear = mbHDR;
+			}
 
 			vdrefptr<VDDisplayBloomNode3D> bloomNode(new VDDisplayBloomNode3D);
 
@@ -890,11 +912,12 @@ bool VDDisplayDriver3D::RebuildTree() {
 
 			// The blur radius is specified in source pixels in the FXInfo, which must be
 			// converted to destination pixels.
-			params.mBlurRadius = mScreenFXInfo.mBloomRadius * (float)dstwf / (float)mSource.pixmap.w;
+			params.mBlurBaseRadius = (float)dstwf / (float)mSource.pixmap.w;
+			params.mBlurAdjustRadius = mScreenFXInfo.mBloomRadius;
 
 			params.mbRenderLinear = mbHDR;
 
-			if (!bloomNode->Init(*mpContext, mDisplayNodeContext, params, bufferedRootNode))
+			if (!bloomNode->InitV2(*mpContext, mDisplayNodeContext, params, inputLinear, bufferedRootNode))
 				return false;
 
 			vdsaferelease <<= mpRootNode;

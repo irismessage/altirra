@@ -23,6 +23,7 @@
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/messagedispatcher.h>
 #include <at/atnativeui/uinativewindow.h>
+#include <at/atcore/fft.h>
 
 class IATCassetteImage;
 class ATCassetteEmulator;
@@ -46,6 +47,12 @@ public:
 	enum class FilterMode : uint8 {
 		FSKDirectSample2000Baud,
 		FSKDirectSample1000Baud
+	};
+
+	enum class WaveformMode : uint8 {
+		None,
+		Waveform,
+		Spectrogram
 	};
 
 	ATUITapeViewControl();
@@ -77,8 +84,11 @@ public:
 	bool GetShowTurboData() const;
 	void SetShowTurboData(bool enabled);
 
-	bool GetShowWaveform() const;
-	void SetShowWaveform(bool enabled);
+	WaveformMode GetWaveformMode() const;
+	void SetWaveformMode(WaveformMode mode);
+
+	bool GetFrequencyGuidelinesEnabled() const;
+	void SetFrequencyGuidelinesEnabled(bool enabled);
 
 	bool GetStoreWaveformOnLoad() const;
 	void SetStoreWaveformOnLoad(bool enabled);
@@ -94,12 +104,17 @@ public:
 	void EnsureSelectionVisible();
 	void EnsureRangeVisible(uint32 startSample, uint32 endSample);
 
+	void GoToLocation(uint32 sample, float pixelsPerSample);
+
 	void Insert();
 	void Delete();
 	void ReAnalyze();
+	void ReAnalyzeFlip();
 	void Filter(FilterMode filterMode);
 
 	bool HasClip() const;
+	void SelectAll();
+	void Deselect();
 	void Cut();
 	void Copy();
 	void Paste();
@@ -147,6 +162,7 @@ private:
 	void OnHScroll(uint32 code);
 	void OnPaint();
 	void PaintAnalysisChannel(IVDDisplayRendererGDI *r, const AnalysisChannel& ch, uint32 posStart, uint32 posEnd, sint32 x1, sint32 x2, sint32 y);
+	void PaintSpectrogram(IVDDisplayRendererGDI& r, uint32 pos, uint32 posinc, sint32 x, sint32 xinc, sint32 n, sint32 ywfhi, sint32 ywflo);
 
 	void SetHaveMouse();
 
@@ -193,6 +209,7 @@ private:
 	struct DecodedBlock {
 		uint32 mSampleStart {};
 		uint32 mSampleEnd {};
+		uint32 mSampleValidEnd {};
 		float mBaudRate {};
 		uint32 mStartByte {};
 		uint32 mByteCount {};
@@ -280,7 +297,10 @@ private:
 	bool mbTimeMarkerShowMS = false;
 
 	bool mbShowTurboData = false;
-	bool mbShowWaveform = true;
+
+	WaveformMode mWaveformMode = WaveformMode::Waveform;
+	bool mbShowFrequencyGuidelines = false;
+
 	bool mbStoreWaveformOnLoad = false;
 
 	bool mbSelectionValid = false;
@@ -323,6 +343,9 @@ private:
 	VDPixmapBuffer mBltImage;
 	VDDisplayImageView mBltImageView;
 
+	VDPixmapBuffer mSpectrogramImage;
+	VDDisplayImageView mSpectrogramImageView;
+
 	sint32 mAnalysisTextMinWidth = 0;
 	sint32 mAnalysisHeight = 0;
 
@@ -333,22 +356,37 @@ private:
 	} mAnalysisChannels[2];
 
 	uint32 mPalette[257] {};
+
+	float mFFTWindow[128] {};
+	uint32 mSpectrogramPalette[256] {};
+
+	struct SpecSample {
+		uint32 mBinOffset;
+		float mCoeffs[4];
+	};
+
+	vdfastvector<SpecSample> mSpectrogramInterp; 
+
+	vdautoptr<ATFFT<128>> mpFFT;
 };
 
 class ATUITapeEditorDialog final : public VDDialogFrameW32 {
 public:
 	ATUITapeEditorDialog();
 
+	void GoToLocation(uint32 sample, float pixelsPerSample);
+
 public:
 	bool PreNCDestroy() override;
 	bool OnLoaded() override;
 	void OnDestroy() override;
+	bool OnCancel() override;
 	void OnSize() override;
 	bool OnCommand(uint32 id, uint32 extcode) override;
 	void OnInitMenu(VDZHMENU hmenu) override;
 
 private:
-	void OnTapeDirtyStateChanged();
+	void OnTapeStateChanged();
 
 	void OnToolbarCommand(uint32 id);
 
@@ -358,6 +396,8 @@ private:
 	void Load(const wchar_t *path);
 	void SaveAsCAS();
 	void SaveAsWAV();
+	void SelectAll();
+	void Deselect();
 	void Cut();
 	void Copy();
 	void CopyDecodedData();

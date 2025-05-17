@@ -27,6 +27,7 @@
 #include <vd2/vdjson/jsonvalue.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/hotkeyexcontrol.h>
+#include <at/atnativeui/hotkeyscandialog.h>
 #include <at/atnativeui/uiproxies.h>
 #include "resource.h"
 #include "uikeyboard.h"
@@ -38,8 +39,9 @@ public:
 protected:
 	class MappingEntry;
 
-	bool OnLoaded();
-	void OnDataExchange(bool write);
+	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
+	bool OnCommand(uint32 id, uint32 extcode) override;
 
 	void OnScanCodeSelChanged(VDUIProxyListBoxControl *, int idx);
 	void OnBindingSelChanged(VDUIProxyListView *, int idx);
@@ -446,6 +448,15 @@ void ATUIDialogKeyboardCustomize::OnDataExchange(bool write) {
 		RebuildMappingList();
 		ReloadEmuKeyList();
 	}
+}
+
+bool ATUIDialogKeyboardCustomize::OnCommand(uint32 id, uint32 extcode) {
+	if (id == ID_TOOLS_SCANFORBLOCKEDKEYS) {
+		ATUIShowDialogScanHotKeys((VDGUIHandle)mhdlg);
+		return true;
+	}
+
+	return false;
 }
 
 void ATUIDialogKeyboardCustomize::OnScanCodeSelChanged(VDUIProxyListBoxControl *, int idx) {

@@ -38,6 +38,7 @@
 #include <at/atui/uimanager.h>
 #include <at/atui/uiwidget.h>
 #include <at/atuicontrols/uibutton.h>
+#include <at/atuicontrols/uiimage.h>
 #include <at/atuicontrols/uilabel.h>
 #include "uikeyboard.h"
 #include "settings.h"
@@ -306,7 +307,7 @@ void ATUIOverlayCustomization::OnCreate() {
 
 			maxSize.include(button->Measure().mMinSize);
 
-			button->OnPressedEvent() = [=] {
+			button->OnPressedEvent() = [=,this] {
 				SetSelectionAnchor(j, i);
 			};
 
@@ -1688,12 +1689,6 @@ void ATUIAudioScope::UpdateSampleCounts(int i) {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-class ATUIImage final : public ATUIWidget {
-public:
-	void Paint(IVDDisplayRenderer& r, sint32 w, sint32 h) override {}
-};
-
-///////////////////////////////////////////////////////////////////////////
 class ATUIRenderer final : public vdrefcount, public IATUIRenderer, public IVDTimerCallback {
 public:
 	ATUIRenderer();
@@ -3064,7 +3059,7 @@ void ATUIRenderer::UpdateHoverTipPos() {
 			x = std::max<int>(0, mPrevLayoutWidth - htsize.w);
 
 		if (y + htsize.h > mPrevLayoutHeight) {
-			int y2 = y - 32 - htsize.h;
+			int y2 = mHoverTipY - 32 - htsize.h;
 
 			if (y2 >= 0)
 				y = y2;

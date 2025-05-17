@@ -29,6 +29,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="source\bicubic.cpp" />
+    <ClCompile Include="source\bloom.cpp" />
     <ClCompile Include="source\customshaderd3d9.cpp" />
     <ClCompile Include="source\direct3d.cpp" />
     <ClCompile Include="source\display.cpp" />
@@ -62,6 +63,7 @@
     <ClInclude Include="..\h\vd2\VDDisplay\renderergdi.h" />
     <ClInclude Include="h\bicubic.h" />
     <ClInclude Include="h\displaydrvd3d9.h" />
+    <ClInclude Include="h\vd2\VDDisplay\internal\bloom.h" />
     <ClInclude Include="h\vd2\VDDisplay\internal\customshaderd3d9.h" />
     <ClInclude Include="h\displaydrv3d.h" />
     <ClInclude Include="h\displaymgr.h" />

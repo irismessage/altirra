@@ -57,6 +57,8 @@ bool ATUIConfDevParFileWriter(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevComputerEyes(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevVideoStillImage(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevNetSerial(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevPrinter(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevPrinterHLE(VDGUIHandle hParent, ATPropertySet& props);
 
 void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("harddisk", ATUIConfDevHardDisk);
@@ -99,6 +101,10 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("computereyes", ATUIConfDevComputerEyes);
 	dev.AddDeviceConfigurer("videostillimage", ATUIConfDevVideoStillImage);
 	dev.AddDeviceConfigurer("netserial", ATUIConfDevNetSerial);
+	dev.AddDeviceConfigurer("820", ATUIConfDevPrinter);
+	dev.AddDeviceConfigurer("1025", ATUIConfDevPrinter);
+	dev.AddDeviceConfigurer("1029", ATUIConfDevPrinter);
+	dev.AddDeviceConfigurer("printer", ATUIConfDevPrinterHLE);
 
 	static const char *const kDiskDriveFullTypes[]={
 		"diskdrive810",
@@ -108,6 +114,7 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 		"diskdrivespeedy1050",
 		"diskdrivehappy1050",
 		"diskdrivesuperarchiver",
+		"diskdrivesuperarchiverbw",
 		"diskdrivetoms1050",
 		"diskdrive1050duplicator",
 		"diskdrivetygrys1050",

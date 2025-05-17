@@ -33,6 +33,8 @@ public:
 		mpStream = &mMemoryStream;
 	}
 
+	bool IsSourceReadOnly() const override { return true; }
+
 	vdfastvector<uint8> mBuffer;
 	VDMemoryStream mMemoryStream;
 };
@@ -41,7 +43,7 @@ void ATVFSOpenAtfsFileView(ATVFSFileView *srcView, const wchar_t *subPath, ATVFS
 	// check that the subPath doesn't end in a separator and isn't empty
 	VDStringSpanW spSpan(subPath);
 	if (spSpan.empty() || spSpan.end()[-1] == L'/')
-		throw MyError("Invalid subpath for inner filesystem: %ls", subPath);
+		throw VDException(L"Invalid subpath for inner filesystem: %ls", subPath);
 
 	// attempt to mount the source as an image
 	vdrefptr<IATImage> image;
@@ -51,13 +53,13 @@ void ATVFSOpenAtfsFileView(ATVFSFileView *srcView, const wchar_t *subPath, ATVFS
 
 	IATDiskImage *diskImage = vdpoly_cast<IATDiskImage *>(image);
 	if (!diskImage)
-		throw MyError("Unable to mount as disk image: %ls", srcView->GetFileName());
+		throw VDException(L"Unable to mount as disk image: %ls", srcView->GetFileName());
 
 	// attempt to mount a recognized filesystem
 	vdautoptr<IATDiskFS> fs(ATDiskMountImage(diskImage, true));
 
 	if (!fs)
-		throw MyError("Unrecognized filesystem in image: %ls", srcView->GetFileName());
+		throw VDException(L"Unrecognized filesystem in image: %ls", srcView->GetFileName());
 
 	// traverse the filesystem using the subpath
 	const wchar_t *s = subPath;
@@ -84,7 +86,7 @@ void ATVFSOpenAtfsFileView(ATVFSFileView *srcView, const wchar_t *subPath, ATVFS
 
 			// 8-bit filesystems don't do Unicode.
 			if (c < 0x20 || c >= 0x7F)
-				throw MyError("Invalid nested filesystem path: %ls", subPath);
+				throw VDException(L"Invalid nested filesystem path: %ls", subPath);
 
 			component[i] = (char)c;
 		}
@@ -92,7 +94,7 @@ void ATVFSOpenAtfsFileView(ATVFSFileView *srcView, const wchar_t *subPath, ATVFS
 		// look up in current directory
 		currentObject = fs->LookupFile(currentObject, component.c_str());
 		if (currentObject == ATDiskFSKey::None)
-			throw MyError("File not found in inner filesystem: %ls", subPath);
+			throw VDException(L"File not found in inner filesystem: %ls", subPath);
 
 		if (!separator) {
 			// reached the end -- done with traversal

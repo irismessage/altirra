@@ -20,17 +20,17 @@
 
 #include <vd2/system/vdtypes.h>
 
-enum ATUITouchMode : uint32 {
-	kATUITouchMode_Default,
-	kATUITouchMode_Immediate,
-	kATUITouchMode_Direct,
-	kATUITouchMode_VerticalPan,
-	kATUITouchMode_2DPan,
-	kATUITouchMode_2DPanSmooth,
-	kATUITouchMode_MultiTouch,
-	kATUITouchMode_MultiTouchImmediate,
-	kATUITouchMode_Dynamic,
-	kATUITouchMode_MultiTouchDynamic
+enum ATUITouchMode : uint32 {				//	flicks		press-and-hold		gestures
+	kATUITouchMode_Default,					//	on			on					on
+	kATUITouchMode_Immediate,				//	off			off					off
+	kATUITouchMode_Direct,					//	off			on					off
+	kATUITouchMode_VerticalPan,				//	off			on					vertical pan only
+	kATUITouchMode_2DPan,					//	off			on					on
+	kATUITouchMode_2DPanSmooth,				//	off			on					on, pan gutters disabled
+	kATUITouchMode_MultiTouch,				//	off			on					off, registered as touch window
+	kATUITouchMode_MultiTouchImmediate,		//	off			off					off, registered as touch window
+	kATUITouchMode_Dynamic,					//	<determined by lookup>
+	kATUITouchMode_MultiTouchDynamic		//	<determined by lookup>
 };
 
 enum ATUICursorImage : uint32 {

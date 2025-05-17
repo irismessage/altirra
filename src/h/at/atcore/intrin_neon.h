@@ -23,6 +23,7 @@
 #define f_AT_ATCORE_INTRIN_NEON_H
 
 #include <intrin.h>
+#include <arm_neon.h>
 
 inline void ATMaskedWrite_NEON(uint8x16_t src, uint8x16_t mask, void *dstp) {
 	vst1q_u8((uint8_t *)dstp, vbslq_u8(mask, src, vld1q_u8((const uint8_t *)dstp)));

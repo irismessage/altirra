@@ -223,7 +223,7 @@ DEFINE_TEST(Core_Checksum) {
 			TEST_ASSERT(c == d);
 		}
 
-		printf("%-10s  OK\n", name);
+		AT_TEST_TRACEF("%-10s  OK", name);
 	};
 
 	ATChecksumSHA256 hash128 = "5D65A47CD489C6780D4854E60F93CB0C90546C6194B5F42C14EAC513FB3CAA72"_atsha256;

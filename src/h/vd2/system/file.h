@@ -77,9 +77,9 @@ namespace nsVDFile {
 
 class VDFile {
 protected:
-	VDFileHandle	mhFile;
+	VDFileHandle	mhFile = nullptr;
 	vdautoptr2<wchar_t>	mpFilename;
-	sint64			mFilePosition;
+	sint64			mFilePosition = 0;
 
 private:
 	VDFile(const VDFile&);
@@ -90,7 +90,10 @@ public:
 	VDFile(const char *pszFileName, uint32 flags = nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
 	VDFile(const wchar_t *pwszFileName, uint32 flags = nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting);
 	VDFile(VDFileHandle h);
+	vdnothrow VDFile(VDFile&&) vdnoexcept;
 	~VDFile();
+
+	vdnothrow VDFile& operator=(VDFile&&) vdnoexcept;
 
 	// The "NT" functions are non-throwing and return success/failure; the regular functions throw exceptions
 	// when something bad happens.
@@ -220,7 +223,11 @@ public:
 	VDFileStream(const wchar_t *pwszFileName, uint32 flags = nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting)
 		: VDFile(pwszFileName, flags) {}
 	VDFileStream(VDFileHandle h) : VDFile(h) {}
+
+	VDFileStream(VDFileStream&&) = default;
 	~VDFileStream();
+
+	VDFileStream& operator=(VDFileStream&&) = default;
 
 	const wchar_t *GetNameForError();
 	sint64	Pos();
@@ -247,6 +254,30 @@ protected:
 	const char		*mpSrc;
 	uint32			mLength;
 	uint32			mPos;
+};
+
+class VDMemoryBufferStream final : public IVDRandomAccessStream {
+	VDMemoryBufferStream(const VDMemoryBufferStream&) = delete;
+	VDMemoryBufferStream& operator=(const VDMemoryBufferStream&) = delete;
+public:
+	VDMemoryBufferStream();
+	~VDMemoryBufferStream();
+
+	vdspan<const uint8> GetBuffer() const {
+		return vdspan<const uint8>(mBuffer.begin(), mBuffer.end());
+	}
+
+	const wchar_t *GetNameForError() override;
+	sint64	Pos() override;
+	void	Read(void *buffer, sint32 bytes) override;
+	sint32	ReadData(void *buffer, sint32 bytes) override;
+	void	Write(const void *buffer, sint32 bytes) override;
+	sint64	Length() override;
+	void	Seek(sint64 offset) override;
+
+protected:
+	vdfastvector<uint8> mBuffer;
+	size_t mPos = 0;
 };
 
 class VDBufferedStream final : public IVDRandomAccessStream {
@@ -345,6 +376,7 @@ public:
 
 	void Flush();
 
+	sint64 Pos() const;
 	void Write(const char *s);
 	void Write(const char *s, int len);
 	void PutLine();

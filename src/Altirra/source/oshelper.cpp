@@ -31,12 +31,22 @@
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Riza/bitmap.h>
+#include <at/atcore/enumparseimpl.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/theme.h>
 #include "decode_png.h"
 #include "encode_png.h"
 #include "common_png.h"
 #include "uiaccessors.h"
+
+AT_DEFINE_ENUM_TABLE_BEGIN(ATProcessEfficiencyMode)
+	{ ATProcessEfficiencyMode::Default, "default" },
+	{ ATProcessEfficiencyMode::Performance, "performance" },
+	{ ATProcessEfficiencyMode::Efficiency, "efficiency" },
+AT_DEFINE_ENUM_TABLE_END(ATProcessEfficiencyMode, ATProcessEfficiencyMode::Default)
+
+DWORD_PTR g_ATOriginalProcessAffinityMask;
+bool g_ATOriginalProcessAffinityMaskAdjusted;
 
 const void *ATLockResource(uint32 id, size_t& size) {
 	HMODULE hmod = VDGetLocalModuleHandleW32();
@@ -514,7 +524,7 @@ void ATShowHelp(void *hwnd, const wchar_t *filename) {
 		VDStringW helpFile(ATGetHelpPath());
 
 		if (!VDDoesPathExist(helpFile.c_str()))
-			throw MyError("Cannot find help file: %ls", helpFile.c_str());
+			throw VDException(L"Cannot find help file: %ls", helpFile.c_str());
 
 		// If we're on Windows NT, check for the ADS and/or network drive.
 		{
@@ -696,4 +706,128 @@ void ATRelaunchElevatedWithEscapedArgs(VDGUIHandle parent, vdspan<const wchar_t 
 	}
 
 	ATRelaunchElevated(parent, argStr.c_str());
+}
+
+BOOL ATGetSystemCpuSetInformationW32(PSYSTEM_CPU_SET_INFORMATION information, ULONG bufferLength, PULONG returnedLength, HANDLE process, ULONG flags) {
+	static const auto pfn = (decltype(GetSystemCpuSetInformation) *)GetProcAddress(GetModuleHandleW(L"kernel32"), "GetSystemCpuSetInformation");
+
+	if (pfn)
+		return pfn(information, bufferLength, returnedLength, process, flags);
+
+	*returnedLength = 0;
+	return TRUE;
+}
+
+void ATSetProcessEfficiencyMode(ATProcessEfficiencyMode mode) {
+	// CPU Sets would seem to be the right way to handle this, but they are a lot weaker than
+	// the documentation implies -- the Windows 11 scheduler will not schedule a thread
+	// on a core that is parked even if the selected CPU set only contains parked cores.
+	// This largely makes setting CPU sets useless as the scheduler will basically
+	// ignore requests to use E-cores unless the system is under heavy load.
+	//
+	// To work around this, force assignment using the process affinity mask. This has the
+	// permanent side effect of disabling auto-scheduling across processor groups, so we
+	// need to only do this if requested. This means that we may not be able to reliably
+	// force scheduling onto E-cores if the system has more than 64 threads, but that's
+	// the best we can do for now.
+		
+	if (mode == ATProcessEfficiencyMode::Default) {
+		if (g_ATOriginalProcessAffinityMaskAdjusted) {
+			g_ATOriginalProcessAffinityMaskAdjusted = false;
+
+			VDVERIFY(SetProcessAffinityMask(GetCurrentProcess(), g_ATOriginalProcessAffinityMask));
+		}
+		return;
+	}
+
+	// read out CPU set information for all CPUs, and build a list of CPU set IDs to use
+	ULONG requiredLength = 0;
+	if (!ATGetSystemCpuSetInformationW32(nullptr, 0, &requiredLength, GetCurrentProcess(), 0)
+		&& GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+	{
+		return;
+	}
+
+	// if there are no CPU sets, or the OS doesn't support CPU sets, exit
+	if (!requiredLength)
+		return;
+
+	vdautoblockptr buf(malloc(requiredLength));
+	if (!buf.get())
+		return;
+
+	ULONG requiredLengthDummy = 0;
+	if (!ATGetSystemCpuSetInformationW32((SYSTEM_CPU_SET_INFORMATION *)buf.get(), requiredLength, &requiredLengthDummy, GetCurrentProcess(), 0))
+		return;
+
+	// traverse CPU set structures and pull out CPU set IDs and efficiency values
+	struct CPUSetInfo {
+		DWORD mId;
+		BYTE mEfficiencyClass;
+		BYTE mLogicalProcessorIndex;
+	};
+
+	vdfastvector<CPUSetInfo> cpuSets;
+
+	ULONG offset = 0;
+	BYTE maxEfficiencyClass = 0;
+
+	while(offset < requiredLength) {
+		if (requiredLength - offset < offsetof(SYSTEM_CPU_SET_INFORMATION, Type) + sizeof(SYSTEM_CPU_SET_INFORMATION::Type))
+			break;
+
+		const SYSTEM_CPU_SET_INFORMATION *info = (const SYSTEM_CPU_SET_INFORMATION *)((const char *)buf.get() + offset);
+
+		if (info->Size == 0)
+			break;
+
+		if (info->Type == CpuSetInformation) {
+			// Toss any logical CPUs not in group 0 or beyond size of DWORD_PTR -- we won't be
+			// able to target these through the process affinity mask. The latter particularly
+			// affects a 32-bit process running on a 64-bit kernel.
+			if (info->CpuSet.Group == 0 && info->CpuSet.LogicalProcessorIndex < sizeof(DWORD_PTR)*8) {
+				cpuSets.emplace_back(info->CpuSet.Id, info->CpuSet.EfficiencyClass, info->CpuSet.LogicalProcessorIndex);
+
+				maxEfficiencyClass = std::max<BYTE>(maxEfficiencyClass, info->CpuSet.EfficiencyClass);
+			}
+		}
+
+		if (requiredLength - offset < info->Size)
+			break;
+
+		offset += info->Size;
+	}
+
+	// extract set of CPU sets that match or don't match the performance cores (highest EfficiencyClass value)
+	vdfastvector<ULONG> selectedCpuSetIds;
+	const bool wantPCore = (mode == ATProcessEfficiencyMode::Performance);
+	DWORD_PTR affinityMask = 0;
+
+	for(const auto& cpuSet : cpuSets) {
+		const bool isPCore = (cpuSet.mEfficiencyClass == maxEfficiencyClass);
+
+		if (isPCore == wantPCore)
+			affinityMask |= DWORD_PTR(1) << cpuSet.mLogicalProcessorIndex;
+	}
+
+	// intersect against original process affinity mask
+	if (!g_ATOriginalProcessAffinityMaskAdjusted) {
+		g_ATOriginalProcessAffinityMask = 0;
+
+		DWORD_PTR systemAffinityMask = 0;
+		if (!GetProcessAffinityMask(GetCurrentProcess(), &g_ATOriginalProcessAffinityMask, &systemAffinityMask))
+			return;
+	}
+
+	affinityMask &= g_ATOriginalProcessAffinityMask;
+
+	// if we're going to try to select either no or all CPU sets, exit as it's pointless, we
+	// either don't have meaningful distinction between CPU set efficiencies or we've been
+	// prerestricted to an affinity set that does that
+	if (affinityMask == 0 || affinityMask == g_ATOriginalProcessAffinityMask)
+		return;
+
+	// apply affinity
+	VDVERIFY(SetProcessAffinityMask(GetCurrentProcess(), affinityMask));
+	g_ATOriginalProcessAffinityMaskAdjusted = true;
 }

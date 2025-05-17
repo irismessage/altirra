@@ -78,6 +78,9 @@
     <ClCompile Include="source\serialsplitter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\paralleltoserial.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\stdafx.h">

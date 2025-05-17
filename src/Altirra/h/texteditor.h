@@ -47,7 +47,7 @@ public:
 
 class IVDTextEditorColorizer {
 public:
-	virtual void RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *colorization) = 0;
+	virtual void RecolorLine(int line, const wchar_t *text, int length, IVDTextEditorColorization *colorization) = 0;
 };
 
 class IVDUIMessageFilterW32 {
@@ -71,7 +71,7 @@ public:
 	virtual bool IsRedoPossible() = 0;
 
 	virtual int GetLineCount() = 0;
-	virtual bool GetLineText(int line, vdfastvector<char>& buf) = 0;
+	virtual bool GetLineText(int line, vdfastvector<wchar_t>& buf) = 0;
 
 	virtual void SetReadOnly(bool enable) = 0;
 	virtual void SetWordWrap(bool enable) = 0;
@@ -107,8 +107,9 @@ public:
 	virtual void DeleteSelection() = 0;
 	virtual void SelectAll() = 0;
 
-	virtual void Append(const char *s) = 0;
-	virtual void InsertAt(int para, int offset, const char *s) = 0;
+	virtual void AppendASCII(const char *s) = 0;
+	virtual void Append(const wchar_t *s) = 0;
+	virtual void InsertAt(int para, int offset, const wchar_t *s) = 0;
 	virtual void RemoveAt(int para1, int offset1, int para2, int offset2) = 0;
 
 	virtual void Load(IVDStream& stream) = 0;

@@ -536,8 +536,8 @@ const ATUIDialogCreateInputMap::ControllerTypeInfo ATUIDialogCreateInputMap::kCo
 		},
 	},
 	{
-		.mType = kATInputControllerType_Trackball_CX80_V1,
-		.mpName = L"Trak-Ball (CX80 V1)",
+		.mType = kATInputControllerType_Trackball_CX80,
+		.mpName = L"Trak-Ball (CX80)",
 		.mbRequiresRelative = true,
 		.mAnalogRelativeModifier = kATInputTriggerMode_Relative | (4 << kATInputTriggerSpeed_Shift) | (6 << kATInputTriggerAccel_Shift),
 		.mDigitalRelativeModifier = kATInputTriggerMode_Relative | (10 << kATInputTriggerSpeed_Shift) | (10 << kATInputTriggerAccel_Shift),
@@ -1020,7 +1020,7 @@ protected:
 		{ kATInputControllerType_Tablet,			1, 0,	L"Tablet (Atari touch tablet)" },
 		{ kATInputControllerType_KoalaPad,			1, 0,	L"Tablet (KoalaPad)" },
 		{ kATInputControllerType_Keypad,			1, 0,	L"Numerical Keypad (CX85)" },
-		{ kATInputControllerType_Trackball_CX80_V1,	1, 0,	L"Trak-Ball (CX80 V1)" },
+		{ kATInputControllerType_Trackball_CX80,	1, 0,	L"Trak-Ball (CX80)" },
 		{ kATInputControllerType_5200Trackball,		1, 0,	L"5200 Trak-Ball (CX53)" },
 		{ kATInputControllerType_Driving,			1, 0,	L"Driving Controller (CX20)" },
 		{ kATInputControllerType_Keyboard,			1, 0,	L"Keyboard Controller (CX21/23/50)" },
@@ -1229,7 +1229,7 @@ protected:
 	static const uint32 kTargetCodesLightPenGun[];
 	static const uint32 kTargetCodesTablet[];
 	static const uint32 kTargetCodesKeypad[];
-	static const uint32 kTargetCodesTrackballCX80V1[];
+	static const uint32 kTargetCodesTrackballCX80[];
 	static const uint32 kTargetCodes5200Trackball[];
 	static const uint32 kTargetCodesDriving[];
 	static const uint32 kTargetCodesKeyboard[];
@@ -1482,6 +1482,8 @@ const uint32 ATUIDialogEditInputMapping::kTargetCodesConsole[] = {
 	kATInputTrigger_Turbo,
 	kATInputTrigger_ColdReset,
 	kATInputTrigger_WarmReset,
+	kATInputTrigger_Rewind,
+	kATInputTrigger_RewindMenu,
 	kATInputTrigger_KeySpace,
 	kATInputTrigger_UILeft,
 	kATInputTrigger_UIRight,
@@ -1546,7 +1548,7 @@ const uint32 ATUIDialogEditInputMapping::kTargetCodesKeypad[] = {
 	kATInputTrigger_Button0+16,
 };
 
-const uint32 ATUIDialogEditInputMapping::kTargetCodesTrackballCX80V1[] = {
+const uint32 ATUIDialogEditInputMapping::kTargetCodesTrackballCX80[] = {
 	kATInputTrigger_Axis0,
 	kATInputTrigger_Axis0+1,
 	kATInputTrigger_Left,
@@ -1678,8 +1680,8 @@ const vdspan<const uint32> ATUIDialogEditInputMapping::GetTargetCodes(ATInputCon
 		case kATInputControllerType_Keypad:
 			return vdspan<const uint32>(kTargetCodesKeypad);
 
-		case kATInputControllerType_Trackball_CX80_V1:
-			return vdspan<const uint32>(kTargetCodesTrackballCX80V1);
+		case kATInputControllerType_Trackball_CX80:
+			return vdspan<const uint32>(kTargetCodesTrackballCX80);
 
 		case kATInputControllerType_5200Trackball:
 			return vdspan<const uint32>(kTargetCodes5200Trackball);
@@ -2061,7 +2063,7 @@ void ATUIDialogInputMapControllerItem::GetText(VDStringW& s) const {
 			s.sprintf(L"Numerical Keypad (port %d)", mControllerUnit + 1);
 			break;
 
-		case kATInputControllerType_Trackball_CX80_V1:
+		case kATInputControllerType_Trackball_CX80:
 			s.sprintf(L"Trak-Ball (port %d)", mControllerUnit + 1);
 			break;
 

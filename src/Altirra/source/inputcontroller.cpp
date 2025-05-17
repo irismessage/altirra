@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/bitmath.h>
+#include <vd2/system/constexpr.h>
 #include <vd2/system/math.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/deviceport.h>
@@ -26,6 +27,7 @@
 #include "inputmanager.h"
 #include <at/ataudio/pokey.h>
 #include "antic.h"
+#include "gtia.h"
 #include "pia.h"
 
 class ATAnticEmulator;
@@ -45,8 +47,9 @@ constexpr int ATLightPenPort::kHorizOffset = 12;
 ATLightPenPort::ATLightPenPort() {
 }
 
-void ATLightPenPort::Init(ATAnticEmulator *antic) {
-	mpAntic = antic;
+void ATLightPenPort::Init(ATAnticEmulator& antic, ATGTIAEmulator& gtia) {
+	mpAntic = &antic;
+	mpGTIA = &gtia;
 }
 
 bool ATLightPenPort::GetImmediateUpdateEnabled() const {
@@ -93,6 +96,8 @@ void ATLightPenPort::SetPosition(bool pen, int x, int y) {
 	}
 
 	mbOddPhase = (x & 1) != 0;
+	mPenBeamX = x;
+	mPenBeamY = y;
 }
 
 void ATLightPenPort::SetPortTriggerState(int index, bool state) {
@@ -109,7 +114,16 @@ void ATLightPenPort::SetPortTriggerState(int index, bool state) {
 	mTriggerState = newState;
 
 	if ((newState & mTriggerStateMask) && mpAntic && !mbImmediateUpdate) {
-		SetAnticPenPosition(mpAntic->GetBeamX() * 2 + kHorizOffset + (mbOddPhase ? 1 : 0), mpAntic->GetBeamY());
+		int beamX = mpAntic->GetBeamX() * 2 + kHorizOffset + (mbOddPhase ? 1 : 0);
+		int beamY = mpAntic->GetBeamY();
+
+		// if the current timing is close enough, correct to the pen position
+		if (abs(beamY - mPenBeamY) <= 2) {
+			beamX = mPenBeamX;
+			beamY = mPenBeamY;
+		}
+
+		SetAnticPenPosition(beamX, beamY);
 	}
 }
 
@@ -1270,6 +1284,8 @@ ATLightPenController::~ATLightPenController() {
 void ATLightPenController::Init(ATScheduler *fastScheduler, ATLightPenPort *lpp) {
 	mpScheduler = fastScheduler;
 	mpLightPen = lpp;
+
+	SetLightSensingEnabled(mbPenDown);
 }
 
 void ATLightPenController::SetDigitalTrigger(uint32 trigger, bool state) {
@@ -1278,10 +1294,9 @@ void ATLightPenController::SetDigitalTrigger(uint32 trigger, bool state) {
 			if (mbTriggerPressed != state) {
 				mbTriggerPressed = state;
 
-				int x, y;
-				GetBeamPos(x, y, ATLightPenNoiseMode::None);
+				auto pos = GetAnticLightPos(ATLightPenNoiseMode::None);
 
-				mpLightPen->TriggerCorrection(state, x, y);
+				mpLightPen->TriggerCorrection(state, pos.x, pos.y);
 			}
 
 			UpdatePortState();
@@ -1291,8 +1306,9 @@ void ATLightPenController::SetDigitalTrigger(uint32 trigger, bool state) {
 			if (mbPenDown != state) {
 				mbPenDown = state;
 
-				mpScheduler->UnsetEvent(mpLPAssertEvent);
 				mpScheduler->UnsetEvent(mpLPDeassertEvent);
+
+				SetLightSensingEnabled(state && !mpLightPen->GetImmediateUpdateEnabled());
 			}
 			break;
 
@@ -1376,6 +1392,62 @@ void ATLightPenController::UpdatePortState() {
 	}
 }
 
+void ATLightPenController::SetLightSensingEnabled(bool enabled) {
+	if (!mpLightPen)
+		return;
+
+	if (enabled) {
+		if (mpLightSensor)
+			return;
+
+		static constexpr uint8 kWeights[3*3] {
+			1, 2, 1,
+			2, 4, 2,
+			1, 2, 1,
+		};
+
+		mpLightSensor = mpLightPen->GetGTIA().RegisterLightSensor(3, 3, kWeights, 0.010f,
+			[this](int y) {
+				if (!mpLightPen->GetImmediateUpdateEnabled())
+					AssertLPInput(y);
+			}
+		);
+	} else {
+		if (!mpLightSensor)
+			return;
+
+		mpLightPen->GetGTIA().UnregisterLightSensor(mpLightSensor);
+		mpLightSensor = nullptr;
+	}
+}
+
+void ATLightPenController::AssertLPInput(std::optional<int> forcedY) {
+	auto pos = GetAnticLightPos(mpLightPen->GetNoiseMode());
+	pos += mpLightPen->GetAdjust(mType != Type::LightGun);
+
+	if (forcedY.has_value())
+		pos.y = forcedY.value();
+
+	mpLightPen->SetPosition(mType != Type::LightGun, pos.x, pos.y);
+
+	DeassertLPInput();
+
+	mPortBits |= 0x100;
+	SetPortOutput(mPortBits);
+
+	// Measured CX-75 light pulse width is about 32-35 color clocks.
+	mpScheduler->SetEvent(17, this, 2, mpLPDeassertEvent);
+}
+
+void ATLightPenController::DeassertLPInput() {
+	mpScheduler->UnsetEvent(mpLPDeassertEvent);
+
+	if (mPortBits & 0x100) {
+		mPortBits &= ~0x100;
+		SetPortOutput(mPortBits);
+	}
+}
+
 void ATLightPenController::GetPointers(vdfastvector<ATInputPointerInfo>& pointers) const {
 	ATInputPointerInfo& pointer = pointers.emplace_back();
 	pointer.mPos = GetBeamPointerPos();
@@ -1390,66 +1462,45 @@ void ATLightPenController::Tick() {
 	// Y range is [4, 123].
 
 	if (mbPenDown) {
-		int x, y;
-
-		GetBeamPos(x, y, mpLightPen->GetNoiseMode());
-
-		const auto [adjX, adjY] = mpLightPen->GetAdjust(mType != Type::LightGun);
-		x += adjX;
-		y += adjY;
-
-		mpLightPen->SetPosition(mType != Type::LightGun, x, y);
-
 		if (mpLightPen->GetImmediateUpdateEnabled()) {
 			// AtariGraphics needs to see the trigger down when the PENH/V
 			// registers change in order to detect which port is being used
 			// for the light pen.
-			if (!(mPortBits & 0x100)) {
-				mPortBits |= 0x100;
-				SetPortOutput(mPortBits);
-			}
-
+			AssertLPInput();
 			return;
 		} else {
-			// Because we are called after the ANTIC emulator's X increment has
-			// occurred, there is a 1 cycle correction we need to apply.
+			if (mpLightSensor) {
+				// This needs to use the uncorrected beam pos X because it corresponds to the
+				// position that we're sensing on screen, not the position reported to ANTIC.
+				// Light pen/gun delays don't matter.
+				//
+				// We do need to use inherent Y corrections since the light sensor will
+				// unilaterally determine the PENV value by the line on which it triggers,
+				// and so if we don't apply it here, it will have no effect. This means that
+				// the light sensor itself is offset vertically by both the inherent and
+				// explicit adjustments, but not horizontally. Barnyard Blaster, in particular,
+				// expects the reported position to be noticeably lower than the scanned
+				// position, which can't be explained by a larger sensor area.
+				auto [x, y] = GetRawBeamPos();
+				auto [x2, y2] = GetAnticLightPos(ATLightPenNoiseMode::None);
 
-			uint32 delay = mpControllerPort->GetCyclesToBeamPosition((x >> 1) + 1 - ATLightPenPort::kHorizOffset, y);
+				y = y2;
 
-			if (delay < 1)
-				delay = 1;
+				const auto [adjX, adjY] = mpLightPen->GetAdjust(mType != Type::LightGun);
+				y += adjY;
 
-			mpScheduler->SetEvent((uint32)delay, this, 1, mpLPAssertEvent);
+				mpLightPen->GetGTIA().SetLightSensorPosition(mpLightSensor, x*2 - 1, y - 1);
+			}
 		}
 	}
 
-	if (mPortBits & 0x100) {
-		mPortBits &= ~0x100;
-		SetPortOutput(mPortBits);
-	}
-
-	mpScheduler->UnsetEvent(mpLPDeassertEvent);
+	DeassertLPInput();
 }
 
 void ATLightPenController::OnScheduledEvent(uint32 id) {
-	if (id == 1) {
-		mpLPAssertEvent = nullptr;
+	mpLPDeassertEvent = nullptr;
 
-		if (!(mPortBits & 0x100)) {
-			mPortBits |= 0x100;
-			SetPortOutput(mPortBits);
-		}
-
-		// Measured CX-75 light pulse width is about 32-35 color clocks.
-		mpScheduler->SetEvent(17, this, 2, mpLPDeassertEvent);
-	} else {
-		mpLPDeassertEvent = nullptr;
-
-		if (mPortBits & 0x100) {
-			mPortBits &= ~0x100;
-			SetPortOutput(mPortBits);
-		}
-	}
+	DeassertLPInput();
 }
 
 void ATLightPenController::OnAttach() {
@@ -1458,17 +1509,23 @@ void ATLightPenController::OnAttach() {
 
 void ATLightPenController::OnDetach() {
 	if (mpScheduler) {
-		mpScheduler->UnsetEvent(mpLPAssertEvent);
 		mpScheduler->UnsetEvent(mpLPDeassertEvent);
 	}
+
+	SetLightSensingEnabled(false);
 }
 
-void ATLightPenController::GetBeamPos(int& x, int& y, ATLightPenNoiseMode noiseMode) const {
+// Return the light pen's cursor position as a beam position (color clocks).
+vdint2 ATLightPenController::GetRawBeamPos() const {
 	const sint32 hiX = mPosX*94;
 	const sint32 hiY = mPosY*188;
 
-	x = (hiX + 0x808000) >> 16;
-	y = (hiY + 0x808000) >> 16;
+	return (vdint2 { hiX, hiY } + 0x808000) >> 16;
+}
+
+// Return the ANTIC light pen position as a beam position (color clocks).
+vdint2 ATLightPenController::GetAnticLightPos(ATLightPenNoiseMode noiseMode) const {
+	auto pos = GetRawBeamPos();
 
 	if (mType == Type::LightGun) {
 		// This is based on the average expected offset by some light gun
@@ -1481,33 +1538,37 @@ void ATLightPenController::GetBeamPos(int& x, int& y, ATLightPenNoiseMode noiseM
 		//	- Delays in latching H/V counters into PENH/V.
 		//	- Area of pickup for the light sensor.
 
-		x += 57;
-		y += 2;
+		pos.x += 43;
+		pos.y += 3;
 	} else {
 		// This is based on actual measurements of a CX-75 with a 1702
 		// monitor. A pixel at the center (hardware hpos/vpos=$80) gives
 		// PENH=~$96-9C and PENV=$40.
 
-		x += 34;
-		y += 1;
+		pos.x += 24;
+		pos.y += 1;
 	}
 	
 	// This is a hand-wavy algorithm to emulate some position-dependent horizontal
 	// noise that appears to be related to phosphors.
+	const sint32 hiY = mPosY*188;
+
 	switch(noiseMode) {
 		case ATLightPenNoiseMode::None:
 			break;
 
 		case ATLightPenNoiseMode::Low:
 			if (hiY & 0x1000)
-				x += (hiY & 0xFFFF) / 0x8000;
+				pos.x += (hiY & 0xFFFF) / 0x8000;
 			break;
 
 		case ATLightPenNoiseMode::High:
 			if (hiY & 0x1000)
-				x += (hiY & 0xFFFF) / 0x3333;
+				pos.x += (hiY & 0xFFFF) / 0x3333;
 			break;
 	}
+
+	return pos;
 }
 
 vdfloat2 ATLightPenController::GetBeamPointerPos() const {

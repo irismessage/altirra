@@ -49,6 +49,7 @@ void OnCommandSystemCPUMode65C816x6() { OnCommandSystemCPUMode(kATCPUMode_65C816
 void OnCommandSystemCPUMode65C816x8() { OnCommandSystemCPUMode(kATCPUMode_65C816, 8); }
 void OnCommandSystemCPUMode65C816x10() { OnCommandSystemCPUMode(kATCPUMode_65C816, 10); }
 void OnCommandSystemCPUMode65C816x12() { OnCommandSystemCPUMode(kATCPUMode_65C816, 12); }
+void OnCommandSystemCPUMode65C816x23() { OnCommandSystemCPUMode(kATCPUMode_65C816, 23); }
 
 void OnCommandSystemCPUToggleHistory() {
 	auto& cpu = g_sim.GetCPU();

@@ -48,7 +48,6 @@ class ATDeviceDiskDrivePercom final : public ATDevice
 	, public ATDeviceSIO
 	, public ATDiskDriveDebugTargetControl
 	, public IATDeviceRawSIO
-	, public IATDevicePrinterPort
 	, public IATDeviceParent
 {
 public:
@@ -89,9 +88,6 @@ public:	// IATDeviceRawSIO
 	void OnMotorStateChanged(bool asserted) override;
 	void OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) override;
 	void OnSendReady() override;
-
-public:	// IATDevicePrinterPort
-	void SetPrinterDefaultOutput(IATPrinterOutput *out) override;
 
 public:	// IATDeviceParent
 	IATDeviceBus *GetDeviceBus(uint32 index) override;
@@ -161,7 +157,7 @@ protected:
 	bool mbSelectFDC2 = false;
 
 	bool mbLastPrinterStrobe = false;
-	IATPrinterOutput *mpPrinter = nullptr;
+	vdrefptr<IATPrinterOutput> mpPrinterOutput;
 
 	ATDiskDriveAudioPlayer mAudioPlayer;
 

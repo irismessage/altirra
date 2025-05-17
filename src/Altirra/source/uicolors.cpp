@@ -160,8 +160,10 @@ ATUIColorReferenceControl::ATUIColorReferenceControl() {
 	mColors.emplace_back(ColorEntry { VDStringW(L"$90: Star Raiders galactic map"), 0x90 });
 	mColors.emplace_back(ColorEntry { VDStringW(L"$96: Star Raiders map BG"), 0x96 });
 	mColors.emplace_back(ColorEntry { VDStringW(L"$B8: Star Raiders map FG"), 0xB8 });
-	mColors.emplace_back(ColorEntry { VDStringW(L"$AA: Pole Position sky"), 0xAA });
-	mColors.emplace_back(ColorEntry { VDStringW(L"$D8: Pole Position grass"), 0xD8 });
+	mColors.emplace_back(ColorEntry { VDStringW(L"$AA: Pole Position sky (NTSC)"), 0xAA });
+	mColors.emplace_back(ColorEntry { VDStringW(L"$8A: Pole Position sky (PAL)"), 0x8A });
+	mColors.emplace_back(ColorEntry { VDStringW(L"$D8: Pole Position grass (NTSC)"), 0xD8 });
+	mColors.emplace_back(ColorEntry { VDStringW(L"$B8: Pole Position grass (PAL)"), 0xB8 });
 
 	for(ColorEntry& ce : mColors)
 		ce.mBgColor = ~0U;
@@ -1059,7 +1061,7 @@ void ATUIColorImageReferenceControl::SampleColors() {
 				vdfloat32x4 planeV2 = planeV;
 
 				for(sint32 px = minX; px < maxX; ++px) {
-					if (all_bool(planeV2 >= vdfloat32x4::zero())) {
+					if (all_bool(cmpge(planeV2, vdfloat32x4::zero()))) {
 						accum += vdfloat32x4(VDColorRGB::FromRGB8(srcRow[px]).SRGBToLinear());
 						++count;
 					}
@@ -1486,6 +1488,19 @@ protected:
 
 	vdrefptr<ATUIColorReferenceControl> mpSamplesControl;
 	ATUIColorImageReferenceWindow mReferenceWindow;
+
+	struct ColorModeName {
+		ATColorMatchingMode mMode;
+		const wchar_t *mpDisplayName;
+	};
+
+	static constexpr ColorModeName kColorModeNames[] {
+		{ ATColorMatchingMode::None, L"None" },
+		{ ATColorMatchingMode::SRGB, L"NTSC/PAL to sRGB" },
+		{ ATColorMatchingMode::Gamma22, L"NTSC/PAL to gamma 2.2" },
+		{ ATColorMatchingMode::Gamma24, L"NTSC/PAL to gamma 2.4" },
+		{ ATColorMatchingMode::AdobeRGB, L"NTSC/PAL to Adobe RGB" },
+	};
 };
 
 ATAdjustColorsDialog g_adjustColorsDialog;
@@ -1540,9 +1555,9 @@ bool ATAdjustColorsDialog::OnLoaded() {
 	mLumaRampCombo.AddItem(L"XL/XE");
 
 	AddProxy(&mColorModeCombo, IDC_COLORMATCHING_MODE);
-	mColorModeCombo.AddItem(L"None");
-	mColorModeCombo.AddItem(L"NTSC/PAL to sRGB");
-	mColorModeCombo.AddItem(L"NTSC/PAL to Adobe RGB");
+
+	for(const auto& entry : kColorModeNames)
+		mColorModeCombo.AddItem(entry.mpDisplayName);
 
 	TBSetRange(IDC_HUESTART, -120, 360);
 	TBSetRange(IDC_HUERANGE, 0, 540);
@@ -1640,7 +1655,16 @@ void ATAdjustColorsDialog::OnDataExchange(bool write) {
 		TBSetValue(IDC_BLU_SCALE, VDRoundToInt(mpParams->mBluScale * 100.0f));
 
 		mLumaRampCombo.SetSelection(mpParams->mLumaRampMode);
-		mColorModeCombo.SetSelection((int)mpParams->mColorMatchingMode);
+
+		auto it = std::find_if(
+			std::begin(kColorModeNames),
+			std::end(kColorModeNames),
+			[mode = mpParams->mColorMatchingMode](const auto& entry) {
+				return entry.mMode == mode;
+			}
+		);
+
+		mColorModeCombo.SetSelection(it != std::end(kColorModeNames) ? (int)(it - kColorModeNames) : 0);
 
 		UpdateLabel(IDC_HUESTART);
 		UpdateLabel(IDC_HUERANGE);
@@ -2172,7 +2196,10 @@ void ATAdjustColorsDialog::OnLumaRampChanged(VDUIProxyComboBoxControl *sender, i
 }
 
 void ATAdjustColorsDialog::OnColorModeChanged(VDUIProxyComboBoxControl *sender, int sel) {
-	ATColorMatchingMode newMode = (ATColorMatchingMode)sel;
+	ATColorMatchingMode newMode = ATColorMatchingMode::None;
+
+	if (sel >= 0 && sel < (int)vdcountof(kColorModeNames))
+		newMode = kColorModeNames[sel].mMode;
 
 	if (mpParams->mColorMatchingMode != newMode) {
 		mpParams->mColorMatchingMode = newMode;
@@ -2186,7 +2213,10 @@ void ATAdjustColorsDialog::OnGammaRampHelp() {
 }
 
 void ATUIOpenAdjustColorsDialog(VDGUIHandle hParent) {
-	g_adjustColorsDialog.Create(hParent);
+	if (g_adjustColorsDialog.IsCreated())
+		g_adjustColorsDialog.Activate();
+	else
+		g_adjustColorsDialog.Create(hParent);
 }
 
 void ATUICloseAdjustColorsDialog() {

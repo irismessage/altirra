@@ -165,12 +165,17 @@ public:
 /// Cassette image block type for raw audio data only.
 class ATCassetteImageBlockRawAudio final : public ATCassetteImageBlockT<kATCassetteImageBlockType_RawAudio> {
 public:
+	ATCassetteImageBlockRawAudio();
+
+	uint32 GetAudioLength() const { return mAudioLength; }
+	uint8 *Extend(uint32 n);
 	void GetMinMax(uint32 offset, uint32 len, uint8& minVal, uint8& maxVal) const;
 
 	uint32 AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const override;
 
+private:
 	vdfastvector<uint8> mAudio;
-	uint32 mAudioLength;
+	uint32 mAudioLength = 0;
 };
 
 /// Cassette image block type for blank tape.

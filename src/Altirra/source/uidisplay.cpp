@@ -64,6 +64,7 @@
 #include "resource.h"
 #include "options.h"
 #include "decode_png.h"
+#include "virtualscreen.h"
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -1876,6 +1877,11 @@ void ATDisplayPane::WarpCapturedMouse() {
 }
 
 void ATDisplayPane::UpdateTextDisplay(bool enabled) {
+	IATVirtualScreenHandler *vs = g_sim.GetVirtualScreenHandler();
+
+	if (vs && vs->IsPassThroughEnabled())
+		enabled = false;
+
 	g_ATUINativeDisplay.SetIgnoreAutoFlipping(enabled);
 
 	if (mpAccessibilityProvider)
@@ -1900,7 +1906,7 @@ void ATDisplayPane::UpdateTextDisplay(bool enabled) {
 	}
 
 	bool forceInvalidate = false;
-	bool virtScreen = (g_sim.GetVirtualScreenHandler() != nullptr);
+	bool virtScreen = (vs != nullptr);
 
 	if (!mbTextModeEnabled) {
 		mbTextModeEnabled = true;

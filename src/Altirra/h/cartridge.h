@@ -139,9 +139,15 @@ protected:
 	static sint32 DebugReadByte_MegaCart3(void *thisptr0, uint32 address);
 	static sint32 ReadByte_MegaCart3(void *thisptr0, uint32 address);
 	static bool WriteByte_MegaCart3(void *thisptr0, uint32 address, uint8 value);
+
 	static sint32 DebugReadByte_MaxFlash(void *thisptr0, uint32 address);
 	static sint32 ReadByte_MaxFlash(void *thisptr0, uint32 address);
 	static bool WriteByte_MaxFlash(void *thisptr0, uint32 address, uint8 value);
+
+	static sint32 DebugReadByte_JAtariCart_512K(void *thisptr0, uint32 address);
+	static sint32 ReadByte_JAtariCart_512K(void *thisptr0, uint32 address);
+	static bool WriteByte_JAtariCart_512K(void *thisptr0, uint32 address, uint8 value);
+
 	static bool WriteByte_Corina1M(void *thisptr0, uint32 address, uint8 value);
 	static bool WriteByte_Corina512K(void *thisptr0, uint32 address, uint8 value);
 
@@ -261,6 +267,9 @@ protected:
 
 	static sint32 ReadByte_CCTL_Pronto(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_Pronto(void *thisptr0, uint32 address, uint8 value);
+	
+	static sint32 DebugReadByte_CCTL_DCart(void *thisptr0, uint32 address);
+	static sint32 ReadByte_CCTL_DCart(void *thisptr0, uint32 address);
 
 	void InitFromImage();
 	void InitMemoryLayers();

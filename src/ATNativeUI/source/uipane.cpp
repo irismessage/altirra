@@ -51,11 +51,13 @@ void ATUIPane::SetName(const wchar_t *name) {
 }
 
 void ATUIPane::RegisterUIPane() {
-	ATRegisterActiveUIPane(mPaneId, this);
+	if (mPaneId)
+		ATRegisterActiveUIPane(mPaneId, this);
 }
 
 void ATUIPane::UnregisterUIPane() {
-	ATUnregisterActiveUIPane(mPaneId, this);
+	if (mPaneId)
+		ATUnregisterActiveUIPane(mPaneId, this);
 }
 
 ////////////////////////////////////////////////////////////////

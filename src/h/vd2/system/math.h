@@ -31,16 +31,16 @@
 
 // Constants
 namespace nsVDMath {
-	static const float	kfPi = 3.1415926535897932384626433832795f;
-	static const double	krPi = 3.1415926535897932384626433832795;
-	static const float	kfTwoPi = 6.283185307179586476925286766559f;
-	static const double	krTwoPi = 6.283185307179586476925286766559;
-	static const float	kfLn2 = 0.69314718055994530941723212145818f;
-	static const double	krLn2 = 0.69314718055994530941723212145818;
-	static const float	kfLn10 = 2.3025850929940456840179914546844f;
-	static const double	krLn10 = 2.3025850929940456840179914546844;
-	static const float	kfOneOverLn10 = 0.43429448190325182765112891891661f;
-	static const double	krOneOverLn10 = 0.43429448190325182765112891891661;
+	static constexpr float	kfPi = 3.1415926535897932384626433832795f;
+	static constexpr double	krPi = 3.1415926535897932384626433832795;
+	static constexpr float	kfTwoPi = 6.283185307179586476925286766559f;
+	static constexpr double	krTwoPi = 6.283185307179586476925286766559;
+	static constexpr float	kfLn2 = 0.69314718055994530941723212145818f;
+	static constexpr double	krLn2 = 0.69314718055994530941723212145818;
+	static constexpr float	kfLn10 = 2.3025850929940456840179914546844f;
+	static constexpr double	krLn10 = 2.3025850929940456840179914546844;
+	static constexpr float	kfOneOverLn10 = 0.43429448190325182765112891891661f;
+	static constexpr double	krOneOverLn10 = 0.43429448190325182765112891891661;
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -128,40 +128,56 @@ inline sint32 VDRoundToIntFastFullRange(double x) {
 	return (sint32)u.i[0];
 }
 
-inline constexpr sint32 VDFloorToInt(double x) {
-	if (std::is_constant_evaluated()) {
-		sint32 estimate = (sint32)x;
+////////////////////////////////////////////////////////////////////////////////
 
-		return x >= 0 || (double)estimate == x ? estimate : estimate - 1;
-	} else
-		return (sint32)floor(x);
+inline constexpr int VDFloorToInt(double x) {
+	int estimate = (int)x;
+
+	return x < (double)estimate ? estimate - 1 : estimate;
+}
+
+inline constexpr sint32 VDFloorToInt32(float x) {
+	sint32 estimate = (sint32)x;
+
+	return x < (float)estimate ? estimate - 1 : estimate;
+}
+
+inline constexpr sint32 VDFloorToInt32(double x) {
+	sint32 estimate = (sint32)x;
+
+	return x < (double)estimate ? estimate - 1 : estimate;
 }
 
 inline constexpr sint64 VDFloorToInt64(double x) {
-	if (std::is_constant_evaluated()) {
-		sint64 estimate = (sint64)x;
+	sint64 estimate = (sint64)x;
 
-		return x >= 0 || (double)estimate == x ? estimate : estimate - 1;
-	} else
-		return (sint64)floor(x);
+	return x < (double)estimate ? estimate - 1 : estimate;
 }
 
-inline constexpr sint32 VDCeilToInt(double x) {
-	if (std::is_constant_evaluated()) {
-		sint32 estimate = (sint32)x;
+////////////////////////////////////////////////////////////////////////////////
 
-		return x < 0 || (double)estimate == x ? estimate : estimate + 1;
-	} else
-		return (sint32)ceil(x);
+inline constexpr int VDCeilToInt(double x) {
+	int estimate = (int)x;
+
+	return (double)estimate < x ? estimate+1 : estimate;
+}
+
+inline constexpr sint32 VDCeilToInt32(float x) {
+	sint64 estimate = (sint32)x;
+
+	return (float)estimate < x ? estimate+1 : estimate;
+}
+
+inline constexpr sint32 VDCeilToInt32(double x) {
+	sint64 estimate = (sint32)x;
+
+	return (double)estimate < x ? estimate+1 : estimate;
 }
 
 inline constexpr sint64 VDCeilToInt64(double x) {
-	if (std::is_constant_evaluated()) {
-		sint64 estimate = (sint64)x;
+	sint64 estimate = (sint64)x;
 
-		return x < 0 || (double)estimate == x ? estimate : estimate + 1;
-	} else
-		return (sint64)ceil(x);
+	return (double)estimate < x ? estimate+1 : estimate;
 }
 
 

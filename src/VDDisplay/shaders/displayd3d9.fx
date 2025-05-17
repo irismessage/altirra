@@ -197,30 +197,31 @@
 //			$$texture 1 vd_src2atexture clamp clamp bilinear
 //			$$texture 2 vd_src2btexture clamp clamp point
 
-//	$$technique screenfx_bloom_prescale
+//	$$technique screenfx_bloomv2_conv
 //		$$pass
-//			$$vertex_shader vs_2_0 VP_Bloom1
-//			$$pixel_shader ps_2_0 FP_Bloom1_Gamma
+//			$$vertex_shader vs_2_0 VP_BloomGamma
+//			$$pixel_shader ps_2_0 FP_BloomGamma
+//			$$texture 0 vd_srctexture clamp clamp point
+//
+//	$$technique screenfx_bloomv2_down
+//		$$pass
+//			$$vertex_shader vs_2_0 VP_BloomDown
+//			$$pixel_shader ps_2_0 FP_BloomDown
 //			$$texture 0 vd_srctexture clamp clamp bilinear
 //
-//	$$technique screenfx_bloom_prescale2
+//	$$technique screenfx_bloomv2_up_noblend
 //		$$pass
-//			$$vertex_shader vs_2_0 VP_Bloom1
-//			$$pixel_shader ps_2_0 FP_Bloom1A
-//			$$texture 0 vd_srctexture clamp clamp bilinear
-//
-//	$$technique screenfx_bloom_blur
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_Bloom2
-//			$$pixel_shader ps_2_0 FP_Bloom2
-//			$$texture 0 vd_srctexture clamp clamp bilinear
-//
-//	$$technique screenfx_bloom_final
-//		$$pass
-//			$$vertex_shader vs_2_0 VP_Bloom3
-//			$$pixel_shader ps_2_0 FP_Bloom3_Gamma
+//			$$vertex_shader vs_2_0 VP_BloomUpNoBlend
+//			$$pixel_shader ps_2_0 FP_BloomUpNoBlend
 //			$$texture 0 vd_srctexture clamp clamp bilinear
 //			$$texture 1 vd_src2atexture clamp clamp point
+//
+//	$$technique screenfx_bloomv2_final
+//		$$pass
+//			$$vertex_shader vs_2_0 VP_BloomFinal
+//			$$pixel_shader ps_2_0 FP_BloomFinal
+//			$$texture 0 vd_srctexture clamp clamp point
+//			$$texture 1 vd_src2atexture clamp clamp bilinear
 
 //	$$technique screenfx_palartifacting
 //		$$pass

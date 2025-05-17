@@ -1487,7 +1487,7 @@
 
     Displays raw sector data.
     
-      .diskdumpsec [-d <drive>] [-i] <virt-sector>
+      .diskdumpsec [-d <drive>] [-i] [-I] <virt-sector>
       
     Reads a raw sector from disk by virtual sector number and displays
     its contents. If phantom sectors are present, the first one is used.
@@ -1496,6 +1496,9 @@
     If -i is specified, the data is inverted before being displayed. This is
     useful for disk formats that are non-inverted on disk and thus inverted
     from the view of the computer (Atari 815, Indus GT CP/M).
+
+    -I displays characters as INTERNAL instead of ATASCII. Bit 7 is also
+    ignored.
     
     WARNING: While this command doesn't disturb timing state, it will
              change virtual disk image state when reading sectors off
@@ -2339,6 +2342,12 @@
       .vbxe_xdl
 
     The XDL address is obtained from the current VBXE_XDLn registers.
+
++ .vbxe_xdlhistory    Display VBXE extended display list (XDL) history
+
+    Displays the execution history of the VBXE XDL up to the current point.
+
+      .vbxe_xdlhistory
 
 + .vectors     Display kernel vectors
 

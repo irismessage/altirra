@@ -60,14 +60,14 @@ namespace nsVDTextDOM {
 		typedef vdfastvector<Line> Lines;
 		Lines	mLines;
 
-		vdfastvector<char> mText;
+		vdfastvector<wchar_t> mText;
 
 		int GetYBottom() const { return mYPos + mHeight; }
 
 		int GetSpanIndexFromOffset(int offset) const;
 		int GetLineIndexFromOffset(int offset) const;
 
-		void Insert(int line, int offset, const char *s, size_t len);
+		void Insert(int line, int offset, const wchar_t *s, size_t len);
 		void Append(const Paragraph& src);
 		void DeleteFromStart(int line, int offset);
 		void DeleteToEnd(int line, int offset);
@@ -149,10 +149,10 @@ namespace nsVDTextDOM {
 		int GetParagraphFromPos(int pos);
 		int GetParagraphFromY(int y);
 
-		void GetParagraphText(int paraIdx, vdfastvector<char>& buf);
-		void GetText(const Iterator& it1, const Iterator& it2, bool forceCRLF, vdfastvector<char>& buf);
+		void GetParagraphText(int paraIdx, vdfastvector<wchar_t>& buf);
+		void GetText(const Iterator& it1, const Iterator& it2, bool forceCRLF, vdfastvector<wchar_t>& buf);
 
-		void Insert(const Iterator& it, const char *text, size_t len, Iterator *after);
+		void Insert(const Iterator& it, const wchar_t *text, size_t len, Iterator *after);
 		void DeleteAll();
 		void Delete(const Iterator& it1, const Iterator& it2);
 

@@ -280,7 +280,25 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			return 0;
 
 		case WM_KEYDOWN:
-			if (mHighlightedAddress.has_value() && mbSelectionEnabled) {
+			if (wParam == VK_PRIOR) {
+				const sint32 startPos = mScrollBar.GetValue();
+				mScrollBar.SetValue(startPos - std::max<sint32>(mCompletelyVisibleRows, 1));
+
+				const sint32 endPos = mScrollBar.GetValue();
+				OnViewScroll(endPos, false);
+			} else if (wParam == VK_NEXT) {
+				const sint32 startPos = mScrollBar.GetValue();
+				mScrollBar.SetValue(startPos + std::max<sint32>(mCompletelyVisibleRows, 1));
+
+				const sint32 endPos = mScrollBar.GetValue();
+				OnViewScroll(endPos, false);
+			} else if (wParam == VK_UP && GetKeyState(VK_CONTROL) < 0) {
+				mScrollBar.SetValue(mScrollBar.GetValue() - 1);
+				OnViewScroll(mScrollBar.GetValue(), false);
+			} else if (wParam == VK_DOWN && GetKeyState(VK_CONTROL) < 0) {
+				mScrollBar.SetValue(mScrollBar.GetValue() + 1);
+				OnViewScroll(mScrollBar.GetValue(), false);
+			} else if (mHighlightedAddress.has_value() && mbSelectionEnabled) {
 				if (wParam == VK_ESCAPE) {
 					CancelEdit();
 				} else if (wParam == VK_RETURN) {
@@ -298,6 +316,9 @@ LRESULT ATMemoryWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				} else if (wParam == VK_DOWN) {
 					CommitEdit();
 					SetHighlightedAddress(mHighlightedAddress.value() + mColumns, mbHighlightedData, true);
+				} else if (wParam == VK_TAB) {
+					CommitEdit();
+					SetHighlightedAddress(mHighlightedAddress.value(), !mbHighlightedData, true);
 				}
 			}
 			return 0;
@@ -867,6 +888,8 @@ void ATMemoryWindow::OnPaint() {
 		COLORREF normalBkColor = VDSwizzleU32(tc.mContentBg) >> 8;
 		COLORREF highlightedBkColor = VDSwizzleU32(mbSelectionEnabled ? tc.mHighlightedBg : tc.mInactiveHiBg) >> 8;
 		COLORREF highlightedTextColor = VDSwizzleU32(mbSelectionEnabled ? tc.mHighlightedFg : tc.mInactiveHiFg) >> 8;
+		COLORREF inactiveHiBkColor = VDSwizzleU32(tc.mInactiveHiBg) >> 8;
+		COLORREF inactiveHiTextColor = VDSwizzleU32(tc.mInactiveHiFg) >> 8;
 
 		::IntersectClipRect(hdc, mTextArea.left, mTextArea.top, mTextArea.right, mTextArea.bottom);
 
@@ -1129,48 +1152,49 @@ void ATMemoryWindow::OnPaint() {
 				if ((uint32)(hiAddr - addr) < mColumns) {
 					uint32 hiOffset = hiAddr - addr;
 
-					::SetBkColor(hdc, highlightedBkColor);
-					::SetTextColor(hdc, highlightedTextColor);
-
 					RECT rHiRect = rLine;
 
-					if (mbHighlightedData) {
-						if (mInterpretMode == InterpretMode::Atascii || mInterpretMode == InterpretMode::Internal) {
-							rHiRect.left = mTextArea.left + (interpretCol + 2 + hiOffset) * mCharWidth - mHScrollPos;
-							rHiRect.right = rHiRect.left + mCharWidth;
-							::ExtTextOutA(hdc, rHiRect.left, rLine.top + textOffsetY, ETO_OPAQUE, &rHiRect, ((changeMask[hiOffset >> 4] & (3 << (hiOffset & 31))) ? mTempLine2.c_str() : mTempLine.c_str()) + interpretCol + 2 + hiOffset, 1, nullptr);
-						}
+					if (mInterpretMode == InterpretMode::Atascii || mInterpretMode == InterpretMode::Internal) {
+						rHiRect.left = mTextArea.left + (interpretCol + 2 + hiOffset) * mCharWidth - mHScrollPos;
+						rHiRect.right = rHiRect.left + mCharWidth;
+
+						::SetBkColor(hdc, !mbHighlightedData ? inactiveHiBkColor : highlightedBkColor);
+						::SetTextColor(hdc, !mbHighlightedData ? inactiveHiTextColor : highlightedTextColor);
+						::ExtTextOutA(hdc, rHiRect.left, rLine.top + textOffsetY, ETO_OPAQUE, &rHiRect, ((changeMask[hiOffset >> 4] & (3 << (hiOffset & 31))) ? mTempLine2.c_str() : mTempLine.c_str()) + interpretCol + 2 + hiOffset, 1, nullptr);
+					}
+
+					int charsPerEntry = 0;
+					int elementOffset = hiOffset;
+
+					if (mValueMode == ValueMode::HexWords) {
+						hiOffset &= ~(int)1;
+						elementOffset >>= 1;
+						charsPerEntry = 4;
+					} else if (mValueMode == ValueMode::DecWords) {
+						hiOffset &= ~(int)1;
+						elementOffset >>= 1;
+						charsPerEntry = 5;
+					} else if (mValueMode == ValueMode::DecBytes) {
+						charsPerEntry = 3;
 					} else {
-						int charsPerEntry = 0;
-						int elementOffset = hiOffset;
+						charsPerEntry = 2;
+					}
 
-						if (mValueMode == ValueMode::HexWords) {
-							hiOffset &= ~(int)1;
-							elementOffset >>= 1;
-							charsPerEntry = 4;
-						} else if (mValueMode == ValueMode::DecWords) {
-							hiOffset &= ~(int)1;
-							elementOffset >>= 1;
-							charsPerEntry = 5;
-						} else if (mValueMode == ValueMode::DecBytes) {
-							charsPerEntry = 3;
-						} else {
-							charsPerEntry = 2;
-						}
+					if (charsPerEntry) {
+						rHiRect.left = mTextArea.left + (startCol + 1 + (charsPerEntry + 1) * elementOffset) * mCharWidth - mHScrollPos;
+						rHiRect.right = rHiRect.left + charsPerEntry * mCharWidth;
 
-						if (charsPerEntry) {
-							rHiRect.left = mTextArea.left + (startCol + 1 + (charsPerEntry + 1) * elementOffset) * mCharWidth - mHScrollPos;
-							rHiRect.right = rHiRect.left + charsPerEntry * mCharWidth;
+						::SetBkColor(hdc, mbHighlightedData ? inactiveHiBkColor : highlightedBkColor);
+						::SetTextColor(hdc, mbHighlightedData ? inactiveHiTextColor : highlightedTextColor);
 
-							::ExtTextOutA(hdc,
-								rHiRect.left,
-								rLine.top + textOffsetY,
-								ETO_OPAQUE,
-								&rHiRect,
-								((changeMask[elementOffset >> 5] & (1 << (elementOffset & 31))) ? mTempLine2.c_str() : mTempLine.c_str()) + startCol + 1 + (charsPerEntry + 1) * elementOffset,
-								charsPerEntry,
-								nullptr);
-						}
+						::ExtTextOutA(hdc,
+							rHiRect.left,
+							rLine.top + textOffsetY,
+							ETO_OPAQUE,
+							&rHiRect,
+							((changeMask[elementOffset >> 5] & (1 << (elementOffset & 31))) ? mTempLine2.c_str() : mTempLine.c_str()) + startCol + 1 + (charsPerEntry + 1) * elementOffset,
+							charsPerEntry,
+							nullptr);
 					}
 
 					::SetBkColor(hdc, normalBkColor);
@@ -1188,7 +1212,7 @@ void ATMemoryWindow::OnPaint() {
 }
 
 void ATMemoryWindow::OnViewScroll(sint32 pos, [[maybe_unused]] bool tracking) {
-	RemakeView((mViewStart & 0xFFFF0000) + (mViewStart & 0xFFFF) % mColumns + pos * mColumns, true);
+	RemakeView((mViewStart & 0xFFFF0000) + (mViewStart & 0xFFFF) % mColumns + std::max<sint32>(0, pos) * mColumns, true);
 }
 
 void ATMemoryWindow::OnViewHScroll(sint32 pos, [[maybe_unused]] bool tracking) {

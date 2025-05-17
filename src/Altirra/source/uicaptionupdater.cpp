@@ -762,7 +762,7 @@ void ATUIWindowCaptionUpdater::CheckForStateChange(bool force) {
 
 		bool basic = mpSim->IsBASICEnabled();
 
-		if (!kATHardwareModeTraits[mLastHardwareMode].mbInternalBASIC)
+		if (!mpSim->SupportsInternalBasic())
 			basic = false;
 
 		DetectChange(change, mbLastBASICState, basic);

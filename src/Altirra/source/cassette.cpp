@@ -54,6 +54,7 @@ AT_DEFINE_ENUM_TABLE_BEGIN(ATCassetteTurboMode)
 	{ kATCassetteTurboMode_ProceedSense, "proceedSense" },
 	{ kATCassetteTurboMode_InterruptSense, "interruptSense" },
 	{ kATCassetteTurboMode_KSOTurbo2000, "ksoturbo2000" },
+	{ kATCassetteTurboMode_TurboD, "turbod" },
 	{ kATCassetteTurboMode_DataControl, "datacontrol" },
 	{ kATCassetteTurboMode_Always, "always" },
 AT_DEFINE_ENUM_TABLE_END(ATCassetteTurboMode, kATCassetteTurboMode_None)
@@ -254,17 +255,12 @@ void ATCassetteEmulator::LoadNew() {
 }
 
 void ATCassetteEmulator::Load(const wchar_t *fn) {
-	vdrefptr<ATVFSFileView> view;
-
-	ATVFSOpenFileView(fn, false, ~view);
-
 	UnloadInternal();
 
 	ATCassetteLoadContext ctx;
-	ctx.mTurboDecodeAlgorithm = mTurboDecodeAlgorithm;
+	GetLoadOptions(ctx);
 
-	vdrefptr<IATCassetteImage> image;
-	ATLoadCassetteImage(view->GetStream(), nullptr, nullptr, ctx, ~image);
+	vdrefptr<IATCassetteImage> image = ATLoadCassetteImage(fn, nullptr, ctx);
 
 	Load(image, fn, true);
 }
@@ -362,6 +358,12 @@ void ATCassetteEmulator::SetRandomizedStartEnabled(bool enable) {
 	mbRandomizedStartEnabled = enable;
 }
 
+void ATCassetteEmulator::GetLoadOptions(ATCassetteLoadContext& ctx) const {
+	ctx.mTurboDecodeAlgorithm = mTurboDecodeAlgorithm;
+	ctx.mbFSKSpeedCompensation = mbFSKSpeedCompensation;
+	ctx.mbCrosstalkReduction = mbCrosstalkReduction;
+}
+
 void ATCassetteEmulator::SetDirectSenseMode(ATCassetteDirectSenseMode mode) {
 	if (mDirectSenseMode != mode) {
 		mDirectSenseMode = mode;
@@ -383,6 +385,7 @@ void ATCassetteEmulator::SetTurboMode(ATCassetteTurboMode mode) {
 		case kATCassetteTurboMode_ProceedSense:
 		case kATCassetteTurboMode_InterruptSense:
 		case kATCassetteTurboMode_KSOTurbo2000:
+		case kATCassetteTurboMode_TurboD:
 		case kATCassetteTurboMode_DataControl:
 			break;
 
@@ -412,44 +415,43 @@ void ATCassetteEmulator::SetTurboMode(ATCassetteTurboMode mode) {
 		}
 	}
 
+	if (mPortInput >= 0) {
+		mpPortMgr->FreeInput(mPortInput);
+		mPortInput = -1;
+	}
+
+	if (mPortOutput >= 0) {
+		mpPortMgr->FreeOutput(mPortOutput);
+		mPortOutput = -1;
+	}
+
+	mpScheduler->UnsetEvent(mpPortUpdateEvent);
+
+	if (mbPortMotorState) {
+		mbPortMotorState = false;
+
+		UpdateMotorState();
+	}
+
 	if (mode == kATCassetteTurboMode_KSOTurbo2000) {
-		if (mPortInput < 0) {
-			mPortInput = mpPortMgr->AllocInput();
-			mpPortMgr->SetInput(mPortInput, ~UINT32_C(0));
-		}
+		mPortInput = mpPortMgr->AllocInput();
+		mpPortMgr->SetInput(mPortInput, ~UINT32_C(0));
 
-		if (mPortOutput < 0) {
-			mPortOutput = mpPortMgr->AllocOutput(
-				[](void *data, uint32 outputState) {
-					ATCassetteEmulator *thisPtr = (ATCassetteEmulator *)data;
-					bool newPortMotorState = !(outputState & 0x20);
+		mPortOutput = mpPortMgr->AllocOutput(
+			[](void *data, uint32 outputState) {
+				ATCassetteEmulator *thisPtr = (ATCassetteEmulator *)data;
+				bool newPortMotorState = !(outputState & 0x20);
 
-					if (thisPtr->mbPortMotorState != newPortMotorState) {
-						thisPtr->mbPortMotorState = newPortMotorState;
+				if (thisPtr->mbPortMotorState != newPortMotorState) {
+					thisPtr->mbPortMotorState = newPortMotorState;
 
-						thisPtr->UpdateMotorState();
-					}
-				},
-				this, 0x20);
-		}
-	} else {
-		if (mPortInput >= 0) {
-			mpPortMgr->FreeInput(mPortInput);
-			mPortInput = -1;
-		}
-
-		if (mPortOutput >= 0) {
-			mpPortMgr->FreeOutput(mPortOutput);
-			mPortOutput = -1;
-		}
-
-		mpScheduler->UnsetEvent(mpPortUpdateEvent);
-
-		if (mbPortMotorState) {
-			mbPortMotorState = false;
-
-			UpdateMotorState();
-		}
+					thisPtr->UpdateMotorState();
+				}
+			},
+			this, 0x20);
+	} else if (mode == kATCassetteTurboMode_TurboD) {
+		mPortInput = mpPortMgr->AllocInput();
+		mpPortMgr->SetInput(mPortInput, ~UINT32_C(0));
 	}
 }
 
@@ -1091,6 +1093,13 @@ void ATCassetteEmulator::OnScheduledEvent(uint32 id) {
 				g_ATLCCasData("Receiving byte[%3d]: %02X (pos=%.3fs)\n", mLogIndex, mDataByte, (float)mPosition / (float)kATCassetteDataSampleRate);
 				mLogIndex = (mLogIndex + 1) % 1000;
 			}
+		} else if (result == kBR_FramingError) {
+			mpPokey->ReceiveSIOByte(mDataByte, 0, false, false, false, true);
+
+			if (g_ATLCCasData.IsEnabled()) {
+				g_ATLCCasData("Receiving byte[%3d]: %02X (pos=%.3fs) [framing error]\n", mLogIndex, mDataByte, (float)mPosition / (float)kATCassetteDataSampleRate);
+				mLogIndex = (mLogIndex + 1) % 1000;
+			}
 		}
 
 	} else if (id == kATCassetteEventId_Record) {
@@ -1337,7 +1346,7 @@ void ATCassetteEmulator::UpdateMotorState() {
 				mpPlayEvent = mpScheduler->AddEvent(1, this, kATCassetteEventId_ProcessBit);
 			}
 
-			if (mTurboMode == kATCassetteTurboMode_KSOTurbo2000 && !mpPortUpdateEvent) {
+			if ((mTurboMode == kATCassetteTurboMode_KSOTurbo2000 || mTurboMode == kATCassetteTurboMode_TurboD) && !mpPortUpdateEvent) {
 				mPortCurrentPosition = mPosition;
 				mbPortCurrentPolarity = true;
 				ScheduleNextPortTransition();
@@ -1768,8 +1777,12 @@ void ATCassetteEmulator::ScheduleNextPortTransition() {
 
 			if (distance > 0) {
 				// Set the inverse of the next bit on the current state. However, there are three inverters
-				// between the tape and pin 4 (joystick right), so we need to uninvert it.
-				mpPortMgr->SetInput(mPortInput, (mbInvertTurboData ? !bit : bit) ? ~UINT32_C(0) : ~UINT32_C(0x80));
+				// between the tape and pin 4 (joystick right) for KSO Turbo 2000, so we need to uninvert it.
+
+				if (mTurboMode == kATCassetteTurboMode_TurboD)
+					mpPortMgr->SetInput(mPortInput, (mbInvertTurboData ? !bit : bit) ? ~UINT32_C(0) : ~UINT32_C(0x10));
+				else
+					mpPortMgr->SetInput(mPortInput, (mbInvertTurboData ? !bit : bit) ? ~UINT32_C(0) : ~UINT32_C(0x80));
 
 				mpScheduler->SetEvent(distance * kATCassetteCyclesPerDataSample, this, kATCassetteEventId_PortUpdate, mpPortUpdateEvent);
 				return;

@@ -27,7 +27,7 @@ public:
 protected:
 	ATUIPaneWindowBase();
 
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 
 	virtual ATUIPane& AsPane() = 0;
 

@@ -544,6 +544,12 @@ HRESULT STDMETHODCALLTYPE ATUIDisplayTextRangeProviderW32::ExpandToEnclosingUnit
 			break;
 
 		case TextUnit_Word:
+			if (!screen.IsAtWordBoundary(mStart))
+				mStart = screen.MoveToPrevWordBoundary(mStart);
+
+			mEnd = screen.MoveToNextWordBoundary(mStart);
+			break;
+
 		case TextUnit_Line:
 		case TextUnit_Paragraph:
 			mStart.x = 0;
@@ -992,6 +998,7 @@ HRESULT STDMETHODCALLTYPE ATUIDisplayTextRangeProviderW32::Move(TextUnit unit, i
 
 	switch(unit) {
 		case TextUnit_Character:
+		case TextUnit_Word:
 			if (count < 0) {
 				if (mStart.x > 0 || mStart.y > 0)
 					canMove = true;
@@ -1014,7 +1021,6 @@ HRESULT STDMETHODCALLTYPE ATUIDisplayTextRangeProviderW32::Move(TextUnit unit, i
 			}
 			break;
 
-		case TextUnit_Word:
 		case TextUnit_Line:
 		case TextUnit_Paragraph:
 			if (count < 0) {
@@ -1166,20 +1172,26 @@ HRESULT STDMETHODCALLTYPE ATUIDisplayTextRangeProviderW32::MoveEndpointByUnit(Te
 					uint32 fwdDist = (uint32)count;
 					const uint32 n = (uint32)screen.mFormatSpans.size();
 
-					if (n - formatIdx < fwdDist)
+					if (n - formatIdx < fwdDist) {
 						formatIdx = n;
-					else
+						actualSteps = (int)(n - formatIdx);
+					} else {
 						formatIdx += fwdDist;
+						actualSteps = count;
+					}
 				} else {
 					uint32 revDist = (uint32)-count;
 
 					if (txOffset != format.mOffset)
 						--revDist;
 
-					if (formatIdx < revDist)
+					if (formatIdx < revDist) {
+						actualSteps = (int)formatIdx;
 						formatIdx = 0;
-					else
+					} else {
+						actualSteps = (int)revDist;
 						formatIdx -= revDist;
+					}
 				}
 
 				txOffset = screen.mFormatSpans[formatIdx].mOffset;
@@ -1188,6 +1200,31 @@ HRESULT STDMETHODCALLTYPE ATUIDisplayTextRangeProviderW32::MoveEndpointByUnit(Te
 			break;
 
 		case TextUnit_Word:
+			if (count > 0) {
+				if (pt >= end)
+					break;
+
+				while(count--) {
+					pt = screen.MoveToNextWordBoundary(pt);
+					++actualSteps;
+
+					if (pt == end)
+						break;
+				}
+			} else {
+				if (pt == ATUIDisplayAccessibilityTextPoint{})
+					break;
+
+				while(count++) {
+					pt = screen.MoveToPrevWordBoundary(pt);
+					++actualSteps;
+
+					if (pt == ATUIDisplayAccessibilityTextPoint{})
+						break;
+				}
+			}
+			break;
+
 		case TextUnit_Line:
 		case TextUnit_Paragraph:
 			if (count > 0) {

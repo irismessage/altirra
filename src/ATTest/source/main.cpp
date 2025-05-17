@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <windows.h>
 #include <corecrt_startup.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/cpuaccel.h>
@@ -22,10 +23,6 @@
 	#define BUILD L"AMD64"
 #elif defined(_M_ARM64)
 	#define BUILD L"ARM64"
-#endif
-
-#ifdef VD_CPU_ARM64
-#include <windows.h>
 #endif
 
 extern void ATTestInitBlobHandler();
@@ -58,10 +55,14 @@ void ATTestHelp() {
 	wprintf(L"Usage: AltirraTest [options] tests... | all");
 	wprintf(L"\n");
 	wprintf(L"Options:\n");
-	wprintf(L"    /allexts   Run tests with all possible CPU extension subsets\n");
-	wprintf(L"    /big       Run tests on big cores (ARM64 only)\n");
-	wprintf(L"    /little    Run tests on LITTLE cores (ARM64 only)\n");
-	wprintf(L"    /v         Enable verbose test output\n");
+	wprintf(L"    /allexts        Run tests with all possible CPU extension subsets\n");
+	wprintf(L"    /big,/pcore     Run tests on big/performance cores\n");
+	wprintf(L"    /little,/ecore  Run tests on LITTLE/efficiency cores\n");
+	wprintf(L"    /ext            Select CPU extensions to use\n");
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	wprintf(L"        Tiers: sse2, sse3, ssse3, sse4.1, sse4.2, avx, avx2\n");
+#endif
+	wprintf(L"    /v              Enable verbose test output\n");
 	wprintf(L"\n");
 
 	wprintf(L"Available tests:\n");
@@ -95,6 +96,32 @@ int ATTestMain(int argc, wchar_t **argv) {
 	_CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 	_CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
 	_CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+	
+	signal(SIGABRT,
+		[](int) {
+			if (IsDebuggerPresent())
+				__debugbreak();
+
+			static constexpr char str[] = "Fatal error: abort() has been called\n";
+
+			DWORD actual = 0;
+			WriteFile(GetStdHandle(STD_ERROR_HANDLE), str, (sizeof str) - 1, &actual, nullptr);
+			TerminateProcess(GetCurrentProcess(), 20);
+		}
+	);
+
+	set_terminate(
+		[] {
+			if (IsDebuggerPresent())
+				__debugbreak();
+
+			static constexpr char str[] = "Fatal error: terminate() has been called\n";
+
+			DWORD actual = 0;
+			WriteFile(GetStdHandle(STD_ERROR_HANDLE), str, (sizeof str) - 1, &actual, nullptr);
+			TerminateProcess(GetCurrentProcess(), 20);
+		}
+	);
 
 	_set_abort_behavior(_CALL_REPORTFAULT, _CALL_REPORTFAULT);
 
@@ -110,12 +137,10 @@ int ATTestMain(int argc, wchar_t **argv) {
 
 	vdvector<SelectedTest> selectedTests;
 
-#ifdef VD_CPU_ARM64
 	bool useBigCores = false;
 	bool useLittleCores = false;
-#endif
-
 	bool testAllCpuExts = false;
+	uint32 selectedExts = 0;
 
 	if (argc <= 1) {
 		ATTestHelp();
@@ -134,17 +159,108 @@ int ATTestMain(int argc, wchar_t **argv) {
 				continue;
 			}
 
-#ifdef VD_CPU_ARM64
-			if (test == L"/big") {
+			if (test == L"/ext") {
+				if (i + 1 == argc) {
+					puts("Error: CPU extension required after /exts");
+					return 10;
+				}
+
+				VDStringSpanW extName(argv[++i]);
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+				if (extName == L"sse2") {
+					selectedExts
+						= CPUF_SUPPORTS_MMX
+						| CPUF_SUPPORTS_INTEGER_SSE
+						| CPUF_SUPPORTS_SSE
+						| CPUF_SUPPORTS_SSE2
+						;
+				} else if (extName == L"sse3") {
+					selectedExts
+						= CPUF_SUPPORTS_MMX
+						| CPUF_SUPPORTS_INTEGER_SSE
+						| CPUF_SUPPORTS_SSE
+						| CPUF_SUPPORTS_SSE2
+						| CPUF_SUPPORTS_SSE3
+						;
+				} else if (extName == L"ssse3") {
+					selectedExts
+						= CPUF_SUPPORTS_MMX
+						| CPUF_SUPPORTS_INTEGER_SSE
+						| CPUF_SUPPORTS_SSE
+						| CPUF_SUPPORTS_SSE2
+						| CPUF_SUPPORTS_SSE3
+						| CPUF_SUPPORTS_SSSE3
+						;
+				} else if (extName == L"sse4.1") {
+					selectedExts
+						= CPUF_SUPPORTS_MMX
+						| CPUF_SUPPORTS_INTEGER_SSE
+						| CPUF_SUPPORTS_SSE
+						| CPUF_SUPPORTS_SSE2
+						| CPUF_SUPPORTS_SSE3
+						| CPUF_SUPPORTS_SSSE3
+						| CPUF_SUPPORTS_SSE41
+						;
+				} else if (extName == L"sse4.2") {
+					selectedExts
+						= CPUF_SUPPORTS_MMX
+						| CPUF_SUPPORTS_INTEGER_SSE
+						| CPUF_SUPPORTS_SSE
+						| CPUF_SUPPORTS_SSE2
+						| CPUF_SUPPORTS_SSE3
+						| CPUF_SUPPORTS_SSSE3
+						| CPUF_SUPPORTS_SSE41
+						| CPUF_SUPPORTS_SSE42
+						| VDCPUF_SUPPORTS_POPCNT
+						;
+				} else if (extName == L"avx") {
+					selectedExts
+						= CPUF_SUPPORTS_MMX
+						| CPUF_SUPPORTS_INTEGER_SSE
+						| CPUF_SUPPORTS_SSE
+						| CPUF_SUPPORTS_SSE2
+						| CPUF_SUPPORTS_SSE3
+						| CPUF_SUPPORTS_SSSE3
+						| CPUF_SUPPORTS_SSE41
+						| CPUF_SUPPORTS_SSE42
+						| VDCPUF_SUPPORTS_POPCNT
+						| VDCPUF_SUPPORTS_AVX
+						;
+				} else if (extName == L"avx2") {
+					selectedExts
+						= CPUF_SUPPORTS_MMX
+						| CPUF_SUPPORTS_INTEGER_SSE
+						| CPUF_SUPPORTS_SSE
+						| CPUF_SUPPORTS_SSE2
+						| CPUF_SUPPORTS_SSE3
+						| CPUF_SUPPORTS_SSSE3
+						| CPUF_SUPPORTS_SSE41
+						| CPUF_SUPPORTS_SSE42
+						| CPUF_SUPPORTS_LZCNT
+						| VDCPUF_SUPPORTS_AVX
+						| VDCPUF_SUPPORTS_AVX2
+						| VDCPUF_SUPPORTS_FMA
+						;
+				} else
+#endif
+				{
+					printf("Error: Unknown CPU extension: %ls\n", argv[i]);
+					return 20;
+				}
+
+				continue;
+			}
+
+			if (test == L"/big" || test == L"/pcore") {
 				useBigCores = true;
 				continue;
 			}
 
-			if (test == L"/little") {
+			if (test == L"/little" || test == L"/ecore") {
 				useLittleCores = true;
 				continue;
 			}
-#endif
 
 			if (test[0] == L'/') {
 				wprintf(L"Unknown switch: %ls\n", argv[i]);
@@ -183,84 +299,98 @@ next:
 		}
 	}
 
-#ifdef VD_CPU_ARM64
 	if (useLittleCores || useBigCores) {
-		ULONG len = 0;
-		GetSystemCpuSetInformation(nullptr, 0, &len, GetCurrentProcess(), 0);
-		if (GetLastError() == ERROR_INSUFFICIENT_BUFFER && len) {
-			char *buf = (char *)malloc(len);
-			if (buf) {
-				ULONG len2;
-				if (GetSystemCpuSetInformation((PSYSTEM_CPU_SET_INFORMATION)buf, len, &len2, GetCurrentProcess(), 0)) {
-					ULONG offset = 0;
-					BYTE minEfficiency = 0xFF;
-					BYTE maxEfficiency = 0x00;
+		HMODULE hmodKernel32 = GetModuleHandle(L"kernel32");
+		const auto pGetSystemCpuSetInformation = (decltype(GetSystemCpuSetInformation) *)GetProcAddress(hmodKernel32, "GetSystemCpuSetInformation");
 
-					DWORD_PTR affinityMask = 0;
+		if (!pGetSystemCpuSetInformation) {
+			puts("CPU sets not available.");
+		} else {
+			ULONG len = 0;
+			pGetSystemCpuSetInformation(nullptr, 0, &len, GetCurrentProcess(), 0);
+			if (GetLastError() == ERROR_INSUFFICIENT_BUFFER && len) {
+				char *buf = (char *)malloc(len);
+				if (buf) {
+					ULONG len2;
+					if (pGetSystemCpuSetInformation((PSYSTEM_CPU_SET_INFORMATION)buf, len, &len2, GetCurrentProcess(), 0)) {
+						ULONG offset = 0;
+						BYTE minEfficiency = 0xFF;
+						BYTE maxEfficiency = 0x00;
 
-					printf("--- begin CPU set information ---\n\n");
+						DWORD_PTR affinityMask = 0;
 
-					while(offset + 8 <= len2) {
-						SYSTEM_CPU_SET_INFORMATION *info = (SYSTEM_CPU_SET_INFORMATION *)(buf + offset);
-						const DWORD infoSize = info->Size;
+						printf("--- begin CPU set information ---\n\n");
 
-						if (len2 - offset < infoSize || info->Size < 8)
-							break;
+						while(offset + 8 <= len2) {
+							SYSTEM_CPU_SET_INFORMATION *info = (SYSTEM_CPU_SET_INFORMATION *)(buf + offset);
+							const DWORD infoSize = info->Size;
 
-						ULONG maxStructSize = infoSize - 8;
-						if (info->Type == CpuSetInformation) {
-							if (maxStructSize >= sizeof(info->CpuSet)) {
-								printf("    ID %08X | Group %04X | LPI %02X | CoreIndex %02X | LLCI %02X | Numa %02X | EfficiencyClass %02X\n"
-									, info->CpuSet.Id
-									, info->CpuSet.Group
-									, info->CpuSet.LogicalProcessorIndex
-									, info->CpuSet.CoreIndex
-									, info->CpuSet.LastLevelCacheIndex
-									, info->CpuSet.NumaNodeIndex
-									, info->CpuSet.EfficiencyClass
-								);
+							if (len2 - offset < infoSize || info->Size < 8)
+								break;
 
-								if (useLittleCores) {
-									if (minEfficiency > info->CpuSet.EfficiencyClass) {
-										minEfficiency = info->CpuSet.EfficiencyClass;
+							ULONG maxStructSize = infoSize - 8;
+							if (info->Type == CpuSetInformation) {
+								if (maxStructSize >= sizeof(info->CpuSet)) {
+									printf("    ID %08X | Group %04X | LPI %02X | CoreIndex %02X | LLCI %02X | Numa %02X | EfficiencyClass %02X\n"
+										, info->CpuSet.Id
+										, info->CpuSet.Group
+										, info->CpuSet.LogicalProcessorIndex
+										, info->CpuSet.CoreIndex
+										, info->CpuSet.LastLevelCacheIndex
+										, info->CpuSet.NumaNodeIndex
+										, info->CpuSet.EfficiencyClass
+									);
 
-										affinityMask = 0;
+									if (useLittleCores) {
+										if (minEfficiency > info->CpuSet.EfficiencyClass) {
+											minEfficiency = info->CpuSet.EfficiencyClass;
+
+											affinityMask = 0;
+										}
+
+										if (info->CpuSet.EfficiencyClass == minEfficiency)
+											affinityMask |= ((DWORD_PTR)1 << info->CpuSet.LogicalProcessorIndex);
+									} else {
+										if (maxEfficiency < info->CpuSet.EfficiencyClass) {
+											maxEfficiency = info->CpuSet.EfficiencyClass;
+
+											affinityMask = 0;
+										}
+
+										if (info->CpuSet.EfficiencyClass == maxEfficiency)
+											affinityMask |= ((DWORD_PTR)1 << info->CpuSet.LogicalProcessorIndex);
 									}
-
-									if (info->CpuSet.EfficiencyClass == minEfficiency)
-										affinityMask |= ((DWORD_PTR)1 << info->CpuSet.LogicalProcessorIndex);
-								} else {
-									if (maxEfficiency < info->CpuSet.EfficiencyClass) {
-										maxEfficiency = info->CpuSet.EfficiencyClass;
-
-										affinityMask = 0;
-									}
-
-									if (info->CpuSet.EfficiencyClass == maxEfficiency)
-										affinityMask |= ((DWORD_PTR)1 << info->CpuSet.LogicalProcessorIndex);
 								}
 							}
+
+							offset += infoSize;
 						}
 
-						offset += infoSize;
+						printf("--- end CPU set information ---\n\n");
+
+						if (affinityMask && SetProcessAffinityMask(GetCurrentProcess(), affinityMask))
+							printf("Successfully set affinity mask %08llX.\n", (unsigned long long)affinityMask);
+						else
+							printf("Failed to set affinity mask %08llX.\n", (unsigned long long)affinityMask);
 					}
-
-					printf("--- end CPU set information ---\n\n");
-
-					if (affinityMask && SetProcessAffinityMask(GetCurrentProcess(), affinityMask))
-						printf("Successfully set affinity mask %08llX.\n", (unsigned long long)affinityMask);
-					else
-						printf("Failed to set affinity mask %08llX.\n", (unsigned long long)affinityMask);
 				}
-			}
 
-			free(buf);
+				free(buf);
+			}
 		}
 	}
-#endif
 
 	long exts = CPUCheckForExtensions();
 	int failedTests = 0;
+
+	if (selectedExts) {
+		if ((selectedExts & exts) != selectedExts) {
+			printf("Error: Cannot run tests with selected CPU extensions due to missing CPU extension: %08X\n", selectedExts & ~exts);
+			return 10;
+		}
+
+		exts = selectedExts;
+	}
 
 	for(;;) {
 		CPUEnableExtensions(exts);
@@ -274,9 +404,10 @@ next:
 
 			try {
 				ATTestSetArguments(selTest.mArgs.c_str());
-				selTest.testInfo->mpTestFn();
+				if (selTest.testInfo->mpTestFn())
+					throw AssertionException();
 			} catch(const AssertionException& e) {
-				wprintf(L"    TEST FAILED: %hs\n", e.gets());
+				wprintf(L"    TEST FAILED: %ls\n", e.wc_str());
 				++failedTests;
 			}
 		}

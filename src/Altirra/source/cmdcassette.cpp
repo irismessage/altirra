@@ -138,6 +138,10 @@ void OnCommandCassetteTurboModeKSOTurbo2000() {
 	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_KSOTurbo2000);
 }
 
+void OnCommandCassetteTurboModeTurboD() {
+	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_TurboD);
+}
+
 void OnCommandCassetteTurboModeAlways() {
 	g_sim.GetCassette().SetTurboMode(kATCassetteTurboMode_Always);
 }
@@ -246,6 +250,7 @@ namespace ATCommands {
 		{ "Cassette.TurboModeProceedSense", OnCommandCassetteTurboModeProceedSense, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_ProceedSense>> },
 		{ "Cassette.TurboModeInterruptSense", OnCommandCassetteTurboModeInterruptSense, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_InterruptSense>> },
 		{ "Cassette.TurboModeKSOTurbo2000", OnCommandCassetteTurboModeKSOTurbo2000, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_KSOTurbo2000>> },
+		{ "Cassette.TurboModeTurboD", OnCommandCassetteTurboModeTurboD, nullptr, CheckedIf<IsCassetteTurboMode<kATCassetteTurboMode_TurboD>> },
 		{ "Cassette.TogglePolarity", OnCommandCassetteTogglePolarity, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Inverted>> },
 		{ "Cassette.PolarityNormal", OnCommandCassettePolarityModeNormal, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Normal>> },
 		{ "Cassette.PolarityInverted", OnCommandCassettePolarityModeInverted, Not<IsCassetteTurboMode<kATCassetteTurboMode_None>>, CheckedIf<IsCassettePolarityMode<kATCassettePolarityMode_Inverted>> },
@@ -293,6 +298,26 @@ namespace ATCommands {
 			},
 			nullptr,
 			[] { return ATCommands::ToChecked(g_sim.GetCassette().IsVBIAvoidanceEnabled()); }
+		},
+		{
+			"Cassette.ToggleFSKSpeedCompensation",
+			[] {
+				auto& cassette = g_sim.GetCassette();
+
+				cassette.SetFSKSpeedCompensationEnabled(!cassette.GetFSKSpeedCompensationEnabled());
+			},
+			nullptr,
+			[] { return ATCommands::ToChecked(g_sim.GetCassette().GetFSKSpeedCompensationEnabled()); }
+		},
+		{
+			"Cassette.ToggleCrosstalkReduction",
+			[] {
+				auto& cassette = g_sim.GetCassette();
+
+				cassette.SetCrosstalkReductionEnabled(!cassette.GetCrosstalkReductionEnabled());
+			},
+			nullptr,
+			[] { return ATCommands::ToChecked(g_sim.GetCassette().GetCrosstalkReductionEnabled()); }
 		},
 	};
 }

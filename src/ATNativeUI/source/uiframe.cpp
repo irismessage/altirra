@@ -1736,11 +1736,11 @@ void *ATContainerWindow::AsInterface(uint32 id) {
 }
 
 VDGUIHandle ATContainerWindow::Create(int x, int y, int cx, int cy, VDGUIHandle parent, bool visible) {
-	return Create(sWndClass, x, y, cx, cy, parent, visible);
+	return Create(sWndClass, L"", x, y, cx, cy, parent, visible);
 }
 
-VDGUIHandle ATContainerWindow::Create(ATOM wc, int x, int y, int cx, int cy, VDGUIHandle parent, bool visible) {
-	return (VDGUIHandle)CreateWindowEx(0, (LPCTSTR)(uintptr_t)wc, _T(""), WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|(visible ? WS_VISIBLE : 0), x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
+VDGUIHandle ATContainerWindow::Create(ATOM wc, const wchar_t *caption, int x, int y, int cx, int cy, VDGUIHandle parent, bool visible) {
+	return (VDGUIHandle)CreateWindowEx(0, (LPCTSTR)(uintptr_t)wc, caption, WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|(visible ? WS_VISIBLE : 0), x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 }
 
 void ATContainerWindow::Destroy() {
@@ -1914,6 +1914,9 @@ void ATContainerWindow::NotifyFontsUpdated() {
 	if (mpDockingPane)
 		mpDockingPane->NotifyFontsUpdated();
 
+	for(ATFrameWindow *w : mUndockedFrames)
+		w->NotifyFontsUpdated();
+
 	ResumeLayout();
 }
 
@@ -1938,6 +1941,18 @@ void ATContainerWindow::UpdateDragHandles(int screenX, int screenY) {
 
 ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame, int code) {
 	return DockFrame(frame, mpDockingPane, code);
+}
+
+vdrefptr<ATFrameWindow> ATContainerWindow::CreateFrame(ATContainerDockingPane *parent, int code, const wchar_t *caption) {
+	vdrefptr<ATFrameWindow> frame(new ATFrameWindow(this));
+	frame->Create(caption, 0, 0, 0, 0, (VDGUIHandle)this->GetHandleW32());
+
+	if (parent)
+		DockFrame(frame, parent, code);
+	else
+		DockFrame(frame, code);
+
+	return frame;
 }
 
 ATContainerDockingPane *ATContainerWindow::DockFrame(ATFrameWindow *frame, ATContainerDockingPane *parent, int code) {
@@ -2516,6 +2531,9 @@ void ATContainerWindow::OnThemeChanged() {
 
 	if (mpDockingPane)
 		mpDockingPane->NotifyThemeUpdated();
+
+	for(ATFrameWindow *frame : mUndockedFrames)
+		frame->NotifyThemeUpdated();
 
 	ResumeLayout();
 }

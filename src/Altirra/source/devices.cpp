@@ -71,6 +71,7 @@ extern const ATDeviceDefinition g_ATDeviceDefDiskDriveUSDoubler;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveSpeedy1050;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveHappy1050;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveSuperArchiver;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveSuperArchiverBW;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveTOMS1050;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveTygrys1050;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050Duplicator;
@@ -110,6 +111,15 @@ extern const ATDeviceDefinition g_ATDeviceDef1450XLTONGDiskControllerFull;
 extern const ATDeviceDefinition g_ATDeviceDef1030Full;
 extern const ATDeviceDefinition g_ATDeviceDef835Full;
 extern const ATDeviceDefinition g_ATDeviceDefSIOSerialAdapter;
+extern const ATDeviceDefinition g_ATDeviceDefMPP1000E;
+extern const ATDeviceDefinition g_ATDeviceDefPrinter820;
+extern const ATDeviceDefinition g_ATDeviceDefPrinter820Full;
+extern const ATDeviceDefinition g_ATDeviceDefPrinter1025;
+extern const ATDeviceDefinition g_ATDeviceDefPrinter1025Full;
+extern const ATDeviceDefinition g_ATDeviceDefPrinter1029;
+extern const ATDeviceDefinition g_ATDeviceDefPrinter1029Full;
+extern const ATDeviceDefinition g_ATDeviceDefPrinter825;
+extern const ATDeviceDefinition g_ATDeviceDefPrinter1020;
 
 void ATRegisterDevices(ATDeviceManager& dm) {
 	static constexpr const ATDeviceDefinition *kDeviceDefs[]={
@@ -161,6 +171,7 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefDiskDriveSpeedy1050,
 		&g_ATDeviceDefDiskDriveHappy1050,
 		&g_ATDeviceDefDiskDriveSuperArchiver,
+		&g_ATDeviceDefDiskDriveSuperArchiverBW,
 		&g_ATDeviceDefDiskDriveTOMS1050,
 		&g_ATDeviceDefDiskDriveTygrys1050,
 		&g_ATDeviceDefDiskDrive1050Duplicator,
@@ -199,7 +210,16 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDef1450XLTONGDiskControllerFull,
 		&g_ATDeviceDef1030Full,
 		&g_ATDeviceDef835Full,
-		&g_ATDeviceDefSIOSerialAdapter
+		&g_ATDeviceDefSIOSerialAdapter,
+		&g_ATDeviceDefMPP1000E,
+		&g_ATDeviceDefPrinter820,
+		&g_ATDeviceDefPrinter820Full,
+		&g_ATDeviceDefPrinter1025,
+		&g_ATDeviceDefPrinter1025Full,
+		&g_ATDeviceDefPrinter1029,
+		&g_ATDeviceDefPrinter1029Full,
+		&g_ATDeviceDefPrinter825,
+		&g_ATDeviceDefPrinter1020,
 	};
 
 	for(const ATDeviceDefinition *def : kDeviceDefs)

@@ -58,6 +58,7 @@ public:
 private:
 	uint8 mBufferedByte = 0;
 	uint32 mBufferedBaudRate = 0;
+	bool mbBufferedBytePending = false;
 	vdfunction<void()> mpOnReadReady;
 	IATAsyncDispatcher *mpAsyncDispatcher = nullptr;
 	uint64 mAsyncCallback = 0;
@@ -117,11 +118,11 @@ void ATLoopbackDevice::SetOnReadReady(vdfunction<void()> fn) {
 }
 
 bool ATLoopbackDevice::Read(uint32& baudRate, uint8& c) {
-	if (!mBufferedBaudRate)
+	if (!mbBufferedBytePending)
 		return false;
 
 	baudRate = mBufferedBaudRate;
-	mBufferedBaudRate = 0;
+	mbBufferedBytePending = false;
 	c = mBufferedByte;
 
 	return true;
@@ -135,7 +136,7 @@ bool ATLoopbackDevice::Read(uint32 baudRate, uint8& c, bool& framingError) {
 		return false;
 
 	// check for more than a 5% discrepancy in baud rates between modem and serial port
-	if (abs((int)baudRate - (int)transmitRate) * 20 > (int)transmitRate) {
+	if (baudRate && transmitRate && abs((int)baudRate - (int)transmitRate) * 20 > (int)transmitRate) {
 		// baud rate mismatch -- return some bogus character and flag a framing error
 		c = 'U';
 		framingError = true;
@@ -145,7 +146,7 @@ bool ATLoopbackDevice::Read(uint32 baudRate, uint8& c, bool& framingError) {
 }
 
 void ATLoopbackDevice::Write(uint32 baudRate, uint8 c) {
-	if (!mBufferedBaudRate) {
+	if (!mbBufferedBytePending) {
 		mpAsyncDispatcher->Queue(&mAsyncCallback,
 			[this] {
 				if (mpOnReadReady)
@@ -156,10 +157,11 @@ void ATLoopbackDevice::Write(uint32 baudRate, uint8 c) {
 
 	mBufferedByte = c;
 	mBufferedBaudRate = baudRate;
+	mbBufferedBytePending = true;
 }
 
 void ATLoopbackDevice::FlushBuffers() {
-	mBufferedBaudRate = 0;
+	mbBufferedBytePending = false;
 }
 
 ///////////////////////////////////////////////////////////////////////////

@@ -509,7 +509,7 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 				hent0.mD = 0;
 		}
 
-		VDStringA buf;
+		VDStringW buf;
 		const auto& result = Disassemble(buf,
 			mLines,
 			0,
@@ -557,7 +557,7 @@ void ATDisassemblyWindow::RemakeView(uint16 focusAddr) {
 }
 
 ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
-	VDStringA& buf,
+	VDStringW& buf,
 	vdfastvector<LineInfo>& lines,
 	uint32 nestingLevel,
 	const ATCPUHistoryEntry& initialState,
@@ -568,6 +568,7 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 	bool stopOnProcedureEnd)
 {
 	ATCPUHistoryEntry hent(initialState);
+	VDStringA abuf;
 
 	IATDebugTarget *target = mLastState.mpDebugTarget;
 	const ATDebugDisasmMode disasmMode = target->GetDisasmMode();
@@ -734,6 +735,26 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 		return breakMap;
 	}();
 
+	static constexpr std::array<uint8, 256> kBreakMap8051 = [] {
+		std::array<uint8, 256> breakMap {};
+
+		breakMap[0x01] |= kBM_EndBlock;		// AJMP
+		breakMap[0x21] |= kBM_EndBlock;		// AJMP
+		breakMap[0x41] |= kBM_EndBlock;		// AJMP
+		breakMap[0x61] |= kBM_EndBlock;		// AJMP
+		breakMap[0x81] |= kBM_EndBlock;		// AJMP
+		breakMap[0xA1] |= kBM_EndBlock;		// AJMP
+		breakMap[0xC1] |= kBM_EndBlock;		// AJMP
+		breakMap[0xE1] |= kBM_EndBlock;		// AJMP
+
+		breakMap[0x02] |= kBM_EndBlock;		// LJMP
+		breakMap[0x22] |= kBM_EndBlock;		// RET
+		breakMap[0x32] |= kBM_EndBlock;		// RETI
+		breakMap[0x73] |= kBM_EndBlock;		// JMP @A+DPTR
+
+		return breakMap;
+	}();
+
 	const uint8 *VDRESTRICT breakMap = nullptr;
 	uint8 (*breakMapSpecialHandler)(const uint8 *insn) = nullptr;
 
@@ -765,6 +786,10 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 
 		case kATDebugDisasmMode_8048:
 			breakMap = kBreakMap8048.data();
+			break;
+
+		case kATDebugDisasmMode_8051:
+			breakMap = kBreakMap8051.data();
 			break;
 	}
 
@@ -828,17 +853,17 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 						}
 
 						IATSourceWindow *sw = sourceWinLookup.first->second;
-						VDStringA sourceLines;
+						VDStringW sourceLines;
 
 						if (sw) {
 							int lineStartIndex = (int)lineInfo.mLine - 1;
 							int lineEndIndex = (int)lineInfo.mLine;
 
 							for(int lineIndex = lineStartIndex; lineIndex < lineEndIndex; ++lineIndex) {
-								const VDStringA& line = sw->ReadLine(lineIndex);
+								const VDStringW& line = sw->ReadLine(lineIndex);
 
 								if (!line.empty()) {
-									sourceLines.append_sprintf("%4d  ", lineIndex + 1);
+									sourceLines.append_sprintf(L"%4d  ", lineIndex + 1);
 									sourceLines += line;
 								}
 							}
@@ -854,20 +879,20 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 								pathStr = sourceFileInfo.mSourcePath.c_str();
 							}
 
-							sourceLines.sprintf("[%ls:%d]\n", sw ? sw->GetPath() : sourceFileInfo.mSourcePath.c_str(), lineInfo.mLine);
+							sourceLines.sprintf(L"[%ls:%d]\n", sw ? sw->GetPath() : sourceFileInfo.mSourcePath.c_str(), lineInfo.mLine);
 						}
 
-						VDStringRefA sourceRange(sourceLines);
-						VDStringRefA sourceLine;
+						VDStringRefW sourceRange(sourceLines);
+						VDStringRefW sourceLine;
 						LineInfo li2(li);
 
 						li2.mbIsSource = true;
 
 						while(sourceRange.split('\n', sourceLine)) {
-							buf.append(indent, ' ');
-							buf += ';';
+							buf.append(indent, L' ');
+							buf += L';';
 							buf += sourceLine;
-							buf += '\n';
+							buf += L'\n';
 
 							lines.push_back(li2);
 						}
@@ -880,7 +905,15 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 
 		buf.append(indent, ' ');
 		size_t lineStart = buf.size();
-		const ATDisasmResult& result = ATDisassembleInsn(buf, target, disasmMode, hent, false, false, true, mbShowCodeBytes, mbShowLabels, false, false, mbShowLabelNamespaces, true, true);
+
+		abuf.clear();
+		const ATDisasmResult& result = ATDisassembleInsn(abuf, target, disasmMode, hent, false, false, true, mbShowCodeBytes, mbShowLabels, false, false, mbShowLabelNamespaces, true, true);
+
+		const size_t abuflen = abuf.size();
+		buf.resize(buf.size() + abuflen);
+
+		for(size_t i=0; i<abuflen; ++i)
+			(buf.end() - abuflen)[i] = (wchar_t)abuf[i];
 
 		uint16 newpc = result.mNextPC;
 
@@ -918,8 +951,8 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 				}
 
 				li.mOperandSelCode = kSelCode_JumpTarget;
-				li.mOperandStart = (uint32)(result.mOperandStart - lineStart) + indent;
-				li.mOperandEnd = (uint32)(result.mOperandEnd - lineStart) + indent;
+				li.mOperandStart = (uint32)result.mOperandStart + indent;
+				li.mOperandEnd = (uint32)result.mOperandEnd + indent;
 
 				if (mbShowCallPreviews) {
 					auto len = buf.size() - lineStart;
@@ -929,7 +962,7 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 
 					li.mCommentPos = (uint32)(buf.size() - lineStart) + indent + 1;
 					li.mbIsExpandable = true;
-					buf += " ;[expand]";
+					buf += L" ;[expand]";
 				}
 			}
 
@@ -965,7 +998,7 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 			newpc = (uint16)focusAddr;
 
 			buf.append(indent, ' ');
-			buf.append_sprintf("; reverse disassembly mismatch -- address forced from $%04X to $%04X\n", pc, newpc);
+			buf.append_sprintf(L"; reverse disassembly mismatch -- address forced from $%04X to $%04X\n", pc, newpc);
 
 			li.mbIsComment = true;
 			li.mbIsExpandable = false;
@@ -987,7 +1020,7 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 		lines.push_back(li);
 
 		buf.append(indent, ' ');
-		buf.append("    ...\n");
+		buf.append(L"    ...\n");
 	}
 
 	return DisasmResult { (startAddr & ~UINT32_C(0xFFFF)) + pc };
@@ -1143,7 +1176,7 @@ void ATDisassemblyWindow::OnLinkSelected(uint32 selectionCode, int para, int off
 		if (expanded) {
 			// [contract] -> [expand]
 			mpTextEditor->RemoveAt(line, li.mCommentPos + 2, line, li.mCommentPos + 10);
-			mpTextEditor->InsertAt(line, li.mCommentPos + 2, "expand");
+			mpTextEditor->InsertAt(line, li.mCommentPos + 2, L"expand");
 
 			uint32 rangeStart = line + 1;
 			uint32 rangeEnd = rangeStart;
@@ -1164,7 +1197,7 @@ void ATDisassemblyWindow::OnLinkSelected(uint32 selectionCode, int para, int off
 		} else {
 			// [expand] -> [contract]
 			mpTextEditor->RemoveAt(line, li.mCommentPos + 2, line, li.mCommentPos + 8);
-			mpTextEditor->InsertAt(line, li.mCommentPos + 2, "contract");
+			mpTextEditor->InsertAt(line, li.mCommentPos + 2, L"contract");
 
 			IATDebugTarget *target = mLastState.mpDebugTarget;
 			ATCPUHistoryEntry initialState;
@@ -1174,7 +1207,7 @@ void ATDisassemblyWindow::OnLinkSelected(uint32 selectionCode, int para, int off
 			initialState.mbEmulation = li.mbEmulation;
 
 			vdfastvector<LineInfo> newLines;
-			VDStringA buf;
+			VDStringW buf;
 
 			Disassemble(buf,
 				newLines,
@@ -1202,7 +1235,7 @@ void ATDisassemblyWindow::OnLinkSelected(uint32 selectionCode, int para, int off
 	}
 }
 
-void ATDisassemblyWindow::RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *cl) {
+void ATDisassemblyWindow::RecolorLine(int line, const wchar_t *text, int length, IVDTextEditorColorization *cl) {
 	int next = 0;
 	sint32 bg = -1;
 	sint32 fg = -1;

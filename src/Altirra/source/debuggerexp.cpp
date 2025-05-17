@@ -110,7 +110,7 @@ public:
 			v &= kATAddressOffsetMask;
 		}
 
-		s.append_sprintf(mbHex ? mVal >= 0x100 ? mVal >= 0x10000 ? "$%08X" : "$%04X" : "$%02X" : "%d", mVal);
+		s.append_sprintf(mbHex ? v >= 0x100 ? v >= 0x10000 ? "$%08X" : "$%04X" : "$%02X" : "%d", v);
 	}
 
 protected:

@@ -16,6 +16,9 @@
 
 #include <stdafx.h>
 
+#if VD_CPU_ARM64
+#include <arm_neon.h>
+
 void VDPixmapResolve4x_NEON(void *dst, ptrdiff_t dstpitch, const void *src, ptrdiff_t srcpitch, uint32 w, uint32 h) {
 	uint8x8_t alphamask = vcreate_u8(0xFFFF000000000000ULL);
 
@@ -67,3 +70,5 @@ void VDPixmapResolve4x_NEON(void *dst, ptrdiff_t dstpitch, const void *src, ptrd
 		src = (const char *)src + srcpitch * 4;
 	} while(--h);
 }
+
+#endif

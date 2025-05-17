@@ -33,7 +33,7 @@ AT_DEFINE_TEST(IO_FLAC) {
 	sint16 buf[1024];
 
 	for(const wchar_t *fn : kTestFiles) {
-		printf("testing %ls\n", fn);
+		AT_TEST_TRACEF("testing %ls", fn);
 
 		try {
 			VDFileStream fs(fn);
@@ -42,7 +42,7 @@ AT_DEFINE_TEST(IO_FLAC) {
 			while(dec->ReadStereo16(buf, 512))
 				;
 		} catch(const MyError& e) {
-			throw AssertionException("Decoding failed: %s", e.c_str());
+			throw AssertionException(L"Decoding failed: %ls", e.wc_str());
 		}
 	}
 
@@ -129,7 +129,7 @@ AT_DEFINE_TEST_NONAUTO(IO_FLAC_OfficialTestFiles) {
 			while(dec->ReadStereo16(buf, 512))
 				;
 		} catch(const MyError& e) {
-			throw AssertionException("Decoding failed: %s", e.c_str());
+			throw AssertionException(L"Decoding failed: %ls", e.wc_str());
 		}
 	}
 
@@ -154,7 +154,7 @@ AT_DEFINE_TEST_NONAUTO(IO_FLAC_OfficialTestFileStress) {
 				while(dec->ReadStereo16(buf, 512))
 					;
 			} catch(const MyError& e) {
-				throw AssertionException("Decoding failed: %s", e.c_str());
+				throw AssertionException(L"Decoding failed: %ls", e.wc_str());
 			}
 		}
 	}

@@ -218,6 +218,18 @@ protected:
 	const VDCRCTable *mpTable;
 };
 
+class VDAdler32Checker {
+public:
+	void Process(const void *src, size_t len);
+	uint32 Adler32() const;
+
+	static uint32 Adler32(const void *src, size_t len);
+
+private:
+	uint32 mA = 1;
+	uint32 mB = 0;
+};
+
 class IVDInflateStream : public IVDStream {
 public:
 	virtual ~IVDInflateStream() = default;
@@ -300,7 +312,8 @@ protected:
 class VDZipArchive {
 public:
 	struct FileInfo {
-		VDString	mFileName;
+		VDString	mRawFileName;
+		VDStringW	mDecodedFileName;
 		uint32		mCompressedSize = 0;
 		uint32		mUncompressedSize = 0;
 		uint32		mCRC32 = 0;
@@ -316,7 +329,8 @@ public:
 
 	sint32			GetFileCount();
 	const FileInfo&	GetFileInfo(sint32 idx) const;
-	sint32			FindFile(const char *name, bool caseSensitive) const;
+	sint32			FindFile(const char *rawName) const;
+	sint32			FindFile(const wchar_t *decodedName, bool caseSensitive) const;
 
 	IVDStream		*OpenRawStream(sint32 idx);
 	IVDInflateStream *OpenDecodedStream(sint32 idx, bool allowLarge = false);
@@ -373,6 +387,12 @@ inline bool operator<=(VDDeflateCompressionLevel a, VDDeflateCompressionLevel b)
 inline bool operator> (VDDeflateCompressionLevel a, VDDeflateCompressionLevel b) { return (uint8)a >  (uint8)b; }
 inline bool operator>=(VDDeflateCompressionLevel a, VDDeflateCompressionLevel b) { return (uint8)a >= (uint8)b; }
 
+enum class VDDeflateChecksumMode : uint8 {
+	None,
+	Adler32,
+	CRC32
+};
+
 // Adapter stream for compressing data with the Deflate algorithm, as
 // described in RFC1951. The child stream receives the raw Deflate
 // stream; no header is added. A CRC-32 is computed on the uncompressed
@@ -387,7 +407,7 @@ class VDDeflateStream final : public IVDStream {
 	VDDeflateStream(const VDDeflateStream&) = delete;
 	VDDeflateStream& operator=(const VDDeflateStream&) = delete;
 public:
-	VDDeflateStream(IVDStream& dest);
+	VDDeflateStream(IVDStream& dest, VDDeflateChecksumMode checksumMode = VDDeflateChecksumMode::CRC32);
 	~VDDeflateStream();
 
 	void SetCompressionLevel(VDDeflateCompressionLevel level);
@@ -405,6 +425,7 @@ public:
 	// Return the CRC-32 of the uncompressed data. Only valid after
 	// Finalize().
 	uint32 GetCRC() const { return mCRCChecker.CRC(); }
+	uint32 Adler32() const { return mAdler32Checker.Adler32(); }
 
 public:
 	const wchar_t *GetNameForError() override;
@@ -418,15 +439,18 @@ public:
 	void	Write(const void *buffer, sint32 bytes) override;
 
 private:
-	void PreProcessInput(const void *p, uint32 n);
+	void PreProcessInputCRC32(const void *p, uint32 n);
+	void PreProcessInputAdler32(const void *p, uint32 n);
 	void WriteOutput(const void *p, uint32 n);
 
 	IVDStream& mDestStream;
 	VDDeflateEncoder *mpEncoder = nullptr;
 	sint64 mPos = 0;
 	VDDeflateCompressionLevel mCompressionLevel = VDDeflateCompressionLevel::Best;
+	VDDeflateChecksumMode mChecksumMode {};
 
 	VDCRCChecker mCRCChecker;
+	VDAdler32Checker mAdler32Checker;
 };
 
 class IVDZipArchiveWriter {

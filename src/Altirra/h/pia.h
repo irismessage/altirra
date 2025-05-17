@@ -69,6 +69,7 @@ public:
 	int AllocInput() override;
 	void FreeInput(int index) override;
 	void SetInput(int index, uint32 rval) override;
+	void SetInputBits(int index, uint32 rval, uint32 mask);
 
 	uint32 RegisterDynamicInput(bool portb, vdfunction<uint8()> fn);
 	void UnregisterDynamicInput(bool portb, uint32 token);

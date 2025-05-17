@@ -211,6 +211,7 @@ void ATConfigVarT<T_Type, T_Val>::operator=(const T_Val& val) {
 }
 
 template void ATConfigVarT<ATConfigVarType::Bool, bool>::operator=(const bool&);
+template void ATConfigVarT<ATConfigVarType::Float, float>::operator=(const float&);
 
 ////////////////////////////////////////////////////////////////////////////////
 

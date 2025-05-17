@@ -126,6 +126,84 @@ void ATArtifactBlendExchangeLinear_SSE2(uint32 *dst, uint32 *blendDst, uint32 n,
 		ATArtifactBlendMayExchangeLinear_SSE2<false>(dst, blendDst, n);
 }
 
+template<bool T_BlendCopy, typename T_BlendSrc>
+void ATArtifactBlendMayExchangeMonoPersistence_SSE2(uint32 *dst, T_BlendSrc *blendDst, const uint32 *palette, float factor, float factor2, float limit, uint32 n) {
+	__m128 *VDRESTRICT blendDst16 = (__m128 *)blendDst;
+	__m128i *VDRESTRICT dst16      = (__m128i *)dst;
+	const uint32 *VDRESTRICT palette2 = palette;
+
+	__m128i bmask = _mm_set1_epi32(0x000000FF);
+	__m128 tiny = _mm_set1_ps(1e-10f);
+	__m128 zero = _mm_setzero_ps();
+	__m128 paletteScale = _mm_set1_ps(1023);
+	__m128 vf1 = _mm_set1_ps(factor);
+	__m128 vf2 = _mm_set1_ps(factor2);
+	__m128 vlimit = _mm_set1_ps(limit);
+	__m128 vscale = _mm_set1_ps(1.0f / 255.0f);
+	__m128 vpedestal = _mm_set1_ps(1.0f);
+
+	uint32 n2 = n >> 2;
+	while(n2--) {
+		__m128i dc = *dst16;
+
+		// load source and convert 8-bit fixed point to float
+		__m128 v = _mm_mul_ps(_mm_cvtepi32_ps(_mm_and_si128(dc, bmask)), vscale);
+
+		// convert gamma 2.0 to linear
+		v = _mm_mul_ps(v, v);
+
+		// apply decay blend
+		__m128 phosphorEnergy;
+		__m128 emission;
+		if constexpr (T_BlendCopy) {
+			phosphorEnergy = v;
+			emission = v;
+		} else {
+			phosphorEnergy = _mm_min_ps(_mm_max_ps(_mm_sub_ps(*blendDst16, vpedestal), zero), vlimit);
+
+			phosphorEnergy = _mm_add_ps(phosphorEnergy, v);
+			emission = _mm_mul_ps(_mm_add_ps(_mm_mul_ps(vf2, phosphorEnergy), vf1), phosphorEnergy);
+			phosphorEnergy = _mm_sub_ps(phosphorEnergy, emission);
+		}
+
+		// if we're doing a blend-and-exchange, update the blend source
+		if constexpr(!std::is_const_v<T_BlendSrc>) {
+			*blendDst16 = _mm_add_ps(phosphorEnergy, vpedestal);
+		}
+
+		++blendDst16;
+
+		// compute approximate square root
+		emission = _mm_max_ps(emission, tiny);
+		emission = _mm_mul_ps(emission, _mm_rsqrt_ps(emission));
+
+		// scale to 0-1023
+		emission = _mm_min_ps(_mm_mul_ps(emission, paletteScale), paletteScale);
+
+		// convert to integer
+		__m128i palIdx = _mm_cvtps_epi32(emission);
+
+		// do palette lookup and write pixels
+		((uint32 *)dst16)[0] = palette2[_mm_extract_epi16(palIdx, 0)];
+		((uint32 *)dst16)[1] = palette2[_mm_extract_epi16(palIdx, 2)];
+		((uint32 *)dst16)[2] = palette2[_mm_extract_epi16(palIdx, 4)];
+		((uint32 *)dst16)[3] = palette2[_mm_extract_epi16(palIdx, 6)];
+		++dst16;
+	}
+}
+
+void ATArtifactBlendCopyMonoPersistence_SSE2(uint32 *dst, uint32 *blendDst, const uint32 *palette, float factor, float factor2, float limit, uint32 n) {
+	ATArtifactBlendMayExchangeMonoPersistence_SSE2<true>(dst, blendDst, palette, factor, factor2, limit, n);
+}
+
+void ATArtifactBlendMonoPersistence_SSE2(uint32 *dst, const uint32 *src, const uint32 *palette, float factor, float factor2, float limit, uint32 n) {
+	ATArtifactBlendMayExchangeMonoPersistence_SSE2<false>(dst, src, palette, factor, factor2, limit, n);
+}
+
+void ATArtifactBlendExchangeMonoPersistence_SSE2(uint32 *dst, uint32 *blendDst, const uint32 *palette, float factor, float factor2, float limit, uint32 n) {
+	ATArtifactBlendMayExchangeMonoPersistence_SSE2<false>(dst, blendDst, palette, factor, factor2, limit, n);
+}
+
 template<int T_Intensity>
 void ATArtifactBlendScanlinesN_SSE2(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n) {
 	__m128i *VDRESTRICT dst = (__m128i *)dst0;

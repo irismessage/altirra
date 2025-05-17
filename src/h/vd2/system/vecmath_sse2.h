@@ -33,11 +33,53 @@
 namespace nsVDVecMath {
 	struct vdmask32x3 {
 		__m128 v;
+
+		[[nodiscard]] static vdmask32x3 set(bool x, bool y, bool z) {
+			return vdmask32x3 {
+				_mm_castsi128_ps(_mm_set_epi32(
+					0,
+					z ? -1 : 0,
+					y ? -1 : 0,
+					x ? -1 : 0
+				))
+			};
+		}
 	};
+
+	[[nodiscard]] inline vdmask32x3 operator~(vdmask32x3 a) { return vdmask32x3 { _mm_xor_ps(a.v, _mm_cmpeq_ps(_mm_setzero_ps(), _mm_setzero_ps())) }; }
+	[[nodiscard]] inline vdmask32x3 operator&(vdmask32x3 a, vdmask32x3 b) { return vdmask32x3 { _mm_and_ps(a.v, b.v) }; }
+	[[nodiscard]] inline vdmask32x3 operator|(vdmask32x3 a, vdmask32x3 b) { return vdmask32x3 { _mm_or_ps(a.v, b.v) }; }
+	[[nodiscard]] inline vdmask32x3 operator^(vdmask32x3 a, vdmask32x3 b) { return vdmask32x3 { _mm_xor_ps(a.v, b.v) }; }
+
+	[[nodiscard]] inline bool operator==(vdmask32x3 a, vdmask32x3 b) { return (_mm_movemask_ps(_mm_xor_ps(a.v, b.v)) & 7) == 0; }
+	[[nodiscard]] inline bool operator!=(vdmask32x3 a, vdmask32x3 b) { return (_mm_movemask_ps(_mm_xor_ps(a.v, b.v)) & 7) != 0; }
+
+	///////////////////////////////////////////////////////////////////////
 
 	struct vdmask32x4 {
 		__m128 v;
+
+		[[nodiscard]] static vdmask32x4 set(bool x, bool y, bool z, bool w) {
+			return vdmask32x4 {
+				_mm_castsi128_ps(_mm_set_epi32(
+					w ? -1 : 0,
+					z ? -1 : 0,
+					y ? -1 : 0,
+					x ? -1 : 0
+				))
+			};
+		}
 	};
+
+	[[nodiscard]] inline vdmask32x4 operator~(vdmask32x4 a) { return vdmask32x4 { _mm_xor_ps(a.v, _mm_cmpeq_ps(_mm_setzero_ps(), _mm_setzero_ps())) }; }
+	[[nodiscard]] inline vdmask32x4 operator&(vdmask32x4 a, vdmask32x4 b) { return vdmask32x4 { _mm_and_ps(a.v, b.v) }; }
+	[[nodiscard]] inline vdmask32x4 operator|(vdmask32x4 a, vdmask32x4 b) { return vdmask32x4 { _mm_or_ps(a.v, b.v) }; }
+	[[nodiscard]] inline vdmask32x4 operator^(vdmask32x4 a, vdmask32x4 b) { return vdmask32x4 { _mm_xor_ps(a.v, b.v) }; }
+
+	[[nodiscard]] inline bool operator!=(vdmask32x4 a, vdmask32x4 b) { return _mm_movemask_ps(_mm_xor_ps(a.v, b.v)) != 0; }
+	[[nodiscard]] inline bool operator==(vdmask32x4 a, vdmask32x4 b) { return _mm_movemask_ps(_mm_xor_ps(a.v, b.v)) == 0; }
+
+	///////////////////////////////////////////////////////////////////////
 
 	struct vdfloat32x3 {
 		__m128 v;
@@ -57,20 +99,20 @@ namespace nsVDVecMath {
 		[[nodiscard]] float x() const { return _mm_cvtss_f32(v); }
 		[[nodiscard]] float y() const { return _mm_cvtss_f32(_mm_shuffle_ps(v, v, 0x55)); }
 		[[nodiscard]] float z() const { return _mm_cvtss_f32(_mm_shuffle_ps(v, v, 0xAA)); }
+
+		[[nodiscard]] vdfloat32x3 operator+() { return *this; }
+		[[nodiscard]] vdfloat32x3 operator-() { return vdfloat32x3 { _mm_sub_ps(_mm_setzero_ps(), v) }; }
+
+		[[nodiscard]] vdfloat32x3 operator+(vdfloat32x3 y) const { return vdfloat32x3 { _mm_add_ps(v, y.v) }; }
+		[[nodiscard]] vdfloat32x3 operator-(vdfloat32x3 y) const { return vdfloat32x3 { _mm_sub_ps(v, y.v) }; }
+		[[nodiscard]] vdfloat32x3 operator*(vdfloat32x3 y) const { return vdfloat32x3 { _mm_mul_ps(v, y.v) }; }
+		[[nodiscard]] vdfloat32x3 operator/(vdfloat32x3 y) const { return vdfloat32x3 { _mm_div_ps(v, y.v) }; }
+
+		[[nodiscard]] vdfloat32x3 operator+(float y) const { return vdfloat32x3 { _mm_add_ps(v, _mm_set1_ps(y)) }; }
+		[[nodiscard]] vdfloat32x3 operator-(float y) const { return vdfloat32x3 { _mm_sub_ps(v, _mm_set1_ps(y)) }; }
+		[[nodiscard]] vdfloat32x3 operator*(float y) const { return vdfloat32x3 { _mm_mul_ps(v, _mm_set1_ps(y)) }; }
+		[[nodiscard]] vdfloat32x3 operator/(float y) const { return vdfloat32x3 { _mm_div_ps(v, _mm_set1_ps(y)) }; }
 	};
-
-	[[nodiscard]] inline vdfloat32x3 operator+(vdfloat32x3 x) { return x; }
-	[[nodiscard]] inline vdfloat32x3 operator-(vdfloat32x3 x) { return vdfloat32x3 { _mm_sub_ps(_mm_setzero_ps(), x.v) }; }
-
-	[[nodiscard]] inline vdfloat32x3 operator+(vdfloat32x3 x, vdfloat32x3 y) { return vdfloat32x3 { _mm_add_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdfloat32x3 operator-(vdfloat32x3 x, vdfloat32x3 y) { return vdfloat32x3 { _mm_sub_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdfloat32x3 operator*(vdfloat32x3 x, vdfloat32x3 y) { return vdfloat32x3 { _mm_mul_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdfloat32x3 operator/(vdfloat32x3 x, vdfloat32x3 y) { return vdfloat32x3 { _mm_div_ps(x.v, y.v) }; }
-
-	[[nodiscard]] inline vdfloat32x3 operator+(vdfloat32x3 x, float y) { return vdfloat32x3 { _mm_add_ps(x.v, _mm_set1_ps(y)) }; }
-	[[nodiscard]] inline vdfloat32x3 operator-(vdfloat32x3 x, float y) { return vdfloat32x3 { _mm_sub_ps(x.v, _mm_set1_ps(y)) }; }
-	[[nodiscard]] inline vdfloat32x3 operator*(vdfloat32x3 x, float y) { return vdfloat32x3 { _mm_mul_ps(x.v, _mm_set1_ps(y)) }; }
-	[[nodiscard]] inline vdfloat32x3 operator/(vdfloat32x3 x, float y) { return vdfloat32x3 { _mm_div_ps(x.v, _mm_set1_ps(y)) }; }
 
 	[[nodiscard]] inline vdfloat32x3 operator+(float x, vdfloat32x3 y) { return vdfloat32x3 { _mm_add_ps(_mm_set1_ps(x), y.v) }; }
 	[[nodiscard]] inline vdfloat32x3 operator-(float x, vdfloat32x3 y) { return vdfloat32x3 { _mm_sub_ps(_mm_set1_ps(x), y.v) }; }
@@ -87,12 +129,15 @@ namespace nsVDVecMath {
 	inline vdfloat32x3& operator*=(vdfloat32x3& x, float y) { x.v = _mm_mul_ps(x.v, _mm_set1_ps(y)); return x; }
 	inline vdfloat32x3& operator/=(vdfloat32x3& x, float y) { x.v = _mm_div_ps(x.v, _mm_set1_ps(y)); return x; }
 
-	[[nodiscard]] inline vdmask32x3 operator< (vdfloat32x3 x, vdfloat32x3 y) { return vdmask32x3 { _mm_cmplt_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdmask32x3 operator<=(vdfloat32x3 x, vdfloat32x3 y) { return vdmask32x3 { _mm_cmple_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdmask32x3 operator> (vdfloat32x3 x, vdfloat32x3 y) { return vdmask32x3 { _mm_cmpgt_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdmask32x3 operator>=(vdfloat32x3 x, vdfloat32x3 y) { return vdmask32x3 { _mm_cmpge_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdmask32x3 operator==(vdfloat32x3 x, vdfloat32x3 y) { return vdmask32x3 { _mm_cmpeq_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdmask32x3 operator!=(vdfloat32x3 x, vdfloat32x3 y) { return vdmask32x3 { _mm_cmpneq_ps(x.v, y.v) }; }
+	[[nodiscard]] inline bool operator==(vdfloat32x3 x, vdfloat32x3 y) { return (_mm_movemask_ps(_mm_cmpneq_ps(x.v, y.v)) & 7) == 0; }
+	[[nodiscard]] inline bool operator!=(vdfloat32x3 x, vdfloat32x3 y) { return (_mm_movemask_ps(_mm_cmpneq_ps(x.v, y.v)) & 7) != 0; }
+
+	[[nodiscard]] inline vdmask32x3 cmplt(vdfloat32x3 x, vdfloat32x3 y) { return vdmask32x3 { _mm_cmplt_ps(x.v, y.v) }; }
+	[[nodiscard]] inline vdmask32x3 cmple(vdfloat32x3 x, vdfloat32x3 y) { return vdmask32x3 { _mm_cmple_ps(x.v, y.v) }; }
+	[[nodiscard]] inline vdmask32x3 cmpgt(vdfloat32x3 x, vdfloat32x3 y) { return vdmask32x3 { _mm_cmpgt_ps(x.v, y.v) }; }
+	[[nodiscard]] inline vdmask32x3 cmpge(vdfloat32x3 x, vdfloat32x3 y) { return vdmask32x3 { _mm_cmpge_ps(x.v, y.v) }; }
+	[[nodiscard]] inline vdmask32x3 cmpeq(vdfloat32x3 x, vdfloat32x3 y) { return vdmask32x3 { _mm_cmpeq_ps(x.v, y.v) }; }
+	[[nodiscard]] inline vdmask32x3 cmpne(vdfloat32x3 x, vdfloat32x3 y) { return vdmask32x3 { _mm_cmpneq_ps(x.v, y.v) }; }
 
 	struct vdfloat32x4 {
 		__m128 v;
@@ -126,20 +171,20 @@ namespace nsVDVecMath {
 		[[nodiscard]] float z() const { return _mm_cvtss_f32(_mm_shuffle_ps(v, v, 0xAA)); }
 		[[nodiscard]] float w() const { return _mm_cvtss_f32(_mm_shuffle_ps(v, v, 0xFF)); }
 		[[nodiscard]] vdfloat32x3 xyz() const { return vdfloat32x3 { v }; }
+
+		[[nodiscard]] vdfloat32x4 operator+() const { return *this; }
+		[[nodiscard]] vdfloat32x4 operator-() const { return vdfloat32x4 { _mm_sub_ps(_mm_setzero_ps(), v) }; }
+
+		[[nodiscard]] vdfloat32x4 operator+(vdfloat32x4 y) const { return vdfloat32x4 { _mm_add_ps(v, y.v) }; }
+		[[nodiscard]] vdfloat32x4 operator-(vdfloat32x4 y) const { return vdfloat32x4 { _mm_sub_ps(v, y.v) }; }
+		[[nodiscard]] vdfloat32x4 operator*(vdfloat32x4 y) const { return vdfloat32x4 { _mm_mul_ps(v, y.v) }; }
+		[[nodiscard]] vdfloat32x4 operator/(vdfloat32x4 y) const { return vdfloat32x4 { _mm_div_ps(v, y.v) }; }
+
+		[[nodiscard]] vdfloat32x4 operator+(float y) const { return vdfloat32x4 { _mm_add_ps(v, _mm_set1_ps(y)) }; }
+		[[nodiscard]] vdfloat32x4 operator-(float y) const { return vdfloat32x4 { _mm_sub_ps(v, _mm_set1_ps(y)) }; }
+		[[nodiscard]] vdfloat32x4 operator*(float y) const { return vdfloat32x4 { _mm_mul_ps(v, _mm_set1_ps(y)) }; }
+		[[nodiscard]] vdfloat32x4 operator/(float y) const { return vdfloat32x4 { _mm_div_ps(v, _mm_set1_ps(y)) }; }
 	};
-
-	[[nodiscard]] inline vdfloat32x4 operator+(vdfloat32x4 x) { return x; }
-	[[nodiscard]] inline vdfloat32x4 operator-(vdfloat32x4 x) { return vdfloat32x4 { _mm_sub_ps(_mm_setzero_ps(), x.v) }; }
-
-	[[nodiscard]] inline vdfloat32x4 operator+(vdfloat32x4 x, vdfloat32x4 y) { return vdfloat32x4 { _mm_add_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdfloat32x4 operator-(vdfloat32x4 x, vdfloat32x4 y) { return vdfloat32x4 { _mm_sub_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdfloat32x4 operator*(vdfloat32x4 x, vdfloat32x4 y) { return vdfloat32x4 { _mm_mul_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdfloat32x4 operator/(vdfloat32x4 x, vdfloat32x4 y) { return vdfloat32x4 { _mm_div_ps(x.v, y.v) }; }
-
-	[[nodiscard]] inline vdfloat32x4 operator+(vdfloat32x4 x, float y) { return vdfloat32x4 { _mm_add_ps(x.v, _mm_set1_ps(y)) }; }
-	[[nodiscard]] inline vdfloat32x4 operator-(vdfloat32x4 x, float y) { return vdfloat32x4 { _mm_sub_ps(x.v, _mm_set1_ps(y)) }; }
-	[[nodiscard]] inline vdfloat32x4 operator*(vdfloat32x4 x, float y) { return vdfloat32x4 { _mm_mul_ps(x.v, _mm_set1_ps(y)) }; }
-	[[nodiscard]] inline vdfloat32x4 operator/(vdfloat32x4 x, float y) { return vdfloat32x4 { _mm_div_ps(x.v, _mm_set1_ps(y)) }; }
 
 	[[nodiscard]] inline vdfloat32x4 operator+(float x, vdfloat32x4 y) { return vdfloat32x4 { _mm_add_ps(_mm_set1_ps(x), y.v) }; }
 	[[nodiscard]] inline vdfloat32x4 operator-(float x, vdfloat32x4 y) { return vdfloat32x4 { _mm_sub_ps(_mm_set1_ps(x), y.v) }; }
@@ -156,12 +201,15 @@ namespace nsVDVecMath {
 	inline vdfloat32x4& operator*=(vdfloat32x4& x, float y) { x.v = _mm_mul_ps(x.v, _mm_set1_ps(y)); return x; }
 	inline vdfloat32x4& operator/=(vdfloat32x4& x, float y) { x.v = _mm_div_ps(x.v, _mm_set1_ps(y)); return x; }
 
-	[[nodiscard]] inline vdmask32x4 operator< (vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { _mm_cmplt_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdmask32x4 operator<=(vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { _mm_cmple_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdmask32x4 operator> (vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { _mm_cmpgt_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdmask32x4 operator>=(vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { _mm_cmpge_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdmask32x4 operator==(vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { _mm_cmpeq_ps(x.v, y.v) }; }
-	[[nodiscard]] inline vdmask32x4 operator!=(vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { _mm_cmpneq_ps(x.v, y.v) }; }
+	[[nodiscard]] inline bool operator==(vdfloat32x4 x, vdfloat32x4 y) { return _mm_movemask_ps(_mm_cmpneq_ps(x.v, y.v)) == 0; }
+	[[nodiscard]] inline bool operator!=(vdfloat32x4 x, vdfloat32x4 y) { return _mm_movemask_ps(_mm_cmpneq_ps(x.v, y.v)) != 0; }
+
+	[[nodiscard]] inline vdmask32x4 cmplt(vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { _mm_cmplt_ps(x.v, y.v) }; }
+	[[nodiscard]] inline vdmask32x4 cmple(vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { _mm_cmple_ps(x.v, y.v) }; }
+	[[nodiscard]] inline vdmask32x4 cmpgt(vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { _mm_cmpgt_ps(x.v, y.v) }; }
+	[[nodiscard]] inline vdmask32x4 cmpge(vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { _mm_cmpge_ps(x.v, y.v) }; }
+	[[nodiscard]] inline vdmask32x4 cmpeq(vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { _mm_cmpeq_ps(x.v, y.v) }; }
+	[[nodiscard]] inline vdmask32x4 cmpne(vdfloat32x4 x, vdfloat32x4 y) { return vdmask32x4 { _mm_cmpneq_ps(x.v, y.v) }; }
 
 	///////////////////////////////////////////////////////////////////////
 
@@ -208,6 +256,28 @@ namespace nsVDVecMath {
 
 	///////////////////////////////////////////////////////////////////////
 
+	struct vdint32x4 {
+		__m128i v;
+
+		static vdint32x4 set(sint32 x, sint32 y, sint32 z, sint32 w) {
+			return vdint32x4 { _mm_set_epi32(w, z, y, x) };
+		}
+
+		[[nodiscard]] bool operator==(vdint32x4 y) const {
+			return _mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(v, y.v))) == 15;
+		}
+
+		[[nodiscard]] bool operator!=(vdint32x4 y) const {
+			return _mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(v, y.v))) != 15;
+		}
+	};
+
+	///////////////////////////////////////////////////////////////////////
+
+	[[nodiscard]] inline bool all_bool(const vdmask32x3& v) {
+		return (_mm_movemask_ps(v.v) & 7) == 7;
+	}
+
 	[[nodiscard]] inline bool all_bool(const vdmask32x4& v) {
 		return _mm_movemask_ps(v.v) == 15;
 	}
@@ -216,12 +286,25 @@ namespace nsVDVecMath {
 		return vdfloat32x4 { _mm_loadu_ps((const float *)&v) };
 	}
 
+	inline void storeu(void *dst, vdint32x4 v) {
+		_mm_storeu_si128((__m128i *)dst, v.v);
+	}
+
 	[[nodiscard]] inline vdfloat32x3 select(vdmask32x3 mask, vdfloat32x3 x, vdfloat32x3 y) {
 		return vdfloat32x3 { _mm_or_ps(_mm_and_ps(mask.v, x.v), _mm_andnot_ps(mask.v, y.v)) };
 	}
 
 	[[nodiscard]] inline vdfloat32x4 select(vdmask32x4 mask, vdfloat32x4 x, vdfloat32x4 y) {
 		return vdfloat32x4 { _mm_or_ps(_mm_and_ps(mask.v, x.v), _mm_andnot_ps(mask.v, y.v)) };
+	}
+
+	[[nodiscard]]
+	inline vdfloat32x4 nonzeromask(vdfloat32x4 x, vdmask32x4 mask) {
+		return vdfloat32x4 { _mm_and_ps(x.v, mask.v) };
+	}
+
+	[[nodiscard]] inline vdfloat32x3 abs(vdfloat32x3 x) {
+		return vdfloat32x3 { _mm_max_ps(x.v, _mm_sub_ps(_mm_setzero_ps(), x.v)) };
 	}
 
 	[[nodiscard]] inline vdfloat32x4 abs(vdfloat32x4 x) {
@@ -244,6 +327,17 @@ namespace nsVDVecMath {
 		return _mm_cvtss_f32(_mm_add_ps(_mm_add_ps(t, _mm_shuffle_ps(t, t, 0x55)), _mm_shuffle_ps(t, t, 0xAA)));
 	}
 
+	[[nodiscard]] inline float dot(vdfloat32x4 x, vdfloat32x4 y) {
+		__m128 t = _mm_mul_ps(x.v, y.v);
+
+		return _mm_cvtss_f32(
+			_mm_add_ps(
+				_mm_add_ps(t, _mm_shuffle_ps(t, t, 0x55)),
+				_mm_add_ps(_mm_shuffle_ps(t, t, 0xAA), _mm_shuffle_ps(t, t, 0xFF))
+			)
+		);
+	}
+
 	[[nodiscard]] inline vdfloat32x3 sqrt(vdfloat32x3 x) {
 		return vdfloat32x3 { _mm_sqrt_ps(x.v) };
 	}
@@ -264,12 +358,20 @@ namespace nsVDVecMath {
 		return vdfloat32x4 { _mm_div_ps(_mm_set1_ps(1.0f), x.v) };
 	}
 
+	[[nodiscard]] inline vdfloat32x3 rcpest(vdfloat32x3 x) {
+		return vdfloat32x3 { _mm_rcp_ps(x.v) };
+	}
+
 	[[nodiscard]] inline vdfloat32x4 rcpest(vdfloat32x4 x) {
 		return vdfloat32x4 { _mm_rcp_ps(x.v) };
 	}
 
 	[[nodiscard]] inline vdfloat32x4 rsqrt(vdfloat32x4 x) {
 		return vdfloat32x4 { _mm_div_ps(_mm_set1_ps(1.0f), _mm_sqrt_ps(x.v)) };
+	}
+
+	[[nodiscard]] inline vdfloat32x3 rsqrtest(vdfloat32x3 x) {
+		return vdfloat32x3 { _mm_rsqrt_ps(x.v) };
 	}
 
 	[[nodiscard]] inline vdfloat32x4 rsqrtest(vdfloat32x4 x) {
@@ -337,8 +439,18 @@ namespace nsVDVecMath {
 		
 		return (uint32)_mm_cvtsi128_si32(_mm_packus_epi16(y, y));
 	}
+
+	[[nodiscard]] inline vdint32x4 ceilint(vdfloat32x4 x) {
+		__m128i ix = _mm_cvttps_epi32(x.v);
+
+		return vdint32x4 { _mm_sub_epi32(ix, _mm_castps_si128(_mm_cmplt_ps(_mm_cvtepi32_ps(ix), x.v))) };
+	}
 }
 
+using nsVDVecMath::vdmask32x3;
+using nsVDVecMath::vdmask32x4;
+using nsVDVecMath::vdfloat32x3;
 using nsVDVecMath::vdfloat32x4;
+using nsVDVecMath::vdint32x4;
 
 #endif

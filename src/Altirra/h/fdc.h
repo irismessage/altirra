@@ -82,6 +82,10 @@ public:
 		mpFnHeadLoadChange = fn;
 	}
 
+	void SetOnIndexChange(vdfunction<void(bool)> fn) {
+		mpFnIndexChange = std::move(fn);
+	}
+
 	bool GetIrqStatus() const { return mbIrqPending; }
 	bool GetDrqStatus() const { return mbDataReadPending || mbDataWritePending; }
 
@@ -112,6 +116,7 @@ public:
 	void SetWriteProtectOverride2(ATFDCWPOverride mode) { mWriteProtectOverride2 = mode; }
 
 	void SetAutoIndexPulse(bool enabled);
+	void SetAutoIndexPulse(bool enabled, bool connected);
 	void SetDoubleClock(bool doubleClock);
 	void SetDiskImage(IATDiskImage *image, bool diskReady);
 	void SetDiskImage(IATDiskImage *image);
@@ -189,6 +194,10 @@ protected:
 		kState_WriteSector_TransferComplete,
 		kState_ReadAddress,
 		kState_ReadTrack,
+		kState_ReadTrack_WaitHeadLoad,
+		kState_ReadTrack_WaitIndexPulse,
+		kState_ReadTrack_TransferByte,
+		kState_ReadTrack_Complete,
 		kState_WriteTrack,
 		kState_WriteTrack_WaitHeadLoad,
 		kState_WriteTrack_InitialDrq,
@@ -265,6 +274,7 @@ protected:
 	bool mbManualIndexPulse = false;
 	bool mbAutoIndexPulse = false;
 	bool mbAutoIndexPulseEnabled = false;
+	bool mbAutoIndexPulseConnected = false;
 	bool mbIndexPulse = false;
 	bool mbTrack0 = false;
 	bool mbSide2 = false;
@@ -312,16 +322,32 @@ protected:
 	vdfunction<void(bool)> mpFnMotorChange;
 	vdfunction<void()> mpFnWriteEnabled;
 	vdfunction<void(bool)> mpFnHeadLoadChange;
+	vdfunction<void(bool)> mpFnIndexChange;
 
 	ATTraceChannelFormatted *mpTraceChannelCommands = nullptr;
 	vdautoptr<ATDiskRotationTracer> mpRotationTracer;
+	uint32 mLogDataByteIndex = 0;
+
+	// Read/Write Track buffer. For Read Track, this holds interleaved clock/data bits.
+	// For Write Track, this holds the write track data written to the FDC composed of
+	// data or control bytes.
+	vdblock<uint8> mReadTrackBuffer;
+	uint32 mReadTrackBitLength = 0;
+	uint32 mReadTrackIndex = 0;
 
 	vdblock<uint8> mWriteTrackBuffer;
-	uint32 mWriteTrackIndex;
+	uint32 mWriteTrackIndex = 0;
 
-	uint8 mTransferBuffer[4096] = {};
+	uint8 mTransferBuffer[4096] {};
 
-	static constexpr uint32 kMaxBytesPerTrackFM = 3256;
+	// The largest track we need to accommodate is an 8" double density. Only data
+	// bytes need to be accommodated for the Write Track command.
+	// 1us bit cell @ 288 RPM = 208333 bits (13020 data byte)
+	//
+	// The write track buffer limit is approximate, as we just need enough to ensure
+	// that the entire track is captured; both the index timing of the Write Track command
+	// and the track parsing routines will trim the written track to the last part
+	// that fits at the actual clock speed and RPM.
 	static constexpr uint32 kMaxBytesPerTrackMFM = 6512;
 	static constexpr uint32 kWriteTrackBufferSize = kMaxBytesPerTrackMFM * 2 + 1024;	// +1024 in case data sector is incomplete at end
 };

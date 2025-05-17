@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2009-2019 Avery Lee
+//	Copyright (C) 2024 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -15,47 +15,40 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+#include "encode_png.h"
+#include "savestatetypes.h"
 
-#include <at/atcore/serialization.h>
+template<ATExchanger T>
+void ATSaveStateInfo::Exchange(T& ex) {
+	vdrefptr<ATSaveStateMemoryBuffer> image;
 
-class ATSaveState;
-class ATSaveStateCPU;
-class ATSaveStateCPU816;
-class ATSaveStateMemoryBuffer;
-class ATSaveStateFirmwareReference;
-class ATSaveStateAntic;
-class ATSaveStateAnticInternal;
-class ATSaveStateGtia;
-class ATSaveStateGtiaInternal;
-class ATSaveStatePokey;
-class ATSaveStatePokeyInternal;
-class ATSaveStatePia;
-class ATSaveStateCartridge;
-class ATSaveStateGtiaRenderer;
-class ATSaveStateDisk;
-class ATSaveStateSioActiveCommand;
-class ATSaveStateSioCommandStep;
-class ATSaveStateColorSettings;
-class ATSaveStateColorParameters;
+	if constexpr (ex.IsReader) {
+		ex.Transfer("thumbnail", &image);
+	} else {
+		vdautoptr pngEncoder { VDCreateImageEncoderPNG() };
+		const void *pngData = nullptr;
+		uint32 pngLen = 0;
 
-void ATSaveRegisterTypes() {
-	ATSERIALIZATION_REGISTER(ATSaveState);
-	ATSERIALIZATION_REGISTER(ATSaveStateMemoryBuffer);
-	ATSERIALIZATION_REGISTER(ATSaveStateFirmwareReference);
-	ATSERIALIZATION_REGISTER(ATSaveStateCPU);
-	ATSERIALIZATION_REGISTER(ATSaveStateCPU816);
-	ATSERIALIZATION_REGISTER(ATSaveStateAntic);
-	ATSERIALIZATION_REGISTER(ATSaveStateAnticInternal);
-	ATSERIALIZATION_REGISTER(ATSaveStateGtia);
-	ATSERIALIZATION_REGISTER(ATSaveStateGtiaInternal);
-	ATSERIALIZATION_REGISTER(ATSaveStatePokey);
-	ATSERIALIZATION_REGISTER(ATSaveStatePokeyInternal);
-	ATSERIALIZATION_REGISTER(ATSaveStatePia);
-	ATSERIALIZATION_REGISTER(ATSaveStateCartridge);
-	ATSERIALIZATION_REGISTER(ATSaveStateGtiaRenderer);
-	ATSERIALIZATION_REGISTER(ATSaveStateDisk);
-	ATSERIALIZATION_REGISTER(ATSaveStateSioActiveCommand);
-	ATSERIALIZATION_REGISTER(ATSaveStateSioCommandStep);
-	ATSERIALIZATION_REGISTER(ATSaveStateColorSettings);
-	ATSERIALIZATION_REGISTER(ATSaveStateColorParameters);
+		// We could set the PAR on the PNG encoder to encode the aspect ratio, but omit it for
+		// now because no programs seem to really support it.
+		pngEncoder->Encode(mImage, pngData, pngLen, false);
+
+		image = new ATSaveStateMemoryBuffer;
+		image->mpDirectName = L"thumbnail.png";
+		image->GetWriteBuffer().assign((const uint8 *)pngData, (const uint8 *)pngData + pngLen);
+
+		ex.Transfer("thumbnail", &image);
+	}
+
+	ex.Transfer("thumbnail_x1", &mImageX1);
+	ex.Transfer("thumbnail_y1", &mImageY1);
+	ex.Transfer("thumbnail_x2", &mImageX2);
+	ex.Transfer("thumbnail_y2", &mImageY2);
+	ex.Transfer("thumbnail_pixel_aspect", &mImagePAR);
+
+	ex.Transfer("run_time_seconds", &mSimRunTimeSeconds);
+	ex.Transfer("cold_start_id", &mColdStartId);
 }
+
+template void ATSaveStateInfo::Exchange(ATSerializer&);
+template void ATSaveStateInfo::Exchange(ATDeserializer&);

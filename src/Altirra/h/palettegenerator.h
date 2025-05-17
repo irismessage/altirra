@@ -31,6 +31,9 @@ enum class ATMonitorMode : uint8;
 class ATColorPaletteGenerator {
 public:
 	void Generate(const ATColorParams& colorParams, ATMonitorMode monitorMode);
+	static void GenerateMonoRamp(const ATColorParams& colorParams, ATMonitorMode monitorMode, uint32 ramp[256]);
+	static void GenerateMonoPersistenceRamp(const ATColorParams& colorParams, ATMonitorMode monitorMode, uint32 ramp[1024]);
+	static vdfloat32x3 ClipLinearColorToSRGB(vdfloat32x3 c);
 
 	// Final palette, as 24-bit RGB.
 	uint32 mPalette[256];
@@ -49,9 +52,17 @@ public:
 	// RGB space.
 	std::optional<vdfloat3x3> mColorMatchingMatrix;
 
+	// Output gamma to apply after the color matching matrix, e.g. 2.2 or 2.4,
+	// or 0 for sRGB.
+	float mOutputGamma;
+
 	// If present, indicates that a monochrome display is active with the
 	// given tint color.
 	std::optional<nsVDVecMath::vdfloat32x3> mTintColor;
+
+private:
+	static bool GetMonoColor(ATMonitorMode monitorMode, vdfloat32x3& c);
+	static bool GetMonoColorLinear(ATMonitorMode monitorMode, vdfloat32x3& c);
 };
 
 #endif

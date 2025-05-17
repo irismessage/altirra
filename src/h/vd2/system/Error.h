@@ -30,70 +30,104 @@
 	#pragma once
 #endif
 
+#include <source_location>
+#include <exception>
+#include <type_traits>
 #include <vd2/system/vdtypes.h>
 
-class MyError;
+class VDException;
+
+using VDExceptionPostContext = struct HWND__ *;
+
+template<typename T>
+concept VDPrintfCompatible = (std::is_arithmetic_v<std::decay_t<T>> || std::is_pointer_v<std::decay_t<T>> || std::is_enum_v<std::decay_t<T>>);
 
 ///////////////////////////////////////////////////////////////////////////
-//	IVDAsyncErrorCallback
+//	VDException
 //
-class IVDAsyncErrorCallback {
+class VDException : public std::exception {
+protected:
+	struct StringHeader;
+
+	StringHeader *mpBuffer = nullptr;
+	const char *mpMessage = nullptr;
+	const wchar_t *mpMessageW = nullptr;
+
 public:
-	virtual bool OnAsyncError(MyError& e) = 0;
-};
+	VDException() noexcept;
+	VDException(const VDException& err) noexcept;
+	VDException(VDException&& err) noexcept;
+	VDException(const char *s);
+	VDException(const wchar_t *s);
 
-///////////////////////////////////////////////////////////////////////////
-//	MyError
-//
-class MyError {
-private:
-	const MyError& operator=(const MyError&);		// protect against accidents
+	template<typename... Args>
+	VDException(const char *format, Args&& ...args) {
+		constexpr bool validParams = (VDPrintfCompatible<Args> && ...);
+
+		if constexpr(validParams)
+			setf(format, std::forward<Args>(args)...);
+		else
+			static_assert(!validParams, "Unsupported parameter types passed");
+	}
+
+	template<typename... Args>
+	VDException(const wchar_t *format, Args&& ...args) {
+		constexpr bool validParams = (VDPrintfCompatible<Args> && ...);
+
+		if constexpr(validParams)
+			wsetf(format, std::forward<Args>(args)...);
+		else
+			static_assert(!validParams, "Unsupported parameter types passed");
+	}
+
+	~VDException();
+
+	VDException& operator=(const VDException&) noexcept;
+	VDException& operator=(VDException&&) noexcept;
+
+	void clear() noexcept;
+	void assign(const char *s);
+	void assign(const wchar_t *s);
+
+	void setf(const char *f, ...);
+	void wsetf(const wchar_t *f, ...);
+
+	void vsetf(const char *f, va_list val);
+	void vwsetf(const wchar_t *f, va_list val);
+	void post(VDExceptionPostContext context, const char *title) const noexcept;
+	const char *c_str() const noexcept { return mpMessage; }
+	const wchar_t *wc_str() const noexcept { return mpMessageW; }
+
+	// Return true if the object contains an exception. Note that an empty
+	// string isn't the same (it corresponds to a user cancel).
+	bool empty() const { return !mpMessage; }
+
+	// deprecated
+	const char *gets() const noexcept { return mpMessage; }
+	void TransferFrom(VDException& err) noexcept {
+		operator=(std::move(err));
+	}
+
+	const char *what() const noexcept override;
 
 protected:
-	char *buf;
-
-public:
-	MyError();
-	MyError(const MyError& err);
-	MyError(const char *f, ...);
-	~MyError();
-	void clear();
-	void assign(const MyError& e);
-	void assign(const char *s);
-	void setf(const char *f, ...);
-	void vsetf(const char *f, va_list val);
-	void post(struct HWND__ *hWndParent, const char *title) const;
-	char *gets() const {
-		return buf;
-	}
-	char *c_str() const {
-		return buf;
-	}
-	bool empty() const { return !buf; }
-	void swap(MyError& err);
-	void TransferFrom(MyError& err);
+	char *Alloc(size_t len);
+	wchar_t *AllocWide(size_t len);
+	void Alloc(size_t narrowLen, size_t wideLen);
+	void MakeNarrow();
+	void MakeWide();
 };
 
-class MyICError : public MyError {
+class VDAllocationFailedException : public VDException {
 public:
-	MyICError(const char *s, uint32 icErr);
-	MyICError(uint32 icErr, const char *format, ...);
+	VDAllocationFailedException();
+	VDAllocationFailedException(size_t attemptedSize);
 };
 
-class MyAVIError : public MyError {
+class VDWin32Exception : public VDException {
 public:
-	MyAVIError(const char *s, uint32 aviErr);
-};
-
-class MyMemoryError : public MyError {
-public:
-	MyMemoryError();
-	MyMemoryError(size_t attemptedSize);
-};
-
-class MyWin32Error : public MyError {
-public:
-	MyWin32Error(const char *format, uint32 err, ...);
+	VDWin32Exception(const char *format, uint32 err, ...);
+	VDWin32Exception(const wchar_t *format, uint32 err, ...);
 
 	uint32 GetWin32Error() const { return mWin32Error; }
 
@@ -101,14 +135,24 @@ protected:
 	const uint32 mWin32Error;
 };
 
-class MyUserAbortError : public MyError {
+class VDUserCancelException : public VDException {
 public:
-	MyUserAbortError();
+	VDUserCancelException();
 };
 
-class MyInternalError : public MyError {
-public:
-	MyInternalError(const char *format, ...);
-};
+////////////////////////////////////////////////////////////////////////////////
+
+using MyError = VDException;
+using MyMemoryError = VDAllocationFailedException;
+using MyWin32Error = VDWin32Exception;
+using MyUserAbortError = VDUserCancelException;
+
+////////////////////////////////////////////////////////////////////////////////
+
+void VDPostException(VDExceptionPostContext context, const char *message, const char *title);
+void VDPostException(VDExceptionPostContext context, const wchar_t *message, const wchar_t *title);
+void VDPostCurrentException(VDExceptionPostContext context, const char *title);
+
+[[noreturn]] void VDRaiseInternalFailure(const char *context = std::source_location::current().function_name());
 
 #endif

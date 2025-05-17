@@ -22,8 +22,17 @@
 #define f_AT_ATCORE_FFT_H
 
 #include <bit>
+#include <vd2/system/vdtypes.h>
 
-#if defined(_M_IX86) || defined(_M_X64)
+#if defined(VD_COMPILER_MSVC) || (defined(VD_COMPILER_CLANG) && __has_cpp_attribute(msvc::no_unique_address))
+	#define VD_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
+#elif __has_cpp_attribute(no_unique_address)
+	#define VD_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#else
+	#define VD_NO_UNIQUE_ADDRESS
+#endif
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 #define ATFFT_USE_SSE2
 #define ATFFT_USE_RADIX_4
 #else
@@ -31,13 +40,132 @@
 #define ATFFT_USE_RADIX_4
 #endif
 
+enum class ATFFTTableType : uint8 {
+	// Cos/sin(-pi/N*i) for i in [0,N). Used for radix-2 and r2c/c2r
+	// stages.
+	TwiddleNeg180,
+
+	// 0.5*Cos/sin(-pi/N*i) for i in [0,N), arranged as quads of 4 real + 4 imag.
+	// Used for vectorized radix-2 stages.
+	TwiddleNeg180Vec4,
+
+	// Version of above for 256-bit (AVX).
+	TwiddleNeg180Vec8,
+
+	// 0.5*Cos/sin(-pi/N*i) for i in [0,N), arranged as quads of 4 real + 4 imag.
+	// Used for vectorized r2c/c2r stages.
+	TwiddleNeg180HalfVec4,
+
+	// Version of above for 256-bit (AVX).
+	TwiddleNeg180HalfVec8,
+
+	// Cos/sin(-pi/2N*i), Cos/sin(-2pi/2N*i), Cos/sin(-3pi/2N*i) for in [0,N).
+	// Used for radix-4 stages.
+	Radix4TwiddleNeg90,
+
+	// Same as Radix4TwiddleNeg90, but grouped into 4 real + 4 imag. Used for
+	// vectorized radix-4 stages.
+	Radix4TwiddleNeg90Vec4,
+
+	// Version of above for 256-bit (AVX).
+	Radix4TwiddleNeg90Vec8,
+
+	// Cos/sin(-pi/2N*(i+1/8)) for i in [0,N). Used for IMDCT-to-FFT conversion
+	// stages.
+	ImdctTwiddle,
+
+	// Same as ImdctTwiddleVec4, but grouped into 4 real + 4 imag. Used for
+	// vectorized IMDCT stages.
+	ImdctTwiddleVec4,
+
+	// Version of above for 256-bit (AVX).
+	ImdctTwiddleVec8,
+
+	// Bit reverse table, with each element multiplied by 16.
+	BitReverseX16,
+};
+
+class ATFFTAllocator {
+	ATFFTAllocator(const ATFFTAllocator&) = delete;
+	ATFFTAllocator& operator=(const ATFFTAllocator&) = delete;
+public:
+	ATFFTAllocator();
+	~ATFFTAllocator();
+
+	void ReserveWorkspace(size_t bytes);
+	uint16_t AllocateTable(ATFFTTableType type, size_t n);
+
+	void Finalize();
+
+	void *GetWorkspace(size_t offset) const;
+	const void *GetTable(uint16_t tableIndex) const;
+
+private:
+	void MakeTwiddleTable(float *dst, size_t n, float offset, float divs, float scale);
+	void MakeTwiddleTableVec4(float *dst, size_t n, float offset, float divs, float scale);
+	void MakeTwiddleTableVec8(float *dst, size_t n, float offset, float divs, float scale);
+	void MakeTwiddleTableRadix4(float *dst, size_t n, float offset, float divs);
+	void MakeTwiddleTableRadix4Vec4(float *dst, size_t n, float offset, float divs);
+	void MakeTwiddleTableRadix4Vec8(float *dst, size_t n, float offset, float divs);
+	void MakeBitReverseTableX16(uint32_t *dst, size_t n);
+
+	size_t mWorkspaceBytesNeeded = 0;
+	size_t mTableSpaceBytesNeeded = 0;
+	char *mpMemory = nullptr;
+
+	struct TableDesc {
+		ATFFTTableType mType;
+		size_t mCount;
+
+		bool operator==(const TableDesc&) const = default;
+
+		size_t GetTableSize() const;
+	};
+
+	struct TableEntry {
+		TableDesc mDesc;
+		size_t mOffset;
+	};
+
+	vdfastvector<TableEntry> mTables;
+};
+
+union ATFFTTableReference {
+	uint16 mTableIndex;
+	float *mpFloatTable;
+	uint32 *mpIntTable;
+};
+
 class ATFFTBase {
 protected:
-	static void Init(float *wtab, int numRadix4, int numRadix2, bool useVec4, int *fwdorder, int N);
+#if defined(ATFFT_USE_SSE2) || defined(ATFFT_USE_NEON)
+	static constexpr bool kUseVec4 = true;
+#else
+	static constexpr bool kUseVec4 = false;
+#endif
 
-	static void ForwardImpl(float *dst, const float *src, float *work, float *wtab, int numRadix4, int numRadix2, bool useVec4, int *fwdorder, int log2N);
-	static void InverseImpl(float *dst, const float *src, float *work, float *wtabend, int numRadix4, int numRadix2, bool useVec4, int *fwdorder, int log2N);
-	static void MultiplyAddImpl(float *dst, const float *src1, const float *src2, int N);
+	void InitImpl(ATFFTAllocator& allocator, uint32 N, bool imdct, bool optimizeForSpeed);
+
+	void ReserveImpl(ATFFTAllocator& allocator, uint32 N, bool imdct, bool optimizeForSpeed);
+	void BindImpl(ATFFTAllocator& allocator);
+
+	void ForwardImpl(float *dst, const float *src);
+	void InverseImpl(float *dst, const float *src);
+	void MultiplyAddImpl(float *dst, const float *src1, const float *src2, int N);
+
+	ATFFTTableReference mBitRevTable {};
+	float *mpWorkArea {};
+
+	uint8_t mFFTSizeBits = 0;
+	uint8_t mNumRadix4Stages = 0;
+	uint8_t mNumRadix2Stages = 0;
+	bool mbIMDCT = false;
+
+#if defined(ATFFT_USE_SSE2)
+	bool mbUseAVX2 = false;
+#endif
+
+	ATFFTTableReference mStageTables[16] {};
 };
 
 // Fast Fourier Transform implementation.
@@ -60,13 +188,27 @@ protected:
 // they are aligned to 16. It is much more important for the FFT object itself to be
 // aligned (natural alignment is 64 for cache line alignment).
 //
-template<int N>
+// FFTs can be tuned either for speed or for efficiency. Speed allows use of higher
+// vector ISAs that may be detrimental if used too occasionally (AVX); efficiency
+// stays with 128-bit vectors.
+//
+template<int N, bool T_SharedAllocator = false>
 class ATFFT : public ATFFTBase {
 	static_assert(N >= 16 && N <= 8192 && (N & (N - 1)) == 0);
 
 public:
-	ATFFT() {
-		ATFFTBase::Init(wtab2, kNumStagesRadix4, kNumStagesRadix2, kUseVec, fwdorder, N);
+	ATFFT(bool optimizeForSpeed = true) {
+		if constexpr (!T_SharedAllocator) {
+			InitImpl(mFFTAllocator, N, false, optimizeForSpeed);
+		}
+	}
+
+	void Reserve(ATFFTAllocator& allocator, bool optimizeForSpeed) requires T_SharedAllocator {
+		ReserveImpl(allocator, N, optimizeForSpeed);
+	}
+
+	void Bind(const ATFFTAllocator& allocator) requires T_SharedAllocator {
+		BindImpl(allocator);
 	}
 
 	// Forward transform from time to frequency domain. This is a real-to-complex (r2c)
@@ -79,7 +221,7 @@ public:
 
 	// Forward transform, out of place.
 	void Forward(float *dst, const float *src) {
-		ForwardImpl(dst, src, work, wtab2, kNumStagesRadix4, kNumStagesRadix2, kUseVec, fwdorder, kSizeBits);
+		ForwardImpl(dst, src);
 	}
 
 	// Inverse transform from frequency to time domain. This is a complex-to-real (c2r)
@@ -92,7 +234,7 @@ public:
 
 	// Inverse transform, out of place.
 	void Inverse(float *dst, const float *src) {
-		InverseImpl(dst, src, work, std::end(wtab2), kNumStagesRadix4, kNumStagesRadix2, kUseVec, fwdorder, kSizeBits);
+		InverseImpl(dst, src);
 	}
 
 	void MultiplyAdd(float *dst, const float *src1, const float *src2) {
@@ -100,40 +242,40 @@ public:
 	}
 
 private:
-	static constexpr int kSizeBits = std::countr_zero((unsigned)N);
+	struct Empty {};
 
-#if defined(ATFFT_USE_SSE2) || defined(ATFFT_USE_NEON)
-	static constexpr bool kUseVec = true;
-#else
-	static constexpr bool kUseVec = false;
-#endif
+	VD_NO_UNIQUE_ADDRESS std::conditional_t<!T_SharedAllocator, ATFFTAllocator, Empty> mFFTAllocator;
+};
 
-#ifdef ATFFT_USE_RADIX_4
-	static constexpr int kNumStagesRadix4 = (kSizeBits - 4) >> 1;
-#else
-	static constexpr int kNumStagesRadix4 = 0;
-#endif
+// Inverse modified discrete cosine transform (IMDCT) implementation.
+//
+// The transform implemented:
+//
+//	x'[i] = sum(j = 0..N-1) { x[i]*cos(pi/N * (i + 0.5) * (j + 0.5))  }
+//
+// This form is compatible with Vorbis I decoding.
+//
+// The IMDCT transforms N points of input into 2N points of output, which is
+// redundant: the first quarter is negated reverse of the second quarter, and
+// the third quarter is the reverse of the fourth quarter. This version returns
+// the third and second quarters, in that order.
+//
+// The underlying implementation uses a N/2 point complex FFT to implement the
+// N-point IMDCT. Note that the inverse MDCT requires the _forward_ FFT.
+//
+class ATIMDCT : public ATFFTBase {
+public:
+	void Reserve(ATFFTAllocator& alloc, size_t N, bool optimizeForSpeed) {
+		ReserveImpl(alloc, N, true, optimizeForSpeed);
+	}
 
-	static constexpr int kNumStagesRadix2 = kSizeBits - 4 - kNumStagesRadix4 * 2;
+	void Bind(ATFFTAllocator& alloc) {
+		BindImpl(alloc);
+	}
 
-	// Each radix-4 stage has 6 elements per twiddle factor, of which there are 8
-	// at the first stage.
-	static constexpr int kWTabSizeRadix4 = ((1 << (2*kNumStagesRadix4)) - 1) * 48 / 3;
-
-	// Each radix-2 stage has 2 elements per twiddle factor, of which there are 8
-	// at the first stage.
-	static constexpr int kWTabSizeRadix2 = ((1 << (2*kNumStagesRadix4 + kNumStagesRadix2)) - (1 << (2*kNumStagesRadix4))) * 16;
-
-	// This contains the twiddle factors for the forward transform in DIT order,
-	// followed by the twiddles for the C2R/R2C conversion (N). They are combined
-	// so as to avoid a zero-length array if no radix-2/4 stages are needed.
-	alignas(64)
-	float wtab2[kWTabSizeRadix4 + kWTabSizeRadix2 + N];
-
-	int fwdorder[N/16];
-	
-	alignas(64)
-	float work[N];
+	void Transform(float *x) {
+		ForwardImpl(x, x);
+	}
 };
 
 #endif

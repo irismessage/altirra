@@ -285,7 +285,7 @@ protected:
 		ATUITimerHandle mTimerHandle;
 	};
 
-	vdfastvector<TimerEntry> mTimerEntries;
+	vdvector<TimerEntry> mTimerEntries;
 	vdfastvector<uint32> mFreeTimerIndices;
 };
 

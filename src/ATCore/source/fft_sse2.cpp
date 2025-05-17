@@ -19,13 +19,14 @@
 //	archive for details.
 
 #include <stdafx.h>
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 #include <intrin.h>
 
 template<int T_LogStep>
 void ATFFT_DIT_Radix2_SSE2(float *y0, const float *w4, int N) {
 	constexpr int step = 1 << T_LogStep;
 	float *__restrict y1 = y0;
-	float *__restrict y2 = y0 + step;
 	const float *__restrict w1 = w4;
 
 	for(int i=0; i<N; i += step*2) {
@@ -34,8 +35,8 @@ void ATFFT_DIT_Radix2_SSE2(float *y0, const float *w4, int N) {
 		for(int j=0; j<step/8; ++j) {
 			__m128 r0 = _mm_load_ps(y1);
 			__m128 i0 = _mm_load_ps(y1+4);
-			__m128 r1 = _mm_load_ps(y2);
-			__m128 i1 = _mm_load_ps(y2+4);
+			__m128 r1 = _mm_load_ps(y1+step);
+			__m128 i1 = _mm_load_ps(y1+step+4);
 			__m128 rw = _mm_load_ps(w2);
 			__m128 iw = _mm_load_ps(w2+4);
 
@@ -47,18 +48,16 @@ void ATFFT_DIT_Radix2_SSE2(float *y0, const float *w4, int N) {
 			__m128 r3 = _mm_sub_ps(r0, rt1);
 			__m128 i3 = _mm_sub_ps(i0, it1);
 
-			_mm_store_ps(y1  , r2);
-			_mm_store_ps(y1+4, i2);
-			_mm_store_ps(y2  , r3);
-			_mm_store_ps(y2+4, i3);
+			_mm_store_ps(y1       , r2);
+			_mm_store_ps(y1+4     , i2);
+			_mm_store_ps(y1+step  , r3);
+			_mm_store_ps(y1+step+4, i3);
 
 			w2 += 8;
 			y1 += 8;
-			y2 += 8;
 		}
 
-		y1 = y2;
-		y2 += step;
+		y1 += step;
 	}
 }
 
@@ -67,19 +66,17 @@ void ATFFT_DIT_Radix4_SSE2(float *y0, const float *w4, int N) {
 	constexpr int step = 1 << T_LogStep;
 	const float *__restrict w1 = w4;
 
+	constexpr int step2 = step*2;
+	constexpr int step3 = step*3;
+
+	float *__restrict y1 = y0;
+
 	for(int i=0; i<N; i += step*4) {
 		const float *__restrict w2 = w1;
 
-		float *__restrict y1 = y0;
-		float *__restrict y2 = y1 + step;
-		float *__restrict y3 = y2 + step;
-		float *__restrict y4 = y3 + step;
-
-		y0 += step*4;
-
 		for(int j=0; j<step/8; ++j) {
-			__m128 r1  = _mm_load_ps(y2);
-			__m128 i1  = _mm_load_ps(y2+4);
+			__m128 r1  = _mm_load_ps(y1+step);
+			__m128 i1  = _mm_load_ps(y1+step+4);
 			__m128 rw1 = _mm_load_ps(w2+8);		// note permutation 1 <-> 2 on twiddle
 			__m128 iw1 = _mm_load_ps(w2+12);
 			__m128 rt1 = _mm_sub_ps(_mm_mul_ps(r1, rw1), _mm_mul_ps(i1, iw1));
@@ -92,15 +89,15 @@ void ATFFT_DIT_Radix4_SSE2(float *y0, const float *w4, int N) {
 			__m128 i4 = _mm_add_ps(i0 , it1);
 			__m128 i5 = _mm_sub_ps(i0 , it1);
 
-			__m128 r2  = _mm_load_ps(y3);
-			__m128 i2  = _mm_load_ps(y3+4);
+			__m128 r2  = _mm_load_ps(y1+step2);
+			__m128 i2  = _mm_load_ps(y1+step2+4);
 			__m128 rw2 = _mm_load_ps(w2);
 			__m128 iw2 = _mm_load_ps(w2+4);
 			__m128 rt2 = _mm_sub_ps(_mm_mul_ps(r2, rw2), _mm_mul_ps(i2, iw2));
 			__m128 it2 = _mm_add_ps(_mm_mul_ps(r2, iw2), _mm_mul_ps(i2, rw2));
 
-			__m128 r3  = _mm_load_ps(y4);
-			__m128 i3  = _mm_load_ps(y4+4);
+			__m128 r3  = _mm_load_ps(y1+step3);
+			__m128 i3  = _mm_load_ps(y1+step3+4);
 			__m128 rw3 = _mm_load_ps(w2+16);
 			__m128 iw3 = _mm_load_ps(w2+20);			
 			__m128 rt3 = _mm_sub_ps(_mm_mul_ps(r3, rw3), _mm_mul_ps(i3, iw3));
@@ -121,28 +118,27 @@ void ATFFT_DIT_Radix4_SSE2(float *y0, const float *w4, int N) {
 			__m128 rB = _mm_sub_ps(r5, i7);
 			__m128 iB = _mm_add_ps(i5, r7);
 
-			_mm_store_ps(y1  , r8);
-			_mm_store_ps(y1+4, i8);
-			_mm_store_ps(y2  , r9);
-			_mm_store_ps(y2+4, i9);
-			_mm_store_ps(y3  , rA);
-			_mm_store_ps(y3+4, iA);
-			_mm_store_ps(y4  , rB);
-			_mm_store_ps(y4+4, iB);
+			_mm_store_ps(y1        , r8);
+			_mm_store_ps(y1+4      , i8);
+			_mm_store_ps(y1+step   , r9);
+			_mm_store_ps(y1+step+4 , i9);
+			_mm_store_ps(y1+step2  , rA);
+			_mm_store_ps(y1+step2+4, iA);
+			_mm_store_ps(y1+step3  , rB);
+			_mm_store_ps(y1+step3+4, iB);
 
 			w2 += 24;
 			y1 += 8;
-			y2 += 8;
-			y3 += 8;
-			y4 += 8;
 		}
+
+		y1 += step*3;
 	}
 }
 
-void ATFFT_DIT_Radix8_SSE2(float *dst0, const float *y0, const int *order0, int N) {
+void ATFFT_DIT_Radix8_SSE2(float *dst0, const float *y0, const uint32 *order0, int N) {
 	float *__restrict dst = dst0;
 	const float *__restrict y = y0;
-	const int *__restrict order = order0;
+	const uint32 *__restrict order = order0;
 
 	// sqrt(2)/2
 	const int step0 = N/8;
@@ -226,27 +222,19 @@ void ATFFT_DIT_R2C_SSE2(float *dst0, const float *src0, const float *w, int N) {
 			ih = _mm_move_ss(ih, _mm_load_ss(&src[N-i+4]));
 		}
 
-		rl = _mm_mul_ps(rl, half);
-		il = _mm_mul_ps(il, half);
-		rh = _mm_mul_ps(rh, half);
-		ih = _mm_mul_ps(ih, half);
-
 		// Xe[n] = (Z[k] + Z*[N-k])/2
-		__m128 rxe = _mm_add_ps(rl, rh);
-		__m128 ixe = _mm_sub_ps(il, ih);
+		__m128 rxe = _mm_mul_ps(_mm_add_ps(rl, rh), half);
+		__m128 ixe = _mm_mul_ps(_mm_sub_ps(il, ih), half);
 
 		// Xo[n] = -j(Z[k] - Z*[N-k])/2 * w[k]
 		__m128 rxo = _mm_add_ps(il, ih);
 		__m128 ixo = _mm_sub_ps(rh, rl);
 
-		__m128 twiddlel = _mm_load_ps(w2);
-		__m128 twiddleh = _mm_load_ps(w2+4);
+		__m128 rw = _mm_load_ps(w2);
+		__m128 iw = _mm_load_ps(w2+4);
 		w2 += 8;
 
 		// = (r3*rw - i3*iw, r3*iw + i3*rw)
-		__m128 rw = _mm_shuffle_ps(twiddlel, twiddleh, _MM_SHUFFLE(2, 0, 2, 0));
-		__m128 iw = _mm_shuffle_ps(twiddlel, twiddleh, _MM_SHUFFLE(3, 1, 3, 1));
-
 		__m128 rxo2 = _mm_sub_ps(_mm_mul_ps(rxo, rw), _mm_mul_ps(ixo, iw));
 		__m128 ixo2 = _mm_add_ps(_mm_mul_ps(rxo, iw), _mm_mul_ps(ixo, rw));
 
@@ -307,27 +295,19 @@ void ATFFT_DIF_C2R_SSE2(float *dst0, const float *x, const float *w, int N) {
 		__m128 ih = _mm_shuffle_ps(a45, a67, _MM_SHUFFLE(1, 3, 1, 3));
 
 		// Xe[n] = (X[k] + X*[N/2-k])/2
-		__m128 rxe = _mm_add_ps(rl, rh);
-		__m128 ixe = _mm_sub_ps(il, ih);
+		__m128 rxe = _mm_mul_ps(_mm_add_ps(rl, rh), half);
+		__m128 ixe = _mm_mul_ps(_mm_sub_ps(il, ih), half);
 
 		// Xo[n] = j(X[k] - X*[N/2-k])/2 * w[k]
 		__m128 rxo = _mm_add_ps(il, ih);
 		__m128 ixo = _mm_sub_ps(rl, rh);
 
-		rxe = _mm_mul_ps(rxe, half);
-		ixe = _mm_mul_ps(ixe, half);
-		rxo = _mm_mul_ps(rxo, nhalf);
-		ixo = _mm_mul_ps(ixo, half);
-
-		__m128 twiddle0 = _mm_load_ps(w);
-		__m128 twiddle1 = _mm_load_ps(w+4);
+		__m128 rw = _mm_load_ps(w);
+		__m128 iw = _mm_load_ps(w+4);
 		w += 8;
 
-		__m128 rw = _mm_shuffle_ps(twiddle0, twiddle1, _MM_SHUFFLE(2, 0, 2, 0));
-		__m128 iw = _mm_shuffle_ps(twiddle0, twiddle1, _MM_SHUFFLE(3, 1, 3, 1));
-
-		__m128 rxo2 = _mm_add_ps(_mm_mul_ps(rxo, rw), _mm_mul_ps(ixo, iw));
-		__m128 ixo2 = _mm_sub_ps(_mm_mul_ps(ixo, rw), _mm_mul_ps(rxo, iw));
+		__m128 rxo2 = _mm_sub_ps(_mm_mul_ps(ixo, iw), _mm_mul_ps(rxo, rw));
+		__m128 ixo2 = _mm_add_ps(_mm_mul_ps(ixo, rw), _mm_mul_ps(rxo, iw));
 
 		__m128 r0 = _mm_add_ps(rxe, rxo2);
 		__m128 i0 = _mm_add_ps(ixe, ixo2);
@@ -355,27 +335,19 @@ void ATFFT_DIF_C2R_SSE2(float *dst0, const float *x, const float *w, int N) {
 		__m128 ih = _mm_shuffle_ps(a45, a67, _MM_SHUFFLE(1, 3, 1, 3));
 
 		// Xe[n] = (X[k] + X*[N/2-k])/2
-		__m128 rxe = _mm_add_ps(rl, rh);
-		__m128 ixe = _mm_sub_ps(il, ih);
+		__m128 rxe = _mm_mul_ps(_mm_add_ps(rl, rh), half);
+		__m128 ixe = _mm_mul_ps(_mm_sub_ps(il, ih), half);
 
 		// Xo[n] = j(X[k] - X*[N/2-k])/2 * w[k]
 		__m128 rxo = _mm_add_ps(il, ih);
 		__m128 ixo = _mm_sub_ps(rl, rh);
 
-		rxe = _mm_mul_ps(rxe, half);
-		ixe = _mm_mul_ps(ixe, half);
-		rxo = _mm_mul_ps(rxo, nhalf);
-		ixo = _mm_mul_ps(ixo, half);
-
-		__m128 twiddle0 = _mm_load_ps(w);
-		__m128 twiddle1 = _mm_load_ps(w+4);
+		__m128 rw = _mm_load_ps(w);
+		__m128 iw = _mm_load_ps(w+4);
 		w += 8;
 
-		__m128 rw = _mm_shuffle_ps(twiddle0, twiddle1, _MM_SHUFFLE(2, 0, 2, 0));
-		__m128 iw = _mm_shuffle_ps(twiddle0, twiddle1, _MM_SHUFFLE(3, 1, 3, 1));
-
-		__m128 rxo2 = _mm_add_ps(_mm_mul_ps(rxo, rw), _mm_mul_ps(ixo, iw));
-		__m128 ixo2 = _mm_sub_ps(_mm_mul_ps(ixo, rw), _mm_mul_ps(rxo, iw));
+		__m128 rxo2 = _mm_sub_ps(_mm_mul_ps(ixo, iw), _mm_mul_ps(rxo, rw));
+		__m128 ixo2 = _mm_add_ps(_mm_mul_ps(ixo, rw), _mm_mul_ps(rxo, iw));
 
 		__m128 r0 = _mm_add_ps(rxe, rxo2);
 		__m128 i0 = _mm_add_ps(ixe, ixo2);
@@ -408,7 +380,6 @@ template<int T_LogStep>
 void ATFFT_DIF_Radix2_SSE2(float *y0, const float *w, int N) {
 	constexpr int step = 1 << T_LogStep;
 	float *__restrict y1 = y0;
-	float *__restrict y2 = y0 + step;
 
 	for(int i=0; i<N; i += step*2) {
 		const float *__restrict w2 = w;
@@ -416,8 +387,8 @@ void ATFFT_DIF_Radix2_SSE2(float *y0, const float *w, int N) {
 		for(int j=0; j<step/8; ++j) {
 			__m128 r0 = _mm_load_ps(y1);
 			__m128 i0 = _mm_load_ps(y1+4);
-			__m128 r1 = _mm_load_ps(y2);
-			__m128 i1 = _mm_load_ps(y2+4);
+			__m128 r1 = _mm_load_ps(y1+step);
+			__m128 i1 = _mm_load_ps(y1+step+4);
 			__m128 rw = _mm_load_ps(w2);
 			__m128 iw = _mm_load_ps(w2+4);
 
@@ -429,41 +400,36 @@ void ATFFT_DIF_Radix2_SSE2(float *y0, const float *w, int N) {
 			__m128 rt3 = _mm_add_ps(_mm_mul_ps(r3, rw), _mm_mul_ps(i3, iw));
 			__m128 it3 = _mm_sub_ps(_mm_mul_ps(i3, rw), _mm_mul_ps(r3, iw));
 
-			_mm_store_ps(y1  , r2);
-			_mm_store_ps(y1+4, i2);
-			_mm_store_ps(y2  , rt3);
-			_mm_store_ps(y2+4, it3);
+			_mm_store_ps(y1       , r2);
+			_mm_store_ps(y1+4     , i2);
+			_mm_store_ps(y1+step  , rt3);
+			_mm_store_ps(y1+step+4, it3);
 
 			w2 += 8;
 			y1 += 8;
-			y2 += 8;
 		}
 
-		y1 = y2;
-		y2 += step;
+		y1 += step;
 	}
 }
 
 template<int T_LogStep>
 void ATFFT_DIF_Radix4_SSE2(float *y0, const float *w4, int N) {
 	constexpr int step = 1 << T_LogStep;
+	constexpr int step2 = step*2;
+	constexpr int step3 = step*3;
+
 	const float *__restrict w1 = w4;
+	float *__restrict y1 = y0;
 
 	for(int i=0; i<N; i += step*4) {
 		const float *__restrict w2 = w1;
 
-		float *__restrict y1 = y0;
-		float *__restrict y2 = y1 + step;
-		float *__restrict y3 = y2 + step;
-		float *__restrict y4 = y3 + step;
-
-		y0 += step*4;
-
 		for(int j=0; j<step/8; ++j) {
 			__m128 r0  = _mm_load_ps(y1);			__m128 i0  = _mm_load_ps(y1+4);
-			__m128 r1  = _mm_load_ps(y2);			__m128 i1  = _mm_load_ps(y2+4);
-			__m128 r2  = _mm_load_ps(y3);			__m128 i2  = _mm_load_ps(y3+4);
-			__m128 r3  = _mm_load_ps(y4);			__m128 i3  = _mm_load_ps(y4+4);
+			__m128 r1  = _mm_load_ps(y1+step);		__m128 i1  = _mm_load_ps(y1+step+4);
+			__m128 r2  = _mm_load_ps(y1+step2);		__m128 i2  = _mm_load_ps(y1+step2+4);
+			__m128 r3  = _mm_load_ps(y1+step3);		__m128 i3  = _mm_load_ps(y1+step3+4);
 
 			__m128 r4 = _mm_add_ps(r0, r2);			__m128 i4 = _mm_add_ps(i0, i2);
 			__m128 r5 = _mm_add_ps(r1, r3);			__m128 i5 = _mm_add_ps(i1, i3);
@@ -491,28 +457,27 @@ void ATFFT_DIF_Radix4_SSE2(float *y0, const float *w4, int N) {
 			__m128 rtB = _mm_add_ps(_mm_mul_ps(rB, rw3), _mm_mul_ps(iB, iw3));
 			__m128 itB = _mm_sub_ps(_mm_mul_ps(iB, rw3), _mm_mul_ps(rB, iw3));
 
-			_mm_store_ps(y1  , r8);
-			_mm_store_ps(y1+4, i8);
-			_mm_store_ps(y2  , rt9);
-			_mm_store_ps(y2+4, it9);
-			_mm_store_ps(y3  , rtA);
-			_mm_store_ps(y3+4, itA);
-			_mm_store_ps(y4  , rtB);
-			_mm_store_ps(y4+4, itB);
+			_mm_store_ps(y1        , r8);
+			_mm_store_ps(y1+4      , i8);
+			_mm_store_ps(y1+step   , rt9);
+			_mm_store_ps(y1+step+4 , it9);
+			_mm_store_ps(y1+step2  , rtA);
+			_mm_store_ps(y1+step2+4, itA);
+			_mm_store_ps(y1+step3  , rtB);
+			_mm_store_ps(y1+step3+4, itB);
 
 			w2 += 24;
 			y1 += 8;
-			y2 += 8;
-			y3 += 8;
-			y4 += 8;
 		}
+
+		y1 += step*3;
 	}
 }
 
-void ATFFT_DIF_Radix8_SSE2(float *dst0, const float *src0, const int *order0, int N) {
+void ATFFT_DIF_Radix8_SSE2(float *dst0, const float *src0, const uint32 *order0, int N) {
 	constexpr float r2d2 = 0.70710678118654752440084436210485f;
 
-	const int *__restrict order = order0;
+	const uint32 *__restrict order = order0;
 	float *__restrict dst = dst0;
 	const float *__restrict src = src0;
 
@@ -675,3 +640,100 @@ void ATFFT_MultiplyAdd_SSE2(float *VDRESTRICT dst, const float *VDRESTRICT src1,
 		)
 	);
 }
+
+/////////////////////////////////////////////////////////////////////////////
+
+void ATFFT_IMDCT_PreTransform_SSE2(float *dst, const float *src, const float *w, size_t N) {
+	size_t N2 = N/2;
+
+	const float *VDRESTRICT w1 = w;
+	const float *VDRESTRICT w2 = w + N - 8;
+
+	const float *VDRESTRICT src1 = src;
+	const float *VDRESTRICT src2 = src + N - 8;
+
+	float *VDRESTRICT dst1 = dst;
+	float *VDRESTRICT dst2 = dst + N - 8;
+
+	for(size_t i = 0; i < N2; i += 8) {
+		const __m128 wr1 = _mm_load_ps(w1  );
+		const __m128 wi1 = _mm_load_ps(w1+4);
+		const __m128 wr2 = _mm_load_ps(w2  );
+		const __m128 wi2 = _mm_load_ps(w2+4);
+		w1 += 8;
+		w2 -= 8;
+
+		__m128 i6r1i7r0 = _mm_loadu_ps(&src1[0]);
+		__m128 i4r3i5r2 = _mm_loadu_ps(&src1[4]);
+		__m128 i2r5i3r4 = _mm_loadu_ps(&src2[0]);
+		__m128 i0r7i1r6 = _mm_loadu_ps(&src2[4]);
+		src1 += 8;
+		src2 -= 8;
+
+		__m128 r3210 = _mm_shuffle_ps(i6r1i7r0, i4r3i5r2, 0b10001000);
+		__m128 i3210 = _mm_shuffle_ps(i0r7i1r6, i2r5i3r4, 0b01110111);
+
+		__m128 i7654 = _mm_shuffle_ps(i4r3i5r2, i6r1i7r0, 0b01110111);
+		__m128 r7654 = _mm_shuffle_ps(i2r5i3r4, i0r7i1r6, 0b10001000);
+
+		__m128 fr3210 = _mm_sub_ps(_mm_mul_ps(r3210, wr1), _mm_mul_ps(i3210, wi1));
+		__m128 fi3210 = _mm_add_ps(_mm_mul_ps(r3210, wi1), _mm_mul_ps(i3210, wr1));
+		__m128 fr7654 = _mm_sub_ps(_mm_mul_ps(r7654, wr2), _mm_mul_ps(i7654, wi2));
+		__m128 fi7654 = _mm_add_ps(_mm_mul_ps(r7654, wi2), _mm_mul_ps(i7654, wr2));
+
+		_mm_store_ps(&dst1[0], _mm_unpacklo_ps(fr3210, fi3210));
+		_mm_store_ps(&dst1[4], _mm_unpackhi_ps(fr3210, fi3210));
+		_mm_store_ps(&dst2[0], _mm_unpacklo_ps(fr7654, fi7654));
+		_mm_store_ps(&dst2[4], _mm_unpackhi_ps(fr7654, fi7654));
+		dst1 += 8;
+		dst2 -= 8;
+	}
+}
+
+void ATFFT_IMDCT_PostTransform_SSE2(float *dst, const float *src, const float *w, size_t N) {
+	// generate 3rd and 2nd quarters of full IMDCT output, in that order
+	const size_t N2 = N/2;
+
+	const float *VDRESTRICT src1 = src;
+	const float *VDRESTRICT src2 = src + N - 8;
+	const float *VDRESTRICT w1 = w;
+	const float *VDRESTRICT w2 = w1 + N - 8;
+	float *VDRESTRICT dst1 = dst + N2 - 8;
+	float *VDRESTRICT dst2 = dst + N2;
+
+	for(size_t i = 0; i < N2; i += 8) {
+		const __m128 w1r = _mm_load_ps(&w1[0]);
+		const __m128 w1i = _mm_load_ps(&w1[4]);
+		const __m128 w2r = _mm_load_ps(&w2[0]);
+		const __m128 w2i = _mm_load_ps(&w2[4]);
+		w1 += 8;
+		w2 -= 8;
+
+		__m128 r1 = _mm_load_ps(&src1[0]);
+		__m128 i1 = _mm_load_ps(&src1[4]);
+		__m128 r2 = _mm_load_ps(&src2[0]);
+		__m128 i2 = _mm_load_ps(&src2[4]);
+		src1 += 8;
+		src2 -= 8;
+
+		__m128 r3 = _mm_sub_ps(_mm_mul_ps(i1, w1i), _mm_mul_ps(r1, w1r));	// negated
+		__m128 i3 = _mm_add_ps(_mm_mul_ps(r1, w1i), _mm_mul_ps(i1, w1r));
+		__m128 r4 = _mm_sub_ps(_mm_mul_ps(i2, w2i), _mm_mul_ps(r2, w2r));	// negated
+		__m128 i4 = _mm_add_ps(_mm_mul_ps(r2, w2i), _mm_mul_ps(i2, w2r));
+
+		r4 = _mm_shuffle_ps(r4, r4, 0b00011011);
+		r3 = _mm_shuffle_ps(r3, r3, 0b00011011);
+
+		// write third quarter
+		_mm_storeu_ps(&dst1[0], _mm_unpacklo_ps(i4, r3));
+		_mm_storeu_ps(&dst1[4], _mm_unpackhi_ps(i4, r3));
+		dst1 -= 8;
+
+		// write second quarter
+		_mm_storeu_ps(&dst2[0], _mm_unpacklo_ps(i3, r4));
+		_mm_storeu_ps(&dst2[4], _mm_unpackhi_ps(i3, r4));
+		dst2 += 8;
+	}
+}
+
+#endif

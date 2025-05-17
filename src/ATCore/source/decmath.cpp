@@ -64,8 +64,8 @@ bool ATDecFloat::SetDouble(double v) {
 		return true;
 	}
 
-	// check for overflow
-	if (ix > 49)
+	// check for overflow (1E+98 error)
+	if (ix >= 49)
 		return false;
 
 	// split mantissa into bytes

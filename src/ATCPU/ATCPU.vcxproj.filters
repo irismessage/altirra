@@ -54,6 +54,9 @@
     <ClCompile Include="source\co6502machine.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\co8051.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\stdafx.h">
@@ -108,6 +111,9 @@
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atcpu\states6502.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atcpu\co8051.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>

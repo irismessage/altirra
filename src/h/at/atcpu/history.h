@@ -37,11 +37,13 @@ struct ATCPUHistoryEntry {
 		uint8	mX;
 		uint8	mZ80_F;
 		uint8	m8048_P1;
+		uint8	m8051_P1;
 	};
 	union {
 		uint8	mY;
 		uint8	mZ80_B;
 		uint8	m8048_P2;
+		uint8	m8051_P2;
 	};
 	union {
 		uint8	mS;
@@ -64,29 +66,42 @@ struct ATCPUHistoryEntry {
 				uint8	mAH;
 				uint8	mZ80_E;
 				uint8	m8048_R0;
+				uint8	m8051_R0;
 			};
 			union {
 				uint8	mXH;
 				uint8	mZ80_H;
 				uint8	m8048_R1;
+				uint8	m8051_R1;
 			};
 			union {
 				uint8	mYH;
 				uint8	mZ80_L;
+				uint8	m8051_R2;
 			};
-
-			uint8	mSH;
+			union {
+				uint8	mSH;
+				uint8	m8051_R3;
+			};
 		} mExt;
 
 		uint32 mGlobalPCBase;
 	};
 
-	uint8	mB;
-	uint8	mK;
+	union {
+		uint8	mB;
+		uint8	m8051_R4;
+	};
+
+	union {
+		uint8	mK;
+		uint8	m8051_R5;
+	};
 
 	union {
 		uint16	mD;
 		uint16	mZ80_SP;
+		uint16	m8051_DPTR;
 	};
 };
 

@@ -5,17 +5,16 @@
 		<link>https://www.virtualdub.org/altirra.html</link>
 		<description>Automatic update notifications for release versions of the Altirra emulator.</description>
 		<item>
-			<title>Altirra 4.10 (4.10.200.15740; win7; sse2)</title>
+			<title>Altirra 4.20 (4.20.200.16272; win7; sse2)</title>
 			<description>
 				<ul>
-<li>Cartridges: CAR types 71-75, XE Multicard, SIC+ added.</li>
-<li>Cassette: PWM encoded turbo data in CAS files, Turbo Blizzard support, improved C: acceleration, and fixes to the Tape Editor.</li>
-<li>Debugger: New breakpoint window, editable memory window, and improved source debugging support.</li>
-<li>Disk: Improved accuracy and support for track buffering in standard disk emulator.</li>
-<li>Display: Reduced latency, improved HDR display support, and vsync adaptive mode.</li>
-<li>Emulation: Improved accuracy of POKEY timer and serial port emulation.</li>
-<li>Input: Improved light pen/gun emulation.</li>
-<li>UI: Improved dark mode and copy/paste.</li>
+<li>New cartridge types: Williams 16K, JRC RAMBOX, MDDOS, COS 32K, Pronto, and CAR types 76/78-93/160.</li>
+<li>New device support: 1400XL/1450XLD modem and disk drive, 835/1030 full emulation, SIDE 3.1, SuperSALT Test Assembly, MIDIMATE/serial over TCP/IP,
+Chalk Board PowerPad, Stack Lightpen.</li>
+<li>UI: Display pan/zoom, new command line switches, improved pad input, improved save state support in many devices, screen reader support.</li>
+<li>Debugger: Write-only register readback, improved source debugging support, improved memory window, trace save/load in the performance analyzer.</li>
+<li>Accuracy improvements to cartridge cassette tape, CPU, device, disk, video, POKEY, network, and VBXE emulation.</li>
+<li>AltirraOS updated to 3.41 with fixes for type 4 polling, keyboard handling, interrupt support, math pack, screen device, and SIO.</li>
 				</ul>
 			</description>
    			<link>https://www.virtualdub.org/altirra.html</link>

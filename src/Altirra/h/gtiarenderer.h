@@ -90,6 +90,7 @@ public:
 
 	void BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires);
 	void RenderScanline(int x2, bool pfgraphics, bool pmgraphics, bool mixed);
+	uint32 SenseScanline(int hpx1, int hpx2, const uint8 *weights) const;
 	void EndScanline();
 
 	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);

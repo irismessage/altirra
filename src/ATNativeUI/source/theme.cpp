@@ -159,8 +159,11 @@ void ATUIUpdateThemeColors() {
 		tc.mContentFg		= VDSwizzleU32(GetSysColor(COLOR_WINDOWTEXT)) >> 8;
 		tc.mHighlightedBg	= VDSwizzleU32(GetSysColor(COLOR_HIGHLIGHT)) >> 8;
 		tc.mHighlightedFg	= VDSwizzleU32(GetSysColor(COLOR_HIGHLIGHTTEXT)) >> 8;
-		tc.mInactiveHiBg	= VDSwizzleU32(GetSysColor(COLOR_3DFACE)) >> 8;
-		tc.mInactiveHiFg	= VDSwizzleU32(GetSysColor(COLOR_WINDOWTEXT)) >> 8;
+
+		// Sigh... COLOR_3DFACE is absurdly bright on Windows 11, with 3DFACE being #F0F0F0
+		// and WINDOWTEXT being #FFFFFF.
+		tc.mInactiveHiBg	= 0xC0C0C0;
+		tc.mInactiveHiFg	= 0x404040;
 		tc.mHyperlinkText	= 0x0000FF;
 		tc.mCommentText		= 0x008000;
 		tc.mKeywordText		= 0x0000FF;

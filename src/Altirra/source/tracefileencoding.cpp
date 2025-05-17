@@ -25,6 +25,10 @@
 #include "tracefileencoding.h"
 #include "tracefileformat.h"
 
+#if VD_CPU_ARM64
+#include <arm_neon.h>
+#endif
+
 //#define AT_PROFILE_TRACE_CODEC_STATISTICS
 
 void ATSavedTraceCodecNull::Encode(ATSaveStateMemoryBuffer& dst, const uint8 *src, uint32 rowSize, size_t rowCount) const {

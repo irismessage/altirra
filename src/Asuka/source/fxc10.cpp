@@ -827,9 +827,21 @@ struct EffectInfo {
 					else if (compile_target == "vs_4_0_level_9_1"
 						|| compile_target == "vs_4_0_level_9_3"
 						|| compile_target == "ps_4_0_level_9_1"
-						|| compile_target == "ps_4_0_level_9_3")
+						|| compile_target == "ps_4_0_level_9_3"
+						|| compile_target == "cs_4_0"
+						|| compile_target == "cs_5_0"
+						)
 					{
 						isd3d10 = true;
+					}
+
+					char shaderModelStr[2] {};
+
+					if (compile_target.size() >= 4) {
+						if (compile_target.size() >= 16 && compile_target.subspan(6, 6) == "_level")
+							shaderModelStr[0] = 2;
+						else
+							shaderModelStr[0] = compile_target[3];
 					}
 
 					for(int pass = 0; pass < 2; ++pass) {
@@ -837,6 +849,7 @@ struct EffectInfo {
 
 						macros.push_back(D3D10_SHADER_MACRO { "PROFILE_D3D9", isd3d9 ? "1" : "0" });
 						macros.push_back(D3D10_SHADER_MACRO { "PROFILE_D3D10", isd3d10 ? "1" : "0" });
+						macros.push_back(D3D10_SHADER_MACRO { "SHADER_MODEL", shaderModelStr });
 
 						bool minprec = false;
 						if (isd3d10) {

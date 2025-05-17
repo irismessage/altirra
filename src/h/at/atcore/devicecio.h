@@ -52,6 +52,14 @@ class IATDeviceCIO {
 public:
 	enum { kTypeID = 'adci'};
 
+	// Handler is currently working on call, which should be retried. Break
+	// should not be handled.
+	static constexpr sint32 kCIOStatus_PendingNonInterruptable = -1;
+
+	// Handler is currently working on call, which should be retried. Break
+	// should be handled.
+	static constexpr sint32 kCIOStatus_PendingInterruptable = -2;
+
 	virtual void InitCIO(IATDeviceCIOManager *mgr) = 0;
 
 	// Get a list of which CIO devices are supported, as the device letters

@@ -108,7 +108,6 @@ void *ATBlackBoxEmulator::AsInterface(uint32 iid) {
 		case IATDeviceButtons::kTypeID: return static_cast<IATDeviceButtons *>(this);
 		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(this);
 		case IATDeviceIndicators::kTypeID: return static_cast<IATDeviceIndicators *>(this);
-		case IATDevicePrinterPort::kTypeID: return static_cast<IATDevicePrinterPort *>(this);
 		case IATDeviceSnapshot::kTypeID: return static_cast<IATDeviceSnapshot *>(this);
 	}
 
@@ -193,12 +192,20 @@ void ATBlackBoxEmulator::Init() {
 		}
 	);
 
+	mParallelBus.SetOnAttach(
+		[this] {
+			mpPrinterOutput = nullptr;
+		}
+	);
+
 	UpdateDipSwitches();
 }
 
 void ATBlackBoxEmulator::Shutdown() {
 	mSerialBus.Shutdown();
 	mParallelBus.Shutdown();
+
+	mpPrinterOutput = nullptr;
 
 	mSCSIBus.Shutdown();
 
@@ -410,10 +417,6 @@ void ATBlackBoxEmulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) 
 
 void ATBlackBoxEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
-}
-
-void ATBlackBoxEmulator::SetPrinterDefaultOutput(IATPrinterOutput *out) {
-	mpPrinterOutput = out;
 }
 
 void ATBlackBoxEmulator::GetSnapshotStatus(ATSnapshotStatus& status) const {
@@ -748,9 +751,13 @@ void ATBlackBoxEmulator::OnVIAOutputChanged(void *thisptr0, uint32 val) {
 			g_ATLCParPrint("Sending byte to printer: $%02X\n", c);
 
 			if (auto *printer = thisptr->mParallelBus.GetChild<IATPrinterOutput>())
-				printer->WriteASCII(&c, 1);
-			else if (thisptr->mpPrinterOutput)
-				thisptr->mpPrinterOutput->WriteASCII(&c, 1);
+				printer->WriteRaw(&c, 1);
+			else {
+				if (!thisptr->mpPrinterOutput)
+					thisptr->mpPrinterOutput = thisptr->GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+
+				thisptr->mpPrinterOutput->WriteRaw(&c, 1);
+			}
 		}
 	}
 

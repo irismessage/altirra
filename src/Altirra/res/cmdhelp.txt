@@ -82,6 +82,14 @@ Usage: Altirra [switches] <disk/cassette/cartridge images...>
   /[no]soundboard:d2c0|d500|d600
               Enable/disable SoundBoard
   /[no]covox  Enable/disable Covox sound device
+  /cleardevices
+              Remove all devices
+  /adddevice <device-tag>[,param1=value[,param2=value...]]
+              Add new device by tag name
+  /setdevice <device-tag>[,param1=value[,param2=value...]]
+              Add or reconfigure existing device by tag name
+  /removedevice <device-tag>
+              Remove device by tag name
 
                           -- Display options --
 

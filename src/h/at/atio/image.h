@@ -27,6 +27,7 @@ class VDStringW;
 struct ATCartLoadContext;
 struct ATCassetteLoadContext;
 class IVDRandomAccessStream;
+class ATVFSFileView;
 
 enum ATImageType {
 	kATImageType_None,
@@ -40,6 +41,13 @@ enum ATImageType {
 	kATImageType_GZip,
 	kATImageType_SAP,
 	kATImageType_SaveState2
+};
+
+// Paired images are files that are associated by their filename alone.
+enum class ATPairedImageType : uint8 {
+	None,
+	TapeDataTrack,
+	TapeAudioTrack
 };
 
 struct ATStateLoadContext {
@@ -71,6 +79,10 @@ public:
 
 ATImageType ATGetImageTypeForFileExtension(const wchar_t *s);
 ATImageType ATDetectImageType(const wchar_t *imagePath, IVDRandomAccessStream& stream);
+ATPairedImageType ATDetectPairedImageType(const wchar_t *imageName);
+vdrefptr<IATImage> ATImageLoadFromFile(const wchar_t *path, ATImageLoadContext *loadCtx);
+
 bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, ATImageLoadContext *loadCtx, VDStringW *resultPath, bool *canUpdate, IATImage **ppImage);
+bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, ATVFSFileView& view, ATImageLoadContext *loadCtx, VDStringW *resultPath, bool *canUpdate, IATImage **ppImage);
 
 #endif	// f_AT_ATIO_IMAGE_H

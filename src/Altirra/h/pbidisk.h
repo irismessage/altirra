@@ -39,6 +39,8 @@ public:
 	void Init() override;
 	void Shutdown() override;
 
+	void SetSIOHookEnabled(bool enabled);
+
 public:
 	void InitMemMap(ATMemoryManager *memmap) override;
 	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
@@ -64,8 +66,10 @@ private:
 
 	IATDevicePBIManager *mpPBIManager = nullptr;
 	bool mbSelected = false;
+	bool mbSIOHookEnabled = false;
 
 	IATDeviceSIOManager *mpSIOManager = nullptr;
+	IATDeviceCIOManager *mpCIOManager = nullptr;
 
 	VDALIGN(2) uint8 mFirmware[0x0800] = {};
 };

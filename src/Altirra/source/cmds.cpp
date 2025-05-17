@@ -19,13 +19,15 @@
 #include <vd2/system/unknown.h>
 #include <at/ataudio/audiooutput.h>
 #include <at/atcore/device.h>
-#include "firmwaremanager.h"
+#include "autosavemanager.h"
 #include "cassette.h"
 #include "console.h"
 #include "cmdhelpers.h"
 #include "debugger.h"
 #include "devicemanager.h"
 #include "disk.h"
+#include "firmwaremanager.h"
+#include "gtia.h"
 #include "simulator.h"
 #include "uiaccessors.h"
 #include "uiconfirm.h"
@@ -49,8 +51,8 @@ void ATUIInitCommandMappingsCassette(ATUICommandManager& cmdMgr);
 void ATUIInitCommandMappingsOption(ATUICommandManager& cmdMgr);
 void ATUIInitCommandMappingsSystem(ATUICommandManager& cmdMgr);
 
-void OnCommandOpenImage();
-void OnCommandBootImage();
+void OnCommandOpenImage(ATUICommandContext& ctx);
+void OnCommandBootImage(ATUICommandContext& ctx);
 bool OnTestCommandQuickLoadState();
 void OnCommandQuickLoadState();
 void OnCommandQuickSaveState();
@@ -69,7 +71,7 @@ void OnCommandSaveFirmwareIDEMain();
 void OnCommandSaveFirmwareIDESDX();
 void OnCommandSaveFirmwareU1MB();
 void OnCommandSaveFirmwareRapidusFlash();
-void OnCommandExit();
+void OnCommandExit(ATUICommandContext&);
 void OnCommandCassetteLoadNew();
 void OnCommandCassetteLoad();
 void OnCommandCassetteUnload();
@@ -174,6 +176,7 @@ void OnCommandSystemCPUMode65C816x6();
 void OnCommandSystemCPUMode65C816x8();
 void OnCommandSystemCPUMode65C816x10();
 void OnCommandSystemCPUMode65C816x12();
+void OnCommandSystemCPUMode65C816x23();
 void OnCommandSystemCPUToggleHistory();
 void OnCommandSystemCPUTogglePathTracing();
 void OnCommandSystemCPUToggleIllegalInstructions();
@@ -233,6 +236,7 @@ void OnCommandVideoToggleStandardNTSCPAL();
 void OnCommandVideoToggleCTIA();
 void OnCommandVideoToggleFrameBlending();
 void OnCommandVideoToggleLinearFrameBlending();
+void OnCommandVideoToggleMonoPersistence();
 void OnCommandVideoToggleInterlace();
 void OnCommandVideoToggleScanlines();
 void OnCommandVideoToggleBloom();
@@ -464,14 +468,7 @@ namespace ATCommands {
 	}
 
 	bool SupportsBASIC() {
-		const ATHardwareMode hwmode = g_sim.GetHardwareMode();
-		switch(hwmode) {
-			case kATHardwareMode_1200XL:
-				return g_sim.IsUltimate1MBEnabled();
-
-			default:
-				return kATHardwareModeTraits[hwmode].mbInternalBASIC;
-		}
+		return g_sim.SupportsInternalBasic();
 	}
 
 	template<ATStorageId T_StorageId>
@@ -626,6 +623,33 @@ namespace ATCommands {
 		return g_sim.GetHLEProgramLoadMode() == T_Mode;
 	}
 
+	template<ATVideoDeinterlaceMode T_Mode>
+	constexpr ATUICommand VideoDeinterlaceCommand(const char *cmd) {
+		return ATUICommand {
+			cmd,
+			[] {
+				g_sim.GetGTIA().SetDeinterlaceMode(T_Mode);
+			},
+			[] {
+				return g_sim.GetGTIA().IsInterlaceEnabled();
+			},
+			[] {
+				return ToRadio(g_sim.GetGTIA().GetDeinterlaceMode() == T_Mode);
+			}
+		};
+	}
+
+	bool IsPALPhaseActive() {
+		switch(g_sim.GetGTIA().GetArtifactingMode()) {
+			case ATArtifactMode::PALHi:
+			case ATArtifactMode::AutoHi:
+				return true;
+
+			default:
+				return false;
+		}
+	}
+
 	constexpr struct ATUICommand kATCommands[]={
 		{ "File.OpenImage", OnCommandOpenImage, NULL },
 		{ "File.BootImage", OnCommandBootImage, NULL },
@@ -646,6 +670,11 @@ namespace ATCommands {
 		{ "Cart.AttachMaxFlash1MBMyIDE",	[]() { OnCommandAttachNewCartridge(kATCartridgeMode_MaxFlash_128K_MyIDE); }, NULL },
 		{ "Cart.AttachMaxFlash8MB",			[]() { OnCommandAttachNewCartridge(kATCartridgeMode_MaxFlash_1024K); }, NULL },
 		{ "Cart.AttachMaxFlash8MBBank0",	[]() { OnCommandAttachNewCartridge(kATCartridgeMode_MaxFlash_1024K_Bank0); }, NULL },
+		{ "Cart.AttachJACart128K",			[]() { OnCommandAttachNewCartridge(kATCartridgeMode_JAtariCart_128K); }, NULL },
+		{ "Cart.AttachJACart256K",			[]() { OnCommandAttachNewCartridge(kATCartridgeMode_JAtariCart_256K); }, NULL },
+		{ "Cart.AttachJACart512K",			[]() { OnCommandAttachNewCartridge(kATCartridgeMode_JAtariCart_512K); }, NULL },
+		{ "Cart.AttachJACart1024K",			[]() { OnCommandAttachNewCartridge(kATCartridgeMode_JAtariCart_1024K); }, NULL },
+		{ "Cart.AttachDCart",				[]() { OnCommandAttachNewCartridge(kATCartridgeMode_DCart); }, NULL },
 		{ "Cart.AttachSIC",					[]() { OnCommandAttachNewCartridge(kATCartridgeMode_SIC_512K); }, NULL },
 		{ "Cart.AttachSIC256K",					[]() { OnCommandAttachNewCartridge(kATCartridgeMode_SIC_256K); }, NULL },
 		{ "Cart.AttachSIC128K",					[]() { OnCommandAttachNewCartridge(kATCartridgeMode_SIC_128K); }, NULL },
@@ -774,6 +803,7 @@ namespace ATCommands {
 		{ "System.CPUMode65C816x8", OnCommandSystemCPUMode65C816x8, nullptr, CheckedIf<Is65C816AccelN<8>> },
 		{ "System.CPUMode65C816x10", OnCommandSystemCPUMode65C816x10, nullptr, CheckedIf<Is65C816AccelN<10>> },
 		{ "System.CPUMode65C816x12", OnCommandSystemCPUMode65C816x12, nullptr, CheckedIf<Is65C816AccelN<12>> },
+		{ "System.CPUMode65C816x23", OnCommandSystemCPUMode65C816x23, nullptr, CheckedIf<Is65C816AccelN<23>> },
 		{ "System.ToggleCPUHistory", OnCommandSystemCPUToggleHistory, nullptr, [] { return g_sim.GetCPU().IsHistoryEnabled() ? kATUICmdState_Checked : kATUICmdState_None; } },
 		{ "System.ToggleCPUPathTracing", OnCommandSystemCPUTogglePathTracing, nullptr, [] { return g_sim.GetCPU().IsPathfindingEnabled() ? kATUICmdState_Checked : kATUICmdState_None; } },
 		{ "System.ToggleCPUIllegalInstructions", OnCommandSystemCPUToggleIllegalInstructions, nullptr, [] { return g_sim.GetCPU().AreIllegalInsnsEnabled() ? kATUICmdState_Checked : kATUICmdState_None; } },
@@ -1032,19 +1062,30 @@ namespace ATCommands {
 		},
 
 		{ "Devices.SIOAccelModePatch",
-			[] { g_sim.SetSIOPatchEnabled(true); g_sim.SetPBIPatchEnabled(false); },
+			[] { g_sim.SetSIOPatchEnabled(true); g_sim.SetSIOPBIPatchEnabled(false); },
 			nullptr,
-			[] { return g_sim.IsSIOPatchEnabled() && !g_sim.IsPBIPatchEnabled() ? kATUICmdState_RadioChecked : kATUICmdState_None; }
+			[] { return g_sim.IsSIOPatchEnabled() && !g_sim.IsSIOPBIPatchEnabled() ? kATUICmdState_RadioChecked : kATUICmdState_None; }
 		},
 		{ "Devices.SIOAccelModePBI",
-			[] { g_sim.SetSIOPatchEnabled(false); g_sim.SetPBIPatchEnabled(true); },
+			[] { g_sim.SetSIOPatchEnabled(false); g_sim.SetSIOPBIPatchEnabled(true); },
 			nullptr,
-			[] { return !g_sim.IsSIOPatchEnabled() && g_sim.IsPBIPatchEnabled() ? kATUICmdState_RadioChecked : kATUICmdState_None; }
+			[] { return !g_sim.IsSIOPatchEnabled() && g_sim.IsSIOPBIPatchEnabled() ? kATUICmdState_RadioChecked : kATUICmdState_None; }
 		},
 		{ "Devices.SIOAccelModeBoth",
-			[] { g_sim.SetSIOPatchEnabled(true); g_sim.SetPBIPatchEnabled(true); },
+			[] { g_sim.SetSIOPatchEnabled(true); g_sim.SetSIOPBIPatchEnabled(true); },
 			nullptr,
-			[] { return g_sim.IsSIOPatchEnabled() && g_sim.IsPBIPatchEnabled() ? kATUICmdState_RadioChecked : kATUICmdState_None; }
+			[] { return g_sim.IsSIOPatchEnabled() && g_sim.IsSIOPBIPatchEnabled() ? kATUICmdState_RadioChecked : kATUICmdState_None; }
+		},
+
+		{ "Devices.CIOHookModeHw",
+			[] { g_sim.SetCIOPBIPatchEnabled(false); },
+			nullptr,
+			[] { return !g_sim.IsCIOPBIPatchEnabled() ? kATUICmdState_RadioChecked : kATUICmdState_None; }
+		},
+		{ "Devices.CIOHookModePBI",
+			[] { g_sim.SetCIOPBIPatchEnabled(true); },
+			nullptr,
+			[] { return g_sim.IsCIOPBIPatchEnabled() ? kATUICmdState_RadioChecked : kATUICmdState_None; }
 		},
 
 		{ "Video.StandardNTSC",		[]() { OnCommandVideoStandard(kATVideoStandard_NTSC); }, NULL, RadioCheckedIf<VideoStandardIs<kATVideoStandard_NTSC> > },
@@ -1056,7 +1097,25 @@ namespace ATCommands {
 
 		{ "Video.ToggleCTIA", OnCommandVideoToggleCTIA, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsCTIAMode> > },
 		{ "Video.ToggleFrameBlending", OnCommandVideoToggleFrameBlending, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsBlendModeEnabled> > },
-		{ "Video.ToggleLinearFrameBlending", OnCommandVideoToggleLinearFrameBlending, GTIATest<&ATGTIAEmulator::IsBlendModeEnabled>, CheckedIf<GTIATest<&ATGTIAEmulator::IsLinearBlendEnabled> > },
+		{ "Video.ToggleLinearFrameBlending",
+			OnCommandVideoToggleLinearFrameBlending,
+			[] {
+				const auto& gtia = g_sim.GetGTIA();
+
+				return gtia.IsBlendModeEnabled() && !gtia.IsBlendMonoPersistenceEnabled();
+			},
+			CheckedIf<GTIATest<&ATGTIAEmulator::IsLinearBlendEnabled>>
+		},
+		{ "Video.ToggleMonoPersistence",
+			OnCommandVideoToggleMonoPersistence,
+			[] {
+				const auto& gtia = g_sim.GetGTIA();
+				auto monMode = gtia.GetMonitorMode();
+
+				return gtia.IsBlendModeEnabled() && monMode != ATMonitorMode::Color && monMode != ATMonitorMode::Peritel;
+			},
+			CheckedIf<GTIATest<&ATGTIAEmulator::IsBlendMonoPersistenceEnabled> >
+		},
 		{ "Video.ToggleInterlace", OnCommandVideoToggleInterlace, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsInterlaceEnabled> > },
 		{ "Video.ToggleScanlines", OnCommandVideoToggleScanlines, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::AreScanlinesEnabled> > },
 		{ "Video.ToggleBloom", OnCommandVideoToggleBloom, NULL, [] { return ToChecked(g_sim.GetGTIA().GetArtifactingParams().mbEnableBloom); } },
@@ -1079,6 +1138,12 @@ namespace ATCommands {
 		{ "Video.ArtifactingAuto",		[]() { OnCommandVideoArtifacting(ATArtifactMode::Auto);		}, nullptr, RadioCheckedIf<VideoArtifactingModeIs<ATArtifactMode::Auto> > },
 		{ "Video.ArtifactingAutoHi",	[]() { OnCommandVideoArtifacting(ATArtifactMode::AutoHi);	}, nullptr, RadioCheckedIf<VideoArtifactingModeIs<ATArtifactMode::AutoHi> > },
 		{ "Video.ArtifactingNextMode",	OnCommandVideoArtifactingNext },
+
+		{ "Video.PALPhase0", [] { g_sim.GetGTIA().SetPALPhase(0); }, IsPALPhaseActive, [] { return ToRadio(g_sim.GetGTIA().GetPALPhase() == 0); } },
+		{ "Video.PALPhase1", [] { g_sim.GetGTIA().SetPALPhase(1); }, IsPALPhaseActive, [] { return ToRadio(g_sim.GetGTIA().GetPALPhase() == 1); } },
+
+		VideoDeinterlaceCommand<ATVideoDeinterlaceMode::None>("Video.DeinterlaceModeNone"),
+		VideoDeinterlaceCommand<ATVideoDeinterlaceMode::AdaptiveBob>("Video.DeinterlaceModeAdaptiveBob"),
 
 		{ "Video.EnhancedModeNone", OnCommandVideoEnhancedModeNone, NULL, RadioCheckedIf<VideoEnhancedTextModeIs<0> > },
 		{ "Video.EnhancedModeHardware", OnCommandVideoEnhancedModeHardware, NULL, RadioCheckedIf<VideoEnhancedTextModeIs<1> > },

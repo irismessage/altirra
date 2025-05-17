@@ -19,8 +19,10 @@
 //	archive for details.
 
 #include <stdafx.h>
+#include <vd2/system/Error.h>
 #include <vd2/system/vdalloc.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/enumparseimpl.h>
 
 ATPropertySet::ATPropertySet() {
 }
@@ -152,6 +154,19 @@ void ATPropertySet::SetString(const char *name, const wchar_t *val) {
 	newstr.release();
 }
 
+void ATPropertySet::SetEnum(const ATEnumLookupTable& enumTable, const char *name, uint32 val) {
+	const char *s = ATEnumToString(enumTable, val);
+
+	size_t len = strlen(s);
+	vdautoarrayptr<wchar_t> newstr(new wchar_t[len+1]);
+	for(size_t i = 0; i <= len; ++i)
+		newstr[i] = (wchar_t)(unsigned char)s[i];
+
+	ATPropertyValue& propVal = CreateProperty(name, kATPropertyType_String16);
+	propVal.mValStr16 = newstr.get();
+	newstr.release();
+}
+
 bool ATPropertySet::GetBool(const char *name, bool def) const {
 	bool val = def;
 	TryGetBool(name, val);
@@ -188,6 +203,16 @@ const wchar_t *ATPropertySet::GetString(const char *name, const wchar_t *def) co
 	return val;
 }
 
+uint32 ATPropertySet::GetEnum(const ATEnumLookupTable& enumTable, const char *name) const {
+	uint32 v;
+	return TryGetEnum(enumTable, name, v) ? v : enumTable.mDefaultValue;
+}
+
+uint32 ATPropertySet::GetEnum(const ATEnumLookupTable& enumTable, const char *name, uint32 table) const {
+	uint32 v;
+	return TryGetEnum(enumTable, name, v) ? v : table;
+}
+
 bool ATPropertySet::TryGetBool(const char *name, bool& val) const {
 	const ATPropertyValue *propVal = GetProperty(name);
 
@@ -214,6 +239,41 @@ bool ATPropertySet::TryGetBool(const char *name, bool& val) const {
 		case kATPropertyType_Bool:
 			val = propVal->mValBool;
 			return true;
+
+		case kATPropertyType_String16: {
+			const wchar_t *s = propVal->mValStr16;
+
+			while(*s == L' ')
+				++s;
+
+			if (*s == L'0') {
+				++s;
+				val = false;
+			} else if (*s == L'1') {
+				++s;
+				val = true;
+			} else if (*s == L'f') {
+				if (s[1] != L'a' || s[2] != L'l' || s[3] != 's' || s[4] != 'e')
+					return false;
+				s += 5;
+				val = false;
+			} else if (*s == L't') {
+				if (s[1] != L'r' || s[2] != L'u' || s[3] != 'e')
+					return false;
+				s += 4;
+
+				val = true;
+			} else
+				return false;
+
+			while(*s == L' ')
+				++s;
+
+			if (*s)
+				return false;
+
+			return true;
+		}
 
 		default:
 			return false;
@@ -256,6 +316,50 @@ bool ATPropertySet::TryGetInt32(const char *name, sint32& val) const {
 			val = (sint32)propVal->mValU32;
 			return true;
 
+		case kATPropertyType_String16: {
+			wchar_t *s = propVal->mValStr16;
+
+			while(*s == L' ')
+				++s;
+
+			wchar_t *t = s;
+			int base = 0;
+			
+			errno = 0;
+
+			if (*s == '$') {
+				++s;
+				base = 16;
+
+				errno = 0;
+				const unsigned long long vh = wcstoull(s, &t, 16);
+				if (errno)
+					return false;
+
+				if (std::cmp_greater(vh, INT32_MAX))
+					return false;
+
+				val = (sint32)vh;
+			} else {
+				const long long v = wcstoll(s, &t, base);
+				if (errno)
+					return false;
+
+				if (std::cmp_less(v, INT32_MIN) || std::cmp_greater(v, INT32_MAX))
+					return false;
+
+				val = (sint32)v;
+			}
+
+			while(*t == L' ')
+				++t;
+
+			if (*t)
+				return false;
+
+			return true;
+		}
+
 		default:
 			return false;
 	}
@@ -297,6 +401,38 @@ bool ATPropertySet::TryGetUint32(const char *name, uint32& val) const {
 			val = propVal->mValU32;
 			return true;
 
+		case kATPropertyType_String16: {
+			wchar_t *s = propVal->mValStr16;
+
+			while(*s == L' ')
+				++s;
+
+			int base = 0;
+			if (*s == '$') {
+				++s;
+				base = 16;
+			}
+
+			wchar_t *t = s;
+
+			errno = 0;
+			const unsigned long long v = wcstoull(s, &t, base);
+			if (errno)
+				return false;
+
+			if (v > UINT32_MAX)
+				return false;
+
+			while(*t == L' ')
+				++t;
+
+			if (*t)
+				return false;
+
+			val = (uint32)v;
+			return true;
+		}
+
 		default:
 			return false;
 	}
@@ -327,6 +463,17 @@ bool ATPropertySet::TryGetFloat(const char *name, float& val) const {
 
 		case kATPropertyType_Float:
 			val = propVal->mValF;
+			return true;
+
+		case kATPropertyType_String16:
+			if (!IsValidFPNumber(propVal->mValStr16))
+				return false;
+
+			errno = 0;
+			val = wcstof(propVal->mValStr16, nullptr);
+			if (errno)
+				return false;
+
 			return true;
 
 		default:
@@ -361,6 +508,21 @@ bool ATPropertySet::TryGetDouble(const char *name, double& val) const {
 			val = propVal->mValD;
 			return true;
 
+		case kATPropertyType_String16:
+			// pre-scan the string and make sure it is a valid simple number
+			if (!IsValidFPNumber(propVal->mValStr16))
+				return false;
+
+			// convert the string now that we know it's good
+			errno = 0;
+			val = wcstod(propVal->mValStr16, nullptr);
+
+			// reject infinites
+			if (errno != 0)
+				return false;
+
+			return true;
+
 		default:
 			return false;
 	}
@@ -374,6 +536,231 @@ bool ATPropertySet::TryGetString(const char *name, const wchar_t *& val) const {
 
 	val = propVal->mValStr16;
 	return true;
+}
+
+bool ATPropertySet::TryGetEnum(const ATEnumLookupTable& table, const char *name, uint32& val) const {
+	val = 0;
+
+	const ATPropertyValue *propVal = GetProperty(name);
+	if (!propVal || propVal->mType != kATPropertyType_String16)
+		return false;
+
+	auto result = ATParseEnum(table, VDStringSpanW(propVal->mValStr16));
+	
+	val = result.mValue;
+	return result.mValid;
+}
+
+bool ATPropertySet::TryConvertToString(const char *name, VDStringW& s) const {
+	s.clear();
+
+	const ATPropertyValue *propVal = GetProperty(name);
+	if (!propVal)
+		return false;
+
+	switch(propVal->mType) {
+		case kATPropertyType_Bool:
+			s = propVal->mValBool ? L"1" : L"0";
+			break;
+
+		case kATPropertyType_Int32:
+			s.sprintf(L"%d", (int)propVal->mValI32);
+			break;
+
+		case kATPropertyType_Uint32:
+			s.sprintf(L"%u", (unsigned)propVal->mValU32);
+			break;
+
+		case kATPropertyType_Float:
+			s.sprintf(L"%.8g", (unsigned)propVal->mValF);
+			break;
+
+		case kATPropertyType_Double:
+			s.sprintf(L"%.17g", (unsigned)propVal->mValD);
+			break;
+
+		case kATPropertyType_String16:
+			s = propVal->mValStr16;
+			break;
+
+		default:
+			return false;
+	}
+
+	return true;
+}
+
+VDStringW ATPropertySet::ToCommandLineString() const {
+	VDStringW s;
+
+	EnumProperties(
+		[&](const char *name, const ATPropertyValue& v) {
+			if (!s.empty())
+				s += L',';
+
+			s += VDTextAToW(name);
+
+			VDStringW value;
+			if (TryConvertToString(name, value)) {
+				const bool needQuotes = value.find(L',') != value.npos;
+
+				s += L'=';
+
+				VDStringW quotedValue;
+
+				if (needQuotes)
+					quotedValue += L'"';
+
+				bool valid = true;
+
+				for(wchar_t c : value) {
+					if (c < 0x20) {
+						valid = false;
+						break;
+					}
+
+					if (c == L'"')
+						s += c;
+					
+					s += c;
+				}
+
+				if (valid) {
+					if (needQuotes)
+						quotedValue += L'"';
+
+					size_t backslashes = 0;
+					for(wchar_t c : quotedValue) {
+
+						if (c == L'\\') {
+							++backslashes;
+							continue;
+						}
+
+						if (c == L'"') {
+							while(backslashes--)
+								s += L"\\\\";
+
+							s += L"\\\"";
+							continue;
+						}
+
+						while(backslashes--)
+							s += L'\\';
+
+						s += c;
+					}
+
+					return;
+				}
+			}
+
+			throw VDException(L"The settings for this device cannot be specified from the command line and must be imported as a file instead.");
+		}
+	);
+
+	return s;
+}
+
+void ATPropertySet::ParseFromCommandLineString(const wchar_t *s) {
+	const auto isValidName = [](VDStringSpanW name) {
+		if (name.empty())
+			return false;
+
+		wchar_t c = name[0];
+
+		if (c != '_' && (c < L'a' || c > L'z') && (c < L'A' || c > L'Z'))
+			return false;
+
+		for(wchar_t ch : name.subspan(1)) {
+			if (ch != '_' && (ch < L'a' || ch > L'z') && (ch < L'A' || ch > L'Z') && (ch < L'0' || ch > L'9'))
+				return false;
+		}
+
+		return true;
+	};
+
+	for(;;) {
+		while(*s == L' ')
+			++s;
+
+		if (!*s)
+			break;
+
+		const wchar_t *nameStart = s;
+		while(*s != L'=') {
+			if (!*s)
+				throw VDException(L"Invalid device parameter: %ls", nameStart);
+
+			++s;
+		}
+
+		// validate name
+		const wchar_t *nameEnd = s;
+		while(nameEnd != nameStart && nameEnd[-1] == L' ')
+			--nameEnd;
+
+		VDStringSpanW nameView(nameStart, nameEnd);
+
+		if (!isValidName(nameView))
+			throw VDException(L"Invalid device parameter name: %.*ls", (int)nameView.size(), nameView.data());
+
+		VDStringA name = VDTextWToA(nameView);
+
+		// parse value
+		++s;
+
+		while(*s == L' ')
+			++s;
+
+		// check for quoting
+		const wchar_t *valueStart = s;
+		bool quoted = false;
+
+		if (*s == L'"') {
+			++s;
+			quoted = true;
+		}
+
+		// parse out value, converting double-escaped quotes
+		VDStringW value;
+		bool valid = true;
+
+		for(;;) {
+			if (!*s) {
+				if (quoted)
+					valid = false;
+				break;
+			}
+
+			if (*s == L',' && !quoted)
+				break;
+
+			if (*s == L'"') {
+				++s;
+
+				if (*s != L'"') {
+					if (!quoted)
+						valid = false;
+
+					break;
+				}
+			}
+
+			value += *s;
+			++s;
+		}
+
+		if (!valid)
+			throw VDException(L"Invalid device parameter: %.*ls", (int)(s - valueStart), valueStart);
+
+		SetString(name.c_str(), value.c_str());
+
+		if (!*s)
+			break;
+
+		++s;
+	}
 }
 
 const ATPropertyValue *ATPropertySet::GetProperty(const char *name) const {
@@ -403,3 +790,61 @@ ATPropertyValue& ATPropertySet::CreateProperty(const char *name, ATPropertyType 
 	newVal.mType = type;
 	return newVal;
 }
+
+bool ATPropertySet::IsValidFPNumber(const wchar_t *s) {
+	while(*s == L' ')
+		++s;
+
+	// eat sign
+	if (*s == L'+' || *s == L'-')
+		++s;
+
+	// eat integer digits
+	bool hasDigits = false;
+
+	while(*s >= L'0' && *s <= L'9') {
+		++s;
+		hasDigits = true;
+	}
+
+	// eat fractional digits
+	if (*s == L'.') {
+		++s;
+
+		while(*s >= L'0' && *s <= L'9') {
+			++s;
+			hasDigits = true;
+		}
+	}
+
+	// fail if we have no integer or fractional digits
+	if (!hasDigits)
+		return false;
+
+	// check for exponential
+	if (*s == L'e' || *s == L'E') {
+		++s;
+
+		if (*s == L'+' || *s == L'-')
+			++s;
+
+		if (*s < L'0' || *s > L'9')
+			return false;
+
+		do {
+			++s;
+		} while(*s >= L'0' && *s <= L'9');
+	}
+
+	// eat trailing spaces
+	while(*s == L' ')
+		++s;
+
+	// fail if there are unconsumed characters
+	if (*s)
+		return false;
+
+	// all good
+	return true;
+}
+

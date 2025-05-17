@@ -6,6 +6,7 @@
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="source\uibutton.cpp" />
+    <ClCompile Include="source\uiimage.cpp" />
     <ClCompile Include="source\uilabel.cpp" />
     <ClCompile Include="source\uilistview.cpp" />
     <ClCompile Include="source\uislider.cpp" />
@@ -13,6 +14,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atuicontrols\uibutton.h" />
+    <ClInclude Include="..\h\at\atuicontrols\uiimage.h" />
     <ClInclude Include="..\h\at\atuicontrols\uilabel.h" />
     <ClInclude Include="..\h\at\atuicontrols\uilistview.h" />
     <ClInclude Include="..\h\at\atuicontrols\uislider.h" />

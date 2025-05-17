@@ -182,6 +182,16 @@ bool ATUICanDropFiles(IDataObject *pDataObj) {
 
 	const auto& formats = ATUIInitDragDropFormatsW32();
 
+	// Check for formats we can use to extract a stream or a filename. We
+	// support HDROP for direct files, and file descriptors for streams.
+	//
+	// We don't allow shell ID lists here even though we have a case for it,
+	// since that is only added support to persist the direct path into a
+	// .zip file if it's one that we support. The other reason is to avoid
+	// Explorer's dodgy 7z/rar support in zipfldr.dll, which doesn't support
+	// any useful interfaces for getting file data -- the only format it
+	// supports is a shell ID list, and its IShellFolder interface doesn't
+	// allow getting an IStream even though it sets SFGAO_STREAM on the entries.
 	FORMATETC etc;
 	etc.cfFormat = CF_HDROP;
 	etc.dwAspect = DVASPECT_CONTENT;

@@ -101,7 +101,6 @@ VDVideoDisplayManager::VDVideoDisplayManager()
 	, mhPalette(NULL)
 	, mWndClass(NULL)
 	, mhwnd(NULL)
-	, mbMultithreaded(false)
 	, mbAppActive(false)
 	, mThreadID(0)
 	, mOutstandingTicks(0)
@@ -115,20 +114,18 @@ VDVideoDisplayManager::~VDVideoDisplayManager() {
 bool VDVideoDisplayManager::Init() {
 	mbAppActive = VDIsForegroundTaskW32();
 
-	if (!mbMultithreaded) {
-		if (!RegisterWindowClass()) {
-			Shutdown();
-			return false;
-		}
-
-		mhwnd = CreateWindowEx(WS_EX_NOPARENTNOTIFY, MAKEINTATOM(mWndClass), L"", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), this);
-		if (!mhwnd) {
-			Shutdown();
-			return false;
-		}
-
-		mThreadID = VDGetCurrentThreadID();
+	if (!RegisterWindowClass()) {
+		Shutdown();
+		return false;
 	}
+
+	mhwnd = CreateWindowEx(WS_EX_NOPARENTNOTIFY, MAKEINTATOM(mWndClass), L"", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), this);
+	if (!mhwnd) {
+		Shutdown();
+		return false;
+	}
+
+	mThreadID = VDGetCurrentThreadID();
 
 	if (!ThreadStart()) {
 		Shutdown();
@@ -136,10 +133,6 @@ bool VDVideoDisplayManager::Init() {
 	}
 
 	mStarted.wait();
-
-	if (mbMultithreaded) {
-		mThreadID = getThreadID();
-	}
 
 	return true;
 }
@@ -152,50 +145,17 @@ void VDVideoDisplayManager::Shutdown() {
 		ThreadWait();
 	}
 
-	if (!mbMultithreaded) {
-		if (mhwnd) {
-			DestroyWindow(mhwnd);
-			mhwnd = NULL;
-		}
-
-		UnregisterWindowClass();
-		mThreadID = 0;
+	if (mhwnd) {
+		DestroyWindow(mhwnd);
+		mhwnd = NULL;
 	}
+
+	UnregisterWindowClass();
+	mThreadID = 0;
 }
 
 void VDVideoDisplayManager::SetProfileHook(const vdfunction<void(IVDVideoDisplay::ProfileEvent)>& profileHook) {
 	mpProfileHook = profileHook;
-}
-
-void VDVideoDisplayManager::RemoteCall(void (*function)(void *), void *data) {
-	if (VDGetCurrentThreadID() == mThreadID) {
-		function(data);
-		return;
-	}
-
-	RemoteCallNode node;
-	node.mpFunction = function;
-	node.mpData = data;
-
-	vdsynchronized(mMutex) {
-		mRemoteCalls.push_back(&node);
-	}
-
-	PostThreadMessage(getThreadID(), WM_NULL, 0, 0);
-
-	HANDLE h = node.mSignal.getHandle();
-	for(;;) {
-		DWORD dwResult = MsgWaitForMultipleObjects(1, &h, FALSE, INFINITE, QS_SENDMESSAGE);
-
-		if (dwResult != WAIT_OBJECT_0+1)
-			break;
-
-		MSG msg;
-		while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE | PM_QS_SENDMESSAGE)) {
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
-		}
-	}
 }
 
 void VDVideoDisplayManager::AddClient(VDVideoDisplayClient *pClient) {
@@ -212,28 +172,6 @@ void VDVideoDisplayManager::RemoveClient(VDVideoDisplayClient *pClient) {
 
 void VDVideoDisplayManager::ModifyPreciseMode(bool enabled) {
 	VDASSERT(VDGetCurrentThreadID() == mThreadID);
-
-	if (!mbMultithreaded) {
-		return;
-	}
-
-	if (enabled) {
-		int rc = ++mPreciseModeCount;
-		VDASSERT(rc < 100000);
-		if (rc == 1) {
-			if (mbMultithreaded)
-				EnterPreciseMode();
-			else {
-				ReaffirmPreciseMode();
-				PostThreadMessage(getThreadID(), WM_NULL, 0, 0);
-			}
-		}
-	} else {
-		int rc = --mPreciseModeCount;
-		VDASSERT(rc >= 0);
-		if (!rc)
-			ExitPreciseMode();
-	}
 }
 
 void VDVideoDisplayManager::ModifyTicksEnabled(bool enabled) {
@@ -244,15 +182,14 @@ void VDVideoDisplayManager::ModifyTicksEnabled(bool enabled) {
 
 		if (rc == 1) {
 			PostThreadMessage(getThreadID(), WM_NULL, 0, 0);
-			if (!mbMultithreaded)
-				mTickTimerId = SetTimer(mhwnd, kTimerID_Tick, 10, NULL);
+			mTickTimerId = SetTimer(mhwnd, kTimerID_Tick, 10, NULL);
 		}
 	} else {
 		int rc = --mTicksEnabledCount;
 		VDASSERT(rc >= 0);
 
 		if (!rc) {
-			if (!mbMultithreaded && mTickTimerId) {
+			if (mTickTimerId) {
 				KillTimer(mhwnd, mTickTimerId);
 				mTickTimerId = 0;
 			}
@@ -374,71 +311,7 @@ void VDVideoDisplayManager::UpdateDisplayInfoCache() {
 }
 
 void VDVideoDisplayManager::ThreadRun() {
-	if (mbMultithreaded)
-		ThreadRunFullRemote();
-	else
-		ThreadRunTimerOnly();
-}
-
-void VDVideoDisplayManager::ThreadRunFullRemote() {
-	if (RegisterWindowClass()) {
-		mhwnd = CreateWindowEx(WS_EX_NOPARENTNOTIFY, MAKEINTATOM(mWndClass), L"", WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, VDGetLocalModuleHandleW32(), this);
-
-		if (mhwnd) {
-			MSG msg;
-			PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE);
-			mThreadID = VDGetCurrentThreadID();
-			mStarted.signal();
-
-			bool timerActive = false;
-			for(;;) {
-				DWORD ret = MsgWaitForMultipleObjects(0, NULL, TRUE, 1, QS_ALLINPUT);
-
-				if (ret == WAIT_OBJECT_0) {
-					bool success = false;
-					while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-						if (msg.message == WM_QUIT)
-							goto xit;
-						success = true;
-						TranslateMessage(&msg);
-						DispatchMessage(&msg);
-					}
-
-					DispatchRemoteCalls();
-
-					if (success)
-						continue;
-
-					ret = WAIT_TIMEOUT;
-					::Sleep(1);
-				}
-				
-				if (ret == WAIT_TIMEOUT) {
-					if (mTicksEnabledCount > 0) {
-						if (!timerActive) {
-							timerActive = true;
-							mTickTimerId = SetTimer(mhwnd, kTimerID_Tick, 10, NULL);
-						}
-						DispatchTicks();
-					} else {
-						if (timerActive) {
-							timerActive = false;
-							if (mTickTimerId) {
-								KillTimer(mhwnd, mTickTimerId);
-								mTickTimerId = 0;
-							}
-						}
-						WaitMessage();
-					}
-				} else
-					break;
-			}
-xit:
-			DestroyWindow(mhwnd);
-			mhwnd = NULL;
-		}
-	}
-	UnregisterWindowClass();
+	ThreadRunTimerOnly();
 }
 
 void VDVideoDisplayManager::ThreadRunTimerOnly() {
@@ -513,17 +386,6 @@ void VDVideoDisplayManager::DispatchTicks() {
 void VDVideoDisplayManager::PostTick() {
 	if (!mOutstandingTicks.xchg(1)) {
 		PostMessage(mhwnd, WM_TIMER, kTimerID_Tick, 0);
-	}
-}
-
-void VDVideoDisplayManager::DispatchRemoteCalls() {
-	vdsynchronized(mMutex) {
-		while(!mRemoteCalls.empty()) {
-			RemoteCallNode *rcn = mRemoteCalls.back();
-			mRemoteCalls.pop_back();
-			rcn->mpFunction(rcn->mpData);
-			rcn->mSignal.signal();
-		}
 	}
 }
 
@@ -691,8 +553,6 @@ LRESULT CALLBACK VDVideoDisplayManager::StaticWndProc(HWND hwnd, UINT msg, WPARA
 LRESULT CALLBACK VDVideoDisplayManager::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch(msg) {
 		case WM_CREATE:
-			if (mbMultithreaded)
-				SetTimer(hwnd, kTimerID_ForegroundPoll, 500, NULL);
 			break;
 
 		case WM_ACTIVATEAPP:

@@ -292,7 +292,7 @@ public:
 	void *AsInterface(uint32 id);
 
 	VDGUIHandle Create(int x, int y, int cx, int cy, VDGUIHandle parent, bool visible);
-	VDGUIHandle Create(ATOM wndClass, int x, int y, int cx, int cy, VDGUIHandle parent, bool visible);
+	VDGUIHandle Create(ATOM wndClass, const wchar_t *caption, int x, int y, int cx, int cy, VDGUIHandle parent, bool visible);
 	void Destroy();
 
 	void Clear();
@@ -332,6 +332,8 @@ public:
 	bool	InitDragHandles();
 	void	ShutdownDragHandles();
 	void	UpdateDragHandles(int screenX, int screenY);
+
+	vdrefptr<ATFrameWindow> CreateFrame(ATContainerDockingPane *parent, int code, const wchar_t *caption);
 	ATContainerDockingPane *DockFrame(ATFrameWindow *frame, ATContainerDockingPane *pane, int code);
 	ATContainerDockingPane *DockFrame(ATFrameWindow *frame, int code);
 	ATContainerDockingPane *DockFrame(ATFrameWindow *frame);

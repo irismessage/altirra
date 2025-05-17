@@ -21,6 +21,39 @@
 #include <vd2/Dita/accel.h>
 #include <at/atui/uicommandmanager.h>
 
+////////////////////////////////////////////////////////////////////////////////
+
+bool ATUICommandContext::GetArg(size_t index, VDStringW& s) const {
+	s.clear();
+
+	if (index >= mInArgs.size())
+		return false;
+
+	s = mInArgs[index];
+	return true;
+}
+
+void ATUICommandContext::SetArg(size_t index, const wchar_t *s) {
+	if (mbRecordArgs) {
+		if (mOutArgs.size() <= index)
+			mOutArgs.resize(index + 1);
+
+		mOutArgs[index] = s;
+	}
+}
+
+void ATUICommandContext::MarkCompleted(bool succeeded) {
+	if (!mbCommandCompleted) {
+		mbCommandCompleted = true;
+		mbCommandCancelled = !succeeded;
+
+		if (mpParent)
+			mpParent->NotifyCommandExecuted(*this);
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 ATUICommandManager::ATUICommandManager() {
 	memset(mpHashTable, 0, sizeof mpHashTable);
 }
@@ -60,22 +93,63 @@ const ATUICommand *ATUICommandManager::GetCommand(const char *str) const {
 	return NULL;
 }
 
-bool ATUICommandManager::ExecuteCommand(const char *str) {
+bool ATUICommandManager::ExecuteCommand(const char *str, const ATUICommandOptions& ctx) {
 	const ATUICommand *cmd = GetCommand(str);
 
 	if (!cmd)
 		return false;
 
-	if (cmd->mpTestFn && !cmd->mpTestFn())
+	return ExecuteCommand(*cmd, ctx);
+}
+
+bool ATUICommandManager::ExecuteCommand(const ATUICommand& cmd, const ATUICommandOptions& ctx) {
+	if (cmd.mpTestFn && !cmd.mpTestFn())
 		return false;
 
-	cmd->mpExecuteFn();
+	if (mpCommandContext && mpCommandContext->GetRefCount() > 1) {
+		if (!mpCommandContext->mbCommandCompleted) {
+			mpCommandContext->mbCommandCompleted = true;
+			mpCommandContext->mbCommandCancelled = true;
+		}
+
+		mpCommandContext->mpParent = nullptr;
+		mpCommandContext = nullptr;
+	}
+
+	if (!mpCommandContext) {
+		mpCommandContext = new ATUICommandContext;
+		mpCommandContext->mpParent = this;
+	}
+
+	mpCommandContext->mbCommandCancelled = false;
+	mpCommandContext->mbCommandCompleted = false;
+	mpCommandContext->mpCommand = &cmd;
+	mpCommandContext->mbRecordArgs = !mOnCommandExecuted.IsEmpty();
+	mpCommandContext->mOutArgs.clear();
+
+	static_cast<ATUICommandOptions&>(*mpCommandContext) = ctx;
+
+	cmd.mpExecuteFn(*mpCommandContext);
+
+	if (mpCommandContext->GetRefCount() == 1)
+		mpCommandContext->MarkCompleted(true);
+
 	return true;
 }
 
-bool ATUICommandManager::ExecuteCommandNT(const char *str) noexcept {
+bool ATUICommandManager::ExecuteCommandNT(const ATUICommand& cmd, const ATUICommandOptions& ctx) noexcept {
 	try {
-		ExecuteCommand(str);
+		ExecuteCommand(cmd, ctx);
+	} catch(const MyError&) {
+		return false;
+	}
+
+	return true;
+}
+
+bool ATUICommandManager::ExecuteCommandNT(const char *str, const ATUICommandOptions& ctx) noexcept {
+	try {
+		ExecuteCommand(str, ctx);
 	} catch(const MyError&) {
 		return false;
 	}
@@ -92,4 +166,10 @@ void ATUICommandManager::ListCommands(vdfastvector<VDAccelToCommandEntry>& comma
 			ace.mpName = node->mpCmd->mpName;
 		}
 	}
+}
+
+void ATUICommandManager::NotifyCommandExecuted(const ATUICommandContext& ctx) {
+	mOnCommandExecuted.InvokeAll(
+		*ctx.mpCommand, ctx.mOutArgs
+	);
 }

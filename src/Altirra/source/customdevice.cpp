@@ -2047,7 +2047,7 @@ void ATDeviceCustom::ReloadConfig() {
 	} catch(const MyError& e) {
 		ShutdownCustomDevice();
 
-		mLastError = VDTextAToW(e.gets());
+		mLastError = e.wc_str();
 
 		if (mpIndicators)
 			mpIndicators->ReportError(mLastError.c_str());

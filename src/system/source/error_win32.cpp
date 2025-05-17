@@ -26,158 +26,147 @@
 #include <stdafx.h>
 #include <windows.h>
 
-#pragma warning(push)
-#pragma warning(disable: 4819)	// warning C4819: The file contains a character that cannot be represented in the current code page (932). Save the file in Unicode format to prevent data loss
-#include <vfw.h>
-#pragma warning(pop)
-
 #include <vd2/system/Error.h>
+#include <vd2/system/VDString.h>
 
 /////////////////////////////////////////////////////////////////////////////
 
-static const char *GetVCMErrorString(uint32 icErr) {
-	const char *err = "(unknown)";
-
-	// Does anyone have the *real* text strings for this?
-
-	switch(icErr) {
-	case (uint32)ICERR_OK:				err = "The operation completed successfully."; break;		// sorry, couldn't resist....
-	case (uint32)ICERR_UNSUPPORTED:		err = "The operation is not supported."; break;
-	case (uint32)ICERR_BADFORMAT:		err = "The source image format is not acceptable."; break;
-	case (uint32)ICERR_MEMORY:			err = "Not enough memory."; break;
-	case (uint32)ICERR_INTERNAL:		err = "An internal error occurred."; break;
-	case (uint32)ICERR_BADFLAGS:		err = "An invalid flag was specified."; break;
-	case (uint32)ICERR_BADPARAM:		err = "An invalid parameter was specified."; break;
-	case (uint32)ICERR_BADSIZE:			err = "An invalid size was specified."; break;
-	case (uint32)ICERR_BADHANDLE:		err = "The handle is invalid."; break;
-	case (uint32)ICERR_CANTUPDATE:		err = "Cannot update the destination image."; break;
-	case (uint32)ICERR_ABORT:			err = "The operation was aborted by the user."; break;
-	case (uint32)ICERR_ERROR:			err = "An unknown error occurred (may be corrupt data)."; break;
-	case (uint32)ICERR_BADBITDEPTH:		err = "The source color depth is not acceptable."; break;
-	case (uint32)ICERR_BADIMAGESIZE:	err = "The source image size is not acceptable."; break;
-	default:
-		if (icErr >= 0x80000000U && icErr <= (uint32)ICERR_CUSTOM) err = "A codec-specific error occurred.";
-		break;
-	}
-
-	return err;
-}
-
-MyICError::MyICError(const char *s, uint32 icErr) {
-	setf("%s error: %s (error code %ld)", s, GetVCMErrorString(icErr), icErr);
-}
-
-MyICError::MyICError(uint32 icErr, const char *format, ...) {
-	char tmpbuf[1024];
-
-	va_list val;
-	va_start(val, format);
-	tmpbuf[(sizeof tmpbuf) - 1] = 0;
-	_vsnprintf(tmpbuf, (sizeof tmpbuf) - 1, format, val);
-	va_end(val);
-
-	setf(tmpbuf, GetVCMErrorString(icErr));
-}
-
-MyAVIError::MyAVIError(const char *s, uint32 avierr) {
-	const char *err = "(Unknown)";
-
-	switch(avierr) {
-	case (uint32)AVIERR_UNSUPPORTED:		err = "unsupported"; break;
-	case (uint32)AVIERR_BADFORMAT:			err = "bad format"; break;
-	case (uint32)AVIERR_MEMORY:				err = "out of memory"; break;
-	case (uint32)AVIERR_INTERNAL:			err = "internal error"; break;
-	case (uint32)AVIERR_BADFLAGS:			err = "bad flags"; break;
-	case (uint32)AVIERR_BADPARAM:			err = "bad parameters"; break;
-	case (uint32)AVIERR_BADSIZE:			err = "bad size"; break;
-	case (uint32)AVIERR_BADHANDLE:			err = "bad AVIFile handle"; break;
-	case (uint32)AVIERR_FILEREAD:			err = "file read error"; break;
-	case (uint32)AVIERR_FILEWRITE:			err = "file write error"; break;
-	case (uint32)AVIERR_FILEOPEN:			err = "file open error"; break;
-	case (uint32)AVIERR_COMPRESSOR:			err = "compressor error"; break;
-	case (uint32)AVIERR_NOCOMPRESSOR:		err = "compressor not available"; break;
-	case (uint32)AVIERR_READONLY:			err = "file marked read-only"; break;
-	case (uint32)AVIERR_NODATA:				err = "no data (?)"; break;
-	case (uint32)AVIERR_BUFFERTOOSMALL:		err = "buffer too small"; break;
-	case (uint32)AVIERR_CANTCOMPRESS:		err = "can't compress (?)"; break;
-	case (uint32)AVIERR_USERABORT:			err = "aborted by user"; break;
-	case (uint32)AVIERR_ERROR:				err = "error (?)"; break;
-	}
-
-	setf("%s error: %s (%08lx)", s, err, avierr);
-}
-
-MyWin32Error::MyWin32Error(const char *format, uint32 err, ...)
+VDWin32Exception::VDWin32Exception(const char *format, uint32 err, ...)
 	: mWin32Error(err)
 {
-	char szError[1024];
-	char szTemp[1024];
-	va_list val;
+	// format the base error message
+	VDStringA errorMessage;
 
+	va_list val;
 	va_start(val, err);
-	szError[(sizeof szError)-1] = 0;
-	_vsnprintf(szError, (sizeof szError)-1, format, val);
+	errorMessage.append_vsprintf(format, val);
 	va_end(val);
+
+	// force the system error message to come through if formatting fails
+	if (errorMessage.empty())
+		errorMessage = "%s";
 
 	// Determine the position of the last %s, and escape everything else. This doesn't
 	// track escaped % signs properly, but it works for the strings that we receive (and at
 	// worst just produces a funny message).
-	const char *keep = strstr(szError, "%s");
-	if (keep) {
-		for(;;) {
-			const char *test = strstr(keep + 1, "%s");
-
-			if (!test)
-				break;
-
-			keep = test;
-		}
+	auto lastStrPos = errorMessage.find("%s");
+	if (lastStrPos == VDStringA::npos) {
+		// hmm, there is no %s substitution
+		assign(errorMessage.c_str());
+		return;
 	}
 
-	char *t = szTemp;
-	char *end = szTemp + (sizeof szTemp) - 1;
-	const char *s = szError;
-
-	while(char c = *s++) {
-		if (c == '%') {
-			// We allow one %s to go through. Everything else gets escaped.
-			if (s-1 != keep) {
-				if (t >= end)
-					break;
-
-				*t++ = '%';
-			}
-		}
-
-		if (t >= end)
+	for(;;) {
+		auto nextStrPos = errorMessage.find("%s", lastStrPos + 2);
+		if (nextStrPos == VDStringA::npos)
 			break;
 
-		*t++ = c;
+		lastStrPos = nextStrPos;
 	}
 
-	*t = 0;
-
-	if (!FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+	// have OS convert error code to system error message
+	VDStringA formatMessageError;
+	LPSTR buffer = nullptr;
+	if (!FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_ALLOCATE_BUFFER,
 			0,
 			err,
 			MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-			szError,
-			sizeof(szError),
-			NULL))
+			(LPSTR)&buffer,
+			1,
+			nullptr) || !buffer)
 	{
-		szError[0] = 0;
-		snprintf(szError, sizeof(szError), "Unknown error %08X", err);
-		szError[sizeof(szError) - 1] = 0;
+		formatMessageError.sprintf("Unknown error %08X", err);
+	} else if (buffer[0]) {
+		// strip off any trailing newline on the error message
+		const size_t l = strlen(buffer);
+
+		if (l>1 && buffer[l-2] == '\r')
+			buffer[l-2] = 0;
+		else if (buffer[l-1] == '\n')
+			buffer[l-1] = 0;
 	}
 
-	if (szError[0]) {
-		long l = strlen(szError);
+	// splice the error message
+	const char *systemErrorMessage = buffer ? buffer : formatMessageError.c_str();
 
-		if (l>1 && szError[l-2] == '\r')
-			szError[l-2] = 0;
-		else if (szError[l-1] == '\n')
-			szError[l-1] = 0;
+	errorMessage.replace(lastStrPos, 2, systemErrorMessage, strlen(systemErrorMessage));
+	assign(errorMessage.c_str());
+
+	if (buffer)
+		LocalFree(buffer);
+}
+
+VDWin32Exception::VDWin32Exception(const wchar_t *format, uint32 err, ...)
+	: mWin32Error(err)
+{
+	// format the base error message
+	VDStringW errorMessage;
+
+	va_list val;
+	va_start(val, err);
+	errorMessage.append_vsprintf(format, val);
+	va_end(val);
+
+	// force the system error message to come through if formatting fails
+	if (errorMessage.empty())
+		errorMessage = L"%s";
+
+	// Determine the position of the last %s, and escape everything else. This doesn't
+	// track escaped % signs properly, but it works for the strings that we receive (and at
+	// worst just produces a funny message).
+	auto lastStrPos = errorMessage.find(L"%s");
+	if (lastStrPos == VDStringA::npos) {
+		// hmm, there is no %s substitution
+		assign(errorMessage.c_str());
+		return;
 	}
 
-	setf(szTemp, szError);
+	for(;;) {
+		auto nextStrPos = errorMessage.find(L"%s", lastStrPos + 2);
+		if (nextStrPos == VDStringA::npos)
+			break;
+
+		lastStrPos = nextStrPos;
+	}
+
+	// have OS convert error code to system error message
+	VDStringW formatMessageError;
+	LPWSTR buffer = nullptr;
+	if (!FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_ALLOCATE_BUFFER,
+			0,
+			err,
+			MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+			(LPWSTR)&buffer,
+			1,
+			nullptr) || !buffer)
+	{
+		formatMessageError.sprintf(L"Unknown error %08X", err);
+	} else if (buffer[0]) {
+		// strip off any trailing newline on the error message
+		const size_t l = wcslen(buffer);
+
+		if (l>1 && buffer[l-2] == L'\r')
+			buffer[l-2] = 0;
+		else if (buffer[l-1] == L'\n')
+			buffer[l-1] = 0;
+	}
+
+	// splice the error message
+	const wchar_t *systemErrorMessage = buffer ? buffer : formatMessageError.c_str();
+
+	errorMessage.replace(lastStrPos, 2, systemErrorMessage, wcslen(systemErrorMessage));
+	assign(errorMessage.c_str());
+
+	if (buffer)
+		LocalFree(buffer);
+}
+
+/////////////////////////////////////////////////////////////////////////////
+
+void VDPostException(VDExceptionPostContext context, const char *message, const char *title) {
+	MessageBoxA(context, message, title, MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+}
+
+void VDPostException(VDExceptionPostContext context, const wchar_t *message, const wchar_t *title) {
+	MessageBoxW(context, message, title, MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
 }

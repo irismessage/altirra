@@ -24,6 +24,7 @@
 #include <vd2/Kasumi/resample.h>
 #include <vd2/VDDisplay/font.h>
 #include <at/ataudio/pokey.h>
+#include <at/atcore/atascii.h>
 #include <at/atcore/configvar.h>
 #include <at/atcore/device.h>
 #include <at/atcore/devicevideo.h>
@@ -52,6 +53,7 @@
 #include "uitypes.h"
 #include "uicalibrationscreen.h"
 #include "uidisplayaccessibility.h"
+#include "vbxe.h"
 
 extern ATSimulator g_sim;
 
@@ -168,121 +170,6 @@ namespace {
 		ATUIDropFilesTarget::BootImage,
 	};
 }
-
-struct ATUIVideoDisplayWindow::ATASCIIDecodeTabs {
-	uint16 v[2][128];
-
-	static constexpr wchar_t kIntlLowTab[] {
-		0x00E1,		// $00: latin small letter A with acute
-		0x00F9,		// $01: latin small letter U with grave
-		0x00D1,		// $02: latin capital letter N with tilde
-		0x00C9,		// $03: latin capital letter E with acute
-		0x00E7,		// $04: latin small letter C with cedilla
-		0x00F4,		// $05: latin small letter O with circumflex
-		0x00F2,		// $06: latin small letter O with grave
-		0x00EC,		// $07: latin small letter I with grave
-		0x00A3,		// $08: pound sign
-		0x00EF,		// $09: latin small letter I with diaeresis
-		0x00FC,		// $0A: latin small letter U with diaeresis
-		0x00E4,		// $0B: latin small letter A with diaeresis
-		0x00D6,		// $0C: latin capital letter O with diaeresis
-		0x00FA,		// $0D: latin small letter U with acute
-		0x00F3,		// $0E: latin small letter O with acute
-		0x00F6,		// $0F: latin small letter O with diaeresis
-		0x00DC,		// $10: latin capital letter U with diaeresis
-		0x00E2,		// $11: latin small letter A with circumflex
-		0x00FB,		// $12: latin small letter U with circumflex
-		0x00EE,		// $13: latin small letter I with circumflex
-		0x00E9,		// $14: latin small letter E with acute
-		0x00E8,		// $15: latin small letter E with grave
-		0x00F1,		// $16: latin small letter N with tilde
-		0x00EA,		// $17: latin small letter E with circumflex
-		0x00E5,		// $18: latin small letter A with ring above
-		0x00E0,		// $19: latin small letter A with grave
-		0x00C5,		// $1A: latin capital letter A with ring above
-	};
-	static_assert(vdcountof(kIntlLowTab) == 27);
-
-	static constexpr uint16 kUnicodeLowTable[]={
-		0x2665,	// heart
-		0x251C,	// vertical tee right
-		0x2595,	// vertical bar right
-		0x2518,	// top-left elbow
-		0x2524,	// vertical tee left
-		0x2510,	// bottom-left elbow
-		0x2571,	// forward diagonal
-		0x2572,	// backwards diagonal
-		0x25E2,	// lower right filled triangle
-		0x2597,	// lower right quadrant
-		0x25E3,	// lower left filled triangle
-		0x259D,	// quadrant upper right
-		0x2598,	// quadrant upper left
-		0x2594,	// top quarter
-		0x2582,	// bottom quarter
-		0x2596,	// lower left quadrant
-					
-		0x2663,	// club
-		0x250C,	// lower-right elbow
-		0x2500,	// horizontal bar
-		0x253C,	// four-way
-		0x2022,	// filled circle
-		0x2584,	// lower half
-		0x258E,	// left quarter
-		0x252C,	// horizontal tee down
-		0x2534,	// horizontal tee up
-		0x258C,	// left side
-		0x2514,	// top-right elbow
-		0x241B,	// escape
-		0x2191,	// up arrow
-		0x2193,	// down arrow
-		0x2190,	// left arrow
-		0x2192,	// right arrow
-	};
-
-	static constexpr uint16 kUnicodeHighTable[]={
-		0x2660,	// spade
-		'|',	// vertical bar (leave this alone so as to not invite font issues)
-		0x21B0,	// curved arrow up-left
-		0x25C0,	// tall left arrow
-		0x25B6,	// tall right arrow
-	};
-
-	constexpr ATASCIIDecodeTabs() : v{} {
-		// basic
-		for(int i=0; i<32; ++i)
-			v[0][i] = 0x20;
-
-		for(int i=32; i<125; ++i)
-			v[0][i] = (uint8)i;
-
-		for(int i=125; i<128; ++i)
-			v[0][i] = 0x20;
-
-		for(int i=0; i<128; ++i)
-			v[1][i] = v[0][i];
-
-		for(int i=0; i<27; ++i)
-			v[1][i] = kIntlLowTab[i];
-
-		for(int i=27; i<32; ++i)
-			v[1][i] = kUnicodeLowTable[i];
-
-		for(int i=0; i<32; ++i)
-			v[0][i] = kUnicodeLowTable[i];
-
-		v[0][0x60] = 0x2666;	// U+2666 black diamond suit
-
-		for(int i=0; i<5; ++i) {
-			v[0][0x7B + i] = kUnicodeHighTable[i];
-			v[1][0x7B + i] = kUnicodeHighTable[i];
-		}
-
-		v[1][96] = 0xA1;	// $60: inverted exclamation mark
-		v[1][123] = 0xC4;	// $7B: latin capital letter A with diaeresis
-	}
-};
-
-constexpr ATUIVideoDisplayWindow::ATASCIIDecodeTabs ATUIVideoDisplayWindow::kATASCIIDecodeTabs;
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -507,7 +394,7 @@ void ATUIVideoDisplayWindow::Copy(ATTextCopyMode copyMode) {
 		if (!actual)
 			continue;
 	
-		const auto& decodeTab = kATASCIIDecodeTabs.v[intl];
+		const auto& decodeTab = kATATASCIITables.mATASCIIToUnicode[intl];
 
 		if (copyMode == ATTextCopyMode::Escaped) {
 			uint8 inv = 0;
@@ -887,7 +774,7 @@ void ATUIVideoDisplayWindow::ReadScreen(ATUIDisplayAccessibilityScreen& screenIn
 			setColors(fg, bg);
 
 		if (len) {
-			const auto& decodeTab = kATASCIIDecodeTabs.v[intl ? 1 : 0];
+			const auto& decodeTab = kATATASCIITables.mATASCIIToUnicode[intl ? 1 : 0];
 
 			uint8 prev = 0;
 			for(int i=0; i<len; ++i) {
@@ -1827,6 +1714,9 @@ void ATUIVideoDisplayWindow::OnCaptureLost() {
 }
 
 ATUIDragEffect ATUIVideoDisplayWindow::OnDragEnter(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) {
+	if (!ATUICanDropFiles(obj))
+		return ATUIDragEffect::None;
+
 	CreateDropTargetOverlays();
 	return OnDragOver(x, y, modifiers, obj);
 }
@@ -2305,15 +2195,15 @@ bool ATUIVideoDisplayWindow::ProcessKeyUp(const ATUIKeyEvent& event, bool enable
 		UpdateCtrlShiftState();
 	}
 
-	if (!alt) {
-		int inputCode = event.mExtendedVirtKey;
+	// Pass the key up to the input manager. This is done even if Alt is pressed, to
+	// ensure that an up event occurs for any keys that were pressed down prior to
+	// Alt being pressed.
+	const int inputCode = event.mExtendedVirtKey;
+	if (im->IsInputMapped(0, inputCode)) {
+		im->OnButtonUp(0, inputCode);
 
-		if (im->IsInputMapped(0, inputCode)) {
-			im->OnButtonUp(0, inputCode);
-
-			if (!g_kbdOpts.mbAllowInputMapOverlap)
-				return true;
-		}
+		if (alt && !g_kbdOpts.mbAllowInputMapOverlap)
+			return true;
 	}
 
 	for(uint32 i=0; i<(uint32)vdcountof(mActiveSpecialVKeys); ++i) {
@@ -3108,10 +2998,6 @@ ATUIVideoDisplayWindow::ModeLineInfo ATUIVideoDisplayWindow::GetModeLineInfo(int
 				1, 1, 8, 10, 8, 16, 8, 16, 8, 4, 4, 2, 1, 2, 1, 1
 			};
 
-			static constexpr uint8 kXCycShift[16] = {
-				15, 15, 2, 2, 2, 2, 3, 3, 2, 2, 1, 1, 0, 0, 0, 0
-			};
-
 			const uint8 pfFetchWidth = (modeLine.mControl & 0x10) && pfWidth < 3 ? pfWidth + 1 : pfWidth;
 			static constexpr uint8 kPFStart[4] = { 0x40, 0x40, 0x30, 0x20 };
 			static constexpr uint8 kPFEnd  [4] = { 0x40, 0xC0, 0xD0, 0xE0 };
@@ -3122,16 +3008,21 @@ ATUIVideoDisplayWindow::ModeLineInfo ATUIVideoDisplayWindow::GetModeLineInfo(int
 				0, 0, 3, 3, 3, 3, 4, 4, 3, 2, 2, 1, 1, 1, 1, 0
 			};
 
+			static constexpr uint8 kByteToHRPixelShift[16] {
+				0, 0, 3, 3, 3, 3, 4, 4, 5, 5, 4, 4, 4, 3, 3, 3
+			};
+
 			modeInfo.mMode = mode;
 			modeInfo.mVPos = vpos;
 			modeInfo.mHeight = kModeHeight[mode];
 			modeInfo.mHScroll = hscroll;
 			modeInfo.mDisplayHposStart = kPFStart[pfWidth];
-			modeInfo.mDisplayHposEnd = kPFStart[pfWidth];
+			modeInfo.mDisplayHposEnd = kPFEnd[pfWidth];
 			modeInfo.mFetchHposStart = kPFStart[pfFetchWidth] + hscroll;
 			modeInfo.mFetchHposEnd = kPFEnd[pfFetchWidth] + hscroll;
 			modeInfo.mCellToHRPixelShift = kCellToHRPixelShift[mode];
 			modeInfo.mCellWidth = mode >= 2 ? ((modeInfo.mFetchHposEnd - modeInfo.mFetchHposStart)*2) >> modeInfo.mCellToHRPixelShift : 0;
+			modeInfo.mByteToHRPixelShift = kByteToHRPixelShift[mode];
 
 			break;
 		}
@@ -3291,21 +3182,77 @@ void ATUIVideoDisplayWindow::SetCoordinateIndicator(int x, int y) {
 						s.append(L"LMS, ");
 
 					if (special & 0x20)
-						s.append(L"VSCR, ");
+						s.append_sprintf(L"VSCR=%u, ", dlent.mHVScroll >> 4);
 
 					if (special & 0x10)
-						s.append(L"HSCR, ");
+						s.append_sprintf(L"HSCR=%u, ", dlent.mHVScroll & 15);
 
 					s.pop_back();
 					s.pop_back();
 
 					s.append(L")");
 				}
+
+				const auto& modeLineInfo = GetModeLineInfo(y);
+
+				if (hcyc >= modeLineInfo.mDisplayHposStart && hcyc < modeLineInfo.mDisplayHposEnd) {
+					const uint32 hrPixel = ((hcyc - modeLineInfo.mFetchHposStart)*2);
+					const uint32 cellOffset = hrPixel >> modeLineInfo.mCellToHRPixelShift;
+					const uint32 byteOffset = hrPixel >> modeLineInfo.mByteToHRPixelShift;
+					const uint32 addr = (dlent.mPFAddress & 0xF000) + ((dlent.mPFAddress + byteOffset) & 0xFFF);
+					
+					s.append_sprintf(L"\n<b>%ls</b>: X=%u @ ($%04X) = $%02X"
+						, modeLineInfo.mMode < 8 ? L"Cell" : L"Pixel"
+						, cellOffset
+						, addr
+						, g_sim.DebugAnticReadByte(addr)
+					);
+				}
 			}
 		}
 
 		if (!dlvalid)
 			s.append(L"<b>DL:</b> None");
+
+		// process XDL if VBXE is enabled
+		ATVBXEEmulator *vbxe = g_sim.GetGTIA().GetVBXE();
+		if (vbxe) {
+			const ATVBXEXDLHistoryEntry *xdlhe = vbxe->GetXDLHistory(vcyc);
+
+			if (xdlhe && xdlhe->mbXdlActive) {
+				s.append_sprintf(L"\n\n<b>VBXE XDL:</b> $%05X", xdlhe->mXdlAddr);
+
+				if (xdlhe->mOverlayMode != (uint8)ATVBXEOverlayMode::Disabled) {
+					const uint8 ovWidth = xdlhe->mAttrByte & 3;
+
+					s.append_sprintf(L"\n<b>VBXE Overlay:</b> %ls %ls @ $%05X.+$%03X"
+						, ovWidth == 1 ? L"Normal" : ovWidth == 2 ? L"Wide" : L"Narrow"
+						,	  xdlhe->mOverlayMode == (uint8)ATVBXEOverlayMode::LR ? L"LR"
+							: xdlhe->mOverlayMode == (uint8)ATVBXEOverlayMode::SR ? L"SR"
+							: xdlhe->mOverlayMode == (uint8)ATVBXEOverlayMode::HR ? L"HR"
+							: L"Text"
+						, xdlhe->mOverlayAddr
+						, xdlhe->mOverlayStep
+					);
+
+					if (xdlhe->mOverlayMode == (uint8)ATVBXEOverlayMode::Text) {
+						s.append_sprintf(L" [font @ $%05X]", (uint32)xdlhe->mChBase << 11);
+					}
+				}
+
+				if (xdlhe->mbMapEnabled) {
+					s.append_sprintf(L"\n<b>VBXE Attribute Map:</b> %ux%u fields @ $%05X.+$%03X"
+						, xdlhe->mMapFieldWidth + 1
+						, xdlhe->mMapFieldHeight + 1
+						, xdlhe->mMapAddr
+						, xdlhe->mMapStep
+					);
+
+					if (xdlhe->mMapHScroll || xdlhe->mMapVScroll)
+						s.append_sprintf(L" [scroll %u,%u]", xdlhe->mMapHScroll, xdlhe->mMapVScroll);
+				}
+			}
+		}
 
 		uir->SetHoverTip(x, y, s.c_str());
 	}

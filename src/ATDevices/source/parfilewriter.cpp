@@ -81,18 +81,20 @@ bool ATDeviceFileWriter::GetErrorStatus(uint32 idx, VDStringW& error) {
 	return false;
 }
 
-void ATDeviceFileWriter::WriteASCII(const void *buf, size_t len) {
+void ATDeviceFileWriter::WriteRaw(const uint8 *src, size_t len) {
 	if (!mbTextTranslation) {
-		Write(buf, len);
+		Write(src, len);
 		Flush();
 		return;
 	}
 
-	const uint8 *src = (const uint8 *)buf;
 	while(len--) {
 		uint8 c = *src++;
 
-		if (c == 0x0D) {
+		if (c == 0x9B) {
+			WriteByte(0x0D);
+			c = 0x0A;
+		} else if (c == 0x0D) {
 			WriteByte(0x0D);
 			c = 0x0A;
 			mbTextIgnoreNextLF = true;
@@ -106,29 +108,6 @@ void ATDeviceFileWriter::WriteASCII(const void *buf, size_t len) {
 			c = 0x0A;
 		} else {
 			mbTextIgnoreNextLF = false;
-		}
-
-		WriteByte(c);
-	}
-
-	Flush();
-}
-
-void ATDeviceFileWriter::WriteATASCII(const void *buf, size_t len) {
-	if (!mbTextTranslation) {
-		Write(buf, len);
-		Flush();
-		return;
-	}
-
-	const uint8 *src = (const uint8 *)buf;
-
-	while(len--) {
-		uint8 c = *src++;
-
-		if (c == 0x9B) {
-			WriteByte(0x0D);
-			c = 0x0A;
 		}
 
 		WriteByte(c);
@@ -159,7 +138,7 @@ bool ATDeviceFileWriter::Read(uint32& baudRate, uint8& c) {
 }
 
 void ATDeviceFileWriter::Write(uint32 baudRate, uint8 c) {
-	WriteATASCII(&c, 1);
+	WriteToFile(&c, 1);
 }
 
 void ATDeviceFileWriter::FlushBuffers() {
@@ -175,7 +154,7 @@ void ATDeviceFileWriter::WriteByte(uint8 c) {
 void ATDeviceFileWriter::Write(const void *buf, size_t len) {
 	while(len) {
 		if (mBufferLevel == 0) {
-			WriteRaw(buf, len);
+			WriteToFile(buf, len);
 			break;
 		}
 
@@ -195,12 +174,12 @@ void ATDeviceFileWriter::Write(const void *buf, size_t len) {
 
 void ATDeviceFileWriter::Flush() {
 	if (mBufferLevel) {
-		WriteRaw(mBuffer, mBufferLevel);
+		WriteToFile(mBuffer, mBufferLevel);
 		mBufferLevel = 0;
 	}
 }
 
-void ATDeviceFileWriter::WriteRaw(const void *buf, size_t len) {
+void ATDeviceFileWriter::WriteToFile(const void *buf, size_t len) {
 	if (!len || !mFile.isOpen())
 		return;
 

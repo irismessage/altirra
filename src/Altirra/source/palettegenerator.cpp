@@ -15,9 +15,13 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+#include <vd2/system/color.h>
+#include <at/atcore/configvar.h>
 #include "palettegenerator.h"
 #include "gtia.h"
 #include "gtiatables.h"
+
+extern ATConfigVarRGBColor g_ATCVDisplayMonoColorWhite;
 
 void ATColorPaletteGenerator::Generate(const ATColorParams& params, ATMonitorMode monitorMode) {
 	using namespace nsVDVecMath;
@@ -100,13 +104,27 @@ void ATColorPaletteGenerator::Generate(const ATColorParams& params, ATMonitorMod
 	bool useMatrix = false;
 	const vdfloat3x3 *toMat = nullptr;
 
+	mOutputGamma = 0;
+
 	switch(params.mColorMatchingMode) {
 		case ATColorMatchingMode::SRGB:
+			mOutputGamma = 0;
 			toMat = &tosRGB;
+			break;
+
+		case ATColorMatchingMode::Gamma22:
+			toMat = &tosRGB;
+			mOutputGamma = 2.2f;
+			break;
+
+		case ATColorMatchingMode::Gamma24:
+			toMat = &tosRGB;
+			mOutputGamma = 2.4f;
 			break;
 
 		case ATColorMatchingMode::AdobeRGB:
 			toMat = &toAdobeRGB;
+			mOutputGamma = 2.2f;
 			break;
 	}
 
@@ -129,26 +147,7 @@ void ATColorPaletteGenerator::Generate(const ATColorParams& params, ATMonitorMod
 	if (useColorTint)
 		useMatrix = false;
 
-	switch(monitorMode) {
-		case ATMonitorMode::MonoAmber:
-			tintColor = vdfloat32x3{252.0/255.0f, 202/255.0f, 3.0f/255.0f};
-			break;
-
-		case ATMonitorMode::MonoGreen:
-			tintColor = vdfloat32x3{0.0f/255.0f, 255.0f/255.0f, 32.0f/255.0f};
-			break;
-
-		case ATMonitorMode::MonoBluishWhite:
-			tintColor = vdfloat32x3{138.0f/255.0f, 194.0f/255.0f, 255.0f/255.0f};
-			break;
-
-		case ATMonitorMode::MonoWhite:
-			tintColor = vdfloat32x3{255.0f/255.0f, 255.0f/255.0f, 255.0f/255.0f};
-			break;
-
-		default:
-			break;
-	}
+	GetMonoColor(monitorMode, tintColor);
 
 	if (monitorMode == ATMonitorMode::Peritel) {
 		// The CA061034 PERITEL adapter is a simple translation from GTIA luma lines to RGB output. The
@@ -209,9 +208,6 @@ void ATColorPaletteGenerator::Generate(const ATColorParams& params, ATMonitorMod
 	} else {
 		uint32 *dstu = mUncorrectedPalette;
 
-		if (useColorTint)
-			tintColor *= 1.0f / dot(tintColor, vdfloat32x3{0.30f, 0.59f, 0.11f});
-
 		for(int hue=0; hue<16; ++hue) {
 			float i = 0;
 			float q = 0;
@@ -265,12 +261,16 @@ void ATColorPaletteGenerator::Generate(const ATColorParams& params, ATMonitorMod
 					// The 800 has the strongest chroma signal, the 800XL is in the middle, the 130XE is the weakest.
 					// We use a approximation of 25% of full luma range for simplicity.
 
+					float intensity;
+
 					if (hue) {
 						const float c = 0.125f;
-						rgb = powf((powf(std::max<float>(y - c, 0.0f), 2.4f) + powf(y + c, 2.4f)) * 0.5f, 1.0f / 2.4f) * tintColor;
+						intensity = powf((powf(std::max<float>(y - c, 0.0f), 2.4f) + powf(y + c, 2.4f)) * 0.5f, 1.0f / 2.4f);
 					} else {
-						rgb = y*tintColor;
+						intensity = y;
 					}
+
+					rgb = intensity * tintColor;
 
 					rgb0 = rgb;
 				} else if (useMatrix) {
@@ -279,14 +279,30 @@ void ATColorPaletteGenerator::Generate(const ATColorParams& params, ATMonitorMod
 
 					rgb = mul(rgb, colorCorrectionMatrix);
 
-					if (params.mColorMatchingMode == ATColorMatchingMode::AdobeRGB) {
-						rgb = pow(max0(rgb), 1.0f / 2.2f);
-					} else {
-						rgb = select(rgb < vdfloat32x3::set1(0.0031308f), rgb * 12.92f, 1.055f * pow(max0(rgb), 1.0f / 2.4f) - 0.055f);
+					switch(params.mColorMatchingMode) {
+						case ATColorMatchingMode::AdobeRGB:
+						case ATColorMatchingMode::Gamma22:
+							rgb = pow(max0(rgb), 1.0f / 2.2f);
+							break;
+
+						case ATColorMatchingMode::Gamma24:
+							rgb = pow(max0(rgb), 1.0f / 2.4f);
+							break;
+
+						case ATColorMatchingMode::SRGB:
+						default:
+							rgb = select(cmplt(rgb, vdfloat32x3::set1(0.0031308f)), rgb * 12.92f, 1.055f * pow(max0(rgb), 1.0f / 2.4f) - 0.055f);
+							break;
 					}
 				}
 
 				rgb = pow(max(rgb, vdfloat32x3::zero()), gamma) * params.mIntensityScale;
+
+				if (useColorTint) {
+					const vdfloat32x3 linrgb(VDColorRGB(rgb).SRGBToLinear());
+
+					rgb = ClipLinearColorToSRGB(linrgb);
+				}
 
 				*dst++	= packus8(permute<2,1,0>(rgb) * 255.0f) & 0xFFFFFF;
 
@@ -328,4 +344,84 @@ void ATColorPaletteGenerator::Generate(const ATColorParams& params, ATMonitorMod
 		mTintColor = tintColor;
 	else
 		mTintColor.reset();
+}
+
+// Mono ramp for non-persistence artifacting; 256 entry table indexed by native NTSC/PAL gamma.
+void ATColorPaletteGenerator::GenerateMonoRamp(const ATColorParams& colorParams, ATMonitorMode monitorMode, uint32 ramp[256]) {
+	vdfloat32x3 c = vdfloat32x3::zero();
+
+	VDVERIFY(GetMonoColorLinear(monitorMode, c));
+
+	for(int i=0; i<256; ++i) {
+		float raw = (float)i / 255.0f;
+		float intensity = powf(raw, 2.2f);
+
+		ramp[i] = VDColorRGB(ClipLinearColorToSRGB(c * intensity)).ToRGB8();
+	}
+}
+
+// Mono ramp for persistence blending; 1024 entry table indexed by gamma 2.0 color and returns 24-bit sRGB.
+void ATColorPaletteGenerator::GenerateMonoPersistenceRamp(const ATColorParams& colorParams, ATMonitorMode monitorMode, uint32 ramp[1024]) {
+	vdfloat32x3 c = vdfloat32x3::zero();
+
+	VDVERIFY(GetMonoColorLinear(monitorMode, c));
+
+	for(int i=0; i<1024; ++i) {
+		float raw = (float)i / 1023.0f;
+		float intensity = raw * raw;
+
+		ramp[i] = VDColorRGB(ClipLinearColorToSRGB(c * intensity)).ToRGB8();
+	}
+}
+
+vdfloat32x3 ATColorPaletteGenerator::ClipLinearColorToSRGB(vdfloat32x3 c) {
+	const vdfloat32x3 lumaAxis = vdfloat32x3::set(0.2126f, 0.7152f, 0.0722f);
+	float luma = dot(c, lumaAxis);
+
+	vdfloat32x3 chroma = c - luma;
+
+	return vdfloat32x3(VDColorRGB(luma + chroma * std::max<float>(0.0f, std::min<float>(1.0f, 2.0f * (1.0f - luma)))).LinearToSRGB());
+}
+
+bool ATColorPaletteGenerator::GetMonoColor(ATMonitorMode monitorMode, vdfloat32x3& c) {
+	if (!GetMonoColorLinear(monitorMode, c))
+		return false;
+
+	c = vdfloat32x3(VDColorRGB(c).LinearToSRGB());
+	return true;
+}
+
+bool ATColorPaletteGenerator::GetMonoColorLinear(ATMonitorMode monitorMode, vdfloat32x3& c) {
+	uint32 srgb = 0;
+
+	switch(monitorMode) {
+		case ATMonitorMode::MonoAmber:
+			srgb = 0xFCCA03;
+			break;
+
+		case ATMonitorMode::MonoGreen:
+			srgb = 0x00FF20;
+			break;
+
+		case ATMonitorMode::MonoBluishWhite:
+			srgb = 0x8AC2FF;
+			break;
+
+		case ATMonitorMode::MonoWhite: {
+			srgb = g_ATCVDisplayMonoColorWhite;
+
+			if (!srgb)
+				return false;
+			break;
+		}
+
+		default:
+			return false;
+	}
+
+	vdfloat32x3 tintColorLinear(VDColorRGB::FromRGB8(srgb).SRGBToLinear());
+
+	// normalize luminance
+	c = tintColorLinear / dot(tintColorLinear, vdfloat32x3::set(0.2126f, 0.7152f, 0.0722f));
+	return true;
 }

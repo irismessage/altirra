@@ -50,6 +50,24 @@ uint32 VDHashString32I(const char *s, uint32 len);
 uint32 VDHashString32I(const wchar_t *s);
 uint32 VDHashString32I(const wchar_t *s, uint32 len);
 
+// Compile-time string hashes
+consteval uint32 VDHashString32IC(const char *s) {
+	uint32 hash = 2166136261U;
+
+	while(unsigned char c = (unsigned char)*s++) {
+		if (c >= 0x80)
+			throw;
+
+		if (c >= 0x41 && c <= 0x5A)
+			c += 0x20;
+
+		hash *= 16777619;
+		hash ^= c;
+	}
+
+	return hash;
+}
+
 // Raw data hashes
 
 vduint128 VDHash128(const void *data, size_t len);

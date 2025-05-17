@@ -26,6 +26,8 @@
 #ifndef f_VD2_SYSTEM_VDSTL_HASHTABLE_H
 #define f_VD2_SYSTEM_VDSTL_HASHTABLE_H
 
+size_t VDComputePrimeBucketCount(size_t minBucketCount);
+
 ///////////////////////////////////////////////////////////////////////////////
 //	vdhashtable_base_node
 //

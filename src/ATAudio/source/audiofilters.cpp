@@ -26,7 +26,7 @@
 #if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 #include <vd2/system/win32/intrin.h>
 #elif defined(VD_CPU_ARM64)
-#include <arm64_neon.h>
+#include <arm_neon.h>
 #endif
 
 alignas(16) constexpr sint16 g_ATAudioResamplingKernel[32][8] = {

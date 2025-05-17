@@ -110,7 +110,7 @@ void ATUIDebuggerBreakpointDialog::OnDataExchange(bool write) {
 			try {
 				condition = ATDebuggerParseExpression(VDTextWToA(conditionStr.c_str()).c_str(), ATGetDebuggerSymbolLookup(), dbg.GetExprOpts());
 			} catch(const ATDebuggerExprParseException& e) {
-				FailValidation(mConditionView.GetWindowId(), (VDStringW(L"Unable to parse condition: ") + VDTextAToW(e.c_str())).c_str());
+				FailValidation(mConditionView.GetWindowId(), (VDStringW(L"Unable to parse condition: ") + e.wc_str()).c_str());
 				return;
 			}
 		}
@@ -185,7 +185,7 @@ void ATUIDebuggerBreakpointDialog::OnDataExchange(bool write) {
 			try {
 				address = dbg.EvaluateThrow(VDTextWToA(locationStr).c_str());
 			} catch(const MyError& e) {
-				FailValidation(mLocationView.GetWindowId(), (VDStringW(L"Unable to parse location: ") + VDTextAToW(e.c_str())).c_str());
+				FailValidation(mLocationView.GetWindowId(), (VDStringW(L"Unable to parse location: ") + e.wc_str()).c_str());
 				return;
 			}
 

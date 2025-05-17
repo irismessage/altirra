@@ -588,7 +588,7 @@ bool ATUIDialogOptionsPageFlash::OnLoaded() {
 	CBAddString(IDC_MAXFLASH8MB_FLASH, L"Am29F040B (64K sectors)");
 	CBAddString(IDC_MAXFLASH8MB_FLASH, L"BM29F040 (64K sectors)");
 	CBAddString(IDC_MAXFLASH8MB_FLASH, L"HY29F040A (64K sectors)");
-	CBAddString(IDC_MAXFLASH8MB_FLASH, L"SST39SF040 (64K sectors)");
+	CBAddString(IDC_MAXFLASH8MB_FLASH, L"SST39SF040 (4K sectors)");
 
 	CBAddString(IDC_U1MB_FLASH, L"A29040 (64K sectors)");
 	CBAddString(IDC_U1MB_FLASH, L"SSF39SF040 (4K sectors)");

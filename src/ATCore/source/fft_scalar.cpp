@@ -61,9 +61,9 @@ void ATFFT_DIT_Radix2_Scalar(float *y0, const float *w, int N) {
 	}
 }
 
-void ATFFT_DIT_Radix8_Scalar(float *dst0, const float *y0, const int *order0, int N) {
+void ATFFT_DIT_Radix8_Scalar(float *dst0, const float *y0, const uint32 *order0, int N) {
 	constexpr float r2d2 = 0.70710678118654752440084436210485f;
-	const int *__restrict order = order0;
+	const uint32 *__restrict order = order0;
 	const int step0 = N/8;
 	const float *__restrict y = y0;
 	float *__restrict dst = dst0;
@@ -275,10 +275,10 @@ void ATFFT_DIF_Radix2_Scalar(float *dst0, const float *w, int N) {
 	}
 }
 
-void ATFFT_DIF_Radix8_Scalar(float *dst0, const float *src0, const int *order0, int N) {
+void ATFFT_DIF_Radix8_Scalar(float *dst0, const float *src0, const uint32 *order0, int N) {
 	constexpr float r2d2 = 0.70710678118654752440084436210485f;
 
-	const int *__restrict order = order0;
+	const uint32 *__restrict order = order0;
 	float *__restrict dst = dst0;
 	const float *__restrict src = src0;
 
@@ -403,5 +403,69 @@ void ATFFT_MultiplyAdd_Scalar(float *VDRESTRICT dst, const float *VDRESTRICT src
 
 		*dst++ += r1*r2 - i1*i2;
 		*dst++ += r1*i2 + r2*i1;
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////////
+
+void ATFFT_IMDCT_PreTransform_Scalar(float *dst, const float *src, const float *w, size_t N) {
+	const size_t N2 = N / 2;
+
+	const float *VDRESTRICT src1 = src;
+	const float *VDRESTRICT src2 = src + N - 1;
+	for(size_t i = 0; i < N2; ++i) {
+		const float xr = *src1;
+		const float xi = *src2;
+		src1 += 2;
+		src2 -= 2;
+
+		const float wr = *w++;
+		const float wi = *w++;
+
+		*dst++ = xr*wr - xi*wi;
+		*dst++ = xr*wi + xi*wr;
+	}
+}
+
+void ATFFT_IMDCT_PostTransform_Scalar(float *dst, const float *src, const float *w, size_t N) {
+	// generate 3rd and 2nd quarters of full IMDCT output, in that order
+	const size_t N2 = N/2;
+	const size_t N4 = N/4;
+
+	const float *VDRESTRICT src1 = src;
+	const float *VDRESTRICT src2 = src + N - 2;
+	const float *VDRESTRICT w1 = w;
+	const float *VDRESTRICT w2 = w1 + N2 - 2;
+	float *VDRESTRICT dst1 = dst + N2 - 2;
+	float *VDRESTRICT dst2 = dst + N2;
+	for(size_t i = 0; i < N4; ++i) {
+		const float x1r = src1[0];
+		const float x1i = src1[1];
+		const float x2r = src2[0];
+		const float x2i = src2[1];
+		src1 += 2;
+		src2 -= 2;
+
+		const float w1r = w1[0];
+		const float w1i = w1[1];
+		const float w2r = w2[0];
+		const float w2i = w2[1];
+		w1 += 2;
+		w2 -= 2;
+
+		const float p1r = x1r*w1r - x1i*w1i;
+		const float p1i = x1r*w1i + x1i*w1r;
+		const float p2r = x2r*w2r - x2i*w2i;
+		const float p2i = x2r*w2i + x2i*w2r;
+
+		// third quarter
+		dst1[0] =  p2i;
+		dst1[1] = -p1r;
+		dst1 -= 2;
+
+		// second quarter
+		dst2[0] =  p1i;
+		dst2[1] = -p2r;
+		dst2 += 2;
 	}
 }

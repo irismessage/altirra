@@ -12,6 +12,7 @@
     <ClCompile Include="source\loopback.cpp" />
     <ClCompile Include="source\modemsound.cpp" />
     <ClCompile Include="source\netserial.cpp" />
+    <ClCompile Include="source\paralleltoserial.cpp" />
     <ClCompile Include="source\parfilewriter.cpp" />
     <ClCompile Include="source\serialsplitter.cpp" />
     <ClCompile Include="source\sioclock.cpp" />

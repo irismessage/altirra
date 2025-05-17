@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <numeric>
 #include <vd2/system/binary.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/math.h>
@@ -50,6 +51,8 @@ AT_DEFINE_ENUM_TABLE_BEGIN(ATColorMatchingMode)
 	{ ATColorMatchingMode::None, "none" },
 	{ ATColorMatchingMode::SRGB, "srgb" },
 	{ ATColorMatchingMode::AdobeRGB, "adobergb" },
+	{ ATColorMatchingMode::Gamma22, "gamma22" },
+	{ ATColorMatchingMode::Gamma24, "gamma24" },
 AT_DEFINE_ENUM_TABLE_END(ATColorMatchingMode, ATColorMatchingMode::None)
 
 AT_DEFINE_ENUM_TABLE_BEGIN(ATMonitorMode)
@@ -60,6 +63,11 @@ AT_DEFINE_ENUM_TABLE_BEGIN(ATMonitorMode)
 	{ ATMonitorMode::MonoBluishWhite, "monobluishwhite" },
 	{ ATMonitorMode::MonoWhite, "monowhite" },
 AT_DEFINE_ENUM_TABLE_END(ATMonitorMode, ATMonitorMode::Color)
+
+AT_DEFINE_ENUM_TABLE_BEGIN(ATVideoDeinterlaceMode)
+	{ ATVideoDeinterlaceMode::None, "none" },
+	{ ATVideoDeinterlaceMode::AdaptiveBob, "adaptivebob" },
+AT_DEFINE_ENUM_TABLE_END(ATVideoDeinterlaceMode, ATVideoDeinterlaceMode::None)
 
 #ifdef VD_CPU_X86
 extern "C" void VDCDECL atasm_update_playfield_160_sse2(
@@ -80,6 +88,7 @@ extern "C" void VDCDECL atasm_update_playfield_160_sse2(
 ATConfigVarInt32 g_ATCVDisplayDropCountThreshold("display.drop_count_threshold", 20);
 ATConfigVarFloat g_ATCVDisplayDropLagThreshold("display.drop_lag_threshold", 0.007f);
 ATConfigVarBool g_ATCVDisplayForceHdrRendering("display.force_hdr_rendering", false);
+ATConfigVarBool g_ATCVDevicesVbxeNtscOffset("devices.vbxe.ntsc_vertical_offset", true);
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -112,10 +121,9 @@ ATArtifactingParams ATArtifactingParams::GetDefault() {
 	params.mScanlineIntensity = 0.75f;
 	params.mbEnableBloom = false;
 	params.mbBloomScanlineCompensation = true;
-	params.mBloomThreshold = 0.01f;
-	params.mBloomRadius = 9.8f;
-	params.mBloomDirectIntensity = 1.00f;
-	params.mBloomIndirectIntensity = 0.10f;
+	params.mBloomRadius = 0.0f;
+	params.mBloomDirectIntensity = 0.80f;
+	params.mBloomIndirectIntensity = 0.40f;
 	params.mSDRIntensity = 200.0f;
 	params.mHDRIntensity = 350.0f;
 	params.mbUseSystemSDR = false;
@@ -388,6 +396,7 @@ public:
 
 	uint32 mViewX1 = 0;
 	uint32 mViewY1 = 0;
+	float mRawPAR = 1.0f;
 	const uint32 *mpPalette = nullptr;
 
 	bool mbDroppedFrame = false;		// this frame is being rendered but won't be presented
@@ -423,7 +432,8 @@ VDPixmap ATFrameBuffer::ApplyScreenFX(VDPixmapBuffer& dstBuffer, const VDPixmap&
 	// We may be called in the middle of a frame for an immediate update, so we must suspend
 	// and restore the existing frame settings.
 	mArtEngine.SuspendFrame();
-	mArtEngine.BeginFrame(palBlending, palBlending, false, false, false, false, bypassOutputCorrection, mScreenFX.mbSignedRGBEncoding, enableSignedOutput && mScreenFX.mbSignedRGBEncoding);
+	mArtEngine.BeginFrame(palBlending, palBlending, false, false, false, false, false, bypassOutputCorrection, mScreenFX.mbSignedRGBEncoding, enableSignedOutput && mScreenFX.mbSignedRGBEncoding,
+		false);
 
 	const uint32 interpW = src32 ? w : mBuffer.w;
 	const uint32 bpr = src32 ? interpW * 4 : interpW;
@@ -483,6 +493,16 @@ void ATFrameBuffer::DuplicateField() {
 
 	VDPixmapBlt(dstField, srcField);
 }
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATGTIALightSensorImpl final : public ATGTIALightSensor {
+public:
+	uint32 mAccumulatedLight = 0;
+	uint32 mLightThreshold = 0;
+	const uint8 *mpWeights = nullptr;
+	vdfunction<void(int)> mTriggerFn;
+};
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -991,7 +1011,7 @@ vdrect32 ATGTIAEmulator::GetFrameScanArea() const {
 }
 
 void ATGTIAEmulator::GetRawFrameFormat(int& w, int& h, bool& rgb32) const {
-	rgb32 = (mpVBXE != NULL) || mArtifactMode != ATArtifactMode::None || mbBlendMode || mbScanlinesEnabled;
+	rgb32 = (mpVBXE != NULL) || mArtifactMode != ATArtifactMode::None || mbBlendMode || mbScanlinesEnabled || (mbInterlaceEnabled && mDeinterlaceMode != ATVideoDeinterlaceMode::None);
 
 	const vdrect32 scanArea = GetFrameScanArea();
 
@@ -1142,6 +1162,15 @@ void ATGTIAEmulator::SetPALMode(bool enabled) {
 	RecomputePalette();
 }
 
+void ATGTIAEmulator::SetPALPhase(int phase) {
+	if (mPALPhase != phase) {
+		mPALPhase = phase;
+
+		if (mColorSettings.mbUsePALParams)
+			RecomputePalette();
+	}
+}
+
 void ATGTIAEmulator::SetSECAMMode(bool enabled) {
 	mbSECAMMode = enabled;
 
@@ -1153,6 +1182,10 @@ void ATGTIAEmulator::SetConsoleSwitch(uint8 c, bool set) {
 
 	if (!set)			// bit is active low
 		mSwitchInput |= c;
+}
+
+uint8 ATGTIAEmulator::ReadConsoleSwitchInputs() const {
+	return (mSwitchInput & mForcedSwitchInput) & 15;
 }
 
 uint8 ATGTIAEmulator::ReadConsoleSwitches() const {
@@ -1193,6 +1226,15 @@ bool ATGTIAEmulator::GetLastFrameBuffer(VDPixmapBuffer& pxbuf, VDPixmap& px) con
 		px = mpLastFrame->mPixmap;
 	}
 
+	return true;
+}
+
+bool ATGTIAEmulator::GetLastFrameBufferRaw(VDPixmapBuffer& pxbuf, VDPixmap& px, float& par) const {
+	if (!mpLastFrame)
+		return false;
+
+	px = mpLastFrame->mPixmap;
+	par = mpLastFrame->mRawPAR;
 	return true;
 }
 
@@ -1663,6 +1705,10 @@ void ATGTIAEmulator::PostLoadState() {
 	// Terminate existing scan line
 	mpDst = NULL;
 	mpRenderer->EndScanline();
+
+	// set the sprite flag in case any sprites should be loaded; it'll get
+	// auto-cleared if there aren't any found on next sprite evaluation
+	mbSpritesActive = true;
 }
 
 void ATGTIAEmulator::GetRegisterState(ATGTIARegisterState& state) const {
@@ -1733,6 +1779,8 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 
 	if (!mpDisplay)
 		return true;
+
+	ResetLightSensors();
 
 	// check if we have a video tap, which means that we must always generate
 	// a frame even if we aren't displaying it
@@ -1876,6 +1924,11 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 		fb->mPixmap.palette = mFrameProperties.mbOutputExtendedRange ? mSignedPalette : mPalette;
 		fb->mpPalette = mPalette;
 
+		fb->mRawPAR = (float)GetPixelAspectRatio();
+
+		if (mFrameProperties.mbAccelScanlines)
+			fb->mRawPAR *= 0.5f;
+
 		mRawFrame = mPreArtifactFrame;
 
 		if (!mFrameProperties.mbSoftPostProcess8) {
@@ -1946,6 +1999,7 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 			if (mFrameProperties.mbAccelOutputCorrection) {
 				memcpy(fb->mScreenFX.mColorCorrectionMatrix, mColorMatchingMatrix, sizeof fb->mScreenFX.mColorCorrectionMatrix);
 				fb->mScreenFX.mGamma = params.mGammaCorrect;
+				fb->mScreenFX.mOutputGamma = mOutputGamma;
 			} else {
 				memset(fb->mScreenFX.mColorCorrectionMatrix, 0, sizeof fb->mScreenFX.mColorCorrectionMatrix);
 				fb->mScreenFX.mGamma = 1.0f;
@@ -1955,19 +2009,24 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 			fb->mScreenFX.mDistortionYRatio = ap.mDistortionYRatio;
 
 			if (ap.mbEnableBloom) {
-				fb->mScreenFX.mBloomThreshold = ap.mBloomThreshold;
-				fb->mScreenFX.mBloomRadius = mFrameProperties.mbOutputHoriz2x ? ap.mBloomRadius * 2.0f : ap.mBloomRadius;
+				fb->mScreenFX.mbBloomEnabled = true;
+				fb->mScreenFX.mBloomRadius = ap.mBloomRadius;
 				fb->mScreenFX.mBloomDirectIntensity = ap.mBloomDirectIntensity;
 				fb->mScreenFX.mBloomIndirectIntensity = ap.mBloomIndirectIntensity;
 
-				if (ap.mbBloomScanlineCompensation && fb->mScreenFX.mScanlineIntensity) {
+				if (ap.mbBloomScanlineCompensation && fb->mScreenFX.mScanlineIntensity != 0) {
+					// Scanline intensity is described in gamma space while bloom intensity is
+					// linear; convert the scanline intensities to linear, average in linear,
+					// then inverse scale the bloom intensities to compensate.
 					const float i1 = 1.0f;
 					const float i2 = fb->mScreenFX.mScanlineIntensity;
-					const float i3 = 0.5f * (i1 + i2);
-					fb->mScreenFX.mBloomDirectIntensity /= i3*i3;
-					fb->mScreenFX.mBloomIndirectIntensity /= i3*i3;
+					const float i3 = 0.5f * (powf(i1, 2.2f) + powf(i2, 2.2f));
+
+					fb->mScreenFX.mBloomDirectIntensity /= i3;
+					fb->mScreenFX.mBloomIndirectIntensity /= i3;
 				}
 			} else {
+				fb->mScreenFX.mbBloomEnabled = false;
 				fb->mScreenFX.mBloomThreshold = 0;
 				fb->mScreenFX.mBloomRadius = 0;
 				fb->mScreenFX.mBloomDirectIntensity = 0;
@@ -2027,9 +2086,10 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 		mbScanlinesWithHiRes[y - 8] = mbHiresMode;
 
 	if (mpVBXE) {
-		if (y == 8)
-			mpVBXE->BeginFrame(mFrameProperties.mbPaletteOutputCorrection ? (int)mActiveColorParams.mColorMatchingMode : 0, mFrameProperties.mbOutputExtendedRange);
-		else if (y == 248)
+		if (y >= 8 && y <= 9) {
+			if (y == (!mbPALMode && g_ATCVDevicesVbxeNtscOffset ? 9 : 8))
+				mpVBXE->BeginFrame(mFrameProperties.mbPaletteOutputCorrection ? (int)mActiveColorParams.mColorMatchingMode : 0, mFrameProperties.mbOutputExtendedRange);
+		} else if (y == 248)
 			mpVBXE->EndFrame();
 	}
 
@@ -2071,7 +2131,7 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires) {
 	memset(mAnticData, 0, sizeof mAnticData);
 
 	if (mpVBXE)
-		mpVBXE->BeginScanline((uint32*)mpDst, mMergeBuffer, mAnticData, mbHiresMode);
+		mpVBXE->BeginScanline(y, (uint32*)mpDst, mMergeBuffer, mAnticData, mbHiresMode);
 	else if (mpDst) {
 		mpRenderer->SetVBlank((uint32)(y - 8) >= 240);
 		mpRenderer->BeginScanline(mpDst, mMergeBuffer, mAnticData, mbHiresMode);
@@ -2088,6 +2148,9 @@ void ATGTIAEmulator::EndScanline(uint8 dlControl, bool pfrendered) {
 		else
 			mpRenderer->RenderScanline(222, pfrendered, mbPMRendered, mbMixedRendering);
 	}
+
+	if (!mLightSensors.empty()) [[unlikely]]
+		ProcessLightSensors();
 
 	if (mpVBXE)
 		mpVBXE->EndScanline();
@@ -2858,7 +2921,8 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 		ATProfileEndRegion(kATProfileRegion_DisplayPresent);
 
 		mpLastFrame = fb;
-		mbBlendModeLastFrame = mbBlendMode;
+		mbBlendModeLastFrame = mFrameProperties.mbSoftBlending;
+		mbBlendModeLastFrameMonoPersistence = mFrameProperties.mbSoftBlendingMonoPersistence;
 
 		mpFrame = NULL;
 	}
@@ -2878,6 +2942,8 @@ void ATGTIAEmulator::RecomputePalette() {
 	const bool useMatrix = gen.mColorMatchingMatrix.has_value();
 	vdfloat3x3 mx;
 
+	mOutputGamma = gen.mOutputGamma;
+
 	if (useMatrix) {
 		mx = gen.mColorMatchingMatrix.value();
 
@@ -2887,7 +2953,7 @@ void ATGTIAEmulator::RecomputePalette() {
 		memset(mColorMatchingMatrix, 0, sizeof mColorMatchingMatrix);
 	}
 
-	mpArtifactingEngine->SetColorParams(mActiveColorParams, useMatrix ? &mx : nullptr, gen.mTintColor.has_value() ? &gen.mTintColor.value() : nullptr);
+	mpArtifactingEngine->SetColorParams(mActiveColorParams, useMatrix ? &mx : nullptr, gen.mTintColor.has_value() ? &gen.mTintColor.value() : nullptr, mMonitorMode, mPALPhase);
 
 	if (mpVBXE) {
 		// For VBXE, we need to push the uncorrected palette since it has to do the correction
@@ -3119,11 +3185,61 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 	}
 }
 
+ATGTIALightSensor *ATGTIAEmulator::RegisterLightSensor(int hrPxWidth, int hrPxHeight, const uint8 *weights, float lightThreshold, vdfunction<void(int)> triggerFn) {
+	if (hrPxWidth <= 0 || hrPxHeight <= 0 || !weights)
+		VDRaiseInternalFailure();
+
+	vdautoptr sensor(new ATGTIALightSensorImpl);
+
+	sensor->mTriggerFn = std::move(triggerFn);
+	sensor->mpWeights = weights;
+	sensor->mLightThreshold = VDRoundToInt32(lightThreshold * lightThreshold * (255.0f * 255.0f) * (float)std::accumulate(weights, weights + hrPxWidth * hrPxHeight, 0.0f));
+	sensor->mAccumulatedLight = 0;
+
+	LightSensor& ls = mLightSensors.emplace_back();
+	ls.mHrPixelArea = vdrect32(0, 0, hrPxWidth, hrPxHeight);
+	ls.mpSensor = sensor;
+
+	return sensor.release();
+}
+
+void ATGTIAEmulator::SetLightSensorPosition(ATGTIALightSensor *sensor, int hrPxX, int hrPxY) {
+	for(LightSensor& ls : mLightSensors) {
+		if (ls.mpSensor == sensor) {
+			ls.mHrPixelArea.translate(hrPxX - ls.mHrPixelArea.left, hrPxY - ls.mHrPixelArea.top);
+			return;
+		}
+	}
+
+	VDRaiseInternalFailure();
+}
+
+void ATGTIAEmulator::UnregisterLightSensor(ATGTIALightSensor *sensor) {
+	if (!sensor)
+		return;
+
+	auto it = std::find_if(mLightSensors.begin(), mLightSensors.end(),
+		[sensor](const LightSensor& ls) {
+			return ls.mpSensor == sensor;
+		}
+	);
+
+	if (it == mLightSensors.end())
+		VDRaiseInternalFailure();
+
+	delete it->mpSensor;
+
+	if (&*it != &mLightSensors.back())
+		*it = std::move(mLightSensors.back());
+
+	mLightSensors.pop_back();
+}
+
 void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 	if (mpVBXE) {
-		const bool doBlending = mArtifactMode == ATArtifactMode::PAL || (mArtifactMode == ATArtifactMode::Auto && mFrameProperties.mbPAL) || mbBlendMode;
+		const bool doBlending = mArtifactMode == ATArtifactMode::PAL || (mArtifactMode == ATArtifactMode::Auto && mFrameProperties.mbPAL) || mFrameProperties.mbSoftBlending;
 
-		if (doBlending || mFrameProperties.mbSoftScanlines) {
+		if (doBlending || mFrameProperties.mbSoftScanlines || mFrameProperties.mbSoftDeinterlace) {
 			ATFrameBuffer *fb = static_cast<ATFrameBuffer *>(&*mpFrame);
 			char *dstrow = (char *)fb->mBuffer.data;
 			ptrdiff_t dstpitch = fb->mBuffer.pitch;
@@ -3133,7 +3249,9 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 				if (fb->mbLowerField)
 					dstrow += dstpitch;
 
-				dstpitch *= 2;
+				if (!mFrameProperties.mbSoftDeinterlace)
+					dstpitch *= 2;
+
 				h >>= 1;
 			} else if (mFrameProperties.mbSoftScanlines)
 				h >>= 1;
@@ -3144,7 +3262,27 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 				if (doBlending)
 					mpArtifactingEngine->Artifact32(row, dst, 912, immediate, mFrameProperties.mbIncludeHBlank);
 
-				if (mFrameProperties.mbSoftScanlines) {
+				if (mFrameProperties.mbSoftDeinterlace) {
+					if (row) {
+						mpArtifactingEngine->Deinterlace(
+							row*2+(fb->mbLowerField ? 1 : 0),
+							(uint32 *)(dstrow - dstpitch),
+							(const uint32 *)(dstrow - dstpitch*2),
+							dst,
+							912
+						);
+					} else {
+						mpArtifactingEngine->Deinterlace(
+							row*2+(fb->mbLowerField ? 1 : 0),
+							nullptr,
+							nullptr,
+							dst,
+							912
+						);
+					}
+
+					dstrow += dstpitch;
+				} else if (mFrameProperties.mbSoftScanlines) {
 					if (row)
 						mpArtifactingEngine->InterpolateScanlines((uint32 *)(dstrow - dstpitch), (const uint32 *)(dstrow - 2*dstpitch), dst, 912);
 
@@ -3173,11 +3311,15 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 	char *dstrow = (char *)fb->mBuffer.data;
 	ptrdiff_t dstpitch = fb->mBuffer.pitch;
 
+	const char *prevrow = nullptr;
+	ptrdiff_t prevpitchx2 = 0;
+
 	if (mFrameProperties.mbInterlaced) {
 		if (fb->mbLowerField)
 			dstrow += dstpitch;
 
-		dstpitch *= 2;
+		if (!mFrameProperties.mbSoftDeinterlace)
+			dstpitch *= 2;
 	}
 
 	const uint8 *srcrow = (const uint8 *)mPreArtifactFrame.data;
@@ -3189,7 +3331,7 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 	if (y1)
 		--y1;
 
-	if (mFrameProperties.mbSoftScanlines)
+	if (mFrameProperties.mbSoftScanlines || mFrameProperties.mbSoftDeinterlace)
 		dstrow += dstpitch * 2 * y1;
 	else
 		dstrow += dstpitch * y1;
@@ -3209,7 +3351,28 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 
 		mpArtifactingEngine->Artifact8(row, dst, src, relativeRow < 240 && mbScanlinesWithHiRes[relativeRow], immediate, mFrameProperties.mbIncludeHBlank);
 
-		if (mFrameProperties.mbSoftScanlines) {
+		if (mFrameProperties.mbSoftDeinterlace) {
+			if (row) {
+				mpArtifactingEngine->Deinterlace(
+					row*2+(fb->mbLowerField ? 1 : 0),
+					(uint32 *)(dstrow - dstpitch),
+					(const uint32 *)(dstrow - dstpitch*2),
+					dst,
+					w
+				);
+			} else {
+				mpArtifactingEngine->Deinterlace(
+					row*2+(fb->mbLowerField ? 1 : 0),
+					nullptr,
+					nullptr,
+					dst,
+					w
+				);
+			}
+
+			prevrow += prevpitchx2;
+			dstrow += dstpitch;
+		} else if (mFrameProperties.mbSoftScanlines) {
 			if (row > y1)
 				mpArtifactingEngine->InterpolateScanlines((uint32 *)(dstrow - dstpitch), (const uint32 *)(dstrow - 2*dstpitch), dst, w);
 
@@ -3524,13 +3687,21 @@ void ATGTIAEmulator::SetFrameProperties() {
 	// Check if output correction is enabled.
 	const ATColorParams& params = mActiveColorParams;
 
-	const bool outputCorrectionEnabled = (params.mGammaCorrect != 1.0f) || params.mColorMatchingMode != ATColorMatchingMode::None;
+	const bool monoTintEnabled = mMonitorMode != ATMonitorMode::Color && mMonitorMode != ATMonitorMode::Peritel;
+	const bool outputCorrectionEnabled = (params.mGammaCorrect != 1.0f) || (params.mColorMatchingMode != ATColorMatchingMode::None && !monoTintEnabled);
 	const bool distortionEnabled = ap.mDistortionViewAngleX > 0;
 	const bool bloomEnabled = ap.mbEnableBloom;
 
 	fp.mbPAL= mbPALMode;
 	fp.mbOverscanPALExtended = fp.mbPAL && mbOverscanPALExtended;
 	fp.mbInterlaced = mbInterlaceEnabled;
+
+	// deinterlace is only effective when interlace is enabled
+	fp.mbSoftDeinterlace = mbInterlaceEnabled && mDeinterlaceMode != ATVideoDeinterlaceMode::None;
+
+	// deinterlace has priority over blending
+	fp.mbSoftBlending = mbBlendMode && !fp.mbSoftDeinterlace;
+	fp.mbSoftBlendingMonoPersistence = fp.mbSoftBlending && mbBlendMonoPersistence && monoTintEnabled;
 
 	// Compute effective artifacting mode.
 	//
@@ -3592,7 +3763,7 @@ void ATGTIAEmulator::SetFrameProperties() {
 	bool useSoftArtifacting = useArtifacting;
 	bool useAccelPALBlending = false;
 
-	if (!preferSoftFX && fp.mArtifactMode == ATArtifactMode::PAL && !(mbBlendMode && mbBlendLinear)) {
+	if (!preferSoftFX && fp.mArtifactMode == ATArtifactMode::PAL && !(fp.mbSoftBlending && mbBlendLinear)) {
 		useAccelPALBlending = true;
 		useSoftArtifacting = false;
 	}
@@ -3603,8 +3774,8 @@ void ATGTIAEmulator::SetFrameProperties() {
 	fp.mbSoftScanlines = preferSoftFX && mbScanlinesEnabled && !mbInterlaceEnabled;
 	fp.mbAccelScanlines = !preferSoftFX && mbScanlinesEnabled;
 
-	// Output is RGB32 instead of P8 when VBXE, artifacting, frame blending, or soft scanlines are active.
-	const bool rgb32 = mpVBXE || useSoftArtifacting || mbBlendMode || fp.mbSoftScanlines;
+	// Output is RGB32 instead of P8 when VBXE, artifacting, deinterlacing, frame blending, or soft scanlines are active.
+	const bool rgb32 = mpVBXE || useSoftArtifacting || fp.mbSoftBlending || fp.mbSoftScanlines || fp.mbSoftDeinterlace;
 	fp.mbOutputRgb32 = rgb32;
 
 	fp.mbRenderRgb32 = mpVBXE != nullptr;
@@ -3622,7 +3793,7 @@ void ATGTIAEmulator::SetFrameProperties() {
 	//   - Bloom
 	const bool useAccelDistortion = canAccelFX && distortionEnabled;
 	const bool useAccelBloom = canAccelFX && bloomEnabled;
-	fp.mbAccelOutputCorrection = !preferSoftFX && rgb32 && outputCorrectionEnabled && !mpVBXE && !(mbBlendMode && mbBlendLinear);
+	fp.mbAccelOutputCorrection = !preferSoftFX && rgb32 && outputCorrectionEnabled && !mpVBXE && !(fp.mbSoftBlending && mbBlendLinear);
 	fp.mbAccelPostProcess = fp.mbAccelScanlines || fp.mbAccelOutputCorrection || useAccelPALBlending || useAccelDistortion || useAccelBloom || canAccelXColor;
 
 	fp.mbSoftOutputCorrection = outputCorrectionEnabled && !fp.mbAccelOutputCorrection && rgb32 && !mpVBXE;
@@ -3630,12 +3801,56 @@ void ATGTIAEmulator::SetFrameProperties() {
 	fp.mbPaletteOutputCorrection = outputCorrectionEnabled && !fp.mbSoftOutputCorrection && !fp.mbAccelOutputCorrection;
 
 	// frame blending is currently only supported by the software postfx engine
-	fp.mbSoftPostProcess = useSoftArtifacting || mbBlendMode || fp.mbSoftScanlines || fp.mbSoftOutputCorrection;
+	fp.mbSoftPostProcess = useSoftArtifacting || fp.mbSoftBlending || fp.mbSoftScanlines || fp.mbSoftOutputCorrection || fp.mbSoftDeinterlace;
 
 	fp.mbSoftPostProcess8 = fp.mbSoftPostProcess && !fp.mbRenderRgb32;
 	fp.mbOutputExtendedRange = fp.mbAccelPalArtifacting || canAccelXColor;
 	fp.mbOutputHDR = canAccelXColor;
 
-	if (fp.mbSoftPostProcess)
-		mpArtifactingEngine->BeginFrame(usePalArtifacting, useSoftArtifacting, useHighArtifacting, mbBlendModeLastFrame, mbBlendMode, mbBlendLinear, fp.mbAccelOutputCorrection || mpVBXE, fp.mbOutputExtendedRange, fp.mbOutputExtendedRange);
+	if (fp.mbSoftPostProcess) {
+		mpArtifactingEngine->BeginFrame(
+			usePalArtifacting,
+			useSoftArtifacting,
+			useHighArtifacting,
+			mbBlendModeLastFrame && mbBlendModeLastFrameMonoPersistence == fp.mbSoftBlendingMonoPersistence,
+			fp.mbSoftBlending,
+			mbBlendLinear,
+			fp.mbSoftBlendingMonoPersistence,
+			fp.mbAccelOutputCorrection || mpVBXE,
+			fp.mbOutputExtendedRange,
+			fp.mbOutputExtendedRange,
+			fp.mbSoftDeinterlace
+		);
+	}
+}
+
+void ATGTIAEmulator::ResetLightSensors() {
+	for(LightSensor& ls : mLightSensors) {
+		ls.mpSensor->mAccumulatedLight = 0;
+	}
+}
+
+void ATGTIAEmulator::ProcessLightSensors() {
+	sint32 y = (sint32)mY;
+	for(LightSensor& ls : mLightSensors) {
+		if (y < ls.mHrPixelArea.top || y >= ls.mHrPixelArea.bottom)
+			continue;
+
+		ATGTIALightSensorImpl& sensorImpl = *ls.mpSensor;
+		if (sensorImpl.mAccumulatedLight >= sensorImpl.mLightThreshold)
+			continue;
+
+		const uint8 *weights = sensorImpl.mpWeights + ls.mHrPixelArea.width() * (mY - ls.mHrPixelArea.top);
+		uint32 sum = 0;
+		if (mpVBXE)
+			sum = mpVBXE->SenseScanline(ls.mHrPixelArea.left, ls.mHrPixelArea.right, weights);
+		else
+			sum = mpRenderer->SenseScanline(ls.mHrPixelArea.left, ls.mHrPixelArea.right, weights);
+
+		sensorImpl.mAccumulatedLight += sum;
+		if (sensorImpl.mAccumulatedLight >= sensorImpl.mLightThreshold) {
+			if (sensorImpl.mTriggerFn)
+				sensorImpl.mTriggerFn(y);
+		}
+	}
 }

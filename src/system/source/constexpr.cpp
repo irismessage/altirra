@@ -70,3 +70,52 @@ static_assert(VDCxCosPi(-0.75f) == -0xB504F3p-24f);
 static_assert(VDCxCosPi(-0.25f) ==  0xB504F3p-24f);
 static_assert(VDCxCosPi( 0.25f) ==  0xB504F3p-24f);
 static_assert(VDCxCosPi( 0.75f) == -0xB504F3p-24f);
+
+
+static_assert(VDCxSqrt(0.0f) == 0.0f);
+static_assert(VDCxSqrt(1.0f) == 1.0f);
+static_assert(VDCxSqrt(4.0f) == 2.0f);
+static_assert(VDCxSqrt(9.0f) == 3.0f);
+
+static_assert(VDCxSqrt(2.0f) == 1.4142135623730950488016887242097f);
+
+// exp
+static_assert(VDCxExp(0.0f) == 1.0f);
+static_assert(VDCxExp(-1.0f) == 0.36787944117144232159552377016146f);
+static_assert(VDCxExp(-0.5f) == 0.60653065971263342360379953499118f);
+static_assert(VDCxExp(0.5f) == 1.6487212707001281468486507878142f);
+static_assert(VDCxExp(1.0f) == 2.7182818284590452353602874713527f);
+static_assert(VDCxExp(2.0f) == 7.389056098930650227230427460575f);
+
+// floor
+static_assert(VDCxFloor(-3.5) == -4);
+static_assert(VDCxFloor(-3.0) == -3);
+static_assert(VDCxFloor(-2.5) == -3);
+static_assert(VDCxFloor(-2.0) == -2);
+static_assert(VDCxFloor(-1.5) == -2);
+static_assert(VDCxFloor(-1.0) == -1);
+static_assert(VDCxFloor(-0.5) == -1);
+static_assert(VDCxFloor( 0.0) == 0);
+static_assert(VDCxFloor(+0.5) == 0);
+static_assert(VDCxFloor(+1.0) == 1);
+static_assert(VDCxFloor(+1.5) == 1);
+static_assert(VDCxFloor(+2.0) == 2);
+static_assert(VDCxFloor(+2.5) == 2);
+static_assert(VDCxFloor(+3.0) == 3);
+static_assert(VDCxFloor(+3.5) == 3);
+
+static_assert(VDCxFloor(-3.5f) == -4);
+static_assert(VDCxFloor(-3.0f) == -3);
+static_assert(VDCxFloor(-2.5f) == -3);
+static_assert(VDCxFloor(-2.0f) == -2);
+static_assert(VDCxFloor(-1.5f) == -2);
+static_assert(VDCxFloor(-1.0f) == -1);
+static_assert(VDCxFloor(-0.5f) == -1);
+static_assert(VDCxFloor( 0.0f) == 0);
+static_assert(VDCxFloor(+0.5f) == 0);
+static_assert(VDCxFloor(+1.0f) == 1);
+static_assert(VDCxFloor(+1.5f) == 1);
+static_assert(VDCxFloor(+2.0f) == 2);
+static_assert(VDCxFloor(+2.5f) == 2);
+static_assert(VDCxFloor(+3.0f) == 3);
+static_assert(VDCxFloor(+3.5f) == 3);

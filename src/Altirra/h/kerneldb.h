@@ -263,6 +263,7 @@ struct ATKernelDatabase {
 		ATByteAdapter<ATKernelSymbols::ESCFLG> ESCFLG;
 		ATByteAdapter<ATKernelSymbols::TABMAP> TABMAP;
 		ATByteAdapter<ATKernelSymbols::LOGMAP> LOGMAP;
+		ATByteAdapter<ATKernelSymbols::INVFLG> INVFLG;
 		ATByteAdapter<ATKernelSymbols::SHFLOK> SHFLOK;
 		ATByteAdapter<ATKernelSymbols::BOTSCR> BOTSCR;
 		ATByteAdapter<ATKernelSymbols::PCOLR0> PCOLR0;

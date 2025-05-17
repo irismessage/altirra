@@ -19,6 +19,9 @@
 //	archive for details.
 
 #include <stdafx.h>
+
+#if VD_CPU_ARM64
+
 #include <vd2/system/vdtypes.h>
 #include <arm_neon.h>
 
@@ -140,10 +143,10 @@ void ATFFT_DIT_Radix4_NEON(float *y0, const float *w4, int N) {
 	}
 }
 
-void ATFFT_DIT_Radix8_NEON(float *dst0, const float *y0, const int *order0, int N) {
+void ATFFT_DIT_Radix8_NEON(float *dst0, const float *y0, const uint32 *order0, int N) {
 	float *VDRESTRICT dst = dst0;
 	const float *VDRESTRICT y = y0;
-	const int *VDRESTRICT order = order0;
+	const uint32 *VDRESTRICT order = order0;
 
 	// sqrt(2)/2
 	const int step0 = N/8;
@@ -234,27 +237,19 @@ void ATFFT_DIT_R2C_NEON(float *dst0, const float *src0, const float *w, int N) {
 		rh = vcombine_f32(vget_high_f32(rh), vget_low_f32(rh));
 		ih = vcombine_f32(vget_high_f32(ih), vget_low_f32(ih));
 
-		rl = vmulq_f32(rl, half);
-		il = vmulq_f32(il, half);
-		rh = vmulq_f32(rh, half);
-		ih = vmulq_f32(ih, half);
-
 		// Xe[n] = (Z[k] + Z*[N-k])/2
-		float32x4_t rxe = vaddq_f32(rl, rh);
-		float32x4_t ixe = vsubq_f32(il, ih);
+		float32x4_t rxe = vmulq_f32(vaddq_f32(rl, rh), half);
+		float32x4_t ixe = vmulq_f32(vsubq_f32(il, ih), half);
 
 		// Xo[n] = -j(Z[k] - Z*[N-k])/2 * w[k]
 		float32x4_t rxo = vaddq_f32(il, ih);
 		float32x4_t ixo = vsubq_f32(rh, rl);
 
-		float32x4_t twiddlel = vld1q_f32(w2);
-		float32x4_t twiddleh = vld1q_f32(w2+4);
+		float32x4_t rw = vld1q_f32(w2);
+		float32x4_t iw = vld1q_f32(w2+4);
 		w2 += 8;
 
 		// = (r3*rw - i3*iw, r3*iw + i3*rw)
-		float32x4_t rw = vuzp1q_f32(twiddlel, twiddleh);
-		float32x4_t iw = vuzp2q_f32(twiddlel, twiddleh);
-
 		float32x4_t rxo2 = vfmsq_f32(vmulq_f32(rxo, rw), ixo, iw);
 		float32x4_t ixo2 = vfmaq_f32(vmulq_f32(rxo, iw), ixo, rw);
 
@@ -317,27 +312,19 @@ void ATFFT_DIF_C2R_NEON(float *dst0, const float *x, const float *w, int N) {
 		float32x4_t ih = vrev64q_f32(vuzp2q_f32(a45, a67));
 
 		// Xe[n] = (X[k] + X*[N/2-k])/2
-		float32x4_t rxe = vaddq_f32(rl, rh);
-		float32x4_t ixe = vsubq_f32(il, ih);
+		float32x4_t rxe = vmulq_f32(vaddq_f32(rl, rh), half);
+		float32x4_t ixe = vmulq_f32(vsubq_f32(il, ih), half);
 
 		// Xo[n] = j(X[k] - X*[N/2-k])/2 * w[k]
 		float32x4_t rxo = vaddq_f32(il, ih);
 		float32x4_t ixo = vsubq_f32(rl, rh);
 
-		rxe = vmulq_f32(rxe, half);
-		ixe = vmulq_f32(ixe, half);
-		rxo = vmulq_f32(rxo, nhalf);
-		ixo = vmulq_f32(ixo, half);
-
-		float32x4_t twiddle0 = vld1q_f32(w);
-		float32x4_t twiddle1 = vld1q_f32(w+4);
+		float32x4_t rw = vld1q_f32(w);
+		float32x4_t iw = vld1q_f32(w+4);
 		w += 8;
 
-		float32x4_t rw = vuzp1q_f32(twiddle0, twiddle1);
-		float32x4_t iw = vuzp2q_f32(twiddle0, twiddle1);
-
-		float32x4_t rxo2 = vfmaq_f32(vmulq_f32(rxo, rw), ixo, iw);
-		float32x4_t ixo2 = vfmsq_f32(vmulq_f32(ixo, rw), rxo, iw);
+		float32x4_t rxo2 = vfmsq_f32(vmulq_f32(ixo, iw), rxo, rw);
+		float32x4_t ixo2 = vfmaq_f32(vmulq_f32(ixo, rw), rxo, iw);
 
 		float32x4_t r0 = vaddq_f32(rxe, rxo2);
 		float32x4_t i0 = vaddq_f32(ixe, ixo2);
@@ -370,27 +357,19 @@ void ATFFT_DIF_C2R_NEON(float *dst0, const float *x, const float *w, int N) {
 		float32x4_t ih = vrev64q_f32(vuzp2q_f32(a45, a67));
 
 		// Xe[n] = (X[k] + X*[N/2-k])/2
-		float32x4_t rxe = vaddq_f32(rl, rh);
-		float32x4_t ixe = vsubq_f32(il, ih);
+		float32x4_t rxe = vmulq_f32(vaddq_f32(rl, rh), half);
+		float32x4_t ixe = vmulq_f32(vsubq_f32(il, ih), half);
 
 		// Xo[n] = j(X[k] - X*[N/2-k])/2 * w[k]
 		float32x4_t rxo = vaddq_f32(il, ih);
 		float32x4_t ixo = vsubq_f32(rl, rh);
 
-		rxe = vmulq_f32(rxe, half);
-		ixe = vmulq_f32(ixe, half);
-		rxo = vmulq_f32(rxo, nhalf);
-		ixo = vmulq_f32(ixo, half);
-
-		float32x4_t twiddle0 = vld1q_f32(w);
-		float32x4_t twiddle1 = vld1q_f32(w+4);
+		float32x4_t rw = vld1q_f32(w);
+		float32x4_t iw = vld1q_f32(w+4);
 		w += 8;
 
-		float32x4_t rw = vuzp1q_f32(twiddle0, twiddle1);
-		float32x4_t iw = vuzp2q_f32(twiddle0, twiddle1);
-
-		float32x4_t rxo2 = vfmaq_f32(vmulq_f32(rxo, rw), ixo, iw);
-		float32x4_t ixo2 = vfmsq_f32(vmulq_f32(ixo, rw), rxo, iw);
+		float32x4_t rxo2 = vfmsq_f32(vmulq_f32(ixo, iw), rxo, rw);
+		float32x4_t ixo2 = vfmaq_f32(vmulq_f32(ixo, rw), rxo, iw);
 
 		float32x4_t r0 = vaddq_f32(rxe, rxo2);
 		float32x4_t i0 = vaddq_f32(ixe, ixo2);
@@ -526,10 +505,10 @@ void ATFFT_DIF_Radix4_NEON(float *y0, const float *w4, int N) {
 	}
 }
 
-void ATFFT_DIF_Radix8_NEON(float *dst0, const float *src0, const int *order0, int N) {
+void ATFFT_DIF_Radix8_NEON(float *dst0, const float *src0, const uint32 *order0, int N) {
 	constexpr float r2d2 = 0.70710678118654752440084436210485f;
 
-	const int *VDRESTRICT order = order0;
+	const uint32 *VDRESTRICT order = order0;
 	float *VDRESTRICT dst = dst0;
 	const float *VDRESTRICT src = src0;
 
@@ -688,3 +667,102 @@ void ATFFT_MultiplyAdd_NEON(float *VDRESTRICT dst, const float *VDRESTRICT src1,
 
 	vst1_f32(dst, vmla_f32(vld1_f32(dst), vld1_f32(src1), vld1_f32(src2)));
 }
+
+/////////////////////////////////////////////////////////////////////////////
+
+void ATFFT_IMDCT_PreTransform_NEON(float *dst, const float *src, const float *w, size_t N) {
+	size_t N2 = N/2;
+
+	const float *VDRESTRICT w1 = w;
+	const float *VDRESTRICT w2 = w + N - 8;
+
+	const float *VDRESTRICT src1 = src;
+	const float *VDRESTRICT src2 = src + N - 8;
+
+	float *VDRESTRICT dst1 = dst;
+	float *VDRESTRICT dst2 = dst + N - 8;
+
+	for(size_t i = 0; i < N2; i += 8) {
+		const float32x4_t wr1 = vld1q_f32(&w1[0]);
+		const float32x4_t wi1 = vld1q_f32(&w1[4]);
+		const float32x4_t wr2 = vld1q_f32(&w2[0]);
+		const float32x4_t wi2 = vld1q_f32(&w2[4]);
+		w1 += 8;
+		w2 -= 8;
+
+		float32x4_t i6r1i7r0 = vld1q_f32(&src1[0]);
+		float32x4_t i4r3i5r2 = vld1q_f32(&src1[4]);
+		float32x4_t i2r5i3r4 = vld1q_f32(&src2[0]);
+		float32x4_t i0r7i1r6 = vld1q_f32(&src2[4]);
+		src1 += 8;
+		src2 -= 8;
+
+		float32x4_t r3210 = vuzp1q_f32(i6r1i7r0, i4r3i5r2);
+		float32x4_t i3210 = vrev64q_f32(vuzp2q_f32(i0r7i1r6, i2r5i3r4));
+
+		float32x4_t i7654 = vrev64q_f32(vuzp2q_f32(i4r3i5r2, i6r1i7r0));
+		float32x4_t r7654 = vuzp1q_f32(i2r5i3r4, i0r7i1r6);
+
+		float32x4_t fr3210 = vfmsq_f32(vmulq_f32(r3210, wr1), i3210, wi1);
+		float32x4_t fi3210 = vfmaq_f32(vmulq_f32(r3210, wi1), i3210, wr1);
+		float32x4_t fr7654 = vfmsq_f32(vmulq_f32(r7654, wr2), i7654, wi2);
+		float32x4_t fi7654 = vfmaq_f32(vmulq_f32(r7654, wi2), i7654, wr2);
+
+		vst1q_f32(&dst1[0], vzip1q_f32(fr3210, fi3210));
+		vst1q_f32(&dst1[4], vzip2q_f32(fr3210, fi3210));
+		vst1q_f32(&dst2[0], vzip1q_f32(fr7654, fi7654));
+		vst1q_f32(&dst2[4], vzip2q_f32(fr7654, fi7654));
+		dst1 += 8;
+		dst2 -= 8;
+	}
+}
+
+void ATFFT_IMDCT_PostTransform_NEON(float *dst, const float *src, const float *w, size_t N) {
+	// generate 3rd and 2nd quarters of full IMDCT output, in that order
+	const size_t N2 = N/2;
+
+	const float *VDRESTRICT src1 = src;
+	const float *VDRESTRICT src2 = src + N - 8;
+	const float *VDRESTRICT w1 = w;
+	const float *VDRESTRICT w2 = w1 + N - 8;
+	float *VDRESTRICT dst1 = dst + N2 - 8;
+	float *VDRESTRICT dst2 = dst + N2;
+
+	for(size_t i = 0; i < N2; i += 8) {
+		const float32x4_t w1r = vld1q_f32(&w1[0]);
+		const float32x4_t w1i = vld1q_f32(&w1[4]);
+		const float32x4_t w2r = vld1q_f32(&w2[0]);
+		const float32x4_t w2i = vld1q_f32(&w2[4]);
+		w1 += 8;
+		w2 -= 8;
+
+		float32x4_t r1 = vld1q_f32(&src1[0]);
+		float32x4_t i1 = vld1q_f32(&src1[4]);
+		float32x4_t r2 = vld1q_f32(&src2[0]);
+		float32x4_t i2 = vld1q_f32(&src2[4]);
+		src1 += 8;
+		src2 -= 8;
+
+		float32x4_t r3 = vfmsq_f32(vmulq_f32(i1, w1i), r1, w1r);	// negated
+		float32x4_t i3 = vfmaq_f32(vmulq_f32(r1, w1i), i1, w1r);
+		float32x4_t r4 = vfmsq_f32(vmulq_f32(i2, w2i), r2, w2r);	// negated
+		float32x4_t i4 = vfmaq_f32(vmulq_f32(r2, w2i), i2, w2r);
+
+		r4 = vrev64q_f32(r4);
+		r4 = vcombine_f32(vget_high_f32(r4), vget_low_f32(r4));
+		r3 = vrev64q_f32(r3);
+		r3 = vcombine_f32(vget_high_f32(r3), vget_low_f32(r3));
+
+		// write third quarter
+		vst1q_f32(&dst1[0], vzip1q_f32(i4, r3));
+		vst1q_f32(&dst1[4], vzip2q_f32(i4, r3));
+		dst1 -= 8;
+
+		// write second quarter
+		vst1q_f32(&dst2[0], vzip1q_f32(i3, r4));
+		vst1q_f32(&dst2[4], vzip2q_f32(i3, r4));
+		dst2 += 8;
+	}
+}
+
+#endif

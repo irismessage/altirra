@@ -589,7 +589,7 @@ void VDCreateDirectory(const wchar_t *path) {
 	}
 
 	if (!CreateDirectoryW(path, NULL))
-		throw MyWin32Error("Cannot create directory: %%s", GetLastError());
+		throw VDWin32Exception(L"Cannot create directory: %%s", GetLastError());
 }
 
 void VDRemoveDirectory(const wchar_t *path) {
@@ -605,7 +605,7 @@ void VDRemoveDirectory(const wchar_t *path) {
 	}
 
 	if (!RemoveDirectoryW(path))
-		throw MyWin32Error("Cannot remove directory: %%s", GetLastError());
+		throw VDWin32Exception(L"Cannot remove directory: %%s", GetLastError());
 }
 
 void VDSetDirectoryCreationTime(const wchar_t *path, const VDDate& date) {
@@ -630,7 +630,7 @@ bool VDRemoveFile(const wchar_t *path) {
 
 void VDRemoveFileEx(const wchar_t *path) {
 	if (!VDRemoveFile(path))
-		throw MyWin32Error("Cannot delete \"%ls\": %%s", GetLastError(), path);
+		throw VDWin32Exception(L"Cannot delete \"%ls\": %%s", GetLastError(), path);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -639,7 +639,7 @@ void VDMoveFile(const wchar_t *srcPath, const wchar_t *dstPath) {
 	bool success = MoveFileW(srcPath, dstPath) != 0;
 
 	if (!success)
-		throw MyWin32Error("Cannot rename \"%ls\" to \"%ls\": %%s", GetLastError(), srcPath, dstPath);
+		throw VDWin32Exception(L"Cannot rename \"%ls\" to \"%ls\": %%s", GetLastError(), srcPath, dstPath);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -861,7 +861,7 @@ VDStringW VDGetProgramFilePath() {
 	VDStringW wstr;
 
 	if (!GetModuleFileNameW(NULL, buf.w, MAX_PATH))
-		throw MyWin32Error("Unable to get program path: %%s", GetLastError());
+		throw VDWin32Exception(L"Unable to get program path: %%s", GetLastError());
 
 	wstr = buf.w;
 
@@ -872,7 +872,7 @@ VDStringW VDGetSystemPath() {
 	wchar_t path[MAX_PATH];
 
 	if (!GetSystemDirectoryW(path, MAX_PATH))
-		throw MyWin32Error("Cannot locate system directory: %%s", GetLastError());
+		throw VDWin32Exception(L"Cannot locate system directory: %%s", GetLastError());
 
 	return VDStringW(path);
 }
@@ -998,7 +998,7 @@ void VDFileSetAttributes(const wchar_t *path, uint32 attrsToChange, uint32 newAt
 			return;
 	}
 
-	throw MyWin32Error("Cannot change attributes on \"%ls\": %%s.", GetLastError(), path);
+	throw VDWin32Exception(L"Cannot change attributes on \"%ls\": %%s.", GetLastError(), path);
 }
 
 ///////////////////////////////////////////////////////////////////////////

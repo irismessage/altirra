@@ -23,18 +23,23 @@
 class IATVirtualScreenHandler {
 public:
 	virtual ~IATVirtualScreenHandler() = default;
-
 	virtual void GetScreen(uint32& width, uint32& height, const uint8 *&screen) const = 0;
 	virtual bool GetCursorInfo(uint32& x, uint32& y) const = 0;
 
 	virtual void SetReadyCallback(const vdfunction<void()>& fn) = 0;
 	virtual bool IsReadyForInput() const = 0;
 
+	virtual void SetResizeCallback(const vdfunction<void()>& fn) = 0;
+	virtual void SetPassThroughChangedCallback(const vdfunction<void()>& fn) = 0;
+
 	virtual void ToggleSuspend() = 0;
 
+	virtual vdsize32 GetTerminalSize() const = 0;
 	virtual void Resize(uint32 w, uint32 h) = 0;
+	virtual void ReadScreenAsInput() = 0;
 	virtual void PushLine(const char *line) = 0;
 
+	virtual bool IsPassThroughEnabled() const = 0;
 	virtual bool IsRawInputActive() const = 0;
 	virtual void SetShiftControlLockState(bool shift, bool ctrl) = 0;
 	virtual bool GetShiftLockState() const = 0;
@@ -42,14 +47,30 @@ public:
 	virtual bool CheckForBell() = 0;
 	virtual int ReadRawText(uint8 *dst, int x, int y, int n) const = 0;
 
+	// Return true if a cursor change has occurred since the last time that
+	// CFCC was called. Cursor movements and hide/show count.
+	virtual bool CheckForCursorChange() = 0;
+
+	// Check if pass-through should be toggled because the display list has
+	// been replaced (or put back!).
+	virtual void CheckForDisplayListReplaced() = 0;
+
 	virtual void ColdReset() = 0;
 	virtual void WarmReset() = 0;
 
-	virtual void SetHookPage(uint8 hookPage) = 0;
-	virtual void SetGetCharAddress(uint16 addr) = 0;
-	virtual void OnCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, int offset) = 0;
+	// Prepare for switching into the virtual screen; make sure system variables
+	// are sane for the virtual screen.
+	virtual void Enable() = 0;
+
+	// Prepare for switching out of the virtual screen; make sure system variables
+	// are sane for the default handler.
+	virtual void Disable() = 0;
+
+	virtual void SetGetCharAddresses(uint16 editor, uint16 screen) = 0;
+	virtual uint8 OnEditorCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, int offset) = 0;
+	virtual uint8 OnScreenCIOVector(ATCPUEmulator *cpu, ATCPUEmulatorMemory *mem, int offset) = 0;
 };
 
-IATVirtualScreenHandler *ATCreateVirtualScreenHandler();
+IATVirtualScreenHandler *ATCreateVirtualScreenHandler(ATCPUEmulatorMemory& mem);
 
 #endif	// f_AT_VIRTUALSCREEN_H

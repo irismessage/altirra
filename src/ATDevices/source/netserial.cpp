@@ -251,7 +251,7 @@ bool ATDeviceNetSerial::Read(uint32 baudRate, uint8& c, bool& framingError) {
 void ATDeviceNetSerial::Write(uint32 baudRate, uint8 c) {
 	if (mpDataSocket) {
 		// drop byte if it is >5% from baud rate
-		if (abs((int)mBaudRate - (int)baudRate) * 20 <= (int)mBaudRate)
+		if (!baudRate || abs((int)mBaudRate - (int)baudRate) * 20 <= (int)mBaudRate)
 			mpDataSocket->Send(&c, 1);
 	}
 }

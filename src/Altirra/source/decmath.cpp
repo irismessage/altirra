@@ -597,12 +597,15 @@ void ATAccelEXP(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	const ATDecFloat x0 = ATReadFR0(mem);
 	double x = x0.ToDouble();
 
-	double r = exp(x);
-	if (r == HUGE_VAL) {
+	static constexpr double kLn1E100 = 230.25850929940456840179914546844;
+
+	if (x >= kLn1E100) {
 		g_ATLCFPAccel("EXP(%s) -> error\n", x0.ToString().c_str());
 		cpu.SetFlagC();
 		return;
 	}
+
+	const double r = exp(x);
 
 	ATDecFloat fpr;
 	if (!fpr.SetDouble(r)) {
@@ -619,6 +622,12 @@ void ATAccelEXP(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 void ATAccelEXP10(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 	const ATDecFloat x0 = ATReadFR0(mem);
 	double x = x0.ToDouble();
+
+	if (x >= 100) {
+		g_ATLCFPAccel("EXP10(%s) -> error\n", x0.ToString().c_str());
+		cpu.SetFlagC();
+		return;
+	}
 
 	double r = pow(10.0, x);
 	ATDecFloat fpr;

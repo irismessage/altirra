@@ -49,6 +49,7 @@ public:
 
 	void SetT0ReadHandler(const vdfunction<bool()>& fn);
 	void SetT1ReadHandler(const vdfunction<bool()>& fn);
+	void SetT1CountEnableHandler(const vdfunction<void(bool)>& fn);
 	void SetXRAMReadHandler(const vdfunction<uint8(uint8)>& fn);
 	void SetXRAMWriteHandler(const vdfunction<void(uint8, uint8)>& fn);
 	void SetPortReadHandler(const vdfunction<uint8(uint8, uint8)>& fn);
@@ -67,6 +68,8 @@ public:
 	void AssertIrq();
 	void NegateIrq();
 
+	void AssertHighToLowT1();
+
 	uint32 GetTStatesPending() const { return mTStatesLeft; }
 	uint32 GetCyclesLeft() const { return mCyclesLeft; }
 	void AddCycles(sint32 cycles) { mCyclesBase += cycles;  mCyclesLeft += cycles; }
@@ -74,9 +77,12 @@ public:
 
 private:
 	bool CheckBreakpoint();
-	void DispatchIrq();
+	void DispatchExternalIrq();
+	void DispatchTimerIrq();
 	void UpdateTimer();
 	void UpdateTimerDeadline();
+	void StartCount();
+	void StopCount();
 
 	int		mTStatesLeft = 0;
 
@@ -94,11 +100,13 @@ private:
 	bool	mbIF = false;
 	bool	mbTIF = false;
 	bool	mbTF = false;
+	bool	mbCountEnabled = false;
 	bool	mbF1 = false;
 	bool	mbIrqEnabled = false;
 	bool	mbIrqPending = false;
 	bool	mbIrqAttention = false;
 	bool	mbTimerIrqPending = false;
+	bool	mbHistoryIrqPending = false;
 
 	uint16		mPC = 0;
 	sint32		mCyclesLeft = 0;
@@ -117,6 +125,7 @@ private:
 
 	vdfunction<bool()> mpFnReadT0;
 	vdfunction<bool()> mpFnReadT1;
+	vdfunction<void(bool)> mpFnCountEnable;
 	vdfunction<uint8(uint8)> mpFnReadXRAM;
 	vdfunction<void(uint8, uint8)> mpFnWriteXRAM;
 	vdfunction<uint8(uint8, uint8)> mpFnReadPort;

@@ -31,9 +31,9 @@
     <ClCompile Include="source\dragdrop.cpp" />
     <ClCompile Include="source\genericdialog.cpp" />
     <ClCompile Include="source\hotkeyexcontrol.cpp" />
+    <ClCompile Include="source\hotkeyscandialog.cpp" />
     <ClCompile Include="source\messagedispatcher.cpp" />
     <ClCompile Include="source\messageloop.cpp" />
-    <ClCompile Include="source\syncwait.cpp" />
     <ClCompile Include="source\theme.cpp" />
     <ClCompile Include="source\uiframe.cpp" />
     <ClCompile Include="source\uinativewindow.cpp" />
@@ -52,9 +52,9 @@
     <ClInclude Include="..\h\at\atnativeui\controlstyles.h" />
     <ClInclude Include="..\h\at\atnativeui\dragdrop.h" />
     <ClInclude Include="..\h\at\atnativeui\genericdialog.h" />
+    <ClInclude Include="..\h\at\atnativeui\hotkeyscandialog.h" />
     <ClInclude Include="..\h\at\atnativeui\messagedispatcher.h" />
     <ClInclude Include="..\h\at\atnativeui\messageloop.h" />
-    <ClInclude Include="..\h\at\atnativeui\syncwait.h" />
     <ClInclude Include="..\h\at\atnativeui\theme.h" />
     <ClInclude Include="..\h\at\atnativeui\theme_win32.h" />
     <ClInclude Include="..\h\at\atnativeui\uiframe.h" />

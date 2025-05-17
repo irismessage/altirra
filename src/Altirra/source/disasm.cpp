@@ -608,62 +608,108 @@ namespace {
 	static_assert(vdcountof(kZ80InsnsDDFD) == 256, "Z80 DD/FD table wrong length");
 	static_assert(vdcountof(kZ80InsnsDDFDCB) == 256, "Z80 DDCB/FDCB table wrong length");
 
-	enum ATMCS48TokenMode : uint8 {
-		kATMCS48TokenMode_None,
-		kATMCS48TokenMode_PCAbs8,
-		kATMCS48TokenMode_PCAbs16,
-		kATMCS48TokenMode_Imm,
+	enum class ATMCSTokenMode : uint8 {
+		None,
+		PCAbs8,		// 8-bit PC low byte argument
+		PCAbs11,	// 11-bit PC argument, with bits 0-7 in follow byte and 8-10 in opcode 5-7
+		PCAbs16,	// 16-bit PC argument in following bytes, MSB first (8051)
+		PCRel8,		// 8-bit PC signed 8-bit offset (8051)
+		Imm,		// 8-bit immediate argument
+		Imm16,		// 16-bit immediate argument, MSB first (8051)
+		DataAddr,	// 8-bit internal memory data address (8051)
+		DstDataAddr,// 8-bit internal memory data address, destination addr at end of insn (8051)
+		BitAddr,	// 8-bit internal bit address (8051)
 	};
 
-	const uint8 kMCS48TokenModeBytes[]={
-		0, 1, 1, 1
+	const uint8 kMCSTokenModeBytes[]={
+		0,
+		1,
+		1,
+		2,
+		1,
+		1,
+		2,
+		1,
+		1,
+		1
 	};
 
-	static_assert(vdcountof(kMCS48TokenModeBytes) == kATMCS48TokenMode_Imm + 1, "token mode byte table missized");
+	static_assert(vdcountof(kMCSTokenModeBytes) == (size_t)ATMCSTokenMode::BitAddr + 1, "token mode byte table missized");
 
-	constexpr ATMCS48TokenMode MCS48ParseInsnToken(const char *s) {
-		return *s != '$' ? kATMCS48TokenMode_None
-			: s[1] == 'r' ? kATMCS48TokenMode_PCAbs8
-			: s[1] == 'p' ? kATMCS48TokenMode_PCAbs16
-			: s[1] == 'i' ? kATMCS48TokenMode_Imm
-			: throw;
+	constexpr ATMCSTokenMode MCSParseInsnToken(const char *s) {
+		if (*s != '$')
+			return ATMCSTokenMode::None;
+
+		switch(s[1]) {
+			case 'r': return ATMCSTokenMode::PCAbs8;
+			case 'p': return ATMCSTokenMode::PCAbs11;
+			case 'P': return ATMCSTokenMode::PCAbs16;
+			case 'R': return ATMCSTokenMode::PCRel8;
+			case 'i': return ATMCSTokenMode::Imm;
+			case 'I': return ATMCSTokenMode::Imm16;
+			case 'd': return ATMCSTokenMode::DataAddr;
+			case 'e': return ATMCSTokenMode::DstDataAddr;
+			case 'b': return ATMCSTokenMode::BitAddr;
+			default:
+				throw s[1];
+		}
 	}
 
-	constexpr int MCS48FindNextInsnToken(const char *s) {
-		return *s == '$' || !*s
-			? 0
-			: MCS48FindNextInsnToken(s+1) + 1;
+	constexpr int MCSFindNextInsnToken(const char *s) {
+		const char *t = s;
+
+		while(*t && *t != '$')
+			++t;
+
+		return (int)(t - s);
 	}
 
 	struct MCS48Insn {
 		const char *s = nullptr;
-		uint8 prefixLen = 0;
-		ATMCS48TokenMode token = kATMCS48TokenMode_None;
+		uint8 prefixLens[2] {};
+		ATMCSTokenMode tokens[2] {};
 
 		constexpr MCS48Insn() = default;
 
-		constexpr MCS48Insn(const char *s_, uint8 prefixLen_)
+		constexpr MCS48Insn(const char *s_)
 			: s(s_)
-			, prefixLen(prefixLen_)
-			, token(MCS48ParseInsnToken(s_ + prefixLen_))
 		{
+			prefixLens[0] = (uint8)MCSFindNextInsnToken(s);
+			tokens[0] = MCSParseInsnToken(s + prefixLens[0]);
+
+			if (tokens[0] != ATMCSTokenMode::None) {
+				prefixLens[1] = MCSFindNextInsnToken(s + prefixLens[0] + 2);
+				tokens[1] = MCSParseInsnToken(s + prefixLens[0] + 2 + prefixLens[1]);
+			}
 		}
 
-		constexpr MCS48Insn(const char *s) : MCS48Insn(s, (uint8)MCS48FindNextInsnToken(s)) {}
-
 		uint32 GetOpcodeLen() const {
-			return s ? kMCS48TokenModeBytes[token] + 1 : 0;
+			return s ? kMCSTokenModeBytes[(int)tokens[0]] + kMCSTokenModeBytes[(int)tokens[1]] + 1 : 1;
 		}
 	};
 
-	constexpr MCS48Insn kMCS48Insns[] = {
-/*00*/	"NOP",			{},				{},				"ADD A,#$i",				"JMP $p",		"EN I",			{},				"DEC A",
+	struct MCSInsnTable {
+		MCS48Insn v[256];
+	};
+
+	template<MCS48Insn... T_Insns>
+	struct MCSInsnTableImpl : public MCSInsnTable {
+		static_assert(sizeof...(T_Insns) == 256);
+
+		constexpr MCSInsnTableImpl()
+			: MCSInsnTable { { T_Insns... } }
+		{
+		}
+	};
+
+	static constexpr MCSInsnTable kMCS48Insns { {
+/*00*/	"NOP",			{},				"OUTL BUS,A",	"ADD A,#$i",	"JMP $p",		"EN I",			{},				"DEC A",
 /*08*/	"IN A,BUS",		"IN A,P1",		"IN A,P2",		{},				{},				{},				{},				{},
 /*10*/	"INC @R0",		"INC @R1",		"JB0 $r",		"ADDC A,#$i",	"CALL $p",		"DIS I",		"JTF $r",		"INC A",
 /*18*/	"INC R0",		"INC R1",		"INC R2",		"INC R3",		"INC R4",		"INC R5",		"INC R6",		"INC R7",
 /*20*/	"XCH A,@R0",	"XCH A,@R1",	{},				"MOV A,#$i",	"JMP $p",		"EN TCNTI",		"JNT0 $r",		"CLR A",
 /*28*/	"XCH A,R0",		"XCH A,R1",		"XCH A,R2",		"XCH A,R3",		"XCH A,R4",		"XCH A,R5",		"XCH A,R6",		"XCH A,R7",
-/*30*/	{},				{},				"JB1 $r",		{},				"CALL $p",		"DIS TCNTI",	"JT0 $r",		"CPL A",
+/*30*/	"XCHD A,@R0",	"XCHD A,@R1",	"JB1 $r",		{},				"CALL $p",		"DIS TCNTI",	"JT0 $r",		"CPL A",
 /*38*/	"OUTL BUS,A",	"OUTL P1,A",	"OUTL P2,A",	{},				{},				{},				{},				{},
 /*40*/	"ORL A,@R0",	"ORL A,@R1",	"MOV A,T",		"ORL A,#$i",	"JMP $p",		"STRT TCNT",	"JNT1 $r",		"SWAP A",
 /*48*/	"ORL A,R0",		"ORL A,R1",		"ORL A,R2",		"ORL A,R3",		"ORL A,R4",		"ORL A,R5",		"ORL A,R6",		"ORL A,R7",
@@ -688,10 +734,43 @@ namespace {
 /*E0*/	{},				{},				{},				"MOVP3 A,@A",	"JMP $p",		"SEL MB0",		"JNC $r",		"RL A",
 /*E8*/	"DJNZ R0,$r",	"DJNZ R1,$r",	"DJNZ R2,$r",	"DJNZ R3,$r",	"DJNZ R4,$r",	"DJNZ R5,$r",	"DJNZ R6,$r",	"DJNZ R7,$r",
 /*F0*/	"MOV A,@R0",	"MOV A,@R1",	"JB7 $r",		{},				"CALL $p",		"SEL MB1",		"JC $r",		"RLC A",
-/*F8*/	"MOV A,R0",		"MOV A,R1",		"MOV A,R2",		"MOV A,R3",		"MOV A,R4",		"MOV A,R5",		"MOV A,R6",		"MOV A,R7",
-	};
+/*F8*/	"MOV A,R0",		"MOV A,R1",		"MOV A,R2",		"MOV A,R3",		"MOV A,R4",		"MOV A,R5",		"MOV A,R6",		"MOV A,R7"
+	} };
 
-	static_assert(vdcountof(kMCS48Insns) == 256, "MCS-48 base table wrong length");
+	static constexpr MCSInsnTable kMCS51Insns { {
+/*00*/	"NOP",			"AJMP $p",		"LJMP $P",		"RR A",			"INC A",		"INC $d",		"INC @R0",		"INC @R1",
+/*08*/	"INC R0",		"INC R1",		"INC R2",		"INC R3",		"INC R4",		"INC R5",		"INC R6",		"INC R7",
+/*10*/	"JBC $b,$R",	"ACALL $p",		"LCALL $P",		"RRC A",		"DEC A",		"DEC $d",		"DEC @R0",		"DEC @R1",
+/*18*/	"DEC R0",		"DEC R1",		"DEC R2",		"DEC R3",		"DEC R4",		"DEC R5",		"DEC R6",		"DEC R7",
+/*20*/	"JB $b,$R",		"AJMP $p",		"RET",			"RL A",			"ADD A,#$i",	"ADD A,$d",		"ADD A,@R0",	"ADD A,@R1",
+/*28*/	"ADD A,R0",		"ADD A,R1",		"ADD A,R2",		"ADD A,R3",		"ADD A,R4",		"ADD A,R5",		"ADD A,R6",		"ADD A,R7",
+/*30*/	"JNB $b,$R",	"ACALL $p",		"RETI",			"RLC A",		"ADDC A,#$i",	"ADDC A,$d",	"ADDC A,@R0",	"ADDC A,@R1",
+/*38*/	"ADDC A,R0",	"ADDC A,R1",	"ADDC A,R2",	"ADDC A,R3",	"ADDC A,R4",	"ADDC A,R5",	"ADDC A,R6",	"ADDC A,R7",
+/*40*/	"JC $R",		"AJMP $p",		"ORL $d,A",		"ORL $d,#$i",	"ORL A,#$i",	"ORL A,$d",		"ORL A,@R0",	"ORL A,@R1",
+/*48*/	"ORL A,R0",		"ORL A,R1",		"ORL A,R2",		"ORL A,R3",		"ORL A,R4",		"ORL A,R5",		"ORL A,R6",		"ORL A,R7",
+/*50*/	"JNC $R",		"ACALL $p",		"ANL $d,A",		"ANL $d,#$i",	"ANL A,#$i",	"ANL A,$d",		"ANL A,@R0",	"ANL A,@R1",
+/*58*/	"ANL A,R0",		"ANL A,R1",		"ANL A,R2",		"ANL A,R3",		"ANL A,R4",		"ANL A,R5",		"ANL A,R6",		"ANL A,R7",
+/*60*/	"JZ $R",		"AJMP $p",		"XRL $d,A",		"XRL $d,#$i",	"XRL A,#$i",	"XRL A,$d",		"XRL A,@R0",	"XRL A,@R1",
+/*68*/	"XRL A,R0",		"XRL A,R1",		"XRL A,R2",		"XRL A,R3",		"XRL A,R4",		"XRL A,R5",		"XRL A,R6",		"XRL A,R7",
+/*70*/	"JNZ $R",		"ACALL $p",		"ORL C,$b",		"JMP @A+DPTR",	"MOV A,#$i",	"MOV $d,#$i",	"MOV @R0,#$i",	"MOV @R1,#$i",
+/*78*/	"MOV R0,#$i",	"MOV R1,#$i",	"MOV R2,#$i",	"MOV R3,#$i",	"MOV R4,#$i",	"MOV R5,#$i",	"MOV R6,#$i",	"MOV R7,#$i",
+/*80*/	"SJMP $R",		"AJMP $p",		"ANL C,$b",		"MOVC A,@A+PC",	"DIV AB",		"MOV $e,$d",	"MOV $d,@R0",	"MOV $d,@R1",
+/*88*/	"MOV $d,R0",	"MOV $d,R1",	"MOV $d,R2",	"MOV $d,R3",	"MOV $d,R4",	"MOV $d,R5",	"MOV $d,R6",	"MOV $d,R7",
+/*90*/	"MOV DPTR,$I",	"ACALL $p",		"MOV $b,C",		"MOVC A,@A+DPTR","SUBB A,#$i",	"SUBB A,$d",	"SUBB A,@R0",	"SUBB A,@R1",
+/*98*/	"SUBB A,R0",	"SUBB A,R1",	"SUBB A,R2",	"SUBB A,R3",	"SUBB A,R4",	"SUBB A,R5",	"SUBB A,R6",	"SUBB A,R7",
+/*A0*/	"ORL C,/$b",	"AJMP $p",		"MOV C,$b",		"INC DPTR",		"MUL AB",		{},				"MOV @R0,$d",	"MOV @R1,$d",
+/*A8*/	"MOV R0,$d",	"MOV R1,$d",	"MOV R2,$d",	"MOV R3,$d",	"MOV R4,$d",	"MOV R5,$d",	"MOV R6,$d",	"MOV R7,$d",
+/*B0*/	"ANL C,/$b",	"ACALL $p",		"CPL $b",		"CPL C",		"CJNE A,#$i,$R","CJNE A,$d,$R",	"CJNE @R0,#$i,$R","CJNE @R1,#$i,$R",
+/*B8*/	"CJNE R0,#$i,$R","CJNE R1,#$i,$R","CJNE R2,#$i,$R","CJNE R3,#$i,$R","CJNE R4,#$i,$R","CJNE R5,#$i,$R","CJNE R6,#$i,$R","CJNE R7,#$i,$R",
+/*C0*/	"PUSH $d",		"AJMP $p",		"CLR $b",		"CLR C",		"SWAP A",		"XCH A,$d",		"XCH A,@R0",	"XCH A,@R1",
+/*C8*/	"XCH A,R0",		"XCH A,R1",		"XCH A,R2",		"XCH A,R3",		"XCH A,R4",		"XCH A,R5",		"XCH A,R6",		"XCH A,R7",
+/*D0*/	"POP $d",		"ACALL $p",		"SETB $b",		"SETB C",		"DA A",			"DJNZ $d,$R",	"XCHD A,@R0",	"XCHD A,@R1",
+/*D8*/	"DJNZ R0,$R",	"DJNZ R1,$R",	"DJNZ R2,$R",	"DJNZ R3,$R",	"DJNZ R4,$R",	"DJNZ R5,$R",	"DJNZ R6,$R",	"DJNZ R7,$R",
+/*E0*/	"MOVX A,@DPTR",	"AJMP $p",		"MOVX A,@R0",	"MOVX A,@R1",	"CLR A",		"MOV A,$d",		"MOV A,@R0",	"MOV A,@R1",
+/*E8*/	"MOV A,R0",		"MOV A,R1",		"MOV A,R2",		"MOV A,R3",		"MOV A,R4",		"MOV A,R5",		"MOV A,R6",		"MOV A,R7",
+/*F0*/	"MOVX @DPTR,A",	"ACALL $p",		"MOVX @R0,A",	"MOVX @R1,A",	"CPL A",		"MOV $d,A",		"MOV @R0,A",	"MOV @R1,A",
+/*F8*/	"MOV R0,A",		"MOV R1,A",		"MOV R2,A",		"MOV R3,A",		"MOV R4,A",		"MOV R5,A",		"MOV R6,A",		"MOV R7,A"
+	} };
 }
 
 namespace AT6809Dsm {
@@ -1444,19 +1523,14 @@ ATDisasmResult ATDisassembleInsnZ80(VDStringA& line, const ATCPUHistoryEntry& he
 	return result;
 }
 
-ATDisasmResult ATDisassembleInsn8048(VDStringA& line, const ATCPUHistoryEntry& hent, bool showCodeBytes, bool lowercaseOps) {
+ATDisasmResult ATDisassembleInsnMCS(VDStringA& line, const ATCPUHistoryEntry& hent, bool showCodeBytes, bool lowercaseOps, const MCSInsnTable& insnTable) {
 	ATDisasmResult result {};
 
 	const uint8 op0 = hent.mOpcode[0];
-	const MCS48Insn *insn = &kMCS48Insns[op0];
-	unsigned oplen = 1;
+	const MCS48Insn *insn = &insnTable.v[op0];
+	unsigned oplen = insn->GetOpcodeLen();
 
 	const char *s = insn->s;
-	if (!s)
-		oplen = 1;
-	else {
-		oplen += kMCS48TokenModeBytes[insn->token];
-	}
 
 	if (showCodeBytes) {
 		line.append(20, ' ');
@@ -1490,7 +1564,7 @@ ATDisasmResult ATDisassembleInsn8048(VDStringA& line, const ATCPUHistoryEntry& h
 
 		result.mOperandEnd = (uint32)line.size();
 	} else {
-		const size_t firstLen = insn->prefixLen;
+		const size_t firstLen = insn->prefixLens[0];
 		const char *split = (const char *)memchr(s, ' ', firstLen);
 
 		const auto startLen = line.size();
@@ -1511,26 +1585,122 @@ ATDisasmResult ATDisassembleInsn8048(VDStringA& line, const ATCPUHistoryEntry& h
 
 		s += firstLen;
 
-		if (insn->token) {
-			s += 2;
-
+		if (insn->tokens[0] != ATMCSTokenMode::None) {
 			result.mOperandStart = (uint32)line.size();
 
-			switch(insn->token) {
-				case kATMCS48TokenMode_None:
+			const uint8 *arg = &hent.mOpcode[1];
+			for(int tokenIdx = 0; tokenIdx < 2; ++tokenIdx) {
+				if (insn->tokens[tokenIdx] == ATMCSTokenMode::None)
 					break;
 
-				case kATMCS48TokenMode_PCAbs8:
-					AppendIntelHex16(line, (uint16)(((hent.mPC + 1) & 0xF00) + hent.mOpcode[1]), lowercaseOps);
-					break;
+				if (tokenIdx == 1) {
+					line.append(s, insn->prefixLens[1]);
+					s += insn->prefixLens[1];
+				}
 
-				case kATMCS48TokenMode_PCAbs16:
-					AppendIntelHex16(line, (uint16)((hent.mPC & 0x800) + ((uint32)(hent.mOpcode[0] & 0xE0) << 3) + hent.mOpcode[1]), lowercaseOps);
-					break;
+				s += 2;
 
-				case kATMCS48TokenMode_Imm:
-					AppendIntelHex8(line, hent.mOpcode[oplen - 1], lowercaseOps);
-					break;
+				const auto appendDirectAddrName = [&](uint8 addr) {
+					if (addr < 0x20) {
+						char name[] {
+							'R', 'B',
+							(char)('0' + (addr >> 3)),
+							'R',
+							(char)('0' + (addr & 7)),
+							0
+						};
+
+						line.append(name);
+						return;
+					}
+
+					const char *name = nullptr;
+					switch(addr) {
+						case 0x80:	name = "P0"; break;
+						case 0x81:	name = "SP"; break;
+						case 0x82:	name = "DPL"; break;
+						case 0x83:	name = "DPH"; break;
+						case 0x87:	name = "PCON"; break;
+						case 0x88:	name = "TCON"; break;
+						case 0x89:	name = "TMOD"; break;
+						case 0x8A:	name = "TL0"; break;
+						case 0x8B:	name = "TL1"; break;
+						case 0x8C:	name = "TH0"; break;
+						case 0x8D:	name = "TH1"; break;
+						case 0x90:	name = "P1"; break;
+						case 0x98:	name = "SCON"; break;
+						case 0x99:	name = "SBUF"; break;
+						case 0xA0:	name = "P2"; break;
+						case 0xA8:	name = "IE"; break;
+						case 0xB0:	name = "P3"; break;
+						case 0xB8:	name = "IP"; break;
+						case 0xC8:	name = "T2CON"; break;
+						case 0xCA:	name = "RCAP2L"; break;
+						case 0xCB:	name = "RCAP2H"; break;
+						case 0xCC:	name = "TL2"; break;
+						case 0xCD:	name = "TH2"; break;
+						case 0xD0:	name = "PSW"; break;
+						case 0xE0:	name = "ACC"; break;
+						case 0xF0:	name = "B"; break;
+						default:
+							break;
+					}
+
+					if (name)
+						line += name;
+					else
+						AppendIntelHex8(line, addr, lowercaseOps);
+				};
+
+				switch(insn->tokens[tokenIdx]) {
+					case ATMCSTokenMode::None:
+						break;
+
+					case ATMCSTokenMode::PCAbs8:
+						AppendIntelHex16(line, (uint16)(((hent.mPC + 1) & 0xF00) + *arg++), lowercaseOps);
+						break;
+
+					case ATMCSTokenMode::PCAbs11:
+						AppendIntelHex16(line, (uint16)((hent.mPC & 0x800) + ((uint32)(hent.mOpcode[0] & 0xE0) << 3) + *arg++), lowercaseOps);
+						break;
+
+					case ATMCSTokenMode::PCAbs16:
+						AppendIntelHex16(line, VDReadUnalignedBEU16(arg), lowercaseOps);
+						arg += 2;
+						break;
+
+					case ATMCSTokenMode::PCRel8:
+						AppendIntelHex16(line, (uint16)(hent.mPC + oplen + (sint16)(sint8)*arg++), lowercaseOps);
+						break;
+
+					case ATMCSTokenMode::Imm:
+						AppendIntelHex8(line, *arg++, lowercaseOps);
+						break;
+
+					case ATMCSTokenMode::Imm16:
+						AppendIntelHex16(line, VDReadUnalignedBEU16(arg), lowercaseOps);
+						arg += 2;
+						break;
+
+					case ATMCSTokenMode::DataAddr:
+						appendDirectAddrName(*arg++);
+						break;
+
+					case ATMCSTokenMode::DstDataAddr:
+						appendDirectAddrName(hent.mOpcode[oplen - 1]);
+						break;
+
+					case ATMCSTokenMode::BitAddr:
+						if (*arg < 0x80)
+							AppendIntelHex8(line, 0x20 + (*arg >> 3), lowercaseOps);
+						else
+							appendDirectAddrName(*arg & 0xF8);
+
+						line += '.';
+						line += '0' + (*arg & 7);
+						++arg;
+						break;
+				}
 			}
 
 			result.mOperandEnd = (uint32)line.size();
@@ -1874,7 +2044,10 @@ ATDisasmResult ATDisassembleInsn(VDStringA& line,
 	bool showGlobalPC)
 {
 	if (disasmMode == kATDebugDisasmMode_8048)
-		return ATDisassembleInsn8048(line, hent, showCodeBytes, lowercaseOps);
+		return ATDisassembleInsnMCS(line, hent, showCodeBytes, lowercaseOps, kMCS48Insns);
+
+	if (disasmMode == kATDebugDisasmMode_8051)
+		return ATDisassembleInsnMCS(line, hent, showCodeBytes, lowercaseOps, kMCS51Insns);
 
 	if (disasmMode == kATDebugDisasmMode_Z80)
 		return ATDisassembleInsnZ80(line, hent, showCodeBytes, lowercaseOps);

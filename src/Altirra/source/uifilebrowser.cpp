@@ -124,7 +124,7 @@ void ATUIFileBrowser::OnCreate() {
 
 		vdrefptr<ATUIFileBrowserItem> item(new ATUIFileBrowserItem);
 
-		vdmove(item->mName, s);
+		item->mName = std::move(s);
 
 		const VDStringW& volLabel = VDGetRootVolumeLabel(item->mName.c_str());
 

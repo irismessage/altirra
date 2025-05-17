@@ -112,6 +112,9 @@ enum ATFirmwareType : uint32 {
 	kATFirmwareType_1030InternalROM,
 	kATFirmwareType_1030ExternalROM,
 	kATFirmwareType_835,
+	kATFirmwareType_820,
+	kATFirmwareType_1025,
+	kATFirmwareType_1029,
 	kATFirmwareTypeCount
 };
 

@@ -41,6 +41,7 @@
 #include <vd2/system/VDString.h>
 
 class IVDRandomAccessStream;
+class VDZipArchive;
 
 class ATInvalidVFSPathException : public MyError {
 public:
@@ -128,10 +129,19 @@ VDStringW ATMakeVFSPath(const wchar_t *protocolAndBasePath, const wchar_t *subPa
 
 const wchar_t *ATVFSSplitPathFile(const wchar_t *path);
 
+// Returns true if the supplied path is a VFS file path. It must directly point to a file.
 bool ATVFSIsFilePath(const wchar_t *s);
+
+// Returns true if the supplied path contains a VFS file path. It can be a nested path that
+// has a root at a file path.
+bool ATVFSExtractFilePath(const wchar_t *s, VDStringW *filePathOpt);
 
 VDStringW ATMakeVFSPathForGZipFile(const wchar_t *path);
 VDStringW ATMakeVFSPathForZipFile(const wchar_t *path, const wchar_t *fileName);
+
+class ATVFSFileView;
+
+using ATVFSOpenSiblingFn = vdfunction<vdrefptr<ATVFSFileView>(const wchar_t *name)>;
 
 class ATVFSFileView : public vdrefcount {
 	ATVFSFileView(const ATVFSFileView&) = delete;
@@ -143,16 +153,33 @@ public:
 
 	IVDRandomAccessStream& GetStream() { return *mpStream; }
 	const wchar_t *GetFileName() const { return mFileName.c_str(); }
-	bool IsReadOnly() const { return mbReadOnly; }
+	virtual bool IsSourceReadOnly() const = 0;
+
+	void SetTryOpenSibling(ATVFSOpenSiblingFn fn);
+	vdrefptr<ATVFSFileView> TryOpenSibling(const wchar_t *name) const;
 
 protected:
 	IVDRandomAccessStream *mpStream;
 	VDStringW mFileName;
-	bool mbReadOnly;
+
+	ATVFSOpenSiblingFn mpOpenSiblingFn;
 };
+
+// View of a zip archive that is extended to provide VFS view oriented open
+// methods.
+class IATVFSZipArchive : public IVDRefCount {
+public:
+	virtual VDZipArchive& GetZipArchive() = 0;
+	virtual vdrefptr<ATVFSFileView> OpenStream(sint32 idx) = 0;
+	virtual vdrefptr<ATVFSFileView> TryOpenStream(const wchar_t *subfile) = 0;
+};
+
+vdrefptr<IATVFSZipArchive> ATVFSOpenZipArchiveFromView(ATVFSFileView& view);
 
 void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, ATVFSFileView **viewOut);
 void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, bool update, ATVFSFileView **viewOut);
+
+vdrefptr<ATVFSFileView> ATVFSWrapStream(IVDRandomAccessStream& stream, const wchar_t *imagePath);
 
 void ATVFSSetAtfsProtocolHandler(vdfunction<void(ATVFSFileView *, const wchar_t *, ATVFSFileView **)> handler);
 void ATVFSSetBlobProtocolHandler(vdfunction<void(const wchar_t *, bool, bool, ATVFSFileView **)> handler);

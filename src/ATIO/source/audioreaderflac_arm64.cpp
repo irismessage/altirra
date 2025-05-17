@@ -17,12 +17,18 @@
 #include <stdafx.h>
 
 #if VD_CPU_ARM64
-#include <arm64_neon.h>
+#include <arm_neon.h>
 
-// workaround for missing intrinsics with /Zc:arm64-aliased-neon-types- in 17.2.5-17.3pre2
-#ifdef _ARM64_DISTINCT_NEON_TYPES
-#ifndef vmull_p64
-#define vmull_p64(src1, src2) __n128_to_poly64x2_t(neon_pmull_64(__poly64x1_t_to_n64(src1), __poly64x1_t_to_n64(src2)))
+// workaround for missing intrinsics with /Zc:arm64-aliased-neon-types- and broken types without
+#if VD_COMPILER_MSVC
+#ifdef vmull_p64
+#undef vmull_p64
+#endif
+
+#define vmull_p64(src1, src2) __n128_to_poly64x2_t(neon_pmull_64(__uint64ToN64_v(src1), __uint64ToN64_v(src2)))
+
+#ifndef vreinterpretq_p64_p128
+#define vreinterpretq_p64_p128(x) __n128_to_poly64x2_t(x)
 #endif
 
 #ifndef vmull_high_p64
@@ -66,15 +72,19 @@ void ATFLACReconstructLPC_Narrow_NEON_Impl(sint32 *__restrict y, uint32 n, const
 	for(uint32 i = 0; i < Order; ++i) {
 		const sint16 v = y[i];
 
+		{
 		                          pipe3 = vextq_s32(pipe2, pipe3, 3);
 		if constexpr (Order >  4) pipe2 = vextq_s32(pipe1, pipe2, 3);
 		if constexpr (Order >  8) pipe1 = vextq_s32(pipe0, pipe1, 3);
 		if constexpr (Order > 12) pipe0 = vextq_s32(pipez, pipe0, 3);
+		}
 
+		{
 		                          pipe3 = vmlal_high_n_s16(pipe3, coeff1, v);
 		if constexpr (Order >  4) pipe2 = vmlal_n_s16(pipe2, vget_low_s16(coeff1), v);
 		if constexpr (Order >  8) pipe1 = vmlal_high_n_s16(pipe1, coeff0, v);
 		if constexpr (Order > 12) pipe0 = vmlal_n_s16(pipe0, vget_low_s16(coeff0), v);
+		}
 	}
 
 	int32x2_t vshift = vmov_n_s32(-qlpShift);
@@ -90,16 +100,20 @@ void ATFLACReconstructLPC_Narrow_NEON_Impl(sint32 *__restrict y, uint32 n, const
 		y[i + Order] = vget_lane_s32(v, 1);
 
 		// shift pipeline
+		{
 		                          pipe3 = vextq_s32(pipe2, pipe3, 3);
 		if constexpr (Order >  4) pipe2 = vextq_s32(pipe1, pipe2, 3);
 		if constexpr (Order >  8) pipe1 = vextq_s32(pipe0, pipe1, 3);
 		if constexpr (Order > 12) pipe0 = vextq_s32(pipez, pipe0, 3);
+		}
 
 		// add in new sample
+		{
 		                          pipe3 = vmlal_high_lane_s16(pipe3, coeff1, vreinterpret_s16_s32(v), 2);
 		if constexpr (Order >  4) pipe2 = vmlal_lane_s16     (pipe2, vget_low_s16(coeff1), vreinterpret_s16_s32(v), 2);
 		if constexpr (Order >  8) pipe1 = vmlal_high_lane_s16(pipe1, coeff0, vreinterpret_s16_s32(v), 2);
 		if constexpr (Order > 12) pipe0 = vmlal_lane_s16     (pipe0, vget_low_s16(coeff0), vreinterpret_s16_s32(v), 2);
+		}
 	}
 }
 
@@ -172,6 +186,7 @@ void ATFLACReconstructLPC_Medium_NEON_Impl(sint32 *__restrict y, uint32 n, const
 	for(uint32 i = 0; i < Order; ++i) {
 		const sint16 v = y[i];
 
+		{
 		                          pipe7 = vextq_s32(pipe6, pipe7, 3);
 		if constexpr (Order >  4) pipe6 = vextq_s32(pipe5, pipe6, 3);
 		if constexpr (Order >  8) pipe5 = vextq_s32(pipe4, pipe5, 3);
@@ -180,7 +195,9 @@ void ATFLACReconstructLPC_Medium_NEON_Impl(sint32 *__restrict y, uint32 n, const
 		if constexpr (Order > 20) pipe2 = vextq_s32(pipe1, pipe2, 3);
 		if constexpr (Order > 24) pipe1 = vextq_s32(pipe0, pipe1, 3);
 		if constexpr (Order > 28) pipe0 = vextq_s32(pipez, pipe0, 3);
+		}
 
+		{
 		                          pipe7 = vmlaq_n_s32(pipe7, coeff7, v);
 		if constexpr (Order >  4) pipe6 = vmlaq_n_s32(pipe6, coeff6, v);
 		if constexpr (Order >  8) pipe5 = vmlaq_n_s32(pipe5, coeff5, v);
@@ -189,6 +206,7 @@ void ATFLACReconstructLPC_Medium_NEON_Impl(sint32 *__restrict y, uint32 n, const
 		if constexpr (Order > 20) pipe2 = vmlaq_n_s32(pipe2, coeff2, v);
 		if constexpr (Order > 24) pipe1 = vmlaq_n_s32(pipe1, coeff1, v);
 		if constexpr (Order > 28) pipe0 = vmlaq_n_s32(pipe0, coeff0, v);
+		}
 	}
 
 	int32x2_t vshift = vmov_n_s32(-qlpShift);
@@ -204,6 +222,7 @@ void ATFLACReconstructLPC_Medium_NEON_Impl(sint32 *__restrict y, uint32 n, const
 		y[i + Order] = vget_lane_s32(v, 1);
 
 		// shift pipeline
+		{
 		                          pipe7 = vextq_s32(pipe6, pipe7, 3);
 		if constexpr (Order >  4) pipe6 = vextq_s32(pipe5, pipe6, 3);
 		if constexpr (Order >  8) pipe5 = vextq_s32(pipe4, pipe5, 3);
@@ -212,8 +231,10 @@ void ATFLACReconstructLPC_Medium_NEON_Impl(sint32 *__restrict y, uint32 n, const
 		if constexpr (Order > 20) pipe2 = vextq_s32(pipe1, pipe2, 3);
 		if constexpr (Order > 24) pipe1 = vextq_s32(pipe0, pipe1, 3);
 		if constexpr (Order > 28) pipe0 = vextq_s32(pipez, pipe0, 3);
+		}
 
 		// add in new sample
+		{
 		                          pipe7 = vmlaq_lane_s32(pipe7, coeff7, v, 1);
 		if constexpr (Order >  4) pipe6 = vmlaq_lane_s32(pipe6, coeff6, v, 1);
 		if constexpr (Order >  8) pipe5 = vmlaq_lane_s32(pipe5, coeff5, v, 1);
@@ -222,6 +243,7 @@ void ATFLACReconstructLPC_Medium_NEON_Impl(sint32 *__restrict y, uint32 n, const
 		if constexpr (Order > 20) pipe2 = vmlaq_lane_s32(pipe2, coeff2, v, 1);
 		if constexpr (Order > 24) pipe1 = vmlaq_lane_s32(pipe1, coeff1, v, 1);
 		if constexpr (Order > 28) pipe0 = vmlaq_lane_s32(pipe0, coeff0, v, 1);
+		}
 	}
 }
 
@@ -352,10 +374,11 @@ void ATFLACReconstructLPC_Wide_NEON(sint32 *y, uint32 n, const sint32 *lpcCoeffs
 	}
 }
 
+VD_CPU_TARGET("aes")
 VDNOINLINE uint16 ATFLACUpdateCRC16_Crypto(uint16 crc16v, const void *buf, size_t n) {
 	const uint8 *__restrict p = (const uint8 *)buf;
 
-	const auto updateSmall = [=](uint8x16_t crc16, const uint8 *__restrict p, size_t n) -> uint8x16_t {
+	const auto updateSmall = [=](uint8x16_t crc16, const uint8 *__restrict p, size_t n) VD_CPU_TARGET_LAMBDA("aes") -> uint8x16_t {
 		alignas(16) uint8_t buf[16] {};
 
 		memcpy(buf + 16 - n, p, n);
@@ -371,8 +394,8 @@ VDNOINLINE uint16 ATFLACUpdateCRC16_Crypto(uint16 crc16v, const void *buf, size_
 		//    crc16*x^bits mod P
 		//	= loquad(crc16)*x^bits + hiquad(crc16)*x^(bits+64) mod P
 		poly64x2_t factors = vreinterpretq_p64_u64(vcombine_u64(vmov_n_u64(k[n-1]), vmov_n_u64(k[n+7])));
-		uint8x16_t crc16_lo = vreinterpretq_u8_p64(vmull_p64(vget_low_p64(vreinterpretq_p64_u8(crc16)), vget_low_p64(factors)));
-		uint8x16_t crc16_hi = vreinterpretq_u8_p64(vmull_high_p64(vreinterpretq_p64_u8(crc16), factors));
+		uint8x16_t crc16_lo = vreinterpretq_u8_p128(vmull_p64(vgetq_lane_p64(vreinterpretq_p64_u8(crc16), 0), vgetq_lane_p64(factors, 0)));
+		uint8x16_t crc16_hi = vreinterpretq_u8_p128(vmull_high_p64(vreinterpretq_p64_u8(crc16), factors));
 		return veorq_u8(veorq_u8(v, crc16_lo), crc16_hi);
 	};
 
@@ -391,7 +414,7 @@ VDNOINLINE uint16 ATFLACUpdateCRC16_Crypto(uint16 crc16v, const void *buf, size_
 	}
 
 	// fold 128 bits (16 bytes) at a time
-	static constexpr alignas(16) uint64_t kFoldConst[2] = { 0x0106, 0x1666 };		// x^128 mod P, x^192 mod P
+	alignas(16) static constexpr uint64_t kFoldConst[2] = { 0x0106, 0x1666 };		// x^128 mod P, x^192 mod P
 	poly64x2_t k16 = vreinterpretq_p64_u64(vld1q_u64(kFoldConst));
 	size_t nv = n >> 4;
 	while(nv--) {
@@ -399,8 +422,8 @@ VDNOINLINE uint16 ATFLACUpdateCRC16_Crypto(uint16 crc16v, const void *buf, size_
 		v = vextq_u8(v, v, 8);
 		p += 16;
 
-		uint8x16_t crc16_lo = vreinterpretq_u8_p64(vmull_p64(vget_low_p64(vreinterpretq_p64_u8(crc16)), vget_low_p64(k16)));
-		uint8x16_t crc16_hi = vreinterpretq_u8_p64(vmull_high_p64(vreinterpretq_p64_u8(crc16), k16));
+		uint8x16_t crc16_lo = vreinterpretq_u8_p128(vmull_p64(vgetq_lane_p64(vreinterpretq_p64_u8(crc16), 0), vgetq_lane_p64(k16, 0)));
+		uint8x16_t crc16_hi = vreinterpretq_u8_p128(vmull_high_p64(vreinterpretq_p64_u8(crc16), k16));
 
 		crc16 = veorq_u8(veorq_u8(v, crc16_lo), crc16_hi);
 	}
@@ -410,28 +433,44 @@ VDNOINLINE uint16 ATFLACUpdateCRC16_Crypto(uint16 crc16v, const void *buf, size_
 		crc16 = updateSmall(crc16, p, n & 15);
 
 	const poly64x2_t x64modP = vreinterpretq_p64_u64(vmovq_n_u64(0x8113));
-	const poly64x1_t x48modP = vreinterpret_p64_u64(vmov_n_u64(0x807B));
-	const poly64x1_t x32modP = vreinterpret_p64_u64(vmov_n_u64(0x8017));
+	const poly64_t x48modP = vget_lane_p64(vreinterpret_p64_u64(vmov_n_u64(0x807B)), 0);
+	const poly64_t x32modP = vget_lane_p64(vreinterpret_p64_u64(vmov_n_u64(0x8017)), 0);
 
 	// fold from 128-bit to 80-bit: crc16[127..64]*(x^64 mod P) + crc16[63..0]
-	uint8x16_t crc16_80 = veorq_u8(vreinterpretq_u8_u64(vsetq_lane_u64(0, vreinterpretq_u64_u8(crc16), 1)), vreinterpretq_u8_p64(vmull_high_p64(vreinterpretq_p64_u8(crc16), x64modP)));
+	uint8x16_t crc16_80 = veorq_u8(vreinterpretq_u8_u64(vsetq_lane_u64(0, vreinterpretq_u64_u8(crc16), 1)), vreinterpretq_u8_p128(vmull_high_p64(vreinterpretq_p64_u8(crc16), x64modP)));
 
 	// fold from 80-bit to 48-bit: crc16[79..48]*(x^48 mod P) + crc16[47..0]
 	poly64x1_t crc16_80_high = vreinterpret_p64_u64(vshr_n_u64(vreinterpret_u64_u8(vget_low_u8(vextq_u8(crc16_80, crc16_80, 2))), 32));
-	uint8x8_t crc16_48 = veor_u8(vget_low_u8(crc16_80), vget_low_u8(vreinterpretq_u8_p64(vmull_p64(crc16_80_high, x48modP))));
+	uint8x8_t crc16_48 = veor_u8(vget_low_u8(crc16_80), vget_low_u8(vreinterpretq_u8_p128(vmull_p64(vget_lane_p64(crc16_80_high, 0), x48modP))));
 
 	// fold from 48-bit to 32-bit: crc16[47..32]*(x^32 mod P) + crc16[31..0]
 	poly64x1_t crc16_48_high = vreinterpret_p64_u16(vset_lane_u16(0, vreinterpret_u16_u64(vshr_n_u64(vreinterpret_u64_u8(crc16_48), 32)), 1));
-	uint8x8_t crc16_32 = veor_u8(crc16_48, vget_low_u8(vreinterpretq_u8_p64(vmull_p64(crc16_48_high, x32modP))));
+	uint8x8_t crc16_32 = veor_u8(crc16_48, vget_low_u8(vreinterpretq_u8_p128(vmull_p64(vget_lane_p64(crc16_48_high, 0), x32modP))));
 
 	// do Barrett reduction from 32-bit to 16-bit
 	// T1 = (R / x^16) * (x^32/P)
 	// T2 = (T1 / x^16) * P
 	// C = R + T2 mod x^16
-	poly64x1_t mu = vreinterpret_p64_u64(vmov_n_u64(0x1FFFB));
-	poly64x1_t P = vreinterpret_p64_u64(vmov_n_u64(0x18005));
-	auto T1 = vget_low_p64(vmull_p64(vreinterpret_p64_u32(vset_lane_u32(0, vshr_n_u32(vreinterpret_u32_u8(crc16_32), 16), 1)), mu));
-	auto T2 = vget_low_p64(vmull_p64(vreinterpret_p64_u64(vshr_n_u64(vreinterpret_u64_p64(T1), 16)), P));
+	poly64_t mu = vget_lane_p64(vreinterpret_p64_u64(vmov_n_u64(0x1FFFB)), 0);
+	poly64_t P = vget_lane_p64(vreinterpret_p64_u64(vmov_n_u64(0x18005)), 0);
+	auto T1 =
+		vget_low_p64(
+			vreinterpretq_p64_p128(vmull_p64(
+				vget_lane_p64(vreinterpret_p64_u32(
+					vset_lane_u32(0, vshr_n_u32(vreinterpret_u32_u8(crc16_32), 16), 1)
+				), 0),
+				mu
+			)
+		)
+	);
+	auto T2 = vget_low_p64(
+		vreinterpretq_p64_p128(
+			vmull_p64(
+				vget_lane_p64(vreinterpret_p64_u64(vshr_n_u64(vreinterpret_u64_p64(T1), 16)), 0),
+				P
+			)
+		)
+	);
 
 	auto crc16final = veor_u16(vreinterpret_u16_u8(crc16_32), vreinterpret_u16_p64(T2));
 	return vget_lane_u16(crc16final, 0);

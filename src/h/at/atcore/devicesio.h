@@ -213,6 +213,9 @@ public:
 
 	virtual void EndCommand() = 0;
 
+	// Shortcut for: BeginCommand(), SendACK(), SendComplete/Error(), SendData(true) if len>0, EndCommand().
+	virtual void HandleCommand(const void *data, uint32 len, bool succeeded) = 0;
+
 	// Returns true if an acceleration request is currently being processed.
 	virtual bool IsAccelRequest() const = 0;
 
@@ -233,6 +236,14 @@ public:
 
 	// Changes every time the serial input register in POKEY is reset.
 	virtual uint32 GetRecvResetCounter() const = 0;
+
+	// Gets the number of cycles per bit that is currently being output on the serial clock
+	// out line.
+	virtual uint32 GetCyclesPerBitSend() const = 0;
+
+	// Gets the number of cycles per bit that is currently being output on the bidirectional
+	// clock line.
+	virtual uint32 GetCyclesPerBitBiClock() const = 0;
 
 	// Gets the current time in the command queue, after all currently queued commands.
 	// This is different than the current time as it tracks delays in command steps that
@@ -282,6 +293,9 @@ public:
 	virtual void SetSIOInterrupt(IATDeviceRawSIO *dev, bool state) = 0;
 	virtual void SetSIOProceed(IATDeviceRawSIO *dev, bool state) = 0;
 
+	// Enable serial output clock changes for a specific raw SIO device.
+	virtual void SetBiClockNotifyEnabled(IATDeviceRawSIO *dev, bool enabled) = 0;
+
 	// Set an external clock signal to be fed into POKEY's external clock input.
 	// Initial offset is in clock cycles from current time; period is in cycles.
 	// A period of 0 disables the external clock.
@@ -324,10 +338,12 @@ public:
 	virtual void OnCommandStateChanged(bool asserted) = 0;
 	virtual void OnMotorStateChanged(bool asserted) = 0;
 	virtual void OnBreakStateChanged(bool asserted) {}
+	virtual void OnReadyStateChanged(bool asserted) {}
 	virtual void OnBeginReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) {}
 	virtual void OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) = 0;
 	virtual void OnTruncateByte() {}
 	virtual void OnSendReady() = 0;
+	virtual void OnSerialBiClockChanged(uint32 cyclesPerBit) {}
 };
 
 #endif

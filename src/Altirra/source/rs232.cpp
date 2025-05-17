@@ -22,6 +22,7 @@
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicecio.h>
 #include <at/atcore/deviceparentimpl.h>
+#include <at/atcore/deviceprinter.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/devicesio.h>
 #include <at/atcore/propertyset.h>
@@ -707,6 +708,7 @@ class ATRS232Emulator final
 	, public IATDeviceCIO
 	, public IATDeviceSIO
 	, public IATDeviceRawSIO
+	, public IATDeviceParent
 	, public IATRS232ChannelCallback
 {
 	ATRS232Emulator(const ATRS232Emulator&);
@@ -765,6 +767,9 @@ public:	// IATDeviceRawSIO
 	void OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) override;
 	void OnSendReady() override;
 
+public:	// IATDeviceParent
+	IATDeviceBus *GetDeviceBus(uint32 index) override;
+
 public:
 	virtual void OnChannelReceiveReady(int index);
 
@@ -789,11 +794,17 @@ protected:
 
 	sint8	mPollCounter;
 	sint8	mDiskCounter;
+	uint8	mPrinterStatus = 0;
+	uint8	mPrinterLastAUX1 = 0;
+	bool	mbPrinterLastEOL = false;
 
 	vdfastvector<uint8> mRelocator;
 	vdfastvector<uint8> mHandler;
+
+	vdrefptr<IATPrinterOutput> mpDefaultPrinterOutput;
 	
-	ATDeviceParentSingleChild mDeviceParent;
+	ATDeviceBusSingleChild mSerialPort;
+	ATDeviceBusSingleChild mParallelPort;
 };
 
 void ATCreateDevice850(const ATPropertySet& pset, IATDevice **dev) {
@@ -824,7 +835,7 @@ ATRS232Emulator::~ATRS232Emulator() {
 void *ATRS232Emulator::AsInterface(uint32 id) {
 	switch(id) {
 		case IATDeviceFirmware::kTypeID:	return static_cast<IATDeviceFirmware *>(this);
-		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(&mDeviceParent);
+		case IATDeviceParent::kTypeID:		return static_cast<IATDeviceParent *>(this);
 		case IATDeviceScheduling::kTypeID:	return static_cast<IATDeviceScheduling *>(this);
 		case IATDeviceIndicators::kTypeID:	return static_cast<IATDeviceIndicators *>(this);
 		case IATDeviceCIO::kTypeID:			return static_cast<IATDeviceCIO *>(this);
@@ -842,21 +853,21 @@ void ATRS232Emulator::GetDeviceInfo(ATDeviceInfo& info) {
 void ATRS232Emulator::Init() {
 	InitChannels();
 
-	mDeviceParent.Init(IATDeviceSerial::kTypeID, "serial", L"Serial Port", "serial", this);
-	mDeviceParent.SetOnAttach(
+	mSerialPort.Init(this, 0, IATDeviceSerial::kTypeID, "serial", L"Serial Ports", "serial");
+	mSerialPort.SetOnAttach(
 		[this] {
 			for(auto *p : mpChannels) {
 				if (p && !p->GetSerialDevice()) {
-					p->SetSerialDevice(mDeviceParent.GetChild<IATDeviceSerial>());
+					p->SetSerialDevice(mSerialPort.GetChild<IATDeviceSerial>());
 					break;
 				}
 			}
 		}
 	);
 
-	mDeviceParent.SetOnDetach(
+	mSerialPort.SetOnDetach(
 		[this] {
-			IATDeviceSerial *serdev = mDeviceParent.GetChild<IATDeviceSerial>();
+			IATDeviceSerial *serdev = mSerialPort.GetChild<IATDeviceSerial>();
 
 			for(auto *p : mpChannels) {
 				if (p && p->GetSerialDevice() == serdev) {
@@ -866,10 +877,20 @@ void ATRS232Emulator::Init() {
 			}
 		}
 	);
+
+	mParallelPort.Init(this, 1, IATPrinterOutput::kTypeID, "parallel", L"Printer Port", "parallel");
+	mParallelPort.SetOnAttach(
+		[this] {
+			mpDefaultPrinterOutput = nullptr;
+		}
+	);
 }
 
 void ATRS232Emulator::Shutdown() {
-	mDeviceParent.Shutdown();
+	mSerialPort.Shutdown();
+	mParallelPort.Shutdown();
+
+	mpDefaultPrinterOutput = nullptr;
 
 	if (mpCIOMgr) {
 		mpCIOMgr->RemoveCIODevice(this);
@@ -902,6 +923,10 @@ void ATRS232Emulator::ColdReset() {
 
 	mPollCounter = 26;
 	mDiskCounter = 26;
+
+	mPrinterStatus = 0;
+	mPrinterLastAUX1 = 0;
+	mbPrinterLastEOL = false;
 }
 
 void ATRS232Emulator::GetSettings(ATPropertySet& props) {
@@ -1124,14 +1149,10 @@ void ATRS232Emulator::OnCIOAbortAsync() {
 
 void ATRS232Emulator::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
-
-	if (mConfig.m850SIOLevel != kAT850SIOEmulationLevel_None)
-		mpSIOMgr->AddDevice(this);
+	mpSIOMgr->AddDevice(this);
 }
 
 IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
-	VDASSERT(mConfig.m850SIOLevel);
-
 	if (!cmd.mbStandardRate)
 		return kCmdResponse_NotHandled;
 
@@ -1142,6 +1163,43 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 	if (cmdid != 0x3F && mPollCounter >= 0)
 		mPollCounter = 26;
 
+	// check for printer (P1: or P2:)
+	if (cmd.mDevice == 0x40 || cmd.mDevice == 0x41) {
+		if (cmdid == 0x53) {		// status
+			const uint8 printerStatusFrame[4] {
+				(uint8)(mPrinterStatus | 0x80),		// set intelligent bit
+				mPrinterLastAUX1,
+				30,		// 850 printer timeout
+				0
+			};
+
+			mPrinterLastAUX1 = cmd.mAUX[0];
+
+			mpSIOMgr->HandleCommand(printerStatusFrame, 4, true);
+
+			return kCmdResponse_Start;
+		} else if (cmdid == 0x57) {	// write
+			// orientation must be normal or command is rejected
+			if (cmd.mAUX[0] != 0x4E) {
+				mPrinterStatus = 0x01;
+				return kCmdResponse_Fail_NAK;
+			}
+
+			// start command and receive 40 byte frame
+			mpSIOMgr->BeginCommand();
+			mpSIOMgr->SendACK();
+			mpSIOMgr->ReceiveData('P', 40, true);
+			mpSIOMgr->SendComplete();
+			mpSIOMgr->EndCommand();
+			return kCmdResponse_Start;
+		}
+	}
+
+	// don't handle disk or serial commands if SIO emulation is disabled
+	if (mConfig.m850SIOLevel == kAT850SIOEmulationLevel_None)
+		return kCmdResponse_NotHandled;
+
+	// check for simulated disk boot
 	if (mConfig.m850SIOLevel == kAT850SIOEmulationLevel_Full && cmd.mDevice == 0x31) {
 		if (cmdid == 0x53) {				// status
 			// The 850 only answers the 26th status request. Once this arrives, it unlocks
@@ -1301,7 +1359,6 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 			mpSIOMgr->BeginCommand();
 			mpSIOMgr->SendACK();
 			mpSIOMgr->ReceiveData(index, 64, true);
-			mpSIOMgr->SendACK();
 			mpSIOMgr->SendComplete();
 		}
 	} else if (cmdid == 0x41) {	// 'A' / control
@@ -1373,11 +1430,50 @@ void ATRS232Emulator::OnSerialAbortCommand() {
 }
 
 void ATRS232Emulator::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
-	ATRS232Channel850& ch = *static_cast<ATRS232Channel850 *>(mpChannels[id]);
+	if (id < 4) {
+		ATRS232Channel850& ch = *static_cast<ATRS232Channel850 *>(mpChannels[id]);
 
-	// push bytes into the device
-	for(uint8 i=0; i<mActiveCommandData; ++i)
-		ch.PutByte(((const uint8 *)data)[i]);
+		// push bytes into the device
+		for(uint8 i=0; i<mActiveCommandData; ++i)
+			ch.PutByte(((const uint8 *)data)[i]);
+	} else if (id == 'P') {
+		// get or create printer output
+		IATPrinterOutput *output = mParallelPort.GetChild<IATPrinterOutput>();
+		if (!output) {
+			if (!mpDefaultPrinterOutput)
+				mpDefaultPrinterOutput = GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+
+			output = mpDefaultPrinterOutput;
+		}
+
+		// copy the buffer and scan for EOL
+		uint8 buf[40];
+		memcpy(buf, data, 40);
+
+		size_t n = 0;
+		bool eol = false;
+		while(n < 40) {
+			++n;
+			if (buf[n-1] == 0x9B) {
+				buf[n-1] = 0x0D;
+				eol = true;
+				break;
+			}
+		}
+
+		// if we're printing an empty line, insert a space as the 850 does
+		if (n == 1 && eol && mbPrinterLastEOL) {
+			buf[0] = 0x20;
+			buf[1] = 0x0D;
+			n = 2;
+		}
+
+		// remember if last character printed was an EOL
+		mbPrinterLastEOL = eol;
+
+		// print now
+		output->WriteRaw(buf, n);
+	}
 }
 
 void ATRS232Emulator::OnSerialFence(uint32 id) {
@@ -1412,6 +1508,15 @@ void ATRS232Emulator::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) 
 }
 
 void ATRS232Emulator::OnSendReady() {
+}
+
+IATDeviceBus *ATRS232Emulator::GetDeviceBus(uint32 index) {
+	if (index == 0)
+		return &mSerialPort;
+	else if (index == 1)
+		return &mParallelPort;
+	else
+		return nullptr;
 }
 
 void ATRS232Emulator::OnChannelReceiveReady(int index) {

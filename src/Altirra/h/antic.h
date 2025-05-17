@@ -41,7 +41,7 @@ class ATAnticEmulatorConnections {
 public:
 	VDFORCEINLINE uint8 AnticReadByteFast(uint32 address) {
 		uintptr readPage = mpAnticReadPageMap[address >> 8];
-		return *mpAnticBusData = (!(readPage & 1) ? *(const uint8 *)(readPage + address) : AnticReadByte(address));
+		return (!(readPage & 1) ? *(const uint8 *)(readPage + address) : AnticReadByte(address));
 	}
 
 	virtual uint8 AnticReadByte(uint32 address) = 0;
@@ -56,8 +56,6 @@ public:
 	virtual uint8 AnticGetCPUHeldCycleValue() = 0;
 	virtual void AnticForceNextCPUCycleSlow() = 0;
 	virtual void AnticOnVBlank() =0;
-
-	uint8 *mpAnticBusData;
 
 protected:
 	const uintptr *mpAnticReadPageMap;
@@ -139,7 +137,11 @@ public:
 		return mDLIST;
 	}
 
-	void Init(ATAnticEmulatorConnections *conn, ATGTIAEmulator *gtia, ATScheduler *sch, ATSimulatorEventManager *simevmgr);
+	void Init(ATAnticEmulatorConnections *conn, ATGTIAEmulator *gtia, ATScheduler *sch, ATSimulatorEventManager *simevmgr, uint8 *busData);
+	void SetBusRefreshData(const uint8 *refreshData) {
+		mpBusRefreshData = refreshData;
+	}
+
 	void ColdReset();
 	void WarmReset();
 	void RequestNMI();
@@ -292,8 +294,9 @@ private:
 	uint32	mPFDisplayEnd = 0;
 	uint32	mPFDMAStart = 0;
 	uint8	*mpPFCharFetchPtr = nullptr;
+	uint8 *mpBusData = nullptr;
+	const uint8 *mpBusRefreshData = nullptr;
 	uint32	mPFDMAVEnd = 0;
-	uint32	mPFDMAVEndWide = 0;
 	uint32	mPFDMAEnd = 0;
 	uint32	mPFDMALatchedStart = 0;
 	uint32	mPFDMALatchedVEnd = 0;
@@ -401,38 +404,45 @@ VDFORCEINLINE uint8 ATAnticEmulator::PreAdvance() {
 
 VDFORCEINLINE void ATAnticEmulator::PostAdvance(uint8 fetchMode) {
 	if (fetchMode) {
-		switch(fetchMode) {
+		// cast is necessary for MSVC to avoid a stupid movzx / dec / movsxd sequence
+		switch((size_t)fetchMode) {
 			case 1:		// refresh cycle
+				[[likely]]
 				break;
 
 			case 3:		// bitmap graphic or character name fetch
-				*mpPFDataWrite++ = mpConn->AnticReadByteFast(mPFRowDMAPtrBase + ((mPFRowDMAPtrOffset++) & 0x0fff));
+				[[likely]]
+				*mpPFDataWrite++ = *mpBusData = mpConn->AnticReadByteFast(mPFRowDMAPtrBase + ((mPFRowDMAPtrOffset++) & 0x0fff));
 				break;
 
 			case 5:		// character data fetch
+				[[likely]]
 				{
 					uint8 c = *mpPFDataRead++;
-					*mpPFCharFetchPtr++ = mpConn->AnticReadByteFast(mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3));
+					*mpPFCharFetchPtr++ = *mpBusData = mpConn->AnticReadByteFast(mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3));
 				}
 				break;
 
 			case 8+3:		// bitmap graphic or character name fetch (abnormal DMA)
-				*mpPFDataWrite++ = mpConn->AnticReadByteFast(mPFRowDMAPtrBase + ((mPFRowDMAPtrOffset++) & 0x0fff));
+				[[unlikely]]
+				*mpPFDataWrite++ = *mpBusData = mpConn->AnticReadByteFast(mPFRowDMAPtrBase + ((mPFRowDMAPtrOffset++) & 0x0fff));
 				if ((uint8)(uintptr)mpPFDataWrite == 63)
 					mpPFDataWrite -= 63;
 				break;
 
 			case 8+5:		// character data fetch (abnormal DMA)
+				[[unlikely]]
 				{
 					uint8 c = *mpPFDataRead | (((uintptr)mpPFDataRead & 48) == 48 ? 0xFF : 0x00);
 					++mpPFDataRead;
 					if ((uint8)(uintptr)mpPFDataRead == 63)
 						mpPFDataRead -= 63;
-					*mpPFCharFetchPtr++ = mpConn->AnticReadByteFast(mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3));
+					*mpPFCharFetchPtr++ = *mpBusData = mpConn->AnticReadByteFast(mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3));
 				}
 				break;
 
 			case 8+7:		// character name + data fetch (abnormal DMA)
+				[[unlikely]]
 				{
 					uint8 c = *mpPFDataRead | (((uintptr)mpPFDataRead & 48) == 48 ? 0xFF : 0x00);
 					++mpPFDataRead;
@@ -441,43 +451,74 @@ VDFORCEINLINE void ATAnticEmulator::PostAdvance(uint8 fetchMode) {
 					uint32 addr1 = mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3);
 					uint32 addr2 = mPFRowDMAPtrBase + ((mPFRowDMAPtrOffset++) & 0x0fff);
 
-					*mpPFDataWrite++ = (*mpPFCharFetchPtr++ = mpConn->AnticReadByteFast(addr1 & addr2));
+					*mpPFDataWrite++ = (*mpPFCharFetchPtr++ = *mpBusData = mpConn->AnticReadByteFast(addr1 & addr2));
 					if ((uint8)(uintptr)mpPFDataWrite == 63)
 						mpPFDataWrite -= 63;
 				}
 				break;
 
 			case 18:	// virtual bitmap graphic or character name fetch
+				*mpPFDataWrite++ = *mpBusData;
+				++mPFRowDMAPtrOffset;
+				break;
+
 			case 19:	// virtual bitmap graphic or character name fetch with refresh DMA
-				*mpPFDataWrite++ = *mpConn->mpAnticBusData;
+				*mpPFDataWrite++ = *mpBusRefreshData;
 				++mPFRowDMAPtrOffset;
 				break;
 
 			case 20:	// virtual character data fetch
+				++mpPFDataRead;
+				*mpPFCharFetchPtr++ = *mpBusData;
+				break;
+
 			case 21:	// virtual character data fetch with refresh DMA
 				++mpPFDataRead;
-				*mpPFCharFetchPtr++ = *mpConn->mpAnticBusData;
+				*mpPFCharFetchPtr++ = *mpBusRefreshData;
 				break;
 
 			case 26:	// virtual bitmap graphic or character name fetch
+				*mpPFDataWrite++ = *mpBusData;
+				if ((uint8)(uintptr)mpPFDataWrite == 63)
+					mpPFDataWrite -= 63;
+				++mPFRowDMAPtrOffset;
+				break;
+
 			case 27:	// virtual bitmap graphic or character name fetch with refresh DMA
-				*mpPFDataWrite++ = *mpConn->mpAnticBusData;
+				*mpPFDataWrite++ = *mpBusRefreshData;
 				if ((uint8)(uintptr)mpPFDataWrite == 63)
 					mpPFDataWrite -= 63;
 				++mPFRowDMAPtrOffset;
 				break;
 
 			case 28:	// virtual character data fetch
+				++mpPFDataRead;
+				if ((uint8)(uintptr)mpPFDataRead == 63)
+					mpPFDataRead -= 63;
+				*mpPFCharFetchPtr++ = *mpBusData;
+				break;
+
 			case 29:	// virtual character data fetch with refresh DMA
 				++mpPFDataRead;
 				if ((uint8)(uintptr)mpPFDataRead == 63)
 					mpPFDataRead -= 63;
-				*mpPFCharFetchPtr++ = *mpConn->mpAnticBusData;
+				*mpPFCharFetchPtr++ = *mpBusRefreshData;
 				break;
 
 			case 30:	// virtual character data + character name fetch (abnormal DMA)
+				[[unlikely]]
+				*mpPFDataWrite++ = (*mpPFCharFetchPtr++ = *mpBusData);
+				if ((uint8)(uintptr)mpPFDataWrite == 63)
+					mpPFDataWrite -= 63;
+				++mPFRowDMAPtrOffset;
+				++mpPFDataRead;
+				if ((uint8)(uintptr)mpPFDataRead == 63)
+					mpPFDataRead -= 63;
+				break;
+
 			case 31:	// virtual character data + character name fetch with refresh DMA (abnormal DMA)
-				*mpPFDataWrite++ = (*mpPFCharFetchPtr++ = *mpConn->mpAnticBusData);
+				[[unlikely]]
+				*mpPFDataWrite++ = (*mpPFCharFetchPtr++ = *mpBusRefreshData);
 				if ((uint8)(uintptr)mpPFDataWrite == 63)
 					mpPFDataWrite -= 63;
 				++mPFRowDMAPtrOffset;
@@ -487,18 +528,22 @@ VDFORCEINLINE void ATAnticEmulator::PostAdvance(uint8 fetchMode) {
 				break;
 
 			case 32+8+2:		// suppressed bitmap graphic or character name fetch, display DMA disabled (abnormal DMA)
+				[[unlikely]]
 				++mPFRowDMAPtrOffset;
 				break;
 
 			case 32+8+2+1:		// suppressed bitmap graphic or character name fetch (abnormal DMA)
+				[[unlikely]]
 				mpConn->AnticReadByteFast(mPFRowDMAPtrBase + (mPFRowDMAPtrOffset & 0x0fff));
 				++mPFRowDMAPtrOffset;
 				break;
 
 			case 32+8+4:		// suppressed character data fetch, display DMA disabled (abnormal DMA)
+				[[unlikely]]
 				break;
 
 			case 32+8+4+1:		// suppressed character data fetch (abnormal DMA)
+				[[unlikely]]
 				{
 					uint8 c = mPFDataBuffer[0];
 					mpConn->AnticReadByteFast(mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3));
@@ -506,10 +551,12 @@ VDFORCEINLINE void ATAnticEmulator::PostAdvance(uint8 fetchMode) {
 				break;
 
 			case 32+8+4+2:	// suppressed character name + data fetch, display DMA disabled (abnormal DMA)
+				[[unlikely]]
 				++mPFRowDMAPtrOffset;
 				break;
 
 			case 32+8+4+2+1:	// suppressed character name + data fetch (abnormal DMA)
+				[[unlikely]]
 				{
 					uint8 c = mPFDataBuffer[0];
 					uint32 addr1 = mPFCharFetchPtr + ((uint32)(c & mPFCharMask) << 3);
@@ -542,6 +589,7 @@ VDFORCEINLINE void ATAnticEmulator::PostAdvance(uint8 fetchMode) {
 
 			case 32+16+8+2:		// virtual bitmap graphic or character name fetch (abnormal DMA)
 			case 32+16+8+2+1:	// virtual bitmap graphic or character name fetch+refresh (abnormal DMA)
+				[[unlikely]]
 				++mPFRowDMAPtrOffset;
 				++mpPFDataWrite;
 				if ((uint8)(uintptr)mpPFDataWrite == 63)
@@ -550,6 +598,7 @@ VDFORCEINLINE void ATAnticEmulator::PostAdvance(uint8 fetchMode) {
 
 			case 32+16+8+4:		// virtual character data fetch (abnormal DMA)
 			case 32+16+8+4+1:	// virtual character data fetch+refresh (abnormal DMA)
+				[[unlikely]]
 				++mpPFDataRead;
 				if ((uint8)(uintptr)mpPFDataRead == 63)
 					mpPFDataRead -= 63;
@@ -558,6 +607,7 @@ VDFORCEINLINE void ATAnticEmulator::PostAdvance(uint8 fetchMode) {
 
 			case 32+16+8+6:		// virtual character data + character name fetch (abnormal DMA)
 			case 32+16+8+6+1:	// virtual character data + character name fetch + refresh (abnormal DMA)
+				[[unlikely]]
 				++mPFRowDMAPtrOffset;
 				++mpPFCharFetchPtr;
 				++mpPFDataRead;
@@ -575,8 +625,6 @@ VDFORCEINLINE void ATAnticEmulator::PostAdvance(uint8 fetchMode) {
 
 	uint8 busActive = fetchMode & 1;
 	mHALTCycles += busActive;
-
-	busActive |= (uint8)mbWSYNCActive;
 }
 
 #ifdef VD_COMPILER_MSVC

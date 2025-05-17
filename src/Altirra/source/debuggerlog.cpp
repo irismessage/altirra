@@ -56,8 +56,7 @@ void ATConsoleLogWriteTag(ATLogChannel *channel) {
 	}
 
 	if (flags & kATLogFlags_TimestampUs) {
-		const uint64 ticks = g_sim.TimeSinceColdReset();
-		double dt = g_sim.GetScheduler()->GetRate().AsInverseDouble() * (double)ticks;
+		double dt = g_sim.SimulatedSecondsSinceColdReset();
 
 		dt = fmod(dt, 100.0);
 

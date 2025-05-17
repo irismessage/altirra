@@ -19,6 +19,7 @@
 #include <at/atcore/propertyset.h>
 #include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uipane.h>
+#include "autosavemanager.h"
 #include "cmdhelpers.h"
 #include "console.h"
 #include "devicemanager.h"
@@ -260,6 +261,12 @@ void OnCommandVideoToggleLinearFrameBlending() {
 	gtia.SetLinearBlendEnabled(!gtia.IsLinearBlendEnabled());
 }
 
+void OnCommandVideoToggleMonoPersistence() {
+	ATGTIAEmulator& gtia = g_sim.GetGTIA();
+
+	gtia.SetBlendMonoPersistenceEnabled(!gtia.IsBlendMonoPersistenceEnabled());
+}
+
 void OnCommandVideoToggleInterlace() {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 
@@ -385,8 +392,28 @@ void OnCommandConfigureSystem() {
 	ATUIShowDialogConfigureSystem(ATUIGetNewPopupOwner());
 }
 
+void OnCommandRewind() {
+	g_sim.GetAutoSaveManager().Rewind();
+}
+
+void OnCommandShowRewindDialog() {
+	extern void ATUIShowDialogRewind(class IATAutoSaveManager&);
+
+	ATUIShowDialogRewind(g_sim.GetAutoSaveManager());
+}
+
+void OnCommandToggleRewindRecording() {
+	auto& asmgr = g_sim.GetAutoSaveManager();
+
+	asmgr.SetRewindEnabled(!asmgr.GetRewindEnabled());
+}
+
 void ATUIInitCommandMappingsSystem(ATUICommandManager& cmdMgr) {
 	using namespace ATCommands;
+
+	auto IsRewindEnabled = []() -> bool {
+		return g_sim.GetAutoSaveManager().GetRewindEnabled();
+	};
 
 	static constexpr struct ATUICommand kCommands[]={
 		{ "System.TogglePause", OnCommandSystemTogglePause },
@@ -395,6 +422,10 @@ void ATUIInitCommandMappingsSystem(ATUICommandManager& cmdMgr) {
 		{ "System.ColdResetComputerOnly", OnCommandSystemColdResetComputerOnly },
 
 		{ "System.ToggleVSyncAdaptiveSpeed", OnCommandSystemSpeedToggleVSyncAdaptive, nullptr, [] { return ToChecked(ATUIGetFrameRateVSyncAdaptive()); } },
+
+		{ "System.Rewind", OnCommandRewind, IsRewindEnabled },
+		{ "System.ShowRewindDialog", OnCommandShowRewindDialog, IsRewindEnabled },
+		{ "System.ToggleRewindRecording", OnCommandToggleRewindRecording, nullptr, [] { return ToChecked(g_sim.GetAutoSaveManager().GetRewindEnabled()); } },
 	};
 
 	cmdMgr.RegisterCommands(kCommands, vdcountof(kCommands));

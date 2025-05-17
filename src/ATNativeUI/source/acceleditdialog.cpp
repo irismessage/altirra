@@ -24,6 +24,7 @@
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/uiproxies.h>
 #include <at/atnativeui/hotkeyexcontrol.h>
+#include <at/atnativeui/hotkeyscandialog.h>
 #include "resource.h"
 
 
@@ -384,6 +385,9 @@ bool VDDialogEditAccelerators::OnCommand(uint32 id, uint32 extcode) {
 	} else if (id == IDC_NEXTKEY) {
 		if (mpHotKeyControl)
 			mpHotKeyControl->CaptureAnyNextKey();
+		return true;
+	} else if (id == ID_TOOLS_SCANFORBLOCKEDKEYS) {
+		ATUIShowDialogScanHotKeys((VDGUIHandle)mhdlg);
 		return true;
 	}
 

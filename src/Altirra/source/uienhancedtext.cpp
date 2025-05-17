@@ -17,6 +17,11 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/color.h>
+#include <vd2/Kasumi/pixmap.h>
+#include <vd2/Kasumi/pixmapops.h>
+#include <vd2/Kasumi/pixmaputils.h>
+#include <vd2/Kasumi/resample.h>
 #include <at/atcore/devicevideo.h>
 #include <windows.h>
 #include "uienhancedtext.h"
@@ -24,6 +29,8 @@
 #include <at/atui/uiwidget.h>
 #include "antic.h"
 #include "gtia.h"
+#include "oshelper.h"
+#include "resource.h"
 #include "simulator.h"
 #include "virtualscreen.h"
 
@@ -42,10 +49,10 @@ public:
 
 	void SetFont(const LOGFONTW *font);
 
-	void OnSize(uint32 w, uint32 h);
-	void OnChar(int ch);
-	bool OnKeyDown(uint32 keyCode);
-	bool OnKeyUp(uint32 keyCode);
+	void OnSize(uint32 w, uint32 h) override;
+	void OnChar(int ch) override;
+	bool OnKeyDown(uint32 keyCode) override;
+	bool OnKeyUp(uint32 keyCode) override;
 
 	void Paste(const wchar_t *s, size_t);
 
@@ -64,27 +71,48 @@ public:
 	uint32 GetActivityCounter() override;
 
 protected:
+	bool OnLineInputKeyDown(uint32 keyCode);
+
 	void Paint(const bool *lineRedrawFlags);
 	void PaintHWMode(const bool *lineRedrawFlags);
 	void PaintSWMode(const bool *lineRedrawFlags);
 
 	void AddToHistory(const char *s);
 	void OnInputReady();
+	void OnVirtualScreenResized();
+	void OnPassThroughChanged();
 	void ProcessPastedInput();
 	void ResetAttractTimeout();
+	void UpdateFont();
+	void ClearFont();
+	vdsize32 ComputeDesiredFontSize() const;
+	void InvalidateFontSizeCache();
+
+	class CharResampler;
+
+	static constexpr int kMinFontSize = 4;
+	static constexpr int kMaxFontSize = 255;
 
 	IATUIEnhancedTextOutput *mpOutput = nullptr;
+	bool	mbLineInputEnabled = false;
+
 	HDC		mhdc = nullptr;
 	HBITMAP	mhBitmap = nullptr;
 	void	*mpBitmap = nullptr;
 	HGDIOBJ	mhOldBitmap = nullptr;
 	int		mBitmapWidth = 0;
 	int		mBitmapHeight = 0;
+	int		mTextModeFontHeight = 0;
 	HFONT	mTextModeFont = nullptr;
 	HFONT	mTextModeFont2x = nullptr;
 	HFONT	mTextModeFont4x = nullptr;
 	int		mTextCharW = 16;
 	int		mTextCharH = 16;
+
+	bool	mbInverseEnabled = true;
+
+	sint32	mViewportWidth = 0;
+	sint32	mViewportHeight = 0;
 
 	uint32	mTextLastForeColor = 0;
 	uint32	mTextLastBackColor = 0;
@@ -96,7 +124,11 @@ protected:
 	uint8	mTextLineCHBASE[30] = {};
 	uint8	mTextLastData[30][40] = {};
 
-	WCHAR	mGlyphIndices[94] = {};
+	static constexpr WCHAR kInvalidGlyphIndex = -1;
+	static constexpr WCHAR kEmptyGlyphIndex = -2;
+	WCHAR	mDefaultGlyphIndices[128] = {};
+	WCHAR	mCustomGlyphIndices[128] = {};
+
 	uint16	mGlyphLookup[3][128] = {};
 
 	// Only used in HW mode.
@@ -118,20 +150,162 @@ protected:
 	uint32 mLastCursorX = 0;
 	uint32 mLastCursorY = 0;
 
+	bool mbUsingCustomFont = false;
+
+	struct PendingSpecialChar {
+		uint8 mChar;
+		uint8 mX;
+		uint8 mY;
+	};
+
+	vdfastvector<PendingSpecialChar> mPendingSpecialChars;
+	uint32 mLastGammaTableForeColor = 0;
+	uint32 mLastGammaTableBackColor = 0;
+
 	vdfastdeque<wchar_t> mPasteBuffer;
 
 	ATGTIAEmulator *mpGTIA = nullptr;
 	ATAnticEmulator *mpANTIC = nullptr;
 	ATSimulator *mpSim = nullptr;
 
+	LOGFONT mBaseFontDesc {};
+	vdsize32 mFontSizeCache[256];
+
 	ATDeviceVideoInfo mVideoInfo = {};
 	VDPixmap mFrameBuffer = {};
 
+	VDPixmapBuffer mRescaledDefaultFont;
+	VDPixmapBuffer mRescaledCustomFont;
+	uint8 mRawDefaultFont[1024] {};
+	uint8 mCurrentCustomFont[1024] {};
+	uint8 mMirroredCustomFont[1024] {};
+	uint32 mGammaTable[256] {};
+
 	static const uint8 kInternalToATASCIIXorTab[4];
+
+	static constexpr size_t kRawDefaultFontHashBuckets = 2111;
+	static const sint8 kRawDefaultFontHashTable[kRawDefaultFontHashBuckets];
 };
 
-const uint8 ATUIEnhancedTextEngine::kInternalToATASCIIXorTab[4]={
+////////////////////////////////////////////////////////////////////////////////
+
+class ATUIEnhancedTextEngine::CharResampler {
+public:
+	CharResampler(uint32 charWidth, uint32 charHeight);
+
+	void ResampleChar(VDPixmap& dst, uint8 ch, const uint8 rawChar[8]);
+
+private:
+	vdautoptr<IVDPixmapResampler> mpResampler;
+	VDPixmapBuffer mExpand8x8Buffer;
+
+	const uint32 mCharWidth;
+	const uint32 mCharHeight;
+};
+
+ATUIEnhancedTextEngine::CharResampler::CharResampler(uint32 charWidth, uint32 charHeight)
+	: mpResampler(VDCreatePixmapResampler())
+	, mCharWidth(charWidth)
+	, mCharHeight(charHeight)
+{
+	mpResampler->SetFilters(IVDPixmapResampler::kFilterSharpLinear, IVDPixmapResampler::kFilterSharpLinear, false);
+	mpResampler->SetSharpnessFactors(1.5f, 1.5f);
+	VDVERIFY(mpResampler->Init(charWidth, charHeight, nsVDPixmap::kPixFormat_Y8_FR, 8, 8, nsVDPixmap::kPixFormat_Y8_FR));
+
+	mExpand8x8Buffer.init(8, 8, nsVDPixmap::kPixFormat_Y8_FR);
+}
+
+void ATUIEnhancedTextEngine::CharResampler::ResampleChar(VDPixmap& dst, uint8 ch, const uint8 rawChar[8]) {
+	VDPixmap pxdst = VDPixmapClip(dst, 0, mCharHeight * (uint32)ch, mCharWidth, mCharHeight);
+	VDPixmap pxsrc {};
+	pxsrc.data = (void *)rawChar;
+	pxsrc.pitch = 1;
+	pxsrc.w = 8;
+	pxsrc.h = 8;
+	pxsrc.format = nsVDPixmap::kPixFormat_Pal1;
+
+	static constexpr uint32 kPal[2] { 0, 0xFFFFFF };
+	pxsrc.palette = kPal;
+
+	VDPixmapBlt(mExpand8x8Buffer, pxsrc);
+
+	mpResampler->Process(pxdst, mExpand8x8Buffer);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+constexpr uint8 ATUIEnhancedTextEngine::kInternalToATASCIIXorTab[4]={
 	0x20, 0x60, 0x40, 0x00
+};
+
+constexpr sint8 ATUIEnhancedTextEngine::kRawDefaultFontHashTable[kRawDefaultFontHashBuckets] = {
+	// generated by hashfont.py
+	 32, -1, -1, -1, -1, -1, -1, -1,  7, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 83, -1, 42, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 13, -1,
+	 92, -1, -1, -1, -1, -1,113, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, 34, -1, -1, -1, -1,125, -1, -1, 87, -1, -1, -1, -1, 48, -1, -1, -1, -1, 58, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 51,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 75, -1, 66, -1, -1, -1, -1, -1, -1, -1,114, -1, -1, -1, -1, -1, -1, -1, -1, -1, 52,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,100, -1, -1, -1, -1, -1, -1, -1, -1, -1, 86, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,109, -1,  2, -1, -1, -1, -1, 16, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 50, -1, -1, -1, 27, -1, -1, -1, -1, -1, -1, 29, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,102, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 44, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 43, -1, -1, -1, -1, -1, -1,115, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  6, -1, -1, -1, -1, -1, 91, -1,101, -1, -1, -1, -1, -1, -1,104,  5,
+	 -1, -1, -1,  4, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 82, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 78, -1, 41, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, 74, -1, -1, 63, -1, -1, -1, -1, -1, 72, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 85, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 53, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 47, -1, -1,  9,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 93, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 89, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 28, -1, -1, -1, -1, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 88, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, 25, -1, -1, -1, -1, -1, -1, 95, -1, -1, -1, -1, 61, -1, -1, -1, -1, -1, -1, -1, 31, -1,111,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 15, -1, -1, -1, -1, -1,110, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, 81, -1, -1,  3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 65, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,119, -1, -1, -1, -1, -1, -1, -1, -1, 55,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, 64, -1, -1, -1, -1, 20, -1, 98, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1,  0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,105, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, 22, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,106, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1,126, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 57, -1, -1,
+	 39, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 46, -1, -1, -1, -1, -1, -1, -1, 79, -1,
+	 -1, -1, 17, -1, 60, -1,  1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1,117, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 10, -1, -1, -1, -1, -1, -1, -1, 70, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,107, -1, -1,121, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 68, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 94, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 45, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 33, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 21, -1, -1, -1, -1, -1, -1, 56, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, 97, 35, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,123, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 26, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, 54, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	116, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 77, -1, -1, -1, -1, -1, -1, 67, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,118, -1, 76, -1,108, -1, -1, -1, -1, -1, -1, -1, 59, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 23, -1, -1, -1, 19, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,103, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 99, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, -1,
+	120, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,127, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, 38, -1, -1, -1, 80, -1, -1, -1, -1, -1, -1, 71, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 96, -1, -1, -1, -1, 37, -1, -1, -1, -1, -1, -1, 30, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 73, -1, -1, -1, -1, -1, -1, -1,112, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, 90, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 40, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,122, -1,124, -1, -1, -1, -1, -1, -1, -1, -1, -1, 18, -1, -1, -1, 24, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 69, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, 84, -1, 49, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	 -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 36, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
 };
 
 ATUIEnhancedTextEngine::ATUIEnhancedTextEngine() {
@@ -145,6 +319,8 @@ ATUIEnhancedTextEngine::ATUIEnhancedTextEngine() {
 	memset(mTextLineMode, 0, sizeof mTextLineMode);
 	memset(mTextLineCHBASE, 0, sizeof mTextLineCHBASE);
 	memset(mTextLastData, 0, sizeof mTextLastData);
+
+	InvalidateFontSizeCache();
 }
 
 ATUIEnhancedTextEngine::~ATUIEnhancedTextEngine() {
@@ -163,12 +339,32 @@ void ATUIEnhancedTextEngine::Init(IATUIEnhancedTextOutput *output, ATSimulator *
 		mhOldBitmap = SelectObject(mhdc, mhBitmap);
 	}
 
+	// load the raw default font from AltirraOS ($E000-E3FF from $D800-FFFF)
+	VDVERIFY(ATLoadKernelResource(IDR_KERNEL, mRawDefaultFont, 0x0800, sizeof mRawDefaultFont, true));
+
+	// swizzle font to ATASCII order
+	std::rotate(mRawDefaultFont, mRawDefaultFont + 0x200, mRawDefaultFont + 0x300);
+
 	auto *vs = sim->GetVirtualScreenHandler();
-	if (vs)
-		vs->SetReadyCallback([this]() { OnInputReady(); });
+	if (vs) {
+		vs->SetReadyCallback([this] { OnInputReady(); });
+		vs->SetResizeCallback([this] { OnVirtualScreenResized(); });
+		vs->SetPassThroughChangedCallback([this] { OnPassThroughChanged(); });
+	}
+
+	OnPassThroughChanged();
 }
 
 void ATUIEnhancedTextEngine::Shutdown() {
+	if (mpSim) {
+		IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
+		if (vs) {
+			vs->SetReadyCallback(nullptr);
+			vs->SetResizeCallback(nullptr);
+			vs->SetPassThroughChangedCallback(nullptr);
+		}
+	}
+
 	SetFont(NULL);
 
 	if (mhdc) {
@@ -203,95 +399,26 @@ IATDeviceVideoOutput *ATUIEnhancedTextEngine::GetVideoOutput() {
 }
 
 void ATUIEnhancedTextEngine::SetFont(const LOGFONTW *font) {
-	if (mTextModeFont) {
-		DeleteObject(mTextModeFont);
-		mTextModeFont = NULL;
-	}
-
-	if (mTextModeFont2x) {
-		DeleteObject(mTextModeFont2x);
-		mTextModeFont2x = NULL;
-	}
-
-	if (mTextModeFont4x) {
-		DeleteObject(mTextModeFont4x);
-		mTextModeFont4x = NULL;
-	}
-
-	if (!font)
+	if (!font) {
+		ClearFont();
 		return;
-
-	mTextModeFont = CreateFontIndirectW(font);
-	if (!mTextModeFont)
-		mTextModeFont = CreateFontW(16, 0, 0, 0, 0, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH, L"Lucida Console");
-
-	memset(mGlyphIndices, 0, sizeof mGlyphIndices);
-
-	mTextCharW = 16;
-	mTextCharH = 16;
-
-	HGDIOBJ hOldFont = SelectObject(mhdc, mTextModeFont);
-	if (hOldFont) {
-		TEXTMETRICW tm;
-		if (GetTextMetricsW(mhdc, &tm)) {
-			mTextCharW = tm.tmAveCharWidth;
-			mTextCharH = tm.tmHeight;
-		}
-
-		for(int i=0; i<94; ++i) {
-			const WCHAR ch = (WCHAR)(33 + i);
-
-			GCP_RESULTSW results = {sizeof(GCP_RESULTSW)};
-			results.lpGlyphs = &mGlyphIndices[i];
-			results.nGlyphs = 1;
-
-			if (!GetCharacterPlacementW(mhdc, &ch, 1, 0, &results, 0))
-				mGlyphIndices[i] = -1;
-		}
-
-		SelectObject(mhdc, hOldFont);
 	}
 
-	LOGFONTW logfont2x4x(*font);
-	logfont2x4x.lfHeight = mTextCharH;
-	logfont2x4x.lfWidth = mTextCharW * 2;
+	// force font to be recreated
+	ClearFont();
+	InvalidateFontSizeCache();
+	mBaseFontDesc = *font;
 
-	mTextModeFont2x = CreateFontIndirectW(&logfont2x4x);
-	if (!mTextModeFont2x)
-		mTextModeFont2x = CreateFontW(16, mTextCharW * 2, 0, 0, 0, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH, L"Lucida Console");
+	// recreate font
+	UpdateFont();
 
-	logfont2x4x.lfHeight *= 2;
-	mTextModeFont4x = CreateFontIndirectW(&logfont2x4x);
-	if (!mTextModeFont4x)
-		mTextModeFont4x = CreateFontW(32, mTextCharW * 2, 0, 0, 0, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH, L"Lucida Console");
+	// reinitialize bitmap
+	sint32 w = mViewportWidth;
+	sint32 h = mViewportHeight;
 
-	// initialize font glyphs
-	HFONT hfonts[3] = { mTextModeFont, mTextModeFont2x, mTextModeFont4x };
-
-	for(int i=0; i<3; ++i) {
-		SelectObject(mhdc, hfonts[i]);
-
-		auto& glyphTable = mGlyphLookup[i];
-		memset(&glyphTable, 0, sizeof glyphTable);
-
-		WCHAR cspace = (WCHAR)0x20;
-		for(int i=32; i<127; ++i) {
-			WCHAR c = (WCHAR)i;
-			WORD glyphIndex = 0;
-
-			if (1 == GetGlyphIndicesW(mhdc, &c, 1, &glyphIndex, GGI_MARK_NONEXISTING_GLYPHS) ||
-				1 == GetGlyphIndicesW(mhdc, &cspace, 1, &glyphIndex, GGI_MARK_NONEXISTING_GLYPHS))
-			{
-				glyphTable[i] = glyphIndex;
-			}
-		}
-
-		// backfill other chars with period
-		for(int i=0; i<32; ++i)
-			glyphTable[i] = glyphTable[0x21];
-
-		glyphTable[0x7F] = glyphTable[0x21];
-	}
+	mViewportWidth = 0;
+	mViewportHeight = 0;
+	OnSize(w, h);
 }
 
 void ATUIEnhancedTextEngine::OnSize(uint32 w, uint32 h) {
@@ -304,28 +431,26 @@ void ATUIEnhancedTextEngine::OnSize(uint32 w, uint32 h) {
 	if (h > 32767)
 		h = 32767;
 
+	if (mViewportWidth == w && mViewportHeight == h)
+		return;
+
+	mViewportWidth = w;
+	mViewportHeight = h;
+
 	uint32 charW;
 	uint32 charH;
 
-	if (mpSim->GetVirtualScreenHandler()) {
-		charW = (uint32)((sint32)w / mTextCharW);
-		charH = (uint32)((sint32)h / mTextCharH);
-
-		if (charW < 40)
-			charW = 40;
-
-		if (charH < 24)
-			charH = 24;
-
-		if (charW > 255)
-			charW = 255;
-
-		if (charH > 255)
-			charH = 255;
+	if (IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler()) {
+		const vdsize32& termSize = vs->GetTerminalSize();
+		charW = termSize.w;
+		charH = termSize.h;
 	} else {
 		charW = 40;
 		charH = 30;
 	}
+
+	// update the font now if we can
+	UpdateFont();
 
 	uint32 adjustedW = (uint32)(charW * mTextCharW);
 	uint32 adjustedH = (uint32)(charH * mTextCharH);
@@ -381,12 +506,10 @@ void ATUIEnhancedTextEngine::OnSize(uint32 w, uint32 h) {
 	mVideoInfo.mTextRows = charH;
 	mVideoInfo.mDisplayArea.set(0, 0, adjustedW, adjustedH);
 
-	IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
-	if (vs)
-		vs->Resize(charW, charH);
-
 	mbLastScreenValid = false;
 	++mVideoInfo.mFrameBufferChangeCount;
+
+	Update(true);
 
 	if (mpOutput)
 		mpOutput->InvalidateTextOutput();
@@ -606,6 +729,72 @@ void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 	}
 
 	if (vs) {
+		if (vs->IsPassThroughEnabled())
+			return;
+
+		// check if a custom font is being used
+		ATMemoryManager *mem = mpSim->GetMemoryManager();
+		const uint8 chbase = mem->DebugReadByte(ATKernelSymbols::CHBAS);
+
+		if (chbase != 0xE0) {
+			bool forceRematchAllChars = false;
+
+			if (!mbUsingCustomFont) {
+				mbUsingCustomFont = true;
+
+				forceInvalidate = true;
+				forceRematchAllChars = true;
+			}
+
+			const uint16 chbase16 = (uint16)(chbase & 0xFC) << 8;
+			mem->DebugAnticReadMemory(mMirroredCustomFont+0x000, chbase16+0x200, 256);
+			mem->DebugAnticReadMemory(mMirroredCustomFont+0x100, chbase16+0x000, 256);
+			mem->DebugAnticReadMemory(mMirroredCustomFont+0x200, chbase16+0x100, 256);
+			mem->DebugAnticReadMemory(mMirroredCustomFont+0x300, chbase16+0x300, 256);
+
+			if (memcmp(mCurrentCustomFont, mMirroredCustomFont, 1024)) {
+				forceInvalidate = true;
+
+				CharResampler cr(mTextCharW, mTextCharH);
+
+				for(int i=0; i<128; ++i) {
+					const uint8 *src = &mMirroredCustomFont[i*8];
+					uint8 *dst = &mCurrentCustomFont[i*8];
+					if (forceRematchAllChars || memcmp(dst, src, 8)) {
+						memcpy(dst, src, 8);
+
+						// check if we can match this to a standard glyph
+						sint8 maybeChar = kRawDefaultFontHashTable[VDReadUnalignedLEU64(src) % kRawDefaultFontHashBuckets];
+						if (maybeChar >= 0 && !memcmp(src, &mRawDefaultFont[maybeChar * 8], 8))
+							mCustomGlyphIndices[i] = mDefaultGlyphIndices[(size_t)maybeChar];
+						else
+							mCustomGlyphIndices[i] = kInvalidGlyphIndex;
+
+						if (mCustomGlyphIndices[i] == kInvalidGlyphIndex) {
+							cr.ResampleChar(mRescaledCustomFont, i, src);
+							forceInvalidate = true;
+						}
+					}
+				}
+			}
+		} else {
+			if (mbUsingCustomFont) {
+				mbUsingCustomFont = false;
+
+				forceInvalidate = true;
+			}
+		}
+
+		// check CHACTL shadow to see if inverse video is enabled (required by SPACEWAY.BAS)
+		const uint8 chact = mem->DebugReadByte(ATKernelSymbols::CHACT);
+		const bool inverseEnabled = (chact & 2) != 0;
+
+		if (mbInverseEnabled != inverseEnabled) {
+			mbInverseEnabled = inverseEnabled;
+
+			forceInvalidate = true;
+		}
+
 		bool lineFlags[255] = {false};
 		bool *lineFlagsPtr = lineFlags;
 
@@ -614,7 +803,7 @@ void ATUIEnhancedTextEngine::Update(bool forceInvalidate) {
 		vs->GetScreen(w, h, screen);
 
 		uint32 cursorX, cursorY;
-		bool cursorPresent = vs->GetCursorInfo(cursorX, cursorY);
+		bool cursorPresent = vs->GetCursorInfo(cursorX, cursorY) && inverseEnabled;
 
 		bool dirty = false;
 		uint32 n = w * h;
@@ -879,17 +1068,38 @@ uint32 ATUIEnhancedTextEngine::GetActivityCounter() {
 }
 
 void ATUIEnhancedTextEngine::Paint(const bool *lineRedrawFlags) {
-	int saveHandle = SaveDC(mhdc);
+	// if the foreground or background colors have changed, recompute the gamma
+	// table
+	if (mLastGammaTableForeColor != mTextLastForeColor || 
+		mLastGammaTableBackColor != mTextLastBackColor)
+	{
+		mLastGammaTableForeColor = mTextLastForeColor;
+		mLastGammaTableBackColor = mTextLastBackColor;
 
-	if (!saveHandle)
-		return;
+		using namespace nsVDVecMath;
+		const vdfloat32x3 foreColor = vdfloat32x3(VDColorRGB::FromBGR8(mTextLastForeColor).SRGBToLinear());
+		const vdfloat32x3 backColor = vdfloat32x3(VDColorRGB::FromBGR8(mTextLastBackColor).SRGBToLinear());
+
+		for(int i=0; i<256; ++i) {
+			float rawAlpha = (float)i / 255.0f;
+
+			// apply contrast enhancement
+			float alpha;
+			if (rawAlpha < 0.25f)
+				alpha = 0.0f;
+			else if (rawAlpha > 0.75f)
+				alpha = 1.0f;
+			else
+				alpha = (rawAlpha - 0.25f) * 2.0f;
+
+			mGammaTable[i] = VDColorRGB(saturate(lerp(backColor, foreColor, alpha))).LinearToSRGB().ToRGB8();
+		}
+	}
 
 	if (mpSim->GetVirtualScreenHandler())
 		PaintSWMode(lineRedrawFlags);
 	else
 		PaintHWMode(lineRedrawFlags);
-
-	RestoreDC(mhdc, saveHandle);
 
 	++mVideoInfo.mFrameBufferChangeCount;
 
@@ -898,6 +1108,11 @@ void ATUIEnhancedTextEngine::Paint(const bool *lineRedrawFlags) {
 }
 
 void ATUIEnhancedTextEngine::PaintHWMode(const bool *lineRedrawFlags) {
+	int saveHandle = SaveDC(mhdc);
+
+	if (!saveHandle)
+		return;
+
 	const COLORREF colorBack = mTextLastBackColor;
 	const COLORREF colorFore = mTextLastForeColor;
 	const COLORREF colorBorder = mTextLastBorderColor;
@@ -1064,10 +1279,18 @@ void ATUIEnhancedTextEngine::PaintHWMode(const bool *lineRedrawFlags) {
 		ExtTextOutW(mhdc, 0, py, ETO_OPAQUE, &rClear, L"", 0, NULL);
 	}
 
+	RestoreDC(mhdc, saveHandle);
 	GdiFlush();
 }
 
 void ATUIEnhancedTextEngine::PaintSWMode(const bool *lineRedrawFlags) {
+	int saveHandle = SaveDC(mhdc);
+
+	if (!saveHandle)
+		return;
+
+	mPendingSpecialChars.clear();
+
 	IATVirtualScreenHandler *const vs = mpSim->GetVirtualScreenHandler();
 	uint32 w;
 	uint32 h;
@@ -1102,6 +1325,7 @@ void ATUIEnhancedTextEngine::PaintSWMode(const bool *lineRedrawFlags) {
 	int lastInvert = 2;
 	const int charWidth = mTextCharW;
 	const int charHeight = mTextCharH;
+	const uint8 invertMask = mbInverseEnabled ? 0xFF : 0x7F;
 
 	uint8 linedata[255];
 
@@ -1112,7 +1336,7 @@ void ATUIEnhancedTextEngine::PaintSWMode(const bool *lineRedrawFlags) {
 		for(uint32 x = 0; x < w; ++x) {
 			uint8 c = screen[x];
 
-			linedata[x] = c;
+			linedata[x] = c & invertMask;
 		}
 
 		if (cursorY == y) {
@@ -1130,11 +1354,24 @@ void ATUIEnhancedTextEngine::PaintSWMode(const bool *lineRedrawFlags) {
 				linedata[cx] ^= 0x80;
 		}
 
+		const WCHAR *const glyphIndexTable = mbUsingCustomFont ? mCustomGlyphIndices : mDefaultGlyphIndices;
 		for(uint32 x = 0; x < w; ++x) {
 			uint8 c = linedata[x];
 
-			if ((uint8)((c & 0x7f) - 0x20) >= 0x5f)
-				c = (c & 0x80) + '.';
+			// Replace non-printable characters with spaces. We'll overwrite
+			// them with glyphs later.
+			uint8 c2 = c & 0x7F;
+			if (glyphIndexTable[c2] == kInvalidGlyphIndex) {
+				mPendingSpecialChars.emplace_back(
+					PendingSpecialChar {
+						.mChar = c,
+						.mX = (uint8)x,
+						.mY = (uint8)y
+					}
+				);
+
+				c = (c & 0x80) + ' ';
+			}
 
 			line[x] = (wchar_t)c;
 		}
@@ -1167,26 +1404,30 @@ void ATUIEnhancedTextEngine::PaintSWMode(const bool *lineRedrawFlags) {
 			uint32 glyphPos = 0;
 			uint32 px = charWidth * x2;
 			const RECT rLine = { (LONG)px, py, (LONG)(charWidth * xe), (LONG)(py + mTextCharH) };
+
 			for(uint32 x3 = x2; x3 < xe; ++x3) {
-				uint32 idx = (uint32)((line[x3] & 0x7f) - 33);
+				WCHAR glyphIdx = glyphIndexTable[line[x3] & 0x7F];
 
-				if (idx < 94) {
-					WCHAR glyphIdx = mGlyphIndices[idx];
+				if (glyphIdx != kEmptyGlyphIndex && glyphIdx != kInvalidGlyphIndex) {
+					line[countOut] = glyphIdx;
 
-					if (glyphIdx >= 0) {
-						line[countOut] = glyphIdx;
+					if (!countOut)
+						px += glyphPos;
+					else
+						glyphOffsets[countOut - 1] = glyphPos;
 
-						if (!countOut)
-							px += glyphPos;
-						else
-							glyphOffsets[countOut - 1] = glyphPos;
-
-						glyphPos = 0;
-						++countOut;
-					}
+					glyphPos = 0;
+					++countOut;
 				}
 
 				glyphPos += mTextCharW;
+			}
+
+			if (countOut) {
+				// We need to zero out this last entry even though it has no meaning.
+				// Otherwise, GDI spends an ungodly amount of time doing a memset()
+				// in kernel mode on a huge buffer.
+				glyphOffsets[countOut-1] = 0;
 			}
 
 			ExtTextOutW(mhdc, px, py, ETO_GLYPH_INDEX | ETO_OPAQUE, &rLine, line, countOut, glyphOffsets);
@@ -1203,6 +1444,30 @@ void ATUIEnhancedTextEngine::PaintSWMode(const bool *lineRedrawFlags) {
 
 		RECT rClear2 = { 0, py, mBitmapWidth, mBitmapHeight };
 		ExtTextOutW(mhdc, 0, py, ETO_OPAQUE, &rClear2, L"", 0, NULL);
+	}
+
+	RestoreDC(mhdc, saveHandle);
+	GdiFlush();
+
+	// Now that GDI is finished, we can draw any needed special characters.
+	VDPixmap charSrc = mbUsingCustomFont ? mRescaledCustomFont : mRescaledDefaultFont;
+	for(const PendingSpecialChar& psc : mPendingSpecialChars) {
+		if (psc.mX >= mVideoInfo.mTextColumns || psc.mY >= mVideoInfo.mTextRows) {
+			VDFAIL("Character out of bounds");
+			continue;
+		}
+
+		const uint8 *src = (const uint8 *)charSrc.data + charSrc.pitch * (psc.mChar & 0x7F) * mTextCharH;
+		uint32 *dst = (uint32 *)((char *)mFrameBuffer.data + mFrameBuffer.pitch * (psc.mY * mTextCharH)) + psc.mX * mTextCharW;
+		const uint8 invert = psc.mChar & 0x80 ? 0xFF : 0;
+
+		for(int row = 0; row < mTextCharH; ++row) {
+			for(int col = 0; col < mTextCharW; ++col)
+				dst[col] = mGammaTable[src[col] ^ invert];
+
+			src += charSrc.pitch;
+			dst = (uint32 *)((char *)dst + mFrameBuffer.pitch);
+		}
 	}
 }
 
@@ -1233,6 +1498,22 @@ void ATUIEnhancedTextEngine::OnInputReady() {
 	ProcessPastedInput();
 }
 
+void ATUIEnhancedTextEngine::OnVirtualScreenResized() {
+	// reinitialize bitmap
+	sint32 w = mViewportWidth;
+	sint32 h = mViewportHeight;
+
+	mViewportWidth = 0;
+	mViewportHeight = 0;
+	OnSize(w, h);
+}
+
+void ATUIEnhancedTextEngine::OnPassThroughChanged() {
+	auto *vs = mpSim->GetVirtualScreenHandler();
+
+	mVideoInfo.mbSignalPassThrough = !vs || vs->IsPassThroughEnabled();
+}
+
 void ATUIEnhancedTextEngine::ProcessPastedInput() {
 	auto *vs = mpSim->GetVirtualScreenHandler();
 	if (!vs || !vs->IsReadyForInput())
@@ -1252,6 +1533,227 @@ void ATUIEnhancedTextEngine::ProcessPastedInput() {
 
 void ATUIEnhancedTextEngine::ResetAttractTimeout() {
 	mpSim->GetMemoryManager()->WriteByte(ATKernelSymbols::ATRACT, 0);
+}
+
+// updates font if needed for viewport size, or just because it hasn't been
+// instantiated yet
+void ATUIEnhancedTextEngine::UpdateFont() {
+	LOGFONT font = mBaseFontDesc;
+
+	if (mBaseFontDesc.lfFaceName[0]) {
+		const vdsize32 desiredFontSize = ComputeDesiredFontSize();
+		if (desiredFontSize.w < 0) {
+			// viewport or terminal size is invalid, don't try to update font yet
+			return;
+		}
+
+		int fontHeight = desiredFontSize.h;
+
+		while(fontHeight > kMinFontSize) {
+			// try to look up pre-cached metrics
+			vdsize32& cachedFontSize = mFontSizeCache[fontHeight];
+
+			// check if cache entry is valid
+			if (cachedFontSize.w < 0) {
+				// no -- we'll have to create the font. mark the entry as tried
+				// first
+				cachedFontSize = vdsize32(0, 0);
+
+				// try to instantiate the font and pull its metrics
+				font.lfHeight = fontHeight;
+
+				ClearFont();
+
+				mTextModeFont = CreateFontIndirectW(&font);
+				if (mTextModeFont) {
+					HGDIOBJ hOldFont = SelectObject(mhdc, mTextModeFont);
+					if (hOldFont) {
+						TEXTMETRICW tm;
+						if (GetTextMetricsW(mhdc, &tm)) {
+							cachedFontSize = vdsize32(tm.tmAveCharWidth, tm.tmHeight);
+						}
+
+						SelectObject(mhdc, hOldFont);
+					}
+
+					// leave the font created -- if we succeed with this size
+					// then we can avoid recreating the font
+				}
+			}
+
+			// if the cached entry is valid and fits, then use this font height
+			if (cachedFontSize.w > 0 && cachedFontSize.w <= desiredFontSize.w && cachedFontSize.h <= desiredFontSize.h)
+				break;
+
+			// font's too wide -- release the font, decrement the height and try again
+			ClearFont();
+			--fontHeight;
+		}
+
+		// if the font has already been created and is the correct height, quick exit;
+		// note that if we newly created it in the above loop, it'll fail because the
+		// cached font height will be 0, as we still need to do init below
+		if (mTextModeFont && mTextModeFontHeight == fontHeight) {
+			// selected font height is the same as that which was already created,
+			// quick exit
+			return;
+		}
+
+		// attempt to create font now
+		ClearFont();
+
+		font.lfHeight = fontHeight;
+		mTextModeFont = CreateFontIndirectW(&font);
+		if (mTextModeFont)
+			mTextModeFontHeight = fontHeight;
+	} else {
+		// no font was specified, so we're using the fallback font -- it is never sized, so we
+		// always succeed if it's been instantiated
+		if (mTextModeFont)
+			return;
+	}
+
+	std::fill(std::begin(mDefaultGlyphIndices), std::end(mDefaultGlyphIndices), kInvalidGlyphIndex);
+	std::fill(std::begin(mCustomGlyphIndices), std::end(mCustomGlyphIndices), kInvalidGlyphIndex);
+
+	mTextCharW = 16;
+	mTextCharH = 16;
+
+	// if we failed to create the font, try to create fallback
+	if (!mTextModeFont) {
+		mTextModeFont = CreateFontW(16, 0, 0, 0, 0, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH, L"Lucida Console");
+		if (!mTextModeFont)
+			return;
+	}
+
+	HGDIOBJ hOldFont = SelectObject(mhdc, mTextModeFont);
+	if (hOldFont) {
+		TEXTMETRICW tm;
+		if (GetTextMetricsW(mhdc, &tm)) {
+			mTextCharW = tm.tmAveCharWidth;
+			mTextCharH = tm.tmHeight;
+		}
+
+		// special-case space
+		mDefaultGlyphIndices[0x20] = kEmptyGlyphIndex;
+
+		// map 21-7A / 7C to the font; 7B/7D-7F differ between ASCII and ATASCII
+		for(int i=0x21; i<0x7C; ++i) {
+			if (i == 0x7B)
+				continue;
+
+			const WCHAR ch = (WCHAR)i;
+
+			GCP_RESULTSW results = {sizeof(GCP_RESULTSW)};
+			results.lpGlyphs = &mDefaultGlyphIndices[i];
+			results.nGlyphs = 1;
+
+			if (!GetCharacterPlacementW(mhdc, &ch, 1, 0, &results, 0))
+				mDefaultGlyphIndices[i] = kInvalidGlyphIndex;
+		}
+
+		SelectObject(mhdc, hOldFont);
+	}
+
+	LOGFONTW logfont2x4x(mBaseFontDesc);
+	logfont2x4x.lfHeight = mTextCharH;
+	logfont2x4x.lfWidth = mTextCharW * 2;
+
+	VDASSERT(!mTextModeFont2x);
+	mTextModeFont2x = CreateFontIndirectW(&logfont2x4x);
+	if (!mTextModeFont2x)
+		mTextModeFont2x = CreateFontW(16, mTextCharW * 2, 0, 0, 0, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH, L"Lucida Console");
+
+	logfont2x4x.lfHeight *= 2;
+	mTextModeFont4x = CreateFontIndirectW(&logfont2x4x);
+	if (!mTextModeFont4x)
+		mTextModeFont4x = CreateFontW(32, mTextCharW * 2, 0, 0, 0, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE | DEFAULT_PITCH, L"Lucida Console");
+
+	// initialize font glyphs
+	HFONT hfonts[3] = { mTextModeFont, mTextModeFont2x, mTextModeFont4x };
+
+	for(int i=0; i<3; ++i) {
+		SelectObject(mhdc, hfonts[i]);
+
+		auto& glyphTable = mGlyphLookup[i];
+		memset(&glyphTable, 0, sizeof glyphTable);
+
+		WCHAR cspace = (WCHAR)0x20;
+		for(int i=32; i<127; ++i) {
+			WCHAR c = (WCHAR)i;
+			WORD glyphIndex = 0;
+
+			if (1 == GetGlyphIndicesW(mhdc, &c, 1, &glyphIndex, GGI_MARK_NONEXISTING_GLYPHS) ||
+				1 == GetGlyphIndicesW(mhdc, &cspace, 1, &glyphIndex, GGI_MARK_NONEXISTING_GLYPHS))
+			{
+				glyphTable[i] = glyphIndex;
+			}
+		}
+
+		// backfill other chars with period
+		for(int i=0; i<32; ++i)
+			glyphTable[i] = glyphTable[0x21];
+
+		glyphTable[0x7F] = glyphTable[0x21];
+	}
+
+	// reinitialize default font fallbacks
+	mRescaledDefaultFont.init(mTextCharW, mTextCharH * 128, nsVDPixmap::kPixFormat_Y8);
+	memset(mRescaledDefaultFont.base(), 0, mRescaledDefaultFont.size());
+
+	mRescaledCustomFont.init(mTextCharW, mTextCharH * 128, nsVDPixmap::kPixFormat_Y8);
+	memset(mRescaledCustomFont.base(), 0, mRescaledCustomFont.size());
+	memset(mCurrentCustomFont, 0, sizeof mCurrentCustomFont);
+
+	CharResampler charResampler(mTextCharW, mTextCharH);
+	for(int i=0; i<128; ++i)
+		charResampler.ResampleChar(mRescaledDefaultFont, i, &mRawDefaultFont[8 * i]);
+}
+
+void ATUIEnhancedTextEngine::ClearFont() {
+	if (mTextModeFont) {
+		DeleteObject(mTextModeFont);
+		mTextModeFont = nullptr;
+		mTextModeFontHeight = 0;
+	}
+
+	if (mTextModeFont2x) {
+		DeleteObject(mTextModeFont2x);
+		mTextModeFont2x = nullptr;
+	}
+
+	if (mTextModeFont4x) {
+		DeleteObject(mTextModeFont4x);
+		mTextModeFont4x = nullptr;
+	}
+}
+
+// Compute the initial font size given the current viewport size and
+// terminal size. The actual font size used will be this or smaller, depending
+// on width constraints, and then min/max size constraints. -1,-1 means
+// indeterminate.
+vdsize32 ATUIEnhancedTextEngine::ComputeDesiredFontSize() const {
+	if (!mViewportWidth || !mViewportHeight)
+		return vdsize32(-1, -1);
+
+	auto *vs = mpSim->GetVirtualScreenHandler();
+	if (!vs)
+		return vdsize32(-1, -1);
+
+	const vdsize32& termSize = vs->GetTerminalSize();
+
+	// The height is the axis that drives font creation, so it's the one that's
+	// clamped; the width is just used to verify that the font is small enough
+	// to fit.
+	return vdsize32(
+		mViewportWidth / termSize.w,
+		std::clamp<int>(mViewportHeight / termSize.h, kMinFontSize, kMaxFontSize)
+	);
+}
+
+void ATUIEnhancedTextEngine::InvalidateFontSizeCache() {
+	for(auto& v : mFontSizeCache)
+		v = vdsize32(-1, -1);
 }
 
 ///////////////////////////////////////////////////////////////////////////

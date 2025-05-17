@@ -22,6 +22,7 @@
 #include <vd2/system/int128.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdstl.h>
+#include <at/atio/audioutils.h>
 #include <at/atio/cassetteblock.h>
 #include <at/atio/cassetteimage.h>
 
@@ -390,6 +391,19 @@ void ATCassetteImageBlockRawData::SetBits(bool fsk, uint32 startPos, uint32 n, b
 
 ///////////////////////////////////////////////////////////////////////////////
 
+ATCassetteImageBlockRawAudio::ATCassetteImageBlockRawAudio() {
+	mAudio.resize(1, 0x80);
+}
+
+uint8 *ATCassetteImageBlockRawAudio::Extend(uint32 n) {
+	mAudioLength += n;
+	mAudio.resize(mAudio.size() + n, 0x80);
+
+	// Last value is always a zero-encoded sentinel, so return the range just
+	// before that.
+	return &*(mAudio.end() - n - 1);
+}
+
 void ATCassetteImageBlockRawAudio::GetMinMax(uint32 offset, uint32 len, uint8& minVal, uint8& maxVal) const {
 	uint8 minAccum = 255;
 	uint8 maxAccum = 0;
@@ -411,11 +425,22 @@ void ATCassetteImageBlockRawAudio::GetMinMax(uint32 offset, uint32 len, uint8& m
 }
 
 uint32 ATCassetteImageBlockRawAudio::AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const {
+	// legacy scale factor due to decoding unsigned bytes
+	volume *= 127.0f;
+
+	const uint8 *VDRESTRICT audioData = mAudio.data();
+	vdspan audioView(mAudio);
 	for(uint32 i = 0; i < n; ++i) {
 		if (posSample >= mAudioLength)
 			return i;
 
-		const float v = (float)((int)mAudio[posSample] - 0x80) * volume;
+		// pull two adjacent samples and decode from modified A-law
+		const float v1 = kATDecodeModifiedALawTable.v[audioData[posSample]];
+		const float v2 = kATDecodeModifiedALawTable.v[audioData[posSample + 1]];
+
+		// linearly interpolate samples
+		const float f = (float)posCycle / (float)kATCassetteCyclesPerAudioSample;
+		const float v = (v1 * (1.0f - f) + v2 * f) * volume;
 
 		posSample += kAudioSamplesPerSyncSampleInt;
 		posCycle += kAudioSamplesPerSyncSampleFrac;

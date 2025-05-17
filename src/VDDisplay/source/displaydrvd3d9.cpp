@@ -55,6 +55,7 @@
 #include <vd2/VDDisplay/logging.h>
 #include <vd2/VDDisplay/renderer.h>
 #include <vd2/VDDisplay/textrenderer.h>
+#include <vd2/VDDisplay/internal/bloom.h>
 #include <vd2/VDDisplay/internal/customshaderd3d9.h>
 #include <vd2/VDDisplay/internal/screenfx.h>
 
@@ -2302,25 +2303,20 @@ protected:
 
 	vdrefptr<IDirect3DTexture9> mpD3DGammaRampTexture;
 	float mCachedGamma = 0;
-	bool mbCachedGammaAdobeRgb = false;
+	float mCachedOutputGamma = 0;
 	bool mbCachedGammaHasInputConversion = false;
 
-	vdrefptr<IDirect3DTexture9> mpD3DBloomPrescale1RTT;
-	vdrefptr<IDirect3DTexture9> mpD3DBloomPrescale2RTT;
-	vdrefptr<IDirect3DTexture9> mpD3DBloomBlur1RTT;
-	vdrefptr<IDirect3DTexture9> mpD3DBloomBlur2RTT;
-	uint32 mCachedBloomInputTexW = 0;
-	uint32 mCachedBloomInputTexH = 0;
-	uint32 mCachedBloomPrescaleW = 0;
-	uint32 mCachedBloomPrescaleH = 0;
-	uint32 mCachedBloomPrescaleTexW = 0;
-	uint32 mCachedBloomPrescaleTexH = 0;
-	uint32 mCachedBloomBlurW = 0;
-	uint32 mCachedBloomBlurH = 0;
-	uint32 mCachedBloomBlurTexW = 0;
-	uint32 mCachedBloomBlurTexH = 0;
-	uint32 mCachedBloomOutputW = 0;
-	uint32 mCachedBloomOutputH = 0;
+	vdrefptr<IDirect3DTexture9> mpD3DBloomInputRTT;
+	vdrefptr<IDirect3DTexture9> mpD3DBloomConvRTT;
+	vdrefptr<IDirect3DTexture9> mpD3DBloomPyramid1RTT[6];
+	vdrefptr<IDirect3DTexture9> mpD3DBloomPyramid2RTT[5];
+	vdfloat2 mBloomPyramidSizeF[6] {};
+	vdsize32 mBloomInputSize {};
+	vdsize32 mBloomConvSize {};
+	vdsize32 mBloomPyramidSize[6] {};
+	vdsize32 mBloomInputTexSize {};
+	vdsize32 mBloomConvTexSize {};
+	vdsize32 mBloomPyramidTexSize[6] {};
 
 	vdrefptr<IDirect3DTexture9> mpD3DArtifactingRTT;
 	uint32 mCachedArtifactingW = 0;
@@ -2358,6 +2354,7 @@ protected:
 	bool				mbCubicTempSurfacesInitialized = false;
 	bool				mbBoxlinearCapable11 = false;
 	bool				mbScreenFXSupported = false;
+	bool				mbBloomSupported = false;
 	const bool			mbUseD3D9Ex;
 
 	bool mbUseScreenFX = false;
@@ -2410,9 +2407,27 @@ bool VDVideoDisplayMinidriverDX9::PreInit(HWND hwnd, HMONITOR hmonitor) {
 	}
 
 	mbScreenFXSupported = false;
+	mbBloomSupported = false;
 
 	if (mpVideoManager->IsPS20Enabled()) {
 		mbScreenFXSupported = true;
+
+		// Check if sRGB read/write is supported. This is in all likelihood supported for
+		// any PS2.0+ card since the following all of the baseline PS2 cards support it:
+		//
+		//	- Intel Mobile 945 (GMA 950)
+		//	- NVIDIA GeForce FX
+		//	- ATI Radeon 9800
+		//
+		// Nevertheless, double-check just to be sure since it's not guaranteed by D3D9.
+
+		IDirect3D9 *d3d9 = mpManager->GetD3D();
+		HRESULT hr = d3d9->CheckDeviceFormat(mpManager->GetAdapter(), mpManager->GetDeviceType(), mpManager->GetDisplayMode().Format, D3DUSAGE_QUERY_SRGBREAD, D3DRTYPE_TEXTURE, D3DFMT_X8R8G8B8);
+		if (SUCCEEDED(hr)) {
+			hr = d3d9->CheckDeviceFormat(mpManager->GetAdapter(), mpManager->GetDeviceType(), mpManager->GetDisplayMode().Format, D3DUSAGE_QUERY_SRGBWRITE, D3DRTYPE_TEXTURE, D3DFMT_X8R8G8B8);
+			if (SUCCEEDED(hr))
+				mbBloomSupported = true;
+		}
 	}
 
 	return true;
@@ -2484,7 +2499,14 @@ void VDVideoDisplayMinidriverDX9::LoadCustomEffect(const wchar_t *path) {
 }
 
 void VDVideoDisplayMinidriverDX9::OnPreDeviceReset() {
-	vdsaferelease <<= mpD3DBloomPrescale1RTT, mpD3DBloomPrescale2RTT, mpD3DBloomBlur1RTT, mpD3DBloomBlur2RTT;
+	vdsaferelease <<= mpD3DBloomInputRTT;
+	vdsaferelease <<= mpD3DBloomConvRTT;
+
+	for(auto& pyramidTex : mpD3DBloomPyramid1RTT)
+		vdsaferelease <<= pyramidTex;
+
+	for(auto& pyramidTex : mpD3DBloomPyramid2RTT)
+		vdsaferelease <<= pyramidTex;
 
 	ShutdownBicubic();
 	ShutdownBicubicPS2Filters();
@@ -2934,7 +2956,15 @@ void VDVideoDisplayMinidriverDX9::ShutdownBoxlinearPS11Filters() {
 void VDVideoDisplayMinidriverDX9::Shutdown() {
 	vdsaferelease <<= mpD3DGammaRampTexture;
 	vdsaferelease <<= mpD3DScanlineMaskTexture;
-	vdsaferelease <<= mpD3DBloomPrescale1RTT, mpD3DBloomPrescale2RTT, mpD3DBloomBlur1RTT, mpD3DBloomBlur2RTT;
+
+	vdsaferelease <<= mpD3DBloomInputRTT, mpD3DBloomConvRTT;
+	
+	for(auto& tex : mpD3DBloomPyramid1RTT)
+		vdsaferelease <<= tex;
+
+	for(auto& tex : mpD3DBloomPyramid2RTT)
+		vdsaferelease <<= tex;
+
 	vdsaferelease <<= mpD3DArtifactingRTT;
 
 	mpCustomPipeline.reset();
@@ -3042,14 +3072,17 @@ bool VDVideoDisplayMinidriverDX9::SetScreenFX(const VDVideoDisplayScreenFXInfo *
 		mbUseScreenFX = true;
 		mScreenFXInfo = *screenFX;
 
+		if (!mbBloomSupported)
+			mScreenFXInfo.mbBloomEnabled = false;
+
 		const bool useInputConversion = (mScreenFXInfo.mColorCorrectionMatrix[0][0] != 0.0f);
 		if (!mpD3DGammaRampTexture
 			|| mCachedGamma != mScreenFXInfo.mGamma
-			|| mbCachedGammaAdobeRgb != mScreenFXInfo.mbColorCorrectAdobeRGB
+			|| mCachedOutputGamma != mScreenFXInfo.mOutputGamma
 			|| mbCachedGammaHasInputConversion != useInputConversion)
 		{
 			mCachedGamma = mScreenFXInfo.mGamma;
-			mbCachedGammaAdobeRgb = mScreenFXInfo.mbColorCorrectAdobeRGB;
+			mCachedOutputGamma = mScreenFXInfo.mOutputGamma;
 			mbCachedGammaHasInputConversion = useInputConversion;
 
 			vdrefptr<IVDD3D9InitTexture> initTex;
@@ -3060,7 +3093,7 @@ bool VDVideoDisplayMinidriverDX9::SetScreenFX(const VDVideoDisplayScreenFXInfo *
 			if (!initTex->Lock(0, lockInfo))
 				return false;
 
-			VDDisplayCreateGammaRamp((uint32 *)lockInfo.mpData, 256, useInputConversion, mScreenFXInfo.mbColorCorrectAdobeRGB, mScreenFXInfo.mGamma);
+			VDDisplayCreateGammaRamp((uint32 *)lockInfo.mpData, 256, useInputConversion, mScreenFXInfo.mOutputGamma, mScreenFXInfo.mGamma);
 
 			initTex->Unlock(0);
 
@@ -3075,8 +3108,15 @@ bool VDVideoDisplayMinidriverDX9::SetScreenFX(const VDVideoDisplayScreenFXInfo *
 		vdsaferelease <<= mpD3DGammaRampTexture, mpD3DScanlineMaskTexture;
 	}
 
-	if (!mbUseScreenFX || mScreenFXInfo.mBloomRadius == 0.0f) {
-		vdsaferelease <<= mpD3DBloomPrescale2RTT, mpD3DBloomBlur1RTT, mpD3DBloomBlur2RTT;
+	if (!mbUseScreenFX || !mScreenFXInfo.mbBloomEnabled) {
+		vdsaferelease <<= mpD3DBloomInputRTT;
+		vdsaferelease <<= mpD3DBloomConvRTT;
+
+		for(auto& tex : mpD3DBloomPyramid1RTT)
+			vdsaferelease <<= tex;
+
+		for(auto& tex : mpD3DBloomPyramid2RTT)
+			vdsaferelease <<= tex;
 	}
 
 	if (!mbUseScreenFX || mScreenFXInfo.mPALBlendingOffset == 0.0f) {
@@ -3303,9 +3343,12 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 	D3D_DO(SetRenderState(D3DRS_ALPHATESTENABLE, FALSE));
 	D3D_DO(SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE));
 	D3D_DO(SetRenderState(D3DRS_STENCILENABLE, FALSE));
+	D3D_DO(SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE));
 	D3D_DO(SetTextureStageState(0, D3DTSS_TEXCOORDINDEX, 0));
 	D3D_DO(SetTextureStageState(1, D3DTSS_TEXCOORDINDEX, 1));
 	D3D_DO(SetTextureStageState(2, D3DTSS_TEXCOORDINDEX, 2));
+	D3D_DO(SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE));
+	D3D_DO(SetSamplerState(1, D3DSAMP_SRGBTEXTURE, FALSE));
 
 	vdrefptr<IDirect3DSurface9> pRTMain;
 
@@ -3855,210 +3898,126 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					ctx.mOutputTessellationY = 24;
 				}
 
-				if (mScreenFXInfo.mBloomRadius <= 0) {
+				if (!mScreenFXInfo.mbBloomEnabled) {
 					bSuccess = mpVideoManager->RunEffect(ctx, technique, pRTMain);
 				} else {
-					float blurRadius = mScreenFXInfo.mBloomRadius * (float)ctx.mOutputW / (float)ctx.mSourceW;
-					uint32 factor1 = 1;
-					uint32 factor2 = 1;
-					float prescaleOffset = 0.0f;
-					bool prescale2x = false;
-
-					if (blurRadius > 56) {
-						prescaleOffset = 1.0f;
-						factor1 = 16;
-						factor2 = 4;
-						prescale2x = true;
-					} else if (blurRadius > 28) {
-						prescaleOffset = 1.0f;
-						factor1 = 8;
-						factor2 = 4;
-						prescale2x = true;
-					} else if (blurRadius > 14) {
-						factor1 = 4;
-						factor2 = 4;
-						prescaleOffset = 1.0f;
-					} else if (blurRadius > 7) {
-						factor1 = 2;
-						factor2 = 2;
-						prescaleOffset = 0.5f;
-					} else {
-						factor1 = 1;
-						factor2 = 1;
-						prescaleOffset = 0.0f;
-					}
-
-					uint32 blurW = std::max<uint32>((destW + factor1 - 1)/factor1, 1);
-					uint32 blurH = std::max<uint32>((destH + factor1 - 1)/factor1, 1);
-					uint32 prescaleW = blurW * (factor1 / factor2);
-					uint32 prescaleH = blurH * (factor1 / factor2);
-
-					uint32 inputTexW = destW;
-					uint32 inputTexH = destH;
-					uint32 prescaleTexW = prescale2x ? prescaleW : 0;
-					uint32 prescaleTexH = prescale2x ? prescaleH : 0;
-					uint32 blurTexW = blurW;
-					uint32 blurTexH = blurH;
+					// compute input and pyramid level sizes
+					vdsize32 inputSize(destW, destH);
 
 					bSuccess = true;
 
-					if (!mpManager->AdjustTextureSize(inputTexW, inputTexH, true)
-						|| (prescaleTexW && !mpManager->AdjustTextureSize(prescaleTexW, prescaleTexH, true))
-						|| !mpManager->AdjustTextureSize(blurTexW, blurTexH, true))
-					{
+					vdsize32 inputTexSize = inputSize;
+					if (!mpManager->AdjustTextureSize(inputTexSize, false))
 						bSuccess = false;
+
+					vdsize32 pyramidSize[6];
+					vdsize32 pyramidTexSize[6];
+					for(int level = 0; level < 6; ++level) {
+						mBloomPyramidSizeF[level] = vdfloat2 { (float)destW, (float)destH } * ldexpf(0.5f, -level);
+						pyramidSize[level] = vdsize32(
+							std::max<sint32>(1, (sint32)ceilf(mBloomPyramidSizeF[level].x)),
+							std::max<sint32>(1, (sint32)ceilf(mBloomPyramidSizeF[level].y))
+						);
+
+						pyramidTexSize[level] = pyramidSize[level];
+						if (!mpManager->AdjustTextureSize(pyramidTexSize[level], false))
+							bSuccess = false;
 					}
 
 					bool needClear = false;
 					if (bSuccess) {
-						if (mCachedBloomOutputW != destW
-							|| mCachedBloomOutputH != destH
-							|| mCachedBloomPrescaleW != prescaleW
-							|| mCachedBloomPrescaleH != prescaleH
-							|| mCachedBloomBlurW != blurW
-							|| mCachedBloomBlurH != blurH)
-						{
-							mCachedBloomOutputW = destW;
-							mCachedBloomOutputH = destH;
-							mCachedBloomPrescaleW = prescaleW;
-							mCachedBloomPrescaleH = prescaleH;
-							mCachedBloomBlurW = blurW;
-							mCachedBloomBlurH = blurH;
+						if (mBloomInputSize != inputSize) {
+							mBloomInputSize = inputSize;
+							needClear = true;
+						}
+
+						for(int level = 0; level < 6; ++level) {
+							if (mBloomPyramidSize[level] != pyramidSize[level]) {
+								mBloomPyramidSize[level] = pyramidSize[level];
+
+								needClear = true;
+							}
+						}
+					}
+
+					if (mBloomInputTexSize != inputTexSize) {
+						vdsaferelease <<= mpD3DBloomInputRTT;
+						vdsaferelease <<= mpD3DBloomConvRTT;
+						mBloomInputTexSize = inputTexSize;
+					}
+
+					for(int level = 0; level < 6; ++level) {
+						if (mBloomPyramidTexSize[level] != pyramidTexSize[level]) {
+							vdsaferelease <<= mpD3DBloomPyramid1RTT[level];
+
+							if (level < 5)
+								vdsaferelease <<= mpD3DBloomPyramid2RTT[level];
+
+							mBloomPyramidTexSize[level] = pyramidTexSize[level];
+						}
+					}
+
+					// reinit RTTs
+					if (bSuccess && !mpD3DBloomInputRTT) {
+						hr = mpD3DDevice->CreateTexture(mBloomInputTexSize.w, mBloomInputTexSize.h, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, ~mpD3DBloomInputRTT, nullptr);
+						if (FAILED(hr))
+							bSuccess = false;
+
+						needClear = true;
+					}
+
+					for(int level = 0; level < 6 && bSuccess; ++level) {
+						if (!mpD3DBloomPyramid1RTT[level]) {
+							hr = mpD3DDevice->CreateTexture(mBloomPyramidTexSize[level].w, mBloomPyramidTexSize[level].h, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, ~mpD3DBloomPyramid1RTT[level], nullptr);
+							if (FAILED(hr))
+								bSuccess = false;
 
 							needClear = true;
 						}
 					}
 
-					if (mCachedBloomInputTexW != inputTexW || mCachedBloomInputTexH != inputTexH) {
-						vdsaferelease <<= mpD3DBloomPrescale1RTT;
-						mCachedBloomInputTexW = inputTexW;
-						mCachedBloomInputTexH = inputTexH;
-					}
+					for(int level = 0; level < 5 && bSuccess; ++level) {
+						if (bSuccess && !mpD3DBloomPyramid2RTT[level]) {
+							hr = mpD3DDevice->CreateTexture(mBloomPyramidTexSize[level].w, mBloomPyramidTexSize[level].h, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, ~mpD3DBloomPyramid2RTT[level], nullptr);
+							if (FAILED(hr))
+								bSuccess = false;
 
-					if (mCachedBloomPrescaleTexW != prescaleTexW || mCachedBloomPrescaleTexH != prescaleTexH) {
-						vdsaferelease <<= mpD3DBloomPrescale2RTT;
-
-						mCachedBloomPrescaleTexW = prescaleTexW;
-						mCachedBloomPrescaleTexH = prescaleTexH;
-					}
-
-					if (mCachedBloomBlurTexW != blurTexW || mCachedBloomBlurTexH != blurTexH) {
-						vdsaferelease <<= mpD3DBloomBlur1RTT;
-						vdsaferelease <<= mpD3DBloomBlur2RTT;
-
-						mCachedBloomBlurTexW = blurTexW;
-						mCachedBloomBlurTexH = blurTexH;
-					}
-
-					if (bSuccess && !mpD3DBloomPrescale1RTT) {
-						hr = mpD3DDevice->CreateTexture(inputTexW, inputTexH, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, ~mpD3DBloomPrescale1RTT, nullptr);
-						if (FAILED(hr))
-							bSuccess = false;
-
-						needClear = true;
-					}
-
-					if (bSuccess && prescaleTexW && !mpD3DBloomPrescale2RTT) {
-						hr = mpD3DDevice->CreateTexture(prescaleTexW, prescaleTexH, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, ~mpD3DBloomPrescale2RTT, nullptr);
-						if (FAILED(hr))
-							bSuccess = false;
-
-						needClear = true;
-					}
-
-					if (bSuccess && !mpD3DBloomBlur1RTT) {
-						hr = mpD3DDevice->CreateTexture(blurTexW, blurTexH, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, ~mpD3DBloomBlur1RTT, nullptr);
-						if (FAILED(hr))
-							bSuccess = false;
-
-						needClear = true;
-					}
-
-					if (bSuccess && !mpD3DBloomBlur2RTT) {
-						hr = mpD3DDevice->CreateTexture(blurTexW, blurTexH, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, ~mpD3DBloomBlur2RTT, nullptr);
-						if (FAILED(hr))
-							bSuccess = false;
-
-						needClear = true;
+							needClear = true;
+						}
 					}
 
 					VDASSERT(bSuccess);
 
 					if (needClear) {
-						if (mpD3DBloomPrescale1RTT)
-							mpManager->ClearRenderTarget(mpD3DBloomPrescale1RTT);
+						if (mpD3DBloomInputRTT)
+							mpManager->ClearRenderTarget(mpD3DBloomInputRTT);
 
-						if (mpD3DBloomPrescale2RTT)
-							mpManager->ClearRenderTarget(mpD3DBloomPrescale2RTT);
+						if (mpD3DBloomConvRTT)
+							mpManager->ClearRenderTarget(mpD3DBloomConvRTT);
 
-						if (mpD3DBloomBlur1RTT)
-							mpManager->ClearRenderTarget(mpD3DBloomBlur1RTT);
+						for(IDirect3DTexture9 *tex : mpD3DBloomPyramid1RTT) {
+							if (tex)
+								mpManager->ClearRenderTarget(tex);
+						}
 
-						if (mpD3DBloomBlur2RTT)
-							mpManager->ClearRenderTarget(mpD3DBloomBlur2RTT);
+						for(IDirect3DTexture9 *tex : mpD3DBloomPyramid2RTT) {
+							if (tex)
+								mpManager->ClearRenderTarget(tex);
+						}
 					}
 
-					struct VSConstants {
-						float mViewport[4];
-						float mUVOffset[4];
-						float mBlurOffsets1[4];
-						float mBlurOffsets2[4];
-					} vsConstants1 {}, vsConstants2 {}, vsConstants3 {};
+					// compute rendering parameters
+					VDDBloomV2ControlParams bloomControlParams {};
 
-					vsConstants1.mUVOffset[0] = prescaleOffset / (float)mCachedBloomInputTexW;
-					vsConstants1.mUVOffset[1] = prescaleOffset / (float)mCachedBloomInputTexH;
+					// The blur radius is specified in source pixels in the FXInfo, which must be
+					// converted to destination pixels.
+					bloomControlParams.mBaseRadius = (float)destW / (float)mSource.pixmap.w;
+					bloomControlParams.mAdjustRadius = mScreenFXInfo.mBloomRadius;
 
-					if (mCachedBloomPrescaleTexW) {
-						vsConstants2.mUVOffset[0] = prescaleOffset / (float)mCachedBloomPrescaleTexW;
-						vsConstants2.mUVOffset[1] = prescaleOffset / (float)mCachedBloomPrescaleTexH;
-					} else {
-						vsConstants2.mUVOffset[0] = vsConstants1.mUVOffset[0];
-						vsConstants2.mUVOffset[1] = vsConstants1.mUVOffset[1];
-					}
+					bloomControlParams.mDirectIntensity = mScreenFXInfo.mBloomDirectIntensity;
+					bloomControlParams.mIndirectIntensity = mScreenFXInfo.mBloomIndirectIntensity;
 
-					const float mainBlurRadius = blurRadius / (float)factor1;
-					const float blurHeightScale = 1.5f / std::min<float>(7.0f, mainBlurRadius);
-
-					const float wf = expf(-7.5f * (1.5f / 7.0f));
-					const float w0 = std::max<float>(0, expf(-7.0f * blurHeightScale) - wf);
-					const float w1 = std::max<float>(0, expf(-6.0f * blurHeightScale) - wf);
-					const float w2 = std::max<float>(0, expf(-5.0f * blurHeightScale) - wf);
-					const float w3 = std::max<float>(0, expf(-4.0f * blurHeightScale) - wf);
-					const float w4 = std::max<float>(0, expf(-3.0f * blurHeightScale) - wf);
-					const float w5 = std::max<float>(0, expf(-2.0f * blurHeightScale) - wf);
-					const float w6 = std::max<float>(0, expf(-1.0f * blurHeightScale) - wf);
-
-					const float wscale = 1.0f / (w6 + 2*(w5+w4+w3+w2+w1));
-
-					const float blurUStep = 1.0f / (float)blurTexW;
-					const float blurVStep = 1.0f / (float)blurTexH;
-					const float filterOffset0 = 1.0f + w4 / std::max<float>(w4 + w5, 1e-10f);
-					const float filterOffset1 = 3.0f + w2 / std::max<float>(w2 + w3, 1e-10f);
-					const float filterOffset2 = 5.0f + w0 / std::max<float>(w0 + w1, 1e-10f);
-
-					vsConstants2.mBlurOffsets1[0] = filterOffset0 * blurUStep;
-					vsConstants2.mBlurOffsets2[0] = filterOffset1 * blurUStep;
-					vsConstants2.mBlurOffsets2[2] = filterOffset2 * blurUStep;
-
-					vsConstants3.mBlurOffsets1[1] = filterOffset0 * blurVStep;
-					vsConstants3.mBlurOffsets2[1] = filterOffset1 * blurVStep;
-					vsConstants3.mBlurOffsets2[3] = filterOffset2 * blurVStep;
-
-					struct PSConstants {
-						float mWeights[4];
-						float mThresholds[4];
-						float mScales[4];
-					} psConstants {};
-
-					psConstants.mWeights[0] = w6 * wscale;
-					psConstants.mWeights[1] = (w5+w4) * wscale;
-					psConstants.mWeights[2] = (w3+w2) * wscale;
-					psConstants.mWeights[3] = (w1+w0) * wscale;
-
-					psConstants.mThresholds[0] = 1.0f + mScreenFXInfo.mBloomThreshold;
-					psConstants.mThresholds[1] = -mScreenFXInfo.mBloomThreshold;
-					psConstants.mScales[0] = mScreenFXInfo.mBloomDirectIntensity;
-					psConstants.mScales[1] = mScreenFXInfo.mBloomIndirectIntensity;
+					const VDDBloomV2RenderParams bloomRenderParams(VDDComputeBloomV2Parameters(bloomControlParams));
 
 					// input render
 					auto ctx2 = ctx;
@@ -4066,10 +4025,15 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					ctx2.mViewportY = 0;
 
 					if (bSuccess) {
-						vdrefptr<IDirect3DSurface9> prescaleSurface;
-						hr = mpD3DBloomPrescale1RTT->GetSurfaceLevel(0, ~prescaleSurface);
-						bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, technique, prescaleSurface);
+						vdrefptr<IDirect3DSurface9> inputSurface;
+						hr = mpD3DBloomInputRTT->GetSurfaceLevel(0, ~inputSurface);
+						bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, technique, inputSurface);
 					}
+
+					// input conversion
+					mpD3DDevice->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, TRUE);
+					mpD3DDevice->SetSamplerState(1, D3DSAMP_SRGBTEXTURE, TRUE);
+					mpD3DDevice->SetRenderState(D3DRS_SRGBWRITEENABLE, TRUE);
 
 					ctx2.mOutputX = 0;
 					ctx2.mOutputY = 0;
@@ -4078,88 +4042,166 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					ctx.mbOutputClear = false;
 
 					ctx2.mbUseUV0Scale = false;
+					
+					// pyramid down passes
+					struct PSConstants {
+						vdfloat4 mUVStep;
+						vdfloat4 mBlendFactors;
+					} psConstants {};
 
-					// prescale passes
-					if (bSuccess) {
+					for(int level = 0; level < 6 && bSuccess; ++level) {
+						if (level) {
+							ctx2.mpSourceTexture1 = mpD3DBloomPyramid1RTT[level - 1];
+							ctx2.mSourceTexW = mBloomPyramidTexSize[level - 1].w;
+							ctx2.mSourceTexH = mBloomPyramidTexSize[level - 1].h;
+						} else {
+							if (mpD3DBloomConvRTT)
+								ctx2.mpSourceTexture1 = mpD3DBloomConvRTT;
+							else
+								ctx2.mpSourceTexture1 = mpD3DBloomInputRTT;
+
+							ctx2.mSourceTexW = mBloomInputTexSize.w;
+							ctx2.mSourceTexH = mBloomInputTexSize.h;
+						}
+
+						ctx2.mViewportW = mBloomPyramidSize[level].w;
+						ctx2.mViewportH = mBloomPyramidSize[level].h;
+						ctx2.mOutputW = (float)ctx2.mViewportW;
+						ctx2.mOutputH = (float)ctx2.mViewportH;
+
+						ctx2.mSourceArea = vdrect32f(
+							0.0f,
+							0.0f,
+							ctx2.mOutputW * 2.0f,
+							ctx2.mOutputH * 2.0f
+						);
+
+						psConstants.mUVStep = vdfloat4 {
+							1.0f / (float)mBloomPyramidTexSize[level].w,
+							1.0f / (float)mBloomPyramidTexSize[level].h,
+							(float)mBloomPyramidTexSize[level].h,
+							(float)mBloomPyramidTexSize[level].w
+						};
+
 						mpD3DDevice->SetPixelShaderConstantF(16, (const float *)&psConstants, sizeof(psConstants)/16);
 
-						ctx2.mpSourceTexture1 = mpD3DBloomPrescale1RTT;
-						ctx2.mSourceTexW = mCachedBloomInputTexW;
-						ctx2.mSourceTexH = mCachedBloomInputTexH;
-						ctx2.mSourceArea = vdrect32f(0, 0, mCachedBloomPrescaleW * factor2, mCachedBloomPrescaleH * factor2);
-
-						if (prescale2x) {
-							mpD3DDevice->SetVertexShaderConstantF(16, (const float *)&vsConstants1, sizeof(vsConstants1)/16);
-
-							ctx2.mOutputW = ctx2.mViewportW = prescaleW;
-							ctx2.mOutputH = ctx2.mViewportH = prescaleH;
-
-							vdrefptr<IDirect3DSurface9> prescale2Surface;
-							hr = mpD3DBloomPrescale2RTT->GetSurfaceLevel(0, ~prescale2Surface);
-							bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, g_technique_screenfx_bloom_prescale, prescale2Surface);
-
-							ctx2.mpSourceTexture1 = mpD3DBloomPrescale2RTT;
-							ctx2.mSourceTexW = mCachedBloomPrescaleTexW;
-							ctx2.mSourceTexH = mCachedBloomPrescaleTexH;
-							ctx2.mSourceArea = vdrect32f(0, 0, mCachedBloomPrescaleW, mCachedBloomPrescaleH);
-						}
-
-						if (bSuccess) {
-							mpD3DDevice->SetVertexShaderConstantF(16, (const float *)&vsConstants2, sizeof(vsConstants2)/16);
-
-							ctx2.mOutputW = ctx2.mViewportW = blurW;
-							ctx2.mOutputH = ctx2.mViewportH = blurH;
-							vdrefptr<IDirect3DSurface9> blurSurface;
-							hr = mpD3DBloomBlur1RTT->GetSurfaceLevel(0, ~blurSurface);
-							bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, prescale2x ? g_technique_screenfx_bloom_prescale2 : g_technique_screenfx_bloom_prescale, blurSurface);
-						}
+						vdrefptr<IDirect3DSurface9> pyramidSurface;
+						hr = mpD3DBloomPyramid1RTT[level]->GetSurfaceLevel(0, ~pyramidSurface);
+						bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, g_technique_screenfx_bloomv2_down, pyramidSurface);
 					}
 
-					// horizontal blur pass
-					if (bSuccess) {
-						ctx2.mpSourceTexture1 = mpD3DBloomBlur1RTT;
-						ctx2.mSourceTexW = mCachedBloomBlurTexW;
-						ctx2.mSourceTexH = mCachedBloomBlurTexH;
-						ctx2.mSourceArea = vdrect32f(0, 0, mCachedBloomBlurW, mCachedBloomBlurH);
-
-						vdrefptr<IDirect3DSurface9> blur2Surface;
-						hr = mpD3DBloomBlur2RTT->GetSurfaceLevel(0, ~blur2Surface);
-						bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, g_technique_screenfx_bloom_blur, blur2Surface);
-					}
-
-					// vertical blur pass
-					if (bSuccess) {
-						ctx2.mpSourceTexture1 = mpD3DBloomBlur2RTT;
+					// pyramid up passes
+					for(int level = 4; level >= 0 && bSuccess; --level) {
+						ctx2.mpSourceTexture1 = level == 4 ? mpD3DBloomPyramid1RTT[5] : mpD3DBloomPyramid2RTT[level + 1];
+						ctx2.mpSourceTexture2 = mpD3DBloomPyramid1RTT[level];
+						ctx2.mSourceTexW = mBloomPyramidTexSize[level + 1].w;
+						ctx2.mSourceTexH = mBloomPyramidTexSize[level + 1].h;
+						ctx2.mViewportW = mBloomPyramidSize[level].w;
+						ctx2.mViewportH = mBloomPyramidSize[level].h;
+						ctx2.mOutputW = (float)ctx2.mViewportW;
+						ctx2.mOutputH = (float)ctx2.mViewportH;
 						
-						mpD3DDevice->SetVertexShaderConstantF(16, (const float *)&vsConstants3, sizeof(vsConstants3)/16);
+						ctx2.mSourceArea = vdrect32f(
+							0.0f,
+							0.0f,
+							ctx2.mOutputW * 0.5f,
+							ctx2.mOutputH * 0.5f
+						);
 
-						vdrefptr<IDirect3DSurface9> blurSurface;
-						hr = mpD3DBloomBlur1RTT->GetSurfaceLevel(0, ~blurSurface);
-						bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, g_technique_screenfx_bloom_blur, blurSurface);
+						ctx2.mbUseUV0Area = true;
+						ctx2.mUV0Area = vdrect32f(
+							0.0f,
+							0.0f,
+							(float)ctx2.mOutputW * 0.5f / (float)mBloomPyramidTexSize[level + 1].w,
+							(float)ctx2.mOutputH * 0.5f / (float)mBloomPyramidTexSize[level + 1].h
+						);
+
+						ctx2.mbUseUV1Area = true;
+						ctx2.mUV1Area = vdrect32f(
+							0.0f,
+							0.0f,
+							(float)ctx2.mOutputW / (float)mBloomPyramidTexSize[level].w,
+							(float)ctx2.mOutputH / (float)mBloomPyramidTexSize[level].h
+						);
+
+						psConstants.mUVStep = vdfloat4 {
+							1.0f / (float)mBloomPyramidTexSize[level + 1].w,
+							1.0f / (float)mBloomPyramidTexSize[level + 1].h,
+							(float)mBloomPyramidTexSize[level + 1].h,
+							(float)mBloomPyramidTexSize[level + 1].w
+						};
+
+						psConstants.mBlendFactors.x = bloomRenderParams.mPassBlendFactors[4 - level].x;
+						psConstants.mBlendFactors.y = bloomRenderParams.mPassBlendFactors[4 - level].y;
+
+						mpD3DDevice->SetPixelShaderConstantF(16, (const float *)&psConstants, sizeof(psConstants)/16);
+
+						vdrefptr<IDirect3DSurface9> pyramidSurface;
+						hr = mpD3DBloomPyramid2RTT[level]->GetSurfaceLevel(0, ~pyramidSurface);
+						bSuccess = SUCCEEDED(hr) && mpVideoManager->RunEffect(ctx2, g_technique_screenfx_bloomv2_up_noblend, pyramidSurface);
 					}
 
 					// final pass
 					if (bSuccess) {
-						ctx.mpSourceTexture1 = mpD3DBloomBlur1RTT;
-						ctx.mpSourceTexture2 = mpD3DBloomPrescale1RTT;
-						ctx.mSourceTexW = mCachedBloomInputTexW;
-						ctx.mSourceTexH = mCachedBloomInputTexH;
-						ctx.mSourceArea = vdrect32f(0, 0, mCachedBloomOutputW, mCachedBloomOutputH);
+						struct PSFinalConstants {
+							vdfloat4 mUVStep;
+							vdfloat4 mBlendFactors;
+							vdfloat4 mShoulderCurve;
+							vdfloat4 mThresholds;
+						} psFinalConstants {};
+
+						psFinalConstants.mUVStep = vdfloat4 {
+							1.0f / (float)mBloomPyramidTexSize[0].w,
+							1.0f / (float)mBloomPyramidTexSize[0].h,
+							(float)mBloomPyramidTexSize[0].h,
+							(float)mBloomPyramidTexSize[0].w
+						};
+
+						psFinalConstants.mBlendFactors.x = bloomRenderParams.mPassBlendFactors[5].x;
+						psFinalConstants.mBlendFactors.y = bloomRenderParams.mPassBlendFactors[5].y;
+						psFinalConstants.mShoulderCurve = bloomRenderParams.mShoulder;
+						psFinalConstants.mThresholds = bloomRenderParams.mThresholds;
+
+						mpD3DDevice->SetPixelShaderConstantF(16, (const float *)&psFinalConstants, sizeof(psFinalConstants)/16);
+
+						ctx.mpSourceTexture1 = mpD3DBloomPyramid2RTT[0];
+						ctx.mpSourceTexture2 = mpD3DBloomInputRTT;
+						ctx.mSourceTexW = mBloomPyramidTexSize[0].w;
+						ctx.mSourceTexH = mBloomPyramidTexSize[0].h;
+						ctx.mSourceArea = vdrect32f(0, 0, mBloomPyramidSizeF[0].x, mBloomPyramidSizeF[0].y);
 						ctx.mOutputX = mDrawRect.left - ctx.mViewportX;
 						ctx.mOutputY = mDrawRect.top - ctx.mViewportY;
 						ctx.mOutputW = mDrawRect.width();
 						ctx.mOutputH = mDrawRect.height();
 						ctx.mbUseUV0Scale = false;
+						ctx.mbUseUV0Area = true;
 						ctx.mbUseUV1Area = true;
-						ctx.mUV1Area = vdrect32f(0.0f, 0.0f,
-							(float)ctx.mOutputW / ((float)factor1 * (float)blurTexW),
-							(float)ctx.mOutputH / ((float)factor1 * (float)blurTexH));
 
-						bSuccess = mpVideoManager->RunEffect(ctx, g_technique_screenfx_bloom_final, pRTMain);
+						ctx.mUV0Area = vdrect32f(
+							0.0f,
+							0.0f,
+							(float)ctx.mOutputW * 0.5f / (float)mBloomPyramidTexSize[0].w,
+							(float)ctx.mOutputH * 0.5f / (float)mBloomPyramidTexSize[0].h
+						);
+
+						ctx.mUV1Area = vdrect32f(
+							0.0f,
+							0.0f,
+							(float)ctx.mOutputW / (float)mBloomInputTexSize.w,
+							(float)ctx.mOutputH / (float)mBloomInputTexSize.h
+						);
+
+						bSuccess = mpVideoManager->RunEffect(ctx,
+							g_technique_screenfx_bloomv2_final,
+							pRTMain
+						);
 					}
 
-					VDASSERT(bSuccess);
+					mpD3DDevice->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE);
+					mpD3DDevice->SetSamplerState(0, D3DSAMP_SRGBTEXTURE, FALSE);
+					mpD3DDevice->SetRenderState(D3DRS_SRGBWRITEENABLE, FALSE);
 
+					VDASSERT(bSuccess);
 				}
 
 				ctx.mbOutputClear = false;

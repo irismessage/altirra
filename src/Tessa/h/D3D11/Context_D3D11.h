@@ -45,6 +45,26 @@ protected:
 	Resources mResources;
 };
 
+class VDTUnorderedAccessViewD3D11 : public IVDTUnorderedAccessView {
+	VDTUnorderedAccessViewD3D11(const VDTUnorderedAccessViewD3D11&) = delete;
+	VDTUnorderedAccessViewD3D11& operator=(const VDTUnorderedAccessViewD3D11&) = delete;
+
+public:
+	VDTUnorderedAccessViewD3D11(IVDTResource& resource, IVDRefUnknown& owner);
+	~VDTUnorderedAccessViewD3D11();
+
+	int AddRef() override;
+	int Release() override;
+
+protected:
+	friend class VDTContextD3D11;
+	friend class VDTSurfaceD3D11;
+
+	IVDTResource& mResource;
+	IVDRefUnknown& mOwner;
+	vdrefptr<ID3D11UnorderedAccessView> mpUAV;
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 class VDTReadbackBufferD3D11 final : public vdrefcounted<IVDTReadbackBuffer>, VDTResourceD3D11 {
 public:
@@ -72,12 +92,13 @@ protected:
 class VDTSurfaceD3D11 final : public vdrefcounted<IVDTSurface>, VDTResourceD3D11 {
 public:
 	VDTSurfaceD3D11();
+	VDTSurfaceD3D11(IVDTTexture& owner);
 	~VDTSurfaceD3D11();
 
 	void *AsInterface(uint32 iid) { return NULL; }
 
 	bool Init(VDTContextD3D11 *parent, uint32 width, uint32 height, VDTFormat format, VDTUsage usage);
-	bool Init(VDTContextD3D11 *parent, IVDTTexture *owner, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, bool rt, bool onlyMip, bool forceSRGB);
+	bool Init(VDTContextD3D11 *parent, IVDTTexture *owner, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, VDTUsage usage, bool onlyMip, bool forceSRGB);
 	void Shutdown();
 
 	bool Restore();
@@ -86,6 +107,8 @@ public:
 	void Copy(uint32 dx, uint32 dy, IVDTSurface *src, uint32 sx, uint32 sy, uint32 w, uint32 h);
 	void GetDesc(VDTSurfaceDesc& desc);
 	IVDTTexture *GetTexture() const { return mpParentTexture; }
+	IVDTUnorderedAccessView *GetUnorderedAccessView() override { return &mUAView; }
+
 	bool Lock(const vdrect32 *r, bool discard, VDTLockData2D& lockData);
 	void Unlock();
 
@@ -100,6 +123,7 @@ protected:
 	uint32 mMipLevel {};
 	bool mbOnlyMip {};
 	VDTSurfaceDesc mDesc {};
+	VDTUnorderedAccessViewD3D11 mUAView;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -249,6 +273,25 @@ protected:
 	friend class VDTContextD3D11;
 
 	ID3D11PixelShader *mpPS;
+};
+
+///////////////////////////////////////////////////////////////////////////////
+class VDTComputeProgramD3D11 final : public vdrefcounted<IVDTComputeProgram>, VDTResourceD3D11 {
+public:
+	VDTComputeProgramD3D11();
+	~VDTComputeProgramD3D11();
+
+	void *AsInterface(uint32 iid) { return nullptr; }
+
+	bool Init(VDTContextD3D11 *parent, VDTProgramFormat format, const void *data, uint32 size);
+	void Shutdown();
+
+	bool Restore();
+
+protected:
+	friend class VDTContextD3D11;
+
+	ID3D11ComputeShader *mpCS = nullptr;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -464,6 +507,7 @@ public:
 
 	const VDTDeviceCaps& GetDeviceCaps() { return mCaps; }
 	bool IsFormatSupportedTexture2D(VDTFormat format);
+	bool IsFormatSupportedRenderTarget2D(VDTFormat format);
 	bool IsMonitorHDREnabled(void *monitor, bool& systemSupport);
 
 	bool CreateReadbackBuffer(uint32 width, uint32 height, VDTFormat format, IVDTReadbackBuffer **buffer);
@@ -471,6 +515,7 @@ public:
 	bool CreateTexture2D(uint32 width, uint32 height, VDTFormat format, uint32 mipcount, VDTUsage usage, const VDTInitData2D *initData, IVDTTexture2D **tex);
 	bool CreateVertexProgram(VDTProgramFormat format, VDTData data, IVDTVertexProgram **tex);
 	bool CreateFragmentProgram(VDTProgramFormat format, VDTData data, IVDTFragmentProgram **tex);
+	bool CreateComputeProgram(VDTProgramFormat format, VDTData data, IVDTComputeProgram **tex);
 	bool CreateVertexFormat(const VDTVertexElement *elements, uint32 count, IVDTVertexProgram *vp, IVDTVertexFormat **format);
 	bool CreateVertexBuffer(uint32 size, bool dynamic, const void *initData, IVDTVertexBuffer **buffer);
 	bool CreateIndexBuffer(uint32 size, bool index32, bool dynamic, const void *initData, IVDTIndexBuffer **buffer);
@@ -512,6 +557,18 @@ public:
 	void DrawPrimitive(VDTPrimitiveType type, uint32 startVertex, uint32 primitiveCount);
 	void DrawIndexedPrimitive(VDTPrimitiveType type, uint32 baseVertexIndex, uint32 minVertex, uint32 vertexCount, uint32 startIndex, uint32 primitiveCount);
 
+	// compute
+	void CsSetProgram(IVDTComputeProgram *program) override;
+	void CsSetConstCount(uint32 count) override;
+	void CsSetConstF(uint32 baseIndex, uint32 count, const float *data) override;
+	void CsSetSamplers(uint32 baseIndex, uint32 count, IVDTSamplerState *const *states) override;
+	void CsSetTextures(uint32 baseIndex, uint32 count, IVDTTexture *const *textures) override;
+	void CsClearTexturesStartingAt(uint32 baseIndex) override;
+	void CsSetUnorderedAccessViews(uint32 baseIndex, uint32 count, IVDTUnorderedAccessView *const *uavs) override;
+	void CsClearUnorderedAccessViewsStartingAt(uint32 baseIndex) override;
+	void CsDispatch(uint32 x, uint32 y, uint32 z) override;
+
+	// misc
 	uint32 InsertFence();
 	bool CheckFence(uint32 id);
 
@@ -532,6 +589,7 @@ public:
 	void UnsetVertexFormat(IVDTVertexFormat *format);
 	void UnsetVertexProgram(IVDTVertexProgram *program);
 	void UnsetFragmentProgram(IVDTFragmentProgram *program);
+	void UnsetComputeProgram(IVDTComputeProgram *program);
 	void UnsetVertexBuffer(IVDTVertexBuffer *buffer);
 	void UnsetIndexBuffer(IVDTIndexBuffer *buffer);
 	void UnsetRenderTarget(IVDTSurface *surface);
@@ -545,17 +603,18 @@ public:
 
 protected:
 	void UpdateConstants();
+	void CsUpdateConstants();
 
 	struct PrivateData;
 
-	VDAtomicInt	mRefCount;
-	PrivateData *mpData;
+	VDAtomicInt	mRefCount { 0 };
+	PrivateData *mpData = nullptr;
 
-	VDD3D11Holder *mpD3DHolder;
-	IDXGIFactory *mpDXGIFactory;
-	IDXGIAdapter1 *mpDXGIAdapter;
-	ID3D11Device *mpD3DDevice;
-	ID3D11DeviceContext *mpD3DDeviceContext;
+	VDD3D11Holder *mpD3DHolder = nullptr;
+	IDXGIFactory *mpDXGIFactory = nullptr;
+	IDXGIAdapter1 *mpDXGIAdapter = nullptr;
+	ID3D11Device *mpD3DDevice = nullptr;
+	ID3D11DeviceContext *mpD3DDeviceContext = nullptr;
 
 	static const uint32 kConstBaseShift = 4;
 	static const uint32 kConstMaxShift = 5;
@@ -563,43 +622,51 @@ protected:
 
 	ID3D11Buffer *mpVSConstBuffers[kConstMaxShift] = {};
 	ID3D11Buffer *mpPSConstBuffers[kConstMaxShift] = {};
+	ID3D11Buffer *mpCSConstBuffers[kConstMaxShift] = {};
 	uint32 mVSConstShift = 0;
 	uint32 mPSConstShift = 0;
+	uint32 mCSConstShift = 0;
 	bool mbVSConstDirty = true;
 	bool mbPSConstDirty = true;
+	bool mbCSConstDirty = true;
 
 	int mLastPrimitiveType = -1;
 
-	VDTSwapChainD3D11 *mpSwapChain;
-	VDTSurfaceD3D11 *mpCurrentRT;
+	VDTSwapChainD3D11 *mpSwapChain = nullptr;
+	VDTSurfaceD3D11 *mpCurrentRT = nullptr;
 	bool mbCurrentRTBypass = false;
-	VDTVertexBufferD3D11 *mpCurrentVB;
-	uint32 mCurrentVBOffset;
-	uint32 mCurrentVBStride;
-	VDTIndexBufferD3D11 *mpCurrentIB;
-	VDTVertexProgramD3D11 *mpCurrentVP;
-	VDTFragmentProgramD3D11 *mpCurrentFP;
-	VDTVertexFormatD3D11 *mpCurrentVF;
+	VDTVertexBufferD3D11 *mpCurrentVB = nullptr;
+	uint32 mCurrentVBOffset = 0;
+	uint32 mCurrentVBStride = 0;
+	VDTIndexBufferD3D11 *mpCurrentIB = nullptr;
+	VDTVertexProgramD3D11 *mpCurrentVP = nullptr;
+	VDTFragmentProgramD3D11 *mpCurrentFP = nullptr;
+	VDTComputeProgramD3D11 *mpCurrentCP = nullptr;
+	VDTVertexFormatD3D11 *mpCurrentVF = nullptr;
 
-	VDTBlendStateD3D11 *mpCurrentBS;
-	VDTRasterizerStateD3D11 *mpCurrentRS;
+	VDTBlendStateD3D11 *mpCurrentBS = nullptr;
+	VDTRasterizerStateD3D11 *mpCurrentRS = nullptr;
 
-	VDTBlendStateD3D11 *mpDefaultBS;
-	VDTRasterizerStateD3D11 *mpDefaultRS;
-	VDTSamplerStateD3D11 *mpDefaultSS;
+	VDTBlendStateD3D11 *mpDefaultBS = nullptr;
+	VDTRasterizerStateD3D11 *mpDefaultRS = nullptr;
+	VDTSamplerStateD3D11 *mpDefaultSS = nullptr;
 
-	VDTViewport mViewport;
-	vdrect32 mScissorRect;
-	VDTDeviceCaps mCaps;
+	VDTViewport mViewport {};
+	vdrect32 mScissorRect {};
+	VDTDeviceCaps mCaps {};
 
-	VDTSamplerStateD3D11 *mpCurrentSamplerStates[16];
-	IVDTTexture *mpCurrentTextures[16];
+	VDTSamplerStateD3D11 *mpCurrentPsSamplerStates[16] {};
+	VDTSamplerStateD3D11 *mpCurrentCsSamplerStates[16] {};
+	IVDTTexture *mpCurrentPsTextures[16] {};
+	IVDTTexture *mpCurrentCsTextures[16] {};
+	VDTUnorderedAccessViewD3D11 *mpCurrentCsUavs[8] {};
 
 	ID3DUserDefinedAnnotation *mpD3DAnnotation {};
 	VDStringW mProfBuffer;
 
 	alignas(16) float mVSConsts[16][4] = {};
 	alignas(16) float mPSConsts[16][4] = {};
+	alignas(16) float mCSConsts[16][4] = {};
 };
 
 bool VDTCreateContextD3D11(IVDTContext **ppctx);

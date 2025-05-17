@@ -230,5 +230,8 @@
     <Xml Include="source\customeffect.xml">
       <Filter>Source Files</Filter>
     </Xml>
+    <Xml Include="source\tape-rawimages.xml">
+      <Filter>Source Files</Filter>
+    </Xml>
   </ItemGroup>
 </Project>

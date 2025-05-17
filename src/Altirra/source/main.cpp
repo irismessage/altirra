@@ -454,7 +454,7 @@ void ATUIExit(bool forceNoConfirm) {
 		return;
 
 	if (forceNoConfirm)
-		DestroyWindow(g_hwnd);
+		PostQuitMessage(0);
 	else
 		::SendMessage(g_hwnd, WM_CLOSE, 0, 0);
 }
@@ -714,6 +714,35 @@ public:
 
 void ATInputConsoleCallback::SetConsoleTrigger(uint32 id, bool state) {
 	switch(id) {
+		case kATInputTrigger_UILeft:
+		case kATInputTrigger_UIRight:
+		case kATInputTrigger_UIUp:
+		case kATInputTrigger_UIDown:
+		case kATInputTrigger_UIAccept:
+		case kATInputTrigger_UIReject:
+		case kATInputTrigger_UIMenu:
+		case kATInputTrigger_UIOption:
+		case kATInputTrigger_UISwitchLeft:
+		case kATInputTrigger_UISwitchRight:
+		case kATInputTrigger_UILeftShift:
+		case kATInputTrigger_UIRightShift:
+			ATUISetNativeDialogMode(false);
+
+			if (state)
+				ATUITriggerButtonDown(id);
+			else
+				ATUITriggerButtonUp(id);
+			break;
+
+		default:
+			break;
+	}
+
+	// block the below actions when a modal is up to prevent improper nesting
+	if (state && !ATUICanManipulateWindows())
+		return;
+
+	switch(id) {
 		case kATInputTrigger_Start:
 			g_sim.GetGTIA().SetConsoleSwitch(0x01, state);
 			break;
@@ -744,26 +773,19 @@ void ATInputConsoleCallback::SetConsoleTrigger(uint32 id, bool state) {
 				g_sim.GetPokey().PushKey(0x21, false);
 			break;
 
-		case kATInputTrigger_UILeft:
-		case kATInputTrigger_UIRight:
-		case kATInputTrigger_UIUp:
-		case kATInputTrigger_UIDown:
-		case kATInputTrigger_UIAccept:
-		case kATInputTrigger_UIReject:
-		case kATInputTrigger_UIMenu:
-		case kATInputTrigger_UIOption:
-		case kATInputTrigger_UISwitchLeft:
-		case kATInputTrigger_UISwitchRight:
-		case kATInputTrigger_UILeftShift:
-		case kATInputTrigger_UIRightShift:
-			ATUISetNativeDialogMode(false);
-
+		case kATInputTrigger_Rewind:
 			if (state)
-				ATUITriggerButtonDown(id);
-			else
-				ATUITriggerButtonUp(id);
+				g_ATUICommandMgr.ExecuteCommandNT("System.Rewind");
 			break;
-	}
+
+		case kATInputTrigger_RewindMenu:
+			if (state)
+				g_ATUICommandMgr.ExecuteCommandNT("System.ShowRewindDialog");
+			break;
+
+		default:
+			break;
+	};
 }
 
 ATInputConsoleCallback g_inputConsoleCallback;
@@ -876,7 +898,7 @@ bool ATUIConfirmDiscardMemory(VDGUIHandle h, const wchar_t *title) {
 }
 
 bool ATUIConfirmReset(VDGUIHandle h, const char *key, const wchar_t *message, const wchar_t *title) {
-	return g_sim.TimeSinceColdReset() == 0 || ATUIConfirm(h, key, message, title);
+	return g_sim.TicksSinceColdReset() == 0 || ATUIConfirm(h, key, message, title);
 }
 
 void ATUIConfirmResetComplete() {
@@ -946,7 +968,7 @@ bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode, bool switchProfi
 
 	const uint32 oldProfileId = ATSettingsGetCurrentProfileId();
 	const uint32 newProfileId = ATGetDefaultProfileId(defaultProfile);
-	const bool switchingProfile = newProfileId != kATProfileId_Invalid && newProfileId != oldProfileId;
+	const bool switchingProfile = switchProfiles && (newProfileId != kATProfileId_Invalid && newProfileId != oldProfileId);
 
 	// check if we are switching to or from 5200 mode
 	const bool switching5200 = (mode == kATHardwareMode_5200 || prevMode == kATHardwareMode_5200);
@@ -1419,8 +1441,9 @@ void DoBootStreamWithConfirm(const wchar_t *origPath, const wchar_t *imageName, 
 
 class ATUIFutureOpenBootImage : public ATUIFuture {
 public:
-	ATUIFutureOpenBootImage(bool coldBoot)
+	ATUIFutureOpenBootImage(bool coldBoot, ATUICommandContext *ctx)
 		: mbColdBoot(coldBoot)
+		, mpCommandContext(ctx)
 	{
 	}
 
@@ -1436,27 +1459,36 @@ public:
 
 			case 1:
 				if (mpConfirmResult && !mpConfirmResult->GetResult()) {
+					mpCommandContext->MarkCompleted(false);
+
 					MarkCompleted();
 					break;
 				}
 
 				mpConfirmResult.clear();
-				mpFileDialogResult = ATUIShowOpenFileDialog('load', L"Load disk, cassette, cartridge, or program image",
-					L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.flac;*.zip;*.atz;*.gz;*.bas;*.arc;*.sap\0"
-					L"Atari program (*.xex,*.obx,*.com)\0*.xex;*.obx;*.com\0"
-					L"BASIC program (*.bas)\0*.bas\0"
-					L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm;*.arc\0"
-					L"Protected disk image (*.pro)\0*.pro\0"
-					L"VAPI disk image (*.atx)\0*.atx\0"
-					L"Cartridge (*.rom,*.bin,*.a52,*.car)\0*.rom;*.bin;*.a52;*.car\0"
-					L"Cassette tape (*.cas,*.wav,*.flac)\0*.cas;*.wav;*.flac\0"
-					L"Zip archive (*.zip)\0*.zip\0"
-					L"gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
-					L".ARC archive (*.arc)\0*.arc\0"
-					L"SAP file (*.sap)\0*.sap\0"
-					L"All files\0*.*\0");
 
-				Wait(mpFileDialogResult);
+				if (VDStringW path; mpCommandContext->GetArg(0, path) && !path.empty()) {
+					mpFileDialogResult = new ATUIFileDialogResult;
+					mpFileDialogResult->mbAccepted = true;
+					mpFileDialogResult->mPath = path;
+				} else {
+					mpFileDialogResult = ATUIShowOpenFileDialog('load', L"Load disk, cassette, cartridge, or program image",
+						L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.flac;*.ogg;*.zip;*.atz;*.gz;*.bas;*.arc;*.sap\0"
+						L"Atari program (*.xex,*.obx,*.com)\0*.xex;*.obx;*.com\0"
+						L"BASIC program (*.bas)\0*.bas\0"
+						L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm;*.arc\0"
+						L"Protected disk image (*.pro)\0*.pro\0"
+						L"VAPI disk image (*.atx)\0*.atx\0"
+						L"Cartridge (*.rom,*.bin,*.a52,*.car)\0*.rom;*.bin;*.a52;*.car\0"
+						L"Cassette tape (*.cas,*.wav,*.flac,*.ogg)\0*.cas;*.wav;*.flac;*.ogg\0"
+						L"Zip archive (*.zip)\0*.zip\0"
+						L"gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
+						L".ARC archive (*.arc)\0*.arc\0"
+						L"SAP file (*.sap)\0*.sap\0"
+						L"All files\0*.*\0");
+
+					Wait(mpFileDialogResult);
+				}
 				++mStage;
 				break;
 
@@ -1472,7 +1504,12 @@ public:
 						g_sim.ColdReset();
 
 					ATAddMRUListItem(mpFileDialogResult->mPath.c_str());
+
+					mpCommandContext->SetArg(0, mpFileDialogResult->mPath.c_str());
 				}
+
+				mpCommandContext->MarkCompleted(mpFileDialogResult->mbAccepted);
+
 				mpFileDialogResult.clear();
 
 				MarkCompleted();
@@ -1483,10 +1520,11 @@ public:
 	const bool mbColdBoot;
 	vdrefptr<ATUIFileDialogResult> mpFileDialogResult;
 	vdrefptr<ATUIFutureWithResult<bool> > mpConfirmResult;
+	vdrefptr<ATUICommandContext> mpCommandContext;
 };
 
-void OnCommandOpen(bool forceColdBoot) {
-	vdrefptr<ATUIFutureOpenBootImage> stage(new ATUIFutureOpenBootImage(forceColdBoot));
+void OnCommandOpen(bool forceColdBoot, ATUICommandContext& ctx) {
+	vdrefptr<ATUIFutureOpenBootImage> stage(new ATUIFutureOpenBootImage(forceColdBoot, &ctx));
 
 	ATUIPushStep(stage->GetStep());
 }
@@ -1997,7 +2035,7 @@ void CheckRecordingExceptions() {
 		if (g_pVideoWriter)
 			g_pVideoWriter->CheckExceptions();
 	} catch(const MyError& e) {
-		ATUIShowError2((VDGUIHandle)g_hwnd, VDTextAToW(e.c_str()).c_str(), L"Video recording stopped with an error");
+		ATUIShowError2((VDGUIHandle)g_hwnd, e.wc_str(), L"Video recording stopped with an error");
 
 		StopVideoRecording();
 	}
@@ -2006,7 +2044,7 @@ void CheckRecordingExceptions() {
 		if (g_pAudioWriter)
 			g_pAudioWriter->CheckExceptions();
 	} catch(const MyError& e) {
-		ATUIShowError2((VDGUIHandle)g_hwnd, VDTextAToW(e.c_str()).c_str(), L"Audio recording stopped with an error");
+		ATUIShowError2((VDGUIHandle)g_hwnd, e.wc_str(), L"Audio recording stopped with an error");
 
 		StopAudioRecording();
 	}
@@ -2015,7 +2053,7 @@ void CheckRecordingExceptions() {
 		if (g_pSapWriter)
 			g_pSapWriter->CheckExceptions();
 	} catch(const MyError& e) {
-		ATUIShowError2((VDGUIHandle)g_hwnd, VDTextAToW(e.c_str()).c_str(), L"SAP recording stopped with an error");
+		ATUIShowError2((VDGUIHandle)g_hwnd, e.wc_str(), L"SAP recording stopped with an error");
 
 		StopSapRecording();
 	}
@@ -2023,12 +2061,12 @@ void CheckRecordingExceptions() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-void OnCommandOpenImage() {
-	OnCommandOpen(false);
+void OnCommandOpenImage(ATUICommandContext& ctx) {
+	OnCommandOpen(false, ctx);
 }
 
-void OnCommandBootImage() {
-	OnCommandOpen(true);
+void OnCommandBootImage(ATUICommandContext& ctx) {
+	OnCommandOpen(true, ctx);
 }
 
 bool OnTestCommandQuickLoadState() {
@@ -2130,8 +2168,8 @@ void OnCommandSaveFirmwareRapidusFlash() {
 	OnCommandSaveFirmware(3);
 }
 
-void OnCommandExit() {
-	ATUIExit(false);
+void OnCommandExit(ATUICommandContext& ctx) {
+	ATUIExit(ctx.mbQuiet);
 }
 
 ATDisplayFilterMode ATUIGetDisplayFilterMode() {
@@ -2852,7 +2890,7 @@ void OnCommandRecordVideo() {
 		gtia.AddVideoTap(g_pVideoWriter->AsVideoTap());
 	} catch(const MyError& e) {
 		StopRecording();
-		ATUIShowError2(ATUIGetNewPopupOwner(), VDTextAToW(e.c_str()).c_str(), L"Video recording failed");
+		ATUIShowError2(ATUIGetNewPopupOwner(), e.wc_str(), L"Video recording failed");
 	}
 }
 
@@ -3243,7 +3281,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			else if (!vdwcsicmp(arg, L"d600"))
 				base = 0xD600;
 			else
-				throw MyError("Invalid SoundBoard memory base: '%ls'", arg);
+				throw VDException(L"Invalid SoundBoard memory base: '%ls'", arg);
 
 			pset.SetUint32("base", base);
 
@@ -3293,7 +3331,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			else if (!vdwcsicmp(arg, L"5200"))
 				g_sim.SetHardwareMode(kATHardwareMode_5200);
 			else
-				throw MyError("Invalid hardware mode '%ls'", arg);
+				throw VDException(L"Invalid hardware mode '%ls'", arg);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"kernel", arg)) {
@@ -3320,13 +3358,13 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			else if (!vdwcsicmp(arg, L"5200lle"))
 				g_sim.SetKernel(kATFirmwareId_5200_LLE);
 			else
-				throw MyError("Invalid kernel mode '%ls'", arg);
+				throw VDException(L"Invalid kernel mode '%ls'", arg);
 		}
 		
 		if (cmdLine.FindAndRemoveSwitch(L"kernelref", arg)) {
 			const auto id = g_sim.GetFirmwareManager()->GetFirmwareByRefString(arg, ATIsKernelFirmwareType);
 			if (!id)
-				throw MyError("Unable to find a match for kernel reference: %ls", arg);
+				throw VDException(L"Unable to find a match for kernel reference: %ls", arg);
 
 			g_sim.SetKernel(id);
 		}
@@ -3334,7 +3372,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		if (cmdLine.FindAndRemoveSwitch(L"basicref", arg)) {
 			const auto id = g_sim.GetFirmwareManager()->GetFirmwareByRefString(arg, [](ATFirmwareType type) { return type == kATFirmwareType_Basic; });
 			if (!id)
-				throw MyError("Unable to find a match for kernel reference: %ls", arg);
+				throw VDException(L"Unable to find a match for kernel reference: %ls", arg);
 
 			g_sim.SetBasic(id);
 		}
@@ -3371,7 +3409,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			else if (!vdwcsicmp(arg, L"1088K"))
 				g_sim.SetMemoryMode(kATMemoryMode_1088K);
 			else
-				throw MyError("Invalid memory mode '%ls'", arg);
+				throw VDException(L"Invalid memory mode '%ls'", arg);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"axlonmemsize", arg)) {
@@ -3420,7 +3458,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			else if (!vdwcsicmp(arg, L"palhi"))
 				g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::PALHi);
 			else
-				throw MyError("Invalid hardware mode '%ls'", arg);
+				throw VDException(L"Invalid hardware mode '%ls'", arg);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"vsync"))
@@ -3476,7 +3514,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			VDStringRefW mode;
 
 			if (!tokenizer.split(',', mode))
-				throw MyError("Invalid PCLink mount string: %ls", arg);
+				throw VDException(L"Invalid PCLink mount string: %ls", arg);
 
 			bool write = false;
 
@@ -3553,7 +3591,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			cartmapper = ATGetCartridgeModeForMapper(wcstol(arg, NULL, 10));
 
 			if (cartmapper <= 0 || cartmapper >= kATCartridgeModeCount)
-				throw MyError("Unsupported or invalid cartridge mapper: %ls", arg);
+				throw VDException(L"Unsupported or invalid cartridge mapper: %ls", arg);
 		}
 
 		if (cmdLine.FindAndRemoveSwitch(L"nocheats")) {
@@ -3567,7 +3605,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 			auto result = ATParseEnum<ATDiskEmulationMode>(VDTextWToU8(VDStringSpanW(arg)));
 
 			if (!result.mValid)
-				throw MyError("Unsupported disk emulation mode: %ls", arg);
+				throw VDException(L"Unsupported disk emulation mode: %ls", arg);
 
 			for(int i=0; i<15; ++i)
 				g_sim.GetDiskDrive(i).SetEmulationMode(result.mValue);
@@ -3631,13 +3669,185 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		// suppressed the setup wizard as any other switch does.
 		cmdLine.FindAndRemoveSwitch(L"skipsetup");
 
-		VDCommandLineIterator it;
-		if (cmdLine.GetNextSwitchArgument(it, arg)) {
-			throw MyError("Unknown command-line switch: %ls. Use /? for help.", arg);
+		struct SwitchHandler {
+			const wchar_t *mpName = nullptr;
+			uint32 mNameHash = 0;
+			bool mbRequiresArg = false;
+			union {
+				vdfunction<void()> mpNoArgHandler;
+				vdfunction<void(const wchar_t *)> mpArgHandler;
+			};
+
+			SwitchHandler(const wchar_t *name, vdfunction<void()> handler)
+				: mpName(name)
+				, mNameHash(VDHashString32I(name))
+				, mbRequiresArg(false)
+				, mpNoArgHandler(std::move(handler))
+			{
+			}
+
+			SwitchHandler(const wchar_t *name, vdfunction<void(const wchar_t *)> handler)
+				: mpName(name)
+				, mNameHash(VDHashString32I(name))
+				, mbRequiresArg(true)
+				, mpArgHandler(std::move(handler))
+			{
+			}
+
+			~SwitchHandler() {
+				if (mbRequiresArg)
+					mpArgHandler.~vdfunction();
+				else
+					mpNoArgHandler.~vdfunction();
+			}
+		};
+
+		SwitchHandler handlers[] {
+			{
+				L"/cleardevices",
+				[] {
+					g_sim.GetDeviceManager()->RemoveAllDevices(false);
+				}
+			},
+			{
+				L"/adddevice",
+				[](const wchar_t *arg) {
+					auto& dm = *g_sim.GetDeviceManager();
+					VDStringRefW params(arg);
+					VDStringRefW tag;
+
+					if (!params.split(L',', tag)) {
+						params.clear();
+						tag = params;
+					}
+
+					// parse parameters, if any
+					ATPropertySet pset;
+					pset.ParseFromCommandLineString(params.data());
+
+					const VDStringA tagA = VDTextWToA(tag);
+					const ATDeviceDefinition *def = dm.GetDeviceDefinition(tagA.c_str());
+
+					// don't allow adding hidden devices
+					if (!def || (def->mFlags & kATDeviceDefFlag_Hidden))
+						throw VDException(L"Unknown device type: %.*ls", (int)tag.size(), tag.data());
+
+					// check if the device is internal
+					if (def->mFlags & kATDeviceDefFlag_Internal) {
+						// internal device -- reconfigure it
+						IATDevice *dev = dm.GetDeviceByTag(tagA.c_str());
+
+						if (!dev)
+							throw VDException(L"Missing internal device: %.*ls", (int)tag.size(), tag.data());
+
+						dm.ReconfigureDevice(*dev, pset);
+					} else {
+						// external device -- add it
+						dm.AddDevice(def, pset);
+					}
+				}
+			},
+			{
+				L"/setdevice",
+				[](const wchar_t *arg) {
+					auto& dm = *g_sim.GetDeviceManager();
+					VDStringRefW params(arg);
+					VDStringRefW tag;
+
+					if (!params.split(L',', tag)) {
+						params.clear();
+						tag = params;
+					}
+
+					// parse parameters, if any
+					ATPropertySet pset;
+					pset.ParseFromCommandLineString(params.data());
+
+					const VDStringA tagA = VDTextWToA(tag);
+					const ATDeviceDefinition *def = dm.GetDeviceDefinition(tagA.c_str());
+
+					// don't allow adding hidden devices
+					if (!def || (def->mFlags & kATDeviceDefFlag_Hidden))
+						throw VDException(L"Unknown device type: %.*ls", (int)tag.size(), tag.data());
+
+					// look for the device
+					IATDevice *dev = dm.GetDeviceByTag(tagA.c_str());
+
+					// check if the device is internal
+					if (def->mFlags & kATDeviceDefFlag_Internal) {
+						// internal device -- reconfigure it
+
+						if (!dev)
+							throw VDException(L"Missing internal device: %.*ls", (int)tag.size(), tag.data());
+
+						dm.ReconfigureDevice(*dev, pset);
+					} else {
+						// external device -- add it if it doesn't already exist
+						if (dev)
+							dm.ReconfigureDevice(*dev, pset);
+						else
+							dm.AddDevice(def, pset);
+
+					}
+				}
+			},
+			{
+				L"/removedevice",
+				[](const wchar_t *arg) {
+					auto& dm = *g_sim.GetDeviceManager();
+
+					IATDevice *dev = dm.GetDeviceByTag(VDTextWToA(arg).c_str(), 0, true, true);
+					if (dev) {
+						ATDeviceInfo devInfo;
+						dev->GetDeviceInfo(devInfo);
+
+						if (!(devInfo.mpDef->mFlags & kATDeviceDefFlag_Internal))
+							dm.RemoveDevice(dev);
+					}
+				}
+			},
+		};
+
+		// prescan the remaining arguments and ensure that all switches are handled, before we do anything else
+		for(VDCommandLineIterator it2; cmdLine.GetNextSwitchArgument(it2, arg);) {
+			const uint32 hash = VDHashString32I(arg);
+			bool valid = false;
+
+			for(const SwitchHandler& sh : handlers) {
+				if (sh.mNameHash == hash && VDStringSpanW(arg) == sh.mpName) {
+					valid = true;
+					break;
+				}
+			}
+
+			if (!valid)
+				throw VDException(L"Unknown command-line switch: %ls. Use /? for help.", arg);
 		}
 
+		VDCommandLineIterator it;
 		bool suppressColdReset = false;
-		while(cmdLine.GetNextNonSwitchArgument(it, arg)) {
+		bool isSwitch = false;
+		while(cmdLine.GetNextArgument(it, arg, isSwitch)) {
+			if (isSwitch) {
+				const uint32 hash = VDHashString32I(arg);
+
+				for(const SwitchHandler& sh : handlers) {
+					if (sh.mNameHash == hash && VDStringSpanW(arg) == sh.mpName) {
+						if (sh.mbRequiresArg) {
+							if (!cmdLine.GetNextArgument(it, arg, isSwitch) || isSwitch)
+								throw VDException(L"Command-line error: switch %ls requires an argument.", sh.mpName);
+
+							sh.mpArgHandler(arg);
+						} else {
+							sh.mpNoArgHandler();
+						}
+						break;
+					}
+				}
+
+				continue;
+			}
+
 			if (!unloaded) {
 				unloaded = true;
 				g_sim.UnloadAll();
@@ -3651,7 +3861,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 		}
 
 	} catch(const MyError& e) {
-		ATUIShowError2((VDGUIHandle)hwnd, VDTextAToW(e.c_str()).c_str(), L"Command-line error");
+		ATUIShowError2((VDGUIHandle)hwnd, e.wc_str(), L"Command-line error");
 	}
 
 	ATSettingsSetBootstrapProfileMode(false);
@@ -3878,7 +4088,7 @@ void ATShutdownJoysticks() {
 }
 
 int RunMainLoop2(HWND hwnd) {
-	int ticks = 0;
+	uint32 ticks = 0;
 
 	ATAnticEmulator& antic = g_sim.GetAntic();
 	uint32 lastFrame = antic.GetPresentedFrameCounter();
@@ -3889,9 +4099,12 @@ int RunMainLoop2(HWND hwnd) {
 
 	uint64 lastTime = VDGetPreciseTick();
 	uint64 lastStatusTime = lastTime;
+	uint32 lastStatusTick = 0;
+
+	const sint64 minStatusTime = secondTime / 10;
 
 	sint64 nextFrameTime;
-	int nextTickUpdate = 60;
+	uint32 nextTickUpdate = 60;
 	bool nextFrameTimeValid = false;
 	bool updateScreenPending = false;
 	uint64 lastCPUTime = 0;
@@ -3977,28 +4190,34 @@ int RunMainLoop2(HWND hwnd) {
 
 				++ticks;
 
-				if ((ticks - nextTickUpdate) >= 0) {
-					float fps = 0;
-					float cpu = 0;
+				if ((sint32)(ticks - nextTickUpdate) >= 0) {
+					sint64 deltaStatusTime = curTime - lastStatusTime;
 
-					if (g_showFps) {
-						float deltaPreciseTicks = (float)(curTime - lastStatusTime);
-						fps = (float)secondTime / deltaPreciseTicks * 60;
+					if (deltaStatusTime >= minStatusTime) {
+						float fps = 0;
+						float cpu = 0;
 
-						uint64 newCPUTime = ATGetCumulativeCPUTime();
+						if (g_showFps) {
+							float deltaPreciseTicks = (float)deltaStatusTime;
+							fps = (float)secondTime / deltaPreciseTicks * (ticks - lastStatusTick);
 
-						sint64 deltaCPUTime = newCPUTime - lastCPUTime;
-						lastCPUTime = newCPUTime;
+							uint64 newCPUTime = ATGetCumulativeCPUTime();
 
-						cpu = ((float)deltaCPUTime / 10000000.0f) / (deltaPreciseTicks * invSecondTime) * 100.0f;
+							sint64 deltaCPUTime = newCPUTime - lastCPUTime;
+							lastCPUTime = newCPUTime;
+
+							cpu = ((float)deltaCPUTime / 10000000.0f) / (deltaPreciseTicks * invSecondTime) * 100.0f;
+						}
+
+						g_sim.GetUIRenderer()->SetFpsIndicator(g_fullscreen && g_showFps ? fps : -1.0f);
+
+						if (!g_fullscreen)
+							g_winCaptionUpdater->Update(true, ticks, fps, cpu);
+
+						lastStatusTime = curTime;
+						lastStatusTick = ticks;
 					}
 
-					g_sim.GetUIRenderer()->SetFpsIndicator(g_fullscreen && g_showFps ? fps : -1.0f);
-
-					if (!g_fullscreen)
-						g_winCaptionUpdater->Update(true, ticks, fps, cpu);
-
-					lastStatusTime = curTime;
 					nextTickUpdate = ticks - ticks % 60 + 60;
 				}
 
@@ -4655,6 +4874,13 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 		}
 	);
 
+	ATOptionsAddUpdateCallback(true,
+		[](ATOptions& opts, const ATOptions *prevOpts, void *) {
+			if (!prevOpts || opts.mEfficiencyMode != prevOpts->mEfficiencyMode)
+				ATSetProcessEfficiencyMode(opts.mEfficiencyMode);
+		}
+	);
+
 	VDVideoDisplaySetMonitorSwitchingDXEnabled(true);
 	VDVideoDisplaySetSecondaryDXEnabled(true);
 	VDVideoDisplaySetD3D9ExEnabled(false);
@@ -4691,7 +4917,10 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 	wc.lpszClassName = _T("AltirraMainWindow");
 	ATOM atom = ATContainerWindow::RegisterCustom(wc);
 	ATUICreateMainWindow(&g_pMainWindow);
-	HWND hwnd = (HWND)g_pMainWindow->Create(atom, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, NULL, false);
+
+	// Windows 11 22631 taskbar uses the initial window caption to size the taskbar label and doesn't
+	// resize it, so it's important that we not create this window with a blank caption.
+	HWND hwnd = (HWND)g_pMainWindow->Create(atom, AT_PROGRAM_NAME_STR, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, NULL, false);
 	g_hwnd = hwnd;
 
 	ATUIInitProgressDialog();
@@ -4794,7 +5023,7 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 		} else if (profileNameSpan == L"5200") {
 			profileToLoad = ATGetDefaultProfileId(kATDefaultProfile_5200);
 		} else {
-			MyError("Unknown default profile: %ls", profileName).post(hwnd, "Altirra error");
+			VDException(L"Unknown default profile: %ls", profileName).post(hwnd, "Altirra error");
 		}
 	}
 
@@ -4834,10 +5063,9 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 
 	ATStartupLog("Restoring pane layout");
 
-	if (!ATRestorePaneLayout(NULL))
-		ATActivateUIPane(kATUIPaneId_Display, true);
-
-	if (ATGetUIPane(kATUIPaneId_Display))
+	// try to restore the pane layout; if it succeeds, give the Display pane
+	// focus if it exists, but if it fails, force the Display pane to exist
+	if (!ATRestorePaneLayout(NULL) || ATGetUIPane(kATUIPaneId_Display))
 		ATActivateUIPane(kATUIPaneId_Display, true);
 
 	ATStartupLog("Initiating cold reset");
@@ -4851,6 +5079,18 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 
 	ATStartupLog("Running main loop");
 	int returnCode = RunMainLoop(hwnd);
+
+	ATStartupLog("Beginning exit");
+
+	ATStartupLog("Destroying pane layout");
+
+	// hide the main window, as we're going to start taking it down and no need
+	// to repaint stuff; we need to clear the panes as they refer to some high
+	// level systems
+	if (g_pMainWindow) {
+		g_pMainWindow->Hide();
+		g_pMainWindow->Clear();
+	}
 
 	ATStartupLog("Destroying remaining UI");
 	ATUIDestroyModelessDialogs(nullptr);

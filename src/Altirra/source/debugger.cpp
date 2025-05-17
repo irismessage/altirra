@@ -779,6 +779,8 @@ protected:
 	vdfunction<void(ATDebuggerRequestFileEvent&)> mpRequestFile;
 
 	vdrefptr<IATDevice> mpDebugDevice;
+
+	ATCPUStepCondition mDebugStepCondition;
 };
 
 ATDebugger g_debugger;
@@ -1124,7 +1126,7 @@ void ATDebugger::Run(ATDebugSrcMode sourceMode) {
 	SetSourceMode(sourceMode);
 
 	ATCPUEmulator& cpu = g_sim.GetCPU();
-	cpu.SetStep(false);
+	cpu.RemoveStepCondition(mDebugStepCondition);
 	cpu.SetTrace(false);
 	g_sim.Resume();
 	mbClientUpdatePending = true;
@@ -1142,7 +1144,7 @@ void ATDebugger::RunTraced() {
 		throw MyError("Step execution is not available on the current target.");
 
 	ATCPUEmulator& cpu = g_sim.GetCPU();
-	cpu.SetStep(false);
+	cpu.RemoveStepCondition(mDebugStepCondition);
 	cpu.SetTrace(true);
 	g_sim.Resume();
 	mbClientUpdatePending = true;
@@ -1164,7 +1166,7 @@ void ATDebugger::RunToScanline(int scan) {
 
 void ATDebugger::RunToVBI() {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
-	cpu.SetStep(false);
+	cpu.RemoveStepCondition(mDebugStepCondition);
 	cpu.SetTrace(false);
 	g_sim.SetBreakOnScanline(248);
 	g_sim.Resume();
@@ -1908,12 +1910,14 @@ void ATDebugger::StepInto(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *
 	} else {
 		ATCPUEmulator& cpu = g_sim.GetCPU();
 
-		cpu.SetTrace(false);
+		cpu.RemoveStepCondition(mDebugStepCondition);
 
 		if (mbSourceMode && stepRangeCount > 0)
 			SetupRangeStep(true, stepRanges, stepRangeCount, false);
-		else
-			cpu.SetStep(true);
+		else {
+			mDebugStepCondition = ATCPUStepCondition::CreateSingleStep();
+			cpu.AddStepCondition(mDebugStepCondition);
+		}
 
 		g_sim.Resume();
 		mbClientUpdatePending = true;
@@ -2000,10 +2004,11 @@ void ATDebugger::StepOver(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *
 		const OpInfo& VDRESTRICT opInfo = opTab.m[opcode];
 
 		cpu.SetTrace(false);
+		cpu.RemoveStepCondition(mDebugStepCondition);
 
 		if (opInfo.mbIsCall) {
-			cpu.SetRTSBreak(cpu.GetS());
-			cpu.SetStep(false);
+			mDebugStepCondition = ATCPUStepCondition::CreateAtStackLevel(cpu.GetS());
+			cpu.AddStepCondition(mDebugStepCondition);
 		} else if (opInfo.mbRepeats && !stepRangeCount) {
 			const ATDebuggerStepRange stepRange { cpu.GetInsnPC(), 1 };
 			SetupRangeStep(false, &stepRange, 1, true);
@@ -2049,20 +2054,32 @@ void ATDebugger::StepOut(ATDebugSrcMode sourceMode) {
 	} else {
 		ATCPUEmulator& cpu = g_sim.GetCPU();
 		uint8 s = cpu.GetS();
-		if (s == 0xFF)
-			return StepInto(sourceMode);
 
+		// By default, ignore everything at this stack level or nested within
+		// (ignore while S register <= current S register).
 		++s;
 
+		// Try to scan for stack frames. If we're able to do so, use the stack
+		// level of the outer frame as the threshold (ignore while S register
+		// < S register in outer frame).
 		ATCallStackFrame frames[2];
 		uint32 framecount = GetCallStack(frames, 2);
 
 		if (framecount >= 2)
 			s = (uint8)frames[1].mSP;
 
-		cpu.SetStep(false);
+		cpu.RemoveStepCondition(mDebugStepCondition);
+
+		mDebugStepCondition = {};
+		mDebugStepCondition.mbStepOut = true;
+
+		// set up to ignore all stack levels below (nested within) threshold
+		mDebugStepCondition.mIgnoreStackStart = s ^ 0x80;
+		mDebugStepCondition.mIgnoreStackLength = 0x80;
+
+		cpu.AddStepCondition(mDebugStepCondition);
+
 		cpu.SetTrace(false);
-		cpu.SetRTSBreak(s);
 		g_sim.Resume();
 		mbClientUpdatePending = true;
 		mRunState = kRunState_StepOut;
@@ -4643,7 +4660,9 @@ void ATDebugger::OnSimulatorEvent(ATSimulatorEvent ev) {
 		if (mRunState == kRunState_RunToVBI2) {
 			ATCPUEmulator& cpu = g_sim.GetCPU();
 
-			cpu.SetStepNMI();
+			cpu.RemoveStepCondition(mDebugStepCondition);
+			mDebugStepCondition = ATCPUStepCondition::CreateNMI();
+			cpu.AddStepCondition(mDebugStepCondition);
 		}
 
 		return;
@@ -4735,7 +4754,9 @@ void ATDebugger::OnSimulatorEvent(ATSimulatorEvent ev) {
 	if (ev == kATSimEvent_ScanlineBreakpoint && mRunState == kRunState_RunToVBI1) {
 		if (g_sim.GetAntic().IsVBIEnabled()) {
 			mRunState = kRunState_RunToVBI2;
-			cpu.SetStepNMI();
+			cpu.RemoveStepCondition(mDebugStepCondition);
+			mDebugStepCondition = ATCPUStepCondition::CreateNMI();
+			cpu.AddStepCondition(mDebugStepCondition);
 			g_sim.SetBreakOnScanline(249);
 			ATConsoleWrite("Vertical blank interrupt routine reached.\n");
 			return;
@@ -4813,8 +4834,6 @@ void ATDebugger::OnSimulatorEvent(ATSimulatorEvent ev) {
 			InterruptRun();
 			break;
 	}
-
-	cpu.SetRTSBreak();
 
 	if (ev != kATSimEvent_CPUPCBreakpointsUpdated) {
 		mFrameExtPC = GetExtPC();
@@ -5202,6 +5221,8 @@ void ATDebugger::OnBreakpointHit(ATBreakpointManager *sender, ATBreakpointEvent 
 	mExprAddress = event->mAddress;
 	mExprValue = event->mValue;
 
+	bool interrupt = false;
+
 	if (bp.mCommand.empty()) {
 		VDStringA message;
 		message.sprintf("Breakpoint %s hit", GetBreakpointName(useridx).c_str());
@@ -5272,20 +5293,15 @@ void ATDebugger::OnBreakpointHit(ATBreakpointManager *sender, ATBreakpointEvent 
 
 		event->mbSilentBreak = true;
 
-		// Because responding to the breakpoint causes a stop, we need to manually
-		// handle a step event.
+		// Because responding to the breakpoint causes a stop, we need to disable
+		// any step condition that has been set up.
 		ATCPUEmulator& cpu = g_sim.GetCPU();
-		if (cpu.GetStep()) {
-			cpu.SetStep(false);
 
-			mbClientUpdatePending = true;
-			mRunState = kRunState_Stopped;
-			cpu.SetRTSBreak();
-			mFrameExtPC = cpu.GetXPC();
-		}
+		if (cpu.IsStepConditionSatisfied(mDebugStepCondition))
+			interrupt = true;
 	}
 
-	if (!bp.mbContinueExecution) {
+	if (!bp.mbContinueExecution || interrupt) {
 		event->mbBreak = true;
 		mbClientUpdatePending = true;
 		SetTarget(bp.mTargetIndex);
@@ -5363,11 +5379,19 @@ void ATDebugger::SetupRangeStep(bool stepInto, const ATDebuggerStepRange *stepRa
 	StepRanges::iterator itNext = std::upper_bound(mStepRanges.begin(), mStepRanges.end(), pcRange, ATDebuggerStepRangeEndPred());
 
 	// set up stepping
-	if (itNext == mStepRanges.begin()) {
-		cpu.SetStepRange(0, 0, CPUSourceStepCallback, this, true);
-	} else {
-		cpu.SetStepRange(itNext[-1].mAddr, itNext[-1].mSize, CPUSourceStepCallback, this, true);
+	cpu.RemoveStepCondition(mDebugStepCondition);
+
+	mDebugStepCondition = {};
+	mDebugStepCondition.mpCallback = CPUSourceStepCallback;
+	mDebugStepCondition.mpCallbackData = this;
+	mDebugStepCondition.mbStepOver = !stepInto;
+
+	if (itNext != mStepRanges.begin()) {
+		mDebugStepCondition.mIgnorePCStart = itNext[-1].mAddr;
+		mDebugStepCondition.mIgnorePCLength = itNext[-1].mSize;
 	}
+
+	cpu.AddStepCondition(mDebugStepCondition);
 
 	mStepS = cpu.GetS();
 	mbStepInto = stepInto;
@@ -5404,7 +5428,11 @@ ATCPUStepResult ATDebugger::CPUSourceStepCallback(ATCPUEmulator *cpu, uint32 pc,
 
 		if (it != thisptr->mStepRanges.begin() && (uint32)(pc - it[-1].mAddr) < it[-1].mSize) {
 			// it's within range -- adjust the fast step range and continue
-			cpu->SetStepRange(it[-1].mAddr, it[-1].mSize, CPUSourceStepCallback, thisptr, true);
+			cpu->RemoveStepCondition(thisptr->mDebugStepCondition);
+			thisptr->mDebugStepCondition.mIgnorePCStart = it[-1].mAddr;
+			thisptr->mDebugStepCondition.mIgnorePCLength = it[-1].mSize;
+			cpu->AddStepCondition(thisptr->mDebugStepCondition);
+
 			return kATCPUStepResult_Continue;
 		}
 
@@ -5415,8 +5443,8 @@ ATCPUStepResult ATDebugger::CPUSourceStepCallback(ATCPUEmulator *cpu, uint32 pc,
 void ATDebugger::InterruptRun(bool leaveRunning) {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 
-	cpu.SetStep(false);
-	cpu.SetRTSBreak();
+	cpu.RemoveStepCondition(mDebugStepCondition);
+
 	g_sim.SetBreakOnScanline(-1);
 	g_sim.SetBreakOnFrameEnd(false);
 
@@ -7174,6 +7202,7 @@ void ATConsoleCmdRegisters(ATDebuggerCmdParser& parser) {
 				state6502.mYH = (uint8)(v >> 8);
 			} else if (regName == "s") {
 				state6502.mS = (uint8)v;
+				state6502.mSH = (uint8)(v >> 8);
 			} else if (regName == "p") {
 				state6502.mP = (uint8)v;
 			} else if (regName == "a") {
@@ -9792,7 +9821,7 @@ void ATConsoleCmdLoadKernelSymbols(ATDebuggerCmdParser& parser) {
 	try {
 		ATLoadSymbols(pathArg->c_str(), ~symbols);
 	} catch(const MyError& e) {
-		throw MyError("Unable to load symbols from %ls: %s", pathArg->c_str(), e.gets());
+		throw VDException(L"Unable to load symbols from %ls: %ls", pathArg->c_str(), e.wc_str());
 	}
 
 	g_debugger.AddModule(0, 0xD800, 0x2800, symbols, "Kernel", NULL);
@@ -9859,21 +9888,9 @@ void ATConsoleCmdDiskOrder(ATDebuggerCmdParser& parser) {
 	}
 }
 
-namespace {
-	struct SecInfo {
-		int mVirtSec;
-		int mPhantomIndex;
-		ATDiskInterface::SectorInfo mInfo;
-
-		bool operator<(const SecInfo& x) const {
-			return mInfo.mRotPos < x.mInfo.mRotPos;
-		}
-	};
-}
-
 void ATConsoleCmdDiskTrack(ATDebuggerCmdParser& parser) {
 	if (parser.IsEmpty()) {
-		ATConsoleWrite("Syntax: .disktrack <track>...\n");
+		ATConsoleWrite("Syntax: .disktrack [-d disknum] <track>...\n");
 		return;
 	}
 
@@ -9895,6 +9912,15 @@ void ATConsoleCmdDiskTrack(ATDebuggerCmdParser& parser) {
 
 	uint32 vsecBase = track * geom.mSectorsPerTrack + 1;
 
+	struct SecInfo : public ATDiskPhysicalSectorInfo {
+		uint32 mVirtSec;
+		int mPhantomIndex;
+
+		bool operator<(const SecInfo& x) const {
+			return mRotPos < x.mRotPos;
+		}
+	};
+
 	vdfastvector<SecInfo> sectors;
 
 	for(uint32 i=0; i<geom.mSectorsPerTrack; ++i) {
@@ -9902,14 +9928,15 @@ void ATConsoleCmdDiskTrack(ATDebuggerCmdParser& parser) {
 		uint32 phantomCount = diskIf.GetSectorPhantomCount(vsec);
 
 		for(uint32 phantomIdx = 0; phantomIdx < phantomCount; ++phantomIdx) {
-			ATDiskInterface::SectorInfo si0;
+			ATDiskPhysicalSectorInfo psi;
 
-			if (diskIf.GetSectorInfo(vsec, phantomIdx, si0)) {
+			if (diskIf.GetSectorInfo(vsec, phantomIdx, psi)) {
 				SecInfo& si = sectors.push_back();
 
 				si.mVirtSec = vsec;
 				si.mPhantomIndex = phantomIdx;
-				si.mInfo = si0;
+
+				static_cast<ATDiskPhysicalSectorInfo&>(si) = psi;
 			}
 		}
 	}
@@ -9917,17 +9944,18 @@ void ATConsoleCmdDiskTrack(ATDebuggerCmdParser& parser) {
 	std::sort(sectors.begin(), sectors.end());
 
 	for(const SecInfo& si : sectors) {
-		ATConsolePrintf("%4d/%d  %2d   %5.3f  $%02X  %s%s%s%s%s\n",
+		ATConsolePrintf("%4d/%d  %2d   %5.3f  %4d  $%02X  %s%s%s%s%s\n",
 			si.mVirtSec,
 			si.mPhantomIndex + 1,
 			si.mVirtSec - vsecBase + 1,
-			si.mInfo.mRotPos,
-			si.mInfo.mFDCStatus
-			, (si.mInfo.mFDCStatus & 0x18) == 0x10 ? " data-crc" : ""
-			, (si.mInfo.mFDCStatus & 0x18) == 0x00 ? " address-crc" : ""
-			, (si.mInfo.mFDCStatus & 0x18) == 0x08 ? " missing-data-field" : ""
-			, (si.mInfo.mFDCStatus & 0x04) == 0x00 ? " long" : ""
-			, (si.mInfo.mFDCStatus & 0x20) == 0x00 ? " deleted" : ""
+			si.mRotPos,
+			si.mPhysicalSize,
+			si.mFDCStatus
+			, (si.mFDCStatus & 0x18) == 0x10 ? " data-crc" : ""
+			, (si.mFDCStatus & 0x18) == 0x00 ? " address-crc" : ""
+			, (si.mFDCStatus & 0x18) == 0x08 ? " missing-data-field" : ""
+			, (si.mFDCStatus & 0x04) == 0x00 ? " long" : ""
+			, (si.mFDCStatus & 0x20) == 0x00 ? " deleted" : ""
 		);
 	}
 }
@@ -9935,9 +9963,10 @@ void ATConsoleCmdDiskTrack(ATDebuggerCmdParser& parser) {
 void ATConsoleCmdDiskDumpSec(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdSwitchNumArg driveSw("d", 1, 15, 1);
 	ATDebuggerCmdSwitch invertSw("i", false);
+	ATDebuggerCmdSwitch internalSw("I", false);
 	ATDebuggerCmdExprNum sectorArg(true, false, 1, 65535);
 
-	parser >> driveSw >> invertSw >> sectorArg >> 0;
+	parser >> driveSw >> invertSw >> internalSw >> sectorArg >> 0;
 
 	ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveSw.GetValue() - 1);
 	IATDiskImage *image = diskIf.GetDiskImage();
@@ -9987,6 +10016,9 @@ void ATConsoleCmdDiskDumpSec(ATDebuggerCmdParser& parser) {
 
 			for(uint32 j=0; j<count; ++j) {
 				uint8 c = buf[i+j];
+
+				if (internalSw)
+					c = (c & 0x7F) ^ (uint8)(0x406020U >> ((c & 0x60) >> 2));
 
 				if (c < 0x20 || c >= 0x7F)
 					c = '.';
@@ -10145,6 +10177,19 @@ void ATConsoleCmdDumpVBXEXDL(ATDebuggerCmdParser& parser) {
 		ATConsoleWrite("VBXE is not enabled.\n");
 	else
 		vbxe->DumpXDL();
+}
+
+void ATConsoleCmdDumpVBXEXDLHistory(ATDebuggerCmdParser& parser) {
+	parser >> 0;
+
+	ATVBXEEmulator *vbxe = g_sim.GetVBXE();
+
+	if (!vbxe)
+		ATConsoleWrite("VBXE is not enabled.\n");
+	else {
+		ATDebuggerConsoleOutput conout;
+		vbxe->DumpXDLHistory(conout);
+	}
 }
 
 void ATConsoleCmdVBXETraceBlits(ATDebuggerCmdParser& parser) {
@@ -11198,7 +11243,7 @@ void ATConsoleCmdBasicRebuildVvt(ATDebuggerCmdParser& parser) {
 }
 
 void ATConsoleCmdBasicSave(ATDebuggerCmdParser& parser) {
-	ATDebuggerCmdString path(true);
+	ATDebuggerCmdPath path(true, true);
 	parser >> path >> 0;
 
 	uint16 pointers[9];
@@ -11259,7 +11304,7 @@ void ATConsoleCmdBasicSave(ATDebuggerCmdParser& parser) {
 
 	f.write(buf.data(), prglen);
 
-	ATConsolePrintf("Wrote %u bytes to %s.\n", prglen + 14, path->c_str());
+	ATConsolePrintf("Wrote %u bytes to %ls.\n", prglen + 14, path->c_str());
 }
 
 void ATConsoleCmdMap(ATDebuggerCmdParser& parser) {
@@ -13996,6 +14041,7 @@ void ATDebuggerInitCommands() {
 		{ ".unloadsym",			ATConsoleCmdUnloadSymbols },
 		{ ".vbxe",				ATConsoleCmdDumpVBXEState },
 		{ ".vbxe_xdl",			ATConsoleCmdDumpVBXEXDL },
+		{ ".vbxe_xdlhistory",	ATConsoleCmdDumpVBXEXDLHistory },
 		{ ".vbxe_bl",			ATConsoleCmdDumpVBXEBL },
 		{ ".vbxe_traceblits",	ATConsoleCmdVBXETraceBlits },
 		{ ".vbxe_pal",			ATConsoleCmdVBXEPal },

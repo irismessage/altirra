@@ -35,8 +35,15 @@ vdrefptr<ATTraceCollection> ATLoadTraceFromAtari800(const wchar_t *file) {
 	// 01234567890123456789012345678901234567890123456789012345678901234567890123456789
 	// 261 101 09B5 LDA $D20E ;IRQST      ; 4cyc ; A=ff S=e5 X=02 Y=00 P=NV*B-I--
 	//
+	// Atari800 5.x format:
+	//
+	//           1         2         3         4         5         6         7
+	// 01234567890123456789012345678901234567890123456789012345678901234567890123456789
+	//   0  52 A=F7 X=8B Y=FC S=FF P=N-*--I-- PC=C2AE: D0 FD     BNE $C2AD
+	//
 	// We ignore any lines that don't conform to this format, as it's going to include
 	// various other commands and command outputs.
+	//
 
 	enum class OperandModes : uint8 {
 		None,		// no operand
@@ -128,6 +135,7 @@ vdrefptr<ATTraceCollection> ATLoadTraceFromAtari800(const wchar_t *file) {
 	static constexpr uint8 kFlagDigitOrSpace = 0x04;
 	static constexpr uint8 kFlagSpace = 0x08;
 	static constexpr uint8 kFlagXDigit = 0x10;
+	static constexpr uint8 kFlagXDigitOrSpace = 0x20;
 	static constexpr uint8 kFlagPrintable = 0x40;
 	static constexpr uint8 kFlagMatchExact = 0x80;
 
@@ -139,35 +147,29 @@ vdrefptr<ATTraceCollection> ATLoadTraceFromAtari800(const wchar_t *file) {
 			for(int i = 0x20; i <= 0x7E; ++i)
 				ctab.v[i] = kFlagPrintable;
 
-			ctab.v[0x20] |= kFlagSpace | kFlagDigitOrSpace;
+			ctab.v[0x20] |= kFlagSpace | kFlagDigitOrSpace | kFlagXDigitOrSpace;
 
 			for(int i = 0x30; i <= 0x39; ++i)
-				ctab.v[i] |= kFlagDigit | kFlagDigitOrSpace | kFlagXDigit;
+				ctab.v[i] |= kFlagDigit | kFlagDigitOrSpace | kFlagXDigit | kFlagXDigitOrSpace;
 
 			for(int i = 0x41; i <= 0x5A; ++i)
 				ctab.v[i] |= kFlagUCaseLetter;
 
 			for(int i = 0x41; i <= 0x46; ++i)
-				ctab.v[i] |= kFlagXDigit;
+				ctab.v[i] |= kFlagXDigit | kFlagXDigitOrSpace;
 
 			for(int i = 0x61; i <= 0x66; ++i)
-				ctab.v[i] |= kFlagXDigit;
+				ctab.v[i] |= kFlagXDigit | kFlagXDigitOrSpace;
 
 			return ctab;
 		}();
 
-	static constexpr char kTemplate[] =
-	//	 261 101 09B5 LDA $D20E ;IRQST      ; 4cyc ; A=ff S=e5 X=02 Y=00 P=NV*B-I--
-		"ddD ddD HHHH UUU ??????????????????; ?cyc ; A=HH S=HH X=HH Y=HH P=??*?????";
+	static constexpr auto translatePattern =
+		[]<size_t N>(const char (&s)[N]) consteval -> VDCxArray<uint8, N-1> {
+			VDCxArray<uint8, N-1> pat;
 
-	static_assert(sizeof(kTemplate) == 75);
-
-	static constexpr auto kPattern =
-		[]() -> VDCxArray<uint8, 74> {
-			VDCxArray<uint8, 74> pat;
-
-			for(int i=0; i<74; ++i) {
-				const char c = kTemplate[i];
+			for(uint32 i = 0; i < N-1; ++i) {
+				const char c = s[i];
 				uint8 flags = 0;
 
 				switch(c) {
@@ -179,6 +181,10 @@ vdrefptr<ATTraceCollection> ATLoadTraceFromAtari800(const wchar_t *file) {
 						flags = kFlagDigit;
 						break;
 
+					case 'h':
+						flags = kFlagXDigitOrSpace;
+						break
+							;
 					case 'H':
 						flags = kFlagXDigit;
 						break;
@@ -200,7 +206,19 @@ vdrefptr<ATTraceCollection> ATLoadTraceFromAtari800(const wchar_t *file) {
 			}
 
 			return pat;
-		}();
+		};
+
+
+	static constexpr char kTemplateA8WP[] =
+	//	 261 101 09B5 LDA $D20E ;IRQST      ; 4cyc ; A=ff S=e5 X=02 Y=00 P=NV*B-I--
+		"ddD ddD HHHH UUU ??????????????????; ?cyc ; A=HH S=HH X=HH Y=HH P=??*?????";
+
+	static constexpr char kTemplateA85[] =
+	//     0  52 A=F7 X=8B Y=FC S=FF P=N-*--I-- PC=C2AE: D0 FD     BNE $C2AD
+		"ddD ddD A=HH X=HH Y=HH S=HH P=??*????? PC=HHHH: HH hh hh";
+
+	static constexpr auto kPatternA8WP = translatePattern(kTemplateA8WP);
+	static constexpr auto kPatternA85 = translatePattern(kTemplateA85);
 
 	static constexpr uint8 kHexLookup[32] {
 		 0,10,11,12,13,14,15, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -318,13 +336,31 @@ vdrefptr<ATTraceCollection> ATLoadTraceFromAtari800(const wchar_t *file) {
 	PendingValue pendingValues[256] {};
 
 	while(const char *line = textInput.GetNextLine()) {
-		if (strlen(line) < 74)
+		const size_t lineLen = strlen(line);
+
+		// check whether the line is A8WP or A85 format
+		static constexpr size_t kMinLineLen = std::min(kPatternA8WP.size(), kPatternA85.size());
+		if (lineLen < kMinLineLen)
 			continue;
 
+		bool useA85 = false;
+		if (line[9] == '=') {
+			if (lineLen < kPatternA85.size())
+				continue;
+
+			useA85 = true;
+		} else {
+			if (lineLen < kPatternA8WP.size())
+				continue;
+		}
+
 		// validate line
+		const uint8 *const pattern = useA85 ? kPatternA85.data() : kPatternA8WP.data();
+		const size_t patternLen = useA85 ? kPatternA85.size() : kPatternA8WP.size();
 		bool valid = true;
-		for(int i=0; i<74; ++i) {
-			const uint8 flags = kPattern[i];
+
+		for(size_t i=0; i<patternLen; ++i) {
+			const uint8 flags = pattern[i];
 			const uint8 c = (uint8)line[i];
 
 			if (flags & kFlagMatchExact) {
@@ -344,47 +380,84 @@ vdrefptr<ATTraceCollection> ATLoadTraceFromAtari800(const wchar_t *file) {
 			continue;
 
 		// parse out fields
-		uint32 vpos
-			= ((uint32)(uint8)line[0] & 0x0f) * 100
-			+ ((uint32)(uint8)line[1] & 0x0f) * 10
-			+ ((uint32)(uint8)line[2] & 0x0f);
+		uint32 vpos;
+		uint32 hpos;
+		uint32 pc;
+		uint8 ra;
+		uint8 rs;
+		uint8 rx;
+		uint8 ry;
+		uint8 rp;
 
-		uint32 hpos
-			= ((uint32)(uint8)line[4] & 0x0f) * 100
-			+ ((uint32)(uint8)line[5] & 0x0f) * 10
-			+ ((uint32)(uint8)line[6] & 0x0f);
+		if (useA85) {
+			vpos= ((uint32)(uint8)line[0] & 0x0f) * 100
+				+ ((uint32)(uint8)line[1] & 0x0f) * 10
+				+ ((uint32)(uint8)line[2] & 0x0f);
 
-		uint32 pc
-			= ((uint32)kHexLookup[line[ 8] & 0x1F] << 12)
-			+ ((uint32)kHexLookup[line[ 9] & 0x1F] <<  8)
-			+ ((uint32)kHexLookup[line[10] & 0x1F] <<  4)
-			+ ((uint32)kHexLookup[line[11] & 0x1F] <<  0);
+			hpos= ((uint32)(uint8)line[4] & 0x0f) * 100
+				+ ((uint32)(uint8)line[5] & 0x0f) * 10
+				+ ((uint32)(uint8)line[6] & 0x0f);
 
-		uint8 ra
-			= ((uint32)kHexLookup[line[46] & 0x1F] << 4)
-			+ ((uint32)kHexLookup[line[47] & 0x1F] << 0);
+			ra	= ((uint32)kHexLookup[line[10] & 0x1F] << 4)
+				+ ((uint32)kHexLookup[line[11] & 0x1F] << 0);
 
-		uint8 rs
-			= ((uint32)kHexLookup[line[51] & 0x1F] << 4)
-			+ ((uint32)kHexLookup[line[52] & 0x1F] << 0);
+			rx	= ((uint32)kHexLookup[line[15] & 0x1F] << 4)
+				+ ((uint32)kHexLookup[line[16] & 0x1F] << 0);
 
-		uint8 rx
-			= ((uint32)kHexLookup[line[56] & 0x1F] << 4)
-			+ ((uint32)kHexLookup[line[57] & 0x1F] << 0);
+			ry	= ((uint32)kHexLookup[line[20] & 0x1F] << 4)
+				+ ((uint32)kHexLookup[line[21] & 0x1F] << 0);
 
-		uint8 ry
-			= ((uint32)kHexLookup[line[61] & 0x1F] << 4)
-			+ ((uint32)kHexLookup[line[62] & 0x1F] << 0);
+			rs	= ((uint32)kHexLookup[line[25] & 0x1F] << 4)
+				+ ((uint32)kHexLookup[line[26] & 0x1F] << 0);
 
-		uint8 rp
-			= (line[66] == '-' ? 0 : 0x80)	// N
-			+ (line[67] == '-' ? 0 : 0x40)	// V
-			+ 0x30							// *B
-			+ (line[70] == '-' ? 0 : 0x08)	// D
-			+ (line[71] == '-' ? 0 : 0x04)	// I
-			+ (line[72] == '-' ? 0 : 0x02)	// Z
-			+ (line[73] == '-' ? 0 : 0x01)	// C
-			;
+			rp	= (line[30] == '-' ? 0 : 0x80)	// N
+				+ (line[31] == '-' ? 0 : 0x40)	// V
+				+ 0x30							// *B
+				+ (line[34] == '-' ? 0 : 0x08)	// D
+				+ (line[35] == '-' ? 0 : 0x04)	// I
+				+ (line[36] == '-' ? 0 : 0x02)	// Z
+				+ (line[37] == '-' ? 0 : 0x01)	// C
+				;
+
+			pc	= ((uint32)kHexLookup[line[42] & 0x1F] << 12)
+				+ ((uint32)kHexLookup[line[43] & 0x1F] <<  8)
+				+ ((uint32)kHexLookup[line[44] & 0x1F] <<  4)
+				+ ((uint32)kHexLookup[line[45] & 0x1F] <<  0);
+		} else {
+			vpos= ((uint32)(uint8)line[0] & 0x0f) * 100
+				+ ((uint32)(uint8)line[1] & 0x0f) * 10
+				+ ((uint32)(uint8)line[2] & 0x0f);
+
+			hpos= ((uint32)(uint8)line[4] & 0x0f) * 100
+				+ ((uint32)(uint8)line[5] & 0x0f) * 10
+				+ ((uint32)(uint8)line[6] & 0x0f);
+
+			pc	= ((uint32)kHexLookup[line[ 8] & 0x1F] << 12)
+				+ ((uint32)kHexLookup[line[ 9] & 0x1F] <<  8)
+				+ ((uint32)kHexLookup[line[10] & 0x1F] <<  4)
+				+ ((uint32)kHexLookup[line[11] & 0x1F] <<  0);
+
+			ra	= ((uint32)kHexLookup[line[46] & 0x1F] << 4)
+				+ ((uint32)kHexLookup[line[47] & 0x1F] << 0);
+
+			rs	= ((uint32)kHexLookup[line[51] & 0x1F] << 4)
+				+ ((uint32)kHexLookup[line[52] & 0x1F] << 0);
+
+			rx	= ((uint32)kHexLookup[line[56] & 0x1F] << 4)
+				+ ((uint32)kHexLookup[line[57] & 0x1F] << 0);
+
+			ry	= ((uint32)kHexLookup[line[61] & 0x1F] << 4)
+				+ ((uint32)kHexLookup[line[62] & 0x1F] << 0);
+
+			rp	= (line[66] == '-' ? 0 : 0x80)	// N
+				+ (line[67] == '-' ? 0 : 0x40)	// V
+				+ 0x30							// *B
+				+ (line[70] == '-' ? 0 : 0x08)	// D
+				+ (line[71] == '-' ? 0 : 0x04)	// I
+				+ (line[72] == '-' ? 0 : 0x02)	// Z
+				+ (line[73] == '-' ? 0 : 0x01)	// C
+				;
+		}
 
 		if (vpos < lastVPos) {
 			highVPos = lastVPos;
@@ -407,73 +480,85 @@ vdrefptr<ATTraceCollection> ATLoadTraceFromAtari800(const wchar_t *file) {
 		he.mPC = pc;
 		he.mEA = UINT32_C(0xFFFFFFFF);
 
-		// try to parse the instruction
-		uint32 insnEncoding = VDReadUnalignedLEU32(&line[13]) & 0xFFFFFF;
-		uint8 op1 = 0;
-		uint8 op2 = 0;
+		if (useA85) {
+			// A8 5.x -- opcode bytes are provided directly
+			he.mOpcode[0] = ((uint32)kHexLookup[line[48] & 0x1F] << 4)
+				+ ((uint32)kHexLookup[line[49] & 0x1F] << 0);
 
-		if (line[17] == ' ')
-			insnEncoding += (uint32)OperandModes::None << 24;
-		else if (line[17] == '#') {
-			insnEncoding += (uint32)OperandModes::Imm8 << 24;
+			he.mOpcode[1] = ((uint32)kHexLookup[line[51] & 0x1F] << 4)
+				+ ((uint32)kHexLookup[line[52] & 0x1F] << 0);
 
-			op1 = ((uint32)kHexLookup[line[19] & 0x1F] << 4)
-				+ ((uint32)kHexLookup[line[20] & 0x1F] << 0);
-		} else if (line[17] == '(') {
-			op1 = ((uint32)kHexLookup[line[19] & 0x1F] << 4)
-				+ ((uint32)kHexLookup[line[20] & 0x1F] << 0);
+			he.mOpcode[2] = ((uint32)kHexLookup[line[54] & 0x1F] << 4)
+				+ ((uint32)kHexLookup[line[55] & 0x1F] << 0);
+		} else {
+			// A8WP - try to parse the instruction as we need to reassemble it
+			uint32 insnEncoding = VDReadUnalignedLEU32(&line[13]) & 0xFFFFFF;
+			uint8 op1 = 0;
+			uint8 op2 = 0;
 
-			if (line[21] == ')') {
-				insnEncoding += (uint32)OperandModes::Ind8Y << 24;
-			} else if (line[21] == ',') {
-				insnEncoding += (uint32)OperandModes::Ind8X << 24;
-			} else {
-				insnEncoding += (uint32)OperandModes::Ind16 << 24;
+			if (line[17] == ' ')
+				insnEncoding += (uint32)OperandModes::None << 24;
+			else if (line[17] == '#') {
+				insnEncoding += (uint32)OperandModes::Imm8 << 24;
 
-				op2 = op1;
-				op1 = ((uint32)kHexLookup[line[21] & 0x1F] << 4)
-					+ ((uint32)kHexLookup[line[22] & 0x1F] << 0);
+				op1 = ((uint32)kHexLookup[line[19] & 0x1F] << 4)
+					+ ((uint32)kHexLookup[line[20] & 0x1F] << 0);
+			} else if (line[17] == '(') {
+				op1 = ((uint32)kHexLookup[line[19] & 0x1F] << 4)
+					+ ((uint32)kHexLookup[line[20] & 0x1F] << 0);
+
+				if (line[21] == ')') {
+					insnEncoding += (uint32)OperandModes::Ind8Y << 24;
+				} else if (line[21] == ',') {
+					insnEncoding += (uint32)OperandModes::Ind8X << 24;
+				} else {
+					insnEncoding += (uint32)OperandModes::Ind16 << 24;
+
+					op2 = op1;
+					op1 = ((uint32)kHexLookup[line[21] & 0x1F] << 4)
+						+ ((uint32)kHexLookup[line[22] & 0x1F] << 0);
+				}
+			} else if (line[17] == '$') {
+				op1 = ((uint32)kHexLookup[line[18] & 0x1F] << 4)
+					+ ((uint32)kHexLookup[line[19] & 0x1F] << 0);
+
+				if (line[20] == ' ')
+					insnEncoding += (uint32)OperandModes::Addr8 << 24;
+				else if (line[20] == ',') {
+					if (line[21] == 'X')
+						insnEncoding += (uint32)OperandModes::Addr8X << 24;
+					else if (line[21] == 'Y')
+						insnEncoding += (uint32)OperandModes::Addr8Y << 24;
+				} else if (line[22] == ' ') {
+					op2 = op1;
+					op1 = ((uint32)kHexLookup[line[20] & 0x1F] << 4)
+						+ ((uint32)kHexLookup[line[21] & 0x1F] << 0);
+
+					insnEncoding += (uint32)OperandModes::Addr16 << 24;
+				} else if (line[22] == ',') {
+					op2 = op1;
+					op1 = ((uint32)kHexLookup[line[20] & 0x1F] << 4)
+						+ ((uint32)kHexLookup[line[21] & 0x1F] << 0);
+
+					if (line[23] == 'X')
+						insnEncoding += (uint32)OperandModes::Addr16X << 24;
+					else if (line[23] == 'Y')
+						insnEncoding += (uint32)OperandModes::Addr16Y << 24;
+				}
 			}
-		} else if (line[17] == '$') {
-			op1 = ((uint32)kHexLookup[line[18] & 0x1F] << 4)
-				+ ((uint32)kHexLookup[line[19] & 0x1F] << 0);
 
-			if (line[20] == ' ')
-				insnEncoding += (uint32)OperandModes::Addr8 << 24;
-			else if (line[20] == ',') {
-				if (line[21] == 'X')
-					insnEncoding += (uint32)OperandModes::Addr8X << 24;
-				else if (line[21] == 'Y')
-					insnEncoding += (uint32)OperandModes::Addr8Y << 24;
-			} else if (line[22] == ' ') {
-				op2 = op1;
-				op1 = ((uint32)kHexLookup[line[20] & 0x1F] << 4)
-					+ ((uint32)kHexLookup[line[21] & 0x1F] << 0);
+			uint8 opcode = kInsnHashTable.v[insnEncoding % kInsnHashTableSize];
 
-				insnEncoding += (uint32)OperandModes::Addr16 << 24;
-			} else if (line[22] == ',') {
-				op2 = op1;
-				op1 = ((uint32)kHexLookup[line[20] & 0x1F] << 4)
-					+ ((uint32)kHexLookup[line[21] & 0x1F] << 0);
+			if (kOpcodeTable[opcode] == insnEncoding) {
+				he.mOpcode[0] = opcode;
 
-				if (line[23] == 'X')
-					insnEncoding += (uint32)OperandModes::Addr16X << 24;
-				else if (line[23] == 'Y')
-					insnEncoding += (uint32)OperandModes::Addr16Y << 24;
-			}
-		}
-
-		uint8 opcode = kInsnHashTable.v[insnEncoding % kInsnHashTableSize];
-
-		if (kOpcodeTable[opcode] == insnEncoding) {
-			he.mOpcode[0] = opcode;
-
-			// special handling for branch instructions
-			if ((opcode & 0x1F) == 0x10) {
-				he.mOpcode[1] = (uint8)(op1 - (pc + 2));
-			} else {
-				he.mOpcode[1] = op1;
-				he.mOpcode[2] = op2;
+				// special handling for branch instructions
+				if ((opcode & 0x1F) == 0x10) {
+					he.mOpcode[1] = (uint8)(op1 - (pc + 2));
+				} else {
+					he.mOpcode[1] = op1;
+					he.mOpcode[2] = op2;
+				}
 			}
 		}
 

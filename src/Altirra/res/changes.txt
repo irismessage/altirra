@@ -1,5 +1,95 @@
 Altirra Change Log
 
+Version 4.30 [December 22, 2024]:
+   [changes]
+   * Display: Due to change in bloom algorithm, bloom settings have been reset to avoid conflicting with earlier versions.
+
+   [features added]
+   * Cartridge: Added support for J(atari)Cart (104-111) and DCart (112).
+   * Cassette: Added Vorbis decoding support.
+   * Cassette: Added support for paired .data.cas+.audio.ogg files for more compact tape storage.
+   * Cassette: Added Turbo D support.
+   * Cassette: Added FSK speed compensation and crosstalk reduction options.
+   * Command Line: Added /cleardevices, /adddevice, and /removedevice switches.
+   * CPU: Added 23x multiplier option for 65C816 mode.
+   * Debugger: Added keyboard shortcuts to memory window.
+   * Debugger: Ctrl+Alt+click now reports scrolling offsets, pixel addresses, and VBXE information.
+   * Debugger: Added .vbxe_xdlhistory command.
+   * Debugger: .diskdumpsec command can now display INTERNAL text.
+   * Debugger: FDC and DISKEMU logging channels are now off by default.
+   * Devices: Added Microbits MPP-1000E modem.
+   * Devices: Added parallel-to-serial adapter device.
+   * Devices: Added 820, 825, 1020, 1025, and 1029 printers.
+   * Devices: Added Remove/Settings commands to context menu.
+   * Devices: Added 850 printer port support.
+   * Devices: Added $D600-D63F address range option for Covox.
+   * Devices: Added option for PBI-based CIO devices instead of using a hook page.
+   * Disk: Super Archiver emulation now supports slow speed.
+   * Disk: Added emulation of the BitWriter add-on for the Super Archiver.
+   * Disk: "Show disk image file" drive menu option now works for mounted images within .zip archives.
+   * Disk: ATX double density support is now enabled by default.
+   * Disk Explorer: Added MAC/65 file viewing mode.
+   * Display: Added support for deinterlacing interlaced video.
+   * Display: Added color correction support for targeting displays that use raw gamma 2.2 or 2.4 instead of sRGB.
+   * Display: Added emulation of long-persistence monochrome monitors.
+   * Display: Enhanced CIO text mode rewritten with screen editing, control character, and pass-through support.
+   * Display: Added adjustable PAL phase.
+   * Display: Reimplemented bloom with pyramid algorithm for narrower peak and wider long tail.
+   * Input: Light pen/gun is now insensitive to dark areas on screen.
+   * PerfAnalyzer: Added import support for Atari800 5.x monitor traces.
+   * PerfAnalyzer: Add "Go To Tape Editor" option when right-clicking on tape channel.
+   * Printer: ATASCII special characters are now converted to Unicode equivalents.
+   * Printer: Generic Printer (P:) device now supports translation modes for port output.
+   * Simulator: Added a speed option to take periodic rewind snapshots.
+   * Tape Editor: Added Select All (Ctrl+A) and Deselect (Ctrl+Shift+A).
+   * Tape Editor: Added FSK spectrogram view option.
+   * UI: Added screen reader support for word granularity.
+   * UI: Improved screen reader support in message boxes.
+   * UI: Added option to force program to efficiency or performance cores.
+   * UI: Added tool to scan for global hotkeys that block keyboard mappings.
+   * VFS: Improved handling of Unicode filenames within .zip archives.
+
+   [bugs fixed]
+   * AltirraOS: Fixed P: compatibility issues with the 1025 printer.
+   * AltirraOS: P: device IDs are supported in XL/XE/XEGS mode.
+   * AltirraOS: K: and C: now support forced read mode (ICAX1 bit 0).
+   * AltirraOS: Modified cassette routine SKCTL usage for compatibility with PokeyMAX 4.
+   * AltirraOS: Fixed bug where checksum errors were not consistently returned from SIO.
+   * AltirraOS: Improved compatibility of C: handler with block control bytes other than $FA/$FC/$FE.
+   * AltirraOS: Improved compatibility of RBLOKV internal vector.
+   * AltirraOS: Carry flag is now checked for error after invoking cassette boot run address.
+   * AltirraOS: Boot screen is no longer re-displayed after printing Boot Error.
+   * ANTIC: Fixed playfield data read on cycle 106 overlapped with a refresh cycle and a pulled-up data bus.
+   * ANTIC: Added emulation of abnormal DMA caused by turning off playfield DMA mid-line.
+   * ATBasic: Fixed ICAX2Z handling issue preventing printing in sideways mode.
+   * Cassette: Fixed framing errors not being reported from during unaccelerated tape reads.
+   * CPU: Fixed 65C816 BRK instruction writing to wrong addresses in native mode with stack outside of page 1.
+   * Debugger: Register (r) command can now set S high byte in 65C816 native mode.
+   * Debugger: Fixed panes not adapting properly after debug font change if undocked.
+   * Devices: SuperSALT Test Assembly now supports External Audio test.
+   * Devices: Fixed SuperSALT Test Assembly bidirectional clock to audio input path.
+   * Devices: Fixed 8048 timer interrupt bug that prevented the 1450XLD parallel disk controller from shutting off the spindle motor.
+   * Devices: Fixed 32-in-1 handling of Select key and selection is no longer reset when bypassing menu with Esc.
+   * Devices: SIO and CIO acceleration now better supports the Break key.
+   * Display: Fixed incorrect gamma for Adobe RGB color matching mode with screen effect acceleration enabled.
+   * Disk: Adjusted ATX density detection to allow for enhanced density disks with no non-boot sectors on track 0.
+   * Disk: Fixed handling of DRQ bit when reading double density ATX disks.
+   * HLE: Improved overflow handling accuracy of FP acceleration handlers.
+   * IDE: Read Verify command fixed.
+   * Input: Keyboard input bindings are now released on key up even if Alt is pressed down in between the key down and key up.
+   * Printer: Fixed printer output going to printer window instead of printer port with P: CIO hook enabled.
+   * Save States: Fixed issue where sometimes P/M graphics would be missing after loading a state if P/M DMA was disabled.
+   * SCSI: Accept but ignore vendor command $0C to work around MIO 1.1 firmware issue.
+   * Simulator: Fixed issue where internal BASIC could sometimes be enabled on a 1200XL.
+   * Tape Editor: Reduced CPU overhead when updating checksum status with SIO decoded data capturing enabled with large blocks.
+   * Tape Editor: Fixed Ctrl+O shortcut.
+   * Tape Editor: Improved baud rate determination when converting to standard blocks.
+   * UI: Added workaround for blank window label on Windows 11 taskbar.
+   * UI: Added extra checking for Explorer's extended archive support, which doesn't support normal drag and drop interfaces.
+   * UI: Fixed bug where changing the hardware type in Configure Settings could also switch profiles.
+   * VBXE: Overlay and attribute map addressing are no longer reset at vertical blank.
+   * VBXE: Added emulation of one-scanline vertical offset for NTSC.
+
 Version 4.21 [March 16, 2024]:
    [features added]
    * UI: Added support for more direct file association setting on Windows 11.

@@ -105,6 +105,24 @@
     <ClCompile Include="source\partitiondiskview.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\vorbisbitreader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\vorbisdecoder.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\vorbismisc.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\audioreadervorbis.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\audioutils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\cassetteaudiofilters.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\stdafx.h">
@@ -175,6 +193,21 @@
     </ClInclude>
     <ClInclude Include="..\h\at\atio\partitiondiskview.h">
       <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\at\atio\vorbisbitreader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\at\atio\vorbisdecoder.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\at\atio\vorbismisc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\at\atio\audioutils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\at\atio\cassetteaudiofilters.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

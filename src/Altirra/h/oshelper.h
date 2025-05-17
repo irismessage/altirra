@@ -4,6 +4,7 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
+#include <at/atcore/enumparse.h>
 
 struct VDPixmap;
 class VDPixmapBuffer;
@@ -46,5 +47,15 @@ void ATShowFileInSystemExplorer(const wchar_t *filename);
 
 void ATRelaunchElevated(VDGUIHandle parent, const wchar_t *params);
 void ATRelaunchElevatedWithEscapedArgs(VDGUIHandle parent, vdspan<const wchar_t *> args);
+
+enum class ATProcessEfficiencyMode : uint8 {
+	Default,
+	Performance,
+	Efficiency
+};
+
+AT_DECLARE_ENUM_TABLE(ATProcessEfficiencyMode);
+
+void ATSetProcessEfficiencyMode(ATProcessEfficiencyMode mode);
 
 #endif

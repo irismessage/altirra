@@ -124,8 +124,8 @@ void ATSourceWindow::LoadFile(const wchar_t *s, const wchar_t *alias) {
 				listingMode = true;
 		}
 
-		mpTextEditor->Append(line);
-		mpTextEditor->Append("\n");
+		mpTextEditor->Append(VDTextU8ToW(VDStringSpanA(line)).c_str());
+		mpTextEditor->Append(L"\n");
 		++lineno;
 	}
 
@@ -148,10 +148,10 @@ void ATSourceWindow::LoadFile(const wchar_t *s, const wchar_t *alias) {
 	ATGetDebugger()->RequestClientUpdate(this);
 }
 
-VDStringA ATSourceWindow::ReadLine(int lineIndex) {
-	vdfastvector<char> lineText;
+VDStringW ATSourceWindow::ReadLine(int lineIndex) {
+	vdfastvector<wchar_t> lineText;
 
-	VDStringA s;
+	VDStringW s;
 	if (mpTextEditor->GetLineText(lineIndex, lineText)) {
 		s.append(lineText.data(), lineText.size());
 		if (s.empty() || s.back() != '\n')
@@ -396,7 +396,7 @@ void ATSourceWindow::OnTextEditorScrolled(int firstVisiblePara, int lastVisibleP
 void ATSourceWindow::OnLinkSelected(uint32 selectionCode, int para, int offset) {
 }
 
-void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *cl) {
+void ATSourceWindow::RecolorLine(int line, const wchar_t *text, int length, IVDTextEditorColorization *cl) {
 	int next = 0;
 
 	auto it = mLineToAddressLookup.find(line);
@@ -441,7 +441,7 @@ void ATSourceWindow::RecolorLine(int line, const char *text, int length, IVDText
 	}
 
 	for(int i=0; i<length; ++i) {
-		char c = text[i];
+		wchar_t c = text[i];
 
 		if (c == ';') {
 			cl->AddTextColorPoint(0, tc.mCommentText, backColor);

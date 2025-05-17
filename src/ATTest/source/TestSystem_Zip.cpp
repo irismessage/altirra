@@ -160,7 +160,7 @@ DEFINE_TEST_NONAUTO(System_ZipBench) {
 					break;
 
 				if (actual < 0)
-					throw ATTestAssertionException("Decompression error: %hs", za.GetFileInfo(i).mFileName.c_str());
+					throw ATTestAssertionException("Decompression error: %ls", za.GetFileInfo(i).mDecodedFileName.c_str());
 
 				len += actual;
 			}
@@ -175,12 +175,12 @@ DEFINE_TEST_NONAUTO(System_ZipBench) {
 			totalOutBytes += len;
 
 			if (!summary) {
-				printf("%6.1fMB  %6.1fMB/sec -> %7.1fMB  %6.1fMB/sec | %s\n"
+				printf("%6.1fMB  %6.1fMB/sec -> %7.1fMB  %6.1fMB/sec | %ls\n"
 					, (double)fi.mCompressedSize / (1024.0 * 1024.0)
 					, (double)fi.mCompressedSize / seconds / (1024.0 * 1024.0)
 					, (double)len / (1024.0 * 1024.0)
 					, (double)len / seconds / (1024.0 * 1024.0)
-					, fi.mFileName.c_str());
+					, fi.mDecodedFileName.c_str());
 			}
 		}
 

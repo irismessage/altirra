@@ -24,6 +24,7 @@ const wchar_t *ATDebugGetDisasmModeDisplayName(ATDebugDisasmMode mode) {
 		L"65C816",
 		L"Z80",
 		L"8048",
+		L"8051",
 		L"6809",
 	};
 

@@ -16,6 +16,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/constexpr.h>
+#include <at/atcore/audiomixer.h>
 #include <at/atcore/logging.h>
 #include <at/atdevices/supersalt.h>
 
@@ -31,6 +32,15 @@ extern const ATDeviceDefinition g_ATDeviceDefSuperSALT {
 		*dev = devp.release();
 	}
 };
+
+ATDeviceSuperSALT::ATDeviceSuperSALT()
+	: mpAudioEdgeBuffer(new ATSyncAudioEdgeBuffer)
+{
+	mpAudioEdgeBuffer->mpDebugLabel = "SuperSALT";
+}
+
+ATDeviceSuperSALT::~ATDeviceSuperSALT() {
+}
 
 void ATDeviceSuperSALT::GetDeviceInfo(ATDeviceInfo& info) {
 	info.mpDef = &g_ATDeviceDefSuperSALT;
@@ -48,11 +58,20 @@ void ATDeviceSuperSALT::Init() {
 	mpSIOMgr = GetService<IATDeviceSIOManager>();
 	mpSIOMgr->AddRawDevice(this);
 	mpScheduler = GetService<IATDeviceSchedulingService>()->GetMachineScheduler();
+
+	mpAudioMixer = GetService<IATAudioMixer>();
+	mpAudioMixer->AddSyncAudioSource(this);
+
 	ColdReset();
 	UpdatePortInputs();
 }
 
 void ATDeviceSuperSALT::Shutdown() {
+	if (mpAudioMixer) {
+		mpAudioMixer->RemoveSyncAudioSource(this);
+		mpAudioMixer = nullptr;
+	}
+
 	if (mpSIOMgr) {
 		mpSIOMgr->RemoveRawDevice(this);
 		mpSIOMgr = nullptr;
@@ -115,6 +134,10 @@ void ATDeviceSuperSALT::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit
 }
 
 void ATDeviceSuperSALT::OnSendReady() {
+}
+
+void ATDeviceSuperSALT::OnSerialBiClockChanged(uint32 cyclesPerBit) {
+	SetAudioInputPeriodBclk(cyclesPerBit);
 }
 
 // This is pretty complex.
@@ -194,6 +217,18 @@ void ATDeviceSuperSALT::OnScheduledEvent(uint32 id) {
 	}
 }
 
+bool ATDeviceSuperSALT::RequiresStereoMixingNow() const {
+	return false;
+}
+
+void ATDeviceSuperSALT::WriteAudio(const ATSyncAudioMixInfo& mixInfo) {
+	FlushAudio(mixInfo.mStartTime + 28*mixInfo.mCount);
+
+	mpAudioEdgeBuffer->mLeftVolume = 0.25f;
+	mpAudioEdgeBuffer->mRightVolume = 0.25f;
+	mpAudioMixer->GetEdgePlayer().AddEdgeBuffer(mpAudioEdgeBuffer);
+}
+
 uint8 ATDeviceSuperSALT::ComputeDirBus() const {
 	uint8 p0 = mpPorts[0]->GetCurrentDirOutput();
 	uint8 p1 = mpPorts[1]->GetCurrentDirOutput();
@@ -211,12 +246,38 @@ uint32 ATDeviceSuperSALT::ComputeSerialCyclesPerByte(uint8 bus) const {
 		300, 600, 1200, 2400, 4800, 9600, 2400, 0,
 	};
 
+	if (bus & 0x01) {
+		return mpSIOMgr->GetCyclesPerBitSend() * 10;
+	}
+
 	static constexpr auto kBaudGeneratorCpbs = VDCxArray<uint32, 16>::transform(
 		kBaudGeneratorRates,
 		[](int baud) -> uint32 {
 			// Normally, communication would use 10 bits per byte (1 start +
 			// 8 data + 1 stop), but the Test Assembly uses a 4-bit counter.
 			return baud ? (uint32)(int)(1789772.5f * 16.0f / (float)baud + 0.5f) : 0;
+		}
+	);
+
+	return kBaudGeneratorCpbs[bus >> 4];
+}
+
+uint32 ATDeviceSuperSALT::ComputeSerialCyclesPerBit(uint8 bus) const {
+	static constexpr int kBaudGeneratorRates[16] {
+		2400, 4800, 9600, 19200, 38400, 76800, 19200, 0,
+		300, 600, 1200, 2400, 4800, 9600, 2400, 0,
+	};
+
+	if (bus & 0x01) {
+		return mpSIOMgr->GetCyclesPerBitSend();
+	}
+
+	static constexpr auto kBaudGeneratorCpbs = VDCxArray<uint32, 16>::transform(
+		kBaudGeneratorRates,
+		[](int baud) -> uint32 {
+			// Normally, communication would use 10 bits per byte (1 start +
+			// 8 data + 1 stop), but the Test Assembly uses a 4-bit counter.
+			return baud ? (uint32)(int)(1789772.5f / (float)baud + 0.5f) : 0;
 		}
 	);
 
@@ -231,7 +292,8 @@ void ATDeviceSuperSALT::UpdatePortInputs() {
 	if (cmd)
 		bus &= mADCValue;
 
-	if (mpSIOMgr->IsSIOMotorAsserted() && mpSIOMgr->IsSIOForceBreakAsserted()) {
+	const bool motor = mpSIOMgr->IsSIOMotorAsserted();
+	if (motor && mpSIOMgr->IsSIOForceBreakAsserted()) {
 		bus &= (bus << 4) | (bus >> 4);
 	}
 
@@ -265,10 +327,18 @@ void ATDeviceSuperSALT::UpdatePortInputs() {
 	mpPorts[2]->SetPotHiresPosition(true, potB3 ? 50<<16 : 228<<16, !potB3);
 	mpPorts[3]->SetPotHiresPosition(true, potB4 ? 50<<16 : 228<<16, !potB4);
 
-	mpPorts[0]->SetTriggerDown(!potB1);
-	mpPorts[1]->SetTriggerDown(!potB2);
-	mpPorts[2]->SetTriggerDown(!potB3);
-	mpPorts[3]->SetTriggerDown(!potB4);
+	// This intentionally diverges from the schematic to fix a P1A failure
+	// caused by a discrepancy -- the trigger lines are connected to the SIO
+	// MOTOR line by a pair of inverters in the actual rev. O board and not
+	// the port A data lines per the schematic or technical manual.
+	//
+	// More info:
+	// https://forums.atariage.com/topic/363930-wanted-atari-cps-super-salt-extended-hardware-test-assembly/?do=findComment&comment=5553307
+
+	mpPorts[0]->SetTriggerDown(!motor);
+	mpPorts[1]->SetTriggerDown(!motor);
+	mpPorts[2]->SetTriggerDown(!motor);
+	mpPorts[3]->SetTriggerDown(!motor);
 
 	mbSIOLoopbackEnabled = (bus & 0x02) != 0;
 	if (!mbSIOLoopbackEnabled) {
@@ -276,10 +346,11 @@ void ATDeviceSuperSALT::UpdatePortInputs() {
 			mpScheduler->SetEvent(1, this, 1, mpEventSendByte);
 	}
 
-	if (!(bus & 0x01)) {
-		uint32 cyclesPerByte = ComputeSerialCyclesPerByte(bus);
-		mpSIOMgr->SetExternalClock(this, 0, cyclesPerByte >> 4);
-	}
+	uint32 cyclesPerByte = ComputeSerialCyclesPerByte(bus);
+	mpSIOMgr->SetExternalClock(this, 0, cyclesPerByte >> 4);
+	
+	SetAudioInputPeriodBaud(ComputeSerialCyclesPerBit(bus));
+	SetAudioInputEnabled((bus & 4) && motor);
 
 	g_ATLCSuperSALT("bus update: %02X -> %02X\n", bus0, bus);
 }
@@ -322,4 +393,182 @@ void ATDeviceSuperSALT::StartADC() {
 		if (mpSIOMgr->IsSIOCommandAsserted())
 			UpdatePortInputs();
 	}
+}
+
+void ATDeviceSuperSALT::SetAudioInputEnabled(bool enabled) {
+	if (mbAudioInputEnabled == enabled)
+		return;
+
+	const uint64 t = mpScheduler->GetTick64();
+
+	if (mbAudioInputEnabled)
+		FlushAudio(t);
+
+	mLastAudioTickTime = t;
+	mbAudioInputEnabled = enabled;
+
+	if (enabled) {
+		// we haven't been generating audio, so we have to advance the relevant
+		// audio clocks to be within the window again
+		if (mAudioPeriodBaud && mLastAudioTimeBaud < t) {
+			uint64 delta = t - mLastAudioTimeBaud + mAudioPeriodBaud - 1;
+
+			mLastAudioTimeBaud += delta - delta % mAudioPeriodBaud;
+
+			VDASSERT(mLastAudioTimeBaud >= t);
+			VDASSERT(mLastAudioTimeBaud < t + mAudioPeriodBaud);
+		}
+
+		if (mAudioPeriodBclk && mLastAudioTimeBclk < t) {
+			uint64 delta = t - mLastAudioTimeBclk + mAudioPeriodBclk - 1;
+
+			mLastAudioTimeBclk += delta - delta % mAudioPeriodBclk;
+
+			VDASSERT(mLastAudioTimeBclk >= t);
+			VDASSERT(mLastAudioTimeBclk < t + mAudioPeriodBclk);
+		}
+
+		if (!mbRegisteredForClockOutChanges) {
+			mbRegisteredForClockOutChanges = true;
+
+			mpSIOMgr->SetBiClockNotifyEnabled(this, true);
+		}
+
+		OnSerialBiClockChanged(mpSIOMgr->GetCyclesPerBitBiClock());
+	} else {
+		if (mbRegisteredForClockOutChanges) {
+			mbRegisteredForClockOutChanges = false;
+
+			mpSIOMgr->SetBiClockNotifyEnabled(this, false);
+		}
+	}
+}
+
+void ATDeviceSuperSALT::SetAudioInputPeriodBclk(uint32 cycles) {
+	if (mAudioPeriodBclk != cycles) {
+		const uint64 t = mpScheduler->GetTick64();
+
+		FlushAudio(t);
+
+		if (!mAudioPeriodBclk)
+			mLastAudioTimeBclk = t;
+		else
+			VDASSERT(!mbAudioInputEnabled || mLastAudioTimeBclk >= t);
+
+		mAudioPeriodBclk = cycles;
+	}
+}
+
+void ATDeviceSuperSALT::SetAudioInputPeriodBaud(uint32 cycles) {
+	if (mAudioPeriodBaud != cycles) {
+		const uint64 t = mpScheduler->GetTick64();
+
+		FlushAudio(t);
+
+		if (!mAudioPeriodBaud)
+			mLastAudioTimeBaud = t;
+		else
+			VDASSERT(!mbAudioInputEnabled || mLastAudioTimeBaud >= t);
+
+		mAudioPeriodBaud = cycles;
+	}
+}
+
+void ATDeviceSuperSALT::FlushAudio(uint64 t) {
+	if (!mbAudioInputEnabled)
+		return;
+
+	// We have to handle both the bidirectional clock and baud generator being active
+	// as this is the configuration set up by CPS SuperSALT -- it has been confirmed
+	// via scope that the baud generator's 19200 baud output is superimposed on the
+	// clock from POKEY during the 2-way clock test. This produces a somewhat more
+	// muted tone than would otherwise result from the timer 4 based serial clock.
+	//
+	// If only one of the clocks is active, we only output the other one. This is
+	// realistic for when the bidirectional clock is set to input. It's more questionable
+	// when the baud generator is paused as it still has a CMOS output, but the precise
+	// behavior is not currently known.
+
+	if (!mAudioPeriodBclk) {
+		if (!mAudioPeriodBaud)
+			return;
+
+		// only baud rate generator active
+		VDASSERT(mLastAudioTimeBaud >= mLastAudioTickTime);
+
+		for(;;) {
+			const bool newPolarity = (mAudioOutputBaud & 1) != 0;
+			if (mLastAudioPolarity != newPolarity) {
+				mLastAudioPolarity = newPolarity;
+				mpAudioEdgeBuffer->mEdges.emplace_back((uint32)mLastAudioTickTime, newPolarity ? -1.0f : 1.0f);
+			}
+
+			if (mLastAudioTimeBaud >= t)
+				break;
+
+			mLastAudioTickTime = mLastAudioTimeBaud;
+			mLastAudioTimeBaud += ((mAudioPeriodBaud + mAudioOutputBaud) >> 1);
+			mAudioOutputBaud ^= 1;
+		}
+
+		VDASSERT(mLastAudioTimeBaud >= mLastAudioTickTime);
+	} else if (!mAudioPeriodBaud) {
+		// only BCLK active
+
+		VDASSERT(mLastAudioTimeBclk >= mLastAudioTickTime);
+
+		for(;;) {
+			const bool newPolarity = (mAudioOutputBclk & 1) != 0;
+			if (mLastAudioPolarity != newPolarity) {
+				mLastAudioPolarity = newPolarity;
+				mpAudioEdgeBuffer->mEdges.emplace_back((uint32)mLastAudioTickTime, newPolarity ? -1.0f : 1.0f);
+			}
+
+			if (mLastAudioTimeBclk >= t)
+				break;
+
+			mLastAudioTickTime = mLastAudioTimeBclk;
+			mLastAudioTimeBclk += ((mAudioPeriodBclk + mAudioOutputBclk) >> 1);
+			mAudioOutputBclk ^= 1;
+		}
+
+		VDASSERT(mLastAudioTimeBclk >= mLastAudioTickTime);
+	} else {
+		// both BCLK and baud rate generator active
+
+		VDASSERT(mLastAudioTimeBaud >= mLastAudioTickTime);
+		VDASSERT(mLastAudioTimeBclk >= mLastAudioTickTime);
+
+		for(;;) {
+			const bool newPolarity = ((mAudioOutputBaud & mAudioOutputBclk) & 1) != 0;
+			if (mLastAudioPolarity != newPolarity) {
+				mLastAudioPolarity = newPolarity;
+				mpAudioEdgeBuffer->mEdges.emplace_back((uint32)mLastAudioTickTime, newPolarity ? -1.0f : 1.0f);
+			}
+
+			const uint64 nextBclk = mLastAudioTimeBclk;
+			const uint64 nextBaud = mLastAudioTimeBaud;
+			const uint64 next = std::min<uint64>(nextBclk, nextBaud);
+
+			if (next >= t)
+				break;
+
+			mLastAudioTickTime = next;
+
+			if (nextBclk == next) {
+				mLastAudioTimeBclk += ((mAudioPeriodBclk + mAudioOutputBclk) >> 1);
+				mAudioOutputBclk ^= 1;
+			}
+
+			if (nextBaud == next) {
+				mLastAudioTimeBaud += ((mAudioPeriodBaud + mAudioOutputBaud) >> 1);
+				mAudioOutputBaud ^= 1;
+			}
+		}
+
+		VDASSERT(mLastAudioTimeBaud >= mLastAudioTickTime);
+		VDASSERT(mLastAudioTimeBclk >= mLastAudioTickTime);
+	}
+
+	mLastAudioTickTime = t;
 }

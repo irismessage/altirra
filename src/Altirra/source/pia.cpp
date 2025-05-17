@@ -27,6 +27,10 @@
 #include "savestate.h"
 #include "trace.h"
 
+#if VD_CPU_ARM64
+#include <arm_neon.h>
+#endif
+
 ///////////////////////////////////////////////////////////////////////////////
 
 #if VD_CPU_X86 || VD_CPU_X64
@@ -207,14 +211,19 @@ void ATPIAEmulator::FreeInput(int index) {
 }
 
 void ATPIAEmulator::SetInput(int index, uint32 rval) {
+	SetInputBits(index, rval, ~UINT32_C(0));
+}
+
+void ATPIAEmulator::SetInputBits(int index, uint32 rval, uint32 mask) {
 	VDASSERT(index < 255);
 
 	if (index < 0)
 		return;
 
-	rval &= 0x3FFFF;
-
 	uint32& inputSlot = GetInput(index);
+
+	rval = inputSlot ^ ((rval ^ inputSlot) & (mask & 0x3FFFF));
+
 	if (rval != inputSlot) {
 		mInputState.RemoveZeroBits(inputSlot);
 		mInputState.AddZeroBits(rval);

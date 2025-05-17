@@ -28,6 +28,8 @@
 
 #if (defined(VD_CPU_X86) && _M_IX86_FP >= 2) || defined(VD_CPU_X64)
 	#include <vd2/system/vecmath_sse2.h>
+#elif defined(VD_CPU_ARM64)
+	#include <vd2/system/vecmath_neon.h>
 #else
 	#include <vd2/system/vecmath_ref.h>
 #endif

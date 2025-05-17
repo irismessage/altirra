@@ -17,7 +17,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
-#include <arm64_neon.h>
+#include <arm_neon.h>
 
 template<typename T>
 void ATArtifactBlendMayExchange_NEON(uint32 *dst, T *blendDst, uint32 n) {
@@ -112,6 +112,84 @@ void ATArtifactBlendExchangeLinear_NEON(uint32 *dst, uint32 *blendDst, uint32 n,
 		ATArtifactBlendMayExchangeLinear_NEON<true>(dst, blendDst, n);
 	else
 		ATArtifactBlendMayExchangeLinear_NEON<false>(dst, blendDst, n);
+}
+
+template<bool T_BlendCopy, typename T_BlendSrc>
+void ATArtifactBlendMayExchangeMonoPersistence_NEON(uint32 *dst0, T_BlendSrc *blendDst0, const uint32 *palette, float factor, float factor2, float limit, uint32 n) {
+	T_BlendSrc *VDRESTRICT blendDst = blendDst0;
+	uint32 *VDRESTRICT dst = dst0;
+	const uint32 *VDRESTRICT palette2 = palette;
+
+	uint32x4_t bmask = vmovq_n_u32(0x000000FF);
+	float32x4_t tiny = vmovq_n_f32(1e-10f);
+	float32x4_t zero = vmovq_n_f32(0);
+	float32x4_t paletteScale = vmovq_n_f32(1023);
+	float32x4_t vf1 = vmovq_n_f32(factor);
+	float32x4_t vf2 = vmovq_n_f32(factor2);
+	float32x4_t vlimit = vmovq_n_f32(limit);
+	float32x4_t vscale = vmovq_n_f32(1.0f / 255.0f);
+	float32x4_t vpedestal = vmovq_n_f32(1.0f);
+
+	uint32 n2 = n >> 2;
+	while(n2--) {
+		uint32x4_t dc = vld1q_u32(dst);
+
+		// load source and convert 8-bit fixed point to float
+		float32x4_t v = vmulq_f32(vcvtq_f32_u32(vandq_u32(dc, bmask)), vscale);
+
+		// convert gamma 2.0 to linear
+		v = vmulq_f32(v, v);
+
+		// apply decay blend
+		float32x4_t phosphorEnergy;
+		float32x4_t emission;
+		if constexpr (T_BlendCopy) {
+			phosphorEnergy = v;
+			emission = v;
+		} else {
+			phosphorEnergy = vminq_f32(vmaxq_f32(vsubq_f32(vreinterpretq_f32_u32(vld1q_u32(blendDst)), vpedestal), zero), vlimit);
+
+			phosphorEnergy = vaddq_f32(phosphorEnergy, v);
+			emission = vmulq_f32(vfmaq_f32(vf2, phosphorEnergy, vf1), phosphorEnergy);
+			phosphorEnergy = vsubq_f32(phosphorEnergy, emission);
+		}
+
+		// if we're doing a blend-and-exchange, update the blend source
+		if constexpr(!std::is_const_v<T_BlendSrc>) {
+			vst1q_u32(blendDst, vreinterpretq_u32_f32(vaddq_f32(phosphorEnergy, vpedestal)));
+		}
+
+		blendDst += 4;
+
+		// compute approximate square root
+		emission = vmaxq_f32(emission, tiny);
+		emission = vmulq_f32(emission, vrsqrteq_f32(emission));
+
+		// scale to 0-1023
+		emission = vminq_f32(vmulq_f32(emission, paletteScale), paletteScale);
+
+		// convert to integer
+		uint16x8_t palIdx = vreinterpretq_u16_u32(vcvtnq_u32_f32(emission));
+
+		// do palette lookup and write pixels
+		dst[0] = palette2[vgetq_lane_u16(palIdx, 0)];
+		dst[1] = palette2[vgetq_lane_u16(palIdx, 2)];
+		dst[2] = palette2[vgetq_lane_u16(palIdx, 4)];
+		dst[3] = palette2[vgetq_lane_u16(palIdx, 6)];
+		dst += 4;
+	}
+}
+
+void ATArtifactBlendCopyMonoPersistence_NEON(uint32 *dst, uint32 *blendDst, const uint32 *palette, float factor, float factor2, float limit, uint32 n) {
+	ATArtifactBlendMayExchangeMonoPersistence_NEON<true>(dst, blendDst, palette, factor, factor2, limit, n);
+}
+
+void ATArtifactBlendMonoPersistence_NEON(uint32 *dst, const uint32 *src, const uint32 *palette, float factor, float factor2, float limit, uint32 n) {
+	ATArtifactBlendMayExchangeMonoPersistence_NEON<false>(dst, src, palette, factor, factor2, limit, n);
+}
+
+void ATArtifactBlendExchangeMonoPersistence_NEON(uint32 *dst, uint32 *blendDst, const uint32 *palette, float factor, float factor2, float limit, uint32 n) {
+	ATArtifactBlendMayExchangeMonoPersistence_NEON<false>(dst, blendDst, palette, factor, factor2, limit, n);
 }
 
 void ATArtifactBlendScanlines_NEON(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n, float intensity) {

@@ -127,7 +127,6 @@ bool ATAdjustScreenEffectsDialog::OnLoaded() {
 	TBSetRange(IDC_SCANLINE_INTENSITY, 1, 7);
 	TBSetRange(IDC_DISTORTION_X, 0, 180);
 	TBSetRange(IDC_DISTORTION_Y, 0, 100);
-	TBSetRange(IDC_BLOOM_THRESHOLD, 0, 100);
 	TBSetRange(IDC_BLOOM_RADIUS, 0, 100);
 	TBSetRange(IDC_BLOOM_DIRECT_INTENSITY, 0, 200);
 	TBSetRange(IDC_BLOOM_INDIRECT_INTENSITY, 0, 200);
@@ -161,7 +160,6 @@ void ATAdjustScreenEffectsDialog::OnDataExchange(bool write) {
 		TBSetValue(IDC_SCANLINE_INTENSITY, VDRoundToInt(params.mScanlineIntensity * 8.0f));
 		TBSetValue(IDC_DISTORTION_X, VDRoundToInt(params.mDistortionViewAngleX));
 		TBSetValue(IDC_DISTORTION_Y, VDRoundToInt(params.mDistortionYRatio * 100.0f));
-		TBSetValue(IDC_BLOOM_THRESHOLD, VDRoundToInt(params.mBloomThreshold * 100.0f));
 		TBSetValue(IDC_BLOOM_RADIUS, VDRoundToInt(params.mBloomRadius * 5.0f));
 		TBSetValue(IDC_BLOOM_DIRECT_INTENSITY, VDRoundToInt(params.mBloomDirectIntensity * 100.0f));
 		TBSetValue(IDC_BLOOM_INDIRECT_INTENSITY, VDRoundToInt(params.mBloomIndirectIntensity * 100.0f));
@@ -171,7 +169,6 @@ void ATAdjustScreenEffectsDialog::OnDataExchange(bool write) {
 		UpdateLabel(IDC_SCANLINE_INTENSITY);
 		UpdateLabel(IDC_DISTORTION_X);
 		UpdateLabel(IDC_DISTORTION_Y);
-		UpdateLabel(IDC_BLOOM_THRESHOLD);
 		UpdateLabel(IDC_BLOOM_RADIUS);
 		UpdateLabel(IDC_BLOOM_DIRECT_INTENSITY);
 		UpdateLabel(IDC_BLOOM_INDIRECT_INTENSITY);
@@ -209,13 +206,6 @@ void ATAdjustScreenEffectsDialog::OnHScroll(uint32 id, int code) {
 
 		if (fabsf(params.mDistortionYRatio - v) > 1e-5f) {
 			params.mDistortionYRatio = v;
-			update = true;
-		}
-	} else if (id == IDC_BLOOM_THRESHOLD) {
-		float v = (float)TBGetValue(IDC_BLOOM_THRESHOLD) / 100.0f;
-
-		if (fabsf(params.mBloomThreshold - v) > 1e-5f) {
-			params.mBloomThreshold = v;
 			update = true;
 		}
 	} else if (id == IDC_BLOOM_RADIUS) {
@@ -274,11 +264,8 @@ void ATAdjustScreenEffectsDialog::UpdateLabel(uint32 id) {
 		case IDC_DISTORTION_Y:
 			SetControlTextF(IDC_STATIC_DISTORTION_Y, L"%.0f%%", params.mDistortionYRatio * 100.0f);
 			break;
-		case IDC_BLOOM_THRESHOLD:
-			SetControlTextF(IDC_STATIC_BLOOM_THRESHOLD, L"%.2f", params.mBloomThreshold);
-			break;
 		case IDC_BLOOM_RADIUS:
-			SetControlTextF(IDC_STATIC_BLOOM_RADIUS, L"%.1f cclk", params.mBloomRadius * 0.5f);
+			SetControlTextF(IDC_STATIC_BLOOM_RADIUS, L"%+.1f", params.mBloomRadius * 0.5f);
 			break;
 		case IDC_BLOOM_DIRECT_INTENSITY:
 			SetControlTextF(IDC_STATIC_BLOOM_DIRECT_INTENSITY, L"%.2f", params.mBloomDirectIntensity);
@@ -347,21 +334,17 @@ void ATAdjustScreenEffectsDialog::UpdateEnables() {
 	ShowControl(IDC_STATIC_DISTORTION_Y, hwSupport);
 	mBloomEnableView.SetVisible(hwSupport);
 	mBloomScanlineCompensationView.SetVisible(hwSupport);
-	ShowControl(IDC_BLOOM_THRESHOLD, hwSupport);
 	ShowControl(IDC_BLOOM_RADIUS, hwSupport);
 	ShowControl(IDC_BLOOM_DIRECT_INTENSITY, hwSupport);
 	ShowControl(IDC_BLOOM_INDIRECT_INTENSITY, hwSupport);
-	ShowControl(IDC_STATIC_BLOOM_THRESHOLD, hwSupport);
 	ShowControl(IDC_STATIC_BLOOM_RADIUS, hwSupport);
 	ShowControl(IDC_STATIC_BLOOM_DIRECT_INTENSITY, hwSupport);
 	ShowControl(IDC_STATIC_BLOOM_INDIRECT_INTENSITY, hwSupport);
-	ShowControl(IDC_LABEL_BLOOM_THRESHOLD, hwSupport);
 	ShowControl(IDC_LABEL_BLOOM_RADIUS, hwSupport);
 	ShowControl(IDC_LABEL_BLOOM_DIRECT_INTENSITY, hwSupport);
 	ShowControl(IDC_LABEL_BLOOM_INDIRECT_INTENSITY, hwSupport);
 
 	mBloomScanlineCompensationView.SetEnabled(bloomEnabled);
-	EnableControl(IDC_BLOOM_THRESHOLD, bloomEnabled);
 	EnableControl(IDC_BLOOM_RADIUS, bloomEnabled);
 	EnableControl(IDC_BLOOM_DIRECT_INTENSITY, bloomEnabled);
 	EnableControl(IDC_BLOOM_INDIRECT_INTENSITY, bloomEnabled);

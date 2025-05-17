@@ -306,7 +306,7 @@ VDStringW VDTextU8ToW(const char *s, int length) {
 		} else {
 			if (wc >= 0x10000) {
 				wc -= 0x10000;
-				temp.push_back(0xD800 + ((wc & 0x3ff) >> 10));
+				temp.push_back(0xD800 + ((wc >> 10) & 0x3ff));
 				wc = 0xDC00 + (wc&0x3ff);
 			}
 		}

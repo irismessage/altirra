@@ -779,7 +779,7 @@ uint32 ATDiskDriveDebugTargetControl::ConvertRawTimestamp(uint32 rawTimestamp) c
 	// mLastSync is the machine cycle at which all sub-cycles have been pushed into the
 	// coprocessor, and the coprocessor's time base is the sub-cycle corresponding to
 	// the end of that machine cycle.
-	return mLastSync - (((mDriveCycleLimit - rawTimestamp - mRawTimestampToDriveAdjust) * mSystemCyclesPerDriveCycleF32 + ((mDriveCycleAccumF32 * mSystemCyclesPerDriveCycleF32) >> 32) + 0xFFFFFFFF) >> 32);
+	return mLastSync - (((sint32)(mDriveCycleLimit - rawTimestamp - mRawTimestampToDriveAdjust) * mSystemCyclesPerDriveCycleF32 + ((mDriveCycleAccumF32 * mSystemCyclesPerDriveCycleF32) >> 32) + 0xFFFFFFFF) >> 32);
 }
 
 void ATDiskDriveDebugTargetControl::GetExecState(ATCPUExecState& state) {

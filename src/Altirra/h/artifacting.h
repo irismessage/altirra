@@ -40,7 +40,7 @@ public:
 	ATArtifactingEngine();
 	~ATArtifactingEngine();
 
-	void SetColorParams(const ATColorParams& params, const vdfloat3x3 *matrix, const nsVDVecMath::vdfloat32x3 *tintColor);
+	void SetColorParams(const ATColorParams& params, const vdfloat3x3 *matrix, const nsVDVecMath::vdfloat32x3 *tintColor, ATMonitorMode monitorMode, int palPhase);
 
 	ATArtifactingParams GetArtifactingParams() const { return mArtifactingParams; }
 	void SetArtifactingParams(const ATArtifactingParams& params);
@@ -57,10 +57,22 @@ public:
 	void SuspendFrame();
 	void ResumeFrame();
 
-	void BeginFrame(bool pal, bool chromaArtifact, bool chromaArtifactHi, bool blendIn, bool blendOut, bool blendLinear, bool bypassOutputCorrection, bool extendedRangeInput, bool extendedRangeOutput);
+	void BeginFrame(
+		bool pal,
+		bool chromaArtifact,
+		bool chromaArtifactHi,
+		bool blendIn,
+		bool blendOut,
+		bool blendLinear,
+		bool blendMonoPersistence,
+		bool bypassOutputCorrection,
+		bool extendedRangeInput,
+		bool extendedRangeOutput,
+		bool deinterlacing);
 	void Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool temporaryUpdate, bool includeBlanking);
 	void Artifact32(uint32 y, uint32 *dst, uint32 width, bool temporaryUpdate, bool includeBlanking);
 	void InterpolateScanlines(uint32 *dst, const uint32 *src1, const uint32 *src2, uint32 n);
+	void Deinterlace(uint32 frameY, uint32 *dst, const uint32 *src1, const uint32 *src2, uint32 n);
 
 private:
 	friend class ATPaletteCorrector;
@@ -86,14 +98,18 @@ private:
 	void BlitNoArtifacts(uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes);
 	void Blend(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n);
 	void BlendExchange(uint32 *VDRESTRICT dst, uint32 *VDRESTRICT blendDst, uint32 n);
+	void BlendCopy(uint32 *VDRESTRICT dst, uint32 *VDRESTRICT blendDst, uint32 n);
 
 	void ColorCorrect(uint8 *VDRESTRICT dst8, uint32 n) const;
 
+	void RecomputeMonoPersistence(float dt);
+	void RecomputeColorTables();
+	void RecomputeMonoPersistence();
 	void RecomputeActiveTables(bool signedOutput);
 	void RecomputeNTSCTables(ATConsoleOutput *debugOut);
 	void RecomputePALTables(ATConsoleOutput *debugOut);
 
-	bool mbPAL;
+	bool mbPAL = false;
 	bool mbHighNTSCTablesInited = false;
 	bool mbHighPALTablesInited = false;
 	bool mbHighTablesSigned = false;
@@ -104,12 +120,14 @@ private:
 	bool mbBlendActive = false;
 	bool mbBlendCopy = false;
 	bool mbBlendLinear = false;
+	bool mbBlendMonoPersistence = false;
 	bool mbScanlineDelayValid = false;
 	bool mbGammaIdentity = false;
 	bool mbEnableColorCorrection = false;
 	bool mbBypassOutputCorrection = false;
 	bool mbExpandedRangeInput = false;
 	bool mbExpandedRangeOutput = false;
+	bool mbDeinterlacing = false;
 
 	bool mbSavedPAL = false;
 	bool mbSavedChromaArtifacts = false;
@@ -121,13 +139,22 @@ private:
 	bool mbSavedExpandedRangeInput = false;
 	bool mbSavedExpandedRangeOutput = false;
 
-	bool mbTintColorEnabled = false;
-	vdfloat3 mTintColor {};
+	float mMonoPersistenceF1 = 0;
+	float mMonoPersistenceF2 = 0;
+	float mMonoPersistenceLimit = 0;
 
-	vdfloat3x3 mColorMatchingMatrix {};
+	bool mbTintColorEnabled = false;
+	vdfloat3 mRawTintColor {};						// tint color according to monitor mode
+	vdfloat3 mTintColor {};							// modified to white if persistence enabled
+
+	vdfloat3x3 mColorMatchingMatrix {};				// only used if color correction enabled
 	sint16 mColorMatchingMatrix16[3][3] {};
 
 	ATColorParams mColorParams;
+	ATMonitorMode mMonitorMode {};
+	int mPALPhase = 0;
+	bool mbColorTablesMonoPersistence = false;
+
 	ATArtifactingParams mArtifactingParams;
 
 	alignas(16) sint16 mChromaVectors[16][4];		// signed 10.6
@@ -144,6 +171,9 @@ private:
 	uint32 mCorrectedSignedPalette[256];
 	uint32 mMonoTable[256];
 
+	// Gamma 2.0 intensity to display color table for mono persistence.
+	uint32 mMonoTable2[1024] {};
+
 	// versions modified for signed/unsigned
 	uint32 mActivePalette[256];
 	alignas(16) sint16 mActiveChromaVectors[16][4];
@@ -157,9 +187,11 @@ private:
 	};
 
 	union {
-		uint32 mPrevFrame7MHz[M][N];
-		uint32 mPrevFrame14MHz[M][N*2];
+		uint32 mPrevFrame7MHz[M*2][N];
+		uint32 mPrevFrame14MHz[M*2][N*2];
 	};
+
+	uint32 mDeinterlaceDelayLine[M*2][N*2] {};
 
 	union {
 		// NTSC high artifacting - scalar/MMX (64-bit)

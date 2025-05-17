@@ -73,31 +73,31 @@ DEFINE_TEST(Core_MD5) {
 
 	// run RFC 1321 test suite
 	digest = ATComputeMD5("", 0);
-	printf("%s  empty\n", MD5HexDigest(digest).c_str());
+	AT_TEST_TRACEF("%s  empty", MD5HexDigest(digest).c_str());
 	TEST_ASSERT(digest == "D41D8CD98F00B204E9800998ECF8427E"_atmd5);
 
 	digest = ATComputeMD5("a", 1);
-	printf("%s  a\n", MD5HexDigest(digest).c_str());
+	AT_TEST_TRACEF("%s  a", MD5HexDigest(digest).c_str());
 	TEST_ASSERT(digest == "0CC175B9C0F1B6A831C399E269772661"_atmd5);
 
 	digest = ATComputeMD5("abc", 3);
-	printf("%s  abc\n", MD5HexDigest(digest).c_str());
+	AT_TEST_TRACEF("%s  abc", MD5HexDigest(digest).c_str());
 	TEST_ASSERT(digest == "900150983cd24fb0d6963f7d28e17f72"_atmd5);
 
 	digest = ATComputeMD5("message digest", 14);
-	printf("%s  message digest\n", MD5HexDigest(digest).c_str());
+	AT_TEST_TRACEF("%s  message digest", MD5HexDigest(digest).c_str());
 	TEST_ASSERT(digest == "F96B697D7CB7938D525A2F31AAF161D0"_atmd5);
 
 	digest = ATComputeMD5("abcdefghijklmnopqrstuvwxyz", 26);
-	printf("%s  a..z\n", MD5HexDigest(digest).c_str());
+	AT_TEST_TRACEF("%s  a..z", MD5HexDigest(digest).c_str());
 	TEST_ASSERT(digest == "C3FCD3D76192E4007DFB496CCA67E13B"_atmd5);
 
 	digest = ATComputeMD5("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", 62);
-	printf("%s  A..Za..z0..9\n", MD5HexDigest(digest).c_str());
+	AT_TEST_TRACEF("%s  A..Za..z0..9", MD5HexDigest(digest).c_str());
 	TEST_ASSERT(digest == "D174AB98D277D9F5A5611C2C9F419D9F"_atmd5);
 
 	digest = ATComputeMD5("12345678901234567890123456789012345678901234567890123456789012345678901234567890", 80);
-	printf("%s  (1..0){8}\n", MD5HexDigest(digest).c_str());
+	AT_TEST_TRACEF("%s  (1..0){8}", MD5HexDigest(digest).c_str());
 	TEST_ASSERT(digest == "57EDF4A22BE3C955AC49DA2E2107B67A"_atmd5);
 
 	return 0;

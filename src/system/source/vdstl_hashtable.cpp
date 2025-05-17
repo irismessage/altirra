@@ -24,7 +24,29 @@
 //		distribution.
 
 #include <stdafx.h>
+#include <vd2/system/Error.h>
 #include <vd2/system/vdstl_hashtable.h>
+
+size_t VDComputePrimeBucketCount(size_t minBucketCount) {
+	static const size_t kBucketSizes[]={
+		11,
+		17, 37, 67, 131,
+		257, 521, 1031, 2049,
+		4099, 8209, 16411, 32771,
+		65537, 131101, 262147, 524309,
+		1048583, 2097169, 4194319, 8388617,
+		16777259, 33554467, 67108879, 134217757,
+		268435459, 536870923, 1073741827
+	};
+
+	for(size_t n : kBucketSizes) {
+		if (n >= minBucketCount)
+			return n;
+	}
+
+	VDRaiseInternalFailure();
+	return minBucketCount;
+}
 
 vdhashtable_base_node *const vdhashtable_base::sEmptyBucket = {NULL};
 
@@ -55,28 +77,5 @@ vdhashtable_base::size_type vdhashtable_base::bucket_size(size_type n) const {
 }
 
 vdhashtable_base::size_type vdhashtable_base::compute_bucket_count(size_type n) {
-	static const size_t kBucketSizes[]={
-		11,
-		17, 37, 67, 131,
-		257, 521, 1031, 2049,
-		4099, 8209, 16411, 32771,
-		65537, 131101, 262147, 524309,
-		1048583, 2097169, 4194319, 8388617,
-		16777259, 33554467, 67108879, 134217757,
-		268435459, 536870923, 1073741827
-	};
-
-	int i = 0;
-	size_type buckets;
-
-	while(i < sizeof(kBucketSizes)/sizeof(kBucketSizes[0])) {
-		buckets = kBucketSizes[i];
-
-		if (n <= buckets)
-			break;
-
-		++i;
-	}
-
-	return buckets;
+	return VDComputePrimeBucketCount(n);
 }

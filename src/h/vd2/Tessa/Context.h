@@ -13,6 +13,9 @@ public:
 	virtual bool Restore() = 0;
 };
 
+class IVDTUnorderedAccessView : public IVDRefCount {
+};
+
 class IVDTReadbackBuffer : public IVDTResource {
 public:
 	virtual bool Lock(VDTLockData2D& lockData) = 0;
@@ -26,6 +29,7 @@ public:
 	virtual void Copy(uint32 dx, uint32 dy, IVDTSurface *src, uint32 sx, uint32 sy, uint32 w, uint32 h) = 0;
 	virtual void GetDesc(VDTSurfaceDesc& desc) = 0;
 	virtual IVDTTexture *GetTexture() const = 0;
+	virtual IVDTUnorderedAccessView *GetUnorderedAccessView() = 0;
 };
 
 class IVDTTexture : public IVDTResource {
@@ -48,6 +52,9 @@ class IVDTVertexProgram : public IVDTResource {
 };
 
 class IVDTFragmentProgram : public IVDTResource {
+};
+
+class IVDTComputeProgram : public IVDTResource {
 };
 
 class IVDTVertexFormat : public IVDTResource {
@@ -160,6 +167,7 @@ public:
 	virtual bool CreateTexture2D(uint32 width, uint32 height, VDTFormat format, uint32 mipcount, VDTUsage usage, const VDTInitData2D *initData, IVDTTexture2D **tex) = 0;
 	virtual bool CreateVertexProgram(VDTProgramFormat format, VDTData data, IVDTVertexProgram **tex) = 0;
 	virtual bool CreateFragmentProgram(VDTProgramFormat format, VDTData data, IVDTFragmentProgram **tex) = 0;
+	virtual bool CreateComputeProgram(VDTProgramFormat format, VDTData data, IVDTComputeProgram **tex) = 0;
 	virtual bool CreateVertexFormat(const VDTVertexElement *elements, uint32 count, IVDTVertexProgram *vp, IVDTVertexFormat **format) = 0;
 	virtual bool CreateVertexBuffer(uint32 size, bool dynamic, const void *initData, IVDTVertexBuffer **buffer) = 0;
 	virtual bool CreateIndexBuffer(uint32 count, bool index32, bool dynamic, const void *initData, IVDTIndexBuffer **buffer) = 0;
@@ -201,6 +209,16 @@ public:
 	virtual void Clear(VDTClearFlags clearFlags, uint32 color, float depth, uint32 stencil) = 0;
 	virtual void DrawPrimitive(VDTPrimitiveType type, uint32 startVertex, uint32 primitiveCount) = 0;
 	virtual void DrawIndexedPrimitive(VDTPrimitiveType type, uint32 baseVertexIndex, uint32 minVertex, uint32 vertexCount, uint32 startIndex, uint32 primitiveCount) = 0;
+
+	virtual void CsSetProgram(IVDTComputeProgram *program) = 0;
+	virtual void CsSetConstCount(uint32 count) = 0;
+	virtual void CsSetConstF(uint32 baseIndex, uint32 count, const float *data) = 0;
+	virtual void CsSetSamplers(uint32 baseIndex, uint32 count, IVDTSamplerState *const *states) = 0;
+	virtual void CsSetTextures(uint32 baseIndex, uint32 count, IVDTTexture *const *textures) = 0;
+	virtual void CsClearTexturesStartingAt(uint32 baseIndex) = 0;
+	virtual void CsSetUnorderedAccessViews(uint32 baseIndex, uint32 count, IVDTUnorderedAccessView *const *uavs) = 0;
+	virtual void CsClearUnorderedAccessViewsStartingAt(uint32 baseIndex) = 0;
+	virtual void CsDispatch(uint32 x, uint32 y, uint32 z) = 0;
 
 	virtual uint32 InsertFence() = 0;
 	virtual bool CheckFence(uint32 id) = 0;

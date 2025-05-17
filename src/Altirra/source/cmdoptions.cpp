@@ -18,6 +18,7 @@
 #include <at/atui/uicommandmanager.h>
 #include "cmdhelpers.h"
 #include "options.h"
+#include "oshelper.h"
 
 template<auto T_Field>
 constexpr ATUICommand ATMakeOnCommandOptionToggle(const char *name) {
@@ -40,11 +41,39 @@ constexpr ATUICommand ATMakeOnCommandOptionToggle(const char *name) {
 	};
 }
 
+template<auto T_Field, auto T_Value>
+constexpr ATUICommand ATMakeOnCommandOptionRadio(const char *name) {
+	using namespace ATCommands;
+
+	return ATUICommand {
+		name,
+		[] {
+			auto prev = g_ATOptions;
+
+			if (g_ATOptions.*T_Field != T_Value) {
+				g_ATOptions.*T_Field = T_Value;
+
+				ATOptionsRunUpdateCallbacks(&prev);
+				g_ATOptions.mbDirty = true;
+				ATOptionsSave();
+			}
+		},
+		nullptr,
+		[] {
+			return ToRadio(g_ATOptions.*T_Field == T_Value);
+		},
+		nullptr
+	};
+}
+
 void ATUIInitCommandMappingsOption(ATUICommandManager& cmdMgr) {
 	static constexpr ATUICommand kCommands[]={
 		ATMakeOnCommandOptionToggle<&ATOptions::mbSingleInstance>("Options.ToggleSingleInstance"),
 		ATMakeOnCommandOptionToggle<&ATOptions::mbPauseDuringMenu>("Options.PauseDuringMenu"),
 		ATMakeOnCommandOptionToggle<&ATOptions::mbPollDirectories>("Options.ToggleDirectoryPolling"),
+		ATMakeOnCommandOptionRadio<&ATOptions::mEfficiencyMode, ATProcessEfficiencyMode::Default>("Options.EfficiencyModeDefault"),
+		ATMakeOnCommandOptionRadio<&ATOptions::mEfficiencyMode, ATProcessEfficiencyMode::Performance>("Options.EfficiencyModePerformance"),
+		ATMakeOnCommandOptionRadio<&ATOptions::mEfficiencyMode, ATProcessEfficiencyMode::Efficiency>("Options.EfficiencyModeEfficiency"),
 	};
 
 	cmdMgr.RegisterCommands(kCommands, vdcountof(kCommands));

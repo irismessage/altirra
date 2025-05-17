@@ -92,11 +92,17 @@ public:
 	{
 	}
 
+	explicit VDColorRGB(vdfloat32x3 c)
+		: v(vdfloat32x4::set(c, 0.0f))
+	{
+	}
+
 	explicit VDColorRGB(vdfloat32x4 c)
 		: v(c)
 	{
 	}
 
+	explicit operator vdfloat32x3() const { return v.xyz(); }
 	explicit operator vdfloat32x4() const { return v; }
 
 	static VDColorRGB FromBGR8(uint32 c) {
@@ -119,13 +125,13 @@ public:
 		vdfloat32x4 x = (v + 0.055f) * (1.0f / 1.055f);
 		vdfloat32x4 y = pow(x, 2.4f);
 
-		return VDColorRGB(select(v < vdfloat32x4::set1(0.04045f), v * (1.0f / 12.92f), y));
+		return VDColorRGB(select(cmplt(v, vdfloat32x4::set1(0.04045f)), v * (1.0f / 12.92f), y));
 	}
 
 	VDColorRGB LinearToSRGB() const {
 		vdfloat32x4 y = 1.055f * pow(v, 1.0f / 2.4f) - 0.055f;
 
-		return VDColorRGB(select(v < vdfloat32x4::set1(0.0031308f), v * 12.92f, y));
+		return VDColorRGB(select(cmplt(v, vdfloat32x4::set1(0.0031308f)), v * 12.92f, y));
 	}
 
 	float Luma() const {

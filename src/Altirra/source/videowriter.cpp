@@ -2483,12 +2483,367 @@ private:
 
 	class HRVerify {
 	public:
-		void operator+=(HRESULT hr) const {
-			if (FAILED(hr))
-				throw MyWin32Error("Media encoding failed: %%s", hr);
-		}
+		HRVerify(const wchar_t *label = L"Media encoding failed") : mpLabel(label) {}
+
+		void operator+=(HRESULT hr) const;
+
+	private:
+		const wchar_t *mpLabel = nullptr;
 	};
 };
+
+void ATMediaFoundationEncoderW32::HRVerify::operator+=(HRESULT hr) const {
+	if (FAILED(hr)) {
+		const char *name = nullptr;
+
+		switch(hr) {
+#define X(code) case code: name = #code; break;
+			X(MF_E_PLATFORM_NOT_INITIALIZED)
+			X(MF_E_BUFFERTOOSMALL)
+			X(MF_E_INVALIDREQUEST)
+			X(MF_E_INVALIDSTREAMNUMBER)
+			X(MF_E_INVALIDMEDIATYPE)
+			X(MF_E_NOTACCEPTING)
+			X(MF_E_NOT_INITIALIZED)
+			X(MF_E_UNSUPPORTED_REPRESENTATION)
+			X(MF_E_NO_MORE_TYPES)
+			X(MF_E_UNSUPPORTED_SERVICE)
+			X(MF_E_UNEXPECTED)
+			X(MF_E_INVALIDNAME)
+			X(MF_E_INVALIDTYPE)
+			X(MF_E_INVALID_FILE_FORMAT)
+			X(MF_E_INVALIDINDEX)
+			X(MF_E_INVALID_TIMESTAMP)
+			X(MF_E_UNSUPPORTED_SCHEME)
+			X(MF_E_UNSUPPORTED_BYTESTREAM_TYPE)
+			X(MF_E_UNSUPPORTED_TIME_FORMAT)
+			X(MF_E_NO_SAMPLE_TIMESTAMP)
+			X(MF_E_NO_SAMPLE_DURATION)
+			X(MF_E_INVALID_STREAM_DATA)
+			X(MF_E_RT_UNAVAILABLE)
+			X(MF_E_UNSUPPORTED_RATE)
+			X(MF_E_THINNING_UNSUPPORTED)
+			X(MF_E_REVERSE_UNSUPPORTED)
+			X(MF_E_UNSUPPORTED_RATE_TRANSITION)
+			X(MF_E_RATE_CHANGE_PREEMPTED)
+			X(MF_E_NOT_FOUND)
+			X(MF_E_NOT_AVAILABLE)
+			X(MF_E_NO_CLOCK)
+			X(MF_E_MULTIPLE_BEGIN)
+			X(MF_E_MULTIPLE_SUBSCRIBERS)
+			X(MF_E_TIMER_ORPHANED)
+			X(MF_E_STATE_TRANSITION_PENDING)
+			X(MF_E_UNSUPPORTED_STATE_TRANSITION)
+			X(MF_E_UNRECOVERABLE_ERROR_OCCURRED)
+			X(MF_E_SAMPLE_HAS_TOO_MANY_BUFFERS)
+			X(MF_E_SAMPLE_NOT_WRITABLE)
+			X(MF_E_INVALID_KEY)
+			X(MF_E_BAD_STARTUP_VERSION)
+			X(MF_E_UNSUPPORTED_CAPTION)
+			X(MF_E_INVALID_POSITION)
+			X(MF_E_ATTRIBUTENOTFOUND)
+			X(MF_E_PROPERTY_TYPE_NOT_ALLOWED)
+			X(MF_E_PROPERTY_TYPE_NOT_SUPPORTED)
+			X(MF_E_PROPERTY_EMPTY)
+			X(MF_E_PROPERTY_NOT_EMPTY)
+			X(MF_E_PROPERTY_VECTOR_NOT_ALLOWED)
+			X(MF_E_PROPERTY_VECTOR_REQUIRED)
+			X(MF_E_OPERATION_CANCELLED)
+			X(MF_E_BYTESTREAM_NOT_SEEKABLE)
+			X(MF_E_DISABLED_IN_SAFEMODE)
+			X(MF_E_CANNOT_PARSE_BYTESTREAM)
+			X(MF_E_SOURCERESOLVER_MUTUALLY_EXCLUSIVE_FLAGS)
+			X(MF_E_MEDIAPROC_WRONGSTATE)
+			X(MF_E_RT_THROUGHPUT_NOT_AVAILABLE)
+			X(MF_E_RT_TOO_MANY_CLASSES)
+			X(MF_E_RT_WOULDBLOCK)
+			X(MF_E_NO_BITPUMP)
+			X(MF_E_RT_OUTOFMEMORY)
+			X(MF_E_RT_WORKQUEUE_CLASS_NOT_SPECIFIED)
+			X(MF_E_INSUFFICIENT_BUFFER)
+			X(MF_E_CANNOT_CREATE_SINK)
+			X(MF_E_BYTESTREAM_UNKNOWN_LENGTH)
+			X(MF_E_SESSION_PAUSEWHILESTOPPED)
+			X(MF_E_FORMAT_CHANGE_NOT_SUPPORTED)
+			X(MF_E_INVALID_WORKQUEUE)
+			X(MF_E_DRM_UNSUPPORTED)
+			X(MF_E_UNAUTHORIZED)
+			X(MF_E_OUT_OF_RANGE)
+			X(MF_E_INVALID_CODEC_MERIT)
+			X(MF_E_HW_MFT_FAILED_START_STREAMING)
+			X(MF_E_OPERATION_IN_PROGRESS)
+			X(MF_E_HARDWARE_DRM_UNSUPPORTED)
+			X(MF_E_DURATION_TOO_LONG)
+			X(MF_E_OPERATION_UNSUPPORTED_AT_D3D_FEATURE_LEVEL)
+			X(MF_E_UNSUPPORTED_MEDIATYPE_AT_D3D_FEATURE_LEVEL)
+			X(MF_E_ASF_PARSINGINCOMPLETE)
+			X(MF_E_ASF_MISSINGDATA)
+			X(MF_E_ASF_INVALIDDATA)
+			X(MF_E_ASF_OPAQUEPACKET)
+			X(MF_E_ASF_NOINDEX)
+			X(MF_E_ASF_OUTOFRANGE)
+			X(MF_E_ASF_INDEXNOTLOADED)
+			X(MF_E_ASF_TOO_MANY_PAYLOADS)
+			X(MF_E_ASF_UNSUPPORTED_STREAM_TYPE)
+			X(MF_E_ASF_DROPPED_PACKET)
+			X(MF_E_NO_EVENTS_AVAILABLE)
+			X(MF_E_INVALID_STATE_TRANSITION)
+			X(MF_E_END_OF_STREAM)
+			X(MF_E_SHUTDOWN)
+			X(MF_E_MP3_NOTFOUND)
+			X(MF_E_MP3_OUTOFDATA)
+			X(MF_E_MP3_NOTMP3)
+			X(MF_E_MP3_NOTSUPPORTED)
+			X(MF_E_NO_DURATION)
+			X(MF_E_INVALID_FORMAT)
+			X(MF_E_PROPERTY_NOT_FOUND)
+			X(MF_E_PROPERTY_READ_ONLY)
+			X(MF_E_PROPERTY_NOT_ALLOWED)
+			X(MF_E_MEDIA_SOURCE_NOT_STARTED)
+			X(MF_E_UNSUPPORTED_FORMAT)
+			X(MF_E_MP3_BAD_CRC)
+			X(MF_E_NOT_PROTECTED)
+			X(MF_E_MEDIA_SOURCE_WRONGSTATE)
+			X(MF_E_MEDIA_SOURCE_NO_STREAMS_SELECTED)
+			X(MF_E_CANNOT_FIND_KEYFRAME_SAMPLE)
+			X(MF_E_UNSUPPORTED_CHARACTERISTICS)
+			X(MF_E_NO_AUDIO_RECORDING_DEVICE)
+			X(MF_E_AUDIO_RECORDING_DEVICE_IN_USE)
+			X(MF_E_AUDIO_RECORDING_DEVICE_INVALIDATED)
+			X(MF_E_VIDEO_RECORDING_DEVICE_INVALIDATED)
+			X(MF_E_VIDEO_RECORDING_DEVICE_PREEMPTED)
+			X(MF_E_NETWORK_RESOURCE_FAILURE)
+			X(MF_E_NET_WRITE)
+			X(MF_E_NET_READ)
+			X(MF_E_NET_REQUIRE_NETWORK)
+			X(MF_E_NET_REQUIRE_ASYNC)
+			X(MF_E_NET_BWLEVEL_NOT_SUPPORTED)
+			X(MF_E_NET_STREAMGROUPS_NOT_SUPPORTED)
+			X(MF_E_NET_MANUALSS_NOT_SUPPORTED)
+			X(MF_E_NET_INVALID_PRESENTATION_DESCRIPTOR)
+			X(MF_E_NET_CACHESTREAM_NOT_FOUND)
+			X(MF_E_NET_REQUIRE_INPUT)
+			X(MF_E_NET_REDIRECT)
+			X(MF_E_NET_REDIRECT_TO_PROXY)
+			X(MF_E_NET_TOO_MANY_REDIRECTS)
+			X(MF_E_NET_TIMEOUT)
+			X(MF_E_NET_CLIENT_CLOSE)
+			X(MF_E_NET_BAD_CONTROL_DATA)
+			X(MF_E_NET_INCOMPATIBLE_SERVER)
+			X(MF_E_NET_UNSAFE_URL)
+			X(MF_E_NET_CACHE_NO_DATA)
+			X(MF_E_NET_EOL)
+			X(MF_E_NET_BAD_REQUEST)
+			X(MF_E_NET_INTERNAL_SERVER_ERROR)
+			X(MF_E_NET_SESSION_NOT_FOUND)
+			X(MF_E_NET_NOCONNECTION)
+			X(MF_E_NET_CONNECTION_FAILURE)
+			X(MF_E_NET_INCOMPATIBLE_PUSHSERVER)
+			X(MF_E_NET_SERVER_ACCESSDENIED)
+			X(MF_E_NET_PROXY_ACCESSDENIED)
+			X(MF_E_NET_CANNOTCONNECT)
+			X(MF_E_NET_INVALID_PUSH_TEMPLATE)
+			X(MF_E_NET_INVALID_PUSH_PUBLISHING_POINT)
+			X(MF_E_NET_BUSY)
+			X(MF_E_NET_RESOURCE_GONE)
+			X(MF_E_NET_ERROR_FROM_PROXY)
+			X(MF_E_NET_PROXY_TIMEOUT)
+			X(MF_E_NET_SERVER_UNAVAILABLE)
+			X(MF_E_NET_TOO_MUCH_DATA)
+			X(MF_E_NET_SESSION_INVALID)
+			X(MF_E_OFFLINE_MODE)
+			X(MF_E_NET_UDP_BLOCKED)
+			X(MF_E_NET_UNSUPPORTED_CONFIGURATION)
+			X(MF_E_NET_PROTOCOL_DISABLED)
+			X(MF_E_NET_COMPANION_DRIVER_DISCONNECT)
+			X(MF_E_ALREADY_INITIALIZED)
+			X(MF_E_BANDWIDTH_OVERRUN)
+			X(MF_E_LATE_SAMPLE)
+			X(MF_E_FLUSH_NEEDED)
+			X(MF_E_INVALID_PROFILE)
+			X(MF_E_INDEX_NOT_COMMITTED)
+			X(MF_E_NO_INDEX)
+			X(MF_E_CANNOT_INDEX_IN_PLACE)
+			X(MF_E_MISSING_ASF_LEAKYBUCKET)
+			X(MF_E_INVALID_ASF_STREAMID)
+			X(MF_E_STREAMSINK_REMOVED)
+			X(MF_E_STREAMSINKS_OUT_OF_SYNC)
+			X(MF_E_STREAMSINKS_FIXED)
+			X(MF_E_STREAMSINK_EXISTS)
+			X(MF_E_SAMPLEALLOCATOR_CANCELED)
+			X(MF_E_SAMPLEALLOCATOR_EMPTY)
+			X(MF_E_SINK_ALREADYSTOPPED)
+			X(MF_E_ASF_FILESINK_BITRATE_UNKNOWN)
+			X(MF_E_SINK_NO_STREAMS)
+			X(MF_E_METADATA_TOO_LONG)
+			X(MF_E_SINK_NO_SAMPLES_PROCESSED)
+			X(MF_E_SINK_HEADERS_NOT_FOUND)
+			X(MF_E_VIDEO_REN_NO_PROCAMP_HW)
+			X(MF_E_VIDEO_REN_NO_DEINTERLACE_HW)
+			X(MF_E_VIDEO_REN_COPYPROT_FAILED)
+			X(MF_E_VIDEO_REN_SURFACE_NOT_SHARED)
+			X(MF_E_VIDEO_DEVICE_LOCKED)
+			X(MF_E_NEW_VIDEO_DEVICE)
+			X(MF_E_NO_VIDEO_SAMPLE_AVAILABLE)
+			X(MF_E_NO_AUDIO_PLAYBACK_DEVICE)
+			X(MF_E_AUDIO_PLAYBACK_DEVICE_IN_USE)
+			X(MF_E_AUDIO_PLAYBACK_DEVICE_INVALIDATED)
+			X(MF_E_AUDIO_SERVICE_NOT_RUNNING)
+			X(MF_E_AUDIO_BUFFER_SIZE_ERROR)
+			X(MF_E_AUDIO_CLIENT_WRAPPER_SPOOF_ERROR)
+			X(MF_E_TOPO_INVALID_OPTIONAL_NODE)
+			X(MF_E_TOPO_CANNOT_FIND_DECRYPTOR)
+			X(MF_E_TOPO_CODEC_NOT_FOUND)
+			X(MF_E_TOPO_CANNOT_CONNECT)
+			X(MF_E_TOPO_UNSUPPORTED)
+			X(MF_E_TOPO_INVALID_TIME_ATTRIBUTES)
+			X(MF_E_TOPO_LOOPS_IN_TOPOLOGY)
+			X(MF_E_TOPO_MISSING_PRESENTATION_DESCRIPTOR)
+			X(MF_E_TOPO_MISSING_STREAM_DESCRIPTOR)
+			X(MF_E_TOPO_STREAM_DESCRIPTOR_NOT_SELECTED)
+			X(MF_E_TOPO_MISSING_SOURCE)
+			X(MF_E_TOPO_SINK_ACTIVATES_UNSUPPORTED)
+			X(MF_E_SEQUENCER_UNKNOWN_SEGMENT_ID)
+			X(MF_E_NO_SOURCE_IN_CACHE)
+			X(MF_E_TRANSFORM_TYPE_NOT_SET)
+			X(MF_E_TRANSFORM_STREAM_CHANGE)
+			X(MF_E_TRANSFORM_INPUT_REMAINING)
+			X(MF_E_TRANSFORM_PROFILE_MISSING)
+			X(MF_E_TRANSFORM_PROFILE_INVALID_OR_CORRUPT)
+			X(MF_E_TRANSFORM_PROFILE_TRUNCATED)
+			X(MF_E_TRANSFORM_PROPERTY_PID_NOT_RECOGNIZED)
+			X(MF_E_TRANSFORM_PROPERTY_VARIANT_TYPE_WRONG)
+			X(MF_E_TRANSFORM_PROPERTY_NOT_WRITEABLE)
+			X(MF_E_TRANSFORM_PROPERTY_ARRAY_VALUE_WRONG_NUM_DIM)
+			X(MF_E_TRANSFORM_PROPERTY_VALUE_SIZE_WRONG)
+			X(MF_E_TRANSFORM_PROPERTY_VALUE_OUT_OF_RANGE)
+			X(MF_E_TRANSFORM_PROPERTY_VALUE_INCOMPATIBLE)
+			X(MF_E_TRANSFORM_NOT_POSSIBLE_FOR_CURRENT_OUTPUT_MEDIATYPE)
+			X(MF_E_TRANSFORM_NOT_POSSIBLE_FOR_CURRENT_INPUT_MEDIATYPE)
+			X(MF_E_TRANSFORM_NOT_POSSIBLE_FOR_CURRENT_MEDIATYPE_COMBINATION)
+			X(MF_E_TRANSFORM_CONFLICTS_WITH_OTHER_CURRENTLY_ENABLED_FEATURES)
+			X(MF_E_TRANSFORM_NEED_MORE_INPUT)
+			X(MF_E_TRANSFORM_NOT_POSSIBLE_FOR_CURRENT_SPKR_CONFIG)
+			X(MF_E_TRANSFORM_CANNOT_CHANGE_MEDIATYPE_WHILE_PROCESSING)
+			X(MF_E_UNSUPPORTED_D3D_TYPE)
+			X(MF_E_TRANSFORM_ASYNC_LOCKED)
+			X(MF_E_TRANSFORM_CANNOT_INITIALIZE_ACM_DRIVER)
+			X(MF_E_TRANSFORM_STREAM_INVALID_RESOLUTION)
+			X(MF_E_TRANSFORM_ASYNC_MFT_NOT_SUPPORTED)
+			X(MF_E_TRANSFORM_EXATTRIBUTE_NOT_SUPPORTED)
+			X(MF_E_LICENSE_INCORRECT_RIGHTS)
+			X(MF_E_LICENSE_OUTOFDATE)
+			X(MF_E_LICENSE_REQUIRED)
+			X(MF_E_DRM_HARDWARE_INCONSISTENT)
+			X(MF_E_NO_CONTENT_PROTECTION_MANAGER)
+			X(MF_E_LICENSE_RESTORE_NO_RIGHTS)
+			X(MF_E_BACKUP_RESTRICTED_LICENSE)
+			X(MF_E_LICENSE_RESTORE_NEEDS_INDIVIDUALIZATION)
+			X(MF_E_COMPONENT_REVOKED)
+			X(MF_E_TRUST_DISABLED)
+			X(MF_E_WMDRMOTA_NO_ACTION)
+			X(MF_E_WMDRMOTA_ACTION_ALREADY_SET)
+			X(MF_E_WMDRMOTA_DRM_HEADER_NOT_AVAILABLE)
+			X(MF_E_WMDRMOTA_DRM_ENCRYPTION_SCHEME_NOT_SUPPORTED)
+			X(MF_E_WMDRMOTA_ACTION_MISMATCH)
+			X(MF_E_WMDRMOTA_INVALID_POLICY)
+			X(MF_E_POLICY_UNSUPPORTED)
+			X(MF_E_OPL_NOT_SUPPORTED)
+			X(MF_E_TOPOLOGY_VERIFICATION_FAILED)
+			X(MF_E_SIGNATURE_VERIFICATION_FAILED)
+			X(MF_E_DEBUGGING_NOT_ALLOWED)
+			X(MF_E_CODE_EXPIRED)
+			X(MF_E_GRL_VERSION_TOO_LOW)
+			X(MF_E_GRL_RENEWAL_NOT_FOUND)
+			X(MF_E_GRL_EXTENSIBLE_ENTRY_NOT_FOUND)
+			X(MF_E_KERNEL_UNTRUSTED)
+			X(MF_E_PEAUTH_UNTRUSTED)
+			X(MF_E_NON_PE_PROCESS)
+			X(MF_E_REBOOT_REQUIRED)
+			X(MF_E_GRL_INVALID_FORMAT)
+			X(MF_E_GRL_UNRECOGNIZED_FORMAT)
+			X(MF_E_ALL_PROCESS_RESTART_REQUIRED)
+			X(MF_E_PROCESS_RESTART_REQUIRED)
+			X(MF_E_USERMODE_UNTRUSTED)
+			X(MF_E_PEAUTH_SESSION_NOT_STARTED)
+			X(MF_E_PEAUTH_PUBLICKEY_REVOKED)
+			X(MF_E_GRL_ABSENT)
+			X(MF_E_PE_UNTRUSTED)
+			X(MF_E_PEAUTH_NOT_STARTED)
+			X(MF_E_INCOMPATIBLE_SAMPLE_PROTECTION)
+			X(MF_E_PE_SESSIONS_MAXED)
+			X(MF_E_HIGH_SECURITY_LEVEL_CONTENT_NOT_ALLOWED)
+			X(MF_E_TEST_SIGNED_COMPONENTS_NOT_ALLOWED)
+			X(MF_E_ITA_UNSUPPORTED_ACTION)
+			X(MF_E_ITA_ERROR_PARSING_SAP_PARAMETERS)
+			X(MF_E_POLICY_MGR_ACTION_OUTOFBOUNDS)
+			X(MF_E_BAD_OPL_STRUCTURE_FORMAT)
+			X(MF_E_ITA_UNRECOGNIZED_ANALOG_VIDEO_PROTECTION_GUID)
+			X(MF_E_NO_PMP_HOST)
+			X(MF_E_ITA_OPL_DATA_NOT_INITIALIZED)
+			X(MF_E_ITA_UNRECOGNIZED_ANALOG_VIDEO_OUTPUT)
+			X(MF_E_ITA_UNRECOGNIZED_DIGITAL_VIDEO_OUTPUT)
+			X(MF_E_RESOLUTION_REQUIRES_PMP_CREATION_CALLBACK)
+			X(MF_E_INVALID_AKE_CHANNEL_PARAMETERS)
+			X(MF_E_CONTENT_PROTECTION_SYSTEM_NOT_ENABLED)
+			X(MF_E_UNSUPPORTED_CONTENT_PROTECTION_SYSTEM)
+			X(MF_E_DRM_MIGRATION_NOT_SUPPORTED)
+			X(MF_E_HDCP_AUTHENTICATION_FAILURE)
+			X(MF_E_HDCP_LINK_FAILURE)
+			X(MF_E_CLOCK_INVALID_CONTINUITY_KEY)
+			X(MF_E_CLOCK_NO_TIME_SOURCE)
+			X(MF_E_CLOCK_STATE_ALREADY_SET)
+			X(MF_E_CLOCK_NOT_SIMPLE)
+			X(MF_E_CLOCK_AUDIO_DEVICE_POSITION_UNEXPECTED)
+			X(MF_E_CLOCK_AUDIO_RENDER_POSITION_UNEXPECTED)
+			X(MF_E_CLOCK_AUDIO_RENDER_TIME_UNEXPECTED)
+			X(MF_E_NO_MORE_DROP_MODES)
+			X(MF_E_NO_MORE_QUALITY_LEVELS)
+			X(MF_E_DROPTIME_NOT_SUPPORTED)
+			X(MF_E_QUALITYKNOB_WAIT_LONGER)
+			X(MF_E_QM_INVALIDSTATE)
+			X(MF_E_TRANSCODE_NO_CONTAINERTYPE)
+			X(MF_E_TRANSCODE_PROFILE_NO_MATCHING_STREAMS)
+			X(MF_E_TRANSCODE_NO_MATCHING_ENCODER)
+			X(MF_E_TRANSCODE_INVALID_PROFILE)
+			X(MF_E_ALLOCATOR_NOT_INITIALIZED)
+			X(MF_E_ALLOCATOR_NOT_COMMITED)
+			X(MF_E_ALLOCATOR_ALREADY_COMMITED)
+			X(MF_E_STREAM_ERROR)
+			X(MF_E_INVALID_STREAM_STATE)
+			X(MF_E_HW_STREAM_NOT_CONNECTED)
+			X(MF_E_NO_CAPTURE_DEVICES_AVAILABLE)
+			X(MF_E_CAPTURE_SINK_OUTPUT_NOT_SET)
+			X(MF_E_CAPTURE_SINK_MIRROR_ERROR)
+			X(MF_E_CAPTURE_SINK_ROTATE_ERROR)
+			X(MF_E_CAPTURE_ENGINE_INVALID_OP)
+			X(MF_E_CAPTURE_ENGINE_ALL_EFFECTS_REMOVED)
+			X(MF_E_CAPTURE_SOURCE_NO_INDEPENDENT_PHOTO_STREAM_PRESENT)
+			X(MF_E_CAPTURE_SOURCE_NO_VIDEO_STREAM_PRESENT)
+			X(MF_E_CAPTURE_SOURCE_NO_AUDIO_STREAM_PRESENT)
+			X(MF_E_CAPTURE_SOURCE_DEVICE_EXTENDEDPROP_OP_IN_PROGRESS)
+			X(MF_E_CAPTURE_PROPERTY_SET_DURING_PHOTO)
+			X(MF_E_CAPTURE_NO_SAMPLES_IN_QUEUE)
+			X(MF_E_HW_ACCELERATED_THUMBNAIL_NOT_SUPPORTED)
+			X(MF_E_UNSUPPORTED_CAPTURE_DEVICE_PRESENT)
+			X(MF_E_TIMELINECONTROLLER_UNSUPPORTED_SOURCE_TYPE)
+			X(MF_E_TIMELINECONTROLLER_NOT_ALLOWED)
+			X(MF_E_TIMELINECONTROLLER_CANNOT_ATTACH)
+			X(MF_E_MEDIA_EXTENSION_APPSERVICE_CONNECTION_FAILED)
+			X(MF_E_MEDIA_EXTENSION_APPSERVICE_REQUEST_FAILED)
+			X(MF_E_MEDIA_EXTENSION_PACKAGE_INTEGRITY_CHECK_FAILED)
+			X(MF_E_MEDIA_EXTENSION_PACKAGE_LICENSE_INVALID)
+#undef X
+			default:
+				break;
+		}
+
+		if (name)
+			throw VDException(L"%ls: %hs (%08X)", mpLabel, name, hr);
+
+		throw VDWin32Exception(L"%ls: %%s", hr, mpLabel);
+	}
+}
 
 ATMediaFoundationEncoderW32::ATMediaFoundationEncoderW32(const wchar_t *filename, ATVideoEncoding venc, uint32 videoBitRate, uint32 audioBitRate, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, bool useYUV) {
 	try {
@@ -2578,61 +2933,63 @@ void ATMediaFoundationEncoderW32::Init(const wchar_t *filename, ATVideoEncoding 
 	verify += mpfnMFCreateSinkWriterFromURL(filename, nullptr, sinkWriterAttributes, ~mpSinkWriter);
 	sinkWriterAttributes.clear();
 
+	HRVerify sinkVerify(L"Media encoding setup failed");
 	vdrefptr<IMFMediaType> mediaTypeOut;
-	verify += mpfnMFCreateMediaType(~mediaTypeOut);
+	sinkVerify += mpfnMFCreateMediaType(~mediaTypeOut);
 
-	verify += mediaTypeOut->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+	sinkVerify += mediaTypeOut->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
 
 	switch(venc) {
 		case kATVideoEncoding_WMV7:
-			verify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_WMV1);
+			sinkVerify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_WMV1);
 			break;
 
 		case kATVideoEncoding_WMV9:
-			verify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_WMV3);
+			sinkVerify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_WMV3);
 			break;
 
 		case kATVideoEncoding_H264_AAC:
 		case kATVideoEncoding_H264_MP3:
-			verify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
+			sinkVerify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
 			break;
 	}
 
-	verify += mediaTypeOut->SetUINT32(MF_MT_AVG_BITRATE, std::clamp<uint32>(videoBitRate, 500000, 8000000));
-	verify += mediaTypeOut->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-	verify += MFSetAttributeSize(mediaTypeOut, MF_MT_FRAME_SIZE, w, h);
-	verify += MFSetAttributeRatio(mediaTypeOut, MF_MT_FRAME_RATE, frameRate.getHi(), frameRate.getLo());
-	verify += MFSetAttributeRatio(mediaTypeOut, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+	sinkVerify += mediaTypeOut->SetUINT32(MF_MT_AVG_BITRATE, std::clamp<uint32>(videoBitRate, 500000, 8000000));
+	sinkVerify += mediaTypeOut->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+	sinkVerify += MFSetAttributeSize(mediaTypeOut, MF_MT_FRAME_SIZE, w, h);
+	sinkVerify += MFSetAttributeRatio(mediaTypeOut, MF_MT_FRAME_RATE, frameRate.getHi(), frameRate.getLo());
+	sinkVerify += MFSetAttributeRatio(mediaTypeOut, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
 
-	verify += mpSinkWriter->AddStream(mediaTypeOut, &mVideoStreamIndex);
+	sinkVerify += mpSinkWriter->AddStream(mediaTypeOut, &mVideoStreamIndex);
 	mediaTypeOut.clear();
 
+	HRVerify videoVerify(L"Video encoding setup failed");
 	vdrefptr<IMFMediaType> mediaTypeIn;
-	verify += mpfnMFCreateMediaType(~mediaTypeIn);
+	videoVerify += mpfnMFCreateMediaType(~mediaTypeIn);
 
-	verify += mediaTypeIn->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+	videoVerify += mediaTypeIn->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
 
 	if (useYUV) {
-		verify += mediaTypeIn->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
-		verify += mediaTypeIn->SetUINT32(MF_MT_VIDEO_CHROMA_SITING, MFVideoChromaSubsampling_MPEG2);
-		verify += mediaTypeIn->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235);
-		verify += mediaTypeIn->SetUINT32(MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709);
+		videoVerify += mediaTypeIn->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
+		videoVerify += mediaTypeIn->SetUINT32(MF_MT_VIDEO_CHROMA_SITING, MFVideoChromaSubsampling_MPEG2);
+		videoVerify += mediaTypeIn->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235);
+		videoVerify += mediaTypeIn->SetUINT32(MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709);
 	} else {
-		verify += mediaTypeIn->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+		videoVerify += mediaTypeIn->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
 	}
 
-	verify += mediaTypeIn->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-	verify += mediaTypeIn->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
+	videoVerify += mediaTypeIn->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+	videoVerify += mediaTypeIn->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
 
 	// This shouldn't be necessary since RGB32 defaults to bottom-up, but the WMV encoder flips the
 	// video if it is not explicitly set.
-	verify += mediaTypeIn->SetUINT32(MF_MT_DEFAULT_STRIDE, useYUV ? w : (UINT32)0 - w*4);
+	videoVerify += mediaTypeIn->SetUINT32(MF_MT_DEFAULT_STRIDE, useYUV ? w : (UINT32)0 - w*4);
 
-	verify += MFSetAttributeSize(mediaTypeIn, MF_MT_FRAME_SIZE, w, h);
-	verify += MFSetAttributeRatio(mediaTypeIn, MF_MT_FRAME_RATE, frameRate.getHi(), frameRate.getLo());
-	verify += MFSetAttributeRatio(mediaTypeIn, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+	videoVerify += MFSetAttributeSize(mediaTypeIn, MF_MT_FRAME_SIZE, w, h);
+	videoVerify += MFSetAttributeRatio(mediaTypeIn, MF_MT_FRAME_RATE, frameRate.getHi(), frameRate.getLo());
+	videoVerify += MFSetAttributeRatio(mediaTypeIn, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
 
-	verify += mpSinkWriter->SetInputMediaType(mVideoStreamIndex, mediaTypeIn, nullptr);
+	videoVerify += mpSinkWriter->SetInputMediaType(mVideoStreamIndex, mediaTypeIn, nullptr);
 	mediaTypeIn.clear();
 
 	////////////////////////////////////////
@@ -2650,24 +3007,25 @@ void ATMediaFoundationEncoderW32::Init(const wchar_t *filename, ATVideoEncoding 
 
 	mAudioSampleSize = numChannels * sizeof(sint16);
 
-	verify += mpfnMFCreateMediaType(~mediaTypeOut);
+	HRVerify audioVerify(L"Audio encoding setup failed");
+	audioVerify += mpfnMFCreateMediaType(~mediaTypeOut);
 
-	verify += mediaTypeOut->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
-	verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, samplesPerSecond);
-	verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, numChannels);
+	audioVerify += mediaTypeOut->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+	audioVerify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, samplesPerSecond);
+	audioVerify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, numChannels);
 
 	if (venc == kATVideoEncoding_H264_AAC) {
-		verify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_AAC);
-		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+		audioVerify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_AAC);
+		audioVerify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
 
 		// The AAC encoder only accepts 12000, 16000, 20000, and 24000.
-		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, ((std::clamp<uint32>(audioBitRate, 96000, 192000) + 16000) / 32000) * 4000);
+		audioVerify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, ((std::clamp<uint32>(audioBitRate, 96000, 192000) + 16000) / 32000) * 4000);
 	} else if (venc == kATVideoEncoding_H264_MP3) {
-		verify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_MP3);
+		audioVerify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_MP3);
 
 		// The MP3 Encoder MF filter only supports up to 128kbps in mono.
 		const uint32 bitrate = ((std::clamp<uint32>(audioBitRate, 64000, numChannels > 1 ? 256000 : 128000) + 16000) / 32000) * 32000;
-		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, bitrate >> 3);
+		audioVerify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, bitrate >> 3);
 
 		MPEGLAYER3WAVEFORMAT wf;
 
@@ -2677,13 +3035,13 @@ void ATMediaFoundationEncoderW32::Init(const wchar_t *filename, ATVideoEncoding 
 		wf.nFramesPerBlock = 1;
 		wf.nCodecDelay = 0;
 
-		verify += mediaTypeOut->SetBlob(MF_MT_USER_DATA, (const UINT8 *)&wf.wID, 12);
-		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_PREFER_WAVEFORMATEX, 1);
-		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, 1);
+		audioVerify += mediaTypeOut->SetBlob(MF_MT_USER_DATA, (const UINT8 *)&wf.wID, 12);
+		audioVerify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_PREFER_WAVEFORMATEX, 1);
+		audioVerify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, 1);
 	} else {
-		verify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_WMAudioV8);
-		verify += mediaTypeOut->SetUINT32(MF_MT_FIXED_SIZE_SAMPLES, TRUE);
-		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+		audioVerify += mediaTypeOut->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_WMAudioV8);
+		audioVerify += mediaTypeOut->SetUINT32(MF_MT_FIXED_SIZE_SAMPLES, TRUE);
+		audioVerify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
 
 		// The WMA codecs are very picky about byte rate and block alignment. These values were
 		// determined by checking the output types from the filter. Unfortunately, we can't do this
@@ -2700,27 +3058,27 @@ void ATMediaFoundationEncoderW32::Init(const wchar_t *filename, ATVideoEncoding 
 
 		const auto& profile = kWMAProfiles[(std::clamp<uint32>(audioBitRate, 96000, 192000) - 96000 + 16000) / 32000];
 
-		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, profile.mByteRate);
-		verify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, profile.mBlockAlignment);
+		audioVerify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, profile.mByteRate);
+		audioVerify += mediaTypeOut->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, profile.mBlockAlignment);
 	}
 
-	verify += mpSinkWriter->AddStream(mediaTypeOut, &mAudioStreamIndex);
+	audioVerify += mpSinkWriter->AddStream(mediaTypeOut, &mAudioStreamIndex);
 	mediaTypeOut.clear();
 
-	verify += mpfnMFCreateMediaType(~mediaTypeIn);
+	audioVerify += mpfnMFCreateMediaType(~mediaTypeIn);
 
-	verify += mediaTypeIn->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
-	verify += mediaTypeIn->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
-	verify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
-	verify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, samplesPerSecond);
-	verify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, samplesPerSecond * mAudioSampleSize);
-	verify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, numChannels);
-	verify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, mAudioSampleSize);
+	audioVerify += mediaTypeIn->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+	audioVerify += mediaTypeIn->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+	audioVerify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+	audioVerify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, samplesPerSecond);
+	audioVerify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, samplesPerSecond * mAudioSampleSize);
+	audioVerify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, numChannels);
+	audioVerify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, mAudioSampleSize);
 
 	if (venc == kATVideoEncoding_H264_MP3)
-		verify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_PREFER_WAVEFORMATEX, 1);
+		audioVerify += mediaTypeIn->SetUINT32(MF_MT_AUDIO_PREFER_WAVEFORMATEX, 1);
 
-	verify += mpSinkWriter->SetInputMediaType(mAudioStreamIndex, mediaTypeIn, nullptr);
+	audioVerify += mpSinkWriter->SetInputMediaType(mAudioStreamIndex, mediaTypeIn, nullptr);
 	mediaTypeIn.clear();
 
 	////////////////////////////////////////
@@ -3345,7 +3703,7 @@ public:
 	void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp);
 
 protected:
-	void RaiseError(const MyError& e);
+	void RaiseError(MyError&& e);
 
 	bool mbStereo;
 	bool mbHalfRate;
@@ -3574,7 +3932,7 @@ void ATVideoWriter::Shutdown() {
 	if (mpMediaEncoder) {
 		MyError e;
 		if (!mpMediaEncoder->Finalize(e))
-			RaiseError(e);
+			RaiseError(std::move(e));
 
 		mpMediaEncoder.reset();
 	}
@@ -3623,8 +3981,8 @@ void ATVideoWriter::WriteFrame(const VDPixmap& px, uint64 timestamp, uint64 time
 
 		if (mbHalfRate)
 			mVideoPreskip = 1;
-	} catch(const MyError& e) {
-		RaiseError(e);
+	} catch(MyError& e) {
+		RaiseError(std::move(e));
 	}
 }
 
@@ -3775,15 +4133,15 @@ void ATVideoWriter::WriteRawAudio(const float *left, const float *right, uint32 
 
 		VDASSERT(!count);
 
-	} catch(const MyError& e) {
-		RaiseError(e);
+	} catch(MyError& e) {
+		RaiseError(std::move(e));
 	}
 }
 
-void ATVideoWriter::RaiseError(const MyError& e) {
+void ATVideoWriter::RaiseError(MyError&& e) {
 	if (!mbErrorState) {
 		mbErrorState = true;
-		mError.assign(e);
+		mError = std::move(e);
 	}
 }
 

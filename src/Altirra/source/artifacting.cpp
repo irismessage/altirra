@@ -53,18 +53,27 @@
 // Note that the bias is thus not exactly 0.5, it is actually 64/255. This is
 // the value used when processing expanded range in the screenFX pipeline for
 // hardware accelerated chroma line blending or HDR output.
+//
+//
+// Monochrome rendering
+// --------------------
+// In monochrome mode, 
 
 #include <stdafx.h>
+#include <bit>
+#include <vd2/system/color.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vecmath.h>
 #include <vd2/system/vectors.h>
 #include <vd2/system/zip.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/consoleoutput.h>
 #include "artifacting.h"
 #include "artifacting_filters.h"
 #include "gtia.h"
 #include "gtiatables.h"
+#include "palettegenerator.h"
 
 void ATArtifactPALLuma(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 void ATArtifactPALChroma(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
@@ -77,6 +86,11 @@ void ATArtifactPAL32(void *dst, void *delayLine, uint32 n, bool useSignedPalette
 	void ATArtifactBlendLinear_SSE2(uint32 *dst, const uint32 *src, uint32 n, bool extendedRange);
 	void ATArtifactBlendExchange_SSE2(uint32 *dst, uint32 *blendDst, uint32 n);
 	void ATArtifactBlendExchangeLinear_SSE2(uint32 *dst, uint32 *blendDst, uint32 n, bool extendedRange);
+
+	void ATArtifactBlendCopyMonoPersistence_SSE2(uint32 *dst, uint32 *blendDst, const uint32 *palette, float factor, float factor2, float limit, uint32 n);
+	void ATArtifactBlendMonoPersistence_SSE2(uint32 *dst, const uint32 *src, const uint32 *palette, float factor, float factor2, float limit, uint32 n);
+	void ATArtifactBlendExchangeMonoPersistence_SSE2(uint32 *dst, uint32 *blendDst, const uint32 *palette, float factor, float factor2, float limit, uint32 n);
+
 	void ATArtifactBlendScanlines_SSE2(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n, float intensity);
 	void ATArtifactNTSCFinal_SSE2(void *dst, const void *srcr, const void *srcg, const void *srcb, uint32 count);
 	void ATArtifactPAL32_SSE2(void *dst, void *delayLine, uint32 n, bool useSignedPalette);
@@ -91,7 +105,7 @@ void ATArtifactPAL32(void *dst, void *delayLine, uint32 n, bool useSignedPalette
 	void __stdcall ATArtifactPALChroma_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 	void __stdcall ATArtifactPALChromaTwin_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 	void __stdcall ATArtifactPALFinal_SSE2(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, const uint32 *vbuf, uint32 *ulbuf, uint32 *vlbuf, uint32 n);
-	void ATArtifactPALFinalMono_SSE2(uint32 *dst, const uint32 *ybuf, uint32 n, const vdfloat3& monoColor);
+	void ATArtifactPALFinalMono_SSE2(uint32 *dst, const uint32 *ybuf, uint32 n, const uint32 palette[256]);
 #endif
 
 #ifdef VD_CPU_AMD64
@@ -102,7 +116,7 @@ void ATArtifactPAL32(void *dst, void *delayLine, uint32 n, bool useSignedPalette
 	void ATArtifactPALLumaTwin_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 	void ATArtifactPALChroma_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
 	void ATArtifactPALChromaTwin_SSE2(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
-	void ATArtifactPALFinalMono_SSE2(uint32 *dst, const uint32 *ybuf, uint32 n, const vdfloat3& monoColor);
+	void ATArtifactPALFinalMono_SSE2(uint32 *dst, const uint32 *ybuf, uint32 n, const uint32 palette[256]);
 	void ATArtifactPALFinal_SSE2(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, const uint32 *vbuf, uint32 *ulbuf, uint32 *vlbuf, uint32 n);
 #endif
 
@@ -111,6 +125,9 @@ void ATArtifactPAL32(void *dst, void *delayLine, uint32 n, bool useSignedPalette
 	void ATArtifactBlendExchange_NEON(uint32 *dst, uint32 *blendDst, uint32 n);
 	void ATArtifactBlendLinear_NEON(uint32 *dst, const uint32 *src, uint32 n, bool extendedRange);
 	void ATArtifactBlendExchangeLinear_NEON(uint32 *dst, uint32 *blendDst, uint32 n, bool extendedRange);
+	void ATArtifactBlendCopyMonoPersistence_NEON(uint32 *dst, uint32 *blendDst, const uint32 *palette, float factor, float factor2, float limit, uint32 n);
+	void ATArtifactBlendMonoPersistence_NEON(uint32 *dst, const uint32 *src, const uint32 *palette, float factor, float factor2, float limit, uint32 n);
+	void ATArtifactBlendExchangeMonoPersistence_NEON(uint32 *dst, uint32 *blendDst, const uint32 *palette, float factor, float factor2, float limit, uint32 n);
 	void ATArtifactBlendScanlines_NEON(uint32 *dst0, const uint32 *src10, const uint32 *src20, uint32 n, float intensity);
 
 	void ATArtifactNTSCAccum_NEON(void *rout, const void *table, const void *src, uint32 count);
@@ -162,6 +179,9 @@ namespace {
 	}
 }
 
+ATConfigVarFloat g_ATCVDisplayPersistanceTc1("display.persistence_tc1", 0);
+ATConfigVarFloat g_ATCVDisplayPersistanceTc2("display.persistence_tc2", 0.247f);
+
 ///////////////////////////////////////////////////////////////////////////
 
 uint32 ATPaletteCorrector::CorrectSingleColor(uint32 c, bool colorCorrectionEnabled, bool signedEncoding) const {
@@ -197,10 +217,37 @@ ATArtifactingEngine::ATArtifactingEngine()
 ATArtifactingEngine::~ATArtifactingEngine() {
 }
 
-void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfloat3x3 *matrix, const nsVDVecMath::vdfloat32x3 *tintColor) {
+void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfloat3x3 *matrix, const nsVDVecMath::vdfloat32x3 *tintColor, ATMonitorMode monitorMode, int palPhase) {
 	using namespace nsVDVecMath;
 
 	mColorParams = params;
+	mMonitorMode = monitorMode;
+	mPALPhase = palPhase;
+
+	mbTintColorEnabled = (tintColor != nullptr);
+
+	if (tintColor) {
+		mRawTintColor.x = tintColor->x();
+		mRawTintColor.y = tintColor->y();
+		mRawTintColor.z = tintColor->z();
+	}
+
+	mbEnableColorCorrection = matrix != nullptr;
+
+	if (matrix)
+		mColorMatchingMatrix = *matrix;
+
+	RecomputeColorTables();
+}
+
+void ATArtifactingEngine::RecomputeColorTables() {
+	const auto& params = mColorParams;
+
+	if (mbBlendMonoPersistence) {
+		mTintColor = vdfloat3{1.0f, 1.0f, 1.0f};
+	} else {
+		mTintColor = mRawTintColor;
+	}
 
 	float lumaRamp[16];
 	ATComputeLumaRamp(params.mLumaRampMode, lumaRamp);
@@ -302,8 +349,17 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 			mGammaTable[i] = (uint8)VDRoundToInt32(powf((float)i / 255.0f, gamma) * 255.0f);
 	}
 
-	const bool useColorTint = (tintColor != nullptr);
-	vdfloat32x3 tintColorVal = tintColor ? *tintColor : vdfloat32x3::zero();
+	const bool useColorTint = mbTintColorEnabled;
+	const bool useMonoPersistence = useColorTint && mbBlendMonoPersistence;
+	vdfloat32x3 tintColorVal =
+		useMonoPersistence
+			? vdfloat32x3::set1(1.0f)
+			: useColorTint
+				? vdfloat32x3::set(mTintColor.x, mTintColor.y, mTintColor.z)
+				: vdfloat32x3::zero();
+
+	if (useColorTint)
+		ATColorPaletteGenerator::GenerateMonoPersistenceRamp(params, mMonitorMode, mMonoTable2);
 
 	for(int i=0; i<256; ++i) {
 		int c = i >> 4;
@@ -321,6 +377,18 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 			} else {
 				rgb = y * tintColorVal;
 			}
+
+			// When mono persistence is active, we need to write gamma 2.0 data into
+			// the framebuffer as it will be squared into linear data by the blender.
+			if (useMonoPersistence) {
+				rgb = vdfloat32x3(VDColorRGB(rgb).SRGBToLinear());
+
+				rgb = sqrt(rgb);
+			} else {
+				const vdfloat32x3 linrgb(VDColorRGB(rgb).SRGBToLinear());
+
+				rgb = ATColorPaletteGenerator::ClipLinearColorToSRGB(linrgb);
+			}
 		} else {
 			rgb = vdfloat32x3::set(r, g, b);
 		}
@@ -328,7 +396,7 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 		mPalette[i] = packus8(permute<2,1,0>(rgb) * 255.0f) & 0xFFFFFF;
 		mSignedPalette[i] = packus8(permute<2,1,0>(rgb) * 127.0f + 64.0f) & 0xFFFFFF;
 
-		if (matrix) {
+		if (mbEnableColorCorrection) {
 			mCorrectedPalette[i] = mPalette[i];
 			mCorrectedSignedPalette[i] = mSignedPalette[i];
 		} else {
@@ -339,11 +407,7 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 		}
 	}
 
-	mbEnableColorCorrection = matrix != nullptr;
-
-	if (matrix) {
-		mColorMatchingMatrix = *matrix;
-
+	if (mbEnableColorCorrection) {
 		mColorMatchingMatrix16[0][0] = VDRoundToInt32(mColorMatchingMatrix.x.x * 16384.0f);
 		mColorMatchingMatrix16[0][1] = VDRoundToInt32(mColorMatchingMatrix.x.y * 16384.0f);
 		mColorMatchingMatrix16[0][2] = VDRoundToInt32(mColorMatchingMatrix.x.z * 16384.0f);
@@ -367,10 +431,14 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 			mCorrectLinearTable[i] = (sint16)floor(0.5f + y * 8191.0f);
 		}
 
-		if (params.mColorMatchingMode == ATColorMatchingMode::AdobeRGB) {
+		if (params.mColorMatchingMode != ATColorMatchingMode::SRGB) {
+			const float outputGamma = (params.mColorMatchingMode == ATColorMatchingMode::Gamma24)
+				? 1.0f / 2.4f
+				: 1.0f / 2.2f;
+
 			for(int i=0; i<1024; ++i) {
 				float x = (float)i / 1023.0f;
-				float y = (x < 0) ? 0.0f : powf(x, 1.0f / 2.2f);
+				float y = (x < 0) ? 0.0f : powf(x, outputGamma);
 
 				y = powf(y, gamma);
 
@@ -405,7 +473,7 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 			b = powf(b, nativeGamma);
 
 			vdfloat3 rgb{r, g, b};
-			vdfloat3 rgb2 = rgb * (*matrix);
+			vdfloat3 rgb2 = rgb * mColorMatchingMatrix;
 
 			r = rgb2.x;
 			g = rgb2.y;
@@ -431,25 +499,20 @@ void ATArtifactingEngine::SetColorParams(const ATColorParams& params, const vdfl
 		}
 	}
 
-	mbTintColorEnabled = (tintColor != nullptr);
-
-	if (tintColor) {
-		mTintColor.x = tintColor->x();
-		mTintColor.y = tintColor->y();
-		mTintColor.z = tintColor->z();
-
-		vdfloat32x3 bgrTint = permute<2,1,0>(*tintColor);
-		vdfloat32x3 c = vdfloat32x3::zero();
-
-		for(int i=0; i<256; ++i) {
-			mMonoTable[i] = packus8(c);
-			c += bgrTint;
-		}
+	if (mbTintColorEnabled) {
+		if (useMonoPersistence) {
+			// make gamma 2.0 table for pass-through to mono persistence
+			for(int i=0; i<255; ++i) {
+				mMonoTable[i] = 0x010101 * (int)(0.5f + powf((float)i / 255.0f, 2.0f/2.2f) * 255.0f);
+			}
+		} else
+			ATColorPaletteGenerator::GenerateMonoRamp(params, mMonitorMode, mMonoTable);
 	}
 
 	mbHighNTSCTablesInited = false;
 	mbHighPALTablesInited = false;
 	mbActiveTablesInited = false;
+	mbColorTablesMonoPersistence = mbBlendMonoPersistence;
 }
 
 void ATArtifactingEngine::SetArtifactingParams(const ATArtifactingParams& params) {
@@ -534,7 +597,18 @@ void ATArtifactingEngine::ResumeFrame() {
 	mbExpandedRangeOutput = mbSavedExpandedRangeOutput;
 }
 
-void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chromaArtifactHi, bool blendIn, bool blendOut, bool blendLinear, bool bypassOutputCorrection, bool extendedRangeInput, bool extendedRangeOutput) {
+void ATArtifactingEngine::BeginFrame(
+	bool pal,
+	bool chromaArtifacts,
+	bool chromaArtifactHi,
+	bool blendIn,
+	bool blendOut,
+	bool blendLinear,
+	bool blendMonoPersistence,
+	bool bypassOutputCorrection,
+	bool extendedRangeInput,
+	bool extendedRangeOutput,
+	bool deinterlacing) {
 	// we don't support expanding output in the artifacting engine
 	VDASSERT(!(!extendedRangeInput && extendedRangeOutput));
 
@@ -544,6 +618,19 @@ void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chroma
 	mbBypassOutputCorrection = bypassOutputCorrection;
 	mbExpandedRangeInput = extendedRangeInput;
 	mbExpandedRangeOutput = extendedRangeOutput;
+	mbDeinterlacing = deinterlacing;
+	mbBlendCopy = !blendIn;
+	mbBlendActive = blendOut;
+	mbBlendLinear = mbBlendActive && blendLinear;
+	mbBlendMonoPersistence = mbBlendActive && blendMonoPersistence;
+
+	if (mbBlendMonoPersistence)
+		RecomputeMonoPersistence(pal ? 1.0f / 50.0f : 1.0f / 60.0f);
+
+	// mono persistence forces a monochrome palette, so we must recompute the color
+	// tables on a change
+	if (mbBlendMonoPersistence != mbColorTablesMonoPersistence)
+		RecomputeColorTables();
 
 	if (!mbActiveTablesInited || mbActiveTablesSigned != extendedRangeOutput)
 		RecomputeActiveTables(extendedRangeOutput);
@@ -576,10 +663,6 @@ void ATArtifactingEngine::BeginFrame(bool pal, bool chromaArtifacts, bool chroma
 			memset(mPALDelayLine32, 0, sizeof mPALDelayLine32);
 		}
 	}
-
-	mbBlendCopy = !blendIn;
-	mbBlendActive = blendOut;
-	mbBlendLinear = blendLinear;
 }
 
 void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N], bool scanlineHasHiRes, bool temporaryUpdate, bool includeHBlank) {
@@ -615,7 +698,7 @@ void ATArtifactingEngine::Artifact8(uint32 y, uint32 dst[N], const uint8 src[N],
 
 		if (mbBlendCopy) {
 			if (!temporaryUpdate)
-				memcpy(blendDst, dst, sizeof(uint32)*n);
+				BlendCopy(dst, blendDst, sizeof(uint32)*n);
 		} else {
 			if (temporaryUpdate)
 				Blend(dst, blendDst, n);
@@ -641,7 +724,7 @@ void ATArtifactingEngine::Artifact32(uint32 y, uint32 *dst, uint32 width, bool t
 
 		if (mbBlendCopy) {
 			if (!temporaryUpdate)
-				memcpy(blendDst, dst, sizeof(uint32)*width);
+				BlendCopy(dst, blendDst, width);
 		} else {
 			if (temporaryUpdate)
 				Blend(dst, blendDst, width);
@@ -676,6 +759,36 @@ void ATArtifactingEngine::InterpolateScanlines(uint32 *dst, const uint32 *src1, 
 
 		r -= (r & 0xfcfcfc) >> 2;
 		dst[i] = r;
+	}
+}
+
+void ATArtifactingEngine::Deinterlace(uint32 y, uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src1, const uint32 *VDRESTRICT src2, uint32 n) {
+	if (n > N*2 || y >= M*2)
+		return;
+
+	// compute change for this line
+	uint32 *VDRESTRICT nextmask = mDeinterlaceDelayLine[y];
+	uint32 *VDRESTRICT nextprev = mPrevFrame14MHz[y];
+
+	for(uint32 i=0; i<n; ++i) {
+		nextmask[i] = (nextprev[i] ^ src2[i]) & 0xFFFFFF;
+		nextprev[i] = src2[i];
+	}
+
+	// exit now if we don't have two adjacent lines yet and aren't producing output
+	if (!dst || y < 2)
+		return;
+
+	const uint32 *VDRESTRICT prevmask = mDeinterlaceDelayLine[y-2];
+	const uint32 *VDRESTRICT cenmask = mDeinterlaceDelayLine[y-1];
+
+	// adaptively blend line
+	for(uint32 i=0; i<n; ++i) {
+		// check if there was a change adjacent
+		if (prevmask[i] | nextmask[i] | cenmask[i]) {
+			// blend adjacent scanlines from this field
+			dst[i] = (src1[i] | src2[i]) - (((src1[i] ^ src2[i]) & 0xFEFEFEFE) >> 1);
+		}
 	}
 }
 
@@ -908,24 +1021,6 @@ void ATArtifactingEngine::ArtifactNTSC(uint32 dst[N], const uint8 src[N], bool s
 }
 
 namespace {
-	void rotate(float& xr, float& yr, float cs, float sn) {
-		float x0 = xr;
-		float y0 = yr;
-
-		xr = x0*cs + y0*sn;
-		yr = -x0*sn + y0*cs;
-	}
-
-	void rotate(float& xr, float& yr, float angle) {
-		const float sn = sinf(angle);
-		const float cs = cosf(angle);
-		float x0 = xr;
-		float y0 = yr;
-
-		xr = x0*cs + y0*sn;
-		yr = -x0*sn + y0*cs;
-	}
-
 	[[maybe_unused]] void accum(uint32 *VDRESTRICT dst, const uint32 (*VDRESTRICT table)[2][12], const uint8 *VDRESTRICT src, uint32 count) {
 		count >>= 1;
 
@@ -1008,6 +1103,34 @@ namespace {
 			*dst8++ = 0;
 		} while(--count);
 	}
+}
+
+void ATArtifactNTSCFinalMonoRamp_ScalarS16(uint32 *dst0, const void *src0, uint32 count, const uint32 monoTab[256]) {
+	uint32 *VDRESTRICT dst = dst0;
+	const uint16 *VDRESTRICT src = (const uint16 *)src0;
+
+	do {
+		int idx0 = ((int)*src++ - 0x7ff8) >> 4;
+		int idx1 = ((int)*src++ - 0x7ff8) >> 4;
+
+		if (idx0 < 0) idx0 = 0;
+		if (idx0 > 255) idx0 = 255;
+		if (idx1 < 0) idx1 = 0;
+		if (idx1 > 255) idx1 = 255;
+
+		*dst++ = monoTab[(unsigned)idx0];
+		*dst++ = monoTab[(unsigned)idx1];
+	} while(--count);
+}
+
+void ATArtifactNTSCFinalMonoRamp_ScalarU8(uint32 *dst0, const void *src0, uint32 count, const uint32 monoTab[256]) {
+	uint32 *VDRESTRICT dst = dst0;
+	const uint8 *VDRESTRICT src = (const uint8 *)src0;
+
+	do {
+		*dst++ = monoTab[*src++];
+		*dst++ = monoTab[*src++];
+	} while(--count);
 }
 
 void ATArtifactColorCorrect_Scalar(uint8 *VDRESTRICT dst8, uint32 N, const sint16 linearTab[256], const uint8 gammaTab[1024], const sint16 matrix16[3][3]) {
@@ -1108,19 +1231,20 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 		ATArtifactNTSCAccumTwin_NEON(gout+2, m4x.mPalToGTwin, src, N);
 		ATArtifactNTSCAccumTwin_NEON(bout+2, m4x.mPalToBTwin, src, N);
 	}
-#elif defined(VD_CPU_AMD64)
-	if (scanlineHasHiRes) {
-		ATArtifactNTSCAccum_SSE2(rout+2, m4x.mPalToR, src, N);
-		ATArtifactNTSCAccum_SSE2(gout+2, m4x.mPalToG, src, N);
-		ATArtifactNTSCAccum_SSE2(bout+2, m4x.mPalToB, src, N);
-	} else {
-		ATArtifactNTSCAccumTwin_SSE2(rout+2, m4x.mPalToRTwin, src, N);
-		ATArtifactNTSCAccumTwin_SSE2(gout+2, m4x.mPalToGTwin, src, N);
-		ATArtifactNTSCAccumTwin_SSE2(bout+2, m4x.mPalToBTwin, src, N);
-	}
 #else
-
-#if defined(VD_COMPILER_MSVC) && defined(VD_CPU_X86)
+#if defined(VD_CPU_AMD64)
+	if (SSE2_enabled) {
+		if (scanlineHasHiRes) {
+			ATArtifactNTSCAccum_SSE2(rout+2, m4x.mPalToR, src, N);
+			ATArtifactNTSCAccum_SSE2(gout+2, m4x.mPalToG, src, N);
+			ATArtifactNTSCAccum_SSE2(bout+2, m4x.mPalToB, src, N);
+		} else {
+			ATArtifactNTSCAccumTwin_SSE2(rout+2, m4x.mPalToRTwin, src, N);
+			ATArtifactNTSCAccumTwin_SSE2(gout+2, m4x.mPalToGTwin, src, N);
+			ATArtifactNTSCAccumTwin_SSE2(bout+2, m4x.mPalToBTwin, src, N);
+		}
+	} else
+#elif defined(VD_COMPILER_MSVC) && defined(VD_CPU_X86)
 	if (SSE2_enabled) {
 		if (scanlineHasHiRes) {
 			ATArtifactNTSCAccum_SSE2(rout+2, m4x.mPalToR, src, N);
@@ -1165,16 +1289,29 @@ void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bo
 	const int xfinal = includeHBlank ? 0 : kLeftBorder7MHz_8/2;
 	const int nfinal = includeHBlank ? N : ((kRightBorder7MHz - kLeftBorder7MHz_8) + 7) & ~7;
 
+	if (mbBlendMonoPersistence || !mbTintColorEnabled) {
 #if VD_CPU_ARM64
-	ATArtifactNTSCFinal_NEON(dst + xdfinal, rout+4+xfinal, gout+4+xfinal, bout+4+xfinal, nfinal);
+		ATArtifactNTSCFinal_NEON(dst + xdfinal, rout+4+xfinal, gout+4+xfinal, bout+4+xfinal, nfinal);
 #else
 #if VD_CPU_X86 || VD_CPU_X64
-	if (SSE2_enabled)
-		ATArtifactNTSCFinal_SSE2(dst + xdfinal, rout+4+xfinal, gout+4+xfinal, bout+4+xfinal, nfinal);
-	else
+		if (SSE2_enabled)
+			ATArtifactNTSCFinal_SSE2(dst + xdfinal, rout+4+xfinal, gout+4+xfinal, bout+4+xfinal, nfinal);
+		else
 #endif
-		final(dst + xdfinal, rout+4+xfinal, gout+4+xfinal, bout+4+xfinal, nfinal);
+			final(dst + xdfinal, rout+4+xfinal*2, gout+4+xfinal*2, bout+4+xfinal*2, nfinal);
 #endif
+	} else {
+#if VD_CPU_ARM64
+		ATArtifactNTSCFinalMonoRamp_ScalarU8(dst + xdfinal, rout+4+xfinal, nfinal, mMonoTable);
+#else
+#if VD_CPU_X86 || VD_CPU_X64
+		if (SSE2_enabled)
+			ATArtifactNTSCFinalMonoRamp_ScalarU8(dst + xdfinal, rout+4+xfinal, nfinal, mMonoTable);
+		else
+#endif
+			ATArtifactNTSCFinalMonoRamp_ScalarS16(dst + xdfinal, rout+4+xfinal*2, nfinal, mMonoTable);
+#endif
+	}
 
 	if (!mbBypassOutputCorrection) {
 		const int xpost = includeHBlank ? 0 : kLeftBorder14MHz;
@@ -1227,7 +1364,7 @@ void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src0[N], bo
 		}
 
 		if (mbTintColorEnabled)
-			ATArtifactPALFinalMono_SSE2(dst, ybuf + 4, N, mTintColor);
+			ATArtifactPALFinalMono_SSE2(dst, ybuf + 4, N, mMonoTable);
 		else
 			ATArtifactPALFinal_SSE2(dst, ybuf + 4, ubuf + 4, vbuf + 4, ulbuf, vlbuf, N);
 	} else 
@@ -1320,7 +1457,68 @@ void ATArtifactBlendExchangeLinear_Reference(uint32 *VDRESTRICT dst, T *VDRESTRI
 	}
 }
 
+template<bool T_BlendCopy, typename T_BlendSrc>
+void ATArtifactBlendMonoPersistence_Reference(uint32 *dst, T_BlendSrc *blendDst, const uint32 *palette, float factor, float factor2, float limit, uint32 n) {
+	while(n--) {
+		// load source and convert 8-bit fixed point to float
+		float v = (float)(*dst & 255) * (1.0f / 255.0f);
+
+		// convert to linear
+		v *= v;
+
+		// apply decay blend
+		float phosphorEnergy;
+		float emission;
+		if constexpr (T_BlendCopy) {
+			phosphorEnergy = v;
+			emission = phosphorEnergy;
+		} else {
+			phosphorEnergy = std::min<float>(std::max<float>(std::bit_cast<float>(*blendDst) - 1.0f, 0.0f), limit);
+
+			// inject energy from electron beam into phosphor
+			phosphorEnergy += v;
+
+			// compute emission from phosphor
+			emission = phosphorEnergy * (factor + phosphorEnergy * factor2);
+
+			// subtract emitted energy from phosphor
+			phosphorEnergy -= emission;
+		}
+
+		// if we're doing a blend-and-exchange, update the blend source
+		if constexpr(!std::is_const_v<T_BlendSrc>) {
+			*blendDst = std::bit_cast<uint32>(phosphorEnergy + 1.0f);
+		}
+
+		++blendDst;
+
+		// apply gamma 2.0 to convert linear to approximately perceptual, for better table uniformity
+		emission = sqrtf(std::max(0.0f, emission));
+
+		// scale to 0-1023 for table index
+		emission = std::max(std::min(emission * 1023.0f, 1023.0f), 0.0f);
+
+		// convert to integer
+		int palIdx = (int)(emission + 0.5f);
+
+		// do palette lookup and write pixels
+		*dst++ = palette[palIdx];
+	}
+}
+
 void ATArtifactingEngine::Blend(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT src, uint32 n) {
+	if (mbBlendMonoPersistence) {
+#if VD_CPU_ARM64
+		if (!(n & 3))
+			return ATArtifactBlendMonoPersistence_NEON(dst, src, mMonoTable2, mMonoPersistenceF1, mMonoPersistenceF2, mMonoPersistenceLimit, n);
+#elif VD_CPU_X86 || VD_CPU_X64
+		if (SSE2_enabled && !(((uintptr)dst | (uintptr)src) & 15) && !(n & 3))
+			return ATArtifactBlendMonoPersistence_SSE2(dst, src, mMonoTable2, mMonoPersistenceF1, mMonoPersistenceF2, mMonoPersistenceLimit, n);
+#endif
+
+		return ATArtifactBlendMonoPersistence_Reference<false>(dst, src, mMonoTable2, mMonoPersistenceF1, mMonoPersistenceF2, mMonoPersistenceLimit, n);
+	}
+
 #if VD_CPU_ARM64
 	if (!(n & 3)) {
 		if (mbBlendLinear)
@@ -1350,6 +1548,18 @@ void ATArtifactingEngine::Blend(uint32 *VDRESTRICT dst, const uint32 *VDRESTRICT
 }
 
 void ATArtifactingEngine::BlendExchange(uint32 *VDRESTRICT dst, uint32 *VDRESTRICT blendDst, uint32 n) {
+	if (mbBlendMonoPersistence) {
+#if VD_CPU_ARM64
+		if (!(n & 3))
+			return ATArtifactBlendExchangeMonoPersistence_NEON(dst, blendDst, mMonoTable2, mMonoPersistenceF1, mMonoPersistenceF2, mMonoPersistenceLimit, n);
+#elif VD_CPU_X86 || VD_CPU_X64
+		if (SSE2_enabled && !(((uintptr)dst | (uintptr)blendDst) & 15) && !(n & 3))
+			return ATArtifactBlendExchangeMonoPersistence_SSE2(dst, blendDst, mMonoTable2, mMonoPersistenceF1, mMonoPersistenceF2, mMonoPersistenceLimit, n);
+#endif
+
+		return ATArtifactBlendMonoPersistence_Reference<false>(dst, blendDst, mMonoTable2, mMonoPersistenceF1, mMonoPersistenceF2, mMonoPersistenceLimit, n);
+	}
+
 #if VD_CPU_ARM64
 	if (!(n & 3)) {
 		if (mbBlendLinear)
@@ -1377,6 +1587,61 @@ void ATArtifactingEngine::BlendExchange(uint32 *VDRESTRICT dst, uint32 *VDRESTRI
 			ATArtifactBlendExchangeLinear_Reference<false>(dst, blendDst, n);
 	} else
 		ATArtifactBlendExchange_Reference(dst, blendDst, n);
+}
+
+void ATArtifactingEngine::BlendCopy(uint32 *VDRESTRICT dst, uint32 *VDRESTRICT blendDst, uint32 n) {
+	if (mbBlendMonoPersistence) {
+#if VD_CPU_ARM64
+		if (!(n & 3))
+			return ATArtifactBlendCopyMonoPersistence_NEON(dst, blendDst, mMonoTable2, mMonoPersistenceF1, mMonoPersistenceF2, mMonoPersistenceLimit, n);
+#elif VD_CPU_X86 || VD_CPU_X64
+		if (SSE2_enabled && !(((uintptr)dst | (uintptr)blendDst) & 15) && !(n & 3))
+			return ATArtifactBlendCopyMonoPersistence_SSE2(dst, blendDst, mMonoTable2, mMonoPersistenceF1, mMonoPersistenceF2, mMonoPersistenceLimit, n);
+#endif
+
+		ATArtifactBlendMonoPersistence_Reference<true>(dst, blendDst, mMonoTable2, mMonoPersistenceF1, mMonoPersistenceF2, mMonoPersistenceLimit, n);
+		return;
+	}
+
+	memcpy(blendDst, dst, sizeof(uint32)*n);
+}
+
+void ATArtifactingEngine::RecomputeMonoPersistence(float dt) {
+	// Approximately discretize y'(x) = -a*y - b*y^2.
+	const float tc1 = g_ATCVDisplayPersistanceTc1;
+	const float tc2 = g_ATCVDisplayPersistanceTc2;
+
+	mMonoPersistenceF1 = tc1 > 0 ? 1.0f - expf(-dt / tc1) : 0;
+	mMonoPersistenceF2 = tc2 > 0 ? 1.0f - expf(-dt / tc2) : 0;
+
+	// Compute upper safety limit for phosphor energy.
+	//
+	// Update sequence:
+	//	pe += 1
+	//	em = f1*pe + f2*pe^2
+	//	pe -= em 
+	//
+	// For steady state, em = 1:
+	//	1 = f1*pe + f2*pe^2
+	//	0 = f2*pe^2 + f1*pe - 1
+	//
+	// By quadratic formula:
+	//	pe = [-f1 +/- sqrt(f1*f1 - 4*f2*-1)]/[2*f2]
+	//	   = [-f1 +/- sqrt(f1*f1 + 4*f2)]/[2*f2]
+	//
+	// Only the positive case is valid:
+	//	pe = [sqrt(f1*f1 + 4*f2) - f1]/[2*f2]
+	//
+	// If factor2=0 (linear emission only):
+	//	1 = f1*pe
+	//	pe = 1/f1
+
+	if (mMonoPersistenceF2 > 0)
+		mMonoPersistenceLimit = (sqrtf(mMonoPersistenceF1 * mMonoPersistenceF1 + 4.0f*mMonoPersistenceF2) - mMonoPersistenceF1) / (2.0f * mMonoPersistenceF2);
+	else if (mMonoPersistenceF1 > 0)
+		mMonoPersistenceLimit = 1.0f / mMonoPersistenceF1;
+	else
+		mMonoPersistenceLimit = 0;
 }
 
 namespace {
@@ -1559,15 +1824,33 @@ void ATArtifactingEngine::RecomputeNTSCTables(ATConsoleOutput *debugOut) {
 	float cp = cosf(phadjust);
 	float sp = sinf(phadjust);
 
+	auto rotate = [](float& xr, float& yr, float cs, float sn) {
+		float x0 = xr;
+		float y0 = yr;
+
+		xr = x0*cs + y0*sn;
+		yr = -x0*sn + y0*cs;
+	};
+
+	auto rotate2 = [](float& xr, float& yr, float angle) {
+		const float sn = sinf(angle);
+		const float cs = cosf(angle);
+		float x0 = xr;
+		float y0 = yr;
+
+		xr = x0*cs + y0*sn;
+		yr = -x0*sn + y0*cs;
+	};
+
 	float co_ir = 0.956f;
 	float co_qr = 0.620f;
 	float co_ig = -0.272f;
 	float co_qg = -0.647f;
 	float co_ib = -1.108f;
 	float co_qb = 1.705f;
-	rotate(co_ir, co_qr, -mColorParams.mRedShift * (nsVDMath::kfPi / 180.0f));
-	rotate(co_ig, co_qg, -mColorParams.mGrnShift * (nsVDMath::kfPi / 180.0f));
-	rotate(co_ib, co_qb, -mColorParams.mBluShift * (nsVDMath::kfPi / 180.0f));
+	rotate2(co_ir, co_qr, -mColorParams.mRedShift * (nsVDMath::kfPi / 180.0f));
+	rotate2(co_ig, co_qg, -mColorParams.mGrnShift * (nsVDMath::kfPi / 180.0f));
+	rotate2(co_ib, co_qb, -mColorParams.mBluShift * (nsVDMath::kfPi / 180.0f));
 	co_ir *= mColorParams.mRedScale;
 	co_qr *= mColorParams.mRedScale;
 	co_ig *= mColorParams.mGrnScale;
@@ -1626,7 +1909,8 @@ void ATArtifactingEngine::RecomputeNTSCTables(ATConsoleOutput *debugOut) {
 
 			const float sensitivityFactor = 0.50f;
 			for(int j=0; j<6; ++j) {
-				vdfloat3 c = (t[6+j] * (chromaSignalAmplitude * sensitivityFactor)) * mTintColor;
+				const float intensity = t[6+j] * (chromaSignalAmplitude * sensitivityFactor);
+				vdfloat3 c { intensity, intensity, intensity };
 
 				rgbtab[0][6+j] = -c;
 				rgbtab[1][6+j] = c;
@@ -1780,7 +2064,7 @@ void ATArtifactingEngine::RecomputeNTSCTables(ATConsoleOutput *debugOut) {
 
 		if (mbTintColorEnabled) {
 			for(int j=0; j<22; ++j) {
-				rgbtab[0][j] = rgbtab[1][j] = (ytab[j] * params.mIntensityScale) * mTintColor;
+				rgbtab[0][j] = rgbtab[1][j] = ytab[j] * vdfloat3{1.0f, 1.0f, 1.0f};
 			}
 		} else {
 			// demodulate to i/q
@@ -1843,7 +2127,7 @@ void ATArtifactingEngine::RecomputeNTSCTables(ATConsoleOutput *debugOut) {
 
 	const float encodingScale = 16.0f * 255.0f * (signedOutput ? 0.5f : 1.0f);
 
-#if defined(VD_CPU_AMD64) || defined(VD_CPU_ARM64)
+#if defined(VD_CPU_ARM64)
 	if (true) {
 #else
 	if (SSE2_enabled) {
@@ -2032,7 +2316,8 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 	const float sat2 = mColorParams.mArtifactSat;
 	const float sat1 = mColorParams.mSaturation / std::max<float>(0.001f, sat2);
 
-	const float chromaPhaseStep = -mColorParams.mHueRange * (nsVDMath::kfTwoPi / (360.0f * 15.0f));
+	static constexpr float deg = nsVDMath::kfTwoPi / 360.0f;
+	const float chromaPhaseStep = -mColorParams.mHueRange * (deg / 15.0f);
 
 	// UV<->RGB chroma coefficients.
 	const float co_vr = 1.1402509f;
@@ -2042,10 +2327,15 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 	float vtab[2][16];
 	float ytab[16];
 
-	utab[0][0] = 0;
-	utab[1][0] = 0;
-	vtab[0][0] = 0;
-	vtab[1][0] = 0;
+	auto& utab0 = utab[mPALPhase & 1];
+	auto& vtab0 = vtab[mPALPhase & 1];
+	auto& utab1 = utab[1 - (mPALPhase & 1)];
+	auto& vtab1 = vtab[1 - (mPALPhase & 1)];
+
+	utab0[0] = 0;
+	utab1[0] = 0;
+	vtab0[0] = 0;
+	vtab1[0] = 0;
 
 	// The hue start is in I-Q, which we must convert to the U-V plane.
 	const float chromaPhaseOffset = (123.0f - mColorParams.mHueStart) * (nsVDMath::kfTwoPi / 360.0f);
@@ -2055,10 +2345,10 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 		float t1 = chromaPhaseOffset + palPhaseInfo.mEvenPhase * chromaPhaseStep;
 		float t2 = chromaPhaseOffset + palPhaseInfo.mOddPhase * chromaPhaseStep;
 
-		utab[0][i+1] = -cosf(t1)*palPhaseInfo.mEvenInvert;
-		vtab[0][i+1] =  sinf(t1)*palPhaseInfo.mEvenInvert;
-		utab[1][i+1] = -cosf(t2)*palPhaseInfo.mOddInvert;
-		vtab[1][i+1] = -sinf(t2)*palPhaseInfo.mOddInvert;		// V inversion
+		utab0[i+1] = -cosf(t1)*palPhaseInfo.mEvenInvert;
+		vtab0[i+1] =  sinf(t1)*palPhaseInfo.mEvenInvert;
+		utab1[i+1] = -cosf(t2)*palPhaseInfo.mOddInvert;
+		vtab1[i+1] = -sinf(t2)*palPhaseInfo.mOddInvert;		// V inversion
 	}
 
 	for(int i=0; i<16; ++i) {
@@ -2203,7 +2493,7 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 	}
 
 	for(int k=0; k<2; ++k) {
-		float v_invert = k ? -1.0f : 1.0f;
+		float v_invert = k != (mPALPhase & 1) ? -1.0f : 1.0f;
 
 		for(int j=0; j<256; ++j) {
 			float u = utab[k][j >> 4];

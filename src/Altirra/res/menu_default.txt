@@ -49,6 +49,11 @@
 		&Empty 128K (1Mbit) MaxFlash cartridge (MyIDE banking)			{Cart.AttachMaxFlash1MBMyIDE}
 		Empty 1M (8Mbit) MaxFlash cartridge (older - bank 127)			{Cart.AttachMaxFlash8MB}
 		Empty 1M (8Mbit) MaxFlash cartridge (newer - bank 0)			{Cart.AttachMaxFlash8MBBank0}
+		Empty 128K J(Atari)Cart										{Cart.AttachJACart128K}
+		Empty 256K J(Atari)Cart										{Cart.AttachJACart256K}
+		Empty 512K J(Atari)Cart										{Cart.AttachJACart512K}
+		Empty 1024K J(Atari)Cart									{Cart.AttachJACart1024K}
+		Empty DCart													{Cart.AttachDCart}
 		Empty SIC! 512K flash cartridge								{Cart.AttachSIC}
 		Empty SIC! 256K flash cartridge								{Cart.AttachSIC256K}
 		Empty SIC! 128K flash cartridge								{Cart.AttachSIC128K}
@@ -160,6 +165,9 @@ S&ystem
 	---
 	&Warp Speed					{System.ToggleWarpSpeed}
 	Pause When Inactive			{System.TogglePauseWhenInactive}
+	Rewind
+		Quick Rewind			{System.Rewind}
+		Rewind...				{System.ShowRewindDialog}
 	---
 	Power-On Delay
 		&Auto					{System.PowerOnDelayAuto}

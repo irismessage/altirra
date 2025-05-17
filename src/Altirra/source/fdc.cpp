@@ -23,17 +23,16 @@
 #include <at/atcore/logging.h>
 #include <at/atcore/scheduler.h>
 #include <at/atcore/randomization.h>
+#include <at/atemulation/diskutils.h>
 #include "diskinterface.h"
 #include "disktrace.h"
 #include "fdc.h"
 #include "trace.h"
 
 extern ATLogChannel g_ATLCDisk;
-ATLogChannel g_ATLCFDC(true, false, "FDC", "Floppy drive controller");
 ATLogChannel g_ATLCFDCCommand(false, false, "FDCCMD", "Floppy drive controller commands");
 ATLogChannel g_ATLCFDCCommandFI(false, false, "FDCCMDFI", "Floppy drive controller extra forced interrupt commands");
 ATLogChannel g_ATLCFDCData(false, false, "FDCDATA", "Floppy drive controller data transfer");
-ATLogChannel g_ATLCFDCWTData(false, false, "FDCWTDATA", "Floppy drive controller write track data");
 
 ATFDCEmulator::ATFDCEmulator() {
 	mpFnDrqChange = [](bool drq) {};
@@ -258,8 +257,13 @@ void ATFDCEmulator::SetDensity(bool mfm) {
 }
 
 void ATFDCEmulator::SetAutoIndexPulse(bool enabled) {
-	if (mbAutoIndexPulseEnabled != enabled) {
+	SetAutoIndexPulse(enabled, enabled);
+}
+
+void ATFDCEmulator::SetAutoIndexPulse(bool enabled, bool connected) {
+	if (mbAutoIndexPulseEnabled != enabled || mbAutoIndexPulseConnected != connected) {
 		mbAutoIndexPulseEnabled = enabled;
+		mbAutoIndexPulseConnected = connected;
 
 		UpdateAutoIndexPulse();
 	}
@@ -459,7 +463,8 @@ uint8 ATFDCEmulator::ReadByte(uint8 address) {
 				mpFnDrqChange(false);
 			}
 
-			g_ATLCFDCData("Read byte: $%02X\n", v);
+			if (g_ATLCFDCData.IsEnabled())
+				g_ATLCFDCData("Read byte[%4u]: $%02X\n", mLogDataByteIndex++, v);
 
 			mRegStatus &= ~0x02;
 			break;
@@ -594,7 +599,7 @@ void ATFDCEmulator::SetTraceContext(ATTraceContext *context, uint64 baseTick, do
 }
 
 void ATFDCEmulator::UpdateIndexPulse() {
-	const bool indexPulse = mbManualIndexPulse || mbAutoIndexPulse;
+	const bool indexPulse = mbManualIndexPulse || (mbAutoIndexPulse && mbAutoIndexPulseConnected);
 	if (mbIndexPulse == indexPulse)
 		return;
 
@@ -627,6 +632,17 @@ void ATFDCEmulator::UpdateIndexPulse() {
 			}
 			break;
 
+		case kState_ReadTrack_WaitIndexPulse:
+			if (mpDiskInterface)
+				mpDiskInterface->SetShowActivity(true, mPhysHalfTrack >> 1);
+
+			SetTransition(kState_ReadTrack_TransferByte, 1);
+			break;
+
+		case kState_ReadTrack_TransferByte:
+			SetTransition(kState_ReadTrack_Complete, 1);
+			break;
+
 		case kState_WriteTrack_WaitIndexPulse:
 			if (mpDiskInterface)
 				mpDiskInterface->SetShowActivity(true, mPhysHalfTrack >> 1);
@@ -650,12 +666,20 @@ void ATFDCEmulator::OnScheduledEvent(uint32 id) {
 		mpAutoIndexOnEvent = nullptr;
 
 		mbAutoIndexPulse = true;
+
+		if (mpFnIndexChange)
+			mpFnIndexChange(true);
+
 		UpdateIndexPulse();
 		UpdateAutoIndexPulse();
 	} else if (id == kEventId_AutoIndexOff) {
 		mpAutoIndexOffEvent = nullptr;
 
 		mbAutoIndexPulse = false;
+
+		if (mpFnIndexChange)
+			mpFnIndexChange(false);
+
 		UpdateIndexPulse();
 		UpdateAutoIndexPulse();
 	} else if (id == kEventId_AutoMotorIdle) {
@@ -730,6 +754,8 @@ void ATFDCEmulator::RunStateMachine() {
 			break;
 
 		case kState_BeginCommand:
+			mLogDataByteIndex = 0;
+
 			switch(mRegCommand & 0xF0) {
 				case 0xD0:
 					g_ATLCFDCCommandFI("Beginning command $%02X (force interrupt)\n", mRegCommand);
@@ -802,8 +828,8 @@ void ATFDCEmulator::RunStateMachine() {
 				}
 			}
 
-			// fall through
 			mState = kState_DispatchCommand;
+			[[fallthrough]];
 
 		case kState_DispatchCommand:
 			mActiveOpIndexMarks = 0;
@@ -978,8 +1004,134 @@ void ATFDCEmulator::RunStateMachine() {
 			SetTransition(kState_EndCommand, 1);
 			break;
 
-		case kState_ReadTrack:
-			g_ATLCFDC <<= "Unsupported Read Track command issued\n";
+		case kState_ReadTrack: {
+			// clear Lost Data, bits 4-5 per official flowchart, and clear DRQ too
+			mRegStatus &= 0xC9;
+
+			// check for disk not ready
+			if (!mbDiskReady) {
+				mRegStatus |= 0x80;
+				SetTransition(kState_EndCommand, 1);
+				break;
+			}
+
+			// render the track
+			const float bytesPerSecond = mbMFM ? mBytesPerSecondMFM : mBytesPerSecondFM;
+			mReadTrackBitLength = (uint32)(0.5f + bytesPerSecond * mRotationPeriodSecs * 16.0);
+
+			mReadTrackBuffer.resize((mReadTrackBitLength + 7 + 32) >> 3);
+
+
+			ATDiskRenderRawTrack(mReadTrackBuffer.data(), mReadTrackBitLength, nullptr, *mpDiskImage, mPhysHalfTrack >> 1, mbMFM, false /*hd*/, true);
+			mReadTrackIndex = 0;
+
+			// wait for head load if E=1
+			if (mRegCommand & 4) {
+				// E=1 wait for head load
+				SetTransition(kState_ReadTrack_WaitHeadLoad, mCyclesHeadLoadDelay);
+			} else {
+				// E=0 don't wait for head load (not measured -- reuse write track timing)
+				SetTransition(kState_ReadTrack_WaitHeadLoad, mCyclesWriteTrackFastDelay);
+			}
+			break;
+		}
+
+		case kState_ReadTrack_WaitHeadLoad:
+			// wait for next index mark
+			mActiveOpIndexMarks = 0;
+
+			mState = kState_ReadTrack_WaitIndexPulse;
+			break;
+
+		case kState_ReadTrack_WaitIndexPulse:
+			break;
+
+		case kState_ReadTrack_TransferByte: {
+			// load next byte from the track buffer
+			static constexpr uint8 kPackBits5140[16] {
+				0x00, 0x01, 0x10, 0x11,
+				0x02, 0x03, 0x12, 0x13,
+				0x20, 0x21, 0x30, 0x31,
+				0x22, 0x23, 0x32, 0x33,
+			};
+
+			const auto compressDataBits = [](uint32 v) constexpr {
+				return kPackBits5140[((v >> 16) + (v >> 23)) & 15] + kPackBits5140[((v >> 20) + (v >> 27)) & 15]*4;
+			};
+
+			static_assert(compressDataBits(0x00000000) == 0x00);
+			static_assert(compressDataBits(0x00010000) == 0x01);
+			static_assert(compressDataBits(0x00040000) == 0x02);
+			static_assert(compressDataBits(0x00100000) == 0x04);
+			static_assert(compressDataBits(0x00400000) == 0x08);
+			static_assert(compressDataBits(0x01000000) == 0x10);
+			static_assert(compressDataBits(0x04000000) == 0x20);
+			static_assert(compressDataBits(0x10000000) == 0x40);
+			static_assert(compressDataBits(0x40000000) == 0x80);
+			static_assert(compressDataBits(0x55550000) == 0xFF);
+
+			// extract 32 bit window
+			const auto extractBitWindow = [this] {
+				return VDReadUnalignedBEU32(&mReadTrackBuffer[mReadTrackIndex >> 3]) << (mReadTrackIndex & 7);
+			};
+
+			// compress data bits and set data register
+			mRegData = compressDataBits(extractBitWindow() & 0x55550000);
+
+			// check for lost data
+			if (mbDataReadPending)
+				mRegStatus |= 0x04;
+
+			// set DRQ
+			if (!mbDataReadPending) {
+				mbDataReadPending = true;
+
+				mpFnDrqChange(true);
+			}
+
+			mRegStatus |= 0x02;
+
+			// Compute the number of bits to advance.
+			//
+			// The FDC returns another byte either after 16 bit cells or when a sync mark is detected,
+			// whichever is sooner.
+			uint32 bitCount = 0;
+
+			for(;;) {
+				if (++mReadTrackIndex >= mReadTrackBitLength)
+					mReadTrackIndex = 0;
+
+				if (++bitCount >= 16)
+					break;
+
+				const uint32 bitWindow = extractBitWindow() >> 16;
+
+				if (mbMFM) {
+					// 4489: MFM 'A1' sync (IDAM/DAM)
+					// 5224: MFM 'C2' sync (IAM)
+					if (bitWindow == 0x4489 || bitWindow == 0x5224)
+						break;
+				} else {
+					if (bitWindow == 0xF56A ||	// FM 'F8' DAM
+						bitWindow == 0xF56B ||	// FM 'F9' DAM
+						bitWindow == 0xF56E ||	// FM 'FA' DAM
+						bitWindow == 0xF56F ||	// FM 'FB' DAM
+						bitWindow == 0xF77A ||	// FM 'FC' IAM
+						bitWindow == 0xF57E)	// FM 'FE' IDAM
+					{
+						break;
+					}
+				}
+			}
+
+			// compute number of cycles to next byte returned
+			mCyclesPerByteAccum_FX16 += (mCyclesPerByte_FX16 * bitCount + 8) >> 4;
+			SetTransition(kState_ReadTrack_TransferByte, mCyclesPerByteAccum_FX16 >> 16);
+			mCyclesPerByteAccum_FX16 &= 0xFFFF;
+			break;
+		}
+
+		case kState_ReadTrack_Complete:
 			SetTransition(kState_EndCommand, 1);
 			break;
 

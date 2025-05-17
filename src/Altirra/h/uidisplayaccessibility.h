@@ -85,7 +85,14 @@ struct ATUIDisplayAccessibilityScreen : public vdrefcount {
 
 	ATUIDisplayAccessibilityTextPoint GetDocumentEnd() const;
 
+	bool IsAtWordBoundary(const ATUIDisplayAccessibilityTextPoint& pt) const;
+	ATUIDisplayAccessibilityTextPoint MoveToPrevWordBoundary(const ATUIDisplayAccessibilityTextPoint& pt) const;
+	ATUIDisplayAccessibilityTextPoint MoveToNextWordBoundary(const ATUIDisplayAccessibilityTextPoint& pt) const;
+
 	void Clear();
+
+private:
+	static uint8 GetCharWordClass(uint8 c);
 };
 
 #endif

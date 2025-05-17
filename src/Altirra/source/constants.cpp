@@ -60,3 +60,15 @@ AT_DEFINE_ENUM_TABLE_BEGIN(ATVideoStandard)
 	{ kATVideoStandard_PAL60, "pal60" },
 	{ kATVideoStandard_NTSC50, "ntsc50" },
 AT_DEFINE_ENUM_TABLE_END(ATVideoStandard, kATVideoStandard_NTSC)
+
+extern constexpr ATHardwareModeTraits kATHardwareModeTraits[] = {
+	/* 800    */	{ .mbRunsXLOS = false, .mbHasPort34 = true , .mbFloatingDataBus = true , .mbInternalBASIC = false, .mbSupportsPBI = false },
+	/* 800XL  */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = true , .mbSupportsPBI = true  },
+	/* 5200   */	{ .mbRunsXLOS = false, .mbHasPort34 = true , .mbFloatingDataBus = true , .mbInternalBASIC = false, .mbSupportsPBI = false },
+	/* XEGS   */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = true , .mbInternalBASIC = true , .mbSupportsPBI = true  },
+	/* 1200XL */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = false, .mbSupportsPBI = true  },
+	/* 130XE  */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = true , .mbInternalBASIC = true , .mbSupportsPBI = true  },
+	/* 1400XL */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = true , .mbSupportsPBI = true  },
+};
+
+static_assert(vdcountof(kATHardwareModeTraits) == kATHardwareModeCount);

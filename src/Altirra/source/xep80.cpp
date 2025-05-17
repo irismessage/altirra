@@ -2596,7 +2596,6 @@ class ATDeviceXEP80 : public ATDevice
 					, public IATDeviceScheduling
 					, public IATDeviceVideoOutput
 					, public IATDeviceDiagnostics
-					, public IATDevicePrinterPort
 					, public IATDeviceParent
 					, public IATDeviceSnapshot
 {
@@ -2631,9 +2630,6 @@ public:	// IATDeviceVideoOutput
 public:	// IATDeviceDiagnostics
 	void DumpStatus(ATConsoleOutput& output) override;
 
-public:	// IATDevicePrinterPort
-	void SetPrinterDefaultOutput(IATPrinterOutput *out) override;
-
 public:	// IATDeviceParent
 	IATDeviceBus *GetDeviceBus(uint32 index) override;
 
@@ -2665,12 +2661,22 @@ void ATCreateDeviceXEP80(const ATPropertySet& pset, IATDevice **dev) {
 extern const ATDeviceDefinition g_ATDeviceDefXEP80 = { "xep80", "xep80", L"XEP80", ATCreateDeviceXEP80 };
 
 ATDeviceXEP80::ATDeviceXEP80() {
+	mParallelBus.SetOnAttach(
+		[this] {
+			mpDefaultPrinter = nullptr;
+		}
+	);
+
 	mXEP80.SetOnPrinterOutput(
 		[this](uint8 c) {
 			if (auto *printer = mParallelBus.GetChild<IATPrinterOutput>())
-				printer->WriteASCII(&c, 1);
-			else if (mpDefaultPrinter)
-				mpDefaultPrinter->WriteASCII(&c, 1);
+				printer->WriteRaw(&c, 1);
+			else {
+				if (!mpDefaultPrinter)
+					mpDefaultPrinter = GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+
+				mpDefaultPrinter->WriteRaw(&c, 1);
+			}
 		}
 	);
 }
@@ -2685,9 +2691,6 @@ void *ATDeviceXEP80::AsInterface(uint32 id) {
 
 		case IATDeviceDiagnostics::kTypeID:
 			return static_cast<IATDeviceDiagnostics *>(this);
-
-		case IATDevicePrinterPort::kTypeID:
-			return static_cast<IATDevicePrinterPort *>(this);
 
 		case IATDeviceParent::kTypeID:
 			return static_cast<IATDeviceParent *>(this);
@@ -2741,6 +2744,7 @@ void ATDeviceXEP80::Init() {
 
 void ATDeviceXEP80::Shutdown() {
 	mParallelBus.Shutdown();
+	mpDefaultPrinter = nullptr;
 
 	GetService<IATDeviceVideoManager>()->RemoveVideoOutput(this);
 
@@ -2812,10 +2816,6 @@ uint32 ATDeviceXEP80::GetActivityCounter() {
 }
 
 void ATDeviceXEP80::DumpStatus(ATConsoleOutput& output) {
-}
-
-void ATDeviceXEP80::SetPrinterDefaultOutput(IATPrinterOutput *out) {
-	mpDefaultPrinter = out;
 }
 
 IATDeviceBus *ATDeviceXEP80::GetDeviceBus(uint32 index) {

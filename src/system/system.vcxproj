@@ -50,8 +50,6 @@
     <ClCompile Include="source\linearalloc.cpp" />
     <ClCompile Include="source\list.cpp">
     </ClCompile>
-    <ClCompile Include="source\log.cpp">
-    </ClCompile>
     <ClCompile Include="source\math.cpp">
     </ClCompile>
     <ClCompile Include="source\memory.cpp">
@@ -60,7 +58,7 @@
     <ClCompile Include="source\refcount.cpp" />
     <ClCompile Include="source\registry.cpp">
     </ClCompile>
-    <ClCompile Include="..\h\vd2\system\source\registrymemory.cpp" />
+    <ClCompile Include="source\registrymemory.cpp" />
     <ClCompile Include="source\strutil.cpp">
     </ClCompile>
     <ClCompile Include="source\text.cpp">
@@ -124,7 +122,6 @@
     <ClInclude Include="..\h\VD2\system\int128.h" />
     <ClInclude Include="..\h\vd2\system\linearalloc.h" />
     <ClInclude Include="..\h\VD2\system\list.h" />
-    <ClInclude Include="..\h\vd2\system\log.h" />
     <ClInclude Include="..\h\vd2\system\math.h" />
     <ClInclude Include="..\h\VD2\system\memory.h" />
     <ClInclude Include="..\h\vd2\system\process.h" />
@@ -132,6 +129,11 @@
     <ClInclude Include="..\h\VD2\system\registry.h" />
     <ClInclude Include="..\h\vd2\system\registrymemory.h" />
     <ClInclude Include="..\h\vd2\system\seh.h" />
+    <ClInclude Include="..\h\vd2\system\vdstl_block.h" />
+    <ClInclude Include="..\h\vd2\system\vdstl_fastdeque.h" />
+    <ClInclude Include="..\h\vd2\system\vdstl_fastvector.h" />
+    <ClInclude Include="..\h\vd2\system\vdstl_ilist.h" />
+    <ClInclude Include="..\h\vd2\system\vdstl_structex.h" />
     <ClInclude Include="..\h\vd2\system\vecmath.h" />
     <ClInclude Include="..\h\VD2\system\strutil.h" />
     <ClInclude Include="..\h\VD2\system\text.h" />
@@ -154,6 +156,7 @@
     <ClInclude Include="..\h\vd2\system\vdstl_vector.h" />
     <ClInclude Include="..\h\VD2\system\VDString.h" />
     <ClInclude Include="..\h\VD2\system\vdtypes.h" />
+    <ClInclude Include="..\h\vd2\system\vecmath_neon.h" />
     <ClInclude Include="..\h\vd2\system\vecmath_ref.h" />
     <ClInclude Include="..\h\vd2\system\vecmath_sse2.h" />
     <ClInclude Include="..\h\vd2\system\vectors.h" />

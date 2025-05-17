@@ -131,12 +131,7 @@ public:
 	uint32 GetSectorSize(uint16 sector) const;
 	uint32 GetSectorPhantomCount(uint16 sector) const;
 
-	struct SectorInfo {
-		float mRotPos;
-		uint8 mFDCStatus;
-	};
-
-	bool GetSectorInfo(uint16 sector, int phantomIdx, SectorInfo& info) const;
+	bool GetSectorInfo(uint16 sector, int phantomIdx, ATDiskPhysicalSectorInfo& info) const;
 
 	void AddStateChangeHandler(const vdfunction<void()> *fn);
 	void RemoveStateChangeHandler(const vdfunction<void()> *fn);

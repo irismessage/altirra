@@ -237,7 +237,7 @@ bool ATCPUEmulator::Decode65C816(uint8 opcode, bool unalignedDP, bool emu, bool 
 			else
 				*mpDstState++ = kStatePtoD;
 
-			*mpDstState++ = kStatePush;			// 5
+			*mpDstState++ = emu ? kStatePush : kStatePushNative;			// 5
 			*mpDstState++ = kState816_SetI_ClearD;
 
 			if (emu)

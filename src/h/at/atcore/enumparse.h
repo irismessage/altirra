@@ -47,6 +47,13 @@ ATEnumParseResult<T> ATParseEnum(const VDStringSpanA& str) {
 }
 
 template<typename T>
+ATEnumParseResult<T> ATParseEnum(const VDStringSpanW& str) {
+	auto v = ATParseEnum(ATGetEnumLookupTable<T>(), str);
+
+	return { v.mValid, (T)v.mValue };
+}
+
+template<typename T>
 const char *ATEnumToString(T value) {
 	return ATEnumToString(ATGetEnumLookupTable<T>(), (uint32)value);
 }

@@ -187,6 +187,10 @@
     <SmartPointer Usage="Minimal">ptr</SmartPointer>
   </Type>
 
+  <Type Name="vdfloat4">
+    <DisplayString>({x}, {y}, {z}, {w})</DisplayString>
+  </Type>
+  
   <Type Name="nsVDVecMath::vdmask32x4">
     <DisplayString>({v.m128_i32[0]!=0}, {v.m128_i32[1]!=0}, {v.m128_i32[2]!=0}, {v.m128_i32[3]!=0})</DisplayString>
   </Type>
@@ -489,12 +493,16 @@
     </Expand>
   </Type>
 
+  <Type Name="ATCassetteImageBlockRawData">
+    <DisplayString>{mDataLength,i} samples</DisplayString>
+  </Type>
   <Type Name="ATTapeImageSpan">
     <DisplayString IncludeView="BlockType" Condition="mBlockType==kATCassetteImageBlockType_Blank">Blank</DisplayString>
-    <DisplayString IncludeView="BlockType" Condition="mBlockType==kATCassetteImageBlockType_FSK">FSK</DisplayString>
+    <DisplayString IncludeView="BlockType" Condition="mBlockType==kATCassetteImageBlockType_FSK">FSK [{*(ATCassetteImageBlockRawData*)mpImageBlock}]</DisplayString>
     <DisplayString IncludeView="BlockType" Condition="mBlockType==kATCassetteImageBlockType_Std">Std</DisplayString>
     <DisplayString IncludeView="BlockType">{mBlockType,en}</DisplayString>
-    <DisplayString>Start {mStart,i} | Len {this[1].mStart-mStart,i} | Offset {mOffset,i} | Type {*this,view(BlockType)}</DisplayString>
+    <DisplayString Condition="mBlockType!=kATCassetteImageBlockType_End">Start {mStart,i} | Len {this[1].mStart-mStart,i} | Offset {mOffset,i} | Type {*this,view(BlockType)}</DisplayString>
+    <DisplayString>Start {mStart,i} | Type {*this,view(BlockType)}</DisplayString>
   </Type>
 
     <Type Name="__m128i">
@@ -503,5 +511,9 @@
   
   <Type Name="ATVBXEEmulator::AttrPixel">
     <DisplayString>Colors:[{mPFK,nvoXb} {mPF0,nvoXb} {mPF1,nvoXb} {mPF2,nvoXb}] Ctrl:{mCtrl,nvoXb} Pri:{mPriority,nvoXb}</DisplayString>
+  </Type>
+  
+  <Type Name="__m256">
+    <DisplayString>{m256_f32[0],g}, {m256_f32[1],g}, {m256_f32[2],g}, {m256_f32[3],g}, {m256_f32[4],g}, {m256_f32[5],g}, {m256_f32[6],g}, {m256_f32[7],g}</DisplayString>
   </Type>
 </AutoVisualizer>

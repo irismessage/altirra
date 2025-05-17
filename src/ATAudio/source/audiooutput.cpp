@@ -200,7 +200,10 @@ void ATSyncAudioEdgePlayer::RenderEdgeBuffer2(float *dstLeft, float *dstRight, u
 				dstR2[sampleOffset+1] += v1;
 			}
 		} else {
-			VDFAIL("Edge player has sample outside of allowed frame window.");
+			if (cycleOffset & 0x80000000)
+				VDFAIL("Edge player has sample before allowed frame window.");
+			else
+				VDFAIL("Edge player has sample after allowed frame window.");
 		}
 
 		++src;
@@ -673,6 +676,7 @@ void ATAudioOutput::InternalWriteAudio(
 		ATSyncAudioMixInfo mixInfo {};
 		mixInfo.mStartTime = timestamp;
 		mixInfo.mCount = count;
+		mixInfo.mNumCycles = count * kATCyclesPerSyncSample;
 		mixInfo.mMixingRate = mMixingRate;
 		mixInfo.mpDCLeft = &dcLevels[0];
 		mixInfo.mpDCRight = &dcLevels[1];

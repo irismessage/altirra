@@ -63,7 +63,7 @@ public:
 	bool	IsRedoPossible() override;
 
 	int		GetLineCount() override;
-	bool	GetLineText(int line, vdfastvector<char>& buf) override;
+	bool	GetLineText(int line, vdfastvector<wchar_t>& buf) override;
 
 	void	SetReadOnly(bool enable) override;
 	void	SetWordWrap(bool enable) override;
@@ -99,8 +99,9 @@ public:
 	void	DeleteSelection() override;
 	void	SelectAll() override;
 
-	void	Append(const char *s) override;
-	void	InsertAt(int para, int offset, const char *s) override;
+	void	AppendASCII(const char *s) override;
+	void	Append(const wchar_t *s) override;
+	void	InsertAt(int para, int offset, const wchar_t *s) override;
 	void	RemoveAt(int para1, int offset1, int para2, int offset2) override;
 
 	void	Load(IVDStream& stream);
@@ -116,7 +117,9 @@ private:
 	void OnSetFocus();
 	void OnKillFocus();
 	void OnKeyDown(WPARAM key);
-	void OnChar(int ch);
+	void OnNarrowChar(uint8 ch);
+	void OnWideChar(uint16 ch);
+	void OnUnicodeChar(uint32 ch);
 	void OnLButtonDown(WPARAM modifiers, int x, int y);
 	void OnLButtonUp(WPARAM modifiers, int x, int y);
 	void OnMouseMove(WPARAM modifiers, int x, int y);
@@ -128,6 +131,7 @@ private:
 	int OnGetText(uint32 length, wchar_t *s);
 	int OnGetTextLength();
 	bool OnSetText(const char *s);
+	bool OnSetText(const wchar_t *s);
 	void OnLazyCaretUpdate();
 
 	void MoveCaret(const Iterator& pos, bool anchor, bool sendScrollUpdate);
@@ -187,6 +191,8 @@ private:
 	bool	mbUpdateEnabled;
 	bool	mbUpdateScrollbarPending;
 
+	uint16	mPendingHalfChar = 0;
+
 	IVDTextEditorCallback	*mpCB;
 	IVDTextEditorColorizer	*mpColorizer;
 	IVDUIMessageFilterW32	*mpMsgFilter;
@@ -197,7 +203,7 @@ private:
 	uint32	mColorTextHiFore;
 	uint32	mColorTextHiBack;
 
-	vdfastvector<char>	mPaintBuffer;
+	vdfastvector<wchar_t>	mPaintBuffer;
 	vdfastvector<Line>	mReflowNewLines;
 
 	Document	mDocument;
@@ -315,7 +321,7 @@ int TextEditor::GetLineCount() {
 	return mDocument.GetParagraphCount();
 }
 
-bool TextEditor::GetLineText(int line, vdfastvector<char>& buf) {
+bool TextEditor::GetLineText(int line, vdfastvector<wchar_t>& buf) {
 	const Paragraph *para = mDocument.GetParagraph(line);
 
 	buf.clear();
@@ -450,7 +456,7 @@ bool TextEditor::Find(const char *text, int len, bool caseSensitive, bool wholeW
 
 			x1 += len - 1;
 
-			const char *s = para.mText.data();
+			const wchar_t *s = para.mText.data();
 
 			if (caseSensitive) {
 				for(int x=x2-1; x>=x1; --x) {
@@ -502,7 +508,7 @@ bool TextEditor::Find(const char *text, int len, bool caseSensitive, bool wholeW
 
 			x2 -= len - 1;
 
-			const char *s = para.mText.data();
+			const wchar_t *s = para.mText.data();
 			if (caseSensitive) {
 				for(int x=x1; x<x2; ++x) {
 					if (!memcmp(s+x, text, len)) {
@@ -643,14 +649,14 @@ void TextEditor::Paste() {
 	if (!OpenClipboard(mhwnd))
 		return;
 
-	vdfastvector<char> buf;
+	vdfastvector<wchar_t> buf;
 
-	if (IsClipboardFormatAvailable(CF_TEXT)) {
-		HGLOBAL hmem = GetClipboardData(CF_TEXT);
+	if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {
+		HGLOBAL hmem = GetClipboardData(CF_UNICODETEXT);
 		if (hmem) {
-			const char *p = (const char *)GlobalLock(hmem);
+			const wchar_t *p = (const wchar_t *)GlobalLock(hmem);
 			if (p) {
-				size_t len = GlobalSize(hmem);
+				size_t len = GlobalSize(hmem) / sizeof(wchar_t);
 				if (len)
 					--len;
 
@@ -663,10 +669,10 @@ void TextEditor::Paste() {
 	CloseClipboard();
 
 	if (!buf.empty()) {
-		char *base = buf.data();
-		char *t = base;
-		const char *s = base;
-		const char *end = s + buf.size();
+		wchar_t *base = buf.data();
+		wchar_t *t = base;
+		const wchar_t *s = base;
+		const wchar_t *end = s + buf.size();
 		char linebreak = 0;
 
 		while(s != end) {
@@ -729,19 +735,31 @@ void TextEditor::SelectAll() {
 	InvalidateRange(mSelectionAnchor, mCaretPos);
 }
 
-void TextEditor::Append(const char *s) {
+void TextEditor::AppendASCII(const char *s) {
+	size_t len = strlen(s);
+
+	VDStringW ws;
+	ws.resize(len);
+
+	for(size_t i=0; i<len; ++i)
+		ws[i] = s[i];
+
+	Append(ws.c_str());
+}
+
+void TextEditor::Append(const wchar_t *s) {
 	Iterator it(mDocument);
 	it.MoveToEnd();
-	mDocument.Insert(it, s, strlen(s), NULL);
+	mDocument.Insert(it, s, wcslen(s), NULL);
 	LazyUpdateCaretPos();
 }
 
-void TextEditor::InsertAt(int para, int offset, const char *s) {
+void TextEditor::InsertAt(int para, int offset, const wchar_t *s) {
 	Iterator it(mDocument);
 
 	it.MoveToParaOffset(para, offset);
 
-	mDocument.Insert(it, s, strlen(s), nullptr);
+	mDocument.Insert(it, s, wcslen(s), nullptr);
 	LazyUpdateCaretPos();
 }
 
@@ -762,37 +780,82 @@ void TextEditor::Load(IVDStream& stream) {
 	mDocument.Delete(it1, it2);
 
 	char buf[4096];
-	char linebreak = 0;
+	size_t bufLevel = 0;
+
+	wchar_t linebreak = 0;
 
 	for(;;) {
-		sint32 actual = stream.ReadData(buf, sizeof buf);
+		sint32 actual = stream.ReadData(buf + bufLevel, (sizeof buf) - bufLevel);
 		if (actual <= 0)
 			break;
 
-		char *dst = buf;
-		const char *src = buf;
-		const char *srcend = src + actual;
+		bufLevel += actual;
 
-		for(; src!=srcend; ++src) {
-			char c = *src;
+		size_t tc = bufLevel;
 
-			if (c == '\r' || c == '\n') {
-				if (linebreak) {
-					if (linebreak == (c ^ ('\r' ^ '\n')))
-						linebreak = 0;
-					continue;
-				}
-				linebreak = c;
-				c = '\n';
-			} else {
-				linebreak = 0;
-			}
+		// check if we have a UTF-8 fragment -- if so, exclude it
+		size_t contBytes = 0;
+		while(contBytes < 6 && ((uint8)buf[contBytes] & 0xC0) == 0x80) {
+			++contBytes;
 
-			*dst++ = c;
+			if (contBytes >= tc)
+				break;
 		}
 
-		it2.MoveToEnd();
-		mDocument.Insert(it2, buf, dst-buf, NULL);
+		if (contBytes < tc) {
+			uint8 c = (uint8)buf[tc - contBytes - 1];
+
+			// C0..DF (2 byte)
+			// E0..EF (3 byte)
+			// F0..F7 (4 byte)
+			if (c >= 0xC0 && c < 0xF8) {
+				static constexpr uint8 kLeadingByteCount[7] {
+					2, 2, 2, 2,
+					3, 3,
+					4
+				};
+
+				if (contBytes < kLeadingByteCount[(c - 0xC0) >> 3]) {
+					// We have a fragment -- defer the leading and continuation
+					// bytes to the next pass
+					tc -= contBytes - 1;
+				}
+			}
+		}
+
+		VDStringW wbuf = VDTextU8ToW(VDStringSpanA(buf, buf + tc));
+		if (!wbuf.empty()) {
+			wchar_t *dst = &*wbuf.begin();
+			const wchar_t *srcstart = dst;
+			const wchar_t *srcend = srcstart + wbuf.size();
+
+			for(const wchar_t *src = srcstart; src!=srcend; ++src) {
+				char c = *src;
+
+				if (c == '\r' || c == '\n') {
+					if (linebreak) {
+						if (linebreak == (c ^ ('\r' ^ '\n')))
+							linebreak = 0;
+						continue;
+					}
+					linebreak = c;
+					c = '\n';
+				} else {
+					linebreak = 0;
+				}
+
+				*dst++ = c;
+			}
+
+			it2.MoveToEnd();
+			mDocument.Insert(it2, srcstart, dst-srcstart, NULL);
+		}
+
+		// move UTF-8 fragment to bottom of buffer
+		if (tc < bufLevel)
+			memmove(buf, buf + tc, bufLevel - tc);
+
+		bufLevel -= tc;
 	}
 
 	if (mpCB)
@@ -855,12 +918,18 @@ void TextEditor::Save(IVDTextEditorStreamOut& streamout) {
 		const Paragraph& para = *mDocument.GetParagraph(i);
 
 		if (!para.mText.empty()) {
-			if (para.mText.back() == '\n') {
-				writer.Write(para.mText.data(), para.mText.size() - 1);
+			bool eol = false;
+
+			if (para.mText.back() == '\n')
+				eol = true;
+
+			const VDStringA& u8 = VDTextWToU8(VDStringSpanW(para.mText.begin(), para.mText.end() - (eol ? 1 : 0)));
+
+			if (!u8.empty())
+				writer.Write(u8.data(), u8.size());
+
+			if (eol)
 				writer.Write("\r\n", 2);
-			} else {
-				writer.Write(para.mText.data(), para.mText.size());
-			}
 		}
 	}
 }
@@ -898,7 +967,10 @@ LRESULT TextEditor::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		OnKeyDown(wParam);
 		break;
 	case WM_CHAR:
-		OnChar((int)wParam);
+		if (IsWindowUnicode(mhwnd))
+			OnWideChar((uint16)wParam);
+		else
+			OnNarrowChar((uint8)wParam);
 		break;
 	case WM_LBUTTONDOWN:
 	case WM_LBUTTONDBLCLK:
@@ -972,7 +1044,10 @@ LRESULT TextEditor::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 		return 0;
 
 	case WM_SETTEXT:
-		return OnSetText((const char *)lParam);
+		if (IsWindowUnicode(mhwnd))
+			return OnSetText((const char *)lParam);
+		else
+			return OnSetText((const wchar_t *)lParam);
 
 	case WM_GETTEXT:
 		if (IsWindowUnicode(mhwnd))
@@ -1059,7 +1134,7 @@ void TextEditor::OnPaint() {
 				const Paragraph *para = mDocument.GetParagraph(paraIdx);
 
 				mDocument.GetParagraphText(paraIdx, mPaintBuffer);
-				const char *s = mPaintBuffer.data();
+				const wchar_t *s = mPaintBuffer.data();
 
 				Paragraph::Lines::const_iterator itL(para->mLines.begin()), itLEnd(para->mLines.end());
 				int yp = para->mYPos;
@@ -1124,7 +1199,7 @@ void TextEditor::OnPaint() {
 						if (xrend > spanNext)
 							xrend = spanNext;
 
-						const char *tab = (const char *)memchr(s + xpos, '\t', xrend - xpos);
+						const wchar_t *tab = wmemchr(s + xpos, L'\t', xrend - xpos);
 						if (tab) {
 							int tabpos = (int)(tab - s);
 
@@ -1171,7 +1246,7 @@ void TextEditor::OnPaint() {
 							xp = xpnew;
 						} else {
 							SIZE siz;
-							GetTextExtentPoint32A(hdc, s + xpos, xrend - xpos, &siz);
+							GetTextExtentPoint32W(hdc, s + xpos, xrend - xpos, &siz);
 
 							RECT r;
 							r.left = xp;
@@ -1180,7 +1255,13 @@ void TextEditor::OnPaint() {
 							r.bottom = yp + ln.mHeight;
 
 							OffsetRect(&r, mGutterX, mGutterY);
-							ExtTextOutA(hdc, mGutterX + xp, mGutterY + yp, ETO_OPAQUE, &r, s + xpos, xrend - xpos, NULL);
+
+							// We need to use DrawTextW() instead of ExtTextOutW() for font linking to happen
+							// consistently. ETO() on Windows 11 just randomly does or doesn't substitute
+							// characters.
+							//ExtTextOutW(hdc, mGutterX + xp, mGutterY + yp, ETO_OPAQUE, &r, s + xpos, xrend - xpos, NULL);
+							DrawTextW(hdc, s + xpos, xrend - xpos, &r, DT_TOP | DT_LEFT | DT_NOCLIP | DT_NOPREFIX | DT_SINGLELINE);
+
 							xp += siz.cx;
 						}
 
@@ -1347,7 +1428,54 @@ void TextEditor::OnKeyDown(WPARAM key) {
 	}
 }
 
-void TextEditor::OnChar(int ch) {
+void TextEditor::OnNarrowChar(uint8 ch) {
+	if (IsDBCSLeadByte(ch)) {
+		mPendingHalfChar = ch;
+		return;
+	}
+
+	char buf[4] {};
+	int len = 1;
+
+	if (mPendingHalfChar) {
+		buf[0] = (char)mPendingHalfChar;
+		buf[1] = (char)ch;
+		len = 2;
+
+		mPendingHalfChar = 0;
+	} else {
+		buf[0] = (char)ch;
+	}
+
+	WCHAR wbuf[2] {};
+
+	if (MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, buf, len, wbuf, 2))
+		OnUnicodeChar(wbuf[0]);
+}
+
+void TextEditor::OnWideChar(uint16 ch) {
+	// if we have a leading surrogate, hold it
+	if (ch >= 0xD800 && ch < 0xDC00) {
+		mPendingHalfChar = ch;
+		return;
+	}
+
+	// if we have a trailing surrogate, combine to previous if we have one
+	uint32 ch32 = ch;
+
+	if (ch32 >= 0xDC00 && ch32 < 0xE000) {
+		if (!mPendingHalfChar)
+			return;
+
+		ch32 = 0x10000 + ((mPendingHalfChar - 0xD800) << 10) + (ch32 & 0x03FF);
+	}
+
+	mPendingHalfChar = 0;
+
+	return OnUnicodeChar(ch32);
+}
+
+void TextEditor::OnUnicodeChar(uint32 ch) {
 	if (ch == 0x01) {
 		SelectAll();
 	} else if (ch == 0x03) {
@@ -1360,17 +1488,27 @@ void TextEditor::OnChar(int ch) {
 	if (ch == '\b') {
 		Delete();
 	} else {
-		char c = (char)ch;
-
 		if (mSelectionAnchor) {
 			mDocument.Delete(mCaretPos, mSelectionAnchor);
 			UpdateCaretPos(true, false);
 		}
 
-		if (c == '\r')
-			c = '\n';
+		if (ch == '\r')
+			ch = '\n';
 
-		mDocument.Insert(mCaretPos, &c, 1, NULL);
+		wchar_t c[2] {};
+
+		// split to surrogates if necessary
+		if (ch >= 0x10000) {
+			ch -= 0x10000;
+
+			c[0] = 0xD800 + ((ch >> 10) & 0x03FF);
+			c[1] = 0xDC00 + (ch & 0x03FF);
+			mDocument.Insert(mCaretPos, c, 2, NULL);
+		} else {
+			c[0] = (wchar_t)ch;
+			mDocument.Insert(mCaretPos, c, 1, NULL);
+		}
 
 		Iterator oldPos(mCaretPos);
 		Iterator newPos(mCaretPos);
@@ -1578,14 +1716,18 @@ int TextEditor::OnGetTextLength() {
 }
 
 bool TextEditor::OnSetText(const char *s) {
+	return OnSetText(VDTextAToW(s).c_str());
+}
+
+bool TextEditor::OnSetText(const wchar_t *s) {
 	if (!s)		// (is this valid?)
-		s = "";
+		s = L"";
 
 	Iterator it1(mDocument);
 	Iterator it2(mDocument);
 	it2.MoveToEnd();
 	mDocument.Delete(it1, it2);
-	mDocument.Insert(it1, s, strlen(s), NULL);
+	mDocument.Insert(it1, s, wcslen(s), NULL);
 	UpdateCaretPos(true, false);
 	return true;
 }
@@ -1830,20 +1972,20 @@ void TextEditor::CutCopy(bool doCut) {
 	}
 
 	if (first != second) {
-		vdfastvector<char> buf;
+		vdfastvector<wchar_t> buf;
 		mDocument.GetText(first, second, true, buf);
 		size_t len = buf.size();
 
 		if (OpenClipboard(mhwnd)) {
 			if (EmptyClipboard()) {
-				HGLOBAL hmem = GlobalAlloc(GMEM_MOVEABLE, len + 1);
+				HGLOBAL hmem = GlobalAlloc(GMEM_MOVEABLE, sizeof(wchar_t) * (len + 1));
 				if (hmem) do {
-					char *p = (char *)GlobalLock(hmem);
+					wchar_t *p = (wchar_t *)GlobalLock(hmem);
 					if (p) {
-						memcpy(p, buf.data(), len);
+						memcpy(p, buf.data(), len*sizeof(wchar_t));
 						p[len] = 0;
 
-						if (SetClipboardData(CF_TEXT, hmem)) {
+						if (SetClipboardData(CF_UNICODETEXT, hmem)) {
 							if (doCut) {
 								mDocument.Delete(first, second);
 								UpdateCaretPos(true, false);
@@ -1896,18 +2038,18 @@ void TextEditor::PosToPixel(int& xp, int& yp, const Iterator& pos) {
 	if (int state = SaveDC(hdc)) {
 		SelectObject(hdc, mhfont);
 
-		vdfastvector<char> text;
+		vdfastvector<wchar_t> text;
 		mDocument.GetParagraphText(pos.mPara, text);
 
 		const Line& ln = para.mLines[pos.mLine];
-		const char *s = text.data();
+		const wchar_t *s = text.data();
 
 		int index = ln.mStart;
 		int end = index + pos.mOffset;
 
 		while(index < end) {
 			int spanend = end;
-			const char *tab = (const char *)memchr(s + index, '\t', end - index);
+			const wchar_t *tab = wmemchr(s + index, L'\t', end - index);
 			if (tab) {
 				spanend = (int)(tab - s);
 				if (spanend == index) {
@@ -1919,7 +2061,7 @@ void TextEditor::PosToPixel(int& xp, int& yp, const Iterator& pos) {
 			}
 
 			SIZE sz;
-			if (GetTextExtentPoint32A(hdc, s + index, spanend - index, &sz))
+			if (GetTextExtentPoint32W(hdc, s + index, spanend - index, &sz))
 				xp += sz.cx;
 
 			index = spanend;
@@ -1963,10 +2105,10 @@ Iterator TextEditor::PixelToPos(int px, int py) {
 				SelectObject(hdc, mhfont);
 
 				const Line& ln = para.mLines[lineIdx];
-				vdfastvector<char> text;
+				vdfastvector<wchar_t> text;
 				mDocument.GetParagraphText(paraIdx, text);
 
-				const char *s = text.data();
+				const wchar_t *s = text.data();
 
 				int index = ln.mStart;
 				int end = index + ln.mLength;
@@ -1975,7 +2117,7 @@ Iterator TextEditor::PixelToPos(int px, int py) {
 
 				while(index < end) {
 					int spanend = end;
-					const char *tab = (const char *)memchr(s + index, '\t', end - index);
+					const wchar_t *tab = wmemchr(s + index, L'\t', end - index);
 					if (tab) {
 						spanend = (int)(tab - s);
 						if (spanend == index) {
@@ -1998,7 +2140,7 @@ Iterator TextEditor::PixelToPos(int px, int py) {
 					SIZE sz;
 					INT fit;
 					int sublen = spanend - index;
-					if (GetTextExtentExPointA(hdc, s + index, sublen, px - xp, &fit, NULL, &sz)) {
+					if (GetTextExtentExPointW(hdc, s + index, sublen, px - xp, &fit, NULL, &sz)) {
 						if (fit < sublen) {
 							offset = index + fit;
 							break;
@@ -2100,9 +2242,9 @@ void TextEditor::ReflowPara(int paraIdx, const Paragraph& para) {
 
 			mReflowNewLines.clear();
 
-			const char *sStart = para.mText.data();
-			const char *sEnd = sStart + para.mText.size();
-			const char *s = sStart;
+			const wchar_t *sStart = para.mText.data();
+			const wchar_t *sEnd = sStart + para.mText.size();
+			const wchar_t *s = sStart;
 
 			if (s == sEnd) {
 				Line ln;
@@ -2116,17 +2258,17 @@ void TextEditor::ReflowPara(int paraIdx, const Paragraph& para) {
 			while(s < sEnd) {
 				INT n;
 				SIZE sz;
-				if (!GetTextExtentExPointA(hdc, s, (int)(sEnd - s), mReflowWidth, &n, NULL, &sz))
+				if (!GetTextExtentExPointW(hdc, s, (int)(sEnd - s), mReflowWidth, &n, NULL, &sz))
 					break;
 
 				if (sz.cx > mReflowWidth)
 					--n;
 
-				const char *sBreak = s + n;
+				const wchar_t *sBreak = s + n;
 
 				if (sBreak != sEnd) {
 					while(sBreak != s) {
-						const char c = sBreak[-1];
+						const wchar_t c = sBreak[-1];
 
 						if (c==' ' || c=='\t')
 							break;
@@ -2138,10 +2280,10 @@ void TextEditor::ReflowPara(int paraIdx, const Paragraph& para) {
 						sBreak = s + n;
 				}
 
-				const char *sLineEnd = sBreak;
+				const wchar_t *sLineEnd = sBreak;
 
 				while(sLineEnd != s) {
-					const char c = sLineEnd[-1];
+					const wchar_t c = sLineEnd[-1];
 
 					if (c!=' ' && c!='\t')
 						break;
@@ -2150,7 +2292,7 @@ void TextEditor::ReflowPara(int paraIdx, const Paragraph& para) {
 				}
 
 				while(sBreak != sEnd) {
-					const char c = *sBreak;
+					const wchar_t c = *sBreak;
 
 					if (c!=' ' && c!='\t')
 						break;

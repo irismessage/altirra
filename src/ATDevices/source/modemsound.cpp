@@ -321,11 +321,13 @@ void ATModemSoundEngine::SetSpeakerEnabled(bool enabled) {
 }
 
 void ATModemSoundEngine::PlayOnOffHookSound() {
-	mpAudioMixer->GetSamplePlayer().AddSound(*mpSoundGroup, 0, mpOnOffHookSource, mpOnOffHookSource, 100, 1.0f);
+	if (mpAudioMixer)
+		mpAudioMixer->GetSamplePlayer().AddSound(*mpSoundGroup, 0, mpOnOffHookSource, mpOnOffHookSource, 100, 1.0f);
 }
 
 void ATModemSoundEngine::Play1030RelaySound() {
-	mpAudioMixer->GetSamplePlayer().AddSound(*mpSoundGroup, 0, kATAudioSampleId_1030Relay, g_ATCVModem1030RelayVolume);
+	if (mpAudioMixer)
+		mpAudioMixer->GetSamplePlayer().AddSound(*mpSoundGroup, 0, kATAudioSampleId_1030Relay, g_ATCVModem1030RelayVolume);
 }
 
 void ATModemSoundEngine::PlayDialTone() {

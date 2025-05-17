@@ -111,6 +111,10 @@ public:
 		return rc;
 	}
 
+	int GetRefCount() const {
+		return mRefCount;
+	}
+
 	bool operator==(const vdrefcount&) const { return true; }
 	bool operator!=(const vdrefcount&) const { return false; }
 

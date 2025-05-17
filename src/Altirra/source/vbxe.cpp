@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/devicesnapshot.h>
 #include <at/atcore/deviceu1mb.h>
@@ -83,20 +84,20 @@ namespace {
 }
 
 // XDLC_TMON, XDLC_GMON, XDLC_HR, XDLC_LR
-const ATVBXEEmulator::OvMode ATVBXEEmulator::kOvModeTable[3][4]={
+const ATVBXEOverlayMode ATVBXEEmulator::kOvModeTable[3][4]={
 	// GTLH
-	/* 0100 */ kOvMode_80Text,
-	/* 0101 */ kOvMode_80Text,
-	/* 0110 */ kOvMode_80Text,
-	/* 0111 */ kOvMode_80Text,
-	/* 1000 */ kOvMode_SR,
-	/* 1001 */ kOvMode_HR,
-	/* 1010 */ kOvMode_LR,
-	/* 1011 */ kOvMode_Disabled,
-	/* 1100 */ kOvMode_Disabled,
-	/* 1101 */ kOvMode_Disabled,
-	/* 1110 */ kOvMode_Disabled,
-	/* 1111 */ kOvMode_Disabled,
+	/* 0100 */ ATVBXEOverlayMode::Text,
+	/* 0101 */ ATVBXEOverlayMode::Text,
+	/* 0110 */ ATVBXEOverlayMode::Text,
+	/* 0111 */ ATVBXEOverlayMode::Text,
+	/* 1000 */ ATVBXEOverlayMode::SR,
+	/* 1001 */ ATVBXEOverlayMode::HR,
+	/* 1010 */ ATVBXEOverlayMode::LR,
+	/* 1011 */ ATVBXEOverlayMode::Disabled,
+	/* 1100 */ ATVBXEOverlayMode::Disabled,
+	/* 1101 */ ATVBXEOverlayMode::Disabled,
+	/* 1110 */ ATVBXEOverlayMode::Disabled,
+	/* 1111 */ ATVBXEOverlayMode::Disabled,
 };
 
 ATVBXEEmulator::ATVBXEEmulator()
@@ -115,7 +116,7 @@ ATVBXEEmulator::ATVBXEEmulator()
 	, mbXdlActive(false)
 	, mbXdlEnabled(false)
 	, mXdlRepeatCounter(0)
-	, mOvMode(kOvMode_Disabled)
+	, mOvMode(ATVBXEOverlayMode::Disabled)
 	, mOvWidth(kOvWidth_Narrow)
 	, mbOvTrans(false)
 	, mbOvTrans15(false)
@@ -239,7 +240,7 @@ void ATVBXEEmulator::ColdReset() {
 	mXdlBaseAddr	= 0;
 	mbXdlEnabled	= false;
 	mbXdlActive		= false;
-	mOvMode			= kOvMode_Disabled;
+	mOvMode			= ATVBXEOverlayMode::Disabled;
 	mOvWidth		= kOvWidth_Normal;
 	mOvMainPriority	= 0;
 	memset(mOvPriority, 0, sizeof mOvPriority);
@@ -305,7 +306,7 @@ void ATVBXEEmulator::WarmReset() {
 
 	// Nuke current XDL processing.
 	mOvWidth = kOvWidth_Normal;
-	mOvMode = kOvMode_Disabled;
+	mOvMode = ATVBXEOverlayMode::Disabled;
 
 	UpdateMemoryMaps();
 }
@@ -455,7 +456,7 @@ void ATVBXEEmulator::DumpStatus() {
 		"High resolution",
 		"80-column text",
 	};
-	ATConsolePrintf("Overlay mode:      %s\n", kModeNames[mOvMode]);
+	ATConsolePrintf("Overlay mode:      %s\n", kModeNames[(int)mOvMode]);
 	ATConsolePrintf("Overlay address:   $%05X\n", mOvAddr & 0x7FFFF);
 	ATConsolePrintf("Overlay step:      $%03X\n", mOvStep);
 	ATConsolePrintf("Overlay priority:  $%02X | %02X %02X %02X %02X\n"
@@ -535,7 +536,7 @@ void ATVBXEEmulator::DumpXDL() {
 				"text"
 			};
 
-			ATConsolePrintf("; mode %s\n", kOvModeNames[ovMode]);
+			ATConsolePrintf("; mode %s\n", kOvModeNames[(int)ovMode]);
 		} else
 			ATConsoleWrite("; mode same\n");
 
@@ -662,6 +663,118 @@ void ATVBXEEmulator::DumpXDL() {
 			break;
 		}
 	}
+}
+
+void ATVBXEEmulator::DumpXDLHistory(ATConsoleOutput& output) {
+	output <<= "                     Overlay                Text       Attribute map";
+	output <<= "VPos     XDL    PF   Addr      Wid Md Pl Pr Char  Sc   Addr      Field Scroll";
+	//          100-101  00000  P0   00000+000 Nrw SR P0 FF 00000 00   00000+000 32x32 31,31
+	output <<= "----------------------------------------------------------------------------";
+
+	uint32 xdlLast = ~(uint32)0;
+
+	VDStringA s;
+	for(uint32 idx = 0; idx < vdcountof(mXDLHistory); ) {
+		const ATVBXEXDLHistoryEntry& xdlhe = mXDLHistory[idx];
+		if (!xdlhe.mbXdlActive) {
+			++idx;
+			continue;
+		}
+
+		uint32 idx2 = idx;
+
+		do {
+			++idx2;
+		} while(idx2 < vdcountof(mXDLHistory) && mXDLHistory[idx2] == xdlhe);
+
+		if (idx2 - idx > 1)
+			s.sprintf("%3u-%-3u", idx + 8, idx2 + 7);
+		else
+			s.sprintf("%3u    ", idx + 8);
+
+		if (xdlLast != xdlhe.mXdlAddr) {
+			s.append_sprintf(
+				"  %05X"
+				, xdlhe.mXdlAddr
+			);
+
+			xdlLast = xdlhe.mXdlAddr;
+		} else {
+			s += "  -    ";
+		}
+
+		s.append_sprintf(
+			"  P%u"
+			, xdlhe.mAttrByte >> 6
+		);
+
+		if (xdlhe.mOverlayMode != (uint8)ATVBXEOverlayMode::Disabled) {
+			static constexpr const char *kOvWidths[] {
+				"Nrw",
+				"Nor",
+				"Wid",
+				"Nrw",
+			};
+
+			static constexpr const char *kOvModes[] {
+				"LR",
+				"SR",
+				"HR",
+				"Tx",
+			};
+
+			s.append_sprintf(
+				"   %05X+%03X %s %s P%u %02X"
+				, xdlhe.mOverlayAddr
+				, xdlhe.mOverlayStep
+				, kOvWidths[xdlhe.mAttrByte & 3]
+				, kOvModes[xdlhe.mOverlayMode - 1]
+				, (xdlhe.mAttrByte >> 4) & 3
+				, xdlhe.mOvPriority
+			);
+
+			if (xdlhe.mOverlayMode == (uint8)ATVBXEOverlayMode::Text) {
+				s.append_sprintf(
+					" %05X %u%u"
+					, (uint32)xdlhe.mChBase << 11
+					, xdlhe.mOvHScroll
+					, xdlhe.mOvVScroll
+				);
+			} else {
+			//     00000 00
+			s += " -     - ";
+			}
+		} else {
+			//       00000+000 Nrw SR P0 FF 00000 00
+			s += "   -         -   -  -  -  -     - ";
+		}
+
+		if (xdlhe.mbMapEnabled) {
+			s.append_sprintf(
+				"   %05X+%03X %2ux%-2u %2u,%-2u"
+				, xdlhe.mMapAddr
+				, xdlhe.mMapStep
+				, xdlhe.mMapFieldWidth + 1
+				, xdlhe.mMapFieldHeight + 1
+				, xdlhe.mMapHScroll
+				, xdlhe.mMapVScroll
+			);
+		} else {
+			//       00000+000 31x31 31,31
+			s += "   -     -    -     -";
+		}
+
+		output <<= s.c_str();
+
+		idx = idx2;
+	}
+}
+
+const ATVBXEXDLHistoryEntry *ATVBXEEmulator::GetXDLHistory(uint32 y) const {
+	if (y >= 8 && y < 248)
+		return &mXDLHistory[y - 8];
+	else
+		return nullptr;
 }
 
 void ATVBXEEmulator::DumpBlitList(sint32 addrOpt, bool compact) {
@@ -868,15 +981,15 @@ void ATVBXEEmulator::LoadState(const IATObjectState *state) {
 
 	// reconstruct overlay mode
 	if (vstate.mIntOvMode & 0x01)
-		mOvMode = kOvMode_80Text;
+		mOvMode = ATVBXEOverlayMode::Text;
 	else if (!(vstate.mIntOvMode & 0x02))
-		mOvMode = kOvMode_Disabled;
+		mOvMode = ATVBXEOverlayMode::Disabled;
 	else if (vstate.mIntOvMode & 0x10)
-		mOvMode = kOvMode_HR;
+		mOvMode = ATVBXEOverlayMode::HR;
 	else if (vstate.mIntOvMode & 0x20)
-		mOvMode = kOvMode_LR;
+		mOvMode = ATVBXEOverlayMode::LR;
 	else
-		mOvMode = kOvMode_SR;
+		mOvMode = ATVBXEOverlayMode::SR;
 
 	if (vstate.mIntOvWidth == 2)
 		mOvWidth = kOvWidth_Wide;
@@ -1025,21 +1138,21 @@ vdrefptr<IATObjectState> ATVBXEEmulator::SaveState() const {
 
 	// convert overlay mode back to XDLC_* mode bits
 	switch(mOvMode) {
-		case kOvMode_Disabled:
+		case ATVBXEOverlayMode::Disabled:
 		default:
 			state->mIntOvMode = 0x00;
 			break;
 
-		case kOvMode_LR:
+		case ATVBXEOverlayMode::LR:
 			state->mIntOvMode = 0x22;
 			break;
-		case kOvMode_SR:
+		case ATVBXEOverlayMode::SR:
 			state->mIntOvMode = 0x02;
 			break;
-		case kOvMode_HR:
+		case ATVBXEOverlayMode::HR:
 			state->mIntOvMode = 0x12;
 			break;
-		case kOvMode_80Text:
+		case ATVBXEOverlayMode::Text:
 			state->mIntOvMode = 0x01;
 			break;
 	}
@@ -1465,7 +1578,7 @@ void ATVBXEEmulator::BeginFrame(int correctionMode, bool signedPalette) {
 	mXdlAddr = mXdlBaseAddr;
 	mXdlRepeatCounter = 1;
 	mOvWidth = kOvWidth_Normal;
-	mOvMode = kOvMode_Disabled;
+	mOvMode = ATVBXEOverlayMode::Disabled;
 
 	mpPfPalette = mPalette[0];
 	mpOvPalette = mPalette[1];
@@ -1483,9 +1596,21 @@ void ATVBXEEmulator::BeginFrame(int correctionMode, bool signedPalette) {
 
 	mOvHscroll = 0;
 	mOvVscroll = 0;
-	mOvAddr = 0;
-	mOvStep = 0;
 	mOvMainPriority = 0;		// native equiv. to $FF default
+
+	// Not reset by hardware:
+	// - overlay address, step
+	// - attribute map address, step
+	// - character base
+
+	mXDLLastHistoryEntry = {};
+	mXDLLastHistoryEntry.mMapFieldWidth = 7;
+	mXDLLastHistoryEntry.mMapFieldHeight = 7;
+	mXDLLastHistoryEntry.mAttrByte = 0x11;
+	mXDLLastHistoryEntry.mOvPriority = 0xFF;
+	mXDLLastHistoryEntry.mChBase = (uint8)(mChAddr >> 11);
+	mXDLLastHistoryEntry.mOverlayStep = mOvStep;
+	mXDLLastHistoryEntry.mMapStep = mOvStep;
 }
 
 void ATVBXEEmulator::EndFrame() {
@@ -1496,7 +1621,7 @@ void ATVBXEEmulator::EndFrame() {
 	mXdlRepeatCounter = 1;
 }
 
-void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires) {
+void ATVBXEEmulator::BeginScanline(uint32 y, uint32 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires) {
 	mpDst = dst;
 
 	mbHiresMode = hires;
@@ -1522,15 +1647,16 @@ void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const 
 		if (!mbXdlActive) {
 			mXdlRepeatCounter = 0xFFFFFFFF;
 			mbAttrMapEnabled = false;
-			mOvMode = kOvMode_Disabled;
+			mOvMode = ATVBXEOverlayMode::Disabled;
 		} else {
+			mXDLLastHistoryEntry.mXdlAddr = mXdlAddr;
 
 			uint32 xdlStart = mXdlAddr;
 			uint8 xdl1 = VBXE_FETCH(mXdlAddr++);
 			uint8 xdl2 = VBXE_FETCH(mXdlAddr++);
 
 			if (xdl1 & 4)
-				mOvMode = kOvMode_Disabled;
+				mOvMode = ATVBXEOverlayMode::Disabled;
 			else if (xdl1 & 3)
 				mOvMode = kOvModeTable[(xdl1 & 3) - 1][(xdl2 >> 4) & 3];
 
@@ -1540,6 +1666,9 @@ void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const 
 				mbAttrMapEnabled = true;
 				reloadAttrMap = true;
 			}
+
+			mXDLLastHistoryEntry.mOverlayMode = (uint8)mOvMode;
+			mXDLLastHistoryEntry.mbMapEnabled = mbAttrMapEnabled;
 
 			// XDLC_RPTL (1 byte)
 			if (xdl1 & 0x20)
@@ -1557,12 +1686,18 @@ void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const 
 
 				mOvAddr = (uint32)ov1 + ((uint32)ov2 << 8) + ((uint32)ov3 << 16);
 				mOvStep = ((uint32)step1 + ((uint32)step2 << 8)) & 0xFFF;
+
+				// overlay addr is always updated below regardless of XDL update
+				mXDLLastHistoryEntry.mOverlayStep = mOvStep;
 			}
 
 			// XDLC_OVSCRL (2 byte)
 			if (xdl1 & 0x80) {
 				mOvHscroll = VBXE_FETCH(mXdlAddr++) & 7;
 				mOvVscroll = VBXE_FETCH(mXdlAddr++) & 7;
+
+				mXDLLastHistoryEntry.mOvHScroll = mOvHscroll;
+				mXDLLastHistoryEntry.mOvVScroll = mOvVscroll;
 			}
 
 			// XDLC_CHBASE (1 byte)
@@ -1570,6 +1705,7 @@ void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const 
 				uint8 chbase = VBXE_FETCH(mXdlAddr++);
 
 				mChAddr = (uint32)chbase << 11;
+				mXDLLastHistoryEntry.mChBase = chbase;
 			}
 
 			// XDLC_MAPADR (5 byte)
@@ -1584,17 +1720,25 @@ void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const 
 				mAttrStep = ((uint32)step1 + ((uint32)step2 << 8)) & 0xFFF;
 
 				reloadAttrMap = true;
+
+				// map addr is always updated below regardless of XDL update
+				mXDLLastHistoryEntry.mMapStep = mAttrStep;
 			}
 
 			// XDLC_MAPPAR (4 byte)
 			if (xdl2 & 0x04) {
 				mAttrHscroll = VBXE_FETCH(mXdlAddr++) & 0x1F;
 				mAttrVscroll = VBXE_FETCH(mXdlAddr++) & 0x1F;
-				uint8 width = VBXE_FETCH(mXdlAddr++);
-				uint8 height = VBXE_FETCH(mXdlAddr++);
+				const uint8 widthCode = VBXE_FETCH(mXdlAddr++) & 0x1F;
+				const uint8 heightCode = VBXE_FETCH(mXdlAddr++) & 0x1F;
 
-				mAttrWidth = (width & 31) + 1;
-				mAttrHeight = (height & 31) + 1;
+				mAttrWidth = widthCode + 1;
+				mAttrHeight = heightCode + 1;
+
+				mXDLLastHistoryEntry.mMapHScroll = mAttrHscroll;
+				mXDLLastHistoryEntry.mMapHScroll = mAttrVscroll;
+				mXDLLastHistoryEntry.mMapFieldWidth = widthCode;
+				mXDLLastHistoryEntry.mMapFieldHeight = heightCode;
 			}
 
 			// XDLC_ATT (2 byte)
@@ -1609,6 +1753,9 @@ void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const 
 				mpOvPalette = mPalette[mOvPaletteIndex];
 
 				mOvMainPriority = ConvertPriorityToNative(pri);
+
+				mXDLLastHistoryEntry.mAttrByte = ctl;
+				mXDLLastHistoryEntry.mOvPriority = pri;
 			}
 
 			// XDLC_END
@@ -1623,7 +1770,7 @@ void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const 
 			// deduct XDL cycles
 			mDMACyclesXDL = (mXdlAddr - xdlStart);
 
-			if (mpTraceChannelOverlay && mOvMode) {
+			if (mpTraceChannelOverlay && mOvMode != ATVBXEOverlayMode::Disabled) {
 				static constexpr const wchar_t *kTraceOvModes[4][3]={
 					{ L"LR128", L"LR160", L"LR168" },
 					{ L"SR256", L"SR320", L"SR336" },
@@ -1632,9 +1779,17 @@ void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const 
 				};
 
 				const uint64 t = mpScheduler->GetTick64();
-				mpTraceChannelOverlay->AddTickEvent(t, t + 114 * mXdlRepeatCounter, kTraceOvModes[mOvMode - 1][mOvWidth], kATTraceColor_Default);
+				mpTraceChannelOverlay->AddTickEvent(t, t + 114 * mXdlRepeatCounter, kTraceOvModes[(int)mOvMode - 1][mOvWidth], kATTraceColor_Default);
 			}
 		}
+	}
+
+	// update XDL history
+	if (y >= 8 && y < 248) {
+		mXDLLastHistoryEntry.mbXdlActive = mbXdlActive;
+		mXDLLastHistoryEntry.mOverlayAddr = mOvAddr;
+		mXDLLastHistoryEntry.mMapAddr = mAttrAddr;
+		mXDLHistory[y - 8] = mXDLLastHistoryEntry;
 	}
 
 	// deduct attribute map cycles
@@ -1662,7 +1817,7 @@ void ATVBXEEmulator::BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const 
 		10, 18, 26
 	};
 
-	mDMACyclesOverlay = kOvCyclesPerMode[mOvMode][mOvWidth];
+	mDMACyclesOverlay = kOvCyclesPerMode[(int)mOvMode][mOvWidth];
 	mDMACyclesOverlayStart = kOvDMAStart[mOvWidth];
 
 	VDASSERT(mDMACyclesXDL + mDMACyclesOverlay + mDMACyclesAttrMap < 114 * 8);
@@ -1846,6 +2001,34 @@ void ATVBXEEmulator::RenderScanline(int xend, bool pfpmrendered) {
 	mX = x1;
 }
 
+uint32 ATVBXEEmulator::SenseScanline(int hpx1, int hpx2, const uint8 *weights) const {
+	if (!mpDst)
+		return 0;
+
+	// clip to visible range
+	int chpx1 = std::max<int>(hpx1, 68);
+	int chpx2 = std::min<int>(hpx2, 444);
+
+	if (chpx1 >= chpx2)
+		return 0;
+
+	weights += (chpx1 - hpx1);
+
+	// compute dot product against luma of pixel pairs
+	const uint32 *src = &mpDst[hpx1 * 2];
+	size_t n = (size_t)(chpx2 - chpx1);
+	uint32 sum = 0;
+
+	for(size_t i=0; i<n; ++i) {
+		uint32 luma = ((src[0] >> 24) + (src[1] >> 24) + 1) >> 1;
+		src += 2;
+
+		sum += luma * luma * (*weights++);
+	}
+
+	return sum;
+}
+
 void ATVBXEEmulator::EndScanline() {
 	if (mpDst) {
 		VDMemset32(mpDst + 444*2, mpPfPalette[mpColorTable[8]], (456 - 444) * 2);
@@ -1861,8 +2044,8 @@ void ATVBXEEmulator::EndScanline() {
 	mRegisterChanges.clear();
 
 	// update overlay address
-	if (mOvMode != kOvMode_Disabled) {
-		if (mOvMode != kOvMode_80Text || mXdlRepeatCounter == 1 || mOvTextRow == 7)
+	if (mOvMode != ATVBXEOverlayMode::Disabled) {
+		if (mOvMode != ATVBXEOverlayMode::Text || mXdlRepeatCounter == 1 || mOvTextRow == 7)
 			mOvAddr += mOvStep;
 	}
 
@@ -2932,7 +3115,7 @@ void ATVBXEEmulator::RenderOverlay(int x1, int x2) {
 		{ 44, 212 },
 	};
 
-	uint32 hscroll = mOvMode == kOvMode_80Text ? mOvHscroll : 0;
+	uint32 hscroll = mOvMode == ATVBXEOverlayMode::Text ? mOvHscroll : 0;
 	int xl = kBounds[mOvWidth][0];
 	int xr = kBounds[mOvWidth][1];
 
@@ -2959,22 +3142,22 @@ void ATVBXEEmulator::RenderOverlay(int x1, int x2) {
 
 	if (x2f > x1f) {
 		switch(mOvMode) {
-			case kOvMode_Disabled:
+			case ATVBXEOverlayMode::Disabled:
 				return;
 
-			case kOvMode_LR:
+			case ATVBXEOverlayMode::LR:
 				RenderOverlayLR(mOverlayDecode + x1f*4, x1f - xl, x2f - x1f);
 				break;
 
-			case kOvMode_SR:
+			case ATVBXEOverlayMode::SR:
 				RenderOverlaySR(mOverlayDecode + x1f*4, x1f - xl, x2f - x1f);
 				break;
 
-			case kOvMode_HR:
+			case ATVBXEOverlayMode::HR:
 				RenderOverlayHR(mOverlayDecode + x1f*4, x1f - xl, x2f - x1f);
 				break;
 
-			case kOvMode_80Text:
+			case ATVBXEOverlayMode::Text:
 				RenderOverlay80Text(mOverlayDecode + x1f*4, xl, x1f - xl, x2f - x1f);
 				break;
 		}
@@ -3000,7 +3183,7 @@ void ATVBXEEmulator::RenderOverlay(int x1, int x2) {
 	const AttrPixel *VDRESTRICT apx = &mAttrPixels[x1h];
 	const uint8 *VDRESTRICT prisrc = &mOvPriDecode[x1h * 2];
 	if (mbOvTrans) {
-		if (mOvMode == kOvMode_80Text) {
+		if (mOvMode == ATVBXEOverlayMode::Text) {
 			const uint8 *ovpri = &mOvTextTrans[x1h * 2 + hscroll];
 
 			if (mbOvTrans15) {

@@ -51,11 +51,11 @@ void ATAudioReaderWAV::Init() {
 		case VDMAKEFOURCC('R', 'I', 'F', 'F'):
 			limit = mStream.Pos() + len;
 			if (len < 4)
-				throw MyError("'%ls' is an invalid WAV file.", mStream.GetNameForError());
+				throw VDException(L"'%ls' is an invalid WAV file.", mStream.GetNameForError());
 
 			mStream.Read(hdr, 4);
 			if (hdr[0] != VDMAKEFOURCC('W', 'A', 'V', 'E'))
-				throw MyError("'%ls' is not a WAV file.", mStream.GetNameForError());
+				throw VDException(L"'%ls' is not a WAV file.", mStream.GetNameForError());
 
 			len = 0;
 			break;
@@ -74,7 +74,7 @@ void ATAudioReaderWAV::Init() {
 					|| (wf.mBlockAlign != wf.mBitsPerSample * wf.mChannels / 8)
 					|| wf.GetSamplesPerSec() < 8000)
 				{
-					throw MyError("'%ls' uses an unsupported WAV format.", mStream.GetNameForError());
+					throw VDException(L"'%ls' uses an unsupported WAV format.", mStream.GetNameForError());
 				}
 
 				mFormatInfo.mSamplesPerSec = wf.GetSamplesPerSec();
@@ -95,7 +95,7 @@ void ATAudioReaderWAV::Init() {
 	}
 
 	if (!wf.mBlockAlign || datapos < 0)
-		throw MyError("'%ls' is not a valid WAV file.", mStream.GetNameForError());
+		throw VDException(L"'%ls' is not a valid WAV file.", mStream.GetNameForError());
 
 	mStream.Seek(datapos);
 
@@ -124,10 +124,6 @@ uint64 ATAudioReaderWAV::GetDataSize() const {
 
 uint64 ATAudioReaderWAV::GetDataPos() const {
 	return mDataPos;
-}
-
-uint64 ATAudioReaderWAV::GetFrameCount() const {
-	return mFrameCount;
 }
 
 ATAudioReadFormatInfo ATAudioReaderWAV::GetFormatInfo() const {

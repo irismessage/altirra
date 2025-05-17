@@ -165,7 +165,7 @@ namespace {
 		uint32 sum = 0;
 
 		if (len >= 1024) {
-			uint32 align = ~(uint32)(uintptr)src & 15;
+			uint32 align = (0U - (uint32)(uintptr)src) & 15;
 			len -= align;
 
 			while(align--)

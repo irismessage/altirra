@@ -118,6 +118,9 @@ ATImageType ATDetectImageType(const wchar_t *imagePath, IVDRandomAccessStream& s
 	if (header[0] == 'f' && header[1] == 'L' && header[2] == 'a' && header[3] == 'C')
 		return kATImageType_Tape;
 
+	if (header[0] == 'O' && header[1] == 'g' && header[2] == 'g' && header[3] == 'S')
+		return kATImageType_Tape;
+
 	if (header[0] == 'F' && header[1] == 'U' && header[2] == 'J' && header[3] == 'I')
 		return kATImageType_Tape;
 
@@ -148,7 +151,41 @@ ATImageType ATDetectImageType(const wchar_t *imagePath, IVDRandomAccessStream& s
 	return kATImageType_None;
 }
 
+ATPairedImageType ATDetectPairedImageType(const wchar_t *imageName) {
+	VDStringSpanW imageNameSpan(imageName);
+	const auto len = imageNameSpan.size();
+
+	if (len > 9 && imageNameSpan.subspan(len - 9).comparei(L".data.cas") == 0)
+		return ATPairedImageType::TapeDataTrack;
+
+	if (len > 10 && imageNameSpan.subspan(len - 10).comparei(L".audio.ogg") == 0)
+		return ATPairedImageType::TapeAudioTrack;
+
+	return ATPairedImageType::None;
+}
+
+vdrefptr<IATImage> ATImageLoadFromFile(const wchar_t *path, ATImageLoadContext *loadCtx) {
+	VDFileStream fs(path);
+
+	vdrefptr<IATImage> image;
+	(void)ATImageLoadAuto(path, path, fs, loadCtx, nullptr, nullptr, ~image);
+
+	return image;
+}
+
 bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream, ATImageLoadContext *loadCtx, VDStringW *resultPath, bool *canUpdate, IATImage **ppImage) {
+	return ATImageLoadAuto(
+		origPath,
+		imagePath,
+		*ATVFSWrapStream(stream, imagePath),
+		loadCtx,
+		resultPath,
+		canUpdate,
+		ppImage);
+}
+
+bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, ATVFSFileView& view, ATImageLoadContext *loadCtx, VDStringW *resultPath, bool *canUpdate, IATImage **ppImage) {
+	IVDRandomAccessStream& stream = view.GetStream();
 	const wchar_t *ext = imagePath ? VDFileSplitExt(imagePath) : L"";
 
 	ATImageType loadType = kATImageType_None;
@@ -231,7 +268,8 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 
 		return ATImageLoadAuto(vfsPath.c_str(), newPath, ms, loadCtx, resultPath, nullptr, ppImage);
 	} else if (intermediateLoadType == kATImageType_Zip || intermediateLoadType == kATImageType_SaveState2) {
-		VDZipArchive ziparch;
+		vdrefptr zipview = ATVFSOpenZipArchiveFromView(view);
+		VDZipArchive& ziparch = zipview->GetZipArchive();
 
 		ziparch.Init(&stream);
 
@@ -242,7 +280,7 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 
 		for(sint32 i=0; i<n; ++i) {
 			const VDZipArchive::FileInfo& info = ziparch.GetFileInfo(i);
-			if (info.mFileName == "savestate.json") {
+			if (info.mDecodedFileName == L"savestate.json") {
 				vdrefptr<IATSaveStateImage2> saveState2;
 				
 				ATReadSaveState2(ziparch, L"savestate.json", ~saveState2);
@@ -259,44 +297,32 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 
 			for(sint32 i=0; i<n; ++i) {
 				const VDZipArchive::FileInfo& info = ziparch.GetFileInfo(i);
-				const VDStringA& name = info.mFileName;
-				const char *ext = VDFileSplitExt(name.c_str());
+				const VDStringW& name = info.mDecodedFileName;
+				const wchar_t *ext = VDFileSplitExt(name.c_str());
 
-				// Just translate A->W directly by code point. If it has loc chars, it isn't
-				// going to match anyway.
-				extBuf.clear();
-
-				for(const char *s = ext; *s; ++s) {
-					extBuf += (wchar_t)(unsigned char)*s;
-				}
-
-				auto detectedType = ATGetImageTypeForFileExtension(extBuf.c_str());
+				auto detectedType = ATGetImageTypeForFileExtension(ext);
 				if (detectedType != kATImageType_None && (!loadType || loadType == detectedType)) {
-					vdautoptr<IVDInflateStream> zs { ziparch.OpenDecodedStream(i) };
+					// if this is the audio file of a data/audio tape pair, ignore it -- we want
+					// to load the data track and have it pull in the audio track
+					if (ATDetectPairedImageType(name.c_str()) == ATPairedImageType::TapeAudioTrack)
+						continue;
 
-					vdfastvector<uint8> data;
-					data.resize(info.mUncompressedSize);
-					zs->Read(data.data(), info.mUncompressedSize);
-
-					zs->VerifyCRC();
-					zs = nullptr;
-
-					VDMemoryStream ms(data.data(), (uint32)data.size());
+					auto zipfileview = zipview->OpenStream(i);
 
 					VDStringW vfsPath;
 				
 					if (origPath)
-						vfsPath = ATMakeVFSPathForZipFile(origPath, VDTextU8ToW(name).c_str());
+						vfsPath = ATMakeVFSPathForZipFile(origPath, name.c_str());
 
 					if (canUpdate)
 						*canUpdate = false;
 
-					return ATImageLoadAuto(origPath ? vfsPath.c_str() : nullptr, VDTextU8ToW(name).c_str(), ms, loadCtx, resultPath, nullptr, ppImage);
+					return ATImageLoadAuto(origPath ? vfsPath.c_str() : nullptr, name.c_str(), *zipfileview, loadCtx, resultPath, nullptr, ppImage);
 				}
 			}
 
 			if (origPath)
-				throw MyError("The zip file \"%ls\" does not contain a recognized file type.", origPath);
+				throw VDException(L"The zip file \"%ls\" does not contain a recognized file type.", origPath);
 			else
 				throw MyError("The zip file does not contain a recognized file type.");
 		}
@@ -325,7 +351,7 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 		*ppImage = cartImage.release();
 	} else if (loadType == kATImageType_Tape) {
 		vdrefptr<IATCassetteImage> tapeImage;
-		ATLoadCassetteImage(stream, origPath, nullptr, loadCtx && loadCtx->mpCassetteLoadContext ? *loadCtx->mpCassetteLoadContext : ATCassetteLoadContext(), ~tapeImage);
+		ATLoadCassetteImage(view, nullptr, origPath, nullptr, loadCtx && loadCtx->mpCassetteLoadContext ? *loadCtx->mpCassetteLoadContext : ATCassetteLoadContext(), ~tapeImage);
 
 		*ppImage = tapeImage.release();
 	} else if (loadType == kATImageType_Disk) {
@@ -345,7 +371,7 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, IVDRando
 		*ppImage = sapImage.release();
 	} else if (loadType != kATImageType_SaveState2) {
 		if (origPath)
-			throw MyError("Unable to identify type of file: %ls.", origPath);
+			throw VDException(L"Unable to identify type of file: %ls.", origPath);
 		else
 			throw MyError("Unable to identify type of file.");
 	}

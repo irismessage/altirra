@@ -99,6 +99,9 @@
     <ClCompile Include="source\options.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\bloom.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\bicubic.h">
@@ -174,6 +177,9 @@
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\vd2\VDDisplay\internal\options.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\vd2\VDDisplay\internal\bloom.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

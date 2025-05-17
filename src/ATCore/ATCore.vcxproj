@@ -5,6 +5,7 @@
     <ClInclude Include="..\h\at\atcore\address.h" />
     <ClInclude Include="..\h\at\atcore\asyncdispatcher.h" />
     <ClInclude Include="..\h\at\atcore\asyncdispatcherimpl.h" />
+    <ClInclude Include="..\h\at\atcore\atascii.h" />
     <ClInclude Include="..\h\at\atcore\audiomixer.h" />
     <ClInclude Include="..\h\at\atcore\audiosource.h" />
     <ClInclude Include="..\h\at\atcore\blockdevice.h" />
@@ -37,6 +38,7 @@
     <ClInclude Include="..\h\at\atcore\deviceserial.h" />
     <ClInclude Include="..\h\at\atcore\devicesio.h" />
     <ClInclude Include="..\h\at\atcore\devicesioimpl.h" />
+    <ClInclude Include="..\h\at\atcore\enumutils.h" />
     <ClInclude Include="..\h\at\atcore\timerservice.h" />
     <ClInclude Include="..\h\at\atcore\deviceu1mb.h" />
     <ClInclude Include="..\h\at\atcore\devicevideo.h" />
@@ -72,6 +74,7 @@
   <ItemGroup>
     <ClCompile Include="source\address.cpp" />
     <ClCompile Include="source\asyncdispatcherimpl.cpp" />
+    <ClCompile Include="source\atascii.cpp" />
     <ClCompile Include="source\bussignal.cpp" />
     <ClCompile Include="source\checksum.cpp" />
     <ClCompile Include="source\checksum_arm64.cpp" />
@@ -86,6 +89,7 @@
     <ClCompile Include="source\devicestorageimpl.cpp" />
     <ClCompile Include="source\enumparse.cpp" />
     <ClCompile Include="source\fft.cpp" />
+    <ClCompile Include="source\fft_avx2.cpp" />
     <ClCompile Include="source\fft_neon.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='NoBuild|Win32'">true</ExcludedFromBuild>

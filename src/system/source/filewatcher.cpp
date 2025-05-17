@@ -37,7 +37,7 @@ void VDFileWatcher::Init(const wchar_t *file, IVDFileWatcherCallback *callback) 
 	mChangeHandle = FindFirstChangeNotificationW(basePath.c_str(), FALSE, FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE);
 
 	if (mChangeHandle == INVALID_HANDLE_VALUE)
-		throw MyError("Unable to monitor file: %ls", file);
+		throw VDException(L"Unable to monitor file: %ls", file);
 
 	mPath = file;
 	mLastWriteTime = VDFileGetLastWriteTime(mPath.c_str());
@@ -72,7 +72,7 @@ void VDFileWatcher::InitDir(const wchar_t *path, bool subdirs, IVDFileWatcherCal
 	mChangeHandle = FindFirstChangeNotificationW(path, subdirs, flags);
 
 	if (mChangeHandle == INVALID_HANDLE_VALUE)
-		throw MyError("Unable to monitor path: %ls", path);
+		throw VDException(L"Unable to monitor path: %ls", path);
 
 	mPath = path;
 	mpCB = callback;

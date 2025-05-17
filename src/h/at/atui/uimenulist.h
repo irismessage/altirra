@@ -31,8 +31,6 @@ struct ATUIMenuItem {
 	}
 };
 
-VDMOVE_CAPABLE(ATUIMenuItem);
-
 class ATUIMenu : public vdrefcount {
 public:
 	void AddItem(const ATUIMenuItem& item) { mItems.push_back(item); }

@@ -94,6 +94,9 @@ static constexpr const char *kATFirmwareTypeNames[]={
 	"1030irom",
 	"1030xrom",
 	"835",
+	"820",
+	"1025",
+	"1029",
 };
 
 VDASSERTCT(vdcountof(kATFirmwareTypeNames) == kATFirmwareTypeCount);
@@ -799,6 +802,8 @@ void ATFirmwareManager::GetVFSSpecialFirmware(const wchar_t *path, bool write, b
 		void SetFileName(const wchar_t *name) {
 			mFileName = name;
 		}
+
+		bool IsSourceReadOnly() const override { return true; }
 
 		vdfastvector<uint8> mBuf;
 		VDMemoryStream mMemStream { nullptr, 0 };

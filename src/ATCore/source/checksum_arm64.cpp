@@ -28,13 +28,14 @@
 #include <at/atcore/internal/checksum.h>
 #include <intrin.h>
 #include <windows.h>
+#include <arm_neon.h>
 
 void ATChecksumUpdateSHA256_NEON(ATChecksumStateSHA256& VDRESTRICT state, const void* src, size_t numBlocks) {
 	using namespace nsATChecksum;
 
 	alignas(16) uint32 W[64];
 
-	const char* VDRESTRICT src2 = (const char*)src;
+	const unsigned char* VDRESTRICT src2 = (const unsigned char*)src;
 
 	while(numBlocks--) {
 		uint32x4_t v0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(src2     )));
@@ -202,10 +203,11 @@ void ATChecksumUpdateSHA256_Crypto(ATChecksumStateSHA256& VDRESTRICT state, cons
 
 #else
 
+VD_CPU_TARGET("sha2")
 void ATChecksumUpdateSHA256_Crypto(ATChecksumStateSHA256& VDRESTRICT state, const void* src, size_t numBlocks) {
 	using namespace nsATChecksum;
 
-	const char* VDRESTRICT src2 = (const char*)src;
+	const unsigned char* VDRESTRICT src2 = (const unsigned char*)src;
 
 	uint32x4_t state0 = vld1q_u32(&state.H[0]);
 	uint32x4_t state1 = vld1q_u32(&state.H[4]);

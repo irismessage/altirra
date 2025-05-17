@@ -573,7 +573,7 @@ void ATLoadSymbolsFromMADSListing(ATSymbolStore& symstore, VDTextStream& ifile) 
 
 	vdfastvector<ATSymbolStore::Symbol> symbols;
 	vdfastvector<ATSymbolStore::Directive> directives;
-	vdfastvector<std::tuple<uint16, uint32, uint32>> lines;		// file/line/offset
+	vdvector<std::tuple<uint16, uint32, uint32>> lines;		// file/line/offset
 
 	while(const char *line = ifile.GetNextLine()) {
 		char space0;

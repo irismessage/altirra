@@ -416,7 +416,7 @@ uint32 ATDiskInterface::GetSectorPhantomCount(uint16 sector) const {
 	return vsi.mNumPhysSectors;
 }
 
-bool ATDiskInterface::GetSectorInfo(uint16 sector, int phantomIdx, SectorInfo& info) const {
+bool ATDiskInterface::GetSectorInfo(uint16 sector, int phantomIdx, ATDiskPhysicalSectorInfo& info) const {
 	if (!mpDiskImage)
 		return false;
 
@@ -429,11 +429,7 @@ bool ATDiskInterface::GetSectorInfo(uint16 sector, int phantomIdx, SectorInfo& i
 	if (phantomIdx < 0 || (uint32)phantomIdx >= vsi.mNumPhysSectors)
 		return false;
 
-	ATDiskPhysicalSectorInfo psi;
-	mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector + phantomIdx, psi);
-
-	info.mRotPos = psi.mRotPos;
-	info.mFDCStatus = psi.mFDCStatus;
+	mpDiskImage->GetPhysicalSectorInfo(vsi.mStartPhysSector + phantomIdx, info);
 	return true;
 }
 
@@ -520,7 +516,7 @@ void ATDiskInterface::Flush(bool ignoreAutoFlush, bool rethrowErrors) {
 		if (rethrowErrors)
 			throw;
 		else if (mpUIRenderer) {
-			VDStringW msg = VDTextAToW(e.c_str());
+			VDStringW msg(e.wc_str());
 
 			for(wchar_t& c : msg) {
 				if (c == L'\n')

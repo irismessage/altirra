@@ -200,6 +200,11 @@ private:
 		uint8 mFetchHposEnd = 0;
 		uint8 mCellWidth = 0;
 		uint8 mCellToHRPixelShift = 0;
+		uint8 mByteToHRPixelShift = 0;
+
+		bool IsBlank() const {
+			return mMode >= 2;
+		}
 
 		bool IsTextMode() const {
 			return (mMode == 2 || mMode == 3 || mMode == 6 || mMode == 7);
@@ -311,9 +316,6 @@ private:
 	vdfastvector<ActiveKey> mActiveKeys;
 	uint32 mActiveSpecialVKeys[kATUIKeyScanCodeLast + 1 - kATUIKeyScanCodeFirst] = {};
 	uint32 mActiveSpecialScanCodes[kATUIKeyScanCodeLast + 1 - kATUIKeyScanCodeFirst] = {};
-
-	struct ATASCIIDecodeTabs;
-	static const ATASCIIDecodeTabs kATASCIIDecodeTabs;
 };
 
 #endif

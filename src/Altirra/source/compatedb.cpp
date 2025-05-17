@@ -223,7 +223,7 @@ void ATLoadCompatEDB(const wchar_t *path, ATCompatEDB& edb) {
 			}
 		}
 	} catch(const VDParseException&) {
-		throw MyError("\"%ls\" is not a valid compatibility database.", path);
+		throw VDException(L"\"%ls\" is not a valid compatibility database.", path);
 	}
 }
 

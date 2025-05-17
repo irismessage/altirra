@@ -11,6 +11,11 @@ public:
 
 	self_type	operator-() const					{ const self_type a = {-x, -y}; return a; }
 
+	self_type	operator+(int v) const				{ return self_type {x+v, y+v}; }
+	self_type	operator-(int v) const				{ return self_type {x+v, y+v}; }
+	self_type	operator<<(int v) const				{ return self_type {x<<v, y<<v}; }
+	self_type	operator>>(int v) const				{ return self_type {x>>v, y>>v}; }
+
 	self_type	operator+(const self_type& r) const	{ const self_type a = {x+r.x, y+r.y}; return a; }
 	self_type	operator-(const self_type& r) const	{ const self_type a = {x-r.x, y-r.y}; return a; }
 

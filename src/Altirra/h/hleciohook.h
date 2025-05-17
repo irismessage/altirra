@@ -20,8 +20,15 @@
 
 #include <vd2/system/unknown.h>
 
+class ATCPUEmulator;
+class ATMemoryManager;
+class ATSimulator;
+class IATDeviceCIOManager;
+
 class IATHLECIOHook : public IVDUnknown {
 public:
+	virtual IATDeviceCIOManager *AsDeviceCIOManager() = 0;
+
 	virtual bool GetBurstTransfersEnabled() const = 0;
 	virtual void SetBurstTransfersEnabled(bool enabled) = 0;
 
@@ -30,9 +37,14 @@ public:
 	virtual void SetCIOPatchEnabled(char c, bool enabled) = 0;
 
 	virtual void ReinitHooks(uint8 hookPage) = 0;
+
+	virtual void SetPBIHookEnabled(bool enabled) = 0;
+	virtual void TryAccelPBIRequest(uint8 entryPointIndex) = 0;
 };
 
 IATHLECIOHook *ATCreateHLECIOHook(ATCPUEmulator *cpu, ATSimulator *sim, ATMemoryManager *memmgr);
 void ATDestroyHLECIOHook(IATHLECIOHook *hook);
+
+IATHLECIOHook *ATGetHLECIOHook(IATDeviceCIOManager *mgr);
 
 #endif	// f_AT_HLECIOHOOK_H

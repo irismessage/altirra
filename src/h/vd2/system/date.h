@@ -30,16 +30,62 @@
 
 class VDStringW;
 
+template<typename T> static constexpr T kVDDateTicksToSeconds = T(0.0000001);
+template<typename T> static constexpr T kVDDateSecondsToTicks = T(10000000.0);
+
+struct VDDateInterval {
+	int64 mDeltaTicks;
+
+	constexpr VDDateInterval operator+() const { return *this; }
+	constexpr VDDateInterval operator-() const { return VDDateInterval { -mDeltaTicks }; }
+
+	constexpr bool operator==(const VDDateInterval& x) const = default;
+	constexpr bool operator< (const VDDateInterval& x) const { return mDeltaTicks <  x.mDeltaTicks; }
+	constexpr bool operator> (const VDDateInterval& x) const { return mDeltaTicks >  x.mDeltaTicks; }
+	constexpr bool operator<=(const VDDateInterval& x) const { return mDeltaTicks <= x.mDeltaTicks; }
+	constexpr bool operator>=(const VDDateInterval& x) const { return mDeltaTicks >= x.mDeltaTicks; }
+
+	constexpr VDDateInterval Abs() const {
+		return VDDateInterval { mDeltaTicks < 0 ? -mDeltaTicks : mDeltaTicks };
+	}
+
+	static constexpr VDDateInterval FromSeconds(float f) {
+		if (std::is_constant_evaluated())
+			return VDDateInterval{ (int64)(f < 0 ? f * kVDDateSecondsToTicks<float> - 0.5f : f * kVDDateSecondsToTicks<float> + 0.5f) };
+		else
+			return VDDateInterval{ (int64)llrintf(f * kVDDateSecondsToTicks<float>) };
+	}
+
+	constexpr float ToSeconds() const {
+		return kVDDateTicksToSeconds<float> * (float)mDeltaTicks;
+	}
+};
+
 struct VDDate {
 	uint64	mTicks;
 
-	bool operator==(const VDDate& x) const { return mTicks == x.mTicks; }
-	bool operator!=(const VDDate& x) const { return mTicks != x.mTicks; }
-	bool operator< (const VDDate& x) const { return mTicks <  x.mTicks; }
-	bool operator> (const VDDate& x) const { return mTicks >  x.mTicks; }
-	bool operator<=(const VDDate& x) const { return mTicks <= x.mTicks; }
-	bool operator>=(const VDDate& x) const { return mTicks >= x.mTicks; }
+	constexpr bool operator==(const VDDate& x) const = default;
+	constexpr bool operator< (const VDDate& x) const { return mTicks <  x.mTicks; }
+	constexpr bool operator> (const VDDate& x) const { return mTicks >  x.mTicks; }
+	constexpr bool operator<=(const VDDate& x) const { return mTicks <= x.mTicks; }
+	constexpr bool operator>=(const VDDate& x) const { return mTicks >= x.mTicks; }
+
+	constexpr VDDateInterval operator-(const VDDate& x) const {
+		return VDDateInterval{ (int64)mTicks - (int64)x.mTicks };
+	};
+
+	constexpr VDDate operator+(const VDDateInterval& x) const {
+		return VDDate { mTicks + x.mDeltaTicks };
+	}
+
+	constexpr VDDate operator-(const VDDateInterval& x) const {
+		return VDDate { mTicks - x.mDeltaTicks };
+	}
 };
+
+constexpr VDDate operator+(const VDDateInterval& x, const VDDate& y) {
+	return VDDate { x.mDeltaTicks + y.mTicks };
+}
 
 // Calendar-based date expansion. This is currently modeled after Win32
 // SYSTEMTIME.

@@ -608,6 +608,26 @@ void ATHistoryTranslateInsn8048(ATHistoryTraceInsn *dst, const ATCPUHistoryEntry
 	}
 }
 
+void ATHistoryTranslateInsn8051(ATHistoryTraceInsn *dst, const ATCPUHistoryEntry *const *hep, uint32 n) {
+	while(n--) {
+		const ATCPUHistoryEntry *he = *hep++;
+		dst->mPC = he->mPC;
+		dst->mbInterrupt = he->mbIRQ != he->mbNMI;
+		dst->mbCall = false;
+		dst->mS = ~he->mS;
+		dst->mOpcode = he->mOpcode[0];
+		dst->mPushCount = 0;
+
+		switch(he->mOpcode[0]) {
+			case 0xC0:	// PUSH direct
+				dst->mPushCount = 1;
+				break;
+		}
+
+		++dst;
+	}
+}
+
 void ATHistoryTranslateInsn6809(ATHistoryTraceInsn *dst, const ATCPUHistoryEntry *const *hep, uint32 n) {
 	while(n--) {
 		const ATCPUHistoryEntry *he = *hep++;
@@ -666,6 +686,9 @@ ATHistoryTranslateInsnFn ATHistoryGetTranslateInsnFn(ATDebugDisasmMode dmode) {
 
 		case kATDebugDisasmMode_8048:
 			return ATHistoryTranslateInsn8048;
+
+		case kATDebugDisasmMode_8051:
+			return ATHistoryTranslateInsn8051;
 
 		case kATDebugDisasmMode_6809:
 			return ATHistoryTranslateInsn6809;

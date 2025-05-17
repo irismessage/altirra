@@ -15,6 +15,8 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+#include <windows.h>
+#include <commctrl.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/messageloop.h>
 #include <at/atcore/configvar.h>
@@ -137,6 +139,18 @@ private:
 	bool PreNCDestroy();
 	void OnItemDoubleClicked();
 
+	static LRESULT CALLBACK StaticViewSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR id, DWORD_PTR thisPtr);
+	LRESULT ViewSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+	VarItem *GetVarItem(const POINT& pt, sint32& index);
+
+	bool mbDragging = false;
+	float mDragOriginX = 0;
+	float mDragOriginValue = 0;
+	float mDragValuePerX = 0;
+	sint32 mDragItemIndex = 0;
+	vdrefptr<VarItem> mpDragItem;
+
 	VDUIProxyListView mVarsView;
 
 	static ATUIDialogAdvancedConfiguration *spModelessInstance;
@@ -222,6 +236,15 @@ bool ATUIDialogAdvancedConfiguration::OnLoaded() {
 
 	AddProxy(&mVarsView, IDC_VARS);
 
+	if (mVarsView.GetWindowHandle()) {
+		SetWindowSubclass(
+			mVarsView.GetWindowHandle(),
+			StaticViewSubclassProc,
+			0,
+			(DWORD_PTR)this
+		);
+	}
+
 	mResizer.Add(mVarsView.GetHandle(), mResizer.kMC);
 
 	mVarsView.InsertColumn(0, L"Name", GetClientSize().w * 2 / 3);
@@ -263,6 +286,9 @@ void ATUIDialogAdvancedConfiguration::OnDestroy() {
 		ATUIUnregisterModelessDialog(mhwnd);
 	}
 
+	if (HWND hwndView = mVarsView.GetWindowHandle())
+		RemoveWindowSubclass(hwndView, StaticViewSubclassProc, 0);
+
 	VDDialogFrameW32::OnDestroy();
 }
 
@@ -302,6 +328,97 @@ void ATUIDialogAdvancedConfiguration::OnItemDoubleClicked() {
 			mVarsView.DeleteItem(mVarsView.GetSelectedIndex());
 		}
 	}
+}
+
+LRESULT CALLBACK ATUIDialogAdvancedConfiguration::StaticViewSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR id, DWORD_PTR thisPtr) {
+	return ((ATUIDialogAdvancedConfiguration *)thisPtr)->ViewSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+LRESULT ATUIDialogAdvancedConfiguration::ViewSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+	switch(msg) {
+		case WM_SETCURSOR: {
+			POINT pt {};
+
+			if (mbDragging) {
+				SetCursor(LoadCursor(NULL, IDC_SIZEWE));
+				return TRUE;
+			} else if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
+				sint32 index;
+				VarItem *item = GetVarItem(pt, index);
+				if (item && item->mpVar && item->mpVar->GetVarType() == ATConfigVarType::Float) {
+					SetCursor(LoadCursor(NULL, IDC_SIZEWE));
+					return TRUE;
+				}
+			}
+			break;
+		}
+
+		case WM_LBUTTONDOWN: {
+			POINT pt { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+			sint32 index;
+			VarItem *item = GetVarItem(pt, index);
+
+			if (item && item->mpVar && item->mpVar->GetVarType() == ATConfigVarType::Float) {
+				sint32 colWidth = ListView_GetColumnWidth(hwnd, 1);
+
+				if (colWidth > 0) {
+					mbDragging = true;
+					mpDragItem = item;
+					mDragItemIndex = index;
+					mDragOriginX = pt.x;
+					mDragOriginValue = *static_cast<ATConfigVarFloat *>(item->mpVar);
+					mDragValuePerX = 1.0f / (float)colWidth;
+
+					mVarsView.SetSelectedIndex(index);
+
+					::SetCapture(hwnd);
+					return 0;
+				}
+			}
+			break;
+		}
+
+		case WM_LBUTTONUP:
+			if (mbDragging) {
+				::ReleaseCapture();
+				mbDragging = false;
+				mpDragItem = nullptr;
+			}
+			break;
+
+		case WM_MOUSEMOVE:
+			if (mbDragging) {
+				sint32 x = (short)LOWORD(lParam);
+
+				float value = mDragOriginValue + (x - mDragOriginX) * mDragValuePerX;
+
+				*static_cast<ATConfigVarFloat *>(mpDragItem->mpVar) = value;
+				mpDragItem->ReadValue();
+				mVarsView.RefreshItem(mDragItemIndex);
+			}
+			break;
+
+		case WM_CAPTURECHANGED:
+			mbDragging = false;
+			mpDragItem = nullptr;
+			break;
+	}
+
+	return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+ATUIDialogAdvancedConfiguration::VarItem *ATUIDialogAdvancedConfiguration::GetVarItem(const POINT& pt, sint32& index) {
+	LVHITTESTINFO htinfo {};
+	htinfo.pt = pt;
+
+	SendMessage(mVarsView.GetWindowHandle(), LVM_SUBITEMHITTEST, 0, (LPARAM)&htinfo);
+
+	index = htinfo.iItem;
+
+	if (htinfo.iSubItem != 1)
+		return nullptr;
+
+	return static_cast<VarItem *>(mVarsView.GetVirtualItem(htinfo.iItem));
 }
 
 ////////////////////////////////////////////////////////////////////////////////

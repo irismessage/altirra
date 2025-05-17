@@ -70,7 +70,9 @@ AT_DECLARE_ENUM_TABLE(ATLumaRampMode);
 enum class ATColorMatchingMode : uint8 {
 	None,
 	SRGB,
-	AdobeRGB
+	AdobeRGB,
+	Gamma22,
+	Gamma24,
 };
 
 AT_DECLARE_ENUM_TABLE(ATColorMatchingMode);
@@ -122,7 +124,6 @@ struct ATArtifactingParams {
 
 	bool mbEnableBloom;
 	bool mbBloomScanlineCompensation;
-	float mBloomThreshold;
 	float mBloomRadius;
 	float mBloomDirectIntensity;
 	float mBloomIndirectIntensity;
@@ -164,6 +165,13 @@ enum class ATVideoFieldPolarity : uint8 {
 	Upper,
 	Lower
 };
+
+enum class ATVideoDeinterlaceMode : uint8 {
+	None,
+	AdaptiveBob,
+};
+
+AT_DECLARE_ENUM_TABLE(ATVideoDeinterlaceMode);
 
 struct ATVideoFrameProperties {
 	ATArtifactMode mArtifactMode;
@@ -207,8 +215,11 @@ struct ATVideoFrameProperties {
 	// is in use. For 32-bit RGB (false), the framebuffer is used directly.
 	bool mbSoftPostProcess8;
 
+	bool mbSoftBlending;
+	bool mbSoftBlendingMonoPersistence;
 	bool mbSoftScanlines;
 	bool mbSoftOutputCorrection;
+	bool mbSoftDeinterlace;
 
 	bool mbAccelPostProcess;
 	bool mbAccelScanlines;
@@ -230,6 +241,11 @@ struct ATGTIAColorTrace {
 	uint8	mColors[240][9];
 };
 
+class ATGTIALightSensor {
+protected:
+	~ATGTIALightSensor() = default;
+};
+
 class ATGTIAEmulator final {
 	ATGTIAEmulator(const ATGTIAEmulator&);
 	ATGTIAEmulator& operator=(const ATGTIAEmulator&);
@@ -240,6 +256,7 @@ public:
 	void Init(IATGTIAEmulatorConnections *);
 	void ColdReset();
 
+	ATVBXEEmulator *GetVBXE() const { return mpVBXE; }
 	void SetVBXE(ATVBXEEmulator *);
 	void SetUIRenderer(IATUIRenderer *);
 	
@@ -372,6 +389,9 @@ public:
 	bool IsPALMode() const { return mbPALMode; }
 	void SetPALMode(bool enabled);
 
+	int GetPALPhase() const { return mPALPhase; }
+	void SetPALPhase(int phase);
+
 	// Query/set whether the video standard is SECAM.
 	bool IsSECAMMode() const { return mbSECAMMode; }
 	void SetSECAMMode(bool enabled);
@@ -382,11 +402,17 @@ public:
 	bool IsBlendModeEnabled() const { return mbBlendMode; }
 	void SetBlendModeEnabled(bool enable) { mbBlendMode = enable; }
 
+	bool IsBlendMonoPersistenceEnabled() const { return mbBlendMonoPersistence; }
+	void SetBlendMonoPersistenceEnabled(bool enable) { mbBlendMonoPersistence = enable; }
+
 	bool IsLinearBlendEnabled() const { return mbBlendLinear; }
 	void SetLinearBlendEnabled(bool enable) { mbBlendLinear = enable; }
 
 	bool IsInterlaceEnabled() const { return mbInterlaceEnabled; }
 	void SetInterlaceEnabled(bool enable) { mbInterlaceEnabled = enable; }
+
+	ATVideoDeinterlaceMode GetDeinterlaceMode() const { return mDeinterlaceMode; }
+	void SetDeinterlaceMode(ATVideoDeinterlaceMode mode) { mDeinterlaceMode = mode; }
 
 	bool AreScanlinesEnabled() const { return mbScanlinesEnabled; }
 	void SetScanlinesEnabled(bool enable) { mbScanlinesEnabled = enable; }
@@ -395,6 +421,7 @@ public:
 	void SetAccelScreenFXEnabled(bool enabled) { mbAccelScreenFX = enabled; }
 
 	void SetConsoleSwitch(uint8 c, bool down);
+	uint8 ReadConsoleSwitchInputs() const;
 	uint8 ReadConsoleSwitches() const;
 
 	uint8 GetForcedConsoleSwitches() const { return mForcedSwitchInput; }
@@ -420,6 +447,7 @@ public:
 
 	bool IsLastFrameBufferAvailable() const;
 	bool GetLastFrameBuffer(VDPixmapBuffer& pxbuf, VDPixmap& px) const;
+	bool GetLastFrameBufferRaw(VDPixmapBuffer& pxbuf, VDPixmap& px, float& par) const;
 
 	uint32 GetBackgroundColor24() const { return mPalette[mPFBAK]; }
 	uint32 GetPlayfieldColor24(int index) const { return mPalette[mPFColor[index]]; }
@@ -478,6 +506,10 @@ public:
 	uint8 ReadByte(uint8 reg);
 	void WriteByte(uint8 reg, uint8 value);
 
+	ATGTIALightSensor *RegisterLightSensor(int hrPxWidth, int hrPxHeight, const uint8 *weights, float lightThreshold, vdfunction<void(int)> triggerFn);
+	void SetLightSensorPosition(ATGTIALightSensor *sensor, int hrPxX, int hrPxY);
+	void UnregisterLightSensor(ATGTIALightSensor *sensor);
+
 protected:
 	struct RegisterChange {
 		sint16 mPos;
@@ -530,6 +562,8 @@ protected:
 	VerticalOverscanMode DeriveVerticalOverscanMode() const;
 
 	void SetFrameProperties();
+	void ResetLightSensors();
+	void ProcessLightSensors();
 
 	// critical variables - sync
 	IATGTIAEmulatorConnections *mpConn; 
@@ -565,9 +599,12 @@ protected:
 	bool	mbVsyncAdaptiveEnabled = false;
 	sint32	mDisplayLagCounter = 0;
 	ATMonitorMode	mMonitorMode = ATMonitorMode::Color;
+	ATVideoDeinterlaceMode mDeinterlaceMode = ATVideoDeinterlaceMode::None;
 	bool	mbBlendMode = false;
 	bool	mbBlendModeLastFrame = false;
+	bool	mbBlendModeLastFrameMonoPersistence = false;
 	bool	mbBlendLinear = true;				// frame blending operates in linear color
+	bool	mbBlendMonoPersistence = false;
 	bool	mbFrameCopiedFromPrev = false;
 	bool	mbOverscanPALExtended = false;
 	bool	mbInterlaceEnabled = false;
@@ -621,6 +658,14 @@ protected:
 	bool	mbPALMode;
 	bool	mbSECAMMode;
 	bool	mbForcedBorder;
+	int		mPALPhase = 0;
+
+	struct LightSensor {
+		vdrect32 mHrPixelArea {};
+		class ATGTIALightSensorImpl *mpSensor = nullptr;
+	};
+
+	vdvector<LightSensor> mLightSensors;
 
 	VDALIGN(16)	uint8	mMergeBuffer[228+12];
 	VDALIGN(16)	uint8	mAnticData[228+12];
@@ -631,6 +676,9 @@ protected:
 	ATColorParams mActiveColorParams;
 	ATColorSettings mColorSettings;
 	float mColorMatchingMatrix[3][3];
+
+	// output gamma, e.g. 2.2 or 2.4, or 0 for sRGB EOTF
+	float mOutputGamma = 0;
 
 	vdfastvector<uint8, vdaligned_alloc<uint8> > mPreArtifactFrameBuffer;
 	VDPixmap	mPreArtifactFrame;

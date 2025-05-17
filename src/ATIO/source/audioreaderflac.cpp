@@ -293,10 +293,6 @@ uint64 ATAudioReaderFLAC::GetDataPos() const {
 	return mBasePos + mPos;
 }
 
-uint64 ATAudioReaderFLAC::GetFrameCount() const {
-	return mSampleCount;
-}
-
 ATAudioReadFormatInfo ATAudioReaderFLAC::GetFormatInfo() const {
 	ATAudioReadFormatInfo info {};
 

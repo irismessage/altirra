@@ -48,7 +48,8 @@ enum ATCassetteTurboMode : uint8 {
 	kATCassetteTurboMode_CommandControl,		// SIO command asserted enables turbo
 	kATCassetteTurboMode_ProceedSense,			// Turbo is always enabled in parallel, sensed by SIO proceed
 	kATCassetteTurboMode_InterruptSense,		// Turbo is always enabled in parallel, sensed by SIO interrupt
-	kATCassetteTurboMode_KSOTurbo2000,			// Turbo is always enabled in parallel, sensed by joystick port
+	kATCassetteTurboMode_KSOTurbo2000,			// Turbo is always enabled in parallel, sensed by joystick port 2 (PA7); motor PA6
+	kATCassetteTurboMode_TurboD,				// Turbo is always enabled in parallel, sensed by joystick port 2 (PA4); motor conventional
 	kATCassetteTurboMode_DataControl,			// SIO data output low enables turbo
 	kATCassetteTurboMode_Always					// Turbo always enabled
 };
@@ -126,6 +127,14 @@ public:
 
 	ATCassetteTurboDecodeAlgorithm GetTurboDecodeAlgorithm() const { return mTurboDecodeAlgorithm; }
 	void SetTurboDecodeAlgorithm(ATCassetteTurboDecodeAlgorithm algorithm) { mTurboDecodeAlgorithm = algorithm; }
+
+	bool GetFSKSpeedCompensationEnabled() const { return mbFSKSpeedCompensation; }
+	void SetFSKSpeedCompensationEnabled(bool enabled) { mbFSKSpeedCompensation = enabled; }
+
+	bool GetCrosstalkReductionEnabled() const { return mbCrosstalkReduction; }
+	void SetCrosstalkReductionEnabled(bool enabled) { mbCrosstalkReduction = enabled; }
+
+	void GetLoadOptions(ATCassetteLoadContext& ctx) const;
 
 	ATCassetteDirectSenseMode GetDirectSenseMode() const { return mDirectSenseMode; }
 	void SetDirectSenseMode(ATCassetteDirectSenseMode mode);
@@ -309,6 +318,9 @@ private:
 	bool	mbTurboProceedAsserted = false;
 	bool	mbTurboInterruptAsserted = false;
 	ATCassetteTurboDecodeAlgorithm mTurboDecodeAlgorithm {};
+
+	bool	mbFSKSpeedCompensation = false;
+	bool	mbCrosstalkReduction = false;
 
 	struct AudioEvent {
 		uint64	mStartTime64;

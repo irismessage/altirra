@@ -145,7 +145,8 @@ half4 FP_ScreenFX(
 	uniform bool doSharp,
 	uniform bool doScanlines,
 	uniform bool doGammaCorrection,
-	uniform bool doColorCorrection)
+	uniform bool doColorCorrection,
+	uniform bool doColorCorrectionSRGB)
 {
 	half3 c;
 
@@ -174,7 +175,12 @@ half4 FP_ScreenFX(
 
 		c = max(0, c * colorCorrectMatrix1.w + colorCorrectMatrix0.w);
 
-		if (doGammaCorrection) {
+		// In most cases, we should be using a 2.2 curve here. However, the exception is when
+		// doing linear/HDR rendering with no actual color correction matrix; in that case
+		// we enter this code path specifically to do gamma-to-linear conversion and should
+		// invert the sRGB EOTF instead.
+
+		if (!doColorCorrectionSRGB) {
 			c.r = pow(c.r, 2.2h);
 			c.g = pow(c.g, 2.2h);
 			c.b = pow(c.b, 2.2h);
@@ -217,23 +223,27 @@ half4 FP_ScreenFX(
 	return half4(c, 1);
 }
 
-half4 FP_ScreenFX_PtLinear_NoScanlines_Linear (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          false, false, false, false); }
-half4 FP_ScreenFX_PtLinear_NoScanlines_Gamma  (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          false, false, true,  false); }
-half4 FP_ScreenFX_PtLinear_NoScanlines_CC     (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          false, false, false, true ); }
-half4 FP_ScreenFX_PtLinear_NoScanlines_GammaCC(float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          false, false, true,  true ); }
-half4 FP_ScreenFX_Sharp_NoScanlines_Linear    (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          true,  false, false, false); }
-half4 FP_ScreenFX_Sharp_NoScanlines_Gamma     (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          true,  false, true,  false); }
-half4 FP_ScreenFX_Sharp_NoScanlines_CC        (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          true,  false, false, true ); }
-half4 FP_ScreenFX_Sharp_NoScanlines_GammaCC   (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          true,  false, true,  true ); }
+half4 FP_ScreenFX_PtLinear_NoScanlines_Linear    (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          false, false, false, false, false); }
+half4 FP_ScreenFX_PtLinear_NoScanlines_Gamma     (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          false, false, true,  false, false); }
+half4 FP_ScreenFX_PtLinear_NoScanlines_CC_SRGB   (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          false, false, false, true , true ); }
+half4 FP_ScreenFX_PtLinear_NoScanlines_CC_Gamma22(float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          false, false, false, true , false); }
+half4 FP_ScreenFX_PtLinear_NoScanlines_GammaCC   (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          false, false, true,  true , false); }
+half4 FP_ScreenFX_Sharp_NoScanlines_Linear       (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          true,  false, false, false, false); }
+half4 FP_ScreenFX_Sharp_NoScanlines_Gamma        (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          true,  false, true,  false, false); }
+half4 FP_ScreenFX_Sharp_NoScanlines_CC_SRGB      (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          true,  false, false, true , true ); }
+half4 FP_ScreenFX_Sharp_NoScanlines_CC_Gamma22   (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          true,  false, false, true , false); }
+half4 FP_ScreenFX_Sharp_NoScanlines_GammaCC      (float4 pos : SV_Position, float2 uv0 : TEXCOORD0                               ) : SV_Target0 { return FP_ScreenFX(pos, uv0, 0,          true,  false, true,  true , false); }
 
-half4 FP_ScreenFX_PtLinear_Scanlines_Linear   (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, false, true,  false, false); }
-half4 FP_ScreenFX_PtLinear_Scanlines_Gamma    (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, false, true,  true,  false); }
-half4 FP_ScreenFX_PtLinear_Scanlines_CC       (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, false, true,  false, true ); }
-half4 FP_ScreenFX_PtLinear_Scanlines_GammaCC  (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, false, true,  true,  true ); }
-half4 FP_ScreenFX_Sharp_Scanlines_Linear      (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, true,  true,  false, false); }
-half4 FP_ScreenFX_Sharp_Scanlines_Gamma       (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, true,  true,  true,  false); }
-half4 FP_ScreenFX_Sharp_Scanlines_CC          (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, true,  true,  false, true ); }
-half4 FP_ScreenFX_Sharp_Scanlines_GammaCC     (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, true,  true,  true,  true ); }
+half4 FP_ScreenFX_PtLinear_Scanlines_Linear    (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, false, true,  false, false, false); }
+half4 FP_ScreenFX_PtLinear_Scanlines_Gamma     (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, false, true,  true,  false, false); }
+half4 FP_ScreenFX_PtLinear_Scanlines_CC_SRGB   (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, false, true,  false, true , true ); }
+half4 FP_ScreenFX_PtLinear_Scanlines_CC_Gamma22(float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, false, true,  false, true , false); }
+half4 FP_ScreenFX_PtLinear_Scanlines_GammaCC   (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, false, true,  true,  true , false); }
+half4 FP_ScreenFX_Sharp_Scanlines_Linear       (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, true,  true,  false, false, false); }
+half4 FP_ScreenFX_Sharp_Scanlines_Gamma        (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, true,  true,  true,  false, false); }
+half4 FP_ScreenFX_Sharp_Scanlines_CC_SRGB      (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, true,  true,  false, true , true ); }
+half4 FP_ScreenFX_Sharp_Scanlines_CC_Gamma22   (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, true,  true,  false, true , false); }
+half4 FP_ScreenFX_Sharp_Scanlines_GammaCC      (float4 pos : SV_Position, float2 uv0 : TEXCOORD0, float2 uvScanMask : TEXCOORD1) : SV_Target0 { return FP_ScreenFX(pos, uv0, uvScanMask, true,  true,  true,  true , false); }
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -419,4 +429,279 @@ half4 FP_Bloom3_Linear(float2 uvBase : TEXCOORD0, float2 uvBlur : TEXCOORD1, Tex
 half4 FP_Bloom3_Gamma(float2 uvBase : TEXCOORD0, float2 uvBlur : TEXCOORD1, Texture2D basetex : register(t1), SamplerState basesamp : register(s1)) : SV_Target0
 {
 	return FP_Bloom3(false, uvBase, uvBlur, basetex, basesamp);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+cbuffer FpBloomV2 {
+	float4 fpBloomV2UVStep			SCREENFX_REG(ps, c16);
+	float4 fpBloomV2BlendFactors	SCREENFX_REG(ps, c17);
+};
+
+void VP_BloomGamma(
+	float2 pos : POSITION,
+	float2 uv0 : TEXCOORD0,
+	out float2 oT0 : TEXCOORD0,
+	out float4 oPos : SV_Position)
+{
+	oPos = float4(pos.xy, 0.5, 1);
+	oT0 = uv0;
+	
+	VP_APPLY_VIEWPORT(oPos);
+}
+
+half4 FP_BloomGamma(
+	float2 uv0 : TEXCOORD0
+) : SV_Target0
+{
+	half3 c, d;
+
+	c = SCREENFX_SAMPLE_SRC(uv0).rgb;
+
+	return half4(SrgbToLinear(c), 0);
+}
+
+void VP_BloomDown(
+	float2 pos : POSITION,
+	float2 uv0 : TEXCOORD0,
+	out float2 oT0 : TEXCOORD0,
+	out float4 oPos : SV_Position)
+{
+	oPos = float4(pos.xy, 0.5, 1);
+	oT0 = uv0;
+	
+	VP_APPLY_VIEWPORT(oPos);
+}
+
+half4 FP_BloomDown(
+	float2 uv0 : TEXCOORD0
+) : SV_Target0
+{
+	half3 c, d;
+
+	// The downsampling filter is the 13 bilinear sample filter from:
+	//
+	// Jiminez, Jorge, Next Generation Post Processing in Call of Duty: Advanced Warfare.
+	// Retrieved from https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare/.
+	//
+	// The filter is a concatenation of two separate filters, which combined cover a
+	// 6x6 texel area (with each sample being a bilinear sample at a texel corner):
+	//
+	// 1   1    1   1
+	//            4
+	// 1   1    1   1
+	//  (/4)     (/8)
+	//
+	// This combines to the following bilinear samples:
+	//
+	// 1   2   1
+	//   4   4
+	// 2   4   2  (/32)
+	//   4   4
+	// 1   2   1
+	//
+	// Or, the following raw texel weights:
+	//
+	// 1 1 2 2 1 1
+	// 1 5 6 6 5 1
+	// 2 6 8 8 6 2 (/128)
+	// 2 6 8 8 6 2
+	// 1 5 6 6 5 1
+	// 1 1 2 2 1 1
+	//
+	// We can almost do this with 9 bilinear samples, except for the corners
+	// which aren't separable. We cheat a bit and reduce the corner weights to
+	// 0.
+
+	const half w1 =  7.0h / 124.0h;
+	const half w2 = 16.0h / 124.0h;
+	const half w3 = 32.0h / 124.0h;
+
+	float2 uv0_a = uv0 - fpBloomV2UVStep.xy*float2( 1.75f, 1.75f);
+	float2 uv0_c = uv0 + fpBloomV2UVStep.xy*float2( 1.75f, 1.75f);
+
+	c  = SCREENFX_SAMPLE_SRC(float2(uv0_a.x, uv0_a.y)).rgb * w1;
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_c.x, uv0_a.y)).rgb * w1;
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_a.x, uv0_c.y)).rgb * w1;
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_c.x, uv0_c.y)).rgb * w1;
+
+	c += SCREENFX_SAMPLE_SRC(float2(uv0  .x, uv0_a.y)).rgb * w2;
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_a.x, uv0  .y)).rgb * w2;
+	c += SCREENFX_SAMPLE_SRC(float2(uv0  .x, uv0_c.y)).rgb * w2;
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_c.x, uv0  .y)).rgb * w2;
+
+	c += SCREENFX_SAMPLE_SRC(float2(uv0  .x, uv0  .y)).rgb * w3;
+
+	return half4(c, 0);
+}
+
+void VP_BloomUp(
+	float2 pos : POSITION,
+	float2 uv0 : TEXCOORD0,
+	out float2 oT0 : TEXCOORD0,
+	out float4 oPos : SV_Position)
+{
+	oPos = float4(pos.xy, 0.5, 1);
+	oT0 = uv0;
+	
+	VP_APPLY_VIEWPORT(oPos);
+}
+
+half4 FP_BloomUp(
+	float2 uv0 : TEXCOORD0
+) : SV_Target0
+{
+	half3 c;
+
+	// The original upsampling filter is a 3x3 loop filter:
+	//
+	//   1  2  1
+	//   2  4  2
+	//   1  2  1
+	//
+	// However, this is being applied while also expanding the image by 2x, so
+	// the sampling positions are 1/4 from the center:
+	//
+	//  +-----------+
+	//  |           |
+	//  |  x     x  |
+	//  |           |
+	//  |     o     |
+	//  |           |
+	//  |  x     x  |
+	//  |           |
+	//  +-----------+
+	//
+	// For that reason, we can't use the standard trick of four overlapping
+	// bilinear samples. However, we can use four non-overlapping samples, with
+	// very carefully arranged offsets:
+	//
+	// Filter kernel for top-left case (UV point at -0.25, -0.25 from [center])
+	//
+	//   1    5    7    3
+	//   5   25   35   15
+	//   7   35  [49]  21
+	//   3   15   21    9
+	//
+	// This kernel needs to be flipped according to which of the four sample
+	// positions in the texel are being used.
+
+	float2 flipSign = (frac(uv0 * fpBloomV2UVStep.wz) < 0.5f ? float2(1.0f, 1.0f) : float2(-1.0f, -1.0f));
+	float2 flippedStep = fpBloomV2UVStep.xy * flipSign;
+
+	float2 uv0_a = uv0 + flippedStep * float2(-0.75f - 1.0f/6.0f, -0.75f - 1.0f/6.0f);
+	float2 uv0_b = uv0 + flippedStep * float2(+0.25f + 0.3f, +0.25f + 0.3f);
+
+	c  = SCREENFX_SAMPLE_SRC(float2(uv0_a.x, uv0_a.y)).rgb * ( 36.0h/256.0h);
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_b.x, uv0_a.y)).rgb * ( 60.0h/256.0h);
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_a.x, uv0_b.y)).rgb * ( 60.0h/256.0h);
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_b.x, uv0_b.y)).rgb * (100.0h/256.0h);
+
+	return half4(c * fpBloomV2BlendFactors.x, fpBloomV2BlendFactors.y);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+#if ENGINE_D3D9
+
+void VP_BloomUpNoBlend(
+	float2 pos : POSITION,
+	float2 uv0 : TEXCOORD0,
+	float2 uv1 : TEXCOORD1,
+	out float2 oT0 : TEXCOORD0,
+	out float2 oTBase : TEXCOORD1,
+	out float4 oPos : SV_Position)
+{
+	oPos = float4(pos.xy, 0.5, 1);
+	oT0 = uv0;
+	oTBase = uv1;
+	
+	VP_APPLY_VIEWPORT(oPos);
+}
+
+half4 FP_BloomUpNoBlend(
+	float2 uv0 : TEXCOORD0,
+	float2 uv1 : TEXCOORD1
+) : SV_Target0
+{
+	half3 c;
+
+	float2 flipSign = (frac(uv0 * fpBloomV2UVStep.wz) < 0.5f ? float2(1.0f, 1.0f) : float2(-1.0f, -1.0f));
+	float2 flippedStep = fpBloomV2UVStep.xy * flipSign;
+
+	float2 uv0_a = uv0 + flippedStep * float2(-0.75f - 1.0f/6.0f, -0.75f - 1.0f/6.0f);
+	float2 uv0_b = uv0 + flippedStep * float2(+0.25f + 0.3f, +0.25f + 0.3f);
+
+	c  = SCREENFX_SAMPLE_SRC(float2(uv0_a.x, uv0_a.y)).rgb * ( 36.0h/256.0h);
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_b.x, uv0_a.y)).rgb * ( 60.0h/256.0h);
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_a.x, uv0_b.y)).rgb * ( 60.0h/256.0h);
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_b.x, uv0_b.y)).rgb * (100.0h/256.0h);
+
+	half3 d = SCREENFX_SAMPLE_BASE(uv1).rgb;
+
+	return half4(c * fpBloomV2BlendFactors.x + d * fpBloomV2BlendFactors.y, 0);
+}
+
+#endif
+
+////////////////////////////////////////////////////////////////////////////////
+
+cbuffer FpBloomV2Final {
+	float4 fpBloomV2FUVStep			SCREENFX_REG(ps, c16);
+	float4 fpBloomV2FBlendFactors	SCREENFX_REG(ps, c17);
+	float4 fpBloomV2FShoulderCurve	SCREENFX_REG(ps, c18);
+	float4 fpBloomV2FThresholds		SCREENFX_REG(ps, c19);
+};
+
+void VP_BloomFinal(
+	float2 pos : POSITION,
+	float2 uv0 : TEXCOORD0,
+	float2 uv1 : TEXCOORD1,
+	out float2 oT0 : TEXCOORD0,
+	out float2 oTBase : TEXCOORD1,
+	out float4 oPos : SV_Position)
+{
+	oPos = float4(pos.xy, 0.5, 1);
+	oT0 = uv0;
+	oTBase = uv1;
+	
+	VP_APPLY_VIEWPORT(oPos);
+}
+
+half4 FP_BloomFinal(
+	float2 uv0 : TEXCOORD0,
+	float2 uvBase : TEXCOORD1,
+	Texture2D basetex : register(t1),
+	SamplerState basesamp : register(s1)
+) : SV_Target0
+{
+	// Filter kernel for top-left case (-0.25, -0.25 from [center])
+	//
+	//   1    5    7    3
+	//   5   25   35   15
+	//   7   35  [49]  21
+	//   3   15   21    9
+
+	float2 flipSign = (frac(uv0 * fpBloomV2FUVStep.wz) < 0.5f ? float2(1.0f, 1.0f) : float2(-1.0f, -1.0f));
+	float2 flippedStep = fpBloomV2FUVStep.xy * flipSign;
+
+	float2 uv0_a = uv0 + flippedStep * float2(-0.75f - 1.0f/6.0f, -0.75f - 1.0f/6.0f);
+	float2 uv0_b = uv0 + flippedStep * float2(+0.25f + 0.3f, +0.25f + 0.3f);
+
+	half3 c;
+	c  = SCREENFX_SAMPLE_SRC(float2(uv0_a.x, uv0_a.y)).rgb * ( 36.0h/256.0h);
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_b.x, uv0_a.y)).rgb * ( 60.0h/256.0h);
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_a.x, uv0_b.y)).rgb * ( 60.0h/256.0h);
+	c += SCREENFX_SAMPLE_SRC(float2(uv0_b.x, uv0_b.y)).rgb * (100.0h/256.0h);
+		
+	half3 d = SCREENFX_SAMPLE_BASE(uvBase).rgb;
+
+	float3 x = min(c * fpBloomV2FBlendFactors.x + d * fpBloomV2FBlendFactors.y, fpBloomV2FThresholds.z);
+	
+	float3 mid = fpBloomV2FThresholds.x * x;
+	float3 shoulder = ((fpBloomV2FShoulderCurve.x*x + fpBloomV2FShoulderCurve.y)*x + fpBloomV2FShoulderCurve.z)*x + fpBloomV2FShoulderCurve.w;
+
+	float3 r = x > fpBloomV2FThresholds.y ? shoulder : mid;
+
+	return half4(r, 0);
 }

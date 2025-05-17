@@ -911,11 +911,45 @@ public:
 		return n;
 	}
 
-	size_type find(value_type c, size_type pos = 0) const {
+	[[nodiscard]] size_type find(value_type c, size_type pos = 0) const {
 		VDASSERT(pos <= (size_type)(mpEnd - mpBegin));
 		const void *p = wmemchr(mpBegin + pos, c, mpEnd - (mpBegin + pos));
 
 		return p ? (size_type)((const value_type *)p - mpBegin) : npos;
+	}
+
+	[[nodiscard]] size_type find(const value_type *s, size_type pos = 0) const {
+		return find(s, pos, (size_type)wcslen(s));
+	}
+
+	[[nodiscard]] size_type find(const value_type *s, size_type pos, size_type count) const {
+		const size_type n = (size_type)(mpEnd - mpBegin);
+
+		if (pos <= n) {
+			size_type charsLeft = n - pos;
+
+			if (charsLeft >= count) {
+				if (!count)
+					return pos;
+
+				size_type stepsLeft = charsLeft - count;
+				const value_type *p = mpBegin + pos;
+
+				for(;;) {
+					if (p[0] == s[0] && memcmp(p, s, count*sizeof(value_type)) == 0)
+						return pos;
+
+					if (!stepsLeft)
+						break;
+
+					--stepsLeft;
+					++p;
+					++pos;
+				}
+			}
+		}
+
+		return npos;
 	}
 
 	int compare(const VDStringSpanW& s) const {
@@ -1245,6 +1279,23 @@ public:
 			n = len;
 
 		return append(str.mpBegin + pos, str.mpBegin + pos + n);
+	}
+
+	this_type& append(size_type n, value_type c) {
+		if (n) {
+			size_type current_size = (size_type)(mpEnd - mpBegin);
+			size_type current_capacity = (size_type)(mpEOS - mpBegin);
+
+			if (current_capacity - current_size < n)
+				reserve_amortized_slow(n, current_size, current_capacity);
+
+			for(size_type i = 0; i < n; ++i)
+				mpBegin[current_size + i] = c;
+
+			mpEnd += n;
+			*mpEnd = 0;
+		}
+		return *this;
 	}
 
 	this_type& append(const value_type *s, size_type n) {

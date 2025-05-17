@@ -23,6 +23,10 @@
 #include <at/atio/cassettedecoder.h>
 #include <at/atio/cassetteimage.h>		// for constants
 
+#ifdef VD_CPU_ARM64
+#include <arm_neon.h>
+#endif
+
 ATConfigVarFloat g_ATCVTapeDecodeDirectHPFCutoff("tape.decode.slope.hpf_cutoff", 5327.0f);
 ATConfigVarFloat g_ATCVTapeDecodeFSKMarkGain("tape.decode.fsk.mark_gain", 1.0f);
 

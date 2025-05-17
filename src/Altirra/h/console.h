@@ -58,7 +58,7 @@ public:
 
 	// Read lines from the source window by 0-based index. Returns the line
 	// if found, with \n appended to the end.
-	virtual VDStringA ReadLine(int lineIndex) = 0;
+	virtual VDStringW ReadLine(int lineIndex) = 0;
 };
 
 IATSourceWindow *ATGetSourceWindow(const wchar_t *s);

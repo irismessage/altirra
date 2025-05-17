@@ -58,11 +58,13 @@ ATAnticEmulator::ATAnticEmulator() {
 ATAnticEmulator::~ATAnticEmulator() {
 }
 
-void ATAnticEmulator::Init(ATAnticEmulatorConnections *mem, ATGTIAEmulator *gtia, ATScheduler *sch, ATSimulatorEventManager *simevmgr) {
+void ATAnticEmulator::Init(ATAnticEmulatorConnections *mem, ATGTIAEmulator *gtia, ATScheduler *sch, ATSimulatorEventManager *simevmgr, uint8 *busData) {
 	mpConn = mem;
 	mpGTIA = gtia;
 	mpScheduler = sch;
 	mpSimEventMgr = simevmgr;
+	mpBusData = busData;
+	mpBusRefreshData = busData;
 
 	memset(mActivityMap, 0, sizeof mActivityMap);
 }
@@ -533,15 +535,15 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 				busActive = true;
 			} else if (mbPhantomPMDMAActive && mX > 3) {
 				// We need to read the result of the _previous_ cycle due to the CPU executing after us.
-				mpGTIA->UpdatePlayer((mY & 1) != 0, mX - 4, *mpConn->mpAnticBusData);
+				mpGTIA->UpdatePlayer((mY & 1) != 0, mX - 4, *mpBusData);
 			} else if (mbPhantomPlayerDMA && mX > 2) {
-				mpGTIA->UpdatePlayer((mY & 1) != 0, mX - 3, *mpConn->mpAnticBusData);
+				mpGTIA->UpdatePlayer((mY & 1) != 0, mX - 3, *mpBusData);
 			}
 		} else if (mX == 6) {		// address DMA (low)
 			if (mbPhantomPMDMAActive)
-				mpGTIA->UpdatePlayer((mY & 1) != 0, 2, *mpConn->mpAnticBusData);
+				mpGTIA->UpdatePlayer((mY & 1) != 0, 2, *mpBusData);
 			else if (mbPhantomPlayerDMA)
-				mpGTIA->UpdatePlayer((mY & 1) != 0, 3, *mpConn->mpAnticBusData);
+				mpGTIA->UpdatePlayer((mY & 1) != 0, 3, *mpBusData);
 
 			if (mbDLExtraLoadsPending && (mDMACTL & 0x20)) {
 				mDLNext = mpConn->AnticReadByte(mDLIST & addressMask);
@@ -551,7 +553,7 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 				mLatchedVScroll2 = mVSCROL;
 		} else if (mX == 7) {		// address DMA (high) + NMIST change
 			if (mbPhantomPMDMAActive)
-				mpGTIA->UpdatePlayer((mY & 1) != 0, 3, *mpConn->mpAnticBusData);
+				mpGTIA->UpdatePlayer((mY & 1) != 0, 3, *mpBusData);
 
 			if (mbDLExtraLoadsPending && (mDMACTL & 0x20)) {
 				uint8 b = mpConn->AnticReadByte(mDLIST & addressMask);
@@ -744,7 +746,7 @@ void ATAnticEmulator::AdvanceScanline() {
 	mX = 0;
 
 	if (mbWSYNCActive) {
-		*mpConn->mpAnticBusData = mWSYNCHoldValue;
+		*mpBusData = mWSYNCHoldValue;
 		mWSYNCCycleOffset += 114;
 	}
 
@@ -805,8 +807,12 @@ void ATAnticEmulator::AdvanceScanline() {
 
 			// Update abnormal DMA pattern.
 			const uint8 origPattern = mAbnormalDMAPattern;
-			mAbnormalDMAPattern |= kClockPattern[fetchRate][dmaStart & 7];
-			mAbnormalDMAPattern &= ~kClockPattern[fetchRate][dmaVEnd & 7];
+
+			if (mPFDMAStart < 114)
+				mAbnormalDMAPattern |= kClockPattern[fetchRate][dmaStart & 7];
+
+			if (mPFDMALatchedVEnd || mPFWidth != kPFDisabled)
+				mAbnormalDMAPattern &= ~kClockPattern[fetchRate][dmaVEnd & 7];
 
 			// Rotate the abnormal DMA pattern, due to 114 cycles not being divisible by 8.
 			mAbnormalDMAPattern = (uint8)((mAbnormalDMAPattern << 6) + (mAbnormalDMAPattern >> 2));
@@ -2087,7 +2093,6 @@ void ATAnticEmulator::ExchangeState(T& io) {
 	io != mPFDisplayEnd;
 	io != mPFDMAStart;
 	io != mPFDMAVEnd;
-	io != mPFDMAVEndWide;
 	io != mPFDMAEnd;
 	io != mPFDMALatchedStart;
 	io != mPFDMALatchedVEnd;
@@ -2295,7 +2300,6 @@ public:
 		rw.Transfer("pf_display_end", &mPFDisplayEnd);
 		rw.Transfer("pf_dma_start", &mPFDMAStart);
 		rw.Transfer("pf_dma_vend", &mPFDMAVEnd);
-		rw.Transfer("pf_dma_vend_wide", &mPFDMAVEndWide);
 		rw.Transfer("pf_dma_end", &mPFDMAEnd);
 		rw.Transfer("pf_dma_latched_start", &mPFDMALatchedStart);
 		rw.Transfer("pf_dma_latched_vend", &mPFDMALatchedVEnd);
@@ -2368,7 +2372,6 @@ public:
 	uint32	mPFDisplayEnd = 0;
 	uint32	mPFDMAStart = 0;
 	uint32	mPFDMAVEnd = 0;
-	uint32	mPFDMAVEndWide = 0;
 	uint32	mPFDMAEnd = 0;
 	uint32	mPFDMALatchedStart = 0;
 	uint32	mPFDMALatchedVEnd = 0;
@@ -2517,7 +2520,6 @@ void ATAnticEmulator::TransferInternalState(T& obj2) {
 	TRANSFER(mPFDisplayEnd);
 	TRANSFER(mPFDMAStart);
 	TRANSFER(mPFDMAVEnd);
-	TRANSFER(mPFDMAVEndWide);
 	TRANSFER(mPFDMAEnd);
 	TRANSFER(mPFDMALatchedStart);
 	TRANSFER(mPFDMALatchedVEnd);
@@ -3041,12 +3043,9 @@ void ATAnticEmulator::UpdatePlayfieldTiming() {
 				break;
 		}
 
-		mPFDMAVEndWide = mode < 8 ? 106 : 108;
-
 		mPFDMAStart += mPFHScrollDMAOffset;
 		mPFDMAEnd += mPFHScrollDMAOffset;
 		mPFDMAVEnd = mPFDMAEnd;
-		mPFDMAVEndWide += mPFHScrollDMAOffset;
 
 		if (mPFDMALatchedStart)
 			mPFDMAStart = mPFDMALatchedStart;
@@ -3109,7 +3108,7 @@ void ATAnticEmulator::OnScheduledEvent(uint32 id) {
 				mWSYNCHoldValue = mpConn->AnticGetCPUHeldCycleValue();
 
 				if (mX < 113)
-					*mpConn->mpAnticBusData = mWSYNCHoldValue;
+					*mpBusData = mWSYNCHoldValue;
 			}
 		}
 

@@ -56,6 +56,8 @@ protected:
 		kState_Write_2,
 		kState_Inquiry_0,
 		kState_ReadCapacity_0,
+		kState_InitializeDriveCharacteristics_0,
+		kState_InitializeDriveCharacteristics_1,
 		kState_UnknownCommand,
 		kState_Status,
 		kState_Complete
@@ -162,6 +164,15 @@ void ATSCSIDiskDevice::BeginCommand(const uint8 *command, uint32 length) {
 		case 0x0A:	// write (group 0)
 		case 0x2A:	// write (group 1)
 			mState = kState_Write_0;
+			break;
+
+		case 0x0C:	// initialize drive characteristics
+			// This vendor-specific command is implemented by the Xebec S1410A to allow the computer to
+			// set translation parameters for the MFM/RLL drive. It is not a standard command, but it is
+			// issued by the MIO 1.1 firmware in SASI mode, and more importantly, that firmware has a bug
+			// with not handling an unknown command error on it. So we need to eat the 8 byte data payload
+			// for it to function in SASI.
+			mState = kState_InitializeDriveCharacteristics_0;
 			break;
 
 		case 0x12:	// inquiry
@@ -313,7 +324,18 @@ void ATSCSIDiskDevice::AdvanceCommand() {
 			mState = kState_Status;
 			break;
 
+		case kState_InitializeDriveCharacteristics_0:
+			mpBus->CommandReceiveData(ATSCSIBusEmulator::kReceiveMode_DataOut, mTransferBuffer, 8);
+			mState = kState_InitializeDriveCharacteristics_1;
+			break;
+
+		case kState_InitializeDriveCharacteristics_1:
+			mError = 0;
+			mState = kState_Status;
+			break;
+
 		case kState_UnknownCommand:
+			mError = 0x20;		// Class 2 Invalid Command
 			mState = kState_Status;
 			break;
 

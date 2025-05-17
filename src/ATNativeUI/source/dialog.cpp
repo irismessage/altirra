@@ -693,6 +693,17 @@ void VDDialogFrameW32::ShowInfo(VDGUIHandle hParent, const wchar_t *message, con
 	ATUIShowGenericDialog(opts);
 }
 
+void VDDialogFrameW32::ShowError(VDGUIHandle hParent, const wchar_t *message, const wchar_t *caption) {
+	ATUIGenericDialogOptions opts;
+	opts.mhParent = hParent;
+	opts.mpMessage = message;
+	opts.mpCaption = caption ? caption : spDefaultCaption;
+	opts.mIconType = kATUIGenericIconType_Error;
+	opts.mResultMask = kATUIGenericResultMask_OK;
+
+	ATUIShowGenericDialogAutoCenter(opts);
+}
+
 void VDDialogFrameW32::ShowInfo(const wchar_t *message, const wchar_t *caption) {
 	if (!caption)
 		caption = spDefaultCaption;
@@ -726,23 +737,13 @@ void VDDialogFrameW32::ShowWarning(const wchar_t *message, const wchar_t *captio
 }
 
 void VDDialogFrameW32::ShowError(const wchar_t *message, const wchar_t *caption) {
-	if (!caption)
-		caption = spDefaultCaption;
-
-	ATUIGenericDialogOptions opts;
-	opts.mhParent = (VDGUIHandle)mhdlg;
-	opts.mpMessage = message;
-	opts.mpCaption = caption;
-	opts.mIconType = kATUIGenericIconType_Error;
-	opts.mResultMask = kATUIGenericResultMask_OK;
-
-	ATUIShowGenericDialogAutoCenter(opts);
+	ShowError((VDGUIHandle)mhdlg, message, caption);
 }
 
 void VDDialogFrameW32::ShowError(const MyError& e) {
 	// don't show user abort errors
 	if (!e.empty())
-		ShowError(VDTextAToW(e.c_str()).c_str());
+		ShowError(e.wc_str());
 }
 
 void VDDialogFrameW32::ShowError2(const wchar_t *message, const wchar_t *title) {
@@ -759,7 +760,7 @@ void VDDialogFrameW32::ShowError2(const wchar_t *message, const wchar_t *title) 
 void VDDialogFrameW32::ShowError2(const MyError& e, const wchar_t *title) {
 	// don't show user abort errors
 	if (!e.empty())
-		ShowError2(VDTextAToW(e.c_str()).c_str(), title);
+		ShowError2(e.wc_str(), title);
 }
 
 bool VDDialogFrameW32::Confirm(const wchar_t *message, const wchar_t *caption) {
@@ -945,6 +946,14 @@ int VDDialogFrameW32::ActivatePopupMenu(int x, int y, vdspan<PopupMenuItem> item
 }
 
 void VDDialogFrameW32::ActivateCommandPopupMenu(int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer) {
+	ActivateCommandPopupMenuInternal(false, x, y, menuID, std::move(initer));
+}
+
+uint32 VDDialogFrameW32::ActivateCommandPopupMenuReturnId(int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer) {
+	return ActivateCommandPopupMenuInternal(true, x, y, menuID, std::move(initer));
+}
+
+uint32 VDDialogFrameW32::ActivateCommandPopupMenuInternal(bool returnId, int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer) {
 	HMENU hmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(menuID));
 	if (hmenu) {
 		HMENU hSubMenu = GetSubMenu(hmenu, 0);
@@ -968,11 +977,14 @@ void VDDialogFrameW32::ActivateCommandPopupMenu(int x, int y, uint32 menuID, vdf
 				}
 			};
 
-			initMenu(hSubMenu, initMenu);
+			if (initer)
+				initMenu(hSubMenu, initMenu);
 
-			(void)TrackPopupMenuEx(hSubMenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL, x, y, mhdlg, nullptr);
+			return (uint32)TrackPopupMenuEx(hSubMenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | (returnId ? TPM_RETURNCMD : 0), x, y, mhdlg, nullptr);
 		}
 	}
+
+	return 0;
 }
 
 void VDDialogFrameW32::LBClear(uint32 id) {

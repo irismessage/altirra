@@ -45,9 +45,6 @@
     <ClCompile Include="source\messageloop.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\syncwait.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\progress.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -81,6 +78,9 @@
     <ClCompile Include="source\accessibility_win32.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\hotkeyscandialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="res\resource.h">
@@ -108,9 +108,6 @@
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atnativeui\messageloop.h">
-      <Filter>Interface Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\h\at\atnativeui\syncwait.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atnativeui\progress.h">
@@ -150,6 +147,9 @@
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atnativeui\accessibility_win32.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atnativeui\hotkeyscandialog.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>

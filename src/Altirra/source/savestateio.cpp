@@ -527,7 +527,7 @@ void ATSnapObjectDeserializer::Deserialize(VDZipArchive& zip, IATSerializable **
 	sint32 n = zip.GetFileCount();
 
 	auto openStream = [&zip, n](const char *name, vdfastvector<uint8>& buf) -> bool {
-		sint32 idx = zip.FindFile(name, true);
+		sint32 idx = zip.FindFile(name);
 
 		if (idx < 0)
 			return false;
@@ -556,7 +556,7 @@ void ATSnapObjectDeserializer::Deserialize(VDZipArchive& zip, IATSerializable **
 		};
 
 		context->mpReadRawStream = [cookie = vdrefptr(deferredZip), &zip](const char *name, vdfastvector<uint8>& buf) -> sint32 {
-			sint32 idx = zip.FindFile(name, true);
+			sint32 idx = zip.FindFile(name);
 
 			if (idx < 0)
 				throw ATInvalidSaveStateException();

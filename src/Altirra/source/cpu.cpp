@@ -87,6 +87,49 @@ AT_DEFINE_ENUM_TABLE_END(ATCPUMode, kATCPUMode_6502)
 	#define ATCPU_PROFILE_OPCODE(pc, opcode) ((void)0)
 #endif
 
+////////////////////////////////////////////////////////////////////////////////
+
+ATCPUStepConditionLink::ATCPUStepConditionLink() {
+}
+
+ATCPUStepConditionLink::ATCPUStepConditionLink(const ATCPUStepConditionLink&) {
+}
+
+ATCPUStepConditionLink::~ATCPUStepConditionLink() {
+}
+
+ATCPUStepConditionLink& ATCPUStepConditionLink::operator=(const ATCPUStepConditionLink&) {
+	if (mbRegistered) {
+		[[unlikely]]
+		VDRaiseInternalFailure();
+	}
+
+	return *this;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+ATCPUStepCondition ATCPUStepCondition::CreateSingleStep() {
+	return {};
+}
+
+ATCPUStepCondition ATCPUStepCondition::CreateAtStackLevel(uint8 s) {
+	ATCPUStepCondition c{};
+
+	c.mIgnoreStackStart = s ^ 0x80;
+	c.mIgnoreStackLength = 0x80;
+
+	return c;
+}
+
+ATCPUStepCondition ATCPUStepCondition::CreateNMI() {
+	ATCPUStepCondition c{};
+	c.mbWaitForNMI = true;
+	return c;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 struct ATCPUEmulator::ExtOpcodeAnchorPred {
 	bool operator()(const ExtOpcodeAnchor& x, const ExtOpcodeAnchor& y) const {
 		return x.mOffset < y.mOffset;
@@ -401,23 +444,57 @@ void ATCPUEmulator::SetHook(uint16 pc, bool enable) {
 		mInsnFlags[pc] &= ~kInsnFlagHook;
 }
 
-void ATCPUEmulator::SetStepRange(uint32 regionStart, uint32 regionSize, ATCPUStepCallback stepcb, void *stepcbdata, bool stepOver) {
-	mbStep = true;
+bool ATCPUEmulator::IsStepConditionSatisfied(const ATCPUStepCondition& condition) const {
+	if (!condition.mbRegistered)
+		return false;
 
-	mStepRegionStart = regionStart;
-	mStepRegionSize = regionSize;
-	mpStepCallback = stepcb;
-	mpStepCallbackData = stepcbdata;
-	mStepStackLevel = -1;
+	if (condition.mbWaitForNMI)
+		return false;
 
-	mDebugFlags &= ~kDebugFlag_StepNMI;
-	mDebugFlags |= kDebugFlag_Step;
+	if ((uint32)(mPC - condition.mIgnorePCStart) < condition.mIgnorePCLength)
+		return false;
 
-	if (mbStepOver != stepOver) {
-		mbStepOver = stepOver;
+	if ((uint32)(mS - condition.mIgnoreStackStart) < condition.mIgnoreStackLength)
+		return false;
 
-		RebuildDecodeTables();
+	return true;
+}
+
+void ATCPUEmulator::AddStepCondition(ATCPUStepCondition& condition) {
+	if (condition.mbRegistered) {
+		[[unlikely]]
+		VDRaiseInternalFailure();
 	}
+
+	condition.mpNext = mpStepConditions;
+	condition.mbRegistered = true;
+
+	mpStepConditions = &condition;
+
+	RecomputeStepConditions();
+}
+
+void ATCPUEmulator::RemoveStepCondition(ATCPUStepCondition& condition) {
+	if (!condition.mbRegistered)
+		return;
+
+	ATCPUStepCondition **prev = &mpStepConditions;
+	while(ATCPUStepCondition *p = *prev) {
+		if (p == &condition) {
+			*prev = p->mpNext;
+
+			if (mpStepConditionsIterator == p)
+				mpStepConditionsIterator = p->mpNext;
+
+			condition.mbRegistered = false;
+			condition.mpNext = nullptr;
+
+			RecomputeStepConditions();
+			return;
+		}
+	}
+
+	VDRaiseInternalFailure();
 }
 
 sint32 ATCPUEmulator::GetNextBreakpoint(sint32 last) const {
@@ -443,8 +520,8 @@ void ATCPUEmulator::SetCPUMode(ATCPUMode mode, uint32 subCycles) {
 	if (subCycles < 1 || mode != kATCPUMode_65C816)
 		subCycles = 1;
 
-	if (subCycles > 16)
-		subCycles = 16;
+	if (subCycles > 24)
+		subCycles = 24;
 
 	if (mCPUMode == mode && mSubCycles == subCycles)
 		return;
@@ -1475,24 +1552,47 @@ uint8 ATCPUEmulator::ProcessDebugging() {
 		}
 	}
 
-	if (mbStep && (mPC - mStepRegionStart) >= mStepRegionSize) {
-		if (mStepStackLevel >= 0 && (sint8)(mS - mStepStackLevel) <= 0) {
-			// do nothing -- stepping through subroutine
-		} else {
-			mStepStackLevel = -1;
+	if (mbStep && (uint16)(mPC - mStepIgnorePCStart) >= mStepIgnorePCLength) {
+		if ((uint8)(mS - mStepIgnoreStackStart) >= mStepIgnoreStackLength) {
+			bool needRecompute = true;
+			bool shouldStop = false;
 
-			ATCPUStepResult stepResult = kATCPUStepResult_Stop;
+			mpStepConditionsIterator = mpStepConditions;
+			while(mpStepConditionsIterator) {
+				ATCPUStepCondition& stepCond = *mpStepConditionsIterator;
+				mpStepConditionsIterator = stepCond.mpNext;
 
-			if (mpStepCallback)
-				stepResult = mpStepCallback(this, mPC, false, mpStepCallbackData);
+				if (!IsStepConditionSatisfied(stepCond))
+					continue;
 
-			if (stepResult == kATCPUStepResult_SkipCall) {
-				mStepStackLevel = mS;
-			} else if (stepResult == kATCPUStepResult_Stop) {
-				mbStep = false;
-				mbStepOver = false;
-				mDebugFlags &= ~(kDebugFlag_Step | kDebugFlag_StepNMI);
+				ATCPUStepResult stepResult = kATCPUStepResult_Stop;
 
+				if (stepCond.mpCallback) {
+					// We need to do this to ensure that a save state invoked from the callback
+					// is correct. This is because we've already read past the ReadOpcode state,
+					// and are depending on continuation to the ReadOpcodeNoBreak state if we
+					// don't stop. But we haven't stopped yet, and if we try to save state from
+					// the callback without this, it'll misinterpret the next state as the
+					// state point to save, which is wrong.
+					RedecodeInsnWithoutBreak();
+
+					stepResult = stepCond.mpCallback(this, mPC, false, stepCond.mpCallbackData);
+				}
+
+				if (stepResult == kATCPUStepResult_SkipCall) {
+					VDASSERT(stepCond.mbRegistered);
+					stepCond.mIgnoreStackStart = mS ^ 0x80;
+					stepCond.mIgnoreStackLength = 0x80;
+					needRecompute = true;
+				} else if (stepResult == kATCPUStepResult_Stop) {
+					shouldStop = true;
+				}
+			}
+
+			if (needRecompute)
+				RecomputeStepConditions();
+
+			if (shouldStop) {
 				mbUnusedCycle = true;
 				RedecodeInsnWithoutBreak();
 				return kATSimEvent_CPUSingleStep;
@@ -1514,41 +1614,61 @@ uint8 ATCPUEmulator::ProcessDebugging() {
 }
 
 void ATCPUEmulator::ProcessStepOver() {
-	if (mStepStackLevel >= 0) {
-		// We apply a two-byte adjustment here to do this test approximately
-		// at the level of the parent (we can't do it exactly).
-		if ((sint8)(mS - mStepStackLevel) <= -2)
-			return;
+	// We apply a two-byte adjustment here to do this test approximately
+	// at the level of the parent (we can't do it exactly).
+	if ((uint8)(mS - mStepIgnoreStackStart + 2) < mStepIgnoreStackLength)
+		return;
 
-		mStepStackLevel = -1;
+	mpStepConditionsIterator = mpStepConditions;
+
+	bool needRecompute = false;
+
+	while(mpStepConditionsIterator) {
+		ATCPUStepCondition& stepCond = *mpStepConditionsIterator;
+		mpStepConditionsIterator = stepCond.mpNext;
+
+		if (!stepCond.mbStepOver || !IsStepConditionSatisfied(stepCond))
+			continue;
+
+		ATCPUStepResult stepResult = kATCPUStepResult_Stop;
+
+		if (stepCond.mpCallback) {
+			// This needs to use PC instead of insnPC, because we are
+			// in the middle of a JSR or interrupt dispatch.
+			stepResult = stepCond.mpCallback(this, mPC, true, stepCond.mpCallbackData);
+		}
+
+		switch(stepResult) {
+			case kATCPUStepResult_SkipCall:
+				VDASSERT(stepCond.mbRegistered);
+
+				// We need a slight adjustment because the stack has already been
+				// adjusted by the JSR -- so we want to ignore the current stack
+				// frame too.
+				stepCond.mIgnoreStackStart = (uint8)(mS - 0x7F);
+				stepCond.mIgnoreStackLength = 0x80;
+				needRecompute = true;
+				break;
+			case kATCPUStepResult_Stop:
+				VDASSERT(stepCond.mbRegistered);
+				stepCond.mbStepOver = false;
+				stepCond.mbStepOut = false;
+				stepCond.mbWaitForNMI = false;
+				stepCond.mIgnorePCStart = 0;
+				stepCond.mIgnorePCLength = 0;
+				stepCond.mIgnoreStackStart = 0;
+				stepCond.mIgnoreStackLength = 0;
+				needRecompute = true;
+				break;
+
+			case kATCPUStepResult_Continue:
+			default:
+				break;
+		}
 	}
 
-	ATCPUStepResult stepResult = kATCPUStepResult_Stop;
-
-	if (mpStepCallback) {
-		// This needs to use PC instead of insnPC, because we are
-		// in the middle of a JSR or interrupt dispatch.
-		stepResult = mpStepCallback(this, mPC, true, mpStepCallbackData);
-	}
-
-	switch(stepResult) {
-		case kATCPUStepResult_SkipCall:
-			mStepStackLevel = mS;
-			break;
-		case kATCPUStepResult_Stop:
-			mbStepOver = false;
-			mpStepCallback = NULL;
-			mStepRegionStart = 0;
-			mStepRegionSize = 0;
-			mStepStackLevel = -1;
-
-			RebuildDecodeTables();
-			break;
-
-		case kATCPUStepResult_Continue:
-		default:
-			break;
-	}
+	if (needRecompute)
+		RecomputeStepConditions();
 }
 
 template<bool T_Accel>
@@ -1566,9 +1686,18 @@ bool ATCPUEmulator::ProcessInterrupts() {
 			mpNextState = mDecodeHeap + mDecodePtrs[(uint32)ExtOpcode::Nmi];
 
 			if (mDebugFlags & kDebugFlag_StepNMI) {
-				mDebugFlags &= ~kDebugFlag_StepNMI;
-				mDebugFlags |= kDebugFlag_Step;
-				mbStep = true;
+				bool recomputeNeeded = false;
+
+				for(ATCPUStepCondition *p = mpStepConditions; p; p = p->mpNext) {
+					if (p->mbWaitForNMI) {
+						p->mbWaitForNMI = false;
+
+						recomputeNeeded = true;
+					}
+				}
+
+				if (recomputeNeeded)
+					RecomputeStepConditions();
 			}
 			return true;
 		}
@@ -1749,6 +1878,80 @@ void ATCPUEmulator::UpdatePendingIRQState() {
 
 		if (cycle - mIRQAcknowledgeTime >= 2)
 			mIntFlags &= ~kIntFlag_IRQPending;
+	}
+}
+
+void ATCPUEmulator::RecomputeStepConditions() {
+	mbStep = false;
+
+	mStepIgnorePCStart = 0;
+	mStepIgnorePCLength = 0;
+	mStepIgnoreStackStart = 0;
+	mStepIgnoreStackLength = 0;
+
+	mDebugFlags &= ~(kDebugFlag_Step | kDebugFlag_StepNMI);
+
+	bool stepOver = false;
+	bool ignorePCRangeValid = false;
+	bool ignoreStackRangeValid = false;
+
+	for(ATCPUStepCondition *p = mpStepConditions; p; p = p->mpNext) {
+		if (p->mbWaitForNMI) {
+			mDebugFlags |= kDebugFlag_StepNMI;
+			continue;
+		}
+
+		if (ignorePCRangeValid) {
+			if (mStepIgnorePCLength > 0) {
+				if (p->mIgnorePCLength == 0) {
+					mStepIgnorePCLength = 0;
+					mStepIgnorePCStart = 0;
+				} else {
+					const uint32 start = std::max<uint32>(mStepIgnorePCStart, p->mIgnorePCStart);
+					const uint32 end = std::min<uint32>(mStepIgnorePCStart + mStepIgnorePCLength, p->mIgnorePCStart + p->mIgnorePCLength);
+
+					if (start < end) {
+						mStepIgnorePCStart = start;
+						mStepIgnorePCLength = end - start;
+					} else {
+						mStepIgnorePCStart = 0;
+						mStepIgnorePCLength = 0;
+					}
+				}
+			}
+		} else {
+			mStepIgnorePCStart = p->mIgnorePCStart;
+			mStepIgnorePCLength = p->mIgnorePCLength;
+			ignorePCRangeValid = true;
+		}
+
+		if (ignoreStackRangeValid) {
+			if ((uint8)(mStepIgnoreStackStart - p->mIgnoreStackStart) < p->mIgnoreStackLength) {
+				mStepIgnoreStackLength = std::min<uint8>(mStepIgnoreStackLength, p->mIgnoreStackLength - (mStepIgnoreStackStart - p->mIgnoreStackStart));
+				mStepIgnoreStackStart = p->mIgnoreStackStart;
+			} else if ((uint8)(p->mIgnoreStackStart - mStepIgnoreStackStart) < mStepIgnoreStackLength) {
+				mStepIgnoreStackLength = std::min<uint8>(p->mIgnoreStackLength, mStepIgnoreStackLength - (p->mIgnoreStackStart - mStepIgnoreStackStart));
+			} else {
+				// ignore ranges disjoint -- can't ignore anything
+				mStepIgnoreStackLength = 0;
+			}
+		} else {
+			mStepIgnoreStackStart = p->mIgnoreStackStart;
+			mStepIgnoreStackLength = p->mIgnoreStackLength;
+			ignoreStackRangeValid = true;
+		}
+
+		mbStep = true;
+		stepOver |= p->mbStepOver;
+	}
+
+	if (mbStep)
+		mDebugFlags |= kDebugFlag_Step;
+
+	if (mbStepOver != stepOver) {
+		mbStepOver = stepOver;
+
+		RebuildDecodeTables();
 	}
 }
 

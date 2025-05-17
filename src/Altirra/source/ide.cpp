@@ -774,13 +774,10 @@ void ATIDEEmulator::UpdateStatus() {
 
 						mpUIRenderer->SetIDEActivity(false, lba);
 
-						if (lba >= mSectorCount || mSectorCount - lba < nsecs || nsecs >= mMaxSectorTransferCount) {
+						if (lba >= mSectorCount || mSectorCount - lba < nsecs || nsecs >= mMaxSectorTransferCount)
 							mRFile.mStatus |= kATIDEStatus_ERR;
-							CompleteCommand();
-						} else {
-							WriteLBA(lba + nsecs - 1);
-						}
 
+						CompleteCommand();
 						mActiveCommandState = 0;
 					}
 					break;

@@ -62,7 +62,6 @@ void *ATMIOEmulator::AsInterface(uint32 iid) {
 		case IATDeviceScheduling::kTypeID: return static_cast<IATDeviceScheduling *>(this);
 		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(this);
 		case IATDeviceIndicators::kTypeID: return static_cast<IATDeviceIndicators *>(this);
-		case IATDevicePrinterPort::kTypeID: return static_cast<IATDevicePrinterPort *>(this);
 		case IATDeviceSnapshot::kTypeID: return static_cast<IATDeviceSnapshot *>(this);
 	}
 
@@ -113,9 +112,17 @@ void ATMIOEmulator::Init() {
 			mSerialCtlInputs = 0;
 		}
 	);
+
+	mParallelBus.SetOnAttach(
+		[this] {
+			mpPrinterOutput = nullptr;
+		}
+	);
 }
 
 void ATMIOEmulator::Shutdown() {
+	mpPrinterOutput = nullptr;
+
 	mParallelBus.Shutdown();
 	mSerialBus.Shutdown();
 
@@ -305,10 +312,6 @@ void ATMIOEmulator::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 
 void ATMIOEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 	mpUIRenderer = r;
-}
-
-void ATMIOEmulator::SetPrinterDefaultOutput(IATPrinterOutput *out) {
-	mpPrinterOutput = out;
 }
 
 void ATMIOEmulator::GetSnapshotStatus(ATSnapshotStatus& status) const {
@@ -703,9 +706,13 @@ bool ATMIOEmulator::OnWrite(void *thisptr0, uint32 addr, uint8 value) {
 						g_ATLCParPrint("Sending byte to printer: $%02X\n", c);
 
 						if (auto *printer = thisptr->mParallelBus.GetChild<IATPrinterOutput>())
-							printer->WriteASCII(&c, 1);
-						else if (thisptr->mpPrinterOutput)
-							thisptr->mpPrinterOutput->WriteASCII(&c, 1);
+							printer->WriteRaw(&c, 1);
+						else {
+							if (!thisptr->mpPrinterOutput)
+								thisptr->mpPrinterOutput = thisptr->GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+
+							thisptr->mpPrinterOutput->WriteRaw(&c, 1);
+						}
 					}
 				}
 

@@ -18,7 +18,7 @@
 #ifndef f_GTIA_NEON_INTRIN_INL
 #define f_GTIA_NEON_INTRIN_INL
 
-#include <arm64_neon.h>
+#include <arm_neon.h>
 
 void atasm_update_playfield_160_neon(void *dst0, const uint8 *src, uint32 n) {
 	// We do unaligned loads from this array, so it's important that we
@@ -34,7 +34,7 @@ void atasm_update_playfield_160_neon(void *dst0, const uint8 *src, uint32 n) {
 	if (!n)
 		return;
 
-	char *dst = (char *)dst0;
+	unsigned char *dst = (unsigned char *)dst0;
 	const uint8 *srcEnd = src + n;
 		
 	// check if we have a starting source offset and remove it
@@ -48,8 +48,8 @@ void atasm_update_playfield_160_neon(void *dst0, const uint8 *src, uint32 n) {
 		ptrdiff_t startingMaskOffset = 16 - startOffset;
 		ptrdiff_t endingMaskOffset = 32 - ((uintptr)srcEnd & 15);
 
-		uint8x16_t mask1 = vld1q_u8((const uint8x16_t *)((const uint8 *)window_table + startingMaskOffset));
-		uint8x16_t mask3 = vld1q_u8((const uint8x16_t *)((const uint8 *)window_table + endingMaskOffset));
+		uint8x16_t mask1 = vld1q_u8((const uint8 *)window_table + startingMaskOffset);
+		uint8x16_t mask3 = vld1q_u8((const uint8 *)window_table + endingMaskOffset);
 
 		uint8x16_t mask = vandq_u8(mask1, mask3);
 

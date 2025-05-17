@@ -62,7 +62,7 @@ bool ATUIQueue::Run() {
 	try {
 		step();
 	} catch(const MyError& e) {
-		PushStep(ATUIShowAlertError(VDTextAToW(e.gets()).c_str(), nullptr)->GetStep());
+		PushStep(ATUIShowAlertError(e.wc_str(), nullptr)->GetStep());
 	}
 
 	return true;

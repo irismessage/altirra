@@ -21,6 +21,7 @@
 #include <at/ataudio/pokey.h>
 #include <at/atcore/media.h>
 #include <at/atio/image.h>
+#include <at/atui/uicommandmanager.h>
 #include "uisettingswindow.h"
 
 #include "audiosampleplayer.h"
@@ -35,8 +36,6 @@
 extern ATSimulator g_sim;
 
 void ATUISetOverscanMode(ATGTIAEmulator::OverscanMode mode);
-void OnCommandOpen(bool forceColdBoot);
-void OnCommandExit();
 
 void ATAppendDiskDrivePath(VDStringW& s, const ATDiskEmulator& drive, const ATDiskInterface& diskIf) {
 	if (drive.IsEnabled() || diskIf.GetClientCount() > 1) {
@@ -171,7 +170,7 @@ public:
 		);
 
 		as->SetAsyncAction(
-			[=]() { return vdrefptr<ATUIFutureWithResult<bool>>(new ATUIFutureSelectDiskImage(this->mDriveIndex)); }
+			[=, this]() { return vdrefptr<ATUIFutureWithResult<bool>>(new ATUIFutureSelectDiskImage(this->mDriveIndex)); }
 		);
 		target->AddSetting(as);
 		as.release();
@@ -627,7 +626,10 @@ public:
 
 		as = new ATUIActionSetting(L"Boot image...");
 		as->SetAction(
-			[]() -> bool { OnCommandOpen(true); return true; }
+			[]() -> bool {
+				ATUIGetCommandManager().ExecuteCommand("File.BootImage");
+				return true;
+			}
 		);
 		target->AddSetting(as);
 		as.release();
@@ -712,7 +714,13 @@ public:
 		target->AddSetting(ss);
 		ss.release();
 
-		as = new ATUIActionSetting(L"Quit", []() -> bool { OnCommandExit(); return true; });
+		as = new ATUIActionSetting(
+			L"Quit",
+			[]() -> bool {
+				ATUICommandManager().ExecuteCommandNT("File.Exit");
+				return true;
+			}
+		);
 		target->AddSetting(as);
 		as.release();
 	}

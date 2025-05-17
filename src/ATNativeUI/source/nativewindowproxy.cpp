@@ -26,8 +26,18 @@ void ATUINativeWindowProxy::SetVisible(bool visible) {
 }
 
 void ATUINativeWindowProxy::Show() {
-	if (mhwnd)
-		ShowWindow(mhwnd, SW_SHOWNOACTIVATE);
+	if (mhwnd) {
+		// The docs are vague about the difference between SW_SHOWNOACTIVATE
+		// and SW_SHOWNA. Both will show the window without activating it, but
+		// one difference is that SW_SHOWNOACTIVATE will un-minimize or
+		// un-maximize windows, while SW_SHOWNA won't. We want to un-minimize
+		// but not un-maximize a window.
+
+		if (IsIconic(mhwnd))
+			ShowWindow(mhwnd, SW_SHOWNOACTIVATE);
+		else
+			ShowWindow(mhwnd, SW_SHOWNA);
+	}
 }
 
 void ATUINativeWindowProxy::Hide() {

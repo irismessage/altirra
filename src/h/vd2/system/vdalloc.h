@@ -45,6 +45,8 @@ class IVDRefUnknown;
 #pragma warning(disable: 4284)		// operator-> must return pointer to UDT
 
 class vdautoblockptr {
+	vdautoblockptr(const vdautoblockptr&) = delete;
+	vdautoblockptr& operator=(const vdautoblockptr&) = delete;
 protected:
 	void *ptr;
 
@@ -62,14 +64,35 @@ public:
 };
 
 template<class T> class vdautoptr2 {
+	vdautoptr2(const vdautoptr2&) = delete;
+	vdautoptr2& operator=(const vdautoptr2&) = delete;
 protected:
 	T *ptr;
 
 public:
 	explicit vdautoptr2(T *p = 0) : ptr(p) {}
+
+	vdautoptr2(vdautoptr2&& other)
+		: ptr(other.ptr)
+	{
+		other.ptr = nullptr;
+	}
+
 	~vdautoptr2() { free((void *)ptr); }
 
 	vdautoptr2<T>& operator=(T *src) { free((void *)ptr); ptr = src; return *this; }
+
+	vdautoptr2& operator=(vdautoptr2&& other) {
+		if (ptr) {
+			free(ptr);
+			ptr = nullptr;
+		}
+
+		ptr = other.ptr;
+		other.ptr = nullptr;
+
+		return *this;
+	}
 
 	operator T*() const { return ptr; }
 	T& operator*() const { return *ptr; }

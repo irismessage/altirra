@@ -79,6 +79,10 @@ void ATCoProc8048::SetT1ReadHandler(const vdfunction<bool()>& fn) {
 	mpFnReadT1 = fn;
 }
 
+void ATCoProc8048::SetT1CountEnableHandler(const vdfunction<void(bool)>& fn) {
+	mpFnCountEnable = fn;
+}
+
 void ATCoProc8048::SetXRAMReadHandler(const vdfunction<uint8(uint8)>& fn) {
 	mpFnReadXRAM= fn;
 }
@@ -125,6 +129,7 @@ void ATCoProc8048::WarmReset() {
 	mPC = 0;
 	mbF1 = false;
 	mbTF = false;
+	mbTIF = false;
 	mbIF = false;
 	mbPBK = false;
 	mbDBF = false;
@@ -133,6 +138,13 @@ void ATCoProc8048::WarmReset() {
 	mpProgramBank = mpProgramBanks[0];
 
 	mbTimerActive = false;
+
+	if (mbCountEnabled) {
+		mbCountEnabled = false;
+
+		if (mpFnCountEnable)
+			mpFnCountEnable(false);
+	}
 
 	mP1 = 0xFF;
 	mP2 = 0xFF;
@@ -151,6 +163,20 @@ void ATCoProc8048::AssertIrq() {
 
 void ATCoProc8048::NegateIrq() {
 	mbIrqPending = false;
+}
+
+void ATCoProc8048::AssertHighToLowT1() {
+	if (mbCountEnabled) {
+		++mT;
+
+		if (mT == 0) {
+			if (!mbTF)
+				mbTF = true;
+
+			if (!mbTimerIrqPending && mbTIF)
+				mbTimerIrqPending = true;
+		}
+	}
 }
 
 void ATCoProc8048::Run() {
@@ -203,14 +229,15 @@ void ATCoProc8048::Run() {
 
 			if (mbIrqEnabled) {
 				if (mbIrqPending && mbIF)
-					DispatchIrq();
+					DispatchExternalIrq();
 			}
 		}
 
-		if (mbTIF && !mbTF && mbTimerActive) {
+		if (mbTIF && !mbTimerIrqPending && mbTimerActive) {
 			UpdateTimer();
+
 			if (mbTimerIrqPending && mbIrqEnabled)
-				DispatchIrq();
+				DispatchTimerIrq();
 		}
 
 		const uint8 opcode = mpProgramBank[mPC];
@@ -250,6 +277,8 @@ void ATCoProc8048::Run() {
 			he->mB = 0;
 			he->mK = 0;
 			he->mS = ~mPSW & 0x07;
+			he->mbIRQ = mbHistoryIrqPending;
+			mbHistoryIrqPending = false;
 
 			he->mOpcode[0] = opcode;
 			he->mOpcode[1] = operand;
@@ -523,10 +552,13 @@ void ATCoProc8048::Run() {
 				break;
 
 			case 0x25:		// EN TCNTI
-				mbTIF = true;
-				mbIrqAttention |= mbTF;
+				if (!mbTIF) {
+					mbTIF = true;
 
-				DispatchIrq();
+					// We don't need to update the timer interrupt here as the timer
+					// overflow FF is held in reset while the timer interrupt is disabled
+					// (TIF=0), so any overflows would have been discarded.
+				}
 				break;
 
 			case 0x08:		// IN A,BUS
@@ -639,10 +671,13 @@ void ATCoProc8048::Run() {
 
 				if (mbTF) {
 					mbTF = false;
-					UpdateTimer();
-					UpdateTimerDeadline();
 					mPC = ((mPC - 1) & 0x700) + operand;
 				}
+				
+				// must do this after we've taken the branch, so the return address
+				// is correct
+				if (mbTimerIrqPending)
+					DispatchTimerIrq();
 				break;
 
 			case 0x36:		// JT0 address
@@ -685,8 +720,10 @@ void ATCoProc8048::Run() {
 				break;
 
 			case 0x42:		// MOV A,T
-				if (mbTimerActive)
+				if (mbTimerActive) {
 					UpdateTimer();
+					DispatchTimerIrq();
+				}
 
 				mA = mT;
 				break;
@@ -756,6 +793,7 @@ void ATCoProc8048::Run() {
 				break;
 
 			case 0x00:		// NOP
+			case 0x01:		// undocumented - treated as NOP for now (seen in 1029 Polish firmware)
 				break;
 
 			case 0x48:		// ORL A,Rr
@@ -847,7 +885,8 @@ void ATCoProc8048::Run() {
 
 					mbIrqEnabled = true;
 
-					DispatchIrq();
+					DispatchExternalIrq();
+					DispatchTimerIrq();
 				}
 				break;
 
@@ -898,16 +937,27 @@ void ATCoProc8048::Run() {
 			case 0x65:		// STOP TCNT
 				if (mbTimerActive) {
 					mbTimerActive = false;
+					mbCountEnabled = false;
+
+					StopCount();
 
 					UpdateTimer();
+					DispatchTimerIrq();
 				}
 				break;
 
-	//		case 0x45:		// STRT TCNT
+			case 0x45:		// STRT TCNT
+				mbTimerActive = true;
+				StartCount();
+				break;
 
 			case 0x55:		// STRT T
-				mbTimerActive = true;
-				UpdateTimerDeadline();
+				StopCount();
+
+				if (!mbTimerActive) {
+					mbTimerActive = true;
+					UpdateTimerDeadline();
+				}
 				break;
 
 			case 0x47:		// SWAP A
@@ -937,6 +987,16 @@ void ATCoProc8048::Run() {
 					uint8 t = mA;
 					mA = *r;
 					*r = t;
+				}
+				break;
+
+			case 0x30:		// XCHD A,@Rr
+			case 0x31:
+				{
+					uint8 *r = &mRAM[mpRegBank[opcode - 0x30]];
+					uint8 d = (*r ^ mA) & 15;
+					*r ^= d;
+					mA ^= d;
 				}
 				break;
 
@@ -979,12 +1039,10 @@ bool ATCoProc8048::CheckBreakpoint() {
 	return false;
 }
 
-void ATCoProc8048::DispatchIrq() {
-	if (!mbIrqEnabled)
-		return;
-
-	if (mbIF && mbIrqPending) {
+void ATCoProc8048::DispatchExternalIrq() {
+	if (mbIrqEnabled && mbIF && mbIrqPending) {
 		mbIrqEnabled = false;
+		mbHistoryIrqPending = true;
 
 		uint8 *stackEntry = &mRAM[0x08 + (mPSW & 7) * 2];
 
@@ -996,9 +1054,17 @@ void ATCoProc8048::DispatchIrq() {
 		mbPBK = false;
 		mpProgramBank = mpProgramBanks[false];
 		mPC = 3;
-	} else if (mbTIF && mbTimerIrqPending) {
+	}
+}
+
+void ATCoProc8048::DispatchTimerIrq() {
+	if (mbIrqEnabled && mbTIF && mbTimerIrqPending) {
 		mbIrqEnabled = false;
+
+		// clear timer overflow FF
 		mbTimerIrqPending = false;
+
+		mbHistoryIrqPending = true;
 
 		uint8 *stackEntry = &mRAM[0x08 + (mPSW & 7) * 2];
 
@@ -1014,13 +1080,17 @@ void ATCoProc8048::DispatchIrq() {
 }
 
 void ATCoProc8048::UpdateTimer() {
+	if (mbCountEnabled)
+		return;
+
 	const uint32 delta = (mCyclesBase - mCyclesLeft) - mTimerDeadline;
 	mT = (uint8)(delta >> 5);
 
-	if (!mbTF && !(delta & (UINT32_C(1) << 31))) {
-		mbTF = true;
+	if (!(delta & (UINT32_C(1) << 31))) {
+		if (!mbTF)
+			mbTF = true;
 
-		if (mbTIF)
+		if (!mbTimerIrqPending && mbTIF)
 			mbTimerIrqPending = true;
 
 		mTimerDeadline += 32 * 256;
@@ -1029,4 +1099,23 @@ void ATCoProc8048::UpdateTimer() {
 
 void ATCoProc8048::UpdateTimerDeadline() {
 	mTimerDeadline = ((mCyclesBase - mCyclesLeft) & ~UINT32_C(31)) + ((0x100 - (uint32)mT) << 5);
+}
+
+void ATCoProc8048::StartCount() {
+	if (mbCountEnabled || !mbTimerActive)
+		return;
+
+	UpdateTimer();
+
+	mbCountEnabled = true;
+	if (mpFnCountEnable)
+		mpFnCountEnable(true);
+}
+
+void ATCoProc8048::StopCount() {
+	if (!mbCountEnabled)
+		return;
+
+	if (mpFnCountEnable)
+		mpFnCountEnable(false);
 }

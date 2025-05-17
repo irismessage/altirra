@@ -31,12 +31,12 @@ vdfunction<void(const wchar_t *, bool, bool, ATVFSFileView **)> g_ATVFSBlobHandl
 vdfunction<void(const wchar_t *, bool, bool, ATVFSFileView **)> g_ATVFSSpecialHandler;
 
 ATInvalidVFSPathException::ATInvalidVFSPathException(const wchar_t *badPath)
-	: MyError("Invalid VFS path: %ls.", badPath)
+	: VDException(L"Invalid VFS path: %s.", badPath)
 {
 }
 
 ATUnsupportedVFSPathException::ATUnsupportedVFSPathException(const wchar_t *badPath)
-	: MyError("Unsupported VFS path: %ls.", badPath)
+	: VDException(L"Unsupported VFS path: %s.", badPath)
 {
 }
 
@@ -46,7 +46,7 @@ ATVFSNotFoundException::ATVFSNotFoundException()
 }
 
 ATVFSNotFoundException::ATVFSNotFoundException(const wchar_t *path)
-	: ATVFSExceptionT(true, "VFS path not found: %ls.", path)
+	: ATVFSExceptionT(true, L"VFS path not found: %ls.", path)
 {
 }
 
@@ -56,7 +56,7 @@ ATVFSReadOnlyException::ATVFSReadOnlyException()
 }
 
 ATVFSReadOnlyException::ATVFSReadOnlyException(const wchar_t *path)
-	: ATVFSExceptionT(true, "VFS path is read only: %ls.", path)
+	: ATVFSExceptionT(true, L"VFS path is read only: %ls.", path)
 {
 }
 
@@ -66,7 +66,7 @@ ATVFSNotAvailableException::ATVFSNotAvailableException()
 }
 
 ATVFSNotAvailableException::ATVFSNotAvailableException(const wchar_t *path)
-	: ATVFSExceptionT(true, "VFS path is not available: %ls.", path)
+	: ATVFSExceptionT(true, L"VFS path is not available: %ls.", path)
 {
 }
 
@@ -381,6 +381,29 @@ bool ATVFSIsFilePath(const wchar_t *s) {
 	return kATVFSProtocol_File == ATParseVFSPath(s, basePath, subPath);
 }
 
+bool ATVFSExtractFilePath(const wchar_t *s, VDStringW *filePathOpt) {
+	VDStringW nextPath;
+	VDStringW basePath;
+	VDStringW subPath;
+
+	for(;;) {
+		auto type = ATParseVFSPath(s, basePath, subPath);
+
+		if (type == kATVFSProtocol_None)
+			return false;
+
+		if (type == kATVFSProtocol_File) {
+			if (filePathOpt)
+				*filePathOpt = std::move(basePath);
+
+			return true;
+		}
+
+		nextPath = std::move(basePath);
+		s = nextPath.c_str();
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 VDStringW ATMakeVFSPathForGZipFile(const wchar_t *path) {
@@ -395,6 +418,13 @@ VDStringW ATMakeVFSPathForZipFile(const wchar_t *path, const wchar_t *fileName) 
 
 class ATVFSFileViewDirect : public ATVFSFileView {
 public:
+	ATVFSFileViewDirect(VDFileStream&& fs, const wchar_t *name, bool write, bool update)
+		: mFileStream(std::move(fs))
+	{
+		mpStream = &mFileStream;
+		mFileName =  name;
+	}
+
 	ATVFSFileViewDirect(const wchar_t *path, bool write, bool update)
 		: mFileStream(path,
 			write
@@ -405,7 +435,10 @@ public:
 	{
 		mpStream = &mFileStream;
 		mFileName = VDFileSplitPath(path);
-		mbReadOnly = !write;
+	}
+
+	bool IsSourceReadOnly() const override {
+		return (mFileStream.getAttributes() & kVDFileAttr_ReadOnly) != 0;
 	}
 
 private:
@@ -418,7 +451,6 @@ public:
 		: mMemoryStream(nullptr, 0)
 	{
 		mpStream = &mMemoryStream;
-		mbReadOnly = false;
 
 		// check if the filename ends in .gz, and if so, strip it off
 		mFileName = view->GetFileName();
@@ -431,7 +463,7 @@ public:
 
 		uint32 size = 0;
 		for(;;) {
-			// Don't gunzip beyond 64MB.
+			// Don't gunzip beyond 256MB.
 			if (size >= 0x10000000)
 				throw MyError("Gzip stream is too large (exceeds 256MB in size).");
 
@@ -451,55 +483,95 @@ public:
 		mMemoryStream = VDMemoryStream(mBuffer.data(), size);
 	}
 
+	bool IsSourceReadOnly() const override { return true; }
+
 private:
 	vdfastvector<uint8> mBuffer;
 	VDMemoryStream mMemoryStream;
 };
 
-class ATVFSFileViewZip : public ATVFSFileView {
+class ATVFSZipArchive final : public vdrefcounted<IATVFSZipArchive> {
 public:
-	ATVFSFileViewZip(ATVFSFileView *view, const wchar_t *subfile)
-		: mMemoryStream(nullptr, 0)
+	ATVFSZipArchive(ATVFSFileView& parentView)
+		: mpZipView(&parentView)
 	{
-		mpStream = &mMemoryStream;
-		mFileName = subfile;
-		mbReadOnly = false;
-
-		auto& srcStream = view->GetStream();
-		bool found = false;
-		VDStringA subfile8(VDTextWToU8(VDStringW(subfile)));
-
-		VDZipArchive ziparch;
-		ziparch.Init(&srcStream);
-		sint32 n = ziparch.GetFileCount();
-		for(sint32 i=0; i<n; ++i) {
-			const VDZipArchive::FileInfo& info = ziparch.GetFileInfo(i);
-			const VDStringA& name = info.mFileName;
-
-			if (name == subfile8) {
-				if (!info.mbSupported)
-					throw MyError("Unsupported compression method in zip archive for file: %ls.", subfile);
-
-				vdautoptr<IVDInflateStream> zs { ziparch.OpenDecodedStream(i) };
-
-				mBuffer.resize(info.mUncompressedSize);
-				zs->Read(mBuffer.data(), info.mUncompressedSize);
-				zs->VerifyCRC();
-
-				mMemoryStream = VDMemoryStream(mBuffer.data(), info.mUncompressedSize);
-				found = true;
-				break;
-			}
-		}
-
-		if (!found)
-			throw MyError("Cannot find within zip file: %ls", subfile);
+		mZipArchive.Init(&mpZipView->GetStream());
 	}
 
+	VDZipArchive& GetZipArchive() override { return mZipArchive; }
+
+	vdrefptr<ATVFSFileView> OpenStream(sint32 idx) override;
+	vdrefptr<ATVFSFileView> TryOpenStream(const wchar_t *subfile) override;
+
+private:
+	vdrefptr<ATVFSFileView> mpZipView;
+	VDZipArchive mZipArchive;
+};
+
+vdrefptr<IATVFSZipArchive> ATVFSOpenZipArchiveFromView(ATVFSFileView& view) {
+	return vdrefptr<IATVFSZipArchive>(new ATVFSZipArchive(view));
+}
+
+class ATVFSFileViewZip final : public ATVFSFileView {
+public:
+	ATVFSFileViewZip(ATVFSZipArchive& zipArch, vdfastvector<uint8>&& buffer, const wchar_t *fileName)
+		: mMemoryStream(nullptr, 0)
+		, mpZipArchive(&zipArch)
+	{
+		mBuffer = std::move(buffer);
+		mMemoryStream = VDMemoryStream(mBuffer.data(), mBuffer.size());
+
+		mpStream = &mMemoryStream;
+		mFileName = fileName;
+	}
+
+	bool IsSourceReadOnly() const override { return true; }
+
 private:
 	vdfastvector<uint8> mBuffer;
 	VDMemoryStream mMemoryStream;
+
+	vdrefptr<ATVFSZipArchive> mpZipArchive;
 };
+
+vdrefptr<ATVFSFileView> ATVFSZipArchive::OpenStream(sint32 idx) {
+	const VDZipArchive::FileInfo& info = mZipArchive.GetFileInfo(idx);
+
+	vdautoptr<IVDInflateStream> zs { mZipArchive.OpenDecodedStream(idx) };
+	vdfastvector<uint8> buffer;
+
+	buffer.resize(info.mUncompressedSize);
+	zs->Read(buffer.data(), info.mUncompressedSize);
+	zs->VerifyCRC();
+
+	vdrefptr<ATVFSFileView> view(new ATVFSFileViewZip(*this, std::move(buffer), info.mDecodedFileName.c_str()));
+	view->SetTryOpenSibling(
+		[self = vdrefptr(this)](const wchar_t *name) -> vdrefptr<ATVFSFileView> {
+			return self->TryOpenStream(name);
+		}
+	);
+
+	return view;
+}
+
+vdrefptr<ATVFSFileView> ATVFSZipArchive::TryOpenStream(const wchar_t *subfile) {
+	sint32 idx = mZipArchive.FindFile(subfile, true);
+	if (idx < 0)
+		return nullptr;
+
+	return OpenStream(idx);
+}
+
+void ATVFSFileView::SetTryOpenSibling(ATVFSOpenSiblingFn fn) {
+	mpOpenSiblingFn = std::move(fn);
+}
+
+vdrefptr<ATVFSFileView> ATVFSFileView::TryOpenSibling(const wchar_t *name) const {
+	if (mpOpenSiblingFn)
+		return mpOpenSiblingFn(name);
+
+	return nullptr;
+}
 
 void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, ATVFSFileView **viewOut) {
 	ATVFSOpenFileView(vfsPath, write, false, viewOut);
@@ -519,19 +591,36 @@ void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, bool update, ATVFSFil
 		switch(protocol) {
 			case kATVFSProtocol_File:
 				view = new ATVFSFileViewDirect(basePath.c_str(), write, update);
+				view->SetTryOpenSibling(
+					[baseDir = VDFileSplitPathLeft(basePath)](const wchar_t *name) -> vdrefptr<ATVFSFileView> {
+						VDFileStream f;
+
+						if (!f.tryOpen(VDMakePath(baseDir, VDStringSpanW(name)).c_str()))
+							return nullptr;
+
+						return vdrefptr(new ATVFSFileViewDirect(std::move(f), name, false, false));
+					}
+				);
 				break;
 
 			case kATVFSProtocol_Zip:
 				if (write)
-					throw MyError("Cannot open .zip file for write access: %ls", basePath.c_str());
+					throw VDException(L"Cannot open .zip file for write access: %ls", basePath.c_str());
 
-				ATVFSOpenFileView(basePath.c_str(), false, ~view);
-				view = new ATVFSFileViewZip(view, subPath.c_str());
+				{
+					ATVFSOpenFileView(basePath.c_str(), false, ~view);
+					vdrefptr zipArchive(new ATVFSZipArchive(*view));
+
+					view = zipArchive->TryOpenStream(subPath.c_str());
+
+					if (!view)
+						throw VDException(L"Cannot find within zip file: %ls", subPath.c_str());
+				}
 				break;
 
 			case kATVFSProtocol_GZip:
 				if (write)
-					throw MyError("Cannot open .gz file for write access: %ls", basePath.c_str());
+					throw VDException(L"Cannot open .gz file for write access: %ls", basePath.c_str());
 
 				ATVFSOpenFileView(basePath.c_str(), false, ~view);
 				view = new ATVFSFileViewGZip(view);
@@ -542,7 +631,7 @@ void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, bool update, ATVFSFil
 					throw MyError("Inner filesystems are not supported.");
 
 				if (write)
-					throw MyError("Cannot open inner filesystem for write access: %ls", basePath.c_str());
+					throw VDException(L"Cannot open inner filesystem for write access: %ls", basePath.c_str());
 
 				ATVFSOpenFileView(basePath.c_str(), false, ~view);
 				{
@@ -578,6 +667,20 @@ void ATVFSOpenFileView(const wchar_t *vfsPath, bool write, bool update, ATVFSFil
 	}
 
 	*viewOut = view.release();
+}
+
+class ATVFSWrappedStreamView final : public ATVFSFileView {
+public:
+	ATVFSWrappedStreamView(IVDRandomAccessStream& stream, const wchar_t *imagePath) {
+		mpStream = &stream;
+		mFileName = imagePath;
+	}
+
+	bool IsSourceReadOnly() const override { return true; }
+};
+
+vdrefptr<ATVFSFileView> ATVFSWrapStream(IVDRandomAccessStream& stream, const wchar_t *imagePath) {
+	return vdrefptr(new ATVFSWrappedStreamView(stream, imagePath));
 }
 
 void ATVFSSetAtfsProtocolHandler(vdfunction<void(ATVFSFileView *, const wchar_t *, ATVFSFileView **)> handler) {

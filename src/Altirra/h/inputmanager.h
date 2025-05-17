@@ -226,7 +226,7 @@ enum ATInputControllerType : uint32 {
 	kATInputControllerType_KoalaPad,
 	kATInputControllerType_AmigaMouse,
 	kATInputControllerType_Keypad,
-	kATInputControllerType_Trackball_CX80_V1,
+	kATInputControllerType_Trackball_CX80,
 	kATInputControllerType_5200Trackball,
 	kATInputControllerType_Driving,
 	kATInputControllerType_Keyboard,

@@ -30,12 +30,12 @@
 		jmp		IRQHandler		;IRQ vector
 		dta		$91				;ID byte
 		dta		0				;device name (unused)
-		dta		a(CIOOpen)
-		dta		a(CIOClose)
-		dta		a(CIOGetByte)
-		dta		a(CIOPutByte)
-		dta		a(CIOGetStatus)
-		dta		a(CIOSpecial)
+		dta		a(CIOOpen-1)
+		dta		a(CIOClose-1)
+		dta		a(CIOGetByte-1)
+		dta		a(CIOPutByte-1)
+		dta		a(CIOGetStatus-1)
+		dta		a(CIOSpecial-1)
 		jmp		Init
 
 ;==========================================================================
@@ -62,11 +62,38 @@
 
 ;==========================================================================
 CIOOpen:
+		sta		$dce0
+		bvs		CIODoPoll
+		rts
+
 CIOClose:
+		sta		$dce1
+		bvs		CIODoPoll
+		rts
+
 CIOGetByte:
+		sta		$dce2
+		bvs		CIODoPoll
+		rts
+
 CIOPutByte:
+		sta		$dce3
+		bvs		CIODoPoll
+		rts
+
 CIOGetStatus:
+		sta		$dce4
+		bvs		CIODoPoll
+		rts
+
 CIOSpecial:
+		sta		$dce5
+		bvs		CIODoPoll
+		rts
+
+CIODoPoll:
+		sta		$dce6
+		bvs		CIODoPoll
 		rts
 
 ;==========================================================================

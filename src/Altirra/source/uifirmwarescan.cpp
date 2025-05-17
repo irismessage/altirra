@@ -80,7 +80,7 @@ void ATUIScanForFirmware(VDGUIHandle hParent, ATFirmwareManager& fwmgr) {
 			if (ATFirmwareAutodetect(buf.data(), (uint32)buf.size(), info, specificType) == ATFirmwareDetection::SpecificImage) {
 				ATFirmwareInfo& info2 = detectedFirmwares.push_back();
 
-				vdmove(info2, info);
+				info2 = std::move(info);
 				info2.mId = ATGetFirmwareIdFromPath(fullPath.c_str());
 				info2.mPath = fullPath;
 

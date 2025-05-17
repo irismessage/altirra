@@ -21,6 +21,7 @@
 #include <vd2/system/vdstl.h>
 #include <at/atcore/scheduler.h>
 
+class ATConsoleOutput;
 class ATMemoryManager;
 class ATMemoryLayer;
 class ATIRQController;
@@ -30,6 +31,50 @@ class ATTraceChannelFormatted;
 class ATPaletteCorrector;
 class IATObjectState;
 template<typename T> class vdrefptr;
+
+enum class ATVBXEOverlayMode : uint8 {
+	Disabled,
+	LR,
+	SR,
+	HR,
+	Text
+};
+
+struct ATVBXEXDLHistoryEntry {
+	// Base (4)
+	uint32 mXdlAddr : 19;
+
+	uint32 mOverlayMode : 3;
+	uint32 mbMapEnabled : 1;
+	uint32 mbXdlActive : 1;
+
+	// XDLC_OVADR (4)
+	uint32 mOverlayAddr : 20;
+	uint32 mOverlayStep : 12;
+
+	// XDLC_MAPADR (4)
+	uint32 mMapAddr : 20;
+	uint32 mMapStep : 12;
+
+	// XDLC_OVSCROL (2)
+	uint8 mOvHScroll;
+	uint8 mOvVScroll;
+
+	// XDLC_ATT (2)
+	uint8 mAttrByte;	// Playfield/overlap palette and overlay width byte
+	uint8 mOvPriority;
+
+	// XDLC_CHBASE (1)
+	uint32 mChBase : 8;
+
+	// XDLC_MAPPAR (3)
+	uint32 mMapFieldWidth : 5;
+	uint32 mMapFieldHeight : 5;
+	uint32 mMapHScroll : 5;
+	uint32 mMapVScroll : 5;
+
+	bool operator==(const ATVBXEXDLHistoryEntry&) const = default;
+};
 
 class ATVBXEEmulator final : public IATSchedulerCallback {
 	ATVBXEEmulator(const ATVBXEEmulator&) = delete;
@@ -75,6 +120,9 @@ public:
 	void DumpBlitList(sint32 addrOpt, bool compact);
 	bool DumpBlitListEntry(uint32 addr, bool compact, bool autologging);
 	void DumpXDL();
+	void DumpXDLHistory(ATConsoleOutput& output);
+
+	const ATVBXEXDLHistoryEntry *GetXDLHistory(uint32 y) const;
 
 	void LoadState(const IATObjectState *state);
 	vdrefptr<IATObjectState> SaveState() const;
@@ -86,8 +134,9 @@ public:
 	// GTIA interface
 	void BeginFrame(int correctionMode, bool signedPalette);
 	void EndFrame();
-	void BeginScanline(uint32 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires);
+	void BeginScanline(uint32 y, uint32 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires);
 	void RenderScanline(int x2, bool pfpmrendered);
+	uint32 SenseScanline(int hpx1, int hpx2, const uint8 *weights) const;
 	void EndScanline();
 
 	void AddRegisterChange(uint8 pos, uint8 addr, uint8 value);
@@ -169,13 +218,7 @@ private:
 	bool mbXdlEnabled;
 	uint32 mXdlRepeatCounter;
 
-	enum OvMode {
-		kOvMode_Disabled,
-		kOvMode_LR,
-		kOvMode_SR,
-		kOvMode_HR,
-		kOvMode_80Text
-	};
+	using OvMode = ATVBXEOverlayMode;
 
 	enum OvWidth {
 		kOvWidth_Narrow,
@@ -309,6 +352,9 @@ private:
 	ATTraceChannelSimple *mpTraceChannelOverlay = nullptr;
 	ATTraceChannelFormatted *mpTraceChannelBlit = nullptr;
 	uint64	mTraceBlitStartTime = 0;
+
+	ATVBXEXDLHistoryEntry mXDLLastHistoryEntry {};
+	ATVBXEXDLHistoryEntry mXDLHistory[240] {};	// 4.8K
 
 	int		mRenderPaletteCorrectionMode = 0;
 	int		mRenderPaletteCorrectedMode = 0;

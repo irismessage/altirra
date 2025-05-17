@@ -18,6 +18,7 @@
 #define f_AT_DEVXCMDCOPYPASTE_H
 
 IATDeviceXCmd& ATGetDeviceXCmdCopyWithChildren();
+IATDeviceXCmd& ATGetDeviceXCmdCopyCmdLine();
 IATDeviceXCmd& ATGetDeviceXCmdPaste();
 
 #endif

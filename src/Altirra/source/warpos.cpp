@@ -267,7 +267,8 @@ void ATWarpOSDevice::UpdateInputShifter() {
 			} else {
 				// valid command -- initiate change + reset or readback
 				if (mCommand < 0x20) {
-					if (mCurrentSetting != mCommand) {
+					// don't change/save for $1F, which means keep-current
+					if (mCommand != 0x1F && mCurrentSetting != mCommand) {
 						mCurrentSetting = mCommand;
 
 						SaveNVRAM();

@@ -36,6 +36,9 @@
     <ClCompile Include="source\uilistview.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\uiimage.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\stdafx.h">
@@ -54,6 +57,9 @@
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atuicontrols\uitextedit.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atuicontrols\uiimage.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>

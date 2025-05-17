@@ -49,6 +49,8 @@ public:
 
 private:
 	struct DeviceNode;
+	class XCmdRemove;
+	class XCmdSettings;
 
 	void OnItemSelectionChanged(VDUIProxyTreeViewControl *sender, int idx);
 	void OnItemDoubleClicked(VDUIProxyTreeViewControl *sender, bool *handled);
@@ -64,6 +66,8 @@ private:
 	bool GetXCmdContext(VDUIProxyTreeViewControl::NodeRef selectedTreeNode, DeviceNode *selectedDeviceNode, IATDevice *&dev, sint32& busIndex);
 	void ExecuteXCmd(IATDevice *dev, sint32 busIndex, IATDeviceXCmd& xcmd);
 
+	void Remove(DeviceNode *p);
+	void Settings(DeviceNode *p);
 	void UpdateIcons();
 
 	VDDialogFrameW32& mParent;

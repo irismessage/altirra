@@ -97,12 +97,10 @@ private:
 	void	UpdateDisplayInfoCache();
 
 	void	ThreadRun();
-	void	ThreadRunFullRemote();
 	void	ThreadRunTimerOnly();
 
 	void	DispatchTicks();
 	void	PostTick();
-	void	DispatchRemoteCalls();
 
 	bool	RegisterWindowClass();
 	void	UnregisterWindowClass();
@@ -134,7 +132,6 @@ private:
 	ATOM		mWndClass;
 	HWND		mhwnd;
 
-	bool		mbMultithreaded;
 	bool		mbAppActive;
 
 	typedef vdlist<VDVideoDisplayClient> Clients;
@@ -145,15 +142,6 @@ private:
 
 	VDSignal			mStarted;
 	VDCriticalSection	mMutex;
-
-	struct RemoteCallNode : vdlist_node {
-		void (*mpFunction)(void *data);
-		void *mpData;
-		VDSignal mSignal;
-	};
-
-	typedef vdlist<RemoteCallNode> RemoteCalls;
-	RemoteCalls	mRemoteCalls;
 
 	vdfunction<void(IVDVideoDisplay::ProfileEvent)> mpProfileHook;
 

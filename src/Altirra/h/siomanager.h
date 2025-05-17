@@ -88,7 +88,7 @@ public:
 
 	void SetTraceContext(ATTraceContext *context);
 
-	void TryAccelPBIRequest();
+	void TryAccelPBIRequest(bool enabled);
 
 	bool TryAccelRequest(const ATSIORequest& req, bool fromPBI);
 
@@ -117,11 +117,14 @@ public:		// IATDeviceSIOManager
 	virtual void InsertFence(uint32 id) override;
 	virtual void FlushQueue() override;
 	virtual void EndCommand() override;
+	virtual void HandleCommand(const void *data, uint32 len, bool succeeded) override;
 	virtual bool IsAccelRequest() const override { return mpAccelRequest != nullptr; }
 	virtual uint32 GetAccelTimeSkew() const override { return mAccelTimeSkew; }
 	virtual sint32 GetHighSpeedIndex() const override { return 10; }
 	virtual uint32 GetCyclesPerBitRecv() const override;
 	virtual uint32 GetRecvResetCounter() const override;
+	virtual uint32 GetCyclesPerBitSend() const override;
+	virtual uint32 GetCyclesPerBitBiClock() const override;
 	virtual uint64 GetCommandQueueTime() const override { return mCommandQueueTime; }
 	virtual uint64 GetCommandFrameEndTime() const override { return mCommandFrameEndTime; }
 	virtual uint64 GetCommandDeassertTime() const override { return mCommandDeassertTime; }
@@ -141,6 +144,7 @@ public:		// IATDeviceSIOManager
 
 	virtual void SetSIOInterrupt(IATDeviceRawSIO *dev, bool state) override;
 	virtual void SetSIOProceed(IATDeviceRawSIO *dev, bool state) override;
+	virtual void SetBiClockNotifyEnabled(IATDeviceRawSIO *dev, bool enabled) override;
 
 	virtual void SetExternalClock(IATDeviceRawSIO *dev, uint32 initialOffset, uint32 period) override;
 
@@ -185,6 +189,7 @@ private:
 	void UpdateActiveDeviceDerivedValues();
 	void UpdateTransferRateDerivedValues();
 	void OnMotorStateChanged(bool asserted);
+	void OnSerialOutputClockChanged();
 	void TraceReceive(uint8 c, uint32 cyclesPerBit, bool postReceive);
 	void UpdatePollState(uint8 cmd, uint8 aux1, uint8 aux2);
 
@@ -252,6 +257,7 @@ private:
 
 	vdfastvector<IATDeviceRawSIO *> mSIOInterruptActive;
 	vdfastvector<IATDeviceRawSIO *> mSIOProceedActive;
+	vdfastvector<IATDeviceRawSIO *> mNotifyBiClockDevices;
 
 	struct ExternalClock {
 		IATDeviceRawSIO *mpDevice;

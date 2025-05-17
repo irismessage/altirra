@@ -1,7 +1,7 @@
 #! python3
 
 # Altirra build script
-# Copyright (C) Avery Lee 2014-2023
+# Copyright (C) Avery Lee 2014-2024
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -27,8 +27,8 @@ import shutil
 import marshal
 import itertools
 
-EXPECTED_MSVC_VERSION = '19.39.33522'
-EXPECTED_MSVC_VERSION_DESC = 'Visual Studio 2022 v17.9.3'
+EXPECTED_MSVC_VERSION = '19.42.34435'
+EXPECTED_MSVC_VERSION_DESC = 'Visual Studio 2022 v17.12.3'
 
 DIAGNOSTIC_PATTERN = re.compile(r'(?:[0-9]+\>|)(?:[a-zA-Z0-9:\\/.]* *\([0-9,]+\).*(?:warning|error)|.*fatal error LNK[0-9]+:).*', re.I)
 
@@ -470,8 +470,8 @@ def banner() -> None:
     if opts.enable_banner:
         opts.enable_banner = False
 
-        print("Altirra Build Release Utility Version 4.20")
-        print("Copyright (C) Avery Lee 2014-2023. Licensed under GNU General Public License, v2 or later")
+        print("Altirra Build Release Utility Version 4.30")
+        print("Copyright (C) Avery Lee 2014-2024. Licensed under GNU General Public License, v2 or later")
         print()
 
 def usage_error(*args) -> None:

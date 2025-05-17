@@ -13,6 +13,8 @@ enum VDTProgramFormat {
 enum VDTFormat {
 	kVDTF_Unknown,
 	kVDTF_R8G8B8A8,
+	kVDTF_R8G8B8A8_sRGB,
+	kVDTF_R8G8B8A8_GammaToSRGB,
 	kVDTF_B8G8R8A8,
 	kVDTF_B8G8R8A8_sRGB,
 	kVDTF_U8V8,
@@ -171,10 +173,19 @@ enum class VDTSwapChainCompositionStatus : uint8 {
 	Overlay
 };
 
-enum VDTUsage {
-	kVDTUsage_Default,
-	kVDTUsage_Render
+enum class VDTUsage : uint32 {
+	None,
+	Shader = 0x01,
+	Render = 0x02,
+	UnorderedAccess = 0x04
 };
+
+inline VDTUsage operator|(VDTUsage a, VDTUsage b) { return VDTUsage((uint32)a | (uint32)b); }
+inline VDTUsage operator&(VDTUsage a, VDTUsage b) { return VDTUsage((uint32)a & (uint32)b); }
+inline VDTUsage& operator|=(VDTUsage& a, VDTUsage b) { return a = VDTUsage((uint32)a | (uint32)b); }
+inline VDTUsage& operator&=(VDTUsage& a, VDTUsage b) { return a = VDTUsage((uint32)a & (uint32)b); }
+inline VDTUsage operator~(VDTUsage a) { return VDTUsage(~(uint32)a); }
+inline bool operator!(VDTUsage a) { return a == VDTUsage::None; }
 
 struct VDTViewport {
 	sint32 mX;
@@ -206,6 +217,7 @@ struct VDTDeviceCaps {
 	uint32	mMaxTextureHeight = 0;
 	bool	mbMinPrecisionPS = false;
 	bool	mbMinPrecisionNonPS = false;
+	bool	mbComputeSM5 = false;
 };
 
 #endif	// f_VD2_TESSA_TYPES_H

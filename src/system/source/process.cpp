@@ -36,5 +36,5 @@ void VDLaunchProgram(const wchar_t *path, const wchar_t *args) {
 		VDVERIFY(CloseHandle(processInfo.hProcess));
 		VDVERIFY(CloseHandle(processInfo.hThread));
 	} else
-		throw MyWin32Error("Unable to launch process: %%s", GetLastError());
+		throw VDWin32Exception(L"Unable to launch process: %%s", GetLastError());
 }

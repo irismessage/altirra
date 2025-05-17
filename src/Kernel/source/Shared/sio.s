@@ -501,7 +501,8 @@ wait:
 	bmi		error			;bail if so
 	lda		recvdn			;check for receive complete
 	beq		wait			;keep waiting if not
-	tya						;set flags from status
+	ldy		status			;set flags from status, and reload in case recvdn
+							;was hit first after IRQ set status
 	
 error:
 	;Mask interrupts, but exit with them masked. We do this in order to
@@ -898,10 +899,15 @@ no_frames:
 	sta		audf4
 	sta		cbaudh
 		
-	;kick pokey into init mode to reset serial input shift hw
+	;Reset pokey serial input shift hw.
+	;
+	;Clearing bits 0-1 sets init mode, which resets the serial I/O shift
+	;register machines and is the main thing we need. Bits 4-6 are of lesser
+	;importance as they only reset the phase of the serial clocks.
+	;
 	ldx		sskctl
 	txa
-	and		#$fc
+	and		#$8c
 	sta		skctl
 	
 	;reset serial port status

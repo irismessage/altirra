@@ -18,6 +18,7 @@
 #ifndef f_AT_INPUTCONTROLLER_H
 #define f_AT_INPUTCONTROLLER_H
 
+#include <optional>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
 #include <at/atcore/notifylist.h>
@@ -29,6 +30,8 @@ class IATDeviceControllerPort;
 class ATPokeyEmulator;
 class ATInputManager;
 class ATAnticEmulator;
+class ATGTIAEmulator;
+class ATGTIALightSensor;
 class ATPIAEmulator;
 class ATPortInputController;
 struct ATInputPointerInfo;
@@ -49,6 +52,8 @@ enum ATInputTrigger : uint32 {
 	kATInputTrigger_Turbo		= 0x0203,
 	kATInputTrigger_ColdReset	= 0x0204,
 	kATInputTrigger_WarmReset	= 0x0205,
+	kATInputTrigger_Rewind		= 0x0206,
+	kATInputTrigger_RewindMenu	= 0x0207,
 	kATInputTrigger_KeySpace	= 0x0300,
 	kATInputTrigger_5200_0		= 0x0400,
 	kATInputTrigger_5200_1		= 0x0401,
@@ -134,17 +139,15 @@ public:
 
 	ATLightPenPort();
 
-	void Init(ATAnticEmulator *antic);
+	void Init(ATAnticEmulator& antic, ATGTIAEmulator& gtia);
 
-	struct LPAdjustOffset {
-		sint32 x, y;
-	};
+	ATGTIAEmulator& GetGTIA() const { return *mpGTIA; }
 
-	void SetAdjust(bool pen, const LPAdjustOffset& offset) {
+	void SetAdjust(bool pen, vdint2 offset) {
 		mAdjust[pen] = offset;
 	}
 
-	LPAdjustOffset GetAdjust(bool pen) const { return mAdjust[pen]; }
+	vdint2 GetAdjust(bool pen) const { return mAdjust[pen]; }
 
 	bool GetImmediateUpdateEnabled() const;
 	void SetImmediateUpdateEnabled(bool enable);
@@ -167,12 +170,15 @@ protected:
 	void SetAnticPenPosition(int x, int y);
 
 	ATAnticEmulator *mpAntic = nullptr;
+	ATGTIAEmulator *mpGTIA = nullptr;
 	uint8 mTriggerState = 0;
 	uint8 mTriggerStateMask = 0x03;
-	LPAdjustOffset mAdjust[2] {};
+	vdint2 mAdjust[2] {};
 	bool mbLastWasPen = false;
 	bool mbOddPhase = false;
 	bool mbImmediateUpdate = false;
+	int mPenBeamX = 0;
+	int mPenBeamY = 0;
 	ATLightPenNoiseMode mNoiseMode = ATLightPenNoiseMode::None;
 
 	ATNotifyList<const vdfunction<void(bool, int, int)> *> mTriggerCorrectionEvent;
@@ -511,8 +517,12 @@ protected:
 	void OnDetach() override;
 
 	void UpdatePortState();
+	void SetLightSensingEnabled(bool enabled);
+	void AssertLPInput(std::optional<int> forcedY = {});
+	void DeassertLPInput();
 
-	void GetBeamPos(int& x, int& y, ATLightPenNoiseMode noiseMode) const;
+	vdint2 GetRawBeamPos() const;
+	vdint2 GetAnticLightPos(ATLightPenNoiseMode noiseMode) const;
 	vdfloat2 GetBeamPointerPos() const;
 
 	Type	mType {};
@@ -522,10 +532,10 @@ protected:
 	bool	mbTriggerPressed {};
 	bool	mbPenDown {};
 
-	ATEvent *mpLPAssertEvent = nullptr;
 	ATEvent *mpLPDeassertEvent = nullptr;
 	ATScheduler *mpScheduler = nullptr;
 	ATLightPenPort *mpLightPen = nullptr;
+	ATGTIALightSensor *mpLightSensor = nullptr;
 };
 
 ///////////////////////////////////////////////////////////////////////////

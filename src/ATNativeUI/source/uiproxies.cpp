@@ -4,6 +4,7 @@
 #include <richedit.h>
 #include <commctrl.h>
 #include <tom.h>
+#include <uxtheme.h>
 
 #include <vd2/system/w32assist.h>
 #include <vd2/system/strutil.h>
@@ -2982,7 +2983,12 @@ VDUIProxyToolbarControl::~VDUIProxyToolbarControl() {
 }
 
 void VDUIProxyToolbarControl::SetDarkModeEnabled(bool enable) {
-	mbDarkModeEnabled = enable;
+	if (mbDarkModeEnabled != enable) {
+		mbDarkModeEnabled = enable;
+
+		if (mhwnd && ATUIIsDarkThemeActive())
+			SetWindowTheme(mhwnd, L"", L"");
+	}
 }
 
 void VDUIProxyToolbarControl::Clear() {
@@ -3156,6 +3162,9 @@ void VDUIProxyToolbarControl::Attach(VDZHWND hwnd) {
 
 	SendMessage(mhwnd, TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_DRAWDDARROWS | TBSTYLE_EX_MIXEDBUTTONS);
 	SendMessage(mhwnd, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
+
+	if (mbDarkModeEnabled && ATUIIsDarkThemeActive())
+		SetWindowTheme(mhwnd, L"", L"");
 }
 
 void VDUIProxyToolbarControl::Detach() {

@@ -21,7 +21,7 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/vectors.h>
 
-void VDDisplayCreateGammaRamp(uint32 *gammaTex, uint32 len, bool enableInputConversion, bool useAdobeRgb, float outputGamma);
+void VDDisplayCreateGammaRamp(uint32 *gammaTex, uint32 len, bool enableInputConversion, float outputGamma, float gammaAdjust);
 void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, uint32 srcH, uint32 dstH, uint32 texSize, float intensity, bool renderLinear);
 void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, uint32 srcH, uint32 dstH, float outY, float outH, uint32 texSize, float intensity, bool renderLinear);
 

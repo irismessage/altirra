@@ -27,6 +27,7 @@
 #include <vd2/system/refcount.h>
 #include <vd2/system/function.h>
 #include <vd2/system/thread.h>
+#include <vd2/system/vectors.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -190,6 +191,7 @@ public:
 
 	bool		AdjustTextureSize(uint32& w, uint32& h, bool nonPow2OK = false);
 	bool		AdjustTextureSize(int& w, int& h, bool nonPow2OK = false);
+	bool		AdjustTextureSize(vdsize32& size, bool nonPow2OK = false);
 	bool		IsTextureFormatAvailable(D3DFORMAT format);
 
 	bool		CheckResourceFormat(DWORD usage, D3DRESOURCETYPE rtype, D3DFORMAT checkFormat) const;

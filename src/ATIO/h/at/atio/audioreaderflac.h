@@ -31,7 +31,6 @@ public:
 
 	uint64 GetDataSize() const override;
 	uint64 GetDataPos() const override;
-	uint64 GetFrameCount() const override;
 
 	ATAudioReadFormatInfo GetFormatInfo() const override;
 	uint32 ReadStereo16(sint16 *dst, uint32 n) override;

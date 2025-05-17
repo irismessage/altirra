@@ -33,15 +33,16 @@ protected:
 	VDUIProxyComboBoxControl mComboAddress;
 	VDUIProxyComboBoxControl mComboChannels;
 
-	static const uint16 kBaseAddresses[];
+	static const uint16 kRanges[][2];
 };
 
-const uint16 ATUIDialogDeviceCovox::kBaseAddresses[] = {
-	0xD100,
-	0xD280,
-	0xD500,
-	0xD600,
-	0xD700,
+const uint16 ATUIDialogDeviceCovox::kRanges[][2] = {
+	{ 0xD100, 0x100 },
+	{ 0xD280, 0x80 },
+	{ 0xD500, 0x100 },
+	{ 0xD600, 0x40 },
+	{ 0xD600, 0x100 },		// also the default
+	{ 0xD700, 0x100 },
 };
 
 ATUIDialogDeviceCovox::ATUIDialogDeviceCovox(ATPropertySet& props)
@@ -54,8 +55,8 @@ bool ATUIDialogDeviceCovox::OnLoaded() {
 	AddProxy(&mComboAddress, IDC_ADDRESS);
 	AddProxy(&mComboChannels, IDC_CHANNELS);
 
-	for(uint16 baseAddr : kBaseAddresses)
-		mComboAddress.AddItem(VDStringW().sprintf(L"$%04X-%04X", baseAddr, baseAddr | 0xFF).c_str());
+	for(auto [baseAddr, size] : kRanges)
+		mComboAddress.AddItem(VDStringW().sprintf(L"$%04X-%04X", baseAddr, baseAddr + size - 1).c_str());
 
 	mComboChannels.AddItem(L"1 channel (mono)");
 	mComboChannels.AddItem(L"4 channels (stereo)");
@@ -71,15 +72,31 @@ void ATUIDialogDeviceCovox::OnDataExchange(bool write) {
 		mPropSet.Clear();
 
 		int sel = mComboAddress.GetSelection();
-		if (sel >= 0 && sel < (int)vdcountof(kBaseAddresses))
-			mPropSet.SetUint32("base", kBaseAddresses[sel]);
+		if (sel >= 0 && sel < (int)vdcountof(kRanges)) {
+			mPropSet.SetUint32("base", kRanges[sel][0]);
+			mPropSet.SetUint32("size", kRanges[sel][1]);
+		}
 
 		mPropSet.SetUint32("channels", mComboChannels.GetSelection() > 0 ? 4 : 1);
 	} else {
-		uint32 baseAddr = mPropSet.GetUint32("base", 0xD600);
+		const uint32 baseAddr = std::min<uint32>(mPropSet.GetUint32("base", 0xD600), 0xFFFF);
+		const uint32 size = std::min<uint32>(mPropSet.GetUint32("size", 0), 0x0100);
 
-		auto it = std::find(std::begin(kBaseAddresses), std::end(kBaseAddresses), baseAddr);
-		int idx = (it != std::end(kBaseAddresses)) ? it - std::begin(kBaseAddresses) : 3;
+		// find largest range with a matching base address and within the specified
+		// size
+		int idx = -1;
+		uint32 bestSize = 0;
+		uint32 maxSize = size ? size : 0x100;
+		for(int i = 0; i < (int)vdcountof(kRanges); ++i) {
+			if (kRanges[i][0] == baseAddr && kRanges[i][1] <= maxSize && kRanges[i][1] > bestSize) {
+				idx = i;
+				bestSize = kRanges[i][1];
+			}
+		}
+
+		// default to $D600-D6FF if a range is specified that doesn't match
+		if (idx < 0)
+			idx = 4;
 
 		mComboAddress.SetSelection(idx);
 

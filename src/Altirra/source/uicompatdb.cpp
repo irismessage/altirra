@@ -316,9 +316,7 @@ void ATUIDialogCompatDBEditAlias::OnFromFile() {
 		ATImageLoadContext loadCtx {};
 		loadCtx.mpCartLoadContext = &cartLoadCtx;
 
-		VDFileStream fs(fn.c_str());
-		vdrefptr<IATImage> image;
-		ATImageLoadAuto(fn.c_str(), fn.c_str(), fs, &loadCtx, nullptr, nullptr, ~image);
+		vdrefptr<IATImage> image = ATImageLoadFromFile(fn.c_str(), &loadCtx);
 
 		vdvector<ATCompatEDBSourcedAliasRule> newSrcRules;
 
@@ -337,7 +335,7 @@ void ATUIDialogCompatDBEditAlias::OnFromFile() {
 		}
 		
 		if (newSrcRules.empty())
-			throw MyError("'%ls' does not contain an image type supported by the compatibility database system.", fn.c_str());
+			throw VDException(L"'%ls' does not contain an image type supported by the compatibility database system.", fn.c_str());
 
 		mCurrentSrcRules = std::move(newSrcRules);
 		RefreshSrcRules();
@@ -1141,10 +1139,7 @@ void ATUIDialogCompatDB::OnUpdateChecksumsToSHA256() {
 					std::optional<ATChecksumSHA256> sha256;
 
 					try {
-						VDFileStream fs(filePath.c_str());
-						vdrefptr<IATImage> image;
-
-						ATImageLoadAuto(filePath.c_str(), filePath.c_str(), fs, &loadCtx, nullptr, nullptr, ~image);
+						vdrefptr<IATImage> image = ATImageLoadFromFile(filePath.c_str(), &loadCtx);
 
 						if (IATDiskImage *diskImage = vdpoly_cast<IATDiskImage *>(image)) {
 							if (!diskImage->IsDynamic()) {

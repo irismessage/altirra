@@ -28,6 +28,45 @@
 #include <vd2/system/w32assist.h>
 #include <windows.h>
 
+static_assert(+VDDateInterval{0} == VDDateInterval{0});
+static_assert(+VDDateInterval{1} == VDDateInterval{1});
+static_assert(-VDDateInterval{0} == VDDateInterval{0});
+static_assert(-VDDateInterval{1} == VDDateInterval{-1});
+
+static_assert(VDDateInterval{0}.Abs().mDeltaTicks == 0);
+static_assert(VDDateInterval{1}.Abs().mDeltaTicks == 1);
+static_assert(VDDateInterval{-1}.Abs().mDeltaTicks == 1);
+
+static_assert(VDDateInterval{ 1} != VDDateInterval{0});
+static_assert(VDDateInterval{ 0} == VDDateInterval{0});
+static_assert(VDDateInterval{ 0} >= VDDateInterval{0});
+static_assert(VDDateInterval{ 1} >= VDDateInterval{0});
+static_assert(VDDateInterval{ 1} >  VDDateInterval{0});
+static_assert(VDDateInterval{ 0} <= VDDateInterval{0});
+static_assert(VDDateInterval{-1} <= VDDateInterval{0});
+static_assert(VDDateInterval{-1} <  VDDateInterval{0});
+
+static_assert(!(VDDateInterval{ 0} != VDDateInterval{0}));
+static_assert(!(VDDateInterval{ 1} == VDDateInterval{0}));
+static_assert(!(VDDateInterval{-1} >= VDDateInterval{0}));
+static_assert(!(VDDateInterval{ 0} >  VDDateInterval{0}));
+static_assert(!(VDDateInterval{ 1} <= VDDateInterval{0}));
+static_assert(!(VDDateInterval{ 0} <  VDDateInterval{0}));
+
+static_assert(VDDateInterval{0}.ToSeconds() == 0.0f);
+static_assert(VDDateInterval{10000000}.ToSeconds() == 1.0f);
+static_assert(VDDateInterval{-10000000}.ToSeconds() == -1.0f);
+static_assert(VDDateInterval::FromSeconds(0).mDeltaTicks == 0);
+static_assert(VDDateInterval::FromSeconds(1.0f).mDeltaTicks == 10000000);
+static_assert(VDDateInterval::FromSeconds(-1.0f).mDeltaTicks == -10000000);
+
+static_assert(VDDate{0} - VDDate{0} == VDDateInterval{0});
+static_assert(VDDate{0} - VDDate{1} == VDDateInterval{-1});
+static_assert(VDDate{1} - VDDate{0} == VDDateInterval{1});
+static_assert(VDDate{1000} + VDDateInterval{1} == VDDate{1001});
+static_assert(VDDateInterval{1} + VDDate{1000} == VDDate{1001});
+static_assert(VDDate{1000} - VDDateInterval{1} == VDDate{999});
+
 VDDate VDGetCurrentDate() {
 	FILETIME ft;
 	::GetSystemTimeAsFileTime(&ft);

@@ -64,6 +64,15 @@ namespace {
 	}
 }
 
+VDVideoDisplayManager *VDGetVideoDisplayManager() {
+	if (!g_pVDVideoDisplayManager) {
+		g_pVDVideoDisplayManager = new VDVideoDisplayManager;
+		g_pVDVideoDisplayManager->Init();
+	}
+
+	return g_pVDVideoDisplayManager;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 VDVideoDisplayFrame::VDVideoDisplayFrame()
@@ -481,7 +490,7 @@ VDVideoDisplayWindow::VDVideoDisplayWindow(HWND hwnd, const CREATESTRUCT& create
 			mbIgnoreMouse = true;
 	}
 
-	VDVideoDisplayManager *vdm = (VDVideoDisplayManager *)createInfo.lpCreateParams;
+	VDVideoDisplayManager *vdm = VDGetVideoDisplayManager();
 	vdm->AddClient(this);
 }
 
@@ -1908,38 +1917,6 @@ void VDVideoDisplayWindow::UpdateSDRBrightness() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-VDVideoDisplayManager *VDGetVideoDisplayManager() {
-	if (!g_pVDVideoDisplayManager) {
-		g_pVDVideoDisplayManager = new VDVideoDisplayManager;
-		g_pVDVideoDisplayManager->Init();
-	}
-
-	return g_pVDVideoDisplayManager;
-}
-
 VDGUIHandle VDCreateDisplayWindowW32(uint32 dwExFlags, uint32 dwFlags, int x, int y, int width, int height, VDGUIHandle hwndParent) {
-	VDVideoDisplayManager *vdm = VDGetVideoDisplayManager();
-
-	if (!vdm)
-		return NULL;
-
-	struct RemoteCreateCall {
-		DWORD dwExFlags;
-		DWORD dwFlags;
-		int x;
-		int y;
-		int width;
-		int height;
-		HWND hwndParent;
-		VDVideoDisplayManager *vdm;
-		HWND hwndResult;
-
-		static void Dispatch(void *p0) {
-			RemoteCreateCall *p = (RemoteCreateCall *)p0;
-			p->hwndResult = CreateWindowEx(p->dwExFlags, g_wszVideoDisplayControlName, L"", p->dwFlags, p->x, p->y, p->width, p->height, p->hwndParent, NULL, VDGetLocalModuleHandleW32(), p->vdm);
-		}
-	} rmc = {dwExFlags, dwFlags | WS_CLIPCHILDREN, x, y, width, height, (HWND)hwndParent, vdm};
-
-	vdm->RemoteCall(RemoteCreateCall::Dispatch, &rmc);
-	return (VDGUIHandle)rmc.hwndResult;
+	return (VDGUIHandle)CreateWindowEx(dwExFlags, g_wszVideoDisplayControlName, L"", dwFlags, x, y, width, height, (HWND)hwndParent, nullptr, VDGetLocalModuleHandleW32(), nullptr);
 }

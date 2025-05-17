@@ -16,11 +16,15 @@
 
 #include <stdafx.h>
 #include <vd2/system/color.h>
+#include <vd2/system/constexpr.h>
 #include <vd2/system/file.h>
+#include <vd2/system/filesys.h>
+#include <vd2/system/registry.h>
 #include <vd2/system/vdstl_vectorview.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/VDDisplay/renderergdi.h>
 #include <vd2/Dita/services.h>
+#include <at/atcore/enumparseimpl.h>
 #include <at/atcore/sioutils.h>
 #include <at/atcore/vfs.h>
 #include <at/atio/cassetteimage.h>
@@ -40,6 +44,12 @@ extern ATSimulator g_sim;
 
 ATUITapeEditorDialog *g_pATUITapeEditorDialog;
 
+AT_DEFINE_ENUM_TABLE_BEGIN(ATUITapeViewControl::WaveformMode)
+	{ ATUITapeViewControl::WaveformMode::None, "none" },
+	{ ATUITapeViewControl::WaveformMode::Waveform, "waveform" },
+	{ ATUITapeViewControl::WaveformMode::Spectrogram, "spectrogram" }
+AT_DEFINE_ENUM_TABLE_END(ATUITapeViewControl::WaveformMode, ATUITapeViewControl::WaveformMode::None)
+
 ATUITapeViewControl::ATUITapeViewControl() {
 	mFnOnSelectionChanged = [] {};
 	mFnOnPositionChanged = [this] { UpdateHeadPosition(); };
@@ -48,6 +58,71 @@ ATUITapeViewControl::ATUITapeViewControl() {
 
 	mBltImage.init(256, 3, nsVDPixmap::kPixFormat_ARGB8888);
 	mBltImageView.SetImage(mBltImage, true);
+
+	mpFFT = new ATFFT<128>;
+
+
+	// Kaiser window -- a little sharper than Blackman-Harris
+	const auto I0 = [](float x) {
+		float x2 = x*x;
+
+		float sum = 1.0f;
+		float term = x2 / 4.0f;
+
+		for(int i=1; i<5; ++i) {
+			sum += term;
+			term *= x2 * 0.25f / ((float)i * (float)i);
+		}
+
+		return sum;
+	};
+
+	static constexpr float a = 4.0f;
+	static constexpr float pi = nsVDMath::kfPi;
+
+	const float scale = 0.25f * 127.0f / I0(pi*a);
+
+	for(size_t i = 0; i < 128; ++i) {
+		const float t = (float)i / 64.0f;
+
+		mFFTWindow[i] = I0(pi*a*sqrtf((2.0f - t) * t)) * scale;
+	}
+
+	// Initialize palette for spectrum using a Roseus-inspired theme, implemented
+	// via Oklch.
+	const vdfloat32x3 oklabToXYZ[3] {
+		vdfloat32x3::set(1.0f, 1.0f, 1.0f),
+		vdfloat32x3::set(0.3963377774f, -0.1055613458f, -0.0894841775f),
+		vdfloat32x3::set(0.2158037573f, -0.0638541728f, -1.2914855480f)
+	};
+
+	const vdfloat32x3 xyzToLinearRGB[3] {
+		vdfloat32x3::set(4.0767416621f, -1.2684380046f, -0.0041960863f),
+		vdfloat32x3::set(-3.3077115913f, 2.6097574011f, -0.7034186147f),
+		vdfloat32x3::set(0.2309699292f, -0.3413193965f, 1.7076147010f)
+	};
+
+	for(size_t i = 0; i < 256; ++i) {
+		// Similarly to Roseus:
+		// - Lightness linearly ramps
+		// - Chroma follows a parabola
+		// - Hue roughly follows a ramp
+		float x = (float)i / 255.0f;
+		float l = x;
+		float c = 0.5f * x * (1.0f - x);
+		float h = nsVDMath::kfTwoPi * (x + 0.5f);
+
+		float a = c*cosf(h);
+		float b = c*sinf(h);
+
+		vdfloat32x3 lms = oklabToXYZ[0] * l + oklabToXYZ[1] * a + oklabToXYZ[2] * b;
+
+		lms *= lms * lms;
+
+		vdfloat32x3 linrgb = xyzToLinearRGB[0] * lms.x() + xyzToLinearRGB[1] * lms.y() + xyzToLinearRGB[2] * lms.z();
+
+		mSpectrogramPalette[i] = VDColorRGB(linrgb).LinearToSRGB().ToRGB8() | 0xFF000000U;
+	}
 }
 
 ATUITapeViewControl::~ATUITapeViewControl() {
@@ -184,13 +259,25 @@ void ATUITapeViewControl::SetShowTurboData(bool enabled) {
 	}
 }
 
-bool ATUITapeViewControl::GetShowWaveform() const {
-	return mbShowWaveform;
+ATUITapeViewControl::WaveformMode ATUITapeViewControl::GetWaveformMode() const {
+	return mWaveformMode;
 }
 
-void ATUITapeViewControl::SetShowWaveform(bool enabled) {
-	if (mbShowWaveform != enabled) {
-		mbShowWaveform = enabled;
+void ATUITapeViewControl::SetWaveformMode(WaveformMode mode) {
+	if (mWaveformMode != mode) {
+		mWaveformMode = mode;
+
+		Invalidate();
+	}
+}
+
+bool ATUITapeViewControl::GetFrequencyGuidelinesEnabled() const {
+	return mbShowFrequencyGuidelines;
+}
+
+void ATUITapeViewControl::SetFrequencyGuidelinesEnabled(bool enabled) {
+	if (mbShowFrequencyGuidelines != enabled) {
+		mbShowFrequencyGuidelines = enabled;
 
 		Invalidate();
 	}
@@ -280,6 +367,14 @@ void ATUITapeViewControl::EnsureRangeVisible(uint32 startSample, uint32 endSampl
 	}
 }
 
+void ATUITapeViewControl::GoToLocation(uint32 sample, float pixelsPerSample) {
+	if (pixelsPerSample > 0)
+		SetZoom(log2f(pixelsPerSample), mScrollX + mCenterX);
+
+	SetScrollX(SampleToGlobalX(sample));
+	SetSelection(sample, sample);
+}
+
 void ATUITapeViewControl::Insert() {
 	if (mbSelectionValid && mSelSortedEndSample > mSelSortedStartSample) {
 		if (mpImage) {
@@ -322,6 +417,15 @@ void ATUITapeViewControl::Delete() {
 
 bool ATUITapeViewControl::HasClip() const {
 	return mpImageClip != nullptr;
+}
+
+void ATUITapeViewControl::SelectAll() {
+	SetSelection(0, mSampleCount);
+}
+
+void ATUITapeViewControl::Deselect() {
+	if (mbSelectionValid)
+		SetSelection(mSelSortedStartSample, mSelSortedStartSample);
 }
 
 void ATUITapeViewControl::Cut() {
@@ -824,7 +928,7 @@ void ATUITapeViewControl::OnMouseDownL(sint32 x, sint32 y) {
 				ClearSelection();
 				mbDrawValid = true;
 
-				if (mbShowWaveform && mpImage->GetWaveformLength() > 0)
+				if (mWaveformMode != WaveformMode::None && mpImage->GetWaveformLength() > 0)
 					mbDrawPolarity = y < (mHeight * 3)/4;
 				else
 					mbDrawPolarity = y < (mHeight >> 1);
@@ -1117,7 +1221,8 @@ void ATUITapeViewControl::OnPaint() {
 			}
 			
 			const bool hasWaveform = mpImage->GetWaveformLength() > 0;
-			const bool showWaveform = mbShowWaveform && hasWaveform;
+			const bool showWaveform = mWaveformMode != WaveformMode::None && hasWaveform;
+			const bool showSpectrogram = mWaveformMode == WaveformMode::Spectrogram;
 			const sint32 yhi = showWaveform ? h*5/8 : h/4;
 			const sint32 ylo = showWaveform ? h*7/8 : h*3/4;
 
@@ -1128,36 +1233,42 @@ void ATUITapeViewControl::OnPaint() {
 				if (n > 1 && showWaveform) {
 					const sint32 ywfhi = h / 8;
 					const sint32 ywflo = h*3 / 8;
-					const auto GetYForU8 = [=](uint8 v) { return ywflo + (((ywfhi - ywflo) * (sint32)v + 128) >> 8); };
 
-					r->SetColorRGB(0x808080);
-					r->FillRect(x1, GetYForU8(128), x2 - x1, 1);
-
-					r->SetColorRGB(0xFFFFFF);
-
-					if (mZoom < 0) {
-						vdfastvector<vdrect32> rects(n);
-
-						for(sint32 i = 0; i < n; ++i) {
-							const auto minMax = mpImage->ReadWaveformMinMax(pos + posinc*i, posinc + 1, mbShowTurboData);
-
-							const sint32 ry1 = GetYForU8(minMax.mMax);
-							const sint32 ry2 = GetYForU8(minMax.mMin);
-
-							rects[i] = { x + i, ry1, x + i + 1, ry2 };
-						}
-
-						r->MultiFillRect(rects.data(), n);
+					if (showSpectrogram) {
+						if (ywfhi < ywflo)
+							PaintSpectrogram(*r, pos, posinc, x, xinc, n, ywfhi, ywflo);
 					} else {
-						vdfastvector<vdpoint32> pts(n + 1);
-						for(sint32 i = 0; i < n; ++i) {
-							uint8 v = 0;
-							mpImage->ReadWaveform(&v, pos + posinc*i, 1, mbShowTurboData);
+						const auto GetYForV = [=](float v) { return ywflo + (sint32)((ywfhi - ywflo) * (v * 0.5f + 0.5f) + 0.5f); };
 
-							pts[i] = { x + xinc*i, GetYForU8(v) };
+						r->SetColorRGB(0x808080);
+						r->FillRect(x1, GetYForV(0), x2 - x1, 1);
+
+						r->SetColorRGB(0xFFFFFF);
+
+						if (mZoom < 0) {
+							vdfastvector<vdrect32> rects(n);
+
+							for(sint32 i = 0; i < n; ++i) {
+								const auto minMax = mpImage->ReadWaveformMinMax(pos + posinc*i, posinc + 1, mbShowTurboData);
+
+								const sint32 ry1 = GetYForV(minMax.mMax);
+								const sint32 ry2 = GetYForV(minMax.mMin);
+
+								rects[i] = { x + i, ry1, x + i + 1, ry2 };
+							}
+
+							r->MultiFillRect(rects.data(), n);
+						} else {
+							vdfastvector<vdpoint32> pts(n + 1);
+							for(sint32 i = 0; i < n; ++i) {
+								float v = 0;
+								mpImage->ReadWaveform(&v, pos + posinc*i, 1, mbShowTurboData);
+
+								pts[i] = { x + xinc*i, GetYForV(v) };
+							}
+
+							r->PolyLine(pts.data(), n - 1);
 						}
-
-						r->PolyLine(pts.data(), n - 1);
 					}
 				}
 
@@ -1255,6 +1366,165 @@ void ATUITapeViewControl::OnPaint() {
 	}
 }
 
+void ATUITapeViewControl::PaintSpectrogram(IVDDisplayRendererGDI& r, uint32 pos, uint32 posinc, sint32 x, sint32 xinc, sint32 n, sint32 ywfhi, sint32 ywflo) {
+	const sint32 sh = ywflo - ywfhi;
+
+	// resize blit image buffer if needed
+	if (mSpectrogramImage.h != sh) {
+		mSpectrogramImage.init(16, sh, nsVDPixmap::kPixFormat_XRGB8888);
+		mSpectrogramImageView.SetImage(mSpectrogramImage, true);
+	}
+
+	static constexpr float kGain = 18.0f;
+
+	// The tape sampling rate is 31.96KHz, while the two FSK tones are at
+	// 3995Hz and 5327Hz. To provide a centered view, generate a log scale
+	// with 3995Hz and 5327Hz at the 1/3 and 2/3 points. As we use a 128
+	// point window, the bins are 499.4Hz apart.
+	static constexpr float kSamplingRate = 31960.2f;
+	static constexpr float kBinWidth = kSamplingRate / 128.0f;
+	static constexpr float kSpaceTone = kSamplingRate / 8.0f;
+	static constexpr float kMarkTone = kSamplingRate / 6.0f;
+	static constexpr float kBinLo = (kSpaceTone - 2*(kMarkTone - kSpaceTone)) / kBinWidth;
+	static constexpr float kBinHi = (kMarkTone + 2*(kMarkTone - kSpaceTone)) / kBinWidth;
+
+	// recompute interpolation map if needed
+	if (mSpectrogramInterp.size() != sh) {
+		mSpectrogramInterp.resize(sh);
+
+		if (sh == 1) {
+			mSpectrogramInterp[0] = SpecSample { (uint32)(kBinLo * 2 - 2), 0.0f, 1.0f, 0.0f, 0.0f };
+		} else if (sh >= 2) {
+			float binSpacing = (kBinHi - kBinLo) / (float)(sh - 1);
+			float bin = kBinHi;
+
+			for(sint32 i = 0; i < sh; ++i) {
+				const float t = bin - (float)(int)bin;
+
+				// compute cubic interpolation parameters
+				mSpectrogramInterp[i] = SpecSample {
+					(uint32)((int)bin * 2 - 2),
+					kGain * ((-0.5f*t + 1.0f)*t - 0.5f)*t,
+					kGain * ((1.5f*t - 2.5f)*t*t + 1),
+					kGain * ((-1.5f*t + 2.0f)*t + 0.5f)*t,
+					kGain * (0.5f*t - 0.5f)*t*t
+				};
+
+				bin -= binSpacing;
+			}
+		}
+	}
+
+	// compute guideline heights if enabled
+	sint32 markerY0 = -1;
+	sint32 markerY1 = -1;
+	if (mbShowFrequencyGuidelines) {
+		markerY0 = (sint32)(0.5f + (float)(sh - 1) * (kBinHi - kSpaceTone / kBinWidth) / (kBinHi - kBinLo));
+		markerY1 = (sint32)(0.5f + (float)(sh - 1) * (kBinHi - kMarkTone / kBinWidth) / (kBinHi - kBinLo));
+
+		if (markerY0 >= sh || markerY1 >= sh) {
+			markerY0 = -1;
+			markerY1 = -1;
+		}
+	}
+
+	sint32 blitStart = 0;
+	float buf[128];
+	for(sint32 i = 0; i < n; ++i) {
+		// read centered window of 128 samples around desired sample
+		const uint32 centerPos = pos + posinc * i;
+		const uint32 offset = centerPos < 64 ? 64 - centerPos : 0;
+
+		if (offset) {
+			for(size_t j = 0; j < offset; ++j)
+				buf[j] = 0;
+		}
+
+		uint32 len = 128 - offset;
+		uint32 actual = mpImage->ReadWaveform(buf + offset, centerPos + offset - 64, len, mbShowTurboData);
+
+		if (actual < len) {
+			for(size_t j = actual + offset; j < 128; ++j)
+				buf[j] = 0;
+		}
+
+		// window sample
+		for(size_t j = 0; j < 128; ++j)
+			buf[j] *= mFFTWindow[j];
+
+		// compute spectrum
+		mpFFT->Forward(buf);
+
+		// discard DC and Nyquist bins and convert them to sentinels
+		buf[0] = 0;
+		buf[126] = 0;
+
+		// convert raw bins to log power
+		for(size_t j = 2; j < 128; j += 2) {
+			float re = buf[j];
+			float im = buf[j+1];
+			float mag = re*re + im*im;
+			float v = logf(std::max<float>(1e-9f, mag));
+
+			buf[j] = v;
+		}
+
+		// paint spectrogram
+		uint32 *dst0 = (uint32 *)mSpectrogramImage.data + (i & 15);
+
+		{
+			uint32 *VDRESTRICT dst = dst0;
+
+			for(sint32 j = 0; j < sh; ++j) {
+				const auto& VDRESTRICT interp = mSpectrogramInterp[j];
+
+				// cubic interpolate bin
+				float y0 = buf[interp.mBinOffset + 0];
+				float y1 = buf[interp.mBinOffset + 2];
+				float y2 = buf[interp.mBinOffset + 4];
+				float y3 = buf[interp.mBinOffset + 6];
+
+				float v = y0 * interp.mCoeffs[0]
+					+ y1 * interp.mCoeffs[1]
+					+ y2 * interp.mCoeffs[2]
+					+ y3 * interp.mCoeffs[3];
+
+				// look up and write color
+				*dst = mSpectrogramPalette[(int)std::max<float>(0.0f, std::min<float>(v, 255.0f))];
+
+				dst = vdptroffset(dst, mSpectrogramImage.pitch);
+			}
+		}
+
+		// add frequency guidelines
+		if (markerY0 >= 0) {
+			uint32& px0 = *vdptroffset(dst0, mSpectrogramImage.pitch * markerY0);
+			uint32& px1 = *vdptroffset(dst0, mSpectrogramImage.pitch * markerY1);
+			uint32 dashColor = 0;
+
+			if (((centerPos + posinc * 4) / (posinc * 8)) & 1)
+				dashColor = 0x404040;
+
+			px0 = ((px0 & 0xFCFCFC) >> 2)*3 + dashColor;
+			px1 = ((px1 & 0xFCFCFC) >> 2)*3 + dashColor;
+		}
+
+		// if we've finished the current band, blit it to the screen
+		if ((i+1) - blitStart >= 16 || i+1 == n) {
+			const sint32 blitWidth = (i + 1) - blitStart;
+
+			mSpectrogramImageView.Invalidate();
+
+			if (xinc > 1)
+				r.StretchBlt(x + xinc*blitStart, ywfhi, xinc*blitWidth, sh, mSpectrogramImageView, 0, 0, blitWidth, sh, {});
+			else
+				r.Blt(x + blitStart, ywfhi, mSpectrogramImageView, 0, 0, blitWidth, sh);
+
+			blitStart = i + 1;
+		}
+	}
+}
+
 void ATUITapeViewControl::PaintAnalysisChannel(IVDDisplayRendererGDI *r, const AnalysisChannel& ch, uint32 posStart, uint32 posEnd, sint32 x1, sint32 x2, sint32 y) {
 	if (ch.mDecodedBlocks.mBlocks.empty())
 		return;
@@ -1305,7 +1575,7 @@ void ATUITapeViewControl::PaintAnalysisChannel(IVDDisplayRendererGDI *r, const A
 			const sint64 xbend = SampleToClientXRaw(byteEnd);
 
 			if (xbstart >= x1 && xbstart < x2) {
-				r->SetColorRGB((sint32)i < validFramePos ? 0x80D7C4 : 0xC0C0C0);
+				r->SetColorRGB((sint32)i < validFramePos ? 0x80FFC4 : 0x707070);
 				r->FillRect((sint32)xbstart, ya1, 1, yah);
 			}
 
@@ -1522,7 +1792,6 @@ void ATUITapeViewControl::UpdateFontMetrics() {
 	}
 
 	mAnalysisHeight += 4;
-	mAnalysisTextMinWidth += 4;
 
 	UpdateDivisionSpacing();
 }
@@ -1823,6 +2092,24 @@ void ATUITapeViewControl::ReAnalyze() {
 		Analyze(ch0.mSampleStart, ch0.mSampleEnd);
 }
 
+void ATUITapeViewControl::ReAnalyzeFlip() {
+	switch(mAnalysisDecoder) {
+		case Decoder::FSK_PLL:
+			SetAnalysisDecoder(Decoder::FSK_Sync);
+			ReAnalyze();
+			break;
+
+		case Decoder::FSK_Sync:
+			SetAnalysisDecoder(Decoder::FSK_PLL);
+			ReAnalyze();
+			break;
+
+		default:
+			break;
+	}
+
+}
+
 void ATUITapeViewControl::Filter(FilterMode filterMode) {
 	if (!HasNonEmptySelection())
 		return;
@@ -1915,6 +2202,7 @@ void ATUITapeViewControl::OnByteDecoded(uint32 startPos, uint32 endPos, uint8 da
 
 		newdblock.mSampleStart = startPos;
 		newdblock.mSampleEnd = startPos;
+		newdblock.mSampleValidEnd = startPos;
 		newdblock.mByteCount = 0;
 		newdblock.mChecksumPos = 0;
 
@@ -1964,7 +2252,12 @@ void ATUITapeViewControl::OnByteDecoded(uint32 startPos, uint32 endPos, uint8 da
 		if (!mSIOMonFramingErrors) {
 			dblock.mbValidFrame = true;
 			dblock.mSuspiciousBit = 0;
-			InvalidateRangeDeferred(dblock.mSampleStart, dblock.mSampleEnd);
+
+			if (dblock.mSampleValidEnd < dblock.mSampleEnd) {
+				InvalidateRangeDeferred(dblock.mSampleValidEnd, dblock.mSampleEnd);
+
+				dblock.mSampleValidEnd = dblock.mSampleEnd;
+			}
 		}
 	}
 
@@ -2080,6 +2373,7 @@ void ATUITapeViewControl::DecodeFSK(uint32 start, uint32 end, bool stopOnFraming
 		DecodedBlock& dblock = output.mBlocks.emplace_back();
 		dblock.mSampleStart = syncStart;
 		dblock.mSampleEnd = syncStart;
+		dblock.mSampleValidEnd = syncStart;
 		dblock.mStartByte = (uint32)output.mByteData.size();
 		dblock.mByteCount = 0;
 		dblock.mChecksumPos = 0;
@@ -2198,6 +2492,9 @@ void ATUITapeViewControl::DecodeFSK(uint32 start, uint32 end, bool stopOnFraming
 		// push a dummy byte to delimit the last byte
 		pos = std::min(posLastByteEnd, end);
 		dblock.mSampleEnd = pos;
+
+		if (dblock.mbValidFrame)
+			dblock.mSampleValidEnd = pos;
 		
 		DecodedByte& dbyte = output.mByteData.emplace_back();
 		dbyte.mStartSample = pos;
@@ -2210,12 +2507,12 @@ void ATUITapeViewControl::DecodeFSK(uint32 start, uint32 end, bool stopOnFraming
 		const uint32 numBits = 10 * numBytes;
 		const uint32 baudRateSampleRange = VDRoundToInt(kATCassetteDataSampleRate * (float)numBits / (float)(dblock.mSampleEnd - dblock.mSampleStart));
 
-		// use the min the two
-		uint32 baudRate = std::min(baudRateBitPeriod, baudRateSampleRange);
+		// use the max of the two (smaller block size)
+		uint32 baudRate = std::max(baudRateBitPeriod, baudRateSampleRange);
 
 		dblock.mBaudRate = baudRate;
 
-		// if the rounded baud rate causes us to go over, decrement it to fit
+		// if the rounded baud rate causes us to go over, increment it to fit
 		ATCassetteWriteCursor writeCursor;
 		writeCursor.mPosition = syncStart;
 		for(int i=0; i<5; ++i) {
@@ -2223,7 +2520,7 @@ void ATUITapeViewControl::DecodeFSK(uint32 start, uint32 end, bool stopOnFraming
 			if (neededSamples <= pos - syncStart)
 				break;
 
-			--baudRate;
+			++baudRate;
 			VDASSERT(i != 4);
 		}
 
@@ -2351,6 +2648,7 @@ void ATUITapeViewControl::DecodeFSK2(uint32 start, uint32 end, bool stopOnFramin
 				dblock = &output.mBlocks.emplace_back();
 				dblock->mSampleStart = startBitPos;
 				dblock->mSampleEnd = startBitPos;
+				dblock->mSampleValidEnd = startBitPos;
 				dblock->mStartByte = (uint32)output.mByteData.size();
 				dblock->mByteCount = 0;
 				dblock->mChecksumPos = 0;
@@ -2405,8 +2703,10 @@ void ATUITapeViewControl::DecodeFSK2(uint32 start, uint32 end, bool stopOnFramin
 					if (framingOK || !dblock->mbValidFrame)
 						dblock->mChecksumPos = i;
 
-					if (framingOK)
+					if (framingOK) {
 						dblock->mbValidFrame = true;
+						dblock->mSampleValidEnd = dblock->mSampleEnd;
+					}
 				}
 
 				sum = (uint32)chk + data[i].mData;
@@ -2422,7 +2722,7 @@ void ATUITapeViewControl::DecodeFSK2(uint32 start, uint32 end, bool stopOnFramin
 		const uint32 numBits = 10 * numBytes;
 		uint32 baudRate = VDRoundToInt(kATCassetteDataSampleRate * (float)numBits / (float)(dblock->mSampleEnd - dblock->mSampleStart));
 
-		// if the rounded baud rate causes us to go over, decrement it to fit
+		// if the rounded baud rate causes us to go over, increment it to fit
 		ATCassetteWriteCursor writeCursor;
 		writeCursor.mPosition = dblock->mSampleStart;
 		for(int i=0; i<5; ++i) {
@@ -2430,7 +2730,7 @@ void ATUITapeViewControl::DecodeFSK2(uint32 start, uint32 end, bool stopOnFramin
 			if (neededSamples <= pos - dblock->mSampleStart)
 				break;
 
-			--baudRate;
+			++baudRate;
 			VDASSERT(i != 4);
 		}
 		
@@ -2557,6 +2857,7 @@ void ATUITapeViewControl::DecodeT2000(uint32 start, uint32 end, DecodedBlocks& o
 					auto& dblock = output.mBlocks.emplace_back();
 					dblock.mSampleStart = byteStart;
 					dblock.mSampleEnd = pos;
+					dblock.mSampleValidEnd = byteStart;
 					dblock.mBaudRate = 0;
 					dblock.mStartByte = 0;
 					dblock.mByteCount = 0;
@@ -2596,6 +2897,7 @@ void ATUITapeViewControl::DecodeT2000(uint32 start, uint32 end, DecodedBlocks& o
 			if (chk == 0) {
 				dblock.mChecksumPos = i;
 				dblock.mbValidFrame = true;
+				dblock.mSampleValidEnd = dblock.mSampleEnd;
 			}
 		}
 	}
@@ -2643,13 +2945,20 @@ ATUITapeEditorDialog::ATUITapeEditorDialog()
 {
 	mpTapeView = new ATUITapeViewControl;
 
-	mFnOnTapeDirtyStateChanged = [this] { OnTapeDirtyStateChanged(); };
+	mFnOnTapeDirtyStateChanged = [this] { OnTapeStateChanged(); };
 	mFnOnTapeChanged = [this] {
 		if (mpTapeView)
 			mpTapeView->SetImage(g_sim.GetCassette().GetImage());
+
+		OnTapeStateChanged();
 	};
 
 	mToolbar.SetOnClicked([this](auto id) { OnToolbarCommand(id); });
+}
+
+void ATUITapeEditorDialog::GoToLocation(uint32 sample, float pixelsPerSample) {
+	if (mpTapeView)
+		mpTapeView->GoToLocation(sample, pixelsPerSample);
 }
 
 bool ATUITapeEditorDialog::PreNCDestroy() {
@@ -2691,6 +3000,16 @@ bool ATUITapeEditorDialog::OnLoaded() {
 	mpTapeView->SetOnAnalysisEncodingChanged([this] { UpdateAnalyzeModeButton(); });
 	mpTapeView->SetOnSelectionChanged([this] { DeferUpdateStatusMessage(); });
 
+	{
+		VDRegistryAppKey key("Settings", false);
+
+		VDStringW s;
+		key.getString("Tape Editor: Waveform Mode", s);
+
+		mpTapeView->SetWaveformMode(ATParseEnum<ATUITapeViewControl::WaveformMode>(s).mValue);
+		mpTapeView->SetFrequencyGuidelinesEnabled(key.getBool("Tape Editor: Show Frequency Guidelnes", false));
+	}
+
 	auto& cas = g_sim.GetCassette();
 	cas.TapeDirtyStateChanged += &mFnOnTapeDirtyStateChanged;
 	cas.TapeChanged.Add(&mFnOnTapeChanged);
@@ -2698,12 +3017,19 @@ bool ATUITapeEditorDialog::OnLoaded() {
 	UpdateModeButtons();
 	UpdateAnalyzeModeButton();
 	OnSize();
-	OnTapeDirtyStateChanged();
+	OnTapeStateChanged();
 	return true;
 }
 
 void ATUITapeEditorDialog::OnDestroy() {
 	ATUISaveWindowPlacement(mhdlg, "TapeEditorDialog");
+
+	{
+		VDRegistryAppKey key("Settings", true);
+
+		key.setString("Tape Editor: Waveform Mode", ATEnumToString(mpTapeView->GetWaveformMode()));
+		key.setBool("Tape Editor: Show Frequency Guidelnes", mpTapeView->GetFrequencyGuidelinesEnabled());
+	}
 
 	auto& cas = g_sim.GetCassette();
 
@@ -2711,6 +3037,11 @@ void ATUITapeEditorDialog::OnDestroy() {
 	cas.TapeChanged.Remove(&mFnOnTapeChanged);
 
 	VDDialogFrameW32::OnDestroy();
+}
+
+bool ATUITapeEditorDialog::OnCancel() {
+	// block Esc from closing
+	return true;
 }
 
 void ATUITapeEditorDialog::OnSize() {
@@ -2753,6 +3084,14 @@ bool ATUITapeEditorDialog::OnCommand(uint32 id, uint32 extcode) {
 			Close();
 			return true;
 
+		case ID_EDIT_SELECTALL:
+			SelectAll();
+			return true;
+
+		case ID_EDIT_DESELECT:
+			Deselect();
+			return true;
+
 		case ID_EDIT_CUT:
 			Cut();
 			return true;
@@ -2785,6 +3124,10 @@ bool ATUITapeEditorDialog::OnCommand(uint32 id, uint32 extcode) {
 			mpTapeView->ReAnalyze();
 			return true;
 
+		case ID_EDIT_REPEATLASTANALYSISFLIP:
+			mpTapeView->ReAnalyzeFlip();
+			return true;
+
 		case ID_EDIT_CONVERTTOSTANDARDBLOCK:
 			ConvertToStdBlock();
 			return true;
@@ -2809,9 +3152,22 @@ bool ATUITapeEditorDialog::OnCommand(uint32 id, uint32 extcode) {
 			mpTapeView->SetShowTurboData(true);
 			break;
 
-		case ID_VIEW_SHOWWAVEFORM:
-			mpTapeView->SetShowWaveform(!mpTapeView->GetShowWaveform());
+		case ID_VIEW_NOSIGNAL:
+			mpTapeView->SetWaveformMode(ATUITapeViewControl::WaveformMode::None);
 			break;
+
+		case ID_VIEW_WAVEFORM:
+			mpTapeView->SetWaveformMode(ATUITapeViewControl::WaveformMode::Waveform);
+			break;
+
+		case ID_VIEW_SPECTROGRAM:
+			mpTapeView->SetWaveformMode(ATUITapeViewControl::WaveformMode::Spectrogram);
+			break;
+
+		case ID_VIEW_SHOWFREQUENCYGUIDELINES:
+			mpTapeView->SetFrequencyGuidelinesEnabled(!mpTapeView->GetFrequencyGuidelinesEnabled());
+			break;
+
 		case ID_OPTIONS_STOREWAVEFORM:
 			mpTapeView->SetStoreWaveformOnLoad(!mpTapeView->GetStoreWaveformOnLoad());
 			break;
@@ -2837,7 +3193,14 @@ void ATUITapeEditorDialog::OnInitMenu(VDZHMENU hmenu) {
 	VDEnableMenuItemByCommandW32(hmenu, ID_FILE_SAVEASCAS, hasImage);
 	VDEnableMenuItemByCommandW32(hmenu, ID_FILE_SAVEASWAV, hasImage);
 
-	VDCheckMenuItemByCommandW32(hmenu, ID_VIEW_SHOWWAVEFORM, mpTapeView->GetShowWaveform());
+	const auto waveformMode = mpTapeView->GetWaveformMode();
+	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIEW_NOSIGNAL, waveformMode == ATUITapeViewControl::WaveformMode::None);
+	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIEW_WAVEFORM, waveformMode == ATUITapeViewControl::WaveformMode::Waveform);
+	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIEW_SPECTROGRAM, waveformMode == ATUITapeViewControl::WaveformMode::Spectrogram);
+
+	VDEnableMenuItemByCommandW32(hmenu, ID_VIEW_SHOWFREQUENCYGUIDELINES, waveformMode == ATUITapeViewControl::WaveformMode::Spectrogram);
+	VDCheckMenuItemByCommandW32(hmenu, ID_VIEW_SHOWFREQUENCYGUIDELINES, mpTapeView->GetFrequencyGuidelinesEnabled());
+
 	VDCheckMenuItemByCommandW32(hmenu, ID_MONITOR_CAPTURESIO, mpTapeView->GetSIOMonitorEnabled());
 	VDCheckMenuItemByCommandW32(hmenu, ID_OPTIONS_STOREWAVEFORM, mpTapeView->GetStoreWaveformOnLoad());
 
@@ -2849,15 +3212,29 @@ void ATUITapeEditorDialog::OnInitMenu(VDZHMENU hmenu) {
 	VDCheckRadioMenuItemByCommandW32(hmenu, ID_VIEW_TURBODATA, showTurbo);
 }
 
-void ATUITapeEditorDialog::OnTapeDirtyStateChanged() {
-	const bool dirty = g_sim.GetCassette().IsImageDirty();
+void ATUITapeEditorDialog::OnTapeStateChanged() {
+	auto& cas = g_sim.GetCassette();
 
 	VDStringW s;
 
-	if (dirty)
-		s += L'*';
-
 	s.append(mBaseCaption);
+
+	if (cas.GetImage()) {
+		s += L" - ";
+
+		const wchar_t *path = cas.GetPath();
+
+		if (cas.IsImageDirty())
+			s += L'*';
+
+		if (path)
+			path = VDFileSplitPath(path);
+
+		if (path && *path)
+			s += path;
+		else
+			s += L"(new tape)";
+	}
 
 	SetCaption(s.c_str());
 }
@@ -2970,15 +3347,11 @@ void ATUITapeEditorDialog::Load(const wchar_t *path) {
 
 	cas.Unload();
 
-	vdrefptr<ATVFSFileView> view;
-	ATVFSOpenFileView(path, false, ~view);
-
 	ATCassetteLoadContext ctx;
-	ctx.mTurboDecodeAlgorithm = cas.GetTurboDecodeAlgorithm();
+	cas.GetLoadOptions(ctx);
 	ctx.mbStoreWaveform = mpTapeView->GetStoreWaveformOnLoad();
 
-	vdrefptr<IATCassetteImage> image;
-	ATLoadCassetteImage(view->GetStream(), nullptr, nullptr, ctx, ~image);
+	vdrefptr<IATCassetteImage> image = ATLoadCassetteImage(path, nullptr, ctx);
 
 	cas.Load(image, path, true);
 }
@@ -3007,6 +3380,8 @@ void ATUITapeEditorDialog::SaveAsCAS() {
 
 		cas.SetImagePersistent(path.c_str());
 		cas.SetImageClean();
+
+		OnTapeStateChanged();
 	}
 }
 
@@ -3024,7 +3399,17 @@ void ATUITapeEditorDialog::SaveAsWAV() {
 
 		cas.SetImagePersistent(path.c_str());
 		cas.SetImageClean();
+
+		OnTapeStateChanged();
 	}
+}
+
+void ATUITapeEditorDialog::SelectAll() {
+	mpTapeView->SelectAll();
+}
+
+void ATUITapeEditorDialog::Deselect() {
+	mpTapeView->Deselect();
 }
 
 void ATUITapeEditorDialog::Cut() {
@@ -3213,5 +3598,13 @@ void ATUIShowDialogTapeEditor() {
 		ed.release();
 	}
 
+	g_pATUITapeEditorDialog->Show();
 	g_pATUITapeEditorDialog->Activate();
+}
+
+void ATUIShowDialogTapeEditorAtLocation(uint32 sample, float pixelsPerSample) {
+	ATUIShowDialogTapeEditor();
+
+	if (g_pATUITapeEditorDialog)
+		g_pATUITapeEditorDialog->GoToLocation(sample, pixelsPerSample);
 }

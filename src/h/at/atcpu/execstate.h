@@ -91,6 +91,18 @@ struct ATCPUExecState8048 {
 	uint8	mReg[2][8];
 };
 
+struct ATCPUExecState8051 {
+	uint16	mPC;
+	uint8	mA;
+	uint8	mPSW;
+	bool	mbF1;
+	bool	mbTF;
+	bool	mbIF;
+	uint8	mP0;
+	uint8	mP1;
+	uint8	mReg[2][8];
+};
+
 struct ATCPUExecState6809 {
 	uint16	mPC;
 	uint8	mA;
@@ -109,6 +121,7 @@ struct ATCPUExecState {
 		ATCPUExecState6502 m6502;
 		ATCPUExecStateZ80 mZ80;
 		ATCPUExecState8048 m8048;
+		ATCPUExecState8051 m8051;
 		ATCPUExecState6809 m6809;
 	};
 };

@@ -253,6 +253,37 @@ void ATGTIARenderer::RenderScanline(int xend, bool pfgraphics, bool pmgraphics, 
 	mX = x1;
 }
 
+uint32 ATGTIARenderer::SenseScanline(int hpx1, int hpx2, const uint8 *weights) const {
+	if (!mpDst)
+		return 0;
+
+	// clip to visible range
+	int chpx1 = std::max<int>(hpx1, 68);
+	int chpx2 = std::min<int>(hpx2, 444);
+
+	if (chpx1 >= chpx2)
+		return 0;
+
+	weights += (chpx1 - hpx1);
+
+	// compute dot product against luma
+	const uint8 *src = &mpDst[hpx1];
+	size_t n = (size_t)(chpx2 - chpx1);
+	uint32 sum = 0;
+
+	for(size_t i=0; i<n; ++i) {
+		uint8 px = *src++;
+		uint32 luma = px & 0x0F;
+
+		if (px & 0xF0)
+			luma += 2;
+
+		sum += luma * luma * (*weights++);
+	}
+
+	return sum * (17*17);
+}
+
 void ATGTIARenderer::EndScanline() {
 	if (mpDst) {
 		memset(mpDst + 444, mpColorTable[8], 456 - 444);

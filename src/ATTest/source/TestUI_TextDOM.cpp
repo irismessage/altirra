@@ -50,14 +50,14 @@ DEFINE_TEST(UI_TextDOM) {
 		Iterator after;
 
 		// (it)[Hello, world!](after)
-		doc.Insert(it, "Hello, world!", 13, &after);
+		doc.Insert(it, L"Hello, world!", 13, &after);
 		TEST_ASSERT(IteratorAt(it, 0, 0, 0));
 		TEST_ASSERT(IteratorAt(after, 0, 0, 13));
 
 		// (it)[foo
 		// ](after2)Hello, world!(after)
 		Iterator after2;
-		doc.Insert(it, "foo\n", 4, &after2);
+		doc.Insert(it, L"foo\n", 4, &after2);
 		TEST_ASSERT(IteratorAt(it, 0, 0, 0));
 		TEST_ASSERT(IteratorAt(after, 1, 0, 13));
 		TEST_ASSERT(IteratorAt(after2, 1, 0, 0));
@@ -66,7 +66,7 @@ DEFINE_TEST(UI_TextDOM) {
 		// foo](after)f(it2)oo
 		// (after2)Hello, world!
 		Iterator it2(doc, 0, 0, 1);
-		doc.Insert(it, "\nfoo", 4, &after);
+		doc.Insert(it, L"\nfoo", 4, &after);
 		TEST_ASSERT(IteratorAt(it, 0, 0, 0));
 		TEST_ASSERT(IteratorAt(it2, 1, 0, 4));
 		TEST_ASSERT(IteratorAt(after2, 2, 0, 0));
@@ -89,7 +89,7 @@ DEFINE_TEST(UI_TextDOM) {
 		// foo(it2)(after2)[test1
 		// test2
 		// test3]Hello, world!(end)
-		doc.Insert(it2, "test1\ntest2\ntest3", 17, &after);
+		doc.Insert(it2, L"test1\ntest2\ntest3", 17, &after);
 		// (it)
 		// foo(it2)(after2)test1
 		// test2
@@ -110,7 +110,7 @@ DEFINE_TEST(UI_TextDOM) {
 		Iterator after;
 
 		// (it)[Hello, world!](after)
-		doc.Insert(it, "Hello, world!", 13, &after);
+		doc.Insert(it, L"Hello, world!", 13, &after);
 		// (it)Hell
 		//+o, w
 		//+orld
@@ -124,7 +124,7 @@ DEFINE_TEST(UI_TextDOM) {
 		//+orld
 		//+!(after)
 		Iterator after2;
-		doc.Insert(it, "foo\n", 4, &after2);
+		doc.Insert(it, L"foo\n", 4, &after2);
 		// (it)foo
 		// (after2)Hell
 		//+o, w
@@ -142,7 +142,7 @@ DEFINE_TEST(UI_TextDOM) {
 		//+orld
 		//+!
 		Iterator it2(doc, 0, 0, 1);
-		doc.Insert(it, "\nfoo", 4, &after);
+		doc.Insert(it, L"\nfoo", 4, &after);
 		// (it)
 		// foo(after)f
 		//+(it2)oo
@@ -178,7 +178,7 @@ DEFINE_TEST(UI_TextDOM) {
 		// foo(it2)(after2)[test1
 		// test2
 		// test3]Hello, world!(end)
-		doc.Insert(it2, "test1\ntest2\ntest3", 17, &after);
+		doc.Insert(it2, L"test1\ntest2\ntest3", 17, &after);
 		// (it)
 		// foo(it2)(after2)t
 		//+est1

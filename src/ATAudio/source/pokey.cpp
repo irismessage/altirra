@@ -1188,6 +1188,13 @@ uint32 ATPokeyEmulator::GetSerialCyclesPerBitRecv() const {
 	return divisor + divisor;
 }
 
+uint32 ATPokeyEmulator::GetSerialBidirectionalClockPeriod() const {
+	if ((mSKCTL & 0x30) == 0x20)
+		return mTimerPeriod[3];
+	else
+		return 0;
+}
+
 void ATPokeyEmulator::SetPotPos(unsigned idx, int pos) {
 	SetPotPosHires(idx, pos << 16, false);
 }
@@ -1687,7 +1694,16 @@ void ATPokeyEmulator::RecomputeTimerPeriod() {
 		}
 	}
 
-	mTimerPeriod[channel] = period;
+	if constexpr (channel == 3) {
+		if (mTimerPeriod[channel] != period) {
+			mTimerPeriod[channel] = period;
+
+			if (mbNotifyBiClockChange && (mSKCTL & 0x30) == 0x20)
+				mpNotifyBiClockChangeFn();
+		}
+	} else {
+		mTimerPeriod[channel] = period;
+	}
 }
 
 void ATPokeyEmulator::RecomputeAllowedDeferredTimers() {
@@ -2831,6 +2847,12 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 
 				mSKCTL = value;
 
+				// check for bidirectional clock change
+				if (mbNotifyBiClockChange && (delta & 0x30)) {
+					if ((value & 0x30) == 0x20 || ((value ^ delta) & 0x30) == 0x20)
+						mpNotifyBiClockChangeFn();
+				}
+
 				// check for keyboard change
 				if (delta & 0x03) {
 					// check for keyboard being switched in and out of normal mode, for
@@ -3326,6 +3348,11 @@ uint32 ATPokeyEmulator::GetCyclesToTimerFire(uint32 ch) const {
 
 bool ATPokeyEmulator::IsSerialForceBreakEnabled() const {
 	return (mSKCTL & 0x80) != 0;
+}
+
+void ATPokeyEmulator::SetNotifyOnBiClockChange(vdfunction<void()> fn) {
+	mbNotifyBiClockChange = fn != nullptr;
+	mpNotifyBiClockChangeFn = std::move(fn);
 }
 
 void ATPokeyEmulator::UpdateMixTable() {

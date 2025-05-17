@@ -25,6 +25,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vdstl_hashmap.h>
 #include <vd2/system/VDString.h>
+#include <at/atcore/enumparse.h>
 
 enum ATPropertyType {
 	kATPropertyType_None,
@@ -63,8 +64,10 @@ public:
 
 	void Clear();
 
-	template<class T>
-	void EnumProperties(const T& functor) const;
+	template<class T> requires requires(const T& f, const ATPropertyValue& v) { f("x", v); }
+	void EnumProperties(const T& functor) const {
+		EnumProperties(EnumPropsAdapter<T>, (void *)&functor);
+	}
 
 	void EnumProperties(void (*fn)(const char *name, const ATPropertyValue& val, void *data), void *data) const;
 
@@ -77,6 +80,13 @@ public:
 	void SetDouble(const char *name, double val);
 	void SetString(const char *name, const wchar_t *val);
 
+	void SetEnum(const ATEnumLookupTable& enumTable, const char *name, uint32 val);
+
+	template<typename T> requires std::is_enum_v<T>
+	void SetEnum(const char *name, T enumVal) {
+		SetEnum(ATGetEnumLookupTable<T>(), name, (uint32)enumVal);
+	}
+
 	[[nodiscard]] bool GetBool(const char *name, bool def = 0) const;
 	[[nodiscard]] sint32 GetInt32(const char *name, sint32 def = 0) const;
 	[[nodiscard]] uint32 GetUint32(const char *name, uint32 def = 0) const;
@@ -84,16 +94,47 @@ public:
 	[[nodiscard]] double GetDouble(const char *name, double def = 0) const;
 	[[nodiscard]] const wchar_t *GetString(const char *name, const wchar_t *def = 0) const;
 
+	[[nodiscard]] uint32 GetEnum(const ATEnumLookupTable& enumTable, const char *name) const;
+	[[nodiscard]] uint32 GetEnum(const ATEnumLookupTable& enumTable, const char *name, uint32 table) const;
+
+	template<typename T> requires std::is_enum_v<T>
+	[[nodiscard]] T GetEnum(const char *name) const {
+		return T(GetEnum(ATGetEnumLookupTable<T>(), name));
+	}
+
+	template<typename T> requires std::is_enum_v<T>
+	[[nodiscard]] T GetEnum(const char *name, T value) const {
+		return T(GetEnum(ATGetEnumLookupTable<T>(), name, (uint32)value));
+	}
+
 	bool TryGetBool(const char *name, bool& val) const;
 	bool TryGetInt32(const char *name, sint32& val) const;
 	bool TryGetUint32(const char *name, uint32& val) const;
 	bool TryGetFloat(const char *name, float& val) const;
 	bool TryGetDouble(const char *name, double& val) const;
 	bool TryGetString(const char *name, const wchar_t *& val) const;
+	
+	bool TryGetEnum(const ATEnumLookupTable& table, const char *name, uint32& val) const;
 
-protected:
+	template<typename T> requires std::is_enum_v<T>
+	bool TryGetEnum(const char *name, T& val) const {
+		uint32 v;
+		bool found = TryGetEnum(ATGetEnumLookupTable<T>(), v);
+		val = T(v);
+		return found;
+	}
+
+	// convert to string regardless of type
+	bool TryConvertToString(const char *name, VDStringW& s) const;
+
+	VDStringW ToCommandLineString() const;
+	void ParseFromCommandLineString(const wchar_t *s);
+
+private:
 	const ATPropertyValue *GetProperty(const char *name) const;
 	ATPropertyValue& CreateProperty(const char *name, ATPropertyType type);
+
+	static bool IsValidFPNumber(const wchar_t *s);
 
 	template<class T>
 	static void EnumPropsAdapter(const char *name, const ATPropertyValue& val, void *data);
@@ -105,11 +146,6 @@ protected:
 template<class T>
 void ATPropertySet::EnumPropsAdapter(const char *name, const ATPropertyValue& val, void *data) {
 	(*(T *)data)(name, val);
-}
-
-template<class T>
-void ATPropertySet::EnumProperties(const T& functor) const {
-	EnumProperties(EnumPropsAdapter<T>, (void *)&functor);
 }
 
 #endif

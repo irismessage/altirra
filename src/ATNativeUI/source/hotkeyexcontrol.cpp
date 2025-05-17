@@ -19,11 +19,14 @@
 #include <stdafx.h>
 #include <tchar.h>
 #include <vd2/Dita/accel.h>
+#include <vd2/system/binary.h>
 #include <vd2/system/color.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/system/VDString.h>
 #include <at/atnativeui/hotkeyexcontrol.h>
+#include <at/atnativeui/theme.h>
+#include <at/atnativeui/theme_win32.h>
 
 class VDUIHotKeyExControlW32 final : public vdrefcounted<IVDUIHotKeyExControl> {
 	VDUIHotKeyExControlW32(const VDUIHotKeyExControlW32&) = delete;
@@ -376,24 +379,49 @@ void VDUIHotKeyExControlW32::OnPaint() {
 
 	RECT r;
 	if (GetClientRect(mhwnd, &r)) {
+		const auto& themeColors = ATUIGetThemeColors();
+		const auto& themeColorsW32 = ATUIGetThemeColorsW32();
+		const HBRUSH dcBrush = (HBRUSH)GetStockObject(DC_BRUSH);
+
 		bool useSysClientEdge = (GetWindowLong(mhwnd, GWL_EXSTYLE) & WS_EX_CLIENTEDGE) != 0;
 
-		if (!useSysClientEdge) {
-			VDVERIFY(DrawEdge(hdc, &r, EDGE_SUNKEN, BF_ADJUST | BF_RECT));
+		if (!useSysClientEdge && r.right != r.left && r.bottom != r.top) {
+			if (ATUIIsDarkThemeActive()) {
+				SetDCBrushColor(hdc, VDSwizzleU32(themeColors.mHardNegEdge) >> 8);
+				{ RECT r1 { r.left     , r.top       , r.right    , r.top    + 1 }; FillRect(hdc, &r1, dcBrush); }
+				{ RECT r2 { r.left     , r.top    + 1, r.left  + 1, r.bottom - 1 }; FillRect(hdc, &r2, dcBrush); }
+
+				SetDCBrushColor(hdc, VDSwizzleU32(themeColors.mHardPosEdge) >> 8);
+				{ RECT r3 { r.left     , r.bottom - 1, r.right    , r.bottom     }; FillRect(hdc, &r3, dcBrush); }
+				{ RECT r4 { r.right - 1, r.top    + 1, r.right    , r.bottom - 1 }; FillRect(hdc, &r4, dcBrush); }
+
+				SetDCBrushColor(hdc, VDSwizzleU32(themeColors.mSoftNegEdge) >> 8);
+				{ RECT r5 { r.left  + 1, r.top    + 1, r.right - 1, r.top    + 2 }; FillRect(hdc, &r5, dcBrush); }
+				{ RECT r6 { r.left  + 1, r.top    + 2, r.left  + 2, r.bottom - 2 }; FillRect(hdc, &r6, dcBrush); }
+
+				SetDCBrushColor(hdc, VDSwizzleU32(themeColors.mSoftPosEdge) >> 8);
+				{ RECT r7 { r.left  + 1, r.bottom - 2, r.right - 1, r.bottom - 1 }; FillRect(hdc, &r7, dcBrush); }
+				{ RECT r8 { r.right - 2, r.top    + 2, r.right - 1, r.bottom - 2 }; FillRect(hdc, &r8, dcBrush); }
+
+				r.left += 2;
+				r.top += 2;
+				r.right -= 2;
+				r.bottom -= 2;
+			} else {
+				VDVERIFY(DrawEdge(hdc, &r, EDGE_SUNKEN, BF_ADJUST | BF_RECT));
+			}
 		}
 
-		uint32 bkColor = GetSysColor(COLOR_WINDOW);
+		uint32 bkColor = themeColorsW32.mContentBgCRef;
 
 		if (mbAllKeysEnabled) {
-			const uint32 bkColor2 = GetSysColor(COLOR_HIGHLIGHT);
+			const uint32 bkColor2 = VDSwizzleU32(themeColors.mHighlightedBg) >> 8;
 
 			bkColor = (bkColor | bkColor2) - (((bkColor ^ bkColor2) & 0xFEFEFE) >> 1);
-
-			SetDCBrushColor(hdc, bkColor);
-			VDVERIFY(FillRect(hdc, &r, (HBRUSH)GetStockObject(DC_BRUSH)));
-		} else {
-			VDVERIFY(FillRect(hdc, &r, (HBRUSH)(COLOR_WINDOW + 1)));
 		}
+
+		SetDCBrushColor(hdc, bkColor);
+		VDVERIFY(FillRect(hdc, &r, dcBrush));
 
 		int cx = GetSystemMetrics(SM_CXEDGE);
 		int cy = GetSystemMetrics(SM_CYEDGE);
@@ -406,7 +434,7 @@ void VDUIHotKeyExControlW32::OnPaint() {
 		if (r.right > r.left && r.bottom > r.top) {			
 			SetBkColor(hdc, bkColor);
 
-			SetTextColor(hdc, GetSysColor(COLOR_BTNTEXT));
+			SetTextColor(hdc, themeColorsW32.mContentFgCRef);
 			SetTextAlign(hdc, TA_TOP | TA_LEFT);
 
 			HGDIOBJ holdFont = SelectObject(hdc, mhfont);

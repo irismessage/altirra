@@ -50,7 +50,7 @@ public:
 		return mPathAlias.empty() ? NULL : mPathAlias.c_str();
 	}
 
-	VDStringA ReadLine(int lineIndex) override;
+	VDStringW ReadLine(int lineIndex) override;
 
 protected:
 	virtual bool OnPaneCommand(ATUIPaneCommandId id);
@@ -68,7 +68,7 @@ protected:
 	void OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount) override;
 	void OnLinkSelected(uint32 selectionCode, int para, int offset) override;
 
-	void RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *colorization) override;
+	void RecolorLine(int line, const wchar_t *text, int length, IVDTextEditorColorization *colorization) override;
 
 	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
 	void OnDebuggerEvent(ATDebugEvent eventId);

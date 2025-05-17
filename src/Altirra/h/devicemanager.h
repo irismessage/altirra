@@ -188,7 +188,7 @@ public:
 	void ToggleDevice(const char *tag);
 
 	uint32 GetDeviceCount() const;
-	IATDevice *GetDeviceByTag(const char *tag, uint32 index = 0) const;
+	IATDevice *GetDeviceByTag(const char *tag, uint32 index = 0, bool visibleOnly = false, bool externalOnly = false) const;
 	IATDevice *GetDeviceByIndex(uint32 i) const;
 
 	ATParsedDevicePath ParsePath(const char *path) const;
@@ -210,6 +210,7 @@ public:
 	void AddDeviceStatusCallback(const vdfunction<void(IATDevice&)> *cb);
 	void RemoveDeviceStatusCallback(const vdfunction<void(IATDevice&)> *cb);
 
+	void ReconfigureDevice(IATDevice& dev, const ATPropertySet& pset);
 	void MarkAndSweep(IATDevice *const *pExcludedDevs, size_t numExcludedDevs, vdfastvector<IATDevice *>& garbage);
 
 	void SerializeDevice(IATDevice *dev, VDStringW& str, bool compact, bool includeChildren) const;
@@ -303,7 +304,7 @@ protected:
 	vdhashmap<VDStringA, NVRAM, vdstringhashi, vdstringpredi> mNVRAMs;
 	vdfastvector<IATDeviceStorage *> mStorage;
 
-	vdfastvector<vdrefptr<IATDeviceXCmd>> mExtCmds;
+	vdvector<vdrefptr<IATDeviceXCmd>> mExtCmds;
 };
 
 #endif

@@ -7,6 +7,7 @@
     <ClCompile Include="source\co65802.cpp" />
     <ClCompile Include="source\co6809.cpp" />
     <ClCompile Include="source\co8048.cpp" />
+    <ClCompile Include="source\co8051.cpp" />
     <ClCompile Include="source\coz80.cpp" />
     <ClCompile Include="source\decode6502.cpp" />
     <ClCompile Include="source\decode65816.cpp" />
@@ -23,6 +24,7 @@
     <ClInclude Include="..\h\at\atcpu\co65802.h" />
     <ClInclude Include="..\h\at\atcpu\co6809.h" />
     <ClInclude Include="..\h\at\atcpu\co8048.h" />
+    <ClInclude Include="..\h\at\atcpu\co8051.h" />
     <ClInclude Include="..\h\at\atcpu\coz80.h" />
     <ClInclude Include="..\h\at\atcpu\decode6502.h" />
     <ClInclude Include="..\h\at\atcpu\decode65816.h" />

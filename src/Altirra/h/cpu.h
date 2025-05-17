@@ -48,13 +48,60 @@ public:
 	virtual void CPUGetHistoryTimes(ATCPUHistoryEntry * VDRESTRICT he) const = 0;
 };
 
-enum ATCPUStepResult {
+enum ATCPUStepResult : uint8 {
 	kATCPUStepResult_Continue,
 	kATCPUStepResult_SkipCall,
 	kATCPUStepResult_Stop
 };
 
 typedef ATCPUStepResult (*ATCPUStepCallback)(ATCPUEmulator *cpu, uint32 pc, bool call, void *data);
+
+struct ATCPUStepCondition;
+
+struct ATCPUStepConditionLink {
+	ATCPUStepCondition *mpNext = nullptr;
+	bool mbRegistered = false;
+
+	ATCPUStepConditionLink();
+	ATCPUStepConditionLink(const ATCPUStepConditionLink&);
+	~ATCPUStepConditionLink();
+
+	ATCPUStepConditionLink& operator=(const ATCPUStepConditionLink&);
+
+	bool IsRegistered() const { return mbRegistered; }
+};
+
+struct ATCPUStepCondition : public ATCPUStepConditionLink {
+	// Ignore calls/interrupts below the stack level where the step condition
+	// is triggered.
+	bool mbStepOver = false;
+
+	// Only break on an RTS instruction.
+	bool mbStepOut = false;
+
+	// Disable this step condition until an NMI has occurred, after which this
+	// flag is cleared.
+	bool mbWaitForNMI = false;
+
+	// S register range for valid condition. Only valid if: (u8)(s - start) >= length.
+	uint8 mIgnoreStackStart = 0;
+	uint8 mIgnoreStackLength = 0;
+
+	// PC range to ignore. The step condition is ignored if
+	// (u16)(pc - start) >= length. Length = 0 disables the range condition.
+	// Only the 16-bit PC is used.
+	uint16 mIgnorePCStart = 0;
+	uint16 mIgnorePCLength = 0;
+
+	// Step callback called when the condition is met. If the callback is not set,
+	// the 
+	ATCPUStepCallback mpCallback = nullptr;
+	void *mpCallbackData = nullptr;
+
+	static ATCPUStepCondition CreateSingleStep();
+	static ATCPUStepCondition CreateAtStackLevel(uint8 s);
+	static ATCPUStepCondition CreateNMI();
+};
 
 enum ATCPUMode : uint8 {
 	kATCPUMode_6502,
@@ -168,37 +215,9 @@ public:
 
 	void	SetHook(uint16 pc, bool enable);
 
-	bool	GetStep() const { return mbStep; }
-
-	void	SetStep(bool step) {
-		mbStep = step;
-		mbStepOver = false;
-		mStepRegionStart = 0;
-		mStepRegionSize = 0;
-		mpStepCallback = NULL;
-		mStepStackLevel = -1;
-
-		mDebugFlags &= ~kDebugFlag_StepNMI;
-
-		if (step)
-			mDebugFlags |= kDebugFlag_Step;
-		else
-			mDebugFlags &= ~kDebugFlag_Step;
-	}
-
-	void	SetStepNMI() {
-		mbStep = false;
-		mbStepOver = false;
-		mStepRegionStart = 0;
-		mStepRegionSize = 0;
-		mpStepCallback = NULL;
-		mStepStackLevel = -1;
-
-		mDebugFlags |= kDebugFlag_StepNMI;
-		mDebugFlags &= ~kDebugFlag_Step;
-	}
-
-	void	SetStepRange(uint32 regionStart, uint32 regionSize, ATCPUStepCallback stepcb, void *stepcbdata, bool stepOver);
+	bool	IsStepConditionSatisfied(const ATCPUStepCondition& condition) const;
+	void	AddStepCondition(ATCPUStepCondition& condition);
+	void	RemoveStepCondition(ATCPUStepCondition& condition);
 
 	void	SetTrace(bool trace) {
 		mbTrace = trace;
@@ -207,8 +226,6 @@ public:
 		else
 			mDebugFlags &= ~kDebugFlag_Trace;
 	}
-	void	SetRTSBreak() { mSBrk = 0x100; mDebugFlags &= ~kDebugFlag_SBrk; }
-	void	SetRTSBreak(uint8 sp) { mSBrk = sp; mDebugFlags |= kDebugFlag_SBrk; }
 
 	void	SetCPUMode(ATCPUMode mode, uint32 subCycles);
 	ATCPUMode GetCPUMode() const { return mCPUMode; }
@@ -322,6 +339,8 @@ protected:
 	void	AddHistoryEntry(bool slowFlag);
 
 	void	UpdatePendingIRQState();
+	void	RecomputeStepConditions();
+
 	void	RedecodeInsnWithoutBreak();
 	void	Update65816DecodeTable();
 	void	RebuildDecodeTables();
@@ -417,11 +436,10 @@ protected:
 
 	uint8	mDebugFlags;
 
-	uint32	mStepRegionStart;
-	uint32	mStepRegionSize;
-	int		mStepStackLevel;
-	ATCPUStepCallback mpStepCallback;
-	void	*mpStepCallbackData;
+	uint16	mStepIgnorePCStart = 0;
+	uint16	mStepIgnorePCLength = 0;
+	uint8	mStepIgnoreStackStart = 0;
+	uint8	mStepIgnoreStackLength = 0;
 
 	uint32	mSubCyclesLeft;
 	bool	mbForceNextCycleSlow;
@@ -475,6 +493,9 @@ protected:
 	bool	mbAllowBlockedNMIs;
 
 	uint32	mBreakpointCount;
+
+	ATCPUStepCondition *mpStepConditions = nullptr;
+	ATCPUStepCondition *mpStepConditionsIterator = nullptr;
 
 	enum {
 		kInsnFlagBreakPt		= 0x01,

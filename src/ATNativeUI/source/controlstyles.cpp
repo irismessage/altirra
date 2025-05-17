@@ -69,22 +69,6 @@ void ATUICheckboxStyleW32::Init(HDC hdc, int w, int h) {
 	const int atlasW = w * 12;
 	const int atlasH = h * 2;
 
-	BITMAPINFO bi {
-		{
-			sizeof(BITMAPINFOHEADER),
-			atlasW,
-			atlasH,
-			1,
-			32,
-			BI_RGB,
-			atlasW*atlasH*4U,
-			0,
-			0,
-			0,
-			0
-		}
-	};
-
 	mhdc = CreateCompatibleDC(hdc);
 	if (!mhdc)
 		return;

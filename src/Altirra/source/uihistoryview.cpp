@@ -1606,31 +1606,53 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 						}
 					}
 				} else {
+					uint32 padToColumn = 5;
+
+					mTempLine = "NEXT ";
+
 					switch(mTimestampMode) {
 						case kTsMode_Beam: {
+							uint32 ts = mpHistoryModel->ConvertRawTimestamp(hent.mCycle);
+							const auto& beamPos = mpHistoryModel->DecodeBeamPosition(ts);
+
 							if (mSubCycles >= 10)
-								mTempLine = "NEXT           | ";
+								padToColumn = 14;
 							else if (mSubCycles > 1)
-								mTempLine = "NEXT          | ";
+								padToColumn = 13;
 							else
-								mTempLine = "NEXT         | ";
+								padToColumn = 12;
+
+							if (beamPos.mFrame >= 1000000)
+								padToColumn += 4;
+							else if (beamPos.mFrame >= 100000)
+								padToColumn += 3;
+							else if (beamPos.mFrame >= 10000)
+								padToColumn += 2;
+							else if (beamPos.mFrame >= 1000)
+								padToColumn += 1;
+
 							break;
 						}
 
 						case kTsMode_Microseconds:
-							mTempLine = "NEXT    | ";
+							padToColumn = 8;
 							break;
 
 						case kTsMode_Cycles:
 						case kTsMode_UnhaltedCycles:
-							mTempLine = "NEXT  | ";
+							padToColumn = 6;
 							break;
 
 						case kTsMode_TapePositionSeconds:
 						case kTsMode_TapePositionSamples:
-							mTempLine = "NEXT     | ";
+							padToColumn = 9;
 							break;
 					}
+
+					if (mTempLine.size() < padToColumn)
+						mTempLine.resize(padToColumn, ' ');
+
+					mTempLine += "| ";
 				}
 
 				if (mbShowRegisters) {
@@ -1646,6 +1668,26 @@ const char *ATUIHistoryView::GetLineText(const ATHTLineIterator& it) {
 							mTempLine.append_sprintf(" P1=%02X P2=%02X"
 								, hent.m8048_P1
 								, hent.m8048_P2
+								);
+						}
+					} else if (mDisasmMode == kATDebugDisasmMode_8051) {
+						mTempLine.append_sprintf("A=%02X PSW=%02X R0=%02X R1=%02X"
+							, hent.mA
+							, hent.mP
+							, hent.mExt.m8051_R0
+							, hent.mExt.m8051_R1
+							);
+
+						if (mbShowSpecialRegisters) {
+							mTempLine.append_sprintf(" R2=%02X R3=%02X R4=%02X R5=%02X DPTR=%04X P1=%02X P2=%02X SP=%02X"
+								, hent.mExt.m8051_R2
+								, hent.mExt.m8051_R3
+								, hent.m8051_R4
+								, hent.m8051_R5
+								, hent.m8051_DPTR
+								, hent.m8051_P1
+								, hent.m8051_P2
+								, hent.mS
 								);
 						}
 					} else if (mDisasmMode == kATDebugDisasmMode_Z80) {
@@ -2434,7 +2476,7 @@ void ATUIHistoryView::Search(const char *substr) {
 		const char mask0 = (unsigned)(((unsigned char)ch0 & 0xdf) - 'A') < 26 ? (char)0xdf : (char)0xff;
 		const size_t substrlen = strlen(substr);
 
-		const auto filter = [=](const ATHTNode& node) {
+		const auto filter = [=, this](const ATHTNode& node) {
 			const bool isInsnNode = (node.mNodeType == kATHTNodeType_Insn);
 			const uint32 lineCount = isInsnNode ? node.mInsn.mCount : 1;
 			const uint32 startOffset = isInsnNode ? node.mInsn.mOffset : 0;

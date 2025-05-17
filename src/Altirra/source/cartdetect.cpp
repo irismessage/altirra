@@ -197,6 +197,15 @@ static constexpr struct ATCartDetectInfo {
 {	kATCartridgeMode_COS32K,					kType800,	kSize32K,	kWrsNone,	kBankNone,		kInit16K,	kHeaderFirst16K,				ATCartDetectFlags::DontRecommend },
 {	kATCartridgeMode_Pronto,					kType800,	kSize16K,	kWrsNone,	kBankNone,		kInit16K,	kHeaderFirst16K,				ATCartDetectFlags::DontRecommend },
 
+{	kATCartridgeMode_JAtariCart_8K,				kType800,	kSize8K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_JAtariCart_16K,			kType800,	kSize16K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_JAtariCart_32K,			kType800,	kSize32K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_JAtariCart_64K,			kType800,	kSize64K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_JAtariCart_128K,			kType800,	kSize128K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_JAtariCart_256K,			kType800,	kSize256K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_JAtariCart_512K,			kType800,	kSize512K,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
+{	kATCartridgeMode_JAtariCart_1024K,			kType800,	kSize1M,	kWrsNone,	kBankAddr,		kInit8K,	kHeaderFirst8K,					},
+
 // 5200 carts
 //
 // Quite a few carts make use of address mirroring, so the entire cart address range

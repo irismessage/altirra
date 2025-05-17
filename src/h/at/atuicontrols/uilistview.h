@@ -25,8 +25,6 @@ struct ATUIListViewItem {
 	vdrefptr<IATUIListViewVirtualItem> mpVirtualItem;
 };
 
-VDMOVE_CAPABLE(ATUIListViewItem);
-
 class ATUIListView : public ATUIContainer {
 public:
 	enum {

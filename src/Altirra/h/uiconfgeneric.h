@@ -55,9 +55,17 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
+class IATUIConfigCheckboxView {
+public:
+	virtual IATUIConfigBoolView& AsBoolView() = 0;
+
+	virtual IATUIConfigCheckboxView& SetText(const wchar_t *text) = 0;
+};
+
 class IATUIConfigSliderView {
 public:
-	virtual IATUIConfigIntView *operator->() = 0;
+	virtual IATUIConfigIntView& AsIntView() = 0;
+
 	virtual IATUIConfigSliderView& SetRange(sint32 minVal, sint32 maxVal) = 0;
 	virtual IATUIConfigSliderView& SetPage(sint32 pageSize) = 0;
 };
@@ -73,12 +81,44 @@ public:
 	virtual IATUIConfigPathView& SetTypeImage() = 0;
 };
 
+class IATUIConfigDropDownView {
+public:
+	virtual IATUIConfigPropView *operator->() = 0;
+
+	virtual IATUIConfigDropDownView& AddRawChoice(uint32 value, const wchar_t *text) = 0;
+
+	template<typename T> requires std::is_enum_v<T>
+	IATUIConfigDropDownView& AddChoice(T value, const wchar_t *text) {
+		return AddRawChoice((uint32)value, text);
+	}
+
+	virtual uint32 GetRawValue() const = 0;
+	virtual void SetRawValue(uint32 value) = 0;
+
+	template<typename T> requires std::is_enum_v<T>
+	T GetValue() {
+		return (T)GetRawValue();
+	}
+
+	template<typename T> requires std::is_enum_v<T>
+	void SetValue(T value) {
+		SetRawValue((uint32)value);
+	}
+};
+
 ///////////////////////////////////////////////////////////////////////////
 
 class IATUIConfigView {
 public:
-	virtual IATUIConfigBoolView& AddCheckbox() = 0;
+	virtual IATUIConfigCheckboxView& AddCheckbox() = 0;
 	virtual IATUIConfigPathView& AddPath() = 0;
+
+	virtual IATUIConfigDropDownView& AddDropDown(const ATEnumLookupTable& enumTable) = 0;
+
+	template<typename T>
+	IATUIConfigDropDownView& AddDropDown() {
+		return AddDropDown(ATGetEnumLookupTable<T>());
+	}
 
 	virtual void Read(const ATPropertySet& pset) = 0;
 	virtual void Write(ATPropertySet& pset) const = 0;

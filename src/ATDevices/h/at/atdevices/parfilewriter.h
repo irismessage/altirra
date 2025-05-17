@@ -35,8 +35,8 @@ public:
 	bool GetErrorStatus(uint32 idx, VDStringW& error) override;
 
 public:	// IATPrinterOutput
-	void WriteASCII(const void *buf, size_t len) override;
-	void WriteATASCII(const void *buf, size_t len) override;
+	bool WantUnicode() const override { return false; }
+	void WriteRaw(const uint8 *buf, size_t len) override;
 
 public:	// IATDeviceSerial
 	void SetOnStatusChange(const vdfunction<void(const ATDeviceSerialStatus&)>& fn) override;
@@ -54,7 +54,7 @@ private:
 	void WriteByte(uint8 c);
 	void Write(const void *buf, size_t len);
 	void Flush();
-	void WriteRaw(const void *buf, size_t len);
+	void WriteToFile(const void *buf, size_t len);
 	void TryOpenOutput();
 
 	VDStringW mPath;

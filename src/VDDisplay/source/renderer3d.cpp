@@ -70,7 +70,7 @@ bool VDDisplayCachedImage3D::Init(IVDTContext& ctx, void *owner, bool linear, co
 	if (w > caps.mMaxTextureWidth || h > caps.mMaxTextureHeight)
 		return false;
 
-	if (!ctx.CreateTexture2D(w, h, linear ? kVDTF_B8G8R8A8_sRGB : kVDTF_B8G8R8A8, 1, kVDTUsage_Default, NULL, ~mpTexture))
+	if (!ctx.CreateTexture2D(w, h, linear ? kVDTF_B8G8R8A8_sRGB : kVDTF_B8G8R8A8, 1, VDTUsage::Shader, NULL, ~mpTexture))
 		return false;
 
 	mWidth = px.w;

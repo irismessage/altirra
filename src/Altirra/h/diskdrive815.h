@@ -249,16 +249,7 @@ protected:
 	uint32 mWriteDataLen = 0;
 	int mWriteDrive = 0;
 
-	struct SectorRenderInfo {
-		uint32 mSector;
-		uint32 mVirtualSector;
-		uint32 mPhysicalSector;
-		uint32 mStartBitPos;
-		uint32 mEndBitPos;
-		uint32 mStartDataFieldBitPos;
-		uint8 mSectorSizeCode;
-	};
-
+	using SectorRenderInfo = ATDiskRenderedSectorInfo;
 	vdfastvector<SectorRenderInfo> mRenderedSectors;
 	
 	ATDebugTargetBreakpointsImpl mBreakpointsImpl;

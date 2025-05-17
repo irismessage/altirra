@@ -34,7 +34,7 @@
 
 ATLogChannel g_ATLCDiskImage(false, false, "DISKIMAGE", "Disk image load details");
 
-ATConfigVarBool g_ATCVImageDiskATXFullSectorsEnabled("image.disk.atx.full_sector_support", false);
+ATConfigVarBool g_ATCVImageDiskATXFullSectorsEnabled("image.disk.atx.full_sector_support", true);
 
 namespace {
 	// FM uses 4us bit cells, of which there are clock and data cells.
@@ -387,7 +387,7 @@ void ATDiskImage::Load(const wchar_t *s) {
 
 void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRandomAccessStream& stream) {
 	sint64 fileSize = stream.Length();
-	const wchar_t *ext = VDFileSplitExt(imagePath);
+	const wchar_t *ext = VDFileSplitExt(imagePath ? imagePath : origPath);
 
 	mImageFileCRC.reset();
 	mImageFileSHA256.reset();
@@ -439,7 +439,7 @@ void ATDiskImage::Load(const wchar_t *origPath, const wchar_t *imagePath, IVDRan
 				stream.Seek(0);
 				LoadXFD(stream, fileSize);
 			} else if (origPath)
-				throw MyError("Disk image \"%ls\" is corrupt or uses an unsupported format.", VDFileSplitPath(origPath));
+				throw VDException(L"Disk image \"%ls\" is corrupt or uses an unsupported format.", VDFileSplitPath(origPath));
 			else
 				throw MyError("Disk image is corrupt or uses an unsupported format.");
 		}
@@ -1050,10 +1050,12 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 		//
 		// Use 256 bytes if no 512 or 1024 byte boot sectors and no 128 byte
 		// non-boot sectors; allow 128 byte boot sectors for 1050 Duplicator.
+		// We require at least one 256 byte sector as there is at least one known
+		// disk that is ED and lacks sector 4-25.
 		//
 		if ((mask128 | mask256) == 0 && mask512)
 			mSectorSize = 512;
-		else if (((mask512 | mask1024) & 0x7) == 0 && (mask128 & 0x1F8) == 0)
+		else if (((mask512 | mask1024) & 0x7) == 0 && (mask128 & 0x1F8) == 0 && (mask256 & 0x1F8))
 			mSectorSize = 256;
 	}
 
@@ -1118,10 +1120,10 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 		for(uint32 psecIndex = 0; psecIndex < vsi.mNumPhysSectors; ++psecIndex) {
 			PhysSectorInfo& psi = mPhysSectors[vsi.mStartPhysSector + psecIndex];
 
+			psi.mFDCStatus |= 0x06;
+
 			if (psi.mPhysicalSize > expectedSize)
 				psi.mFDCStatus &= ~0x04;
-			else
-				psi.mFDCStatus |= 0x04;
 		}
 	}
 
@@ -1377,7 +1379,7 @@ void ATDiskImage::LoadATR(IVDRandomAccessStream& stream, uint32 len, const wchar
 
 	if (mSectorSize > 8192) {
 		if (origPath)
-			throw MyError("Disk image \"%ls\" uses an unsupported sector size of %u bytes.", VDFileSplitPath(origPath), mSectorSize);
+			throw VDException(L"Disk image \"%ls\" uses an unsupported sector size of %u bytes.", VDFileSplitPath(origPath), mSectorSize);
 		else
 			throw MyError("Disk image uses an unsupported sector size of %u bytes.", mSectorSize);
 	}

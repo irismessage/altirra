@@ -182,7 +182,11 @@ extern void VDDebugPrint(const char *format, ...);
 #if defined(VD_COMPILER_MSVC)
 	#define VDBREAK		__debugbreak()
 #elif defined(VD_COMPILER_CLANG)
-	#define VDBREAK		__asm__ volatile ("int3" : : )
+	#if __has_builtin(__builtin_debugtrap)
+		#define VDBREAK		__builtin_debugtrap()
+	#else
+		#define VDBREAK		__asm__ volatile ("int3" : : )
+	#endif
 #else
 	#define VDBREAK		*(volatile char *)0 = *(volatile char *)0
 #endif
@@ -206,8 +210,8 @@ extern void VDDebugPrint(const char *format, ...);
 	}
 
 	#define VDFAIL(str)			if (VDAssert(#str, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
-	#define VDASSERT(exp)		if (std::is_constant_evaluated()) { if (!(exp)) *(char *)nullptr = 0; } else if (!(exp) && VDAssert  (#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
-	#define VDASSERTPTR(exp) 	if (std::is_constant_evaluated()) { if (!(exp)) *(char *)nullptr = 0; } else if (!(exp) && VDAssertPtr(#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
+	#define VDASSERT(exp)		if (!(exp)) { if (std::is_constant_evaluated()) { *(char *)nullptr = 0; } else if (VDAssert  (#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; }} else ((void)0)
+	#define VDASSERTPTR(exp) 	if (!(exp)) { if (std::is_constant_evaluated()) { *(char *)nullptr = 0; } else if (VDAssertPtr(#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; }} else ((void)0)
 	#define VDVERIFY(exp)		if (!(exp) && VDAssert   (#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
 	#define VDVERIFYPTR(exp) 	if (!(exp) && VDAssertPtr(#exp, __FILE__, __LINE__) == kVDAssertBreak) { VDBREAK; } else ((void)0)
 

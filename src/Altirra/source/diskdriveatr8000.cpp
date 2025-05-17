@@ -448,6 +448,12 @@ ATDeviceDiskDriveATR8000::ATDeviceDiskDriveATR8000() {
 	mSerialXmitQueue.SetMaxCyclesPerBit(8900);
 
 	mFirmwareControl.Init(mROM, sizeof mROM, kATFirmwareType_ATR8000);
+
+	mParallelBus.SetOnAttach(
+		[this] {
+			mpPrinterOutput = nullptr;
+		}
+	);
 }
 
 ATDeviceDiskDriveATR8000::~ATDeviceDiskDriveATR8000() {
@@ -461,7 +467,6 @@ void *ATDeviceDiskDriveATR8000::AsInterface(uint32 iid) {
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
 		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(&mAudioPlayer);
 		case IATDeviceButtons::kTypeID: return static_cast<IATDeviceButtons *>(this);
-		case IATDevicePrinterPort::kTypeID: return static_cast<IATDevicePrinterPort *>(this);
 		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(this);
 		case ATFDCEmulator::kTypeID: return &mFDC;
 		case ATCTCEmulator::kTypeID: return &mCTC;
@@ -734,10 +739,6 @@ void ATDeviceDiskDriveATR8000::ActivateButton(ATDeviceButton idx, bool state) {
 				DeviceReset();
 			break;
 	}
-}
-
-void ATDeviceDiskDriveATR8000::SetPrinterDefaultOutput(IATPrinterOutput *out) {
-	mpPrinterOutput = out;
 }
 
 IATDeviceBus *ATDeviceDiskDriveATR8000::GetDeviceBus(uint32 index) {
@@ -1069,9 +1070,13 @@ void ATDeviceDiskDriveATR8000::OnWritePort(uint8 addr, uint8 val) {
 
 							if (state) {
 								if (auto *printer = mParallelBus.GetChild<IATPrinterOutput>())
-									printer->WriteASCII(&mPrinterData, 1);
-								else if (mpPrinterOutput)
-									mpPrinterOutput->WriteASCII(&mPrinterData, 1);
+									printer->WriteRaw(&mPrinterData, 1);
+								else {
+									if (!mpPrinterOutput)
+										mpPrinterOutput = GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+
+									mpPrinterOutput->WriteRaw(&mPrinterData, 1);
+								}
 							}
 						}
 						break;

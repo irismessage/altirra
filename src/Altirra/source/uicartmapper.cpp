@@ -197,7 +197,7 @@ void ATUIDialogCartridgeMapper::OnDataExchange(bool write) {
 			for(int i=0; i<=kATCartridgeMapper_Max; ++i) {
 				ATCartridgeMode mode = ATGetCartridgeModeForMapper(i);
 
-				if (!mappersDetected[mode]) {
+				if (mode != kATCartridgeMode_None && !mappersDetected[mode]) {
 					mappersDetected[mode] = true;
 					mMappers.push_back(mode);
 				}
@@ -373,6 +373,16 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeName(int mode) {
 		case kATCartridgeMode_COS32K:				return L"COS 32K";
 		case kATCartridgeMode_Pronto:				return L"Pronto";
 
+		case kATCartridgeMode_JAtariCart_8K:		return L"J(atari)Cart 8K";
+		case kATCartridgeMode_JAtariCart_16K:		return L"J(atari)Cart 16K";
+		case kATCartridgeMode_JAtariCart_32K:		return L"J(atari)Cart 32K";
+		case kATCartridgeMode_JAtariCart_64K:		return L"J(atari)Cart 64K";
+		case kATCartridgeMode_JAtariCart_128K:		return L"J(atari)Cart 128K";
+		case kATCartridgeMode_JAtariCart_256K:		return L"J(atari)Cart 256K";
+		case kATCartridgeMode_JAtariCart_512K:		return L"J(atari)Cart 512K";
+		case kATCartridgeMode_JAtariCart_1024K:		return L"J(atari)Cart 1MB";
+		case kATCartridgeMode_DCart:				return L"DCart";
+
 		// These modes should not be hit
 		case kATCartridgeMode_SuperCharger3D:
 		default:
@@ -498,6 +508,16 @@ const wchar_t *ATUIDialogCartridgeMapper::GetModeDesc(int mode) {
 		case kATCartridgeMode_MDDOS:				return L"4K banked by CCTL access (4K+4K switchable)";
 		case kATCartridgeMode_COS32K:				return L"16K banked by CCTL access";
 		case kATCartridgeMode_Pronto:				return L"16K fixed + EEPROM";
+
+		case kATCartridgeMode_JAtariCart_8K:
+		case kATCartridgeMode_JAtariCart_16K:
+		case kATCartridgeMode_JAtariCart_32K:
+		case kATCartridgeMode_JAtariCart_64K:
+		case kATCartridgeMode_JAtariCart_128K:
+		case kATCartridgeMode_JAtariCart_256K:
+		case kATCartridgeMode_JAtariCart_512K:
+		case kATCartridgeMode_JAtariCart_1024K:		return L"8K banked by CCTL address (switchable)";
+		case kATCartridgeMode_DCart:				return L"8K banked by CCTL write (switchable) + keyhole";
 
 			// These modes should not be hit
 		case kATCartridgeMode_SuperCharger3D:

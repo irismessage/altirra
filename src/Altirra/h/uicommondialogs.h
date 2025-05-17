@@ -5,7 +5,7 @@
 #include <vd2/system/VDString.h>
 #include "uiqueue.h"
 
-class MyError;
+class VDException;
 
 bool ATUIGetNativeDialogMode();
 void ATUISetNativeDialogMode(bool enabled);
@@ -17,8 +17,8 @@ void ATUIShowWarning(VDGUIHandle h, const wchar_t *text, const wchar_t *caption)
 bool ATUIShowWarningConfirm(VDGUIHandle h, const wchar_t *text, const wchar_t *title = nullptr);
 void ATUIShowError2(VDGUIHandle h, const wchar_t *text, const wchar_t *title);
 void ATUIShowError(VDGUIHandle h, const wchar_t *text);
-void ATUIShowError(VDGUIHandle h, const MyError& e);
-void ATUIShowError(const MyError& e);
+void ATUIShowError(VDGUIHandle h, const VDException& e);
+void ATUIShowError(const VDException& e);
 
 vdrefptr<ATUIFutureWithResult<bool> > ATUIShowAlertWarningConfirm(const wchar_t *text, const wchar_t *title);
 vdrefptr<ATUIFutureWithResult<bool> > ATUIShowAlertError(const wchar_t *text, const wchar_t *title);

@@ -149,10 +149,17 @@ namespace ATCommands {
 			, [] {
 				const bool enable = !g_sim.GetPokey().IsImmediatePotUpdateEnabled();
 				g_sim.GetPokey().SetImmediatePotUpdateEnabled(enable);
-				g_sim.GetLightPenPort()->SetImmediateUpdateEnabled(enable);
 			}
 			, nullptr
 			, [] { return ToChecked(g_sim.GetPokey().IsImmediatePotUpdateEnabled()); }
+		},
+		{ "Input.ToggleImmediateLightPenUpdate"
+			, [] {
+				const bool enable = !g_sim.GetLightPenPort()->GetImmediateUpdateEnabled();
+				g_sim.GetLightPenPort()->SetImmediateUpdateEnabled(enable);
+			}
+			, nullptr
+			, [] { return ToChecked(g_sim.GetLightPenPort()->GetImmediateUpdateEnabled()); }
 		},
 
 		{ "Input.RecalibrateLightPen", ATUIRecalibrateLightPen },

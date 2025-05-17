@@ -63,7 +63,12 @@ enum ATAudioSampleId : uint32 {
 	kATAudioSampleId_DiskStep2H,
 	kATAudioSampleId_DiskStep3,
 	kATAudioSampleId_SpeakerStep,
-	kATAudioSampleId_1030Relay
+	kATAudioSampleId_1030Relay,
+	kATAudioSampleId_Printer1029Pin,
+	kATAudioSampleId_Printer1029Platen,
+	kATAudioSampleId_Printer1029Retract,
+	kATAudioSampleId_Printer1029Home,
+	kATAudioSampleId_Printer1025Feed
 };
 
 enum class ATSoundId : uint32 {

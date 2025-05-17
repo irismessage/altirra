@@ -42,7 +42,6 @@ class ATMIOEmulator final : public ATDevice
 	, public IATDeviceParent
 	, public ATDeviceBus
 	, public IATDeviceIndicators
-	, public IATDevicePrinterPort
 	, public IATDeviceSnapshot
 	, public IATSCSIBusMonitor
 	, public IATSchedulerCallback
@@ -93,9 +92,6 @@ public:
 
 public:
 	virtual void InitIndicators(IATDeviceIndicatorManager *r) override;
-
-public:
-	virtual void SetPrinterDefaultOutput(IATPrinterOutput *out) override;
 
 public:
 	void GetSnapshotStatus(ATSnapshotStatus& status) const override;
@@ -153,7 +149,7 @@ private:
 	ATMemoryLayer *mpMemLayerRAM = nullptr;
 	ATMemoryLayer *mpMemLayerFirmware = nullptr;
 
-	IATPrinterOutput *mpPrinterOutput = nullptr;
+	vdrefptr<IATPrinterOutput> mpPrinterOutput;
 
 	struct SCSIDiskEntry {
 		IATDevice *mpDevice;

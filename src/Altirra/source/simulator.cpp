@@ -68,6 +68,7 @@
 #include "oshelper.h"
 #include "savestate.h"
 #include "savestateio.h"
+#include "savestatetypes.h"
 #include "cartridge.h"
 #include "cartridgeport.h"
 #include "resource.h"
@@ -112,6 +113,10 @@
 #include "encode_png.h"
 #include "1400xl.h"
 #include "1450xld.h"
+#include "autosavemanager.h"
+#include "pbidisk.h"
+
+vdrefptr<IATPrinterOutputManager> ATCreatePrinterOutputManager();
 
 namespace {
 	const char kSaveStateVersion[] = "Altirra save state V1";
@@ -308,6 +313,8 @@ public:
 	vdautoptr<ATCPUTracer> mpCPUTracer;
 	vdrefptr<IATTraceChannelVideo> mpTraceChannelVideo;
 	vdrefptr<IATVideoTracer> mpVideoTracer;
+	vdrefptr<IATAutoSaveManager> mpAutoSaveManager;
+	vdrefptr<IATPrinterOutputManager> mpPrinterOutputManager;
 	uint64 mTraceSizeLimit = UINT64_MAX;
 	ATRapidusDevice *mpRapidus = nullptr;
 
@@ -319,6 +326,13 @@ public:
 	uint32 mLockedRandomSeed = 0;
 
 	uint64 mColdResetTime = 0;
+	uint32 mColdStartId = 0;
+
+	double mRealRunTimeBaseSeconds = 0;
+	uint64 mRealRunTimeBaseTick = 0;
+	double mRunTimeBaseSeconds = 0;
+	uint64 mRunTimeBaseTick = 0;
+
 	bool mbExtRAMClearedOnce = false;
 	bool mbInU1MBPreLock = false;
 
@@ -353,6 +367,9 @@ public:
 	// hack to emulate Atari's hack where they reused a bit from the modem
 	// latch for the disk controller
 	bool mb1400XLDiskAttn = false;
+
+	bool mbSIOPBIPatchEnabled = false;
+	bool mbCIOPBIPatchEnabled = false;
 
 	ATDiskInterface *mpDiskInterfaces[15] = {};
 
@@ -422,6 +439,7 @@ void ATSimulator::PrivateData::ResetCPU() {
 
 	mParent.mpCPUHookManager->CallResetHooks();
 	mParent.mpCPUHookManager->CallInitHooks(mParent.mpKernelLowerROM, mParent.mpKernelUpperROM);
+	mParent.UpdatePBIHookDevice();
 }
 
 void ATSimulator::PrivateData::ResetComputer() {
@@ -468,6 +486,7 @@ void ATSimulator::PrivateData::OverrideKernelMapping(IATDeviceSystemControl *sou
 
 		mParent.mpCPUHookManager->CallResetHooks();
 		mParent.mpCPUHookManager->CallInitHooks(mParent.mpKernelLowerROM, mParent.mpKernelUpperROM);
+		mParent.UpdatePBIHookDevice();
 	}
 }
 
@@ -487,7 +506,10 @@ void ATSimulator::PrivateData::OnU1MBConfigPreLocked(bool inPreLockState) {
 }
 
 uint8 ATSimulator::PrivateData::ReadConsoleButtons() const {
-	return mParent.mGTIA.ReadConsoleSwitches() & 7;
+	// We need to read on the inputs and not the GTIA output so the 32-in-1 doesn't
+	// think the Select button is down because of the GTIA momentarily pulling it
+	// down on power-up.
+	return mParent.mGTIA.ReadConsoleSwitchInputs() & 7;
 }
 
 ATScheduler *ATSimulator::PrivateData::GetMachineScheduler() const {
@@ -703,7 +725,6 @@ ATSimulator::ATSimulator()
 	, mpMemLayerIoBusFloat(nullptr)
 	, mpInputManager(nullptr)
 	, mpLightPen(nullptr)
-	, mpPrinterOutput(nullptr)
 	, mpVBXE(NULL)
 	, mpCheatEngine(NULL)
 	, mpUIRenderer(NULL)
@@ -744,6 +765,7 @@ void ATSimulator::Init() {
 	mpSIOManager = new ATSIOManager;
 	mpFirmwareManager = new ATFirmwareManager;
 	mpDeviceManager = new ATDeviceManager;
+	mpPrivateData->mpPrinterOutputManager = ATCreatePrinterOutputManager();
 
 	mpDeviceManager->Init();
 	mpDeviceManager->AddDeviceChangeCallback(ATSlightSIDEmulator::kTypeID, mpPrivateData);
@@ -764,8 +786,7 @@ void ATSimulator::Init() {
 	mpDeviceManager->RegisterService<IATDeviceSIOManager>(mpSIOManager);
 	mpDeviceManager->RegisterService<IATDeviceSchedulingService>(mpPrivateData);
 	mpDeviceManager->RegisterService<IATDeviceCartridgePort>(&mpPrivateData->mCartPort);
-
-	mpAnticBusData = &mpMemMan->mBusValue;
+	mpDeviceManager->RegisterService<IATPrinterOutputManager>(mpPrivateData->mpPrinterOutputManager);
 
 	mCartModuleIds[0] = 0;
 	mCartModuleIds[1] = 0;
@@ -810,12 +831,13 @@ void ATSimulator::Init() {
 	mPIA.Init(&mScheduler);
 
 	mGTIA.Init(this);
-	mAntic.Init(this, &mGTIA, &mScheduler, mpSimEventManager);
+	mAntic.Init(this, &mGTIA, &mScheduler, mpSimEventManager, &mpMemMan->mBusValue);
 
 	mpSIOManager->Init(&mCPU, this);
 	mpHLECIOHook = ATCreateHLECIOHook(&mCPU, this, mpMemMan);
+	mpDeviceManager->RegisterService<IATDeviceCIOManager>(mpHLECIOHook->AsDeviceCIOManager());
 
-	mpLightPen->Init(&mAntic);
+	mpLightPen->Init(mAntic, mGTIA);
 
 	mpAudioSamplePool = new ATAudioSamplePool;
 	mpAudioSamplePool->Init();
@@ -913,12 +935,14 @@ void ATSimulator::Init() {
 	mpAnticReadPageMap = mpMemMan->GetAnticMemoryMap();
 
 	mpInputManager->Init(&mScheduler, &mSlowScheduler, mPokey, mpPrivateData->mPortManager, mpLightPen);
+	mpPrivateData->mpAutoSaveManager = ATCreateAutoSaveManager(*this);
 }
 
 void ATSimulator::Shutdown() {
 	if (!mpPrivateData)
 		return;
 
+	mpPrivateData->mpAutoSaveManager = nullptr;
 	mpPrivateData->mStereoEnableSignal.Shutdown();
 
 	SetTracingEnabled(nullptr);
@@ -1050,8 +1074,6 @@ void ATSimulator::Shutdown() {
 	delete mpCheatEngine; mpCheatEngine = NULL;
 	delete mpPokeyTables; mpPokeyTables = NULL;
 
-	vdsaferelease <<= mpPrinterOutput;
-
 	if (mpUIRenderer) {
 		mpUIRenderer->Release();
 		mpUIRenderer = NULL;
@@ -1155,20 +1177,12 @@ IATDeviceCIOManager *ATSimulator::GetDeviceCIOManager() {
 	return vdpoly_cast<IATDeviceCIOManager *>(mpHLECIOHook);
 }
 
-void ATSimulator::SetPrinterDefaultOutput(IATPrinterOutput *p) {
-	if (mpPrinterOutput == p)
-		return;
+IATAutoSaveManager& ATSimulator::GetAutoSaveManager() const {
+	return *mpPrivateData->mpAutoSaveManager;
+}
 
-	if (p)
-		p->AddRef();
-
-	if (mpPrinterOutput)
-		mpPrinterOutput->Release();
-
-	mpPrinterOutput = p;
-
-	for(IATDevicePrinterPort *pr : mpDeviceManager->GetInterfaces<IATDevicePrinterPort>(false, false, false))
-		pr->SetPrinterDefaultOutput(p);
+IATPrinterOutputManager& ATSimulator::GetPrinterOutputManager() const {
+	return *mpPrivateData->mpPrinterOutputManager;
 }
 
 bool ATSimulator::GetDiskBurstTransfersEnabled() const {
@@ -1207,6 +1221,19 @@ void ATSimulator::SetCIOPatchEnabled(char c, bool enabled) const {
 	mpHLECIOHook->SetCIOPatchEnabled(c, enabled);
 }
 
+bool ATSimulator::IsCIOPBIPatchEnabled() const {
+	return mpPrivateData->mbCIOPBIPatchEnabled;
+}
+
+void ATSimulator::SetCIOPBIPatchEnabled(bool enable) {
+	if (mpPrivateData->mbCIOPBIPatchEnabled == enable)
+		return;
+	
+	mpPrivateData->mbCIOPBIPatchEnabled = enable;
+
+	UpdatePBIHookDevice();
+}
+
 bool ATSimulator::IsSIOPatchEnabled() const {
 	return mpSIOManager->IsSIOPatchEnabled();
 }
@@ -1215,21 +1242,17 @@ void ATSimulator::SetSIOPatchEnabled(bool enable) {
 	mpSIOManager->SetSIOPatchEnabled(enable);
 }
 
-
-bool ATSimulator::IsPBIPatchEnabled() const {
-	return mpDeviceManager->GetDeviceByTag("pbidisk") != nullptr;
+bool ATSimulator::IsSIOPBIPatchEnabled() const {
+	return mpPrivateData->mbSIOPBIPatchEnabled;
 }
 
-void ATSimulator::SetPBIPatchEnabled(bool enable) {
-	auto *dev = mpDeviceManager->GetDeviceByTag("pbidisk");
+void ATSimulator::SetSIOPBIPatchEnabled(bool enable) {
+	if (mpPrivateData->mbSIOPBIPatchEnabled == enable)
+		return;
+	
+	mpPrivateData->mbSIOPBIPatchEnabled = enable;
 
-	if (enable) {
-		if (!dev)
-			mpDeviceManager->AddDevice("pbidisk", ATPropertySet());
-	} else {
-		if (dev)
-			mpDeviceManager->RemoveDevice(dev);
-	}
+	UpdatePBIHookDevice();
 }
 
 bool ATSimulator::GetDeviceSIOPatchEnabled() const {
@@ -1347,6 +1370,10 @@ void ATSimulator::SetVideoStandard(ATVideoStandard vs) {
 	if (mVideoStandard == vs)
 		return;
 
+	const uint64 t = mScheduler.GetTick64();
+	mpPrivateData->mRunTimeBaseSeconds = SimulatedSecondsSinceColdReset();
+	mpPrivateData->mRunTimeBaseTick = t;
+
 	mVideoStandard = vs;
 	++mConfigChangeCounter;
 	
@@ -1442,7 +1469,7 @@ void ATSimulator::SetHardwareMode(ATHardwareMode mode) {
 	for(ATVBXEEmulator *vbxe : mpDeviceManager->GetInterfaces<ATVBXEEmulator>(false, false, false))
 		vbxe->Set5200Mode(is5200);
 
-	mpMemMan->SetFloatingDataBus(kATHardwareModeTraits[mode].mbFloatingDataBus);
+	UpdateFloatingBus();
 
 	mpLightPen->SetIgnorePort34(!kATHardwareModeTraits[mode].mbHasPort34);
 
@@ -1469,8 +1496,8 @@ void ATSimulator::SetCPUMode(ATCPUMode mode, uint32 subCycles) {
 	if (subCycles < 1 || mode != kATCPUMode_65C816)
 		subCycles = 1;
 
-	if (subCycles > 16)
-		subCycles = 16;
+	if (subCycles > 24)
+		subCycles = 24;
 
 	if (mpPrivateData->mCPUMode == mode && mpPrivateData->mCPUSubCycles == subCycles)
 		return;
@@ -1724,6 +1751,7 @@ void ATSimulator::SetUltimate1MBEnabled(bool enable) {
 		if (mpMemLayerBASICROM)
 			mpMemMan->SetLayerMemory(mpMemLayerBASICROM, mpPrivateData->mBASICROM);
 
+		InitMemoryMap();
 		UpdateKernelROMPtrs();
 
 		ReinitHookPage();
@@ -1798,14 +1826,37 @@ void ATSimulator::SetAudioStatusEnabled(bool enable) {
 	}
 }
 
+vdsize32 ATSimulator::GetVirtualScreenSize() const {
+	return mVirtualScreenSize;
+}
+
+void ATSimulator::SetVirtualScreenSize(const vdsize32& size) {
+	// This clamping is also done internally by the virtual screen handler, but
+	// doing it here too makes things more consistent.
+	const vdsize32 newSize(
+		std::clamp<sint32>(size.w, 40, 255),
+		std::clamp<sint32>(size.h, 24, 255)
+	);
+
+	if (mVirtualScreenSize != newSize) {
+		mVirtualScreenSize = newSize;
+
+		if (mpVirtualScreenHandler)
+			mpVirtualScreenHandler->Resize(newSize.w, newSize.h);
+	}
+}
+
 void ATSimulator::SetVirtualScreenEnabled(bool enable) {
 	if (enable) {
 		if (!mpVirtualScreenHandler) {
-			mpVirtualScreenHandler = ATCreateVirtualScreenHandler();
+			mpVirtualScreenHandler = ATCreateVirtualScreenHandler(*mCPU.GetMemory());
+			mpVirtualScreenHandler->Resize(mVirtualScreenSize.w, mVirtualScreenSize.h);
+			mpVirtualScreenHandler->Enable();
 			ReinitHookPage();
 		}
 	} else {
 		if (mpVirtualScreenHandler) {
+			mpVirtualScreenHandler->Disable();
 			delete mpVirtualScreenHandler;
 			mpVirtualScreenHandler = NULL;
 
@@ -1964,8 +2015,20 @@ void ATSimulator::SetTracingEnabled(const ATTraceSettings *settings) {
 	mpPrivateData->mpTraceContext = context;
 }
 
-uint64 ATSimulator::TimeSinceColdReset() const {
+uint64 ATSimulator::TicksSinceColdReset() const {
 	return mScheduler.GetTick64() - mpPrivateData->mColdResetTime;
+}
+
+double ATSimulator::RealSecondsSinceColdReset() const {
+	return mpPrivateData->mRealRunTimeBaseSeconds + std::max<double>(0.0, (double)(VDGetPreciseTick() - mpPrivateData->mRealRunTimeBaseTick)) * VDGetPreciseSecondsPerTick();
+}
+
+double ATSimulator::SimulatedSecondsSinceColdReset() const {
+	return mpPrivateData->mRunTimeBaseSeconds + (mScheduler.GetTick64() - mpPrivateData->mRunTimeBaseTick) * mScheduler.GetRate().AsInverseDouble();
+}
+
+uint32 ATSimulator::GetColdStartId() const {
+	return mpPrivateData->mColdStartId;
 }
 
 uint32 ATSimulator::GetRandomSeed() const {
@@ -1974,6 +2037,7 @@ uint32 ATSimulator::GetRandomSeed() const {
 
 void ATSimulator::SetRandomSeed(uint32 seed) {
 	mpPrivateData->mRandomSeed = seed;
+	mpPrivateData->mColdStartId = seed;
 }
 
 uint32 ATSimulator::GetLockedRandomSeed() const {
@@ -1986,6 +2050,11 @@ void ATSimulator::SetLockedRandomSeed(uint32 seed) {
 
 void ATSimulator::ColdReset() {
 	mpPrivateData->mColdResetTime = mScheduler.GetTick64();
+	mpPrivateData->mRunTimeBaseSeconds = 0;
+	mpPrivateData->mRunTimeBaseTick = mpPrivateData->mColdResetTime;
+	mpPrivateData->mRealRunTimeBaseSeconds = 0;
+	mpPrivateData->mRealRunTimeBaseTick = VDGetPreciseTick();
+	mpPrivateData->mColdStartId ^= (uint32)mpPrivateData->mRealRunTimeBaseTick;
 
 	int powerOnDelay = mPowerOnDelay;
 
@@ -2148,6 +2217,7 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 	if (mpUltimate1MB)
 		mpUltimate1MB->ColdReset();
 
+	UpdateFloatingBus();
 	UpdateXLCartridgeLine();
 	UpdateKeyboardPresentLine();
 	UpdateForcedSelfTestLine();
@@ -2166,6 +2236,7 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 
 	// notify CPU hooks that we're reinitializing the OS
 	mpCPUHookManager->CallResetHooks();
+	UpdatePBIHookDevice();
 
 	// Check if we need to toggle BASIC for cassette boot (must be before we call the init hooks,
 	// which set up auto-hold-START).
@@ -2177,6 +2248,7 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 	} else {
 		mpCPUHookManager->EnableOSHooks(true);
 		mpCPUHookManager->CallInitHooks(mpKernelLowerROM, mpKernelUpperROM);
+		UpdatePBIHookDevice();
 	}
 
 	// power-cycle controllers
@@ -2255,6 +2327,7 @@ void ATSimulator::InternalWarmReset(bool enableHeldKeys) {
 	} else {
 		mpCPUHookManager->EnableOSHooks(true);
 		mpCPUHookManager->CallInitHooks(mpKernelLowerROM, mpKernelUpperROM);
+		UpdatePBIHookDevice();
 	}
 
 	for(IATDevice *dev : mpDeviceManager->GetDevices(false, false, false))
@@ -2624,7 +2697,7 @@ bool ATSimulator::Load(ATMediaLoadContext& ctx) {
 	
 	ATScopeGuard restoreCassetteImageLoadCtx([&] { loadCtx->mpCassetteLoadContext = origCassetteLoadCtx; });
 
-	loadCtx->mpCassetteLoadContext->mTurboDecodeAlgorithm = mpCassette->GetTurboDecodeAlgorithm();
+	mpCassette->GetLoadOptions(*loadCtx->mpCassetteLoadContext);
 
 	const wchar_t *origPath = ctx.mOriginalPath.empty() ? nullptr : ctx.mOriginalPath.c_str();
 	const wchar_t *imagePath = ctx.mImageName.empty() ? nullptr : ctx.mImageName.c_str();
@@ -2643,32 +2716,18 @@ bool ATSimulator::Load(ATMediaLoadContext& ctx) {
 			if (!origPath)
 				throw MyError("Cannot load image: no name specified.");
 
-			VDStringW basePath;
-			VDStringW subPath;
-			if (ATParseVFSPath(origPath, basePath, subPath) == kATVFSProtocol_File) {
-				VDFileStream stream(origPath, nsVDFile::kRead | nsVDFile::kDenyWrite | nsVDFile::kOpenExisting | nsVDFile::kSequential);
-
-				if (stream.getAttributes() & kVDFileAttr_ReadOnly)
-					ctx.mWriteMode = (ATMediaWriteMode)(ctx.mWriteMode & ~kATMediaWriteMode_AutoFlush);
-
-				if (!ATImageLoadAuto(origPath, origPath, stream, loadCtx, &resultPath, &canUpdate, ~ctx.mpImage))
-					return false;
-
-				ctx.mImageName = resultPath.empty() ? origPath : resultPath.c_str();
-				imagePath = ctx.mImageName.c_str();
-			} else {
-				vdrefptr<ATVFSFileView> view;
+			vdrefptr<ATVFSFileView> view;
 		
-				ATVFSOpenFileView(origPath, false, ~view);
+			ATVFSOpenFileView(origPath, false, ~view);
 
+			if (view->IsSourceReadOnly())
 				ctx.mWriteMode = (ATMediaWriteMode)(ctx.mWriteMode & ~kATMediaWriteMode_AutoFlush);
 
-				if (!ATImageLoadAuto(origPath, view->GetFileName(), view->GetStream(), loadCtx, &resultPath, &canUpdate, ~ctx.mpImage))
-					return false;
+			if (!ATImageLoadAuto(origPath, imagePath, *view, loadCtx, &resultPath, &canUpdate, ~ctx.mpImage))
+				return false;
 
-				ctx.mImageName = view->GetFileName();
-				imagePath = ctx.mImageName.c_str();
-			}
+			ctx.mImageName = view->GetFileName();
+			imagePath = ctx.mImageName.c_str();
 
 			if (!resultPath.empty()) {
 				ctx.mOriginalPath = resultPath;
@@ -3007,53 +3066,6 @@ void ATSimulator::LoadCartridgeBASIC() {
 
 	VDMemoryStream memstream(mpPrivateData->mBASICROM, sizeof mpPrivateData->mBASICROM);
 	mpCartridge[0]->Load(L"special:basic", memstream, &ctx);
-}
-
-ATSimulator::AdvanceResult ATSimulator::AdvanceUntilInstructionBoundary() {
-	for(;;) {
-		if (!mCPU.IsInstructionInProgress())
-			return kAdvanceResult_Running;
-
-		if (!mbRunning)
-			return kAdvanceResult_Stopped;
-
-		ATSimulatorEvent cpuEvent = kATSimEvent_None;
-
-		if (mCPU.GetUnusedCycle())
-			cpuEvent = (ATSimulatorEvent)mCPU.Advance();
-		else {
-			int x = mAntic.GetBeamX();
-
-			if (!x && mAntic.GetBeamY() == 248) {
-				mGTIA.BeginFrame(248, true, false);
-			}
-
-			ATSCHEDULER_ADVANCE(&mScheduler);
-			uint8 fetchMode = mAntic.PreAdvance();
-
-			if (!((fetchMode | mAntic.GetWSYNCFlag()) & 1))
-				cpuEvent = (ATSimulatorEvent)mCPU.Advance();
-
-			mAntic.PostAdvance(fetchMode);
-
-			if (!(cpuEvent | mPendingEvent))
-				continue;
-		}
-
-		ATSimulatorEvent ev = mPendingEvent;
-		mPendingEvent = kATSimEvent_None;
-		mbRunning = false;
-
-		if (cpuEvent)
-			NotifyEvent(cpuEvent);
-		if (ev)
-			NotifyEvent(ev);
-
-		if (!mbRunning) {
-			mGTIA.UpdateScreen(true, false);
-			return kAdvanceResult_Stopped;
-		}
-	}
 }
 
 ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
@@ -3894,6 +3906,10 @@ public:
 class ATSaveState final : public ATSnapExchangeObject<ATSaveState, "ATSaveState"> {
 public:
 	uint32 mVersion = 0;
+	VDStringW mProgramInfo;
+	double mSimRunTimeSeconds = 0;
+	double mRealRunTimeSeconds = 0;
+	uint32 mColdStartId = 0;
 
 	vdrefptr<ATSaveStateMemoryBuffer> mpMemory;
 	uint8 mXmemPortbMask = 0;
@@ -3911,7 +3927,6 @@ public:
 	vdrefptr<IATObjectState> mpPokey;
 	vdrefptr<IATObjectState> mpGtia;
 	vdrefptr<IATObjectState> mpPia;
-	VDStringW mProgramInfo;
 	bool mbStereo {};
 	bool mbMapRAM {};
 	vdrefptr<ATSaveStateFirmwareReference> mpOsRom;
@@ -3934,6 +3949,10 @@ public:
 	void Exchange(T& rw) {
 		rw.Transfer("version", &mVersion);
 		rw.Transfer("program_info", &mProgramInfo);
+		rw.Transfer("sim_run_time_seconds", &mSimRunTimeSeconds);
+		rw.Transfer("real_run_time_seconds", &mRealRunTimeSeconds);
+		rw.Transfer("cold_start_id", &mColdStartId);
+
 		rw.TransferEnum("hardware_mode", &mHardwareMode);
 		rw.TransferEnum("memory_mode", &mMemoryMode);
 		rw.TransferEnum("video_standard", &mVideoStandard);
@@ -4135,54 +4154,14 @@ ATSnapshotStatus ATSimulator::GetSnapshotStatus() const {
 	return status;
 }
 
-struct ATSaveStateInfo final : public ATSnapExchangeObject<ATSaveStateInfo, "ATSaveStateInfo"> {
-	template<ATExchanger T>
-	void Exchange(T& ex);
-
-	VDPixmapBuffer mImage;
-	float mImageX1 = 0;
-	float mImageY1 = 0;
-	float mImageX2 = 0;
-	float mImageY2 = 0;
-	float mImagePAR = 0;
-};
-
-template<ATExchanger T>
-void ATSaveStateInfo::Exchange(T& ex) {
-	vdrefptr<ATSaveStateMemoryBuffer> image;
-
-	if constexpr (ex.IsReader) {
-		ex.Transfer("thumbnail", &image);
-	} else {
-		vdautoptr pngEncoder { VDCreateImageEncoderPNG() };
-		const void *pngData = nullptr;
-		uint32 pngLen = 0;
-
-		// We could set the PAR on the PNG encoder to encode the aspect ratio, but omit it for
-		// now because no programs seem to really support it.
-		pngEncoder->Encode(mImage, pngData, pngLen, false);
-
-		image = new ATSaveStateMemoryBuffer;
-		image->mpDirectName = L"thumbnail.png";
-		image->GetWriteBuffer().assign((const uint8 *)pngData, (const uint8 *)pngData + pngLen);
-
-		ex.Transfer("thumbnail", &image);
-	}
-
-	ex.Transfer("thumbnail_x1", &mImageX1);
-	ex.Transfer("thumbnail_y1", &mImageY1);
-	ex.Transfer("thumbnail_x2", &mImageX2);
-	ex.Transfer("thumbnail_y2", &mImageY2);
-	ex.Transfer("thumbnail_pixel_aspect", &mImagePAR);
-}
-
 void ATSimulator::CreateSnapshot(IATSerializable **ppSnapshot, IATSerializable **ppSnapInfo) {
 	vdrefptr<ATSaveState> root(new ATSaveState);
 	vdrefptr<ATSaveStateInfo> info(new ATSaveStateInfo);
 
 	VDPixmapBuffer pxbuf;
 	VDPixmap px;
-	if (mGTIA.GetLastFrameBuffer(pxbuf, px)) {
+	float par;
+	if (mGTIA.GetLastFrameBufferRaw(pxbuf, px, par)) {
 		if (pxbuf.data)
 			info->mImage = std::move(pxbuf);
 		else
@@ -4193,8 +4172,11 @@ void ATSimulator::CreateSnapshot(IATSerializable **ppSnapshot, IATSerializable *
 		info->mImageY1 = scanArea.top;
 		info->mImageX2 = scanArea.right;
 		info->mImageY2 = scanArea.bottom;
-		info->mImagePAR = mGTIA.GetPixelAspectRatio();
+		info->mImagePAR = par;
 	}
+
+	info->mSimRunTimeSeconds = SimulatedSecondsSinceColdReset();
+	info->mColdStartId = mpPrivateData->mColdStartId;
 
 	const auto& memorySerMap = GetMemorySerializationMap(mMemoryMode, mpUltimate1MB != nullptr);
 
@@ -4226,6 +4208,9 @@ void ATSimulator::CreateSnapshot(IATSerializable **ppSnapshot, IATSerializable *
 
 	root->mVersion = 1;
 	root->mProgramInfo = AT_PROGRAM_NAME_STR L" " AT_VERSION_STR AT_VERSION_DEBUG_STR AT_VERSION_PRERELEASE_STR;
+
+	root->mSimRunTimeSeconds = info->mSimRunTimeSeconds;
+	root->mRealRunTimeSeconds = RealSecondsSinceColdReset();
 
 	root->mpMemory = membuf;
 	root->mXmemPortbMask = memorySerMap.mPortbBankMask;
@@ -4519,6 +4504,15 @@ bool ATSimulator::ApplySnapshot(const IATSerializable& snapshot, ATStateLoadCont
 
 			mpDeviceManager->LoadState(savestate.mpDeviceStates);
 
+			mpPrivateData->mRunTimeBaseSeconds = std::max<double>(0.0, savestate.mSimRunTimeSeconds);
+			mpPrivateData->mRunTimeBaseTick = mScheduler.GetTick64();
+			mpPrivateData->mColdResetTime = mpPrivateData->mRunTimeBaseTick - (uint64)(fmod(mpPrivateData->mRunTimeBaseSeconds, 0x1.0p+64) + 0.5);
+
+			mpPrivateData->mRealRunTimeBaseSeconds = std::max<double>(0.0, savestate.mRealRunTimeSeconds);
+			mpPrivateData->mRealRunTimeBaseTick = VDGetPreciseTick();
+			mpPrivateData->mColdStartId = savestate.mColdStartId;
+
+
 			ApplyVideoStandard();
 
 			mPokey.PostLoadState();
@@ -4538,6 +4532,14 @@ bool ATSimulator::ApplySnapshot(const IATSerializable& snapshot, ATStateLoadCont
 	}
 
 	return true;
+}
+
+void ATSimulator::UpdateFloatingBus() {
+	const bool floatingBus = kATHardwareModeTraits[mHardwareMode].mbFloatingDataBus;
+	mpMemMan->SetFloatingDataBus(floatingBus);
+
+	static constexpr uint8 kPulledUpBus = 0xFF;
+	mAntic.SetBusRefreshData(floatingBus ? &mpMemMan->mBusValue : &kPulledUpBus);
 }
 
 void ATSimulator::UpdateXLCartridgeLine() {
@@ -4970,10 +4972,12 @@ void ATSimulator::InitMemoryMap() {
 	}
 
 	// create BASIC ROM layer
-	mpMemLayerBASICROM = mpMemMan->CreateLayer(kATMemoryPri_ROM, mpPrivateData->mBASICROM, 0xA0, 0x20, true);
-	mpMemMan->SetLayerName(mpMemLayerBASICROM, "BASIC ROM");
-	mpMemMan->SetLayerFastBus(mpMemLayerBASICROM, mbShadowROM);
-	mpMemMan->SetLayerAddressSpace(mpMemLayerBASICROM, kATAddressSpace_ROM + 0xA000);
+	if (SupportsInternalBasic()) {
+		mpMemLayerBASICROM = mpMemMan->CreateLayer(kATMemoryPri_ROM, mpPrivateData->mBASICROM, 0xA0, 0x20, true);
+		mpMemMan->SetLayerName(mpMemLayerBASICROM, "BASIC ROM");
+		mpMemMan->SetLayerFastBus(mpMemLayerBASICROM, mbShadowROM);
+		mpMemMan->SetLayerAddressSpace(mpMemLayerBASICROM, kATAddressSpace_ROM + 0xA000);
+	}
 
 	// create game ROM layer
 	if (mHardwareMode == kATHardwareMode_XEGS) {
@@ -5299,7 +5303,7 @@ void ATSimulator::CPUGetHistoryTimes(ATCPUHistoryEntry * VDRESTRICT he) const {
 }
 
 uint8 ATSimulator::AnticReadByte(uint32 addr) {
-	return *mpAnticBusData = mpMemMan->AnticReadByte(addr);
+	return mpMemMan->mBusValue = mpMemMan->AnticReadByte(addr);
 }
 
 void ATSimulator::AnticAssertNMI_VBI() {
@@ -5454,9 +5458,12 @@ void ATSimulator::AnticEndScanline() {
 		NotifyEvent(kATSimEvent_ScanlineBreakpoint);
 	}
 
-	if (y == 247) {
+	if (y == 248) {
 		if (mpCheatEngine)
 			mpCheatEngine->ApplyCheats();
+
+		if (mpVirtualScreenHandler)
+			mpVirtualScreenHandler->CheckForDisplayListReplaced();
 
 		NotifyEvent(kATSimEvent_VBLANK);
 	}
@@ -5715,9 +5722,6 @@ void ATSimulator::InitDevice(IVDUnknown& dev) {
 	if (auto devcio = vdpoly_cast<IATDeviceCIO *>(&dev))
 		devcio->InitCIO(GetDeviceCIOManager());
 
-	if (auto devpr = vdpoly_cast<IATDevicePrinterPort *>(&dev))
-		devpr->SetPrinterDefaultOutput(GetPrinterOutput());
-
 	if (auto devpbi = vdpoly_cast<IATDevicePBIConnection *>(&dev))
 		devpbi->InitPBI(mpPBIManager);
 
@@ -5839,20 +5843,11 @@ void ATSimulator::InitCassetteAutoBasicBoot() {
 }
 
 bool ATSimulator::SupportsInternalBasic() const {
-	switch(mHardwareMode) {
-		case kATHardwareMode_1200XL:
-			// hack -- Ultimate1MB takes over MMU, so it can do BASIC
-			return mpUltimate1MB != nullptr;
+	// if U1MB is enabled, it can map BASIC regardless of the base computer type
+	if (mpUltimate1MB)
+		return true;
 
-		case kATHardwareMode_800XL:
-		case kATHardwareMode_XEGS:
-		case kATHardwareMode_130XE:
-		case kATHardwareMode_1400XL:
-			return true;
-
-		default:
-			return false;
-	}
+	return kATHardwareModeTraits[mHardwareMode].mbInternalBASIC;
 }
 
 void ATSimulator::UpdateAudioMonitors() {
@@ -5877,4 +5872,27 @@ void ATSimulator::UpdateAudioStatus() {
 		mpUIRenderer->SetAudioStatus(&status);
 	} else
 		mpUIRenderer->SetAudioStatus(nullptr);
+}
+
+void ATSimulator::UpdatePBIHookDevice() {
+	auto *dev = mpDeviceManager->GetDeviceByTag("pbidisk");
+	const bool enable = (mpPrivateData->mbCIOPBIPatchEnabled || mpPrivateData->mbSIOPBIPatchEnabled)
+		&& kATHardwareModeTraits[mHardwareMode].mbSupportsPBI;
+
+	if (enable) {
+		if (!dev)
+			dev = mpDeviceManager->AddDevice("pbidisk", ATPropertySet());
+	} else {
+		if (dev) {
+			if (!mpPrivateData->mbCIOPBIPatchEnabled) {
+				mpDeviceManager->RemoveDevice(dev);
+				dev = nullptr;
+			}
+		}
+	}
+
+	if (dev)
+		static_cast<ATPBIDiskEmulator *>(dev)->SetSIOHookEnabled(mpPrivateData->mbSIOPBIPatchEnabled);
+
+	mpHLECIOHook->SetPBIHookEnabled(mpPrivateData->mbCIOPBIPatchEnabled && dev);
 }

@@ -36,7 +36,7 @@
       <PreprocessorDefinitions>_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
-      <AdditionalOptions Condition="'$(Configuration)'=='Debug' or '$(Configuration)'=='Profile'">/wholearchive:attest.lib %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions Condition="'$(Configuration)'=='Debug' or '$(Configuration)'=='Profile' or '$(Configuration)'=='ProfileClang'">/wholearchive:attest.lib %(AdditionalOptions)</AdditionalOptions>
       <AdditionalDependencies>system.lib;riza.lib;dita.lib;kasumi.lib;tessa.lib;vddisplay.lib;atui.lib;atnativeui.lib;atnetwork.lib;atnetworksockets.lib;atcore.lib;vdjson.lib;atcpu.lib;atdebugger.lib;atio.lib;atappbase.lib;atdevices.lib;atuicontrols.lib;atemulation.lib;atvm.lib;ataudio.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VDLibPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <SubSystem>Windows</SubSystem>
@@ -51,12 +51,16 @@
     </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="h\1025full.h" />
+    <ClInclude Include="h\1029full.h" />
     <ClInclude Include="h\1030full.h" />
     <ClInclude Include="h\1090.h" />
     <ClInclude Include="h\1400xl.h" />
     <ClInclude Include="h\1450xld.h" />
+    <ClInclude Include="h\820full.h" />
     <ClInclude Include="h\audiorawsource.h" />
     <ClInclude Include="h\asyncdownloader.h" />
+    <ClInclude Include="h\autosavemanager.h" />
     <ClInclude Include="h\bit3.h" />
     <ClInclude Include="h\blockdevdiskadapter.h" />
     <ClInclude Include="h\blockdevvirtfat32.h" />
@@ -96,19 +100,31 @@
     <ClInclude Include="h\pokeysavecompat.h" />
     <ClInclude Include="h\pokeytrace.h" />
     <ClInclude Include="h\portmanager.h" />
+    <ClInclude Include="h\printer.h" />
+    <ClInclude Include="h\printer1020.h" />
+    <ClInclude Include="h\printer1020font.h" />
+    <ClInclude Include="h\printerbase.h" />
+    <ClInclude Include="h\printerfont.h" />
+    <ClInclude Include="h\printeroutput.h" />
+    <ClInclude Include="h\printerttfencoder.h" />
+    <ClInclude Include="h\printertypes.h" />
     <ClInclude Include="h\profilerui.h" />
     <ClInclude Include="h\rapidus.h" />
     <ClInclude Include="h\sapconverter.h" />
     <ClInclude Include="h\sapwriter.h" />
     <ClInclude Include="h\savestateio.h" />
+    <ClInclude Include="h\savestatetypes.h" />
     <ClInclude Include="h\settings.h" />
     <ClInclude Include="h\side3.h" />
     <ClInclude Include="h\sio2sd.h" />
+    <ClCompile Include="source\1025full.cpp" />
+    <ClCompile Include="source\1029full.cpp" />
     <ClCompile Include="source\1030.cpp" />
     <ClCompile Include="source\1030full.cpp" />
     <ClCompile Include="source\1090.cpp" />
     <ClCompile Include="source\1400xl.cpp" />
     <ClCompile Include="source\1450xld.cpp" />
+    <ClCompile Include="source\820full.cpp" />
     <ClCompile Include="source\about.cpp" />
     <ClCompile Include="source\allocator.cpp" />
     <ClCompile Include="source\antic.cpp" />
@@ -143,6 +159,7 @@
     <ClCompile Include="source\audiorawsource.cpp" />
     <ClCompile Include="source\audiosampleplayer.cpp" />
     <ClCompile Include="source\audiowriter.cpp" />
+    <ClCompile Include="source\autosavemanager.cpp" />
     <ClCompile Include="source\aviwriter.cpp" />
     <ClCompile Include="source\asyncdownloader_win32.cpp" />
     <ClCompile Include="source\bit3.cpp" />
@@ -251,9 +268,11 @@
     <ClCompile Include="source\memorymanager.cpp" />
     <ClCompile Include="source\midimate.cpp" />
     <ClCompile Include="source\mio.cpp" />
+    <ClCompile Include="source\misccvars.cpp" />
     <ClCompile Include="source\mmu.cpp" />
     <ClCompile Include="source\modem.cpp" />
     <ClCompile Include="source\modemtcp.cpp" />
+    <ClCompile Include="source\mpp1000e.cpp" />
     <ClCompile Include="source\myide.cpp" />
     <ClCompile Include="source\options.cpp" />
     <ClCompile Include="source\oshelper.cpp" />
@@ -269,6 +288,12 @@
     <ClCompile Include="source\pokeytrace.cpp" />
     <ClCompile Include="source\portmanager.cpp" />
     <ClCompile Include="source\printer.cpp" />
+    <ClCompile Include="source\printer1020.cpp" />
+    <ClCompile Include="source\printer1020font.cpp" />
+    <ClCompile Include="source\printerbase.cpp" />
+    <ClCompile Include="source\printerfont.cpp" />
+    <ClCompile Include="source\printeroutput.cpp" />
+    <ClCompile Include="source\printerttfencoder.cpp" />
     <ClCompile Include="source\profiler.cpp" />
     <ClCompile Include="source\profilerui.cpp" />
     <ClCompile Include="source\rapidus.cpp" />
@@ -279,6 +304,7 @@
     <ClCompile Include="source\sapwriter.cpp" />
     <ClCompile Include="source\savestate.cpp" />
     <ClCompile Include="source\savestateio.cpp" />
+    <ClCompile Include="source\savestatetypes.cpp" />
     <ClCompile Include="source\scsidisk.cpp" />
     <ClCompile Include="source\sdrive.cpp" />
     <ClCompile Include="source\settings.cpp" />
@@ -335,6 +361,7 @@
     <ClCompile Include="source\uiconfdevparfilewriter.cpp" />
     <ClCompile Include="source\uiconfdevpercom.cpp" />
     <ClCompile Include="source\uiconfdevpocketmodem.cpp" />
+    <ClCompile Include="source\uiconfdevprinter.cpp" />
     <ClCompile Include="source\uiconfdevside3.cpp" />
     <ClCompile Include="source\uiconfdevsx212.cpp" />
     <ClCompile Include="source\uiconfdevvbxe.cpp" />
@@ -381,6 +408,7 @@
     <ClCompile Include="source\uifrontend.cpp" />
     <ClCompile Include="source\uihistoryview.cpp" />
     <ClCompile Include="source\uipageddialog.cpp" />
+    <ClCompile Include="source\uisavestate.cpp" />
     <ClCompile Include="source\uiscreeneffects.cpp" />
     <ClCompile Include="source\uitapeeditor.cpp" />
     <ClCompile Include="source\uitraceviewer.cpp" />
@@ -553,6 +581,7 @@
     <ClInclude Include="h\uifrontend.h" />
     <ClInclude Include="h\uihistoryview.h" />
     <ClInclude Include="h\uipageddialog.h" />
+    <ClInclude Include="h\uisavestate.h" />
     <ClInclude Include="h\uisettingswindow.h" />
     <ClInclude Include="h\uitapeeditor.h" />
     <ClInclude Include="h\updatecheck.h" />
@@ -669,6 +698,11 @@
     <None Include="..\..\out\release\nogame.rom" />
     <None Include="..\..\out\release\nohdbios.rom" />
     <None Include="..\..\out\release\nokernel.rom" />
+    <None Include="res\printer-1025-feed.pcm" />
+    <None Include="res\printer-1029-home.pcm" />
+    <None Include="res\printer-1029-pin.pcm" />
+    <None Include="res\printer-1029-platen.pcm" />
+    <None Include="res\printer-1029-retract.pcm" />
     <None Include="res\profilerToolbar.bmp" />
     <None Include="res\program.ico" />
     <None Include="..\..\out\Release\superkernel.rom" />

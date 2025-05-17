@@ -40,9 +40,11 @@ struct VDDisplayVertex3T3D {
 ///////////////////////////////////////////////////////////////////////////
 
 class VDDisplayNodeContext3D;
-class VDDisplayMeshCommand3D;
+class VDDisplayCommand3D;
+struct VDDisplayMeshCommand3D;
+struct VDDisplayDispatchCommand3D;
 enum VDDPoolTextureIndex : uint16;
-enum VDDPoolMeshIndex : uint16;
+enum VDDPoolCommandIndex : uint16;
 enum VDDPoolRenderViewId : uint8;
 
 using VDDVertexTransformer = void (*)(void *, const void *, size_t, vdfloat2, vdfloat2);
@@ -91,20 +93,15 @@ public:
 
 	void *InitVertices(size_t vertexSize, uint32 vertexCount, VDDVertexTransformer vertexTransformer);
 
-	template<typename T>
+	template<typename T> requires(alignof(T) <= 4 && !(sizeof(T) & 3))
 	T *InitVertices(uint32 vertexCount) {
-		static_assert(alignof(T) <= 4, "Cannot direct map with vertex type that has greater than 32-bit alignment");
-		static_assert(!(sizeof(T) & 3), "Cannot direct map with vertex type that is not 32-bit aligned in size");
-
 		return (T *)InitVertex(sizeof(T), vertexCount);
 	}
 
 	void SetVertices(const void *data, size_t vertexSize, size_t vertexCount, VDDVertexTransformer vertexTransformer);
 
-	template<typename T>
-	void SetVertices(const T *vertices, size_t vertexCount) {
-		static_assert(!(sizeof(T) & 3), "Cannot set vertex type that is not 32-bit aligned in size");
-
+	template<typename T> requires(!(sizeof(T) & 3))
+	void SetVertices(const T *vertices, size_t vertexCount) { 
 		SetVertices(vertices, sizeof(T), vertexCount, TransformVerts<T>);
 	}
 
@@ -117,6 +114,9 @@ public:
 	void SetTopologyImm(std::initializer_list<uint16> indices);
 	void SetTopologyQuad();
 
+	void SetQuad2T(const vdfloat2& duv1, const vdfloat2& duv2);
+	void SetOffsetQuad2T(const vdfloat2& uv1, const vdfloat2& duv1, const vdfloat2& uv2, const vdfloat2& duv2);
+
 	void InitTextures(uint32 numTextures);
 	void InitTextures(std::initializer_list<VDDPoolTextureIndex> textures);
 	void SetTexture(uint32 textureSlot, VDDPoolTextureIndex poolTextureIndex);
@@ -127,17 +127,19 @@ public:
 
 	void SetClear(uint32 clearColor);
 
+	void SetBlendState(IVDTBlendState *blendState);
+
 	void SetRenderView(VDDPoolRenderViewId id);
 	VDDPoolRenderViewId SetRenderView(const VDDRenderView& renderView);
 	VDDPoolRenderViewId SetRenderView(VDDPoolTextureIndex texture, uint32 mipLevel, bool bypassConversion);
 	VDDPoolRenderViewId SetRenderView(VDDPoolTextureIndex texture, uint32 mipLevel, bool bypassConversion, const VDTViewport& viewport);
 
-	VDDPoolMeshIndex GetMeshIndex() const { return mMeshIndex; }
+	VDDPoolCommandIndex GetCommandIndex() const { return mCommandIndex; }
 
 private:
-	friend class VDDisplayMeshPool3D;
+	friend class VDDisplayCommandList3D;
 
-	VDDisplayMeshBuilder3D(VDDisplayNodeContext3D& dctx, VDDisplayMeshPool3D& pool, VDDisplayMeshCommand3D& cmd, VDDPoolMeshIndex meshIndex);
+	VDDisplayMeshBuilder3D(VDDisplayNodeContext3D& dctx, VDDisplayCommandList3D& pool, VDDisplayMeshCommand3D& cmd, VDDPoolCommandIndex meshIndex);
 
 	template<typename T>
 	static void TransformVerts(void *dst0, const void *src0, size_t n, vdfloat2 scale, vdfloat2 offset) {
@@ -159,18 +161,60 @@ private:
 	}
 
 	VDDisplayNodeContext3D *mpDctx;
-	VDDisplayMeshPool3D *mpPool;
+	VDDisplayCommandList3D *mpPool;
 	VDDisplayMeshCommand3D *mpCmd;
-	VDDPoolMeshIndex mMeshIndex;
+	VDDPoolCommandIndex mCommandIndex;
 };
 
-class VDDisplayMeshPool3D {
-	VDDisplayMeshPool3D(const VDDisplayMeshPool3D&) = delete;
-	VDDisplayMeshPool3D& operator=(const VDDisplayMeshPool3D&) = delete;
+class VDDisplayDispatchBuilder3D {
+public:
+	void SetComputeProgram(IVDTComputeProgram *fp);
+	void SetComputeProgram(VDTData fpdata);
+
+	void SetCPConstData(const void *src, size_t len);
+
+	template<typename T>
+	void SetCPConstData(const T& obj) {
+		static_assert(!(sizeof(obj) & 15));
+		SetCPConstData(&obj, sizeof obj);
+	}
+
+	void SetCPConstDataReuse();
+
+	void InitTextures(uint32 numTextures);
+	void InitTextures(std::initializer_list<VDDPoolTextureIndex> textures);
+	void SetTexture(uint32 textureSlot, VDDPoolTextureIndex poolTextureIndex);
+
+	void InitSamplers(uint32 numSamplers);
+	void InitSamplers(std::initializer_list<IVDTSamplerState *> samplers);
+	void SetSampler(uint32 samplerSlot, IVDTSamplerState *ss);
+
+	void InitUAVs(uint32 numViews);
+	void InitUAVs(std::initializer_list<IVDTUnorderedAccessView *> views);
+	void SetUAV(uint32 viewSlot, IVDTUnorderedAccessView *views);
+
+	void SetDimensions(uint32 x, uint32 y, uint32 z);
+
+	VDDPoolCommandIndex GetCommandIndex() const { return mCommandIndex; }
+
+private:
+	friend class VDDisplayCommandList3D;
+
+	VDDisplayDispatchBuilder3D(VDDisplayNodeContext3D& dctx, VDDisplayCommandList3D& pool, VDDisplayDispatchCommand3D& cmd, VDDPoolCommandIndex meshIndex);
+
+	VDDisplayNodeContext3D *mpDctx;
+	VDDisplayCommandList3D *mpPool;
+	VDDisplayDispatchCommand3D *mpCmd;
+	VDDPoolCommandIndex mCommandIndex;
+};
+
+class VDDisplayCommandList3D {
+	VDDisplayCommandList3D(const VDDisplayCommandList3D&) = delete;
+	VDDisplayCommandList3D& operator=(const VDDisplayCommandList3D&) = delete;
 
 public:
-	VDDisplayMeshPool3D() = default;
-	~VDDisplayMeshPool3D();
+	VDDisplayCommandList3D() = default;
+	~VDDisplayCommandList3D();
 
 	void Clear();
 
@@ -184,13 +228,37 @@ public:
 	void SetRenderViewFromCurrent(VDDPoolRenderViewId id, IVDTContext& ctx);
 
 	VDDisplayMeshBuilder3D AddMesh(VDDisplayNodeContext3D& dctx);
-	void DrawAllMeshes(IVDTContext& ctx, VDDisplayNodeContext3D& dctx);
-	void DrawMeshes(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, VDDPoolMeshIndex start, uint32 count);
+	VDDisplayDispatchBuilder3D AddDispatch(VDDisplayNodeContext3D& dctx);
+
+	void UpdateDispatchConstants(VDDPoolCommandIndex index, const void *data, size_t len);
+	
+	template<typename T>
+	void UpdateDispatchConstants(VDDPoolCommandIndex index, const T& data) {
+		UpdateDispatchConstants(index, &data, sizeof data);
+	}
+
+	void ReadDispatchConstants(VDDPoolCommandIndex index, void *data, size_t len) const;
+
+	template<typename T>
+	T ReadDispatchConstants(VDDPoolCommandIndex index) const {
+		T data {};
+		ReadDispatchConstants(index, &data, sizeof data);
+
+		return data;
+	}
+
+	void UpdateDispatchUAV(VDDPoolCommandIndex cmdIndex, uint32 viewIndex, IVDTUnorderedAccessView *view);
+
+	void ExecuteAll(IVDTContext& ctx, VDDisplayNodeContext3D& dctx);
+	void Execute(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, VDDPoolCommandIndex start, uint32 count);
+	void ExecuteRange(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, VDDPoolCommandIndex start, VDDPoolCommandIndex end);
 
 	operator bool() const { return !mbError; }
+	VDDPoolCommandIndex GetNextCommandIndex() const;
 
 private:
 	friend class VDDisplayMeshBuilder3D;
+	friend class VDDisplayDispatchBuilder3D;
 
 	vdfastvector<uint32> mVertexData;
 	vdfastvector<uint32> mVertexTransformedData;
@@ -199,21 +267,19 @@ private:
 	vdfastvector<IVDTTexture *> mpTextures;
 	vdfastvector<VDDPoolTextureIndex> mTextureIndices;
 	vdfastvector<char, vdaligned_alloc<char, 16>> mConstData;
-	vdfastvector<VDDisplayMeshCommand3D> mMeshes;
+	vdfastvector<VDDisplayCommand3D> mMeshes;
 	vdfastvector<IVDTTexture *> mpAllocatedTextures;
+	vdfastvector<IVDTUnorderedAccessView *> mpUAVs;
 
 	vdfastvector<VDDRenderView> mRenderViews;
 	bool mbError = false;
 };
 
-class VDDisplayMeshCommand3D {
-private:
-	friend class VDDisplayMeshBuilder3D;
-	friend class VDDisplayMeshPool3D;
-
+struct VDDisplayMeshCommand3D {
 	IVDTVertexFormat *mpVF = nullptr;
 	IVDTVertexProgram *mpVP = nullptr;
 	IVDTFragmentProgram *mpFP = nullptr;
+	IVDTBlendState *mpBlendState = nullptr;
 
 	uint32 mSamplerStart = 0;
 	uint16 mTextureStart = 0;
@@ -250,6 +316,41 @@ private:
 	VDDVertexTransformer mVertexTransformer = nullptr;
 };
 
+struct VDDisplayDispatchCommand3D {
+	IVDTComputeProgram *mpCP = nullptr;
+
+	uint32 mSamplerStart = 0;
+	uint16 mTextureStart = 0;
+	uint16 mUAVStart = 0;
+	uint8 mSamplerCount = 0;
+	uint8 mTextureCount = 0;
+	uint8 mUAVCount = 0;
+
+	// Vertex/fragment program constant data. Special case: len=0, offset>0
+	// means to reuse existing set data.
+	uint32 mCPConstOffset = 0;
+	uint16 mCPConstCount = 0;
+
+	uint32 mSizeX = 0;
+	uint32 mSizeY = 0;
+	uint32 mSizeZ = 0;
+};
+
+class VDDisplayCommand3D {
+public:
+	VDDisplayCommand3D() {}
+
+private:
+	friend class VDDisplayMeshBuilder3D;
+	friend class VDDisplayCommandList3D;
+
+	bool mbIsCompute = false;
+	union {
+		VDDisplayMeshCommand3D mMeshCommand;
+		VDDisplayDispatchCommand3D mDispatchCommand;
+	};
+};
+
 class VDDisplayNodeContext3D {
 	VDDisplayNodeContext3D(const VDDisplayNodeContext3D&);
 	VDDisplayNodeContext3D& operator=(const VDDisplayNodeContext3D&);
@@ -275,6 +376,7 @@ public:
 
 	IVDTVertexProgram *InitVP(VDTData vpdata);
 	IVDTFragmentProgram *InitFP(VDTData ipdata);
+	IVDTComputeProgram *InitCP(VDTData ipdata);
 	bool CacheVB(const void *data, uint32 len, uint32& offset, uint32& generation);
 	bool CacheIB(const uint16 *data, uint32 count, uint32& offset, uint32& generation);
 
@@ -290,9 +392,23 @@ public:
 	IVDTSamplerState *mpSSPoint = nullptr;
 	IVDTSamplerState *mpSSBilinear = nullptr;
 	IVDTSamplerState *mpSSBilinearRepeatMip = nullptr;
+	IVDTBlendState *mpBSOver = nullptr;
 
+	// General purpose RGBA format. Recommended for render targets since
+	// RGBA is needed for widest compatibility with compute.
+	VDTFormat mRGBAFormat {};
+
+	// General purpose RGBA format with implicit linear <-> sRGB conversion.
+	// Recommended for render targets where sRGB conversion may be needed.
+	VDTFormat mRGBASRGBFormat {};
+
+	VDTFormat mRGBAGammaToSRGBFormat {};
+
+	// BGRA-specific layout formats. Used for textures where we need to upload
+	// BGRA data and don't want to swizzle it on upload.
 	VDTFormat mBGRAFormat {};
 	VDTFormat mBGRASRGBFormat {};
+
 	VDTFormat mHDRFormat {};
 	bool mbRenderLinear {};
 	float mSDRBrightness {};
@@ -316,6 +432,7 @@ public:
 
 	vdhashmap<VDTData, IVDTVertexProgram *, VDTDataHashPred, VDTDataHashPred> mVPCache;
 	vdhashmap<VDTData, IVDTFragmentProgram *, VDTDataHashPred, VDTDataHashPred> mFPCache;
+	vdhashmap<VDTData, IVDTComputeProgram *, VDTDataHashPred, VDTDataHashPred> mCPCache;
 
 	bool mbTraceRTs = false;
 	vdvector<vdrefptr<IVDTSurface>> mTracedRTs;
@@ -424,7 +541,8 @@ public:
 	VDDisplayBufferSourceNode3D();
 	~VDDisplayBufferSourceNode3D();
 
-	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, float outx, float outy, float outw, float outh, uint32 w, uint32 h, bool hdr, VDDisplayNode3D *child);
+	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, float outx, float outy, float outw, float outh, uint32 w, uint32 h, bool format, VDDisplayNode3D *child);
+	bool InitWithFormat(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, float outx, float outy, float outw, float outh, uint32 w, uint32 h, VDTFormat format, VDDisplayNode3D *child);
 	void Shutdown();
 
 	VDDisplaySourceTexMapping GetTextureMapping() const;
@@ -532,7 +650,7 @@ private:
 	uint32	mTex2Width;
 	uint32	mTex2Height;
 
-	VDDisplayMeshPool3D mMeshPool;
+	VDDisplayCommandList3D mMeshPool;
 
 	uint32	mLastPalette[256] {};
 };
@@ -564,7 +682,7 @@ private:
 	float	mDstW = 1;
 	float	mDstH = 1;
 	VDDisplaySourceTexMapping mMapping;
-	VDDisplayMeshPool3D mMeshPool;
+	VDDisplayCommandList3D mMeshPool;
 	VDDPoolTextureIndex mSourceTextureIndex {};
 };
 
@@ -600,7 +718,7 @@ private:
 	VDDPoolTextureIndex mSourceTex {};
 	VDDPoolRenderViewId mOutputView {};
 
-	VDDisplayMeshPool3D mMeshPool;
+	VDDisplayCommandList3D mMeshPool;
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -623,7 +741,7 @@ public:
 		uint32 mClipDstW;
 		uint32 mClipDstH;
 		bool mbLinear;
-		bool mbUseAdobeRGB;
+		float mOutputGamma;
 		bool mbRenderLinear;
 		bool mbSignedInput;
 		float mHDRScale;
@@ -657,7 +775,7 @@ private:
 	VDDPoolTextureIndex mSourceTextureIndex {};
 	VDDPoolRenderViewId mOutputViewId {};
 
-	VDDisplayMeshPool3D mMeshPool;
+	VDDisplayCommandList3D mMeshPool;
 
 	static const uint32 kTessellation;
 };
@@ -678,7 +796,7 @@ private:
 	struct Vertex;
 
 	vdrefptr<VDDisplaySourceNode3D> mpSourceNode;
-	VDDisplayMeshPool3D mMeshPool;
+	VDDisplayCommandList3D mMeshPool;
 	VDDPoolTextureIndex mSourceTextureIndex {};
 
 	VDDisplaySourceTexMapping mMapping {};
@@ -701,19 +819,24 @@ public:
 		uint32 mClipW;
 		uint32 mClipH;
 		float mThreshold;
-		float mBlurRadius;
+		float mBlurBaseRadius;
+		float mBlurAdjustRadius;
 		float mDirectIntensity;
 		float mIndirectIntensity;
 		bool mbRenderLinear;
 	};
 
-	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const Params& params, VDDisplaySourceNode3D *child);
+	bool InitV1(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const Params& params, VDDisplaySourceNode3D *child);
+	bool InitV2(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const Params& params, bool inputLinear, VDDisplaySourceNode3D *child);
 	void Shutdown();
 
 	void Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const VDDRenderView& renderView) override;
 
 private:
+	bool RemakeV2(IVDTContext& ctx, VDDisplayNodeContext3D& dctx);
+
 	struct Vertex;
+	struct CpBloomV2Final;
 
 	Params mParams {};
 	uint32 mBlurW = 0;
@@ -721,13 +844,20 @@ private:
 	uint32 mBlurW2 = 0;
 	uint32 mBlurH2 = 0;
 	bool mbPrescale2x = false;
+	uint32 mChangeCounter = 0;
+
+	VDDPoolCommandIndex mCommandIndexStart {};
+	VDDPoolCommandIndex mCommandIndexDown {};
+	VDDPoolCommandIndex mCommandIndexUp {};
+	VDDPoolCommandIndex mCommandIndexFinal {};
 
 	VDDisplaySourceNode3D *mpSourceNode = nullptr;
+	bool mbSourceLinear = false;
 
 	VDDPoolTextureIndex mSourceTextureIndex;
 	VDDPoolRenderViewId mOutputViewId;
 
-	VDDisplayMeshPool3D mMeshPool;
+	VDDisplayCommandList3D mMeshPool;
 
 	VDDisplaySourceTexMapping mMapping {};
 };

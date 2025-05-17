@@ -27,6 +27,7 @@ extern const ATDeviceDefinition g_ATDeviceDefFileWriter;
 extern const ATDeviceDefinition g_ATDeviceDefNetSerial;
 extern const ATDeviceDefinition g_ATDeviceDefSerialSplitter;
 extern const ATDeviceDefinition g_ATDeviceDefSuperSALT;
+extern const ATDeviceDefinition g_ATDeviceDefParallelToSerial;
 
 const std::initializer_list<const ATDeviceDefinition *> kATDeviceLibraryDefs {
 	&g_ATDeviceDefDiskDrive,
@@ -36,5 +37,6 @@ const std::initializer_list<const ATDeviceDefinition *> kATDeviceLibraryDefs {
 	&g_ATDeviceDefFileWriter,
 	&g_ATDeviceDefNetSerial,
 	&g_ATDeviceDefSerialSplitter,
-	&g_ATDeviceDefSuperSALT
+	&g_ATDeviceDefSuperSALT,
+	&g_ATDeviceDefParallelToSerial
 };

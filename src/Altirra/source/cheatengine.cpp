@@ -174,7 +174,7 @@ void ATCheatEngine::Load(const wchar_t *filename) {
 			}
 		}
 	} else {
-		throw MyError("File %ls is not a supported cheat file.", VDFileSplitPath(filename));
+		throw VDException(L"File %ls is not a supported cheat file.", VDFileSplitPath(filename));
 	}
 }
 

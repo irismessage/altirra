@@ -24,21 +24,15 @@
 #include "uidbgpane.h"
 
 class IVDTextEditor;
+class ATPrinterGraphicalOutput;
+class ATPrinterOutput;
+class ATPrinterOutputManager;
+class ATUIPrinterGraphicalOutputWindow;
 
-class ATPrinterOutputWindow : public ATUIPaneWindow,
-							  public IATPrinterOutput
-{
+class ATPrinterOutputWindow : public ATUIPaneWindow {
 public:
 	ATPrinterOutputWindow();
 	~ATPrinterOutputWindow();
-
-public:
-	int AddRef() { return ATUIPaneWindow::AddRef(); }
-	int Release() { return ATUIPaneWindow::Release(); }
-
-public:
-	void WriteASCII(const void *buf, size_t len) override;
-	void WriteATASCII(const void *buf, size_t len) override;
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
@@ -49,12 +43,38 @@ protected:
 	void OnFontsUpdated() override;
 	void OnSetFocus() override;
 
+	void OnAddedOutput(ATPrinterOutput& output);
+	void OnRemovingOutput(ATPrinterOutput& output);
+	void OnAddedGraphicalOutput(ATPrinterGraphicalOutput& output);
+	void OnRemovingGraphicalOutput(ATPrinterGraphicalOutput& output);
+
+	void AttachToAnyOutput();
+
+	void AttachToTextOutput(ATPrinterOutput& output);
+	void DetachFromTextOutput();
+	void UpdateTextOutput();
+
+	void AttachToGraphicsOutput(ATPrinterGraphicalOutput& output);
+	void DetachFromGraphicsOutput();
+
 	vdrefptr<IVDTextEditor> mpTextEditor;
 	HWND	mhwndTextEditor;
 
-	uint8		mDropNextChar = 0;
 	uint32		mLineBufIdx;
-	uint8		mLineBuf[133];
+	wchar_t		mLineBuf[133];
+
+	size_t mLastTextOffset = 0;
+
+	ATPrinterOutput *mpTextOutput = nullptr;
+	ATPrinterGraphicalOutput *mpGraphicsOutput = nullptr;
+
+	vdrefptr<ATUIPrinterGraphicalOutputWindow> mpGraphicWindow;
+	vdrefptr<ATPrinterOutputManager> mpOutputMgr;
+
+	vdfunction<void(ATPrinterOutput&)> mAddedOutputFn;
+	vdfunction<void(ATPrinterOutput&)> mRemovingOutputFn;
+	vdfunction<void(ATPrinterGraphicalOutput&)> mAddedGraphicalOutputFn;
+	vdfunction<void(ATPrinterGraphicalOutput&)> mRemovingGraphicalOutputFn;
 };
 
 #endif

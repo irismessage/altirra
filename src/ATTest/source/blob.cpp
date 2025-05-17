@@ -36,6 +36,8 @@ public:
 	ATTestBlobStream(VDStringSpanW fileName, bool readOnly, vdfastvector<uint8>& buffer, ATTestBlob *parent);
 	~ATTestBlobStream();
 
+	bool IsSourceReadOnly() const override { return true; }
+
 	const wchar_t *GetNameForError() override;
 	sint64	Pos() override;
 	void	Read(void *buffer, sint32 bytes) override;
@@ -58,7 +60,6 @@ ATTestBlobStream::ATTestBlobStream(VDStringSpanW fileName, bool readOnly, vdfast
 {
 	mpStream = this;
 	mFileName = fileName;
-	mbReadOnly = readOnly;
 }
 
 ATTestBlobStream::~ATTestBlobStream() {
@@ -185,7 +186,7 @@ std::tuple<vdvector_view<const uint8>, uint32, uint32> ATTestGetBlob(const wchar
 	ATTestBlobDatabase& db = ATTestBlobDatabase::Get();
 	auto it = db.mBlobs.find_as(s);
 	if (it == db.mBlobs.end())
-		throw MyError("Blob not found: %ls", s);
+		throw VDException(L"Blob not found: %ls", s);
 
 	ATTestBlob& blob = *it->second;
 	uint32 minRange = blob.mMinWriteRange;

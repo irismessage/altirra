@@ -101,7 +101,7 @@ bool ATInputMap::UsesPhysicalPort(int portIdx) const {
 			case kATInputControllerType_KoalaPad:
 			case kATInputControllerType_AmigaMouse:
 			case kATInputControllerType_Keypad:
-			case kATInputControllerType_Trackball_CX80_V1:
+			case kATInputControllerType_Trackball_CX80:
 			case kATInputControllerType_5200Trackball:
 			case kATInputControllerType_Driving:
 			case kATInputControllerType_Keyboard:
@@ -341,7 +341,7 @@ void ATInputManager::ResetToDefaults() {
 				case kATInputControllerType_KoalaPad:
 				case kATInputControllerType_AmigaMouse:
 				case kATInputControllerType_Keypad:
-				case kATInputControllerType_Trackball_CX80_V1:
+				case kATInputControllerType_Trackball_CX80:
 				case kATInputControllerType_Driving:
 				case kATInputControllerType_Keyboard:
 				case kATInputControllerType_LightGun:
@@ -1162,6 +1162,12 @@ void ATInputManager::GetNameForTargetCode(uint32 code, ATInputControllerType typ
 			case kATInputTrigger_Turbo:
 				name = L"Turbo";
 				break;
+			case kATInputTrigger_Rewind:
+				name = L"Quick Rewind";
+				break;
+			case kATInputTrigger_RewindMenu:
+				name = L"Show Rewind Menu";
+				break;
 			case kATInputTrigger_ColdReset:
 				name = L"Cold Reset";
 				break;
@@ -1759,7 +1765,7 @@ void ATInputManager::RebuildMappings() {
 						}
 						break;
 
-					case kATInputControllerType_Trackball_CX80_V1:
+					case kATInputControllerType_Trackball_CX80:
 						if (c.mIndex < 4) {
 							ATTrackballController *trakball = new ATTrackballController;
 

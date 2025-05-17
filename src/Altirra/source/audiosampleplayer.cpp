@@ -38,7 +38,9 @@ public:
 	uint32 mOverlapSamples = 0;
 	bool mbHasOutput = false;
 
-	ATFFT<kConvSize> mFFT;
+	// we optimize for efficiency, since we'll only be executing for a tiny
+	// fraction of the frame and don't want to take the AVX clocking hit
+	ATFFT<kConvSize> mFFT { false };
 
 	alignas(16) float mXformBuffer[kConvSize] {};
 	alignas(16) float mAccumBuffer[kConvSize] {};
@@ -290,44 +292,41 @@ struct ATAudioSound final : public vdlist_node {
 ///////////////////////////////////////////////////////////////////////////
 
 void ATAudioSamplePool::Init() {
-	static constexpr uint32 kResIds[]={
-		IDR_DISK_SPIN,
-		IDR_TRACK_STEP,
-		IDR_TRACK_STEP_2,
-		IDR_TRACK_STEP_2,
-		IDR_TRACK_STEP_3,
-		IDR_SPEAKER_STEP,
-		IDR_1030RELAY
+	struct SampleSourceInfo {
+		uint32 mResId;
+		float mBaseVolume;
 	};
 
-	static constexpr float kBaseVolumes[]={
-		0.05f,
-		0.4f,
-		0.8f,
-		0.8f,
-		0.4f,
-		1.0f,
-		1.0f
+	static constexpr SampleSourceInfo kSampleSources[]={
+		{ IDR_DISK_SPIN,				0.05f	},
+		{ IDR_TRACK_STEP,				0.4f	},
+		{ IDR_TRACK_STEP_2,				0.8f	},
+		{ IDR_TRACK_STEP_2,				0.8f	},
+		{ IDR_TRACK_STEP_3,				0.4f	},
+		{ IDR_SPEAKER_STEP,				1.0f	},
+		{ IDR_1030RELAY,				1.0f	},
+		{ IDR_PRINTER_1029_PIN,			0.2f	},
+		{ IDR_PRINTER_1029_PLATEN,		0.1f	},
+		{ IDR_PRINTER_1029_RETRACT,		0.1f	},
+		{ IDR_PRINTER_1029_HOME,		0.2f	},
+		{ IDR_PRINTER_1025_FEED,		0.05f	},
 	};
-
-	static_assert(vdcountof(kResIds) == vdcountof(mSamples), "Sample array mismatch");
-	static_assert(vdcountof(kBaseVolumes) == vdcountof(mSamples), "Sample array mismatch");
 
 	vdfastvector<uint8> data;
-	for(size_t i=0; i<vdcountof(kResIds); ++i) {
+	for(size_t i=0; i<vdcountof(kSampleSources); ++i) {
 		if (i + 1 == kATAudioSampleId_DiskStep2H) {
 			// special case
 			auto samp = mSamples[kATAudioSampleId_DiskStep2 - 1];
 			samp.mLength >>= 1;
 			mSamples[i] = samp;
 		} else {
-			ATLoadMiscResource(kResIds[i], data);
+			ATLoadMiscResource(kSampleSources[i].mResId, data);
 
 			const size_t len = data.size() * sizeof(data[0]);
 			sint16 *p = (sint16 *)mAllocator.Allocate(len);
 			memcpy(p, data.data(), len);
 
-			mSamples[i] = { p, (uint32)(len / sizeof(sint16)), kBaseVolumes[i] };
+			mSamples[i] = { p, (uint32)(len / sizeof(sint16)), kSampleSources[i].mBaseVolume };
 		}
 	}
 }

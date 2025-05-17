@@ -41,14 +41,9 @@
 	#define AT_DEFINE_TEST(name) AT_DEFINE_TEST2(name, true)
 	#define AT_DEFINE_TEST_NONAUTO(name) AT_DEFINE_TEST2(name, false)
 
-	class ATTestAssertionException : public MyError {
+	class ATTestAssertionException : public VDException {
 	public:
-		ATTestAssertionException(const char *s, ...) {
-			va_list val;
-			va_start(val, s);
-			vsetf(s, val);
-			va_end(val);
-		}
+		using VDException::VDException;
 	};
 
 	bool ATTestShouldBreak();

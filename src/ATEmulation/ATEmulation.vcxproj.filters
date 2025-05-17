@@ -60,6 +60,9 @@
     <ClCompile Include="source\phone.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\diskutils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\stdafx.h">
@@ -102,6 +105,9 @@
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atemulation\phone.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atemulation\diskutils.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>

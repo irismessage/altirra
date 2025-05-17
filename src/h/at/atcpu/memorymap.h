@@ -55,6 +55,12 @@ struct ATCoProcReadMemNode {
 	void *mpThis;
 
 	template<typename T, typename T_Read, typename T_DebugRead>
+	requires(
+		requires(T& obj, const T& cobj, const T_Read& fn1, const T_DebugRead& fn2, uint8& v) {
+			v = fn1(uint32(), &obj);
+			v = fn2(uint32(), &cobj);
+		}
+	)
 	void BindLambdas(T *thisptr, const T_Read&, const T_DebugRead&) {
 		mpThis = thisptr;
 
@@ -68,11 +74,51 @@ struct ATCoProcReadMemNode {
 	}
 
 	template<typename T, typename T_DualRead>
+	requires(
+		requires(const T& cobj, const T_DualRead& fn, uint8& v) {
+			v = fn(uint32(), &cobj);
+		}
+	)
 	void BindLambdas(T *thisptr, const T_DualRead&) {
 		mpThis = thisptr;
 
-		mpDebugRead = [](uint32 addr, uint8 val, void *thisptr) {
-			return T_DualRead()(addr, val, (const T *)(thisptr));
+		mpDebugRead = [](uint32 addr, void *thisptr) {
+			return T_DualRead()(addr, (const T *)(thisptr));
+		};
+
+		mpRead = mpDebugRead;
+	}
+
+	template<auto T_Read, auto T_DebugRead, typename T>
+	requires(
+		requires(T& obj, const T& cobj, uint8& v) {
+			v = (obj.*T_Read)(uint32());
+			v = (cobj.*T_DebugRead)(uint32());
+		}
+	)
+	void BindMethods(T *thisptr) {
+		mpThis = thisptr;
+
+		mpRead = [](uint32 addr, void *thisptr) -> uint8 {
+			return ((T *)(thisptr)->*T_Read)(addr);
+		};
+
+		mpDebugRead = [](uint32 addr, void *thisptr) -> uint8 {
+			return ((const T *)(thisptr)->*T_DebugRead)(addr);
+		};
+	}
+
+	template<auto T_DualRead, typename T>
+	requires(
+		requires(const T& cobj, uint8& v) {
+			v = (cobj.*T_DualRead)(uint32());
+		}
+	)
+	void BindMethod(const T *thisptr) {
+		mpThis = const_cast<T *>(thisptr);
+
+		mpDebugRead = [](uint32 addr, void *thisptr) {
+			return (((const T *)(thisptr))->*T_DualRead)(addr);
 		};
 
 		mpRead = mpDebugRead;
@@ -88,10 +134,28 @@ struct ATCoProcWriteMemNode {
 	void *mpThis;
 
 	template<typename T, typename T_Lambda>
+	requires(
+		requires(T& obj, const T_Lambda& fn) {
+			fn(uint32(), uint8(), &obj);
+		}
+	)
 	void BindLambda(T *thisptr, const T_Lambda&) {
 		mpThis = thisptr;
 		mpWrite = [](uint32 addr, uint8 val, void *thisptr) {
 			return T_Lambda()(addr, val, (T *)(thisptr));
+		};
+	}
+
+	template<auto T_Method, typename T>
+	requires(
+		requires(T& obj) {
+			(obj.*T_Method)(uint32(), uint8());
+		}
+	)
+	void BindMethod(T *thisptr) {
+		mpThis = thisptr;
+		mpWrite = [](uint32 addr, uint8 val, void *thisptr) {
+			return ((T *)(thisptr)->*T_Method)(addr, val);
 		};
 	}
 

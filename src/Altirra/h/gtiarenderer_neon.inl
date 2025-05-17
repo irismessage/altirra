@@ -19,7 +19,7 @@
 #define f_GTIARENDERER_NEON_INL
 
 #include <at/atcore/intrin_neon.h>
-#include <arm64_neon.h>
+#include <arm_neon.h>
 
 namespace nsATGTIARenderer {
 	// We do unaligned loads from this array, so it's important that we
@@ -44,7 +44,7 @@ void atasm_gtia_render_lores_fast_neon(void *dst0, const uint8 *src, uint32 n, c
 	if (!n)
 		return;
 
-	char *dst = (char *)dst0;
+	unsigned char *dst = (unsigned char *)dst0;
 	const uint8 *srcEnd = src + n;
 		
 	// check if we have a starting source offset and remove it
@@ -58,8 +58,8 @@ void atasm_gtia_render_lores_fast_neon(void *dst0, const uint8 *src, uint32 n, c
 		ptrdiff_t startingMaskOffset = 16 - startOffset;
 		ptrdiff_t endingMaskOffset = 32 - ((uintptr)srcEnd & 15);
 
-		uint8x16_t mask1 = vld1q_u8((const uint8x16_t *)((const uint8 *)window_table + startingMaskOffset));
-		uint8x16_t mask2 = vld1q_u8((const uint8x16_t *)((const uint8 *)window_table + endingMaskOffset));
+		uint8x16_t mask1 = vld1q_u8((const uint8 *)window_table + startingMaskOffset);
+		uint8x16_t mask2 = vld1q_u8((const uint8 *)window_table + endingMaskOffset);
 
 		uint8x16_t mask = vandq_u8(mask1, mask2);
 
@@ -74,7 +74,7 @@ void atasm_gtia_render_lores_fast_neon(void *dst0, const uint8 *src, uint32 n, c
 		if (startOffset) {
 			ptrdiff_t startingMaskOffset = 16 - startOffset;
 
-			uint8x16_t mask = vld1q_u8((const uint8x16_t *)((const uint8 *)window_table + startingMaskOffset));
+			uint8x16_t mask = vld1q_u8((const uint8 *)window_table + startingMaskOffset);
 
 			const uint8x16_t paletteIndices = vqtbl1q_u8(colorTable, *(const uint8x16_t *)src);
 			src += 16;
@@ -106,7 +106,7 @@ void atasm_gtia_render_lores_fast_neon(void *dst0, const uint8 *src, uint32 n, c
 		if (byteCounter) {
 			ptrdiff_t endingMaskOffset = 32 - byteCounter;
 
-			uint8x16_t mask = vld1q_u8((const uint8x16_t *)((const uint8 *)window_table + endingMaskOffset));
+			uint8x16_t mask = vld1q_u8((const uint8 *)window_table + endingMaskOffset);
 
 			const uint8x16_t paletteIndices = vqtbl1q_u8(colorTable, *(const uint8x16_t *)src);
 			uint8x16x2_t d = vld2q_u8(dst);
@@ -126,14 +126,14 @@ void atasm_gtia_render_mode8_fast_neon(
 {
 	using namespace nsATGTIARenderer;
 
-	char *dst = (char *)dst0;
+	unsigned char *dst = (unsigned char *)dst0;
 
 	// precook color tables
 	const uint8x16_t colorTable = vld1q_u8(color_table);
 	const uint8x16_t playfieldColorTable = vqtbl1q_u8(colorTable, vld1q_u8(color_table_preshuffle));
-	const uint8x16_t pf1ColorTable = vqtbl1q_u8(colorTable, vld1q_u8(hires_splat_pf1));
-	const uint8x16_t evenMask = vld1q_u8(hires_mask_2);
-	const uint8x16_t  oddMask = vld1q_u8(hires_mask_1);
+	const uint8x16_t pf1ColorTable = vqtbl1q_u8(colorTable, vreinterpretq_u8_u64(vld1q_u64(hires_splat_pf1)));
+	const uint8x16_t evenMask = vreinterpretq_u8_u64(vld1q_u64(hires_mask_2));
+	const uint8x16_t  oddMask = vreinterpretq_u8_u64(vld1q_u64(hires_mask_1));
 	const uint8x16_t evenPixelTable = vbslq_u8(evenMask, pf1ColorTable, playfieldColorTable);
 	const uint8x16_t  oddPixelTable = vbslq_u8(oddMask, pf1ColorTable, playfieldColorTable);
 

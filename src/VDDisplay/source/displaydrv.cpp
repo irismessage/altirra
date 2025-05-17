@@ -19,8 +19,6 @@
 #include <vector>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/memory.h>
-#include <vd2/system/log.h>
-#include <vd2/system/memory.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>

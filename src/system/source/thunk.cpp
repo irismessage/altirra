@@ -373,9 +373,15 @@ struct VDThunkTable {
 		// This generates a unique table of thunk functions, each specialized to use a
 		// specific index. Thus, we are constrained in the non-dynamic mode to have a fixed
 		// size pool of thunks.
+#if VD_COMPILER_MSVC
 		static constexpr Thunk kThunks[]={
 			GetThunk<T_Indices>((T_Fn)nullptr)...
 		};
+#else
+		static const Thunk kThunks[]={
+			reinterpret_cast<Thunk>(GetThunk<T_Indices>((T_Fn)nullptr))...
+		};
+#endif
 
 		return kThunks;
 	}
@@ -445,10 +451,10 @@ template<unsigned IdBase, unsigned N, typename T_Fn>
 void *VDThunkTable<IdBase, N, T_Fn>::sData[N][4];
 
 template<unsigned IdBase, unsigned N, typename T_Fn>
-typename T_Fn VDThunkTable<IdBase, N, T_Fn>::spFns[N];
+T_Fn VDThunkTable<IdBase, N, T_Fn>::spFns[N];
 
 template<unsigned IdBase, unsigned N, typename T_Fn>
-uint32 typename VDThunkTable<IdBase, N, T_Fn>::sBitField[(N+31)/32];
+uint32 VDThunkTable<IdBase, N, T_Fn>::sBitField[N/32];
 
 typedef VDThunkTable<0, 64, VDThunkTypeT> VDThunkT;
 typedef VDThunkTable<1, 512, VDThunkTypeW> VDThunkW;

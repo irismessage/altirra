@@ -26,6 +26,7 @@ enum ATErrorMode {
 	kATErrorModeCount
 };
 
+enum class ATProcessEfficiencyMode : uint8;
 enum ATMediaWriteMode : uint8;
 
 struct ATOptions {
@@ -55,6 +56,7 @@ struct ATOptions {
 	VDStringA	mMaxflash8MbFlashChip;
 
 	ATMediaWriteMode mDefaultWriteMode;
+	ATProcessEfficiencyMode mEfficiencyMode;
 
 	bool mbCompatEnable;
 	bool mbCompatEnableInternalDB;

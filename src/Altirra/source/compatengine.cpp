@@ -97,7 +97,7 @@ void ATCompatLoadExtDatabase(const wchar_t *path, bool testOnly) {
 	auto len = stream.Length();
 
 	if (len > 0x8000000)
-		throw MyError("Compatibility engine '%ls' is too big (%llu bytes).", path, (unsigned long long)len);
+		throw VDException(L"Compatibility engine '%ls' is too big (%llu bytes).", path, (unsigned long long)len);
 
 	size_t lensz = (size_t)len;
 
@@ -109,7 +109,7 @@ void ATCompatLoadExtDatabase(const wchar_t *path, bool testOnly) {
 
 	auto *hdr = (const ATCompatDBHeader *)p.get();
 	if (lensz < sizeof(ATCompatDBHeader) || !hdr->Validate(lensz))
-		throw MyError("'%ls' is not a valid compiled compatibility engine file.", path);
+		throw VDException(L"'%ls' is not a valid compiled compatibility engine file.", path);
 
 	if (!testOnly) {
 		if (g_pATCompatDBExt)

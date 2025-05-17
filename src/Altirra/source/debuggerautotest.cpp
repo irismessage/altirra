@@ -177,7 +177,8 @@ void ATDebuggerCmdAutotestCmdOffOn(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdName nameArg(true);
 	parser >> nameArg >> 0;
 
-	const ATUICommand *cmd = ATUIGetCommandManager().GetCommand(nameArg->c_str());
+	ATUICommandManager& cmdMgr = ATUIGetCommandManager();
+	const ATUICommand *cmd = cmdMgr.GetCommand(nameArg->c_str());
 	if (!cmd)
 		throw MyError("Unknown UI command: %s", nameArg->c_str());
 
@@ -192,21 +193,19 @@ void ATDebuggerCmdAutotestCmdOffOn(ATDebuggerCmdParser& parser) {
 	const bool isOn = (state == kATUICmdState_Checked);
 
 	if (isOn != T_State)
-		cmd->mpExecuteFn();
+		cmdMgr.ExecuteCommand(*cmd);
 }
 
 void ATDebuggerCmdAutotestCmd(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdName nameArg(true);
 	parser >> nameArg >> 0;
 
-	const ATUICommand *cmd = ATUIGetCommandManager().GetCommand(nameArg->c_str());
+	ATUICommandManager& cmdMgr = ATUIGetCommandManager();
+	const ATUICommand *cmd = cmdMgr.GetCommand(nameArg->c_str());
 	if (!cmd)
 		throw MyError("Unknown UI command: %s", nameArg->c_str());
 
-	if (cmd->mpTestFn && !cmd->mpTestFn())
-		return;
-
-	cmd->mpExecuteFn();
+	cmdMgr.ExecuteCommand(*cmd);
 }
 
 void ATDebuggerCmdAutotestBootImage(ATDebuggerCmdParser& parser) {

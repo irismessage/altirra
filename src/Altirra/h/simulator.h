@@ -60,6 +60,8 @@ class IVDRandomAccessStream;
 class IATImage;
 class ATTraceCollection;
 struct ATTraceSettings;
+class IATAutoSaveManager;
+class IATPrinterOutputManager;
 
 enum ATMediaWriteMode : uint8;
 struct ATMediaLoadContext;
@@ -161,9 +163,8 @@ public:
 	IATDeviceCIOManager *GetDeviceCIOManager();
 	ATHLEProgramLoader *GetProgramLoader() { return mpHLEProgramLoader; }
 	IATHLEFPAccelerator *GetFPAccelerator() const { return mpHLEFPAccelerator; }
-
-	IATPrinterOutput *GetPrinterOutput() { return mpPrinterOutput; }
-	void SetPrinterDefaultOutput(IATPrinterOutput *p);
+	IATAutoSaveManager& GetAutoSaveManager() const;
+	IATPrinterOutputManager& GetPrinterOutputManager() const;
 
 	bool IsTurboModeEnabled() const { return mbTurbo; }
 	bool IsFrameSkipEnabled() const { return mbFrameSkip; }
@@ -187,7 +188,10 @@ public:
 	bool IsCassetteAutoRewindEnabled() const;
 	bool IsCassetteRandomizedStartEnabled() const { return mbCassetteRandomizedStartEnabled; }
 	bool IsFPPatchEnabled() const { return mbFPPatchEnabled; }
+
 	bool IsBASICEnabled() const { return mbBASICEnabled; }
+	bool SupportsInternalBasic() const;
+
 	bool IsROMAutoReloadEnabled() const { return mbROMAutoReloadEnabled; }
 	bool IsAutoLoadKernelSymbolsEnabled() const { return mbAutoLoadKernelSymbols; }
 	bool IsDualPokeysEnabled() const { return mbDualPokeys; }
@@ -202,12 +206,15 @@ public:
 	bool HasCIODevice(char c) const;
 	bool GetCIOPatchEnabled(char c) const;
 	void SetCIOPatchEnabled(char c, bool enabled) const;
+
+	bool IsCIOPBIPatchEnabled() const;
+	void SetCIOPBIPatchEnabled(bool enable);
 	
 	bool IsSIOPatchEnabled() const;
 	void SetSIOPatchEnabled(bool enable);
 
-	bool IsPBIPatchEnabled() const;
-	void SetPBIPatchEnabled(bool enable);
+	bool IsSIOPBIPatchEnabled() const;
+	void SetSIOPBIPatchEnabled(bool enable);
 
 	bool GetDeviceSIOPatchEnabled() const;
 	void SetDeviceSIOPatchEnabled(bool enable) const;
@@ -322,6 +329,9 @@ public:
 	bool IsVirtualScreenEnabled() const { return mpVirtualScreenHandler != NULL; }
 	void SetVirtualScreenEnabled(bool enable);
 
+	vdsize32 GetVirtualScreenSize() const;
+	void SetVirtualScreenSize(const vdsize32& size);
+
 	bool GetShadowROMEnabled() const { return mbShadowROM; }
 	void SetShadowROMEnabled(bool enabled);
 	bool GetShadowCartridgeEnabled() const { return mbShadowCartridge; }
@@ -341,7 +351,10 @@ public:
 	bool GetTracingEnabled() const;
 	void SetTracingEnabled(const ATTraceSettings *settings);
 
-	uint64 TimeSinceColdReset() const;
+	uint64 TicksSinceColdReset() const;
+	double RealSecondsSinceColdReset() const;
+	double SimulatedSecondsSinceColdReset() const;
+	uint32 GetColdStartId() const;
 
 	uint32 GetRandomSeed() const;
 	void SetRandomSeed(uint32 seed);
@@ -394,7 +407,6 @@ public:
 		kAdvanceResult_WaitingForFrame
 	};
 
-	AdvanceResult AdvanceUntilInstructionBoundary();
 	AdvanceResult Advance(bool dropFrame);
 	void SetOnAdvanceUnblocked(vdfunction<void()> fn);
 
@@ -430,6 +442,7 @@ public:
 	void CreateSnapshot(IATSerializable **snapshot, IATSerializable **snapInfo);
 	bool ApplySnapshot(const IATSerializable& snapshot, ATStateLoadContext *context);
 
+	void UpdateFloatingBus();
 	void UpdateXLCartridgeLine();
 	void UpdateKeyboardPresentLine();
 	void UpdateForcedSelfTestLine();
@@ -502,10 +515,10 @@ private:
 	void ApplyVideoStandard();
 
 	void InitCassetteAutoBasicBoot();
-	bool SupportsInternalBasic() const;
 
 	void UpdateAudioMonitors();
 	void UpdateAudioStatus();
+	void UpdatePBIHookDevice();
 
 	bool mbRunning;
 	bool mbRunSingleCycle = false;
@@ -596,12 +609,12 @@ private:
 	ATCartridgeEmulator	*mpCartridge[2];
 	ATInputManager	*mpInputManager;
 	ATLightPenPort *mpLightPen;
-	IATPrinterOutput *mpPrinterOutput;
 	ATVBXEEmulator *mpVBXE;
 	ATCheatEngine *mpCheatEngine;
 	IATUIRenderer *mpUIRenderer;
 	ATUltimate1MBEmulator *mpUltimate1MB;
 	IATVirtualScreenHandler *mpVirtualScreenHandler;
+	vdsize32 mVirtualScreenSize { 80, 24 };
 
 	ATHLEBasicLoader *mpHLEBasicLoader;
 	ATHLEProgramLoader *mpHLEProgramLoader;

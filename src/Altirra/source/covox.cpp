@@ -302,6 +302,7 @@ public:
 	virtual void GetDeviceInfo(ATDeviceInfo& info) override;
 	virtual void WarmReset() override;
 	virtual void ColdReset() override;
+	virtual void GetSettingsBlurb(VDStringW& buf) override;
 	virtual void GetSettings(ATPropertySet& settings) override;
 	virtual bool SetSettings(const ATPropertySet& settings) override;
 	virtual void Init() override;
@@ -388,30 +389,37 @@ void ATDeviceCovox::ColdReset() {
 	mCovox.ColdReset();
 }
 
+void ATDeviceCovox::GetSettingsBlurb(VDStringW& buf) {
+	buf.sprintf(L"$%04X-%04X", mAddrLo, mAddrHi);
+}
+
 void ATDeviceCovox::GetSettings(ATPropertySet& settings) {
 	settings.SetUint32("base", mAddrLo);
+	settings.SetUint32("size", mAddrHi - mAddrLo + 1);
 	settings.SetUint32("channels", mCovox.IsFourChannels() ? 4 : 1);
 }
 
 bool ATDeviceCovox::SetSettings(const ATPropertySet& settings) {
 	uint32 baseAddr = settings.GetUint32("base", 0xD600);
+	uint32 size = settings.GetUint32("size", 0);
 
 	switch(baseAddr) {
 		case 0xD280:
 			mAddrLo = baseAddr;
-			mAddrHi = baseAddr + 0x7F;
-			mCovox.SetAddressRange(0xD280, 0xD2FF, false);
+			mAddrHi = baseAddr + (size && size <= 0x80 ? size - 1 : 0x7F);
 			break;
 
 		case 0xD100:
 		case 0xD500:
 		case 0xD600:
 		case 0xD700:
+		default:
 			mAddrLo = baseAddr;
-			mAddrHi = baseAddr + 0xFF;
-			mCovox.SetAddressRange(baseAddr, baseAddr + 0xFF, true);
+			mAddrHi = baseAddr + (size && size <= 0x100 ? size - 1 : 0xFF);
 			break;
 	}
+
+	mCovox.SetAddressRange(mAddrLo, mAddrHi, (mAddrLo & 0xFF00) != 0xD200);
 
 	uint32 channels = settings.GetUint32("channels", 4);
 	mCovox.SetFourChannels(channels > 1);

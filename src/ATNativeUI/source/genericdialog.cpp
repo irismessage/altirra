@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2008-2017 Avery Lee
+//	Copyright (C) 2008-2024 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -11,9 +11,8 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
 #include <windows.h>
@@ -42,6 +41,7 @@ namespace {
 
 		LayoutSpecs Measure(const vdsize32& r);
 		void Arrange(const vdrect32& r);
+		virtual void Sort() {}
 
 		virtual LayoutSpecs MeasureInternal(const vdsize32& r) = 0;
 		virtual void ArrangeInternal(const vdrect32& r) = 0;
@@ -76,19 +76,26 @@ namespace {
 
 	class LayoutCustom final : public LayoutObject {
 	public:
-		void Init(vdfunction<LayoutSpecs(const vdsize32&)> measure, vdfunction<void(const vdrect32&, const LayoutSpecs&)> arrange);
+		void Init(vdfunction<LayoutSpecs(const vdsize32&)> measure, vdfunction<void(const vdrect32&, const LayoutSpecs&)> arrange, vdfunction<void()> sort);
 
+		void Sort() override;
 		LayoutSpecs MeasureInternal(const vdsize32& r) override;
 		void ArrangeInternal(const vdrect32& r) override;
 
 	private:
 		vdfunction<LayoutSpecs(const vdsize32&)> mpMeasure;
 		vdfunction<void(const vdrect32&, const LayoutSpecs& specs)> mpArrange;
+		vdfunction<void()> mpSort;
 	};
 
-	void LayoutCustom::Init(vdfunction<LayoutSpecs(const vdsize32&)> measure, vdfunction<void(const vdrect32&, const LayoutSpecs&)> arrange) {
-		mpMeasure = measure;
-		mpArrange = arrange;
+	void LayoutCustom::Init(vdfunction<LayoutSpecs(const vdsize32&)> measure, vdfunction<void(const vdrect32&, const LayoutSpecs&)> arrange, vdfunction<void()> sort) {
+		mpMeasure = std::move(measure);
+		mpArrange = std::move(arrange);
+		mpSort = std::move(sort);
+	}
+
+	void LayoutCustom::Sort() {
+		mpSort();
 	}
 
 	LayoutSpecs LayoutCustom::MeasureInternal(const vdsize32& r) {
@@ -106,6 +113,8 @@ namespace {
 
 		void Init(HWND hwnd, const vdrect32f& area = { 0, 0, 0, 0 });
 		void InitFixed(HWND hwnd, sint32 w, sint32 h, const vdrect32f& area = { 0, 0, 0, 0 });
+
+		void Sort() override;
 
 		LayoutSpecs MeasureInternal(const vdsize32& r) override;
 		void ArrangeInternal(const vdrect32& r) override;
@@ -137,6 +146,10 @@ namespace {
 		mSpecs.mMinSize = mSpecs.mPreferredSize = { w, h };
 	}
 
+	void LayoutWindow::Sort() {
+		VDVERIFY(SetWindowPos(mhwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE));
+	}
+
 	LayoutSpecs LayoutWindow::MeasureInternal(const vdsize32& r) {
 		return mSpecs;
 	}
@@ -160,6 +173,8 @@ namespace {
 	public:
 		void AddChild(LayoutObject *child, const vdrect32f& area);
 
+		void Sort() override;
+
 		LayoutSpecs MeasureInternal(const vdsize32& r) override;
 		void ArrangeInternal(const vdrect32& r) override;
 
@@ -174,6 +189,11 @@ namespace {
 
 	void LayoutRelative::AddChild(LayoutObject *child, const vdrect32f& area) {
 		mChildren.push_back({child, area});
+	}
+
+	void LayoutRelative::Sort() {
+		for(const Child& ch : mChildren)
+			ch.mpObject->Sort();
 	}
 
 	LayoutSpecs LayoutRelative::MeasureInternal(const vdsize32& r) {
@@ -197,6 +217,7 @@ namespace {
 		void Init(bool vertical, sint32 spacing);
 		void AddChild(LayoutObject *child, float weight = 1);
 
+		void Sort() override;
 		LayoutSpecs MeasureInternal(const vdsize32& r) override;
 		void ArrangeInternal(const vdrect32& r) override;
 
@@ -233,6 +254,13 @@ namespace {
 		mChildren.push_back({ child, weight });
 
 		mTotalWeight += weight;
+	}
+
+	void LayoutStack::Sort() {
+		for(const Child& ch : mChildren) {
+			if (ch.mpObject)
+				ch.mpObject->Sort();
+		}
 	}
 
 	LayoutSpecs LayoutStack::MeasureInternal(const vdsize32& r) {
@@ -373,6 +401,7 @@ namespace {
 		void Init();
 		void AddChild(LayoutObject *child, DockLocation location);
 
+		void Sort() override;
 		LayoutSpecs MeasureInternal(const vdsize32& r) override;
 		void ArrangeInternal(const vdrect32& r) override;
 
@@ -393,6 +422,30 @@ namespace {
 
 	void LayoutDock::AddChild(LayoutObject *child, DockLocation location) {
 		mChildren.push_back({ child, location });
+	}
+
+	void LayoutDock::Sort() {
+		// Children are allocated space from last to first. To traverse in reading
+		// order, we therefore want to recurse as follows:
+		//
+		// - Top/left docked, forward order
+		// - Fill docked
+		// - Right/bottom docked, reverse order
+
+		for(const Child& ch : mChildren) {
+			if (ch.mLocation == kDockLocation_Top || ch.mLocation == kDockLocation_Left)
+				ch.mpObject->Sort();
+		}
+
+		for(const Child& ch : mChildren) {
+			if (ch.mLocation == kDockLocation_Fill)
+				ch.mpObject->Sort();
+		}
+
+		for(auto it = mChildren.rbegin(), itEnd = mChildren.rend(); it != itEnd; ++it) {
+			if (it->mLocation == kDockLocation_Right || it->mLocation == kDockLocation_Bottom)
+				it->mpObject->Sort();
+		}
 	}
 
 	LayoutSpecs LayoutDock::MeasureInternal(const vdsize32& r) {
@@ -715,7 +768,11 @@ bool ATGenericDialogW32::OnLoaded() {
 	if (mOptions.mResultMask & kATUIGenericResultMask_Deny)
 		SetControlText(IDCANCEL, L"&Deny");
 	else if (!(mOptions.mResultMask & (kATUIGenericResultMask_Deny | kATUIGenericResultMask_Cancel))) {
-		EnableControl(IDCANCEL, false);
+		// Don't disable the Cancel button even if we're hiding it. This is needed for
+		// the Escape key to work; otherwise, the default dialog procedure never even
+		// sends the IDCANCEL command.
+		//EnableControl(IDCANCEL, false);
+
 		ShowControl(IDCANCEL, false);
 
 		SetFocusToControl(IDOK);
@@ -724,6 +781,8 @@ bool ATGenericDialogW32::OnLoaded() {
 	}
 
 	ReinitLayout();
+
+	mLayoutMainStack.Sort();
 
 	const DWORD dwStyle = GetWindowLong(mhdlg, GWL_STYLE);
 	const DWORD dwExStyle = GetWindowLong(mhdlg, GWL_EXSTYLE);
@@ -1080,16 +1139,19 @@ void ATGenericDialogW32::ReinitLayout() {
 			break;
 
 		case kATUIGenericIconType_Info:
+			SetDlgItemTextW(mhdlg, IDC_GENERIC_ICON, L"[info icon]");
 			baseIcon = IDI_INFORMATION;
 			shellIcon = SIID_INFO;
 			break;
 
 		case kATUIGenericIconType_Warning:
+			SetDlgItemTextW(mhdlg, IDC_GENERIC_ICON, L"[warning icon]");
 			baseIcon = IDI_WARNING;
 			shellIcon = SIID_WARNING;
 			break;
 
 		case kATUIGenericIconType_Error:
+			SetDlgItemTextW(mhdlg, IDC_GENERIC_ICON, L"[error icon]");
 			baseIcon = IDI_ERROR;
 			shellIcon = SIID_ERROR;
 			break;
@@ -1226,6 +1288,12 @@ void ATGenericDialogW32::ReinitLayout() {
 		};
 	};
 
+	const auto sortText = [](LayoutObject& child) {
+		return [&child] {
+			child.Sort();
+		};
+	};
+
 	mLayoutMessageDock.Init();
 	mLayoutMessageDock.SetMargins(vdrect32(padX, padY, padX, padY));
 
@@ -1237,13 +1305,13 @@ void ATGenericDialogW32::ReinitLayout() {
 
 	if (mOptions.mpTitle) {
 		mLayoutTitleCustom.SetMargins(vdrect32(0, titleOffsetY, 0, padY));
-		mLayoutTitleCustom.Init(measureText(mhwndTitle, hFontTitle, mOptions.mpTitle), arrangeText(mLayoutTitle));
+		mLayoutTitleCustom.Init(measureText(mhwndTitle, hFontTitle, mOptions.mpTitle), arrangeText(mLayoutTitle), sortText(mLayoutTitle));
 		mLayoutMessageDock.AddChild(&mLayoutTitleCustom, LayoutDock::kDockLocation_Top);
 	}
 
 	if (mOptions.mpMessage) {
 		mLayoutTextCustom.SetMargins(vdrect32(0, mOptions.mpTitle ? 0 : titleOffsetY, 0, titleOffsetY));
-		mLayoutTextCustom.Init(measureText(hwndMessage, hFontMessage, mOptions.mpMessage), arrangeText(mLayoutText));
+		mLayoutTextCustom.Init(measureText(hwndMessage, hFontMessage, mOptions.mpMessage), arrangeText(mLayoutText), sortText(mLayoutText));
 		mLayoutMessageDock.AddChild(&mLayoutTextCustom, LayoutDock::kDockLocation_Fill);
 	}
 

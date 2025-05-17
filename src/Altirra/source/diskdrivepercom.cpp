@@ -90,6 +90,12 @@ ATDeviceDiskDrivePercom::ATDeviceDiskDrivePercom(HardwareType hardwareType)
 		: mHardwareType == HardwareType::AT88 ? kATFirmwareType_PercomAT
 		: kATFirmwareType_Percom
 	);
+
+	mParallelBus.SetOnAttach(
+		[this] {
+			mpPrinterOutput = nullptr;
+		}
+	);
 }
 
 ATDeviceDiskDrivePercom::~ATDeviceDiskDrivePercom() {
@@ -102,7 +108,6 @@ void *ATDeviceDiskDrivePercom::AsInterface(uint32 iid) {
 		case IATDeviceDiskDrive::kTypeID: return static_cast<IATDeviceDiskDrive *>(this);
 		case IATDeviceSIO::kTypeID: return static_cast<IATDeviceSIO *>(this);
 		case IATDeviceAudioOutput::kTypeID: return static_cast<IATDeviceAudioOutput *>(&mAudioPlayer);
-		case IATDevicePrinterPort::kTypeID: return static_cast<IATDevicePrinterPort *>(this);
 		case IATDeviceParent::kTypeID: return mHardwareType == HardwareType::AT88SPD ? static_cast<IATDeviceParent *>(this) : nullptr;
 		case ATFDCEmulator::kTypeID: return &mFDC;
 		case ATPIAEmulator::kTypeID: return mHardwareType != HardwareType::RFD ? &mPIA : nullptr;
@@ -424,6 +429,7 @@ void ATDeviceDiskDrivePercom::Init() {
 
 void ATDeviceDiskDrivePercom::Shutdown() {
 	mParallelBus.Shutdown();
+	mpPrinterOutput = nullptr;
 
 	mAudioPlayer.Shutdown();
 	mSerialCmdQueue.Shutdown();
@@ -447,8 +453,6 @@ void ATDeviceDiskDrivePercom::Shutdown() {
 	}
 
 	mpDiskDriveManager = nullptr;
-
-	vdsaferelease <<= mpPrinter;
 }
 
 uint32 ATDeviceDiskDrivePercom::GetComputerPowerOnDelay() const {
@@ -597,17 +601,6 @@ void ATDeviceDiskDrivePercom::OnReceiveByte(uint8 c, bool command, uint32 cycles
 }
 
 void ATDeviceDiskDrivePercom::OnSendReady() {
-}
-
-void ATDeviceDiskDrivePercom::SetPrinterDefaultOutput(IATPrinterOutput *out) {
-	if (mpPrinter != out) {
-		vdsaferelease <<= mpPrinter;
-
-		mpPrinter = out;
-
-		if (out)
-			out->AddRef();
-	}
 }
 
 IATDeviceBus *ATDeviceDiskDrivePercom::GetDeviceBus(uint32 index) {
@@ -941,9 +934,13 @@ void ATDeviceDiskDrivePercom::OnPIACB2ChangedATSPD(bool value) {
 		const uint8 c = ~mPIA.GetPortAOutput();
 
 		if (auto *printer = mParallelBus.GetChild<IATPrinterOutput>())
-			printer->WriteASCII(&c, 1);
-		else if (mpPrinter)
-			mpPrinter->WriteASCII(&c, 1);
+			printer->WriteRaw(&c, 1);
+		else {
+			if (!mpPrinterOutput)
+				mpPrinterOutput = GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+
+			mpPrinterOutput->WriteRaw(&c, 1);
+		}
 	}
 }
 

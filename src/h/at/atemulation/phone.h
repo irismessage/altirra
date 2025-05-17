@@ -33,8 +33,10 @@ namespace ATPhoneConstants {
 	constexpr float kMinPulseInterdigitTime = 0.300f;
 
 	// A make (off-hook) time of at least 1 second causes an end to the
-	// number being dialed and commences dialing.
-	constexpr float kMaxPulseInterdigitTime = 1.0f;
+	// number being dialed and commences dialing. This is marginal for the
+	// MPP Smart Terminal software, though, which uses about a 1s delay, so
+	// we use 1.5s for safety margin.
+	constexpr float kMaxPulseInterdigitTime = 1.5f;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

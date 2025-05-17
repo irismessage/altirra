@@ -28,50 +28,140 @@
 #include <stdarg.h>
 
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/atomic.h>
 #include <vd2/system/Error.h>
-#include <vd2/system/log.h>
+#include <vd2/system/text.h>
+#include <vd2/system/VDString.h>
 
-MyError::MyError() {
-	buf = NULL;
-}
+struct VDException::StringHeader {
+	VDAtomicInt mRefCount;
 
-MyError::MyError(const MyError& err) {
-	buf = _strdup(err.buf);
-}
+	// Following this are:
+	// - wide message
+	// - narrow message
+	//
+	// The reason for this mess:
+	// - We need Unicode in order to support parameters formatted into the
+	//   message, such as filenames. This applies even if we avoid localization
+	//   and keep all exception messages in English.
+	//
+	// - We need a narrow string in order to support std::exception::what(),
+	//   which is required to be const noexcept. (Allocate + terminate() on
+	//   failure is unsportsmanlike.) This also precludes delayed formatting
+	//   of stored tokens.
+	//
+	// - UTF-8 locale support is not quite there yet in the UCRT, there are
+	//   still too many bugs where UTF-8 code points >2 chars fail.
+	//
+	// - We have a lot of existing code using narrow strings.
+	//
+	// Therefore:
+	// - We need _both_ the narrow and wide message on construction.
+	// - We don't want to force both narrow and wide strings to be supplied,
+	//   so the static literal optimization is ditched.
+};
 
-MyError::MyError(const char *f, ...)
-	: buf(NULL)
+VDException::VDException() noexcept
+	: mpMessage("")
+	, mpMessageW(L"")
 {
-	va_list val;
-
-	va_start(val, f);
-	vsetf(f, val);
-	va_end(val);
 }
 
-MyError::~MyError() {
-	free(buf);
+VDException::VDException(const VDException& err) noexcept {
+	operator=(err);
 }
 
-void MyError::clear() {
-	if (buf)			// we do this check because debug free() always does a heapchk even if buf==NULL
-		free(buf);
-	buf = NULL;
+VDException::VDException(VDException&& err) noexcept {
+	operator=(std::move(err));
 }
 
-void MyError::assign(const MyError& e) {
-	if (buf)
-		free(buf);
-	buf = _strdup(e.buf);
+VDException::VDException(const char *s) {
+	assign(s);
 }
 
-void MyError::assign(const char *s) {
-	if (buf)
-		free(buf);
-	buf = _strdup(s);
+VDException::VDException(const wchar_t *s) {
+	assign(s);
 }
 
-void MyError::setf(const char *f, ...) {
+VDException::~VDException() {
+	clear();
+}
+
+VDException& VDException::operator=(const VDException& err) noexcept {
+	if (mpBuffer != err.mpBuffer) {
+		clear();
+
+		mpBuffer = err.mpBuffer;
+
+		if (mpBuffer)
+			++mpBuffer->mRefCount;
+	}
+
+	mpMessage = err.mpMessage;
+	mpMessageW = err.mpMessageW;
+
+	return *this;
+}
+
+VDException& VDException::operator=(VDException&& err) noexcept {
+	if (&err != this) {
+		clear();
+
+		mpBuffer = err.mpBuffer;
+		mpMessage = err.mpMessage;
+		mpMessageW = err.mpMessageW;
+
+		err.mpBuffer = nullptr;
+		err.mpMessage = nullptr;
+		err.mpMessageW = nullptr;
+	}
+
+	return *this;
+}
+
+void VDException::clear() noexcept {
+	if (mpBuffer) {
+		if (!--mpBuffer->mRefCount)
+			free(mpBuffer);
+
+		mpBuffer = nullptr;
+	}
+
+	mpMessage = "";
+	mpMessageW = L"";
+}
+
+void VDException::assign(const char *s) {
+	clear();
+
+	if (!s || !*s)
+		return;
+
+	const size_t len = strlen(s);
+	char *buf = Alloc(len);
+
+	if (buf) {
+		memcpy(buf, s, len + 1);
+		MakeWide();
+	}
+}
+
+void VDException::assign(const wchar_t *s) {
+	clear();
+
+	if (!s || !*s)
+		return;
+
+	const size_t len = wcslen(s);
+	wchar_t *buf = AllocWide(len);
+
+	if (buf) {
+		memcpy(buf, s, sizeof(wchar_t) * (len + 1));
+		MakeNarrow();
+	}
+}
+
+void VDException::setf(const char *f, ...) {
 	va_list val;
 
 	va_start(val, f);
@@ -79,67 +169,185 @@ void MyError::setf(const char *f, ...) {
 	va_end(val);
 }
 
-void MyError::vsetf(const char *f, va_list val) {
-	for(int size = 1024; size <= 32768; size += size) {
-		free(buf);
-		buf = NULL;
+void VDException::wsetf(const wchar_t *f, ...) {
+	va_list val;
 
-		buf = (char *)malloc(size);
-		if (!buf)
-			return;
-
-		if ((unsigned)_vsnprintf(buf, size, f, val) < (unsigned)size)
-			return;
-	}
-
-	free(buf);
-	buf = NULL;
+	va_start(val, f);
+	vwsetf(f,val);
+	va_end(val);
 }
 
-void MyError::post(HWND hWndParent, const char *title) const {
-	if (!buf || !*buf)
+void VDException::vsetf(const char *f, va_list val) {
+	char *buf = Alloc(256);
+	if (!buf)
 		return;
 
-	VDDEBUG("*** %s: %s\n", title, buf);
-	VDLog(kVDLogError, VDswprintf(L"Error: %hs", 1, &buf));
+	int len = vsnprintf(buf, 256, f, val);
+	if (len == 0) {
+		// don't keep empty strings
+		clear();
 
-	MessageBoxA(hWndParent, buf, title, MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+		mpMessage = "";
+		mpMessageW = L"";
+		return;
+	}
+
+	if (len >= 256) {
+		buf = Alloc(len + 1);
+		if (!buf)
+			len = -1;
+		else
+			len = vsnprintf(buf, len + 1, f, val);
+	}
+
+	if (len < 0) {
+		clear();
+
+		setf("<%s>", f);
+	} else {
+		MakeWide();
+	}
 }
 
-void MyError::swap(MyError& err) {
-	char *s = err.buf;
-	err.buf = buf;
-	buf = s;
+void VDException::vwsetf(const wchar_t *f, va_list val) {
+	wchar_t *buf = AllocWide(256);
+	if (!buf)
+		return;
+
+	int len = vswprintf(buf, 256, f, val);
+	if (len == 0) {
+		// don't keep empty strings
+		clear();
+
+		mpMessage = "";
+		mpMessageW = L"";
+		return;
+	}
+
+	if (len >= 256) {
+		buf = AllocWide(len + 1);
+		if (!buf)
+			len = -1;
+		else
+			len = vswprintf(buf, len + 1, f, val);
+	}
+
+	if (len < 0) {
+		clear();
+
+		wsetf(L"<%ls>", f);
+	} else {
+		MakeNarrow();
+	}
 }
 
-void MyError::TransferFrom(MyError& err) {
-	if (buf)
-		free(buf);
+void VDException::post(HWND hWndParent, const char *title) const noexcept {
+	const char *msg = c_str();
+	if (!msg)
+		return;
 
-	buf = err.buf;
-	err.buf = NULL;
+	VDPostException(hWndParent, msg, title);
 }
 
-MyMemoryError::MyMemoryError() {
-	setf("Out of memory");
+const char *VDException::what() const noexcept {
+	const char *str = c_str();
+
+	return str ? str : "<user canceled operation>";
 }
 
-MyMemoryError::MyMemoryError(size_t requestedSize) {
+char *VDException::Alloc(size_t len) {
+	// This is a legacy path where ASCII strings are passed, so we assume a 1:1
+	// conversion to wchar.
+
+	Alloc(len, len);
+
+	return const_cast<char *>(mpMessage);
+}
+
+wchar_t *VDException::AllocWide(size_t len) {
+	Alloc(len, len);
+
+	return const_cast<wchar_t *>(mpMessageW);
+}
+
+void VDException::Alloc(size_t narrowLen, size_t wideLen) {
+	clear();
+
+	const size_t messageBytes = sizeof(wchar_t)*(wideLen + 1) + (narrowLen + 1);
+	void *p = malloc(sizeof(StringHeader) + messageBytes);
+	if (!p)
+		return;
+
+	mpBuffer = new(p) StringHeader;
+	mpBuffer->mRefCount = 1;
+
+	mpMessageW = (const wchar_t *)(mpBuffer + 1);
+	mpMessage = (const char *)(mpMessageW + wideLen + 1);
+
+	memset(mpBuffer + 1, 0, messageBytes);
+}
+
+void VDException::MakeNarrow() {
+	char *narrow = const_cast<char *>(mpMessage);
+	const wchar_t *wide = mpMessageW;
+
+	for(;;) {
+		const wchar_t c = *wide++;
+		*narrow++ = c < 0x80 ? (char)c : '?';
+
+		if (!c)
+			break;
+	}
+}
+
+void VDException::MakeWide() {
+	const char *narrow = mpMessage;
+	wchar_t *wide = const_cast<wchar_t *>(mpMessageW);
+
+	for(;;) {
+		const char c = *narrow++;
+		*wide++ = (wchar_t)c;
+
+		if (!c)
+			break;
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+VDAllocationFailedException::VDAllocationFailedException() {
+	assign("Out of memory");
+}
+
+VDAllocationFailedException::VDAllocationFailedException(size_t requestedSize) {
 	setf("Out of memory (unable to allocate %llu bytes)", (unsigned long long)requestedSize);
 }
 
-MyUserAbortError::MyUserAbortError() {
-	buf = _strdup("");
+////////////////////////////////////////////////////////////////////////////////
+
+VDUserCancelException::VDUserCancelException() {
+	mpMessage = "";
+	mpMessageW = L"";
 }
 
-MyInternalError::MyInternalError(const char *format, ...) {
-	char tbuf[1024];
-	va_list val;
+////////////////////////////////////////////////////////////////////////////////
 
-	va_start(val, format);
-	_vsnprintf(tbuf, (sizeof tbuf) - 1, format, val);
-	tbuf[1023] = 0;
-	va_end(val);
+void VDPostCurrentException(VDExceptionPostContext context, const char *title) {
+	try {
+		throw;
+	} catch(const VDException& ex) {
+		VDPostException(context, ex.wc_str(), VDTextAToW(title).c_str());
+	} catch(const std::exception& stdex) {
+		VDPostException(context, stdex.what(), title);
+	} catch(...) {
+		VDPostException(context, "An unknown exception occurred.", title);
+	}
+}
 
-	setf("Internal error: %s", tbuf);
+////////////////////////////////////////////////////////////////////////////////
+
+VDNOINLINE void VDRaiseInternalFailure(const char *context) {
+	[[maybe_unused]] const char *volatile contextptr = context;
+
+	std::terminate();
 }

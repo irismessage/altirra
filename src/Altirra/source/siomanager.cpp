@@ -39,6 +39,7 @@ ATDebuggerLogChannel g_ATLCHookSIO(false, false, "HOOKSIO", "OS SIO hook message
 ATDebuggerLogChannel g_ATLCSIOCmd(false, false, "SIOCMD", "SIO bus commands");
 ATDebuggerLogChannel g_ATLCSIOAccel(false, false, "SIOACCEL", "SIO command acceleration");
 ATDebuggerLogChannel g_ATLCSIOSteps(false, false, "SIOSTEPS", "SIO command steps");
+ATDebuggerLogChannel g_ATLCSIOReply(false, false, "SIOREPLY", "SIO command reply");
 
 AT_DECLARE_ENUM_TABLE(ATSIOManager::StepType);
 
@@ -161,6 +162,7 @@ void ATSIOManager::Shutdown() {
 	UninitHooks();
 
 	if (mpPokey) {
+		mpPokey->SetNotifyOnBiClockChange(nullptr);
 		mpPokey->RemoveSIODevice(this);
 		mpPokey = nullptr;
 	}
@@ -242,8 +244,8 @@ void ATSIOManager::SetTraceContext(ATTraceContext *context) {
 	}
 }
 
-void ATSIOManager::TryAccelPBIRequest() {
-	if (OnHookSIOV(0))
+void ATSIOManager::TryAccelPBIRequest(bool enabled) {
+	if (enabled && OnHookSIOV(0))
 		mpCPU->SetP(mpCPU->GetP() | AT6502::kFlagC);
 	else
 		mpCPU->SetP(mpCPU->GetP() & ~AT6502::kFlagC);
@@ -271,6 +273,11 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool pbi) {
 	if (req.mAddress <= ATKernelSymbols::TIMFLG && (ATKernelSymbols::TIMFLG - req.mAddress) < req.mLength)
 		return false;
 
+	// Bypass acceleration if the Break key has been pressed.
+	ATKernelDatabase kdb(mpMemory);
+	if (kdb.BRKKEY == 0)
+		return false;
+
 	// Check if the I flag is set -- if so, bail. This will hang in SIO
 	// if not intercepted by a PBI device.
 	if (mpCPU->GetP() & AT6502::kFlagI)
@@ -280,7 +287,6 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool pbi) {
 	if ((req.mMode & 0xC0) == 0xC0)
 		return false;
 
-	ATKernelDatabase kdb(mpMemory);
 	uint8 status = 0x01;
 
 	mActiveDeviceId = req.mDevice;
@@ -824,6 +830,9 @@ void ATSIOManager::SendNAK() {
 	} else {
 		SendData("N", 1, false);
 	}
+
+	if (g_ATLCSIOReply.IsEnabled())
+		g_ATLCSIOReply("Device %02X > NAK\n", mActiveDeviceId);
 }
 
 void ATSIOManager::SendComplete(bool autoDelay) {
@@ -840,6 +849,9 @@ void ATSIOManager::SendComplete(bool autoDelay) {
 	} else {
 		SendData("C", 1, false);
 	}
+
+	if (g_ATLCSIOReply.IsEnabled())
+		g_ATLCSIOReply("Device %02X > Complete\n", mActiveDeviceId);
 }
 
 void ATSIOManager::SendError(bool autoDelay) {
@@ -856,6 +868,9 @@ void ATSIOManager::SendError(bool autoDelay) {
 	} else {
 		SendData("E", 1, false);
 	}
+
+	if (g_ATLCSIOReply.IsEnabled())
+		g_ATLCSIOReply("Device %02X > Error\n", mActiveDeviceId);
 }
 
 void ATSIOManager::ReceiveData(uint32 id, uint32 len, bool autoProtocol) {
@@ -955,12 +970,35 @@ void ATSIOManager::EndCommand() {
 	step.mType = kStepType_EndCommand;
 }
 
+void ATSIOManager::HandleCommand(const void *data, uint32 len, bool succeeded) {
+	SendACK();
+
+	if (succeeded)
+		SendComplete();
+	else
+		SendError();
+
+	if (len)
+		SendData(data, len, true);
+
+	EndCommand();
+}
+
 uint32 ATSIOManager::GetCyclesPerBitRecv() const {
 	return mpPokey->GetSerialCyclesPerBitRecv();
 }
 
 uint32 ATSIOManager::GetRecvResetCounter() const {
 	return mpPokey->GetSerialInputResetCounter();
+}
+
+uint32 ATSIOManager::GetCyclesPerBitSend() const {
+	return mpPokey->GetSerialCyclesPerBitSend();
+}
+
+uint32 ATSIOManager::GetCyclesPerBitBiClock() const {
+	// Double period because we need a full cycle hi+lo per bit.
+	return mpPokey->GetSerialBidirectionalClockPeriod() * 2;
 }
 
 class ATSaveStateSioCommandStep final : public ATSnapExchangeObject<ATSaveStateSioCommandStep, "ATSaveStateSioCommandStep"> {
@@ -1177,7 +1215,16 @@ void ATSIOManager::SetFrameTime(uint32 cyclesPerFrame) {
 }
 
 void ATSIOManager::SetReadyState(bool ready) {
-	mbReadyState = ready;
+	if (mbReadyState != ready) {
+		mbReadyState = ready;
+
+		RawDeviceListLock lock(this);
+
+		for(auto *rawdev : mSIORawDevices) {
+			if (rawdev)
+				rawdev->OnReadyStateChanged(mbReadyState);
+		}
+	}
 }
 
 void ATSIOManager::PreLoadState() {
@@ -1318,6 +1365,7 @@ void ATSIOManager::AddRawDevice(IATDeviceRawSIO *dev) {
 void ATSIOManager::RemoveRawDevice(IATDeviceRawSIO *dev) {
 	SetSIOInterrupt(dev, false);
 	SetSIOProceed(dev, false);
+	SetBiClockNotifyEnabled(dev, false);
 
 	SetExternalClock(dev, 0, 0);
 
@@ -1402,6 +1450,34 @@ void ATSIOManager::SetSIOProceed(IATDeviceRawSIO *dev, bool state) {
 			if (mSIOProceedActive.empty())
 				mpPIA->SetCA1(true);
 		}
+	}
+}
+
+void ATSIOManager::SetBiClockNotifyEnabled(IATDeviceRawSIO *dev, bool enabled) {
+	if (!dev)
+		return;
+
+	auto it = std::lower_bound(mNotifyBiClockDevices.begin(), mNotifyBiClockDevices.end(), dev);
+
+	if (enabled) {
+		if (it != mNotifyBiClockDevices.end() && *it == dev)
+			return;
+
+		if (mNotifyBiClockDevices.empty()) {
+			mpPokey->SetNotifyOnBiClockChange(
+				[this] { OnSerialOutputClockChanged(); }
+			);
+		}
+
+		mNotifyBiClockDevices.insert(it, dev);
+	} else {
+		if (it == mNotifyBiClockDevices.end() || *it != dev)
+			return;
+
+		mNotifyBiClockDevices.erase(it);
+
+		if (mNotifyBiClockDevices.empty())
+			mpPokey->SetNotifyOnBiClockChange(nullptr);
 	}
 }
 
@@ -1730,6 +1806,13 @@ void ATSIOManager::OnMotorStateChanged(bool asserted) {
 				rawdev->OnMotorStateChanged(mbMotorState);
 		}
 	}
+}
+
+void ATSIOManager::OnSerialOutputClockChanged() {
+	const uint32 cpb = GetCyclesPerBitBiClock();
+
+	for(IATDeviceRawSIO *dev : mNotifyBiClockDevices)
+		dev->OnSerialBiClockChanged(cpb);
 }
 
 void ATSIOManager::TraceReceive(uint8 c, uint32 cyclesPerBit, bool postReceive) {

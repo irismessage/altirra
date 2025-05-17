@@ -161,7 +161,7 @@ void ATUIListView::Sort(const IATUIListViewSorter& sorter) {
 		if (ptrlist[i] != &mItems[i])
 			redrawRequired = true;
 
-		vdmove(items2[i], *ptrlist[i]);
+		items2[i] = std::move(*ptrlist[i]);
 	}
 
 	mItems.swap(items2);

@@ -229,6 +229,9 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 					L"of the dongle device. This form implements a simple mapping function where up to three bits output "
 					L"by the computer produce up to four bits of output from the dongle."
 			},
+			{ "mpp1000e", L"Microbits MPP-1000E Modem",
+				L"A 300 baud modem connecting to joystick port 2."
+			},
 			{ "simcovox", L"SimCovox",
 				L"A joystick based Covox device made by Jakub Husak, plugging into ports 1 and 2.\n\nhttps://github.com/jhusak/atari8_simcovox_arduino_mega328p"
 			},
@@ -293,8 +296,14 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		L"Parallel port devices",
 		"parallel",
 		{
+			{ "825", L"825 80-Column Printer",
+				L"80 column dot-matrix printer with a parallel port connection. Based on the Centronics 737 printer."
+			},
 			{ "parfilewriter", L"File writer",
 				L"Writes all data output from a parallel or serial port to a file."
+			},
+			{ "par2ser", L"Parallel to serial adapter",
+				L"Connects a parallel port output to a serial input."
 			},
 		}
 	},
@@ -361,6 +370,10 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 
 			{ "diskdrivesuperarchiver", L"Super Archiver",
 				L"Full Super Archiver disk drive emulation, including 6507 CPU."
+			},
+
+			{ "diskdrivesuperarchiverbw", L"Super Archiver w/BitWriter",
+				L"Full emulation of a 1050 drive with the Super Archiver mod, including the BitWriter hardware which allows raw write capability."
 			},
 
 			{ "diskdrivetoms1050", L"TOMS 1050",
@@ -431,6 +444,12 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 		L"Serial I/O bus devices",
 		"sio",
 		{
+			{ "820", L"820 40-Column Printer",
+				L"Basic 40 column dot-matrix printer, printing 3 7/8\" roll paper. Capable of 40 column conventional text and 29 character sideways text."
+			},
+			{ "820full", L"820 40-Column Printer (full emulation)",
+				L"Basic 40 column dot-matrix printer, with full emulation of the 6507 microcontroller and dot matrix print rendering."
+			},
 			{ "835", L"835 Modem",
 				L"A 300 baud modem that connects directly to the SIO port.\n"
 			},
@@ -446,6 +465,21 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 					L"booting the computer without disk drives or with "
 					L"the DOS 2.x AUTORUN.SYS will automatically load the R: handler from the 850; otherwise, "
 					L"the tools in the Additions disk can be used to load the handler."
+			},
+			{ "1020", L"1020 Color Printer",
+				L"A four-color plotter that prints on roll paper with an 820-compatible printer protocol."
+			},
+			{ "1025", L"1025 80-Column Printer",
+				L"80 column dot-matrix printer supporting double-width and condensed modes, adjustable line spacing, and international characters."
+			},
+			{ "1025full", L"1025 80-Column Printer (full emulation)",
+				L"80 column dot-matrix printer supporting double-width and condensed modes, adjustable line spacing, and international characters."
+			},
+			{ "1029", L"1029 80-Column Printer",
+				L"80 column dot-matrix printer supporting elongated text, adjustable line spacing, international characters, and bitmapped graphics."
+			},
+			{ "1029full", L"1029 80-Column Printer (full emulation)",
+				L"80 column dot-matrix printer supporting elongated text, adjustable line spacing, international characters, and bitmapped graphics."
 			},
 			{ "1030", L"1030 Modem",
 				L"A 300 baud modem that connects directly to the SIO port.\n"
@@ -764,6 +798,77 @@ struct ATUIControllerDevices::DeviceNode final : public vdrefcounted<IVDUITreeVi
 	vdfastvector<VDUIProxyTreeViewControl::NodeRef> mErrorNodes;
 };
 
+///////////////////////////////////////////////////////////////////////////////
+
+class ATUIControllerDevices::XCmdRemove final : public vdrefcounted<IATDeviceXCmd> {
+public:
+	XCmdRemove(ATUIControllerDevices& parent, DeviceNode *node) : mParent(parent), mpNode(node) {}
+
+	bool IsPostRefreshNeeded() const override { return false; }
+	bool IsSupported(IATDevice *dev, int busIndex) const override;
+	ATDeviceXCmdInfo GetInfo() const override;
+	void Invoke(ATDeviceManager& devmgr, IATDevice *dev, int busIndex) override;
+
+private:
+	ATUIControllerDevices& mParent;
+	vdrefptr<DeviceNode> mpNode;
+};
+
+bool ATUIControllerDevices::XCmdRemove::IsSupported(IATDevice *dev, int busIndex) const
+{
+	return mpNode && mpNode->mbCanRemove;
+}
+
+ATDeviceXCmdInfo ATUIControllerDevices::XCmdRemove::GetInfo() const
+{
+	ATDeviceXCmdInfo info {};
+	info.mDisplayName = L"Remove";
+	info.mbRequiresElevation = false;
+
+	return info;
+}
+
+void ATUIControllerDevices::XCmdRemove::Invoke(ATDeviceManager& devmgr, IATDevice *dev, int busIndex)
+{
+	mParent.Remove(mpNode);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+class ATUIControllerDevices::XCmdSettings final : public vdrefcounted<IATDeviceXCmd> {
+public:
+	XCmdSettings(ATUIControllerDevices& parent, DeviceNode *node) : mParent(parent), mpNode(node) {}
+
+	bool IsPostRefreshNeeded() const override { return false; }
+	bool IsSupported(IATDevice *dev, int busIndex) const override;
+	ATDeviceXCmdInfo GetInfo() const override;
+	void Invoke(ATDeviceManager& devmgr, IATDevice *dev, int busIndex) override;
+
+private:
+	ATUIControllerDevices& mParent;
+	vdrefptr<DeviceNode> mpNode;
+};
+
+bool ATUIControllerDevices::XCmdSettings::IsSupported(IATDevice *dev, int busIndex) const
+{
+	return mpNode && mpNode->mbHasSettings;
+}
+
+ATDeviceXCmdInfo ATUIControllerDevices::XCmdSettings::GetInfo() const
+{
+	ATDeviceXCmdInfo info {};
+	info.mDisplayName = L"Settings...";
+	info.mbRequiresElevation = false;
+
+	return info;
+}
+
+void ATUIControllerDevices::XCmdSettings::Invoke(ATDeviceManager& devmgr, IATDevice *dev, int busIndex)
+{
+	mParent.Settings(mpNode);
+}
+
+///////////////////////////////////////////////////////////////////////////////
 ATUIControllerDevices::ATUIControllerDevices(VDDialogFrameW32& parent, ATDeviceManager& devMgr, VDUIProxyTreeViewControl& treeView, VDUIProxyButtonControl& settingsView, VDUIProxyButtonControl& removeView,
 	VDUIProxyButtonControl& moreView)
 	: mParent(parent)
@@ -815,10 +920,16 @@ void ATUIControllerDevices::Add() {
 
 	auto *p = static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem());
 	if (p) {
-		if (p->mpParent)
+		while(p->mpParent)
 			p = p->mpParent;
 
 		devParent = vdpoly_cast<IATDeviceParent *>(p->mpDev);
+
+		// ignore devices that have no actual buses, just to make shared device
+		// base implementation easier
+		if (!devParent->GetDeviceBus(0))
+			devParent = nullptr;
+
 		devBus = p->mpDevBus;
 	}
 
@@ -960,6 +1071,10 @@ void ATUIControllerDevices::Add() {
 void ATUIControllerDevices::Remove() {
 	auto *p = static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem());
 
+	Remove(p);
+}
+
+void ATUIControllerDevices::Remove(DeviceNode *p) {
 	if (!p || !p->mpDev || !p->mbCanRemove)
 		return;
 
@@ -1095,11 +1210,14 @@ void ATUIControllerDevices::RemoveAll() {
 void ATUIControllerDevices::Settings() {
 	auto *p = static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem());
 
-	if (!p || !p->mpDev)
+	Settings(p);
+}
+
+void ATUIControllerDevices::Settings(DeviceNode *p) {
+	if (!p || !p->mpDev || !p->mbHasSettings)
 		return;
 
 	IATDevice *dev = p->mpDev;
-	vdrefptr<IATDevice> devholder(dev);
 	if (!dev)
 		return;
 
@@ -1119,61 +1237,16 @@ void ATUIControllerDevices::Settings() {
 	
 	if (fn((VDGUIHandle)mParent.GetWindowHandle(), pset)) {
 		try {
-			if (dev->SetSettings(pset)) {
-				mDevMgr.IncrementChangeCounter();
-
-				OnDataExchange(false);
-			} else {
-				vdfastvector<IATDevice *> childDevices;
-				mDevMgr.MarkAndSweep(&dev, 1, childDevices);
-
-				IATDeviceParent *parent = dev->GetParent();
-				uint32 busIndex = 0;
-				IATDeviceBus *bus = nullptr;
-
-				if (parent) {
-					busIndex = dev->GetParentBusIndex();
-					bus = parent->GetDeviceBus(busIndex);
-					bus->RemoveChildDevice(dev);
-				}
-
-				mDevMgr.RemoveDevice(dev);
-				dev = nullptr;
-				devholder.clear();
-
-				while(!childDevices.empty()) {
-					IATDevice *child = childDevices.back();
-					childDevices.pop_back();
-
-					mDevMgr.RemoveDevice(child);
-				}
-
-				IATDevice *newChild = mDevMgr.AddDevice(configTag.c_str(), pset, parent != nullptr);
-
-				if (bus && newChild) {
-					bus->AddChildDevice(newChild);
-				}
-
-				mDevMgr.MarkAndSweep(NULL, 0, childDevices);
-
-				while(!childDevices.empty()) {
-					IATDevice *child = childDevices.back();
-					childDevices.pop_back();
-
-					mDevMgr.RemoveDevice(child);
-				}
-
-				OnDataExchange(false);
-			}
+			mDevMgr.ReconfigureDevice(*dev, pset);
 
 			SaveSettings(configTag.c_str(), pset);
 		} catch(const MyError& err) {
 			err.post(mParent.GetWindowHandle(), "Error");
-
-			// We may have lost the previous device, so we need to reinit the tree.
-			OnDataExchange(false);
-			return;
 		}
+
+		// We may have lost the previous device, so we need to reinit the tree
+		// even on failure.
+		OnDataExchange(false);
 	}
 }
 
@@ -1391,8 +1464,22 @@ bool ATUIControllerDevices::DisplayMore(const VDUIProxyTreeViewControl::ContextM
 	sint32 busIndex = -1;
 	bool validNode = GetXCmdContext(event.mNode, node, dev, busIndex);
 
+	vdrefptr<IATDeviceXCmd> removeXcmd;
+	vdrefptr<IATDeviceXCmd> settingsXcmd;
 	if (validNode) {
 		xcmds = mDevMgr.GetExtendedCommandsForDevice(dev, busIndex);
+
+		if (node) {
+			if (node->mbCanRemove) {
+				removeXcmd = new XCmdRemove(*this, node);
+				xcmds.emplace_back(removeXcmd);
+			}
+
+			if (node->mbHasSettings) {
+				settingsXcmd = new XCmdSettings(*this, node);
+				xcmds.emplace_back(settingsXcmd);
+			}
+		}
 
 		auto n = xcmds.size();
 

@@ -67,12 +67,12 @@ const uint8 kATVHDDynamicHeaderSignature[8] = { 'c', 'x', 's', 'p', 'a', 'r', 's
 
 class ATInvalidVHDImageException : public MyError {
 public:
-	ATInvalidVHDImageException(const wchar_t *path) : MyError("%ls is not a valid VHD image.", path) {}
+	ATInvalidVHDImageException(const wchar_t *path) : VDException(L"%ls is not a valid VHD image.", path) {}
 };
 
 class ATUnsupportedVHDImageException : public MyError {
 public:
-	ATUnsupportedVHDImageException(const wchar_t *path) : MyError("%ls is a valid but unsupported VHD image.", path) {}
+	ATUnsupportedVHDImageException(const wchar_t *path) : VDException(L"%ls is a valid but unsupported VHD image.", path) {}
 };
 
 class ATMissingParentVHDImageException : public MyError {

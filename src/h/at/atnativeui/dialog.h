@@ -32,7 +32,7 @@
 #include <at/atnativeui/uiproxies.h>
 #include <list>
 
-class MyError;
+class VDException;
 enum ATUICursorImage : uint32;
 
 class IVDUIDropFileList {
@@ -191,15 +191,16 @@ public:
 	sintptr ShowDialog(VDDialogFrameW32 *parent);
 
 	static void ShowInfo(VDGUIHandle hParent, const wchar_t *message, const wchar_t *caption);
+	static void ShowError(VDGUIHandle hParent, const wchar_t *message, const wchar_t *caption);
 	static void SetDefaultCaption(const wchar_t *caption);
 
 	void ShowInfo(const wchar_t *message, const wchar_t *caption = nullptr);
 	void ShowInfo2(const wchar_t *message, const wchar_t *title = nullptr);
 	void ShowWarning(const wchar_t *message, const wchar_t *caption = nullptr);
 	void ShowError(const wchar_t *message, const wchar_t *caption = nullptr);
-	void ShowError(const MyError&);
+	void ShowError(const VDException&);
 	void ShowError2(const wchar_t *message, const wchar_t *title = nullptr);
-	void ShowError2(const MyError&, const wchar_t *title = nullptr);
+	void ShowError2(const VDException&, const wchar_t *title = nullptr);
 	bool Confirm(const wchar_t *message, const wchar_t *caption = nullptr);
 	bool Confirm2(const char *ignoreTag, const wchar_t *message, const wchar_t *title = nullptr);
 	
@@ -217,6 +218,10 @@ public:
 	int ActivateMenuButton(uint32 id, vdspan<PopupMenuItem> items);
 
 	void ActivateCommandPopupMenu(int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer);
+	uint32 ActivateCommandPopupMenuReturnId(int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer);
+private:
+	uint32 ActivateCommandPopupMenuInternal(bool returnId, int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer);
+public:
 
 	bool PostCall(const vdfunction<void()>& call);
 	bool PostCall(vdfunction<void()>&& call);

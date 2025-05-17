@@ -230,7 +230,7 @@ void ATUILoadMenu() {
 					else if (cmdname == L"$port4none")
 						itemid = ID_INPUT_PORT4_NONE;
 					else {
-						throw MyError("Error parsing menu on line %u: unknown special menu '%ls'", lineno, VDStringW(cmdname).c_str());
+						throw VDException(L"Error parsing menu on line %u: unknown special menu '%ls'", lineno, VDStringW(cmdname).c_str());
 					}
 				}
 

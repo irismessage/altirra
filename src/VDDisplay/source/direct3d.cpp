@@ -1433,6 +1433,16 @@ bool VDD3D9Manager::AdjustTextureSize(int& texw, int& texh, bool nonPow2OK) {
 	return texw >= origw && texh >= origh;
 }
 
+bool VDD3D9Manager::AdjustTextureSize(vdsize32& texSize, bool nonPow2OK) {
+	int w = texSize.w;
+	int h = texSize.h;
+	bool succeeded = AdjustTextureSize(w, h, nonPow2OK);
+
+	texSize.w = w;
+	texSize.h = h;
+	return succeeded;
+}
+
 bool VDD3D9Manager::IsTextureFormatAvailable(D3DFORMAT format) {
 	HRESULT hr = mpD3D->CheckDeviceFormat(mAdapter, mDevType, mDisplayMode.Format, 0, D3DRTYPE_TEXTURE, format);
 

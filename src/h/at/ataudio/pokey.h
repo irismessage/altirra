@@ -25,6 +25,7 @@
 	#pragma once
 #endif
 
+#include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
@@ -147,6 +148,7 @@ public:
 	void	SetExternalSerialClock(uint32 basetime, uint32 period);
 	uint32	GetSerialCyclesPerBitSend() const;
 	uint32	GetSerialCyclesPerBitRecv() const;
+	uint32	GetSerialBidirectionalClockPeriod() const;
 	uint32	GetSerialInputResetCounter() const { return mSerialInputResetCounter; }
 
 	bool	IsChannelEnabled(uint32 channel) const;
@@ -215,6 +217,8 @@ public:
 
 	uint32	GetCyclesToTimerFire(uint32 ch) const;
 	bool	IsSerialForceBreakEnabled() const;
+
+	void	SetNotifyOnBiClockChange(vdfunction<void()> fn);
 
 private:
 	void	OnScheduledEvent(uint32 id) override;
@@ -366,6 +370,7 @@ private:
 	bool	mbSerInBurstPendingIRQ2;
 	bool	mbSerInBurstPendingData;
 	bool	mbSerInDeferredLoad;
+	bool	mbNotifyBiClockChange = false;
 	uint32	mSerOutBurstDeadline;
 	uint32	mSerialInputResetCounter = 0;
 
@@ -458,6 +463,8 @@ private:
 
 	bool	mbTraceIrqPending = false;
 	uint64	mTraceIrqStart = 0;
+
+	vdfunction<void()> mpNotifyBiClockChangeFn;
 };
 
 #endif

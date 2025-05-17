@@ -2,25 +2,21 @@
 <rss version="2.0">
 	<channel>
 		<title>Altirra update feed (test channel)</title>
-		<link>https://forums.atariage.com/topic/345943-altirra-410-released/</link>
+		<link>https://forums.atariage.com/topic/358862-altirra-420-released/</link>
 		<description>Automatic update notifications for test versions of the Altirra emulator, used by the Check for Updates feature in the program.</description>
 		<item>
-			<title>Altirra 4.20-test30 (4.20.130.16210; win7; sse2)</title>
+			<title>Altirra 4.30-test1 (4.30.101.16275; win7; sse2)</title>
 			<description>
 				<ul>
-<li>Fixed MOVP3 A,@A instruction in XF551 full emulation (fixes HyperXF menu).</li>
-<li>Fixed a compatibility issue in zip decompressor and improved decompression speed.</li>
-<li>Optimized speed and memory usage of trace analyzer load/save.</li>
-<li>Trace recorder no longer records disk sector-under-head information for hard disk like images which only have one track, which looked silly.</li>
-<li>Adjusted color of keywords in source views as they were hard to see in dark theme.</li>
-<li>Fixed debug display incorrectly rendering Graphics 3 (IR mode 8).</li>
-<li>Added separate internal cartridge types for SIC! 128K and 256K cartridge sizes, and added separate flash ROM types to match.</li>
-<li>Fixed bug in the keyframe flags emitted by the video recorder when writing an uncompressed AVI file.</li>
-<li>Fixed an ARM64-specific bug in the video recorder (source only for now, since I don't usually include ARM64 test releases).</li>
-<li>Fixed /soundboard command line switch not correctly applying the specified address.</li>
+<li>Cassette: Added Vorbis decoding support.</li>
+<li>Cassette: Added support for paired .data.cas+.audio.ogg files for more compact tape storage.</li>
+<li>Debugger: Added keyboard shortcuts to memory window.</li>
+<li>Printer: ATASCII special characters are now converted to Unicode equivalents.</li>
+<li>Tape Editor: Added Select All (Ctrl+A) and Deselect (Ctrl+Shift+A).</li>
+<li>VFS: Improved handling of Unicode filenames within .zip archives.</li>
 				</ul>
 			</description>
-   			<link>https://forums.atariage.com/topic/345943-altirra-410-released/?do=findComment&amp;comment=5367231</link>
+   			<link>https://forums.atariage.com/topic/358862-altirra-420-released/</link>
 			<pubDate>
 				now
 			</pubDate>

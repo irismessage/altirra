@@ -44,7 +44,7 @@ public:
 	void OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount) override;
 	void OnLinkSelected(uint32 selectionCode, int para, int offset) override;
 
-	void RecolorLine(int line, const char *text, int length, IVDTextEditorColorization *colorization);
+	void RecolorLine(int line, const wchar_t *text, int length, IVDTextEditorColorization *colorization);
 
 	void SetPosition(uint32 addr) override;
 
@@ -98,7 +98,7 @@ private:
 		uint32 mCommentPos;
 	};
 
-	DisasmResult Disassemble(VDStringA& buf,
+	DisasmResult Disassemble(VDStringW& buf,
 		vdfastvector<LineInfo>& lines,
 		uint32 nestingLevel,
 		const ATCPUHistoryEntry& initialState,

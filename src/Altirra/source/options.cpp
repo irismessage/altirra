@@ -19,6 +19,7 @@
 #include <vd2/system/registry.h>
 #include <at/atcore/media.h>
 #include "options.h"
+#include "oshelper.h"
 
 uint32 g_ATOptionsSaveSuspended;
 
@@ -84,6 +85,17 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, const char *name, VDStrin
 }
 
 template<class T>
+void ATOptionsExchangeEnum(VDRegistryKey& key, bool write, const char *name, T& val) {
+	if (write)
+		key.setString(name, ATEnumToString(val));
+	else {
+		VDStringW str;
+		key.getString(name, str);
+		val = ATParseEnum<T>(str).mValue;
+	}
+}
+
+template<class T>
 void ATOptionsExchangeEnum(VDRegistryKey& key, bool write, const char *name, T& val, T limit) {
 	if (write)
 		key.setInt(name, val);
@@ -118,6 +130,7 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "CompatDB: External DB path", opts.mCompatExternalDBPath);
 
 	ATOptionsExchange(key, write, "System: Force directory change polling", opts.mbPollDirectories);
+	ATOptionsExchangeEnum(key, write, "System: Efficiency mode", opts.mEfficiencyMode);
 
 	ATOptionsExchange(key, write, "Accessibility: Enable", opts.mbAccEnabled);
 }

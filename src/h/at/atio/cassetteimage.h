@@ -75,9 +75,18 @@ enum class ATCassetteTurboDecodeAlgorithm : uint8 {
 
 AT_DECLARE_ENUM_TABLE(ATCassetteTurboDecodeAlgorithm);
 
+enum class ATCassetteTrackLoadMode : uint8 {
+	Default,
+	RequireCASOnly,
+	RequireVorbisOnly
+};
+
 struct ATCassetteLoadContext {
 	ATCassetteTurboDecodeAlgorithm mTurboDecodeAlgorithm = ATCassetteTurboDecodeAlgorithm::SlopeNoFilter;
+	bool mbFSKSpeedCompensation = false;
+	bool mbCrosstalkReduction = false;
 	bool mbStoreWaveform = false;
+	ATCassetteTrackLoadMode mTrackLoadMode = ATCassetteTrackLoadMode::Default;
 };
 
 enum ATCassetteRegionType : uint8 {
@@ -261,11 +270,11 @@ public:
 	virtual vdrefptr<IATTapeImageClip> CopyRange(uint32 start, uint32 len) = 0;
 
 	virtual uint32 GetWaveformLength() const = 0;
-	virtual uint32 ReadWaveform(uint8 *dst, uint32 pos, uint32 len, bool direct) const = 0;
+	virtual uint32 ReadWaveform(float *dst, uint32 pos, uint32 len, bool direct) const = 0;
 
 	struct MinMax {
-		uint8 mMin;
-		uint8 mMax;
+		float mMin;
+		float mMax;
 	};
 
 	virtual MinMax ReadWaveformMinMax(uint32 pos, uint32 len, bool direct) const = 0;
@@ -276,7 +285,8 @@ public:
 };
 
 void ATCreateNewCassetteImage(IATCassetteImage **ppImage);
-void ATLoadCassetteImage(IVDRandomAccessStream& file, const wchar_t *origNameOverride, IVDRandomAccessStream *analysisOutput, const ATCassetteLoadContext& ctx, IATCassetteImage **ppImage);
+[[nodiscard]] vdrefptr<IATCassetteImage> ATLoadCassetteImage(const wchar_t *path, IVDRandomAccessStream *analysisOutput, const ATCassetteLoadContext& ctx);
+void ATLoadCassetteImage(ATVFSFileView& view, IVDRandomAccessStream *audioStreamOpt, const wchar_t *origNameOverride, IVDRandomAccessStream *analysisOutput, const ATCassetteLoadContext& ctx, IATCassetteImage **ppImage);
 void ATSaveCassetteImageCAS(IVDRandomAccessStream& file, IATCassetteImage *image);
 void ATSaveCassetteImageWAV(IVDRandomAccessStream& file, IATCassetteImage *image);
 

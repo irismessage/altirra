@@ -106,7 +106,7 @@ int Paragraph::GetSpanIndexFromOffset(int offset) const {
 	return spidx;
 }
 
-void Paragraph::Insert(int line, int offset, const char *s, size_t len) {
+void Paragraph::Insert(int line, int offset, const wchar_t *s, size_t len) {
 	if (!len)
 		return;
 
@@ -709,13 +709,13 @@ int Document::GetParagraphFromY(int y) {
 	return para;
 }
 
-void Document::GetParagraphText(int paraIdx, vdfastvector<char>& buf) {
+void Document::GetParagraphText(int paraIdx, vdfastvector<wchar_t>& buf) {
 	const Paragraph *para = mParagraphs[paraIdx];
 
 	buf = para->mText;
 }
 
-void Document::GetText(const Iterator& it1, const Iterator& it2, bool forceCRLF, vdfastvector<char>& buf) {
+void Document::GetText(const Iterator& it1, const Iterator& it2, bool forceCRLF, vdfastvector<wchar_t>& buf) {
 	if (it1 > it2)
 		return GetText(it2, it1, forceCRLF, buf);
 
@@ -746,7 +746,7 @@ void Document::GetText(const Iterator& it1, const Iterator& it2, bool forceCRLF,
 	}
 }
 
-void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator *after) {
+void Document::Insert(const Iterator& it, const wchar_t *text, size_t len, Iterator *after) {
 	if (!len)
 		return;
 
@@ -762,7 +762,7 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 	int bottomYOld = para->GetYBottom();
 
 	// check for newline
-	const char *s = (const char *)memchr(text, '\n', len);
+	const wchar_t *s = wmemchr(text, L'\n', len);
 	bool splitRequired = false;
 	if (!s)
 		s = text+len;
@@ -795,7 +795,7 @@ void Document::Insert(const Iterator& it, const char *text, size_t len, Iterator
 	text = s;
 	
 	// generate new paragraphs
-	while(s = (const char *)memchr(text, '\n', len)) {
+	while(s = wmemchr(text, L'\n', len)) {
 		++s;
 
 		Paragraph *p = new Paragraph;

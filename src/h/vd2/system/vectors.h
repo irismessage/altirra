@@ -599,6 +599,7 @@ bool VDRect<T>::contains(const VDPoint<T>& pt) const {
 
 ///////////////////////////////////////////////////////////////////////////////
 typedef VDPoint<sint32>	vdpoint32;
+typedef VDPoint<float>	vdpoint32f;
 typedef VDSize<sint32>	vdsize32;
 typedef VDSize<float>	vdsize32f;
 typedef	VDRect<sint32>	vdrect32;

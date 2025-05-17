@@ -182,6 +182,7 @@ namespace ATKernelSymbols {
 		ESCFLG = 0x02A2,
 		TABMAP = 0x02A3,
 		LOGMAP = 0x02B2,
+		INVFLG = 0x02B6,
 		DRETRY = 0x02BD,
 		SHFLOK = 0x02BE,
 		BOTSCR = 0x02BF,
@@ -337,6 +338,7 @@ namespace ATKernelSymbols {
 	// kernel symbols
 	enum {
 		EDITRV = 0xE400,
+		SCRENV = 0xE410,
 		PRINTV = 0xE430,
 		CASETV = 0xE440,
 		DISKIV = 0xE450,

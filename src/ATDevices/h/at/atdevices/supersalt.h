@@ -17,13 +17,19 @@
 #ifndef f_AT_ATDEVICES_SUPERSALT_H
 #define f_AT_ATDEVICES_SUPERSALT_H
 
+#include <at/atcore/audiosource.h>
 #include <at/atcore/deviceimpl.h>
 #include <at/atcore/deviceport.h>
 #include <at/atcore/devicesio.h>
 #include <at/atcore/scheduler.h>
 
-class ATDeviceSuperSALT final : public ATDeviceT<IATDeviceRawSIO>, IATSchedulerCallback {
+class ATSyncAudioEdgeBuffer;
+
+class ATDeviceSuperSALT final : public ATDeviceT<IATDeviceRawSIO>, IATSchedulerCallback, IATSyncAudioSource {
 public:
+	ATDeviceSuperSALT();
+	~ATDeviceSuperSALT();
+
 	void GetDeviceInfo(ATDeviceInfo& info) override;
 	void Init() override;
 	void Shutdown() override;
@@ -36,23 +42,46 @@ public:
 	void OnBeginReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) override;
 	void OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) override;
 	void OnSendReady() override;
+	void OnSerialBiClockChanged(uint32 cyclesPerBit) override;
 
 public:
 	void OnScheduledEvent(uint32 id) override;
 
+public:
+	bool RequiresStereoMixingNow() const;
+	void WriteAudio(const ATSyncAudioMixInfo& mixInfo);
+
 private:
 	uint8 ComputeDirBus() const;
 	uint32 ComputeSerialCyclesPerByte(uint8 bus) const;
+	uint32 ComputeSerialCyclesPerBit(uint8 bus) const;
 	void UpdatePortInputs();
 	void StartADC();
+	void SetAudioInputEnabled(bool enabled);
+	void SetAudioInputPeriodBclk(uint32 cycles);
+	void SetAudioInputPeriodBaud(uint32 cycles);
+	void FlushAudio(uint64 t);
 
 	vdrefptr<IATDeviceControllerPort> mpPorts[4];
 	ATScheduler *mpScheduler = nullptr;
 	ATEvent *mpEventSendByte = nullptr;
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	IATAudioMixer *mpAudioMixer = nullptr;
 
 	uint8 mADCValue = 0xFF;
 	bool mbSIOLoopbackEnabled = false;
+	bool mbAudioInputEnabled = false;
+	uint64 mLastAudioTickTime = 0;
+	uint64 mLastAudioTimeBclk = 0;
+	uint64 mLastAudioTimeBaud = 0;
+	uint32 mAudioPeriodBclk = 0;
+	uint32 mAudioPeriodBaud = 0;
+	uint32 mAudioOutputBclk = 0;
+	uint32 mAudioOutputBaud = 0;
+	bool mLastAudioPolarity = false;
+	bool mbRegisteredForClockOutChanges = false;
+
+	vdrefptr<ATSyncAudioEdgeBuffer> mpAudioEdgeBuffer;
 };
 
 #endif

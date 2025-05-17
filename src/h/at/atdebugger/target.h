@@ -32,6 +32,7 @@ enum ATDebugDisasmMode : uint8 {
 	kATDebugDisasmMode_65C816,
 	kATDebugDisasmMode_Z80,
 	kATDebugDisasmMode_8048,
+	kATDebugDisasmMode_8051,
 	kATDebugDisasmMode_6809
 };
 

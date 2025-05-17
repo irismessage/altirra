@@ -12,7 +12,7 @@
   <ItemDefinitionGroup>
     <PackResource>
       <OutputPath>$(ProjectDir)autogen\%(Filename).inl</OutputPath>
-      <CommandLineTemplate>"$(ATBuildToolPath)\asuka.exe" makearray "%(FullPath)" "[OutputPath]" [SymbolName] [SymbolName]Len</CommandLineTemplate>
+      <CommandLineTemplate>"$(ATBuildToolPath)\asuka.exe" makearray "%(FullPath)" [OutputPath] [SymbolName] [SymbolName]Len</CommandLineTemplate>
       <Outputs>[OutputPath]</Outputs>
     </PackResource>
   </ItemDefinitionGroup>

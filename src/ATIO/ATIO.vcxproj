@@ -6,8 +6,11 @@
     <ClCompile Include="source\audioreaderflac.cpp" />
     <ClCompile Include="source\audioreaderflac_arm64.cpp" />
     <ClCompile Include="source\audioreaderflac_x86.cpp" />
+    <ClCompile Include="source\audioreadervorbis.cpp" />
+    <ClCompile Include="source\audioutils.cpp" />
     <ClCompile Include="source\cartridgeimage.cpp" />
     <ClCompile Include="source\cartridgetypes.cpp" />
+    <ClCompile Include="source\cassetteaudiofilters.cpp" />
     <ClCompile Include="source\cassetteblock.cpp" />
     <ClCompile Include="source\cassettedecoder.cpp" />
     <ClCompile Include="source\cassetteimage.cpp" />
@@ -30,6 +33,9 @@
     <ClCompile Include="source\stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="source\vorbisbitreader.cpp" />
+    <ClCompile Include="source\vorbisdecoder.cpp" />
+    <ClCompile Include="source\vorbismisc.cpp" />
     <ClCompile Include="source\wav.cpp" />
     <ClCompile Include="source\audioreaderwav.cpp" />
   </ItemGroup>
@@ -54,8 +60,13 @@
     <ClInclude Include="..\h\at\atio\wav.h" />
     <ClInclude Include="h\at\atio\audioreader.h" />
     <ClInclude Include="h\at\atio\audioreaderflac.h" />
+    <ClInclude Include="h\at\atio\audioutils.h" />
+    <ClInclude Include="h\at\atio\cassetteaudiofilters.h" />
     <ClInclude Include="h\at\atio\tapepiecetable.h" />
     <ClInclude Include="h\at\atio\audioreaderwav.h" />
+    <ClInclude Include="h\at\atio\vorbisbitreader.h" />
+    <ClInclude Include="h\at\atio\vorbisdecoder.h" />
+    <ClInclude Include="h\at\atio\vorbismisc.h" />
     <ClInclude Include="h\stdafx.h" />
   </ItemGroup>
   <ItemGroup>

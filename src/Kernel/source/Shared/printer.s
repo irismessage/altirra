@@ -122,17 +122,19 @@ fill_done:
 	;
 	;	normal   (40): 00101000 -> 01001110 ($4E 'N')
 	;	sideways (29): 00011101 -> 01010011 ($53 'S')
-	;	               010_1I1_
-	txa
-	and		#%00011101
-	eor		#%01001110
+	lda		mode_s-29,x
 	sta		daux1			;set AUX1 to indicate width to device
 	
 	;send to printer and exit
 do_io:
+.if _KERNEL_XLXE
+	mva		icdnoz dunit
+.endif
 	mva		ptimot dtimlo
 	jmp		siov
 
+mode_s:
+	dta		'S'
 iocbdat:
 	dta		$40			;device
 	dta		$01			;unit
@@ -141,6 +143,12 @@ iocbdat:
 	dta		a(prnbuf)	;buffer address
 	dta		a(0)		;timeout
 	dta		a(0)		;buffer length
+mode_n:
+	dta		'N'
+
+.if mode_n-mode_s != 11
+.error "N/S lookup misaligned"
+.endif
 .endp
 
 ;==============================================================================

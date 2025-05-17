@@ -997,6 +997,51 @@
     <ClCompile Include="source\traceimporta800.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\mpp1000e.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\misccvars.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\820full.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\1025full.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\1029full.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\printerbase.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\printerfont.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevprinter.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\autosavemanager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uisavestate.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\savestatetypes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\printeroutput.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\printerttfencoder.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\printer1020font.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\printer1020.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\antic.h">
@@ -1632,6 +1677,48 @@
     <ClInclude Include="h\1030full.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="h\820full.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\1025full.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\1029full.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\printerbase.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\printerfont.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\printer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\autosavemanager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uisavestate.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\savestatetypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\printeroutput.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\printertypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\printerttfencoder.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\printer1020font.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\printer1020.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="h\cpumachine.inl">
@@ -1800,6 +1887,11 @@
     <None Include="res\1030relay.pcm">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="res\printer-1029-pin.pcm" />
+    <None Include="res\printer-1029-platen.pcm" />
+    <None Include="res\printer-1029-retract.pcm" />
+    <None Include="res\printer-1029-home.pcm" />
+    <None Include="res\printer-1025-feed.pcm" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="res\Altirra.rc">

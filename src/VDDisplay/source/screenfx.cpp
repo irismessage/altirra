@@ -19,19 +19,26 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/VDDisplay/internal/screenfx.h>
 
-void VDDisplayCreateGammaRamp(uint32 *gammaTex, uint32 len, bool enableInputConversion, bool useAdobeRgb, float outputGamma) {
+void VDDisplayCreateGammaRamp(uint32 *gammaTex, uint32 len, bool enableInputConversion, float outputGamma, float gammaAdjust) {
+	float correctionFactor = 1.0f / gammaAdjust;
+	
+	bool useSRGB = false;
+	if (enableInputConversion) {
+		if (outputGamma > 0)
+			correctionFactor /= outputGamma;
+		else
+			useSRGB = true;
+	}
+
 	for(uint32 i=0; i<len; ++i) {
 		float x = (float)i / (float)len;
 
-		if (enableInputConversion) {
-			if (useAdobeRgb) {
-				x = powf(x, 1.0f / 2.2f);
-			} else {
-				x = (x < 0.0031308f) ? x * 12.92f : 1.055f * powf(x, 1.0f / 2.4f) - 0.055f;
-			}
+		if (useSRGB) {
+			// sRGB gamma
+			x = (x < 0.0031308f) ? x * 12.92f : 1.055f * powf(x, 1.0f / 2.4f) - 0.055f;
 		}
 
-		float y = powf(x, 1.0f / outputGamma);
+		float y = powf(x, correctionFactor);
 		uint32 px = (uint32)(y * 255.0f + 0.5f) * 0x01010101;
 
 		gammaTex[i] = px;
@@ -70,14 +77,16 @@ void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, ui
 
 	// Apply scanline intensity setting and convert the mask from linear to gamma
 	// space. The intensity setting is adjusted so that the specified level is
-	// achieved in gamma space.
+	// achieved in gamma space. Squaring works pretty well here, we can do a teeny
+	// bit better with a 2.2 approximation (true sRGB is problematic as it's
+	// piecewise).
 
-	intensity *= intensity;
+	intensity = powf(intensity, 2.2f);
 	for(float& y : rawMask) {
 		y = y * (1.0f - intensity) + intensity;
 
 		if (!renderLinear)
-			y = sqrtf(y);
+			y = powf(y, 1.0f / 2.2f);
 	}
 
 	// Convert the mask to texels.

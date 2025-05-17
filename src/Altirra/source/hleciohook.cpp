@@ -43,6 +43,8 @@ public:
 
 	void WarmReset();
 
+	IATDeviceCIOManager *AsDeviceCIOManager() override { return this; }
+
 	bool HasCIODevice(char c) const override;
 	bool GetBurstTransfersEnabled() const override;
 	void SetBurstTransfersEnabled(bool enabled) override;
@@ -54,6 +56,9 @@ public:
 
 	virtual void ReinitHooks(uint8 hookPage) override;
 	void UninitHooks();
+
+	void SetPBIHookEnabled(bool enabled) override;
+	void TryAccelPBIRequest(uint8 entryPointIndex) override;
 
 public:
 	void AddCIODevice(IATDeviceCIO *dev) override;
@@ -68,15 +73,31 @@ public:
 
 protected:
 	uint8 OnHookGeneric(uint16 pc);
-	uint8 HandleGenericDevice(uint16 pc, int function, uint8 deviceNameHint);
+	uint8 HandleGenericDeviceAsHook(uint16 pc, int function, uint8 deviceNameHint);
+
+	enum class HookResult : uint8 {
+		NotHandled,
+		Handled,
+		Poll
+	};
+
+	HookResult HandleGenericDevice(int function, uint8 deviceNameHint);
+
 	uint8 OnHookContinuation(uint16 pc);
-	uint8 OnHookVirtualScreen(uint16 pc);
+	HookResult HandleContinuation();
+	
+	uint8 TranslateHookResult(HookResult result);
+
 	uint8 OnHookCIOV(uint16 pc);
 	uint8 OnHookCIOVInit(uint16 pc);
 	uint8 OnHookCIOINV(uint16 pc);
 	uint8 OnHookCassetteOpen(uint16 pc);
+	uint8 OnHookEditorOpen(uint16 pc);
 	uint8 OnHookEditorGetChar(uint16 pc);
 	uint8 OnHookEditorPutChar(uint16 pc);
+	uint8 OnHookScreenOpen(uint16 pc);
+	uint8 OnHookScreenGetChar(uint16 pc);
+	uint8 OnHookScreenPutChar(uint16 pc);
 
 	void InitHooks(const uint8 *lowerROM, const uint8 *upperROM);
 	bool IsValidOSCIORoutine(const uint8 *lowerROM, const uint8 *upperROM, uint16 pc) const;
@@ -86,45 +107,54 @@ protected:
 	void CloseAllIOCBs();
 	void AbortPendingCommand(IATDeviceCIO *dev);
 
-	ATCPUEmulator *mpCPU;
-	ATSimulator *mpSim;
-	ATMemoryManager *mpMemMan;
+	ATCPUEmulator *mpCPU = nullptr;
+	ATSimulator *mpSim = nullptr;
+	ATMemoryManager *mpMemMan = nullptr;
 
-	uint32	mCIOPatchMask;
-	uint8	mHookPage;
-	bool	mbCIOHandlersEstablished;
-	bool	mbBurstIOEnabled;
-	uint16	mCassetteCIOOpenHandlerHookAddress;
-	uint16	mEditorCIOGetCharHandlerHookAddress;
-	uint16	mEditorCIOPutCharHandlerHookAddress;
+	uint32	mCIOPatchMask = 1U << ('P' - 'A');
+	uint8	mHookPage = 0;
+	bool	mbCIOHandlersEstablished = false;
+	bool	mbBurstIOEnabled = true;
+	bool	mbPBIHookEnabled = false;
+	uint16	mCassetteCIOOpenHandlerHookAddress = 0;
+	uint16	mEditorCIOOpenHandlerHookAddress = 0;
+	uint16	mEditorCIOGetCharHandlerHookAddress = 0;
+	uint16	mEditorCIOPutCharHandlerHookAddress = 0;
+	uint16	mScreenCIOOpenHandlerHookAddress = 0;
+	uint16	mScreenCIOGetCharHandlerHookAddress = 0;
+	uint16	mScreenCIOPutCharHandlerHookAddress = 0;
 	uint16	mPrinterHookAddresses[6] = {};
 
-	ATCPUHookInitNode *mpInitHook;
-	ATCPUHookResetNode *mpResetHook;
+	ATCPUHookInitNode *mpInitHook = nullptr;
+	ATCPUHookResetNode *mpResetHook = nullptr;
 
-	ATCPUHookNode *mpDeviceRoutineHooks[24];
-	ATCPUHookNode *mpCIOVHook;
-	ATCPUHookNode *mpCIOVInitHook;
-	ATCPUHookNode *mpCIOINVHook;
-	ATCPUHookNode *mpCSOPIVHook;
-	ATCPUHookNode *mpCassetteOpenHook;
-	ATCPUHookNode *mpEditorGetCharHook;
-	ATCPUHookNode *mpEditorPutCharHook;
-	ATCPUHookNode *mpContinuationHook;
+	ATCPUHookNode *mpDeviceRoutineHooks[24] {};
+	ATCPUHookNode *mpCIOVHook = nullptr;
+	ATCPUHookNode *mpCIOVInitHook = nullptr;
+	ATCPUHookNode *mpCIOINVHook = nullptr;
+	ATCPUHookNode *mpCSOPIVHook = nullptr;
+	ATCPUHookNode *mpCassetteOpenHook = nullptr;
+	ATCPUHookNode *mpEditorOpenHook = nullptr;
+	ATCPUHookNode *mpEditorGetCharHook = nullptr;
+	ATCPUHookNode *mpEditorPutCharHook = nullptr;
+	ATCPUHookNode *mpScreenOpenHook = nullptr;
+	ATCPUHookNode *mpScreenGetCharHook = nullptr;
+	ATCPUHookNode *mpScreenPutCharHook = nullptr;
+	ATCPUHookNode *mpContinuationHook = nullptr;
 
-	ATMemoryLayer	*mpMemLayerHook;
+	ATMemoryLayer	*mpMemLayerHook = nullptr;
 
 	vdfunction<sint32()> mpContinuationFn;
-	IATDeviceCIO *mpActiveDevice;
-	uint8	mActiveCommand;
-	uint8	mActiveCommandAUX[6];
-	uint8	mActiveChannel;
-	uint8	mActiveDeviceNo;
-	uint8	mActiveDeviceName;
-	uint16	mActiveBufferAddr;
-	uint16	mActiveBufferLength;
-	uint32	mActiveActualLength;
-	uint32	mActiveTransferLength;
+	IATDeviceCIO *mpActiveDevice = nullptr;
+	uint8	mActiveCommand = 0;
+	uint8	mActiveCommandAUX[6] {};
+	uint8	mActiveChannel = 0;
+	uint8	mActiveDeviceNo = 0;
+	uint8	mActiveDeviceName = 0;
+	uint16	mActiveBufferAddr = 0;
+	uint16	mActiveBufferLength = 0;
+	uint32	mActiveActualLength = 0;
+	uint32	mActiveTransferLength = 0;
 
 	vdfastvector<uint8> mLargeTransferBuffer;
 
@@ -138,47 +168,21 @@ protected:
 		uint8 mName;
 	};
 
-	ExtendedIOCB mExtIOCBs[8];
+	ExtendedIOCB mExtIOCBs[8] {};
 
-	IATDeviceCIO *mCIODeviceMap[256];
-	IATDeviceCIO *mCIODeviceMapNew[256];
+	IATDeviceCIO *mCIODeviceMap[256] {};
+	IATDeviceCIO *mCIODeviceMapNew[256] {};
 
-	uint8	mTransferBuffer[1024];
+	uint8	mTransferBuffer[1024] {};
 
-	VDALIGN(4)	uint8	mHookROM[0x100];
+	VDALIGN(4)	uint8	mHookROM[0x100] {};
 
 	static const char kStandardNames[];
 };
 
 const char ATHLECIOHook::kStandardNames[]="ESKPC";
 
-ATHLECIOHook::ATHLECIOHook()
-	: mpCPU(NULL)
-	, mpSim(NULL)
-	, mpMemMan(nullptr)
-	, mCassetteCIOOpenHandlerHookAddress(0)
-	, mEditorCIOGetCharHandlerHookAddress(0)
-	, mEditorCIOPutCharHandlerHookAddress(0)
-	, mCIOPatchMask(1U << ('P' - 'A'))
-	, mHookPage(0)
-	, mbCIOHandlersEstablished(false)
-	, mbBurstIOEnabled(true)
-	, mpInitHook(nullptr)
-	, mpCIOVHook(NULL)
-	, mpCIOVInitHook(NULL)
-	, mpCIOINVHook(NULL)
-	, mpCSOPIVHook(NULL)
-	, mpCassetteOpenHook(NULL)
-	, mpEditorGetCharHook(NULL)
-	, mpEditorPutCharHook(NULL)
-	, mpContinuationHook(nullptr)
-	, mpMemLayerHook(nullptr)
-	, mpContinuationFn()
-	, mpActiveDevice(nullptr)
-{
-	for(auto& hook : mpDeviceRoutineHooks)
-		hook = nullptr;
-
+ATHLECIOHook::ATHLECIOHook() {
 	for(auto& dev : mCIODeviceMap)
 		dev = nullptr;
 
@@ -231,8 +235,12 @@ void ATHLECIOHook::WarmReset() {
 	AbortPendingCommand(nullptr);
 
 	mCassetteCIOOpenHandlerHookAddress = 0;
+	mEditorCIOOpenHandlerHookAddress = 0;
 	mEditorCIOPutCharHandlerHookAddress = 0;
 	mEditorCIOGetCharHandlerHookAddress = 0;
+	mScreenCIOOpenHandlerHookAddress = 0;
+	mScreenCIOPutCharHandlerHookAddress = 0;
+	mScreenCIOGetCharHandlerHookAddress = 0;
 
 	CloseAllIOCBs();
 
@@ -284,7 +292,7 @@ bool ATHLECIOHook::IsHookPageNeeded() const {
 	if (vs)
 		return true;
 
-	if (!mRegisteredDevices.empty())
+	if (!mRegisteredDevices.empty() && !mbPBIHookEnabled)
 		return true;
 
 	return false;
@@ -305,9 +313,6 @@ void ATHLECIOHook::ReinitHooks(uint8 hookPage) {
 
 	const bool genericDevs = !mCIODevices.empty();
 
-	if (vs)
-		vs->SetHookPage(hookPage);
-
 	if (mHookPage) {
 		const uint16 hookPageBase = (uint16)mHookPage << 8;
 
@@ -315,12 +320,6 @@ void ATHLECIOHook::ReinitHooks(uint8 hookPage) {
 			// H:
 			for(int i=0; i<6; ++i)
 				hookmgr.SetHookMethod(mpDeviceRoutineHooks[i], kATCPUHookMode_Always, hookPageBase + 0x71 + 2*i, 0, this, &ATHLECIOHook::OnHookGeneric);
-		}
-
-		// virtual screen
-		if (vs) {
-			for(int i=0; i<6; ++i)
-				hookmgr.SetHookMethod(mpDeviceRoutineHooks[i+12], kATCPUHookMode_Always, hookPageBase + 0x51 + 2*i, 0, this, &ATHLECIOHook::OnHookVirtualScreen);
 		}
 
 		hookmgr.SetHookMethod(mpContinuationHook, kATCPUHookMode_Always, hookPageBase + 0x7F, 0, this, &ATHLECIOHook::OnHookContinuation);
@@ -334,7 +333,7 @@ void ATHLECIOHook::ReinitHooks(uint8 hookPage) {
 
 			hookmgr.SetHook(mpDeviceRoutineHooks[i+18], kATCPUHookMode_KernelROMOnly, mPrinterHookAddresses[i], 0,
 				[i,this](uint16 pc) {
-					return HandleGenericDevice(pc, i * 2, 'P');
+					return HandleGenericDeviceAsHook(pc, i * 2, 'P');
 				}
 			);
 		}
@@ -360,13 +359,25 @@ void ATHLECIOHook::ReinitHooks(uint8 hookPage) {
 	}
 
 	if (vs && mHookPage) {
-		vs->SetGetCharAddress(mEditorCIOGetCharHandlerHookAddress);
+		vs->SetGetCharAddresses(mEditorCIOGetCharHandlerHookAddress, mScreenCIOGetCharHandlerHookAddress);
+
+		if (mEditorCIOOpenHandlerHookAddress)
+			hookmgr.SetHookMethod(mpEditorOpenHook, kATCPUHookMode_KernelROMOnly, mEditorCIOOpenHandlerHookAddress, 0, this, &ATHLECIOHook::OnHookEditorOpen);
 
 		if (mEditorCIOPutCharHandlerHookAddress)
 			hookmgr.SetHookMethod(mpEditorPutCharHook, kATCPUHookMode_KernelROMOnly, mEditorCIOPutCharHandlerHookAddress, 0, this, &ATHLECIOHook::OnHookEditorPutChar);
 
 		if (mEditorCIOGetCharHandlerHookAddress)
 			hookmgr.SetHookMethod(mpEditorGetCharHook, kATCPUHookMode_KernelROMOnly, mEditorCIOGetCharHandlerHookAddress, 0, this, &ATHLECIOHook::OnHookEditorGetChar);
+
+		if (mScreenCIOOpenHandlerHookAddress)
+			hookmgr.SetHookMethod(mpScreenOpenHook, kATCPUHookMode_KernelROMOnly, mScreenCIOOpenHandlerHookAddress, 0, this, &ATHLECIOHook::OnHookScreenOpen);
+
+		if (mScreenCIOPutCharHandlerHookAddress)
+			hookmgr.SetHookMethod(mpScreenPutCharHook, kATCPUHookMode_KernelROMOnly, mScreenCIOPutCharHandlerHookAddress, 0, this, &ATHLECIOHook::OnHookScreenPutChar);
+
+		if (mScreenCIOGetCharHandlerHookAddress)
+			hookmgr.SetHookMethod(mpScreenGetCharHook, kATCPUHookMode_KernelROMOnly, mScreenCIOGetCharHandlerHookAddress, 0, this, &ATHLECIOHook::OnHookScreenGetChar);
 	}
 
 	// Hook layer
@@ -406,6 +417,10 @@ void ATHLECIOHook::UninitHooks() {
 
 	hookmgr.UnsetHook(mpEditorPutCharHook);
 	hookmgr.UnsetHook(mpEditorGetCharHook);
+	hookmgr.UnsetHook(mpEditorOpenHook);
+	hookmgr.UnsetHook(mpScreenPutCharHook);
+	hookmgr.UnsetHook(mpScreenGetCharHook);
+	hookmgr.UnsetHook(mpScreenOpenHook);
 	hookmgr.UnsetHook(mpCassetteOpenHook);
 	hookmgr.UnsetHook(mpCSOPIVHook);
 	hookmgr.UnsetHook(mpCIOVInitHook);
@@ -419,6 +434,26 @@ void ATHLECIOHook::UninitHooks() {
 	if (mpMemLayerHook) {
 		mpMemMan->DeleteLayer(mpMemLayerHook);
 		mpMemLayerHook = nullptr;
+	}
+}
+
+void ATHLECIOHook::SetPBIHookEnabled(bool enabled) {
+	mbPBIHookEnabled = enabled;
+}
+
+void ATHLECIOHook::TryAccelPBIRequest(uint8 entryPointIndex) {
+	switch(entryPointIndex == 6 ? HandleContinuation() : HandleGenericDevice(entryPointIndex * 2, 0)) {
+		case HookResult::NotHandled:
+			mpCPU->SetP(mpCPU->GetP() & ~AT6502::kFlagV);
+			break;
+
+		case HookResult::Handled:
+			mpCPU->SetP((mpCPU->GetP() & ~AT6502::kFlagV) | AT6502::kFlagC);
+			break;
+
+		case HookResult::Poll:
+			mpCPU->SetP(mpCPU->GetP() | AT6502::kFlagV);
+			break;
 	}
 }
 
@@ -523,15 +558,19 @@ bool ATHLECIOHook::IsBreakActive() const {
 uint8 ATHLECIOHook::OnHookGeneric(uint16 pc) {
 	const uint8 function = (uint8)pc & 14;
 
-	return HandleGenericDevice(pc, function, 0);
+	return HandleGenericDeviceAsHook(pc, function, 0);
 }
 
-uint8 ATHLECIOHook::HandleGenericDevice(uint16 pc, int function, uint8 deviceNameHint) {
+uint8 ATHLECIOHook::HandleGenericDeviceAsHook(uint16 pc, int function, uint8 deviceNameHint) {
+	return TranslateHookResult(HandleGenericDevice(function, deviceNameHint));
+}
+
+ATHLECIOHook::HookResult ATHLECIOHook::HandleGenericDevice(int function, uint8 deviceNameHint) {
 	// first, validate the IOCB
 	const uint8 iocb = mpCPU->GetX();
 	if (iocb & 0x8f) {
 		mpCPU->Ldy(kATCIOStat_UnkDevice);
-		return 0x60;
+		return HookResult::Handled;
 	}
 	
 	// look up the extended IOCB
@@ -552,13 +591,13 @@ uint8 ATHLECIOHook::HandleGenericDevice(uint16 pc, int function, uint8 deviceNam
 		if (!dev) {
 			// we don't know this device (weird)
 			mpCPU->Ldy(kATCIOStat_UnkDevice);
-			return 0x60;
+			return HookResult::Handled;
 		}
 
 		// check if this is an override device -- if so, we should bail and let
 		// native CIO handle it; we will soft-open later
 		if (strchr(kStandardNames, (char)name)) {
-			return 0;
+			return HookResult::NotHandled;
 		}
 
 		const uint8 deviceNo = kdb.ICDNOZ;
@@ -620,34 +659,35 @@ uint8 ATHLECIOHook::HandleGenericDevice(uint16 pc, int function, uint8 deviceNam
 
 				if (!dev) {
 					mpCPU->Ldy(kATCIOStat_UnkDevice);
-					return 0x60;
+					return HookResult::Handled;
 				}
 			} else if (softdev && strchr(kStandardNames, (char)name)) {
 				dev = softdev;
 				overrideDevice = true;
 			} else {
 				if (deviceNameHint) {
-					return 0;
+					return HookResult::NotHandled;
 				} else {
 					mpCPU->Ldy(kATCIOStat_UnkDevice);
-					return 0x60;
+					return HookResult::Handled;
 				}
 			}
 
 			deviceNo = (function == 6) ? mem->ReadByte(ATKernelSymbols::ICDNO + iocb) : mem->ReadByte(ATKernelSymbols::ICDNOZ);
 		}
 
-		// if this is an override device, reject calls not to GET BYTE, PUT BYTE, or
-		// STATUS
+		// If this is an override device, reject calls not to GET BYTE, PUT BYTE, or
+		// STATUS. Allow CLOSE through since we need to shadow (but not intercept) it.
 		if (overrideDevice) {
 			switch(function) {
+				case 2:
 				case 4:
 				case 6:
 				case 8:
 					break;
 
 				default:
-					return 0;
+					return HookResult::NotHandled;
 			}
 		}
 
@@ -656,10 +696,21 @@ uint8 ATHLECIOHook::HandleGenericDevice(uint16 pc, int function, uint8 deviceNam
 			case 2:		// close
 				result = dev->OnCIOClose(channel, deviceNo);
 
+				// override devices can only shadow CLOSE
+				if (overrideDevice) {
+					xiocb.mpDevice = nullptr;
+					return HookResult::NotHandled;
+				}
+
 				if (result < 0) {
-					mpCPU->PushWord(pc-1);
-					mpCPU->PushWord(0xE4C0-1);
-					return 0x60;
+					mpActiveDevice = dev;
+					mActiveChannel = channel;
+					mActiveDeviceNo = deviceNo;
+					mpContinuationFn = [this]() -> sint32 {
+						return mpActiveDevice->OnCIOClose(mActiveChannel, mActiveDeviceNo);
+					};
+
+					return HookResult::Poll;
 				}
 
 				xiocb.mpDevice = nullptr;
@@ -777,11 +828,15 @@ uint8 ATHLECIOHook::HandleGenericDevice(uint16 pc, int function, uint8 deviceNam
 				}
 
 				mTransferBuffer[0] = mpCPU->GetA();
+				mActiveActualLength = 0;
 
 				mpContinuationFn = [this]() -> sint32 {
-					uint32 actual;
+					uint32 actual = 0;
+					sint32 result = mpActiveDevice->OnCIOPutBytes(mActiveChannel, mActiveDeviceNo, mTransferBuffer, mActiveActualLength ? 0 : 1, actual);
 
-					return mpActiveDevice->OnCIOPutBytes(mActiveChannel, mActiveDeviceNo, mTransferBuffer, 1, actual);
+					mActiveActualLength += actual;
+
+					return result;
 				};
 
 				break;
@@ -851,41 +906,59 @@ uint8 ATHLECIOHook::HandleGenericDevice(uint16 pc, int function, uint8 deviceNam
 	}
 
 	if (mpContinuationFn)
-		return OnHookContinuation(0);
+		return HandleContinuation();
 
 	mpCPU->Ldy(result);
-	return 0x60;
+	return HookResult::Handled;
 }
 
 uint8 ATHLECIOHook::OnHookContinuation(uint16) {
+	return TranslateHookResult(HandleContinuation());
+}
+
+ATHLECIOHook::HookResult ATHLECIOHook::HandleContinuation() {
 	if (!mpContinuationFn) {
 		mpCPU->Ldy(kATCIOStat_UnkDevice);
-		return 0x60;
+		return HookResult::Handled;
 	}
 
 	sint32 r = mpContinuationFn();
 
 	if (r < 0) {
-		mpCPU->PushWord((uint16)(((uint32)mHookPage << 8) + 0x7F - 1));
-		mpCPU->PushWord(0xE4C0 - 1);
-		return 0x60;
+		if (r == IATDeviceCIO::kCIOStatus_PendingInterruptable) {
+			if (mpCPU->GetMemory()->ReadByte(ATKernelSymbols::BRKKEY) == 0) {
+				AbortPendingCommand(mpActiveDevice);
+
+				mpCPU->Ldy(kATCIOStat_Break);
+				return HookResult::Handled;
+			}
+		}
+
+		return HookResult::Poll;
 	}
 
 	mpContinuationFn = nullptr;
 
 	mpCPU->Ldy((uint8)r);
 
-	return 0x60;
+	return HookResult::Handled;
 }
 
-uint8 ATHLECIOHook::OnHookVirtualScreen(uint16 pc) {
-	IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
+uint8 ATHLECIOHook::TranslateHookResult(HookResult result) {
+	switch(result) {
+		case HookResult::NotHandled:
+			return 0;
 
-	if (!vs)
-		return 0;
+		case HookResult::Handled:
+			return 0x60;
 
-	vs->OnCIOVector(mpCPU, mpCPU->GetMemory(), pc & 14);
-	return 0x60;
+		case HookResult::Poll:
+			mpCPU->PushWord((uint16)(((uint32)mHookPage << 8) + 0x7F - 1));
+			mpCPU->PushWord(0xE4C0 - 1);
+			return 0x60;
+	}
+
+	return 0;
 }
 
 uint8 ATHLECIOHook::OnHookCIOVInit(uint16 pc) {
@@ -1060,26 +1133,6 @@ uint8 ATHLECIOHook::OnHookCIOV(uint16 pc) {
 		}
 	}
 
-	// check character in HATABS and see if it's the printer or editor
-	const uint8 devname = kdb.HATABS[devid];
-	if (devname == 'E') {
-		IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
-
-		if (vs) {
-			const uint8 cmd = kdb.ICCMD[iocbIdx];
-
-			switch(cmd) {
-				case kATCIOCmd_Open:
-					vs->OnCIOVector(mpCPU, mem, 0);
-					break;
-
-				case kATCIOCmd_Close:
-					vs->OnCIOVector(mpCPU, mem, 2);
-					break;
-			}
-		}
-	}
-
 	return 0;
 }
 
@@ -1124,14 +1177,22 @@ uint8 ATHLECIOHook::OnHookCassetteOpen(uint16 pc) {
 	return 0x60;
 }
 
+uint8 ATHLECIOHook::OnHookEditorOpen(uint16 pc) {
+	IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
+
+	if (!vs)
+		return 0;
+
+	return vs->OnEditorCIOVector(mpCPU, mpCPU->GetMemory(), 0 /* open */);
+}
+
 uint8 ATHLECIOHook::OnHookEditorGetChar(uint16 pc) {
 	IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
 
 	if (!vs)
 		return 0;
 
-	vs->OnCIOVector(mpCPU, mpCPU->GetMemory(), 4 /* get byte */);
-	return 0x60;
+	return vs->OnEditorCIOVector(mpCPU, mpCPU->GetMemory(), 4 /* get byte */);
 }
 
 uint8 ATHLECIOHook::OnHookEditorPutChar(uint16 pc) {
@@ -1140,37 +1201,72 @@ uint8 ATHLECIOHook::OnHookEditorPutChar(uint16 pc) {
 	if (!vs)
 		return 0;
 
-	vs->OnCIOVector(mpCPU, mpCPU->GetMemory(), 6 /* put byte */);
-	return 0x60;
+	return vs->OnEditorCIOVector(mpCPU, mpCPU->GetMemory(), 6 /* put byte */);
+}
+
+uint8 ATHLECIOHook::OnHookScreenOpen(uint16 pc) {
+	IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
+
+	if (!vs)
+		return 0;
+
+	return vs->OnScreenCIOVector(mpCPU, mpCPU->GetMemory(), 0 /* open */);
+}
+
+uint8 ATHLECIOHook::OnHookScreenGetChar(uint16 pc) {
+	IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
+
+	if (!vs)
+		return 0;
+
+	return vs->OnScreenCIOVector(mpCPU, mpCPU->GetMemory(), 4 /* get byte */);
+}
+
+uint8 ATHLECIOHook::OnHookScreenPutChar(uint16 pc) {
+	IATVirtualScreenHandler *vs = mpSim->GetVirtualScreenHandler();
+
+	if (!vs)
+		return 0;
+
+	return vs->OnScreenCIOVector(mpCPU, mpCPU->GetMemory(), 6 /* put byte */);
 }
 
 void ATHLECIOHook::InitHooks(const uint8 *lowerROM, const uint8 *upperROM) {
 	mCassetteCIOOpenHandlerHookAddress = 0;
+	mEditorCIOOpenHandlerHookAddress = 0;
 	mEditorCIOPutCharHandlerHookAddress = 0;
 	mEditorCIOGetCharHandlerHookAddress = 0;
+	mScreenCIOOpenHandlerHookAddress = 0;
+	mScreenCIOPutCharHandlerHookAddress = 0;
+	mScreenCIOGetCharHandlerHookAddress = 0;
 
 	for(auto& vec : mPrinterHookAddresses)
 		vec = 0;
 
 	if (upperROM) {
-		// read cassette OPEN vector from kernel ROM
-		uint16 openVec = VDReadUnalignedLEU16(&upperROM[ATKernelSymbols::CASETV - 0xD800]) + 1;
+		// pull various stock device vectors
+		static constexpr struct VectorInfo {
+			uint16 ATHLECIOHook::*mpVariable;
+			uint16 mVecOffset;
+		} kVectorsToGet[] {
+			{ &ATHLECIOHook::mCassetteCIOOpenHandlerHookAddress, ATKernelSymbols::CASETV - 0xD800 },
+			{ &ATHLECIOHook::mEditorCIOOpenHandlerHookAddress, ATKernelSymbols::EDITRV - 0xD800 },
+			{ &ATHLECIOHook::mEditorCIOGetCharHandlerHookAddress, ATKernelSymbols::EDITRV - 0xD800 + 4 },
+			{ &ATHLECIOHook::mEditorCIOPutCharHandlerHookAddress, ATKernelSymbols::EDITRV - 0xD800 + 6 },
+			{ &ATHLECIOHook::mScreenCIOOpenHandlerHookAddress, ATKernelSymbols::SCRENV - 0xD800 },
+			{ &ATHLECIOHook::mScreenCIOGetCharHandlerHookAddress, ATKernelSymbols::SCRENV - 0xD800 + 4 },
+			{ &ATHLECIOHook::mScreenCIOPutCharHandlerHookAddress, ATKernelSymbols::SCRENV - 0xD800 + 6 },
+		};
 
-		if (IsValidOSCIORoutine(lowerROM, upperROM, openVec))
-			mCassetteCIOOpenHandlerHookAddress = openVec;
+		for(const VectorInfo& vecInfo : kVectorsToGet) {
+			uint16 vec = VDReadUnalignedLEU16(&upperROM[vecInfo.mVecOffset]) + 1;
 
-		uint16 editorPutVec = VDReadUnalignedLEU16(&upperROM[ATKernelSymbols::EDITRV - 0xD800 + 6]) + 1;
+			if (IsValidOSCIORoutine(lowerROM, upperROM, vec))
+				(this->*vecInfo.mpVariable) = vec;
+		}
 
-		if (IsValidOSCIORoutine(lowerROM, upperROM, editorPutVec))
-			mEditorCIOPutCharHandlerHookAddress = editorPutVec;
-
-		uint16 editorGetVec = VDReadUnalignedLEU16(&upperROM[ATKernelSymbols::EDITRV - 0xD800 + 4]) + 1;
-
-		if (IsValidOSCIORoutine(lowerROM, upperROM, editorGetVec))
-			mEditorCIOGetCharHandlerHookAddress = editorGetVec;
-
-		// Currently we only hook get byte, put byte and status for the printer.
-		for(int i=2; i<5; ++i) {
+		// Currently we only hook close, get byte, put byte and status for the printer.
+		for(int i=1; i<5; ++i) {
 			const uint16 prvec = VDReadUnalignedLEU16(&upperROM[ATKernelSymbols::PRINTV - 0xD800 + 2*i]) + 1;
 
 			if (IsValidOSCIORoutine(lowerROM, upperROM, prvec))
@@ -1331,8 +1427,16 @@ void ATHLECIOHook::RegisterCIODevices() {
 
 		// install handler
 		hatabs[insertPos++] = name;
-		hatabs[insertPos++] = 0x70;
-		hatabs[insertPos++] = mHookPage;
+
+		if (!mbPBIHookEnabled) {
+			// register using hook page
+			hatabs[insertPos++] = 0x70;
+			hatabs[insertPos++] = mHookPage;
+		} else {
+			// register using GPDVV
+			hatabs[insertPos++] = 0x8F;
+			hatabs[insertPos++] = 0xE4;
+		}
 	}
 
 	// compact HATABS
@@ -1447,7 +1551,7 @@ void ATHLECIOHook::AbortPendingCommand(IATDeviceCIO *dev) {
 	if (!mpContinuationFn)
 		return;
 
-	if (dev && mpActiveDevice != dev) {
+	if (dev && mpActiveDevice == dev) {
 		mpActiveDevice->OnCIOAbortAsync();
 
 		mpActiveDevice = nullptr;
@@ -1467,4 +1571,8 @@ IATHLECIOHook *ATCreateHLECIOHook(ATCPUEmulator *cpu, ATSimulator *sim, ATMemory
 
 void ATDestroyHLECIOHook(IATHLECIOHook *hook) {
 	delete static_cast<ATHLECIOHook *>(hook);
+}
+
+IATHLECIOHook *ATGetHLECIOHook(IATDeviceCIOManager *mgr) {
+	return static_cast<ATHLECIOHook *>(mgr);
 }

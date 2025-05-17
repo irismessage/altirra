@@ -37,33 +37,88 @@
 #ifdef _MSC_VER
 	#include <vd2/system/win32/intrin.h>
 
-	inline uint16 VDSwizzleU16(uint16 value) { return (uint16)_byteswap_ushort((unsigned short)value); }
-	inline sint16 VDSwizzleS16(sint16 value) { return (sint16)_byteswap_ushort((unsigned short)value); }
-	inline uint32 VDSwizzleU32(uint32 value) { return (uint32)_byteswap_ulong((unsigned long)value); }
-	inline sint32 VDSwizzleS32(sint32 value) { return (sint32)_byteswap_ulong((unsigned long)value); }
-	inline uint64 VDSwizzleU64(uint64 value) { return (uint64)_byteswap_uint64((unsigned __int64)value); }
-	inline sint64 VDSwizzleS64(sint64 value) { return (sint64)_byteswap_uint64((unsigned __int64)value); }
+	inline constexpr uint16 VDSwizzleU16(uint16 value) {
+		if (std::is_constant_evaluated()) {
+			return (value >> 8) + (value << 8);
+		} else {
+			return (uint16)_byteswap_ushort((unsigned short)value);
+		}
+	}
+	
+	inline constexpr sint16 VDSwizzleS16(sint16 value) {
+		if (std::is_constant_evaluated()) {
+			return (sint16)(((uint16)value >> 8) + ((uint16)value << 8));
+		} else {
+			return (sint16)_byteswap_ushort((unsigned short)value);
+		}
+	}
+
+	inline constexpr uint32 VDSwizzleU32(uint32 value) {
+		if (std::is_constant_evaluated()) {
+			return (value >> 24) + (value << 24) + ((value&0xff00)<<8) + ((value&0xff0000)>>8);
+		} else {
+			return (uint32)_byteswap_ulong((unsigned long)value);
+		}
+	}
+
+	inline constexpr sint32 VDSwizzleS32(sint32 value) {
+		if (std::is_constant_evaluated()) {
+			return (sint32)(((uint32)value >> 24) + ((uint32)value << 24) + (((uint32)value&0xff00)<<8) + (((uint32)value&0xff0000)>>8));
+		} else {
+			return (sint32)_byteswap_ulong((unsigned long)value);
+		}
+	}
+
+	inline constexpr uint64 VDSwizzleU64(uint64 value) {
+		if (std::is_constant_evaluated()) {
+			return	((value & 0xFF00000000000000) >> 56) +
+					((value & 0x00FF000000000000) >> 40) +
+					((value & 0x0000FF0000000000) >> 24) +
+					((value & 0x000000FF00000000) >>  8) +
+					((value & 0x00000000FF000000) <<  8) +
+					((value & 0x0000000000FF0000) << 24) +
+					((value & 0x000000000000FF00) << 40) +
+					((value & 0x00000000000000FF) << 56);
+		} else {
+			return (uint64)_byteswap_uint64((unsigned __int64)value);
+		}
+	}
+
+	inline constexpr sint64 VDSwizzleS64(sint64 value) {
+		if (std::is_constant_evaluated()) {
+			return (sint64)((((uint64)value & 0xFF00000000000000) >> 56) +
+							(((uint64)value & 0x00FF000000000000) >> 40) +
+							(((uint64)value & 0x0000FF0000000000) >> 24) +
+							(((uint64)value & 0x000000FF00000000) >>  8) +
+							(((uint64)value & 0x00000000FF000000) <<  8) +
+							(((uint64)value & 0x0000000000FF0000) << 24) +
+							(((uint64)value & 0x000000000000FF00) << 40) +
+							(((uint64)value & 0x00000000000000FF) << 56));
+		} else {
+			return (sint64)_byteswap_uint64((unsigned __int64)value);
+		}
+	}
 
 	inline uint32 VDRotateLeftU32(uint32 value, int bits) { return (uint32)_rotl((unsigned int)value, bits); }
 	inline uint32 VDRotateRightU32(uint32 value, int bits) { return (uint32)_rotr((unsigned int)value, bits); }
 #else
-	inline uint16 VDSwizzleU16(uint16 value) {
+	inline constexpr uint16 VDSwizzleU16(uint16 value) {
 		return (value >> 8) + (value << 8);
 	}
 
-	inline sint16 VDSwizzleS16(sint16 value) {
+	inline constexpr sint16 VDSwizzleS16(sint16 value) {
 		return (sint16)(((uint16)value >> 8) + ((uint16)value << 8));
 	}
 
-	inline uint32 VDSwizzleU32(uint32 value) {
+	inline constexpr uint32 VDSwizzleU32(uint32 value) {
 		return (value >> 24) + (value << 24) + ((value&0xff00)<<8) + ((value&0xff0000)>>8);
 	}
 
-	inline sint32 VDSwizzleS32(sint32 value) {
+	inline constexpr sint32 VDSwizzleS32(sint32 value) {
 		return (sint32)(((uint32)value >> 24) + ((uint32)value << 24) + (((uint32)value&0xff00)<<8) + (((uint32)value&0xff0000)>>8));
 	}
 
-	inline uint64 VDSwizzleU64(uint64 value) {
+	inline constexpr uint64 VDSwizzleU64(uint64 value) {
 		return	((value & 0xFF00000000000000) >> 56) +
 				((value & 0x00FF000000000000) >> 40) +
 				((value & 0x0000FF0000000000) >> 24) +
@@ -74,7 +129,7 @@
 				((value & 0x00000000000000FF) << 56);
 	}
 
-	inline sint64 VDSwizzleS64(sint64 value) {
+	inline constexpr sint64 VDSwizzleS64(sint64 value) {
 		return (sint64)((((uint64)value & 0xFF00000000000000) >> 56) +
 						(((uint64)value & 0x00FF000000000000) >> 40) +
 						(((uint64)value & 0x0000FF0000000000) >> 24) +
@@ -274,5 +329,19 @@ inline void VDWriteUnalignedBED(void *p, double v) {
 #define VDToBEU16(x)	VDSwizzleU16(x)
 #define VDToBEU32(x)	VDSwizzleU32(x)
 #define VDToBEU64(x)	VDSwizzleU64(x)
+
+////////////////////////////////////////////////////////////////////////////////
+
+template<typename T>
+struct vdbe;
+
+template<> struct vdbe<uint8> { uint8 val; vdbe() = default; vdbe(uint8 v) : val(v) {} vdbe& operator=(uint8 v) { val = v; return *this; } operator uint8() const { return val; } };
+template<> struct vdbe<sint8> { sint8 val; vdbe() = default; vdbe(sint8 v) : val(v) {} vdbe& operator=(sint8 v) { val = v; return *this; } operator sint8() const { return val; } };
+template<> struct vdbe<uint16> { uint8 buf[2]; vdbe() = default; vdbe(uint16 v) { VDWriteUnalignedBEU16(buf, v); } vdbe& operator=(uint16 v) { VDWriteUnalignedBEU16(buf, v); return *this; } operator uint16() const { return VDReadUnalignedBEU16(buf); } };
+template<> struct vdbe<sint16> { uint8 buf[2]; vdbe() = default; vdbe(sint16 v) { VDWriteUnalignedBEU16(buf, v); } vdbe& operator=(sint16 v) { VDWriteUnalignedBEU16(buf, v); return *this; } operator sint16() const { return VDReadUnalignedBEU16(buf); } };
+template<> struct vdbe<uint32> { uint8 buf[4]; vdbe() = default; vdbe(uint32 v) { VDWriteUnalignedBEU32(buf, v); } vdbe& operator=(uint32 v) { VDWriteUnalignedBEU32(buf, v); return *this; } operator uint32() const { return VDReadUnalignedBEU32(buf); } };
+template<> struct vdbe<sint32> { uint8 buf[4]; vdbe() = default; vdbe(sint32 v) { VDWriteUnalignedBEU32(buf, v); } vdbe& operator=(sint32 v) { VDWriteUnalignedBEU32(buf, v); return *this; } operator sint32() const { return VDReadUnalignedBEU32(buf); } };
+template<> struct vdbe<uint64> { uint8 buf[8]; vdbe() = default; vdbe(uint64 v) { VDWriteUnalignedBEU64(buf, v); } vdbe& operator=(uint64 v) { VDWriteUnalignedBEU64(buf, v); return *this; } operator uint64() const { return VDReadUnalignedBEU64(buf); } };
+template<> struct vdbe<sint64> { uint8 buf[8]; vdbe() = default; vdbe(sint64 v) { VDWriteUnalignedBEU64(buf, v); } vdbe& operator=(sint64 v) { VDWriteUnalignedBEU64(buf, v); return *this; } operator sint64() const { return VDReadUnalignedBEU64(buf); } };
 
 #endif

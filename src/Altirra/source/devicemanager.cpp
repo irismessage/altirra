@@ -193,11 +193,17 @@ uint32 ATDeviceManager::GetDeviceCount() const {
 	return mDevices.size();
 }
 
-IATDevice *ATDeviceManager::GetDeviceByTag(const char *tag, uint32 index) const {
+IATDevice *ATDeviceManager::GetDeviceByTag(const char *tag, uint32 index, bool visibleOnly, bool externalOnly) const {
 	for(auto it = mDevices.begin(), itEnd = mDevices.end();
 		it != itEnd;
 		++it)
 	{
+		if (visibleOnly && it->mbHidden)
+			continue;
+
+		if (externalOnly && it->mbInternal)
+			continue;
+
 		if (!strcmp(it->mpTag, tag)) {
 			if (!index--)
 				return it->mpDevice;
@@ -452,6 +458,60 @@ void ATDeviceManager::AddDeviceStatusCallback(const vdfunction<void(IATDevice&)>
 
 void ATDeviceManager::RemoveDeviceStatusCallback(const vdfunction<void(IATDevice&)> *cb) {
 	mStatusHandlers.Remove(cb);
+}
+
+void ATDeviceManager::ReconfigureDevice(IATDevice& dev, const ATPropertySet& pset) {
+	if (dev.SetSettings(pset)) {
+		IncrementChangeCounter();
+		return;
+	}
+
+	vdrefptr devholder(&dev);
+
+	vdfastvector<IATDevice *> childDevices;
+	IATDevice *devPtr = &dev;
+	MarkAndSweep(&devPtr, 1, childDevices);
+
+	IATDeviceParent *parent = dev.GetParent();
+	uint32 busIndex = 0;
+	IATDeviceBus *bus = nullptr;
+
+	if (parent) {
+		busIndex = dev.GetParentBusIndex();
+		bus = parent->GetDeviceBus(busIndex);
+		bus->RemoveChildDevice(&dev);
+	}
+
+	ATDeviceInfo devInfo;
+	dev.GetDeviceInfo(devInfo);
+	
+	const VDStringA configTag(devInfo.mpDef->mpConfigTag);
+
+	RemoveDevice(&dev);
+
+	devholder.clear();
+
+	while(!childDevices.empty()) {
+		IATDevice *child = childDevices.back();
+		childDevices.pop_back();
+
+		RemoveDevice(child);
+	}
+
+	IATDevice *newChild = AddDevice(configTag.c_str(), pset, parent != nullptr);
+
+	if (bus && newChild) {
+		bus->AddChildDevice(newChild);
+	}
+
+	MarkAndSweep(nullptr, 0, childDevices);
+
+	while(!childDevices.empty()) {
+		IATDevice *child = childDevices.back();
+		childDevices.pop_back();
+
+		RemoveDevice(child);
+	}
 }
 
 void ATDeviceManager::MarkAndSweep(IATDevice *const *pExcludedDevs, size_t numExcludedDevs, vdfastvector<IATDevice *>& garbage) {

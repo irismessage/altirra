@@ -164,6 +164,7 @@
     <Xml Include="source\systems-800.xml" />
     <Xml Include="source\systems-xegs.xml" />
     <Xml Include="source\systems-xlxe.xml" />
+    <Xml Include="source\tape-rawimages.xml" />
     <Xml Include="source\using-the-emulated-computer.xml">
       <SubType>Designer</SubType>
     </Xml>

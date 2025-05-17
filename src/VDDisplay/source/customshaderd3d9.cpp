@@ -339,7 +339,7 @@ void VDDisplayCustomShaderD3D9::Init(const char *shaderPath8, const VDDisplayCus
 					auto size = pref.size();
 
 					if (size > 0x10000)
-						throw MyError("Pass %u %s shader '%ls' is too large.", pass + 1, shaderType, precompiledPath.c_str());
+						throw VDException(L"Pass %u %hs shader '%ls' is too large.", pass + 1, shaderType, precompiledPath.c_str());
 
 					uint32 size4 = (uint32)size >> 2;
 					bytecode.resize(size4);
@@ -350,7 +350,7 @@ void VDDisplayCustomShaderD3D9::Init(const char *shaderPath8, const VDDisplayCus
 					const uint32 versionLo = versionBase + 0x0101;		// vs/ps_1_1
 					const uint32 versionHi = versionBase + 0x0300;		// vs/ps_3_0
 					if (!VDD3DXCheckShaderSize(bytecode.data(), size4 * 4) || bytecode[0] < versionLo || bytecode[0] > versionHi)
-						throw MyError("Pass %u: invalid precompiled %s shader '%ls'", pass + 1, shaderType, precompiledPath.c_str());
+						throw VDException(L"Pass %u: invalid precompiled %hs shader '%ls'", pass + 1, shaderType, precompiledPath.c_str());
 
 					continue;
 				}
@@ -362,7 +362,7 @@ void VDDisplayCustomShaderD3D9::Init(const char *shaderPath8, const VDDisplayCus
 				// nope... try original
 				fxPath = VDMakePath(VDStringSpanW(basePath), shaderPath);
 				if (!VDDoesPathExist(fxPath.c_str()))
-					throw MyError("Pass %u %s shader: cannot find '%ls' or a precompiled/HLSL specific version", pass + 1, shaderType, shaderPath.c_str());
+					throw VDException(L"Pass %u %hs shader: cannot find '%ls' or a precompiled/HLSL specific version", pass + 1, shaderType, shaderPath.c_str());
 			}
 
 			if (!hmod) {

@@ -120,10 +120,19 @@ enum ATCartridgeMode : uint32 {
 	kATCartridgeMode_MDDOS,
 	kATCartridgeMode_COS32K,
 	kATCartridgeMode_Pronto,
+	kATCartridgeMode_JAtariCart_8K,			// J(atari)Cart by Jakub Husak (https://github.com/jhusak/jataricart)
+	kATCartridgeMode_JAtariCart_16K,
+	kATCartridgeMode_JAtariCart_32K,
+	kATCartridgeMode_JAtariCart_64K,
+	kATCartridgeMode_JAtariCart_128K,
+	kATCartridgeMode_JAtariCart_256K,
+	kATCartridgeMode_JAtariCart_512K,
+	kATCartridgeMode_JAtariCart_1024K,
+	kATCartridgeMode_DCart,					// DCart by Grzegorz "GienekP" Karpiel (https://dcart.pl)
 	kATCartridgeModeCount
 };
 
-static constexpr uint32 kATCartridgeMapper_Max = 70;
+static constexpr uint32 kATCartridgeMapper_Max = 160;
 
 ATCartridgeMode ATGetCartridgeModeForMapper(int mapper);
 int ATGetCartridgeMapperForMode(ATCartridgeMode mode, uint32 size);

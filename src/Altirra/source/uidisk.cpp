@@ -1092,7 +1092,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_SAVEDISKAS, haveNonDynamicDisk);
 						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_EXPLOREDISK, haveDisk);
 						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_REVERTDISK, haveDisk && diskIf.CanRevert());
-						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_SHOWDISKFILEINEXPLORER, haveDisk && diskIf.IsDiskBacked() && ATVFSIsFilePath(diskIf.GetPath()));
+						VDEnableMenuItemByCommandW32(hsubmenu, ID_CONTEXT_SHOWDISKFILEINEXPLORER, haveDisk && diskIf.IsDiskBacked() && ATVFSExtractFilePath(diskIf.GetPath(), nullptr));
 
 						TPMPARAMS params = {sizeof(TPMPARAMS)};
 						params.rcExclude = r;
@@ -1408,8 +1408,10 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 						break;
 
 					case ID_CONTEXT_SHOWDISKFILEINEXPLORER:
-						if (const wchar_t *path = diskIf.GetPath(); ATVFSIsFilePath(path)) {
-							ATShowFileInSystemExplorer(path);
+						if (const wchar_t *path = diskIf.GetPath()) {
+							VDStringW filePath;
+							if (ATVFSExtractFilePath(path, &filePath))
+								ATShowFileInSystemExplorer(filePath.c_str());
 						}
 						break;
 				}

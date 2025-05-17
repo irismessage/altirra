@@ -75,22 +75,38 @@ VDFile::VDFile(HANDLE h)
 	mFilePosition = (uint32)lo + ((uint64)(uint32)hi << 32);
 }
 
+vdnothrow VDFile::VDFile(VDFile&& other) vdnoexcept
+	: mhFile(other.mhFile)
+	, mpFilename(std::move(other.mpFilename))
+	, mFilePosition(other.mFilePosition)
+{
+	other.mhFile = nullptr;
+}
+
 VDFile::~VDFile() {
 	closeNT();
+}
+
+vdnothrow VDFile& VDFile::operator=(VDFile&& other) vdnoexcept {
+	std::swap(mhFile, other.mhFile);
+	std::swap(mpFilename, other.mpFilename);
+	std::swap(mFilePosition, other.mFilePosition);
+
+	return *this;
 }
 
 void VDFile::open(const char *pszFilename, uint32 flags) {
 	uint32 err = open_internal(pszFilename, NULL, flags);
 
 	if (err)
-		throw MyWin32Error("Cannot open file \"%s\":\n%%s", err, pszFilename);
+		throw VDWin32Exception(L"Cannot open file \"%s\":\n%%s", err, pszFilename);
 }
 
 void VDFile::open(const wchar_t *pwszFilename, uint32 flags) {
 	uint32 err = open_internal(NULL, pwszFilename, flags);
 
 	if (err)
-		throw MyWin32Error("Cannot open file \"%ls\":\n%%s", err, pwszFilename);
+		throw VDWin32Exception(L"Cannot open file \"%ls\":\n%%s", err, pwszFilename);
 }
 
 bool VDFile::openNT(const wchar_t *pwszFilename, uint32 flags) {
@@ -104,7 +120,7 @@ bool VDFile::tryOpen(const wchar_t *pwszFilename, uint32 flags) {
 		return false;
 
 	if (err)
-		throw MyWin32Error("Cannot open file \"%ls\":\n%%s", err, pwszFilename);
+		throw VDWin32Exception(L"Cannot open file \"%ls\":\n%%s", err, pwszFilename);
 
 	return true;
 }
@@ -116,7 +132,7 @@ bool VDFile::openAlways(const wchar_t *pwszFilename, uint32 flags) {
 		return true;
 
 	if (err)
-		throw MyWin32Error("Cannot open file \"%ls\":\n%%s", err, pwszFilename);
+		throw VDWin32Exception(L"Cannot open file \"%ls\":\n%%s", err, pwszFilename);
 
 	return true;
 }
@@ -222,7 +238,7 @@ bool VDFile::closeNT() {
 
 void VDFile::close() {
 	if (!closeNT())
-		throw MyWin32Error("Cannot complete file \"%ls\": %%s", GetLastError(), mpFilename.get());
+		throw VDWin32Exception(L"Cannot complete file \"%ls\": %%s", GetLastError(), mpFilename.get());
 }
 
 bool VDFile::truncateNT() {
@@ -231,7 +247,7 @@ bool VDFile::truncateNT() {
 
 void VDFile::truncate() {
 	if (!truncateNT())
-		throw MyWin32Error("Cannot truncate file \"%ls\": %%s", GetLastError(), mpFilename.get());
+		throw VDWin32Exception(L"Cannot truncate file \"%ls\": %%s", GetLastError(), mpFilename.get());
 }
 
 bool VDFile::extendValidNT(sint64 pos) {
@@ -250,7 +266,7 @@ bool VDFile::extendValidNT(sint64 pos) {
 
 void VDFile::extendValid(sint64 pos) {
 	if (!extendValidNT(pos))
-		throw MyWin32Error("Cannot extend file \"%ls\": %%s", GetLastError(), mpFilename.get());
+		throw VDWin32Exception(L"Cannot extend file \"%ls\": %%s", GetLastError(), mpFilename.get());
 }
 
 bool VDFile::enableExtendValid() {
@@ -291,7 +307,7 @@ long VDFile::readData(void *buffer, long length) {
 	DWORD dwActual;
 
 	if (!ReadFile(mhFile, buffer, (DWORD)length, &dwActual, NULL))
-		throw MyWin32Error("Cannot read from file \"%ls\": %%s", GetLastError(), mpFilename.get());
+		throw VDWin32Exception(L"Cannot read from file \"%ls\": %%s", GetLastError(), mpFilename.get());
 
 	mFilePosition += dwActual;
 
@@ -300,7 +316,7 @@ long VDFile::readData(void *buffer, long length) {
 
 void VDFile::read(void *buffer, long length) {
 	if (length != readData(buffer, length))
-		throw MyWin32Error("Cannot read from file \"%ls\": Premature end of file.", GetLastError(), mpFilename.get());
+		throw VDWin32Exception(L"Cannot read from file \"%ls\": Premature end of file.", GetLastError(), mpFilename.get());
 }
 
 long VDFile::writeData(const void *buffer, long length) {
@@ -314,12 +330,12 @@ long VDFile::writeData(const void *buffer, long length) {
 	return dwActual;
 
 found_error:
-	throw MyWin32Error("Cannot write to file \"%ls\": %%s", GetLastError(), mpFilename.get());
+	throw VDWin32Exception(L"Cannot write to file \"%ls\": %%s", GetLastError(), mpFilename.get());
 }
 
 void VDFile::write(const void *buffer, long length) {
 	if (length != writeData(buffer, length))
-		throw MyWin32Error("Cannot write to file \"%ls\": Unable to write all data.", GetLastError(), mpFilename.get());
+		throw VDWin32Exception(L"Cannot write to file \"%ls\": Unable to write all data.", GetLastError(), mpFilename.get());
 }
 
 bool VDFile::seekNT(sint64 newPos, eSeekMode mode) {
@@ -356,7 +372,7 @@ bool VDFile::seekNT(sint64 newPos, eSeekMode mode) {
 
 void VDFile::seek(sint64 newPos, eSeekMode mode) {
 	if (!seekNT(newPos, mode))
-		throw MyWin32Error("Cannot seek within file \"%ls\": %%s", GetLastError(), mpFilename.get());
+		throw VDWin32Exception(L"Cannot seek within file \"%ls\": %%s", GetLastError(), mpFilename.get());
 }
 
 bool VDFile::skipNT(sint64 delta) {
@@ -379,7 +395,7 @@ void VDFile::skip(sint64 delta) {
 
 	if (delta > 0 && delta <= sizeof buf) {
 		if ((long)delta != readData(buf, (long)delta))
-			throw MyWin32Error("Cannot seek within file \"%ls\": %%s", GetLastError(), mpFilename.get());
+			throw VDWin32Exception(L"Cannot seek within file \"%ls\": %%s", GetLastError(), mpFilename.get());
 	} else
 		seek(delta, kSeekCur);
 }
@@ -395,7 +411,7 @@ sint64 VDFile::size() const {
 	DWORD err;
 
 	if (u.l[0] == (DWORD)-1L && (err = GetLastError()) != NO_ERROR)
-		throw MyWin32Error("Cannot retrieve size of file \"%ls\": %%s", GetLastError(), mpFilename.get());
+		throw VDWin32Exception(L"Cannot retrieve size of file \"%ls\": %%s", GetLastError(), mpFilename.get());
 
 	return (sint64)u.siz;
 }
@@ -410,7 +426,7 @@ bool VDFile::flushNT() {
 
 void VDFile::flush() {
 	if (!flushNT())
-		throw MyWin32Error("Cannot flush file \"%ls\": %%s", GetLastError(), mpFilename.get());
+		throw VDWin32Exception(L"Cannot flush file \"%ls\": %%s", GetLastError(), mpFilename.get());
 }
 
 bool VDFile::isOpen() const {

@@ -16,6 +16,7 @@
 
 #include <stdafx.h>
 #include <at/atcore/deviceparent.h>
+#include <at/atcore/propertyset.h>
 #include "devicemanager.h"
 #include "oshelper.h"
 #include "uiclipboard.h"
@@ -62,6 +63,61 @@ void ATDeviceXCmdCopy<T_IncludeChildren>::Invoke(ATDeviceManager& devmgr, IATDev
 	if (!s.empty()) {
 		ATCopyTextToClipboard(nullptr, s.c_str());
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+class ATDeviceXCmdCopyCmdLine final : public ATDeviceXCmdCopyBase {
+public:
+	bool IsPostRefreshNeeded() const override { return false; }
+	bool IsSupported(IATDevice *dev, int busIndex) const override;
+	ATDeviceXCmdInfo GetInfo() const override;
+	void Invoke(ATDeviceManager& devMgr, IATDevice *dev, int busIndex) override;
+};
+
+ATDeviceXCmdCopyCmdLine g_ATDeviceXCmdCopyCmdLine;
+
+bool ATDeviceXCmdCopyCmdLine::IsSupported(IATDevice *dev, int busIndex) const {
+	if (!dev)
+		return false;
+
+	return true;
+}
+
+ATDeviceXCmdInfo ATDeviceXCmdCopyCmdLine::GetInfo() const {
+	ATDeviceXCmdInfo info;
+
+	info.mbRequiresElevation = false;
+	info.mDisplayName = L"Copy For Command Line";
+	return info;
+}
+
+void ATDeviceXCmdCopyCmdLine::Invoke(ATDeviceManager& devmgr, IATDevice *dev, int busIndex) {
+	if (!dev)
+		return;
+
+	VDStringW s;
+
+	ATDeviceInfo devInfo;
+	dev->GetDeviceInfo(devInfo);
+
+	if (devInfo.mpDef->mFlags & kATDeviceDefFlag_Internal)
+		s = L"/setdevice:";
+	else
+		s = L"/adddevice:";
+
+	s += VDTextAToW(devInfo.mpDef->mpConfigTag);
+
+	ATPropertySet pset;
+	dev->GetSettings(pset);
+
+	if (!pset.IsEmpty()) {
+		s += L',';
+		s += pset.ToCommandLineString();
+	}
+
+	if (!s.empty())
+		ATCopyTextToClipboard(nullptr, s.c_str());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -150,5 +206,6 @@ IATDeviceXCmd& ATGetDeviceXCmdPaste() {
 void ATDeviceInitXCmdCopyPaste(ATDeviceManager& dm) {
 	dm.RegisterExtendedCommand(g_ATDeviceXCmdCopy<false>);
 	dm.RegisterExtendedCommand(g_ATDeviceXCmdCopy<true>);
+	dm.RegisterExtendedCommand(g_ATDeviceXCmdCopyCmdLine);
 	dm.RegisterExtendedCommand(g_ATDeviceXCmdPaste);
 }

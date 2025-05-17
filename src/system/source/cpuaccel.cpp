@@ -81,6 +81,10 @@ long CPUCheckForExtensions() {
 			if (cpuInfo[2] & 0x00000200)
 				flags |= CPUF_SUPPORTS_SSSE3;
 
+			// ECX{12] = FMA
+			if (cpuInfo[2] & 0x00001000)
+				flags |= VDCPUF_SUPPORTS_FMA;
+
 			// ECX[19] = SSE4.1
 			if (cpuInfo[2] & 0x00080000) {
 				flags |= CPUF_SUPPORTS_SSE41;
@@ -93,6 +97,8 @@ long CPUCheckForExtensions() {
 				// Bulldozer/Jaguar support AVX. 
 				//
 				if (cpuInfo[2] & (1 << 20)) {
+					flags |= CPUF_SUPPORTS_SSE42;
+
 					if (cpuInfo[2] & (1 << 1))
 						flags |= CPUF_SUPPORTS_CLMUL;
 				}
@@ -112,8 +118,13 @@ long CPUCheckForExtensions() {
 
 						__cpuidex(cpuInfo7_0, 7, 0);
 
+						// EBX[3] = BMI1
 						// EBX[5] = AVX2
-						if (cpuInfo7_0[1] & (1 << 5)) {
+						// EBX[8] = BMI2
+						static constexpr uint32 BMI1 = UINT32_C(1) << 3;
+						static constexpr uint32 AVX2 = UINT32_C(1) << 5;
+						static constexpr uint32 BMI2 = UINT32_C(1) << 8;
+						if ((cpuInfo7_0[1] & (AVX2 | BMI1 | BMI2)) == (AVX2 | BMI1 | BMI2)) {
 							flags |= CPUF_SUPPORTS_AVX2;
 
 							// EBX[5] = SHA

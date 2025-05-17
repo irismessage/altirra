@@ -90,9 +90,6 @@
     <ClCompile Include="source\list.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\log.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\math.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -106,9 +103,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\registry.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\h\vd2\system\source\registrymemory.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\strutil.cpp">
@@ -166,6 +160,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\constexpr.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\registrymemory.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -231,9 +228,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\VD2\system\list.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\h\vd2\system\log.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\vd2\system\math.h">
@@ -363,6 +357,24 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\vd2\system\constexpr.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\vd2\system\vdstl_ilist.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\vd2\system\vdstl_fastdeque.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\vd2\system\vdstl_fastvector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\vd2\system\vdstl_block.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\vd2\system\vdstl_structex.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\vd2\system\vecmath_neon.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

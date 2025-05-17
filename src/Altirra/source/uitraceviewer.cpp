@@ -17,7 +17,9 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/constexpr.h>
 #include <vd2/system/file.h>
+#include <vd2/system/filesys.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/w32assist.h>
@@ -60,6 +62,7 @@ extern ATSimulator g_sim;
 
 ///////////////////////////////////////////////////////////////////////////
 
+void ATUIShowDialogTapeEditorAtLocation(uint32 sample, float pixelsPerSample);
 void ATUINotifyTraceViewerThemeChanged();
 vdrefptr<ATTraceCollection> ATLoadTraceFromAtari800(const wchar_t *file);
 
@@ -1172,6 +1175,7 @@ private:
 	void OnMouseDownL(int x, int y) override;
 	void OnMouseUpL(int x, int y) override;
 	void OnMouseWheel(int x, int y, sint32 delta) override;
+	void OnContextMenu(uint32 id, int x, int y) override;
 	bool OnSetCursor(ATUICursorImage& image);
 	void OnCaptureLost() override;
 	bool OnShouldErase() override;
@@ -1190,6 +1194,7 @@ private:
 	void RecomputeEndTime();
 	double PixelToTime(sint32 x) const;
 	sint32 TimeToPixel(double t) const;
+	ATUITraceViewerChannel *PointToTraceChannel(const vdpoint32& cpt) const;
 
 	ATUITraceViewerContext& mContext;
 	sint32 mWidth = 0;
@@ -1433,6 +1438,37 @@ void ATUITraceViewerEventView::OnMouseWheel(int x, int y, sint32 delta) {
 	}
 }
 
+void ATUITraceViewerEventView::OnContextMenu(uint32 id, int x, int y) {
+	if (y < 0)
+		return;
+
+	vdpoint32 cpt = TransformScreenToClient(vdpoint32(x, y));
+	ATUITraceViewerChannel *ch = PointToTraceChannel(cpt);
+
+	if (!ch || ch->mType != ATUITraceViewerChannel::kType_Tape)
+		return;
+
+	ATTraceChannelTape *tapeChannel = static_cast<ATTraceChannelTape *>(&*ch->mpChannel);
+	const double timeSeconds = PixelToTime(cpt.x);
+
+	tapeChannel->StartIteration(timeSeconds, tapeChannel->GetDuration(), 0);
+
+	ATTraceEvent ev;
+	if (tapeChannel->GetNextEvent(ev)) {
+		const auto& tapeEvent = tapeChannel->GetLastEvent();
+		const double samplesPerSec = tapeChannel->GetSamplesPerSec();
+		uint32 pos = VDClampToUint32((sint64)(0.5 + (timeSeconds - ev.mEventStart) * samplesPerSec) + (sint64)tapeEvent.mPosition);
+
+		switch(ActivateCommandPopupMenuReturnId(x, y, IDR_PERFANALYZER_TAPE_MENU, nullptr)) {
+			case ID_CONTEXT_GOTOTAPEEDITOR: {
+				float pixelsPerTapeSample = 1.0f / (mSecondsPerPixel * samplesPerSec);
+				ATUIShowDialogTapeEditorAtLocation(pos, pixelsPerTapeSample);
+				break;
+			}
+		}
+	}
+}
+
 bool ATUITraceViewerEventView::OnSetCursor(ATUICursorImage& image) {
 	image = mContext.mbSelectionMode ? kATUICursorImage_IBeam : kATUICursorImage_Arrow;
 	return true;
@@ -1661,26 +1697,82 @@ bool ATUITraceViewerEventView::OnPaint() {
 
 									uint32 *pLo = mTapeBlitBuffer.data();
 									uint32 *pHi = pLo + blitw * (blith - 1);
-									const uint32 color = 0xFF70A0FF;
 
-									for(sint32 x=0; x<blitw; ++x) {
-										const uint32 pos = (uint32)(pos32 >> 32);
-										const bool bit = image->GetBit(pos, turbo);
-										pos32 += posinc32;
+									static constexpr auto kColorTable = VDCxArray<uint32, 32>::from_index(
+										[](size_t i) {
+											const float f1 = (float)i / 31.0f;
+											const float f0 = 1.0f - f1;
 
-										if (bit != lastBit) {
-											uint32 *p = pLo + x;
+											// #70A0FF
+											const uint32 r = (uint32)(0.5f + VDCxSqrt(112.0f * 112.0f * f1 + 32.0f * 32.0f * f0));
+											const uint32 g = (uint32)(0.5f + VDCxSqrt(160.0f * 160.0f * f1 + 32.0f * 32.0f * f0));
+											const uint32 b = (uint32)(0.5f + VDCxSqrt(255.0f * 255.0f * f1 + 32.0f * 32.0f * f0));
 
-											for(sint32 y=0; y<blith; ++y) {
-												*p = color;
-												p += blitw;
+											return UINT32_C(0xFF000000) + (r << 16) + (g << 8) + b;
+										}
+									);
+
+									static constexpr auto kColorTable2 = VDCxArray<uint32, 32>::from_index(
+										[](size_t i) {
+											const float f1 = 0.15f + 0.85f * (float)i / 31.0f;
+											const float f0 = 1.0f - f1;
+
+											// #70A0FF
+											const uint32 r = (uint32)(0.5f + VDCxSqrt(112.0f * 112.0f * f1 + 32.0f * 32.0f * f0));
+											const uint32 g = (uint32)(0.5f + VDCxSqrt(160.0f * 160.0f * f1 + 32.0f * 32.0f * f0));
+											const uint32 b = (uint32)(0.5f + VDCxSqrt(255.0f * 255.0f * f1 + 32.0f * 32.0f * f0));
+
+											return UINT32_C(0xFF000000) + (r << 16) + (g << 8) + b;
+										}
+									);
+
+									uint32 bitWidth = std::max<uint32>(1, (uint32)((posinc32 + UINT32_C(0xFFFFFFFF)) >> 32));
+
+									if (bitWidth < 2) {
+										const uint32 color = 0xFF70A0FF;
+
+										for(sint32 x=0; x<blitw; ++x) {
+											const uint32 pos = (uint32)(pos32 >> 32);
+											const bool bit = image->GetBit(pos, turbo);
+											pos32 += posinc32;
+
+											if (bit != lastBit) {
+												uint32 *p = pLo + x;
+
+												for(sint32 y=0; y<blith; ++y) {
+													*p = color;
+													p += blitw;
+												}
+											} if (bit)
+												pHi[x] = color;
+											else
+												pLo[x] = color;
+
+											lastBit = bit;
+										}
+									} else {
+										const uint32 bitCountScale = (31 << 12) / bitWidth;
+										for(sint32 x=0; x<blitw; ++x) {
+											const uint32 pos = (uint32)(pos32 >> 32);
+											const auto info = image->GetTransitionInfo(pos, bitWidth, turbo);
+
+											const uint32 markFrac = (info.mMarkBits * bitCountScale + 2048) >> 12;
+											pos32 += posinc32;
+
+											if (info.mTransitionBits > 0) {
+												const uint32 transitionFrac = (info.mTransitionBits * bitCountScale + 2048) >> 12;
+												uint32 *p = pLo + x;
+
+												const uint32 color = kColorTable2[transitionFrac];
+												for(sint32 y=0; y<blith; ++y) {
+													*p = color;
+													p += blitw;
+												}
 											}
-										} if (bit)
-											pHi[x] = color;
-										else
-											pLo[x] = color;
-
-										lastBit = bit;
+										
+											pHi[x] = kColorTable[markFrac];
+											pLo[x] = kColorTable[31 - markFrac];
+										}
 									}
 
 									BITMAPINFO bi = {
@@ -1799,6 +1891,26 @@ sint32 ATUITraceViewerEventView::TimeToPixel(double t) const {
 	t = std::max<double>(t - mStartTime, -5 * mSecondsPerPixel);
 	t = std::min<double>(t, mEndTime - mStartTime + mSecondsPerPixel * 5);
 	return (sint32)floor(t / mSecondsPerPixel);
+}
+
+ATUITraceViewerChannel *ATUITraceViewerEventView::PointToTraceChannel(const vdpoint32& cpt) const {
+	for(const auto *group : mContext.mGroups) {
+		const sint32 groupY = group->mPosY;
+
+		if (cpt.y < groupY || (cpt.y - groupY) >= group->mHeight)
+			continue;
+
+		for(auto *ch : group->mChannels) {
+			const sint32 chY = ch->mPosY + groupY;
+
+			if (cpt.y >= chY && (cpt.y - chY) < ch->mHeight)
+				return ch;
+		}
+
+		break;
+	}
+
+	return nullptr;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1926,6 +2038,8 @@ class ATUITraceViewer;
 class IATUITraceViewerHost {
 public:
 	virtual void SetTraceViewer(ATUITraceViewer *viewer) = 0;
+	virtual void ClearLoadedTraceName() = 0;
+	virtual void SetLoadedTraceNameCaptured() = 0;
 };
 
 class ATUITraceViewer final : public VDDialogFrameW32, public IATUITraceViewer {
@@ -2063,6 +2177,7 @@ void ATUITraceViewer::StartStopTracing() {
 		mbRecording = true;
 
 		SetCollection(nullptr);
+		mHost.ClearLoadedTraceName();
 
 		g_sim.SetTracingEnabled(&mSettings);
 		g_sim.Resume();
@@ -2074,6 +2189,7 @@ void ATUITraceViewer::StartStopTracing() {
 		g_sim.Pause();
 
 		SetCollection(newCollection);
+		mHost.SetLoadedTraceNameCaptured();
 	}
 
 	mToolbar.SetItemText(kToolbarId_StartStop, mbRecording ? L"Stop" : L"Start");
@@ -2406,7 +2522,7 @@ void ATUITraceViewer::Load(const wchar_t *path) {
 
 	for(sint32 i=0; i<n; ++i) {
 		const VDZipArchive::FileInfo& info = ziparch.GetFileInfo(i);
-		if (info.mFileName == "trace.json") {
+		if (info.mDecodedFileName == L"trace.json") {
 			vdautoptr ds(ATCreateSaveStateDeserializer(L"trace.json"));
 
 			ATProgress progress;
@@ -3070,7 +3186,11 @@ void ATUITraceViewer::OpenProfile() {
 
 class ATUIPerformanceAnalyzerContainerWindow : public ATContainerWindow, public IATUITraceViewerHost {
 public:
+	void SetBaseCaption(const wchar_t *caption);
+
 	void SetTraceViewer(ATUITraceViewer *viewer) override;
+	void ClearLoadedTraceName() override;
+	void SetLoadedTraceNameCaptured() override;
 
 private:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
@@ -3084,10 +3204,32 @@ private:
 	void DoLoad();
 	void DoSave();
 	void DoImportAtari800();
+	void UpdateCaption();
 
 	ATUITraceViewer *mpTraceViewer = nullptr;
 	HMENU mhmenu = nullptr;
+	VDStringW mBaseCaption;
+	VDStringW mLoadedTraceName;
 };
+
+void ATUIPerformanceAnalyzerContainerWindow::SetBaseCaption(const wchar_t *caption) {
+	mBaseCaption = caption;
+	UpdateCaption();
+}
+
+void ATUIPerformanceAnalyzerContainerWindow::ClearLoadedTraceName() {
+	if (!mLoadedTraceName.empty()) {
+		mLoadedTraceName.clear();
+		UpdateCaption();
+	}
+}
+
+void ATUIPerformanceAnalyzerContainerWindow::SetLoadedTraceNameCaptured() {
+	static unsigned sTraceNumber = 0;
+
+	mLoadedTraceName.sprintf(L"Captured Trace %u", ++sTraceNumber);
+	UpdateCaption();
+}
 
 void ATUIPerformanceAnalyzerContainerWindow::SetTraceViewer(ATUITraceViewer *viewer) {
 	mpTraceViewer = viewer;
@@ -3182,6 +3324,8 @@ void ATUIPerformanceAnalyzerContainerWindow::DoLoad() {
 		return;
 
 	mpTraceViewer->Load(path.c_str());
+	mLoadedTraceName = VDFileSplitPath(path.c_str());
+	UpdateCaption();
 }
 
 void ATUIPerformanceAnalyzerContainerWindow::DoSave() {
@@ -3193,17 +3337,34 @@ void ATUIPerformanceAnalyzerContainerWindow::DoSave() {
 		return;
 
 	mpTraceViewer->Save(path.c_str());
+	mLoadedTraceName = VDFileSplitPath(path.c_str());
+	UpdateCaption();
 }
 
 void ATUIPerformanceAnalyzerContainerWindow::DoImportAtari800() {
 	if (!mpTraceViewer)
 		return;
 
-	const VDStringW& path = VDGetLoadFileName(VDMAKEFOURCC('t', 'r', 'c', 'e'), (VDGUIHandle)mhwnd, L"Import Atari800WinPLus 4.0 Monitor Trace", L"A8WP Trace\0*.*\0", nullptr);
+	const VDStringW& path = VDGetLoadFileName(VDMAKEFOURCC('t', 'r', 'c', 'e'), (VDGUIHandle)mhwnd, L"Import Atari800WinPLus 4.0 / Atari800 5.x Monitor Trace", L"Atari800 Trace\0*.*\0", nullptr);
 	if (path.empty())
 		return;
 
 	mpTraceViewer->ImportA800(path.c_str());
+	mLoadedTraceName = VDFileSplitPath(path.c_str());
+	UpdateCaption();
+}
+
+void ATUIPerformanceAnalyzerContainerWindow::UpdateCaption() {
+	VDStringW caption;
+
+	caption = mBaseCaption;
+
+	if (!mLoadedTraceName.empty()) {
+		caption += L" - ";
+		caption += mLoadedTraceName;
+	}
+
+	SetCaption(caption.c_str());
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -3212,7 +3373,7 @@ void ATUIOpenTraceViewer(VDGUIHandle h, ATTraceCollection *collection) {
 	vdrefptr<ATUIPerformanceAnalyzerContainerWindow> container { new ATUIPerformanceAnalyzerContainerWindow };
 
 	if (container->Create(CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, nullptr, true)) {
-		SetWindowTextW(container->GetHandleW32(), L"Altirra Performance Analyzer");
+		container->SetBaseCaption(L"Altirra Performance Analyzer");
 
 		vdrefptr<ATFrameWindow> frame(new ATFrameWindow(container));
 

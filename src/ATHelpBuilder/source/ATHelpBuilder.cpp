@@ -405,7 +405,7 @@ private:
 		for each(String^ s in images) {
 			System::Console::WriteLine("[copying image] {0}", s);
 
-			String^ relPath = s->Replace('/', '\\');
+			String^ relPath = s->Replace(L'/', L'\\');
 			String^ relDir = Path::GetDirectoryName(relPath);
 
 			Directory::CreateDirectory(Path::Combine(mOutputPath, relDir));

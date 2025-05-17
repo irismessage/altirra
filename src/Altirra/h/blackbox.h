@@ -45,7 +45,6 @@ class ATBlackBoxEmulator final : public ATDevice
 	, public IATDeviceParent
 	, public ATDeviceBus
 	, public IATDeviceIndicators
-	, public IATDevicePrinterPort
 	, public IATDeviceSnapshot
 	, public IATSCSIBusMonitor
 	, public IATSchedulerCallback
@@ -102,9 +101,6 @@ public:
 public:
 	void InitIndicators(IATDeviceIndicatorManager *r) override;
 
-public:
-	void SetPrinterDefaultOutput(IATPrinterOutput *out) override;
-
 public:		// IATDeviceSnapshot
 	void GetSnapshotStatus(ATSnapshotStatus& status) const override;
 	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx) override;
@@ -157,7 +153,7 @@ protected:
 	ATMemoryLayer *mpMemLayerRAM;
 	ATMemoryLayer *mpMemLayerFirmware;
 
-	IATPrinterOutput *mpPrinterOutput;
+	vdrefptr<IATPrinterOutput> mpPrinterOutput;
 
 	struct SCSIDiskEntry {
 		IATDevice *mpDevice;

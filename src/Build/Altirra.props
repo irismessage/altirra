@@ -16,6 +16,7 @@
     <VDConfigDirTag>Unknown</VDConfigDirTag>
     <VDConfigDirTag Condition="$(Configuration)=='Debug'">Debug</VDConfigDirTag>
     <VDConfigDirTag Condition="$(Configuration)=='Profile'">Profile</VDConfigDirTag>
+    <VDConfigDirTag Condition="$(Configuration)=='ProfileClang'">ProfileClang</VDConfigDirTag>
     <VDConfigDirTag Condition="$(Configuration)=='Analysis'">Analysis</VDConfigDirTag>
     <VDConfigDirTag Condition="$(Configuration)=='Release'">Release</VDConfigDirTag>
     <VDToolsConfigDirTag>Release</VDToolsConfigDirTag>

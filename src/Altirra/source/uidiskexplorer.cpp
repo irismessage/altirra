@@ -66,6 +66,7 @@ protected:
 	void OnDestroy() override;
 	void OnWrapModeChanged(VDUIProxyComboBoxControl *sender, int sel);
 	void ReloadFile();
+	void DecodeMAC65(VDStringA& rtf, const uint8 *src, size_t len);
 
 	const void *mpSrc;
 	size_t mSrcLen;
@@ -77,6 +78,7 @@ protected:
 		kViewMode_38Columns,
 		kViewMode_HexDump,
 		kViewMode_Executable,
+		kViewMode_MAC65,
 		kViewModeCount
 	};
 
@@ -104,6 +106,7 @@ bool ATUIFileViewer::OnLoaded() {
 	mViewModeCombo.AddItem(L"Text: wrap to GR.0 screen (38 columns)");
 	mViewModeCombo.AddItem(L"Hex dump");
 	mViewModeCombo.AddItem(L"Executable");
+	mViewModeCombo.AddItem(L"MAC/65");
 
 	VDRegistryAppKey key("Settings", false);
 	mViewMode = (ViewMode)key.getEnumInt("File Viewer: View mode", kViewModeCount, (int)kViewMode_38Columns);
@@ -244,6 +247,8 @@ void ATUIFileViewer::ReloadFile() {
 				start += tc;
 			}
 		}
+	} else if (mViewMode == kViewMode_MAC65) {
+		DecodeMAC65(rtf, src, mSrcLen);
 	} else for(size_t i=0; i<mSrcLen; ++i) {
 		unsigned char c = src[i];
 
@@ -371,6 +376,356 @@ void ATUIFileViewer::ReloadFile() {
 
 	SendMessageW(hwndHelp, WM_SETREDRAW, TRUE, 0);
 	RedrawWindow(hwndHelp, nullptr, nullptr, RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN);
+}
+
+void ATUIFileViewer::DecodeMAC65(VDStringA& rtf, const uint8 *src, size_t len) {
+	if (len < 4 || src[0] != 0xFE || src[1] != 0xFE) {
+		rtf.append("[Invalid MAC/65 source file]\\par");
+		return;
+	}
+
+	size_t maxLen = VDReadUnalignedLEU16(&src[2]);
+	if (len > maxLen)
+		len = maxLen;
+
+	src += 4;
+
+	while(len >= 3) {
+		const uint16 lineNo = VDReadUnalignedLEU16(&src[0]);
+		const size_t lineLen = src[2];
+
+		// the line length includes the line header, so it cannot be less than 3
+		if (lineLen < 3 || lineLen > len) {
+			rtf.append("[Invalid line header]\\par");
+			break;
+		}
+
+		size_t offset = 3;
+		size_t xout = 0;
+		bool statement = true;
+		bool comment = false;
+
+		// MAC/65 formats line numbers a bit weirdly: 0, 01, 10, 0100, 1000, 010000...
+		if (lineNo == 0) {
+			rtf += "0";
+			++xout;
+		} else if (lineNo < 100) {
+			rtf.append_sprintf("%02u", lineNo);
+			xout += 2;
+		} else if (lineNo < 10000) {
+			rtf.append_sprintf("%04u", lineNo);
+			xout += 4;
+		} else {
+			rtf.append_sprintf("%06u", lineNo);
+			xout += 6;
+		}
+
+		rtf += ' ';
+		++xout;
+
+		const auto appendChar = [&](uint8 c) {
+			if (c >= 0x20 && c < 0x7F) {
+				if (c == '{' || c == '}' || c == '\\')
+					rtf.append_sprintf("\\'%02x", c);
+				else
+					rtf += (char)c;
+			} else
+				rtf.append_sprintf("<$%02X>", c);
+		};
+
+		while(offset < lineLen) {
+			uint8 c = src[offset++];
+
+			// check for label token
+			if (c >= 0x80 || comment) {
+				if (comment)
+					--offset;
+
+				size_t idLen = comment ? lineLen - offset : c - 0x80;
+
+				if (lineLen - offset < idLen)
+					break;
+
+				xout += idLen;
+				while(idLen--) {
+					c = src[offset++];
+
+					appendChar(c);
+				}
+
+				continue;
+			}
+
+			// process statement or expression token
+			const char *token = nullptr;
+
+			if (statement) {
+				// special case comment line, which should not be indented
+				if (c == 88) {
+					// comment line
+					comment = true;
+					continue;
+				}
+
+				// indent to column 10, min 1 space
+				while(xout < 9) {
+					++xout;
+					rtf += ' ';
+				}
+
+				if (rtf.back() != ' ')
+					rtf += ' ';
+
+				switch(c) {
+					case 0: token = "ERROR -"; break;
+					case 1: token = ".IF"; break;
+					case 2: token = ".ELSE"; break;
+					case 3: token = ".ENDIF"; break;
+					case 4: token = ".MACRO"; break;
+					case 5: token = ".ENDM"; break;
+					case 6: token = ".TITLE"; break;
+
+					case 7:
+						// macro
+						token = "";
+						break;
+
+					case 8: token = ".PAGE"; break;
+					case 9: token = ".WORD"; break;
+					case 10: token = ".ERROR"; break;
+					case 11: token = ".BYTE"; break;
+					case 12: token = ".SBYTE"; break;
+					case 13: token = ".DBYTE"; break;
+					case 14: token = ".END"; break;
+					case 15: token = ".OPT"; break;
+					case 16: token = ".TAB"; break;
+					case 17: token = ".INCLUDE"; break;
+					case 18: token = ".DS"; break;
+					case 19: token = ".ORG"; break;
+					case 20: token = ".EQU"; break;
+					case 21: token = "BRA"; break;
+					case 22: token = "TRB"; break;
+					case 23: token = "TSB"; break;
+					case 24: token = ".FLOAT"; break;
+					case 25: token = ".CBYTE"; break;
+					case 26: token = ";"; break;
+					case 27: token = ".LOCAL"; break;
+					case 28: token = ".SET"; break;
+					case 29: token = "*="; break;
+					case 30: token = "="; break;
+					case 31: token = ".="; break;
+					case 32: token = "JSR"; break;
+					case 33: token = "JMP"; break;
+					case 34: token = "DEC"; break;
+					case 35: token = "INC"; break;
+					case 36: token = "LDX"; break;
+					case 37: token = "LDY"; break;
+					case 38: token = "STX"; break;
+					case 39: token = "STY"; break;
+					case 40: token = "CPX"; break;
+					case 41: token = "CPY"; break;
+					case 42: token = "BIT"; break;
+					case 43: token = "BRK"; break;
+					case 44: token = "CLC"; break;
+					case 45: token = "CLD"; break;
+					case 46: token = "CLI"; break;
+					case 47: token = "CLV"; break;
+					case 48: token = "DEX"; break;
+					case 49: token = "DEY"; break;
+					case 50: token = "INX"; break;
+					case 51: token = "INY"; break;
+					case 52: token = "NOP"; break;
+					case 53: token = "PHA"; break;
+					case 54: token = "PHP"; break;
+					case 55: token = "PLA"; break;
+					case 56: token = "PLP"; break;
+					case 57: token = "RTI"; break;
+					case 58: token = "RTS"; break;
+					case 59: token = "SEC"; break;
+					case 60: token = "SED"; break;
+					case 61: token = "SEI"; break;
+					case 62: token = "TAX"; break;
+					case 63: token = "TAY"; break;
+					case 64: token = "TSX"; break;
+					case 65: token = "TXA"; break;
+					case 66: token = "TXS"; break;
+					case 67: token = "TYA"; break;
+					case 68: token = "BCC"; break;
+					case 69: token = "BCS"; break;
+					case 70: token = "BEQ"; break;
+					case 71: token = "BMI"; break;
+					case 72: token = "BNE"; break;
+					case 73: token = "BPL"; break;
+					case 74: token = "BVC"; break;
+					case 75: token = "BVS"; break;
+					case 76: token = "ORA"; break;
+					case 77: token = "AND"; break;
+					case 78: token = "EOR"; break;
+					case 79: token = "ADC"; break;
+					case 80: token = "STA"; break;
+					case 81: token = "LDA"; break;
+					case 82: token = "CMP"; break;
+					case 83: token = "SBC"; break;
+					case 84: token = "ASL"; break;
+					case 85: token = "ROL"; break;
+					case 86: token = "LSR"; break;
+					case 87: token = "ROR"; break;
+					// 88 (comment line) handled above
+					case 89: token = "STZ"; break;
+					case 90: token = "DEA"; break;
+					case 91: token = "INA"; break;
+					case 92: token = "PHX"; break;
+					case 93: token = "PHY"; break;
+					case 94: token = "PLX"; break;
+					case 95: token = "PLY"; break;
+
+					default:
+						break;
+				}
+			} else {
+				if (c == 5) {
+					if (lineLen - offset < 2)
+						break;
+
+					const unsigned c = VDReadUnalignedLEU16(&src[offset]);
+					offset += 2;
+
+					rtf.append_sprintf("$%04X", c);
+					xout += 5;
+				} else if (c == 6) {
+					if (lineLen - offset < 1)
+						break;
+
+					const unsigned c = src[offset++];
+
+					rtf.append_sprintf("$%02X", c);
+					xout += 3;
+				} else if (c == 7) {
+					if (lineLen - offset < 2)
+						break;
+
+					const unsigned num = VDReadUnalignedLEU16(&src[offset]);
+					offset += 2;
+
+					if (num >= 10000) ++xout;
+					if (num >= 1000) ++xout;
+					if (num >= 100) ++xout;
+					if (num >= 10) ++xout;
+					++xout;
+
+					rtf.append_sprintf("%u", num);
+				} else if (c == 8) {
+					if (lineLen - offset < 1)
+						break;
+
+					const unsigned num = src[offset++];
+					if (num >= 100) ++xout;
+					if (num >= 10) ++xout;
+					++xout;
+
+					rtf.append_sprintf("%u", c);
+				} else if (c == 10) {
+					if (lineLen - offset < 1)
+						break;
+
+					const unsigned c = src[offset++];
+					appendChar(c);
+					++xout;
+				} else if (c == 59) {
+					comment = true;
+					token = "";
+				} else {
+					switch(c) {
+						case 11: token = "%$"; break;
+						case 12: token = "%"; break;
+						case 13: token = "*"; break;
+						case 18: token = "+"; break;
+						case 19: token = "-"; break;
+						case 20: token = "*"; break;
+						case 21: token = "/"; break;
+						case 22: token = "&"; break;
+						case 24: token = "="; break;
+						case 25: token = "<="; break;
+						case 26: token = ">="; break;
+						case 27: token = "<>"; break;
+						case 28: token = ">"; break;
+						case 29: token = "<"; break;
+						case 30: token = "-"; break;
+						case 31: token = "["; break;
+						case 32: token = "]"; break;
+						case 36: token = "!"; break;
+						case 37: token = "%"; break;
+						case 39: token = "\\"; break;
+						case 47: token = ".REF"; break;
+						case 48: token = ".DEF"; break;
+						case 49: token = ".NOT"; break;
+						case 50: token = ".AND"; break;
+						case 51: token = ".OR"; break;
+						case 52: token = "<"; break;
+						case 53: token = ">"; break;
+						case 54: token = ",X)"; break;
+						case 55: token = "),Y"; break;
+						case 56: token = ",Y"; break;
+						case 57: token = ",X"; break;
+						case 58: token = ")"; break;
+
+						case 61: token = ","; break;
+						case 62: token = "#"; break;
+						case 63: token = "A"; break;
+						case 64: token = "("; break;
+						case 65: token = "\""; break;
+						case 69: token = "NO"; break;
+						case 70: token = "OBJ"; break;
+						case 71: token = "ERR"; break;
+						case 72: token = "EJECT"; break;
+						case 73: token = "LIST"; break;
+						case 74: token = "XREF"; break;
+						case 75: token = "MLIST"; break;
+						case 76: token = "CLIST"; break;
+						case 77: token = "NUM"; break;
+
+						default:
+							break;
+					}
+				}
+			}
+
+			if (token) {
+				rtf += token;
+				xout += strlen(token);
+
+				// when starting the comment column, indent to column 22, minimum two spaces
+				if (comment) {
+					while(xout < 21) {
+						++xout;
+						rtf += ' ';
+					}
+
+					if (rtf.back() == ' ') {
+						if (rtf.end()[-2] != ' ') {
+							++xout;
+							rtf += ' ';
+						}
+					} else {
+						xout += 2;
+						rtf += "  ";
+					}
+				}
+			}
+
+			if (statement) {
+				statement = false;
+
+				rtf += ' ';
+				++xout;
+			}
+		}
+
+		rtf += "\\line ";
+
+		src += lineLen;
+		len -= lineLen;
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -664,7 +1019,7 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 
 			SetFocusToControl(IDC_DISK_CONTENTS);
 		} catch(const MyError& e) {
-			ShowError(VDTextAToW(e.gets()).c_str(), L"Disk load error");
+			ShowError(e.wc_str(), L"Disk load error");
 			End(false);
 			return true;
 		}
@@ -802,9 +1157,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 					ATImageLoadContext ctx;
 					ctx.mLoadType = kATImageType_Disk;
 
-					VDFileStream fstream(fnp);
-					vdrefptr<IATImage> image0;
-					ATImageLoadAuto(fnp, fnp, fstream, &ctx, nullptr, nullptr, ~image0);
+					vdrefptr<IATImage> image0 = ATImageLoadFromFile(fnp, &ctx);
 
 					image = vdpoly_cast<IATDiskImage *>(image0);
 
@@ -846,7 +1199,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 						mpFS->DeleteFile(fle->mFileKey);
 					} catch(const MyError& e) {
 						VDStringW str;
-						str.sprintf(L"Cannot delete file \"%ls\": %hs", fle->mFileName.c_str(), e.gets());
+						str.sprintf(L"Cannot delete file \"%ls\": %ls", fle->mFileName.c_str(), e.wc_str());
 						ShowError(str.c_str(), L"Altirra Error");
 					}
 				}
@@ -893,7 +1246,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 						viewer.ShowDialog(this);
 					} catch(const MyError& e) {
 						VDStringW str;
-						str.sprintf(L"Cannot view file: %hs", e.gets());
+						str.sprintf(L"Cannot view file: %ls", e.wc_str());
 						ShowError(str.c_str(), L"Altirra Error");
 					}
 				}
@@ -1021,12 +1374,10 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 			vdrefptr<IATDiskImage> image;
 
 			{
-				VDFileStream fstream(s.c_str());
 				ATImageLoadContext ctx;
 				ctx.mLoadType = kATImageType_Disk;
 
-				vdrefptr<IATImage> image0;
-				ATImageLoadAuto(s.c_str(), s.c_str(), fstream, &ctx, nullptr, nullptr, ~image0);
+				vdrefptr<IATImage> image0 = ATImageLoadFromFile(s.c_str(), &ctx);
 
 				image = vdpoly_cast<IATDiskImage *>(image0);
 			}
@@ -1246,7 +1597,7 @@ void ATUIDialogDiskExplorer::OnItemLabelChanged(VDUIProxyListView *sender, VDUIP
 				event->mbAllowEdit = false;
 
 				VDStringW s;
-				s.sprintf(L"Cannot create directory \"%ls\": %hs", event->mpNewLabel, e.gets());
+				s.sprintf(L"Cannot create directory \"%ls\": %ls", event->mpNewLabel, e.wc_str());
 				ShowError(s.c_str(), L"Altirra Error");
 
 				PostCall([idx,this]() { mList.DeleteItem(idx); });
@@ -1267,7 +1618,7 @@ void ATUIDialogDiskExplorer::OnItemLabelChanged(VDUIProxyListView *sender, VDUIP
 		event->mbAllowEdit = false;
 
 		VDStringW s;
-		s.sprintf(L"Cannot rename \"%ls\" to \"%ls\": %hs", fle->mFileName.c_str(), event->mpNewLabel, e.gets());
+		s.sprintf(L"Cannot rename \"%ls\" to \"%ls\": %ls", fle->mFileName.c_str(), event->mpNewLabel, e.wc_str());
 		ShowError(s.c_str(), L"Altirra Error");
 	}
 }

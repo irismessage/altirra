@@ -110,6 +110,10 @@ struct ATKnownFirmware {
 
 	{ 0x329B1D5B,  4096, kATFirmwareType_1030InternalROM, L"Atari 1030 internal 8050 firmware" },
 	{ 0x7ABDB8E7,  8192, kATFirmwareType_1030ExternalROM, L"Atari 1030 external ROM firmware" },
+
+	{ 0x79E0FEA4,  2048, kATFirmwareType_820, L"Atari 820 firmware" },
+	{ 0x46D194B4,  4096, kATFirmwareType_1025, L"Atari 1025 firmware" },
+	{ 0x19C4F811,  4096, kATFirmwareType_1029, L"Atari 1029 firmware (English)" },
 };
 
 bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {

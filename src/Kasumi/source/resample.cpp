@@ -97,6 +97,7 @@ bool VDPixmapResampler::Init(const vdrect32f& dstrect0, uint32 dw, uint32 dh, in
 	if (dstformat != srcformat || (
 			srcformat != nsVDPixmap::kPixFormat_XRGB8888 &&
 			srcformat != nsVDPixmap::kPixFormat_Y8 &&
+			srcformat != nsVDPixmap::kPixFormat_Y8_FR &&
 			srcformat != nsVDPixmap::kPixFormat_YUV444_Planar &&
 			srcformat != nsVDPixmap::kPixFormat_YUV444_Planar_FR &&
 			srcformat != nsVDPixmap::kPixFormat_YUV444_Planar_709 &&
@@ -213,6 +214,7 @@ bool VDPixmapResampler::Init(const vdrect32f& dstrect0, uint32 dw, uint32 dh, in
 			break;
 
 		case nsVDPixmap::kPixFormat_Y8:
+		case nsVDPixmap::kPixFormat_Y8_FR:
 			gen.ldsrc(0, 0, 0, 0, sw, sh, kVDPixType_8, sw);
 			ApplyFilters(gen, mDstRectPlane0.width(), mDstRectPlane0.height(), xoffset, yoffset, xfactor, yfactor);
 			break;
@@ -260,6 +262,7 @@ void VDPixmapResampler::Process(const VDPixmap& dst, const VDPixmap& src) {
 	switch(dst.format) {
 		case nsVDPixmap::kPixFormat_XRGB8888:
 		case nsVDPixmap::kPixFormat_Y8:
+		case nsVDPixmap::kPixFormat_Y8_FR:
 			mpBlitter->Blit(dst, &mDstRectPlane0, src);
 			break;
 

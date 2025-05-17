@@ -5,14 +5,6 @@
 #include <at/atui/uimenulist.h>
 #include <at/atui/uicontainer.h>
 
-template<>
-void vdmove<ATUIMenuItem>(ATUIMenuItem& dst, ATUIMenuItem& src) {
-	vdmove(dst.mText, src.mText);
-	dst.mpSubMenu.from(src.mpSubMenu);
-	dst.mbSeparator = src.mbSeparator;
-	dst.mbDisabled = src.mbDisabled;
-}
-
 namespace {
 	void DrawBevel(IVDDisplayRenderer& rdr, const vdrect32& r, uint32 tlColor, uint32 brColor) {
 		vdpoint32 pts[5] = {

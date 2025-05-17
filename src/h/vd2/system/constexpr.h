@@ -65,8 +65,8 @@ struct VDCxArray {
 	[[nodiscard]] constexpr       T& back()       { return v[N-1]; }
 	[[nodiscard]] constexpr const T& back() const { return v[N-1]; }
 
-	[[nodiscard]] constexpr bool   empty() const { return false; }
-	[[nodiscard]] constexpr size_t size() const { return N; }
+	[[nodiscard]] consteval bool   empty() const { return false; }
+	[[nodiscard]] consteval size_t size() const { return N; }
 
 	template<typename T_Src>
 	static constexpr VDCxArray transform(T_Src&& input, auto&& fn) {
@@ -88,7 +88,92 @@ struct VDCxArray {
 	}
 };
 
-inline constexpr float VDCxNarrowToFloat(double d) {
+template<typename Key, typename Value>
+struct VDCxPair {
+	Key first;
+	Value second;
+};
+
+template<typename Key, typename Value, size_t N, size_t NumBuckets>
+class VDCxHashMap {
+public:
+	using Entry = VDCxPair<Key, Value>;
+	using Index = std::conditional_t<(N < 256), uint8, std::conditional_t<(N < 65536), uint16, uint32>>;
+
+	using value_type      = Entry;
+	using size_type       = size_t;
+	using difference_type = ptrdiff_t;
+	using reference       = Entry&;
+	using const_reference = const Entry&;
+	using pointer         = Entry*;
+	using const_pointer   = const Entry*;
+	using iterator        = Entry*;
+	using const_iterator  = const Entry*;
+	using reverse_iterator       = std::reverse_iterator<iterator>;
+	using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+
+	constexpr void init(const Entry (&entries)[N]) {
+		uint32 hashfirst[NumBuckets] {};
+		uint32 hashnext[N] {};
+
+		for(size_t i = 0; i < N; ++i) {
+			size_t h = (size_t)entries[i].first % NumBuckets;
+
+			hashnext[i] = hashfirst[h];
+			hashfirst[h] = i + 1;
+		}
+
+		size_t count = 0;
+		for(size_t h = 0; h < NumBuckets; ++h) {
+			mPartitions[h] = (Index)count;
+
+			for(uint32 i = hashfirst[h]; i; i = hashnext[i - 1])
+				mEntries[count++] = entries[i - 1];
+		}
+
+		mPartitions[NumBuckets] = (Index)count;
+	}
+
+	[[nodiscard]] constexpr Entry&       operator[](size_t i)       { return mEntries[i]; }
+	[[nodiscard]] constexpr const Entry& operator[](size_t i) const { return mEntries[i]; }
+
+	[[nodiscard]] constexpr       Entry *begin()       { return mEntries; }
+	[[nodiscard]] constexpr const Entry *begin() const { return mEntries; }
+	[[nodiscard]] constexpr       Entry *end()       { return mEntries+N; }
+	[[nodiscard]] constexpr const Entry *end() const { return mEntries+N; }
+
+	[[nodiscard]] constexpr       Entry *data()       { return mEntries; }
+	[[nodiscard]] constexpr const Entry *data() const { return mEntries; }
+
+	[[nodiscard]] constexpr       Entry& front()       { return mEntries[0]; }
+	[[nodiscard]] constexpr const Entry& front() const { return mEntries[0]; }
+
+	[[nodiscard]] constexpr       Entry& back()       { return mEntries[N-1]; }
+	[[nodiscard]] constexpr const Entry& back() const { return mEntries[N-1]; }
+
+	[[nodiscard]] constexpr bool   empty() const { return false; }
+	[[nodiscard]] constexpr size_t size() const { return N; }
+
+	[[nodiscard]] constexpr iterator find(const Key& k) const {
+		const size_t h = (size_t)k % NumBuckets;
+		const Index idx1 = mPartitions[h];
+		const Index idx2 = mPartitions[h + 1];
+		const Entry *p = &mEntries[idx1];
+
+		for(Index idx = idx1; idx != idx2; ++idx) {
+			if (p->mKey == k)
+				return p;
+		}
+
+		return &mEntries[N];
+	}
+
+private:
+	Index mPartitions[NumBuckets + 1] {};
+	Entry mEntries[N] {};
+};
+
+constexpr float VDCxNarrowToFloat(double d) {
 	// #pragma float_control isn't enough to force correct narrowing with
 	// fast math, so use the bit_cast sledgehammer to prevent the compiler from
 	// cheating.
@@ -224,6 +309,117 @@ constexpr float VDCxSincPi(float v) {
 		const double d = (double)v * 3.1415926535897932384626433832795;
 		return VDCxNarrowToFloat(sin(d) / d);
 	}
+}
+
+constexpr float VDCxAbs(float v) {
+	return v < 0 ? -v : v;
+}
+
+constexpr float VDCxSqrt(float v) {
+	if (v < 0)
+		throw;
+
+	if (v == 0.0f)
+		return 0.0f;
+
+	// Compute initial approximation
+	//
+	// This differs slightly from the classic Q3 magic constant for a slightly
+	// better error bound.
+	//
+	// Lomont, Chris. Fast Inverse Square Root. PDF file. February 2003.
+	// https://www.lomont.org/papers/2003/InvSqrt.pdf
+	// 
+	double vhalf = 0.5 * (double)v;
+	double x = (double)std::bit_cast<float>(UINT32_C(0x5F375A86) - (std::bit_cast<uint32>(v) >> 1));
+
+	// three Newton-Raphson iterations in double precision
+	x = x*(1.5 - vhalf * x * x);
+	x = x*(1.5 - vhalf * x * x);
+	x = x*(1.5 - vhalf * x * x);
+
+	// compute sqrt(x) = x * rsqrt(x) and round to float
+	return VDCxNarrowToFloat((double)v * x);
+}
+
+constexpr float VDCxFloor(float v) {
+	// early out if the value is guaranteed integer (which is also possibly
+	// outside of integer range)
+	if (v <= -0x1.0p24 || v >= +0x1.0p24)
+		return v;
+
+	// truncate to integer
+	sint32 i = (sint32)v;
+
+	// return lower integer
+	return (float)i > v ? (float)(i - 1) : (float)i;
+}
+
+constexpr double VDCxFloor(double v) {
+	// early out if the value is guaranteed integer (which is also possibly
+	// outside of integer range)
+	if (v <= -0x1.0p53 || v >= +0x1.0p53)
+		return v;
+
+	// truncate to integer
+	long long i = (long long)v;
+
+	// return lower integer
+	return (double)i > v ? (double)(i - 1) : (double)i;
+}
+
+constexpr float VDCxExp(float v) {
+	// convert to double
+	double d = std::bit_cast<double>(std::bit_cast<uint64>((double)v));
+
+	// scale by 1/ln(2) to switch to computing exp2()
+	d *= 1.4426950408889634073599246810019;
+
+	// split integer/fraction
+	double x = VDCxFloor(d);
+	double f = d - x;
+
+	// return zero if too small for a float
+	if (x < -127 - 25)
+		return 0;
+
+	// fail if overflow
+	if (x >= 128)
+		throw;
+
+	// Compute series expansion for e^(frac*ln2/2) over [0, 0.34658]. We need
+	// order-8 in order to clear full float precision.
+	double z = f * 0.34657359027997265470861606072909;
+
+	double fr = 0;
+
+	fr += 1.0 / 3628800.0;
+	fr *= z;
+	fr += 1.0 / 362880.0;
+	fr *= z;
+	fr += 1.0 / 40320.0;
+	fr *= z;
+	fr += 1.0 / 5040.0;
+	fr *= z;
+	fr += 1.0 / 720.0;
+	fr *= z;
+	fr += 1.0 / 120.0;
+	fr *= z;
+	fr += 1.0 / 24.0;
+	fr *= z;
+	fr += 1.0 / 6.0;
+	fr *= z;
+	fr += 1.0 / 2.0;
+	fr *= z;
+	fr += 1.0;
+	fr *= z;
+	fr += 1.0;
+
+	// compute 2^x * e^(f*ln2/2)
+	double r = std::bit_cast<double>((unsigned long long)(x + 1023) << 52) * (fr * fr);
+
+	// round to float and return
+	return VDCxNarrowToFloat(r);
 }
 
 #endif

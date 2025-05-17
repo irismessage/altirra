@@ -393,13 +393,15 @@
 	// These aren't really assembly routines, but we define them so we aren't asm dependent.
 
 	void vdasm_uint128_add(uint64 dst[2], const uint64 x[2], const uint64 y[2]) {
-		dst[0] = x[0] + y[0];
-		dst[1] = x[1] + y[1] + (dst[0] < x[0]);
+		const auto x0 = x[0];
+		dst[0] = x0 + y[0];
+		dst[1] = x[1] + y[1] + (dst[0] < x0);
 	}
 
 	void vdasm_uint128_sub(uint64 dst[2], const uint64 x[2], const uint64 y[2]) {
-		dst[0] = x[0] - y[0];
-		dst[1] = x[1] - y[1] - (dst[0] > x[0]);
+		const auto x0 = x[0];
+		dst[0] = x0 - y[0];
+		dst[1] = x[1] - y[1] - (dst[0] > x0);
 	}
 
 	void vdint128::setSquare(sint64 v) {

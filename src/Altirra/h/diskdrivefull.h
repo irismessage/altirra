@@ -34,6 +34,7 @@
 #include <at/atcore/scheduler.h>
 #include <at/atemulation/riot.h>
 #include "fdc.h"
+#include "pia.h"
 #include "diskdrivefullbase.h"
 #include "diskinterface.h"
 
@@ -58,6 +59,7 @@ public:
 		kDeviceType_Speedy1050,
 		kDeviceType_Happy1050,
 		kDeviceType_SuperArchiver,
+		kDeviceType_SuperArchiver_BitWriter,
 		kDeviceType_TOMS1050,
 		kDeviceType_Tygrys1050,
 		kDeviceType_1050Duplicator,
@@ -128,6 +130,13 @@ protected:
 
 	void OnRIOTRegisterWrite(uint32 addr, uint8 val);
 
+	void OnPIAOutputChanged(uint32 outputState);
+	void UpdateBitWriterAddress(uint32 newAddr);
+	void UpdateBitWriterRAMOutput();
+	void BeginBitWriterWrite();
+	void EndBitWriterWrite();
+	void BitWriterWriteRawTrack();
+
 	void PlayStepSound();
 	void UpdateRotationStatus();
 	void UpdateDiskStatus();
@@ -149,10 +158,12 @@ protected:
 	enum {
 		kEventId_DriveReceiveBit = kEventId_FirstCustom,
 		kEventId_DriveDiskChange,
+		kEventId_DriveBitWriterShift
 	};
 
 	ATEvent *mpEventDriveReceiveBit = nullptr;
 	ATEvent *mpEventDriveDiskChange = nullptr;
+	ATEvent *mpEventDriveBitWriterShift = nullptr;
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
 	IATDiskDriveManager *mpDiskDriveManager = nullptr;
 	ATDiskInterface *mpDiskInterface = nullptr;
@@ -185,6 +196,10 @@ protected:
 	static constexpr float kDefaultAutoSpeedRate = 266.0f;
 	float mHappy810AutoSpeedRate = kDefaultAutoSpeedRate;
 
+	uint32 mBitWriterAddress = 0;
+	uint8 mBitWriterBitIndex = 0;
+	uint32 mBitWriterRawTrackPos = 0;
+
 	ATDiskDriveAudioPlayer mAudioPlayer;
 
 	uint32 mLastStepSoundTime = 0;
@@ -193,7 +208,7 @@ protected:
 
 	ATCoProcReadMemNode mReadNodeFDCRAM {};
 	ATCoProcReadMemNode mReadNodeRIOTRAM {};
-	ATCoProcReadMemNode mReadNodeRIOTRegisters {};
+	ATCoProcReadMemNode mReadNodeRIOTRegisters{};
 	ATCoProcReadMemNode mReadNodeROMBankSwitch {};
 	ATCoProcReadMemNode mReadNodeROMBankSwitch23 {};
 	ATCoProcReadMemNode mReadNodeROMBankSwitchAB {};
@@ -203,7 +218,7 @@ protected:
 	ATCoProcReadMemNode mReadNodeROMConflict {};
 	ATCoProcWriteMemNode mWriteNodeFDCRAM {};
 	ATCoProcWriteMemNode mWriteNodeRIOTRAM {};
-	ATCoProcWriteMemNode mWriteNodeRIOTRegisters {};
+	ATCoProcWriteMemNode mWriteNodeRIOTRegisters{};
 	ATCoProcWriteMemNode mWriteNodeROMBankSwitch {};
 	ATCoProcWriteMemNode mWriteNodeROMBankSwitch23 {};
 	ATCoProcWriteMemNode mWriteNodeROMBankSwitchAB {};
@@ -223,6 +238,10 @@ protected:
 
 	ATFDCEmulator mFDC;
 	ATRIOT6532Emulator mRIOT;
+	ATPIAEmulator mPIA;
+	int mPIAInput = -1;
+	int mPIAOutput = -1;
+	uint32 mPIAPrevOutput = 0;
 
 	vdfastvector<ATCPUHistoryEntry> mHistory;
 
@@ -232,6 +251,19 @@ protected:
 	VDALIGN(4) uint8 mROM[0x4000] = {};
 	VDALIGN(4) uint8 mDummyWrite[0x100] = {};
 	VDALIGN(4) uint8 mDummyRead[0x100] = {};
+	VDALIGN(4) uint8 mBitWriterRAM[0x2000] {};
+	
+	// The slowest standard speed is 270 RPM at 4us bit cells, which corresponds to
+	// 55,555.6 bit cells per track, or 6944.4 raw bytes (including clock and data bits).
+	// To make things easier, we allocate 6945+1536 bytes and repeat the extra bits
+	// so we can overrun by up to a full sector when parsing, + 64 bits for the bit
+	// reader. During the write, we
+	// wrap over the entire buffer size, and after the write, the last part gets
+	// rotated around and tail-wrapped for decoding.
+	static constexpr uint32 kRawTrackMaxBitLen = 55556;
+	static constexpr uint32 kRawTrackBufExtraWrap = 1536;
+	static constexpr uint32 kRawTrackBufSize = 6945 + kRawTrackBufExtraWrap + 8;
+	uint8 mBitWriterTrack[kRawTrackBufSize] {};
 	
 	ATDebugTargetBreakpointsImpl mBreakpointsImpl;
 };

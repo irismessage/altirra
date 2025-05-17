@@ -16,10 +16,12 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcore/devicecio.h>
 #include <at/atcore/propertyset.h>
-#include "pbidisk.h"
+#include "hleciohook.h"
 #include "memorymanager.h"
 #include "siomanager.h"
+#include "pbidisk.h"
 #include "pbidisk.inl"
 
 static_assert(sizeof(g_ATPBIDiskFirmware) == 0x400, "PBIDisk firmware is wrong size");
@@ -58,6 +60,7 @@ void ATPBIDiskEmulator::GetDeviceInfo(ATDeviceInfo& info) {
 }
 
 void ATPBIDiskEmulator::Init() {
+	mpCIOManager = GetService<IATDeviceCIOManager>();
 }
 
 void ATPBIDiskEmulator::Shutdown() {
@@ -66,6 +69,7 @@ void ATPBIDiskEmulator::Shutdown() {
 		mpPBIManager = nullptr;
 	}
 
+	mpCIOManager = nullptr;
 	mpSIOManager = nullptr;
 
 	if (mpMemLayerFirmware) {
@@ -81,6 +85,10 @@ void ATPBIDiskEmulator::Shutdown() {
 	mpMemMan = nullptr;
 }
 
+void ATPBIDiskEmulator::SetSIOHookEnabled(bool enabled) {
+	mbSIOHookEnabled = enabled;
+}
+
 void ATPBIDiskEmulator::InitMemMap(ATMemoryManager *memmap) {
 	mpMemMan = memmap;
 
@@ -88,7 +96,7 @@ void ATPBIDiskEmulator::InitMemMap(ATMemoryManager *memmap) {
 	memset(mFirmware + 0x400, 0xFF, 0x400);
 
 	mpMemLayerFirmware = mpMemMan->CreateLayer(kATMemoryPri_PBI, mFirmware, 0xD8, 0x08, true);
-	mpMemMan->SetLayerName(mpMemLayerFirmware, "PBIDisk ROM");
+	mpMemMan->SetLayerName(mpMemLayerFirmware, "PBIHook ROM");
 	mpMemMan->SetLayerFastBus(mpMemLayerFirmware, true);
 
 	ATMemoryHandlerTable handlers = {};
@@ -98,7 +106,7 @@ void ATPBIDiskEmulator::InitMemMap(ATMemoryManager *memmap) {
 	};
 
 	mpMemLayerControl = mpMemMan->CreateLayer(kATMemoryPri_PBI + 1, handlers, 0xDC, 0x04);
-	mpMemMan->SetLayerName(mpMemLayerControl, "PBIDisk control registers");
+	mpMemMan->SetLayerName(mpMemLayerControl, "PBIHook control registers");
 	mpMemMan->SetLayerFastBus(mpMemLayerControl, true);
 }
 
@@ -138,9 +146,19 @@ void ATPBIDiskEmulator::InitSIO(IATDeviceSIOManager *mgr) {
 }
 
 bool ATPBIDiskEmulator::OnWriteByte(uint32 address, uint8 value) {
-	if (address == 0xDCEF) {
-		// Time to cheat.
-		static_cast<ATSIOManager *>(mpSIOManager)->TryAccelPBIRequest();
+	switch(address) {
+		case 0xDCE0:
+		case 0xDCE1:
+		case 0xDCE2:
+		case 0xDCE3:
+		case 0xDCE4:
+		case 0xDCE5:
+			ATGetHLECIOHook(mpCIOManager)->TryAccelPBIRequest(address & 7);
+			break;
+		case 0xDCEF:
+			// Time to cheat.
+			static_cast<ATSIOManager *>(mpSIOManager)->TryAccelPBIRequest(mbSIOHookEnabled);
+			break;
 	}
 
 	return true;

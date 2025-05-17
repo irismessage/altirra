@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/file.h>
+#include <vd2/system/filesys.h>
 #include <vd2/Dita/services.h>
 #include <at/atio/cassetteimage.h>
 #include "uifilefilters.h"
@@ -44,13 +45,14 @@ void OnCommandToolsAnalyzeTapeDecoding() {
 	if (fn2.empty())
 		return;
 
-	VDFileStream f1(fn1.c_str(), nsVDFile::kRead | nsVDFile::kSequential | nsVDFile::kOpenExisting);
+	if (VDFileIsPathEqual(fn1.c_str(), fn2.c_str()))
+		throw MyError("The analysis file needs to be different from the source tape file.");
+
 	VDFileStream f2(fn2.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kSequential | nsVDFile::kCreateAlways);
 
-	vdrefptr<IATCassetteImage> image;
 	ATCassetteLoadContext ctx;
-	ctx.mTurboDecodeAlgorithm = g_sim.GetCassette().GetTurboDecodeAlgorithm();
-	ATLoadCassetteImage(f1, nullptr, &f2, ctx, ~image);
+	g_sim.GetCassette().GetLoadOptions(ctx);
+	(void)ATLoadCassetteImage(fn1.c_str(), &f2, ctx);
 }
 
 void OnCommandToolsAdvancedConfiguration() {

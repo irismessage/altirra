@@ -122,6 +122,17 @@ ATCartridgeMode ATGetCartridgeModeForMapper(int mapper) {
 		case 91: return kATCartridgeMode_XEMulticart_256K;
 		case 92: return kATCartridgeMode_XEMulticart_512K;
 		case 93: return kATCartridgeMode_XEMulticart_1M;
+
+		case 104: return kATCartridgeMode_JAtariCart_8K;
+		case 105: return kATCartridgeMode_JAtariCart_16K;
+		case 106: return kATCartridgeMode_JAtariCart_32K;
+		case 107: return kATCartridgeMode_JAtariCart_64K;
+		case 108: return kATCartridgeMode_JAtariCart_128K;
+		case 109: return kATCartridgeMode_JAtariCart_256K;
+		case 110: return kATCartridgeMode_JAtariCart_512K;
+		case 111: return kATCartridgeMode_JAtariCart_1024K;
+		case 112: return kATCartridgeMode_DCart;
+
 		case 160: return kATCartridgeMode_JRC6_64K;
 		default:
 			return kATCartridgeMode_None;
@@ -236,6 +247,16 @@ int ATGetCartridgeMapperForMode(ATCartridgeMode mode, uint32 size) {
 		case kATCartridgeMode_XEMulticart_256K:			return 91;
 		case kATCartridgeMode_XEMulticart_512K:			return 92;
 		case kATCartridgeMode_XEMulticart_1M:			return 93;
+
+		case kATCartridgeMode_JAtariCart_8K:			return 104;
+		case kATCartridgeMode_JAtariCart_16K:			return 105;
+		case kATCartridgeMode_JAtariCart_32K:			return 106;
+		case kATCartridgeMode_JAtariCart_64K:			return 107;
+		case kATCartridgeMode_JAtariCart_128K:			return 108;
+		case kATCartridgeMode_JAtariCart_256K:			return 109;
+		case kATCartridgeMode_JAtariCart_512K:			return 110;
+		case kATCartridgeMode_JAtariCart_1024K:			return 111;
+		case kATCartridgeMode_DCart:					return 112;
 
 		case kATCartridgeMode_JRC6_64K:					return 160;
 
@@ -365,6 +386,15 @@ uint32 ATGetImageSizeForCartridgeType(ATCartridgeMode mode) {
 		case kATCartridgeMode_MDDOS:				return 0x10000;
 		case kATCartridgeMode_COS32K:				return 0x8000;
 		case kATCartridgeMode_Pronto:				return 0x4000;
+		case kATCartridgeMode_JAtariCart_8K:		return 0x2000;
+		case kATCartridgeMode_JAtariCart_16K:		return 0x4000;
+		case kATCartridgeMode_JAtariCart_32K:		return 0x8000;
+		case kATCartridgeMode_JAtariCart_64K:		return 0x10000;
+		case kATCartridgeMode_JAtariCart_128K:		return 0x20000;
+		case kATCartridgeMode_JAtariCart_256K:		return 0x40000;
+		case kATCartridgeMode_JAtariCart_512K:		return 0x80000;
+		case kATCartridgeMode_JAtariCart_1024K:		return 0x100000;
+		case kATCartridgeMode_DCart:				return 0x80000;
 
 		default:
 			return 0;

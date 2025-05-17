@@ -271,16 +271,10 @@ void ATUIDialogSysConfigPage::CmdComboBinding::Write() {
 	const ATUICommand *cmd = cm.GetCommand(mLookupTable[mActiveEntries[idx]].mpCommand);
 
 	if (cmd) {
-		if (!cmd->mpTestFn || cmd->mpTestFn()) {
-			try {
-				cmd->mpExecuteFn();
-			} catch(const MyError&) {
-				// eat command errors
-			}
+		cm.ExecuteCommandNT(*cmd);
 
-			// Some commands may fail, so we need to re-read in case the change got rolled back.
-			Read();
-		}
+		// Some commands may fail, so we need to re-read in case the change got rolled back.
+		Read();
 	}
 }
 
@@ -314,12 +308,8 @@ void ATUIDialogSysConfigPage::CmdRadioBinding::Write() {
 	for(const auto& entry : mEntries) {
 		if (entry.mpControl->GetChecked()) {
 			const ATUICommand *cmd = cm.GetCommand(entry.mpCommand);
-			if (cmd && (!cmd->mpTestFn || cmd->mpTestFn())) {
-				try {
-					cmd->mpExecuteFn();
-				} catch(const MyError&) {
-					// eat command errors
-				}
+			if (cmd) {
+				cm.ExecuteCommandNT(*cmd);
 
 				Read();
 			}
@@ -370,11 +360,7 @@ void ATUIDialogSysConfigPage::CmdBoolBinding::Write() {
 			const ATUICommand *cmd2 = newState || !mpDisableCmd ? cmd : cm.GetCommand(mpDisableCmd);
 
 			if (cmd2) {
-				try {
-					cmd2->mpExecuteFn();
-				} catch(const MyError&) {
-					// eat command errors
-				}
+				cm.ExecuteCommandNT(*cmd2);
 
 				Read();
 			}
@@ -408,17 +394,8 @@ void ATUIDialogSysConfigPage::CmdTriggerBinding::Write() {
 	if (!cmd)
 		return;
 
-	if (!cmd->mpTestFn || cmd->mpTestFn()) {
-		if (cmd) {
-			try {
-				cmd->mpExecuteFn();
-			} catch(const MyError&) {
-				// eat command errors
-			}
-
-			Read();
-		}
-	}
+	cm.ExecuteCommandNT(*cmd);
+	Read();
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -794,7 +771,6 @@ bool ATUIDialogSysConfigAssessment::OnLoaded() {
 	mTargetView.AddItem(L"Emulator performance");
 	mTargetView.SetSelection(0);
 
-	mTargetView.Focus();
 	Reassess();
 
 	return true;
@@ -816,9 +792,6 @@ bool ATUIDialogSysConfigAssessment::OnLinkActivated(const wchar_t *s) {
 
 void ATUIDialogSysConfigAssessment::Reassess() {
 	mLinkHandlers.clear();
-
-	// This is a hack to prevent the caret from showing up on the rich edit control.
-	mTargetView.Focus();
 
 	mRtfBuffer = R"---({\rtf1{\colortbl)---";
 
@@ -1214,14 +1187,14 @@ bool ATUIDialogSysConfigMemory::OnLoaded() {
 	mMemoryClearModeView.SetOnSelectionChanged([this](int) { mMemoryClearModeBinding.Write(); });
 
 	ultimate1MBBinding->GetView().SetOnClicked(
-		[=] {
+		[=, this] {
 			ultimate1MBBinding->Write();
 			mMemoryTypeBinding.Read();
 		}
 	);
 
 	mAxlonSizeView.SetOnSelectionChanged(
-		[=](int) {
+		[=, this](int) {
 			mAxlonSizeBinding.Write();
 			axlonAliasingBinding->Read();
 		}
@@ -1296,8 +1269,16 @@ protected:
 	VDUIProxyButtonControl mSIOAccelSIOVView;
 	VDUIProxyButtonControl mSIOAccelPBIView;
 	VDUIProxyButtonControl mSIOAccelBothView;
+	VDUIProxyComboBoxControl mCIOModeView;
 	
 	CmdRadioBinding mSIOAccelBinding;
+
+	static constexpr CmdMapEntry kCIOModeBindings[] = {
+		{ "Devices.CIOHookModeHw",		L"Hook page (default)" },
+		{ "Devices.CIOHookModePBI",		L"PBI device (XL/XE only)" },
+	};
+
+	CmdComboBinding mCIOModeBinding { kCIOModeBindings };
 };
 
 ATUIDialogSysConfigAcceleration::ATUIDialogSysConfigAcceleration()
@@ -1306,12 +1287,14 @@ ATUIDialogSysConfigAcceleration::ATUIDialogSysConfigAcceleration()
 	mSIOAccelSIOVView.SetOnClicked([this] { mSIOAccelBinding.Write(); });
 	mSIOAccelPBIView.SetOnClicked([this] { mSIOAccelBinding.Write(); });
 	mSIOAccelBothView.SetOnClicked([this] { mSIOAccelBinding.Write(); });
+	mCIOModeView.SetOnSelectionChanged([this](int) { mCIOModeBinding.Write(); });
 }
 
 bool ATUIDialogSysConfigAcceleration::OnLoaded() {
 	AddProxy(&mSIOAccelSIOVView, IDC_SIOACCEL_SIOV);
 	AddProxy(&mSIOAccelPBIView, IDC_SIOACCEL_PBI);
 	AddProxy(&mSIOAccelBothView, IDC_SIOACCEL_BOTH);
+	AddProxy(&mCIOModeView, IDC_CIOACCELMODE);
 
 	BindCheckbox(IDC_FASTBOOT, "System.ToggleFastBoot");
 	BindCheckbox(IDC_FASTFPMATH, "System.ToggleFPPatch");
@@ -1331,7 +1314,10 @@ bool ATUIDialogSysConfigAcceleration::OnLoaded() {
 	mSIOAccelBinding.Bind("Devices.SIOAccelModePBI", &mSIOAccelPBIView);
 	mSIOAccelBinding.Bind("Devices.SIOAccelModeBoth", &mSIOAccelBothView);
 
+	mCIOModeBinding.Bind(&mCIOModeView);
+
 	AddAutoReadBinding(&mSIOAccelBinding);
+	AddAutoReadBinding(&mCIOModeBinding);
 
 	AddHelpEntry(IDC_FASTBOOT, L"Fast boot",
 		L"Accelerate standard OS checksum and memory test routines to speed up OS boot. \
@@ -1405,6 +1391,11 @@ issue."
 of a byte at a time, when a CIO patch is active for a device."
 		);
 
+	AddHelpEntry(IDC_CIOACCELMODE, L"CIO hook mode",
+		L"Controls how emulator CIO devices are injected. PBI hooking uses a PBI device instead of "
+		L"a hook page, but only works on XL/XE systems."
+		);
+
 	OnDataExchange(false);
 
 	return ATUIDialogSysConfigPage::OnLoaded();
@@ -1420,11 +1411,9 @@ protected:
 	bool OnLoaded() override;
 
 	VDUIProxyComboBoxControl mArtifactModeView;
+	VDUIProxyComboBoxControl mPALPhaseView;
 	VDUIProxyComboBoxControl mMonitorModeView;
-	VDUIProxyButtonControl mEnhTextNoneView;
-	VDUIProxyButtonControl mEnhTextHWView;
-	VDUIProxyButtonControl mEnhTextSWView;
-	VDUIProxyButtonControl mEnhTextFontView;
+	VDUIProxyComboBoxControl mDeinterlaceModeView;
 	
 	static constexpr CmdMapEntry kArtifactModeOptions[] = {
 		{ "Video.ArtifactingNone",		L"None" },
@@ -1436,6 +1425,11 @@ protected:
 		{ "Video.ArtifactingAutoHi",	L"NTSC/PAL high artifacting (auto-switch)" },
 	};
 
+	static constexpr CmdMapEntry kPALPhaseOptions[] = {
+		{ "Video.PALPhase0",	L"Phase 0" },
+		{ "Video.PALPhase1",	L"Phase 1" },
+	};
+
 	static constexpr CmdMapEntry kMonitorModeOptions[] = {
 		{ "Video.MonitorModeColor",		L"Color" },
 		{ "Video.MonitorModeMonoGreen",	L"Monochrome (green phosphor)" },
@@ -1445,58 +1439,80 @@ protected:
 		{ "Video.MonitorModePERITEL",	L"RGB through PERITEL/SCART CA061034 adapter" },
 	};
 
+	static constexpr CmdMapEntry kDeinterlaceModeOptions[] = {
+		{ "Video.DeinterlaceModeNone",			L"No deinterlacing" },
+		{ "Video.DeinterlaceModeAdaptiveBob",	L"Deinterlace (adaptive bob)" },
+	};
+
 	CmdComboBinding mArtifactModeBinding { kArtifactModeOptions };
+	CmdComboBinding mPALPhaseBinding { kPALPhaseOptions };
 	CmdComboBinding mMonitorModeBinding { kMonitorModeOptions };
-	CmdRadioBinding mEnhTextModeBinding;
-	CmdTriggerBinding mEnhTextFontBinding { "Video.EnhancedTextFontDialog" };
+	CmdComboBinding mDeinterlaceModeBinding { kDeinterlaceModeOptions };
 };
 
 constexpr ATUIDialogSysConfigVideo::CmdMapEntry ATUIDialogSysConfigVideo::kArtifactModeOptions[];
+constexpr ATUIDialogSysConfigVideo::CmdMapEntry ATUIDialogSysConfigVideo::kPALPhaseOptions[];
 constexpr ATUIDialogSysConfigVideo::CmdMapEntry ATUIDialogSysConfigVideo::kMonitorModeOptions[];
 
 ATUIDialogSysConfigVideo::ATUIDialogSysConfigVideo()
 	: ATUIDialogSysConfigPage(IDD_CONFIGURE_VIDEO)
 {
-	mArtifactModeView.SetOnSelectionChanged([this](int) { mArtifactModeBinding.Write(); });
-	mMonitorModeView.SetOnSelectionChanged([this](int) { mMonitorModeBinding.Write(); });
-	mEnhTextNoneView.SetOnClicked([this] { mEnhTextModeBinding.Write(); });
-	mEnhTextHWView.SetOnClicked([this] { mEnhTextModeBinding.Write(); });
-	mEnhTextSWView.SetOnClicked([this] { mEnhTextModeBinding.Write(); });
-	mEnhTextFontView.SetOnClicked([this] { mEnhTextFontBinding.Write(); });
+	mArtifactModeView.SetOnSelectionChanged([this](int) { mArtifactModeBinding.Write(); mPALPhaseBinding.Read(); });
+	mPALPhaseView.SetOnSelectionChanged([this](int) { mPALPhaseBinding.Write(); });
+	mDeinterlaceModeView.SetOnSelectionChanged([this](int) { mDeinterlaceModeBinding.Write(); });
 }
 
 bool ATUIDialogSysConfigVideo::OnLoaded() {
 	AddProxy(&mArtifactModeView, IDC_ARTIFACTMODE);
+	AddProxy(&mPALPhaseView, IDC_PALPHASE);
 	AddProxy(&mMonitorModeView, IDC_MONITORMODE);
-	AddProxy(&mEnhTextNoneView, IDC_ENHTEXT_NONE);
-	AddProxy(&mEnhTextHWView, IDC_ENHTEXT_HW);
-	AddProxy(&mEnhTextSWView, IDC_ENHTEXT_SW);
-	AddProxy(&mEnhTextFontView, IDC_ENHTEXTFONT);
+	AddProxy(&mDeinterlaceModeView, IDC_DEINTERLACEMODE);
 
 	auto& blendBinding = *BindCheckbox(IDC_FRAMEBLENDING, "Video.ToggleFrameBlending");
 	auto& blendLinearBinding = *BindCheckbox(IDC_FRAMEBLENDINGLINEAR, "Video.ToggleLinearFrameBlending");
+	auto& blendMonoPersistence = *BindCheckbox(IDC_FRAMEBLENDINGPERSISTENCE, "Video.ToggleMonoPersistence");
 
 	blendBinding.GetView().SetOnClicked(
 		[&] {
 			blendBinding.Write();
 			blendLinearBinding.Read();
+			blendMonoPersistence.Read();
 		}
 	);
 
-	BindCheckbox(IDC_INTERLACE, "Video.ToggleInterlace");
+	blendMonoPersistence.GetView().SetOnClicked(
+		[&] {
+			blendMonoPersistence.Write();
+			blendLinearBinding.Read();
+		}
+	);
+
+	mMonitorModeView.SetOnSelectionChanged(
+		[&, this](int) {
+			mMonitorModeBinding.Write();
+			blendMonoPersistence.Read();
+		}
+	);
+
+	auto& interlaceBinding = *BindCheckbox(IDC_INTERLACE, "Video.ToggleInterlace");
+	interlaceBinding.GetView().SetOnClicked(
+		[&, this] {
+			interlaceBinding.Write();
+			mDeinterlaceModeBinding.Read();
+		}
+	);
+
 	BindCheckbox(IDC_SCANLINES, "Video.ToggleScanlines");
 
 	mArtifactModeBinding.Bind(&mArtifactModeView);
+	mPALPhaseBinding.Bind(&mPALPhaseView);
 	mMonitorModeBinding.Bind(&mMonitorModeView);
-	mEnhTextModeBinding.Bind("Video.EnhancedModeNone", &mEnhTextNoneView);
-	mEnhTextModeBinding.Bind("Video.EnhancedModeHardware", &mEnhTextHWView);
-	mEnhTextModeBinding.Bind("Video.EnhancedModeCIO", &mEnhTextSWView);
-	mEnhTextFontBinding.Bind(&mEnhTextFontView);
+	mDeinterlaceModeBinding.Bind(&mDeinterlaceModeView);
 
 	AddAutoReadBinding(&mArtifactModeBinding);
+	AddAutoReadBinding(&mPALPhaseBinding);
 	AddAutoReadBinding(&mMonitorModeBinding);
-	AddAutoReadBinding(&mEnhTextModeBinding);
-	AddAutoReadBinding(&mEnhTextFontBinding);
+	AddAutoReadBinding(&mDeinterlaceModeBinding);
 
 	AddHelpEntry(IDC_FRAMEBLENDING, L"Frame blending",
 		L"Blend adjacent frames together to eliminate flickering from frame alternation effects."
@@ -1511,6 +1527,10 @@ bool ATUIDialogSysConfigVideo::OnLoaded() {
 that can manipulate ANTIC video timing to force even/odd fields."
 		);
 
+	AddHelpEntry(IDC_DEINTERLACEMODE, L"Deinterlace mode",
+		L"Controls removal of \"venetian blind\" artifacts on moving objects when interlacing is enabled."
+	);
+
 	AddHelpEntry(IDC_SCANLINES, L"Scanlines",
 		L"Darken video between scanlines to simulate beam scanning of a CRT."
 		);
@@ -1519,14 +1539,9 @@ that can manipulate ANTIC video timing to force even/odd fields."
 		L"Emulate false color effects derived from composite video encoding."
 		);
 
-	AddHelpEntry(IDC_ENHTEXT_NONE, L"Enhanced text mode",
-		L"Enable enhanced text screen editor. Hardware mode is more compatible and displays the regular \
-hardware screen with native quality fonts. CIO mode uses a software hook to provide a bigger screen and \
-better editing capabilities, but only works with software that uses OS facilites to print text.");
-
-	LinkHelpEntry(IDC_ENHTEXT_SW, IDC_ENHTEXT_NONE);
-	LinkHelpEntry(IDC_ENHTEXT_HW, IDC_ENHTEXT_NONE);
-	LinkHelpEntry(IDC_ENHTEXTFONT, IDC_ENHTEXT_NONE);
+	AddHelpEntry(IDC_PALPHASE, L"PAL phase",
+		L"Controls the V-phase of even and odd lines for PAL video output. Only active for PAL high artifacting."
+		);
 
 	AddHelpEntry(IDC_MONITORMODE, L"Monitor mode",
 		L"Selects the monitor (screen) type. Monochrome types only display one color. RGB PERITEL emulates "
@@ -1537,6 +1552,127 @@ better editing capabilities, but only works with software that uses OS facilites
 	OnDataExchange(false);
 
 	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogSysConfigEnhancedText final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigEnhancedText();
+
+protected:
+	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
+
+	void OnResizeVirtualScreen();
+	void UpdateVirtualScreenSize();
+
+	VDUIProxyButtonControl mEnhTextNoneView;
+	VDUIProxyButtonControl mEnhTextHWView;
+	VDUIProxyButtonControl mEnhTextSWView;
+	VDUIProxyButtonControl mEnhTextFontView;
+	VDUIProxyButtonControl mVSResizeView;
+	VDUIProxyEditControl mVSWidthView;
+	VDUIProxyEditControl mVSHeightView;
+	VDUIProxyControl mVSSizeView;
+	
+	CmdRadioBinding mEnhTextModeBinding;
+	CmdTriggerBinding mEnhTextFontBinding { "Video.EnhancedTextFontDialog" };
+
+	VDStringW mVSSizeBaseCaption;
+};
+
+ATUIDialogSysConfigEnhancedText::ATUIDialogSysConfigEnhancedText()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_ENHANCEDTEXT)
+{
+	mEnhTextNoneView.SetOnClicked([this] { mEnhTextModeBinding.Write(); });
+	mEnhTextHWView.SetOnClicked([this] { mEnhTextModeBinding.Write(); });
+	mEnhTextSWView.SetOnClicked([this] { mEnhTextModeBinding.Write(); });
+	mEnhTextFontView.SetOnClicked([this] { mEnhTextFontBinding.Write(); });
+	mVSResizeView.SetOnClicked([this] { OnResizeVirtualScreen(); });
+}
+
+bool ATUIDialogSysConfigEnhancedText::OnLoaded() {
+	AddProxy(&mEnhTextNoneView, IDC_ENHTEXT_NONE);
+	AddProxy(&mEnhTextHWView, IDC_ENHTEXT_HW);
+	AddProxy(&mEnhTextSWView, IDC_ENHTEXT_SW);
+	AddProxy(&mEnhTextFontView, IDC_ENHTEXTFONT);
+	AddProxy(&mVSWidthView, IDC_WIDTH);
+	AddProxy(&mVSHeightView, IDC_HEIGHT);
+	AddProxy(&mVSResizeView, IDC_RESIZE);
+	AddProxy(&mVSSizeView, IDC_STATIC_VSSIZE);
+
+	mEnhTextModeBinding.Bind("Video.EnhancedModeNone", &mEnhTextNoneView);
+	mEnhTextModeBinding.Bind("Video.EnhancedModeHardware", &mEnhTextHWView);
+	mEnhTextModeBinding.Bind("Video.EnhancedModeCIO", &mEnhTextSWView);
+	mEnhTextFontBinding.Bind(&mEnhTextFontView);
+
+	AddAutoReadBinding(&mEnhTextModeBinding);
+	AddAutoReadBinding(&mEnhTextFontBinding);
+
+	AddHelpEntry(IDC_ENHTEXT_NONE, L"Enhanced text mode",
+		L"Enable enhanced text screen editor. Hardware mode is more compatible and displays the regular \
+hardware screen with native quality fonts. CIO mode uses a software hook to provide a bigger screen and \
+better editing capabilities, but only works with software that uses OS facilites to print text.");
+
+	LinkHelpEntry(IDC_ENHTEXT_SW, IDC_ENHTEXT_NONE);
+	LinkHelpEntry(IDC_ENHTEXT_HW, IDC_ENHTEXT_NONE);
+	LinkHelpEntry(IDC_ENHTEXTFONT, IDC_ENHTEXT_NONE);
+
+	mVSSizeBaseCaption = mVSSizeView.GetCaption();
+
+	OnDataExchange(false);
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+void ATUIDialogSysConfigEnhancedText::OnDataExchange(bool write) {
+	ATUIDialogSysConfigPage::OnDataExchange(write);
+
+	if (!write) {
+		const vdsize32& vssize = g_sim.GetVirtualScreenSize();
+		VDStringW s;
+
+		s.sprintf(L"%u", vssize.w);
+		mVSWidthView.SetText(s.c_str());
+
+		s.sprintf(L"%u", vssize.h);
+		mVSHeightView.SetText(s.c_str());
+
+		UpdateVirtualScreenSize();
+	}
+}
+
+void ATUIDialogSysConfigEnhancedText::OnResizeVirtualScreen() {
+	const VDStringW widthStr = mVSWidthView.GetCaption();
+	const VDStringW heightStr = mVSHeightView.GetCaption();
+	wchar_t dummy = 0;
+	unsigned width = 0;
+	unsigned height = 0;
+
+	if (1 != swscanf(widthStr.c_str(), L" %u%lc", &width, &dummy)) {
+		FailValidation(mVSWidthView.GetWindowId());
+		SignalFailedValidation(mVSWidthView.GetWindowId());
+		return;
+	}
+
+	if (1 != swscanf(heightStr.c_str(), L" %u%lc", &height, &dummy)) {
+		FailValidation(mVSWidthView.GetWindowId());
+		SignalFailedValidation(mVSWidthView.GetWindowId());
+		return;
+	}
+
+	g_sim.SetVirtualScreenSize(vdsize32(width, height));
+	UpdateVirtualScreenSize();
+}
+
+void ATUIDialogSysConfigEnhancedText::UpdateVirtualScreenSize() {
+	const vdsize32& vssize = g_sim.GetVirtualScreenSize();
+
+	VDStringW s;
+	s.sprintf(L"%ls: %ux%u", mVSSizeBaseCaption.c_str(), vssize.w, vssize.h);
+
+	mVSSizeView.SetCaption(s.c_str());
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1690,6 +1826,7 @@ protected:
 		{ "Cassette.TurboModeProceedSense", L"SIO proceed (Turbo 6000)" },
 		{ "Cassette.TurboModeInterruptSense", L"SIO interrupt (Rambit Turbo Tape)" },
 		{ "Cassette.TurboModeKSOTurbo2000", L"Joystick port 2 (KSO Turbo 2000)" },
+		{ "Cassette.TurboModeTurboD", L"Joystick port 2 (Turbo D)" },
 	};
 
 	CmdComboBinding mTurboTypeBinding { sTurboTypeOptions };
@@ -1734,6 +1871,8 @@ bool ATUIDialogSysConfigCassette::OnLoaded() {
 	BindCheckbox(IDC_RANDOMIZESTARTPOS, "Cassette.ToggleRandomizeStartPosition");
 	BindCheckbox(IDC_TURBOINVERT, "Cassette.TogglePolarity");
 	BindCheckbox(IDC_VBIAVOIDANCE, "Cassette.ToggleVBIAvoidance");
+	BindCheckbox(IDC_FSKSPEEDCOMPENSATION, "Cassette.ToggleFSKSpeedCompensation");
+	BindCheckbox(IDC_CROSSTALKREDUCTION, "Cassette.ToggleCrosstalkReduction");
 
 	AddProxy(&mTurboTypeView, IDC_TURBOTYPE);
 	mTurboTypeBinding.Bind(&mTurboTypeView);
@@ -1810,6 +1949,15 @@ in audio-oriented tape players. This only takes effect when a raw tape in WAV or
 correct pulse duty cycles (recommended for KSO Turbo 2000). The tape must be reloaded for changes to take effect."
 		);
 
+	AddHelpEntry(IDC_FSKSPEEDCOMPENSATION, L"Enable FSK speed compensation",
+		L"Correct for speed variation on the tape by tracking deviation of the FSK tones. This only works for raw audio tape input "
+		L"and only for pure FSK (non-turbo) tapes."
+	);
+
+	AddHelpEntry(IDC_CROSSTALKREDUCTION, L"Enable crosstalk reduction",
+		L"Reduce crosstalk leakage from the data track into the audio track. This only works for raw stereo audio tape input."
+	);
+
 	AddHelpEntry(IDC_VBIAVOIDANCE, L"Avoid OS C: random VBI-related errors",
 		L"Latch cassette data across the start of vertical blank to work around a bug in the Atari OS C: handler \
 that causes ~0.3% of C: block reads to fail. This adds a small amount of jitter to FSK sampling through SKSTAT."
@@ -1840,6 +1988,7 @@ protected:
 	VDUIProxyButtonControl mCPUMode65C816_8XView;
 	VDUIProxyButtonControl mCPUMode65C816_10XView;
 	VDUIProxyButtonControl mCPUMode65C816_12XView;
+	VDUIProxyButtonControl mCPUMode65C816_23XView;
 	
 	CmdRadioBinding mCPUModeBinding;
 };
@@ -1858,7 +2007,7 @@ bool ATUIDialogSysConfigCPU::OnLoaded() {
 	CmdBoolBinding *shadowROMBinding = BindCheckbox(IDC_SHADOW_ROM, "System.ToggleShadowROM");
 	CmdBoolBinding *shadowCartsBinding = BindCheckbox(IDC_SHADOW_CARTS, "System.ToggleShadowCarts");
 
-	auto cpuModeCallback = [=] {
+	auto cpuModeCallback = [=, this] {
 		mCPUModeBinding.Write();
 		shadowROMBinding->Read();
 		shadowCartsBinding->Read();
@@ -1873,6 +2022,7 @@ bool ATUIDialogSysConfigCPU::OnLoaded() {
 	mCPUMode65C816_8XView.SetOnClicked(cpuModeCallback);
 	mCPUMode65C816_10XView.SetOnClicked(cpuModeCallback);
 	mCPUMode65C816_12XView.SetOnClicked(cpuModeCallback);
+	mCPUMode65C816_23XView.SetOnClicked(cpuModeCallback);
 
 	AddProxy(&mCPUMode6502View, IDC_CPUMODEL_6502C);
 	AddProxy(&mCPUMode65C02View, IDC_CPUMODEL_65C02);
@@ -1883,6 +2033,7 @@ bool ATUIDialogSysConfigCPU::OnLoaded() {
 	AddProxy(&mCPUMode65C816_8XView, IDC_CPUMODEL_65C816_14MHZ);
 	AddProxy(&mCPUMode65C816_10XView, IDC_CPUMODEL_65C816_17MHZ);
 	AddProxy(&mCPUMode65C816_12XView, IDC_CPUMODEL_65C816_21MHZ);
+	AddProxy(&mCPUMode65C816_23XView, IDC_CPUMODEL_65C816_41MHZ);
 
 	mCPUModeBinding.Bind("System.CPUMode6502", &mCPUMode6502View);
 	mCPUModeBinding.Bind("System.CPUMode65C02", &mCPUMode65C02View);
@@ -1893,6 +2044,7 @@ bool ATUIDialogSysConfigCPU::OnLoaded() {
 	mCPUModeBinding.Bind("System.CPUMode65C816x8", &mCPUMode65C816_8XView);
 	mCPUModeBinding.Bind("System.CPUMode65C816x10", &mCPUMode65C816_10XView);
 	mCPUModeBinding.Bind("System.CPUMode65C816x12", &mCPUMode65C816_12XView);
+	mCPUModeBinding.Bind("System.CPUMode65C816x23", &mCPUMode65C816_23XView);
 
 	AddAutoReadBinding(&mCPUModeBinding);
 
@@ -1938,6 +2090,7 @@ enhancement of the 6502 and rarely used (not to be confused with the 6502C)."
 	LinkHelpEntry(IDC_CPUMODEL_65C816_14MHZ, IDC_CPUMODEL_6502C);
 	LinkHelpEntry(IDC_CPUMODEL_65C816_17MHZ, IDC_CPUMODEL_6502C);
 	LinkHelpEntry(IDC_CPUMODEL_65C816_21MHZ, IDC_CPUMODEL_6502C);
+	LinkHelpEntry(IDC_CPUMODEL_65C816_41MHZ, IDC_CPUMODEL_6502C);
 
 	OnDataExchange(false);
 
@@ -2230,6 +2383,7 @@ bool ATUIDialogSysConfigSpeed::OnLoaded() {
 	mAutoPauseBinding.Bind(&mAutoPauseView);
 
 	BindCheckbox(IDC_LOCKTOREFRESH, "System.ToggleVSyncAdaptiveSpeed");
+	BindCheckbox(IDC_REWIND, "System.ToggleRewindRecording");
 
 	AddHelpEntry(IDC_RATE_HARDWARE, L"Base frame rate",
 		L"Select the baseline rate at which the emulator runs. \"Match hardware\" uses the accurate speed of the \
@@ -2258,6 +2412,9 @@ real time."
 hitching."
 	);
 
+	AddHelpEntry(IDC_REWIND, L"Enable rewind recording",
+		L"Periodically take snapshots to enable rewinding to recent state. This has a small performance penalty."
+	);
 
 	OnDataExchange(false);
 
@@ -2559,19 +2716,43 @@ public:
 
 protected:
 	bool OnLoaded() override;
+
+	static inline constexpr CmdMapEntry sEfficiencyModeOptions[] = {
+		{ "Options.EfficiencyModeDefault",		L"Default - OS managed" },
+		{ "Options.EfficiencyModePerformance",	L"Prefer performance / big cores" },
+		{ "Options.EfficiencyModeEfficiency",	L"Prefer efficiency / little cores" },
+	};
+
+	VDUIProxyComboBoxControl mEfficiencyModeView;
+	CmdComboBinding mEfficiencyModeBinding { sEfficiencyModeOptions };
 };
 
 ATUIDialogSysConfigUI::ATUIDialogSysConfigUI()
 	: ATUIDialogSysConfigPage(IDD_CONFIGURE_UI)
 {
+	mEfficiencyModeView.SetOnSelectionChanged(
+		[this](int) {
+			mEfficiencyModeBinding.Write();
+		}
+	);
 }
 
 bool ATUIDialogSysConfigUI::OnLoaded() {
+	AddProxy(&mEfficiencyModeView, IDC_EFFICIENCYMODE);
+
+	mEfficiencyModeBinding.Bind(&mEfficiencyModeView);
+	AddAutoReadBinding(&mEfficiencyModeBinding);
+
 	BindCheckbox(IDC_AUTOHIDEMENU, "View.ToggleAutoHideMenu");
 
 	AddHelpEntry(IDC_AUTOHIDEMENU,
 		L"Auto-hide menu",
 		L"Automatically hide menu in windowed mode except when mouse is in menu area."
+	);
+
+	AddHelpEntry(IDC_EFFICIENCYMODE,
+		L"Efficiency mode",
+		L"Selects the program's CPU core preference on CPUs with hybrid/heterogeneous core types (Intel 12th/13th gen, ARM)."
 	);
 
 	OnDataExchange(false);
@@ -3094,12 +3275,16 @@ ATUIDialogSysConfigInput::ATUIDialogSysConfigInput()
 bool ATUIDialogSysConfigInput::OnLoaded() {
 	BindCheckbox(IDC_USERAWINPUT, "Input.ToggleRawInputEnabled");
 	BindCheckbox(IDC_IMMEDIATEPOTS, "Input.ToggleImmediatePotUpdate");
+	BindCheckbox(IDC_IMMEDIATELIGHTPEN, "Input.ToggleImmediateLightPenUpdate");
 
 	AddHelpEntry(IDC_USERAWINPUT, L"Use Raw Input API for relative mouse input",
 L"Use the Raw Input API in Windows to track relative mouse movements instead of WM_MOUSEMOVE. Can bypass acceleration for better control, but may have compatibility issues with some setups.");
 
 	AddHelpEntry(IDC_IMMEDIATEPOTS, L"Use immediate analog update",
-L"Allow the POT0-7 and LPENH/V registers to update immediately instead of waiting for the next pot/display scan. This slightly reduces accuracy but can reduce paddle latency.");
+L"Allow paddle position registers to update immediately instead of waiting for the next pot/display scan. This slightly reduces accuracy but can reduce paddle latency.");
+
+	AddHelpEntry(IDC_IMMEDIATELIGHTPEN, L"Use immediate light pen update",
+L"Allow light pen position registers to update immediately instead of waiting for the next pot/display scan. This slightly reduces accuracy but can reduce light pen latency.");
 
 	OnDataExchange(false);
 
@@ -3149,6 +3334,7 @@ void ATUIDialogConfigureSystem::OnPopulatePages() {
 	PopCategory();
 	PushCategory(L"Outputs");
 	AddPage(L"Video", vdmakeunique<ATUIDialogSysConfigVideo>());
+	AddPage(L"Enhanced Text", vdmakeunique<ATUIDialogSysConfigEnhancedText>());
 	AddPage(L"Audio", vdmakeunique<ATUIDialogSysConfigAudio>());
 	PopCategory();
 	PushCategory(L"Peripherals");

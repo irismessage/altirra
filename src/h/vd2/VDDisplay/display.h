@@ -27,9 +27,12 @@ struct VDVideoDisplayScreenFXInfo {
 	bool mbSignedRGBEncoding;
 	float mHDRIntensity;
 
-	bool mbColorCorrectAdobeRGB;
+	// 0 = sRGB, otherwise explicit gamma (2.2 for Adobe RGB)
+	float mOutputGamma = 0;
+
 	float mColorCorrectionMatrix[3][3];
 
+	bool mbBloomEnabled = false;
 	float mBloomThreshold;
 	float mBloomRadius;
 	float mBloomDirectIntensity;
@@ -216,6 +219,18 @@ void VDVideoDisplaySetD3D9LimitPS2_0(bool enable);
 void VDVideoDisplaySetD3D11Force9_1(bool enable);
 void VDVideoDisplaySetD3D11Force9_3(bool enable);
 void VDVideoDisplaySetD3D11Force10_0(bool enable);
+
+struct VDDBloomV2Settings {
+	float mCoeffWidthBase = -1.5f;
+	float mCoeffWidthBaseSlope = 0.0f;
+	float mCoeffWidthAdjustSlope = 0.050f;
+	float mShoulderX = 0.305f;
+	float mShoulderY = 0.305f;
+	float mLimitX = 1.781f;
+	float mLimitSlope = 0.086f;
+};
+
+void VDDSetBloomV2Settings(const VDDBloomV2Settings& settings);
 
 IVDVideoDisplay *VDGetIVideoDisplay(VDGUIHandle hwnd);
 bool VDRegisterVideoDisplayControl();
